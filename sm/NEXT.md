@@ -70,7 +70,8 @@ Owed, and blocking nothing above:
   PostgreSQL passes a wait policy with each call, and sm1 is to
   take one the same way, through sm2, sm3 and `include/sm.h`,
   `sm_tbl_lock` first among the calls. `lock_timeout` needs
-  no more than a sys timer that interrupts the waiting thread.
+  no more than an `sm_sys.h` timer that interrupts the
+  waiting thread.
 - **The evaluator's cost is unmeasured**: what a call a row
   adds to a write on a table with a partial or an expression
   index.

@@ -786,7 +786,7 @@ Errors: `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`,
 
 ### Interrupting a wait
 
-There is no call for it: a wait is ended through sys
+There is no call for it: a wait is ended through `sm_sys.h`
 (`../sm0/INTERRUPT.md`). A wait for another transaction — on
 a lock another holds, or on a row another is writing — is a
 `sm_wait()` on the waiting thread's wait mask
@@ -796,7 +796,7 @@ bit in the mask (`sm_interrupt()`) makes the call fail with
 the transaction stays active and holds exactly what it held,
 and the caller decides whether to abort it. A host's query
 cancel, statement timeout and lock timeout are all made this
-way, from any thread or a sys timer.
+way, from any thread or an `sm_sys.h` timer.
 
 **sm1 takes no bit.** It stays pending until the thread takes
 it (`sm_take()`), and until then every wait the thread makes

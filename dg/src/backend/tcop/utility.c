@@ -1676,7 +1676,14 @@ static void ExecDropStmt(DropStmt *stmt, bool isTopLevel) {
     /* A table is sm's (access/smstore.h). */
     smstore_drop_tables(stmt);
     break;
+  case OBJECT_SCHEMA:
+    /* A schema is sm's (access/smstore.h). */
+    smstore_drop_namespaces(stmt);
+    break;
   case OBJECT_SEQUENCE:
+    /* A sequence is sm's (access/smstore.h). */
+    smstore_drop_sequences(stmt);
+    break;
   case OBJECT_VIEW:
   case OBJECT_MATVIEW:
   case OBJECT_FOREIGN_TABLE:

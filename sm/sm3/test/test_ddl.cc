@@ -728,3 +728,165 @@ TEST_CASE("the catalog refuses an evaluated index it cannot keep") {
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   db.commit();
 }
+
+TEST_CASE("a sequence is made in a namespace, found by name, and counts") {
+  // Verify create_sequence, cat_get_sequence, cat_list_sequences and
+  // nextval.
+  // 1. A sequence made in public starting at 10 by 5 is found and
+  //    listed by its transaction, and hands out 10, then 15; another
+  //    session does not find it before the commit.
+  // 2. Its name is a relation's: a table cannot take it, and it
+  //    cannot take a table's; the same name in another namespace
+  //    is free.
+  // 3. An increment of 0, or no name, is SM_ERR_INVALID.
+  // 4. After the commit the other session finds it, and its next
+  //    value is 20.
+  // 5. One made under a savepoint goes with a rollback to it, and
+  //    one made in an aborted transaction is not there: its name is
+  //    not found and nextval is SM_ERR_NOTFOUND.
+  // 6. After a restart it is found again, and goes on counting by 5
+  //    past 20.
+  cat_db_t db;
+  uint64_t ids = 0, oid = 0, t = 0, app = 0, other_ids = 0, tmp = 0, v = 0;
+  using names_t = std::vector<std::string>;
+  std::vector<sm3::column_spec_t> cols = {
+      {"x", sm2::type_int4.code, -1, false}};
+  sm3::session_t *other = nullptr;
+  REQUIRE(sm3::session_open(db.cat, db.open(), other) == 0);
+  db.begin();
+  REQUIRE_MESSAGE(
+      sm3::create_sequence(db.ss, sm3::nsp_public, "ids", 10, 5, ids) == 0,
+      sm1::errmsg());
+  CHECK(sm3::cat_get_sequence(db.ss, sm3::nsp_public, "ids", oid) == 0);
+  CHECK(oid == ids);
+  std::string seqname;
+  uint64_t seqnsp = 0;
+  REQUIRE(sm3::cat_get_sequence_name(db.ss, ids, seqnsp, seqname) == 0);
+  CHECK(seqnsp == sm3::nsp_public);
+  CHECK(seqname == "ids");
+  names_t names;
+  REQUIRE(sm3::cat_list_sequences(db.ss, sm3::nsp_public, names) == 0);
+  CHECK(names == names_t{"ids"});
+  REQUIRE(sm3::nextval(db.ss, ids, v) == 0);
+  CHECK(v == 10);
+  REQUIRE(sm3::nextval(db.ss, ids, v) == 0);
+  CHECK(v == 15);
+  REQUIRE(sm3::begin(other, sm1::xctlevel_t::read_committed) == 0);
+  CHECK(sm3::cat_get_sequence(other, sm3::nsp_public, "ids", oid) == 1);
+  REQUIRE(sm3::commit(other) == 0);
+
+  CHECK(sm3::create_table(db.ss, sm3::nsp_public, "ids", cols, oid) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
+  REQUIRE(sm3::create_table(db.ss, sm3::nsp_public, "orders", cols, t) == 0);
+  CHECK(sm3::create_sequence(db.ss, sm3::nsp_public, "orders", 1, 1, oid) ==
+        -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
+  CHECK(sm3::cat_get_sequence(db.ss, sm3::nsp_public, "orders", oid) == 1);
+  CHECK(sm3::cat_get_sequence_name(db.ss, t, seqnsp, seqname) == 1);
+  REQUIRE(sm3::create_namespace(db.ss, "app", app) == 0);
+  REQUIRE(sm3::create_sequence(db.ss, app, "ids", 1, 1, other_ids) == 0);
+  CHECK(other_ids != ids);
+
+  CHECK(sm3::create_sequence(db.ss, app, "zero", 1, 0, oid) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm3::create_sequence(db.ss, app, "", 1, 1, oid) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  db.commit();
+
+  REQUIRE(sm3::begin(other, sm1::xctlevel_t::read_committed) == 0);
+  CHECK(sm3::cat_get_sequence(other, sm3::nsp_public, "ids", oid) == 0);
+  CHECK(oid == ids);
+  REQUIRE(sm3::nextval(other, ids, v) == 0);
+  CHECK(v == 20);
+  REQUIRE(sm3::commit(other) == 0);
+  sm3::session_close(other);
+
+  db.begin();
+  REQUIRE(sm3::savepoint(db.ss) == 1);
+  REQUIRE(sm3::create_sequence(db.ss, app, "tmp", 1, 1, tmp) == 0);
+  REQUIRE(sm3::rollback(db.ss, 1) == 0);
+  CHECK(sm3::cat_get_sequence(db.ss, app, "tmp", oid) == 1);
+  REQUIRE(sm3::create_sequence(db.ss, app, "gone", 1, 1, tmp) == 0);
+  REQUIRE(sm3::abort(db.ss) == 0);
+  db.begin();
+  CHECK(sm3::cat_get_sequence(db.ss, app, "gone", oid) == 1);
+  CHECK(sm3::nextval(db.ss, tmp, v) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  REQUIRE(sm3::abort(db.ss) == 0);
+
+  db.reload();
+  db.begin();
+  CHECK(sm3::cat_get_sequence(db.ss, sm3::nsp_public, "ids", oid) == 0);
+  CHECK(oid == ids);
+  REQUIRE(sm3::nextval(db.ss, ids, v) == 0);
+  CHECK(v > 20);
+  CHECK((v - 10) % 5 == 0);
+  db.commit();
+}
+
+TEST_CASE("a sequence is dropped, and holds its namespace until it is") {
+  // Verify drop_sequence and a namespace's drop with one in it.
+  // 1. A namespace holding a sequence is SM_ERR_INUSE to drop, also
+  //    after a restart, when only memory's count of it is reloaded.
+  // 2. A dropped sequence is not found or listed, and nextval on it
+  //    is SM_ERR_NOTFOUND; a rollback to a savepoint brings it back
+  //    and it counts on.
+  // 3. Dropping an unknown oid is SM_ERR_NOTFOUND.
+  // 4. With the sequence dropped, the namespace can be dropped in
+  //    the same transaction, and both stay gone after a restart.
+  // 5. A sequence made and dropped in one transaction leaves its
+  //    namespace free to drop.
+  cat_db_t db;
+  uint64_t app = 0, s = 0, oid = 0, v = 0, scratch = 0, q = 0;
+  using names_t = std::vector<std::string>;
+  names_t names;
+  db.begin();
+  REQUIRE(sm3::create_namespace(db.ss, "app", app) == 0);
+  REQUIRE(sm3::create_sequence(db.ss, app, "s", 1, 1, s) == 0);
+  db.commit();
+  db.begin();
+  CHECK(sm3::drop_namespace(db.ss, app) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INUSE);
+  REQUIRE(sm3::abort(db.ss) == 0);
+  db.reload();
+  db.begin();
+  CHECK(sm3::drop_namespace(db.ss, app) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INUSE);
+  REQUIRE(sm3::abort(db.ss) == 0);
+
+  db.begin();
+  REQUIRE(sm3::nextval(db.ss, s, v) == 0);
+  CHECK(v == 1);
+  REQUIRE(sm3::savepoint(db.ss) == 1);
+  REQUIRE_MESSAGE(sm3::drop_sequence(db.ss, s) == 0, sm1::errmsg());
+  CHECK(sm3::cat_get_sequence(db.ss, app, "s", oid) == 1);
+  REQUIRE(sm3::cat_list_sequences(db.ss, app, names) == 0);
+  CHECK(names.empty());
+  CHECK(sm3::nextval(db.ss, s, v) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  REQUIRE(sm3::rollback(db.ss, 1) == 0);
+  CHECK(sm3::cat_get_sequence(db.ss, app, "s", oid) == 0);
+  REQUIRE(sm3::nextval(db.ss, s, v) == 0);
+  CHECK(v == 2);
+  CHECK(sm3::drop_sequence(db.ss, s + 999) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+
+  REQUIRE(sm3::drop_sequence(db.ss, s) == 0);
+  REQUIRE_MESSAGE(sm3::drop_namespace(db.ss, app) == 0, sm1::errmsg());
+  db.commit();
+  db.reload();
+  db.begin();
+  CHECK_FALSE(sm3::cat_get_namespace(db.ss, "app", oid));
+  CHECK(sm3::nextval(db.ss, s, v) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+
+  REQUIRE(sm3::create_namespace(db.ss, "scratch", scratch) == 0);
+  db.commit();
+  db.begin();
+  REQUIRE(sm3::create_sequence(db.ss, scratch, "q", 1, 1, q) == 0);
+  CHECK(sm3::drop_namespace(db.ss, scratch) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INUSE);
+  REQUIRE(sm3::drop_sequence(db.ss, q) == 0);
+  REQUIRE_MESSAGE(sm3::drop_namespace(db.ss, scratch) == 0, sm1::errmsg());
+  db.commit();
+}

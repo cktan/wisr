@@ -475,4 +475,32 @@ int create_collation(session_t *session, uint64_t nspoid, std::string_view name,
   return 0;
 }
 
+/* Create a sequence; see sm3.h. */
+int create_sequence(session_t *session, uint64_t nspoid, std::string_view name,
+                    uint64_t start, uint64_t increment, uint64_t &oid) {
+  if (name.empty()) {
+    return invalid("create sequence: no name");
+  }
+  if (increment == 0) {
+    return invalid("create sequence: an increment of 0");
+  }
+  uint64_t q;
+  if (cat_new_oid(session, q) != 0 ||
+      cat_put_sequence(session, q, nspoid, name, start, increment) != 0) {
+    return -1;
+  }
+  oid = q;
+  return 0;
+}
+
+/* Drop a sequence; see sm3.h. */
+int drop_sequence(session_t *session, uint64_t oid) {
+  return cat_del_sequence(session, oid);
+}
+
+/* A sequence's next value; see sm3.h. */
+int nextval(session_t *session, uint64_t oid, uint64_t &out) {
+  return sm1::nextseq(session->sm1, sequence_counter(oid), out);
+}
+
 } // namespace sm3

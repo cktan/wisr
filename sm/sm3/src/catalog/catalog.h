@@ -36,6 +36,8 @@ enum class kind_t : int16_t {
      and no key at all; the value stays retired. */
   column = 8,      /* a column, keyed by its table's oid and its attnum */
   index_state = 9, /* an index's state, keyed as its index is */
+  /* 10 is the statistics design's (SM3_DESIGN.md §6.9). */
+  sequence = 11, /* a sequence: its namespace, name and counter */
 };
 
 /* The catalog's format version, which META holds. */
@@ -69,6 +71,12 @@ int part_ids(kind_t kind, std::string_view key, uint64_t &table_oid,
 /* The namespace the NAME key is in. */
 int name_nspoid(std::string_view key, uint64_t &nspoid);
 
+/* The prefix of every NAME key in the namespace nspoid. */
+int name_prefix(uint64_t nspoid, std::string &prefix);
+
+/* The name a NAME key holds. */
+int name_of_key(std::string_view key, std::string &name);
+
 /* The prefix every key of kind begins with, for a scan of them all. */
 int kind_prefix(kind_t kind, std::string &prefix);
 
@@ -90,6 +98,14 @@ struct name_rec_t {
 /* A namespace's blob. */
 struct nspace_rec_t {
   std::string name;
+};
+
+/* A sequence's blob: where it is, and how its counter was made. */
+struct sequence_rec_t {
+  uint64_t nspoid;
+  std::string name;
+  uint64_t start;
+  uint64_t increment;
 };
 
 /* A collation's blob. */
@@ -123,6 +139,8 @@ int encode_nspace(const nspace_rec_t &rec, std::string &blob);
 int decode_nspace(std::string_view blob, nspace_rec_t &rec);
 int encode_collation(const collation_rec_t &rec, std::string &blob);
 int decode_collation(std::string_view blob, collation_rec_t &rec);
+int encode_sequence(const sequence_rec_t &rec, std::string &blob);
+int decode_sequence(std::string_view blob, sequence_rec_t &rec);
 
 /* ---- parts: a blob's tuples, for the codec and its tests ---- */
 
@@ -138,6 +156,7 @@ enum class part_t {
   nspace,
   collation,
   index_state,
+  sequence,
 };
 
 /* A part's schema, and its layout, which the codec encodes by. */

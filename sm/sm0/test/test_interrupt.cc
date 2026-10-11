@@ -319,7 +319,7 @@ TEST_CASE("a periodic timer interrupts again and again, until cancelled") {
 }
 
 TEST_CASE("the timer thread blocks every signal") {
-  // Verify a signal to the process cannot land in sys's timer thread.
+  // Verify a signal to the process cannot land in sm_sys.h's timer thread.
   // 1. Arm and cancel a timer, so the timer thread runs.
   // 2. Confirm every thread of the process but this one blocks SIGTERM,
   //    though this one does not.

@@ -99,6 +99,24 @@ int name_nspoid(std::string_view key, uint64_t &nspoid) {
   return 0;
 }
 
+/* The prefix of a namespace's NAME keys: their first two columns. */
+int name_prefix(uint64_t nspoid, std::string &prefix) {
+  sm2::datum_t d[2] = {kind_datum(kind_t::name),
+                       sm2::datum_from_int64(static_cast<int64_t>(nspoid))};
+  return encode(entity_cols, d, prefix);
+}
+
+/* The name a NAME key holds. */
+int name_of_key(std::string_view key, std::string &name) {
+  std::vector<std::optional<std::string>> cols;
+  if (sm2::decode_key(name_cols, key, cols) != 0 || !cols[2]) {
+    return sm1::seterr(sm1::SM_ERR_CORRUPT, "catalog: not a name key");
+  }
+  // The text comes back as its bytes.
+  name = *cols[2];
+  return 0;
+}
+
 /* The key of an entity by its oid. */
 int entity_key(kind_t kind, uint64_t oid, std::string &key) {
   sm2::datum_t d[2] = {kind_datum(kind),

@@ -28,7 +28,7 @@
  * immediately even if the signal arrives before poll() begins.
  *
  * The epoll() implementation overcomes the race with a different technique:
- * it waits on the thread's wake fd from sys (sm_sys.h), an eventfd that a
+ * it waits on the thread's wake fd from sm_sys.h, an eventfd that a
  * latch's setter writes through sm_interrupt(), or a signal handler of the
  * thread's own through sm_interrupt_self().  No signal is sent.
  *
@@ -101,7 +101,8 @@
 #endif
 
 /*
- * By default, we use a self-pipe with poll() and sys's wake fd with epoll().
+ * By default, we use a self-pipe with poll() and sm_sys.h's wake fd with
+ * epoll().
  * For testing the choice can also be manually specified.
  */
 #if defined(WAIT_USE_POLL) || defined(WAIT_USE_EPOLL)
@@ -237,7 +238,7 @@ static inline void ResourceOwnerForgetWaitEventSet(ResourceOwner owner,
  */
 void ShutdownWaitEventSupport(void) {
 #ifdef WAIT_USE_SYS_FD
-  /* sys closes the fd itself; only fd.c's count of it goes. */
+  /* sm_sys.h closes the fd itself; only fd.c's count of it goes. */
   if (wake_fd != -1) {
     wake_fd = -1;
     ReleaseExternalFD();

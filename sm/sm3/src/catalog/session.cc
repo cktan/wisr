@@ -32,12 +32,15 @@ void drop_from(sm3::session_t *s, int d) {
   while (!s->states.empty() && s->states.back().depth >= d) {
     s->states.pop_back();
   }
+  while (!s->sequences.empty() && s->sequences.back().depth >= d) {
+    s->sequences.pop_back();
+  }
 }
 
 /* Whether s's transaction has made any DDL. */
 bool made_ddl(const sm3::session_t *s) {
   return !s->tables.empty() || !s->names.empty() || !s->collations.empty() ||
-         !s->nspaces.empty() || !s->states.empty();
+         !s->nspaces.empty() || !s->states.empty() || !s->sequences.empty();
 }
 
 /*
@@ -59,6 +62,14 @@ void publish(sm3::session_t *s) {
     }
   }
   s->nspaces.clear();
+  for (sm3::sequence_change_t &q : s->sequences) {
+    if (q.nspoid) {
+      cat->sequence_nsp[q.oid] = *q.nspoid;
+    } else {
+      cat->sequence_nsp.erase(q.oid);
+    }
+  }
+  s->sequences.clear();
   // One more publish; an index it makes valid dates from it.
   uint64_t seq = cat->seq.load() + 1;
   for (sm3::state_change_t &c : s->states) {
@@ -107,8 +118,8 @@ int session_open(catalog_t *cat, sm1::session_t *s, session_t *&out) {
     return sm1::seterr(sm1::SM_ERR_INVALID,
                        "session_open: no catalog or no sm1 session");
   }
-  out =
-      new session_t{s, cat, sm1::xctlevel_t::read_committed, 0, {}, {}, {}, {}};
+  out = new session_t{
+      s, cat, sm1::xctlevel_t::read_committed, 0, {}, {}, {}, {}, {}, {}};
   return 0;
 }
 
@@ -261,6 +272,9 @@ int forget(session_t *s, int depth) {
   for (state_change_t &c : s->states) {
     c.depth = std::min(c.depth, depth - 1);
   }
+  for (sequence_change_t &c : s->sequences) {
+    c.depth = std::min(c.depth, depth - 1);
+  }
   s->depth = depth - 1;
   return 0;
 }
@@ -326,6 +340,12 @@ void overlay_name(session_t *s, uint64_t nspoid, std::string_view name,
 void overlay_collation(session_t *s, uint64_t oid, uint64_t nspoid,
                        sm2::collation_t *collation) {
   s->collations.push_back({s->depth, oid, nspoid, collation});
+}
+
+/* Record a sequence created in nspoid, or dropped. */
+void overlay_sequence(session_t *s, uint64_t oid,
+                      std::optional<uint64_t> nspoid) {
+  s->sequences.push_back({s->depth, oid, nspoid});
 }
 
 /* Record an index's state set, or its going with its index. */
@@ -430,11 +450,26 @@ bool nspace_in_use(const session_t *s, uint64_t oid) {
       return true;
     }
   }
-  // The shared ones, but for the tables it has changed.
+  // Its own sequences as they now stand, the last change to each.
+  std::map<uint64_t, bool> own_seq; /* sequence oid -> in the namespace */
+  for (const sequence_change_t &c : s->sequences) {
+    own_seq[c.oid] = c.nspoid && *c.nspoid == oid;
+  }
+  for (const auto &[q, in] : own_seq) {
+    if (in) {
+      return true;
+    }
+  }
+  // The shared ones, but for the tables and sequences it has changed.
   const catalog_t *cat = s->cat;
   std::shared_lock lock(cat->mu);
   for (const auto &[c, nsp] : cat->collation_nsp) {
     if (nsp == oid) {
+      return true;
+    }
+  }
+  for (const auto &[q, nsp] : cat->sequence_nsp) {
+    if (nsp == oid && !own_seq.count(q)) {
       return true;
     }
   }

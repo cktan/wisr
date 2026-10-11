@@ -15,6 +15,7 @@
 
 #include "postgres.h"
 
+#include <string>
 #include <vector>
 
 #include "access/smstore.h"
@@ -23,9 +24,12 @@
 #include "catalog/index.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_class_d.h"
+#include "catalog/pg_namespace_d.h"
 #include "catalog/pg_type_d.h"
 #include "commands/defrem.h"
+#include "lib/stringinfo.h"
 #include "miscadmin.h"
+#include "nodes/makefuncs.h"
 #include "parser/parse_type.h"
 #include "storage/lockdefs.h"
 #include "access/nbtree.h"
@@ -325,8 +329,26 @@ Oid smstore_namespace_oid(const char *name) {
 }
 
 /*
- * The oid of the relation named name in nspoid, a table or an index, or
- * InvalidOid if there is none.
+ * The oid of the sequence named name in nspoid, or InvalidOid if there is
+ * none.  sm reads it from its catalog in the transaction, which this begins.
+ */
+static Oid sequence_oid(const char *name, Oid nspoid) {
+  uint64_t oid;
+
+  switch (sm_cat_sequence_oid(xact_session(), nspoid, name, &oid)) {
+  case 0:
+    return (Oid)oid;
+  case 1:
+    return InvalidOid;
+  default:
+    sm_error("look up a sequence");
+  }
+  return InvalidOid; /* not reached */
+}
+
+/*
+ * The oid of the relation named name in nspoid, a table, an index or a
+ * sequence, or InvalidOid if there is none.
  */
 Oid smstore_relation_oid(const char *name, Oid nspoid) {
   uint64_t oid, table;
@@ -343,11 +365,131 @@ Oid smstore_relation_oid(const char *name, Oid nspoid) {
   case 0:
     return (Oid)oid;
   case 1:
-    return InvalidOid;
+    break;
   default:
     sm_error("look up an index");
   }
-  return InvalidOid; /* not reached */
+  return sequence_oid(name, nspoid);
+}
+
+static void drop_table(RangeVar *rv, bool missing_ok);
+static void drop_sequence(RangeVar *rv, bool missing_ok);
+
+/*
+ * Create the schema name in sm, in this transaction, and return its oid.
+ * Every session's search path is recomputed once this one commits, and
+ * this session's at its next command.
+ */
+Oid smstore_create_namespace(const char *name) {
+  sm_session_t *s = xact_session();
+  uint64_t oid;
+
+  if (waiting([&] { return sm_cat_create_namespace(s, name, &oid); }) != 0) {
+    if (sm_errnum() == SM_ERR_DUPKEY)
+      ereport(ERROR, (errcode(ERRCODE_DUPLICATE_SCHEMA),
+                      errmsg("schema \"%s\" already exists", name)));
+    sm_error("create a schema");
+  }
+  /* A search path naming it may now find it. */
+  CacheInvalidateCatalog(NamespaceRelationId);
+  return (Oid)oid;
+}
+
+/*
+ * The tables in the schema nspoid, sorted by name, dropped with it by DROP
+ * SCHEMA ... CASCADE.
+ */
+static std::vector<std::string> namespace_tables(Oid nspoid) {
+  std::vector<std::string> names;
+
+  if (sm_cat_list_tables(xact_session(), nspoid, names) != 0)
+    sm_error("list a schema's tables");
+  return names;
+}
+
+/* The sequences in the schema nspoid, sorted by name, as for its tables. */
+static std::vector<std::string> namespace_sequences(Oid nspoid) {
+  std::vector<std::string> names;
+
+  if (sm_cat_list_sequences(xact_session(), nspoid, names) != 0)
+    sm_error("list a schema's sequences");
+  return names;
+}
+
+/*
+ * Drop the schema nspname, nspoid, from sm, in this transaction.  With
+ * cascade its tables go first, each with its indexes, and its sequences;
+ * without, a schema that holds any fails.
+ */
+static void drop_namespace(const char *nspname, Oid nspoid, bool cascade) {
+  if (cascade) {
+    std::vector<std::string> tables = namespace_tables(nspoid);
+    std::vector<std::string> sequences = namespace_sequences(nspoid);
+    int n = (int)(tables.size() + sequences.size());
+    StringInfoData detail;
+
+    initStringInfo(&detail);
+    for (const std::string &t : tables)
+      appendStringInfo(&detail, "%sdrop cascades to table %s.%s",
+                       detail.len > 0 ? "\n" : "", nspname, t.c_str());
+    for (const std::string &q : sequences)
+      appendStringInfo(&detail, "%sdrop cascades to sequence %s.%s",
+                       detail.len > 0 ? "\n" : "", nspname, q.c_str());
+    if (n == 1)
+      ereport(NOTICE, (errmsg_internal("%s", detail.data)));
+    else if (n > 1)
+      ereport(NOTICE, (errmsg_plural("drop cascades to %d other object",
+                                     "drop cascades to %d other objects", n,
+                                     n),
+                       errdetail_internal("%s", detail.data)));
+    for (const std::string &t : tables)
+      drop_table(makeRangeVar(pstrdup(nspname), pstrdup(t.c_str()), -1),
+                 false);
+    for (const std::string &q : sequences)
+      drop_sequence(makeRangeVar(pstrdup(nspname), pstrdup(q.c_str()), -1),
+                    false);
+  }
+  sm_session_t *s = xact_session();
+
+  if (waiting([&] { return sm_cat_drop_namespace(s, nspoid); }) != 0) {
+    if (sm_errnum() == SM_ERR_INUSE)
+      ereport(ERROR,
+              (errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+               errmsg("cannot drop schema %s because other objects depend "
+                      "on it",
+                      nspname),
+               errhint("Use DROP ... CASCADE to drop the dependent objects "
+                       "too.")));
+    if (sm_errnum() == SM_ERR_INVALID)
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("schema \"%s\" cannot be dropped", nspname)));
+    sm_error("drop a schema");
+  }
+  /* A search path naming it no longer finds it. */
+  CacheInvalidateCatalog(NamespaceRelationId);
+}
+
+/*
+ * Drop the schemas a DROP SCHEMA names, from sm, in this transaction.  One
+ * that is not there is an error, or with IF EXISTS a notice.
+ */
+void smstore_drop_namespaces(DropStmt *stmt) {
+  ListCell *l;
+
+  foreach (l, stmt->objects) {
+    const char *name = strVal(lfirst(l));
+    Oid nspoid = smstore_namespace_oid(name);
+
+    if (!OidIsValid(nspoid)) {
+      if (!stmt->missing_ok)
+        ereport(ERROR, (errcode(ERRCODE_UNDEFINED_SCHEMA),
+                        errmsg("schema \"%s\" does not exist", name)));
+      ereport(NOTICE,
+              (errmsg("schema \"%s\" does not exist, skipping", name)));
+      continue;
+    }
+    drop_namespace(name, nspoid, stmt->behavior == DROP_CASCADE);
+  }
 }
 
 /*
@@ -440,6 +582,161 @@ ObjectAddress smstore_create_table(CreateStmt *stmt) {
   }
   ObjectAddressSet(address, RelationRelationId, (Oid)oid);
   return address;
+}
+
+/* Refuse what a CREATE SEQUENCE asks that sm's sequences do not have. */
+static void refuse_sequence_option(const char *what) {
+  ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                  errmsg("CREATE SEQUENCE supports only START and INCREMENT "
+                         "yet, not %s",
+                         what)));
+}
+
+/*
+ * Create the sequence a CREATE SEQUENCE describes, in sm, in this
+ * transaction: counting up from START, by INCREMENT, both at least 1.
+ * Returns its address, or InvalidObjectAddress if IF NOT EXISTS found the
+ * name taken.
+ */
+ObjectAddress smstore_create_sequence(CreateSeqStmt *stmt) {
+  const char *name = stmt->sequence->relname;
+  int64 start = 1, increment = 1;
+  Oid nspoid;
+  uint64_t oid;
+  ObjectAddress address;
+  ListCell *l;
+
+  if (stmt->for_identity)
+    refuse_sequence_option("an identity column");
+  if (stmt->ownerId != InvalidOid)
+    refuse_sequence_option("an owner");
+  if (stmt->sequence->relpersistence != RELPERSISTENCE_PERMANENT)
+    refuse_sequence_option("TEMPORARY or UNLOGGED");
+  foreach (l, stmt->options) {
+    DefElem *opt = lfirst_node(DefElem, l);
+
+    if (strcmp(opt->defname, "start") == 0)
+      start = defGetInt64(opt);
+    else if (strcmp(opt->defname, "increment") == 0)
+      increment = defGetInt64(opt);
+    else if (strcmp(opt->defname, "as") == 0) {
+      /* A value is a bigint: AS bigint says so, and nothing else can. */
+      if (typenameTypeId(NULL, defGetTypeName(opt)) != INT8OID)
+        refuse_sequence_option("AS a type other than bigint");
+    } else
+      refuse_sequence_option(opt->defname);
+  }
+  if (start < 1 || increment < 1)
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("a sequence counts up from 1 or more, by 1 or "
+                           "more, yet")));
+  nspoid = RangeVarGetCreationNamespace(stmt->sequence);
+  if (stmt->if_not_exists && OidIsValid(smstore_relation_oid(name, nspoid))) {
+    ereport(NOTICE, (errcode(ERRCODE_DUPLICATE_TABLE),
+                     errmsg("relation \"%s\" already exists, skipping", name)));
+    return InvalidObjectAddress;
+  }
+  sm_session_t *s = xact_session();
+
+  if (waiting([&] {
+        return sm_cat_create_sequence(s, nspoid, name, (uint64_t)start,
+                                      (uint64_t)increment, &oid);
+      }) != 0) {
+    if (sm_errnum() == SM_ERR_DUPKEY)
+      ereport(ERROR, (errcode(ERRCODE_DUPLICATE_TABLE),
+                      errmsg("relation \"%s\" already exists", name)));
+    sm_error("create a sequence");
+  }
+  ObjectAddressSet(address, RelationRelationId, (Oid)oid);
+  return address;
+}
+
+/*
+ * The name of the sequence oid, as this transaction sees it, or NULL if
+ * there is none.
+ */
+static char *sequence_name(Oid oid) {
+  uint64_t nspoid;
+  std::string name;
+
+  switch (sm_cat_sequence_name(xact_session(), oid, &nspoid, name)) {
+  case 0:
+    return pstrdup(name.c_str());
+  case 1:
+    return NULL;
+  default:
+    sm_error("look up a sequence");
+  }
+  return NULL; /* not reached */
+}
+
+/* Whether there is a sequence oid, as this transaction sees it. */
+bool smstore_sequence_exists(Oid oid) { return sequence_name(oid) != NULL; }
+
+/* The name of the sequence oid, for a message; its oid if it is gone. */
+const char *smstore_sequence_name(Oid oid) {
+  char *name = sequence_name(oid);
+
+  return name != NULL ? name : psprintf("%u", oid);
+}
+
+/*
+ * The next value of the sequence oid, from sm.  It is not transactional:
+ * a rollback does not give it back.
+ */
+int64 smstore_nextval(Oid oid) {
+  sm_session_t *s = xact_session();
+  uint64_t value;
+
+  if (sm_cat_nextval(s, oid, &value) != 0) {
+    if (sm_errnum() == SM_ERR_NOTFOUND)
+      ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
+                      errmsg("sequence with OID %u does not exist", oid)));
+    sm_error("draw a sequence's next value");
+  }
+  if (value > (uint64_t)PG_INT64_MAX)
+    ereport(ERROR, (errcode(ERRCODE_SEQUENCE_GENERATOR_LIMIT_EXCEEDED),
+                    errmsg("nextval: reached maximum value of sequence "
+                           "\"%s\" (" INT64_FORMAT ")",
+                           smstore_sequence_name(oid), PG_INT64_MAX)));
+  return (int64)value;
+}
+
+/*
+ * Drop the sequence rv names, from sm, in this transaction.  One that is not
+ * there is an error, or with missing_ok a notice; a relation of another kind
+ * by that name is an error.
+ */
+static void drop_sequence(RangeVar *rv, bool missing_ok) {
+  Oid oid = RangeVarGetRelid(rv, NoLock, true);
+
+  if (!OidIsValid(oid)) {
+    if (!missing_ok)
+      ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
+                      errmsg("sequence \"%s\" does not exist", rv->relname)));
+    ereport(NOTICE, (errmsg("sequence \"%s\" does not exist, skipping",
+                            rv->relname)));
+    return;
+  }
+  if (!smstore_sequence_exists(oid))
+    ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
+                    errmsg("\"%s\" is not a sequence", rv->relname)));
+  sm_session_t *s = xact_session();
+
+  if (waiting([&] { return sm_cat_drop_sequence(s, oid); }) != 0)
+    sm_error("drop a sequence");
+}
+
+/*
+ * Drop the sequences a DROP SEQUENCE names, from sm, in this transaction.
+ * CASCADE and RESTRICT are the same: nothing depends on a sequence in sm.
+ */
+void smstore_drop_sequences(DropStmt *stmt) {
+  ListCell *l;
+
+  foreach (l, stmt->objects)
+    drop_sequence(makeRangeVarFromNameList((List *)lfirst(l)),
+                  stmt->missing_ok);
 }
 
 /*
@@ -740,6 +1037,38 @@ void smstore_endscan(smstore_scan_t *scan) {
 }
 
 /*
+ * Drop the table rv names, from sm, in this transaction: with its indexes,
+ * rows and sequence.  One that is not there is an error, or with missing_ok
+ * a notice.
+ */
+static void drop_table(RangeVar *rv, bool missing_ok) {
+  Oid oid;
+  Relation rel;
+
+  /* Locked against other sessions' use until the transaction ends. */
+  oid = RangeVarGetRelid(rv, AccessExclusiveLock, true);
+  if (!OidIsValid(oid)) {
+    if (!missing_ok)
+      ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
+                      errmsg("table \"%s\" does not exist", rv->relname)));
+    ereport(NOTICE,
+            (errmsg("table \"%s\" does not exist, skipping", rv->relname)));
+    return;
+  }
+  rel = relation_open(oid, NoLock);
+  if (rel->rd_rel->relkind != RELKIND_RELATION)
+    ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
+                    errmsg("\"%s\" is not a table", rv->relname)));
+  /* Every session forgets its descriptor once this one commits. */
+  CacheInvalidateRelcache(rel);
+  relation_close(rel, NoLock);
+  sm_session_t *s = xact_session();
+
+  if (waiting([&] { return sm_cat_drop_table(s, oid); }) != 0)
+    sm_error("drop a table");
+}
+
+/*
  * Drop the tables a DROP TABLE names, from sm, in this transaction: each
  * with its indexes, rows and sequence.  CASCADE and RESTRICT are the same:
  * nothing but its indexes depends on a table in sm.
@@ -747,33 +1076,8 @@ void smstore_endscan(smstore_scan_t *scan) {
 void smstore_drop_tables(DropStmt *stmt) {
   ListCell *l;
 
-  foreach (l, stmt->objects) {
-    RangeVar *rv = makeRangeVarFromNameList((List *)lfirst(l));
-    Oid oid;
-    Relation rel;
-
-    /* Locked against other sessions' use until the transaction ends. */
-    oid = RangeVarGetRelid(rv, AccessExclusiveLock, true);
-    if (!OidIsValid(oid)) {
-      if (!stmt->missing_ok)
-        ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
-                        errmsg("table \"%s\" does not exist", rv->relname)));
-      ereport(NOTICE,
-              (errmsg("table \"%s\" does not exist, skipping", rv->relname)));
-      continue;
-    }
-    rel = relation_open(oid, NoLock);
-    if (rel->rd_rel->relkind != RELKIND_RELATION)
-      ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
-                      errmsg("\"%s\" is not a table", rv->relname)));
-    /* Every session forgets its descriptor once this one commits. */
-    CacheInvalidateRelcache(rel);
-    relation_close(rel, NoLock);
-    sm_session_t *s = xact_session();
-
-    if (waiting([&] { return sm_cat_drop_table(s, oid); }) != 0)
-      sm_error("drop a table");
-  }
+  foreach (l, stmt->objects)
+    drop_table(makeRangeVarFromNameList((List *)lfirst(l)), stmt->missing_ok);
 }
 
 /*

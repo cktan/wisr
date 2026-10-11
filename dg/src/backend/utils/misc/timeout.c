@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * timeout.c
- *	  Routines to multiplex a thread's alarm, a sys timer that raises
+ *	  Routines to multiplex a thread's alarm, an sm_sys.h timer that raises
  *	  INTERRUPT_ALARM, for multiple timeout reasons.
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group

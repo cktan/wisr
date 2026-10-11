@@ -56,6 +56,12 @@ struct sm3::catalog_t {
   std::unordered_map<uint64_t, index_status_t> index_states;
   /* The namespace of each collation, for a namespace's drop to ask. */
   std::unordered_map<uint64_t, uint64_t> collation_nsp;
+  /*
+   * The namespace of each sequence, for the same: all of a sequence
+   * that is kept in memory, its name and counter being read from the
+   * catalog store in the transaction.
+   */
+  std::unordered_map<uint64_t, uint64_t> sequence_nsp;
 
   /*
    * How many times a transaction's DDL has been published, and, for
@@ -110,6 +116,11 @@ struct nspace_change_t {
   uint64_t oid;
   std::optional<std::string> name; /* nullopt: dropped */
 };
+struct sequence_change_t {
+  int depth;
+  uint64_t oid;
+  std::optional<uint64_t> nspoid; /* nullopt: dropped */
+};
 
 } // namespace sm3
 
@@ -128,6 +139,7 @@ struct sm3::session_t {
   std::vector<collation_change_t> collations;
   std::vector<nspace_change_t> nspaces;
   std::vector<state_change_t> states;
+  std::vector<sequence_change_t> sequences;
   bool in_txn = false;      /* between begin and commit or abort */
   uint64_t snap_seq = 0;    /* cat->seq, noted before the snapshot */
   bool stmt_pinned = false; /* stmt_begin was called: statement snapshots */
@@ -189,6 +201,9 @@ int build_table(const collation_lookup_t &lookup, uint64_t oid,
  */
 int lock_table(sm1::session_t *s, uint64_t oid, sm1::lockmode_t mode);
 
+/* The name of the sm1 sequence that counts for the sequence oid. */
+std::string sequence_counter(uint64_t oid);
+
 /* The collation oid, as session sees it; false if unknown. */
 bool session_collation(const session_t *s, uint64_t oid,
                        const sm2::collation_t *&out);
@@ -204,10 +219,13 @@ void overlay_nspace(session_t *s, uint64_t oid,
                     std::optional<std::string_view> name);
 void overlay_state(session_t *s, uint64_t index,
                    std::optional<index_status_t> status);
+void overlay_sequence(session_t *s, uint64_t oid,
+                      std::optional<uint64_t> nspoid);
 
 /*
  * Whether there is a namespace oid as session sees it, its name
- * set in name; and whether a table or a collation is in it. Both
+ * set in name; and whether a table, a collation or a sequence is
+ * in it. Both
  * read the catalog in memory, which holds every commit published
  * so far, not what the transaction's snapshot shows (CATALOG.md
  * §5).

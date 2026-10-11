@@ -34,6 +34,7 @@ void tcb_init(void) {
   Assert(tcb == NULL);
   tcb = new tcb_t();
   tcb->timeout.reset(timeout_state_new());
+  tcb->sequence.reset(sequence_state_new());
 }
 
 /*

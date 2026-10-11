@@ -447,8 +447,8 @@ int cat_put_namespace(session_t* s, uint64_t namespace_oid,
                       std::string_view name);
 
 /*
- * Erase the namespace namespace_oid. One that still holds a table
- * or a collation is refused with SM_ERR_INUSE, and the two built
+ * Erase the namespace namespace_oid. One that still holds a table,
+ * a collation or a sequence is refused with SM_ERR_INUSE, and the two built
  * in, pg_catalog and public, with SM_ERR_INVALID. It waits for
  * every transaction that is putting something in the namespace,
  * and one that tries after it has committed finds no namespace
@@ -467,6 +467,47 @@ int cat_del_namespace(session_t* s, uint64_t namespace_oid);
 int cat_put_collation(session_t* s, uint64_t collation_oid,
                       uint64_t namespace_oid, std::string_view name,
                       std::string_view locale, bool deterministic);
+
+/*
+ * Store a sequence named name in namespace_oid as sequence_oid,
+ * which must be new, and make its counter, the sm1 sequence that
+ * hands out start, start + increment, ... A taken name, a table's
+ * or an index's among them, fails with SM_ERR_DUPKEY; no such
+ * namespace with SM_ERR_NOTFOUND.
+ */
+int cat_put_sequence(session_t* s, uint64_t sequence_oid,
+                     uint64_t namespace_oid, std::string_view name,
+                     uint64_t start, uint64_t increment);
+
+/*
+ * Erase the sequence sequence_oid, with its name and its counter.
+ * One that is not there fails with SM_ERR_NOTFOUND.
+ */
+int cat_del_sequence(session_t* s, uint64_t sequence_oid);
+
+/*
+ * The sequence named name in nspoid, as s's transaction sees it --
+ * read from the catalog store, so s needs one open: 0 with its oid
+ * set in oid, 1 if there is none, or -1.
+ */
+int cat_get_sequence(session_t* s, uint64_t nspoid, std::string_view name,
+                     uint64_t& oid);
+
+/*
+ * The namespace and name of the sequence oid, as s's transaction
+ * sees it, which must be open: 0 with them set, 1 if there is no
+ * such sequence -- an oid of another kind among them -- or -1.
+ */
+int cat_get_sequence_name(session_t* s, uint64_t oid, uint64_t& nspoid,
+                          std::string& name);
+
+/*
+ * The names of the sequences in nspoid, sorted, as s's transaction
+ * sees them, into names, which it replaces; s needs a transaction
+ * open.
+ */
+int cat_list_sequences(session_t* s, uint64_t nspoid,
+                       std::vector<std::string>& names);
 
 /*
  * ---- DDL: what a CREATE, a DROP or an ALTER does ----
@@ -553,8 +594,8 @@ int create_namespace(session_t* session, std::string_view name,
                      uint64_t& oid);
 
 /*
- * Drop the namespace oid. One that still holds a table or a
- * collation is refused with SM_ERR_INUSE, and the two built in,
+ * Drop the namespace oid. One that still holds a table, a
+ * collation or a sequence is refused with SM_ERR_INUSE, and the two built in,
  * pg_catalog and public, with SM_ERR_INVALID. It waits for every
  * transaction that is creating something in the namespace, and
  * one that tries after it has committed finds no namespace
@@ -665,6 +706,29 @@ int set_index_state(session_t* session, uint64_t table, uint64_t oid,
 int create_collation(session_t* session, uint64_t nspoid,
                      std::string_view name, std::string_view locale,
                      bool deterministic, uint64_t& oid);
+
+/*
+ * Create a sequence named name in namespace nspoid, SQL's CREATE
+ * SEQUENCE, handing out start, start + increment, ...; its oid is
+ * set in oid. It takes the name from the namespace's tables and
+ * indexes, as a relation does. An increment of 0, or no name,
+ * fails with SM_ERR_INVALID.
+ */
+int create_sequence(session_t* session, uint64_t nspoid,
+                    std::string_view name, uint64_t start,
+                    uint64_t increment, uint64_t& oid);
+
+/* Drop the sequence oid, with its counter. */
+int drop_sequence(session_t* session, uint64_t oid);
+
+/*
+ * Hand out the next value of the sequence oid. Values are not
+ * transactional: a rollback does not give one back, as sm1's
+ * sequences do not (sm1/API.md). One past UINT64_MAX fails with
+ * SM_ERR_INVALID, and a sequence that is not there with
+ * SM_ERR_NOTFOUND.
+ */
+int nextval(session_t* session, uint64_t oid, uint64_t& out);
 
 /*
  * ---- tables: a row and its index entries (SM3_DESIGN.md §3) ----

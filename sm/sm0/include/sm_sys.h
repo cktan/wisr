@@ -5,7 +5,7 @@
  * Each thread has a word of pending interrupt bits. Any thread may
  * raise bits in any other; the owner checks and claims them. A
  * thread blocked in sm_wait() or polling its wake fd is woken. A
- * timer raises bits at a deadline. sys attaches no meaning to a
+ * timer raises bits at a deadline. sm_sys.h attaches no meaning to a
  * bit: the caller defines them, claims them, and decides what an
  * interrupt means. Nothing here uses signals.
  *
@@ -65,7 +65,7 @@ void sm_interrupt(const sm_thread_ref_t &t, uint32_t bits);
  * has one. Lock-free, so safe in a signal handler: for a handler
  * that must wake its own thread's poll loop. It wakes no
  * sm_wait(), which a handler could not have interrupted safely
- * anyway. The thread must have a block already -- any earlier sys
+ * anyway. The thread must have a block already -- any earlier sm_sys.h
  * call on it, such as sm_wake_fd() -- or nothing is raised: a
  * handler cannot make one.
  */

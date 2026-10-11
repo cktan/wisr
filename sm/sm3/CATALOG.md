@@ -78,6 +78,8 @@ kinds' values are on disk, so frozen.
 | — | 7 | — | retired: a table's oid lock was a key here, and is now an `sm1::LOCKTYPE_OID` lock on its oid |
 | `COLUMN` | 8 | table oid `int8`, attnum `int8` | one column of the table |
 | `INDEX_STATE` | 9 | table oid `int8`, index oid `int8` | one index's state, with why its build failed; none for a pending index |
+| — | 10 | — | the statistics design's (`SM3_DESIGN.md` §6.9) |
+| `SEQUENCE` | 11 | oid `int8` | a sequence: its namespace, name, start and increment |
 
 - **A table is several entries.** Its own fields are under
   its `TABLE` key, each column under a `COLUMN` key, and each
@@ -106,6 +108,14 @@ kinds' values are on disk, so frozen.
   no namespace.
 - **A table's rowno sequence is `sm3.rowno.<oid>`**, made with
   its store.
+- **A sequence's counter is `sm3.seq.<oid>`**, the sm1 sequence
+  made and dropped with its `SEQUENCE` entry, in the same
+  transaction; `nextval` is sm1's `nextseq` on it, and so not
+  transactional. Its name is a `NAME` key in its namespace, so
+  it shares names with the namespace's tables and indexes, as a
+  relation does in PostgreSQL. Only which namespace holds it is
+  kept in memory, for a namespace's drop (§5); its name and
+  record are read from the store in the transaction.
 - **A table's oid lock is no longer a key here.** It is an
   `sm1::LOCKTYPE_OID` lock on the table's oid
   (`SM3_DESIGN.md` §2). Locking the `TABLE` key instead would
@@ -127,6 +137,7 @@ TABLE value       = table
 COLUMN value      = column
 INDEX value       = index | key × nkey | include × ninclude | read × nread
 INDEX_STATE value = index state
+SEQUENCE value    = sequence
 ```
 
 | Part | Fields |
@@ -142,6 +153,7 @@ INDEX_STATE value = index state
 | read | attnum `int4` |
 | namespace | name `text` |
 | collation | name `text`, locale `text`, deterministic `bool`, ICU version `text` |
+| sequence | namespace `int8`, name `text`, start `int8`, increment `int8` |
 
 - **A part evolves as a tuple does.** A field appended to a
   part's schema reads as its missing value in a value written
@@ -150,7 +162,9 @@ INDEX_STATE value = index state
   the framing, does: it was 2 when a table's columns and
   indexes left its blob for keys of their own, 3 when an
   index's state left the index part for one too, and is 4
-  since the built-in namespaces took PostgreSQL's oids.
+  since the built-in namespaces took PostgreSQL's oids. A new
+  kind, as `SEQUENCE` was, changes no key's layout, and leaves
+  it as it is.
 - **An index's state** is 0 pending, 1 valid or 2 failed
   (`SM3_DESIGN.md` §3), in the index state part. The index
   part's three attributes that once held it are retired and

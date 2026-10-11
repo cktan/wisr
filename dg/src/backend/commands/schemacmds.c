@@ -15,6 +15,7 @@
 #include "postgres.h"
 
 #include "access/htup_details.h"
+#include "access/smstore.h"
 #include "access/table.h"
 #include "access/xact.h"
 #include "catalog/catalog.h"
@@ -143,8 +144,8 @@ Oid CreateSchemaCommand(CreateSchemaStmt *stmt, const char *queryString,
     SetUserIdAndSecContext(owner_uid,
                            save_sec_context | SECURITY_LOCAL_USERID_CHANGE);
 
-  /* Create the schema's namespace */
-  namespaceId = NamespaceCreate(schemaName, owner_uid, false);
+  /* Create the schema's namespace, in sm: it records no owner. */
+  namespaceId = smstore_create_namespace(schemaName);
 
   /* Advance cmd counter to make the namespace visible */
   CommandCounterIncrement();

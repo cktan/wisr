@@ -384,7 +384,7 @@ void SetInterruptHandler(uint32 bit, interrupt_handler_t handler) {
 
 /*
  * Interrupt the thread that owns proc, which runs the handlers of bits at
- * its next CHECK_FOR_INTERRUPTS() or wait.  sys wakes it: a wait it is in
+ * its next CHECK_FOR_INTERRUPTS() or wait.  sm_sys.h wakes it: a wait it is in
  * returns, and runs them.  A proc that no thread owns is left alone.
  */
 void InterruptProc(PGPROC *proc, uint32 bits) {

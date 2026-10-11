@@ -34,6 +34,13 @@ struct timeout_state_free_t {
 };
 extern timeout_state_t *timeout_state_new(void);
 
+/* sequence.c: this session's last value of each sequence, for currval. */
+typedef struct sequence_state_t sequence_state_t;
+struct sequence_state_free_t {
+  void operator()(sequence_state_t *state) const;
+};
+extern sequence_state_t *sequence_state_new(void);
+
 /* shmem.c: the index of the structures the threads share, by name. */
 typedef struct shmem_index_t shmem_index_t;
 struct shmem_index_free_t {
@@ -65,6 +72,7 @@ typedef struct pcb_t {
 /* The thread control block: one for each thread that runs digres code. */
 typedef struct tcb_t {
   std::unique_ptr<timeout_state_t, timeout_state_free_t> timeout;
+  std::unique_ptr<sequence_state_t, sequence_state_free_t> sequence;
 } tcb_t;
 
 extern pcb_t *pcb;

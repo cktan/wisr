@@ -605,6 +605,146 @@ int cat_put_collation(session_t *session, uint64_t oid, uint64_t nspoid,
   return 0;
 }
 
+/* A sequence's counter; see internal.h. */
+std::string sequence_counter(uint64_t oid) {
+  return "sm3.seq." + std::to_string(oid);
+}
+
+/* Store a new sequence and make its counter; see sm3.h. */
+int cat_put_sequence(session_t *session, uint64_t oid, uint64_t nspoid,
+                     std::string_view name, uint64_t start,
+                     uint64_t increment) {
+  kv_ptr kv(nullptr, &sm2::catkv_close);
+  std::string blob;
+  // Shared: a drop of the namespace waits this transaction out.
+  if (open_kv(session->sm1, kv) != 0 ||
+      use_nspace(session, nspoid, sm1::SM_LOCKMODE_SH, blob) != 0) {
+    return -1;
+  }
+  // The name first, so a taken one fails before anything is made.
+  if (insert_name(kv.get(), nspoid, name,
+                  {kind_t::sequence, oid, std::nullopt}) != 0 ||
+      encode_sequence({nspoid, std::string(name), start, increment}, blob) !=
+          0 ||
+      insert_entity(kv.get(), kind_t::sequence, oid, blob) != 0 ||
+      sm1::mkseq(session->sm1, sequence_counter(oid), start, increment) != 0) {
+    return -1;
+  }
+  overlay_sequence(session, oid, nspoid);
+  return 0;
+}
+
+/* Erase a sequence and its counter; see sm3.h. */
+int cat_del_sequence(session_t *session, uint64_t oid) {
+  kv_ptr kv(nullptr, &sm2::catkv_close);
+  std::string key;
+  std::string_view v;
+  // Its record under an X lock on its key, as a namespace's is
+  // read: the newest committed one, which this may then erase.
+  if (open_kv(session->sm1, kv) != 0 ||
+      entity_key(kind_t::sequence, oid, key) != 0 ||
+      sm2::catkv_lock(kv.get(), key, sm1::SM_LOCKMODE_EX) != 0) {
+    return -1;
+  }
+  int rc = session->level == sm1::xctlevel_t::read_committed
+               ? sm2::catkv_get_latest(kv.get(), key, v)
+               : sm2::catkv_get(kv.get(), key, v);
+  if (rc != 0) {
+    return rc == 1 ? sm1::seterr(sm1::SM_ERR_NOTFOUND, "sequence " +
+                                                           std::to_string(oid) +
+                                                           " does not exist")
+                   : -1;
+  }
+  sequence_rec_t rec;
+  if (decode_sequence(v, rec) != 0 || sm2::catkv_erase(kv.get(), key) != 0 ||
+      erase_name(kv.get(), rec.nspoid, rec.name) != 0 ||
+      sm1::rmseq(session->sm1, sequence_counter(oid)) != 0) {
+    return -1;
+  }
+  overlay_sequence(session, oid, std::nullopt);
+  return 0;
+}
+
+/* A sequence by name, read in the transaction; see sm3.h. */
+int cat_get_sequence(session_t *session, uint64_t nspoid, std::string_view name,
+                     uint64_t &oid) {
+  kv_ptr kv(nullptr, &sm2::catkv_close);
+  std::string key;
+  std::string_view v;
+  if (open_kv(session->sm1, kv) != 0 || name_key(nspoid, name, key) != 0) {
+    return -1;
+  }
+  int rc = sm2::catkv_get(kv.get(), key, v);
+  if (rc != 0) {
+    return rc;
+  }
+  name_rec_t rec;
+  if (decode_name(v, rec) != 0) {
+    return -1;
+  }
+  // The name may be a table's or an index's.
+  if (rec.kind != kind_t::sequence) {
+    return 1;
+  }
+  oid = rec.oid;
+  return 0;
+}
+
+/* A sequence's namespace and name by its oid; see sm3.h. */
+int cat_get_sequence_name(session_t *session, uint64_t oid, uint64_t &nspoid,
+                          std::string &name) {
+  kv_ptr kv(nullptr, &sm2::catkv_close);
+  std::string key;
+  std::string_view v;
+  if (open_kv(session->sm1, kv) != 0 ||
+      entity_key(kind_t::sequence, oid, key) != 0) {
+    return -1;
+  }
+  int rc = sm2::catkv_get(kv.get(), key, v);
+  if (rc != 0) {
+    return rc;
+  }
+  sequence_rec_t rec;
+  if (decode_sequence(v, rec) != 0) {
+    return -1;
+  }
+  nspoid = rec.nspoid;
+  name = std::move(rec.name);
+  return 0;
+}
+
+/* The sequences in a namespace, read in the transaction; see sm3.h. */
+int cat_list_sequences(session_t *session, uint64_t nspoid,
+                       std::vector<std::string> &names) {
+  kv_ptr kv(nullptr, &sm2::catkv_close);
+  std::string prefix;
+  sm2::catkv_scan_t *c = nullptr;
+  if (open_kv(session->sm1, kv) != 0 || name_prefix(nspoid, prefix) != 0 ||
+      sm2::catkv_scan(kv.get(), prefix, c) != 0) {
+    return -1;
+  }
+  std::unique_ptr<sm2::catkv_scan_t, decltype(&sm2::catkv_scanend)> guard(
+      c, &sm2::catkv_scanend);
+  names.clear();
+  std::string_view k, v;
+  int rc;
+  // The keys come in name order, every kind's names together.
+  while ((rc = sm2::catkv_scannxt(c, k, v)) == 0) {
+    name_rec_t rec;
+    if (decode_name(v, rec) != 0) {
+      return -1;
+    }
+    if (rec.kind == kind_t::sequence) {
+      std::string name;
+      if (name_of_key(k, name) != 0) {
+        return -1;
+      }
+      names.push_back(std::move(name));
+    }
+  }
+  return rc == 1 ? 0 : -1;
+}
+
 /* Take a table's oid lock; see internal.h. */
 int lock_table(sm1::session_t *s, uint64_t oid, sm1::lockmode_t mode) {
   // The name is the oid, big-endian: it is persisted in a

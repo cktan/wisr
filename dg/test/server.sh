@@ -257,7 +257,7 @@ wait $iso
   fail "isolation levels"
 
 # Verify that a statement waiting in sm for another session's lock is ended
-# by a statement timeout, from its own sys timer, and by a cancel request
+# by a statement timeout, from its own sm_sys.h timer, and by a cancel request
 # from its client, which another thread turns into an interrupt bit in it:
 # sm's wait ends, and CHECK_FOR_INTERRUPTS() raises the error.
 # 1. In a session of its own, begin, and drop t1 without committing: it
@@ -687,17 +687,170 @@ for sql in "reindex table t4" "reindex index t4_ac" \
     echo "$out" | grep -q '^REINDEX$' || fail "reindex: $sql"
 done
 
-# Verify that sequences are refused until they are sm's, that DISCARD
-# SEQUENCES still runs, and that the buffer manager's settings are gone.
-# 1. Confirm CREATE SEQUENCE and ALTER SEQUENCE fail, naming sequences.
-# 2. Confirm DISCARD SEQUENCES succeeds: there is no cache to discard.
-# 3. Confirm temp_buffers, effective_io_concurrency, io_combine_limit,
+# Verify that a schema is sm's: CREATE SCHEMA makes one a table can be made
+# in, for good or not at all, a session whose search path named it before it
+# was made finds it, and DROP SCHEMA drops it, with its tables only when told.
+# 1. Create s1; creating it again fails, and IF NOT EXISTS notices. Make
+#    s1.t with a row, and read it back.
+# 2. Hold a session with search_path s3, public that has read public.nsp0
+#    by its bare name; create s3 from another; the held session's unqualified
+#    CREATE TABLE w lands in s3.
+# 3. Create s4 in a transaction and roll back: s4 is not there.
+# 4. CREATE SCHEMA s5 CREATE TABLE v makes v in s5.
+# 5. DROP SCHEMA s1 fails while it holds t; CASCADE drops it, telling of t,
+#    and s1.t is gone; dropping s1 again fails, and IF EXISTS notices.
+# 6. Dropping public is refused.
+[ "$(local_psql -c 'create schema s1' 2>&1)" = "CREATE SCHEMA" ] ||
+  fail "create schema"
+local_psql -c 'create schema s1' 2>&1 |
+  grep -q 'schema "s1" already exists' || fail "create schema twice"
+local_psql -c 'create schema if not exists s1' 2>&1 |
+  grep -q 'schema "s1" already exists, skipping' ||
+  fail "create schema if not exists"
+local_psql -c 'create table s1.t (a int4)' -c 'insert into s1.t values (3)' \
+  > "$work/schema.out" 2>&1
+[ "$(local_psql -c 'select a from s1.t' 2>&1)" = 3 ] || fail "table in s1"
+local_psql -c 'create table nsp0 (a int4)' >> "$work/schema.out" 2>&1
+mkfifo "$work/nsp.in"
+local_psql < "$work/nsp.in" > "$work/nsp.out" 2>&1 &
+nsp=$!
+exec 4> "$work/nsp.in"
+echo "set search_path = s3, public; select count(*) from nsp0;" >&4
+echo "select 'held';" >&4
+for _ in $(seq 50); do
+  grep -q '^held$' "$work/nsp.out" && break
+  sleep 0.1
+done
+local_psql -c 'create schema s3' >> "$work/schema.out" 2>&1
+echo "create table w (a int4); select 'made';" >&4
+for _ in $(seq 50); do
+  grep -q '^made$' "$work/nsp.out" && break
+  sleep 0.1
+done
+exec 4>&-
+wait $nsp
+local_psql -c 'select count(*) from s3.w' 2>&1 | grep -qx 0 ||
+  fail "search path finds a schema made later"
+local_psql -c 'begin' -c 'create schema s4' -c 'rollback' \
+  >> "$work/schema.out" 2>&1
+local_psql -c 'create table s4.x (a int4)' 2>&1 |
+  grep -q 'schema "s4" does not exist' || fail "create schema rolled back"
+local_psql -c 'create schema s5 create table v (b int8)' \
+  >> "$work/schema.out" 2>&1
+local_psql -c 'select count(*) from s5.v' 2>&1 | grep -qx 0 ||
+  fail "create schema with a table"
+local_psql -c 'drop schema s1' 2>&1 |
+  grep -q 'cannot drop schema s1 because other objects depend on it' ||
+  fail "drop schema restrict"
+local_psql -c 'drop schema s1 cascade' > "$work/nspdrop.out" 2>&1
+grep -q 'drop cascades to table s1.t' "$work/nspdrop.out" &&
+  grep -q '^DROP SCHEMA$' "$work/nspdrop.out" || fail "drop schema cascade"
+local_psql -c 'select a from s1.t' 2>&1 |
+  grep -q 'relation "s1.t" does not exist' || fail "dropped schema's table"
+local_psql -c 'drop schema s1' 2>&1 |
+  grep -q 'schema "s1" does not exist' || fail "drop schema twice"
+local_psql -c 'drop schema if exists s1' 2>&1 |
+  grep -q 'schema "s1" does not exist, skipping' ||
+  fail "drop schema if exists"
+local_psql -c 'drop schema public' 2>&1 |
+  grep -q 'schema "public" cannot be dropped' || fail "drop public"
+
+# Verify that a sequence is sm's: CREATE SEQUENCE makes one, by a name a
+# table cannot also take, nextval counts from START by INCREMENT and never
+# gives a value back or out twice, currval and lastval report the session's
+# own draws, a schema's drop takes its sequences only when told, and DROP
+# SEQUENCE drops one.
+# 1. Create q from 10 by 5; again fails, IF NOT EXISTS notices, and a table
+#    named q fails.
+# 2. In one session draw 10 and 15, then currval and lastval give 15; in a
+#    new session both are not yet defined.
+# 3. Draw in a transaction and roll back: the next draw is higher still.
+# 4. Four sessions draw 25 each at once: 100 values, no two the same.
+# 5. Make s6.r: it gives 1. DROP SCHEMA s6 fails; CASCADE drops it, telling
+#    of r.
+# 6. CYCLE, a negative increment, ALTER SEQUENCE and setval() are refused,
+#    and reading q as a table is too.
+# 7. Drop q: nextval('q') then fails, as does dropping it again; IF EXISTS
+#    notices, and DROP SEQUENCE of a table fails.
+# 8. DISCARD SEQUENCES runs, and forgets the session's draws.
+[ "$(local_psql -c 'create sequence q start 10 increment 5' 2>&1)" = \
+  "CREATE SEQUENCE" ] || fail "create sequence"
+local_psql -c 'create sequence q' 2>&1 |
+  grep -q 'relation "q" already exists' || fail "create sequence twice"
+local_psql -c 'create sequence if not exists q' 2>&1 |
+  grep -q 'relation "q" already exists, skipping' ||
+  fail "create sequence if not exists"
+local_psql -c 'create table q (a int4)' 2>&1 |
+  grep -q 'relation "q" already exists' || fail "a table takes a sequence's name"
+[ "$(local_psql -c "select nextval('q')" -c "select nextval('q')" \
+  -c "select currval('q')" -c 'select lastval()' 2>&1 | tr '\n' ' ')" = \
+  "10 15 15 15 " ] || fail "nextval, currval and lastval"
+local_psql -c "select currval('q')" 2>&1 |
+  grep -q 'currval of sequence "q" is not yet defined in this session' ||
+  fail "currval in a new session"
+local_psql -c 'select lastval()' 2>&1 |
+  grep -q 'lastval is not yet defined in this session' ||
+  fail "lastval in a new session"
+local_psql -c 'begin' -c "select nextval('q')" -c 'rollback' \
+  > "$work/seq.out" 2>&1
+[ "$(local_psql -c "select nextval('q') > 20" 2>&1)" = t ] ||
+  fail "a rolled back draw is not given back"
+draws=""
+for i in 1 2 3 4; do
+  local_psql -c "select nextval('q') from generate_series(1, 25)" \
+    > "$work/draw$i.out" 2>&1 &
+  draws="$draws $!"
+done
+for pid in $draws; do
+  wait "$pid"
+done
+[ "$(cat "$work"/draw?.out | grep -cx '[0-9]*')" = 100 ] &&
+  [ "$(cat "$work"/draw?.out | sort -u | wc -l)" = 100 ] ||
+  fail "concurrent draws are distinct"
+local_psql -c 'create schema s6' -c 'create sequence s6.r' \
+  >> "$work/seq.out" 2>&1
+[ "$(local_psql -c "select nextval('s6.r')" 2>&1)" = 1 ] ||
+  fail "a sequence in a schema"
+local_psql -c 'drop schema s6' 2>&1 |
+  grep -q 'cannot drop schema s6 because other objects depend on it' ||
+  fail "drop schema holding a sequence"
+local_psql -c 'drop schema s6 cascade' 2>&1 |
+  grep -q 'drop cascades to sequence s6.r' || fail "drop schema cascade, sequence"
+local_psql -c 'create sequence z cycle' 2>&1 |
+  grep -q 'CREATE SEQUENCE supports only START and INCREMENT yet, not cycle' ||
+  fail "refused: cycle"
+local_psql -c 'create sequence z increment -1' 2>&1 |
+  grep -q 'a sequence counts up from 1 or more' ||
+  fail "refused: a negative increment"
+for sql in "alter sequence q restart" "select setval('q', 5)"; do
+  local_psql -c "$sql" 2>&1 | grep -q 'not supported yet' ||
+    fail "refused: $sql"
+done
+local_psql -c 'select * from q' 2>&1 |
+  grep -q '"q" is a sequence, which cannot be used as a relation yet' ||
+  fail "reading a sequence as a table"
+[ "$(local_psql -c 'drop sequence q' 2>&1)" = "DROP SEQUENCE" ] ||
+  fail "drop sequence"
+local_psql -c "select nextval('q')" 2>&1 |
+  grep -q 'relation "q" does not exist' || fail "nextval of a dropped sequence"
+local_psql -c 'drop sequence q' 2>&1 |
+  grep -q 'sequence "q" does not exist' || fail "drop sequence twice"
+local_psql -c 'drop sequence if exists q' 2>&1 |
+  grep -q 'sequence "q" does not exist, skipping' ||
+  fail "drop sequence if exists"
+local_psql -c 'create table qt (a int4)' -c 'drop sequence qt' 2>&1 |
+  grep -q '"qt" is not a sequence' || fail "drop sequence of a table"
+local_psql -c 'create sequence q2' -c "select nextval('q2')" \
+  -c 'discard sequences' -c "select currval('q2')" 2>&1 |
+  grep -q 'currval of sequence "q2" is not yet defined' ||
+  fail "discard sequences forgets the draws"
+
+# Verify that the buffer manager's settings are gone, and DISCARD SEQUENCES
+# still runs.
+# 1. Confirm DISCARD SEQUENCES succeeds.
+# 2. Confirm temp_buffers, effective_io_concurrency, io_combine_limit,
 #    zero_damaged_pages and multixact_offset_buffers are not settings any
 #    more, and the data directory has no pg_multixact.
-for sql in "create sequence s" "alter sequence s restart"; do
-  local_psql -c "$sql" 2>&1 | grep -q 'sequences are not supported yet' ||
-    fail "sequence refused: $sql"
-done
 [ "$(local_psql -c 'discard sequences' 2>&1)" = "DISCARD SEQUENCES" ] ||
   fail "discard sequences"
 for guc in temp_buffers effective_io_concurrency io_combine_limit \
@@ -831,8 +984,9 @@ local_psql -c 'drop table if exists t1' > "$work/drop2.out" 2>&1
 grep -q 'does not exist, skipping' "$work/drop2.out" || fail "drop if exists"
 
 # Verify that a signal sent to the server can land only in the postmaster's
-# thread: every other thread, sessions, sm's, RocksDB's and sys's, blocks the
-# signals the postmaster handles, whose handlers set the postmaster's latch.
+# thread: every other thread, sessions, sm's, RocksDB's and sm_sys.h's,
+# blocks the signals the postmaster handles, whose handlers set the
+# postmaster's latch.
 # 1. With a session idle (opened above), list the server's threads.
 # 2. Confirm each but the main one blocks SIGHUP, SIGINT, SIGQUIT, SIGTERM,
 #    SIGUSR1, SIGUSR2 and SIGALRM.

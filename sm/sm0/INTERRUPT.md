@@ -1,9 +1,8 @@
 # Interrupts and timers
 
 A design for interrupting threads, and for timers that
-interrupt them, built in `src/interrupt.cc`. sys knows nothing
-of what
-an interrupt means to its caller: it is grounded in
+interrupt them, built in `src/interrupt.cc`. `sm_sys.h` knows
+nothing of what an interrupt means to its caller: it is grounded in
 `std::thread`, gives each thread a word of pending interrupt
 bits, lets any thread raise bits in any other, wakes a thread
 blocked in an interruptible wait, and runs timers that raise
@@ -32,7 +31,7 @@ rather than to the thread that blocks.
   ends that wait.
 - **No signals.** Interrupts and timers are atomics, mutexes,
   condition variables and an eventfd.
-- **sys attaches no meaning to a bit.** The caller defines
+- **`sm_sys.h` attaches no meaning to a bit.** The caller defines
   them, claims them and decides what to do.
 
 ## 2. Thread identity
@@ -51,7 +50,8 @@ it ends; another thread that must interrupt it keeps a copy. The
 block lives as long as any handle, so an interrupt that arrives
 after the thread ended is harmless, not a use after free: the
 bits land where nobody reads them. A thread hands its handle to
-whoever must interrupt it; sys keeps no registry of threads.
+whoever must interrupt it; `sm_sys.h` keeps no registry of
+threads.
 
 A handle kept in memory C++ did not construct -- a struct
 allocated with `malloc()` -- must be made there with placement
@@ -223,8 +223,8 @@ sm_timer_id_t sm_timer_at(const sm_thread_ref_t &t,
 bool           sm_timer_cancel(sm_timer_id_t id);
 ```
 
-- **One timer thread for the process**, a `std::thread` sys
-  starts on the first `sm_timer_at()`. It keeps a min-heap of
+- **One timer thread for the process**, a `std::thread` that
+  `sm_sys.h` starts on the first `sm_timer_at()`. It keeps a min-heap of
   `(when, id, thread, bits, period)` and sleeps on a condition
   variable of its own until the earliest deadline, or until a
   new timer is earlier.
@@ -332,7 +332,7 @@ leaves no bit behind.
 
 ## 10. Tests
 
-sys unit tests (`test/test_interrupt.cc`), each with its
+`sm_sys.h` unit tests (`test/test_interrupt.cc`), each with its
 synopsis and steps, run by `make test`, and under the
 sanitizers by `make tsan` and `make asan`:
 
@@ -351,16 +351,16 @@ sanitizers by `make tsan` and `make asan`:
   timer thread kept busy, so that the race is met: without the
   cancel's wait for a firing, the test fails most runs.
 
-And in sm, when its waits use sys: a row lock waiter
+And in sm, when its waits use `sm_sys.h`: a row lock waiter
 interrupted from another thread fails with
 `SM_ERR_INTERRUPTED`, its transaction intact -- a new scenario
 in `sm1/mvcc/`, added beside the others, none changed.
 
 ## 11. Open questions
 
-1. **The eventfd.** Keep `sm_wake_fd()` in sys, or keep sys to
-   condition variables and let a caller register a waker of its
-   own?
+1. **The eventfd.** Keep `sm_wake_fd()` in `sm_sys.h`, or keep
+   `sm_sys.h` to condition variables and let a caller register
+   a waker of its own?
 2. **The wait mask.** A mask per thread lets a bit that should
    not abort a lock wait -- digres's reload -- pass. Without
    it, every wait sm makes for a caller ends on any bit, which

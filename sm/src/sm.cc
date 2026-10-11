@@ -1014,6 +1014,64 @@ int sm_cat_index_oid(sm_session_t *session, uint64_t nspoid, const char *name,
   });
 }
 
+/* Create a sequence in the catalog. */
+int sm_cat_create_sequence(sm_session_t *session, uint64_t nspoid,
+                           const char *name, uint64_t start, uint64_t increment,
+                           uint64_t *oid) {
+  return guard(session, [&] {
+    if (!oid) {
+      return null_arg("sm_cat_create_sequence", "oid");
+    }
+    return sm3::create_sequence(session->sm3, nspoid, name_of(name), start,
+                                increment, *oid);
+  });
+}
+
+/* Drop a sequence from the catalog. */
+int sm_cat_drop_sequence(sm_session_t *session, uint64_t oid) {
+  return guard(session, [&] { return sm3::drop_sequence(session->sm3, oid); });
+}
+
+/* A sequence's oid by name: 0, or 1 if there is none. */
+int sm_cat_sequence_oid(sm_session_t *session, uint64_t nspoid,
+                        const char *name, uint64_t *oid) {
+  return guard(session, [&] {
+    if (!oid) {
+      return null_arg("sm_cat_sequence_oid", "oid");
+    }
+    return sm3::cat_get_sequence(session->sm3, nspoid, name_of(name), *oid);
+  });
+}
+
+/* A sequence's namespace and name by its oid: 0, or 1 if none. */
+int sm_cat_sequence_name(sm_session_t *session, uint64_t oid, uint64_t *nspoid,
+                         std::string &name) {
+  return guard(session, [&] {
+    if (!nspoid) {
+      return null_arg("sm_cat_sequence_name", "nspoid");
+    }
+    return sm3::cat_get_sequence_name(session->sm3, oid, *nspoid, name);
+  });
+}
+
+/* The sequences' names in a namespace, sorted. */
+int sm_cat_list_sequences(sm_session_t *session, uint64_t nspoid,
+                          std::vector<std::string> &names) {
+  return guard(session, [&] {
+    return sm3::cat_list_sequences(session->sm3, nspoid, names);
+  });
+}
+
+/* A sequence's next value. */
+int sm_cat_nextval(sm_session_t *session, uint64_t oid, uint64_t *out) {
+  return guard(session, [&] {
+    if (!out) {
+      return null_arg("sm_cat_nextval", "out");
+    }
+    return sm3::nextval(session->sm3, oid, *out);
+  });
+}
+
 /* Wait for an index's build to end. */
 int sm_cat_index_wait(sm_session_t *session, uint64_t table, uint64_t index) {
   return guard(nullptr, [&] {

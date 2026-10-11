@@ -683,7 +683,7 @@ with each call, and sm1 is to take one the same way, as a flag
 on the calls that can wait. `SM_ERR_BLOCKED` is the code those
 flags will return too.
 
-**Every wait can be cut short.** sm1 waits through sys
+**Every wait can be cut short.** sm1 waits through `sm_sys.h`
 (`../sm0/INTERRUPT.md`): an interrupt to the waiting thread,
 a bit in its wait mask (`sm_wait_mask()`), makes the wait
 fail with `SM_ERR_INTERRUPTED`: not an abort, the transaction
@@ -698,8 +698,8 @@ at once too. An interrupt is then never lost to a wait that
 began a moment late, nor to a caller that goes on after the
 error; when it is done with it is the host's to say.
 This is what a host builds query cancel, statement timeout
-and lock timeout from: the bits and the timers are sys's, and
-their meaning the host's. The alternative was for the host to
+and lock timeout from: the bits and the timers are
+`sm_sys.h`'s, and their meaning the host's. The alternative was for the host to
 poll, with every wait a refused call it repeats; that loses
 the waits-for graph, and with it deadlock detection, which
 `set_qa_nowait` already shows.

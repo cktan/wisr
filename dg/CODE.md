@@ -160,18 +160,19 @@ digres is one process; each session is a thread of it.
   (`InterruptsOfSignal()`). A session thread blocks every
   signal but the faults it causes itself.
 - **Only the postmaster's thread takes a signal.** Every other
-  thread blocks them: sessions by their mask, sys's timer
+  thread blocks them: sessions by their mask, `sm_sys.h`'s timer
   thread by itself, and sm's and RocksDB's because
   `datadir_load()` attaches sm with every signal blocked, which
   the threads it starts inherit. Start no thread from the
   postmaster with its signals unblocked.
-- **A latch wakes one thread** through sys: it keeps its
+- **A latch wakes one thread** through `sm_sys.h`: it keeps its
   owner's handle, and `SetLatch()` writes the owner's wake fd
   (`sm_interrupt()`, or `sm_interrupt_self()` in a signal
   handler).
-- **A thread's timeouts are one sys timer** (`timeout.c`), which
-  raises `INTERRUPT_ALARM` in that thread alone; its handler
-  fires what is due and arms the timer for the next.
+- **A thread's timeouts are one `sm_sys.h` timer**
+  (`timeout.c`), which raises `INTERRUPT_ALARM` in that thread
+  alone; its handler fires what is due and arms the timer for
+  the next.
 - **Lock-free handoffs are atomics.** Where PostgreSQL read
   and wrote a flag shared between processes plainly, digres
   uses a relaxed atomic (or release and acquire where order

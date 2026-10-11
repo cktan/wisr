@@ -200,6 +200,8 @@ const std::vector<attribute_t> &schema_of(sm3::part_t part) {
       /* collation */
       {att(type_text), att(type_text), att(type_bool), att(type_text)},
       /* index_state */ {att(type_int2), att(type_int2), att(type_text)},
+      /* sequence */
+      {att(type_int8), att(type_text), att(type_int8), att(type_int8)},
   };
   return schemas[static_cast<size_t>(part)];
 }
@@ -226,6 +228,7 @@ const sm2::tup_desc_t &part_desc(part_t part) {
       schema_of(part_t::index),     schema_of(part_t::index_key),
       schema_of(part_t::include),   schema_of(part_t::nspace),
       schema_of(part_t::collation), schema_of(part_t::index_state),
+      schema_of(part_t::sequence),
   };
   return descs[static_cast<size_t>(part)];
 }
@@ -542,6 +545,31 @@ int decode_collation(std::string_view blob, collation_rec_t &rec) {
   rec.deterministic = r.b(2);
   rec.icu_version = r.bytes(3);
   return r.ok ? at_end(blob, pos) : corrupt("a collation part cut short");
+}
+
+/* A sequence's blob. */
+int encode_sequence(const sequence_rec_t &rec, std::string &blob) {
+  writer_t w(4);
+  w.i8(0, rec.nspoid);
+  w.bytes(1, rec.name);
+  w.i8(2, rec.start);
+  w.i8(3, rec.increment);
+  blob.clear();
+  return w.append(part_desc(part_t::sequence), blob);
+}
+
+/* Read a sequence's blob. */
+int decode_sequence(std::string_view blob, sequence_rec_t &rec) {
+  reader_t r;
+  size_t pos = 0;
+  if (r.read(blob, pos, part_t::sequence) != 0) {
+    return -1;
+  }
+  rec.nspoid = r.i8(0);
+  rec.name = r.bytes(1);
+  rec.start = r.i8(2);
+  rec.increment = r.i8(3);
+  return r.ok ? at_end(blob, pos) : corrupt("a sequence part cut short");
 }
 
 } // namespace sm3

@@ -264,8 +264,9 @@ int sm_abort_prepared(sm_session_t* session, const char* gid);
 /*
  * ---- sequences, below the catalog ----
  *
- * A sequence of the caller's own, as SQL's CREATE SEQUENCE. A
- * table's store and its rowno sequence are made and dropped with
+ * A counter of the caller's own, with a name and no namespace. SQL's
+ * CREATE SEQUENCE is sm_cat_create_sequence, a sequence in a
+ * namespace with one of these behind it. A table's store and its rowno sequence are made and dropped with
  * the table, by sm_cat_create_table and sm_cat_drop_table, and are
  * not reachable here. Names beginning "sm3." are sm3's own, a
  * table's rowno sequence among them, and each call below refuses
@@ -601,6 +602,51 @@ int sm_cat_list_tables(sm_session_t* session, uint64_t nspoid,
 /* The index named name in nspoid, and its table: 0, or 1 if none. */
 int sm_cat_index_oid(sm_session_t* session, uint64_t nspoid,
                      const char* name, uint64_t* table, uint64_t* index);
+
+/*
+ * Create the sequence name in nspoid, SQL's CREATE SEQUENCE, in the
+ * session's transaction, handing out start, start + increment, ...;
+ * its oid is set in oid. Its name is a relation's: one a table or
+ * an index of nspoid has fails with SM_ERR_DUPKEY. An increment of
+ * 0 fails with SM_ERR_INVALID.
+ */
+int sm_cat_create_sequence(sm_session_t* session, uint64_t nspoid,
+                           const char* name, uint64_t start,
+                           uint64_t increment, uint64_t* oid);
+
+/* Drop the sequence oid, in the session's transaction. */
+int sm_cat_drop_sequence(sm_session_t* session, uint64_t oid);
+
+/*
+ * The oid of the sequence named name in nspoid, as the session's
+ * transaction sees it: 0, or 1 if there is none. It reads the
+ * catalog in that transaction, which must be open.
+ */
+int sm_cat_sequence_oid(sm_session_t* session, uint64_t nspoid,
+                        const char* name, uint64_t* oid);
+
+/*
+ * The namespace and name of the sequence oid, as the session's
+ * transaction, which must be open, sees it: 0, or 1 if there is no
+ * such sequence, an oid of a table or an index among them.
+ */
+int sm_cat_sequence_name(sm_session_t* session, uint64_t oid,
+                         uint64_t* nspoid, std::string& name);
+
+/*
+ * The names of the sequences in nspoid, sorted, as the session's
+ * transaction, which must be open, sees them, into names.
+ */
+int sm_cat_list_sequences(sm_session_t* session, uint64_t nspoid,
+                          std::vector<std::string>& names);
+
+/*
+ * Hand out the next value of the sequence oid. It is not
+ * transactional: a rollback does not give it back. A sequence not
+ * there, as the session's transaction sees it, fails with
+ * SM_ERR_NOTFOUND; one past UINT64_MAX with SM_ERR_INVALID.
+ */
+int sm_cat_nextval(sm_session_t* session, uint64_t oid, uint64_t* out);
 
 /*
  * Wait until the build of the table's index has ended. An index

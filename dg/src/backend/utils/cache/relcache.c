@@ -1287,8 +1287,16 @@ static Relation RelationBuildSmDesc(Oid targetRelId, bool insertIt) {
   TupleConstr *constr;
   bool has_not_null = false;
 
-  if (desc == NULL)
+  if (desc == NULL) {
+    /* A sequence has a name in sm but no descriptor (commands/sequence.c). */
+    if (smstore_sequence_exists(targetRelId))
+      ereport(ERROR,
+              (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+               errmsg("\"%s\" is a sequence, which cannot be used as a "
+                      "relation yet",
+                      smstore_sequence_name(targetRelId))));
     return NULL;
+  }
 
   memset(&form, 0, sizeof(form));
   form.oid = targetRelId;

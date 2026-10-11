@@ -73,8 +73,11 @@ template <typename F> int scan_parts(sm2::catkv_t *kv, sm3::kind_t kind, F f) {
   return rc == 1 ? 0 : -1;
 }
 
-/* Set cat's collation_nsp from the NAME entries, in one scan of them. */
-int collation_nspaces(sm2::catkv_t *kv, sm3::catalog_t &cat) {
+/*
+ * Set cat's collation_nsp and sequence_nsp from the NAME entries, in
+ * one scan of them.
+ */
+int member_nspaces(sm2::catkv_t *kv, sm3::catalog_t &cat) {
   std::string prefix;
   sm2::catkv_scan_t *c = nullptr;
   if (sm3::kind_prefix(sm3::kind_t::name, prefix) != 0 ||
@@ -93,6 +96,8 @@ int collation_nspaces(sm2::catkv_t *kv, sm3::catalog_t &cat) {
     }
     if (rec.kind == sm3::kind_t::collation) {
       cat.collation_nsp[rec.oid] = nspoid;
+    } else if (rec.kind == sm3::kind_t::sequence) {
+      cat.sequence_nsp[rec.oid] = nspoid;
     }
   }
   return rc == 1 ? 0 : -1;
@@ -239,7 +244,7 @@ int load(sm2::catkv_t *kv, sm3::catalog_t &cat) {
     cat.collations[oid] = c;
   }
   // The namespace of each collation, which only its name records.
-  if (collation_nspaces(kv, cat) != 0) {
+  if (member_nspaces(kv, cat) != 0) {
     return -1;
   }
   // Each table's own fields, then its columns and its indexes,

@@ -2179,3 +2179,59 @@ new instance. An audit of `global/` and `base/` came first.
   refer to.
 - **Left broken, as found**: `pg_ls_tmpdir()` opens
   `pg_tablespace` and fails.
+
+## Step 72: CREATE SCHEMA and DROP SCHEMA are sm's
+
+- **CREATE SCHEMA makes the namespace in sm**
+  (`smstore_create_namespace()`, `sm_cat_create_namespace`), in
+  the transaction, so a rollback takes it back. What
+  `CreateSchemaCommand()` did around `NamespaceCreate()` stays:
+  IF NOT EXISTS, the reserved `pg_` prefix, and the statements
+  inside it run with the new schema first in the search path.
+  sm records no owner: AUTHORIZATION is checked as before and
+  then not kept.
+- **Every session's search path is recomputed** once a schema
+  is made or dropped: the change registers an invalidation of
+  `pg_namespace`, which runs namespace.c's syscache callback in
+  each session at commit, and in this one at its next command.
+  A session whose path named a schema before it existed finds
+  it after.
+- **DROP SCHEMA is `smstore_drop_namespaces()`**, not
+  PostgreSQL's dependency walk, which read `pg_depend`. RESTRICT
+  fails on a schema that still holds a table (sm's
+  `SM_ERR_INUSE`); CASCADE drops its tables first, each with its
+  indexes, telling of them as PostgreSQL does. `pg_catalog` and
+  `public` cannot be dropped: sm builds them in.
+- **Not done**: ALTER SCHEMA (rename, owner), and a schema's
+  collations under CASCADE, which sm still refuses as in use.
+- `server.sh` makes, uses, rolls back and drops schemas, and
+  checks a held session finds a schema made after its search
+  path was computed.
+
+## Step 73: sequences are sm's
+
+- **A sequence is an object in sm's catalog**, in a schema,
+  with an sm counter behind it (`sm3/CATALOG.md` kind 11;
+  `REVIEW.md` §5 has why). CREATE SEQUENCE is
+  `smstore_create_sequence()`, in the transaction: START and
+  INCREMENT, each at least 1, and AS bigint. Every other
+  option, TEMPORARY, an owner and an identity column are
+  refused, as are ALTER SEQUENCE and `setval()`: sm's counters
+  only go forward.
+- **Its name is a relation's.** `smstore_relation_oid()` finds
+  a sequence after a table and an index, reading sm's catalog in
+  the transaction, which it begins; a table and a sequence
+  cannot share a name in one schema.
+- **`nextval()` is sm's**, by `regclass` and by name, and like
+  PostgreSQL's is not transactional. `currval()` and
+  `lastval()` read this session's draws, kept in the thread's
+  control block (`tcb->sequence`); DISCARD SEQUENCES forgets
+  them. A value past `bigint`'s range is an error.
+- **DROP SEQUENCE is `smstore_drop_sequences()`**, and DROP
+  SCHEMA ... CASCADE drops a schema's sequences after its
+  tables.
+- **Not done**: reading a sequence as a relation (`SELECT *
+  FROM q`), SERIAL and identity columns, and a column's
+  DEFAULT, which CREATE TABLE still refuses.
+- `server.sh` makes, draws from, drops and refuses sequences,
+  four sessions drawing at once.

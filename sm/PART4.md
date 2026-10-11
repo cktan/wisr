@@ -115,12 +115,12 @@ What this changes above:
   only what it must keep longer.
 - **Every wait can be interrupted.** A backend thread waiting
   inside the stack never reaches PostgreSQL's interrupt
-  check, so the stack waits through sys
+  check, so the stack waits through `sm_sys.h`
   (`sm0/INTERRUPT.md`): an interrupt to the thread, a bit
   in its wait mask, fails the wait with `SM_ERR_INTERRUPTED`
   and leaves the transaction to the caller. The bit stays
   pending until the fork takes it. Query cancel,
-  `statement_timeout` and `lock_timeout` are bits and sys
+  `statement_timeout` and `lock_timeout` are bits and `sm_sys.h`
   timers (`sm1/SM1_DESIGN.md` §5.1); the wait for an index
   build (`sm_cat_index_wait`) ends the same way.
 - **The fork has no `longjmp`.** PostgreSQL raises an error by
@@ -477,7 +477,7 @@ This is a reading, not a run. The spike is what tests it.
 | Transaction | start, commit, abort; subtransactions; two-phase | `sm_begin`, `sm_commit`, `sm_abort`; `sm_savepoint`, `sm_rollback`, `sm_forget`; `sm_prepare` and the rest | fits |
 | Cancel | `CHECK_FOR_INTERRUPTS` | `sm_interrupt` to the waiting thread; sm's waits end with `SM_ERR_INTERRUPTED` | fits |
 | Create and drop | `heap_create_with_catalog`, `index_create`, and their drops | `sm_cat_create_table`, `sm_cat_create_index`, `sm_cat_drop_table`, `sm_cat_drop_index`, `sm_tbl_truncate` | fits for these; gaps 7, 8 |
-| Sequence | `nextval`, `setval`, `currval` | `sm_mkseq`, `sm_nextseq`, `sm_rmseq` | `nextval` only; gap 9 |
+| Sequence | `nextval`, `setval`, `currval` | `sm_cat_create_sequence`, `sm_cat_nextval`, `sm_cat_drop_sequence`: a sequence in a namespace, over an sm1 counter | `nextval`, and `currval` kept by the host; no `setval`, gap 9 |
 
 Not needed by the stack, and so left out of the table: vacuum,
 freezing, the visibility map, HOT, and `index_build_range_scan`
