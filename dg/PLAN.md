@@ -410,6 +410,10 @@ Do not reopen these without the owner:
 - **No WAL.** sm keeps what is durable. There is no recovery,
   archiving or hot standby, and `PREPARE TRANSACTION` is
   refused.
+- **No buffer manager, smgr or free-space map.** Every
+  relation with storage is sm's, and sm reads and writes its
+  own; there are no pages in shared buffers, no relation files,
+  and no PostgreSQL sequences until sm's replace them.
 - **No asynchronous I/O.** Disk I/O is to go through sm; the
   rest is the client socket, which waits on the latch. A buffer
   read is synchronous.

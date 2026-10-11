@@ -24,7 +24,6 @@
 #include "rewrite/prs2lock.h"
 #include "storage/block.h"
 #include "storage/relfilelocator.h"
-#include "storage/smgr.h"
 #include "utils/relcache.h"
 #include "utils/reltrigger.h"
 
@@ -54,7 +53,6 @@ typedef LockInfoData *LockInfo;
 typedef struct RelationData
 {
 	RelFileLocator rd_locator;	/* relation physical identifier */
-	SMgrRelation rd_smgr;		/* cached file handle, or NULL */
 	int			rd_refcnt;		/* reference count */
 	ProcNumber	rd_backend;		/* owning backend's proc number, if temp rel */
 	bool		rd_islocaltemp; /* rel is a temp rel of this session */
@@ -510,60 +508,6 @@ typedef struct ViewOptions
 	(RELKIND_HAS_STORAGE((relation)->rd_rel->relkind) && \
 	 ((relation)->rd_rel->relfilenode == InvalidRelFileNumber))
 
-#ifndef FRONTEND
-/*
- * RelationGetSmgr
- *		Returns smgr file handle for a relation, opening it if needed.
- *
- * Very little code is authorized to touch rel->rd_smgr directly.  Instead
- * use this function to fetch its value.
- */
-static inline SMgrRelation
-RelationGetSmgr(Relation rel)
-{
-	if (unlikely(rel->rd_smgr == NULL))
-	{
-		rel->rd_smgr = smgropen(rel->rd_locator, rel->rd_backend);
-		smgrpin(rel->rd_smgr);
-	}
-	return rel->rd_smgr;
-}
-
-/*
- * RelationCloseSmgr
- *		Close the relation at the smgr level, if not already done.
- */
-static inline void
-RelationCloseSmgr(Relation relation)
-{
-	if (relation->rd_smgr != NULL)
-	{
-		smgrunpin(relation->rd_smgr);
-		smgrclose(relation->rd_smgr);
-		relation->rd_smgr = NULL;
-	}
-}
-#endif							/* !FRONTEND */
-
-/*
- * RelationGetTargetBlock
- *		Fetch relation's current insertion target block.
- *
- * Returns InvalidBlockNumber if there is no current target block.  Note
- * that the target block status is discarded on any smgr-level invalidation,
- * so there's no need to re-open the smgr handle if it's not currently open.
- */
-#define RelationGetTargetBlock(relation) \
-	( (relation)->rd_smgr != NULL ? (relation)->rd_smgr->smgr_targblock : InvalidBlockNumber )
-
-/*
- * RelationSetTargetBlock
- *		Set relation's current insertion target block.
- */
-#define RelationSetTargetBlock(relation, targblock) \
-	do { \
-		RelationGetSmgr(relation)->smgr_targblock = (targblock); \
-	} while (0)
 
 /*
  * RelationIsPermanent

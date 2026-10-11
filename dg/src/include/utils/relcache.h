@@ -112,12 +112,6 @@ RelationBuildLocalRelation(const char *relname, Oid relnamespace,
                            char relpersistence, char relkind);
 
 /*
- * Routines to manage assignment of new relfilenumber to a relation
- */
-extern void RelationSetNewRelfilenumber(Relation relation, char persistence);
-extern void RelationAssumeNewRelfilelocator(Relation relation);
-
-/*
  * Routines for flushing/rebuilding relcache entries in various scenarios
  */
 extern void RelationForgetRelation(Oid rid);

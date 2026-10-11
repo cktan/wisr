@@ -28,8 +28,6 @@
 extern bool check_application_name(char **newval, void **extra,
                                    GucSource source);
 extern void assign_application_name(const char *newval, void *extra);
-extern bool check_vacuum_buffer_usage_limit(int *newval, void **extra,
-                                            GucSource source);
 extern bool check_backtrace_functions(char **newval, void **extra,
                                       GucSource source);
 extern void assign_backtrace_functions(const char *newval, void *extra);
@@ -74,9 +72,6 @@ extern bool check_log_stats(bool *newval, void **extra, GucSource source);
 extern bool check_log_timezone(char **newval, void **extra, GucSource source);
 extern void assign_log_timezone(const char *newval, void *extra);
 extern const char *show_log_timezone(void);
-extern void assign_maintenance_io_concurrency(int newval, void *extra);
-extern void assign_io_max_combine_limit(int newval, void *extra);
-extern void assign_io_combine_limit(int newval, void *extra);
 extern bool check_max_stack_depth(int *newval, void **extra, GucSource source);
 extern void assign_max_stack_depth(int newval, void *extra);
 extern bool check_multixact_member_buffers(int *newval, void **extra,
@@ -112,7 +107,6 @@ extern void assign_tcp_keepalives_interval(int newval, void *extra);
 extern const char *show_tcp_keepalives_interval(void);
 extern void assign_tcp_user_timeout(int newval, void *extra);
 extern const char *show_tcp_user_timeout(void);
-extern bool check_temp_buffers(int *newval, void **extra, GucSource source);
 extern bool check_timezone(char **newval, void **extra, GucSource source);
 extern void assign_timezone(const char *newval, void *extra);
 extern const char *show_timezone(void);

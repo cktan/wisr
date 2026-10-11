@@ -49,7 +49,6 @@
 #include "catalog/pg_tablespace.h"
 #include "catalog/pg_trigger.h"
 #include "catalog/pg_type.h"
-#include "catalog/storage.h"
 #include "catalog/toasting.h"
 #include "commands/comment.h"
 #include "commands/defrem.h"
@@ -82,11 +81,9 @@
 #include "rewrite/rewriteDefine.h"
 #include "rewrite/rewriteHandler.h"
 #include "rewrite/rewriteManip.h"
-#include "storage/bufmgr.h"
 #include "storage/lmgr.h"
 #include "storage/lock.h"
 #include "storage/predicate.h"
-#include "storage/smgr.h"
 #include "tcop/utility.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
@@ -704,7 +701,6 @@ static void ATExecForceNoForceRowSecurity(Relation rel, bool force_rls);
 static ObjectAddress ATExecSetCompression(Relation rel, const char *column,
                                           Node *newValue, LOCKMODE lockmode);
 
-static void index_copy_data(Relation rel, RelFileLocator newrlocator);
 static const char *storage_name(char c);
 
 static void RangeVarCallbackForDropRelation(const RangeVar *rel, Oid relOid,
@@ -1890,7 +1886,6 @@ void ExecuteTruncateGuts(List *explicit_rels, List *relids,
   EState *estate;
   ResultRelInfo *resultRelInfos;
   ResultRelInfo *resultRelInfo;
-  SubTransactionId mySubid;
   ListCell *cell;
 
   /*
@@ -2018,7 +2013,6 @@ void ExecuteTruncateGuts(List *explicit_rels, List *relids,
   /*
    * OK, truncate each table.
    */
-  mySubid = GetCurrentSubTransactionId();
 
   foreach (cell, rels) {
     Relation rel = (Relation)lfirst(cell);
@@ -2067,58 +2061,8 @@ void ExecuteTruncateGuts(List *explicit_rels, List *relids,
       continue;
     }
 
-    /*
-     * Normally, we need a transaction-safe truncation here.  However, if
-     * the table was either created in the current (sub)transaction or has
-     * a new relfilenumber in the current (sub)transaction, then we can
-     * just truncate it in-place, because a rollback would cause the whole
-     * table or the current physical file to be thrown away anyway.
-     */
-    if (rel->rd_createSubid == mySubid ||
-        rel->rd_newRelfilelocatorSubid == mySubid) {
-      /* Immediate, non-rollbackable truncation is OK */
-      heap_truncate_one_rel(rel);
-    } else {
-      Oid heap_relid;
-      Oid toast_relid;
-      ReindexParams reindex_params = {0};
-
-      /*
-       * This effectively deletes all rows in the table, and may be done
-       * in a serializable transaction.  In that case we must record a
-       * rw-conflict in to this transaction from each transaction
-       * holding a predicate lock on the table.
-       */
-      CheckTableForSerializableConflictIn(rel);
-
-      /*
-       * Need the full transaction-safe pushups.
-       *
-       * Create a new empty storage file for the relation, and assign it
-       * as the relfilenumber value. The old storage file is scheduled
-       * for deletion at commit.
-       */
-      RelationSetNewRelfilenumber(rel, rel->rd_rel->relpersistence);
-
-      heap_relid = RelationGetRelid(rel);
-
-      /*
-       * The same for the toast table, if any.
-       */
-      toast_relid = rel->rd_rel->reltoastrelid;
-      if (OidIsValid(toast_relid)) {
-        Relation toastrel = relation_open(toast_relid, AccessExclusiveLock);
-
-        RelationSetNewRelfilenumber(toastrel, toastrel->rd_rel->relpersistence);
-        table_close(toastrel, NoLock);
-      }
-
-      /*
-       * Reconstruct the indexes to match, and we're done.
-       */
-      reindex_relation(NULL, heap_relid, REINDEX_REL_PROCESS_TOAST,
-                       &reindex_params);
-    }
+    /* Refused, but for a partitioned table: TRUNCATE is not sm's yet. */
+    heap_truncate_one_rel(rel);
   }
 
   /* Now go through the hash table, and truncate foreign tables */
@@ -8802,7 +8746,6 @@ static ObjectAddress ATExecAddIndex(AlteredTableInfo *tab, Relation rel,
 
     irel->rd_createSubid = stmt->oldCreateSubid;
     irel->rd_firstRelfilelocatorSubid = stmt->oldFirstRelfilelocatorSubid;
-    RelationPreserveStorage(irel->rd_locator, true);
     index_close(irel, NoLock);
   }
 
@@ -15295,85 +15238,20 @@ static void ATExecSetRelOptions(Relation rel, List *defList,
 
 /*
  * Execute ALTER TABLE SET TABLESPACE for cases where there is no tuple
- * rewriting to be done, so we just want to copy the data as fast as possible.
+ * rewriting to be done: nothing, if the relation is in that tablespace
+ * already; otherwise refused, as there are no tablespaces to move it to.
  */
 static void ATExecSetTableSpace(Oid tableOid, Oid newTableSpace,
                                 LOCKMODE lockmode) {
-  Relation rel;
-  Oid reltoastrelid;
-  RelFileNumber newrelfilenumber;
-  RelFileLocator newrlocator;
-  List *reltoastidxids = NIL;
-  ListCell *lc;
+  Relation rel = relation_open(tableOid, lockmode);
 
-  /*
-   * Need lock here in case we are recursing to toast table or index
-   */
-  rel = relation_open(tableOid, lockmode);
-
-  /* Check first if relation can be moved to new tablespace */
   if (!CheckRelationTableSpaceMove(rel, newTableSpace)) {
     InvokeObjectPostAlterHook(RelationRelationId, RelationGetRelid(rel), 0);
     relation_close(rel, NoLock);
     return;
   }
-
-  reltoastrelid = rel->rd_rel->reltoastrelid;
-  /* Fetch the list of indexes on toast relation if necessary */
-  if (OidIsValid(reltoastrelid)) {
-    Relation toastRel = relation_open(reltoastrelid, lockmode);
-
-    reltoastidxids = RelationGetIndexList(toastRel);
-    relation_close(toastRel, lockmode);
-  }
-
-  /*
-   * Relfilenumbers are not unique in databases across tablespaces, so we
-   * need to allocate a new one in the new tablespace.
-   */
-  newrelfilenumber =
-      GetNewRelFileNumber(newTableSpace, NULL, rel->rd_rel->relpersistence);
-
-  /* Open old and new relation */
-  newrlocator = rel->rd_locator;
-  newrlocator.relNumber = newrelfilenumber;
-  newrlocator.spcOid = newTableSpace;
-
-  /* hand off to AM to actually create new rel storage and copy the data */
-  if (rel->rd_rel->relkind == RELKIND_INDEX) {
-    index_copy_data(rel, newrlocator);
-  } else {
-    Assert(RELKIND_HAS_TABLE_AM(rel->rd_rel->relkind));
-    table_relation_copy_data(rel, &newrlocator);
-  }
-
-  /*
-   * Update the pg_class row.
-   *
-   * NB: This wouldn't work if ATExecSetTableSpace() were allowed to be
-   * executed on pg_class or its indexes (the above copy wouldn't contain
-   * the updated pg_class entry), but that's forbidden with
-   * CheckRelationTableSpaceMove().
-   */
-  SetRelationTableSpace(rel, newTableSpace, newrelfilenumber);
-
-  InvokeObjectPostAlterHook(RelationRelationId, RelationGetRelid(rel), 0);
-
-  RelationAssumeNewRelfilelocator(rel);
-
-  relation_close(rel, NoLock);
-
-  /* Make sure the reltablespace change is visible */
-  CommandCounterIncrement();
-
-  /* Move associated toast relation and/or indexes, too */
-  if (OidIsValid(reltoastrelid))
-    ATExecSetTableSpace(reltoastrelid, newTableSpace, lockmode);
-  foreach (lc, reltoastidxids)
-    ATExecSetTableSpace(lfirst_oid(lc), newTableSpace, lockmode);
-
-  /* Clean up */
-  list_free(reltoastidxids);
+  ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                  errmsg("tablespaces are not supported")));
 }
 
 /*
@@ -15573,45 +15451,6 @@ Oid AlterTableMoveAll(AlterTableMoveAllStmt *stmt) {
   }
 
   return new_tablespaceoid;
-}
-
-static void index_copy_data(Relation rel, RelFileLocator newrlocator) {
-  SMgrRelation dstrel;
-
-  /*
-   * Since we copy the file directly without looking at the shared buffers,
-   * we'd better first flush out any pages of the source relation that are
-   * in shared buffers.  We assume no new changes will be made while we are
-   * holding exclusive lock on the rel.
-   */
-  FlushRelationBuffers(rel);
-
-  /*
-   * Create and copy all forks of the relation, and schedule unlinking of
-   * old physical files.
-   *
-   * NOTE: any conflict in relfilenumber value will be caught in
-   * RelationCreateStorage().
-   */
-  dstrel =
-      RelationCreateStorage(newrlocator, rel->rd_rel->relpersistence, true);
-
-  /* copy main fork */
-  RelationCopyStorage(RelationGetSmgr(rel), dstrel, MAIN_FORKNUM);
-
-  /* copy those extra forks that exist */
-  for (ForkNumber forkNum = (ForkNumber)(MAIN_FORKNUM + 1);
-       forkNum <= MAX_FORKNUM; forkNum++) {
-    if (smgrexists(RelationGetSmgr(rel), forkNum)) {
-      smgrcreate(dstrel, forkNum, false);
-
-      RelationCopyStorage(RelationGetSmgr(rel), dstrel, forkNum);
-    }
-  }
-
-  /* drop old relation, and close new one */
-  RelationDropStorage(rel);
-  smgrclose(dstrel);
 }
 
 /*

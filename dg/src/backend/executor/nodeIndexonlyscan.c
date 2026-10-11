@@ -35,7 +35,6 @@
 #include "executor/nodeIndexonlyscan.h"
 #include "executor/nodeIndexscan.h"
 #include "miscadmin.h"
-#include "storage/bufmgr.h"
 #include "storage/predicate.h"
 #include "utils/builtins.h"
 #include "utils/rel.h"

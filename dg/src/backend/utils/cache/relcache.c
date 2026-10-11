@@ -66,7 +66,6 @@
 #include "catalog/pg_trigger.h"
 #include "catalog/pg_type.h"
 #include "catalog/schemapg.h"
-#include "catalog/storage.h"
 #include "commands/policy.h"
 #include "commands/trigger.h"
 #include "common/int.h"
@@ -78,7 +77,6 @@
 #include "rewrite/rowsecurity.h"
 #include "storage/fd.h"
 #include "storage/lmgr.h"
-#include "storage/smgr.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/catcache.h"
@@ -444,8 +442,6 @@ static Relation AllocateRelationDesc(Form_pg_class relp) {
    */
   relation = (Relation)palloc0(sizeof(RelationData));
 
-  /* make sure relation is marked as having no open file yet */
-  relation->rd_smgr = NULL;
 
   /*
    * Copy the relation tuple form
@@ -1229,8 +1225,6 @@ retry:
    */
   RelationInitPhysicalAddr(relation);
 
-  /* make sure relation is marked as having no open file yet */
-  relation->rd_smgr = NULL;
 
   /*
    * now we can free the memory allocated for pg_class_tuple
@@ -1376,7 +1370,6 @@ static Relation RelationBuildSmDesc(Oid targetRelId, bool insertIt) {
 
   RelationInitLockInfo(relation);
   RelationInitPhysicalAddr(relation);
-  relation->rd_smgr = NULL;
 
   if (insertIt)
     RelationCacheInsert(relation, true);
@@ -1496,7 +1489,6 @@ static Relation RelationBuildSmIndexDesc(Oid indexoid, Oid table,
 
   RelationInitLockInfo(relation);
   RelationInitPhysicalAddr(relation);
-  relation->rd_smgr = NULL;
 
   if (insertIt)
     RelationCacheInsert(relation, true);
@@ -1989,8 +1981,6 @@ static void formrdesc(const char *relationName, Oid relationReltype,
    */
   relation = (Relation)palloc0(sizeof(RelationData));
 
-  /* make sure relation is marked as having no open file yet */
-  relation->rd_smgr = NULL;
 
   /*
    * initialize reference count: 1 because it is nailed in cache
@@ -2484,12 +2474,6 @@ static void RelationReloadNailed(Relation relation) {
 static void RelationDestroyRelation(Relation relation, bool remember_tupdesc) {
   Assert(RelationHasReferenceCountZero(relation));
 
-  /*
-   * Make sure smgr and lower levels close the relation's files, if they
-   * weren't closed already.  (This was probably done by caller, but let's
-   * just be real sure.)
-   */
-  RelationCloseSmgr(relation);
 
 
   /*
@@ -2554,14 +2538,6 @@ static void RelationDestroyRelation(Relation relation, bool remember_tupdesc) {
  * An entry that's marked as invalid will be reloaded on next access.
  */
 static void RelationInvalidateRelation(Relation relation) {
-  /*
-   * Make sure smgr and lower levels close the relation's files, if they
-   * weren't closed already.  If the relation is not getting deleted, the
-   * next smgr access should reopen the files automatically.  This ensures
-   * that the low-level file access state is updated after, say, a vacuum
-   * truncation.
-   */
-  RelationCloseSmgr(relation);
 
   /* Free AM cached data, if any */
   if (relation->rd_amcache)
@@ -2756,8 +2732,6 @@ static void RelationRebuildRelation(Relation relation) {
       memcpy(relation, &tmpstruct, sizeof(RelationData));
     }
 
-    /* rd_smgr must not be swapped, due to back-links from smgr level */
-    SWAPFIELD(SMgrRelation, rd_smgr);
     /* rd_refcnt must be preserved */
     SWAPFIELD(int, rd_refcnt);
     /* isnailed shouldn't change */
@@ -3039,10 +3013,8 @@ void RelationCacheInvalidate(bool debug_discard) {
        * relcache entries in phase 2.  It's safe since consulting the
        * map doesn't involve any access to relcache entries.
        */
-      if (RelationIsMapped(relation)) {
-        RelationCloseSmgr(relation);
+      if (RelationIsMapped(relation))
         RelationInitPhysicalAddr(relation);
-      }
 
       /*
        * Add this entry to list of stuff to rebuild in second pass.
@@ -3064,11 +3036,6 @@ void RelationCacheInvalidate(bool debug_discard) {
     }
   }
 
-  /*
-   * We cannot destroy the SMgrRelations as there might still be references
-   * to them, but close the underlying file descriptors.
-   */
-  smgrreleaseall();
 
   /*
    * Phase 2: rebuild (or invalidate) the items found to need rebuild in
@@ -3527,8 +3494,6 @@ Relation RelationBuildLocalRelation(const char *relname, Oid relnamespace,
    */
   rel = (Relation)palloc0(sizeof(RelationData));
 
-  /* make sure relation is marked as having no open file yet */
-  rel->rd_smgr = NULL;
 
   /* mark it nailed if appropriate */
   rel->rd_isnailed = nailit;
@@ -3691,210 +3656,6 @@ Relation RelationBuildLocalRelation(const char *relname, Oid relnamespace,
   RelationIncrementReferenceCount(rel);
 
   return rel;
-}
-
-/*
- * RelationSetNewRelfilenumber
- *
- * Assign a new relfilenumber (physical file name), and possibly a new
- * persistence setting, to the relation.
- *
- * This allows a full rewrite of the relation to be done with transactional
- * safety (since the filenumber assignment can be rolled back).  Note however
- * that there is no simple way to access the relation's old data for the
- * remainder of the current transaction.  This limits the usefulness to cases
- * such as TRUNCATE or rebuilding an index from scratch.
- *
- * Caller must already hold exclusive lock on the relation.
- */
-void RelationSetNewRelfilenumber(Relation relation, char persistence) {
-  RelFileNumber newrelfilenumber;
-  Relation pg_class;
-  ItemPointerData otid;
-  HeapTuple tuple;
-  Form_pg_class classform;
-  MultiXactId minmulti = InvalidMultiXactId;
-  TransactionId freezeXid = InvalidTransactionId;
-  RelFileLocator newrlocator;
-
-  if (!IsBinaryUpgrade) {
-    /* Allocate a new relfilenumber */
-    newrelfilenumber =
-        GetNewRelFileNumber(relation->rd_rel->reltablespace, NULL, persistence);
-  } else if (relation->rd_rel->relkind == RELKIND_INDEX) {
-    if (!OidIsValid(binary_upgrade_next_index_pg_class_relfilenumber))
-      ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                      errmsg("index relfilenumber value not set when in binary "
-                             "upgrade mode")));
-
-    newrelfilenumber = binary_upgrade_next_index_pg_class_relfilenumber;
-    binary_upgrade_next_index_pg_class_relfilenumber = InvalidOid;
-  } else if (relation->rd_rel->relkind == RELKIND_RELATION) {
-    if (!OidIsValid(binary_upgrade_next_heap_pg_class_relfilenumber))
-      ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                      errmsg("heap relfilenumber value not set when in binary "
-                             "upgrade mode")));
-
-    newrelfilenumber = binary_upgrade_next_heap_pg_class_relfilenumber;
-    binary_upgrade_next_heap_pg_class_relfilenumber = InvalidOid;
-  } else
-    ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                    errmsg("unexpected request for new relfilenumber in binary "
-                           "upgrade mode")));
-
-  /*
-   * Get a writable copy of the pg_class tuple for the given relation.
-   */
-  pg_class = table_open(RelationRelationId, RowExclusiveLock);
-
-  tuple = SearchSysCacheLockedCopy1(
-      RELOID, ObjectIdGetDatum(RelationGetRelid(relation)));
-  if (!HeapTupleIsValid(tuple))
-    elog(ERROR, "could not find tuple for relation %u",
-         RelationGetRelid(relation));
-  otid = tuple->t_self;
-  classform = (Form_pg_class)GETSTRUCT(tuple);
-
-  /*
-   * Schedule unlinking of the old storage at transaction commit, except
-   * when performing a binary upgrade, when we must do it immediately.
-   */
-  if (IsBinaryUpgrade) {
-    SMgrRelation srel;
-
-    /*
-     * During a binary upgrade, we use this code path to ensure that
-     * pg_largeobject and its index have the same relfilenumbers as in the
-     * old cluster. This is necessary because pg_upgrade treats
-     * pg_largeobject like a user table, not a system table. It is however
-     * possible that a table or index may need to end up with the same
-     * relfilenumber in the new cluster as what it had in the old cluster.
-     * Hence, we can't wait until commit time to remove the old storage.
-     *
-     * In general, this function needs to have transactional semantics,
-     * and removing the old storage before commit time surely isn't.
-     * However, it doesn't really matter, because if a binary upgrade
-     * fails at this stage, the new cluster will need to be recreated
-     * anyway.
-     */
-    srel = smgropen(relation->rd_locator, relation->rd_backend);
-    smgrdounlinkall(&srel, 1, false);
-    smgrclose(srel);
-  } else {
-    /* Not a binary upgrade, so just schedule it to happen later. */
-    RelationDropStorage(relation);
-  }
-
-  /*
-   * Create storage for the main fork of the new relfilenumber.  If it's a
-   * table-like object, call into the table AM to do so, which'll also
-   * create the table's init fork if needed.
-   *
-   * NOTE: If relevant for the AM, any conflict in relfilenumber value will
-   * be caught here, if GetNewRelFileNumber messes up for any reason.
-   */
-  newrlocator = relation->rd_locator;
-  newrlocator.relNumber = newrelfilenumber;
-
-  if (RELKIND_HAS_TABLE_AM(relation->rd_rel->relkind)) {
-    table_relation_set_new_filelocator(relation, &newrlocator, persistence,
-                                       &freezeXid, &minmulti);
-  } else if (RELKIND_HAS_STORAGE(relation->rd_rel->relkind)) {
-    /* handle these directly, at least for now */
-    SMgrRelation srel;
-
-    srel = RelationCreateStorage(newrlocator, persistence, true);
-    smgrclose(srel);
-  } else {
-    /* we shouldn't be called for anything else */
-    elog(ERROR, "relation \"%s\" does not have storage",
-         RelationGetRelationName(relation));
-  }
-
-  /*
-   * If we're dealing with a mapped index, pg_class.relfilenode doesn't
-   * change; instead we have to send the update to the relation mapper.
-   *
-   * For mapped indexes, we don't actually change the pg_class entry at all;
-   * this is essential when reindexing pg_class itself.  That leaves us with
-   * possibly-inaccurate values of relpages etc, but those will be fixed up
-   * later.
-   */
-  if (RelationIsMapped(relation)) {
-    /* This case is only supported for indexes */
-    Assert(relation->rd_rel->relkind == RELKIND_INDEX);
-
-    /* Since we're not updating pg_class, these had better not change */
-    Assert(classform->relfrozenxid == freezeXid);
-    Assert(classform->relminmxid == minmulti);
-    Assert(classform->relpersistence == persistence);
-
-    /*
-     * In some code paths it's possible that the tuple update we'd
-     * otherwise do here is the only thing that would assign an XID for
-     * the current transaction.  However, we must have an XID to delete
-     * files, so make sure one is assigned.
-     */
-    (void)GetCurrentTransactionId();
-
-    /* Do the deed */
-    RelationMapUpdateMap(RelationGetRelid(relation), newrelfilenumber,
-                         relation->rd_rel->relisshared, false);
-
-    /* Since we're not updating pg_class, must trigger inval manually */
-    CacheInvalidateRelcache(relation);
-  } else {
-    /* Normal case, update the pg_class entry */
-    classform->relfilenode = newrelfilenumber;
-
-    /* relpages etc. never change for sequences */
-    if (relation->rd_rel->relkind != RELKIND_SEQUENCE) {
-      classform->relpages = 0; /* it's empty until further notice */
-      classform->reltuples = -1;
-      classform->relallvisible = 0;
-      classform->relallfrozen = 0;
-    }
-    classform->relfrozenxid = freezeXid;
-    classform->relminmxid = minmulti;
-    classform->relpersistence = persistence;
-
-    CatalogTupleUpdate(pg_class, &otid, tuple);
-  }
-
-  UnlockTuple(pg_class, &otid, InplaceUpdateTupleLock);
-  heap_freetuple(tuple);
-
-  table_close(pg_class, RowExclusiveLock);
-
-  /*
-   * Make the pg_class row change or relation map change visible.  This will
-   * cause the relcache entry to get updated, too.
-   */
-  CommandCounterIncrement();
-
-  RelationAssumeNewRelfilelocator(relation);
-}
-
-/*
- * RelationAssumeNewRelfilelocator
- *
- * Code that modifies pg_class.reltablespace or pg_class.relfilenode must call
- * this.  The call shall precede any code that might insert WAL records whose
- * replay would modify bytes in the new RelFileLocator, and the call shall
- * follow any WAL modifying bytes in the prior RelFileLocator.  See struct
- * RelationData. Ideally, call this as near as possible to the
- * CommandCounterIncrement() that makes the pg_class change visible (before it
- * or after it); that minimizes the chance of future development adding a
- * forbidden WAL insertion between RelationAssumeNewRelfilelocator() and
- * CommandCounterIncrement().
- */
-void RelationAssumeNewRelfilelocator(Relation relation) {
-  relation->rd_newRelfilelocatorSubid = GetCurrentSubTransactionId();
-  if (relation->rd_firstRelfilelocatorSubid == InvalidSubTransactionId)
-    relation->rd_firstRelfilelocatorSubid = relation->rd_newRelfilelocatorSubid;
-
-  /* Flag relation as needing eoxact cleanup (to clear these fields) */
-  EOXactListAdd(relation);
 }
 
 /*
@@ -6037,7 +5798,6 @@ static bool load_relcache_init_file(bool shared) {
     /*
      * Reset transient-state fields in the relcache entry
      */
-    rel->rd_smgr = NULL;
     if (rel->rd_isnailed)
       rel->rd_refcnt = 1;
     else

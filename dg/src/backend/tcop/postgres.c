@@ -53,7 +53,6 @@
 #include "postmaster/interrupt.h"
 #include "postmaster/postmaster.h"
 #include "rewrite/rewriteHandler.h"
-#include "storage/bufmgr.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "storage/pmsignal.h"
@@ -2809,16 +2808,11 @@ static void ProcessRecoveryConflictInterrupt(ProcSignalReason reason) {
      * waiting for buffer pin (i.e., also waiting for locks), we set
      * the flag so that ProcSleep() will check for deadlocks.
      */
-    if (!HoldingBufferPinThatDelaysRecovery()) {
-      if (reason == PROCSIG_RECOVERY_CONFLICT_STARTUP_DEADLOCK &&
-          GetStartupBufferPinWaitBufId() < 0)
-        CheckDeadLockAlert();
-      return;
-    }
-
-    MyProc->recoveryConflictPending = true;
-
-    /* Intentional fall through to error handling */
+    /* No buffer pin is held: there are no buffers. */
+    if (reason == PROCSIG_RECOVERY_CONFLICT_STARTUP_DEADLOCK &&
+        GetStartupBufferPinWaitBufId() < 0)
+      CheckDeadLockAlert();
+    return;
     /* FALLTHROUGH */
 
   case PROCSIG_RECOVERY_CONFLICT_LOCK:

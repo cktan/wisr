@@ -119,20 +119,6 @@ static thread_local /*LOCAL*/ relopt_int intRelOpts[] = {
      TOAST_TUPLE_TARGET,
      128,
      TOAST_TUPLE_TARGET_MAIN},
-    {{"effective_io_concurrency",
-      "Number of simultaneous requests that can be handled efficiently by the "
-      "disk subsystem.",
-      RELOPT_KIND_TABLESPACE, ShareUpdateExclusiveLock},
-     -1,
-     0,
-     MAX_IO_CONCURRENCY},
-    {{"maintenance_io_concurrency",
-      "Number of simultaneous requests that can be handled efficiently by the "
-      "disk subsystem for maintenance work.",
-      RELOPT_KIND_TABLESPACE, ShareUpdateExclusiveLock},
-     -1,
-     0,
-     MAX_IO_CONCURRENCY},
 
     /* list terminator */
     {{NULL}}};
@@ -1527,10 +1513,7 @@ bytea *tablespace_reloptions(Datum reloptions, bool validate) {
        offsetof(TableSpaceOpts, random_page_cost)},
       {"seq_page_cost", RELOPT_TYPE_REAL,
        offsetof(TableSpaceOpts, seq_page_cost)},
-      {"effective_io_concurrency", RELOPT_TYPE_INT,
-       offsetof(TableSpaceOpts, effective_io_concurrency)},
-      {"maintenance_io_concurrency", RELOPT_TYPE_INT,
-       offsetof(TableSpaceOpts, maintenance_io_concurrency)}};
+  };
 
   return (bytea *)build_reloptions(reloptions, validate, RELOPT_KIND_TABLESPACE,
                                    sizeof(TableSpaceOpts), tab, lengthof(tab));

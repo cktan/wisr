@@ -18,7 +18,6 @@
 #include "access/nbtree.h"
 #include "access/transam.h"
 #include "miscadmin.h"
-#include "storage/bufmgr.h"
 #include "storage/ipc.h"
 #include "storage/pg_sema.h"
 #include "storage/pmsignal.h"
@@ -110,7 +109,6 @@ static void CreateOrAttachShmemStructs(void) {
    */
   VarsupShmemInit();
   MultiXactShmemInit();
-  BufferManagerShmemInit();
 
   /*
    * Set up lock manager

@@ -30,22 +30,17 @@
  * TupleTableSlotOps* passed to the slot creation routine. The builtin types
  * of slots are
  *
- * 1. physical tuple in a disk buffer page (TTSOpsBufferHeapTuple)
- * 2. physical tuple constructed in palloc'ed memory (TTSOpsHeapTuple)
- * 3. "minimal" physical tuple constructed in palloc'ed memory
+ * 1. physical tuple constructed in palloc'ed memory (TTSOpsHeapTuple)
+ * 2. "minimal" physical tuple constructed in palloc'ed memory
  *    (TTSOpsMinimalTuple)
- * 4. "virtual" tuple consisting of Datum/isnull arrays (TTSOpsVirtual)
+ * 3. "virtual" tuple consisting of Datum/isnull arrays (TTSOpsVirtual)
  *
+ * There are no tuples in disk buffer pages: a table's rows are sm's, and a
+ * slot holds one as a virtual tuple.  For a palloc'd tuple we usually want
+ * the tuple pfree'd when the TupleTableSlot's reference is dropped.
  *
- * The first two cases are similar in that they both deal with "materialized"
- * tuples, but resource management is different.  For a tuple in a disk page
- * we need to hold a pin on the buffer until the TupleTableSlot's reference
- * to the tuple is dropped; while for a palloc'd tuple we usually want the
- * tuple pfree'd when the TupleTableSlot's reference is dropped.
- *
- * A "minimal" tuple is handled similarly to a palloc'd regular tuple.
- * At present, minimal tuples never are stored in buffers, so there is no
- * parallel to case 1.  Note that a minimal tuple has no "system columns".
+ * A "minimal" tuple is handled similarly to a palloc'd regular tuple.  Note
+ * that a minimal tuple has no "system columns".
  *
  * A "virtual" tuple is an optimization used to minimize physical data copying
  * in a nest of plan nodes.  Until materialized pass-by-reference Datums in
@@ -233,12 +228,10 @@ struct TupleTableSlotOps
 extern PGDLLIMPORT const TupleTableSlotOps TTSOpsVirtual;
 extern PGDLLIMPORT const TupleTableSlotOps TTSOpsHeapTuple;
 extern PGDLLIMPORT const TupleTableSlotOps TTSOpsMinimalTuple;
-extern PGDLLIMPORT const TupleTableSlotOps TTSOpsBufferHeapTuple;
 
 #define TTS_IS_VIRTUAL(slot) ((slot)->tts_ops == &TTSOpsVirtual)
 #define TTS_IS_HEAPTUPLE(slot) ((slot)->tts_ops == &TTSOpsHeapTuple)
 #define TTS_IS_MINIMALTUPLE(slot) ((slot)->tts_ops == &TTSOpsMinimalTuple)
-#define TTS_IS_BUFFERTUPLE(slot) ((slot)->tts_ops == &TTSOpsBufferHeapTuple)
 
 
 /*
@@ -266,22 +259,6 @@ typedef struct HeapTupleTableSlot
 	uint32		off;			/* saved state for slot_deform_heap_tuple */
 	HeapTupleData tupdata;		/* optional workspace for storing tuple */
 } HeapTupleTableSlot;
-
-/* heap tuple residing in a buffer */
-typedef struct BufferHeapTupleTableSlot
-{
-	pg_node_attr(abstract)
-
-	HeapTupleTableSlot base;
-
-	/*
-	 * If buffer is not InvalidBuffer, then the slot is holding a pin on the
-	 * indicated buffer page; drop the pin when we release the slot's
-	 * reference to that buffer.  (TTS_FLAG_SHOULDFREE should not be set in
-	 * such a case, since presumably base.tuple is pointing into the buffer.)
-	 */
-	Buffer		buffer;			/* tuple's buffer, or InvalidBuffer */
-} BufferHeapTupleTableSlot;
 
 typedef struct MinimalTupleTableSlot
 {
@@ -326,12 +303,6 @@ extern TupleTableSlot *ExecStoreHeapTuple(HeapTuple tuple,
 extern void ExecForceStoreHeapTuple(HeapTuple tuple,
 									TupleTableSlot *slot,
 									bool shouldFree);
-extern TupleTableSlot *ExecStoreBufferHeapTuple(HeapTuple tuple,
-												TupleTableSlot *slot,
-												Buffer buffer);
-extern TupleTableSlot *ExecStorePinnedBufferHeapTuple(HeapTuple tuple,
-													  TupleTableSlot *slot,
-													  Buffer buffer);
 extern TupleTableSlot *ExecStoreMinimalTuple(MinimalTuple mtup,
 											 TupleTableSlot *slot,
 											 bool shouldFree);

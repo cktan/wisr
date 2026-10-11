@@ -27,7 +27,6 @@
 #include "catalog/index.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_enum.h"
-#include "catalog/storage.h"
 #include "commands/tablecmds.h"
 #include "commands/trigger.h"
 #include "common/pg_prng.h"
@@ -38,12 +37,10 @@
 #include "storage/condition_variable.h"
 #include "storage/fd.h"
 #include "storage/lmgr.h"
-#include "storage/md.h"
 #include "storage/predicate.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
 #include "storage/sinvaladt.h"
-#include "storage/smgr.h"
 #include "utils/builtins.h"
 #include "utils/combocid.h"
 #include "utils/guc.h"
@@ -1022,13 +1019,6 @@ static void CommitTransaction(void) {
   PreCommit_on_commit_actions();
 
   /*
-   * Synchronize files that are created and not WAL-logged during this
-   * transaction. This must happen before AtEOXact_RelationMap(), so that we
-   * don't see committed-but-broken files after a crash.
-   */
-  smgrDoPendingSyncs(true);
-
-  /*
    * Insert notifications sent by NOTIFY commands into the queue.  This
    * should be late in the pre-commit sequence to minimize time spent
    * holding the notify-insertion lock.  However, this could result in
@@ -1086,9 +1076,6 @@ static void CommitTransaction(void) {
   ResourceOwnerRelease(TopTransactionResourceOwner,
                        RESOURCE_RELEASE_BEFORE_LOCKS, true, true);
 
-  /* Check we've released all buffer pins */
-  AtEOXact_Buffers(true);
-
   /* Clean up the relation cache */
   AtEOXact_RelationCache(true);
 
@@ -1112,17 +1099,6 @@ static void CommitTransaction(void) {
                        RESOURCE_RELEASE_AFTER_LOCKS, true, true);
 
   /*
-   * Likewise, dropping of files deleted during the transaction is best done
-   * after releasing relcache and buffer pins.  (This is not strictly
-   * necessary during commit, since such pins should have been released
-   * already, but this ordering is definitely critical during abort.)  Since
-   * this may take many seconds, also delay until after releasing locks.
-   * Other backends will observe the attendant catalog changes and not
-   * attempt to access affected files.
-   */
-  smgrDoPendingDeletes(true);
-
-  /*
    * Send out notification signals to other backends (and do other
    * post-commit NOTIFY cleanup).  This must not happen until after our
    * transaction is fully done from the viewpoint of other backends.
@@ -1137,7 +1113,6 @@ static void CommitTransaction(void) {
   AtEOXact_Enum();
   AtEOXact_on_commit_actions(true);
   AtEOXact_Namespace(true);
-  AtEOXact_SMgr();
   AtEOXact_Files(true);
   AtEOXact_ComboCid();
   AtEOXact_HashTables(true);
@@ -1187,9 +1162,6 @@ static void AbortTransaction(void) {
    * while cleaning up!
    */
   LWLockReleaseAll();
-
-  /* Clean up buffer content locks, too */
-  UnlockBuffers();
 
   /* Cancel condition variable sleep */
   ConditionVariableCancelSleep();
@@ -1242,15 +1214,11 @@ static void AbortTransaction(void) {
    */
   SetUserIdAndSecContext(s->prevUser, s->prevSecContext);
 
-  /* Forget about any active REINDEX. */
-  ResetReindexState(s->nestingLevel);
-
   /*
    * do abort processing
    */
   AfterTriggerEndXact(false); /* 'false' means it's abort */
   AtAbort_Portals();
-  smgrDoPendingSyncs(false);
   AtEOXact_RelationMap(false);
 
   TRACE_POSTGRESQL_TRANSACTION_ABORT(MyProc->vxid.lxid);
@@ -1271,7 +1239,6 @@ static void AbortTransaction(void) {
   if (TopTransactionResourceOwner != NULL) {
     ResourceOwnerRelease(TopTransactionResourceOwner,
                          RESOURCE_RELEASE_BEFORE_LOCKS, false, true);
-    AtEOXact_Buffers(false);
     AtEOXact_RelationCache(false);
     AtEOXact_TypeCache();
     AtEOXact_Inval(false);
@@ -1280,14 +1247,12 @@ static void AbortTransaction(void) {
                          false, true);
     ResourceOwnerRelease(TopTransactionResourceOwner,
                          RESOURCE_RELEASE_AFTER_LOCKS, false, true);
-    smgrDoPendingDeletes(false);
 
     AtEOXact_GUC(false, 1);
     AtEOXact_SPI(false);
     AtEOXact_Enum();
     AtEOXact_on_commit_actions(false);
     AtEOXact_Namespace(false);
-    AtEOXact_SMgr();
     AtEOXact_Files(false);
     AtEOXact_ComboCid();
     AtEOXact_HashTables(false);
@@ -3014,7 +2979,6 @@ static void CommitSubTransaction(void) {
                             s->parent->subTransactionId);
   AtEOSubXact_TypeCache();
   AtEOSubXact_Inval(true);
-  AtSubCommit_smgr();
 
   CurrentResourceOwner = s->curTransactionOwner;
 
@@ -3078,8 +3042,6 @@ static void AbortSubTransaction(void) {
    */
   LWLockReleaseAll();
 
-  UnlockBuffers();
-
   /* Cancel condition variable sleep */
   ConditionVariableCancelSleep();
 
@@ -3122,9 +3084,6 @@ static void AbortSubTransaction(void) {
    */
   SetUserIdAndSecContext(s->prevUser, s->prevSecContext);
 
-  /* Forget about any active REINDEX. */
-  ResetReindexState(s->nestingLevel);
-
   /*
    * No need for SnapBuildResetExportedSnapshotState() here, snapshot
    * exports are not supported in subtransactions.
@@ -3153,7 +3112,6 @@ static void AbortSubTransaction(void) {
                          false);
     ResourceOwnerRelease(s->curTransactionOwner, RESOURCE_RELEASE_AFTER_LOCKS,
                          false, false);
-    AtSubAbort_smgr();
 
     AtEOXact_GUC(false, s->gucNestLevel);
     AtEOSubXact_SPI(false, s->subTransactionId);

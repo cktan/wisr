@@ -37,7 +37,6 @@
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
 #include "postmaster/postmaster.h"
-#include "storage/bufmgr.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "storage/lmgr.h"
@@ -46,7 +45,6 @@
 #include "storage/procnumber.h"
 #include "storage/procsignal.h"
 #include "storage/sinvaladt.h"
-#include "storage/smgr.h"
 #include "tcop/backend_startup.h"
 #include "tcop/tcopprot.h"
 #include "utils/acl.h"
@@ -326,10 +324,6 @@ void BaseInit(void) {
    * files.
    */
   InitFileAccess();
-
-  /* Do local initialization of storage and buffer managers */
-  smgrinit();
-  InitBufferManagerAccess();
 
   /*
    * Initialize temporary file access after pgstat, so that the temporary

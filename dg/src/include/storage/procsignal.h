@@ -45,9 +45,7 @@ typedef enum {
 
 #define NUM_PROCSIGNALS (PROCSIG_RECOVERY_CONFLICT_LAST + 1)
 
-typedef enum {
-  PROCSIGNAL_BARRIER_SMGRRELEASE, /* ask smgr to close files */
-} ProcSignalBarrierType;
+typedef enum {} ProcSignalBarrierType;
 
 /*
  * Length of query cancel keys generated.

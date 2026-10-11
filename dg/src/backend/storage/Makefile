@@ -1,3 +1,3 @@
 top := ../../..
-SUBDIRS := buffer file freespace ipc lmgr page smgr
+SUBDIRS := file ipc lmgr page
 include $(top)/dg.mk

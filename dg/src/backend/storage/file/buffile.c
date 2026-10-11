@@ -40,10 +40,12 @@
 #include "executor/instrument.h"
 #include "miscadmin.h"
 #include "storage/buffile.h"
-#include "storage/bufmgr.h"
 #include "storage/fd.h"
 #include "utils/resowner.h"
 #include "utils/wait_event.h"
+
+/* GUC: time temporary file I/O, for EXPLAIN (BUFFERS) and statistics. */
+thread_local /*LOCAL*/ bool track_io_timing = false;
 
 /*
  * We break BufFiles into gigabyte-sized segments, regardless of RELSEG_SIZE.

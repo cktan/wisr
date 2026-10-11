@@ -45,7 +45,6 @@
 
 #include "access/xact.h"
 #include "catalog/pg_tablespace.h"
-#include "catalog/storage.h"
 #include "miscadmin.h"
 #include "port/pg_crc32c.h"
 #include "storage/fd.h"
@@ -721,27 +720,10 @@ static void write_relmap_file(RelMapFile *newmap, bool send_sinval,
     CacheInvalidateRelmap(dbid);
 
   /*
-   * Make sure that the files listed in the map are not deleted if the outer
-   * transaction aborts.  This had better be within the critical section
-   * too: it's not likely to fail, but if it did, we'd arrive at transaction
-   * abort with the files still vulnerable.  PANICing will leave things in a
-   * good state on-disk.
-   *
-   * Note: we're cheating a little bit here by assuming that mapped files
-   * are either in pg_global or the database's default tablespace.
+   * The files the map lists were kept from deletion on abort, with
+   * preserve_files; there is no smgr, and no deletion pending to cancel.
    */
-  if (preserve_files) {
-    int32 i;
-
-    for (i = 0; i < newmap->num_mappings; i++) {
-      RelFileLocator rlocator;
-
-      rlocator.spcOid = tsid;
-      rlocator.dbOid = dbid;
-      rlocator.relNumber = newmap->mappings[i].mapfilenumber;
-      RelationPreserveStorage(rlocator, false);
-    }
-  }
+  (void)preserve_files;
 }
 
 /*

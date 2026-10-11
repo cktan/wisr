@@ -28,7 +28,6 @@
 #include "catalog/index.h"
 #include "lib/stringinfo.h"
 #include "miscadmin.h"
-#include "storage/bufmgr.h"
 #include "storage/procarray.h"
 #include "utils/acl.h"
 #include "utils/injection_point.h"
@@ -253,73 +252,6 @@ char *BuildIndexValueDescription(Relation indexRelation, const Datum *values,
   return buf.data;
 }
 
-/*
- * Get the snapshotConflictHorizon from the table entries pointed to by the
- * index tuples being deleted using an AM-generic approach.
- *
- * This is a table_index_delete_tuples() shim used by index AMs that only need
- * to consult the tableam to get a snapshotConflictHorizon value, and only
- * expect to delete index tuples that are already known deletable (typically
- * due to having LP_DEAD bits set).  When a snapshotConflictHorizon value
- * isn't needed in index AM's deletion WAL record, it is safe for it to skip
- * calling here entirely.
- *
- * We assume that caller index AM uses the standard IndexTuple representation,
- * with table TIDs stored in the t_tid field.  We also expect (and assert)
- * that the line pointers on page for 'itemnos' offsets are already marked
- * LP_DEAD.
- */
-TransactionId index_compute_xid_horizon_for_tuples(Relation irel, Relation hrel,
-                                                   Buffer ibuf,
-                                                   OffsetNumber *itemnos,
-                                                   int nitems) {
-  TM_IndexDeleteOp delstate;
-  TransactionId snapshotConflictHorizon = InvalidTransactionId;
-  Page ipage = BufferGetPage(ibuf);
-  IndexTuple itup;
-
-  Assert(nitems > 0);
-
-  delstate.irel = irel;
-  delstate.iblknum = BufferGetBlockNumber(ibuf);
-  delstate.bottomup = false;
-  delstate.bottomupfreespace = 0;
-  delstate.ndeltids = 0;
-  delstate.deltids = (TM_IndexDelete *)palloc(nitems * sizeof(TM_IndexDelete));
-  delstate.status = (TM_IndexStatus *)palloc(nitems * sizeof(TM_IndexStatus));
-
-  /* identify what the index tuples about to be deleted point to */
-  for (int i = 0; i < nitems; i++) {
-    OffsetNumber offnum = itemnos[i];
-    ItemId iitemid;
-
-    iitemid = PageGetItemId(ipage, offnum);
-    itup = (IndexTuple)PageGetItem(ipage, iitemid);
-
-    Assert(ItemIdIsDead(iitemid));
-
-    ItemPointerCopy(&itup->t_tid, &delstate.deltids[i].tid);
-    delstate.deltids[i].id = delstate.ndeltids;
-    delstate.status[i].idxoffnum = offnum;
-    delstate.status[i].knowndeletable = true; /* LP_DEAD-marked */
-    delstate.status[i].promising = false;     /* unused */
-    delstate.status[i].freespace = 0;         /* unused */
-
-    delstate.ndeltids++;
-  }
-
-  /* determine the actual xid horizon */
-  snapshotConflictHorizon = table_index_delete_tuples(hrel, &delstate);
-
-  /* assert tableam agrees that all items are deletable */
-  Assert(delstate.ndeltids == nitems);
-
-  pfree(delstate.deltids);
-  pfree(delstate.status);
-
-  return snapshotConflictHorizon;
-}
-
 /* ----------------------------------------------------------------
  *		heap-or-index-scan access to system catalogs
  *
@@ -362,7 +294,7 @@ SysScanDesc systable_beginscan(Relation heapRelation, Oid indexId, bool indexOK,
   SysScanDesc sysscan;
   Relation irel;
 
-  if (indexOK && !IgnoreSystemIndexes && !ReindexIsProcessingIndex(indexId))
+  if (indexOK && !IgnoreSystemIndexes)
     irel = index_open(indexId, AccessShareLock);
   else
     irel = NULL;
@@ -587,12 +519,6 @@ SysScanDesc systable_beginscan_ordered(Relation heapRelation,
   int i;
   ScanKey idxkey;
 
-  /* REINDEX can probably be a hard error here ... */
-  if (ReindexIsProcessingIndex(RelationGetRelid(indexRelation)))
-    ereport(ERROR,
-            (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-             errmsg("cannot access index \"%s\" while it is being reindexed",
-                    RelationGetRelationName(indexRelation))));
   /* ... but we only throw a warning about violating IgnoreSystemIndexes */
   if (IgnoreSystemIndexes)
     elog(WARNING, "using index \"%s\" despite IgnoreSystemIndexes",

@@ -2000,3 +2000,40 @@ join it, each with a warning, so a tool that runs them goes on.
   `index_concurrently_swap()`. `reindex_relation()` stays for
   the heap's TRUNCATE, until TRUNCATE is sm's.
 - `server.sh` checks both warnings.
+
+## Step 65: the buffer manager, smgr and free-space map are gone
+
+PLAN.md §7. With the heap and nbtree gone, nothing kept pages
+in shared buffers or relation files on disk: every relation
+with storage is sm's.
+
+- **Gone**: `storage/buffer` (the buffer manager, local
+  buffers, read streams), `storage/smgr` (smgr, md, bulk
+  writes), `storage/freespace`, and `catalog/storage.c`, the
+  creating, truncating and deleting of relation files at
+  commit; their headers; the buffer-backed tuple slot
+  (`TTSOpsBufferHeapTuple`); the hooks in `xact.c`,
+  `postinit.c`, `ipci.c`, `inval.c` and `postgres.c`; and the
+  settings `temp_buffers`, `zero_damaged_pages`,
+  `vacuum_buffer_usage_limit`, `effective_io_concurrency`,
+  `maintenance_io_concurrency`, `io_combine_limit`,
+  `io_max_combine_limit` and `backend_flush_after`.
+  `track_io_timing` stays, for temporary files, in
+  `buffile.c`; `shared_buffers` stays while SLRU sizes itself
+  by it.
+- **Sequences are refused**, "not supported yet":
+  `sequence.c`, a one-row heap read through the buffer
+  manager, is now its entry points, each refusing, until sm's
+  sequences replace it. DISCARD SEQUENCES runs: there is no
+  cache.
+- **Refused where a relation's file was needed**: making a
+  relation with storage outside sm, TRUNCATE's heap paths (and
+  with them `reindex_relation()` and the reindex state),
+  ALTER TABLE SET TABLESPACE that would move data, and
+  ANALYZE's block sampler, which the table access method no
+  longer offers.
+- **The planner** estimates an index as large as its table,
+  and an ANALYZE or index build records no pages.
+- The proc signal barrier has no type left; its machinery is
+  next to go.
+- `server.sh` checks sequences refused and the settings gone.

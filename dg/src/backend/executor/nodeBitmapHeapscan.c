@@ -44,7 +44,6 @@
 #include "executor/nodeBitmapHeapscan.h"
 #include "miscadmin.h"
 #include "nodes/rowbitmap.h"
-#include "storage/bufmgr.h"
 #include "utils/rel.h"
 #include "utils/spccache.h"
 

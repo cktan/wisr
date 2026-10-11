@@ -34,6 +34,9 @@ typedef struct BufFile BufFile;
  * prototypes for functions in buffile.c
  */
 
+/* Whether a temporary file's reads and writes are timed. */
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool track_io_timing;
+
 extern BufFile *BufFileCreateTemp(bool interXact);
 extern void BufFileClose(BufFile *file);
 pg_nodiscard extern size_t BufFileRead(BufFile *file, void *ptr, size_t size);

@@ -275,8 +275,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT char *backtrace_functions;
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT int temp_file_limit;
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT int num_temp_buffers;
-
 extern thread_local /*LOCAL*/ PGDLLIMPORT char *cluster_name;
 extern thread_local /*LOCAL*/ PGDLLIMPORT char *ConfigFileName;
 extern thread_local /*LOCAL*/ PGDLLIMPORT char *HbaFileName;

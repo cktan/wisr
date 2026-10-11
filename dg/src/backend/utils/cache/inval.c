@@ -121,7 +121,6 @@
 #include "miscadmin.h"
 #include "storage/procnumber.h"
 #include "storage/sinval.h"
-#include "storage/smgr.h"
 #include "utils/catcache.h"
 #include "utils/injection_point.h"
 #include "utils/inval.h"
@@ -796,11 +795,7 @@ void LocalExecuteInvalidationMessage(SharedInvalidationMessage *msg) {
      * We could have smgr entries for relations of other databases, so no
      * short-circuit test is possible here.
      */
-    RelFileLocatorBackend rlocator;
-
-    rlocator.locator = msg->sm.rlocator;
-    rlocator.backend = (msg->sm.backend_hi << 16) | (int)msg->sm.backend_lo;
-    smgrreleaserellocator(rlocator);
+    /* There is no smgr to release a relation's files from. */
   } else if (msg->id == SHAREDINVALRELMAP_ID) {
     /* We only care about our own database and shared catalogs */
     if (msg->rm.dbId == InvalidOid)

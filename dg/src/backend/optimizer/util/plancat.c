@@ -47,7 +47,6 @@
 #include "rewrite/rewriteHandler.h"
 #include "rewrite/rewriteManip.h"
 #include "statistics/statistics.h"
-#include "storage/bufmgr.h"
 #include "tcop/tcopprot.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
@@ -430,21 +429,9 @@ void get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
        * there are not physical indexes.
        */
       if (indexRelation->rd_rel->relkind != RELKIND_PARTITIONED_INDEX) {
-        if (RelationIsSm(relation)) {
-          /* sm has no pages: as large as its table, which is estimated. */
-          info->pages = rel->pages;
-          info->tuples = rel->tuples;
-        } else if (info->indpred == NIL) {
-          info->pages = RelationGetNumberOfBlocks(indexRelation);
-          info->tuples = rel->tuples;
-        } else {
-          double allvisfrac; /* dummy */
-
-          estimate_rel_size(indexRelation, NULL, &info->pages, &info->tuples,
-                            &allvisfrac);
-          if (info->tuples > rel->tuples)
-            info->tuples = rel->tuples;
-        }
+        /* An index is sm's, with no pages: as large as its table. */
+        info->pages = rel->pages;
+        info->tuples = rel->tuples;
 
         /*
          * Get tree height while we have the index open
@@ -998,11 +985,6 @@ static bool infer_collation_opclass_match(InferenceElem *elem, Relation idxRel,
  */
 void estimate_rel_size(Relation rel, int32 *attr_widths, BlockNumber *pages,
                        double *tuples, double *allvisfrac) {
-  BlockNumber curpages;
-  BlockNumber relpages;
-  double reltuples;
-  BlockNumber relallvisible;
-  double density;
 
   if (RelationIsSm(rel)) {
     /*
@@ -1018,83 +1000,6 @@ void estimate_rel_size(Relation rel, int32 *attr_widths, BlockNumber *pages,
     *allvisfrac = 1;
   } else if (RELKIND_HAS_TABLE_AM(rel->rd_rel->relkind)) {
     table_relation_estimate_size(rel, attr_widths, pages, tuples, allvisfrac);
-  } else if (rel->rd_rel->relkind == RELKIND_INDEX) {
-    /*
-     * XXX: It'd probably be good to move this into a callback, individual
-     * index types e.g. know if they have a metapage.
-     */
-
-    /* it has storage, ok to call the smgr */
-    curpages = RelationGetNumberOfBlocks(rel);
-
-    /* report estimated # pages */
-    *pages = curpages;
-    /* quick exit if rel is clearly empty */
-    if (curpages == 0) {
-      *tuples = 0;
-      *allvisfrac = 0;
-      return;
-    }
-
-    /* coerce values in pg_class to more desirable types */
-    relpages = (BlockNumber)rel->rd_rel->relpages;
-    reltuples = (double)rel->rd_rel->reltuples;
-    relallvisible = (BlockNumber)rel->rd_rel->relallvisible;
-
-    /*
-     * Discount the metapage while estimating the number of tuples. This
-     * is a kluge because it assumes more than it ought to about index
-     * structure.  Currently it's OK for btree, hash, and GIN indexes but
-     * suspect for GiST indexes.
-     */
-    if (relpages > 0) {
-      curpages--;
-      relpages--;
-    }
-
-    /* estimate number of tuples from previous tuple density */
-    if (reltuples >= 0 && relpages > 0)
-      density = reltuples / (double)relpages;
-    else {
-      /*
-       * If we have no data because the relation was never vacuumed,
-       * estimate tuple width from attribute datatypes.  We assume here
-       * that the pages are completely full, which is OK for tables
-       * (since they've presumably not been VACUUMed yet) but is
-       * probably an overestimate for indexes.  Fortunately
-       * get_relation_info() can clamp the overestimate to the parent
-       * table's size.
-       *
-       * Note: this code intentionally disregards alignment
-       * considerations, because (a) that would be gilding the lily
-       * considering how crude the estimate is, and (b) it creates
-       * platform dependencies in the default plans which are kind of a
-       * headache for regression testing.
-       *
-       * XXX: Should this logic be more index specific?
-       */
-      int32 tuple_width;
-
-      tuple_width = get_rel_data_width(rel, attr_widths);
-      tuple_width += MAXALIGN(SizeofHeapTupleHeader);
-      tuple_width += sizeof(ItemIdData);
-      /* note: integer division is intentional here */
-      density = (BLCKSZ - SizeOfPageHeaderData) / tuple_width;
-    }
-    *tuples = rint(density * (double)curpages);
-
-    /*
-     * We use relallvisible as-is, rather than scaling it up like we do
-     * for the pages and tuples counts, on the theory that any pages added
-     * since the last VACUUM are most likely not marked all-visible.  But
-     * costsize.c wants it converted to a fraction.
-     */
-    if (relallvisible == 0 || curpages <= 0)
-      *allvisfrac = 0;
-    else if ((double)relallvisible >= curpages)
-      *allvisfrac = 1;
-    else
-      *allvisfrac = (double)relallvisible / curpages;
   } else {
     /*
      * Just use whatever's in pg_class.  This covers foreign tables,

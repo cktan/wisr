@@ -2190,17 +2190,6 @@ static void CheckOpSlotCompatibility(ExprEvalStep *op, TupleTableSlot *slot) {
     return;
 
   /*
-   * Should probably fixed at some point, but for now it's easier to allow
-   * buffer and heap tuples to be used interchangeably.
-   */
-  if (slot->tts_ops == &TTSOpsBufferHeapTuple &&
-      op->d.fetch.kind == &TTSOpsHeapTuple)
-    return;
-  if (slot->tts_ops == &TTSOpsHeapTuple &&
-      op->d.fetch.kind == &TTSOpsBufferHeapTuple)
-    return;
-
-  /*
    * At the moment we consider it OK if a virtual slot is used instead of a
    * specific type of slot, as a virtual slot never needs to be deformed.
    */

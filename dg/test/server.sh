@@ -687,6 +687,24 @@ for sql in "reindex table t4" "reindex index t4_ac" \
     echo "$out" | grep -q '^REINDEX$' || fail "reindex: $sql"
 done
 
+# Verify that sequences are refused until they are sm's, that DISCARD
+# SEQUENCES still runs, and that the buffer manager's settings are gone.
+# 1. Confirm CREATE SEQUENCE and ALTER SEQUENCE fail, naming sequences.
+# 2. Confirm DISCARD SEQUENCES succeeds: there is no cache to discard.
+# 3. Confirm temp_buffers, effective_io_concurrency, io_combine_limit and
+#    zero_damaged_pages are not settings any more.
+for sql in "create sequence s" "alter sequence s restart"; do
+  local_psql -c "$sql" 2>&1 | grep -q 'sequences are not supported yet' ||
+    fail "sequence refused: $sql"
+done
+[ "$(local_psql -c 'discard sequences' 2>&1)" = "DISCARD SEQUENCES" ] ||
+  fail "discard sequences"
+for guc in temp_buffers effective_io_concurrency io_combine_limit \
+  zero_damaged_pages; do
+  local_psql -c "show $guc" 2>&1 |
+    grep -q 'unrecognized configuration parameter' || fail "setting $guc"
+done
+
 # Verify that = finds rows, and that DROP TABLE removes a table for good,
 # even from a session that had used it.
 # 1. Confirm WHERE a = 2 finds the one row.

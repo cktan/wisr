@@ -25,7 +25,6 @@
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
 #include "postmaster/postmaster.h"
-#include "storage/bufmgr.h"
 #include "utils/acl.h"
 #include "utils/datetime.h"
 #include "utils/fmgrprotos.h"
@@ -922,26 +921,6 @@ bool check_cluster_name(char **newval, void **extra, GucSource source) {
   pfree(clean);
   *newval = ret;
   return true;
-}
-
-/*
- * GUC assign_hook for maintenance_io_concurrency
- */
-void assign_maintenance_io_concurrency(int newval, void *extra) {
-  maintenance_io_concurrency = newval;
-}
-
-/*
- * GUC assign hooks that recompute io_combine_limit whenever
- * io_combine_limit_guc and io_max_combine_limit are changed.  These are needed
- * because the GUC subsystem doesn't support dependencies between GUCs, and
- * they may be assigned in either order.
- */
-void assign_io_max_combine_limit(int newval, void *extra) {
-  io_combine_limit = Min(newval, io_combine_limit_guc);
-}
-void assign_io_combine_limit(int newval, void *extra) {
-  io_combine_limit = Min(io_max_combine_limit, newval);
 }
 
 /*

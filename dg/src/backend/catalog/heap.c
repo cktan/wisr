@@ -53,7 +53,6 @@
 #include "catalog/pg_subscription_rel.h"
 #include "catalog/pg_tablespace.h"
 #include "catalog/pg_type.h"
-#include "catalog/storage.h"
 #include "commands/tablecmds.h"
 #include "commands/typecmds.h"
 #include "common/int.h"
@@ -336,22 +335,11 @@ Relation heap_create(const char *relname, Oid relnamespace, Oid reltablespace,
       relname, relnamespace, tupDesc, relid, accessmtd, relfilenumber,
       reltablespace, shared_relation, mapped_relation, relpersistence, relkind);
 
-  /*
-   * Have the storage manager create the relation's disk file, if needed.
-   *
-   * For tables, the AM callback creates both the main and the init fork.
-   * For others, only the main fork is created; the other forks will be
-   * created on demand.
-   */
-  if (create_storage) {
-    if (RELKIND_HAS_TABLE_AM(rel->rd_rel->relkind))
-      table_relation_set_new_filelocator(rel, &rel->rd_locator, relpersistence,
-                                         relfrozenxid, relminmxid);
-    else if (RELKIND_HAS_STORAGE(rel->rd_rel->relkind))
-      RelationCreateStorage(rel->rd_locator, relpersistence, true);
-    else
-      Assert(false);
-  }
+  /* A relation's storage is sm's: there is no disk file to make here. */
+  if (create_storage)
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("relation \"%s\" cannot have storage outside sm",
+                           relname)));
 
   /*
    * If a tablespace is specified, removal of that tablespace is normally
@@ -1747,12 +1735,6 @@ void heap_drop_with_catalog(Oid relid) {
    */
   if (relid == defaultPartOid)
     update_default_partition_oid(parentOid, InvalidOid);
-
-  /*
-   * Schedule unlinking of the relation's physical files at commit.
-   */
-  if (RELKIND_HAS_STORAGE(rel->rd_rel->relkind))
-    RelationDropStorage(rel);
 
   /*
    * Close relcache entry, but *keep* AccessExclusiveLock on the relation
@@ -3215,49 +3197,6 @@ void RemoveStatistics(Oid relid, AttrNumber attnum) {
 }
 
 /*
- * RelationTruncateIndexes - truncate all indexes associated
- * with the heap relation to zero tuples.
- *
- * The routine will truncate and then reconstruct the indexes on
- * the specified relation.  Caller must hold exclusive lock on rel.
- */
-static void RelationTruncateIndexes(Relation heapRelation) {
-  ListCell *indlist;
-
-  /* Ask the relcache to produce a list of the indexes of the rel */
-  foreach (indlist, RelationGetIndexList(heapRelation)) {
-    Oid indexId = lfirst_oid(indlist);
-    Relation currentIndex;
-    IndexInfo *indexInfo;
-
-    /* Open the index relation; use exclusive lock, just to be sure */
-    currentIndex = index_open(indexId, AccessExclusiveLock);
-
-    /*
-     * Fetch info needed for index_build.  Since we know there are no
-     * tuples that actually need indexing, we can use a dummy IndexInfo.
-     * This is slightly cheaper to build, but the real point is to avoid
-     * possibly running user-defined code in index expressions or
-     * predicates.  We might be getting invoked during ON COMMIT
-     * processing, and we don't want to run any such code then.
-     */
-    indexInfo = BuildDummyIndexInfo(currentIndex);
-
-    /*
-     * Now truncate the actual file (and discard buffers).
-     */
-    RelationTruncate(currentIndex, 0);
-
-    /* Initialize the index and rebuild */
-    /* Note: we do not need to re-establish pkey setting */
-    index_build(heapRelation, currentIndex, indexInfo, true);
-
-    /* We're done with this index */
-    index_close(currentIndex, NoLock);
-  }
-}
-
-/*
  *	 heap_truncate
  *
  *	 This routine deletes all data within all the specified relations.
@@ -3304,31 +3243,12 @@ void heap_truncate(List *relids) {
  * checked permissions etc, and must have obtained AccessExclusiveLock.
  */
 void heap_truncate_one_rel(Relation rel) {
-  Oid toastrelid;
-
-  /*
-   * Truncate the relation.  Partitioned tables have no storage, so there is
-   * nothing to do for them here.
-   */
+  /* Partitioned tables have no storage, so there is nothing to do. */
   if (rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
     return;
-
-  /* Truncate the underlying relation */
-  table_relation_nontransactional_truncate(rel);
-
-  /* If the relation has indexes, truncate the indexes too */
-  RelationTruncateIndexes(rel);
-
-  /* If there is a toast table, truncate that too */
-  toastrelid = rel->rd_rel->reltoastrelid;
-  if (OidIsValid(toastrelid)) {
-    Relation toastrel = table_open(toastrelid, AccessExclusiveLock);
-
-    table_relation_nontransactional_truncate(toastrel);
-    RelationTruncateIndexes(toastrel);
-    /* keep the lock... */
-    table_close(toastrel, NoLock);
-  }
+  /* The heap's truncation is gone; a table in sm has none yet. */
+  ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                  errmsg("TRUNCATE is not supported yet")));
 }
 
 /*

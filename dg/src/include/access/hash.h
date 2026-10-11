@@ -23,7 +23,6 @@
 #include "catalog/pg_am_d.h"
 #include "common/hashfn.h"
 #include "lib/stringinfo.h"
-#include "storage/bufmgr.h"
 #include "storage/lockdefs.h"
 #include "utils/hsearch.h"
 #include "utils/relcache.h"

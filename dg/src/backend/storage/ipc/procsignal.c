@@ -26,7 +26,6 @@
 #include "storage/proc.h"
 #include "storage/shmem.h"
 #include "storage/sinval.h"
-#include "storage/smgr.h"
 #include "tcop/tcopprot.h"
 #include "utils/memutils.h"
 #include "utils/wait_event.h"
@@ -536,11 +535,8 @@ void ProcessProcSignalBarrier(void) {
         bool processed = true;
 
         type = (ProcSignalBarrierType)pg_rightmost_one_pos32(flags);
-        switch (type) {
-        case PROCSIGNAL_BARRIER_SMGRRELEASE:
-          processed = ProcessBarrierSmgrRelease();
-          break;
-        }
+        /* There are no barrier types left to process. */
+        (void)processed;
 
         /*
          * To avoid an infinite loop, we must always unset the bit in

@@ -32,7 +32,6 @@
 #include "access/slru.h"
 #include "access/toast_compression.h"
 #include "catalog/namespace.h"
-#include "catalog/storage.h"
 #include "commands/extension.h"
 #include "commands/event_trigger.h"
 #include "commands/tablespace.h"
@@ -54,7 +53,7 @@
 #include "parser/parse_expr.h"
 #include "parser/parser.h"
 #include "postmaster/postmaster.h"
-#include "storage/bufmgr.h"
+#include "storage/buffile.h"
 #include "storage/bufpage.h"
 #include "storage/fd.h"
 #include "storage/predicate.h"
@@ -825,22 +824,6 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
      NULL,
      NULL,
      NULL},
-    {{"zero_damaged_pages", PGC_SUSET, DEVELOPER_OPTIONS,
-      gettext_noop("Continues processing past damaged page headers."),
-      gettext_noop(
-          "Detection of a damaged page header normally causes PostgreSQL to "
-          "report an error, aborting the current transaction. Setting "
-          "\"zero_damaged_pages\" to true causes the system to instead report "
-          "a "
-          "warning, zero out the damaged page, and continue processing. This "
-          "behavior will destroy data, namely all the rows on the damaged "
-          "page."),
-      GUC_NOT_IN_SAMPLE},
-     &zero_damaged_pages,
-     false,
-     NULL,
-     NULL,
-     NULL},
 
     {{"trace_connection_negotiation", PGC_POSTMASTER, DEVELOPER_OPTIONS,
       gettext_noop("Logs details of pre-authentication connection handshake."),
@@ -1535,18 +1518,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      NULL,
      NULL},
 
-    {{"vacuum_buffer_usage_limit", PGC_USERSET, RESOURCES_MEM,
-      gettext_noop(
-          "Sets the buffer pool size for VACUUM, ANALYZE, and autovacuum."),
-      NULL, GUC_UNIT_KB},
-     &VacuumBufferUsageLimit,
-     2048,
-     0,
-     MAX_BAS_VAC_RING_SIZE_KB,
-     check_vacuum_buffer_usage_limit,
-     NULL,
-     NULL},
-
     {{"num_os_semaphores", PGC_INTERNAL, PRESET_OPTIONS,
       gettext_noop("Shows the number of semaphores required for the server."),
       NULL, GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE | GUC_RUNTIME_COMPUTED},
@@ -1591,18 +1562,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      16,
      SLRU_MAX_ALLOWED_BUFFERS,
      check_serial_buffers,
-     NULL,
-     NULL},
-
-    {{"temp_buffers", PGC_USERSET, RESOURCES_MEM,
-      gettext_noop(
-          "Sets the maximum number of temporary buffers used by each session."),
-      NULL, GUC_UNIT_BLOCKS | GUC_EXPLAIN},
-     &num_temp_buffers,
-     1024,
-     100,
-     INT_MAX / 2,
-     check_temp_buffers,
      NULL,
      NULL},
 
@@ -1994,64 +1953,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      0,
      -1,
      INT_MAX / 2,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"effective_io_concurrency", PGC_USERSET, RESOURCES_IO,
-      gettext_noop("Number of simultaneous requests that can be handled "
-                   "efficiently by the disk subsystem."),
-      gettext_noop("0 disables simultaneous requests."), GUC_EXPLAIN},
-     &effective_io_concurrency,
-     DEFAULT_EFFECTIVE_IO_CONCURRENCY,
-     0,
-     MAX_IO_CONCURRENCY,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"maintenance_io_concurrency", PGC_USERSET, RESOURCES_IO,
-      gettext_noop("A variant of \"effective_io_concurrency\" that is used for "
-                   "maintenance work."),
-      gettext_noop("0 disables simultaneous requests."), GUC_EXPLAIN},
-     &maintenance_io_concurrency,
-     DEFAULT_MAINTENANCE_IO_CONCURRENCY,
-     0,
-     MAX_IO_CONCURRENCY,
-     NULL,
-     assign_maintenance_io_concurrency,
-     NULL},
-
-    {{"io_max_combine_limit", PGC_POSTMASTER, RESOURCES_IO,
-      gettext_noop("Server-wide limit that clamps io_combine_limit."), NULL,
-      GUC_UNIT_BLOCKS},
-     &io_max_combine_limit,
-     DEFAULT_IO_COMBINE_LIMIT,
-     1,
-     MAX_IO_COMBINE_LIMIT,
-     NULL,
-     assign_io_max_combine_limit,
-     NULL},
-
-    {{"io_combine_limit", PGC_USERSET, RESOURCES_IO,
-      gettext_noop("Limit on the size of data reads and writes."), NULL,
-      GUC_UNIT_BLOCKS},
-     &io_combine_limit_guc,
-     DEFAULT_IO_COMBINE_LIMIT,
-     1,
-     MAX_IO_COMBINE_LIMIT,
-     NULL,
-     assign_io_combine_limit,
-     NULL},
-
-    {{"backend_flush_after", PGC_USERSET, RESOURCES_IO,
-      gettext_noop("Number of pages after which previously performed writes "
-                   "are flushed to disk."),
-      gettext_noop("0 disables forced writeback."), GUC_UNIT_BLOCKS},
-     &backend_flush_after,
-     DEFAULT_BACKEND_FLUSH_AFTER,
-     0,
-     WRITEBACK_MAX_PENDING_FLUSHES,
      NULL,
      NULL,
      NULL},

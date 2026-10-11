@@ -145,7 +145,6 @@ thread_local /*LOCAL*/ int MaxConnections = 100;
 thread_local /*SHARED*/ int MaxBackends = 0;
 
 /* GUC parameters for vacuum */
-thread_local /*LOCAL*/ int VacuumBufferUsageLimit = 2048;
 
 thread_local /*LOCAL*/ int VacuumCostPageHit = 1;
 thread_local /*LOCAL*/ int VacuumCostPageMiss = 2;

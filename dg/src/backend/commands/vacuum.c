@@ -36,7 +36,6 @@
 #include "commands/vacuum.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
-#include "storage/bufmgr.h"
 #include "storage/lmgr.h"
 #include "storage/pmsignal.h"
 #include "utils/acl.h"
@@ -65,25 +64,6 @@ static List *expand_vacuum_rel(VacuumRelation *vrel, MemoryContext vac_context,
 static List *get_all_vacuum_rels(MemoryContext vac_context, int options);
 
 /*
- * GUC check function to ensure GUC value specified is within the allowable
- * range.
- */
-bool check_vacuum_buffer_usage_limit(int *newval, void **extra,
-                                     GucSource source) {
-  /* Value upper and lower hard limits are inclusive */
-  if (*newval == 0 || (*newval >= MIN_BAS_VAC_RING_SIZE_KB &&
-                       *newval <= MAX_BAS_VAC_RING_SIZE_KB))
-    return true;
-
-  /* Value does not fall within any allowable range */
-  GUC_check_errdetail("\"%s\" must be 0 or between %d kB and %d kB.",
-                      "vacuum_buffer_usage_limit", MIN_BAS_VAC_RING_SIZE_KB,
-                      MAX_BAS_VAC_RING_SIZE_KB);
-
-  return false;
-}
-
-/*
  * Primary entry point for the ANALYZE command.  VACUUM, whatever its
  * options, returns at once with success: sm collects its own garbage, so
  * there is nothing for it to do.
@@ -93,22 +73,13 @@ bool check_vacuum_buffer_usage_limit(int *newval, void **extra,
  */
 void ExecVacuum(ParseState *pstate, VacuumStmt *vacstmt, bool isTopLevel) {
   VacuumParams params;
-  BufferAccessStrategy bstrategy = NULL;
   bool verbose = false;
   bool skip_locked = false;
-  int ring_size;
   MemoryContext vac_context;
-  MemoryContext old_context;
   ListCell *lc;
 
   if (vacstmt->is_vacuumcmd)
     return;
-
-  /*
-   * Set this to an invalid value so it is clear whether or not a
-   * BUFFER_USAGE_LIMIT was specified when making the access strategy.
-   */
-  ring_size = -1;
 
   /* Parse options list */
   foreach (lc, vacstmt->options) {
@@ -118,30 +89,7 @@ void ExecVacuum(ParseState *pstate, VacuumStmt *vacstmt, bool isTopLevel) {
       verbose = defGetBoolean(opt);
     else if (strcmp(opt->defname, "skip_locked") == 0)
       skip_locked = defGetBoolean(opt);
-    else if (strcmp(opt->defname, "buffer_usage_limit") == 0) {
-      const char *hintmsg;
-      int result;
-      char *vac_buffer_size;
-
-      vac_buffer_size = defGetString(opt);
-
-      /*
-       * Check that the specified value is valid and the size falls
-       * within the hard upper and lower limits if it is not 0.
-       */
-      if (!parse_int(vac_buffer_size, &result, GUC_UNIT_KB, &hintmsg) ||
-          (result != 0 && (result < MIN_BAS_VAC_RING_SIZE_KB ||
-                           result > MAX_BAS_VAC_RING_SIZE_KB))) {
-        ereport(ERROR,
-                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                 errmsg("BUFFER_USAGE_LIMIT option must be 0 or between %d kB "
-                        "and %d kB",
-                        MIN_BAS_VAC_RING_SIZE_KB, MAX_BAS_VAC_RING_SIZE_KB),
-                 hintmsg ? errhint("%s", _(hintmsg)) : 0));
-      }
-
-      ring_size = result;
-    } else
+    else
       ereport(ERROR,
               (errcode(ERRCODE_SYNTAX_ERROR),
                errmsg("unrecognized %s option \"%s\"", "ANALYZE", opt->defname),
@@ -161,21 +109,8 @@ void ExecVacuum(ParseState *pstate, VacuumStmt *vacstmt, bool isTopLevel) {
   vac_context =
       AllocSetContextCreate(PortalContext, "Vacuum", ALLOCSET_DEFAULT_SIZES);
 
-  /*
-   * Make a buffer strategy object in the cross-transaction memory context.
-   * If BUFFER_USAGE_LIMIT was specified by the command, it overrides the
-   * value of VacuumBufferUsageLimit.  Either value may be 0, in which case
-   * GetAccessStrategyWithSize() will return NULL, effectively allowing full
-   * use of shared buffers.
-   */
-  old_context = MemoryContextSwitchTo(vac_context);
-  if (ring_size == -1)
-    ring_size = VacuumBufferUsageLimit;
-  bstrategy = GetAccessStrategyWithSize(BAS_VACUUM, ring_size);
-  MemoryContextSwitchTo(old_context);
-
   /* Now go through the common routine */
-  vacuum(vacstmt->rels, &params, bstrategy, vac_context, isTopLevel);
+  vacuum(vacstmt->rels, &params, NULL, vac_context, isTopLevel);
 
   /* Finally, clean up the vacuum memory context */
   MemoryContextDelete(vac_context);
