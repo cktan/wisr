@@ -2113,7 +2113,7 @@ static void formrdesc(const char *relationName, Oid relationReltype,
    * initialize the table am handler
    */
   relation->rd_rel->relam = HEAP_TABLE_AM_OID;
-  relation->rd_tableam = GetHeapamTableAmRoutine();
+  relation->rd_tableam = smtable_routine();
 
   /*
    * initialize the rel-has-index flag, using hardwired knowledge

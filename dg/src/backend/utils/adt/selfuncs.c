@@ -100,7 +100,6 @@
 
 #include "access/table.h"
 #include "access/tableam.h"
-#include "access/visibilitymap.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_operator.h"
@@ -6059,7 +6058,6 @@ static bool get_actual_variable_endpoint(
   bool have_data = false;
   SnapshotData SnapshotNonVacuumable;
   IndexScanDesc index_scan;
-  Buffer vmbuffer = InvalidBuffer;
   BlockNumber last_heap_block = InvalidBlockNumber;
   int n_visited_heap_pages = 0;
   ItemPointer tid;
@@ -6123,8 +6121,8 @@ static bool get_actual_variable_endpoint(
   while ((tid = index_getnext_tid(index_scan, indexscandir)) != NULL) {
     BlockNumber block = ItemPointerGetBlockNumber(tid);
 
-    if (!VM_ALL_VISIBLE(heapRel, block, &vmbuffer)) {
-      /* Rats, we have to visit the heap to check visibility */
+    /* No page is known all-visible: visit the table to check. */
+    {
       if (!index_fetch_heap(index_scan, tableslot)) {
         /*
          * No visible tuple for this index entry, so we need to
@@ -6187,8 +6185,6 @@ static bool get_actual_variable_endpoint(
     break;
   }
 
-  if (vmbuffer != InvalidBuffer)
-    ReleaseBuffer(vmbuffer);
   index_endscan(index_scan);
 
   return have_data;

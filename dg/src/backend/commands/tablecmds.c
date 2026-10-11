@@ -15,8 +15,9 @@
 #include "postgres.h"
 
 #include "access/attmap.h"
+#include "access/relation.h"
+#include "access/table.h"
 #include "access/genam.h"
-#include "access/heapam.h"
 #include "access/multixact.h"
 #include "access/reloptions.h"
 #include "access/relscan.h"
@@ -5701,7 +5702,6 @@ static void ATRewriteTable(AlteredTableInfo *tab, Oid OIDNewHeap) {
   ListCell *l;
   EState *estate;
   CommandId mycid;
-  BulkInsertState bistate;
   int ti_options;
   ExprState *partqualstate = NULL;
 
@@ -5720,17 +5720,15 @@ static void ATRewriteTable(AlteredTableInfo *tab, Oid OIDNewHeap) {
     newrel = NULL;
 
   /*
-   * Prepare a BulkInsertState and options for table_tuple_insert.  The FSM
-   * is empty, so don't bother using it.
+   * Prepare options for table_tuple_insert.  The FSM is empty, so don't
+   * bother using it.
    */
   if (newrel) {
     mycid = GetCurrentCommandId(true);
-    bistate = GetBulkInsertState();
     ti_options = TABLE_INSERT_SKIP_FSM;
   } else {
     /* keep compiler quiet about using these uninitialized */
     mycid = 0;
-    bistate = NULL;
     ti_options = 0;
   }
 
@@ -6045,7 +6043,7 @@ static void ATRewriteTable(AlteredTableInfo *tab, Oid OIDNewHeap) {
 
       /* Write the tuple out to the new relation */
       if (newrel)
-        table_tuple_insert(newrel, insertslot, mycid, ti_options, bistate);
+        table_tuple_insert(newrel, insertslot, mycid, ti_options, NULL);
 
       ResetExprContext(econtext);
 
@@ -6065,8 +6063,6 @@ static void ATRewriteTable(AlteredTableInfo *tab, Oid OIDNewHeap) {
 
   table_close(oldrel, NoLock);
   if (newrel) {
-    FreeBulkInsertState(bistate);
-
     table_finish_bulk_insert(newrel, ti_options);
 
     table_close(newrel, NoLock);
@@ -6588,7 +6584,7 @@ static List *find_typed_table_dependencies(Oid typeOid, const char *typeName,
 
   scan = table_beginscan_catalog(classRel, 1, key);
 
-  while ((tuple = heap_getnext(scan, ForwardScanDirection)) != NULL) {
+  while ((tuple = catalog_scan_next(scan)) != NULL) {
     Form_pg_class classform = (Form_pg_class)GETSTRUCT(tuple);
 
     if (behavior == DROP_RESTRICT)
@@ -15632,7 +15628,7 @@ Oid AlterTableMoveAll(AlterTableMoveAllStmt *stmt) {
 
   rel = table_open(RelationRelationId, AccessShareLock);
   scan = table_beginscan_catalog(rel, 1, key);
-  while ((tuple = heap_getnext(scan, ForwardScanDirection)) != NULL) {
+  while ((tuple = catalog_scan_next(scan)) != NULL) {
     Form_pg_class relForm = (Form_pg_class)GETSTRUCT(tuple);
     Oid relOid = relForm->oid;
 

@@ -1853,3 +1853,33 @@ could name the GC thread's side.
   reloptions (`fillfactor`, `deduplicate_items`,
   `vacuum_cleanup_index_scale_factor`). The heap's CLUSTER
   rewrite refuses a sort until the heap goes too.
+
+## Step 59: the heap is gone
+
+- **`access/heap` is deleted**: heapam, its table access
+  method, visibility rules, pruning, rewrite, hio, TOAST
+  storage and the visibility map, about 15,000 lines, with
+  `toast_helper.c` and the headers `heapam.h`, `hio.h`,
+  `rewriteheap.h` and `visibilitymap*.h`. No relation can be a
+  heap: a table is sm's, and a catalog table cannot be opened.
+- **pg_am's heap is sm's**: `heap_tableam_handler` is in
+  `access/sm/smtable.c` and returns a routine whose slot is
+  virtual; every other callback raises an error, all filled by
+  one C++ template that takes each callback's type. The
+  relcache gives it to every relation.
+- **What stays of TOAST**: `heaptoast.c`, moved to
+  `access/common`, flattens a tuple built in memory, a
+  composite's, as before; `toast_internals.c` keeps
+  compression. Writing to a TOAST table went with it.
+- **Callers kept, refusing**: writing a catalog table
+  (`CatalogTuple*()`, `indexing.c`), scanning one
+  (`catalog_scan_next()`, in place of `heap_getnext()`), and
+  overwriting a row in place (`systable_inplace_update_*()`)
+  raise the error opening a catalog table would. They go with
+  their callers: VACUUM, CLUSTER, tablespaces, databases,
+  publications and the rest.
+- **No visibility map**: an index-only scan of what would be a
+  heap, and the planner's endpoint probe, visit the table for
+  every entry; ANALYZE and index builds record no all-visible
+  pages. COPY, CREATE TABLE AS, REFRESH and ALTER TABLE's
+  rewrite pass no bulk insert state.

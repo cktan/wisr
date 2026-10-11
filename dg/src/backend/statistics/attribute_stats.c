@@ -17,7 +17,9 @@
 
 #include "postgres.h"
 
-#include "access/heapam.h"
+#include "access/relation.h"
+#include "access/table.h"
+#include "access/tableam.h"
 #include "catalog/indexing.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_collation.h"

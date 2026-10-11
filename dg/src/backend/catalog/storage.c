@@ -19,7 +19,6 @@
 
 #include "postgres.h"
 
-#include "access/visibilitymap.h"
 #include "access/xact.h"
 #include "catalog/storage.h"
 #include "miscadmin.h"
@@ -230,7 +229,6 @@ void RelationPreserveStorage(RelFileLocator rlocator, bool atCommit) {
  */
 void RelationTruncate(Relation rel, BlockNumber nblocks) {
   bool fsm;
-  bool vm;
   bool need_fsm_vacuum = false;
   ForkNumber forks[MAX_FORKNUM];
   BlockNumber old_blocks[MAX_FORKNUM];
@@ -262,17 +260,6 @@ void RelationTruncate(Relation rel, BlockNumber nblocks) {
       old_blocks[nforks] = smgrnblocks(reln, FSM_FORKNUM);
       nforks++;
       need_fsm_vacuum = true;
-    }
-  }
-
-  /* Prepare for truncation of the visibility map too if it exists */
-  vm = smgrexists(RelationGetSmgr(rel), VISIBILITYMAP_FORKNUM);
-  if (vm) {
-    blocks[nforks] = visibilitymap_prepare_truncate(rel, nblocks);
-    if (BlockNumberIsValid(blocks[nforks])) {
-      forks[nforks] = VISIBILITYMAP_FORKNUM;
-      old_blocks[nforks] = smgrnblocks(reln, VISIBILITYMAP_FORKNUM);
-      nforks++;
     }
   }
 

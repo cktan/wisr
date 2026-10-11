@@ -1704,7 +1704,6 @@ typedef struct IndexScanState
  *		ScanDesc		   index scan descriptor
  *		Instrument		   local index scan instrumentation
  *		TableSlot		   slot for holding tuples fetched from the table
- *		VMBuffer		   buffer in use for visibility map testing, if any
  *		NameCStringAttNums attnums of name typed columns to pad to NAMEDATALEN
  *		NameCStringCount   number of elements in the NameCStringAttNums array
  *		SmScan			   for a table in sm, its index scan
@@ -1726,7 +1725,6 @@ typedef struct IndexOnlyScanState
 	struct IndexScanDescData *ioss_ScanDesc;
 	IndexScanInstrumentation ioss_Instrument;
 	TupleTableSlot *ioss_TableSlot;
-	Buffer		ioss_VMBuffer;
 	Size		ioss_PscanLen;
 	AttrNumber *ioss_NameCStringAttNums;
 	int			ioss_NameCStringCount;

@@ -40,7 +40,6 @@
 #include "access/relscan.h"
 #include "access/smstore.h"
 #include "access/tableam.h"
-#include "access/visibilitymap.h"
 #include "executor/executor.h"
 #include "executor/nodeBitmapHeapscan.h"
 #include "miscadmin.h"

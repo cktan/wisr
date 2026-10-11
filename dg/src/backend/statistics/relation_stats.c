@@ -17,9 +17,11 @@
 
 #include "postgres.h"
 
+#include "access/relation.h"
+#include "access/table.h"
+#include "access/tableam.h"
 #include <math.h>
 
-#include "access/heapam.h"
 #include "catalog/indexing.h"
 #include "catalog/namespace.h"
 #include "nodes/makefuncs.h"

@@ -15,7 +15,8 @@
 #include "postgres.h"
 
 #include "access/genam.h"
-#include "access/heapam.h"
+#include "access/relation.h"
+#include "access/table.h"
 #include "access/htup_details.h"
 #include "access/tableam.h"
 #include "catalog/indexing.h"
@@ -412,7 +413,7 @@ void RemoveSubscriptionRel(Oid subid, Oid relid) {
 
   /* Do the search and delete what we found. */
   scan = table_beginscan_catalog(rel, nkeys, skey);
-  while (HeapTupleIsValid(tup = heap_getnext(scan, ForwardScanDirection))) {
+  while (HeapTupleIsValid(tup = catalog_scan_next(scan))) {
     Form_pg_subscription_rel subrel;
 
     subrel = (Form_pg_subscription_rel)GETSTRUCT(tup);

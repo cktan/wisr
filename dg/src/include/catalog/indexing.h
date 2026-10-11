@@ -49,5 +49,6 @@ extern void CatalogTupleUpdateWithInfo(Relation heapRel, ItemPointer otid,
                                        HeapTuple tup,
                                        CatalogIndexState indstate);
 extern void CatalogTupleDelete(Relation heapRel, ItemPointer tid);
+extern HeapTuple catalog_scan_next(struct TableScanDescData *scan);
 
 #endif /* INDEXING_H */

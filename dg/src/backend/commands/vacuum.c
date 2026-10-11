@@ -21,12 +21,14 @@
 #include <math.h>
 
 #include "access/genam.h"
-#include "access/heapam.h"
+#include "access/relation.h"
+#include "access/table.h"
 #include "access/htup_details.h"
 #include "access/multixact.h"
 #include "access/tableam.h"
 #include "access/transam.h"
 #include "access/xact.h"
+#include "catalog/indexing.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_database.h"
 #include "catalog/pg_inherits.h"
@@ -560,7 +562,7 @@ static List *get_all_vacuum_rels(MemoryContext vac_context, int options) {
 
   scan = table_beginscan_catalog(pgclass, 0, NULL);
 
-  while ((tuple = heap_getnext(scan, ForwardScanDirection)) != NULL) {
+  while ((tuple = catalog_scan_next(scan)) != NULL) {
     Form_pg_class classForm = (Form_pg_class)GETSTRUCT(tuple);
     MemoryContext oldcontext;
     Oid relid = classForm->oid;

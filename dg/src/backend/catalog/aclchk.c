@@ -39,7 +39,8 @@
 #include "postgres.h"
 
 #include "access/genam.h"
-#include "access/heapam.h"
+#include "access/relation.h"
+#include "access/table.h"
 #include "access/htup_details.h"
 #include "access/sysattr.h"
 #include "access/tableam.h"
@@ -801,7 +802,7 @@ static List *objectsInSchemaToOids(ObjectType objtype, List *nspnames) {
       rel = table_open(ProcedureRelationId, AccessShareLock);
       scan = table_beginscan_catalog(rel, keycount, key);
 
-      while ((tuple = heap_getnext(scan, ForwardScanDirection)) != NULL) {
+      while ((tuple = catalog_scan_next(scan)) != NULL) {
         Oid oid = ((Form_pg_proc)GETSTRUCT(tuple))->oid;
 
         objects = lappend_oid(objects, oid);
@@ -839,7 +840,7 @@ static List *getRelationsInNamespace(Oid namespaceId, char relkind) {
   rel = table_open(RelationRelationId, AccessShareLock);
   scan = table_beginscan_catalog(rel, 2, key);
 
-  while ((tuple = heap_getnext(scan, ForwardScanDirection)) != NULL) {
+  while ((tuple = catalog_scan_next(scan)) != NULL) {
     Oid oid = ((Form_pg_class)GETSTRUCT(tuple))->oid;
 
     relations = lappend_oid(relations, oid);

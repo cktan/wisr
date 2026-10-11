@@ -24,8 +24,9 @@
  */
 #include "postgres.h"
 
-#include "access/heapam.h"
 #include "access/reloptions.h"
+#include "access/relation.h"
+#include "access/table.h"
 #include "access/tableam.h"
 #include "access/xact.h"
 #include "catalog/namespace.h"
@@ -52,11 +53,10 @@ typedef struct {
   DestReceiver pub; /* publicly-known function pointers */
   IntoClause *into; /* target relation specification */
   /* These fields are filled by intorel_startup: */
-  Relation rel;            /* relation to write to */
-  ObjectAddress reladdr;   /* address of rel, for ExecCreateTableAs */
-  CommandId output_cid;    /* cmin to insert in output tuples */
-  int ti_options;          /* table_tuple_insert performance options */
-  BulkInsertState bistate; /* bulk insert state */
+  Relation rel;          /* relation to write to */
+  ObjectAddress reladdr; /* address of rel, for ExecCreateTableAs */
+  CommandId output_cid;  /* cmin to insert in output tuples */
+  int ti_options;        /* table_tuple_insert performance options */
 } DR_intorel;
 
 /* utility functions for CTAS definition creation */
@@ -522,15 +522,6 @@ static void intorel_startup(DestReceiver *self, int operation,
   myState->ti_options = TABLE_INSERT_SKIP_FSM;
 
   /*
-   * If WITH NO DATA is specified, there is no need to set up the state for
-   * bulk inserts as there are no tuples to insert.
-   */
-  if (!into->skipData)
-    myState->bistate = GetBulkInsertState();
-  else
-    myState->bistate = NULL;
-
-  /*
    * Valid smgr_targblock implies something already wrote to the relation.
    * This may be harmless, but this function hasn't planned for it.
    */
@@ -554,7 +545,7 @@ static bool intorel_receive(TupleTableSlot *slot, DestReceiver *self) {
      * data (say a tuple's xmin), but since we don't do that here...
      */
     table_tuple_insert(myState->rel, slot, myState->output_cid,
-                       myState->ti_options, myState->bistate);
+                       myState->ti_options, NULL);
   }
 
   /* We know this is a newly created relation, so there are no indexes */
@@ -570,7 +561,6 @@ static void intorel_shutdown(DestReceiver *self) {
   IntoClause *into = myState->into;
 
   if (!into->skipData) {
-    FreeBulkInsertState(myState->bistate);
     table_finish_bulk_insert(myState->rel, myState->ti_options);
   }
 

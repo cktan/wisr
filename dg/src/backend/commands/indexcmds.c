@@ -16,7 +16,8 @@
 #include "postgres.h"
 
 #include "access/amapi.h"
-#include "access/heapam.h"
+#include "access/relation.h"
+#include "access/table.h"
 #include "access/htup_details.h"
 #include "access/reloptions.h"
 #include "access/sysattr.h"
@@ -2843,7 +2844,7 @@ static void ReindexMultipleTables(const ReindexStmt *stmt,
    */
   relationRelation = table_open(RelationRelationId, AccessShareLock);
   scan = table_beginscan_catalog(relationRelation, num_keys, scan_keys);
-  while ((tuple = heap_getnext(scan, ForwardScanDirection)) != NULL) {
+  while ((tuple = catalog_scan_next(scan)) != NULL) {
     Form_pg_class classtuple = (Form_pg_class)GETSTRUCT(tuple);
     Oid relid = classtuple->oid;
 

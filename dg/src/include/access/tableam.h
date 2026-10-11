@@ -1901,10 +1901,10 @@ extern void table_block_relation_estimate_size(Relation rel,
 extern const TableAmRoutine *GetTableAmRoutine(Oid amhandler);
 
 /* ----------------------------------------------------------------------------
- * Functions in heapam_handler.c
+ * Functions in access/sm/smtable.c
  * ----------------------------------------------------------------------------
  */
 
-extern const TableAmRoutine *GetHeapamTableAmRoutine(void);
+extern const TableAmRoutine *smtable_routine(void);
 
 #endif							/* TABLEAM_H */

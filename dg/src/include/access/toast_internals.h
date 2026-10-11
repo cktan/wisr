@@ -47,10 +47,6 @@ typedef struct toast_compress_header {
 extern Datum toast_compress_datum(Datum value, char cmethod);
 extern Oid toast_get_valid_index(Oid toastoid, LOCKMODE lock);
 
-extern void toast_delete_datum(Relation rel, Datum value, bool is_speculative);
-extern Datum toast_save_datum(Relation rel, Datum value,
-                              struct varlena *oldexternal, int options);
-
 extern int toast_open_indexes(Relation toastrel, LOCKMODE lock,
                               Relation **toastidxs, int *num_indexes);
 extern void toast_close_indexes(Relation *toastidxs, int num_indexes,

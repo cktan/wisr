@@ -14,8 +14,10 @@
  */
 #include "postgres.h"
 
-#include "access/heapam.h"
 #include "access/toast_compression.h"
+#include "access/relation.h"
+#include "access/table.h"
+#include "access/tableam.h"
 #include "access/xact.h"
 #include "catalog/binary_upgrade.h"
 #include "catalog/catalog.h"

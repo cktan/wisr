@@ -15,7 +15,8 @@
 #include "postgres.h"
 
 #include "access/genam.h"
-#include "access/heapam.h"
+#include "access/relation.h"
+#include "access/table.h"
 #include "access/htup_details.h"
 #include "access/tableam.h"
 #include "catalog/catalog.h"
@@ -799,7 +800,7 @@ List *GetAllTablesPublicationRelations(bool pubviaroot) {
 
   scan = table_beginscan_catalog(classRel, 1, key);
 
-  while ((tuple = heap_getnext(scan, ForwardScanDirection)) != NULL) {
+  while ((tuple = catalog_scan_next(scan)) != NULL) {
     Form_pg_class relForm = (Form_pg_class)GETSTRUCT(tuple);
     Oid relid = relForm->oid;
 
@@ -816,7 +817,7 @@ List *GetAllTablesPublicationRelations(bool pubviaroot) {
 
     scan = table_beginscan_catalog(classRel, 1, key);
 
-    while ((tuple = heap_getnext(scan, ForwardScanDirection)) != NULL) {
+    while ((tuple = catalog_scan_next(scan)) != NULL) {
       Form_pg_class relForm = (Form_pg_class)GETSTRUCT(tuple);
       Oid relid = relForm->oid;
 
@@ -909,7 +910,7 @@ List *GetSchemaPublicationRelations(Oid schemaid,
 
   /* get all the relations present in the specified schema */
   scan = table_beginscan_catalog(classRel, 1, key);
-  while ((tuple = heap_getnext(scan, ForwardScanDirection)) != NULL) {
+  while ((tuple = catalog_scan_next(scan)) != NULL) {
     Form_pg_class relForm = (Form_pg_class)GETSTRUCT(tuple);
     Oid relid = relForm->oid;
     char relkind;

@@ -24,8 +24,9 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
-#include "access/heapam.h"
 #include "access/tableam.h"
+#include "access/relation.h"
+#include "access/table.h"
 #include "access/xact.h"
 #include "catalog/namespace.h"
 #include "commands/copyapi.h"
@@ -76,8 +77,6 @@
 typedef struct CopyMultiInsertBuffer {
   TupleTableSlot *slots[MAX_BUFFERED_TUPLES]; /* Array to store tuples */
   ResultRelInfo *resultRelInfo;               /* ResultRelInfo for 'relid' */
-  BulkInsertState bistate;             /* BulkInsertState for this rel if plain
-                                        * table; NULL if foreign table */
   int nused;                           /* number of 'slots' containing tuples */
   uint64 linenos[MAX_BUFFERED_TUPLES]; /* Line # of tuple in copy
                                         * stream */
@@ -314,7 +313,6 @@ static CopyMultiInsertBuffer *CopyMultiInsertBufferInit(ResultRelInfo *rri) {
   buffer = (CopyMultiInsertBuffer *)palloc(sizeof(CopyMultiInsertBuffer));
   memset(buffer->slots, 0, sizeof(TupleTableSlot *) * MAX_BUFFERED_TUPLES);
   buffer->resultRelInfo = rri;
-  buffer->bistate = (rri->ri_FdwRoutine == NULL) ? GetBulkInsertState() : NULL;
   buffer->nused = 0;
 
   return buffer;
@@ -396,8 +394,6 @@ static inline void CopyMultiInsertBufferFlush(CopyMultiInsertInfo *miinfo,
     int batch_size = resultRelInfo->ri_BatchSize;
     int sent = 0;
 
-    Assert(buffer->bistate == NULL);
-
     /* Ensure that the FDW supports batching and it's enabled */
     Assert(resultRelInfo->ri_FdwRoutine->ExecForeignBatchInsert);
     Assert(batch_size > 1);
@@ -463,8 +459,6 @@ static inline void CopyMultiInsertBufferFlush(CopyMultiInsertInfo *miinfo,
     uint64 save_cur_lineno = cstate->cur_lineno;
     MemoryContext oldcontext;
 
-    Assert(buffer->bistate != NULL);
-
     /*
      * Print error context information correctly, if one of the operations
      * below fails.
@@ -477,7 +471,7 @@ static inline void CopyMultiInsertBufferFlush(CopyMultiInsertInfo *miinfo,
      */
     oldcontext = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
     table_multi_insert(resultRelInfo->ri_RelationDesc, slots, nused, mycid,
-                       ti_options, buffer->bistate);
+                       ti_options, NULL);
     MemoryContextSwitchTo(oldcontext);
 
     for (i = 0; i < nused; i++) {
@@ -539,12 +533,6 @@ static inline void CopyMultiInsertBufferCleanup(CopyMultiInsertInfo *miinfo,
 
   /* Remove back-link to ourself */
   resultRelInfo->ri_CopyMultiInsertBuffer = NULL;
-
-  if (resultRelInfo->ri_FdwRoutine == NULL) {
-    Assert(buffer->bistate != NULL);
-    FreeBulkInsertState(buffer->bistate);
-  } else
-    Assert(buffer->bistate == NULL);
 
   /* Since we only create slots on demand, just drop the non-null ones. */
   for (i = 0; i < MAX_BUFFERED_TUPLES && buffer->slots[i] != NULL; i++)
@@ -692,7 +680,6 @@ uint64 CopyFrom(CopyFromState cstate) {
   ErrorContextCallback errcallback;
   CommandId mycid = GetCurrentCommandId(true);
   int ti_options = 0; /* start with default options for insert */
-  BulkInsertState bistate = NULL;
   CopyInsertMethod insertMethod;
   CopyMultiInsertInfo multiInsertInfo = {0}; /* pacify compiler */
   int64 processed = 0;
@@ -964,7 +951,6 @@ uint64 CopyFrom(CopyFromState cstate) {
   if (insertMethod == CIM_SINGLE || insertMethod == CIM_MULTI_CONDITIONAL) {
     singleslot = table_slot_create(resultRelInfo->ri_RelationDesc,
                                    &estate->es_tupleTable);
-    bistate = GetBulkInsertState();
   }
 
   has_before_insert_row_trig =
@@ -1117,8 +1103,6 @@ uint64 CopyFrom(CopyFromState cstate) {
           CopyMultiInsertInfoFlush(&multiInsertInfo, resultRelInfo, &processed);
         }
 
-        if (bistate != NULL)
-          ReleaseBulkInsertStatePin(bistate);
         prevResultRelInfo = resultRelInfo;
       }
 
@@ -1267,7 +1251,7 @@ uint64 CopyFrom(CopyFromState cstate) {
           } else {
             /* OK, store the tuple and create index entries for it */
             table_tuple_insert(resultRelInfo->ri_RelationDesc, myslot, mycid,
-                               ti_options, bistate);
+                               ti_options, NULL);
 
             if (resultRelInfo->ri_NumIndices > 0)
               recheckIndexes =
@@ -1309,9 +1293,6 @@ uint64 CopyFrom(CopyFromState cstate) {
                           "%" PRIu64
                           " rows were skipped due to data type incompatibility",
                           cstate->num_errors, cstate->num_errors));
-
-  if (bistate != NULL)
-    FreeBulkInsertState(bistate);
 
   MemoryContextSwitchTo(oldcontext);
 

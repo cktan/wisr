@@ -25,13 +25,13 @@
 #include <unistd.h>
 
 #include "access/amapi.h"
-#include "access/heapam.h"
+#include "access/relation.h"
+#include "access/table.h"
 #include "access/multixact.h"
 #include "access/relscan.h"
 #include "access/tableam.h"
 #include "access/toast_compression.h"
 #include "access/transam.h"
-#include "access/visibilitymap.h"
 #include "access/xact.h"
 #include "catalog/binary_upgrade.h"
 #include "catalog/catalog.h"
@@ -2580,12 +2580,9 @@ static void index_update_stats(Relation rel, bool hasindex, double reltuples) {
    * GRANT, but no command changes a relkind from non-index to index.  (Even
    * if one did, relallvisible doesn't break functionality.)
    */
-  if (update_stats) {
+  /* relallvisible and relallfrozen stay 0: there is no visibility map. */
+  if (update_stats)
     relpages = RelationGetNumberOfBlocks(rel);
-
-    if (rel->rd_rel->relkind != RELKIND_INDEX)
-      visibilitymap_count(rel, &relallvisible, &relallfrozen);
-  }
 
   /*
    * We always update the pg_class row using a non-transactional,

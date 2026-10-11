@@ -20,7 +20,8 @@
 #include "postgres.h"
 
 #include "access/genam.h"
-#include "access/heapam.h"
+#include "access/relation.h"
+#include "access/table.h"
 #include "access/relscan.h"
 #include "access/tableam.h"
 #include "access/transam.h"
@@ -700,113 +701,26 @@ void systable_endscan_ordered(SysScanDesc sysscan) {
 }
 
 /*
- * systable_inplace_update_begin --- update a row "in place" (overwrite it)
- *
- * Overwriting violates both MVCC and transactional safety, so the uses of
- * this function in Postgres are extremely limited.  Nonetheless we find some
- * places to use it.  See README.tuplock section "Locking to write
- * inplace-updated tables" and later sections for expectations of readers and
- * writers of a table that gets inplace updates.  Standard flow:
- *
- * ... [any slow preparation not requiring oldtup] ...
- * systable_inplace_update_begin([...], &tup, &inplace_state);
- * if (!HeapTupleIsValid(tup))
- *	elog(ERROR, [...]);
- * ... [buffer is exclusive-locked; mutate "tup"] ...
- * if (dirty)
- *	systable_inplace_update_finish(inplace_state, tup);
- * else
- *	systable_inplace_update_cancel(inplace_state);
- *
- * The first several params duplicate the systable_beginscan() param list.
- * "oldtupcopy" is an output parameter, assigned NULL if the key ceases to
- * find a live tuple.  (In PROC_IN_VACUUM, that is a low-probability transient
- * condition.)  If "oldtupcopy" gets non-NULL, you must pass output parameter
- * "state" to systable_inplace_update_finish() or
- * systable_inplace_update_cancel().
+ * systable_inplace_update_begin --- overwrite a row of a catalog table: the
+ * heap's, gone with it.  digres has no catalog tables, so the relation was
+ * not opened; this is left for callers that go with the heap's others.
  */
 void systable_inplace_update_begin(Relation relation, Oid indexId, bool indexOK,
                                    Snapshot snapshot, int nkeys,
                                    const ScanKeyData *key,
                                    HeapTuple *oldtupcopy, void **state) {
-  int retries = 0;
-  SysScanDesc scan;
-  HeapTuple oldtup;
-  BufferHeapTupleTableSlot *bslot;
-
-  /*
-   * Accept a snapshot argument, for symmetry, but this function advances
-   * its snapshot as needed to reach the tail of the updated tuple chain.
-   */
-  Assert(snapshot == NULL);
-
-  Assert(IsInplaceUpdateRelation(relation) || !IsSystemRelation(relation));
-
-  /* Loop for an exclusive-locked buffer of a non-updated tuple. */
-  do {
-    TupleTableSlot *slot;
-
-    CHECK_FOR_INTERRUPTS();
-
-    /*
-     * Processes issuing heap_update (e.g. GRANT) at maximum speed could
-     * drive us to this error.  A hostile table owner has stronger ways to
-     * damage their own table, so that's minor.
-     */
-    if (retries++ > 10000)
-      elog(ERROR, "giving up after too many tries to overwrite row");
-
-    INJECTION_POINT("inplace-before-pin", NULL);
-    scan = systable_beginscan(relation, indexId, indexOK, snapshot, nkeys,
-                              unconstify(ScanKeyData *, key));
-    oldtup = systable_getnext(scan);
-    if (!HeapTupleIsValid(oldtup)) {
-      systable_endscan(scan);
-      *oldtupcopy = NULL;
-      return;
-    }
-
-    slot = scan->slot;
-    Assert(TTS_IS_BUFFERTUPLE(slot));
-    bslot = (BufferHeapTupleTableSlot *)slot;
-  } while (!heap_inplace_lock(scan->heap_rel, bslot->base.tuple, bslot->buffer,
-                              (void (*)(void *))systable_endscan, scan));
-
-  *oldtupcopy = heap_copytuple(oldtup);
-  *state = scan;
+  ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                  errmsg("relation %u cannot be written: digres has no catalog "
+                         "tables",
+                         RelationGetRelid(relation))));
 }
 
-/*
- * systable_inplace_update_finish --- second phase of inplace update
- *
- * The tuple cannot change size, and therefore its header fields and null
- * bitmap (if any) don't change either.
- */
+/* Second phase of an in-place update, which never begins. */
 void systable_inplace_update_finish(void *state, HeapTuple tuple) {
-  SysScanDesc scan = (SysScanDesc)state;
-  Relation relation = scan->heap_rel;
-  TupleTableSlot *slot = scan->slot;
-  BufferHeapTupleTableSlot *bslot = (BufferHeapTupleTableSlot *)slot;
-  HeapTuple oldtup = bslot->base.tuple;
-  Buffer buffer = bslot->buffer;
-
-  heap_inplace_update_and_unlock(relation, oldtup, tuple, buffer);
-  systable_endscan(scan);
+  elog(ERROR, "no in-place update began");
 }
 
-/*
- * systable_inplace_update_cancel --- abandon inplace update
- *
- * This is an alternative to making a no-op update.
- */
+/* Abandon an in-place update, which never begins. */
 void systable_inplace_update_cancel(void *state) {
-  SysScanDesc scan = (SysScanDesc)state;
-  Relation relation = scan->heap_rel;
-  TupleTableSlot *slot = scan->slot;
-  BufferHeapTupleTableSlot *bslot = (BufferHeapTupleTableSlot *)slot;
-  HeapTuple oldtup = bslot->base.tuple;
-  Buffer buffer = bslot->buffer;
-
-  heap_inplace_unlock(relation, oldtup, buffer);
-  systable_endscan(scan);
+  elog(ERROR, "no in-place update began");
 }

@@ -20,10 +20,12 @@
 #include <unistd.h>
 
 #include "access/genam.h"
-#include "access/heapam.h"
+#include "access/relation.h"
+#include "access/table.h"
 #include "access/htup_details.h"
 #include "access/tableam.h"
 #include "access/xact.h"
+#include "catalog/indexing.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_authid.h"
 #include "catalog/pg_collation.h"
@@ -873,7 +875,7 @@ static bool ThereIsAtLeastOneRole(void) {
   pg_authid_rel = table_open(AuthIdRelationId, AccessShareLock);
 
   scan = table_beginscan_catalog(pg_authid_rel, 0, NULL);
-  result = (heap_getnext(scan, ForwardScanDirection) != NULL);
+  result = (catalog_scan_next(scan) != NULL);
 
   table_endscan(scan);
   table_close(pg_authid_rel, AccessShareLock);

@@ -18,7 +18,8 @@
 #include "postgres.h"
 
 #include "access/amapi.h"
-#include "access/heapam.h"
+#include "access/relation.h"
+#include "access/table.h"
 #include "access/multixact.h"
 #include "access/relscan.h"
 #include "access/tableam.h"
@@ -1484,7 +1485,7 @@ static List *get_tables_to_cluster(MemoryContext cluster_context) {
   ScanKeyInit(&entry, Anum_pg_index_indisclustered, BTEqualStrategyNumber,
               F_BOOLEQ, BoolGetDatum(true));
   scan = table_beginscan_catalog(indRelation, 1, &entry);
-  while ((indexTuple = heap_getnext(scan, ForwardScanDirection)) != NULL) {
+  while ((indexTuple = catalog_scan_next(scan)) != NULL) {
     RelToCluster *rtc;
 
     index = (Form_pg_index)GETSTRUCT(indexTuple);

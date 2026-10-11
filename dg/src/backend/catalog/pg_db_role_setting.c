@@ -12,7 +12,8 @@
 #include "postgres.h"
 
 #include "access/genam.h"
-#include "access/heapam.h"
+#include "access/relation.h"
+#include "access/table.h"
 #include "access/htup_details.h"
 #include "access/tableam.h"
 #include "catalog/indexing.h"
@@ -170,7 +171,7 @@ void DropSetting(Oid databaseid, Oid roleid) {
   }
 
   scan = table_beginscan_catalog(relsetting, numkeys, keys);
-  while (HeapTupleIsValid(tup = heap_getnext(scan, ForwardScanDirection))) {
+  while (HeapTupleIsValid(tup = catalog_scan_next(scan))) {
     CatalogTupleDelete(relsetting, &tup->t_self);
   }
   table_endscan(scan);

@@ -50,8 +50,9 @@
 #include <dirent.h>
 #include <sys/stat.h>
 
-#include "access/heapam.h"
 #include "access/htup_details.h"
+#include "access/relation.h"
+#include "access/table.h"
 #include "access/reloptions.h"
 #include "access/tableam.h"
 #include "access/xact.h"
@@ -363,7 +364,7 @@ void DropTableSpace(DropTableSpaceStmt *stmt) {
   ScanKeyInit(&entry[0], Anum_pg_tablespace_spcname, BTEqualStrategyNumber,
               F_NAMEEQ, CStringGetDatum(tablespacename));
   scandesc = table_beginscan_catalog(rel, 1, entry);
-  tuple = heap_getnext(scandesc, ForwardScanDirection);
+  tuple = catalog_scan_next(scandesc);
 
   if (!HeapTupleIsValid(tuple)) {
     if (!stmt->missing_ok) {
@@ -743,7 +744,7 @@ ObjectAddress RenameTableSpace(const char *oldname, const char *newname) {
   ScanKeyInit(&entry[0], Anum_pg_tablespace_spcname, BTEqualStrategyNumber,
               F_NAMEEQ, CStringGetDatum(oldname));
   scan = table_beginscan_catalog(rel, 1, entry);
-  tup = heap_getnext(scan, ForwardScanDirection);
+  tup = catalog_scan_next(scan);
   if (!HeapTupleIsValid(tup))
     ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
                     errmsg("tablespace \"%s\" does not exist", oldname)));
@@ -780,7 +781,7 @@ ObjectAddress RenameTableSpace(const char *oldname, const char *newname) {
   ScanKeyInit(&entry[0], Anum_pg_tablespace_spcname, BTEqualStrategyNumber,
               F_NAMEEQ, CStringGetDatum(newname));
   scan = table_beginscan_catalog(rel, 1, entry);
-  tup = heap_getnext(scan, ForwardScanDirection);
+  tup = catalog_scan_next(scan);
   if (HeapTupleIsValid(tup))
     ereport(ERROR, (errcode(ERRCODE_DUPLICATE_OBJECT),
                     errmsg("tablespace \"%s\" already exists", newname)));
@@ -824,7 +825,7 @@ Oid AlterTableSpaceOptions(AlterTableSpaceOptionsStmt *stmt) {
   ScanKeyInit(&entry[0], Anum_pg_tablespace_spcname, BTEqualStrategyNumber,
               F_NAMEEQ, CStringGetDatum(stmt->tablespacename));
   scandesc = table_beginscan_catalog(rel, 1, entry);
-  tup = heap_getnext(scandesc, ForwardScanDirection);
+  tup = catalog_scan_next(scandesc);
   if (!HeapTupleIsValid(tup))
     ereport(ERROR,
             (errcode(ERRCODE_UNDEFINED_OBJECT),
@@ -1190,7 +1191,7 @@ Oid get_tablespace_oid(const char *tablespacename, bool missing_ok) {
   ScanKeyInit(&entry[0], Anum_pg_tablespace_spcname, BTEqualStrategyNumber,
               F_NAMEEQ, CStringGetDatum(tablespacename));
   scandesc = table_beginscan_catalog(rel, 1, entry);
-  tuple = heap_getnext(scandesc, ForwardScanDirection);
+  tuple = catalog_scan_next(scandesc);
 
   /* We assume that there can be at most one matching tuple */
   if (HeapTupleIsValid(tuple))
@@ -1231,7 +1232,7 @@ char *get_tablespace_name(Oid spc_oid) {
   ScanKeyInit(&entry[0], Anum_pg_tablespace_oid, BTEqualStrategyNumber, F_OIDEQ,
               ObjectIdGetDatum(spc_oid));
   scandesc = table_beginscan_catalog(rel, 1, entry);
-  tuple = heap_getnext(scandesc, ForwardScanDirection);
+  tuple = catalog_scan_next(scandesc);
 
   /* We assume that there can be at most one matching tuple */
   if (HeapTupleIsValid(tuple))

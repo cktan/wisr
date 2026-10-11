@@ -24,7 +24,8 @@
 #include <sys/stat.h>
 
 #include "access/genam.h"
-#include "access/heapam.h"
+#include "access/relation.h"
+#include "access/table.h"
 #include "access/htup_details.h"
 #include "access/multixact.h"
 #include "access/tableam.h"
@@ -116,7 +117,7 @@ static void CreateDatabaseUsingFileCopy(Oid src_dboid, Oid dst_dboid,
    */
   rel = table_open(TableSpaceRelationId, AccessShareLock);
   scan = table_beginscan_catalog(rel, 0, NULL);
-  while ((tuple = heap_getnext(scan, ForwardScanDirection)) != NULL) {
+  while ((tuple = catalog_scan_next(scan)) != NULL) {
     Form_pg_tablespace spaceform = (Form_pg_tablespace)GETSTRUCT(tuple);
     Oid srctablespace = spaceform->oid;
     Oid dsttablespace;
@@ -2136,7 +2137,7 @@ static void remove_dbtablespaces(Oid db_id) {
 
   rel = table_open(TableSpaceRelationId, AccessShareLock);
   scan = table_beginscan_catalog(rel, 0, NULL);
-  while ((tuple = heap_getnext(scan, ForwardScanDirection)) != NULL) {
+  while ((tuple = catalog_scan_next(scan)) != NULL) {
     Form_pg_tablespace spcform = (Form_pg_tablespace)GETSTRUCT(tuple);
     Oid dsttablespace = spcform->oid;
     char *dstpath;
@@ -2186,7 +2187,7 @@ static bool check_db_file_conflict(Oid db_id) {
 
   rel = table_open(TableSpaceRelationId, AccessShareLock);
   scan = table_beginscan_catalog(rel, 0, NULL);
-  while ((tuple = heap_getnext(scan, ForwardScanDirection)) != NULL) {
+  while ((tuple = catalog_scan_next(scan)) != NULL) {
     Form_pg_tablespace spcform = (Form_pg_tablespace)GETSTRUCT(tuple);
     Oid dsttablespace = spcform->oid;
     char *dstpath;

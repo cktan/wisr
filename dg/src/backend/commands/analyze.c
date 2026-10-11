@@ -24,7 +24,6 @@
 #include "access/tableam.h"
 #include "access/transam.h"
 #include "access/tupconvert.h"
-#include "access/visibilitymap.h"
 #include "access/xact.h"
 #include "catalog/index.h"
 #include "catalog/indexing.h"
@@ -528,11 +527,9 @@ static void do_analyze_rel(Relation onerel, VacuumParams *params, List *va_cols,
    * VACUUM if the index AM returns NULL from its amvacuumcleanup() routine.
    */
   if (!inh) {
+    /* No page is all-visible or all-frozen: there is no visibility map. */
     BlockNumber relallvisible = 0;
     BlockNumber relallfrozen = 0;
-
-    if (RELKIND_HAS_STORAGE(onerel->rd_rel->relkind))
-      visibilitymap_count(onerel, &relallvisible, &relallfrozen);
 
     /*
      * Update pg_class for table relation.  CCI first, in case acquirefunc
