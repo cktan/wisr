@@ -1977,3 +1977,26 @@ making and dropping one does too.
   dependencies a dropped database left.
 - `server.sh` creates, uses, drops, force-drops and recreates a
   database.
+
+## Step 64: CLUSTER and REINDEX do nothing, and say so
+
+PLAN.md §7. VACUUM already did nothing; CLUSTER and REINDEX
+join it, each with a warning, so a tool that runs them goes on.
+
+- **CLUSTER** warns that a table in sm is kept by rowno, not in
+  an index's order, and succeeds; so do ALTER TABLE ...
+  CLUSTER ON and SET WITHOUT CLUSTER. `cluster.c` is gone: the
+  heap's rewrite in an index's order, and its swap of a new
+  heap's files for the old (`make_new_heap()`,
+  `finish_heap_swap()`).
+- **Without that swap**, an ALTER TABLE that rewrites its table
+  and REFRESH MATERIALIZED VIEW are refused, "not supported
+  yet"; the refresh's own code goes (`matview.c` keeps its
+  receiver and the check that DML may not touch a view).
+- **REINDEX**, of an index, table, schema or database, warns
+  that sm keeps an index's entries with its table's rows, and
+  succeeds. Its code in `indexcmds.c` goes, with
+  `index_concurrently_create_copy()` and
+  `index_concurrently_swap()`. `reindex_relation()` stays for
+  the heap's TRUNCATE, until TRUNCATE is sm's.
+- `server.sh` checks both warnings.

@@ -669,6 +669,24 @@ db_psql d1 'select a from t' | grep -q 'relation "t" does not exist' ||
 db_psql postgres 'alter database d1 rename to d3' |
   grep -q 'ALTER DATABASE is not supported' || fail "alter database"
 
+# Verify that CLUSTER and REINDEX succeed, doing nothing, each with a
+# warning saying why: sm keeps no table in an index's order, and keeps an
+# index's entries with its table's rows.
+# 1. Run CLUSTER on t4 by its index, and CLUSTER of every table.
+# 2. Run REINDEX of t4, of its index, and of the database.
+# 3. Confirm each warns and reports its command.
+for sql in "cluster t4 using t4_ac" "cluster"; do
+  out=$(local_psql -c "$sql" 2>&1)
+  echo "$out" | grep -q 'WARNING:  CLUSTER does nothing' &&
+    echo "$out" | grep -q '^CLUSTER$' || fail "cluster: $sql"
+done
+for sql in "reindex table t4" "reindex index t4_ac" \
+  "reindex database postgres"; do
+  out=$(local_psql -c "$sql" 2>&1)
+  echo "$out" | grep -q 'WARNING:  REINDEX does nothing' &&
+    echo "$out" | grep -q '^REINDEX$' || fail "reindex: $sql"
+done
+
 # Verify that = finds rows, and that DROP TABLE removes a table for good,
 # even from a session that had used it.
 # 1. Confirm WHERE a = 2 finds the one row.

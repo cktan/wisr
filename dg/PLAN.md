@@ -404,7 +404,9 @@ Do not reopen these without the owner:
   vacuum are removed, planner included; sorting and temporary
   files stay serial.
 - **No VACUUM.** sm collects its own garbage. `VACUUM`
-  succeeds and does nothing; `ANALYZE` stays.
+  succeeds and does nothing; `ANALYZE` stays. `CLUSTER` and
+  `REINDEX` succeed too, doing nothing, with a warning: a table
+  in sm is kept by rowno, and its indexes with its rows.
 - **No WAL.** sm keeps what is durable. There is no recovery,
   archiving or hot standby, and `PREPARE TRANSACTION` is
   refused.

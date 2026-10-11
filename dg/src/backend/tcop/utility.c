@@ -22,7 +22,6 @@
 #include "catalog/pg_authid.h"
 #include "catalog/pg_inherits.h"
 #include "commands/alter.h"
-#include "commands/cluster.h"
 #include "commands/collationcmds.h"
 #include "commands/comment.h"
 #include "commands/conversioncmds.h"
@@ -695,7 +694,8 @@ void standard_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
     break;
 
   case T_ClusterStmt:
-    cluster(pstate, (ClusterStmt *)parsetree, isTopLevel);
+    ereport(WARNING, (errmsg("CLUSTER does nothing: a table in sm is kept "
+                             "by rowno, not in an index's order")));
     break;
 
   case T_VacuumStmt:

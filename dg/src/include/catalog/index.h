@@ -79,14 +79,7 @@ extern Oid index_create(Relation heapRelation, const char *indexRelationName,
 #define INDEX_CONSTR_CREATE_REMOVE_OLD_DEPS	(1 << 4)
 #define INDEX_CONSTR_CREATE_WITHOUT_OVERLAPS (1 << 5)
 
-extern Oid index_concurrently_create_copy(Relation heapRelation, Oid oldIndexId,
-                                          Oid tablespaceOid,
-                                          const char *newName);
-
 extern void index_concurrently_build(Oid heapRelationId, Oid indexRelationId);
-
-extern void index_concurrently_swap(Oid newIndexId, Oid oldIndexId,
-                                    const char *oldName);
 
 extern void index_concurrently_set_dead(Oid heapId, Oid indexId);
 
