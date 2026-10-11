@@ -40,11 +40,9 @@
 #include "commands/portalcmds.h"
 #include "commands/prepare.h"
 #include "commands/proclang.h"
-#include "commands/publicationcmds.h"
 #include "commands/schemacmds.h"
 #include "commands/seclabel.h"
 #include "commands/sequence.h"
-#include "commands/subscriptioncmds.h"
 #include "commands/tablecmds.h"
 #include "commands/tablespace.h"
 #include "commands/trigger.h"
@@ -1545,17 +1543,9 @@ static void ProcessUtilitySlow(ParseState *pstate, PlannedStmt *pstmt,
       break;
 
     case T_CreatePublicationStmt:
-      address = CreatePublication(pstate, (CreatePublicationStmt *)parsetree);
-      break;
-
     case T_AlterPublicationStmt:
-      AlterPublication(pstate, (AlterPublicationStmt *)parsetree);
-
-      /*
-       * AlterPublication calls EventTriggerCollectSimpleCommand
-       * directly
-       */
-      commandCollected = true;
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("publications are not supported")));
       break;
 
     case T_CreateSubscriptionStmt:

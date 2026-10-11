@@ -348,6 +348,23 @@ for sql in "grant select on large object 123 to public" \
     fail "large object refused: $sql"
 done
 
+# Verify that publications and subscriptions are refused: creating,
+# altering, dropping or commenting on one fails, naming which.
+# 1. Run each statement in a session of its own.
+# 2. Confirm each fails saying publications, or subscriptions, are not
+#    supported.
+for sql in "create publication p for all tables" \
+  "alter publication p add table t" "drop publication p" \
+  "comment on publication p is 'x'"; do
+  local_psql -c "$sql" 2>&1 | grep -q 'publications are not supported' ||
+    fail "publication refused: $sql"
+done
+for sql in "create subscription s connection 'x' publication p" \
+  "drop subscription s"; do
+  local_psql -c "$sql" 2>&1 | grep -q 'subscriptions are not supported' ||
+    fail "subscription refused: $sql"
+done
+
 # Verify that LOCK TABLE takes sm's table lock: SHARE lets another session
 # read and keeps it from writing; ACCESS EXCLUSIVE keeps it from reading.
 # 1. In a session of its own, lock t2 in SHARE mode and hold it.

@@ -1903,3 +1903,29 @@ ported. Large objects are the first.
 - The grammar, nodes and catalog headers stay, as for LISTEN:
   sq parses the statements, and the catalog's ids are still
   named in tables of object classes.
+
+## Step 61: publications and subscriptions are gone
+
+PLAN.md §7: storage and replication features are deleted.
+Logical replication's workers went with the WAL; its catalogs'
+code goes now.
+
+- **Gone**: `pg_publication.c`, `publicationcmds.c` and
+  `pg_subscription.c` with their command headers; the SQL
+  functions `pg_get_publication_tables` and
+  `pg_relation_is_publishable`; the `pg_publication_tables`
+  view, the publication and subscription rows of
+  `pg_seclabels`, and the column grants on `pg_subscription`.
+- **A relation publishes nothing**:
+  `RelationBuildPublicationDesc()` says so without looking,
+  and the relcache keeps no publication descriptor. ALTER
+  TABLE no longer asks whether a table is published, nor DROP
+  DATABASE whether it has subscriptions, nor dropping a table
+  for its subscription states.
+- **Refused**: CREATE, ALTER and DROP PUBLICATION, and naming a
+  publication or subscription anywhere (COMMENT, owners,
+  dependencies), fail with "publications are not supported" or
+  "subscriptions are not supported", as CREATE SUBSCRIPTION
+  already did.
+- The grammar, nodes and catalog headers stay; the headers lose
+  their functions' prototypes.

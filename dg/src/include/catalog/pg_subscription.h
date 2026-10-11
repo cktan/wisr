@@ -178,13 +178,5 @@ typedef struct Subscription
 
 #endif							/* EXPOSE_TO_CLIENT_CODE */
 
-extern Subscription *GetSubscription(Oid subid, bool missing_ok);
-extern void FreeSubscription(Subscription *sub);
-extern void DisableSubscription(Oid subid);
-
-extern int	CountDBSubscriptions(Oid dbid);
-
-extern void GetPublicationsStr(List *publications, StringInfo dest,
-							   bool quote_literal);
 
 #endif							/* PG_SUBSCRIPTION_H */

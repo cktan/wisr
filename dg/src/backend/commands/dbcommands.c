@@ -1036,7 +1036,6 @@ void dropdb(const char *dbname, bool missing_ok, bool force) {
   Form_pg_database datform;
   int notherbackends;
   int npreparedxacts;
-  int nsubscriptions;
 
   /*
    * Look up the target database's OID, and get exclusive lock on it. We
@@ -1084,21 +1083,6 @@ void dropdb(const char *dbname, bool missing_ok, bool force) {
   if (db_id == MyDatabaseId)
     ereport(ERROR, (errcode(ERRCODE_OBJECT_IN_USE),
                     errmsg("cannot drop the currently open database")));
-
-  /*
-   * Check if there are subscriptions defined in the target database.
-   *
-   * We can't drop them automatically because they might be holding
-   * resources in other databases/instances.
-   */
-  if ((nsubscriptions = CountDBSubscriptions(db_id)) > 0)
-    ereport(ERROR, (errcode(ERRCODE_OBJECT_IN_USE),
-                    errmsg("database \"%s\" is being used by logical "
-                           "replication subscription",
-                           dbname),
-                    errdetail_plural("There is %d subscription.",
-                                     "There are %d subscriptions.",
-                                     nsubscriptions, nsubscriptions)));
 
   /*
    * Attempt to terminate all existing connections to the target database if

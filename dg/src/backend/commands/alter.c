@@ -48,9 +48,7 @@
 #include "commands/event_trigger.h"
 #include "commands/extension.h"
 #include "commands/policy.h"
-#include "commands/publicationcmds.h"
 #include "commands/schemacmds.h"
-#include "commands/subscriptioncmds.h"
 #include "commands/tablecmds.h"
 #include "commands/tablespace.h"
 #include "commands/trigger.h"
@@ -306,21 +304,6 @@ static void AlterObjectRename_internal(Relation rel, Oid objectId,
   CatalogTupleUpdate(rel, &oldtup->t_self, newtup);
 
   InvokeObjectPostAlterHook(classId, objectId, 0);
-
-  /* Do post catalog-update tasks */
-  if (classId == PublicationRelationId) {
-    Form_pg_publication pub = (Form_pg_publication)GETSTRUCT(oldtup);
-
-    /*
-     * Invalidate relsynccache entries.
-     *
-     * Unlike ALTER PUBLICATION ADD/SET/DROP commands, renaming a
-     * publication does not impact the publication status of tables. So,
-     * we don't need to invalidate relcache to rebuild the rd_pubdesc.
-     * Instead, we invalidate only the relsyncache.
-     */
-    InvalidatePubRelSyncCache(pub->oid, pub->puballtables);
-  }
 
   /* Release memory */
   pfree(values);
@@ -775,7 +758,9 @@ ObjectAddress ExecAlterOwnerStmt(AlterOwnerStmt *stmt) {
     return AlterEventTriggerOwner(strVal(stmt->object), newowner);
 
   case OBJECT_PUBLICATION:
-    return AlterPublicationOwner(strVal(stmt->object), newowner);
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("publications are not supported")));
+    return InvalidObjectAddress; /* not reached */
 
   case OBJECT_SUBSCRIPTION:
     ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),

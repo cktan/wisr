@@ -1762,11 +1762,6 @@ void heap_drop_with_catalog(Oid relid) {
   relation_close(rel, NoLock);
 
   /*
-   * Remove any associated relation synchronization states.
-   */
-  RemoveSubscriptionRel(InvalidOid, relid);
-
-  /*
    * Forget any ON COMMIT action for the rel
    */
   remove_on_commit_action(relid);

@@ -68,7 +68,6 @@
 #include "catalog/schemapg.h"
 #include "catalog/storage.h"
 #include "commands/policy.h"
-#include "commands/publicationcmds.h"
 #include "commands/trigger.h"
 #include "common/int.h"
 #include "miscadmin.h"
@@ -2524,8 +2523,6 @@ static void RelationDestroyRelation(Relation relation, bool remember_tupdesc) {
   bms_free(relation->rd_idattr);
   bms_free(relation->rd_hotblockingattr);
   bms_free(relation->rd_summarizedattr);
-  if (relation->rd_pubdesc)
-    pfree(relation->rd_pubdesc);
   if (relation->rd_options)
     pfree(relation->rd_options);
   if (relation->rd_indextuple)
@@ -5551,52 +5548,11 @@ void RelationGetExclusionInfo(Relation indexRelation, Oid **operators,
 }
 
 /*
- * Get the publication information for the given relation.
- *
- * Traverse all the publications which the relation is in to get the
- * publication actions and validate:
- * 1. The row filter expressions for such publications if any. We consider the
- *    row filter expression as invalid if it references any column which is not
- *    part of REPLICA IDENTITY.
- * 2. The column list for such publication if any. We consider the column list
- * 	  invalid if REPLICA IDENTITY contains any column that is not part of
- * it.
- * 3. The generated columns of the relation for such publications. We consider
- *    any reference of an unpublished generated column in REPLICA IDENTITY as
- *    invalid.
- *
- * To avoid fetching the publication information repeatedly, we cache the
- * publication actions, row filter validation information, column list
- * validation information, and generated column validation information.
+ * RelationBuildPublicationDesc -- what the publications of relation publish,
+ * and whether its replica identity covers them: nothing, and it does, as
+ * digres has no publications.
  */
 void RelationBuildPublicationDesc(Relation relation, PublicationDesc *pubdesc) {
-  List *puboids;
-  ListCell *lc;
-  MemoryContext oldcxt;
-  Oid schemaid;
-  List *ancestors = NIL;
-  Oid relid = RelationGetRelid(relation);
-
-  /*
-   * If not publishable, it publishes no actions.  (pgoutput_change() will
-   * ignore it.)
-   */
-  if (!is_publishable_relation(relation)) {
-    memset(pubdesc, 0, sizeof(PublicationDesc));
-    pubdesc->rf_valid_for_update = true;
-    pubdesc->rf_valid_for_delete = true;
-    pubdesc->cols_valid_for_update = true;
-    pubdesc->cols_valid_for_delete = true;
-    pubdesc->gencols_valid_for_update = true;
-    pubdesc->gencols_valid_for_delete = true;
-    return;
-  }
-
-  if (relation->rd_pubdesc) {
-    memcpy(pubdesc, relation->rd_pubdesc, sizeof(PublicationDesc));
-    return;
-  }
-
   memset(pubdesc, 0, sizeof(PublicationDesc));
   pubdesc->rf_valid_for_update = true;
   pubdesc->rf_valid_for_delete = true;
@@ -5604,128 +5560,6 @@ void RelationBuildPublicationDesc(Relation relation, PublicationDesc *pubdesc) {
   pubdesc->cols_valid_for_delete = true;
   pubdesc->gencols_valid_for_update = true;
   pubdesc->gencols_valid_for_delete = true;
-
-  /* Fetch the publication membership info. */
-  puboids = GetRelationPublications(relid);
-  schemaid = RelationGetNamespace(relation);
-  puboids = list_concat_unique_oid(puboids, GetSchemaPublications(schemaid));
-
-  if (relation->rd_rel->relispartition) {
-    /* Add publications that the ancestors are in too. */
-    ancestors = get_partition_ancestors(relid);
-
-    foreach (lc, ancestors) {
-      Oid ancestor = lfirst_oid(lc);
-
-      puboids =
-          list_concat_unique_oid(puboids, GetRelationPublications(ancestor));
-      schemaid = get_rel_namespace(ancestor);
-      puboids =
-          list_concat_unique_oid(puboids, GetSchemaPublications(schemaid));
-    }
-  }
-  puboids = list_concat_unique_oid(puboids, GetAllTablesPublications());
-
-  foreach (lc, puboids) {
-    Oid pubid = lfirst_oid(lc);
-    HeapTuple tup;
-    Form_pg_publication pubform;
-    bool invalid_column_list;
-    bool invalid_gen_col;
-
-    tup = SearchSysCache1(PUBLICATIONOID, ObjectIdGetDatum(pubid));
-
-    if (!HeapTupleIsValid(tup))
-      elog(ERROR, "cache lookup failed for publication %u", pubid);
-
-    pubform = (Form_pg_publication)GETSTRUCT(tup);
-
-    pubdesc->pubactions.pubinsert |= pubform->pubinsert;
-    pubdesc->pubactions.pubupdate |= pubform->pubupdate;
-    pubdesc->pubactions.pubdelete |= pubform->pubdelete;
-    pubdesc->pubactions.pubtruncate |= pubform->pubtruncate;
-
-    /*
-     * Check if all columns referenced in the filter expression are part
-     * of the REPLICA IDENTITY index or not.
-     *
-     * If the publication is FOR ALL TABLES then it means the table has no
-     * row filters and we can skip the validation.
-     */
-    if (!pubform->puballtables && (pubform->pubupdate || pubform->pubdelete) &&
-        pub_rf_contains_invalid_column(pubid, relation, ancestors,
-                                       pubform->pubviaroot)) {
-      if (pubform->pubupdate)
-        pubdesc->rf_valid_for_update = false;
-      if (pubform->pubdelete)
-        pubdesc->rf_valid_for_delete = false;
-    }
-
-    /*
-     * Check if all columns are part of the REPLICA IDENTITY index or not.
-     *
-     * Check if all generated columns included in the REPLICA IDENTITY are
-     * published.
-     */
-    if ((pubform->pubupdate || pubform->pubdelete) &&
-        pub_contains_invalid_column(pubid, relation, ancestors,
-                                    pubform->pubviaroot, pubform->pubgencols,
-                                    &invalid_column_list, &invalid_gen_col)) {
-      if (pubform->pubupdate) {
-        pubdesc->cols_valid_for_update = !invalid_column_list;
-        pubdesc->gencols_valid_for_update = !invalid_gen_col;
-      }
-
-      if (pubform->pubdelete) {
-        pubdesc->cols_valid_for_delete = !invalid_column_list;
-        pubdesc->gencols_valid_for_delete = !invalid_gen_col;
-      }
-    }
-
-    ReleaseSysCache(tup);
-
-    /*
-     * If we know everything is replicated and the row filter is invalid
-     * for update and delete, there is no point to check for other
-     * publications.
-     */
-    if (pubdesc->pubactions.pubinsert && pubdesc->pubactions.pubupdate &&
-        pubdesc->pubactions.pubdelete && pubdesc->pubactions.pubtruncate &&
-        !pubdesc->rf_valid_for_update && !pubdesc->rf_valid_for_delete)
-      break;
-
-    /*
-     * If we know everything is replicated and the column list is invalid
-     * for update and delete, there is no point to check for other
-     * publications.
-     */
-    if (pubdesc->pubactions.pubinsert && pubdesc->pubactions.pubupdate &&
-        pubdesc->pubactions.pubdelete && pubdesc->pubactions.pubtruncate &&
-        !pubdesc->cols_valid_for_update && !pubdesc->cols_valid_for_delete)
-      break;
-
-    /*
-     * If we know everything is replicated and replica identity has an
-     * unpublished generated column, there is no point to check for other
-     * publications.
-     */
-    if (pubdesc->pubactions.pubinsert && pubdesc->pubactions.pubupdate &&
-        pubdesc->pubactions.pubdelete && pubdesc->pubactions.pubtruncate &&
-        !pubdesc->gencols_valid_for_update &&
-        !pubdesc->gencols_valid_for_delete)
-      break;
-  }
-
-  if (relation->rd_pubdesc) {
-    pfree(relation->rd_pubdesc);
-    relation->rd_pubdesc = NULL;
-  }
-
-  /* Now save copy of the descriptor in the relcache entry. */
-  oldcxt = MemoryContextSwitchTo(CacheMemoryContext);
-  relation->rd_pubdesc = (PublicationDesc *)palloc(sizeof(PublicationDesc));
-  memcpy(relation->rd_pubdesc, pubdesc, sizeof(PublicationDesc));
-  MemoryContextSwitchTo(oldcxt);
 }
 
 static bytea **CopyIndexAttOptions(bytea **srcopts, int natts) {
@@ -6216,7 +6050,6 @@ static bool load_relcache_init_file(bool shared) {
     rel->rd_keyattr = NULL;
     rel->rd_pkattr = NULL;
     rel->rd_idattr = NULL;
-    rel->rd_pubdesc = NULL;
     rel->rd_statvalid = false;
     rel->rd_statlist = NIL;
     rel->rd_fkeyvalid = false;

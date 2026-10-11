@@ -8013,24 +8013,6 @@ static ObjectAddress ATExecSetExpression(AlteredTableInfo *tab, Relation rel,
   if (attgenerated == ATTRIBUTE_GENERATED_VIRTUAL && attTup->attnotnull)
     tab->verify_new_notnull = true;
 
-  /*
-   * We need to prevent this because a change of expression could affect a
-   * row filter and inject expressions that are not permitted in a row
-   * filter.  XXX We could try to have a more precise check to catch only
-   * publications with row filters, or even re-verify the row filter
-   * expressions.
-   */
-  if (attgenerated == ATTRIBUTE_GENERATED_VIRTUAL &&
-      GetRelationPublications(RelationGetRelid(rel)) != NIL)
-    ereport(
-        ERROR,
-        (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-         errmsg("ALTER TABLE / SET EXPRESSION is not supported for virtual "
-                "generated columns in tables that are part of a publication"),
-         errdetail(
-             "Column \"%s\" of relation \"%s\" is a virtual generated column.",
-             colName, RelationGetRelationName(rel))));
-
   rewrite = (attgenerated == ATTRIBUTE_GENERATED_STORED);
 
   ReleaseSysCache(tuple);
@@ -17278,17 +17260,6 @@ static void ATPrepChangePersistence(AlteredTableInfo *tab, Relation rel,
       return;
     break;
   }
-
-  /*
-   * Check that the table is not part of any publication when changing to
-   * UNLOGGED, as UNLOGGED tables can't be published.
-   */
-  if (!toLogged && GetRelationPublications(RelationGetRelid(rel)) != NIL)
-    ereport(ERROR, (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-                    errmsg("cannot change table \"%s\" to unlogged because it "
-                           "is part of a publication",
-                           RelationGetRelationName(rel)),
-                    errdetail("Unlogged relations cannot be replicated.")));
 
   /*
    * Check existing foreign key constraints to preserve the invariant that

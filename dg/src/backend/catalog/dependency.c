@@ -70,7 +70,6 @@
 #include "commands/event_trigger.h"
 #include "commands/extension.h"
 #include "commands/policy.h"
-#include "commands/publicationcmds.h"
 #include "commands/seclabel.h"
 #include "commands/sequence.h"
 #include "commands/trigger.h"
@@ -1282,18 +1281,6 @@ static void doDeletion(const ObjectAddress *object, int flags) {
 
   case PolicyRelationId:
     RemovePolicyById(object->objectId);
-    break;
-
-  case PublicationNamespaceRelationId:
-    RemovePublicationSchemaById(object->objectId);
-    break;
-
-  case PublicationRelRelationId:
-    RemovePublicationRelById(object->objectId);
-    break;
-
-  case PublicationRelationId:
-    RemovePublicationById(object->objectId);
     break;
 
   case CastRelationId:

@@ -378,22 +378,6 @@ CREATE VIEW pg_stats_ext_exprs WITH (security_barrier) AS
 -- unprivileged users may read pg_statistic_ext but not pg_statistic_ext_data
 REVOKE ALL ON pg_statistic_ext_data FROM public;
 
-CREATE VIEW pg_publication_tables AS
-    SELECT
-        P.pubname AS pubname,
-        N.nspname AS schemaname,
-        C.relname AS tablename,
-        ( SELECT array_agg(a.attname ORDER BY a.attnum)
-          FROM pg_attribute a
-          WHERE a.attrelid = GPT.relid AND
-                a.attnum = ANY(GPT.attrs)
-        ) AS attnames,
-        pg_get_expr(GPT.qual, GPT.relid) AS rowfilter
-    FROM pg_publication P,
-         LATERAL pg_get_publication_tables(P.pubname) GPT,
-         pg_class C JOIN pg_namespace N ON (N.oid = C.relnamespace)
-    WHERE C.oid = GPT.relid;
-
 CREATE VIEW pg_locks AS
     SELECT * FROM pg_lock_status() AS L;
 
@@ -529,28 +513,6 @@ FROM
         AND l.objoid = evt.oid
 WHERE
     l.objsubid = 0
-UNION ALL
-SELECT
-    l.objoid, l.classoid, l.objsubid,
-    'publication'::text AS objtype,
-    NULL::oid AS objnamespace,
-    quote_ident(p.pubname) AS objname,
-    l.provider, l.label
-FROM
-    pg_seclabel l
-    JOIN pg_publication p ON l.classoid = p.tableoid AND l.objoid = p.oid
-WHERE
-    l.objsubid = 0
-UNION ALL
-SELECT
-    l.objoid, l.classoid, 0::int4 AS objsubid,
-    'subscription'::text AS objtype,
-    NULL::oid AS objnamespace,
-    quote_ident(s.subname) AS objname,
-    l.provider, l.label
-FROM
-    pg_shseclabel l
-    JOIN pg_subscription s ON l.classoid = s.tableoid AND l.objoid = s.oid
 UNION ALL
 SELECT
     l.objoid, l.classoid, 0::int4 AS objsubid,
@@ -725,10 +687,3 @@ CREATE VIEW pg_replication_origin_status AS
 
 REVOKE ALL ON pg_replication_origin_status FROM public;
 
--- All columns of pg_subscription except subconninfo are publicly readable.
-REVOKE ALL ON pg_subscription FROM public;
-GRANT SELECT (oid, subdbid, subskiplsn, subname, subowner, subenabled,
-              subbinary, substream, subtwophasestate, subdisableonerr,
-			  subpasswordrequired, subrunasowner, subfailover,
-              subslotname, subsynccommit, subpublications, suborigin)
-    ON pg_subscription TO public;

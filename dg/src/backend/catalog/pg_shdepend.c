@@ -51,9 +51,7 @@
 #include "commands/defrem.h"
 #include "commands/event_trigger.h"
 #include "commands/policy.h"
-#include "commands/publicationcmds.h"
 #include "commands/schemacmds.h"
-#include "commands/subscriptioncmds.h"
 #include "commands/tablecmds.h"
 #include "commands/tablespace.h"
 #include "commands/typecmds.h"
@@ -1506,10 +1504,6 @@ static void shdepReassignOwned_Owner(Form_pg_shdepend sdepForm, Oid newrole) {
 
   case EventTriggerRelationId:
     AlterEventTriggerOwner_oid(sdepForm->objid, newrole);
-    break;
-
-  case PublicationRelationId:
-    AlterPublicationOwner_oid(sdepForm->objid, newrole);
     break;
 
     /* Generic alter owner cases */

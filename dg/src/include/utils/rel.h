@@ -164,7 +164,6 @@ typedef struct RelationData
 	Bitmapset  *rd_hotblockingattr; /* cols blocking HOT update */
 	Bitmapset  *rd_summarizedattr;	/* cols indexed by summarizing indexes */
 
-	PublicationDesc *rd_pubdesc;	/* publication descriptor, or NULL */
 
 	/*
 	 * rd_options is set whenever rd_rel is loaded into the relcache entry.

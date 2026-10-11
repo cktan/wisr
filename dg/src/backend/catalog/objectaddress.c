@@ -380,11 +380,6 @@ static ObjectAddress get_object_address_opf_member(ObjectType objtype,
 
 static ObjectAddress get_object_address_usermapping(List *object,
                                                     bool missing_ok);
-static ObjectAddress get_object_address_publication_rel(List *object,
-                                                        Relation *relp,
-                                                        bool missing_ok);
-static ObjectAddress get_object_address_publication_schema(List *object,
-                                                           bool missing_ok);
 static ObjectAddress get_object_address_defacl(List *object, bool missing_ok);
 static const ObjectPropertyType *get_object_property_data(Oid class_id);
 
@@ -507,8 +502,6 @@ ObjectAddress get_object_address(ObjectType objtype, Node *object,
     case OBJECT_EVENT_TRIGGER:
     case OBJECT_PARAMETER_ACL:
     case OBJECT_ACCESS_METHOD:
-    case OBJECT_PUBLICATION:
-    case OBJECT_SUBSCRIPTION:
       address = get_object_address_unqualified(
           objtype, castNode(String, object), missing_ok);
       break;
@@ -603,13 +596,15 @@ ObjectAddress get_object_address(ObjectType objtype, Node *object,
       address =
           get_object_address_usermapping(castNode(List, object), missing_ok);
       break;
+    case OBJECT_PUBLICATION:
     case OBJECT_PUBLICATION_NAMESPACE:
-      address = get_object_address_publication_schema(castNode(List, object),
-                                                      missing_ok);
-      break;
     case OBJECT_PUBLICATION_REL:
-      address = get_object_address_publication_rel(castNode(List, object),
-                                                   &relation, missing_ok);
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("publications are not supported")));
+      break;
+    case OBJECT_SUBSCRIPTION:
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("subscriptions are not supported")));
       break;
     case OBJECT_DEFACL:
       address = get_object_address_defacl(castNode(List, object), missing_ok);
@@ -1282,98 +1277,6 @@ static ObjectAddress get_object_address_usermapping(List *object,
   address.objectId = ((Form_pg_user_mapping)GETSTRUCT(tp))->oid;
 
   ReleaseSysCache(tp);
-
-  return address;
-}
-
-/*
- * Find the ObjectAddress for a publication relation.  The first element of
- * the object parameter is the relation name, the second is the
- * publication name.
- */
-static ObjectAddress get_object_address_publication_rel(List *object,
-                                                        Relation *relp,
-                                                        bool missing_ok) {
-  ObjectAddress address;
-  Relation relation;
-  List *relname;
-  char *pubname;
-  Publication *pub;
-
-  ObjectAddressSet(address, PublicationRelRelationId, InvalidOid);
-
-  relname = (List *)linitial(object);
-  relation = relation_openrv_extended(makeRangeVarFromNameList(relname),
-                                      AccessShareLock, missing_ok);
-  if (!relation)
-    return address;
-
-  /* fetch publication name from input list */
-  pubname = strVal(lsecond(object));
-
-  /* Now look up the pg_publication tuple */
-  pub = GetPublicationByName(pubname, missing_ok);
-  if (!pub) {
-    relation_close(relation, AccessShareLock);
-    return address;
-  }
-
-  /* Find the publication relation mapping in syscache. */
-  address.objectId = GetSysCacheOid2(
-      PUBLICATIONRELMAP, Anum_pg_publication_rel_oid,
-      ObjectIdGetDatum(RelationGetRelid(relation)), ObjectIdGetDatum(pub->oid));
-  if (!OidIsValid(address.objectId)) {
-    if (!missing_ok)
-      ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
-                      errmsg("publication relation \"%s\" in publication "
-                             "\"%s\" does not exist",
-                             RelationGetRelationName(relation), pubname)));
-    relation_close(relation, AccessShareLock);
-    return address;
-  }
-
-  *relp = relation;
-  return address;
-}
-
-/*
- * Find the ObjectAddress for a publication schema. The first element of the
- * object parameter is the schema name, the second is the publication name.
- */
-static ObjectAddress get_object_address_publication_schema(List *object,
-                                                           bool missing_ok) {
-  ObjectAddress address;
-  Publication *pub;
-  char *pubname;
-  char *schemaname;
-  Oid schemaid;
-
-  ObjectAddressSet(address, PublicationNamespaceRelationId, InvalidOid);
-
-  /* Fetch schema name and publication name from input list */
-  schemaname = strVal(linitial(object));
-  pubname = strVal(lsecond(object));
-
-  schemaid = get_namespace_oid(schemaname, missing_ok);
-  if (!OidIsValid(schemaid))
-    return address;
-
-  /* Now look up the pg_publication tuple */
-  pub = GetPublicationByName(pubname, missing_ok);
-  if (!pub)
-    return address;
-
-  /* Find the publication schema mapping in syscache */
-  address.objectId = GetSysCacheOid2(
-      PUBLICATIONNAMESPACEMAP, Anum_pg_publication_namespace_oid,
-      ObjectIdGetDatum(schemaid), ObjectIdGetDatum(pub->oid));
-  if (!OidIsValid(address.objectId) && !missing_ok)
-    ereport(
-        ERROR,
-        (errcode(ERRCODE_UNDEFINED_OBJECT),
-         errmsg(
-             "publication schema \"%s\" in publication \"%s\" does not exist",
-             schemaname, pubname)));
 
   return address;
 }
