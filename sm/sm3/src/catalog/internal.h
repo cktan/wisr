@@ -280,7 +280,6 @@ void overlay_stats(session_t *s, uint64_t oid,
  * so far, not what the transaction's snapshot shows (CATALOG.md
  * §5).
  */
-bool session_nspace(const session_t *s, uint64_t oid, std::string &name);
 bool nspace_in_use(const session_t *s, uint64_t oid);
 
 } // namespace sm3

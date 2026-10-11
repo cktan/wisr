@@ -301,6 +301,40 @@ TEST_CASE("a namespace is created like a table, and found by name") {
   CHECK(d->nspoid == app);
 }
 
+TEST_CASE("a namespace's name is found by its oid") {
+  // Verify cat_get_namespace_name.
+  // 1. The built-in namespaces are found by their fixed oids, and an
+  //    unknown oid is not found.
+  // 2. One created is found by its transaction at once, by another
+  //    session only after the commit.
+  // 3. Dropped, it is not found by its transaction.
+  cat_db_t db;
+  uint64_t app = 0;
+  std::string name;
+  db.begin();
+  CHECK(sm3::cat_get_namespace_name(db.ss, sm3::nsp_public, name));
+  CHECK(name == "public");
+  CHECK(sm3::cat_get_namespace_name(db.ss, sm3::nsp_pg_catalog, name));
+  CHECK(name == "pg_catalog");
+  CHECK_FALSE(sm3::cat_get_namespace_name(db.ss, 999999, name));
+
+  sm3::session_t *other = nullptr;
+  REQUIRE(sm3::session_open(db.cat, db.open(), other) == 0);
+  REQUIRE(sm3::create_namespace(db.ss, "app", app) == 0);
+  CHECK(sm3::cat_get_namespace_name(db.ss, app, name));
+  CHECK(name == "app");
+  CHECK_FALSE(sm3::cat_get_namespace_name(other, app, name));
+  db.commit();
+  CHECK(sm3::cat_get_namespace_name(other, app, name));
+  CHECK(name == "app");
+
+  db.begin();
+  REQUIRE(sm3::drop_namespace(db.ss, app) == 0);
+  CHECK_FALSE(sm3::cat_get_namespace_name(db.ss, app, name));
+  db.commit();
+  sm3::session_close(other);
+}
+
 TEST_CASE("a namespace is dropped only when it is empty") {
   // Verify drop_namespace.
   // 1. The built-in namespaces are SM_ERR_INVALID to drop, and an

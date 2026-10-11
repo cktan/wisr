@@ -973,6 +973,14 @@ int sm_cat_namespace_oid(sm_session_t *session, const char *name,
   });
 }
 
+/* The name of the namespace oid: 0, or 1 if there is none. */
+int sm_cat_namespace_name(sm_session_t *session, uint64_t oid,
+                          std::string &name) {
+  return guard(session, [&] {
+    return sm3::cat_get_namespace_name(session->sm3, oid, name) ? 0 : 1;
+  });
+}
+
 /* The namespaces' names, sorted. */
 int sm_cat_list_namespaces(sm_session_t *session,
                            std::vector<std::string> &names) {

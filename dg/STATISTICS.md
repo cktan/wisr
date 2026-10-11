@@ -149,9 +149,10 @@ four live calls. All of §3 is built (`WORKNOTE.md` steps 74 to
   expression's place as `attname`, as PostgreSQL shows them in
   `pg_stats` only through the index.
 - **Built-in oids 8844 and 8845**, `pg_stats_all()` and
-  `pg_stats_rel()` in `smstore.c`. A schema's name is found in
-  sm's list of schemas: `get_namespace_name()` knows only the
-  built-in ones.
+  `pg_stats_rel()` in `smstore.c`. A schema's name is
+  `get_namespace_name()`'s, which asks sm
+  (`sm_cat_namespace_name`) for a schema made by CREATE
+  SCHEMA.
 - **The view itself waits** for system views in digres; when
   they come, `pg_stats` is a view over the function.
 

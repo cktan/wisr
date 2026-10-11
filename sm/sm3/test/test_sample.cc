@@ -164,6 +164,31 @@ TEST_CASE("a dense table is counted exactly, from runs within the budget") {
   CHECK(s.avg_row_bytes > 0);
 }
 
+TEST_CASE("a table the budget covers is read whole, its sample uniform") {
+  // Verify a table no larger than the budget is read whole, though
+  // fewer runs would give the rows wanted.
+  // 1. Fill 60,000 rows and sample for target 100: 30,000 rows
+  //    wanted, a budget of 300,000 rownos.
+  // 2. Every rowno is covered, the count is exact, and 30,000 rows
+  //    are kept.
+  // 3. The kept rows are spread over the table, not clustered in
+  //    runs: each tenth of the rownos holds 3,000 within 10%.
+  sample_db_t db;
+  db.fill(60000);
+  sm3::sample_t s = db.sample(100);
+  CHECK(s.whole);
+  CHECK(s.rownos_covered == 60000);
+  CHECK(s.live_rows == 60000.0);
+  REQUIRE(s.rows.size() == 30000);
+  std::vector<int> tenth(10, 0);
+  for (const sm3::sample_row_t &r : s.rows) {
+    tenth[(r.rowno - 1) / 6000]++;
+  }
+  for (int c : tenth) {
+    CHECK(std::abs(c - 3000) < 300);
+  }
+}
+
 TEST_CASE("a sparse table is counted within a few percent, in the budget") {
   // Verify the sparse-table rule.
   // 1. Fill 60,000 rows and keep one rowno in ten: 6,000 live.

@@ -18,6 +18,7 @@
 #include "access/hash.h"
 #include "access/htup_details.h"
 #include "access/smstore.h"
+#include "access/transam.h"
 #include "access/tupdesc.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_am.h"
@@ -3121,7 +3122,9 @@ char *get_namespace_name(Oid nspid) {
 
     result = pstrdup(nsptup->nspname);
     return result;
-  } else
+  } else if (nspid >= FirstNormalObjectId)
+    return smstore_namespace_name(nspid); /* made by CREATE SCHEMA */
+  else
     return NULL;
 }
 

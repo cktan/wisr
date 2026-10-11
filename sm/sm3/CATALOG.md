@@ -314,8 +314,10 @@ transaction. Each reports failure as sm1 does (`DESIGN.md`
   no map of index names is kept.
 - **`cat_get_namespace(ss, name, oid)`** finds a namespace by
   name as the session's transaction sees it, by a look at
-  each, since they are few and no map by name is kept, and
-  **`cat_list_namespaces(ss)`** lists their names, sorted.
+  each, since they are few and no map by name is kept;
+  **`cat_get_namespace_name(ss, oid, name)`** finds one's name
+  by its oid; and **`cat_list_namespaces(ss)`** lists their
+  names, sorted.
 - **`prepare(ss, gid)`** prepares as sm1 does, but refuses a
   transaction that made DDL: its overlay would have to outlive
   the session.

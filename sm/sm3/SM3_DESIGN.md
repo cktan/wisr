@@ -1166,8 +1166,11 @@ at its snapshot.
    so sparse that the rule above asks for more, gives fewer
    rows than wanted, and the estimators take any sample size.
    Only a table no larger than the budget is read whole, by
-   the runs taking every slot, and its row count is then
-   exact.
+   the runs taking every slot, even when fewer runs would
+   give the rows wanted: the reservoir then draws from every
+   row, so a column that follows the rownos is not estimated
+   from a few runs, as PostgreSQL reads a table under its
+   sample whole. Its row count is then exact.
 5. **The runs.** `1..N` is cut into `⌈N / B⌉` aligned slots of
    `B` rownos, and `k` of them are drawn without replacement
    by **Floyd's algorithm**, which draws `k` numbers and looks

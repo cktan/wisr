@@ -2355,3 +2355,20 @@ planning, as `get_relation_foreign_keys()` reached
   is a run of eight sessions on `digres-tsan`, each fifteen
   times analyzing two shared tables, inserting, planning a
   filter and a join on them and reading `pg_stats`: no report.
+
+## Step 79: a schema made by CREATE SCHEMA has a name
+
+`get_namespace_name()` read only the compiled-in schemas, and
+gave NULL for one made by CREATE SCHEMA; `pg_stats` found the
+name by listing sm's schemas (step 78).
+
+- **sm names a schema by its oid**: `sm_cat_namespace_name()`,
+  over sm3's `cat_get_namespace_name()`, which was the internal
+  `session_nspace()`.
+- **`get_namespace_name()` asks sm** for an oid past the
+  built-in ones (`smstore_namespace_name()`), and `pg_stats`
+  uses it again.
+- **Found, not fixed here**: a `regclass`'s output opens
+  `pg_class`.
+- `server.sh` shows a table in a schema made by CREATE SCHEMA
+  in `pg_stats` by its schema's name.

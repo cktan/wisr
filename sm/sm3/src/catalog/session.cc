@@ -539,8 +539,9 @@ std::vector<std::string> cat_list_namespaces(const session_t *s) {
   return out;
 }
 
-/* A namespace by oid as s sees it; see internal.h. */
-bool session_nspace(const session_t *s, uint64_t oid, std::string &name) {
+/* A namespace by oid as s sees it; see sm3.h. */
+bool cat_get_namespace_name(const session_t *s, uint64_t oid,
+                            std::string &name) {
   std::map<uint64_t, std::string> all = nspaces_of(s);
   auto it = all.find(oid);
   if (it == all.end()) {

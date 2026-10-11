@@ -932,6 +932,8 @@ within "$n" 1000000 10 || fail "join by distinct values: $n"
 #    with u14's.
 # 3. t14's b has its ten values as common values and no histogram; c has
 #    a third null, and 101 histogram bounds.
+# 4. s7.u, analyzed above, is shown in its schema, s7, by name: a schema
+#    made by CREATE SCHEMA is named by sm.
 local_psql -c 'create table t15 (a int4)' >> "$work/stats.out" 2>&1
 [ "$(local_psql -c "select count(*) from pg_stats('t15')" 2>&1)" = 0 ] ||
   fail "pg_stats of a table never analyzed"
@@ -948,6 +950,8 @@ local_psql -c 'create table t15 (a int4)' >> "$work/stats.out" 2>&1
       array_length(histogram_bounds, 1)
       from pg_stats('t14') where attname = 'c'" 2>&1)" = "t|101" ] ||
   fail "pg_stats nulls and bounds"
+[ "$(local_psql -c "select schemaname, tablename from pg_stats('s7.u')" \
+  2>&1)" = "s7|u" ] || fail "pg_stats of a table in a schema made"
 
 # Verify that the buffer manager's settings are gone, and DISCARD SEQUENCES
 # still runs.

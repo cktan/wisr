@@ -341,6 +341,23 @@ Oid smstore_namespace_oid(const char *name) {
 }
 
 /*
+ * The name of the schema nspoid in sm, palloc'd, or NULL if there is none.
+ */
+char *smstore_namespace_name(Oid nspoid) {
+  std::string name;
+
+  switch (sm_cat_namespace_name(session(), nspoid, name)) {
+  case 0:
+    return pstrdup(name.c_str());
+  case 1:
+    return NULL;
+  default:
+    sm_error("look up a schema");
+  }
+  return NULL; /* not reached */
+}
+
+/*
  * The oid of the sequence named name in nspoid, or InvalidOid if there is
  * none.  sm reads it from its catalog in the transaction, which this begins.
  */
@@ -1325,28 +1342,12 @@ static Datum text_array(const sm_type_t *smtype, Oid typid,
 }
 
 /*
- * The name of the schema nspoid in sm: get_namespace_name() knows only
- * the built-in ones.  NULL if there is none.
+ * Put the pg_stats rows of the table oid in sm into rsinfo's tuplestore,
+ * one a statistic (STATISTICS.md section 2.5): a column's under the
+ * table's name, an index expression's under the index's.  None if it was
+ * never analyzed.
  */
-static const char *namespace_name(Oid nspoid) {
-  std::vector<std::string> nspnames;
-
-  if (sm_cat_list_namespaces(xact_session(), nspnames) != 0)
-    sm_error("list the schemas");
-  for (const std::string &nsp : nspnames)
-    if (smstore_namespace_oid(nsp.c_str()) == nspoid)
-      return pstrdup(nsp.c_str());
-  return NULL;
-}
-
-/*
- * Put the pg_stats rows of the table oid in sm, in the schema nspname,
- * into rsinfo's tuplestore, one a statistic (STATISTICS.md section 2.5):
- * a column's under the table's name, an index expression's under the
- * index's.  None if it was never analyzed.
- */
-static void put_stats_rows(ReturnSetInfo *rsinfo, const char *nspname,
-                           Oid oid) {
+static void put_stats_rows(ReturnSetInfo *rsinfo, Oid oid) {
   std::shared_ptr<const sm_stats_t> st = table_stats(oid);
 
   if (st == nullptr)
@@ -1360,7 +1361,7 @@ static void put_stats_rows(ReturnSetInfo *rsinfo, const char *nspname,
     Datum values[17];
     bool nulls[17];
 
-    namestrcpy(&nsp, nspname);
+    namestrcpy(&nsp, get_namespace_name(RelationGetNamespace(rel)));
     namestrcpy(&name, RelationGetRelationName(rel));
     memset(nulls, true, sizeof(nulls));
     values[0] = NameGetDatum(&nsp);
@@ -1406,8 +1407,7 @@ Datum pg_stats_all(PG_FUNCTION_ARGS) {
     if (sm_cat_list_tables(xact_session(), nspoid, tables) != 0)
       sm_error("list a schema's tables");
     for (const std::string &t : tables)
-      put_stats_rows(rsinfo, nsp.c_str(),
-                     smstore_relation_oid(t.c_str(), nspoid));
+      put_stats_rows(rsinfo, smstore_relation_oid(t.c_str(), nspoid));
   }
   return (Datum)0;
 }
@@ -1416,17 +1416,10 @@ Datum pg_stats_all(PG_FUNCTION_ARGS) {
 Datum pg_stats_rel(PG_FUNCTION_ARGS) {
   ReturnSetInfo *rsinfo = (ReturnSetInfo *)fcinfo->resultinfo;
   Oid oid = PG_GETARG_OID(0);
-  const char *nspname;
 
   InitMaterializedSRF(fcinfo, 0);
-  if (oid < FirstNormalObjectId || OidIsValid(smstore_index_table(oid)))
-    return (Datum)0;
-  /* A sequence's oid, or a dropped table's, has no descriptor. */
-  smstore_table_t *desc = smstore_table_desc(oid);
-
-  if (desc == NULL || (nspname = namespace_name(desc->nspoid)) == NULL)
-    return (Datum)0;
-  put_stats_rows(rsinfo, nspname, oid);
+  if (oid >= FirstNormalObjectId && !OidIsValid(smstore_index_table(oid)))
+    put_stats_rows(rsinfo, oid);
   return (Datum)0;
 }
 

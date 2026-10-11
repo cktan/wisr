@@ -586,6 +586,13 @@ int sm_cat_namespace_oid(sm_session_t* session, const char* name,
                          uint64_t* oid);
 
 /*
+ * The name of the namespace oid, as the session's transaction sees
+ * it, into name: 0, or 1 if there is none.
+ */
+int sm_cat_namespace_name(sm_session_t* session, uint64_t oid,
+                          std::string& name);
+
+/*
  * The names of the namespaces, sorted, as the session's transaction
  * sees them, into names, which it replaces.
  */

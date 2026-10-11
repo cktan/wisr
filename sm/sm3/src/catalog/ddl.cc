@@ -88,7 +88,7 @@ int use_nspace(sm3::session_t *session, uint64_t nspoid, sm1::lockmode_t mode,
   if (sm3::lock_table(session->sm1, nspoid, mode) != 0) {
     return -1;
   }
-  return sm3::session_nspace(session, nspoid, name)
+  return sm3::cat_get_namespace_name(session, nspoid, name)
              ? 0
              : sm1::seterr(sm1::SM_ERR_NOTFOUND, "namespace " +
                                                      std::to_string(nspoid) +

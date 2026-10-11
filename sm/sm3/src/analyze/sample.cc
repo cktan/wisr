@@ -177,6 +177,12 @@ int sample_table(table_t *table, int32_t target, std::mt19937_64 &rng,
   uint64_t k = static_cast<uint64_t>(
       std::ceil(1.2 * static_cast<double>(want) / (b * f0)));
   k = std::clamp<uint64_t>(k, 1, max_slots);
+  // A table the budget covers is read whole: every row is then in
+  // the reservoir's draw, not only those of k runs, so a column
+  // that follows the rownos is not estimated from a few clusters.
+  if (max_slots == slots) {
+    k = slots;
+  }
 
   // 4. The runs, k slots by Floyd, and more while the rows fall
   // short and the budget lasts. A reservoir (Algorithm R) keeps a
