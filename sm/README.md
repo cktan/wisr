@@ -38,6 +38,8 @@ the wrapper through the `rel/` test suite.
 
 ## Where to read
 
+- `CODE.md` — the rules and practices for changing `sm/`:
+  levels, errors, exceptions, names, tests
 - `LOCK.md` — what gets locked and how: the two mechanisms,
   the lock subjects, and the scenarios that are easy to get
   wrong

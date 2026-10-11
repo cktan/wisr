@@ -432,17 +432,20 @@ design:
   inside a RocksDB callback never reaches the wrapper, so those
   boundaries keep catch-alls of their own (next). Exceptions stay
   enabled in every build (§2).
-- **The foreign boundaries catch for themselves.** The
-  RocksDB callbacks — the compaction filter, the comparator,
-  the prefix extractor — and the GC thread have no caller to
-  return -1 to. Every callback and thread entry is
-  `noexcept`, with a catch-all that reports through the
-  `sm1::set_log` hook. The compaction filter keeps the version
-  on error, so a failure can never delete data; the GC thread
-  logs and tries again on its next cycle. The comparator and
-  the prefix extractor are pure `memcmp` and byte slicing:
-  they are marked `noexcept` to say so, and need no
-  catch-all.
+- **The foreign boundaries report errors; they catch no
+  exception.** The RocksDB callbacks — the compaction filter,
+  the comparator, the prefix extractor — and the GC thread
+  have no caller to return -1 to. The compaction filter keeps
+  any version it has a doubt about — an undecodable value, a
+  failed status lookup — and reports how many through the
+  `sm1::set_log` hook once per compaction, so a failure can
+  never delete data. The GC thread logs a failed pass and
+  tries again on its next cycle. The comparator and the prefix
+  extractor are pure `memcmp` and byte slicing, and cannot
+  fail. None of them catches: running out of memory aborts
+  the process (above) and sm throws nothing of its own, so an
+  exception that reached one would be a bug, and it ends the
+  process through `std::terminate`.
 
 - **One encoder, one tuple format, two callers.** The key
   encoding and the tuple layout are sm2's alone
