@@ -157,8 +157,6 @@ thread_local /*LOCAL*/ int VacuumCostBalance = 0; /* working state for vacuum */
 thread_local /*LOCAL*/ bool VacuumCostActive = false;
 
 /* configurable SLRU buffer sizes */
-thread_local /*LOCAL*/ int commit_timestamp_buffers = 0;
 thread_local /*LOCAL*/ int multixact_member_buffers = 32;
 thread_local /*LOCAL*/ int multixact_offset_buffers = 16;
 thread_local /*LOCAL*/ int serializable_buffers = 32;
-thread_local /*LOCAL*/ int subtransaction_buffers = 0;

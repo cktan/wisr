@@ -1535,3 +1535,24 @@ heap: nothing digres runs needs a PostgreSQL xid.
 - Nothing in `server.sh` asks for an xid: a function call by
   name, `txid_current()` say, is not resolved yet, so the
   refusal is not tested.
+
+## Step 46: subtrans and commit_ts are gone
+
+Both map an xid to something: `pg_subtrans` a subtransaction's
+xid to its parent's, `pg_commit_ts` a committed xid to its
+commit time. Step 45 left no xid to map.
+
+- **Gone**: `subtrans.c` and `commit_ts.c` with their headers;
+  the settings `subtransaction_buffers`,
+  `commit_timestamp_buffers` and `track_commit_timestamp`;
+  the SQL functions `pg_xact_commit_timestamp`,
+  `pg_xact_commit_timestamp_origin` and
+  `pg_last_committed_xact`; the LWLock `CommitTs`, the
+  tranches `CommitTsBuffer`, `CommitTsSLRU`, `SubtransBuffer`
+  and `SubtransSLRU`, and their wait events; the commit
+  timestamp fields of `TransamVariables`; the `pg_subtrans`
+  and `pg_commit_ts` directories.
+- **An xid is its own topmost**: the heap, the lock manager,
+  the proc array and the snapshot code asked subtrans for a
+  subtransaction's top xid, and now take the xid as it is.
+  They are the heap's machinery, and go with it.

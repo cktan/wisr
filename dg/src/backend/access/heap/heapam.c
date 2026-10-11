@@ -36,7 +36,6 @@
 #include "access/heaptoast.h"
 #include "access/hio.h"
 #include "access/multixact.h"
-#include "access/subtrans.h"
 #include "access/valid.h"
 #include "access/visibilitymap.h"
 #include "catalog/pg_database.h"
@@ -7586,7 +7585,7 @@ void HeapCheckForSerializableConflictOut(bool visible, Relation relation,
    */
   if (TransactionIdEquals(xid, GetTopTransactionIdIfAny()))
     return;
-  xid = SubTransGetTopmostTransaction(xid);
+  /* digres assigns no subtransaction an xid: xid is its own topmost. */
   if (TransactionIdPrecedes(xid, TransactionXmin))
     return;
 

@@ -20,10 +20,8 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "access/commit_ts.h"
 #include "access/multixact.h"
 #include "access/smstore.h"
-#include "access/subtrans.h"
 #include "access/transam.h"
 #include "access/twophase.h"
 #include "access/xact.h"

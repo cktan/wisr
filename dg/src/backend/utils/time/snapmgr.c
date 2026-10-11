@@ -107,7 +107,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "access/subtrans.h"
 #include "access/transam.h"
 #include "access/xact.h"
 #include "datatype/timestamp.h"
@@ -1554,7 +1553,7 @@ bool XidInMVCCSnapshot(TransactionId xid, Snapshot snapshot) {
      * Snapshot overflowed, so convert xid to top-level.  This is safe
      * because we eliminated too-old XIDs above.
      */
-    xid = SubTransGetTopmostTransaction(xid);
+    /* digres assigns no subtransaction an xid: xid is its own topmost. */
 
     /*
      * If xid was indeed a subxact, we might now have an xid < xmin,

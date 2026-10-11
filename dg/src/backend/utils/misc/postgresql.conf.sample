@@ -147,11 +147,9 @@
 					# range 128kB to 16GB
 
 # SLRU buffers (change requires restart)
-#commit_timestamp_buffers = 0		# memory for pg_commit_ts (0 = auto)
 #multixact_offset_buffers = 16		# memory for pg_multixact/offsets
 #multixact_member_buffers = 32		# memory for pg_multixact/members
 #serializable_buffers = 32		# memory for pg_serial
-#subtransaction_buffers = 0		# memory for pg_subtrans (0 = auto)
 
 # - Disk -
 
@@ -305,7 +303,6 @@
 #max_slot_wal_keep_size = -1	# in megabytes; -1 disables
 #idle_replication_slot_timeout = 0	# in seconds; 0 disables
 #wal_sender_timeout = 60s	# in milliseconds; 0 disables
-#track_commit_timestamp = off	# collect timestamp of transaction commit
 				# (change requires restart)
 
 # - Primary Server -

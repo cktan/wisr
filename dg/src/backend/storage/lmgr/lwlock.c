@@ -136,8 +136,6 @@ static constexpr auto BuiltinTrancheNames = [] {
 #define PG_LWLOCK(id, lockname) a[id] = CppAsString(lockname);
 #include "storage/lwlocklist.h"
 #undef PG_LWLOCK
-  a[LWTRANCHE_COMMITTS_BUFFER] = "CommitTsBuffer";
-  a[LWTRANCHE_SUBTRANS_BUFFER] = "SubtransBuffer";
   a[LWTRANCHE_MULTIXACTOFFSET_BUFFER] = "MultiXactOffsetBuffer";
   a[LWTRANCHE_MULTIXACTMEMBER_BUFFER] = "MultiXactMemberBuffer";
   a[LWTRANCHE_SERIAL_BUFFER] = "SerialBuffer";
@@ -148,11 +146,9 @@ static constexpr auto BuiltinTrancheNames = [] {
   a[LWTRANCHE_BUFFER_MAPPING] = "BufferMapping";
   a[LWTRANCHE_LOCK_MANAGER] = "LockManager";
   a[LWTRANCHE_PREDICATE_LOCK_MANAGER] = "PredicateLockManager";
-  a[LWTRANCHE_COMMITTS_SLRU] = "CommitTsSLRU";
   a[LWTRANCHE_MULTIXACTOFFSET_SLRU] = "MultiXactOffsetSLRU";
   a[LWTRANCHE_MULTIXACTMEMBER_SLRU] = "MultiXactMemberSLRU";
   a[LWTRANCHE_SERIAL_SLRU] = "SerialSLRU";
-  a[LWTRANCHE_SUBTRANS_SLRU] = "SubtransSLRU";
   return a;
 }();
 

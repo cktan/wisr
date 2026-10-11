@@ -15,7 +15,6 @@
 
 #include "postgres.h"
 
-#include "access/subtrans.h"
 #include "access/transam.h"
 #include "access/xact.h"
 #include "catalog/catalog.h"
@@ -578,7 +577,7 @@ void XactLockTableWait(TransactionId xid, Relation rel, ItemPointer ctid,
       pg_usleep(1000L);
     }
     first = false;
-    xid = SubTransGetTopmostTransaction(xid);
+    /* digres assigns no subtransaction an xid: xid is its own topmost. */
   }
 
   if (oper != XLTW_None)
@@ -616,7 +615,7 @@ bool ConditionalXactLockTableWait(TransactionId xid, bool logLockFailure) {
       pg_usleep(1000L);
     }
     first = false;
-    xid = SubTransGetTopmostTransaction(xid);
+    /* digres assigns no subtransaction an xid: xid is its own topmost. */
   }
 
   return true;

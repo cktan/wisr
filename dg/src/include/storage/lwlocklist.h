@@ -69,7 +69,7 @@ PG_LWLOCK(35, AutoFile)
 PG_LWLOCK(36, ReplicationSlotAllocation)
 PG_LWLOCK(37, ReplicationSlotControl)
 /* 38 was CommitTsSLRULock */
-PG_LWLOCK(39, CommitTs)
+/* 39 was CommitTs */
 PG_LWLOCK(40, ReplicationOrigin)
 PG_LWLOCK(41, MultiXactTruncation)
 /* 42 was OldSnapshotTimeMapLock */

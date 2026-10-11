@@ -14,10 +14,8 @@
  */
 #include "postgres.h"
 
-#include "access/commit_ts.h"
 #include "access/multixact.h"
 #include "access/nbtree.h"
-#include "access/subtrans.h"
 #include "access/transam.h"
 #include "access/twophase.h"
 #include "miscadmin.h"
@@ -112,8 +110,6 @@ static void CreateOrAttachShmemStructs(void) {
    * Set up xlog, clog, and buffers
    */
   VarsupShmemInit();
-  CommitTsShmemInit();
-  SUBTRANSShmemInit();
   MultiXactShmemInit();
   BufferManagerShmemInit();
 

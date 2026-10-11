@@ -32,7 +32,6 @@
 
 #include <signal.h>
 
-#include "access/subtrans.h"
 #include "access/transam.h"
 #include "access/twophase.h"
 #include "access/xact.h"
@@ -936,7 +935,8 @@ bool TransactionIdIsInProgress(TransactionId xid) {
    * is still running (or, more precisely, whether it was running when we
    * held ProcArrayLock).
    */
-  topxid = SubTransGetTopmostTransaction(xid);
+  /* digres assigns no subtransaction an xid: xid is its own topmost. */
+  topxid = xid;
   Assert(TransactionIdIsValid(topxid));
   if (!TransactionIdEquals(topxid, xid) && pg_lfind32(topxid, xids, nxids))
     return true;

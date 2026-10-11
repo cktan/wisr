@@ -251,7 +251,6 @@ DynamicSharedMemoryControl	"Waiting to read or update dynamic shared memory allo
 AutoFile	"Waiting to update the <filename>postgresql.auto.conf</filename> file."
 ReplicationSlotAllocation	"Waiting to allocate or free a replication slot."
 ReplicationSlotControl	"Waiting to read or update replication slot state."
-CommitTs	"Waiting to read or update the last value set for a transaction commit timestamp."
 ReplicationOrigin	"Waiting to create, drop or use a replication origin."
 MultiXactTruncation	"Waiting to read or truncate multixact information."
 LogicalRepWorker	"Waiting to read or update the state of logical replication workers."
@@ -269,8 +268,6 @@ SerialControl	"Waiting to read or update shared <filename>pg_serial</filename> s
 # lwlocknames.h.  Other LWLocks must be listed in the section below.
 #
 
-CommitTsBuffer	"Waiting for I/O on a commit timestamp SLRU buffer."
-SubtransBuffer	"Waiting for I/O on a sub-transaction SLRU buffer."
 MultiXactOffsetBuffer	"Waiting for I/O on a multixact offset SLRU buffer."
 MultiXactMemberBuffer	"Waiting for I/O on a multixact member SLRU buffer."
 SerialBuffer	"Waiting for I/O on a serializable transaction conflict SLRU buffer."
@@ -281,11 +278,9 @@ LockFastPath	"Waiting to read or update a process' fast-path lock information."
 BufferMapping	"Waiting to associate a data block with a buffer in the buffer pool."
 LockManager	"Waiting to read or update information about <quote>heavyweight</quote> locks."
 PredicateLockManager	"Waiting to access predicate lock information used by serializable transactions."
-CommitTsSLRU	"Waiting to access the commit timestamp SLRU cache."
 MultiXactOffsetSLRU	"Waiting to access the multixact offset SLRU cache."
 MultiXactMemberSLRU	"Waiting to access the multixact member SLRU cache."
 SerialSLRU	"Waiting to access the serializable transaction conflict SLRU cache."
-SubtransSLRU	"Waiting to access the sub-transaction SLRU cache."
 
 # No "ABI_compatibility" region here as WaitEventLWLock has its own C code.
 

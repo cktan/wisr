@@ -41,8 +41,6 @@ extern bool check_client_encoding(char **newval, void **extra,
                                   GucSource source);
 extern void assign_client_encoding(const char *newval, void *extra);
 extern bool check_cluster_name(char **newval, void **extra, GucSource source);
-extern bool check_commit_ts_buffers(int *newval, void **extra,
-                                    GucSource source);
 extern const char *show_data_directory_mode(void);
 extern bool check_datestyle(char **newval, void **extra, GucSource source);
 extern void assign_datestyle(const char *newval, void *extra);
@@ -106,7 +104,6 @@ extern void assign_session_authorization(const char *newval, void *extra);
 extern void assign_session_replication_role(int newval, void *extra);
 extern bool check_ssl(bool *newval, void **extra, GucSource source);
 extern bool check_stage_log_stats(bool *newval, void **extra, GucSource source);
-extern bool check_subtrans_buffers(int *newval, void **extra, GucSource source);
 extern void assign_syslog_facility(int newval, void *extra);
 extern void assign_syslog_ident(const char *newval, void *extra);
 extern void assign_tcp_keepalives_count(int newval, void *extra);

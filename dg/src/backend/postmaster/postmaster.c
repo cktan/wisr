@@ -1158,11 +1158,9 @@ static void getInstallationPaths(const char *argv0) {
  * a name leaves this list when its subsystem is cut.
  */
 static void make_legacy_dirs(void) {
-  static const char *const dirs[] = {"pg_commit_ts",
-                                     "pg_dynshmem",
+  static const char *const dirs[] = {"pg_dynshmem",
                                      "pg_serial",
                                      "pg_snapshots",
-                                     "pg_subtrans",
                                      "pg_multixact",
                                      "pg_multixact/members",
                                      "pg_multixact/offsets",

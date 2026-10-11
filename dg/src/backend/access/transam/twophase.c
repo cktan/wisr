@@ -28,9 +28,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "access/commit_ts.h"
 #include "access/htup_details.h"
-#include "access/subtrans.h"
 #include "access/transam.h"
 #include "access/twophase.h"
 #include "access/xact.h"

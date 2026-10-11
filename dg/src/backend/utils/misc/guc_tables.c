@@ -29,7 +29,6 @@
 #include <syslog.h>
 #endif
 
-#include "access/commit_ts.h"
 #include "access/slru.h"
 #include "access/toast_compression.h"
 #include "access/twophase.h"
@@ -783,13 +782,6 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
      &enable_bonjour,
      false,
      check_bonjour,
-     NULL,
-     NULL},
-    {{"track_commit_timestamp", PGC_POSTMASTER, REPLICATION_SENDING,
-      gettext_noop("Collects transaction commit time."), NULL},
-     &track_commit_timestamp,
-     false,
-     NULL,
      NULL,
      NULL},
     {{"ssl", PGC_SIGHUP, CONN_AUTH_SSL,
@@ -1599,19 +1591,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      NULL,
      NULL},
 
-    {{"commit_timestamp_buffers", PGC_POSTMASTER, RESOURCES_MEM,
-      gettext_noop("Sets the size of the dedicated buffer pool used for the "
-                   "commit timestamp cache."),
-      gettext_noop("0 means use a fraction of \"shared_buffers\"."),
-      GUC_UNIT_BLOCKS},
-     &commit_timestamp_buffers,
-     0,
-     0,
-     SLRU_MAX_ALLOWED_BUFFERS,
-     check_commit_ts_buffers,
-     NULL,
-     NULL},
-
     {{"multixact_member_buffers", PGC_POSTMASTER, RESOURCES_MEM,
       gettext_noop("Sets the size of the dedicated buffer pool used for the "
                    "MultiXact member cache."),
@@ -1645,19 +1624,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      16,
      SLRU_MAX_ALLOWED_BUFFERS,
      check_serial_buffers,
-     NULL,
-     NULL},
-
-    {{"subtransaction_buffers", PGC_POSTMASTER, RESOURCES_MEM,
-      gettext_noop("Sets the size of the dedicated buffer pool used for the "
-                   "subtransaction cache."),
-      gettext_noop("0 means use a fraction of \"shared_buffers\"."),
-      GUC_UNIT_BLOCKS},
-     &subtransaction_buffers,
-     0,
-     0,
-     SLRU_MAX_ALLOWED_BUFFERS,
-     check_subtrans_buffers,
      NULL,
      NULL},
 
