@@ -27,6 +27,7 @@
 
 #include "access/nbtree.h"
 #include "access/relscan.h"
+#include "access/smstore.h"
 #include "access/tableam.h"
 #include "catalog/pg_am.h"
 #include "executor/executor.h"
@@ -91,6 +92,18 @@ static TupleTableSlot *IndexNext(IndexScanState *node) {
   scandesc = node->iss_ScanDesc;
   econtext = node->ss.ps.ps_ExprContext;
   slot = node->ss.ss_ScanTupleSlot;
+
+  /* An index of a table in sm is read by sm, forwards. */
+  if (RelationIsSm(node->ss.ss_currentRelation)) {
+    if (!ScanDirectionIsForward(direction))
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("an index scan runs forwards only")));
+    if (node->iss_SmScan == NULL)
+      node->iss_SmScan = smstore_index_beginscan(
+          node->ss.ss_currentRelation, node->iss_RelationDesc,
+          node->iss_ScanKeys, node->iss_NumScanKeys);
+    return smstore_index_getnext(node->iss_SmScan, slot) ? slot : NULL;
+  }
 
   if (scandesc == NULL) {
     /*
@@ -516,6 +529,11 @@ void ExecReScanIndexScan(IndexScanState *node) {
   if (node->iss_ScanDesc)
     index_rescan(node->iss_ScanDesc, node->iss_ScanKeys, node->iss_NumScanKeys,
                  node->iss_OrderByKeys, node->iss_NumOrderByKeys);
+  /* sm's scan begins again, with the keys as they are now, when next read. */
+  if (node->iss_SmScan != NULL) {
+    smstore_endscan(node->iss_SmScan);
+    node->iss_SmScan = NULL;
+  }
   node->iss_ReachedEnd = false;
 
   ExecScanReScan(&node->ss);
@@ -704,6 +722,8 @@ void ExecEndIndexScan(IndexScanState *node) {
    */
   if (indexScanDesc)
     index_endscan(indexScanDesc);
+  if (node->iss_SmScan != NULL)
+    smstore_endscan(node->iss_SmScan);
   if (indexRelationDesc)
     index_close(indexRelationDesc, NoLock);
 }
@@ -811,9 +831,10 @@ IndexScanState *ExecInitIndexScan(IndexScan *node, EState *estate, int eflags) {
   /*
    * get the scan type from the relation descriptor.
    */
-  ExecInitScanTupleSlot(estate, &indexstate->ss,
-                        RelationGetDescr(currentRelation),
-                        table_slot_callbacks(currentRelation));
+  ExecInitScanTupleSlot(
+      estate, &indexstate->ss, RelationGetDescr(currentRelation),
+      RelationIsSm(currentRelation) ? &TTSOpsVirtual
+                                    : table_slot_callbacks(currentRelation));
 
   /*
    * Initialize result type and projection.

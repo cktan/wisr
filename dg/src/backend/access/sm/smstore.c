@@ -28,8 +28,12 @@
 #include "miscadmin.h"
 #include "parser/parse_type.h"
 #include "storage/lockdefs.h"
+#include "access/nbtree.h"
+#include "access/skey.h"
 #include "utils/builtins.h"
+#include "utils/fmgrprotos.h"
 #include "utils/datadir.h"
+#include "utils/hsearch.h"
 #include "utils/inval.h"
 #include "utils/rel.h"
 #include "utils/memutils.h"
@@ -438,6 +442,37 @@ static sm_tbl_t *open_table(Oid oid, sm_lockmode_t mode) {
   return tbl;
 }
 
+/* An index's table, by the index's oid. */
+typedef struct index_table_t {
+  Oid index; /* the hash key */
+  Oid table;
+} index_table_t;
+
+/*
+ * The table of each index of the tables smstore_table_desc() described, in
+ * this thread: made on first use, in CacheMemoryContext, with the
+ * descriptors.
+ */
+static thread_local /*LOCAL*/ HTAB *index_tables = NULL;
+
+/* Remember that the index indexoid is table's. */
+static void remember_index(Oid indexoid, Oid table) {
+  index_table_t *entry;
+
+  if (index_tables == NULL) {
+    HASHCTL ctl;
+
+    ctl.keysize = sizeof(Oid);
+    ctl.entrysize = sizeof(index_table_t);
+    ctl.hcxt = CacheMemoryContext;
+    index_tables = hash_create("sm index tables", 64, &ctl,
+                               HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
+  }
+  entry =
+      (index_table_t *)hash_search(index_tables, &indexoid, HASH_ENTER, NULL);
+  entry->table = table;
+}
+
 /* PostgreSQL's type for sm's type code (sm2/TYPE.md section 3). */
 static Oid type_oid(uint8_t code) {
   switch (code) {
@@ -485,7 +520,47 @@ smstore_table_t *smstore_table_desc(Oid oid) {
       col->not_null = c.not_null;
     }
   }
+  desc->nindexes = (int)def->indexes.size();
+  desc->indexes =
+      (smstore_index_t *)palloc0(desc->nindexes * sizeof(smstore_index_t));
+  for (int i = 0; i < desc->nindexes; i++) {
+    const sm_index_def_t &x = def->indexes[i];
+    smstore_index_t *ix = &desc->indexes[i];
+
+    ix->oid = (Oid)x.oid;
+    ix->name = pstrdup(x.name.c_str());
+    ix->unique = x.unique;
+    ix->usable = sm_tbl_index_usable(tbl, x.oid);
+    ix->nkeys = (int)x.key_attnums.size();
+    ix->ncolumns = ix->nkeys + (int)x.include_attnums.size();
+    ix->attnums = (int16 *)palloc(ix->ncolumns * sizeof(int16));
+    ix->desc = (bool *)palloc(ix->nkeys * sizeof(bool));
+    ix->nulls_first = (bool *)palloc(ix->nkeys * sizeof(bool));
+    for (int k = 0; k < ix->nkeys; k++) {
+      ix->attnums[k] = (int16)(x.key_attnums[k] + 1);
+      ix->desc[k] = x.key[k].desc;
+      ix->nulls_first[k] = x.key[k].nulls_first;
+    }
+    for (size_t k = 0; k < x.include_attnums.size(); k++)
+      ix->attnums[ix->nkeys + k] = (int16)(x.include_attnums[k] + 1);
+    remember_index(ix->oid, oid);
+  }
   return desc;
+}
+
+/*
+ * The table of the index indexoid, as last described by
+ * smstore_table_desc(), or InvalidOid if no table described has it: an
+ * index's descriptor is built from its table's.
+ */
+Oid smstore_index_table(Oid indexoid) {
+  index_table_t *entry;
+
+  if (index_tables == NULL)
+    return InvalidOid;
+  entry =
+      (index_table_t *)hash_search(index_tables, &indexoid, HASH_FIND, NULL);
+  return entry != NULL ? entry->table : InvalidOid;
 }
 
 /*
@@ -533,10 +608,18 @@ void smstore_insert(Relation rel, TupleTableSlot *slot) {
   smstore_rowno_to_tid(rowno, &slot->tts_tid);
 }
 
-/* A scan of a table in sm: the table, and sm's cursor over its rows. */
+/*
+ * A scan of a table in sm: the table, and sm's cursor over its rows; or,
+ * over one of its indexes, sm's cursor over the index's entries and the scan
+ * keys every row it reads must meet, with each key's column in the table.
+ */
 struct smstore_scan_t {
   sm_tbl_t *tbl;
   sm_rel_scan_t *cursor;
+  sm_idx_scan_t *icursor;
+  ScanKey keys;
+  int nkeys;
+  AttrNumber *keycols;
 };
 
 /* Begin a scan of every row of rel, a table in sm, in rowno order. */
@@ -548,7 +631,7 @@ smstore_scan_t *smstore_beginscan(Relation rel) {
     ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
                     errmsg("relation \"%s\" does not exist",
                            RelationGetRelationName(rel))));
-  scan = (smstore_scan_t *)palloc(sizeof(smstore_scan_t));
+  scan = (smstore_scan_t *)palloc0(sizeof(smstore_scan_t));
   scan->tbl = tbl;
   if (sm_tbl_scan(tbl, 0, UINT64_MAX, &scan->cursor) != 0)
     sm_error("scan a table");
@@ -585,6 +668,7 @@ bool smstore_getnext(smstore_scan_t *scan, TupleTableSlot *slot) {
 /* End a scan; the table stays open until the transaction ends. */
 void smstore_endscan(smstore_scan_t *scan) {
   sm_rel_scanend(scan->cursor);
+  sm_idx_scanend(scan->icursor);
   pfree(scan);
 }
 
@@ -818,5 +902,180 @@ void smstore_drop_indexes(DropStmt *stmt) {
 
     if (waiting([&] { return sm_cat_drop_index(s, table, index); }) != 0)
       sm_error("drop an index");
+  }
+}
+
+/* Whether this transaction may scan rel's index indexoid now: built, valid. */
+bool smstore_index_usable(Relation rel, Oid indexoid) {
+  sm_tbl_t *tbl = open_table(RelationGetRelid(rel), SM_LOCKMODE_IS);
+
+  return tbl != NULL && sm_tbl_index_usable(tbl, indexoid);
+}
+
+/* Whether a scan key is a plain comparison with a value, usable as a bound. */
+static bool plain_key(ScanKey key, Oid coltype) {
+  return (key->sk_flags & (SK_ISNULL | SK_ROW_HEADER | SK_SEARCHARRAY |
+                           SK_SEARCHNULL | SK_SEARCHNOTNULL)) == 0 &&
+         (key->sk_subtype == InvalidOid || key->sk_subtype == coltype);
+}
+
+/*
+ * Whether the row in slot meets every scan key: each compares the row's
+ * value in the key's column, by the key's operator, with the key's value.
+ * A null meets only IS NULL.
+ */
+static bool keys_met(smstore_scan_t *scan, TupleTableSlot *slot) {
+  for (int i = 0; i < scan->nkeys; i++) {
+    ScanKey key = &scan->keys[i];
+    int col = scan->keycols[i] - 1;
+    bool isnull = slot->tts_isnull[col];
+
+    if (key->sk_flags & SK_SEARCHNULL) {
+      if (!isnull)
+        return false;
+      continue;
+    }
+    if (key->sk_flags & SK_SEARCHNOTNULL) {
+      if (isnull)
+        return false;
+      continue;
+    }
+    if (isnull || (key->sk_flags & SK_ISNULL))
+      return false;
+    if (!DatumGetBool(FunctionCall2Coll(&key->sk_func, key->sk_collation,
+                                        slot->tts_values[col],
+                                        key->sk_argument)))
+      return false;
+  }
+  return true;
+}
+
+/*
+ * Begin a scan of index, a btree of heap, a table in sm, for the rows that
+ * meet keys: btree scan keys on the index's columns.  Equal keys on its
+ * leading columns are a prefix both bounds share; the next column's ranges
+ * bound it below and above, in the index's own order, so a DESC column's
+ * upper value is its lower bound.  Every row read is checked against every
+ * key, so a key that bounds nothing still holds.
+ */
+smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
+                                        ScanKey keys, int nkeys) {
+  sm_tbl_t *tbl = open_table(RelationGetRelid(heap), SM_LOCKMODE_IS);
+  Form_pg_index form = index->rd_index;
+  int ncols = form->indnkeyatts;
+  sm_datum_t *lo_vals = (sm_datum_t *)palloc0(ncols * sizeof(sm_datum_t));
+  sm_datum_t *hi_vals = (sm_datum_t *)palloc0(ncols * sizeof(sm_datum_t));
+  bool *nulls = (bool *)palloc0(ncols * sizeof(bool));
+  sm_bound_t lo = {lo_vals, nulls, 0, true};
+  sm_bound_t hi = {hi_vals, nulls, 0, true};
+  smstore_scan_t *scan;
+
+  if (tbl == NULL)
+    ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
+                    errmsg("relation \"%s\" does not exist",
+                           RelationGetRelationName(heap))));
+  for (int i = 0; i < nkeys; i++)
+    if (keys[i].sk_flags & (SK_ROW_HEADER | SK_SEARCHARRAY))
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("an index scan in sm takes no row comparison "
+                             "or array yet")));
+
+  for (int c = 0; c < ncols; c++) {
+    Oid coltype = index->rd_opcintype[c];
+    bool desc = (index->rd_indoption[c] & INDOPTION_DESC) != 0;
+    ScanKey eq = NULL, below = NULL, above = NULL;
+
+    for (int i = 0; i < nkeys; i++) {
+      ScanKey key = &keys[i];
+
+      if (key->sk_attno != c + 1 || !plain_key(key, coltype))
+        continue;
+      switch (key->sk_strategy) {
+      case BTEqualStrategyNumber:
+        eq = key;
+        break;
+      case BTGreaterStrategyNumber:
+      case BTGreaterEqualStrategyNumber:
+        below = key; /* the value's lower end */
+        break;
+      default:
+        above = key; /* the value's upper end */
+        break;
+      }
+    }
+    if (eq != NULL) {
+      lo_vals[c] = hi_vals[c] = (sm_datum_t)eq->sk_argument;
+      lo.n = hi.n = c + 1;
+      continue;
+    }
+    /* In the index's order a DESC column's high values come first. */
+    ScanKey first = desc ? above : below, last = desc ? below : above;
+
+    if (first != NULL) {
+      lo_vals[c] = (sm_datum_t)first->sk_argument;
+      lo.n = c + 1;
+      lo.inclusive = first->sk_strategy == BTGreaterEqualStrategyNumber ||
+                     first->sk_strategy == BTLessEqualStrategyNumber;
+    }
+    if (last != NULL) {
+      hi_vals[c] = (sm_datum_t)last->sk_argument;
+      hi.n = c + 1;
+      hi.inclusive = last->sk_strategy == BTGreaterEqualStrategyNumber ||
+                     last->sk_strategy == BTLessEqualStrategyNumber;
+    }
+    break;
+  }
+
+  scan = (smstore_scan_t *)palloc0(sizeof(smstore_scan_t));
+  scan->tbl = tbl;
+  scan->keys = keys;
+  scan->nkeys = nkeys;
+  scan->keycols = (AttrNumber *)palloc(Max(nkeys, 1) * sizeof(AttrNumber));
+  for (int i = 0; i < nkeys; i++)
+    scan->keycols[i] = form->indkey.values[keys[i].sk_attno - 1];
+  if (sm_tbl_idx_scan(tbl, RelationGetRelid(index), lo.n > 0 ? &lo : NULL,
+                      hi.n > 0 ? &hi : NULL, NULL, &scan->icursor) != 0)
+    sm_error("scan an index");
+  return scan;
+}
+
+/*
+ * The index scan's next row that meets its keys into slot, as a virtual
+ * tuple, its tid its rowno; false at the end.
+ */
+bool smstore_index_getnext(smstore_scan_t *scan, TupleTableSlot *slot) {
+  for (;;) {
+    uint64_t rowno;
+    bool cut;
+    const void *value, *tuple;
+    size_t len;
+
+    CHECK_FOR_INTERRUPTS();
+    switch (sm_idx_scannxt(scan->icursor, &rowno, &cut, &value, &len)) {
+    case 0:
+      break;
+    case 1:
+      ExecClearTuple(slot);
+      return false;
+    default:
+      sm_error("scan an index");
+    }
+    /* The row as this transaction sees it; one it does not see is passed. */
+    switch (sm_tbl_read(scan->tbl, rowno, &tuple, &len)) {
+    case 0:
+      break;
+    case 1:
+      continue;
+    default:
+      sm_error("read a row");
+    }
+    ExecClearTuple(slot);
+    if (sm_tbl_deform(scan->tbl, tuple, len, (sm_datum_t *)slot->tts_values,
+                      slot->tts_isnull, slot->tts_tupleDescriptor->natts) != 0)
+      sm_error("read a row");
+    ExecStoreVirtualTuple(slot);
+    smstore_rowno_to_tid(rowno, &slot->tts_tid);
+    if (keys_met(scan, slot))
+      return true;
   }
 }

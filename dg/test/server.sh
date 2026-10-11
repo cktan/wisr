@@ -400,6 +400,34 @@ grep -qx 'INSERT 0 1' "$work/index.out" &&
   grep -q 'index "t3_b" does not exist' "$work/index.out" ||
   fail "drop index"
 
+# Verify that an index scan reads a table in sm through its index: equal
+# keys, ranges, a key on a second column, and IS NULL find the rows they
+# should, with the plan an index scan.
+# 1. Create t4 and a two-column index in one transaction, so sm fills the
+#    index at once, then insert rows, one with a null key.
+# 2. Confirm the plan of a range on the first column is an index scan.
+# 3. Confirm a range, an equal key with a range on the second column, IS
+#    NULL and an empty range return the right rows.
+local_psql > /dev/null 2>&1 <<'SQL'
+begin;
+create table t4 (a int4, b int8, c int2);
+create index t4_ac on t4 (a, c);
+commit;
+insert into t4 values (1, 10, 1), (2, 20, 2), (3, 30, 3), (4, 40, 4),
+  (3, 31, 6), (null, 60, 7);
+SQL
+local_psql -c 'explain (costs off) select * from t4 where a >= 2 and a < 4' \
+  > "$work/iscan.out" 2>&1
+grep -q 'Index Scan using t4_ac on t4' "$work/iscan.out" || fail "index plan"
+[ "$(local_psql -c 'select b from t4 where a >= 2 and a < 4' 2>&1 |
+  tr '\n' ' ')" = "20 30 31 " ] || fail "index range"
+[ "$(local_psql -c 'select b from t4 where a = 3 and c > 3' 2>&1)" = 31 ] ||
+  fail "index key and range"
+[ "$(local_psql -c 'select b from t4 where a is null' 2>&1)" = 60 ] ||
+  fail "index is null"
+[ "$(local_psql -c 'select b from t4 where a > 2 and a < 2' 2>&1)" = "" ] ||
+  fail "index empty range"
+
 # Verify that = finds rows, and that DROP TABLE removes a table for good,
 # even from a session that had used it.
 # 1. Confirm WHERE a = 2 finds the one row.

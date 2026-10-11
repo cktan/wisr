@@ -41,6 +41,7 @@
 #include "access/tupdesc_details.h"
 #include "access/xact.h"
 #include "catalog/binary_upgrade.h"
+#include "catalog/cat_builtin.h"
 #include "catalog/catalog.h"
 #include "catalog/indexing.h"
 #include "catalog/namespace.h"
@@ -312,6 +313,9 @@ static void RelationParseRelOptions(Relation relation, HeapTuple tuple);
 static void RelationBuildTupleDesc(Relation relation);
 static Relation RelationBuildDesc(Oid targetRelId, bool insertIt);
 static Relation RelationBuildSmDesc(Oid targetRelId, bool insertIt);
+static Relation RelationBuildSmIndexDesc(Oid indexoid, Oid table,
+                                         bool insertIt);
+static void InitIndexAmRoutine(Relation relation);
 static void InitTableAmRoutine(Relation relation);
 static void RelationInitPhysicalAddr(Relation relation);
 static void load_critical_index(Oid indexoid, Oid heapoid);
@@ -1018,8 +1022,13 @@ static Relation RelationBuildDesc(Oid targetRelId, bool insertIt) {
   Form_pg_class relp;
 
   /* A relation a user made is sm's: no pg_class row describes it. */
-  if (targetRelId >= FirstNormalObjectId)
+  if (targetRelId >= FirstNormalObjectId) {
+    Oid table = smstore_index_table(targetRelId);
+
+    if (OidIsValid(table))
+      return RelationBuildSmIndexDesc(targetRelId, table, insertIt);
     return RelationBuildSmDesc(targetRelId, insertIt);
+  }
 
   /*
    * This function and its subroutines can allocate a good deal of transient
@@ -1340,8 +1349,14 @@ static Relation RelationBuildSmDesc(Oid targetRelId, bool insertIt) {
 
   relation->rd_fkeylist = NIL;
   relation->rd_fkeyvalid = false;
-  /* No index yet, and no extended statistics: there is no CREATE STATISTICS. */
+  /* Its indexes are sm's; no extended statistics: no CREATE STATISTICS. */
+  oldcxt = MemoryContextSwitchTo(CacheMemoryContext);
   relation->rd_indexlist = NIL;
+  for (int i = 0; i < desc->nindexes; i++)
+    relation->rd_indexlist =
+        lappend_oid(relation->rd_indexlist, desc->indexes[i].oid);
+  MemoryContextSwitchTo(oldcxt);
+  relation->rd_rel->relhasindex = desc->nindexes > 0;
   relation->rd_pkindex = InvalidOid;
   relation->rd_replidindex = InvalidOid;
   relation->rd_indexvalid = true;
@@ -1358,6 +1373,125 @@ static Relation RelationBuildSmDesc(Oid targetRelId, bool insertIt) {
    */
   relation->rd_amhandler = F_HEAP_TABLEAM_HANDLER;
   InitTableAmRoutine(relation);
+
+  RelationInitLockInfo(relation);
+  RelationInitPhysicalAddr(relation);
+  relation->rd_smgr = NULL;
+
+  if (insertIt)
+    RelationCacheInsert(relation, true);
+  relation->rd_isvalid = true;
+  return relation;
+}
+
+/*
+ * Build the descriptor of the index indexoid of table, a table in sm, from
+ * sm3's definition of it: a btree whose columns are the table's, keyed by
+ * each column type's default btree operator class.  sm reads and writes its
+ * entries; the descriptor is for the planner and the executor's scan keys.
+ * NULL if the table has no such index.
+ */
+static Relation RelationBuildSmIndexDesc(Oid indexoid, Oid table,
+                                         bool insertIt) {
+  smstore_table_t *desc = smstore_table_desc(table);
+  smstore_index_t *ix = NULL;
+  FormData_pg_class form;
+  Relation relation;
+  MemoryContext oldcxt;
+  Form_pg_index index;
+  int nopclasses;
+  const cat_opclass_t *opclasses = cat_opclasses(&nopclasses);
+
+  for (int i = 0; desc != NULL && i < desc->nindexes; i++)
+    if (desc->indexes[i].oid == indexoid)
+      ix = &desc->indexes[i];
+  if (ix == NULL)
+    return NULL;
+
+  memset(&form, 0, sizeof(form));
+  form.oid = indexoid;
+  namestrcpy(&form.relname, ix->name);
+  form.relnamespace = desc->nspoid;
+  form.relowner = BOOTSTRAP_SUPERUSERID;
+  form.relam = BTREE_AM_OID;
+  form.relfilenode = indexoid;
+  form.relkind = RELKIND_INDEX;
+  form.relpersistence = RELPERSISTENCE_PERMANENT;
+  form.relispopulated = true;
+  form.relnatts = ix->ncolumns;
+  relation = AllocateRelationDesc(&form);
+  RelationGetRelid(relation) = indexoid;
+  relation->rd_refcnt = 0;
+  relation->rd_isnailed = false;
+  relation->rd_createSubid = InvalidSubTransactionId;
+  relation->rd_newRelfilelocatorSubid = InvalidSubTransactionId;
+  relation->rd_firstRelfilelocatorSubid = InvalidSubTransactionId;
+  relation->rd_droppedSubid = InvalidSubTransactionId;
+  relation->rd_backend = INVALID_PROC_NUMBER;
+  relation->rd_islocaltemp = false;
+
+  /* Its columns are the table's, in the cache's context. */
+  oldcxt = MemoryContextSwitchTo(CacheMemoryContext);
+  relation->rd_att->tdtypeid = RECORDOID;
+  relation->rd_att->tdtypmod = -1;
+  for (int i = 0; i < ix->ncolumns; i++) {
+    smstore_column_t *col = &desc->columns[ix->attnums[i] - 1];
+
+    TupleDescInitEntry(relation->rd_att, i + 1, col->name, col->typid,
+                       col->typmod, 0);
+    TupleDescAttr(relation->rd_att, i)->attrelid = indexoid;
+    populate_compact_attribute(relation->rd_att, i);
+  }
+
+  /* Its pg_index form, with the table's column of each of its own. */
+  index = (Form_pg_index)palloc0(offsetof(FormData_pg_index, indkey) +
+                                 (offsetof(int2vector, values) + ix->ncolumns * sizeof(int16)));
+  index->indexrelid = indexoid;
+  index->indrelid = table;
+  index->indnatts = ix->ncolumns;
+  index->indnkeyatts = ix->nkeys;
+  index->indisunique = ix->unique;
+  index->indimmediate = true;
+  index->indisvalid = ix->usable;
+  index->indisready = true;
+  index->indislive = true;
+  SET_VARSIZE(&index->indkey, (offsetof(int2vector, values) + ix->ncolumns * sizeof(int16)));
+  index->indkey.ndim = 1;
+  index->indkey.elemtype = INT2OID;
+  index->indkey.dim1 = ix->ncolumns;
+  memcpy(index->indkey.values, ix->attnums, ix->ncolumns * sizeof(int16));
+  relation->rd_index = index;
+  relation->rd_indextuple = NULL;
+  MemoryContextSwitchTo(oldcxt);
+
+  /* Its access method's data, in a context of its own, as an index's is. */
+  relation->rd_indexcxt = AllocSetContextCreate(
+      CacheMemoryContext, "index info", ALLOCSET_SMALL_SIZES);
+  MemoryContextCopyAndSetIdentifier(relation->rd_indexcxt,
+                                    RelationGetRelationName(relation));
+  relation->rd_amhandler = F_BTHANDLER;
+  InitIndexAmRoutine(relation);
+  oldcxt = MemoryContextSwitchTo(relation->rd_indexcxt);
+  relation->rd_opfamily = (Oid *)palloc0(ix->nkeys * sizeof(Oid));
+  relation->rd_opcintype = (Oid *)palloc0(ix->nkeys * sizeof(Oid));
+  relation->rd_indcollation = (Oid *)palloc0(ix->nkeys * sizeof(Oid));
+  relation->rd_indoption = (int16 *)palloc0(ix->nkeys * sizeof(int16));
+  MemoryContextSwitchTo(oldcxt);
+  for (int i = 0; i < ix->nkeys; i++) {
+    Oid typid = TupleDescAttr(relation->rd_att, i)->atttypid;
+    const cat_opclass_t *opclass = NULL;
+
+    for (int k = 0; k < nopclasses && opclass == NULL; k++)
+      if (opclasses[k].opcmethod == BTREE_AM_OID &&
+          opclasses[k].opcdefault && opclasses[k].opcintype == typid)
+        opclass = &opclasses[k];
+    if (opclass == NULL)
+      elog(ERROR, "type %u has no default btree operator class", typid);
+    relation->rd_opfamily[i] = opclass->opcfamily;
+    relation->rd_opcintype[i] = opclass->opcintype;
+    relation->rd_indoption[i] = (ix->desc[i] ? INDOPTION_DESC : 0) |
+                                (ix->nulls_first[i] ? INDOPTION_NULLS_FIRST : 0);
+  }
 
   RelationInitLockInfo(relation);
   RelationInitPhysicalAddr(relation);

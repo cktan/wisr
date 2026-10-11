@@ -11862,19 +11862,18 @@ static char *generate_function_name(Oid funcid, int nargs, List *argnames,
  */
 static char *generate_operator_name(Oid operid, Oid arg1, Oid arg2) {
   StringInfoData buf;
-  HeapTuple opertup;
-  Form_pg_operator operform;
+  const cat_operator_t *operform;
   char *oprname;
   char *nspname;
   Operator p_result;
 
   initStringInfo(&buf);
 
-  opertup = SearchSysCache1(OPEROID, ObjectIdGetDatum(operid));
-  if (!HeapTupleIsValid(opertup))
+  /* Every operator is compiled in (catalog/cat_builtin.h). */
+  operform = cat_operator(operid);
+  if (operform == NULL)
     elog(ERROR, "cache lookup failed for operator %u", operid);
-  operform = (Form_pg_operator)GETSTRUCT(opertup);
-  oprname = NameStr(operform->oprname);
+  oprname = pstrdup(operform->oprname);
 
   /*
    * The idea here is to schema-qualify only if the parser would fail to
@@ -11906,8 +11905,6 @@ static char *generate_operator_name(Oid operid, Oid arg1, Oid arg2) {
 
   if (nspname)
     appendStringInfoChar(&buf, ')');
-
-  ReleaseSysCache(opertup);
 
   return buf.data;
 }

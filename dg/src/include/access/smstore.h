@@ -16,6 +16,7 @@
 #define SMSTORE_H
 
 #include "catalog/objectaddress.h"
+#include "access/skey.h"
 #include "executor/tuptable.h"
 #include "storage/lockdefs.h"
 #include "nodes/parsenodes.h"
@@ -35,6 +36,22 @@ typedef struct smstore_column_t {
   bool dropped;
 } smstore_column_t;
 
+/*
+ * An index of a table in sm: its columns by place in the table, 1-based,
+ * the keys first and the INCLUDE columns after, and how each key sorts.
+ */
+typedef struct smstore_index_t {
+  Oid oid;
+  const char *name;
+  bool unique;
+  bool usable; /* the session may scan it now (sm_tbl_index_usable) */
+  int nkeys;
+  int ncolumns;
+  int16 *attnums;    /* ncolumns of them */
+  bool *desc;        /* nkeys of them */
+  bool *nulls_first; /* nkeys of them */
+} smstore_index_t;
+
 /* A table in sm, as its relation descriptor is built from it. */
 typedef struct smstore_table_t {
   Oid oid;
@@ -42,6 +59,8 @@ typedef struct smstore_table_t {
   const char *name;
   int ncolumns;
   smstore_column_t *columns;
+  int nindexes;
+  smstore_index_t *indexes;
 } smstore_table_t;
 
 extern void smstore_statement_start(void);
@@ -57,6 +76,8 @@ extern ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt);
 extern void smstore_drop_indexes(DropStmt *stmt);
 extern void smstore_lock_table(Relation rel, LOCKMODE lockmode, bool nowait);
 extern smstore_table_t *smstore_table_desc(Oid oid);
+extern Oid smstore_index_table(Oid indexoid);
+extern bool smstore_index_usable(Relation rel, Oid indexoid);
 extern void smstore_insert(Relation rel, TupleTableSlot *slot);
 
 /* A scan of a table in sm, in rowno order. */
@@ -65,6 +86,9 @@ typedef struct smstore_scan_t smstore_scan_t;
 extern smstore_scan_t *smstore_beginscan(Relation rel);
 extern bool smstore_getnext(smstore_scan_t *scan, TupleTableSlot *slot);
 extern void smstore_endscan(smstore_scan_t *scan);
+extern smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
+                                               ScanKey keys, int nkeys);
+extern bool smstore_index_getnext(smstore_scan_t *scan, TupleTableSlot *slot);
 extern void smstore_rowno_to_tid(uint64 rowno, ItemPointer tid);
 extern uint64 smstore_tid_to_rowno(ItemPointer tid);
 

@@ -17,8 +17,9 @@ For each catalog named in CATALOGS it writes
   - the rows, in oid order, and cat_NAME(oid) to find one;
   - where the catalog has a name column worth searching by, the rows
     again in name order, and cat_NAMEs_named(name, &count) to find
-    all of that name; where it has none, cat_NAMEs(&count), all the
-    rows, for a caller to search.
+    all of that name; where it has none, cat_NAMEs(&count) (or
+    cat_NAMEes for a name ending in s), all the rows, for a caller to
+    search.
 
 A row is read-only and lives for ever: a caller keeps the pointer for
 as long as it likes, and there is nothing to release.
@@ -39,6 +40,7 @@ CATALOGS = {
     "pg_cast": ("cast", None),
     "pg_am": ("am", "amname"),
     "pg_amop": ("amop", None),
+    "pg_opclass": ("opclass", None),
 }
 
 # BKI column type -> (C type, how a value is written)
@@ -184,13 +186,18 @@ def write_header(catalogs, out):
         w(f"extern const cat_{short}_t *cat_{short}(Oid oid);\n\n")
         if name_col is None:
             w(f"/* Every {catalog} row, in oid order, and how many in *count. */\n")
-            w(f"extern const cat_{short}_t *cat_{short}s(int *count);\n")
+            w(f"extern const cat_{short}_t *cat_{plural(short)}(int *count);\n")
             continue
         w(f"/*\n * The {catalog} rows whose {name_col} is name, in oid order, and how\n")
         w(" * many in *count; NULL and 0 if there are none.\n */\n")
         w(f"extern const cat_{short}_t *const *cat_{short}s_named(const char *name,\n")
         w(f"{' ' * (len(short) * 2 + 43)}int *count);\n")
     w("\n#endif /* CAT_BUILTIN_H */\n")
+
+
+def plural(short):
+    """The plural of a row's name in C: cast -> casts, opclass -> opclasses."""
+    return short + ("es" if short.endswith("s") else "s")
 
 
 def write_oid_lookup(catalog, short, w):
@@ -233,7 +240,7 @@ def write_source(catalogs, out):
         write_oid_lookup(catalog, short, w)
         if name_col is None:
             w(f"/* Every {catalog} row, in oid order. */\n")
-            w(f"const cat_{short}_t *cat_{short}s(int *count) {{\n")
+            w(f"const cat_{short}_t *cat_{plural(short)}(int *count) {{\n")
             w(f"  *count = lengthof({short}_rows);\n  return {short}_rows;\n}}\n")
             continue
         name_at = names.index(name_col)

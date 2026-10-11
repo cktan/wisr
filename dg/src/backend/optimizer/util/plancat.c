@@ -239,9 +239,11 @@ void get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
        * queries.  Note that this is OK because the data structure we
        * are constructing is only used by the planner --- the executor
        * still needs to insert into "invalid" indexes, if they're marked
-       * indisready.
+       * indisready.  An index in sm is asked now: its build may have ended
+       * since its descriptor was made.
        */
-      if (!index->indisvalid) {
+      if (RelationIsSm(relation) ? !smstore_index_usable(relation, indexoid)
+                                 : !index->indisvalid) {
         index_close(indexRelation, NoLock);
         continue;
       }
@@ -276,7 +278,9 @@ void get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 
       for (i = 0; i < ncolumns; i++) {
         info->indexkeys[i] = index->indkey.values[i];
-        info->canreturn[i] = index_can_return(indexRelation, i + 1);
+        /* sm's index scans read the row, not the index entry, yet. */
+        info->canreturn[i] =
+            !RelationIsSm(relation) && index_can_return(indexRelation, i + 1);
       }
 
       for (i = 0; i < nkeycolumns; i++) {
@@ -296,11 +300,14 @@ void get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
         amroutine = indexRelation->rd_indam;
         info->amcanorderbyop = amroutine->amcanorderbyop;
         info->amoptionalkey = amroutine->amoptionalkey;
-        info->amsearcharray = amroutine->amsearcharray;
+        /* sm's index scans take no array of values yet. */
+        info->amsearcharray =
+            amroutine->amsearcharray && !RelationIsSm(relation);
         info->amsearchnulls = amroutine->amsearchnulls;
         info->amhasgettuple = (amroutine->amgettuple != NULL);
+        /* sm's index scans fetch a row at a time: no bitmap scans. */
         info->amhasgetbitmap =
-            amroutine->amgetbitmap != NULL &&
+            amroutine->amgetbitmap != NULL && !RelationIsSm(relation) &&
             relation->rd_tableam->scan_bitmap_next_tuple != NULL;
         info->amcanmarkpos =
             (amroutine->ammarkpos != NULL && amroutine->amrestrpos != NULL);
@@ -313,7 +320,12 @@ void get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
         /*
          * Fetch the ordering information for the index, if any.
          */
-        if (info->relam == BTREE_AM_OID) {
+        if (RelationIsSm(relation)) {
+          /* sm's index scans are not ordered for the planner yet. */
+          info->sortopfamily = NULL;
+          info->reverse_sort = NULL;
+          info->nulls_first = NULL;
+        } else if (info->relam == BTREE_AM_OID) {
           /*
            * If it's a btree index, we can use its opfamily OIDs
            * directly as the sort ordering opfamily OIDs.
@@ -425,7 +437,11 @@ void get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
        * there are not physical indexes.
        */
       if (indexRelation->rd_rel->relkind != RELKIND_PARTITIONED_INDEX) {
-        if (info->indpred == NIL) {
+        if (RelationIsSm(relation)) {
+          /* sm has no pages: as large as its table, which is estimated. */
+          info->pages = rel->pages;
+          info->tuples = rel->tuples;
+        } else if (info->indpred == NIL) {
           info->pages = RelationGetNumberOfBlocks(indexRelation);
           info->tuples = rel->tuples;
         } else {
@@ -440,7 +456,7 @@ void get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
         /*
          * Get tree height while we have the index open
          */
-        if (amroutine->amgettreeheight) {
+        if (amroutine->amgettreeheight && !RelationIsSm(relation)) {
           info->tree_height = amroutine->amgettreeheight(indexRelation);
         } else {
           /* For other index types, just set it to "unknown" for now */

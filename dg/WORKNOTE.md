@@ -1656,3 +1656,48 @@ and the executor next.
   descriptor.
 - `server.sh` creates plain and unique indexes, checks a
   default name, a duplicate refused, and DROP INDEX.
+
+## Step 51: an index scan reads a table in sm through its index
+
+The planner and the executor now use an index in sm, the
+second step before nbtree goes.
+
+- **A table in sm lists its indexes** (`rd_indexlist`), and an
+  index's descriptor is built from sm3's definition
+  (`RelationBuildSmIndexDesc()`): a btree whose columns are
+  the table's, keyed by each type's default btree operator
+  class, with DESC and NULLS FIRST in `rd_indoption`, and a
+  `pg_index` form made for it. smstore remembers each index's
+  table, so the descriptor can be built from the index's oid.
+  It keeps nbtree's routine for the planner's flags and its
+  cost estimate.
+- **`pg_opclass` is compiled in**; `gen_cat.py` names the list
+  of a catalog ending in s with -es (`cat_opclasses()`).
+- **The planner asks sm whether an index may be scanned**
+  (`smstore_index_usable()`): one built in the background may
+  have become valid since its descriptor was made. Not yet: an
+  index-only scan, an ordered or backward scan, a bitmap scan,
+  an array of values (`a IN (...)`). A bitmap scan is to come:
+  an index scan yields rownos, and a rowno is a tid. sm has no
+  pages; an index is estimated as large as its table.
+- **`IndexNext()` reads a table in sm through
+  `smstore_index_beginscan()`**: equal keys on the index's
+  leading columns are a prefix both bounds share, and the next
+  column's ranges bound it, in the index's own order, so a
+  DESC column's upper value is its lower bound. A key whose
+  value is not of the column's type bounds nothing. Each entry's
+  row is read with `sm_tbl_read()`, and every row is checked
+  against every scan key, so a bound only narrows the scan.
+- **EXPLAIN names operators** from the compiled-in rows
+  (`generate_operator_name()`).
+- `server.sh` builds an index with its table, so sm fills it at
+  once, and checks a range, an equal key with a range on the
+  second column, IS NULL and an empty range, and that the plan
+  is an index scan.
+- **`make tsan` fails now and then**, on a race inside RocksDB's
+  group commit: two threads write at once, sm1's sequence lease
+  for a CREATE TABLE and sm1's GC, and the group's leader copies
+  the other's batch, handed over through RocksDB's atomics,
+  which the sanitizer does not see in an uninstrumented RocksDB.
+  The new tests make more such writes at once. No suppression
+  fits: the GC thread runs no instrumented code to name.
