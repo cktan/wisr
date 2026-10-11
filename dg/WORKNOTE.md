@@ -1363,3 +1363,27 @@ transaction's isolation level.
   checks NOT NULL, a rollback, that UPDATE is refused, and that
   a scan at READ COMMITTED sees another session's commit and
   one at REPEATABLE READ does not.
+
+## Step 39: = in a WHERE, and DROP TABLE
+
+The rest of the first milestone: a scan filtered by equality,
+and a table dropped.
+
+- **`pg_am` and `pg_amop` are compiled in.** Every pg_amop
+  lookup in `lsyscache.c` reads the compiled-in rows: by
+  operator, by operator, purpose and family, and by family,
+  types and strategy, a search of a thousand-odd rows in order.
+  `GetIndexAmRoutineByAmId()` reads `cat_am()`. The planner
+  needs them for any `=`, to find its btree and hash families.
+- **DROP TABLE is `smstore_drop_tables()`**: each table named
+  is looked up, locked, dropped from sm with its indexes, rows
+  and sequence, and its descriptor invalidated in every session
+  at commit. IF EXISTS passes over one that is not there.
+  CASCADE and RESTRICT do the same: nothing but its indexes
+  depends on a table in sm. DROP of any other kind of relation
+  is as it was.
+- A session that used a table finds the one created in its
+  place under the same name, with other columns: a name is
+  looked up in sm each statement.
+- `server.sh` filters with `=`, and drops a table from one
+  session while another has used it.

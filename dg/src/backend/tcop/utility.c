@@ -1726,6 +1726,9 @@ static void ExecDropStmt(DropStmt *stmt, bool isTopLevel) {
     /* fall through */
 
   case OBJECT_TABLE:
+    /* A table is sm's (access/smstore.h). */
+    smstore_drop_tables(stmt);
+    break;
   case OBJECT_SEQUENCE:
   case OBJECT_VIEW:
   case OBJECT_MATVIEW:

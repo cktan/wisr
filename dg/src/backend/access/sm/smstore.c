@@ -19,12 +19,14 @@
 
 #include "access/smstore.h"
 #include "access/xact.h"
+#include "access/relation.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_class_d.h"
 #include "catalog/pg_type_d.h"
 #include "parser/parse_type.h"
 #include "utils/builtins.h"
 #include "utils/datadir.h"
+#include "utils/inval.h"
 #include "utils/rel.h"
 #include "utils/memutils.h"
 
@@ -461,4 +463,39 @@ bool smstore_getnext(smstore_scan_t *scan, TupleTableSlot *slot) {
 void smstore_endscan(smstore_scan_t *scan) {
   sm_rel_scanend(scan->cursor);
   pfree(scan);
+}
+
+/*
+ * Drop the tables a DROP TABLE names, from sm, in this transaction: each
+ * with its indexes, rows and sequence.  CASCADE and RESTRICT are the same:
+ * nothing but its indexes depends on a table in sm.
+ */
+void smstore_drop_tables(DropStmt *stmt) {
+  ListCell *l;
+
+  foreach (l, stmt->objects) {
+    RangeVar *rv = makeRangeVarFromNameList((List *)lfirst(l));
+    Oid oid;
+    Relation rel;
+
+    /* Locked against other sessions' use until the transaction ends. */
+    oid = RangeVarGetRelid(rv, AccessExclusiveLock, true);
+    if (!OidIsValid(oid)) {
+      if (!stmt->missing_ok)
+        ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
+                        errmsg("table \"%s\" does not exist", rv->relname)));
+      ereport(NOTICE,
+              (errmsg("table \"%s\" does not exist, skipping", rv->relname)));
+      continue;
+    }
+    rel = relation_open(oid, NoLock);
+    if (rel->rd_rel->relkind != RELKIND_RELATION)
+      ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
+                      errmsg("\"%s\" is not a table", rv->relname)));
+    /* Every session forgets its descriptor once this one commits. */
+    CacheInvalidateRelcache(rel);
+    relation_close(rel, NoLock);
+    if (sm_cat_drop_table(xact_session(), oid) != 0)
+      sm_error("drop a table");
+  }
 }

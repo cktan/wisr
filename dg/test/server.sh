@@ -252,6 +252,37 @@ wait $iso
   "BEGIN 1 after 6 COMMIT BEGIN 1 6 after 6 COMMIT " ] ||
   fail "isolation levels"
 
+# Verify that = finds rows, and that DROP TABLE removes a table for good,
+# even from a session that had used it.
+# 1. Confirm WHERE a = 2 finds the one row.
+# 2. In a session of its own, scan t1; drop t1 from another, and create it
+#    again with other columns and a row; scan again in the first session:
+#    it sees the new table.
+# 3. Confirm dropping a table that is gone fails, and IF EXISTS passes.
+[ "$(local_psql -c 'select b from t1 where a = 2' 2>&1)" = 20 ] ||
+  fail "where a = 2"
+mkfifo "$work/drop.in"
+local_psql < "$work/drop.in" > "$work/drop.out" 2>&1 &
+dropper=$!
+exec 4> "$work/drop.in"
+echo "select a from t1 where a = 1;" >&4
+for _ in $(seq 50); do
+  grep -qx 1 "$work/drop.out" && break
+  sleep 0.1
+done
+local_psql -c 'drop table t1' > /dev/null 2>&1
+local_psql -c 'create table t1 (x int8)' > /dev/null 2>&1
+local_psql -c 'insert into t1 values (77)' > /dev/null 2>&1
+echo "select * from t1;" >&4
+exec 4>&-
+wait $dropper
+[ "$(tr '\n' ' ' < "$work/drop.out")" = "1 77 " ] || fail "drop table"
+local_psql -c 'drop table t1' > /dev/null 2>&1
+local_psql -c 'drop table t1' > "$work/drop2.out" 2>&1
+grep -q 'table "t1" does not exist' "$work/drop2.out" || fail "drop twice"
+local_psql -c 'drop table if exists t1' > "$work/drop2.out" 2>&1
+grep -q 'does not exist, skipping' "$work/drop2.out" || fail "drop if exists"
+
 # Verify that a signal sent to the server can land only in the postmaster's
 # thread: every other thread, sessions, sm's, RocksDB's and sys's, blocks the
 # signals the postmaster handles, whose handlers set the postmaster's latch.

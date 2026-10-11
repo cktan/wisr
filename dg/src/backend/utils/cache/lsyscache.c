@@ -58,6 +58,51 @@ thread_local /*SHARED*/ get_attavgwidth_hook_type get_attavgwidth_hook = NULL;
  */
 
 /*
+ * The pg_amop rows of operator opno, in a palloc'd array, and how many in
+ * *count: every row is compiled in (catalog/cat_builtin.h), since there is
+ * no CREATE OPERATOR CLASS.  A thousand-odd rows, searched in order.
+ */
+static const cat_amop_t **amops_of_operator(Oid opno, int *count) {
+  int nrows;
+  const cat_amop_t *rows = cat_amops(&nrows);
+  const cat_amop_t **result =
+      (const cat_amop_t **)palloc(sizeof(cat_amop_t *) * (nrows + 1));
+  int n = 0;
+
+  for (int i = 0; i < nrows; i++)
+    if (rows[i].amopopr == opno)
+      result[n++] = &rows[i];
+  *count = n;
+  return result;
+}
+
+/* The pg_amop row of opno for purpose in opfamily, or NULL. */
+static const cat_amop_t *amop_of_operator(Oid opno, char purpose,
+                                          Oid opfamily) {
+  int nrows;
+  const cat_amop_t *rows = cat_amops(&nrows);
+
+  for (int i = 0; i < nrows; i++)
+    if (rows[i].amopopr == opno && rows[i].amoppurpose == purpose &&
+        rows[i].amopfamily == opfamily)
+      return &rows[i];
+  return NULL;
+}
+
+/* The pg_amop row of opfamily's strategy for these types, or NULL. */
+static const cat_amop_t *amop_of_strategy(Oid opfamily, Oid lefttype,
+                                          Oid righttype, int16 strategy) {
+  int nrows;
+  const cat_amop_t *rows = cat_amops(&nrows);
+
+  for (int i = 0; i < nrows; i++)
+    if (rows[i].amopfamily == opfamily && rows[i].amoplefttype == lefttype &&
+        rows[i].amoprighttype == righttype && rows[i].amopstrategy == strategy)
+      return &rows[i];
+  return NULL;
+}
+
+/*
  * op_in_opfamily
  *
  *		Return t iff operator 'opno' is in operator family 'opfamily'.
@@ -65,9 +110,7 @@ thread_local /*SHARED*/ get_attavgwidth_hook_type get_attavgwidth_hook = NULL;
  * This function only considers search operators, not ordering operators.
  */
 bool op_in_opfamily(Oid opno, Oid opfamily) {
-  return SearchSysCacheExists3(AMOPOPID, ObjectIdGetDatum(opno),
-                               CharGetDatum(AMOP_SEARCH),
-                               ObjectIdGetDatum(opfamily));
+  return amop_of_operator(opno, AMOP_SEARCH, opfamily) != NULL;
 }
 
 /*
@@ -79,18 +122,9 @@ bool op_in_opfamily(Oid opno, Oid opfamily) {
  * This function only considers search operators, not ordering operators.
  */
 int get_op_opfamily_strategy(Oid opno, Oid opfamily) {
-  HeapTuple tp;
-  Form_pg_amop amop_tup;
-  int result;
+  const cat_amop_t *amop_tup = amop_of_operator(opno, AMOP_SEARCH, opfamily);
 
-  tp = SearchSysCache3(AMOPOPID, ObjectIdGetDatum(opno),
-                       CharGetDatum(AMOP_SEARCH), ObjectIdGetDatum(opfamily));
-  if (!HeapTupleIsValid(tp))
-    return 0;
-  amop_tup = (Form_pg_amop)GETSTRUCT(tp);
-  result = amop_tup->amopstrategy;
-  ReleaseSysCache(tp);
-  return result;
+  return amop_tup != NULL ? amop_tup->amopstrategy : 0;
 }
 
 /*
@@ -100,18 +134,9 @@ int get_op_opfamily_strategy(Oid opno, Oid opfamily) {
  *opfamily, return its amopsortfamily OID; else return InvalidOid.
  */
 Oid get_op_opfamily_sortfamily(Oid opno, Oid opfamily) {
-  HeapTuple tp;
-  Form_pg_amop amop_tup;
-  Oid result;
+  const cat_amop_t *amop_tup = amop_of_operator(opno, AMOP_ORDER, opfamily);
 
-  tp = SearchSysCache3(AMOPOPID, ObjectIdGetDatum(opno),
-                       CharGetDatum(AMOP_ORDER), ObjectIdGetDatum(opfamily));
-  if (!HeapTupleIsValid(tp))
-    return InvalidOid;
-  amop_tup = (Form_pg_amop)GETSTRUCT(tp);
-  result = amop_tup->amopsortfamily;
-  ReleaseSysCache(tp);
-  return result;
+  return amop_tup != NULL ? amop_tup->amopsortfamily : InvalidOid;
 }
 
 /*
@@ -125,19 +150,14 @@ Oid get_op_opfamily_sortfamily(Oid opno, Oid opfamily) {
  */
 void get_op_opfamily_properties(Oid opno, Oid opfamily, bool ordering_op,
                                 int *strategy, Oid *lefttype, Oid *righttype) {
-  HeapTuple tp;
-  Form_pg_amop amop_tup;
+  const cat_amop_t *amop_tup =
+      amop_of_operator(opno, ordering_op ? AMOP_ORDER : AMOP_SEARCH, opfamily);
 
-  tp = SearchSysCache3(AMOPOPID, ObjectIdGetDatum(opno),
-                       CharGetDatum(ordering_op ? AMOP_ORDER : AMOP_SEARCH),
-                       ObjectIdGetDatum(opfamily));
-  if (!HeapTupleIsValid(tp))
+  if (amop_tup == NULL)
     elog(ERROR, "operator %u is not a member of opfamily %u", opno, opfamily);
-  amop_tup = (Form_pg_amop)GETSTRUCT(tp);
   *strategy = amop_tup->amopstrategy;
   *lefttype = amop_tup->amoplefttype;
   *righttype = amop_tup->amoprighttype;
-  ReleaseSysCache(tp);
 }
 
 /*
@@ -149,19 +169,10 @@ void get_op_opfamily_properties(Oid opno, Oid opfamily, bool ordering_op,
  */
 Oid get_opfamily_member(Oid opfamily, Oid lefttype, Oid righttype,
                         int16 strategy) {
-  HeapTuple tp;
-  Form_pg_amop amop_tup;
-  Oid result;
+  const cat_amop_t *amop_tup =
+      amop_of_strategy(opfamily, lefttype, righttype, strategy);
 
-  tp = SearchSysCache4(AMOPSTRATEGY, ObjectIdGetDatum(opfamily),
-                       ObjectIdGetDatum(lefttype), ObjectIdGetDatum(righttype),
-                       Int16GetDatum(strategy));
-  if (!HeapTupleIsValid(tp))
-    return InvalidOid;
-  amop_tup = (Form_pg_amop)GETSTRUCT(tp);
-  result = amop_tup->amopopr;
-  ReleaseSysCache(tp);
-  return result;
+  return amop_tup != NULL ? amop_tup->amopopr : InvalidOid;
 }
 
 /*
@@ -234,7 +245,8 @@ static bool get_opmethod_canorder(Oid amoid) {
 bool get_ordering_op_properties(Oid opno, Oid *opfamily, Oid *opcintype,
                                 CompareType *cmptype) {
   bool result = false;
-  CatCList *catlist;
+  const cat_amop_t **amops;
+  int namops;
   int i;
 
   /* ensure outputs are initialized on failure */
@@ -246,11 +258,10 @@ bool get_ordering_op_properties(Oid opno, Oid *opfamily, Oid *opcintype,
    * Search pg_amop to see if the target operator is registered as the "<"
    * or ">" operator of any btree opfamily.
    */
-  catlist = SearchSysCacheList1(AMOPOPID, ObjectIdGetDatum(opno));
+  amops = amops_of_operator(opno, &namops);
 
-  for (i = 0; i < catlist->n_members; i++) {
-    HeapTuple tuple = &catlist->members[i]->tuple;
-    Form_pg_amop aform = (Form_pg_amop)GETSTRUCT(tuple);
+  for (i = 0; i < namops; i++) {
+    const cat_amop_t *aform = amops[i];
     CompareType am_cmptype;
 
     /* must be ordering index */
@@ -273,7 +284,7 @@ bool get_ordering_op_properties(Oid opno, Oid *opfamily, Oid *opcintype,
     }
   }
 
-  ReleaseSysCacheList(catlist);
+  pfree(amops);
 
   return result;
 }
@@ -323,18 +334,18 @@ Oid get_equality_op_for_ordering_op(Oid opno, bool *reverse) {
  */
 Oid get_ordering_op_for_equality_op(Oid opno, bool use_lhs_type) {
   Oid result = InvalidOid;
-  CatCList *catlist;
+  const cat_amop_t **amops;
+  int namops;
   int i;
 
   /*
    * Search pg_amop to see if the target operator is registered as the "="
    * operator of any btree opfamily.
    */
-  catlist = SearchSysCacheList1(AMOPOPID, ObjectIdGetDatum(opno));
+  amops = amops_of_operator(opno, &namops);
 
-  for (i = 0; i < catlist->n_members; i++) {
-    HeapTuple tuple = &catlist->members[i]->tuple;
-    Form_pg_amop aform = (Form_pg_amop)GETSTRUCT(tuple);
+  for (i = 0; i < namops; i++) {
+    const cat_amop_t *aform = amops[i];
     CompareType cmptype;
 
     /* must be ordering index */
@@ -356,7 +367,7 @@ Oid get_ordering_op_for_equality_op(Oid opno, bool use_lhs_type) {
     }
   }
 
-  ReleaseSysCacheList(catlist);
+  pfree(amops);
 
   return result;
 }
@@ -382,18 +393,18 @@ Oid get_ordering_op_for_equality_op(Oid opno, bool use_lhs_type) {
  */
 List *get_mergejoin_opfamilies(Oid opno) {
   List *result = NIL;
-  CatCList *catlist;
+  const cat_amop_t **amops;
+  int namops;
   int i;
 
   /*
    * Search pg_amop to see if the target operator is registered as the "="
    * operator of any opfamily of an ordering index type.
    */
-  catlist = SearchSysCacheList1(AMOPOPID, ObjectIdGetDatum(opno));
+  amops = amops_of_operator(opno, &namops);
 
-  for (i = 0; i < catlist->n_members; i++) {
-    HeapTuple tuple = &catlist->members[i]->tuple;
-    Form_pg_amop aform = (Form_pg_amop)GETSTRUCT(tuple);
+  for (i = 0; i < namops; i++) {
+    const cat_amop_t *aform = amops[i];
 
     /* must be ordering index equality */
     if (get_opmethod_canorder(aform->amopmethod) &&
@@ -402,7 +413,7 @@ List *get_mergejoin_opfamilies(Oid opno) {
       result = lappend_oid(result, aform->amopfamily);
   }
 
-  ReleaseSysCacheList(catlist);
+  pfree(amops);
 
   return result;
 }
@@ -430,7 +441,8 @@ List *get_mergejoin_opfamilies(Oid opno) {
  */
 bool get_compatible_hash_operators(Oid opno, Oid *lhs_opno, Oid *rhs_opno) {
   bool result = false;
-  CatCList *catlist;
+  const cat_amop_t **amops;
+  int namops;
   int i;
 
   /* Ensure output args are initialized on failure */
@@ -444,11 +456,10 @@ bool get_compatible_hash_operators(Oid opno, Oid *lhs_opno, Oid *rhs_opno) {
    * operator of any hash opfamily.  If the operator is registered in
    * multiple opfamilies, assume we can use any one.
    */
-  catlist = SearchSysCacheList1(AMOPOPID, ObjectIdGetDatum(opno));
+  amops = amops_of_operator(opno, &namops);
 
-  for (i = 0; i < catlist->n_members; i++) {
-    HeapTuple tuple = &catlist->members[i]->tuple;
-    Form_pg_amop aform = (Form_pg_amop)GETSTRUCT(tuple);
+  for (i = 0; i < namops; i++) {
+    const cat_amop_t *aform = amops[i];
 
     if (aform->amopmethod == HASH_AM_OID &&
         aform->amopstrategy == HTEqualStrategyNumber) {
@@ -496,7 +507,7 @@ bool get_compatible_hash_operators(Oid opno, Oid *lhs_opno, Oid *rhs_opno) {
     }
   }
 
-  ReleaseSysCacheList(catlist);
+  pfree(amops);
 
   return result;
 }
@@ -526,7 +537,8 @@ bool get_compatible_hash_operators(Oid opno, Oid *lhs_opno, Oid *rhs_opno) {
 bool get_op_hash_functions(Oid opno, RegProcedure *lhs_procno,
                            RegProcedure *rhs_procno) {
   bool result = false;
-  CatCList *catlist;
+  const cat_amop_t **amops;
+  int namops;
   int i;
 
   /* Ensure output args are initialized on failure */
@@ -540,11 +552,10 @@ bool get_op_hash_functions(Oid opno, RegProcedure *lhs_procno,
    * operator of any hash opfamily.  If the operator is registered in
    * multiple opfamilies, assume we can use any one.
    */
-  catlist = SearchSysCacheList1(AMOPOPID, ObjectIdGetDatum(opno));
+  amops = amops_of_operator(opno, &namops);
 
-  for (i = 0; i < catlist->n_members; i++) {
-    HeapTuple tuple = &catlist->members[i]->tuple;
-    Form_pg_amop aform = (Form_pg_amop)GETSTRUCT(tuple);
+  for (i = 0; i < namops; i++) {
+    const cat_amop_t *aform = amops[i];
 
     if (aform->amopmethod == HASH_AM_OID &&
         aform->amopstrategy == HTEqualStrategyNumber) {
@@ -587,7 +598,7 @@ bool get_op_hash_functions(Oid opno, RegProcedure *lhs_procno,
     }
   }
 
-  ReleaseSysCacheList(catlist);
+  pfree(amops);
 
   return result;
 }
@@ -646,17 +657,17 @@ bool get_op_hash_functions_ext(Oid opno, Oid inputtype,
 List *get_op_index_interpretation(Oid opno) {
   List *result = NIL;
   OpIndexInterpretation *thisresult;
-  CatCList *catlist;
+  const cat_amop_t **amops;
+  int namops;
   int i;
 
   /*
    * Find all the pg_amop entries containing the operator.
    */
-  catlist = SearchSysCacheList1(AMOPOPID, ObjectIdGetDatum(opno));
+  amops = amops_of_operator(opno, &namops);
 
-  for (i = 0; i < catlist->n_members; i++) {
-    HeapTuple op_tuple = &catlist->members[i]->tuple;
-    Form_pg_amop op_form = (Form_pg_amop)GETSTRUCT(op_tuple);
+  for (i = 0; i < namops; i++) {
+    const cat_amop_t *op_form = amops[i];
     CompareType cmptype;
 
     /* must be ordering index */
@@ -679,7 +690,7 @@ List *get_op_index_interpretation(Oid opno) {
     result = lappend(result, thisresult);
   }
 
-  ReleaseSysCacheList(catlist);
+  pfree(amops);
 
   /*
    * If we didn't find any btree opfamily containing the operator, perhaps
@@ -689,11 +700,10 @@ List *get_op_index_interpretation(Oid opno) {
     Oid op_negator = get_negator(opno);
 
     if (OidIsValid(op_negator)) {
-      catlist = SearchSysCacheList1(AMOPOPID, ObjectIdGetDatum(op_negator));
+      amops = amops_of_operator(op_negator, &namops);
 
-      for (i = 0; i < catlist->n_members; i++) {
-        HeapTuple op_tuple = &catlist->members[i]->tuple;
-        Form_pg_amop op_form = (Form_pg_amop)GETSTRUCT(op_tuple);
+      for (i = 0; i < namops; i++) {
+        const cat_amop_t *op_form = amops[i];
         IndexAmRoutine *amroutine =
             GetIndexAmRoutineByAmId(op_form->amopmethod, false);
         CompareType cmptype;
@@ -721,7 +731,7 @@ List *get_op_index_interpretation(Oid opno) {
         result = lappend(result, thisresult);
       }
 
-      ReleaseSysCacheList(catlist);
+      pfree(amops);
     }
   }
 
@@ -749,7 +759,8 @@ List *get_op_index_interpretation(Oid opno) {
  */
 bool equality_ops_are_compatible(Oid opno1, Oid opno2) {
   bool result;
-  CatCList *catlist;
+  const cat_amop_t **amops;
+  int namops;
   int i;
 
   /* Easy if they're the same operator */
@@ -759,12 +770,11 @@ bool equality_ops_are_compatible(Oid opno1, Oid opno2) {
   /*
    * We search through all the pg_amop entries for opno1.
    */
-  catlist = SearchSysCacheList1(AMOPOPID, ObjectIdGetDatum(opno1));
+  amops = amops_of_operator(opno1, &namops);
 
   result = false;
-  for (i = 0; i < catlist->n_members; i++) {
-    HeapTuple op_tuple = &catlist->members[i]->tuple;
-    Form_pg_amop op_form = (Form_pg_amop)GETSTRUCT(op_tuple);
+  for (i = 0; i < namops; i++) {
+    const cat_amop_t *op_form = amops[i];
 
     /*
      * op_in_opfamily() is cheaper than GetIndexAmRoutineByAmId(), so
@@ -781,7 +791,7 @@ bool equality_ops_are_compatible(Oid opno1, Oid opno2) {
     }
   }
 
-  ReleaseSysCacheList(catlist);
+  pfree(amops);
 
   return result;
 }
@@ -801,7 +811,8 @@ bool equality_ops_are_compatible(Oid opno1, Oid opno2) {
  */
 bool comparison_ops_are_compatible(Oid opno1, Oid opno2) {
   bool result;
-  CatCList *catlist;
+  const cat_amop_t **amops;
+  int namops;
   int i;
 
   /* Easy if they're the same operator */
@@ -811,12 +822,11 @@ bool comparison_ops_are_compatible(Oid opno1, Oid opno2) {
   /*
    * We search through all the pg_amop entries for opno1.
    */
-  catlist = SearchSysCacheList1(AMOPOPID, ObjectIdGetDatum(opno1));
+  amops = amops_of_operator(opno1, &namops);
 
   result = false;
-  for (i = 0; i < catlist->n_members; i++) {
-    HeapTuple op_tuple = &catlist->members[i]->tuple;
-    Form_pg_amop op_form = (Form_pg_amop)GETSTRUCT(op_tuple);
+  for (i = 0; i < namops; i++) {
+    const cat_amop_t *op_form = amops[i];
 
     /*
      * op_in_opfamily() is cheaper than GetIndexAmRoutineByAmId(), so
@@ -833,7 +843,7 @@ bool comparison_ops_are_compatible(Oid opno1, Oid opno2) {
     }
   }
 
-  ReleaseSysCacheList(catlist);
+  pfree(amops);
 
   return result;
 }
@@ -887,18 +897,18 @@ bool collations_agree_on_equality(Oid coll1, Oid coll2) {
  */
 bool op_is_safe_index_member(Oid opno) {
   bool result = false;
-  CatCList *catlist;
+  const cat_amop_t **amops;
+  int namops;
   int i;
 
   /*
    * Search pg_amop to see if the target operator is registered for any
    * btree or hash opfamily.
    */
-  catlist = SearchSysCacheList1(AMOPOPID, ObjectIdGetDatum(opno));
+  amops = amops_of_operator(opno, &namops);
 
-  for (i = 0; i < catlist->n_members; i++) {
-    HeapTuple tuple = &catlist->members[i]->tuple;
-    Form_pg_amop aform = (Form_pg_amop)GETSTRUCT(tuple);
+  for (i = 0; i < namops; i++) {
+    const cat_amop_t *aform = amops[i];
 
     /* Check if the AM is B-tree or Hash */
     if (aform->amopmethod == BTREE_AM_OID || aform->amopmethod == HASH_AM_OID) {
@@ -907,7 +917,7 @@ bool op_is_safe_index_member(Oid opno) {
     }
   }
 
-  ReleaseSysCacheList(catlist);
+  pfree(amops);
 
   return result;
 }

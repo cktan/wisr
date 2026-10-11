@@ -37,6 +37,8 @@ CATALOGS = {
     "pg_proc": ("proc", "proname"),
     "pg_operator": ("operator", "oprname"),
     "pg_cast": ("cast", None),
+    "pg_am": ("am", "amname"),
+    "pg_amop": ("amop", None),
 }
 
 # BKI column type -> (C type, how a value is written)
