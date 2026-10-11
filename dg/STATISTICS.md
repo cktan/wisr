@@ -5,7 +5,8 @@ The strategy is `../sm/STATISTICS.md` (§3.7 is the host's
 part); what sm records, and how, is
 `../sm/sm3/SM3_DESIGN.md` §6, and its calls are in
 `../sm/include/sm.h`: `sm_tbl_analyze`, `sm_tbl_stats` and the
-four live calls. This is a design for review, not yet built.
+four live calls. All of §3 is built (`WORKNOTE.md` steps 74 to
+78).
 
 ## 1. Where digres stands
 
@@ -64,7 +65,12 @@ four live calls. This is a design for review, not yet built.
   - bytes now are `disk + mem × c`, and bytes then
     `rec.heap_disk + rec.heap_mem × c`;
   - tuples are `rec.live_rows × now / then`: the row count
-    grows and shrinks with the table since the analyze;
+    grows and shrinks with the table since the analyze. When
+    the analyze found nothing on disk, its compression is
+    unknown, and a flush since would read as a shrink: tuples
+    are then `rec.live_rows × N now / N then`, by the row
+    numbers handed out, which counts inserts exactly and not
+    deletes;
   - pages are `⌈now / 8192⌉`, at least 1; `allvisfrac` 1, as
     there is no visibility map.
 - **An index** gets the same from its own entry
@@ -95,15 +101,17 @@ four live calls. This is a design for review, not yet built.
   PostgreSQL's own bytes (`../sm/sm2/VARLENA.md`), so
   `construct_array()` takes them as they are.
 - **`pg_statistic` gets a descriptor and no table.** The row is
-  formed with `pg_statistic`'s tuple descriptor, and
-  `get_attstatsslot()` reads its arrays through the
-  `STATRELATTINH` cache's descriptor, which opening the cache
-  builds by opening `pg_statistic` -- an error in digres. So
-  `pg_statistic` is nailed in the relcache as the bootstrap
-  catalogs are: `BKI_SCHEMA_MACRO` on its header makes genbki
-  write `Schema_pg_statistic`, and `formrdesc()` builds it from
-  that, with no scan. Nothing ever searches the cache; only its
-  descriptor is used.
+  formed, and `get_attstatsslot()` reads its arrays, with
+  `pg_statistic`'s tuple descriptor, which `statistic_tupdesc()`
+  (`lsyscache.c`) makes on each call from
+  `Schema_pg_statistic`: `BKI_SCHEMA_MACRO` on its header makes
+  genbki write it. Opening the `STATRELATTINH` cache, or the
+  relation, would open `pg_statistic` -- an error in digres --
+  and nailing it in the relcache does not hold: its entry is
+  rebuilt by a `pg_class` scan once the relcache is built.
+  `get_attstatsslot()` reads the element type's length and
+  alignment from the compiled-in catalog
+  (`get_typlenbyvalalign`), not the `TYPEOID` cache.
 - **The row is the caller's**, freed with `heap_freetuple`, not
   `ReleaseSysCache`: each call site that sets
   `vardata->freefunc` for it is changed to match.
@@ -140,6 +148,10 @@ four live calls. This is a design for review, not yet built.
   too, with the index's name as `tablename` and the
   expression's place as `attname`, as PostgreSQL shows them in
   `pg_stats` only through the index.
+- **Built-in oids 8844 and 8845**, `pg_stats_all()` and
+  `pg_stats_rel()` in `smstore.c`. A schema's name is found in
+  sm's list of schemas: `get_namespace_name()` knows only the
+  built-in ones.
 - **The view itself waits** for system views in digres; when
   they come, `pg_stats` is a view over the function.
 
@@ -158,7 +170,8 @@ four live calls. This is a design for review, not yet built.
    → verify: `EXPLAIN` of `=` on a common value estimates its
    frequency times the rows; of `<` a histogram's share; a
    join's estimate uses the distinct counts; an expression
-   index's statistics drive a filter on that expression.
+   index's statistics drive a filter on that expression. The
+   last waits: digres has no expression index yet.
 4. `pg_stats` (§2.5).
    → verify: after ANALYZE, `pg_stats('t')` gives a row a
    column, with the common values and bounds a known

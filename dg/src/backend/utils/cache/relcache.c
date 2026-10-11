@@ -1348,8 +1348,9 @@ static Relation RelationBuildSmDesc(Oid targetRelId, bool insertIt) {
   relation->rd_att->constr = constr;
   MemoryContextSwitchTo(oldcxt);
 
+  /* No foreign keys: sm keeps none, so pg_constraint is never scanned. */
   relation->rd_fkeylist = NIL;
-  relation->rd_fkeyvalid = false;
+  relation->rd_fkeyvalid = true;
   /* Its indexes are sm's; no extended statistics: no CREATE STATISTICS. */
   oldcxt = MemoryContextSwitchTo(CacheMemoryContext);
   relation->rd_indexlist = NIL;

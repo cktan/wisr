@@ -1278,7 +1278,7 @@ static void ExecHashBuildSkewHash(HashState *hashstate, HashJoinTable hashtable,
       frac += sslot.numbers[i];
     if (frac < SKEW_MIN_OUTER_FRACTION) {
       free_attstatsslot(&sslot);
-      ReleaseSysCache(statsTuple);
+      heap_freetuple(statsTuple);
       return;
     }
 
@@ -1370,7 +1370,7 @@ static void ExecHashBuildSkewHash(HashState *hashstate, HashJoinTable hashtable,
     free_attstatsslot(&sslot);
   }
 
-  ReleaseSysCache(statsTuple);
+  heap_freetuple(statsTuple);
 }
 
 /*

@@ -18,6 +18,7 @@
 #include "access/hash.h"
 #include "access/htup_details.h"
 #include "access/smstore.h"
+#include "access/tupdesc.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_amop.h"
@@ -40,6 +41,7 @@
 #include "catalog/pg_subscription.h"
 #include "catalog/pg_transform.h"
 #include "catalog/pg_type.h"
+#include "catalog/schemapg.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "utils/array.h"
@@ -2874,12 +2876,42 @@ const struct SubscriptRoutines *getSubscriptingRoutines(Oid typid,
 
 /*
  * get_statistic_tuple
- *		The pg_statistic row of a relation's column, to release with
- *		ReleaseSysCache(), or NULL: always NULL, as nothing analyzes a
- *table in sm yet, and pg_statistic has no rows.
+ *		The pg_statistic row of a relation's column, made from sm's
+ *		statistics, to free with heap_freetuple(), or NULL if there are
+ *		none: a table in sm never analyzed, or an inheritance tree.
  */
 HeapTuple get_statistic_tuple(Oid relid, AttrNumber attnum, bool inh) {
-  return NULL;
+  return smstore_statistic_tuple(relid, attnum, inh);
+}
+
+/*
+ * pg_statistic's tuple descriptor, made in the current memory context from
+ * its compiled-in attributes: pg_statistic has no rows and no relcache
+ * entry, only the shape sm's statistics are formed in.
+ */
+TupleDesc statistic_tupdesc(void) {
+  static const FormData_pg_attribute attrs[Natts_pg_statistic] = {
+      Schema_pg_statistic};
+  TupleDesc desc = CreateTemplateTupleDesc(Natts_pg_statistic);
+
+  for (int i = 0; i < Natts_pg_statistic; i++) {
+    memcpy(TupleDescAttr(desc, i), &attrs[i], ATTRIBUTE_FIXED_PART_SIZE);
+    populate_compact_attribute(desc, i);
+  }
+  TupleDescCompactAttr(desc, 0)->attcacheoff = 0;
+  return desc;
+}
+
+/* The attribute attno of a pg_statistic row, which is never null. */
+static Datum statistic_attr(HeapTuple statstuple, AttrNumber attno) {
+  TupleDesc desc = statistic_tupdesc();
+  bool isnull;
+  Datum val = heap_getattr(statstuple, attno, desc, &isnull);
+
+  FreeTupleDesc(desc);
+  if (isnull)
+    elog(ERROR, "pg_statistic attribute %d is null", attno);
+  return val;
 }
 
 /*
@@ -2907,7 +2939,7 @@ int32 get_attavgwidth(Oid relid, AttrNumber attnum) {
   tp = get_statistic_tuple(relid, attnum, false);
   if (HeapTupleIsValid(tp)) {
     stawidth = ((Form_pg_statistic)GETSTRUCT(tp))->stawidth;
-    ReleaseSysCache(tp);
+    heap_freetuple(tp);
     if (stawidth > 0)
       return stawidth;
   }
@@ -2972,8 +3004,9 @@ bool get_attstatsslot(AttStatsSlot *sslot, HeapTuple statstuple, int reqkind,
   ArrayType *statarray;
   Oid arrayelemtype;
   int narrayelem;
-  HeapTuple typeTuple;
-  Form_pg_type typeForm;
+  int16 typlen;
+  bool typbyval;
+  char typalign;
 
   /* initialize *sslot properly */
   memset(sslot, 0, sizeof(AttStatsSlot));
@@ -2990,8 +3023,7 @@ bool get_attstatsslot(AttStatsSlot *sslot, HeapTuple statstuple, int reqkind,
   sslot->stacoll = (&stats->stacoll1)[i];
 
   if (flags & ATTSTATSSLOT_VALUES) {
-    val = SysCacheGetAttrNotNull(STATRELATTINH, statstuple,
-                                 Anum_pg_statistic_stavalues1 + i);
+    val = statistic_attr(statstuple, Anum_pg_statistic_stavalues1 + i);
 
     /*
      * Detoast the array if needed, and in any case make a copy that's
@@ -3005,16 +3037,12 @@ bool get_attstatsslot(AttStatsSlot *sslot, HeapTuple statstuple, int reqkind,
      */
     sslot->valuetype = arrayelemtype = ARR_ELEMTYPE(statarray);
 
-    /* Need info about element type */
-    typeTuple = SearchSysCache1(TYPEOID, ObjectIdGetDatum(arrayelemtype));
-    if (!HeapTupleIsValid(typeTuple))
-      elog(ERROR, "cache lookup failed for type %u", arrayelemtype);
-    typeForm = (Form_pg_type)GETSTRUCT(typeTuple);
+    /* Need info about element type, from the compiled-in catalog */
+    get_typlenbyvalalign(arrayelemtype, &typlen, &typbyval, &typalign);
 
     /* Deconstruct array into Datum elements; NULLs not expected */
-    deconstruct_array(statarray, arrayelemtype, typeForm->typlen,
-                      typeForm->typbyval, typeForm->typalign, &sslot->values,
-                      NULL, &sslot->nvalues);
+    deconstruct_array(statarray, arrayelemtype, typlen, typbyval, typalign,
+                      &sslot->values, NULL, &sslot->nvalues);
 
     /*
      * If the element type is pass-by-reference, we now have a bunch of
@@ -3022,17 +3050,14 @@ bool get_attstatsslot(AttStatsSlot *sslot, HeapTuple statstuple, int reqkind,
      * that until free_attstatsslot.  Otherwise, all the useful info is in
      * sslot->values[], so we can free the array object immediately.
      */
-    if (!typeForm->typbyval)
+    if (!typbyval)
       sslot->values_arr = statarray;
     else
       pfree(statarray);
-
-    ReleaseSysCache(typeTuple);
   }
 
   if (flags & ATTSTATSSLOT_NUMBERS) {
-    val = SysCacheGetAttrNotNull(STATRELATTINH, statstuple,
-                                 Anum_pg_statistic_stanumbers1 + i);
+    val = statistic_attr(statstuple, Anum_pg_statistic_stanumbers1 + i);
 
     /*
      * Detoast the array if needed, and in any case make a copy that's

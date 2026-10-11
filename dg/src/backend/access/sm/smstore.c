@@ -45,6 +45,14 @@
 #include "utils/inval.h"
 #include "utils/rel.h"
 #include "utils/memutils.h"
+#include "utils/lsyscache.h"
+#include "utils/typcache.h"
+#include "utils/array.h"
+#include "catalog/pg_statistic.h"
+#include "access/transam.h"
+#include "access/htup_details.h"
+#include "funcapi.h"
+#include "utils/tuplestore.h"
 
 /* Whether this session's PostgreSQL transaction has begun an sm one. */
 static thread_local /*LOCAL*/ bool sm_xact_open = false;
@@ -1110,17 +1118,26 @@ static double compression(const sm_stats_t &st) {
 }
 
 /*
- * How much the table has grown since it was analyzed, by its heap's bytes
- * now over then, each at the compression recorded; and its bytes now, in
- * *now.  Bytes in memtables are uncompressed, so they count at c.
+ * How much the table has grown since it was analyzed, and its heap's bytes
+ * now, in *now, at the compression recorded: bytes in memtables are
+ * uncompressed, so they count at c.  The growth is its bytes now over then;
+ * but when the analyze found nothing on disk, its compression is unknown,
+ * and a flush since would read as a shrink, so the growth is then its row
+ * numbers now over then, which counts inserts and not deletes
+ * (STATISTICS.md section 2.2).
  */
 static double growth(sm_tbl_t *tbl, const sm_stats_t &st, double *now) {
-  uint64_t disk, mem;
+  uint64_t disk, mem, n;
   double c = compression(st), then;
 
   if (sm_tbl_size(tbl, &disk, &mem) != 0)
     sm_error("size a table");
   *now = disk + mem * c;
+  if (st.heap_disk == 0) {
+    if (sm_tbl_rowno_limit(tbl, &n) != 0)
+      sm_error("read a table's row numbers");
+    return st.rowno_limit > 0 ? (double)n / st.rowno_limit : 1.0;
+  }
   then = st.heap_disk + st.heap_mem * c;
   return then > 0 ? *now / then : 1.0;
 }
@@ -1177,6 +1194,240 @@ bool smstore_estimate_index_size(Oid table, Oid index, double *pages,
     return true;
   }
   return false;
+}
+
+/* An array of the float4s f, n of them, for a statistic's numbers. */
+static Datum float4_array(const float *f, int n) {
+  std::vector<Datum> d;
+
+  for (int i = 0; i < n; i++)
+    d.push_back(Float4GetDatum(f[i]));
+  return PointerGetDatum(construct_array_builtin(d.data(), n, FLOAT4OID));
+}
+
+/*
+ * The pg_statistic row of relid's column attnum, made from sm's statistics
+ * (STATISTICS.md section 2.3): a table's column, or an expression of one of
+ * its indexes, by its index's oid.  Its slots are what PostgreSQL's ANALYZE
+ * fills -- the common values with the type's =, the histogram and the
+ * correlation with its < -- with the column's collation.  NULL if there is
+ * none: a table never analyzed, a column without statistics, or an
+ * inheritance tree.  The caller frees it with heap_freetuple().
+ */
+HeapTuple smstore_statistic_tuple(Oid relid, AttrNumber attnum, bool inh) {
+  if (inh || attnum <= 0 || relid < FirstNormalObjectId)
+    return NULL;
+  /* An index's statistics are its table's, by the index's oid. */
+  Oid table = smstore_index_table(relid);
+  bool is_index = OidIsValid(table);
+
+  if (!is_index)
+    table = relid;
+  std::shared_ptr<const sm_stats_t> st = table_stats(table);
+  const sm_stat_t *found = NULL;
+
+  if (st == nullptr)
+    return NULL;
+  for (const sm_stat_t &x : st->stats)
+    if (x.has_index == is_index && (!is_index || x.index == relid) &&
+        x.position == attnum - 1) {
+      found = &x;
+      break;
+    }
+  if (found == NULL)
+    return NULL;
+
+  /* The column's type and collation, from its descriptor. */
+  Relation rel = relation_open(relid, NoLock);
+  Form_pg_attribute att = TupleDescAttr(RelationGetDescr(rel), attnum - 1);
+  Oid typid = att->atttypid, coll = att->attcollation;
+  int16 typlen = att->attlen;
+  bool typbyval = att->attbyval;
+  char typalign = att->attalign;
+
+  relation_close(rel, NoLock);
+  TypeCacheEntry *tc =
+      lookup_type_cache(typid, TYPECACHE_EQ_OPR | TYPECACHE_LT_OPR);
+  const sm_type_t *smtype = sm_type(type_code(typid));
+  auto values_array = [&](const std::vector<std::string> &bytes) {
+    std::vector<Datum> d;
+
+    for (const std::string &b : bytes)
+      d.push_back((Datum)sm_datum_of_bytes(smtype, b));
+    return PointerGetDatum(construct_array(d.data(), (int)d.size(), typid,
+                                           typlen, typbyval, typalign));
+  };
+
+  Datum values[Natts_pg_statistic];
+  bool nulls[Natts_pg_statistic];
+
+  memset(values, 0, sizeof(values));
+  memset(nulls, false, sizeof(nulls));
+  values[Anum_pg_statistic_starelid - 1] = ObjectIdGetDatum(relid);
+  values[Anum_pg_statistic_staattnum - 1] = Int16GetDatum(attnum);
+  values[Anum_pg_statistic_stainherit - 1] = BoolGetDatum(false);
+  values[Anum_pg_statistic_stanullfrac - 1] = Float4GetDatum(found->null_frac);
+  values[Anum_pg_statistic_stawidth - 1] = Int32GetDatum(found->width);
+  values[Anum_pg_statistic_stadistinct - 1] = Float4GetDatum(found->distinct);
+  for (int k = 0; k < STATISTIC_NUM_SLOTS; k++) {
+    nulls[Anum_pg_statistic_stanumbers1 - 1 + k] = true;
+    nulls[Anum_pg_statistic_stavalues1 - 1 + k] = true;
+  }
+  /* Fill the next slot with kind, op, and its numbers and values. */
+  int k = 0;
+  auto slot = [&](int16 kind, Oid op, Datum numbers, bool has_numbers,
+                  Datum vals, bool has_values) {
+    values[Anum_pg_statistic_stakind1 - 1 + k] = Int16GetDatum(kind);
+    values[Anum_pg_statistic_staop1 - 1 + k] = ObjectIdGetDatum(op);
+    values[Anum_pg_statistic_stacoll1 - 1 + k] = ObjectIdGetDatum(coll);
+    if (has_numbers) {
+      values[Anum_pg_statistic_stanumbers1 - 1 + k] = numbers;
+      nulls[Anum_pg_statistic_stanumbers1 - 1 + k] = false;
+    }
+    if (has_values) {
+      values[Anum_pg_statistic_stavalues1 - 1 + k] = vals;
+      nulls[Anum_pg_statistic_stavalues1 - 1 + k] = false;
+    }
+    k++;
+  };
+  if (!found->mcv.empty() && OidIsValid(tc->eq_opr))
+    slot(STATISTIC_KIND_MCV, tc->eq_opr,
+         float4_array(found->mcv_freq.data(), (int)found->mcv_freq.size()),
+         true, values_array(found->mcv), true);
+  if (found->bounds.size() >= 2 && OidIsValid(tc->lt_opr))
+    slot(STATISTIC_KIND_HISTOGRAM, tc->lt_opr, 0, false,
+         values_array(found->bounds), true);
+  if (found->has_correlation && OidIsValid(tc->lt_opr))
+    slot(STATISTIC_KIND_CORRELATION, tc->lt_opr,
+         float4_array(&found->correlation, 1), true, 0, false);
+
+  /* Formed in pg_statistic's shape, which it has no rows of. */
+  TupleDesc desc = statistic_tupdesc();
+  HeapTuple tup = heap_form_tuple(desc, values, nulls);
+
+  FreeTupleDesc(desc);
+  return tup;
+}
+
+/* An array of values' text, by the type's output function, as text[]. */
+static Datum text_array(const sm_type_t *smtype, Oid typid,
+                        const std::vector<std::string> &bytes) {
+  Oid out;
+  bool varlena;
+  std::vector<Datum> d;
+
+  getTypeOutputInfo(typid, &out, &varlena);
+  for (const std::string &b : bytes)
+    d.push_back(CStringGetTextDatum(
+        OidOutputFunctionCall(out, (Datum)sm_datum_of_bytes(smtype, b))));
+  return PointerGetDatum(
+      construct_array_builtin(d.data(), (int)d.size(), TEXTOID));
+}
+
+/*
+ * The name of the schema nspoid in sm: get_namespace_name() knows only
+ * the built-in ones.  NULL if there is none.
+ */
+static const char *namespace_name(Oid nspoid) {
+  std::vector<std::string> nspnames;
+
+  if (sm_cat_list_namespaces(xact_session(), nspnames) != 0)
+    sm_error("list the schemas");
+  for (const std::string &nsp : nspnames)
+    if (smstore_namespace_oid(nsp.c_str()) == nspoid)
+      return pstrdup(nsp.c_str());
+  return NULL;
+}
+
+/*
+ * Put the pg_stats rows of the table oid in sm, in the schema nspname,
+ * into rsinfo's tuplestore, one a statistic (STATISTICS.md section 2.5):
+ * a column's under the table's name, an index expression's under the
+ * index's.  None if it was never analyzed.
+ */
+static void put_stats_rows(ReturnSetInfo *rsinfo, const char *nspname,
+                           Oid oid) {
+  std::shared_ptr<const sm_stats_t> st = table_stats(oid);
+
+  if (st == nullptr)
+    return;
+  for (const sm_stat_t &x : st->stats) {
+    /* The column is the table's, or the index's for an expression. */
+    Relation rel = relation_open(x.has_index ? (Oid)x.index : oid, NoLock);
+    Form_pg_attribute att = TupleDescAttr(RelationGetDescr(rel), x.position);
+    const sm_type_t *smtype = sm_type(type_code(att->atttypid));
+    NameData nsp, name;
+    Datum values[17];
+    bool nulls[17];
+
+    namestrcpy(&nsp, nspname);
+    namestrcpy(&name, RelationGetRelationName(rel));
+    memset(nulls, true, sizeof(nulls));
+    values[0] = NameGetDatum(&nsp);
+    values[1] = NameGetDatum(&name);
+    values[2] = NameGetDatum(&att->attname);
+    values[3] = BoolGetDatum(false);
+    values[4] = Float4GetDatum(x.null_frac);
+    values[5] = Int32GetDatum(x.width);
+    values[6] = Float4GetDatum(x.distinct);
+    for (int i = 0; i <= 6; i++)
+      nulls[i] = false;
+    if (!x.mcv.empty()) {
+      values[7] = text_array(smtype, att->atttypid, x.mcv);
+      values[8] = float4_array(x.mcv_freq.data(), (int)x.mcv_freq.size());
+      nulls[7] = nulls[8] = false;
+    }
+    if (x.bounds.size() >= 2) {
+      values[9] = text_array(smtype, att->atttypid, x.bounds);
+      nulls[9] = false;
+    }
+    if (x.has_correlation) {
+      values[10] = Float4GetDatum(x.correlation);
+      nulls[10] = false;
+    }
+    /* The tuplestore copies the row, attname too, before the close. */
+    tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc, values, nulls);
+    relation_close(rel, NoLock);
+  }
+}
+
+/* pg_stats(): the pg_stats rows of every table in every schema in sm. */
+Datum pg_stats_all(PG_FUNCTION_ARGS) {
+  ReturnSetInfo *rsinfo = (ReturnSetInfo *)fcinfo->resultinfo;
+  std::vector<std::string> nspnames;
+
+  InitMaterializedSRF(fcinfo, 0);
+  if (sm_cat_list_namespaces(xact_session(), nspnames) != 0)
+    sm_error("list the schemas");
+  for (const std::string &nsp : nspnames) {
+    Oid nspoid = smstore_namespace_oid(nsp.c_str());
+    std::vector<std::string> tables;
+
+    if (sm_cat_list_tables(xact_session(), nspoid, tables) != 0)
+      sm_error("list a schema's tables");
+    for (const std::string &t : tables)
+      put_stats_rows(rsinfo, nsp.c_str(),
+                     smstore_relation_oid(t.c_str(), nspoid));
+  }
+  return (Datum)0;
+}
+
+/* pg_stats(rel): the pg_stats rows of the table rel, none if not in sm. */
+Datum pg_stats_rel(PG_FUNCTION_ARGS) {
+  ReturnSetInfo *rsinfo = (ReturnSetInfo *)fcinfo->resultinfo;
+  Oid oid = PG_GETARG_OID(0);
+  const char *nspname;
+
+  InitMaterializedSRF(fcinfo, 0);
+  if (oid < FirstNormalObjectId || OidIsValid(smstore_index_table(oid)))
+    return (Datum)0;
+  /* A sequence's oid, or a dropped table's, has no descriptor. */
+  smstore_table_t *desc = smstore_table_desc(oid);
+
+  if (desc == NULL || (nspname = namespace_name(desc->nspoid)) == NULL)
+    return (Datum)0;
+  put_stats_rows(rsinfo, nspname, oid);
+  return (Datum)0;
 }
 
 /*

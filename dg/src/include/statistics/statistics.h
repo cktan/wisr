@@ -92,12 +92,6 @@ extern MVNDistinct *statext_ndistinct_load(Oid mvoid, bool inh);
 extern MVDependencies *statext_dependencies_load(Oid mvoid, bool inh);
 extern MCVList *statext_mcv_load(Oid mvoid, bool inh);
 
-extern void BuildRelationExtStatistics(Relation onerel, bool inh,
-                                       double totalrows, int numrows,
-                                       HeapTuple *rows, int natts,
-                                       VacAttrStats **vacattrstats);
-extern int ComputeExtStatisticsRows(Relation onerel, int natts,
-                                    VacAttrStats **vacattrstats);
 extern bool statext_is_kind_built(HeapTuple htup, char type);
 extern Selectivity dependencies_clauselist_selectivity(
     PlannerInfo *root, List *clauses, int varRelid, JoinType jointype,

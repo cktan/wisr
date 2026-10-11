@@ -16,6 +16,7 @@
 #include "access/attnum.h"
 #include "access/cmptype.h"
 #include "access/htup.h"
+#include "access/tupdesc.h"
 #include "nodes/pg_list.h"
 
 /* avoid including subscripting.h here */
@@ -190,6 +191,7 @@ extern const struct SubscriptRoutines *getSubscriptingRoutines(Oid typid,
 extern Oid getBaseType(Oid typid);
 extern Oid getBaseTypeAndTypmod(Oid typid, int32 *typmod);
 extern int32 get_typavgwidth(Oid typid, int32 typmod);
+extern TupleDesc statistic_tupdesc(void);
 extern HeapTuple get_statistic_tuple(Oid relid, AttrNumber attnum, bool inh);
 extern int32 get_attavgwidth(Oid relid, AttrNumber attnum);
 extern bool get_attstatsslot(AttStatsSlot *sslot, HeapTuple statstuple,

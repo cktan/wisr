@@ -76,6 +76,8 @@ extern void smstore_analyze(List *rels, bool verbose);
 extern bool smstore_estimate_size(Oid oid, double *pages, double *tuples);
 extern bool smstore_estimate_index_size(Oid table, Oid index, double *pages,
                                         double *tuples);
+extern HeapTuple smstore_statistic_tuple(Oid relid, AttrNumber attnum,
+                                         bool inh);
 extern ObjectAddress smstore_create_sequence(CreateSeqStmt *stmt);
 extern void smstore_drop_sequences(DropStmt *stmt);
 extern int64 smstore_nextval(Oid oid);

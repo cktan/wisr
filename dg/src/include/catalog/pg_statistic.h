@@ -26,7 +26,7 @@
  *		typedef struct FormData_pg_statistic
  * ----------------
  */
-CATALOG(pg_statistic,2619,StatisticRelationId)
+CATALOG(pg_statistic,2619,StatisticRelationId) BKI_SCHEMA_MACRO
 {
 	/* These fields form the unique key for the entry: */
 	Oid			starelid BKI_LOOKUP(pg_class);	/* relation containing

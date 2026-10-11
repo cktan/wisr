@@ -869,7 +869,7 @@ local_psql -c 'begin' -c 'analyze t13' -c 'rollback' >> "$work/analyze.out" 2>&1
 local_psql -c 'insert into t13 select g, g from generate_series(1, 20000) g' \
   >> "$work/analyze.out" 2>&1
 n=$(rows_of 'select * from t13')
-[ "$n" -gt 36000 ] && [ "$n" -lt 44000 ] || fail "rows grow with the table"
+[ "$n" -gt 36000 ] && [ "$n" -lt 44000 ] || fail "rows grow with the table: $n"
 local_psql -c 'create schema s7' -c 'create table s7.u (a int4)' \
   -c 'insert into s7.u values (1), (2)' >> "$work/analyze.out" 2>&1
 local_psql -c 'analyze verbose' > "$work/analyze_all.out" 2>&1
@@ -881,6 +881,73 @@ local_psql -c 'create sequence q3' -c 'analyze q3' 2>&1 |
 local_psql -c 'analyze t13 (a)' 2>&1 |
   grep -q 'ANALYZE of chosen columns is not supported yet' ||
   fail "analyze a column list"
+
+# Verify that the planner estimates a filter by sm's column statistics.
+# 1. Make t14 with 50,000 rows: b one of ten values, c null in a third and
+#    one of 1,000 values otherwise; b = 0 is estimated at the default.
+# 2. Analyze it: b = 0 and b <> 0 are estimated by the common values,
+#    5,000 and 45,000 within 10%.
+# 3. c IS NULL is estimated by the null fraction, 16,667 within 10%;
+#    c < 100 by the histogram, 3,333 within 15%.
+# 4. DISTINCT b is estimated at its 10 distinct values.
+local_psql -c 'create table t14 (a int4, b int8, c int2)' \
+  -c "insert into t14 select g, g % 10, case when g % 3 = 0 then null
+      else g % 1000 end from generate_series(1, 50000) g" \
+  > "$work/stats.out" 2>&1
+[ "$(rows_of 'select * from t14 where b = 0')" -lt 100 ] ||
+  fail "no statistics before analyze"
+local_psql -c 'analyze t14' >> "$work/stats.out" 2>&1
+within() {
+  [ "$1" -ge $(($2 - $2 * $3 / 100)) ] && [ "$1" -le $(($2 + $2 * $3 / 100)) ]
+}
+n=$(rows_of 'select * from t14 where b = 0')
+within "$n" 5000 10 || fail "b = 0 by the common values: $n"
+n=$(rows_of 'select * from t14 where b <> 0')
+within "$n" 45000 10 || fail "b <> 0 by the common values: $n"
+n=$(rows_of 'select * from t14 where c is null')
+within "$n" 16667 10 || fail "c is null by the null fraction: $n"
+n=$(rows_of 'select * from t14 where c < 100')
+within "$n" 3333 15 || fail "c < 100 by the histogram: $n"
+n=$(local_psql -c 'explain select distinct b from t14' 2>&1 |
+  grep -o 'rows=[0-9]*' | head -1 | cut -d= -f2)
+[ "$n" = 10 ] || fail "distinct b by its distinct values: $n"
+
+# Verify that a GROUP BY and a join of tables in sm plan and run, and that
+# a join is estimated by the distinct values on each side.
+# 1. GROUP BY b on t14 gives each of b's values, 0 with 5,000 rows.
+# 2. Make u14 with 2,000 rows, b one of 100 values, and analyze it.
+# 3. t14 join u14 on b is estimated at 10 x 5,000 x 20 = 1,000,000
+#    within 10%.
+[ "$(local_psql -c 'select b, count(*) from t14 group by b
+      order by b limit 1' 2>&1)" = "0|5000" ] || fail "group by"
+local_psql -c 'create table u14 (a int4, b int8)' \
+  -c 'insert into u14 select g, g % 100 from generate_series(1, 2000) g' \
+  -c 'analyze u14' >> "$work/stats.out" 2>&1
+n=$(rows_of 'select * from t14 join u14 on t14.b = u14.b')
+within "$n" 1000000 10 || fail "join by distinct values: $n"
+
+# Verify that pg_stats() shows sm's statistics as the pg_stats view would.
+# 1. A table never analyzed, t15, has no rows in pg_stats('t15').
+# 2. t14 has a row a column in pg_stats('t14'), and pg_stats() has them
+#    with u14's.
+# 3. t14's b has its ten values as common values and no histogram; c has
+#    a third null, and 101 histogram bounds.
+local_psql -c 'create table t15 (a int4)' >> "$work/stats.out" 2>&1
+[ "$(local_psql -c "select count(*) from pg_stats('t15')" 2>&1)" = 0 ] ||
+  fail "pg_stats of a table never analyzed"
+[ "$(local_psql -c "select string_agg(attname, ',' order by attname)
+      from pg_stats('t14')" 2>&1)" = "a,b,c" ] || fail "pg_stats a column"
+[ "$(local_psql -c "select count(*) from pg_stats()
+      where tablename in ('t14', 'u14')" 2>&1)" = 5 ] ||
+  fail "pg_stats of every table"
+[ "$(local_psql -c "select array_length(most_common_vals, 1),
+      array_length(most_common_freqs, 1), histogram_bounds is null
+      from pg_stats('t14') where attname = 'b'" 2>&1)" = "10|10|t" ] ||
+  fail "pg_stats common values"
+[ "$(local_psql -c "select null_frac between '0.3' and '0.37',
+      array_length(histogram_bounds, 1)
+      from pg_stats('t14') where attname = 'c'" 2>&1)" = "t|101" ] ||
+  fail "pg_stats nulls and bounds"
 
 # Verify that the buffer manager's settings are gone, and DISCARD SEQUENCES
 # still runs.

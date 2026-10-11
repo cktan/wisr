@@ -100,6 +100,7 @@
 
 #include "access/table.h"
 #include "access/tableam.h"
+#include "access/transam.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_operator.h"
@@ -4898,7 +4899,7 @@ void examine_variable(PlannerInfo *root, Node *node, int varRelid,
             } else if (index->indpred == NIL) {
               vardata->statsTuple =
                   get_statistic_tuple(index->indexoid, pos + 1, false);
-              vardata->freefunc = ReleaseSysCache;
+              vardata->freefunc = heap_freetuple;
 
               if (HeapTupleIsValid(vardata->statsTuple)) {
                 /*
@@ -5102,7 +5103,7 @@ static void examine_simple_variable(PlannerInfo *root, Var *var,
      */
     vardata->statsTuple =
         get_statistic_tuple(rte->relid, var->varattno, rte->inh);
-    vardata->freefunc = ReleaseSysCache;
+    vardata->freefunc = heap_freetuple;
 
     if (HeapTupleIsValid(vardata->statsTuple)) {
       /*
@@ -5534,7 +5535,7 @@ static void examine_indexcol_variable(PlannerInfo *root, IndexOptInfo *index,
         elog(ERROR, "no function provided to release variable stats with");
     } else {
       vardata->statsTuple = get_statistic_tuple(relid, colnum, rte->inh);
-      vardata->freefunc = ReleaseSysCache;
+      vardata->freefunc = heap_freetuple;
     }
   } else {
     /* Expression --- maybe there are stats for the index itself */
@@ -5551,7 +5552,7 @@ static void examine_indexcol_variable(PlannerInfo *root, IndexOptInfo *index,
         elog(ERROR, "no function provided to release variable stats with");
     } else {
       vardata->statsTuple = get_statistic_tuple(relid, colnum, false);
-      vardata->freefunc = ReleaseSysCache;
+      vardata->freefunc = heap_freetuple;
     }
   }
 }
@@ -5922,6 +5923,13 @@ static bool get_actual_variable_range(PlannerInfo *root,
      * get_relation_info hook --- don't try to access them.
      */
     if (index->hypothetical)
+      continue;
+
+    /*
+     * An index in sm cannot be scanned here: it offers no index AM scan.
+     * The histogram's ends stand in, as when no index is usable.
+     */
+    if (index->indexoid >= FirstNormalObjectId)
       continue;
 
     /*

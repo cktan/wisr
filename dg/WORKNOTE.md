@@ -2261,3 +2261,97 @@ new instance. An audit of `global/` and `base/` came first.
   analyze path of `analyze.c` it reached.
 - `server.sh` checks the estimate before and after ANALYZE, a
   rolled-back one, growth without another, and the refusals.
+
+## Step 75: PostgreSQL's ANALYZE is gone
+
+Step 74 left ANALYZE's own path with no caller; this removes it,
+and what only it reached.
+
+- **`vacuum.c`** is `ExecVacuum()`, which hands ANALYZE to sm,
+  and `vacuum_delay_point()`, which the type-specific analyze
+  routines still call. `vacuum()`, its relation lists,
+  `vac_update_relstats()`, `vac_open_indexes()` and the rest
+  are gone.
+- **`analyze.c`** keeps `std_typanalyze()` and the estimators it
+  sets, `compute_scalar_stats()` among them, which the compiled-in
+  typanalyze functions (arrays, ranges) and extended statistics
+  name. `analyze_rel()`, the block sampler, the index statistics
+  and `update_attstats()` are gone: sm samples and estimates.
+- **Extended statistics are read, not built.** What built them
+  at ANALYZE is gone -- `BuildRelationExtStatistics()`,
+  `ComputeExtStatisticsRows()`, `statext_ndistinct_build()`,
+  `statext_dependencies_build()`, `statext_mcv_build()`, their
+  serializers, the multi-sort helpers and the types they used.
+  The planner's side, the deserializers and
+  `statext_clauselist_selectivity()`, stays; with no
+  `pg_statistic_ext_data` it finds nothing.
+- Removed until nothing was left unused, by the compiler's
+  unused-function warnings and by finding no caller of an
+  extern: about 4,800 lines.
+
+## Step 76: the planner reads sm's column statistics
+
+`STATISTICS.md` §2.3 and §2.4; its third step.
+
+- **`get_statistic_tuple()` makes a `pg_statistic` row** from
+  `sm_tbl_stats()` (`smstore_statistic_tuple()`): the null
+  fraction, width and distinct count, and the slots
+  PostgreSQL's ANALYZE fills -- the common values with the
+  type's `=`, the histogram and the correlation with its `<`,
+  operators from the type cache, the column's collation. The
+  row is the caller's, freed with `heap_freetuple()`; every
+  `freefunc` and release of one is changed to match.
+- **`pg_statistic` is a descriptor, not a table.**
+  `statistic_tupdesc()` builds it from `Schema_pg_statistic`
+  (`BKI_SCHEMA_MACRO` on its header), and `get_attstatsslot()`
+  reads with it rather than through the `STATRELATTINH` cache,
+  and takes the element type from the compiled-in catalog
+  rather than `TYPEOID`. Nailing `pg_statistic` in the relcache
+  was tried: its entry is rebuilt from `pg_class` once the
+  relcache is built, which fails.
+- **`get_actual_variable_range()` passes over an index in sm**:
+  it has no index AM scan; the histogram's ends stand in.
+- **Found, not fixed here**: a `GROUP BY` or a join on a table in
+  sm fails planning, before and after this step:
+  `get_relation_foreign_keys()` reaches `RelationGetFKeyList()`,
+  which opens `pg_constraint`.
+- `server.sh` checks `=`, `<>`, `IS NULL`, `<` and `DISTINCT`
+  estimates before and after ANALYZE.
+
+## Step 77: GROUP BY and joins of tables in sm plan
+
+Found in step 76: a `GROUP BY` or a join on a table in sm failed
+planning, as `get_relation_foreign_keys()` reached
+`RelationGetFKeyList()`, which opens `pg_constraint`.
+
+- **A table in sm has no foreign keys**: its relcache entry is
+  built with the list valid and empty, as its extended
+  statistics are, so `pg_constraint` is never scanned. digres
+  refuses a foreign key at CREATE TABLE.
+- `server.sh` runs a `GROUP BY`, and checks a join's estimate
+  by the distinct values on each side.
+
+## Step 78: pg_stats is a function
+
+`STATISTICS.md` §2.5; its fourth step.
+
+- **`pg_stats()` and `pg_stats(regclass)`** are built in
+  (`pg_proc.dat`, oids 8844 and 8845): the rows of PostgreSQL's
+  `pg_stats` view, by its columns, for every table in sm or for
+  one, from `sm_tbl_stats()`. Common values and bounds are text
+  arrays, each value through its type's output function; the
+  element and range columns are null. A table never analyzed,
+  an index, a sequence or an oid not in sm gives no rows.
+- **A schema's name is sm's**: `get_namespace_name()` reads
+  only the compiled-in schemas, so a schema made by CREATE
+  SCHEMA is found in `sm_cat_list_namespaces()` by its oid.
+- **Found, not fixed here**: `unnest()` of an array opens
+  `pg_range`; a cast to `numeric`, `pg_type`; a comparison of
+  `float4` with a `numeric` literal, `pg_operator`.
+- `server.sh` checks no rows before ANALYZE, a row a column
+  after, every table's, and the common values, null fraction
+  and bounds of a known distribution.
+- **`make tsan` is clean** (`STATISTICS.md` §3 step 5), and so
+  is a run of eight sessions on `digres-tsan`, each fifteen
+  times analyzing two shared tables, inserting, planning a
+  filter and a join on them and reading `pg_stats`: no report.
