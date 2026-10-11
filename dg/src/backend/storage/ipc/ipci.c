@@ -17,7 +17,6 @@
 #include "access/multixact.h"
 #include "access/nbtree.h"
 #include "access/transam.h"
-#include "access/twophase.h"
 #include "miscadmin.h"
 #include "storage/bufmgr.h"
 #include "storage/ipc.h"
@@ -129,7 +128,6 @@ static void CreateOrAttachShmemStructs(void) {
   if (!IsUnderPostmaster)
     InitProcGlobal();
   ProcArrayShmemInit();
-  TwoPhaseShmemInit();
 
   /*
    * Set up shared-inval messaging

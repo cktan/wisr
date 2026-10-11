@@ -17,7 +17,6 @@
 #include "postgres.h"
 
 #include "access/smstore.h"
-#include "access/twophase.h"
 #include "access/xact.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_authid.h"
@@ -548,13 +547,13 @@ void standard_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
       break;
 
     case TRANS_STMT_COMMIT_PREPARED:
-      PreventInTransactionBlock(isTopLevel, "COMMIT PREPARED");
-      FinishPreparedTransaction(stmt->gid, true);
-      break;
-
     case TRANS_STMT_ROLLBACK_PREPARED:
-      PreventInTransactionBlock(isTopLevel, "ROLLBACK PREPARED");
-      FinishPreparedTransaction(stmt->gid, false);
+      /* There is no prepared transaction: PREPARE TRANSACTION is refused. */
+      ereport(ERROR,
+              (errcode(ERRCODE_UNDEFINED_OBJECT),
+               errmsg("prepared transaction with identifier \"%s\" does not "
+                      "exist",
+                      stmt->gid)));
       break;
 
     case TRANS_STMT_ROLLBACK:

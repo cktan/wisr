@@ -383,46 +383,6 @@ typedef struct PredicateLockData {
 	  PREDLOCKTAG_RELATION))
 
 /*
- * Two-phase commit statefile records. There are two types: for each
- * transaction, we generate one per-transaction record and a variable
- * number of per-predicate-lock records.
- */
-typedef enum TwoPhasePredicateRecordType {
-  TWOPHASEPREDICATERECORD_XACT,
-  TWOPHASEPREDICATERECORD_LOCK,
-} TwoPhasePredicateRecordType;
-
-/*
- * Per-transaction information to reconstruct a SERIALIZABLEXACT. Not
- * much is needed because most of it not meaningful for a recovered
- * prepared transaction.
- *
- * In particular, we do not record the in and out conflict lists for a
- * prepared transaction because the associated SERIALIZABLEXACTs will
- * not be available after recovery. Instead, we simply record the
- * existence of each type of conflict by setting the transaction's
- * summary conflict in/out flag.
- */
-typedef struct TwoPhasePredicateXactRecord {
-  TransactionId xmin;
-  uint32 flags;
-} TwoPhasePredicateXactRecord;
-
-/* Per-lock state */
-typedef struct TwoPhasePredicateLockRecord {
-  PREDICATELOCKTARGETTAG target;
-  uint32 filler; /* to avoid length change in back-patched fix */
-} TwoPhasePredicateLockRecord;
-
-typedef struct TwoPhasePredicateRecord {
-  TwoPhasePredicateRecordType type;
-  union {
-    TwoPhasePredicateXactRecord xactRecord;
-    TwoPhasePredicateLockRecord lockRecord;
-  } data;
-} TwoPhasePredicateRecord;
-
-/*
  * Define a macro to use for an "empty" SERIALIZABLEXACT reference.
  */
 #define InvalidSerializableXact ((SERIALIZABLEXACT *) NULL)

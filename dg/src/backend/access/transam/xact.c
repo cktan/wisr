@@ -23,7 +23,6 @@
 #include "access/multixact.h"
 #include "access/smstore.h"
 #include "access/transam.h"
-#include "access/twophase.h"
 #include "access/xact.h"
 #include "catalog/index.h"
 #include "catalog/namespace.h"
@@ -1255,7 +1254,6 @@ static void AbortTransaction(void) {
   smgrDoPendingSyncs(false);
   AtEOXact_LargeObject(false);
   AtEOXact_RelationMap(false);
-  AtAbort_Twophase();
 
   TRACE_POSTGRESQL_TRANSACTION_ABORT(MyProc->vxid.lxid);
 

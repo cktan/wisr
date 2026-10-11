@@ -31,7 +31,6 @@
 
 #include "access/slru.h"
 #include "access/toast_compression.h"
-#include "access/twophase.h"
 #include "catalog/namespace.h"
 #include "catalog/storage.h"
 #include "commands/extension.h"
@@ -1788,21 +1787,9 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      NULL,
      NULL},
 
-    /*
-     * See also CheckRequiredParameterValues() if this parameter changes
-     */
-    {{"max_prepared_transactions", PGC_POSTMASTER, RESOURCES_MEM,
-      gettext_noop(
-          "Sets the maximum number of simultaneously prepared transactions."),
-      NULL},
-     &max_prepared_xacts,
-     0,
-     0,
-     MAX_BACKENDS,
-     NULL,
-     NULL,
-     NULL},
-
+/*
+ * See also CheckRequiredParameterValues() if this parameter changes
+ */
 #ifdef LOCK_DEBUG
     {{"trace_lock_oidmin", PGC_SUSET, DEVELOPER_OPTIONS,
       gettext_noop("Sets the minimum OID of tables for tracking locks."),

@@ -34,7 +34,6 @@
 #include <sys/time.h>
 
 #include "access/transam.h"
-#include "access/twophase.h"
 #include "miscadmin.h"
 #include "storage/condition_variable.h"
 #include "storage/ipc.h"
@@ -89,8 +88,7 @@ static void CheckDeadLock(void);
  */
 static Size PGProcShmemSize(void) {
   Size size = 0;
-  Size TotalProcs =
-      add_size(MaxBackends, add_size(NUM_AUXILIARY_PROCS, max_prepared_xacts));
+  Size TotalProcs = add_size(MaxBackends, NUM_AUXILIARY_PROCS);
 
   size = add_size(size, mul_size(TotalProcs, sizeof(PGPROC)));
   size = add_size(size, mul_size(TotalProcs, sizeof(*ProcGlobal->xids)));
@@ -106,8 +104,7 @@ static Size PGProcShmemSize(void) {
  */
 static Size FastPathLockShmemSize(void) {
   Size size = 0;
-  Size TotalProcs =
-      add_size(MaxBackends, add_size(NUM_AUXILIARY_PROCS, max_prepared_xacts));
+  Size TotalProcs = add_size(MaxBackends, NUM_AUXILIARY_PROCS);
   Size fpLockBitsSize, fpRelIdSize;
 
   /*
@@ -162,7 +159,7 @@ void InitProcGlobal(void) {
   PGPROC *procs;
   int i, j;
   bool found;
-  uint32 TotalProcs = MaxBackends + NUM_AUXILIARY_PROCS + max_prepared_xacts;
+  uint32 TotalProcs = MaxBackends + NUM_AUXILIARY_PROCS;
 
   /* Used for setup of per-backend fast-path slots. */
   char *fpPtr, *fpEndPtr PG_USED_FOR_ASSERTS_ONLY;

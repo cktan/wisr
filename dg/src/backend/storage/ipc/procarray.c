@@ -33,7 +33,6 @@
 #include <signal.h>
 
 #include "access/transam.h"
-#include "access/twophase.h"
 #include "access/xact.h"
 #include "catalog/catalog.h"
 #include "catalog/pg_authid.h"
@@ -290,7 +289,7 @@ static inline FullTransactionId FullXidRelativeTo(FullTransactionId rel,
 static void GlobalVisUpdateApply(ComputeXidHorizonsResult *horizons);
 
 /* Size of the ProcArray structure itself */
-#define PROCARRAY_MAXPROCS	(MaxBackends + max_prepared_xacts)
+#define PROCARRAY_MAXPROCS	(MaxBackends)
 
 /*
  * Snapshots are sized to hold every xid and cached subxid of every proc;

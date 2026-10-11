@@ -414,13 +414,6 @@ CREATE VIEW pg_available_extension_versions AS
            LEFT JOIN pg_extension AS X
              ON E.name = X.extname AND E.version = X.extversion;
 
-CREATE VIEW pg_prepared_xacts AS
-    SELECT P.transaction, P.gid, P.prepared,
-           U.rolname AS owner, D.datname AS database
-    FROM pg_prepared_xact() AS P
-         LEFT JOIN pg_authid U ON P.ownerid = U.oid
-         LEFT JOIN pg_database D ON P.dbid = D.oid;
-
 CREATE VIEW pg_prepared_statements AS
     SELECT * FROM pg_prepared_statement() AS P;
 

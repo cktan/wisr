@@ -33,7 +33,6 @@
 #include <unistd.h>
 
 #include "access/transam.h"
-#include "access/twophase.h"
 #include "miscadmin.h"
 #include "pg_trace.h"
 #include "storage/lmgr.h"
@@ -50,7 +49,7 @@ thread_local /*LOCAL*/ int
 thread_local /*LOCAL*/ bool log_lock_failures = false;
 
 #define NLOCKENTS() \
-	mul_size(max_locks_per_xact, add_size(MaxBackends, max_prepared_xacts))
+	mul_size(max_locks_per_xact, MaxBackends)
 
 /*
  * Data structures defining the semantics of the standard lock methods.
@@ -137,12 +136,6 @@ static const LockMethodData user_lockmethod = {MaxLockMode, LockConflicts,
  */
 static const LockMethod LockMethods[] = {NULL, &default_lockmethod,
                                          &user_lockmethod};
-
-/* Record that's written to 2PC state file when a lock is persisted */
-typedef struct TwoPhaseLockRecord {
-  LOCKTAG locktag;
-  LOCKMODE lockmode;
-} TwoPhaseLockRecord;
 
 /*
  * Count of the number of fast path lock slots we believe to be used.  This
@@ -2611,11 +2604,11 @@ VirtualTransactionId *GetLockConflicts(const LOCKTAG *locktag,
 
   /*
    * Allocate memory to store results, and fill with InvalidVXID.  We only
-   * need enough space for MaxBackends + max_prepared_xacts + a terminator.
+   * need enough space for MaxBackends + a terminator.
    * InHotStandby allocate once in TopMemoryContext.
    */
-  vxids = (VirtualTransactionId *)palloc0(
-      sizeof(VirtualTransactionId) * (MaxBackends + max_prepared_xacts + 1));
+  vxids = (VirtualTransactionId *)palloc0(sizeof(VirtualTransactionId) *
+                                          (MaxBackends + 1));
 
   /* Compute hash code and partition lock, and look up conflicting modes. */
   hashcode = LockTagHashCode(locktag);
@@ -2762,7 +2755,7 @@ VirtualTransactionId *GetLockConflicts(const LOCKTAG *locktag,
 
   LWLockRelease(partitionLock);
 
-  if (count > MaxBackends + max_prepared_xacts) /* should never happen */
+  if (count > MaxBackends) /* should never happen */
     elog(PANIC, "too many conflicting locks found");
 
   vxids[count].procNumber = INVALID_PROC_NUMBER;
@@ -2778,10 +2771,8 @@ VirtualTransactionId *GetLockConflicts(const LOCKTAG *locktag,
  * would be bad to release a lock here if there might still be a LOCALLOCK
  * object with pointers to it.)
  *
- * We currently use this in two situations: first, to release locks held by
- * prepared transactions on commit (see lock_twophase_postcommit); and second,
- * to release locks taken via the fast-path, transferred to the main hash
- * table, and then released (see LockReleaseAll).
+ * We use this to release locks taken via the fast-path, transferred to the
+ * main hash table, and then released (see LockReleaseAll).
  */
 static void LockRefindAndRelease(LockMethod lockMethodTable, PGPROC *proc,
                                  LOCKTAG *locktag, LOCKMODE lockmode,
@@ -2825,7 +2816,7 @@ static void LockRefindAndRelease(LockMethod lockMethodTable, PGPROC *proc,
    * release.
    */
   if (!(proclock->holdMask & LOCKBIT_ON(lockmode))) {
-    PROCLOCK_PRINT("lock_twophase_postcommit: WRONGTYPE", proclock);
+    PROCLOCK_PRINT("LockRefindAndRelease: WRONGTYPE", proclock);
     LWLockRelease(partitionLock);
     elog(WARNING, "you don't own a lock of type %s",
          lockMethodTable->lockModeNames[lockmode]);
@@ -3372,38 +3363,7 @@ void VirtualXactLockTableCleanup(void) {
  */
 static bool XactLockForVirtualXact(VirtualTransactionId vxid, TransactionId xid,
                                    bool wait) {
-  bool more = false;
-
-  /* There is no point to wait for 2PCs if you have no 2PCs. */
-  if (max_prepared_xacts == 0)
-    return true;
-
-  do {
-    LockAcquireResult lar;
-    LOCKTAG tag;
-
-    /* Clear state from previous iterations. */
-    if (more) {
-      xid = InvalidTransactionId;
-      more = false;
-    }
-
-    /* If we have no xid, try to find one. */
-    if (!TransactionIdIsValid(xid))
-      xid = TwoPhaseGetXidByVirtualXID(vxid, &more);
-    if (!TransactionIdIsValid(xid)) {
-      Assert(!more);
-      return true;
-    }
-
-    /* Check or wait for XID completion. */
-    SET_LOCKTAG_TRANSACTION(tag, xid);
-    lar = LockAcquire(&tag, ShareLock, false, !wait);
-    if (lar == LOCKACQUIRE_NOT_AVAIL)
-      return false;
-    LockRelease(&tag, ShareLock, false);
-  } while (more);
-
+  /* There is no prepared transaction to wait for: digres has no 2PC. */
   return true;
 }
 

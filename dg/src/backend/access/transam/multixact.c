@@ -55,7 +55,6 @@
 #include "access/multixact.h"
 #include "access/slru.h"
 #include "access/transam.h"
-#include "access/twophase.h"
 #include "access/xact.h"
 #include "commands/dbcommands.h"
 #include "funcapi.h"
@@ -268,7 +267,7 @@ typedef struct MultiXactStateData {
 /*
  * Sizes of OldestMemberMXactId and OldestVisibleMXactId arrays.
  */
-#define NumMemberSlots		(MaxBackends + max_prepared_xacts)
+#define NumMemberSlots		(MaxBackends)
 #define NumVisibleSlots		MaxBackends
 
 /* Pointers to the state data in shared memory */

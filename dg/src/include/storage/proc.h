@@ -145,14 +145,6 @@ typedef enum {
  * the PGPROC is linked into that lock's waitProcs queue.  A recycled PGPROC
  * is linked into ProcGlobal's freeProcs list.
  *
- * Note: twophase.c also sets up a dummy PGPROC struct for each currently
- * prepared transaction.  These PGPROCs appear in the ProcArray data structure
- * so that the prepared transactions appear to be still running and are
- * correctly shown as holding locks.  A prepared transaction PGPROC can be
- * distinguished from a real one at need by the fact that it has pid == 0.
- * The semaphore and lock-activity fields in a prepared-xact PGPROC are unused,
- * but its myProcLocks[] lists are valid.
- *
  * We allow many fields of this struct to be accessed without locks, such as
  * delayChkptFlags and isRegularBackend. However, keep in mind that writing
  * mirrored ones (see below) requires holding ProcArrayLock or XidGenLock in

@@ -48,7 +48,7 @@ PG_LWLOCK(13, MultiXactGen)
 /* 15 was MultiXactMemberSLRULock */
 PG_LWLOCK(16, RelCacheInit)
 /* 17 was CheckpointerComm */
-PG_LWLOCK(18, TwoPhaseState)
+/* 18 was TwoPhaseState */
 PG_LWLOCK(19, TablespaceCreate)
 PG_LWLOCK(20, BtreeVacuum)
 PG_LWLOCK(21, AddinShmemInit)

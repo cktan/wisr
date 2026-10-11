@@ -175,21 +175,12 @@
  *
  * final rollback checking
  *		PreCommit_CheckForSerializationFailure(void)
- *
- * two-phase commit support
- *		AtPrepare_PredicateLocks(void);
- *		PostPrepare_PredicateLocks(TransactionId xid);
- *		PredicateLockTwoPhaseFinish(TransactionId xid, bool isCommit);
- *		predicatelock_twophase_recover(TransactionId xid, uint16 info,
- *									   void
- **recdata, uint32 len);
  */
 
 #include "postgres.h"
 
 #include "access/slru.h"
 #include "access/transam.h"
-#include "access/twophase.h"
 #include "access/xact.h"
 #include "miscadmin.h"
 #include "port/pg_lfind.h"
@@ -249,7 +240,7 @@
 	(&MainLWLockArray[PREDICATELOCK_MANAGER_LWLOCK_OFFSET + (i)].lock)
 
 #define NPREDICATELOCKTARGETENTS() \
-	mul_size(max_predicate_locks_per_xact, add_size(MaxBackends, max_prepared_xacts))
+	mul_size(max_predicate_locks_per_xact, MaxBackends)
 
 #define SxactIsOnFinishedList(sxact) (!dlist_node_is_detached(&(sxact)->finishedLink))
 
@@ -1010,7 +1001,7 @@ void PredicateLockShmemInit(void) {
    * Compute size for serializable transaction hashtable. Note these
    * calculations must agree with PredicateLockShmemSize!
    */
-  max_table_size = (MaxBackends + max_prepared_xacts);
+  max_table_size = MaxBackends;
 
   /*
    * Allocate a list to hold information on transactions participating in
@@ -1554,7 +1545,7 @@ static Snapshot GetSerializableTransactionSnapshotInt(
     }
   } else {
     ++(PredXact->WritableSxactCount);
-    Assert(PredXact->WritableSxactCount <= (MaxBackends + max_prepared_xacts));
+    Assert(PredXact->WritableSxactCount <= MaxBackends);
   }
 
   /* Maintain serializable global xmin info. */

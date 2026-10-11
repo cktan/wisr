@@ -123,11 +123,15 @@ grep -qx 18 "$work/checkpoint.out" || fail "statement after checkpoint"
 # 1. Prepare a transaction, roll back the block the refusal aborted, then
 #    run a statement, in one session.
 # 2. Confirm the refusal was reported and the last statement answered.
+# 3. Confirm COMMIT PREPARED finds no prepared transaction.
 local_psql -c "begin; prepare transaction 'x'" -c 'rollback' \
   -c 'select 5 + 5' > "$work/prepare.out" 2>&1
 grep -q "PREPARE TRANSACTION is not supported" "$work/prepare.out" ||
   fail "prepare refused"
 grep -qx 10 "$work/prepare.out" || fail "statement after prepare"
+local_psql -c "commit prepared 'x'" > "$work/prepare2.out" 2>&1
+grep -q 'prepared transaction with identifier "x" does not exist' \
+  "$work/prepare2.out" || fail "commit prepared"
 
 # Verify that a session waits for its own popen() child, which nothing else
 # in the process reaps first.

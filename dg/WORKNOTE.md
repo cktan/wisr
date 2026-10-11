@@ -1556,3 +1556,26 @@ commit time. Step 45 left no xid to map.
   the proc array and the snapshot code asked subtrans for a
   subtransaction's top xid, and now take the xid as it is.
   They are the heap's machinery, and go with it.
+
+## Step 47: two-phase commit is gone
+
+PREPARE TRANSACTION was already refused (step 12), but
+`twophase.c` kept its shared state, its setting, and a slot
+in every structure sized by backends: a prepared transaction
+held a dummy PGPROC, its locks and its predicate locks. When
+two-phase commit comes back it is to be sm's (`sm_prepare`).
+
+- **Gone**: `twophase.c` and its header; the setting
+  `max_prepared_transactions`; the SQL function
+  `pg_prepared_xact` and the view `pg_prepared_xacts`; the
+  LWLock `TwoPhaseState` and its wait event; the abort hook in
+  `xact.c`; the 2PC record types of the lock manager and of
+  `predicate.c`, already unused.
+- **Nothing is sized for prepared transactions**: the lock
+  table, the proc array, the predicate lock tables, multixact's
+  member slots and the PGPROC array count backends alone.
+- **A virtual transaction lock waits for no prepared
+  transaction**: `XactLockForVirtualXact()` has none to find.
+- **COMMIT PREPARED and ROLLBACK PREPARED** fail as for a gid
+  that does not exist, which every gid is. `server.sh` checks
+  it.

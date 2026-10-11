@@ -132,10 +132,6 @@
 #shared_buffers = 128MB			# min 128kB
 					# (change requires restart)
 #temp_buffers = 8MB			# min 800kB
-#max_prepared_transactions = 0		# zero disables the feature
-					# (change requires restart)
-# Caution: it is not advisable to set max_prepared_transactions nonzero unless
-# you actively intend to use prepared transactions.
 #work_mem = 4MB				# min 64kB
 #hash_mem_multiplier = 2.0		# 1-1000.0 multiplier on hash table work_mem
 #maintenance_work_mem = 64MB		# min 64kB
