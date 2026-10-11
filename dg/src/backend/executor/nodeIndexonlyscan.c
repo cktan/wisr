@@ -27,6 +27,7 @@
 #include "access/genam.h"
 #include "access/htup_details.h"
 #include "access/relscan.h"
+#include "access/smstore.h"
 #include "access/tableam.h"
 #include "access/tupdesc.h"
 #include "access/visibilitymap.h"
@@ -72,6 +73,18 @@ static TupleTableSlot *IndexOnlyNext(IndexOnlyScanState *node) {
   scandesc = node->ioss_ScanDesc;
   econtext = node->ss.ps.ps_ExprContext;
   slot = node->ss.ss_ScanTupleSlot;
+
+  /* An index of a table in sm is read by sm, forwards, its rows unread. */
+  if (RelationIsSm(node->ss.ss_currentRelation)) {
+    if (!ScanDirectionIsForward(direction))
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("an index scan runs forwards only")));
+    if (node->ioss_SmScan == NULL)
+      node->ioss_SmScan = smstore_index_beginscan(
+          node->ss.ss_currentRelation, node->ioss_RelationDesc,
+          node->ioss_ScanKeys, node->ioss_NumScanKeys);
+    return smstore_index_getentry(node->ioss_SmScan, slot) ? slot : NULL;
+  }
 
   if (scandesc == NULL) {
     /*
@@ -351,6 +364,11 @@ void ExecReScanIndexOnlyScan(IndexOnlyScanState *node) {
     index_rescan(node->ioss_ScanDesc, node->ioss_ScanKeys,
                  node->ioss_NumScanKeys, node->ioss_OrderByKeys,
                  node->ioss_NumOrderByKeys);
+  /* sm's scan begins again, with the keys as they are now, when next read. */
+  if (node->ioss_SmScan != NULL) {
+    smstore_endscan(node->ioss_SmScan);
+    node->ioss_SmScan = NULL;
+  }
 
   ExecScanReScan(&node->ss);
 }
@@ -380,6 +398,8 @@ void ExecEndIndexOnlyScan(IndexOnlyScanState *node) {
    */
   if (indexScanDesc)
     index_endscan(indexScanDesc);
+  if (node->ioss_SmScan != NULL)
+    smstore_endscan(node->ioss_SmScan);
   if (indexRelationDesc)
     index_close(indexRelationDesc, NoLock);
 }

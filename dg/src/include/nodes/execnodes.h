@@ -1707,6 +1707,7 @@ typedef struct IndexScanState
  *		VMBuffer		   buffer in use for visibility map testing, if any
  *		NameCStringAttNums attnums of name typed columns to pad to NAMEDATALEN
  *		NameCStringCount   number of elements in the NameCStringAttNums array
+ *		SmScan			   for a table in sm, its index scan
  * ----------------
  */
 typedef struct IndexOnlyScanState
@@ -1729,6 +1730,7 @@ typedef struct IndexOnlyScanState
 	Size		ioss_PscanLen;
 	AttrNumber *ioss_NameCStringAttNums;
 	int			ioss_NameCStringCount;
+	struct smstore_scan_t *ioss_SmScan;	/* a table in sm's: access/smstore.h */
 } IndexOnlyScanState;
 
 /* ----------------

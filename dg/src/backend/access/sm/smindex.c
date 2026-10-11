@@ -7,9 +7,9 @@
  * and smstore.c scans it.  The planner still asks an index's access method
  * what its scans can do and what they cost, and this answers for sm's: a
  * btree, ordered, unique or not, of several columns, scanned forwards a row
- * at a time or into a bitmap of rownos, keeping no position.  Its costs and
- * its strategies are btree's.  It has no build, insert, vacuum or scan
- * function: nothing calls them on an index in sm.
+ * at a time, its columns alone, or into a bitmap of rownos, keeping no
+ * position.  Its costs and its strategies are btree's.  It has no build,
+ *insert, vacuum or scan function: nothing calls them on an index in sm.
  *
  * IDENTIFICATION
  *	  src/backend/access/sm/smindex.c
@@ -42,6 +42,13 @@ static int64 smindex_getbitmap(IndexScanDesc scan, TIDBitmap *tbm) {
   return 0; /* not reached */
 }
 
+/*
+ * Whether an index-only scan can return the index's column attno: every
+ * column, key or INCLUDE.  smstore.c decodes the key, and reads the row
+ * where the key does not give its columns back.
+ */
+static bool smindex_canreturn(Relation index, int attno) { return true; }
+
 /* The access method of an index in sm, palloc'd as a handler's is. */
 IndexAmRoutine *smindex_routine(void) {
   IndexAmRoutine *amroutine = makeNode(IndexAmRoutine);
@@ -70,8 +77,8 @@ IndexAmRoutine *smindex_routine(void) {
   amroutine->amsummarizing = false;
   amroutine->amkeytype = InvalidOid;
 
-  /* Not yet: an index-only scan (amcanreturn). */
   amroutine->amcostestimate = btcostestimate;
+  amroutine->amcanreturn = smindex_canreturn;
   amroutine->amgettuple = smindex_gettuple;
   amroutine->amgetbitmap = smindex_getbitmap;
   amroutine->amtranslatestrategy = bttranslatestrategy;

@@ -1013,7 +1013,8 @@ void estimate_rel_size(Relation rel, int32 *attr_widths, BlockNumber *pages,
 
     *pages = 10;
     *tuples = rint(10.0 * ((BLCKSZ - SizeOfPageHeaderData) / tuple_width));
-    *allvisfrac = 0;
+    /* An index entry sm returns is one the transaction sees: no fetch. */
+    *allvisfrac = 1;
   } else if (RELKIND_HAS_TABLE_AM(rel->rd_rel->relkind)) {
     table_relation_estimate_size(rel, attr_widths, pages, tuples, allvisfrac);
   } else if (rel->rd_rel->relkind == RELKIND_INDEX) {

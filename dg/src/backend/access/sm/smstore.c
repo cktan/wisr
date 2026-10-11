@@ -644,6 +644,18 @@ struct smstore_scan_t {
   ScanKey keys;
   int nkeys;
   AttrNumber *keycols;
+  /* An index scan's: its index, and its last entry's value. */
+  Oid index;
+  Form_pg_index form;
+  const void *value;
+  size_t len;
+  /* smstore_index_getentry()'s room for an entry's value and a row. */
+  sm_datum_t *entry_values;
+  bool *entry_isnull;
+  size_t entry_ncols;
+  Datum *row_values;
+  bool *row_isnull;
+  int row_natts;
 };
 
 /* Begin a scan of every row of rel, a table in sm, in rowno order. */
@@ -946,12 +958,14 @@ static bool plain_key(ScanKey key, Oid coltype) {
 /*
  * Whether the row in slot meets every scan key: each compares the row's
  * value in the key's column, by the key's operator, with the key's value.
- * A null meets only IS NULL.
+ * A null meets only IS NULL.  With index_shaped, slot holds an index
+ * entry's columns, not a row's.
  */
-static bool keys_met(smstore_scan_t *scan, TupleTableSlot *slot) {
+static bool keys_met(smstore_scan_t *scan, TupleTableSlot *slot,
+                     bool index_shaped) {
   for (int i = 0; i < scan->nkeys; i++) {
     ScanKey key = &scan->keys[i];
-    int col = scan->keycols[i] - 1;
+    int col = (index_shaped ? key->sk_attno : scan->keycols[i]) - 1;
     bool isnull = slot->tts_isnull[col];
 
     if (key->sk_flags & SK_SEARCHNULL) {
@@ -1054,6 +1068,9 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
   scan->tbl = tbl;
   scan->keys = keys;
   scan->nkeys = nkeys;
+  scan->index = RelationGetRelid(index);
+  scan->form = form;
+  scan->row_natts = RelationGetDescr(heap)->natts;
   scan->keycols = (AttrNumber *)palloc(Max(nkeys, 1) * sizeof(AttrNumber));
   for (int i = 0; i < nkeys; i++)
     scan->keycols[i] = form->indkey.values[keys[i].sk_attno - 1];
@@ -1097,7 +1114,7 @@ bool smstore_index_getnext(smstore_scan_t *scan, TupleTableSlot *slot) {
 
   while (smstore_index_getrowno(scan, &rowno))
     /* A row the transaction does not see is passed. */
-    if (read_row(scan->tbl, rowno, slot) && keys_met(scan, slot))
+    if (read_row(scan->tbl, rowno, slot) && keys_met(scan, slot, false))
       return true;
   ExecClearTuple(slot);
   return false;
@@ -1119,6 +1136,8 @@ bool smstore_index_getrowno(smstore_scan_t *scan, uint64 *rowno) {
   switch (sm_idx_scannxt(scan->icursor, &r, &cut, &value, &len)) {
   case 0:
     *rowno = r;
+    scan->value = value;
+    scan->len = len;
     return true;
   case 1:
     return false;
@@ -1126,6 +1145,96 @@ bool smstore_index_getrowno(smstore_scan_t *scan, uint64 *rowno) {
     sm_error("scan an index");
   }
   return false; /* not reached */
+}
+
+/*
+ * The entry's INCLUDE columns, from its value, into the slot's columns
+ * after the key's.  The value holds the rowno and the cut flag first.
+ */
+static void entry_includes(smstore_scan_t *scan, TupleTableSlot *slot) {
+  int nkeys = scan->form->indnkeyatts;
+
+  if (scan->entry_values == NULL) {
+    scan->entry_ncols = sm_tbl_idx_ncols(scan->tbl, scan->index);
+    scan->entry_values =
+        (sm_datum_t *)palloc(scan->entry_ncols * sizeof(sm_datum_t));
+    scan->entry_isnull = (bool *)palloc(scan->entry_ncols * sizeof(bool));
+  }
+  if (sm_tbl_idx_deform(scan->tbl, scan->index, scan->value, scan->len,
+                        scan->entry_values, scan->entry_isnull,
+                        scan->entry_ncols) != 0)
+    sm_error("read an index entry");
+  for (int i = nkeys; i < scan->form->indnatts; i++) {
+    slot->tts_values[i] = (Datum)scan->entry_values[2 + i - nkeys];
+    slot->tts_isnull[i] = scan->entry_isnull[2 + i - nkeys];
+  }
+}
+
+/*
+ * The row at rowno's columns the index holds into slot, in the index's
+ * order: false if the transaction does not see the row.  For an entry
+ * whose key does not give its columns back.
+ */
+static bool entry_from_row(smstore_scan_t *scan, uint64_t rowno,
+                           TupleTableSlot *slot) {
+  const void *tuple;
+  size_t len;
+
+  if (scan->row_values == NULL) {
+    scan->row_values = (Datum *)palloc(scan->row_natts * sizeof(Datum));
+    scan->row_isnull = (bool *)palloc(scan->row_natts * sizeof(bool));
+  }
+  switch (sm_tbl_read(scan->tbl, rowno, &tuple, &len)) {
+  case 0:
+    break;
+  case 1:
+    return false;
+  default:
+    sm_error("read a row");
+  }
+  if (sm_tbl_deform(scan->tbl, tuple, len, (sm_datum_t *)scan->row_values,
+                    scan->row_isnull, scan->row_natts) != 0)
+    sm_error("read a row");
+  for (int i = 0; i < scan->form->indnatts; i++) {
+    int col = scan->form->indkey.values[i] - 1;
+
+    slot->tts_values[i] = scan->row_values[col];
+    slot->tts_isnull[i] = scan->row_isnull[col];
+  }
+  return true;
+}
+
+/*
+ * The index scan's next entry that meets its keys into slot, a virtual
+ * tuple of the index's columns, its tid its rowno; false at the end.  The
+ * key gives its columns and the entry's value the INCLUDE ones, with no
+ * row read: an entry sm returns is one the transaction sees.  Where the
+ * key does not give them back, the row is read.
+ */
+bool smstore_index_getentry(smstore_scan_t *scan, TupleTableSlot *slot) {
+  uint64 rowno;
+
+  while (smstore_index_getrowno(scan, &rowno)) {
+    ExecClearTuple(slot);
+    switch (sm_idx_scan_key(scan->icursor, (sm_datum_t *)slot->tts_values,
+                            slot->tts_isnull, scan->form->indnkeyatts)) {
+    case 0:
+      entry_includes(scan, slot);
+      break;
+    case 1:
+      if (!entry_from_row(scan, rowno, slot))
+        continue;
+      break;
+    default:
+      sm_error("read an index entry");
+    }
+    ExecStoreVirtualTuple(slot);
+    smstore_rowno_to_tid(rowno, &slot->tts_tid);
+    if (keys_met(scan, slot, true))
+      return true;
+  }
+  ExecClearTuple(slot);
+  return false;
 }
 
 /* Begin reading rows of rel, a table in sm, by rowno (smstore_fetch()). */

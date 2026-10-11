@@ -90,6 +90,7 @@ extern smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
                                                ScanKey keys, int nkeys);
 extern bool smstore_index_getnext(smstore_scan_t *scan, TupleTableSlot *slot);
 extern bool smstore_index_getrowno(smstore_scan_t *scan, uint64 *rowno);
+extern bool smstore_index_getentry(smstore_scan_t *scan, TupleTableSlot *slot);
 extern smstore_scan_t *smstore_beginfetch(Relation rel);
 extern bool smstore_fetch(smstore_scan_t *scan, uint64 rowno,
                           TupleTableSlot *slot);

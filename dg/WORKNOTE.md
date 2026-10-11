@@ -1811,3 +1811,26 @@ could name the GC thread's side.
   IN list, a recheck, and an uncommitted row passed over.
 - Not yet: `count(*)` and `generate_series()`, which look a
   function up by name in pg_proc.
+
+## Step 57: index-only scans of tables in sm
+
+- **sm gives an entry's key columns back**:
+  `sm_idx_scan_key()` decodes the key of the entry the cursor
+  last returned, and returns 1 where the key keeps no datum: a
+  key cut to fit, or text under a non-deterministic collation.
+- **`smstore_index_getentry()`** fills a slot of the index's
+  columns: the key's from the key, the INCLUDE ones from the
+  entry's value, and no row read. An entry sm returns is one
+  the transaction sees, as entries are versioned with rows.
+  Where the key keeps no datum, the row is read. The scan keys
+  are checked on the entry's columns.
+- **The planner**: `smindex_routine()` can return every column,
+  and sm's size estimate says every row is visible
+  (`allvisfrac` 1), so an index-only scan costs no table fetch.
+- `nodeIndexonlyscan.c` reads an index in sm through smstore,
+  forwards, as `nodeIndexscan.c` does.
+- `server.sh` checks an index-only scan with INCLUDE columns, a
+  negative int2 and nulls, and one on a unique index with a
+  null key. A key that keeps no datum needs a text key, which
+  a table in sm does not have yet: that path, reading the row,
+  is not reached by a test.

@@ -527,6 +527,34 @@ echo "rollback;" >&4
 exec 4>&-
 wait $held
 
+# Verify that an index-only scan of an index in sm gives the index's
+# columns from its entries, reading no row: key columns decoded from the
+# key, INCLUDE columns from the entry's value.
+# 1. Create t8 with an index on (a, b DESC) including c, and a unique
+#    index on d; insert rows with a negative int2, nulls, and a null d.
+# 2. With sequential and bitmap scans off, a range on a plans an
+#    index-only scan, and returns a, b and c, nulls and the sign kept.
+# 3. A range on d, by the unique index, returns its values; d IS NULL,
+#    whose entry carries its rowno, returns its one row.
+only_psql() {
+  local_psql -c 'set enable_seqscan = off' -c 'set enable_bitmapscan = off' \
+    -c "$1" 2>&1 | grep -v '^SET$'
+}
+local_psql -c 'create table t8 (a int4, b int2, c int8, d int4)' \
+  -c 'create index t8_ab on t8 (a, b desc) include (c)' \
+  -c 'create unique index t8_d on t8 (d)' \
+  -c 'insert into t8 values (1, -1, 10, 100), (2, 5, 20, null),
+    (2, -3, 30, 300), (null, 4, 40, 400), (5, null, null, 500)' \
+  > "$work/only.out" 2>&1
+only_psql 'explain (costs off) select a, b, c from t8 where a >= 2' |
+  grep -q 'Index Only Scan using t8_ab on t8' || fail "index-only plan"
+[ "$(only_psql 'select a, b, c from t8 where a >= 2' | tr '\n' ' ')" = \
+  "2|5|20 2|-3|30 5|| " ] || fail "index-only scan"
+[ "$(only_psql 'select d from t8 where d > 100' | tr '\n' ' ')" = \
+  "300 400 500 " ] || fail "index-only unique"
+[ "$(only_psql 'select d is null from t8 where d is null')" = t ] ||
+  fail "index-only null key"
+
 # Verify that = finds rows, and that DROP TABLE removes a table for good,
 # even from a session that had used it.
 # 1. Confirm WHERE a = 2 finds the one row.
