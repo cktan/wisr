@@ -1950,3 +1950,30 @@ sm keeps its own files; a tablespace has nothing to place.
   with "tablespaces are not supported".
 - `server.sh` checks the refusals, the settings gone, and a
   sort that spills to temporary files.
+
+## Step 63: CREATE and DROP DATABASE are sm's
+
+PLAN.md §7. Connecting already opened a database in sm; now
+making and dropping one does too.
+
+- **CREATE DATABASE name** makes it in sm (`sm_mkdb`), at
+  once, outside a transaction block as before. Its options are
+  refused: sm has no template, owner, encoding or locale to
+  keep. Its oid is the id sm gives it.
+- **DROP DATABASE [IF EXISTS] name** drops it from sm
+  (`sm_rmdb`): not the session's own; and not one another
+  session has open, which sm refuses. A session leaves sm a
+  moment after it ends, so the drop is tried again for 5
+  seconds, as PostgreSQL waits. `WITH (FORCE)` first tells the
+  other sessions to end.
+- **ALTER DATABASE is refused**, every form: sm keeps no name
+  change, owner, settings or other attribute of a database.
+- **`get_database_oid()` and `get_database_name()` ask sm**
+  (`datadir.c`), where they read pg_database, which digres
+  does not have.
+- **Gone with the old `dbcommands.c`**: copying a template
+  (`copydir.c` and `file_copy_method`), the SQL function
+  `pg_database_collation_actual_version`, and the buffers and
+  dependencies a dropped database left.
+- `server.sh` creates, uses, drops, force-drops and recreates a
+  database.

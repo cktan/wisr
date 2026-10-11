@@ -3434,44 +3434,6 @@ static void FindAndDropRelationBuffers(RelFileLocator rlocator,
 }
 
 /* ---------------------------------------------------------------------
- *		DropDatabaseBuffers
- *
- *		This function removes all the buffers in the buffer cache for a
- *		particular database.  Dirty pages are simply dropped, without
- *		bothering to write them out first.  This is used when we destroy
- *a database, to avoid trying to flush data to disk when the directory tree no
- *longer exists.  Implementation is pretty similar to DropRelationBuffers()
- *which is for destroying just one relation.
- * --------------------------------------------------------------------
- */
-void DropDatabaseBuffers(Oid dbid) {
-  int i;
-
-  /*
-   * We needn't consider local buffers, since by assumption the target
-   * database isn't our own.
-   */
-
-  for (i = 0; i < NBuffers; i++) {
-    BufferDesc *bufHdr = GetBufferDescriptor(i);
-    uint32 buf_state;
-
-    /*
-     * As in DropRelationBuffers, an unlocked precheck should be safe and
-     * saves some cycles.
-     */
-    if (bufHdr->tag.dbOid != dbid)
-      continue;
-
-    buf_state = LockBufHdr(bufHdr);
-    if (bufHdr->tag.dbOid == dbid)
-      InvalidateBuffer(bufHdr); /* releases spinlock */
-    else
-      UnlockBufHdr(bufHdr, buf_state);
-  }
-}
-
-/* ---------------------------------------------------------------------
  *		FlushRelationBuffers
  *
  *		This function writes all dirty pages of a relation out to disk

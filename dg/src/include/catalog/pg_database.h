@@ -123,7 +123,5 @@ DECLARE_OID_DEFINING_MACRO(PostgresDbOid, 5);
  */
 #define		  DATCONNLIMIT_INVALID_DB	-2
 
-extern bool database_is_invalid_form(Form_pg_database datform);
-extern bool database_is_invalid_oid(Oid dboid);
 
 #endif							/* PG_DATABASE_H */

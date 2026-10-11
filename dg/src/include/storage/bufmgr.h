@@ -244,7 +244,6 @@ extern void DropRelationBuffers(struct SMgrRelationData *smgr_reln,
                                 BlockNumber *firstDelBlock);
 extern void DropRelationsAllBuffers(struct SMgrRelationData **smgr_reln,
                                     int nlocators);
-extern void DropDatabaseBuffers(Oid dbid);
 
 #define RelationGetNumberOfBlocks(reln) \
 	RelationGetNumberOfBlocksInFork(reln, MAIN_FORKNUM)

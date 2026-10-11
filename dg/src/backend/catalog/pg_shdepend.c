@@ -888,44 +888,6 @@ void copyTemplateDependencies(Oid templateDbId, Oid newDbId) {
 }
 
 /*
- * dropDatabaseDependencies
- *
- * Delete pg_shdepend entries corresponding to a database that's being
- * dropped.
- */
-void dropDatabaseDependencies(Oid databaseId) {
-  Relation sdepRel;
-  ScanKeyData key[1];
-  SysScanDesc scan;
-  HeapTuple tup;
-
-  sdepRel = table_open(SharedDependRelationId, RowExclusiveLock);
-
-  /*
-   * First, delete all the entries that have the database Oid in the dbid
-   * field.
-   */
-  ScanKeyInit(&key[0], Anum_pg_shdepend_dbid, BTEqualStrategyNumber, F_OIDEQ,
-              ObjectIdGetDatum(databaseId));
-  /* We leave the other index fields unspecified */
-
-  scan = systable_beginscan(sdepRel, SharedDependDependerIndexId, true, NULL, 1,
-                            key);
-
-  while (HeapTupleIsValid(tup = systable_getnext(scan))) {
-    CatalogTupleDelete(sdepRel, &tup->t_self);
-  }
-
-  systable_endscan(scan);
-
-  /* Now delete all entries corresponding to the database itself */
-  shdepDropDependency(sdepRel, DatabaseRelationId, databaseId, 0, true,
-                      InvalidOid, InvalidOid, SHARED_DEPENDENCY_INVALID);
-
-  table_close(sdepRel, RowExclusiveLock);
-}
-
-/*
  * deleteSharedDependencyRecordsFor
  *
  * Delete all pg_shdepend entries corresponding to an object that's being

@@ -610,6 +610,65 @@ local_psql -c "set work_mem = '64kB'" -c 'explain (analyze, costs off,
   -c 'select a from t9 order by b, a limit 5' 2>&1 | grep -v '^SET$' |
   tr '\n' ' ')" = "10 10 10 10 20 " ] || fail "external sort"
 
+# Verify that CREATE and DROP DATABASE are sm's: a new database is a
+# database of its own, a database in use is not dropped unless forced, and
+# ALTER DATABASE is refused.
+# 1. Create d1; creating it again, or d2 with an option, fails.
+# 2. Make a table in d1 with a row: d1 sees it, postgres does not.
+# 3. Dropping d1 from d1 fails: it is the session's own.
+# 4. With a session held open on d1, DROP DATABASE d1 fails as in use;
+#    WITH (FORCE) drops d1, and the held session's next statement finds
+#    it ended.
+# 5. Dropping d1 again fails, IF EXISTS notices, and connecting to it fails.
+# 6. Create d1 again: it has no table t. ALTER DATABASE fails.
+db_psql() {
+  psql -X -A -t -h "$work" -p "$port" -d "$1" -c "$2" 2>&1
+}
+[ "$(db_psql postgres 'create database d1')" = "CREATE DATABASE" ] ||
+  fail "create database"
+db_psql postgres 'create database d1' | grep -q 'database "d1" already exists' ||
+  fail "create database twice"
+db_psql postgres 'create database d2 with owner = x' |
+  grep -q 'CREATE DATABASE takes no options yet' || fail "create db options"
+db_psql d1 'create table t (a int4)' > "$work/db.out"
+db_psql d1 'insert into t values (1)' >> "$work/db.out"
+[ "$(db_psql d1 'select a from t')" = 1 ] || fail "table in d1"
+db_psql postgres 'select a from t' | grep -q 'relation "t" does not exist' ||
+  fail "table not in postgres"
+db_psql d1 'drop database d1' |
+  grep -q 'cannot drop the currently open database' || fail "drop own db"
+mkfifo "$work/dbheld.in"
+psql -X -A -t -h "$work" -p "$port" -d d1 < "$work/dbheld.in" \
+  > "$work/dbheld.out" 2>&1 &
+dbheld=$!
+exec 4> "$work/dbheld.in"
+echo "select 'held';" >&4
+for _ in $(seq 50); do
+  grep -q '^held$' "$work/dbheld.out" && break
+  sleep 0.1
+done
+db_psql postgres 'drop database d1' |
+  grep -q 'database "d1" is being accessed by other users' ||
+  fail "drop database in use"
+[ "$(db_psql postgres 'drop database d1 with (force)')" = "DROP DATABASE" ] ||
+  fail "drop database force"
+echo "select 2;" >&4 2> /dev/null
+exec 4>&-
+wait $dbheld
+grep -q 'terminating connection due to administrator command' \
+  "$work/dbheld.out" || fail "force ends the session"
+db_psql postgres 'drop database d1' | grep -q 'database "d1" does not exist' ||
+  fail "drop database twice"
+db_psql postgres 'drop database if exists d1' |
+  grep -q 'does not exist, skipping' || fail "drop database if exists"
+db_psql d1 'select 1' | grep -q 'database "d1" does not exist' ||
+  fail "connect to a dropped database"
+db_psql postgres 'create database d1' > "$work/db.out"
+db_psql d1 'select a from t' | grep -q 'relation "t" does not exist' ||
+  fail "a new database is empty"
+db_psql postgres 'alter database d1 rename to d3' |
+  grep -q 'ALTER DATABASE is not supported' || fail "alter database"
+
 # Verify that = finds rows, and that DROP TABLE removes a table for good,
 # even from a session that had used it.
 # 1. Confirm WHERE a = 2 finds the one row.

@@ -56,7 +56,6 @@
 #include "postmaster/postmaster.h"
 #include "storage/bufmgr.h"
 #include "storage/bufpage.h"
-#include "storage/copydir.h"
 #include "storage/fd.h"
 #include "storage/predicate.h"
 #include "storage/proc.h"
@@ -285,14 +284,6 @@ static const struct config_enum_entry default_toast_compression_options[] = {
     {"pglz", TOAST_PGLZ_COMPRESSION, false},
 #ifdef USE_LZ4
     {"lz4", TOAST_LZ4_COMPRESSION, false},
-#endif
-    {NULL, 0, false}};
-
-static const struct config_enum_entry file_copy_method_options[] = {
-    {"copy", FILE_COPY_METHOD_COPY, false},
-#if defined(HAVE_COPYFILE) && defined(COPYFILE_CLONE_FORCE) ||                 \
-    defined(HAVE_COPY_FILE_RANGE)
-    {"clone", FILE_COPY_METHOD_CLONE, false},
 #endif
     {NULL, 0, false}};
 
@@ -3171,15 +3162,6 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
      session_replication_role_options,
      NULL,
      assign_session_replication_role,
-     NULL},
-
-    {{"file_copy_method", PGC_USERSET, RESOURCES_DISK,
-      gettext_noop("Selects the file copy method."), NULL},
-     &file_copy_method,
-     FILE_COPY_METHOD_COPY,
-     file_copy_method_options,
-     NULL,
-     NULL,
      NULL},
 
     {{"file_extend_method", PGC_SIGHUP, RESOURCES_DISK,

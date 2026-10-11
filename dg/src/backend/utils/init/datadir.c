@@ -129,6 +129,55 @@ Oid datadir_database_oid(const char *dbname) {
 }
 
 /*
+ * The name of the database whose oid is dboid, palloc'd, or NULL if there is
+ * none: the one of sm's databases with that id.
+ */
+char *datadir_database_name(Oid dboid) {
+  std::vector<std::string> names;
+
+  if (sm_lsdb(sm_env, names) != 0)
+    ereport(ERROR, (errmsg("could not list databases: %s", sm_errmsg())));
+  for (const std::string &name : names)
+    if (datadir_database_oid(name.c_str()) == dboid)
+      return pstrdup(name.c_str());
+  return NULL;
+}
+
+/*
+ * Create the database dbname in sm, at once and for good, as CREATE
+ * DATABASE does outside a transaction: false if it exists already.
+ */
+bool datadir_create_database(const char *dbname) {
+  if (sm_mkdb(sm_env, dbname, NULL) == 0)
+    return true;
+  if (sm_errnum() == SM_ERR_EXISTS)
+    return false;
+  ereport(ERROR, (errmsg("could not create database \"%s\": %s", dbname,
+                         sm_errmsg())));
+  return false; /* not reached */
+}
+
+/*
+ * Drop the database dbname from sm, at once and for good: DATADIR_DROPPED,
+ * or DATADIR_NO_DATABASE if there is none, or DATADIR_IN_USE while a
+ * session has it open.
+ */
+datadir_drop_t datadir_drop_database(const char *dbname) {
+  if (sm_rmdb(sm_env, dbname) == 0)
+    return DATADIR_DROPPED;
+  switch (sm_errnum()) {
+  case SM_ERR_NOTFOUND:
+    return DATADIR_NO_DATABASE;
+  case SM_ERR_INUSE:
+    return DATADIR_IN_USE;
+  default:
+    ereport(ERROR, (errmsg("could not drop database \"%s\": %s", dbname,
+                           sm_errmsg())));
+  }
+  return DATADIR_DROPPED; /* not reached */
+}
+
+/*
  * Open this session's sm session on the database dbname, for as long as
  * the session lasts.  The first on a database loads its catalog.
  */

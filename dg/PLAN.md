@@ -440,10 +440,11 @@ Do not reopen these without the owner:
   publications, subscriptions and large objects are tied to
   PostgreSQL's files, WAL and catalog tables, and are deleted,
   not ported: their statements are refused. Databases are not
-  among them: CREATE, DROP and ALTER DATABASE are to be sm's
-  (`sm_mkdb`, `sm_rmdb`). The rest of the DDL that writes
-  catalog tables is kept, refusing, to be ported onto sm's
-  catalog.
+  among them: CREATE and DROP DATABASE are sm's (`sm_mkdb`,
+  `sm_rmdb`); ALTER DATABASE is refused until sm keeps a
+  database's name changes and attributes. The rest of the DDL
+  that writes catalog tables is kept, refusing, to be ported onto
+  sm's catalog.
 
 ## 8. Working in this tree
 

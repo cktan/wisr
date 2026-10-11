@@ -218,8 +218,6 @@ extern void shdepLockAndCheckObject(Oid classId, Oid objectId);
 
 extern void copyTemplateDependencies(Oid templateDbId, Oid newDbId);
 
-extern void dropDatabaseDependencies(Oid databaseId);
-
 extern void shdepDropOwned(List *roleids, DropBehavior behavior);
 
 extern void shdepReassignOwned(List *roleids, Oid newrole);
