@@ -1508,3 +1508,30 @@ replacing `xact.c`: the transaction's ends are sm's, said in
 - The begin is still lazy, at the first call into sm, so that
   `SET TRANSACTION ISOLATION LEVEL` after BEGIN still sets
   sm's level.
+
+## Step 45: digres assigns no transaction ids
+
+A transaction is sm's (PLAN.md §7), and a table in sm is no
+heap: nothing digres runs needs a PostgreSQL xid.
+
+- **Asking for one is refused**: `GetCurrentTransactionId()`,
+  `GetTopTransactionId()` and their FullTransactionId pair
+  raise "digres assigns no transaction ids"; the `IfAny`
+  forms return the invalid xid. Only the heap and what writes
+  through it ask, and none of it runs on a table in sm.
+- **Gone with assignment**: `AssignTransactionId()`, the
+  transaction state's xid and its array of subcommitted child
+  xids, `RecordTransactionCommit()` and
+  `RecordTransactionAbort()`, and what only they called:
+  `GetNewTransactionId()`, `XactLockTableInsert()` and
+  `XactLockTableDelete()`, `RegisterPredicateLockingXid()`,
+  `XidCacheRemoveRunningXids()`, `TransactionIdLatest()`.
+  `TransactionIdIsCurrentTransactionId()` is false for every
+  xid, and `xactGetCommittedChildren()` finds none.
+- **Left for the heap**, whose machinery they are: the commit
+  status functions of `transam.c`, multixact, snapshots and
+  the proc array's xmin, and `predicate.c`.
+- `age(xid)`'s reference point is the next xid, unchanging.
+- Nothing in `server.sh` asks for an xid: a function call by
+  name, `txid_current()` say, is not resolved yet, so the
+  refusal is not tested.

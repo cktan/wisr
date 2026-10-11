@@ -507,36 +507,6 @@ void UnlockTuple(Relation relation, ItemPointer tid, LOCKMODE lockmode) {
 }
 
 /*
- *		XactLockTableInsert
- *
- * Insert a lock showing that the given transaction ID is running ---
- * this is done when an XID is acquired by a transaction or subtransaction.
- * The lock can then be used to wait for the transaction to finish.
- */
-void XactLockTableInsert(TransactionId xid) {
-  LOCKTAG tag;
-
-  SET_LOCKTAG_TRANSACTION(tag, xid);
-
-  (void)LockAcquire(&tag, ExclusiveLock, false, false);
-}
-
-/*
- *		XactLockTableDelete
- *
- * Delete the lock showing that the given transaction ID is running.
- * (This is never used for main transaction IDs; those locks are only
- * released implicitly at transaction end.  But we do use it for subtrans IDs.)
- */
-void XactLockTableDelete(TransactionId xid) {
-  LOCKTAG tag;
-
-  SET_LOCKTAG_TRANSACTION(tag, xid);
-
-  LockRelease(&tag, ExclusiveLock, false);
-}
-
-/*
  *		XactLockTableWait
  *
  * Wait for the specified transaction to commit or abort.  If an operation

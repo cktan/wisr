@@ -258,11 +258,8 @@ extern bool TransactionIdPrecedes(TransactionId id1, TransactionId id2);
 extern bool TransactionIdPrecedesOrEquals(TransactionId id1, TransactionId id2);
 extern bool TransactionIdFollows(TransactionId id1, TransactionId id2);
 extern bool TransactionIdFollowsOrEquals(TransactionId id1, TransactionId id2);
-extern TransactionId TransactionIdLatest(TransactionId mainxid, int nxids,
-                                         const TransactionId *xids);
 
 extern void VarsupShmemInit(void);
-extern FullTransactionId GetNewTransactionId(bool isSubXact);
 extern FullTransactionId ReadNextFullTransactionId(void);
 extern void SetTransactionIdLimit(TransactionId oldest_datfrozenxid,
                                   Oid oldest_datoid);

@@ -1593,42 +1593,6 @@ static void CreateLocalPredicateLockHash(void) {
 }
 
 /*
- * Register the top level XID in SerializableXidHash.
- * Also store it for easy reference in MySerializableXact.
- */
-void RegisterPredicateLockingXid(TransactionId xid) {
-  SERIALIZABLEXIDTAG sxidtag;
-  SERIALIZABLEXID *sxid;
-  bool found;
-
-  /*
-   * If we're not tracking predicate lock data for this transaction, we
-   * should ignore the request and return quickly.
-   */
-  if (MySerializableXact == InvalidSerializableXact)
-    return;
-
-  /* We should have a valid XID and be at the top level. */
-  Assert(TransactionIdIsValid(xid));
-
-  LWLockAcquire(SerializableXactHashLock, LW_EXCLUSIVE);
-
-  /* This should only be done once per transaction. */
-  Assert(MySerializableXact->topXid == InvalidTransactionId);
-
-  MySerializableXact->topXid = xid;
-
-  sxidtag.xid = xid;
-  sxid = (SERIALIZABLEXID *)hash_search(SerializableXidHash, &sxidtag,
-                                        HASH_ENTER, &found);
-  Assert(!found);
-
-  /* Initialize the structure. */
-  sxid->myXact = MySerializableXact;
-  LWLockRelease(SerializableXactHashLock);
-}
-
-/*
  * Check whether there are any predicate locks held by any transaction
  * for the page at the given block number.
  *

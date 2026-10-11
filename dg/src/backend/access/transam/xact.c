@@ -85,13 +85,6 @@ thread_local /*LOCAL*/ TransactionId CheckXidAlive = InvalidTransactionId;
 thread_local /*LOCAL*/ bool bsysscan = false;
 
 /*
- * XactTopFullTransactionId stores the XID of our toplevel transaction, which
- * will be the same as TopTransactionStateData.fullTransactionId.
- */
-static thread_local /*LOCAL*/ FullTransactionId XactTopFullTransactionId = {
-    InvalidTransactionId};
-
-/*
  * Miscellaneous flag bits to record events which occur on the top level
  * transaction. These flags are only persisted in MyXactFlags and are intended
  * so we remember to do certain things later on in the transaction. This is
@@ -148,7 +141,6 @@ typedef enum TBlockState {
  *	transaction state structure
  */
 typedef struct TransactionStateData {
-  FullTransactionId fullTransactionId; /* my FullTransactionId */
   SubTransactionId subTransactionId;   /* my subxact ID */
   char *name;                          /* savepoint name, if any */
   int savepointLevel;                  /* savepoint level */
@@ -159,9 +151,6 @@ typedef struct TransactionStateData {
   MemoryContext curTransactionContext; /* my xact-lifetime context */
   ResourceOwner curTransactionOwner;   /* my query resources */
   MemoryContext priorContext; /* CurrentMemoryContext before xact started */
-  TransactionId *childXids;   /* subcommitted child XIDs, in XID order */
-  int nChildXids;             /* # of subcommitted child XIDs */
-  int maxChildXids;           /* allocated size of childXids[] */
   Oid prevUser;               /* previous CurrentUserId setting */
   int prevSecContext;         /* previous SecurityRestrictionContext */
   bool prevXactReadOnly;      /* entry-time xact r/o state */
@@ -217,7 +206,6 @@ thread_local /*LOCAL*/ bool xact_is_sampled = false;
 static thread_local /*LOCAL*/ MemoryContext TransactionAbortContext = NULL;
 
 /* local function prototypes */
-static void AssignTransactionId(TransactionState s);
 static void AbortTransaction(void);
 static void AtAbort_Memory(void);
 static void AtCleanup_Memory(void);
@@ -231,7 +219,6 @@ static void CleanupTransaction(void);
 static void CheckTransactionBlock(bool isTopLevel, bool throwError,
                                   const char *stmtType);
 static void CommitTransaction(void);
-static TransactionId RecordTransactionAbort(bool isSubXact);
 static void StartTransaction(void);
 
 static bool CommitTransactionCommandInternal(void);
@@ -295,112 +282,62 @@ bool IsAbortedTransactionBlockState(void) {
 }
 
 /*
- *	GetTopTransactionId
- *
- * This will return the XID of the main transaction, assigning one if
- * it's not yet set.  Be careful to call this only inside a valid xact.
+ * Refuse a transaction id: digres assigns none.  A transaction is sm's
+ * (PLAN.md section 7); only what writes a heap asks for a PostgreSQL xid,
+ * and a table in sm is no heap.
  */
+static void NoTransactionId(void) {
+  ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                  errmsg("digres assigns no transaction ids")));
+}
+
+/* The main transaction's xid: refused (NoTransactionId()). */
 TransactionId GetTopTransactionId(void) {
-  if (!FullTransactionIdIsValid(XactTopFullTransactionId))
-    AssignTransactionId(&TopTransactionStateData);
-  return XidFromFullTransactionId(XactTopFullTransactionId);
+  NoTransactionId();
+  return InvalidTransactionId; /* not reached */
 }
 
-/*
- *	GetTopTransactionIdIfAny
- *
- * This will return the XID of the main transaction, if one is assigned.
- * It will return InvalidTransactionId if we are not currently inside a
- * transaction, or inside a transaction that hasn't yet been assigned an XID.
- */
-TransactionId GetTopTransactionIdIfAny(void) {
-  return XidFromFullTransactionId(XactTopFullTransactionId);
-}
+/* The main transaction's xid if it has one: never. */
+TransactionId GetTopTransactionIdIfAny(void) { return InvalidTransactionId; }
 
-/*
- *	GetCurrentTransactionId
- *
- * This will return the XID of the current transaction (main or sub
- * transaction), assigning one if it's not yet set.  Be careful to call this
- * only inside a valid xact.
- */
+/* The current (sub)transaction's xid: refused (NoTransactionId()). */
 TransactionId GetCurrentTransactionId(void) {
-  TransactionState s = CurrentTransactionState;
-
-  if (!FullTransactionIdIsValid(s->fullTransactionId))
-    AssignTransactionId(s);
-  return XidFromFullTransactionId(s->fullTransactionId);
+  NoTransactionId();
+  return InvalidTransactionId; /* not reached */
 }
 
-/*
- *	GetCurrentTransactionIdIfAny
- *
- * This will return the XID of the current sub xact, if one is assigned.
- * It will return InvalidTransactionId if we are not currently inside a
- * transaction, or inside a transaction that hasn't been assigned an XID yet.
- */
+/* The current (sub)transaction's xid if it has one: never. */
 TransactionId GetCurrentTransactionIdIfAny(void) {
-  return XidFromFullTransactionId(CurrentTransactionState->fullTransactionId);
+  return InvalidTransactionId;
 }
 
-/*
- *	GetTopFullTransactionId
- *
- * This will return the FullTransactionId of the main transaction, assigning
- * one if it's not yet set.  Be careful to call this only inside a valid xact.
- */
+/* The main transaction's FullTransactionId: refused. */
 FullTransactionId GetTopFullTransactionId(void) {
-  if (!FullTransactionIdIsValid(XactTopFullTransactionId))
-    AssignTransactionId(&TopTransactionStateData);
-  return XactTopFullTransactionId;
+  NoTransactionId();
+  return InvalidFullTransactionId; /* not reached */
 }
 
-/*
- *	GetTopFullTransactionIdIfAny
- *
- * This will return the FullTransactionId of the main transaction, if one is
- * assigned.  It will return InvalidFullTransactionId if we are not currently
- * inside a transaction, or inside a transaction that hasn't yet been assigned
- * one.
- */
+/* The main transaction's FullTransactionId if it has one: never. */
 FullTransactionId GetTopFullTransactionIdIfAny(void) {
-  return XactTopFullTransactionId;
+  return InvalidFullTransactionId;
 }
 
-/*
- *	GetCurrentFullTransactionId
- *
- * This will return the FullTransactionId of the current transaction (main or
- * sub transaction), assigning one if it's not yet set.  Be careful to call
- * this only inside a valid xact.
- */
+/* The current (sub)transaction's FullTransactionId: refused. */
 FullTransactionId GetCurrentFullTransactionId(void) {
-  TransactionState s = CurrentTransactionState;
-
-  if (!FullTransactionIdIsValid(s->fullTransactionId))
-    AssignTransactionId(s);
-  return s->fullTransactionId;
+  NoTransactionId();
+  return InvalidFullTransactionId; /* not reached */
 }
 
-/*
- *	GetCurrentFullTransactionIdIfAny
- *
- * This will return the FullTransactionId of the current sub xact, if one is
- * assigned.  It will return InvalidFullTransactionId if we are not currently
- * inside a transaction, or inside a transaction that hasn't been assigned one
- * yet.
- */
+/* The current (sub)transaction's FullTransactionId if it has one: never. */
 FullTransactionId GetCurrentFullTransactionIdIfAny(void) {
-  return CurrentTransactionState->fullTransactionId;
+  return InvalidFullTransactionId;
 }
 
 /*
  *	GetStableLatestTransactionId
  *
- * Get the transaction's XID if it has one, else read the next-to-be-assigned
- * XID.  Once we have a value, return that same value for the remainder of the
- * current transaction.  This is meant to provide the reference point for the
- * age(xid) function, but might be useful for other maintenance tasks as well.
+ * The next-to-be-assigned XID, read once and returned for the rest of the
+ * transaction: the reference point for the age(xid) function.
  */
 TransactionId GetStableLatestTransactionId(void) {
   static thread_local /*LOCAL*/ LocalTransactionId lxid =
@@ -409,96 +346,12 @@ TransactionId GetStableLatestTransactionId(void) {
 
   if (lxid != MyProc->vxid.lxid) {
     lxid = MyProc->vxid.lxid;
-    stablexid = GetTopTransactionIdIfAny();
-    if (!TransactionIdIsValid(stablexid))
-      stablexid = ReadNextTransactionId();
+    stablexid = ReadNextTransactionId();
   }
 
   Assert(TransactionIdIsValid(stablexid));
 
   return stablexid;
-}
-
-/*
- * AssignTransactionId
- *
- * Assigns a new permanent FullTransactionId to the given TransactionState.
- * We do not assign XIDs to transactions until/unless this is called.
- * Also, any parent TransactionStates that don't yet have XIDs are assigned
- * one; this maintains the invariant that a child transaction has an XID
- * following its parent's.
- */
-static void AssignTransactionId(TransactionState s) {
-  bool isSubXact = (s->parent != NULL);
-  ResourceOwner currentOwner;
-
-  /* Assert that caller didn't screw up */
-  Assert(!FullTransactionIdIsValid(s->fullTransactionId));
-  Assert(s->state == TRANS_INPROGRESS);
-
-  /*
-   * Ensure parent(s) have XIDs, so that a child always has an XID later
-   * than its parent.  Mustn't recurse here, or we might get a stack
-   * overflow if we're at the bottom of a huge stack of subtransactions none
-   * of which have XIDs yet.
-   */
-  if (isSubXact && !FullTransactionIdIsValid(s->parent->fullTransactionId)) {
-    TransactionState p = s->parent;
-    TransactionState *parents;
-    size_t parentOffset = 0;
-
-    parents = (TransactionStateData **)palloc(sizeof(TransactionState) *
-                                              s->nestingLevel);
-    while (p != NULL && !FullTransactionIdIsValid(p->fullTransactionId)) {
-      parents[parentOffset++] = p;
-      p = p->parent;
-    }
-
-    /*
-     * This is technically a recursive call, but the recursion will never
-     * be more than one layer deep.
-     */
-    while (parentOffset != 0)
-      AssignTransactionId(parents[--parentOffset]);
-
-    pfree(parents);
-  }
-
-  /*
-   * Generate a new FullTransactionId and record its xid in PGPROC and
-   * pg_subtrans.
-   *
-   * NB: we must make the subtrans entry BEFORE the Xid appears anywhere in
-   * shared storage other than PGPROC; because if there's no room for it in
-   * PGPROC, the subtrans entry is needed to ensure that other backends see
-   * the Xid as "running".  See GetNewTransactionId.
-   */
-  s->fullTransactionId = GetNewTransactionId(isSubXact);
-  if (!isSubXact)
-    XactTopFullTransactionId = s->fullTransactionId;
-
-  if (isSubXact)
-    SubTransSetParent(XidFromFullTransactionId(s->fullTransactionId),
-                      XidFromFullTransactionId(s->parent->fullTransactionId));
-
-  /*
-   * If it's a top-level transaction, the predicate locking system needs to
-   * be told about it too.
-   */
-  if (!isSubXact)
-    RegisterPredicateLockingXid(XidFromFullTransactionId(s->fullTransactionId));
-
-  /*
-   * Acquire lock on the transaction XID.  (We assume this cannot block.) We
-   * have to ensure that the lock is assigned to the transaction's own
-   * ResourceOwner.
-   */
-  currentOwner = CurrentResourceOwner;
-  CurrentResourceOwner = s->curTransactionOwner;
-
-  XactLockTableInsert(XidFromFullTransactionId(s->fullTransactionId));
-
-  CurrentResourceOwner = currentOwner;
 }
 
 /*
@@ -599,62 +452,7 @@ int GetCurrentTransactionNestLevel(void) {
  *	TransactionIdIsCurrentTransactionId
  */
 bool TransactionIdIsCurrentTransactionId(TransactionId xid) {
-  TransactionState s;
-
-  /*
-   * We always say that BootstrapTransactionId is "not my transaction ID"
-   * even when it is (ie, during bootstrap).  Along with the fact that
-   * transam.c always treats BootstrapTransactionId as already committed,
-   * this causes the heapam_visibility.c routines to see all tuples as
-   * committed, which is what we need during bootstrap.  (Bootstrap mode
-   * only inserts tuples, it never updates or deletes them, so all tuples
-   * can be presumed good immediately.)
-   *
-   * Likewise, InvalidTransactionId and FrozenTransactionId are certainly
-   * not my transaction ID, so we can just return "false" immediately for
-   * any non-normal XID.
-   */
-  if (!TransactionIdIsNormal(xid))
-    return false;
-
-  if (TransactionIdEquals(xid, GetTopTransactionIdIfAny()))
-    return true;
-
-  /*
-   * We will return true for the Xid of the current subtransaction, any of
-   * its subcommitted children, any of its parents, or any of their
-   * previously subcommitted children.  However, a transaction being aborted
-   * is no longer "current", even though it may still have an entry on the
-   * state stack.
-   */
-  for (s = CurrentTransactionState; s != NULL; s = s->parent) {
-    int low, high;
-
-    if (s->state == TRANS_ABORT)
-      continue;
-    if (!FullTransactionIdIsValid(s->fullTransactionId))
-      continue; /* it can't have any child XIDs either */
-    if (TransactionIdEquals(xid,
-                            XidFromFullTransactionId(s->fullTransactionId)))
-      return true;
-    /* As the childXids array is ordered, we can use binary search */
-    low = 0;
-    high = s->nChildXids - 1;
-    while (low <= high) {
-      int middle;
-      TransactionId probe;
-
-      middle = low + (high - low) / 2;
-      probe = s->childXids[middle];
-      if (TransactionIdEquals(probe, xid))
-        return true;
-      else if (TransactionIdPrecedes(probe, xid))
-        low = middle + 1;
-      else
-        high = middle - 1;
-    }
-  }
-
+  /* digres assigns no xid, so none is this transaction's. */
   return false;
 }
 
@@ -822,56 +620,6 @@ static void AtSubStart_ResourceOwner(void) {
  */
 
 /*
- *	RecordTransactionCommit
- *
- * Record the commit timestamp.  There is no commit log to mark and no
- * commit record to write: digres has no WAL.
- *
- * Returns latest XID among xact and its children, or InvalidTransactionId
- * if the xact has no XID.  (We compute that here just because it's easier.)
- */
-static TransactionId RecordTransactionCommit(void) {
-  TransactionId xid = GetTopTransactionIdIfAny();
-  int nrels;
-  RelFileLocator *rels;
-  int nchildren;
-  TransactionId *children;
-
-  nrels = smgrGetPendingDeletes(true, &rels);
-  nchildren = xactGetCommittedChildren(&children);
-  if (rels)
-    pfree(rels);
-
-  if (!TransactionIdIsValid(xid)) {
-    /*
-     * We expect that every RelationDropStorage is followed by a catalog
-     * update, and hence XID assignment, so we shouldn't get here with any
-     * pending deletes.
-     *
-     * Use a real test not just an Assert to check this, since it's a bit
-     * fragile.
-     */
-    if (nrels != 0)
-      elog(ERROR,
-           "cannot commit a transaction that deleted files but has no xid");
-
-    /* Can't have child XIDs either; AssignTransactionId enforces this */
-    Assert(nchildren == 0);
-    return InvalidTransactionId;
-  }
-
-  /* Record commit timestamp, without being interrupted */
-  START_CRIT_SECTION();
-  TransactionTreeSetCommitTsData(xid, nchildren, children,
-                                 GetCurrentTransactionStopTimestamp(),
-                                 InvalidRepOriginId);
-  END_CRIT_SECTION();
-
-  /* Compute latestXid while we have the child XIDs handy */
-  return TransactionIdLatest(xid, nchildren, children);
-}
-
-/*
  *	AtCCI_LocalCache
  */
 static void AtCCI_LocalCache(void) {
@@ -947,132 +695,10 @@ static void AtSubCommit_Memory(void) {
   }
 }
 
-/*
- * AtSubCommit_childXids
- *
- * Pass my own XID and my child XIDs up to my parent as committed children.
- */
-static void AtSubCommit_childXids(void) {
-  TransactionState s = CurrentTransactionState;
-  int new_nChildXids;
-
-  Assert(s->parent != NULL);
-
-  /*
-   * The parent childXids array will need to hold my XID and all my
-   * childXids, in addition to the XIDs already there.
-   */
-  new_nChildXids = s->parent->nChildXids + s->nChildXids + 1;
-
-  /* Allocate or enlarge the parent array if necessary */
-  if (s->parent->maxChildXids < new_nChildXids) {
-    int new_maxChildXids;
-    TransactionId *new_childXids;
-
-    /*
-     * Make it 2x what's needed right now, to avoid having to enlarge it
-     * repeatedly. But we can't go above MaxAllocSize.  (The latter limit
-     * is what ensures that we don't need to worry about integer overflow
-     * here or in the calculation of new_nChildXids.)
-     */
-    new_maxChildXids =
-        Min(new_nChildXids * 2, (int)(MaxAllocSize / sizeof(TransactionId)));
-
-    if (new_maxChildXids < new_nChildXids)
-      ereport(
-          ERROR,
-          (errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-           errmsg("maximum number of committed subtransactions (%d) exceeded",
-                  (int)(MaxAllocSize / sizeof(TransactionId)))));
-
-    /*
-     * We keep the child-XID arrays in TopTransactionContext; this avoids
-     * setting up child-transaction contexts for what might be just a few
-     * bytes of grandchild XIDs.
-     */
-    if (s->parent->childXids == NULL)
-      new_childXids = (TransactionId *)MemoryContextAlloc(
-          TopTransactionContext, new_maxChildXids * sizeof(TransactionId));
-    else
-      new_childXids = (TransactionId *)repalloc(
-          s->parent->childXids, new_maxChildXids * sizeof(TransactionId));
-
-    s->parent->childXids = new_childXids;
-    s->parent->maxChildXids = new_maxChildXids;
-  }
-
-  /*
-   * Copy all my XIDs to parent's array.
-   *
-   * Note: We rely on the fact that the XID of a child always follows that
-   * of its parent.  By copying the XID of this subtransaction before the
-   * XIDs of its children, we ensure that the array stays ordered. Likewise,
-   * all XIDs already in the array belong to subtransactions started and
-   * subcommitted before us, so their XIDs must precede ours.
-   */
-  s->parent->childXids[s->parent->nChildXids] =
-      XidFromFullTransactionId(s->fullTransactionId);
-
-  if (s->nChildXids > 0)
-    memcpy(&s->parent->childXids[s->parent->nChildXids + 1], s->childXids,
-           s->nChildXids * sizeof(TransactionId));
-
-  s->parent->nChildXids = new_nChildXids;
-
-  /* Release child's array to avoid leakage */
-  if (s->childXids != NULL)
-    pfree(s->childXids);
-  /* We must reset these to avoid double-free if fail later in commit */
-  s->childXids = NULL;
-  s->nChildXids = 0;
-  s->maxChildXids = 0;
-}
-
 /* ----------------------------------------------------------------
  *						AbortTransaction stuff
  * ----------------------------------------------------------------
  */
-
-/*
- *	RecordTransactionAbort
- *
- * There is no commit log to mark and no abort record to write: digres has
- * no WAL.
- *
- * Returns latest XID among xact and its children, or InvalidTransactionId
- * if the xact has no XID.  (We compute that here just because it's easier.)
- */
-static TransactionId RecordTransactionAbort(bool isSubXact) {
-  TransactionId xid = GetCurrentTransactionIdIfAny();
-  TransactionId latestXid;
-  int nchildren;
-  TransactionId *children;
-
-  /*
-   * If we haven't been assigned an XID, nobody will care whether we aborted
-   * or not.  Hence, we're done in that case.  It does not matter if we have
-   * rels to delete (note that this routine is not responsible for actually
-   * deleting 'em).  We cannot have any child XIDs, either.
-   */
-  if (!TransactionIdIsValid(xid))
-    return InvalidTransactionId;
-
-  nchildren = xactGetCommittedChildren(&children);
-
-  /* Compute latestXid while we have the child XIDs handy */
-  latestXid = TransactionIdLatest(xid, nchildren, children);
-
-  /*
-   * If we're aborting a subtransaction, we can immediately remove failed
-   * XIDs from PGPROC's cache of running child XIDs.  We do that here for
-   * subxacts, because we already have the child XID array at hand.  For
-   * main xacts, the equivalent happens just after this function returns.
-   */
-  if (isSubXact)
-    XidCacheRemoveRunningXids(xid, nchildren, children, latestXid);
-
-  return latestXid;
-}
 
 /*
  *	AtAbort_Memory
@@ -1120,24 +746,6 @@ static void AtSubAbort_ResourceOwner(void) {
 
   /* Make sure we have a valid ResourceOwner */
   CurrentResourceOwner = s->curTransactionOwner;
-}
-
-/*
- * AtSubAbort_childXids
- */
-static void AtSubAbort_childXids(void) {
-  TransactionState s = CurrentTransactionState;
-
-  /*
-   * We keep the child-XID arrays in TopTransactionContext (see
-   * AtSubCommit_childXids).  This means we'd better free the array
-   * explicitly at abort to avoid leakage.
-   */
-  if (s->childXids != NULL)
-    pfree(s->childXids);
-  s->childXids = NULL;
-  s->nChildXids = 0;
-  s->maxChildXids = 0;
 }
 
 /* ----------------------------------------------------------------
@@ -1243,8 +851,6 @@ static void StartTransaction(void) {
   s = &TopTransactionStateData;
   CurrentTransactionState = s;
 
-  Assert(!FullTransactionIdIsValid(XactTopFullTransactionId));
-
   /* check the current transaction state */
   Assert(s->state == TRANS_DEFAULT);
 
@@ -1255,7 +861,6 @@ static void StartTransaction(void) {
    * flags are fetched below.
    */
   s->state = TRANS_START;
-  s->fullTransactionId = InvalidFullTransactionId; /* until assigned */
 
   /* Determine if statements are logged in this transaction */
   xact_is_sampled =
@@ -1270,9 +875,6 @@ static void StartTransaction(void) {
    */
   s->nestingLevel = 1;
   s->gucNestLevel = 1;
-  s->childXids = NULL;
-  s->nChildXids = 0;
-  s->maxChildXids = 0;
 
   /*
    * Once the current user ID and the security context flags are fetched,
@@ -1368,7 +970,6 @@ static void StartTransaction(void) {
  */
 static void CommitTransaction(void) {
   TransactionState s = CurrentTransactionState;
-  TransactionId latestXid;
 
   ShowTransactionState("CommitTransaction");
 
@@ -1461,20 +1062,13 @@ static void CommitTransaction(void) {
   if (TransactionTimeout > 0)
     disable_timeout(TRANSACTION_TIMEOUT, false);
 
-  /*
-   * We need to mark our XIDs as committed in pg_xact.  This is where we
-   * durably commit.
-   */
-  latestXid = RecordTransactionCommit();
-
   TRACE_POSTGRESQL_TRANSACTION_COMMIT(MyProc->vxid.lxid);
 
   /*
-   * Let others know about no transaction in progress by me. Note that this
-   * must be done _before_ releasing locks we hold and _after_
-   * RecordTransactionCommit.
+   * Let others know about no transaction in progress by me, before
+   * releasing the locks we hold.  It has no xid to end: digres assigns none.
    */
-  ProcArrayEndTransaction(MyProc, latestXid);
+  ProcArrayEndTransaction(MyProc, InvalidTransactionId);
 
   /*
    * This is all post-commit cleanup.  Note that if an error is raised here,
@@ -1560,15 +1154,9 @@ static void CommitTransaction(void) {
 
   AtCommit_Memory();
 
-  s->fullTransactionId = InvalidFullTransactionId;
   s->subTransactionId = InvalidSubTransactionId;
   s->nestingLevel = 0;
   s->gucNestLevel = 0;
-  s->childXids = NULL;
-  s->nChildXids = 0;
-  s->maxChildXids = 0;
-
-  XactTopFullTransactionId = InvalidFullTransactionId;
 
   /*
    * done with commit processing, set current transaction state back to
@@ -1584,7 +1172,6 @@ static void CommitTransaction(void) {
  */
 static void AbortTransaction(void) {
   TransactionState s = CurrentTransactionState;
-  TransactionId latestXid;
 
   /* Prevent cancel/die interrupt while cleaning up */
   HOLD_INTERRUPTS();
@@ -1672,20 +1259,13 @@ static void AbortTransaction(void) {
   AtEOXact_RelationMap(false);
   AtAbort_Twophase();
 
-  /*
-   * Advertise the fact that we aborted in pg_xact (assuming that we got as
-   * far as assigning an XID to advertise).
-   */
-  latestXid = RecordTransactionAbort(false);
-
   TRACE_POSTGRESQL_TRANSACTION_ABORT(MyProc->vxid.lxid);
 
   /*
-   * Let others know about no transaction in progress by me. Note that this
-   * must be done _before_ releasing locks we hold and _after_
-   * RecordTransactionAbort.
+   * Let others know about no transaction in progress by me, before
+   * releasing the locks we hold.
    */
-  ProcArrayEndTransaction(MyProc, latestXid);
+  ProcArrayEndTransaction(MyProc, InvalidTransactionId);
 
   /*
    * Post-abort cleanup.  See notes in CommitTransaction() concerning
@@ -1753,15 +1333,9 @@ static void CleanupTransaction(void) {
 
   AtCleanup_Memory(); /* and transaction memory */
 
-  s->fullTransactionId = InvalidFullTransactionId;
   s->subTransactionId = InvalidSubTransactionId;
   s->nestingLevel = 0;
   s->gucNestLevel = 0;
-  s->childXids = NULL;
-  s->nChildXids = 0;
-  s->maxChildXids = 0;
-
-  XactTopFullTransactionId = InvalidFullTransactionId;
 
   /*
    * done with abort processing, set current transaction state back to
@@ -3433,8 +3007,6 @@ static void CommitSubTransaction(void) {
    */
 
   /* Post-commit cleanup */
-  if (FullTransactionIdIsValid(s->fullTransactionId))
-    AtSubCommit_childXids();
   AfterTriggerEndSubXact(true);
   AtSubCommit_Portals(s->subTransactionId, s->parent->subTransactionId,
                       s->parent->nestingLevel, s->parent->curTransactionOwner);
@@ -3452,12 +3024,7 @@ static void CommitSubTransaction(void) {
   AtEOSubXact_Inval(true);
   AtSubCommit_smgr();
 
-  /*
-   * The only lock we actually release here is the subtransaction XID lock.
-   */
   CurrentResourceOwner = s->curTransactionOwner;
-  if (FullTransactionIdIsValid(s->fullTransactionId))
-    XactLockTableDelete(XidFromFullTransactionId(s->fullTransactionId));
 
   /*
    * Other locks should get transferred to their parent resource owner.
@@ -3582,13 +3149,6 @@ static void AbortSubTransaction(void) {
     AtEOSubXact_LargeObject(false, s->subTransactionId,
                             s->parent->subTransactionId);
 
-    /* Advertise the fact that we aborted in pg_xact. */
-    (void)RecordTransactionAbort(true);
-
-    /* Post-abort cleanup */
-    if (FullTransactionIdIsValid(s->fullTransactionId))
-      AtSubAbort_childXids();
-
     /* sm undoes the subtransaction's writes. */
     smstore_subabort();
 
@@ -3691,7 +3251,6 @@ static void PushTransaction(void) {
    * We can now stack a minimally valid subtransaction without fear of
    * failure.
    */
-  s->fullTransactionId = InvalidFullTransactionId; /* until assigned */
   s->subTransactionId = currentSubTransactionId;
   s->parent = p;
   s->nestingLevel = p->nestingLevel + 1;
@@ -3760,7 +3319,6 @@ static void ShowTransactionState(const char *str) {
  *		Recursive subroutine for ShowTransactionState
  */
 static void ShowTransactionStateRec(const char *str, TransactionState s) {
-  StringInfoData buf;
 
   if (s->parent) {
     /*
@@ -3776,25 +3334,14 @@ static void ShowTransactionStateRec(const char *str, TransactionState s) {
       ShowTransactionStateRec(str, s->parent);
   }
 
-  initStringInfo(&buf);
-  if (s->nChildXids > 0) {
-    int i;
-
-    appendStringInfo(&buf, ", children: %u", s->childXids[0]);
-    for (i = 1; i < s->nChildXids; i++)
-      appendStringInfo(&buf, " %u", s->childXids[i]);
-  }
   ereport(
       DEBUG5,
       (errmsg_internal(
-          "%s(%d) name: %s; blockState: %s; state: %s, xid/subid/cid: "
-          "%u/%u/%u%s%s",
-          str, s->nestingLevel, PointerIsValid(s->name) ? s->name : "unnamed",
+          "%s(%d) name: %s; blockState: %s; state: %s, subid/cid: %u/%u%s", str,
+          s->nestingLevel, PointerIsValid(s->name) ? s->name : "unnamed",
           BlockStateAsString(s->blockState), TransStateAsString(s->state),
-          (unsigned int)XidFromFullTransactionId(s->fullTransactionId),
           (unsigned int)s->subTransactionId, (unsigned int)currentCommandId,
-          currentCommandIdUsed ? " (used)" : "", buf.data)));
-  pfree(buf.data);
+          currentCommandIdUsed ? " (used)" : "")));
 }
 
 /*
@@ -3875,14 +3422,9 @@ static const char *TransStateAsString(TransState state) {
  * If there are no subxacts, *ptr is set to NULL.
  */
 int xactGetCommittedChildren(TransactionId **ptr) {
-  TransactionState s = CurrentTransactionState;
-
-  if (s->nChildXids == 0)
-    *ptr = NULL;
-  else
-    *ptr = s->childXids;
-
-  return s->nChildXids;
+  /* A transaction has no xid, nor its children: digres assigns none. */
+  *ptr = NULL;
+  return 0;
 }
 
 /*
