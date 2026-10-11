@@ -36,7 +36,6 @@
 #include "storage/condition_variable.h"
 #include "storage/fd.h"
 #include "storage/lmgr.h"
-#include "storage/predicate.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
 #include "storage/sinvaladt.h"
@@ -1023,13 +1022,6 @@ static void CommitTransaction(void) {
    * holding the notify-insertion lock.  However, this could result in
    * creating a snapshot, so we must do it before serializable cleanup.
    */
-
-  /*
-   * Mark serializable transaction as complete for predicate locking
-   * purposes.  This should be done as late as we can put it and still allow
-   * errors to be raised for failure patterns found at commit.
-   */
-  PreCommit_CheckForSerializationFailure();
 
   /* Prevent cancel/die interrupt while cleaning up */
   HOLD_INTERRUPTS();

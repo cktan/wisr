@@ -49,7 +49,6 @@
 #include "common/int.h"
 #include "lib/ilist.h"
 #include "storage/ipc.h"
-#include "storage/predicate.h"
 #include "storage/proc.h"
 #include "utils/memutils.h"
 #include "utils/resowner.h"
@@ -689,10 +688,8 @@ static void ResourceOwnerReleaseInternal(ResourceOwner owner,
        * least all non-session locks), so just do a single lmgr call at
        * the top of the recursion.
        */
-      if (owner == TopTransactionResourceOwner) {
+      if (owner == TopTransactionResourceOwner)
         ProcReleaseLocks(isCommit);
-        ReleasePredicateLocks(isCommit, false);
-      }
     } else {
       /*
        * Release locks retail.  Note that if we are committing a

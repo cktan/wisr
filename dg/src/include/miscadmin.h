@@ -196,11 +196,8 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT bool ExitOnAnyError;
 extern thread_local /*SHARED*/ PGDLLIMPORT char *DataDir;
 extern thread_local /*SHARED*/ PGDLLIMPORT int data_directory_mode;
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT int NBuffers;
 extern thread_local /*SHARED*/ PGDLLIMPORT int MaxBackends;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int MaxConnections;
-
-extern thread_local /*LOCAL*/ PGDLLIMPORT int serializable_buffers;
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT int MyProcPid;
 extern thread_local /*LOCAL*/ PGDLLIMPORT pg_time_t MyStartTime;

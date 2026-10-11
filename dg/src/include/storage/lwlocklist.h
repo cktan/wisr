@@ -58,9 +58,9 @@ PG_LWLOCK(21, AddinShmemInit)
 PG_LWLOCK(25, RelationMapping)
 /* 26 was NotifySLRULock */
 /* 27 was NotifyQueue */
-PG_LWLOCK(28, SerializableXactHash)
-PG_LWLOCK(29, SerializableFinishedList)
-PG_LWLOCK(30, SerializablePredicateList)
+/* 28 was SerializableXactHashLock */
+/* 29 was SerializableFinishedListLock */
+/* 30 was SerializablePredicateListLock */
 /* 31 was SerialSLRULock */
 PG_LWLOCK(32, SyncRep)
 /* 33 was BackgroundWorker */
@@ -82,4 +82,4 @@ PG_LWLOCK(48, WaitEventCustom)
 PG_LWLOCK(49, WALSummarizer)
 /* 50 was DSMRegistryLock */
 PG_LWLOCK(51, InjectionPoint)
-PG_LWLOCK(52, SerialControl)
+/* 52 was SerialControlLock */

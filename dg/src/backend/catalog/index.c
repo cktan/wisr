@@ -60,7 +60,6 @@
 #include "parser/parser.h"
 #include "rewrite/rewriteManip.h"
 #include "storage/lmgr.h"
-#include "storage/predicate.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
 #include "utils/guc.h"
@@ -1213,15 +1212,8 @@ void index_concurrently_set_dead(Oid heapId, Oid indexId) {
   Relation userHeapRelation;
   Relation userIndexRelation;
 
-  /*
-   * No more predicate locks will be acquired on this index, and we're about
-   * to stop doing inserts into the index which could show conflicts with
-   * existing predicate locks, so now is the time to move them to the heap
-   * relation.
-   */
   userHeapRelation = table_open(heapId, ShareUpdateExclusiveLock);
   userIndexRelation = index_open(indexId, ShareUpdateExclusiveLock);
-  TransferPredicateLocksToHeapRelation(userIndexRelation);
 
   /*
    * Now we are sure that nobody uses the index for queries; they just might
@@ -1658,9 +1650,6 @@ void index_drop(Oid indexId, bool concurrent, bool concurrent_lock_mode) {
      */
     userHeapRelation = table_open(heapId, ShareUpdateExclusiveLock);
     userIndexRelation = index_open(indexId, AccessExclusiveLock);
-  } else {
-    /* Not concurrent, so just transfer predicate locks and we're good */
-    TransferPredicateLocksToHeapRelation(userIndexRelation);
   }
 
   /*

@@ -707,6 +707,48 @@ for guc in temp_buffers effective_io_concurrency io_combine_limit \
 done
 [ ! -e "$work/data/pg_multixact" ] || fail "no pg_multixact"
 
+# Verify that SERIALIZABLE is sm's: a write skew between two serializable
+# transactions fails one of them with a serialization failure, though
+# PostgreSQL's predicate locks are gone, with their settings and pg_serial.
+# 1. Create t10 with rows 1 and 2.
+# 2. In two sessions, begin SERIALIZABLE, read a > 10 (nothing), and insert
+#    a row of a > 10; commit the first, then the second.
+# 3. Confirm the first commits, and the second fails with SQLSTATE 40001.
+# 4. Confirm max_pred_locks_per_transaction and shared_buffers are not
+#    settings, and the data directory has no pg_serial.
+local_psql -c 'create table t10 (a int4)' -c 'insert into t10 values (1), (2)' \
+  > "$work/skew.out" 2>&1
+for n in 1 2; do
+  mkfifo "$work/skew$n.in"
+  psql -X -A -t -v VERBOSITY=verbose -h "$work" -p "$port" -d postgres \
+    < "$work/skew$n.in" > "$work/skew$n.out" 2>&1 &
+  eval "skew$n=\$!"
+done
+exec 5> "$work/skew1.in" 6> "$work/skew2.in"
+echo "begin isolation level serializable; select a from t10 where a > 10;" >&5
+echo "begin isolation level serializable; select a from t10 where a > 10;" >&6
+echo "insert into t10 values (11); select 'inserted';" >&5
+echo "insert into t10 values (12); select 'inserted';" >&6
+for _ in $(seq 50); do
+  grep -q '^inserted$' "$work/skew1.out" &&
+    grep -q '^inserted$' "$work/skew2.out" && break
+  sleep 0.1
+done
+echo "commit;" >&5
+exec 5>&-
+wait $skew1
+echo "commit;" >&6
+exec 6>&-
+wait $skew2
+grep -q '^COMMIT$' "$work/skew1.out" || fail "serializable first commit"
+grep -q 'ERROR:  40001: could not commit: not serializable' \
+  "$work/skew2.out" || fail "serializable write skew"
+for guc in max_pred_locks_per_transaction shared_buffers; do
+  local_psql -c "show $guc" 2>&1 |
+    grep -q 'unrecognized configuration parameter' || fail "setting $guc"
+done
+[ ! -e "$work/data/pg_serial" ] || fail "no pg_serial"
+
 # Verify that = finds rows, and that DROP TABLE removes a table for good,
 # even from a session that had used it.
 # 1. Confirm WHERE a = 2 finds the one row.

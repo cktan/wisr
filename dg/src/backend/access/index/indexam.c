@@ -47,7 +47,6 @@
 #include "catalog/pg_type.h"
 #include "nodes/execnodes.h"
 #include "storage/lmgr.h"
-#include "storage/predicate.h"
 #include "utils/ruleutils.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
@@ -185,10 +184,6 @@ bool index_insert(Relation indexRelation, Datum *values, bool *isnull,
   RELATION_CHECKS;
   CHECK_REL_PROCEDURE(aminsert);
 
-  if (!(indexRelation->rd_indam->ampredlocks))
-    CheckForSerializableConflictIn(indexRelation, (ItemPointer)NULL,
-                                   InvalidBlockNumber);
-
   return indexRelation->rd_indam->aminsert(
       indexRelation, values, isnull, heap_t_ctid, heapRelation, checkUnique,
       indexUnchanged, indexInfo);
@@ -270,9 +265,6 @@ static IndexScanDesc index_beginscan_internal(Relation indexRelation, int nkeys,
 
   RELATION_CHECKS;
   CHECK_REL_PROCEDURE(ambeginscan);
-
-  if (!(indexRelation->rd_indam->ampredlocks))
-    PredicateLockRelation(indexRelation, snapshot);
 
   /*
    * We hold a reference count to the relcache entry throughout the scan.

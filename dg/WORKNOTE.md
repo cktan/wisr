@@ -2073,3 +2073,24 @@ PLAN.md §7: a row in sm names no lockers, so no set of them.
 - `shared_buffers` stays while `predicate.c`'s SLRU sizes
   itself by it.
 - `server.sh` checks the setting and the directory gone.
+
+## Step 68: predicate locks and SLRUs are gone
+
+PLAN.md §7: SERIALIZABLE is sm's, which tracks the reads and
+writes of a serializable transaction itself.
+
+- **Gone**: `predicate.c` and its headers, with every hook into
+  them: index scans and inserts, DROP TABLE, commit, the
+  index-only scan, resource release, and the serializable
+  snapshot; the settings `max_pred_locks_per_transaction`,
+  `max_pred_locks_per_relation`, `max_pred_locks_per_page` and
+  `serializable_buffers`; the SIReadLock rows of `pg_locks`, the
+  SQL function `pg_safe_snapshot_blocking_pids`, and the safe
+  snapshot wait in `pg_isolation_test_session_is_blocked`;
+  their LWLocks, tranches, lock partitions and wait events; the
+  `pg_serial` directory.
+- **`slru.c` is gone**, its last user with it, and so is
+  `shared_buffers`, by which SLRUs sized themselves.
+- `server.sh` stages a write skew between two serializable
+  transactions: the second commit fails with 40001. It checks
+  the settings and `pg_serial` gone.

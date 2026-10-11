@@ -82,7 +82,6 @@
 #include "rewrite/rewriteManip.h"
 #include "storage/lmgr.h"
 #include "storage/lock.h"
-#include "storage/predicate.h"
 #include "tcop/utility.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
@@ -5660,15 +5659,6 @@ static void ATRewriteTable(AlteredTableInfo *tab, Oid OIDNewHeap) {
     else
       ereport(DEBUG1, (errmsg_internal("verifying table \"%s\"",
                                        RelationGetRelationName(oldrel))));
-
-    if (newrel) {
-      /*
-       * All predicate locks on the tuples or pages are about to be made
-       * invalid, because we move tuples around.  Promote them to
-       * relation locks.
-       */
-      TransferPredicateLocksToHeapRelation(oldrel);
-    }
 
     econtext = GetPerTupleExprContext(estate);
 

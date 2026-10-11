@@ -35,7 +35,6 @@
 #include "executor/nodeIndexonlyscan.h"
 #include "executor/nodeIndexscan.h"
 #include "miscadmin.h"
-#include "storage/predicate.h"
 #include "utils/builtins.h"
 #include "utils/rel.h"
 
@@ -174,14 +173,6 @@ static TupleTableSlot *IndexOnlyNext(IndexOnlyScanState *node) {
       ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                       errmsg("lossy distance functions are not supported in "
                              "index-only scans")));
-
-    /*
-     * If we didn't access the heap, then we'll need to take a predicate
-     * lock explicitly, as if we had.  For now we do that at page level.
-     */
-    if (!tuple_from_heap)
-      PredicateLockPage(scandesc->heapRelation, ItemPointerGetBlockNumber(tid),
-                        estate->es_snapshot);
 
     return slot;
   }

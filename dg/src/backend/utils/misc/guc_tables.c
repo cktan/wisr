@@ -29,7 +29,6 @@
 #include <syslog.h>
 #endif
 
-#include "access/slru.h"
 #include "access/toast_compression.h"
 #include "catalog/namespace.h"
 #include "commands/extension.h"
@@ -56,7 +55,6 @@
 #include "storage/buffile.h"
 #include "storage/bufpage.h"
 #include "storage/fd.h"
-#include "storage/predicate.h"
 #include "storage/proc.h"
 #include "storage/procnumber.h"
 #include "tcop/backend_startup.h"
@@ -1506,17 +1504,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      * We sometimes multiply the number of shared buffers by two without
      * checking for overflow, so we mustn't allow more than INT_MAX / 2.
      */
-    {{"shared_buffers", PGC_POSTMASTER, RESOURCES_MEM,
-      gettext_noop(
-          "Sets the number of shared memory buffers used by the server."),
-      NULL, GUC_UNIT_BLOCKS},
-     &NBuffers,
-     16384,
-     16,
-     INT_MAX / 2,
-     NULL,
-     NULL,
-     NULL},
 
     {{"num_os_semaphores", PGC_INTERNAL, PRESET_OPTIONS,
       gettext_noop("Shows the number of semaphores required for the server."),
@@ -1526,18 +1513,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      0,
      INT_MAX,
      NULL,
-     NULL,
-     NULL},
-
-    {{"serializable_buffers", PGC_POSTMASTER, RESOURCES_MEM,
-      gettext_noop("Sets the size of the dedicated buffer pool used for the "
-                   "serializable transaction cache."),
-      NULL, GUC_UNIT_BLOCKS},
-     &serializable_buffers,
-     32,
-     16,
-     SLRU_MAX_ALLOWED_BUFFERS,
-     check_serial_buffers,
      NULL,
      NULL},
 
@@ -1789,51 +1764,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      &max_locks_per_xact,
      64,
      10,
-     INT_MAX,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"max_pred_locks_per_transaction", PGC_POSTMASTER, LOCK_MANAGEMENT,
-      gettext_noop(
-          "Sets the maximum number of predicate locks per transaction."),
-      gettext_noop(
-          "The shared predicate lock table is sized on the assumption that "
-          "at most \"max_pred_locks_per_transaction\" objects per server "
-          "process "
-          "or prepared transaction will need to be locked at any one time.")},
-     &max_predicate_locks_per_xact,
-     64,
-     10,
-     INT_MAX,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"max_pred_locks_per_relation", PGC_SIGHUP, LOCK_MANAGEMENT,
-      gettext_noop("Sets the maximum number of predicate-locked pages and "
-                   "tuples per relation."),
-      gettext_noop("If more than this total of pages and tuples in the same "
-                   "relation are locked "
-                   "by a connection, those locks are replaced by a "
-                   "relation-level lock.")},
-     &max_predicate_locks_per_relation,
-     -2,
-     INT_MIN,
-     INT_MAX,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"max_pred_locks_per_page", PGC_SIGHUP, LOCK_MANAGEMENT,
-      gettext_noop(
-          "Sets the maximum number of predicate-locked tuples per page."),
-      gettext_noop(
-          "If more than this number of tuples on the same page are locked "
-          "by a connection, those locks are replaced by a page-level lock.")},
-     &max_predicate_locks_per_page,
-     2,
-     0,
      INT_MAX,
      NULL,
      NULL,

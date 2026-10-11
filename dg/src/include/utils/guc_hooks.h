@@ -86,7 +86,6 @@ extern void assign_restrict_nonsystem_relation_kind(const char *newval,
                                                     void *extra);
 extern bool check_search_path(char **newval, void **extra, GucSource source);
 extern void assign_search_path(const char *newval, void *extra);
-extern bool check_serial_buffers(int *newval, void **extra, GucSource source);
 extern bool check_session_authorization(char **newval, void **extra,
                                         GucSource source);
 extern void assign_session_authorization(const char *newval, void *extra);

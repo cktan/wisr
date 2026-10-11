@@ -1158,15 +1158,11 @@ static void getInstallationPaths(const char *argv0) {
  * a name leaves this list when its subsystem is cut.
  */
 static void make_legacy_dirs(void) {
-  static const char *const dirs[] = {"pg_dynshmem",
-                                     "pg_serial",
-                                     "pg_snapshots",
-                                     "pg_replslot",
-                                     "pg_stat",
-                                     "pg_stat_tmp",
-                                     "pg_logical",
-                                     "pg_logical/snapshots",
-                                     "pg_logical/mappings"};
+  static const char *const dirs[] = {
+      "pg_dynshmem",          "pg_snapshots",
+      "pg_replslot",          "pg_stat",
+      "pg_stat_tmp",          "pg_logical",
+      "pg_logical/snapshots", "pg_logical/mappings"};
 
   for (int i = 0; i < lengthof(dirs); i++)
     if (mkdir(dirs[i], pg_dir_create_mode) != 0 && errno != EEXIST)

@@ -65,7 +65,6 @@
 #include "parser/parsetree.h"
 #include "partitioning/partdesc.h"
 #include "storage/lmgr.h"
-#include "storage/predicate.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
@@ -1694,14 +1693,6 @@ void heap_drop_with_catalog(Oid relid) {
    * our own session.
    */
   CheckTableNotInUse(rel, "DROP TABLE");
-
-  /*
-   * This effectively deletes all rows in the table, and may be done in a
-   * serializable transaction.  In that case we must record a rw-conflict in
-   * to this transaction from each transaction holding a predicate lock on
-   * the table.
-   */
-  CheckTableForSerializableConflictIn(rel);
 
   /*
    * Delete pg_foreign_table tuple first.

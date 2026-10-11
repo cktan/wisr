@@ -20,7 +20,6 @@
 #include "storage/ipc.h"
 #include "storage/pg_sema.h"
 #include "storage/pmsignal.h"
-#include "storage/predicate.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
 #include "storage/procsignal.h"
@@ -112,11 +111,6 @@ static void CreateOrAttachShmemStructs(void) {
    * Set up lock manager
    */
   LockManagerShmemInit();
-
-  /*
-   * Set up predicate lock manager
-   */
-  PredicateLockShmemInit();
 
   /*
    * Set up process table

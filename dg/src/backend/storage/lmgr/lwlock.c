@@ -136,13 +136,10 @@ static constexpr auto BuiltinTrancheNames = [] {
 #define PG_LWLOCK(id, lockname) a[id] = CppAsString(lockname);
 #include "storage/lwlocklist.h"
 #undef PG_LWLOCK
-  a[LWTRANCHE_SERIAL_BUFFER] = "SerialBuffer";
   a[LWTRANCHE_REPLICATION_ORIGIN_STATE] = "ReplicationOriginState";
   a[LWTRANCHE_REPLICATION_SLOT_IO] = "ReplicationSlotIO";
   a[LWTRANCHE_LOCK_FASTPATH] = "LockFastPath";
   a[LWTRANCHE_LOCK_MANAGER] = "LockManager";
-  a[LWTRANCHE_PREDICATE_LOCK_MANAGER] = "PredicateLockManager";
-  a[LWTRANCHE_SERIAL_SLRU] = "SerialSLRU";
   return a;
 }();
 
@@ -438,11 +435,6 @@ static void InitializeLWLocks(void) {
   lock = MainLWLockArray + LOCK_MANAGER_LWLOCK_OFFSET;
   for (id = 0; id < NUM_LOCK_PARTITIONS; id++, lock++)
     LWLockInitialize(&lock->lock, LWTRANCHE_LOCK_MANAGER);
-
-  /* Initialize predicate lmgrs' LWLocks in main array */
-  lock = MainLWLockArray + PREDICATELOCK_MANAGER_LWLOCK_OFFSET;
-  for (id = 0; id < NUM_PREDICATELOCK_PARTITIONS; id++, lock++)
-    LWLockInitialize(&lock->lock, LWTRANCHE_PREDICATE_LOCK_MANAGER);
 
   /*
    * Copy the info about any named tranches into shared memory (so that

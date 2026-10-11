@@ -106,7 +106,6 @@ PROCARRAY_GROUP_UPDATE	"Waiting for the group leader to clear the transaction ID
 RECOVERY_END_COMMAND	"Waiting for <xref linkend="guc-recovery-end-command"/> to complete."
 REPLICATION_ORIGIN_DROP	"Waiting for a replication origin to become inactive so it can be dropped."
 REPLICATION_SLOT_DROP	"Waiting for a replication slot to become inactive so it can be dropped."
-SAFE_SNAPSHOT	"Waiting to obtain a valid snapshot for a <literal>READ ONLY DEFERRABLE</literal> transaction."
 SYNC_REP	"Waiting for confirmation from a remote server during synchronous replication."
 WAL_RECEIVER_EXIT	"Waiting for the WAL receiver to exit."
 WAL_RECEIVER_WAIT_START	"Waiting for startup process to send initial data for streaming replication."
@@ -239,9 +238,6 @@ TablespaceCreate	"Waiting to create or drop a tablespace."
 BtreeVacuum	"Waiting to read or update vacuum-related information for a B-tree index."
 AddinShmemInit	"Waiting to manage an extension's space allocation in shared memory."
 RelationMapping	"Waiting to read or update a <filename>pg_filenode.map</filename> file (used to track the filenode assignments of certain system catalogs)."
-SerializableXactHash	"Waiting to read or update information about serializable transactions."
-SerializableFinishedList	"Waiting to access the list of finished serializable transactions."
-SerializablePredicateList	"Waiting to access the list of predicate locks held by serializable transactions."
 SyncRep	"Waiting to read or update information about the state of synchronous replication."
 DynamicSharedMemoryControl	"Waiting to read or update dynamic shared memory allocation information."
 AutoFile	"Waiting to update the <filename>postgresql.auto.conf</filename> file."
@@ -253,7 +249,6 @@ XactTruncation	"Waiting to execute <function>pg_xact_status</function> or update
 WaitEventCustom	"Waiting to read or update custom wait events information."
 WALSummarizer	"Waiting to read or update WAL summarization state."
 InjectionPoint	"Waiting to read or update information related to injection points."
-SerialControl	"Waiting to read or update shared <filename>pg_serial</filename> state."
 
 #
 # END OF PREDEFINED LWLOCKS (DO NOT CHANGE THIS LINE)
@@ -263,13 +258,10 @@ SerialControl	"Waiting to read or update shared <filename>pg_serial</filename> s
 # lwlocknames.h.  Other LWLocks must be listed in the section below.
 #
 
-SerialBuffer	"Waiting for I/O on a serializable transaction conflict SLRU buffer."
 ReplicationOriginState	"Waiting to read or update the progress of one replication origin."
 ReplicationSlotIO	"Waiting for I/O on a replication slot."
 LockFastPath	"Waiting to read or update a process' fast-path lock information."
 LockManager	"Waiting to read or update information about <quote>heavyweight</quote> locks."
-PredicateLockManager	"Waiting to access predicate lock information used by serializable transactions."
-SerialSLRU	"Waiting to access the serializable transaction conflict SLRU cache."
 
 # No "ABI_compatibility" region here as WaitEventLWLock has its own C code.
 

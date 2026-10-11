@@ -114,7 +114,6 @@
 #include "miscadmin.h"
 #include "port/pg_lfind.h"
 #include "storage/fd.h"
-#include "storage/predicate.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
 #include "utils/builtins.h"
@@ -286,11 +285,7 @@ Snapshot GetTransactionSnapshot(void) {
      */
     if (IsolationUsesXactSnapshot()) {
       /* First, create the snapshot in CurrentSnapshotData */
-      if (IsolationIsSerializable())
-        CurrentSnapshot =
-            GetSerializableTransactionSnapshot(&CurrentSnapshotData);
-      else
-        CurrentSnapshot = GetSnapshotData(&CurrentSnapshotData);
+      CurrentSnapshot = GetSnapshotData(&CurrentSnapshotData);
       /* Make a saved copy */
       CurrentSnapshot = CopySnapshot(CurrentSnapshot);
       FirstXactSnapshot = CurrentSnapshot;
@@ -524,9 +519,6 @@ static void SetTransactionSnapshot(Snapshot sourcesnap,
    * serializable mode, predicate.c needs to do its own processing.
    */
   if (IsolationUsesXactSnapshot()) {
-    if (IsolationIsSerializable())
-      SetSerializableTransactionSnapshot(CurrentSnapshot, sourcevxid,
-                                         sourcepid);
     /* Make a saved copy */
     CurrentSnapshot = CopySnapshot(CurrentSnapshot);
     FirstXactSnapshot = CurrentSnapshot;

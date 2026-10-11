@@ -139,7 +139,6 @@ thread_local /*LOCAL*/ int maintenance_work_mem = 65536;
  * MaxBackends is computed by PostmasterMain after modules have had a chance to
  * register background workers.
  */
-thread_local /*LOCAL*/ int NBuffers = 16384;
 thread_local /*LOCAL*/ int MaxConnections = 100;
 thread_local /*SHARED*/ int MaxBackends = 0;
 
@@ -155,4 +154,3 @@ thread_local /*LOCAL*/ int VacuumCostBalance = 0; /* working state for vacuum */
 thread_local /*LOCAL*/ bool VacuumCostActive = false;
 
 /* configurable SLRU buffer sizes */
-thread_local /*LOCAL*/ int serializable_buffers = 32;

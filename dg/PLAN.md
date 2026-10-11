@@ -421,6 +421,10 @@ Do not reopen these without the owner:
   sm lacks is PostgreSQL's two weaker row lock modes, a
   concurrency gap (PART4.md gap 3), not a reason for
   multixacts.
+- **SERIALIZABLE is sm's.** sm runs serializable
+  transactions itself, and fails one of a write skew with a
+  retryable error, SQLSTATE 40001. PostgreSQL's predicate
+  locks, their SLRU and its `shared_buffers` are gone.
 - **No asynchronous I/O.** Disk I/O is to go through sm; the
   rest is the client socket, which waits on the latch. A buffer
   read is synchronous.

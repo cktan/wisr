@@ -14,7 +14,6 @@
 #include "postgres.h"
 
 #include "catalog/pg_type.h"
-#include "storage/predicate_internals.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
 #include "utils/array.h"
@@ -44,7 +43,6 @@ Datum pg_isolation_test_session_is_blocked(PG_FUNCTION_ARGS) {
   int32 *blocking_pids;
   int num_interesting_pids;
   int num_blocking_pids;
-  int dummy;
   int i, j;
 
   proc = BackendPidGetProc(blocked_pid);
@@ -86,18 +84,6 @@ Datum pg_isolation_test_session_is_blocked(PG_FUNCTION_ARGS) {
       if (blocking_pids[i] == interesting_pids[j])
         PG_RETURN_BOOL(true);
     }
-
-  /*
-   * Check if blocked_pid is waiting for a safe snapshot.  We could in
-   * theory check the resulting array of blocker PIDs against the
-   * interesting PIDs list, but since there is no danger of autovacuum
-   * blocking GetSafeSnapshot there seems to be no point in expending cycles
-   * on allocating a buffer and searching for overlap; so it's presently
-   * sufficient for the isolation tester's purposes to use a single element
-   * buffer and check if the number of safe snapshot blockers is non-zero.
-   */
-  if (GetSafeSnapshotBlockingPids(blocked_pid, &dummy, 1) > 0)
-    PG_RETURN_BOOL(true);
 
   PG_RETURN_BOOL(false);
 }

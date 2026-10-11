@@ -15,9 +15,11 @@
 #include "access/htup_details.h"
 #include "funcapi.h"
 #include "miscadmin.h"
-#include "storage/predicate_internals.h"
+#include "storage/lock.h"
+#include "storage/proc.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
+#include "utils/timestamp.h"
 
 /*
  * This must match enum LockTagType!  Also, be sure to document any changes
@@ -32,19 +34,10 @@ const char *const LockTagTypeNames[] = {
 StaticAssertDecl(lengthof(LockTagTypeNames) == (LOCKTAG_LAST_TYPE + 1),
                  "array length mismatch");
 
-/* This must match enum PredicateLockTargetType (predicate_internals.h) */
-static const char *const PredicateLockTagTypeNames[] = {"relation", "page",
-                                                        "tuple"};
-
-StaticAssertDecl(lengthof(PredicateLockTagTypeNames) == (PREDLOCKTAG_TUPLE + 1),
-                 "array length mismatch");
-
 /* Working status for pg_lock_status */
 typedef struct {
-  LockData *lockData;              /* state data from lmgr */
-  int currIdx;                     /* current PROCLOCK index */
-  PredicateLockData *predLockData; /* state data for pred locks */
-  int predLockIdx;                 /* current index for pred lock */
+  LockData *lockData; /* state data from lmgr */
+  int currIdx;        /* current PROCLOCK index */
 } PG_Lock_Status;
 
 /* Number of columns in pg_locks output */
@@ -75,7 +68,6 @@ Datum pg_lock_status(PG_FUNCTION_ARGS) {
   FuncCallContext *funcctx;
   PG_Lock_Status *mystatus;
   LockData *lockData;
-  PredicateLockData *predLockData;
 
   if (SRF_IS_FIRSTCALL()) {
     TupleDesc tupdesc;
@@ -122,8 +114,6 @@ Datum pg_lock_status(PG_FUNCTION_ARGS) {
 
     mystatus->lockData = GetLockStatusData();
     mystatus->currIdx = 0;
-    mystatus->predLockData = GetPredicateLockStatusData();
-    mystatus->predLockIdx = 0;
 
     MemoryContextSwitchTo(oldcontext);
   }
@@ -325,74 +315,6 @@ Datum pg_lock_status(PG_FUNCTION_ARGS) {
     SRF_RETURN_NEXT(funcctx, result);
   }
 
-  /*
-   * Have returned all regular locks. Now start on the SIREAD predicate
-   * locks.
-   */
-  predLockData = mystatus->predLockData;
-  if (mystatus->predLockIdx < predLockData->nelements) {
-    PredicateLockTargetType lockType;
-
-    PREDICATELOCKTARGETTAG *predTag =
-        &(predLockData->locktags[mystatus->predLockIdx]);
-    SERIALIZABLEXACT *xact = &(predLockData->xacts[mystatus->predLockIdx]);
-    Datum values[NUM_LOCK_STATUS_COLUMNS] = {0};
-    bool nulls[NUM_LOCK_STATUS_COLUMNS] = {0};
-    HeapTuple tuple;
-    Datum result;
-
-    mystatus->predLockIdx++;
-
-    /*
-     * Form tuple with appropriate data.
-     */
-
-    /* lock type */
-    lockType = GET_PREDICATELOCKTARGETTAG_TYPE(*predTag);
-
-    values[0] = CStringGetTextDatum(PredicateLockTagTypeNames[lockType]);
-
-    /* lock target */
-    values[1] = GET_PREDICATELOCKTARGETTAG_DB(*predTag);
-    values[2] = GET_PREDICATELOCKTARGETTAG_RELATION(*predTag);
-    if (lockType == PREDLOCKTAG_TUPLE)
-      values[4] = GET_PREDICATELOCKTARGETTAG_OFFSET(*predTag);
-    else
-      nulls[4] = true;
-    if ((lockType == PREDLOCKTAG_TUPLE) || (lockType == PREDLOCKTAG_PAGE))
-      values[3] = GET_PREDICATELOCKTARGETTAG_PAGE(*predTag);
-    else
-      nulls[3] = true;
-
-    /* these fields are targets for other types of locks */
-    nulls[5] = true; /* virtualxid */
-    nulls[6] = true; /* transactionid */
-    nulls[7] = true; /* classid */
-    nulls[8] = true; /* objid */
-    nulls[9] = true; /* objsubid */
-
-    /* lock holder */
-    values[10] =
-        VXIDGetDatum(xact->vxid.procNumber, xact->vxid.localTransactionId);
-    if (xact->pid != 0)
-      values[11] = Int32GetDatum(xact->pid);
-    else
-      nulls[11] = true;
-
-    /*
-     * Lock mode. Currently all predicate locks are SIReadLocks, which are
-     * always held (never waiting) and have no fast path
-     */
-    values[12] = CStringGetTextDatum("SIReadLock");
-    values[13] = BoolGetDatum(true);
-    values[14] = BoolGetDatum(false);
-    nulls[15] = true;
-
-    tuple = heap_form_tuple(funcctx->tuple_desc, values, nulls);
-    result = HeapTupleGetDatum(tuple);
-    SRF_RETURN_NEXT(funcctx, result);
-  }
-
   SRF_RETURN_DONE(funcctx);
 }
 
@@ -499,40 +421,6 @@ Datum pg_blocking_pids(PG_FUNCTION_ARGS) {
 
   PG_RETURN_ARRAYTYPE_P(
       construct_array_builtin(arrayelems, narrayelems, INT4OID));
-}
-
-/*
- * pg_safe_snapshot_blocking_pids - produce an array of the PIDs blocking
- * given PID from getting a safe snapshot
- *
- * XXX this does not consider parallel-query cases; not clear how big a
- * problem that is in practice
- */
-Datum pg_safe_snapshot_blocking_pids(PG_FUNCTION_ARGS) {
-  int blocked_pid = PG_GETARG_INT32(0);
-  int *blockers;
-  int num_blockers;
-  Datum *blocker_datums;
-
-  /* A buffer big enough for any possible blocker list without truncation */
-  blockers = (int *)palloc(MaxBackends * sizeof(int));
-
-  /* Collect a snapshot of processes waited for by GetSafeSnapshot */
-  num_blockers =
-      GetSafeSnapshotBlockingPids(blocked_pid, blockers, MaxBackends);
-
-  /* Convert int array to Datum array */
-  if (num_blockers > 0) {
-    int i;
-
-    blocker_datums = (Datum *)palloc(num_blockers * sizeof(Datum));
-    for (i = 0; i < num_blockers; ++i)
-      blocker_datums[i] = Int32GetDatum(blockers[i]);
-  } else
-    blocker_datums = NULL;
-
-  PG_RETURN_ARRAYTYPE_P(
-      construct_array_builtin(blocker_datums, num_blockers, INT4OID));
 }
 
 /*
