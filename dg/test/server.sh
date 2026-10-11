@@ -252,9 +252,10 @@ wait $iso
   "BEGIN 1 after 6 COMMIT BEGIN 1 6 after 6 COMMIT " ] ||
   fail "isolation levels"
 
-# Verify that a statement waiting for another session's lock is ended by a
-# statement timeout, from its own sys timer, and by a cancel request from
-# its client, which another thread turns into an interrupt bit in it.
+# Verify that a statement waiting in sm for another session's lock is ended
+# by a statement timeout, from its own sys timer, and by a cancel request
+# from its client, which another thread turns into an interrupt bit in it:
+# sm's wait ends, and CHECK_FOR_INTERRUPTS() raises the error.
 # 1. In a session of its own, begin, and drop t1 without committing: it
 #    holds t1's lock.
 # 2. From a session with statement_timeout = 500, scan t1: it waits, and

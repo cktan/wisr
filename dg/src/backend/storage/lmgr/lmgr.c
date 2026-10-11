@@ -16,6 +16,7 @@
 #include "postgres.h"
 
 #include "access/subtrans.h"
+#include "access/transam.h"
 #include "access/xact.h"
 #include "catalog/catalog.h"
 #include "miscadmin.h"
@@ -89,6 +90,17 @@ static inline void SetLocktagRelationOid(LOCKTAG *tag, Oid relid) {
 }
 
 /*
+ * Whether relid is locked by sm, not here: a relation in sm, any a user made
+ * (access/smstore.h).  sm locks it as it is opened, and its records as they
+ * are read and written, so a lock asked of this lock manager is a no-op,
+ * held as far as anyone asks.  A lock request still takes the invalidation
+ * messages waiting, as it would on acquiring a lock.
+ */
+static inline bool locked_by_sm(Oid relid) {
+  return relid >= FirstNormalObjectId;
+}
+
+/*
  *		LockRelationOid
  *
  * Lock a relation given only its OID.  This should generally be used
@@ -98,6 +110,11 @@ void LockRelationOid(Oid relid, LOCKMODE lockmode) {
   LOCKTAG tag;
   LOCALLOCK *locallock;
   LockAcquireResult res;
+
+  if (locked_by_sm(relid)) {
+    AcceptInvalidationMessages();
+    return;
+  }
 
   SetLocktagRelationOid(&tag, relid);
 
@@ -140,6 +157,11 @@ bool ConditionalLockRelationOid(Oid relid, LOCKMODE lockmode) {
   LOCALLOCK *locallock;
   LockAcquireResult res;
 
+  if (locked_by_sm(relid)) {
+    AcceptInvalidationMessages();
+    return true;
+  }
+
   SetLocktagRelationOid(&tag, relid);
 
   res =
@@ -171,6 +193,11 @@ void LockRelationId(LockRelId *relid, LOCKMODE lockmode) {
   LOCALLOCK *locallock;
   LockAcquireResult res;
 
+  if (locked_by_sm(relid->relId)) {
+    AcceptInvalidationMessages();
+    return;
+  }
+
   SET_LOCKTAG_RELATION(tag, relid->dbId, relid->relId);
 
   res = LockAcquireExtended(&tag, lockmode, false, false, true, &locallock,
@@ -195,6 +222,9 @@ void LockRelationId(LockRelId *relid, LOCKMODE lockmode) {
 void UnlockRelationId(LockRelId *relid, LOCKMODE lockmode) {
   LOCKTAG tag;
 
+  if (locked_by_sm(relid->relId))
+    return;
+
   SET_LOCKTAG_RELATION(tag, relid->dbId, relid->relId);
 
   LockRelease(&tag, lockmode, false);
@@ -207,6 +237,9 @@ void UnlockRelationId(LockRelId *relid, LOCKMODE lockmode) {
  */
 void UnlockRelationOid(Oid relid, LOCKMODE lockmode) {
   LOCKTAG tag;
+
+  if (locked_by_sm(relid))
+    return;
 
   SetLocktagRelationOid(&tag, relid);
 
@@ -224,6 +257,11 @@ void LockRelation(Relation relation, LOCKMODE lockmode) {
   LOCKTAG tag;
   LOCALLOCK *locallock;
   LockAcquireResult res;
+
+  if (locked_by_sm(RelationGetRelid(relation))) {
+    AcceptInvalidationMessages();
+    return;
+  }
 
   SET_LOCKTAG_RELATION(tag, relation->rd_lockInfo.lockRelId.dbId,
                        relation->rd_lockInfo.lockRelId.relId);
@@ -253,6 +291,8 @@ bool CheckRelationLockedByMe(Relation relation, LOCKMODE lockmode,
                              bool orstronger) {
   LOCKTAG tag;
 
+  if (locked_by_sm(RelationGetRelid(relation)))
+    return true;
   SET_LOCKTAG_RELATION(tag, relation->rd_lockInfo.lockRelId.dbId,
                        relation->rd_lockInfo.lockRelId.relId);
 
@@ -266,6 +306,9 @@ bool CheckRelationLockedByMe(Relation relation, LOCKMODE lockmode,
  */
 bool CheckRelationOidLockedByMe(Oid relid, LOCKMODE lockmode, bool orstronger) {
   LOCKTAG tag;
+
+  if (locked_by_sm(relid))
+    return true;
 
   SetLocktagRelationOid(&tag, relid);
 
@@ -287,6 +330,9 @@ bool CheckRelationOidLockedByMe(Oid relid, LOCKMODE lockmode, bool orstronger) {
 void LockRelationIdForSession(LockRelId *relid, LOCKMODE lockmode) {
   LOCKTAG tag;
 
+  if (locked_by_sm(relid->relId))
+    return;
+
   SET_LOCKTAG_RELATION(tag, relid->dbId, relid->relId);
 
   (void)LockAcquire(&tag, lockmode, true, false);
@@ -297,6 +343,9 @@ void LockRelationIdForSession(LockRelId *relid, LOCKMODE lockmode) {
  */
 void UnlockRelationIdForSession(LockRelId *relid, LOCKMODE lockmode) {
   LOCKTAG tag;
+
+  if (locked_by_sm(relid->relId))
+    return;
 
   SET_LOCKTAG_RELATION(tag, relid->dbId, relid->relId);
 

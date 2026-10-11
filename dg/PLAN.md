@@ -414,6 +414,14 @@ Do not reopen these without the owner:
 - **No checkpoints.** sm keeps what is durable, and RocksDB
   bounds its own recovery. `CHECKPOINT` succeeds and does
   nothing, as `VACUUM` does.
+- **sm's lock manager is the only one, in the end.** sm locks
+  a table as it is opened and a record as it is read or
+  written; the parser and executor lock nothing of their own,
+  and only a special operation (a DROP, a `LOCK TABLE`, a
+  `SELECT ... FOR UPDATE`) asks sm for a lock explicitly. One
+  lock manager means one deadlock detector. Tables in sm move
+  first; PostgreSQL's lock manager goes when nothing else uses
+  it.
 
 ## 8. Working in this tree
 

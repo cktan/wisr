@@ -1417,3 +1417,26 @@ thread's wait mask (`../sys/INTERRUPT.md` §8), and fail with
   a scan in another is ended by its statement_timeout, and by
   a cancel request from its psql: the interrupt bits of steps
   32 and 33 reach a thread waiting in the lock manager.
+
+## Step 41: sm locks its tables, and nothing else does
+
+PLAN.md §7 now records it: sm's lock manager is the only one, in
+the end. sm locks a table as it is opened and a record as it is
+read or written; the parser and executor lock nothing of their
+own, and only a special operation asks sm for a lock.
+
+- **PostgreSQL's relation locks are no-ops for a table in sm**
+  (`lmgr.c`, `locked_by_sm()`): taking one, conditionally or
+  for the session, does nothing but take the invalidation
+  messages waiting, as acquiring a lock would; releasing one
+  does nothing; and a check whether one is held says it is.
+  Catalog relations, which are not sm's, lock as before.
+- **A session that conflicts now waits in sm**: a scan of a
+  table another session is dropping waits in `sm_tbl_open()`
+  for the drop's lock. So step 40's path is reached, and
+  `server.sh`'s lock-wait checks test it: PostgreSQL logs no
+  lock wait, and with `waiting()` not acting on
+  `SM_ERR_INTERRUPTED` both checks fail.
+- One deadlock detector for tables in sm. The lock manager
+  keeps every other tag: advisory locks, transaction ids,
+  objects.
