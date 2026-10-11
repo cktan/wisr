@@ -14,6 +14,7 @@
 #include "postgres.h"
 
 #include "access/htup_details.h"
+#include "catalog/cat_builtin.h"
 #include "access/relation.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_proc.h"
@@ -361,6 +362,107 @@ TypeFuncClass get_func_result_type(Oid functionId, Oid *resultTypeId,
 }
 
 /*
+ * The elements of a built-in row's array literal, as "{a,b,c}", palloc'd,
+ * and how many in *n.  The built-in literals quote and escape nothing.
+ */
+static char **cat_array_elems(const char *lit, int *n) {
+  char *s = pstrdup(lit + 1); /* past the "{" */
+  char **elems;
+  int count = 1;
+
+  s[strlen(s) - 1] = '\0'; /* the "}" */
+  for (char *c = s; *c; c++)
+    count += (*c == ',');
+  elems = (char **)palloc(count * sizeof(char *));
+  *n = 0;
+  for (char *tok = s;; tok++) {
+    char *comma = strchr(tok, ',');
+
+    elems[(*n)++] = tok;
+    if (comma == NULL)
+      break;
+    *comma = '\0';
+    tok = comma;
+  }
+  return elems;
+}
+
+/*
+ * The argument types, names and modes of a built-in function, as
+ * get_func_arg_info() gives a pg_proc tuple's: every argument's if it has
+ * proallargtypes, else its input arguments'.  Returns how many.
+ */
+int cat_proc_arg_info(const cat_proc_t *proc, Oid **p_argtypes,
+                      char ***p_argnames, char **p_argmodes) {
+  const cat_oids_t *types = proc->proallargtypes.values != NULL
+                                ? &proc->proallargtypes
+                                : &proc->proargtypes;
+  int numargs = types->count;
+  int n;
+
+  *p_argtypes = palloc_array(Oid, Max(numargs, 1));
+  memcpy(*p_argtypes, types->values, numargs * sizeof(Oid));
+  *p_argnames = NULL;
+  if (proc->proargnames != NULL) {
+    *p_argnames = cat_array_elems(proc->proargnames, &n);
+    if (n != numargs) /* should not happen */
+      elog(ERROR, "proargnames must have the same number of elements as the "
+                  "function has arguments");
+  }
+  *p_argmodes = NULL;
+  if (proc->proargmodes != NULL) {
+    char **modes = cat_array_elems(proc->proargmodes, &n);
+
+    if (n != numargs) /* should not happen */
+      elog(ERROR, "proargmodes must have the same number of elements as the "
+                  "function has arguments");
+    *p_argmodes = (char *)palloc(numargs);
+    for (int i = 0; i < numargs; i++)
+      (*p_argmodes)[i] = modes[i][0];
+  }
+  return numargs;
+}
+
+/*
+ * build_function_result_tupdesc_cat
+ *
+ * build_function_result_tupdesc_t() for a built-in function's row: a tuple
+ * descriptor of its OUT parameters, or NULL if it has fewer than two.
+ */
+static TupleDesc build_function_result_tupdesc_cat(const cat_proc_t *proc) {
+  Oid *argtypes;
+  char **argnames;
+  char *argmodes;
+  int numargs;
+  int numoutargs = 0;
+  TupleDesc desc;
+
+  /* Can't have output args without both of these */
+  if (proc->proallargtypes.values == NULL || proc->proargmodes == NULL)
+    return NULL;
+  numargs = cat_proc_arg_info(proc, &argtypes, &argnames, &argmodes);
+  for (int i = 0; i < numargs; i++)
+    numoutargs +=
+        !(argmodes[i] == PROARGMODE_IN || argmodes[i] == PROARGMODE_VARIADIC);
+  if (numoutargs < 2 && proc->prokind != PROKIND_PROCEDURE)
+    return NULL;
+
+  desc = CreateTemplateTupleDesc(numoutargs);
+  numoutargs = 0;
+  for (int i = 0; i < numargs; i++) {
+    char *pname = argnames ? argnames[i] : NULL;
+
+    if (argmodes[i] == PROARGMODE_IN || argmodes[i] == PROARGMODE_VARIADIC)
+      continue;
+    /* Parameter is not named, so gin up a column name */
+    if (pname == NULL || pname[0] == '\0')
+      pname = psprintf("column%d", numoutargs + 1);
+    TupleDescInitEntry(desc, ++numoutargs, pname, argtypes[i], -1, 0);
+  }
+  return desc;
+}
+
+/*
  * internal_get_result_type -- workhorse code implementing all the above
  *
  * funcid must always be supplied.  call_expr and rsinfo can be NULL if not
@@ -373,22 +475,20 @@ static TypeFuncClass internal_get_result_type(Oid funcid, Node *call_expr,
                                               Oid *resultTypeId,
                                               TupleDesc *resultTupleDesc) {
   TypeFuncClass result;
-  HeapTuple tp;
-  Form_pg_proc procform;
+  const cat_proc_t *procform;
   Oid rettype;
   Oid base_rettype;
   TupleDesc tupdesc;
 
   /* First fetch the function's pg_proc row to inspect its rettype */
-  tp = SearchSysCache1(PROCOID, ObjectIdGetDatum(funcid));
-  if (!HeapTupleIsValid(tp))
+  procform = cat_proc(funcid); /* every function is built in */
+  if (procform == NULL)
     elog(ERROR, "cache lookup failed for function %u", funcid);
-  procform = (Form_pg_proc)GETSTRUCT(tp);
 
   rettype = procform->prorettype;
 
   /* Check for OUT parameters defining a RECORD result */
-  tupdesc = build_function_result_tupdesc_t(tp);
+  tupdesc = build_function_result_tupdesc_cat(procform);
   if (tupdesc) {
     /*
      * It has OUT parameters, so it's basically like a regular composite
@@ -398,7 +498,9 @@ static TypeFuncClass internal_get_result_type(Oid funcid, Node *call_expr,
     if (resultTypeId)
       *resultTypeId = rettype;
 
-    if (resolve_polymorphic_tupdesc(tupdesc, &procform->proargtypes,
+    if (resolve_polymorphic_tupdesc(tupdesc,
+                                    buildoidvector(procform->proargtypes.values,
+                                                   procform->proargtypes.count),
                                     call_expr)) {
       if (tupdesc->tdtypeid == RECORDOID && tupdesc->tdtypmod < 0)
         assign_record_type_typmod(tupdesc);
@@ -410,8 +512,6 @@ static TypeFuncClass internal_get_result_type(Oid funcid, Node *call_expr,
         *resultTupleDesc = NULL;
       result = TYPEFUNC_RECORD;
     }
-
-    ReleaseSysCache(tp);
 
     return result;
   }
@@ -427,7 +527,7 @@ static TypeFuncClass internal_get_result_type(Oid funcid, Node *call_expr,
               (errcode(ERRCODE_DATATYPE_MISMATCH),
                errmsg("could not determine actual result type for function "
                       "\"%s\" declared to return type %s",
-                      NameStr(procform->proname), format_type_be(rettype))));
+                      procform->proname, format_type_be(rettype))));
     rettype = newrettype;
   }
 
@@ -459,8 +559,6 @@ static TypeFuncClass internal_get_result_type(Oid funcid, Node *call_expr,
   default:
     break;
   }
-
-  ReleaseSysCache(tp);
 
   return result;
 }
@@ -1384,80 +1482,33 @@ int get_func_input_arg_names(Datum proargnames, Datum proargmodes,
  * returning scalar types.
  */
 char *get_func_result_name(Oid functionId) {
-  char *result;
-  HeapTuple procTuple;
-  Datum proargmodes;
-  Datum proargnames;
-  ArrayType *arr;
-  int numargs;
+  const cat_proc_t *proc = cat_proc(functionId); /* every one is built in */
+  Oid *argtypes;
+  char **argnames;
   char *argmodes;
-  Datum *argnames;
-  int numoutargs;
-  int nargnames;
-  int i;
+  char *result = NULL;
+  int numargs;
+  int numoutargs = 0;
 
-  /* First fetch the function's pg_proc row */
-  procTuple = SearchSysCache1(PROCOID, ObjectIdGetDatum(functionId));
-  if (!HeapTupleIsValid(procTuple))
+  if (proc == NULL)
     elog(ERROR, "cache lookup failed for function %u", functionId);
-
   /* If there are no named OUT parameters, return NULL */
-  if (heap_attisnull(procTuple, Anum_pg_proc_proargmodes, NULL) ||
-      heap_attisnull(procTuple, Anum_pg_proc_proargnames, NULL))
-    result = NULL;
-  else {
-    /* Get the data out of the tuple */
-    proargmodes =
-        SysCacheGetAttrNotNull(PROCOID, procTuple, Anum_pg_proc_proargmodes);
-    proargnames =
-        SysCacheGetAttrNotNull(PROCOID, procTuple, Anum_pg_proc_proargnames);
+  if (proc->proargmodes == NULL || proc->proargnames == NULL)
+    return NULL;
+  numargs = cat_proc_arg_info(proc, &argtypes, &argnames, &argmodes);
 
-    /*
-     * We expect the arrays to be 1-D arrays of the right types; verify
-     * that.  For the char array, we don't need to use deconstruct_array()
-     * since the array data is just going to look like a C array of
-     * values.
-     */
-    arr = DatumGetArrayTypeP(proargmodes); /* ensure not toasted */
-    numargs = ARR_DIMS(arr)[0];
-    if (ARR_NDIM(arr) != 1 || numargs < 0 || ARR_HASNULL(arr) ||
-        ARR_ELEMTYPE(arr) != CHAROID)
-      elog(ERROR, "proargmodes is not a 1-D char array or it contains nulls");
-    argmodes = (char *)ARR_DATA_PTR(arr);
-    arr = DatumGetArrayTypeP(proargnames); /* ensure not toasted */
-    if (ARR_NDIM(arr) != 1 || ARR_DIMS(arr)[0] != numargs || ARR_HASNULL(arr) ||
-        ARR_ELEMTYPE(arr) != TEXTOID)
-      elog(ERROR,
-           "proargnames is not a 1-D text array of length %d or it contains "
-           "nulls",
-           numargs);
-    deconstruct_array_builtin(arr, TEXTOID, &argnames, NULL, &nargnames);
-    Assert(nargnames == numargs);
-
-    /* scan for output argument(s) */
-    result = NULL;
-    numoutargs = 0;
-    for (i = 0; i < numargs; i++) {
-      if (argmodes[i] == PROARGMODE_IN || argmodes[i] == PROARGMODE_VARIADIC)
-        continue;
-      Assert(argmodes[i] == PROARGMODE_OUT || argmodes[i] == PROARGMODE_INOUT ||
-             argmodes[i] == PROARGMODE_TABLE);
-      if (++numoutargs > 1) {
-        /* multiple out args, so forget it */
-        result = NULL;
-        break;
-      }
-      result = TextDatumGetCString(argnames[i]);
-      if (result == NULL || result[0] == '\0') {
-        /* Parameter is not named, so forget it */
-        result = NULL;
-        break;
-      }
-    }
+  /* scan for output argument(s) */
+  for (int i = 0; i < numargs; i++) {
+    if (argmodes[i] == PROARGMODE_IN || argmodes[i] == PROARGMODE_VARIADIC)
+      continue;
+    Assert(argmodes[i] == PROARGMODE_OUT || argmodes[i] == PROARGMODE_INOUT ||
+           argmodes[i] == PROARGMODE_TABLE);
+    if (++numoutargs > 1)
+      return NULL; /* multiple out args, so forget it */
+    result = argnames[i];
+    if (result[0] == '\0')
+      return NULL; /* Parameter is not named, so forget it */
   }
-
-  ReleaseSysCache(procTuple);
-
   return result;
 }
 

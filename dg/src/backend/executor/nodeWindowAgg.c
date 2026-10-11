@@ -34,6 +34,7 @@
 #include "postgres.h"
 
 #include "access/htup_details.h"
+#include "catalog/cat_builtin.h"
 #include "catalog/objectaccess.h"
 #include "catalog/pg_aggregate.h"
 #include "catalog/pg_proc.h"
@@ -2568,8 +2569,7 @@ static WindowStatePerAggData *initialize_peragg(WindowAggState *winstate,
                                                 WindowStatePerAgg peraggstate) {
   Oid inputTypes[FUNC_MAX_ARGS];
   int numArguments;
-  HeapTuple aggTuple;
-  Form_pg_aggregate aggform;
+  const cat_aggregate_t *aggform;
   Oid aggtranstype;
   AttrNumber initvalAttNo;
   AclResult aclresult;
@@ -2607,10 +2607,9 @@ static WindowStatePerAggData *initialize_peragg(WindowAggState *winstate,
     inputTypes[i++] = exprType((Node *)lfirst(lc));
   }
 
-  aggTuple = SearchSysCache1(AGGFNOID, ObjectIdGetDatum(wfunc->winfnoid));
-  if (!HeapTupleIsValid(aggTuple))
+  aggform = cat_aggregate(wfunc->winfnoid); /* every aggregate is built in */
+  if (aggform == NULL)
     elog(ERROR, "cache lookup failed for aggregate %u", wfunc->winfnoid);
-  aggform = (Form_pg_aggregate)GETSTRUCT(aggTuple);
 
   /*
    * Figure out whether we want to use the moving-aggregate implementation,
@@ -2667,14 +2666,12 @@ static WindowStatePerAggData *initialize_peragg(WindowAggState *winstate,
 
   /* Check that aggregate owner has permission to call component fns */
   {
-    HeapTuple procTuple;
+    const cat_proc_t *proc = cat_proc(wfunc->winfnoid); /* built in */
     Oid aggOwner;
 
-    procTuple = SearchSysCache1(PROCOID, ObjectIdGetDatum(wfunc->winfnoid));
-    if (!HeapTupleIsValid(procTuple))
+    if (proc == NULL)
       elog(ERROR, "cache lookup failed for function %u", wfunc->winfnoid);
-    aggOwner = ((Form_pg_proc)GETSTRUCT(procTuple))->proowner;
-    ReleaseSysCache(procTuple);
+    aggOwner = proc->proowner;
 
     aclresult = object_aclcheck(ProcedureRelationId, transfn_oid, aggOwner,
                                 ACL_EXECUTE);
@@ -2753,12 +2750,15 @@ static WindowStatePerAggData *initialize_peragg(WindowAggState *winstate,
   get_typlenbyval(aggtranstype, &peraggstate->transtypeLen,
                   &peraggstate->transtypeByVal);
 
-  /*
-   * initval is potentially null, so don't try to access it as a struct
-   * field. Must do it the hard way with SysCacheGetAttr.
-   */
-  textInitVal = SysCacheGetAttr(AGGFNOID, aggTuple, initvalAttNo,
-                                &peraggstate->initValueIsNull);
+  /* initval is potentially null: NULL in the built-in row. */
+  {
+    const char *initval = initvalAttNo == Anum_pg_aggregate_aggminitval
+                              ? aggform->aggminitval
+                              : aggform->agginitval;
+
+    peraggstate->initValueIsNull = initval == NULL;
+    textInitVal = initval == NULL ? (Datum)0 : CStringGetTextDatum(initval);
+  }
 
   if (peraggstate->initValueIsNull)
     peraggstate->initValue = (Datum)0;
@@ -2814,8 +2814,6 @@ static WindowStatePerAggData *initialize_peragg(WindowAggState *winstate,
                               ALLOCSET_DEFAULT_SIZES);
   else
     peraggstate->aggcontext = winstate->aggcontext;
-
-  ReleaseSysCache(aggTuple);
 
   return peraggstate;
 }

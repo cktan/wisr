@@ -162,6 +162,9 @@ extern TupleDesc get_expr_result_tupdesc(Node *expr, bool noError);
 extern bool resolve_polymorphic_argtypes(int numargs, Oid *argtypes,
                                          char *argmodes, Node *call_expr);
 
+struct cat_proc_t;
+extern int cat_proc_arg_info(const struct cat_proc_t *proc, Oid **p_argtypes,
+                             char ***p_argnames, char **p_argmodes);
 extern int get_func_arg_info(HeapTuple procTup, Oid **p_argtypes,
                              char ***p_argnames, char **p_argmodes);
 

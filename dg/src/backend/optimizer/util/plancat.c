@@ -1901,14 +1901,12 @@ void add_function_cost(PlannerInfo *root, Oid funcid, Node *node,
  * leave it to the caller to do so.
  */
 double get_function_rows(PlannerInfo *root, Oid funcid, Node *node) {
-  HeapTuple proctup;
-  Form_pg_proc procform;
+  const cat_proc_t *procform;
   double result;
 
-  proctup = SearchSysCache1(PROCOID, ObjectIdGetDatum(funcid));
-  if (!HeapTupleIsValid(proctup))
+  procform = cat_proc(funcid); /* every function is built in */
+  if (procform == NULL)
     elog(ERROR, "cache lookup failed for function %u", funcid);
-  procform = (Form_pg_proc)GETSTRUCT(proctup);
 
   Assert(procform->proretset); /* else caller error */
 
@@ -1928,15 +1926,12 @@ double get_function_rows(PlannerInfo *root, Oid funcid, Node *node) {
 
     if (sresult == &req) {
       /* Success */
-      ReleaseSysCache(proctup);
       return req.rows;
     }
   }
 
   /* No support function, or it failed, so rely on prorows */
   result = procform->prorows;
-
-  ReleaseSysCache(proctup);
 
   return result;
 }

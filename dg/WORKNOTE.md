@@ -2118,3 +2118,34 @@ writes of a serializable transaction itself.
   when the subtransaction commits.
 - `server.sh` truncates in a transaction, in a savepoint, and
   committed, and checks the refusals.
+
+## Step 70: functions are called by name
+
+The lookups a function call makes are rewritten as reached
+(step 6): every function is built in, so each reads the rows
+compiled in, not pg_proc.
+
+- **`FuncnameGetCandidates()`** searches `cat_procs_named()`.
+  The rows are in oid order, so a candidate is compared with
+  every earlier one, not just the last. `MatchNamedCall()`
+  matches argument names from the row, through
+  `cat_proc_arg_info()` (`funcapi.c`), which reads its
+  argument types, names and modes as `get_func_arg_info()`
+  reads a tuple's.
+- **`func_get_detail()`**, **`internal_get_result_type()`**,
+  **`get_func_result_name()`** and **`get_function_rows()`**
+  read the row by oid; a function's OUT parameters make its
+  result's tuple descriptor from the row.
+- **pg_aggregate is compiled in.** `gen_cat.py` takes a key
+  column other than the oid, and keys pg_aggregate by
+  `aggfnoid`. The parser, the planner (`prepagg.c`,
+  `planagg.c`), and `nodeAgg.c` and `nodeWindowAgg.c` read it;
+  an initial value is the row's string.
+- **No built-in function has argument defaults** in its row:
+  PostgreSQL sets them in `system_functions.sql`, which digres
+  does not run.
+- `server.sh` calls a function plainly, by argument names, and
+  as a set; and aggregates and a window function over a table.
+- Not yet: GROUP BY, joins and EXPLAIN VERBOSE, which read
+  pg_constraint; `pg_typeof()`, whose output reads pg_type; and
+  functions that need the default locale.

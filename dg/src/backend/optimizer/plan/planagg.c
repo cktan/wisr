@@ -29,6 +29,7 @@
 #include "postgres.h"
 
 #include "access/htup_details.h"
+#include "catalog/cat_builtin.h"
 #include "catalog/pg_aggregate.h"
 #include "catalog/pg_type.h"
 #include "nodes/makefuncs.h"
@@ -475,17 +476,8 @@ static void minmax_qp_callback(PlannerInfo *root, void *extra) {
  * Returns InvalidOid if there is no such operator.
  */
 static Oid fetch_agg_sort_op(Oid aggfnoid) {
-  HeapTuple aggTuple;
-  Form_pg_aggregate aggform;
-  Oid aggsortop;
+  /* fetch aggregate entry from the built-in pg_aggregate */
+  const cat_aggregate_t *aggform = cat_aggregate(aggfnoid);
 
-  /* fetch aggregate entry from pg_aggregate */
-  aggTuple = SearchSysCache1(AGGFNOID, ObjectIdGetDatum(aggfnoid));
-  if (!HeapTupleIsValid(aggTuple))
-    return InvalidOid;
-  aggform = (Form_pg_aggregate)GETSTRUCT(aggTuple);
-  aggsortop = aggform->aggsortop;
-  ReleaseSysCache(aggTuple);
-
-  return aggsortop;
+  return aggform != NULL ? aggform->aggsortop : InvalidOid;
 }

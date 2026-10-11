@@ -16,6 +16,7 @@
 
 #include "access/htup_details.h"
 #include "catalog/pg_aggregate.h"
+#include "catalog/cat_builtin.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_type.h"
 #include "funcapi.h"
@@ -329,17 +330,13 @@ Node *ParseFuncOrColumn(ParseState *pstate, List *funcname, List *fargs,
     /*
      * It's an aggregate; fetch needed info from the pg_aggregate entry.
      */
-    HeapTuple tup;
-    Form_pg_aggregate classForm;
+    const cat_aggregate_t *classForm = cat_aggregate(funcid);
     int catDirectArgs;
 
-    tup = SearchSysCache1(AGGFNOID, ObjectIdGetDatum(funcid));
-    if (!HeapTupleIsValid(tup)) /* should not happen */
+    if (classForm == NULL) /* should not happen */
       elog(ERROR, "cache lookup failed for aggregate %u", funcid);
-    classForm = (Form_pg_aggregate)GETSTRUCT(tup);
     aggkind = classForm->aggkind;
     catDirectArgs = classForm->aggnumdirectargs;
-    ReleaseSysCache(tup);
 
     /* Now check various disallowed cases. */
     if (AGGKIND_IS_ORDERED_SET(aggkind)) {
@@ -1478,8 +1475,7 @@ FuncDetailCode func_get_detail(List *funcname, List *fargs, List *fargnames,
   }
 
   if (best_candidate) {
-    HeapTuple ftup;
-    Form_pg_proc pform;
+    const cat_proc_t *pform;
     FuncDetailCode result;
 
     /*
@@ -1521,28 +1517,23 @@ FuncDetailCode func_get_detail(List *funcname, List *fargs, List *fargnames,
       }
     }
 
-    ftup = SearchSysCache1(PROCOID, ObjectIdGetDatum(best_candidate->oid));
-    if (!HeapTupleIsValid(ftup)) /* should not happen */
+    /* Every function is built in. */
+    pform = cat_proc(best_candidate->oid);
+    if (pform == NULL) /* should not happen */
       elog(ERROR, "cache lookup failed for function %u", best_candidate->oid);
-    pform = (Form_pg_proc)GETSTRUCT(ftup);
     *rettype = pform->prorettype;
     *retset = pform->proretset;
     *vatype = pform->provariadic;
     /* fetch default args if caller wants 'em */
     if (argdefaults && best_candidate->ndargs > 0) {
-      Datum proargdefaults;
-      char *str;
       List *defaults;
 
       /* shouldn't happen, FuncnameGetCandidates messed up */
-      if (best_candidate->ndargs > pform->pronargdefaults)
+      if (best_candidate->ndargs > pform->pronargdefaults ||
+          pform->proargdefaults == NULL)
         elog(ERROR, "not enough default arguments");
 
-      proargdefaults =
-          SysCacheGetAttrNotNull(PROCOID, ftup, Anum_pg_proc_proargdefaults);
-      str = TextDatumGetCString(proargdefaults);
-      defaults = castNode(List, stringToNode(str));
-      pfree(str);
+      defaults = castNode(List, stringToNode(pform->proargdefaults));
 
       /* Delete any unused defaults from the returned list */
       if (best_candidate->argnumbers != NULL) {
@@ -1609,7 +1600,6 @@ FuncDetailCode func_get_detail(List *funcname, List *fargs, List *fargnames,
       break;
     }
 
-    ReleaseSysCache(ftup);
     return result;
   }
 

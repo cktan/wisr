@@ -229,9 +229,9 @@ static void InitTempTableNamespace(void);
 static void RemoveTempRelations(Oid tempNamespaceId);
 static void RemoveTempRelationsCallback(int code, Datum arg);
 static void InvalidationCallback(Datum arg, int cacheid, uint32 hashvalue);
-static bool MatchNamedCall(HeapTuple proctup, int nargs, List *argnames,
-                           bool include_out_arguments, int pronargs,
-                           int **argnumbers);
+static bool MatchNamedCall(const cat_proc_t *procform, int nargs,
+                           List *argnames, bool include_out_arguments,
+                           int pronargs, int **argnumbers);
 
 /*
  * Recomputing the namespace path can be costly when done frequently, such as
@@ -1111,7 +1111,8 @@ FuncCandidateList FuncnameGetCandidates(List *names, int nargs, List *argnames,
   char *schemaname;
   char *funcname;
   Oid namespaceId;
-  CatCList *catlist;
+  const cat_proc_t *const *rows;
+  int count;
   int i;
 
   /* check for caller error */
@@ -1131,13 +1132,12 @@ FuncCandidateList FuncnameGetCandidates(List *names, int nargs, List *argnames,
     recomputeNamespacePath();
   }
 
-  /* Search syscache by name only */
-  catlist = SearchSysCacheList1(PROCNAMEARGSNSP, CStringGetDatum(funcname));
+  /* Search the built-in functions by name: there is no CREATE FUNCTION. */
+  rows = cat_procs_named(funcname, &count);
 
-  for (i = 0; i < catlist->n_members; i++) {
-    HeapTuple proctup = &catlist->members[i]->tuple;
-    Form_pg_proc procform = (Form_pg_proc)GETSTRUCT(proctup);
-    Oid *proargtypes = procform->proargtypes.values;
+  for (i = 0; i < count; i++) {
+    const cat_proc_t *procform = rows[i];
+    const Oid *proargtypes = procform->proargtypes.values;
     int pronargs = procform->pronargs;
     int effective_nargs;
     int pathpos = 0;
@@ -1174,23 +1174,10 @@ FuncCandidateList FuncnameGetCandidates(List *names, int nargs, List *argnames,
      * proargtypes (which doesn't).  Of course, if proallargtypes is null,
      * we always use proargtypes.
      */
-    if (include_out_arguments) {
-      Datum proallargtypes;
-      bool isNull;
-
-      proallargtypes = SysCacheGetAttr(PROCNAMEARGSNSP, proctup,
-                                       Anum_pg_proc_proallargtypes, &isNull);
-      if (!isNull) {
-        ArrayType *arr = DatumGetArrayTypeP(proallargtypes);
-
-        pronargs = ARR_DIMS(arr)[0];
-        if (ARR_NDIM(arr) != 1 || pronargs < 0 || ARR_HASNULL(arr) ||
-            ARR_ELEMTYPE(arr) != OIDOID)
-          elog(ERROR,
-               "proallargtypes is not a 1-D Oid array or it contains nulls");
-        Assert(pronargs >= procform->pronargs);
-        proargtypes = (Oid *)ARR_DATA_PTR(arr);
-      }
+    if (include_out_arguments && procform->proallargtypes.values != NULL) {
+      pronargs = procform->proallargtypes.count;
+      Assert(pronargs >= procform->pronargs);
+      proargtypes = procform->proallargtypes.values;
     }
 
     if (argnames != NIL) {
@@ -1224,7 +1211,7 @@ FuncCandidateList FuncnameGetCandidates(List *names, int nargs, List *argnames,
         continue;
 
       /* Check for argument name match, generate positional mapping */
-      if (!MatchNamedCall(proctup, nargs, argnames, include_out_arguments,
+      if (!MatchNamedCall(procform, nargs, argnames, include_out_arguments,
                           pronargs, &argnumbers))
         continue;
 
@@ -1306,36 +1293,18 @@ FuncCandidateList FuncnameGetCandidates(List *names, int nargs, List *argnames,
      */
     if (resultList != NULL && (any_special || !OidIsValid(namespaceId))) {
       /*
-       * If we have an ordered list from SearchSysCacheList (the normal
-       * case), then any conflicting proc must immediately adjoin this
-       * one in the list, so we only need to look at the newest result
-       * item.  If we have an unordered list, we have to scan the whole
-       * result list.  Also, if either the current candidate or any
-       * previous candidate is a special match, we can't assume that
-       * conflicts are adjacent.
-       *
+       * The built-in rows are in oid order, not by argument types, so a
+       * conflicting proc can be anywhere in the result list: scan it all.
        * We ignore defaulted arguments in deciding what is a match.
        */
       FuncCandidateList prevResult;
+      int cmp_nargs = newResult->nargs - newResult->ndargs;
 
-      if (catlist->ordered && !any_special) {
-        /* ndargs must be 0 if !any_special */
-        if (effective_nargs == resultList->nargs &&
-            memcmp(newResult->args, resultList->args,
-                   effective_nargs * sizeof(Oid)) == 0)
-          prevResult = resultList;
-        else
-          prevResult = NULL;
-      } else {
-        int cmp_nargs = newResult->nargs - newResult->ndargs;
-
-        for (prevResult = resultList; prevResult;
-             prevResult = prevResult->next) {
-          if (cmp_nargs == prevResult->nargs - prevResult->ndargs &&
-              memcmp(newResult->args, prevResult->args,
-                     cmp_nargs * sizeof(Oid)) == 0)
-            break;
-        }
+      for (prevResult = resultList; prevResult; prevResult = prevResult->next) {
+        if (cmp_nargs == prevResult->nargs - prevResult->ndargs &&
+            memcmp(newResult->args, prevResult->args,
+                   cmp_nargs * sizeof(Oid)) == 0)
+          break;
       }
 
       if (prevResult) {
@@ -1414,8 +1383,6 @@ FuncCandidateList FuncnameGetCandidates(List *names, int nargs, List *argnames,
     resultList = newResult;
   }
 
-  ReleaseSysCacheList(catlist);
-
   return resultList;
 }
 
@@ -1440,17 +1407,15 @@ FuncCandidateList FuncnameGetCandidates(List *names, int nargs, List *argnames,
  * numbers.  Defaulted arguments are included in this map, at positions
  * after the last supplied argument.
  */
-static bool MatchNamedCall(HeapTuple proctup, int nargs, List *argnames,
-                           bool include_out_arguments, int pronargs,
-                           int **argnumbers) {
-  Form_pg_proc procform = (Form_pg_proc)GETSTRUCT(proctup);
+static bool MatchNamedCall(const cat_proc_t *procform, int nargs,
+                           List *argnames, bool include_out_arguments,
+                           int pronargs, int **argnumbers) {
   int numposargs = nargs - list_length(argnames);
   int pronallargs;
   Oid *p_argtypes;
   char **p_argnames;
   char *p_argmodes;
   bool *arggiven;
-  bool isnull;
   int ap; /* call args position */
   int pp; /* proargs position */
   ListCell *lc;
@@ -1460,13 +1425,12 @@ static bool MatchNamedCall(HeapTuple proctup, int nargs, List *argnames,
   Assert(nargs <= pronargs);
 
   /* Ignore this function if its proargnames is null */
-  (void)SysCacheGetAttr(PROCOID, proctup, Anum_pg_proc_proargnames, &isnull);
-  if (isnull)
+  if (procform->proargnames == NULL)
     return false;
 
   /* OK, let's extract the argument names and types */
   pronallargs =
-      get_func_arg_info(proctup, &p_argtypes, &p_argnames, &p_argmodes);
+      cat_proc_arg_info(procform, &p_argtypes, &p_argnames, &p_argmodes);
   Assert(p_argnames != NULL);
 
   Assert(include_out_arguments ? (pronargs == pronallargs)

@@ -780,6 +780,25 @@ local_psql -c 'begin' -c 'declare c cursor for select a from t11' \
   -c 'truncate t11' 2>&1 | grep -q 'being used by active queries' ||
   fail "truncate under a cursor"
 
+# Verify that functions are found by name among the built-in ones: a plain
+# call, a call by argument names, a set-returning function,
+# aggregates, and a window function, the last two over a table in sm.
+# 1. Call abs(-3), parse_ident(strict => true, str => 'a.b') and
+#    generate_series(1, 3).
+# 2. Fill t12; count, sum, average and distinct-count it.
+# 3. Run a running sum over it as a window function.
+[ "$(local_psql -c 'select abs(-3)' 2>&1)" = 3 ] || fail "function call"
+[ "$(local_psql -c "select parse_ident(strict => true, str => 'a.b')" 2>&1)" \
+  = "{a,b}" ] || fail "function call by argument name"
+[ "$(local_psql -c 'select generate_series(1, 3)' 2>&1 | tr '\n' ' ')" = \
+  "1 2 3 " ] || fail "set-returning function"
+local_psql -c 'create table t12 (a int4, b int4)' \
+  -c 'insert into t12 values (1, 10), (2, 20), (2, 30)' > "$work/agg.out" 2>&1
+[ "$(local_psql -c 'select count(*), sum(b), avg(b), count(distinct a)
+  from t12' 2>&1)" = "3|60|20.0000000000000000|2" ] || fail "aggregates"
+[ "$(local_psql -c 'select sum(b) over (order by b) from t12' 2>&1 |
+  tr '\n' ' ')" = "10 30 60 " ] || fail "window function"
+
 # Verify that = finds rows, and that DROP TABLE removes a table for good,
 # even from a session that had used it.
 # 1. Confirm WHERE a = 2 finds the one row.

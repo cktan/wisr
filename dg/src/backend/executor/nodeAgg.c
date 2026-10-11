@@ -248,6 +248,7 @@
 #include "postgres.h"
 
 #include "access/htup_details.h"
+#include "catalog/cat_builtin.h"
 #include "catalog/objectaccess.h"
 #include "catalog/pg_aggregate.h"
 #include "catalog/pg_proc.h"
@@ -3421,8 +3422,7 @@ AggState *ExecInitAgg(Agg *node, EState *estate, int eflags) {
     Oid aggTransFnInputTypes[FUNC_MAX_ARGS];
     int numAggTransFnArgs;
     int numDirectArgs;
-    HeapTuple aggTuple;
-    Form_pg_aggregate aggform;
+    const cat_aggregate_t *aggform;
     AclResult aclresult;
     Oid finalfn_oid;
     Oid serialfn_oid, deserialfn_oid;
@@ -3445,10 +3445,9 @@ AggState *ExecInitAgg(Agg *node, EState *estate, int eflags) {
     peragg->transno = aggref->aggtransno;
 
     /* Fetch the pg_aggregate row */
-    aggTuple = SearchSysCache1(AGGFNOID, ObjectIdGetDatum(aggref->aggfnoid));
-    if (!HeapTupleIsValid(aggTuple))
+    aggform = cat_aggregate(aggref->aggfnoid); /* every aggregate is built in */
+    if (aggform == NULL)
       elog(ERROR, "cache lookup failed for aggregate %u", aggref->aggfnoid);
-    aggform = (Form_pg_aggregate)GETSTRUCT(aggTuple);
 
     /* Check permission to call aggregate function */
     aclresult = object_aclcheck(ProcedureRelationId, aggref->aggfnoid,
@@ -3504,13 +3503,11 @@ AggState *ExecInitAgg(Agg *node, EState *estate, int eflags) {
 
     /* Check that aggregate owner has permission to call component fns */
     {
-      HeapTuple procTuple;
+      const cat_proc_t *proc = cat_proc(aggref->aggfnoid); /* built in */
 
-      procTuple = SearchSysCache1(PROCOID, ObjectIdGetDatum(aggref->aggfnoid));
-      if (!HeapTupleIsValid(procTuple))
+      if (proc == NULL)
         elog(ERROR, "cache lookup failed for function %u", aggref->aggfnoid);
-      aggOwner = ((Form_pg_proc)GETSTRUCT(procTuple))->proowner;
-      ReleaseSysCache(procTuple);
+      aggOwner = proc->proowner;
 
       if (OidIsValid(finalfn_oid)) {
         aclresult = object_aclcheck(ProcedureRelationId, finalfn_oid, aggOwner,
@@ -3605,12 +3602,10 @@ AggState *ExecInitAgg(Agg *node, EState *estate, int eflags) {
         aclcheck_error(aclresult, OBJECT_FUNCTION, get_func_name(transfn_oid));
       InvokeFunctionExecuteHook(transfn_oid);
 
-      /*
-       * initval is potentially null, so don't try to access it as a
-       * struct field. Must do it the hard way with SysCacheGetAttr.
-       */
-      textInitVal = SysCacheGetAttr(
-          AGGFNOID, aggTuple, Anum_pg_aggregate_agginitval, &initValueIsNull);
+      /* initval is potentially null: NULL in the built-in row. */
+      initValueIsNull = aggform->agginitval == NULL;
+      textInitVal =
+          initValueIsNull ? (Datum)0 : CStringGetTextDatum(aggform->agginitval);
       if (initValueIsNull)
         initValue = (Datum)0;
       else
@@ -3676,7 +3671,6 @@ AggState *ExecInitAgg(Agg *node, EState *estate, int eflags) {
       }
     } else
       pertrans->aggshared = true;
-    ReleaseSysCache(aggTuple);
   }
 
   /*

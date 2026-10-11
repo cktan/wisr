@@ -35,6 +35,7 @@
 #include "postgres.h"
 
 #include "access/htup_details.h"
+#include "catalog/cat_builtin.h"
 #include "catalog/pg_aggregate.h"
 #include "catalog/pg_type.h"
 #include "nodes/nodeFuncs.h"
@@ -110,8 +111,7 @@ void preprocess_aggrefs(PlannerInfo *root, Node *clause) {
 }
 
 static void preprocess_aggref(Aggref *aggref, PlannerInfo *root) {
-  HeapTuple aggTuple;
-  Form_pg_aggregate aggform;
+  const cat_aggregate_t *aggform;
   Oid aggtransfn;
   Oid aggfinalfn;
   Oid aggcombinefn;
@@ -141,10 +141,9 @@ static void preprocess_aggref(Aggref *aggref, PlannerInfo *root) {
    * ignore the moving-aggregate variant, since what we're concerned with
    * here is aggregates not window functions.
    */
-  aggTuple = SearchSysCache1(AGGFNOID, ObjectIdGetDatum(aggref->aggfnoid));
-  if (!HeapTupleIsValid(aggTuple))
+  aggform = cat_aggregate(aggref->aggfnoid); /* every aggregate is built in */
+  if (aggform == NULL)
     elog(ERROR, "cache lookup failed for aggregate %u", aggref->aggfnoid);
-  aggform = (Form_pg_aggregate)GETSTRUCT(aggTuple);
   aggtransfn = aggform->aggtransfn;
   aggfinalfn = aggform->aggfinalfn;
   aggcombinefn = aggform->aggcombinefn;
@@ -193,14 +192,13 @@ static void preprocess_aggref(Aggref *aggref, PlannerInfo *root) {
   get_typlenbyval(aggref->aggtype, &resulttypeLen, &resulttypeByVal);
 
   /* get initial value */
-  textInitVal = SysCacheGetAttr(AGGFNOID, aggTuple,
-                                Anum_pg_aggregate_agginitval, &initValueIsNull);
+  initValueIsNull = aggform->agginitval == NULL;
+  textInitVal =
+      initValueIsNull ? (Datum)0 : CStringGetTextDatum(aggform->agginitval);
   if (initValueIsNull)
     initValue = (Datum)0;
   else
     initValue = GetAggInitVal(textInitVal, aggtranstype);
-
-  ReleaseSysCache(aggTuple);
 
   /*
    * 1. See if this is identical to another aggregate function call that
