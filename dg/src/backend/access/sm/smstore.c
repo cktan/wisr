@@ -320,14 +320,38 @@ Oid smstore_relation_oid(const char *name, Oid nspoid) {
   return InvalidOid; /* not reached */
 }
 
-/* Whether constraints, a column's, are NOT NULL alone, if any. */
-static bool only_not_null(List *constraints) {
+/*
+ * Whether constraints, a column's, are only those sm's tables take: NOT
+ * NULL, and a PRIMARY KEY or UNIQUE, which parse analysis has made an index
+ * statement of its own.
+ */
+static bool only_taken(List *constraints) {
   ListCell *l;
 
-  foreach (l, constraints)
-    if (lfirst_node(Constraint, l)->contype != CONSTR_NOTNULL)
+  foreach (l, constraints) {
+    ConstrType type = lfirst_node(Constraint, l)->contype;
+
+    if (type != CONSTR_NOTNULL && type != CONSTR_PRIMARY &&
+        type != CONSTR_UNIQUE)
       return false;
+  }
   return true;
+}
+
+/*
+ * Whether col is NOT NULL: said of it, or of its name in one of the
+ * statement's NOT NULL constraints, as a PRIMARY KEY's columns are.
+ */
+static bool column_not_null(const CreateStmt *stmt, const ColumnDef *col) {
+  ListCell *l, *k;
+
+  if (col->is_not_null)
+    return true;
+  foreach (l, stmt->nnconstraints)
+    foreach (k, lfirst_node(Constraint, l)->keys)
+      if (strcmp(strVal(lfirst(k)), col->colname) == 0)
+        return true;
+  return false;
 }
 
 /* Refuse what a CREATE TABLE asks that sm's tables do not have yet. */
@@ -339,8 +363,8 @@ static void check_create_table(const CreateStmt *stmt) {
       stmt->oncommit != ONCOMMIT_NOOP ||
       stmt->relation->relpersistence != RELPERSISTENCE_PERMANENT)
     ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    errmsg("CREATE TABLE supports only columns and NOT NULL "
-                           "yet")));
+                    errmsg("CREATE TABLE supports only columns, NOT NULL, "
+                           "PRIMARY KEY and UNIQUE yet")));
 }
 
 /*
@@ -363,14 +387,14 @@ ObjectAddress smstore_create_table(CreateStmt *stmt) {
 
     if (col->collClause != NULL || col->raw_default != NULL ||
         col->cooked_default != NULL || col->identity != 0 ||
-        col->generated != 0 || !only_not_null(col->constraints))
+        col->generated != 0 || !only_taken(col->constraints))
       ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                       errmsg("column \"%s\" asks for what CREATE TABLE "
                              "does not support yet",
                              col->colname)));
     typenameTypeIdAndMod(NULL, col->typeName, &typid, &typmod);
     columns.push_back(
-        {col->colname, type_code(typid), typmod, col->is_not_null});
+        {col->colname, type_code(typid), typmod, column_not_null(stmt, col)});
   }
   sm_session_t *s = xact_session();
 

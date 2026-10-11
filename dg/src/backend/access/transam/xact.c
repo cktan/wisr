@@ -457,6 +457,9 @@ bool TransactionIdIsCurrentTransactionId(TransactionId xid) {
  *	CommandCounterIncrement
  */
 void CommandCounterIncrement(void) {
+  /* The next command is a statement of sm's too: it sees this one's. */
+  smstore_statement_start();
+
   /*
    * If the current value of the command counter hasn't been "used" to mark
    * tuples, we need not increment it, since there's no need to distinguish

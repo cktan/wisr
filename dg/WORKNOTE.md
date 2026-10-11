@@ -1718,3 +1718,21 @@ could name the GC thread's side.
   not needed with RocksDB instrumented. `server.sh` and `run.sh`
   ran clean under it twelve times running, with no suppression.
 - The first `make tsan` builds RocksDB, which takes a while.
+
+## Step 53: PRIMARY KEY and UNIQUE in CREATE TABLE
+
+- **A column's PRIMARY KEY or UNIQUE is taken**: parse analysis
+  already makes each an index statement of its own, which
+  `smstore_create_index()` creates as a unique index in sm. A
+  primary key's columns are NOT NULL, from the statement's NOT
+  NULL constraints, as PostgreSQL's are.
+- **`CommandCounterIncrement()` begins a statement in sm**: the
+  next command is to see this one's changes, as PostgreSQL's
+  command id says. Creating a table and then its index in one
+  CREATE TABLE needs it: sm refused the index, the table's
+  definition having been changed by the same statement.
+- Not yet: a constraint is not recorded apart from its index,
+  so DROP INDEX drops a primary key's index, which PostgreSQL
+  refuses; and a unique violation does not name the constraint.
+- `server.sh` checks duplicates and a NULL key refused, and a
+  primary key lookup planned on its index.

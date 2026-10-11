@@ -428,6 +428,28 @@ grep -q 'Index Scan using t4_ac on t4' "$work/iscan.out" || fail "index plan"
 [ "$(local_psql -c 'select b from t4 where a > 2 and a < 2' 2>&1)" = "" ] ||
   fail "index empty range"
 
+# Verify that PRIMARY KEY and UNIQUE in CREATE TABLE make sm's unique
+# indexes, and that a primary key's columns are NOT NULL.
+# 1. Create t5 with an inline PRIMARY KEY and UNIQUE, and t6 with a table
+#    PRIMARY KEY of two columns; insert a row in each.
+# 2. Confirm a duplicate of each key is refused, and a NULL key.
+# 3. Confirm a lookup by the primary key is an index scan on t5_pkey.
+local_psql > /dev/null 2>&1 <<'SQL'
+create table t5 (a int4 primary key, b int8 unique);
+create table t6 (a int4, b int8, primary key (a, b));
+insert into t5 values (1, 10);
+insert into t6 values (1, 1), (1, 2);
+SQL
+for sql in "insert into t5 values (1, 20)" "insert into t5 values (2, 10)" \
+  "insert into t6 values (1, 2)"; do
+  local_psql -c "$sql" 2>&1 | grep -q 'duplicate key value' ||
+    fail "duplicate refused: $sql"
+done
+local_psql -c 'insert into t5 values (null, 30)' 2>&1 |
+  grep -q 'violates not-null constraint' || fail "primary key not null"
+local_psql -c 'explain (costs off) select * from t5 where a = 1' 2>&1 |
+  grep -q 'Index Scan using t5_pkey on t5' || fail "primary key plan"
+
 # Verify that = finds rows, and that DROP TABLE removes a table for good,
 # even from a session that had used it.
 # 1. Confirm WHERE a = 2 finds the one row.
