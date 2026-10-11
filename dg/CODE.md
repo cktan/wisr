@@ -17,9 +17,13 @@ wins over convenience and over what PostgreSQL did.
 - **Everything a database needs to be read is inside its
   directory**: its catalog, its rows, its sequences, its id
   allocators, its prepared transactions.
-- **Temporary files are the exception**: every database spills
-  to `base/pgsql_tmp`. They last no longer than a statement or
-  a session, and a copied database needs none of them.
+- **The package is what is transactionally consistent**: a
+  database's data and its WAL, both in its RocksDB directory.
+  State that must agree with a database's committed data goes
+  there; what need not may be shared.
+- **Temporary files are shared for that reason**: every
+  database spills to `base/pgsql_tmp`. They are scratch space
+  for a running statement, and no part of the package.
 - **`global/` holds the list of databases**, and nothing a
   database reads to answer a query.
 - **A database uses nothing of another's**, on disk or in a

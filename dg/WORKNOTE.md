@@ -2164,7 +2164,9 @@ new instance. An audit of `global/` and `base/` came first.
   database's directory records its name, its `dbid` or a path.
 - **Temporary files stay shared**, in `base/pgsql_tmp`, by the
   owner's decision: they are the one thing under `base` that
-  is no database, and nothing a copied database needs. Putting
+  is no database, and no part of the transactionally
+  consistent package, which is a database's data and WAL in
+  RocksDB. Putting
   them in `base/{dbid}/pgsql_tmp` was tried and taken back.
 - **Left, and to hold to the objective when it is reached**:
   `GetNewObjectId()` is one counter for the process, in memory
