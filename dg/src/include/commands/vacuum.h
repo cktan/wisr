@@ -208,9 +208,8 @@ extern void vac_update_relstats(Relation relation, BlockNumber num_pages,
                                 double num_tuples,
                                 BlockNumber num_all_visible_pages,
                                 BlockNumber num_all_frozen_pages, bool hasindex,
-                                TransactionId frozenxid, MultiXactId minmulti,
-                                bool *frozenxid_updated, bool *minmulti_updated,
-                                bool in_outer_xact);
+                                TransactionId frozenxid,
+                                bool *frozenxid_updated, bool in_outer_xact);
 extern void vacuum_delay_point(bool is_analyze);
 extern bool vacuum_is_permitted_for_relation(Oid relid, Form_pg_class reltuple,
                                              bits32 options);

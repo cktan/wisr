@@ -24,7 +24,6 @@
 #include "access/relation.h"
 #include "access/table.h"
 #include "access/htup_details.h"
-#include "access/multixact.h"
 #include "access/tableam.h"
 #include "access/transam.h"
 #include "access/xact.h"
@@ -574,8 +573,7 @@ static List *get_all_vacuum_rels(MemoryContext vac_context, int options) {
 void vac_update_relstats(Relation relation, BlockNumber num_pages,
                          double num_tuples, BlockNumber num_all_visible_pages,
                          BlockNumber num_all_frozen_pages, bool hasindex,
-                         TransactionId frozenxid, MultiXactId minmulti,
-                         bool *frozenxid_updated, bool *minmulti_updated,
+                         TransactionId frozenxid, bool *frozenxid_updated,
                          bool in_outer_xact) {
   Oid relid = RelationGetRelid(relation);
   Relation rd;
@@ -583,9 +581,8 @@ void vac_update_relstats(Relation relation, BlockNumber num_pages,
   HeapTuple ctup;
   void *inplace_state;
   Form_pg_class pgcform;
-  bool dirty, futurexid, futuremxid;
+  bool dirty, futurexid;
   TransactionId oldfrozenxid;
-  MultiXactId oldminmulti;
 
   rd = table_open(RelationRelationId, RowExclusiveLock);
 
@@ -668,27 +665,6 @@ void vac_update_relstats(Relation relation, BlockNumber num_pages,
     }
   }
 
-  /* Similarly for relminmxid */
-  oldminmulti = pgcform->relminmxid;
-  futuremxid = false;
-  if (minmulti_updated)
-    *minmulti_updated = false;
-  if (MultiXactIdIsValid(minmulti) && oldminmulti != minmulti) {
-    bool update = false;
-
-    if (MultiXactIdPrecedes(oldminmulti, minmulti))
-      update = true;
-    else if (MultiXactIdPrecedes(ReadNextMultiXactId(), oldminmulti))
-      futuremxid = update = true;
-
-    if (update) {
-      pgcform->relminmxid = minmulti;
-      dirty = true;
-      if (minmulti_updated)
-        *minmulti_updated = true;
-    }
-  }
-
   /* If anything changed, write out the tuple. */
   if (dirty)
     systable_inplace_update_finish(inplace_state, ctup);
@@ -702,12 +678,6 @@ void vac_update_relstats(Relation relation, BlockNumber num_pages,
                       errmsg_internal("overwrote invalid relfrozenxid value %u "
                                       "with new value %u for table \"%s\"",
                                       oldfrozenxid, frozenxid,
-                                      RelationGetRelationName(relation))));
-  if (futuremxid)
-    ereport(WARNING, (errcode(ERRCODE_DATA_CORRUPTED),
-                      errmsg_internal("overwrote invalid relminmxid value %u "
-                                      "with new value %u for table \"%s\"",
-                                      oldminmulti, minmulti,
                                       RelationGetRelationName(relation))));
 }
 

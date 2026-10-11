@@ -2051,3 +2051,25 @@ last kind of barrier.
   `ProcSignalBarrierPending` and the `ProcSignalBarrier` wait
   event.
 - **The ProcSignal array** is the slots alone, with no header.
+
+## Step 67: multixacts are gone
+
+PLAN.md §7: a row in sm names no lockers, so no set of them.
+
+- **Gone**: `multixact.c` and its header, its SLRUs and their
+  settings (`multixact_offset_buffers`,
+  `multixact_member_buffers`), the SQL functions `mxid_age`
+  and `pg_get_multixact_members`, the end-of-transaction hook,
+  the LWLocks `MultiXactGen` and `MultiXactTruncation`, the
+  multixact tranches and wait events, and the `pg_multixact`
+  directories.
+- **`vac_update_relstats()`** no longer takes a minimum
+  multixact; every caller passed none. `InvalidMultiXactId`
+  stays, in `access/transam.h`, for pg_class's `relminmxid`.
+- **Leftovers of steps 62 and 65 go too**: the
+  `BufferContent` and `BufferMapping` tranches, the buffer
+  mapping partitions of the main LWLock array, and the
+  `pg_tblspc` directory.
+- `shared_buffers` stays while `predicate.c`'s SLRU sizes
+  itself by it.
+- `server.sh` checks the setting and the directory gone.

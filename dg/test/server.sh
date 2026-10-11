@@ -691,8 +691,9 @@ done
 # SEQUENCES still runs, and that the buffer manager's settings are gone.
 # 1. Confirm CREATE SEQUENCE and ALTER SEQUENCE fail, naming sequences.
 # 2. Confirm DISCARD SEQUENCES succeeds: there is no cache to discard.
-# 3. Confirm temp_buffers, effective_io_concurrency, io_combine_limit and
-#    zero_damaged_pages are not settings any more.
+# 3. Confirm temp_buffers, effective_io_concurrency, io_combine_limit,
+#    zero_damaged_pages and multixact_offset_buffers are not settings any
+#    more, and the data directory has no pg_multixact.
 for sql in "create sequence s" "alter sequence s restart"; do
   local_psql -c "$sql" 2>&1 | grep -q 'sequences are not supported yet' ||
     fail "sequence refused: $sql"
@@ -700,10 +701,11 @@ done
 [ "$(local_psql -c 'discard sequences' 2>&1)" = "DISCARD SEQUENCES" ] ||
   fail "discard sequences"
 for guc in temp_buffers effective_io_concurrency io_combine_limit \
-  zero_damaged_pages; do
+  zero_damaged_pages multixact_offset_buffers; do
   local_psql -c "show $guc" 2>&1 |
     grep -q 'unrecognized configuration parameter' || fail "setting $guc"
 done
+[ ! -e "$work/data/pg_multixact" ] || fail "no pg_multixact"
 
 # Verify that = finds rows, and that DROP TABLE removes a table for good,
 # even from a session that had used it.

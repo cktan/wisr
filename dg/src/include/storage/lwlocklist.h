@@ -43,7 +43,7 @@ PG_LWLOCK(6, SInvalWrite)
 /* 10 was CheckpointLock */
 /* 11 was XactSLRULock */
 /* 12 was SubtransSLRULock */
-PG_LWLOCK(13, MultiXactGen)
+/* 13 was MultiXactGenLock */
 /* 14 was MultiXactOffsetSLRULock */
 /* 15 was MultiXactMemberSLRULock */
 PG_LWLOCK(16, RelCacheInit)
@@ -71,7 +71,7 @@ PG_LWLOCK(37, ReplicationSlotControl)
 /* 38 was CommitTsSLRULock */
 /* 39 was CommitTs */
 PG_LWLOCK(40, ReplicationOrigin)
-PG_LWLOCK(41, MultiXactTruncation)
+/* 41 was MultiXactTruncationLock */
 /* 42 was OldSnapshotTimeMapLock */
 PG_LWLOCK(43, LogicalRepWorker)
 PG_LWLOCK(44, XactTruncation)

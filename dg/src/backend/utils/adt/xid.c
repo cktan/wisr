@@ -16,7 +16,6 @@
 
 #include <limits.h>
 
-#include "access/multixact.h"
 #include "access/transam.h"
 #include "access/xact.h"
 #include "common/hashfn.h"
@@ -104,20 +103,6 @@ Datum xid_age(PG_FUNCTION_ARGS) {
 
   /* Permanent XIDs are always infinitely old */
   if (!TransactionIdIsNormal(xid))
-    PG_RETURN_INT32(INT_MAX);
-
-  PG_RETURN_INT32((int32)(now - xid));
-}
-
-/*
- *		mxid_age			- compute age of a multi XID
- *(relative to latest stable mxid)
- */
-Datum mxid_age(PG_FUNCTION_ARGS) {
-  TransactionId xid = PG_GETARG_TRANSACTIONID(0);
-  MultiXactId now = ReadNextMultiXactId();
-
-  if (!MultiXactIdIsValid(xid))
     PG_RETURN_INT32(INT_MAX);
 
   PG_RETURN_INT32((int32)(now - xid));

@@ -18,7 +18,6 @@
 
 #include "access/detoast.h"
 #include "access/genam.h"
-#include "access/multixact.h"
 #include "access/relation.h"
 #include "access/table.h"
 #include "access/tableam.h"
@@ -536,8 +535,8 @@ static void do_analyze_rel(Relation onerel, VacuumParams *params, List *va_cols,
      */
     CommandCounterIncrement();
     vac_update_relstats(onerel, relpages, totalrows, relallvisible,
-                        relallfrozen, hasindex, InvalidTransactionId,
-                        InvalidMultiXactId, NULL, NULL, in_outer_xact);
+                        relallfrozen, hasindex, InvalidTransactionId, NULL,
+                        in_outer_xact);
 
     /* Same for indexes */
     for (ind = 0; ind < nindexes; ind++) {
@@ -546,8 +545,7 @@ static void do_analyze_rel(Relation onerel, VacuumParams *params, List *va_cols,
 
       totalindexrows = ceil(thisdata->tupleFract * totalrows);
       vac_update_relstats(Irel[ind], 0 /* no blocks */, totalindexrows, 0, 0,
-                          false, InvalidTransactionId, InvalidMultiXactId, NULL,
-                          NULL, in_outer_xact);
+                          false, InvalidTransactionId, NULL, in_outer_xact);
     }
   } else if (onerel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE) {
     /*
@@ -556,8 +554,7 @@ static void do_analyze_rel(Relation onerel, VacuumParams *params, List *va_cols,
      */
     CommandCounterIncrement();
     vac_update_relstats(onerel, -1, totalrows, 0, 0, hasindex,
-                        InvalidTransactionId, InvalidMultiXactId, NULL, NULL,
-                        in_outer_xact);
+                        InvalidTransactionId, NULL, in_outer_xact);
   }
 
   /*

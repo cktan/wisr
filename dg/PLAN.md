@@ -414,6 +414,13 @@ Do not reopen these without the owner:
   relation with storage is sm's, and sm reads and writes its
   own; there are no pages in shared buffers, no relation files,
   and no PostgreSQL sequences until sm's replace them.
+- **No multixacts.** A heap row named its lockers in its
+  header, and several needed a MultiXactId. A row in sm names
+  none: sm's lock manager holds row locks, shared by as many
+  as take them, and they end with their transactions. What
+  sm lacks is PostgreSQL's two weaker row lock modes, a
+  concurrency gap (PART4.md gap 3), not a reason for
+  multixacts.
 - **No asynchronous I/O.** Disk I/O is to go through sm; the
   rest is the client socket, which waits on the latch. A buffer
   read is synchronous.

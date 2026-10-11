@@ -74,10 +74,6 @@ extern void assign_log_timezone(const char *newval, void *extra);
 extern const char *show_log_timezone(void);
 extern bool check_max_stack_depth(int *newval, void **extra, GucSource source);
 extern void assign_max_stack_depth(int newval, void *extra);
-extern bool check_multixact_member_buffers(int *newval, void **extra,
-                                           GucSource source);
-extern bool check_multixact_offset_buffers(int *newval, void **extra,
-                                           GucSource source);
 extern bool check_random_seed(double *newval, void **extra, GucSource source);
 extern void assign_random_seed(double newval, void *extra);
 extern const char *show_random_seed(void);

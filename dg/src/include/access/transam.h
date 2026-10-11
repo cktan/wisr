@@ -28,6 +28,8 @@
  * ----------------
  */
 #define InvalidTransactionId		((TransactionId) 0)
+/* No multixact: a row in sm never names a set of lockers (PLAN.md §7). */
+#define InvalidMultiXactId		((MultiXactId) 0)
 #define BootstrapTransactionId		((TransactionId) 1)
 #define FrozenTransactionId			((TransactionId) 2)
 #define FirstNormalTransactionId	((TransactionId) 3)

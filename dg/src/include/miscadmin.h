@@ -200,8 +200,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT int NBuffers;
 extern thread_local /*SHARED*/ PGDLLIMPORT int MaxBackends;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int MaxConnections;
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT int multixact_member_buffers;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int multixact_offset_buffers;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int serializable_buffers;
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT int MyProcPid;

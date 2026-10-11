@@ -34,7 +34,6 @@
 #include "access/htup_details.h"
 #include "access/smindex.h"
 #include "access/smstore.h"
-#include "access/multixact.h"
 #include "access/reloptions.h"
 #include "access/sysattr.h"
 #include "access/table.h"

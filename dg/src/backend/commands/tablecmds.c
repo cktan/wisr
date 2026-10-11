@@ -18,7 +18,6 @@
 #include "access/relation.h"
 #include "access/table.h"
 #include "access/genam.h"
-#include "access/multixact.h"
 #include "access/reloptions.h"
 #include "access/relscan.h"
 #include "access/sysattr.h"

@@ -20,7 +20,6 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "access/multixact.h"
 #include "access/smstore.h"
 #include "access/transam.h"
 #include "access/xact.h"
@@ -1091,8 +1090,6 @@ static void CommitTransaction(void) {
    */
   AtEOXact_Inval(true);
 
-  AtEOXact_MultiXact();
-
   ResourceOwnerRelease(TopTransactionResourceOwner, RESOURCE_RELEASE_LOCKS,
                        true, true);
   ResourceOwnerRelease(TopTransactionResourceOwner,
@@ -1242,7 +1239,6 @@ static void AbortTransaction(void) {
     AtEOXact_RelationCache(false);
     AtEOXact_TypeCache();
     AtEOXact_Inval(false);
-    AtEOXact_MultiXact();
     ResourceOwnerRelease(TopTransactionResourceOwner, RESOURCE_RELEASE_LOCKS,
                          false, true);
     ResourceOwnerRelease(TopTransactionResourceOwner,

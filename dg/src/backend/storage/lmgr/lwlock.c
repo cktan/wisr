@@ -136,18 +136,12 @@ static constexpr auto BuiltinTrancheNames = [] {
 #define PG_LWLOCK(id, lockname) a[id] = CppAsString(lockname);
 #include "storage/lwlocklist.h"
 #undef PG_LWLOCK
-  a[LWTRANCHE_MULTIXACTOFFSET_BUFFER] = "MultiXactOffsetBuffer";
-  a[LWTRANCHE_MULTIXACTMEMBER_BUFFER] = "MultiXactMemberBuffer";
   a[LWTRANCHE_SERIAL_BUFFER] = "SerialBuffer";
-  a[LWTRANCHE_BUFFER_CONTENT] = "BufferContent";
   a[LWTRANCHE_REPLICATION_ORIGIN_STATE] = "ReplicationOriginState";
   a[LWTRANCHE_REPLICATION_SLOT_IO] = "ReplicationSlotIO";
   a[LWTRANCHE_LOCK_FASTPATH] = "LockFastPath";
-  a[LWTRANCHE_BUFFER_MAPPING] = "BufferMapping";
   a[LWTRANCHE_LOCK_MANAGER] = "LockManager";
   a[LWTRANCHE_PREDICATE_LOCK_MANAGER] = "PredicateLockManager";
-  a[LWTRANCHE_MULTIXACTOFFSET_SLRU] = "MultiXactOffsetSLRU";
-  a[LWTRANCHE_MULTIXACTMEMBER_SLRU] = "MultiXactMemberSLRU";
   a[LWTRANCHE_SERIAL_SLRU] = "SerialSLRU";
   return a;
 }();
@@ -439,11 +433,6 @@ static void InitializeLWLocks(void) {
   for (id = 0, lock = MainLWLockArray; id < NUM_INDIVIDUAL_LWLOCKS;
        id++, lock++)
     LWLockInitialize(&lock->lock, id);
-
-  /* Initialize buffer mapping LWLocks in main array */
-  lock = MainLWLockArray + BUFFER_MAPPING_LWLOCK_OFFSET;
-  for (id = 0; id < NUM_BUFFER_PARTITIONS; id++, lock++)
-    LWLockInitialize(&lock->lock, LWTRANCHE_BUFFER_MAPPING);
 
   /* Initialize lmgrs' LWLocks in main array */
   lock = MainLWLockArray + LOCK_MANAGER_LWLOCK_OFFSET;

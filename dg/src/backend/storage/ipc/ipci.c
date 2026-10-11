@@ -14,7 +14,6 @@
  */
 #include "postgres.h"
 
-#include "access/multixact.h"
 #include "access/nbtree.h"
 #include "access/transam.h"
 #include "miscadmin.h"
@@ -108,7 +107,6 @@ static void CreateOrAttachShmemStructs(void) {
    * Set up xlog, clog, and buffers
    */
   VarsupShmemInit();
-  MultiXactShmemInit();
 
   /*
    * Set up lock manager

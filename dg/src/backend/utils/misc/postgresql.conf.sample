@@ -139,8 +139,6 @@
 #max_stack_depth = 2MB			# min 100kB
 
 # SLRU buffers (change requires restart)
-#multixact_offset_buffers = 16		# memory for pg_multixact/offsets
-#multixact_member_buffers = 32		# memory for pg_multixact/members
 #serializable_buffers = 32		# memory for pg_serial
 
 # - Disk -
@@ -599,7 +597,6 @@
 						# threshold
 #autovacuum_freeze_max_age = 200000000	# maximum XID age before forced vacuum
 					# (change requires restart)
-#autovacuum_multixact_freeze_max_age = 400000000	# maximum multixact age
 							# before forced vacuum
 							# (change requires restart)
 #autovacuum_vacuum_cost_delay = 2ms	# default vacuum cost delay for
@@ -626,9 +623,6 @@
 #vacuum_freeze_table_age = 150000000
 #vacuum_freeze_min_age = 50000000
 #vacuum_failsafe_age = 1600000000
-#vacuum_multixact_freeze_table_age = 150000000
-#vacuum_multixact_freeze_min_age = 5000000
-#vacuum_multixact_failsafe_age = 1600000000
 #vacuum_max_eager_freeze_failure_rate = 0.03 # 0 disables eager scanning
 
 #------------------------------------------------------------------------------

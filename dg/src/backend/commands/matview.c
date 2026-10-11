@@ -18,7 +18,6 @@
 #include "access/relation.h"
 #include "access/table.h"
 #include "access/htup_details.h"
-#include "access/multixact.h"
 #include "access/tableam.h"
 #include "access/xact.h"
 #include "catalog/indexing.h"

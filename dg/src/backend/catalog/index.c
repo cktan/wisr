@@ -27,7 +27,6 @@
 #include "access/amapi.h"
 #include "access/relation.h"
 #include "access/table.h"
-#include "access/multixact.h"
 #include "access/relscan.h"
 #include "access/tableam.h"
 #include "access/toast_compression.h"

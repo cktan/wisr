@@ -1529,30 +1529,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      NULL,
      NULL},
 
-    {{"multixact_member_buffers", PGC_POSTMASTER, RESOURCES_MEM,
-      gettext_noop("Sets the size of the dedicated buffer pool used for the "
-                   "MultiXact member cache."),
-      NULL, GUC_UNIT_BLOCKS},
-     &multixact_member_buffers,
-     32,
-     16,
-     SLRU_MAX_ALLOWED_BUFFERS,
-     check_multixact_member_buffers,
-     NULL,
-     NULL},
-
-    {{"multixact_offset_buffers", PGC_POSTMASTER, RESOURCES_MEM,
-      gettext_noop("Sets the size of the dedicated buffer pool used for the "
-                   "MultiXact offset cache."),
-      NULL, GUC_UNIT_BLOCKS},
-     &multixact_offset_buffers,
-     16,
-     16,
-     SLRU_MAX_ALLOWED_BUFFERS,
-     check_multixact_offset_buffers,
-     NULL,
-     NULL},
-
     {{"serializable_buffers", PGC_POSTMASTER, RESOURCES_MEM,
       gettext_noop("Sets the size of the dedicated buffer pool used for the "
                    "serializable transaction cache."),
