@@ -749,6 +749,37 @@ for guc in max_pred_locks_per_transaction shared_buffers; do
 done
 [ ! -e "$work/data/pg_serial" ] || fail "no pg_serial"
 
+# Verify that TRUNCATE empties a table in sm, in its transaction: a rollback,
+# or a rollback to a savepoint taken before it, brings the rows back, and the
+# table and its index take new rows after.
+# 1. Fill t11, keyed by a, with rows 1 and 2.
+# 2. Truncate in a transaction, read t11 there (empty), insert 3 and find it
+#    by its key, then roll back: rows 1 and 2 again.
+# 3. Truncate inside a savepoint and roll back to it: rows 1 and 2.
+# 4. Truncate, commit, insert 5: t11 holds 5 alone, found by its key.
+# 5. TRUNCATE ... RESTART IDENTITY, and TRUNCATE under an open cursor of t11,
+#    are refused.
+local_psql -c 'create table t11 (a int4 primary key, b int4)' \
+  -c 'insert into t11 values (1, 10), (2, 20)' > "$work/truncate.out" 2>&1
+[ "$(local_psql -c 'begin' -c 'truncate t11' -c 'select a from t11' \
+  -c 'insert into t11 values (3, 30)' -c 'select b from t11 where a = 3' \
+  -c 'rollback' 2>&1 | tr '\n' ' ')" = \
+  "BEGIN TRUNCATE TABLE INSERT 0 1 30 ROLLBACK " ] || fail "truncate in xact"
+[ "$(local_psql -c 'select a from t11' | tr '\n' ' ')" = "1 2 " ] ||
+  fail "truncate rolled back"
+[ "$(local_psql -c 'begin' -c 'savepoint s' -c 'truncate t11' \
+  -c 'rollback to s' -c 'select a from t11' -c 'commit' 2>&1 |
+  grep -v '^[A-Z]' | tr '\n' ' ')" = "1 2 " ] || fail "truncate savepoint"
+local_psql -c 'truncate t11' -c 'insert into t11 values (5, 50)' \
+  >> "$work/truncate.out" 2>&1
+[ "$(local_psql -c 'select a from t11' -c 'select b from t11 where a = 5' |
+  tr '\n' ' ')" = "5 50 " ] || fail "truncate committed"
+local_psql -c 'truncate t11 restart identity' 2>&1 |
+  grep -q 'sequences are not supported yet' || fail "truncate restart identity"
+local_psql -c 'begin' -c 'declare c cursor for select a from t11' \
+  -c 'truncate t11' 2>&1 | grep -q 'being used by active queries' ||
+  fail "truncate under a cursor"
+
 # Verify that = finds rows, and that DROP TABLE removes a table for good,
 # even from a session that had used it.
 # 1. Confirm WHERE a = 2 finds the one row.

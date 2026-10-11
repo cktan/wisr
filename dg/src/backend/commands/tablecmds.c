@@ -16,6 +16,7 @@
 
 #include "access/attmap.h"
 #include "access/relation.h"
+#include "access/smstore.h"
 #include "access/table.h"
 #include "access/genam.h"
 #include "access/reloptions.h"
@@ -1757,6 +1758,41 @@ static void RangeVarCallbackForDropRelation(const RangeVar *rel, Oid relOid,
 }
 
 /*
+ * TRUNCATE of tables in sm, if every table it names is one: each truncated
+ * by sm (access/smstore.h), in the order named; false if any is not.  sm
+ * has no sequences to restart yet, nor inheritance or foreign keys, so
+ * RESTART IDENTITY is refused and ONLY and CASCADE change nothing.
+ */
+static bool truncate_in_sm(TruncateStmt *stmt) {
+  List *relids = NIL;
+  ListCell *cell;
+
+  foreach (cell, stmt->relations) {
+    Oid relid = RangeVarGetRelid(lfirst_node(RangeVar, cell), NoLock, false);
+
+    if (relid < FirstNormalObjectId)
+      return false;
+    relids = list_append_unique_oid(relids, relid);
+  }
+  if (stmt->restart_seqs)
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("sequences are not supported yet")));
+  foreach (cell, relids) {
+    Relation rel = relation_open(lfirst_oid(cell), NoLock);
+
+    if (rel->rd_rel->relkind != RELKIND_RELATION)
+      ereport(ERROR,
+              (errcode(ERRCODE_WRONG_OBJECT_TYPE),
+               errmsg("\"%s\" is not a table", RelationGetRelationName(rel))));
+    /* Not while this session has a scan of it open, as a cursor's. */
+    CheckTableNotInUse(rel, "TRUNCATE");
+    smstore_truncate(rel);
+    relation_close(rel, NoLock);
+  }
+  return true;
+}
+
+/*
  * ExecuteTruncate
  *		Executes a TRUNCATE command.
  *
@@ -1775,6 +1811,10 @@ void ExecuteTruncate(TruncateStmt *stmt) {
   List *rels = NIL;
   List *relids = NIL;
   ListCell *cell;
+
+  /* Tables in sm are truncated by sm, each in this transaction. */
+  if (truncate_in_sm(stmt))
+    return;
 
   /*
    * Open, exclusive-lock, and check all the explicitly-specified relations

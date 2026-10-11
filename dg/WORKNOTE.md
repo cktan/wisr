@@ -2094,3 +2094,27 @@ writes of a serializable transaction itself.
 - `server.sh` stages a write skew between two serializable
   transactions: the second commit fails with 40001. It checks
   the settings and `pg_serial` gone.
+
+## Step 69: TRUNCATE is sm's
+
+- **TRUNCATE of tables in sm** goes to `smstore_truncate()`,
+  each named table in turn: `sm_tbl_truncate()` empties it and
+  its indexes in the transaction, with the table opened
+  exclusively, so a rollback, or a rollback to a savepoint
+  taken before it, brings the rows back. The names are looked
+  up without TRUNCATE's pg_class check, which failed on every
+  table. ONLY and CASCADE change nothing: a table in sm has no
+  children or foreign keys. RESTART IDENTITY is refused until
+  sequences are sm's. TRUNCATE under this session's own open
+  cursor of the table is refused, as in PostgreSQL.
+- **A truncate moves the table's rows to a new store**, which
+  only the handle that truncated knows. The transaction's other
+  handles of the table, such as the one its descriptor opened,
+  are closed, so the next use opens one afresh.
+- **A subtransaction's handles close when it aborts**: sm's
+  rollback undoes what they did, a truncate's new store among
+  it, and they would point at a store gone. Each handle notes
+  the nesting level that opened it, and passes to the parent
+  when the subtransaction commits.
+- `server.sh` truncates in a transaction, in a savepoint, and
+  committed, and checks the refusals.

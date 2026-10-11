@@ -52,6 +52,7 @@ typedef struct open_table_t {
   Oid oid;
   sm_lockmode_t mode;
   sm_tbl_t *tbl;
+  int level; /* the subtransaction nesting level that holds it */
 } open_table_t;
 
 /*
@@ -120,6 +121,25 @@ template <class F> static int waiting(F f) {
   }
 }
 
+/*
+ * Close the tables the aborting subtransaction opened: sm's rollback undid
+ * what they did, a truncate's new store among it, and released their locks,
+ * so a handle of them is stale.  The next use opens one afresh.
+ */
+static void close_subxact_tables(void) {
+  int level = GetCurrentTransactionNestLevel();
+  ListCell *l;
+
+  foreach (l, open_tables) {
+    open_table_t *ot = (open_table_t *)lfirst(l);
+
+    if (ot->level >= level) {
+      sm_tbl_close(ot->tbl);
+      open_tables = foreach_delete_current(open_tables, l);
+    }
+  }
+}
+
 /* Close the tables this transaction opened: a handle is good for it only. */
 static void close_tables(void) {
   ListCell *l;
@@ -171,10 +191,19 @@ static int subxact_savepoint(void) {
 /* The subtransaction commits: its savepoint goes, its writes stay. */
 void smstore_subcommit(void) {
   int depth = subxact_savepoint();
+  int level = GetCurrentTransactionNestLevel();
+  ListCell *l;
 
   /* A savepoint sm cannot forget is a transaction it ended: next call says. */
   if (depth > 0)
     (void)sm_forget(session(), depth);
+  /* The tables the subtransaction opened are its parent's now. */
+  foreach (l, open_tables) {
+    open_table_t *ot = (open_table_t *)lfirst(l);
+
+    if (ot->level >= level)
+      ot->level = level - 1;
+  }
 }
 
 /* The subtransaction aborts: its writes are undone, and its savepoint goes. */
@@ -189,6 +218,7 @@ void smstore_subabort(void) {
     (void)sm_rollback(session(), depth);
     (void)sm_forget(session(), depth);
   }
+  close_subxact_tables();
 }
 
 /*
@@ -461,6 +491,7 @@ static sm_tbl_t *open_table(Oid oid, sm_lockmode_t mode) {
   ot->oid = oid;
   ot->mode = mode;
   ot->tbl = tbl;
+  ot->level = GetCurrentTransactionNestLevel();
   open_tables = lappend(open_tables, ot);
   MemoryContextSwitchTo(old);
   return tbl;
@@ -764,6 +795,39 @@ static sm_lockmode_t table_lock_mode(LOCKMODE lockmode) {
     return SM_LOCKMODE_SIX;
   default:
     return SM_LOCKMODE_EX;
+  }
+}
+
+/*
+ * TRUNCATE rel, a table in sm: its rows and its indexes' entries go, in
+ * this transaction, which a rollback undoes.  The table is opened
+ * exclusively, so the truncate waits for every other session's use of it.
+ * The caller has checked this session has no scan of it open.
+ */
+void smstore_truncate(Relation rel) {
+  Oid oid = RelationGetRelid(rel);
+  sm_tbl_t *tbl = open_table(oid, SM_LOCKMODE_EX);
+  ListCell *l;
+
+  if (tbl == NULL)
+    ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
+                    errmsg("relation \"%s\" does not exist",
+                           RelationGetRelationName(rel))));
+  if (sm_tbl_truncate(tbl) != 0)
+    sm_error("truncate a table");
+
+  /*
+   * The table's rows are in a new store now, which only the handle that
+   * truncated it knows: close the transaction's other handles of it, so the
+   * next use opens one afresh.
+   */
+  foreach (l, open_tables) {
+    open_table_t *ot = (open_table_t *)lfirst(l);
+
+    if (ot->oid == oid && ot->tbl != tbl) {
+      sm_tbl_close(ot->tbl);
+      open_tables = foreach_delete_current(open_tables, l);
+    }
   }
 }
 
