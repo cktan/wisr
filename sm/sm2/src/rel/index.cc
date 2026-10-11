@@ -15,6 +15,7 @@
 #include "native.h"
 #include "sm2.h"
 
+#include <cstring>
 #include <memory>
 #include <optional>
 #include <string>
@@ -31,8 +32,12 @@ struct sm2::index_t {
 };
 
 struct sm2::index_scan_t {
-  sm1::scan_t *scan;
-  const index_t *index;
+  sm1::scan_t *scan = nullptr;
+  const index_t *index = nullptr;
+  std::string_view key; /* the last entry's sm1 key, sm1's to keep */
+  bool cut = false;     /* the last entry's cut flag */
+  std::vector<std::optional<std::string>> datums; /* idx_scan_key's */
+  std::vector<std::string> varlenas;              /* idx_scan_key's */
 };
 
 namespace {
@@ -296,7 +301,9 @@ int idx_scan(index_t *index, const bound_t *lo, const bound_t *hi,
       return -1;
     }
     try {
-      out = new index_scan_t{c, index};
+      out = new index_scan_t;
+      out->scan = c;
+      out->index = index;
     } catch (...) {
       sm1::scanend(c);
       throw;
@@ -317,6 +324,7 @@ int idx_scannxt(index_scan_t *scan, uint64_t &rowno, bool &cut,
     if (rc != 0) {
       return rc;
     }
+    scan->key = key;
     // The value opens with the rowno and the cut flag.
     datum_t r, c;
     bool r_null, c_null;
@@ -330,6 +338,76 @@ int idx_scannxt(index_scan_t *scan, uint64_t &rowno, bool &cut,
     }
     rowno = static_cast<uint64_t>(datum_to_int64(r));
     cut = datum_to_bool(c);
+    scan->cut = cut;
+    return 0;
+  });
+}
+
+/*
+ * A datum_t over a key column's decoded bytes: a by-value one
+ * sign-extended to 8 bytes as tuples give them (sm2.h), a varlena
+ * made for a variable-width one and kept in the cursor, else a
+ * pointer to the bytes.
+ */
+static datum_t key_datum(index_scan_t *scan, const type_t *type,
+                         const std::string &bytes) {
+  if (type->byval) {
+    if (bytes.size() == sizeof(int32_t)) {
+      int32_t v;
+      std::memcpy(&v, bytes.data(), sizeof(v));
+      return datum_from_int32(v);
+    }
+    if (bytes.size() == sizeof(int16_t)) {
+      int16_t v;
+      std::memcpy(&v, bytes.data(), sizeof(v));
+      return datum_from_int16(v);
+    }
+    datum_t d = 0;
+    std::memcpy(&d, bytes.data(), bytes.size());
+    return d;
+  }
+  if (type->len < 0) {
+    scan->varlenas.push_back(make_varlena(bytes));
+    return datum_from_ptr(scan->varlenas.back().data());
+  }
+  return datum_from_ptr(bytes.data());
+}
+
+/* The key columns of the cursor's last entry, if the key gives them. */
+int idx_scan_key(index_scan_t *scan, std::span<datum_t> values,
+                 std::span<bool> isnull) {
+  return catch_nomem([&] {
+    const index_t *ix = scan->index;
+    if (values.size() != ix->key.size() || isnull.size() != ix->key.size()) {
+      return sm1::seterr(sm1::SM_ERR_INVALID,
+                         "index: a datum and null flag for every key column");
+    }
+    if (scan->cut || !key_decodable(ix->key)) {
+      return 1;
+    }
+    // The relid, the columns, then the rowno if the entry has one.
+    std::string_view key = scan->key;
+    if (key.size() < sizeof(ix->relid)) {
+      return sm1::seterr(sm1::SM_ERR_CORRUPT, "index: an entry key too short");
+    }
+    key.remove_prefix(sizeof(ix->relid));
+    scan->varlenas.clear();
+    scan->varlenas.reserve(ix->key.size());
+    if (decode_key_front(ix->key, key, scan->datums) != 0) {
+      return -1;
+    }
+    bool has_null = false;
+    for (size_t i = 0; i < ix->key.size(); i++) {
+      isnull[i] = !scan->datums[i].has_value();
+      has_null |= isnull[i];
+      values[i] =
+          isnull[i] ? 0 : key_datum(scan, ix->key[i].type, *scan->datums[i]);
+    }
+    size_t suffix = !ix->unique || has_null ? sizeof(uint64_t) : 0;
+    if (key.size() != suffix) {
+      return sm1::seterr(sm1::SM_ERR_CORRUPT,
+                         "index: an entry key runs on past its columns");
+    }
     return 0;
   });
 }

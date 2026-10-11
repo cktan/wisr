@@ -10,6 +10,7 @@
  * first sorts them high before inverting, so that they end low.
  */
 
+#include "collation.h"
 #include "native.h"
 #include "sm2.h"
 
@@ -117,6 +118,19 @@ int encode_key(std::span<const key_column_t> cols,
 /* Decode a key encode_key made under cols, every byte of it. */
 int decode_key(std::span<const key_column_t> cols, std::string_view key,
                std::vector<std::optional<std::string>> &datums) {
+  if (decode_key_front(cols, key, datums) != 0) {
+    return -1;
+  }
+  if (!key.empty()) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       "a key runs on past its last column");
+  }
+  return 0;
+}
+
+/* Decode the columns at the front of key, advancing key past them. */
+int decode_key_front(std::span<const key_column_t> cols, std::string_view &key,
+                     std::vector<std::optional<std::string>> &datums) {
   return catch_nomem([&] {
     datums.clear();
     for (const key_column_t &col : cols) {
@@ -151,12 +165,24 @@ int decode_key(std::span<const key_column_t> cols, std::string_view key,
       }
       key.remove_prefix(before - rest.size());
     }
-    if (!key.empty()) {
-      return sm1::seterr(sm1::SM_ERR_INVALID,
-                         "a key runs on past its last column");
-    }
     return 0;
   });
+}
+
+/*
+ * Whether every column's key gives its datum back: its type has a
+ * key_decode, and a text key is not under a non-deterministic
+ * collation, whose key keeps no datum.
+ */
+bool key_decodable(std::span<const key_column_t> cols) {
+  for (const key_column_t &col : cols) {
+    if (col.type == nullptr || col.type->key_decode == nullptr ||
+        (col.collation != nullptr && col.collation->icu != nullptr &&
+         !col.collation->deterministic)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 } // namespace sm2

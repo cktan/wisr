@@ -919,6 +919,21 @@ int sm_idx_scan_seek(sm_idx_scan_t *scan, const sm_bound_t *lo) {
   });
 }
 
+/* The key columns of an index cursor's last entry; no session. */
+int sm_idx_scan_key(sm_idx_scan_t *scan, sm_datum_t *values, bool *isnull,
+                    size_t n) {
+  return guard(nullptr, [&] {
+    if (!scan || (n && (!values || !isnull))) {
+      return null_arg("sm_idx_scan_key", !scan     ? "scan"
+                                         : !values ? "values"
+                                                   : "isnull");
+    }
+    return sm2::idx_scan_key(idx_scan_of(scan),
+                             std::span<sm2::datum_t>(values, n),
+                             std::span<bool>(isnull, n));
+  });
+}
+
 /* Close an index cursor. */
 void sm_idx_scanend(sm_idx_scan_t *scan) {
   sm2::idx_scanend(idx_scan_of(scan));

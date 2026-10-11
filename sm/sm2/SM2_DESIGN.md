@@ -904,6 +904,12 @@ are the same shape, keyed by its columns (`idx_open`,
   key is never cut (§3.2).
 - **An entry's value** is a tuple: the `rowno`, a flag saying
   the key was cut, then the INCLUDE columns.
+- **An entry gives its key columns back** (`idx_scan_key`),
+  for index-only scans: the key decodes past the relid, its
+  columns' datums as a tuple gives them, and the `rowno` is
+  what remains, if anything. A cut key, or a text column under
+  a non-deterministic collation, keeps no datum (§2.3); then
+  the caller reads them from the row.
 - **`idx_delete` removes an entry committed since the
   transaction began.** An entry is an sm1 key, so at READ
   COMMITTED sm1 refuses to erase one committed after the

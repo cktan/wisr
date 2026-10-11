@@ -529,10 +529,11 @@ the next things the fork would hit:**
    for a child's foreign-key check (`NEXT.md`).
 4. **No wait policy.** `NOWAIT` and `SKIP LOCKED` need a flag
    on the calls that can wait; there is only the QA setting.
-5. **An index entry does not give back its key columns.** It
-   holds the rowno and the `INCLUDE` columns. An index-only
-   scan needs the key values, so it works only for columns
-   also listed in `INCLUDE`.
+5. **An index entry gives back its key columns only where its
+   key keeps them.** `sm_idx_scan_key` decodes them, but a
+   key cut to fit, or a text key under a non-deterministic
+   collation, keeps no datum: an index-only scan reads such an
+   entry's row.
 6. **No mark and restore on an index cursor.** A merge join
    backs its inner side up to a mark. A cursor only goes
    forward, so the fork puts a Materialize node there, as it

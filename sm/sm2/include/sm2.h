@@ -649,6 +649,17 @@ int idx_scannxt(index_scan_t* scan, uint64_t& rowno, bool& cut,
  */
 int idx_scan_seek(index_scan_t* scan, const bound_t& lo);
 
+/*
+ * The key columns of the entry idx_scannxt last returned, one
+ * datum and null flag per column, as idx_scan takes them: 0; 1 if
+ * the key does not give them back -- it was cut, or a column's key
+ * keeps no datum (key_decodable) -- and the row has them; -1 on
+ * error. A by-reference datum is valid until the next call on the
+ * cursor.
+ */
+int idx_scan_key(index_scan_t* scan, std::span<datum_t> values,
+                 std::span<bool> isnull);
+
 /* Close a cursor from idx_scan; nullptr is a no-op. */
 void idx_scanend(index_scan_t* scan);
 
@@ -658,6 +669,21 @@ void idx_scanend(index_scan_t* scan);
  */
 int decode_key(std::span<const key_column_t> cols, std::string_view key,
                std::vector<std::optional<std::string>>& datums);
+
+/*
+ * Decode the columns at the front of key as decode_key does,
+ * advancing key past them; what follows them is left.
+ */
+int decode_key_front(std::span<const key_column_t> cols,
+                     std::string_view& key,
+                     std::vector<std::optional<std::string>>& datums);
+
+/*
+ * Whether keys under cols decode: every column's type has a
+ * key_decode, and no text column is under a non-deterministic
+ * collation, whose key keeps no datum (TYPE.md §3.5).
+ */
+bool key_decodable(std::span<const key_column_t> cols);
 
 /*
  * The catalog key-value store (sm3/CATALOG.md §1): the level

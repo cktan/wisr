@@ -454,6 +454,18 @@ int sm_idx_scannxt(sm_idx_scan_t* scan, uint64_t* rowno, bool* cut,
 /* Move the cursor forward to the first entry at or after lo. */
 int sm_idx_scan_seek(sm_idx_scan_t* scan, const sm_bound_t* lo);
 
+/*
+ * The key columns of the entry sm_idx_scannxt last returned, into
+ * values and isnull, n of each, one per key column, as a bound
+ * gives them: 0; 1 if the key does not give them back -- it was
+ * cut, or a text column is under a non-deterministic collation --
+ * so the row must; or -1. An entry the cursor returns is one the
+ * transaction sees, as its row is. A by-reference value is valid
+ * until the next call on the cursor.
+ */
+int sm_idx_scan_key(sm_idx_scan_t* scan, sm_datum_t* values, bool* isnull,
+                    size_t n);
+
 /* Close a cursor; NULL is a no-op. */
 void sm_idx_scanend(sm_idx_scan_t* scan);
 

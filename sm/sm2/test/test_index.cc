@@ -1,7 +1,7 @@
 /*
  * test_index.cc -- the index rel over sm1 (SM2_DESIGN.md §5):
- * entries in key order, scans between bounds, uniqueness, and
- * keys cut to fit.
+ * entries in key order, scans between bounds, uniqueness, keys
+ * cut to fit, and keys decoded back.
  */
 
 #include "datums.h"
@@ -13,6 +13,7 @@
 #include "sm2.h"
 
 #include <algorithm>
+#include <memory>
 #include <optional>
 #include <random>
 #include <string>
@@ -189,6 +190,102 @@ TEST_CASE("an index scan yields exactly the entries between its bounds") {
   }
 }
 
+/* The bytes of a non-null datum of type, as the key encoding reads them. */
+std::string bytes_of(const sm2::type_t *type, int32_t typmod, sm2::datum_t d) {
+  std::string_view v;
+  REQUIRE_MESSAGE(sm2::datum_bytes(type, typmod, d, v) == 0, sm1::errmsg());
+  return std::string(v);
+}
+
+TEST_CASE("an index entry gives back its key columns") {
+  // Verify idx_scan_key returns the key columns idx_insert was given.
+  // 1. A non-unique index on a descending int2 with nulls first, a
+  //    text, a decimal and a float8 takes three entries, one with
+  //    nulls; a unique int4 index takes a value and a null, whose
+  //    entry carries its rowno.
+  // 2. Each entry a scan yields decodes to its columns' bytes and
+  //    nulls, and a negative int2 is sign-extended, as a tuple's is.
+  // 3. A key column count that does not match is refused.
+  db_t db;
+  sm1::session_t *s = db.open();
+  int32_t dec = decimal_typmod(10, 2);
+  std::vector<sm2::key_column_t> cols = {
+      {&sm2::type_int2, -1, nullptr, true, true},
+      {&sm2::type_text, -1, nullptr, false, false},
+      {&sm2::type_decimal64, dec, nullptr, false, false},
+      {&sm2::type_float8, -1, nullptr, false, false}};
+  std::vector<sm2::key_column_t> ucols = {
+      {&sm2::type_int4, -1, nullptr, false, false}};
+  sm2::index_t *ix = open_index(db, s, cols, false, 1);
+  sm2::index_t *uix = open_index(db, s, ucols, true, 2);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  std::vector<std::vector<std::optional<std::string>>> rows = {
+      {le(int16_t{-1}), std::string("hello"), le(int64_t{125}), le(1.5)},
+      {std::nullopt, std::string(""), std::nullopt, le(-2.0)},
+      {le(int16_t{300}), std::nullopt, le(int64_t{-7}), std::nullopt}};
+  std::vector<values_t> vals;
+  for (size_t i = 0; i < rows.size(); i++) {
+    vals.push_back(datums_of(cols, rows[i]));
+    REQUIRE_MESSAGE(
+        sm2::idx_insert(ix, vals[i].d(), vals[i].null(), i + 1, {}, {}) == 0,
+        sm1::errmsg());
+  }
+  std::vector<std::vector<std::optional<std::string>>> urows = {
+      {le(int32_t{7})}, {std::nullopt}};
+  for (size_t i = 0; i < urows.size(); i++) {
+    values_t u = datums_of(ucols, urows[i]);
+    REQUIRE(sm2::idx_insert(uix, u.d(), u.null(), i + 1, {}, {}) == 0);
+  }
+  struct case_t {
+    sm2::index_t *index;
+    const std::vector<sm2::key_column_t> *keys;
+    const std::vector<std::vector<std::optional<std::string>>> *rows;
+  };
+  for (const case_t &k :
+       {case_t{ix, &cols, &rows}, case_t{uix, &ucols, &urows}}) {
+    const std::vector<sm2::key_column_t> *keys = k.keys;
+    sm2::index_scan_t *scan = nullptr;
+    REQUIRE(sm2::idx_scan(k.index, nullptr, nullptr, scan) == 0);
+    uint64_t rowno;
+    bool cut;
+    std::string_view value;
+    size_t seen = 0;
+    while (sm2::idx_scannxt(scan, rowno, cut, value) == 0) {
+      std::vector<sm2::datum_t> got(keys->size());
+      std::unique_ptr<bool[]> null = std::make_unique<bool[]>(keys->size());
+      REQUIRE_MESSAGE(
+          sm2::idx_scan_key(scan, got,
+                            std::span<bool>(null.get(), keys->size())) == 0,
+          sm1::errmsg());
+      const auto &want = (*k.rows)[rowno - 1];
+      values_t w = datums_of(*keys, want);
+      for (size_t c = 0; c < keys->size(); c++) {
+        REQUIRE(null[c] == w.null()[c]);
+        if (!null[c]) {
+          const sm2::key_column_t &k = (*keys)[c];
+          CHECK(bytes_of(k.type, k.typmod, got[c]) ==
+                bytes_of(k.type, k.typmod, w.d()[c]));
+        }
+      }
+      if (k.index == ix && rowno == 1) {
+        CHECK(got[0] == sm2::datum_from_int16(-1));
+      }
+      seen++;
+    }
+    CHECK(seen == k.rows->size());
+    std::vector<sm2::datum_t> few(1);
+    bool fewnull[1];
+    if (keys->size() > 1) {
+      CHECK(sm2::idx_scan_key(scan, few, fewnull) == -1);
+      CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+    }
+    sm2::idx_scanend(scan);
+  }
+  REQUIRE(sm1::commit(s) == 0);
+  sm2::idx_close(uix);
+  sm2::idx_close(ix);
+}
+
 TEST_CASE("a unique index refuses a duplicate key, but not nulls") {
   // Verify uniqueness in an index keyed without the rowno.
   // 1. A second entry with an existing key fails with sm1's
@@ -231,6 +328,7 @@ TEST_CASE("under a non-deterministic collation, equal is ICU's equal") {
   // 2. A non-unique index takes "abc" and "ABC" as two entries.
   // 3. A scan of the non-unique index between "aBc" and "aBc",
   //    inclusive, yields both of them and not "abd".
+  // 4. An entry's key keeps no datum, so idx_scan_key returns 1.
   db_t db;
   sm1::session_t *s = db.open();
   sm2::collation_t *ci = nullptr;
@@ -256,6 +354,19 @@ TEST_CASE("under a non-deterministic collation, equal is ICU's equal") {
   REQUIRE(sm2::idx_insert(ix, d_abd.d(), d_abd.null(), 12, {}, {}) == 0);
   sm2::bound_t eq{d_mixed.d(), d_mixed.null(), true};
   CHECK(scan_all(ix, &eq, &eq) == std::vector<uint64_t>{10, 11});
+  {
+    // An entry's key under the collation keeps no datum to give back.
+    sm2::index_scan_t *scan = nullptr;
+    REQUIRE(sm2::idx_scan(ix, nullptr, nullptr, scan) == 0);
+    uint64_t rowno;
+    bool cut;
+    std::string_view value;
+    sm2::datum_t got[1];
+    bool null[1];
+    REQUIRE(sm2::idx_scannxt(scan, rowno, cut, value) == 0);
+    CHECK(sm2::idx_scan_key(scan, got, null) == 1);
+    sm2::idx_scanend(scan);
+  }
   REQUIRE(sm1::commit(s) == 0);
   sm2::idx_close(ix);
   sm2::idx_close(uix);
@@ -268,7 +379,8 @@ TEST_CASE("a key too long for sm1 is cut, flagged, and kept apart") {
   // 1. Two 5000-byte texts that share their first 4500 bytes both
   //    insert: each is cut to fit and carries its rowno, so the two
   //    stay apart though their cut bytes are the same.
-  // 2. The scan reports both as cut, with their INCLUDE column.
+  // 2. The scan reports both as cut, with their INCLUDE column, and
+  //    idx_scan_key returns 1: a cut key's columns are the row's.
   // 3. A bound on such a text is itself too long: the scan says it
   //    was widened, and still yields both entries.
   db_t db;
@@ -299,6 +411,9 @@ TEST_CASE("a key too long for sm1 is cut, flagged, and kept apart") {
     REQUIRE(sm2::idx_scannxt(scan, rowno, cut, value) == 0);
     CHECK(rowno == want);
     CHECK(cut);
+    sm2::datum_t got[1];
+    bool null[1];
+    CHECK(sm2::idx_scan_key(scan, got, null) == 1);
     sm2::datum_t inc;
     bool inc_null;
     REQUIRE(sm2::tup_decode(sm2::idx_value_schema(ix), value, 2, inc,
