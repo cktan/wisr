@@ -252,6 +252,52 @@ wait $iso
   "BEGIN 1 after 6 COMMIT BEGIN 1 6 after 6 COMMIT " ] ||
   fail "isolation levels"
 
+# Verify that a statement waiting for another session's lock is ended by a
+# statement timeout, from its own sys timer, and by a cancel request from
+# its client, which another thread turns into an interrupt bit in it.
+# 1. In a session of its own, begin, and drop t1 without committing: it
+#    holds t1's lock.
+# 2. From a session with statement_timeout = 500, scan t1: it waits, and
+#    fails within seconds, its statement timed out.
+# 3. Scan t1 from another session, and interrupt its psql, which sends a
+#    cancel request: the scan fails, cancelled.
+# 4. Roll the drop back: t1 is still there.
+mkfifo "$work/lock.in"
+local_psql < "$work/lock.in" > "$work/lock.out" 2>&1 &
+holder=$!
+exec 4> "$work/lock.in"
+echo "begin; drop table t1; select 'dropped';" >&4
+for _ in $(seq 50); do
+  grep -qx dropped "$work/lock.out" && break
+  sleep 0.1
+done
+timeout 10 psql -X -A -t -h "$work" -p "$port" -d postgres \
+  -c 'set statement_timeout = 500' -c 'select * from t1' \
+  > "$work/timeout.out" 2>&1
+grep -q 'canceling statement due to statement timeout' "$work/timeout.out" ||
+  fail "statement timeout on a lock wait"
+psql -X -A -t -h "$work" -p "$port" -d postgres -c 'select * from t1' \
+  > "$work/cancel.out" 2>&1 &
+waiter=$!
+sleep 1
+kill -INT $waiter
+for _ in $(seq 50); do
+  kill -0 $waiter 2> /dev/null || break
+  sleep 0.1
+done
+if kill -0 $waiter 2> /dev/null; then
+  fail "cancel ends a lock wait"
+  kill -KILL $waiter
+fi
+wait $waiter
+grep -q 'canceling statement due to user request' "$work/cancel.out" ||
+  fail "cancel message"
+echo "rollback;" >&4
+exec 4>&-
+wait $holder
+[ "$(local_psql -c 'select a from t1 where a = 1' 2>&1)" = 1 ] ||
+  fail "drop rolled back"
+
 # Verify that = finds rows, and that DROP TABLE removes a table for good,
 # even from a session that had used it.
 # 1. Confirm WHERE a = 2 finds the one row.

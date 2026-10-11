@@ -118,6 +118,12 @@ void InitPostmasterChild(void) {
 
   /* CHECK_FOR_INTERRUPTS() reads this thread's interrupts from here on. */
   MyInterrupts = sys_pending_word();
+  /*
+   * What ends a wait in sm for another transaction (sys.h): what cancels or
+   * ends the statement, and a timeout, which may.
+   */
+  sys_set_wait_mask(INTERRUPT_CANCEL | INTERRUPT_DIE | INTERRUPT_QUIT |
+                    INTERRUPT_ALARM);
 
   /*
    * A session thread is no process: its signal mask is set
@@ -188,6 +194,12 @@ void InitStandaloneProcess(const char *argv0) {
 
   /* CHECK_FOR_INTERRUPTS() reads this thread's interrupts from here on. */
   MyInterrupts = sys_pending_word();
+  /*
+   * What ends a wait in sm for another transaction (sys.h): what cancels or
+   * ends the statement, and a timeout, which may.
+   */
+  sys_set_wait_mask(INTERRUPT_CANCEL | INTERRUPT_DIE | INTERRUPT_QUIT |
+                    INTERRUPT_ALARM);
 
   /*
    * For consistency with InitPostmasterChild, initialize signal mask here.

@@ -23,6 +23,7 @@
 #include "catalog/namespace.h"
 #include "catalog/pg_class_d.h"
 #include "catalog/pg_type_d.h"
+#include "miscadmin.h"
 #include "parser/parse_type.h"
 #include "utils/builtins.h"
 #include "utils/datadir.h"
@@ -82,6 +83,25 @@ static int sm_sqlstate(void) {
 static void sm_error(const char *what) {
   ereport(ERROR, (errcode(sm_sqlstate()),
                   errmsg("could not %s: %s", what, sm_errmsg())));
+}
+
+/*
+ * Call f, a call into sm that may wait for another transaction, until it
+ * does not fail on an interrupted wait.  An interrupt in this thread's wait
+ * mask ends sm's wait, with SM_ERR_INTERRUPTED (miscinit.c sets the mask);
+ * CHECK_FOR_INTERRUPTS() then acts on it, raising the error a cancel, an
+ * end or a timeout calls for.  One that calls for nothing, or that must
+ * wait until interrupts are allowed, has been taken: the call is made again,
+ * and waits again.
+ */
+template <class F> static int waiting(F f) {
+  for (;;) {
+    int rc = f();
+
+    if (rc == 0 || sm_errnum() != SM_ERR_INTERRUPTED)
+      return rc;
+    CHECK_FOR_INTERRUPTS();
+  }
 }
 
 /*
@@ -279,8 +299,12 @@ ObjectAddress smstore_create_table(CreateStmt *stmt) {
     columns.push_back(
         {col->colname, type_code(typid), typmod, col->is_not_null});
   }
-  if (sm_cat_create_table(xact_session(), nspoid, stmt->relation->relname,
-                          columns, &oid) != 0) {
+  sm_session_t *s = xact_session();
+
+  if (waiting([&] {
+        return sm_cat_create_table(s, nspoid, stmt->relation->relname, columns,
+                                   &oid);
+      }) != 0) {
     if (sm_errnum() == SM_ERR_DUPKEY)
       ereport(ERROR, (errcode(ERRCODE_DUPLICATE_TABLE),
                       errmsg("relation \"%s\" already exists",
@@ -308,7 +332,10 @@ static sm_tbl_t *open_table(Oid oid, bool write) {
     if (ot->oid == oid && (ot->write || !write))
       return ot->tbl;
   }
-  if (sm_tbl_open(s, oid, write ? SM_LOCKMODE_IX : SM_LOCKMODE_IS, &tbl) != 0) {
+  if (waiting([&] {
+        return sm_tbl_open(s, oid, write ? SM_LOCKMODE_IX : SM_LOCKMODE_IS,
+                           &tbl);
+      }) != 0) {
     if (sm_errnum() == SM_ERR_NOTFOUND)
       return NULL;
     sm_error("open a table");
@@ -404,8 +431,10 @@ void smstore_insert(Relation rel, TupleTableSlot *slot) {
                     errmsg("relation \"%s\" does not exist",
                            RelationGetRelationName(rel))));
   slot_getallattrs(slot);
-  if (sm_tbl_insert(tbl, (const sm_datum_t *)slot->tts_values, slot->tts_isnull,
-                    slot->tts_nvalid, &rowno) != 0)
+  if (waiting([&] {
+        return sm_tbl_insert(tbl, (const sm_datum_t *)slot->tts_values,
+                             slot->tts_isnull, slot->tts_nvalid, &rowno);
+      }) != 0)
     sm_error("insert a row");
   smstore_rowno_to_tid(rowno, &slot->tts_tid);
 }
@@ -495,7 +524,9 @@ void smstore_drop_tables(DropStmt *stmt) {
     /* Every session forgets its descriptor once this one commits. */
     CacheInvalidateRelcache(rel);
     relation_close(rel, NoLock);
-    if (sm_cat_drop_table(xact_session(), oid) != 0)
+    sm_session_t *s = xact_session();
+
+    if (waiting([&] { return sm_cat_drop_table(s, oid); }) != 0)
       sm_error("drop a table");
   }
 }

@@ -1387,3 +1387,33 @@ and a table dropped.
   looked up in sm each statement.
 - `server.sh` filters with `=`, and drops a table from one
   session while another has used it.
+
+## Step 40: a wait in sm ends on an interrupt
+
+sm's waits for another transaction are a `sys_wait()` on the
+thread's wait mask (`../sys/INTERRUPT.md` §8), and fail with
+`SM_ERR_INTERRUPTED` when a bit in it is raised.
+
+- **A session thread's wait mask** is `INTERRUPT_CANCEL`,
+  `_DIE`, `_QUIT` and `_ALARM`, set where `MyInterrupts` is:
+  what cancels or ends a statement, and a timeout, which may.
+  A latch's wake raises no bit, and `_RELOAD` and `_PROCSIG`
+  wait for the statement's next `CHECK_FOR_INTERRUPTS()`.
+- **A call into sm that may wait is made through
+  `waiting()`** (`smstore.c`): opening a table, creating and
+  dropping one, inserting a row. On `SM_ERR_INTERRUPTED` it
+  runs `CHECK_FOR_INTERRUPTS()`, which raises what the
+  interrupt calls for, a cancel's or a timeout's error; one
+  that calls for nothing, or must wait until interrupts are
+  allowed, has been taken, and the call is made again.
+- **No SQL statement waits in sm yet.** A table is also locked
+  in PostgreSQL's lock manager, before sm's, so a session that
+  conflicts waits there; a row's lock is not reached until
+  UPDATE and DELETE are. The path is untested end to end.
+- **Two lock managers lock the same table**, PostgreSQL's and
+  sm's (`../sm/PART4.md` §3 warns of it): a deadlock across
+  them is one neither detector sees. Not resolved here.
+- `server.sh` holds a table's lock in one session, and confirms
+  a scan in another is ended by its statement_timeout, and by
+  a cancel request from its psql: the interrupt bits of steps
+  32 and 33 reach a thread waiting in the lock manager.
