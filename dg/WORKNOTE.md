@@ -1736,3 +1736,27 @@ could name the GC thread's side.
   refuses; and a unique violation does not name the constraint.
 - `server.sh` checks duplicates and a NULL key refused, and a
   primary key lookup planned on its index.
+
+## Step 54: ORDER BY reads an index in sm in order
+
+- **An index in sm is ordered for the planner**: its opfamilies
+  are its sort families, with DESC and NULLS FIRST as the
+  index has them, so an ORDER BY in the index's order, a merge
+  join's input, a LIMIT, can use an index scan with no sort.
+- **But only forwards**: `IndexOptInfo` has `amcanbackward`,
+  false for an index in sm, and `build_index_paths()` makes no
+  backward path without it; an order the index does not have is
+  sorted. sm's cursors run forwards, and keep no mark for a
+  merge join's restore (`amcanmarkpos` is false too).
+- **ORDER BY needed the type cache**: `lookup_type_cache()` reads
+  `cat_type()`, and hashes a type's oid itself, not by
+  pg_type's catalog cache, which no invalidation reaches. The
+  hash was what broke: it opened pg_type, and an error raised
+  in the abort path, which looks types up, recursed until it
+  PANICked.
+- **`pg_amproc` and `pg_opfamily` are compiled in**, and
+  `get_opfamily_proc()`, `get_opfamily_method()`,
+  `get_opfamily_name()`, the `get_opclass_*()` helpers and
+  `GetDefaultOpClass()` read them.
+- `server.sh` orders by an index's columns, with nulls last,
+  in reverse, with nulls first, and with a LIMIT.

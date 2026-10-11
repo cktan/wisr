@@ -450,6 +450,20 @@ local_psql -c 'insert into t5 values (null, 30)' 2>&1 |
 local_psql -c 'explain (costs off) select * from t5 where a = 1' 2>&1 |
   grep -q 'Index Scan using t5_pkey on t5' || fail "primary key plan"
 
+# Verify that an index in sm gives ORDER BY its rows in order, forwards: a
+# descending order the index does not have is sorted.
+# 1. Order t4 by a, its index's order: an index scan, nulls last.
+# 2. Order it by a DESC: a sort, nulls first, as PostgreSQL's DESC orders.
+# 3. A LIMIT with a range stops early, in order.
+local_psql -c 'explain (costs off) select b from t4 order by a' 2>&1 |
+  grep -q 'Index Scan using t4_ac on t4' || fail "ordered index plan"
+[ "$(local_psql -c 'select b from t4 order by a, c' 2>&1 | tr '\n' ' ')" = \
+  "10 20 30 31 40 60 " ] || fail "ordered index scan"
+[ "$(local_psql -c 'select b from t4 order by a desc, c desc' 2>&1 |
+  tr '\n' ' ')" = "60 40 31 30 20 10 " ] || fail "descending order"
+[ "$(local_psql -c 'select b from t4 where a > 1 order by a, c limit 2' 2>&1 |
+  tr '\n' ' ')" = "20 30 " ] || fail "ordered limit"
+
 # Verify that = finds rows, and that DROP TABLE removes a table for good,
 # even from a session that had used it.
 # 1. Confirm WHERE a = 2 finds the one row.

@@ -41,6 +41,8 @@ CATALOGS = {
     "pg_am": ("am", "amname"),
     "pg_amop": ("amop", None),
     "pg_opclass": ("opclass", None),
+    "pg_amproc": ("amproc", None),
+    "pg_opfamily": ("opfamily", "opfname"),
 }
 
 # BKI column type -> (C type, how a value is written)

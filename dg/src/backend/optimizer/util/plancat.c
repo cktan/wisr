@@ -309,8 +309,12 @@ void get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
         info->amhasgetbitmap =
             amroutine->amgetbitmap != NULL && !RelationIsSm(relation) &&
             relation->rd_tableam->scan_bitmap_next_tuple != NULL;
+        /* sm's index scans run forwards, and keep no position, yet. */
         info->amcanmarkpos =
-            (amroutine->ammarkpos != NULL && amroutine->amrestrpos != NULL);
+            (amroutine->ammarkpos != NULL && amroutine->amrestrpos != NULL) &&
+            !RelationIsSm(relation);
+        info->amcanbackward =
+            amroutine->amcanbackward && !RelationIsSm(relation);
         info->amcostestimate = amroutine->amcostestimate;
         Assert(info->amcostestimate != NULL);
 
@@ -320,12 +324,7 @@ void get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
         /*
          * Fetch the ordering information for the index, if any.
          */
-        if (RelationIsSm(relation)) {
-          /* sm's index scans are not ordered for the planner yet. */
-          info->sortopfamily = NULL;
-          info->reverse_sort = NULL;
-          info->nulls_first = NULL;
-        } else if (info->relam == BTREE_AM_OID) {
+        if (info->relam == BTREE_AM_OID) {
           /*
            * If it's a btree index, we can use its opfamily OIDs
            * directly as the sort ordering opfamily OIDs.
@@ -398,6 +397,7 @@ void get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
         info->amhasgettuple = false;
         info->amhasgetbitmap = false;
         info->amcanmarkpos = false;
+        info->amcanbackward = false;
         info->amcostestimate = NULL;
 
         info->sortopfamily = NULL;

@@ -22,6 +22,7 @@
 #include "access/sysattr.h"
 #include "access/tableam.h"
 #include "access/xact.h"
+#include "catalog/cat_builtin.h"
 #include "catalog/catalog.h"
 #include "catalog/index.h"
 #include "catalog/indexing.h"
@@ -2111,10 +2112,8 @@ Oid GetDefaultOpClass(Oid type_id, Oid am_id) {
   int nexact = 0;
   int ncompatible = 0;
   int ncompatiblepreferred = 0;
-  Relation rel;
-  ScanKeyData skey[1];
-  SysScanDesc scan;
-  HeapTuple tup;
+  int nrows;
+  const cat_opclass_t *rows = cat_opclasses(&nrows);
   TYPCATEGORY tcategory;
 
   /* If it's a domain, look at the base type instead */
@@ -2132,20 +2131,14 @@ Oid GetDefaultOpClass(Oid type_id, Oid am_id) {
    * to specify which one he wants.  (The preferred-type special case is a
    * kluge for varchar: it's binary-compatible to both text and bpchar, so
    * we need a tiebreaker.)  If we find more than one exact match, then
-   * someone put bogus entries in pg_opclass.
+   * someone put bogus entries in pg_opclass.  Every opclass is compiled in
+   * (catalog/cat_builtin.h).
    */
-  rel = table_open(OperatorClassRelationId, AccessShareLock);
+  for (int i = 0; i < nrows; i++) {
+    const cat_opclass_t *opclass = &rows[i];
 
-  ScanKeyInit(&skey[0], Anum_pg_opclass_opcmethod, BTEqualStrategyNumber,
-              F_OIDEQ, ObjectIdGetDatum(am_id));
-
-  scan = systable_beginscan(rel, OpclassAmNameNspIndexId, true, NULL, 1, skey);
-
-  while (HeapTupleIsValid(tup = systable_getnext(scan))) {
-    Form_pg_opclass opclass = (Form_pg_opclass)GETSTRUCT(tup);
-
-    /* ignore altogether if not a default opclass */
-    if (!opclass->opcdefault)
+    /* ignore altogether if not one of the method's, or not its default */
+    if (opclass->opcmethod != am_id || !opclass->opcdefault)
       continue;
     if (opclass->opcintype == type_id) {
       nexact++;
@@ -2160,10 +2153,6 @@ Oid GetDefaultOpClass(Oid type_id, Oid am_id) {
       }
     }
   }
-
-  systable_endscan(scan);
-
-  table_close(rel, AccessShareLock);
 
   /* raise error if pg_opclass contains inconsistent data */
   if (nexact > 1)

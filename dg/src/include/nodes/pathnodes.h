@@ -1218,6 +1218,8 @@ struct IndexOptInfo
 	bool		amhasgetbitmap;
 	/* does AM have ammarkpos interface? */
 	bool		amcanmarkpos;
+	/* can its scans run backwards? (not an index in sm's, yet) */
+	bool		amcanbackward;
 	/* AM's cost estimator */
 	/* Rather than include amapi.h here, we declare amcostestimate like this */
 	void		(*amcostestimate) (struct PlannerInfo *, struct IndexPath *, double, Cost *, Cost *, Selectivity *, double *, double *) pg_node_attr(read_write_ignore);

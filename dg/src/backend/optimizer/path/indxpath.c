@@ -872,9 +872,10 @@ static List *build_index_paths(PlannerInfo *root, RelOptInfo *rel,
   }
 
   /*
-   * 5. If the index is ordered, a backwards scan might be interesting.
+   * 5. If the index is ordered, a backwards scan might be interesting, if
+   * the index can be scanned backwards.
    */
-  if (index_is_ordered && pathkeys_possibly_useful) {
+  if (index_is_ordered && pathkeys_possibly_useful && index->amcanbackward) {
     index_pathkeys = build_index_pathkeys(root, index, BackwardScanDirection);
     useful_pathkeys = truncate_useless_pathkeys(root, rel, index_pathkeys);
     if (useful_pathkeys != NIL) {

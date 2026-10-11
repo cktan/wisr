@@ -934,19 +934,16 @@ bool op_is_safe_index_member(Oid opno) {
  */
 Oid get_opfamily_proc(Oid opfamily, Oid lefttype, Oid righttype,
                       int16 procnum) {
-  HeapTuple tp;
-  Form_pg_amproc amproc_tup;
-  RegProcedure result;
+  int nrows;
+  const cat_amproc_t *rows = cat_amprocs(&nrows);
 
-  tp = SearchSysCache4(AMPROCNUM, ObjectIdGetDatum(opfamily),
-                       ObjectIdGetDatum(lefttype), ObjectIdGetDatum(righttype),
-                       Int16GetDatum(procnum));
-  if (!HeapTupleIsValid(tp))
-    return InvalidOid;
-  amproc_tup = (Form_pg_amproc)GETSTRUCT(tp);
-  result = amproc_tup->amproc;
-  ReleaseSysCache(tp);
-  return result;
+  /* Every support function is compiled in (catalog/cat_builtin.h). */
+  for (int i = 0; i < nrows; i++)
+    if (rows[i].amprocfamily == opfamily &&
+        rows[i].amproclefttype == lefttype &&
+        rows[i].amprocrighttype == righttype && rows[i].amprocnum == procnum)
+      return rows[i].amproc;
+  return InvalidOid;
 }
 
 /*				---------- ATTRIBUTE CACHES ----------
@@ -1297,18 +1294,11 @@ char *get_language_name(Oid langoid, bool missing_ok) {
  *		Returns the OID of the operator family the opclass belongs to.
  */
 Oid get_opclass_family(Oid opclass) {
-  HeapTuple tp;
-  Form_pg_opclass cla_tup;
-  Oid result;
+  const cat_opclass_t *cla_tup = cat_opclass(opclass);
 
-  tp = SearchSysCache1(CLAOID, ObjectIdGetDatum(opclass));
-  if (!HeapTupleIsValid(tp))
+  if (cla_tup == NULL)
     elog(ERROR, "cache lookup failed for opclass %u", opclass);
-  cla_tup = (Form_pg_opclass)GETSTRUCT(tp);
-
-  result = cla_tup->opcfamily;
-  ReleaseSysCache(tp);
-  return result;
+  return cla_tup->opcfamily;
 }
 
 /*
@@ -1317,18 +1307,11 @@ Oid get_opclass_family(Oid opclass) {
  *		Returns the OID of the datatype the opclass indexes.
  */
 Oid get_opclass_input_type(Oid opclass) {
-  HeapTuple tp;
-  Form_pg_opclass cla_tup;
-  Oid result;
+  const cat_opclass_t *cla_tup = cat_opclass(opclass);
 
-  tp = SearchSysCache1(CLAOID, ObjectIdGetDatum(opclass));
-  if (!HeapTupleIsValid(tp))
+  if (cla_tup == NULL)
     elog(ERROR, "cache lookup failed for opclass %u", opclass);
-  cla_tup = (Form_pg_opclass)GETSTRUCT(tp);
-
-  result = cla_tup->opcintype;
-  ReleaseSysCache(tp);
-  return result;
+  return cla_tup->opcintype;
 }
 
 /*
@@ -1339,20 +1322,12 @@ Oid get_opclass_input_type(Oid opclass) {
  */
 bool get_opclass_opfamily_and_input_type(Oid opclass, Oid *opfamily,
                                          Oid *opcintype) {
-  HeapTuple tp;
-  Form_pg_opclass cla_tup;
+  const cat_opclass_t *cla_tup = cat_opclass(opclass);
 
-  tp = SearchSysCache1(CLAOID, ObjectIdGetDatum(opclass));
-  if (!HeapTupleIsValid(tp))
+  if (cla_tup == NULL)
     return false;
-
-  cla_tup = (Form_pg_opclass)GETSTRUCT(tp);
-
   *opfamily = cla_tup->opcfamily;
   *opcintype = cla_tup->opcintype;
-
-  ReleaseSysCache(tp);
-
   return true;
 }
 
@@ -1386,39 +1361,24 @@ Oid get_opclass_method(Oid opclass) {
  *		Returns the OID of the index access method the opfamily is for.
  */
 Oid get_opfamily_method(Oid opfid) {
-  HeapTuple tp;
-  Form_pg_opfamily opfform;
-  Oid result;
+  /* Every operator family is compiled in (catalog/cat_builtin.h). */
+  const cat_opfamily_t *opfform = cat_opfamily(opfid);
 
-  tp = SearchSysCache1(OPFAMILYOID, ObjectIdGetDatum(opfid));
-  if (!HeapTupleIsValid(tp))
+  if (opfform == NULL)
     elog(ERROR, "cache lookup failed for operator family %u", opfid);
-  opfform = (Form_pg_opfamily)GETSTRUCT(tp);
-
-  result = opfform->opfmethod;
-  ReleaseSysCache(tp);
-  return result;
+  return opfform->opfmethod;
 }
 
 char *get_opfamily_name(Oid opfid, bool missing_ok) {
-  HeapTuple tup;
-  char *opfname;
-  Form_pg_opfamily opfform;
+  /* Every operator family is compiled in (catalog/cat_builtin.h). */
+  const cat_opfamily_t *opfform = cat_opfamily(opfid);
 
-  tup = SearchSysCache1(OPFAMILYOID, ObjectIdGetDatum(opfid));
-
-  if (!HeapTupleIsValid(tup)) {
+  if (opfform == NULL) {
     if (!missing_ok)
       elog(ERROR, "cache lookup failed for operator family %u", opfid);
     return NULL;
   }
-
-  opfform = (Form_pg_opfamily)GETSTRUCT(tup);
-  opfname = pstrdup(NameStr(opfform->opfname));
-
-  ReleaseSysCache(tup);
-
-  return opfname;
+  return pstrdup(opfform->opfname);
 }
 
 /*				---------- OPERATOR CACHE ----------

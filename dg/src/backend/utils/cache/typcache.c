@@ -48,6 +48,8 @@
 #include "access/nbtree.h"
 #include "access/relation.h"
 #include "access/table.h"
+#include "catalog/cat_builtin.h"
+#include "common/hashfn.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_constraint.h"
 #include "catalog/pg_enum.h"
@@ -227,11 +229,12 @@ static void insert_rel_type_cache_if_needed(TypeCacheEntry *typentry);
 static void delete_rel_type_cache_if_needed(TypeCacheEntry *typentry);
 
 /*
- * Hash function compatible with one-arg system cache hash function.
+ * Hash function of a type's oid.  It was the one-arg system cache's, for
+ * pg_type's invalidations; every type is compiled in, and none comes.
  */
 static uint32 type_cache_syshash(const void *key, Size keysize) {
   Assert(keysize == sizeof(Oid));
-  return GetSysCacheHashValue1(TYPEOID, ObjectIdGetDatum(*(const Oid *)key));
+  return hash_bytes_uint32(*(const Oid *)key);
 }
 
 /*
@@ -329,18 +332,15 @@ TypeCacheEntry *lookup_type_cache(Oid type_id, int flags) {
      * user-facing error, since some code paths such as domain_in() allow
      * this function to be reached with a user-supplied OID.
      */
-    HeapTuple tp;
-    Form_pg_type typtup;
+    const cat_type_t *typtup = cat_type(type_id);
 
-    tp = SearchSysCache1(TYPEOID, ObjectIdGetDatum(type_id));
-    if (!HeapTupleIsValid(tp))
+    /* Every type is compiled in (catalog/cat_builtin.h). */
+    if (typtup == NULL)
       ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
                       errmsg("type with OID %u does not exist", type_id)));
-    typtup = (Form_pg_type)GETSTRUCT(tp);
     if (!typtup->typisdefined)
       ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
-                      errmsg("type \"%s\" is only a shell",
-                             NameStr(typtup->typname))));
+                      errmsg("type \"%s\" is only a shell", typtup->typname)));
 
     /* Now make the typcache entry */
     typentry = (TypeCacheEntry *)hash_search(TypeCacheHash, &type_id,
@@ -371,25 +371,20 @@ TypeCacheEntry *lookup_type_cache(Oid type_id, int flags) {
       typentry->nextDomain = firstDomainTypeEntry;
       firstDomainTypeEntry = typentry;
     }
-
-    ReleaseSysCache(tp);
   } else if (!(typentry->flags & TCFLAGS_HAVE_PG_TYPE_DATA)) {
     /*
      * We have an entry, but its pg_type row got changed, so reload the
      * data obtained directly from pg_type.
      */
-    HeapTuple tp;
-    Form_pg_type typtup;
+    const cat_type_t *typtup = cat_type(type_id);
 
-    tp = SearchSysCache1(TYPEOID, ObjectIdGetDatum(type_id));
-    if (!HeapTupleIsValid(tp))
+    /* Every type is compiled in (catalog/cat_builtin.h). */
+    if (typtup == NULL)
       ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
                       errmsg("type with OID %u does not exist", type_id)));
-    typtup = (Form_pg_type)GETSTRUCT(tp);
     if (!typtup->typisdefined)
       ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
-                      errmsg("type \"%s\" is only a shell",
-                             NameStr(typtup->typname))));
+                      errmsg("type \"%s\" is only a shell", typtup->typname)));
 
     /*
      * Keep this part in sync with the code above.  Many of these fields
@@ -406,8 +401,6 @@ TypeCacheEntry *lookup_type_cache(Oid type_id, int flags) {
     typentry->typarray = typtup->typarray;
     typentry->typcollation = typtup->typcollation;
     typentry->flags |= TCFLAGS_HAVE_PG_TYPE_DATA;
-
-    ReleaseSysCache(tp);
   }
 
   /*
