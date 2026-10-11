@@ -8,7 +8,6 @@
 
 #include "db.h"
 #include "env.h"
-#include "oom.h"
 #include "session.h"
 #include "sm0_codec.h"
 #include "sm1.h"
@@ -52,7 +51,7 @@ TEST_CASE("sm1_init refuses a missing, non-directory, or empty homedir") {
 namespace {
 
 /* A host process's own out-of-memory policy, for the test below. */
-void host_oom_handler() { throw std::bad_alloc(); }
+void host_oom_handler() { abort(); }
 
 /*
  * Run `test_sm1 --oom-child homedir` and wait for it; returns its
@@ -89,15 +88,14 @@ int run_oom_child(const char *homedir, std::string &err) {
 
 /*
  * The out-of-memory child: attach, so sm1's new-handler is
- * installed, then run out of memory inside sm1. Never returns.
+ * installed, then run out of memory. Never returns.
  */
 int oom_child_main(const char *homedir) {
   sm1::env_t *env;
   if (sm1::attach(homedir, env) != 0) {
     return 2;
   }
-  // Fail an allocation while marked inside sm1.
-  wisr::in_sm1_t in_sm1;
+  // Fail an allocation: the handler runs as operator new would.
   std::get_new_handler()();
   return 3;
 }
@@ -123,29 +121,11 @@ TEST_CASE(
   std::set_new_handler(saved);
 }
 
-TEST_CASE("running out of memory outside sm1 throws, for sm2 to report") {
-  // Verify the handler sm1::attach installs leaves a failure
-  // outside sm1 to the caller (the top-level DESIGN.md §5).
-  // 1. Attach with no new-handler set, so sm1's is installed.
-  // 2. Outside any sm1 call, the handler throws std::bad_alloc.
-  // 3. Restore the handler the test binary had.
-  std::new_handler saved = std::get_new_handler();
-  std::set_new_handler(nullptr);
-  {
-    home_t home;
-    std::new_handler h = std::get_new_handler();
-    REQUIRE(h != nullptr);
-    CHECK_THROWS_AS(h(), std::bad_alloc);
-  }
-  std::set_new_handler(saved);
-}
-
-TEST_CASE("running out of memory inside sm1 aborts the process, loudly") {
-  // Verify the handler is fatal on a thread inside sm1, in a child
-  // process, since it aborts.
+TEST_CASE("running out of memory aborts the process, loudly") {
+  // Verify the handler is fatal, in a child process, since it
+  // aborts.
   // 1. Initialize a home directory for the child.
-  // 2. The child attaches, marks itself inside sm1, and runs out
-  //    of memory.
+  // 2. The child attaches and runs out of memory.
   // 3. It dies of SIGABRT, having said *** FATAL *** on stderr.
   tmpdir_t tmp;
   REQUIRE(sm1::init(tmp.path()) == 0);

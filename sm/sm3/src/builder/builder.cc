@@ -220,7 +220,7 @@ void work() {
       try {
         build_one(task.cat, ws, task.table, task.index, batch_rows);
       } catch (...) {
-        // Out of memory, most likely: give the build up.
+        // The worker has no caller to pass it to: give the build up.
         sm3::abort(ws);
       }
     }
@@ -276,21 +276,19 @@ namespace sm3 {
 /* Attach a catalog; see sm3.h. */
 int builder_attach(catalog_t *cat, std::function<sm1::session_t *()> open,
                    size_t batch_rows) {
-  return catch_nomem([&] {
-    if (!cat || !open || batch_rows == 0) {
-      return sm1::seterr(sm1::SM_ERR_INVALID,
-                         "builder: no catalog, no way to open a session, or "
-                         "no rows");
+  if (!cat || !open || batch_rows == 0) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       "builder: no catalog, no way to open a session, or "
+                       "no rows");
+  }
+  {
+    std::lock_guard lock(g_builder.mu);
+    if (g_builder.catalogs.count(cat)) {
+      return sm1::seterr(sm1::SM_ERR_INVALID, "builder: attached already");
     }
-    {
-      std::lock_guard lock(g_builder.mu);
-      if (g_builder.catalogs.count(cat)) {
-        return sm1::seterr(sm1::SM_ERR_INVALID, "builder: attached already");
-      }
-      g_builder.catalogs[cat] = {std::move(open), batch_rows};
-    }
-    return 0;
-  });
+    g_builder.catalogs[cat] = {std::move(open), batch_rows};
+  }
+  return 0;
 }
 
 /* Detach a catalog and wait for its builds to end; see sm3.h. */
@@ -342,7 +340,8 @@ void builder_enqueue(catalog_t *cat, uint64_t table, uint64_t index) {
   try {
     enqueue(cat, table, index);
   } catch (...) {
-    // Out of memory: it stays pending, for the next attach to find.
+    // A worker that cannot start: the index stays pending, for the
+    // next attach to find.
   }
 }
 
@@ -360,68 +359,65 @@ bool builder_building(const catalog_t *cat, uint64_t oid) {
 
 /* Wait for a build to end; see sm3.h. */
 int builder_wait(session_t *session, uint64_t table, uint64_t oid) {
-  return catch_nomem([&] {
-    if (session->in_txn) {
-      return sm1::seterr(sm1::SM_ERR_INTRANS,
-                         "index wait: inside a transaction");
+  if (session->in_txn) {
+    return sm1::seterr(sm1::SM_ERR_INTRANS, "index wait: inside a transaction");
+  }
+  const catalog_t *cat = session->cat;
+  builder_t &b = g_builder;
+  for (;;) {
+    // The count first: a change after it wakes the wait below.
+    uint64_t gen;
+    bool active;
+    {
+      std::lock_guard lock(b.mu);
+      gen = b.gen;
+      active = b.active.count({cat, oid}) != 0;
     }
-    const catalog_t *cat = session->cat;
-    builder_t &b = g_builder;
-    for (;;) {
-      // The count first: a change after it wakes the wait below.
-      uint64_t gen;
-      bool active;
-      {
-        std::lock_guard lock(b.mu);
-        gen = b.gen;
-        active = b.active.count({cat, oid}) != 0;
-      }
-      std::shared_ptr<const table_def_t> d = cat_get_table(cat, table);
-      const index_def_t *x = nullptr;
-      if (d) {
-        for (const index_def_t &i : d->indexes) {
-          if (i.oid == oid) {
-            x = &i;
-          }
+    std::shared_ptr<const table_def_t> d = cat_get_table(cat, table);
+    const index_def_t *x = nullptr;
+    if (d) {
+      for (const index_def_t &i : d->indexes) {
+        if (i.oid == oid) {
+          x = &i;
         }
       }
-      if (!x) {
-        return sm1::seterr(sm1::SM_ERR_NOTFOUND,
-                           "index wait: no index " + std::to_string(oid) +
-                               " on table " + std::to_string(table));
-      }
-      index_status_t st = cat_get_index_state(cat, oid);
-      if (st.state == index_state_t::valid) {
-        return 0;
-      }
-      if (st.state == index_state_t::failed) {
-        // The build's own error, as the index's state keeps it.
-        if (st.error != sm1::SM_OK) {
-          return sm1::seterr(st.error, st.reason);
-        }
-        return sm1::seterr(sm1::SM_ERR_INVALID, "index wait: the build failed");
-      }
-      std::unique_lock lock(b.mu);
-      // An index is queued before it is published, so one seen
-      // pending with no build has none coming.
-      if (b.gen == gen && !active) {
-        return sm1::seterr(sm1::SM_ERR_INVALID,
-                           "index wait: no build of the index is running");
-      }
-      // Until something changes, or an interrupt to this thread
-      // ends the wait; the bit stays, for the caller to take.
-      std::pair<builder_t *, uint64_t> at{&b, gen};
-      auto moved = [](void *arg) {
-        auto *p = static_cast<std::pair<builder_t *, uint64_t> *>(arg);
-        return p->first->gen != p->second;
-      };
-      if (sm_wait(&lock, &b.cv, moved, &at, sm_wait_mask(), SM_FOREVER) ==
-          SM_WAIT_INTERRUPTED) {
-        return sm1::seterr(sm1::SM_ERR_INTERRUPTED,
-                           "index wait: the wait was interrupted");
-      }
     }
-  });
+    if (!x) {
+      return sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                         "index wait: no index " + std::to_string(oid) +
+                             " on table " + std::to_string(table));
+    }
+    index_status_t st = cat_get_index_state(cat, oid);
+    if (st.state == index_state_t::valid) {
+      return 0;
+    }
+    if (st.state == index_state_t::failed) {
+      // The build's own error, as the index's state keeps it.
+      if (st.error != sm1::SM_OK) {
+        return sm1::seterr(st.error, st.reason);
+      }
+      return sm1::seterr(sm1::SM_ERR_INVALID, "index wait: the build failed");
+    }
+    std::unique_lock lock(b.mu);
+    // An index is queued before it is published, so one seen
+    // pending with no build has none coming.
+    if (b.gen == gen && !active) {
+      return sm1::seterr(sm1::SM_ERR_INVALID,
+                         "index wait: no build of the index is running");
+    }
+    // Until something changes, or an interrupt to this thread
+    // ends the wait; the bit stays, for the caller to take.
+    std::pair<builder_t *, uint64_t> at{&b, gen};
+    auto moved = [](void *arg) {
+      auto *p = static_cast<std::pair<builder_t *, uint64_t> *>(arg);
+      return p->first->gen != p->second;
+    };
+    if (sm_wait(&lock, &b.cv, moved, &at, sm_wait_mask(), SM_FOREVER) ==
+        SM_WAIT_INTERRUPTED) {
+      return sm1::seterr(sm1::SM_ERR_INTERRUPTED,
+                         "index wait: the wait was interrupted");
+    }
+  }
 }
 
 } // namespace sm3

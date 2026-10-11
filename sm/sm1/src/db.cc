@@ -9,7 +9,6 @@
 #include "env.h"
 #include "error.h"
 #include "log.h"
-#include "oom.h"
 #include "session.h"
 #include "sm0_codec.h"
 #include "sm0_defer.h"
@@ -852,8 +851,6 @@ wisr::db_t::~db_t() {
 /* Create the database dbname. */
 int sm1::mkdb(sm1::env_t *env, std::string_view dbname_arg,
               const sm1::options_t *opt) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   // Take the name as a C string, as the engine uses it.
   std::string dbname_str;
   if (copy_name(dbname_arg, "database", dbname_str) != 0) {
@@ -865,8 +862,6 @@ int sm1::mkdb(sm1::env_t *env, std::string_view dbname_arg,
 
 /* Delete the database dbname and all of its data. */
 int sm1::rmdb(sm1::env_t *env, std::string_view dbname_arg) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   // Take the name as a C string, as the engine uses it.
   std::string dbname_str;
   if (copy_name(dbname_arg, "database", dbname_str) != 0) {
@@ -878,15 +873,11 @@ int sm1::rmdb(sm1::env_t *env, std::string_view dbname_arg) {
 
 /* List the databases in the home directory, in bytewise order. */
 int sm1::lsdb(sm1::env_t *env, std::vector<std::string> &out) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   return ::lsdb(env, out);
 }
 
 /* The dbid sm1::mkdb gave the database dbname. */
 int sm1::dbid(sm1::env_t *env, std::string_view dbname_arg, uint64_t *out) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   // Take the name as a C string, as the engine uses it.
   std::string dbname_str;
   if (copy_name(dbname_arg, "database", dbname_str) != 0) {

@@ -43,46 +43,44 @@ namespace sm2 {
 int encode_key(std::span<const key_column_t> cols,
                std::span<const datum_t> datums, std::span<const bool> isnull,
                std::string &key) {
-  return catch_nomem([&] {
-    if (cols.size() != datums.size() || cols.size() != isnull.size()) {
-      return bad_columns("a datum and null flag for every column, no more");
+  if (cols.size() != datums.size() || cols.size() != isnull.size()) {
+    return bad_columns("a datum and null flag for every column, no more");
+  }
+  size_t start = key.size();
+  for (size_t i = 0; i < cols.size(); i++) {
+    const key_column_t &col = cols[i];
+    if (col.type == nullptr) {
+      key.resize(start);
+      return bad_columns("a column without a type");
     }
-    size_t start = key.size();
-    for (size_t i = 0; i < cols.size(); i++) {
-      const key_column_t &col = cols[i];
-      if (col.type == nullptr) {
+    // The marker, then the type's own key.
+    size_t pos = key.size();
+    if (isnull[i]) {
+      key += null_marker(col);
+    } else {
+      // The type's key is over the bytes the datum_t stands for: a
+      // variable-width type's payload, past its varlena header,
+      // as every type function takes it (SM2_DESIGN.md §2).
+      std::string_view bytes;
+      if (datum_bytes(col.type, col.typmod, datums[i], bytes) != 0) {
         key.resize(start);
-        return bad_columns("a column without a type");
+        return -1;
       }
-      // The marker, then the type's own key.
-      size_t pos = key.size();
-      if (isnull[i]) {
-        key += null_marker(col);
-      } else {
-        // The type's key is over the bytes the datum_t stands for: a
-        // variable-width type's payload, past its varlena header,
-        // as every type function takes it (SM2_DESIGN.md §2).
-        std::string_view bytes;
-        if (datum_bytes(col.type, col.typmod, datums[i], bytes) != 0) {
-          key.resize(start);
-          return -1;
-        }
-        if (col.type->len < 0) {
-          bytes = varlena_payload(bytes);
-        }
-        key += value_mark;
-        if (col.type->key_encode(bytes, col.typmod, col.collation, key) != 0) {
-          key.resize(start);
-          return -1;
-        }
+      if (col.type->len < 0) {
+        bytes = varlena_payload(bytes);
       }
-      // A descending column is the ascending one inverted.
-      if (col.desc) {
-        invert(key, pos);
+      key += value_mark;
+      if (col.type->key_encode(bytes, col.typmod, col.collation, key) != 0) {
+        key.resize(start);
+        return -1;
       }
     }
-    return 0;
-  });
+    // A descending column is the ascending one inverted.
+    if (col.desc) {
+      invert(key, pos);
+    }
+  }
+  return 0;
 }
 
 /* encode_key with the columns' bytes held to max_len; see sm2.h. */
@@ -90,29 +88,26 @@ int encode_key(std::span<const key_column_t> cols,
                std::span<const datum_t> datums, std::span<const bool> isnull,
                size_t max_len, overflow_t overflow, std::string &key,
                bool &cut) {
-  return catch_nomem([&] {
-    cut = false;
-    size_t start = key.size();
-    if (encode_key(cols, datums, isnull, key) != 0) {
-      return -1;
-    }
-    if (key.size() - start <= max_len) {
-      return 0;
-    }
-    // Refuse a key that must be exact.
-    if (overflow == overflow_t::refuse) {
-      size_t len = key.size() - start;
-      key.resize(start);
-      return sm1::seterr(sm1::SM_ERR_KEYTOOLONG,
-                         "key of " + std::to_string(len) +
-                             " bytes exceeds the " + std::to_string(max_len) +
-                             " its columns may use");
-    }
-    // Cut the rest, keeping the order as a coarsening.
-    key.resize(start + max_len);
-    cut = true;
+  cut = false;
+  size_t start = key.size();
+  if (encode_key(cols, datums, isnull, key) != 0) {
+    return -1;
+  }
+  if (key.size() - start <= max_len) {
     return 0;
-  });
+  }
+  // Refuse a key that must be exact.
+  if (overflow == overflow_t::refuse) {
+    size_t len = key.size() - start;
+    key.resize(start);
+    return sm1::seterr(sm1::SM_ERR_KEYTOOLONG,
+                       "key of " + std::to_string(len) + " bytes exceeds the " +
+                           std::to_string(max_len) + " its columns may use");
+  }
+  // Cut the rest, keeping the order as a coarsening.
+  key.resize(start + max_len);
+  cut = true;
+  return 0;
 }
 
 /* Decode a key encode_key made under cols, every byte of it. */
@@ -131,42 +126,40 @@ int decode_key(std::span<const key_column_t> cols, std::string_view key,
 /* Decode the columns at the front of key, advancing key past them. */
 int decode_key_front(std::span<const key_column_t> cols, std::string_view &key,
                      std::vector<std::optional<std::string>> &datums) {
-  return catch_nomem([&] {
-    datums.clear();
-    for (const key_column_t &col : cols) {
-      if (col.type == nullptr) {
-        return bad_columns("a column without a type");
-      }
-      // A descending column is read from an inverted copy of what
-      // is left, and the key advances by what that copy used.
-      std::string inverted;
-      std::string_view rest = key;
-      if (col.desc) {
-        inverted.assign(key);
-        invert(inverted, 0);
-        rest = inverted;
-      }
-      size_t before = rest.size();
-      if (rest.empty()) {
-        return bad_key(col.type->name);
-      }
-      char marker = rest[0];
-      rest.remove_prefix(1);
-      if (marker == null_marker(col)) {
-        datums.emplace_back(std::nullopt);
-      } else if (marker == value_mark) {
-        std::string datum;
-        if (col.type->key_decode(rest, col.typmod, col.collation, datum) != 0) {
-          return -1;
-        }
-        datums.emplace_back(std::move(datum));
-      } else {
-        return bad_key(col.type->name);
-      }
-      key.remove_prefix(before - rest.size());
+  datums.clear();
+  for (const key_column_t &col : cols) {
+    if (col.type == nullptr) {
+      return bad_columns("a column without a type");
     }
-    return 0;
-  });
+    // A descending column is read from an inverted copy of what
+    // is left, and the key advances by what that copy used.
+    std::string inverted;
+    std::string_view rest = key;
+    if (col.desc) {
+      inverted.assign(key);
+      invert(inverted, 0);
+      rest = inverted;
+    }
+    size_t before = rest.size();
+    if (rest.empty()) {
+      return bad_key(col.type->name);
+    }
+    char marker = rest[0];
+    rest.remove_prefix(1);
+    if (marker == null_marker(col)) {
+      datums.emplace_back(std::nullopt);
+    } else if (marker == value_mark) {
+      std::string datum;
+      if (col.type->key_decode(rest, col.typmod, col.collation, datum) != 0) {
+        return -1;
+      }
+      datums.emplace_back(std::move(datum));
+    } else {
+      return bad_key(col.type->name);
+    }
+    key.remove_prefix(before - rest.size());
+  }
+  return 0;
 }
 
 /*

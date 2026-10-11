@@ -313,15 +313,13 @@ namespace sm3 {
 int cat_open(sm1::env_t *env, std::string_view dbname, catalog_t *&out) {
   std::unique_ptr<catalog_t> cat;
   int rc = in_own_txn(env, dbname, nullptr, [&](sm1::session_t *session) {
-    return catch_nomem([&] {
-      sm2::catkv_t *raw = nullptr;
-      if (sm2::catkv_open(session, raw) != 0) {
-        return -1;
-      }
-      kv_ptr kv(raw, &sm2::catkv_close);
-      cat = std::make_unique<catalog_t>();
-      return load(kv.get(), *cat);
-    });
+    sm2::catkv_t *raw = nullptr;
+    if (sm2::catkv_open(session, raw) != 0) {
+      return -1;
+    }
+    kv_ptr kv(raw, &sm2::catkv_close);
+    cat = std::make_unique<catalog_t>();
+    return load(kv.get(), *cat);
   });
   // Hand it over only once its transaction has committed.
   if (rc == 0) {

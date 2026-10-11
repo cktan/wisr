@@ -54,11 +54,11 @@ template <typename T> int int_cmp(std::string_view a, std::string_view b) {
 
 /* Parse an int2's canonical text. */
 int int2_in(std::string_view t, int32_t, std::string &d) {
-  return sm2::catch_nomem([&] { return int_in<int16_t>("int2", t, d); });
+  return int_in<int16_t>("int2", t, d);
 }
 /* Print an int2 datum. */
 int int2_out(std::string_view d, int32_t, std::string &t) {
-  return sm2::catch_nomem([&] { return int_out<int16_t>("int2", d, t); });
+  return int_out<int16_t>("int2", d, t);
 }
 /* Order two int2 datums. */
 int int2_cmp(std::string_view a, std::string_view b, int32_t) {
@@ -77,11 +77,11 @@ int int2_unkey(std::string_view &k, int32_t, const sm2::collation_t *,
 
 /* Parse an int4's canonical text. */
 int int4_in(std::string_view t, int32_t, std::string &d) {
-  return sm2::catch_nomem([&] { return int_in<int32_t>("int4", t, d); });
+  return int_in<int32_t>("int4", t, d);
 }
 /* Print an int4 datum. */
 int int4_out(std::string_view d, int32_t, std::string &t) {
-  return sm2::catch_nomem([&] { return int_out<int32_t>("int4", d, t); });
+  return int_out<int32_t>("int4", d, t);
 }
 /* Order two int4 datums. */
 int int4_cmp(std::string_view a, std::string_view b, int32_t) {
@@ -100,11 +100,11 @@ int int4_unkey(std::string_view &k, int32_t, const sm2::collation_t *,
 
 /* Parse an int8's canonical text. */
 int int8_in(std::string_view t, int32_t, std::string &d) {
-  return sm2::catch_nomem([&] { return int_in<int64_t>("int8", t, d); });
+  return int_in<int64_t>("int8", t, d);
 }
 /* Print an int8 datum. */
 int int8_out(std::string_view d, int32_t, std::string &t) {
-  return sm2::catch_nomem([&] { return int_out<int64_t>("int8", d, t); });
+  return int_out<int64_t>("int8", d, t);
 }
 /* Order two int8 datums. */
 int int8_cmp(std::string_view a, std::string_view b, int32_t) {

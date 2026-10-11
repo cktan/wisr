@@ -351,25 +351,23 @@ void close_rels(table_t *table) {
 /* Lock the table, then open its heap and every index; see sm3.h. */
 int tbl_open(session_t *session, uint64_t oid, sm1::lockmode_t mode,
              table_t *&out) {
-  return catch_nomem([&] {
-    std::unique_ptr<table_t, void (*)(table_t *)> t(new table_t, tbl_close);
-    // Take the table-oid lock, so the definition holds to commit.
-    if (cat_lock_table(session, oid, mode, t->def) != 0) {
-      return -1;
-    }
-    t->session = session;
-    t->writable = covers_write(mode);
-    t->exclusive = mode == sm1::SM_LOCKMODE_EX;
-    // No committed definition: this transaction made the table, and
-    // no other can see it or its rows.
-    t->fresh = cat_get_table(session->cat, oid) == nullptr;
-    load_states(t.get());
-    if (open_rels(t.get()) != 0) {
-      return -1;
-    }
-    out = t.release();
-    return 0;
-  });
+  std::unique_ptr<table_t, void (*)(table_t *)> t(new table_t, tbl_close);
+  // Take the table-oid lock, so the definition holds to commit.
+  if (cat_lock_table(session, oid, mode, t->def) != 0) {
+    return -1;
+  }
+  t->session = session;
+  t->writable = covers_write(mode);
+  t->exclusive = mode == sm1::SM_LOCKMODE_EX;
+  // No committed definition: this transaction made the table, and
+  // no other can see it or its rows.
+  t->fresh = cat_get_table(session->cat, oid) == nullptr;
+  load_states(t.get());
+  if (open_rels(t.get()) != 0) {
+    return -1;
+  }
+  out = t.release();
+  return 0;
 }
 
 /* Close the heap and the indexes; the table-oid lock stays to commit. */
@@ -405,134 +403,128 @@ bool tbl_index_usable(const table_t *table, uint64_t index) {
 /* Insert the row, then its entry in every index; see sm3.h. */
 int tbl_insert(table_t *table, std::span<const sm2::datum_t> values,
                std::span<const bool> isnull, uint64_t &rowno) {
-  return catch_nomem([&] {
-    if (need_writable(table) != 0 || need_not_null(table, isnull) != 0) {
+  if (need_writable(table) != 0 || need_not_null(table, isnull) != 0) {
+    return -1;
+  }
+  uint64_t r = 0;
+  if (sm2::rel_insert(table->rel, values, isnull, r) != 0) {
+    return -1;
+  }
+  vals_t row{values, isnull};
+  for (size_t i = 0; i < table->indexes.size(); i++) {
+    if (!maintained(table, i)) {
+      continue;
+    }
+    entry_t e;
+    if (make_entry(table, i, row, e) != 0 ||
+        (e.belongs && add_entry(table, i, e, row, r) != 0)) {
       return -1;
     }
-    uint64_t r = 0;
-    if (sm2::rel_insert(table->rel, values, isnull, r) != 0) {
-      return -1;
-    }
-    vals_t row{values, isnull};
-    for (size_t i = 0; i < table->indexes.size(); i++) {
-      if (!maintained(table, i)) {
-        continue;
-      }
-      entry_t e;
-      if (make_entry(table, i, row, e) != 0 ||
-          (e.belongs && add_entry(table, i, e, row, r) != 0)) {
-        return -1;
-      }
-    }
-    rowno = r;
-    return 0;
-  });
+  }
+  rowno = r;
+  return 0;
 }
 
 /* Replace the row, then fix each index it changed; see sm3.h. */
 int tbl_update(table_t *table, uint64_t rowno,
                std::span<const sm2::datum_t> values,
                std::span<const bool> isnull, std::string *old) {
-  return catch_nomem([&] {
-    if (need_writable(table) != 0 || need_not_null(table, isnull) != 0) {
+  if (need_writable(table) != 0 || need_not_null(table, isnull) != 0) {
+    return -1;
+  }
+  std::string_view image;
+  if (sm2::rel_update(table->rel, rowno, values, isnull, &image) != 0) {
+    return -1;
+  }
+  // Copy the old image: it views session memory that the index
+  // calls below reuse.
+  std::string copy(image);
+  const table_def_t &def = *table->def;
+  deformed_t before(def.schema.size());
+  if (!table->indexes.empty() &&
+      sm2::tup_deform(def.desc, copy, before.d,
+                      {before.null.get(), before.n}) != 0) {
+    return -1;
+  }
+  vals_t after{values, isnull};
+  for (size_t i = 0; i < table->indexes.size(); i++) {
+    if (!maintained(table, i)) {
+      continue;
+    }
+    const index_def_t &x = def.indexes[i];
+    // No column the index depends on changed: leave it alone,
+    // and the evaluator unasked.
+    int same = unchanged(def, x, before.row(), after);
+    if (same < 0) {
       return -1;
     }
-    std::string_view image;
-    if (sm2::rel_update(table->rel, rowno, values, isnull, &image) != 0) {
+    if (same) {
+      continue;
+    }
+    entry_t was, is;
+    if (make_entry(table, i, before.row(), was) != 0 ||
+        make_entry(table, i, after, is) != 0) {
       return -1;
     }
-    // Copy the old image: it views session memory that the index
-    // calls below reuse.
-    std::string copy(image);
-    const table_def_t &def = *table->def;
-    deformed_t before(def.schema.size());
-    if (!table->indexes.empty() &&
-        sm2::tup_deform(def.desc, copy, before.d,
-                        {before.null.get(), before.n}) != 0) {
-      return -1;
-    }
-    vals_t after{values, isnull};
-    for (size_t i = 0; i < table->indexes.size(); i++) {
-      if (!maintained(table, i)) {
+    // A column it reads changed, yet the entry may not have: the
+    // row is in the index both times, under an equal key, with
+    // the same INCLUDE columns.
+    if (!x.eval.empty() && was.belongs && is.belongs) {
+      int kept = keys_equal(x, was, is);
+      if (kept == 1) {
+        kept = cols_same(def, x.include_attnums, before.row(), after, false);
+      }
+      if (kept < 0) {
+        return -1;
+      }
+      if (kept) {
         continue;
       }
-      const index_def_t &x = def.indexes[i];
-      // No column the index depends on changed: leave it alone,
-      // and the evaluator unasked.
-      int same = unchanged(def, x, before.row(), after);
-      if (same < 0) {
-        return -1;
-      }
-      if (same) {
-        continue;
-      }
-      entry_t was, is;
-      if (make_entry(table, i, before.row(), was) != 0 ||
-          make_entry(table, i, after, is) != 0) {
-        return -1;
-      }
-      // A column it reads changed, yet the entry may not have: the
-      // row is in the index both times, under an equal key, with
-      // the same INCLUDE columns.
-      if (!x.eval.empty() && was.belongs && is.belongs) {
-        int kept = keys_equal(x, was, is);
-        if (kept == 1) {
-          kept = cols_same(def, x.include_attnums, before.row(), after, false);
-        }
-        if (kept < 0) {
-          return -1;
-        }
-        if (kept) {
-          continue;
-        }
-      }
-      if ((was.belongs && remove_entry(table, i, was, rowno) != 0) ||
-          (is.belongs && add_entry(table, i, is, after, rowno) != 0)) {
-        return -1;
-      }
     }
-    if (old) {
-      *old = std::move(copy);
+    if ((was.belongs && remove_entry(table, i, was, rowno) != 0) ||
+        (is.belongs && add_entry(table, i, is, after, rowno) != 0)) {
+      return -1;
     }
-    return 0;
-  });
+  }
+  if (old) {
+    *old = std::move(copy);
+  }
+  return 0;
 }
 
 /* Delete the row, then its entry in every index; see sm3.h. */
 int tbl_delete(table_t *table, uint64_t rowno, std::string *old) {
-  return catch_nomem([&] {
-    if (need_writable(table) != 0) {
+  if (need_writable(table) != 0) {
+    return -1;
+  }
+  std::string_view image;
+  if (sm2::rel_delete(table->rel, rowno, &image) != 0) {
+    return -1;
+  }
+  // Copy the old image: it views session memory that the index
+  // calls below reuse.
+  std::string copy(image);
+  const table_def_t &def = *table->def;
+  deformed_t before(def.schema.size());
+  if (!table->indexes.empty() &&
+      sm2::tup_deform(def.desc, copy, before.d,
+                      {before.null.get(), before.n}) != 0) {
+    return -1;
+  }
+  for (size_t i = 0; i < table->indexes.size(); i++) {
+    if (!maintained(table, i)) {
+      continue;
+    }
+    entry_t was;
+    if (make_entry(table, i, before.row(), was) != 0 ||
+        (was.belongs && remove_entry(table, i, was, rowno) != 0)) {
       return -1;
     }
-    std::string_view image;
-    if (sm2::rel_delete(table->rel, rowno, &image) != 0) {
-      return -1;
-    }
-    // Copy the old image: it views session memory that the index
-    // calls below reuse.
-    std::string copy(image);
-    const table_def_t &def = *table->def;
-    deformed_t before(def.schema.size());
-    if (!table->indexes.empty() &&
-        sm2::tup_deform(def.desc, copy, before.d,
-                        {before.null.get(), before.n}) != 0) {
-      return -1;
-    }
-    for (size_t i = 0; i < table->indexes.size(); i++) {
-      if (!maintained(table, i)) {
-        continue;
-      }
-      entry_t was;
-      if (make_entry(table, i, before.row(), was) != 0 ||
-          (was.belongs && remove_entry(table, i, was, rowno) != 0)) {
-        return -1;
-      }
-    }
-    if (old) {
-      *old = std::move(copy);
-    }
-    return 0;
-  });
+  }
+  if (old) {
+    *old = std::move(copy);
+  }
+  return 0;
 }
 
 /* Read the row at rowno. */
@@ -557,23 +549,21 @@ int tbl_lock(table_t *table, uint64_t rowno, sm1::lockmode_t mode) {
 
 /* Empty the table, then reopen its heap and indexes; see sm3.h. */
 int tbl_truncate(table_t *table) {
-  return catch_nomem([&] {
-    if (!table->exclusive) {
-      return sm1::seterr(sm1::SM_ERR_INVALID,
-                         "truncate: the table is not opened exclusive");
-    }
-    const uint64_t oid = table->def->oid;
-    std::shared_ptr<const table_def_t> def;
-    if (truncate_table(table->session, oid) != 0 ||
-        cat_lock_table(table->session, oid, sm1::SM_LOCKMODE_EX, def) != 0) {
-      return -1;
-    }
-    // The handle's heap and indexes are on the old store.
-    close_rels(table);
-    table->def = std::move(def);
-    load_states(table);
-    return open_rels(table);
-  });
+  if (!table->exclusive) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       "truncate: the table is not opened exclusive");
+  }
+  const uint64_t oid = table->def->oid;
+  std::shared_ptr<const table_def_t> def;
+  if (truncate_table(table->session, oid) != 0 ||
+      cat_lock_table(table->session, oid, sm1::SM_LOCKMODE_EX, def) != 0) {
+    return -1;
+  }
+  // The handle's heap and indexes are on the old store.
+  close_rels(table);
+  table->def = std::move(def);
+  load_states(table);
+  return open_rels(table);
 }
 
 /* Open a cursor over the rows first..last. */
@@ -622,15 +612,13 @@ int tbl_idx_size(table_t *table, uint64_t index, uint64_t &disk,
 
 /* N, the last rowno the table's sequence handed out, 0 if none. */
 int tbl_rowno_limit(table_t *table, uint64_t &n) {
-  return catch_nomem([&] {
-    int rc = sm1::lastseq(table->session->sm1, table->def->rowno_seq, n);
-    // A sequence that never handed out a rowno: no row ever was.
-    if (rc == 1) {
-      n = 0;
-      return 0;
-    }
-    return rc;
-  });
+  int rc = sm1::lastseq(table->session->sm1, table->def->rowno_seq, n);
+  // A sequence that never handed out a rowno: no row ever was.
+  if (rc == 1) {
+    n = 0;
+    return 0;
+  }
+  return rc;
 }
 
 /* The sorted runs a lookup in the table's store may visit. */
@@ -641,120 +629,117 @@ int tbl_probes(table_t *table, uint64_t &n) {
 /* One batch of an index's build; see sm3.h. */
 int tbl_index_backfill(table_t *table, uint64_t index, uint64_t from,
                        size_t max_rows, uint64_t &next, bool &done) {
-  return catch_nomem([&] {
-    if (need_writable(table) != 0) {
+  if (need_writable(table) != 0) {
+    return -1;
+  }
+  const table_def_t &def = *table->def;
+  size_t i = 0;
+  while (i < def.indexes.size() && def.indexes[i].oid != index) {
+    i++;
+  }
+  if (i == def.indexes.size()) {
+    return sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                       "table: no index " + std::to_string(index));
+  }
+  const index_def_t &x = def.indexes[i];
+  if (table->states[i] != index_state_t::pending) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       "index build: index " + x.name + " is not pending");
+  }
+  // Rows another transaction may write are read at their newest
+  // version, which only READ COMMITTED can do.
+  bool rc = table->session->level == sm1::xctlevel_t::read_committed;
+  if (!table->fresh && !rc) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       "index build: not at READ COMMITTED");
+  }
+  // The batch's rows, by rowno; their tuples are read again below.
+  std::vector<uint64_t> rownos;
+  sm2::rel_scan_t *scan = nullptr;
+  if (sm2::rel_scan(table->rel, from, UINT64_MAX, scan) != 0) {
+    return -1;
+  }
+  uint64_t rowno;
+  std::string_view tuple;
+  int more = 0;
+  while (rownos.size() < max_rows &&
+         (more = sm2::rel_scannxt(scan, rowno, tuple)) == 0) {
+    rownos.push_back(rowno);
+  }
+  sm2::rel_scanend(scan);
+  if (more < 0) {
+    return -1;
+  }
+  deformed_t row(def.schema.size());
+  for (uint64_t r : rownos) {
+    int found;
+    if (table->fresh) {
+      found = sm2::rel_read(table->rel, r, tuple);
+    } else {
+      // Hold the row shared to the end of the batch: a writer
+      // changes the heap row first, so it and the build never
+      // work on one row at once (SM3_DESIGN.md §3).
+      if (sm2::rel_lock(table->rel, r, sm1::SM_LOCKMODE_SH) != 0) {
+        return -1;
+      }
+      found = sm2::rel_read_latest(table->rel, r, tuple);
+    }
+    if (found < 0) {
       return -1;
     }
-    const table_def_t &def = *table->def;
-    size_t i = 0;
-    while (i < def.indexes.size() && def.indexes[i].oid != index) {
-      i++;
+    // Deleted since the scan: nothing to cover.
+    if (found == 1) {
+      continue;
     }
-    if (i == def.indexes.size()) {
-      return sm1::seterr(sm1::SM_ERR_NOTFOUND,
-                         "table: no index " + std::to_string(index));
-    }
-    const index_def_t &x = def.indexes[i];
-    if (table->states[i] != index_state_t::pending) {
-      return sm1::seterr(sm1::SM_ERR_INVALID,
-                         "index build: index " + x.name + " is not pending");
-    }
-    // Rows another transaction may write are read at their newest
-    // version, which only READ COMMITTED can do.
-    bool rc = table->session->level == sm1::xctlevel_t::read_committed;
-    if (!table->fresh && !rc) {
-      return sm1::seterr(sm1::SM_ERR_INVALID,
-                         "index build: not at READ COMMITTED");
-    }
-    // The batch's rows, by rowno; their tuples are read again below.
-    std::vector<uint64_t> rownos;
-    sm2::rel_scan_t *scan = nullptr;
-    if (sm2::rel_scan(table->rel, from, UINT64_MAX, scan) != 0) {
+    // Copy the tuple: the index calls below reuse session memory.
+    std::string copy(tuple);
+    if (sm2::tup_deform(def.desc, copy, row.d, {row.null.get(), row.n}) != 0) {
       return -1;
     }
-    uint64_t rowno;
-    std::string_view tuple;
-    int more = 0;
-    while (rownos.size() < max_rows &&
-           (more = sm2::rel_scannxt(scan, rowno, tuple)) == 0) {
-      rownos.push_back(rowno);
+    // A row a partial index does not take needs no entry.
+    entry_t key;
+    if (make_entry(table, i, row.row(), key) != 0) {
+      return -1;
     }
-    sm2::rel_scanend(scan);
+    if (!key.belongs || add_entry(table, i, key, row.row(), r) == 0) {
+      continue;
+    }
+    if (sm1::errnum() != sm1::SM_ERR_DUPKEY) {
+      return -1;
+    }
+    // An entry is there already. With the rowno in its key it is
+    // this row's, made by a writer; without, it may be another's.
+    bool has_null = false;
+    for (bool n : key.null()) {
+      has_null |= n;
+    }
+    if (!x.unique || has_null) {
+      continue;
+    }
+    sm2::bound_t eq{key.d(), key.null(), true};
+    sm2::index_scan_t *is = nullptr;
+    if (sm2::idx_scan(table->indexes[i], &eq, &eq, is) != 0) {
+      return -1;
+    }
+    uint64_t owner;
+    bool cut, mine = false;
+    std::string_view value;
+    while ((more = sm2::idx_scannxt(is, owner, cut, value)) == 0) {
+      mine |= owner == r;
+    }
+    sm2::idx_scanend(is);
     if (more < 0) {
       return -1;
     }
-    deformed_t row(def.schema.size());
-    for (uint64_t r : rownos) {
-      int found;
-      if (table->fresh) {
-        found = sm2::rel_read(table->rel, r, tuple);
-      } else {
-        // Hold the row shared to the end of the batch: a writer
-        // changes the heap row first, so it and the build never
-        // work on one row at once (SM3_DESIGN.md §3).
-        if (sm2::rel_lock(table->rel, r, sm1::SM_LOCKMODE_SH) != 0) {
-          return -1;
-        }
-        found = sm2::rel_read_latest(table->rel, r, tuple);
-      }
-      if (found < 0) {
-        return -1;
-      }
-      // Deleted since the scan: nothing to cover.
-      if (found == 1) {
-        continue;
-      }
-      // Copy the tuple: the index calls below reuse session memory.
-      std::string copy(tuple);
-      if (sm2::tup_deform(def.desc, copy, row.d, {row.null.get(), row.n}) !=
-          0) {
-        return -1;
-      }
-      // A row a partial index does not take needs no entry.
-      entry_t key;
-      if (make_entry(table, i, row.row(), key) != 0) {
-        return -1;
-      }
-      if (!key.belongs || add_entry(table, i, key, row.row(), r) == 0) {
-        continue;
-      }
-      if (sm1::errnum() != sm1::SM_ERR_DUPKEY) {
-        return -1;
-      }
-      // An entry is there already. With the rowno in its key it is
-      // this row's, made by a writer; without, it may be another's.
-      bool has_null = false;
-      for (bool n : key.null()) {
-        has_null |= n;
-      }
-      if (!x.unique || has_null) {
-        continue;
-      }
-      sm2::bound_t eq{key.d(), key.null(), true};
-      sm2::index_scan_t *is = nullptr;
-      if (sm2::idx_scan(table->indexes[i], &eq, &eq, is) != 0) {
-        return -1;
-      }
-      uint64_t owner;
-      bool cut, mine = false;
-      std::string_view value;
-      while ((more = sm2::idx_scannxt(is, owner, cut, value)) == 0) {
-        mine |= owner == r;
-      }
-      sm2::idx_scanend(is);
-      if (more < 0) {
-        return -1;
-      }
-      if (!mine) {
-        return sm1::seterr(sm1::SM_ERR_DUPKEY,
-                           "index build: two rows of " + def.name +
-                               " with one key in " + x.name);
-      }
+    if (!mine) {
+      return sm1::seterr(sm1::SM_ERR_DUPKEY, "index build: two rows of " +
+                                                 def.name +
+                                                 " with one key in " + x.name);
     }
-    done = rownos.size() < max_rows;
-    next = rownos.empty() ? from : rownos.back() + 1;
-    return 0;
-  });
+  }
+  done = rownos.size() < max_rows;
+  next = rownos.empty() ? from : rownos.back() + 1;
+  return 0;
 }
 
 /* The value schema of one of the table's indexes; see sm3.h. */

@@ -93,44 +93,39 @@ template <typename F> int float_cmp(std::string_view a, std::string_view b) {
  */
 template <typename F>
 int float_key(const char *type, std::string_view datum, std::string &key) {
-  return sm2::catch_nomem([&] {
-    using U = bits_t<F>;
-    if (datum.size() != sizeof(F)) {
-      return sm2::bad_datum(type, datum, sizeof(F));
-    }
-    F v = std::bit_cast<F>(sm2::load_le<U>(datum));
-    U bits = std::isnan(v)
-                 ? std::bit_cast<U>(std::numeric_limits<F>::quiet_NaN())
-             : v == F{0} ? U{0}
+  using U = bits_t<F>;
+  if (datum.size() != sizeof(F)) {
+    return sm2::bad_datum(type, datum, sizeof(F));
+  }
+  F v = std::bit_cast<F>(sm2::load_le<U>(datum));
+  U bits = std::isnan(v) ? std::bit_cast<U>(std::numeric_limits<F>::quiet_NaN())
+           : v == F{0}   ? U{0}
                          : std::bit_cast<U>(v);
-    const U sign = U{1} << (8 * sizeof(U) - 1);
-    sm2::put_be(static_cast<U>(bits & sign ? ~bits : bits ^ sign), key);
-    return 0;
-  });
+  const U sign = U{1} << (8 * sizeof(U) - 1);
+  sm2::put_be(static_cast<U>(bits & sign ? ~bits : bits ^ sign), key);
+  return 0;
 }
 
 /* Read float_key's bytes back into the datum the key keeps. */
 template <typename F>
 int float_unkey(const char *type, std::string_view &key, std::string &datum) {
-  return sm2::catch_nomem([&] {
-    using U = bits_t<F>;
-    U k;
-    if (!sm2::get_be(key, k)) {
-      return sm2::bad_key(type);
-    }
-    const U sign = U{1} << (8 * sizeof(U) - 1);
-    sm2::store_le(static_cast<U>(k & sign ? k ^ sign : ~k), datum);
-    return 0;
-  });
+  using U = bits_t<F>;
+  U k;
+  if (!sm2::get_be(key, k)) {
+    return sm2::bad_key(type);
+  }
+  const U sign = U{1} << (8 * sizeof(U) - 1);
+  sm2::store_le(static_cast<U>(k & sign ? k ^ sign : ~k), datum);
+  return 0;
 }
 
 /* Parse a float4's canonical text. */
 int float4_in(std::string_view t, int32_t, std::string &d) {
-  return sm2::catch_nomem([&] { return float_in<float>("float4", t, d); });
+  return float_in<float>("float4", t, d);
 }
 /* Print a float4 datum. */
 int float4_out(std::string_view d, int32_t, std::string &t) {
-  return sm2::catch_nomem([&] { return float_out<float>("float4", d, t); });
+  return float_out<float>("float4", d, t);
 }
 /* Order two float4 datums. */
 int float4_cmp(std::string_view a, std::string_view b, int32_t) {
@@ -150,11 +145,11 @@ int float4_unkey(std::string_view &k, int32_t, const sm2::collation_t *,
 
 /* Parse a float8's canonical text. */
 int float8_in(std::string_view t, int32_t, std::string &d) {
-  return sm2::catch_nomem([&] { return float_in<double>("float8", t, d); });
+  return float_in<double>("float8", t, d);
 }
 /* Print a float8 datum. */
 int float8_out(std::string_view d, int32_t, std::string &t) {
-  return sm2::catch_nomem([&] { return float_out<double>("float8", d, t); });
+  return float_out<double>("float8", d, t);
 }
 /* Order two float8 datums. */
 int float8_cmp(std::string_view a, std::string_view b, int32_t) {

@@ -125,68 +125,64 @@ std::string decimal_text(__int128 v, int scale) {
 /* Parse a decimal's canonical text under typmod. */
 template <size_t W>
 int decimal_in(std::string_view text, int32_t typmod, std::string &datum) {
-  return sm2::catch_nomem([&] {
-    numtype_t t;
-    if (!decode_typmod<W>(typmod, t)) {
-      return bad_typmod<W>(typmod);
-    }
-    // Read [-]digits[.digits] as an integer at the text's scale,
-    // stopping at 39 digits, past any precision.
-    size_t i = 0;
-    bool neg = i < text.size() && text[i] == '-';
-    i += neg;
-    unsigned __int128 mag = 0;
-    int int_digits = 0, frac_digits = -1;
-    for (; i < text.size(); i++) {
-      char c = text[i];
-      if (c == '.' && frac_digits < 0 && int_digits > 0) {
-        frac_digits = 0;
-      } else if (c >= '0' && c <= '9' && int_digits + frac_digits < 39) {
-        (frac_digits < 0 ? int_digits : frac_digits)++;
-        mag = mag * 10 + (c - '0');
-      } else {
-        return sm2::bad_input(decimal_name<W>(), text);
-      }
-    }
-    // Canonical text carries exactly the column's scale, and the
-    // value must fit its precision.
-    if (int_digits == 0 || frac_digits == 0 ||
-        (frac_digits < 0 ? 0 : frac_digits) != t.scale ||
-        mag >= pow10(t.precision)) {
+  numtype_t t;
+  if (!decode_typmod<W>(typmod, t)) {
+    return bad_typmod<W>(typmod);
+  }
+  // Read [-]digits[.digits] as an integer at the text's scale,
+  // stopping at 39 digits, past any precision.
+  size_t i = 0;
+  bool neg = i < text.size() && text[i] == '-';
+  i += neg;
+  unsigned __int128 mag = 0;
+  int int_digits = 0, frac_digits = -1;
+  for (; i < text.size(); i++) {
+    char c = text[i];
+    if (c == '.' && frac_digits < 0 && int_digits > 0) {
+      frac_digits = 0;
+    } else if (c >= '0' && c <= '9' && int_digits + frac_digits < 39) {
+      (frac_digits < 0 ? int_digits : frac_digits)++;
+      mag = mag * 10 + (c - '0');
+    } else {
       return sm2::bad_input(decimal_name<W>(), text);
     }
-    __int128 v = neg ? -static_cast<__int128>(mag) : static_cast<__int128>(mag);
-    // Canonical only if it prints back unchanged: no leading zero,
-    // no "-0".
-    if (decimal_text(v, t.scale) != text) {
-      return sm2::bad_input(decimal_name<W>(), text);
-    }
-    store(v, W, datum);
-    return 0;
-  });
+  }
+  // Canonical text carries exactly the column's scale, and the
+  // value must fit its precision.
+  if (int_digits == 0 || frac_digits == 0 ||
+      (frac_digits < 0 ? 0 : frac_digits) != t.scale ||
+      mag >= pow10(t.precision)) {
+    return sm2::bad_input(decimal_name<W>(), text);
+  }
+  __int128 v = neg ? -static_cast<__int128>(mag) : static_cast<__int128>(mag);
+  // Canonical only if it prints back unchanged: no leading zero,
+  // no "-0".
+  if (decimal_text(v, t.scale) != text) {
+    return sm2::bad_input(decimal_name<W>(), text);
+  }
+  store(v, W, datum);
+  return 0;
 }
 
 /* Print a decimal datum under typmod. */
 template <size_t W>
 int decimal_out(std::string_view datum, int32_t typmod, std::string &text) {
-  return sm2::catch_nomem([&] {
-    numtype_t t;
-    if (!decode_typmod<W>(typmod, t)) {
-      return bad_typmod<W>(typmod);
-    }
-    if (datum.size() != W) {
-      return sm2::bad_datum(decimal_name<W>(), datum, W);
-    }
-    __int128 v = load(datum);
-    if (magnitude(v) >= pow10(t.precision)) {
-      return sm1::seterr(sm1::SM_ERR_INVALID,
-                         std::string("a ") + decimal_name<W>() +
-                             " datum exceeds its precision " +
-                             std::to_string(t.precision));
-    }
-    text = decimal_text(v, t.scale);
-    return 0;
-  });
+  numtype_t t;
+  if (!decode_typmod<W>(typmod, t)) {
+    return bad_typmod<W>(typmod);
+  }
+  if (datum.size() != W) {
+    return sm2::bad_datum(decimal_name<W>(), datum, W);
+  }
+  __int128 v = load(datum);
+  if (magnitude(v) >= pow10(t.precision)) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       std::string("a ") + decimal_name<W>() +
+                           " datum exceeds its precision " +
+                           std::to_string(t.precision));
+  }
+  text = decimal_text(v, t.scale);
+  return 0;
 }
 
 /* Order two decimal datums of one column: integer order. */
@@ -203,48 +199,44 @@ int decimal_cmp(std::string_view a, std::string_view b, int32_t) {
 template <size_t W>
 int decimal_key(std::string_view datum, int32_t typmod,
                 const sm2::collation_t *, std::string &key) {
-  return sm2::catch_nomem([&] {
-    numtype_t t;
-    if (!decode_typmod<W>(typmod, t)) {
-      return bad_typmod<W>(typmod);
-    }
-    if (datum.size() != W) {
-      return sm2::bad_datum(decimal_name<W>(), datum, W);
-    }
-    __int128 v = load(datum);
-    if constexpr (W == 8) {
-      sm2::put_key_int<uint64_t>(static_cast<int64_t>(v), key);
-    } else {
-      sm2::put_key_int<unsigned __int128>(v, key);
-    }
-    return 0;
-  });
+  numtype_t t;
+  if (!decode_typmod<W>(typmod, t)) {
+    return bad_typmod<W>(typmod);
+  }
+  if (datum.size() != W) {
+    return sm2::bad_datum(decimal_name<W>(), datum, W);
+  }
+  __int128 v = load(datum);
+  if constexpr (W == 8) {
+    sm2::put_key_int<uint64_t>(static_cast<int64_t>(v), key);
+  } else {
+    sm2::put_key_int<unsigned __int128>(v, key);
+  }
+  return 0;
 }
 
 /* Read a decimal's key back into its datum. */
 template <size_t W>
 int decimal_unkey(std::string_view &key, int32_t typmod,
                   const sm2::collation_t *, std::string &datum) {
-  return sm2::catch_nomem([&] {
-    numtype_t t;
-    if (!decode_typmod<W>(typmod, t)) {
-      return bad_typmod<W>(typmod);
-    }
-    __int128 v;
-    bool ok;
-    if constexpr (W == 8) {
-      int64_t n;
-      ok = sm2::get_key_int<uint64_t>(key, n);
-      v = n;
-    } else {
-      ok = sm2::get_key_int<unsigned __int128>(key, v);
-    }
-    if (!ok) {
-      return sm2::bad_key(decimal_name<W>());
-    }
-    store(v, W, datum);
-    return 0;
-  });
+  numtype_t t;
+  if (!decode_typmod<W>(typmod, t)) {
+    return bad_typmod<W>(typmod);
+  }
+  __int128 v;
+  bool ok;
+  if constexpr (W == 8) {
+    int64_t n;
+    ok = sm2::get_key_int<uint64_t>(key, n);
+    v = n;
+  } else {
+    ok = sm2::get_key_int<unsigned __int128>(key, v);
+  }
+  if (!ok) {
+    return sm2::bad_key(decimal_name<W>());
+  }
+  store(v, W, datum);
+  return 0;
 }
 
 } // namespace

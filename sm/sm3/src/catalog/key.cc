@@ -49,99 +49,85 @@ int meta_key(std::string &key) { return kind_prefix(kind_t::meta, key); }
 
 /* The key of a name in a namespace. */
 int name_key(uint64_t nspoid, std::string_view name, std::string &key) {
-  return catch_nomem([&] {
-    std::string text = sm2::make_varlena(name);
-    sm2::datum_t d[3] = {kind_datum(kind_t::name),
-                         sm2::datum_from_int64(static_cast<int64_t>(nspoid)),
-                         sm2::datum_from_ptr(text.data())};
-    return encode(name_cols, d, key);
-  });
+  std::string text = sm2::make_varlena(name);
+  sm2::datum_t d[3] = {kind_datum(kind_t::name),
+                       sm2::datum_from_int64(static_cast<int64_t>(nspoid)),
+                       sm2::datum_from_ptr(text.data())};
+  return encode(name_cols, d, key);
 }
 
 /* The key of a part of a table. */
 int part_key(kind_t kind, uint64_t table_oid, uint64_t n, std::string &key) {
-  return catch_nomem([&] {
-    sm2::datum_t d[3] = {kind_datum(kind),
-                         sm2::datum_from_int64(static_cast<int64_t>(table_oid)),
-                         sm2::datum_from_int64(static_cast<int64_t>(n))};
-    return encode(part_cols, d, key);
-  });
+  sm2::datum_t d[3] = {kind_datum(kind),
+                       sm2::datum_from_int64(static_cast<int64_t>(table_oid)),
+                       sm2::datum_from_int64(static_cast<int64_t>(n))};
+  return encode(part_cols, d, key);
 }
 
 /* The table and the n of a part key. */
 int part_ids(kind_t kind, std::string_view key, uint64_t &table_oid,
              uint64_t &n) {
-  return catch_nomem([&] {
-    std::vector<std::optional<std::string>> cols;
-    if (sm2::decode_key(part_cols, key, cols) != 0 || !cols[0] || !cols[1] ||
-        !cols[2]) {
-      return sm1::seterr(sm1::SM_ERR_CORRUPT, "catalog: not a part key");
-    }
-    // Each column comes back as its native bytes, little-endian.
-    int16_t k;
-    int64_t t, v;
-    std::memcpy(&k, cols[0]->data(), sizeof(k));
-    std::memcpy(&t, cols[1]->data(), sizeof(t));
-    std::memcpy(&v, cols[2]->data(), sizeof(v));
-    if (k != static_cast<int16_t>(kind)) {
-      return sm1::seterr(sm1::SM_ERR_CORRUPT, "catalog: a key of another kind");
-    }
-    table_oid = static_cast<uint64_t>(t);
-    n = static_cast<uint64_t>(v);
-    return 0;
-  });
+  std::vector<std::optional<std::string>> cols;
+  if (sm2::decode_key(part_cols, key, cols) != 0 || !cols[0] || !cols[1] ||
+      !cols[2]) {
+    return sm1::seterr(sm1::SM_ERR_CORRUPT, "catalog: not a part key");
+  }
+  // Each column comes back as its native bytes, little-endian.
+  int16_t k;
+  int64_t t, v;
+  std::memcpy(&k, cols[0]->data(), sizeof(k));
+  std::memcpy(&t, cols[1]->data(), sizeof(t));
+  std::memcpy(&v, cols[2]->data(), sizeof(v));
+  if (k != static_cast<int16_t>(kind)) {
+    return sm1::seterr(sm1::SM_ERR_CORRUPT, "catalog: a key of another kind");
+  }
+  table_oid = static_cast<uint64_t>(t);
+  n = static_cast<uint64_t>(v);
+  return 0;
 }
 
 /* The namespace a NAME key is in. */
 int name_nspoid(std::string_view key, uint64_t &nspoid) {
-  return catch_nomem([&] {
-    std::vector<std::optional<std::string>> cols;
-    if (sm2::decode_key(name_cols, key, cols) != 0 || !cols[1]) {
-      return sm1::seterr(sm1::SM_ERR_CORRUPT, "catalog: not a name key");
-    }
-    // The column comes back as its native bytes, little-endian.
-    int64_t n;
-    std::memcpy(&n, cols[1]->data(), sizeof(n));
-    nspoid = static_cast<uint64_t>(n);
-    return 0;
-  });
+  std::vector<std::optional<std::string>> cols;
+  if (sm2::decode_key(name_cols, key, cols) != 0 || !cols[1]) {
+    return sm1::seterr(sm1::SM_ERR_CORRUPT, "catalog: not a name key");
+  }
+  // The column comes back as its native bytes, little-endian.
+  int64_t n;
+  std::memcpy(&n, cols[1]->data(), sizeof(n));
+  nspoid = static_cast<uint64_t>(n);
+  return 0;
 }
 
 /* The key of an entity by its oid. */
 int entity_key(kind_t kind, uint64_t oid, std::string &key) {
-  return catch_nomem([&] {
-    sm2::datum_t d[2] = {kind_datum(kind),
-                         sm2::datum_from_int64(static_cast<int64_t>(oid))};
-    return encode(entity_cols, d, key);
-  });
+  sm2::datum_t d[2] = {kind_datum(kind),
+                       sm2::datum_from_int64(static_cast<int64_t>(oid))};
+  return encode(entity_cols, d, key);
 }
 
 /* The prefix of every key of a kind. */
 int kind_prefix(kind_t kind, std::string &prefix) {
-  return catch_nomem([&] {
-    sm2::datum_t d[1] = {kind_datum(kind)};
-    return encode(kind_cols, d, prefix);
-  });
+  sm2::datum_t d[1] = {kind_datum(kind)};
+  return encode(kind_cols, d, prefix);
 }
 
 /* The oid an entity key names. */
 int entity_oid(kind_t kind, std::string_view key, uint64_t &oid) {
-  return catch_nomem([&] {
-    std::vector<std::optional<std::string>> cols;
-    if (sm2::decode_key(entity_cols, key, cols) != 0 || !cols[0] || !cols[1]) {
-      return sm1::seterr(sm1::SM_ERR_CORRUPT, "catalog: not an entity key");
-    }
-    // Each column comes back as its native bytes, little-endian.
-    int16_t k;
-    int64_t o;
-    std::memcpy(&k, cols[0]->data(), sizeof(k));
-    std::memcpy(&o, cols[1]->data(), sizeof(o));
-    if (k != static_cast<int16_t>(kind)) {
-      return sm1::seterr(sm1::SM_ERR_CORRUPT, "catalog: a key of another kind");
-    }
-    oid = static_cast<uint64_t>(o);
-    return 0;
-  });
+  std::vector<std::optional<std::string>> cols;
+  if (sm2::decode_key(entity_cols, key, cols) != 0 || !cols[0] || !cols[1]) {
+    return sm1::seterr(sm1::SM_ERR_CORRUPT, "catalog: not an entity key");
+  }
+  // Each column comes back as its native bytes, little-endian.
+  int16_t k;
+  int64_t o;
+  std::memcpy(&k, cols[0]->data(), sizeof(k));
+  std::memcpy(&o, cols[1]->data(), sizeof(o));
+  if (k != static_cast<int16_t>(kind)) {
+    return sm1::seterr(sm1::SM_ERR_CORRUPT, "catalog: a key of another kind");
+  }
+  oid = static_cast<uint64_t>(o);
+  return 0;
 }
 
 } // namespace sm3

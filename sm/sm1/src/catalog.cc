@@ -19,7 +19,6 @@
  */
 
 #include "error.h"
-#include "oom.h"
 #include "session.h"
 #include "sm0_codec.h"
 #include "sm0_defer.h"
@@ -163,21 +162,15 @@ int catalog_lookup(sm1::session_t *s, const view_t &view, uint64_t storeid) {
 
 /* Create a store and hand out its storeid. */
 int sm1::mkstore(sm1::session_t *session, uint64_t &storeid) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   return ::mkstore(session, &storeid);
 }
 
 /* Drop a store and all of its rows. */
 int sm1::rmstore(sm1::session_t *session, uint64_t storeid) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   return ::rmstore(session, storeid);
 }
 
 /* List the stores visible to the transaction. */
 int sm1::lsstore(sm1::session_t *session, std::vector<uint64_t> &out) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   return ::lsstore(session, out);
 }

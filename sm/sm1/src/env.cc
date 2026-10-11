@@ -16,7 +16,6 @@
 
 #include "error.h"
 #include "log.h"
-#include "oom.h"
 #include "sm0_codec.h"
 #include "sm0_defer.h"
 
@@ -37,8 +36,6 @@
 #include <rocksdb/write_batch.h>
 
 using namespace wisr;
-
-thread_local bool wisr::t_in_sm1 = false;
 
 namespace {
 
@@ -194,10 +191,7 @@ int recover_dbs(sm1::env_t *env) {
 
 /*
  * The new-handler sm1::attach installs: running out of memory
- * inside sm1 is fatal to the process, and outside it throws
- * std::bad_alloc, as operator new would with no handler, for the
- * levels above to report as SM_ERR_NOMEM (the top-level DESIGN.md
- * §5).
+ * anywhere in the process is fatal (the top-level DESIGN.md §5).
  *
  * It should be very rare: on a default Linux system an allocation
  * seldom fails, since the kernel's OOM killer ends the process
@@ -211,10 +205,6 @@ int recover_dbs(sm1::env_t *env) {
  * transaction. Formatting allocates nothing.
  */
 [[noreturn]] void oom_handler() {
-  // Outside sm1, nothing touches RocksDB: let the caller recover.
-  if (!t_in_sm1) {
-    throw std::bad_alloc();
-  }
   char msg[256];
   sm0::format_into(
       msg, sizeof(msg),
@@ -326,8 +316,6 @@ int env_destroy_db_dir(const std::string &path) {
 
 /* Make homedir a wisr home directory: global/, base/, root db. */
 int sm1::init(std::string_view homedir_arg) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   // Take the name as a C string, as the engine uses it.
   std::string homedir_str;
   if (copy_name(homedir_arg, "home directory", homedir_str) != 0) {
@@ -395,8 +383,6 @@ int sm1::init(std::string_view homedir_arg) {
 
 /* Create an environment on an initialized home directory. */
 int sm1::attach(std::string_view homedir_arg, sm1::env_t *&out) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   // Make running out of memory fatal, unless the host process
   // already has an out-of-memory policy of its own.
   if (!std::get_new_handler()) {
@@ -423,8 +409,6 @@ int sm1::attach(std::string_view homedir_arg, sm1::env_t *&out) {
  * open.
  */
 int sm1::detach(sm1::env_t *env, int force) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   // Detaching NULL is a no-op.
   if (!env) {
     return 0;

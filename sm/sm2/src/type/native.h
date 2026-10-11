@@ -55,19 +55,6 @@ template <typename T> void store_le(T v, std::string &datum) {
 }
 
 /*
- * f(), or -1 with SM_ERR_NOMEM if it runs out of memory: a type's
- * in and out are sm2 entry points (SM2_DESIGN.md §5). Recording
- * the error allocates nothing.
- */
-template <typename F> int catch_nomem(F f) {
-  try {
-    return f();
-  } catch (const std::bad_alloc &) {
-    return sm1::seterr(sm1::SM_ERR_NOMEM, "out of memory");
-  }
-}
-
-/*
  * Append u's bytes most significant first; U is unsigned,
  * unsigned __int128 included.
  */
@@ -123,26 +110,22 @@ int bad_datum(const char *type, std::string_view datum, size_t len);
  */
 template <typename S, typename U>
 int int_key(const char *type, std::string_view datum, std::string &key) {
-  return catch_nomem([&] {
-    if (datum.size() != sizeof(S)) {
-      return bad_datum(type, datum, sizeof(S));
-    }
-    put_key_int<U>(load_le<S>(datum), key);
-    return 0;
-  });
+  if (datum.size() != sizeof(S)) {
+    return bad_datum(type, datum, sizeof(S));
+  }
+  put_key_int<U>(load_le<S>(datum), key);
+  return 0;
 }
 
 /* Read int_key's bytes back into the little-endian datum. */
 template <typename S, typename U>
 int int_unkey(const char *type, std::string_view &key, std::string &datum) {
-  return catch_nomem([&] {
-    S v;
-    if (!get_key_int<U>(key, v)) {
-      return bad_key(type);
-    }
-    store_le(v, datum);
-    return 0;
-  });
+  S v;
+  if (!get_key_int<U>(key, v)) {
+    return bad_key(type);
+  }
+  store_le(v, datum);
+  return 0;
 }
 
 /*

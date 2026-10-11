@@ -17,7 +17,6 @@
 
 #include "db.h"
 #include "log.h"
-#include "oom.h"
 #include "session.h"
 #include "sm0_codec.h"
 #include "version.h"
@@ -62,8 +61,6 @@ public:
    */
   bool Filter(int, const rocksdb::Slice &key, const rocksdb::Slice &value,
               std::string *new_value, bool *value_changed) const override {
-    // Inside sm1: running out of memory is fatal.
-    in_sm1_t in_sm1;
     // Decode the version's userkey, xid, and seq.
     version_t v;
     version_decode_key(key, &v);
@@ -165,8 +162,6 @@ public:
    */
   std::unique_ptr<rocksdb::CompactionFilter>
   CreateCompactionFilter(const rocksdb::CompactionFilter::Context &) override {
-    // Inside sm1: running out of memory is fatal.
-    in_sm1_t in_sm1;
     // Until the database is fully open, keep everything.
     if (!m_db->gc_ready) {
       return std::make_unique<keep_all_filter_t>();
@@ -328,8 +323,6 @@ void warn_stuck(db_t *db) {
 
 /* The worker: run GC when woken, and at least once a second. */
 void gc_main(db_t *db) {
-  // sm1's own thread: running out of memory on it is fatal.
-  in_sm1_t in_sm1;
   // Hold gc_mu while waiting for work.
   std::unique_lock<std::mutex> guard(db->gc_mu);
   // Run until told to stop.

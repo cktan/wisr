@@ -4,7 +4,6 @@
  * §3.1, §3.2).
  */
 
-#include "alloc.h"
 #include "doctest.h"
 #include "gen.h"
 
@@ -283,53 +282,6 @@ TEST_CASE("-0 and 0 are distinct datums that compare equal") {
     REQUIRE(t->in("0", -1, pos) == 0);
     CHECK(neg != pos);
     CHECK(t->cmp(neg, pos, -1) == 0);
-  }
-}
-
-TEST_CASE("running out of memory in a type's in or out is SM_ERR_NOMEM") {
-  // Verify every type's in and out turn a bad_alloc into an error
-  // (SM2_DESIGN.md §5), taking the allocation that reports bad
-  // input, since a fixed-width datum and its text fit without one;
-  // for bytea, whose every datum prints, the allocation of a long
-  // text.
-  // 1. With no allocation left, in on invalid text -- bytes that
-  //    are not UTF-8, for text and varchar -- fails with
-  //    SM_ERR_NOMEM, not SM_ERR_INVALID, and throws nothing.
-  // 2. So does out on a datum of the wrong width or not UTF-8, or
-  //    on a 16-byte bytea.
-  // 3. With the budget restored, the same calls report
-  //    SM_ERR_INVALID again, and the bytea prints.
-  for (int code = 1; code < 256; code++) {
-    const sm2::type_t *t = sm2::type_by_code(code);
-    if (!t) {
-      continue;
-    }
-    CAPTURE(t->name);
-    bool utf8 = t == &sm2::type_text || t == &sm2::type_varchar;
-    bool bytea = t == &sm2::type_bytea;
-    std::string bad_text = utf8 ? "\xff" : "not a value";
-    std::string bad_datum = utf8    ? "\xff"
-                            : bytea ? std::string(16, '\0')
-                                    : std::string(t->len + 1, '\0');
-    std::string datum, text;
-    t_alloc_budget = 0;
-    int in_rc = t->in(bad_text, -1, datum);
-    sm1::errnum_t in_err = sm1::errnum();
-    int out_rc = t->out(bad_datum, -1, text);
-    sm1::errnum_t out_err = sm1::errnum();
-    t_alloc_budget = -1;
-    CHECK(in_rc == -1);
-    CHECK(in_err == sm1::SM_ERR_NOMEM);
-    CHECK(out_rc == -1);
-    CHECK(out_err == sm1::SM_ERR_NOMEM);
-    CHECK(t->in(bad_text, -1, datum) == -1);
-    CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-    if (bytea) {
-      CHECK(t->out(bad_datum, -1, text) == 0);
-    } else {
-      CHECK(t->out(bad_datum, -1, text) == -1);
-      CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-    }
   }
 }
 

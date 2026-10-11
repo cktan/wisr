@@ -81,28 +81,24 @@ int bytes_cmp(std::string_view a, std::string_view b, int32_t) {
 
 /* Parse type's text: the text itself, if it is valid UTF-8. */
 int string_in(const char *type, std::string_view text, std::string &datum) {
-  return sm2::catch_nomem([&] {
-    // Not echoed into the message, which must stay valid text.
-    if (!valid_utf8(text)) {
-      return sm1::seterr(sm1::SM_ERR_INVALID,
-                         std::string("invalid input for type ") + type +
-                             ": not valid UTF-8, or holds a NUL");
-    }
-    datum.assign(text);
-    return 0;
-  });
+  // Not echoed into the message, which must stay valid text.
+  if (!valid_utf8(text)) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       std::string("invalid input for type ") + type +
+                           ": not valid UTF-8, or holds a NUL");
+  }
+  datum.assign(text);
+  return 0;
 }
 
 /* Print type's datum: the datum itself, if it is valid UTF-8. */
 int string_out(const char *type, std::string_view datum, std::string &text) {
-  return sm2::catch_nomem([&] {
-    if (!valid_utf8(datum)) {
-      return sm1::seterr(sm1::SM_ERR_INVALID, std::string("a ") + type +
-                                                  " datum is not valid UTF-8");
-    }
-    text.assign(datum);
-    return 0;
-  });
+  if (!valid_utf8(datum)) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       std::string("a ") + type + " datum is not valid UTF-8");
+  }
+  text.assign(datum);
+  return 0;
 }
 
 /* True if collation is ICU's, not byte order. */
@@ -120,21 +116,19 @@ bool uses_icu(const sm2::collation_t *collation) {
  */
 int bytes_key(std::string_view datum, const sm2::collation_t *collation,
               std::string &key) {
-  return sm2::catch_nomem([&] {
-    if (uses_icu(collation)) {
-      size_t start = key.size();
-      if (sm2::collation_sortkey(collation, datum, key) != 0) {
-        key.resize(start);
-        return -1;
-      }
-      key.append(2, '\0');
-      if (!collation->deterministic) {
-        return 0;
-      }
+  if (uses_icu(collation)) {
+    size_t start = key.size();
+    if (sm2::collation_sortkey(collation, datum, key) != 0) {
+      key.resize(start);
+      return -1;
     }
-    sm2::put_escaped(datum, key);
-    return 0;
-  });
+    key.append(2, '\0');
+    if (!collation->deterministic) {
+      return 0;
+    }
+  }
+  sm2::put_escaped(datum, key);
+  return 0;
 }
 
 /*
@@ -143,27 +137,25 @@ int bytes_key(std::string_view datum, const sm2::collation_t *collation,
  */
 int bytes_unkey(const char *type, std::string_view &key,
                 const sm2::collation_t *collation, std::string &datum) {
-  return sm2::catch_nomem([&] {
-    if (uses_icu(collation) && !collation->deterministic) {
-      return sm1::seterr(sm1::SM_ERR_INVALID,
-                         std::string("a ") + type +
-                             " key under a non-deterministic collation "
-                             "holds only its sort key");
-    }
-    // The sort key ends at the first zero byte, which begins 00 00.
-    if (uses_icu(collation)) {
-      size_t end = key.find('\0');
-      if (end == std::string_view::npos || end + 1 >= key.size() ||
-          key[end + 1] != '\0') {
-        return sm2::bad_key(type);
-      }
-      key.remove_prefix(end + 2);
-    }
-    if (!sm2::get_escaped(key, datum)) {
+  if (uses_icu(collation) && !collation->deterministic) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       std::string("a ") + type +
+                           " key under a non-deterministic collation "
+                           "holds only its sort key");
+  }
+  // The sort key ends at the first zero byte, which begins 00 00.
+  if (uses_icu(collation)) {
+    size_t end = key.find('\0');
+    if (end == std::string_view::npos || end + 1 >= key.size() ||
+        key[end + 1] != '\0') {
       return sm2::bad_key(type);
     }
-    return 0;
-  });
+    key.remove_prefix(end + 2);
+  }
+  if (!sm2::get_escaped(key, datum)) {
+    return sm2::bad_key(type);
+  }
+  return 0;
 }
 
 /* Parse a text's text. */
@@ -230,39 +222,35 @@ int hex_value(char c) {
 
 /* Parse a bytea's canonical text: "\x" and lower-case hex pairs. */
 int bytea_in(std::string_view text, int32_t, std::string &datum) {
-  return sm2::catch_nomem([&] {
-    if (!text.starts_with("\\x") || text.size() % 2 != 0) {
+  if (!text.starts_with("\\x") || text.size() % 2 != 0) {
+    return sm2::bad_input("bytea", text);
+  }
+  std::string bytes;
+  bytes.reserve(text.size() / 2 - 1);
+  for (size_t i = 2; i < text.size(); i += 2) {
+    int hi = hex_value(text[i]), lo = hex_value(text[i + 1]);
+    if (hi < 0 || lo < 0) {
       return sm2::bad_input("bytea", text);
     }
-    std::string bytes;
-    bytes.reserve(text.size() / 2 - 1);
-    for (size_t i = 2; i < text.size(); i += 2) {
-      int hi = hex_value(text[i]), lo = hex_value(text[i + 1]);
-      if (hi < 0 || lo < 0) {
-        return sm2::bad_input("bytea", text);
-      }
-      bytes.push_back(static_cast<char>(hi << 4 | lo));
-    }
-    datum = std::move(bytes);
-    return 0;
-  });
+    bytes.push_back(static_cast<char>(hi << 4 | lo));
+  }
+  datum = std::move(bytes);
+  return 0;
 }
 
 /* Print a bytea datum as "\x" and lower-case hex. */
 int bytea_out(std::string_view datum, int32_t, std::string &text) {
-  return sm2::catch_nomem([&] {
-    static const char digits[] = "0123456789abcdef";
-    std::string out;
-    out.reserve(2 + 2 * datum.size());
-    out += "\\x";
-    for (char c : datum) {
-      unsigned char b = static_cast<unsigned char>(c);
-      out += digits[b >> 4];
-      out += digits[b & 0x0F];
-    }
-    text = std::move(out);
-    return 0;
-  });
+  static const char digits[] = "0123456789abcdef";
+  std::string out;
+  out.reserve(2 + 2 * datum.size());
+  out += "\\x";
+  for (char c : datum) {
+    unsigned char b = static_cast<unsigned char>(c);
+    out += digits[b >> 4];
+    out += digits[b & 0x0F];
+  }
+  text = std::move(out);
+  return 0;
 }
 
 } // namespace

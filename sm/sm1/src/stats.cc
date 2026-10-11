@@ -9,7 +9,6 @@
  */
 
 #include "error.h"
-#include "oom.h"
 #include "session.h"
 #include "version.h"
 
@@ -139,14 +138,10 @@ int probes(sm1::session_t *s, uint64_t storeid, uint64_t *out) {
 int sm1::approxsize(sm1::session_t *session, uint64_t storeid, const char *lo,
                     size_t lolen, const char *hi, size_t hilen, uint64_t &disk,
                     uint64_t &mem) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   return ::approxsize(session, storeid, lo, lolen, hi, hilen, &disk, &mem);
 }
 
 /* Count the sorted runs a point lookup of a store may visit. */
 int sm1::probes(sm1::session_t *session, uint64_t storeid, uint64_t &out) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   return ::probes(session, storeid, &out);
 }

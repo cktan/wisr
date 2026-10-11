@@ -13,6 +13,7 @@
 
 #include "collation.h"
 #include "native.h"
+#include "sm0_defer.h"
 
 #include <unicode/uloc.h>
 #include <unicode/ustring.h>
@@ -76,57 +77,54 @@ namespace sm2 {
 /* Open a collation by locale; see sm2.h. */
 int collation_open(std::string_view locale, bool deterministic,
                    std::string_view expected_version, collation_t *&out) {
-  return catch_nomem([&] {
-    // Byte order needs no ICU, and never changes.
-    if (locale == "C" || locale == "POSIX") {
-      if (!deterministic) {
-        return bad_collation(locale, "byte order is always deterministic");
-      }
-      if (!expected_version.empty()) {
-        return bad_collation(locale, "byte order has no version");
-      }
-      out = new collation_t{std::string(locale), "", nullptr, true};
-      return 0;
+  // Byte order needs no ICU, and never changes.
+  if (locale == "C" || locale == "POSIX") {
+    if (!deterministic) {
+      return bad_collation(locale, "byte order is always deterministic");
     }
-    // A BCP 47 tag, as PostgreSQL's ICU collations take, into
-    // ICU's own locale ID.
-    char id[ULOC_FULLNAME_CAPACITY];
-    UErrorCode status = U_ZERO_ERROR;
-    std::string tag(locale);
-    int32_t parsed = 0;
-    uloc_forLanguageTag(tag.c_str(), id, sizeof(id), &parsed, &status);
-    if (U_FAILURE(status) || status == U_STRING_NOT_TERMINATED_WARNING ||
-        parsed != static_cast<int32_t>(tag.size())) {
-      return bad_collation(locale, "not a BCP 47 language tag");
+    if (!expected_version.empty()) {
+      return bad_collation(locale, "byte order has no version");
     }
-    // Refuse a language ICU does not know, rather than sorting it
-    // by ICU's root order unasked.
-    if (!known_language(id)) {
-      return bad_collation(locale, "ICU does not know its language");
-    }
-    // Open the collator.
-    status = U_ZERO_ERROR;
-    UCollator *icu = ucol_open(id, &status);
-    if (U_FAILURE(status)) {
-      return bad_collation(locale, u_errorName(status));
-    }
-    // Refuse a version other than the one the keys were built under.
-    std::string version = icu_version(icu);
-    if (!expected_version.empty() && expected_version != version) {
-      ucol_close(icu);
-      return bad_collation(locale, "keys were built under ICU collation "
-                                   "version " +
-                                       std::string(expected_version) +
-                                       ", but this ICU has " + version);
-    }
-    try {
-      out = new collation_t{std::string(locale), version, icu, deterministic};
-    } catch (...) {
-      ucol_close(icu);
-      throw;
-    }
+    out = new collation_t{std::string(locale), "", nullptr, true};
     return 0;
-  });
+  }
+  // A BCP 47 tag, as PostgreSQL's ICU collations take, into
+  // ICU's own locale ID.
+  char id[ULOC_FULLNAME_CAPACITY];
+  UErrorCode status = U_ZERO_ERROR;
+  std::string tag(locale);
+  int32_t parsed = 0;
+  uloc_forLanguageTag(tag.c_str(), id, sizeof(id), &parsed, &status);
+  if (U_FAILURE(status) || status == U_STRING_NOT_TERMINATED_WARNING ||
+      parsed != static_cast<int32_t>(tag.size())) {
+    return bad_collation(locale, "not a BCP 47 language tag");
+  }
+  // Refuse a language ICU does not know, rather than sorting it
+  // by ICU's root order unasked.
+  if (!known_language(id)) {
+    return bad_collation(locale, "ICU does not know its language");
+  }
+  // Open the collator.
+  status = U_ZERO_ERROR;
+  UCollator *icu = ucol_open(id, &status);
+  if (U_FAILURE(status)) {
+    return bad_collation(locale, u_errorName(status));
+  }
+  // Refuse a version other than the one the keys were built under.
+  std::string version = icu_version(icu);
+  if (!expected_version.empty() && expected_version != version) {
+    ucol_close(icu);
+    return bad_collation(locale, "keys were built under ICU collation "
+                                 "version " +
+                                     std::string(expected_version) +
+                                     ", but this ICU has " + version);
+  }
+  // Close icu if the collation cannot be made: it may run out of
+  // memory before any sm1::attach makes that fatal.
+  sm0::scope_guard_t close_icu([&] { ucol_close(icu); });
+  out = new collation_t{std::string(locale), version, icu, deterministic};
+  close_icu.dismiss();
+  return 0;
 }
 
 /* Close a collation from collation_open; nullptr is a no-op. */

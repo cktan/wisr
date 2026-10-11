@@ -8,7 +8,6 @@
  */
 
 #include "error.h"
-#include "oom.h"
 #include "session.h"
 #include "sm0_defer.h"
 #include "version.h"
@@ -973,24 +972,18 @@ int access_check_current(sm1::session_t *s, uint64_t storeid,
 
 /* Move an open cursor to key, forward only. */
 int sm1::scan_seek(sm1::scan_t *scan, std::string_view key, int inclusive) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   return ::scan_seek(scan, key.data(), key.size(), inclusive);
 }
 
 /* Take a lock without writing anything; see sm1.h. */
 int sm1::lock(sm1::session_t *session, sm1::locktype_t type, uint64_t storeid,
               std::string_view key, sm1::lockmode_t mode) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   return lock_row(session, type, storeid, key.data(), key.size(), mode);
 }
 
 /* Insert a row; the key must not exist. */
 int sm1::insert(sm1::session_t *session, uint64_t storeid, std::string_view key,
                 std::string_view data) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   return write_row(session, WRITE_INSERT, storeid, key.data(), key.size(),
                    data.data(), data.size(), nullptr, nullptr);
 }
@@ -998,8 +991,6 @@ int sm1::insert(sm1::session_t *session, uint64_t storeid, std::string_view key,
 /* Replace a row's value; the key must exist. */
 int sm1::update(sm1::session_t *session, uint64_t storeid, std::string_view key,
                 std::string_view data, std::string_view *old) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   // Ask for the old row only if the caller wants it.
   const char *o = nullptr;
   size_t olen = 0;
@@ -1016,8 +1007,6 @@ int sm1::update(sm1::session_t *session, uint64_t storeid, std::string_view key,
 /* Delete a row; the key must exist. */
 int sm1::erase(sm1::session_t *session, uint64_t storeid, std::string_view key,
                std::string_view *old) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   // Ask for the old row only if the caller wants it.
   const char *o = nullptr;
   size_t olen = 0;
@@ -1033,8 +1022,6 @@ int sm1::erase(sm1::session_t *session, uint64_t storeid, std::string_view key,
 /* Read one key. */
 int sm1::read(sm1::session_t *session, uint64_t storeid, std::string_view key,
               std::string_view &data) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   const char *d = nullptr;
   size_t dlen = 0;
   int rc = read_row(session, storeid, key.data(), key.size(), &d, &dlen);
@@ -1046,8 +1033,6 @@ int sm1::read(sm1::session_t *session, uint64_t storeid, std::string_view key,
 /* Read the newest committed version of a key. */
 int sm1::read_latest(sm1::session_t *session, uint64_t storeid,
                      std::string_view key, std::string_view &data) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   const char *d = nullptr;
   size_t dlen = 0;
   int rc = read_latest_row(session, storeid, key.data(), key.size(), &d, &dlen);
@@ -1060,8 +1045,6 @@ int sm1::read_latest(sm1::session_t *session, uint64_t storeid,
 int sm1::scan(sm1::session_t *session, uint64_t storeid, const char *skey,
               size_t sklen, int skey_inclusive, const char *ekey, size_t eklen,
               int ekey_inclusive, sm1::scan_t *&out) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   // Open the cursor, handing it back only on success.
   sm1::scan_t *c = ::scan(session, storeid, skey, sklen, skey_inclusive, ekey,
                           eklen, ekey_inclusive);
@@ -1075,8 +1058,6 @@ int sm1::scan(sm1::session_t *session, uint64_t storeid, const char *skey,
 /* Advance a cursor to its next row. */
 int sm1::scannxt(sm1::scan_t *scan, std::string_view &key,
                  std::string_view &data) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   const char *k = nullptr, *d = nullptr;
   size_t klen = 0, dlen = 0;
   int rc = scan_next(scan, &k, &klen, &d, &dlen);
@@ -1088,8 +1069,6 @@ int sm1::scannxt(sm1::scan_t *scan, std::string_view &key,
 
 /* Close a cursor: the iterator first, then its snapshot. */
 void sm1::scanend(sm1::scan_t *scan) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   // Closing NULL is a no-op.
   if (!scan) {
     return;

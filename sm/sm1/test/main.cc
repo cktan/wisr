@@ -26,7 +26,7 @@ int orphan_child_main(const char *homedir);
 /* test_seq.cc's child workload: reports each value, until killed. */
 int seq_child_main(const char *homedir);
 
-/* test_env.cc's child workload: runs out of memory inside sm1. */
+/* test_env.cc's child workload: runs out of memory. */
 int oom_child_main(const char *homedir);
 
 /* Run a child workload if asked to, else the tests. */

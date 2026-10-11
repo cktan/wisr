@@ -38,18 +38,6 @@ enum class kind_t : int16_t {
   index_state = 9, /* an index's state, keyed as its index is */
 };
 
-/*
- * Run f, turning an allocation failure into SM_ERR_NOMEM, as sm2's
- * entry points do: no exception leaves an sm3 call.
- */
-template <typename F> int catch_nomem(F f) {
-  try {
-    return f();
-  } catch (const std::bad_alloc &) {
-    return sm1::seterr(sm1::SM_ERR_NOMEM, "out of memory");
-  }
-}
-
 /* The catalog's format version, which META holds. */
 constexpr int32_t format_version = 4;
 

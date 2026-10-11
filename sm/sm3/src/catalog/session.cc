@@ -103,15 +103,13 @@ namespace sm3 {
 
 /* Open a session; see sm3.h. */
 int session_open(catalog_t *cat, sm1::session_t *s, session_t *&out) {
-  return catch_nomem([&] {
-    if (!cat || !s) {
-      return sm1::seterr(sm1::SM_ERR_INVALID,
-                         "session_open: no catalog or no sm1 session");
-    }
-    out = new session_t{s,  cat, sm1::xctlevel_t::read_committed, 0, {}, {},
-                        {}, {}};
-    return 0;
-  });
+  if (!cat || !s) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       "session_open: no catalog or no sm1 session");
+  }
+  out =
+      new session_t{s, cat, sm1::xctlevel_t::read_committed, 0, {}, {}, {}, {}};
+  return 0;
 }
 
 /* Close a session, dropping its overlay; nullptr is a no-op. */
@@ -477,18 +475,15 @@ std::shared_ptr<const table_def_t> cat_get_table(const session_t *s,
 /* Lock a table's schema, then read its definition; see sm3.h. */
 int cat_lock_table(session_t *s, uint64_t oid, sm1::lockmode_t mode,
                    std::shared_ptr<const table_def_t> &out) {
-  return catch_nomem([&] {
-    if (lock_table(s->sm1, oid, mode) != 0) {
-      return -1;
-    }
-    // Under the lock, the definition cannot change until commit;
-    // one dropped while this waited is gone.
-    out = cat_get_table(s, oid);
-    return out ? 0
-               : sm1::seterr(sm1::SM_ERR_NOTFOUND, "table " +
-                                                       std::to_string(oid) +
-                                                       " does not exist");
-  });
+  if (lock_table(s->sm1, oid, mode) != 0) {
+    return -1;
+  }
+  // Under the lock, the definition cannot change until commit;
+  // one dropped while this waited is gone.
+  out = cat_get_table(s, oid);
+  return out ? 0
+             : sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                           "table " + std::to_string(oid) + " does not exist");
 }
 
 /* The table names in nspoid as s sees them: its changes over the shared. */

@@ -7,7 +7,6 @@
 
 #include "env.h"
 #include "error.h"
-#include "oom.h"
 #include "sm0_codec.h"
 
 #include <memory>
@@ -95,8 +94,6 @@ sm1::session_t *open_session(sm1::env_t *env, const char *dbname,
 /* Open dbname and start a session on it. */
 int sm1::opendb(sm1::env_t *env, std::string_view dbname_arg,
                 sm1::session_t *&out, const sm1::options_t *opt) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   // Take the name as a C string, as the engine uses it.
   std::string dbname_str;
   if (copy_name(dbname_arg, "database", dbname_str) != 0) {
@@ -117,8 +114,6 @@ int sm1::opendb(sm1::env_t *env, std::string_view dbname_arg,
  * The last session on a database closes the database.
  */
 int sm1::closedb(sm1::session_t *session) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   // Closing NULL is a no-op.
   if (!session) {
     return 0;

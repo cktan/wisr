@@ -373,63 +373,61 @@ int deform_each(const sm2::tup_desc_t &desc, std::string_view tuple, F &&put) {
  */
 int decode_view(const sm2::tup_desc_t &desc, std::string_view tuple,
                 size_t ordinal, std::optional<std::string_view> &datum) {
-  return sm2::catch_nomem([&] {
-    const auto &schema = desc.schema;
-    parsed_t t;
-    if (ordinal >= schema.size()) {
-      return invalid("attribute " + std::to_string(ordinal) +
-                     " is past the schema's " + std::to_string(schema.size()));
-    }
-    // Step 1: a usable schema, then the header and null bitmap only
-    // -- flags, natts, and that the bitmap fits -- not the fixed
-    // part or the var data.
-    if (check_desc(desc) != 0 || parse_head(desc, tuple, t) != 0) {
-      return -1;
-    }
-    datum = std::nullopt;
-    const sm2::attribute_t &a = schema[ordinal];
-    // A dropped attribute reads as null, whatever the row holds.
-    if (a.dropped) {
-      return 0;
-    }
-    // Step 2: the row was written before the attribute was added,
-    // so it has no entry; it reads as the missing value, or null.
-    if (ordinal >= t.natts) {
-      if (a.missing) {
-        datum = std::string_view(*a.missing);
-      }
-      return 0;
-    }
-    // Step 3: its bit in the null bitmap is set.
-    if (t.nulls && bit(t.nulls, ordinal)) {
-      return 0;
-    }
-    // Step 4: its entry is where it would be in a row with no
-    // nulls, off[ordinal] from the fixed part's start, less the
-    // entry widths the nulls before it do not take.
-    size_t pos = t.fixed + desc.off[ordinal] - null_width(t, desc, ordinal);
-    // The entry -- a datum, or a 2-byte slot -- must lie within the
-    // tuple; a truncated or damaged tuple could place it past.
-    if (pos + entry_width(desc, ordinal) > tuple.size()) {
-      return corrupt("cut short in its fixed part");
-    }
-    // Step 5, variable width: the slot must point past its own
-    // entry and into the tuple, and the varlena there must be one
-    // the codec reads, ending within the tuple.
-    if (desc.width[ordinal] < 0) {
-      size_t start = slot_at(t, pos), len;
-      if (start < pos || start >= tuple.size()) {
-        return corrupt("a slot that does not point to its varlena");
-      }
-      if (const char *why = varlena_extent(tuple.substr(start), len)) {
-        return corrupt(why);
-      }
-    }
-    // Step 5: the fixed-width datum itself, or the varlena whole,
-    // header included, as a view into tuple.
-    datum = datum_at(t, desc, ordinal, pos);
+  const auto &schema = desc.schema;
+  parsed_t t;
+  if (ordinal >= schema.size()) {
+    return invalid("attribute " + std::to_string(ordinal) +
+                   " is past the schema's " + std::to_string(schema.size()));
+  }
+  // Step 1: a usable schema, then the header and null bitmap only
+  // -- flags, natts, and that the bitmap fits -- not the fixed
+  // part or the var data.
+  if (check_desc(desc) != 0 || parse_head(desc, tuple, t) != 0) {
+    return -1;
+  }
+  datum = std::nullopt;
+  const sm2::attribute_t &a = schema[ordinal];
+  // A dropped attribute reads as null, whatever the row holds.
+  if (a.dropped) {
     return 0;
-  });
+  }
+  // Step 2: the row was written before the attribute was added,
+  // so it has no entry; it reads as the missing value, or null.
+  if (ordinal >= t.natts) {
+    if (a.missing) {
+      datum = std::string_view(*a.missing);
+    }
+    return 0;
+  }
+  // Step 3: its bit in the null bitmap is set.
+  if (t.nulls && bit(t.nulls, ordinal)) {
+    return 0;
+  }
+  // Step 4: its entry is where it would be in a row with no
+  // nulls, off[ordinal] from the fixed part's start, less the
+  // entry widths the nulls before it do not take.
+  size_t pos = t.fixed + desc.off[ordinal] - null_width(t, desc, ordinal);
+  // The entry -- a datum, or a 2-byte slot -- must lie within the
+  // tuple; a truncated or damaged tuple could place it past.
+  if (pos + entry_width(desc, ordinal) > tuple.size()) {
+    return corrupt("cut short in its fixed part");
+  }
+  // Step 5, variable width: the slot must point past its own
+  // entry and into the tuple, and the varlena there must be one
+  // the codec reads, ending within the tuple.
+  if (desc.width[ordinal] < 0) {
+    size_t start = slot_at(t, pos), len;
+    if (start < pos || start >= tuple.size()) {
+      return corrupt("a slot that does not point to its varlena");
+    }
+    if (const char *why = varlena_extent(tuple.substr(start), len)) {
+      return corrupt(why);
+    }
+  }
+  // Step 5: the fixed-width datum itself, or the varlena whole,
+  // header included, as a view into tuple.
+  datum = datum_at(t, desc, ordinal, pos);
+  return 0;
 }
 
 } // namespace
@@ -518,133 +516,127 @@ std::string_view varlena_payload(std::string_view v) {
 /* Encode datums and isnull under schema into tuple; see sm2.h. */
 int tup_encode(const tup_desc_t &desc, std::span<const datum_t> datums,
                std::span<const bool> isnull, std::string &tuple) {
-  return catch_nomem([&] {
-    if (check_desc(desc) != 0) {
-      return -1;
+  if (check_desc(desc) != 0) {
+    return -1;
+  }
+  const auto &schema = desc.schema;
+  const auto &w = desc.width;
+  if (datums.size() != schema.size() || isnull.size() != schema.size()) {
+    return invalid("a datum and null flag for every attribute, no more");
+  }
+  // Check each datum, and size the fixed part and the var data.
+  bool nulls = false;
+  size_t fixed = 0, nvar = 0, var = 0;
+  std::vector<std::string_view> attr_bytes(datums.size());
+  for (size_t i = 0; i < datums.size(); i++) {
+    if (isnull[i]) {
+      nulls = true;
+      continue;
     }
-    const auto &schema = desc.schema;
-    const auto &w = desc.width;
-    if (datums.size() != schema.size() || isnull.size() != schema.size()) {
-      return invalid("a datum and null flag for every attribute, no more");
+    if (schema[i].dropped) {
+      return invalid("attribute " + std::to_string(i) +
+                     " is dropped, so its datum must be null");
     }
-    // Check each datum, and size the fixed part and the var data.
-    bool nulls = false;
-    size_t fixed = 0, nvar = 0, var = 0;
-    std::vector<std::string_view> attr_bytes(datums.size());
+    // The bytes the datum_t stands for, which the tuple stores.
+    if (datum_bytes(schema[i].type, schema[i].typmod, datums[i],
+                    attr_bytes[i]) != 0) {
+      return invalid("attribute " + std::to_string(i) + ": " +
+                     std::string(sm1::errmsg()));
+    }
+    if (w[i] > 0) {
+      fixed += w[i];
+      continue;
+    }
+    nvar++;
+    var += varlena_len(varlena_payload(attr_bytes[i]).size());
+  }
+  // A row past the limit is refused, so every slot is 2 bytes.
+  size_t head =
+      1 + varint_len(datums.size()) + (nulls ? (datums.size() + 7) / 8 : 0);
+  size_t var_start = head + fixed + slot_width * nvar;
+  if (var_start + var > max_tup_len) {
+    return sm1::seterr(sm1::SM_ERR_ROWTOOLONG,
+                       "tuple: a row of " + std::to_string(var_start + var) +
+                           " bytes is longer than " +
+                           std::to_string(max_tup_len));
+  }
+  // The header, then the null bitmap, a set bit for a null.
+  std::string out;
+  out += static_cast<char>(nulls ? has_nulls : 0);
+  put_varint(datums.size(), out);
+  if (nulls) {
+    size_t at = out.size();
+    out.append((datums.size() + 7) / 8, '\0');
     for (size_t i = 0; i < datums.size(); i++) {
       if (isnull[i]) {
-        nulls = true;
-        continue;
-      }
-      if (schema[i].dropped) {
-        return invalid("attribute " + std::to_string(i) +
-                       " is dropped, so its datum must be null");
-      }
-      // The bytes the datum_t stands for, which the tuple stores.
-      if (datum_bytes(schema[i].type, schema[i].typmod, datums[i],
-                      attr_bytes[i]) != 0) {
-        return invalid("attribute " + std::to_string(i) + ": " +
-                       std::string(sm1::errmsg()));
-      }
-      if (w[i] > 0) {
-        fixed += w[i];
-        continue;
-      }
-      nvar++;
-      var += varlena_len(varlena_payload(attr_bytes[i]).size());
-    }
-    // A row past the limit is refused, so every slot is 2 bytes.
-    size_t head =
-        1 + varint_len(datums.size()) + (nulls ? (datums.size() + 7) / 8 : 0);
-    size_t var_start = head + fixed + slot_width * nvar;
-    if (var_start + var > max_tup_len) {
-      return sm1::seterr(sm1::SM_ERR_ROWTOOLONG,
-                         "tuple: a row of " + std::to_string(var_start + var) +
-                             " bytes is longer than " +
-                             std::to_string(max_tup_len));
-    }
-    // The header, then the null bitmap, a set bit for a null.
-    std::string out;
-    out += static_cast<char>(nulls ? has_nulls : 0);
-    put_varint(datums.size(), out);
-    if (nulls) {
-      size_t at = out.size();
-      out.append((datums.size() + 7) / 8, '\0');
-      for (size_t i = 0; i < datums.size(); i++) {
-        if (isnull[i]) {
-          out[at + i / 8] = static_cast<char>(out[at + i / 8] | 1 << (i % 8));
-        }
+        out[at + i / 8] = static_cast<char>(out[at + i / 8] | 1 << (i % 8));
       }
     }
-    // The fixed part: each datum, or each varlena's slot.
-    size_t next = var_start;
-    std::string word;
-    for (size_t i = 0; i < datums.size(); i++) {
-      if (isnull[i]) {
-        continue;
-      }
-      if (w[i] > 0) {
-        out += attr_bytes[i];
-        continue;
-      }
-      store_le(static_cast<uint16_t>(next), word);
-      out += word;
-      next += varlena_len(varlena_payload(attr_bytes[i]).size());
+  }
+  // The fixed part: each datum, or each varlena's slot.
+  size_t next = var_start;
+  std::string word;
+  for (size_t i = 0; i < datums.size(); i++) {
+    if (isnull[i]) {
+      continue;
     }
-    // The var data, each varlena in its shortest form.
-    for (size_t i = 0; i < datums.size(); i++) {
-      if (!isnull[i] && w[i] < 0) {
-        out += make_varlena(varlena_payload(attr_bytes[i]));
-      }
+    if (w[i] > 0) {
+      out += attr_bytes[i];
+      continue;
     }
-    tuple = std::move(out);
-    return 0;
-  });
+    store_le(static_cast<uint16_t>(next), word);
+    out += word;
+    next += varlena_len(varlena_payload(attr_bytes[i]).size());
+  }
+  // The var data, each varlena in its shortest form.
+  for (size_t i = 0; i < datums.size(); i++) {
+    if (!isnull[i] && w[i] < 0) {
+      out += make_varlena(varlena_payload(attr_bytes[i]));
+    }
+  }
+  tuple = std::move(out);
+  return 0;
 }
 
 /* Check that tuple is one the codec could write; see sm2.h. */
 int tup_check(const tup_desc_t &desc, std::string_view tuple) {
-  return catch_nomem([&] {
-    const auto &schema = desc.schema;
-    parsed_t t;
-    if (check_desc(desc) != 0) {
-      return -1;
+  const auto &schema = desc.schema;
+  parsed_t t;
+  if (check_desc(desc) != 0) {
+    return -1;
+  }
+  // A malformed tuple handed in to be written is the caller's
+  // error, not corruption in the store.
+  if (parse(desc, tuple, t) != 0) {
+    return sm1::seterr(sm1::SM_ERR_INVALID, std::string(sm1::errmsg()));
+  }
+  if (t.natts != schema.size()) {
+    return invalid("an attribute count other than the schema's");
+  }
+  for (size_t i = 0; i < schema.size(); i++) {
+    if (schema[i].dropped && !(t.nulls && bit(t.nulls, i))) {
+      return invalid("attribute " + std::to_string(i) +
+                     " is dropped, so it must be null");
     }
-    // A malformed tuple handed in to be written is the caller's
-    // error, not corruption in the store.
-    if (parse(desc, tuple, t) != 0) {
-      return sm1::seterr(sm1::SM_ERR_INVALID, std::string(sm1::errmsg()));
-    }
-    if (t.natts != schema.size()) {
-      return invalid("an attribute count other than the schema's");
-    }
-    for (size_t i = 0; i < schema.size(); i++) {
-      if (schema[i].dropped && !(t.nulls && bit(t.nulls, i))) {
-        return invalid("attribute " + std::to_string(i) +
-                       " is dropped, so it must be null");
-      }
-    }
-    return 0;
-  });
+  }
+  return 0;
 }
 
 /* Deform every attribute of tuple into datums and isnull; see sm2.h. */
 int tup_deform(const tup_desc_t &desc, std::string_view tuple,
                std::span<datum_t> datums, std::span<bool> isnull) {
-  return catch_nomem([&] {
-    const auto &schema = desc.schema;
-    if (datums.size() != schema.size() || isnull.size() != schema.size()) {
-      return invalid("deform: output spans must match schema size");
-    }
-    return deform_each(desc, tuple,
-                       [&](size_t i, std::optional<std::string_view> d) {
-                         isnull[i] = !d;
-                         datums[i] = 0;
-                         if (d) {
-                           bytes_to_datum(schema[i], *d, datums[i]);
-                         }
-                       });
-  });
+  const auto &schema = desc.schema;
+  if (datums.size() != schema.size() || isnull.size() != schema.size()) {
+    return invalid("deform: output spans must match schema size");
+  }
+  return deform_each(desc, tuple,
+                     [&](size_t i, std::optional<std::string_view> d) {
+                       isnull[i] = !d;
+                       datums[i] = 0;
+                       if (d) {
+                         bytes_to_datum(schema[i], *d, datums[i]);
+                       }
+                     });
 }
 
 /* One attribute of a tuple, by ordinal, into val and isnull; see sm2.h. */

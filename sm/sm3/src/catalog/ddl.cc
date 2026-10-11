@@ -245,42 +245,40 @@ namespace sm3 {
 int cat_init(sm1::env_t *env, std::string_view dbname,
              const sm1::options_t *opt) {
   return in_own_txn(env, dbname, opt, [&](sm1::session_t *session) {
-    return catch_nomem([&] {
-      kv_ptr kv(nullptr, &sm2::catkv_close);
-      std::string key, value;
-      std::string_view v;
-      if (open_kv(session, kv) != 0 || meta_key(key) != 0) {
+    kv_ptr kv(nullptr, &sm2::catkv_close);
+    std::string key, value;
+    std::string_view v;
+    if (open_kv(session, kv) != 0 || meta_key(key) != 0) {
+      return -1;
+    }
+    // A database is initialized once.
+    int rc = sm2::catkv_get(kv.get(), key, v);
+    if (rc != 1) {
+      return rc == 0 ? sm1::seterr(sm1::SM_ERR_EXISTS,
+                                   "catalog: the database has one already")
+                     : -1;
+    }
+    if (encode_meta(format_version, value) != 0 ||
+        sm2::catkv_insert(kv.get(), key, value) != 0) {
+      return -1;
+    }
+    // Oids for everything made from now on.
+    if (sm1::mkseq(session, oid_seq, first_oid, 1) != 0) {
+      return -1;
+    }
+    // The built-in namespaces, at their fixed oids.
+    for (auto [oid, name] :
+         {std::pair<uint64_t, const char *>{nsp_pg_catalog, "pg_catalog"},
+          {nsp_public, "public"}}) {
+      std::string blob;
+      if (insert_name(kv.get(), nsp_of_namespaces, name,
+                      {kind_t::nspace, oid, std::nullopt}) != 0 ||
+          encode_nspace({name}, blob) != 0 ||
+          insert_entity(kv.get(), kind_t::nspace, oid, blob) != 0) {
         return -1;
       }
-      // A database is initialized once.
-      int rc = sm2::catkv_get(kv.get(), key, v);
-      if (rc != 1) {
-        return rc == 0 ? sm1::seterr(sm1::SM_ERR_EXISTS,
-                                     "catalog: the database has one already")
-                       : -1;
-      }
-      if (encode_meta(format_version, value) != 0 ||
-          sm2::catkv_insert(kv.get(), key, value) != 0) {
-        return -1;
-      }
-      // Oids for everything made from now on.
-      if (sm1::mkseq(session, oid_seq, first_oid, 1) != 0) {
-        return -1;
-      }
-      // The built-in namespaces, at their fixed oids.
-      for (auto [oid, name] :
-           {std::pair<uint64_t, const char *>{nsp_pg_catalog, "pg_catalog"},
-            {nsp_public, "public"}}) {
-        std::string blob;
-        if (insert_name(kv.get(), nsp_of_namespaces, name,
-                        {kind_t::nspace, oid, std::nullopt}) != 0 ||
-            encode_nspace({name}, blob) != 0 ||
-            insert_entity(kv.get(), kind_t::nspace, oid, blob) != 0) {
-          return -1;
-        }
-      }
-      return 0;
-    });
+    }
+    return 0;
   });
 }
 
@@ -291,335 +289,320 @@ int cat_new_oid(session_t *session, uint64_t &oid) {
 
 /* Store a new namespace; see sm3.h. */
 int cat_put_namespace(session_t *session, uint64_t oid, std::string_view name) {
-  return catch_nomem([&] {
-    kv_ptr kv(nullptr, &sm2::catkv_close);
-    std::string blob;
-    // The name first, so a taken one fails before the namespace
-    // is written.
-    if (open_kv(session->sm1, kv) != 0 ||
-        insert_name(kv.get(), nsp_of_namespaces, name,
-                    {kind_t::nspace, oid, std::nullopt}) != 0 ||
-        encode_nspace({std::string(name)}, blob) != 0 ||
-        insert_entity(kv.get(), kind_t::nspace, oid, blob) != 0) {
-      return -1;
-    }
-    overlay_nspace(session, oid, name);
-    return 0;
-  });
+  kv_ptr kv(nullptr, &sm2::catkv_close);
+  std::string blob;
+  // The name first, so a taken one fails before the namespace
+  // is written.
+  if (open_kv(session->sm1, kv) != 0 ||
+      insert_name(kv.get(), nsp_of_namespaces, name,
+                  {kind_t::nspace, oid, std::nullopt}) != 0 ||
+      encode_nspace({std::string(name)}, blob) != 0 ||
+      insert_entity(kv.get(), kind_t::nspace, oid, blob) != 0) {
+    return -1;
+  }
+  overlay_nspace(session, oid, name);
+  return 0;
 }
 
 /* Erase a namespace; see sm3.h. */
 int cat_del_namespace(session_t *session, uint64_t oid) {
-  return catch_nomem([&] {
-    if (oid == nsp_pg_catalog || oid == nsp_public) {
-      return invalid("drop namespace: a built-in namespace cannot be dropped");
-    }
-    kv_ptr kv(nullptr, &sm2::catkv_close);
-    std::string name, key;
-    std::string_view v;
-    // Exclusive: this waits out every transaction creating in it.
-    if (open_kv(session->sm1, kv) != 0 ||
-        use_nspace(session, oid, sm1::SM_LOCKMODE_EX, name) != 0) {
-      return -1;
-    }
-    if (nspace_in_use(session, oid)) {
-      return sm1::seterr(sm1::SM_ERR_INUSE,
-                         "drop namespace: " + name + " is not empty");
-    }
-    // Its record under an X lock on its key, as a table's is read:
-    // the newest committed one, which this may then erase.
-    if (entity_key(kind_t::nspace, oid, key) != 0 ||
-        sm2::catkv_lock(kv.get(), key, sm1::SM_LOCKMODE_EX) != 0) {
-      return -1;
-    }
-    int rc = session->level == sm1::xctlevel_t::read_committed
-                 ? sm2::catkv_get_latest(kv.get(), key, v)
-                 : sm2::catkv_get(kv.get(), key, v);
-    if (rc != 0) {
-      return rc == 1 ? sm1::seterr(sm1::SM_ERR_NOTFOUND,
-                                   "namespace " + std::to_string(oid) +
-                                       " does not exist")
-                     : -1;
-    }
-    if (sm2::catkv_erase(kv.get(), key) != 0 ||
-        erase_name(kv.get(), nsp_of_namespaces, name) != 0) {
-      return -1;
-    }
-    overlay_nspace(session, oid, std::nullopt);
-    return 0;
-  });
+  if (oid == nsp_pg_catalog || oid == nsp_public) {
+    return invalid("drop namespace: a built-in namespace cannot be dropped");
+  }
+  kv_ptr kv(nullptr, &sm2::catkv_close);
+  std::string name, key;
+  std::string_view v;
+  // Exclusive: this waits out every transaction creating in it.
+  if (open_kv(session->sm1, kv) != 0 ||
+      use_nspace(session, oid, sm1::SM_LOCKMODE_EX, name) != 0) {
+    return -1;
+  }
+  if (nspace_in_use(session, oid)) {
+    return sm1::seterr(sm1::SM_ERR_INUSE,
+                       "drop namespace: " + name + " is not empty");
+  }
+  // Its record under an X lock on its key, as a table's is read:
+  // the newest committed one, which this may then erase.
+  if (entity_key(kind_t::nspace, oid, key) != 0 ||
+      sm2::catkv_lock(kv.get(), key, sm1::SM_LOCKMODE_EX) != 0) {
+    return -1;
+  }
+  int rc = session->level == sm1::xctlevel_t::read_committed
+               ? sm2::catkv_get_latest(kv.get(), key, v)
+               : sm2::catkv_get(kv.get(), key, v);
+  if (rc != 0) {
+    return rc == 1 ? sm1::seterr(sm1::SM_ERR_NOTFOUND, "namespace " +
+                                                           std::to_string(oid) +
+                                                           " does not exist")
+                   : -1;
+  }
+  if (sm2::catkv_erase(kv.get(), key) != 0 ||
+      erase_name(kv.get(), nsp_of_namespaces, name) != 0) {
+    return -1;
+  }
+  overlay_nspace(session, oid, std::nullopt);
+  return 0;
 }
 
 /* Read a table's record to change it; see sm3.h. */
 int cat_get_table_rec(session_t *session, uint64_t oid, table_rec_t &rec) {
-  return catch_nomem([&] { return latest_table(session, oid, rec); });
+  return latest_table(session, oid, rec);
 }
 
 /* Store a table's record, new or changed; see sm3.h. */
 int cat_put_table(session_t *session, uint64_t oid, const table_rec_t &rec) {
-  return catch_nomem([&] {
-    kv_ptr kv(nullptr, &sm2::catkv_close);
-    std::string blob;
-    // The names rec takes, and what each names.
-    std::map<std::string, name_rec_t> names;
-    names[rec.name] = {kind_t::table, oid, std::nullopt};
-    for (size_t i = 1; i < rec.indexes.size(); i++) {
-      // The order they are stored in, and so the order they load in.
-      if (rec.indexes[i - 1].oid >= rec.indexes[i].oid) {
-        return invalid("put table: indexes out of the order of their oids");
-      }
+  kv_ptr kv(nullptr, &sm2::catkv_close);
+  std::string blob;
+  // The names rec takes, and what each names.
+  std::map<std::string, name_rec_t> names;
+  names[rec.name] = {kind_t::table, oid, std::nullopt};
+  for (size_t i = 1; i < rec.indexes.size(); i++) {
+    // The order they are stored in, and so the order they load in.
+    if (rec.indexes[i - 1].oid >= rec.indexes[i].oid) {
+      return invalid("put table: indexes out of the order of their oids");
     }
-    for (const index_rec_t &x : rec.indexes) {
-      // Two of its own objects cannot share one.
-      if (!names.emplace(x.name, name_rec_t{kind_t::index, x.oid, oid})
-               .second) {
-        return taken(x.name);
-      }
+  }
+  for (const index_rec_t &x : rec.indexes) {
+    // Two of its own objects cannot share one.
+    if (!names.emplace(x.name, name_rec_t{kind_t::index, x.oid, oid}).second) {
+      return taken(x.name);
     }
-    if (!cat_get_table(session, oid)) {
-      // A new table. Its namespace must be there, and is held
-      // shared, so that it is not dropped under this.
-      if (open_kv(session->sm1, kv) != 0 ||
-          use_nspace(session, rec.nspoid, sm1::SM_LOCKMODE_SH, blob) != 0) {
-        return -1;
-      }
-      // The names first, so a taken one fails before the record
-      // is written.
-      for (const auto &[name, what] : names) {
-        if (insert_name(kv.get(), rec.nspoid, name, what) != 0) {
-          return -1;
-        }
-      }
-      // Its own fields, then a key for each column and each index.
-      if (put_table_fields(session, kv.get(), oid, rec) != 0) {
-        return -1;
-      }
-      for (size_t i = 0; i < rec.columns.size(); i++) {
-        if (put_column(session, kv.get(), oid, i, rec.columns[i]) != 0) {
-          return -1;
-        }
-      }
-      for (const index_rec_t &x : rec.indexes) {
-        if (put_index(session, kv.get(), oid, x) != 0) {
-          return -1;
-        }
-      }
-      if (record_table(session, oid, rec) != 0) {
-        return -1;
-      }
-      overlay_name(session, rec.nspoid, rec.name, oid);
-      return 0;
-    }
-    table_rec_t old;
+  }
+  if (!cat_get_table(session, oid)) {
+    // A new table. Its namespace must be there, and is held
+    // shared, so that it is not dropped under this.
     if (open_kv(session->sm1, kv) != 0 ||
-        latest_table(session, oid, old) != 0) {
+        use_nspace(session, rec.nspoid, sm1::SM_LOCKMODE_SH, blob) != 0) {
       return -1;
     }
-    if (rec.columns.size() < old.columns.size()) {
-      return invalid("put table: a column keeps its place, dropped or not");
-    }
-    if (old.nspoid != rec.nspoid) {
-      return invalid("put table: a table does not change its namespace");
-    }
-    std::map<std::string, name_rec_t> had;
-    had[old.name] = {kind_t::table, oid, std::nullopt};
-    for (const index_rec_t &x : old.indexes) {
-      had[x.name] = {kind_t::index, x.oid, oid};
-    }
-    // The new names first, so a taken one leaves the old in place.
+    // The names first, so a taken one fails before the record
+    // is written.
     for (const auto &[name, what] : names) {
-      auto h = had.find(name);
-      if (h != had.end()) {
-        // Kept, unless it now names another of the table's objects.
-        if (h->second.oid != what.oid) {
-          return taken(name);
-        }
-        continue;
-      }
       if (insert_name(kv.get(), rec.nspoid, name, what) != 0) {
         return -1;
       }
     }
-    for (const auto &[name, what] : had) {
-      if (!names.count(name) && erase_name(kv.get(), rec.nspoid, name) != 0) {
-        return -1;
-      }
-    }
-    // Only what changed is written: the table's own fields, a
-    // column, an index.
-    if ((old.name != rec.name || old.storeid != rec.storeid ||
-         old.rowno_seq != rec.rowno_seq || old.next_relid != rec.next_relid) &&
-        put_table_fields(session, kv.get(), oid, rec) != 0) {
+    // Its own fields, then a key for each column and each index.
+    if (put_table_fields(session, kv.get(), oid, rec) != 0) {
       return -1;
     }
     for (size_t i = 0; i < rec.columns.size(); i++) {
-      if ((i >= old.columns.size() || !(rec.columns[i] == old.columns[i])) &&
-          put_column(session, kv.get(), oid, i, rec.columns[i]) != 0) {
+      if (put_column(session, kv.get(), oid, i, rec.columns[i]) != 0) {
         return -1;
       }
     }
-    auto index_of = [](const table_rec_t &r, uint64_t x) {
-      return std::find_if(r.indexes.begin(), r.indexes.end(),
-                          [x](const index_rec_t &i) { return i.oid == x; });
-    };
     for (const index_rec_t &x : rec.indexes) {
-      auto was = index_of(old, x.oid);
-      if ((was == old.indexes.end() || !(x == *was)) &&
-          put_index(session, kv.get(), oid, x) != 0) {
-        return -1;
-      }
-    }
-    for (const index_rec_t &x : old.indexes) {
-      // An index no longer in the record goes, and its state with it.
-      if (index_of(rec, x.oid) == rec.indexes.end() &&
-          (del_part(session, kv.get(), kind_t::index, oid, x.oid) != 0 ||
-           del_index_state(session, kv.get(), oid, x.oid) != 0)) {
+      if (put_index(session, kv.get(), oid, x) != 0) {
         return -1;
       }
     }
     if (record_table(session, oid, rec) != 0) {
       return -1;
     }
-    if (old.name != rec.name) {
-      overlay_name(session, rec.nspoid, old.name, std::nullopt);
-      overlay_name(session, rec.nspoid, rec.name, oid);
-    }
+    overlay_name(session, rec.nspoid, rec.name, oid);
     return 0;
-  });
+  }
+  table_rec_t old;
+  if (open_kv(session->sm1, kv) != 0 || latest_table(session, oid, old) != 0) {
+    return -1;
+  }
+  if (rec.columns.size() < old.columns.size()) {
+    return invalid("put table: a column keeps its place, dropped or not");
+  }
+  if (old.nspoid != rec.nspoid) {
+    return invalid("put table: a table does not change its namespace");
+  }
+  std::map<std::string, name_rec_t> had;
+  had[old.name] = {kind_t::table, oid, std::nullopt};
+  for (const index_rec_t &x : old.indexes) {
+    had[x.name] = {kind_t::index, x.oid, oid};
+  }
+  // The new names first, so a taken one leaves the old in place.
+  for (const auto &[name, what] : names) {
+    auto h = had.find(name);
+    if (h != had.end()) {
+      // Kept, unless it now names another of the table's objects.
+      if (h->second.oid != what.oid) {
+        return taken(name);
+      }
+      continue;
+    }
+    if (insert_name(kv.get(), rec.nspoid, name, what) != 0) {
+      return -1;
+    }
+  }
+  for (const auto &[name, what] : had) {
+    if (!names.count(name) && erase_name(kv.get(), rec.nspoid, name) != 0) {
+      return -1;
+    }
+  }
+  // Only what changed is written: the table's own fields, a
+  // column, an index.
+  if ((old.name != rec.name || old.storeid != rec.storeid ||
+       old.rowno_seq != rec.rowno_seq || old.next_relid != rec.next_relid) &&
+      put_table_fields(session, kv.get(), oid, rec) != 0) {
+    return -1;
+  }
+  for (size_t i = 0; i < rec.columns.size(); i++) {
+    if ((i >= old.columns.size() || !(rec.columns[i] == old.columns[i])) &&
+        put_column(session, kv.get(), oid, i, rec.columns[i]) != 0) {
+      return -1;
+    }
+  }
+  auto index_of = [](const table_rec_t &r, uint64_t x) {
+    return std::find_if(r.indexes.begin(), r.indexes.end(),
+                        [x](const index_rec_t &i) { return i.oid == x; });
+  };
+  for (const index_rec_t &x : rec.indexes) {
+    auto was = index_of(old, x.oid);
+    if ((was == old.indexes.end() || !(x == *was)) &&
+        put_index(session, kv.get(), oid, x) != 0) {
+      return -1;
+    }
+  }
+  for (const index_rec_t &x : old.indexes) {
+    // An index no longer in the record goes, and its state with it.
+    if (index_of(rec, x.oid) == rec.indexes.end() &&
+        (del_part(session, kv.get(), kind_t::index, oid, x.oid) != 0 ||
+         del_index_state(session, kv.get(), oid, x.oid) != 0)) {
+      return -1;
+    }
+  }
+  if (record_table(session, oid, rec) != 0) {
+    return -1;
+  }
+  if (old.name != rec.name) {
+    overlay_name(session, rec.nspoid, old.name, std::nullopt);
+    overlay_name(session, rec.nspoid, rec.name, oid);
+  }
+  return 0;
 }
 
 /* Store an index's state, under the table's lock IX; see sm3.h. */
 int cat_put_index_state(session_t *session, uint64_t table_oid,
                         uint64_t index_oid, const index_status_t &status) {
-  return catch_nomem([&] {
-    // As a writer of the table takes it: readers and writers go
-    // on, and DDL on the table is kept out until this commits.
-    std::shared_ptr<const table_def_t> d;
-    if (cat_lock_table(session, table_oid, sm1::SM_LOCKMODE_IX, d) != 0) {
-      return -1;
-    }
-    bool there = false;
-    for (const index_def_t &x : d->indexes) {
-      there |= x.oid == index_oid;
-    }
-    if (!there) {
-      return sm1::seterr(sm1::SM_ERR_NOTFOUND,
-                         "index state: no index " + std::to_string(index_oid));
-    }
-    // A state only ever leaves pending: that is what makes one seen
-    // late safe (SM3_DESIGN.md §3.3). Setting a pending index
-    // pending changes nothing.
-    index_state_t now = cat_get_index_state(session, index_oid).state;
-    if (now != index_state_t::pending) {
-      return sm1::seterr(sm1::SM_ERR_INVALID,
-                         "index state: index " + std::to_string(index_oid) +
-                             " is no longer pending, and its state is set "
-                             "once");
-    }
-    if (status.state == index_state_t::pending) {
-      return 0;
-    }
-    // Only a failed index keeps why.
-    index_status_t st{status.state, sm1::SM_OK, {}};
-    if (status.state == index_state_t::failed) {
-      st.error = status.error;
-      st.reason = status.reason;
-    }
-    kv_ptr kv(nullptr, &sm2::catkv_close);
-    std::string key, blob;
-    if (open_kv(session->sm1, kv) != 0 ||
-        part_key(kind_t::index_state, table_oid, index_oid, key) != 0) {
-      return -1;
-    }
-    // Under the key's lock, so that of two transactions setting one
-    // index's state the second finds the first's and is refused.
-    int rc = latest_key(session, kv.get(), key);
-    if (rc < 0) {
-      return -1;
-    }
-    if (rc == 0) {
-      return sm1::seterr(sm1::SM_ERR_INVALID,
-                         "index state: index " + std::to_string(index_oid) +
-                             " is no longer pending, and its state is set "
-                             "once");
-    }
-    if (encode_index_state(st, blob) != 0 ||
-        sm2::catkv_insert(kv.get(), key, blob) != 0) {
-      return -1;
-    }
-    overlay_state(session, index_oid, std::move(st));
+  // As a writer of the table takes it: readers and writers go
+  // on, and DDL on the table is kept out until this commits.
+  std::shared_ptr<const table_def_t> d;
+  if (cat_lock_table(session, table_oid, sm1::SM_LOCKMODE_IX, d) != 0) {
+    return -1;
+  }
+  bool there = false;
+  for (const index_def_t &x : d->indexes) {
+    there |= x.oid == index_oid;
+  }
+  if (!there) {
+    return sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                       "index state: no index " + std::to_string(index_oid));
+  }
+  // A state only ever leaves pending: that is what makes one seen
+  // late safe (SM3_DESIGN.md §3.3). Setting a pending index
+  // pending changes nothing.
+  index_state_t now = cat_get_index_state(session, index_oid).state;
+  if (now != index_state_t::pending) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       "index state: index " + std::to_string(index_oid) +
+                           " is no longer pending, and its state is set "
+                           "once");
+  }
+  if (status.state == index_state_t::pending) {
     return 0;
-  });
+  }
+  // Only a failed index keeps why.
+  index_status_t st{status.state, sm1::SM_OK, {}};
+  if (status.state == index_state_t::failed) {
+    st.error = status.error;
+    st.reason = status.reason;
+  }
+  kv_ptr kv(nullptr, &sm2::catkv_close);
+  std::string key, blob;
+  if (open_kv(session->sm1, kv) != 0 ||
+      part_key(kind_t::index_state, table_oid, index_oid, key) != 0) {
+    return -1;
+  }
+  // Under the key's lock, so that of two transactions setting one
+  // index's state the second finds the first's and is refused.
+  int rc = latest_key(session, kv.get(), key);
+  if (rc < 0) {
+    return -1;
+  }
+  if (rc == 0) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       "index state: index " + std::to_string(index_oid) +
+                           " is no longer pending, and its state is set "
+                           "once");
+  }
+  if (encode_index_state(st, blob) != 0 ||
+      sm2::catkv_insert(kv.get(), key, blob) != 0) {
+    return -1;
+  }
+  overlay_state(session, index_oid, std::move(st));
+  return 0;
 }
 
 /* Erase a table's record and its names; see sm3.h. */
 int cat_del_table(session_t *session, uint64_t oid) {
-  return catch_nomem([&] {
-    kv_ptr kv(nullptr, &sm2::catkv_close);
-    table_rec_t rec;
-    std::string key;
-    if (open_kv(session->sm1, kv) != 0 ||
-        latest_table(session, oid, rec) != 0) {
+  kv_ptr kv(nullptr, &sm2::catkv_close);
+  table_rec_t rec;
+  std::string key;
+  if (open_kv(session->sm1, kv) != 0 || latest_table(session, oid, rec) != 0) {
+    return -1;
+  }
+  // Its names, then its record: each column, each index, and
+  // its own fields.
+  if (erase_name(kv.get(), rec.nspoid, rec.name) != 0) {
+    return -1;
+  }
+  for (const index_rec_t &x : rec.indexes) {
+    if (erase_name(kv.get(), rec.nspoid, x.name) != 0 ||
+        del_part(session, kv.get(), kind_t::index, oid, x.oid) != 0 ||
+        del_index_state(session, kv.get(), oid, x.oid) != 0) {
       return -1;
     }
-    // Its names, then its record: each column, each index, and
-    // its own fields.
-    if (erase_name(kv.get(), rec.nspoid, rec.name) != 0) {
+  }
+  for (size_t i = 0; i < rec.columns.size(); i++) {
+    if (del_part(session, kv.get(), kind_t::column, oid, i) != 0) {
       return -1;
     }
-    for (const index_rec_t &x : rec.indexes) {
-      if (erase_name(kv.get(), rec.nspoid, x.name) != 0 ||
-          del_part(session, kv.get(), kind_t::index, oid, x.oid) != 0 ||
-          del_index_state(session, kv.get(), oid, x.oid) != 0) {
-        return -1;
-      }
-    }
-    for (size_t i = 0; i < rec.columns.size(); i++) {
-      if (del_part(session, kv.get(), kind_t::column, oid, i) != 0) {
-        return -1;
-      }
-    }
-    if (entity_key(kind_t::table, oid, key) != 0 ||
-        del_key(session, kv.get(), key) != 0) {
-      return -1;
-    }
-    overlay_table(session, oid, nullptr);
-    overlay_name(session, rec.nspoid, rec.name, std::nullopt);
-    return 0;
-  });
+  }
+  if (entity_key(kind_t::table, oid, key) != 0 ||
+      del_key(session, kv.get(), key) != 0) {
+    return -1;
+  }
+  overlay_table(session, oid, nullptr);
+  overlay_name(session, rec.nspoid, rec.name, std::nullopt);
+  return 0;
 }
 
 /* Store a new collation; see sm3.h. */
 int cat_put_collation(session_t *session, uint64_t oid, uint64_t nspoid,
                       std::string_view name, std::string_view locale,
                       bool deterministic) {
-  return catch_nomem([&] {
-    kv_ptr kv(nullptr, &sm2::catkv_close);
-    std::string blob;
-    if (open_kv(session->sm1, kv) != 0 ||
-        use_nspace(session, nspoid, sm1::SM_LOCKMODE_SH, blob) != 0) {
-      return -1;
-    }
-    // Opening it checks the locale and gives the version to record.
-    sm2::collation_t *raw = nullptr;
-    if (sm2::collation_open(locale, deterministic, "", raw) != 0) {
-      return -1;
-    }
-    std::unique_ptr<sm2::collation_t, decltype(&sm2::collation_close)> c(
-        raw, &sm2::collation_close);
-    std::string version(sm2::collation_version(c.get()));
-    if (insert_name(kv.get(), nspoid, name,
-                    {kind_t::collation, oid, std::nullopt}) != 0 ||
-        encode_collation(
-            {std::string(name), std::string(locale), deterministic, version},
-            blob) != 0 ||
-        insert_entity(kv.get(), kind_t::collation, oid, blob) != 0) {
-      return -1;
-    }
-    // The overlay holds it open, for this transaction's DDL to use.
-    overlay_collation(session, oid, nspoid, c.release());
-    return 0;
-  });
+  kv_ptr kv(nullptr, &sm2::catkv_close);
+  std::string blob;
+  if (open_kv(session->sm1, kv) != 0 ||
+      use_nspace(session, nspoid, sm1::SM_LOCKMODE_SH, blob) != 0) {
+    return -1;
+  }
+  // Opening it checks the locale and gives the version to record.
+  sm2::collation_t *raw = nullptr;
+  if (sm2::collation_open(locale, deterministic, "", raw) != 0) {
+    return -1;
+  }
+  std::unique_ptr<sm2::collation_t, decltype(&sm2::collation_close)> c(
+      raw, &sm2::collation_close);
+  std::string version(sm2::collation_version(c.get()));
+  if (insert_name(kv.get(), nspoid, name,
+                  {kind_t::collation, oid, std::nullopt}) != 0 ||
+      encode_collation(
+          {std::string(name), std::string(locale), deterministic, version},
+          blob) != 0 ||
+      insert_entity(kv.get(), kind_t::collation, oid, blob) != 0) {
+    return -1;
+  }
+  // The overlay holds it open, for this transaction's DDL to use.
+  overlay_collation(session, oid, nspoid, c.release());
+  return 0;
 }
 
 /* Take a table's oid lock; see internal.h. */

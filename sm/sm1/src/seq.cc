@@ -15,7 +15,6 @@
  */
 
 #include "error.h"
-#include "oom.h"
 #include "session.h"
 #include "sm0_codec.h"
 
@@ -204,8 +203,6 @@ int lastseq(sm1::session_t *s, const char *name, uint64_t *out) {
 /* Create a sequence. */
 int sm1::mkseq(sm1::session_t *session, std::string_view name_arg,
                uint64_t start, uint64_t increment) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   // Take the name as a C string, as the engine uses it.
   std::string name_str;
   if (copy_name(name_arg, "sequence", name_str) != 0) {
@@ -221,8 +218,6 @@ int sm1::mkseq(sm1::session_t *session, std::string_view name_arg,
 
 /* Drop a sequence. */
 int sm1::rmseq(sm1::session_t *session, std::string_view name_arg) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   // Take the name as a C string, as the engine uses it.
   std::string name_str;
   if (copy_name(name_arg, "sequence", name_str) != 0) {
@@ -239,8 +234,6 @@ int sm1::rmseq(sm1::session_t *session, std::string_view name_arg) {
 /* Hand out a sequence's next value. */
 int sm1::nextseq(sm1::session_t *session, std::string_view name_arg,
                  uint64_t &out) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   // Take the name as a C string, as the engine uses it.
   std::string name_str;
   if (copy_name(name_arg, "sequence", name_str) != 0) {
@@ -257,8 +250,6 @@ int sm1::nextseq(sm1::session_t *session, std::string_view name_arg,
 /* Report a sequence's last value without drawing one. */
 int sm1::lastseq(sm1::session_t *session, std::string_view name_arg,
                  uint64_t &out) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   // Take the name as a C string, as the engine uses it.
   std::string name_str;
   if (copy_name(name_arg, "sequence", name_str) != 0) {

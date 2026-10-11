@@ -233,349 +233,315 @@ const sm2::tup_desc_t &part_desc(part_t part) {
 /* Read one framed part; see catalog.h. */
 int read_part(std::string_view blob, size_t &pos, const sm2::tup_desc_t &desc,
               row_t &row) {
-  return catch_nomem([&] {
-    uint64_t len;
-    if (!get_varint(blob, pos, len) || len > blob.size() - pos) {
-      return corrupt("a part cut short");
-    }
-    std::string_view tuple = blob.substr(pos, len);
-    size_t n = desc.schema.size();
-    row.values.assign(n, 0);
-    row.isnull.reset(new bool[n]);
-    if (sm2::tup_deform(desc, tuple, row.values,
-                        std::span<bool>(row.isnull.get(), n)) != 0) {
-      return corrupt("a part that is not a tuple of its schema");
-    }
-    pos += len;
-    return 0;
-  });
+  uint64_t len;
+  if (!get_varint(blob, pos, len) || len > blob.size() - pos) {
+    return corrupt("a part cut short");
+  }
+  std::string_view tuple = blob.substr(pos, len);
+  size_t n = desc.schema.size();
+  row.values.assign(n, 0);
+  row.isnull.reset(new bool[n]);
+  if (sm2::tup_deform(desc, tuple, row.values,
+                      std::span<bool>(row.isnull.get(), n)) != 0) {
+    return corrupt("a part that is not a tuple of its schema");
+  }
+  pos += len;
+  return 0;
 }
 
 /* META's value: the format version. */
 int encode_meta(int32_t version, std::string &value) {
-  return catch_nomem([&] {
-    writer_t w(1);
-    w.i4(0, version);
-    value.clear();
-    return w.append(part_desc(part_t::meta), value);
-  });
+  writer_t w(1);
+  w.i4(0, version);
+  value.clear();
+  return w.append(part_desc(part_t::meta), value);
 }
 
 /* Read META's value. */
 int decode_meta(std::string_view value, int32_t &version) {
-  return catch_nomem([&] {
-    reader_t r;
-    size_t pos = 0;
-    if (r.read(value, pos, part_t::meta) != 0) {
-      return -1;
-    }
-    version = r.i4(0);
-    return r.ok ? at_end(value, pos) : corrupt("META without its version");
-  });
+  reader_t r;
+  size_t pos = 0;
+  if (r.read(value, pos, part_t::meta) != 0) {
+    return -1;
+  }
+  version = r.i4(0);
+  return r.ok ? at_end(value, pos) : corrupt("META without its version");
 }
 
 /* A NAME key's value: what it names. */
 int encode_name(const name_rec_t &rec, std::string &value) {
-  return catch_nomem([&] {
-    writer_t w(3);
-    w.i2(0, static_cast<int16_t>(rec.kind));
-    w.i8(1, rec.oid);
-    w.opt_i8(2, rec.table);
-    value.clear();
-    return w.append(part_desc(part_t::name), value);
-  });
+  writer_t w(3);
+  w.i2(0, static_cast<int16_t>(rec.kind));
+  w.i8(1, rec.oid);
+  w.opt_i8(2, rec.table);
+  value.clear();
+  return w.append(part_desc(part_t::name), value);
 }
 
 /* Read a NAME key's value. */
 int decode_name(std::string_view value, name_rec_t &rec) {
-  return catch_nomem([&] {
-    reader_t r;
-    size_t pos = 0;
-    if (r.read(value, pos, part_t::name) != 0) {
-      return -1;
-    }
-    rec.kind = static_cast<kind_t>(r.i2(0));
-    rec.oid = r.i8(1);
-    rec.table = r.opt_i8(2);
-    return r.ok ? at_end(value, pos) : corrupt("a NAME value cut short");
-  });
+  reader_t r;
+  size_t pos = 0;
+  if (r.read(value, pos, part_t::name) != 0) {
+    return -1;
+  }
+  rec.kind = static_cast<kind_t>(r.i2(0));
+  rec.oid = r.i8(1);
+  rec.table = r.opt_i8(2);
+  return r.ok ? at_end(value, pos) : corrupt("a NAME value cut short");
 }
 
 /* A table's value: its own fields. */
 int encode_table(const table_rec_t &rec, std::string &blob) {
-  return catch_nomem([&] {
-    blob.clear();
-    writer_t t(5);
-    t.i8(0, rec.nspoid);
-    t.bytes(1, rec.name);
-    t.i8(2, rec.storeid);
-    t.bytes(3, rec.rowno_seq);
-    t.i2(4, static_cast<int16_t>(rec.next_relid));
-    return t.append(part_desc(part_t::table), blob);
-  });
+  blob.clear();
+  writer_t t(5);
+  t.i8(0, rec.nspoid);
+  t.bytes(1, rec.name);
+  t.i8(2, rec.storeid);
+  t.bytes(3, rec.rowno_seq);
+  t.i2(4, static_cast<int16_t>(rec.next_relid));
+  return t.append(part_desc(part_t::table), blob);
 }
 
 /* Read a table's value; its columns and indexes are left empty. */
 int decode_table(std::string_view blob, table_rec_t &rec) {
-  return catch_nomem([&] {
-    size_t pos = 0;
-    reader_t t;
-    if (t.read(blob, pos, part_t::table) != 0) {
-      return -1;
-    }
-    rec.nspoid = t.i8(0);
-    rec.name = t.bytes(1);
-    rec.storeid = t.i8(2);
-    rec.rowno_seq = t.bytes(3);
-    rec.next_relid = static_cast<uint16_t>(t.i2(4));
-    if (!t.ok) {
-      return corrupt("a table part cut short");
-    }
-    rec.columns.clear();
-    rec.indexes.clear();
-    return at_end(blob, pos);
-  });
+  size_t pos = 0;
+  reader_t t;
+  if (t.read(blob, pos, part_t::table) != 0) {
+    return -1;
+  }
+  rec.nspoid = t.i8(0);
+  rec.name = t.bytes(1);
+  rec.storeid = t.i8(2);
+  rec.rowno_seq = t.bytes(3);
+  rec.next_relid = static_cast<uint16_t>(t.i2(4));
+  if (!t.ok) {
+    return corrupt("a table part cut short");
+  }
+  rec.columns.clear();
+  rec.indexes.clear();
+  return at_end(blob, pos);
 }
 
 /* A column's value. */
 int encode_column(const column_rec_t &c, std::string &blob) {
-  return catch_nomem([&] {
-    blob.clear();
-    writer_t w(7);
-    w.bytes(0, c.name);
-    w.i2(1, c.type_code);
-    w.i4(2, c.typmod);
-    w.b(3, c.not_null);
-    w.b(4, c.dropped);
-    if (c.missing) {
-      w.bytes(5, *c.missing);
-    }
-    w.opt_i8(6, c.collation);
-    return w.append(part_desc(part_t::column), blob);
-  });
+  blob.clear();
+  writer_t w(7);
+  w.bytes(0, c.name);
+  w.i2(1, c.type_code);
+  w.i4(2, c.typmod);
+  w.b(3, c.not_null);
+  w.b(4, c.dropped);
+  if (c.missing) {
+    w.bytes(5, *c.missing);
+  }
+  w.opt_i8(6, c.collation);
+  return w.append(part_desc(part_t::column), blob);
 }
 
 /* Read a column's value. */
 int decode_column(std::string_view blob, column_rec_t &c) {
-  return catch_nomem([&] {
-    size_t pos = 0;
-    reader_t r;
-    if (r.read(blob, pos, part_t::column) != 0) {
-      return -1;
-    }
-    c.name = r.bytes(0);
-    c.type_code = static_cast<uint8_t>(r.i2(1));
-    c.typmod = r.i4(2);
-    c.not_null = r.b(3);
-    c.dropped = r.b(4);
-    c.missing = r.opt_bytes(5);
-    c.collation = r.opt_i8(6);
-    if (!r.ok) {
-      return corrupt("a column part cut short");
-    }
-    return at_end(blob, pos);
-  });
+  size_t pos = 0;
+  reader_t r;
+  if (r.read(blob, pos, part_t::column) != 0) {
+    return -1;
+  }
+  c.name = r.bytes(0);
+  c.type_code = static_cast<uint8_t>(r.i2(1));
+  c.typmod = r.i4(2);
+  c.not_null = r.b(3);
+  c.dropped = r.b(4);
+  c.missing = r.opt_bytes(5);
+  c.collation = r.opt_i8(6);
+  if (!r.ok) {
+    return corrupt("a column part cut short");
+  }
+  return at_end(blob, pos);
 }
 
 /* An index's value: the index, then its key, INCLUDE and read columns. */
 int encode_index(const index_rec_t &x, std::string &blob) {
-  return catch_nomem([&] {
-    blob.clear();
-    writer_t w(11);
-    w.i8(0, x.oid);
-    w.bytes(1, x.name);
-    w.i2(2, static_cast<int16_t>(x.relid));
-    w.b(3, x.unique);
-    w.i4(4, static_cast<int32_t>(x.keys.size()));
-    w.i4(5, static_cast<int32_t>(x.includes.size()));
-    // Attributes 6 to 8 held the index's state, which has an
-    // entry of its own now; they are left null.
-    // Only a partial or an expression index has a blob, and
-    // columns it reads, which follow its INCLUDE parts.
-    if (!x.eval.empty()) {
-      w.bytes(9, x.eval);
-      w.i4(10, static_cast<int32_t>(x.reads.size()));
+  blob.clear();
+  writer_t w(11);
+  w.i8(0, x.oid);
+  w.bytes(1, x.name);
+  w.i2(2, static_cast<int16_t>(x.relid));
+  w.b(3, x.unique);
+  w.i4(4, static_cast<int32_t>(x.keys.size()));
+  w.i4(5, static_cast<int32_t>(x.includes.size()));
+  // Attributes 6 to 8 held the index's state, which has an
+  // entry of its own now; they are left null.
+  // Only a partial or an expression index has a blob, and
+  // columns it reads, which follow its INCLUDE parts.
+  if (!x.eval.empty()) {
+    w.bytes(9, x.eval);
+    w.i4(10, static_cast<int32_t>(x.reads.size()));
+  }
+  if (w.append(part_desc(part_t::index), blob) != 0) {
+    return -1;
+  }
+  for (const index_key_rec_t &k : x.keys) {
+    writer_t kw(6);
+    kw.i4(0, k.attnum);
+    kw.b(1, k.desc);
+    kw.b(2, k.nulls_first);
+    kw.opt_i8(3, k.collation);
+    // An expression has no column to take its type from.
+    if (k.attnum < 0) {
+      kw.i2(4, static_cast<int16_t>(k.type_code));
+      kw.i4(5, k.typmod);
     }
-    if (w.append(part_desc(part_t::index), blob) != 0) {
+    if (kw.append(part_desc(part_t::index_key), blob) != 0) {
       return -1;
     }
-    for (const index_key_rec_t &k : x.keys) {
-      writer_t kw(6);
-      kw.i4(0, k.attnum);
-      kw.b(1, k.desc);
-      kw.b(2, k.nulls_first);
-      kw.opt_i8(3, k.collation);
-      // An expression has no column to take its type from.
-      if (k.attnum < 0) {
-        kw.i2(4, static_cast<int16_t>(k.type_code));
-        kw.i4(5, k.typmod);
-      }
-      if (kw.append(part_desc(part_t::index_key), blob) != 0) {
-        return -1;
-      }
+  }
+  for (int32_t attnum : x.includes) {
+    writer_t iw(1);
+    iw.i4(0, attnum);
+    if (iw.append(part_desc(part_t::include), blob) != 0) {
+      return -1;
     }
-    for (int32_t attnum : x.includes) {
-      writer_t iw(1);
-      iw.i4(0, attnum);
-      if (iw.append(part_desc(part_t::include), blob) != 0) {
-        return -1;
-      }
+  }
+  // A column read is laid out as an INCLUDE column is.
+  for (int32_t attnum : x.reads) {
+    writer_t rw(1);
+    rw.i4(0, attnum);
+    if (rw.append(part_desc(part_t::include), blob) != 0) {
+      return -1;
     }
-    // A column read is laid out as an INCLUDE column is.
-    for (int32_t attnum : x.reads) {
-      writer_t rw(1);
-      rw.i4(0, attnum);
-      if (rw.append(part_desc(part_t::include), blob) != 0) {
-        return -1;
-      }
-    }
-    return 0;
-  });
+  }
+  return 0;
 }
 
 /* Read an index's value. */
 int decode_index(std::string_view blob, index_rec_t &x) {
-  return catch_nomem([&] {
-    size_t pos = 0;
-    x = index_rec_t{};
-    reader_t r;
-    if (r.read(blob, pos, part_t::index) != 0) {
+  size_t pos = 0;
+  x = index_rec_t{};
+  reader_t r;
+  if (r.read(blob, pos, part_t::index) != 0) {
+    return -1;
+  }
+  x.oid = r.i8(0);
+  x.name = r.bytes(1);
+  x.relid = static_cast<uint16_t>(r.i2(2));
+  x.unique = r.b(3);
+  int32_t nkey = r.i4(4), ninclude = r.i4(5);
+  if (!r.ok || nkey < 0 || ninclude < 0) {
+    return corrupt("an index part cut short");
+  }
+  x.eval = r.opt_bytes(9).value_or("");
+  int32_t nread = r.opt_i4(10).value_or(0);
+  if (nread < 0) {
+    return corrupt("an index part cut short");
+  }
+  for (int32_t k = 0; k < nkey; k++) {
+    reader_t kr;
+    if (kr.read(blob, pos, part_t::index_key) != 0) {
       return -1;
     }
-    x.oid = r.i8(0);
-    x.name = r.bytes(1);
-    x.relid = static_cast<uint16_t>(r.i2(2));
-    x.unique = r.b(3);
-    int32_t nkey = r.i4(4), ninclude = r.i4(5);
-    if (!r.ok || nkey < 0 || ninclude < 0) {
-      return corrupt("an index part cut short");
+    x.keys.push_back({kr.i4(0), kr.b(1), kr.b(2), kr.opt_i8(3),
+                      static_cast<uint8_t>(kr.opt_i2(4).value_or(0)),
+                      kr.opt_i4(5).value_or(-1)});
+    if (!kr.ok) {
+      return corrupt("an index key part cut short");
     }
-    x.eval = r.opt_bytes(9).value_or("");
-    int32_t nread = r.opt_i4(10).value_or(0);
-    if (nread < 0) {
-      return corrupt("an index part cut short");
+  }
+  for (int32_t k = 0; k < ninclude; k++) {
+    reader_t ir;
+    if (ir.read(blob, pos, part_t::include) != 0) {
+      return -1;
     }
-    for (int32_t k = 0; k < nkey; k++) {
-      reader_t kr;
-      if (kr.read(blob, pos, part_t::index_key) != 0) {
-        return -1;
-      }
-      x.keys.push_back({kr.i4(0), kr.b(1), kr.b(2), kr.opt_i8(3),
-                        static_cast<uint8_t>(kr.opt_i2(4).value_or(0)),
-                        kr.opt_i4(5).value_or(-1)});
-      if (!kr.ok) {
-        return corrupt("an index key part cut short");
-      }
+    x.includes.push_back(ir.i4(0));
+    if (!ir.ok) {
+      return corrupt("an include part cut short");
     }
-    for (int32_t k = 0; k < ninclude; k++) {
-      reader_t ir;
-      if (ir.read(blob, pos, part_t::include) != 0) {
-        return -1;
-      }
-      x.includes.push_back(ir.i4(0));
-      if (!ir.ok) {
-        return corrupt("an include part cut short");
-      }
+  }
+  for (int32_t k = 0; k < nread; k++) {
+    reader_t rr;
+    if (rr.read(blob, pos, part_t::include) != 0) {
+      return -1;
     }
-    for (int32_t k = 0; k < nread; k++) {
-      reader_t rr;
-      if (rr.read(blob, pos, part_t::include) != 0) {
-        return -1;
-      }
-      x.reads.push_back(rr.i4(0));
-      if (!rr.ok) {
-        return corrupt("a column an index reads cut short");
-      }
+    x.reads.push_back(rr.i4(0));
+    if (!rr.ok) {
+      return corrupt("a column an index reads cut short");
     }
-    return at_end(blob, pos);
-  });
+  }
+  return at_end(blob, pos);
 }
 
 /* An index's state: the state, and why its build failed. */
 int encode_index_state(const index_status_t &rec, std::string &blob) {
-  return catch_nomem([&] {
-    writer_t w(3);
-    w.i2(0, static_cast<int16_t>(rec.state));
-    // Only a failed index has a reason to keep.
-    if (rec.state == index_state_t::failed) {
-      w.i2(1, static_cast<int16_t>(rec.error));
-      w.bytes(2, rec.reason);
-    }
-    blob.clear();
-    return w.append(part_desc(part_t::index_state), blob);
-  });
+  writer_t w(3);
+  w.i2(0, static_cast<int16_t>(rec.state));
+  // Only a failed index has a reason to keep.
+  if (rec.state == index_state_t::failed) {
+    w.i2(1, static_cast<int16_t>(rec.error));
+    w.bytes(2, rec.reason);
+  }
+  blob.clear();
+  return w.append(part_desc(part_t::index_state), blob);
 }
 
 /* Read an index's state. */
 int decode_index_state(std::string_view blob, index_status_t &rec) {
-  return catch_nomem([&] {
-    reader_t r;
-    size_t pos = 0;
-    if (r.read(blob, pos, part_t::index_state) != 0) {
-      return -1;
-    }
-    int16_t state = r.i2(0);
-    if (!r.ok || state < 0 ||
-        state > static_cast<int16_t>(index_state_t::failed)) {
-      return corrupt("an index in no known state");
-    }
-    rec.state = static_cast<index_state_t>(state);
-    rec.error = static_cast<sm1::errnum_t>(r.opt_i2(1).value_or(sm1::SM_OK));
-    rec.reason = r.opt_bytes(2).value_or("");
-    return at_end(blob, pos);
-  });
+  reader_t r;
+  size_t pos = 0;
+  if (r.read(blob, pos, part_t::index_state) != 0) {
+    return -1;
+  }
+  int16_t state = r.i2(0);
+  if (!r.ok || state < 0 ||
+      state > static_cast<int16_t>(index_state_t::failed)) {
+    return corrupt("an index in no known state");
+  }
+  rec.state = static_cast<index_state_t>(state);
+  rec.error = static_cast<sm1::errnum_t>(r.opt_i2(1).value_or(sm1::SM_OK));
+  rec.reason = r.opt_bytes(2).value_or("");
+  return at_end(blob, pos);
 }
 
 /* A namespace's blob. */
 int encode_nspace(const nspace_rec_t &rec, std::string &blob) {
-  return catch_nomem([&] {
-    writer_t w(1);
-    w.bytes(0, rec.name);
-    blob.clear();
-    return w.append(part_desc(part_t::nspace), blob);
-  });
+  writer_t w(1);
+  w.bytes(0, rec.name);
+  blob.clear();
+  return w.append(part_desc(part_t::nspace), blob);
 }
 
 /* Read a namespace's blob. */
 int decode_nspace(std::string_view blob, nspace_rec_t &rec) {
-  return catch_nomem([&] {
-    reader_t r;
-    size_t pos = 0;
-    if (r.read(blob, pos, part_t::nspace) != 0) {
-      return -1;
-    }
-    rec.name = r.bytes(0);
-    return r.ok ? at_end(blob, pos) : corrupt("a namespace part cut short");
-  });
+  reader_t r;
+  size_t pos = 0;
+  if (r.read(blob, pos, part_t::nspace) != 0) {
+    return -1;
+  }
+  rec.name = r.bytes(0);
+  return r.ok ? at_end(blob, pos) : corrupt("a namespace part cut short");
 }
 
 /* A collation's blob. */
 int encode_collation(const collation_rec_t &rec, std::string &blob) {
-  return catch_nomem([&] {
-    writer_t w(4);
-    w.bytes(0, rec.name);
-    w.bytes(1, rec.locale);
-    w.b(2, rec.deterministic);
-    w.bytes(3, rec.icu_version);
-    blob.clear();
-    return w.append(part_desc(part_t::collation), blob);
-  });
+  writer_t w(4);
+  w.bytes(0, rec.name);
+  w.bytes(1, rec.locale);
+  w.b(2, rec.deterministic);
+  w.bytes(3, rec.icu_version);
+  blob.clear();
+  return w.append(part_desc(part_t::collation), blob);
 }
 
 /* Read a collation's blob. */
 int decode_collation(std::string_view blob, collation_rec_t &rec) {
-  return catch_nomem([&] {
-    reader_t r;
-    size_t pos = 0;
-    if (r.read(blob, pos, part_t::collation) != 0) {
-      return -1;
-    }
-    rec.name = r.bytes(0);
-    rec.locale = r.bytes(1);
-    rec.deterministic = r.b(2);
-    rec.icu_version = r.bytes(3);
-    return r.ok ? at_end(blob, pos) : corrupt("a collation part cut short");
-  });
+  reader_t r;
+  size_t pos = 0;
+  if (r.read(blob, pos, part_t::collation) != 0) {
+    return -1;
+  }
+  rec.name = r.bytes(0);
+  rec.locale = r.bytes(1);
+  rec.deterministic = r.b(2);
+  rec.icu_version = r.bytes(3);
+  return r.ok ? at_end(blob, pos) : corrupt("a collation part cut short");
 }
 
 } // namespace sm3

@@ -262,88 +262,80 @@ int frac_digits(std::string_view text) {
 
 /* Parse a date's canonical text. */
 int date_in(std::string_view text, int32_t, std::string &datum) {
-  return sm2::catch_nomem([&] {
-    int32_t d;
-    if (text == "infinity") {
-      d = date_noend;
-    } else if (text == "-infinity") {
-      d = date_nobegin;
-    } else {
-      // Read the fields, move a BC year, and check the range.
-      cursor_t c{text};
-      int64_t y, m, dd;
-      if (!get_ymd(c, y, m, dd)) {
-        return sm2::bad_input("date", text);
-      }
-      int64_t jd = julian(y, m, dd, c.lit(" BC"));
-      if (!c.done() || jd < date_min_julian || jd >= date_end_julian) {
-        return sm2::bad_input("date", text);
-      }
-      d = static_cast<int32_t>(jd - postgres_epoch_jdate);
-      // Canonical only if it prints back unchanged.
-      if (date_text(d) != text) {
-        return sm2::bad_input("date", text);
-      }
+  int32_t d;
+  if (text == "infinity") {
+    d = date_noend;
+  } else if (text == "-infinity") {
+    d = date_nobegin;
+  } else {
+    // Read the fields, move a BC year, and check the range.
+    cursor_t c{text};
+    int64_t y, m, dd;
+    if (!get_ymd(c, y, m, dd)) {
+      return sm2::bad_input("date", text);
     }
-    sm2::store_le(d, datum);
-    return 0;
-  });
+    int64_t jd = julian(y, m, dd, c.lit(" BC"));
+    if (!c.done() || jd < date_min_julian || jd >= date_end_julian) {
+      return sm2::bad_input("date", text);
+    }
+    d = static_cast<int32_t>(jd - postgres_epoch_jdate);
+    // Canonical only if it prints back unchanged.
+    if (date_text(d) != text) {
+      return sm2::bad_input("date", text);
+    }
+  }
+  sm2::store_le(d, datum);
+  return 0;
 }
 
 /* Print a date datum; a value outside PostgreSQL's range is invalid. */
 int date_out(std::string_view datum, int32_t, std::string &text) {
-  return sm2::catch_nomem([&] {
-    if (datum.size() != 4) {
-      return sm2::bad_datum("date", datum, 4);
-    }
-    int32_t d = sm2::load_le<int32_t>(datum);
-    int64_t jd = int64_t{d} + postgres_epoch_jdate;
-    if (d != date_noend && d != date_nobegin &&
-        (jd < date_min_julian || jd >= date_end_julian)) {
-      return bad_range("date");
-    }
-    text = date_text(d);
-    return 0;
-  });
+  if (datum.size() != 4) {
+    return sm2::bad_datum("date", datum, 4);
+  }
+  int32_t d = sm2::load_le<int32_t>(datum);
+  int64_t jd = int64_t{d} + postgres_epoch_jdate;
+  if (d != date_noend && d != date_nobegin &&
+      (jd < date_min_julian || jd >= date_end_julian)) {
+    return bad_range("date");
+  }
+  text = date_text(d);
+  return 0;
 }
 
 /* Parse a time's canonical text, at most typmod fraction digits. */
 int time_in(std::string_view text, int32_t typmod, std::string &datum) {
-  return sm2::catch_nomem([&] {
-    int digits = max_digits(typmod);
-    if (digits < 0) {
-      return bad_typmod("time", typmod);
-    }
-    cursor_t c{text};
-    int64_t usecs;
-    if (!get_time(c, usecs) || !c.done() || usecs > usecs_per_day) {
-      return sm2::bad_input("time", text);
-    }
-    // Canonical only if it prints back unchanged.
-    std::string back;
-    put_time(back, usecs);
-    if (back != text || frac_digits(text) > digits) {
-      return sm2::bad_input("time", text);
-    }
-    sm2::store_le(usecs, datum);
-    return 0;
-  });
+  int digits = max_digits(typmod);
+  if (digits < 0) {
+    return bad_typmod("time", typmod);
+  }
+  cursor_t c{text};
+  int64_t usecs;
+  if (!get_time(c, usecs) || !c.done() || usecs > usecs_per_day) {
+    return sm2::bad_input("time", text);
+  }
+  // Canonical only if it prints back unchanged.
+  std::string back;
+  put_time(back, usecs);
+  if (back != text || frac_digits(text) > digits) {
+    return sm2::bad_input("time", text);
+  }
+  sm2::store_le(usecs, datum);
+  return 0;
 }
 
 /* Print a time datum: 00:00:00 through 24:00:00. */
 int time_out(std::string_view datum, int32_t, std::string &text) {
-  return sm2::catch_nomem([&] {
-    if (datum.size() != 8) {
-      return sm2::bad_datum("time", datum, 8);
-    }
-    int64_t usecs = sm2::load_le<int64_t>(datum);
-    if (usecs < 0 || usecs > usecs_per_day) {
-      return bad_range("time");
-    }
-    text.clear();
-    put_time(text, usecs);
-    return 0;
-  });
+  if (datum.size() != 8) {
+    return sm2::bad_datum("time", datum, 8);
+  }
+  int64_t usecs = sm2::load_le<int64_t>(datum);
+  if (usecs < 0 || usecs > usecs_per_day) {
+    return bad_range("time");
+  }
+  text.clear();
+  put_time(text, usecs);
+  return 0;
 }
 
 /*
@@ -423,24 +415,20 @@ int usecs_cmp(std::string_view a, std::string_view b, int32_t) {
 
 /* Parse a timestamp's canonical text. */
 int ts_in(std::string_view t, int32_t typmod, std::string &d) {
-  return sm2::catch_nomem(
-      [&] { return timestamp_in("timestamp", false, t, typmod, d); });
+  return timestamp_in("timestamp", false, t, typmod, d);
 }
 /* Print a timestamp datum. */
 int ts_out(std::string_view d, int32_t, std::string &t) {
-  return sm2::catch_nomem(
-      [&] { return timestamp_out("timestamp", false, d, t); });
+  return timestamp_out("timestamp", false, d, t);
 }
 
 /* Parse a timestamptz's canonical text, in UTC. */
 int tstz_in(std::string_view t, int32_t typmod, std::string &d) {
-  return sm2::catch_nomem(
-      [&] { return timestamp_in("timestamptz", true, t, typmod, d); });
+  return timestamp_in("timestamptz", true, t, typmod, d);
 }
 /* Print a timestamptz datum, in UTC. */
 int tstz_out(std::string_view d, int32_t, std::string &t) {
-  return sm2::catch_nomem(
-      [&] { return timestamp_out("timestamptz", true, d, t); });
+  return timestamp_out("timestamptz", true, d, t);
 }
 
 /* A date's key: its integer's, so the infinities sort at the ends. */

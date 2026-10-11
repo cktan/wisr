@@ -890,9 +890,9 @@ void builder_detach(catalog_t* cat);
 /*
  * Put the table's pending index on the queue, starting a worker
  * if fewer than the most allowed are alive. One queued already,
- * or of a catalog not attached, is left alone, and so is one that
- * cannot be queued for want of memory: it stays pending, for the
- * next builder_attach to find. It does not throw.
+ * or of a catalog not attached, is left alone, and so is one whose
+ * worker cannot be started: it stays pending, for the next
+ * builder_attach to find. It does not throw.
  */
 void builder_enqueue(catalog_t* cat, uint64_t table, uint64_t index);
 

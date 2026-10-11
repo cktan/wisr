@@ -21,7 +21,6 @@
 
 #include "error.h"
 #include "log.h"
-#include "oom.h"
 #include "session.h"
 #include "sm0_codec.h"
 #include "sm0_defer.h"
@@ -178,8 +177,8 @@ bool cache_get_locked(db_t *db, uint64_t xid, uint64_t *commit_ts) {
 
 /*
  * Move xid from the active table into the commit cache. It never
- * throws: running out of memory inside sm1 aborts the process
- * (oom.h).
+ * throws: running out of memory aborts the process (env.cc's
+ * new-handler).
  */
 void enter_cache(db_t *db, uint64_t xid, uint64_t commit_ts) noexcept {
   {
@@ -629,7 +628,7 @@ int finish_commit(sm1::session_t *s, uint64_t commit_ts) {
  * here: nothing may throw, or sm1::commit would report a failure
  * for a committed transaction and a caller's sm1::abort would drop
  * the stores it created. Nothing does: running out of memory
- * inside sm1 aborts the process (oom.h), and the next open's WAL
+ * aborts the process (env.cc's new-handler), and the next open's WAL
  * replay finds the commit.
  */
 void publish_commit(sm1::session_t *s, uint64_t xid,
@@ -1364,8 +1363,6 @@ void xct_undo_overflow(sm1::session_t *s) {
 
 /* Begin a statement inside another; see sm1.h. */
 int sm1::stmt_begin(sm1::session_t *session, sm1::stmt_t &outer) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   if (xct_check_active(session) != 0) {
     return -1;
   }
@@ -1380,8 +1377,6 @@ int sm1::stmt_begin(sm1::session_t *session, sm1::stmt_t &outer) {
 
 /* End a statement begun inside another; see sm1.h. */
 int sm1::stmt_end(sm1::session_t *session, const sm1::stmt_t &outer) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   if (xct_check_active(session) != 0) {
     return -1;
   }
@@ -1410,27 +1405,19 @@ void xct_end_scans(sm1::session_t *s) {
 
 /* Begin a transaction at level, declared read-only or not. */
 int sm1::begin(sm1::session_t *session, sm1::xctlevel_t level, bool read_only) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   return ::begin(session, level, read_only);
 }
 
 /* Commit the active transaction, then run its on_commit functions. */
 int sm1::commit(sm1::session_t *session) {
   int rc;
-  {
-    // Inside sm1: running out of memory is fatal.
-    in_sm1_t in_sm1;
-    rc = ::commit(session);
-  }
+  { rc = ::commit(session); }
   run_committed_fns();
   return rc;
 }
 
 /* Have fn run once the active transaction has committed. */
 int sm1::on_commit(sm1::session_t *session, std::function<void()> fn) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   // Require an active, non-prepared transaction.
   if (xct_check_active(session) != 0) {
     return -1;
@@ -1445,16 +1432,10 @@ int sm1::on_commit(sm1::session_t *session, std::function<void()> fn) {
 }
 
 /* Read the rest of this statement at one snapshot. */
-int sm1::stmt_begin(sm1::session_t *session) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
-  return ::stmt_begin(session);
-}
+int sm1::stmt_begin(sm1::session_t *session) { return ::stmt_begin(session); }
 
 /* QA only: make the session's lock requests fail where they would wait. */
 int sm1::set_qa_nowait(sm1::session_t *session, bool on) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   if (!session) {
     return set_error(sm1::SM_ERR_INVALID, "NULL session");
   }
@@ -1463,30 +1444,20 @@ int sm1::set_qa_nowait(sm1::session_t *session, bool on) {
 }
 
 /* Set the session's one savepoint. */
-int sm1::savepoint(sm1::session_t *session) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
-  return ::savepoint(session);
-}
+int sm1::savepoint(sm1::session_t *session) { return ::savepoint(session); }
 
 /* Undo every write made since the savepoint at depth. */
 int sm1::rollback(sm1::session_t *session, int depth) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   return ::rollback(session, depth);
 }
 
 /* Forget the savepoint at depth, and those inside it. */
 int sm1::forget(sm1::session_t *session, int depth) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   return ::forget(session, depth);
 }
 
 /* Prepare the active transaction under gid. */
 int sm1::prepare(sm1::session_t *session, std::string_view gid_arg) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   // Take the name as a C string, as the engine uses it.
   std::string gid_str;
   if (copy_name(gid_arg, "gid", gid_str) != 0) {
@@ -1499,8 +1470,6 @@ int sm1::prepare(sm1::session_t *session, std::string_view gid_arg) {
 /* List the unresolved prepared transactions. */
 int sm1::list_prepared(sm1::session_t *session,
                        std::vector<sm1::prepared_t> &out) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   return ::list_prepared(session, out);
 }
 
@@ -1524,19 +1493,13 @@ static int commit_prepared_gid(sm1::session_t *session,
 /* Commit a prepared transaction by gid, then run its on_commit functions. */
 int sm1::commit_prepared(sm1::session_t *session, std::string_view gid_arg) {
   int rc;
-  {
-    // Inside sm1: running out of memory is fatal.
-    in_sm1_t in_sm1;
-    rc = commit_prepared_gid(session, gid_arg);
-  }
+  { rc = commit_prepared_gid(session, gid_arg); }
   run_committed_fns();
   return rc;
 }
 
 /* Abort a prepared transaction by gid, from any session. */
 int sm1::abort_prepared(sm1::session_t *session, std::string_view gid_arg) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   // Take the name as a C string, as the engine uses it.
   std::string gid_str;
   if (copy_name(gid_arg, "gid", gid_str) != 0) {
@@ -1552,15 +1515,9 @@ int sm1::abort_prepared(sm1::session_t *session, std::string_view gid_arg) {
 }
 
 /* Abort the active transaction. */
-int sm1::abort(sm1::session_t *session) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
-  return abort_xct(session);
-}
+int sm1::abort(sm1::session_t *session) { return abort_xct(session); }
 
 /* Whether the session's prepared transaction is still unresolved. */
 bool sm1::in_doubt(sm1::session_t *session) {
-  // Inside sm1: running out of memory is fatal.
-  in_sm1_t in_sm1;
   return session != nullptr && !session->active && pending_prepared(session);
 }

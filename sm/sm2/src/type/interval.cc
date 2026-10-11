@@ -286,43 +286,39 @@ int typmod_keeps(int32_t typmod, const interval_t &v) {
 
 /* Parse an interval's canonical text under typmod. */
 int interval_in(std::string_view text, int32_t typmod, std::string &datum) {
-  return sm2::catch_nomem([&] {
-    interval_t v;
-    if (text == "infinity" || text == "-infinity") {
-      bool pos = text[0] == 'i';
-      v = {pos ? std::numeric_limits<int64_t>::max()
-               : std::numeric_limits<int64_t>::min(),
-           pos ? std::numeric_limits<int32_t>::max()
-               : std::numeric_limits<int32_t>::min(),
-           pos ? std::numeric_limits<int32_t>::max()
-               : std::numeric_limits<int32_t>::min()};
-    } else if (!parse(text, v) || interval_text(v) != text) {
-      // Canonical only if it prints back unchanged.
-      return sm2::bad_input("interval", text);
-    }
-    int kept = typmod_keeps(typmod, v);
-    if (kept < 0) {
-      return sm1::seterr(sm1::SM_ERR_INVALID,
-                         "invalid typmod for type interval: " +
-                             std::to_string(typmod));
-    }
-    if (kept == 0) {
-      return sm2::bad_input("interval", text);
-    }
-    store(v, datum);
-    return 0;
-  });
+  interval_t v;
+  if (text == "infinity" || text == "-infinity") {
+    bool pos = text[0] == 'i';
+    v = {pos ? std::numeric_limits<int64_t>::max()
+             : std::numeric_limits<int64_t>::min(),
+         pos ? std::numeric_limits<int32_t>::max()
+             : std::numeric_limits<int32_t>::min(),
+         pos ? std::numeric_limits<int32_t>::max()
+             : std::numeric_limits<int32_t>::min()};
+  } else if (!parse(text, v) || interval_text(v) != text) {
+    // Canonical only if it prints back unchanged.
+    return sm2::bad_input("interval", text);
+  }
+  int kept = typmod_keeps(typmod, v);
+  if (kept < 0) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       "invalid typmod for type interval: " +
+                           std::to_string(typmod));
+  }
+  if (kept == 0) {
+    return sm2::bad_input("interval", text);
+  }
+  store(v, datum);
+  return 0;
 }
 
 /* Print an interval datum; every 16 bytes are a valid interval. */
 int interval_out(std::string_view datum, int32_t, std::string &text) {
-  return sm2::catch_nomem([&] {
-    if (datum.size() != 16) {
-      return sm2::bad_datum("interval", datum, 16);
-    }
-    text = interval_text(load(datum));
-    return 0;
-  });
+  if (datum.size() != 16) {
+    return sm2::bad_datum("interval", datum, 16);
+  }
+  text = interval_text(load(datum));
+  return 0;
 }
 
 /*
@@ -347,41 +343,37 @@ int interval_cmp(std::string_view a, std::string_view b, int32_t) {
  */
 int interval_key(std::string_view datum, int32_t, const sm2::collation_t *,
                  std::string &key) {
-  return sm2::catch_nomem([&] {
-    if (datum.size() != 16) {
-      return sm2::bad_datum("interval", datum, 16);
-    }
-    interval_t v = load(datum);
-    __int128 span =
-        static_cast<__int128>(v.time) +
-        static_cast<__int128>(int64_t{v.month} * 30 + v.day) * usecs_per_day;
-    sm2::put_key_int<unsigned __int128>(span, key);
-    sm2::put_key_int<uint32_t>(v.month, key);
-    sm2::put_key_int<uint32_t>(v.day, key);
-    return 0;
-  });
+  if (datum.size() != 16) {
+    return sm2::bad_datum("interval", datum, 16);
+  }
+  interval_t v = load(datum);
+  __int128 span =
+      static_cast<__int128>(v.time) +
+      static_cast<__int128>(int64_t{v.month} * 30 + v.day) * usecs_per_day;
+  sm2::put_key_int<unsigned __int128>(span, key);
+  sm2::put_key_int<uint32_t>(v.month, key);
+  sm2::put_key_int<uint32_t>(v.day, key);
+  return 0;
 }
 
 /* Read an interval's key: the time is the span less the rest. */
 int interval_unkey(std::string_view &key, int32_t, const sm2::collation_t *,
                    std::string &datum) {
-  return sm2::catch_nomem([&] {
-    __int128 span;
-    int32_t month, day;
-    if (!sm2::get_key_int<unsigned __int128>(key, span) ||
-        !sm2::get_key_int<uint32_t>(key, month) ||
-        !sm2::get_key_int<uint32_t>(key, day)) {
-      return sm2::bad_key("interval");
-    }
-    __int128 time =
-        span - static_cast<__int128>(int64_t{month} * 30 + day) * usecs_per_day;
-    if (time < std::numeric_limits<int64_t>::min() ||
-        time > std::numeric_limits<int64_t>::max()) {
-      return sm2::bad_key("interval");
-    }
-    store({static_cast<int64_t>(time), day, month}, datum);
-    return 0;
-  });
+  __int128 span;
+  int32_t month, day;
+  if (!sm2::get_key_int<unsigned __int128>(key, span) ||
+      !sm2::get_key_int<uint32_t>(key, month) ||
+      !sm2::get_key_int<uint32_t>(key, day)) {
+    return sm2::bad_key("interval");
+  }
+  __int128 time =
+      span - static_cast<__int128>(int64_t{month} * 30 + day) * usecs_per_day;
+  if (time < std::numeric_limits<int64_t>::min() ||
+      time > std::numeric_limits<int64_t>::max()) {
+    return sm2::bad_key("interval");
+  }
+  store({static_cast<int64_t>(time), day, month}, datum);
+  return 0;
 }
 
 } // namespace
