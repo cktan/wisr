@@ -2480,8 +2480,12 @@ store (`DESIGN.md` §5), so a temporary table and all its
 indexes are one temporary store, and no per-row or per-key
 marking exists at any level.
 
-**Status: not built, and low priority.** What follows is the
-proposed mechanism, checked against RocksDB 8.9.1.
+**Status: not built, and replaced.** `TEMPTABLE.md` at the top
+level is the design: a temporary store is a column family of
+one unlogged RocksDB instance kept apart from every database,
+not of the database's own. What follows is the mechanism
+proposed before it, checked against RocksDB 8.9.1, and kept
+for its account of what RocksDB offers.
 
 RocksDB has no temporary column family: no option marks one
 so. It has the parts to build one from, and sm1's write path

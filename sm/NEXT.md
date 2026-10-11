@@ -91,9 +91,10 @@ Owed, and blocking nothing above:
 - **sm2's TOAST** (`sm2/SM2_DESIGN.md` §8.2, step 3). The
   `0xFFFF` relid is reserved per table and unused. Wholly
   independent of the above, so it can run in parallel.
-- **Temporary tables** (`sm3/CATALOG.md` §7): a temporary
-  store, its definition in the session's own temporary catalog
-  and never written to store 0.
+- **Temporary tables** (`TEMPTABLE.md`): a temporary store in
+  an unlogged RocksDB instance of its own, its definition in
+  the session's own temporary catalog and never written to
+  store 0. Designed, and §11 there is the order of work.
 - **Dependency checks**, such as refusing `DROP COLLATION` in
   use and `DROP SCHEMA … CASCADE`: low priority. They wait
   for the dependency index of `sm3/CATALOG3.md` §0.5, and
