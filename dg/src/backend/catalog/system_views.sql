@@ -495,18 +495,6 @@ WHERE
 UNION ALL
 SELECT
     l.objoid, l.classoid, l.objsubid,
-    'large object'::text AS objtype,
-    NULL::oid AS objnamespace,
-    l.objoid::text AS objname,
-    l.provider, l.label
-FROM
-    pg_seclabel l
-    JOIN pg_largeobject_metadata lom ON l.objoid = lom.oid
-WHERE
-    l.classoid = 'pg_catalog.pg_largeobject'::regclass AND l.objsubid = 0
-UNION ALL
-SELECT
-    l.objoid, l.classoid, l.objsubid,
     'language'::text AS objtype,
     NULL::oid AS objnamespace,
     quote_ident(lan.lanname) AS objname,

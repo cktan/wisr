@@ -58,7 +58,6 @@
 #include "storage/bufpage.h"
 #include "storage/copydir.h"
 #include "storage/fd.h"
-#include "storage/large_object.h"
 #include "storage/predicate.h"
 #include "storage/proc.h"
 #include "storage/procnumber.h"
@@ -1300,18 +1299,6 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
           "Allows tablespaces directly inside pg_tblspc, for testing."),
       NULL, GUC_NOT_IN_SAMPLE},
      &allow_in_place_tablespaces,
-     false,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"lo_compat_privileges", PGC_SUSET, COMPAT_OPTIONS_PREVIOUS,
-      gettext_noop("Enables backward compatibility mode for privilege checks "
-                   "on large objects."),
-      gettext_noop(
-          "Skips privilege checks when reading or modifying large objects, "
-          "for compatibility with PostgreSQL releases prior to 9.0.")},
-     &lo_compat_privileges,
      false,
      NULL,
      NULL,

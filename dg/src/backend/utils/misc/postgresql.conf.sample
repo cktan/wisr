@@ -754,7 +754,6 @@
 #array_nulls = on
 #backslash_quote = safe_encoding	# on, off, or safe_encoding
 #escape_string_warning = on
-#lo_compat_privileges = off
 #quote_all_identifiers = off
 #standard_conforming_strings = on
 

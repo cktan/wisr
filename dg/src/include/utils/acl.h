@@ -259,9 +259,6 @@ extern AclResult pg_class_aclcheck_ext(Oid table_oid, Oid roleid, AclMode mode,
                                        bool *is_missing);
 extern AclResult pg_parameter_aclcheck(const char *name, Oid roleid,
                                        AclMode mode);
-extern AclResult pg_largeobject_aclcheck_snapshot(Oid lobj_oid, Oid roleid,
-                                                  AclMode mode,
-                                                  Snapshot snapshot);
 
 extern void aclcheck_error(AclResult aclerr, ObjectType objtype,
                            const char *objectname);

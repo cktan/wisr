@@ -1883,3 +1883,23 @@ could name the GC thread's side.
   every entry; ANALYZE and index builds record no all-visible
   pages. COPY, CREATE TABLE AS, REFRESH and ALTER TABLE's
   rewrite pass no bulk insert state.
+
+## Step 60: large objects are gone
+
+PLAN.md §7: storage and replication features are deleted, not
+ported. Large objects are the first.
+
+- **Gone**: `inv_api.c`, `be-fsstubs.c` and
+  `pg_largeobject.c`, with their headers; the SQL functions
+  `lo_*`, `loread`, `lowrite` and `has_largeobject_privilege`;
+  the setting `lo_compat_privileges`; the end-of-transaction
+  hooks in `xact.c`; the ACL checks and GRANT of a large object
+  in `aclchk.c` and `acl.c`; the large object rows of the
+  `pg_seclabels` view and the REVOKEs of `lo_import` and
+  `lo_export`.
+- **Refused**: naming a large object, as GRANT, ALTER DEFAULT
+  PRIVILEGES, COMMENT or ALTER LARGE OBJECT do, fails with
+  "large objects are not supported".
+- The grammar, nodes and catalog headers stay, as for LISTEN:
+  sq parses the statements, and the catalog's ids are still
+  named in tables of object classes.

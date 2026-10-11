@@ -337,6 +337,17 @@ grep -q 'LISTEN is not supported' "$work/notify.out" &&
 [ "$(local_psql -c 'unlisten *' -c 'discard all' 2>&1 | tr '\n' ' ')" = \
   "UNLISTEN DISCARD ALL " ] || fail "unlisten and discard all"
 
+# Verify that large objects are refused: GRANT, default privileges and
+# COMMENT on one each fail, naming large objects.
+# 1. Run each statement in a session of its own.
+# 2. Confirm each fails with the one message.
+for sql in "grant select on large object 123 to public" \
+  "alter default privileges grant select on large objects to public" \
+  "comment on large object 123 is 'x'"; do
+  local_psql -c "$sql" 2>&1 | grep -q 'large objects are not supported' ||
+    fail "large object refused: $sql"
+done
+
 # Verify that LOCK TABLE takes sm's table lock: SHARE lets another session
 # read and keeps it from writing; ACCESS EXCLUSIVE keeps it from reading.
 # 1. In a session of its own, lock t2 in SHARE mode and hold it.

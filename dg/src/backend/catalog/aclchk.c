@@ -115,7 +115,6 @@ static void
 ExecGrant_common(InternalGrant *istmt, Oid classid, AclMode default_privs,
                  void (*object_check)(InternalGrant *istmt, HeapTuple tuple));
 static void ExecGrant_Language_check(InternalGrant *istmt, HeapTuple tuple);
-static void ExecGrant_Largeobject(InternalGrant *istmt);
 static void ExecGrant_Type_check(InternalGrant *istmt, HeapTuple tuple);
 static void ExecGrant_Parameter(InternalGrant *istmt);
 
@@ -158,9 +157,6 @@ static AclMode pg_class_aclmask_ext(Oid table_oid, Oid roleid, AclMode mask,
                                     AclMaskHow how, bool *is_missing);
 static AclMode pg_parameter_acl_aclmask(Oid acl_oid, Oid roleid, AclMode mask,
                                         AclMaskHow how);
-static AclMode pg_largeobject_aclmask_snapshot(Oid lobj_oid, Oid roleid,
-                                               AclMode mask, AclMaskHow how,
-                                               Snapshot snapshot);
 static AclMode pg_namespace_aclmask_ext(Oid nsp_oid, Oid roleid, AclMode mask,
                                         AclMaskHow how, bool *is_missing);
 static AclMode pg_type_aclmask_ext(Oid type_oid, Oid roleid, AclMode mask,
@@ -471,8 +467,8 @@ void ExecuteGrantStmt(GrantStmt *stmt) {
     errormsg = gettext_noop("invalid privilege type %s for language");
     break;
   case OBJECT_LARGEOBJECT:
-    all_privileges = ACL_ALL_RIGHTS_LARGEOBJECT;
-    errormsg = gettext_noop("invalid privilege type %s for large object");
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("large objects are not supported")));
     break;
   case OBJECT_SCHEMA:
     all_privileges = ACL_ALL_RIGHTS_SCHEMA;
@@ -593,9 +589,6 @@ static void ExecGrantStmt_oids(InternalGrant *istmt) {
   case OBJECT_LANGUAGE:
     ExecGrant_common(istmt, LanguageRelationId, ACL_ALL_RIGHTS_LANGUAGE,
                      ExecGrant_Language_check);
-    break;
-  case OBJECT_LARGEOBJECT:
-    ExecGrant_Largeobject(istmt);
     break;
   case OBJECT_SCHEMA:
     ExecGrant_common(istmt, NamespaceRelationId, ACL_ALL_RIGHTS_SCHEMA, NULL);
@@ -953,8 +946,8 @@ void ExecAlterDefaultPrivilegesStmt(ParseState *pstate,
     errormsg = gettext_noop("invalid privilege type %s for schema");
     break;
   case OBJECT_LARGEOBJECT:
-    all_privileges = ACL_ALL_RIGHTS_LARGEOBJECT;
-    errormsg = gettext_noop("invalid privilege type %s for large object");
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("large objects are not supported")));
     break;
   default:
     elog(ERROR, "unrecognized GrantStmt.objtype: %d", (int)action->objtype);
@@ -1128,13 +1121,8 @@ static void SetDefaultACL(InternalDefaultACL *iacls) {
     break;
 
   case OBJECT_LARGEOBJECT:
-    if (OidIsValid(iacls->nspid))
-      ereport(ERROR, (errcode(ERRCODE_INVALID_GRANT_OPERATION),
-                      errmsg("cannot use IN SCHEMA clause when using %s",
-                             "GRANT/REVOKE ON LARGE OBJECTS")));
-    objtype = DEFACLOBJ_LARGEOBJECT;
-    if (iacls->all_privs && this_privileges == ACL_NO_RIGHTS)
-      this_privileges = ACL_ALL_RIGHTS_LARGEOBJECT;
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("large objects are not supported")));
     break;
 
   default:
@@ -1387,9 +1375,6 @@ void RemoveRoleFromObjectACL(Oid roleid, Oid classid, Oid objid) {
       break;
     case LanguageRelationId:
       istmt.objtype = OBJECT_LANGUAGE;
-      break;
-    case LargeObjectRelationId:
-      istmt.objtype = OBJECT_LARGEOBJECT;
       break;
     case NamespaceRelationId:
       istmt.objtype = OBJECT_SCHEMA;
@@ -2053,123 +2038,6 @@ static void ExecGrant_Language_check(InternalGrant *istmt, HeapTuple tuple) {
                    "because only superusers can use untrusted languages.")));
 }
 
-static void ExecGrant_Largeobject(InternalGrant *istmt) {
-  Relation relation;
-  ListCell *cell;
-
-  if (istmt->all_privs && istmt->privileges == ACL_NO_RIGHTS)
-    istmt->privileges = ACL_ALL_RIGHTS_LARGEOBJECT;
-
-  relation = table_open(LargeObjectMetadataRelationId, RowExclusiveLock);
-
-  foreach (cell, istmt->objects) {
-    Oid loid = lfirst_oid(cell);
-    Form_pg_largeobject_metadata form_lo_meta;
-    char loname[NAMEDATALEN];
-    Datum aclDatum;
-    bool isNull;
-    AclMode avail_goptions;
-    AclMode this_privileges;
-    Acl *old_acl;
-    Acl *new_acl;
-    Oid grantorId;
-    Oid ownerId;
-    HeapTuple newtuple;
-    Datum values[Natts_pg_largeobject_metadata] = {0};
-    bool nulls[Natts_pg_largeobject_metadata] = {0};
-    bool replaces[Natts_pg_largeobject_metadata] = {0};
-    int noldmembers;
-    int nnewmembers;
-    Oid *oldmembers;
-    Oid *newmembers;
-    ScanKeyData entry[1];
-    SysScanDesc scan;
-    HeapTuple tuple;
-
-    /* There's no syscache for pg_largeobject_metadata */
-    ScanKeyInit(&entry[0], Anum_pg_largeobject_metadata_oid,
-                BTEqualStrategyNumber, F_OIDEQ, ObjectIdGetDatum(loid));
-
-    scan = systable_beginscan(relation, LargeObjectMetadataOidIndexId, true,
-                              NULL, 1, entry);
-
-    tuple = systable_getnext(scan);
-    if (!HeapTupleIsValid(tuple))
-      elog(ERROR, "could not find tuple for large object %u", loid);
-
-    form_lo_meta = (Form_pg_largeobject_metadata)GETSTRUCT(tuple);
-
-    /*
-     * Get owner ID and working copy of existing ACL. If there's no ACL,
-     * substitute the proper default.
-     */
-    ownerId = form_lo_meta->lomowner;
-    aclDatum = heap_getattr(tuple, Anum_pg_largeobject_metadata_lomacl,
-                            RelationGetDescr(relation), &isNull);
-    if (isNull) {
-      old_acl = acldefault(OBJECT_LARGEOBJECT, ownerId);
-      /* There are no old member roles according to the catalogs */
-      noldmembers = 0;
-      oldmembers = NULL;
-    } else {
-      old_acl = DatumGetAclPCopy(aclDatum);
-      /* Get the roles mentioned in the existing ACL */
-      noldmembers = aclmembers(old_acl, &oldmembers);
-    }
-
-    /* Determine ID to do the grant as, and available grant options */
-    select_best_grantor(GetUserId(), istmt->privileges, old_acl, ownerId,
-                        &grantorId, &avail_goptions);
-
-    /*
-     * Restrict the privileges to what we can actually grant, and emit the
-     * standards-mandated warning and error messages.
-     */
-    snprintf(loname, sizeof(loname), "large object %u", loid);
-    this_privileges = restrict_and_check_grant(
-        istmt->is_grant, avail_goptions, istmt->all_privs, istmt->privileges,
-        loid, grantorId, OBJECT_LARGEOBJECT, loname, 0, NULL);
-
-    /*
-     * Generate new ACL.
-     */
-    new_acl = merge_acl_with_grant(
-        old_acl, istmt->is_grant, istmt->grant_option, istmt->behavior,
-        istmt->grantees, this_privileges, grantorId, ownerId);
-
-    /*
-     * We need the members of both old and new ACLs so we can correct the
-     * shared dependency information.
-     */
-    nnewmembers = aclmembers(new_acl, &newmembers);
-
-    /* finished building new ACL value, now insert it */
-    replaces[Anum_pg_largeobject_metadata_lomacl - 1] = true;
-    values[Anum_pg_largeobject_metadata_lomacl - 1] = PointerGetDatum(new_acl);
-
-    newtuple = heap_modify_tuple(tuple, RelationGetDescr(relation), values,
-                                 nulls, replaces);
-
-    CatalogTupleUpdate(relation, &newtuple->t_self, newtuple);
-
-    /* Update initial privileges for extensions */
-    recordExtensionInitPriv(loid, LargeObjectRelationId, 0, new_acl);
-
-    /* Update the shared dependency ACL info */
-    updateAclDependencies(LargeObjectRelationId, form_lo_meta->oid, 0, ownerId,
-                          noldmembers, oldmembers, nnewmembers, newmembers);
-
-    systable_endscan(scan);
-
-    pfree(new_acl);
-
-    /* prevent error when processing duplicate objects */
-    CommandCounterIncrement();
-  }
-
-  table_close(relation, RowExclusiveLock);
-}
-
 static void ExecGrant_Type_check(InternalGrant *istmt, HeapTuple tuple) {
   Form_pg_type pg_type_tuple;
 
@@ -2722,7 +2590,9 @@ static AclMode pg_aclmask(ObjectType objtype, Oid object_oid, AttrNumber attnum,
   case OBJECT_LANGUAGE:
     return object_aclmask(LanguageRelationId, object_oid, roleid, mask, how);
   case OBJECT_LARGEOBJECT:
-    return pg_largeobject_aclmask_snapshot(object_oid, roleid, mask, how, NULL);
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("large objects are not supported")));
+    return 0; /* not reached */
   case OBJECT_PARAMETER_ACL:
     return pg_parameter_acl_aclmask(object_oid, roleid, mask, how);
   case OBJECT_SCHEMA:
@@ -3192,78 +3062,6 @@ static AclMode pg_parameter_acl_aclmask(Oid acl_oid, Oid roleid, AclMode mask,
 }
 
 /*
- * Routine for examining a user's privileges for a largeobject
- *
- * When a large object is opened for reading, it is opened relative to the
- * caller's snapshot, but when it is opened for writing, a current
- * MVCC snapshot will be used.  See doc/src/sgml/lobj.sgml.  This function
- * takes a snapshot argument so that the permissions check can be made
- * relative to the same snapshot that will be used to read the underlying
- * data.  The caller will actually pass NULL for an instantaneous MVCC
- * snapshot, since all we do with the snapshot argument is pass it through
- * to systable_beginscan().
- */
-static AclMode pg_largeobject_aclmask_snapshot(Oid lobj_oid, Oid roleid,
-                                               AclMode mask, AclMaskHow how,
-                                               Snapshot snapshot) {
-  AclMode result;
-  Relation pg_lo_meta;
-  ScanKeyData entry[1];
-  SysScanDesc scan;
-  HeapTuple tuple;
-  Datum aclDatum;
-  bool isNull;
-  Acl *acl;
-  Oid ownerId;
-
-  /* Superusers bypass all permission checking. */
-  if (superuser_arg(roleid))
-    return mask;
-
-  /*
-   * Get the largeobject's ACL from pg_largeobject_metadata
-   */
-  pg_lo_meta = table_open(LargeObjectMetadataRelationId, AccessShareLock);
-
-  ScanKeyInit(&entry[0], Anum_pg_largeobject_metadata_oid,
-              BTEqualStrategyNumber, F_OIDEQ, ObjectIdGetDatum(lobj_oid));
-
-  scan = systable_beginscan(pg_lo_meta, LargeObjectMetadataOidIndexId, true,
-                            snapshot, 1, entry);
-
-  tuple = systable_getnext(scan);
-  if (!HeapTupleIsValid(tuple))
-    ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
-                    errmsg("large object %u does not exist", lobj_oid)));
-
-  ownerId = ((Form_pg_largeobject_metadata)GETSTRUCT(tuple))->lomowner;
-
-  aclDatum = heap_getattr(tuple, Anum_pg_largeobject_metadata_lomacl,
-                          RelationGetDescr(pg_lo_meta), &isNull);
-
-  if (isNull) {
-    /* No ACL, so build default ACL */
-    acl = acldefault(OBJECT_LARGEOBJECT, ownerId);
-    aclDatum = (Datum)0;
-  } else {
-    /* detoast ACL if necessary */
-    acl = DatumGetAclP(aclDatum);
-  }
-
-  result = aclmask(acl, roleid, ownerId, mask, how);
-
-  /* if we have a detoasted copy, free it */
-  if (acl && (Pointer)acl != DatumGetPointer(aclDatum))
-    pfree(acl);
-
-  systable_endscan(scan);
-
-  table_close(pg_lo_meta, AccessShareLock);
-
-  return result;
-}
-
-/*
  * Routine for examining a user's privileges for a namespace, with is_missing
  */
 static AclMode pg_namespace_aclmask_ext(Oid nsp_oid, Oid roleid, AclMode mask,
@@ -3668,18 +3466,6 @@ AclResult pg_parameter_aclcheck(const char *name, Oid roleid, AclMode mode) {
 }
 
 /*
- * Exported routine for checking a user's access privileges to a largeobject
- */
-AclResult pg_largeobject_aclcheck_snapshot(Oid lobj_oid, Oid roleid,
-                                           AclMode mode, Snapshot snapshot) {
-  if (pg_largeobject_aclmask_snapshot(lobj_oid, roleid, mode, ACLMASK_ANY,
-                                      snapshot) != 0)
-    return ACLCHECK_OK;
-  else
-    return ACLCHECK_NO_PRIV;
-}
-
-/*
  * Generic ownership check for an object
  */
 bool object_ownercheck(Oid classid, Oid objectid, Oid roleid) {
@@ -3689,10 +3475,6 @@ bool object_ownercheck(Oid classid, Oid objectid, Oid roleid) {
   /* Superusers bypass all permission checking. */
   if (superuser_arg(roleid))
     return true;
-
-  /* For large objects, the catalog to consult is pg_largeobject_metadata */
-  if (classid == LargeObjectRelationId)
-    classid = LargeObjectMetadataRelationId;
 
   cacheid = get_object_catcache_oid(classid);
   if (cacheid != -1) {
@@ -3996,42 +3778,6 @@ void recordExtObjInitPriv(Oid objoid, Oid classoid) {
                                     DatumGetAclP(aclDatum));
 
     ReleaseSysCache(tuple);
-  } else if (classoid == LargeObjectRelationId) {
-    /* For large objects, we must consult pg_largeobject_metadata */
-    Datum aclDatum;
-    bool isNull;
-    HeapTuple tuple;
-    ScanKeyData entry[1];
-    SysScanDesc scan;
-    Relation relation;
-
-    /*
-     * Note: this is dead code, given that we don't allow large objects to
-     * be made extension members.  But it seems worth carrying in case
-     * some future caller of this function has need for it.
-     */
-    relation = table_open(LargeObjectMetadataRelationId, RowExclusiveLock);
-
-    /* There's no syscache for pg_largeobject_metadata */
-    ScanKeyInit(&entry[0], Anum_pg_largeobject_metadata_oid,
-                BTEqualStrategyNumber, F_OIDEQ, ObjectIdGetDatum(objoid));
-
-    scan = systable_beginscan(relation, LargeObjectMetadataOidIndexId, true,
-                              NULL, 1, entry);
-
-    tuple = systable_getnext(scan);
-    if (!HeapTupleIsValid(tuple))
-      elog(ERROR, "could not find tuple for large object %u", objoid);
-
-    aclDatum = heap_getattr(tuple, Anum_pg_largeobject_metadata_lomacl,
-                            RelationGetDescr(relation), &isNull);
-
-    /* Add the record, if any, for the top-level object */
-    if (!isNull)
-      recordExtensionInitPrivWorker(objoid, classoid, 0,
-                                    DatumGetAclP(aclDatum));
-
-    systable_endscan(scan);
   }
   /* This will error on unsupported classoid. */
   else if (get_object_attnum_acl(classoid) != InvalidAttrNumber) {

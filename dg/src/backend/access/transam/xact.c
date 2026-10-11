@@ -32,7 +32,6 @@
 #include "commands/trigger.h"
 #include "common/pg_prng.h"
 #include "executor/spi.h"
-#include "libpq/be-fsstubs.h"
 #include "libpq/pqsignal.h"
 #include "miscadmin.h"
 #include "pg_trace.h"
@@ -1029,9 +1028,6 @@ static void CommitTransaction(void) {
    */
   smgrDoPendingSyncs(true);
 
-  /* close large objects before lower-level cleanup */
-  AtEOXact_LargeObject(true);
-
   /*
    * Insert notifications sent by NOTIFY commands into the queue.  This
    * should be late in the pre-commit sequence to minimize time spent
@@ -1255,7 +1251,6 @@ static void AbortTransaction(void) {
   AfterTriggerEndXact(false); /* 'false' means it's abort */
   AtAbort_Portals();
   smgrDoPendingSyncs(false);
-  AtEOXact_LargeObject(false);
   AtEOXact_RelationMap(false);
 
   TRACE_POSTGRESQL_TRANSACTION_ABORT(MyProc->vxid.lxid);
@@ -3009,8 +3004,6 @@ static void CommitSubTransaction(void) {
   AfterTriggerEndSubXact(true);
   AtSubCommit_Portals(s->subTransactionId, s->parent->subTransactionId,
                       s->parent->nestingLevel, s->parent->curTransactionOwner);
-  AtEOSubXact_LargeObject(true, s->subTransactionId,
-                          s->parent->subTransactionId);
 
   /* sm keeps the subtransaction's writes. */
   smstore_subcommit();
@@ -3145,8 +3138,6 @@ static void AbortSubTransaction(void) {
     AfterTriggerEndSubXact(false);
     AtSubAbort_Portals(s->subTransactionId, s->parent->subTransactionId,
                        s->curTransactionOwner, s->parent->curTransactionOwner);
-    AtEOSubXact_LargeObject(false, s->subTransactionId,
-                            s->parent->subTransactionId);
 
     /* sm undoes the subtransaction's writes. */
     smstore_subabort();

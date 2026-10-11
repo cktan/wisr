@@ -662,12 +662,6 @@ REVOKE EXECUTE ON FUNCTION pg_reload_conf() FROM public;
 
 REVOKE EXECUTE ON FUNCTION pg_promote(boolean, integer) FROM public;
 
-REVOKE EXECUTE ON FUNCTION lo_import(text) FROM public;
-
-REVOKE EXECUTE ON FUNCTION lo_import(text, oid) FROM public;
-
-REVOKE EXECUTE ON FUNCTION lo_export(oid, text) FROM public;
-
 REVOKE EXECUTE ON FUNCTION pg_ls_waldir() FROM public;
 
 REVOKE EXECUTE ON FUNCTION pg_ls_archive_statusdir() FROM public;

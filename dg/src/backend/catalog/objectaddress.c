@@ -77,7 +77,6 @@
 #include "parser/parse_oper.h"
 #include "parser/parse_type.h"
 #include "rewrite/rewriteSupport.h"
-#include "storage/large_object.h"
 #include "storage/lmgr.h"
 #include "storage/sinval.h"
 #include "utils/acl.h"
@@ -554,15 +553,8 @@ ObjectAddress get_object_address(ObjectType objtype, Node *object,
                                               missing_ok);
       break;
     case OBJECT_LARGEOBJECT:
-      address.classId = LargeObjectRelationId;
-      address.objectId = oidparse(object);
-      address.objectSubId = 0;
-      if (!LargeObjectExists(address.objectId)) {
-        if (!missing_ok)
-          ereport(ERROR,
-                  (errcode(ERRCODE_UNDEFINED_OBJECT),
-                   errmsg("large object %u does not exist", address.objectId)));
-      }
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("large objects are not supported")));
       break;
     case OBJECT_CAST: {
       TypeName *sourcetype = linitial_node(TypeName, castNode(List, object));
@@ -1849,8 +1841,7 @@ void check_object_ownership(Oid roleid, ObjectType objtype,
                      NameListToString(castNode(List, object)));
     break;
   case OBJECT_LARGEOBJECT:
-    if (!lo_compat_privileges &&
-        !object_ownercheck(address.classId, address.objectId, roleid))
+    if (!object_ownercheck(address.classId, address.objectId, roleid))
       ereport(ERROR,
               (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
                errmsg("must be owner of large object %u", address.objectId)));
@@ -2406,12 +2397,6 @@ char *getObjectDescription(const ObjectAddress *object, bool missing_ok) {
                        get_language_name(object->objectId, false));
     break;
   }
-
-  case LargeObjectRelationId:
-    if (!LargeObjectExists(object->objectId))
-      break;
-    appendStringInfo(&buffer, _("large object %u"), object->objectId);
-    break;
 
   case OperatorRelationId: {
     bits16 flags = FORMAT_OPERATOR_INVALID_AS_NULL;
@@ -4151,14 +4136,6 @@ char *getObjectIdentityParts(const ObjectAddress *object, List **objname,
     ReleaseSysCache(langTup);
     break;
   }
-
-  case LargeObjectRelationId:
-    if (!LargeObjectExists(object->objectId))
-      break;
-    appendStringInfo(&buffer, "%u", object->objectId);
-    if (objname)
-      *objname = list_make1(psprintf("%u", object->objectId));
-    break;
 
   case OperatorRelationId: {
     bits16 flags =

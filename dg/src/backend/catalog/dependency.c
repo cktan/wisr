@@ -1260,10 +1260,6 @@ static void doDeletion(const ObjectAddress *object, int flags) {
     RemoveAttrDefaultById(object->objectId);
     break;
 
-  case LargeObjectRelationId:
-    LargeObjectDrop(object->objectId);
-    break;
-
   case OperatorRelationId:
     RemoveOperatorById(object->objectId);
     break;
