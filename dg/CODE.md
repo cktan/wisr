@@ -7,6 +7,37 @@ taken and why. The repository's `CLAUDE.md` holds the rules
 for the whole repository; this file adds what is particular to
 `dg/`. Where the two differ, `CLAUDE.md` wins.
 
+## The overriding objective: a database is its directory
+
+A database `X` is the directory `base/X` and nothing else. It
+can be copied to another machine and imported, whole, into a
+new digres instance there. Every change is held to this, and it
+wins over convenience and over what PostgreSQL did.
+
+- **Everything a database needs to be read is inside its
+  directory**: its catalog, its rows, its sequences, its id
+  allocators, its prepared transactions.
+- **Temporary files are the exception**: every database spills
+  to `base/pgsql_tmp`. They last no longer than a statement or
+  a session, and a copied database needs none of them.
+- **`global/` holds the list of databases**, and nothing a
+  database reads to answer a query.
+- **A database uses nothing of another's**, on disk or in a
+  counter: no cluster-wide oid, sequence, transaction id or
+  shared catalog. An id is the database's own, and two
+  databases may hold the same one.
+- **Nothing in the directory names where it is**: not the
+  database's name or `dbid`, not its oid, not a path, not the
+  instance. The importing instance gives it those.
+- **What is compiled in is the same in every instance** of one
+  version; a row may refer to it by oid. What the instance
+  keeps outside `base/` — the superuser, the settings — a
+  database must not depend on to be read.
+- **Before adding state, ask where it lives.** If a copied
+  `base/X` would miss it, it is in the wrong place.
+
+The import itself is not built yet (`PLAN.md` §7).
+
 ## 1. Building and testing
 
 - **Build with `make -j4`**, never plain `make`, from `dg/`.

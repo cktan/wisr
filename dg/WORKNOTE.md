@@ -2149,3 +2149,31 @@ compiled in, not pg_proc.
 - Not yet: GROUP BY, joins and EXPLAIN VERBOSE, which read
   pg_constraint; `pg_typeof()`, whose output reads pg_type; and
   functions that need the default locale.
+
+## Step 71: a database is its directory
+
+`CODE.md`, the overriding objective, decided by the owner:
+`base/X` can be copied to another machine and imported into a
+new instance. An audit of `global/` and `base/` came first.
+
+- **What already held**: `global/root` has the names, the
+  `dbid`s, the next `dbid` and a format version, and no more.
+  Each database has its own timestamps, object ids, sequence
+  leases, catalog, locks and prepared transactions; a table in
+  each of two databases gets the same oid. Nothing in a
+  database's directory records its name, its `dbid` or a path.
+- **Temporary files stay shared**, in `base/pgsql_tmp`, by the
+  owner's decision: they are the one thing under `base` that
+  is no database, and nothing a copied database needs. Putting
+  them in `base/{dbid}/pgsql_tmp` was tried and taken back.
+- **Left, and to hold to the objective when it is reached**:
+  `GetNewObjectId()` is one counter for the process, in memory
+  alone. Its callers all open a catalog table first and fail
+  there; each must take the database's own id from sm as it is
+  moved. Sequences are refused still; sm's are per database.
+- **Not built**: the import. sm has no call that takes a
+  directory in under a name and gives it a `dbid`, and a
+  database does not record which built-in catalog its rows
+  refer to.
+- **Left broken, as found**: `pg_ls_tmpdir()` opens
+  `pg_tablespace` and fails.

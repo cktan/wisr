@@ -367,6 +367,16 @@ are gone with `make test` passing.
 
 Do not reopen these without the owner:
 
+- **A database is its directory, and this overrides the
+  rest.** `base/X` can be copied to another machine and
+  imported, whole, into a new digres instance (`CODE.md`, the
+  overriding objective). So `global/` holds only the list of
+  databases, a database uses nothing outside its directory and
+  nothing of another database, and nothing inside it names
+  where it is. Decided by the owner on 2026-10-11. The import
+  is not built, and is low priority: sm has no call that takes
+  a directory in under a name and gives it a `dbid`. What
+  matters now is that no change makes it impossible later.
 - **Memory contexts and resource owners stay.** Contexts are
   arenas and are what makes an exception cheap to recover
   from. RAII is for new code and for guards around them.
