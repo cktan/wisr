@@ -1694,10 +1694,27 @@ second step before nbtree goes.
   once, and checks a range, an equal key with a range on the
   second column, IS NULL and an empty range, and that the plan
   is an index scan.
-- **`make tsan` fails now and then**, on a race inside RocksDB's
-  group commit: two threads write at once, sm1's sequence lease
-  for a CREATE TABLE and sm1's GC, and the group's leader copies
-  the other's batch, handed over through RocksDB's atomics,
-  which the sanitizer does not see in an uninstrumented RocksDB.
-  The new tests make more such writes at once. No suppression
-  fits: the GC thread runs no instrumented code to name.
+
+## Step 52: make tsan instruments RocksDB and sm
+
+`make tsan` failed now and then after step 51: a race inside
+RocksDB's group commit, where two threads write at once -- sm1's
+sequence lease for a CREATE TABLE and sm1's GC -- and the
+group's leader copies the other's batch, handed over through
+RocksDB's atomics. The sanitizer did not see them in the
+system's RocksDB, which is not built for it, and no suppression
+could name the GC thread's side.
+
+- **`test/rocksdb_tsan.sh` builds RocksDB 8.9.1**, the system's
+  version, from its source with `-fsanitize=thread`, as a
+  static library with the system's compression libraries, under
+  `build/`: cloned and built once, for `make tsan` alone.
+- **`make tsan` links it, and sm instrumented too**:
+  `sm/Makefile` builds its levels' libraries under another
+  `BUILD` with other `OPTFLAGS` (`build/tsan/libsm.a`). Every
+  library that runs threads is now instrumented: RocksDB, sm and
+  sys. sq, the parser, is not.
+- **`test/tsan.supp` is gone**: its two RocksDB suppressions are
+  not needed with RocksDB instrumented. `server.sh` and `run.sh`
+  ran clean under it twelve times running, with no suppression.
+- The first `make tsan` builds RocksDB, which takes a while.

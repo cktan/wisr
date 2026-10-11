@@ -26,7 +26,9 @@ for the whole repository; this file adds what is particular to
 - **`make -j4 tsan`** builds `build/digres-tsan` under the
   thread sanitizer and runs the threaded tests and
   `server.sh` on it; a report fails it. Run it for any change
-  to threads, signals, latches, locks or shared state.
+  to threads, signals, latches, locks or shared state. RocksDB,
+  sm and sys are instrumented with it; the first run builds
+  RocksDB for it (`test/rocksdb_tsan.sh`), which takes a while.
 - **Run the full suite before every commit** that touches
   source. A commit of documents alone needs none.
 - **Save test output to a file** and read the file, rather

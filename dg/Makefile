@@ -23,13 +23,21 @@ include $(top)/dg.mk
 I := src/include
 B := src/backend
 PERL := perl
-LDLIBS := -lrocksdb -licui18n -licuuc -licudata -lm -lpthread -ldl -lrt
+# RocksDB, which sm links: the system's, or, for the thread sanitizer, one
+# built for it with its compression libraries (test/rocksdb_tsan.sh).
+LINK_ROCKSDB = -lrocksdb
+ROCKSDB_TSAN := build/rocksdb-tsan/librocksdb.a
+LDLIBS = $(LINK_ROCKSDB) -licui18n -licuuc -licudata -lm -lpthread -ldl -lrt
 # The parser, a library of its own (../sq).
 SQ := ../sq
 LIBSQ := $(SQ)/build/libsq.a
 # The storage stack, a library of its own too (../sm).
 SM := ../sm
 LIBSM := $(SM)/build/libsm.a
+# sm instrumented too, for the same reason as sys below.
+LIBSM_TSAN := $(SM)/build/tsan/libsm.a
+# The sm library a link takes: the tsan build overrides it.
+LINK_SM = $(LIBSM)
 # The system services sm and digres build on (../sys).
 SYS := ../sys
 LIBSYS := $(SYS)/build/libsys.a
@@ -88,12 +96,12 @@ define link_shared
 	$(CXX) $(STD) $(3) $(CPPFLAGS) -c -o $(1).shared.o $(1).shared.c
 	$(CXX) $(3) -o $(1) -Wl,-Map=$(1).map \
 	    $$(find src -name '*$(2)' $(if $(filter .o,$(2)),! -name '*.tsan.o')) \
-	    $(1).shared.o $(LIBSQ) $(LIBSM) $(LINK_SYS) $(LDLIBS)
+	    $(1).shared.o $(LIBSQ) $(LINK_SM) $(LINK_SYS) $(LDLIBS)
 	python3 -B src/tools/shared_tls.py src $(2) $(1).map $(1) > $(1).shared.c
 	$(CXX) $(STD) $(3) $(CPPFLAGS) -c -o $(1).shared.o $(1).shared.c
 	$(CXX) $(3) -o $(1) -Wl,-Map=$(1).map \
 	    $$(find src -name '*$(2)' $(if $(filter .o,$(2)),! -name '*.tsan.o')) \
-	    $(1).shared.o $(LIBSQ) $(LIBSM) $(LINK_SYS) $(LDLIBS)
+	    $(1).shared.o $(LIBSQ) $(LINK_SM) $(LINK_SYS) $(LDLIBS)
 	python3 -B src/tools/shared_tls.py src $(2) $(1).map $(1) | \
 	    cmp -s - $(1).shared.c
 endef
@@ -101,19 +109,19 @@ endef
 # The server again, each object compiled once more as NAME.tsan.o for
 # the thread sanitizer, and the statements in test/ run with it, alone
 # and in threads, and test/server.sh run on it. The sanitizer cannot map its memory with the address
-# space randomised, hence setarch -R. sq and sm are not instrumented;
-# sys is. RocksDB is not either, and test/tsan.supp says why its
-# reports are left out.
+# space randomised, hence setarch -R. Every library that runs threads
+# is instrumented: sm, sys, and RocksDB, built for it by
+# test/rocksdb_tsan.sh. sq, the parser, is not.
 .PHONY: tsan
 tsan: LINK_SYS = $(LIBSYS_TSAN)
-tsan: gen $(LIBSQ) $(LIBSM) $(LIBSYS_TSAN)
+tsan: LINK_SM = $(LIBSM_TSAN)
+tsan: LINK_ROCKSDB = $(ROCKSDB_TSAN) -lsnappy -llz4 -lzstd -lz -lbz2
+tsan: gen $(LIBSQ) $(LIBSM_TSAN) $(LIBSYS_TSAN) $(ROCKSDB_TSAN)
 	$(MAKE) -C src OBJ=tsan.o
 	@mkdir -p build
 	$(call link_shared,build/digres-tsan,.tsan.o,-O1 -g -fsanitize=thread)
-	TSAN_OPTIONS="suppressions=$(CURDIR)/test/tsan.supp" \
-	    DIGRES="setarch $$(uname -m) -R build/digres-tsan" test/run.sh
-	TSAN_OPTIONS="suppressions=$(CURDIR)/test/tsan.supp" \
-	    DIGRES="setarch $$(uname -m) -R build/digres-tsan" test/server.sh
+	DIGRES="setarch $$(uname -m) -R build/digres-tsan" test/run.sh
+	DIGRES="setarch $$(uname -m) -R build/digres-tsan" test/server.sh
 
 # The parser is sq and a converter (src/backend/parser/parser.c). sq's
 # tests keep what PostgreSQL's parser printed for each of their files;
@@ -134,10 +142,17 @@ test:
 $(LIBSQ):
 	$(MAKE) -C $(SQ) build/libsq.a
 
-# So does sm.
-.PHONY: $(LIBSM)
+# So does sm, plain and for the thread sanitizer.
+.PHONY: $(LIBSM) $(LIBSM_TSAN)
 $(LIBSM):
 	$(MAKE) -C $(SM)
+$(LIBSM_TSAN):
+	$(MAKE) -C $(SM) BUILD=build/tsan OPTFLAGS="-O1 -g -fsanitize=thread" \
+	    build/tsan/libsm.a
+
+# RocksDB for the thread sanitizer, built once.
+$(ROCKSDB_TSAN):
+	test/rocksdb_tsan.sh
 
 # And sys, plain and for the thread sanitizer.
 .PHONY: $(LIBSYS) $(LIBSYS_TSAN)

@@ -32,7 +32,8 @@ LDLIBS   += -lrocksdb -licui18n -licuuc -licudata -lpthread
 
 BUILD     := build
 LIB       := $(BUILD)/libsm.a
-LEVEL_LIBS := sm1/build/libsm1.a sm2/build/libsm2.a sm3/build/libsm3.a
+LEVEL_LIBS := sm1/$(BUILD)/libsm1.a sm2/$(BUILD)/libsm2.a \
+              sm3/$(BUILD)/libsm3.a
 
 .PHONY: all test clean format rel sys $(LEVELS)
 
@@ -61,7 +62,21 @@ sm3: sm2
 # The empty recipe matters: without one, make does not look at
 # an archive's time again after its level rebuilt it, and the
 # bundle, and rel with it, would keep the stale one.
+# The levels' libraries: by the levels' own builds, or, with BUILD set
+# elsewhere ("make BUILD=build/tsan OPTFLAGS=... build/tsan/libsm.a",
+# as digres's tsan build does), each level's library alone, built under
+# that directory with these flags.
+ifeq ($(BUILD),build)
 $(LEVEL_LIBS): $(LEVELS) ;
+else
+sm1/$(BUILD)/libsm1.a: sys
+	$(MAKE) -C sm1 BUILD=$(BUILD) OPTFLAGS='$(OPTFLAGS)' $(BUILD)/libsm1.a
+sm2/$(BUILD)/libsm2.a: sm1/$(BUILD)/libsm1.a
+	$(MAKE) -C sm2 BUILD=$(BUILD) OPTFLAGS='$(OPTFLAGS)' $(BUILD)/libsm2.a
+sm3/$(BUILD)/libsm3.a: sm2/$(BUILD)/libsm2.a
+	$(MAKE) -C sm3 BUILD=$(BUILD) OPTFLAGS='$(OPTFLAGS)' $(BUILD)/libsm3.a
+.PHONY: $(LEVEL_LIBS)
+endif
 
 $(BUILD)/src/sm.o: src/sm.cc
 	@mkdir -p $(dir $@)
@@ -71,7 +86,7 @@ $(BUILD)/src/sm.o: src/sm.cc
 # ar script: ADDLIB keeps two levels' same-named objects apart.
 $(LIB): $(BUILD)/src/sm.o $(LEVEL_LIBS)
 	rm -f $@
-	printf 'CREATE $@\nADDLIB sm1/build/libsm1.a\nADDLIB sm2/build/libsm2.a\nADDLIB sm3/build/libsm3.a\nADDMOD $(BUILD)/src/sm.o\nSAVE\nEND\n' | ar -M
+	printf 'CREATE $@\nADDLIB sm1/$(BUILD)/libsm1.a\nADDLIB sm2/$(BUILD)/libsm2.a\nADDLIB sm3/$(BUILD)/libsm3.a\nADDMOD $(BUILD)/src/sm.o\nSAVE\nEND\n' | ar -M
 
 # Each level's own target, in order, stopping at the first level
 # that fails; then the rel test driver.

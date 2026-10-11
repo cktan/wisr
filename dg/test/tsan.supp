@@ -1,8 +1,0 @@
-# tsan.supp -- what the thread sanitizer is not to report in digres-tsan
-# ("make tsan").
-#
-# RocksDB is not built for the sanitizer: its atomics are invisible to
-# it, so it reports races between RocksDB's own threads that the atomics
-# order. A race with a frame of RocksDB's in it is RocksDB's to answer
-# for, not digres's.
-race:librocksdb.so
