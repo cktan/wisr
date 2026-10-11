@@ -57,7 +57,7 @@ PG_LWLOCK(21, AddinShmemInit)
 /* 24 was SyncScan */
 PG_LWLOCK(25, RelationMapping)
 /* 26 was NotifySLRULock */
-PG_LWLOCK(27, NotifyQueue)
+/* 27 was NotifyQueue */
 PG_LWLOCK(28, SerializableXactHash)
 PG_LWLOCK(29, SerializableFinishedList)
 PG_LWLOCK(30, SerializablePredicateList)
@@ -77,7 +77,7 @@ PG_LWLOCK(43, LogicalRepWorker)
 PG_LWLOCK(44, XactTruncation)
 /* 45 was XactTruncationLock until removal of BackendRandomLock */
 /* 46 was WrapLimitsVacuumLock */
-PG_LWLOCK(47, NotifyQueueTail)
+/* 47 was NotifyQueueTail */
 PG_LWLOCK(48, WaitEventCustom)
 PG_LWLOCK(49, WALSummarizer)
 /* 50 was DSMRegistryLock */

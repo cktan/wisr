@@ -20,7 +20,6 @@
 #include "access/subtrans.h"
 #include "access/transam.h"
 #include "access/twophase.h"
-#include "commands/async.h"
 #include "miscadmin.h"
 #include "storage/bufmgr.h"
 #include "storage/ipc.h"
@@ -151,7 +150,6 @@ static void CreateOrAttachShmemStructs(void) {
    * Set up other modules that need some shared memory space
    */
   BTreeShmemInit();
-  AsyncShmemInit();
   InjectionPointShmemInit();
 }
 

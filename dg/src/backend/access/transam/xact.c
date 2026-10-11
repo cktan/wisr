@@ -31,7 +31,6 @@
 #include "catalog/namespace.h"
 #include "catalog/pg_enum.h"
 #include "catalog/storage.h"
-#include "commands/async.h"
 #include "commands/tablecmds.h"
 #include "commands/trigger.h"
 #include "common/pg_prng.h"
@@ -1462,7 +1461,6 @@ static void CommitTransaction(void) {
    * holding the notify-insertion lock.  However, this could result in
    * creating a snapshot, so we must do it before serializable cleanup.
    */
-  PreCommit_Notify();
 
   /*
    * Mark serializable transaction as complete for predicate locking
@@ -1565,7 +1563,6 @@ static void CommitTransaction(void) {
    * post-commit NOTIFY cleanup).  This must not happen until after our
    * transaction is fully done from the viewpoint of other backends.
    */
-  AtCommit_Notify();
 
   /*
    * Everything after this should be purely internal-to-this-backend
@@ -1698,7 +1695,6 @@ static void AbortTransaction(void) {
   AtAbort_Portals();
   smgrDoPendingSyncs(false);
   AtEOXact_LargeObject(false);
-  AtAbort_Notify();
   AtEOXact_RelationMap(false);
   AtAbort_Twophase();
 
@@ -3582,7 +3578,6 @@ static void CommitSubTransaction(void) {
                       s->parent->nestingLevel, s->parent->curTransactionOwner);
   AtEOSubXact_LargeObject(true, s->subTransactionId,
                           s->parent->subTransactionId);
-  AtSubCommit_Notify();
 
   CallSubXactCallbacks(SUBXACT_EVENT_COMMIT_SUB, s->subTransactionId,
                        s->parent->subTransactionId);
@@ -3724,7 +3719,6 @@ static void AbortSubTransaction(void) {
                        s->curTransactionOwner, s->parent->curTransactionOwner);
     AtEOSubXact_LargeObject(false, s->subTransactionId,
                             s->parent->subTransactionId);
-    AtSubAbort_Notify();
 
     /* Advertise the fact that we aborted in pg_xact. */
     (void)RecordTransactionAbort(true);

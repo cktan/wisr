@@ -1160,7 +1160,6 @@ static void getInstallationPaths(const char *argv0) {
 static void make_legacy_dirs(void) {
   static const char *const dirs[] = {"pg_commit_ts",
                                      "pg_dynshmem",
-                                     "pg_notify",
                                      "pg_serial",
                                      "pg_snapshots",
                                      "pg_subtrans",

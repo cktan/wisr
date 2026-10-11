@@ -34,7 +34,6 @@
 #include "access/printtup.h"
 #include "access/xact.h"
 #include "catalog/pg_type.h"
-#include "commands/async.h"
 #include "commands/event_trigger.h"
 #include "commands/prepare.h"
 #include "common/pg_prng.h"
@@ -477,10 +476,6 @@ void ProcessClientReadInterrupt(bool blocked) {
     /* Process sinval catchup interrupts, if any */
     if (catchupInterruptPending)
       ProcessCatchupInterrupt();
-
-    /* Process notify interrupts, if any */
-    if (notifyInterruptPending)
-      ProcessNotifyInterrupt(true);
   } else if (ProcDiePending) {
     /*
      * We're dying.  If there is no data available to read, then it's safe
@@ -4082,16 +4077,6 @@ void PostgresMain(const char *dbname, const char *username) {
                                IdleInTransactionSessionTimeout);
         }
       } else {
-        /*
-         * Process incoming notifies (including self-notifies), if
-         * any, and send relevant messages to the client.  Doing it
-         * here helps ensure stable behavior in tests: if any notifies
-         * were received during the just-finished transaction, they'll
-         * be seen by the client before ReadyForQuery is.
-         */
-        if (notifyInterruptPending)
-          ProcessNotifyInterrupt(false);
-
         set_ps_display("idle");
 
         /* Start the idle-session timer */

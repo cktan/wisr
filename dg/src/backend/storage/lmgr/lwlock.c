@@ -140,7 +140,6 @@ static constexpr auto BuiltinTrancheNames = [] {
   a[LWTRANCHE_SUBTRANS_BUFFER] = "SubtransBuffer";
   a[LWTRANCHE_MULTIXACTOFFSET_BUFFER] = "MultiXactOffsetBuffer";
   a[LWTRANCHE_MULTIXACTMEMBER_BUFFER] = "MultiXactMemberBuffer";
-  a[LWTRANCHE_NOTIFY_BUFFER] = "NotifyBuffer";
   a[LWTRANCHE_SERIAL_BUFFER] = "SerialBuffer";
   a[LWTRANCHE_BUFFER_CONTENT] = "BufferContent";
   a[LWTRANCHE_REPLICATION_ORIGIN_STATE] = "ReplicationOriginState";
@@ -152,7 +151,6 @@ static constexpr auto BuiltinTrancheNames = [] {
   a[LWTRANCHE_COMMITTS_SLRU] = "CommitTsSLRU";
   a[LWTRANCHE_MULTIXACTOFFSET_SLRU] = "MultiXactOffsetSLRU";
   a[LWTRANCHE_MULTIXACTMEMBER_SLRU] = "MultiXactMemberSLRU";
-  a[LWTRANCHE_NOTIFY_SLRU] = "NotifySLRU";
   a[LWTRANCHE_SERIAL_SLRU] = "SerialSLRU";
   a[LWTRANCHE_SUBTRANS_SLRU] = "SubtransSLRU";
   return a;

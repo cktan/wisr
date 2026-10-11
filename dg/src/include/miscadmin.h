@@ -205,7 +205,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT int MaxConnections;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int commit_timestamp_buffers;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int multixact_member_buffers;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int multixact_offset_buffers;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int notify_buffers;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int serializable_buffers;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int subtransaction_buffers;
 

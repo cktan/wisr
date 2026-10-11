@@ -321,6 +321,18 @@ SQL
 [ "$(local_psql -c 'select a from t2' 2>&1 | tr '\n' ' ')" = "1 3 5 6 9 " ] ||
   fail "savepoints"
 
+# Verify that LISTEN and NOTIFY are refused, and that UNLISTEN and DISCARD
+# ALL, which a pooler sends, still run.
+# 1. Confirm LISTEN and NOTIFY fail, each with its name.
+# 2. Confirm UNLISTEN * and DISCARD ALL succeed.
+local_psql -c 'listen ch' > "$work/notify.out" 2>&1
+local_psql -c 'notify ch' >> "$work/notify.out" 2>&1
+grep -q 'LISTEN is not supported' "$work/notify.out" &&
+  grep -q 'NOTIFY is not supported' "$work/notify.out" ||
+  fail "listen and notify refused"
+[ "$(local_psql -c 'unlisten *' -c 'discard all' 2>&1 | tr '\n' ' ')" = \
+  "UNLISTEN DISCARD ALL " ] || fail "unlisten and discard all"
+
 # Verify that = finds rows, and that DROP TABLE removes a table for good,
 # even from a session that had used it.
 # 1. Confirm WHERE a = 2 finds the one row.

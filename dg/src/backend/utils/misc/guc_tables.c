@@ -35,7 +35,6 @@
 #include "access/twophase.h"
 #include "catalog/namespace.h"
 #include "catalog/storage.h"
-#include "commands/async.h"
 #include "commands/extension.h"
 #include "commands/event_trigger.h"
 #include "commands/tablespace.h"
@@ -1063,15 +1062,6 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
      NULL,
      NULL},
 
-    {{"trace_notify", PGC_USERSET, DEVELOPER_OPTIONS,
-      gettext_noop("Generates debugging output for LISTEN and NOTIFY."), NULL,
-      GUC_NOT_IN_SAMPLE},
-     &Trace_notify,
-     false,
-     NULL,
-     NULL,
-     NULL},
-
 #ifdef LOCK_DEBUG
     {{"trace_locks", PGC_SUSET, DEVELOPER_OPTIONS,
       gettext_noop("Emits information about lock usage."), NULL,
@@ -1646,18 +1636,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      NULL,
      NULL},
 
-    {{"notify_buffers", PGC_POSTMASTER, RESOURCES_MEM,
-      gettext_noop("Sets the size of the dedicated buffer pool used for the "
-                   "LISTEN/NOTIFY message cache."),
-      NULL, GUC_UNIT_BLOCKS},
-     &notify_buffers,
-     16,
-     16,
-     SLRU_MAX_ALLOWED_BUFFERS,
-     check_notify_buffers,
-     NULL,
-     NULL},
-
     {{"serializable_buffers", PGC_POSTMASTER, RESOURCES_MEM,
       gettext_noop("Sets the size of the dedicated buffer pool used for the "
                    "serializable transaction cache."),
@@ -2027,22 +2005,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      0,
      0,
      60,
-     NULL,
-     NULL,
-     NULL},
-
-    {{
-         "max_notify_queue_pages",
-         PGC_POSTMASTER,
-         RESOURCES_DISK,
-         gettext_noop("Sets the maximum number of allocated pages for NOTIFY / "
-                      "LISTEN queue."),
-         NULL,
-     },
-     &max_notify_queue_pages,
-     1048576,
-     64,
-     INT_MAX,
      NULL,
      NULL,
      NULL},

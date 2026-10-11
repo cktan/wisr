@@ -28,7 +28,6 @@
  */
 typedef enum {
   PROCSIG_CATCHUP_INTERRUPT,  /* sinval catchup interrupt */
-  PROCSIG_NOTIFY_INTERRUPT,   /* listen/notify interrupt */
   PROCSIG_BARRIER,            /* global barrier interrupt  */
   PROCSIG_LOG_MEMORY_CONTEXT, /* ask backend to log the memory contexts */
 

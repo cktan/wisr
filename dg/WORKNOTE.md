@@ -1464,3 +1464,26 @@ subtransactions as they follow its transactions.
   call into sm says so.
 - `server.sh` rolls back, releases and nests savepoints, with
   one set before any row and one whose insert failed.
+
+## Step 43: LISTEN and NOTIFY are gone
+
+PLAN.md §7: sm's transactions are to replace `xact.c`, and
+PostgreSQL's transaction ids go with it. NOTIFY needs one: its
+queue, an SLRU under `pg_notify`, is ordered by the notifying
+transaction's xid, and every listener reads it at commit.
+
+- **Gone**: `commands/async.c` and its header; the SQL
+  functions `pg_notify`, `pg_listening_channels` and
+  `pg_notification_queue_usage`; the settings `notify_buffers`,
+  `max_notify_queue_pages` and `trace_notify`; the LWLocks
+  `NotifyQueue` and `NotifyQueueTail` and the tranches
+  `NotifyBuffer` and `NotifySLRU`, with their wait events; the
+  `PROCSIG_NOTIFY_INTERRUPT` reason; the commit, abort and
+  subtransaction hooks in `xact.c`; the reads of the client's
+  notifies in `postgres.c`; the `pg_notify` directory.
+- **LISTEN and NOTIFY are refused** when they run. UNLISTEN
+  succeeds and does nothing, as it did for a session listening
+  to nothing, and DISCARD ALL no longer unlistens: poolers send
+  both.
+- The grammar and nodes stay: sq parses the statements, and
+  digres refuses them.

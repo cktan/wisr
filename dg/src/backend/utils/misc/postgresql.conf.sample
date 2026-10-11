@@ -150,7 +150,6 @@
 #commit_timestamp_buffers = 0		# memory for pg_commit_ts (0 = auto)
 #multixact_offset_buffers = 16		# memory for pg_multixact/offsets
 #multixact_member_buffers = 32		# memory for pg_multixact/members
-#notify_buffers = 16			# memory for pg_notify
 #serializable_buffers = 32		# memory for pg_serial
 #subtransaction_buffers = 0		# memory for pg_subtrans (0 = auto)
 
@@ -164,9 +163,6 @@
 					# by the operating system:
 					#   posix_fallocate (most Unix-like systems)
 					#   write_zeros
-
-#max_notify_queue_pages = 1048576	# limits the number of SLRU pages allocated
-					# for NOTIFY / LISTEN queue
 
 # - Kernel Resources -
 

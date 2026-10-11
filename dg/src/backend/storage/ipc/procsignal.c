@@ -17,7 +17,6 @@
 #include <signal.h>
 #include <unistd.h>
 
-#include "commands/async.h"
 #include "miscadmin.h"
 #include "port/atomics.h"
 #include "port/pg_bitutils.h"
@@ -631,9 +630,6 @@ static bool CheckProcSignal(ProcSignalReason reason) {
 void procsignal_sigusr1_handler(void) {
   if (CheckProcSignal(PROCSIG_CATCHUP_INTERRUPT))
     HandleCatchupInterrupt();
-
-  if (CheckProcSignal(PROCSIG_NOTIFY_INTERRUPT))
-    HandleNotifyInterrupt();
 
   if (CheckProcSignal(PROCSIG_BARRIER))
     HandleProcSignalBarrierInterrupt();

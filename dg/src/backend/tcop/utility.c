@@ -23,7 +23,6 @@
 #include "catalog/pg_authid.h"
 #include "catalog/pg_inherits.h"
 #include "commands/alter.h"
-#include "commands/async.h"
 #include "commands/cluster.h"
 #include "commands/collationcmds.h"
 #include "commands/comment.h"
@@ -302,19 +301,9 @@ static int ClassifyUtilityCommandAsReadOnly(Node *parsetree) {
   }
 
   case T_ListenStmt:
-  case T_NotifyStmt: {
-    /*
-     * NOTIFY requires an XID assignment, so it can't be permitted
-     * on a standby. Perhaps LISTEN could, since without NOTIFY it
-     * would be OK to just do nothing, at least until promotion,
-     * but we currently prohibit it lest the user get the wrong
-     * idea.
-     *
-     * (We do allow T_UnlistenStmt on a standby, though, because
-     * it's a no-op.)
-     */
+  case T_NotifyStmt:
+    /* Refused when they run, wherever they run. */
     return COMMAND_OK_IN_READ_ONLY_TXN;
-  }
 
   case T_LockStmt: {
     LockStmt *stmt = (LockStmt *)parsetree;
@@ -694,45 +683,16 @@ void standard_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
     DropDatabase(pstate, (DropdbStmt *)parsetree);
     break;
 
-    /* Query-level asynchronous notification */
-  case T_NotifyStmt: {
-    NotifyStmt *stmt = (NotifyStmt *)parsetree;
+    /* LISTEN and NOTIFY are gone; UNLISTEN has nothing to undo. */
+  case T_NotifyStmt:
+  case T_ListenStmt:
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("%s is not supported",
+                           IsA(parsetree, NotifyStmt) ? "NOTIFY" : "LISTEN")));
+    break;
 
-    Async_Notify(stmt->conditionname, stmt->payload);
-  } break;
-
-  case T_ListenStmt: {
-    ListenStmt *stmt = (ListenStmt *)parsetree;
-
-    CheckRestrictedOperation("LISTEN");
-
-    /*
-     * We don't allow LISTEN in background processes, as there is
-     * no mechanism for them to collect NOTIFY messages, so they'd
-     * just block cleanout of the async SLRU indefinitely.
-     * (Authors of custom background workers could bypass this
-     * restriction by calling Async_Listen directly, but then it's
-     * on them to provide some mechanism to process the message
-     * queue.)  Note there seems no reason to forbid UNLISTEN.
-     */
-    if (MyBackendType != B_BACKEND)
-      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      /* translator: %s is name of a SQL command, eg LISTEN */
-                      errmsg("cannot execute %s within a background process",
-                             "LISTEN")));
-
-    Async_Listen(stmt->conditionname);
-  } break;
-
-  case T_UnlistenStmt: {
-    UnlistenStmt *stmt = (UnlistenStmt *)parsetree;
-
-    CheckRestrictedOperation("UNLISTEN");
-    if (stmt->conditionname)
-      Async_Unlisten(stmt->conditionname);
-    else
-      Async_UnlistenAll();
-  } break;
+  case T_UnlistenStmt:
+    break;
 
   case T_LoadStmt: {
     LoadStmt *stmt = (LoadStmt *)parsetree;
