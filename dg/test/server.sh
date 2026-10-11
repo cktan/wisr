@@ -464,6 +464,17 @@ local_psql -c 'explain (costs off) select b from t4 order by a' 2>&1 |
 [ "$(local_psql -c 'select b from t4 where a > 1 order by a, c limit 2' 2>&1 |
   tr '\n' ' ')" = "20 30 " ] || fail "ordered limit"
 
+# Verify that a scroll cursor over an index in sm, which scans only forwards,
+# moves back over what it read.
+# 1. Declare a scroll cursor ordered by t4's index, with sorts off.
+# 2. Fetch two rows forwards, then one back: the first again.
+local_psql -c 'set enable_sort = off' -c 'begin' \
+  -c 'declare c scroll cursor for select b from t4 order by a, c' \
+  -c 'fetch 2 from c' -c 'fetch prior from c' -c 'commit' \
+  > "$work/scroll.out" 2>&1
+[ "$(grep -v '^[A-Z]' "$work/scroll.out" | tr '\n' ' ')" = "10 20 10 " ] ||
+  fail "scroll cursor"
+
 # Verify that = finds rows, and that DROP TABLE removes a table for good,
 # even from a session that had used it.
 # 1. Confirm WHERE a = 2 finds the one row.

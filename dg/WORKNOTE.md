@@ -1760,3 +1760,27 @@ could name the GC thread's side.
   `GetDefaultOpClass()` read them.
 - `server.sh` orders by an index's columns, with nulls last,
   in reverse, with nulls first, and with a LIMIT.
+
+## Step 55: an index in sm has an access method of its own
+
+- **`smindex_routine()`** (`access/sm/smindex.c`) is the
+  `IndexAmRoutine` of an index in sm, which
+  `RelationBuildSmIndexDesc()` puts in `rd_indam` in place of
+  nbtree's: ordered, unique, of several columns, scanned
+  forwards a row at a time, with no array keys, no mark, no
+  bitmap and no index-only scan yet. Its costs
+  (`btcostestimate`) and strategies are btree's. Its
+  `amgettuple` raises an error: smstore.c scans an index in sm,
+  but the planner plans a plain index scan only for an access
+  method that has one.
+- **The planner reads it as any other**: `get_relation_info()`
+  loses its special cases for sm, keeping only the size, as an
+  index in sm has no pages.
+- **`IndexSupportsBackwardScan()` asks the descriptor**, not
+  pg_class and pg_am, which have no index in sm: a scroll
+  cursor over one failed opening pg_class. Now the planner puts
+  a Materialize over the forward-only scan.
+- `server.sh` fetches back through a scroll cursor over an
+  index in sm.
+- Not yet: `int` as a column's type is not resolved in CREATE
+  TABLE (it opens pg_type); `int4` is.

@@ -32,6 +32,7 @@
 #include <unistd.h>
 
 #include "access/htup_details.h"
+#include "access/smindex.h"
 #include "access/smstore.h"
 #include "access/multixact.h"
 #include "access/reloptions.h"
@@ -1469,9 +1470,10 @@ static Relation RelationBuildSmIndexDesc(Oid indexoid, Oid table,
       CacheMemoryContext, "index info", ALLOCSET_SMALL_SIZES);
   MemoryContextCopyAndSetIdentifier(relation->rd_indexcxt,
                                     RelationGetRelationName(relation));
-  relation->rd_amhandler = F_BTHANDLER;
-  InitIndexAmRoutine(relation);
+  /* sm's access method, not nbtree's: it has no handler to call. */
+  relation->rd_amhandler = InvalidOid;
   oldcxt = MemoryContextSwitchTo(relation->rd_indexcxt);
+  relation->rd_indam = smindex_routine();
   relation->rd_opfamily = (Oid *)palloc0(ix->nkeys * sizeof(Oid));
   relation->rd_opcintype = (Oid *)palloc0(ix->nkeys * sizeof(Oid));
   relation->rd_indcollation = (Oid *)palloc0(ix->nkeys * sizeof(Oid));

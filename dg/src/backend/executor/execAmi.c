@@ -13,8 +13,7 @@
 #include "postgres.h"
 
 #include "access/amapi.h"
-#include "access/htup_details.h"
-#include "catalog/pg_class.h"
+#include "access/genam.h"
 #include "executor/executor.h"
 #include "executor/nodeAgg.h"
 #include "executor/nodeAppend.h"
@@ -59,7 +58,7 @@
 #include "executor/nodeWorktablescan.h"
 #include "nodes/extensible.h"
 #include "nodes/pathnodes.h"
-#include "utils/syscache.h"
+#include "utils/rel.h"
 
 static bool IndexSupportsBackwardScan(Oid indexid);
 
@@ -554,24 +553,16 @@ bool ExecSupportsBackwardScan(Plan *node) {
  * index's AM does.
  */
 static bool IndexSupportsBackwardScan(Oid indexid) {
+  Relation index;
   bool result;
-  HeapTuple ht_idxrel;
-  Form_pg_class idxrelrec;
-  IndexAmRoutine *amroutine;
 
-  /* Fetch the pg_class tuple of the index relation */
-  ht_idxrel = SearchSysCache1(RELOID, ObjectIdGetDatum(indexid));
-  if (!HeapTupleIsValid(ht_idxrel))
-    elog(ERROR, "cache lookup failed for relation %u", indexid);
-  idxrelrec = (Form_pg_class)GETSTRUCT(ht_idxrel);
-
-  /* Fetch the index AM's API struct */
-  amroutine = GetIndexAmRoutineByAmId(idxrelrec->relam, false);
-
-  result = amroutine->amcanbackward;
-
-  pfree(amroutine);
-  ReleaseSysCache(ht_idxrel);
+  /*
+   * Ask the index's descriptor, not pg_am: an index in sm has sm's access
+   * method.  The planner, which asks this, holds the index already.
+   */
+  index = index_open(indexid, NoLock);
+  result = index->rd_indam->amcanbackward;
+  index_close(index, NoLock);
 
   return result;
 }

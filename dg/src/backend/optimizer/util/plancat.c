@@ -278,9 +278,7 @@ void get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 
       for (i = 0; i < ncolumns; i++) {
         info->indexkeys[i] = index->indkey.values[i];
-        /* sm's index scans read the row, not the index entry, yet. */
-        info->canreturn[i] =
-            !RelationIsSm(relation) && index_can_return(indexRelation, i + 1);
+        info->canreturn[i] = index_can_return(indexRelation, i + 1);
       }
 
       for (i = 0; i < nkeycolumns; i++) {
@@ -300,21 +298,15 @@ void get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
         amroutine = indexRelation->rd_indam;
         info->amcanorderbyop = amroutine->amcanorderbyop;
         info->amoptionalkey = amroutine->amoptionalkey;
-        /* sm's index scans take no array of values yet. */
-        info->amsearcharray =
-            amroutine->amsearcharray && !RelationIsSm(relation);
+        info->amsearcharray = amroutine->amsearcharray;
         info->amsearchnulls = amroutine->amsearchnulls;
         info->amhasgettuple = (amroutine->amgettuple != NULL);
-        /* sm's index scans fetch a row at a time: no bitmap scans. */
         info->amhasgetbitmap =
-            amroutine->amgetbitmap != NULL && !RelationIsSm(relation) &&
+            amroutine->amgetbitmap != NULL &&
             relation->rd_tableam->scan_bitmap_next_tuple != NULL;
-        /* sm's index scans run forwards, and keep no position, yet. */
         info->amcanmarkpos =
-            (amroutine->ammarkpos != NULL && amroutine->amrestrpos != NULL) &&
-            !RelationIsSm(relation);
-        info->amcanbackward =
-            amroutine->amcanbackward && !RelationIsSm(relation);
+            (amroutine->ammarkpos != NULL && amroutine->amrestrpos != NULL);
+        info->amcanbackward = amroutine->amcanbackward;
         info->amcostestimate = amroutine->amcostestimate;
         Assert(info->amcostestimate != NULL);
 
@@ -456,7 +448,7 @@ void get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
         /*
          * Get tree height while we have the index open
          */
-        if (amroutine->amgettreeheight && !RelationIsSm(relation)) {
+        if (amroutine->amgettreeheight) {
           info->tree_height = amroutine->amgettreeheight(indexRelation);
         } else {
           /* For other index types, just set it to "unknown" for now */
