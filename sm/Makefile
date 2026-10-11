@@ -27,8 +27,8 @@ CC       ?= gcc
 CXX      ?= g++
 OPTFLAGS ?= -O1 -g
 CXXFLAGS ?= $(OPTFLAGS)
-CXXFLAGS += -std=c++20 -Wall -Wextra -Iinclude -Ism0/include -Ism1/include \
-            -Ism2/include -Ism3/include -MMD -MP
+CXXFLAGS += -std=c++20 -fno-rtti -Wall -Wextra -Iinclude -Ism0/include \
+            -Ism1/include -Ism2/include -Ism3/include -MMD -MP
 LDLIBS   += -lrocksdb -licui18n -licuuc -licudata -lpthread
 
 BUILD     := build

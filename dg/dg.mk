@@ -25,7 +25,7 @@ OPT := -O1 -g -fsanitize=thread
 else
 OPT ?= -O0 -g
 endif
-STD := -x c++ -std=gnu++20 -w
+STD := -x c++ -std=gnu++20 -fno-rtti -w
 # Every directory may include sm_sys.h: the services dg is built on,
 # in sm's level 0 (../sm/sm0).
 CPPFLAGS := -I$(top)/src/include -I$(top)/../sm/sm0/include $(INCLUDES) -D_GNU_SOURCE

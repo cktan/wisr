@@ -776,6 +776,12 @@ const sm_type_t *sm_type(uint8_t code) {
   return reinterpret_cast<const sm_type_t *>(sm2::type_by_code(code));
 }
 
+/* A datum from a statistic value's bytes; see sm.h. */
+sm_datum_t sm_datum_of_bytes(const sm_type_t *type, const std::string &bytes) {
+  return sm3::datum_of_bytes(reinterpret_cast<const sm2::type_t *>(type),
+                             bytes);
+}
+
 /* Parse a value's canonical text; see sm.h. */
 int sm_type_in(const sm_type_t *type, int32_t typmod, const char *text,
                size_t len, sm_datum_t *val, std::string &buf) {
@@ -1327,6 +1333,134 @@ int sm_tbl_idx_deform(sm_tbl_t *tbl, uint64_t index, const void *value,
       return -1;
     }
     return deform("sm_tbl_idx_deform", *desc, value, len, values, isnull, n);
+  });
+}
+
+/* The heap's bytes, live. */
+int sm_tbl_size(sm_tbl_t *tbl, uint64_t *disk, uint64_t *mem) {
+  return guard(tbl ? tbl->session : nullptr, [&] {
+    if (!tbl || !disk || !mem) {
+      return null_arg("sm_tbl_size", !tbl ? "tbl" : !disk ? "disk" : "mem");
+    }
+    return sm3::tbl_size(tbl->table, *disk, *mem);
+  });
+}
+
+/* An index's bytes, live. */
+int sm_tbl_idx_size(sm_tbl_t *tbl, uint64_t index, uint64_t *disk,
+                    uint64_t *mem) {
+  return guard(tbl ? tbl->session : nullptr, [&] {
+    if (!tbl || !disk || !mem) {
+      return null_arg("sm_tbl_idx_size", !tbl ? "tbl" : !disk ? "disk" : "mem");
+    }
+    return sm3::tbl_idx_size(tbl->table, index, *disk, *mem);
+  });
+}
+
+/* The last rowno handed out, live. */
+int sm_tbl_rowno_limit(sm_tbl_t *tbl, uint64_t *n) {
+  return guard(tbl ? tbl->session : nullptr, [&] {
+    if (!tbl || !n) {
+      return null_arg("sm_tbl_rowno_limit", !tbl ? "tbl" : "n");
+    }
+    return sm3::tbl_rowno_limit(tbl->table, *n);
+  });
+}
+
+/* The sorted runs a lookup may visit, live. */
+int sm_tbl_probes(sm_tbl_t *tbl, uint64_t *n) {
+  return guard(tbl ? tbl->session : nullptr, [&] {
+    if (!tbl || !n) {
+      return null_arg("sm_tbl_probes", !tbl ? "tbl" : "n");
+    }
+    return sm3::tbl_probes(tbl->table, *n);
+  });
+}
+
+/* Analyze a table. */
+int sm_tbl_analyze(sm_tbl_t *tbl, int32_t target) {
+  return guard(tbl ? tbl->session : nullptr, [&] {
+    if (!tbl) {
+      return null_arg("sm_tbl_analyze", "tbl");
+    }
+    return sm3::tbl_analyze(tbl->table, target);
+  });
+}
+
+namespace {
+
+/*
+ * The statistics in sm.h's form, each built once from sm3's and shared:
+ * by the address of sm3's, which a view keeps alive, so the address is
+ * never another's while its view is held.  An expired view is built again.
+ */
+std::mutex g_stats_mu;
+std::unordered_map<const sm3::stats_t *, std::weak_ptr<const sm_stats_t>>
+    g_stats_views;
+
+/* sm3's statistics in sm.h's form, with what they were built from. */
+struct stats_view_t {
+  std::shared_ptr<const sm3::stats_t> from;
+  sm_stats_t view;
+};
+
+/* The view of st, built now if no holder has one. */
+std::shared_ptr<const sm_stats_t>
+stats_view(std::shared_ptr<const sm3::stats_t> st) {
+  // One build at a time, so two callers share the first's.
+  std::lock_guard<std::mutex> lock(g_stats_mu);
+  auto it = g_stats_views.find(st.get());
+  if (it != g_stats_views.end()) {
+    if (auto held = it->second.lock()) {
+      return held;
+    }
+  }
+  auto v = std::make_shared<stats_view_t>();
+  v->view = {st->target,
+             st->run_length,
+             st->rows_sampled,
+             st->rowno_limit,
+             st->live_rows,
+             st->heap_disk,
+             st->heap_mem,
+             st->avg_row_bytes,
+             {},
+             {}};
+  for (const sm3::stats_index_t &x : st->indexes) {
+    v->view.indexes.push_back({x.oid, x.disk, x.mem, x.entries, x.belongs});
+  }
+  for (const sm3::stat_t &c : st->stats) {
+    v->view.stats.push_back(
+        {c.index.has_value(), c.index.value_or(0), c.position, c.null_frac,
+         c.width, c.distinct, c.correlation.has_value(),
+         c.correlation.value_or(0), c.mcv, c.mcv_freq, c.bounds});
+  }
+  v->from = std::move(st);
+  std::shared_ptr<const sm_stats_t> out(v, &v->view);
+  // Views no one holds any more go, so the map stays small.
+  for (auto e = g_stats_views.begin(); e != g_stats_views.end();) {
+    e = e->second.expired() ? g_stats_views.erase(e) : std::next(e);
+  }
+  g_stats_views[v->from.get()] = out;
+  return out;
+}
+
+} // namespace
+
+/* A table's statistics: 0, or 1 if never analyzed. */
+int sm_tbl_stats(sm_session_t *session, uint64_t oid,
+                 std::shared_ptr<const sm_stats_t> &out) {
+  return guard(session, [&] {
+    std::shared_ptr<const sm3::stats_t> st;
+    if (sm3::cat_get_stats(session->sm3, oid, st) != 0) {
+      return -1;
+    }
+    if (!st) {
+      out = nullptr;
+      return 1;
+    }
+    out = stats_view(std::move(st));
+    return 0;
   });
 }
 

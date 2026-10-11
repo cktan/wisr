@@ -1,0 +1,85 @@
+# test_stats.rel -- a table's statistics (sm3/SM3_DESIGN.md section
+# 6): analyze samples it and records each column's statistics, and
+# each partial or expression index's from rel's evaluator.
+#
+# 1. A table never analyzed has no statistics.
+# 2. An analyze rolled back leaves none.
+# 3. Analyzed and committed, a table of 2,000 rows, under the
+#    budget, is read whole: its counts are exact, and so is what
+#    each column holds -- id unique and in rowno order, state four
+#    values a quarter each, owner a tenth null.
+# 4. The partial index holds the free quarter of the rows, and the
+#    expression index's lower(owner) has eight values, in lower case.
+# 5. Another session sees them once committed.
+
+(def test-dir "/tmp/wisr_rel_test_stats")
+(rm-rf test-dir)
+(env-init test-dir)
+(env-attach test-dir)
+(db-create "statdb")
+(db-open "statdb")
+
+# Whether x is within 0.001 of y.
+(defn near [x y] (< (math/abs (- x y)) 0.001))
+
+(begin :rc)
+(table-create jobs
+  (columns (id :int4 :not-null) (state :text :not-null) (owner :text)))
+(def states ["free" "taken" "done" "lost"])
+(for i 0 2000
+  (insert jobs [(+ i 1) (get states (% i 4))
+                (if (= 0 (% i 10)) nil (string "Name" (% i 8)))]))
+(index-create jobs_free (table jobs) (key (owner :asc)) :unique false
+  :where (state "free"))
+(index-create jobs_lower (table jobs) (key ((lower owner) :asc))
+  :unique false)
+(commit)
+
+# 1. and 2.
+(begin :rc)
+(assert-nil (stats jobs))
+(analyze jobs 10)
+(abort)
+(begin :rc)
+(assert-nil (stats jobs))
+
+# 3.
+(analyze jobs 10)
+(commit)
+(begin :rc)
+(def st (stats jobs))
+(assert-eq (st :live-rows) 2000)
+(assert-eq (st :rows-sampled) 2000)
+(assert-eq (st :rowno-limit) 2000)
+(def id ((st :columns) "id"))
+(assert-eq (id :distinct) -1)
+(assert-eq (> (id :correlation) 0.99) true)
+(def state ((st :columns) "state"))
+(assert-eq (state :distinct) 4)
+(assert-eq (sorted (tuple ;(state :mcv))) (sorted states))
+(each f (state :freqs) (assert-eq (near f 0.25) true))
+(def owner ((st :columns) "owner"))
+(assert-eq (near (owner :null-frac) 0.1) true)
+(assert-eq (owner :distinct) 8)
+
+# 4.
+(def free ((st :indexes) "jobs_free"))
+(assert-eq (near (free :belongs) 0.25) true)
+(assert-eq (free :entries) 500)
+(def lower ((((st :indexes) "jobs_lower") :exprs) 0))
+(assert-eq (lower :distinct) 8)
+(assert-eq (sorted (tuple ;(lower :mcv)))
+  (sorted (map (fn [k] (string "name" k)) (range 8))))
+(commit)
+
+# 5.
+(session-open other "statdb")
+(session-use other)
+(begin :rc)
+(assert-eq ((stats jobs) :live-rows) 2000)
+(commit)
+(session-close other)
+
+(db-close)
+(env-detach)
+(rm-rf test-dir)

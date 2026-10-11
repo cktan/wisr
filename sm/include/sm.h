@@ -56,6 +56,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -327,6 +328,13 @@ typedef uintptr_t sm_datum_t;
 #define SM_DATUM_FROM_INT64(v) ((sm_datum_t)(uint64_t)(v))
 #define SM_DATUM_FROM_BOOL(v)  ((sm_datum_t)((v) ? 1 : 0))
 #define SM_DATUM_FROM_PTR(p)   ((sm_datum_t)(const void*)(p))
+
+/*
+ * The datum of type whose bytes are bytes, as a statistic keeps a
+ * value (sm_stat_t): a by-value one built from them, a by-reference
+ * one pointing into bytes, which must outlive it.
+ */
+sm_datum_t sm_datum_of_bytes(const sm_type_t* type, const std::string& bytes);
 
 #define SM_DATUM_TO_INT16(d)   ((int16_t)(uint16_t)(d))
 #define SM_DATUM_TO_INT32(d)   ((int32_t)(uint32_t)(d))
@@ -843,6 +851,86 @@ size_t sm_tbl_idx_ncols(const sm_tbl_t* tbl, uint64_t index);
 int sm_tbl_idx_deform(sm_tbl_t* tbl, uint64_t index, const void* value,
                       size_t len, sm_datum_t* values, bool* isnull,
                       size_t n);
+
+/*
+ * ---- statistics, for the host's planner (sm3/SM3_DESIGN.md §6) ----
+ *
+ * What the table's LSM looks like now, read live and stored
+ * nowhere: the heap's bytes and the index's, in sorted files
+ * (disk) and in memtables (mem), apart, never summed; N, the last
+ * rowno handed out, 0 if none; and the sorted runs a lookup in the
+ * table's store may visit.
+ */
+int sm_tbl_size(sm_tbl_t* tbl, uint64_t* disk, uint64_t* mem);
+int sm_tbl_idx_size(sm_tbl_t* tbl, uint64_t index, uint64_t* disk,
+                    uint64_t* mem);
+int sm_tbl_rowno_limit(sm_tbl_t* tbl, uint64_t* n);
+int sm_tbl_probes(sm_tbl_t* tbl, uint64_t* n);
+
+/*
+ * The statistics of one column, or of one expression of an index:
+ * PostgreSQL's six. A value is its bytes as a datum of the column's
+ * or expression's type, a varlena for a variable-width one.
+ */
+struct sm_stat_t {
+    bool                     has_index;   /* an expression's, not a column's */
+    uint64_t                 index;
+    int32_t                  position;    /* the column's 0-based place, or
+                                             the expression's among the
+                                             index's keys */
+    float                    null_frac;
+    int32_t                  width;
+    float                    distinct;    /* a count, or minus a fraction
+                                             of the rows */
+    bool                     has_correlation;
+    float                    correlation;
+    std::vector<std::string> mcv;         /* most common values */
+    std::vector<float>       mcv_freq;
+    std::vector<std::string> bounds;      /* histogram bounds */
+};
+
+/* An index's sizes and entries as the analyze found them. */
+struct sm_stats_index_t {
+    uint64_t oid;
+    uint64_t disk;
+    uint64_t mem;
+    double   entries;
+    float    belongs;   /* the fraction of rows in a partial index */
+};
+
+/* A table's statistics, as its last analyze recorded them. */
+struct sm_stats_t {
+    int32_t                       target;
+    int32_t                       run_length;
+    uint64_t                      rows_sampled;
+    uint64_t                      rowno_limit;
+    double                        live_rows;
+    uint64_t                      heap_disk;
+    uint64_t                      heap_mem;
+    int32_t                       avg_row_bytes;
+    std::vector<sm_stats_index_t> indexes;
+    std::vector<sm_stat_t>        stats;
+};
+
+/*
+ * Analyze the table, in its transaction: sample up to 300 x target
+ * of its rows, reading no more than ten times that in rownos
+ * whatever its size, and record each column's statistics, each
+ * partial or expression index's from the evaluator, and the sizes.
+ * They commit and roll back with the transaction. A table whose
+ * heap holds no bytes, as a new or truncated one, is not analyzed.
+ */
+int sm_tbl_analyze(sm_tbl_t* tbl, int32_t target);
+
+/*
+ * The table oid's statistics, as the session sees them: 0 with them
+ * in out, or 1 if it was never analyzed. They are shared, read-only,
+ * by every caller in the process: held from memory, loaded once on
+ * first use, built into this form once, and taking no lock. A
+ * holder keeps the ones it was given, whatever is analyzed since.
+ */
+int sm_tbl_stats(sm_session_t* session, uint64_t oid,
+                 std::shared_ptr<const sm_stats_t>& out);
 
 /*
  * Create the table name in nspoid with these columns: its store,

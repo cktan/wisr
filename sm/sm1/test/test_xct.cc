@@ -285,13 +285,16 @@ TEST_CASE("a commit read from the status table is remembered") {
   // Verify a cache miss that finds a commit record keeps it, so
   // the next version of that transaction costs no disk read.
   // 1. Commit a key, noting the writer's xid, and close the
-  //    database, which frees the cache.
+  //    database, which frees the cache: its idle time is 0, so its
+  //    last session's close closes it.
   // 2. Reopen: the cache does not hold the xid.
   // 3. Read the key: it is there, and the xid is now cached.
   // 4. Read it again: the same answer, the same entry.
   home_t home;
+  sm1::options_t now;
+  now.idle_close_ms = 0;
   REQUIRE(sm1::mkdb(home.env(), "db", nullptr) == 0);
-  sm1::session_t *s = opendb(home.env(), "db", nullptr);
+  sm1::session_t *s = opendb(home.env(), "db", &now);
   REQUIRE(s);
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   uint64_t store = mkstore(s);
@@ -302,7 +305,7 @@ TEST_CASE("a commit read from the status table is remembered") {
   REQUIRE(sm1::commit(s) == 0);
   REQUIRE(sm1::closedb(s) == 0);
 
-  s = opendb(home.env(), "db", nullptr);
+  s = opendb(home.env(), "db", &now);
   REQUIRE(s);
   CHECK_FALSE(wisr::xct_cache_has(s->db, xid));
 

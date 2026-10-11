@@ -26,7 +26,8 @@ endif
 
 CXX      ?= g++
 CXXFLAGS ?= $(OPTFLAGS)
-CXXFLAGS += -std=c++20 -Wall -Wextra -Iinclude -I../include -Isrc -MMD -MP
+CXXFLAGS += -std=c++20 -fno-rtti -Wall -Wextra -Iinclude -I../include -Isrc \
+            -MMD -MP
 LDLIBS   += -lpthread
 
 BUILD := build

@@ -107,6 +107,18 @@ struct db_t {
   rocksdb::ColumnFamilyHandle *cf_meta = nullptr;
   int durability_sync = 1;
   int nsessions = 0; /* guarded by the env's mu */
+  /*
+   * How long the database stays open with no session, and since when
+   * it has had none (sm1::closedb), both read under the env's mu.
+   */
+  long long idle_close_ms = 0;
+  std::chrono::steady_clock::time_point idle_since;
+  /*
+   * The options it was opened with, its RocksDB options string apart,
+   * so a session asking for others reopens it once it is idle.
+   */
+  sm1::options_t opts;
+  std::string rocksdb_options;
 
   /* storeid -> column family handle, for every live store CF. */
   std::shared_mutex store_mu;

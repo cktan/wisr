@@ -413,10 +413,13 @@ crash with it, and sm3 writes no undo of its own.
   definition its readers hold. `CATALOG.md` §2's kinds run to
   9 and are frozen because they are on disk; statistics are
   kind 10, and that document has to say so.
-- **One entry a table**, not one a column. `sm_analyze` writes
-  every column at once and a plan reads every column at once.
-  PostgreSQL's per-column granularity suits a `pg_statistic`
-  it reaches through an index; this is a blob.
+- **One entry a table** was the first plan, as `sm_analyze`
+  writes every column at once and a plan reads them at once.
+  It became one a statistic, with one for the table: an sm1
+  value holds 64 MB, and a wide table's statistics, or a few
+  columns' at a high target, do not fit in one
+  (`sm3/SM3_DESIGN.md` §6.6). They are still read together,
+  by one scan of the table's entries.
 - **Gone with what they describe.** Dropping a table drops its
   statistics; dropping a column, or an index, drops that one's.
 

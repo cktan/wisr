@@ -387,8 +387,9 @@ TEST_CASE("sm1_lastseq reports the last value without drawing one") {
   // 2. After values are drawn it reports the last one, with or
   //    without a transaction, and the next draw follows it.
   // 3. A value drawn in a transaction that aborts stays drawn.
-  // 4. After a reopen it reports the value below the reserved
-  //    block, which the next draw is one increment above.
+  // 4. After a clean reopen it reports the last value exactly: the
+  //    close kept the sequence's place, and the next draw is one
+  //    increment above it.
   // 5. A reopen with no draw since leaves it where it was:
   //    sm1::lastseq persists no lease of its own.
   seq_fixture_t f;
@@ -415,12 +416,12 @@ TEST_CASE("sm1_lastseq reports the last value without drawing one") {
   REQUIRE(sm1::lastseq(s, SEQ, out) == 0);
   CHECK(out == 4);
 
-  // 4. Reopen: the rest of the block is skipped.
+  // 4. Reopen: nothing of the block is skipped.
   f.reopen();
   s = f.s();
   uint64_t bound = 0;
   REQUIRE(sm1::lastseq(s, SEQ, bound) == 0);
-  CHECK(bound >= 4);
+  CHECK(bound == 4);
 
   // 5. Reopen again without drawing, then draw.
   f.reopen();

@@ -8,6 +8,7 @@
 
 #include "catalog.h"
 
+#include <algorithm>
 #include <cstring>
 #include <string>
 
@@ -78,6 +79,26 @@ public:
       i8(i, *v);
     }
   }
+  void f4(size_t i, float v) { set(i, sm2::datum_from_float(v)); }
+  void f8(size_t i, double v) { set(i, sm2::datum_from_double(v)); }
+  void opt_f4(size_t i, const std::optional<float> &v) {
+    if (v) {
+      f4(i, *v);
+    }
+  }
+
+  /*
+   * Set attribute i to the value of type whose bytes, as
+   * sm2::datum_bytes gives them, are v: a by-value one copied into
+   * the datum, a by-reference one pointing at a copy of v.
+   */
+  void value(size_t i, const sm2::type_t *type, std::string_view v) {
+    if (!type->byval) {
+      m_own.emplace_back(v);
+      v = m_own.back();
+    }
+    set(i, sm3::datum_of_bytes(type, v));
+  }
 
   /* Encode the part under desc and append it, framed, to blob. */
   int append(const sm2::tup_desc_t &desc, std::string &blob) const {
@@ -115,6 +136,11 @@ public:
   int read(std::string_view blob, size_t &pos, sm3::part_t part) {
     m_part = part;
     return sm3::read_part(blob, pos, sm3::part_desc(part), m_row);
+  }
+
+  /* Read the part at pos in blob under desc, a layout of the caller's. */
+  int read(std::string_view blob, size_t &pos, const sm2::tup_desc_t &desc) {
+    return sm3::read_part(blob, pos, desc, m_row);
   }
 
   /* Attribute i as an integer, a bool, or bytes; ok false if null. */
@@ -157,6 +183,25 @@ public:
       return std::nullopt;
     }
     return i4(i);
+  }
+  float f4(size_t i) { return sm2::datum_to_float(get(i)); }
+  double f8(size_t i) { return sm2::datum_to_double(get(i)); }
+  std::optional<float> opt_f4(size_t i) {
+    if (m_row.isnull[i]) {
+      return std::nullopt;
+    }
+    return f4(i);
+  }
+
+  /* Attribute i, of type a, as its bytes; ok false if null. */
+  std::string value(size_t i, const attribute_t &a) {
+    std::string_view v;
+    if (m_row.isnull[i] ||
+        sm2::datum_bytes(a.type, a.typmod, m_row.values[i], v) != 0) {
+      ok = false;
+      return {};
+    }
+    return std::string(v);
   }
 
   /* False once a required attribute was found null. */
@@ -202,6 +247,16 @@ const std::vector<attribute_t> &schema_of(sm3::part_t part) {
       /* index_state */ {att(type_int2), att(type_int2), att(type_text)},
       /* sequence */
       {att(type_int8), att(type_text), att(type_int8), att(type_int8)},
+      /* stats_table */
+      {att(type_int4), att(type_int4), att(type_int4), att(type_int8),
+       att(type_int8), att(type_float8), att(type_int8), att(type_int8),
+       att(type_int4), att(type_int4), att(type_int4)},
+      /* stats_index */
+      {att(type_int8), att(type_int8), att(type_int8), att(type_float8),
+       att(type_float4)},
+      /* statistic */
+      {att(type_int8), att(type_int4), att(type_float4), att(type_int4),
+       att(type_float4), att(type_float4), att(type_int4), att(type_int4)},
   };
   return schemas[static_cast<size_t>(part)];
 }
@@ -223,12 +278,13 @@ const std::vector<attribute_t> &part_schema(part_t part) {
 /* A part's layout, built once from its schema. */
 const sm2::tup_desc_t &part_desc(part_t part) {
   static const sm2::tup_desc_t descs[] = {
-      schema_of(part_t::meta),      schema_of(part_t::name),
-      schema_of(part_t::table),     schema_of(part_t::column),
-      schema_of(part_t::index),     schema_of(part_t::index_key),
-      schema_of(part_t::include),   schema_of(part_t::nspace),
-      schema_of(part_t::collation), schema_of(part_t::index_state),
-      schema_of(part_t::sequence),
+      schema_of(part_t::meta),        schema_of(part_t::name),
+      schema_of(part_t::table),       schema_of(part_t::column),
+      schema_of(part_t::index),       schema_of(part_t::index_key),
+      schema_of(part_t::include),     schema_of(part_t::nspace),
+      schema_of(part_t::collation),   schema_of(part_t::index_state),
+      schema_of(part_t::sequence),    schema_of(part_t::stats_table),
+      schema_of(part_t::stats_index), schema_of(part_t::statistic),
   };
   return descs[static_cast<size_t>(part)];
 }
@@ -570,6 +626,262 @@ int decode_sequence(std::string_view blob, sequence_rec_t &rec) {
   rec.start = r.i8(2);
   rec.increment = r.i8(3);
   return r.ok ? at_end(blob, pos) : corrupt("a sequence part cut short");
+}
+
+} // namespace sm3
+
+namespace {
+
+/*
+ * The attribute the values of statistic s have under def, into out:
+ * its column's, or its index expression's. False if def has no such
+ * one: a column out of range or dropped, an index gone, or a place
+ * that is a column's and not an expression's.
+ */
+bool stat_attribute(const sm3::stat_t &s, const sm3::table_def_t &def,
+                    attribute_t &out) {
+  if (!s.index) {
+    if (s.position < 0 ||
+        static_cast<size_t>(s.position) >= def.columns.size()) {
+      return false;
+    }
+    const sm3::column_def_t &c = def.columns[s.position];
+    out = {c.type, c.typmod, false, std::nullopt};
+    return !c.dropped;
+  }
+  for (const sm3::index_def_t &x : def.indexes) {
+    if (x.oid != *s.index) {
+      continue;
+    }
+    if (s.position < 0 ||
+        static_cast<size_t>(s.position) >= x.key_attnums.size() ||
+        x.key_attnums[s.position] != -1) {
+      return false;
+    }
+    const sm2::key_column_t &k = x.key[s.position];
+    out = {k.type, k.typmod, false, std::nullopt};
+    return true;
+  }
+  return false;
+}
+
+/* Whether def has the index oid. */
+bool has_index(const sm3::table_def_t &def, uint64_t oid) {
+  return std::any_of(def.indexes.begin(), def.indexes.end(),
+                     [&](const sm3::index_def_t &x) { return x.oid == oid; });
+}
+
+/* Fail with SM_ERR_INVALID: statistics to store are not well formed. */
+int bad_stats(const char *why) {
+  return sm1::seterr(sm1::SM_ERR_INVALID, std::string("statistics: ") + why);
+}
+
+} // namespace
+
+namespace sm3 {
+
+/* A datum from its bytes; see catalog.h. */
+sm2::datum_t datum_of_bytes(const sm2::type_t *type, std::string_view bytes) {
+  if (!type->byval) {
+    return sm2::datum_from_ptr(bytes.data());
+  }
+  // A narrow by-value datum is sign-extended, as sm2 builds one.
+  int64_t n = 0;
+  std::memcpy(&n, bytes.data(), std::min(bytes.size(), sizeof(n)));
+  switch (bytes.size()) {
+  case 1:
+    return sm2::datum_from_bool(bytes[0] != 0);
+  case 2:
+    return sm2::datum_from_int16(static_cast<int16_t>(n));
+  case 4:
+    return sm2::datum_from_int32(static_cast<int32_t>(n));
+  default:
+    return sm2::datum_from_int64(n);
+  }
+}
+
+/* A table's own statistics entry: its counts, sizes and indexes. */
+int encode_stats_table(const stats_t &st, std::string &blob) {
+  blob.clear();
+  if (st.format != stats_format) {
+    return bad_stats("an unknown format");
+  }
+  writer_t t(11);
+  t.i4(0, st.format);
+  t.i4(1, st.target);
+  t.i4(2, st.run_length);
+  t.i8(3, st.rows_sampled);
+  t.i8(4, st.rowno_limit);
+  t.f8(5, st.live_rows);
+  t.i8(6, st.heap_disk);
+  t.i8(7, st.heap_mem);
+  t.i4(8, st.avg_row_bytes);
+  t.i4(9, static_cast<int32_t>(st.indexes.size()));
+  t.i4(10, static_cast<int32_t>(st.stats.size()));
+  if (t.append(part_desc(part_t::stats_table), blob) != 0) {
+    return -1;
+  }
+  for (const stats_index_t &x : st.indexes) {
+    writer_t w(5);
+    w.i8(0, x.oid);
+    w.i8(1, x.disk);
+    w.i8(2, x.mem);
+    w.f8(3, x.entries);
+    w.f4(4, x.belongs);
+    if (w.append(part_desc(part_t::stats_index), blob) != 0) {
+      return -1;
+    }
+  }
+  return 0;
+}
+
+/* Read a table's own statistics entry, leaving out indexes gone. */
+int decode_stats_table(std::string_view blob, const table_def_t &def,
+                       stats_t &st) {
+  size_t pos = 0;
+  reader_t t;
+  if (t.read(blob, pos, part_t::stats_table) != 0) {
+    return -1;
+  }
+  st.format = t.i4(0);
+  if (t.ok && st.format != stats_format) {
+    return corrupt("statistics of an unknown format");
+  }
+  st.target = t.i4(1);
+  st.run_length = t.i4(2);
+  st.rows_sampled = t.i8(3);
+  st.rowno_limit = t.i8(4);
+  st.live_rows = t.f8(5);
+  st.heap_disk = t.i8(6);
+  st.heap_mem = t.i8(7);
+  st.avg_row_bytes = t.i4(8);
+  int32_t nindex = t.i4(9);
+  if (!t.ok || nindex < 0) {
+    return corrupt("a statistics part cut short");
+  }
+  st.indexes.clear();
+  st.stats.clear();
+  for (int32_t i = 0; i < nindex; i++) {
+    reader_t r;
+    if (r.read(blob, pos, part_t::stats_index) != 0) {
+      return -1;
+    }
+    stats_index_t x{r.i8(0), r.i8(1), r.i8(2), r.f8(3), r.f4(4)};
+    if (!r.ok) {
+      return corrupt("an index statistics part cut short");
+    }
+    if (has_index(def, x.oid)) {
+      st.indexes.push_back(x);
+    }
+  }
+  return at_end(blob, pos);
+}
+
+/* One statistic's entry: the statistic, its common values, its bounds. */
+int encode_stat(const stat_t &s, const table_def_t &def, std::string &blob) {
+  blob.clear();
+  attribute_t a;
+  if (!stat_attribute(s, def, a)) {
+    return bad_stats("a statistic of no column or index expression");
+  }
+  if (s.mcv.size() != s.mcv_freq.size()) {
+    return bad_stats("common values and frequencies of unequal counts");
+  }
+  writer_t w(8);
+  w.opt_i8(0, s.index);
+  w.i4(1, s.position);
+  w.f4(2, s.null_frac);
+  w.i4(3, s.width);
+  w.f4(4, s.distinct);
+  w.opt_f4(5, s.correlation);
+  w.i4(6, static_cast<int32_t>(s.mcv.size()));
+  w.i4(7, static_cast<int32_t>(s.bounds.size()));
+  if (w.append(part_desc(part_t::statistic), blob) != 0) {
+    return -1;
+  }
+  // A value's part is laid out by its own type, and a fixed-width
+  // one must be that width.
+  std::vector<attribute_t> mcv_schema = {a, att(sm2::type_float4)};
+  std::vector<attribute_t> bound_schema = {a};
+  sm2::tup_desc_t mcv_desc(mcv_schema), bound_desc(bound_schema);
+  auto fits = [&](const std::string &v) {
+    return a.type->len < 0 || v.size() == static_cast<size_t>(a.type->len);
+  };
+  for (size_t i = 0; i < s.mcv.size(); i++) {
+    if (!fits(s.mcv[i])) {
+      return bad_stats("a common value not of its type's width");
+    }
+    writer_t m(2);
+    m.value(0, a.type, s.mcv[i]);
+    m.f4(1, s.mcv_freq[i]);
+    if (m.append(mcv_desc, blob) != 0) {
+      return -1;
+    }
+  }
+  for (const std::string &b : s.bounds) {
+    if (!fits(b)) {
+      return bad_stats("a histogram bound not of its type's width");
+    }
+    writer_t m(1);
+    m.value(0, a.type, b);
+    if (m.append(bound_desc, blob) != 0) {
+      return -1;
+    }
+  }
+  return 0;
+}
+
+/* Read one statistic's entry, unless what it describes is gone. */
+int decode_stat(std::string_view blob, const table_def_t &def, stat_t &s,
+                bool &kept) {
+  size_t pos = 0;
+  reader_t r;
+  kept = false;
+  if (r.read(blob, pos, part_t::statistic) != 0) {
+    return -1;
+  }
+  s = stat_t{};
+  s.index = r.opt_i8(0);
+  s.position = r.i4(1);
+  s.null_frac = r.f4(2);
+  s.width = r.i4(3);
+  s.distinct = r.f4(4);
+  s.correlation = r.opt_f4(5);
+  int32_t nmcv = r.i4(6), nbound = r.i4(7);
+  if (!r.ok || nmcv < 0 || nbound < 0) {
+    return corrupt("a statistic part cut short");
+  }
+  attribute_t a;
+  // Its column dropped or its index gone: its values are not read.
+  if (!stat_attribute(s, def, a)) {
+    return 0;
+  }
+  std::vector<attribute_t> mcv_schema = {a, att(sm2::type_float4)};
+  std::vector<attribute_t> bound_schema = {a};
+  sm2::tup_desc_t mcv_desc(mcv_schema), bound_desc(bound_schema);
+  for (int32_t j = 0; j < nmcv; j++) {
+    reader_t m;
+    if (m.read(blob, pos, mcv_desc) != 0) {
+      return -1;
+    }
+    s.mcv.push_back(m.value(0, a));
+    s.mcv_freq.push_back(m.f4(1));
+    if (!m.ok) {
+      return corrupt("a common value part cut short");
+    }
+  }
+  for (int32_t j = 0; j < nbound; j++) {
+    reader_t m;
+    if (m.read(blob, pos, bound_desc) != 0) {
+      return -1;
+    }
+    s.bounds.push_back(m.value(0, a));
+    if (!m.ok) {
+      return corrupt("a histogram bound part cut short");
+    }
+  }
+  kept = true;
+  return at_end(blob, pos);
 }
 
 } // namespace sm3

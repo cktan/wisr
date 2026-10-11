@@ -31,8 +31,8 @@ BUILD    := build
 SM0      := ../sm0
 SM0_LIB  := $(SM0)/$(BUILD)/libsm0.a
 
-CXXFLAGS += -std=c++20 -Wall -Wextra -Iinclude -I../include -I$(SM0)/include \
-            -Isrc -MMD -MP
+CXXFLAGS += -std=c++20 -fno-rtti -Wall -Wextra -Iinclude -I../include \
+            -I$(SM0)/include -Isrc -MMD -MP
 LDLIBS   += $(SM0_LIB) -lrocksdb -lpthread
 
 # The compiler and flags every object is built with. Rewriting

@@ -884,6 +884,103 @@ int tbl_rowno_limit(table_t* table, uint64_t& n);
 int tbl_probes(table_t* table, uint64_t& n);
 
 /*
+ * ---- statistics (SM3_DESIGN.md §6.6, §6.7) ----
+ *
+ * What an analyze of a table records, in one catalog entry of kind
+ * STATS, for the host's planner. A value -- a common value or a
+ * histogram bound -- is its bytes as sm2::datum_bytes gives them,
+ * a varlena for a variable-width type, of the type of what it
+ * describes.
+ */
+
+/*
+ * The datum of type whose bytes, as sm2::datum_bytes gives them and
+ * a statistic keeps a value, are bytes: a by-value one built from
+ * them, sign-extended as sm2 builds one; a by-reference one pointing
+ * at bytes, which must outlive it.
+ */
+sm2::datum_t datum_of_bytes(const sm2::type_t* type, std::string_view bytes);
+
+/* The version of the parts below; 1 for now. */
+constexpr int32_t stats_format = 1;
+
+/* The statistics of one column, or of one expression of an index. */
+struct stat_t {
+    std::optional<uint64_t>  index;       /* nullopt: a column's */
+    int32_t                  position;    /* the column's attnum, 0-based,
+                                             or the expression's place
+                                             among the index's keys */
+    float                    null_frac;
+    int32_t                  width;       /* average bytes of a value */
+    float                    distinct;    /* a count, or, below 0, minus
+                                             a fraction of the rows */
+    std::optional<float>     correlation;
+    std::vector<std::string> mcv;         /* most common values */
+    std::vector<float>       mcv_freq;    /* each one's frequency */
+    std::vector<std::string> bounds;      /* histogram bounds */
+};
+
+/* An index's sizes and entries as the analyze found them. */
+struct stats_index_t {
+    uint64_t oid;
+    uint64_t disk;
+    uint64_t mem;
+    double   entries;
+    float    belongs;  /* the fraction of rows in it; 1 if not partial */
+};
+
+/* A table's statistics. */
+struct stats_t {
+    int32_t                    format = stats_format;
+    int32_t                    target;        /* the statistics target */
+    int32_t                    run_length;    /* B, rownos a run */
+    uint64_t                   rows_sampled;
+    uint64_t                   rowno_limit;   /* N when analyzed */
+    double                     live_rows;
+    uint64_t                   heap_disk;
+    uint64_t                   heap_mem;
+    int32_t                    avg_row_bytes;
+    std::vector<stats_index_t> indexes;
+    std::vector<stat_t>        stats;
+};
+
+/*
+ * Record stats as the table oid's in session's transaction,
+ * replacing any it had: they commit, roll back and survive a crash
+ * with it, and other sessions see them once it commits. It takes
+ * the STATS entry's lock X, so two analyzes of one table queue;
+ * at REPEATABLE READ and above the second then fails as retryable.
+ * Every stat_t must name a column or an index expression of the
+ * table, and its values be of that one's type: SM_ERR_INVALID if
+ * not, SM_ERR_NOTFOUND if there is no such table.
+ */
+int cat_put_stats(session_t* session, uint64_t oid, const stats_t& stats);
+
+/*
+ * The table oid's statistics, as session sees them: its own
+ * transaction's, else the last committed, into out, or nullptr if
+ * the table was never analyzed. The committed ones are loaded on
+ * first use, in a transaction of their own, and then kept in
+ * memory, so a plan takes no lock and reads nothing. A statistic
+ * of an index dropped since is left out.
+ */
+int cat_get_stats(session_t* session, uint64_t oid,
+                  std::shared_ptr<const stats_t>& out);
+
+/*
+ * Analyze the table, opened in a transaction (SM3_DESIGN.md §6.4 to
+ * §6.7): sample up to 300 x target of its rows, reading no more
+ * than ten times that in rownos whatever its size, estimate each
+ * live column's statistics, and record them with the table's sizes
+ * and its indexes' by cat_put_stats. A table whose heap holds no
+ * bytes, as a new or truncated one, is not analyzed, and keeps the
+ * statistics it had. Another analyze of the table waits for this
+ * one's transaction before it samples. A target below 1 is
+ * SM_ERR_INVALID.
+ */
+int tbl_analyze(table_t* table, int32_t target);
+
+/*
  * One batch of the build of the table's index oid, which must be
  * pending (SM3_DESIGN.md §3): cover up to max_rows rows from
  * rowno from on. For each it takes the row's lock shared, reads

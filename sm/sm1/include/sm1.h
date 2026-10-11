@@ -335,9 +335,10 @@ int nextseq(session_t* session, std::string_view name,
  * Report the last value the sequence handed out in out, drawing
  * none: no lease is extended and nothing is written.
  *
- * Exact once the sequence has handed out a value in this process.
- * Before that it is the value below the block reserved last, an
- * upper bound, since a restart skips the rest of that block.
+ * Exact, but after a crash: a clean close keeps each sequence's
+ * place. Until a sequence hands out a value after a crash, it is
+ * the value below the block reserved last, an upper bound, since
+ * the crash skips the rest of that block.
  * Like sm1::nextseq it needs no transaction, and inside one reads
  * the definition at its snapshot.
  *
@@ -357,7 +358,11 @@ int lastseq(session_t* session, std::string_view name,
  *
  * session is invalid after this call whether it succeeded or
  * not. Passing NULL is a no-op returning 0. Closing the last
- * session on a database closes the database.
+ * session on a database leaves it open for its idle time,
+ * options_t::idle_close_ms, for a session that comes in meanwhile;
+ * then it is closed, keeping each sequence's place. A failed
+ * database is closed at once, and an idle one opened anew for a
+ * session that asks other options of it.
  */
 int closedb(session_t* session);
 

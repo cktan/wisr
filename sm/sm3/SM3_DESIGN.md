@@ -1030,8 +1030,9 @@ The planner is kept, so statistics are not optional. The
 strategy is `STATISTICS.md`, at the root of the stack, and
 its measurements are done (§6 there). This section is the
 design it asked for (§8 there, step 2): the choices it left
-open, made here, and the format written out. Designed, not
-built; the order of work is §6.9.
+open, made here, and the format written out. Being built:
+the order of work is §6.9, and every step is done: what is
+left is the host's, the planner's use of these statistics.
 
 In brief: `tbl_analyze` samples a table by runs of rownos,
 computes PostgreSQL's statistics from the sample with
@@ -1154,28 +1155,37 @@ at its snapshot.
    `STATISTICS.md` §6 asked for: a table with nine rownos in
    ten dead gets ten times the runs, where a fixed count
    returned a tenth of the rows wanted. The 1.2 is margin for
-   the pilot's error.
-4. **A full scan instead** when `f0` is 0, or when `k × B ≥
-   N`. As PostgreSQL reads every block of a table smaller than
-   its sample, this reads every row of one, and the row count
-   is then exact.
-5. **Otherwise, `k` runs.** `1..N` is cut into `⌈N / B⌉`
-   aligned slots of `B` rownos, and `k` of them are chosen
-   without replacement, in ascending order, by Knuth's
-   selection sampling (Algorithm S), which draws them in one
-   pass. The cursor is moved to each slot's first rowno with
-   `scan_seek` and reads to its last. Runs never overlap and
-   every seek is forward (principle 6).
+   the pilot's error. A pilot that found nothing live counts
+   as `f0 = 1 / 301`, with `B = 1`.
+4. **The budget.** The runs cover at most `10 × 300 × target`
+   rownos, 300,000 at the default target, whatever the
+   table's size: `k` is capped at that over `B`. **Nothing
+   reads the table whole**: a table emptied by deletes, or one
+   so sparse that the rule above asks for more, gives fewer
+   rows than wanted, and the estimators take any sample size.
+   Only a table no larger than the budget is read whole, by
+   the runs taking every slot, and its row count is then
+   exact.
+5. **The runs.** `1..N` is cut into `⌈N / B⌉` aligned slots of
+   `B` rownos, and `k` of them are drawn without replacement
+   by **Floyd's algorithm**, which draws `k` numbers and looks
+   at no other slot, so the work is `O(k log k)` whatever `N`
+   is. They are read in ascending order through one forward
+   cursor, moved to each slot's first rowno with `scan_seek`;
+   a row the cursor returns past a slot is held for the next,
+   so every seek is forward (principle 6). The pilot's rownos
+   are drawn the same way. If the runs come up short of the
+   rows wanted, more slots are drawn among those not read, as
+   many as the live fraction found so far says, while the
+   budget lasts, each round through a cursor of its own.
 6. **The row count** is the live rows found over the rownos
    the runs covered, times `N`.
-7. **A reservoir** (Vitter's algorithm Z) keeps a uniform
-   `300 × target` of the rows found, each with its rowno, and
-   the kept rows are sorted back into rowno order for the
+7. **A reservoir** keeps a uniform `300 × target` of the rows
+   found, each with its rowno, by Algorithm R: every row in a
+   run is read anyway, so Vitter's algorithm Z, which saves
+   random draws by skipping rows, would save nothing. The
+   kept rows are sorted back into rowno order for the
    correlation of §6.5.
-
-If the pilot was unlucky and the runs come up short, the
-sample is what it is, as PostgreSQL's is for a small table:
-the estimators take any sample size.
 
 **The rows read are the caller's snapshot.** The cursor sees
 what the caller's transaction sees, its own writes before
@@ -1245,20 +1255,34 @@ live rows times that fraction.
 
 ### 6.6 What is recorded
 
-**One catalog entry a table, of kind `STATS`, value 10**,
-keyed by the table's oid (`CATALOG.md` §2), outside the
-`TABLE` entry and its DDL (`STATISTICS.md` §3.6). Its value is
-parts, each an sm2 tuple under a fixed schema with its length
-as a varint, as every catalog value is (`CATALOG.md` §3):
+**Catalog entries of kind `STATS`, value 10: one for the
+table, and one for each statistic**, outside the `TABLE` entry
+and its DDL (`STATISTICS.md` §3.6). The key after the kind is
+(table oid, index oid, n): (t, 0, 0) is the table's own entry,
+(t, 0, attnum + 1) a column's, and (t, index oid, place + 1) an
+index expression's, so a table's entries are together, its own
+first. Each value is parts, each an sm2 tuple under a fixed
+schema with its length as a varint, as every catalog value is
+(`CATALOG.md` §3):
 
 ```
-STATS value = table | index × nindex | stat × nstat
-stat        = statistic | mcv × nmcv | bound × nbound
+the table's entry     = table | index × nindex
+a statistic's entry   = statistic | mcv × nmcv | bound × nbound
 ```
+
+- **Why an entry a statistic, not one a table.** An sm1 value
+  is at most 64 MB (`sm1::max_datalen`). A statistic keeps up
+  to `target` common values and `target + 1` bounds of up to
+  1 KB each, some 200 KB a column at the default target and
+  20 MB at the largest, 10,000: one entry a table would not
+  hold a wide table, nor three columns at that target, and its
+  analyze would fail. An entry a statistic holds the largest
+  with room to spare, and lets one column be analyzed alone
+  later.
 
 | Part | Fields |
 | --- | --- |
-| table | format `int4`, target `int4`, run length `int4`, rows sampled `int8`, rowno limit `int8`, live rows `float8`, heap disk `int8`, heap mem `int8`, average row bytes `int4`, nindex `int4`, nstat `int4` |
+| table | format `int4`, target `int4`, run length `int4`, rows sampled `int8`, rowno limit `int8`, live rows `float8`, heap disk `int8`, heap mem `int8`, average row bytes `int4`, nindex `int4`, nstat `int4`, the statistics recorded |
 | index | index oid `int8`, disk `int8`, mem `int8`, entries `float8`, fraction that belongs `float4` |
 | statistic | index oid `int8` or null, position `int4`, null fraction `float4`, width `int4`, distinct `float4`, correlation `float4` or null, nmcv `int4`, nbound `int4` |
 | mcv | value, frequency `float4` |
@@ -1320,15 +1344,19 @@ worse plan and never a wrong answer:
 | DDL | Its statistics |
 | --- | --- |
 | `DROP TABLE` | its `STATS` entry is deleted with the table's others, and its map entry dropped after commit |
-| `DROP INDEX`, `DROP COLUMN` | left; a reader skips a part whose index is gone or whose column is dropped, and the next analyze writes without it |
+| `DROP INDEX`, `DROP COLUMN` | the index's expressions' entries, or the column's, are erased with it; the table's own entry is left, and a reader skips its part for an index gone |
 | `ADD COLUMN`, `CREATE INDEX` | none until the next analyze; the planner's defaults meanwhile |
 | `TRUNCATE` | left, as PostgreSQL leaves `pg_statistic` |
 
-Dropping a column or an index does not rewrite the entry,
-because that would make DDL write the key `tbl_analyze`
-writes. An attnum is never reused, nor an index oid
-(`CATALOG.md` §1), so a part left behind is never read as
-another's.
+Dropping a column or an index erases only that one's entries,
+never the table's own, which `tbl_analyze` locks: DDL holds the
+table-oid lock X, so no analyze is writing meanwhile. An
+analyze writes every entry the definition allows, or erases it
+if it has no statistic for it, reading each as of the newest
+commit under its lock, so it needs no scan; `DROP TABLE` erases
+them the same way. An attnum is never reused, nor an index oid
+(`CATALOG.md` §1), so an index part left behind is never read
+as another's.
 
 **After a `TRUNCATE`**, `STATISTICS.md` §3.6 asks for a choice
 of floor on rows. **Decision: a live heap of 0 bytes, `disk`
@@ -1350,13 +1378,17 @@ and nothing of the truncate.
 | sm2 | `relid_size(session, store, relid, disk, mem)`, the same by a rel's relid | §6.2 |
 | sm3 | `tbl_size`, `tbl_idx_size`, `tbl_rowno_limit`, `tbl_probes` | live, on an open table |
 | sm3 | `tbl_analyze(table, target)` | §6.4 to §6.7 |
-| sm3 | `cat_get_stats(session, table oid, out)` | the published `shared_ptr<const stats_t>`, loading it on first use; null if never analyzed |
+| sm3 | `cat_put_stats(session, table oid, stats)` | records a `stats_t` in the session's transaction, published at its commit |
+| sm3 | `cat_get_stats(session, table oid, out)` | the session's own, else the published `shared_ptr<const stats_t>`, loading it on first use in a READ COMMITTED transaction of the catalog's own; null if never analyzed |
 | top | `sm_tbl_analyze`, `sm_tbl_stats`, and the four live calls | the same, in `include/sm.h` |
 | `rel` | `analyze`, and a verb that prints a table's statistics | testing |
 
 The calls of sm1, sm2 and the live four of sm3 are built
-(§6.9, step 1); the rest are proposals, to be settled when
-each is built.
+(§6.9, step 1), `cat_put_stats` and `cat_get_stats` (step
+2), `tbl_analyze` (steps 4 and 5), and the top level's and
+`rel`'s (step 5).
+A statistic's `position` is a column's attnum 0-based, as
+sm3's positions are everywhere.
 
 ### 6.9 Order of work
 
@@ -1368,20 +1400,31 @@ settled:
    → verify: `disk` and `mem` follow a load before and after
    a flush; `N` is the sequence's last value; probes rise with
    level-0 files and fall after compaction.
-2. Kind 10, its format, and the map.
+2. ~~Kind 10, its format, and the map.~~ **Built.** The map
+   is the catalog's, published at commit as DDL is; a table
+   never analyzed is remembered as such once asked about.
    → verify: statistics survive a restart, an aborted analyze
    leaves the old ones, a planner holding one is unaffected by
    the next publish, and an entry is loaded on first use and
    not at startup.
-3. The pilot, the slots and the reservoir.
+3. ~~The pilot, the slots and the reservoir.~~ **Built**, in
+   `src/analyze/sample.cc`, with the budget of §6.4.
    → verify: the row count against a full count, dense and
-   sparse, and the full-scan path on a small table.
-4. The estimators, ported one routine at a time, tests first.
+   sparse; a small table read whole by its runs; an emptied
+   table read no further than the budget.
+4. ~~The estimators, ported one routine at a time, tests
+   first.~~ **Built**: `compute_scalar_stats` and
+   `analyze_mcv_list` in `src/analyze/estimate.cc`, and
+   `tbl_analyze` over the sample in `src/analyze/analyze.cc`.
+   Sorting by key, then by place in the sample, puts equal
+   values together, so PostgreSQL's `tupnoLink` is not needed.
    → verify: each statistic against a full scan of uniform,
    skewed, clustered and mostly-null data; text under a
    non-deterministic collation groups as it compares.
-5. Expressions, predicates, and the calls in `include/sm.h`
-   and `rel`.
+5. ~~Expressions, predicates, and the calls in
+   `include/sm.h` and `rel`.~~ **Built**: `sm_tbl_analyze`,
+   `sm_tbl_stats`, the four live calls and
+   `sm_datum_of_bytes`; `rel`'s `analyze` and `stats`.
    → verify: a `rel` script analyzes a table with a partial
    and an expression index and prints what it expects.
 

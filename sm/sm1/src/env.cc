@@ -272,6 +272,8 @@ sm1::env_t *attach(const char *homedir) {
   if (recover_dbs(env.get()) != 0) {
     return nullptr;
   }
+  // The reaper closes databases left idle, until detach stops it.
+  env_start_reaper(env.get());
   // Hand the environment to the caller.
   return env.release();
 }
@@ -287,7 +289,66 @@ sm1::env_t::~env_t() {
   }
 }
 
+namespace {
+
+/*
+ * The reaper's loop: close each database whose last session closed
+ * longer ago than its idle time, then sleep until the next is due, or
+ * until a database's last session closes, until told to stop.
+ */
+void reaper_main(sm1::env_t *env) {
+  std::unique_lock<std::mutex> guard(env->mu);
+  while (!env->stopping) {
+    auto now = std::chrono::steady_clock::now();
+    auto next = std::chrono::steady_clock::time_point::max();
+    for (auto it = env->dbs.begin(); it != env->dbs.end();) {
+      db_t *db = it->second;
+      auto due = db->idle_since + std::chrono::milliseconds(db->idle_close_ms);
+      if (db->nsessions > 0) {
+        ++it;
+      } else if (due <= now) {
+        // Unregister it, then close it: no session came in time.
+        it = env->dbs.erase(it);
+        delete db;
+      } else {
+        next = std::min(next, due);
+        ++it;
+      }
+    }
+    if (next == std::chrono::steady_clock::time_point::max()) {
+      env->idle_cv.wait(guard);
+    } else {
+      env->idle_cv.wait_until(guard, next);
+    }
+  }
+}
+
+} // namespace
+
 namespace wisr {
+
+/* Start the reaper; see env.h. */
+void env_start_reaper(sm1::env_t *env) {
+  env->reaper = std::thread(reaper_main, env);
+}
+
+/* Stop the reaper and close the idle databases; see env.h. */
+void env_stop_reaper(sm1::env_t *env) {
+  {
+    std::lock_guard<std::mutex> guard(env->mu);
+    env->stopping = true;
+  }
+  env->idle_cv.notify_one();
+  if (env->reaper.joinable()) {
+    env->reaper.join();
+  }
+  // Every session is closed: what is left open is idle.
+  std::lock_guard<std::mutex> guard(env->mu);
+  for (auto &kv : env->dbs) {
+    delete kv.second;
+  }
+  env->dbs.clear();
+}
 
 /* The directory of database dbid. */
 std::string env_db_path(const sm1::env_t *env, uint64_t dbid) {
@@ -429,6 +490,8 @@ int sm1::detach(sm1::env_t *env, int force) {
   for (sm1::session_t *s : sessions) {
     sm1::closedb(s);
   }
+  // Close the databases left idle, and stop their reaper.
+  env_stop_reaper(env);
   // Close the root db and free the environment.
   delete env;
   return 0;

@@ -845,6 +845,43 @@ local_psql -c 'create sequence q2' -c "select nextval('q2')" \
   grep -q 'currval of sequence "q2" is not yet defined' ||
   fail "discard sequences forgets the draws"
 
+# Verify that ANALYZE is sm's, and that the planner sizes a table by it:
+# never analyzed, ten pages; analyzed, its live rows, growing with it.
+# 1. Make t13 with 20,000 rows: a scan is estimated under 5,000 rows.
+# 2. Analyze it in a transaction rolled back: still under 5,000.
+# 3. Analyze it: a scan is estimated at 20,000 rows exactly.
+# 4. Insert 20,000 more: the estimate is 40,000 within 10%, with no
+#    analyze since.
+# 5. A bare ANALYZE VERBOSE reports t13 and a table in another schema;
+#    a sequence is passed over with a warning; a column list is refused.
+rows_of() {
+  local_psql -c "explain $1" 2>&1 | grep -o 'rows=[0-9]*' | head -1 |
+    cut -d= -f2
+}
+local_psql -c 'create table t13 (a int4, b int8)' \
+  -c 'insert into t13 select g, g % 10 from generate_series(1, 20000) g' \
+  > "$work/analyze.out" 2>&1
+[ "$(rows_of 'select * from t13')" -lt 5000 ] || fail "never analyzed"
+local_psql -c 'begin' -c 'analyze t13' -c 'rollback' >> "$work/analyze.out" 2>&1
+[ "$(rows_of 'select * from t13')" -lt 5000 ] || fail "analyze rolled back"
+[ "$(local_psql -c 'analyze t13' 2>&1)" = "ANALYZE" ] || fail "analyze"
+[ "$(rows_of 'select * from t13')" = 20000 ] || fail "analyzed rows"
+local_psql -c 'insert into t13 select g, g from generate_series(1, 20000) g' \
+  >> "$work/analyze.out" 2>&1
+n=$(rows_of 'select * from t13')
+[ "$n" -gt 36000 ] && [ "$n" -lt 44000 ] || fail "rows grow with the table"
+local_psql -c 'create schema s7' -c 'create table s7.u (a int4)' \
+  -c 'insert into s7.u values (1), (2)' >> "$work/analyze.out" 2>&1
+local_psql -c 'analyze verbose' > "$work/analyze_all.out" 2>&1
+grep -q 'INFO:  "t13": ' "$work/analyze_all.out" &&
+  grep -q 'INFO:  "u": 2 live rows' "$work/analyze_all.out" ||
+  fail "analyze every table"
+local_psql -c 'create sequence q3' -c 'analyze q3' 2>&1 |
+  grep -q 'WARNING:  skipping "q3"' || fail "analyze a sequence"
+local_psql -c 'analyze t13 (a)' 2>&1 |
+  grep -q 'ANALYZE of chosen columns is not supported yet' ||
+  fail "analyze a column list"
+
 # Verify that the buffer manager's settings are gone, and DISCARD SEQUENCES
 # still runs.
 # 1. Confirm DISCARD SEQUENCES succeeds.

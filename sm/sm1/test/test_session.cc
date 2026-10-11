@@ -6,7 +6,14 @@
 #include "doctest.h"
 #include "util.h"
 
+#include "db.h"
+#include "env.h"
+#include "session.h"
 #include "sm1.h"
+
+#include <chrono>
+#include <mutex>
+#include <thread>
 
 TEST_CASE("sm1_opendb requires an existing database") {
   // Verify open never creates a database.
@@ -53,6 +60,82 @@ TEST_CASE("an open database cannot be removed, and detach honors force") {
   CHECK(sm1::detach(env, 0) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INUSE);
   CHECK(sm1::detach(env, 1) == 0);
+}
+
+namespace {
+
+/* The database dbname open in env now, or nullptr: closed, or never. */
+wisr::db_t *open_db(sm1::env_t *env, const char *dbname) {
+  std::lock_guard<std::mutex> guard(env->mu);
+  auto it = env->dbs.find(dbname);
+  return it == env->dbs.end() ? nullptr : it->second;
+}
+
+} // namespace
+
+TEST_CASE("a database stays open for its idle time after its last session") {
+  // Verify the reaper and closedb's idle time.
+  // 1. With idle_close_ms 300, close the only session: the database
+  //    is still open, and a session opened at once joins it as it is.
+  // 2. Close that one and wait well past 300 ms: the reaper has
+  //    closed it.
+  // 3. With idle_close_ms 0, closing the last session closes it at
+  //    once, as before there was an idle time.
+  // 4. A database left idle can be removed: rmdb closes it first.
+  // 5. One left idle that a session asks other options of is opened
+  //    anew with them; asked for none, or the same, it is reused.
+  tmpdir_t tmp;
+  REQUIRE(sm1::init(tmp.path()) == 0);
+  sm1::env_t *env = attach(tmp.path());
+  REQUIRE(env);
+  sm1::options_t idle;
+  idle.idle_close_ms = 300;
+  REQUIRE(sm1::mkdb(env, "db", nullptr) == 0);
+  sm1::session_t *a = opendb(env, "db", &idle);
+  REQUIRE(a);
+  wisr::db_t *db = open_db(env, "db");
+  REQUIRE(sm1::closedb(a) == 0);
+  CHECK(open_db(env, "db") == db);
+  sm1::session_t *b = opendb(env, "db", &idle);
+  REQUIRE(b);
+  CHECK(open_db(env, "db") == db);
+
+  REQUIRE(sm1::closedb(b) == 0);
+  for (int i = 0; i < 50 && open_db(env, "db"); i++) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  CHECK(open_db(env, "db") == nullptr);
+
+  sm1::options_t now;
+  now.idle_close_ms = 0;
+  sm1::session_t *c = opendb(env, "db", &now);
+  REQUIRE(c);
+  REQUIRE(sm1::closedb(c) == 0);
+  CHECK(open_db(env, "db") == nullptr);
+
+  sm1::session_t *d = opendb(env, "db", nullptr);
+  REQUIRE(d);
+  REQUIRE(sm1::closedb(d) == 0);
+  CHECK(open_db(env, "db") != nullptr);
+  CHECK(sm1::rmdb(env, "db") == 0);
+  CHECK(open_db(env, "db") == nullptr);
+
+  REQUIRE(sm1::mkdb(env, "db", nullptr) == 0);
+  sm1::session_t *e = opendb(env, "db", &idle);
+  REQUIRE(e);
+  db = open_db(env, "db");
+  REQUIRE(sm1::closedb(e) == 0);
+  sm1::session_t *f = opendb(env, "db", nullptr);
+  REQUIRE(f);
+  CHECK(open_db(env, "db") == db);
+  REQUIRE(sm1::closedb(f) == 0);
+  sm1::options_t other = idle;
+  other.savepoint_undo_bytes = 1 << 20;
+  sm1::session_t *g = opendb(env, "db", &other);
+  REQUIRE(g);
+  CHECK(g->db->opts.savepoint_undo_bytes == 1 << 20);
+  REQUIRE(sm1::closedb(g) == 0);
+  CHECK(sm1::detach(env, 0) == 0);
 }
 
 TEST_CASE("the transaction state machine rejects out-of-order calls") {

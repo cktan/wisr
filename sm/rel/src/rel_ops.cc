@@ -1280,6 +1280,130 @@ static Janet cfun_truncate(int32_t argc, Janet *argv) {
   return janet_wrap_nil();
 }
 
+/* (analyze table [target]): analyze the table, target 100 if none. */
+static Janet cfun_analyze(int32_t argc, Janet *argv) {
+  janet_arity(argc, 1, 2);
+  session_ctx_t *s = require_session();
+  std::string tbl_name = identifier_of(argv[0]);
+  int32_t target = argc == 2 ? janet_getinteger(argv, 1) : 100;
+  // A reader's lock, as ANALYZE takes it: writers go on meanwhile.
+  table_def_t *p_tdef = need_table(s, tbl_name, SM_LOCKMODE_IS, "analyze");
+  if (sm_tbl_analyze(p_tdef->tbl, target) != 0) {
+    panic_sm_error("analyze sm_tbl_analyze");
+  }
+  return janet_wrap_nil();
+}
+
+/* A statistic as a Janet struct, its values of type code and typmod. */
+static Janet stat_form(const sm_stat_t &st, uint8_t code, int32_t typmod) {
+  const sm_type_t *type = sm_type(code);
+  auto values = [&](const std::vector<std::string> &bytes) {
+    std::vector<Janet> out;
+    for (const std::string &b : bytes) {
+      out.push_back(
+          value_to_janet(sm_datum_of_bytes(type, b), false, code, typmod));
+    }
+    return tuple_of(out);
+  };
+  std::vector<Janet> freqs;
+  for (float f : st.mcv_freq) {
+    freqs.push_back(janet_wrap_number(f));
+  }
+  JanetKV *kv = janet_struct_begin(7);
+  janet_struct_put(kv, janet_ckeywordv("null-frac"),
+                   janet_wrap_number(st.null_frac));
+  janet_struct_put(kv, janet_ckeywordv("width"), janet_wrap_integer(st.width));
+  janet_struct_put(kv, janet_ckeywordv("distinct"),
+                   janet_wrap_number(st.distinct));
+  janet_struct_put(kv, janet_ckeywordv("correlation"),
+                   st.has_correlation ? janet_wrap_number(st.correlation)
+                                      : janet_wrap_nil());
+  janet_struct_put(kv, janet_ckeywordv("mcv"), values(st.mcv));
+  janet_struct_put(kv, janet_ckeywordv("freqs"), tuple_of(freqs));
+  janet_struct_put(kv, janet_ckeywordv("bounds"), values(st.bounds));
+  return janet_wrap_struct(janet_struct_end(kv));
+}
+
+/*
+ * (stats table): the table's statistics, nil if never analyzed: its
+ * counts and sizes, each column's by name, and each index's by name
+ * with its expressions' by place.
+ */
+static Janet cfun_stats(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 1);
+  session_ctx_t *s = require_session();
+  std::string tbl_name = identifier_of(argv[0]);
+  table_def_t *p_tdef = need_table(s, tbl_name, SM_LOCKMODE_IS, "stats");
+  const sm_table_def_t &def = *p_tdef->def;
+  std::shared_ptr<const sm_stats_t> held;
+  int rc = sm_tbl_stats(s->session, def.oid, held);
+  if (rc == 1) {
+    return janet_wrap_nil();
+  }
+  if (rc != 0) {
+    panic_sm_error("stats sm_tbl_stats");
+  }
+  const sm_stats_t &st = *held;
+  JanetTable *columns = janet_table(0);
+  JanetTable *indexes = janet_table(0);
+  for (const sm_stats_index_t &x : st.indexes) {
+    for (const sm_index_def_t &d : def.indexes) {
+      if (d.oid != x.oid) {
+        continue;
+      }
+      // Each expression's statistics, by its place among the keys.
+      JanetTable *exprs = janet_table(0);
+      const index_def_t &ri = p_tdef->indexes.at(d.name);
+      for (const sm_stat_t &e : st.stats) {
+        if (e.has_index && e.index == x.oid) {
+          const key_col_def_t &k = ri.keys.at(e.position);
+          janet_table_put(exprs, janet_wrap_integer(e.position),
+                          stat_form(e, k.type_code, k.typmod));
+        }
+      }
+      JanetKV *kv = janet_struct_begin(5);
+      janet_struct_put(kv, janet_ckeywordv("belongs"),
+                       janet_wrap_number(x.belongs));
+      janet_struct_put(kv, janet_ckeywordv("entries"),
+                       janet_wrap_number(x.entries));
+      janet_struct_put(kv, janet_ckeywordv("disk"),
+                       janet_wrap_number(static_cast<double>(x.disk)));
+      janet_struct_put(kv, janet_ckeywordv("mem"),
+                       janet_wrap_number(static_cast<double>(x.mem)));
+      janet_struct_put(kv, janet_ckeywordv("exprs"), janet_wrap_table(exprs));
+      janet_table_put(indexes, janet_cstringv(d.name.c_str()),
+                      janet_wrap_struct(janet_struct_end(kv)));
+    }
+  }
+  for (const sm_stat_t &c : st.stats) {
+    if (!c.has_index) {
+      const sm_column_def_t &col = def.columns.at(c.position);
+      janet_table_put(columns, janet_cstringv(col.name.c_str()),
+                      stat_form(c, col.type_code, col.typmod));
+    }
+  }
+  JanetKV *kv = janet_struct_begin(10);
+  janet_struct_put(kv, janet_ckeywordv("target"),
+                   janet_wrap_integer(st.target));
+  janet_struct_put(kv, janet_ckeywordv("live-rows"),
+                   janet_wrap_number(st.live_rows));
+  janet_struct_put(kv, janet_ckeywordv("rows-sampled"),
+                   janet_wrap_number(static_cast<double>(st.rows_sampled)));
+  janet_struct_put(kv, janet_ckeywordv("rowno-limit"),
+                   janet_wrap_number(static_cast<double>(st.rowno_limit)));
+  janet_struct_put(kv, janet_ckeywordv("run-length"),
+                   janet_wrap_integer(st.run_length));
+  janet_struct_put(kv, janet_ckeywordv("avg-row-bytes"),
+                   janet_wrap_integer(st.avg_row_bytes));
+  janet_struct_put(kv, janet_ckeywordv("heap-disk"),
+                   janet_wrap_number(static_cast<double>(st.heap_disk)));
+  janet_struct_put(kv, janet_ckeywordv("heap-mem"),
+                   janet_wrap_number(static_cast<double>(st.heap_mem)));
+  janet_struct_put(kv, janet_ckeywordv("columns"), janet_wrap_table(columns));
+  janet_struct_put(kv, janet_ckeywordv("indexes"), janet_wrap_table(indexes));
+  return janet_wrap_struct(janet_struct_end(kv));
+}
+
 /* (update table rowno [new_val1 new_val2 ...]) */
 static Janet cfun_update(int32_t argc, Janet *argv) {
   janet_fixarity(argc, 3);
@@ -1728,6 +1852,8 @@ static const JanetReg s_rel_cfuns[] = {
     {"_read-latest", cfun_read_latest, "internal"},
     {"_lock-row", cfun_lock_row, "internal"},
     {"_truncate", cfun_truncate, "internal"},
+    {"_analyze", cfun_analyze, "internal"},
+    {"_stats", cfun_stats, "internal"},
     {"_update", cfun_update, "internal"},
     {"_delete", cfun_delete, "internal"},
     {"_scan", cfun_scan, "internal"},
@@ -1799,6 +1925,12 @@ static const char *s_prelude = R"janet(
 
 (defmacro truncate [tbl]
   ~(_truncate (string ',tbl)))
+
+(defmacro analyze [tbl & rest]
+  ~(_analyze (string ',tbl) ,;rest))
+
+(defmacro stats [tbl]
+  ~(_stats (string ',tbl)))
 
 (defmacro update [tbl rowno row]
   ~(_update (string ',tbl) ,rowno ,row))

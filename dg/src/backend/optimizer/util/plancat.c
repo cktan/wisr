@@ -429,9 +429,22 @@ void get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
        * there are not physical indexes.
        */
       if (indexRelation->rd_rel->relkind != RELKIND_PARTITIONED_INDEX) {
-        /* An index is sm's, with no pages: as large as its table. */
-        info->pages = rel->pages;
-        info->tuples = rel->tuples;
+        double sm_pages, sm_tuples;
+
+        /*
+         * An index is sm's: its bytes and its entries as its table's last
+         * analyze found them, a partial one's its share of the rows; never
+         * analyzed, as large as its table.
+         */
+        if (smstore_estimate_index_size(RelationGetRelid(relation),
+                                        RelationGetRelid(indexRelation),
+                                        &sm_pages, &sm_tuples)) {
+          info->pages = (BlockNumber)sm_pages;
+          info->tuples = std::min(rint(sm_tuples), rel->tuples);
+        } else {
+          info->pages = rel->pages;
+          info->tuples = rel->tuples;
+        }
 
         /*
          * Get tree height while we have the index open
@@ -987,17 +1000,26 @@ void estimate_rel_size(Relation rel, int32 *attr_widths, BlockNumber *pages,
                        double *tuples, double *allvisfrac) {
 
   if (RelationIsSm(rel)) {
+    double sm_pages, sm_tuples;
+
+    /* An index entry sm returns is one the transaction sees: no fetch. */
+    *allvisfrac = 1;
+    /* Analyzed: its bytes now, and its rows grown with them since. */
+    if (smstore_estimate_size(RelationGetRelid(rel), &sm_pages, &sm_tuples)) {
+      *pages = (BlockNumber)sm_pages;
+      *tuples = rint(sm_tuples);
+      return;
+    }
+
     /*
-     * sm keeps no page count and no statistics yet: estimate as for a heap
-     * never analyzed, ten full pages of rows of the columns' widths.
+     * Never analyzed, or empty: as a heap never analyzed, ten full pages of
+     * rows of the columns' widths.
      */
     int32 tuple_width = get_rel_data_width(rel, attr_widths) +
                         MAXALIGN(SizeofHeapTupleHeader) + sizeof(ItemIdData);
 
     *pages = 10;
     *tuples = rint(10.0 * ((BLCKSZ - SizeOfPageHeaderData) / tuple_width));
-    /* An index entry sm returns is one the transaction sees: no fetch. */
-    *allvisfrac = 1;
   } else if (RELKIND_HAS_TABLE_AM(rel->rd_rel->relkind)) {
     table_relation_estimate_size(rel, attr_widths, pages, tuples, allvisfrac);
   } else {

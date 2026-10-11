@@ -140,6 +140,13 @@ the two differ, `CLAUDE.md` wins.
 - **Match the code around you**, and touch only what the
   change needs. Remove what your change leaves unused; leave
   unused code you did not orphan, and mention it.
+- **No RTTI.** No `dynamic_cast`, `typeid`, `std::type_info`,
+  `std::type_index`, `std::any` or `std::dynamic_pointer_cast`.
+  What an object is, is known where it is made: say it with a
+  kind field or an enum, a function pointer, or a virtual call.
+  Catching an exception by its type is not this rule's concern.
+  Every Makefile compiles with `-fno-rtti`, so the compiler
+  refuses the rest.
 
 ## 8. Tests
 

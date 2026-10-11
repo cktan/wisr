@@ -24,13 +24,13 @@ The rest of `sm3/SM3_DESIGN.md` §8.1 step 5.
    `STATISTICS.md`, whose measurements are done (§6 there):
    RocksDB's size estimates are exact once flushed and
    compacted, and as much as 7x high for rows still
-   unflushed. Its design is `SM3_DESIGN.md` §6, and is not
-   built but for its first step, the live sizes, rowno limit
-   and probes; §6.9 there is the order of work, the catalog's
-   kind 10 next. The stack analyzes:
-   `sm_analyze` samples a table and records statistics of an
-   LSM in sm3's catalog, and the host fits them to the
-   planner.
+   unflushed. Its design is `SM3_DESIGN.md` §6, and the
+   stack's part is built: `sm_tbl_analyze` samples a table,
+   within a fixed budget, and records PostgreSQL's statistics
+   of it in sm3's catalog, and `sm_tbl_stats` reads them. Next
+   is the host's: digres's ANALYZE and its planner reading
+   them in place of `pg_statistic` and `pg_class`, designed in
+   `../dg/STATISTICS.md`.
 
 Low priority, and after it:
 

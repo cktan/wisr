@@ -15,6 +15,9 @@
 
 #include "postgres.h"
 
+#include <algorithm>
+#include <cmath>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -27,6 +30,7 @@
 #include "catalog/pg_namespace_d.h"
 #include "catalog/pg_type_d.h"
 #include "commands/defrem.h"
+#include "commands/vacuum.h"
 #include "lib/stringinfo.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
@@ -1078,6 +1082,172 @@ void smstore_drop_tables(DropStmt *stmt) {
 
   foreach (l, stmt->objects)
     drop_table(makeRangeVarFromNameList((List *)lfirst(l)), stmt->missing_ok);
+}
+
+/*
+ * The table oid's statistics, as this transaction sees them, nullptr if it
+ * was never analyzed: sm's, shared by every session and copied by none.
+ */
+static std::shared_ptr<const sm_stats_t> table_stats(Oid oid) {
+  std::shared_ptr<const sm_stats_t> st;
+
+  if (sm_tbl_stats(xact_session(), oid, st) < 0)
+    sm_error("read a table's statistics");
+  return st;
+}
+
+/*
+ * The compression of a table's rows on disk when it was analyzed: its heap's
+ * bytes in sorted files over its rows' bytes, at most 1, and 1 when nothing
+ * was on disk (STATISTICS.md section 2.2).
+ */
+static double compression(const sm_stats_t &st) {
+  double raw = st.live_rows * st.avg_row_bytes;
+
+  if (st.heap_disk == 0 || raw <= 0)
+    return 1.0;
+  return std::min(1.0, (double)st.heap_disk / raw);
+}
+
+/*
+ * How much the table has grown since it was analyzed, by its heap's bytes
+ * now over then, each at the compression recorded; and its bytes now, in
+ * *now.  Bytes in memtables are uncompressed, so they count at c.
+ */
+static double growth(sm_tbl_t *tbl, const sm_stats_t &st, double *now) {
+  uint64_t disk, mem;
+  double c = compression(st), then;
+
+  if (sm_tbl_size(tbl, &disk, &mem) != 0)
+    sm_error("size a table");
+  *now = disk + mem * c;
+  then = st.heap_disk + st.heap_mem * c;
+  return then > 0 ? *now / then : 1.0;
+}
+
+/*
+ * A table's pages and rows for the planner (STATISTICS.md section 2.2): its
+ * bytes now, in 8 KB pages, and the rows the last analyze counted, grown or
+ * shrunk with its bytes since.  False for a table never analyzed, or whose
+ * heap holds no bytes, new or truncated: the caller plans it as a heap
+ * never analyzed.
+ */
+bool smstore_estimate_size(Oid oid, double *pages, double *tuples) {
+  sm_tbl_t *tbl = open_table(oid, SM_LOCKMODE_IS);
+  double now;
+
+  if (tbl == NULL)
+    return false;
+  std::shared_ptr<const sm_stats_t> st = table_stats(oid);
+  if (st == nullptr)
+    return false;
+  double g = growth(tbl, *st, &now);
+  if (now <= 0)
+    return false;
+  *tuples = st->live_rows * g;
+  *pages = std::max(1.0, std::ceil(now / BLCKSZ));
+  return true;
+}
+
+/*
+ * An index's pages and entries for the planner: its bytes now, in pages,
+ * and the entries the last analyze counted -- a partial index's share of
+ * the rows -- grown as its table has.  False if its table was never
+ * analyzed, or the index was made since.
+ */
+bool smstore_estimate_index_size(Oid table, Oid index, double *pages,
+                                 double *tuples) {
+  sm_tbl_t *tbl = open_table(table, SM_LOCKMODE_IS);
+  uint64_t disk, mem;
+  double now;
+
+  if (tbl == NULL)
+    return false;
+  std::shared_ptr<const sm_stats_t> st = table_stats(table);
+  if (st == nullptr)
+    return false;
+  for (const sm_stats_index_t &x : st->indexes) {
+    if (x.oid != index)
+      continue;
+    double g = growth(tbl, *st, &now);
+    if (sm_tbl_idx_size(tbl, index, &disk, &mem) != 0)
+      sm_error("size an index");
+    *tuples = x.entries * g;
+    *pages = std::max(1.0, std::ceil((disk + mem * compression(*st)) / BLCKSZ));
+    return true;
+  }
+  return false;
+}
+
+/*
+ * Analyze the table oid, named name for a message, in sm, in this
+ * transaction: opened as a reader, so writers go on meanwhile.  A name
+ * that is not a table's, a sequence's or an index's, is passed over with
+ * a warning, as PostgreSQL passes over what it cannot analyze.
+ */
+static void analyze_table(Oid oid, const char *name, bool verbose) {
+  sm_tbl_t *tbl = open_table(oid, SM_LOCKMODE_IS);
+
+  if (tbl == NULL) {
+    ereport(WARNING,
+            (errmsg("skipping \"%s\" --- cannot analyze non-tables", name)));
+    return;
+  }
+  if (waiting([&] { return sm_tbl_analyze(tbl, default_statistics_target); }) !=
+      0)
+    sm_error("analyze a table");
+  /* Plans of the table are made again, with its new statistics. */
+  Relation rel = relation_open(oid, NoLock);
+
+  CacheInvalidateRelcache(rel);
+  relation_close(rel, NoLock);
+  if (verbose) {
+    std::shared_ptr<const sm_stats_t> st = table_stats(oid);
+
+    if (st != nullptr)
+      ereport(INFO,
+              (errmsg("\"%s\": %.0f live rows, %llu rows in sample, of %llu "
+                      "row numbers in runs of %d",
+                      name, st->live_rows, (unsigned long long)st->rows_sampled,
+                      (unsigned long long)st->rowno_limit, st->run_length)));
+  }
+}
+
+/*
+ * ANALYZE: each table rels names, or with none every table in sm, analyzed
+ * by sm in this transaction, so the statistics commit and roll back with
+ * it (STATISTICS.md section 2.1).  Each takes default_statistics_target; a
+ * column list is refused.
+ */
+void smstore_analyze(List *rels, bool verbose) {
+  ListCell *l;
+
+  if (rels == NIL) {
+    std::vector<std::string> nspnames;
+
+    if (sm_cat_list_namespaces(xact_session(), nspnames) != 0)
+      sm_error("list the schemas");
+    for (const std::string &nsp : nspnames) {
+      Oid nspoid = smstore_namespace_oid(nsp.c_str());
+      std::vector<std::string> tables;
+
+      if (sm_cat_list_tables(xact_session(), nspoid, tables) != 0)
+        sm_error("list a schema's tables");
+      for (const std::string &t : tables)
+        analyze_table(smstore_relation_oid(t.c_str(), nspoid), t.c_str(),
+                      verbose);
+    }
+    return;
+  }
+  foreach (l, rels) {
+    VacuumRelation *vrel = lfirst_node(VacuumRelation, l);
+
+    if (vrel->va_cols != NIL)
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("ANALYZE of chosen columns is not supported yet")));
+    analyze_table(RangeVarGetRelid(vrel->relation, NoLock, false),
+                  vrel->relation->relname, verbose);
+  }
 }
 
 /*

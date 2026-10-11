@@ -64,6 +64,17 @@ struct sm3::catalog_t {
   std::unordered_map<uint64_t, uint64_t> sequence_nsp;
 
   /*
+   * Each table's committed statistics, loaded on first use: nullptr
+   * if it was never analyzed. A table not yet asked about has no
+   * entry. A commit that recorded new ones replaces its entry.
+   */
+  std::unordered_map<uint64_t, std::shared_ptr<const stats_t>> stats;
+
+  /* Where the catalog was opened from, for a load of its own. */
+  sm1::env_t *env = nullptr;
+  std::string dbname;
+
+  /*
    * How many times a transaction's DDL has been published, and, for
    * an index that became valid since the catalog was loaded, the
    * count at which it did (SM3_DESIGN.md §3). A session notes the
@@ -121,6 +132,11 @@ struct sequence_change_t {
   uint64_t oid;
   std::optional<uint64_t> nspoid; /* nullopt: dropped */
 };
+struct stats_change_t {
+  int depth;
+  uint64_t oid;                         /* the table's */
+  std::shared_ptr<const stats_t> stats; /* nullptr: the table dropped */
+};
 
 } // namespace sm3
 
@@ -140,6 +156,7 @@ struct sm3::session_t {
   std::vector<nspace_change_t> nspaces;
   std::vector<state_change_t> states;
   std::vector<sequence_change_t> sequences;
+  std::vector<stats_change_t> stats;
   bool in_txn = false;      /* between begin and commit or abort */
   uint64_t snap_seq = 0;    /* cat->seq, noted before the snapshot */
   bool stmt_pinned = false; /* stmt_begin was called: statement snapshots */
@@ -201,6 +218,13 @@ int build_table(const collation_lookup_t &lookup, uint64_t oid,
  */
 int lock_table(sm1::session_t *s, uint64_t oid, sm1::lockmode_t mode);
 
+/*
+ * Take the table oid's STATS entry lock X, to the end of the
+ * transaction: an analyze takes it before it samples, so a second
+ * waits for the first rather than both sampling.
+ */
+int cat_lock_stats(session_t *s, uint64_t oid);
+
 /* The name of the sm1 sequence that counts for the sequence oid. */
 std::string sequence_counter(uint64_t oid);
 
@@ -221,6 +245,8 @@ void overlay_state(session_t *s, uint64_t index,
                    std::optional<index_status_t> status);
 void overlay_sequence(session_t *s, uint64_t oid,
                       std::optional<uint64_t> nspoid);
+void overlay_stats(session_t *s, uint64_t oid,
+                   std::shared_ptr<const stats_t> stats);
 
 /*
  * Whether there is a namespace oid as session sees it, its name

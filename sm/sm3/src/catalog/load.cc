@@ -324,6 +324,9 @@ int cat_open(sm1::env_t *env, std::string_view dbname, catalog_t *&out) {
     }
     kv_ptr kv(raw, &sm2::catkv_close);
     cat = std::make_unique<catalog_t>();
+    // Kept for a load of the catalog's own later: statistics.
+    cat->env = env;
+    cat->dbname = std::string(dbname);
     return load(kv.get(), *cat);
   });
   // Hand it over only once its transaction has committed.

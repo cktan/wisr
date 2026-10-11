@@ -28,6 +28,10 @@
  * writing, but those savepoints can no longer be rolled back
  * to: sm1::rollback fails with SM_ERR_UNDOLIMIT and the
  * transaction can only be aborted. It must be at least 1.
+ *
+ * idle_close_ms is how long a database stays open after its last
+ * session closes, so a session that comes in meanwhile finds it
+ * open; 0 closes it at once. It must not be negative.
  */
 #ifndef SM_OPTIONS_H
 #define SM_OPTIONS_H
@@ -41,6 +45,7 @@ typedef struct sm_options_t {
     const char* rocksdb_options;       /* NULL = defaults */
     int         commit_cache_entries;
     long long   savepoint_undo_bytes;
+    long long   idle_close_ms;
 } sm_options_t;
 
 /* Fill opt with the defaults. */
@@ -53,6 +58,7 @@ static inline void sm_options_init(sm_options_t* opt) {
     opt->rocksdb_options      = 0;
     opt->commit_cache_entries = 65536;
     opt->savepoint_undo_bytes = 64LL << 20;
+    opt->idle_close_ms        = 60000;
 }
 
 #endif /* SM_OPTIONS_H */

@@ -26,9 +26,9 @@ SM2 := ../sm2
 
 CXX      ?= g++
 CXXFLAGS ?= $(OPTFLAGS)
-CXXFLAGS += -std=c++20 -Wall -Wextra -Iinclude -Isrc/catalog \
-            -I$(SM2)/include -I$(SM1)/include -I$(SM0)/include -I../include \
-            -MMD -MP
+CXXFLAGS += -std=c++20 -fno-rtti -Wall -Wextra -Iinclude -Isrc/catalog \
+            -Isrc/analyze -I$(SM2)/include -I$(SM1)/include \
+            -I$(SM0)/include -I../include -MMD -MP
 LDLIBS   += -lrocksdb -licui18n -licuuc -licudata -lpthread
 
 BUILD := build

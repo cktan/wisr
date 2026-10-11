@@ -305,6 +305,7 @@ typedef struct sm_options_t {
     const char* rocksdb_options;       /* default NULL: RocksDB's */
     int         commit_cache_entries;  /* default 65536 */
     long long   savepoint_undo_bytes;  /* default 64 MB */
+    long long   idle_close_ms;         /* default 60000 */
 } sm_options_t;
 
 /* sm1.h */
@@ -680,8 +681,17 @@ in-doubt and awaits its coordinator (see the 2PC API).
 `session` is invalid after this call, whether it succeeded
 or not. Passing NULL is a no-op returning 0.
 
-Closing the last session on a database closes the
-underlying database.
+Closing the last session on a database leaves it open for
+`idle_close_ms`, 60 seconds by default, so a session that comes
+in meanwhile finds it as it was; a thread of the environment's
+then closes it. With `idle_close_ms` 0 it closes at once, and
+so does a database that has failed (fail-stop), so the next
+open recovers it. A session that asks an idle database for
+other options than it was opened with gets it opened anew with
+them; while any session has it open, options are ignored.
+Closing it writes each sequence's place, in one synced write,
+so a clean reopen goes on from there. `sm1::rmdb` of a database
+left idle closes it first, and `sm1::detach` closes every one.
 
 ---
 
@@ -1316,10 +1326,11 @@ database has stopped, or persisting the next block failed),
 
 `sm1::lastseq` reports the last value handed out, drawing none:
 no lease is extended and nothing is written. It returns 1 if
-the sequence never handed one out. It is exact once the
-sequence has handed out a value in this process; before that it
-is the value below the block reserved last, an upper bound,
-since a restart skips the rest of that block. It needs no
+the sequence never handed one out. It is exact, but after a
+crash: a clean close keeps the sequence's place. Until it hands
+out a value after a crash it is the value below the block
+reserved last, an upper bound, since the crash skips the rest
+of that block. It needs no
 transaction, and inside one reads the definition at its
 snapshot, as `sm1::nextseq` does. Errors: `SM_ERR_NOTFOUND`,
 `SM_ERR_INVALID`, `SM_ERR_PREPARED`, `SM_ERR_CORRUPT`,

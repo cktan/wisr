@@ -220,6 +220,47 @@ int erase_name(sm2::catkv_t *kv, uint64_t nspoid, std::string_view name) {
   return sm2::catkv_erase(kv, key);
 }
 
+/* Erase key, if it is there, as of the newest commit and under its lock X. */
+int erase_if_there(sm3::session_t *session, sm2::catkv_t *kv,
+                   const std::string &key) {
+  int rc = latest_key(session, kv, key);
+  if (rc < 0) {
+    return -1;
+  }
+  return rc == 0 ? sm2::catkv_erase(kv, key) : 0;
+}
+
+/*
+ * Every statistics key the table oid of rec may have: its own, each
+ * column's, dropped or not, and each index expression's.
+ */
+int stats_keys(uint64_t oid, const sm3::table_rec_t &rec,
+               std::vector<std::string> &keys) {
+  keys.clear();
+  std::string k;
+  if (sm3::stats_key(oid, 0, 0, k) != 0) {
+    return -1;
+  }
+  keys.push_back(k);
+  for (size_t i = 0; i < rec.columns.size(); i++) {
+    if (sm3::stats_key(oid, 0, i + 1, k) != 0) {
+      return -1;
+    }
+    keys.push_back(k);
+  }
+  for (const sm3::index_rec_t &x : rec.indexes) {
+    for (size_t p = 0; p < x.keys.size(); p++) {
+      if (x.keys[p].attnum < 0) {
+        if (sm3::stats_key(oid, x.oid, p + 1, k) != 0) {
+          return -1;
+        }
+        keys.push_back(k);
+      }
+    }
+  }
+  return 0;
+}
+
 /*
  * Build the definition rec describes, as s sees its collations, and
  * record it in s's overlay as the table oid's.
@@ -467,6 +508,24 @@ int cat_put_table(session_t *session, uint64_t oid, const table_rec_t &rec) {
          del_index_state(session, kv.get(), oid, x.oid) != 0)) {
       return -1;
     }
+    // And its expressions' statistics, if it was analyzed.
+    for (size_t p = 0;
+         index_of(rec, x.oid) == rec.indexes.end() && p < x.keys.size(); p++) {
+      std::string k;
+      if (x.keys[p].attnum < 0 && (stats_key(oid, x.oid, p + 1, k) != 0 ||
+                                   erase_if_there(session, kv.get(), k) != 0)) {
+        return -1;
+      }
+    }
+  }
+  // A column dropped now takes its statistics with it.
+  for (size_t i = 0; i < old.columns.size(); i++) {
+    std::string k;
+    if (!old.columns[i].dropped && rec.columns[i].dropped &&
+        (stats_key(oid, 0, i + 1, k) != 0 ||
+         erase_if_there(session, kv.get(), k) != 0)) {
+      return -1;
+    }
   }
   if (record_table(session, oid, rec) != 0) {
     return -1;
@@ -565,11 +624,22 @@ int cat_del_table(session_t *session, uint64_t oid) {
       return -1;
     }
   }
+  // Its statistics, every entry it may have, if it was analyzed.
+  std::vector<std::string> keys;
+  if (stats_keys(oid, rec, keys) != 0) {
+    return -1;
+  }
+  for (const std::string &k : keys) {
+    if (erase_if_there(session, kv.get(), k) != 0) {
+      return -1;
+    }
+  }
   if (entity_key(kind_t::table, oid, key) != 0 ||
       del_key(session, kv.get(), key) != 0) {
     return -1;
   }
   overlay_table(session, oid, nullptr);
+  overlay_stats(session, oid, nullptr);
   overlay_name(session, rec.nspoid, rec.name, std::nullopt);
   return 0;
 }
@@ -602,6 +672,142 @@ int cat_put_collation(session_t *session, uint64_t oid, uint64_t nspoid,
   }
   // The overlay holds it open, for this transaction's DDL to use.
   overlay_collation(session, oid, nspoid, c.release());
+  return 0;
+}
+
+/* Record a table's statistics; see sm3.h. */
+int cat_put_stats(session_t *session, uint64_t oid, const stats_t &stats) {
+  // A reader's table-oid lock, so a drop of the table waits for this
+  // transaction, and this sees its definition as it stays.
+  if (lock_table(session->sm1, oid, sm1::SM_LOCKMODE_IS) != 0) {
+    return -1;
+  }
+  std::shared_ptr<const table_def_t> def = cat_get_table(session, oid);
+  if (!def) {
+    return sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                       "table " + std::to_string(oid) + " does not exist");
+  }
+  // The table's own entry and each statistic's, by key.
+  std::map<std::string, std::string> want;
+  std::string key, blob;
+  if (stats_key(oid, 0, 0, key) != 0 || encode_stats_table(stats, blob) != 0) {
+    return -1;
+  }
+  want[key] = blob;
+  for (const stat_t &st : stats.stats) {
+    if (encode_stat(st, *def, blob) != 0 ||
+        stats_key(oid, st.index.value_or(0), st.position + 1, key) != 0) {
+      return -1;
+    }
+    if (!want.emplace(key, blob).second) {
+      return sm1::seterr(sm1::SM_ERR_INVALID,
+                         "statistics: two of one column or expression");
+    }
+  }
+  // Its own entry's lock X first: a second analyze queues here.
+  kv_ptr kv(nullptr, &sm2::catkv_close);
+  std::vector<std::string> keys;
+  if (cat_lock_stats(session, oid) != 0 || open_kv(session->sm1, kv) != 0 ||
+      stats_keys(oid, def->rec, keys) != 0) {
+    return -1;
+  }
+  // Each entry the table may have is written, or erased if this
+  // analyze has none for it.
+  for (const std::string &k : keys) {
+    auto w = want.find(k);
+    if (w != want.end() ? put_key(session, kv.get(), k, w->second) != 0
+                        : erase_if_there(session, kv.get(), k) != 0) {
+      return -1;
+    }
+  }
+  overlay_stats(session, oid, std::make_shared<const stats_t>(stats));
+  return 0;
+}
+
+/* Lock a table's STATS entry; see internal.h. */
+int cat_lock_stats(session_t *session, uint64_t oid) {
+  kv_ptr kv(nullptr, &sm2::catkv_close);
+  std::string key;
+  if (open_kv(session->sm1, kv) != 0 || stats_key(oid, 0, 0, key) != 0) {
+    return -1;
+  }
+  return sm2::catkv_lock(kv.get(), key, sm1::SM_LOCKMODE_EX);
+}
+
+/* A table's statistics, loaded on first use; see sm3.h. */
+int cat_get_stats(session_t *session, uint64_t oid,
+                  std::shared_ptr<const stats_t> &out) {
+  // This transaction's own, the last it recorded.
+  for (auto it = session->stats.rbegin(); it != session->stats.rend(); ++it) {
+    if (it->oid == oid) {
+      out = it->stats;
+      return 0;
+    }
+  }
+  catalog_t *cat = session->cat;
+  {
+    std::shared_lock lock(cat->mu);
+    auto it = cat->stats.find(oid);
+    if (it != cat->stats.end()) {
+      out = it->second;
+      return 0;
+    }
+  }
+  // Not asked about yet: load it, typed by the definition session
+  // sees, in a READ COMMITTED transaction of the catalog's own, so
+  // the caller's takes no lock and records no read.
+  std::shared_ptr<const table_def_t> def = cat_get_table(session, oid);
+  if (!def) {
+    out = nullptr;
+    return 0;
+  }
+  std::shared_ptr<const stats_t> loaded;
+  if (in_own_txn(cat->env, cat->dbname, nullptr, [&](sm1::session_t *s) {
+        kv_ptr kv(nullptr, &sm2::catkv_close);
+        std::string prefix, head;
+        sm2::catkv_scan_t *c = nullptr;
+        if (open_kv(s, kv) != 0 || stats_prefix(oid, prefix) != 0 ||
+            stats_key(oid, 0, 0, head) != 0 ||
+            sm2::catkv_scan(kv.get(), prefix, c) != 0) {
+          return -1;
+        }
+        std::unique_ptr<sm2::catkv_scan_t, decltype(&sm2::catkv_scanend)> guard(
+            c, &sm2::catkv_scanend);
+        // The table's own entry sorts first, then each statistic's.
+        auto st = std::make_shared<stats_t>();
+        bool have = false;
+        std::string_view k, v;
+        int rc;
+        while ((rc = sm2::catkv_scannxt(c, k, v)) == 0) {
+          if (k == head) {
+            if (decode_stats_table(v, *def, *st) != 0) {
+              return -1;
+            }
+            have = true;
+            continue;
+          }
+          stat_t one;
+          bool kept = false;
+          if (decode_stat(v, *def, one, kept) != 0) {
+            return -1;
+          }
+          if (kept) {
+            st->stats.push_back(std::move(one));
+          }
+        }
+        if (rc != 1) {
+          return -1;
+        }
+        if (have) {
+          loaded = std::move(st);
+        }
+        return 0;
+      }) != 0) {
+    return -1;
+  }
+  // A commit that published newer ones meanwhile keeps its own.
+  std::unique_lock lock(cat->mu);
+  out = cat->stats.try_emplace(oid, std::move(loaded)).first->second;
   return 0;
 }
 

@@ -36,8 +36,8 @@ enum class kind_t : int16_t {
      and no key at all; the value stays retired. */
   column = 8,      /* a column, keyed by its table's oid and its attnum */
   index_state = 9, /* an index's state, keyed as its index is */
-  /* 10 is the statistics design's (SM3_DESIGN.md §6.9). */
-  sequence = 11, /* a sequence: its namespace, name and counter */
+  stats = 10,      /* a table's statistics (SM3_DESIGN.md §6.6) */
+  sequence = 11,   /* a sequence: its namespace, name and counter */
 };
 
 /* The catalog's format version, which META holds. */
@@ -70,6 +70,18 @@ int part_ids(kind_t kind, std::string_view key, uint64_t &table_oid,
 
 /* The namespace the NAME key is in. */
 int name_nspoid(std::string_view key, uint64_t &nspoid);
+
+/*
+ * The key of one of the table table_oid's statistics entries
+ * (SM3_DESIGN.md §6.6): (0, 0) its own, the table's counts and
+ * sizes; (0, attnum + 1) a column's; (index oid, place + 1) an
+ * index expression's. A table's entries sort in that order.
+ */
+int stats_key(uint64_t table_oid, uint64_t index_oid, uint64_t n,
+              std::string &key);
+
+/* The prefix of every statistics entry of the table table_oid. */
+int stats_prefix(uint64_t table_oid, std::string &prefix);
 
 /* The prefix of every NAME key in the namespace nspoid. */
 int name_prefix(uint64_t nspoid, std::string &prefix);
@@ -142,6 +154,23 @@ int decode_collation(std::string_view blob, collation_rec_t &rec);
 int encode_sequence(const sequence_rec_t &rec, std::string &blob);
 int decode_sequence(std::string_view blob, sequence_rec_t &rec);
 
+/*
+ * A table's statistics, as its STATS entries hold them
+ * (SM3_DESIGN.md §6.6): the table's own entry, its counts, sizes
+ * and indexes, with stats left empty; and one statistic's entry,
+ * typed by what it describes, a column or an index expression of
+ * def. Encoding a statistic fails with SM_ERR_INVALID if def has no
+ * such one; decoding the table's leaves out an index def no longer
+ * has, and decoding a statistic sets kept to false for one whose
+ * column is dropped or whose index is gone.
+ */
+int encode_stats_table(const stats_t &stats, std::string &blob);
+int decode_stats_table(std::string_view blob, const table_def_t &def,
+                       stats_t &stats);
+int encode_stat(const stat_t &stat, const table_def_t &def, std::string &blob);
+int decode_stat(std::string_view blob, const table_def_t &def, stat_t &stat,
+                bool &kept);
+
 /* ---- parts: a blob's tuples, for the codec and its tests ---- */
 
 /* The layout of each part of a blob (CATALOG.md §3). */
@@ -157,6 +186,9 @@ enum class part_t {
   collation,
   index_state,
   sequence,
+  stats_table,
+  stats_index,
+  statistic,
 };
 
 /* A part's schema, and its layout, which the codec encodes by. */

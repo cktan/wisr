@@ -78,7 +78,7 @@ kinds' values are on disk, so frozen.
 | — | 7 | — | retired: a table's oid lock was a key here, and is now an `sm1::LOCKTYPE_OID` lock on its oid |
 | `COLUMN` | 8 | table oid `int8`, attnum `int8` | one column of the table |
 | `INDEX_STATE` | 9 | table oid `int8`, index oid `int8` | one index's state, with why its build failed; none for a pending index |
-| — | 10 | — | the statistics design's (`SM3_DESIGN.md` §6.9) |
+| `STATS` | 10 | table oid `int8`, index oid `int8`, n `int8` | the table's statistics, an entry for the table, (0, 0), and one a statistic: a column's (0, attnum + 1), an index expression's (index oid, place + 1); `SM3_DESIGN.md` §6.6 |
 | `SEQUENCE` | 11 | oid `int8` | a sequence: its namespace, name, start and increment |
 
 - **A table is several entries.** Its own fields are under

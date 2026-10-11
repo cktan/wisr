@@ -94,6 +94,13 @@ Every `.c` file is compiled as strict C++20 (`g++ -x c++
   destructors run as an error unwinds: RAII is safe.
 - **Never `catch (...)` without rethrowing.** It would swallow
   an error or a session's exit.
+- **No RTTI.** No `dynamic_cast`, `typeid`, `std::type_info`,
+  `std::type_index`, `std::any` or `std::dynamic_pointer_cast`.
+  PostgreSQL says what a node is with its tag (`nodeTag()`,
+  `IsA()`); do the same, or use an enum, a function pointer or
+  a virtual call. Catching an exception by its type is not this
+  rule's concern. `dg.mk` compiles with `-fno-rtti`, so the
+  compiler refuses the rest.
 - As in PostgreSQL, do not leave a `PG_TRY` block with
   `return`, `break`, `continue` or `goto`.
 

@@ -2235,3 +2235,29 @@ new instance. An audit of `global/` and `base/` came first.
   DEFAULT, which CREATE TABLE still refuses.
 - `server.sh` makes, draws from, drops and refuses sequences,
   four sessions drawing at once.
+
+## Step 74: ANALYZE is sm's, and a table is sized by it
+
+`STATISTICS.md` is the design; this is its first two steps.
+
+- **ANALYZE goes to `smstore_analyze()`** from `ExecVacuum()`,
+  not `vacuum()`: each table named, or with none every table in
+  every schema, opened as a reader and analyzed by
+  `sm_tbl_analyze()` at `default_statistics_target`, in the
+  statement's transaction. A sequence is passed over with a
+  warning, a column list refused. VERBOSE reports each table's
+  live rows, the rows sampled, its row numbers and run length.
+  The table's descriptor is invalidated, so its plans are made
+  again.
+- **A table is sized by its statistics**
+  (`smstore_estimate_size()`): its bytes now in pages, and the
+  rows the last analyze counted, grown with its bytes since at
+  the compression recorded. One never analyzed, or empty, is
+  still planned as ten pages. An index is sized by its own
+  bytes and entries, a partial one by its share of the rows.
+- **The statistics are sm's, shared**: `sm_tbl_stats()` hands
+  every session one read-only copy a process; digres keeps none.
+- **Left unused, for a step of its own**: `vacuum()` and the
+  analyze path of `analyze.c` it reached.
+- `server.sh` checks the estimate before and after ANALYZE, a
+  rolled-back one, growth without another, and the refusals.

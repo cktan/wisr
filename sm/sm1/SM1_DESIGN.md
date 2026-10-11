@@ -483,7 +483,11 @@ be64(seqid)`, holding the first value **not** covered by the
 lease. It is the same scheme with the sequence's increment as
 its step, and it is not transactional: a value is taken under
 the allocator's mutex, never given back, and a crash skips the
-rest of the lease. A sequence with no lease row yet has handed
+rest of the lease. A clean close does not: closing a database
+writes each sequence's next value as its lease, in one synced
+batch, so the next open goes on from there. A database stays
+open for `idle_close_ms` after its last session closes, so
+sessions that come and go do not close and reopen it. A sequence with no lease row yet has handed
 out nothing, so it starts at its `start`.
 
 ### 4.3 `visible_ts`: making snapshots correct

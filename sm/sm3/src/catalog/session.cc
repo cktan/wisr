@@ -35,12 +35,16 @@ void drop_from(sm3::session_t *s, int d) {
   while (!s->sequences.empty() && s->sequences.back().depth >= d) {
     s->sequences.pop_back();
   }
+  while (!s->stats.empty() && s->stats.back().depth >= d) {
+    s->stats.pop_back();
+  }
 }
 
 /* Whether s's transaction has made any DDL. */
 bool made_ddl(const sm3::session_t *s) {
   return !s->tables.empty() || !s->names.empty() || !s->collations.empty() ||
-         !s->nspaces.empty() || !s->states.empty() || !s->sequences.empty();
+         !s->nspaces.empty() || !s->states.empty() || !s->sequences.empty() ||
+         !s->stats.empty();
 }
 
 /*
@@ -70,6 +74,14 @@ void publish(sm3::session_t *s) {
     }
   }
   s->sequences.clear();
+  for (sm3::stats_change_t &c : s->stats) {
+    if (c.stats) {
+      cat->stats[c.oid] = std::move(c.stats);
+    } else {
+      cat->stats.erase(c.oid);
+    }
+  }
+  s->stats.clear();
   // One more publish; an index it makes valid dates from it.
   uint64_t seq = cat->seq.load() + 1;
   for (sm3::state_change_t &c : s->states) {
@@ -119,7 +131,7 @@ int session_open(catalog_t *cat, sm1::session_t *s, session_t *&out) {
                        "session_open: no catalog or no sm1 session");
   }
   out = new session_t{
-      s, cat, sm1::xctlevel_t::read_committed, 0, {}, {}, {}, {}, {}, {}};
+      s, cat, sm1::xctlevel_t::read_committed, 0, {}, {}, {}, {}, {}, {}, {}};
   return 0;
 }
 
@@ -275,6 +287,9 @@ int forget(session_t *s, int depth) {
   for (sequence_change_t &c : s->sequences) {
     c.depth = std::min(c.depth, depth - 1);
   }
+  for (stats_change_t &c : s->stats) {
+    c.depth = std::min(c.depth, depth - 1);
+  }
   s->depth = depth - 1;
   return 0;
 }
@@ -340,6 +355,12 @@ void overlay_name(session_t *s, uint64_t nspoid, std::string_view name,
 void overlay_collation(session_t *s, uint64_t oid, uint64_t nspoid,
                        sm2::collation_t *collation) {
   s->collations.push_back({s->depth, oid, nspoid, collation});
+}
+
+/* Record a table's new statistics, or their going with the table. */
+void overlay_stats(session_t *s, uint64_t oid,
+                   std::shared_ptr<const stats_t> stats) {
+  s->stats.push_back({s->depth, oid, std::move(stats)});
 }
 
 /* Record a sequence created in nspoid, or dropped. */

@@ -9,8 +9,10 @@
 
 #include <stdint.h>
 
+#include <condition_variable>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -39,11 +41,31 @@ struct sm1::env_t {
   /* Every open session, for sm1::detach. */
   std::unordered_set<sm1::session_t *> sessions;
 
+  /*
+   * The reaper: a thread that closes each database left with no
+   * session once its idle time has passed, woken by idle_cv when a
+   * database's last session closes, and stopped by detach. Both
+   * under mu.
+   */
+  std::thread reaper;
+  std::condition_variable idle_cv;
+  bool stopping = false;
+
   /* Close the root db. */
   ~env_t();
 };
 
 namespace wisr {
+
+/* Start env's reaper; an environment's first act once attached. */
+void env_start_reaper(sm1::env_t *env);
+
+/*
+ * Stop env's reaper and close every database still open, all of
+ * them idle once their sessions are closed. Called with env->mu not
+ * held.
+ */
+void env_stop_reaper(sm1::env_t *env);
 
 /* The directory of database dbid: {homedir}/base/{dbid}. */
 std::string env_db_path(const sm1::env_t *env, uint64_t dbid);

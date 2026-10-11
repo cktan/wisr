@@ -25,11 +25,14 @@ const sm2::key_column_t entity_cols[] = {col(sm2::type_int2),
                                          col(sm2::type_int8)};
 const sm2::key_column_t part_cols[] = {col(sm2::type_int2), col(sm2::type_int8),
                                        col(sm2::type_int8)};
+const sm2::key_column_t stats_cols[] = {
+    col(sm2::type_int2), col(sm2::type_int8), col(sm2::type_int8),
+    col(sm2::type_int8)};
 
 /* Encode datums, none null, under cols into key. */
 int encode(std::span<const sm2::key_column_t> cols,
            std::span<const sm2::datum_t> datums, std::string &key) {
-  bool isnull[3] = {false, false, false};
+  bool isnull[4] = {false, false, false, false};
   key.clear();
   return sm2::encode_key(cols, datums,
                          std::span<const bool>(isnull, datums.size()), key);
@@ -97,6 +100,21 @@ int name_nspoid(std::string_view key, uint64_t &nspoid) {
   std::memcpy(&n, cols[1]->data(), sizeof(n));
   nspoid = static_cast<uint64_t>(n);
   return 0;
+}
+
+/* The key of one of a table's statistics entries. */
+int stats_key(uint64_t table_oid, uint64_t index_oid, uint64_t n,
+              std::string &key) {
+  sm2::datum_t d[4] = {kind_datum(kind_t::stats),
+                       sm2::datum_from_int64(static_cast<int64_t>(table_oid)),
+                       sm2::datum_from_int64(static_cast<int64_t>(index_oid)),
+                       sm2::datum_from_int64(static_cast<int64_t>(n))};
+  return encode(stats_cols, d, key);
+}
+
+/* The prefix of a table's statistics entries: their first two columns. */
+int stats_prefix(uint64_t table_oid, std::string &prefix) {
+  return entity_key(kind_t::stats, table_oid, prefix);
 }
 
 /* The prefix of a namespace's NAME keys: their first two columns. */

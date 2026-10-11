@@ -177,9 +177,16 @@ int rmdb(sm1::env_t *env, const char *dbname) {
 
   // Hold the env mutex for the root db and the registry.
   std::lock_guard<std::mutex> guard(env->mu);
-  // Refuse while any session has the database open.
-  if (env->dbs.count(dbname)) {
-    return set_error(sm1::SM_ERR_INUSE, "database {} is open", dbname);
+  // Refuse while any session has the database open; one left idle
+  // is closed first.
+  auto open = env->dbs.find(dbname);
+  if (open != env->dbs.end()) {
+    if (open->second->nsessions > 0) {
+      return set_error(sm1::SM_ERR_INUSE, "database {} is open", dbname);
+    }
+    db_t *idle = open->second;
+    env->dbs.erase(open);
+    delete idle;
   }
   // Look the name up in the root db.
   std::string dkey = dbname_key(dbname);
@@ -401,6 +408,11 @@ db_t *db_open(const std::string &path, const char *dbname,
     set_error(sm1::SM_ERR_INVALID, "ts_lease must be positive");
     return nullptr;
   }
+  // Reject a negative idle time.
+  if (opt->idle_close_ms < 0) {
+    set_error(sm1::SM_ERR_INVALID, "idle_close_ms must not be negative");
+    return nullptr;
+  }
   rocksdb::DBOptions dbo;
   // Parse the pass-through RocksDB options.
   if (db_options(opt, &dbo) != 0) {
@@ -418,6 +430,10 @@ db_t *db_open(const std::string &path, const char *dbname,
   // Allocate the shared database object.
   std::unique_ptr<db_t> db(new db_t);
   db->name = dbname;
+  db->idle_close_ms = opt->idle_close_ms;
+  db->opts = *opt;
+  db->rocksdb_options = opt->rocksdb_options ? opt->rocksdb_options : "";
+  db->opts.rocksdb_options = nullptr;
   std::vector<rocksdb::ColumnFamilyDescriptor> cfs;
   // Give each store CF its options, GC filter included.
   for (const std::string &name : names) {
@@ -810,6 +826,40 @@ int db_drop_store_cf(db_t *db, uint64_t storeid) {
 
 } // namespace wisr
 
+/*
+ * Persist each sequence's next value as its lease, so the next open
+ * resumes there: one synced batch, however many sequences there are.
+ * A sequence that handed out its block's last value, or none, is left
+ * as it is. A failure is logged, and the next open skips the rest of
+ * each block, as after a crash.
+ */
+static void keep_seq_positions(wisr::db_t *db) {
+  rocksdb::WriteBatch batch;
+  size_t n = 0;
+  for (const auto &[seqid, st] : db->seqs) {
+    if (st.exhausted || st.next >= st.limit) {
+      continue;
+    }
+    std::string val;
+    sm0::put_be64(val, st.next);
+    batch.Put(db->cf_meta, wisr::seq_meta_key(seqid), val);
+    n++;
+  }
+  if (n == 0) {
+    return;
+  }
+  // Durable before the database closes, as a lease renewal is.
+  rocksdb::WriteOptions wo;
+  wo.sync = true;
+  rocksdb::Status s = db->rdb->Write(wo, &batch);
+  if (!s.ok()) {
+    log_msg(sm1::loglevel_t::warn,
+            "database {}: the sequences' places were not kept, and the "
+            "next open skips the rest of their blocks: {}",
+            db->name.c_str(), s.ToString().c_str());
+  }
+}
+
 /* Destroy every CF handle, then close RocksDB. */
 wisr::db_t::~db_t() {
   // Stop the GC worker, then wait out running compactions,
@@ -831,6 +881,9 @@ wisr::db_t::~db_t() {
   if (!rdb) {
     return;
   }
+  // Keep each sequence's exact place, so a clean reopen goes on from
+  // it and skips none of its block, as only a crash then does.
+  keep_seq_positions(this);
   // Wait out running compactions, whose filters read the handles.
   rocksdb::CancelAllBackgroundWork(rdb, true);
   // Destroy every store CF handle.

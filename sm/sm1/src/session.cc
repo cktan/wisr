@@ -16,17 +16,41 @@ using namespace wisr;
 
 namespace {
 
+/* Whether opt asks for other options than db was opened with. */
+bool other_options(const db_t *db, const sm1::options_t *opt) {
+  const sm1::options_t &had = db->opts;
+  std::string rocks = opt->rocksdb_options ? opt->rocksdb_options : "";
+  return rocks != db->rocksdb_options ||
+         opt->durability_sync != had.durability_sync ||
+         opt->group_commit_us != had.group_commit_us ||
+         opt->deadlock_ms != had.deadlock_ms ||
+         opt->ssi_max_entries != had.ssi_max_entries ||
+         opt->ts_lease != had.ts_lease ||
+         opt->commit_cache_entries != had.commit_cache_entries ||
+         opt->savepoint_undo_bytes != had.savepoint_undo_bytes ||
+         opt->idle_close_ms != had.idle_close_ms;
+}
+
 /*
  * Find dbname in the registry, or open it and register it.
+ * One left idle that a session asks other options of is closed
+ * and opened again with them, as no session is using it.
  * Called with env->mu held. Returns NULL with the error set.
  */
 db_t *find_or_open(sm1::env_t *env, const char *dbname,
                    const sm1::options_t *opt) {
   // Look for the database among those already open.
   auto it = env->dbs.find(dbname);
-  // Reuse an open database: later sessions join it.
+  // Reuse an open database: later sessions join it, and while any
+  // session has it their options are ignored.
   if (it != env->dbs.end()) {
-    return it->second; // later sessions join; their opt is ignored
+    db_t *open = it->second;
+    if (open->nsessions > 0 || !opt || !other_options(open, opt)) {
+      return open;
+    }
+    // Idle, and asked for other options: close it, to open it anew.
+    env->dbs.erase(it);
+    delete open;
   }
   // Look up the database's dbid in the root db.
   std::string val;
@@ -111,7 +135,8 @@ int sm1::opendb(sm1::env_t *env, std::string_view dbname_arg,
 
 /*
  * Close a session: its cursors, then its active transaction.
- * The last session on a database closes the database.
+ * The last session on a database leaves it open for its idle
+ * time, for the next to find, or closes it at once with none.
  */
 int sm1::closedb(sm1::session_t *session) {
   // Closing NULL is a no-op.
@@ -132,12 +157,21 @@ int sm1::closedb(sm1::session_t *session) {
     std::lock_guard<std::mutex> guard(env->mu);
     // Unregister the session.
     env->sessions.erase(session);
-    // Drop the session count; the last session closes the database.
+    // Drop the session count; the last session closes the database,
+    // or leaves it to the reaper for its idle time.
     if (--db->nsessions == 0) {
-      // Unregister the database before closing it.
-      env->dbs.erase(db->name);
-      // Close the database: its last session is gone.
-      delete db;
+      // A failed database is closed at once, so the next open
+      // recovers it rather than finding it failed.
+      if (db->idle_close_ms == 0 || db->failed.load()) {
+        // Unregister the database before closing it.
+        env->dbs.erase(db->name);
+        // Close the database: its last session is gone.
+        delete db;
+      } else {
+        db->idle_since = std::chrono::steady_clock::now();
+        // The reaper closes it once its idle time has passed.
+        env->idle_cv.notify_one();
+      }
     }
   }
   // Free the session.

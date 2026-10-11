@@ -523,6 +523,34 @@ rollback to a savepoint taken before it, brings the rows back.
 (truncate jobs)
 ```
 
+### `(analyze table [target])`
+Analyzes the table in the current transaction
+(`sm3/SM3_DESIGN.md` §6): samples up to 300 × `target` rows,
+100 if none is given, reading no more than ten times that in
+row numbers whatever the table's size, and records each
+column's statistics, each partial or expression index's from
+rel's evaluator, and the sizes. They commit and roll back with
+the transaction. It takes the table's lock as a reader.
+
+```janet
+(analyze jobs 10)
+```
+
+### `(stats table)`
+The table's statistics, `nil` if it was never analyzed: a
+struct of `:live-rows`, `:rows-sampled`, `:rowno-limit`,
+`:run-length`, `:avg-row-bytes`, `:heap-disk`, `:heap-mem`,
+`:columns`, by name, and `:indexes`, by name, each with
+`:belongs`, `:entries`, its sizes, and `:exprs`, its
+expressions' by place. A column's or an expression's has
+`:null-frac`, `:width`, `:distinct`, `:correlation`, `:mcv` and
+`:freqs`, the common values and their frequencies, and
+`:bounds`, the histogram.
+
+```janet
+(((stats jobs) :columns) "state")
+```
+
 ### `(update table rowno [val1 val2 ...])`
 Updates the row at `rowno` and synchronizes secondary indexes.
 Returns the previous tuple values `[old1 old2 ...]`.

@@ -3,7 +3,7 @@
 CXX      ?= g++
 OPTFLAGS ?= -O1 -g
 CXXFLAGS ?= $(OPTFLAGS)
-CXXFLAGS += -std=c++20 -Wall -Wextra -I../include -I/usr/local/include -Isrc -MMD -MP
+CXXFLAGS += -std=c++20 -fno-rtti -Wall -Wextra -I../include -I/usr/local/include -Isrc -MMD -MP
 LDLIBS   += -L/usr/local/lib -ljanet -lrocksdb -licui18n -licuuc -licudata -lpthread -ldl -lm
 
 BUILD    ?= ../build

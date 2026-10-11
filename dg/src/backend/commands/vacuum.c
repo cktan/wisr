@@ -18,6 +18,8 @@
  */
 #include "postgres.h"
 
+#include "access/smstore.h"
+
 #include <math.h>
 
 #include "access/genam.h"
@@ -94,6 +96,14 @@ void ExecVacuum(ParseState *pstate, VacuumStmt *vacstmt, bool isTopLevel) {
                errmsg("unrecognized %s option \"%s\"", "ANALYZE", opt->defname),
                parser_errposition(pstate, opt->location)));
   }
+
+  /*
+   * Every table is sm's, and sm analyzes it (STATISTICS.md section 2.1):
+   * what follows, vacuum() and analyze.c, is not reached.  SKIP_LOCKED has
+   * nothing to skip: the analyze takes a reader's lock.
+   */
+  smstore_analyze(vacstmt->rels, verbose);
+  return;
 
   /* Set analyze options */
   params.options = VACOPT_ANALYZE | (verbose ? VACOPT_VERBOSE : 0) |
