@@ -422,6 +422,15 @@ Do not reopen these without the owner:
   lock manager means one deadlock detector. Tables in sm move
   first; PostgreSQL's lock manager goes when nothing else uses
   it.
+- **sm's transactions are the only ones, in the end.** As with
+  locks, `xact.c` goes: sm keeps the transaction, its
+  statements, savepoints, isolation, visibility and
+  durability, and digres keeps only what a session needs
+  around it -- its block state, memory and resource cleanup,
+  and the hooks that end a statement. PostgreSQL's
+  transaction ids, commit log, snapshots and two-phase commit
+  go with it. Until then sm's transaction follows
+  PostgreSQL's (`access/smstore.h`).
 
 ## 8. Working in this tree
 
