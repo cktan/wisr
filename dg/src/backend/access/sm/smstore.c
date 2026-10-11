@@ -1064,42 +1064,88 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
 }
 
 /*
+ * The row at rowno, as this transaction sees it, into slot, as a virtual
+ * tuple, its tid its rowno; false, the slot empty, if it sees none.
+ */
+static bool read_row(sm_tbl_t *tbl, uint64_t rowno, TupleTableSlot *slot) {
+  const void *tuple;
+  size_t len;
+
+  ExecClearTuple(slot);
+  switch (sm_tbl_read(tbl, rowno, &tuple, &len)) {
+  case 0:
+    break;
+  case 1:
+    return false;
+  default:
+    sm_error("read a row");
+  }
+  if (sm_tbl_deform(tbl, tuple, len, (sm_datum_t *)slot->tts_values,
+                    slot->tts_isnull, slot->tts_tupleDescriptor->natts) != 0)
+    sm_error("read a row");
+  ExecStoreVirtualTuple(slot);
+  smstore_rowno_to_tid(rowno, &slot->tts_tid);
+  return true;
+}
+
+/*
  * The index scan's next row that meets its keys into slot, as a virtual
  * tuple, its tid its rowno; false at the end.
  */
 bool smstore_index_getnext(smstore_scan_t *scan, TupleTableSlot *slot) {
-  for (;;) {
-    uint64_t rowno;
-    bool cut;
-    const void *value, *tuple;
-    size_t len;
+  uint64 rowno;
 
-    CHECK_FOR_INTERRUPTS();
-    switch (sm_idx_scannxt(scan->icursor, &rowno, &cut, &value, &len)) {
-    case 0:
-      break;
-    case 1:
-      ExecClearTuple(slot);
-      return false;
-    default:
-      sm_error("scan an index");
-    }
-    /* The row as this transaction sees it; one it does not see is passed. */
-    switch (sm_tbl_read(scan->tbl, rowno, &tuple, &len)) {
-    case 0:
-      break;
-    case 1:
-      continue;
-    default:
-      sm_error("read a row");
-    }
-    ExecClearTuple(slot);
-    if (sm_tbl_deform(scan->tbl, tuple, len, (sm_datum_t *)slot->tts_values,
-                      slot->tts_isnull, slot->tts_tupleDescriptor->natts) != 0)
-      sm_error("read a row");
-    ExecStoreVirtualTuple(slot);
-    smstore_rowno_to_tid(rowno, &slot->tts_tid);
-    if (keys_met(scan, slot))
+  while (smstore_index_getrowno(scan, &rowno))
+    /* A row the transaction does not see is passed. */
+    if (read_row(scan->tbl, rowno, slot) && keys_met(scan, slot))
       return true;
+  ExecClearTuple(slot);
+  return false;
+}
+
+/*
+ * The rowno of the index scan's next entry into *rowno, the row unread;
+ * false at the end.  The entry is within the scan's bounds, but its row may
+ * be one the transaction does not see, or not meet every key: who reads
+ * the row checks.
+ */
+bool smstore_index_getrowno(smstore_scan_t *scan, uint64 *rowno) {
+  uint64_t r;
+  bool cut;
+  const void *value;
+  size_t len;
+
+  CHECK_FOR_INTERRUPTS();
+  switch (sm_idx_scannxt(scan->icursor, &r, &cut, &value, &len)) {
+  case 0:
+    *rowno = r;
+    return true;
+  case 1:
+    return false;
+  default:
+    sm_error("scan an index");
   }
+  return false; /* not reached */
+}
+
+/* Begin reading rows of rel, a table in sm, by rowno (smstore_fetch()). */
+smstore_scan_t *smstore_beginfetch(Relation rel) {
+  sm_tbl_t *tbl = open_table(RelationGetRelid(rel), SM_LOCKMODE_IS);
+  smstore_scan_t *scan;
+
+  if (tbl == NULL)
+    ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
+                    errmsg("relation \"%s\" does not exist",
+                           RelationGetRelationName(rel))));
+  scan = (smstore_scan_t *)palloc0(sizeof(smstore_scan_t));
+  scan->tbl = tbl;
+  return scan;
+}
+
+/*
+ * The row at rowno into slot, as a virtual tuple, its tid its rowno; false
+ * if the transaction sees none there.
+ */
+bool smstore_fetch(smstore_scan_t *scan, uint64 rowno, TupleTableSlot *slot) {
+  return read_row(scan->tbl, rowno, slot);
 }

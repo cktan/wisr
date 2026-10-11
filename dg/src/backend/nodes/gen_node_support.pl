@@ -152,7 +152,7 @@ my @abstract_types = qw(Node);
 my @extra_tags = qw(
   IntList OidList XidList
   AllocSetContext GenerationContext SlabContext BumpContext
-  TIDBitmap
+  TIDBitmap RowBitmap
   WindowObjectData
 );
 

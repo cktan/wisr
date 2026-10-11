@@ -1784,3 +1784,30 @@ could name the GC thread's side.
   index in sm.
 - Not yet: `int` as a column's type is not resolved in CREATE
   TABLE (it opens pg_type); `int4` is.
+
+## Step 56: bitmap scans of tables in sm, over rownos
+
+- **A `RowBitmap`** (`nodes/rowbitmap.c`) is a set of rownos:
+  bit r for row r in a 64-bit space, with no page or block. Its
+  words are kept sparsely, in a hash table, and it is exact; it
+  grows as it must, with no lossy form. It is a node, so
+  BitmapAnd and BitmapOr take it as they take a `TIDBitmap`:
+  `rbm_intersect()`, `rbm_union()`.
+- **A bitmap index scan of an index in sm** has smstore.c walk
+  the index between the bounds its keys make, adding each
+  entry's rowno (`smstore_index_getrowno()`) without reading the
+  row. It opens no `IndexScanDesc`. An IN list is the executor's
+  array keys, one walk per value.
+- **A bitmap heap scan of a table in sm** reads each rowno in
+  order (`smstore_fetch()`), passes a row the transaction does
+  not see, and rechecks every row against the original quals:
+  an entry is only within the bounds, and a key that bounds
+  nothing is checked there.
+- `smindex_routine()` has an `amgetbitmap`, which raises an
+  error, so the planner plans bitmap scans.
+- The planner now prefers a bitmap scan for a small range;
+  `server.sh` turns them off for its index scan plan check.
+- `server.sh` checks a BitmapOr, a BitmapAnd, an OR of ANDs, an
+  IN list, a recheck, and an uncommitted row passed over.
+- Not yet: `count(*)` and `generate_series()`, which look a
+  function up by name in pg_proc.

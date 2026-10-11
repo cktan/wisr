@@ -1734,7 +1734,8 @@ typedef struct IndexOnlyScanState
 /* ----------------
  *	 BitmapIndexScanState information
  *
- *		result			   bitmap to return output into, or NULL
+ *		result			   bitmap to return output into, or NULL: a
+ *						   TIDBitmap, or for an index in sm a RowBitmap
  *		ScanKeys		   Skey structures for index quals
  *		NumScanKeys		   number of ScanKeys
  *		RuntimeKeys		   info about Skeys that must be evaluated at runtime
@@ -1751,7 +1752,7 @@ typedef struct IndexOnlyScanState
 typedef struct BitmapIndexScanState
 {
 	ScanState	ss;				/* its first field is NodeTag */
-	TIDBitmap  *biss_result;
+	Node	   *biss_result;
 	struct ScanKeyData *biss_ScanKeys;
 	int			biss_NumScanKeys;
 	IndexRuntimeKeyInfo *biss_RuntimeKeys;
@@ -1786,6 +1787,9 @@ typedef struct BitmapHeapScanInstrumentation
  *		stats			   execution statistics
  *		initialized		   is node is ready to iterate
  *		recheck			   do current page's tuples need recheck
+ *		rbm				   for a table in sm, bitmap of rownos from child
+ *		rbm_iter		   iteration over rbm
+ *		sm_fetch		   reader of the sm table's rows by rowno
  * ----------------
  */
 typedef struct BitmapHeapScanState
@@ -1796,6 +1800,9 @@ typedef struct BitmapHeapScanState
 	BitmapHeapScanInstrumentation stats;
 	bool		initialized;
 	bool		recheck;
+	struct RowBitmap *rbm;
+	struct RowBitmapIterator *rbm_iter;
+	struct smstore_scan_t *sm_fetch;	/* access/smstore.h */
 } BitmapHeapScanState;
 
 /* ----------------

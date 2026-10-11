@@ -28,9 +28,12 @@
 
 #include "postgres.h"
 
+#include "access/smstore.h"
 #include "executor/executor.h"
 #include "executor/nodeBitmapOr.h"
 #include "miscadmin.h"
+#include "nodes/rowbitmap.h"
+#include "utils/rel.h"
 
 /* ----------------------------------------------------------------
  *		ExecBitmapOr
@@ -105,7 +108,7 @@ Node *MultiExecBitmapOr(BitmapOrState *node) {
   PlanState **bitmapplans;
   int nplans;
   int i;
-  TIDBitmap *result = NULL;
+  Node *result = NULL;
 
   /* must provide our own instrumentation support */
   if (node->ps.instrument)
@@ -122,7 +125,7 @@ Node *MultiExecBitmapOr(BitmapOrState *node) {
    */
   for (i = 0; i < nplans; i++) {
     PlanState *subnode = bitmapplans[i];
-    TIDBitmap *subresult;
+    Node *subresult;
 
     /*
      * We can special-case BitmapIndexScan children to avoid an explicit
@@ -132,28 +135,37 @@ Node *MultiExecBitmapOr(BitmapOrState *node) {
     if (IsA(subnode, BitmapIndexScanState)) {
       if (result == NULL) /* first subplan */
       {
-        /* XXX should we use less than work_mem for this? */
-        result = tbm_create(work_mem * (Size)1024);
+        /* An index in sm gives rownos, not tids. */
+        if (RelationIsSm(((BitmapIndexScanState *)subnode)->biss_RelationDesc))
+          result = (Node *)rbm_create();
+        else
+          /* XXX should we use less than work_mem for this? */
+          result = (Node *)tbm_create(work_mem * (Size)1024);
       }
 
       ((BitmapIndexScanState *)subnode)->biss_result = result;
 
-      subresult = (TIDBitmap *)MultiExecProcNode(subnode);
+      subresult = MultiExecProcNode(subnode);
 
       if (subresult != result)
         elog(ERROR, "unrecognized result from subplan");
     } else {
       /* standard implementation */
-      subresult = (TIDBitmap *)MultiExecProcNode(subnode);
+      subresult = MultiExecProcNode(subnode);
 
-      if (!subresult || !IsA(subresult, TIDBitmap))
+      /* Every subplan's is a TIDBitmap, or for a table in sm a RowBitmap. */
+      if (!subresult ||
+          !(IsA(subresult, TIDBitmap) || IsA(subresult, RowBitmap)))
         elog(ERROR, "unrecognized result from subplan");
 
       if (result == NULL)
         result = subresult; /* first subplan */
-      else {
-        tbm_union(result, subresult);
-        tbm_free(subresult);
+      else if (IsA(result, RowBitmap)) {
+        rbm_union(castNode(RowBitmap, result), castNode(RowBitmap, subresult));
+        rbm_free(castNode(RowBitmap, subresult));
+      } else {
+        tbm_union(castNode(TIDBitmap, result), castNode(TIDBitmap, subresult));
+        tbm_free(castNode(TIDBitmap, subresult));
       }
     }
   }
@@ -166,7 +178,7 @@ Node *MultiExecBitmapOr(BitmapOrState *node) {
   if (node->ps.instrument)
     InstrStopNode(node->ps.instrument, 0 /* XXX */);
 
-  return (Node *)result;
+  return result;
 }
 
 /* ----------------------------------------------------------------

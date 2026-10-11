@@ -30,6 +30,7 @@
 
 #include "executor/executor.h"
 #include "executor/nodeBitmapAnd.h"
+#include "nodes/rowbitmap.h"
 
 /* ----------------------------------------------------------------
  *		ExecBitmapAnd
@@ -104,7 +105,7 @@ Node *MultiExecBitmapAnd(BitmapAndState *node) {
   PlanState **bitmapplans;
   int nplans;
   int i;
-  TIDBitmap *result = NULL;
+  Node *result = NULL;
 
   /* must provide our own instrumentation support */
   if (node->ps.instrument)
@@ -121,18 +122,24 @@ Node *MultiExecBitmapAnd(BitmapAndState *node) {
    */
   for (i = 0; i < nplans; i++) {
     PlanState *subnode = bitmapplans[i];
-    TIDBitmap *subresult;
+    Node *subresult;
 
-    subresult = (TIDBitmap *)MultiExecProcNode(subnode);
+    subresult = MultiExecProcNode(subnode);
 
-    if (!subresult || !IsA(subresult, TIDBitmap))
+    /* Every subplan's is a TIDBitmap, or for a table in sm a RowBitmap. */
+    if (!subresult || !(IsA(subresult, TIDBitmap) || IsA(subresult, RowBitmap)))
       elog(ERROR, "unrecognized result from subplan");
 
     if (result == NULL)
       result = subresult; /* first subplan */
-    else {
-      tbm_intersect(result, subresult);
-      tbm_free(subresult);
+    else if (IsA(result, RowBitmap)) {
+      rbm_intersect(castNode(RowBitmap, result),
+                    castNode(RowBitmap, subresult));
+      rbm_free(castNode(RowBitmap, subresult));
+    } else {
+      tbm_intersect(castNode(TIDBitmap, result),
+                    castNode(TIDBitmap, subresult));
+      tbm_free(castNode(TIDBitmap, subresult));
     }
 
     /*
@@ -142,7 +149,8 @@ Node *MultiExecBitmapAnd(BitmapAndState *node) {
      * the subplans by selectivity should make this case more likely to
      * occur.)
      */
-    if (tbm_is_empty(result))
+    if (IsA(result, RowBitmap) ? rbm_is_empty(castNode(RowBitmap, result))
+                               : tbm_is_empty(castNode(TIDBitmap, result)))
       break;
   }
 
@@ -153,7 +161,7 @@ Node *MultiExecBitmapAnd(BitmapAndState *node) {
   if (node->ps.instrument)
     InstrStopNode(node->ps.instrument, 0 /* XXX */);
 
-  return (Node *)result;
+  return result;
 }
 
 /* ----------------------------------------------------------------

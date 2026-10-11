@@ -431,6 +431,11 @@ Do not reopen these without the owner:
   transaction ids, commit log, snapshots and two-phase commit
   go with it. Until then sm's transaction follows
   PostgreSQL's (`access/smstore.h`).
+- **A bitmap of rows in sm holds rownos.** A row in sm is a
+  64-bit rowno, with no page or block: a bitmap scan maps each
+  rowno to its bit in that space (`nodes/rowbitmap.h`), and
+  reads the rows in rowno order. It is exact; there is no lossy
+  form, as there is no page to fall back to.
 
 ## 8. Working in this tree
 
