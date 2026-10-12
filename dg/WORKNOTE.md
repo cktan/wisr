@@ -2430,3 +2430,79 @@ was refused.
   `DISCARD TEMP`; and the refusals. Breaking the `ON COMMIT`
   registration, and creating the table in `public` instead,
   each fail it.
+
+## Step 81: a regclass prints its relation's name
+
+Found in step 79: `regclassout()` looked the oid up in the
+`RELOID` cache, which opens `pg_class`.
+
+- **`regclassout()` and `RelationIsVisibleExt()`** read the
+  relation's `pg_class` form from its descriptor
+  (`RelationGetClassForm()`), as `get_rel_name()` does. A name
+  is qualified when the search path would not find it, and an
+  oid that is no relation prints as its number.
+- `server.sh` prints regclasses on the default path and on one
+  where a schema hides `public`'s table.
+
+## Step 82: a type named by its schema is found
+
+Every type name of the SQL standard -- `integer`, `real`,
+`varchar`, `numeric` -- is `pg_catalog.`-qualified by the
+grammar, and `LookupTypeNameExtended()` looked a qualified name
+up in the `TYPENAMENSP` cache, which opens `pg_type`: a cast to
+any of them failed.
+
+- **A qualified name is found among the compiled-in types**,
+  by `builtin_type_oid()` (`namespace.c`), as an unqualified
+  one already was, now extern.
+- `server.sh` casts to the standard's names, and looks a type
+  up in `pg_catalog`, in a schema without it, and in none.
+
+## Step 83: an operator is chosen among the compiled-in ones
+
+`OpernameGetCandidates()` listed an operator name's candidates
+from the `OPERNAMENSP` cache, which opens `pg_operator`: any
+operator whose argument types matched none exactly -- `float4 >
+0.3`, `numeric + 1` -- failed.
+
+- **The candidates are the compiled-in rows of the name**
+  (`cat_operators_named()`), as `OpernameGetOprid()` already
+  read them. They are not ordered by argument types, as the
+  cache's list was, so a duplicate is looked for in the whole
+  result list, PostgreSQL's path for an unordered list.
+- `'a' || 1` takes the array operator, as PostgreSQL would
+  without the `text || anynonarray` operators step 6 cut with
+  their SQL-language functions.
+- `server.sh` checks operators chosen by coercion, and one
+  qualified by its schema.
+
+## Step 84: pg_range is compiled in
+
+`unnest()` of an array failed: choosing among its forms asks
+whether the argument is a multirange (`get_multirange_range()`),
+which searched the `RANGEMULTIRANGE` cache and opened
+`pg_range`.
+
+- **`gen_cat.py` writes pg_range**, keyed by `rngtypid`:
+  `cat_range()` finds a range type's row, `cat_ranges()` gives
+  them all.
+- **The range lookups read it**: `get_range_subtype()`,
+  `get_range_collation()`, `get_range_multirange()`, and
+  `get_multirange_range()`, which looks at each row, as there is
+  no key by multirange; the type cache's
+  `load_rangetype_info()` too.
+- **Found, not fixed here**: `array_agg()` opens `pg_type`, from
+  the planner's `agg_args_support_sendreceive()`.
+- `server.sh` runs `unnest`, with ordinality, and ranges and a
+  multirange.
+
+## Step 85: array_agg plans
+
+Found in step 84: the planner asks whether an aggregate's
+argument types have send and receive functions
+(`agg_args_support_sendreceive()`, for a partial aggregate's
+state), and looked each type up in the `TYPEOID` cache, which
+opens `pg_type`: `array_agg()` failed.
+
+- **The type's row is the compiled-in one** (`cat_type()`).
+- `server.sh` runs `array_agg`, plain and ordered in groups.

@@ -838,17 +838,16 @@ Datum to_regclass(PG_FUNCTION_ARGS) {
 Datum regclassout(PG_FUNCTION_ARGS) {
   Oid classid = PG_GETARG_OID(0);
   char *result;
-  HeapTuple classtup;
+  FormData_pg_class classform_data;
 
   if (classid == InvalidOid) {
     result = pstrdup("-");
     PG_RETURN_CSTRING(result);
   }
 
-  classtup = SearchSysCache1(RELOID, ObjectIdGetDatum(classid));
-
-  if (HeapTupleIsValid(classtup)) {
-    Form_pg_class classform = (Form_pg_class)GETSTRUCT(classtup);
+  /* From the descriptor: a user's relation has no pg_class row. */
+  if (RelationGetClassForm(classid, &classform_data)) {
+    Form_pg_class classform = &classform_data;
     char *classname = NameStr(classform->relname);
 
     /*
@@ -871,8 +870,6 @@ Datum regclassout(PG_FUNCTION_ARGS) {
 
       result = quote_qualified_identifier(nspname, classname);
     }
-
-    ReleaseSysCache(classtup);
   } else {
     /* If OID doesn't match any pg_class entry, return it numerically */
     result = (char *)palloc(NAMEDATALEN);

@@ -89,6 +89,7 @@ extern Oid RelnameGetRelid(const char *relname);
 extern bool RelationIsVisible(Oid relid);
 
 extern Oid TypenameGetTypid(const char *typname);
+extern Oid builtin_type_oid(const char *typname, Oid namespaceId);
 extern Oid TypenameGetTypidExtended(const char *typname, bool temp_ok);
 extern bool TypeIsVisible(Oid typid);
 

@@ -15,6 +15,7 @@
 #include "postgres.h"
 
 #include "access/htup_details.h"
+#include "catalog/cat_builtin.h"
 #include "catalog/pg_aggregate.h"
 #include "catalog/pg_constraint.h"
 #include "catalog/pg_type.h"
@@ -1945,8 +1946,7 @@ bool agg_args_support_sendreceive(Aggref *aggref) {
   ListCell *lc;
 
   foreach (lc, aggref->args) {
-    HeapTuple typeTuple;
-    Form_pg_type pt;
+    const cat_type_t *pt;
     TargetEntry *tle = (TargetEntry *)lfirst(lc);
     Oid type = exprType((Node *)tle->expr);
 
@@ -1959,18 +1959,14 @@ bool agg_args_support_sendreceive(Aggref *aggref) {
     if (type == RECORDOID)
       return false;
 
-    typeTuple = SearchSysCache1(TYPEOID, ObjectIdGetDatum(type));
-    if (!HeapTupleIsValid(typeTuple))
+    /* Every type is compiled in (catalog/cat_builtin.h). */
+    pt = cat_type(type);
+    if (pt == NULL)
       elog(ERROR, "cache lookup failed for type %u", type);
 
-    pt = (Form_pg_type)GETSTRUCT(typeTuple);
-
     if (!pt->typbyval &&
-        (!OidIsValid(pt->typsend) || !OidIsValid(pt->typreceive))) {
-      ReleaseSysCache(typeTuple);
+        (!OidIsValid(pt->typsend) || !OidIsValid(pt->typreceive)))
       return false;
-    }
-    ReleaseSysCache(typeTuple);
   }
   return true;
 }

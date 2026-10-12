@@ -174,10 +174,9 @@ LookupTypeNameExtended(ParseState *pstate,
 			setup_parser_errposition_callback(&pcbstate, pstate, typeName->location);
 
 			namespaceId = LookupExplicitNamespace(schemaname, missing_ok);
+			/* Every type is compiled in: there is no pg_type to search. */
 			if (OidIsValid(namespaceId))
-				typoid = GetSysCacheOid2(TYPENAMENSP, Anum_pg_type_oid,
-										 PointerGetDatum(typname),
-										 ObjectIdGetDatum(namespaceId));
+				typoid = builtin_type_oid(typname, namespaceId);
 			else
 				typoid = InvalidOid;
 

@@ -854,20 +854,19 @@ bool RelationIsVisible(Oid relid) { return RelationIsVisibleExt(relid, NULL); }
  *error.  (Caller must initialize *is_missing = false.)
  */
 static bool RelationIsVisibleExt(Oid relid, bool *is_missing) {
-  HeapTuple reltup;
-  Form_pg_class relform;
+  FormData_pg_class relform_data;
+  Form_pg_class relform = &relform_data;
   Oid relnamespace;
   bool visible;
 
-  reltup = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
-  if (!HeapTupleIsValid(reltup)) {
+  /* From the descriptor: a user's relation has no pg_class row. */
+  if (!RelationGetClassForm(relid, &relform_data)) {
     if (is_missing != NULL) {
       *is_missing = true;
       return false;
     }
     elog(ERROR, "cache lookup failed for relation %u", relid);
   }
-  relform = (Form_pg_class)GETSTRUCT(reltup);
 
   recomputeNamespacePath();
 
@@ -905,8 +904,6 @@ static bool RelationIsVisibleExt(Oid relid, bool *is_missing) {
     }
   }
 
-  ReleaseSysCache(reltup);
-
   return visible;
 }
 
@@ -922,7 +919,7 @@ Oid TypenameGetTypid(const char *typname) {
  * The built-in type named typname in namespaceId, or InvalidOid: every type
  * is compiled in (catalog/cat_builtin.h), since there is no CREATE TYPE.
  */
-static Oid builtin_type_oid(const char *typname, Oid namespaceId) {
+Oid builtin_type_oid(const char *typname, Oid namespaceId) {
   int count;
   const cat_type_t *const *rows = cat_types_named(typname, &count);
 
@@ -1634,7 +1631,8 @@ FuncCandidateList OpernameGetCandidates(List *names, char oprkind,
   char *schemaname;
   char *opername;
   Oid namespaceId;
-  CatCList *catlist;
+  const cat_operator_t *const *rows;
+  int count;
   int i;
 
   /* deconstruct the name list */
@@ -1651,8 +1649,8 @@ FuncCandidateList OpernameGetCandidates(List *names, char oprkind,
     recomputeNamespacePath();
   }
 
-  /* Search syscache by name only */
-  catlist = SearchSysCacheList1(OPERNAMENSP, CStringGetDatum(opername));
+  /* Search the built-in operators by name only: there is no pg_operator */
+  rows = cat_operators_named(opername, &count);
 
   /*
    * In typical scenarios, most if not all of the operators found by the
@@ -1666,12 +1664,11 @@ FuncCandidateList OpernameGetCandidates(List *names, char oprkind,
 #define SPACE_PER_OP MAXALIGN(offsetof(struct _FuncCandidateList, args) + \
 							  2 * sizeof(Oid))
 
-  if (catlist->n_members > 0)
-    resultSpace = (char *)palloc(catlist->n_members * SPACE_PER_OP);
+  if (count > 0)
+    resultSpace = (char *)palloc(count * SPACE_PER_OP);
 
-  for (i = 0; i < catlist->n_members; i++) {
-    HeapTuple opertup = &catlist->members[i]->tuple;
-    Form_pg_operator operform = (Form_pg_operator)GETSTRUCT(opertup);
+  for (i = 0; i < count; i++) {
+    const cat_operator_t *operform = rows[i];
     int pathpos = 0;
     FuncCandidateList newResult;
 
@@ -1705,28 +1702,17 @@ FuncCandidateList OpernameGetCandidates(List *names, char oprkind,
        * arguments as something we already accepted?	If so, keep only
        * the one that appears earlier in the search path.
        *
-       * If we have an ordered list from SearchSysCacheList (the normal
-       * case), then any conflicting oper must immediately adjoin this
-       * one in the list, so we only need to look at the newest result
-       * item.  If we have an unordered list, we have to scan the whole
-       * result list.
+       * The built-in rows are not ordered by argument types, so we
+       * have to scan the whole result list.
        */
       if (resultList) {
         FuncCandidateList prevResult;
 
-        if (catlist->ordered) {
-          if (operform->oprleft == resultList->args[0] &&
-              operform->oprright == resultList->args[1])
-            prevResult = resultList;
-          else
-            prevResult = NULL;
-        } else {
-          for (prevResult = resultList; prevResult;
-               prevResult = prevResult->next) {
-            if (operform->oprleft == prevResult->args[0] &&
-                operform->oprright == prevResult->args[1])
-              break;
-          }
+        for (prevResult = resultList; prevResult;
+             prevResult = prevResult->next) {
+          if (operform->oprleft == prevResult->args[0] &&
+              operform->oprright == prevResult->args[1])
+            break;
         }
         if (prevResult) {
           /* We have a match with a previous result */
@@ -1759,8 +1745,6 @@ FuncCandidateList OpernameGetCandidates(List *names, char oprkind,
     newResult->next = resultList;
     resultList = newResult;
   }
-
-  ReleaseSysCacheList(catlist);
 
   return resultList;
 }

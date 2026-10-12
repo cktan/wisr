@@ -46,6 +46,7 @@ CATALOGS = {
     "pg_amproc": ("amproc", None),
     "pg_opfamily": ("opfamily", "opfname"),
     "pg_aggregate": ("aggregate", None, "aggfnoid"),
+    "pg_range": ("range", None, "rngtypid"),
 }
 
 

@@ -37,7 +37,6 @@
 #include "catalog/pg_operator.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_publication.h"
-#include "catalog/pg_range.h"
 #include "catalog/pg_statistic.h"
 #include "catalog/pg_subscription.h"
 #include "catalog/pg_transform.h"
@@ -3141,6 +3140,9 @@ char *get_namespace_name_or_temp(Oid nspid) {
 }
 
 /*				---------- PG_RANGE CACHES ----------
+ *
+ * pg_range is compiled in (catalog/cat_builtin.h): there is no CREATE TYPE
+ * AS RANGE.
  */
 
 /*
@@ -3150,18 +3152,9 @@ char *get_namespace_name_or_temp(Oid nspid) {
  * Returns InvalidOid if the type is not a range type.
  */
 Oid get_range_subtype(Oid rangeOid) {
-  HeapTuple tp;
+  const cat_range_t *rngtup = cat_range(rangeOid);
 
-  tp = SearchSysCache1(RANGETYPE, ObjectIdGetDatum(rangeOid));
-  if (HeapTupleIsValid(tp)) {
-    Form_pg_range rngtup = (Form_pg_range)GETSTRUCT(tp);
-    Oid result;
-
-    result = rngtup->rngsubtype;
-    ReleaseSysCache(tp);
-    return result;
-  } else
-    return InvalidOid;
+  return rngtup != NULL ? rngtup->rngsubtype : InvalidOid;
 }
 
 /*
@@ -3172,18 +3165,9 @@ Oid get_range_subtype(Oid rangeOid) {
  * or if its subtype is not collatable.
  */
 Oid get_range_collation(Oid rangeOid) {
-  HeapTuple tp;
+  const cat_range_t *rngtup = cat_range(rangeOid);
 
-  tp = SearchSysCache1(RANGETYPE, ObjectIdGetDatum(rangeOid));
-  if (HeapTupleIsValid(tp)) {
-    Form_pg_range rngtup = (Form_pg_range)GETSTRUCT(tp);
-    Oid result;
-
-    result = rngtup->rngcollation;
-    ReleaseSysCache(tp);
-    return result;
-  } else
-    return InvalidOid;
+  return rngtup != NULL ? rngtup->rngcollation : InvalidOid;
 }
 
 /*
@@ -3193,18 +3177,9 @@ Oid get_range_collation(Oid rangeOid) {
  * Returns InvalidOid if the type is not a range type.
  */
 Oid get_range_multirange(Oid rangeOid) {
-  HeapTuple tp;
+  const cat_range_t *rngtup = cat_range(rangeOid);
 
-  tp = SearchSysCache1(RANGETYPE, ObjectIdGetDatum(rangeOid));
-  if (HeapTupleIsValid(tp)) {
-    Form_pg_range rngtup = (Form_pg_range)GETSTRUCT(tp);
-    Oid result;
-
-    result = rngtup->rngmultitypid;
-    ReleaseSysCache(tp);
-    return result;
-  } else
-    return InvalidOid;
+  return rngtup != NULL ? rngtup->rngmultitypid : InvalidOid;
 }
 
 /*
@@ -3214,18 +3189,14 @@ Oid get_range_multirange(Oid rangeOid) {
  * Returns InvalidOid if the type is not a multirange.
  */
 Oid get_multirange_range(Oid multirangeOid) {
-  HeapTuple tp;
+  int count;
+  const cat_range_t *rows = cat_ranges(&count);
 
-  tp = SearchSysCache1(RANGEMULTIRANGE, ObjectIdGetDatum(multirangeOid));
-  if (HeapTupleIsValid(tp)) {
-    Form_pg_range rngtup = (Form_pg_range)GETSTRUCT(tp);
-    Oid result;
-
-    result = rngtup->rngtypid;
-    ReleaseSysCache(tp);
-    return result;
-  } else
-    return InvalidOid;
+  /* The compiled-in rows are keyed by range type: look at each, few. */
+  for (int i = 0; i < count; i++)
+    if (rows[i].rngmultitypid == multirangeOid)
+      return rows[i].rngtypid;
+  return InvalidOid;
 }
 
 /*				---------- PG_INDEX CACHE ----------

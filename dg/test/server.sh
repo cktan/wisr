@@ -953,6 +953,77 @@ local_psql -c 'create table t15 (a int4)' >> "$work/stats.out" 2>&1
 [ "$(local_psql -c "select schemaname, tablename from pg_stats('s7.u')" \
   2>&1)" = "s7|u" ] || fail "pg_stats of a table in a schema made"
 
+# Verify that a regclass prints as its relation's name, qualified only
+# when the search path would not find it.
+# 1. On the default path, t14 prints bare and s7.u qualified.
+# 2. With s7 first on the path, s7.u prints bare; a t14 made in s7 then
+#    hides public's, which prints qualified.
+# 3. An oid that is no relation prints as the number.
+[ "$(local_psql -c "select 't14'::regclass, 's7.u'::regclass" 2>&1)" = \
+  "t14|s7.u" ] || fail "regclass on the default path"
+[ "$(local_psql -c 'create table s7.t14 (a int4)' -c 'set search_path = s7, public' \
+  -c "select 's7.u'::regclass, 'public.t14'::regclass, 's7.t14'::regclass" \
+  2>&1 | tail -1)" = "u|public.t14|t14" ] || fail "regclass on a path"
+[ "$(local_psql -c 'select 99999::regclass' 2>&1)" = 99999 ] ||
+  fail "regclass of no relation"
+
+# Verify that a type named by its schema, as the SQL standard's names are
+# (integer is pg_catalog.int4), is found among the compiled-in types.
+# 1. Casts to integer, bigint, real, double precision, varchar(3) and
+#    numeric give their values.
+# 2. pg_catalog.int4 is found; public.int4 is not a type, and nope.int4
+#    names no schema.
+[ "$(local_psql -c "select 1::integer, 2::bigint, 1.5::real,
+      2.5::double precision, 'xyz1'::varchar(3), 1.25::numeric" 2>&1)" = \
+  "1|2|1.5|2.5|xyz|1.25" ] || fail "casts to the standard's type names"
+[ "$(local_psql -c "select '7'::pg_catalog.int4" 2>&1)" = 7 ] ||
+  fail "a type qualified by its schema"
+local_psql -c "select '1'::public.int4" 2>&1 |
+  grep -q 'type "public.int4" does not exist' || fail "no type in a schema"
+local_psql -c "select '1'::nope.int4" 2>&1 |
+  grep -q 'schema "nope" does not exist' || fail "a type in no schema"
+
+# Verify that an operator whose argument types match none exactly is
+# chosen among the compiled-in operators of its name, as PostgreSQL's
+# rules choose.
+# 1. float4 > a numeric constant, numeric + integer, and int2 * int8 are
+#    found by coercing an argument.
+# 2. OPERATOR(pg_catalog.+) is found; OPERATOR(public.+) does not exist.
+[ "$(local_psql -c "select '1'::float4 > 0.3, 1.5::numeric(5,2) + 1,
+      2::int2 * 3::int8" 2>&1)" = "t|2.50|6" ] ||
+  fail "operators chosen by coercion"
+[ "$(local_psql -c 'select 3 operator(pg_catalog.+) 4' 2>&1)" = 7 ] ||
+  fail "an operator qualified by its schema"
+local_psql -c 'select 3 operator(public.+) 4' 2>&1 |
+  grep -q 'operator does not exist: integer public.+ integer' ||
+  fail "no operator in a schema"
+
+# Verify that range and multirange types, and functions polymorphic over
+# them, such as unnest's anymultirange form, are resolved from the
+# compiled-in pg_range.
+# 1. unnest of an array gives its elements, with ordinality too.
+# 2. int4range contains 5; numeric ranges intersect.
+# 3. An int4multirange is made of two ranges.
+[ "$(local_psql -c 'select unnest(array[1,2])' 2>&1 | tr '\n' ,)" = "1,2," ] ||
+  fail "unnest"
+[ "$(local_psql -c "select * from unnest(array['a','b']) with ordinality" \
+  2>&1 | tr '\n' ,)" = "a|1,b|2," ] || fail "unnest with ordinality"
+[ "$(local_psql -c 'select int4range(1, 10) @> 5,
+      numrange(1.5, 2.5) * numrange(2, 3)' 2>&1)" = "t|[2,2.5)" ] ||
+  fail "ranges"
+[ "$(local_psql -c 'select int4multirange(int4range(1, 3), int4range(5, 7))' \
+  2>&1)" = "{[1,3),[5,7)}" ] || fail "a multirange"
+
+# Verify that array_agg, whose arguments the planner checks for send and
+# receive functions, plans and runs.
+# 1. array_agg of an unnest gives the array back.
+# 2. array_agg ordered, grouped over t14, gives each group's values.
+[ "$(local_psql -c 'select array_agg(x) from unnest(array[3,1,2]) x' 2>&1)" = \
+  "{3,1,2}" ] || fail "array_agg"
+[ "$(local_psql -c 'select b, array_agg(a order by a) from t14
+      where a <= 20 group by b order by b limit 1' 2>&1)" = "0|{10,20}" ] ||
+  fail "array_agg grouped"
+
 # Verify that the buffer manager's settings are gone, and DISCARD SEQUENCES
 # still runs.
 # 1. Confirm DISCARD SEQUENCES succeeds.

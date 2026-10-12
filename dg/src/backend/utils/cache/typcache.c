@@ -54,7 +54,6 @@
 #include "catalog/pg_constraint.h"
 #include "catalog/pg_enum.h"
 #include "catalog/pg_operator.h"
-#include "catalog/pg_range.h"
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
 #include "common/int.h"
@@ -791,8 +790,7 @@ static void load_typcache_tupdesc(TypeCacheEntry *typentry) {
  * load_rangetype_info --- helper routine to set up range type information
  */
 static void load_rangetype_info(TypeCacheEntry *typentry) {
-  Form_pg_range pg_range;
-  HeapTuple tup;
+  const cat_range_t *pg_range;
   Oid subtypeOid;
   Oid opclassOid;
   Oid canonicalOid;
@@ -801,20 +799,17 @@ static void load_rangetype_info(TypeCacheEntry *typentry) {
   Oid opcintype;
   Oid cmpFnOid;
 
-  /* get information from pg_range */
-  tup = SearchSysCache1(RANGETYPE, ObjectIdGetDatum(typentry->type_id));
+  /* get information from pg_range's compiled-in rows */
+  pg_range = cat_range(typentry->type_id);
   /* should not fail, since we already checked typtype ... */
-  if (!HeapTupleIsValid(tup))
+  if (pg_range == NULL)
     elog(ERROR, "cache lookup failed for range type %u", typentry->type_id);
-  pg_range = (Form_pg_range)GETSTRUCT(tup);
 
   subtypeOid = pg_range->rngsubtype;
   typentry->rng_collation = pg_range->rngcollation;
   opclassOid = pg_range->rngsubopc;
   canonicalOid = pg_range->rngcanonical;
   subdiffOid = pg_range->rngsubdiff;
-
-  ReleaseSysCache(tup);
 
   /* get opclass properties and look up the comparison function */
   opfamilyOid = get_opclass_family(opclassOid);
