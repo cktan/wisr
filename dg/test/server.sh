@@ -1236,6 +1236,60 @@ local_psql -c 'create index t18iv on t18 (iv)' 2>&1 |
   grep -q 'an index key of type interval is not supported yet' ||
   fail "an interval key refused"
 
+# Verify that numeric refuses what a decimal of 38 digits has no value for,
+# as PostgreSQL words each error.
+# 1. NaN and infinity are not values; text past 38 digits is refused.
+# 2. Division by zero, the root of a negative, the logarithm of zero.
+# 3. A precision past 38, a field overflow, a result past 38 digits.
+for c in "'NaN'::numeric|invalid input syntax for type numeric" \
+  "'Infinity'::numeric|invalid input syntax for type numeric" \
+  "'0.123456789012345678901234567890123456789'::numeric|value overflows numeric format" \
+  "1 / 0::numeric|division by zero" \
+  "sqrt(-1::numeric)|cannot take square root of a negative number" \
+  "ln(0::numeric)|cannot take logarithm of zero" \
+  "1::numeric(50,2)|NUMERIC precision 50 must be between 1 and 38" \
+  "12345.6::numeric(5,2)|numeric field overflow" \
+  "99999999999999999999999999999999999999::numeric * 10|value overflows numeric format"; do
+  local_psql -c "select ${c%%|*}" 2>&1 | grep -q "${c#*|}" ||
+    fail "numeric refuses ${c%%|*}"
+done
+
+# Verify that numeric columns are stored in sm as decimals at their scale,
+# indexed, keyed and analyzed.
+# 1. Make t20 with numeric(10,2), numeric(30,5) and a bare numeric, which is
+#    numeric(18,3), and indexes; values are rounded to the column's scale.
+# 2. A value past the precision is refused, as an assignment is.
+# 3. Index scans find = and ranges whose keys have more places than the
+#    column, and keys past its range.
+# 4. A unique numeric(30,5) index refuses a value that rounds to a taken one.
+# 5. ANALYZE gives common values at the column's scale, and = is estimated.
+local_psql -c 'create table t20 (id int4 primary key, a numeric(10,2),
+      b numeric(30,5), c numeric)' \
+  -c 'create index t20a on t20 (a)' -c 'create unique index t20b on t20 (b)' \
+  -c 'insert into t20 values (1, 1.5, 123456789012345678901234.12345, 2.5),
+      (2, -0.004, -1, 1.23456), (3, null, 0, null), (4, 1.51, 1.51, 0.0005)' \
+  > "$work/numeric.out" 2>&1
+[ "$(local_psql -c 'select * from t20 order by id' 2>&1 | tr '\n' ,)" = \
+  "1|1.50|123456789012345678901234.12345|2.500,2|0.00|-1.00000|1.235,3||0.00000|,4|1.51|1.51000|0.001," ] ||
+  fail "numeric columns read back"
+local_psql -c 'insert into t20 values (5, 123456789.5, 5, 5)' 2>&1 |
+  grep -q 'numeric field overflow' || fail "numeric column precision"
+[ "$(local_psql -c 'set enable_seqscan = off' \
+  -c 'select array_agg(id) from t20 where a = 1.5' \
+  -c 'select array_agg(id) from t20 where a = 1.505' \
+  -c 'select array_agg(id order by a) from t20 where a <= 1.505' \
+  -c 'select array_agg(id order by a) from t20 where a > -1e30' \
+  -c 'select array_agg(id order by b) from t20 where b >= 1.500001' 2>&1 |
+  tr '\n' ,)" = "SET,{1},,{2,1},{2,1,4},{4,1}," ] || fail "numeric keys"
+local_psql -c 'insert into t20 values (6, 0, 1.509999999, 0)' 2>&1 |
+  grep -q 'duplicate key' || fail "a unique numeric key"
+local_psql -c 'create table t21 (a numeric(10,2))' \
+  -c 'insert into t21 select (g % 10) / 4.0 from generate_series(1, 5000) g' \
+  -c 'analyze t21' >> "$work/numeric.out" 2>&1
+[ "$(local_psql -c "select (most_common_vals::text[])[1] from pg_stats('t21')" \
+  2>&1)" = "0.00" ] && [ "$(rows_of 'select * from t21 where a = 0.5')" = 500 ] ||
+  fail "numeric statistics"
+
 # Verify that an INSERT naming its columns fills the others with their
 # types' defaults, null for every built-in type.
 # 1. Insert naming two columns of t19, then three in another order, then

@@ -25,6 +25,7 @@
 #include "parser/parse_node.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
+#include "utils/numeric.h"
 
 static void pcb_error_callback(void *arg);
 
@@ -368,16 +369,29 @@ Const *make_const(ParseState *pstate, A_Const *aconst) {
         typebyval = FLOAT8PASSBYVAL; /* int8 and float8 alike */
       }
     } else {
-      /* arrange to report location if numeric_in() fails */
-      setup_parser_errposition_callback(&pcbstate, pstate, aconst->location);
-      val = DirectFunctionCall3(
-          numeric_in, CStringGetDatum(aconst->val.fval.fval),
-          ObjectIdGetDatum(InvalidOid), Int32GetDatum(-1));
-      cancel_parser_errposition_callback(&pcbstate);
+      ErrorSaveContext numeric_escontext = {T_ErrorSaveContext};
 
-      typeid_ = NUMERICOID;
-      typelen = -1; /* variable len */
-      typebyval = false;
+      /*
+       * A numeric, if it has at most 38 digits (DECIMAL.md); else, as in
+       * DuckDB, a float8, which takes 1e300 and loses digits past its own.
+       */
+      if (DirectInputFunctionCallSafe(numeric_in, aconst->val.fval.fval,
+                                      InvalidOid, -1,
+                                      (Node *)&numeric_escontext, &val)) {
+        typeid_ = NUMERICOID;
+        typelen = sizeof(decimal_t);
+        typebyval = false;
+      } else {
+        /* arrange to report location if float8in() fails */
+        setup_parser_errposition_callback(&pcbstate, pstate, aconst->location);
+        val = DirectFunctionCall1(float8in,
+                                  CStringGetDatum(aconst->val.fval.fval));
+        cancel_parser_errposition_callback(&pcbstate);
+
+        typeid_ = FLOAT8OID;
+        typelen = sizeof(float8);
+        typebyval = FLOAT8PASSBYVAL;
+      }
     }
     break;
   }

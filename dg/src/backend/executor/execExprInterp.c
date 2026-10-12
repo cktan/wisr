@@ -65,6 +65,7 @@
 #include "miscadmin.h"
 #include "nodes/miscnodes.h"
 #include "nodes/nodeFuncs.h"
+#include "utils/float.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/date.h"
@@ -4498,6 +4499,9 @@ static char *ExecGetJsonValueItemString(JsonbValue *item, bool *resnull) {
   case jbvNumeric:
     return DatumGetCString(
         DirectFunctionCall1(numeric_out, NumericGetDatum(item->val.numeric)));
+
+  case jbvFloat8:
+    return float8out_internal(item->val.float8val);
 
   case jbvBool:
     return DatumGetCString(

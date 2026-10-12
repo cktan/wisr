@@ -346,12 +346,12 @@
 # OIDS 1700 - 1799
 
 { oid => '1700', array_type_oid => '1231',
-  descr => '\'numeric(precision, scale)\' arbitrary precision number',
-  typname => 'numeric', typlen => '-1', typbyval => 'f', typcategory => 'N',
+  descr => '\'numeric(precision, scale)\' decimal of up to 38 digits',
+  typname => 'numeric', typlen => '32', typbyval => 'f', typcategory => 'N',
   typinput => 'numeric_in', typoutput => 'numeric_out',
   typreceive => 'numeric_recv', typsend => 'numeric_send',
   typmodin => 'numerictypmodin', typmodout => 'numerictypmodout',
-  typalign => 'i', typstorage => 'm' },
+  typalign => 'd', typstorage => 'p' },
 
 { oid => '1790', array_type_oid => '2201',
   descr => 'reference to cursor (portal name)',

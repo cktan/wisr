@@ -28,6 +28,7 @@
 #include "miscadmin.h"
 #include "nodes/miscnodes.h"
 #include "parser/parse_coerce.h"
+#include "utils/float.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
@@ -1644,6 +1645,9 @@ static text *JsonbValueAsText(JsonbValue *v) {
     return cstring_to_text(DatumGetCString(cstr));
   }
 
+  case jbvFloat8:
+    return cstring_to_text(float8out_internal(v->val.float8val));
+
   case jbvBinary: {
     StringInfoData jtext;
 
@@ -2810,6 +2814,8 @@ static Datum populate_scalar(ScalarIOData *io, Oid typid, int32 typmod,
     else if (jbv->type == jbvNumeric)
       str = DatumGetCString(
           DirectFunctionCall1(numeric_out, PointerGetDatum(jbv->val.numeric)));
+    else if (jbv->type == jbvFloat8)
+      str = float8out_internal(jbv->val.float8val);
     else if (jbv->type == jbvBinary)
       str = JsonbToCString(NULL, jbv->val.binary.data, jbv->val.binary.len);
     else
@@ -5009,6 +5015,14 @@ void iterate_jsonb_values(Jsonb *jb, uint32 flags, void *state,
 
         val = DatumGetCString(
             DirectFunctionCall1(numeric_out, NumericGetDatum(v.val.numeric)));
+
+        action(state, val, strlen(val));
+        pfree(val);
+      }
+      break;
+    case jbvFloat8:
+      if (flags & jtiNumeric) {
+        char *val = float8out_internal(v.val.float8val);
 
         action(state, val, strlen(val));
         pfree(val);

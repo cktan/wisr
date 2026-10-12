@@ -2744,3 +2744,74 @@ default (`get_typdefault()`), which read the `TYPEOID` cache.
   if it is NOT NULL.
 - `server.sh` inserts naming columns, in another order and from
   a SELECT, and refuses leaving out a NOT NULL one.
+
+## Step 95: numeric is a decimal of 38 digits
+
+`DECIMAL.md` §3, steps 1 to 3: PostgreSQL's arbitrary-precision
+numeric is gone, and `numeric` is a 128-bit integer with its
+scale.
+
+- **`utils/adt/decimal.c` replaces `numeric.c`** (some 2,900
+  lines for 11,400), keeping every function's name, so its
+  `pg_proc` rows and its callers stand: jsonb, jsonpath,
+  `extract`, `to_char`, `money`, `pg_lsn` and the rest.
+- **The type is 32 bytes by reference** (`decimal_t`,
+  `utils/numeric.h`), oid 1700 and name `numeric` as before;
+  its text and binary forms are PostgreSQL's.
+- **What PostgreSQL did with arbitrary precision is done
+  exactly** in a 512-bit integer where 128 bits do not reach --
+  a product, a quotient's dividend, a sum of squares -- and
+  rounded to 38 digits; each result's scale is the one
+  PostgreSQL's would have. `ln`, `exp`, `log` and a power to a
+  fraction are computed in `long double`.
+- **No NaN, no infinity**; a typmod's precision is 1 to 38; a
+  result past 38 digits before the point is an error; a literal
+  past 38 digits is a `float8`.
+- **Sums and variances are exact**: one state for every numeric
+  aggregate, of numerics and integers, summing in 512 bits.
+- `test/select_numeric.sql` checks PostgreSQL's results with no
+  server; `server.sh` checks the errors.
+
+## Step 96: numeric columns are sm's decimals
+
+`DECIMAL.md` §2.3, step 4 of its §3.
+
+- **A `numeric(p, s)` column is sm2's `decimal64`** up to 18
+  digits, **`decimal128`** up to 38, its typmod sm2's own. A
+  bare `numeric` column is `numeric(18, 3)`, DuckDB's default,
+  as sm2 keeps a decimal's scale in its schema.
+- **Values cross at the sm boundary** (`smstore.c`): a row's
+  numerics are rounded to their columns' scales and checked
+  against their precisions, as an assignment does, and go as
+  integers; read back, they are made numerics at the column's
+  scale and the slot is materialized, as sm's datums point into
+  a tuple kept only until the next row. Statistics' values are
+  made numerics the same way.
+- **A scan's key is widened to the column's scale**: the
+  integer at or below a lower bound, at or above an upper one,
+  within the column's precision, inclusive. Each row is checked
+  against the keys again, so `= 1.505` on a `numeric(10, 2)`
+  finds nothing, and `<= 1.505` finds `1.50`.
+- `server.sh` stores, reads, indexes, keys and analyzes numeric
+  columns.
+
+## Step 97: a JSON number with an exponent is a float8
+
+`DECIMAL.md` §2.7: jsonb's numbers were numeric's alone, so a
+JSON number past 38 digits, `1e300`, was refused.
+
+- **jsonb has a second kind of number, `jbvFloat8`**, stored as
+  a container entry of its own (`JENTRY_ISFLOAT8`), eight
+  bytes. A number token with an exponent is parsed as one, one
+  without as a numeric.
+- **The two are one kind** (`JsonbKind()`): equal, ordered and
+  contained across the kinds, a numeric and a float8 compared
+  as float8s, as SQL compares them; both hash as the float8
+  they compare as. A float prints as `float8` does.
+- **jsonpath computes in numeric**: a float8 is converted where
+  it is computed with -- arithmetic, a number method -- and
+  compared as a float8; one only selected is returned as it is.
+- **Casts and text** (`->>`, `::numeric`, `::float8`, the
+  integers, `jsonb_array_elements_text`, JSON_VALUE) take
+  either kind.
+- `test/select_jsonb_numbers.sql` checks each, with no server.

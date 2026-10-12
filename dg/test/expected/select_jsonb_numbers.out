@@ -1,0 +1,68 @@
+	 1: jsonb	(typeid = 3802, len = -1, typmod = -1, byval = f)
+	----
+	 1: jsonb = "{"a": 1.5, "b": 2.5, "c": 1e+300, "d": -0.03, "e": 12345678901234567890}"	(typeid = 3802, len = -1, typmod = -1, byval = f)
+	----
+	 1: jsonb_typeof	(typeid = 25, len = -1, typmod = -1, byval = f)
+	 2: jsonb_typeof	(typeid = 25, len = -1, typmod = -1, byval = f)
+	 3: ?column?	(typeid = 16, len = 1, typmod = -1, byval = t)
+	 4: ?column?	(typeid = 16, len = 1, typmod = -1, byval = t)
+	 5: ?column?	(typeid = 16, len = 1, typmod = -1, byval = t)
+	----
+	 1: jsonb_typeof = "number"	(typeid = 25, len = -1, typmod = -1, byval = f)
+	 2: jsonb_typeof = "number"	(typeid = 25, len = -1, typmod = -1, byval = f)
+	 3: ?column? = "t"	(typeid = 16, len = 1, typmod = -1, byval = t)
+	 4: ?column? = "t"	(typeid = 16, len = 1, typmod = -1, byval = t)
+	 5: ?column? = "t"	(typeid = 16, len = 1, typmod = -1, byval = t)
+	----
+	 1: ?column?	(typeid = 25, len = -1, typmod = -1, byval = f)
+	 2: float8	(typeid = 701, len = 8, typmod = -1, byval = t)
+	 3: numeric	(typeid = 1700, len = 32, typmod = -1, byval = f)
+	 4: int4	(typeid = 23, len = 4, typmod = -1, byval = t)
+	----
+	 1: ?column? = "1e+300"	(typeid = 25, len = -1, typmod = -1, byval = f)
+	 2: float8 = "1e+300"	(typeid = 701, len = 8, typmod = -1, byval = t)
+	 3: numeric = "2.5"	(typeid = 1700, len = 32, typmod = -1, byval = f)
+	 4: int4 = "25"	(typeid = 23, len = 4, typmod = -1, byval = t)
+	----
+	 1: ?column?	(typeid = 16, len = 1, typmod = -1, byval = t)
+	 2: ?column?	(typeid = 16, len = 1, typmod = -1, byval = t)
+	----
+	 1: ?column? = "t"	(typeid = 16, len = 1, typmod = -1, byval = t)
+	 2: ?column? = "t"	(typeid = 16, len = 1, typmod = -1, byval = t)
+	----
+	 1: jsonb_path_query	(typeid = 3802, len = -1, typmod = -1, byval = f)
+	----
+	 1: jsonb_path_query = "5.0"	(typeid = 3802, len = -1, typmod = -1, byval = f)
+	----
+	 1: jsonb_path_query	(typeid = 3802, len = -1, typmod = -1, byval = f)
+	----
+	 1: jsonb_path_query = "1e+300"	(typeid = 3802, len = -1, typmod = -1, byval = f)
+	----
+	 1: jsonb_path_query	(typeid = 3802, len = -1, typmod = -1, byval = f)
+	----
+	 1: jsonb_path_query = "2"	(typeid = 3802, len = -1, typmod = -1, byval = f)
+	----
+	 1: jsonb_path_query = "3.5"	(typeid = 3802, len = -1, typmod = -1, byval = f)
+	----
+	 1: jsonb_path_query	(typeid = 3802, len = -1, typmod = -1, byval = f)
+	 2: jsonb_path_query	(typeid = 3802, len = -1, typmod = -1, byval = f)
+	 3: jsonb_path_query	(typeid = 3802, len = -1, typmod = -1, byval = f)
+	----
+	 1: jsonb_path_query = "2"	(typeid = 3802, len = -1, typmod = -1, byval = f)
+	 2: jsonb_path_query = ""2.5""	(typeid = 3802, len = -1, typmod = -1, byval = f)
+	 3: jsonb_path_query = ""number""	(typeid = 3802, len = -1, typmod = -1, byval = f)
+	----
+	 1: x	(typeid = 25, len = -1, typmod = -1, byval = f)
+	----
+	 1:  = "1.5"	(typeid = 25, len = -1, typmod = -1, byval = f)
+	----
+	 1:  = "2000"	(typeid = 25, len = -1, typmod = -1, byval = f)
+	----
+	 1: jsonb_agg	(typeid = 3802, len = -1, typmod = -1, byval = f)
+	----
+	 1: jsonb_agg = "[10, 2]"	(typeid = 3802, len = -1, typmod = -1, byval = f)
+	----
+	 1: count	(typeid = 20, len = 8, typmod = -1, byval = t)
+	----
+	 1: count = "1"	(typeid = 20, len = 8, typmod = -1, byval = t)
+	----

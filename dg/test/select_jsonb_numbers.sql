@@ -1,0 +1,19 @@
+-- Verify that a JSON number with an exponent is a float8 in jsonb, and one
+-- without a numeric (DECIMAL.md), and that the two are one kind of number.
+-- 1. Read a document with both: floats print as float8 does.
+-- 2. Both are numbers: equal, ordered and contained across the kinds.
+-- 3. ->> and casts give each its value; 1e300 keeps its float8.
+-- 4. jsonpath computes with a float as numeric, compares it as float8,
+--    and returns one it only selects as it is.
+-- 5. Text, aggregation and DISTINCT treat equal numbers alike.
+SELECT '{"a": 1.5, "b": 2.5e0, "c": 1e300, "d": -3E-2, "e": 12345678901234567890}'::jsonb;
+SELECT jsonb_typeof('1e3'::jsonb), jsonb_typeof('1000'::jsonb), '1e3'::jsonb = '1000'::jsonb, '2.5e0'::jsonb = '2.5'::jsonb, '1e3'::jsonb < '1001'::jsonb;
+SELECT ('{"c": 1e300}'::jsonb ->> 'c'), ('{"c": 1e300}'::jsonb -> 'c')::float8, ('{"b": 2.5e0}'::jsonb -> 'b')::numeric, ('{"b": 2.5e1}'::jsonb -> 'b')::int4;
+SELECT '[1, 2e0, 3]'::jsonb @> '[2]'::jsonb, '{"a": 1e2}'::jsonb @> '{"a": 100}'::jsonb;
+SELECT jsonb_path_query('{"x": 2.5e0}'::jsonb, '$.x * 2'::jsonpath, '{}'::jsonb, false);
+SELECT jsonb_path_query('{"x": 1e300}'::jsonb, '$.x'::jsonpath, '{}'::jsonb, false);
+SELECT jsonb_path_query('{"a": [1, 2e0, 3.5e0]}'::jsonb, '$.a[*] ? (@ > 1.5)'::jsonpath, '{}'::jsonb, false);
+SELECT jsonb_path_query('{"x": 2.5e0}'::jsonb, '$.x.floor()'::jsonpath, '{}'::jsonb, false), jsonb_path_query('{"x": 2.5e0}'::jsonb, '$.x.string()'::jsonpath, '{}'::jsonb, false), jsonb_path_query('{"x": 2.5e0}'::jsonb, '$.x.type()'::jsonpath, '{}'::jsonb, false);
+SELECT x from jsonb_array_elements_text('[1.5, 2e3]'::jsonb) x;
+SELECT jsonb_agg(x) from (values ('1e1'::jsonb), ('2'::jsonb)) v(x);
+SELECT count(distinct x) from (values ('1e1'::jsonb), ('10'::jsonb), ('10.0'::jsonb)) v(x);

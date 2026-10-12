@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * numeric.h
- *	  Definitions for the exact numeric data type of Postgres
+ *	  numeric, a decimal of at most 38 digits (DECIMAL.md)
  *
  * Original coding 1998, Jan Wieck.  Heavily revised 2003, Tom Lane.
  *
@@ -21,29 +21,23 @@
 struct Node;
 
 /*
- * Limits on the precision and scale specifiable in a NUMERIC typmod.  The
- * precision is strictly positive, but the scale may be positive or negative.
- * A negative scale implies rounding before the decimal point.
- *
- * Note that the minimum display scale defined below is zero --- we always
- * display all digits before the decimal point, even when the scale is
- * negative.
- *
- * Note that the implementation limits on the precision and display scale of a
- * numeric value are much larger --- beware of what you use these for!
+ * numeric is a decimal of at most 38 digits (DECIMAL.md): a typmod's
+ * precision is 1 to 38, its scale 0 to the precision, and a value's scale
+ * at most 38.
  */
-#define NUMERIC_MAX_PRECISION		1000
+#define NUMERIC_MAX_PRECISION		38
 
-#define NUMERIC_MIN_SCALE			(-1000)
-#define NUMERIC_MAX_SCALE			1000
+#define NUMERIC_MIN_SCALE			0
+#define NUMERIC_MAX_SCALE			38
 
 /*
- * Internal limits on the scales chosen for calculation results
+ * Limits on the scales chosen for calculation results
  */
-#define NUMERIC_MAX_DISPLAY_SCALE	NUMERIC_MAX_PRECISION
+#define NUMERIC_MAX_DISPLAY_SCALE	NUMERIC_MAX_SCALE
 #define NUMERIC_MIN_DISPLAY_SCALE	0
 
-#define NUMERIC_MAX_RESULT_SCALE	(NUMERIC_MAX_PRECISION * 2)
+/* A bound on the decimal weights a result's scale is estimated from */
+#define NUMERIC_MAX_RESULT_SCALE	2000
 
 /*
  * For inherently inexact calculations such as division and square root,
@@ -52,20 +46,33 @@ struct Node;
  */
 #define NUMERIC_MIN_SIG_DIGITS		16
 
-/* The actual contents of Numeric are private to numeric.c */
-struct NumericData;
-typedef struct NumericData *Numeric;
+/*
+ * A numeric value: the number times 10^scale, a 128-bit two's complement
+ * integer in two halves, so that it needs no 16-byte alignment, and its
+ * scale.  32 bytes, passed by reference; there is no NaN or infinity.
+ */
+typedef struct decimal_t {
+  uint64 lo;    /* the integer's low 64 bits */
+  int64 hi;     /* its high 64 bits */
+  int16 scale;  /* 0 to NUMERIC_MAX_SCALE */
+  int16 pad[7]; /* zero */
+} decimal_t;
+
+typedef decimal_t *Numeric;
 
 /*
  * fmgr interface macros
  */
 
 static inline Numeric DatumGetNumeric(Datum X) {
-  return (Numeric)PG_DETOAST_DATUM(X);
+  return (Numeric)DatumGetPointer(X);
 }
 
 static inline Numeric DatumGetNumericCopy(Datum X) {
-  return (Numeric)PG_DETOAST_DATUM_COPY(X);
+  Numeric copy = (Numeric)palloc(sizeof(decimal_t));
+
+  memcpy(copy, DatumGetPointer(X), sizeof(decimal_t));
+  return copy;
 }
 
 static inline Datum NumericGetDatum(Numeric X) { return PointerGetDatum(X); }
@@ -75,7 +82,7 @@ static inline Datum NumericGetDatum(Numeric X) { return PointerGetDatum(X); }
 #define PG_RETURN_NUMERIC(x)	  return NumericGetDatum(x)
 
 /*
- * Utility functions in numeric.c
+ * Utility functions in decimal.c
  */
 extern bool numeric_is_nan(Numeric num);
 extern bool numeric_is_inf(Numeric num);

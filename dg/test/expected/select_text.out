@@ -16,10 +16,10 @@
 	----
 	 1: ?column? = "x1"	(typeid = 25, len = -1, typmod = -1, byval = f)
 	----
-	 1: numeric	(typeid = 1700, len = -1, typmod = -1, byval = f)
+	 1: numeric	(typeid = 1700, len = 32, typmod = -1, byval = f)
 	 2: varchar	(typeid = 1043, len = -1, typmod = 6, byval = f)
 	----
-	 1: numeric = "1.5"	(typeid = 1700, len = -1, typmod = -1, byval = f)
+	 1: numeric = "1.5"	(typeid = 1700, len = 32, typmod = -1, byval = f)
 	 2: varchar = "ab"	(typeid = 1043, len = -1, typmod = 6, byval = f)
 	----
 	 1: ?column?	(typeid = 16, len = 1, typmod = -1, byval = t)

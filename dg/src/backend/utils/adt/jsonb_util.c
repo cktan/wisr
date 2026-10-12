@@ -18,6 +18,7 @@
 #include "miscadmin.h"
 #include "port/pg_bitutils.h"
 #include "utils/datetime.h"
+#include "utils/float.h"
 #include "utils/fmgrprotos.h"
 #include "utils/json.h"
 #include "utils/jsonb.h"
@@ -206,11 +207,12 @@ int compareJsonbContainers(JsonbContainer *a, JsonbContainer *b) {
         continue;
       }
 
-      if (va.type == vb.type) {
+      if (JsonbKind(va.type) == JsonbKind(vb.type)) {
         switch (va.type) {
         case jbvString:
         case jbvNull:
         case jbvNumeric:
+        case jbvFloat8:
         case jbvBool:
           res = compareJsonbScalarValue(&va, &vb);
           break;
@@ -247,7 +249,7 @@ int compareJsonbContainers(JsonbContainer *a, JsonbContainer *b) {
         }
       } else {
         /* Type-defined order */
-        res = (va.type > vb.type) ? 1 : -1;
+        res = (JsonbKind(va.type) > JsonbKind(vb.type)) ? 1 : -1;
       }
     } else {
       /*
@@ -335,7 +337,7 @@ JsonbValue *findJsonbValueFromContainer(JsonbContainer *container, uint32 flags,
     for (i = 0; i < count; i++) {
       fillJsonbValue(container, i, base_addr, offset, result);
 
-      if (key->type == result->type) {
+      if (JsonbKind(key->type) == JsonbKind(result->type)) {
         if (equalsJsonbScalarValue(key, result))
           return result;
       }
@@ -472,6 +474,10 @@ static void fillJsonbValue(JsonbContainer *container, int index,
   } else if (JBE_ISNUMERIC(entry)) {
     result->type = jbvNumeric;
     result->val.numeric = (Numeric)(base_addr + INTALIGN(offset));
+  } else if (JBE_ISFLOAT8(entry)) {
+    result->type = jbvFloat8;
+    memcpy(&result->val.float8val, base_addr + INTALIGN(offset),
+           sizeof(float8));
   } else if (JBE_ISBOOL_TRUE(entry)) {
     result->type = jbvBool;
     result->val.boolean = true;
@@ -1043,7 +1049,7 @@ bool JsonbDeepContains(JsonbIterator **val, JsonbIterator **mContained) {
        * Compare rhs pair's value with lhs pair's value just found using
        * key
        */
-      if (lhsVal->type != vcontained.type) {
+      if (JsonbKind(lhsVal->type) != JsonbKind(vcontained.type)) {
         return false;
       } else if (IsAJsonbScalar(lhsVal)) {
         if (!equalsJsonbScalarValue(lhsVal, &vcontained))
@@ -1206,9 +1212,13 @@ void JsonbHashScalarValue(const JsonbValue *scalarVal, uint32 *hash) {
                  scalarVal->val.string.len));
     break;
   case jbvNumeric:
-    /* Must hash equal numerics to equal hash codes */
+  case jbvFloat8:
+    /*
+     * Must hash equal numbers to equal hash codes, a numeric and a float8
+     * among them: both hash as the float8 they compare as.
+     */
     tmp = DatumGetUInt32(DirectFunctionCall1(
-        hash_numeric, NumericGetDatum(scalarVal->val.numeric)));
+        hashfloat8, Float8GetDatum(jsonb_number_float8(scalarVal))));
     break;
   case jbvBool:
     tmp = scalarVal->val.boolean ? 0x02 : 0x04;
@@ -1247,8 +1257,9 @@ void JsonbHashScalarValueExtended(const JsonbValue *scalarVal, uint64 *hash,
                           scalarVal->val.string.len, seed));
     break;
   case jbvNumeric:
+  case jbvFloat8:
     tmp = DatumGetUInt64(DirectFunctionCall2(
-        hash_numeric_extended, NumericGetDatum(scalarVal->val.numeric),
+        hashfloat8extended, Float8GetDatum(jsonb_number_float8(scalarVal)),
         UInt64GetDatum(seed)));
     break;
   case jbvBool:
@@ -1270,19 +1281,40 @@ void JsonbHashScalarValueExtended(const JsonbValue *scalarVal, uint64 *hash,
 }
 
 /*
+ * The float8 of a jsonb number: a float8's own, a numeric's as it casts.
+ */
+float8 jsonb_number_float8(const JsonbValue *v) {
+  if (v->type == jbvFloat8)
+    return v->val.float8val;
+  return DatumGetFloat8(
+      DirectFunctionCall1(numeric_float8, NumericGetDatum(v->val.numeric)));
+}
+
+/*
+ * Compare two jsonb numbers: two numerics exactly, else as float8s, as SQL
+ * compares a numeric with a float8.
+ */
+static int compare_jsonb_numbers(const JsonbValue *a, const JsonbValue *b) {
+  if (a->type == jbvNumeric && b->type == jbvNumeric)
+    return DatumGetInt32(DirectFunctionCall2(numeric_cmp,
+                                             PointerGetDatum(a->val.numeric),
+                                             PointerGetDatum(b->val.numeric)));
+  return float8_cmp_internal(jsonb_number_float8(a), jsonb_number_float8(b));
+}
+
+/*
  * Are two scalar JsonbValues of the same type a and b equal?
  */
 static bool equalsJsonbScalarValue(JsonbValue *a, JsonbValue *b) {
-  if (a->type == b->type) {
+  if (JsonbKind(a->type) == JsonbKind(b->type)) {
     switch (a->type) {
     case jbvNull:
       return true;
     case jbvString:
       return lengthCompareJsonbStringValue(a, b) == 0;
     case jbvNumeric:
-      return DatumGetBool(DirectFunctionCall2(numeric_eq,
-                                              PointerGetDatum(a->val.numeric),
-                                              PointerGetDatum(b->val.numeric)));
+    case jbvFloat8:
+      return compare_jsonb_numbers(a, b) == 0;
     case jbvBool:
       return a->val.boolean == b->val.boolean;
 
@@ -1301,7 +1333,7 @@ static bool equalsJsonbScalarValue(JsonbValue *a, JsonbValue *b) {
  * operators, where a lexical sort order is generally expected.
  */
 static int compareJsonbScalarValue(JsonbValue *a, JsonbValue *b) {
-  if (a->type == b->type) {
+  if (JsonbKind(a->type) == JsonbKind(b->type)) {
     switch (a->type) {
     case jbvNull:
       return 0;
@@ -1309,9 +1341,8 @@ static int compareJsonbScalarValue(JsonbValue *a, JsonbValue *b) {
       return varstr_cmp(a->val.string.val, a->val.string.len, b->val.string.val,
                         b->val.string.len, DEFAULT_COLLATION_OID);
     case jbvNumeric:
-      return DatumGetInt32(
-          DirectFunctionCall2(numeric_cmp, PointerGetDatum(a->val.numeric),
-                              PointerGetDatum(b->val.numeric)));
+    case jbvFloat8:
+      return compare_jsonb_numbers(a, b);
     case jbvBool:
       if (a->val.boolean == b->val.boolean)
         return 0;
@@ -1673,12 +1704,19 @@ static void convertJsonbScalar(StringInfo buffer, JEntry *header,
     break;
 
   case jbvNumeric:
-    numlen = VARSIZE_ANY(scalarVal->val.numeric);
+    numlen = sizeof(decimal_t);
     padlen = padBufferToInt(buffer);
 
     appendToBuffer(buffer, scalarVal->val.numeric, numlen);
 
     *header = JENTRY_ISNUMERIC | (padlen + numlen);
+    break;
+
+  case jbvFloat8:
+    padlen = padBufferToInt(buffer);
+    appendToBuffer(buffer, (const char *)&scalarVal->val.float8val,
+                   sizeof(float8));
+    *header = JENTRY_ISFLOAT8 | (padlen + (int)sizeof(float8));
     break;
 
   case jbvBool:

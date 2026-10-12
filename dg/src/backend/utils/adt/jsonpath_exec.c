@@ -356,6 +356,7 @@ static JsonbValue *JsonValueListNext(const JsonValueList *jvl,
 static JsonbValue *JsonbInitBinary(JsonbValue *jbv, Jsonb *jb);
 static int JsonbType(JsonbValue *jb);
 static JsonbValue *getScalar(JsonbValue *scalar, enum jbvType type);
+static JsonbValue *float8_item_numeric(JsonbValue *jb);
 static JsonbValue *wrapItemsInArray(const JsonValueList *items);
 static int compareDatetime(Datum val1, Oid typid1, Datum val2, Oid typid2,
                            bool useTz, bool *cast_error);
@@ -712,6 +713,15 @@ executeItemOptUnwrapTarget(JsonPathExecContext *cxt, JsonPathItem *jsp,
 
   check_stack_depth();
   CHECK_FOR_INTERRUPTS();
+
+  /* A number method takes a float8 as the numeric it computes in. */
+  if (jb != NULL && jb->type == jbvFloat8 &&
+      (jsp->type == jpiAbs || jsp->type == jpiFloor ||
+       jsp->type == jpiCeiling || jsp->type == jpiDouble ||
+       jsp->type == jpiBigint || jsp->type == jpiBoolean ||
+       jsp->type == jpiDecimal || jsp->type == jpiNumber ||
+       jsp->type == jpiInteger))
+    jb = float8_item_numeric(jb);
 
   switch (jsp->type) {
   case jpiNull:
@@ -1470,6 +1480,9 @@ executeItemOptUnwrapTarget(JsonPathExecContext *cxt, JsonPathItem *jsp,
     case jbvNumeric:
       tmp = DatumGetCString(
           DirectFunctionCall1(numeric_out, NumericGetDatum(jb->val.numeric)));
+      break;
+    case jbvFloat8:
+      tmp = float8out_internal(jb->val.float8val);
       break;
     case jbvBool:
       tmp = (char *)((jb->val.boolean) ? "true" : "false");
@@ -3036,6 +3049,15 @@ static JsonPathBool compareItems(int32 op, JsonbValue *jb1, JsonbValue *jb2,
   int cmp;
   bool res;
 
+  /* A float8 and a number compare as float8s, as SQL compares them. */
+  if ((jb1->type == jbvFloat8 || jb2->type == jbvFloat8) &&
+      JsonbKind(jb1->type) == jbvNumeric &&
+      JsonbKind(jb2->type) == jbvNumeric) {
+    cmp =
+        float8_cmp_internal(jsonb_number_float8(jb1), jsonb_number_float8(jb2));
+    goto apply_op;
+  }
+
   if (jb1->type != jb2->type) {
     if (jb1->type == jbvNull || jb2->type == jbvNull)
 
@@ -3090,6 +3112,7 @@ static JsonPathBool compareItems(int32 op, JsonbValue *jb1, JsonbValue *jb2,
     elog(ERROR, "invalid jsonb value type %d", jb1->type);
   }
 
+apply_op:
   switch (op) {
   case jpiEqual:
     res = (cmp == 0);
@@ -3287,7 +3310,23 @@ static JsonbValue *getScalar(JsonbValue *scalar, enum jbvType type) {
   Assert(scalar->type != jbvBinary ||
          !JsonContainerIsScalar(scalar->val.binary.data));
 
+  /* A float8 computed with is a numeric, as jsonpath computes in one. */
+  if (type == jbvNumeric && scalar->type == jbvFloat8)
+    return float8_item_numeric(scalar);
   return scalar->type == type ? scalar : NULL;
+}
+
+/*
+ * A float8 item as a numeric one, a copy: jsonpath's arithmetic and number
+ * methods are numeric's.  One past numeric's range is an error.
+ */
+static JsonbValue *float8_item_numeric(JsonbValue *jb) {
+  JsonbValue *v = (JsonbValue *)palloc(sizeof(JsonbValue));
+
+  v->type = jbvNumeric;
+  v->val.numeric = DatumGetNumeric(
+      DirectFunctionCall1(float8_numeric, Float8GetDatum(jb->val.float8val)));
+  return v;
 }
 
 /* Construct a JSON array from the item list */

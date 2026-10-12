@@ -144,12 +144,14 @@ typedef uint32 JEntry;
 #define JENTRY_ISBOOL_TRUE		0x30000000
 #define JENTRY_ISNULL			0x40000000
 #define JENTRY_ISCONTAINER		0x50000000 /* array or object */
+#define JENTRY_ISFLOAT8			0x60000000    /* a number with an exponent */
 
 /* Access macros.  Note possible multiple evaluations */
 #define JBE_OFFLENFLD(je_)		((je_) & JENTRY_OFFLENMASK)
 #define JBE_HAS_OFF(je_)		(((je_) & JENTRY_HAS_OFF) != 0)
 #define JBE_ISSTRING(je_)		(((je_) & JENTRY_TYPEMASK) == JENTRY_ISSTRING)
 #define JBE_ISNUMERIC(je_)		(((je_) & JENTRY_TYPEMASK) == JENTRY_ISNUMERIC)
+#define JBE_ISFLOAT8(je_)		(((je_) & JENTRY_TYPEMASK) == JENTRY_ISFLOAT8)
 #define JBE_ISCONTAINER(je_)	(((je_) & JENTRY_TYPEMASK) == JENTRY_ISCONTAINER)
 #define JBE_ISNULL(je_)			(((je_) & JENTRY_TYPEMASK) == JENTRY_ISNULL)
 #define JBE_ISBOOL_TRUE(je_)	(((je_) & JENTRY_TYPEMASK) == JENTRY_ISBOOL_TRUE)
@@ -223,6 +225,12 @@ enum jbvType {
   jbvString,
   jbvNumeric,
   jbvBool,
+  /*
+   * A JSON number written with an exponent, 1e3, as a float8 (DECIMAL.md):
+   * one written without is a jbvNumeric.  The two are one kind to compare,
+   * equal or sort (JsonbKind()).
+   */
+  jbvFloat8,
   /* Composite types */
   jbvArray = 0x10,
   jbvObject,
@@ -249,6 +257,7 @@ struct JsonbValue {
 
   union {
     Numeric numeric;
+    float8 float8val; /* jbvFloat8 */
     bool boolean;
     struct {
       int len;
@@ -282,8 +291,11 @@ struct JsonbValue {
 };
 
 #define IsAJsonbScalar(jsonbval)	(((jsonbval)->type >= jbvNull && \
-									  (jsonbval)->type <= jbvBool) || \
+									  (jsonbval)->type <= jbvFloat8) || \
 									  (jsonbval)->type == jbvDatetime)
+
+/* A value's kind to compare and sort by: a float8 is a number. */
+#define JsonbKind(type_)	((type_) == jbvFloat8 ? jbvNumeric : (type_))
 
 /*
  * Key/value pair within an Object.
@@ -388,6 +400,7 @@ extern void JsonbToJsonbValue(Jsonb *jsonb, JsonbValue *val);
 extern Jsonb *JsonbValueToJsonb(JsonbValue *val);
 extern bool JsonbDeepContains(JsonbIterator **val, JsonbIterator **mContained);
 extern void JsonbHashScalarValue(const JsonbValue *scalarVal, uint32 *hash);
+extern float8 jsonb_number_float8(const JsonbValue *v);
 extern void JsonbHashScalarValueExtended(const JsonbValue *scalarVal,
                                          uint64 *hash, uint64 seed);
 

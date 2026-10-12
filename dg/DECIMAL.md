@@ -2,7 +2,8 @@
 
 PostgreSQL's `numeric` is replaced by a fixed-width decimal of
 at most 38 digits, the one sm stores (`../sm/sm2/TYPE.md`
-§3.4). Reviewed; §4 records the answers. Not yet built.
+§3.4). Reviewed; §4 records the answers. All of §3 is built
+(`WORKNOTE.md` steps 95 to 97).
 
 ## 1. Where digres stands
 
@@ -82,9 +83,10 @@ typedef struct decimal_t {
 
 - **A literal with a point or an exponent is `numeric`** with
   the scale it is written with: `1.50` has scale 2, `1e3`
-  scale 0. More than 38 significant digits is an error, not a
-  `float8` as DuckDB makes it, which would drop digits unasked
-  (§4.2).
+  scale 0. One past 38 digits is a `float8`, as DuckDB makes
+  it: `1e300` and `3.4e38` are ordinary float literals, and
+  refusing them broke them. Text past 38 significant digits,
+  `'0.1234...'::numeric`, is refused (§4.2).
 - **Casts**: from and to the integers, `float4`, `float8`,
   `text`, `money`; `numeric(p, s)` rescales and checks, as
   PostgreSQL's typmod coercion does.
@@ -124,12 +126,13 @@ Results are exact or an error, never silently wrong.
 Each is moved to `decimal_t`, keeping its SQL signature:
 
 - `extract()`, `date_part` (`timestamp.c`, `date.c`);
-- jsonb's numbers and jsonpath's arithmetic, as DuckDB's JSON
-  does (§4.4): jsonb keeps each number's text as written, so a
-  document is stored whole, `1e400` and a 50-digit integer
-  included; a number taken as a value -- `->>` cast, a jsonpath
-  comparison or arithmetic -- is a decimal if it fits in 38
-  digits, and an error if not;
+- jsonb's numbers (§4.4, as answered after the review): a JSON
+  number written with an exponent, `1e300`, is a `float8`, and
+  one without, `1.5`, a numeric. The two are one kind of
+  number: equal, ordered, hashed and contained across the kinds,
+  a numeric and a float8 compared as float8s, as SQL compares
+  them. jsonpath computes in numeric, a float8 converted when it
+  is computed with; one only selected stays as it is;
 - `money`'s casts (`cash.c`), `pg_lsn`'s `+` and `-`,
   `pg_size_pretty(numeric)` (`dbsize.c`), `to_char` and
   `to_number` (`formatting.c`), `random(numeric, numeric)`,
@@ -162,13 +165,13 @@ Each is moved to `decimal_t`, keeping its SQL signature:
 
 1. **An unconstrained `numeric` column** is given a default,
    DuckDB's `DECIMAL(18, 3)`.
-2. **A literal past 38 digits** is an error.
+2. **A literal past 38 digits** was to be an error; building
+   it showed that this refuses `1e300` as a float, so it is a
+   `float8`, as in DuckDB. Text cast to numeric past 38 digits
+   is still an error.
 3. **`sqrt`, `ln`, `exp`, `power`** in `long double`, some 33
    digits, are enough.
-4. **jsonb** does as DuckDB's JSON: DuckDB's JSON is text, so a
-   number is kept as written, and extracting one gives a
-   `BIGINT`, `UBIGINT` or `DOUBLE` as fits, a `DECIMAL` cast
-   failing when it does not. Here a number is kept as written,
-   and is a decimal when taken as a value, an error past 38
-   digits.
+4. **jsonb**: a number with an exponent is a `float8`, one
+   without a numeric (an error past 38 digits). This replaced
+   the first answer, to keep each number's text as written.
 5. **`sum(int8)` past 38 digits** is an error.

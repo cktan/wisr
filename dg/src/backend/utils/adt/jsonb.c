@@ -18,6 +18,7 @@
 #include "funcapi.h"
 #include "libpq/pqformat.h"
 #include "miscadmin.h"
+#include "utils/float.h"
 #include "utils/builtins.h"
 #include "utils/json.h"
 #include "utils/jsonb.h"
@@ -173,6 +174,7 @@ const char *JsonbTypeName(JsonbValue *val) {
   case jbvArray:
     return "array";
   case jbvNumeric:
+  case jbvFloat8:
     return "number";
   case jbvString:
     return "string";
@@ -330,6 +332,9 @@ static void jsonb_put_escaped_value(StringInfo out, JsonbValue *scalarVal) {
         out, DatumGetCString(DirectFunctionCall1(
                  numeric_out, PointerGetDatum(scalarVal->val.numeric))));
     break;
+  case jbvFloat8:
+    appendStringInfoString(out, float8out_internal(scalarVal->val.float8val));
+    break;
   case jbvBool:
     if (scalarVal->val.boolean)
       appendBinaryStringInfo(out, "true", 4);
@@ -367,6 +372,15 @@ static JsonParseErrorType jsonb_in_scalar(void *pstate, char *token,
      * numeric size is well below the JsonbValue restriction
      */
     Assert(token != NULL);
+    /* A number with an exponent is a float8, else a numeric (DECIMAL.md). */
+    if (strpbrk(token, "eE") != NULL) {
+      v.type = jbvFloat8;
+      if (!DirectInputFunctionCallSafe(float8in, token, InvalidOid, -1,
+                                       _state->escontext, &numd))
+        return JSON_SEM_ACTION_FAILED;
+      v.val.float8val = DatumGetFloat8(numd);
+      break;
+    }
     v.type = jbvNumeric;
     if (!DirectInputFunctionCallSafe(numeric_in, token, InvalidOid, -1,
                                      _state->escontext, &numd))
@@ -1757,6 +1771,17 @@ bool JsonbExtractScalar(JsonbContainer *jbc, JsonbValue *res) {
 }
 
 /*
+ * A jsonb number as a numeric datum, palloc'd: a numeric copied out of
+ * the jsonb, a float8 cast.
+ */
+static Datum jsonb_number_numeric(const JsonbValue *v) {
+  if (v->type == jbvFloat8)
+    return DirectFunctionCall1(float8_numeric,
+                               Float8GetDatum(v->val.float8val));
+  return NumericGetDatum(DatumGetNumericCopy(NumericGetDatum(v->val.numeric)));
+}
+
+/*
  * Emit correct, translatable cast error message
  */
 static void cannotCastJsonbValue(enum jbvType type, const char *sqltype) {
@@ -1767,6 +1792,7 @@ static void cannotCastJsonbValue(enum jbvType type, const char *sqltype) {
       {jbvNull, gettext_noop("cannot cast jsonb null to type %s")},
       {jbvString, gettext_noop("cannot cast jsonb string to type %s")},
       {jbvNumeric, gettext_noop("cannot cast jsonb numeric to type %s")},
+      {jbvFloat8, gettext_noop("cannot cast jsonb numeric to type %s")},
       {jbvBool, gettext_noop("cannot cast jsonb boolean to type %s")},
       {jbvArray, gettext_noop("cannot cast jsonb array to type %s")},
       {jbvObject, gettext_noop("cannot cast jsonb object to type %s")},
@@ -1816,14 +1842,14 @@ Datum jsonb_numeric(PG_FUNCTION_ARGS) {
     PG_RETURN_NULL();
   }
 
-  if (v.type != jbvNumeric)
+  if (JsonbKind(v.type) != jbvNumeric)
     cannotCastJsonbValue(v.type, "numeric");
 
   /*
    * v.val.numeric points into jsonb body, so we need to make a copy to
    * return
    */
-  retValue = DatumGetNumericCopy(NumericGetDatum(v.val.numeric));
+  retValue = DatumGetNumeric(jsonb_number_numeric(&v));
 
   PG_FREE_IF_COPY(in, 0);
 
@@ -1843,10 +1869,10 @@ Datum jsonb_int2(PG_FUNCTION_ARGS) {
     PG_RETURN_NULL();
   }
 
-  if (v.type != jbvNumeric)
+  if (JsonbKind(v.type) != jbvNumeric)
     cannotCastJsonbValue(v.type, "smallint");
 
-  retValue = DirectFunctionCall1(numeric_int2, NumericGetDatum(v.val.numeric));
+  retValue = DirectFunctionCall1(numeric_int2, jsonb_number_numeric(&v));
 
   PG_FREE_IF_COPY(in, 0);
 
@@ -1866,10 +1892,10 @@ Datum jsonb_int4(PG_FUNCTION_ARGS) {
     PG_RETURN_NULL();
   }
 
-  if (v.type != jbvNumeric)
+  if (JsonbKind(v.type) != jbvNumeric)
     cannotCastJsonbValue(v.type, "integer");
 
-  retValue = DirectFunctionCall1(numeric_int4, NumericGetDatum(v.val.numeric));
+  retValue = DirectFunctionCall1(numeric_int4, jsonb_number_numeric(&v));
 
   PG_FREE_IF_COPY(in, 0);
 
@@ -1889,10 +1915,10 @@ Datum jsonb_int8(PG_FUNCTION_ARGS) {
     PG_RETURN_NULL();
   }
 
-  if (v.type != jbvNumeric)
+  if (JsonbKind(v.type) != jbvNumeric)
     cannotCastJsonbValue(v.type, "bigint");
 
-  retValue = DirectFunctionCall1(numeric_int8, NumericGetDatum(v.val.numeric));
+  retValue = DirectFunctionCall1(numeric_int8, jsonb_number_numeric(&v));
 
   PG_FREE_IF_COPY(in, 0);
 
@@ -1912,11 +1938,10 @@ Datum jsonb_float4(PG_FUNCTION_ARGS) {
     PG_RETURN_NULL();
   }
 
-  if (v.type != jbvNumeric)
+  if (JsonbKind(v.type) != jbvNumeric)
     cannotCastJsonbValue(v.type, "real");
 
-  retValue =
-      DirectFunctionCall1(numeric_float4, NumericGetDatum(v.val.numeric));
+  retValue = DirectFunctionCall1(numeric_float4, jsonb_number_numeric(&v));
 
   PG_FREE_IF_COPY(in, 0);
 
@@ -1936,11 +1961,10 @@ Datum jsonb_float8(PG_FUNCTION_ARGS) {
     PG_RETURN_NULL();
   }
 
-  if (v.type != jbvNumeric)
+  if (JsonbKind(v.type) != jbvNumeric)
     cannotCastJsonbValue(v.type, "double precision");
 
-  retValue =
-      DirectFunctionCall1(numeric_float8, NumericGetDatum(v.val.numeric));
+  retValue = Float8GetDatum(jsonb_number_float8(&v));
 
   PG_FREE_IF_COPY(in, 0);
 
@@ -1963,6 +1987,8 @@ char *JsonbUnquote(Jsonb *jb) {
     else if (v.type == jbvNumeric)
       return DatumGetCString(
           DirectFunctionCall1(numeric_out, PointerGetDatum(v.val.numeric)));
+    else if (v.type == jbvFloat8)
+      return float8out_internal(v.val.float8val);
     else if (v.type == jbvNull)
       return pstrdup("null");
     else {

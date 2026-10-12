@@ -260,8 +260,7 @@ static bool flattenJsonPathParseItem(StringInfo buf, int *result,
     appendStringInfoChar(buf, '\0');
     break;
   case jpiNumeric:
-    appendBinaryStringInfo(buf, item->value.numeric,
-                           VARSIZE(item->value.numeric));
+    appendBinaryStringInfo(buf, item->value.numeric, sizeof(decimal_t));
     break;
   case jpiBool:
     appendBinaryStringInfo(buf, &item->value.boolean,
