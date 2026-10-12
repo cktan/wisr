@@ -19,8 +19,10 @@
  * off[], where its entry starts in a row with no nulls, and an
  * entry is off[k] less the widths of the nulls before it.
  *
- * TOAST and compression are not built yet: a TOAST pointer or a
- * compressed varlena is refused rather than misread.
+ * A TOAST pointer of sm2's own is stored as it is (rel/toast.cc
+ * moves the datum out of line). Compression is not built: a
+ * compressed varlena, or another's TOAST pointer, is refused rather
+ * than misread.
  */
 
 #include "native.h"
@@ -48,7 +50,8 @@ constexpr size_t short_max = 126;
  * The length of the varlena whose header starts v, in len,
  * trusting it past v; or why the header is not one this codec can
  * store or read: none, one cut short, a compressed one or a
- * TOAST pointer.
+ * TOAST pointer that is not sm2's. sm2's own pointer is as long as
+ * every one is, toast_ptr_len.
  */
 const char *varlena_header(std::string_view v, size_t &len) {
   if (v.empty()) {
@@ -56,7 +59,11 @@ const char *varlena_header(std::string_view v, size_t &len) {
   }
   uint8_t first = static_cast<uint8_t>(v[0]);
   if (first == static_cast<uint8_t>(sm2::varlena_toast)) {
-    return "a TOAST pointer, which sm2 cannot store or read yet";
+    if (v.size() < 2 || static_cast<uint8_t>(v[1]) != sm2::toast_tag) {
+      return "a TOAST pointer that is not sm2's";
+    }
+    len = sm2::toast_ptr_len;
+    return nullptr;
   }
   if (first & 0x01) {
     len = first >> 1;
@@ -94,6 +101,15 @@ const char *varlena_extent(std::string_view v, size_t &len) {
 
 /* The shortest varlena length for a datum of n bytes. */
 size_t varlena_len(size_t n) { return n + (n <= short_max ? 1 : 4); }
+
+/*
+ * The length a tuple stores the varlena v in: its shortest form,
+ * or a TOAST pointer as it is.
+ */
+size_t stored_len(std::string_view v) {
+  return sm2::varlena_is_toast(v) ? v.size()
+                                  : varlena_len(sm2::varlena_payload(v).size());
+}
 
 /* Fail with SM_ERR_CORRUPT: the tuple is malformed. */
 int corrupt(const std::string &why) {
@@ -472,9 +488,12 @@ int datum_bytes(const type_t *type, int32_t typmod, const datum_t &d,
     out = std::string_view(ptr, w);
     return 0;
   }
-  // A varlena, whose header gives its length: 1 byte, or 4.
+  // A varlena, whose header gives its length: 1 byte, or 4; a
+  // TOAST pointer's second byte says whose it is.
   size_t len = 0;
-  std::string_view head(ptr, (ptr[0] & 0x01) ? 1 : 4);
+  std::string_view head(ptr, ptr[0] == varlena_toast ? 2
+                             : (ptr[0] & 0x01)       ? 1
+                                                     : 4);
   if (const char *why = varlena_header(head, len)) {
     return bad(why);
   }
@@ -513,9 +532,16 @@ std::string_view varlena_payload(std::string_view v) {
   return v.substr(4);
 }
 
-/* Encode datums and isnull under schema into tuple; see sm2.h. */
-int tup_encode(const tup_desc_t &desc, std::span<const datum_t> datums,
-               std::span<const bool> isnull, std::string &tuple) {
+/*
+ * Check datums and isnull against desc, as tup_encode does, and
+ * size the tuple they make: each attribute's bytes in attr_bytes,
+ * whether any is null in nulls, where the var data starts in
+ * var_start and the tuple's whole length in len.
+ */
+static int measure(const tup_desc_t &desc, std::span<const datum_t> datums,
+                   std::span<const bool> isnull,
+                   std::vector<std::string_view> &attr_bytes, bool &nulls,
+                   size_t &var_start, size_t &len) {
   if (check_desc(desc) != 0) {
     return -1;
   }
@@ -525,9 +551,9 @@ int tup_encode(const tup_desc_t &desc, std::span<const datum_t> datums,
     return invalid("a datum and null flag for every attribute, no more");
   }
   // Check each datum, and size the fixed part and the var data.
-  bool nulls = false;
+  nulls = false;
   size_t fixed = 0, nvar = 0, var = 0;
-  std::vector<std::string_view> attr_bytes(datums.size());
+  attr_bytes.assign(datums.size(), {});
   for (size_t i = 0; i < datums.size(); i++) {
     if (isnull[i]) {
       nulls = true;
@@ -548,17 +574,40 @@ int tup_encode(const tup_desc_t &desc, std::span<const datum_t> datums,
       continue;
     }
     nvar++;
-    var += varlena_len(varlena_payload(attr_bytes[i]).size());
+    var += stored_len(attr_bytes[i]);
   }
-  // A row past the limit is refused, so every slot is 2 bytes.
   size_t head =
       1 + varint_len(datums.size()) + (nulls ? (datums.size() + 7) / 8 : 0);
-  size_t var_start = head + fixed + slot_width * nvar;
-  if (var_start + var > max_tup_len) {
-    return sm1::seterr(sm1::SM_ERR_ROWTOOLONG,
-                       "tuple: a row of " + std::to_string(var_start + var) +
-                           " bytes is longer than " +
-                           std::to_string(max_tup_len));
+  var_start = head + fixed + slot_width * nvar;
+  len = var_start + var;
+  return 0;
+}
+
+/* The length of the tuple tup_encode would make; see sm2.h. */
+int tup_size(const tup_desc_t &desc, std::span<const datum_t> datums,
+             std::span<const bool> isnull, size_t &len) {
+  std::vector<std::string_view> attr_bytes;
+  bool nulls;
+  size_t var_start;
+  return measure(desc, datums, isnull, attr_bytes, nulls, var_start, len);
+}
+
+/* Encode datums and isnull under schema into tuple; see sm2.h. */
+int tup_encode(const tup_desc_t &desc, std::span<const datum_t> datums,
+               std::span<const bool> isnull, std::string &tuple) {
+  std::vector<std::string_view> attr_bytes;
+  bool nulls;
+  size_t var_start, len;
+  if (measure(desc, datums, isnull, attr_bytes, nulls, var_start, len) != 0) {
+    return -1;
+  }
+  const auto &w = desc.width;
+  // A row past the limit is refused, so every slot is 2 bytes.
+  if (len > max_tup_len) {
+    return sm1::seterr(sm1::SM_ERR_ROWTOOLONG, "tuple: a row of " +
+                                                   std::to_string(len) +
+                                                   " bytes is longer than " +
+                                                   std::to_string(max_tup_len));
   }
   // The header, then the null bitmap, a set bit for a null.
   std::string out;
@@ -586,11 +635,17 @@ int tup_encode(const tup_desc_t &desc, std::span<const datum_t> datums,
     }
     store_le(static_cast<uint16_t>(next), word);
     out += word;
-    next += varlena_len(varlena_payload(attr_bytes[i]).size());
+    next += stored_len(attr_bytes[i]);
   }
-  // The var data, each varlena in its shortest form.
+  // The var data: each varlena in its shortest form, and a TOAST
+  // pointer as it is.
   for (size_t i = 0; i < datums.size(); i++) {
-    if (!isnull[i] && w[i] < 0) {
+    if (isnull[i] || w[i] > 0) {
+      continue;
+    }
+    if (varlena_is_toast(attr_bytes[i])) {
+      out += attr_bytes[i];
+    } else {
       out += make_varlena(varlena_payload(attr_bytes[i]));
     }
   }

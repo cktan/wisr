@@ -7,8 +7,10 @@ writes and `tup_decode` and `tup_deform` read, which a heap
 file is the rest.
 
 **Status: built**, in `src/tuple/tuple.cc`, with the pinned
-examples of §7 in `test/test_tuple.cc`. TOAST is postponed
-(`SM2_DESIGN.md` §8.2): a tuple holds every datum inline.
+examples of §7 in `test/test_tuple.cc`. A datum is inline, or
+out of line with one of sm2's TOAST pointers in its place,
+which the codec stores as it is; the heap `rel` decides which
+(`SM2_DESIGN.md` §4.2).
 
 ---
 

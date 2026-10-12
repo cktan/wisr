@@ -66,7 +66,7 @@ sm2::rel_t *open_rel(db_t &db, sm1::session_t *s,
                      std::span<const sm2::attribute_t> schema,
                      uint16_t relid = 0) {
   sm2::rel_t *rel = nullptr;
-  REQUIRE(sm2::rel_open(s, db.store(), relid, schema, "rowno", rel) == 0);
+  REQUIRE(sm2::rel_open(s, db.store(), relid, schema, "rowno", "", rel) == 0);
   return rel;
 }
 
@@ -402,9 +402,9 @@ TEST_CASE("a row that cannot be encoded draws no rowno") {
   std::vector<sm2::attribute_t> bad = {
       {&sm2::type_decimal64, 3, false, std::nullopt}};
   sm2::rel_t *out = nullptr;
-  CHECK(sm2::rel_open(s, db.store(), 0, bad, "rowno", out) == -1);
+  CHECK(sm2::rel_open(s, db.store(), 0, bad, "rowno", "", out) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm2::rel_open(nullptr, db.store(), 0, schema, "rowno", out) == -1);
+  CHECK(sm2::rel_open(nullptr, db.store(), 0, schema, "rowno", "", out) == -1);
 }
 
 TEST_CASE("rel supports raw tuple bytes and datum_t/isnull writes") {

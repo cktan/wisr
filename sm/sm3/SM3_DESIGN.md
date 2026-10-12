@@ -25,8 +25,10 @@ per table, index relids allocated and never reused, and
 `DROP TABLE` as one `sm1::rmstore`. §3's index maintenance
 is built, the C API's one way to write a row, and so is its
 index build, for partial and expression indexes too; §6's
-statistics are not. sm2, which it is built on, is, but for TOAST
-(`sm2/SM2_DESIGN.md` §8.2).
+statistics are not. sm2, which it is built on, is; its TOAST
+(`sm2/SM2_DESIGN.md` §4.2) is not used here yet: a table's
+heap is opened with no sequence for TOAST ids, so every datum
+stays in its tuple and a row is held to 64 KB.
 This file exists so the protocols are argued before they are
 written. Unlike sm2's two formats, almost nothing here is
 permanent on disk — the catalog's own layout is the exception

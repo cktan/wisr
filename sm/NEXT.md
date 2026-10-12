@@ -103,9 +103,14 @@ Owed, and blocking nothing above:
 
 ## 3. Not blocking
 
-- **sm2's TOAST** (`sm2/SM2_DESIGN.md` §8.2, step 3). The
-  `0xFFFF` relid is reserved per table and unused. Wholly
-  independent of the above, so it can run in parallel.
+- **TOAST above sm2.** sm2's is built
+  (`sm2/SM2_DESIGN.md` §4.2): a heap `rel` given a sequence
+  for ids moves a row's long datums out of line. Not built:
+  sm3 gives its tables no such sequence, so nothing is moved
+  through it. It is to make the sequence with the table, and
+  fetch a value where it needs one -- an index's key, the
+  index build, `ANALYZE`'s sample -- and the C API and digres
+  are to fetch what a query reads.
 - **What temporary tables left for later** (`TEMPTABLE.md`
   §9). They are built, in digres too. Not built: skipping the
   sync of a commit that wrote only temporary stores,

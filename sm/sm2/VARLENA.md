@@ -6,8 +6,8 @@ across the tuple codec. `SM2_DESIGN.md` §4.1 argues *why*;
 `TUPLE.md` is the tuple around it; this file is the bytes.
 
 **Status: built**, in `src/tuple/tuple.cc`, with the helpers
-in `include/sm2.h`. The compressed form and the TOAST pointer
-are specified here but not built: both are refused.
+in `include/sm2.h`. The compressed form is specified here but
+not built, and is refused.
 
 ---
 
@@ -32,7 +32,7 @@ Told apart by the first byte, least significant bits first:
 | First byte | Header | Form | Length field | Data |
 | --- | --- | --- | --- | --- |
 | `xxxxxxx1` | 1 byte | short, uncompressed | `byte >> 1` | up to 126 bytes |
-| `00000001` | 1 byte, then a vartag byte | TOAST pointer | — | not built |
+| `00000001` | 1 byte, then a vartag byte | TOAST pointer | — | 20 bytes: the pointer |
 | `xxxxxx00` | 4 bytes, little-endian | long, uncompressed | `word >> 2` | up to 1 GB |
 | `xxxxxx10` | 4 bytes, little-endian | long, compressed | `word >> 2` | not built |
 
@@ -46,9 +46,11 @@ Told apart by the first byte, least significant bits first:
   PostgreSQL's compressed payload. Not built: refused.
 - **TOAST pointer.** `0x01`, a vartag byte naming the kind of
   pointer, then the pointer itself. PostgreSQL's vartags 1, 2,
-  3 and 18 are taken; sm2's will be a value of its own, with a
-  pointer whose shape is open (`QUESTIONS.md` 4.2). Not built:
-  refused.
+  3 and 18 are taken; sm2's is `0x40`, and its pointer is 22
+  bytes in all: after the two bytes, the datum's length as 4
+  bytes, the store's id as 8 and the datum's id as 8, all
+  little-endian (`SM2_DESIGN.md` §4.2). It is stored as it is.
+  A pointer with any other vartag is refused.
 
 ## 3. Writing: the shortest form
 
@@ -72,8 +74,8 @@ valid when:
 - the tuple holds at least its header — one byte, or four for
   a long form — and the whole length its header gives;
 - a long form's length is at least its 4-byte header;
-- it is neither compressed nor a TOAST pointer, until those
-  are built.
+- it is not compressed, and a TOAST pointer is sm2's own,
+  whose length is always 22.
 
 The tuple's own rule, that its varlenas lie end to end with
 nothing after the last, catches a header that claims too much
@@ -117,4 +119,6 @@ In `include/sm2.h`:
   for a compressed varlena or a TOAST pointer, which a caller
   checks for first;
 - `varlena_is_toast(v)` — true when the first byte is `0x01`;
-- `varlena_toast` — that byte.
+- `varlena_toast` — that byte;
+- `make_toast_ptr(p)` and `parse_toast_ptr(v, p)` — sm2's
+  pointer, to and from its varlena.

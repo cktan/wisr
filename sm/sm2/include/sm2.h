@@ -260,7 +260,9 @@ inline const void* datum_to_ptr(datum_t d) {
  * pointer, or the varlena at the pointer, header included, as long
  * as its header says. Fails with SM_ERR_INVALID on a typmod the
  * type refuses, a null pointer, or a varlena this codec cannot
- * read: a TOAST pointer, a compressed one, or a malformed header.
+ * read: a compressed one, a TOAST pointer that is not sm2's, or a
+ * malformed header. One of sm2's TOAST pointers is given as it is,
+ * toast_ptr_len bytes.
  */
 int datum_bytes(const type_t* type, int32_t typmod, const datum_t& d,
                 std::string_view& out);
@@ -331,8 +333,8 @@ struct attribute_t {
  *   xxxxxxx1  1-byte header, up to 126 bytes of data
  *   xxxxxx00  4-byte little-endian header, up to 1 GB
  *   xxxxxx10  4-byte header, compressed -- not built yet
- *   00000001  a TOAST pointer: a vartag byte, then the pointer --
- *             not built yet
+ *   00000001  a TOAST pointer: a vartag byte, then the pointer
+ *             (toast_ptr_t below)
  *
  * A type's own functions take the data after the header,
  * varlena_payload's.
@@ -353,6 +355,42 @@ bool varlena_is_toast(std::string_view v);
  * header; empty for anything else, which callers check first.
  */
 std::string_view varlena_payload(std::string_view v);
+
+/*
+ * sm2's TOAST pointer (SM2_DESIGN.md §4.2): what a tuple holds in
+ * place of a datum stored out of line. It is a varlena of
+ * toast_ptr_len bytes: varlena_toast, the vartag toast_tag --
+ * PostgreSQL's own are 1, 2, 3 and 18 -- then len, storeid and id,
+ * little-endian. len is the datum's length, its varlena header
+ * left out; storeid the sm1 store that holds it, so a pointer
+ * carried to another table is known for what it is; id names the
+ * datum there, and is never given to another.
+ */
+constexpr uint8_t toast_tag     = 0x40;
+constexpr size_t  toast_ptr_len = 22;
+
+struct toast_ptr_t {
+    uint32_t len;
+    uint64_t storeid;
+    uint64_t id;
+};
+
+/* The pointer p as a varlena, toast_ptr_len bytes. */
+std::string make_toast_ptr(const toast_ptr_t& p);
+
+/* The pointer the varlena v is, in out: false if it is not one of sm2's. */
+bool parse_toast_ptr(std::string_view v, toast_ptr_t& out);
+
+/*
+ * When a row is moved out of line, and how (SM2_DESIGN.md §4.2). A
+ * tuple longer than toast_threshold has its longest datums moved
+ * out, longest first, until it is not, but none shorter than
+ * toast_min. A datum out of line is cut into chunks of
+ * toast_chunk bytes, each one sm1 key.
+ */
+constexpr size_t toast_threshold = 2000;
+constexpr size_t toast_min       = 64;
+constexpr size_t toast_chunk     = 8192;
 
 /*
  * The longest tuple, TOAST aside (TUPLE.md §1): the furthest a
@@ -387,7 +425,8 @@ struct tup_desc_t {
  * Replace tuple with datums, one per attribute of schema, in the
  * layout of TUPLE.md: a byval datum as its bytes inside datum_t;
  * a byref fixed-width datum as the bytes pointed to by datum_t;
- * a variable-width one as a varlena pointed to by datum_t; a
+ * a variable-width one as a varlena pointed to by datum_t, or one
+ * of sm2's TOAST pointers, which is stored as it is; a
  * dropped attribute must be null. Fails with SM_ERR_INVALID on
  * wrong attribute count, invalid typmod, or malformed varlena,
  * and with SM_ERR_ROWTOOLONG on a tuple longer than
@@ -396,6 +435,14 @@ struct tup_desc_t {
 int tup_encode(const tup_desc_t& desc, std::span<const datum_t> datums,
                std::span<const bool> isnull, std::string& tuple);
 
+
+/*
+ * The length of the tuple tup_encode would make of datums and
+ * isnull, in len, whatever it is: a length past max_tup_len is
+ * given, not refused. It fails as tup_encode does otherwise.
+ */
+int tup_size(const tup_desc_t& desc, std::span<const datum_t> datums,
+             std::span<const bool> isnull, size_t& len);
 
 /*
  * One attribute of a tuple, by its position in schema, into val
@@ -456,10 +503,15 @@ struct rel_scan_t;
  * alive for the rel's lifetime -- and each new rowno drawn from
  * the sm1 sequence rowno_seq. Fails with SM_ERR_INVALID if an
  * attribute's type or typmod is not one sm2 can encode.
+ *
+ * With toast_seq, an sm1 sequence of the rel's own, a row's long
+ * datums are stored out of line (TOAST, below); with none, "", no
+ * datum is, and a row past max_tup_len is refused.
  */
 int rel_open(sm1::session_t* session, uint64_t storeid, uint16_t relid,
              std::span<const attribute_t> schema,
-             std::string_view rowno_seq, rel_t*& out);
+             std::string_view rowno_seq, std::string_view toast_seq,
+             rel_t*& out);
 
 /* Close a rel from rel_open; nullptr is a no-op. */
 void rel_close(rel_t* rel);
@@ -518,6 +570,47 @@ int rel_update(rel_t* rel, uint64_t rowno, std::span<const datum_t> datums,
 
 /* Delete the row at rowno, handing back its tuple through old. */
 int rel_delete(rel_t* rel, uint64_t rowno, std::string_view* old = nullptr);
+
+/*
+ * TOAST (SM2_DESIGN.md §4.2). A rel opened with a toast_seq keeps
+ * a tuple to toast_threshold bytes where it can: the row's longest
+ * variable-width datums are written to the store's TOAST relid,
+ * 0xFFFF, in chunks, and the tuple holds a toast_ptr_t for each.
+ * The row and its chunks are written in the caller's transaction,
+ * the row first, so a write sm1 refuses has written no chunk.
+ *
+ * A tuple a rel hands out holds its pointers as they are, and
+ * tup_decode gives one as the datum: varlena_is_toast tells, and
+ * toast_fetch reads the value.
+ *
+ * What a write does with a pointer among its datums:
+ *   - rel_insert reads the value and stores it again under a new
+ *     id, since two rows never share one; the pointer must be of
+ *     this rel's store, or it fails with SM_ERR_INVALID.
+ *   - rel_update keeps it, writing nothing, if it is the pointer
+ *     the row holds for that attribute, as an update that leaves
+ *     the column alone gives it back. Any other fails with
+ *     SM_ERR_INVALID, after the row is written: the caller rolls
+ *     back, as after any write that fails past its first step.
+ * A datum the row no longer holds has its chunks erased, by
+ * rel_update and rel_delete.
+ *
+ * The old tuple rel_update and rel_delete hand back is the rel's
+ * copy when the rel has a toast_seq, valid until the next call on
+ * the rel.
+ */
+
+/*
+ * Read the datum the TOAST pointer ptr names, a varlena as
+ * tup_decode gives it, into out: the datum's bytes, with no
+ * varlena header. It reads as the session's transaction sees the
+ * store, so a pointer is to be fetched in the statement that read
+ * it: a later one may find the row changed and the datum erased.
+ * Fails with SM_ERR_INVALID if ptr is not a pointer of this rel's
+ * store, SM_ERR_NOTFOUND if the datum is not there, and
+ * SM_ERR_CORRUPT if only part of it is.
+ */
+int toast_fetch(rel_t* rel, std::string_view ptr, std::string& out);
 
 /*
  * Open a cursor over the rows with rowno from first to last, both

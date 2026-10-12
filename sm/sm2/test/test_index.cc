@@ -517,7 +517,7 @@ TEST_CASE("index and heap entries share a store without meeting") {
   std::vector<sm2::attribute_t> schema = {
       {&sm2::type_int4, -1, false, std::nullopt}};
   sm2::rel_t *rel = nullptr;
-  REQUIRE(sm2::rel_open(s, db.store(), 0, schema, "rowno", rel) == 0);
+  REQUIRE(sm2::rel_open(s, db.store(), 0, schema, "rowno", "", rel) == 0);
   std::vector<sm2::key_column_t> cols = {
       {&sm2::type_int4, -1, nullptr, false, false}};
   sm2::index_t *a = open_index(db, s, cols, false, 1);

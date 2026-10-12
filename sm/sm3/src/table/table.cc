@@ -321,7 +321,7 @@ namespace {
 int open_rels(table_t *table) {
   const table_def_t &def = *table->def;
   sm1::session_t *s = table->session->sm1;
-  if (sm2::rel_open(s, def.storeid, heap_relid, def.schema, def.rowno_seq,
+  if (sm2::rel_open(s, def.storeid, heap_relid, def.schema, def.rowno_seq, "",
                     table->rel) != 0) {
     return -1;
   }

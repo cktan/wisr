@@ -25,7 +25,7 @@ decisions in `SM2_OBJECTIVE.md`:
 
 **Status: all four steps of §8.2 are built** — the types, the
 key encoding, the tuple codec and the tuple relation, heap and
-index — with TOAST postponed. This file was written so the
+index — and TOAST with it (§4.2). This file was written so the
 formats were argued before they were written, because two of
 them — the key encoding and the tuple layout — are on disk and
 effectively permanent once any data exists. §8 has the order
@@ -792,11 +792,88 @@ schema order too.
   the row's `natts` columns, set for a null, rounded up to
   whole bytes.
 
-Open: the shape of a TOAST pointer — a vartag of sm2's own,
-since PostgreSQL's 1, 2, 3 and 18 are taken, and the pointer
-after it, which the fork's detoast code is taught to follow;
-and whether sm2 ever compresses a datum inline, as PostgreSQL
-does, which its compressed 4-byte form already provides for.
+Open: whether sm2 ever compresses a datum inline, as
+PostgreSQL does, which its compressed 4-byte form already
+provides for.
+
+### 4.2 TOAST
+
+**Decision: a datum out of line is named by an id of its own,
+and never changes.** The heap `rel` moves a row's long datums
+out of the tuple and into the table's store, and leaves a
+pointer for each. Built in `src/rel/toast.cc` and
+`src/rel/rel.cc`, with `test/test_toast.cc`.
+
+- **The key of a chunk is `0xFFFF ‖ id ‖ seq`**: the TOAST
+  relid, the datum's id as 8 bytes big-endian, and the chunk's
+  number as 4. A datum's chunks are next to one another and in
+  order, so reading one back is one scan.
+- **The id is from a sequence of the table's own**, handed to
+  `rel_open` as `toast_seq`. Not the rowno sequence: `ANALYZE`
+  samples rownos between 1 and its limit
+  (`sm3/SM3_DESIGN.md` §6), and each id drawn from it would be
+  a hole a sample falls into. A `rel` opened with no
+  `toast_seq` moves nothing out, as before.
+- **A datum is written once and only ever erased.** A pointer
+  names the same bytes for as long as it names any. The
+  alternative was to key a chunk by its row and column, with
+  no id: a replaced datum would then overwrite the same keys,
+  two writes cheaper, but a pointer read before the change and
+  fetched after it would give the new bytes under the old
+  length. An id makes that an error, not wrong data. Nor was
+  the other scheme's pointer any smaller, since a pointer
+  travels through the executor apart from its row and would
+  have had to name the row and column itself.
+- **The pointer is 22 bytes**: `0x01`, the vartag `0x40`, then
+  the datum's length, the store's id and the datum's id,
+  little-endian (`toast_ptr_t`, `VARLENA.md` §2). The store's
+  id is there so that a pointer carried to another table is
+  known for what it is, and refused.
+- **Which datums move.** A tuple longer than
+  `toast_threshold`, 2000 bytes, has its longest variable-width
+  datums moved out, longest first, until it is not; none
+  shorter than `toast_min`, 64 bytes, is moved. So a row of
+  many short datums can stay longer than the threshold, and
+  only `max_tup_len` refuses it. 2000 is PostgreSQL's figure.
+- **A chunk is `toast_chunk`, 8192 bytes.** PostgreSQL's is
+  about 2000, for its page. Here each chunk is a key in sm1's
+  lock, undo and read sets (`sm1/SM1_DESIGN.md` §13), so fewer
+  and longer ones are cheaper.
+- **The three sizes are constants**, not settings of a table,
+  until something measures them.
+- **The row is written before its chunks.** The ids are drawn,
+  the tuple is encoded with its pointers, the row is written,
+  and only then the chunks. sm1's refusal of the row --
+  `SM_ERR_UPDATED` under READ COMMITTED above all, which is no
+  abort (§5) -- then leaves no chunk behind.
+- **Two rows never share a datum.** There is no count of a
+  datum's users, so:
+  - an insert given a pointer reads the value and stores it
+    again under a new id;
+  - an update keeps a pointer only if it is the one the row
+    holds for that attribute, which is what an update that
+    leaves the column alone gives back, and writes nothing for
+    it. Any other is refused, after the row is written, so the
+    caller rolls back, as after any write that fails past its
+    first step.
+- **A datum the row no longer holds is erased**, by the update
+  that replaced it and by the delete of its row, from the old
+  tuple sm1 hands back. Those are sm1 erases in the caller's
+  transaction: a rollback brings the chunks back, and a
+  snapshot older than the commit still reads them.
+- **A fetch reads at the transaction's snapshot**
+  (`toast_fetch`). PostgreSQL reads TOAST with a snapshot of
+  its own that sees any chunk not yet vacuumed; sm1 has no
+  such read. So a pointer is to be fetched in the statement
+  that read it: at READ COMMITTED a later statement may find
+  the row changed and the datum gone, which is
+  `SM_ERR_NOTFOUND`.
+- **A key is never made of a pointer.** `encode_key` refuses
+  one: the caller fetches the value first.
+- **Not built**: compression; a fetch of part of a datum; and
+  the levels above. sm3 opens its tables with no `toast_seq`
+  yet, so nothing is moved out of line through it (`NEXT.md`
+  §3).
 
 ---
 
@@ -1152,8 +1229,8 @@ error state (§5); `src/type` does already.
 | --- | --- |
 | 1. Types | built |
 | 2. Key encoding | built |
-| 3. Tuple format and codec | built, TOAST postponed |
-| 4. Tuple relation | built: the heap and index `rel`s |
+| 3. Tuple format and codec | built |
+| 4. Tuple relation | built: the heap and index `rel`s, and TOAST (§4.2) |
 
 #### Step 1. Types
 
@@ -1227,13 +1304,10 @@ that calls it (§4).
 - An attribute count per row, as PostgreSQL's `natts`, so
   `ADD COLUMN` is O(1) and a dropped column does not shift the
   ones after it; no schema version (§4).
-- TOAST for large datums, below sm1's 64MB ceiling —
-  **postponed**. The codec is built without it: a variable
-  datum is always inline, and a TOAST pointer or a compressed
-  varlena is refused (§4.1), so a row is bounded
-  by sm1's value limit until TOAST comes. Its keys, threshold,
-  chunk size and whether to compress stay open
-  (`QUESTIONS.md` 4.2, 4.4).
+- TOAST for large datums, below sm1's 64MB ceiling: built
+  after the rest of the step, in the heap `rel` (§4.2). The
+  codec stores one of sm2's pointers as it is, and still
+  refuses a compressed varlena.
 
 **Verify:** a row written with N attributes reads correctly
 after columns are added — each missing one as null or its

@@ -15,12 +15,13 @@
 #include <string>
 
 /*
- * A fresh sm1 home, database and store with a rowno sequence, and
- * sessions on it; all of it is removed at the end.
+ * A fresh sm1 home, database and store with a rowno sequence and
+ * one for TOAST ids, and sessions on it; all of it is removed at
+ * the end.
  */
 class db_t {
 public:
-  /* Initialize a home, a database "db", a store and "rowno". */
+  /* Initialize a home, a database "db", a store, "rowno" and "toast". */
   db_t() {
     std::string tmpl =
         (std::filesystem::temp_directory_path() / "sm2-rel-XXXXXX").string();
@@ -32,6 +33,7 @@ public:
     REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
     REQUIRE(sm1::mkstore(s, m_store) == 0);
     REQUIRE(sm1::mkseq(s, "rowno", 1, 1) == 0);
+    REQUIRE(sm1::mkseq(s, "toast", 1, 1) == 0);
     REQUIRE(sm1::commit(s) == 0);
   }
 

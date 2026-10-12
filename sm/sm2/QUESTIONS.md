@@ -35,22 +35,13 @@ number never changes.
 
 4.2 is a hole in the design as written, not a preference.
 
-**4.2 [BLOCKING] What are TOAST keys?**
-Where TOAST data lives is settled: in the table's own sm1
-store, under the relid `0xFFFF` (`SM2_DESIGN.md` §4,
-§5). What follows the relid is not.
-*Suggested: `0xFFFF ‖ chunk_id ‖ chunk_seq`, PostgreSQL's
-names, with `chunk_id` an 8-byte big-endian value from an sm1
-sequence and `chunk_seq` a 4-byte big-endian chunk number.*
-The tuple's TOAST pointer carries the `chunk_id`; `chunk_seq`
-keeps a datum's chunks contiguous and in order, so reading one
-back is one forward scan. → `SM2_DESIGN.md` §4
+**4.2 What are TOAST keys?** Answered: `0xFFFF ‖ id ‖ seq`,
+with the id from a sequence of the table's own, and the
+pointer's shape with it. → `SM2_DESIGN.md` §4.2
 
-**4.4 [ASSUMABLE] What is the TOAST threshold?**
-*Suggested: start at 2KB, make it a per-relation setting with
-that default, and measure before defending the number.* sm1
-allows 64MB, but undo, lock and read sets are linear in keys
-touched (`sm1/SM1_DESIGN.md` §13). → `SM2_DESIGN.md` §4
+**4.4 What is the TOAST threshold?** Answered: 2000 bytes, a
+datum of 64 or more, chunks of 8192; constants, not settings,
+until they are measured. → `SM2_DESIGN.md` §4.2
 
 ---
 

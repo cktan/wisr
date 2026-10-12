@@ -67,6 +67,13 @@ int encode_key(std::span<const key_column_t> cols,
         return -1;
       }
       if (col.type->len < 0) {
+        // A key is of the value, which a TOAST pointer only names:
+        // the caller fetches it first (toast_fetch).
+        if (varlena_is_toast(bytes)) {
+          key.resize(start);
+          return sm1::seterr(sm1::SM_ERR_INVALID,
+                             "key: a TOAST pointer, not its value");
+        }
         bytes = varlena_payload(bytes);
       }
       key += value_mark;
