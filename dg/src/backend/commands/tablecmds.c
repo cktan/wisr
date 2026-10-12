@@ -17445,63 +17445,18 @@ void PreCommit_on_commit_actions(void) {
   }
 
   /*
-   * Truncate relations before dropping so that all dependencies between
-   * relations are removed after they are worked on.  Doing it like this
-   * might be a waste as it is possible that a relation being truncated will
-   * be dropped anyway due to its parent being dropped, but this makes the
-   * code more robust because of not having to re-check that the relation
-   * exists at truncation time.
+   * The tables are sm's: each is truncated, or dropped, there, in the
+   * transaction about to commit.  Only a table has an action, and nothing
+   * but its indexes depends on it, which go with it.
    */
-  if (oids_to_truncate != NIL)
-    heap_truncate(oids_to_truncate);
+  foreach (l, oids_to_truncate) {
+    Relation rel = relation_open(lfirst_oid(l), NoLock);
 
-  if (oids_to_drop != NIL) {
-    ObjectAddresses *targetObjects = new_object_addresses();
-
-    foreach (l, oids_to_drop) {
-      ObjectAddress object;
-
-      object.classId = RelationRelationId;
-      object.objectId = lfirst_oid(l);
-      object.objectSubId = 0;
-
-      Assert(!object_address_present(&object, targetObjects));
-
-      add_exact_object_address(&object, targetObjects);
-    }
-
-    /*
-     * Object deletion might involve toast table access (to clean up
-     * toasted catalog entries), so ensure we have a valid snapshot.
-     */
-    PushActiveSnapshot(GetTransactionSnapshot());
-
-    /*
-     * Since this is an automatic drop, rather than one directly initiated
-     * by the user, we pass the PERFORM_DELETION_INTERNAL flag.
-     */
-    performMultipleDeletions(targetObjects, DROP_CASCADE,
-                             PERFORM_DELETION_INTERNAL |
-                                 PERFORM_DELETION_QUIETLY);
-
-    PopActiveSnapshot();
-
-#ifdef USE_ASSERT_CHECKING
-
-    /*
-     * Note that table deletion will call remove_on_commit_action, so the
-     * entry should get marked as deleted.
-     */
-    foreach (l, on_commits) {
-      OnCommitItem *oc = (OnCommitItem *)lfirst(l);
-
-      if (oc->oncommit != ONCOMMIT_DROP)
-        continue;
-
-      Assert(oc->deleting_subid != InvalidSubTransactionId);
-    }
-#endif
+    smstore_truncate(rel);
+    relation_close(rel, NoLock);
   }
+  foreach (l, oids_to_drop)
+    smstore_drop_table(lfirst_oid(l));
 }
 
 /*

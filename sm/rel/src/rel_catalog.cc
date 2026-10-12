@@ -218,11 +218,11 @@ static table_def_t *lock_into(session_ctx_t *s, const std::string &name,
   return s->stmt_tables.back().get();
 }
 
-/* Open the table name in public, locked in mode; nullptr if none. */
+/* Open the table name, temporary or in public; nullptr if none. */
 table_def_t *catalog_t::open_table(session_ctx_t *s, const std::string &name,
                                    sm_lockmode_t mode) {
   uint64_t oid = 0;
-  if (sm_cat_table_oid(s->session, SM_NSP_PUBLIC, name.c_str(), &oid) != 0) {
+  if (rel_table_oid(s, name, &oid) != 0) {
     return nullptr;
   }
   return lock_into(s, name, oid, mode);
@@ -233,8 +233,7 @@ std::pair<table_def_t *, index_def_t *>
 catalog_t::open_index(session_ctx_t *s, const std::string &name,
                       sm_lockmode_t mode) {
   uint64_t table = 0, index = 0;
-  if (sm_cat_index_oid(s->session, SM_NSP_PUBLIC, name.c_str(), &table,
-                       &index) != 0) {
+  if (rel_index_oid(s, name, &table, &index) != 0) {
     return {nullptr, nullptr};
   }
   table_def_t *t = lock_into(s, "", table, mode);

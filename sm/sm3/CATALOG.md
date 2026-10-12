@@ -240,7 +240,7 @@ SEQUENCE value    = sequence
   process's, not a catalog's (`SM3_DESIGN.md` §3).
 - **A session's temporary catalog** (`TEMPTABLE.md` at the top
   level, §4): the definitions of its temporary tables, their
-  names in the namespace `pg_temp`, and their indexes'
+  names, which are in no namespace, and their indexes'
   states. A change to a temporary table is made in the
   overlay like any other, marked as one; `commit` moves it
   here and not into the shared catalog, and takes the

@@ -30,6 +30,7 @@
 #include "catalog/pg_namespace_d.h"
 #include "catalog/pg_type_d.h"
 #include "commands/defrem.h"
+#include "commands/tablecmds.h"
 #include "commands/vacuum.h"
 #include "lib/stringinfo.h"
 #include "miscadmin.h"
@@ -376,13 +377,25 @@ static Oid sequence_oid(const char *name, Oid nspoid) {
 }
 
 /*
+ * The namespace nspoid as sm knows it.  The session's temporary tables are
+ * in no namespace in sm, which SM_NSP_TEMP stands for; digres's own
+ * temporary namespace, PG_TEMP_NAMESPACE, is compiled in and never sm's.
+ */
+static uint64_t sm_nspoid(Oid nspoid) {
+  return nspoid == PG_TEMP_NAMESPACE ? SM_NSP_TEMP : nspoid;
+}
+
+/*
  * The oid of the relation named name in nspoid, a table, an index or a
  * sequence, or InvalidOid if there is none.
  */
 Oid smstore_relation_oid(const char *name, Oid nspoid) {
   uint64_t oid, table;
 
-  switch (sm_cat_table_oid(session(), nspoid, name, &oid)) {
+  /* No namespace holds nothing: InvalidOid is SM_NSP_TEMP's number. */
+  if (!OidIsValid(nspoid))
+    return InvalidOid;
+  switch (sm_cat_table_oid(session(), sm_nspoid(nspoid), name, &oid)) {
   case 0:
     return (Oid)oid;
   case 1:
@@ -390,7 +403,7 @@ Oid smstore_relation_oid(const char *name, Oid nspoid) {
   default:
     sm_error("look up a table");
   }
-  switch (sm_cat_index_oid(session(), nspoid, name, &table, &oid)) {
+  switch (sm_cat_index_oid(session(), sm_nspoid(nspoid), name, &table, &oid)) {
   case 0:
     return (Oid)oid;
   case 1:
@@ -398,7 +411,8 @@ Oid smstore_relation_oid(const char *name, Oid nspoid) {
   default:
     sm_error("look up an index");
   }
-  return sequence_oid(name, nspoid);
+  /* A sequence is never temporary yet. */
+  return nspoid == PG_TEMP_NAMESPACE ? InvalidOid : sequence_oid(name, nspoid);
 }
 
 static void drop_table(RangeVar *rv, bool missing_ok);
@@ -561,11 +575,10 @@ static void check_create_table(const CreateStmt *stmt) {
       stmt->partspec != NULL || stmt->ofTypename != NULL ||
       stmt->constraints != NIL || stmt->options != NIL ||
       stmt->tablespacename != NULL || stmt->accessMethod != NULL ||
-      stmt->oncommit != ONCOMMIT_NOOP ||
-      stmt->relation->relpersistence != RELPERSISTENCE_PERMANENT)
+      stmt->relation->relpersistence == RELPERSISTENCE_UNLOGGED)
     ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                     errmsg("CREATE TABLE supports only columns, NOT NULL, "
-                           "PRIMARY KEY and UNIQUE yet")));
+                           "PRIMARY KEY, UNIQUE and TEMPORARY yet")));
 }
 
 /*
@@ -575,12 +588,19 @@ static void check_create_table(const CreateStmt *stmt) {
 ObjectAddress smstore_create_table(CreateStmt *stmt) {
   std::vector<sm_column_spec_t> columns;
   Oid nspoid;
+  bool temp;
   uint64_t oid;
   ObjectAddress address;
   ListCell *l;
 
   check_create_table(stmt);
   nspoid = RangeVarGetCreationNamespace(stmt->relation);
+  /* A table in pg_temp is temporary, and a temporary one is in no other. */
+  RangeVarAdjustRelationPersistence(stmt->relation, nspoid);
+  temp = stmt->relation->relpersistence == RELPERSISTENCE_TEMP;
+  if (!temp && stmt->oncommit != ONCOMMIT_NOOP)
+    ereport(ERROR, (errcode(ERRCODE_INVALID_TABLE_DEFINITION),
+                    errmsg("ON COMMIT can only be used on temporary tables")));
   foreach (l, stmt->tableElts) {
     ColumnDef *col = lfirst_node(ColumnDef, l);
     Oid typid;
@@ -599,9 +619,12 @@ ObjectAddress smstore_create_table(CreateStmt *stmt) {
   }
   sm_session_t *s = xact_session();
 
+  /* A temporary table is the session's alone, in no namespace of sm's. */
   if (waiting([&] {
-        return sm_cat_create_table(s, nspoid, stmt->relation->relname, columns,
-                                   &oid);
+        return temp ? sm_cat_create_temp_table(s, stmt->relation->relname,
+                                               columns, &oid)
+                    : sm_cat_create_table(s, nspoid, stmt->relation->relname,
+                                          columns, &oid);
       }) != 0) {
     if (sm_errnum() == SM_ERR_DUPKEY)
       ereport(ERROR, (errcode(ERRCODE_DUPLICATE_TABLE),
@@ -609,6 +632,8 @@ ObjectAddress smstore_create_table(CreateStmt *stmt) {
                              stmt->relation->relname)));
     sm_error("create a table");
   }
+  /* What its ON COMMIT asks is done before each commit (xact.c). */
+  register_on_commit_action((Oid)oid, stmt->oncommit);
   ObjectAddressSet(address, RelationRelationId, (Oid)oid);
   return address;
 }
@@ -884,7 +909,8 @@ smstore_table_t *smstore_table_desc(Oid oid) {
   def = sm_tbl_def(tbl);
   desc = (smstore_table_t *)palloc(sizeof(smstore_table_t));
   desc->oid = oid;
-  desc->nspoid = (Oid)def->nspoid;
+  desc->nspoid =
+      def->nspoid == SM_NSP_TEMP ? PG_TEMP_NAMESPACE : (Oid)def->nspoid;
   desc->name = pstrdup(def->name.c_str());
   desc->ncolumns = (int)def->columns.size();
   desc->columns =
@@ -1088,13 +1114,39 @@ static void drop_table(RangeVar *rv, bool missing_ok) {
   if (rel->rd_rel->relkind != RELKIND_RELATION)
     ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
                     errmsg("\"%s\" is not a table", rv->relname)));
+  relation_close(rel, NoLock);
+  smstore_drop_table(oid);
+}
+
+/*
+ * Drop the table oid from sm, in this transaction, with its indexes, rows
+ * and sequence: DROP TABLE's, and ON COMMIT DROP's.
+ */
+void smstore_drop_table(Oid oid) {
+  Relation rel = relation_open(oid, NoLock);
+
   /* Every session forgets its descriptor once this one commits. */
   CacheInvalidateRelcache(rel);
   relation_close(rel, NoLock);
+  /* Its ON COMMIT action, if it has one, goes with it. */
+  remove_on_commit_action(oid);
   sm_session_t *s = xact_session();
 
   if (waiting([&] { return sm_cat_drop_table(s, oid); }) != 0)
     sm_error("drop a table");
+}
+
+/*
+ * Drop every temporary table of the session, in this transaction: DISCARD
+ * TEMP's.  sm drops them itself when the session closes its database.
+ */
+void smstore_drop_temp_tables(void) {
+  std::vector<std::string> names;
+
+  if (sm_cat_list_tables(xact_session(), SM_NSP_TEMP, names) != 0)
+    sm_error("list the temporary tables");
+  for (const std::string &name : names)
+    smstore_drop_table(smstore_relation_oid(name.c_str(), PG_TEMP_NAMESPACE));
 }
 
 /*
@@ -1437,12 +1489,20 @@ static void analyze_table(Oid oid, const char *name, bool verbose) {
             (errmsg("skipping \"%s\" --- cannot analyze non-tables", name)));
     return;
   }
+  Relation rel = relation_open(oid, NoLock);
+
+  /* sm keeps no statistics for a temporary table yet, and refuses. */
+  if (rel->rd_rel->relpersistence == RELPERSISTENCE_TEMP) {
+    relation_close(rel, NoLock);
+    ereport(WARNING, (errmsg("skipping \"%s\" --- statistics are not kept "
+                             "for a temporary table yet",
+                             name)));
+    return;
+  }
   if (waiting([&] { return sm_tbl_analyze(tbl, default_statistics_target); }) !=
       0)
     sm_error("analyze a table");
   /* Plans of the table are made again, with its new statistics. */
-  Relation rel = relation_open(oid, NoLock);
-
   CacheInvalidateRelcache(rel);
   relation_close(rel, NoLock);
   if (verbose) {
@@ -1675,8 +1735,8 @@ static bool find_index(const RangeVar *rv, uint64_t *table, uint64_t *index) {
   else
     path = fetch_search_path(false);
   foreach (l, path) {
-    switch (
-        sm_cat_index_oid(session(), lfirst_oid(l), rv->relname, table, index)) {
+    switch (sm_cat_index_oid(session(), sm_nspoid(lfirst_oid(l)), rv->relname,
+                             table, index)) {
     case 0:
       return true;
     case 1:

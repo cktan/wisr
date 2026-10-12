@@ -484,6 +484,14 @@ void sm_idx_scanend(sm_idx_scan_t* scan);
 #define SM_NSP_PG_CATALOG 11
 #define SM_NSP_PUBLIC     2200
 
+/*
+ * The namespace of a session's temporary tables: none
+ * (sm3::nsp_temp). The lookups by name take it to mean the
+ * session's own temporary tables and their indexes, and a temporary
+ * table's definition has it for its namespace.
+ */
+#define SM_NSP_TEMP 0
+
 /* A column, as a table is created with it. */
 struct sm_column_spec_t {
     const char* name;
@@ -948,6 +956,22 @@ int sm_cat_create_table(sm_session_t* session, uint64_t nspoid,
                         const char* name,
                         const std::vector<sm_column_spec_t>& columns,
                         uint64_t* oid);
+
+/*
+ * Create the temporary table name with these columns
+ * (TEMPTABLE.md): the session's alone, seen by no other and gone
+ * when the session closes. It is in no namespace, and is found by
+ * name with SM_NSP_TEMP. Its rows are never logged and take no
+ * locks, but follow the session's transactions as any table's do.
+ * The other calls take its oid as they take any table's, but
+ * sm_tbl_analyze fails with SM_ERR_INVALID, and so does preparing
+ * a transaction that made, changed or wrote one. A name another of
+ * the session's temporary tables or their indexes has fails with
+ * SM_ERR_DUPKEY.
+ */
+int sm_cat_create_temp_table(sm_session_t* session, const char* name,
+                             const std::vector<sm_column_spec_t>& columns,
+                             uint64_t* oid);
 
 /* Drop the table oid: its store, rows, indexes and sequence. */
 int sm_cat_drop_table(sm_session_t* session, uint64_t oid);

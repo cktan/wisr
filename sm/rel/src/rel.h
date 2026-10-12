@@ -214,6 +214,16 @@ void make_varlena(const char *data, size_t len, std::vector<uint8_t> &out);
 /* The payload of the varlena at p, its length from its header. */
 void varlena_payload(const void *p, const char **out_data, size_t *out_len);
 
+/*
+ * The table name's oid, as a search path of the session's temporary
+ * tables and then public finds it: 0, 1 if there is none, or -1.
+ */
+int rel_table_oid(session_ctx_t *s, const std::string &name, uint64_t *oid);
+
+/* The index name and its table, found as rel_table_oid finds a table. */
+int rel_index_oid(session_ctx_t *s, const std::string &name, uint64_t *table,
+                  uint64_t *index);
+
 /* Register all rel native functions and macros into env. */
 void register_rel_cfuns(JanetTable *env);
 

@@ -105,9 +105,13 @@ int drop_namespace(session_t *session, uint64_t oid) {
   return cat_del_namespace(session, oid);
 }
 
-/* Create a table; see sm3.h. */
-int create_table(session_t *session, uint64_t nspoid, std::string_view name,
-                 std::span<const column_spec_t> columns, uint64_t &oid) {
+/*
+ * Create a table in nspoid, or a temporary one if nspoid is
+ * nsp_temp: what create_table and create_temp_table share.
+ */
+static int make_table(session_t *session, uint64_t nspoid,
+                      std::string_view name,
+                      std::span<const column_spec_t> columns, uint64_t &oid) {
   if (name.empty()) {
     return sm1::seterr(sm1::SM_ERR_INVALID, "create table: no name");
   }
@@ -132,7 +136,7 @@ int create_table(session_t *session, uint64_t nspoid, std::string_view name,
   // The table's store and its rowno sequence (DESIGN.md §5): for a
   // temporary table, both temporary, and so the session's alone
   // (TEMPTABLE.md §4).
-  const bool temp = nspoid == nsp_pg_temp;
+  const bool temp = nspoid == nsp_temp;
   if (sm1::mkstore(session->sm1, rec.storeid, temp) != 0) {
     return -1;
   }
@@ -153,6 +157,22 @@ int create_table(session_t *session, uint64_t nspoid, std::string_view name,
     sm1::seterr(error, reason);
   }
   return -1;
+}
+
+/* Create a table; see sm3.h. */
+int create_table(session_t *session, uint64_t nspoid, std::string_view name,
+                 std::span<const column_spec_t> columns, uint64_t &oid) {
+  // No namespace is the temporary tables' alone (create_temp_table).
+  if (nspoid == nsp_temp) {
+    return sm1::seterr(sm1::SM_ERR_NOTFOUND, "namespace 0 does not exist");
+  }
+  return make_table(session, nspoid, name, columns, oid);
+}
+
+/* Create a temporary table; see sm3.h. */
+int create_temp_table(session_t *session, std::string_view name,
+                      std::span<const column_spec_t> columns, uint64_t &oid) {
+  return make_table(session, nsp_temp, name, columns, oid);
 }
 
 /* Drop a table; see sm3.h. */
@@ -180,7 +200,7 @@ int truncate_table(session_t *session, uint64_t oid) {
   // A new, empty store for the rows and index entries, temporary
   // if the table is; the index relids and the rowno sequence carry
   // over.
-  if (sm1::mkstore(session->sm1, rec.storeid, rec.nspoid == nsp_pg_temp) != 0 ||
+  if (sm1::mkstore(session->sm1, rec.storeid, rec.nspoid == nsp_temp) != 0 ||
       cat_put_table(session, oid, rec) != 0) {
     return -1;
   }

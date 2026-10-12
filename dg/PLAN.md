@@ -472,6 +472,14 @@ Do not reopen these without the owner:
   database's name changes and attributes. The rest of the DDL
   that writes catalog tables is kept, refusing, to be ported onto
   sm's catalog.
+- **The temporary namespace is compiled in.** `pg_temp` has
+  one oid in every session and database
+  (`PG_TEMP_NAMESPACE`), and no row anywhere: sm keeps each
+  session's temporary tables apart, in no namespace
+  (`../sm/TEMPTABLE.md`). PostgreSQL's `pg_temp_N` per backend
+  would be a row in the database naming a slot of this
+  instance, against "a database is its directory"
+  (`CODE.md`).
 
 ## 8. Working in this tree
 

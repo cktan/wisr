@@ -38,16 +38,13 @@ constexpr uint64_t nsp_public = 2200;
 constexpr uint64_t first_oid = 16384;
 
 /*
- * The temporary namespace, pg_temp (TEMPTABLE.md §4): built in, at
- * an oid PostgreSQL gives no namespace, and the same in every
- * session and database. A table made in it is a temporary table.
- * Its store is a temporary store and its definition is kept in the
- * session's memory alone, so each session finds only its own there:
- * no other session sees the table, and it ends with its session.
- * The namespace is not listed and cannot be dropped.
+ * The namespace oid of a session's temporary tables (TEMPTABLE.md
+ * §4): no namespace at all. sm3 keeps no temporary namespace, and
+ * its host names its own. A temporary table's definition has this
+ * for its namespace, and the lookups by name take it to mean the
+ * session's own temporary tables and their indexes.
  */
-constexpr uint64_t nsp_pg_temp = 12;
-constexpr char nsp_pg_temp_name[] = "pg_temp";
+constexpr uint64_t nsp_temp = 0;
 
 /*
  * The relids of a table's rels in its store (SM3_DESIGN.md §4):
@@ -551,6 +548,18 @@ int cat_list_sequences(session_t* s, uint64_t nspoid,
  */
 int create_table(session_t* session, uint64_t nspoid, std::string_view name,
                  std::span<const column_spec_t> columns, uint64_t& oid);
+
+/*
+ * Create a temporary table named name (TEMPTABLE.md §4), as
+ * create_table does but in no namespace: its store is a temporary
+ * store, its rowno sequence a temporary sequence, and its
+ * definition is kept in the session's memory alone. No other
+ * session sees it, and it ends with its session. A name another
+ * of the session's temporary tables or their indexes has fails
+ * with SM_ERR_DUPKEY. It is found by name with nsp_temp.
+ */
+int create_temp_table(session_t* session, std::string_view name,
+                      std::span<const column_spec_t> columns, uint64_t& oid);
 
 /*
  * The rest of the DDL, each in session's transaction and, as

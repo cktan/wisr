@@ -49,7 +49,7 @@ bool made_ddl(const sm3::session_t *s) {
 
 /* Whether a name change is of a temporary table's name. */
 bool temp_name(const sm3::name_change_t &c) {
-  return c.name.first == sm3::nsp_pg_temp;
+  return c.name.first == sm3::nsp_temp;
 }
 
 /*
@@ -490,8 +490,6 @@ static std::map<uint64_t, std::string> nspaces_of(const session_t *s) {
       out.erase(c.oid);
     }
   }
-  // Built in, and in no store: every session has its own.
-  out[nsp_pg_temp] = nsp_pg_temp_name;
   return out;
 }
 
@@ -530,10 +528,7 @@ bool cat_get_namespace(const session_t *s, std::string_view name,
 std::vector<std::string> cat_list_namespaces(const session_t *s) {
   std::vector<std::string> out;
   for (const auto &[oid, name] : nspaces_of(s)) {
-    // The temporary namespace is not one to list.
-    if (oid != nsp_pg_temp) {
-      out.push_back(name);
-    }
+    out.push_back(name);
   }
   std::sort(out.begin(), out.end());
   return out;
@@ -635,7 +630,7 @@ int cat_lock_table(session_t *s, uint64_t oid, sm1::lockmode_t mode,
                    std::shared_ptr<const table_def_t> &out) {
   // A temporary table is the session's alone: no one to lock out.
   out = cat_get_table(s, oid);
-  if (out && out->nspoid == nsp_pg_temp) {
+  if (out && out->nspoid == nsp_temp) {
     return 0;
   }
   if (lock_table(s->sm1, oid, mode) != 0) {
@@ -657,7 +652,7 @@ std::vector<std::string> cat_list_tables(const session_t *s, uint64_t nspoid) {
       seen[c.name.second] = c.oid.has_value();
     }
   }
-  if (nspoid == nsp_pg_temp) {
+  if (nspoid == nsp_temp) {
     // Its own temporary tables: the catalog has none.
     for (const auto &[name, oid] : s->temp_names) {
       seen.emplace(name, true);
@@ -721,7 +716,7 @@ cat_get_table(const session_t *s, uint64_t nspoid, std::string_view name) {
     }
   }
   uint64_t oid;
-  if (nspoid == nsp_pg_temp) {
+  if (nspoid == nsp_temp) {
     // Its own temporary tables: the catalog has none.
     auto it = s->temp_names.find(std::string(name));
     if (it == s->temp_names.end()) {

@@ -282,6 +282,7 @@ static Janet cfun_session_close(int32_t argc, Janet *argv) {
 
 /* (begin [level]) */
 static Janet cfun_begin(int32_t argc, Janet *argv) {
+  janet_arity(argc, 0, 2);
   session_ctx_t *s = require_session();
   sm_xctlevel_t level = SM_XCT_READ_COMMITTED;
   if (argc >= 1) {
@@ -299,8 +300,16 @@ static Janet cfun_begin(int32_t argc, Janet *argv) {
       janet_panicf("unknown isolation level '%s'", lvl.c_str());
     }
   }
+  int read_only = 0;
+  if (argc == 2) {
+    std::string option = identifier_of(argv[1]);
+    if (option != "read-only" && option != ":read-only") {
+      janet_panic("begin: the option after the level is :read-only");
+    }
+    read_only = 1;
+  }
   // Begin transaction at the requested isolation level.
-  if (sm_begin(s->session, level, 0) != 0) {
+  if (sm_begin(s->session, level, read_only) != 0) {
     panic_sm_error("begin");
   }
   return janet_wrap_nil();
@@ -467,8 +476,29 @@ static Janet cfun_abort_prepared(int32_t argc, Janet *argv) {
   return janet_wrap_nil();
 }
 
-/* (table-create name (columns ...)) */
-static Janet cfun_table_create(int32_t argc, Janet *argv) {
+/*
+ * The table name's oid, as a search path of the session's temporary
+ * tables and then public finds it: 0, 1 if there is none, or -1.
+ */
+int rel_table_oid(session_ctx_t *s, const std::string &name, uint64_t *oid) {
+  int rc = sm_cat_table_oid(s->session, SM_NSP_TEMP, name.c_str(), oid);
+  return rc == 1
+             ? sm_cat_table_oid(s->session, SM_NSP_PUBLIC, name.c_str(), oid)
+             : rc;
+}
+
+/* The index name and its table, found as rel_table_oid finds a table. */
+int rel_index_oid(session_ctx_t *s, const std::string &name, uint64_t *table,
+                  uint64_t *index) {
+  int rc =
+      sm_cat_index_oid(s->session, SM_NSP_TEMP, name.c_str(), table, index);
+  return rc == 1 ? sm_cat_index_oid(s->session, SM_NSP_PUBLIC, name.c_str(),
+                                    table, index)
+                 : rc;
+}
+
+/* (table-create name (columns ...)) and (temp-table-create ...) */
+static Janet table_create(int32_t argc, Janet *argv, bool temp) {
   janet_arity(argc, 2, -1);
   session_ctx_t *s = require_session();
   std::string tbl_name = identifier_of(argv[0]);
@@ -570,11 +600,24 @@ static Janet cfun_table_create(int32_t argc, Janet *argv) {
     specs.push_back({c.name.c_str(), c.type_code, c.typmod, c.not_null});
   }
   uint64_t oid = 0;
-  if (sm_cat_create_table(s->session, SM_NSP_PUBLIC, tbl_name.c_str(), specs,
-                          &oid) != 0) {
-    panic_sm_error("table-create");
+  int rc =
+      temp ? sm_cat_create_temp_table(s->session, tbl_name.c_str(), specs, &oid)
+           : sm_cat_create_table(s->session, SM_NSP_PUBLIC, tbl_name.c_str(),
+                                 specs, &oid);
+  if (rc != 0) {
+    panic_sm_error(temp ? "temp-table-create" : "table-create");
   }
   return janet_wrap_nil();
+}
+
+/* (table-create name (columns ...)) */
+static Janet cfun_table_create(int32_t argc, Janet *argv) {
+  return table_create(argc, argv, false);
+}
+
+/* (temp-table-create name (columns ...)) */
+static Janet cfun_temp_table_create(int32_t argc, Janet *argv) {
+  return table_create(argc, argv, true);
 }
 
 /* (table-drop name) */
@@ -584,7 +627,7 @@ static Janet cfun_table_drop(int32_t argc, Janet *argv) {
   std::string tbl_name = identifier_of(argv[0]);
 
   uint64_t oid = 0;
-  int rc = sm_cat_table_oid(s->session, SM_NSP_PUBLIC, tbl_name.c_str(), &oid);
+  int rc = rel_table_oid(s, tbl_name, &oid);
   if (rc == 1) {
     janet_panicf("table-drop: table '%s' does not exist", tbl_name.c_str());
   }
@@ -1075,8 +1118,7 @@ static Janet cfun_index_drop(int32_t argc, Janet *argv) {
   std::string idx_name = identifier_of(argv[0]);
 
   uint64_t table = 0, index = 0;
-  int rc = sm_cat_index_oid(s->session, SM_NSP_PUBLIC, idx_name.c_str(), &table,
-                            &index);
+  int rc = rel_index_oid(s, idx_name, &table, &index);
   if (rc == 1) {
     janet_panicf("index-drop: index '%s' not found", idx_name.c_str());
   }
@@ -1093,8 +1135,7 @@ static Janet cfun_index_wait(int32_t argc, Janet *argv) {
   std::string idx_name = identifier_of(argv[0]);
 
   uint64_t table = 0, index = 0;
-  int rc = sm_cat_index_oid(s->session, SM_NSP_PUBLIC, idx_name.c_str(), &table,
-                            &index);
+  int rc = rel_index_oid(s, idx_name, &table, &index);
   if (rc == 1) {
     janet_panicf("index-wait: index '%s' not found", idx_name.c_str());
   }
@@ -1830,6 +1871,7 @@ static const JanetReg s_rel_cfuns[] = {
      "(abort-prepared gid) -- abort prepared transaction"},
 
     {"_table-create", cfun_table_create, "internal"},
+    {"_temp-table-create", cfun_temp_table_create, "internal"},
     {"_table-drop", cfun_table_drop, "internal"},
     {"_namespace-create", cfun_namespace_create, "internal"},
     {"_namespace-drop", cfun_namespace_drop, "internal"},
@@ -1877,6 +1919,9 @@ static const JanetReg s_rel_cfuns[] = {
 static const char *s_prelude = R"janet(
 (defmacro table-create [name & body]
   ~(_table-create (string ',name) ',body))
+
+(defmacro temp-table-create [name & body]
+  ~(_temp-table-create (string ',name) ',body))
 
 (defmacro table-drop [name]
   ~(_table-drop (string ',name)))

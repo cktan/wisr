@@ -1091,6 +1091,91 @@ grep -q 'table "t1" does not exist' "$work/drop2.out" || fail "drop twice"
 local_psql -c 'drop table if exists t1' > "$work/drop2.out" 2>&1
 grep -q 'does not exist, skipping' "$work/drop2.out" || fail "drop if exists"
 
+# Verify that a temporary table is its session's alone, in sm: it is found
+# before a table of its name, follows the session's transactions, takes
+# writes in a read-only one, and does what its ON COMMIT asks.
+# 1. In one session create temporary tt1 with a key and two rows; read it by
+#    name, through pg_temp, and joined with table tp1; then create a temporary
+#    tp1, which hides the table, still read as public.tp1.
+# 2. In one session roll back an insert into a temporary table, roll back
+#    another to a savepoint, and commit a third in a read-only transaction:
+#    it holds its first row and the third; an insert into a table in a
+#    read-only transaction is refused.
+# 3. ON COMMIT DROP: the table is there in its transaction and gone after.
+#    ON COMMIT DELETE ROWS: its rows are there in a transaction, gone after.
+# 4. While a session holds temporary tt2 with a row, another finds no tt2,
+#    and makes its own, empty; the first still counts its row.
+# 5. DISCARD TEMP drops a session's temporary tables; ANALYZE skips one with
+#    a warning; UNLOGGED, ON COMMIT on a table, and a temporary table in
+#    public are refused.
+local_psql -c 'create table tp1 (a int4)' -c 'insert into tp1 values (1)' \
+  > "$work/temp.out" 2>&1
+[ "$(local_psql -c 'create temporary table tt1 (a int4 primary key, b int4)' \
+  -c 'insert into tt1 values (1, 10), (2, 20)' \
+  -c 'select b from tt1 where a = 2' -c 'select b from pg_temp.tt1 where a = 1' \
+  -c 'select tt1.b from tt1, tp1 where tt1.a = tp1.a' \
+  -c 'create temp table tp1 (z int4)' -c 'select count(*) from tp1' \
+  -c 'select a from public.tp1' 2>&1 | grep -v '^[A-Z]' | tr '\n' ' ')" = \
+  "20 10 10 0 1 " ] || fail "temporary table"
+local_psql -c 'select 1 from tt1' 2>&1 | grep -q 'relation "tt1" does not exist' ||
+  fail "temporary table outlived its session"
+[ "$(local_psql -c 'create temp table tt1 (a int4)' \
+  -c 'insert into tt1 values (1)' \
+  -c 'begin' -c 'insert into tt1 values (2)' -c 'rollback' \
+  -c 'begin' -c 'savepoint s' -c 'insert into tt1 values (3)' \
+  -c 'rollback to s' -c 'commit' \
+  -c 'begin read only' -c 'insert into tt1 values (4)' -c 'commit' \
+  -c 'select a from tt1 order by a' 2>&1 | grep -v '^[A-Z]' |
+  tr '\n' ' ')" = "1 4 " ] || fail "temporary table in transactions"
+local_psql -c 'begin read only' -c 'insert into tp1 values (2)' 2>&1 |
+  grep -q 'cannot execute INSERT in a read-only transaction' ||
+  fail "read-only insert into a table"
+local_psql -c 'begin' -c 'create temp table tt1 (a int4) on commit drop' \
+  -c 'insert into tt1 values (7)' -c 'select a from tt1' -c 'commit' \
+  -c 'select a from tt1' > "$work/temp_drop.out" 2>&1
+grep -qx 7 "$work/temp_drop.out" &&
+  grep -q 'relation "tt1" does not exist' "$work/temp_drop.out" ||
+  fail "on commit drop"
+[ "$(local_psql -c 'create temp table tt1 (a int4) on commit delete rows' \
+  -c 'begin' -c 'insert into tt1 values (1), (2)' \
+  -c 'select count(*) from tt1' -c 'commit' -c 'select count(*) from tt1' \
+  2>&1 | grep -v '^[A-Z]' | tr '\n' ' ')" = "2 0 " ] ||
+  fail "on commit delete rows"
+mkfifo "$work/temp.in"
+local_psql < "$work/temp.in" > "$work/temp_own.out" 2>&1 &
+owner=$!
+exec 4> "$work/temp.in"
+echo "create temp table tt2 (a int4); insert into tt2 values (1);" >&4
+echo "select 'made';" >&4
+for _ in $(seq 50); do
+  grep -qx made "$work/temp_own.out" && break
+  sleep 0.1
+done
+local_psql -c 'select 1 from tt2' 2>&1 |
+  grep -q 'relation "tt2" does not exist' || fail "temporary table seen"
+[ "$(local_psql -c 'create temp table tt2 (a int4)' \
+  -c 'select count(*) from tt2' 2>&1 | tail -1)" = 0 ] ||
+  fail "temporary table of the same name"
+echo "select count(*) + 40 from tt2;" >&4
+exec 4>&-
+wait $owner
+grep -qx 41 "$work/temp_own.out" || fail "temporary table kept"
+local_psql -c 'create temp table tt1 (a int4)' -c 'discard temp' \
+  -c 'select 1 from tt1' 2>&1 | grep -q 'relation "tt1" does not exist' ||
+  fail "discard temp"
+local_psql -c 'create temp table tt1 (a int4)' -c 'analyze tt1' 2>&1 |
+  grep -q 'statistics are not kept for a temporary table yet' ||
+  fail "analyze a temporary table"
+local_psql -c 'create unlogged table tu1 (a int4)' 2>&1 |
+  grep -q 'supports only' || fail "unlogged table"
+local_psql -c 'create table tu1 (a int4) on commit drop' 2>&1 |
+  grep -q 'ON COMMIT can only be used on temporary tables' ||
+  fail "on commit on a table"
+local_psql -c 'create temp table public.tu1 (a int4)' 2>&1 |
+  grep -q 'cannot create temporary relation in non-temporary schema' ||
+  fail "temporary table in public"
+local_psql -c 'drop table tp1' > /dev/null 2>&1
+
 # Verify that a signal sent to the server can land only in the postmaster's
 # thread: every other thread, sessions, sm's, RocksDB's and sm_sys.h's,
 # blocks the signals the postmaster handles, whose handlers set the

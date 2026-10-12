@@ -1306,7 +1306,10 @@ static Relation RelationBuildSmDesc(Oid targetRelId, bool insertIt) {
   form.relam = HEAP_TABLE_AM_OID;
   form.relfilenode = targetRelId;
   form.relkind = RELKIND_RELATION;
-  form.relpersistence = RELPERSISTENCE_PERMANENT;
+  /* A table in sm with no namespace there is the session's temporary one. */
+  form.relpersistence = desc->nspoid == PG_TEMP_NAMESPACE
+                            ? RELPERSISTENCE_TEMP
+                            : RELPERSISTENCE_PERMANENT;
   form.relispopulated = true;
   form.relnatts = desc->ncolumns;
   form.relreplident = REPLICA_IDENTITY_NOTHING;
@@ -1319,7 +1322,7 @@ static Relation RelationBuildSmDesc(Oid targetRelId, bool insertIt) {
   relation->rd_firstRelfilelocatorSubid = InvalidSubTransactionId;
   relation->rd_droppedSubid = InvalidSubTransactionId;
   relation->rd_backend = INVALID_PROC_NUMBER;
-  relation->rd_islocaltemp = false;
+  relation->rd_islocaltemp = desc->nspoid == PG_TEMP_NAMESPACE;
 
   /* The columns, in the cache's context, as AllocateRelationDesc's are. */
   oldcxt = MemoryContextSwitchTo(CacheMemoryContext);
@@ -1417,7 +1420,10 @@ static Relation RelationBuildSmIndexDesc(Oid indexoid, Oid table,
   form.relam = BTREE_AM_OID;
   form.relfilenode = indexoid;
   form.relkind = RELKIND_INDEX;
-  form.relpersistence = RELPERSISTENCE_PERMANENT;
+  /* A table in sm with no namespace there is the session's temporary one. */
+  form.relpersistence = desc->nspoid == PG_TEMP_NAMESPACE
+                            ? RELPERSISTENCE_TEMP
+                            : RELPERSISTENCE_PERMANENT;
   form.relispopulated = true;
   form.relnatts = ix->ncolumns;
   relation = AllocateRelationDesc(&form);
@@ -1429,7 +1435,7 @@ static Relation RelationBuildSmIndexDesc(Oid indexoid, Oid table,
   relation->rd_firstRelfilelocatorSubid = InvalidSubTransactionId;
   relation->rd_droppedSubid = InvalidSubTransactionId;
   relation->rd_backend = INVALID_PROC_NUMBER;
-  relation->rd_islocaltemp = false;
+  relation->rd_islocaltemp = desc->nspoid == PG_TEMP_NAMESPACE;
 
   /* Its columns are the table's, in the cache's context. */
   oldcxt = MemoryContextSwitchTo(CacheMemoryContext);

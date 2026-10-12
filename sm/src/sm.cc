@@ -36,6 +36,7 @@ static_assert(static_cast<int>(sm1::xctlevel_t::serializable) ==
               SM_XCT_SERIALIZABLE);
 static_assert(sm3::nsp_pg_catalog == SM_NSP_PG_CATALOG);
 static_assert(sm3::nsp_public == SM_NSP_PUBLIC);
+static_assert(sm3::nsp_temp == SM_NSP_TEMP);
 static_assert(static_cast<int>(sm3::index_state_t::pending) ==
               SM_INDEX_PENDING);
 static_assert(static_cast<int>(sm3::index_state_t::valid) == SM_INDEX_VALID);
@@ -1487,6 +1488,23 @@ int sm_cat_create_table(sm_session_t *session, uint64_t nspoid,
           {std::string(name_of(c.name)), c.type_code, c.typmod, c.not_null});
     }
     return sm3::create_table(session->sm3, nspoid, name_of(name), cols, *oid);
+  });
+}
+
+/* Create a temporary table in the session's transaction. */
+int sm_cat_create_temp_table(sm_session_t *session, const char *name,
+                             const std::vector<sm_column_spec_t> &columns,
+                             uint64_t *oid) {
+  return guard(session, [&] {
+    if (!oid) {
+      return null_arg("sm_cat_create_temp_table", "oid");
+    }
+    std::vector<sm3::column_spec_t> cols;
+    for (const sm_column_spec_t &c : columns) {
+      cols.push_back(
+          {std::string(name_of(c.name)), c.type_code, c.typmod, c.not_null});
+    }
+    return sm3::create_temp_table(session->sm3, name_of(name), cols, *oid);
   });
 }
 

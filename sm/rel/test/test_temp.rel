@@ -1,0 +1,156 @@
+# test_temp.rel -- a temporary table is its session's alone,
+# follows the session's transactions, and ends with the session.
+#
+# 1. A temporary table takes rows and an index, and is kept from
+#    commit to commit.
+# 2. Another session does not see it, and makes its own of the
+#    same name.
+# 3. Abort and rollback to a savepoint undo its rows and its
+#    creation.
+# 4. It hides a table in public of the same name, until dropped.
+# 5. A read-only transaction can create and write one.
+# 6. A transaction that wrote one cannot be prepared.
+# 7. Closing the session ends it.
+
+(def test-dir "/tmp/wisr_rel_test_temp")
+(rm-rf test-dir)
+(env-init test-dir)
+(env-attach test-dir)
+(db-create "tmpdb")
+
+# True if running thunk fails.
+(defn fails? [thunk]
+  (try (do (thunk) false) ([err] true)))
+
+(session-open s1 "tmpdb")
+(session-open s2 "tmpdb")
+
+# 1. Rows and an index, across commits.
+# 1.1 Create scratch with a unique index and two rows, and commit.
+# 1.2 In a new transaction, both the heap and the index have them.
+# 1.3 A second temporary table named scratch is refused.
+# 1.4 A duplicate key is refused by the unique index, which ends
+#     the transaction as it does on any table.
+(session-use s1)
+(begin :rc)
+(temp-table-create scratch (columns (id :int4 :not-null) (v :text)))
+(index-create scratch_id (table scratch) (key (id :asc)) :unique true)
+(insert scratch [1 "one"])
+(insert scratch [2 "two"])
+(commit)
+(begin :rc)
+(assert-count 2 (scan scratch))
+(assert-count 2 (idx-scan scratch_id))
+(assert-eq
+  (fails? (fn [] (temp-table-create scratch (columns (id :int4)))))
+  true)
+(commit)
+(begin :rc)
+(assert-eq (fails? (fn [] (insert scratch [2 "again"]))) true)
+
+# 2. Another session.
+# 2.1 s2 cannot scan scratch, and its list of tables has none.
+# 2.2 s2 creates its own scratch, which starts empty.
+# 2.3 s1 still has its two rows, and s2 its one.
+(session-use s2)
+(begin :rc)
+(assert-eq (fails? (fn [] (scan scratch))) true)
+(assert-count 0 (list-tables))
+(temp-table-create scratch (columns (id :int4 :not-null)))
+(assert-count 0 (scan scratch))
+(insert scratch [9])
+(commit)
+(session-use s1)
+(begin :rc)
+(assert-count 2 (scan scratch))
+(commit)
+(session-use s2)
+(begin :rc)
+(assert-count 1 (scan scratch))
+(commit)
+
+# 3. Abort and savepoints.
+# 3.1 A row inserted and aborted is gone.
+# 3.2 A row inserted after a savepoint goes with a rollback to it.
+# 3.3 A temporary table created and aborted is gone.
+(session-use s1)
+(begin :rc)
+(insert scratch [3 "three"])
+(abort)
+(begin :rc)
+(assert-count 2 (scan scratch))
+(def sp (savepoint))
+(insert scratch [3 "three"])
+(assert-count 3 (scan scratch))
+(rollback sp)
+(assert-count 2 (scan scratch))
+(assert-count 2 (idx-scan scratch_id))
+(commit)
+(begin :rc)
+(temp-table-create gone (columns (x :int4)))
+(insert gone [1])
+(abort)
+(begin :rc)
+(assert-eq (fails? (fn [] (scan gone))) true)
+(commit)
+
+# 4. A temporary table hides one in public.
+# 4.1 s1 creates public table shared with one row, and commits.
+# 4.2 s1 creates temporary shared, empty: its name finds that one.
+# 4.3 s2 still finds the public one, with its row.
+# 4.4 s1 drops the temporary one, and finds the public one again.
+(begin :rc)
+(table-create shared (columns (x :int4)))
+(insert shared [1])
+(commit)
+(begin :rc)
+(temp-table-create shared (columns (x :int4)))
+(assert-count 0 (scan shared))
+(commit)
+(session-use s2)
+(begin :rc)
+(assert-count 1 (scan shared))
+(commit)
+(session-use s1)
+(begin :rc)
+(table-drop shared)
+(assert-count 1 (scan shared))
+(commit)
+
+# 5. A read-only transaction.
+# 5.1 It cannot insert into the public table.
+# 5.2 It creates a temporary table, inserts a row and commits.
+# 5.3 The row is there afterwards.
+(begin :rc :read-only)
+(assert-eq (fails? (fn [] (insert shared [2]))) true)
+(abort)
+(begin :rc :read-only)
+(temp-table-create ro (columns (x :int4)))
+(insert ro [1])
+(commit)
+(begin :rc)
+(assert-count 1 (scan ro))
+(commit)
+
+# 6. No prepare after a write to a temporary table.
+(begin :rc)
+(insert ro [2])
+(assert-eq (fails? (fn [] (prepare "g_temp"))) true)
+(abort)
+
+# 7. The end of the session.
+# 7.1 Close s1 and open it again.
+# 7.2 Its temporary tables are gone, and the public one is not.
+(session-close s1)
+(session-open s1 "tmpdb")
+(session-use s1)
+(begin :rc)
+(assert-eq (fails? (fn [] (scan scratch))) true)
+(assert-eq (fails? (fn [] (scan ro))) true)
+(assert-count 1 (scan shared))
+(commit)
+
+(session-close s1)
+(session-close s2)
+(env-detach)
+(print "test_temp.rel passed")

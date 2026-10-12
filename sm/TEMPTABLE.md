@@ -224,18 +224,23 @@ transaction at a time. So, for a temporary store:
   transaction's overlay, tagged with its savepoint depth, as
   now. At commit it moves into the temporary catalog instead
   of the shared one; an abort or a rollback drops it.
-- **One temporary namespace**, `pg_temp`, at a fixed oid
-  (`sm3::nsp_pg_temp`, 12), the same in every session and
-  database. A session's lookup in it finds its own tables and
-  no one else's, so no namespace per session is needed.
-  Creating a table in it is what asks for a temporary table:
-  the calls take no new flag. It is built in and in no store:
-  it is found by name, not listed, and cannot be dropped, and
-  no namespace may take its name.
+- **A call of its own asks for one**: `create_temp_table`,
+  which is `create_table` without a namespace.
+- **No temporary namespace.** sm3 keeps none: no oid is
+  reserved for one and no name. The host names its own, with
+  whatever oid it likes, as PostgreSQL does. A temporary
+  table's definition has namespace 0 (`sm3::nsp_temp`), which
+  no namespace has, and that is what marks it temporary.
+- **The lookups by name take namespace 0** to mean the
+  session's own temporary tables and their indexes. A session
+  finds its own there and no one else's. `create_table` and
+  the other creators refuse namespace 0 as one that does not
+  exist.
 - **Names** of a session's temporary tables and their indexes
   are one name space, checked in memory, since no key in
-  store 0 holds them. A name in `pg_temp` and the same name in
-  another namespace do not meet.
+  store 0 holds them. A temporary name and the same name in a
+  namespace do not meet, and two sessions may each have a
+  temporary table of the same name.
 - **A table's oid** comes from the database's `sm3.oid`
   sequence, as any table's does.
 - **A table's rowno counter** is a temporary sequence of sm1
@@ -254,21 +259,25 @@ transaction at a time. So, for a temporary store:
   old, as for a table (`sm3/SM3_DESIGN.md` §4).
 - **Not kept yet, and refused**: statistics of a temporary
   table (`tbl_analyze` fails, and `cat_get_stats` gives
-  none), and a sequence or a collation in `pg_temp`.
+  none), and a temporary sequence or collation.
 - **A prepare is refused** after any of it, as after any DDL.
 
 ---
 
 ## 5. The wrapper and the host
 
-- **`include/sm.h`** gains the temporary namespace's oid.
-  `sm_cat_create_table` in it makes a temporary table; the
-  other calls take a temporary table's oid as they take any.
+- **`include/sm.h`** gains `sm_cat_create_temp_table` and
+  `SM_NSP_TEMP`, which is 0. The other calls take a temporary
+  table's oid as they take any, and the lookups by name take
+  `SM_NSP_TEMP`.
 - **`ON COMMIT DELETE ROWS` and `ON COMMIT DROP` are the
   host's**: it truncates or drops the table before it
   commits.
-- **The search path is the host's**: it looks in the
-  temporary namespace first, as PostgreSQL does.
+- **The temporary namespace and the search path are the
+  host's**: it maps its own temporary namespace to
+  `SM_NSP_TEMP`, and looks there first, as PostgreSQL does.
+- **`rel`** has `(temp-table-create ...)`, and finds a name
+  among the session's temporary tables before `public`.
 - **digres** stops refusing `CREATE TEMPORARY TABLE`, and its
   sweep of `base/pgsql_tmp` at startup leaves `sm` alone.
 
@@ -382,6 +391,7 @@ Each step lands on its own, with its tests.
 3. **Temporary stores in sm1** (§3.2 to §3.5). Built, and
    temporary sequences with them.
 4. **The temporary catalog in sm3** (§4). Built.
-5. **The wrapper, and `rel`** (§5).
-6. **digres**: `CREATE TEMPORARY TABLE`, `ON COMMIT`, and
+5. **The wrapper, and `rel`** (§5). Built.
+6. **digres**: Built (`dg/WORKNOTE.md` step 80).
+   `CREATE TEMPORARY TABLE`, `ON COMMIT`, and
    the temporary namespace in the search path.

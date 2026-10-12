@@ -226,8 +226,6 @@ static bool TSConfigIsVisibleExt(Oid cfgid, bool *is_missing);
 static void recomputeNamespacePath(void);
 static void AccessTempTableNamespace(bool force);
 static void InitTempTableNamespace(void);
-static void RemoveTempRelations(Oid tempNamespaceId);
-static void RemoveTempRelationsCallback(int code, Datum arg);
 static void InvalidationCallback(Datum arg, int cacheid, uint32 hashvalue);
 static bool MatchNamedCall(const cat_proc_t *procform, int nargs,
                            List *argnames, bool include_out_arguments,
@@ -3801,10 +3799,6 @@ static void AccessTempTableNamespace(bool force) {
  *backend
  */
 static void InitTempTableNamespace(void) {
-  char namespaceName[NAMEDATALEN];
-  Oid namespaceId;
-  Oid toastspaceId;
-
   Assert(!OidIsValid(myTempNamespace));
 
   /*
@@ -3826,63 +3820,14 @@ static void InitTempTableNamespace(void) {
              "permission denied to create temporary tables in database \"%s\"",
              get_database_name(MyDatabaseId))));
 
-  snprintf(namespaceName, sizeof(namespaceName), "pg_temp_%d", MyProcNumber);
-
-  namespaceId = get_namespace_oid(namespaceName, true);
-  if (!OidIsValid(namespaceId)) {
-    /*
-     * First use of this temp namespace in this database; create it. The
-     * temp namespaces are always owned by the superuser.  We leave their
-     * permissions at default --- i.e., no access except to superuser ---
-     * to ensure that unprivileged users can't peek at other backends'
-     * temp tables.  This works because the places that access the temp
-     * namespace for my own backend skip permissions checks on it.
-     */
-    namespaceId = NamespaceCreate(namespaceName, BOOTSTRAP_SUPERUSERID, true);
-    /* Advance command counter to make namespace visible */
-    CommandCounterIncrement();
-  } else {
-    /*
-     * If the namespace already exists, clean it out (in case the former
-     * owner crashed without doing so).
-     */
-    RemoveTempRelations(namespaceId);
-  }
-
   /*
-   * If the corresponding toast-table namespace doesn't exist yet, create
-   * it. (We assume there is no need to clean it out if it does exist, since
-   * dropping a parent table should make its toast table go away.)
+   * The namespace is compiled in, the same oid in every session: sm keeps
+   * each session's temporary tables apart, in no namespace of its own
+   * (smstore.c), so there is none to create or to clean out, and no TOAST
+   * namespace beside it.  It is still set up on first use, so a session
+   * with no temporary table does not search for one.
    */
-  snprintf(namespaceName, sizeof(namespaceName), "pg_toast_temp_%d",
-           MyProcNumber);
-
-  toastspaceId = get_namespace_oid(namespaceName, true);
-  if (!OidIsValid(toastspaceId)) {
-    toastspaceId = NamespaceCreate(namespaceName, BOOTSTRAP_SUPERUSERID, true);
-    /* Advance command counter to make namespace visible */
-    CommandCounterIncrement();
-  }
-
-  /*
-   * Okay, we've prepared the temp namespace ... but it's not committed yet,
-   * so all our work could be undone by transaction rollback.  Set flag for
-   * AtEOXact_Namespace to know what to do.
-   */
-  myTempNamespace = namespaceId;
-  myTempToastNamespace = toastspaceId;
-
-  /*
-   * Mark MyProc as owning this namespace which other processes can use to
-   * decide if a temporary namespace is in use or not.  We assume that
-   * assignment of namespaceId is an atomic operation.  Even if it is not,
-   * the temporary relation which resulted in the creation of this temporary
-   * namespace is still locked until the current transaction commits, and
-   * its pg_namespace row is not visible yet.  However it does not matter:
-   * this flag makes the namespace as being in use, so no objects created on
-   * it would be removed concurrently.
-   */
-  MyProc->tempNamespaceId = namespaceId;
+  myTempNamespace = PG_TEMP_NAMESPACE;
 
   /* It should not be done already. */
   Assert(myTempNamespaceSubID == InvalidSubTransactionId);
@@ -3898,31 +3843,15 @@ static void InitTempTableNamespace(void) {
 void AtEOXact_Namespace(bool isCommit) {
   /*
    * If we abort the transaction in which a temp namespace was selected,
-   * we'll have to do any creation or cleanout work over again.  So, just
-   * forget the namespace entirely until next time.  On the other hand, if
-   * we commit then register an exit callback to clean out the temp tables
-   * at backend shutdown.  (We only want to register the callback once per
-   * session, so this is a good place to do it.)
+   * forget it until next time: the transaction's temporary tables went
+   * with it.  A commit keeps it; sm drops the session's temporary tables
+   * when the session closes its database, so no exit callback does.
    */
   if (myTempNamespaceSubID != InvalidSubTransactionId) {
-    if (isCommit)
-      before_shmem_exit(RemoveTempRelationsCallback, 0);
-    else {
+    if (!isCommit) {
       myTempNamespace = InvalidOid;
-      myTempToastNamespace = InvalidOid;
       baseSearchPathValid = false; /* need to rebuild list */
       searchPathCacheValid = false;
-
-      /*
-       * Reset the temporary namespace flag in MyProc.  We assume that
-       * this operation is atomic.
-       *
-       * Because this transaction is aborting, the pg_namespace row is
-       * not visible to anyone else anyway, but that doesn't matter:
-       * it's not a problem if objects contained in this namespace are
-       * removed concurrently.
-       */
-      MyProc->tempNamespaceId = InvalidOid;
     }
     myTempNamespaceSubID = InvalidSubTransactionId;
   }
@@ -3946,67 +3875,9 @@ void AtEOSubXact_Namespace(bool isCommit, SubTransactionId mySubid,
       myTempNamespaceSubID = InvalidSubTransactionId;
       /* TEMP namespace creation failed, so reset state */
       myTempNamespace = InvalidOid;
-      myTempToastNamespace = InvalidOid;
       baseSearchPathValid = false; /* need to rebuild list */
       searchPathCacheValid = false;
-
-      /*
-       * Reset the temporary namespace flag in MyProc.  We assume that
-       * this operation is atomic.
-       *
-       * Because this subtransaction is aborting, the pg_namespace row
-       * is not visible to anyone else anyway, but that doesn't matter:
-       * it's not a problem if objects contained in this namespace are
-       * removed concurrently.
-       */
-      MyProc->tempNamespaceId = InvalidOid;
     }
-  }
-}
-
-/*
- * Remove all relations in the specified temp namespace.
- *
- * This is called at backend shutdown (if we made any temp relations).
- * It is also called when we begin using a pre-existing temp namespace,
- * in order to clean out any relations that might have been created by
- * a crashed backend.
- */
-static void RemoveTempRelations(Oid tempNamespaceId) {
-  ObjectAddress object;
-
-  /*
-   * We want to get rid of everything in the target namespace, but not the
-   * namespace itself (deleting it only to recreate it later would be a
-   * waste of cycles).  Hence, specify SKIP_ORIGINAL.  It's also an INTERNAL
-   * deletion, and we want to not drop any extensions that might happen to
-   * own temp objects.
-   */
-  object.classId = NamespaceRelationId;
-  object.objectId = tempNamespaceId;
-  object.objectSubId = 0;
-
-  performDeletion(&object, DROP_CASCADE,
-                  PERFORM_DELETION_INTERNAL | PERFORM_DELETION_QUIETLY |
-                      PERFORM_DELETION_SKIP_ORIGINAL |
-                      PERFORM_DELETION_SKIP_EXTENSIONS);
-}
-
-/*
- * Callback to remove temp relations at backend exit.
- */
-static void RemoveTempRelationsCallback(int code, Datum arg) {
-  if (OidIsValid(myTempNamespace)) /* should always be true */
-  {
-    /* Need to ensure we have a usable transaction. */
-    AbortOutOfAnyTransaction();
-    StartTransactionCommand();
-    PushActiveSnapshot(GetTransactionSnapshot());
-
-    RemoveTempRelations(myTempNamespace);
-
-    PopActiveSnapshot();
-    CommitTransactionCommand();
   }
 }
 
@@ -4015,7 +3886,7 @@ static void RemoveTempRelationsCallback(int code, Datum arg) {
  */
 void ResetTempTableNamespace(void) {
   if (OidIsValid(myTempNamespace))
-    RemoveTempRelations(myTempNamespace);
+    smstore_drop_temp_tables();
 }
 
 /*

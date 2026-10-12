@@ -1004,17 +1004,18 @@ static void CommitTransaction(void) {
    * the transaction-abort path.
    */
 
+  /*
+   * Let ON COMMIT management do its thing (must happen after closing
+   * cursors, to avoid dangling-reference problems), and before sm's
+   * transaction commits: its truncates and drops are part of it.
+   */
+  PreCommit_on_commit_actions();
+
   /* sm's transaction commits first: one sm refuses fails this one. */
   smstore_commit();
 
   /* Shut down the deferred-trigger manager */
   AfterTriggerEndXact(true);
-
-  /*
-   * Let ON COMMIT management do its thing (must happen after closing
-   * cursors, to avoid dangling-reference problems)
-   */
-  PreCommit_on_commit_actions();
 
   /*
    * Insert notifications sent by NOTIFY commands into the queue.  This

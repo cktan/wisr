@@ -2372,3 +2372,61 @@ name by listing sm's schemas (step 78).
   `pg_class`.
 - `server.sh` shows a table in a schema made by CREATE SCHEMA
   in `pg_stats` by its schema's name.
+
+## Step 80: temporary tables
+
+`../sm/TEMPTABLE.md`; its sixth step. `CREATE TEMPORARY TABLE`
+was refused.
+
+- **A temporary table is sm's** (`sm_cat_create_temp_table`):
+  the session's alone, its rows unlogged and unlocked, in the
+  session's transactions like any table's. sm drops it when the
+  session closes its database.
+- **`pg_temp` is compiled in**, at oid 8846
+  (`PG_TEMP_NAMESPACE`, `pg_namespace.dat`), the same in every
+  session. PostgreSQL made a `pg_temp_N` and a `pg_toast_temp_N`
+  row per backend: rows in the database named after a slot of
+  this instance, which a copied `base/X` must not carry, and
+  which a read-only transaction could not write. Nothing is
+  written for the namespace now, in any database.
+- **sm has no temporary namespace.** `smstore.c` maps
+  `PG_TEMP_NAMESPACE` to sm's `SM_NSP_TEMP`, which is 0, on the
+  way in, and a definition with no namespace back to it. The
+  oid never reaches sm or the disk.
+- **The namespace is still set up on first use**
+  (`InitTempTableNamespace()`), so a session with no temporary
+  table does not look for one on every name. An abort of the
+  transaction that set it up forgets it.
+- **Went with it**: `RemoveTempRelations()` and its exit
+  callback, since sm drops the tables; the cleaning out of a
+  crashed backend's namespace, since a crash leaves none; the
+  TOAST namespace's creation; `MyProc->tempNamespaceId` being
+  set. `DISCARD TEMP` drops the session's temporary tables
+  through sm (`smstore_drop_temp_tables()`).
+- **A relation descriptor of one says so**: `relpersistence` is
+  `RELPERSISTENCE_TEMP` and `rd_islocaltemp` is set, so
+  PostgreSQL's own checks hold: a read-only transaction writes
+  to it, and the transaction is marked as having used the
+  temporary namespace.
+- **`ON COMMIT DROP` and `DELETE ROWS` are done in sm**, by
+  `PreCommit_on_commit_actions()`, which now runs before sm's
+  transaction commits rather than after: a drop or a truncate
+  there is part of it. `DELETE ROWS` is a TRUNCATE, a new store
+  in sm at each commit that used a temporary table.
+- **Refused**: `UNLOGGED`; `ON COMMIT` on a table that is not
+  temporary; a temporary table in a schema that is not; a
+  temporary sequence, as before.
+- **ANALYZE skips a temporary table with a warning**: sm keeps
+  no statistics for one yet.
+- **Left on purpose**: `myTempToastNamespace` and the functions
+  that read it, never set now; the `CREATE TEMP` privilege
+  check, which the tests run only as the superuser.
+- **Found, not fixed here**: `int` and `integer` do not resolve
+  as type names (`pg_type` is opened); `int4` does.
+- `server.sh` checks a temporary table read by name, through
+  `pg_temp` and in a join; one hiding a table; rollback,
+  savepoints and a read-only transaction; both `ON COMMIT`
+  actions; two sessions each with one of the same name;
+  `DISCARD TEMP`; and the refusals. Breaking the `ON COMMIT`
+  registration, and creating the table in `public` instead,
+  each fail it.

@@ -117,12 +117,15 @@ Closes the named session.
 Control transaction lifecycles, statement snapshots, savepoints,
 and distributed 2PC resolution.
 
-### `(begin [level])`
+### `(begin [level [:read-only]])`
 Begins a new transaction in the active session. The isolation
 level defaults to `:rc` (`read-committed`). Supported levels:
 - `:rc` / `:read-committed`
 - `:rr` / `:repeatable-read`
 - `:ser` / `:serializable`
+
+`:read-only` after the level declares the transaction READ
+ONLY: a write fails, except to a temporary table.
 
 ```janet
 (begin :rc)
@@ -316,6 +319,20 @@ Column qualifier:
     (name :text :not-null)
     (email :text)
     (active :bool)))
+```
+
+### `(temp-table-create name (columns ...))`
+Creates a temporary table, as `table-create` does: the
+session's alone, seen by no other session, and gone when the
+session closes. Every primitive that takes a table or index
+name looks among the session's temporary tables first and
+then in `public`, so a temporary table hides a table of the
+same name.
+
+```janet
+(temp-table-create scratch
+  (columns
+    (id :int4 :not-null)))
 ```
 
 ### `(table-drop name)`

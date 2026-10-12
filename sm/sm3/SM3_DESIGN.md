@@ -173,7 +173,8 @@ the others, not built yet:
   catalog holds in the session's memory only, never written
   through to sm2, and visible to no other session.
   `TEMPTABLE.md` at the top level is the design, and it is
-  built: a table made in the namespace `pg_temp`.
+  built: a table made by `create_temp_table`, in no
+  namespace.
 
 Settled for the layout, whatever its shape:
 

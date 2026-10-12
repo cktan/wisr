@@ -166,7 +166,7 @@ struct sm3::session_t {
 
   /*
    * The session's temporary catalog (TEMPTABLE.md §4): its committed
-   * temporary tables, their names in pg_temp, and their indexes'
+   * temporary tables, their names, and their indexes'
    * states. A commit moves the overlay's temporary changes here, and
    * never into the shared catalog; nothing else reads or writes it.
    */

@@ -78,11 +78,10 @@ int taken(const std::string &name) {
  */
 int use_nspace(sm3::session_t *session, uint64_t nspoid, sm1::lockmode_t mode,
                std::string &name) {
-  // A temporary table never comes this way (put_temp_table), and
-  // nothing else is kept in the temporary namespace yet.
-  if (nspoid == sm3::nsp_pg_temp) {
-    return invalid("only a table can be made in the temporary namespace, "
-                   "and it cannot be dropped");
+  // No namespace: a temporary table's, which never comes this way
+  // (put_temp_table), and nothing else is temporary yet.
+  if (nspoid == sm3::nsp_temp) {
+    return sm1::seterr(sm1::SM_ERR_NOTFOUND, "namespace 0 does not exist");
   }
   // Held to the end of the transaction, as a table-oid lock is.
   if (sm3::lock_table(session->sm1, nspoid, mode) != 0) {
@@ -106,7 +105,7 @@ int latest_table(sm3::session_t *session, uint64_t oid, sm3::table_rec_t &rec) {
   std::shared_ptr<const sm3::table_def_t> d = sm3::cat_get_table(session, oid);
   // A temporary table is the session's alone: it has no users to
   // wait out, and its record is the one the session sees.
-  if (d && d->nspoid == sm3::nsp_pg_temp) {
+  if (d && d->nspoid == sm3::nsp_temp) {
     rec = d->rec;
     return 0;
   }
@@ -405,10 +404,6 @@ int cat_new_oid(session_t *session, uint64_t &oid) {
 
 /* Store a new namespace; see sm3.h. */
 int cat_put_namespace(session_t *session, uint64_t oid, std::string_view name) {
-  // The temporary namespace's name is taken, in no store.
-  if (name == nsp_pg_temp_name) {
-    return taken(std::string(name));
-  }
   kv_ptr kv(nullptr, &sm2::catkv_close);
   std::string blob;
   // The name first, so a taken one fails before the namespace
@@ -426,7 +421,7 @@ int cat_put_namespace(session_t *session, uint64_t oid, std::string_view name) {
 
 /* Erase a namespace; see sm3.h. */
 int cat_del_namespace(session_t *session, uint64_t oid) {
-  if (oid == nsp_pg_catalog || oid == nsp_public || oid == nsp_pg_temp) {
+  if (oid == nsp_pg_catalog || oid == nsp_public) {
     return invalid("drop namespace: a built-in namespace cannot be dropped");
   }
   kv_ptr kv(nullptr, &sm2::catkv_close);
@@ -489,7 +484,7 @@ int cat_put_table(session_t *session, uint64_t oid, const table_rec_t &rec) {
     }
   }
   // A temporary table is kept in the session, not in the store.
-  if (rec.nspoid == nsp_pg_temp) {
+  if (rec.nspoid == nsp_temp) {
     return put_temp_table(session, oid, rec, names);
   }
   if (!cat_get_table(session, oid)) {
@@ -657,7 +652,7 @@ int cat_put_index_state(session_t *session, uint64_t table_oid,
     st.reason = status.reason;
   }
   // A temporary table's index: its state is the session's to keep.
-  if (d->nspoid == nsp_pg_temp) {
+  if (d->nspoid == nsp_temp) {
     overlay_state(session, index_oid, std::move(st), true);
     return 0;
   }
@@ -697,7 +692,7 @@ int cat_del_table(session_t *session, uint64_t oid) {
   }
   // A temporary table has no entry in the store: it goes from the
   // session's view, with its name and its indexes' states.
-  if (rec.nspoid == nsp_pg_temp) {
+  if (rec.nspoid == nsp_temp) {
     for (const index_rec_t &x : rec.indexes) {
       overlay_state(session, x.oid, std::nullopt, true);
     }
@@ -776,7 +771,7 @@ int cat_put_collation(session_t *session, uint64_t oid, uint64_t nspoid,
 /* Record a table's statistics; see sm3.h. */
 int cat_put_stats(session_t *session, uint64_t oid, const stats_t &stats) {
   std::shared_ptr<const table_def_t> def = cat_get_table(session, oid);
-  if (def && def->nspoid == nsp_pg_temp) {
+  if (def && def->nspoid == nsp_temp) {
     return invalid("statistics are not kept for a temporary table yet");
   }
   // A reader's table-oid lock, so a drop of the table waits for this
@@ -829,7 +824,7 @@ int cat_put_stats(session_t *session, uint64_t oid, const stats_t &stats) {
 /* Lock a table's STATS entry; see internal.h. */
 int cat_lock_stats(session_t *session, uint64_t oid) {
   std::shared_ptr<const table_def_t> def = cat_get_table(session, oid);
-  if (def && def->nspoid == nsp_pg_temp) {
+  if (def && def->nspoid == nsp_temp) {
     return invalid("statistics are not kept for a temporary table yet");
   }
   kv_ptr kv(nullptr, &sm2::catkv_close);
@@ -864,7 +859,7 @@ int cat_get_stats(session_t *session, uint64_t oid,
   // the caller's takes no lock and records no read.
   std::shared_ptr<const table_def_t> def = cat_get_table(session, oid);
   // A temporary table has none, and the store nothing to load.
-  if (def && def->nspoid == nsp_pg_temp) {
+  if (def && def->nspoid == nsp_temp) {
     out = nullptr;
     return 0;
   }
