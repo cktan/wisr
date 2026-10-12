@@ -232,7 +232,7 @@ const std::vector<attribute_t> &schema_of(sm3::part_t part) {
        att(type_int2)},
       /* column */
       {att(type_text), att(type_int2), att(type_int4), att(type_bool),
-       att(type_bool), att(type_bytea), att(type_int8)},
+       att(type_bool), att(type_bytea), att(type_int8), att(type_bytea)},
       /* index */
       {att(type_int8), att(type_text), att(type_int2), att(type_bool),
        att(type_int4), att(type_int4), att(type_int2), att(type_int2),
@@ -385,7 +385,7 @@ int decode_table(std::string_view blob, table_rec_t &rec) {
 /* A column's value. */
 int encode_column(const column_rec_t &c, std::string &blob) {
   blob.clear();
-  writer_t w(7);
+  writer_t w(8);
   w.bytes(0, c.name);
   w.i2(1, c.type_code);
   w.i4(2, c.typmod);
@@ -395,6 +395,9 @@ int encode_column(const column_rec_t &c, std::string &blob) {
     w.bytes(5, *c.missing);
   }
   w.opt_i8(6, c.collation);
+  if (c.default_expr) {
+    w.bytes(7, *c.default_expr);
+  }
   return w.append(part_desc(part_t::column), blob);
 }
 
@@ -412,6 +415,7 @@ int decode_column(std::string_view blob, column_rec_t &c) {
   c.dropped = r.b(4);
   c.missing = r.opt_bytes(5);
   c.collation = r.opt_i8(6);
+  c.default_expr = r.opt_bytes(7);
   if (!r.ok) {
     return corrupt("a column part cut short");
   }

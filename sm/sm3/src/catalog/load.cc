@@ -133,8 +133,8 @@ int build_table(const collation_lookup_t &lookup, uint64_t oid,
       return corrupt("column " + c.name + " of " + rec.name +
                      " names an unknown type or collation");
     }
-    t->columns.push_back(
-        {c.name, type, c.typmod, c.not_null, c.dropped, c.missing, coll});
+    t->columns.push_back({c.name, type, c.typmod, c.not_null, c.dropped,
+                          c.missing, coll, c.default_expr});
     t->schema.push_back({type, c.typmod, c.dropped, c.missing});
   }
   // Lay the rows out once, for every reader of the table.

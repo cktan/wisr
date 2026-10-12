@@ -1290,6 +1290,35 @@ local_psql -c 'create table t21 (a numeric(10,2))' \
   2>&1)" = "0.00" ] && [ "$(rows_of 'select * from t21 where a = 0.5')" = 500 ] ||
   fail "numeric statistics"
 
+# Verify that a column's DEFAULT is kept in sm and fills what an INSERT or
+# UPDATE leaves to it, in later sessions too.
+# 1. Make t22 with constant, expression, now() and numeric defaults.
+# 2. Insert naming one column, with DEFAULT, and DEFAULT VALUES, each in a
+#    session of its own; read the defaults back.
+# 3. UPDATE ... SET col = DEFAULT gives the default again.
+# 4. A default of the wrong type, one naming a column, and one with a
+#    subquery are refused, as PostgreSQL refuses them.
+local_psql -c "create table t22 (id int4, n int4 default 7,
+      t text default 'x' || 'y', ts timestamptz default now(),
+      r numeric(10,2) default 1.555)" > "$work/default.out" 2>&1
+local_psql -c 'insert into t22 (id) values (1)' >> "$work/default.out" 2>&1
+local_psql -c "insert into t22 values (2, default, 'z', default, default)" \
+  >> "$work/default.out" 2>&1
+local_psql -c 'insert into t22 default values' >> "$work/default.out" 2>&1
+[ "$(local_psql -c 'select id, n, t, ts is not null, r from t22
+      order by id nulls first' 2>&1 | tr '\n' ,)" = \
+  "|7|xy|t|1.56,1|7|xy|t|1.56,2|7|z|t|1.56," ] || fail "column defaults"
+[ "$(local_psql -c 'update t22 set n = 0, t = default where id = 2' \
+  -c 'update t22 set n = default where id = 2' \
+  -c 'select n, t from t22 where id = 2' 2>&1 | tail -1)" = "7|xy" ] ||
+  fail "UPDATE to DEFAULT"
+for c in "default 'abc'|invalid input syntax for type integer" \
+  "default b|cannot use column reference in DEFAULT expression" \
+  "default (select 1)|cannot use subquery in DEFAULT expression"; do
+  local_psql -c "create table t23 (a int4 ${c%%|*})" 2>&1 |
+    grep -q "${c#*|}" || fail "a default refused: ${c%%|*}"
+done
+
 # Verify that an INSERT naming its columns fills the others with their
 # types' defaults, null for every built-in type.
 # 1. Insert naming two columns of t19, then three in another order, then

@@ -1343,12 +1343,29 @@ static Relation RelationBuildSmDesc(Oid targetRelId, bool insertIt) {
                          col->typmod, 0);
       att->attnotnull = col->not_null;
       has_not_null |= col->not_null;
+      att->atthasdef = col->default_expr != NULL;
     }
     att->attrelid = targetRelId;
     populate_compact_attribute(relation->rd_att, i);
   }
   constr = (TupleConstr *)palloc0(sizeof(TupleConstr));
   constr->has_not_null = has_not_null;
+  /* The columns' defaults, as pg_attrdef's rows would give them. */
+  for (int i = 0; i < desc->ncolumns; i++)
+    if (!desc->columns[i].dropped && desc->columns[i].default_expr != NULL)
+      constr->num_defval++;
+  if (constr->num_defval > 0) {
+    int n = 0;
+
+    constr->defval =
+        (AttrDefault *)palloc(constr->num_defval * sizeof(AttrDefault));
+    for (int i = 0; i < desc->ncolumns; i++)
+      if (!desc->columns[i].dropped && desc->columns[i].default_expr != NULL) {
+        constr->defval[n].adnum = i + 1;
+        constr->defval[n].adbin = pstrdup(desc->columns[i].default_expr);
+        n++;
+      }
+  }
   relation->rd_att->constr = constr;
   MemoryContextSwitchTo(oldcxt);
 

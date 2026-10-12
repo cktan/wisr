@@ -57,6 +57,7 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -498,6 +499,7 @@ struct sm_column_spec_t {
     uint8_t     type_code;  /* sm2/TYPE.md section 3 */
     int32_t     typmod;
     bool        not_null;
+    const char* default_expr = nullptr; /* the host's default, opaque */
 };
 
 /*
@@ -520,6 +522,7 @@ struct sm_column_def_t {
     int32_t     typmod;
     bool        not_null;
     bool        dropped;
+    std::optional<std::string> default_expr; /* the host's, opaque */
 };
 
 /* Where an index's build stands (sm3::index_state_t). */

@@ -25,6 +25,8 @@
 #include "access/xact.h"
 #include "access/relation.h"
 #include "catalog/index.h"
+#include "parser/parse_node.h"
+#include "catalog/heap.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_class_d.h"
 #include "catalog/pg_namespace_d.h"
@@ -753,8 +755,9 @@ void smstore_drop_namespaces(DropStmt *stmt) {
 
 /*
  * Whether constraints, a column's, are only those sm's tables take: NOT
- * NULL, and a PRIMARY KEY or UNIQUE, which parse analysis has made an index
- * statement of its own.
+ * NULL, a PRIMARY KEY or UNIQUE, which parse analysis has made an index
+ * statement of its own, and a DEFAULT, which it has made the column's
+ * raw_default.
  */
 static bool only_taken(List *constraints) {
   ListCell *l;
@@ -763,7 +766,7 @@ static bool only_taken(List *constraints) {
     ConstrType type = lfirst_node(Constraint, l)->contype;
 
     if (type != CONSTR_NOTNULL && type != CONSTR_PRIMARY &&
-        type != CONSTR_UNIQUE)
+        type != CONSTR_UNIQUE && type != CONSTR_DEFAULT)
       return false;
   }
   return true;
@@ -798,6 +801,23 @@ static void check_create_table(const CreateStmt *stmt) {
 }
 
 /*
+ * col's DEFAULT as sm keeps it, the cooked expression's nodeToString(),
+ * palloc'd, or NULL with none: coerced to the column's type and checked
+ * as PostgreSQL's DEFAULT is (cookDefault()).
+ */
+static const char *column_default(ColumnDef *col, Oid typid, int32 typmod) {
+  ParseState *pstate;
+  Node *expr;
+
+  if (col->raw_default == NULL)
+    return NULL;
+  pstate = make_parsestate(NULL);
+  expr = cookDefault(pstate, col->raw_default, typid, typmod, col->colname, 0);
+  free_parsestate(pstate);
+  return nodeToString(expr);
+}
+
+/*
  * Create the table a CREATE TABLE, after parse analysis, describes, in sm,
  * in this transaction: its columns and their NOT NULL.  Returns its address.
  */
@@ -822,8 +842,8 @@ ObjectAddress smstore_create_table(CreateStmt *stmt) {
     Oid typid;
     int32 typmod;
 
-    if (col->collClause != NULL || col->raw_default != NULL ||
-        col->cooked_default != NULL || col->identity != 0 ||
+    if (col->collClause != NULL || col->cooked_default != NULL ||
+        col->identity != 0 ||
         col->generated != 0 || !only_taken(col->constraints))
       ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                       errmsg("column \"%s\" asks for what CREATE TABLE "
@@ -834,7 +854,8 @@ ObjectAddress smstore_create_table(CreateStmt *stmt) {
     if (typid == NUMERICOID && typmod < (int32)VARHDRSZ)
       typmod = NUMERIC_DEFAULT_TYPMOD;
     columns.push_back({col->colname, type_code(typid, typmod), typmod,
-                       column_not_null(stmt, col)});
+                       column_not_null(stmt, col),
+                       column_default(col, typid, typmod)});
   }
   sm_session_t *s = xact_session();
 
@@ -1167,6 +1188,8 @@ smstore_table_t *smstore_table_desc(Oid oid) {
 
     col->name = pstrdup(c.name.c_str());
     col->dropped = c.dropped;
+    col->default_expr =
+        c.default_expr ? pstrdup(c.default_expr->c_str()) : NULL;
     if (!c.dropped) {
       col->typid = type_oid(c.type_code);
       col->typmod = c.typmod;

@@ -35,6 +35,7 @@ typedef struct smstore_column_t {
   int32 typmod;
   bool not_null;
   bool dropped;
+  const char *default_expr; /* its DEFAULT, nodeToString()'s, or NULL */
 } smstore_column_t;
 
 /*

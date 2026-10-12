@@ -68,6 +68,8 @@ struct column_spec_t {
     uint8_t     type_code;  /* sm2's frozen code (sm2/TYPE.md §3) */
     int32_t     typmod;
     bool        not_null;
+    /* The host's default for the column, opaque to sm: kept, not run. */
+    std::optional<std::string> default_expr = std::nullopt;
 };
 
 /*
@@ -131,6 +133,7 @@ struct column_rec_t {
   bool dropped;
   std::optional<std::string> missing; /* its bytes; a varlena if variable */
   std::optional<uint64_t> collation;
+  std::optional<std::string> default_expr; /* the host's, opaque */
   bool operator==(const column_rec_t&) const = default;
 };
 
@@ -178,6 +181,7 @@ struct column_def_t {
     bool                       dropped;
     std::optional<std::string> missing;   /* its bytes, as sm2 holds it */
     const sm2::collation_t*    collation; /* nullptr: none */
+    std::optional<std::string> default_expr; /* the host's, opaque */
 };
 
 /* An index of a loaded table. */

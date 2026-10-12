@@ -335,6 +335,35 @@ TEST_CASE("a namespace's name is found by its oid") {
   sm3::session_close(other);
 }
 
+TEST_CASE("a column's default is kept with the table, opaque") {
+  // Verify a column spec's default_expr is stored and loaded as given.
+  // 1. Create t with a default on one column of two, and commit.
+  // 2. The loaded definition has it on that column and none on the other.
+  // 3. After a restart it is still there, byte for byte.
+  cat_db_t db;
+  std::string expr("{CONST :consttype 23}\0x", 23);
+  std::vector<sm3::column_spec_t> cols = {
+      {"a", sm2::type_int4.code, -1, false, expr},
+      {"b", sm2::type_int4.code, -1, false}};
+  uint64_t t = 0;
+  db.begin();
+  REQUIRE(sm3::create_table(db.ss, sm3::nsp_public, "t", cols, t) == 0);
+  db.commit();
+  db.begin();
+  auto def = sm3::cat_get_table(db.ss, t);
+  REQUIRE(def);
+  CHECK(def->columns[0].default_expr == expr);
+  CHECK_FALSE(def->columns[1].default_expr);
+  db.commit();
+  db.reload();
+  db.begin();
+  def = sm3::cat_get_table(db.ss, t);
+  REQUIRE(def);
+  CHECK(def->columns[0].default_expr == expr);
+  CHECK_FALSE(def->columns[1].default_expr);
+  db.commit();
+}
+
 TEST_CASE("no oid past last_oid is handed out") {
   // Verify the oids stop at last_oid, PostgreSQL's 32 bits, rather
   // than go on to one that would wrap onto a built-in oid.

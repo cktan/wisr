@@ -2815,3 +2815,24 @@ JSON number past 38 digits, `1e300`, was refused.
   integers, `jsonb_array_elements_text`, JSON_VALUE) take
   either kind.
 - `test/select_jsonb_numbers.sql` checks each, with no server.
+
+## Step 98: a column has a DEFAULT
+
+CREATE TABLE refused a column's DEFAULT: there was nowhere to
+keep it, as there is no `pg_attrdef`.
+
+- **sm keeps it, opaque**: a column spec's `default_expr`, the
+  column part's eighth attribute, bytes sm stores and loads and
+  never runs (`../sm/sm3/CATALOG.md`). A part written before it
+  reads as null, so the catalog's format is unchanged.
+- **CREATE TABLE cooks it** as PostgreSQL does
+  (`cookDefault()`): coerced to the column's type, a column
+  reference or a subquery refused; its `nodeToString()` is
+  what sm keeps.
+- **The relcache gives it back** as `pg_attrdef` would: the
+  column's `atthasdef`, the table's `defval`. So the rewriter
+  fills a column an INSERT leaves out, `DEFAULT VALUES` and
+  `SET col = DEFAULT`, by PostgreSQL's own path.
+- `test_ddl` keeps a default across a restart; `server.sh`
+  inserts and updates by defaults in later sessions, and
+  refuses bad ones.

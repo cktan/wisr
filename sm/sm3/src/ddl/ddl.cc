@@ -131,7 +131,7 @@ static int make_table(session_t *session, uint64_t nspoid,
                   {}};
   for (const column_spec_t &c : columns) {
     rec.columns.push_back({c.name, c.type_code, c.typmod, c.not_null, false,
-                           std::nullopt, std::nullopt});
+                           std::nullopt, std::nullopt, c.default_expr});
   }
   // The table's store and its rowno sequence (DESIGN.md §5): for a
   // temporary table, both temporary, and so the session's alone
@@ -260,7 +260,7 @@ int add_column(session_t *session, uint64_t oid, const column_spec_t &col,
   rec.columns.push_back(
       {col.name, col.type_code, col.typmod, col.not_null, false,
        missing ? std::optional<std::string>(*missing) : std::nullopt,
-       std::nullopt});
+       std::nullopt, col.default_expr});
   return cat_put_table(session, oid, rec);
 }
 
