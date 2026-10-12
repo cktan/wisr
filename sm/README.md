@@ -97,9 +97,9 @@ the wrapper through the `rel/` test suite.
 - `BULKLOAD.md` — the design of a bulk load: one
   transaction in one of three modes, mini-batch, batch and
   file, the last writing sorted files that RocksDB ingests
-- `TEMPTABLE.md` — the design of temporary tables: their
-  rows in one unlogged RocksDB instance of their own, under
-  the database's transactions, with no locks
+- `TEMPTABLE.md` — the design of temporary tables, which is
+  built: their rows in one unlogged RocksDB instance of their
+  own, under the database's transactions, with no locks
 - `FEATURELIST.md` — which PostgreSQL features wisr supports
 - `PART4.md` — what it would take to put PostgreSQL on this
   stack, and what that target forces on level 2's design

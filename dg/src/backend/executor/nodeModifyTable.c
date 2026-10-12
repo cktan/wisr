@@ -4464,13 +4464,14 @@ ModifyTableState *ExecInitModifyTable(ModifyTable *node, EState *estate,
     CheckValidResultRel(resultRelInfo, operation, node->onConflictAction,
                         mergeActions);
 
-    /* sm's tables take an INSERT so far, and nothing else that writes. */
+    /* sm's tables take no MERGE and no INSERT ... ON CONFLICT yet. */
     if (RelationIsSm(resultRelInfo->ri_RelationDesc) &&
-        (operation != CMD_INSERT || node->onConflictAction != ONCONFLICT_NONE))
+        (operation == CMD_MERGE || node->onConflictAction != ONCONFLICT_NONE))
       ereport(
           ERROR,
           (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-           errmsg("only a plain INSERT writes to table \"%s\" yet",
+           errmsg("MERGE and INSERT ... ON CONFLICT do not write to table "
+                  "\"%s\" yet",
                   RelationGetRelationName(resultRelInfo->ri_RelationDesc))));
 
     resultRelInfo++;

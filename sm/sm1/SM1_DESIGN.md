@@ -2528,9 +2528,9 @@ suits them:
   meaning of a temporary table, and holds because a temporary
   store never outlives the process.
 
-Open: how `sm1::mkstore` is asked for a temporary store, and
-whether its files get their own `cf_paths` directory, as
-PostgreSQL's temporary tablespaces do.
+Settled since: `sm1::mkstore` takes a `temporary` flag, and a
+temporary store's files are those of the instance of their
+own, under `base/pgsql_tmp/sm` (`TEMPTABLE.md` §3).
 
 ---
 

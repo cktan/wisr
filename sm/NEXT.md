@@ -84,6 +84,21 @@ Owed, and blocking nothing above:
   (`SM3_DESIGN.md` §7). The primitive is built when a workload
   asks.
 
+- **A point read should pin its row, not lend it.** The bytes
+  `sm1::read`, `sm1::read_latest` and the old row of a write
+  hand out are valid only until the next call on the session
+  (`sm1/API.md`), so a caller holding two rows read by rowno
+  must copy one. PostgreSQL pins a page a row and holds any
+  number at once. sm should give the same: a read that
+  returns a handle the caller releases, over RocksDB's
+  `PinnableSlice`, which keeps the block in memory and copies
+  nothing. sm1's point read is an iterator's `Seek` today
+  (`sm1/SM1_DESIGN.md` §10.1), so the handle would hold the
+  iterator, or the read would move to `Get`. Until then
+  digres copies: the row an index scan, a bitmap scan or an
+  UPDATE fetches by its rowno is copied once a column is
+  passed by reference.
+
 ---
 
 ## 3. Not blocking
@@ -91,10 +106,11 @@ Owed, and blocking nothing above:
 - **sm2's TOAST** (`sm2/SM2_DESIGN.md` §8.2, step 3). The
   `0xFFFF` relid is reserved per table and unused. Wholly
   independent of the above, so it can run in parallel.
-- **Temporary tables** (`TEMPTABLE.md`): a temporary store in
-  an unlogged RocksDB instance of its own, its definition in
-  the session's own temporary catalog and never written to
-  store 0. Designed, and §11 there is the order of work.
+- **What temporary tables left for later** (`TEMPTABLE.md`
+  §9). They are built, in digres too. Not built: skipping the
+  sync of a commit that wrote only temporary stores,
+  statistics of a temporary table, `CREATE TEMPORARY
+  SEQUENCE`, and a bulk load into one.
 - **Dependency checks**, such as refusing `DROP COLLATION` in
   use and `DROP SCHEMA … CASCADE`: low priority. They wait
   for the dependency index of `sm3/CATALOG3.md` §0.5, and

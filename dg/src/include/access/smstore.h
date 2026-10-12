@@ -17,6 +17,7 @@
 
 #include "catalog/objectaddress.h"
 #include "access/skey.h"
+#include "access/tableam.h"
 #include "executor/tuptable.h"
 #include "storage/lockdefs.h"
 #include "nodes/parsenodes.h"
@@ -96,6 +97,16 @@ extern smstore_table_t *smstore_table_desc(Oid oid);
 extern Oid smstore_index_table(Oid indexoid);
 extern bool smstore_index_usable(Relation rel, Oid indexoid);
 extern void smstore_insert(Relation rel, TupleTableSlot *slot);
+extern bool smstore_fetch_row(Relation rel, ItemPointer tid,
+                              TupleTableSlot *slot);
+extern TM_Result smstore_update(Relation rel, ItemPointer tid,
+                                TupleTableSlot *slot, CommandId cid,
+                                TM_FailureData *tmfd);
+extern TM_Result smstore_delete(Relation rel, ItemPointer tid, CommandId cid,
+                                TM_FailureData *tmfd);
+extern TM_Result smstore_lock_latest(Relation rel, ItemPointer tid,
+                                     TupleTableSlot *slot,
+                                     TM_FailureData *tmfd);
 
 /* A scan of a table in sm, in rowno order. */
 typedef struct smstore_scan_t smstore_scan_t;

@@ -6,12 +6,12 @@ survives a crash. This file is the design of temporary tables
 across the levels: where their rows live, what a write to one
 skips, and what it keeps.
 
-It is a design and not yet built. It replaces the mechanism
-proposed in `sm1/SM1_DESIGN.md` §11.3, which put a temporary
-store's column family in the database's own RocksDB. What is
-said here of RocksDB is from memory of its documentation;
-§10 lists what is to be checked before any of it is relied
-on.
+It is built, at every level and in digres: §11 has the steps,
+and §9 what was left for later. It replaced the mechanism
+first proposed in `sm1/SM1_DESIGN.md` §11.3, which put a
+temporary store's column family in the database's own
+RocksDB. §10 is the list drawn up before the work, of what to
+check first, kept as it was written.
 
 ---
 

@@ -3,12 +3,15 @@
  * smtable.c
  *	  The table access method of a table in sm (access/tableam.h).
  *
- * A table in sm is read and written by the executor through smstore.c, not
- * through a table access method; the heap, which was one, is gone.  But a
- * relation still carries a TableAmRoutine, and code that only asks it
- * questions -- what slot holds a row, whether a bitmap scan is possible --
- * reads this one: a row is a virtual tuple.  Every other callback raises an
- * error: nothing should reach it.
+ * A table in sm is scanned and inserted into by the executor through
+ * smstore.c, not through a table access method; the heap, which was one, is
+ * gone.  But a relation still carries a TableAmRoutine, and code that only
+ * asks it questions -- what slot holds a row, whether a bitmap scan is
+ * possible -- reads this one: a row is a virtual tuple.  UPDATE and DELETE
+ * do come this way: nodeModifyTable.c fetches a row by its tid, updates or
+ * deletes it, and reads its newest version when another transaction changed
+ * it first, in many places, and each is a callback here over smstore.c.
+ * Every other callback raises an error: nothing should reach it.
  *
  * IDENTIFICATION
  *	  src/backend/access/sm/smtable.c
@@ -17,6 +20,7 @@
  */
 #include "postgres.h"
 
+#include "access/smstore.h"
 #include "access/tableam.h"
 #include "executor/tuptable.h"
 #include "fmgr.h"
@@ -35,6 +39,44 @@ static const TupleTableSlotOps *smtable_slot_callbacks(Relation rel) {
   return &TTSOpsVirtual;
 }
 
+/* The row at tid, as the statement sees it, or as it kept it (smstore.c). */
+static bool smtable_fetch_row_version(Relation rel, ItemPointer tid,
+                                      Snapshot snapshot, TupleTableSlot *slot) {
+  return smstore_fetch_row(rel, tid, slot);
+}
+
+/* Delete the row at tid: sm's snapshot and its waits are its own. */
+static TM_Result smtable_tuple_delete(Relation rel, ItemPointer tid,
+                                      CommandId cid, Snapshot snapshot,
+                                      Snapshot crosscheck, bool wait,
+                                      TM_FailureData *tmfd, bool changingPart) {
+  return smstore_delete(rel, tid, cid, tmfd);
+}
+
+/*
+ * Replace the row at otid with the slot's.  sm writes the table's indexes
+ * itself, so the executor is told to write none.
+ */
+static TM_Result smtable_tuple_update(Relation rel, ItemPointer otid,
+                                      TupleTableSlot *slot, CommandId cid,
+                                      Snapshot snapshot, Snapshot crosscheck,
+                                      bool wait, TM_FailureData *tmfd,
+                                      LockTupleMode *lockmode,
+                                      TU_UpdateIndexes *update_indexes) {
+  *lockmode = LockTupleExclusive;
+  *update_indexes = TU_None;
+  return smstore_update(rel, otid, slot, cid, tmfd);
+}
+
+/* The newest version of the row at tid, which a write found changed. */
+static TM_Result smtable_tuple_lock(Relation rel, ItemPointer tid,
+                                    Snapshot snapshot, TupleTableSlot *slot,
+                                    CommandId cid, LockTupleMode mode,
+                                    LockWaitPolicy wait_policy, uint8 flags,
+                                    TM_FailureData *tmfd) {
+  return smstore_lock_latest(rel, tid, slot, tmfd);
+}
+
 /* Every callback set, as GetTableAmRoutine() requires. */
 static const TableAmRoutine smtable_methods = [] {
   TableAmRoutine r = {};
@@ -51,7 +93,7 @@ static const TableAmRoutine smtable_methods = [] {
   r.index_fetch_reset = refuse;
   r.index_fetch_end = refuse;
   r.index_fetch_tuple = refuse;
-  r.tuple_fetch_row_version = refuse;
+  r.tuple_fetch_row_version = smtable_fetch_row_version;
   r.tuple_tid_valid = refuse;
   r.tuple_get_latest_tid = refuse;
   r.tuple_satisfies_snapshot = refuse;
@@ -60,9 +102,9 @@ static const TableAmRoutine smtable_methods = [] {
   r.tuple_insert_speculative = refuse;
   r.tuple_complete_speculative = refuse;
   r.multi_insert = refuse;
-  r.tuple_delete = refuse;
-  r.tuple_update = refuse;
-  r.tuple_lock = refuse;
+  r.tuple_delete = smtable_tuple_delete;
+  r.tuple_update = smtable_tuple_update;
+  r.tuple_lock = smtable_tuple_lock;
   r.relation_set_new_filelocator = refuse;
   r.relation_nontransactional_truncate = refuse;
   r.relation_copy_data = refuse;

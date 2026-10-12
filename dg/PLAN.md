@@ -6,6 +6,13 @@ would otherwise be found the hard way. `README.md` describes
 the tree, `WORKNOTE.md` the decisions taken so far (steps 1 to
 9), and `../sm/PART4.md` §2 why the server must be threaded.
 
+**Since it was written** the steps of §2 were all taken, and
+the spike after them: digres is one process with a thread a
+session, and its tables are sm's. §1 is where it stood then;
+`README.md` says what runs now, `CODE.md` how the code is
+kept, and `WORKNOTE.md` each step since. §7's decisions
+stand, and are added to.
+
 Written on 2026-10-09, with `main` and `wip-dg` both at
 `edf7fad`. Step 1 is done since, in `43137f7` on `wip-dg`; §3
 records how, and what it left for step 3. Step 2 is done too;

@@ -235,9 +235,10 @@ rollback;
 SQL
 [ "$(local_psql -c 'select a from t1 where a > 3' 2>&1)" = "" ] ||
   fail "rollback"
-local_psql -c 'update t1 set a = 0' >> "$work/rows.out" 2>&1
-grep -q 'only a plain INSERT writes to table "t1" yet' "$work/rows.out" ||
-  fail "update refused"
+local_psql -c 'insert into t1 values (1, 1, 1) on conflict do nothing' \
+  >> "$work/rows.out" 2>&1
+grep -q 'do not write to table "t1" yet' "$work/rows.out" ||
+  fail "on conflict refused"
 mkfifo "$work/iso.in"
 local_psql < "$work/iso.in" > "$work/iso.out" 2>&1 &
 iso=$!
@@ -1165,6 +1166,97 @@ local_psql -c 'drop table t1' > "$work/drop2.out" 2>&1
 grep -q 'table "t1" does not exist' "$work/drop2.out" || fail "drop twice"
 local_psql -c 'drop table if exists t1' > "$work/drop2.out" 2>&1
 grep -q 'does not exist, skipping' "$work/drop2.out" || fail "drop if exists"
+
+# Verify that UPDATE and DELETE write a table in sm, with its indexes, in
+# their transaction; and that under READ COMMITTED a row another transaction
+# changed first is read again and checked again, as PostgreSQL does.
+# 1. Fill tw1, keyed by a, with four rows.  Update one by its key, then
+#    every row; move two keys with RETURNING and find them by the index;
+#    delete one by its key with RETURNING: the rows left are as expected.
+# 2. An update to a key that is taken is refused, and one to NULL in a NOT
+#    NULL column; neither changes a row.
+# 3. A delete rolled back, and an update rolled back to a savepoint, leave
+#    the rows as they were.
+# 4. A temporary table takes an update and a delete.
+# 5. One session updates row 3 and holds its transaction open.  A second, at
+#    READ COMMITTED, updates the same row and waits; when the first commits,
+#    the second's change is made to the first's row.  The same, the second
+#    setting another column: the first's change to b is kept.
+# 6. The same, the second's WHERE no longer true of the first's row: it
+#    updates none.  And a DELETE ... RETURNING gives the first's row.
+# 7. The same at REPEATABLE READ: the second fails, and can be retried.
+# 8. SELECT ... FOR UPDATE is refused.
+local_psql -c 'create table tw1 (a int4 primary key, b int4 not null)' \
+  -c 'insert into tw1 values (1, 10), (2, 20), (3, 30), (4, 40)' \
+  > "$work/write.out" 2>&1
+[ "$(local_psql -c 'update tw1 set b = b + 1 where a = 2' \
+  -c 'select b from tw1 where a = 2' -c 'update tw1 set b = b + 100' \
+  -c 'select b from tw1 order by a' 2>&1 | tr '\n' ' ')" = \
+  "UPDATE 1 21 UPDATE 4 110 121 130 140 " ] || fail "update"
+[ "$(local_psql -c 'update tw1 set a = a + 10 where a < 3 returning a, b' \
+  -c 'select b from tw1 where a = 12' -c 'select b from tw1 where a = 2' \
+  -c 'delete from tw1 where a = 11 returning a, b' \
+  -c 'select a from tw1 order by a' 2>&1 | tr '\n' ' ')" = \
+  "11|110 12|121 UPDATE 2 121 11|110 DELETE 1 3 4 12 " ] ||
+  fail "update a key, delete"
+local_psql -c 'update tw1 set a = 4 where a = 3' 2>&1 |
+  grep -q 'duplicate key value violates a unique index on "tw1"' ||
+  fail "update to a taken key"
+local_psql -c 'update tw1 set b = null where a = 3' 2>&1 |
+  grep -q 'violates not-null constraint' || fail "update to null"
+[ "$(local_psql -c 'begin' -c 'delete from tw1' -c 'select count(*) from tw1' \
+  -c 'rollback' -c 'begin' -c 'savepoint s' -c 'update tw1 set b = 0' \
+  -c 'rollback to s' -c 'commit' -c 'select a, b from tw1 order by a' 2>&1 |
+  grep -v '^[A-Z]' | tr '\n' ' ')" = "0 3|130 4|140 12|121 " ] ||
+  fail "update and delete rolled back"
+[ "$(local_psql -c 'create temp table tw2 (a int4, b int4)' \
+  -c 'insert into tw2 values (1, 1), (2, 2)' \
+  -c 'update tw2 set b = 9 where a = 1' -c 'delete from tw2 where a = 2' \
+  -c 'select a, b from tw2' 2>&1 | tail -1)" = "1|9" ] ||
+  fail "update and delete of a temporary table"
+
+# Hold row 3 of tw1 updated (b + 1000) in a session of its own, run the
+# statements given in another, which waits, commit the first, and print what
+# the other said, on one line.
+after_update() {
+  mkfifo "$work/write.in"
+  local_psql < "$work/write.in" > "$work/write_held.out" 2>&1 &
+  local holder=$!
+  exec 4> "$work/write.in"
+  echo "begin; update tw1 set b = b + 1000 where a = 3; select 'held';" >&4
+  for _ in $(seq 50); do
+    grep -qx held "$work/write_held.out" && break
+    sleep 0.1
+  done
+  local_psql "$@" > "$work/write_other.out" 2>&1 &
+  local other=$!
+  sleep 1
+  echo "commit;" >&4
+  exec 4>&-
+  wait $holder
+  wait $other
+  rm "$work/write.in"
+  tr '\n' ' ' < "$work/write_other.out"
+}
+[ "$(after_update -c 'update tw1 set b = b + 1 where a = 3 returning b')" = \
+  "1131 UPDATE 1 " ] || fail "update after a concurrent update"
+[ "$(after_update -c 'update tw1 set a = a where a = 3 returning b')" = \
+  "2131 UPDATE 1 " ] || fail "update keeps a concurrent update's column"
+[ "$(after_update -c 'update tw1 set b = 0 where a = 3 and b < 2000')" = \
+  "UPDATE 0 " ] || fail "update rechecks its WHERE"
+[ "$(local_psql -c 'select b from tw1 where a = 3')" = 3131 ] ||
+  fail "update that no longer matched"
+[ "$(after_update -c 'delete from tw1 where a = 3 and b < 2000 returning b')" = \
+  "DELETE 0 " ] || fail "delete rechecks its WHERE"
+after_update -v VERBOSITY=verbose -c 'begin isolation level repeatable read' \
+  -c 'select count(*) from tw1' -c 'update tw1 set b = b + 1 where a = 3' |
+  grep -q 'ERROR:  40001' || fail "update at repeatable read"
+[ "$(after_update -c 'delete from tw1 where a = 3 returning b')" = \
+  "6131 DELETE 1 " ] || fail "delete after a concurrent update"
+local_psql -c 'select a from tw1 for update' 2>&1 |
+  grep -q 'locking a row of table "tw1" is not supported yet' ||
+  fail "for update refused"
+local_psql -c 'drop table tw1' > /dev/null 2>&1
 
 # Verify that a temporary table is its session's alone, in sm: it is found
 # before a table of its name, follows the session's transactions, takes

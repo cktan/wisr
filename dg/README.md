@@ -4,18 +4,33 @@ A fork of PostgreSQL that runs on the storage stack in `../sm`.
 `../sm/PART4.md` §10 says how it is to be made, and §9 what it
 calls.
 
-**It starts, and `psql` connects to it, but it has no tables
-yet.** `build/initdb DIR` makes a data directory,
-`build/digres -D DIR` serves it, and PostgreSQL's own `psql`
-runs `select 1 + 1` on it. A statement over constants also runs
-with no server: `echo 'select 1 + 1;' | build/digres --parse
---run`. `make -j4` generates what is generated, compiles every
-file as strict C++ with no `-fpermissive`, and links
-`build/digres` with `../sq` and `../sm`. The server has no
-catalog tables: its catalog is being replaced, not created
-(`../sm/PART4.md` §10). `DGWORK.md` is the
-plan, `WORKNOTE.md` the decisions taken along the way, and
-`CODE.md` the rules for changing the code.
+**It starts, `psql` connects to it, and its tables are sm's.**
+`build/initdb DIR` makes a data directory, `build/digres -D
+DIR` serves it, and PostgreSQL's own `psql` runs statements on
+it. What runs so far, each a step of `WORKNOTE.md`:
+
+- databases and schemas, created and dropped;
+- tables of `int2`, `int4` and `int8` columns, with NOT NULL,
+  PRIMARY KEY and UNIQUE, and indexes on them;
+- temporary tables, with ON COMMIT;
+- sequences;
+- INSERT, UPDATE and DELETE, with RETURNING; TRUNCATE;
+- sequential, index, index-only and bitmap scans, joins,
+  GROUP BY and ORDER BY;
+- transactions and savepoints at READ COMMITTED, REPEATABLE
+  READ and SERIALIZABLE, which are sm's;
+- ANALYZE, and the planner reading its statistics.
+
+A statement over constants also runs with no server: `echo
+'select 1 + 1;' | build/digres --parse --run`.
+
+`make -j4` generates what is generated, compiles every file as
+strict C++ with no `-fpermissive`, and links `build/digres`
+with `../sq` and `../sm`. The server has no catalog tables:
+its catalog is being replaced, not created (`../sm/PART4.md`
+§10). `DGWORK.md` is the plan, `WORKNOTE.md` the decisions
+taken along the way, and `CODE.md` the rules for changing the
+code.
 
 ## Building
 
@@ -80,8 +95,10 @@ superuser and the list of databases from the directory. There
 is no `pg_hba.conf`: a local socket connection is admitted if
 the OS user is the superuser, and a TCP connection by the
 superuser's password. `WORKNOTE.md` step 9 lists what was cut
-to get here and what does not work yet: a statement that needs
-a catalog table, which is most of them, fails with an error.
+to get here. What does not work yet fails with an error: a
+statement that still looks in a catalog table, and what a
+table in sm does not take, such as a column of another type,
+MERGE, INSERT ... ON CONFLICT and SELECT ... FOR UPDATE.
 `make test` starts a server and connects with `psql`, if there
 is one on the path.
 

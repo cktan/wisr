@@ -86,6 +86,19 @@ static thread_local /*LOCAL*/ List *open_tables = NIL;
  */
 static thread_local /*LOCAL*/ List *savepoints = NIL;
 
+/*
+ * The row the statement keeps, to be fetched by its rowno again: one a
+ * write found changed by a commit since the statement's snapshot, then its
+ * newest version, which smstore_lock_latest() read; or one just deleted, as
+ * it was.  The statement's own read of the rowno would give neither.
+ * kept_tuple is in TopTransactionContext, and NULL when the row is yet to
+ * be read; kept_oid is InvalidOid when none is kept.
+ */
+static thread_local /*LOCAL*/ Oid kept_oid = InvalidOid;
+static thread_local /*LOCAL*/ uint64 kept_rowno = 0;
+static thread_local /*LOCAL*/ char *kept_tuple = NULL;
+static thread_local /*LOCAL*/ Size kept_len = 0;
+
 /* This session's sm session, or an error if it has none. */
 static sm_session_t *session(void) {
   sm_session_t *s = datadir_sm_session();
@@ -165,6 +178,9 @@ static void close_tables(void) {
     sm_tbl_close(((open_table_t *)lfirst(l))->tbl);
   open_tables = NIL;
   savepoints = NIL;
+  /* The kept row's memory goes with the transaction. */
+  kept_oid = InvalidOid;
+  kept_tuple = NULL;
 }
 
 /*
@@ -307,7 +323,14 @@ static sm_session_t *xact_session(void) {
  * sm, so that the statement reads at one snapshot under READ COMMITTED, and
  * does not see the rows it writes itself (sm_stmt_begin).
  */
-void smstore_statement_start(void) { statement_pending = true; }
+void smstore_statement_start(void) {
+  statement_pending = true;
+  /* A row is kept for the statement that wrote it, and no longer. */
+  if (kept_tuple != NULL)
+    pfree(kept_tuple);
+  kept_oid = InvalidOid;
+  kept_tuple = NULL;
+}
 
 /* sm's type code for a column of type typid (sm2/TYPE.md section 3). */
 static uint8_t type_code(Oid typid) {
@@ -1922,6 +1945,16 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
   return scan;
 }
 
+/* The tuple of the row at rowno into slot, cleared, as a virtual tuple. */
+static void tuple_into_slot(sm_tbl_t *tbl, uint64_t rowno, const void *tuple,
+                            size_t len, TupleTableSlot *slot) {
+  if (sm_tbl_deform(tbl, tuple, len, (sm_datum_t *)slot->tts_values,
+                    slot->tts_isnull, slot->tts_tupleDescriptor->natts) != 0)
+    sm_error("read a row");
+  ExecStoreVirtualTuple(slot);
+  smstore_rowno_to_tid(rowno, &slot->tts_tid);
+}
+
 /*
  * The row at rowno, as this transaction sees it, into slot, as a virtual
  * tuple, its tid its rowno; false, the slot empty, if it sees none.
@@ -1939,11 +1972,7 @@ static bool read_row(sm_tbl_t *tbl, uint64_t rowno, TupleTableSlot *slot) {
   default:
     sm_error("read a row");
   }
-  if (sm_tbl_deform(tbl, tuple, len, (sm_datum_t *)slot->tts_values,
-                    slot->tts_isnull, slot->tts_tupleDescriptor->natts) != 0)
-    sm_error("read a row");
-  ExecStoreVirtualTuple(slot);
-  smstore_rowno_to_tid(rowno, &slot->tts_tid);
+  tuple_into_slot(tbl, rowno, tuple, len, slot);
   return true;
 }
 
@@ -2099,4 +2128,162 @@ smstore_scan_t *smstore_beginfetch(Relation rel) {
  */
 bool smstore_fetch(smstore_scan_t *scan, uint64 rowno, TupleTableSlot *slot) {
   return read_row(scan->tbl, rowno, slot);
+}
+
+/* rel, a table in sm, opened to write in this transaction. */
+static sm_tbl_t *table_to_write(Relation rel) {
+  sm_tbl_t *tbl = open_table(RelationGetRelid(rel), SM_LOCKMODE_IX);
+
+  if (tbl == NULL)
+    ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
+                    errmsg("relation \"%s\" does not exist",
+                           RelationGetRelationName(rel))));
+  return tbl;
+}
+
+/*
+ * Keep the row at rowno of the table oid for the statement, with a copy of
+ * its tuple, or with none yet if tuple is NULL.
+ */
+static void keep_row(Oid oid, uint64 rowno, const void *tuple, size_t len) {
+  if (kept_tuple != NULL)
+    pfree(kept_tuple);
+  kept_oid = oid;
+  kept_rowno = rowno;
+  kept_tuple = NULL;
+  kept_len = len;
+  if (tuple != NULL) {
+    /* Until the statement ends, or the transaction: its context's. */
+    kept_tuple = (char *)MemoryContextAlloc(TopTransactionContext, Max(len, 1));
+    memcpy(kept_tuple, tuple, len);
+  }
+}
+
+/*
+ * The row of rel at tid into slot, as a virtual tuple: the kept one if it
+ * is that row, else as the statement sees it; false if it sees none.  The
+ * executor fetches the row it is to update, the newest version of one it
+ * locked, and the row it deleted, for RETURNING.
+ */
+bool smstore_fetch_row(Relation rel, ItemPointer tid, TupleTableSlot *slot) {
+  sm_tbl_t *tbl = open_table(RelationGetRelid(rel), SM_LOCKMODE_IS);
+  uint64 rowno = smstore_tid_to_rowno(tid);
+
+  if (tbl == NULL)
+    return false;
+  if (kept_oid == RelationGetRelid(rel) && kept_rowno == rowno &&
+      kept_tuple != NULL) {
+    ExecClearTuple(slot);
+    tuple_into_slot(tbl, rowno, kept_tuple, kept_len, slot);
+    return true;
+  }
+  return read_row(tbl, rowno, slot);
+}
+
+/*
+ * What an update or a delete of the row at rowno of rel came to, rc from
+ * sm, as the executor is told it.  A commit since the statement's snapshot
+ * changed the row, under READ COMMITTED: TM_Updated, and the row is kept
+ * for smstore_lock_latest() to read; sm holds its lock.  The statement has
+ * already changed the row: TM_SelfModified, by this command, so the
+ * executor passes over it.  At the other levels sm has aborted the
+ * transaction instead, which is an error here, as any other failure is.
+ */
+static TM_Result write_result(Relation rel, uint64 rowno, int rc, CommandId cid,
+                              TM_FailureData *tmfd, const char *what) {
+  if (rc == 0)
+    return TM_Ok;
+  tmfd->xmax = InvalidTransactionId;
+  smstore_rowno_to_tid(rowno, &tmfd->ctid);
+  switch (sm_errnum()) {
+  case SM_ERR_UPDATED:
+    keep_row(RelationGetRelid(rel), rowno, NULL, 0);
+    return TM_Updated;
+  case SM_ERR_SELFMODIFIED:
+    tmfd->cmax = cid;
+    return TM_SelfModified;
+  case SM_ERR_NOTFOUND:
+    return TM_Deleted;
+  case SM_ERR_DUPKEY:
+    ereport(ERROR,
+            (errcode(ERRCODE_UNIQUE_VIOLATION),
+             errmsg("duplicate key value violates a unique index on \"%s\"",
+                    RelationGetRelationName(rel)),
+             errdetail("%s", sm_errmsg())));
+  default:
+    sm_error(what);
+  }
+  return TM_Ok; /* not reached */
+}
+
+/*
+ * Replace the row of rel at tid with the slot's: sm writes every index of
+ * the table with it, and the row keeps its rowno, so its tid.
+ */
+TM_Result smstore_update(Relation rel, ItemPointer tid, TupleTableSlot *slot,
+                         CommandId cid, TM_FailureData *tmfd) {
+  sm_tbl_t *tbl = table_to_write(rel);
+  uint64 rowno = smstore_tid_to_rowno(tid);
+
+  slot_getallattrs(slot);
+  int rc = waiting([&] {
+    return sm_tbl_update(tbl, rowno, (const sm_datum_t *)slot->tts_values,
+                         slot->tts_isnull, slot->tts_nvalid);
+  });
+
+  if (rc == 0)
+    slot->tts_tid = *tid;
+  return write_result(rel, rowno, rc, cid, tmfd, "update a row");
+}
+
+/*
+ * Delete the row of rel at tid, with its entry in every index.  The row is
+ * kept as it was, for RETURNING to fetch.
+ */
+TM_Result smstore_delete(Relation rel, ItemPointer tid, CommandId cid,
+                         TM_FailureData *tmfd) {
+  sm_tbl_t *tbl = table_to_write(rel);
+  uint64 rowno = smstore_tid_to_rowno(tid);
+  std::string old;
+  int rc = waiting([&] { return sm_tbl_delete(tbl, rowno, &old); });
+
+  if (rc == 0)
+    keep_row(RelationGetRelid(rel), rowno, old.data(), old.size());
+  return write_result(rel, rowno, rc, cid, tmfd, "delete a row");
+}
+
+/*
+ * The newest committed version of the row of rel at tid into slot, after
+ * an update or a delete of it gave TM_Updated: the executor checks the row
+ * again and writes again (sm_tbl_read_latest).  TM_Deleted if it is gone.
+ * The row is kept, so the executor's next fetch of it is this version.
+ * Locking a row that no write found changed is SELECT ... FOR UPDATE's,
+ * which is not here yet.
+ */
+TM_Result smstore_lock_latest(Relation rel, ItemPointer tid,
+                              TupleTableSlot *slot, TM_FailureData *tmfd) {
+  sm_tbl_t *tbl = table_to_write(rel);
+  uint64 rowno = smstore_tid_to_rowno(tid);
+  const void *tuple;
+  size_t len;
+
+  if (kept_oid != RelationGetRelid(rel) || kept_rowno != rowno)
+    ereport(ERROR,
+            (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+             errmsg("locking a row of table \"%s\" is not supported yet",
+                    RelationGetRelationName(rel))));
+  ExecClearTuple(slot);
+  switch (sm_tbl_read_latest(tbl, rowno, &tuple, &len)) {
+  case 0:
+    break;
+  case 1:
+    kept_oid = InvalidOid;
+    return TM_Deleted;
+  default:
+    sm_error("read a row's newest version");
+  }
+  keep_row(RelationGetRelid(rel), rowno, tuple, len);
+  tuple_into_slot(tbl, rowno, kept_tuple, kept_len, slot);
+  tmfd->traversed = true;
+  return TM_Ok;
 }

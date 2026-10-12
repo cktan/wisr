@@ -2506,3 +2506,46 @@ opens `pg_type`: `array_agg()` failed.
 
 - **The type's row is the compiled-in one** (`cat_type()`).
 - `server.sh` runs `array_agg`, plain and ordered in groups.
+
+## Step 86: UPDATE and DELETE
+
+A table in sm took a plain INSERT and nothing else that writes.
+
+- **UPDATE and DELETE write a table in sm**, with RETURNING, at
+  every isolation level, a temporary table included. sm writes
+  the table's indexes with the row, so the executor is told to
+  write none (`TU_None`). A row keeps its rowno, so its tid.
+- **They come through the table access method**: `smtable.c`
+  now has `tuple_fetch_row_version`, `tuple_update`,
+  `tuple_delete` and `tuple_lock`, each over a function of
+  `smstore.c`. A scan and an INSERT still go to `smstore.c`
+  from the executor; but `nodeModifyTable.c` fetches, writes and
+  locks a row in some ten places, which stay PostgreSQL's this
+  way.
+- **sm's answers are the executor's**: `SM_ERR_UPDATED`, a
+  commit since the statement's snapshot under READ COMMITTED,
+  is `TM_Updated`; the executor then asks for the row's newest
+  version (`sm_tbl_read_latest`), checks its WHERE again
+  (EvalPlanQual) and writes again. `SM_ERR_SELFMODIFIED`, a row
+  the statement already changed, is `TM_SelfModified` by this
+  command, and the row is passed over. At REPEATABLE READ and
+  SERIALIZABLE sm aborts the transaction instead, and the error
+  carries sm's SQLSTATE, 40001.
+- **A statement keeps one row** (`kept_*`, `smstore.c`): the
+  newest version it read after `TM_Updated`, or the row it just
+  deleted, as sm gave it. The executor fetches that row again by
+  its tid -- for the columns an UPDATE does not set, and for
+  RETURNING -- and the statement's own read of the rowno would
+  give the version of its snapshot.
+- **Still refused**: MERGE, INSERT ... ON CONFLICT, and SELECT
+  ... FOR UPDATE or SHARE, which reaches `tuple_lock` for a row
+  no write found changed.
+- `server.sh` checks an update by key and of every row, of a
+  key, to a taken key and to NULL; a delete; RETURNING;
+  rollback and a savepoint; a temporary table; and, against a
+  session holding the row updated, an update made to its row,
+  one that keeps its column, an update and a delete whose WHERE
+  no longer holds, a delete returning its row, and the failure
+  at REPEATABLE READ. A fetch that ignores the kept row, and a
+  delete that keeps none, each fail it.
+
