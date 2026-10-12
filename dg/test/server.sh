@@ -1145,6 +1145,18 @@ for guc in temp_buffers effective_io_concurrency io_combine_limit \
 done
 [ ! -e "$work/data/pg_multixact" ] || fail "no pg_multixact"
 
+# Verify that pg_hba.conf and pg_ident.conf are gone, with what read them.
+# 1. Confirm hba_file and ident_file are not settings any more.
+# 2. Confirm the functions that showed the files' rules are not there.
+for guc in hba_file ident_file; do
+  local_psql -c "show $guc" 2>&1 |
+    grep -q 'unrecognized configuration parameter' || fail "setting $guc"
+done
+for f in pg_hba_file_rules pg_ident_file_mappings; do
+  local_psql -c "select * from $f()" 2>&1 |
+    grep -q "function $f() does not exist" || fail "function $f"
+done
+
 # Verify that SERIALIZABLE is sm's: a write skew between two serializable
 # transactions fails one of them with a serialization failure, though
 # PostgreSQL's predicate locks are gone, with their settings and pg_serial.

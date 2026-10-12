@@ -2657,3 +2657,37 @@ Found in step 89: an explicit `COLLATE` looked the name up in
   `pg_c_utf8` and `pg_unicode_fast`. A collation of one's own,
   CREATE COLLATION, is not wired to sm yet.
 - `server.sh` uses each provider's.
+
+## Step 92: hba.c is gone
+
+`pg_hba.conf` and `pg_ident.conf` were not read (step 9), but
+their parser was still compiled, unreached. What chooses how a
+connection is authenticated, once digres has roles, will not be
+those files.
+
+- **`hba.c` is deleted**: the tokenizer, the parsers of both
+  files, the matching of a line to a connection and of a user
+  to a map. `auth.c` keeps what was still called, some forty
+  lines: the fixed rule (`hba_getauthmethod()`), the names of
+  the methods (`hba_authname()`), `pg_isblank()`, and
+  `check_usermap()`, which now only compares the two names --
+  there is no map to look in.
+- **Went with it**: `hbafuncs.c` and its functions,
+  `pg_hba_file_rules()` and `pg_ident_file_mappings()`, with
+  their views; `ifaddr.c` and `ifaddr.h`, which matched
+  `samehost` and `samenet`; `check_oauth_validator()`, which
+  only the parser called; the settings `hba_file` and
+  `ident_file`; and the two sample files.
+- **`hba.h` keeps `HbaLine`**, less the fields that matched a
+  line to a connection or named it in a file: the
+  authentication methods read the rest. A log line of a
+  connection authenticated no longer ends in a file and line,
+  which were `(null):0`.
+- **Left on purpose**: the authentication methods the fixed
+  rule never chooses -- ident, RADIUS, password, md5, trust --
+  and those that are build options (GSS, SSPI, PAM, BSD, LDAP,
+  certificates, OAuth). `auth.c` still holds them, unreached.
+- `server.sh` checks the two settings and the two functions are
+  gone; its peer and password checks are as before, and a
+  `check_usermap()` that admits any name fails them.
+

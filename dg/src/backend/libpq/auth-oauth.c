@@ -689,9 +689,9 @@ static void load_validator_library(const char *libname) {
   MemoryContextCallback *mcb;
 
   /*
-   * The presence, and validity, of libname has already been established by
-   * check_oauth_validator so we don't need to perform more than Assert
-   * level checking here.
+   * Whatever chooses OAuth for a connection is to check libname against
+   * oauth_validator_libraries first, as pg_hba.conf's parser did. Nothing
+   * chooses it yet: digres's rule is fixed (auth.c).
    */
   Assert(libname && *libname);
 
@@ -752,83 +752,4 @@ static void load_validator_library(const char *libname) {
 static void shutdown_validator_library(void *arg) {
   if (ValidatorCallbacks->shutdown_cb != NULL)
     ValidatorCallbacks->shutdown_cb(validator_module_state);
-}
-
-/*
- * Ensure an OAuth validator named in the HBA is permitted by the configuration.
- *
- * If the validator is currently unset and exactly one library is declared in
- * oauth_validator_libraries, then that library will be used as the validator.
- * Otherwise the name must be present in the list of oauth_validator_libraries.
- */
-bool check_oauth_validator(HbaLine *hbaline, int elevel, char **err_msg) {
-  int line_num = hbaline->linenumber;
-  const char *file_name = hbaline->sourcefile;
-  char *rawstring;
-  List *elemlist = NIL;
-
-  *err_msg = NULL;
-
-  if (oauth_validator_libraries_string[0] == '\0') {
-    ereport(elevel, errcode(ERRCODE_CONFIG_FILE_ERROR),
-            errmsg("oauth_validator_libraries must be set for authentication "
-                   "method %s",
-                   "oauth"),
-            errcontext("line %d of configuration file \"%s\"", line_num,
-                       file_name));
-    *err_msg = psprintf(
-        "oauth_validator_libraries must be set for authentication method %s",
-        "oauth");
-    return false;
-  }
-
-  /* SplitDirectoriesString needs a modifiable copy */
-  rawstring = pstrdup(oauth_validator_libraries_string);
-
-  if (!SplitDirectoriesString(rawstring, ',', &elemlist)) {
-    /* syntax error in list */
-    ereport(elevel, errcode(ERRCODE_CONFIG_FILE_ERROR),
-            errmsg("invalid list syntax in parameter \"%s\"",
-                   "oauth_validator_libraries"));
-    *err_msg = psprintf("invalid list syntax in parameter \"%s\"",
-                        "oauth_validator_libraries");
-    goto done;
-  }
-
-  if (!hbaline->oauth_validator) {
-    if (elemlist->length == 1) {
-      hbaline->oauth_validator = pstrdup((const char *)linitial(elemlist));
-      goto done;
-    }
-
-    ereport(elevel, errcode(ERRCODE_CONFIG_FILE_ERROR),
-            errmsg("authentication method \"oauth\" requires argument "
-                   "\"validator\" to be set when oauth_validator_libraries "
-                   "contains multiple options"),
-            errcontext("line %d of configuration file \"%s\"", line_num,
-                       file_name));
-    *err_msg =
-        "authentication method \"oauth\" requires argument \"validator\" to be "
-        "set when oauth_validator_libraries contains multiple options";
-    goto done;
-  }
-
-  foreach_ptr(char, allowed, elemlist) {
-    if (strcmp(allowed, hbaline->oauth_validator) == 0)
-      goto done;
-  }
-
-  ereport(
-      elevel, errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-      errmsg("validator \"%s\" is not permitted by %s",
-             hbaline->oauth_validator, "oauth_validator_libraries"),
-      errcontext("line %d of configuration file \"%s\"", line_num, file_name));
-  *err_msg = psprintf("validator \"%s\" is not permitted by %s",
-                      hbaline->oauth_validator, "oauth_validator_libraries");
-
-done:
-  list_free_deep(elemlist);
-  pfree(rawstring);
-
-  return (*err_msg == NULL);
 }

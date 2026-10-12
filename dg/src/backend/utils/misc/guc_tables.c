@@ -349,8 +349,6 @@ thread_local /*LOCAL*/ int num_temp_buffers = 1024;
 
 thread_local /*LOCAL*/ char *cluster_name = "";
 thread_local /*LOCAL*/ char *ConfigFileName;
-thread_local /*LOCAL*/ char *HbaFileName;
-thread_local /*LOCAL*/ char *IdentFileName;
 thread_local /*LOCAL*/ char *external_pid_file;
 
 thread_local /*LOCAL*/ char *application_name;
@@ -2575,24 +2573,6 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
       gettext_noop("Sets the server's main configuration file."), NULL,
       GUC_DISALLOW_IN_FILE | GUC_SUPERUSER_ONLY},
      &ConfigFileName,
-     NULL,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"hba_file", PGC_POSTMASTER, FILE_LOCATIONS,
-      gettext_noop("Sets the server's \"hba\" configuration file."), NULL,
-      GUC_SUPERUSER_ONLY},
-     &HbaFileName,
-     NULL,
-     NULL,
-     NULL,
-     NULL},
-
-    {{"ident_file", PGC_POSTMASTER, FILE_LOCATIONS,
-      gettext_noop("Sets the server's \"ident\" configuration file."), NULL,
-      GUC_SUPERUSER_ONLY},
-     &IdentFileName,
      NULL,
      NULL,
      NULL,

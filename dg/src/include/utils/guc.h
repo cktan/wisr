@@ -277,8 +277,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT int temp_file_limit;
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT char *cluster_name;
 extern thread_local /*LOCAL*/ PGDLLIMPORT char *ConfigFileName;
-extern thread_local /*LOCAL*/ PGDLLIMPORT char *HbaFileName;
-extern thread_local /*LOCAL*/ PGDLLIMPORT char *IdentFileName;
 extern thread_local /*LOCAL*/ PGDLLIMPORT char *external_pid_file;
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT char *application_name;

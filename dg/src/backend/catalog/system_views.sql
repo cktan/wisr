@@ -564,18 +564,6 @@ CREATE VIEW pg_file_settings AS
 REVOKE ALL ON pg_file_settings FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION pg_show_all_file_settings() FROM PUBLIC;
 
-CREATE VIEW pg_hba_file_rules AS
-   SELECT * FROM pg_hba_file_rules() AS A;
-
-REVOKE ALL ON pg_hba_file_rules FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION pg_hba_file_rules() FROM PUBLIC;
-
-CREATE VIEW pg_ident_file_mappings AS
-   SELECT * FROM pg_ident_file_mappings() AS A;
-
-REVOKE ALL ON pg_ident_file_mappings FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION pg_ident_file_mappings() FROM PUBLIC;
-
 CREATE VIEW pg_timezone_abbrevs AS
     SELECT * FROM pg_timezone_abbrevs_zone() z
     UNION ALL

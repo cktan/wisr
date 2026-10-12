@@ -396,7 +396,9 @@ Do not reopen these without the owner:
 - **One encoding, UTF8; default collation C;** ICU for a column
   or a query that asks.
 - **Authentication is fixed**: peer on the local socket, SCRAM
-  over TCP, no `pg_hba.conf`.
+  over TCP, no `pg_hba.conf`. Its parser is gone too
+  (`WORKNOTE.md` step 92): what replaces the rule, once there
+  are roles, will not be that file.
 - **Every writable global is `thread_local`**, marked
   `/*SHARED*/` or `/*LOCAL*/`, and the build fails otherwise
   (§3.2, §3.6). A new thread is given its parent's SHARED
@@ -535,4 +537,3 @@ Do not reopen these without the owner:
 - Time zone abbreviations are not loaded.
 - `initdb` does not clean up when interrupted.
 - A reload with no configuration file logs a complaint.
-- `hba.c` still holds the parser of `pg_hba.conf`, unreached.

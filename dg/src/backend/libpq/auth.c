@@ -40,6 +40,70 @@
 #include "tcop/backend_startup.h"
 #include "utils/memutils.h"
 
+/*
+ * The name of each authentication method, by its UserAuth (libpq/hba.h):
+ * keep the two in step.
+ */
+static const char *const UserAuthName[] = {
+    "reject",        "implicit reject", /* Not a user-visible option */
+    "trust",         "ident",
+    "password",      "md5",
+    "scram-sha-256", "gss",
+    "sspi",          "pam",
+    "bsd",           "ldap",
+    "cert",          "radius",
+    "peer",          "oauth",
+};
+
+StaticAssertDecl(lengthof(UserAuthName) == USER_AUTH_LAST + 1,
+                 "UserAuthName[] must match the UserAuth enum");
+
+/* The name of an authentication method, statically allocated. */
+const char *hba_authname(UserAuth auth_method) {
+  return UserAuthName[auth_method];
+}
+
+/* Whether c is a blank: a space, a tab or a carriage return. */
+bool pg_isblank(const char c) { return c == ' ' || c == '\t' || c == '\r'; }
+
+/*
+ * Choose how the connection is authenticated. digres has no pg_hba.conf
+ * and nothing in its place yet: the rule is fixed, and depends only on how
+ * the client arrived. A local socket connection is authenticated by the OS
+ * user at its other end (peer), and a TCP connection by password
+ * (SCRAM-SHA-256).
+ */
+void hba_getauthmethod(hbaPort *port) {
+  HbaLine *hba = (HbaLine *)palloc0(sizeof(HbaLine));
+
+  if (port->raddr.addr.ss_family == AF_UNIX) {
+    hba->conntype = ctLocal;
+    hba->auth_method = uaPeer;
+  } else {
+    hba->conntype = ctHost;
+    hba->auth_method = uaSCRAM;
+  }
+  port->hba = hba;
+}
+
+/*
+ * Whether the user the client authenticated as, system_user, may be the
+ * database user pg_user: STATUS_OK if they are the same name, else
+ * STATUS_ERROR. There are no user name maps, as pg_ident.conf held, so
+ * usermap_name is never set.
+ */
+int check_usermap(const char *usermap_name, const char *pg_user,
+                  const char *system_user, bool case_insensitive) {
+  Assert(usermap_name == NULL);
+  if ((case_insensitive ? pg_strcasecmp(pg_user, system_user)
+                        : strcmp(pg_user, system_user)) == 0)
+    return STATUS_OK;
+  ereport(LOG, (errmsg("provided user name (%s) and authenticated user name "
+                       "(%s) do not match",
+                       pg_user, system_user)));
+  return STATUS_ERROR;
+}
+
 /*----------------------------------------------------------------
  * Global authentication functions
  *----------------------------------------------------------------
@@ -290,7 +354,7 @@ static void auth_failed(Port *port, int status, const char *logdetail) {
     break;
   }
 
-  /* No pg_hba.conf line to name: digres's rule is fixed (hba.c). */
+  /* No pg_hba.conf line to name: digres's rule is fixed. */
 
   ereport(FATAL, (errcode(errcode_return), errmsg(errstr, port->user_name),
                   logdetail ? errdetail_log("%s", logdetail) : 0));
@@ -332,11 +396,9 @@ void set_authn_id(Port *port, const char *id) {
   MyClientConnectionInfo.auth_method = port->hba->auth_method;
 
   if (log_connections & LOG_CONNECTION_AUTHENTICATION) {
-    ereport(LOG, errmsg("connection authenticated: identity=\"%s\" method=%s "
-                        "(%s:%d)",
+    ereport(LOG, errmsg("connection authenticated: identity=\"%s\" method=%s",
                         MyClientConnectionInfo.authn_id,
-                        hba_authname(MyClientConnectionInfo.auth_method),
-                        port->hba->sourcefile, port->hba->linenumber));
+                        hba_authname(MyClientConnectionInfo.auth_method)));
   }
 }
 
@@ -348,12 +410,7 @@ void ClientAuthentication(Port *port) {
   int status = STATUS_ERROR;
   const char *logdetail = NULL;
 
-  /*
-   * Get the authentication method to use for this frontend/database
-   * combination.  Note: we do not parse the file at this point; this has
-   * already been done elsewhere.  hba.c dropped an error message into the
-   * server logfile if parsing the hba config file failed.
-   */
+  /* The authentication method to use: fixed by how the client arrived. */
   hba_getauthmethod(port);
 
   CHECK_FOR_INTERRUPTS();
@@ -591,10 +648,8 @@ void ClientAuthentication(Port *port) {
      * called, perhaps because the trust method is in use, then we handle
      * the logging here instead.
      */
-    ereport(LOG, errmsg("connection authenticated: user=\"%s\" method=%s "
-                        "(%s:%d)",
-                        port->user_name, hba_authname(port->hba->auth_method),
-                        port->hba->sourcefile, port->hba->linenumber));
+    ereport(LOG, errmsg("connection authenticated: user=\"%s\" method=%s",
+                        port->user_name, hba_authname(port->hba->auth_method)));
   }
 
   if (ClientAuthentication_hook)

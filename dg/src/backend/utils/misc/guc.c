@@ -51,8 +51,6 @@
 #include "utils/timestamp.h"
 
 #define CONFIG_FILENAME "postgresql.conf"
-#define HBA_FILENAME	"pg_hba.conf"
-#define IDENT_FILENAME	"pg_ident.conf"
 
 /*
  * Precision with which REAL type guc values are to be printed for GUC
@@ -1676,60 +1674,6 @@ bool SelectConfigFiles(const char *userDoption, const char *progname) {
    * installation's share directory, and digres has no installation yet.
    * Until it does, a time zone is named in full or by its offset.
    */
-
-  /*
-   * Figure out where pg_hba.conf is, and make sure the path is absolute.
-   */
-  if (HbaFileName) {
-    fname = make_absolute_path(HbaFileName);
-    fname_is_malloced = true;
-  } else if (configdir) {
-    fname =
-        (char *)guc_malloc(FATAL, strlen(configdir) + strlen(HBA_FILENAME) + 2);
-    sprintf(fname, "%s/%s", configdir, HBA_FILENAME);
-    fname_is_malloced = false;
-  } else {
-    write_stderr(
-        "%s does not know where to find the \"hba\" configuration file.\n"
-        "This can be specified as \"hba_file\" in \"%s\", "
-        "or by the -D invocation option, or by the "
-        "PGDATA environment variable.\n",
-        progname, ConfigFileName);
-    return false;
-  }
-  SetConfigOption("hba_file", fname, PGC_POSTMASTER, PGC_S_OVERRIDE);
-
-  if (fname_is_malloced)
-    free(fname);
-  else
-    guc_free(fname);
-
-  /*
-   * Likewise for pg_ident.conf.
-   */
-  if (IdentFileName) {
-    fname = make_absolute_path(IdentFileName);
-    fname_is_malloced = true;
-  } else if (configdir) {
-    fname = (char *)guc_malloc(FATAL,
-                               strlen(configdir) + strlen(IDENT_FILENAME) + 2);
-    sprintf(fname, "%s/%s", configdir, IDENT_FILENAME);
-    fname_is_malloced = false;
-  } else {
-    write_stderr(
-        "%s does not know where to find the \"ident\" configuration file.\n"
-        "This can be specified as \"ident_file\" in \"%s\", "
-        "or by the -D invocation option, or by the "
-        "PGDATA environment variable.\n",
-        progname, ConfigFileName);
-    return false;
-  }
-  SetConfigOption("ident_file", fname, PGC_POSTMASTER, PGC_S_OVERRIDE);
-
-  if (fname_is_malloced)
-    free(fname);
-  else
-    guc_free(fname);
 
   free(configdir);
 
