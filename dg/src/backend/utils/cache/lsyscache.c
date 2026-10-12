@@ -2286,52 +2286,26 @@ char get_typstorage(Oid typid) {
  * the returned expression tree might produce something of the wrong type.
  */
 Node *get_typdefault(Oid typid) {
-  HeapTuple typeTuple;
-  Form_pg_type type;
-  Datum datum;
-  bool isNull;
+  /* Every type is compiled in (catalog/cat_builtin.h). */
+  const cat_type_t *type = cat_type(typid);
   Node *expr;
 
-  typeTuple = SearchSysCache1(TYPEOID, ObjectIdGetDatum(typid));
-  if (!HeapTupleIsValid(typeTuple))
+  if (type == NULL)
     elog(ERROR, "cache lookup failed for type %u", typid);
-  type = (Form_pg_type)GETSTRUCT(typeTuple);
-
-  /*
-   * typdefault and typdefaultbin are potentially null, so don't try to
-   * access 'em as struct fields. Must do it the hard way with
-   * SysCacheGetAttr.
-   */
-  datum =
-      SysCacheGetAttr(TYPEOID, typeTuple, Anum_pg_type_typdefaultbin, &isNull);
-
-  if (!isNull) {
+  if (type->typdefaultbin != NULL) {
     /* We have an expression default */
-    expr = (Node *)stringToNode(TextDatumGetCString(datum));
+    expr = (Node *)stringToNode(type->typdefaultbin);
+  } else if (type->typdefault != NULL) {
+    /* A plain literal default, converted to a value of the type */
+    Datum datum = OidInputFunctionCall(
+        type->typinput, pstrdup(type->typdefault), getTypeIOParam(type), -1);
+
+    expr = (Node *)makeConst(typid, -1, type->typcollation, type->typlen, datum,
+                             false, type->typbyval);
   } else {
-    /* Perhaps we have a plain literal default */
-    datum =
-        SysCacheGetAttr(TYPEOID, typeTuple, Anum_pg_type_typdefault, &isNull);
-
-    if (!isNull) {
-      char *strDefaultVal;
-
-      /* Convert text datum to C string */
-      strDefaultVal = TextDatumGetCString(datum);
-      /* Convert C string to a value of the given type */
-      datum = OidInputFunctionCall(type->typinput, strDefaultVal,
-                                   getTypeIOParam(typeTuple), -1);
-      /* Build a Const node containing the value */
-      expr = (Node *)makeConst(typid, -1, type->typcollation, type->typlen,
-                               datum, false, type->typbyval);
-      pfree(strDefaultVal);
-    } else {
-      /* No default */
-      expr = NULL;
-    }
+    /* No default */
+    expr = NULL;
   }
-
-  ReleaseSysCache(typeTuple);
 
   return expr;
 }

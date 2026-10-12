@@ -335,12 +335,36 @@ void smstore_statement_start(void) {
 /* sm's type code for a column of type typid (sm2/TYPE.md section 3). */
 static uint8_t type_code(Oid typid) {
   switch (typid) {
+  case BOOLOID:
+    return 1;
   case INT2OID:
     return 2;
   case INT4OID:
     return 3;
   case INT8OID:
     return 4;
+  case FLOAT4OID:
+    return 5;
+  case FLOAT8OID:
+    return 6;
+  case TEXTOID:
+    return 8;
+  case VARCHAROID:
+    return 9;
+  case BYTEAOID:
+    return 10;
+  case DATEOID:
+    return 11;
+  case TIMEOID:
+    return 12;
+  case TIMESTAMPOID:
+    return 13;
+  case TIMESTAMPTZOID:
+    return 14;
+  case INTERVALOID:
+    return 15;
+  case UUIDOID:
+    return 16;
   default:
     ereport(ERROR,
             (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -905,12 +929,36 @@ static void remember_index(Oid indexoid, Oid table) {
 /* PostgreSQL's type for sm's type code (sm2/TYPE.md section 3). */
 static Oid type_oid(uint8_t code) {
   switch (code) {
+  case 1:
+    return BOOLOID;
   case 2:
     return INT2OID;
   case 3:
     return INT4OID;
   case 4:
     return INT8OID;
+  case 5:
+    return FLOAT4OID;
+  case 6:
+    return FLOAT8OID;
+  case 8:
+    return TEXTOID;
+  case 9:
+    return VARCHAROID;
+  case 10:
+    return BYTEAOID;
+  case 11:
+    return DATEOID;
+  case 12:
+    return TIMEOID;
+  case 13:
+    return TIMESTAMPOID;
+  case 14:
+    return TIMESTAMPTZOID;
+  case 15:
+    return INTERVALOID;
+  case 16:
+    return UUIDOID;
   default:
     elog(ERROR, "sm type code %d has no type here", code);
   }
@@ -1710,6 +1758,19 @@ ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt) {
     bool desc = elem->ordering == SORTBY_DESC;
 
     key.attnum = column_place(rel, elem->name);
+    /*
+     * sm keys an interval in an order finer than PostgreSQL's: '1 mon' and
+     * '30 days', which PostgreSQL calls equal, are two keys
+     * (../sm/sm2/TYPE.md section 3.10), so = through the index would miss
+     * one and UNIQUE would take both.  Refused until the two agree.
+     */
+    if (TupleDescAttr(RelationGetDescr(rel), key.attnum)->atttypid ==
+        INTERVALOID)
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("an index key of type interval is not supported "
+                             "yet"),
+                      errdetail("sm orders intervals PostgreSQL calls equal "
+                                "as distinct keys.")));
     key.desc = desc;
     /* PostgreSQL's default puts nulls last ascending, first descending. */
     key.nulls_first = elem->nulls_ordering == SORTBY_NULLS_DEFAULT

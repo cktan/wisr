@@ -206,8 +206,8 @@ grep -q 'relation "t1" already exists' "$work/table.out" ||
 local_psql -c 'create table if not exists t1 (a int4)' >> "$work/table.out" 2>&1
 grep -q 'relation "t1" already exists, skipping' "$work/table.out" ||
   fail "create table if not exists"
-local_psql -c 'create table t2 (a text)' >> "$work/table.out" 2>&1
-grep -q 'type text is not supported yet' "$work/table.out" ||
+local_psql -c 'create table t2 (a point)' >> "$work/table.out" 2>&1
+grep -q 'type point is not supported yet' "$work/table.out" ||
   fail "create table, a type not taken"
 
 # Verify that INSERT writes rows to sm and a scan reads them back, in the
@@ -1129,6 +1129,130 @@ local_psql -c 'alter table t14 add foreign key (a) references u14' \
 local_psql -c "select 'a' collate nope < 'b'" 2>&1 |
   grep -q 'collation "nope" for encoding "UTF8" does not exist' ||
   fail "an unknown collation"
+
+# Verify that bool, float4 and float8 columns are stored in sm, and keyed
+# in its indexes by PostgreSQL's order.
+# 1. Make t16 with each and its indexes, made empty so that none is still
+#    building when used, and insert NaN, Infinity, -1e300 and nulls.
+# 2. Read them back as written.
+# 3. An index on float8 orders NaN last and finds it with = 'NaN'; one on
+#    (bool, float4) serves b AND r > 2.
+# 4. A unique index on float4 calls -0 and 0 one key.
+local_psql -c 'create table t16 (id int4 primary key, b bool, r float4,
+      d float8)' \
+  -c 'create index t16d on t16 (d)' -c 'create index t16b on t16 (b, r)' \
+  -c 'create unique index t16r on t16 (r)' \
+  -c "insert into t16 values (1, true, 1.5, 2.25), (2, false, 0, 'NaN'),
+      (3, null, 'Infinity', -1e300), (4, true, 3.4e38, 0)" \
+  > "$work/floats.out" 2>&1
+[ "$(local_psql -c 'select * from t16 order by id' 2>&1 | tr '\n' ,)" = \
+  "1|t|1.5|2.25,2|f|0|NaN,3||Infinity|-1e+300,4|t|3.4e+38|0," ] ||
+  fail "bool and floats read back"
+[ "$(local_psql -c 'set enable_seqscan = off' \
+  -c 'select id from t16 order by d' \
+  -c "select id from t16 where d = 'NaN'" \
+  -c 'select id from t16 where b and r > 2' 2>&1 | tr '\n' ,)" = \
+  "SET,3,4,1,2,2,4," ] || fail "bool and float keys"
+local_psql -c "insert into t16 values (5, false, '-0', 1)" 2>&1 |
+  grep -q 'duplicate key' || fail "-0 and 0 one float key"
+
+# Verify that text, varchar and bytea columns are stored in sm, short and
+# long, and keyed in its indexes in the default collation's byte order.
+# 1. Make t17 with each and its indexes, made empty so that none is still
+#    building when used; insert values empty, of 200 and 5000 bytes, null.
+# 2. Read their lengths back; a varchar(5) refuses six characters.
+# 3. Indexes on each: = on text and on varchar (by text's opclass) use
+#    them; a range and ORDER BY on varchar, and ORDER BY on bytea, come
+#    in byte order.
+# 4. A unique index on varchar refuses a duplicate.
+local_psql -c 'create table t17 (id int4 primary key, t text, v varchar(5),
+      b bytea)' \
+  -c 'create index t17t on t17 (t)' -c 'create unique index t17v on t17 (v)' \
+  -c 'create index t17b on t17 (b)' \
+  -c "insert into t17 values (1, 'hello', 'ab', '\x00ff'), (2, '', null, ''),
+      (3, repeat('x', 200), 'abcde', '\xdeadbeef'),
+      (4, repeat('y', 5000), 'z', null), (5, 'B', 'a', '\x01')" \
+  > "$work/text.out" 2>&1
+[ "$(local_psql -c 'select id, length(t), v, b from t17 order by id' 2>&1 |
+  tr '\n' ,)" = "1|5|ab|\x00ff,2|0||\x,3|200|abcde|\xdeadbeef,4|5000|z|,5|1|a|\x01," ] ||
+  fail "text, varchar and bytea read back"
+local_psql -c "insert into t17 values (6, 'x', 'toolong', null)" 2>&1 |
+  grep -q 'value too long for type character varying(5)' ||
+  fail "varchar(5) refuses six"
+[ "$(local_psql -c 'set enable_seqscan = off' \
+  -c "explain (costs off) select id from t17 where t = 'hello'" \
+  -c "explain (costs off) select id from t17 where v = 'ab'" 2>&1 |
+  grep -cE 'Index Scan (on|using) t17[tv]')" = 2 ] || fail "text and varchar indexes"
+[ "$(local_psql -c 'set enable_seqscan = off' \
+  -c "select id from t17 where t = 'hello'" \
+  -c "select id from t17 where v > 'a' order by v" \
+  -c 'select id from t17 order by b nulls first' 2>&1 | tr '\n' ,)" = \
+  "SET,1,1,3,4,4,2,1,5,3," ] || fail "text, varchar and bytea keys"
+local_psql -c "insert into t17 values (7, 'q', 'ab', null)" 2>&1 |
+  grep -q 'duplicate key' || fail "a unique varchar key"
+
+# Verify that date, time, timestamp, timestamptz, interval and uuid columns
+# are stored in sm and keyed in its indexes in PostgreSQL's order.
+# 1. Make t18 with each and an index on each, made empty; insert values at
+#    the types' ends, infinities and nulls among them.
+# 2. Read them back as written, in UTC.
+# 3. Each index orders as PostgreSQL does, uuid nulls first when asked;
+#    30 days and 1 month are one interval, found together by =.
+# 4. A unique uuid index refuses a duplicate.
+# 5. An index keyed on interval is refused: sm's keys would tell 30 days
+#    from 1 month.
+local_psql -c 'create table t18 (id int4 primary key, dt date, tm time,
+      ts timestamp, tz timestamptz, iv interval, u uuid)' \
+  -c 'create index t18dt on t18 (dt)' -c 'create index t18tm on t18 (tm)' \
+  -c 'create index t18ts on t18 (ts)' -c 'create index t18tz on t18 (tz)' \
+  -c 'create unique index t18u on t18 (u)' \
+  -c "insert into t18 values (1, '2024-01-31', '10:30',
+      '2024-01-31 10:30:00.123456', '2024-01-31 10:30+02', '1 day 2 hours',
+      'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'),
+      (2, '1999-12-31', '00:00', '-infinity', 'infinity', '-1 month',
+      '00000000-0000-0000-0000-000000000000'),
+      (3, 'infinity', '23:59:59.999999', '2000-01-01', null, '30 days', null),
+      (4, '4713-01-01 BC', null, '294276-12-31 23:59:59',
+      '1970-01-01 00:00+00', '1 month', 'ffffffff-ffff-ffff-ffff-ffffffffffff')" \
+  > "$work/dates.out" 2>&1
+[ "$(local_psql -c "set timezone = 'UTC'" -c 'select * from t18 order by id' \
+  2>&1 | tr '\n' ,)" = "SET,1|2024-01-31|10:30:00|2024-01-31 10:30:00.123456|2024-01-31 08:30:00+00|1 day 02:00:00|a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11,2|1999-12-31|00:00:00|-infinity|infinity|-1 mons|00000000-0000-0000-0000-000000000000,3|infinity|23:59:59.999999|2000-01-01 00:00:00||30 days|,4|4713-01-01 BC||294276-12-31 23:59:59|1970-01-01 00:00:00+00|1 mon|ffffffff-ffff-ffff-ffff-ffffffffffff," ] ||
+  fail "dates, times, intervals and uuids read back"
+[ "$(local_psql -c 'set enable_seqscan = off' \
+  -c 'select array_agg(id) from (select id from t18 order by dt) x' \
+  -c 'select array_agg(id) from (select id from t18 order by tm) x' \
+  -c 'select array_agg(id) from (select id from t18 order by ts) x' \
+  -c 'select array_agg(id) from (select id from t18 order by tz nulls first) x' \
+  -c "select array_agg(id order by id) from t18
+      where iv = interval '1 month'" \
+  -c 'select array_agg(id) from (select id from t18 order by u nulls first) x' \
+  2>&1 | tr '\n' ,)" = \
+  "SET,{4,2,1,3},{2,1,3,4},{2,3,1,4},{3,4,1,2},{3,4},{3,2,1,4}," ] ||
+  fail "date, time, interval and uuid keys"
+local_psql -c "insert into t18 values (5, null, null, null, null, null,
+    'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11')" 2>&1 |
+  grep -q 'duplicate key' || fail "a unique uuid key"
+local_psql -c 'create index t18iv on t18 (iv)' 2>&1 |
+  grep -q 'an index key of type interval is not supported yet' ||
+  fail "an interval key refused"
+
+# Verify that an INSERT naming its columns fills the others with their
+# types' defaults, null for every built-in type.
+# 1. Insert naming two columns of t19, then three in another order, then
+#    from a SELECT.
+# 2. Read the rows back with nulls where nothing was named.
+# 3. Leaving out a NOT NULL column, or giving DEFAULT VALUES, is refused.
+local_psql -c 'create table t19 (a int4, b int4, t text, c int8 not null)' \
+  -c 'insert into t19 (a, c) values (1, 10)' \
+  -c "insert into t19 (c, a, t) values (20, 2, 'two')" \
+  -c 'insert into t19 (a, c) select g, g * 10 from generate_series(4, 5) g' \
+  > "$work/insertcols.out" 2>&1
+[ "$(local_psql -c 'select * from t19 order by a' 2>&1 | tr '\n' ,)" = \
+  "1|||10,2||two|20,4|||40,5|||50," ] || fail "an insert naming its columns"
+[ "$(local_psql -c 'insert into t19 (a) values (3)' \
+  -c 'insert into t19 default values' 2>&1 |
+  grep -c 'null value in column "c"')" = 2 ] ||
+  fail "a NOT NULL column left out"
 
 # Verify that the buffer manager's settings are gone, and DISCARD SEQUENCES
 # still runs.

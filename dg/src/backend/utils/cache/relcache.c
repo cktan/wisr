@@ -72,6 +72,7 @@
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/optimizer.h"
+#include "parser/parse_coerce.h"
 #include "rewrite/rewriteDefine.h"
 #include "rewrite/rowsecurity.h"
 #include "storage/fd.h"
@@ -1486,17 +1487,30 @@ static Relation RelationBuildSmIndexDesc(Oid indexoid, Oid table,
   relation->rd_indoption = (int16 *)palloc0(ix->nkeys * sizeof(int16));
   MemoryContextSwitchTo(oldcxt);
   for (int i = 0; i < ix->nkeys; i++) {
-    Oid typid = TupleDescAttr(relation->rd_att, i)->atttypid;
+    Form_pg_attribute att = TupleDescAttr(relation->rd_att, i);
+    Oid typid = att->atttypid;
     const cat_opclass_t *opclass = NULL;
 
+    /*
+     * The type's default btree opclass, as GetDefaultOpClass() finds it:
+     * one for the type itself, else one the type is binary-coercible to,
+     * as varchar takes text's.
+     */
     for (int k = 0; k < nopclasses && opclass == NULL; k++)
       if (opclasses[k].opcmethod == BTREE_AM_OID &&
           opclasses[k].opcdefault && opclasses[k].opcintype == typid)
+        opclass = &opclasses[k];
+    for (int k = 0; k < nopclasses && opclass == NULL; k++)
+      if (opclasses[k].opcmethod == BTREE_AM_OID &&
+          opclasses[k].opcdefault &&
+          IsBinaryCoercible(typid, opclasses[k].opcintype))
         opclass = &opclasses[k];
     if (opclass == NULL)
       elog(ERROR, "type %u has no default btree operator class", typid);
     relation->rd_opfamily[i] = opclass->opcfamily;
     relation->rd_opcintype[i] = opclass->opcintype;
+    /* Keyed in the column's collation: the default, C, in sm's order. */
+    relation->rd_indcollation[i] = att->attcollation;
     relation->rd_indoption[i] = (ix->desc[i] ? INDOPTION_DESC : 0) |
                                 (ix->nulls_first[i] ? INDOPTION_NULLS_FIRST : 0);
   }

@@ -2691,3 +2691,56 @@ those files.
   gone; its peer and password checks are as before, and a
   `check_usermap()` that admits any name fails them.
 
+
+## Step 92: bool, floats and text in tables
+
+A table in sm took `int2`, `int4` and `int8` alone, though sm2
+has seventeen types. sm2 keeps PostgreSQL's own datums
+(`../sm/sm2/TYPE.md` §1), so a type needs only its code.
+
+- **`bool`, `float4`, `float8`, `text`, `varchar` and `bytea`**
+  are mapped to sm2's codes 1, 5, 6, 8, 9 and 10, and back
+  (`type_code()`, `type_oid()`). A varlena goes across in its
+  short or long form; sm2 refuses a compressed one or a TOAST
+  pointer, which a table in sm never makes.
+- **Their keys are PostgreSQL's order**: a float's total order,
+  NaN last and -0 one key with 0; text's byte order, which is
+  the default collation, C.
+- **An index's opclass is the type's default, or one it is
+  binary-coercible to**, as `GetDefaultOpClass()` finds it:
+  `varchar` takes `text_ops`. Its collation is the column's,
+  so the planner matches it to a clause in that collation; one
+  in another, `COLLATE "unicode"`, is not served by it.
+- `server.sh` stores, reads, indexes and keys each, and refuses
+  a type sm does not take yet, `point`.
+
+## Step 93: dates, times, intervals and uuids in tables
+
+- **`date`, `time`, `timestamp`, `timestamptz`, `interval` and
+  `uuid`** are mapped to sm2's codes 11 to 16, and back. Their
+  datums are PostgreSQL's: four or eight bytes by value, an
+  interval's 16-byte struct and a uuid's bytes by reference.
+- **An index keyed on interval is refused.** sm2 keys an
+  interval by its span and then its months and days
+  (`../sm/sm2/TYPE.md` §3.10): an order finer than
+  PostgreSQL's, which calls `'1 mon'` and `'30 days'` equal. So
+  `=` through such an index would find one of two equal
+  intervals, and UNIQUE would take both. An interval may still
+  be an index's INCLUDE column. Whether sm2's key should share
+  PostgreSQL's ties, or dg scan every key of a span, is open.
+- **Found, not fixed here**: an INSERT naming its columns fails
+  opening `pg_type`, for a table of any types.
+- `server.sh` stores, reads, indexes and keys each, and refuses
+  an interval key.
+
+## Step 94: an INSERT names its columns
+
+Found in step 93: an INSERT naming its columns failed for every
+table, as the rewriter asks each left-out column's type for its
+default (`get_typdefault()`), which read the `TYPEOID` cache.
+
+- **`get_typdefault()` reads the compiled-in row**: no built-in
+  type has a default, so a left-out column is null, or refused
+  if it is NOT NULL.
+- `server.sh` inserts naming columns, in another order and from
+  a SELECT, and refuses leaving out a NOT NULL one.
