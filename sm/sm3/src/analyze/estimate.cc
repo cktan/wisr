@@ -119,6 +119,14 @@ int compute_scalar_stats(const sm2::key_column_t &col,
       if (sm2::datum_bytes(type, col.typmod, values[i], bytes) != 0) {
         return -1;
       }
+      // A datum out of line is as wide as its pointer says, and
+      // always too wide to sort: it is counted, and never fetched.
+      sm2::toast_ptr_t p;
+      if (sm2::parse_toast_ptr(bytes, p)) {
+        total_width += static_cast<double>(p.len) + 4;
+        toowide_cnt++;
+        continue;
+      }
       total_width += static_cast<double>(bytes.size());
       if (bytes.size() > width_threshold) {
         toowide_cnt++;

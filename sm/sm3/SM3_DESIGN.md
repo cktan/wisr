@@ -25,10 +25,9 @@ per table, index relids allocated and never reused, and
 `DROP TABLE` as one `sm1::rmstore`. §3's index maintenance
 is built, the C API's one way to write a row, and so is its
 index build, for partial and expression indexes too; §6's
-statistics are not. sm2, which it is built on, is; its TOAST
-(`sm2/SM2_DESIGN.md` §4.2) is not used here yet: a table's
-heap is opened with no sequence for TOAST ids, so every datum
-stays in its tuple and a row is held to 64 KB.
+statistics are not. sm2, which it is built on, is, and its
+TOAST (`sm2/SM2_DESIGN.md` §4.2) is used here once the host
+says it reads TOAST pointers (§3.4).
 This file exists so the protocols are argued before they are
 written. Unlike sm2's two formats, almost nothing here is
 permanent on disk — the catalog's own layout is the exception
@@ -67,7 +66,7 @@ answer.
 | `rel_update` / `rel_delete` returning the old image as a tuple | the old index entries can be computed without a read of their own; the image views sm1 session memory, valid until the next call, so sm3 copies it before any index call (§3) |
 | sm2's codec over `datum_t` values and null flags, as PostgreSQL's `Datum` (`sm2/TUPLE.md` §9) | sm3 never handles a value's bytes: rows, index keys and bounds are `datum_t`s, and `encode_key` strips a varlena's header itself |
 | `tup_desc_t`: a schema's widths and entry offsets, built once (`sm2/TUPLE.md` §6) | sm3 builds one per table and per index value when a definition loads or changes, so a one-column read costs a step per earlier null, not a pass over the row |
-| a tuple of at most 64 KB, TOAST postponed (`sm2/TUPLE.md` §1) | a longer row fails with `SM_ERR_ROWTOOLONG`, which sm3 passes up, as PostgreSQL's `program_limit_exceeded`, until TOAST exists |
+| a tuple of at most 64 KB, its long datums out of line with TOAST (`sm2/SM2_DESIGN.md` §4.2) | a row is as long as its datums once the host reads TOAST pointers (§3.4); without, or in an index entry, a longer one fails with `SM_ERR_ROWTOOLONG`, which sm3 passes up, as PostgreSQL's `program_limit_exceeded` |
 | `SM_ERR_DUPKEY` from sm1's insert | a unique index keyed without `rowno` — the primary key's among them — needs no separate existence check (§3) |
 | `SM_ERR_UPDATED` and `rel_read_latest` at READ COMMITTED | a filtered update or delete must re-check its predicate, and recompute its index entries, from the newest version (§3); the error does not abort and is not retryable |
 | transactions at RC / RR / SERIALIZABLE | index maintenance is atomic with the base write for free, because both are in one transaction |
@@ -927,6 +926,56 @@ transaction that opens the table again sees it valid and
 still may not scan it; and of two transactions setting one
 index's state the second waits and is refused. `test_ddl.cc`
 has every refused transition.
+
+### 3.4 Datums out of line, and the indexes
+
+sm2 moves a row's long datums out of its tuple (TOAST,
+`sm2/SM2_DESIGN.md` §4.2), and a tuple then holds a pointer
+where a datum was. Built in `src/table/table.cc`, with
+`test/test_toast.cc`.
+
+- **The host turns it on** (`cat_set_toast`), once for a
+  catalog, to say it reads pointers. Off, the default, a
+  table's heap is opened with no sequence for TOAST ids, so
+  sm2 moves nothing: a host that reads a datum straight out of
+  a tuple, as digres does, is given no pointer.
+- **A table has a sequence for its ids**, `sm3.toast.<oid>`,
+  made with it and dropped with it, temporary when the table
+  is. It is named by the oid and not kept in the table's
+  record. A table made before TOAST has none; that is seen
+  when the table is opened, and it goes on with every datum in
+  its tuple.
+- **An index is made of values, never of a pointer.** What an
+  index needs of a row -- its key columns, its INCLUDE columns,
+  and the columns its evaluator reads -- is fetched before the
+  entry is made, by every write and by the build. So the
+  evaluator is never shown a pointer, an index-only scan never
+  gives one, and an entry is held to 64 KB whatever the row is:
+  a row whose INCLUDE column makes its entry longer is refused,
+  as PostgreSQL refuses an index row too long for a page. The
+  other course for INCLUDE, keeping the pointer in the entry,
+  would have had a reader of the index fetch through the
+  table.
+- **An update tells an unchanged column by its pointer.** The
+  same pointer before and after is one datum, and nothing is
+  fetched for it; a pointer on one side and anything else on
+  the other is taken as changed, and both sides are then
+  fetched and the entries made. Comparing the bytes under the
+  varlena header, as for a datum in line, would have called a
+  pointer equal to the empty text.
+- **The old row's datums outlast the write.** The old entries
+  are made from the image the heap write hands back (§3), and
+  by then sm2 would have erased what the old row held out of
+  line. So `tbl_update` and `tbl_delete` write with hold, fix
+  the indexes, and then release (`sm2::rel_release`).
+- **`ANALYZE` fetches nothing for a column.** A datum out of
+  line counts as PostgreSQL counts one past 1 KB: toward the
+  column's width, at the length its pointer gives, and not
+  among the values sorted for the common values and the
+  histogram (§6.5). A row shown to an expression index's
+  evaluator has what the evaluator reads fetched, as in a
+  write.
+- **`tbl_fetch` reads a datum** for the host, by its pointer.
 
 ## 4. Object mapping
 

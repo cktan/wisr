@@ -80,6 +80,7 @@ struct sm_env_t {
   std::unordered_set<sm_session_t *> sessions;
   sm_index_eval_fn eval = nullptr; /* the host's evaluator, set once */
   void *eval_ctx = nullptr;
+  bool toast = false; /* the host reads TOAST pointers (sm_set_toast) */
 };
 
 /*
@@ -482,6 +483,22 @@ int sm_set_index_evaluator(sm_env_t *env, sm_index_eval_fn fn, void *ctx) {
   });
 }
 
+/* Turn TOAST on or off for env, before it opens a database. */
+int sm_set_toast(sm_env_t *env, int on) {
+  return guard(nullptr, [&] {
+    if (!env) {
+      return null_arg("sm_set_toast", "env");
+    }
+    std::lock_guard lock(env->mu);
+    if (!env->catalogs.empty()) {
+      return sm1::seterr(sm1::SM_ERR_INVALID,
+                         "sm_set_toast: a database has been opened");
+    }
+    env->toast = on != 0;
+    return 0;
+  });
+}
+
 /*
  * Create dbname, with opt's options or the defaults, and its
  * catalog; a database whose catalog cannot be made is removed.
@@ -566,6 +583,7 @@ int sm_opendb(sm_env_t *env, const char *dbname, const sm_options_t *opt,
       // queue what a restart left unbuilt; the evaluator first,
       // for a build may need it at once.
       if (rc == 0 && (set_evaluator(env, cat) != 0 ||
+                      sm3::cat_set_toast(cat, env->toast) != 0 ||
                       start_builder(env, name_of(dbname), cat) != 0)) {
         sm3::cat_close(cat);
         cat = nullptr;
@@ -1292,6 +1310,21 @@ int sm_tbl_decode(sm_tbl_t *tbl, const void *tuple, size_t len, size_t ordinal,
     }
     return decode("sm_tbl_decode", sm3::tbl_def(tbl->table).desc, tuple, len,
                   ordinal, val, isnull);
+  });
+}
+
+/* Read the value a TOAST pointer of the table names. */
+int sm_tbl_fetch(sm_tbl_t *tbl, sm_datum_t val, std::string *out) {
+  return guard(tbl ? tbl->session : nullptr, [&] {
+    if (!tbl || !val || !out) {
+      return null_arg("sm_tbl_fetch", !tbl ? "tbl" : !val ? "val" : "out");
+    }
+    const char *v = static_cast<const char *>(sm2::datum_to_ptr(val));
+    if (v[0] != sm2::varlena_toast) {
+      return sm1::seterr(sm1::SM_ERR_INVALID,
+                         "sm_tbl_fetch: not a TOAST pointer");
+    }
+    return sm3::tbl_fetch(tbl->table, {v, sm2::toast_ptr_len}, *out);
   });
 }
 

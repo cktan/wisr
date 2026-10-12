@@ -140,7 +140,10 @@ static int make_table(session_t *session, uint64_t nspoid,
   if (sm1::mkstore(session->sm1, rec.storeid, temp) != 0) {
     return -1;
   }
+  // And the sequence its TOAST ids come from, used once the host
+  // reads TOAST pointers (cat_set_toast).
   if (sm1::mkseq(session->sm1, rec.rowno_seq, 1, 1, temp) == 0 &&
+      sm1::mkseq(session->sm1, toast_seq_name(t), 1, 1, temp) == 0 &&
       cat_put_table(session, t, rec) == 0) {
     oid = t;
     return 0;
@@ -152,6 +155,7 @@ static int make_table(session_t *session, uint64_t nspoid,
   if (sm1::retryable() != 1) {
     sm1::errnum_t error = sm1::errnum();
     std::string reason = sm1::errmsg();
+    sm1::rmseq(session->sm1, toast_seq_name(t));
     sm1::rmseq(session->sm1, rec.rowno_seq);
     sm1::rmstore(session->sm1, rec.storeid);
     sm1::seterr(error, reason);
@@ -185,6 +189,11 @@ int drop_table(session_t *session, uint64_t oid) {
   // Its store takes its rows and index entries with it (DESIGN.md §5).
   if (sm1::rmstore(session->sm1, rec.storeid) != 0 ||
       sm1::rmseq(session->sm1, rec.rowno_seq) != 0) {
+    return -1;
+  }
+  // A table made before TOAST has no sequence for its ids.
+  if (sm1::rmseq(session->sm1, toast_seq_name(oid)) != 0 &&
+      sm1::errnum() != sm1::SM_ERR_NOTFOUND) {
     return -1;
   }
   return 0;

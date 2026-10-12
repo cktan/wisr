@@ -104,7 +104,7 @@ public:
 
   /* Environment lifecycle. */
   int env_init(const char *path);
-  int env_attach(const char *path);
+  int env_attach(const char *path, bool toast = false);
   int env_detach(int force);
   sm_env_t *env() const { return m_env; }
   const std::string &env_path() const { return m_env_path; }
@@ -160,10 +160,13 @@ int janet_to_value(Janet val, const col_def_t &col, std::vector<uint8_t> &buf,
 /*
  * Convert a value back to a Janet value: a number, boolean or
  * string for the types rel converts natively, and canonical text
- * (sm_type_out) for any other.
+ * (sm_type_out) for any other. A value out of line (TOAST) is
+ * fetched through tbl; with no tbl -- the old row a write hands
+ * back, whose values out of line that write erased -- it is the
+ * keyword :toast.
  */
 Janet value_to_janet(const sm_datum_t &val, bool isnull, uint8_t type_code,
-                     int32_t typmod);
+                     int32_t typmod, sm_tbl_t *tbl = nullptr);
 
 /*
  * A column's typmod from the numbers after its type, as

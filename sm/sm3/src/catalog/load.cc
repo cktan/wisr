@@ -346,6 +346,15 @@ int cat_set_evaluator(catalog_t *cat, index_eval_fn eval) {
   return 0;
 }
 
+/* Say whether the host reads TOAST pointers; see sm3.h. */
+int cat_set_toast(catalog_t *cat, bool on) {
+  if (!cat) {
+    return sm1::seterr(sm1::SM_ERR_INVALID, "toast: no catalog");
+  }
+  cat->toast = on;
+  return 0;
+}
+
 /* Close a catalog; nullptr is a no-op. */
 void cat_close(catalog_t *cat) { delete cat; }
 

@@ -103,14 +103,14 @@ Owed, and blocking nothing above:
 
 ## 3. Not blocking
 
-- **TOAST above sm2.** sm2's is built
-  (`sm2/SM2_DESIGN.md` §4.2): a heap `rel` given a sequence
-  for ids moves a row's long datums out of line. Not built:
-  sm3 gives its tables no such sequence, so nothing is moved
-  through it. It is to make the sequence with the table, and
-  fetch a value where it needs one -- an index's key, the
-  index build, `ANALYZE`'s sample -- and the C API and digres
-  are to fetch what a query reads.
+- **TOAST in digres.** sm2's and sm3's are built
+  (`sm2/SM2_DESIGN.md` §4.2, `sm3/SM3_DESIGN.md` §3.4), and
+  the C API has `sm_set_toast` and `sm_tbl_fetch`. digres
+  leaves it off: it reads a value straight out of a tuple. It
+  is to fetch a pointer where it reads a value, and give a
+  column's pointer back to an update that leaves the column
+  alone. Also not built: compression, and a fetch of part of a
+  value.
 - **What temporary tables left for later** (`TEMPTABLE.md`
   §9). They are built, in digres too. Not built: skipping the
   sync of a commit that wrote only temporary stores,

@@ -27,7 +27,7 @@ int catalog_t::env_init(const char *path) {
 }
 
 /* Attach an existing home directory. */
-int catalog_t::env_attach(const char *path) {
+int catalog_t::env_attach(const char *path, bool toast) {
   if (m_env != nullptr) {
     env_detach(0);
   }
@@ -38,7 +38,9 @@ int catalog_t::env_attach(const char *path) {
   }
   // rel evaluates its own partial and expression indexes; the
   // evaluator must be in place before a database is opened.
-  if (sm_set_index_evaluator(env, index_eval, nullptr) != 0) {
+  // And whether long values go out of line, likewise.
+  if (sm_set_index_evaluator(env, index_eval, nullptr) != 0 ||
+      sm_set_toast(env, toast) != 0) {
     sm_detach(env, 1);
     return -1;
   }

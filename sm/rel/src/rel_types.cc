@@ -284,7 +284,7 @@ int janet_to_value(Janet val, const col_def_t &col, std::vector<uint8_t> &buf,
 
 /* Convert a value back to a Janet value. */
 Janet value_to_janet(const sm_datum_t &val, bool isnull, uint8_t type_code,
-                     int32_t typmod) {
+                     int32_t typmod, sm_tbl_t *tbl) {
   if (isnull) {
     return janet_wrap_nil();
   }
@@ -304,6 +304,18 @@ Janet value_to_janet(const sm_datum_t &val, bool isnull, uint8_t type_code,
   case 8:    // text
   case 9:    // varchar
   case 10: { // bytea
+    if (sm_datum_is_toast(val)) {
+      if (tbl == nullptr) {
+        return janet_ckeywordv("toast");
+      }
+      // Out of line: read the value itself.
+      std::string value;
+      if (sm_tbl_fetch(tbl, val, &value) != 0) {
+        janet_panicf("fetch of a value out of line failed: %s", sm_errmsg());
+      }
+      return janet_wrap_string(janet_string(
+          reinterpret_cast<const uint8_t *>(value.data()), value.size()));
+    }
     const char *payload = nullptr;
     size_t len = 0;
     varlena_payload(SM_DATUM_TO_PTR(val), &payload, &len);

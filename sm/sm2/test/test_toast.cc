@@ -393,6 +393,44 @@ TEST_CASE("a delete erases the row's datums, and hands back its tuple") {
   sm2::rel_close(rel);
 }
 
+TEST_CASE("a write with hold keeps the old datums until rel_release") {
+  // Verify the old row's values can be fetched after the write,
+  // as a caller with an index entry to remove needs.
+  // 1. Insert a row with a long a. Update a with hold: the old
+  //    pointer still fetches the first value, and the store holds
+  //    both datums' chunks.
+  // 2. rel_release: the first datum is gone, the second is there.
+  // 3. Delete the row with hold: its datum still fetches; after
+  //    rel_release no chunk is left, and a second release is no
+  //    error.
+  db_t db;
+  sm1::session_t *s = db.open();
+  sm2::rel_t *rel = open_rel(db, s);
+  std::string first = text_of(20000), second = text_of(10000, 'y');
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  uint64_t rowno = insert(rel, {1, first, std::nullopt});
+  datums_t change({1, second, std::nullopt});
+  std::string_view old;
+  REQUIRE(sm2::rel_update(rel, rowno, change.d, change.null, &old, true) == 0);
+  std::string ptr = *held(old, 1), out;
+  REQUIRE_MESSAGE(sm2::toast_fetch(rel, ptr, out) == 0, sm1::errmsg());
+  CHECK(out == first);
+  CHECK(chunks(db, s) == 5);
+  REQUIRE(sm2::rel_release(rel) == 0);
+  CHECK(chunks(db, s) == 2);
+  CHECK(sm2::toast_fetch(rel, ptr, out) == -1);
+
+  REQUIRE(sm2::rel_delete(rel, rowno, &old, true) == 0);
+  ptr = *held(old, 1);
+  REQUIRE(sm2::toast_fetch(rel, ptr, out) == 0);
+  CHECK(out == second);
+  REQUIRE(sm2::rel_release(rel) == 0);
+  CHECK(chunks(db, s) == 0);
+  CHECK(sm2::rel_release(rel) == 0);
+  REQUIRE(sm1::commit(s) == 0);
+  sm2::rel_close(rel);
+}
+
 TEST_CASE("two rows never share a datum") {
   // Verify a pointer given to a write is copied, or refused.
   // 1. Insert row one with a long a; insert row two giving row

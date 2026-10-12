@@ -710,6 +710,18 @@ using index_eval_fn = std::function<int(
 int cat_set_evaluator(catalog_t* cat, index_eval_fn eval);
 
 /*
+ * Say whether the catalog's host reads TOAST pointers
+ * (sm2/SM2_DESIGN.md §4.2): once, before any session uses the
+ * catalog. On, a table's long datums are stored out of line: a
+ * tuple a table hands out may hold a pointer where a datum was,
+ * which sm2::varlena_is_toast tells and tbl_fetch reads. Off, the
+ * default, every datum stays in its tuple and a row is held to
+ * sm2::max_tup_len, as before TOAST. A host does not turn it off
+ * again over tables it wrote with it on.
+ */
+int cat_set_toast(catalog_t* cat, bool on);
+
+/*
  * Drop the index oid of the table: its name, its place in the
  * table's definition, and its entries.
  */
@@ -855,6 +867,17 @@ int tbl_update(table_t* table, uint64_t rowno,
  * not null, gets the image deleted.
  */
 int tbl_delete(table_t* table, uint64_t rowno, std::string* old = nullptr);
+
+/*
+ * Read the datum the TOAST pointer ptr names, a varlena a tuple of
+ * the table held, into out: its bytes, with no varlena header
+ * (sm2::toast_fetch). A table's tuples hold pointers only when the
+ * catalog's host reads them (cat_set_toast). A pointer is to be
+ * fetched in the statement that read it; the old tuple a write
+ * hands back names datums that write erased, which the
+ * transaction's own later statements no longer see.
+ */
+int tbl_fetch(table_t* table, std::string_view ptr, std::string& out);
 
 /* Read the row at rowno, as sm2::rel_read does. */
 int tbl_read(table_t* table, uint64_t rowno, std::string_view& tuple);

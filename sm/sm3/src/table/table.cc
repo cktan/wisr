@@ -1,7 +1,10 @@
 /*
  * table.cc -- an open table and its writes (SM3_DESIGN.md §3): the
  * heap write, then each index the write changes, with the old
- * entries computed from the image the heap write hands back.
+ * entries computed from the image the heap write hands back. A
+ * datum the heap holds out of line (sm2's TOAST) is fetched where
+ * an index needs its value, and an old row's are erased only once
+ * the indexes are fixed.
  */
 
 #include "../catalog/internal.h"
@@ -66,6 +69,37 @@ struct deformed_t {
   size_t n;
 };
 
+/*
+ * A row's values, copied so that those out of line can be fetched
+ * in place: own holds the fetched ones, which d then points at.
+ */
+struct image_t {
+  /* Copy r's datums; its null flags are borrowed. */
+  explicit image_t(const vals_t &r) : d(r.d.begin(), r.d.end()), null(r.null) {
+    // A fetched value must not move once a datum points at it.
+    own.reserve(d.size());
+  }
+
+  vals_t row() const { return {d, null}; }
+
+  std::vector<sm2::datum_t> d;
+  std::span<const bool> null;
+  std::vector<std::string> own;
+};
+
+/* Whether column att of the row r is a TOAST pointer, not a value. */
+bool is_pointer(const sm3::table_def_t &def, const vals_t &r, int32_t att) {
+  return !r.null[att] && def.schema[att].type->len < 0 &&
+         *static_cast<const char *>(sm2::datum_to_ptr(r.d[att])) ==
+             sm2::varlena_toast;
+}
+
+/* The TOAST pointer column att of r is, as its varlena. */
+std::string_view pointer_of(const vals_t &r, int32_t att) {
+  return {static_cast<const char *>(sm2::datum_to_ptr(r.d[att])),
+          sm2::toast_ptr_len};
+}
+
 /* Whether mode lets its holder write the table's rows. */
 bool covers_write(sm1::lockmode_t mode) {
   return mode == sm1::SM_LOCKMODE_IX || mode == sm1::SM_LOCKMODE_SIX ||
@@ -111,7 +145,8 @@ int native(const sm2::type_t *type, int32_t typmod, const sm2::datum_t &d,
 /*
  * Whether the columns atts of a row are the same before and after:
  * 1 if each compares equal by its type's cmp, or with by_cmp off
- * holds the same bytes, 0 if not, -1 on error.
+ * holds the same bytes, 0 if not, -1 on error. A column out of
+ * line in either is the same only if both hold one pointer.
  */
 int cols_same(const sm3::table_def_t &def, const std::vector<int32_t> &atts,
               const vals_t &before, const vals_t &after, bool by_cmp) {
@@ -122,6 +157,16 @@ int cols_same(const sm3::table_def_t &def, const std::vector<int32_t> &atts,
     }
     if (before.null[att] || after.null[att]) {
       if (before.null[att] && after.null[att]) {
+        continue;
+      }
+      return 0;
+    }
+    // Out of line: one pointer both times is one datum, unchanged.
+    // Anything else is taken as changed, with no fetch; the caller
+    // fetches before it compares what the index holds.
+    bool pb = is_pointer(def, before, att), pa = is_pointer(def, after, att);
+    if (pb || pa) {
+      if (pb && pa && pointer_of(before, att) == pointer_of(after, att)) {
         continue;
       }
       return 0;
@@ -311,18 +356,75 @@ int remove_entry(sm3::table_t *t, size_t i, const entry_t &e, uint64_t rowno) {
              : -1;
 }
 
+/*
+ * Fetch the columns atts of row that are out of line, in place: a
+ * TOAST pointer among them becomes its value. An expression's
+ * place, below 0, is no column.
+ */
+int fetch_cols(sm3::table_t *t, image_t &row,
+               const std::vector<int32_t> &atts) {
+  for (int32_t att : atts) {
+    if (att < 0 || !is_pointer(*t->def, row.row(), att)) {
+      continue;
+    }
+    std::string value;
+    if (sm2::toast_fetch(t->rel, pointer_of(row.row(), att), value) != 0) {
+      return -1;
+    }
+    row.own.push_back(sm2::make_varlena(value));
+    row.d[att] = sm2::datum_from_ptr(row.own.back().data());
+  }
+  return 0;
+}
+
+/*
+ * Fetch what index x needs of row: its key columns, whose values
+ * make the key; its INCLUDE columns, so that an entry never holds
+ * a pointer; and the columns its evaluator reads, which is shown
+ * values (SM3_DESIGN.md §3).
+ */
+int fetch_for(sm3::table_t *t, const sm3::index_def_t &x, image_t &row) {
+  return fetch_cols(t, row, x.key_attnums) != 0 ||
+                 fetch_cols(t, row, x.include_attnums) != 0 ||
+                 fetch_cols(t, row, x.reads) != 0
+             ? -1
+             : 0;
+}
+
 } // namespace
 
 namespace sm3 {
 
 namespace {
 
+/*
+ * The sequence table's heap draws its TOAST ids from, in out: ""
+ * unless the host reads TOAST pointers and the table has one. A
+ * table made before TOAST has none, and stores every datum in its
+ * tuple as it always did.
+ */
+int toast_seq_of(const table_t *table, std::string &out) {
+  out.clear();
+  if (!table->session->cat->toast) {
+    return 0;
+  }
+  std::string name = toast_seq_name(table->def->oid);
+  uint64_t last;
+  if (sm1::lastseq(table->session->sm1, name, last) < 0) {
+    return sm1::errnum() == sm1::SM_ERR_NOTFOUND ? 0 : -1;
+  }
+  out = name;
+  return 0;
+}
+
 /* Open table's heap and indexes on the store its definition names. */
 int open_rels(table_t *table) {
   const table_def_t &def = *table->def;
   sm1::session_t *s = table->session->sm1;
-  if (sm2::rel_open(s, def.storeid, heap_relid, def.schema, def.rowno_seq, "",
-                    table->rel) != 0) {
+  std::string toast_seq;
+  if (toast_seq_of(table, toast_seq) != 0 ||
+      sm2::rel_open(s, def.storeid, heap_relid, def.schema, def.rowno_seq,
+                    toast_seq, table->rel) != 0) {
     return -1;
   }
   for (const index_def_t &x : def.indexes) {
@@ -410,14 +512,17 @@ int tbl_insert(table_t *table, std::span<const sm2::datum_t> values,
   if (sm2::rel_insert(table->rel, values, isnull, r) != 0) {
     return -1;
   }
-  vals_t row{values, isnull};
+  // A pointer the caller gave is fetched for the indexes that need
+  // its value; the heap has stored a copy of its own.
+  image_t row(vals_t{values, isnull});
   for (size_t i = 0; i < table->indexes.size(); i++) {
     if (!maintained(table, i)) {
       continue;
     }
     entry_t e;
-    if (make_entry(table, i, row, e) != 0 ||
-        (e.belongs && add_entry(table, i, e, row, r) != 0)) {
+    if (fetch_for(table, table->def->indexes[i], row) != 0 ||
+        make_entry(table, i, row.row(), e) != 0 ||
+        (e.belongs && add_entry(table, i, e, row.row(), r) != 0)) {
       return -1;
     }
   }
@@ -432,8 +537,10 @@ int tbl_update(table_t *table, uint64_t rowno,
   if (need_writable(table) != 0 || need_not_null(table, isnull) != 0) {
     return -1;
   }
+  // The old row's datums out of line are held until its index
+  // entries are found and removed, below.
   std::string_view image;
-  if (sm2::rel_update(table->rel, rowno, values, isnull, &image) != 0) {
+  if (sm2::rel_update(table->rel, rowno, values, isnull, &image, true) != 0) {
     return -1;
   }
   // Copy the old image: it views session memory that the index
@@ -447,6 +554,8 @@ int tbl_update(table_t *table, uint64_t rowno,
     return -1;
   }
   vals_t after{values, isnull};
+  image_t was_row(table->indexes.empty() ? vals_t{} : before.row());
+  image_t is_row(after);
   for (size_t i = 0; i < table->indexes.size(); i++) {
     if (!maintained(table, i)) {
       continue;
@@ -462,8 +571,9 @@ int tbl_update(table_t *table, uint64_t rowno,
       continue;
     }
     entry_t was, is;
-    if (make_entry(table, i, before.row(), was) != 0 ||
-        make_entry(table, i, after, is) != 0) {
+    if (fetch_for(table, x, was_row) != 0 || fetch_for(table, x, is_row) != 0 ||
+        make_entry(table, i, was_row.row(), was) != 0 ||
+        make_entry(table, i, is_row.row(), is) != 0) {
       return -1;
     }
     // A column it reads changed, yet the entry may not have: the
@@ -472,7 +582,8 @@ int tbl_update(table_t *table, uint64_t rowno,
     if (!x.eval.empty() && was.belongs && is.belongs) {
       int kept = keys_equal(x, was, is);
       if (kept == 1) {
-        kept = cols_same(def, x.include_attnums, before.row(), after, false);
+        kept = cols_same(def, x.include_attnums, was_row.row(), is_row.row(),
+                         false);
       }
       if (kept < 0) {
         return -1;
@@ -482,9 +593,13 @@ int tbl_update(table_t *table, uint64_t rowno,
       }
     }
     if ((was.belongs && remove_entry(table, i, was, rowno) != 0) ||
-        (is.belongs && add_entry(table, i, is, after, rowno) != 0)) {
+        (is.belongs && add_entry(table, i, is, is_row.row(), rowno) != 0)) {
       return -1;
     }
+  }
+  // The indexes are fixed: what the old row held out of line goes.
+  if (sm2::rel_release(table->rel) != 0) {
+    return -1;
   }
   if (old) {
     *old = std::move(copy);
@@ -497,8 +612,10 @@ int tbl_delete(table_t *table, uint64_t rowno, std::string *old) {
   if (need_writable(table) != 0) {
     return -1;
   }
+  // The row's datums out of line are held until its index entries
+  // are found and removed, below.
   std::string_view image;
-  if (sm2::rel_delete(table->rel, rowno, &image) != 0) {
+  if (sm2::rel_delete(table->rel, rowno, &image, true) != 0) {
     return -1;
   }
   // Copy the old image: it views session memory that the index
@@ -511,18 +628,46 @@ int tbl_delete(table_t *table, uint64_t rowno, std::string *old) {
                       {before.null.get(), before.n}) != 0) {
     return -1;
   }
+  image_t was_row(table->indexes.empty() ? vals_t{} : before.row());
   for (size_t i = 0; i < table->indexes.size(); i++) {
     if (!maintained(table, i)) {
       continue;
     }
     entry_t was;
-    if (make_entry(table, i, before.row(), was) != 0 ||
+    if (fetch_for(table, def.indexes[i], was_row) != 0 ||
+        make_entry(table, i, was_row.row(), was) != 0 ||
         (was.belongs && remove_entry(table, i, was, rowno) != 0)) {
       return -1;
     }
   }
+  // The indexes are fixed: what the row held out of line goes.
+  if (sm2::rel_release(table->rel) != 0) {
+    return -1;
+  }
   if (old) {
     *old = std::move(copy);
+  }
+  return 0;
+}
+
+/* Read a datum out of line; see sm3.h. */
+int tbl_fetch(table_t *table, std::string_view ptr, std::string &out) {
+  return sm2::toast_fetch(table->rel, ptr, out);
+}
+
+/* Fetch a row's columns that are out of line; see internal.h. */
+int tbl_fetch_cols(table_t *table, const std::vector<int32_t> &atts,
+                   std::span<sm2::datum_t> row, std::span<const bool> isnull,
+                   std::vector<std::string> &own) {
+  image_t image(vals_t{row, isnull});
+  if (fetch_cols(table, image, atts) != 0) {
+    return -1;
+  }
+  // The values go to the caller, and the datums with them: a
+  // string's bytes stay where they are when it is moved.
+  std::copy(image.d.begin(), image.d.end(), row.begin());
+  for (std::string &v : image.own) {
+    own.push_back(std::move(v));
   }
   return 0;
 }
@@ -697,11 +842,13 @@ int tbl_index_backfill(table_t *table, uint64_t index, uint64_t from,
       return -1;
     }
     // A row a partial index does not take needs no entry.
+    image_t values(row.row());
     entry_t key;
-    if (make_entry(table, i, row.row(), key) != 0) {
+    if (fetch_for(table, x, values) != 0 ||
+        make_entry(table, i, values.row(), key) != 0) {
       return -1;
     }
-    if (!key.belongs || add_entry(table, i, key, row.row(), r) == 0) {
+    if (!key.belongs || add_entry(table, i, key, values.row(), r) == 0) {
       continue;
     }
     if (sm1::errnum() != sm1::SM_ERR_DUPKEY) {

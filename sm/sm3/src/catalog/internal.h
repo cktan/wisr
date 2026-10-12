@@ -87,6 +87,7 @@ struct sm3::catalog_t {
 
   /* The host's evaluator of partial and expression indexes; set once. */
   index_eval_fn eval;
+  bool toast = false; /* the host reads TOAST pointers (cat_set_toast) */
 
   /* Close every collation the catalog holds. */
   ~catalog_t() {
@@ -259,6 +260,21 @@ temp_tables_of(const session_t *s);
  */
 void overlay_table(session_t *s, uint64_t oid,
                    std::shared_ptr<const table_def_t> def, bool temp = false);
+/*
+ * Fetch the columns atts of a row of table that are out of line,
+ * in place: a TOAST pointer in row becomes a datum pointing at its
+ * value, which own is given to keep. For a caller that shows a
+ * row to the host's evaluator outside a write, as ANALYZE does.
+ */
+int tbl_fetch_cols(table_t *table, const std::vector<int32_t> &atts,
+                   std::span<sm2::datum_t> row, std::span<const bool> isnull,
+                   std::vector<std::string> &own);
+
+/* The sm1 sequence the table oid draws its TOAST ids from. */
+inline std::string toast_seq_name(uint64_t oid) {
+  return "sm3.toast." + std::to_string(oid);
+}
+
 void overlay_name(session_t *s, uint64_t nspoid, std::string_view name,
                   std::optional<uint64_t> oid);
 void overlay_collation(session_t *s, uint64_t oid, uint64_t nspoid,

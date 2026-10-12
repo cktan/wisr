@@ -1,0 +1,117 @@
+# test_toast.rel -- TOAST through the C API: with it on, a row's
+# long values are stored out of line and read back, and its indexes
+# are made of the values.
+#
+# 1. A row with long values reads back whole, by read and by scan,
+#    and an index finds it by a long key, its INCLUDE column whole.
+# 2. An update hands back the old row with :toast where a value was
+#    out of line, and the new values read back.
+# 3. A row past 64 KB is stored.
+# 4. Another session reads the committed values; an abort undoes a
+#    change to one.
+# 5. The values are there after the environment is attached again.
+# 6. With TOAST off, the default, a row past 64 KB is refused.
+
+(def test-dir "/tmp/wisr_rel_test_toast")
+(rm-rf test-dir)
+(env-init test-dir)
+(env-attach test-dir :toast true)
+(db-create "tdb")
+
+# True if running thunk fails.
+(defn fails? [thunk]
+  (try (do (thunk) false) ([err] true)))
+
+(def title1 (string "title-one" (string/repeat "t" 3000)))
+(def title2 (string "title-two" (string/repeat "u" 3000)))
+(def body1 (string "body-one" (string/repeat "b" 20000)))
+(def body2 (string "body-two" (string/repeat "c" 9000)))
+(def huge (string/repeat "h" 200000))
+
+(session-open s1 "tdb")
+(session-open s2 "tdb")
+
+# 1. Long values in, and out.
+# 1.1 Create docs with an index on title that includes body.
+# 1.2 Insert a row whose title and body are both long.
+# 1.3 read and scan give the values back whole.
+# 1.4 The index finds the row by its title, with the body.
+(session-use s1)
+(begin :rc)
+(table-create docs
+  (columns
+    (id :int4 :not-null)
+    (title :text)
+    (body :text)))
+(index-create docs_title (table docs) (key (title :asc)) :include [body])
+(def r1 (insert docs [1 title1 body1]))
+(assert-eq (read docs r1) [1 title1 body1])
+(def all (scan docs))
+(assert-count 1 all)
+(assert-eq ((all 0) 1) [1 title1 body1])
+(def hits (idx-scan docs_title :ge [title1] :le [title1]))
+(assert-count 1 hits)
+(assert-eq ((hits 0) 0) r1)
+(assert-eq ((hits 0) 2) [body1])
+(commit)
+
+# 2. An update.
+# 2.1 Replace the title and the body: the old row comes back with
+#     :toast for both.
+# 2.2 The new values read back, and the index finds the row by the
+#     new title and not by the old.
+(begin :rc)
+(def old (update docs r1 [1 title2 body2]))
+(assert-eq old [1 :toast :toast])
+(assert-eq (read docs r1) [1 title2 body2])
+(assert-count 0 (idx-scan docs_title :ge [title1] :le [title1]))
+(assert-count 1 (idx-scan docs_title :ge [title2] :le [title2]))
+(commit)
+
+# 3. A row past 64 KB, in a table with no index to hold it.
+(begin :rc)
+(table-create notes (columns (id :int4 :not-null) (note :text)))
+(def r2 (insert notes [1 huge]))
+(assert-eq (read notes r2) [1 huge])
+(commit)
+
+# 4. Another session, and an abort.
+# 4.1 s2 reads what s1 committed.
+# 4.2 s2 replaces the body and aborts: the first body is back.
+(session-use s2)
+(begin :rc)
+(assert-eq (read docs r1) [1 title2 body2])
+(update docs r1 [1 title2 "short"])
+(assert-eq (read docs r1) [1 title2 "short"])
+(abort)
+(begin :rc)
+(assert-eq (read docs r1) [1 title2 body2])
+(commit)
+
+# 5. After a restart.
+(session-close s1)
+(session-close s2)
+(env-detach)
+(env-attach test-dir :toast true)
+(session-open s1 "tdb")
+(session-use s1)
+(begin :rc)
+(assert-eq (read docs r1) [1 title2 body2])
+(assert-eq (read notes r2) [1 huge])
+(assert-eq (delete docs r1) [1 :toast :toast])
+(assert-count 0 (scan docs))
+(commit)
+(session-close s1)
+(env-detach)
+
+# 6. TOAST off: a new table's long row is refused.
+(env-attach test-dir)
+(session-open s1 "tdb")
+(session-use s1)
+(begin :rc)
+(table-create plain (columns (id :int4 :not-null) (note :text)))
+(assert-eq (fails? (fn [] (insert plain [1 huge]))) true)
+(abort)
+(session-close s1)
+(env-detach)
+(print "test_toast.rel passed")

@@ -562,14 +562,25 @@ int rel_lock(rel_t* rel, uint64_t rowno, sm1::lockmode_t mode);
  * the caller maintaining indexes needs.
  */
 int rel_update(rel_t* rel, uint64_t rowno, std::string_view tuple,
-               std::string_view* old = nullptr);
+               std::string_view* old = nullptr, bool hold = false);
 
 /* Encode datums and isnull, then replace the row at rowno. */
 int rel_update(rel_t* rel, uint64_t rowno, std::span<const datum_t> datums,
-               std::span<const bool> isnull, std::string_view* old = nullptr);
+               std::span<const bool> isnull, std::string_view* old = nullptr,
+               bool hold = false);
 
 /* Delete the row at rowno, handing back its tuple through old. */
-int rel_delete(rel_t* rel, uint64_t rowno, std::string_view* old = nullptr);
+int rel_delete(rel_t* rel, uint64_t rowno, std::string_view* old = nullptr,
+               bool hold = false);
+
+/*
+ * Erase the datums out of line that the rel's writes with hold
+ * kept (TOAST, below): those the old rows held and the new do not.
+ * A caller that needs an old row's values after the write -- the
+ * key of an index entry to remove -- writes with hold, fetches
+ * them, and then calls this. Nothing held is no error.
+ */
+int rel_release(rel_t* rel);
 
 /*
  * TOAST (SM2_DESIGN.md §4.2). A rel opened with a toast_seq keeps
@@ -593,7 +604,8 @@ int rel_delete(rel_t* rel, uint64_t rowno, std::string_view* old = nullptr);
  *     SM_ERR_INVALID, after the row is written: the caller rolls
  *     back, as after any write that fails past its first step.
  * A datum the row no longer holds has its chunks erased, by
- * rel_update and rel_delete.
+ * rel_update and rel_delete; or, when they are called with hold,
+ * by the rel_release that follows.
  *
  * The old tuple rel_update and rel_delete hand back is the rel's
  * copy when the rel has a toast_seq, valid until the next call on

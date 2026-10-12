@@ -26,6 +26,7 @@ struct sm2::rel_t {
   std::string toast_seq; /* "" if the rel moves no datum out of line */
   bool toasts;           /* a toast_seq, and a variable-width attribute */
   std::string old;       /* the old tuple a write handed back, when toasts */
+  std::vector<sm2::toast_ptr_t> held; /* datums rel_release is to erase */
 };
 
 struct sm2::rel_scan_t {
@@ -199,13 +200,27 @@ int pointers_of(const sm2::rel_t *rel, std::string_view tuple,
   return 0;
 }
 
+/* Erase the datums rel holds for rel_release, and hold none. */
+int release(sm2::rel_t *rel) {
+  std::vector<sm2::toast_ptr_t> held;
+  held.swap(rel->held);
+  for (const sm2::toast_ptr_t &p : held) {
+    if (sm2::toast_erase(rel->session, p) != 0) {
+      return -1;
+    }
+  }
+  return 0;
+}
+
 /*
  * After the row that held the tuple old was replaced, or deleted:
  * check each pointer the new row kept is the one old held for
- * that attribute, and erase the datums old held that are not kept.
+ * that attribute, and erase the datums old held that are not kept
+ * -- now, or with hold when the caller calls rel_release.
  */
 int settle_old(sm2::rel_t *rel, std::string_view old,
-               const std::vector<std::pair<size_t, std::string>> &kept) {
+               const std::vector<std::pair<size_t, std::string>> &kept,
+               bool hold) {
   std::vector<std::pair<size_t, std::string>> had;
   if (pointers_of(rel, old, had) != 0) {
     return -1;
@@ -223,11 +238,9 @@ int settle_old(sm2::rel_t *rel, std::string_view old,
     }
     sm2::toast_ptr_t p;
     sm2::parse_toast_ptr(h.second, p);
-    if (sm2::toast_erase(rel->session, p) != 0) {
-      return -1;
-    }
+    rel->held.push_back(p);
   }
-  return 0;
+  return hold ? 0 : release(rel);
 }
 
 /* Insert the row datums and isnull make, and what it moves out. */
@@ -253,7 +266,7 @@ int insert_row(sm2::rel_t *rel, std::span<const sm2::datum_t> datums,
  */
 int update_row(sm2::rel_t *rel, uint64_t rowno,
                std::span<const sm2::datum_t> datums,
-               std::span<const bool> isnull, std::string_view *old) {
+               std::span<const bool> isnull, std::string_view *old, bool hold) {
   ready_t row;
   if (make_ready(rel, datums, isnull, true, row) != 0) {
     return -1;
@@ -267,7 +280,8 @@ int update_row(sm2::rel_t *rel, uint64_t rowno,
   }
   // sm1's view ends at the next call on the session: keep a copy.
   rel->old = was;
-  if (settle_old(rel, rel->old, row.kept) != 0 || write_moved(rel, row) != 0) {
+  if (settle_old(rel, rel->old, row.kept, hold) != 0 ||
+      write_moved(rel, row) != 0) {
     return -1;
   }
   if (old != nullptr) {
@@ -376,7 +390,7 @@ int rel_read_latest(rel_t *rel, uint64_t rowno, std::string_view &tuple) {
 
 /* Replace the row at rowno with an already-encoded tuple; see sm2.h. */
 int rel_update(rel_t *rel, uint64_t rowno, std::string_view tuple,
-               std::string_view *old) {
+               std::string_view *old, bool hold) {
   if (tup_check(rel->desc, tuple) != 0) {
     return -1;
   }
@@ -390,17 +404,18 @@ int rel_update(rel_t *rel, uint64_t rowno, std::string_view tuple,
     return -1;
   }
   return update_row(rel, rowno, datums,
-                    std::span<const bool>(isnull.get(), datums.size()), old);
+                    std::span<const bool>(isnull.get(), datums.size()), old,
+                    hold);
 }
 
 /* Replace the row at rowno with datum_t and isnull; see sm2.h. */
 int rel_update(rel_t *rel, uint64_t rowno, std::span<const datum_t> datums,
-               std::span<const bool> isnull, std::string_view *old) {
-  return update_row(rel, rowno, datums, isnull, old);
+               std::span<const bool> isnull, std::string_view *old, bool hold) {
+  return update_row(rel, rowno, datums, isnull, old, hold);
 }
 
 /* Delete the row at rowno, handing back its tuple. */
-int rel_delete(rel_t *rel, uint64_t rowno, std::string_view *old) {
+int rel_delete(rel_t *rel, uint64_t rowno, std::string_view *old, bool hold) {
   if (!rel->toasts) {
     return sm1::erase(rel->session, rel->storeid, row_key(rel->relid, rowno),
                       old);
@@ -413,7 +428,7 @@ int rel_delete(rel_t *rel, uint64_t rowno, std::string_view *old) {
   // sm1's view ends at the next call on the session: keep a copy.
   rel->old = was;
   // The datums the row held out of line go with it.
-  if (settle_old(rel, rel->old, {}) != 0) {
+  if (settle_old(rel, rel->old, {}, hold) != 0) {
     return -1;
   }
   if (old != nullptr) {
@@ -421,6 +436,9 @@ int rel_delete(rel_t *rel, uint64_t rowno, std::string_view *old) {
   }
   return 0;
 }
+
+/* Erase the datums the rel's writes held; see sm2.h. */
+int rel_release(rel_t *rel) { return release(rel); }
 
 /* Read the datum a TOAST pointer names; see sm2.h. */
 int toast_fetch(rel_t *rel, std::string_view ptr, std::string &out) {

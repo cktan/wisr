@@ -32,11 +32,11 @@ int ask_evaluator(const sm3::index_eval_fn &eval, const sm3::table_def_t &def,
  * belong to it, into ix, and each expression's statistics over
  * those rows, appended to stats.
  */
-int analyze_index(sm3::session_t *session, const sm3::table_def_t &def,
+int analyze_index(sm3::table_t *table, const sm3::table_def_t &def,
                   const sm3::index_def_t &x, const sm3::sample_t &s,
                   int32_t target, sm3::stats_index_t &ix,
                   std::vector<sm3::stat_t> &stats) {
-  const sm3::index_eval_fn &eval = session->cat->eval;
+  const sm3::index_eval_fn &eval = sm3::tbl_session(table)->cat->eval;
   if (!eval) {
     return sm1::seterr(sm1::SM_ERR_INVALID,
                        "analyze: index " + x.name +
@@ -62,6 +62,13 @@ int analyze_index(sm3::session_t *session, const sm3::table_def_t &def,
       if (sm2::tup_decode(def.desc, r.tuple, c, row[c], row_null[c]) != 0) {
         return -1;
       }
+    }
+    // What the evaluator reads of it is fetched, if out of line.
+    std::vector<std::string> own;
+    if (sm3::tbl_fetch_cols(table, x.reads, row,
+                            std::span<const bool>(row_null.get(), ncol),
+                            own) != 0) {
+      return -1;
     }
     bool belongs = true;
     std::vector<std::string> out(exprs.size());
@@ -183,7 +190,7 @@ int analyze_table(table_t *table, int32_t target, std::mt19937_64 &rng) {
   // its expressions' statistics, from the host's evaluator.
   for (size_t i = 0; i < def.indexes.size(); i++) {
     if (!def.indexes[i].eval.empty() &&
-        analyze_index(session, def, def.indexes[i], s, target, st.indexes[i],
+        analyze_index(table, def, def.indexes[i], s, target, st.indexes[i],
                       st.stats) != 0) {
       return -1;
     }

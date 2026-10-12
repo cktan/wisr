@@ -127,12 +127,20 @@ static Janet cfun_env_init(int32_t argc, Janet *argv) {
   return janet_wrap_nil();
 }
 
-/* (env-attach path) */
+/* (env-attach path [:toast bool]) */
 static Janet cfun_env_attach(int32_t argc, Janet *argv) {
-  janet_fixarity(argc, 1);
+  janet_arity(argc, 1, 3);
   const char *path = janet_getcstring(argv, 0);
+  bool toast = false;
+  if (argc >= 2) {
+    if (identifier_of(argv[1]) != "toast" &&
+        identifier_of(argv[1]) != ":toast") {
+      janet_panic("env-attach: the option after the path is :toast");
+    }
+    toast = argc == 2 || janet_getboolean(argv, 2);
+  }
   // Attach to the wisr environment.
-  if (get_catalog().env_attach(path) != 0) {
+  if (get_catalog().env_attach(path, toast) != 0) {
     panic_sm_error("env-attach");
   }
   return janet_wrap_nil();
@@ -1243,9 +1251,9 @@ static Janet cfun_read(int32_t argc, Janet *argv) {
 
   Janet *vals = janet_tuple_begin(ncols);
   for (size_t i = 0; i < ncols; i++) {
-    vals[i] =
-        value_to_janet(out.values[i], out.isnull[i],
-                       p_tdef->columns[i].type_code, p_tdef->columns[i].typmod);
+    vals[i] = value_to_janet(out.values[i], out.isnull[i],
+                             p_tdef->columns[i].type_code,
+                             p_tdef->columns[i].typmod, tbl);
   }
   return janet_wrap_tuple(janet_tuple_end(vals));
 }
@@ -1279,9 +1287,9 @@ static Janet cfun_read_latest(int32_t argc, Janet *argv) {
 
   Janet *vals = janet_tuple_begin(ncols);
   for (size_t i = 0; i < ncols; i++) {
-    vals[i] =
-        value_to_janet(out.values[i], out.isnull[i],
-                       p_tdef->columns[i].type_code, p_tdef->columns[i].typmod);
+    vals[i] = value_to_janet(out.values[i], out.isnull[i],
+                             p_tdef->columns[i].type_code,
+                             p_tdef->columns[i].typmod, tbl);
   }
   return janet_wrap_tuple(janet_tuple_end(vals));
 }
@@ -1581,7 +1589,7 @@ static Janet cfun_scan(int32_t argc, Janet *argv) {
         panic_sm_error("scan sm_tbl_decode");
       }
       vals[i] = value_to_janet(val, isnull, p_tdef->columns[i].type_code,
-                               p_tdef->columns[i].typmod);
+                               p_tdef->columns[i].typmod, tbl);
     }
     Janet t_val = janet_wrap_tuple(janet_tuple_end(vals));
 

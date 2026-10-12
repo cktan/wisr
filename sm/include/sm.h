@@ -727,6 +727,38 @@ typedef int (*sm_index_eval_fn)(void* ctx, uint64_t table, uint64_t index,
 int sm_set_index_evaluator(sm_env_t* env, sm_index_eval_fn fn, void* ctx);
 
 /*
+ * TOAST: a row's long values stored out of line
+ * (sm2/SM2_DESIGN.md section 4.2).
+ *
+ * Off, the default, every value is in its row's tuple, and a row
+ * is at most 65535 bytes. A host turns it on to say it reads TOAST
+ * pointers: a tuple may then hold, where a variable-width value
+ * was, a pointer to it, 22 bytes whose first is 0x01, which
+ * sm_datum_is_toast tells and sm_tbl_fetch reads. sm moves a row's
+ * longest values out once its tuple passes 2000 bytes.
+ *
+ * A write is given values. One of the row's own pointers, given
+ * back to sm_tbl_update for a column it leaves alone, is kept
+ * without a write; sm_tbl_insert given a pointer stores a copy of
+ * its value. An index is made of values always: its key and its
+ * INCLUDE columns are fetched, so an entry never holds a pointer,
+ * and is held to 65535 bytes itself. sm_tbl_analyze counts a value
+ * out of line as too wide to sort, and fetches none.
+ */
+
+/*
+ * Turn TOAST on or off for env: once, before any database is
+ * opened. Not to be turned off again over tables written with it
+ * on.
+ */
+int sm_set_toast(sm_env_t* env, int on);
+
+/* Whether val, a non-null variable-width value, is a TOAST pointer. */
+static inline bool sm_datum_is_toast(sm_datum_t val) {
+    return *(const char*)val == 1;
+}
+
+/*
  * ---- tables: a row and its index entries, sm3's ----
  *
  * An open table: its definition under the table-oid lock, its heap
@@ -836,6 +868,19 @@ int sm_tbl_deform(sm_tbl_t* tbl, const void* tuple, size_t len,
  */
 int sm_tbl_decode(sm_tbl_t* tbl, const void* tuple, size_t len,
                   size_t ordinal, sm_datum_t* val, bool* isnull);
+
+/*
+ * Read the value the TOAST pointer val names, one sm_tbl_deform or
+ * sm_tbl_decode gave of this table, into *out: its bytes, with no
+ * varlena header. It reads as the session's transaction sees the
+ * table, so a pointer is to be fetched in the statement that read
+ * it. The old tuple sm_tbl_update and sm_tbl_delete hand back
+ * names values that write erased: the statement that made the
+ * write still sees them (sm_stmt_begin), and no later one does.
+ * Fails with SM_ERR_INVALID if val is not a pointer of the table,
+ * and SM_ERR_NOTFOUND if the value is gone.
+ */
+int sm_tbl_fetch(sm_tbl_t* tbl, sm_datum_t val, std::string* out);
 
 /*
  * Open a cursor over the entries of the table's index, by oid,

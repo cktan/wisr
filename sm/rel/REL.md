@@ -28,12 +28,18 @@ Formats a fresh wisr storage home directory at `path`.
 (env-init "/tmp/wisr_home")
 ```
 
-### `(env-attach path)`
+### `(env-attach path [:toast bool])`
 Attaches to an existing storage home directory at `path` and
-initializes the environment handle for the process.
+initializes the environment handle for the process. With
+`:toast true`, a row's long values are stored out of line
+(`sm_set_toast`): a row may then be longer than 64 KB. A value
+read or scanned comes back whole. The old row `update` and
+`delete` return has the keyword `:toast` where a value was out
+of line, since that write erased it.
 
 ```janet
 (env-attach "/tmp/wisr_home")
+(env-attach "/tmp/wisr_home" :toast true)
 ```
 
 ### `(env-detach [:force bool])`

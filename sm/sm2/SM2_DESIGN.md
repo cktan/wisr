@@ -858,7 +858,10 @@ pointer for each. Built in `src/rel/toast.cc` and
     first step.
 - **A datum the row no longer holds is erased**, by the update
   that replaced it and by the delete of its row, from the old
-  tuple sm1 hands back. Those are sm1 erases in the caller's
+  tuple sm1 hands back. A caller that needs the old values
+  after the write -- sm3, for the index entries to remove --
+  writes with `hold`, and the erase waits for its
+  `rel_release`. Those are sm1 erases in the caller's
   transaction: a rollback brings the chunks back, and a
   snapshot older than the commit still reads them.
 - **A fetch reads at the transaction's snapshot**
@@ -870,10 +873,10 @@ pointer for each. Built in `src/rel/toast.cc` and
   `SM_ERR_NOTFOUND`.
 - **A key is never made of a pointer.** `encode_key` refuses
   one: the caller fetches the value first.
-- **Not built**: compression; a fetch of part of a datum; and
-  the levels above. sm3 opens its tables with no `toast_seq`
-  yet, so nothing is moved out of line through it (`NEXT.md`
-  §3).
+- **Not built**: compression, and a fetch of part of a datum.
+  Above sm2, sm3 gives a table its sequence and fetches for
+  its indexes (`sm3/SM3_DESIGN.md` §3.4), once the host turns
+  TOAST on; digres does not yet.
 
 ---
 
