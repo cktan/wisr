@@ -1578,6 +1578,62 @@ local_psql -c 'select a from tw1 for update' 2>&1 |
   fail "for update refused"
 local_psql -c 'drop table tw1' > /dev/null 2>&1
 
+# Verify that COPY reads a table in sm and writes one, its indexes with it.
+# 1. Make tc1, keyed by a, with an index on b, and COPY three rows into it
+#    from a file, one with a null: they are there, and both indexes find them.
+# 2. COPY tc1 TO STDOUT gives the rows back as they came, and a column list
+#    with CSV and a header gives those columns.
+# 3. psql's \copy loads rows from its input, and writes the table to a file.
+# 4. A file with a row whose key is taken, after a row that is new, fails,
+#    and leaves neither row; so does one with a null in a NOT NULL column.
+# 5. A COPY rolled back leaves no row.
+# 6. The binary format written from tc1 loads into another table, and the
+#    two agree.
+# 7. A temporary table takes a COPY, and 5000 rows load and are all counted.
+printf '1\t10\tone\n2\t20\t\\N\n3\t30\tthree\n' > "$work/copy.tsv"
+printf '4\t40\tfour\n1\t99\tdup\n' > "$work/copy_dup.tsv"
+printf '7\t\\N\tseven\n' > "$work/copy_null.tsv"
+local_psql -c 'create table tc1 (a int4 primary key, b int4 not null, c text)' \
+  -c 'create index tc1_b on tc1 (b)' > "$work/copy.out" 2>&1
+[ "$(local_psql -c "copy tc1 from '$work/copy.tsv'" \
+  -c 'select c from tc1 where a = 3' -c 'select a from tc1 where b = 20' \
+  -c 'select count(*) from tc1 where c is null' 2>&1 | tr '\n' ' ')" = \
+  "COPY 3 three 2 1 " ] || fail "copy from a file"
+local_psql -c 'copy tc1 to stdout' 2> "$work/copy.err" |
+  cmp -s - "$work/copy.tsv" || fail "copy to stdout"
+[ "$(local_psql -c 'copy tc1 (a, c) to stdout with (format csv, header)' 2>&1 |
+  tr '\n' ' ')" = "a,c 1,one 2, 3,three " ] || fail "copy columns as csv"
+printf '5\t50\tfive\n6\t60\tsix\n' |
+  local_psql -c '\copy tc1 from stdin' >> "$work/copy.out" 2>&1
+local_psql -c "\\copy tc1 to '$work/copy_out.tsv'" >> "$work/copy.out" 2>&1
+[ "$(wc -l < "$work/copy_out.tsv")" = 5 ] &&
+  grep -qx "$(printf '6\t60\tsix')" "$work/copy_out.tsv" || fail "psql's copy"
+local_psql -c "copy tc1 from '$work/copy_dup.tsv'" 2>&1 |
+  grep -q 'duplicate key value violates a unique index on "tc1"' ||
+  fail "copy of a taken key"
+local_psql -c "copy tc1 from '$work/copy_null.tsv'" 2>&1 |
+  grep -q 'violates not-null constraint' || fail "copy of a null"
+[ "$(local_psql -c 'select count(*) from tc1' \
+  -c 'select count(*) from tc1 where a in (4, 7)' | tr '\n' ' ')" = "5 0 " ] ||
+  fail "a failed copy left rows"
+printf '8\t80\teight\n' > "$work/copy_one.tsv"
+[ "$(local_psql -c 'begin' -c "copy tc1 from '$work/copy_one.tsv'" \
+  -c 'select count(*) from tc1' -c 'rollback' -c 'select count(*) from tc1' \
+  2>&1 | grep -v '^[A-Z]' | tr '\n' ' ')" = "6 5 " ] || fail "copy rolled back"
+[ "$(local_psql -c "copy tc1 to '$work/copy.bin' with (format binary)" \
+  -c 'create table tc2 (a int4 primary key, b int4 not null, c text)' \
+  -c "copy tc2 from '$work/copy.bin' with (format binary)" \
+  -c 'select count(*), sum(b) from tc2' \
+  -c 'select count(*) from tc1 join tc2 using (a, b, c)' 2>&1 |
+  grep -v '^[A-Z]' | tr '\n' ' ')" = "5|170 4 " ] || fail "copy in binary"
+seq 1 5000 | awk '{ print $1 "\t" $1 * 2 "\trow" $1 }' > "$work/copy_big.tsv"
+[ "$(local_psql -c 'create temp table tc3 (a int4 primary key, b int4, c text)' \
+  -c "copy tc3 from '$work/copy_big.tsv'" \
+  -c 'select count(*), max(b) from tc3' -c 'select c from tc3 where a = 4321' \
+  2>&1 | tr '\n' ' ')" = "CREATE TABLE COPY 5000 5000|10000 row4321 " ] ||
+  fail "copy into a temporary table"
+local_psql -c 'drop table tc1' -c 'drop table tc2' > /dev/null 2>&1
+
 # Verify that a temporary table is its session's alone, in sm: it is found
 # before a table of its name, follows the session's transactions, takes
 # writes in a read-only one, and does what its ON COMMIT asks.

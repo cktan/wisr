@@ -107,6 +107,7 @@
 #include "postgres.h"
 
 #include "access/genam.h"
+#include "access/smstore.h"
 #include "access/relscan.h"
 #include "access/tableam.h"
 #include "access/xact.h"
@@ -312,6 +313,10 @@ List *ExecInsertIndexTuples(ResultRelInfo *resultRelInfo, TupleTableSlot *slot,
   bool isnull[INDEX_MAX_KEYS];
 
   Assert(ItemPointerIsValid(tupleid));
+
+  /* sm wrote the table's indexes with the row (access/smstore.h). */
+  if (RelationIsSm(resultRelInfo->ri_RelationDesc))
+    return NIL;
 
   /*
    * Get information from the result relation info structure.

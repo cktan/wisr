@@ -10,8 +10,9 @@
  * possible -- reads this one: a row is a virtual tuple.  UPDATE and DELETE
  * do come this way: nodeModifyTable.c fetches a row by its tid, updates or
  * deletes it, and reads its newest version when another transaction changed
- * it first, in many places, and each is a callback here over smstore.c.
- * Every other callback raises an error: nothing should reach it.
+ * it first, in many places, and each is a callback here over smstore.c.  So
+ * does COPY, which scans a table and inserts into one through the access
+ * method.  Every other callback raises an error: nothing should reach it.
  *
  * IDENTIFICATION
  *	  src/backend/access/sm/smtable.c
@@ -20,10 +21,12 @@
  */
 #include "postgres.h"
 
+#include "access/relscan.h"
 #include "access/smstore.h"
 #include "access/tableam.h"
 #include "executor/tuptable.h"
 #include "fmgr.h"
+#include "utils/snapmgr.h"
 #include "utils/fmgrprotos.h"
 
 /* A callback of the access method that a table in sm never takes. */
@@ -37,6 +40,72 @@ template <typename R, typename... A> static R refuse(A...) {
 /* The slot a row of a table in sm is put in: a virtual one. */
 static const TupleTableSlotOps *smtable_slot_callbacks(Relation rel) {
   return &TTSOpsVirtual;
+}
+
+/* A scan of a table in sm by the access method: sm's cursor behind it. */
+typedef struct smtable_scan_t {
+  TableScanDescData base; /* what tableam.h reads */
+  smstore_scan_t *scan;
+} smtable_scan_t;
+
+/*
+ * Begin a scan of every row of rel, in rowno order.  sm reads at its own
+ * transaction's snapshot, and takes no scan keys.
+ */
+static TableScanDesc smtable_scan_begin(Relation rel, Snapshot snapshot,
+                                        int nkeys, struct ScanKeyData *key,
+                                        uint32 flags) {
+  smtable_scan_t *scan;
+
+  if (nkeys != 0)
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("a scan of table \"%s\" takes no scan keys",
+                           RelationGetRelationName(rel))));
+  scan = (smtable_scan_t *)palloc0(sizeof(smtable_scan_t));
+  scan->base.rs_rd = rel;
+  scan->base.rs_snapshot = snapshot;
+  scan->base.rs_flags = flags;
+  scan->scan = smstore_beginscan(rel);
+  return &scan->base;
+}
+
+/* End a scan, and let go of a snapshot taken for it alone. */
+static void smtable_scan_end(TableScanDesc sscan) {
+  smtable_scan_t *scan = (smtable_scan_t *)sscan;
+
+  smstore_endscan(scan->scan);
+  if (sscan->rs_flags & SO_TEMP_SNAPSHOT)
+    UnregisterSnapshot(sscan->rs_snapshot);
+  pfree(scan);
+}
+
+/* The scan's next row into slot; false at the end.  Forward only. */
+static bool smtable_scan_getnextslot(TableScanDesc sscan,
+                                     ScanDirection direction,
+                                     TupleTableSlot *slot) {
+  smtable_scan_t *scan = (smtable_scan_t *)sscan;
+
+  if (!ScanDirectionIsForward(direction))
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("a scan of table \"%s\" runs forwards only",
+                           RelationGetRelationName(sscan->rs_rd))));
+  return smstore_getnext(scan->scan, slot);
+}
+
+/* Insert the slot's row: sm writes the table's indexes with it. */
+static void smtable_tuple_insert(Relation rel, TupleTableSlot *slot,
+                                 CommandId cid, int options,
+                                 struct BulkInsertStateData *bistate) {
+  smstore_insert(rel, slot);
+  slot->tts_tableOid = RelationGetRelid(rel);
+}
+
+/* Insert each slot's row, one at a time: sm has no batched insert yet. */
+static void smtable_multi_insert(Relation rel, TupleTableSlot **slots,
+                                 int nslots, CommandId cid, int options,
+                                 struct BulkInsertStateData *bistate) {
+  for (int i = 0; i < nslots; i++)
+    smtable_tuple_insert(rel, slots[i], cid, options, bistate);
 }
 
 /* The row at tid, as the statement sees it, or as it kept it (smstore.c). */
@@ -83,10 +152,10 @@ static const TableAmRoutine smtable_methods = [] {
 
   r.type = T_TableAmRoutine;
   r.slot_callbacks = smtable_slot_callbacks;
-  r.scan_begin = refuse;
-  r.scan_end = refuse;
+  r.scan_begin = smtable_scan_begin;
+  r.scan_end = smtable_scan_end;
   r.scan_rescan = refuse;
-  r.scan_getnextslot = refuse;
+  r.scan_getnextslot = smtable_scan_getnextslot;
   r.scan_set_tidrange = refuse;
   r.scan_getnextslot_tidrange = refuse;
   r.index_fetch_begin = refuse;
@@ -98,10 +167,10 @@ static const TableAmRoutine smtable_methods = [] {
   r.tuple_get_latest_tid = refuse;
   r.tuple_satisfies_snapshot = refuse;
   r.index_delete_tuples = refuse;
-  r.tuple_insert = refuse;
+  r.tuple_insert = smtable_tuple_insert;
   r.tuple_insert_speculative = refuse;
   r.tuple_complete_speculative = refuse;
-  r.multi_insert = refuse;
+  r.multi_insert = smtable_multi_insert;
   r.tuple_delete = smtable_tuple_delete;
   r.tuple_update = smtable_tuple_update;
   r.tuple_lock = smtable_tuple_lock;

@@ -2851,3 +2851,30 @@ keep it, as there is no `pg_attrdef`.
   compatible.
 - The error drops "yet": `an index key of type interval is not
   supported`.
+
+## Step 100: COPY reads and writes a table in sm
+
+`COPY t FROM` and `COPY t TO` failed: both go to the table access
+method, whose callbacks refused. `COPY (SELECT ...) TO` ran, as
+a query.
+
+- **`smtable.c` scans and inserts**: `scan_begin`,
+  `scan_getnextslot` and `scan_end`, a forward scan of every
+  row over `smstore_beginscan()`, with no scan keys; and
+  `tuple_insert` and `multi_insert`, over `smstore_insert()`.
+  A batch is inserted a row at a time: sm has no batched insert
+  yet (`../sm/BULKLOAD.md`).
+- **The executor writes no index of a table in sm**:
+  `ExecInsertIndexTuples()` returns at once for one. sm writes
+  a table's indexes with its row, and an index in sm has no
+  `aminsert`; COPY called it for each row.
+- **What works**: text, CSV and binary, a column list, a file,
+  STDIN and STDOUT, psql's `\copy`, a temporary table. A row
+  sm refuses -- a key that is taken, a NULL in a NOT NULL
+  column -- fails the statement and leaves none of its rows.
+- **Left on purpose**: `scan_rescan` and the rest of the scan
+  callbacks, which nothing reaches.
+- `server.sh` checks each of those. A `multi_insert` that takes
+  one row of a batch, and index maintenance not skipped, each
+  fail it.
+

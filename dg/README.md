@@ -14,7 +14,8 @@ it. What runs so far, each a step of `WORKNOTE.md`:
   PRIMARY KEY and UNIQUE, and indexes on them;
 - temporary tables, with ON COMMIT;
 - sequences;
-- INSERT, UPDATE and DELETE, with RETURNING; TRUNCATE;
+- INSERT, UPDATE and DELETE, with RETURNING; TRUNCATE; COPY
+  to and from a table;
 - sequential, index, index-only and bitmap scans, joins,
   GROUP BY and ORDER BY;
 - transactions and savepoints at READ COMMITTED, REPEATABLE
