@@ -41,6 +41,7 @@ ordered key as the only access path below sm2.
 - [x] bool
 - [x] timestamp / date / time
 - [x] interval
+      — not as an index key in digres (`../dg/WORKNOTE.md` step 99)
 - [x] UUID
 - [x] bytea
 - [ ] JSON / JSONB

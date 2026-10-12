@@ -1976,13 +1976,14 @@ ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt) {
      * sm keys an interval in an order finer than PostgreSQL's: '1 mon' and
      * '30 days', which PostgreSQL calls equal, are two keys
      * (../sm/sm2/TYPE.md section 3.10), so = through the index would miss
-     * one and UNIQUE would take both.  Refused until the two agree.
+     * one and UNIQUE would take both.  So an interval is never an index
+     * key; it may be an INCLUDE column.
      */
     if (TupleDescAttr(RelationGetDescr(rel), key.attnum)->atttypid ==
         INTERVALOID)
       ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      errmsg("an index key of type interval is not supported "
-                             "yet"),
+                      errmsg("an index key of type interval is not "
+                             "supported"),
                       errdetail("sm orders intervals PostgreSQL calls equal "
                                 "as distinct keys.")));
     key.desc = desc;

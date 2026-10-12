@@ -2726,8 +2726,8 @@ has seventeen types. sm2 keeps PostgreSQL's own datums
   PostgreSQL's, which calls `'1 mon'` and `'30 days'` equal. So
   `=` through such an index would find one of two equal
   intervals, and UNIQUE would take both. An interval may still
-  be an index's INCLUDE column. Whether sm2's key should share
-  PostgreSQL's ties, or dg scan every key of a span, is open.
+  be an index's INCLUDE column. Decided in step 99: it stays
+  refused.
 - **Found, not fixed here**: an INSERT naming its columns fails
   opening `pg_type`, for a table of any types.
 - `server.sh` stores, reads, indexes and keys each, and refuses
@@ -2836,3 +2836,18 @@ keep it, as there is no `pg_attrdef`.
 - `test_ddl` keeps a default across a restart; `server.sh`
   inserts and updates by defaults in later sessions, and
   refuses bad ones.
+
+## Step 99: an interval is never an index key
+
+- **Decided, not deferred.** Step 93 left open whether sm2's
+  interval key should share PostgreSQL's ties, or dg scan every
+  key of a span. Neither: an index keyed on interval stays
+  refused, PRIMARY KEY and UNIQUE included; an interval may be
+  an INCLUDE column.
+- Why: sm2's key keeps `'1 mon'` and `'30 days'` apart on
+  purpose (`../sm/sm2/TYPE.md` section 3.10), and dg scanning
+  spans would still leave UNIQUE wrong. Interval keys are rare;
+  a query on one scans the table. Lifting the refusal later is
+  compatible.
+- The error drops "yet": `an index key of type interval is not
+  supported`.

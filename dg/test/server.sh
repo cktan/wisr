@@ -1233,7 +1233,7 @@ local_psql -c "insert into t18 values (5, null, null, null, null, null,
     'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11')" 2>&1 |
   grep -q 'duplicate key' || fail "a unique uuid key"
 local_psql -c 'create index t18iv on t18 (iv)' 2>&1 |
-  grep -q 'an index key of type interval is not supported yet' ||
+  grep -q 'an index key of type interval is not supported' ||
   fail "an interval key refused"
 
 # Verify that numeric refuses what a decimal of 38 digits has no value for,
