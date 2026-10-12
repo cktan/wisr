@@ -53,6 +53,7 @@
 #include "storage/procarray.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
+#include "utils/datadir.h"
 #include "utils/catcache.h"
 #include "utils/guc_hooks.h"
 #include "utils/inval.h"
@@ -1994,16 +1995,20 @@ static bool OpfamilyIsVisibleExt(Oid opfid, bool *is_missing) {
  */
 static Oid lookup_collation(const char *collname, Oid collnamespace,
                             int32 encoding) {
-  Oid collid;
-  HeapTuple colltup;
-  Form_pg_collation collform;
+  const cat_collation_t *const *rows;
+  const cat_collation_t *collform = NULL;
+  int count;
 
-  /* Check for encoding-specific entry (exact match) */
-  collid = GetSysCacheOid3(COLLNAMEENCNSP, Anum_pg_collation_oid,
-                           PointerGetDatum(collname), Int32GetDatum(encoding),
-                           ObjectIdGetDatum(collnamespace));
-  if (OidIsValid(collid))
-    return collid;
+  /*
+   * Every collation is compiled in (catalog/cat_builtin.h): look at those
+   * of the name in the namespace, for an encoding-specific entry (exact
+   * match) first.
+   */
+  rows = cat_collations_named(collname, &count);
+  for (int i = 0; i < count; i++)
+    if (rows[i]->collnamespace == collnamespace &&
+        rows[i]->collencoding == encoding)
+      return rows[i]->oid;
 
   /*
    * Check for any-encoding entry.  This takes a bit more work: while libc
@@ -2011,21 +2016,15 @@ static Oid lookup_collation(const char *collname, Oid collnamespace,
    * collations only work with certain encodings, so we have to check that
    * aspect before deciding it's a match.
    */
-  colltup = SearchSysCache3(COLLNAMEENCNSP, PointerGetDatum(collname),
-                            Int32GetDatum(-1), ObjectIdGetDatum(collnamespace));
-  if (!HeapTupleIsValid(colltup))
+  for (int i = 0; i < count; i++)
+    if (rows[i]->collnamespace == collnamespace && rows[i]->collencoding == -1)
+      collform = rows[i];
+  if (collform == NULL)
     return InvalidOid;
-  collform = (Form_pg_collation)GETSTRUCT(colltup);
-  if (collform->collprovider == COLLPROVIDER_ICU) {
-    if (is_encoding_supported_by_icu(encoding))
-      collid = collform->oid;
-    else
-      collid = InvalidOid;
-  } else {
-    collid = collform->oid;
-  }
-  ReleaseSysCache(colltup);
-  return collid;
+  if (collform->collprovider == COLLPROVIDER_ICU &&
+      !is_encoding_supported_by_icu(encoding))
+    return InvalidOid;
+  return collform->oid;
 }
 
 /*
@@ -2078,20 +2077,18 @@ bool CollationIsVisible(Oid collid) {
  *error.  (Caller must initialize *is_missing = false.)
  */
 static bool CollationIsVisibleExt(Oid collid, bool *is_missing) {
-  HeapTuple colltup;
-  Form_pg_collation collform;
+  /* Every collation is compiled in (catalog/cat_builtin.h). */
+  const cat_collation_t *collform = cat_collation(collid);
   Oid collnamespace;
   bool visible;
 
-  colltup = SearchSysCache1(COLLOID, ObjectIdGetDatum(collid));
-  if (!HeapTupleIsValid(colltup)) {
+  if (collform == NULL) {
     if (is_missing != NULL) {
       *is_missing = true;
       return false;
     }
     elog(ERROR, "cache lookup failed for collation %u", collid);
   }
-  collform = (Form_pg_collation)GETSTRUCT(colltup);
 
   recomputeNamespacePath();
 
@@ -2112,12 +2109,8 @@ static bool CollationIsVisibleExt(Oid collid, bool *is_missing) {
      * slow check to see if this collation would be found by
      * CollationGetCollid.
      */
-    char *collname = NameStr(collform->collname);
-
-    visible = (CollationGetCollid(collname) == collid);
+    visible = (CollationGetCollid(collform->collname) == collid);
   }
-
-  ReleaseSysCache(colltup);
 
   return visible;
 }
@@ -3062,8 +3055,18 @@ Oid QualifiedNameGetCreationNamespace(const List *names, char **objname_p) {
 Oid get_namespace_oid(const char *nspname, bool missing_ok) {
   Oid oid;
 
-  /* Namespaces are sm's: the built-in ones too, under their own oids. */
-  oid = smstore_namespace_oid(nspname);
+  /*
+   * Namespaces are sm's: the built-in ones too, under their own oids. With
+   * no storage, as "digres --run" has, only the built-in ones are, as they
+   * are compiled in.
+   */
+  if (datadir_sm_session() == NULL) {
+    int count;
+    const cat_namespace_t *const *rows = cat_namespaces_named(nspname, &count);
+
+    oid = count > 0 ? rows[0]->oid : InvalidOid;
+  } else
+    oid = smstore_namespace_oid(nspname);
   if (!OidIsValid(oid) && !missing_ok)
     ereport(ERROR, (errcode(ERRCODE_UNDEFINED_SCHEMA),
                     errmsg("schema \"%s\" does not exist", nspname)));

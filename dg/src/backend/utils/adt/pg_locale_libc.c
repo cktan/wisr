@@ -15,6 +15,7 @@
 #include <wctype.h>
 
 #include "access/htup_details.h"
+#include "catalog/cat_builtin.h"
 #include "catalog/pg_database.h"
 #include "catalog/pg_collation.h"
 #include "mb/pg_wchar.h"
@@ -392,19 +393,13 @@ pg_locale_t create_pg_locale_libc(Oid collid, MemoryContext context) {
 
     ReleaseSysCache(tp);
   } else {
-    HeapTuple tp;
-    Datum datum;
+    /* Every collation is compiled in (catalog/cat_builtin.h). */
+    const cat_collation_t *coll = cat_collation(collid);
 
-    tp = SearchSysCache1(COLLOID, ObjectIdGetDatum(collid));
-    if (!HeapTupleIsValid(tp))
+    if (coll == NULL)
       elog(ERROR, "cache lookup failed for collation %u", collid);
-
-    datum = SysCacheGetAttrNotNull(COLLOID, tp, Anum_pg_collation_collcollate);
-    collate = TextDatumGetCString(datum);
-    datum = SysCacheGetAttrNotNull(COLLOID, tp, Anum_pg_collation_collctype);
-    ctype = TextDatumGetCString(datum);
-
-    ReleaseSysCache(tp);
+    collate = pstrdup(coll->collcollate);
+    ctype = pstrdup(coll->collctype);
   }
 
   loc = make_libc_collator(collate, ctype);

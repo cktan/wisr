@@ -192,10 +192,8 @@ static void CheckMyDatabase(const char *name, bool am_superuser,
     ereport(FATAL, (errmsg("could not set the C locale")));
   database_ctype_is_c = true;
 
-  /*
-   * The default collation is not set up yet: init_database_collation()
-   * reads pg_database. Nothing that compares text can run until it is.
-   */
+  /* The default collation, C as the locale is, for comparing text. */
+  init_database_collation();
 }
 
 /*

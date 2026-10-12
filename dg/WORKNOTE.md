@@ -2600,3 +2600,60 @@ in the permission check of the relation's lookup.
   yet, by its own name (`AlterObjectTypeCommandTag()`, from
   `utility.c`, now extern).
 - `server.sh` checks the refusals.
+
+## Step 89: the default collation is C
+
+Step 8 made a database's collation and character
+classification C, but left the default collation unset:
+`init_database_collation()` read `pg_database`. So nothing that
+compares or cases text ran -- `'a' < 'b'`, `ORDER BY` of text,
+`upper()`, `LIKE`, a regular expression -- with "default locale
+not initialized".
+
+- **`init_database_collation()` makes the default C**, as the
+  process's locale is, marked the default, with no catalog
+  read; `CheckMyDatabase()` calls it where it sets the locale.
+- **Found, not fixed here**: an explicit `COLLATE` opens
+  `pg_collation`; and `digres --run`, with no data directory,
+  crashes on any name looked up through the search path, as
+  the role's name is read from a cache it never set up.
+- `server.sh` compares, sorts, cases and matches text.
+
+## Step 90: digres --run looks names up through the search path
+
+Found in step 89: `digres --run`, with no data directory,
+crashed on any name looked up through the search path -- an
+unqualified cast, an operator matched by coercion -- reading
+the role's name from a cache it never set up.
+
+- **`GetUserNameFromId()` reads no cache**: digres has one role
+  and no `pg_authid`. The superuser's name is initdb's, or with
+  no data directory the operating system user's, initdb's
+  default; any other oid is no role.
+- **With no storage, the schemas are the built-in ones**:
+  `get_namespace_oid()` finds a name among the compiled-in rows
+  when there is no sm session.
+- **A `--run` session has the C default collation**, as a
+  server session does (step 89).
+- `test/select_text.sql` compares, matches and concatenates
+  text, casts to a standard type name and names the user, with
+  no server, alone and in 8 threads.
+
+## Step 91: the built-in collations are compiled in
+
+Found in step 89: an explicit `COLLATE` looked the name up in
+`pg_collation`, which digres does not have.
+
+- **`gen_cat.py` writes pg_collation**: `cat_collation()` finds
+  a collation by oid, `cat_collations_named()` by name.
+- **What read the `COLLOID` and `COLLNAMEENCNSP` caches reads
+  the rows**: `lookup_collation()` and
+  `CollationIsVisibleExt()` (`namespace.c`),
+  `get_collation_name()` and `get_collation_isdeterministic()`,
+  and making a collation's locale, `create_pg_locale()` and the
+  builtin, ICU and libc providers' constructors.
+- **So the seven built-in collations work**: `C` and `POSIX`,
+  ICU's `unicode`, and the builtin provider's `ucs_basic`,
+  `pg_c_utf8` and `pg_unicode_fast`. A collation of one's own,
+  CREATE COLLATION, is not wired to sm yet.
+- `server.sh` uses each provider's.

@@ -33,8 +33,8 @@
 #include <time.h>
 
 #include "access/htup_details.h"
+#include "catalog/cat_builtin.h"
 #include "catalog/pg_collation.h"
-#include "catalog/pg_database.h"
 #include "common/hashfn.h"
 #include "common/string.h"
 #include "mb/pg_wchar.h"
@@ -46,7 +46,6 @@
 #include "utils/memutils.h"
 #include "utils/pg_locale.h"
 #include "utils/relcache.h"
-#include "utils/syscache.h"
 
 #ifdef WIN32
 #include <shlwapi.h>
@@ -989,16 +988,13 @@ static char *IsoLocaleName(const char *winlocname) {
  * Create a new pg_locale_t struct for the given collation oid.
  */
 static pg_locale_t create_pg_locale(Oid collid, MemoryContext context) {
-  HeapTuple tp;
-  Form_pg_collation collform;
+  const cat_collation_t *collform;
   pg_locale_t result;
-  Datum datum;
-  bool isnull;
 
-  tp = SearchSysCache1(COLLOID, ObjectIdGetDatum(collid));
-  if (!HeapTupleIsValid(tp))
+  /* Every collation is compiled in (catalog/cat_builtin.h). */
+  collform = cat_collation(collid);
+  if (collform == NULL)
     elog(ERROR, "cache lookup failed for collation %u", collid);
-  collform = (Form_pg_collation)GETSTRUCT(tp);
 
   if (collform->collprovider == COLLPROVIDER_BUILTIN)
     result = create_pg_locale_builtin(collid, context);
@@ -1015,21 +1011,14 @@ static pg_locale_t create_pg_locale(Oid collid, MemoryContext context) {
   Assert((result->collate_is_c && result->collate == NULL) ||
          (!result->collate_is_c && result->collate != NULL));
 
-  datum = SysCacheGetAttr(COLLOID, tp, Anum_pg_collation_collversion, &isnull);
-  if (!isnull) {
+  if (collform->collversion != NULL) {
     char *actual_versionstr;
-    char *collversionstr;
-
-    collversionstr = TextDatumGetCString(datum);
-
-    if (collform->collprovider == COLLPROVIDER_LIBC)
-      datum =
-          SysCacheGetAttrNotNull(COLLOID, tp, Anum_pg_collation_collcollate);
-    else
-      datum = SysCacheGetAttrNotNull(COLLOID, tp, Anum_pg_collation_colllocale);
+    const char *collversionstr = collform->collversion;
 
     actual_versionstr = get_collation_actual_version(
-        collform->collprovider, TextDatumGetCString(datum));
+        collform->collprovider, collform->collprovider == COLLPROVIDER_LIBC
+                                    ? collform->collcollate
+                                    : collform->colllocale);
     if (!actual_versionstr) {
       /*
        * This could happen when specifying a version in CREATE COLLATION
@@ -1038,14 +1027,13 @@ static pg_locale_t create_pg_locale(Oid collid, MemoryContext context) {
        */
       ereport(ERROR, (errmsg("collation \"%s\" has no actual version, but a "
                              "version was recorded",
-                             NameStr(collform->collname))));
+                             collform->collname)));
     }
 
     if (strcmp(actual_versionstr, collversionstr) != 0)
       ereport(
           WARNING,
-          (errmsg("collation \"%s\" has version mismatch",
-                  NameStr(collform->collname)),
+          (errmsg("collation \"%s\" has version mismatch", collform->collname),
            errdetail(
                "The collation in the database was created using version %s, "
                "but the operating system provides version %s.",
@@ -1055,44 +1043,23 @@ static pg_locale_t create_pg_locale(Oid collid, MemoryContext context) {
                    "or build PostgreSQL with the right library version.",
                    quote_qualified_identifier(
                        get_namespace_name(collform->collnamespace),
-                       NameStr(collform->collname)))));
+                       collform->collname))));
   }
-
-  ReleaseSysCache(tp);
 
   return result;
 }
 
 /*
- * Initialize default_locale with database locale settings.
+ * Initialize default_locale: a database's collation is C in digres, which
+ * keeps no pg_database row to name another (WORKNOTE.md step 8).
  */
 void init_database_collation(void) {
-  HeapTuple tup;
-  Form_pg_database dbform;
-  pg_locale_t result;
+  static thread_local /*LOCAL*/ struct pg_locale_struct database_locale;
 
   Assert(default_locale == NULL);
-
-  /* Fetch our pg_database row normally, via syscache */
-  tup = SearchSysCache1(DATABASEOID, ObjectIdGetDatum(MyDatabaseId));
-  if (!HeapTupleIsValid(tup))
-    elog(ERROR, "cache lookup failed for database %u", MyDatabaseId);
-  dbform = (Form_pg_database)GETSTRUCT(tup);
-
-  if (dbform->datlocprovider == COLLPROVIDER_BUILTIN)
-    result = create_pg_locale_builtin(DEFAULT_COLLATION_OID, TopMemoryContext);
-  else if (dbform->datlocprovider == COLLPROVIDER_ICU)
-    result = create_pg_locale_icu(DEFAULT_COLLATION_OID, TopMemoryContext);
-  else if (dbform->datlocprovider == COLLPROVIDER_LIBC)
-    result = create_pg_locale_libc(DEFAULT_COLLATION_OID, TopMemoryContext);
-  else
-    /* shouldn't happen */
-    PGLOCALE_SUPPORT_ERROR(dbform->datlocprovider);
-
-  result->is_default = true;
-  ReleaseSysCache(tup);
-
-  default_locale = result;
+  database_locale = c_locale;
+  database_locale.is_default = true;
+  default_locale = &database_locale;
 }
 
 /*

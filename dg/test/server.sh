@@ -1098,6 +1098,38 @@ local_psql -c 'alter table t14 add foreign key (a) references u14' \
   grep -q 'ERROR:  ALTER INDEX is not supported yet' "$work/alter.out" ||
   fail "ALTER refused"
 
+# Verify that text compares, cases and matches, by the database's default
+# collation, C.
+# 1. 'a' < 'b', and ORDER BY sorts B before a, as C's byte order does.
+# 2. upper and lower change ASCII only; LIKE and ILIKE match.
+# 3. A regular expression, SIMILAR TO and SUBSTRING ... SIMILAR match.
+[ "$(local_psql -c "select 'a' < 'b', upper('abc'), lower('ÀB'),
+      'Foo' like 'F%', 'foo' ilike 'F%'" 2>&1)" = "t|ABC|Àb|t|t" ] ||
+  fail "text compared and cased"
+[ "$(local_psql -c "select x from (values ('b'), ('a'), ('B')) v(x)
+      order by x" 2>&1 | tr '\n' ,)" = "B,a,b," ] || fail "text sorted"
+[ "$(local_psql -c "select substring('foobar' from 'o.b'), 'foobar' ~ 'o.b',
+      'foobar' similar to '%o_b%',
+      substring('foobar' similar '%#\"o_b#\"%' escape '#')" 2>&1)" = \
+  "oob|t|t|oob" ] || fail "text matched"
+
+# Verify that the built-in collations, compiled in, are found by name and
+# used, by each of their providers.
+# 1. "C" and "POSIX" compare by byte: 'a' is not below 'B'.
+# 2. "unicode", ICU's root, sorts a, ä, b, B.
+# 3. pg_c_utf8 upper-cases ä, "C" does not, pg_unicode_fast makes ß SS.
+# 4. A collation qualified by pg_catalog is found; an unknown one is not.
+[ "$(local_psql -c "select 'a' collate \"C\" < 'B', 'a' collate \"POSIX\" < 'B',
+      upper('ä' collate pg_c_utf8), upper('ä' collate \"C\"),
+      upper('ß' collate pg_unicode_fast), 'a' collate pg_catalog.\"C\" < 'b'" \
+  2>&1)" = "f|f|Ä|ä|SS|t" ] || fail "built-in collations"
+[ "$(local_psql -c "select x from (values ('b'), ('a'), ('B'), ('ä')) v(x)
+      order by x collate \"unicode\"" 2>&1 | tr '\n' ,)" = "a,ä,b,B," ] ||
+  fail "ICU collation"
+local_psql -c "select 'a' collate nope < 'b'" 2>&1 |
+  grep -q 'collation "nope" for encoding "UTF8" does not exist' ||
+  fail "an unknown collation"
+
 # Verify that the buffer manager's settings are gone, and DISCARD SEQUENCES
 # still runs.
 # 1. Confirm DISCARD SEQUENCES succeeds.

@@ -11,6 +11,7 @@
 
 #include "postgres.h"
 
+#include "catalog/cat_builtin.h"
 #include "catalog/pg_database.h"
 #include "catalog/pg_collation.h"
 #include "common/unicode_case.h"
@@ -129,15 +130,12 @@ pg_locale_t create_pg_locale_builtin(Oid collid, MemoryContext context) {
     locstr = TextDatumGetCString(datum);
     ReleaseSysCache(tp);
   } else {
-    HeapTuple tp;
-    Datum datum;
+    /* Every collation is compiled in (catalog/cat_builtin.h). */
+    const cat_collation_t *coll = cat_collation(collid);
 
-    tp = SearchSysCache1(COLLOID, ObjectIdGetDatum(collid));
-    if (!HeapTupleIsValid(tp))
+    if (coll == NULL)
       elog(ERROR, "cache lookup failed for collation %u", collid);
-    datum = SysCacheGetAttrNotNull(COLLOID, tp, Anum_pg_collation_colllocale);
-    locstr = TextDatumGetCString(datum);
-    ReleaseSysCache(tp);
+    locstr = pstrdup(coll->colllocale);
   }
 
   builtin_validate_locale(GetDatabaseEncoding(), locstr);

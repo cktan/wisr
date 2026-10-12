@@ -30,6 +30,7 @@
 
 #include "access/htup_details.h"
 #include "catalog/pg_authid.h"
+#include "common/username.h"
 #include "common/file_perm.h"
 #include "libpq/libpq.h"
 #include "libpq/pqsignal.h"
@@ -831,24 +832,24 @@ void SetCurrentRoleId(Oid roleid, bool is_superuser) {
  * is true.
  */
 char *GetUserNameFromId(Oid roleid, bool noerr) {
-  HeapTuple tuple;
-  char *result;
+  /*
+   * digres has one role, the superuser, and no pg_authid: its name is the
+   * one initdb gave it (utils/init/datadir.c), or with no data directory,
+   * as "digres --run" has, the operating system user's, initdb's default.
+   */
+  if (roleid == BOOTSTRAP_SUPERUSERID) {
+    const char *name = datadir_superuser();
+    char *errstr = NULL;
 
-  /* The superuser's name is the one initdb gave it (utils/init/datadir.c). */
-  if (roleid == BOOTSTRAP_SUPERUSERID && datadir_superuser() != NULL)
-    return pstrdup(datadir_superuser());
-
-  tuple = SearchSysCache1(AUTHOID, ObjectIdGetDatum(roleid));
-  if (!HeapTupleIsValid(tuple)) {
-    if (!noerr)
-      ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
-                      errmsg("invalid role OID: %u", roleid)));
-    result = NULL;
-  } else {
-    result = pstrdup(NameStr(((Form_pg_authid)GETSTRUCT(tuple))->rolname));
-    ReleaseSysCache(tuple);
+    if (name == NULL)
+      name = get_user_name(&errstr);
+    if (name != NULL)
+      return pstrdup(name);
   }
-  return result;
+  if (!noerr)
+    ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
+                    errmsg("invalid role OID: %u", roleid)));
+  return NULL;
 }
 
 /* ------------------------------------------------------------------------

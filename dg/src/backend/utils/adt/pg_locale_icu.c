@@ -29,6 +29,7 @@
 #endif
 
 #include "access/htup_details.h"
+#include "catalog/cat_builtin.h"
 #include "catalog/pg_database.h"
 #include "catalog/pg_collation.h"
 #include "mb/pg_wchar.h"
@@ -160,24 +161,15 @@ pg_locale_t create_pg_locale_icu(Oid collid, MemoryContext context) {
 
     ReleaseSysCache(tp);
   } else {
-    Form_pg_collation collform;
-    HeapTuple tp;
-    Datum datum;
-    bool isnull;
+    /* Every collation is compiled in (catalog/cat_builtin.h). */
+    const cat_collation_t *collform = cat_collation(collid);
 
-    tp = SearchSysCache1(COLLOID, ObjectIdGetDatum(collid));
-    if (!HeapTupleIsValid(tp))
+    if (collform == NULL)
       elog(ERROR, "cache lookup failed for collation %u", collid);
-    collform = (Form_pg_collation)GETSTRUCT(tp);
     deterministic = collform->collisdeterministic;
-    datum = SysCacheGetAttrNotNull(COLLOID, tp, Anum_pg_collation_colllocale);
-    iculocstr = TextDatumGetCString(datum);
-    datum =
-        SysCacheGetAttr(COLLOID, tp, Anum_pg_collation_collicurules, &isnull);
-    if (!isnull)
-      icurules = TextDatumGetCString(datum);
-
-    ReleaseSysCache(tp);
+    iculocstr = pstrdup(collform->colllocale);
+    if (collform->collicurules != NULL)
+      icurules = pstrdup(collform->collicurules);
   }
 
   collator = make_icu_collator(iculocstr, icurules);

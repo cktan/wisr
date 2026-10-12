@@ -51,6 +51,7 @@
 #include "parser/parser.h"
 #include "tcop/dest.h"
 #include "tcop/tcopprot.h"
+#include "utils/pg_locale.h"
 #include "utils/guc.h"
 #include "utils/resowner.h"
 #include "utils/memutils.h"
@@ -140,6 +141,10 @@ static void run_session(void *arg) {
    */
   if (s->plan || s->run)
     InitializeSessionUserIdStandalone();
+
+  /* Text compares by the default collation, C, as in a server session. */
+  database_ctype_is_c = true;
+  init_database_collation();
   debug_out = s->out;
 
   PG_TRY();

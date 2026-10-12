@@ -1158,32 +1158,19 @@ Oid get_cast_oid(Oid sourcetypeid, Oid targettypeid, bool missing_ok) {
  * for anything except preparing error messages.
  */
 char *get_collation_name(Oid colloid) {
-  HeapTuple tp;
+  /* Every collation is compiled in (catalog/cat_builtin.h). */
+  const cat_collation_t *colltup = cat_collation(colloid);
 
-  tp = SearchSysCache1(COLLOID, ObjectIdGetDatum(colloid));
-  if (HeapTupleIsValid(tp)) {
-    Form_pg_collation colltup = (Form_pg_collation)GETSTRUCT(tp);
-    char *result;
-
-    result = pstrdup(NameStr(colltup->collname));
-    ReleaseSysCache(tp);
-    return result;
-  } else
-    return NULL;
+  return colltup != NULL ? pstrdup(colltup->collname) : NULL;
 }
 
+/* Whether the collation colloid is deterministic. */
 bool get_collation_isdeterministic(Oid colloid) {
-  HeapTuple tp;
-  Form_pg_collation colltup;
-  bool result;
+  const cat_collation_t *colltup = cat_collation(colloid);
 
-  tp = SearchSysCache1(COLLOID, ObjectIdGetDatum(colloid));
-  if (!HeapTupleIsValid(tp))
+  if (colltup == NULL)
     elog(ERROR, "cache lookup failed for collation %u", colloid);
-  colltup = (Form_pg_collation)GETSTRUCT(tp);
-  result = colltup->collisdeterministic;
-  ReleaseSysCache(tp);
-  return result;
+  return colltup->collisdeterministic;
 }
 
 /*				---------- CONSTRAINT CACHE ----------
