@@ -1130,6 +1130,17 @@ local_psql -c "select 'a' collate nope < 'b'" 2>&1 |
   grep -q 'collation "nope" for encoding "UTF8" does not exist' ||
   fail "an unknown collation"
 
+# Verify that a collation's name is printed from the rows compiled in.
+# 1. regcollation prints a name, quoted when it must be, and an unknown oid
+#    as a number.
+# 2. EXPLAIN VERBOSE of a scan prints a constant's collation.
+[ "$(local_psql -c "select 'unicode'::regcollation, 950::regcollation,
+      0::regcollation, 99999::regcollation" 2>&1)" = 'unicode|"C"|-|99999' ] ||
+  fail "regcollation printed"
+local_psql -c 'create table tcoll (x text)' \
+  -c "explain verbose select x < 'y' collate \"unicode\" from tcoll" 2>&1 |
+  grep -q "'y'::text COLLATE unicode" || fail "a collation explained"
+
 # Verify that bool, float4 and float8 columns are stored in sm, and keyed
 # in its indexes by PostgreSQL's order.
 # 1. Make t16 with each and its indexes, made empty so that none is still

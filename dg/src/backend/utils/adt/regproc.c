@@ -24,6 +24,7 @@
 #include "access/htup_details.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_class.h"
+#include "catalog/cat_builtin.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_proc.h"
@@ -962,19 +963,18 @@ Datum to_regcollation(PG_FUNCTION_ARGS) {
 Datum regcollationout(PG_FUNCTION_ARGS) {
   Oid collationid = PG_GETARG_OID(0);
   char *result;
-  HeapTuple collationtup;
+  /* Every collation is compiled in (catalog/cat_builtin.h). */
+  const cat_collation_t *collationform;
 
   if (collationid == InvalidOid) {
     result = pstrdup("-");
     PG_RETURN_CSTRING(result);
   }
 
-  collationtup = SearchSysCache1(COLLOID, ObjectIdGetDatum(collationid));
+  collationform = cat_collation(collationid);
 
-  if (HeapTupleIsValid(collationtup)) {
-    Form_pg_collation collationform =
-        (Form_pg_collation)GETSTRUCT(collationtup);
-    char *collationname = NameStr(collationform->collname);
+  if (collationform != NULL) {
+    const char *collationname = collationform->collname;
 
     /*
      * In bootstrap mode, skip the fancy namespace stuff and just return
@@ -997,8 +997,6 @@ Datum regcollationout(PG_FUNCTION_ARGS) {
 
       result = quote_qualified_identifier(nspname, collationname);
     }
-
-    ReleaseSysCache(collationtup);
   } else {
     /* If OID doesn't match any pg_collation entry, return it numerically */
     result = (char *)palloc(NAMEDATALEN);

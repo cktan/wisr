@@ -2878,3 +2878,13 @@ a query.
   one row of a batch, and index maintenance not skipped, each
   fail it.
 
+## Step 101: a collation's name is printed from the rows compiled in
+
+Found in step 91: `EXPLAIN VERBOSE` of a constant in a collation
+not the default, and `regcollation` output, read `pg_collation`.
+
+- **`generate_collation_name()`** (`ruleutils.c`) and
+  **`regcollationout()`** (`regproc.c`) find the collation with
+  `cat_collation()`, as `get_collation_name()` does.
+- `server.sh` prints a `regcollation` and explains a collated
+  constant.

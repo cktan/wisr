@@ -26,6 +26,7 @@
 #include "catalog/pg_aggregate.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_authid.h"
+#include "catalog/cat_builtin.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_constraint.h"
 #include "catalog/pg_depend.h"
@@ -12023,17 +12024,15 @@ static char *generate_qualified_type_name(Oid typid) {
  * The result includes all necessary quoting and schema-prefixing.
  */
 char *generate_collation_name(Oid collid) {
-  HeapTuple tp;
-  Form_pg_collation colltup;
-  char *collname;
+  /* Every collation is compiled in (catalog/cat_builtin.h). */
+  const cat_collation_t *colltup = cat_collation(collid);
+  const char *collname;
   char *nspname;
   char *result;
 
-  tp = SearchSysCache1(COLLOID, ObjectIdGetDatum(collid));
-  if (!HeapTupleIsValid(tp))
+  if (colltup == NULL)
     elog(ERROR, "cache lookup failed for collation %u", collid);
-  colltup = (Form_pg_collation)GETSTRUCT(tp);
-  collname = NameStr(colltup->collname);
+  collname = colltup->collname;
 
   if (!CollationIsVisible(collid))
     nspname = get_namespace_name_or_temp(colltup->collnamespace);
@@ -12041,8 +12040,6 @@ char *generate_collation_name(Oid collid) {
     nspname = NULL;
 
   result = quote_qualified_identifier(nspname, collname);
-
-  ReleaseSysCache(tp);
 
   return result;
 }
