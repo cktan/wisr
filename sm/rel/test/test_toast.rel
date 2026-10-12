@@ -12,7 +12,7 @@
 # 5. The values are there after the environment is attached again.
 # 6. With TOAST off, the default, a row past 64 KB is refused.
 
-(def test-dir "/tmp/wisr_rel_test_toast")
+(def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_toast"))
 (rm-rf test-dir)
 (env-init test-dir)
 (env-attach test-dir :toast true)
