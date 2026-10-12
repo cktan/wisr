@@ -25,16 +25,19 @@ $(BIN): $(OBJS) $(BUILD)/libsm.a
 	@mkdir -p $(dir $@)
 	$(CXX) -o $@ $(OBJS) $(BUILD)/libsm.a $(LDLIBS)
 
+# Each run's databases are in a directory of its own, REL_TMP, which
+# the tests make theirs under: runs side by side, by one user or two,
+# do not meet. It is removed after a run that passes, kept after one
+# that fails, for a look.
 test: $(BIN)
 	@mkdir -p test
-	@rm -rf /tmp/wisr_rel_test_*
-	@for t in test/*.rel; do \
+	@REL_TMP=$$(mktemp -d /tmp/wisr_rel_test.XXXXXX) && export REL_TMP && \
+	for t in test/*.rel; do \
 		if [ -f "$$t" ]; then \
 			echo "Running $$t..."; \
-			$(BIN) "$$t" || exit 1; \
+			$(BIN) "$$t" || { echo "kept $$REL_TMP"; exit 1; }; \
 		fi \
-	done
-	@rm -rf /tmp/wisr_rel_test_*
+	done && rm -rf "$$REL_TMP"
 	@echo "All rel tests passed."
 
 format:

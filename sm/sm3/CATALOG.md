@@ -41,7 +41,11 @@ own catalog store, store 0, under the key prefix `"U"`.
   numbers, since digres compiles its built-ins in with them
   (`PART4.md` §10): `pg_catalog` is 11, `public` is 2200. `nextseq` is not
   transactional, so an aborted DDL leaves a gap, as PostgreSQL's
-  oid counter does.
+  oid counter does. They stop at `last_oid`, 2^32 - 1: digres
+  takes an oid as PostgreSQL's 32-bit `Oid`, so a larger one
+  would wrap onto a built-in one. Past it, `cat_new_oid` fails
+  with `SM_ERR_INVALID`; PostgreSQL wraps its counter instead,
+  and checks each oid it hands out is free, which sm does not.
 
 sm3 reaches the catalog through sm2's catalog key-value store,
 `catkv_*` in `sm2/include/sm2.h`: each call is one sm1 call on
@@ -332,7 +336,7 @@ is there, a namespace that goes is empty. So its writes are
 few, and named for what a repository does.
 
 - **`cat_new_oid(ss, oid)`** takes the next oid from the
-  sequence `sm3.oid`.
+  sequence `sm3.oid`, and fails past `last_oid`.
 - **`cat_get_table_rec(ss, table_oid, rec)`** reads a table's
   record in order to change it. A record, `table_rec_t`, is
   the table as the catalog keeps it, plain values with types

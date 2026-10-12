@@ -5,7 +5,8 @@
 #   test/server.sh
 #
 # The server listens on 127.0.0.1 and on a socket in build/test/server,
-# at port DG_TEST_PORT, 54329 if that is not set. Its log and each
+# at port DG_TEST_PORT, or if that is not set one the kernel finds free,
+# so runs side by side, by one user or two, do not meet. Its log and each
 # check's output are left in build/test/server/. DIGRES names the server
 # to run, build/digres if it is not set: "make tsan" sets it to the build
 # under the thread sanitizer, and then a report in the log fails.
@@ -15,7 +16,10 @@ if ! command -v psql > /dev/null; then
   exit 0
 fi
 work=$PWD/build/test/server
-port=${DG_TEST_PORT:-54329}
+# A free port: the kernel's pick for a socket bound to port 0, released
+# before the server binds it.
+port=${DG_TEST_PORT:-$(python3 -c 'import socket; s = socket.socket()
+s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')}
 digres=${DIGRES:-build/digres}
 rm -rf "$work"
 mkdir -p "$work"

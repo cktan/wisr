@@ -10,7 +10,7 @@
 # 4. A filter that spans two tables: the order row changes, the order
 #    changes and still qualifies, and only the customer changes.
 
-(def test-dir "/tmp/wisr_rel_test_recheck")
+(def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_recheck"))
 (rm-rf test-dir)
 (env-init test-dir)
 (env-attach test-dir)

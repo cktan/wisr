@@ -11,7 +11,7 @@
 # 4. index-wait is refused inside a transaction.
 # 5. A valid index is valid, and usable, after a restart.
 
-(def test-dir "/tmp/wisr_rel_test_build")
+(def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_build"))
 (rm-rf test-dir)
 (env-init test-dir)
 (env-attach test-dir)

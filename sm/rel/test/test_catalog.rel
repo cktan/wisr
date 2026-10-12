@@ -2,7 +2,7 @@
 # transactional, private to its session until commit, and
 # survives a restart.
 
-(def test-dir "/tmp/wisr_rel_test_catalog")
+(def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_catalog"))
 (rm-rf test-dir)
 (env-init test-dir)
 (env-attach test-dir)

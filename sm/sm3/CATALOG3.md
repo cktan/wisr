@@ -659,7 +659,7 @@ table resolved for use; its writes take a record,
 
 | Call | Synopsis |
 | --- | --- |
-| `cat_new_oid(ss, oid&)` | Takes the next oid from the one sequence every kind of object shares. |
+| `cat_new_oid(ss, oid&)` | Takes the next oid from the one sequence every kind of object shares. Past `last_oid` it is `SM_ERR_INVALID`. |
 | `cat_get_namespace(cat, name, namespace_oid&)` | Returns whether a committed namespace of that name exists, and sets its oid. |
 | `cat_get_namespace(ss, name, namespace_oid&)` | Returns whether a namespace of that name exists as the session sees it, and sets its oid. |
 | `cat_get_namespace_name(ss, namespace_oid, name&)` | Returns whether a namespace of that oid exists as the session sees it, and sets its name. |

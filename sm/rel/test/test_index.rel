@@ -1,6 +1,6 @@
 # test_index.rel -- composite keys, INCLUDE columns, unique constraints, and idx-scan
 
-(def test-dir "/tmp/wisr_rel_test_index")
+(def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_index"))
 (rm-rf test-dir)
 (env-init test-dir)
 (env-attach test-dir)

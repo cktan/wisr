@@ -13,7 +13,7 @@
 # 4. describe-table gives them back in index-create's own forms.
 # 5. A predicate on a column that is not text.
 
-(def test-dir "/tmp/wisr_rel_test_partial")
+(def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_partial"))
 (rm-rf test-dir)
 (env-init test-dir)
 (env-attach test-dir)

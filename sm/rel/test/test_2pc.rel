@@ -1,6 +1,6 @@
 # test_2pc.rel -- Two-Phase Commit (2PC): prepare, list, commit-prepared, abort-prepared
 
-(def test-dir "/tmp/wisr_rel_test_2pc")
+(def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_2pc"))
 (rm-rf test-dir)
 (env-init test-dir)
 (env-attach test-dir)

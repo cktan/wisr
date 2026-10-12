@@ -38,6 +38,13 @@ constexpr uint64_t nsp_public = 2200;
 constexpr uint64_t first_oid = 16384;
 
 /*
+ * The last oid handed out: PostgreSQL's Oid is 32 bits, and digres
+ * takes an oid as one, so a larger one would wrap onto a built-in
+ * oid. cat_new_oid fails past it.
+ */
+constexpr uint64_t last_oid = UINT32_MAX;
+
+/*
  * The namespace oid of a session's temporary tables (TEMPTABLE.md
  * §4): no namespace at all. sm3 keeps no temporary namespace, and
  * its host names its own. A temporary table's definition has this
@@ -397,7 +404,10 @@ int cat_lock_table(session_t* s, uint64_t oid, sm1::lockmode_t mode,
  * change at once; others see it once it commits.
  */
 
-/* Take the next oid; one is never handed out twice. */
+/*
+ * Take the next oid; one is never handed out twice. Past last_oid
+ * it fails with SM_ERR_INVALID: the oids are used up.
+ */
 int cat_new_oid(session_t* s, uint64_t& oid);
 
 /*

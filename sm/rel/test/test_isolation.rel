@@ -1,7 +1,7 @@
 # test_isolation.rel -- multi-session MVCC, Repeatable Read snapshot isolation,
 # and Read Committed conflict handling with read-latest.
 
-(def test-dir "/tmp/wisr_rel_test_isolation")
+(def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_isolation"))
 (rm-rf test-dir)
 (env-init test-dir)
 (env-attach test-dir)

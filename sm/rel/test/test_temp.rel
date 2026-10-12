@@ -12,7 +12,7 @@
 # 6. A transaction that wrote one cannot be prepared.
 # 7. Closing the session ends it.
 
-(def test-dir "/tmp/wisr_rel_test_temp")
+(def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_temp"))
 (rm-rf test-dir)
 (env-init test-dir)
 (env-attach test-dir)

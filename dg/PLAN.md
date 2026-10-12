@@ -492,8 +492,9 @@ Do not reopen these without the owner:
   files nobody touched. Format only the files you changed that
   were clean before, with `clang-format -i`. Run `make format`
   in `../sm` before a commit, as `../CLAUDE.md` asks.
-- **Port 5432 is taken** on this machine by a PostgreSQL 16.
-  `test/server.sh` uses 54329, or `DG_TEST_PORT`.
+- **Port 5432 is taken** on this machine by a PostgreSQL 16,
+  and others run the tests here too. `test/server.sh` uses a
+  port the kernel finds free, or `DG_TEST_PORT`.
 - **Debugging a backend**: `gdb -p` is refused here
   (`ptrace_scope`). Run the server under gdb with
   `set detach-on-fork off` and `set schedule-multiple on`, add

@@ -335,6 +335,44 @@ TEST_CASE("a namespace's name is found by its oid") {
   sm3::session_close(other);
 }
 
+TEST_CASE("no oid past last_oid is handed out") {
+  // Verify the oids stop at last_oid, PostgreSQL's 32 bits, rather
+  // than go on to one that would wrap onto a built-in oid.
+  // 1. Make the oid sequence, sm3.oid, again at last_oid - 1.
+  // 2. Two tables take last_oid - 1 and last_oid.
+  // 3. A third fails with SM_ERR_INVALID, and so do a namespace and
+  //    an oid taken plainly; the two tables remain.
+  cat_db_t db;
+  std::vector<sm3::column_spec_t> cols = {
+      {"x", sm2::type_int4.code, -1, false}};
+  uint64_t t1 = 0, t2 = 0, t3 = 0, n = 0, o = 0;
+  db.begin();
+  REQUIRE(sm1::rmseq(db.s, "sm3.oid") == 0);
+  REQUIRE(sm1::mkseq(db.s, "sm3.oid", sm3::last_oid - 1, 1) == 0);
+  db.commit();
+
+  db.begin();
+  REQUIRE(sm3::create_table(db.ss, sm3::nsp_public, "t1", cols, t1) == 0);
+  REQUIRE(sm3::create_table(db.ss, sm3::nsp_public, "t2", cols, t2) == 0);
+  CHECK(t1 == sm3::last_oid - 1);
+  CHECK(t2 == sm3::last_oid);
+  db.commit();
+
+  db.begin();
+  CHECK(sm3::create_table(db.ss, sm3::nsp_public, "t3", cols, t3) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm3::create_namespace(db.ss, "app", n) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm3::cat_new_oid(db.ss, o) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  REQUIRE(sm3::abort(db.ss) == 0);
+  db.begin();
+  auto def = sm3::cat_get_table(db.ss, sm3::nsp_public, "t2");
+  REQUIRE(def);
+  CHECK(def->oid == t2);
+  db.commit();
+}
+
 TEST_CASE("a namespace is dropped only when it is empty") {
   // Verify drop_namespace.
   // 1. The built-in namespaces are SM_ERR_INVALID to drop, and an

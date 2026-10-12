@@ -399,7 +399,18 @@ int cat_init(sm1::env_t *env, std::string_view dbname,
 
 /* Take the next oid; see sm3.h. */
 int cat_new_oid(session_t *session, uint64_t &oid) {
-  return sm1::nextseq(session->sm1, oid_seq, oid);
+  uint64_t next = 0;
+  if (sm1::nextseq(session->sm1, oid_seq, next) != 0) {
+    return -1;
+  }
+  // The sequence goes on past last_oid; the oids do not.
+  if (next > last_oid) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       "the oids are used up: " + std::to_string(next) +
+                           " is past " + std::to_string(last_oid));
+  }
+  oid = next;
+  return 0;
 }
 
 /* Store a new namespace; see sm3.h. */

@@ -9,7 +9,7 @@
 # 3. DDL blocks on a writer of the table, and goes ahead after it commits.
 # 4. A writer blocks on uncommitted DDL, and goes ahead after it commits.
 
-(def test-dir "/tmp/wisr_rel_test_blocking")
+(def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_blocking"))
 (rm-rf test-dir)
 (env-init test-dir)
 (env-attach test-dir)
