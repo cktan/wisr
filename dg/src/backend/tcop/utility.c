@@ -1870,7 +1870,7 @@ Query *UtilityContainsQuery(Node *parsetree) {
  *
  * This covers most cases where ALTER is used with an ObjectType enum.
  */
-static CommandTag AlterObjectTypeCommandTag(ObjectType objtype) {
+CommandTag AlterObjectTypeCommandTag(ObjectType objtype) {
   CommandTag tag;
 
   switch (objtype) {

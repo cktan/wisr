@@ -88,6 +88,7 @@ extern TupleDesc UtilityTupleDescriptor(Node *parsetree);
 extern Query *UtilityContainsQuery(Node *parsetree);
 
 extern CommandTag CreateCommandTag(Node *parsetree);
+extern CommandTag AlterObjectTypeCommandTag(ObjectType objtype);
 
 static inline const char *CreateCommandName(Node *parsetree) {
   return GetCommandTagName(CreateCommandTag(parsetree));

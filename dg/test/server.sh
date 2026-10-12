@@ -1029,6 +1029,75 @@ local_psql -c 'select 3 operator(public.+) 4' 2>&1 |
       where a <= 20 group by b order by b limit 1' 2>&1)" = "0|{10,20}" ] ||
   fail "array_agg grouped"
 
+# Verify that the built-in functions PostgreSQL writes in SQL, written in C
+# here (utils/adt/sql_bodies.c), and the operators and the cast they
+# implement, give what PostgreSQL's SQL bodies give.
+# 1. || of text and any other type casts the other to text, bool's as
+#    'true'; quote_literal and quote_nullable take any type.
+# 2. lpad and rpad pad with spaces; numeric round, trunc, log and log10
+#    take their defaults; bit_length counts bits.
+# 3. + of a date, time, timestamp or timetz with an interval, integer or
+#    date on the left; inet, pg_lsn and path @> point; circle's polygon.
+# 4. date_part of a date, age from today, timestamptz(date, time).
+# 5. OVERLAPS with lengths, with ends, and with a null start.
+# 6. pg_sleep_for and pg_sleep_until return; a strict function of a null
+#    xml is null.
+local_psql -c "set timezone = 'UTC'" \
+  -c "select 'a' || 1, 1 || 'a', 'a' || true, 'x' || 1.5::numeric,
+      quote_literal(42), quote_literal(true), quote_nullable(null::int),
+      quote_nullable(7)" \
+  -c "select lpad('ab', 5), rpad('ab', 5) || '|', round(2.5::numeric),
+      trunc(2.7::numeric), log(100::numeric), log10(1000::numeric),
+      bit_length('abc'), bit_length('\x0102'::bytea), bit_length(B'10101')" \
+  -c "select 1 + date '2024-01-31', interval '1 day' + date '2024-01-01',
+      time '10:00' + date '2024-01-01', interval '1 hour' + time '10:00',
+      interval '1 day' + timestamp '2024-01-01 00:00',
+      timetz '10:00+02' + date '2024-01-01', interval '1 hour' + timetz '10:00+02',
+      interval '1 day' + timestamptz '2024-01-01 00:00+00'" \
+  -c "select 10::int8 + inet '10.0.0.1', 1::numeric + '0/10'::pg_lsn,
+      path '((0,0),(2,0))' @> point '(1,0)',
+      npoints(circle '<(0,0),1>'::polygon)" \
+  -c "select date_part('year', date '2024-05-01'),
+      age(current_date::timestamp), age(current_date::timestamptz),
+      timestamptz(date '2024-01-01', time '10:00')" \
+  -c "select (date '2024-01-01', interval '2 days') overlaps
+      (date '2024-01-02', interval '1 day'),
+      (time '10:00', interval '1 hour') overlaps (time '10:30', time '12:00'),
+      (timestamp '2024-01-01', timestamp '2024-01-02') overlaps
+      (timestamp '2024-01-03', interval '1 day'),
+      ((null::timestamp, interval '1 day') overlaps
+      (timestamp '2024-01-01', interval '1 day')) is null" \
+  -c "select pg_sleep_for('10 milliseconds'), pg_sleep_until(now()),
+      xpath('/a', null::xml) is null" > "$work/sqlbodies.out" 2>&1
+cat > "$work/sqlbodies.expected" <<'OUT'
+SET
+a1|1a|atrue|x1.5|'42'|'true'|NULL|'7'
+   ab|ab   ||3|2|2.0000000000000000|3.0000000000000000|24|16|5
+2024-02-01|2024-01-02 00:00:00|2024-01-01 10:00:00|11:00:00|2024-01-02 00:00:00|2024-01-01 08:00:00+00|11:00:00+02|2024-01-02 00:00:00+00
+10.0.0.11|0/11|t|12
+2024|00:00:00|00:00:00|2024-01-01 10:00:00+00
+t|t|f|t
+||t
+OUT
+cmp -s "$work/sqlbodies.out" "$work/sqlbodies.expected" ||
+  fail "functions written in SQL by PostgreSQL"
+
+# Verify that an ALTER of a table or index is refused plainly, as digres
+# has no ALTER TABLE yet, rather than failing on pg_class.
+# 1. ADD FOREIGN KEY, ADD COLUMN, RENAME, RENAME COLUMN and SET SCHEMA of
+#    t14 are refused, each naming what it is.
+# 2. ALTER INDEX is refused as ALTER INDEX.
+local_psql -c 'alter table t14 add foreign key (a) references u14' \
+  -c 'alter table t14 add column z int4' -c 'alter table t14 rename to t99' \
+  -c 'alter table t14 rename column a to z' \
+  -c 'alter table t14 set schema s7' -c 'create index t14a on t14 (a)' \
+  -c 'alter index t14a rename to t14b' > "$work/alter.out" 2>&1
+[ "$(grep -c 'ERROR:  ALTER TABLE is not supported yet' "$work/alter.out")" = 4 ] &&
+  grep -q 'ERROR:  ALTER TABLE ... RENAME COLUMN is not supported yet' \
+    "$work/alter.out" &&
+  grep -q 'ERROR:  ALTER INDEX is not supported yet' "$work/alter.out" ||
+  fail "ALTER refused"
+
 # Verify that the buffer manager's settings are gone, and DISCARD SEQUENCES
 # still runs.
 # 1. Confirm DISCARD SEQUENCES succeeds.

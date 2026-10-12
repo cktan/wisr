@@ -2549,3 +2549,54 @@ A table in sm took a plain INSERT and nothing else that writes.
   at REPEATABLE READ. A fetch that ignores the kept row, and a
   delete that keeps none, each fail it.
 
+## Step 87: what PostgreSQL wrote in SQL is written in C
+
+Step 6 cut the 50 built-in functions PostgreSQL writes in SQL,
+since digres has no SQL language, and with them thirteen
+operators and a cast. 43 come back, as 42 C functions in
+`utils/adt/sql_bodies.c` (`log` and `log10` of a numeric share
+one), each doing what its SQL body did by calling the C
+functions that SQL reached.
+
+- **Their rows are PostgreSQL's**, oid, strictness and all,
+  with `prolang` internal and `prosrc` the C function; the
+  operators and the cast are back as they were, commutators
+  too.
+- **What comes back**: `||` of text and any type, both ways;
+  `+` with an interval, integer or date on the left, and of
+  `int8` and `inet`, `numeric` and `pg_lsn`; `path @> point`;
+  the cast from `circle` to `polygon`; `OVERLAPS` with lengths;
+  `lpad` and `rpad` of two arguments; `round`, `trunc`, `log`
+  and `log10` of one numeric; `bit_length`; `age` of one
+  timestamp; `date_part` of a date; `timestamptz(date, time)`;
+  `SUBSTRING ... SIMILAR`; `quote_literal` and `quote_nullable`
+  of any type; `pg_sleep_for` and `pg_sleep_until`; `xpath` and
+  `xpath_exists` of two arguments.
+- **A value is made text by the cast PostgreSQL would choose**
+  (`find_coercion_pathway()`), as `$2::text` did: `'a' || true`
+  is `atrue`, by bool's cast, not its output `t`.
+- **Left out**: `obj_description`, `col_description` and
+  `shobj_description`, as there is no `pg_description`;
+  `ts_debug`, a query over text search's catalogs;
+  `pg_relation_size(regclass)`, which reads relation files; and
+  the SQL language's validator and `pg_get_function_sqlbody`.
+- **Found, not fixed here**: the default collation is never set
+  up (`init_database_collation()` reads `pg_database`), so
+  nothing that compares or cases text runs -- `'a' < 'b'`,
+  `upper()`, a regular expression, and so `SUBSTRING ...
+  SIMILAR`.
+- `server.sh` checks each against what PostgreSQL gives.
+
+## Step 88: ALTER TABLE is refused plainly
+
+Every ALTER of a table or an index -- `ADD FOREIGN KEY`, `ADD
+COLUMN`, `RENAME`, `SET SCHEMA` -- failed opening `pg_class`,
+in the permission check of the relation's lookup.
+
+- **It is refused before the lookup**, as `ALTER SEQUENCE` is:
+  `AlterTableLookupRelation()`, `RenameRelation()`,
+  `renameatt()`, `RenameConstraint()` and
+  `AlterTableNamespace()` say the statement is not supported
+  yet, by its own name (`AlterObjectTypeCommandTag()`, from
+  `utility.c`, now extern).
+- `server.sh` checks the refusals.

@@ -3694,6 +3694,16 @@ static void RangeVarCallbackForRenameAttribute(const RangeVar *rv, Oid relid,
 }
 
 /*
+ * Refuse what, an ALTER of a relation: digres has no ALTER TABLE yet.
+ * Called before the relation is looked up, as the lookup's check opens
+ * pg_class, which digres has not.
+ */
+static void refuse_alter(const char *what) {
+  ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                  errmsg("%s is not supported yet", what)));
+}
+
+/*
  *		renameatt		- changes the name of an attribute in a
  *relation
  *
@@ -3704,6 +3714,7 @@ ObjectAddress renameatt(RenameStmt *stmt) {
   AttrNumber attnum;
   ObjectAddress address;
 
+  refuse_alter("ALTER TABLE ... RENAME COLUMN");
   /* lock level taken here should match renameatt_internal */
   relid = RangeVarGetRelidExtended(stmt->relation, AccessExclusiveLock,
                                    stmt->missing_ok ? RVR_MISSING_OK : 0,
@@ -3826,6 +3837,8 @@ ObjectAddress RenameConstraint(RenameStmt *stmt) {
   Oid relid = InvalidOid;
   Oid typid = InvalidOid;
 
+  if (stmt->renameType != OBJECT_DOMCONSTRAINT)
+    refuse_alter("ALTER TABLE ... RENAME CONSTRAINT");
   if (stmt->renameType == OBJECT_DOMCONSTRAINT) {
     Relation rel;
     HeapTuple tup;
@@ -3867,6 +3880,7 @@ ObjectAddress RenameRelation(RenameStmt *stmt) {
   Oid relid;
   ObjectAddress address;
 
+  refuse_alter(GetCommandTagName(AlterObjectTypeCommandTag(stmt->renameType)));
   /*
    * Grab an exclusive lock on the target table, index, sequence, view,
    * materialized view, or foreign table, which we will NOT release until
@@ -4117,6 +4131,7 @@ static void CheckAlterTableIsSafe(Relation rel) {
  *table statement.
  */
 Oid AlterTableLookupRelation(AlterTableStmt *stmt, LOCKMODE lockmode) {
+  refuse_alter(GetCommandTagName(AlterObjectTypeCommandTag(stmt->objtype)));
   return RangeVarGetRelidExtended(stmt->relation, lockmode,
                                   stmt->missing_ok ? RVR_MISSING_OK : 0,
                                   RangeVarCallbackForAlterRelation, stmt);
@@ -17088,6 +17103,7 @@ ObjectAddress AlterTableNamespace(AlterObjectSchemaStmt *stmt, Oid *oldschema) {
   ObjectAddresses *objsMoved;
   ObjectAddress myself;
 
+  refuse_alter(GetCommandTagName(AlterObjectTypeCommandTag(stmt->objectType)));
   relid = RangeVarGetRelidExtended(stmt->relation, AccessExclusiveLock,
                                    stmt->missing_ok ? RVR_MISSING_OK : 0,
                                    RangeVarCallbackForAlterRelation, stmt);
