@@ -1417,13 +1417,16 @@ as another's.
 
 **After a `TRUNCATE`**, `STATISTICS.md` §3.6 asks for a choice
 of floor on rows. **Decision: a live heap of 0 bytes, `disk`
-and `mem` both, is never analyzed.** The host plans it as
-PostgreSQL plans a truncated table, `reltuples` -1 and its
-ten-page guess, not as empty. Only a new store is 0 bytes: a
-table emptied by `DELETE` keeps its tombstones until
-compaction, and is planned from its statistics. This needs
-nothing of the stack, since §6.2 already answers the size,
-and nothing of the truncate.
+and `mem` both, whose sample reads no row, is never
+analyzed.** The host plans it as PostgreSQL plans a truncated
+table, `reltuples` -1 and its ten-page guess, not as empty.
+Only a new store is 0 bytes: a table emptied by `DELETE`
+keeps its tombstones until compaction, and is planned from
+its statistics. The sizes are RocksDB's estimates, which may
+read 0 for a heap with rows, mid-flush, so the sample has the
+last word: rows read are recorded, whatever the bytes. This
+needs nothing of the stack, since §6.2 already answers the
+size, and nothing of the truncate.
 
 ### 6.8 The calls
 

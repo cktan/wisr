@@ -131,11 +131,6 @@ int analyze_table(table_t *table, int32_t target, std::mt19937_64 &rng) {
   if (tbl_size(table, st.heap_disk, st.heap_mem) != 0) {
     return -1;
   }
-  // A heap of no bytes is a new store, a new or truncated table's:
-  // the host plans it as PostgreSQL plans one truncated (§6.7).
-  if (st.heap_disk == 0 && st.heap_mem == 0) {
-    return 0;
-  }
   // A second analyze of the table waits here, before it samples.
   if (cat_lock_stats(session, def.oid) != 0) {
     return -1;
@@ -143,6 +138,13 @@ int analyze_table(table_t *table, int32_t target, std::mt19937_64 &rng) {
   sample_t s;
   if (sample_table(table, target, rng, s) != 0) {
     return -1;
+  }
+  // A heap of no bytes and no row read is a new store, a new or
+  // truncated table's: the host plans it as PostgreSQL plans one
+  // truncated (§6.7). The bytes are RocksDB's estimate, which may
+  // read 0 mid-flush, so the sample decides.
+  if (st.heap_disk == 0 && st.heap_mem == 0 && s.rows_read == 0) {
+    return 0;
   }
   st.target = target;
   st.run_length = s.run_length;

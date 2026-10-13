@@ -994,7 +994,8 @@ struct sm_stats_t {
  * whatever its size, and record each column's statistics, each
  * partial or expression index's from the evaluator, and the sizes.
  * They commit and roll back with the transaction. A table whose
- * heap holds no bytes, as a new or truncated one, is not analyzed.
+ * heap holds no bytes and whose sample reads no row, as a new or
+ * truncated one, is not analyzed.
  */
 int sm_tbl_analyze(sm_tbl_t* tbl, int32_t target);
 

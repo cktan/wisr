@@ -1052,8 +1052,8 @@ int cat_get_stats(session_t* session, uint64_t oid,
  * than ten times that in rownos whatever its size, estimate each
  * live column's statistics, and record them with the table's sizes
  * and its indexes' by cat_put_stats. A table whose heap holds no
- * bytes, as a new or truncated one, is not analyzed, and keeps the
- * statistics it had. Another analyze of the table waits for this
+ * bytes and whose sample reads no row, as a new or truncated one,
+ * is not analyzed, and keeps the statistics it had. Another analyze of the table waits for this
  * one's transaction before it samples. A target below 1 is
  * SM_ERR_INVALID.
  */
