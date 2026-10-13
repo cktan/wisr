@@ -889,6 +889,25 @@ local_psql -c 'create table s9.v (id serial)' > /dev/null 2>&1
   tr '\n' ,)" = "NOTICE:  drop cascades to 2 other objects,DETAIL:  drop cascades to table s9.u,drop cascades to table s9.v,DROP SCHEMA,CREATE SCHEMA," ] ||
   fail "drop schema cascade, serial"
 
+# Verify that EXPLAIN VERBOSE prints function calls and a sequence's regclass
+# from the rows compiled in and from sm, with no pg_proc or pg_class.
+# 1. Function calls print by name.
+# 2. A serial's nextval() prints its sequence as a regclass, qualified only
+#    off the search path; so does a sequence cast to regclass.
+local_psql -c 'create table ev1 (id serial, v text)' -c 'create schema ev' \
+  -c 'create table ev.t (id serial)' > /dev/null 2>&1
+local_psql -c 'explain verbose select upper(v), length(v) from ev1' 2>&1 |
+  grep -q 'Output: upper(v), length(v)' || fail "explain verbose, functions"
+local_psql -c "explain verbose insert into ev1 (v) values ('q')" 2>&1 |
+  grep -q "Output: nextval('ev1_id_seq'::regclass), 'q'::text" ||
+  fail "explain verbose, a serial"
+local_psql -c 'explain verbose insert into ev.t default values' 2>&1 |
+  grep -q "Output: nextval('ev.t_id_seq'::regclass)" ||
+  fail "explain verbose, a serial off the search path"
+[ "$(local_psql -c "select 'ev1_id_seq'::regclass, 'ev.t_id_seq'::regclass" \
+  2>&1)" = "ev1_id_seq|ev.t_id_seq" ] || fail "a sequence's regclass"
+local_psql -c 'drop table ev1' -c 'drop schema ev cascade' > /dev/null 2>&1
+
 # Verify that an lc_* setting is checked without setlocale(), which would
 # change every session's locale: a valid name is taken, another refused.
 # 1. SET lc_numeric to C is taken and shown.

@@ -996,11 +996,22 @@ ObjectAddress smstore_create_sequence(CreateSeqStmt *stmt) {
  * there is none.
  */
 static char *sequence_name(Oid oid) {
-  uint64_t nspoid;
+  Oid nspoid;
+
+  return smstore_sequence_lookup(oid, &nspoid);
+}
+
+/*
+ * The name of the sequence oid, as this transaction sees it, and its
+ * namespace in *nspoid; NULL if there is none.
+ */
+char *smstore_sequence_lookup(Oid oid, Oid *nspoid) {
+  uint64_t nsp;
   std::string name;
 
-  switch (sm_cat_sequence_name(xact_session(), oid, &nspoid, name)) {
+  switch (sm_cat_sequence_name(xact_session(), oid, &nsp, name)) {
   case 0:
+    *nspoid = (Oid)nsp;
     return pstrdup(name.c_str());
   case 1:
     return NULL;

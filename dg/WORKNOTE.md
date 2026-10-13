@@ -3046,3 +3046,17 @@ found it changed (step 86).
   changed row not rechecked, and a share lock taken exclusive
   each fail it.
 
+## Step 107: a function's and a sequence's names are printed
+
+- **`generate_function_name()` reads `cat_proc()`**, the rows
+  compiled in, as `generate_operator_name()` does: any EXPLAIN
+  VERBOSE, or other deparse, that printed a function call failed
+  opening `pg_proc`.
+- **`regclassout()` names a sequence from sm**
+  (`smstore_sequence_lookup`), qualified only when the search
+  path does not find it: a sequence has no descriptor, so a
+  serial's `nextval('t_id_seq'::regclass)` failed to print.
+- The strings are made in the caller's context, as PostgreSQL's
+  are, and are copied by every caller; none is kept in a cache.
+- `server.sh`: EXPLAIN VERBOSE of functions and of serials, and
+  a sequence's regclass.

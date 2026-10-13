@@ -11772,8 +11772,7 @@ static char *generate_function_name(Oid funcid, int nargs, List *argnames,
                                     Oid *argtypes, bool has_variadic,
                                     bool *use_variadic_p, bool inGroupBy) {
   char *result;
-  HeapTuple proctup;
-  Form_pg_proc procform;
+  const cat_proc_t *procform;
   char *proname;
   bool use_variadic;
   char *nspname;
@@ -11786,11 +11785,11 @@ static char *generate_function_name(Oid funcid, int nargs, List *argnames,
   Oid *p_true_typeids;
   bool force_qualify = false;
 
-  proctup = SearchSysCache1(PROCOID, ObjectIdGetDatum(funcid));
-  if (!HeapTupleIsValid(proctup))
+  /* Every function is compiled in (catalog/cat_builtin.h). */
+  procform = cat_proc(funcid);
+  if (procform == NULL)
     elog(ERROR, "cache lookup failed for function %u", funcid);
-  procform = (Form_pg_proc)GETSTRUCT(proctup);
-  proname = NameStr(procform->proname);
+  proname = pstrdup(procform->proname);
 
   /*
    * Due to parser hacks to avoid needing to reserve CUBE, we need to force
@@ -11846,8 +11845,6 @@ static char *generate_function_name(Oid funcid, int nargs, List *argnames,
     nspname = get_namespace_name_or_temp(procform->pronamespace);
 
   result = quote_qualified_identifier(nspname, proname);
-
-  ReleaseSysCache(proctup);
 
   return result;
 }

@@ -22,6 +22,7 @@
 #include <ctype.h>
 
 #include "access/htup_details.h"
+#include "access/smstore.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_class.h"
 #include "catalog/cat_builtin.h"
@@ -840,14 +841,27 @@ Datum regclassout(PG_FUNCTION_ARGS) {
   Oid classid = PG_GETARG_OID(0);
   char *result;
   FormData_pg_class classform_data;
+  char *seqname = NULL;
+  Oid seqnspoid;
 
   if (classid == InvalidOid) {
     result = pstrdup("-");
     PG_RETURN_CSTRING(result);
   }
 
+  /*
+   * A sequence is sm's and has no descriptor (commands/sequence.c): named
+   * from sm, qualified unless the search path finds it.
+   */
+  if (classid >= FirstNormalObjectId && !IsBootstrapProcessingMode())
+    seqname = smstore_sequence_lookup(classid, &seqnspoid);
+  if (seqname != NULL)
+    result = quote_qualified_identifier(RelnameGetRelid(seqname) == classid
+                                            ? NULL
+                                            : get_namespace_name(seqnspoid),
+                                        seqname);
   /* From the descriptor: a user's relation has no pg_class row. */
-  if (RelationGetClassForm(classid, &classform_data)) {
+  else if (RelationGetClassForm(classid, &classform_data)) {
     Form_pg_class classform = &classform_data;
     char *classname = NameStr(classform->relname);
 
