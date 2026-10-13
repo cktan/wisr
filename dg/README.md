@@ -14,6 +14,7 @@ it. What runs so far, each a step of `WORKNOTE.md`:
   PRIMARY KEY and UNIQUE, and indexes on them;
 - temporary tables, with ON COMMIT;
 - sequences;
+- SELECT ... FOR UPDATE and FOR SHARE;
 - INSERT, UPDATE and DELETE, with RETURNING; TRUNCATE; COPY
   to and from a table, into an empty one as a bulk load from
   sorted files;
@@ -102,7 +103,7 @@ superuser's password. `WORKNOTE.md` step 9 lists what was cut
 to get here. What does not work yet fails with an error: a
 statement that still looks in a catalog table, and what a
 table in sm does not take, such as a column of another type,
-MERGE, INSERT ... ON CONFLICT and SELECT ... FOR UPDATE.
+MERGE, INSERT ... ON CONFLICT, and NOWAIT or SKIP LOCKED.
 `make test` starts a server and connects with `psql`, if there
 is one on the path.
 

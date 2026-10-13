@@ -3012,3 +3012,37 @@ to end.
   runs a COPY into it from another session: it does not wait,
   and its rows are there.
 
+## Step 106: SELECT ... FOR UPDATE and FOR SHARE
+
+Locking a row was refused: the table access method's `tuple_lock`
+read a row's newest version only after an UPDATE or a DELETE had
+found it changed (step 86).
+
+- **`tuple_lock` locks a row in sm** (`smstore_lock_row()`, over
+  `sm_tbl_lock`): exclusive for FOR UPDATE and FOR NO KEY UPDATE,
+  shared for FOR SHARE and FOR KEY SHARE, to the end of the
+  transaction. sm has the two modes and no key-only ones, so the
+  weaker of each pair is as strong as the stronger: an UPDATE
+  that leaves a key alone still waits for a FOR KEY SHARE.
+- **It waits as a write does**, for a transaction that holds the
+  row or has written it. A plain SELECT takes no lock and waits
+  for none.
+- **At READ COMMITTED the newest version is read** once the lock
+  is held, and the executor checks the row's WHERE again
+  (EvalPlanQual) if that version is another than the statement
+  saw: the two tuples are compared, so a row no one changed
+  costs no recheck. A row deleted meanwhile is not returned.
+- **At REPEATABLE READ and SERIALIZABLE** sm fails the lock, and
+  the transaction, if the row changed since the snapshot: 40001.
+- **The slot owns the row it is given**: the executor keeps it
+  past sm's next call.
+- **Refused**: NOWAIT and SKIP LOCKED. sm has no row lock that
+  does not wait yet.
+- `server.sh` checks the four strengths; a FOR UPDATE that waits
+  for an updater and returns its row, rechecks its WHERE, and
+  drops a row deleted meanwhile; an UPDATE waiting for a FOR
+  UPDATE and for a FOR SHARE; a SELECT and a FOR SHARE passing;
+  and the failure at REPEATABLE READ. A row left unlocked, a
+  changed row not rechecked, and a share lock taken exclusive
+  each fail it.
+

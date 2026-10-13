@@ -110,9 +110,10 @@ extern TM_Result smstore_update(Relation rel, ItemPointer tid,
                                 TM_FailureData *tmfd);
 extern TM_Result smstore_delete(Relation rel, ItemPointer tid, CommandId cid,
                                 TM_FailureData *tmfd);
-extern TM_Result smstore_lock_latest(Relation rel, ItemPointer tid,
-                                     TupleTableSlot *slot,
-                                     TM_FailureData *tmfd);
+extern TM_Result smstore_lock_row(Relation rel, ItemPointer tid,
+                                  TupleTableSlot *slot, LockTupleMode mode,
+                                  LockWaitPolicy wait_policy,
+                                  TM_FailureData *tmfd);
 
 /* A scan of a table in sm, in rowno order. */
 typedef struct smstore_scan_t smstore_scan_t;

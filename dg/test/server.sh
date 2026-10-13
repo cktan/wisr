@@ -1614,7 +1614,7 @@ grep -q 'does not exist, skipping' "$work/drop2.out" || fail "drop if exists"
 # 6. The same, the second's WHERE no longer true of the first's row: it
 #    updates none.  And a DELETE ... RETURNING gives the first's row.
 # 7. The same at REPEATABLE READ: the second fails, and can be retried.
-# 8. SELECT ... FOR UPDATE is refused.
+# 8. SELECT ... FOR UPDATE NOWAIT is refused.
 local_psql -c 'create table tw1 (a int4 primary key, b int4 not null)' \
   -c 'insert into tw1 values (1, 10), (2, 20), (3, 30), (4, 40)' \
   > "$work/write.out" 2>&1
@@ -1682,10 +1682,89 @@ after_update -v VERBOSITY=verbose -c 'begin isolation level repeatable read' \
   grep -q 'ERROR:  40001' || fail "update at repeatable read"
 [ "$(after_update -c 'delete from tw1 where a = 3 returning b')" = \
   "6131 DELETE 1 " ] || fail "delete after a concurrent update"
-local_psql -c 'select a from tw1 for update' 2>&1 |
-  grep -q 'locking a row of table "tw1" is not supported yet' ||
-  fail "for update refused"
+local_psql -c 'select a from tw1 for update nowait' 2>&1 |
+  grep -q 'NOWAIT and SKIP LOCKED are not supported yet on table "tw1"' ||
+  fail "for update nowait refused"
 local_psql -c 'drop table tw1' > /dev/null 2>&1
+
+# Verify that SELECT ... FOR UPDATE and FOR SHARE lock rows in sm, until the
+# transaction ends, and read the newest version of a row changed meanwhile.
+# 1. Each of the four strengths returns the rows a plain SELECT would, and a
+#    row the transaction itself updated is returned as updated.
+# 2. While one session holds row 3 updated, another's FOR UPDATE of it waits,
+#    and then returns the first's row; with a WHERE the first's row no longer
+#    meets, it returns none; of a row the first deleted, none.
+# 3. While one session holds row 2 FOR UPDATE, another's UPDATE of it waits,
+#    and a plain SELECT of it does not.
+# 4. While one holds row 2 FOR SHARE, another's FOR SHARE passes, and
+#    another's UPDATE waits.
+# 5. At REPEATABLE READ, FOR UPDATE of a row changed since the snapshot fails
+#    with a serialization failure.
+local_psql -c 'create table tk1 (a int4 primary key, b int4)' \
+  -c 'insert into tk1 values (1, 10), (2, 20), (3, 30), (4, 40)' \
+  > "$work/rowlock.out" 2>&1
+[ "$(local_psql -c 'select b from tk1 where a = 1 for update' \
+  -c 'select b from tk1 where a = 1 for no key update' \
+  -c 'select b from tk1 where a = 1 for share' \
+  -c 'select b from tk1 where a = 1 for key share' \
+  -c 'select count(*) from (select a from tk1 for update) s' 2>&1 |
+  tr '\n' ' ')" = "10 10 10 10 4 " ] || fail "for update"
+[ "$(local_psql -c 'begin' -c 'update tk1 set b = 11 where a = 1' \
+  -c 'select b from tk1 where a = 1 for update' -c 'rollback' 2>&1 |
+  grep -v '^[A-Z]' | tr '\n' ' ')" = "11 " ] || fail "for update of own row"
+
+# Run the statement given first in a session that then holds its transaction
+# open, run psql with the rest of the arguments in another, commit the first,
+# and print "waited" or "passed", for whether the other was still running a
+# second later, then what the other said, on one line.
+against() {
+  mkfifo "$work/rowlock.in"
+  local_psql < "$work/rowlock.in" > "$work/rowlock_held.out" 2>&1 &
+  local holder=$!
+  exec 4> "$work/rowlock.in"
+  echo "begin; $1; select 'held';" >&4
+  for _ in $(seq 50); do
+    grep -qx held "$work/rowlock_held.out" && break
+    sleep 0.1
+  done
+  local_psql "${@:2}" > "$work/rowlock_other.out" 2>&1 &
+  local other=$!
+  sleep 1
+  local state=passed
+  kill -0 $other 2> /dev/null && state=waited
+  echo "commit;" >&4
+  exec 4>&-
+  wait $holder
+  wait $other
+  rm "$work/rowlock.in"
+  echo "$state $(tr '\n' ' ' < "$work/rowlock_other.out")"
+}
+[ "$(against 'update tk1 set b = b + 100 where a = 3' \
+  -c 'select b from tk1 where a = 3 for update')" = "waited 130 " ] ||
+  fail "for update after a concurrent update"
+[ "$(against 'update tk1 set b = 0 where a = 3' \
+  -c 'select b from tk1 where a = 3 and b > 100 for update')" = "waited " ] ||
+  fail "for update rechecks its WHERE"
+[ "$(against 'delete from tk1 where a = 4' \
+  -c 'select b from tk1 where a = 4 for update')" = "waited " ] ||
+  fail "for update of a row deleted meanwhile"
+[ "$(against 'select b from tk1 where a = 2 for update' \
+  -c 'update tk1 set b = b + 1 where a = 2 returning b')" = \
+  "waited 21 UPDATE 1 " ] || fail "update waits for a for update"
+[ "$(against 'select b from tk1 where a = 2 for update' \
+  -c 'select b from tk1 where a = 2')" = "passed 21 " ] ||
+  fail "select passes a for update"
+[ "$(against 'select b from tk1 where a = 2 for share' \
+  -c 'select b from tk1 where a = 2 for share')" = "passed 21 " ] ||
+  fail "for share passes a for share"
+[ "$(against 'select b from tk1 where a = 2 for share' \
+  -c 'update tk1 set b = b + 1 where a = 2 returning b')" = \
+  "waited 22 UPDATE 1 " ] || fail "update waits for a for share"
+against 'update tk1 set b = b + 1 where a = 1' -v VERBOSITY=verbose \
+  -c 'begin isolation level repeatable read' -c 'select count(*) from tk1' \
+  -c 'select b from tk1 where a = 1 for update' |
+  grep -q 'ERROR:  40001' || fail "for update at repeatable read"
+local_psql -c 'drop table tk1' > /dev/null 2>&1
 
 # Verify that COPY reads a table in sm and writes one, its indexes with it.
 # 1. Make tc1, keyed by a, with an index on b, and COPY three rows into it

@@ -144,13 +144,17 @@ static TM_Result smtable_tuple_update(Relation rel, ItemPointer otid,
   return smstore_update(rel, otid, slot, cid, tmfd);
 }
 
-/* The newest version of the row at tid, which a write found changed. */
+/*
+ * Lock the row at tid and read its newest version: SELECT ... FOR UPDATE's
+ * and FOR SHARE's, and an UPDATE's or DELETE's when a write found the row
+ * changed.
+ */
 static TM_Result smtable_tuple_lock(Relation rel, ItemPointer tid,
                                     Snapshot snapshot, TupleTableSlot *slot,
                                     CommandId cid, LockTupleMode mode,
                                     LockWaitPolicy wait_policy, uint8 flags,
                                     TM_FailureData *tmfd) {
-  return smstore_lock_latest(rel, tid, slot, tmfd);
+  return smstore_lock_row(rel, tid, slot, mode, wait_policy, tmfd);
 }
 
 /* Every callback set, as GetTableAmRoutine() requires. */

@@ -2763,37 +2763,85 @@ TM_Result smstore_delete(Relation rel, ItemPointer tid, CommandId cid,
 }
 
 /*
- * The newest committed version of the row of rel at tid into slot, after
- * an update or a delete of it gave TM_Updated: the executor checks the row
- * again and writes again (sm_tbl_read_latest).  TM_Deleted if it is gone.
- * The row is kept, so the executor's next fetch of it is this version.
- * Locking a row that no write found changed is SELECT ... FOR UPDATE's,
- * which is not here yet.
+ * Lock the row of rel at tid, and put its newest version into slot.
+ *
+ * After an update or a delete of the row gave TM_Updated, sm holds its lock
+ * already, and this reads the version to check again (sm_tbl_read_latest);
+ * the row is kept, so the executor's next fetch of it is this version.
+ *
+ * Else it is SELECT ... FOR UPDATE's or FOR SHARE's: the row is locked in
+ * sm, shared or exclusive, to the end of the transaction, waiting for
+ * another transaction that holds it or has written it.  Above READ
+ * COMMITTED, sm fails the lock, and the transaction, if the row changed
+ * since the snapshot.  At READ COMMITTED the newest version is read, and
+ * tmfd says whether it is another than the statement saw, for the executor
+ * to check its WHERE again.  The slot owns what it holds, since the
+ * executor keeps it past sm's next call.  TM_Deleted if the row is gone.
  */
-TM_Result smstore_lock_latest(Relation rel, ItemPointer tid,
-                              TupleTableSlot *slot, TM_FailureData *tmfd) {
-  sm_tbl_t *tbl = table_to_write(rel);
+TM_Result smstore_lock_row(Relation rel, ItemPointer tid, TupleTableSlot *slot,
+                           LockTupleMode mode, LockWaitPolicy wait_policy,
+                           TM_FailureData *tmfd) {
+  Oid oid = RelationGetRelid(rel);
   uint64 rowno = smstore_tid_to_rowno(tid);
+  bool share = mode == LockTupleShare || mode == LockTupleKeyShare;
+  bool after_write =
+      kept_oid == oid && kept_rowno == rowno && kept_tuple == NULL;
+  sm_tbl_t *tbl =
+      share ? open_table(oid, SM_LOCKMODE_IS) : table_to_write(rel);
   const void *tuple;
   size_t len;
 
-  if (kept_oid != RelationGetRelid(rel) || kept_rowno != rowno)
-    ereport(ERROR,
-            (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-             errmsg("locking a row of table \"%s\" is not supported yet",
-                    RelationGetRelationName(rel))));
+  if (tbl == NULL)
+    ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
+                    errmsg("relation \"%s\" does not exist",
+                           RelationGetRelationName(rel))));
+  if (!after_write) {
+    if (wait_policy != LockWaitBlock)
+      ereport(ERROR,
+              (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+               errmsg("NOWAIT and SKIP LOCKED are not supported yet on "
+                      "table \"%s\"",
+                      RelationGetRelationName(rel))));
+    /* Held to the end of the transaction, as a write's is. */
+    if (waiting([&] {
+          return sm_tbl_lock(tbl, rowno,
+                             share ? SM_LOCKMODE_SH : SM_LOCKMODE_EX);
+        }) != 0)
+      sm_error("lock a row");
+  }
   ExecClearTuple(slot);
   switch (sm_tbl_read_latest(tbl, rowno, &tuple, &len)) {
   case 0:
     break;
   case 1:
-    kept_oid = InvalidOid;
+    if (after_write)
+      kept_oid = InvalidOid;
     return TM_Deleted;
   default:
     sm_error("read a row's newest version");
   }
-  keep_row(RelationGetRelid(rel), rowno, tuple, len);
-  tuple_into_slot(tbl, rowno, kept_tuple, kept_len, slot);
-  tmfd->traversed = true;
+  if (after_write) {
+    keep_row(oid, rowno, tuple, len);
+    tuple_into_slot(tbl, rowno, kept_tuple, kept_len, slot);
+    tmfd->traversed = true;
+    return TM_Ok;
+  }
+  /* sm's bytes last until its next call: the read below is one. */
+  std::string latest((const char *)tuple, len);
+
+  switch (sm_tbl_read(tbl, rowno, &tuple, &len)) {
+  case 0:
+    tmfd->traversed = len != latest.size() ||
+                      memcmp(tuple, latest.data(), len) != 0;
+    break;
+  case 1:
+    tmfd->traversed = true;
+    break;
+  default:
+    sm_error("read a row");
+  }
+  tuple_into_slot(tbl, rowno, latest.data(), latest.size(), slot);
+  /* Copied out of latest, which ends with this call. */
+  ExecMaterializeSlot(slot);
   return TM_Ok;
 }
