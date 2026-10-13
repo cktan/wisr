@@ -302,6 +302,46 @@ bool check_locale(int category, const char *locale, char **canonname) {
   if (canonname)
     *canonname = NULL; /* in case of failure */
 
+#ifndef WIN32
+  /*
+   * With no canonical name asked for, a locale_t of the name says whether
+   * it is valid: setlocale() would change every thread's locale, and a
+   * backend is a thread.
+   */
+  if (canonname == NULL) {
+    int mask;
+    locale_t loc;
+
+    switch (category) {
+    case LC_COLLATE:
+      mask = LC_COLLATE_MASK;
+      break;
+    case LC_CTYPE:
+      mask = LC_CTYPE_MASK;
+      break;
+    case LC_MONETARY:
+      mask = LC_MONETARY_MASK;
+      break;
+    case LC_NUMERIC:
+      mask = LC_NUMERIC_MASK;
+      break;
+    case LC_TIME:
+      mask = LC_TIME_MASK;
+      break;
+    case LC_MESSAGES:
+      mask = LC_MESSAGES_MASK;
+      break;
+    default:
+      return false;
+    }
+    loc = newlocale(mask, locale, (locale_t)0);
+    if (loc == (locale_t)0)
+      return false;
+    freelocale(loc);
+    return true;
+  }
+#endif
+
   save = setlocale(category, NULL);
   if (!save)
     return false; /* won't happen, we hope */

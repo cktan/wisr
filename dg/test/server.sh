@@ -889,6 +889,16 @@ local_psql -c 'create table s9.v (id serial)' > /dev/null 2>&1
   tr '\n' ,)" = "NOTICE:  drop cascades to 2 other objects,DETAIL:  drop cascades to table s9.u,drop cascades to table s9.v,DROP SCHEMA,CREATE SCHEMA," ] ||
   fail "drop schema cascade, serial"
 
+# Verify that an lc_* setting is checked without setlocale(), which would
+# change every session's locale: a valid name is taken, another refused.
+# 1. SET lc_numeric to C is taken and shown.
+# 2. SET lc_time to a locale that does not exist is refused.
+[ "$(local_psql -c "set lc_numeric = 'C'" -c 'show lc_numeric' 2>&1 |
+  tr '\n' ,)" = "SET,C," ] || fail "lc_numeric set to C"
+local_psql -c "set lc_time = 'xx_YY'" 2>&1 |
+  grep -q 'invalid value for parameter "lc_time": "xx_YY"' ||
+  fail "lc_time set to no locale"
+
 # Verify that an identity column draws from a sequence it owns for good,
 # and that ALWAYS refuses a value given unless overridden.
 # 1. id1's ALWAYS and id2's BY DEFAULT (START 10, INCREMENT 5) number

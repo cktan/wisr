@@ -230,6 +230,13 @@ int parse_tool_main(int argc, char **argv) {
   s.analyze = argc > 2 && strcmp(argv[2], "--analyze") == 0;
   s.plan = argc > 2 && strcmp(argv[2], "--plan") == 0;
   s.run = argc > 2 && strcmp(argv[2], "--run") == 0;
+  /*
+   * The process's locale is C, as main() sets a server's: before any
+   * thread, since setlocale() changes every thread's (postinit.c).
+   */
+  if (pg_perm_setlocale(LC_COLLATE, "C") == NULL ||
+      pg_perm_setlocale(LC_CTYPE, "C") == NULL)
+    elog(FATAL, "could not set the C locale");
   /* The settings come first: a session's user is one, and each thread
    * is given this thread's. */
   InitializeGUCOptions();

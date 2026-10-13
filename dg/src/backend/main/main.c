@@ -142,14 +142,12 @@ int main(int argc, char *argv[]) {
   set_pglocale_pgservice(argv[0], PG_TEXTDOMAIN("postgres"));
 
   /*
-   * In the postmaster, absorb the environment values for LC_COLLATE and
-   * LC_CTYPE.  Individual backends will change these later to settings
-   * taken from pg_database, but the postmaster cannot do that.  If we leave
-   * these set to "C" then message localization might not work well in the
-   * postmaster.
+   * LC_COLLATE and LC_CTYPE are C, every database's (postinit.c), set here
+   * for the process: a backend is a thread, and setlocale() and setenv()
+   * change every thread's, so a backend sets neither.
    */
-  init_locale("LC_COLLATE", LC_COLLATE, "");
-  init_locale("LC_CTYPE", LC_CTYPE, "");
+  init_locale("LC_COLLATE", LC_COLLATE, "C");
+  init_locale("LC_CTYPE", LC_CTYPE, "C");
 
   /*
    * LC_MESSAGES will get set later during GUC option processing, but we set

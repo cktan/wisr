@@ -186,10 +186,17 @@ static void CheckMyDatabase(const char *name, bool am_superuser,
   SetConfigOption("client_encoding", GetDatabaseEncodingName(), PGC_BACKEND,
                   PGC_S_DYNAMIC_DEFAULT);
 
-  /* assign locale variables */
-  if (pg_perm_setlocale(LC_COLLATE, "C") == NULL ||
-      pg_perm_setlocale(LC_CTYPE, "C") == NULL)
-    ereport(FATAL, (errmsg("could not set the C locale")));
+  /*
+   * The process's LC_COLLATE and LC_CTYPE are C, set by main() before any
+   * backend: a backend is a thread, and setlocale() and setenv() would
+   * change every thread's.  Only the message encoding is the backend's,
+   * as pg_perm_setlocale() would set it.
+   */
+#ifdef ENABLE_NLS
+  SetMessageEncoding(pg_bind_textdomain_codeset(textdomain(NULL)));
+#else
+  SetMessageEncoding(GetDatabaseEncoding());
+#endif
   database_ctype_is_c = true;
 
   /* The default collation, C as the locale is, for comparing text. */
