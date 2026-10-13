@@ -1778,6 +1778,9 @@ local_psql -c 'drop table tk1' > /dev/null 2>&1
 # 6. The binary format written from tc1 loads into another table, and the
 #    two agree.
 # 7. A temporary table takes a COPY, and 5000 rows load and are all counted.
+# 8. The file COPY TO wrote is its owner's alone, and the server's umask,
+#    every thread's, is as it was.
+umask_before=$(grep '^Umask:' "/proc/$server/status")
 printf '1\t10\tone\n2\t20\t\\N\n3\t30\tthree\n' > "$work/copy.tsv"
 printf '4\t40\tfour\n1\t99\tdup\n' > "$work/copy_dup.tsv"
 printf '7\t\\N\tseven\n' > "$work/copy_null.tsv"
@@ -1820,6 +1823,9 @@ seq 1 5000 | awk '{ print $1 "\t" $1 * 2 "\trow" $1 }' > "$work/copy_big.tsv"
   -c 'select count(*), max(b) from tc3' -c 'select c from tc3 where a = 4321' \
   2>&1 | tr '\n' ' ')" = "CREATE TABLE COPY 5000 5000|10000 row4321 " ] ||
   fail "copy into a temporary table"
+[ "$(stat -c %a "$work/copy.bin")" = 600 ] &&
+  [ "$(grep '^Umask:' "/proc/$server/status")" = "$umask_before" ] ||
+  fail "copy to a file leaves the umask"
 local_psql -c 'drop table tc1' -c 'drop table tc2' > /dev/null 2>&1
 
 # Verify that COPY into an empty table is a bulk load, from sorted files, and

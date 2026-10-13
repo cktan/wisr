@@ -800,7 +800,6 @@ CopyToState BeginCopyTo(ParseState *pstate, Relation rel, RawStmt *raw_query,
                         errmsg("could not execute command \"%s\": %m",
                                cstate->filename)));
     } else {
-      mode_t oumask; /* Pre-existing umask value */
       struct stat st;
 
       /*
@@ -811,12 +810,12 @@ CopyToState BeginCopyTo(ParseState *pstate, Relation rel, RawStmt *raw_query,
         ereport(ERROR, (errcode(ERRCODE_INVALID_NAME),
                         errmsg("relative path not allowed for COPY to file")));
 
-      oumask = umask(S_IWGRP | S_IWOTH);
-      PG_TRY();
-      { cstate->copy_file = AllocateFile(cstate->filename, PG_BINARY_W); }
-      PG_FINALLY();
-      { umask(oumask); }
-      PG_END_TRY();
+      /*
+       * The file takes the server's umask, readable by its owner alone:
+       * PostgreSQL loosened the umask around the open, but the umask is
+       * the process's, every backend thread's, and so is left alone.
+       */
+      cstate->copy_file = AllocateFile(cstate->filename, PG_BINARY_W);
       if (cstate->copy_file == NULL) {
         /* copy errno because ereport subfunctions might change it */
         int save_errno = errno;
