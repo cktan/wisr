@@ -2015,6 +2015,49 @@ upsert_against "insert into tu1 values (30, 'thirty', 1)" commit \
   fail "the row an upsert inserted after its conflict went"
 local_psql -c 'drop table tu1' > /dev/null 2>&1
 
+# Verify that every statement that writes a table in sm runs above READ
+# COMMITTED as it does at it, where no other session is in the way: sm reads
+# and locks by other rules there, and a path taken only there is easily
+# missed.
+# 1. At REPEATABLE READ, and again at SERIALIZABLE, in one transaction over
+#    a table of three rows: UPDATE of one row and of all, DELETE, INSERT, ON
+#    CONFLICT DO UPDATE and DO NOTHING, FOR UPDATE, FOR SHARE NOWAIT and
+#    SKIP LOCKED, COPY into the table and into an empty one, a temporary
+#    table, TRUNCATE, and a ROLLBACK TO a savepoint.
+# 2. Each statement answers as expected, and the table is as expected after
+#    the commit.
+printf '10\tten\t1\n11\televen\t1\n' > "$work/level.tsv"
+for level in 'repeatable read' 'serializable'; do
+  local_psql -c 'drop table if exists tv1' -c 'drop table if exists tv2' \
+    -c 'create table tv1 (id int4 primary key, name text unique, n int4)' \
+    -c "insert into tv1 values (1, 'one', 1), (2, 'two', 2), (3, 'three', 3)" \
+    -c 'create table tv2 (id int4 primary key, name text, n int4)' \
+    > "$work/level.out" 2>&1
+  [ "$(local_psql -c "begin isolation level $level" \
+    -c 'update tv1 set n = n + 10 where id = 1 returning n' \
+    -c 'update tv1 set n = n + 1' \
+    -c 'delete from tv1 where id = 3 returning id' \
+    -c "insert into tv1 values (4, 'four', 4) returning id" \
+    -c "insert into tv1 values (4, 'x', 9) on conflict (id)
+      do update set n = tv1.n + excluded.n returning n" \
+    -c "insert into tv1 values (1, 'x', 9) on conflict (id) do nothing" \
+    -c 'select id from tv1 where id = 2 for update' \
+    -c 'select id from tv1 where id = 2 for share nowait' \
+    -c 'select count(*) from (select id from tv1 for update skip locked) s' \
+    -c "copy tv1 from '$work/level.tsv'" -c "copy tv2 from '$work/level.tsv'" \
+    -c 'select count(*) from tv2' \
+    -c 'create temp table tv3 (x int4)' -c 'insert into tv3 values (1), (2)' \
+    -c 'update tv3 set x = x + 1' -c 'delete from tv3 where x = 2' \
+    -c 'select x from tv3' -c 'truncate tv2' -c 'select count(*) from tv2' \
+    -c 'savepoint s' -c 'update tv1 set n = 0' -c 'rollback to s' \
+    -c 'select sum(n) from tv1' -c 'commit' \
+    -c 'select id, n from tv1 order by id' 2>&1 | grep -v '^[A-Z]' |
+    tr '\n' ' ')" = \
+    "11 3 4 13 2 2 3 2 3 0 30 1|12 2|3 4|13 10|1 11|1 " ] ||
+    fail "the writes at $level"
+done
+local_psql -c 'drop table tv1' -c 'drop table tv2' > /dev/null 2>&1
+
 # Verify that COPY reads a table in sm and writes one, its indexes with it.
 # 1. Make tc1, keyed by a, with an index on b, and COPY three rows into it
 #    from a file, one with a null: they are there, and both indexes find them.
