@@ -37,6 +37,7 @@
  */
 #include "postgres.h"
 
+#include "access/smstore.h"
 #include "access/sysattr.h"
 #include "access/table.h"
 #include "access/tableam.h"
@@ -2272,6 +2273,13 @@ char *ExecBuildSlotValueDescription(Oid reloid, TupleTableSlot *slot,
 LockTupleMode ExecUpdateLockMode(EState *estate, ResultRelInfo *relinfo) {
   Bitmapset *keyCols;
   Bitmapset *updatedCols;
+
+  /*
+   * A row in sm is locked to write in one mode, whatever columns change:
+   * sm has no lock for the key alone (access/smstore.h).
+   */
+  if (RelationIsSm(relinfo->ri_RelationDesc))
+    return LockTupleExclusive;
 
   /*
    * Compute lock mode to use.  If columns that are part of the key have not

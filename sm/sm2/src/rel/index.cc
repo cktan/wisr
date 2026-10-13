@@ -247,6 +247,70 @@ int idx_insert(index_t *index, std::span<const datum_t> key,
   return sm1::insert(index->session, index->storeid, k, value);
 }
 
+/*
+ * The sm1 key of a unique index's entry for key, in k: 0, or 1 if
+ * the key has a NULL column, which makes it no other row's -- its
+ * entry carries its rowno, and two such never meet -- or -1.
+ */
+static int unique_key(index_t *index, std::span<const datum_t> key,
+                      std::span<const bool> key_isnull, std::string &k) {
+  if (!index->unique) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       "index: only a unique index has one row a key");
+  }
+  for (bool n : key_isnull) {
+    if (n) {
+      return 1;
+    }
+  }
+  bool cut;
+  return entry_key(index, key, key_isnull, 0, k, cut);
+}
+
+/* The rowno an entry's value begins with. */
+static int entry_rowno(const index_t *index, std::string_view value,
+                       uint64_t &rowno) {
+  datum_t d;
+  bool isnull;
+  if (tup_decode(index->value_desc, value, 0, d, isnull) != 0) {
+    return -1;
+  }
+  rowno = static_cast<uint64_t>(datum_to_int64(d));
+  return 0;
+}
+
+/* The row that has a unique key, as the snapshot shows; see sm2.h. */
+int idx_find(index_t *index, std::span<const datum_t> key,
+             std::span<const bool> key_isnull, uint64_t &rowno) {
+  std::string k;
+  int rc = unique_key(index, key, key_isnull, k);
+  if (rc != 0) {
+    return rc;
+  }
+  std::string_view value;
+  rc = sm1::read(index->session, index->storeid, k, value);
+  return rc != 0 ? rc : entry_rowno(index, value, rowno);
+}
+
+/* The row that has a unique key now, under a lock; see sm2.h. */
+int idx_find_latest(index_t *index, std::span<const datum_t> key,
+                    std::span<const bool> key_isnull, uint64_t &rowno) {
+  std::string k;
+  int rc = unique_key(index, key, key_isnull, k);
+  if (rc != 0) {
+    return rc;
+  }
+  // sm1 reads a newest version only under a lock that keeps it
+  // the newest. Shared is enough: nothing is to be written.
+  if (sm1::lock(index->session, sm1::LOCKTYPE_ROW, index->storeid, k,
+                sm1::SM_LOCKMODE_SH) != 0) {
+    return -1;
+  }
+  std::string_view value;
+  rc = sm1::read_latest(index->session, index->storeid, k, value);
+  return rc != 0 ? rc : entry_rowno(index, value, rowno);
+}
+
 /* Put the entry for the row at rowno into a load; see sm2.h. */
 int idx_load(index_t *index, sm1::loader_t *loader, size_t stream,
              std::span<const datum_t> key, std::span<const bool> key_isnull,

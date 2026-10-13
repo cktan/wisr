@@ -822,6 +822,29 @@ int sm_tbl_insert(sm_tbl_t* tbl, const sm_datum_t* values,
                   const bool* isnull, size_t n, uint64_t* rowno);
 
 /*
+ * Insert a row unless a row already has its key in one of the
+ * narbiters unique indexes arbiters names by oid, or in any unique
+ * index of the table if narbiters is 0: INSERT ... ON CONFLICT.
+ * Returns 0 with the new row's id in *rowno; 1, with nothing
+ * written, with the id of the row that has the key; or -1.
+ *
+ * It finds a conflict before the row is written, and leaves
+ * nothing locked by it: it waits for a transaction that has
+ * inserted the key and not yet ended, and takes no lock on the
+ * key but the row's own entry, once inserted. Above READ
+ * COMMITTED a key taken since the snapshot fails the call and the
+ * transaction. A duplicate in a unique index that is not an
+ * arbiter fails with SM_ERR_DUPKEY, as sm_tbl_insert's does.
+ *
+ * The row found is not locked: for DO UPDATE the caller locks it
+ * (sm_tbl_lock), and if it is gone by then, calls this again.
+ */
+int sm_tbl_insert_arbiter(sm_tbl_t* tbl, const sm_datum_t* values,
+                          const bool* isnull, size_t n,
+                          const uint64_t* arbiters, size_t narbiters,
+                          uint64_t* rowno);
+
+/*
  * A BULK LOAD (BULKLOAD.md section 5, section 13): many rows into
  * one table, for COPY, a restore, CREATE TABLE AS.
  *

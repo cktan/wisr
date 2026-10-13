@@ -884,6 +884,41 @@ int tbl_insert(table_t* table, std::span<const sm2::datum_t> values,
                std::span<const bool> isnull, uint64_t& rowno);
 
 /*
+ * Insert a row as tbl_insert does, unless a row already has its
+ * key in one of the unique indexes arbiters names by oid, or in
+ * any unique index of the table if arbiters is empty: SQL's
+ * INSERT ... ON CONFLICT. Returns 0 with the new row's rowno; 1,
+ * with nothing written, with the rowno of the row that has the
+ * key; or -1.
+ *
+ * It finds out before the row is written. It looks each
+ * arbiter's key up first (sm2::idx_find), and a row the snapshot
+ * shows there is the conflict, with nothing locked and nothing
+ * written; at READ COMMITTED, where the snapshot may show a row
+ * deleted since, the row is first confirmed against the newest
+ * version. Finding none, it puts the row's entry into each arbiter
+ * before the row itself: sm1's insert waits for another
+ * transaction that has put the key in and not yet ended, and says
+ * at once if a row is there, when only those entries are written;
+ * they are then taken back, and that row, read under a lock that
+ * is given back at once, is the conflict. So in neither case is
+ * anything of the key left held: the lock on a key is the entry of
+ * the row inserted, as in any insert.
+ *
+ * Above READ COMMITTED a key taken since the snapshot fails the
+ * call, and the transaction, with SM_ERR_CONFLICT. A duplicate in
+ * a unique index that is not an arbiter fails as tbl_insert's
+ * does, with SM_ERR_DUPKEY.
+ *
+ * The row found is not locked, and may be changed or deleted by
+ * another before the caller locks it (tbl_lock): a caller that
+ * then finds it gone calls this again.
+ */
+int tbl_insert_arbiter(table_t* table, std::span<const sm2::datum_t> values,
+                       std::span<const bool> isnull,
+                       std::span<const uint64_t> arbiters, uint64_t& rowno);
+
+/*
  * Replace the row at rowno. An index is left alone if the row's
  * key columns compare equal before and after, by their types' cmp,
  * and its INCLUDE columns hold the same bytes; otherwise its old

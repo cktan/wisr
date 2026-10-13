@@ -3083,3 +3083,58 @@ Step 106 refused both: sm had no row lock that did not wait.
   written one. Waiting all the same, and failing where it should
   skip, each fail it.
 
+## Step 109: INSERT ... ON CONFLICT
+
+It was refused. PostgreSQL does it by a speculative insertion: it
+inserts the row, finds a conflict from the index it then writes,
+and takes the row back. A row in sm cannot be taken back, short
+of a savepoint a row.
+
+- **sm finds the conflict before the row is written**
+  (`sm_tbl_insert_arbiter`, `../sm/sm3/include/sm3.h`). It looks
+  the key up in each arbiter index; finding none, it puts the
+  row's entry into the arbiters first, where sm waits for another
+  session's insert of the key and says at once if a row is there,
+  and only then writes the row.
+- **A conflict leaves nothing locked.** The first version locked
+  the key to look, and kept the lock: a session waiting for the
+  row then stood between the row's holder and a DELETE of it, and
+  the two deadlocked. Now a lock taken to read the newest version
+  is given back at once.
+- **At READ COMMITTED a row the snapshot shows is confirmed**
+  against the newest version before it is called a conflict. The
+  version before that went on for ever finding a row another
+  session had deleted since.
+- **`ExecInsert()` has a branch for a table in sm**: on a conflict
+  DO NOTHING returns, and DO UPDATE is PostgreSQL's
+  `ExecOnConflictUpdate()`, which locks the row through
+  `tuple_lock` and updates it through `tuple_update`; if the row
+  is gone by then, the insert is tried again.
+- **`ExecUpdateLockMode()` answers for a table in sm** without
+  asking which columns an index has: sm has one lock to write a
+  row. It read each index's `pg_index` row, which an index in sm
+  has none of, and crashed.
+- **`ExecCheckTupleVisible()` passes a row in sm**: above READ
+  COMMITTED sm fails the insert, or the lock, on a key or a row
+  changed since the snapshot.
+- **A bug of step 106 is fixed**: `SELECT ... FOR UPDATE` above
+  READ COMMITTED failed on a row no one had changed. sm reads a
+  row's newest version only at READ COMMITTED; above it
+  `smstore_lock_row()` now reads the snapshot's, which the lock
+  has just shown to be the newest.
+- **Unlike PostgreSQL**: two rows of one statement with the same
+  key -- `VALUES (7, ...), (7, ...) ... DO UPDATE` -- insert the
+  first and pass over the second, where PostgreSQL raises "cannot
+  affect row a second time". sm tells a statement that it has
+  changed a row already only when it writes it.
+- **Found, not fixed here**: `ON CONFLICT ON CONSTRAINT name`
+  opens `pg_constraint`.
+- **Still refused**: MERGE.
+- `server.sh` checks DO NOTHING and DO UPDATE, by a column list
+  and by none, EXCLUDED, a WHERE, RETURNING, several rows; an
+  upsert waiting for an insert that commits and for one that
+  rolls back, for an updater, and for a delete; a row deleted
+  once it was found; and both isolation levels above READ
+  COMMITTED. Running PostgreSQL's visibility check, and not
+  trying again, each fail it.
+

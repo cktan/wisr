@@ -1369,6 +1369,55 @@ void smstore_insert(Relation rel, TupleTableSlot *slot) {
   smstore_rowno_to_tid(rowno, &slot->tts_tid);
 }
 
+/*
+ * Insert the slot's row into rel, a table in sm, unless a row already has
+ * its key in one of the unique indexes arbiters lists by oid, or in any
+ * unique index of rel if the list is empty: INSERT ... ON CONFLICT.  True if
+ * one has, with that row's tid in *conflict and nothing written; false with
+ * the row inserted, its tid in the slot.  This waits for another session's
+ * insert of the key that is not yet committed, and above READ COMMITTED
+ * fails on a key taken since the snapshot.  The row found is not locked,
+ * nor its key.
+ */
+bool smstore_insert_arbiter(Relation rel, TupleTableSlot *slot, List *arbiters,
+                            ItemPointer conflict) {
+  sm_tbl_t *tbl = open_table(RelationGetRelid(rel), SM_LOCKMODE_IX);
+  std::vector<uint64_t> oids;
+  uint64_t rowno;
+  ListCell *l;
+  int rc;
+
+  if (tbl == NULL)
+    ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
+                    errmsg("relation \"%s\" does not exist",
+                           RelationGetRelationName(rel))));
+  foreach (l, arbiters)
+    oids.push_back(lfirst_oid(l));
+  slot_getallattrs(slot);
+  const sm_datum_t *row = row_to_sm(slot->tts_tupleDescriptor,
+                                    slot->tts_values, slot->tts_isnull,
+                                    slot->tts_nvalid);
+  rc = waiting([&] {
+    return sm_tbl_insert_arbiter(tbl, row, slot->tts_isnull, slot->tts_nvalid,
+                                 oids.data(), oids.size(), &rowno);
+  });
+  if (rc < 0) {
+    if (sm_errnum() == SM_ERR_DUPKEY)
+      ereport(ERROR,
+              (errcode(ERRCODE_UNIQUE_VIOLATION),
+               errmsg("duplicate key value violates a unique index on \"%s\"",
+                      RelationGetRelationName(rel)),
+               errdetail("%s", sm_errmsg())));
+    sm_error("insert a row");
+  }
+  if (rc == 1) {
+    smstore_rowno_to_tid(rowno, conflict);
+    return true;
+  }
+  smstore_rowno_to_tid(rowno, &slot->tts_tid);
+  return false;
+}
+
 /* Raise the error of a bulk load's call that failed, on rel. */
 static void load_error(Relation rel, const char *what) {
   if (sm_errnum() == SM_ERR_DUPKEY)
@@ -2785,9 +2834,10 @@ TM_Result smstore_delete(Relation rel, ItemPointer tid, CommandId cid,
  * another transaction that holds it or has written it -- or, with NOWAIT,
  * failing, and with SKIP LOCKED answering TM_WouldBlock.  Above READ
  * COMMITTED, sm fails the lock, and the transaction, if the row changed
- * since the snapshot.  At READ COMMITTED the newest version is read, and
- * tmfd says whether it is another than the statement saw, for the executor
- * to check its WHERE again.  The slot owns what it holds, since the
+ * since the snapshot, and what is read after is the snapshot's row.  At
+ * READ COMMITTED the newest version is read, and tmfd says whether it is
+ * another than the statement saw, for the executor to check its WHERE
+ * again.  The slot owns what it holds, since the
  * executor keeps it past sm's next call.  TM_Deleted if the row is gone.
  */
 TM_Result smstore_lock_row(Relation rel, ItemPointer tid, TupleTableSlot *slot,
@@ -2831,6 +2881,26 @@ TM_Result smstore_lock_row(Relation rel, ItemPointer tid, TupleTableSlot *slot,
     }
   }
   ExecClearTuple(slot);
+  /*
+   * Above READ COMMITTED the lock has just failed on any version newer than
+   * the snapshot, so the snapshot's is the newest; and sm reads a newest
+   * version, as such, only at READ COMMITTED.
+   */
+  if (IsolationUsesXactSnapshot()) {
+    switch (sm_tbl_read(tbl, rowno, &tuple, &len)) {
+    case 0:
+      break;
+    case 1:
+      return TM_Deleted;
+    default:
+      sm_error("read a row");
+    }
+    tmfd->traversed = false;
+    tuple_into_slot(tbl, rowno, tuple, len, slot);
+    /* sm's bytes last until its next call. */
+    ExecMaterializeSlot(slot);
+    return TM_Ok;
+  }
   switch (sm_tbl_read_latest(tbl, rowno, &tuple, &len)) {
   case 0:
     break;

@@ -235,10 +235,10 @@ rollback;
 SQL
 [ "$(local_psql -c 'select a from t1 where a > 3' 2>&1)" = "" ] ||
   fail "rollback"
-local_psql -c 'insert into t1 values (1, 1, 1) on conflict do nothing' \
-  >> "$work/rows.out" 2>&1
-grep -q 'do not write to table "t1" yet' "$work/rows.out" ||
-  fail "on conflict refused"
+local_psql -c 'merge into t1 using (select 1 as x) s on t1.a = s.x
+  when not matched then insert values (1, 1, 1)' >> "$work/rows.out" 2>&1
+grep -q 'MERGE does not write to table "t1" yet' "$work/rows.out" ||
+  fail "merge refused"
 mkfifo "$work/iso.in"
 local_psql < "$work/iso.in" > "$work/iso.out" 2>&1 &
 iso=$!
@@ -1714,7 +1714,8 @@ local_psql -c 'drop table tw1' > /dev/null 2>&1
 # 4. While one holds row 2 FOR SHARE, another's FOR SHARE passes, and
 #    another's UPDATE waits.
 # 5. At REPEATABLE READ, FOR UPDATE of a row changed since the snapshot fails
-#    with a serialization failure.
+#    with a serialization failure; of a row unchanged, it and FOR SHARE lock
+#    the row and return it, as at SERIALIZABLE.
 # 6. NOWAIT: a row that is free is locked; one another session holds FOR
 #    UPDATE, or has updated, fails at once with lock_not_available; a FOR
 #    SHARE NOWAIT passes a FOR SHARE holder.
@@ -1786,6 +1787,13 @@ against 'update tk1 set b = b + 1 where a = 1' -v VERBOSITY=verbose \
   -c 'begin isolation level repeatable read' -c 'select count(*) from tk1' \
   -c 'select b from tk1 where a = 1 for update' |
   grep -q 'ERROR:  40001' || fail "for update at repeatable read"
+[ "$(local_psql -c 'begin isolation level repeatable read' \
+  -c 'select a from tk1 where a = 2 for update' \
+  -c 'select a from tk1 where a = 2 for share' -c 'commit' \
+  -c 'begin isolation level serializable' \
+  -c 'select a from tk1 where a = 2 for update' -c 'commit' 2>&1 |
+  grep -v '^[A-Z]' | tr '\n' ' ')" = "2 2 2 " ] ||
+  fail "for update of an unchanged row above read committed"
 [ "$(local_psql -c 'select b from tk1 where a = 1 for update nowait' 2>&1 |
   grep -c .)" = 1 ] || fail "for update nowait of a free row"
 against 'select b from tk1 where a = 2 for update' -v VERBOSITY=verbose \
@@ -1807,6 +1815,116 @@ against 'update tk1 set b = b + 1 where a = 2' -v VERBOSITY=verbose \
   -c 'select a from tk1 order by a for share skip locked')" = \
   "passed 1 2 " ] || fail "skip locked leaves out a written row"
 local_psql -c 'drop table tk1' > /dev/null 2>&1
+
+# Verify that INSERT ... ON CONFLICT finds the row that has a key before it
+# writes, in sm, and does nothing or updates that row.
+# 1. tu1 has a key, id, and a unique name. DO NOTHING on a taken id inserts
+#    nothing, and on a free one inserts; with no column named, a taken name
+#    is a conflict too.
+# 2. DO UPDATE on a taken id updates that row from EXCLUDED, and RETURNING
+#    gives the row as updated; on a free id it inserts; by name, it updates
+#    the row that has the name; with a WHERE the row does not meet, it does
+#    nothing.
+# 3. With id the arbiter, a row whose id is free and whose name is taken
+#    fails as an insert does, with a unique violation.
+# 4. Several rows in one statement: the free are inserted and the taken
+#    updated.
+# 5. While a session has inserted an id and not committed, another's upsert
+#    of it waits: after a commit it updates that row, and after a rollback
+#    it inserts its own.
+# 6. An upsert of a row another session is updating waits, and updates the
+#    row as that session left it; of a row another deleted, it inserts.
+# 7. At REPEATABLE READ, an id taken since the snapshot fails the upsert
+#    with a serialization failure, and a row there before it is updated.
+# 8. An upsert finds its row, and waits to lock it behind a session that has
+#    updated it; that session then deletes the row and commits: the upsert
+#    looks again, finds none, and inserts.
+local_psql -c 'create table tu1 (id int4 primary key, name text unique, n int4)' \
+  -c "insert into tu1 values (1, 'one', 1), (2, 'two', 1)" \
+  > "$work/upsert.out" 2>&1
+[ "$(local_psql -c "insert into tu1 values (1, 'uno', 9) on conflict (id) do nothing" \
+  -c "insert into tu1 values (3, 'three', 1) on conflict (id) do nothing" \
+  -c "insert into tu1 values (8, 'one', 9) on conflict do nothing" \
+  -c 'select count(*), sum(n) from tu1' 2>&1 | tr '\n' ' ')" = \
+  "INSERT 0 0 INSERT 0 1 INSERT 0 0 3|3 " ] || fail "on conflict do nothing"
+[ "$(local_psql -c "insert into tu1 values (1, 'x', 5) on conflict (id)
+    do update set n = tu1.n + excluded.n returning id, name, n" \
+  -c "insert into tu1 values (4, 'four', 1) on conflict (id)
+    do update set n = 0 returning id, name, n" \
+  -c "insert into tu1 values (9, 'two', 7) on conflict (name)
+    do update set n = excluded.n returning id, name, n" \
+  -c "insert into tu1 values (3, 'z', 50) on conflict (id)
+    do update set n = excluded.n where tu1.n > 10 returning n" 2>&1 |
+  tr '\n' ' ')" = "1|one|6 INSERT 0 1 4|four|1 INSERT 0 1 2|two|7 INSERT 0 1 INSERT 0 0 " ] ||
+  fail "on conflict do update"
+local_psql -c "insert into tu1 values (9, 'one', 7) on conflict (id)
+    do update set n = 0" 2>&1 |
+  grep -q 'duplicate key value violates a unique index on "tu1"' ||
+  fail "on conflict with another unique index"
+[ "$(local_psql -c "insert into tu1 values (5, 'five', 1), (1, 'q', 100),
+    (6, 'six', 1) on conflict (id) do update set n = excluded.n" \
+  -c 'select id, n from tu1 order by id' 2>&1 | tr '\n' ' ')" = \
+  "INSERT 0 3 1|100 2|7 3|1 4|1 5|1 6|1 " ] || fail "on conflict over several rows"
+
+# Run the statement given first in a session, end its transaction with the
+# word given second, run psql with the rest of the arguments in another
+# session meanwhile, and print "waited" or "passed" and what the other said.
+upsert_against() {
+  mkfifo "$work/upsert.in"
+  local_psql < "$work/upsert.in" > "$work/upsert_held.out" 2>&1 &
+  local holder=$!
+  exec 4> "$work/upsert.in"
+  echo "begin; $1; select 'held';" >&4
+  for _ in $(seq 50); do
+    grep -qx held "$work/upsert_held.out" && break
+    sleep 0.1
+  done
+  local_psql "${@:3}" > "$work/upsert_other.out" 2>&1 &
+  local other=$!
+  sleep 1
+  local state=passed
+  kill -0 $other 2> /dev/null && state=waited
+  echo "$2;" >&4
+  exec 4>&-
+  wait $holder
+  wait $other
+  rm "$work/upsert.in"
+  echo "$state $(tr '\n' ' ' < "$work/upsert_other.out")"
+}
+[ "$(upsert_against "insert into tu1 values (20, 'twenty', 1)" commit \
+  -c "insert into tu1 values (20, 'vingt', 5) on conflict (id)
+    do update set n = tu1.n + excluded.n returning name, n")" = \
+  "waited twenty|6 INSERT 0 1 " ] || fail "upsert after a committed insert"
+[ "$(upsert_against "insert into tu1 values (21, 'x21', 1)" rollback \
+  -c "insert into tu1 values (21, 'y21', 5) on conflict (id)
+    do update set n = 0 returning name, n")" = \
+  "waited y21|5 INSERT 0 1 " ] || fail "upsert after a rolled back insert"
+[ "$(upsert_against 'update tu1 set n = n + 1000 where id = 1' commit \
+  -c "insert into tu1 values (1, 'z', 1) on conflict (id)
+    do update set n = tu1.n + 1 returning n")" = \
+  "waited 1101 INSERT 0 1 " ] || fail "upsert of a row updated meanwhile"
+[ "$(upsert_against 'delete from tu1 where id = 2' commit \
+  -c "insert into tu1 values (2, 'deux', 7) on conflict (id)
+    do update set n = 0 returning name, n")" = \
+  "waited deux|7 INSERT 0 1 " ] || fail "upsert of a row deleted meanwhile"
+upsert_against "insert into tu1 values (30, 'thirty', 1)" commit \
+  -v VERBOSITY=verbose -c 'begin isolation level repeatable read' \
+  -c 'select count(*) from tu1' \
+  -c "insert into tu1 values (30, 'trente', 1) on conflict do nothing" |
+  grep -q 'ERROR:  40001' || fail "upsert at repeatable read"
+[ "$(local_psql -c 'begin isolation level repeatable read' \
+  -c "insert into tu1 values (3, 'z', 4) on conflict (id)
+    do update set n = tu1.n + excluded.n returning n" -c 'commit' 2>&1 |
+  tr '\n' ' ')" = "BEGIN 5 INSERT 0 1 COMMIT " ] ||
+  fail "upsert of an old row at repeatable read"
+[ "$(upsert_against 'update tu1 set n = n + 1 where id = 3' \
+  'delete from tu1 where id = 3; commit' \
+  -c "insert into tu1 values (3, 'trois', 7) on conflict (id)
+    do update set n = 0 returning name, n")" = \
+  "waited trois|7 INSERT 0 1 " ] || fail "upsert of a row deleted once found"
+[ "$(local_psql -c 'select name, n from tu1 where id = 3')" = "trois|7" ] ||
+  fail "the row an upsert inserted after its conflict went"
+local_psql -c 'drop table tu1' > /dev/null 2>&1
 
 # Verify that COPY reads a table in sm and writes one, its indexes with it.
 # 1. Make tc1, keyed by a, with an index on b, and COPY three rows into it

@@ -543,6 +543,148 @@ int tbl_insert(table_t *table, std::span<const sm2::datum_t> values,
   return 0;
 }
 
+/*
+ * The row that has entry e's key in unique index i of t now, past
+ * the snapshot, in found: 0, 1 if none has, or -1. sm1 reads a
+ * newest version only under a lock on the key, and the lock is
+ * given back at once, by a savepoint: the caller is left holding
+ * nothing of the key, or it would stand between the row's owner
+ * and the row. READ COMMITTED alone has such a read.
+ */
+int find_now(sm3::table_t *t, size_t i, const entry_t &e, uint64_t &found) {
+  int mark = sm3::savepoint(t->session);
+  if (mark < 0) {
+    return -1;
+  }
+  int rc = sm2::idx_find_latest(t->indexes[i], e.d(), e.null(), found);
+  // Releases the lock; nothing was written since the mark.
+  if (rc < 0 || sm3::rollback(t->session, mark) != 0) {
+    return -1;
+  }
+  return rc;
+}
+
+/* Insert the row unless an arbiter index has its key; see sm3.h. */
+int tbl_insert_arbiter(table_t *table, std::span<const sm2::datum_t> values,
+                       std::span<const bool> isnull,
+                       std::span<const uint64_t> arbiters, uint64_t &rowno) {
+  if (need_writable(table) != 0 || need_not_null(table, isnull) != 0) {
+    return -1;
+  }
+  const table_def_t &def = *table->def;
+  // Each arbiter must be a unique index of the table.
+  for (uint64_t oid : arbiters) {
+    bool found = false;
+    for (const index_def_t &x : def.indexes) {
+      found = found || (x.oid == oid && x.unique);
+    }
+    if (!found) {
+      return sm1::seterr(sm1::SM_ERR_INVALID, "insert: " + std::to_string(oid) +
+                                                  " is not a unique index of " +
+                                                  def.name);
+    }
+  }
+  image_t row(vals_t{values, isnull});
+  // The arbiters, each with the row's entry in it, if it has one.
+  std::vector<size_t> arb;
+  std::vector<entry_t> entry(table->indexes.size());
+  for (size_t i = 0; i < table->indexes.size(); i++) {
+    const index_def_t &x = def.indexes[i];
+    bool arbiter = x.unique && (arbiters.empty() ||
+                                std::find(arbiters.begin(), arbiters.end(),
+                                          x.oid) != arbiters.end());
+    if (!arbiter || !maintained(table, i)) {
+      continue;
+    }
+    if (fetch_for(table, x, row) != 0 ||
+        make_entry(table, i, row.row(), entry[i]) != 0) {
+      return -1;
+    }
+    // A row a partial index does not take has no key in it.
+    if (entry[i].belongs) {
+      arb.push_back(i);
+    }
+  }
+  const bool rc_level =
+      table->session->level == sm1::xctlevel_t::read_committed;
+look:
+  // Look first, locking nothing: a row with the key that the
+  // snapshot shows is the conflict. At READ COMMITTED the snapshot
+  // may be behind, and show a row deleted since, which a caller
+  // that came back for it would be shown for ever: there the row
+  // is confirmed against the newest version.
+  for (size_t i : arb) {
+    uint64_t found = 0;
+    int rc =
+        sm2::idx_find(table->indexes[i], entry[i].d(), entry[i].null(), found);
+    if (rc == 0 && rc_level) {
+      rc = find_now(table, i, entry[i], found);
+    }
+    if (rc < 0) {
+      return -1;
+    }
+    if (rc == 0) {
+      rowno = found;
+      return 1;
+    }
+  }
+  // None seen, but one may have been put there since the
+  // snapshot, or be on its way. So the arbiters' entries go in
+  // before the row: sm1's insert waits for a transaction that has
+  // not ended, and says at once if a row is there, when nothing
+  // but these entries has been written.
+  uint64_t r = 0;
+  if (sm2::rel_reserve(table->rel, r) != 0) {
+    return -1;
+  }
+  for (size_t n = 0; n < arb.size(); n++) {
+    size_t i = arb[n];
+    if (add_entry(table, i, entry[i], row.row(), r) == 0) {
+      continue;
+    }
+    if (sm1::errnum() != sm1::SM_ERR_DUPKEY) {
+      return -1;
+    }
+    // The key is a row's that the snapshot did not show: take
+    // back the entries put in so far, and say which row has it.
+    for (size_t m = 0; m < n; m++) {
+      if (remove_entry(table, arb[m], entry[arb[m]], r) != 0) {
+        return -1;
+      }
+    }
+    uint64_t found = 0;
+    int rc = find_now(table, i, entry[i], found);
+    if (rc < 0) {
+      return -1;
+    }
+    if (rc == 1) {
+      // Gone again already, deleted and committed: look once more.
+      goto look;
+    }
+    rowno = found;
+    return 1;
+  }
+  // The row, then its entries in the indexes that are no arbiter:
+  // a duplicate in one of those is an error, as in tbl_insert.
+  if (sm2::rel_insert_at(table->rel, r, values, isnull) != 0) {
+    return -1;
+  }
+  for (size_t i = 0; i < table->indexes.size(); i++) {
+    if (!maintained(table, i) ||
+        std::find(arb.begin(), arb.end(), i) != arb.end()) {
+      continue;
+    }
+    entry_t e;
+    if (fetch_for(table, def.indexes[i], row) != 0 ||
+        make_entry(table, i, row.row(), e) != 0 ||
+        (e.belongs && add_entry(table, i, e, row.row(), r) != 0)) {
+      return -1;
+    }
+  }
+  rowno = r;
+  return 0;
+}
+
 /* Replace the row, then fix each index it changed; see sm3.h. */
 int tbl_update(table_t *table, uint64_t rowno,
                std::span<const sm2::datum_t> values,

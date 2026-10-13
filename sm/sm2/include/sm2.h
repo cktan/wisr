@@ -532,6 +532,20 @@ int rel_insert(rel_t* rel, std::span<const datum_t> datums,
                std::span<const bool> isnull, uint64_t& rowno);
 
 /*
+ * Draw a rowno from the rel's sequence, for a row rel_insert_at
+ * is to insert: a caller that must write something of the row
+ * before the row itself -- the entry of a unique index, to learn
+ * of a duplicate first -- needs its rowno early. A rowno drawn and
+ * never used is a gap, as a sequence leaves.
+ */
+int rel_reserve(rel_t* rel, uint64_t& rowno);
+
+/* Insert a row as rel_insert does, under a rowno rel_reserve drew. */
+int rel_insert_at(rel_t* rel, uint64_t rowno,
+                  std::span<const datum_t> datums,
+                  std::span<const bool> isnull);
+
+/*
  * Read the row at rowno as the transaction sees it: 0 with tuple
  * set, 1 if there is none, -1 on error, as sm1::read. The tuple views
  * sm1 memory and is valid only until the next call on this rel's
@@ -742,6 +756,32 @@ int idx_insert(index_t* index, std::span<const datum_t> key,
                std::span<const bool> key_isnull, uint64_t rowno,
                std::span<const datum_t> include,
                std::span<const bool> include_isnull);
+
+/*
+ * The row that has key in a unique index, as the transaction's
+ * snapshot shows: 0 with its rowno, 1 if none has, or -1. It locks
+ * nothing and waits for no one. So a row put under the key since
+ * the snapshot, committed or not, is not found: a caller that must
+ * know inserts the entry (idx_insert), which sm1 checks against
+ * the newest version and waits for. A key with a NULL column is
+ * no other row's, and is 1 at once.
+ */
+int idx_find(index_t* index, std::span<const datum_t> key,
+             std::span<const bool> key_isnull, uint64_t& rowno);
+
+/*
+ * The row that has key in a unique index now, past the snapshot:
+ * its newest committed version, at READ COMMITTED, the one level
+ * with such a read (sm1::read_latest). sm1 gives it only under a
+ * lock on the key, so this takes one, shared, waiting as sm1::lock
+ * does. The lock is held as any is, to the end of the transaction
+ * or a rollback to a savepoint set before it; a caller that only
+ * wanted to look sets one first and rolls back, so that it does
+ * not go on holding a key it has no row under. Returns as
+ * idx_find.
+ */
+int idx_find_latest(index_t* index, std::span<const datum_t> key,
+                    std::span<const bool> key_isnull, uint64_t& rowno);
 
 /*
  * Put the entry for the row at rowno into a bulk load of the

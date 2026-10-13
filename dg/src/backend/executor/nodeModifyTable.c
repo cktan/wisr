@@ -343,6 +343,14 @@ static void ExecCheckTupleVisible(EState *estate, Relation rel,
   if (!IsolationUsesXactSnapshot())
     return;
 
+  /*
+   * sm made the check when it locked the key, and the row: above READ
+   * COMMITTED either fails, with the transaction, on one changed since the
+   * snapshot (access/smstore.h).
+   */
+  if (RelationIsSm(rel))
+    return;
+
   if (!table_tuple_satisfies_snapshot(rel, slot, estate->es_snapshot)) {
     Datum xminDatum;
     TransactionId xmin;
@@ -1015,7 +1023,32 @@ static TupleTableSlot *ExecInsert(ModifyTableContext *context,
           resultRelInfo->ri_TrigDesc->trig_insert_before_row)))
       ExecPartitionCheck(resultRelInfo, slot, estate, true);
 
-    if (onconflict != ONCONFLICT_NONE && resultRelInfo->ri_NumIndices > 0) {
+    if (onconflict != ONCONFLICT_NONE && RelationIsSm(resultRelationDesc)) {
+      ItemPointerData conflictTid;
+
+      /*
+       * sm looks for a row with the key before it writes, under a lock on
+       * the key, so there is no speculative insertion to take back.  The
+       * row it finds is not locked: DO UPDATE locks it, and comes back
+       * here if another session deleted it first.
+       */
+      for (;;) {
+        TupleTableSlot *returning = NULL;
+
+        CHECK_FOR_INTERRUPTS();
+        if (!smstore_insert_arbiter(resultRelationDesc, slot,
+                                    resultRelInfo->ri_onConflictArbiterIndexes,
+                                    &conflictTid))
+          break;
+        if (onconflict == ONCONFLICT_NOTHING ||
+            ExecOnConflictUpdate(context, resultRelInfo, &conflictTid, slot,
+                                 canSetTag, &returning)) {
+          InstrCountTuples2(&mtstate->ps, 1);
+          return returning;
+        }
+      }
+    } else if (onconflict != ONCONFLICT_NONE &&
+               resultRelInfo->ri_NumIndices > 0) {
       /* Perform a speculative insertion. */
       uint32 specToken;
       ItemPointerData conflictTid;
@@ -4464,14 +4497,12 @@ ModifyTableState *ExecInitModifyTable(ModifyTable *node, EState *estate,
     CheckValidResultRel(resultRelInfo, operation, node->onConflictAction,
                         mergeActions);
 
-    /* sm's tables take no MERGE and no INSERT ... ON CONFLICT yet. */
-    if (RelationIsSm(resultRelInfo->ri_RelationDesc) &&
-        (operation == CMD_MERGE || node->onConflictAction != ONCONFLICT_NONE))
+    /* sm's tables take no MERGE yet. */
+    if (RelationIsSm(resultRelInfo->ri_RelationDesc) && operation == CMD_MERGE)
       ereport(
           ERROR,
           (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-           errmsg("MERGE and INSERT ... ON CONFLICT do not write to table "
-                  "\"%s\" yet",
+           errmsg("MERGE does not write to table \"%s\" yet",
                   RelationGetRelationName(resultRelInfo->ri_RelationDesc))));
 
     resultRelInfo++;

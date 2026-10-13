@@ -1216,6 +1216,23 @@ int sm_tbl_insert(sm_tbl_t *tbl, const sm_datum_t *values, const bool *isnull,
   });
 }
 
+/* Insert a row unless an arbiter index has its key. */
+int sm_tbl_insert_arbiter(sm_tbl_t *tbl, const sm_datum_t *values,
+                          const bool *isnull, size_t n,
+                          const uint64_t *arbiters, size_t narbiters,
+                          uint64_t *rowno) {
+  return guard(tbl ? tbl->session : nullptr, [&] {
+    if (check_row("sm_tbl_insert_arbiter", tbl, values, isnull, n) != 0) {
+      return -1;
+    }
+    if (!rowno || (narbiters && !arbiters)) {
+      return null_arg("sm_tbl_insert_arbiter", !rowno ? "rowno" : "arbiters");
+    }
+    return sm3::tbl_insert_arbiter(tbl->table, {values, n}, {isnull, n},
+                                   {arbiters, narbiters}, *rowno);
+  });
+}
+
 /* Begin a bulk load into the table. */
 int sm_tbl_load_begin(sm_tbl_t *tbl) {
   return guard(tbl ? tbl->session : nullptr, [&] {

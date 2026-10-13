@@ -44,11 +44,16 @@ std::string row_key(uint16_t relid, uint64_t rowno) {
   return key;
 }
 
-/* Write tuple, already checked, under a new rowno from rel's sequence. */
-int write_new(sm2::rel_t *rel, std::string_view tuple, uint64_t &rowno) {
-  // Draw the rowno from the table's sequence.
-  uint64_t r;
-  if (sm1::nextseq(rel->session, rel->rowno_seq, r) != 0) {
+/*
+ * Write tuple, already checked, under a new rowno from rel's
+ * sequence; or under reserved, a rowno rel_reserve drew, if that
+ * is not 0.
+ */
+int write_new(sm2::rel_t *rel, std::string_view tuple, uint64_t &rowno,
+              uint64_t reserved = 0) {
+  // Draw the rowno from the table's sequence, unless it was.
+  uint64_t r = reserved;
+  if (r == 0 && sm1::nextseq(rel->session, rel->rowno_seq, r) != 0) {
     return -1;
   }
   // Write the row.
@@ -243,15 +248,20 @@ int settle_old(sm2::rel_t *rel, std::string_view old,
   return hold ? 0 : release(rel);
 }
 
-/* Insert the row datums and isnull make, and what it moves out. */
+/*
+ * Insert the row datums and isnull make, and what it moves out,
+ * under a new rowno, or under reserved if that is not 0.
+ */
 int insert_row(sm2::rel_t *rel, std::span<const sm2::datum_t> datums,
-               std::span<const bool> isnull, uint64_t &rowno) {
+               std::span<const bool> isnull, uint64_t &rowno,
+               uint64_t reserved = 0) {
   ready_t row;
   if (make_ready(rel, datums, isnull, false, row) != 0) {
     return -1;
   }
   uint64_t r;
-  if (write_new(rel, row.tuple, r) != 0 || write_moved(rel, row) != 0) {
+  if (write_new(rel, row.tuple, r, reserved) != 0 ||
+      write_moved(rel, row) != 0) {
     return -1;
   }
   rowno = r;
@@ -367,6 +377,22 @@ int rel_insert(rel_t *rel, std::string_view tuple, uint64_t &rowno) {
 int rel_insert(rel_t *rel, std::span<const datum_t> datums,
                std::span<const bool> isnull, uint64_t &rowno) {
   return insert_row(rel, datums, isnull, rowno);
+}
+
+/* Draw a rowno for a row to be inserted later; see sm2.h. */
+int rel_reserve(rel_t *rel, uint64_t &rowno) {
+  // From the table's sequence, as rel_insert draws one.
+  return sm1::nextseq(rel->session, rel->rowno_seq, rowno);
+}
+
+/* Insert a row under a rowno rel_reserve drew; see sm2.h. */
+int rel_insert_at(rel_t *rel, uint64_t rowno, std::span<const datum_t> datums,
+                  std::span<const bool> isnull) {
+  if (rowno == 0) {
+    return sm1::seterr(sm1::SM_ERR_INVALID, "rel: no rowno reserved");
+  }
+  uint64_t r;
+  return insert_row(rel, datums, isnull, r, rowno);
 }
 
 /* Read the row at rowno: 0, 1 if absent, or -1. */
