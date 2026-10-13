@@ -142,6 +142,7 @@ typedef struct SysScanDescData {
   struct IndexScanDescData *iscan; /* only valid in index-scan case */
   struct SnapshotData *snapshot;   /* snapshot to unregister at end of scan */
   struct TupleTableSlot *slot;
+  struct HeapTupleData *copy; /* the row last read, if copied out of slot */
 } SysScanDescData;
 
 #endif /* RELSCAN_H */

@@ -7,8 +7,10 @@
  * oid and columns, compiled in (cat_relation()), and nothing stored: its
  * table access method makes its rows when a scan begins, from the rows
  * compiled in and from sm's catalog as this transaction sees it, into a
- * tuple store the scan reads.  Every write is refused.  The server's own
- * lookups do not come this way; a client's query on pg_namespace does.
+ * tuple store the scan reads.  Every write is refused.  A client's query
+ * on pg_namespace comes this way; of the server's own lookups, only a
+ * syscache miss in a catalog of compiled-in rows alone does
+ * (catrel_is_builtin()).
  *
  * IDENTIFICATION
  *	  src/backend/catalog/catrel.c
@@ -38,6 +40,7 @@
 #include "catalog/pg_sequence_d.h"
 #include "catalog/pg_tablespace_d.h"
 #include "catalog/pg_inherits_d.h"
+#include "catalog/pg_language_d.h"
 #include "catalog/pg_policy_d.h"
 #include "catalog/pg_publication_rel_d.h"
 #include "catalog/pg_rewrite_d.h"
@@ -359,30 +362,54 @@ static void gen_pg_attrdef(Tuplestorestate *ts, TupleDesc desc, Oid only) {
 }
 
 /*
+ * Whether value, null if isnull, passes the scan key key, as a heap scan
+ * tests one (HeapKeyTest()): a null passes none.
+ */
+static bool key_matches(ScanKey key, Datum value, bool isnull) {
+  if (isnull || (key->sk_flags & SK_ISNULL))
+    return false;
+  return DatumGetBool(FunctionCall2Coll(&key->sk_func, key->sk_collation, value,
+                                        key->sk_argument));
+}
+
+/*
  * The rows of a catalog compiled in as text (cat_relation_t's text): each
  * value read by its column type's input function, as COPY reads one.  A
  * pg_node_tree, which no input function reads, is taken as its text.
  */
 static void gen_text_rows(const cat_relation_t *cat, Tuplestorestate *ts,
-                          TupleDesc desc) {
+                          TupleDesc desc, int nkeys, ScanKey key) {
   AttInMetadata *meta = TupleDescGetAttInMetadata(desc);
   Datum *values = (Datum *)palloc(cat->natts * sizeof(Datum));
   bool *nulls = (bool *)palloc(cat->natts * sizeof(bool));
 
+  /* One column of a row: its text read by the column type's input. */
+  auto read = [&](const char *const *row, int a) {
+    nulls[a] = row[a] == NULL;
+    if (nulls[a])
+      values[a] = (Datum)0;
+    else if (TupleDescAttr(desc, a)->atttypid == PG_NODE_TREEOID)
+      values[a] = CStringGetTextDatum(row[a]);
+    else
+      values[a] = InputFunctionCall(&meta->attinfuncs[a], (char *)row[a],
+                                    meta->attioparams[a], meta->atttypmods[a]);
+  };
+
   for (int i = 0; i < cat->nrows; i++) {
     const char *const *row = &cat->text[(size_t)i * cat->natts];
+    bool match = true;
 
-    for (int a = 0; a < cat->natts; a++) {
-      nulls[a] = row[a] == NULL;
-      if (nulls[a])
-        values[a] = (Datum)0;
-      else if (TupleDescAttr(desc, a)->atttypid == PG_NODE_TREEOID)
-        values[a] = CStringGetTextDatum(row[a]);
-      else
-        values[a] =
-            InputFunctionCall(&meta->attinfuncs[a], (char *)row[a],
-                              meta->attioparams[a], meta->atttypmods[a]);
+    /* The key columns first: a row a key passes over is read no further. */
+    for (int k = 0; k < nkeys && match; k++) {
+      int a = key[k].sk_attno - 1;
+
+      read(row, a);
+      match = key_matches(&key[k], values[a], nulls[a]);
     }
+    if (!match)
+      continue;
+    for (int a = 0; a < cat->natts; a++)
+      read(row, a);
     tuplestore_putvalues(ts, desc, values, nulls);
   }
 }
@@ -591,10 +618,11 @@ static void generate(Relation rel, Tuplestorestate *ts, int nkeys,
     break;
   case TypeRelationId:
   case CollationRelationId:
+  case LanguageRelationId:
   case ProcedureRelationId:
   case OperatorRelationId:
   case CastRelationId:
-    gen_text_rows(cat_relation(RelationGetRelid(rel)), ts, desc);
+    gen_text_rows(cat_relation(RelationGetRelid(rel)), ts, desc, nkeys, key);
     break;
   /*
    * What digres has none of: read, and empty.  sm keeps no constraint but
@@ -633,6 +661,8 @@ static const TupleTableSlotOps *catrel_slot_callbacks(Relation rel) {
 typedef struct catrel_scan_t {
   TableScanDescData base; /* what tableam.h reads */
   Tuplestorestate *rows;
+  int nkeys; /* the scan keys a row read must pass */
+  ScanKey keys;
 } catrel_scan_t;
 
 /*
@@ -651,6 +681,9 @@ static TableScanDesc catrel_scan_begin(Relation rel, Snapshot snapshot,
   /* Held in memory: a catalog's rows are few. */
   scan->rows = tuplestore_begin_heap(true, false, work_mem);
   generate(rel, scan->rows, nkeys, key);
+  scan->nkeys = nkeys;
+  scan->keys = (ScanKey)palloc(Max(nkeys, 1) * sizeof(ScanKeyData));
+  memcpy(scan->keys, key, nkeys * sizeof(ScanKeyData));
   return &scan->base;
 }
 
@@ -666,18 +699,35 @@ static void catrel_scan_end(TableScanDesc sscan) {
   catrel_scan_t *scan = (catrel_scan_t *)sscan;
 
   tuplestore_end(scan->rows);
+  pfree(scan->keys);
   if (sscan->rs_flags & SO_TEMP_SNAPSHOT)
     UnregisterSnapshot(sscan->rs_snapshot);
   pfree(scan);
 }
 
-/* The scan's next row into slot; false at the end. */
+/*
+ * The scan's next row that passes its keys into slot; false at the end.
+ * A generator may have made rows the keys pass over, so each is tested.
+ */
 static bool catrel_scan_getnextslot(TableScanDesc sscan,
                                     ScanDirection direction,
                                     TupleTableSlot *slot) {
-  return tuplestore_gettupleslot(((catrel_scan_t *)sscan)->rows,
-                                 ScanDirectionIsForward(direction), false,
-                                 slot);
+  catrel_scan_t *scan = (catrel_scan_t *)sscan;
+
+  while (tuplestore_gettupleslot(scan->rows, ScanDirectionIsForward(direction),
+                                 false, slot)) {
+    bool match = true;
+
+    for (int k = 0; k < scan->nkeys && match; k++) {
+      bool isnull;
+      Datum value = slot_getattr(slot, scan->keys[k].sk_attno, &isnull);
+
+      match = key_matches(&scan->keys[k], value, isnull);
+    }
+    if (match)
+      return true;
+  }
+  return false;
 }
 
 /*
@@ -740,6 +790,26 @@ static const TableAmRoutine catrel_methods = [] {
 
 /* The table access method of a catalog relation. */
 const TableAmRoutine *catrel_routine(void) { return &catrel_methods; }
+
+/*
+ * Whether the catalog relation relid has the rows compiled in alone, none
+ * of sm's: a syscache miss in it is looked up in its rows (systable_
+ * beginscan()), as they are fixed, and no DDL makes a cached one stale.
+ */
+bool catrel_is_builtin(Oid relid) {
+  switch (relid) {
+  case AccessMethodRelationId:
+  case CastRelationId:
+  case CollationRelationId:
+  case LanguageRelationId:
+  case OperatorRelationId:
+  case ProcedureRelationId:
+  case TypeRelationId:
+    return true;
+  default:
+    return false;
+  }
+}
 
 /*
  * The quals of a sequential scan of rel, scanrelid in its plan, that can

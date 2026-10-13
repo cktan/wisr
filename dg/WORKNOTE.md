@@ -3499,3 +3499,31 @@ statement refused.
   which digres has not, so psql shows none.
 - `pg_get_functiondef()` still reads the syscache, and fails.
 - `server.sh`: `\df` of two, `\do`, `\dC`, `\dT` and `\dx`.
+
+## Step 124: a syscache miss reads the compiled-in rows
+
+`SYSCATALOG.md` §2. A syscache miss scanned the catalog's index,
+which digres has not: `pg_get_functiondef()` failed opening
+relation 2690, `pg_proc`'s.
+
+- **A catalog of compiled-in rows alone is scanned without its
+  index**: `pg_am`, `pg_cast`, `pg_collation`, `pg_language`,
+  `pg_operator`, `pg_proc` and `pg_type`
+  (`catrel_is_builtin()`, `systable_beginscan()`). Its rows are
+  fixed: a cached one is never stale, and none needs an
+  invalidation.
+- **A catalog relation's scan applies its keys.** A text row's
+  key columns are read first, and a row a key passes over is
+  read no further, so a lookup by oid or name in `pg_proc`
+  reads its three thousand rows' keys alone. Every other row a
+  generator makes is tested as it is read.
+- `systable_getnext()` frees the copy it makes of a catalog
+  relation's row, a minimal tuple, when it reads the next.
+- **`pg_language` is a catalog relation**, its rows compiled in:
+  `c` and `internal`, as digres has no `sql`.
+- A catalog with sm's rows in it is not looked up this way; a
+  syscache lookup in one still fails.
+- `server.sh`: `\sf abs(integer)` prints its definition, a
+  function no oid names gives null, and `pg_language` lists two.
+  The `pg_attribute` narrowing check now finds the scan gives
+  dd1.t's five rows, with none left for the filter to remove.

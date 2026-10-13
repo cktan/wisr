@@ -112,11 +112,19 @@ and after).
   are made for that relation, its table and its table's
   indexes. The quals are still checked. A join clause is not:
   the planner hands a sequential scan none.
-- **The server's own lookups do not come this way.** The
-  parser, planner and executor go on reading the compiled-in
-  rows and sm directly (`lsyscache.c`, `cat_builtin.h`). A
-  catalog relation is for a query a client sends, and no code
-  in the server scans one.
+- **The server's own lookups come this way only for a
+  syscache miss in a catalog of compiled-in rows alone**:
+  `pg_am`, `pg_cast`, `pg_collation`, `pg_language`,
+  `pg_operator`, `pg_proc` and `pg_type`
+  (`catrel_is_builtin()`). `systable_beginscan()` opens no index
+  on one, and the scan makes only the rows its keys pass. Those
+  rows are fixed, so a cached one is never stale, and they are
+  PostgreSQL's own, with no fixed value standing in for one
+  digres has not. A catalog with sm's rows in it (`pg_class`,
+  `pg_attribute`, `pg_index`, `pg_namespace`) is not looked up
+  this way: the parser, planner and executor go on reading sm
+  directly, and a syscache lookup in one fails, until its caller
+  is converted.
 - **A column with nothing true to say** has a fixed value,
   listed by catalog in §4: the owner is the superuser, an ACL
   is null, a tablespace is 0. `reltuples` and `relpages` are
@@ -243,6 +251,7 @@ runs the psql command and reads its output.
 | 5. `pg_database`, `pg_roles`, `\l`, `\du` | done, `WORKNOTE.md` steps 115 and 118; psql 16's `\l` asks for a column PostgreSQL 17 renamed |
 | 6. `\d name` | done: a table and an index, `WORKNOTE.md` step 115; a sequence, step 119; `\d+`, step 120; sizes, step 121 |
 | 7. The other compiled-in catalogs | `pg_proc`, `pg_operator`, `pg_cast`, `pg_extension`, `pg_description`: `\df`, `\do`, `\dC`, `\dx`, step 123 |
+| 8. A syscache miss in a compiled-in catalog | `pg_language` too; `pg_get_functiondef()`, `\sf`, step 124 |
 
 ---
 

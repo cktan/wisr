@@ -19,6 +19,9 @@
 /* The table access method of a catalog relation (catalog/catrel.c). */
 extern const TableAmRoutine *catrel_routine(void);
 
+/* Whether a catalog relation has the rows compiled in alone, none of sm's. */
+extern bool catrel_is_builtin(Oid relid);
+
 /* A qual a scan of a catalog relation is narrowed by: column = value. */
 typedef struct catrel_key_t {
   AttrNumber attno;

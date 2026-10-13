@@ -1603,12 +1603,15 @@ cmp -s "$work/dd.out" "$work/dd.expected" || fail "\\d of a table and an index"
 [ "$(local_psql -c '\du')" = \
   "$me|Superuser, Create role, Create DB, Replication, Bypass RLS" ] ||
   fail "\\du"
-# Verify that a scan of pg_attribute for one table makes that table's rows
-# and its indexes' alone (catalog/catrel.c): of dd1.t's five columns and
-# its indexes' three, the filter removes the three.
+# Verify that a scan of pg_attribute for one table gives that table's rows
+# alone (catalog/catrel.c): its key passes dd1.t's five columns and none of
+# its indexes', so the filter has nothing left to remove.
 local_psql -c "explain (analyze, costs off, timing off, summary off)
                  select * from pg_attribute where attrelid = 'dd1.t'::regclass" \
-  | grep -qx '  Rows Removed by Filter: 3' || fail "pg_attribute narrowed"
+  > "$work/narrow.out"
+grep -qx 'Seq Scan on pg_attribute (actual rows=5.00 loops=1)' \
+  "$work/narrow.out" && ! grep -q 'Rows Removed' "$work/narrow.out" ||
+  fail "pg_attribute narrowed"
 
 # Verify that pg_database is a catalog relation a query reads, a row a
 # database of sm's. psql 16's \l asks for daticulocale, which PostgreSQL 17
@@ -1738,6 +1741,28 @@ inet|text|text|in assignment
 pg_catalog|int2vector|
 OUT
 cmp -s "$work/df.out" "$work/df.expected" || fail "\\df, \\do, \\dC, \\dT and \\dx"
+
+# Verify that a syscache miss in a catalog of compiled-in rows alone is
+# looked up in its catalog relation (catrel_is_builtin()), so the server's
+# own lookups of functions and languages succeed.
+# 1. \sf prints abs(integer)'s definition: pg_proc's and pg_language's rows.
+# 2. A function no oid names gives NULL, as a lookup that misses does.
+# 3. pg_language lists the languages compiled in, c and internal.
+local_psql -c '\sf abs(integer)' \
+  -c 'select pg_get_functiondef(1) is null' \
+  -c 'select lanname from pg_language order by 1' > "$work/sf.out" 2>&1
+cat > "$work/sf.expected" << 'OUT'
+CREATE OR REPLACE FUNCTION pg_catalog.abs(integer)
+ RETURNS integer
+ LANGUAGE internal
+ IMMUTABLE PARALLEL SAFE STRICT
+AS $function$int4abs$function$
+t
+c
+internal
+OUT
+cmp -s "$work/sf.out" "$work/sf.expected" ||
+  fail "a syscache miss reads the compiled-in rows"
 
 # Verify that text compares, cases and matches, by the database's default
 # collation, C.

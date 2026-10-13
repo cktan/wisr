@@ -25,6 +25,7 @@
 #include "access/relscan.h"
 #include "access/tableam.h"
 #include "access/transam.h"
+#include "catalog/catrel.h"
 #include "catalog/index.h"
 #include "lib/stringinfo.h"
 #include "miscadmin.h"
@@ -294,7 +295,12 @@ SysScanDesc systable_beginscan(Relation heapRelation, Oid indexId, bool indexOK,
   SysScanDesc sysscan;
   Relation irel;
 
-  if (indexOK && !IgnoreSystemIndexes)
+  /*
+   * A catalog of compiled-in rows alone has no index: its access method
+   * makes the rows its keys pass (catrel_is_builtin()).
+   */
+  if (indexOK && !IgnoreSystemIndexes &&
+      !catrel_is_builtin(RelationGetRelid(heapRelation)))
     irel = index_open(indexId, AccessShareLock);
   else
     irel = NULL;
@@ -304,6 +310,7 @@ SysScanDesc systable_beginscan(Relation heapRelation, Oid indexId, bool indexOK,
   sysscan->heap_rel = heapRelation;
   sysscan->irel = irel;
   sysscan->slot = table_slot_create(heapRelation, NULL);
+  sysscan->copy = NULL;
 
   if (snapshot == NULL) {
     Oid relid = RelationGetRelid(heapRelation);
@@ -412,12 +419,19 @@ HeapTuple systable_getnext(SysScanDesc sysscan) {
                     "implemented");
     }
   } else {
+    /* The last row a catalog relation gave, copied, is not read again. */
+    if (sysscan->copy != NULL) {
+      heap_freetuple(sysscan->copy);
+      sysscan->copy = NULL;
+    }
     if (table_scan_getnextslot(sysscan->scan, ForwardScanDirection,
                                sysscan->slot)) {
       bool shouldFree;
 
+      /* A catalog relation's slot holds a minimal tuple: it is copied. */
       htup = ExecFetchSlotHeapTuple(sysscan->slot, false, &shouldFree);
-      Assert(!shouldFree);
+      if (shouldFree)
+        sysscan->copy = htup;
     }
   }
 
@@ -481,6 +495,8 @@ void systable_endscan(SysScanDesc sysscan) {
     index_close(sysscan->irel, AccessShareLock);
   } else
     table_endscan(sysscan->scan);
+  if (sysscan->copy != NULL)
+    heap_freetuple(sysscan->copy);
 
   if (sysscan->snapshot)
     UnregisterSnapshot(sysscan->snapshot);
@@ -529,6 +545,7 @@ SysScanDesc systable_beginscan_ordered(Relation heapRelation,
   sysscan->heap_rel = heapRelation;
   sysscan->irel = indexRelation;
   sysscan->slot = table_slot_create(heapRelation, NULL);
+  sysscan->copy = NULL;
 
   if (snapshot == NULL) {
     Oid relid = RelationGetRelid(heapRelation);
