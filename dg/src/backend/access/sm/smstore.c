@@ -613,11 +613,15 @@ List *smstore_namespace_names(void) {
   return out;
 }
 
-/* Add to *out a relation of sm's, made from what is given. */
-static void add_relation(List **out, uint64_t oid, const std::string &name,
-                         Oid nspoid, char kind, int natts, bool hasindex,
-                         bool temp) {
-  smstore_relation_t *r = (smstore_relation_t *)palloc(sizeof(*r));
+static void remember_index(Oid indexoid, Oid table);
+static Oid type_oid(uint8_t code);
+
+/* Add to *out a relation of sm's, made from what is given; it is returned. */
+static smstore_relation_t *add_relation(List **out, uint64_t oid,
+                                        const std::string &name, Oid nspoid,
+                                        char kind, int natts, bool hasindex,
+                                        bool temp) {
+  smstore_relation_t *r = (smstore_relation_t *)palloc0(sizeof(*r));
 
   r->oid = (Oid)oid;
   r->name = pstrdup(name.c_str());
@@ -627,6 +631,40 @@ static void add_relation(List **out, uint64_t oid, const std::string &name,
   r->hasindex = hasindex;
   r->temp = temp;
   *out = lappend(*out, r);
+  return r;
+}
+
+/* Add to *out the index x of the table def, in pg_index's terms. */
+static void add_index(List **out, const sm_table_def_t &def,
+                      const sm_index_def_t &x, Oid nspoid, bool temp) {
+  int nkeys = (int)x.key_attnums.size();
+  int natts = nkeys + (int)x.include_attnums.size();
+  smstore_relation_t *r = add_relation(out, x.oid, x.name, nspoid,
+                                       RELKIND_INDEX, natts, false, temp);
+
+  r->table = (Oid)def.oid;
+  r->unique = x.unique;
+  r->valid = x.state == SM_INDEX_VALID;
+  r->nkeys = nkeys;
+  r->attnums = (int16 *)palloc0(natts * sizeof(int16));
+  r->typids = (Oid *)palloc0(natts * sizeof(Oid));
+  r->desc = (bool *)palloc0(nkeys * sizeof(bool));
+  r->nulls_first = (bool *)palloc0(nkeys * sizeof(bool));
+  for (int i = 0; i < natts; i++) {
+    int32_t at = i < nkeys ? x.key_attnums[i] : x.include_attnums[i - nkeys];
+
+    /* An expression's place is 0, as pg_index has it. */
+    if (at >= 0) {
+      r->attnums[i] = (int16)(at + 1);
+      r->typids[i] = type_oid(def.columns[at].type_code);
+    }
+  }
+  for (int k = 0; k < nkeys; k++) {
+    r->desc[k] = x.key[k].desc;
+    r->nulls_first[k] = x.key[k].nulls_first;
+  }
+  /* So the index can be opened by its oid alone (RelationBuildDesc()). */
+  remember_index(r->oid, r->table);
 }
 
 /* Add to *out the tables of sm's namespace nspoid, with their indexes. */
@@ -652,9 +690,7 @@ static void add_tables(sm_session_t *s, uint64_t nspoid, List **out) {
     add_relation(out, def.oid, def.name, pgnsp, RELKIND_RELATION,
                  (int)def.columns.size(), !def.indexes.empty(), temp);
     for (const sm_index_def_t &x : def.indexes)
-      add_relation(out, x.oid, x.name, pgnsp, RELKIND_INDEX,
-                   (int)(x.key_attnums.size() + x.include_attnums.size()),
-                   false, temp);
+      add_index(out, def, x, pgnsp, temp);
   }
 }
 
@@ -736,6 +772,8 @@ Oid smstore_relation_oid(const char *name, Oid nspoid) {
   }
   switch (sm_cat_index_oid(session(), sm_nspoid(nspoid), name, &table, &oid)) {
   case 0:
+    /* So the index can be opened by its oid alone (RelationBuildDesc()). */
+    remember_index((Oid)oid, (Oid)table);
     return (Oid)oid;
   case 1:
     break;
@@ -1256,9 +1294,9 @@ typedef struct index_table_t {
 } index_table_t;
 
 /*
- * The table of each index of the tables smstore_table_desc() described, in
- * this thread: made on first use, in CacheMemoryContext, with the
- * descriptors.
+ * The table of each index of the tables smstore_table_desc() described, or
+ * that a listing (smstore_relations()) or a lookup by name found, in this
+ * thread: made on first use, in CacheMemoryContext, with the descriptors.
  */
 static thread_local /*LOCAL*/ HTAB *index_tables = NULL;
 

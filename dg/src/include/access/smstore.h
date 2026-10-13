@@ -37,6 +37,15 @@ typedef struct smstore_relation_t {
   int natts;     /* its columns; an index's key and include columns */
   bool hasindex; /* a table with an index */
   bool temp;     /* a temporary table, or an index on one */
+  /* An index's, as pg_index lists it; its columns are natts. */
+  Oid table;
+  bool unique;
+  bool valid;        /* built, and used by the planner */
+  int nkeys;         /* its key columns, the first of its columns */
+  int16 *attnums;    /* each column's place in the table, from 1 */
+  Oid *typids;       /* each column's type */
+  bool *desc;        /* each key column's */
+  bool *nulls_first; /* each key column's */
 } smstore_relation_t;
 
 /* A column of a table in sm. */

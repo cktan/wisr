@@ -1185,11 +1185,88 @@ char *pg_get_indexdef_columns_extended(Oid indexrelid, bits16 flags) {
  * This is now used for exclusion constraints as well: if excludeOps is not
  * NULL then it points to an array of exclusion operator OIDs.
  */
+/*
+ * pg_get_indexdef_worker() for an index of sm's, from its descriptor: there
+ * is no pg_index row.  It is a btree on columns, each with its type's
+ * default operator class and collation, so only its uniqueness, its
+ * columns' order and nulls, and its INCLUDE columns are printed.
+ */
+static char *sm_indexdef(Oid indexrelid, int colno, bool attrsOnly,
+                         bool keysOnly, bool missing_ok) {
+  Relation index;
+  Relation table;
+  StringInfoData buf;
+  Form_pg_index idx;
+  bool sep = false;
+
+  /*
+   * An index is known by its table once found by its name or listed in
+   * pg_class or pg_index (smstore_index_table()).
+   */
+  if (!OidIsValid(smstore_index_table(indexrelid))) {
+    if (missing_ok)
+      return NULL;
+    elog(ERROR, "cache lookup failed for index %u", indexrelid);
+  }
+  index = relation_open(indexrelid, AccessShareLock);
+  idx = index->rd_index;
+  table = relation_open(idx->indrelid, AccessShareLock);
+  initStringInfo(&buf);
+  if (!attrsOnly)
+    appendStringInfo(&buf, "CREATE %sINDEX %s ON %s USING btree (",
+                     idx->indisunique ? "UNIQUE " : "",
+                     quote_identifier(RelationGetRelationName(index)),
+                     quote_qualified_identifier(
+                         get_namespace_name(RelationGetNamespace(table)),
+                         RelationGetRelationName(table)));
+  for (int keyno = 0; keyno < idx->indnatts; keyno++) {
+    AttrNumber attnum = idx->indkey.values[keyno];
+    int16 opt;
+
+    if (keyno == idx->indnkeyatts) {
+      if (keysOnly)
+        break;
+      if (!colno) {
+        appendStringInfoString(&buf, ") INCLUDE (");
+        sep = false;
+      }
+    }
+    if (colno && colno != keyno + 1)
+      continue;
+    if (!colno && sep)
+      appendStringInfoString(&buf, ", ");
+    sep = true;
+    appendStringInfoString(
+        &buf,
+        quote_identifier(NameStr(
+            TupleDescAttr(RelationGetDescr(table), attnum - 1)->attname)));
+    if (attrsOnly || keyno >= idx->indnkeyatts)
+      continue;
+    /* The order and the nulls, where not a btree's own. */
+    opt = index->rd_indoption[keyno];
+    if (opt & INDOPTION_DESC) {
+      appendStringInfoString(&buf, " DESC");
+      if (!(opt & INDOPTION_NULLS_FIRST))
+        appendStringInfoString(&buf, " NULLS LAST");
+    } else if (opt & INDOPTION_NULLS_FIRST)
+      appendStringInfoString(&buf, " NULLS FIRST");
+  }
+  if (!attrsOnly)
+    appendStringInfoChar(&buf, ')');
+  relation_close(table, AccessShareLock);
+  relation_close(index, AccessShareLock);
+  return buf.data;
+}
+
 static char *pg_get_indexdef_worker(Oid indexrelid, int colno,
                                     const Oid *excludeOps, bool attrsOnly,
                                     bool keysOnly, bool showTblSpc,
                                     bool inherits, int prettyFlags,
                                     bool missing_ok) {
+  /* An index of sm's has no pg_index row. */
+  if (indexrelid >= FirstNormalObjectId)
+    return sm_indexdef(indexrelid, colno, attrsOnly, keysOnly, missing_ok);
+
   /* might want a separate isConstraint parameter later */
   bool isConstraint = (excludeOps != NULL);
   HeapTuple ht_idx;

@@ -1512,6 +1512,44 @@ ERROR:  permission denied for table pg_class
 OUT
 cmp -s "$work/dt.out" "$work/dt.expected" || fail "pg_class, pg_am and \\dt"
 
+# Verify that pg_index is a catalog relation a query reads, so psql's \di
+# runs, and that pg_get_indexdef() prints an index of sm's as PostgreSQL
+# does.
+# 1. In schema di1 make table a, its primary key, a unique index with
+#    DESC, NULLS FIRST and INCLUDE, and one on a quoted column.
+# 2. \di lists them with their table.
+# 3. pg_index has each index's columns, operator classes and options.
+# 4. pg_get_indexdef() prints each, and one column of one.
+local_psql -c 'create schema di1' \
+  -c 'create table di1.a (x int4 primary key, y text, "Z z" int8)' \
+  -c 'create unique index a_yz on di1.a (y desc, "Z z" nulls first)
+        include (x)' -c 'create index a_z on di1.a ("Z z")' \
+  -c '\di di1.*' \
+  -c "select indexrelid::regclass, indnatts, indnkeyatts, indisunique, indkey,
+        indoption from pg_index where indrelid = 'di1.a'::regclass
+        order by indexrelid" \
+  -c "select pg_get_indexdef(indexrelid) from pg_index
+        where indrelid = 'di1.a'::regclass order by indexrelid" \
+  -c "select pg_get_indexdef('di1.a_yz'::regclass, 2, true)" \
+  > "$work/di.out" 2>&1
+cat > "$work/di.expected" << OUT
+CREATE SCHEMA
+CREATE TABLE
+CREATE INDEX
+CREATE INDEX
+di1|a_pkey|index|$me|a
+di1|a_yz|index|$me|a
+di1|a_z|index|$me|a
+di1.a_pkey|1|1|t|1|0
+di1.a_yz|3|2|t|2 3 1|3 2
+di1.a_z|1|1|f|3|0
+CREATE UNIQUE INDEX a_pkey ON di1.a USING btree (x)
+CREATE UNIQUE INDEX a_yz ON di1.a USING btree (y DESC, "Z z" NULLS FIRST) INCLUDE (x)
+CREATE INDEX a_z ON di1.a USING btree ("Z z")
+"Z z"
+OUT
+cmp -s "$work/di.out" "$work/di.expected" || fail "pg_index, pg_get_indexdef and \\di"
+
 # Verify that text compares, cases and matches, by the database's default
 # collation, C.
 # 1. 'a' < 'b', and ORDER BY sorts B before a, as C's byte order does.

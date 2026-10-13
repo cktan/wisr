@@ -55,8 +55,8 @@ CATALOGS = {
 }
 
 #The catalogs a query can read as relations(SYSCATALOG.md).
-RELATIONS = ["pg_am", "pg_class", "pg_namespace", "pg_publication",
-             "pg_publication_namespace"]
+RELATIONS = ["pg_am", "pg_class", "pg_index", "pg_namespace",
+             "pg_publication", "pg_publication_namespace"]
 
 
 def key_col(entry):

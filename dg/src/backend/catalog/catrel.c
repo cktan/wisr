@@ -25,12 +25,15 @@
 #include "catalog/pg_am_d.h"
 #include "catalog/pg_authid_d.h"
 #include "catalog/pg_class_d.h"
+#include "catalog/pg_index.h"
 #include "catalog/pg_namespace_d.h"
 #include "catalog/pg_publication_d.h"
 #include "catalog/pg_publication_namespace_d.h"
 #include "executor/tuptable.h"
 #include "miscadmin.h"
+#include "commands/defrem.h"
 #include "utils/builtins.h"
+#include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 #include "utils/tuplestore.h"
@@ -143,6 +146,62 @@ static void gen_pg_class(Tuplestorestate *ts, TupleDesc desc) {
   }
 }
 
+/*
+ * A row of pg_index, into ts, for the index r of sm's: a btree on columns,
+ * each with its type's default operator class and collation.  sm keeps no
+ * mark of a primary key, so none is one; no index is an exclusion
+ * constraint, deferred, clustered or the replica identity.
+ */
+static void index_row(Tuplestorestate *ts, TupleDesc desc,
+                      const smstore_relation_t *r) {
+  Datum values[Natts_pg_index];
+  bool nulls[Natts_pg_index];
+  Oid *colls = (Oid *)palloc0(r->nkeys * sizeof(Oid));
+  Oid *classes = (Oid *)palloc0(r->nkeys * sizeof(Oid));
+  int16 *options = (int16 *)palloc0(r->nkeys * sizeof(int16));
+
+  for (int k = 0; k < r->nkeys; k++) {
+    colls[k] = get_typcollation(r->typids[k]);
+    classes[k] = GetDefaultOpClass(r->typids[k], BTREE_AM_OID);
+    options[k] = (r->desc[k] ? INDOPTION_DESC : 0) |
+                 (r->nulls_first[k] ? INDOPTION_NULLS_FIRST : 0);
+  }
+  memset(values, 0, sizeof(values));
+  memset(nulls, false, sizeof(nulls));
+  values[Anum_pg_index_indexrelid - 1] = ObjectIdGetDatum(r->oid);
+  values[Anum_pg_index_indrelid - 1] = ObjectIdGetDatum(r->table);
+  values[Anum_pg_index_indnatts - 1] = Int16GetDatum(r->natts);
+  values[Anum_pg_index_indnkeyatts - 1] = Int16GetDatum(r->nkeys);
+  values[Anum_pg_index_indisunique - 1] = BoolGetDatum(r->unique);
+  values[Anum_pg_index_indimmediate - 1] = BoolGetDatum(true);
+  values[Anum_pg_index_indisvalid - 1] = BoolGetDatum(r->valid);
+  values[Anum_pg_index_indisready - 1] = BoolGetDatum(true);
+  values[Anum_pg_index_indislive - 1] = BoolGetDatum(true);
+  values[Anum_pg_index_indkey - 1] =
+      PointerGetDatum(buildint2vector(r->attnums, r->natts));
+  values[Anum_pg_index_indcollation - 1] =
+      PointerGetDatum(buildoidvector(colls, r->nkeys));
+  values[Anum_pg_index_indclass - 1] =
+      PointerGetDatum(buildoidvector(classes, r->nkeys));
+  values[Anum_pg_index_indoption - 1] =
+      PointerGetDatum(buildint2vector(options, r->nkeys));
+  nulls[Anum_pg_index_indexprs - 1] = true;
+  nulls[Anum_pg_index_indpred - 1] = true;
+  tuplestore_putvalues(ts, desc, values, nulls);
+}
+
+/* pg_index's rows: an index of sm's, a row. */
+static void gen_pg_index(Tuplestorestate *ts, TupleDesc desc) {
+  ListCell *l;
+
+  foreach (l, smstore_relations()) {
+    smstore_relation_t *r = (smstore_relation_t *)lfirst(l);
+
+    if (r->kind == RELKIND_INDEX)
+      index_row(ts, desc, r);
+  }
+}
+
 /* pg_am's rows: those compiled in. */
 static void gen_pg_am(Tuplestorestate *ts, TupleDesc desc) {
   int count;
@@ -172,6 +231,9 @@ static void generate(Relation rel, Tuplestorestate *ts) {
     break;
   case AccessMethodRelationId:
     gen_pg_am(ts, desc);
+    break;
+  case IndexRelationId:
+    gen_pg_index(ts, desc);
     break;
   /* What digres has none of: read, and empty. */
   case PublicationRelationId:

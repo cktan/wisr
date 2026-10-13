@@ -3281,3 +3281,26 @@ query reads, with nothing stored.
   PostgreSQL's `pg_temp_N`.
 - `server.sh`: `\dt`, `\ds`, `\dt pg_temp.*`, `\dtS`, pg_class's
   rows, pg_am, and a write refused.
+
+## Step 114: pg_index is read, \di runs, and an index's definition is printed
+
+`SYSCATALOG.md` step 4.
+
+- **`pg_index` lists sm's indexes** (`smstore_relations()`): each
+  one's table, columns, key column count, uniqueness, whether
+  it is valid, and each key column's operator class (its
+  type's default btree one), collation, order and nulls. sm
+  keeps no mark of a primary key, so `indisprimary` is false,
+  and `\d` will call one UNIQUE.
+- **`pg_get_indexdef()` prints an index of sm's** from its
+  descriptor (`sm_indexdef()` in `ruleutils.c`), as PostgreSQL
+  prints it: `CREATE [UNIQUE] INDEX name ON schema.table USING
+  btree (...)`, with DESC, NULLS FIRST or LAST where they are
+  not a btree's own, and INCLUDE; or one column of it.
+- **An index can be opened by its oid alone** once a listing or
+  a lookup by name has found it: both record its table
+  (`remember_index()`), which `RelationBuildDesc()` asks.
+  Before, only a table's descriptor recorded it. sm has no
+  lookup of an index by oid.
+- `server.sh`: `\di`, `pg_index`'s rows, and
+  `pg_get_indexdef()` of three indexes and of one column.
