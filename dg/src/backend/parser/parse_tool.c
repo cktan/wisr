@@ -51,6 +51,7 @@
 #include "parser/parser.h"
 #include "tcop/dest.h"
 #include "tcop/tcopprot.h"
+#include "tcop/utility.h"
 #include "utils/pg_locale.h"
 #include "utils/guc.h"
 #include "utils/resowner.h"
@@ -99,13 +100,15 @@ static void print_error(FILE *out) {
 /*
  * Take one statement through the analyzer, the rewriter and the planner,
  * and print each plan; or, if run is set, execute each and print its rows.
+ * A utility statement, which is not planned, is run by ProcessUtility(),
+ * as a server runs one.
  */
 static void plan_or_run(RawStmt *raw, const char *sql, bool run, FILE *out) {
   List *queries = pg_analyze_and_rewrite_fixedparams(raw, sql, NULL, 0, NULL);
   ListCell *lc;
 
-  foreach (lc, queries) {
-    PlannedStmt *stmt = pg_plan_query((Query *)lfirst(lc), sql, 0, NULL);
+  foreach (lc, pg_plan_queries(queries, sql, 0, NULL)) {
+    PlannedStmt *stmt = lfirst_node(PlannedStmt, lc);
     QueryDesc *desc;
 
     if (!run) {
@@ -116,6 +119,12 @@ static void plan_or_run(RawStmt *raw, const char *sql, bool run, FILE *out) {
     /* The executor keeps what it opens in the current resource owner. */
     if (CurrentResourceOwner == NULL)
       CurrentResourceOwner = ResourceOwnerCreate(NULL, "parse tool");
+
+    if (stmt->commandType == CMD_UTILITY) {
+      ProcessUtility(stmt, sql, false, PROCESS_UTILITY_TOPLEVEL, NULL, NULL,
+                     CreateDestReceiver(DestDebug), NULL);
+      continue;
+    }
 
     desc = CreateQueryDesc(stmt, sql, InvalidSnapshot, InvalidSnapshot,
                            CreateDestReceiver(DestDebug), NULL, NULL, 0);

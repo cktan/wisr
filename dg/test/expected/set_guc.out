@@ -1,0 +1,17 @@
+	 1: ?column?	(typeid = 701, len = 8, typmod = -1, byval = t)
+	----
+	 1: ?column? = "0.333333333333333"	(typeid = 701, len = 8, typmod = -1, byval = t)
+	----
+	 1: extra_float_digits	(typeid = 25, len = -1, typmod = -1, byval = f)
+	----
+	 1: extra_float_digits = "0"	(typeid = 25, len = -1, typmod = -1, byval = f)
+	----
+	 1: ?column?	(typeid = 701, len = 8, typmod = -1, byval = t)
+	----
+	 1: ?column? = "0.3333333333333333"	(typeid = 701, len = 8, typmod = -1, byval = t)
+	----
+	 1: lc_numeric	(typeid = 25, len = -1, typmod = -1, byval = f)
+	----
+	 1: lc_numeric = "C"	(typeid = 25, len = -1, typmod = -1, byval = f)
+	----
+ERROR: invalid value for parameter "lc_numeric": "xx_YY"
