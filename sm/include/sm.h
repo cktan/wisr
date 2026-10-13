@@ -835,7 +835,10 @@ int sm_tbl_insert(sm_tbl_t* tbl, const sm_datum_t* values,
  * sorted files that the store takes whole when the load ends,
  * past its log and its compactions. For that the table's lock is
  * taken exclusive, to the end of the transaction: no one else
- * reads or writes the table meanwhile. A duplicate key is then
+ * reads or writes the table meanwhile. The lock is taken only if
+ * it is free when the load begins; the load never waits for it,
+ * and with another transaction using the table, even to read,
+ * the rows are inserted instead. A duplicate key is then
  * found when the load ends, not at its row. The first row that
  * must be stored out of line (sm_set_toast), or is too long,
  * ends the files: what was handed over goes into the table, and

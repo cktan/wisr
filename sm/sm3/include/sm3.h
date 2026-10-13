@@ -913,7 +913,9 @@ int tbl_delete(table_t* table, uint64_t rowno, std::string* old = nullptr);
  * any row, as a new table's and a truncated one's do, and a table
  * whose rows were deleted does not. tbl_load_open takes such a
  * table's lock exclusive, to the end of the transaction, so that
- * no one else reads or writes it meanwhile. Every row is checked
+ * no one else reads or writes it meanwhile -- if the lock is free
+ * at that moment. It does not wait for it: with another
+ * transaction using the table, the rows are inserted instead. Every row is checked
  * as tbl_insert checks one, and has its entry made in every index
  * of the table; but a key a unique index already has is found
  * only when the load is closed.

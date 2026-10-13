@@ -995,6 +995,17 @@ Errors: `SM_ERR_CONFLICT` (not at READ COMMITTED) /
 `sm1::set_qa_nowait`), `SM_ERR_NOTFOUND` (no such store),
 `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`, `SM_ERR_INVALID`.
 
+### int sm1::trylock(sm1::session_t* session, sm1::locktype_t type, uint64_t storeid, std::string_view key, sm1::lockmode_t mode)
+
+Take a `LOCKTYPE_OID` lock as `sm1::lock` does, if it can be
+had at once. It never waits. Returns 0 with the lock held to
+the end of the transaction, 1 with nothing taken if another
+transaction holds it in a mode that conflicts, or -1. It is for
+a caller that would go another way sooner than wait, as a bulk
+load does for its table. A row's lock is refused with
+`SM_ERR_INVALID`: taking one is also a check of the row, which
+this does not make.
+
 ### int sm1::savepoint(sm1::session_t* session)
 
 Set a savepoint at the current point in the transaction

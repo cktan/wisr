@@ -357,6 +357,40 @@ TEST_CASE("a row to be stored out of line ends the files, and the rest are "
   REQUIRE(sm3::commit(f.a) == 0);
 }
 
+TEST_CASE("a load does not wait for an empty table another is using") {
+  // Verify the lock a load takes is one it can have at once.
+  // 1. Session b reads items, which is empty, and stays in its
+  //    transaction: it holds the table's lock to read.
+  // 2. Session a opens a load: the call returns, having waited for
+  //    no one, and each row it is handed is in the table at once,
+  //    inserted and not on its way to a file.
+  // 3. b is not kept out: it opens the table again.
+  // 4. a closes and commits; b, in a new transaction, sees the rows.
+  items_t f(files_options());
+  start(f.b);
+  sm3::table_t *reader = f.open_items(f.b, sm1::SM_LOCKMODE_IS);
+  CHECK(count(reader) == 0);
+
+  start(f.a);
+  sm3::table_t *t = f.open_items(f.a);
+  sm3::loader_t *l = open_load(t);
+  add_rows(l, 1, 25);
+  CHECK(count(t) == 25);
+  sm3::table_t *again = f.open_items(f.b, sm1::SM_LOCKMODE_IS);
+  sm3::tbl_close(again);
+  REQUIRE_MESSAGE(sm3::tbl_load_close(l) == 0, sm1::errmsg());
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  sm3::tbl_close(reader);
+  REQUIRE(sm3::commit(f.b) == 0);
+
+  start(f.b);
+  reader = f.open_items(f.b, sm1::SM_LOCKMODE_IS);
+  CHECK(count(reader) == 25);
+  sm3::tbl_close(reader);
+  REQUIRE(sm3::commit(f.b) == 0);
+}
+
 TEST_CASE("an aborted load leaves its table empty, and ready for another") {
   // Verify an abort after the close, on a table committed empty.
   // 1. Load 100 rows as files, close, and abort.

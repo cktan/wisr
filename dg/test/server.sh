@@ -1743,7 +1743,9 @@ local_psql -c 'drop table tc1' -c 'drop table tc2' > /dev/null 2>&1
 #    repeat then loads.
 # 3. While a session has a COPY into empty tl3 uncommitted, another's read of
 #    tl3 waits for it; a read begun after the commit sees every row.
-# 4. A COPY into tl1, which has rows, with a key that is taken fails at that
+# 4. While a session that read empty tl4 stays in its transaction, a COPY
+#    into tl4 does not wait for it: its rows are inserted, and are there.
+# 5. A COPY into tl1, which has rows, with a key that is taken fails at that
 #    row and leaves tl1 as it was.
 seq 1 100000 | awk '{ print $1 "\t" $1 % 1000 "\trow" $1 }' > "$work/load.tsv"
 cp "$work/load.tsv" "$work/load_dup.tsv"
@@ -1752,6 +1754,7 @@ local_psql -c 'create table tl1 (a int4 primary key, b int4, c text)' \
   -c 'create index tl1_b on tl1 (b)' \
   -c 'create table tl2 (a int4 primary key, b int4, c text)' \
   -c 'create table tl3 (a int4 primary key, b int4, c text)' \
+  -c 'create table tl4 (a int4 primary key, b int4, c text)' \
   > "$work/load.out" 2>&1
 [ "$(local_psql -c "copy tl1 from '$work/load.tsv'" \
   -c 'select count(*), sum(b) from tl1' -c 'select c from tl1 where a = 54321' \
@@ -1782,6 +1785,22 @@ wait $loader
 wait $reader
 [ "$(local_psql -c 'select count(*) from tl3')" = 100000 ] ||
   fail "a reader after a bulk load"
+mkfifo "$work/load_r.in"
+local_psql < "$work/load_r.in" > "$work/load_r.out" 2>&1 &
+reader=$!
+exec 4> "$work/load_r.in"
+echo "begin; select count(*) from tl4; select 'held';" >&4
+for _ in $(seq 100); do
+  grep -qx held "$work/load_r.out" && break
+  sleep 0.1
+done
+[ "$(timeout 60 psql -X -A -t -h "$work" -p "$port" -d postgres \
+  -c "copy tl4 from '$work/load.tsv'" -c 'select count(*) from tl4' 2>&1 |
+  tr '\n' ' ')" = "COPY 100000 100000 " ] ||
+  fail "a bulk load waited for a reader"
+echo "commit;" >&4
+exec 4>&-
+wait $reader
 printf '100001\t1\tnew\n77\t7\tagain\n' > "$work/load_more.tsv"
 local_psql -c "copy tl1 from '$work/load_more.tsv'" 2>&1 |
   grep -q 'duplicate key value violates a unique index on "tl1"' ||
@@ -1789,6 +1808,7 @@ local_psql -c "copy tl1 from '$work/load_more.tsv'" 2>&1 |
 [ "$(local_psql -c 'select count(*) from tl1')" = 100000 ] ||
   fail "a failed copy into a table with rows"
 local_psql -c 'drop table tl1' -c 'drop table tl2' -c 'drop table tl3' \
+  -c 'drop table tl4' \
   > /dev/null 2>&1
 
 # Verify that a temporary table is its session's alone, in sm: it is found

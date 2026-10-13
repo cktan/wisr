@@ -679,19 +679,26 @@ int tbl_load_open(table_t *table, loader_t *&out) {
   if (sm1::store_empty(s, storeid, empty) != 0) {
     return -1;
   }
-  if (empty) {
+  // A temporary table is its session's alone: no one to keep out.
+  if (empty && !table->exclusive && table->def->nspoid != nsp_temp) {
     // Keep every other transaction out, readers too, to the end of
     // this one: sm1's loader checks nothing against the store, and
-    // waits for no one (BULKLOAD.md §3.1).
-    std::shared_ptr<const table_def_t> def;
-    if (!table->exclusive && cat_lock_table(table->session, table->def->oid,
-                                            sm1::SM_LOCKMODE_EX, def) != 0) {
+    // waits for no one (BULKLOAD.md §3.1). The lock is taken only
+    // if it is free now. A load does not wait for it: the rows can
+    // be inserted instead, and waiting here, with the table's lock
+    // already held to write, is how two loads would deadlock.
+    int held = lock_table_now(s, table->def->oid, sm1::SM_LOCKMODE_EX);
+    if (held < 0) {
       return -1;
     }
-    table->exclusive = true;
-    // A writer may have got in while this waited for the lock.
-    if (sm1::store_empty(s, storeid, empty) != 0) {
-      return -1;
+    if (held == 1) {
+      empty = false;
+    } else {
+      table->exclusive = true;
+      // A writer may have put a row in before the lock was taken.
+      if (sm1::store_empty(s, storeid, empty) != 0) {
+        return -1;
+      }
     }
   }
   if (empty) {

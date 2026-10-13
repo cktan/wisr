@@ -233,6 +233,13 @@ int build_table(const collation_lookup_t &lookup, uint64_t oid,
 int lock_table(sm1::session_t *s, uint64_t oid, sm1::lockmode_t mode);
 
 /*
+ * As lock_table, but never waiting: 0 with the lock held, 1 with
+ * nothing taken if another transaction holds it in a mode that
+ * conflicts, or -1.
+ */
+int lock_table_now(sm1::session_t *s, uint64_t oid, sm1::lockmode_t mode);
+
+/*
  * Take the table oid's STATS entry lock X, to the end of the
  * transaction: an analyze takes it before it samples, so a second
  * waits for the first rather than both sampling.

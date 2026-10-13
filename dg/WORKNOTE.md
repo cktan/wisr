@@ -2991,3 +2991,24 @@ put in a memtable and compacted. sm now has a bulk load
   `nextval()`.
 - sm3 `test_ddl`: "an identity column owns its sequence from
   its CREATE TABLE"; `server.sh`: identity columns.
+
+## Step 105: a bulk load does not wait for its table
+
+Step 103's load took an empty table's lock exclusive, and waited
+for it: a COPY into an empty table that another session had only
+read, in a transaction still open, waited for that transaction
+to end.
+
+- **sm takes the lock only if it is free at once**
+  (`sm1::trylock`, under `sm_tbl_load_begin`). With another
+  transaction using the table the COPY's rows are inserted, as
+  into a table with rows.
+- **Nothing changes in digres's code.** What changes is when a
+  COPY into an empty table is a load from files: when no other
+  transaction has the table open.
+- A COPY that does take the lock still keeps readers out until
+  it commits (step 103).
+- `server.sh` holds a transaction that read an empty table, and
+  runs a COPY into it from another session: it does not wait,
+  and its rows are there.
+

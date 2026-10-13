@@ -556,6 +556,23 @@ int lock(session_t* session, locktype_t type, uint64_t storeid,
          std::string_view key, lockmode_t mode);
 
 /*
+ * Take the LOCKTYPE_OID lock named key in mode, as sm1::lock
+ * does, if it can be had at once: this never waits. Returns 0
+ * with the lock held, to the end of the transaction; 1, with
+ * nothing taken or changed, if another transaction holds it in a
+ * mode that conflicts; or -1. A caller that would rather go
+ * another way than wait asks like this, as a bulk load does for
+ * its table (BULKLOAD.md section 13). It is for an oid's lock
+ * alone: a row's lock is also a check of the row, which this does
+ * not make.
+ *
+ * Errors: SM_ERR_INVALID (a type other than LOCKTYPE_OID, a key
+ * not 8 bytes, an unknown mode), SM_ERR_NOTRANS, SM_ERR_PREPARED.
+ */
+int trylock(session_t* session, locktype_t type, uint64_t storeid,
+            std::string_view key, lockmode_t mode);
+
+/*
  * Read the newest committed version of a key, ignoring the
  * snapshot, under a row lock this transaction already holds, or
  * with a write of the key by this transaction still in effect,

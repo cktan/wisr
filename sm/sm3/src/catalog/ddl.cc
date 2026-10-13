@@ -1126,4 +1126,14 @@ int lock_table(sm1::session_t *s, uint64_t oid, sm1::lockmode_t mode) {
   return sm1::lock(s, sm1::LOCKTYPE_OID, 0, key, mode);
 }
 
+/* Take a table's oid lock if it is free now; see internal.h. */
+int lock_table_now(sm1::session_t *s, uint64_t oid, sm1::lockmode_t mode) {
+  std::string key(8, '\0');
+  for (int i = 0; i < 8; i++) {
+    key[i] = static_cast<char>(oid >> (56 - 8 * i));
+  }
+  // lock_table's lock, asked for without waiting.
+  return sm1::trylock(s, sm1::LOCKTYPE_OID, 0, key, mode);
+}
+
 } // namespace sm3

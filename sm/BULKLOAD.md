@@ -1027,6 +1027,13 @@ narrowed, with these differences.
   So no one else reads or writes the table while it loads.
   sm3 looks once before it asks for the lock, so that a load
   into a table with rows keeps no one out.
+- **The lock is taken only if it is free at once**
+  (`sm1::trylock`). A load never waits for it: with another
+  transaction using the table, a reader included, the rows are
+  inserted. Waiting would hold a load behind any reader, for a
+  gain it can do without; and the loader already holds the
+  table's lock to write, so two loads each waiting to make
+  theirs exclusive would wait on each other.
 - **sm1 checks the store is empty, and trusts the lock.** The
   covering-lock argument of §7.2 is not there.
 - **A table with rows is loaded by `tbl_insert`**, a row at a

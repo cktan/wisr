@@ -1003,6 +1003,26 @@ int sm1::lock(sm1::session_t *session, sm1::locktype_t type, uint64_t storeid,
   return lock_row(session, type, storeid, key.data(), key.size(), mode);
 }
 
+/* Take an oid's lock if it is free now; see sm1.h. */
+int sm1::trylock(sm1::session_t *session, sm1::locktype_t type,
+                 uint64_t storeid, std::string_view key, sm1::lockmode_t mode) {
+  if (xct_check_active(session) != 0) {
+    return -1;
+  }
+  if (type != sm1::LOCKTYPE_OID || key.size() != 8) {
+    return set_error(sm1::SM_ERR_INVALID,
+                     "trylock: only a LOCKTYPE_OID lock, named by 8 bytes");
+  }
+  if (static_cast<int>(mode) < 0 || static_cast<int>(mode) > 4) {
+    return set_error(sm1::SM_ERR_INVALID, "unknown lock mode {}", (int)mode);
+  }
+  // Taken, or converted, only if no other holder conflicts.
+  return lock_try(session, type, storeid,
+                  rocksdb::Slice(key.data(), key.size()), mode) == 0
+             ? 0
+             : 1;
+}
+
 /* Insert a row; the key must not exist. */
 int sm1::insert(sm1::session_t *session, uint64_t storeid, std::string_view key,
                 std::string_view data) {

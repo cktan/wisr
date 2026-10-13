@@ -839,3 +839,43 @@ TEST_CASE("a write refused with SM_ERR_UPDATED keeps the row locked until "
   sm1::closedb(u);
   sm1::closedb(o);
 }
+
+TEST_CASE("trylock takes an oid's lock only if it is free now") {
+  // Verify sm1::trylock never waits, and takes nothing it cannot.
+  // 1. Session a takes an oid's lock shared.
+  // 2. Session b's trylock of it exclusive returns 1 at once, and
+  //    b holds nothing: a's exclusive try still fails only on b's
+  //    later shared hold, not before.
+  // 3. b's trylock of it shared returns 0: shared holders agree.
+  // 4. a commits; b's trylock exclusive now converts its hold,
+  //    returning 0.
+  // 5. A row's lock, and an oid named by other than 8 bytes, are
+  //    SM_ERR_INVALID.
+  home_t home;
+  REQUIRE(sm1::mkdb(home.env(), "db", nullptr) == 0);
+  sm1::session_t *a = opendb(home.env(), "db", nullptr);
+  sm1::session_t *b = opendb(home.env(), "db", nullptr);
+  REQUIRE(a);
+  REQUIRE(b);
+  std::string oid(8, '\x07');
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_OID, 0, oid, sm1::SM_LOCKMODE_SH) == 0);
+  CHECK(sm1::trylock(b, sm1::LOCKTYPE_OID, 0, oid, sm1::SM_LOCKMODE_EX) == 1);
+  CHECK(sm1::trylock(a, sm1::LOCKTYPE_OID, 0, oid, sm1::SM_LOCKMODE_EX) == 0);
+  REQUIRE(sm1::commit(a) == 0);
+
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_OID, 0, oid, sm1::SM_LOCKMODE_SH) == 0);
+  CHECK(sm1::trylock(b, sm1::LOCKTYPE_OID, 0, oid, sm1::SM_LOCKMODE_SH) == 0);
+  CHECK(sm1::trylock(b, sm1::LOCKTYPE_OID, 0, oid, sm1::SM_LOCKMODE_EX) == 1);
+  REQUIRE(sm1::commit(a) == 0);
+  CHECK(sm1::trylock(b, sm1::LOCKTYPE_OID, 0, oid, sm1::SM_LOCKMODE_EX) == 0);
+
+  CHECK(sm1::trylock(b, sm1::LOCKTYPE_ROW, 0, oid, sm1::SM_LOCKMODE_EX) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm1::trylock(b, sm1::LOCKTYPE_OID, 0, "short", sm1::SM_LOCKMODE_EX) ==
+        -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  REQUIRE(sm1::commit(b) == 0);
+}
