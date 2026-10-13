@@ -65,13 +65,14 @@ Owed, and blocking nothing above:
   NO KEY UPDATE`, so an update of a parent row that leaves its
   key alone still waits for a child's transaction, which holds
   the row shared.
-- **`NOWAIT` and `SKIP LOCKED` as flags on the calls.** sm1's
-  `set_qa_nowait` is for QA only (`sm1/SM1_DESIGN.md` §5.1).
-  PostgreSQL passes a wait policy with each call, and sm1 is to
-  take one the same way, through sm2, sm3 and `include/sm.h`,
-  `sm_tbl_lock` first among the calls. `lock_timeout` needs
-  no more than an `sm_sys.h` timer that interrupts the
-  waiting thread.
+- **`lock_timeout`, and the rest of no-wait.** A lock that
+  does not wait is built for a row and for a table
+  (`sm1::trylock`, `sm_tbl_trylock`), and digres's NOWAIT and
+  SKIP LOCKED use it. Not built: a write that does not wait,
+  which nothing in SQL asks for; `LOCK TABLE ... NOWAIT`; and
+  `lock_timeout`, which needs no more than an `sm_sys.h` timer
+  that interrupts the waiting thread. sm1's `set_qa_nowait` is
+  still for QA only (`sm1/SM1_DESIGN.md` §5.1).
 - **The evaluator's cost is unmeasured**: what a call a row
   adds to a write on a table with a partial or an expression
   index.

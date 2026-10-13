@@ -2782,7 +2782,8 @@ TM_Result smstore_delete(Relation rel, ItemPointer tid, CommandId cid,
  *
  * Else it is SELECT ... FOR UPDATE's or FOR SHARE's: the row is locked in
  * sm, shared or exclusive, to the end of the transaction, waiting for
- * another transaction that holds it or has written it.  Above READ
+ * another transaction that holds it or has written it -- or, with NOWAIT,
+ * failing, and with SKIP LOCKED answering TM_WouldBlock.  Above READ
  * COMMITTED, sm fails the lock, and the transaction, if the row changed
  * since the snapshot.  At READ COMMITTED the newest version is read, and
  * tmfd says whether it is another than the statement saw, for the executor
@@ -2807,18 +2808,27 @@ TM_Result smstore_lock_row(Relation rel, ItemPointer tid, TupleTableSlot *slot,
                     errmsg("relation \"%s\" does not exist",
                            RelationGetRelationName(rel))));
   if (!after_write) {
-    if (wait_policy != LockWaitBlock)
-      ereport(ERROR,
-              (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-               errmsg("NOWAIT and SKIP LOCKED are not supported yet on "
-                      "table \"%s\"",
-                      RelationGetRelationName(rel))));
-    /* Held to the end of the transaction, as a write's is. */
-    if (waiting([&] {
-          return sm_tbl_lock(tbl, rowno,
-                             share ? SM_LOCKMODE_SH : SM_LOCKMODE_EX);
-        }) != 0)
+    sm_lockmode_t smmode = share ? SM_LOCKMODE_SH : SM_LOCKMODE_EX;
+    int rc;
+
+    /*
+     * Held to the end of the transaction, as a write's is.  NOWAIT and SKIP
+     * LOCKED ask for it without waiting, and are told when it is another's.
+     */
+    if (wait_policy == LockWaitBlock)
+      rc = waiting([&] { return sm_tbl_lock(tbl, rowno, smmode); });
+    else
+      rc = sm_tbl_trylock(tbl, rowno, smmode);
+    if (rc < 0)
       sm_error("lock a row");
+    if (rc == 1) {
+      if (wait_policy == LockWaitSkip)
+        return TM_WouldBlock;
+      ereport(ERROR,
+              (errcode(ERRCODE_LOCK_NOT_AVAILABLE),
+               errmsg("could not obtain lock on row in relation \"%s\"",
+                      RelationGetRelationName(rel))));
+    }
   }
   ExecClearTuple(slot);
   switch (sm_tbl_read_latest(tbl, rowno, &tuple, &len)) {

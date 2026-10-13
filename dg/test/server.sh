@@ -1633,7 +1633,6 @@ grep -q 'does not exist, skipping' "$work/drop2.out" || fail "drop if exists"
 # 6. The same, the second's WHERE no longer true of the first's row: it
 #    updates none.  And a DELETE ... RETURNING gives the first's row.
 # 7. The same at REPEATABLE READ: the second fails, and can be retried.
-# 8. SELECT ... FOR UPDATE NOWAIT is refused.
 local_psql -c 'create table tw1 (a int4 primary key, b int4 not null)' \
   -c 'insert into tw1 values (1, 10), (2, 20), (3, 30), (4, 40)' \
   > "$work/write.out" 2>&1
@@ -1701,9 +1700,6 @@ after_update -v VERBOSITY=verbose -c 'begin isolation level repeatable read' \
   grep -q 'ERROR:  40001' || fail "update at repeatable read"
 [ "$(after_update -c 'delete from tw1 where a = 3 returning b')" = \
   "6131 DELETE 1 " ] || fail "delete after a concurrent update"
-local_psql -c 'select a from tw1 for update nowait' 2>&1 |
-  grep -q 'NOWAIT and SKIP LOCKED are not supported yet on table "tw1"' ||
-  fail "for update nowait refused"
 local_psql -c 'drop table tw1' > /dev/null 2>&1
 
 # Verify that SELECT ... FOR UPDATE and FOR SHARE lock rows in sm, until the
@@ -1719,6 +1715,13 @@ local_psql -c 'drop table tw1' > /dev/null 2>&1
 #    another's UPDATE waits.
 # 5. At REPEATABLE READ, FOR UPDATE of a row changed since the snapshot fails
 #    with a serialization failure.
+# 6. NOWAIT: a row that is free is locked; one another session holds FOR
+#    UPDATE, or has updated, fails at once with lock_not_available; a FOR
+#    SHARE NOWAIT passes a FOR SHARE holder.
+# 7. SKIP LOCKED: with one session holding the first ready row, another's
+#    "first ready row" is the second, as two workers on a queue find; and a
+#    scan of every row leaves out the one held, and one updated and not yet
+#    committed. Neither waits.
 local_psql -c 'create table tk1 (a int4 primary key, b int4)' \
   -c 'insert into tk1 values (1, 10), (2, 20), (3, 30), (4, 40)' \
   > "$work/rowlock.out" 2>&1
@@ -1783,6 +1786,26 @@ against 'update tk1 set b = b + 1 where a = 1' -v VERBOSITY=verbose \
   -c 'begin isolation level repeatable read' -c 'select count(*) from tk1' \
   -c 'select b from tk1 where a = 1 for update' |
   grep -q 'ERROR:  40001' || fail "for update at repeatable read"
+[ "$(local_psql -c 'select b from tk1 where a = 1 for update nowait' 2>&1 |
+  grep -c .)" = 1 ] || fail "for update nowait of a free row"
+against 'select b from tk1 where a = 2 for update' -v VERBOSITY=verbose \
+  -c 'select b from tk1 where a = 2 for update nowait' |
+  grep -q 'passed ERROR:  55P03' || fail "for update nowait of a held row"
+against 'update tk1 set b = b + 1 where a = 2' -v VERBOSITY=verbose \
+  -c 'select b from tk1 where a = 2 for share nowait' |
+  grep -q 'passed ERROR:  55P03' || fail "for share nowait of a written row"
+[ "$(against 'select b from tk1 where a = 2 for share' \
+  -c 'select a from tk1 where a = 2 for share nowait')" = "passed 2 " ] ||
+  fail "for share nowait passes a for share"
+[ "$(against 'select a from tk1 order by a limit 1 for update skip locked' \
+  -c 'select a from tk1 order by a limit 1 for update skip locked')" = \
+  "passed 2 " ] || fail "skip locked takes the next row"
+[ "$(against 'select a from tk1 where a = 2 for update' \
+  -c 'select a from tk1 order by a for update skip locked')" = \
+  "passed 1 3 " ] || fail "skip locked leaves out a held row"
+[ "$(against 'update tk1 set b = 0 where a = 3' \
+  -c 'select a from tk1 order by a for share skip locked')" = \
+  "passed 1 2 " ] || fail "skip locked leaves out a written row"
 local_psql -c 'drop table tk1' > /dev/null 2>&1
 
 # Verify that COPY reads a table in sm and writes one, its indexes with it.

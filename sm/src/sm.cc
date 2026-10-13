@@ -1317,6 +1317,16 @@ int sm_tbl_lock(sm_tbl_t *tbl, uint64_t rowno, sm_lockmode_t mode) {
   });
 }
 
+/* Lock a row if it is free now. */
+int sm_tbl_trylock(sm_tbl_t *tbl, uint64_t rowno, sm_lockmode_t mode) {
+  return guard(tbl ? tbl->session : nullptr, [&] {
+    if (!tbl) {
+      return null_arg("sm_tbl_trylock", "tbl");
+    }
+    return sm3::tbl_trylock(tbl->table, rowno, mode);
+  });
+}
+
 /* Empty a table, and refresh the handle's definition. */
 int sm_tbl_truncate(sm_tbl_t *tbl) {
   return guard(tbl ? tbl->session : nullptr, [&] {

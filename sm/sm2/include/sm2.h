@@ -556,6 +556,12 @@ int rel_read_latest(rel_t* rel, uint64_t rowno, std::string_view& tuple);
 int rel_lock(rel_t* rel, uint64_t rowno, sm1::lockmode_t mode);
 
 /*
+ * As rel_lock, but never waiting, as sm1::trylock does: 0 with the
+ * row locked, 1 with nothing taken if it would have waited, or -1.
+ */
+int rel_trylock(rel_t* rel, uint64_t rowno, sm1::lockmode_t mode);
+
+/*
  * Replace the row at rowno with tuple, which must pass
  * tup_check; it keeps its rowno. With
  * old non-null, the tuple replaced is handed back there, which

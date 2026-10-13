@@ -3060,3 +3060,26 @@ found it changed (step 86).
   are, and are copied by every caller; none is kept in a cache.
 - `server.sh`: EXPLAIN VERBOSE of functions and of serials, and
   a sequence's regclass.
+
+## Step 108: NOWAIT and SKIP LOCKED
+
+Step 106 refused both: sm had no row lock that did not wait.
+
+- **sm has one now** (`sm_tbl_trylock`, over `sm1::trylock`): the
+  lock `sm_tbl_lock` takes, or 1 at once if it would have waited
+  -- another transaction holds the row in a mode that conflicts,
+  or has written it and not yet ended.
+- **`smstore_lock_row()` asks that way** for a wait policy other
+  than "block". NOWAIT raises `could not obtain lock on row in
+  relation`, 55P03, as PostgreSQL does; SKIP LOCKED answers
+  `TM_WouldBlock`, and the executor passes over the row.
+- So two sessions each taking the first ready row of a table,
+  `ORDER BY ... LIMIT 1 FOR UPDATE SKIP LOCKED`, take different
+  rows, and neither waits.
+- **Not done**: `LOCK TABLE ... NOWAIT`, and `lock_timeout`.
+- `server.sh` checks NOWAIT on a free row, a held one and a
+  written one; a FOR SHARE NOWAIT passing a FOR SHARE; and SKIP
+  LOCKED taking the next row, and leaving out a held row and a
+  written one. Waiting all the same, and failing where it should
+  skip, each fail it.
+

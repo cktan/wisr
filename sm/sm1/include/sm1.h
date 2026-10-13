@@ -556,18 +556,22 @@ int lock(session_t* session, locktype_t type, uint64_t storeid,
          std::string_view key, lockmode_t mode);
 
 /*
- * Take the LOCKTYPE_OID lock named key in mode, as sm1::lock
- * does, if it can be had at once: this never waits. Returns 0
- * with the lock held, to the end of the transaction; 1, with
- * nothing taken or changed, if another transaction holds it in a
- * mode that conflicts; or -1. A caller that would rather go
- * another way than wait asks like this, as a bulk load does for
- * its table (BULKLOAD.md section 13). It is for an oid's lock
- * alone: a row's lock is also a check of the row, which this does
- * not make.
+ * Take a lock as sm1::lock does, if it can be had at once: this
+ * never waits. Returns 0 with the lock held, to the end of the
+ * transaction; 1, with nothing taken or changed, if it would have
+ * waited -- another transaction holds the lock in a mode that
+ * conflicts, or, for a row, has written it and not yet ended; or
+ * -1. A caller that would go another way sooner than wait asks
+ * like this: SQL's NOWAIT and SKIP LOCKED for a row, and a bulk
+ * load for its table (BULKLOAD.md section 13).
  *
- * Errors: SM_ERR_INVALID (a type other than LOCKTYPE_OID, a key
- * not 8 bytes, an unknown mode), SM_ERR_NOTRANS, SM_ERR_PREPARED.
+ * A row's lock taken this way is the lock sm1::lock takes, with
+ * its check: above READ COMMITTED a row changed since the
+ * snapshot fails the call, and the transaction, with
+ * SM_ERR_CONFLICT.
+ *
+ * Errors: as sm1::lock, but for SM_ERR_DEADLOCK, SM_ERR_BLOCKED
+ * and SM_ERR_INTERRUPTED, which come of waiting.
  */
 int trylock(session_t* session, locktype_t type, uint64_t storeid,
             std::string_view key, lockmode_t mode);

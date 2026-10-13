@@ -849,8 +849,7 @@ TEST_CASE("trylock takes an oid's lock only if it is free now") {
   // 3. b's trylock of it shared returns 0: shared holders agree.
   // 4. a commits; b's trylock exclusive now converts its hold,
   //    returning 0.
-  // 5. A row's lock, and an oid named by other than 8 bytes, are
-  //    SM_ERR_INVALID.
+  // 5. An oid named by other than 8 bytes is SM_ERR_INVALID.
   home_t home;
   REQUIRE(sm1::mkdb(home.env(), "db", nullptr) == 0);
   sm1::session_t *a = opendb(home.env(), "db", nullptr);
@@ -872,10 +871,64 @@ TEST_CASE("trylock takes an oid's lock only if it is free now") {
   REQUIRE(sm1::commit(a) == 0);
   CHECK(sm1::trylock(b, sm1::LOCKTYPE_OID, 0, oid, sm1::SM_LOCKMODE_EX) == 0);
 
-  CHECK(sm1::trylock(b, sm1::LOCKTYPE_ROW, 0, oid, sm1::SM_LOCKMODE_EX) == -1);
-  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(sm1::trylock(b, sm1::LOCKTYPE_OID, 0, "short", sm1::SM_LOCKMODE_EX) ==
         -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   REQUIRE(sm1::commit(b) == 0);
+}
+
+TEST_CASE("trylock takes a row's lock unless it would wait") {
+  // Verify sm1::trylock on a row: the lock sm1::lock takes, and
+  // never a wait.
+  // 1. A row is committed. Session a locks it exclusive; b's
+  //    trylock, shared or exclusive, returns 1, and b's
+  //    transaction goes on.
+  // 2. a commits: b's trylock exclusive returns 0, and a third
+  //    try by a returns 1.
+  // 3. b commits. a updates the row and does not commit: the
+  //    uncommitted version is its lock, and b's trylock returns 1.
+  // 4. a commits. At REPEATABLE READ, a session that began before
+  //    that commit fails its trylock with SM_ERR_CONFLICT, as
+  //    sm1::lock would.
+  home_t home;
+  REQUIRE(sm1::mkdb(home.env(), "db", nullptr) == 0);
+  sm1::session_t *a = opendb(home.env(), "db", nullptr);
+  sm1::session_t *b = opendb(home.env(), "db", nullptr);
+  sm1::session_t *c = opendb(home.env(), "db", nullptr);
+  REQUIRE(a);
+  REQUIRE(b);
+  REQUIRE(c);
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
+  uint64_t store = mkstore(a);
+  put(a, store, "k", "v1");
+  REQUIRE(sm1::commit(a) == 0);
+
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, store, "k", sm1::SM_LOCKMODE_EX) ==
+          0);
+  CHECK(sm1::trylock(b, sm1::LOCKTYPE_ROW, store, "k", sm1::SM_LOCKMODE_SH) ==
+        1);
+  CHECK(sm1::trylock(b, sm1::LOCKTYPE_ROW, store, "k", sm1::SM_LOCKMODE_EX) ==
+        1);
+  CHECK(get(b, store, "k") == "v1");
+  REQUIRE(sm1::commit(a) == 0);
+  CHECK(sm1::trylock(b, sm1::LOCKTYPE_ROW, store, "k", sm1::SM_LOCKMODE_EX) ==
+        0);
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
+  CHECK(sm1::trylock(a, sm1::LOCKTYPE_ROW, store, "k", sm1::SM_LOCKMODE_EX) ==
+        1);
+  REQUIRE(sm1::commit(b) == 0);
+
+  REQUIRE(sm1::begin(c, sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(get(c, store, "k") == "v1");
+  REQUIRE(sm1::update(a, store, "k", "v2") == 0);
+  REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
+  CHECK(sm1::trylock(b, sm1::LOCKTYPE_ROW, store, "k", sm1::SM_LOCKMODE_SH) ==
+        1);
+  REQUIRE(sm1::commit(b) == 0);
+  REQUIRE(sm1::commit(a) == 0);
+  CHECK(sm1::trylock(c, sm1::LOCKTYPE_ROW, store, "k", sm1::SM_LOCKMODE_EX) ==
+        -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_CONFLICT);
 }

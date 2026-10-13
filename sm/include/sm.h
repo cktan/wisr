@@ -902,6 +902,15 @@ int sm_tbl_read_latest(sm_tbl_t* tbl, uint64_t rowno, const void** tuple,
 int sm_tbl_lock(sm_tbl_t* tbl, uint64_t rowno, sm_lockmode_t mode);
 
 /*
+ * As sm_tbl_lock, but never waiting: 0 with the row locked; 1,
+ * with nothing taken, if another transaction holds the row in a
+ * mode that conflicts or has written it and not yet ended; or -1.
+ * SELECT ... FOR UPDATE NOWAIT fails on 1, and SKIP LOCKED passes
+ * over the row.
+ */
+int sm_tbl_trylock(sm_tbl_t* tbl, uint64_t rowno, sm_lockmode_t mode);
+
+/*
  * Empty the table, as SQL's TRUNCATE: its rows and every index's
  * entries go, in the table's transaction, at the same cost however
  * many there are. The table must be opened SM_LOCKMODE_EX,

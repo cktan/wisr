@@ -997,6 +997,14 @@ int tbl_read_latest(table_t* table, uint64_t rowno, std::string_view& tuple);
 int tbl_lock(table_t* table, uint64_t rowno, sm1::lockmode_t mode);
 
 /*
+ * As tbl_lock, but never waiting (sm1::trylock): 0 with the row
+ * locked, 1 with nothing taken if another transaction holds it or
+ * has written it and not ended, or -1. SQL's NOWAIT and SKIP
+ * LOCKED.
+ */
+int tbl_trylock(table_t* table, uint64_t rowno, sm1::lockmode_t mode);
+
+/*
  * Empty the table: its rows and every index's entries, in the
  * table's transaction (truncate_table). The table must be
  * opened exclusive, SM_ERR_INVALID if not. The handle stays open

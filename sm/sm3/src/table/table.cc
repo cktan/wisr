@@ -818,6 +818,16 @@ int tbl_lock(table_t *table, uint64_t rowno, sm1::lockmode_t mode) {
   return sm2::rel_lock(table->rel, rowno, mode);
 }
 
+/* Lock the row at rowno if it is free now; see sm3.h. */
+int tbl_trylock(table_t *table, uint64_t rowno, sm1::lockmode_t mode) {
+  // Only a shared lock sits under a table opened to read.
+  if (mode != sm1::SM_LOCKMODE_SH && need_writable(table) != 0) {
+    return -1;
+  }
+  // The same lock, asked for without waiting.
+  return sm2::rel_trylock(table->rel, rowno, mode);
+}
+
 /* Empty the table, then reopen its heap and indexes; see sm3.h. */
 int tbl_truncate(table_t *table) {
   if (!table->exclusive) {

@@ -319,7 +319,8 @@ int lock_name(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
 
 /* sm1::lock, minus the out-of-memory guard. */
 int lock_row(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
-             const char *key, size_t klen, sm1::lockmode_t mode) {
+             const char *key, size_t klen, sm1::lockmode_t mode,
+             bool nowait = false) {
   // Require an active, non-prepared transaction.
   if (xct_check_active(s) != 0) {
     return -1;
@@ -339,7 +340,14 @@ int lock_row(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
   }
   // A name outside any store takes the lock and nothing else.
   if (type != sm1::LOCKTYPE_ROW) {
-    return lock_name(s, type, storeid, key, klen, mode);
+    if (!nowait) {
+      return lock_name(s, type, storeid, key, klen, mode);
+    }
+    // Taken, or converted, only if no other holder conflicts.
+    return lock_try(s, type, storeid, rocksdb::Slice(key ? key : "", klen),
+                    mode) == 0
+               ? 0
+               : 1;
   }
   // Validate the storeid and key at the current view.
   if (enter(s, xct_view(s), storeid, key, klen) != 0) {
@@ -374,6 +382,10 @@ int lock_row(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
           lock_try(s, sm1::LOCKTYPE_ROW, storeid, k, mode) == 0) {
         break;
       }
+    }
+    // Asked not to wait: the row is another's for now.
+    if (nowait) {
+      return 1;
     }
     // Wait, without the latch, for the uncommitted writer, or for
     // the holders that conflict.
@@ -1003,24 +1015,10 @@ int sm1::lock(sm1::session_t *session, sm1::locktype_t type, uint64_t storeid,
   return lock_row(session, type, storeid, key.data(), key.size(), mode);
 }
 
-/* Take an oid's lock if it is free now; see sm1.h. */
+/* Take a lock if it can be had at once; see sm1.h. */
 int sm1::trylock(sm1::session_t *session, sm1::locktype_t type,
                  uint64_t storeid, std::string_view key, sm1::lockmode_t mode) {
-  if (xct_check_active(session) != 0) {
-    return -1;
-  }
-  if (type != sm1::LOCKTYPE_OID || key.size() != 8) {
-    return set_error(sm1::SM_ERR_INVALID,
-                     "trylock: only a LOCKTYPE_OID lock, named by 8 bytes");
-  }
-  if (static_cast<int>(mode) < 0 || static_cast<int>(mode) > 4) {
-    return set_error(sm1::SM_ERR_INVALID, "unknown lock mode {}", (int)mode);
-  }
-  // Taken, or converted, only if no other holder conflicts.
-  return lock_try(session, type, storeid,
-                  rocksdb::Slice(key.data(), key.size()), mode) == 0
-             ? 0
-             : 1;
+  return lock_row(session, type, storeid, key.data(), key.size(), mode, true);
 }
 
 /* Insert a row; the key must not exist. */

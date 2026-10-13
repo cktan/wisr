@@ -382,6 +382,13 @@ int rel_lock(rel_t *rel, uint64_t rowno, sm1::lockmode_t mode) {
                    row_key(rel->relid, rowno), mode);
 }
 
+/* Lock the row at rowno in mode if it is free now; see sm2.h. */
+int rel_trylock(rel_t *rel, uint64_t rowno, sm1::lockmode_t mode) {
+  // The same lock, asked for without waiting.
+  return sm1::trylock(rel->session, sm1::LOCKTYPE_ROW, rel->storeid,
+                      row_key(rel->relid, rowno), mode);
+}
+
 /* Read the newest committed version of the row at rowno. */
 int rel_read_latest(rel_t *rel, uint64_t rowno, std::string_view &tuple) {
   return sm1::read_latest(rel->session, rel->storeid,
