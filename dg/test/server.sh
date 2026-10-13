@@ -41,6 +41,78 @@ tcp_psql() {
   PGPASSWORD=$1 psql -X -A -t -h 127.0.0.1 -p "$port" -d postgres "${@:2}"
 }
 
+# A held session: a psql reading statements from a fifo, so a transaction
+# stays open across steps; its output is in $work/NAME.out.
+declare -A held_pid held_fd
+
+# Start the held session NAME.
+held_start() {
+  local fd
+  mkfifo "$work/$1.in"
+  # Without the other held sessions' fifos, whose end it would keep open.
+  (
+    for fd in "${held_fd[@]}"; do exec {fd}>&-; done
+    exec psql -X -A -t -h "$work" -p "$port" -d postgres
+  ) < "$work/$1.in" > "$work/$1.out" 2>&1 &
+  held_pid[$1]=$!
+  exec {fd}> "$work/$1.in"
+  held_fd[$1]=$fd
+}
+
+# Send the statements SQL to the held session NAME.
+held_send() {
+  echo "$2" >&"${held_fd[$1]}"
+}
+
+# Wait, five seconds at most, for the held session NAME to print LINE.
+held_wait() {
+  for _ in $(seq 50); do
+    grep -qxF -- "$2" "$work/$1.out" && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+# End the held session NAME, once it has run what it was sent.
+held_end() {
+  local fd=${held_fd[$1]}
+  exec {fd}>&-
+  wait "${held_pid[$1]}"
+}
+
+# A statement in the background, in a session of its own; its output is in
+# $work/NAME.out.
+declare -A bg_pid
+
+# Start psql with the arguments given as the background statement NAME.
+bg_start() {
+  local name=$1
+  shift
+  local_psql "$@" > "$work/$name.out" 2>&1 &
+  bg_pid[$name]=$!
+}
+
+# Whether the background statement NAME is still waiting after a second.
+bg_waiting() {
+  sleep 1
+  kill -0 "${bg_pid[$1]}" 2> /dev/null
+}
+
+# Wait, ten seconds at most, for the background statement NAME to end;
+# false, and it is killed, if it does not.
+bg_end() {
+  for _ in $(seq 100); do
+    kill -0 "${bg_pid[$1]}" 2> /dev/null || break
+    sleep 0.1
+  done
+  if kill -0 "${bg_pid[$1]}" 2> /dev/null; then
+    kill -KILL "${bg_pid[$1]}"
+    wait "${bg_pid[$1]}"
+    return 1
+  fi
+  wait "${bg_pid[$1]}"
+}
+
 # Verify that the server starts on what initdb made, and takes connections.
 # 1. Make a data directory whose superuser has a password.
 # 2. Start the server on it.
@@ -1303,6 +1375,64 @@ grep -q 'ERROR:  ALTER TABLE supports only ADD COLUMN, DROP COLUMN and RENAME ye
   grep -q 'ERROR:  ALTER TABLE is not supported yet' "$work/alter3.out" &&
   grep -q 'ERROR:  ALTER INDEX is not supported yet' "$work/alter3.out" ||
   fail "ALTER refused"
+
+# Verify that ALTER TABLE and the statements around it wait for each other
+# in sm, and that a statement that waited reads the new definition, as
+# PostgreSQL's relation locks make it (lmgr.c, smstore_lock_relation()).
+# 1. A reads rc in a transaction: B's ADD COLUMN waits until A commits.
+# 2. C has read rc. A adds d DEFAULT 5 and has not committed: C's INSERT and
+#    SELECT wait, and once A commits, the INSERT takes d's default and the
+#    SELECT reads d.
+# 3. A drops b and has not committed: C's INSERT of four values waits, and
+#    once A commits fails as rc has three columns; one of three goes in.
+# 4. C reads rc in a transaction: RENAME COLUMN and RENAME TO wait until C
+#    commits, and C then reads rc2 and aa.
+local_psql -c 'create table rc (a int4, b int4)' \
+  -c 'insert into rc values (1, 1)' > /dev/null 2>&1
+held_start rca
+held_start rcc
+held_send rca "begin; select 'step1', count(*) from rc;"
+held_wait rca 'step1|1' || fail "rc step 1 read"
+bg_start rcb -c 'alter table rc add column c int4'
+bg_waiting rcb || fail "ADD COLUMN waits for a reader"
+held_send rca "commit;"
+bg_end rcb && [ "$(cat "$work/rcb.out")" = "ALTER TABLE" ] ||
+  fail "ADD COLUMN after a reader"
+
+held_send rcc "select 'step2', count(*) from rc;"
+held_wait rcc 'step2|1' || fail "rc step 2 read"
+held_send rca "begin; alter table rc add column d int4 default 5;
+  select 'altered';"
+held_wait rca altered || fail "rc step 2 alter"
+held_send rcc "insert into rc (a) values (2); select * from rc order by a;"
+sleep 1
+grep -q INSERT "$work/rcc.out" && fail "INSERT waits for ADD COLUMN"
+held_send rca "commit;"
+held_wait rcc '2|||5' && grep -qxF '1|1||5' "$work/rcc.out" ||
+  fail "INSERT and SELECT after ADD COLUMN"
+
+held_send rca "begin; alter table rc drop column b; select 'dropped';"
+held_wait rca dropped || fail "rc step 3 alter"
+held_send rcc "insert into rc values (3, 3, 3, 3);"
+sleep 1
+grep -q 'more expressions' "$work/rcc.out" && fail "INSERT waits for DROP COLUMN"
+held_send rca "commit;"
+held_send rcc "insert into rc values (3, 3, 3); select * from rc where a = 3;"
+held_wait rcc '3|3|3' &&
+  grep -q 'ERROR:  INSERT has more expressions than target columns' \
+    "$work/rcc.out" || fail "INSERT after DROP COLUMN"
+
+held_send rcc "begin; select 'step4', count(*) from rc;"
+held_wait rcc 'step4|3' || fail "rc step 4 read"
+bg_start rcr -c 'alter table rc rename column a to aa' \
+  -c 'alter table rc rename to rc2'
+bg_waiting rcr || fail "RENAME waits for a reader"
+held_send rcc "commit;"
+bg_end rcr || fail "RENAME after a reader"
+held_send rcc "select 'renamed', sum(aa) from rc2;"
+held_wait rcc 'renamed|6' || fail "RENAME read after"
+held_end rca
+held_end rcc
 
 # Verify that text compares, cases and matches, by the database's default
 # collation, C.

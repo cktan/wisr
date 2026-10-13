@@ -3184,3 +3184,43 @@ Step 88 refused every ALTER TABLE. sm3 had `add_column`,
   column with no missing value. `server.sh`: each form, the
   refusals, a rollback, and another session reading the new
   column.
+
+## Step 111: a statement waits out DDL before it reads the definition
+
+Step 41 made PostgreSQL's relation locks no-ops for a table in
+sm: sm locked the table when the executor opened it. So a
+statement read the definition, planned, and only then waited in
+sm for a DDL that held the table. Once the DDL committed it ran
+the plan it had: an INSERT behind an uncommitted ADD COLUMN
+failed with `sm_tbl_insert: n is not the attribute count`, and
+one behind a DROP COLUMN wrote into the dropped column's place.
+
+- **`LockRelationOid()`, `LockRelationId()` and
+  `LockRelation()` open the table in sm**
+  (`smstore_lock_relation()`), before they take the
+  invalidation messages, as PostgreSQL's lock is taken before
+  its relcache entry is used. sm's lock is only to exclude DDL,
+  which takes X: AccessExclusive and Exclusive take X,
+  RowExclusive IX, the rest IS. So CREATE INDEX's ShareLock and
+  ANALYZE's ShareUpdateExclusive keep no writer out, as sm's
+  index builds and analyzes do not. An index's or a sequence's
+  oid is no table in sm, and takes nothing.
+  `ConditionalLockRelationOid()` is still a no-op.
+- **ALTER TABLE looks its table up with no lock**: sm's DDL
+  takes the lock itself, and a NOT NULL column with no default
+  asks for it without waiting (step 110), which X taken first
+  would turn into a wait.
+- **The invalidation messages are sent before sm commits, too**
+  (`PreCommit_Inval()`). sm's commit lets go of the locks, and
+  `AtEOXact_Inval()` sends them only after: a session the
+  commit woke could read the messages waiting before they were
+  there, and cache the old definition. One that reads them
+  before the commit rebuilds nothing old, since a rebuild opens
+  the table in sm and waits.
+- `server.sh` gains helpers for held sessions and background
+  statements, and checks, with sessions holding the table: ADD
+  COLUMN and RENAME wait for a reader; an INSERT and a SELECT
+  behind an uncommitted ADD COLUMN take its default and read
+  it; an INSERT behind a DROP COLUMN fails as PostgreSQL's
+  does. Without the lock the last three fail. The early send
+  is a race no check holds to.

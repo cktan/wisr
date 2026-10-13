@@ -15,6 +15,7 @@
 
 #include "postgres.h"
 
+#include "access/smstore.h"
 #include "access/transam.h"
 #include "access/xact.h"
 #include "catalog/catalog.h"
@@ -91,9 +92,10 @@ static inline void SetLocktagRelationOid(LOCKTAG *tag, Oid relid) {
 /*
  * Whether relid is locked by sm, not here: a relation in sm, any a user made
  * (access/smstore.h).  sm locks it as it is opened, and its records as they
- * are read and written, so a lock asked of this lock manager is a no-op,
- * held as far as anyone asks.  A lock request still takes the invalidation
- * messages waiting, as it would on acquiring a lock.
+ * are read and written, so a lock asked of this lock manager is held as far
+ * as anyone asks.  A lock request takes sm's lock on the table
+ * (smstore_lock_relation()), then the invalidation messages waiting, as
+ * acquiring a lock does: the definition is read after any DDL on it ends.
  */
 static inline bool locked_by_sm(Oid relid) {
   return relid >= FirstNormalObjectId;
@@ -111,6 +113,7 @@ void LockRelationOid(Oid relid, LOCKMODE lockmode) {
   LockAcquireResult res;
 
   if (locked_by_sm(relid)) {
+    smstore_lock_relation(relid, lockmode);
     AcceptInvalidationMessages();
     return;
   }
@@ -193,6 +196,7 @@ void LockRelationId(LockRelId *relid, LOCKMODE lockmode) {
   LockAcquireResult res;
 
   if (locked_by_sm(relid->relId)) {
+    smstore_lock_relation(relid->relId, lockmode);
     AcceptInvalidationMessages();
     return;
   }
@@ -258,6 +262,7 @@ void LockRelation(Relation relation, LOCKMODE lockmode) {
   LockAcquireResult res;
 
   if (locked_by_sm(RelationGetRelid(relation))) {
+    smstore_lock_relation(RelationGetRelid(relation), lockmode);
     AcceptInvalidationMessages();
     return;
   }

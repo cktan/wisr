@@ -1011,6 +1011,9 @@ static void CommitTransaction(void) {
    */
   PreCommit_on_commit_actions();
 
+  /* A session sm's commit wakes finds the messages there. */
+  PreCommit_Inval();
+
   /* sm's transaction commits first: one sm refuses fails this one. */
   smstore_commit();
 

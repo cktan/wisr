@@ -29,6 +29,8 @@ extern void AcceptInvalidationMessages(void);
 
 extern void AtEOXact_Inval(bool isCommit);
 
+extern void PreCommit_Inval(void);
+
 extern void PreInplace_Inval(void);
 extern void AtInplace_Inval(void);
 extern void ForgetInplace_Inval(void);

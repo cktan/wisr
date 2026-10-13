@@ -100,6 +100,7 @@ extern ObjectAddress smstore_rename_column(RenameStmt *stmt);
 extern ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt);
 extern void smstore_drop_indexes(DropStmt *stmt);
 extern void smstore_lock_table(Relation rel, LOCKMODE lockmode, bool nowait);
+extern void smstore_lock_relation(Oid relid, LOCKMODE lockmode);
 extern void smstore_truncate(Relation rel);
 extern smstore_table_t *smstore_table_desc(Oid oid);
 extern Oid smstore_index_table(Oid indexoid);

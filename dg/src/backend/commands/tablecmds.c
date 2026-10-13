@@ -4150,8 +4150,13 @@ Oid AlterTableLookupRelation(AlterTableStmt *stmt, LOCKMODE lockmode) {
                       errmsg("ALTER TABLE supports only ADD COLUMN, DROP "
                              "COLUMN and RENAME yet")));
   }
-  /* No permission check: it would open pg_class, which digres has not. */
-  return RangeVarGetRelidExtended(stmt->relation, lockmode,
+  /*
+   * No permission check: it would open pg_class, which digres has not.  No
+   * lock: sm's DDL takes the table's own, and a NOT NULL column with no
+   * default asks for it without waiting (smstore_alter_table()).
+   */
+  (void)lockmode;
+  return RangeVarGetRelidExtended(stmt->relation, NoLock,
                                   stmt->missing_ok ? RVR_MISSING_OK : 0, NULL,
                                   NULL);
 }

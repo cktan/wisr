@@ -1068,6 +1068,26 @@ void AtEOXact_Inval(bool isCommit) {
 }
 
 /*
+ * PreCommit_Inval
+ *		Send the transaction's invalidation messages before sm's
+ *transaction commits, as well as after (AtEOXact_Inval()).
+ *
+ * sm's commit lets go of its locks, and a session waiting for one then reads
+ * the messages waiting: those sent after the commit may not be there yet,
+ * and the definition it caches would be the old one.  One that reads them
+ * earlier rebuilds nothing old: a rebuild opens the table in sm, which waits
+ * for this transaction.  If the commit fails, they cost a rebuild.
+ */
+void PreCommit_Inval(void) {
+  if (transInvalInfo == NULL)
+    return;
+  ProcessInvalidationMessagesMulti(&transInvalInfo->PriorCmdInvalidMsgs,
+                                   SendSharedInvalidMessages);
+  ProcessInvalidationMessagesMulti(&transInvalInfo->ii.CurrentCmdInvalidMsgs,
+                                   SendSharedInvalidMessages);
+}
+
+/*
  * PreInplace_Inval
  *		Process queued-up invalidation before inplace update critical
  *section.

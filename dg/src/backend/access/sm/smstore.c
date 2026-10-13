@@ -2374,6 +2374,24 @@ static sm_lockmode_t table_lock_mode(LOCKMODE lockmode) {
 }
 
 /*
+ * Lock the relation relid, if it is a table in sm, as PostgreSQL locks a
+ * relation before it reads its definition (lmgr.c): so a definition a DDL
+ * is changing is read once the DDL has ended.  Only the conflict with DDL,
+ * which takes X, matters here: the call into sm that uses the table takes
+ * what it needs, so a writer takes IX and anything not exclusive IS -- an
+ * index build or an analyze in sm keeps no writer out.  An index or a
+ * sequence is not a table in sm, and takes nothing.
+ */
+void smstore_lock_relation(Oid relid, LOCKMODE lockmode) {
+  sm_lockmode_t mode = lockmode >= ExclusiveLock      ? SM_LOCKMODE_EX
+                       : lockmode == RowExclusiveLock ? SM_LOCKMODE_IX
+                                                      : SM_LOCKMODE_IS;
+
+  /* Held until the transaction ends, as the handle is. */
+  (void)open_table(relid, mode);
+}
+
+/*
  * TRUNCATE rel, a table in sm: its rows and its indexes' entries go, in
  * this transaction, which a rollback undoes.  The table is opened
  * exclusively, so the truncate waits for every other session's use of it.
