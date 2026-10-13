@@ -22,7 +22,9 @@
 #include "access/tableam.h"
 #include "catalog/cat_builtin.h"
 #include "catalog/catrel.h"
+#include "catalog/pg_am_d.h"
 #include "catalog/pg_authid_d.h"
+#include "catalog/pg_class_d.h"
 #include "catalog/pg_namespace_d.h"
 #include "catalog/pg_publication_d.h"
 #include "catalog/pg_publication_namespace_d.h"
@@ -81,6 +83,82 @@ static void gen_pg_namespace(Tuplestorestate *ts, TupleDesc desc) {
   }
 }
 
+/*
+ * A row of pg_class, into ts: a relation's own columns given, the rest as
+ * digres has them -- owned by the superuser, in no tablespace, with no
+ * statistics, no ACL and no options.
+ */
+static void class_row(Tuplestorestate *ts, TupleDesc desc, Oid oid,
+                      const char *name, Oid nspoid, Oid reltype, char kind,
+                      int natts, bool hasindex, bool temp) {
+  Datum values[Natts_pg_class];
+  bool nulls[Natts_pg_class];
+
+  memset(values, 0, sizeof(values));
+  memset(nulls, false, sizeof(nulls));
+  values[Anum_pg_class_oid - 1] = ObjectIdGetDatum(oid);
+  values[Anum_pg_class_relname - 1] = name_datum(name);
+  values[Anum_pg_class_relnamespace - 1] = ObjectIdGetDatum(nspoid);
+  values[Anum_pg_class_reltype - 1] = ObjectIdGetDatum(reltype);
+  values[Anum_pg_class_relowner - 1] = ObjectIdGetDatum(BOOTSTRAP_SUPERUSERID);
+  values[Anum_pg_class_relam - 1] =
+      ObjectIdGetDatum(kind == RELKIND_RELATION ? HEAP_TABLE_AM_OID
+                       : kind == RELKIND_INDEX  ? BTREE_AM_OID
+                                                : InvalidOid);
+  values[Anum_pg_class_relfilenode - 1] = ObjectIdGetDatum(oid);
+  /* Never analyzed, as PostgreSQL says it: no pages, -1 rows. */
+  values[Anum_pg_class_reltuples - 1] = Float4GetDatum(-1);
+  values[Anum_pg_class_relhasindex - 1] = BoolGetDatum(hasindex);
+  values[Anum_pg_class_relpersistence - 1] =
+      CharGetDatum(temp ? RELPERSISTENCE_TEMP : RELPERSISTENCE_PERMANENT);
+  values[Anum_pg_class_relkind - 1] = CharGetDatum(kind);
+  values[Anum_pg_class_relnatts - 1] = Int16GetDatum(natts);
+  values[Anum_pg_class_relispopulated - 1] = BoolGetDatum(true);
+  values[Anum_pg_class_relreplident - 1] =
+      CharGetDatum(kind == RELKIND_RELATION ? REPLICA_IDENTITY_DEFAULT
+                                            : REPLICA_IDENTITY_NOTHING);
+  nulls[Anum_pg_class_relacl - 1] = true;
+  nulls[Anum_pg_class_reloptions - 1] = true;
+  nulls[Anum_pg_class_relpartbound - 1] = true;
+  tuplestore_putvalues(ts, desc, values, nulls);
+}
+
+/*
+ * pg_class's rows: the catalog relations, in pg_catalog, then sm's tables,
+ * indexes and sequences, the session's temporary tables among them.
+ */
+static void gen_pg_class(Tuplestorestate *ts, TupleDesc desc) {
+  int count;
+  const cat_relation_t *cats = cat_relations(&count);
+  ListCell *l;
+
+  for (int i = 0; i < count; i++)
+    class_row(ts, desc, cats[i].oid, cats[i].name, PG_CATALOG_NAMESPACE,
+              cats[i].rowtype, RELKIND_RELATION, cats[i].natts, false, false);
+  foreach (l, smstore_relations()) {
+    smstore_relation_t *r = (smstore_relation_t *)lfirst(l);
+
+    class_row(ts, desc, r->oid, r->name, r->nspoid, InvalidOid, r->kind,
+              r->natts, r->hasindex, r->temp);
+  }
+}
+
+/* pg_am's rows: those compiled in. */
+static void gen_pg_am(Tuplestorestate *ts, TupleDesc desc) {
+  int count;
+  const cat_am_t *rows = cat_ams(&count);
+  Datum values[4];
+  bool nulls[4] = {false, false, false, false};
+
+  for (int i = 0; i < count; i++) {
+    values[0] = ObjectIdGetDatum(rows[i].oid);
+    values[1] = name_datum(rows[i].amname);
+    values[2] = ObjectIdGetDatum(rows[i].amhandler);
+    values[3] = CharGetDatum(rows[i].amtype);
+    tuplestore_putvalues(ts, desc, values, nulls);
+  }
+}
+
 /* Fill ts with the rows of the catalog relation rel. */
 static void generate(Relation rel, Tuplestorestate *ts) {
   TupleDesc desc = RelationGetDescr(rel);
@@ -88,6 +166,12 @@ static void generate(Relation rel, Tuplestorestate *ts) {
   switch (RelationGetRelid(rel)) {
   case NamespaceRelationId:
     gen_pg_namespace(ts, desc);
+    break;
+  case RelationRelationId:
+    gen_pg_class(ts, desc);
+    break;
+  case AccessMethodRelationId:
+    gen_pg_am(ts, desc);
     break;
   /* What digres has none of: read, and empty. */
   case PublicationRelationId:

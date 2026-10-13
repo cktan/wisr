@@ -28,6 +28,17 @@
  */
 #define RelationIsSm(rel) (RelationGetRelid(rel) >= FirstNormalObjectId)
 
+/* A relation in sm, as pg_class lists it (catalog/catrel.c). */
+typedef struct smstore_relation_t {
+  Oid oid;
+  char *name;
+  Oid nspoid;
+  char kind;     /* RELKIND_RELATION, RELKIND_INDEX or RELKIND_SEQUENCE */
+  int natts;     /* its columns; an index's key and include columns */
+  bool hasindex; /* a table with an index */
+  bool temp;     /* a temporary table, or an index on one */
+} smstore_relation_t;
+
 /* A column of a table in sm. */
 typedef struct smstore_column_t {
   const char *name;
@@ -74,6 +85,7 @@ extern void smstore_subabort(void);
 extern Oid smstore_namespace_oid(const char *name);
 extern char *smstore_namespace_name(Oid nspoid);
 extern List *smstore_namespace_names(void);
+extern List *smstore_relations(void);
 extern Oid smstore_relation_oid(const char *name, Oid nspoid);
 extern Oid smstore_create_namespace(const char *name);
 extern void smstore_drop_namespaces(DropStmt *stmt);

@@ -55,7 +55,8 @@ CATALOGS = {
 }
 
 #The catalogs a query can read as relations(SYSCATALOG.md).
-RELATIONS = ["pg_namespace", "pg_publication", "pg_publication_namespace"]
+RELATIONS = ["pg_am", "pg_class", "pg_namespace", "pg_publication",
+             "pg_publication_namespace"]
 
 
 def key_col(entry):
@@ -224,7 +225,9 @@ def write_header(catalogs, out):
     w("/* The catalog relation with this oid, or NULL. */\n")
     w("extern const cat_relation_t *cat_relation(Oid oid);\n\n")
     w("/* The catalog relation named name, or NULL. */\n")
-    w("extern const cat_relation_t *cat_relation_named(const char *name);\n")
+    w("extern const cat_relation_t *cat_relation_named(const char *name);\n\n")
+    w("/* Every catalog relation, and how many in *count. */\n")
+    w("extern const cat_relation_t *cat_relations(int *count);\n")
     w("\n#endif /* CAT_BUILTIN_H */\n")
 
 
@@ -324,7 +327,10 @@ def write_relations(catalogs, oids, w):
     w("/* Find the catalog relation named name. */\n")
     w("const cat_relation_t *cat_relation_named(const char *name) {\n")
     w("  for (const cat_relation_t &r : relations)\n")
-    w("    if (strcmp(r.name, name) == 0)\n      return &r;\n  return NULL;\n}\n")
+    w("    if (strcmp(r.name, name) == 0)\n      return &r;\n  return NULL;\n}\n\n")
+    w("/* Every catalog relation. */\n")
+    w("const cat_relation_t *cat_relations(int *count) {\n")
+    w("  *count = lengthof(relations);\n  return relations;\n}\n")
 
 
 def main():

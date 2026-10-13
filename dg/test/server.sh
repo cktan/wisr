@@ -1475,6 +1475,43 @@ ERROR:  permission denied: "pg_namespace" is a system catalog
 OUT
 cmp -s "$work/dn.out" "$work/dn.expected" || fail "pg_namespace and \\dn"
 
+# Verify that pg_class and pg_am are catalog relations a query reads, so
+# psql's \dt and \ds run: pg_class lists the catalog relations, and sm's
+# tables, indexes, sequences and the session's temporary tables.
+# 1. In schema dt1 make table a, its serial's sequence and its primary key,
+#    sequence q, and a temporary table tt.
+# 2. \dt and \ds list them; \dtS lists the catalog relations.
+# 3. pg_class has each with its kind, columns and whether it has an index;
+#    pg_am has btree and heap.
+# 4. A write to pg_class is refused.
+local_psql -c 'create schema dt1' \
+  -c 'create table dt1.a (x serial primary key, y text)' \
+  -c 'create sequence dt1.q' -c 'create temp table tt (z int4)' \
+  -c '\dt dt1.*' -c '\ds dt1.*' -c '\dt pg_temp.*' -c '\dtS pg_cl*' \
+  -c "select relname, relkind, relnatts, relhasindex from pg_class
+        where relnamespace = 'dt1'::regnamespace order by relname" \
+  -c "select amname from pg_am where amname in ('btree', 'heap') order by 1" \
+  -c "delete from pg_class" > "$work/dt.out" 2>&1
+cat > "$work/dt.expected" << OUT
+CREATE SCHEMA
+CREATE TABLE
+CREATE SEQUENCE
+CREATE TABLE
+dt1|a|table|$me
+dt1|a_x_seq|sequence|$me
+dt1|q|sequence|$me
+pg_temp|tt|table|$me
+pg_catalog|pg_class|table|$me
+a|r|2|t
+a_pkey|i|1|f
+a_x_seq|S|3|f
+q|S|3|f
+btree
+heap
+ERROR:  permission denied for table pg_class
+OUT
+cmp -s "$work/dt.out" "$work/dt.expected" || fail "pg_class, pg_am and \\dt"
+
 # Verify that text compares, cases and matches, by the database's default
 # collation, C.
 # 1. 'a' < 'b', and ORDER BY sorts B before a, as C's byte order does.

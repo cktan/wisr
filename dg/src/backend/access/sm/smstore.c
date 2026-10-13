@@ -613,6 +613,82 @@ List *smstore_namespace_names(void) {
   return out;
 }
 
+/* Add to *out a relation of sm's, made from what is given. */
+static void add_relation(List **out, uint64_t oid, const std::string &name,
+                         Oid nspoid, char kind, int natts, bool hasindex,
+                         bool temp) {
+  smstore_relation_t *r = (smstore_relation_t *)palloc(sizeof(*r));
+
+  r->oid = (Oid)oid;
+  r->name = pstrdup(name.c_str());
+  r->nspoid = nspoid;
+  r->kind = kind;
+  r->natts = natts;
+  r->hasindex = hasindex;
+  r->temp = temp;
+  *out = lappend(*out, r);
+}
+
+/* Add to *out the tables of sm's namespace nspoid, with their indexes. */
+static void add_tables(sm_session_t *s, uint64_t nspoid, List **out) {
+  std::vector<std::string> names;
+  bool temp = nspoid == SM_NSP_TEMP;
+  Oid pgnsp = temp ? PG_TEMP_NAMESPACE : (Oid)nspoid;
+
+  if (sm_cat_list_tables(s, nspoid, names) != 0)
+    sm_error("list a schema's tables");
+  for (const std::string &name : names) {
+    sm_table_def_t def;
+
+    /* Not locked: a listing does not wait for a table's DDL. */
+    switch (sm_cat_table_def(s, nspoid, name.c_str(), def)) {
+    case 0:
+      break;
+    case 1:
+      continue;
+    default:
+      sm_error("read a table's definition");
+    }
+    add_relation(out, def.oid, def.name, pgnsp, RELKIND_RELATION,
+                 (int)def.columns.size(), !def.indexes.empty(), temp);
+    for (const sm_index_def_t &x : def.indexes)
+      add_relation(out, x.oid, x.name, pgnsp, RELKIND_INDEX,
+                   (int)(x.key_attnums.size() + x.include_attnums.size()),
+                   false, temp);
+  }
+}
+
+/*
+ * Every relation in sm, palloc'd smstore_relation_t, as this transaction
+ * sees them: each schema's tables, their indexes and its sequences, and the
+ * session's temporary tables, in pg_temp.  pg_class's rows
+ * (catalog/catrel.c).
+ */
+List *smstore_relations(void) {
+  sm_session_t *s = xact_session();
+  std::vector<std::string> nsps;
+  List *out = NIL;
+
+  if (sm_cat_list_namespaces(s, nsps) != 0)
+    sm_error("list the schemas");
+  for (const std::string &nsp : nsps) {
+    std::vector<std::string> seqs;
+    uint64_t nspoid, oid;
+
+    if (sm_cat_namespace_oid(s, nsp.c_str(), &nspoid) != 0)
+      continue;
+    add_tables(s, nspoid, &out);
+    if (sm_cat_list_sequences(s, nspoid, seqs) != 0)
+      sm_error("list a schema's sequences");
+    for (const std::string &seq : seqs)
+      if (sm_cat_sequence_oid(s, nspoid, seq.c_str(), &oid) == 0)
+        add_relation(&out, oid, seq, (Oid)nspoid, RELKIND_SEQUENCE, 3, false,
+                     false);
+  }
+  add_tables(s, SM_NSP_TEMP, &out);
+  return out;
+}
+
 /*
  * The oid of the sequence named name in nspoid, or InvalidOid if there is
  * none.  sm reads it from its catalog in the transaction, which this begins.

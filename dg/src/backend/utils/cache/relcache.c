@@ -1628,11 +1628,27 @@ static Relation RelationBuildSmIndexDesc(Oid indexoid, Oid table,
 
 /*
  * Copy relid's pg_class form into *form, from its descriptor: for a caller
- * that read it from pg_class's row, which a relation in sm has none of.
- * Returns false if there is no such relation.
+ * that read it from pg_class's row, which a relation in sm has none of.  A
+ * sequence has no descriptor: its name, schema and kind are sm's.  Returns
+ * false if there is no such relation.
  */
 bool RelationGetClassForm(Oid relid, FormData_pg_class *form) {
-  Relation rel = RelationIdGetRelation(relid);
+  Relation rel;
+  Oid nspoid;
+  char *seqname;
+
+  if (relid >= FirstNormalObjectId &&
+      (seqname = smstore_sequence_lookup(relid, &nspoid)) != NULL) {
+    memset(form, 0, CLASS_TUPLE_SIZE);
+    form->oid = relid;
+    namestrcpy(&form->relname, seqname);
+    form->relnamespace = nspoid;
+    form->relowner = BOOTSTRAP_SUPERUSERID;
+    form->relkind = RELKIND_SEQUENCE;
+    form->relpersistence = RELPERSISTENCE_PERMANENT;
+    return true;
+  }
+  rel = RelationIdGetRelation(relid);
 
   if (!RelationIsValid(rel))
     return false;
@@ -2232,7 +2248,10 @@ static void formrdesc(const char *relationName, Oid relationReltype,
    * initialize the table am handler
    */
   relation->rd_rel->relam = HEAP_TABLE_AM_OID;
-  relation->rd_tableam = smtable_routine();
+  /* One a query can read has its rows made (catalog/catrel.c). */
+  relation->rd_tableam = cat_relation(RelationGetRelid(relation)) != NULL
+                             ? catrel_routine()
+                             : smtable_routine();
 
   /*
    * initialize the rel-has-index flag, using hardwired knowledge

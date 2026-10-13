@@ -629,6 +629,16 @@ int sm_cat_table_oid(sm_session_t* session, uint64_t nspoid,
 int sm_cat_list_tables(sm_session_t* session, uint64_t nspoid,
                        std::vector<std::string>& names);
 
+/*
+ * The definition of the table named name in nspoid, as the
+ * session's transaction sees it, into out: 0, or 1 if there is
+ * none. It takes no lock, so a DDL that commits meanwhile is not
+ * waited for: it is for listing tables, as a catalog query does,
+ * not for using one, which sm_tbl_open is for.
+ */
+int sm_cat_table_def(sm_session_t* session, uint64_t nspoid,
+                     const char* name, sm_table_def_t& out);
+
 /* The index named name in nspoid, and its table: 0, or 1 if none. */
 int sm_cat_index_oid(sm_session_t* session, uint64_t nspoid,
                      const char* name, uint64_t* table, uint64_t* index);

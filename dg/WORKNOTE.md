@@ -3255,3 +3255,29 @@ query reads, with nothing stored.
   has a `pg_temp_N` a session.
 - `server.sh`: `\dn`, `pg_namespace`'s rows, a schema made in an
   open transaction, and the writes refused.
+
+## Step 113: pg_class and pg_am are read, and \dt and \ds run
+
+`SYSCATALOG.md` step 3.
+
+- **`pg_class` lists every relation**: the catalog relations, in
+  `pg_catalog`, then sm's tables, their indexes and the
+  sequences of each schema (`smstore_relations()`), and the
+  session's temporary tables, in `pg_temp`. Each has its name,
+  schema, kind, column count, whether it has an index, and its
+  access method, heap or btree; the owner is the superuser, the
+  rest as a relation never analyzed has it.
+- **Listing takes no lock**: `sm_cat_table_def()`, new in
+  `sm.h`, reads a table's definition as the transaction sees
+  it, where `sm_tbl_open()` would wait for a DDL on it.
+- **`pg_am` is the rows compiled in.**
+- **`pg_class` is opened at startup** (`formrdesc()`), so the
+  nailed descriptor takes the catalog relations' access method
+  too.
+- **`pg_table_is_visible()` of a sequence** reads its name and
+  schema from sm (`RelationGetClassForm()`): a sequence has no
+  descriptor.
+- The temporary schema is `pg_temp`, as in `pg_namespace`, not
+  PostgreSQL's `pg_temp_N`.
+- `server.sh`: `\dt`, `\ds`, `\dt pg_temp.*`, `\dtS`, pg_class's
+  rows, pg_am, and a write refused.

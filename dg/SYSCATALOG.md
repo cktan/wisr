@@ -230,7 +230,7 @@ runs the psql command and reads its output.
 | --- | --- |
 | 1. Read the code | done, 2026-10-14: §1's functions, §2's access method, §3 |
 | 2. Mechanism, `pg_namespace`, `\dn` | done, `WORKNOTE.md` step 112 |
-| 3. `pg_class`, `pg_am`, `\dt`, `\ds` | not begun |
+| 3. `pg_class`, `pg_am`, `\dt`, `\ds` | done, `WORKNOTE.md` step 113 |
 | 4. `pg_index`, `\di` | not begun |
 | 5. `pg_database`, `pg_roles`, `\l`, `\du` | not begun |
 | 6. `\d name` | not begun |
