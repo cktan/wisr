@@ -887,6 +887,61 @@ int tbl_update(table_t* table, uint64_t rowno,
 int tbl_delete(table_t* table, uint64_t rowno, std::string* old = nullptr);
 
 /*
+ * A BULK LOAD into an open table (BULKLOAD.md §5, §13): many rows
+ * handed over one by one and written to sorted files that the
+ * store takes whole, past its log and its compactions.
+ *
+ * It is for an EMPTY table: one whose store holds no version of
+ * any row, as a new table's and a truncated one's do, and a table
+ * whose rows were deleted does not. tbl_load_open takes such a
+ * table's lock exclusive, to the end of the transaction, so that
+ * no one else reads or writes it meanwhile. Every row is checked
+ * as tbl_insert checks one, and has its entry made in every index
+ * of the table; but a key a unique index already has is found
+ * only when the load is closed.
+ *
+ * A row a load does not take -- one to be stored out of line, or
+ * too long for a tuple -- ends it: what was handed over goes into
+ * the table at once, and that row and every one after it are
+ * inserted as tbl_insert would. A load into a table that is not
+ * empty inserts every row that way, and takes no lock beyond the
+ * table's own. So a caller with many rows to add opens a load
+ * whatever the table holds.
+ *
+ * While rows are going to files the transaction cannot commit,
+ * the table's other writes are refused, and its reads do not see
+ * the load. After a load the transaction cannot be prepared, and
+ * a savepoint set before it cannot be rolled back to.
+ */
+struct loader_t;
+
+/* Begin a load into table, opened to write. */
+int tbl_load_open(table_t* table, loader_t*& out);
+
+/*
+ * Hand over one row; its rowno is known at once. It fails as
+ * tbl_insert does for what it sees in the row; a duplicate key
+ * fails here once rows are being inserted, and at the close
+ * otherwise. After a failure the transaction is to be aborted.
+ */
+int tbl_load_add(loader_t* loader, std::span<const sm2::datum_t> values,
+                 std::span<const bool> isnull, uint64_t& rowno);
+
+/*
+ * Finish the load: sort, check and put into the table whatever is
+ * still on its way. The loader is freed, even on failure; the
+ * transaction is still to commit, or after a failure to abort.
+ */
+int tbl_load_close(loader_t* loader);
+
+/*
+ * Free a loader that will not be closed, its transaction having
+ * ended without it: the abort ended the load itself. nullptr is a
+ * no-op.
+ */
+void tbl_load_free(loader_t* loader);
+
+/*
  * Read the datum the TOAST pointer ptr names, a varlena a tuple of
  * the table held, into out: its bytes, with no varlena header
  * (sm2::toast_fetch). A table's tuples hold pointers only when the

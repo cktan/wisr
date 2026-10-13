@@ -104,6 +104,12 @@ static thread_local /*LOCAL*/ List *savepoints = NIL;
  * be read; kept_oid is InvalidOid when none is kept.
  */
 static thread_local /*LOCAL*/ Oid kept_oid = InvalidOid;
+
+/*
+ * The table a bulk load is begun on (smstore_load()), InvalidOid when none
+ * is.  sm ends a load with its transaction, so this is forgotten then.
+ */
+static thread_local /*LOCAL*/ Oid load_oid = InvalidOid;
 static thread_local /*LOCAL*/ uint64 kept_rowno = 0;
 static thread_local /*LOCAL*/ char *kept_tuple = NULL;
 static thread_local /*LOCAL*/ Size kept_len = 0;
@@ -190,6 +196,8 @@ static void close_tables(void) {
   /* The kept row's memory goes with the transaction. */
   kept_oid = InvalidOid;
   kept_tuple = NULL;
+  /* And so does a bulk load: sm ended it, and the handle is closed. */
+  load_oid = InvalidOid;
 }
 
 /*
@@ -201,8 +209,19 @@ void smstore_commit(void) {
     return;
   close_tables();
   sm_xact_open = false;
-  if (sm_commit(session()) != 0)
-    sm_error("commit");
+  if (sm_commit(session()) != 0) {
+    int code = sm_sqlstate();
+    std::string why = sm_errmsg();
+
+    /*
+     * A commit sm refuses may leave its transaction running, as one with a
+     * bulk load still open does: end it, or it keeps its locks.  One sm
+     * aborted itself takes this as nothing.
+     */
+    (void)sm_abort(session());
+    ereport(ERROR,
+            (errcode(code), errmsg("could not commit: %s", why.c_str())));
+  }
 }
 
 /* Abort the sm transaction, if one has begun, as the PostgreSQL one does. */
@@ -1311,6 +1330,72 @@ void smstore_insert(Relation rel, TupleTableSlot *slot) {
     sm_error("insert a row");
   }
   smstore_rowno_to_tid(rowno, &slot->tts_tid);
+}
+
+/* Raise the error of a bulk load's call that failed, on rel. */
+static void load_error(Relation rel, const char *what) {
+  if (sm_errnum() == SM_ERR_DUPKEY)
+    ereport(ERROR,
+            (errcode(ERRCODE_UNIQUE_VIOLATION),
+             errmsg("duplicate key value violates a unique index on \"%s\"",
+                    RelationGetRelationName(rel)),
+             errdetail("%s", sm_errmsg())));
+  sm_error(what);
+}
+
+/*
+ * Hand the n slots' rows to sm's bulk load of rel, a table in sm, beginning
+ * the load at the first: COPY's rows, a batch at a time.  Into an empty
+ * table sm writes them to sorted files, which its store takes whole when the
+ * load ends; for that it takes the table's lock exclusive until the
+ * transaction ends, so no other session reads or writes the table meanwhile,
+ * and a duplicate key is found at the end.  Into a table with rows it
+ * inserts each (../sm/BULKLOAD.md).  Each slot's tid is its row's rowno.
+ */
+void smstore_load(Relation rel, TupleTableSlot **slots, int n) {
+  Oid oid = RelationGetRelid(rel);
+  sm_tbl_t *tbl = open_table(oid, SM_LOCKMODE_IX);
+
+  if (tbl == NULL)
+    ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
+                    errmsg("relation \"%s\" does not exist",
+                           RelationGetRelationName(rel))));
+  if (load_oid != oid) {
+    /* Waits for the table's other users, if it is empty. */
+    if (waiting([&] { return sm_tbl_load_begin(tbl); }) != 0)
+      load_error(rel, "begin a bulk load");
+    load_oid = oid;
+  }
+  for (int i = 0; i < n; i++) {
+    TupleTableSlot *slot = slots[i];
+    uint64_t rowno;
+
+    slot_getallattrs(slot);
+    const sm_datum_t *row = row_to_sm(slot->tts_tupleDescriptor,
+                                      slot->tts_values, slot->tts_isnull,
+                                      slot->tts_nvalid);
+    if (waiting([&] {
+          return sm_tbl_load_add(tbl, row, slot->tts_isnull, slot->tts_nvalid,
+                                 &rowno);
+        }) != 0)
+      load_error(rel, "load a row");
+    smstore_rowno_to_tid(rowno, &slot->tts_tid);
+    slot->tts_tableOid = oid;
+  }
+}
+
+/*
+ * End the bulk load begun on rel, if one is: its rows are in the table, and
+ * a key that two of them share fails here.
+ */
+void smstore_load_end(Relation rel) {
+  Oid oid = RelationGetRelid(rel);
+
+  if (load_oid != oid)
+    return;
+  load_oid = InvalidOid;
+  if (sm_tbl_load_end(open_table(oid, SM_LOCKMODE_IX)) != 0)
+    load_error(rel, "end a bulk load");
 }
 
 /*

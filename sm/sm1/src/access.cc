@@ -823,6 +823,11 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
       (!st.owner && xct_check_readonly(s) != 0)) {
     return -1;
   }
+  // A load open into the store has keys this write cannot be
+  // checked against: they are not in the store yet.
+  if (load_open_on(s, storeid)) {
+    return set_error(sm1::SM_ERR_INVALID, "a bulk load is open into the store");
+  }
   // Check the key and put the version under its latch, so no
   // other write of it comes between (WRITELOCK.md §3.2).
   std::unique_lock<std::mutex> latch(lock_latch(s->db, storeid, key));

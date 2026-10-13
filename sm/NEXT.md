@@ -34,13 +34,13 @@ The rest of `sm3/SM3_DESIGN.md` §8.1 step 5.
 
 Low priority, and after it:
 
-2. **Bulk load**: a path that batches within sm1's memory
-   bound. It has a design, `BULKLOAD.md`, and is not built. A
-   load is one transaction in one of three modes: mini-batch,
-   100 rows a write under IX, keeping no row locks;
-   batch mode, a chunk a write under SIX; and file mode,
-   sorted files that RocksDB ingests. Its checks against
-   RocksDB are done, and batch mode is its first piece.
+2. **Bulk load, the rest of it.** File mode into an empty
+   table is built, and digres's `COPY` uses it (`BULKLOAD.md`
+   §13). Not built: a load from files into a table that has
+   rows, which inserts a row at a time today; rows stored out
+   of line, which end a load's files; a `rel` verb; and batch
+   mode and mini-batch, which matter less now that no write
+   keeps a row lock.
 
 ---
 

@@ -100,12 +100,19 @@ static void smtable_tuple_insert(Relation rel, TupleTableSlot *slot,
   slot->tts_tableOid = RelationGetRelid(rel);
 }
 
-/* Insert each slot's row, one at a time: sm has no batched insert yet. */
+/*
+ * Hand the slots' rows to sm's bulk load of the table, which this begins:
+ * COPY's batches come this way, and nothing else does.
+ */
 static void smtable_multi_insert(Relation rel, TupleTableSlot **slots,
                                  int nslots, CommandId cid, int options,
                                  struct BulkInsertStateData *bistate) {
-  for (int i = 0; i < nslots; i++)
-    smtable_tuple_insert(rel, slots[i], cid, options, bistate);
+  smstore_load(rel, slots, nslots);
+}
+
+/* End the bulk load multi_insert began: COPY has no more rows. */
+static void smtable_finish_bulk_insert(Relation rel, int options) {
+  smstore_load_end(rel);
 }
 
 /* The row at tid, as the statement sees it, or as it kept it (smstore.c). */
@@ -171,6 +178,7 @@ static const TableAmRoutine smtable_methods = [] {
   r.tuple_insert_speculative = refuse;
   r.tuple_complete_speculative = refuse;
   r.multi_insert = smtable_multi_insert;
+  r.finish_bulk_insert = smtable_finish_bulk_insert;
   r.tuple_delete = smtable_tuple_delete;
   r.tuple_update = smtable_tuple_update;
   r.tuple_lock = smtable_tuple_lock;

@@ -1423,6 +1423,70 @@ or, for update/delete, key), `SM_ERR_DUPKEY` (insert),
 
 ---
 
+## Bulk load API
+
+A load fills an empty store without a write a key
+(`../BULKLOAD.md` §5, file mode). Its keys are written to
+sorted files and handed to RocksDB whole when the load is
+closed, past the log, the memtable and the compactions. A
+load that ends under `options_t::load_small_bytes` is written
+as one batch instead. Either way the keys are the
+transaction's own versions: no other transaction sees them
+until it commits, and an abort leaves none.
+
+- **The store is one the transaction made, and empty.** No
+  one else can reach it, so a load takes no lock and no latch
+  and reads nothing from the store. A key is new if no other
+  key of the load equals it.
+- **Keys go in by stream.** A stream's keys are a range of the
+  store that no other stream's fall in. One declared ascending
+  is given its keys in order and written straight to a file;
+  any other is sorted, in memory up to
+  `options_t::load_sort_bytes`, then in runs on disk that the
+  close merges.
+- **While a load is open its transaction cannot commit**, and
+  after one it cannot prepare. The savepoints set when it
+  opens can no longer be rolled back to
+  (`SM_ERR_UNDOLIMIT`).
+- **An abort of any kind ends an open load**, deletes its
+  files and frees it.
+- **A load's files are temporary files**: the sorted files and
+  the sort's runs are written under
+  `{homedir}/base/pgsql_tmp/sm/load`, whatever the store, and a
+  database's own directory holds nothing of a load that is not
+  closed. RocksDB links them into the database at the close,
+  or copies them if that directory is on another filesystem.
+  `sm1::attach` empties the temporary instance, so it removes
+  what a crash left.
+
+### int sm1::load_open(sm1::session_t* session, uint64_t storeid, sm1::loader_t*& out)
+
+Open a load into `storeid`. Fails with `SM_ERR_INVALID` if the
+store was not made by this transaction, holds a key already,
+or the transaction has a load open; `SM_ERR_READONLY` in a
+read-only transaction, unless the store is temporary.
+
+### int sm1::load_stream(sm1::loader_t* loader, bool ascending, size_t& stream)
+
+Declare a stream; they are numbered from 0 in the order
+declared.
+
+### int sm1::load_put(sm1::loader_t* loader, size_t stream, std::string_view key, std::string_view value)
+
+Put a key and its value into a stream. A key equal to another
+of the load fails with `SM_ERR_DUPKEY`, here in an ascending
+stream and at the close in any other; a key out of order in an
+ascending stream fails with `SM_ERR_INVALID`. After a failure
+the transaction is to be aborted.
+
+### int sm1::load_close(sm1::loader_t* loader)
+
+Sort and merge what is left, check that no two keys are equal
+and no two streams overlap (`SM_ERR_INVALID`), and put every
+key into the store at once. The loader is freed unless the
+call fails, when the abort frees it. The transaction then
+reads what it loaded, and is still to commit.
+
 ## Read API
 
 Reads never block and never take locks; `sm1::lock` is how a

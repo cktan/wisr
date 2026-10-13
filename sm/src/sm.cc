@@ -1133,6 +1133,7 @@ struct sm_tbl_t {
   sm3::table_t *table = nullptr;
   sm_table_def_t def;
   std::unordered_map<uint64_t, sm2::tup_desc_t> value_descs;
+  sm3::loader_t *loader = nullptr; /* the bulk load begun on the table */
 };
 
 namespace {
@@ -1190,6 +1191,8 @@ int sm_tbl_open(sm_session_t *session, uint64_t oid, sm_lockmode_t mode,
 /* Close a table; NULL is a no-op. */
 void sm_tbl_close(sm_tbl_t *tbl) {
   if (tbl) {
+    // A load never ended: its transaction's end has ended it.
+    sm3::tbl_load_free(tbl->loader);
     sm3::tbl_close(tbl->table);
     delete tbl;
   }
@@ -1209,6 +1212,50 @@ int sm_tbl_insert(sm_tbl_t *tbl, const sm_datum_t *values, const bool *isnull,
       return null_arg("sm_tbl_insert", "rowno");
     }
     return sm3::tbl_insert(tbl->table, {values, n}, {isnull, n}, *rowno);
+  });
+}
+
+/* Begin a bulk load into the table. */
+int sm_tbl_load_begin(sm_tbl_t *tbl) {
+  return guard(tbl ? tbl->session : nullptr, [&] {
+    if (!tbl) {
+      return null_arg("sm_tbl_load_begin", "tbl");
+    }
+    if (tbl->loader) {
+      return sm1::seterr(sm1::SM_ERR_INVALID,
+                         "sm_tbl_load_begin: a load is begun already");
+    }
+    return sm3::tbl_load_open(tbl->table, tbl->loader);
+  });
+}
+
+/* Hand a row to the table's bulk load. */
+int sm_tbl_load_add(sm_tbl_t *tbl, const sm_datum_t *values, const bool *isnull,
+                    size_t n, uint64_t *rowno) {
+  return guard(tbl ? tbl->session : nullptr, [&] {
+    if (check_row("sm_tbl_load_add", tbl, values, isnull, n) != 0) {
+      return -1;
+    }
+    if (!rowno || !tbl->loader) {
+      return !rowno ? null_arg("sm_tbl_load_add", "rowno")
+                    : sm1::seterr(sm1::SM_ERR_INVALID,
+                                  "sm_tbl_load_add: no load is begun");
+    }
+    return sm3::tbl_load_add(tbl->loader, {values, n}, {isnull, n}, *rowno);
+  });
+}
+
+/* Finish the table's bulk load. */
+int sm_tbl_load_end(sm_tbl_t *tbl) {
+  return guard(tbl ? tbl->session : nullptr, [&] {
+    if (!tbl || !tbl->loader) {
+      return sm1::seterr(sm1::SM_ERR_INVALID,
+                         "sm_tbl_load_end: no load is begun");
+    }
+    // Freed by the close, whatever it returns.
+    sm3::loader_t *loader = tbl->loader;
+    tbl->loader = nullptr;
+    return sm3::tbl_load_close(loader);
   });
 }
 

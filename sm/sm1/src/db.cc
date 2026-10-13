@@ -398,6 +398,12 @@ db_t *db_open(const std::string &path, const char *dbname,
     set_error(sm1::SM_ERR_INVALID, "savepoint_undo_bytes must be at least 1");
     return nullptr;
   }
+  // Reject a load that could buffer, sort or file nothing.
+  if (opt->load_small_bytes < 1 || opt->load_sort_bytes < 1 ||
+      opt->load_file_bytes < 1) {
+    set_error(sm1::SM_ERR_INVALID, "the load_ options must be at least 1");
+    return nullptr;
+  }
   // Reject a non-positive deadlock timeout.
   if (opt->deadlock_ms <= 0) {
     set_error(sm1::SM_ERR_INVALID, "deadlock_ms must be positive");
@@ -518,6 +524,10 @@ db_t *db_open(const std::string &path, const char *dbname,
   db->cache.assign(2 * db->cache_sets, db_t::cache_slot_t{});
   // Cap each transaction's undo list.
   db->undo_max_bytes = static_cast<size_t>(opt->savepoint_undo_bytes);
+  // And the sizes of a bulk load.
+  db->load_small_bytes = static_cast<size_t>(opt->load_small_bytes);
+  db->load_sort_bytes = static_cast<size_t>(opt->load_sort_bytes);
+  db->load_file_bytes = static_cast<size_t>(opt->load_file_bytes);
   // Arm deadlock detection.
   db->deadlock_ms = opt->deadlock_ms;
 

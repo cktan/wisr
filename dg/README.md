@@ -15,7 +15,8 @@ it. What runs so far, each a step of `WORKNOTE.md`:
 - temporary tables, with ON COMMIT;
 - sequences;
 - INSERT, UPDATE and DELETE, with RETURNING; TRUNCATE; COPY
-  to and from a table;
+  to and from a table, into an empty one as a bulk load from
+  sorted files;
 - sequential, index, index-only and bitmap scans, joins,
   GROUP BY and ORDER BY;
 - transactions and savepoints at READ COMMITTED, REPEATABLE

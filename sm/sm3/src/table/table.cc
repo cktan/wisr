@@ -14,6 +14,19 @@
 #include <string>
 #include <vector>
 
+/*
+ * A bulk load into a table (BULKLOAD.md §5, §13). load is sm1's
+ * loader on the table's store while the rows go to it, and nullptr
+ * once they go by tbl_insert: from the start, into a table that
+ * had rows, or from the first row a load does not take.
+ */
+struct sm3::loader_t {
+  table_t *table = nullptr;
+  sm1::loader_t *load = nullptr;
+  size_t heap = 0;             /* the stream of the table's rows */
+  std::vector<size_t> streams; /* the stream of each index, in order */
+};
+
 struct sm3::table_t {
   session_t *session;
   std::shared_ptr<const table_def_t> def; /* held under the table-oid lock */
@@ -649,6 +662,112 @@ int tbl_delete(table_t *table, uint64_t rowno, std::string *old) {
   }
   return 0;
 }
+
+/* Begin a bulk load into the table; see sm3.h. */
+int tbl_load_open(table_t *table, loader_t *&out) {
+  if (need_writable(table) != 0) {
+    return -1;
+  }
+  sm1::session_t *s = table->session->sm1;
+  uint64_t storeid = table->def->storeid;
+  std::unique_ptr<loader_t> l(new loader_t);
+  l->table = table;
+  // Only an empty table is loaded from files. Look before
+  // locking, so that a load into a table with rows keeps no one
+  // out.
+  bool empty;
+  if (sm1::store_empty(s, storeid, empty) != 0) {
+    return -1;
+  }
+  if (empty) {
+    // Keep every other transaction out, readers too, to the end of
+    // this one: sm1's loader checks nothing against the store, and
+    // waits for no one (BULKLOAD.md §3.1).
+    std::shared_ptr<const table_def_t> def;
+    if (!table->exclusive && cat_lock_table(table->session, table->def->oid,
+                                            sm1::SM_LOCKMODE_EX, def) != 0) {
+      return -1;
+    }
+    table->exclusive = true;
+    // A writer may have got in while this waited for the lock.
+    if (sm1::store_empty(s, storeid, empty) != 0) {
+      return -1;
+    }
+  }
+  if (empty) {
+    if (sm1::load_open(s, storeid, l->load) != 0 ||
+        sm1::load_stream(l->load, true, l->heap) != 0) {
+      return -1;
+    }
+    // An index's entries arrive in the heap's order, not its own.
+    l->streams.resize(table->indexes.size());
+    for (size_t &stream : l->streams) {
+      if (sm1::load_stream(l->load, false, stream) != 0) {
+        return -1;
+      }
+    }
+  }
+  out = l.release();
+  return 0;
+}
+
+/* Hand a row to a bulk load; see sm3.h. */
+int tbl_load_add(loader_t *l, std::span<const sm2::datum_t> values,
+                 std::span<const bool> isnull, uint64_t &rowno) {
+  table_t *table = l->table;
+  if (l->load == nullptr) {
+    return tbl_insert(table, values, isnull, rowno);
+  }
+  if (need_not_null(table, isnull) != 0) {
+    return -1;
+  }
+  uint64_t r = 0;
+  int rc = sm2::rel_load(table->rel, l->load, l->heap, values, isnull, r);
+  if (rc < 0) {
+    return -1;
+  }
+  if (rc == 1) {
+    // A row a load does not take, too long or to be stored out of
+    // line: what is loaded so far goes into the table, and this
+    // row and those after it are inserted.
+    sm1::loader_t *load = l->load;
+    l->load = nullptr;
+    return sm1::load_close(load) != 0
+               ? -1
+               : tbl_insert(table, values, isnull, rowno);
+  }
+  // Its entry in every index, as tbl_insert makes it. No value is
+  // out of line: rel_load took the row.
+  vals_t row{values, isnull};
+  for (size_t i = 0; i < table->indexes.size(); i++) {
+    if (!maintained(table, i)) {
+      continue;
+    }
+    entry_t e;
+    if (make_entry(table, i, row, e) != 0) {
+      return -1;
+    }
+    if (!e.belongs) {
+      continue;
+    }
+    picked_t inc(row, table->def->indexes[i].include_attnums);
+    if (sm2::idx_load(table->indexes[i], l->load, l->streams[i], e.d(),
+                      e.null(), r, inc.d(), inc.null()) != 0) {
+      return -1;
+    }
+  }
+  rowno = r;
+  return 0;
+}
+
+/* Finish a bulk load; see sm3.h. */
+int tbl_load_close(loader_t *l) {
+  std::unique_ptr<loader_t> own(l);
+  return l->load == nullptr ? 0 : sm1::load_close(l->load);
+}
+
+/* Free a bulk load's handle, and no more; see sm3.h. */
+void tbl_load_free(loader_t *l) { delete l; }
 
 /* Read a datum out of line; see sm3.h. */
 int tbl_fetch(table_t *table, std::string_view ptr, std::string &out) {

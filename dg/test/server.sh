@@ -1684,6 +1684,64 @@ seq 1 5000 | awk '{ print $1 "\t" $1 * 2 "\trow" $1 }' > "$work/copy_big.tsv"
   fail "copy into a temporary table"
 local_psql -c 'drop table tc1' -c 'drop table tc2' > /dev/null 2>&1
 
+# Verify that COPY into an empty table is a bulk load, from sorted files, and
+# into a table with rows an insert a row (../sm/BULKLOAD.md).
+# 1. Make tl1, keyed by a, with an index on b, and COPY 100000 rows into it,
+#    enough to pass a small load: every row is counted, and both indexes
+#    find theirs.
+# 2. Into tl2, empty and keyed, COPY the same file with one key repeated at
+#    its end: the COPY fails, and tl2 is left empty; the file without the
+#    repeat then loads.
+# 3. While a session has a COPY into empty tl3 uncommitted, another's read of
+#    tl3 waits for it; a read begun after the commit sees every row.
+# 4. A COPY into tl1, which has rows, with a key that is taken fails at that
+#    row and leaves tl1 as it was.
+seq 1 100000 | awk '{ print $1 "\t" $1 % 1000 "\trow" $1 }' > "$work/load.tsv"
+cp "$work/load.tsv" "$work/load_dup.tsv"
+printf '77\t7\tagain\n' >> "$work/load_dup.tsv"
+local_psql -c 'create table tl1 (a int4 primary key, b int4, c text)' \
+  -c 'create index tl1_b on tl1 (b)' \
+  -c 'create table tl2 (a int4 primary key, b int4, c text)' \
+  -c 'create table tl3 (a int4 primary key, b int4, c text)' \
+  > "$work/load.out" 2>&1
+[ "$(local_psql -c "copy tl1 from '$work/load.tsv'" \
+  -c 'select count(*), sum(b) from tl1' -c 'select c from tl1 where a = 54321' \
+  -c 'select count(*) from tl1 where b = 999' 2>&1 | tr '\n' ' ')" = \
+  "COPY 100000 100000|49950000 row54321 100 " ] || fail "bulk load"
+local_psql -c "copy tl2 from '$work/load_dup.tsv'" 2>&1 |
+  grep -q 'duplicate key value violates a unique index on "tl2"' ||
+  fail "bulk load of a repeated key"
+[ "$(local_psql -c 'select count(*) from tl2' \
+  -c "copy tl2 from '$work/load.tsv'" -c 'select count(*) from tl2' 2>&1 |
+  tr '\n' ' ')" = "0 COPY 100000 100000 " ] || fail "bulk load after a failed one"
+mkfifo "$work/load.in"
+local_psql < "$work/load.in" > "$work/load_held.out" 2>&1 &
+loader=$!
+exec 4> "$work/load.in"
+echo "begin; copy tl3 from '$work/load.tsv'; select 'held';" >&4
+for _ in $(seq 100); do
+  grep -qx held "$work/load_held.out" && break
+  sleep 0.1
+done
+local_psql -c 'select count(*) from tl3' > "$work/load_reader.out" 2>&1 &
+reader=$!
+sleep 1
+kill -0 $reader 2> /dev/null || fail "a reader passed a bulk load"
+echo "commit;" >&4
+exec 4>&-
+wait $loader
+wait $reader
+[ "$(local_psql -c 'select count(*) from tl3')" = 100000 ] ||
+  fail "a reader after a bulk load"
+printf '100001\t1\tnew\n77\t7\tagain\n' > "$work/load_more.tsv"
+local_psql -c "copy tl1 from '$work/load_more.tsv'" 2>&1 |
+  grep -q 'duplicate key value violates a unique index on "tl1"' ||
+  fail "copy of a taken key into a table with rows"
+[ "$(local_psql -c 'select count(*) from tl1')" = 100000 ] ||
+  fail "a failed copy into a table with rows"
+local_psql -c 'drop table tl1' -c 'drop table tl2' -c 'drop table tl3' \
+  > /dev/null 2>&1
+
 # Verify that a temporary table is its session's alone, in sm: it is found
 # before a table of its name, follows the session's transactions, takes
 # writes in a read-only one, and does what its ON COMMIT asks.

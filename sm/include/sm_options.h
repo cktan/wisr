@@ -32,6 +32,13 @@
  * idle_close_ms is how long a database stays open after its last
  * session closes, so a session that comes in meanwhile finds it
  * open; 0 closes it at once. It must not be negative.
+ *
+ * The three load_ options are a bulk load's (BULKLOAD.md section
+ * 5), each at least 1. load_small_bytes is the size below which a
+ * load is written as one batch and not as files; load_sort_bytes
+ * is the memory a load sorts in before it writes a run to disk;
+ * load_file_bytes is the size at which a sorted file is closed and
+ * the next begun.
  */
 #ifndef SM_OPTIONS_H
 #define SM_OPTIONS_H
@@ -46,6 +53,9 @@ typedef struct sm_options_t {
     int         commit_cache_entries;
     long long   savepoint_undo_bytes;
     long long   idle_close_ms;
+    long long   load_small_bytes;
+    long long   load_sort_bytes;
+    long long   load_file_bytes;
 } sm_options_t;
 
 /* Fill opt with the defaults. */
@@ -59,6 +69,9 @@ static inline void sm_options_init(sm_options_t* opt) {
     opt->commit_cache_entries = 65536;
     opt->savepoint_undo_bytes = 64LL << 20;
     opt->idle_close_ms        = 60000;
+    opt->load_small_bytes     = 4LL << 20;
+    opt->load_sort_bytes      = 256LL << 20;
+    opt->load_file_bytes      = 256LL << 20;
 }
 
 #endif /* SM_OPTIONS_H */

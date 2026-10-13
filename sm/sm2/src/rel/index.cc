@@ -202,12 +202,16 @@ std::span<const attribute_t> idx_value_schema(const index_t *index) {
   return index->value;
 }
 
-/* Add the entry for the row at rowno; see sm2.h. */
-int idx_insert(index_t *index, std::span<const datum_t> key,
-               std::span<const bool> key_isnull, uint64_t rowno,
-               std::span<const datum_t> include,
-               std::span<const bool> include_isnull) {
-  std::string k;
+/*
+ * The entry of the row at rowno, as sm1 holds it: its key in k and
+ * its value in value, which is the rowno, whether the key was cut,
+ * and the INCLUDE columns.
+ */
+static int entry_of(index_t *index, std::span<const datum_t> key,
+                    std::span<const bool> key_isnull, uint64_t rowno,
+                    std::span<const datum_t> include,
+                    std::span<const bool> include_isnull, std::string &k,
+                    std::string &value) {
   bool cut;
   if (entry_key(index, key, key_isnull, rowno, k, cut) != 0) {
     return -1;
@@ -226,13 +230,34 @@ int idx_insert(index_t *index, std::span<const datum_t> key,
   for (size_t i = 0; i < include.size(); i++) {
     nulls[i + 2] = include_isnull[i];
   }
-  std::string value;
-  if (tup_encode(index->value_desc, datums,
-                 std::span<const bool>(nulls.get(), datums.size()),
-                 value) != 0) {
+  return tup_encode(index->value_desc, datums,
+                    std::span<const bool>(nulls.get(), datums.size()), value);
+}
+
+/* Add the entry for the row at rowno; see sm2.h. */
+int idx_insert(index_t *index, std::span<const datum_t> key,
+               std::span<const bool> key_isnull, uint64_t rowno,
+               std::span<const datum_t> include,
+               std::span<const bool> include_isnull) {
+  std::string k, value;
+  if (entry_of(index, key, key_isnull, rowno, include, include_isnull, k,
+               value) != 0) {
     return -1;
   }
   return sm1::insert(index->session, index->storeid, k, value);
+}
+
+/* Put the entry for the row at rowno into a load; see sm2.h. */
+int idx_load(index_t *index, sm1::loader_t *loader, size_t stream,
+             std::span<const datum_t> key, std::span<const bool> key_isnull,
+             uint64_t rowno, std::span<const datum_t> include,
+             std::span<const bool> include_isnull) {
+  std::string k, value;
+  if (entry_of(index, key, key_isnull, rowno, include, include_isnull, k,
+               value) != 0) {
+    return -1;
+  }
+  return sm1::load_put(loader, stream, k, value);
 }
 
 /* Remove the entry for key and rowno. */

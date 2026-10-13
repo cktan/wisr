@@ -216,6 +216,7 @@ void reset(sm1::session_t *s) {
   s->dropped.clear();
   s->dropped_seqs.clear();
   s->temp_touched = false;
+  s->loaded = false;
   s->temp_seqs_made.clear();
   s->temp_seqs_dropped.clear();
   s->undo.clear();
@@ -282,6 +283,8 @@ void drop_temp_seqs_made(sm1::session_t *s, size_t from) {
  * locks.
  */
 void discard(sm1::session_t *s) {
+  // A load still open ends here, and its files with it.
+  load_discard(s);
   // Close the transaction's cursors.
   xct_end_scans(s);
   ssi_end(s); // an aborted node constrains nobody: freed
@@ -560,6 +563,11 @@ int commit(sm1::session_t *s) {
   // Require an active, non-prepared transaction.
   if (xct_check_active(s) != 0) {
     return -1;
+  }
+  // A load's rows are not in the database until it is closed.
+  if (s->loader) {
+    return set_error(sm1::SM_ERR_INVALID,
+                     "a transaction with a bulk load open cannot commit");
   }
   // Close cursors first, releasing their snapshots and
   // narrowing their SIREAD ranges before validation (§8.2).
@@ -863,6 +871,12 @@ int prepare(sm1::session_t *s, const char *gid) {
     return set_error(sm1::SM_ERR_INVALID,
                      "a transaction that made, dropped or wrote a "
                      "temporary store cannot be prepared");
+  }
+  // A PREPARED record names the keys written, and a load keeps
+  // none (BULKLOAD.md §5.6).
+  if (s->loader || s->loaded) {
+    return set_error(sm1::SM_ERR_INVALID,
+                     "a transaction that bulk loaded cannot be prepared");
   }
   // Own the gid before reserving it: releasing the reservation,
   // and everything after the record is written, must not

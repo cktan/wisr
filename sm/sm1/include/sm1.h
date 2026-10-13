@@ -124,6 +124,9 @@ struct session_t;
 /* A scan cursor over a range of one store. */
 struct scan_t;
 
+/* A bulk load into one store (load_open). */
+struct loader_t;
+
 /*
  * Isolation levels.
  *
@@ -1090,6 +1093,100 @@ int scan_seek(scan_t* scan, std::string_view key, int inclusive);
  * a failure to release resources.
  */
 void scanend(scan_t* scan);
+
+/*
+ * BULK LOAD (BULKLOAD.md section 5, file mode).
+ *
+ * A load fills an empty store in the caller's transaction without
+ * a write a key. Its keys are written to sorted files and handed
+ * to RocksDB whole when the load is closed, past the log, the
+ * memtable and the compactions; a load that ends small, under
+ * options_t::load_small_bytes, is written as one batch instead.
+ * Either way the keys are the transaction's own versions: no
+ * other transaction sees them until it commits, and an abort
+ * leaves none.
+ *
+ * The store must hold no key, a version of any kind, and THE
+ * CALLER MUST KEEP EVERY OTHER TRANSACTION OUT OF IT, readers too,
+ * from before the load opens until the transaction ends: sm3
+ * holds the table's lock exclusive. sm1 cannot check that; it
+ * checks the store is empty. Under that lock a load takes no lock
+ * and no latch of its own, and checks nothing against the store:
+ * a key is new if no other key of the load equals it. A store the
+ * transaction made itself is reached by no one else already.
+ *
+ * While a load is open, the transaction's other writes to that
+ * store are refused with SM_ERR_INVALID: they could not be
+ * checked against keys still on their way.
+ *
+ * Keys go in by STREAM. A stream's keys are a range of the store
+ * no other stream's keys fall in, as a table's rows are one range
+ * and each of its indexes another. A stream declared ascending is
+ * given its keys in order and is written straight to a file; any
+ * other is sorted, in memory up to options_t::load_sort_bytes and
+ * then in runs on disk that the close merges.
+ *
+ * While a load is open its transaction may not commit, and after
+ * one it may not prepare. The savepoints set when a load opens can
+ * no longer be rolled back to (SM_ERR_UNDOLIMIT), as past
+ * options_t::savepoint_undo_bytes. An abort, of any kind, ends an
+ * open load and frees it; the caller must not use it again.
+ *
+ * A load's files, the sorted ones and the runs alike, are kept
+ * under the temporary instance, {homedir}/base/pgsql_tmp/sm/load,
+ * until the store takes them: a database's own directory holds
+ * nothing of a load that is not closed.
+ */
+
+/*
+ * Open a load into storeid in session's transaction.
+ *
+ * Errors: SM_ERR_INVALID (the store holds a key already, or a
+ * load is open), SM_ERR_NOTFOUND, SM_ERR_NOTRANS, SM_ERR_PREPARED,
+ * SM_ERR_READONLY, SM_ERR_IO.
+ */
+int load_open(session_t* session, uint64_t storeid, loader_t*& out);
+
+/*
+ * Whether storeid holds no key at all, in empty: no version of
+ * any kind, live, dead or deleted, of any transaction. It is what
+ * load_open requires, asked without opening anything; without a
+ * lock on the store the answer may change at once.
+ *
+ * Errors: SM_ERR_NOTFOUND, SM_ERR_NOTRANS, SM_ERR_PREPARED, SM_ERR_IO.
+ */
+int store_empty(session_t* session, uint64_t storeid, bool& empty);
+
+/*
+ * Declare a stream of the load, numbered from 0 in the order
+ * declared, in stream. With ascending, every key put to it must be
+ * greater than the one before.
+ */
+int load_stream(loader_t* loader, bool ascending, size_t& stream);
+
+/*
+ * Put a key and its value into a stream. A key equal to another of
+ * the load fails with SM_ERR_DUPKEY, here or at the close; one out
+ * of order in an ascending stream with SM_ERR_INVALID. After a
+ * failure the transaction is to be aborted.
+ *
+ * Errors: SM_ERR_DUPKEY, SM_ERR_INVALID, SM_ERR_DISKFULL, SM_ERR_IO.
+ */
+int load_put(loader_t* loader, size_t stream, std::string_view key,
+             std::string_view value);
+
+/*
+ * Close the load: sort and merge what is left, check that no two
+ * keys are equal and no two streams overlap, and put every key
+ * into the store at once. The loader is freed unless the call
+ * fails, when the transaction is to be aborted, which frees it.
+ * The transaction then reads what it loaded, and is still to
+ * commit.
+ *
+ * Errors: SM_ERR_DUPKEY, SM_ERR_INVALID (two streams overlap),
+ * SM_ERR_DISKFULL, SM_ERR_IO.
+ */
+int load_close(loader_t* loader);
 
 } // namespace sm1
 

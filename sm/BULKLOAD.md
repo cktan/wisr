@@ -11,10 +11,18 @@ time through RocksDB's ordinary write path with other writers
 kept out; and **file mode**, which writes them to sorted files
 that RocksDB ingests whole.
 
-It is a design and not yet built. What is said here of
-RocksDB is from memory of its documentation, and the stack
-builds on 8.9.1. §10 lists what is to be checked before any
-of it is relied on.
+**Status.** File mode into an empty table is built, at every
+level and in digres, whose `COPY` uses it (§13 below;
+`sm1/API.md`, `sm3/include/sm3.h`, `include/sm.h`,
+`../dg/WORKNOTE.md`). A load into a table with rows inserts
+its rows one by one. Batch mode, mini-batch and file mode into
+a table with rows are not built. What is said here of RocksDB
+was checked against 8.9.1 (§10).
+
+**Measured**, 300,000 rows of two integers and a short text by
+digres's `COPY`, digres a debug build: 4.0 s row by row and
+1.6 s from files with no index; 6.6 s and 1.7 s with a primary
+key; 13.0 s and 2.2 s with a primary key and two more indexes.
 
 ---
 
@@ -998,3 +1006,85 @@ and the interface in place.
    for a load on each side of the threshold.
 
 The fork's own work in §11 is outside this repository.
+
+---
+
+## 13. What was built first, and how it differs
+
+File mode for an empty table was built before the modes §12
+puts ahead of it: it is the mode that writes a load once, and
+the one case that needs nothing of the others. It is §5
+narrowed, with these differences.
+
+**Which tables**
+
+- **Any empty table**, not only one made or truncated in the
+  transaction (§5.1). Empty means its store holds no version
+  of any kind: a new table and a truncated one are empty, and
+  one whose rows were deleted is not, until they are purged.
+- **sm3 takes the table's lock exclusive**, to the end of the
+  transaction, and then looks again that the store is empty.
+  So no one else reads or writes the table while it loads.
+  sm3 looks once before it asks for the lock, so that a load
+  into a table with rows keeps no one out.
+- **sm1 checks the store is empty, and trusts the lock.** The
+  covering-lock argument of §7.2 is not there.
+- **A table with rows is loaded by `tbl_insert`**, a row at a
+  time, through the same three calls: a host with many rows
+  opens a load whatever the table holds.
+
+**Which rows**
+
+- **A row to be stored out of line ends the files.** A load
+  has no stream for TOAST's chunks. The first row
+  `rel_insert` would move a datum out of, or that is too long
+  for a tuple, closes sm1's loader -- what was handed over is
+  put into the table then -- and that row and every one after
+  it are inserted by `tbl_insert`.
+
+**The streams, and the checks**
+
+- **The heap is one ascending stream, and each index one that
+  is sorted**, a partial or an expression index among them,
+  its entries made as `tbl_insert` makes them.
+- **No stream is declared unique.** With the store empty and
+  no one else in it, two equal keys are both the load's, in a
+  unique index or not, so every stream is checked alike: a
+  key equal to another fails with `SM_ERR_DUPKEY`, when the
+  load closes.
+- **A stream is a range of its own**, which the close checks:
+  two that overlap fail with `SM_ERR_INVALID`.
+- **A serializable load tells SSI of every key**, as any write
+  does (§3.4); at the other levels nothing is told.
+
+**The rest**
+
+- **A small load is one write batch** (§5.7), with no batch
+  mode beneath it: the keys are held in memory up to
+  `load_small_bytes`, 4 MB, and a load closed before that is
+  written in one RocksDB write.
+- **While a load is open**, the transaction cannot commit, and
+  its other writes to that store are refused: they could not
+  be checked against keys still on their way.
+- **A prepare is refused** after a load, as with one open: a
+  `PREPARED` record names the keys written, and a load keeps
+  none.
+- **An abort after the close** leaves a table that was
+  committed empty with the load's versions in it, dead, for
+  the sweep to drop (§5.6); to every reader it is empty.
+- **The files are temporary files.** Sorted files and runs
+  alike are written under `base/pgsql_tmp/sm/load`, one
+  directory a load, removed at its close or abort. §5.2 put
+  them in a directory of the database; but a database is to be
+  its directory and nothing else (`../dg/CODE.md`), and a load
+  not yet closed is no part of it. `sm1::attach` empties the
+  temporary instance, so nothing sweeps a database for them.
+  RocksDB links a file in when the two directories are on one
+  filesystem, and copies it when they are not.
+- **The options** are `load_small_bytes`, `load_sort_bytes`
+  and `load_file_bytes` (`include/sm_options.h`).
+- **The calls**: `sm1::load_open`, `load_stream`, `load_put`,
+  `load_close` and `store_empty`; `sm2::rel_load` and
+  `idx_load`; `sm3::tbl_load_open`, `tbl_load_add`,
+  `tbl_load_close`; `sm_tbl_load_begin`, `sm_tbl_load_add`,
+  `sm_tbl_load_end`. `rel` has no verb for it yet.

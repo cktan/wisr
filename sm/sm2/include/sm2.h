@@ -574,6 +574,23 @@ int rel_delete(rel_t* rel, uint64_t rowno, std::string_view* old = nullptr,
                bool hold = false);
 
 /*
+ * Put a row into a bulk load (sm1::load_open) of the rel's store,
+ * as rel_insert would write it: encoded, under a new rowno from
+ * the rel's sequence, into stream, which the caller declared
+ * ascending and gives the rel's rows alone. Nothing is in the
+ * store until the load is closed.
+ *
+ * Returns 0; -1 on error; or 1, having drawn no rowno and put
+ * nothing, for a row a load does not take: one too long for a
+ * tuple, one rel_insert would store a datum of out of line, and
+ * one given a TOAST pointer. The caller ends the load and inserts
+ * that row, and those after it, with rel_insert.
+ */
+int rel_load(rel_t* rel, sm1::loader_t* loader, size_t stream,
+             std::span<const datum_t> datums, std::span<const bool> isnull,
+             uint64_t& rowno);
+
+/*
  * Erase the datums out of line that the rel's writes with hold
  * kept (TOAST, below): those the old rows held and the new do not.
  * A caller that needs an old row's values after the write -- the
@@ -719,6 +736,19 @@ int idx_insert(index_t* index, std::span<const datum_t> key,
                std::span<const bool> key_isnull, uint64_t rowno,
                std::span<const datum_t> include,
                std::span<const bool> include_isnull);
+
+/*
+ * Put the entry for the row at rowno into a bulk load of the
+ * index's store, as idx_insert would write it, into stream, which
+ * the caller gives this index's entries alone and did not declare
+ * ascending. A key already in the load fails with SM_ERR_DUPKEY,
+ * when the load is closed.
+ */
+int idx_load(index_t* index, sm1::loader_t* loader, size_t stream,
+             std::span<const datum_t> key,
+             std::span<const bool> key_isnull, uint64_t rowno,
+             std::span<const datum_t> include,
+             std::span<const bool> include_isnull);
 
 /*
  * Remove the entry idx_insert added for key and rowno. At read

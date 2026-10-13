@@ -817,6 +817,46 @@ int sm_tbl_insert(sm_tbl_t* tbl, const sm_datum_t* values,
                   const bool* isnull, size_t n, uint64_t* rowno);
 
 /*
+ * A BULK LOAD (BULKLOAD.md section 5, section 13): many rows into
+ * one table, for COPY, a restore, CREATE TABLE AS.
+ *
+ * sm_tbl_load_begin, then sm_tbl_load_add for each row, then
+ * sm_tbl_load_end; the table is one opened to write. The rows are
+ * the transaction's own, as inserted ones are: no one else sees
+ * them before it commits, and an abort leaves none.
+ *
+ * Into an EMPTY table -- a new one, a truncated one, any whose
+ * store holds no version of a row -- the rows are written to
+ * sorted files that the store takes whole when the load ends,
+ * past its log and its compactions. For that the table's lock is
+ * taken exclusive, to the end of the transaction: no one else
+ * reads or writes the table meanwhile. A duplicate key is then
+ * found when the load ends, not at its row. The first row that
+ * must be stored out of line (sm_set_toast), or is too long,
+ * ends the files: what was handed over goes into the table, and
+ * the rest are inserted.
+ *
+ * Into a table that has rows, every row is inserted, as
+ * sm_tbl_insert would, and no lock is taken but the table's own.
+ *
+ * While a load into an empty table is under way the transaction
+ * cannot commit, and the table's other writes fail with
+ * SM_ERR_INVALID. After one the transaction cannot be prepared,
+ * and a savepoint set before it cannot be rolled back to. After a
+ * failed call the transaction is to be aborted; a load not ended
+ * is ended by its transaction's end, and its handle freed by
+ * sm_tbl_close.
+ */
+int sm_tbl_load_begin(sm_tbl_t* tbl);
+
+/* Hand over one row of n values and null flags; *rowno is its id. */
+int sm_tbl_load_add(sm_tbl_t* tbl, const sm_datum_t* values,
+                    const bool* isnull, size_t n, uint64_t* rowno);
+
+/* End the load: every row handed over is in the table. */
+int sm_tbl_load_end(sm_tbl_t* tbl);
+
+/*
  * Replace the row at rowno. old, if not NULL, gets the tuple
  * replaced -- at read committed the newest, not the one the caller
  * read.

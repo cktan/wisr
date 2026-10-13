@@ -46,6 +46,10 @@ struct sm1::session_t {
    */
   std::unordered_set<uint64_t> temp_stores;
   bool temp_touched = false;
+  /* The bulk load open in the transaction, if any (load.cc). */
+  sm1::loader_t *loader = nullptr;
+  /* The transaction bulk loaded: it keeps no write set to prepare. */
+  bool loaded = false;
   /*
    * The session's temporary sequences, by name (sm1.h, mkseq), with
    * those the transaction made and those it dropped: an abort takes
@@ -404,6 +408,15 @@ int xct_check_writable(wisr::db_t *db);
  * into the active table. Returns 0 or -1.
  */
 int xct_alloc_xid(sm1::session_t *session);
+
+/*
+ * End the bulk load the session has open, if any, deleting its
+ * files: its transaction is ending without it (load.cc).
+ */
+void load_discard(sm1::session_t *session);
+
+/* Whether the session has a bulk load open into storeid. */
+bool load_open_on(const sm1::session_t *session, uint64_t storeid);
 
 /* The fate of a version's writer (§3.4). */
 enum xct_state_t { XCT_DEAD, XCT_IN_FLIGHT, XCT_COMMITTED, XCT_ERROR };

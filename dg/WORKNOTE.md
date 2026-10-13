@@ -2917,3 +2917,44 @@ not the default, and `regcollation` output, read `pg_collation`.
   own: `GENERATED ALWAYS` needs INSERT's `OVERRIDING`.
 - sm3 `test_ddl`: "a column owns a sequence, which goes with its
   table or column"; `server.sh`: serial columns.
+
+## Step 103: COPY into an empty table is a bulk load
+
+`COPY` inserted its rows one by one (step 100): a write to sm for
+each row and for each of its index entries, every one logged,
+put in a memtable and compacted. sm now has a bulk load
+(`../sm/BULKLOAD.md` §13).
+
+- **`multi_insert` hands COPY's rows to sm's load**
+  (`smstore_load()`, over `sm_tbl_load_begin` and
+  `sm_tbl_load_add`), and `finish_bulk_insert`, which COPY calls
+  when it has no more, ends it (`smstore_load_end()`).
+- **Into an empty table the rows go to sorted files**, which
+  sm's store takes whole at the end, past its log and its
+  compactions. sm takes the table's lock exclusive for that,
+  until the transaction ends: a session that reads the table
+  waits for the COPY's transaction, where PostgreSQL would let
+  it read an empty table.
+- **A duplicate key is then found at the end**, not at its row;
+  the COPY fails all the same, and leaves no row.
+- **Into a table with rows nothing changes**: sm inserts each
+  row, and takes no lock beyond the table's own.
+- **The files are under `base/pgsql_tmp/sm/load`**, never in a
+  database's directory.
+- **A commit sm refuses ends sm's transaction too**
+  (`smstore_commit()`). One refused without being aborted, as a
+  commit with a load still open is, was left running and kept
+  its locks.
+- **Measured**, 300,000 rows of two integers and a short text,
+  this build: 4.0 s before and 1.6 s now with no index; 6.6 s
+  and 1.7 s with a primary key; 13.0 s and 2.2 s with a primary
+  key and two more indexes.
+- **Not done**: `INSERT ... SELECT` and `CREATE TABLE AS` still
+  insert row by row; and a `ROLLBACK TO` a savepoint set before
+  such a COPY fails, since sm cannot undo a load in part.
+- `server.sh` loads 100,000 rows and reads them through both
+  indexes; fails a load with a repeated key and loads the
+  table again; shows a reader waiting; and a COPY into a table
+  with rows failing at its row. A load never ended, and one
+  that takes no lock, each fail it.
+

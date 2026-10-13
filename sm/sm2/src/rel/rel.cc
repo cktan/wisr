@@ -437,6 +437,52 @@ int rel_delete(rel_t *rel, uint64_t rowno, std::string_view *old, bool hold) {
   return 0;
 }
 
+/* Put a row into a load under a new rowno; see sm2.h. */
+int rel_load(rel_t *rel, sm1::loader_t *loader, size_t stream,
+             std::span<const datum_t> datums, std::span<const bool> isnull,
+             uint64_t &rowno) {
+  size_t len;
+  if (tup_size(rel->desc, datums, isnull, len) != 0) {
+    return -1;
+  }
+  // A row longer than a tuple may be goes the other way, where it
+  // is refused or stored out of line.
+  if (len > max_tup_len) {
+    return 1;
+  }
+  // So does one rel_insert would move a datum out of: a load has
+  // no stream for the chunks. And one given a pointer, whose
+  // value rel_insert copies.
+  for (size_t i = 0; rel->toasts && i < datums.size(); i++) {
+    if (isnull[i] || rel->desc.width[i] > 0) {
+      continue;
+    }
+    std::string_view v;
+    if (datum_bytes(rel->desc.schema[i].type, rel->desc.schema[i].typmod,
+                    datums[i], v) != 0) {
+      return -1;
+    }
+    if (varlena_is_toast(v) ||
+        (len > toast_threshold && varlena_payload(v).size() >= toast_min)) {
+      return 1;
+    }
+  }
+  std::string tuple;
+  if (tup_encode(rel->desc, datums, isnull, tuple) != 0) {
+    return -1;
+  }
+  // Draw the rowno from the table's sequence: a load's ascend.
+  uint64_t r;
+  if (sm1::nextseq(rel->session, rel->rowno_seq, r) != 0) {
+    return -1;
+  }
+  if (sm1::load_put(loader, stream, row_key(rel->relid, r), tuple) != 0) {
+    return -1;
+  }
+  rowno = r;
+  return 0;
+}
+
 /* Erase the datums the rel's writes held; see sm2.h. */
 int rel_release(rel_t *rel) { return release(rel); }
 

@@ -99,6 +99,8 @@ extern smstore_table_t *smstore_table_desc(Oid oid);
 extern Oid smstore_index_table(Oid indexoid);
 extern bool smstore_index_usable(Relation rel, Oid indexoid);
 extern void smstore_insert(Relation rel, TupleTableSlot *slot);
+extern void smstore_load(Relation rel, TupleTableSlot **slots, int n);
+extern void smstore_load_end(Relation rel);
 extern bool smstore_fetch_row(Relation rel, ItemPointer tid,
                               TupleTableSlot *slot);
 extern TM_Result smstore_update(Relation rel, ItemPointer tid,
