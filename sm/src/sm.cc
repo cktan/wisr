@@ -1065,6 +1065,14 @@ int sm_cat_drop_sequence(sm_session_t *session, uint64_t oid) {
   return guard(session, [&] { return sm3::drop_sequence(session->sm3, oid); });
 }
 
+/* Make a table's column own a sequence, or none. */
+int sm_cat_own_sequence(sm_session_t *session, uint64_t oid, uint64_t table,
+                        int32_t attnum) {
+  return guard(session, [&] {
+    return sm3::own_sequence(session->sm3, oid, table, attnum);
+  });
+}
+
 /* A sequence's oid by name: 0, or 1 if there is none. */
 int sm_cat_sequence_oid(sm_session_t *session, uint64_t nspoid,
                         const char *name, uint64_t *oid) {

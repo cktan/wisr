@@ -2888,3 +2888,32 @@ not the default, and `regcollation` output, read `pg_collation`.
   `cat_collation()`, as `get_collation_name()` does.
 - `server.sh` prints a `regcollation` and explains a collated
   constant.
+
+## Step 102: a SERIAL column, its sequence owned by it
+
+- **sm3: a sequence has an owner**, a table's column, set by
+  `own_sequence` (`sm_cat_own_sequence`): appended, nullable
+  fields of the sequence part (`../sm/sm3/CATALOG.md`).
+  Dropping the table or the column drops the sequences it owns;
+  dropping an owned one alone is `SM_ERR_INUSE`.
+- **`ALTER SEQUENCE ... OWNED BY`** is taken, `OWNED BY NONE`
+  too, and nothing else ALTER SEQUENCE asks. The table must be
+  in the sequence's schema, as PostgreSQL requires.
+- **`CREATE SEQUENCE ... AS smallint` or `integer`** is taken.
+  sm's counter keeps no bound: a value past the type's range
+  fails where it is stored, `integer out of range`, not in
+  `nextval`. A type other than the three is PostgreSQL's error.
+- **So `serial`, `smallserial` and `bigserial` work**, as
+  PostgreSQL expands them: a sequence, the column's `DEFAULT
+  nextval(...)` and NOT NULL, and the sequence owned by the
+  column. A temporary table's is refused, with temporary
+  sequences.
+- **DROP SEQUENCE of an owned one** fails as PostgreSQL's does
+  without CASCADE, hinting `OWNED BY NONE`.
+- **DROP SCHEMA ... CASCADE drops its tables first**, then lists
+  the sequences left in a new statement: an owned one went with
+  its table and is not named, as in PostgreSQL.
+- Identity columns, on the same ownership, are a step of their
+  own: `GENERATED ALWAYS` needs INSERT's `OVERRIDING`.
+- sm3 `test_ddl`: "a column owns a sequence, which goes with its
+  table or column"; `server.sh`: serial columns.

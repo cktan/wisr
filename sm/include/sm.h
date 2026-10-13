@@ -640,8 +640,21 @@ int sm_cat_create_sequence(sm_session_t* session, uint64_t nspoid,
                            const char* name, uint64_t start,
                            uint64_t increment, uint64_t* oid);
 
-/* Drop the sequence oid, in the session's transaction. */
+/*
+ * Drop the sequence oid, in the session's transaction. One a
+ * column owns fails with SM_ERR_INUSE.
+ */
 int sm_cat_drop_sequence(sm_session_t* session, uint64_t oid);
+
+/*
+ * Make the column attnum (0-based) of the table table own the
+ * sequence oid, SQL's ALTER SEQUENCE ... OWNED BY, in the session's
+ * transaction: dropping the table or the column drops it. Table 0
+ * is OWNED BY NONE. A table in another namespace, or a column it
+ * does not have, fails with SM_ERR_INVALID.
+ */
+int sm_cat_own_sequence(sm_session_t* session, uint64_t oid, uint64_t table,
+                        int32_t attnum);
 
 /*
  * The oid of the sequence named name in nspoid, as the session's

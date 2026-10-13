@@ -83,6 +83,7 @@ extern HeapTuple smstore_statistic_tuple(Oid relid, AttrNumber attnum,
                                          bool inh);
 extern ObjectAddress smstore_create_sequence(CreateSeqStmt *stmt);
 extern void smstore_drop_sequences(DropStmt *stmt);
+extern ObjectAddress smstore_own_sequence(AlterSeqStmt *stmt, List *owned_by);
 extern int64 smstore_nextval(Oid oid);
 extern bool smstore_sequence_exists(Oid oid);
 extern const char *smstore_sequence_name(Oid oid);

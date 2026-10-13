@@ -957,6 +957,46 @@ int cat_put_sequence(session_t *session, uint64_t oid, uint64_t nspoid,
   return 0;
 }
 
+/* A sequence's record, to change it; see internal.h. */
+int cat_get_sequence_rec(session_t *session, uint64_t oid, bool lock,
+                         sequence_rec_t &rec) {
+  kv_ptr kv(nullptr, &sm2::catkv_close);
+  std::string key;
+  std::string_view v;
+  if (open_kv(session->sm1, kv) != 0 ||
+      entity_key(kind_t::sequence, oid, key) != 0) {
+    return -1;
+  }
+  // Under an X lock on its key, as cat_del_sequence reads it.
+  if (lock && sm2::catkv_lock(kv.get(), key, sm1::SM_LOCKMODE_EX) != 0) {
+    return -1;
+  }
+  int rc = lock && session->level == sm1::xctlevel_t::read_committed
+               ? sm2::catkv_get_latest(kv.get(), key, v)
+               : sm2::catkv_get(kv.get(), key, v);
+  if (rc != 0) {
+    return rc == 1 ? sm1::seterr(sm1::SM_ERR_NOTFOUND, "sequence " +
+                                                           std::to_string(oid) +
+                                                           " does not exist")
+                   : -1;
+  }
+  return decode_sequence(v, rec);
+}
+
+/* Replace a sequence's record; see internal.h. */
+int cat_put_sequence_rec(session_t *session, uint64_t oid,
+                         const sequence_rec_t &rec) {
+  kv_ptr kv(nullptr, &sm2::catkv_close);
+  std::string key;
+  std::string blob;
+  if (open_kv(session->sm1, kv) != 0 ||
+      entity_key(kind_t::sequence, oid, key) != 0 ||
+      encode_sequence(rec, blob) != 0) {
+    return -1;
+  }
+  return put_key(session, kv.get(), key, blob);
+}
+
 /* Erase a sequence and its counter; see sm3.h. */
 int cat_del_sequence(session_t *session, uint64_t oid) {
   kv_ptr kv(nullptr, &sm2::catkv_close);

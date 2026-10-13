@@ -991,3 +991,81 @@ TEST_CASE("a sequence is dropped, and holds its namespace until it is") {
   REQUIRE_MESSAGE(sm3::drop_namespace(db.ss, scratch) == 0, sm1::errmsg());
   db.commit();
 }
+
+TEST_CASE("a column owns a sequence, which goes with its table or column") {
+  // Verify own_sequence, and the drops it makes a sequence follow.
+  // 1. A sequence owned by t's column a is SM_ERR_INUSE to drop, also
+  //    after a restart, the owner kept in its record.
+  // 2. Owning it by a column t does not have, or by a table in
+  //    another namespace, is SM_ERR_INVALID.
+  // 3. Owned by none again, it can be dropped; a rollback brings
+  //    the owner back.
+  // 4. Dropping column b drops the sequence b owns, not a's.
+  // 5. Dropping t drops the sequences it still owns; one it does not
+  //    own is left, and a rollback brings them back.
+  cat_db_t db;
+  uint64_t t = 0, sa = 0, sb = 0, free_q = 0, app = 0, oid = 0, v = 0;
+  db.begin();
+  t = make_t(db);
+  REQUIRE(sm3::create_namespace(db.ss, "app", app) == 0);
+  REQUIRE(sm3::create_sequence(db.ss, sm3::nsp_public, "t_a_seq", 1, 1, sa) ==
+          0);
+  REQUIRE(sm3::create_sequence(db.ss, sm3::nsp_public, "t_b_seq", 1, 1, sb) ==
+          0);
+  REQUIRE(sm3::create_sequence(db.ss, sm3::nsp_public, "free", 1, 1, free_q) ==
+          0);
+  REQUIRE_MESSAGE(sm3::own_sequence(db.ss, sa, t, 0) == 0, sm1::errmsg());
+  REQUIRE(sm3::own_sequence(db.ss, sb, t, 1) == 0);
+  db.commit();
+  db.reload();
+
+  db.begin();
+  CHECK(sm3::drop_sequence(db.ss, sa) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INUSE);
+  REQUIRE(sm3::abort(db.ss) == 0);
+
+  db.begin();
+  CHECK(sm3::own_sequence(db.ss, free_q, t, 7) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  REQUIRE(sm3::abort(db.ss) == 0);
+  db.begin();
+  uint64_t other = 0;
+  REQUIRE(sm3::create_sequence(db.ss, app, "q", 1, 1, other) == 0);
+  CHECK(sm3::own_sequence(db.ss, other, t, 0) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  REQUIRE(sm3::abort(db.ss) == 0);
+
+  db.begin();
+  REQUIRE(sm3::savepoint(db.ss) == 1);
+  REQUIRE(sm3::own_sequence(db.ss, sa, 0, -1) == 0);
+  REQUIRE_MESSAGE(sm3::drop_sequence(db.ss, sa) == 0, sm1::errmsg());
+  REQUIRE(sm3::rollback(db.ss, 1) == 0);
+  CHECK(sm3::drop_sequence(db.ss, sa) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INUSE);
+  REQUIRE(sm3::abort(db.ss) == 0);
+
+  db.begin();
+  REQUIRE_MESSAGE(sm3::drop_column(db.ss, t, "b") == 0, sm1::errmsg());
+  CHECK(sm3::cat_get_sequence(db.ss, sm3::nsp_public, "t_b_seq", oid) == 1);
+  CHECK(sm3::cat_get_sequence(db.ss, sm3::nsp_public, "t_a_seq", oid) == 0);
+  db.commit();
+
+  db.begin();
+  REQUIRE(sm3::savepoint(db.ss) == 1);
+  REQUIRE_MESSAGE(sm3::drop_table(db.ss, t) == 0, sm1::errmsg());
+  CHECK(sm3::cat_get_sequence(db.ss, sm3::nsp_public, "t_a_seq", oid) == 1);
+  CHECK(sm3::nextval(db.ss, sa, v) == -1);
+  std::vector<std::string> names;
+  REQUIRE(sm3::cat_list_sequences(db.ss, sm3::nsp_public, names) == 0);
+  CHECK(names == std::vector<std::string>{"free"});
+  CHECK(sm3::cat_get_sequence(db.ss, sm3::nsp_public, "free", oid) == 0);
+  REQUIRE(sm3::rollback(db.ss, 1) == 0);
+  CHECK(sm3::cat_get_sequence(db.ss, sm3::nsp_public, "t_a_seq", oid) == 0);
+  REQUIRE(sm3::drop_table(db.ss, t) == 0);
+  db.commit();
+  db.reload();
+  db.begin();
+  CHECK(sm3::cat_get_sequence(db.ss, sm3::nsp_public, "t_a_seq", oid) == 1);
+  CHECK(sm3::cat_get_sequence(db.ss, sm3::nsp_public, "free", oid) == 0);
+  db.commit();
+}

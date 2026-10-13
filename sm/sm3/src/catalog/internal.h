@@ -242,6 +242,19 @@ int cat_lock_stats(session_t *s, uint64_t oid);
 /* The name of the sm1 sequence that counts for the sequence oid. */
 std::string sequence_counter(uint64_t oid);
 
+/*
+ * The record of the sequence oid. To change it, lock: under an X
+ * lock on its key to the end of the transaction, its newest
+ * committed version, or the one s's transaction last put; else as
+ * s's transaction sees it. No such sequence fails with
+ * SM_ERR_NOTFOUND.
+ */
+int cat_get_sequence_rec(session_t *s, uint64_t oid, bool lock,
+                         sequence_rec_t &rec);
+
+/* Replace the record of the sequence oid, read by cat_get_sequence_rec. */
+int cat_put_sequence_rec(session_t *s, uint64_t oid, const sequence_rec_t &rec);
+
 /* The collation oid, as session sees it; false if unknown. */
 bool session_collation(const session_t *s, uint64_t oid,
                        const sm2::collation_t *&out);

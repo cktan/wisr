@@ -679,15 +679,27 @@ static std::vector<std::string> namespace_sequences(Oid nspoid) {
 
 /*
  * Drop the schema nspname, nspoid, from sm, in this transaction.  With
- * cascade its tables go first, each with its indexes, and its sequences;
- * without, a schema that holds any fails.
+ * cascade its tables go first, each with its indexes and the sequences its
+ * columns own, then its other sequences; without, a schema that holds any
+ * fails.
  */
 static void drop_namespace(const char *nspname, Oid nspoid, bool cascade) {
   if (cascade) {
     std::vector<std::string> tables = namespace_tables(nspoid);
-    std::vector<std::string> sequences = namespace_sequences(nspoid);
-    int n = (int)(tables.size() + sequences.size());
+    std::vector<std::string> sequences;
+    int n;
     StringInfoData detail;
+
+    for (const std::string &t : tables)
+      drop_table(makeRangeVar(pstrdup(nspname), pstrdup(t.c_str()), -1),
+                 false);
+    /*
+     * The sequences left: an owned one went with its table, unnamed.  The
+     * list is read in a new statement, which sees the drops.
+     */
+    CommandCounterIncrement();
+    sequences = namespace_sequences(nspoid);
+    n = (int)(tables.size() + sequences.size());
 
     initStringInfo(&detail);
     for (const std::string &t : tables)
@@ -703,9 +715,6 @@ static void drop_namespace(const char *nspname, Oid nspoid, bool cascade) {
                                      "drop cascades to %d other objects", n,
                                      n),
                        errdetail_internal("%s", detail.data)));
-    for (const std::string &t : tables)
-      drop_table(makeRangeVar(pstrdup(nspname), pstrdup(t.c_str()), -1),
-                 false);
     for (const std::string &q : sequences)
       drop_sequence(makeRangeVar(pstrdup(nspname), pstrdup(q.c_str()), -1),
                     false);
@@ -914,9 +923,17 @@ ObjectAddress smstore_create_sequence(CreateSeqStmt *stmt) {
     else if (strcmp(opt->defname, "increment") == 0)
       increment = defGetInt64(opt);
     else if (strcmp(opt->defname, "as") == 0) {
-      /* A value is a bigint: AS bigint says so, and nothing else can. */
-      if (typenameTypeId(NULL, defGetTypeName(opt)) != INT8OID)
-        refuse_sequence_option("AS a type other than bigint");
+      /*
+       * sm's counter is a bigint's, and keeps no bound: AS smallint or
+       * integer, as a SERIAL column's sequence is, is taken, and a value
+       * past the type's range fails where it is stored, out of range.
+       */
+      Oid type = typenameTypeId(NULL, defGetTypeName(opt));
+
+      if (type != INT2OID && type != INT4OID && type != INT8OID)
+        ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                        errmsg("sequence type must be smallint, integer, or "
+                               "bigint")));
     } else
       refuse_sequence_option(opt->defname);
   }
@@ -1017,8 +1034,17 @@ static void drop_sequence(RangeVar *rv, bool missing_ok) {
                     errmsg("\"%s\" is not a sequence", rv->relname)));
   sm_session_t *s = xact_session();
 
-  if (waiting([&] { return sm_cat_drop_sequence(s, oid); }) != 0)
+  if (waiting([&] { return sm_cat_drop_sequence(s, oid); }) != 0) {
+    if (sm_errnum() == SM_ERR_INUSE)
+      ereport(ERROR,
+              (errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+               errmsg("cannot drop sequence %s because other objects depend "
+                      "on it",
+                      rv->relname),
+               errdetail("A column owns it: it is dropped with its table."),
+               errhint("Use ALTER SEQUENCE ... OWNED BY NONE first.")));
     sm_error("drop a sequence");
+  }
 }
 
 /*
@@ -1946,6 +1972,75 @@ static int32_t column_place(Relation rel, const char *name) {
   ereport(ERROR, (errcode(ERRCODE_UNDEFINED_COLUMN),
                   errmsg("column \"%s\" does not exist", name)));
   return -1; /* not reached */
+}
+
+/*
+ * Make the column an ALTER SEQUENCE ... OWNED BY names own the sequence, in
+ * sm, in this transaction, or no column with OWNED BY NONE: the sequence is
+ * then dropped with the table or the column.  Returns its address, or
+ * InvalidObjectAddress if IF EXISTS found no sequence.
+ */
+ObjectAddress smstore_own_sequence(AlterSeqStmt *stmt, List *owned_by) {
+  Oid oid = RangeVarGetRelid(stmt->sequence, NoLock, true);
+  int nnames = list_length(owned_by);
+  uint64_t table = 0, seq_nspoid;
+  int32_t attnum = -1;
+  std::string seq_name;
+  ObjectAddress address;
+
+  if (!OidIsValid(oid)) {
+    if (!stmt->missing_ok)
+      ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
+                      errmsg("relation \"%s\" does not exist",
+                             stmt->sequence->relname)));
+    ereport(NOTICE, (errmsg("relation \"%s\" does not exist, skipping",
+                            stmt->sequence->relname)));
+    return InvalidObjectAddress;
+  }
+  sm_session_t *s = xact_session();
+
+  switch (sm_cat_sequence_name(s, oid, &seq_nspoid, seq_name)) {
+  case 0:
+    break;
+  case 1:
+    ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
+                    errmsg("\"%s\" is not a sequence",
+                           stmt->sequence->relname)));
+    break;
+  default:
+    sm_error("look up a sequence");
+  }
+  if (nnames == 1) {
+    if (strcmp(strVal(linitial(owned_by)), "none") != 0)
+      ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                      errmsg("invalid OWNED BY option"),
+                      errhint("Specify OWNED BY table.column or OWNED BY "
+                              "NONE.")));
+  } else {
+    RangeVar *rv =
+        makeRangeVarFromNameList(list_copy_head(owned_by, nnames - 1));
+    Oid relid = RangeVarGetRelid(rv, NoLock, false);
+    Relation rel;
+
+    if (smstore_sequence_exists(relid))
+      ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
+                      errmsg("sequence cannot be owned by relation \"%s\"",
+                             rv->relname)));
+    rel = relation_open(relid, NoLock);
+    if (RelationGetNamespace(rel) != (Oid)seq_nspoid)
+      ereport(ERROR,
+              (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+               errmsg("sequence must be in same schema as table it is linked "
+                      "to")));
+    attnum = column_place(rel, strVal(llast(owned_by)));
+    relation_close(rel, NoLock);
+    table = relid;
+  }
+  if (waiting([&] { return sm_cat_own_sequence(s, oid, table, attnum); }) !=
+      0)
+    sm_error("give a sequence its owner");
+  ObjectAddressSet(address, RelationRelationId, oid);
+  return address;
 }
 
 /*

@@ -850,6 +850,45 @@ local_psql -c 'create sequence q2' -c "select nextval('q2')" \
   grep -q 'currval of sequence "q2" is not yet defined' ||
   fail "discard sequences forgets the draws"
 
+# Verify that a SERIAL column draws from a sequence its column owns, which
+# goes with the table.
+# 1. sr1's serial, sr2's bigserial and smallserial number their rows from
+#    1; sr1's sequence, its name taken, is sr1_id_seq1.
+# 2. A sequence a column owns is not dropped alone; owned by none, it is.
+# 3. OWNED BY a table of another schema, or AS text, is refused.
+# 4. DROP TABLE drops the sequence sr2's columns own.
+# 5. DROP SCHEMA ... CASCADE drops a serial's table, and its sequence with
+#    it, unnamed.
+local_psql -c 'create sequence sr1_id_seq' \
+  -c 'create table sr1 (id serial primary key, v text)' \
+  -c 'create table sr2 (id bigserial, w smallserial, v text)' > /dev/null 2>&1
+[ "$(local_psql -c "insert into sr1 (v) values ('a'), ('b') returning id" \
+  -c "insert into sr2 (v) values ('x') returning id, w" \
+  -c "select nextval('sr1_id_seq1')" 2>&1 | tr '\n' ,)" = \
+  "1,2,INSERT 0 2,1|1,INSERT 0 1,3," ] || fail "serial columns"
+local_psql -c 'drop sequence sr1_id_seq1' 2>&1 |
+  grep -q 'cannot drop sequence sr1_id_seq1 because other objects depend' ||
+  fail "an owned sequence dropped alone"
+[ "$(local_psql -c 'alter sequence sr1_id_seq owned by sr1.v' \
+  -c 'alter sequence sr1_id_seq owned by none' \
+  -c 'drop sequence sr1_id_seq' 2>&1 | tr '\n' ,)" = \
+  "ALTER SEQUENCE,ALTER SEQUENCE,DROP SEQUENCE," ] ||
+  fail "a sequence owned by none"
+local_psql -c 'create schema s9' -c 'create table s9.u (id int4)' \
+  -c 'create sequence q9' -c 'alter sequence q9 owned by s9.u.id' 2>&1 |
+  grep -q 'sequence must be in same schema as table it is linked to' ||
+  fail "a sequence owned across schemas"
+local_psql -c 'create sequence q10 as text' 2>&1 |
+  grep -q 'sequence type must be smallint, integer, or bigint' ||
+  fail "a sequence AS text"
+local_psql -c 'drop table sr2' -c "select nextval('sr2_id_seq')" 2>&1 |
+  grep -q 'relation "sr2_id_seq" does not exist' ||
+  fail "a table's drop takes its sequence"
+local_psql -c 'create table s9.v (id serial)' > /dev/null 2>&1
+[ "$(local_psql -c 'drop schema s9 cascade' -c 'create schema s9' 2>&1 |
+  tr '\n' ,)" = "NOTICE:  drop cascades to 2 other objects,DETAIL:  drop cascades to table s9.u,drop cascades to table s9.v,DROP SCHEMA,CREATE SCHEMA," ] ||
+  fail "drop schema cascade, serial"
+
 # Verify that ANALYZE is sm's, and that the planner sizes a table by it:
 # never analyzed, ten pages; analyzed, its live rows, growing with it.
 # 1. Make t13 with 20,000 rows: a scan is estimated under 5,000 rows.

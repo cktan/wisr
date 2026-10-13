@@ -179,10 +179,44 @@ int create_temp_table(session_t *session, std::string_view name,
   return make_table(session, nsp_temp, name, columns, oid);
 }
 
+/*
+ * Drop the sequences in nspoid that the table oid owns, by any of
+ * its columns or by the column attnum alone. A sequence is owned
+ * only in its table's namespace, so only that one is looked in.
+ */
+static int drop_owned_sequences(session_t *session, uint64_t oid,
+                                uint64_t nspoid, int32_t attnum) {
+  std::vector<std::string> names;
+  if (nspoid == nsp_temp || cat_list_sequences(session, nspoid, names) != 0) {
+    return nspoid == nsp_temp ? 0 : -1;
+  }
+  for (const std::string &name : names) {
+    uint64_t q;
+    sequence_rec_t rec;
+    if (cat_get_sequence(session, nspoid, name, q) != 0 ||
+        cat_get_sequence_rec(session, q, false, rec) != 0) {
+      return -1;
+    }
+    if (rec.owner != oid || (attnum >= 0 && rec.owner_attnum != attnum)) {
+      continue;
+    }
+    // Locked and read again: the drop is of the newest record.
+    if (cat_get_sequence_rec(session, q, true, rec) != 0) {
+      return -1;
+    }
+    if (rec.owner == oid && (attnum < 0 || rec.owner_attnum == attnum) &&
+        cat_del_sequence(session, q) != 0) {
+      return -1;
+    }
+  }
+  return 0;
+}
+
 /* Drop a table; see sm3.h. */
 int drop_table(session_t *session, uint64_t oid) {
   table_rec_t rec;
   if (cat_get_table_rec(session, oid, rec) != 0 ||
+      drop_owned_sequences(session, oid, rec.nspoid, -1) != 0 ||
       cat_del_table(session, oid) != 0) {
     return -1;
   }
@@ -286,6 +320,10 @@ int drop_column(session_t *session, uint64_t oid, std::string_view name) {
       return invalid("drop column: index " + x.name + " uses " +
                      std::string(name));
     }
+  }
+  // The sequences it owns go with it, as PostgreSQL's do.
+  if (drop_owned_sequences(session, oid, rec.nspoid, at) != 0) {
+    return -1;
   }
   // It keeps its place, and reads as null from now on.
   column_rec_t &c = rec.columns[at];
@@ -526,9 +564,50 @@ int create_sequence(session_t *session, uint64_t nspoid, std::string_view name,
   return 0;
 }
 
-/* Drop a sequence; see sm3.h. */
+/* Drop a sequence, if no column owns it; see sm3.h. */
 int drop_sequence(session_t *session, uint64_t oid) {
+  sequence_rec_t rec;
+  if (cat_get_sequence_rec(session, oid, true, rec) != 0) {
+    return -1;
+  }
+  if (rec.owner) {
+    return sm1::seterr(sm1::SM_ERR_INUSE, "drop sequence: " + rec.name +
+                                              " is owned by table " +
+                                              std::to_string(*rec.owner));
+  }
   return cat_del_sequence(session, oid);
+}
+
+/* Make a table's column own a sequence, or none; see sm3.h. */
+int own_sequence(session_t *session, uint64_t oid, uint64_t table,
+                 int32_t attnum) {
+  sequence_rec_t rec;
+  std::shared_ptr<const table_def_t> def;
+  // The table first, as a drop of it takes it before the sequence:
+  // held to the end of the transaction, so the table outlives this.
+  if (table != 0 &&
+      cat_lock_table(session, table, sm1::SM_LOCKMODE_IS, def) != 0) {
+    return -1;
+  }
+  if (cat_get_sequence_rec(session, oid, true, rec) != 0) {
+    return -1;
+  }
+  if (table == 0) {
+    rec.owner = std::nullopt;
+    rec.owner_attnum = -1;
+    return cat_put_sequence_rec(session, oid, rec);
+  }
+  if (def->nspoid != rec.nspoid) {
+    return invalid("own sequence: table " + def->rec.name +
+                   " is not in the sequence's namespace");
+  }
+  if (!live_attnum(def->rec, attnum)) {
+    return invalid("own sequence: table " + def->rec.name + " has no column " +
+                   std::to_string(attnum));
+  }
+  rec.owner = table;
+  rec.owner_attnum = attnum;
+  return cat_put_sequence_rec(session, oid, rec);
 }
 
 /* A sequence's next value; see sm3.h. */

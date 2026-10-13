@@ -585,8 +585,8 @@ int create_temp_table(session_t* session, std::string_view name,
 
 /*
  * Drop the table oid: its name, its indexes' names, its
- * definition, its store with its rows and index entries, and its
- * rowno sequence.
+ * definition, its store with its rows and index entries, its
+ * rowno sequence, and the sequences its columns own.
  */
 int drop_table(session_t* session, uint64_t oid);
 
@@ -619,7 +619,7 @@ int add_column(session_t* session, uint64_t oid,
 /*
  * Drop the column name of the table oid. It keeps its place, read
  * as null from then on (SM2_DESIGN.md §4); one an index uses is
- * refused.
+ * refused. The sequences it owns are dropped with it.
  */
 int drop_column(session_t* session, uint64_t oid,
                 std::string_view name);
@@ -772,8 +772,22 @@ int create_sequence(session_t* session, uint64_t nspoid,
                     std::string_view name, uint64_t start,
                     uint64_t increment, uint64_t& oid);
 
-/* Drop the sequence oid, with its counter. */
+/*
+ * Drop the sequence oid, with its counter. One a column owns is
+ * refused with SM_ERR_INUSE: it goes with its table or column.
+ */
 int drop_sequence(session_t* session, uint64_t oid);
+
+/*
+ * Make the column attnum of the table table own the sequence oid,
+ * SQL's ALTER SEQUENCE ... OWNED BY, so that dropping the table or
+ * the column drops it; table 0 makes it owned by none. The table
+ * must be in the sequence's namespace, and attnum one of its live
+ * columns, or SM_ERR_INVALID. The table is held against a drop to
+ * the end of the transaction.
+ */
+int own_sequence(session_t* session, uint64_t oid, uint64_t table,
+                 int32_t attnum);
 
 /*
  * Hand out the next value of the sequence oid. Values are not

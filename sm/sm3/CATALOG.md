@@ -120,6 +120,12 @@ kinds' values are on disk, so frozen.
   relation does in PostgreSQL. Only which namespace holds it is
   kept in memory, for a namespace's drop (§5); its name and
   record are read from the store in the transaction.
+- **A sequence may be owned by a column**, SQL's `OWNED BY`, of
+  a table in its namespace: its owner fields name the table and
+  the column's place, and are null otherwise, as in a sequence
+  written before them. Dropping the table or the column drops
+  it; dropping it alone is `SM_ERR_INUSE`. The table's drop
+  finds what it owns by reading its namespace's sequences.
 - **A table's oid lock is no longer a key here.** It is an
   `sm1::LOCKTYPE_OID` lock on the table's oid
   (`SM3_DESIGN.md` §2). Locking the `TABLE` key instead would
@@ -157,7 +163,7 @@ SEQUENCE value    = sequence
 | read | attnum `int4` |
 | namespace | name `text` |
 | collation | name `text`, locale `text`, deterministic `bool`, ICU version `text` |
-| sequence | namespace `int8`, name `text`, start `int8`, increment `int8` |
+| sequence | namespace `int8`, name `text`, start `int8`, increment `int8`, owner table `int8` or null, owner column `int4` or null |
 
 - **A part evolves as a tuple does.** A field appended to a
   part's schema reads as its missing value in a value written

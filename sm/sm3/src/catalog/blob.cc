@@ -246,7 +246,8 @@ const std::vector<attribute_t> &schema_of(sm3::part_t part) {
       {att(type_text), att(type_text), att(type_bool), att(type_text)},
       /* index_state */ {att(type_int2), att(type_int2), att(type_text)},
       /* sequence */
-      {att(type_int8), att(type_text), att(type_int8), att(type_int8)},
+      {att(type_int8), att(type_text), att(type_int8), att(type_int8),
+       att(type_int8), att(type_int4)},
       /* stats_table */
       {att(type_int4), att(type_int4), att(type_int4), att(type_int8),
        att(type_int8), att(type_float8), att(type_int8), att(type_int8),
@@ -609,11 +610,16 @@ int decode_collation(std::string_view blob, collation_rec_t &rec) {
 
 /* A sequence's blob. */
 int encode_sequence(const sequence_rec_t &rec, std::string &blob) {
-  writer_t w(4);
+  writer_t w(6);
   w.i8(0, rec.nspoid);
   w.bytes(1, rec.name);
   w.i8(2, rec.start);
   w.i8(3, rec.increment);
+  // Its owner, a table's column, or both null.
+  if (rec.owner) {
+    w.i8(4, *rec.owner);
+    w.i4(5, rec.owner_attnum);
+  }
   blob.clear();
   return w.append(part_desc(part_t::sequence), blob);
 }
@@ -629,6 +635,8 @@ int decode_sequence(std::string_view blob, sequence_rec_t &rec) {
   rec.name = r.bytes(1);
   rec.start = r.i8(2);
   rec.increment = r.i8(3);
+  rec.owner = r.opt_i8(4);
+  rec.owner_attnum = r.opt_i4(5).value_or(-1);
   return r.ok ? at_end(blob, pos) : corrupt("a sequence part cut short");
 }
 

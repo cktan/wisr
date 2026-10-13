@@ -8,8 +8,8 @@
  * catalog, in a schema, with an sm counter behind it (access/smstore.h):
  * CREATE SEQUENCE makes one, nextval() draws from it, and currval() and
  * lastval() report what this session drew.  sm's counters only go
- * forward, so setval(), ALTER SEQUENCE and a sequence's other options are
- * refused, and a SERIAL or identity column with them.
+ * forward, so setval(), ALTER SEQUENCE but its OWNED BY, and a sequence's
+ * other options are refused, and an identity column with them.
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -64,10 +64,19 @@ ObjectAddress DefineSequence(ParseState *pstate, CreateSeqStmt *seq) {
   return smstore_create_sequence(seq);
 }
 
-/* ALTER SEQUENCE: refused. */
+/*
+ * ALTER SEQUENCE: OWNED BY alone, as a SERIAL column's sequence is given
+ * its owner, made in sm (access/smstore.h); anything else is refused.
+ */
 ObjectAddress AlterSequence(ParseState *pstate, AlterSeqStmt *stmt) {
-  refuse("ALTER SEQUENCE");
-  return InvalidObjectAddress; /* not reached */
+  DefElem *opt;
+
+  if (stmt->for_identity || list_length(stmt->options) != 1)
+    refuse("ALTER SEQUENCE");
+  opt = linitial_node(DefElem, stmt->options);
+  if (strcmp(opt->defname, "owned_by") != 0)
+    refuse("ALTER SEQUENCE");
+  return smstore_own_sequence(stmt, (List *)opt->arg);
 }
 
 /* ALTER SEQUENCE ... SET LOGGED or UNLOGGED: refused. */

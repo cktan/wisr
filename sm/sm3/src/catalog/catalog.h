@@ -118,6 +118,9 @@ struct sequence_rec_t {
   std::string name;
   uint64_t start;
   uint64_t increment;
+  /* The table whose column owns it, OWNED BY, and the column's place. */
+  std::optional<uint64_t> owner;
+  int32_t owner_attnum = -1;
 };
 
 /* A collation's blob. */
