@@ -73,6 +73,14 @@ Owed, and blocking nothing above:
   `lock_timeout`, which needs no more than an `sm_sys.h` timer
   that interrupts the waiting thread. sm1's `set_qa_nowait` is
   still for QA only (`sm1/SM1_DESIGN.md` §5.1).
+- **ADD COLUMN with a volatile default is refused.**
+  `random()`, `clock_timestamp()`, a `serial` or an identity
+  column give each existing row its own value, so PostgreSQL
+  rewrites the table. sm3's `add_column` gives older rows one
+  missing value and has no rewrite; digres says it is not
+  supported yet. It needs a pass that writes the value into
+  every row under the table's X lock, or a rewrite into a new
+  store as `truncate_table` swaps one in.
 - **The evaluator's cost is unmeasured**: what a call a row
   adds to a write on a table with a partial or an expression
   index.

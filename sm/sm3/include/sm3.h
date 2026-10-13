@@ -607,7 +607,6 @@ int create_temp_table(session_t* session, std::string_view name,
  */
 int drop_table(session_t* session, uint64_t oid);
 
-/* Rename the table oid to name, in its namespace. */
 /*
  * Empty the table oid: it gets a new, empty store, and the old one
  * is dropped, rows and index entries with it. The columns, the
@@ -620,18 +619,32 @@ int drop_table(session_t* session, uint64_t oid);
  */
 int truncate_table(session_t* session, uint64_t oid);
 
+/* Rename the table oid to name, in its namespace. */
 int rename_table(session_t* session, uint64_t oid,
                  std::string_view name);
 
 /*
  * Append col to the table oid. A row written before it reads it as
  * missing -- its bytes as sm2 holds them, a varlena for a
- * variable-width type -- or as null without one, so a NOT NULL
- * column needs one. An identity column is SM_ERR_INVALID.
+ * variable-width type -- or as null without one. So a NOT NULL
+ * column without one needs a table with no row: its table-oid lock
+ * X is taken if it is free now, and kept only if the table's store
+ * is empty, SM_ERR_BLOCKED if it is not free and SM_ERR_NOTNULL if
+ * the store holds a version of any kind, a deleted row's too, until
+ * compaction. A live column's name is SM_ERR_DUPKEY, and an
+ * identity column SM_ERR_INVALID.
  */
 int add_column(session_t* session, uint64_t oid,
                const column_spec_t& col,
                std::optional<std::string_view> missing);
+
+/*
+ * Rename the live column name of the table oid to new_name. Its
+ * indexes name it by place, so they are untouched. One another live
+ * column has is SM_ERR_DUPKEY.
+ */
+int rename_column(session_t* session, uint64_t oid,
+                  std::string_view name, std::string_view new_name);
 
 /*
  * Drop the column name of the table oid. It keeps its place, read

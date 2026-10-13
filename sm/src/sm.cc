@@ -1635,6 +1635,60 @@ int sm_cat_drop_table(sm_session_t *session, uint64_t oid) {
   return guard(session, [&] { return sm3::drop_table(session->sm3, oid); });
 }
 
+/* Rename a table in the session's transaction. */
+int sm_cat_rename_table(sm_session_t *session, uint64_t oid, const char *name) {
+  return guard(session, [&] {
+    return sm3::rename_table(session->sm3, oid, name_of(name));
+  });
+}
+
+/* Append a column in the session's transaction. */
+int sm_cat_add_column(sm_session_t *session, uint64_t oid,
+                      const sm_column_spec_t &col, const sm_datum_t *missing) {
+  return guard(session, [&] {
+    // The missing value as sm2 holds it: the datum's bytes.
+    std::optional<std::string_view> bytes;
+    if (missing) {
+      const sm2::type_t *type = sm2::type_by_code(col.type_code);
+      std::string_view v;
+      if (!type) {
+        return sm1::seterr(sm1::SM_ERR_INVALID,
+                           "add column: a type code sm2 lacks");
+      }
+      if (sm2::datum_bytes(type, col.typmod, *missing, v) != 0) {
+        return -1;
+      }
+      bytes = v;
+    }
+    sm3::column_spec_t c{std::string(name_of(col.name)),
+                         col.type_code,
+                         col.typmod,
+                         col.not_null,
+                         col.default_expr
+                             ? std::optional<std::string>(col.default_expr)
+                             : std::nullopt,
+                         col.identity,
+                         col.identity_seq};
+    return sm3::add_column(session->sm3, oid, c, bytes);
+  });
+}
+
+/* Rename a column in the session's transaction. */
+int sm_cat_rename_column(sm_session_t *session, uint64_t oid, const char *name,
+                         const char *new_name) {
+  return guard(session, [&] {
+    return sm3::rename_column(session->sm3, oid, name_of(name),
+                              name_of(new_name));
+  });
+}
+
+/* Drop a column in the session's transaction. */
+int sm_cat_drop_column(sm_session_t *session, uint64_t oid, const char *name) {
+  return guard(session, [&] {
+    return sm3::drop_column(session->sm3, oid, name_of(name));
+  });
+}
+
 /* Create an index in the session's transaction. */
 int sm_cat_create_index(sm_session_t *session, uint64_t table, const char *name,
                         const std::vector<sm_index_key_spec_t> &keys,

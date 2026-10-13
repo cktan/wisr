@@ -61,6 +61,62 @@ int check_missing(const sm2::type_t *type, int32_t typmod,
   return 0;
 }
 
+/*
+ * Refuse a NOT NULL column with no missing value, name, unless the
+ * table oid holds no row, which it then goes on holding: its
+ * table-oid lock X is taken if it is free now, and kept only if
+ * the store is empty. Busy is SM_ERR_BLOCKED; rows, SM_ERR_NOTNULL.
+ */
+int need_empty(sm3::session_t *session, uint64_t oid, const std::string &name) {
+  std::shared_ptr<const sm3::table_def_t> d = sm3::cat_get_table(session, oid);
+  if (!d) {
+    return sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                       "table " + std::to_string(oid) + " does not exist");
+  }
+  bool empty;
+  // A temporary table is the session's alone: no one to keep out.
+  if (d->nspoid == sm3::nsp_temp) {
+    if (sm1::store_empty(session->sm1, d->storeid, empty) != 0) {
+      return -1;
+    }
+    return empty ? 0
+                 : sm1::seterr(sm1::SM_ERR_NOTNULL,
+                               "add column: " + name +
+                                   " is NOT NULL, and the table has rows");
+  }
+  // A mark to roll back to, which lets go of the lock taken after
+  // it and keeps one held from before.
+  int depth = sm3::savepoint(session);
+  if (depth < 0) {
+    return -1;
+  }
+  int held = sm3::lock_table_now(session->sm1, oid, sm1::SM_LOCKMODE_EX);
+  int rc = 0;
+  if (held < 0) {
+    rc = -1;
+  } else if (held == 1) {
+    rc = sm1::seterr(sm1::SM_ERR_BLOCKED,
+                     "add column: " + name +
+                         " is NOT NULL, and the table is in use");
+  } else if (!(d = sm3::cat_get_table(session, oid))) {
+    // Dropped while the lock was free.
+    rc = sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                     "table " + std::to_string(oid) + " does not exist");
+  } else if (sm1::store_empty(session->sm1, d->storeid, empty) != 0) {
+    rc = -1;
+  } else if (!empty) {
+    rc = sm1::seterr(sm1::SM_ERR_NOTNULL,
+                     "add column: " + name +
+                         " is NOT NULL, and the table has rows");
+  }
+  if (rc != 0) {
+    // The error is set already; the rollback only lets the lock go.
+    sm3::rollback(session, depth);
+  }
+  sm3::forget(session, depth);
+  return rc;
+}
+
 /* Refuse columns the table cannot be laid out by. */
 int check_columns(std::span<const sm3::column_spec_t> columns) {
   std::unordered_set<std::string> seen;
@@ -326,24 +382,52 @@ int add_column(session_t *session, uint64_t oid, const column_spec_t &col,
   if (missing && check_missing(type, col.typmod, *missing) != 0) {
     return -1;
   }
-  if (col.not_null && !missing) {
-    return invalid("add column: " + col.name +
-                   " is NOT NULL, so older rows need a missing value");
-  }
   if (col.identity != 0) {
     return invalid("add column: " + col.name + " is an identity column");
+  }
+  // No row older than it may read it as null.
+  if (col.not_null && !missing && need_empty(session, oid, col.name) != 0) {
+    return -1;
   }
   table_rec_t rec;
   if (cat_get_table_rec(session, oid, rec) != 0) {
     return -1;
   }
   if (live_column(rec, col.name) >= 0) {
-    return invalid("add column: " + col.name + " is taken");
+    return sm1::seterr(sm1::SM_ERR_DUPKEY,
+                       "add column: " + col.name + " is taken");
   }
   rec.columns.push_back(
       {col.name, col.type_code, col.typmod, col.not_null, false,
        missing ? std::optional<std::string>(*missing) : std::nullopt,
        std::nullopt, col.default_expr});
+  return cat_put_table(session, oid, rec);
+}
+
+/* Rename a column; see sm3.h. */
+int rename_column(session_t *session, uint64_t oid, std::string_view name,
+                  std::string_view new_name) {
+  if (new_name.empty()) {
+    return invalid("rename column: no name");
+  }
+  table_rec_t rec;
+  if (cat_get_table_rec(session, oid, rec) != 0) {
+    return -1;
+  }
+  int at = live_column(rec, name);
+  if (at < 0) {
+    return sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                       "rename column: no column " + std::string(name));
+  }
+  if (name == new_name) {
+    return 0;
+  }
+  if (live_column(rec, new_name) >= 0) {
+    return sm1::seterr(sm1::SM_ERR_DUPKEY,
+                       "rename column: " + std::string(new_name) + " is taken");
+  }
+  // An index names its columns by place, so only the name changes.
+  rec.columns[at].name = new_name;
   return cat_put_table(session, oid, rec);
 }
 

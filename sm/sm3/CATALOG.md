@@ -469,7 +469,13 @@ begins with `cat_get_table_rec` and ends with `cat_put_table`.
 - **`add_column(session, oid, col, missing)`** appends a
   column. A row written before it reads it as `missing` — its
   bytes, checked to be a datum of the column's type — or as
-  null without one, so a `NOT NULL` column needs one.
+  null without one. So a `NOT NULL` column without one needs
+  an empty table: the table-oid lock X is taken only if it is
+  free now, and kept only if the store holds no version at
+  all; a savepoint set before it lets the lock go otherwise.
+- **`rename_column(session, oid, name, new_name)`** puts the
+  record back with the live column renamed. An index names
+  its columns by place, so it is untouched.
 - **`drop_column(session, oid, name)`** marks the column
   dropped; it keeps its place and reads as null, and its name
   can be added again. One an index uses is refused.

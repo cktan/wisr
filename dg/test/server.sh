@@ -1199,20 +1199,109 @@ OUT
 cmp -s "$work/sqlbodies.out" "$work/sqlbodies.expected" ||
   fail "functions written in SQL by PostgreSQL"
 
-# Verify that an ALTER of a table or index is refused plainly, as digres
-# has no ALTER TABLE yet, rather than failing on pg_class.
-# 1. ADD FOREIGN KEY, ADD COLUMN, RENAME, RENAME COLUMN and SET SCHEMA of
-#    t14 are refused, each naming what it is.
-# 2. ALTER INDEX is refused as ALTER INDEX.
-local_psql -c 'alter table t14 add foreign key (a) references u14' \
-  -c 'alter table t14 add column z int4' -c 'alter table t14 rename to t99' \
-  -c 'alter table t14 rename column a to z' \
-  -c 'alter table t14 set schema s7' -c 'create index t14a on t14 (a)' \
-  -c 'alter index t14a rename to t14b' > "$work/alter.out" 2>&1
-[ "$(grep -c 'ERROR:  ALTER TABLE is not supported yet' "$work/alter.out")" = 4 ] &&
-  grep -q 'ERROR:  ALTER TABLE ... RENAME COLUMN is not supported yet' \
-    "$work/alter.out" &&
-  grep -q 'ERROR:  ALTER INDEX is not supported yet' "$work/alter.out" ||
+# Verify that ALTER TABLE adds, drops and renames columns, and renames a
+# table, in sm; and refuses the rest plainly, rather than failing on
+# pg_class.
+# 1. Add to al1, which has rows, c with a constant DEFAULT and d with an
+#    expression one: the rows read them, and a new row takes them.
+# 2. A NOT NULL column with no DEFAULT is refused on al1, which has rows,
+#    and taken by the empty ale1; a volatile DEFAULT and a serial are
+#    refused; a taken name is an error, or with IF NOT EXISTS a notice.
+# 3. Drop b: al1 reads without it. One an index uses is refused.
+# 4. Rename c to cc and al1 to al2: al1 is gone, al2 has cc.
+# 5. A session that read al1 before an ADD COLUMN reads the new column
+#    after it commits; one rolled back leaves al2 as it was.
+# 6. While that session reads the empty ale2 in a transaction, a NOT NULL
+#    column with no DEFAULT is refused at once, ale2 being in use.
+# 7. ADD FOREIGN KEY, SET SCHEMA and ALTER INDEX are refused, each naming
+#    what it is.
+local_psql -c 'create table al1 (a int4, b text)' \
+  -c "insert into al1 values (1, 'x'), (2, 'y')" \
+  -c 'create index al1a on al1 (a)' \
+  -c "alter table al1 add column c int4 default 7,
+        add column d text default 'h' || 'i'" \
+  -c 'insert into al1 (a) values (3)' -c 'select * from al1 order by a' \
+  -c 'alter table al1 add column e int4 not null' \
+  -c 'create table ale1 (x int4)' \
+  -c 'alter table ale1 add column y int4 not null' \
+  -c 'insert into ale1 values (1, null)' \
+  -c 'alter table al1 add column f float8 default random()' \
+  -c 'alter table al1 add column f serial' \
+  -c 'alter table al1 add column a int4' \
+  -c 'alter table al1 add column if not exists a int4' \
+  -c 'alter table al1 drop column b' -c 'select * from al1 order by a' \
+  -c 'alter table al1 drop column a' \
+  -c 'alter table al1 rename column c to cc' \
+  -c 'alter table al1 rename to al2' -c 'select cc from al2 order by 1' \
+  -c 'select * from al1' > "$work/alter.out" 2>&1
+cat > "$work/alter.expected" << 'OUT'
+CREATE TABLE
+INSERT 0 2
+CREATE INDEX
+ALTER TABLE
+INSERT 0 1
+1|x|7|hi
+2|y|7|hi
+3||7|hi
+ERROR:  column "e" of relation "al1" contains null values
+CREATE TABLE
+ALTER TABLE
+ERROR:  null value in column "y" of relation "ale1" violates not-null constraint
+DETAIL:  Failing row contains (1, null).
+ERROR:  ALTER TABLE ... ADD COLUMN with a volatile DEFAULT is not supported yet
+ERROR:  ALTER TABLE ... ADD COLUMN of a serial column is not supported yet
+ERROR:  column "a" of relation "al1" already exists
+NOTICE:  column "a" of relation "al1" already exists, skipping
+ALTER TABLE
+ALTER TABLE
+1|7|hi
+2|7|hi
+3|7|hi
+ERROR:  cannot drop column a of table al1 because other objects depend on it
+DETAIL:  drop column: index al1a uses a
+HINT:  Drop the index first.
+ALTER TABLE
+ALTER TABLE
+7
+7
+7
+ERROR:  relation "al1" does not exist
+LINE 1: select * from al1
+                      ^
+OUT
+cmp -s "$work/alter.out" "$work/alter.expected" || fail "ALTER TABLE"
+mkfifo "$work/alter.in"
+local_psql < "$work/alter.in" > "$work/alter2.out" 2>&1 &
+alter=$!
+exec 4> "$work/alter.in"
+echo "select count(*) from al2;" >&4
+for _ in $(seq 50); do
+  grep -qx 3 "$work/alter2.out" && break
+  sleep 0.1
+done
+local_psql -c 'alter table al2 add column z int4 default 4' \
+  -c 'begin' -c 'alter table al2 add column w int4' -c 'rollback' \
+  -c 'create table ale2 (x int4)' > /dev/null 2>&1
+echo "begin; select count(*) from ale2;" >&4
+for _ in $(seq 50); do
+  grep -qx 0 "$work/alter2.out" && break
+  sleep 0.1
+done
+local_psql -c 'alter table ale2 add column y int4 not null' 2>&1 |
+  grep -q 'could not obtain lock on relation "ale2"' ||
+  fail "NOT NULL column refused on a table in use"
+echo "commit; select * from al2 where a = 1;" >&4
+exec 4>&-
+wait $alter
+[ "$(tr '\n' ' ' < "$work/alter2.out")" = "3 BEGIN 0 COMMIT 1|7|hi|4 " ] ||
+  fail "ALTER TABLE seen by another session"
+local_psql -c 'alter table al2 add foreign key (a) references u14' \
+  -c 'alter table al2 set schema s7' \
+  -c 'alter index al1a rename to al1b' > "$work/alter3.out" 2>&1
+grep -q 'ERROR:  ALTER TABLE supports only ADD COLUMN, DROP COLUMN and RENAME yet' \
+  "$work/alter3.out" &&
+  grep -q 'ERROR:  ALTER TABLE is not supported yet' "$work/alter3.out" &&
+  grep -q 'ERROR:  ALTER INDEX is not supported yet' "$work/alter3.out" ||
   fail "ALTER refused"
 
 # Verify that text compares, cases and matches, by the database's default

@@ -564,11 +564,53 @@ TEST_CASE("dropping an index erases its entries and nothing else") {
   db.commit();
 }
 
+TEST_CASE("a column is renamed, and its index goes on using it") {
+  // Verify rename_column.
+  // 1. b is renamed c: the index on b is still on place 1.
+  // 2. A rename to a live column's name is SM_ERR_DUPKEY; of an
+  //    unknown or a dropped column, SM_ERR_NOTFOUND.
+  // 3. A rename that aborts leaves the old name.
+  // 4. After a restart t has a and c, and its index is on c.
+  cat_db_t db;
+  db.begin();
+  uint64_t t = make_t(db), ix = 0;
+  std::vector<sm3::index_key_spec_t> on_b = {{1, false, false, std::nullopt}};
+  REQUIRE(sm3::create_index(db.ss, t, "t_b", on_b, {}, false, ix) == 0);
+  REQUIRE(sm3::rename_column(db.ss, t, "b", "c") == 0);
+  db.commit();
+
+  db.begin();
+  CHECK(sm3::rename_column(db.ss, t, "c", "a") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
+  CHECK(sm3::rename_column(db.ss, t, "b", "d") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  REQUIRE(sm3::add_column(db.ss, t, {"e", sm2::type_int8.code, -1, false},
+                          std::nullopt) == 0);
+  REQUIRE(sm3::drop_column(db.ss, t, "e") == 0);
+  CHECK(sm3::rename_column(db.ss, t, "e", "f") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  REQUIRE(sm3::abort(db.ss) == 0);
+
+  db.begin();
+  REQUIRE(sm3::rename_column(db.ss, t, "c", "x") == 0);
+  REQUIRE(sm3::abort(db.ss) == 0);
+
+  sm3::catalog_t *cat = db.reload();
+  auto d = sm3::cat_get_table(cat, t);
+  REQUIRE(d != nullptr);
+  REQUIRE(d->columns.size() == 2);
+  CHECK(d->columns[0].name == "a");
+  CHECK(d->columns[1].name == "c");
+  REQUIRE(d->indexes.size() == 1);
+  REQUIRE(d->indexes[0].key_attnums.size() == 1);
+  CHECK(d->indexes[0].key_attnums[0] == 1);
+}
+
 TEST_CASE("the DDL refuses what the catalog cannot hold") {
   // Verify each call's errors.
-  // 1. add column: a live name again, NOT NULL with no missing
-  //    value, a missing value of the wrong width or not a varlena
-  //    are SM_ERR_INVALID; an unknown table SM_ERR_NOTFOUND.
+  // 1. add column: a live name again is SM_ERR_DUPKEY; a missing
+  //    value of the wrong width or not a varlena SM_ERR_INVALID; an
+  //    unknown table SM_ERR_NOTFOUND.
   // 2. drop column: an unknown one is SM_ERR_NOTFOUND; one an index
   //    uses is SM_ERR_INVALID.
   // 3. create index: a dropped or unknown column, and a collation
@@ -583,10 +625,7 @@ TEST_CASE("the DDL refuses what the catalog cannot hold") {
   using col = sm3::column_spec_t;
   CHECK(sm3::add_column(db.ss, t, col{"a", sm2::type_int8.code, -1, false},
                         std::nullopt) == -1);
-  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm3::add_column(db.ss, t, col{"x", sm2::type_int8.code, -1, true},
-                        std::nullopt) == -1);
-  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
   CHECK(sm3::add_column(db.ss, t, col{"x", sm2::type_int8.code, -1, false},
                         le(int32_t{1})) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);

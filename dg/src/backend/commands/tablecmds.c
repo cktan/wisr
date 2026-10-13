@@ -3714,6 +3714,9 @@ ObjectAddress renameatt(RenameStmt *stmt) {
   AttrNumber attnum;
   ObjectAddress address;
 
+  /* A table's column is sm's to rename; nothing else's is yet. */
+  if (stmt->relationType == OBJECT_TABLE)
+    return smstore_rename_column(stmt);
   refuse_alter("ALTER TABLE ... RENAME COLUMN");
   /* lock level taken here should match renameatt_internal */
   relid = RangeVarGetRelidExtended(stmt->relation, AccessExclusiveLock,
@@ -3880,6 +3883,9 @@ ObjectAddress RenameRelation(RenameStmt *stmt) {
   Oid relid;
   ObjectAddress address;
 
+  /* A table is sm's to rename; nothing else is yet. */
+  if (stmt->renameType == OBJECT_TABLE)
+    return smstore_rename_table(stmt);
   refuse_alter(GetCommandTagName(AlterObjectTypeCommandTag(stmt->renameType)));
   /*
    * Grab an exclusive lock on the target table, index, sequence, view,
@@ -4131,10 +4137,23 @@ static void CheckAlterTableIsSafe(Relation rel) {
  *table statement.
  */
 Oid AlterTableLookupRelation(AlterTableStmt *stmt, LOCKMODE lockmode) {
-  refuse_alter(GetCommandTagName(AlterObjectTypeCommandTag(stmt->objtype)));
+  ListCell *l;
+
+  if (stmt->objtype != OBJECT_TABLE)
+    refuse_alter(GetCommandTagName(AlterObjectTypeCommandTag(stmt->objtype)));
+  /* sm's tables take ADD COLUMN and DROP COLUMN (smstore_alter_table()). */
+  foreach (l, stmt->cmds) {
+    AlterTableType subtype = lfirst_node(AlterTableCmd, l)->subtype;
+
+    if (subtype != AT_AddColumn && subtype != AT_DropColumn)
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("ALTER TABLE supports only ADD COLUMN, DROP "
+                             "COLUMN and RENAME yet")));
+  }
+  /* No permission check: it would open pg_class, which digres has not. */
   return RangeVarGetRelidExtended(stmt->relation, lockmode,
-                                  stmt->missing_ok ? RVR_MISSING_OK : 0,
-                                  RangeVarCallbackForAlterRelation, stmt);
+                                  stmt->missing_ok ? RVR_MISSING_OK : 0, NULL,
+                                  NULL);
 }
 
 /*

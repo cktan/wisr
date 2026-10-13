@@ -57,6 +57,9 @@
 #include "access/htup_details.h"
 #include "funcapi.h"
 #include "utils/tuplestore.h"
+#include "executor/executor.h"
+#include "optimizer/optimizer.h"
+#include "utils/datum.h"
 
 /*
  * Where a row's numerics are made from sm's datums, reset at each row: the
@@ -1629,6 +1632,318 @@ void smstore_drop_tables(DropStmt *stmt) {
 
   foreach (l, stmt->objects)
     drop_table(makeRangeVarFromNameList((List *)lfirst(l)), stmt->missing_ok);
+}
+
+/*
+ * Ready the table relid, named name, for an ALTER that changes its
+ * definition: an error if it is not a table, or if this transaction is
+ * using it.  Every session forgets its descriptor once this one commits,
+ * and this one at its next command; and this transaction's handles of it,
+ * which hold the old definition, are closed, so the next use opens one
+ * afresh.
+ */
+static void alter_table_rel(Oid relid, const char *name) {
+  Relation rel = relation_open(relid, NoLock);
+  ListCell *l;
+
+  if (rel->rd_rel->relkind != RELKIND_RELATION)
+    ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
+                    errmsg("\"%s\" is not a table", name)));
+  /* No scan of it is open, so no handle closed below is in use. */
+  CheckTableNotInUse(rel, "ALTER TABLE");
+  CacheInvalidateRelcache(rel);
+  relation_close(rel, NoLock);
+  foreach (l, open_tables) {
+    open_table_t *ot = (open_table_t *)lfirst(l);
+
+    if (ot->oid == relid) {
+      sm_tbl_close(ot->tbl);
+      open_tables = foreach_delete_current(open_tables, l);
+    }
+  }
+}
+
+/* Refuse a column name a system column has, as PostgreSQL does. */
+static void check_column_name(const char *name) {
+  if (SystemAttributeByName(name) != NULL)
+    ereport(ERROR, (errcode(ERRCODE_DUPLICATE_COLUMN),
+                    errmsg("column name \"%s\" conflicts with a system column "
+                           "name",
+                           name)));
+}
+
+/* Whether type names one of the serial types, which are not types. */
+static bool is_serial(const TypeName *type) {
+  static const char *const serials[] = {"smallserial", "serial2",   "serial",
+                                        "serial4",     "bigserial", "serial8"};
+  const char *name;
+
+  if (type->arrayBounds != NIL || list_length(type->names) > 2 ||
+      (list_length(type->names) == 2 &&
+       strcmp(strVal(linitial(type->names)), "pg_catalog") != 0))
+    return false;
+  name = strVal(llast(type->names));
+  for (const char *serial : serials)
+    if (strcmp(name, serial) == 0)
+      return true;
+  return false;
+}
+
+/*
+ * The value of expr, a column's DEFAULT that calls nothing volatile, as sm
+ * takes a datum: what rows older than the column read it as.  False if it
+ * is null.  A varlena is untoasted, a numeric made sm's in buf.
+ */
+static bool default_value(Expr *expr, Oid typid, int32 typmod, sm_datum_t *out,
+                          uint8 *buf) {
+  EState *estate = CreateExecutorState();
+  ExprState *state;
+  Datum value;
+  bool isnull;
+  int16 typlen;
+  bool typbyval;
+
+  /* Evaluated once, now, as PostgreSQL's attmissingval is. */
+  state = ExecPrepareExpr(expression_planner(expr), estate);
+  value = ExecEvalExpr(state, GetPerTupleExprContext(estate), &isnull);
+  if (!isnull) {
+    get_typlenbyval(typid, &typlen, &typbyval);
+    if (typid == NUMERICOID)
+      *out = numeric_to_sm(value, typmod, buf);
+    else if (typlen == -1)
+      *out = (sm_datum_t)PointerGetDatum(
+          pg_detoast_datum_copy((struct varlena *)DatumGetPointer(value)));
+    else
+      *out = (sm_datum_t)datumCopy(value, typbyval, typlen);
+  }
+  FreeExecutorState(estate);
+  return !isnull;
+}
+
+/*
+ * ADD COLUMN col to rel, the table relid, in sm: NOT NULL and a DEFAULT
+ * only.  Rows already there read the default, evaluated now, so one that
+ * calls something volatile is refused, as is a serial column: PostgreSQL
+ * rewrites the table for those (../sm/NEXT.md).  NOT NULL with no default
+ * needs the table empty.
+ */
+static void add_column(Oid relid, const char *relname, ColumnDef *col,
+                       bool if_not_exists) {
+  Node *raw_default = NULL;
+  bool not_null = col->is_not_null;
+  Oid typid;
+  int32 typmod;
+  const char *default_expr = NULL;
+  sm_datum_t missing = 0;
+  bool has_missing = false;
+  uint8 buf[16];
+  ListCell *l;
+
+  check_column_name(col->colname);
+  if (col->typeName != NULL && is_serial(col->typeName))
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("ALTER TABLE ... ADD COLUMN of a serial column is "
+                           "not supported yet")));
+  foreach (l, col->constraints) {
+    Constraint *c = lfirst_node(Constraint, l);
+
+    if (c->contype == CONSTR_NOTNULL)
+      not_null = true;
+    else if (c->contype == CONSTR_DEFAULT)
+      raw_default = c->raw_expr;
+    else if (c->contype != CONSTR_NULL)
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("ALTER TABLE ... ADD COLUMN supports only NOT "
+                             "NULL and DEFAULT yet")));
+  }
+  if (col->collClause != NULL || col->generated != 0 || col->identity != 0 ||
+      col->compression != NULL || col->storage_name != NULL)
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("ALTER TABLE ... ADD COLUMN supports only NOT "
+                           "NULL and DEFAULT yet")));
+  typenameTypeIdAndMod(NULL, col->typeName, &typid, &typmod);
+  /* A numeric with no precision is the default one, kept in sm. */
+  if (typid == NUMERICOID && typmod < (int32)VARHDRSZ)
+    typmod = NUMERIC_DEFAULT_TYPMOD;
+  if (raw_default != NULL) {
+    ParseState *pstate = make_parsestate(NULL);
+    Node *expr =
+        cookDefault(pstate, raw_default, typid, typmod, col->colname, 0);
+
+    free_parsestate(pstate);
+    if (contain_volatile_functions(expr))
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("ALTER TABLE ... ADD COLUMN with a volatile "
+                             "DEFAULT is not supported yet")));
+    default_expr = nodeToString(expr);
+    has_missing = default_value((Expr *)expr, typid, typmod, &missing, buf);
+  }
+  sm_column_spec_t spec = {col->colname, type_code(typid, typmod), typmod,
+                           not_null, default_expr};
+  sm_session_t *s = xact_session();
+
+  if (waiting([&] {
+        return sm_cat_add_column(s, relid, spec,
+                                 has_missing ? &missing : nullptr);
+      }) == 0)
+    return;
+  if (sm_errnum() == SM_ERR_DUPKEY) {
+    if (!if_not_exists)
+      ereport(ERROR, (errcode(ERRCODE_DUPLICATE_COLUMN),
+                      errmsg("column \"%s\" of relation \"%s\" already exists",
+                             col->colname, relname)));
+    ereport(NOTICE,
+            (errcode(ERRCODE_DUPLICATE_COLUMN),
+             errmsg("column \"%s\" of relation \"%s\" already exists, skipping",
+                    col->colname, relname)));
+    return;
+  }
+  if (sm_errnum() == SM_ERR_NOTNULL)
+    ereport(ERROR, (errcode(ERRCODE_NOT_NULL_VIOLATION),
+                    errmsg("column \"%s\" of relation \"%s\" contains null "
+                           "values",
+                           col->colname, relname)));
+  if (sm_errnum() == SM_ERR_BLOCKED)
+    ereport(ERROR, (errcode(ERRCODE_LOCK_NOT_AVAILABLE),
+                    errmsg("could not obtain lock on relation \"%s\"", relname),
+                    errdetail("A NOT NULL column with no default is added "
+                              "only to an empty table no one else is using.")));
+  sm_error("add a column");
+}
+
+/* DROP COLUMN name of the table relid, in sm; it reads as null from now. */
+static void drop_column(Oid relid, const char *relname, const char *name,
+                        bool missing_ok) {
+  sm_session_t *s = xact_session();
+
+  if (waiting([&] { return sm_cat_drop_column(s, relid, name); }) == 0)
+    return;
+  if (sm_errnum() == SM_ERR_NOTFOUND) {
+    if (!missing_ok)
+      ereport(ERROR, (errcode(ERRCODE_UNDEFINED_COLUMN),
+                      errmsg("column \"%s\" of relation \"%s\" does not exist",
+                             name, relname)));
+    ereport(NOTICE, (errmsg("column \"%s\" of relation \"%s\" does not exist, "
+                            "skipping",
+                            name, relname)));
+    return;
+  }
+  /* An index on it would have to go too: CASCADE does not do that yet. */
+  if (sm_errnum() == SM_ERR_INVALID)
+    ereport(ERROR,
+            (errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+             errmsg("cannot drop column %s of table %s because other objects "
+                    "depend on it",
+                    name, relname),
+             errdetail("%s", sm_errmsg()), errhint("Drop the index first.")));
+  sm_error("drop a column");
+}
+
+/*
+ * Do an ALTER TABLE of the table relid, in sm, in this transaction, one
+ * subcommand after another: ADD COLUMN and DROP COLUMN, the subcommands
+ * AlterTableLookupRelation() lets through.
+ */
+void smstore_alter_table(Oid relid, AlterTableStmt *stmt) {
+  const char *relname = stmt->relation->relname;
+  ListCell *l;
+
+  foreach (l, stmt->cmds) {
+    AlterTableCmd *cmd = lfirst_node(AlterTableCmd, l);
+
+    alter_table_rel(relid, relname);
+    if (cmd->subtype == AT_AddColumn)
+      add_column(relid, relname, castNode(ColumnDef, cmd->def),
+                 cmd->missing_ok);
+    else
+      drop_column(relid, relname, cmd->name, cmd->missing_ok);
+    /* The next subcommand sees what this one did. */
+    CommandCounterIncrement();
+  }
+}
+
+/*
+ * The table an ALTER TABLE ... RENAME names, locked, or InvalidOid if it is
+ * not there and stmt says IF EXISTS.
+ */
+static Oid rename_target(RenameStmt *stmt) {
+  /* Locked against other sessions' use until the transaction ends. */
+  Oid relid = RangeVarGetRelid(stmt->relation, AccessExclusiveLock, true);
+
+  if (!OidIsValid(relid)) {
+    if (!stmt->missing_ok)
+      ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
+                      errmsg("relation \"%s\" does not exist",
+                             stmt->relation->relname)));
+    ereport(NOTICE, (errmsg("relation \"%s\" does not exist, skipping",
+                            stmt->relation->relname)));
+    return InvalidOid;
+  }
+  alter_table_rel(relid, stmt->relation->relname);
+  return relid;
+}
+
+/*
+ * ALTER TABLE ... RENAME TO: rename the table in sm, in this transaction,
+ * in its schema.  Returns its address.
+ */
+ObjectAddress smstore_rename_table(RenameStmt *stmt) {
+  Oid relid = rename_target(stmt);
+  ObjectAddress address;
+
+  if (!OidIsValid(relid))
+    return InvalidObjectAddress;
+  sm_session_t *s = xact_session();
+
+  if (waiting([&] { return sm_cat_rename_table(s, relid, stmt->newname); }) !=
+      0) {
+    if (sm_errnum() == SM_ERR_DUPKEY)
+      ereport(ERROR, (errcode(ERRCODE_DUPLICATE_TABLE),
+                      errmsg("relation \"%s\" already exists", stmt->newname)));
+    sm_error("rename a table");
+  }
+  ObjectAddressSet(address, RelationRelationId, relid);
+  return address;
+}
+
+/*
+ * ALTER TABLE ... RENAME COLUMN: rename the column in sm, in this
+ * transaction; its indexes go on using it.  Returns its address.
+ */
+ObjectAddress smstore_rename_column(RenameStmt *stmt) {
+  Oid relid = rename_target(stmt);
+  const char *relname = stmt->relation->relname;
+  AttrNumber attnum = InvalidAttrNumber;
+  ObjectAddress address;
+  Relation rel;
+
+  if (!OidIsValid(relid))
+    return InvalidObjectAddress;
+  check_column_name(stmt->newname);
+  rel = relation_open(relid, NoLock);
+  for (int i = 0; i < RelationGetDescr(rel)->natts; i++) {
+    Form_pg_attribute att = TupleDescAttr(RelationGetDescr(rel), i);
+
+    if (!att->attisdropped && strcmp(NameStr(att->attname), stmt->subname) == 0)
+      attnum = att->attnum;
+  }
+  relation_close(rel, NoLock);
+  sm_session_t *s = xact_session();
+
+  if (waiting([&] {
+        return sm_cat_rename_column(s, relid, stmt->subname, stmt->newname);
+      }) != 0) {
+    if (sm_errnum() == SM_ERR_NOTFOUND)
+      ereport(ERROR, (errcode(ERRCODE_UNDEFINED_COLUMN),
+                      errmsg("column \"%s\" does not exist", stmt->subname)));
+    if (sm_errnum() == SM_ERR_DUPKEY)
+      ereport(ERROR, (errcode(ERRCODE_DUPLICATE_COLUMN),
+                      errmsg("column \"%s\" of relation \"%s\" already exists",
+                             stmt->newname, relname)));
+    sm_error("rename a column");
+  }
+  ObjectAddressSubSet(address, RelationRelationId, relid, attnum);
+  return address;
 }
 
 /*

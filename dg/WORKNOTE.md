@@ -3138,3 +3138,49 @@ of a savepoint a row.
   COMMITTED. Running PostgreSQL's visibility check, and not
   trying again, each fail it.
 
+## Step 110: ALTER TABLE adds, drops and renames
+
+Step 88 refused every ALTER TABLE. sm3 had `add_column`,
+`drop_column` and `rename_table`; `sm.h` had none of them.
+
+- **`sm.h` has them now**, with sm3's new `rename_column`:
+  `sm_cat_add_column`, `sm_cat_drop_column`,
+  `sm_cat_rename_column`, `sm_cat_rename_table`. An index
+  names its columns by place, so a rename leaves it alone.
+- **`utility.c` calls `smstore_alter_table()`** for a table in
+  sm, as it calls `smstore_create_table()`: PostgreSQL's
+  `AlterTable()` reads `pg_class` and `pg_attribute` at every
+  turn. `AlterTableLookupRelation()` lets through ADD COLUMN
+  and DROP COLUMN only, and looks the table up with no
+  permission check, which would open `pg_class`.
+  `RenameRelation()` and `renameatt()` call
+  `smstore_rename_table()` and `smstore_rename_column()` for a
+  table.
+- **ADD COLUMN takes NOT NULL and a DEFAULT.** The default is
+  cooked as CREATE TABLE's is, kept, and evaluated once: the
+  rows already there read that value, as PostgreSQL's
+  `attmissingval`. One that calls something volatile, and a
+  serial, are refused: PostgreSQL rewrites the table for them,
+  and sm has no rewrite (`../sm/NEXT.md` §2).
+- **NOT NULL with no DEFAULT needs an empty table**, as in
+  PostgreSQL, which fails `column ... contains null values`
+  otherwise. sm3 takes the table's lock X only if it is free
+  now, and keeps it only if the store holds no version at all;
+  a savepoint lets it go otherwise. So a table emptied by
+  DELETE counts as having rows until compaction; TRUNCATE
+  empties it. A session using the table makes the ALTER fail
+  at once, `could not obtain lock on relation`, 55P03, rather
+  than wait.
+- **DROP COLUMN of one an index uses is refused**, CASCADE or
+  not: dropping the index with it is not done yet.
+- **Each subcommand closes the transaction's handles of the
+  table**, after `CheckTableNotInUse()`: a handle holds the
+  definition it was opened with.
+- **Not done**: the rest of ALTER TABLE -- SET SCHEMA, ALTER
+  COLUMN TYPE, SET and DROP NOT NULL and DEFAULT, ADD
+  CONSTRAINT, the identity forms -- and RENAME of an index or
+  a constraint.
+- sm3 `test_ddl`: a column renamed; `test_lock`: a NOT NULL
+  column with no missing value. `server.sh`: each form, the
+  refusals, a rollback, and another session reading the new
+  column.

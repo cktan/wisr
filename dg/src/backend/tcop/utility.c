@@ -1054,7 +1054,13 @@ static void ProcessUtilitySlow(ParseState *pstate, PlannedStmt *pstmt,
       lockmode = AlterTableGetLockLevel(atstmt->cmds);
       relid = AlterTableLookupRelation(atstmt, lockmode);
 
-      if (OidIsValid(relid)) {
+      /* A table in sm is sm's to alter (access/smstore.h). */
+      if (relid >= FirstNormalObjectId) {
+        EventTriggerAlterTableStart(parsetree);
+        EventTriggerAlterTableRelid(relid);
+        smstore_alter_table(relid, atstmt);
+        EventTriggerAlterTableEnd();
+      } else if (OidIsValid(relid)) {
         AlterTableUtilityContext atcontext;
 
         /* Set up info needed for recursive callbacks ... */

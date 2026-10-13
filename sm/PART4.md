@@ -543,8 +543,11 @@ the next things the fork would hit:**
    `sm_index_key_spec_t` has no field for it, and there is no
    `sm_cat_create_collation`. Text keys made through the C
    API sort by bytes.
-8. **`ALTER TABLE` is not in `sm.h`.** `add_column`,
-   `drop_column` and `rename_table` exist in sm3 only.
+8. ~~**`ALTER TABLE` is not in `sm.h`.**~~ **Closed.**
+   `sm_cat_add_column`, `sm_cat_drop_column`,
+   `sm_cat_rename_column` and `sm_cat_rename_table` call
+   sm3's; digres's ADD COLUMN, DROP COLUMN and RENAME use
+   them.
 9. **A sequence only goes forward.** No `setval`, no
    `ALTER SEQUENCE`, and none of a sequence's options: the
    stack's sequences are a name and a counter.

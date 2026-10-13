@@ -426,3 +426,69 @@ TEST_CASE("two DDL on one table run one after the other") {
   REQUIRE(d != nullptr);
   CHECK(d->columns.size() == 3);
 }
+
+TEST_CASE("a NOT NULL column with no missing value needs t empty, free now") {
+  // Verify add_column takes t X only if it is free, keeps it only
+  // if t holds no row, and lets go of nothing held from before.
+  // 1. B holds t IS: A's add of NOT NULL z fails at once,
+  //    SM_ERR_BLOCKED.
+  // 2. B commits: A's add succeeds on the empty t, and A holds t X,
+  //    so C's add of NOT NULL w is SM_ERR_BLOCKED. A aborts.
+  // 3. A inserts a row into t and commits.
+  // 4. A's add of NOT NULL z fails, SM_ERR_NOTNULL, and lets t's X
+  //    go: C's add of y returns while A is still open.
+  // 5. A adds y, taking t X, then its add of NOT NULL z fails: the
+  //    X from before is kept, so C's add of y waits until A aborts.
+  locks_t f;
+  def_ptr d;
+  const sm3::column_spec_t col_z = {"z", sm2::type_int4.code, -1, true};
+  const sm3::column_spec_t col_w = {"w", sm2::type_int4.code, -1, true};
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::begin(f.b, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::cat_lock_table(f.b, f.t, sm1::SM_LOCKMODE_IS, d) == 0);
+  CHECK(sm3::add_column(f.a, f.t, col_z, std::nullopt) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+
+  REQUIRE(sm3::commit(f.b) == 0);
+  REQUIRE_MESSAGE(sm3::add_column(f.a, f.t, col_z, std::nullopt) == 0,
+                  sm1::errmsg());
+  REQUIRE(sm3::begin(f.c, sm1::xctlevel_t::read_committed) == 0);
+  CHECK(sm3::add_column(f.c, f.t, col_w, std::nullopt) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
+  REQUIRE(sm3::abort(f.c) == 0);
+  REQUIRE(sm3::abort(f.a) == 0);
+
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  sm3::table_t *tb = nullptr;
+  REQUIRE(sm3::tbl_open(f.a, f.t, sm1::SM_LOCKMODE_IX, tb) == 0);
+  sm2::datum_t v = sm2::datum_from_int32(7);
+  bool isnull = false;
+  uint64_t rowno = 0;
+  REQUIRE(sm3::tbl_insert(tb, {&v, 1}, {&isnull, 1}, rowno) == 0);
+  sm3::tbl_close(tb);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  CHECK(sm3::add_column(f.a, f.t, col_z, std::nullopt) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTNULL);
+  REQUIRE(sm3::begin(f.c, sm1::xctlevel_t::read_committed) == 0);
+  CHECK(sm3::add_column(f.c, f.t, col_y, std::nullopt) == 0);
+  REQUIRE(sm3::abort(f.c) == 0);
+
+  REQUIRE(sm3::add_column(f.a, f.t, col_y, std::nullopt) == 0);
+  CHECK(sm3::add_column(f.a, f.t, col_z, std::nullopt) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTNULL);
+  std::atomic<bool> returned{false};
+  int rc = -1;
+  REQUIRE(sm3::begin(f.c, sm1::xctlevel_t::read_committed) == 0);
+  std::thread tc([&] {
+    rc = sm3::add_column(f.c, f.t, col_y, std::nullopt);
+    returned = true;
+  });
+  settle();
+  CHECK_FALSE(returned);
+  REQUIRE(sm3::abort(f.a) == 0);
+  tc.join();
+  CHECK(rc == 0);
+  REQUIRE(sm3::abort(f.c) == 0);
+}

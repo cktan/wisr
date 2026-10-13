@@ -1119,6 +1119,31 @@ int sm_cat_create_temp_table(sm_session_t* session, const char* name,
 /* Drop the table oid: its store, rows, indexes and sequence. */
 int sm_cat_drop_table(sm_session_t* session, uint64_t oid);
 
+/* Rename the table oid to name, in its namespace (sm3::rename_table). */
+int sm_cat_rename_table(sm_session_t* session, uint64_t oid,
+                        const char* name);
+
+/*
+ * Append col to the table oid. A row written before it reads it as
+ * the datum *missing of col's type, or as null when missing is
+ * nullptr; a NOT NULL column without one needs an empty table, and
+ * fails at once, SM_ERR_BLOCKED, if the table is in use, and
+ * SM_ERR_NOTNULL if it has rows (sm3::add_column).
+ */
+int sm_cat_add_column(sm_session_t* session, uint64_t oid,
+                      const sm_column_spec_t& col, const sm_datum_t* missing);
+
+/* Rename the column name of the table oid (sm3::rename_column). */
+int sm_cat_rename_column(sm_session_t* session, uint64_t oid,
+                         const char* name, const char* new_name);
+
+/*
+ * Drop the column name of the table oid: it reads as null from then
+ * on, and the sequences it owns go with it (sm3::drop_column).
+ */
+int sm_cat_drop_column(sm_session_t* session, uint64_t oid,
+                       const char* name);
+
 /*
  * Create the index name on the table, keyed by keys, with the
  * INCLUDE columns includes by 0-based place. On a table this

@@ -702,7 +702,8 @@ dels it.
 | `drop_table(ss, table_oid)` | Dels the record and drops the store, with all rows and index entries, and the sequence. |
 | `rename_table(ss, table_oid, name)` | Puts the record back under the new name. |
 | `truncate_table(ss, table_oid)` | Empties the table by swapping in a new store; keeps columns, indexes and the rowno sequence. |
-| `add_column(ss, table_oid, col, missing)` | Appends a column. Rows written earlier read it as `missing`, or as null if none is given. |
+| `add_column(ss, table_oid, col, missing)` | Appends a column. Rows written earlier read it as `missing`, or as null if none is given; `NOT NULL` with none needs an empty table, its lock free now. |
+| `rename_column(ss, table_oid, name, new_name)` | Renames a live column; indexes name it by place and are untouched. |
 | `drop_column(ss, table_oid, name)` | Marks a column dropped; it keeps its place and reads as null. Refused if an index uses it. |
 | `create_index(ss, table_oid, name, keys, includes, unique, index_oid&)` | Adds an index to the record as `pending` and queues it for the builder at commit. On a table made in the same transaction, fills it at once and records it `valid`. |
 | `create_index(ss, table_oid, name, keys, includes, unique, eval, reads, index_oid&)` | The same for a partial or expression index: `eval` is the host's blob, `reads` the columns it reads. |
