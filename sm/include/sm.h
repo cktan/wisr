@@ -562,6 +562,7 @@ struct sm_index_def_t {
      */
     std::string                  eval;
     std::vector<int32_t>         reads;
+    bool                         primary = false; /* the primary key */
 };
 
 /*
@@ -690,6 +691,23 @@ int sm_cat_sequence_oid(sm_session_t* session, uint64_t nspoid,
  */
 int sm_cat_sequence_name(sm_session_t* session, uint64_t oid,
                          uint64_t* nspoid, std::string& name);
+
+/* A sequence: its namespace, name, START and INCREMENT, and owner. */
+struct sm_sequence_def_t {
+    uint64_t    nspoid;
+    std::string name;
+    uint64_t    start;
+    uint64_t    increment;
+    uint64_t    owner;        /* the table whose column owns it, or 0 */
+    int32_t     owner_attnum; /* that column, 0-based, or -1 */
+};
+
+/*
+ * The sequence oid, as the session's transaction, which must be
+ * open, sees it, into out: 0, or 1 if there is no such sequence.
+ */
+int sm_cat_sequence_def(sm_session_t* session, uint64_t oid,
+                        sm_sequence_def_t* out);
 
 /*
  * The names of the sequences in nspoid, sorted, as the session's
@@ -1170,13 +1188,18 @@ int sm_cat_drop_column(sm_session_t* session, uint64_t oid,
  * the bytes and hands them to the evaluator -- and reads, the
  * columns they read, so an update that changes none of them can
  * leave the index alone. A plain index gives both empty.
+ *
+ * A primary index is the table's primary key: unique, on columns
+ * alone, each NOT NULL, and the table's only one, or it fails with
+ * SM_ERR_INVALID (sm3::create_index).
  */
 int sm_cat_create_index(sm_session_t* session, uint64_t table,
                         const char* name,
                         const std::vector<sm_index_key_spec_t>& keys,
                         const std::vector<int32_t>& includes, bool unique,
                         const std::string& eval,
-                        const std::vector<int32_t>& reads, uint64_t* oid);
+                        const std::vector<int32_t>& reads, uint64_t* oid,
+                        bool primary = false);
 
 /* Drop the index oid of the table, and its entries. */
 int sm_cat_drop_index(sm_session_t* session, uint64_t table, uint64_t index);

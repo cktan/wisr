@@ -606,6 +606,42 @@ TEST_CASE("a column is renamed, and its index goes on using it") {
   CHECK(d->indexes[0].key_attnums[0] == 1);
 }
 
+TEST_CASE("a primary key is marked, one a table, on NOT NULL columns") {
+  // Verify create_index's primary mark and its rules.
+  // 1. A primary key on a, which is NOT NULL, and a plain index on b.
+  // 2. A second primary key, one on b, which may be null, and one not
+  //    unique are SM_ERR_INVALID.
+  // 3. After a restart the primary key keeps its mark, and the plain
+  //    index has none.
+  cat_db_t db;
+  db.begin();
+  uint64_t t = make_t(db), pk = 0, ib = 0, other = 0;
+  std::vector<sm3::index_key_spec_t> on_a = {{0, false, false, std::nullopt}};
+  std::vector<sm3::index_key_spec_t> on_b = {{1, false, false, std::nullopt}};
+  REQUIRE(sm3::create_index(db.ss, t, "t_pkey", on_a, {}, true, pk, true) == 0);
+  REQUIRE(sm3::create_index(db.ss, t, "t_b", on_b, {}, false, ib) == 0);
+
+  CHECK(sm3::create_index(db.ss, t, "t_pk2", on_a, {}, true, other, true) ==
+        -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm3::create_index(db.ss, t, "t_pk3", on_b, {}, true, other, true) ==
+        -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm3::create_index(db.ss, t, "t_pk4", on_a, {}, false, other, true) ==
+        -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  db.commit();
+
+  sm3::catalog_t *cat = db.reload();
+  auto d = sm3::cat_get_table(cat, t);
+  REQUIRE(d != nullptr);
+  REQUIRE(d->indexes.size() == 2);
+  CHECK(d->indexes[0].oid == pk);
+  CHECK(d->indexes[0].primary);
+  CHECK(d->indexes[1].oid == ib);
+  CHECK_FALSE(d->indexes[1].primary);
+}
+
 TEST_CASE("the DDL refuses what the catalog cannot hold") {
   // Verify each call's errors.
   // 1. add column: a live name again is SM_ERR_DUPKEY; a missing
@@ -961,6 +997,32 @@ TEST_CASE("a sequence is made in a namespace, found by name, and counts") {
   REQUIRE(sm3::nextval(db.ss, ids, v) == 0);
   CHECK(v > 20);
   CHECK((v - 10) % 5 == 0);
+  db.commit();
+}
+
+TEST_CASE("a sequence's definition is read back by its oid") {
+  // Verify cat_get_sequence_def.
+  // 1. Make ids, START 10 INCREMENT 5, and table t.
+  // 2. ids reads back its namespace, name, START and INCREMENT, and no
+  //    owner; once t's column b owns it, that owner.
+  // 3. A table's oid, and an unknown one, are 1: no sequence.
+  cat_db_t db;
+  db.begin();
+  uint64_t t = make_t(db), ids = 0;
+  REQUIRE(sm3::create_sequence(db.ss, sm3::nsp_public, "ids", 10, 5, ids) == 0);
+  sm3::sequence_def_t d;
+  REQUIRE(sm3::cat_get_sequence_def(db.ss, ids, d) == 0);
+  CHECK(d.nspoid == sm3::nsp_public);
+  CHECK(d.name == "ids");
+  CHECK(d.start == 10);
+  CHECK(d.increment == 5);
+  CHECK_FALSE(d.owner.has_value());
+  REQUIRE(sm3::own_sequence(db.ss, ids, t, 1) == 0);
+  REQUIRE(sm3::cat_get_sequence_def(db.ss, ids, d) == 0);
+  CHECK(d.owner == t);
+  CHECK(d.owner_attnum == 1);
+  CHECK(sm3::cat_get_sequence_def(db.ss, t, d) == 1);
+  CHECK(sm3::cat_get_sequence_def(db.ss, 99999, d) == 1);
   db.commit();
 }
 

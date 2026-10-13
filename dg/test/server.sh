@@ -1557,7 +1557,8 @@ cmp -s "$work/di.out" "$work/di.expected" || fail "pg_index, pg_get_indexdef and
 #    typmod, a serial and a primary key; an index with DESC and INCLUDE;
 #    and a column added and dropped.
 # 2. \d dd1.t lists its columns, but not the dropped one, and its indexes.
-# 3. \d dd1.t_cb lists the index's columns and its table.
+# 3. \d dd1.t_cb lists the index's columns and its table; \d dd1.t_pkey
+#    calls it the primary key.
 # 4. \du lists the superuser.
 local_psql -c 'create schema dd1' \
   -c "create table dd1.t (a int4 primary key, b text default 'x' not null,
@@ -1565,7 +1566,7 @@ local_psql -c 'create schema dd1' \
   -c 'create unique index t_cb on dd1.t (c desc) include (b)' \
   -c 'alter table dd1.t add column e int4' \
   -c 'alter table dd1.t drop column e' -P format=aligned \
-  -P tuples_only=off -c '\d dd1.t' -c '\d dd1.t_cb' 2>&1 |
+  -P tuples_only=off -c '\d dd1.t' -c '\d dd1.t_cb' -c '\d dd1.t_pkey' 2>&1 |
   sed 's/ *$//' > "$work/dd.out"
 cat > "$work/dd.expected" << OUT
 CREATE SCHEMA
@@ -1581,8 +1582,8 @@ ALTER TABLE
  c      | numeric(10,2) |           |          |
  d      | integer       |           | not null | nextval('dd1.t_d_seq'::regclass)
 Indexes:
+    "t_pkey" PRIMARY KEY, btree (a)
     "t_cb" UNIQUE, btree (c DESC) INCLUDE (b)
-    "t_pkey" UNIQUE, btree (a)
 
               Index "dd1.t_cb"
  Column |     Type      | Key? | Definition
@@ -1590,6 +1591,12 @@ Indexes:
  c      | numeric(10,2) | yes  | c
  b      | text          | no   | b
 unique, btree, for table "dd1.t"
+
+          Index "dd1.t_pkey"
+ Column |  Type   | Key? | Definition
+--------+---------+------+------------
+ a      | integer | yes  | a
+primary key, btree, for table "dd1.t"
 
 OUT
 cmp -s "$work/dd.out" "$work/dd.expected" || fail "\\d of a table and an index"
@@ -1602,6 +1609,135 @@ cmp -s "$work/dd.out" "$work/dd.expected" || fail "\\d of a table and an index"
 local_psql -c "explain (analyze, costs off, timing off, summary off)
                  select * from pg_attribute where attrelid = 'dd1.t'::regclass" \
   | grep -qx '  Rows Removed by Filter: 3' || fail "pg_attribute narrowed"
+
+# Verify that pg_database is a catalog relation a query reads, a row a
+# database of sm's. psql 16's \l asks for daticulocale, which PostgreSQL 17
+# renamed, so its query is not sent here.
+# 1. postgres is there, owned by the superuser, in UTF8, with the C locale.
+# 2. Its oid is above the built-in ones: FirstNormalObjectId and sm's id.
+local_psql -c "select datname, pg_get_userbyid(datdba) = current_user,
+                 pg_encoding_to_char(encoding), datlocprovider, datcollate,
+                 datctype, datallowconn from pg_database
+               where datname = 'postgres'" \
+  -c "select count(*) from pg_database
+        where datname = current_database() and oid >= 16384" \
+  > "$work/db.out" 2>&1
+cat > "$work/db.expected" << OUT
+postgres|t|UTF8|c|C|C|t
+1
+OUT
+cmp -s "$work/db.out" "$work/db.expected" || fail "pg_database"
+
+# Verify that psql's \d describes a sequence of sm's: pg_sequence has its
+# START and INCREMENT, and pg_depend the column that owns it.
+# 1. In schema sq1 make sequence q, START 5 INCREMENT 3, and table t with a
+#    serial a and an identity column b.
+# 2. \d of q gives its START and INCREMENT, and of t's sequences says the
+#    serial's is owned by t.a, the identity's for t.b.
+local_psql -c 'create schema sq1' -c 'create sequence sq1.q start 5 increment 3' \
+  -c 'create table sq1.t (a serial, b int4 generated always as identity)' \
+  -P format=aligned -P tuples_only=off \
+  -c '\d sq1.q' -c '\d sq1.t_a_seq' -c '\d sq1.t_b_seq' 2>&1 |
+  sed 's/ *$//' > "$work/sq.out"
+cat > "$work/sq.expected" << OUT
+CREATE SCHEMA
+CREATE SEQUENCE
+CREATE TABLE
+                               Sequence "sq1.q"
+  Type  | Start | Minimum |       Maximum       | Increment | Cycles? | Cache
+--------+-------+---------+---------------------+-----------+---------+-------
+ bigint |     5 |       1 | 9223372036854775807 |         3 | no      |     1
+
+                            Sequence "sq1.t_a_seq"
+  Type  | Start | Minimum |       Maximum       | Increment | Cycles? | Cache
+--------+-------+---------+---------------------+-----------+---------+-------
+ bigint |     1 |       1 | 9223372036854775807 |         1 | no      |     1
+Owned by: sq1.t.a
+
+                            Sequence "sq1.t_b_seq"
+  Type  | Start | Minimum |       Maximum       | Increment | Cycles? | Cache
+--------+-------+---------+---------------------+-----------+---------+-------
+ bigint |     1 |       1 | 9223372036854775807 |         1 | no      |     1
+Sequence for identity column: sq1.t.b
+
+OUT
+cmp -s "$work/sq.out" "$work/sq.expected" || fail "\\d of a sequence"
+
+# Verify that psql's \d+, \dt+ and \ds+ run: the comment functions answer
+# null, as digres keeps no comments, and a sequence's size is null; an empty
+# table's is 0.
+# 1. In schema dp1 make table t, with a primary key and a default, and
+#    sequence q.
+# 2. \d+ dp1.t lists each column's storage, and its access method.
+# 3. \dt+ and \ds+ list t and q with their persistence and no comment.
+local_psql -c 'create schema dp1' \
+  -c "create table dp1.t (a int4 primary key, b text default 'x')" \
+  -c 'create sequence dp1.q' -P format=aligned -P tuples_only=off \
+  -c '\d+ dp1.t' 2>&1 | sed 's/ *$//' > "$work/dp.out"
+local_psql -c '\dt+ dp1.*' -c '\ds+ dp1.*' >> "$work/dp.out" 2>&1
+cat > "$work/dp.expected" << OUT
+CREATE SCHEMA
+CREATE TABLE
+CREATE SEQUENCE
+                                               Table "dp1.t"
+ Column |  Type   | Collation | Nullable |  Default  | Storage  | Compression | Stats target | Description
+--------+---------+-----------+----------+-----------+----------+-------------+--------------+-------------
+ a      | integer |           | not null |           | plain    |             |              |
+ b      | text    |           |          | 'x'::text | extended |             |              |
+Indexes:
+    "t_pkey" PRIMARY KEY, btree (a)
+Access method: heap
+
+dp1|t|table|$me|permanent|heap|0 bytes|
+dp1|q|sequence|$me|permanent||
+OUT
+cmp -s "$work/dp.out" "$work/dp.expected" || fail "\\d+, \\dt+ and \\ds+"
+# Verify that the size functions give a table's and its index's bytes in
+# sm, which are 0 while empty (above) and grow with their rows. sm's bytes
+# in memtables are estimates, so no more than that is checked.
+# 1. Put a thousand rows in dp1.t.
+# 2. The table and its index have bytes; the total is the two; a fork
+#    other than main has none.
+[ "$(local_psql -c "insert into dp1.t select g, repeat('x', 100)
+                      from generate_series(1, 1000) g" \
+      -c "select pg_relation_size('dp1.t') > 0,
+                 pg_relation_size('dp1.t_pkey') > 0,
+                 pg_total_relation_size('dp1.t') =
+                   pg_table_size('dp1.t') + pg_indexes_size('dp1.t'),
+                 pg_relation_size('dp1.t', 'fsm')")" = "INSERT 0 1000
+t|t|t|0" ] || fail "sizes of a table in sm"
+# Verify that COMMENT is refused plainly, as digres keeps no comments,
+# rather than failing on pg_description.
+local_psql -c "comment on table dp1.t is 'x'" 2>&1 |
+  grep -qx 'ERROR:  COMMENT is not supported yet' || fail "COMMENT refused"
+
+# Verify that psql's \df, \do, \dC, \dT and \dx run: pg_proc, pg_operator,
+# pg_cast and pg_type are the rows compiled in, pg_extension empty.
+# 1. \df lists abs's six functions, and pg_get_keywords's OUT arguments.
+# 2. \do lists the operators named ->; \dC the casts to and from inet;
+#    \dT the type int2vector; \dx no extension.
+local_psql -c '\df abs' -c '\df pg_get_keywords' -c '\do -> ' \
+  -c '\dC inet' -c '\dT int2vector' -c '\dx' > "$work/df.out" 2>&1
+cat > "$work/df.expected" << 'OUT'
+pg_catalog|abs|bigint|bigint|func
+pg_catalog|abs|double precision|double precision|func
+pg_catalog|abs|integer|integer|func
+pg_catalog|abs|numeric|numeric|func
+pg_catalog|abs|real|real|func
+pg_catalog|abs|smallint|smallint|func
+pg_catalog|pg_get_keywords|SETOF record|OUT word text, OUT catcode "char", OUT barelabel boolean, OUT catdesc text, OUT baredesc text|func
+pg_catalog|->|json|integer|json|
+pg_catalog|->|json|text|json|
+pg_catalog|->|jsonb|integer|jsonb|
+pg_catalog|->|jsonb|text|jsonb|
+cidr|inet|(binary coercible)|yes
+inet|character|text|in assignment
+inet|character varying|text|in assignment
+inet|cidr|cidr|in assignment
+inet|text|text|in assignment
+pg_catalog|int2vector|
+OUT
+cmp -s "$work/df.out" "$work/df.expected" || fail "\\df, \\do, \\dC, \\dT and \\dx"
 
 # Verify that text compares, cases and matches, by the database's default
 # collation, C.

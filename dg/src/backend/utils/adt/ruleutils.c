@@ -365,9 +365,9 @@ static char *pg_get_partkeydef_worker(Oid relid, int prettyFlags,
 static char *pg_get_constraintdef_worker(Oid constraintId, bool fullCommand,
                                          int prettyFlags, bool missing_ok);
 static text *pg_get_expr_worker(text *expr, Oid relid, int prettyFlags);
-static int print_function_arguments(StringInfo buf, HeapTuple proctup,
+static int print_function_arguments(StringInfo buf, const cat_proc_t *proc,
                                     bool print_table_args, bool print_defaults);
-static void print_function_rettype(StringInfo buf, HeapTuple proctup);
+static void print_function_rettype(StringInfo buf, const cat_proc_t *proc);
 static void print_function_trftypes(StringInfo buf, HeapTuple proctup);
 static void set_rtable_names(deparse_namespace *dpns, List *parent_namespaces,
                              Bitmapset *rels_used);
@@ -2782,11 +2782,11 @@ Datum pg_get_functiondef(PG_FUNCTION_ARGS) {
   appendStringInfo(&buf, "CREATE OR REPLACE %s %s(",
                    isfunction ? "FUNCTION" : "PROCEDURE",
                    quote_qualified_identifier(nsp, name));
-  (void)print_function_arguments(&buf, proctup, false, true);
+  (void)print_function_arguments(&buf, cat_proc(funcid), false, true);
   appendStringInfoString(&buf, ")\n");
   if (isfunction) {
     appendStringInfoString(&buf, " RETURNS ");
-    print_function_rettype(&buf, proctup);
+    print_function_rettype(&buf, cat_proc(funcid));
     appendStringInfoChar(&buf, '\n');
   }
 
@@ -2972,17 +2972,15 @@ Datum pg_get_functiondef(PG_FUNCTION_ARGS) {
 Datum pg_get_function_arguments(PG_FUNCTION_ARGS) {
   Oid funcid = PG_GETARG_OID(0);
   StringInfoData buf;
-  HeapTuple proctup;
+  /* A function is one of the rows compiled in (catalog/cat_builtin.h). */
+  const cat_proc_t *proc = cat_proc(funcid);
 
-  proctup = SearchSysCache1(PROCOID, ObjectIdGetDatum(funcid));
-  if (!HeapTupleIsValid(proctup))
+  if (proc == NULL)
     PG_RETURN_NULL();
 
   initStringInfo(&buf);
 
-  (void)print_function_arguments(&buf, proctup, false, true);
-
-  ReleaseSysCache(proctup);
+  (void)print_function_arguments(&buf, proc, false, true);
 
   PG_RETURN_TEXT_P(string_to_text(buf.data));
 }
@@ -2996,17 +2994,15 @@ Datum pg_get_function_arguments(PG_FUNCTION_ARGS) {
 Datum pg_get_function_identity_arguments(PG_FUNCTION_ARGS) {
   Oid funcid = PG_GETARG_OID(0);
   StringInfoData buf;
-  HeapTuple proctup;
+  /* A function is one of the rows compiled in (catalog/cat_builtin.h). */
+  const cat_proc_t *proc = cat_proc(funcid);
 
-  proctup = SearchSysCache1(PROCOID, ObjectIdGetDatum(funcid));
-  if (!HeapTupleIsValid(proctup))
+  if (proc == NULL)
     PG_RETURN_NULL();
 
   initStringInfo(&buf);
 
-  (void)print_function_arguments(&buf, proctup, false, false);
-
-  ReleaseSysCache(proctup);
+  (void)print_function_arguments(&buf, proc, false, false);
 
   PG_RETURN_TEXT_P(string_to_text(buf.data));
 }
@@ -3019,22 +3015,15 @@ Datum pg_get_function_identity_arguments(PG_FUNCTION_ARGS) {
 Datum pg_get_function_result(PG_FUNCTION_ARGS) {
   Oid funcid = PG_GETARG_OID(0);
   StringInfoData buf;
-  HeapTuple proctup;
+  /* A function is one of the rows compiled in (catalog/cat_builtin.h). */
+  const cat_proc_t *proc = cat_proc(funcid);
 
-  proctup = SearchSysCache1(PROCOID, ObjectIdGetDatum(funcid));
-  if (!HeapTupleIsValid(proctup))
+  if (proc == NULL || proc->prokind == PROKIND_PROCEDURE)
     PG_RETURN_NULL();
-
-  if (((Form_pg_proc)GETSTRUCT(proctup))->prokind == PROKIND_PROCEDURE) {
-    ReleaseSysCache(proctup);
-    PG_RETURN_NULL();
-  }
 
   initStringInfo(&buf);
 
-  print_function_rettype(&buf, proctup);
-
-  ReleaseSysCache(proctup);
+  print_function_rettype(&buf, proc);
 
   PG_RETURN_TEXT_P(string_to_text(buf.data));
 }
@@ -3043,8 +3032,7 @@ Datum pg_get_function_result(PG_FUNCTION_ARGS) {
  * Guts of pg_get_function_result: append the function's return type
  * to the specified buffer.
  */
-static void print_function_rettype(StringInfo buf, HeapTuple proctup) {
-  Form_pg_proc proc = (Form_pg_proc)GETSTRUCT(proctup);
+static void print_function_rettype(StringInfo buf, const cat_proc_t *proc) {
   int ntabargs = 0;
   StringInfoData rbuf;
 
@@ -3053,7 +3041,7 @@ static void print_function_rettype(StringInfo buf, HeapTuple proctup) {
   if (proc->proretset) {
     /* It might be a table function; try to print the arguments */
     appendStringInfoString(&rbuf, "TABLE(");
-    ntabargs = print_function_arguments(&rbuf, proctup, true, false);
+    ntabargs = print_function_arguments(&rbuf, proc, true, false);
     if (ntabargs > 0)
       appendStringInfoChar(&rbuf, ')');
     else
@@ -3077,10 +3065,48 @@ static void print_function_rettype(StringInfo buf, HeapTuple proctup) {
  * We print argument defaults only if print_defaults is true.
  * Function return value is the number of arguments printed.
  */
-static int print_function_arguments(StringInfo buf, HeapTuple proctup,
+/*
+ * The arguments of proc, as get_func_arg_info() gives a pg_proc tuple's:
+ * their types, their names or NULL if none has one, their modes or NULL if
+ * all are IN, palloc'd; and how many.  The names and modes are text arrays
+ * in the row compiled in.
+ */
+static int cat_func_arg_info(const cat_proc_t *proc, Oid **types, char ***names,
+                             char **modes) {
+  const cat_oids_t *all = proc->proallargtypes.count > 0 ? &proc->proallargtypes
+                                                         : &proc->proargtypes;
+  int n = all->count;
+  Datum *elems;
+  int nelems;
+
+  *types = (Oid *)palloc(Max(n, 1) * sizeof(Oid));
+  memcpy(*types, all->values, n * sizeof(Oid));
+  *names = NULL;
+  *modes = NULL;
+  if (proc->proargnames != NULL) {
+    deconstruct_array_builtin(
+        DatumGetArrayTypeP(OidInputFunctionCall(
+            F_ARRAY_IN, (char *)proc->proargnames, TEXTOID, -1)),
+        TEXTOID, &elems, NULL, &nelems);
+    *names = (char **)palloc0(Max(n, 1) * sizeof(char *));
+    for (int i = 0; i < nelems && i < n; i++)
+      (*names)[i] = TextDatumGetCString(elems[i]);
+  }
+  if (proc->proargmodes != NULL) {
+    deconstruct_array_builtin(
+        DatumGetArrayTypeP(OidInputFunctionCall(
+            F_ARRAY_IN, (char *)proc->proargmodes, CHAROID, -1)),
+        CHAROID, &elems, NULL, &nelems);
+    *modes = (char *)palloc0(Max(n, 1));
+    for (int i = 0; i < nelems && i < n; i++)
+      (*modes)[i] = DatumGetChar(elems[i]);
+  }
+  return n;
+}
+
+static int print_function_arguments(StringInfo buf, const cat_proc_t *proc,
                                     bool print_table_args,
                                     bool print_defaults) {
-  Form_pg_proc proc = (Form_pg_proc)GETSTRUCT(proctup);
   int numargs;
   Oid *argtypes;
   char **argnames;
@@ -3093,21 +3119,12 @@ static int print_function_arguments(StringInfo buf, HeapTuple proctup,
   ListCell *nextargdefault = NULL;
   int i;
 
-  numargs = get_func_arg_info(proctup, &argtypes, &argnames, &argmodes);
+  numargs = cat_func_arg_info(proc, &argtypes, &argnames, &argmodes);
 
   nlackdefaults = numargs;
   if (print_defaults && proc->pronargdefaults > 0) {
-    Datum proargdefaults;
-    bool isnull;
-
-    proargdefaults =
-        SysCacheGetAttr(PROCOID, proctup, Anum_pg_proc_proargdefaults, &isnull);
-    if (!isnull) {
-      char *str;
-
-      str = TextDatumGetCString(proargdefaults);
-      argdefaults = castNode(List, stringToNode(str));
-      pfree(str);
+    if (proc->proargdefaults != NULL) {
+      argdefaults = castNode(List, stringToNode(proc->proargdefaults));
       nextargdefault = list_head(argdefaults);
       /* nlackdefaults counts only *input* arguments lacking defaults */
       nlackdefaults = proc->pronargs - list_length(argdefaults);
@@ -3116,16 +3133,12 @@ static int print_function_arguments(StringInfo buf, HeapTuple proctup,
 
   /* Check for special treatment of ordered-set aggregates */
   if (proc->prokind == PROKIND_AGGREGATE) {
-    HeapTuple aggtup;
-    Form_pg_aggregate agg;
+    const cat_aggregate_t *agg = cat_aggregate(proc->oid);
 
-    aggtup = SearchSysCache1(AGGFNOID, ObjectIdGetDatum(proc->oid));
-    if (!HeapTupleIsValid(aggtup))
+    if (agg == NULL)
       elog(ERROR, "cache lookup failed for aggregate %u", proc->oid);
-    agg = (Form_pg_aggregate)GETSTRUCT(aggtup);
     if (AGGKIND_IS_ORDERED_SET(agg->aggkind))
       insertorderbyat = agg->aggnumdirectargs;
-    ReleaseSysCache(aggtup);
   }
 
   argsprinted = 0;

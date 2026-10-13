@@ -143,6 +143,18 @@ char *datadir_database_name(Oid dboid) {
   return NULL;
 }
 
+/* The names of sm's databases, palloc'd, as sm lists them. */
+List *datadir_database_names(void) {
+  std::vector<std::string> names;
+  List *out = NIL;
+
+  if (sm_lsdb(sm_env, names) != 0)
+    ereport(ERROR, (errmsg("could not list databases: %s", sm_errmsg())));
+  for (const std::string &name : names)
+    out = lappend(out, pstrdup(name.c_str()));
+  return out;
+}
+
 /*
  * Create the database dbname in sm, at once and for good, as CREATE
  * DATABASE does outside a transaction: false if it exists already.

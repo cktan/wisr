@@ -488,7 +488,10 @@ begins with `cat_get_table_rec` and ends with `cat_put_table`.
   build to fill and mark valid (`SM3_DESIGN.md` §3). On a
   table its own transaction made, which no other can see, it
   runs the build itself, over the rows the transaction has
-  written, and records the index valid.
+  written, and records the index valid. With `primary` it marks
+  the index the table's primary key, a mark sm3 keeps for the
+  host and acts on no further: unique, on columns alone, each
+  `NOT NULL`, and the table's only one.
 - **`create_index(…, eval, reads, oid)`** is the same for
   a partial or an expression index: `eval` its blob, `reads`
   the columns it reads. It needs the catalog to have an

@@ -57,10 +57,12 @@ CATALOGS = {
 }
 
 #The catalogs a query can read as relations(SYSCATALOG.md).
-RELATIONS = ["pg_am", "pg_attrdef", "pg_attribute", "pg_class",
-             "pg_collation", "pg_constraint", "pg_index", "pg_inherits",
-             "pg_namespace", "pg_policy", "pg_publication",
-             "pg_publication_namespace", "pg_publication_rel", "pg_rewrite",
+RELATIONS = ["pg_am", "pg_attrdef", "pg_attribute", "pg_cast", "pg_class",
+             "pg_collation", "pg_constraint", "pg_database", "pg_depend",
+             "pg_description", "pg_extension", "pg_index", "pg_inherits",
+             "pg_namespace", "pg_operator", "pg_policy", "pg_proc",
+             "pg_publication", "pg_publication_namespace",
+             "pg_publication_rel", "pg_rewrite", "pg_sequence",
              "pg_statistic_ext", "pg_trigger", "pg_type"]
 
 # Views PostgreSQL makes at initdb (system_views.sql), read as catalog
@@ -79,7 +81,8 @@ VIEWS = {
 
 # Of those, the ones whose rows are postgres.bki's, written out as the text
 # of each value, for the catalog's own input functions to read.
-TEXT_ROWS = {"pg_collation", "pg_type"}
+TEXT_ROWS = {"pg_cast", "pg_collation", "pg_operator", "pg_proc",
+             "pg_type"}
 
 
 def key_col(entry):

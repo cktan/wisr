@@ -25,8 +25,18 @@
 #include "catalog/pg_am_d.h"
 #include "catalog/pg_attrdef_d.h"
 #include "catalog/pg_attribute_d.h"
-#include "catalog/pg_collation_d.h"
+#include "catalog/pg_collation.h"
+#include "catalog/pg_cast_d.h"
 #include "catalog/pg_constraint_d.h"
+#include "catalog/pg_description_d.h"
+#include "catalog/pg_extension_d.h"
+#include "catalog/pg_operator_d.h"
+#include "catalog/pg_proc_d.h"
+#include "catalog/dependency.h"
+#include "catalog/pg_database_d.h"
+#include "catalog/pg_depend_d.h"
+#include "catalog/pg_sequence_d.h"
+#include "catalog/pg_tablespace_d.h"
 #include "catalog/pg_inherits_d.h"
 #include "catalog/pg_policy_d.h"
 #include "catalog/pg_publication_rel_d.h"
@@ -47,7 +57,9 @@
 #include "miscadmin.h"
 #include "commands/defrem.h"
 #include "optimizer/optimizer.h"
+#include "mb/pg_wchar.h"
 #include "utils/builtins.h"
+#include "utils/datadir.h"
 #include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
@@ -186,9 +198,8 @@ static void gen_pg_class(Tuplestorestate *ts, TupleDesc desc, Oid only) {
 
 /*
  * A row of pg_index, into ts, for the index r of sm's: a btree on columns,
- * each with its type's default operator class and collation.  sm keeps no
- * mark of a primary key, so none is one; no index is an exclusion
- * constraint, deferred, clustered or the replica identity.
+ * each with its type's default operator class and collation.  No index is
+ * an exclusion constraint, deferred, clustered or the replica identity.
  */
 static void index_row(Tuplestorestate *ts, TupleDesc desc,
                       const smstore_relation_t *r) {
@@ -211,6 +222,7 @@ static void index_row(Tuplestorestate *ts, TupleDesc desc,
   values[Anum_pg_index_indnatts - 1] = Int16GetDatum(r->natts);
   values[Anum_pg_index_indnkeyatts - 1] = Int16GetDatum(r->nkeys);
   values[Anum_pg_index_indisunique - 1] = BoolGetDatum(r->unique);
+  values[Anum_pg_index_indisprimary - 1] = BoolGetDatum(r->primary);
   values[Anum_pg_index_indimmediate - 1] = BoolGetDatum(true);
   values[Anum_pg_index_indisvalid - 1] = BoolGetDatum(r->valid);
   values[Anum_pg_index_indisready - 1] = BoolGetDatum(true);
@@ -348,16 +360,31 @@ static void gen_pg_attrdef(Tuplestorestate *ts, TupleDesc desc, Oid only) {
 
 /*
  * The rows of a catalog compiled in as text (cat_relation_t's text): each
- * value read by its column type's input function, as COPY reads one.
+ * value read by its column type's input function, as COPY reads one.  A
+ * pg_node_tree, which no input function reads, is taken as its text.
  */
 static void gen_text_rows(const cat_relation_t *cat, Tuplestorestate *ts,
                           TupleDesc desc) {
   AttInMetadata *meta = TupleDescGetAttInMetadata(desc);
+  Datum *values = (Datum *)palloc(cat->natts * sizeof(Datum));
+  bool *nulls = (bool *)palloc(cat->natts * sizeof(bool));
 
-  for (int i = 0; i < cat->nrows; i++)
-    tuplestore_puttuple(ts,
-                        BuildTupleFromCStrings(
-                            meta, (char **)&cat->text[(size_t)i * cat->natts]));
+  for (int i = 0; i < cat->nrows; i++) {
+    const char *const *row = &cat->text[(size_t)i * cat->natts];
+
+    for (int a = 0; a < cat->natts; a++) {
+      nulls[a] = row[a] == NULL;
+      if (nulls[a])
+        values[a] = (Datum)0;
+      else if (TupleDescAttr(desc, a)->atttypid == PG_NODE_TREEOID)
+        values[a] = CStringGetTextDatum(row[a]);
+      else
+        values[a] =
+            InputFunctionCall(&meta->attinfuncs[a], (char *)row[a],
+                              meta->attioparams[a], meta->atttypmods[a]);
+    }
+    tuplestore_putvalues(ts, desc, values, nulls);
+  }
 }
 
 /*
@@ -379,6 +406,102 @@ static void gen_pg_roles(Tuplestorestate *ts, TupleDesc desc) {
   nulls[11] = true;
   values[12] = ObjectIdGetDatum(BOOTSTRAP_SUPERUSERID);
   tuplestore_putvalues(ts, desc, values, nulls);
+}
+
+/*
+ * pg_database's rows: sm's databases, each owned by the superuser, in
+ * UTF-8, with the C locale, as every database of digres is (WORKNOTE.md
+ * step 8), in the default tablespace, with no ACL.
+ */
+static void gen_pg_database(Tuplestorestate *ts, TupleDesc desc) {
+  Datum values[Natts_pg_database];
+  bool nulls[Natts_pg_database];
+  ListCell *l;
+
+  foreach (l, datadir_database_names()) {
+    const char *name = (const char *)lfirst(l);
+
+    memset(values, 0, sizeof(values));
+    memset(nulls, false, sizeof(nulls));
+    values[Anum_pg_database_oid - 1] =
+        ObjectIdGetDatum(datadir_database_oid(name));
+    values[Anum_pg_database_datname - 1] = name_datum(name);
+    values[Anum_pg_database_datdba - 1] =
+        ObjectIdGetDatum(BOOTSTRAP_SUPERUSERID);
+    values[Anum_pg_database_encoding - 1] = Int32GetDatum(PG_UTF8);
+    values[Anum_pg_database_datlocprovider - 1] =
+        CharGetDatum(COLLPROVIDER_LIBC);
+    values[Anum_pg_database_datistemplate - 1] = BoolGetDatum(false);
+    values[Anum_pg_database_datallowconn - 1] = BoolGetDatum(true);
+    values[Anum_pg_database_dathasloginevt - 1] = BoolGetDatum(false);
+    values[Anum_pg_database_datconnlimit - 1] = Int32GetDatum(-1);
+    values[Anum_pg_database_dattablespace - 1] =
+        ObjectIdGetDatum(DEFAULTTABLESPACE_OID);
+    values[Anum_pg_database_datcollate - 1] = CStringGetTextDatum("C");
+    values[Anum_pg_database_datctype - 1] = CStringGetTextDatum("C");
+    nulls[Anum_pg_database_datlocale - 1] = true;
+    nulls[Anum_pg_database_daticurules - 1] = true;
+    nulls[Anum_pg_database_datcollversion - 1] = true;
+    nulls[Anum_pg_database_datacl - 1] = true;
+    tuplestore_putvalues(ts, desc, values, nulls);
+  }
+}
+
+/*
+ * pg_sequence's rows: a sequence of sm's, a row.  sm's sequences are
+ * bigint, count up from START by INCREMENT with no bound but bigint's, and
+ * neither cycle nor cache.
+ */
+static void gen_pg_sequence(Tuplestorestate *ts, TupleDesc desc, Oid only) {
+  Datum values[Natts_pg_sequence];
+  bool nulls[Natts_pg_sequence];
+  ListCell *l;
+
+  memset(nulls, false, sizeof(nulls));
+  foreach (l, sm_relations(only)) {
+    smstore_relation_t *r = (smstore_relation_t *)lfirst(l);
+
+    if (r->kind != RELKIND_SEQUENCE)
+      continue;
+    values[Anum_pg_sequence_seqrelid - 1] = ObjectIdGetDatum(r->oid);
+    values[Anum_pg_sequence_seqtypid - 1] = ObjectIdGetDatum(INT8OID);
+    values[Anum_pg_sequence_seqstart - 1] = Int64GetDatum(r->seqstart);
+    values[Anum_pg_sequence_seqincrement - 1] = Int64GetDatum(r->seqincrement);
+    values[Anum_pg_sequence_seqmax - 1] = Int64GetDatum(PG_INT64_MAX);
+    values[Anum_pg_sequence_seqmin - 1] = Int64GetDatum(1);
+    values[Anum_pg_sequence_seqcache - 1] = Int64GetDatum(1);
+    values[Anum_pg_sequence_seqcycle - 1] = BoolGetDatum(false);
+    tuplestore_putvalues(ts, desc, values, nulls);
+  }
+}
+
+/*
+ * pg_depend's rows: digres records no dependencies but a sequence's on the
+ * column that owns it -- automatic for a serial's, internal for an identity
+ * column's, as PostgreSQL records them.
+ */
+static void gen_pg_depend(Tuplestorestate *ts, TupleDesc desc, Oid only) {
+  Datum values[Natts_pg_depend];
+  bool nulls[Natts_pg_depend];
+  ListCell *l;
+
+  memset(nulls, false, sizeof(nulls));
+  foreach (l, sm_relations(only)) {
+    smstore_relation_t *r = (smstore_relation_t *)lfirst(l);
+
+    if (r->kind != RELKIND_SEQUENCE || !OidIsValid(r->owner))
+      continue;
+    values[Anum_pg_depend_classid - 1] = ObjectIdGetDatum(RelationRelationId);
+    values[Anum_pg_depend_objid - 1] = ObjectIdGetDatum(r->oid);
+    values[Anum_pg_depend_objsubid - 1] = Int32GetDatum(0);
+    values[Anum_pg_depend_refclassid - 1] =
+        ObjectIdGetDatum(RelationRelationId);
+    values[Anum_pg_depend_refobjid - 1] = ObjectIdGetDatum(r->owner);
+    values[Anum_pg_depend_refobjsubid - 1] = Int32GetDatum(r->owner_attnum);
+    values[Anum_pg_depend_deptype - 1] =
+        CharGetDatum(r->owner_identity ? DEPENDENCY_INTERNAL : DEPENDENCY_AUTO);
+    tuplestore_putvalues(ts, desc, values, nulls);
+  }
 }
 
 /* pg_am's rows: those compiled in. */
@@ -412,6 +535,10 @@ static bool is_filter_column(Oid relid, AttrNumber attno) {
     return attno == Anum_pg_attrdef_adrelid;
   case IndexRelationId:
     return attno == Anum_pg_index_indexrelid || attno == Anum_pg_index_indrelid;
+  case SequenceRelationId:
+    return attno == Anum_pg_sequence_seqrelid;
+  case DependRelationId:
+    return attno == Anum_pg_depend_objid;
   default:
     return false;
   }
@@ -450,11 +577,23 @@ static void generate(Relation rel, Tuplestorestate *ts, int nkeys,
   case AttrDefaultRelationId:
     gen_pg_attrdef(ts, desc, only);
     break;
+  case DatabaseRelationId:
+    gen_pg_database(ts, desc);
+    break;
+  case SequenceRelationId:
+    gen_pg_sequence(ts, desc, only);
+    break;
+  case DependRelationId:
+    gen_pg_depend(ts, desc, only);
+    break;
   case CATREL_PG_ROLES:
     gen_pg_roles(ts, desc);
     break;
   case TypeRelationId:
   case CollationRelationId:
+  case ProcedureRelationId:
+  case OperatorRelationId:
+  case CastRelationId:
     gen_text_rows(cat_relation(RelationGetRelid(rel)), ts, desc);
     break;
   /*
@@ -463,6 +602,8 @@ static void generate(Relation rel, Tuplestorestate *ts, int nkeys,
    * pg_index's.
    */
   case ConstraintRelationId:
+  case DescriptionRelationId:
+  case ExtensionRelationId:
   case InheritsRelationId:
   case PolicyRelationId:
   case PublicationRelationId:

@@ -130,18 +130,18 @@ Datum to_regproc(PG_FUNCTION_ARGS) {
 Datum regprocout(PG_FUNCTION_ARGS) {
   RegProcedure proid = PG_GETARG_OID(0);
   char *result;
-  HeapTuple proctup;
+  /* A function is one of the rows compiled in (catalog/cat_builtin.h). */
+  const cat_proc_t *procform;
 
   if (proid == InvalidOid) {
     result = pstrdup("-");
     PG_RETURN_CSTRING(result);
   }
 
-  proctup = SearchSysCache1(PROCOID, ObjectIdGetDatum(proid));
+  procform = cat_proc(proid);
 
-  if (HeapTupleIsValid(proctup)) {
-    Form_pg_proc procform = (Form_pg_proc)GETSTRUCT(proctup);
-    char *proname = NameStr(procform->proname);
+  if (procform != NULL) {
+    char *proname = pstrdup(procform->proname);
 
     /*
      * In bootstrap mode, skip the fancy namespace stuff and just return
@@ -167,8 +167,6 @@ Datum regprocout(PG_FUNCTION_ARGS) {
 
       result = quote_qualified_identifier(nspname, proname);
     }
-
-    ReleaseSysCache(proctup);
   } else {
     /* If OID doesn't match any pg_proc entry, return it numerically */
     result = (char *)palloc(NAMEDATALEN);

@@ -166,6 +166,7 @@ struct index_rec_t {
   std::vector<int32_t> includes; /* 0-based attnums */
   std::string eval;                 /* the host's blob; empty: plain */
   std::vector<int32_t> reads;       /* the columns it reads, 0-based */
+  bool primary = false;             /* the table's primary key */
   bool operator==(const index_rec_t&) const = default;
 };
 
@@ -212,6 +213,7 @@ struct index_def_t {
      */
     std::string                       eval;
     std::vector<int32_t>              reads;
+    bool                              primary = false; /* the table's primary key */
 };
 
 /*
@@ -541,6 +543,19 @@ int cat_get_sequence(session_t* s, uint64_t nspoid, std::string_view name,
 int cat_get_sequence_name(session_t* s, uint64_t oid, uint64_t& nspoid,
                           std::string& name);
 
+/* A sequence as CREATE SEQUENCE and OWNED BY left it. */
+struct sequence_def_t {
+    uint64_t                nspoid;
+    std::string             name;
+    uint64_t                start;
+    uint64_t                increment;
+    std::optional<uint64_t> owner;            /* the table owning it */
+    int32_t                 owner_attnum = -1; /* its column, 0-based */
+};
+
+/* As cat_get_sequence_name, the whole of the sequence oid, into def. */
+int cat_get_sequence_def(session_t* s, uint64_t oid, sequence_def_t& def);
+
 /*
  * The names of the sequences in nspoid, sorted, as s's transaction
  * sees them, into names, which it replaces; s needs a transaction
@@ -684,12 +699,16 @@ int drop_namespace(session_t* session, uint64_t oid);
  * no other can see, it fills the index itself, from the rows the
  * transaction has written, and records it valid; two of those
  * rows with one key fail a unique index with SM_ERR_DUPKEY.
+ *
+ * A primary one is the table's primary key, a mark the host reads:
+ * it must be unique, on columns alone, every one NOT NULL, and the
+ * table's only one, or it is SM_ERR_INVALID.
  */
 int create_index(session_t* session, uint64_t table,
                  std::string_view name,
                  std::span<const index_key_spec_t> keys,
                  std::span<const int32_t> includes, bool unique,
-                 uint64_t& oid);
+                 uint64_t& oid, bool primary = false);
 
 /*
  * As create_index, for a partial or an expression index
@@ -708,7 +727,7 @@ int create_index(session_t* session, uint64_t table,
                  std::span<const index_key_spec_t> keys,
                  std::span<const int32_t> includes, bool unique,
                  std::string_view eval, std::span<const int32_t> reads,
-                 uint64_t& oid);
+                 uint64_t& oid, bool primary = false);
 
 /*
  * The host's evaluator of partial and expression indexes

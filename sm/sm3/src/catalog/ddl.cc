@@ -1076,6 +1076,29 @@ int cat_get_sequence_name(session_t *session, uint64_t oid, uint64_t &nspoid,
   return 0;
 }
 
+/* A sequence by its oid, read in the transaction; see sm3.h. */
+int cat_get_sequence_def(session_t *session, uint64_t oid,
+                         sequence_def_t &def) {
+  kv_ptr kv(nullptr, &sm2::catkv_close);
+  std::string key;
+  std::string_view v;
+  if (open_kv(session->sm1, kv) != 0 ||
+      entity_key(kind_t::sequence, oid, key) != 0) {
+    return -1;
+  }
+  int rc = sm2::catkv_get(kv.get(), key, v);
+  if (rc != 0) {
+    return rc;
+  }
+  sequence_rec_t rec;
+  if (decode_sequence(v, rec) != 0) {
+    return -1;
+  }
+  def = {rec.nspoid,    std::move(rec.name), rec.start,
+         rec.increment, rec.owner,           rec.owner_attnum};
+  return 0;
+}
+
 /* The sequences in a namespace, read in the transaction; see sm3.h. */
 int cat_list_sequences(session_t *session, uint64_t nspoid,
                        std::vector<std::string> &names) {

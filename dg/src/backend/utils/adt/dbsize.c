@@ -15,6 +15,7 @@
 
 #include "access/htup_details.h"
 #include "access/relation.h"
+#include "access/smstore.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_authid.h"
 #include "catalog/pg_database.h"
@@ -223,6 +224,16 @@ static int64 calculate_relation_size(RelFileLocator *rfn, ProcNumber backend,
   return totalsize;
 }
 
+/*
+ * The bytes of the fork forknum of rel: its files' sizes, or for a table or
+ * an index in sm, which has none, its main fork's bytes in sm.
+ */
+static int64 relation_fork_size(Relation rel, ForkNumber forknum) {
+  if (RelationIsSm(rel))
+    return forknum == MAIN_FORKNUM ? smstore_relation_bytes(rel) : 0;
+  return calculate_relation_size(&(rel->rd_locator), rel->rd_backend, forknum);
+}
+
 Datum pg_relation_size(PG_FUNCTION_ARGS) {
   Oid relOid = PG_GETARG_OID(0);
   text *forkName = PG_GETARG_TEXT_PP(1);
@@ -241,8 +252,7 @@ Datum pg_relation_size(PG_FUNCTION_ARGS) {
   if (rel == NULL)
     PG_RETURN_NULL();
 
-  size = calculate_relation_size(&(rel->rd_locator), rel->rd_backend,
-                                 forkname_to_number(text_to_cstring(forkName)));
+  size = relation_fork_size(rel, forkname_to_number(text_to_cstring(forkName)));
 
   relation_close(rel, AccessShareLock);
 
@@ -303,8 +313,7 @@ static int64 calculate_table_size(Relation rel) {
    * heap size, including FSM and VM
    */
   for (forkNum = (ForkNumber)0; forkNum <= MAX_FORKNUM; forkNum++)
-    size +=
-        calculate_relation_size(&(rel->rd_locator), rel->rd_backend, forkNum);
+    size += relation_fork_size(rel, forkNum);
 
   /*
    * Size of toast relation
@@ -338,8 +347,7 @@ static int64 calculate_indexes_size(Relation rel) {
       idxRel = relation_open(idxOid, AccessShareLock);
 
       for (forkNum = (ForkNumber)0; forkNum <= MAX_FORKNUM; forkNum++)
-        size += calculate_relation_size(&(idxRel->rd_locator),
-                                        idxRel->rd_backend, forkNum);
+        size += relation_fork_size(idxRel, forkNum);
 
       relation_close(idxRel, AccessShareLock);
     }

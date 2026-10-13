@@ -1513,20 +1513,18 @@ bool FunctionIsVisible(Oid funcid) {
  *error.  (Caller must initialize *is_missing = false.)
  */
 static bool FunctionIsVisibleExt(Oid funcid, bool *is_missing) {
-  HeapTuple proctup;
-  Form_pg_proc procform;
+  /* A function is one of the rows compiled in (catalog/cat_builtin.h). */
+  const cat_proc_t *procform = cat_proc(funcid);
   Oid pronamespace;
   bool visible;
 
-  proctup = SearchSysCache1(PROCOID, ObjectIdGetDatum(funcid));
-  if (!HeapTupleIsValid(proctup)) {
+  if (procform == NULL) {
     if (is_missing != NULL) {
       *is_missing = true;
       return false;
     }
     elog(ERROR, "cache lookup failed for function %u", funcid);
   }
-  procform = (Form_pg_proc)GETSTRUCT(proctup);
 
   recomputeNamespacePath();
 
@@ -1546,7 +1544,7 @@ static bool FunctionIsVisibleExt(Oid funcid, bool *is_missing) {
      * the path.  So we must do a slow check to see if this is the same
      * proc that would be found by FuncnameGetCandidates.
      */
-    char *proname = NameStr(procform->proname);
+    char *proname = pstrdup(procform->proname);
     int nargs = procform->pronargs;
     FuncCandidateList clist;
 
@@ -1564,8 +1562,6 @@ static bool FunctionIsVisibleExt(Oid funcid, bool *is_missing) {
       }
     }
   }
-
-  ReleaseSysCache(proctup);
 
   return visible;
 }
@@ -1765,20 +1761,18 @@ bool OperatorIsVisible(Oid oprid) { return OperatorIsVisibleExt(oprid, NULL); }
  *error.  (Caller must initialize *is_missing = false.)
  */
 static bool OperatorIsVisibleExt(Oid oprid, bool *is_missing) {
-  HeapTuple oprtup;
-  Form_pg_operator oprform;
+  /* An operator is one of the rows compiled in (catalog/cat_builtin.h). */
+  const cat_operator_t *oprform = cat_operator(oprid);
   Oid oprnamespace;
   bool visible;
 
-  oprtup = SearchSysCache1(OPEROID, ObjectIdGetDatum(oprid));
-  if (!HeapTupleIsValid(oprtup)) {
+  if (oprform == NULL) {
     if (is_missing != NULL) {
       *is_missing = true;
       return false;
     }
     elog(ERROR, "cache lookup failed for operator %u", oprid);
   }
-  oprform = (Form_pg_operator)GETSTRUCT(oprtup);
 
   recomputeNamespacePath();
 
@@ -1798,13 +1792,11 @@ static bool OperatorIsVisibleExt(Oid oprid, bool *is_missing) {
      * in the path.  So we must do a slow check to see if this is the same
      * operator that would be found by OpernameGetOprid.
      */
-    char *oprname = NameStr(oprform->oprname);
+    char *oprname = pstrdup(oprform->oprname);
 
     visible = (OpernameGetOprid(list_make1(makeString(oprname)),
                                 oprform->oprleft, oprform->oprright) == oprid);
   }
-
-  ReleaseSysCache(oprtup);
 
   return visible;
 }

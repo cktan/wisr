@@ -9,10 +9,10 @@
  * does by calling the C functions that SQL would reach.  Each keeps its
  * pg_proc row, its oid and its strictness; only prolang and prosrc changed.
  *
- * Left out, as digres has what they read in no form: obj_description,
- * col_description, shobj_description (pg_description), ts_debug (a query
- * over text search's catalogs) and pg_relation_size(regclass) (relation
- * files).
+ * digres keeps no comments, so obj_description, col_description and
+ * shobj_description, which read pg_description, answer null.  Left out, as
+ * digres has what it reads in no form: ts_debug, a query over text search's
+ * catalogs.
  *
  *-------------------------------------------------------------------------
  */
@@ -418,4 +418,38 @@ Datum xpath_exists_noparams(PG_FUNCTION_ARGS) {
   return DirectFunctionCall3(xpath_exists, PG_GETARG_DATUM(0),
                              PG_GETARG_DATUM(1),
                              PointerGetDatum(construct_empty_array(TEXTOID)));
+}
+
+/*
+ * obj_description(oid, name): the object's comment, from pg_description.
+ * digres keeps none, so there is none to give.
+ */
+Datum obj_description(PG_FUNCTION_ARGS) { PG_RETURN_NULL(); }
+
+/* obj_description(oid), the deprecated form: as obj_description(). */
+Datum obj_description_oid(PG_FUNCTION_ARGS) { PG_RETURN_NULL(); }
+
+/* col_description(oid, int4): a column's comment; none, as above. */
+Datum col_description(PG_FUNCTION_ARGS) { PG_RETURN_NULL(); }
+
+/* shobj_description(oid, name): a shared object's comment; none. */
+Datum shobj_description(PG_FUNCTION_ARGS) { PG_RETURN_NULL(); }
+
+/*
+ * pg_relation_size(regclass): pg_relation_size($1, 'main'), null where
+ * that is: a relation that cannot be opened.
+ */
+Datum pg_relation_size_main(PG_FUNCTION_ARGS) {
+  LOCAL_FCINFO(call, 2);
+  Datum size;
+
+  InitFunctionCallInfoData(*call, NULL, 2, InvalidOid, NULL, NULL);
+  call->args[0].value = PG_GETARG_DATUM(0);
+  call->args[0].isnull = false;
+  call->args[1].value = CStringGetTextDatum("main");
+  call->args[1].isnull = false;
+  size = pg_relation_size(call);
+  if (call->isnull)
+    PG_RETURN_NULL();
+  return size;
 }

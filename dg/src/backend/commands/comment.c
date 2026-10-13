@@ -40,6 +40,14 @@ ObjectAddress CommentObject(CommentStmt *stmt) {
   ObjectAddress address = InvalidObjectAddress;
 
   /*
+   * A column cannot be looked up as get_object_address() would, in
+   * pg_attribute, and digres keeps no comment on it anyway (below).
+   */
+  if (stmt->objtype == OBJECT_COLUMN)
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("COMMENT is not supported yet")));
+
+  /*
    * When loading a dump, we may see a COMMENT ON DATABASE for the old name
    * of the database.  Erroring out would prevent pg_restore from completing
    * (which is really pg_restore's fault, but for now we will work around
@@ -65,6 +73,15 @@ ObjectAddress CommentObject(CommentStmt *stmt) {
    */
   address = get_object_address(stmt->objtype, stmt->object, &relation,
                                ShareUpdateExclusiveLock, false);
+
+  /*
+   * digres keeps no comments: there is no pg_description to keep one in,
+   * and obj_description() and the like answer null (sql_bodies.c).  The
+   * object is looked up first, so one not there, or of a kind digres has
+   * none of, says so.
+   */
+  ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                  errmsg("COMMENT is not supported yet")));
 
   /* Require ownership of the target object. */
   check_object_ownership(GetUserId(), stmt->objtype, address, stmt->object,

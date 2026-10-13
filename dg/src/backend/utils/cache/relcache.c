@@ -1389,6 +1389,9 @@ static Relation RelationBuildSmDesc(Oid targetRelId, bool insertIt) {
   MemoryContextSwitchTo(oldcxt);
   relation->rd_rel->relhasindex = desc->nindexes > 0;
   relation->rd_pkindex = InvalidOid;
+  for (int i = 0; i < desc->nindexes; i++)
+    if (desc->indexes[i].primary)
+      relation->rd_pkindex = desc->indexes[i].oid;
   relation->rd_replidindex = InvalidOid;
   relation->rd_indexvalid = true;
   relation->rd_statlist = NIL;
@@ -1561,6 +1564,7 @@ static Relation RelationBuildSmIndexDesc(Oid indexoid, Oid table,
   index->indnatts = ix->ncolumns;
   index->indnkeyatts = ix->nkeys;
   index->indisunique = ix->unique;
+  index->indisprimary = ix->primary;
   index->indimmediate = true;
   index->indisvalid = ix->usable;
   index->indisready = true;

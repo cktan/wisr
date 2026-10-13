@@ -2461,6 +2461,20 @@
   prorettype => 'interval', proargtypes => 'interval int4',
   prosrc => 'interval_scale' },
 
+{ oid => '1215', descr => 'get description for object id and catalog name',
+  proname => 'obj_description', procost => '100', provolatile => 's',
+  prorettype => 'text', proargtypes => 'oid name',
+  prosrc => 'obj_description' },
+{ oid => '1216', descr => 'get description for table column',
+  proname => 'col_description', procost => '100', provolatile => 's',
+  prorettype => 'text', proargtypes => 'oid int4',
+  prosrc => 'col_description' },
+{ oid => '1993',
+  descr => 'get description for object id and shared catalog name',
+  proname => 'shobj_description', procost => '100', provolatile => 's',
+  prorettype => 'text', proargtypes => 'oid name',
+  prosrc => 'shobj_description' },
+
 { oid => '1217',
   descr => 'truncate timestamp with time zone to specified units',
   proname => 'date_trunc', provolatile => 's', prorettype => 'timestamptz',
@@ -2786,6 +2800,11 @@
 
 # This form of obj_description is now deprecated, since it will fail if
 # OIDs are not unique across system catalogs.  Use the other form instead.
+{ oid => '1348', descr => 'deprecated, use two-argument form instead',
+  proname => 'obj_description', procost => '100', provolatile => 's',
+  prorettype => 'text', proargtypes => 'oid',
+  prosrc => 'obj_description_oid' },
+
 { oid => '1349', descr => 'print type names of oidvector field',
   proname => 'oidvectortypes', provolatile => 's', prorettype => 'text',
   proargtypes => 'oidvector', prosrc => 'oidvectortypes' },
@@ -6744,6 +6763,10 @@
 { oid => '2168', descr => 'total disk space usage for the specified database',
   proname => 'pg_database_size', provolatile => 'v', prorettype => 'int8',
   proargtypes => 'name', prosrc => 'pg_database_size_name' },
+{ oid => '2325',
+  descr => 'disk space usage for the main fork of the specified table or index',
+  proname => 'pg_relation_size', provolatile => 'v', prorettype => 'int8',
+  proargtypes => 'regclass', prosrc => 'pg_relation_size_main' },
 { oid => '2332',
   descr => 'disk space usage for the specified fork of a table or index',
   proname => 'pg_relation_size', provolatile => 'v', prorettype => 'int8',

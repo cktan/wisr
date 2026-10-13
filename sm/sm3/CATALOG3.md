@@ -705,7 +705,7 @@ dels it.
 | `add_column(ss, table_oid, col, missing)` | Appends a column. Rows written earlier read it as `missing`, or as null if none is given; `NOT NULL` with none needs an empty table, its lock free now. |
 | `rename_column(ss, table_oid, name, new_name)` | Renames a live column; indexes name it by place and are untouched. |
 | `drop_column(ss, table_oid, name)` | Marks a column dropped; it keeps its place and reads as null. Refused if an index uses it. |
-| `create_index(ss, table_oid, name, keys, includes, unique, index_oid&)` | Adds an index to the record as `pending` and queues it for the builder at commit. On a table made in the same transaction, fills it at once and records it `valid`. |
+| `create_index(ss, table_oid, name, keys, includes, unique, index_oid&, primary)` | Adds an index to the record as `pending` and queues it for the builder at commit. On a table made in the same transaction, fills it at once and records it `valid`. `primary` marks the table's one primary key. |
 | `create_index(ss, table_oid, name, keys, includes, unique, eval, reads, index_oid&)` | The same for a partial or expression index: `eval` is the host's blob, `reads` the columns it reads. |
 | `enqueue_pending_indexes(cat)` | Queues every pending index for the builder; called when a database is opened, for what a crash left unqueued. |
 | `set_index_state(ss, table_oid, index_oid, state, error = SM_OK, reason = {})` | Puts a pending index's state, `valid` or `failed`, keeping the error and message for a failed one. Does not wait for the table's users. |

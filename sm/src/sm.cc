@@ -300,6 +300,7 @@ sm_table_def_t api_def(const sm3::session_t *ss, const sm3::table_def_t &d) {
     sm_index_def_t i{
         x.oid, x.name, x.unique, x.key_attnums, {},     x.include_attnums,
         {},    state,  st.error, st.reason,     x.eval, x.reads};
+    i.primary = x.primary;
     for (const sm2::key_column_t &k : x.key) {
       i.key.push_back({reinterpret_cast<const sm_type_t *>(k.type), k.typmod,
                        reinterpret_cast<const sm_collation_t *>(k.collation),
@@ -1124,6 +1125,28 @@ int sm_cat_sequence_name(sm_session_t *session, uint64_t oid, uint64_t *nspoid,
   });
 }
 
+/* A sequence's definition. */
+int sm_cat_sequence_def(sm_session_t *session, uint64_t oid,
+                        sm_sequence_def_t *out) {
+  return guard(session, [&] {
+    if (!out) {
+      return null_arg("sm_cat_sequence_def", "out");
+    }
+    sm3::sequence_def_t d;
+    int rc = sm3::cat_get_sequence_def(session->sm3, oid, d);
+    if (rc != 0) {
+      return rc;
+    }
+    *out = {d.nspoid,
+            d.name,
+            d.start,
+            d.increment,
+            d.owner.value_or(0),
+            d.owner ? d.owner_attnum : -1};
+    return 0;
+  });
+}
+
 /* The sequences' names in a namespace, sorted. */
 int sm_cat_list_sequences(sm_session_t *session, uint64_t nspoid,
                           std::vector<std::string> &names) {
@@ -1722,7 +1745,8 @@ int sm_cat_create_index(sm_session_t *session, uint64_t table, const char *name,
                         const std::vector<sm_index_key_spec_t> &keys,
                         const std::vector<int32_t> &includes, bool unique,
                         const std::string &eval,
-                        const std::vector<int32_t> &reads, uint64_t *oid) {
+                        const std::vector<int32_t> &reads, uint64_t *oid,
+                        bool primary) {
   return guard(session, [&] {
     if (!oid) {
       return null_arg("sm_cat_create_index", "oid");
@@ -1733,7 +1757,7 @@ int sm_cat_create_index(sm_session_t *session, uint64_t table, const char *name,
                    key.type_code, key.typmod});
     }
     return sm3::create_index(session->sm3, table, name_of(name), k, includes,
-                             unique, eval, reads, *oid);
+                             unique, eval, reads, *oid, primary);
   });
 }
 

@@ -660,6 +660,7 @@ static void add_index(List **out, const sm_table_def_t &def,
 
   r->table = (Oid)def.oid;
   r->unique = x.unique;
+  r->primary = x.primary;
   r->valid = x.state == SM_INDEX_VALID;
   r->nkeys = nkeys;
   r->attnums = (int16 *)palloc0(natts * sizeof(int16));
@@ -684,6 +685,31 @@ static void add_index(List **out, const sm_table_def_t &def,
 }
 
 /* Add to *out the tables of sm's namespace nspoid, with their indexes. */
+/*
+ * Add to *out the sequence oid, named name in nspoid, with its START,
+ * INCREMENT and owner as sm keeps them.
+ */
+static void add_sequence(sm_session_t *s, uint64_t oid, const char *name,
+                         Oid nspoid, List **out) {
+  smstore_relation_t *r =
+      add_relation(out, oid, name, nspoid, RELKIND_SEQUENCE, 3, false, false);
+  sm_sequence_def_t seq;
+  sm_table_def_t owner;
+
+  if (sm_cat_sequence_def(s, oid, &seq) != 0)
+    sm_error("read a sequence");
+  r->seqstart = (int64)seq.start;
+  r->seqincrement = (int64)seq.increment;
+  if (seq.owner == 0)
+    return;
+  r->owner = (Oid)seq.owner;
+  r->owner_attnum = (int16)(seq.owner_attnum + 1);
+  /* An identity column's sequence, or a serial's: as pg_depend tells. */
+  if (sm_cat_table_def_oid(s, seq.owner, owner) == 0 &&
+      (size_t)seq.owner_attnum < owner.columns.size())
+    r->owner_identity = owner.columns[seq.owner_attnum].identity != 0;
+}
+
 /* Add to *out the table def, with its columns, and its indexes. */
 static void add_table(const sm_table_def_t &def, List **out) {
   bool temp = def.nspoid == SM_NSP_TEMP;
@@ -755,7 +781,7 @@ List *smstore_relations_of(Oid oid) {
     sm_error("read a table's definition");
   }
   if ((seq = smstore_sequence_lookup(oid, &nspoid)) != NULL) {
-    add_relation(&out, oid, seq, nspoid, RELKIND_SEQUENCE, 3, false, false);
+    add_sequence(s, oid, seq, nspoid, &out);
     return out;
   }
   /* An index of a table not met: it may be any table's. */
@@ -786,8 +812,7 @@ List *smstore_relations(void) {
       sm_error("list a schema's sequences");
     for (const std::string &seq : seqs)
       if (sm_cat_sequence_oid(s, nspoid, seq.c_str(), &oid) == 0)
-        add_relation(&out, oid, seq, (Oid)nspoid, RELKIND_SEQUENCE, 3, false,
-                     false);
+        add_sequence(s, oid, seq.c_str(), (Oid)nspoid, &out);
   }
   add_tables(s, SM_NSP_TEMP, &out);
   return out;
@@ -1474,6 +1499,7 @@ smstore_table_t *smstore_table_desc(Oid oid) {
     ix->oid = (Oid)x.oid;
     ix->name = pstrdup(x.name.c_str());
     ix->unique = x.unique;
+    ix->primary = x.primary;
     ix->usable = sm_tbl_index_usable(tbl, x.oid);
     ix->nkeys = (int)x.key_attnums.size();
     ix->ncolumns = ix->nkeys + (int)x.include_attnums.size();
@@ -2252,6 +2278,25 @@ bool smstore_estimate_index_size(Oid table, Oid index, double *pages,
   return false;
 }
 
+/*
+ * The bytes rel, a table or an index in sm, takes now: in sorted files and
+ * in memtables, as sm counts them (sm_tbl_size, sm_tbl_idx_size), for
+ * PostgreSQL's size functions (dbsize.c).  0 for one no longer there.
+ */
+int64 smstore_relation_bytes(Relation rel) {
+  bool index = rel->rd_rel->relkind == RELKIND_INDEX;
+  sm_tbl_t *tbl = open_table(
+      index ? rel->rd_index->indrelid : RelationGetRelid(rel), SM_LOCKMODE_IS);
+  uint64_t disk, mem;
+
+  if (tbl == NULL)
+    return 0;
+  if ((index ? sm_tbl_idx_size(tbl, RelationGetRelid(rel), &disk, &mem)
+             : sm_tbl_size(tbl, &disk, &mem)) != 0)
+    sm_error("size a table");
+  return (int64)(disk + mem);
+}
+
 /* An array of the float4s f, n of them, for a statistic's numbers. */
 static Datum float4_array(const float *f, int n) {
   std::vector<Datum> d;
@@ -2817,7 +2862,7 @@ ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt) {
 
   if (waiting([&] {
         return sm_cat_create_index(s, relid, name, keys, includes, stmt->unique,
-                                   std::string(), {}, &oid);
+                                   std::string(), {}, &oid, stmt->primary);
       }) != 0) {
     if (sm_errnum() == SM_ERR_DUPKEY)
       ereport(ERROR, (errcode(ERRCODE_UNIQUE_VIOLATION),

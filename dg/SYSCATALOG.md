@@ -240,9 +240,9 @@ runs the psql command and reads its output.
 | 2. Mechanism, `pg_namespace`, `\dn` | done, `WORKNOTE.md` step 112 |
 | 3. `pg_class`, `pg_am`, `\dt`, `\ds` | done, `WORKNOTE.md` step 113 |
 | 4. `pg_index`, `\di` | done, `WORKNOTE.md` step 114 |
-| 5. `pg_database`, `pg_roles`, `\l`, `\du` | `pg_roles` and `\du` done, step 115; `\l` not begun |
-| 6. `\d name` | of a table and an index done, `WORKNOTE.md` step 115; of a sequence and `\d+` not begun |
-| 7. The other compiled-in catalogs | not begun |
+| 5. `pg_database`, `pg_roles`, `\l`, `\du` | done, `WORKNOTE.md` steps 115 and 118; psql 16's `\l` asks for a column PostgreSQL 17 renamed |
+| 6. `\d name` | done: a table and an index, `WORKNOTE.md` step 115; a sequence, step 119; `\d+`, step 120; sizes, step 121 |
+| 7. The other compiled-in catalogs | `pg_proc`, `pg_operator`, `pg_cast`, `pg_extension`, `pg_description`: `\df`, `\do`, `\dC`, `\dx`, step 123 |
 
 ---
 

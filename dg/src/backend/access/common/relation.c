@@ -21,6 +21,7 @@
 #include "postgres.h"
 
 #include "access/relation.h"
+#include "access/smstore.h"
 #include "access/transam.h"
 #include "catalog/cat_builtin.h"
 #include "access/xact.h"
@@ -90,10 +91,13 @@ Relation try_relation_open(Oid relationId, LOCKMODE lockmode) {
 
   /*
    * A relation of sm's, or a catalog a query can read, has no pg_class row
-   * to probe: its descriptor is built, or there is no such relation.
+   * to probe: its descriptor is built, or there is no such relation.  A
+   * sequence of sm's has no descriptor, so cannot be opened: none is given.
    */
   if (relationId >= FirstNormalObjectId || cat_relation(relationId) != NULL) {
-    r = RelationIdGetRelation(relationId);
+    r = relationId >= FirstNormalObjectId && smstore_sequence_exists(relationId)
+            ? NULL
+            : RelationIdGetRelation(relationId);
     if (!RelationIsValid(r)) {
       if (lockmode != NoLock)
         UnlockRelationOid(relationId, lockmode);

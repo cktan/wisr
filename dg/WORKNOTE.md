@@ -3371,3 +3371,131 @@ table, several times a command.
   `pg_attribute` for one table makes its rows alone. By hand,
   on thirty tables, the filter removed one row, where it had
   removed 89.
+
+## Step 117: a primary key is one
+
+Steps 114 and 115 showed a primary key as UNIQUE: sm kept no
+mark of one.
+
+- **sm3 keeps the mark** (`index_rec_t::primary`, the index
+  part's attribute 11, written only for one, so an index kept
+  before reads as none). `create_index()` takes it, and refuses
+  one not unique, not on columns alone, on a column that may be
+  null, or a table's second.
+- **`sm.h`**: `sm_cat_create_index()` takes `primary`, and
+  `sm_index_def_t` has it. `smstore_create_index()` passes the
+  statement's.
+- **digres reads it**: the index's descriptor has
+  `indisprimary`, the table's `rd_pkindex`, and `pg_index` the
+  column. So `\d` says PRIMARY KEY, and `\d` of the index
+  "primary key".
+- A table made before this has its primary key unmarked.
+- sm3 `test_ddl`: a primary key marked, and refused three ways;
+  `server.sh`: `\d` of a table and of its primary key.
+
+## Step 118: pg_database is read
+
+`SYSCATALOG.md` step 5's last part.
+
+- **`pg_database` has a row a database of sm's**
+  (`datadir_database_names()`), its oid the one the server
+  gives it, `FirstNormalObjectId` and sm's id: owned by the
+  superuser, in UTF-8, with the C locale, in the default
+  tablespace, with no ACL. It is a shared catalog opened at
+  startup, so it takes the catalog relations' access method as
+  `pg_class` does (step 113).
+- **psql 16's `\l` fails** on `daticulocale`, which PostgreSQL
+  17 renamed `datlocale`: as against PostgreSQL 18 itself. A
+  psql of 17 or later sends `datlocale`.
+- `server.sh` reads `pg_database`.
+
+## Step 119: \d describes a sequence
+
+- **sm3 reads a sequence's definition back**
+  (`cat_get_sequence_def()`; `sm_cat_sequence_def()` in
+  `sm.h`): its namespace, name, START, INCREMENT, and the column
+  that owns it.
+- **`pg_sequence` has a row a sequence**: bigint, from START by
+  INCREMENT, up to bigint's bound, with no cycle and a cache of
+  one, as sm's sequences are. A serial's is bigint, where
+  PostgreSQL makes it integer: its range is the column's
+  (step 104).
+- **`pg_depend` has a row an owned sequence**, its dependence
+  on the owning column, automatic for a serial's and internal
+  for an identity column's, as PostgreSQL records them, so `\d`
+  says "Owned by" or "Sequence for identity column". digres
+  records no other dependency.
+- Both are narrowed by the sequence's oid (`seqrelid`,
+  `objid`), as step 116 narrows the others.
+- sm3 `test_ddl`: a sequence's definition read back;
+  `server.sh`: `\d` of three sequences.
+
+## Step 120: \d+, \dt+ and \ds+ run
+
+- **`obj_description()`, `col_description()` and
+  `shobj_description()` are back**, with their PostgreSQL rows,
+  in `sql_bodies.c`, answering null: digres keeps no comments,
+  as it has no `pg_description` (step 87 left them out).
+- **`pg_relation_size(regclass)` is back**, as
+  `pg_relation_size($1, 'main')`.
+- **`try_relation_open()` of a sequence gives none**: a
+  sequence of sm's has no descriptor (step 102), and the size
+  functions, which `\ds+` calls, read a null for one.
+- A table's and an index's sizes are 0: the size functions
+  count relation files, which a table in sm has none of. sm's
+  sizes (`sm_tbl_size()`) are not reached yet.
+- COMMENT ON still fails, on `pg_description`.
+- `server.sh`: `\d+` of a table, `\dt+` and `\ds+`.
+
+## Step 121: a table's size is sm's
+
+Step 120 left the size functions at 0 for a table in sm: they
+count relation files.
+
+- **A relation of sm's main fork is its bytes in sm**
+  (`relation_fork_size()` in `dbsize.c`,
+  `smstore_relation_bytes()`): a table's heap or an index's
+  entries, in sorted files and in memtables, as `sm_tbl_size()`
+  and `sm_tbl_idx_size()` count them; its other forks, none.
+  So `pg_relation_size()`, `pg_table_size()`,
+  `pg_indexes_size()` and `pg_total_relation_size()` answer,
+  and `\dt+` shows a size.
+- Bytes in a memtable are counted as they are there,
+  uncompressed, and a file's as written. They are RocksDB's
+  estimates, which vary: a thousand rows read 69 kB to 198 kB
+  over three runs.
+- `server.sh`: a table's and its index's sizes grow with rows,
+  and add up.
+
+## Step 122: COMMENT is refused plainly
+
+COMMENT ON failed opening `pg_description`, relation 2609.
+digres keeps no comments, and step 120 made the functions that
+read them answer null, so it is refused once the object is
+looked up: "COMMENT is not supported yet". One not there, or of
+a kind digres has none of, says that first. A column's is
+refused before, as its lookup reads `pg_attribute`. A restore script
+that comments its objects stops there, as it would on any
+statement refused.
+
+- `server.sh` checks the refusal.
+
+## Step 123: \df, \do, \dC and \dx run
+
+`SYSCATALOG.md` step 7, for functions, operators and casts.
+
+- **`pg_proc`, `pg_operator` and `pg_cast` are the rows compiled
+  in**, as text (`TEXT_ROWS`), as `pg_type` is (step 115). A
+  `pg_node_tree`, which no input function reads, is taken as
+  its text. `pg_extension` and `pg_description` are read, and
+  empty.
+- **What psql calls on them reads the rows compiled in**, not
+  the syscache: `regprocout()`, `pg_get_function_result()`,
+  `pg_get_function_arguments()` and
+  `pg_get_function_identity_arguments()` (a function's argument
+  names and modes are parsed from the row's text arrays), and
+  `pg_function_is_visible()` and `pg_operator_is_visible()`.
+- A built-in's description is PostgreSQL's in `pg_description`,
+  which digres has not, so psql shows none.
+- `pg_get_functiondef()` still reads the syscache, and fails.
+- `server.sh`: `\df` of two, `\do`, `\dC`, `\dT` and `\dx`.

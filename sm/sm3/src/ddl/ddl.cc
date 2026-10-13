@@ -469,10 +469,10 @@ int drop_column(session_t *session, uint64_t oid, std::string_view name) {
 /* Create a plain index; see sm3.h. */
 int create_index(session_t *session, uint64_t table, std::string_view name,
                  std::span<const index_key_spec_t> keys,
-                 std::span<const int32_t> includes, bool unique,
-                 uint64_t &oid) {
-  return create_index(session, table, name, keys, includes, unique, {}, {},
-                      oid);
+                 std::span<const int32_t> includes, bool unique, uint64_t &oid,
+                 bool primary) {
+  return create_index(session, table, name, keys, includes, unique, {}, {}, oid,
+                      primary);
 }
 
 /* Create an index, plain, partial or of expressions; see sm3.h. */
@@ -480,7 +480,7 @@ int create_index(session_t *session, uint64_t table, std::string_view name,
                  std::span<const index_key_spec_t> keys,
                  std::span<const int32_t> includes, bool unique,
                  std::string_view eval, std::span<const int32_t> reads,
-                 uint64_t &oid) {
+                 uint64_t &oid, bool primary) {
   if (name.empty() || keys.empty()) {
     return invalid("create index: no name, or no key column");
   }
@@ -500,7 +500,18 @@ int create_index(session_t *session, uint64_t table, std::string_view name,
   x.name = std::string(name);
   x.relid = rec.next_relid;
   x.unique = unique;
+  x.primary = primary;
   x.eval = std::string(eval);
+  if (primary && (!unique || !eval.empty())) {
+    return invalid("create index: a primary key not unique, or not on "
+                   "columns alone");
+  }
+  for (const index_rec_t &other : rec.indexes) {
+    if (primary && other.primary) {
+      return invalid("create index: the table has a primary key, " +
+                     other.name);
+    }
+  }
   for (int32_t a : reads) {
     if (!live_attnum(rec, a)) {
       return invalid("create index: it reads no live column");
@@ -518,6 +529,9 @@ int create_index(session_t *session, uint64_t table, std::string_view name,
       }
     } else if (!live_attnum(rec, k.attnum)) {
       return invalid("create index: a key names no live column");
+    } else if (primary && !rec.columns[k.attnum].not_null) {
+      return invalid("create index: a primary key on " +
+                     rec.columns[k.attnum].name + ", which may be null");
     }
     if (k.collation) {
       uint8_t code = expr ? k.type_code : rec.columns[k.attnum].type_code;
