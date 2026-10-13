@@ -31,6 +31,8 @@ A catalog is added to CATALOGS when something first asks for it.
 For each catalog named in RELATIONS it writes its oid, row type and
 columns, and cat_relation(oid) and cat_relation_named(name) to find
 one: a catalog relation, a catalog a query can read (SYSCATALOG.md).
+For one in TEXT_ROWS it writes its rows too, each value as text, NULL
+for a null.
 """
 
 import re
@@ -55,8 +57,29 @@ CATALOGS = {
 }
 
 #The catalogs a query can read as relations(SYSCATALOG.md).
-RELATIONS = ["pg_am", "pg_class", "pg_index", "pg_namespace",
-             "pg_publication", "pg_publication_namespace"]
+RELATIONS = ["pg_am", "pg_attrdef", "pg_attribute", "pg_class",
+             "pg_collation", "pg_constraint", "pg_index", "pg_inherits",
+             "pg_namespace", "pg_policy", "pg_publication",
+             "pg_publication_namespace", "pg_publication_rel", "pg_rewrite",
+             "pg_statistic_ext", "pg_trigger", "pg_type"]
+
+# Views PostgreSQL makes at initdb (system_views.sql), read as catalog
+# relations too: name -> (oid, columns). Not in postgres.bki, so their
+# columns are written here, as the view's select list has them, and each
+# takes an oid from the range initdb gives its views, 12000 to 16383.
+VIEWS = {
+    "pg_roles": (12100, [
+        ("rolname", "name"), ("rolsuper", "bool"), ("rolinherit", "bool"),
+        ("rolcreaterole", "bool"), ("rolcreatedb", "bool"),
+        ("rolcanlogin", "bool"), ("rolreplication", "bool"),
+        ("rolconnlimit", "int4"), ("rolpassword", "text"),
+        ("rolvaliduntil", "timestamptz"), ("rolbypassrls", "bool"),
+        ("rolconfig", "_text"), ("oid", "oid")]),
+}
+
+# Of those, the ones whose rows are postgres.bki's, written out as the text
+# of each value, for the catalog's own input functions to read.
+TEXT_ROWS = {"pg_collation", "pg_type"}
 
 
 def key_col(entry):
@@ -221,7 +244,9 @@ def write_header(catalogs, out):
     w("typedef struct cat_column_t {\n  const char *name;\n  Oid typid;\n} cat_column_t;\n\n")
     w("/* A catalog relation: a catalog a query can read (SYSCATALOG.md). */\n")
     w("typedef struct cat_relation_t {\n  const char *name;\n  Oid oid;\n  Oid rowtype;\n")
-    w("  int natts;\n  const cat_column_t *columns;\n} cat_relation_t;\n\n")
+    w("  int natts;\n  const cat_column_t *columns;\n")
+    w("  /* Its rows, natts values a row, as text, NULL for null; or none. */\n")
+    w("  int nrows;\n  const char *const *text;\n} cat_relation_t;\n\n")
     w("/* The catalog relation with this oid, or NULL. */\n")
     w("extern const cat_relation_t *cat_relation(Oid oid);\n\n")
     w("/* The catalog relation named name, or NULL. */\n")
@@ -309,16 +334,29 @@ def write_relations(catalogs, oids, w):
     type_oid = {r[at["typname"]][1]: r[at["oid"]][1] for r in trows}
     rowtype = {r[at["typrelid"]][1]: r[at["oid"]][1] for r in trows}
     w("\n/* ---- catalog relations ---- */\n\n")
-    for rel in RELATIONS:
+    for view, (oid, cols) in VIEWS.items():
+        catalogs[view] = (cols, [])
+        oids[view] = oid
+    for rel in RELATIONS + list(VIEWS):
         w(f"static const cat_column_t {rel}_columns[] = {{\n")
         for col, ctype in catalogs[rel][0]:
             w(f"    {{{c_string(col)}, {type_oid[ctype]}}},\n")
         w("};\n\n")
+        if rel in TEXT_ROWS:
+            w(f"static const char *const {rel}_text[] = {{\n")
+            for row in catalogs[rel][1]:
+                vals = ["NULL" if is_null(t) else c_string(t[1]) for t in row]
+                w("    " + ", ".join(vals) + ",\n")
+            w("};\n\n")
     w("static const cat_relation_t relations[] = {\n")
-    for rel in RELATIONS:
+    for rel in RELATIONS + list(VIEWS):
         oid = oids[rel]
         w(f"    {{{c_string(rel)}, {oid}, {rowtype.get(str(oid), '0')}, ")
-        w(f"lengthof({rel}_columns), {rel}_columns}},\n")
+        w(f"lengthof({rel}_columns), {rel}_columns, ")
+        if rel in TEXT_ROWS:
+            w(f"{len(catalogs[rel][1])}, {rel}_text}},\n")
+        else:
+            w("0, NULL},\n")
     w("};\n\n")
     w("/* Find the catalog relation with this oid: there are few. */\n")
     w("const cat_relation_t *cat_relation(Oid oid) {\n")

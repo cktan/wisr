@@ -1048,6 +1048,20 @@ int sm_cat_table_def(sm_session_t *session, uint64_t nspoid, const char *name,
   });
 }
 
+/* A table's definition by oid, with no lock; 1 if none. */
+int sm_cat_table_def_oid(sm_session_t *session, uint64_t oid,
+                         sm_table_def_t &out) {
+  return guard(session, [&] {
+    std::shared_ptr<const sm3::table_def_t> d =
+        sm3::cat_get_table(session->sm3, oid);
+    if (!d) {
+      return 1;
+    }
+    out = api_def(session->sm3, *d);
+    return 0;
+  });
+}
+
 /* An index's oid and its table's by name; 1 if none. */
 int sm_cat_index_oid(sm_session_t *session, uint64_t nspoid, const char *name,
                      uint64_t *table, uint64_t *index) {

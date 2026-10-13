@@ -1550,6 +1550,59 @@ CREATE INDEX a_z ON di1.a USING btree ("Z z")
 OUT
 cmp -s "$work/di.out" "$work/di.expected" || fail "pg_index, pg_get_indexdef and \\di"
 
+# Verify that psql's \d describes a table and an index of sm's, and \du the
+# superuser: pg_attribute, pg_attrdef, pg_type, pg_collation and pg_roles
+# are read, and the catalogs digres has nothing of are read empty.
+# 1. In schema dd1 make table t with a default, NOT NULL, a numeric's
+#    typmod, a serial and a primary key; an index with DESC and INCLUDE;
+#    and a column added and dropped.
+# 2. \d dd1.t lists its columns, but not the dropped one, and its indexes.
+# 3. \d dd1.t_cb lists the index's columns and its table.
+# 4. \du lists the superuser.
+local_psql -c 'create schema dd1' \
+  -c "create table dd1.t (a int4 primary key, b text default 'x' not null,
+        c numeric(10,2), d serial)" \
+  -c 'create unique index t_cb on dd1.t (c desc) include (b)' \
+  -c 'alter table dd1.t add column e int4' \
+  -c 'alter table dd1.t drop column e' -P format=aligned \
+  -P tuples_only=off -c '\d dd1.t' -c '\d dd1.t_cb' 2>&1 |
+  sed 's/ *$//' > "$work/dd.out"
+cat > "$work/dd.expected" << OUT
+CREATE SCHEMA
+CREATE TABLE
+CREATE INDEX
+ALTER TABLE
+ALTER TABLE
+                                  Table "dd1.t"
+ Column |     Type      | Collation | Nullable |             Default
+--------+---------------+-----------+----------+----------------------------------
+ a      | integer       |           | not null |
+ b      | text          |           | not null | 'x'::text
+ c      | numeric(10,2) |           |          |
+ d      | integer       |           | not null | nextval('dd1.t_d_seq'::regclass)
+Indexes:
+    "t_cb" UNIQUE, btree (c DESC) INCLUDE (b)
+    "t_pkey" UNIQUE, btree (a)
+
+              Index "dd1.t_cb"
+ Column |     Type      | Key? | Definition
+--------+---------------+------+------------
+ c      | numeric(10,2) | yes  | c
+ b      | text          | no   | b
+unique, btree, for table "dd1.t"
+
+OUT
+cmp -s "$work/dd.out" "$work/dd.expected" || fail "\\d of a table and an index"
+[ "$(local_psql -c '\du')" = \
+  "$me|Superuser, Create role, Create DB, Replication, Bypass RLS" ] ||
+  fail "\\du"
+# Verify that a scan of pg_attribute for one table makes that table's rows
+# and its indexes' alone (catalog/catrel.c): of dd1.t's five columns and
+# its indexes' three, the filter removes the three.
+local_psql -c "explain (analyze, costs off, timing off, summary off)
+                 select * from pg_attribute where attrelid = 'dd1.t'::regclass" \
+  | grep -qx '  Rows Removed by Filter: 3' || fail "pg_attribute narrowed"
+
 # Verify that text compares, cases and matches, by the database's default
 # collation, C.
 # 1. 'a' < 'b', and ORDER BY sorts B before a, as C's byte order does.

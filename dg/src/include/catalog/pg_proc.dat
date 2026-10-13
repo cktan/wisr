@@ -10038,6 +10038,11 @@
 
 # replication/origin.h
 # publications
+{ oid => '6121',
+  descr => 'returns whether a relation can be part of a publication',
+  proname => 'pg_relation_is_publishable', provolatile => 's',
+  prorettype => 'bool', proargtypes => 'regclass',
+  prosrc => 'pg_relation_is_publishable' },
 
 # rls
 { oid => '3298',

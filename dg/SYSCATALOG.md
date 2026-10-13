@@ -104,6 +104,14 @@ and after).
   three thousand rows.
 - **A row is made on each scan**, and nothing is cached. If a
   query on them is ever slow, that is when to cache.
+- **A scan for one relation makes that relation's rows alone.**
+  A qual of a filter column's oid equal to a constant or a
+  parameter -- `pg_class.oid`, `pg_attribute.attrelid`,
+  `pg_attrdef.adrelid`, `pg_index.indexrelid` and `indrelid` --
+  is handed to the access method as a scan key, and the rows
+  are made for that relation, its table and its table's
+  indexes. The quals are still checked. A join clause is not:
+  the planner hands a sequential scan none.
 - **The server's own lookups do not come this way.** The
   parser, planner and executor go on reading the compiled-in
   rows and sm directly (`lsyscache.c`, `cat_builtin.h`). A
@@ -232,8 +240,8 @@ runs the psql command and reads its output.
 | 2. Mechanism, `pg_namespace`, `\dn` | done, `WORKNOTE.md` step 112 |
 | 3. `pg_class`, `pg_am`, `\dt`, `\ds` | done, `WORKNOTE.md` step 113 |
 | 4. `pg_index`, `\di` | done, `WORKNOTE.md` step 114 |
-| 5. `pg_database`, `pg_roles`, `\l`, `\du` | not begun |
-| 6. `\d name` | not begun |
+| 5. `pg_database`, `pg_roles`, `\l`, `\du` | `pg_roles` and `\du` done, step 115; `\l` not begun |
+| 6. `\d name` | of a table and an index done, `WORKNOTE.md` step 115; of a sequence and `\d+` not begun |
 | 7. The other compiled-in catalogs | not begun |
 
 ---

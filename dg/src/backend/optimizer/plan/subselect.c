@@ -17,6 +17,7 @@
 #include "postgres.h"
 
 #include "access/htup_details.h"
+#include "catalog/cat_builtin.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_type.h"
 #include "executor/executor.h"
@@ -753,20 +754,12 @@ static bool hash_ok_operator(OpExpr *expr) {
 
     return op_hashjoinable(opid, exprType(leftarg));
   } else {
-    /* else must look up the operator properties */
-    HeapTuple tup;
-    Form_pg_operator optup;
+    /* else must look up the operator properties: they are compiled in */
+    const cat_operator_t *optup = cat_operator(opid);
 
-    tup = SearchSysCache1(OPEROID, ObjectIdGetDatum(opid));
-    if (!HeapTupleIsValid(tup))
+    if (optup == NULL)
       elog(ERROR, "cache lookup failed for operator %u", opid);
-    optup = (Form_pg_operator)GETSTRUCT(tup);
-    if (!optup->oprcanhash || !func_strict(optup->oprcode)) {
-      ReleaseSysCache(tup);
-      return false;
-    }
-    ReleaseSysCache(tup);
-    return true;
+    return optup->oprcanhash && func_strict(optup->oprcode);
   }
 }
 

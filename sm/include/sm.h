@@ -639,6 +639,10 @@ int sm_cat_list_tables(sm_session_t* session, uint64_t nspoid,
 int sm_cat_table_def(sm_session_t* session, uint64_t nspoid,
                      const char* name, sm_table_def_t& out);
 
+/* As sm_cat_table_def, of the table oid: 0, or 1 if there is none. */
+int sm_cat_table_def_oid(sm_session_t* session, uint64_t oid,
+                         sm_table_def_t& out);
+
 /* The index named name in nspoid, and its table: 0, or 1 if none. */
 int sm_cat_index_oid(sm_session_t* session, uint64_t nspoid,
                      const char* name, uint64_t* table, uint64_t* index);

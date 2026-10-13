@@ -21,6 +21,8 @@
 #include "postgres.h"
 
 #include "access/relation.h"
+#include "access/transam.h"
+#include "catalog/cat_builtin.h"
 #include "access/xact.h"
 #include "catalog/namespace.h"
 #include "storage/lmgr.h"
@@ -87,22 +89,35 @@ Relation try_relation_open(Oid relationId, LOCKMODE lockmode) {
     LockRelationOid(relationId, lockmode);
 
   /*
-   * Now that we have the lock, probe to see if the relation really exists
-   * or not.
+   * A relation of sm's, or a catalog a query can read, has no pg_class row
+   * to probe: its descriptor is built, or there is no such relation.
    */
-  if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relationId))) {
-    /* Release useless lock */
-    if (lockmode != NoLock)
-      UnlockRelationOid(relationId, lockmode);
+  if (relationId >= FirstNormalObjectId || cat_relation(relationId) != NULL) {
+    r = RelationIdGetRelation(relationId);
+    if (!RelationIsValid(r)) {
+      if (lockmode != NoLock)
+        UnlockRelationOid(relationId, lockmode);
+      return NULL;
+    }
+  } else {
+    /*
+     * Now that we have the lock, probe to see if the relation really exists
+     * or not.
+     */
+    if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relationId))) {
+      /* Release useless lock */
+      if (lockmode != NoLock)
+        UnlockRelationOid(relationId, lockmode);
 
-    return NULL;
+      return NULL;
+    }
+
+    /* Should be safe to do a relcache load */
+    r = RelationIdGetRelation(relationId);
+
+    if (!RelationIsValid(r))
+      elog(ERROR, "could not open relation with OID %u", relationId);
   }
-
-  /* Should be safe to do a relcache load */
-  r = RelationIdGetRelation(relationId);
-
-  if (!RelationIsValid(r))
-    elog(ERROR, "could not open relation with OID %u", relationId);
 
   /* If we didn't get the lock ourselves, assert that caller holds one */
   Assert(lockmode != NoLock ||

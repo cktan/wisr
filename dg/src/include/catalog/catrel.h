@@ -11,8 +11,23 @@
 #define CATREL_H
 
 #include "access/tableam.h"
+#include "nodes/execnodes.h"
+
+/* pg_roles's oid: a view in PostgreSQL, with none fixed (gen_cat.py). */
+#define CATREL_PG_ROLES 12100
 
 /* The table access method of a catalog relation (catalog/catrel.c). */
 extern const TableAmRoutine *catrel_routine(void);
+
+/* A qual a scan of a catalog relation is narrowed by: column = value. */
+typedef struct catrel_key_t {
+  AttrNumber attno;
+  ExprState *value;
+} catrel_key_t;
+
+extern List *catrel_scan_keys(Relation rel, List *qual, Index scanrelid,
+                              PlanState *parent);
+extern TableScanDesc catrel_beginscan(Relation rel, Snapshot snapshot,
+                                      List *keys, ExprContext *econtext);
 
 #endif /* CATREL_H */

@@ -630,8 +630,24 @@ static smstore_relation_t *add_relation(List **out, uint64_t oid,
   r->natts = natts;
   r->hasindex = hasindex;
   r->temp = temp;
+  r->attnames = (char **)palloc0(Max(natts, 1) * sizeof(char *));
+  r->typids = (Oid *)palloc0(Max(natts, 1) * sizeof(Oid));
+  r->typmods = (int32 *)palloc0(Max(natts, 1) * sizeof(int32));
+  r->notnull = (bool *)palloc0(Max(natts, 1) * sizeof(bool));
+  r->defaults = (char **)palloc0(Max(natts, 1) * sizeof(char *));
+  r->identity = (char *)palloc0(Max(natts, 1) * sizeof(char));
   *out = lappend(*out, r);
   return r;
+}
+
+/* Set r's column i to the table's column c. */
+static void set_column(smstore_relation_t *r, int i, const sm_column_def_t &c) {
+  r->attnames[i] = pstrdup(c.name.c_str());
+  r->typmods[i] = c.typmod;
+  if (c.dropped)
+    return;
+  r->typids[i] = type_oid(c.type_code);
+  r->notnull[i] = c.not_null;
 }
 
 /* Add to *out the index x of the table def, in pg_index's terms. */
@@ -647,7 +663,6 @@ static void add_index(List **out, const sm_table_def_t &def,
   r->valid = x.state == SM_INDEX_VALID;
   r->nkeys = nkeys;
   r->attnums = (int16 *)palloc0(natts * sizeof(int16));
-  r->typids = (Oid *)palloc0(natts * sizeof(Oid));
   r->desc = (bool *)palloc0(nkeys * sizeof(bool));
   r->nulls_first = (bool *)palloc0(nkeys * sizeof(bool));
   for (int i = 0; i < natts; i++) {
@@ -656,7 +671,8 @@ static void add_index(List **out, const sm_table_def_t &def,
     /* An expression's place is 0, as pg_index has it. */
     if (at >= 0) {
       r->attnums[i] = (int16)(at + 1);
-      r->typids[i] = type_oid(def.columns[at].type_code);
+      set_column(r, i, def.columns[at]);
+      r->notnull[i] = false;
     }
   }
   for (int k = 0; k < nkeys; k++) {
@@ -668,10 +684,29 @@ static void add_index(List **out, const sm_table_def_t &def,
 }
 
 /* Add to *out the tables of sm's namespace nspoid, with their indexes. */
+/* Add to *out the table def, with its columns, and its indexes. */
+static void add_table(const sm_table_def_t &def, List **out) {
+  bool temp = def.nspoid == SM_NSP_TEMP;
+  Oid pgnsp = temp ? PG_TEMP_NAMESPACE : (Oid)def.nspoid;
+  smstore_relation_t *r =
+      add_relation(out, def.oid, def.name, pgnsp, RELKIND_RELATION,
+                   (int)def.columns.size(), !def.indexes.empty(), temp);
+
+  for (size_t i = 0; i < def.columns.size(); i++) {
+    const sm_column_def_t &c = def.columns[i];
+
+    set_column(r, (int)i, c);
+    if (!c.dropped && c.default_expr)
+      r->defaults[i] = pstrdup(c.default_expr->c_str());
+    r->identity[i] = c.dropped ? 0 : c.identity;
+  }
+  for (const sm_index_def_t &x : def.indexes)
+    add_index(out, def, x, pgnsp, temp);
+}
+
+/* Add to *out the tables of sm's namespace nspoid, with their indexes. */
 static void add_tables(sm_session_t *s, uint64_t nspoid, List **out) {
   std::vector<std::string> names;
-  bool temp = nspoid == SM_NSP_TEMP;
-  Oid pgnsp = temp ? PG_TEMP_NAMESPACE : (Oid)nspoid;
 
   if (sm_cat_list_tables(s, nspoid, names) != 0)
     sm_error("list a schema's tables");
@@ -681,17 +716,50 @@ static void add_tables(sm_session_t *s, uint64_t nspoid, List **out) {
     /* Not locked: a listing does not wait for a table's DDL. */
     switch (sm_cat_table_def(s, nspoid, name.c_str(), def)) {
     case 0:
+      add_table(def, out);
       break;
     case 1:
-      continue;
+      break;
     default:
       sm_error("read a table's definition");
     }
-    add_relation(out, def.oid, def.name, pgnsp, RELKIND_RELATION,
-                 (int)def.columns.size(), !def.indexes.empty(), temp);
-    for (const sm_index_def_t &x : def.indexes)
-      add_index(out, def, x, pgnsp, temp);
   }
+}
+
+/*
+ * The relations of sm's that smstore_relations() would give for the one
+ * relation oid, a table, an index or a sequence: it and, for a table or an
+ * index, the table and all its indexes.  Every relation if oid is an index
+ * whose table this thread has not met; none if there is no such relation.
+ * For a catalog query on one relation, which needs no other's rows.
+ */
+List *smstore_relations_of(Oid oid) {
+  sm_session_t *s = xact_session();
+  Oid table = smstore_index_table(oid);
+  sm_table_def_t def;
+  Oid nspoid;
+  char *seq;
+  List *out = NIL;
+
+  /* sm has no relation below the first oid a user's object takes. */
+  if (oid < FirstNormalObjectId)
+    return NIL;
+  /* Not locked, as smstore_relations() is not. */
+  switch (sm_cat_table_def_oid(s, OidIsValid(table) ? table : oid, def)) {
+  case 0:
+    add_table(def, &out);
+    return out;
+  case 1:
+    break;
+  default:
+    sm_error("read a table's definition");
+  }
+  if ((seq = smstore_sequence_lookup(oid, &nspoid)) != NULL) {
+    add_relation(&out, oid, seq, nspoid, RELKIND_SEQUENCE, 3, false, false);
+    return out;
+  }
+  /* An index of a table not met: it may be any table's. */
+  return OidIsValid(table) ? NIL : smstore_relations();
 }
 
 /*

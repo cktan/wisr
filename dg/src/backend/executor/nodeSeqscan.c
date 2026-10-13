@@ -24,6 +24,7 @@
 
 #include "access/relscan.h"
 #include "access/smstore.h"
+#include "catalog/catrel.h"
 #include "access/tableam.h"
 #include "executor/execScan.h"
 #include "executor/executor.h"
@@ -72,8 +73,13 @@ static TupleTableSlot *SeqNext(SeqScanState *node) {
      * We reach here if the scan is not parallel, or if we're serially
      * executing a scan that was planned to be parallel.
      */
-    scandesc = table_beginscan(node->ss.ss_currentRelation, estate->es_snapshot,
-                               0, NULL);
+    /* A catalog relation's rows may be narrowed (catalog/catrel.c). */
+    scandesc =
+        node->cat_keys != NIL
+            ? catrel_beginscan(node->ss.ss_currentRelation, estate->es_snapshot,
+                               node->cat_keys, node->ss.ps.ps_ExprContext)
+            : table_beginscan(node->ss.ss_currentRelation, estate->es_snapshot,
+                              0, NULL);
     node->ss.ss_currentScanDesc = scandesc;
   }
 
@@ -228,6 +234,11 @@ SeqScanState *ExecInitSeqScan(SeqScan *node, EState *estate, int eflags) {
    */
   scanstate->ss.ps.qual =
       ExecInitQual(node->scan.plan.qual, (PlanState *)scanstate);
+  /* The quals that narrow the rows a catalog relation makes. */
+  if (scanstate->ss.ss_currentRelation->rd_tableam == catrel_routine())
+    scanstate->cat_keys =
+        catrel_scan_keys(scanstate->ss.ss_currentRelation, node->scan.plan.qual,
+                         node->scan.scanrelid, (PlanState *)scanstate);
 
   /*
    * When EvalPlanQual() is not in use, assign ExecProcNode for this node
@@ -290,7 +301,14 @@ void ExecReScanSeqScan(SeqScanState *node) {
 
   scan = node->ss.ss_currentScanDesc;
 
-  if (scan != NULL)
+  /*
+   * A catalog relation narrowed by its keys begins again, so a parameter's
+   * new value narrows it.
+   */
+  if (scan != NULL && node->cat_keys != NIL) {
+    table_endscan(scan);
+    node->ss.ss_currentScanDesc = NULL;
+  } else if (scan != NULL)
     table_rescan(scan,  /* scan desc */
                  NULL); /* new scan keys */
   /* A scan of a table in sm begins again at the next row asked for. */

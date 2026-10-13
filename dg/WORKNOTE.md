@@ -3304,3 +3304,70 @@ query reads, with nothing stored.
   lookup of an index by oid.
 - `server.sh`: `\di`, `pg_index`'s rows, and
   `pg_get_indexdef()` of three indexes and of one column.
+
+## Step 115: \d describes a table and an index, and \du runs
+
+`SYSCATALOG.md` step 6, for a table and an index.
+
+- **`pg_attribute` lists the columns** of the catalog relations
+  and of sm's tables and indexes (`smstore_relations()`, which
+  now gives each one's names, types, typmods, NOT NULL,
+  defaults and identity): storage as the type's, collation as
+  the type's, a dropped one named as PostgreSQL names it. A
+  sequence's columns and the system columns are not listed.
+- **`pg_attrdef` has a column's DEFAULT**, the expression sm
+  keeps, with oid 0: sm keeps none for it.
+- **`pg_type` and `pg_collation` are the rows compiled in**, as
+  text: `gen_cat.py` writes them out of `postgres.bki`
+  (`TEXT_ROWS`), and each value is read by its column type's
+  input function (`BuildTupleFromCStrings()`).
+- **`pg_roles` is a catalog relation** though a view in
+  PostgreSQL: its columns are written in `gen_cat.py` (`VIEWS`),
+  its oid taken from initdb's range for views, 12100. One row,
+  the superuser. So `\du` runs.
+- **Read, and empty**: `pg_constraint`, `pg_inherits`,
+  `pg_policy`, `pg_publication_rel`, `pg_rewrite`,
+  `pg_statistic_ext` and `pg_trigger`.
+- **`pg_relation_is_publishable()` is back**, answering false:
+  step 61 removed it with publications, and psql's `\d` asks.
+- **`try_relation_open()` of a relation of sm's or a catalog
+  relation** builds its descriptor, or finds none, with no
+  `pg_class` probe: `pg_get_expr()` opened its relation that
+  way.
+- **`hash_ok_operator()` reads the operator compiled in**: a
+  correlated EXISTS the planner may hash, as `\d`'s, opened
+  `pg_operator`.
+- **Not done**: `\d` of a sequence, which reads `pg_sequence`;
+  `\d+`, which needs `col_description()` and the size
+  functions; a primary key is shown as UNIQUE (step 114).
+- `server.sh`: `\d` of a table with a default, a typmod, a
+  serial, a dropped column and two indexes, `\d` of an index,
+  and `\du`.
+
+## Step 116: a catalog scan for one relation makes its rows alone
+
+Every scan of a catalog relation made every row: `\d t` reads
+`pg_attribute` for one table, and listed every column of every
+table, several times a command.
+
+- **`nodeSeqscan.c` hands a catalog relation its keys**
+  (`catrel_scan_keys()`, at the node's start): each qual of a
+  filter column (`is_filter_column()` in `catrel.c`) equal to a
+  value that reads nothing of the relation and is not volatile,
+  a constant or a parameter, made a scan key when the scan
+  begins (`catrel_beginscan()`). A rescan begins the scan again,
+  so a correlated subquery's parameter narrows each one.
+- **A generator given a key makes the rows of that relation**:
+  `smstore_relations_of()`, which reads the one table's
+  definition by its oid (`sm_cat_table_def_oid()`, new in
+  `sm.h`, with no lock), with its indexes; for an index, its
+  table's, found as step 114 records it; for a sequence, it
+  alone. An index whose table the thread has not met falls back
+  to every relation.
+- The quals are still checked on each row, so a key need only
+  narrow, never decide. A join clause narrows nothing: the
+  planner gives a sequential scan none.
+- `server.sh` checks, by `EXPLAIN ANALYZE`'s rows removed, that
+  `pg_attribute` for one table makes its rows alone. By hand,
+  on thirty tables, the filter removed one row, where it had
+  removed 89.

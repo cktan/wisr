@@ -37,13 +37,19 @@ typedef struct smstore_relation_t {
   int natts;     /* its columns; an index's key and include columns */
   bool hasindex; /* a table with an index */
   bool temp;     /* a temporary table, or an index on one */
-  /* An index's, as pg_index lists it; its columns are natts. */
+  /* A table's and an index's columns, natts of them, for pg_attribute. */
+  char **attnames;
+  Oid *typids; /* InvalidOid for a dropped column */
+  int32 *typmods;
+  bool *notnull;
+  char **defaults; /* a table column's DEFAULT, nodeToString()'s, or NULL */
+  char *identity;  /* a table column's identity kind, or 0 */
+  /* An index's, as pg_index lists it. */
   Oid table;
   bool unique;
   bool valid;        /* built, and used by the planner */
   int nkeys;         /* its key columns, the first of its columns */
   int16 *attnums;    /* each column's place in the table, from 1 */
-  Oid *typids;       /* each column's type */
   bool *desc;        /* each key column's */
   bool *nulls_first; /* each key column's */
 } smstore_relation_t;
@@ -95,6 +101,7 @@ extern Oid smstore_namespace_oid(const char *name);
 extern char *smstore_namespace_name(Oid nspoid);
 extern List *smstore_namespace_names(void);
 extern List *smstore_relations(void);
+extern List *smstore_relations_of(Oid oid);
 extern Oid smstore_relation_oid(const char *name, Oid nspoid);
 extern Oid smstore_create_namespace(const char *name);
 extern void smstore_drop_namespaces(DropStmt *stmt);
