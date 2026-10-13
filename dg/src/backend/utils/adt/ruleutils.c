@@ -2562,8 +2562,7 @@ static text *pg_get_expr_worker(text *expr, Oid relid, int prettyFlags) {
 Datum pg_get_userbyid(PG_FUNCTION_ARGS) {
   Oid roleid = PG_GETARG_OID(0);
   Name result;
-  HeapTuple roletup;
-  Form_pg_authid role_rec;
+  char *name;
 
   /*
    * Allocate space for the result
@@ -2571,15 +2570,11 @@ Datum pg_get_userbyid(PG_FUNCTION_ARGS) {
   result = (Name)palloc(NAMEDATALEN);
   memset(NameStr(*result), 0, NAMEDATALEN);
 
-  /*
-   * Get the pg_authid entry and print the result
-   */
-  roletup = SearchSysCache1(AUTHOID, ObjectIdGetDatum(roleid));
-  if (HeapTupleIsValid(roletup)) {
-    role_rec = (Form_pg_authid)GETSTRUCT(roletup);
-    *result = role_rec->rolname;
-    ReleaseSysCache(roletup);
-  } else
+  /* digres has one role, the superuser, and no pg_authid (miscinit.c). */
+  name = GetUserNameFromId(roleid, true);
+  if (name != NULL)
+    namestrcpy(result, name);
+  else
     sprintf(NameStr(*result), "unknown (OID=%u)", roleid);
 
   PG_RETURN_NAME(result);

@@ -19,14 +19,18 @@ For each catalog named in CATALOGS it writes
     names, as pg_aggregate's aggfnoid;
   - where the catalog has a name column worth searching by, the rows
     again in name order, and cat_NAMEs_named(name, &count) to find
-    all of that name; where it has none, cat_NAMEs(&count) (or
-    cat_NAMEes for a name ending in s), all the rows, for a caller to
-    search.
+    all of that name;
+  - cat_NAMEs(&count) (or cat_NAMEes for a name ending in s), all the
+    rows, for a caller to search or list.
 
 A row is read-only and lives for ever: a caller keeps the pointer for
 as long as it likes, and there is nothing to release.
 
 A catalog is added to CATALOGS when something first asks for it.
+
+For each catalog named in RELATIONS it writes its oid, row type and
+columns, and cat_relation(oid) and cat_relation_named(name) to find
+one: a catalog relation, a catalog a query can read (SYSCATALOG.md).
 """
 
 import re
@@ -50,12 +54,15 @@ CATALOGS = {
     "pg_collation": ("collation", "collname"),
 }
 
+#The catalogs a query can read as relations(SYSCATALOG.md).
+RELATIONS = ["pg_namespace", "pg_publication", "pg_publication_namespace"]
+
 
 def key_col(entry):
     """The column a catalog's rows are ordered and found by."""
     return entry[2] if len(entry) > 2 else "oid"
 
-# BKI column type -> (C type, how a value is written)
+#BKI column type->(C type, how a value is written)
 SCALARS = {
     "oid": ("Oid", "num"),
     "regproc": ("Oid", "regproc"),
@@ -72,8 +79,8 @@ SCALARS = {
 }
 OID_LISTS = {"oidvector", "_oid"}
 
-# Values postgres.bki leaves for the bootstrap to fill in. digres runs
-# on 64-bit Linux alone (sm/PART4.md section 10), so each is known here.
+#Values postgres.bki leaves for the bootstrap to fill in.digres runs
+#on 64 - bit Linux alone(sm / PART4.md section 10), so each is known here.
 SYMBOLS = {
     "SIZEOF_POINTER": "8",
     "ALIGNOF_POINTER": "d",
@@ -111,18 +118,21 @@ def tokens(line):
 
 
 def read_bki(path):
-    """The catalogs of postgres.bki: name -> (columns, rows)."""
+    """The catalogs of postgres.bki: name -> (columns, rows), and each
+    catalog's oid: name -> oid."""
     text = open(path).read()
-    catalogs = {}
-    for m in re.finditer(r"^create (\w+) .*?\n \(\n(.*?)\n \)\n", text, flags=re.M | re.S):
+    catalogs, oids = {}, {
+  }
+    for m in re.finditer(r"^create (\w+) (\d+).*?\n \(\n(.*?)\n \)\n", text, flags=re.M | re.S):
         cols = []
-        for line in m.group(2).split("\n"):
+        for line in m.group(3).split("\n"):
             name, ctype = [p.strip() for p in line.strip(" ,").split("=")]
             cols.append((name, ctype.split()[0]))
         catalogs[m.group(1)] = (cols, [])
+        oids[m.group(1)] = int(m.group(2))
     current = None
     for line in text.split("\n"):
-        # A bootstrap catalog is open from its "create"; the rest are
+# A bootstrap catalog is open from its "create"; the rest are
         # opened by name.
         if line.startswith(("open ", "create ")):
             current = line.split()[1]
@@ -130,7 +140,7 @@ def read_bki(path):
             current = None
         elif line.startswith("insert ( ") and current in catalogs:
             catalogs[current][1].append(tokens(line[len("insert ( ") : -2]))
-    return catalogs
+    return catalogs, oids
 
 
 def c_string(value):
@@ -197,14 +207,24 @@ def write_header(catalogs, out):
         w(f"}} cat_{short}_t;\n\n")
         w(f"/* The {catalog} row with this {key}, or NULL. */\n")
         w(f"extern const cat_{short}_t *cat_{short}(Oid {key});\n\n")
+        w(f"/* Every {catalog} row, in {key} order, and how many in *count. */\n")
+        w(f"extern const cat_{short}_t *cat_{plural(short)}(int *count);\n")
         if name_col is None:
-            w(f"/* Every {catalog} row, in {key} order, and how many in *count. */\n")
-            w(f"extern const cat_{short}_t *cat_{plural(short)}(int *count);\n")
             continue
+        w("\n")
         w(f"/*\n * The {catalog} rows whose {name_col} is name, in oid order, and how\n")
         w(" * many in *count; NULL and 0 if there are none.\n */\n")
         w(f"extern const cat_{short}_t *const *cat_{short}s_named(const char *name,\n")
         w(f"{' ' * (len(short) * 2 + 43)}int *count);\n")
+    w("\n/* A column of a catalog relation: its name and its type. */\n")
+    w("typedef struct cat_column_t {\n  const char *name;\n  Oid typid;\n} cat_column_t;\n\n")
+    w("/* A catalog relation: a catalog a query can read (SYSCATALOG.md). */\n")
+    w("typedef struct cat_relation_t {\n  const char *name;\n  Oid oid;\n  Oid rowtype;\n")
+    w("  int natts;\n  const cat_column_t *columns;\n} cat_relation_t;\n\n")
+    w("/* The catalog relation with this oid, or NULL. */\n")
+    w("extern const cat_relation_t *cat_relation(Oid oid);\n\n")
+    w("/* The catalog relation named name, or NULL. */\n")
+    w("extern const cat_relation_t *cat_relation_named(const char *name);\n")
     w("\n#endif /* CAT_BUILTIN_H */\n")
 
 
@@ -252,11 +272,12 @@ def write_source(catalogs, out):
         w("".join(body))
         w("};\n\n")
         write_oid_lookup(catalog, short, key, w)
+        w(f"/* Every {catalog} row, in {key} order. */\n")
+        w(f"const cat_{short}_t *cat_{plural(short)}(int *count) {{\n")
+        w(f"  *count = lengthof({short}_rows);\n  return {short}_rows;\n}}\n")
         if name_col is None:
-            w(f"/* Every {catalog} row, in {key} order. */\n")
-            w(f"const cat_{short}_t *cat_{plural(short)}(int *count) {{\n")
-            w(f"  *count = lengthof({short}_rows);\n  return {short}_rows;\n}}\n")
             continue
+        w("\n")
         name_at = names.index(name_col)
         order = sorted(range(len(rows)), key=lambda i: (rows[i][name_at][1].encode(), i))
         w(f"/* The rows in order of {name_col}, and of oid within a name. */\n")
@@ -277,12 +298,44 @@ def write_source(catalogs, out):
         w(f"  return n > 0 ? &{short}_by_name[lo] : NULL;\n}}\n")
 
 
+def write_relations(catalogs, oids, w):
+    """Write the catalog relations of RELATIONS, and their lookups."""
+    tcols, trows = catalogs["pg_type"]
+    tnames = [c for c, _ in tcols]
+    at = {c: tnames.index(c) for c in ("oid", "typname", "typrelid")}
+    type_oid = {r[at["typname"]][1]: r[at["oid"]][1] for r in trows}
+    rowtype = {r[at["typrelid"]][1]: r[at["oid"]][1] for r in trows}
+    w("\n/* ---- catalog relations ---- */\n\n")
+    for rel in RELATIONS:
+        w(f"static const cat_column_t {rel}_columns[] = {{\n")
+        for col, ctype in catalogs[rel][0]:
+            w(f"    {{{c_string(col)}, {type_oid[ctype]}}},\n")
+        w("};\n\n")
+    w("static const cat_relation_t relations[] = {\n")
+    for rel in RELATIONS:
+        oid = oids[rel]
+        w(f"    {{{c_string(rel)}, {oid}, {rowtype.get(str(oid), '0')}, ")
+        w(f"lengthof({rel}_columns), {rel}_columns}},\n")
+    w("};\n\n")
+    w("/* Find the catalog relation with this oid: there are few. */\n")
+    w("const cat_relation_t *cat_relation(Oid oid) {\n")
+    w("  for (const cat_relation_t &r : relations)\n")
+    w("    if (r.oid == oid)\n      return &r;\n  return NULL;\n}\n\n")
+    w("/* Find the catalog relation named name. */\n")
+    w("const cat_relation_t *cat_relation_named(const char *name) {\n")
+    w("  for (const cat_relation_t &r : relations)\n")
+    w("    if (strcmp(r.name, name) == 0)\n      return &r;\n  return NULL;\n}\n")
+
+
 def main():
     """Write the file named on the command line to standard output."""
     writers = {"header": write_header, "source": write_source}
     if len(sys.argv) != 3 or sys.argv[2] not in writers:
         sys.exit("usage: gen_cat.py POSTGRES_BKI header|source")
-    writers[sys.argv[2]](read_bki(sys.argv[1]), sys.stdout)
+    catalogs, oids = read_bki(sys.argv[1])
+    writers[sys.argv[2]](catalogs, sys.stdout)
+    if sys.argv[2] == "source":
+        write_relations(catalogs, oids, sys.stdout.write)
 
 
 if __name__ == "__main__":

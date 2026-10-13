@@ -7,10 +7,10 @@ making the catalog tables readable relations again, with no
 storage behind them, so that those queries run as they are
 sent.
 
-**It is a proposal, and not built.** It is in the area of the
-catalog lookups, which are being moved to the compiled-in rows
-step by step (`WORKNOTE.md` step 6 and after), so it is to be
-agreed before it is begun. §6 tracks what is done.
+**It is being built**, a step at a time, and §6 tracks what is
+done. It is in the area of the catalog lookups, which are being
+moved to the compiled-in rows step by step (`WORKNOTE.md` step 6
+and after).
 
 ---
 
@@ -30,10 +30,14 @@ agreed before it is begun. §6 tracks what is done.
   | `\du` | `pg_roles` | `relation "pg_catalog.pg_roles" does not exist` |
   | `\d name` | `pg_class`, then a dozen more (§4) | fails on the first |
 
-- **They also call functions**: `pg_table_is_visible()`,
-  `pg_get_userbyid()`, `pg_encoding_to_char()`,
-  `array_to_string()`. Each is to be checked: one that looks
-  in a catalog table fails as the query would.
+- **They also call functions.** Checked on 2026-10-14:
+
+  | Function | Today | Called by |
+  | --- | --- | --- |
+  | `pg_table_is_visible`, `format_type`, `pg_encoding_to_char`, `array_to_string`, `current_schemas` | run | `\dt`, `\d`, `\l` |
+  | `pg_get_userbyid` | opens `pg_authid` (1260) | almost every command, for the owner |
+  | `pg_get_indexdef` | opens `pg_index` (2610) | `\d name`, for its indexes |
+  | `obj_description`, `pg_relation_size`, `pg_table_size` | not defined | `\dt+`, `\d+` |
 - **A catalog table cannot be opened.** Its name is not found:
   `get_relname_relid()` asks sm, which has no table named
   `pg_class`. Its oid is refused: `ScanPgRelation()` raises
@@ -70,6 +74,16 @@ agreed before it is begun. §6 tracks what is done.
   A readable `pg_class` serves them all. Recognising one
   client's text and answering it by hand would serve one, and
   follow its releases for ever.
+- **Nothing is stored for them.** `sm_mkdb` makes no
+  `pg_class`, and DDL writes nothing but sm's catalog: one
+  catalog, and no second copy to keep in step with it. A
+  catalog relation is a name, an oid and columns, compiled in.
+- **A scan goes through a table access method of its own**,
+  as a table in sm goes through `smtable.c`'s: its scan fills
+  a tuple store from the catalog's generator and reads it, its
+  writes are refused, and it tells the planner its size. So
+  the executor's and the planner's paths are PostgreSQL's, and
+  no new branch is made in `nodeSeqscan.c`.
 - **They are not views.** A view is a stored rule
   (`pg_rewrite`), which is among what was cut. A catalog
   relation gives a client the same thing.
@@ -109,31 +123,42 @@ agreed before it is begun. §6 tracks what is done.
 
 ## 3. The mechanism
 
-Not read against the code yet in detail; the touch points are
-from a first look, and step 1 of §5 is to confirm them.
+Read against the code on 2026-10-14 (step 1 of §5).
 
-- **The name is found.** `get_relname_relid(name,
-  PG_CATALOG_NAMESPACE)` answers a catalog relation's oid from
-  a compiled-in list, before it asks sm.
-- **The relation is opened.** `RelationBuildDesc()` builds the
-  descriptor of a catalog relation from its compiled-in
-  columns, as `RelationBuildSmDesc()` builds a table's from
-  sm's, in place of `ScanPgRelation()`'s refusal. Its
-  `relkind` is `r` and its namespace `pg_catalog`.
-- **Its columns are compiled in.** `schemapg.h` has a
-  descriptor for the catalogs marked `BKI_SCHEMA_MACRO`. The
-  others need one each: either the mark on their header, or
-  `gen_cat.py` writing every catalog's.
-- **A scan calls its generator.** `nodeSeqscan.c` already
-  branches for a table in sm (`RelationIsSm()`); a catalog
-  relation is a third case, whose scan fills a tuple store
-  from the catalog's generator when it starts, and reads rows
-  from it.
+- **The name is found.** `get_relname_relid()` asks sm alone
+  (`lsyscache.c`, `smstore_relation_oid()`). It is to answer a
+  catalog relation's oid from a compiled-in list first, for
+  `PG_CATALOG_NAMESPACE`, and for no namespace when the
+  search path reaches `pg_catalog`.
+- **The relation is opened.** `RelationBuildDesc()` sends an
+  oid from `FirstNormalObjectId` up to sm
+  (`RelationBuildSmDesc()`, `RelationBuildSmIndexDesc()`), and
+  every other one to `ScanPgRelation()`, which refuses it:
+  `relation %u cannot be opened`. A catalog relation's oid is
+  to be built from its compiled-in columns before that
+  refusal. Its `relkind` is `r`, its namespace `pg_catalog`,
+  and its `rd_tableam` the catalog relations' access method.
+- **Its columns are compiled in for eleven.** `schemapg.h` has
+  `pg_attribute`, `pg_auth_members`, `pg_authid`, `pg_class`,
+  `pg_database`, `pg_index`, `pg_proc`, `pg_shseclabel`,
+  `pg_statistic`, `pg_subscription` and `pg_type`. The rest --
+  `pg_namespace`, `pg_am`, `pg_attrdef`, `pg_constraint`,
+  `pg_collation`, `pg_inherits`, `pg_trigger` and the others
+  of §4 -- need one each, written by `gen_cat.py` from their
+  headers.
+- **A scan is the access method's.** A catalog relation's oid
+  is below `FirstNormalObjectId`, so `RelationIsSm()` is false
+  and `nodeSeqscan.c` takes PostgreSQL's path,
+  `table_beginscan()` and `table_scan_getnextslot()`. The
+  access method, beside `smtable.c`, begins a scan by filling
+  a tuple store from the catalog's generator, and reads a
+  virtual tuple from it at each call.
 - **A generator is one function a catalog**, in a file of its
   own under `catalog/`: it is given a tuple store and puts the
   catalog's rows in it. `pg_stats()` is written this way
   (`smstore.c`, step 78).
-- **The planner sizes it** by a fixed guess a catalog, with no
+- **The planner sizes it** through the access method's
+  `relation_estimate_size`: a fixed guess a catalog, with no
   statistics.
 - **Locks**: none is taken. Its definition cannot change.
 
@@ -184,9 +209,11 @@ runs the psql command and reads its output.
    which functions of §4 open a catalog table.
 2. **The mechanism, with `pg_namespace` alone**: the name
    found, the relation opened, the scan calling a generator,
-   writes refused. `\dn` runs.
+   writes refused; and `pg_get_userbyid()` naming the
+   superuser with no catalog. `\dn` runs.
 3. **`pg_class` and `pg_am`**: `\dt` and `\ds` run.
-4. **`pg_index`**: `\di` runs.
+4. **`pg_index`**, and `pg_get_indexdef()` made from sm's
+   definition: `\di` runs.
 5. **`pg_database`, and `pg_roles`**: `\l` and `\du` run.
 6. **`\d name`**: `pg_attribute`, `pg_type`, `pg_attrdef`,
    `pg_collation`, `pg_constraint`, the empty ones, and the
@@ -201,8 +228,8 @@ runs the psql command and reads its output.
 
 | Step | State |
 | --- | --- |
-| 1. Read the code | not begun |
-| 2. Mechanism, `pg_namespace`, `\dn` | not begun |
+| 1. Read the code | done, 2026-10-14: §1's functions, §2's access method, §3 |
+| 2. Mechanism, `pg_namespace`, `\dn` | done, `WORKNOTE.md` step 112 |
 | 3. `pg_class`, `pg_am`, `\dt`, `\ds` | not begun |
 | 4. `pg_index`, `\di` | not begun |
 | 5. `pg_database`, `pg_roles`, `\l`, `\du` | not begun |

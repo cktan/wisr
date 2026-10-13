@@ -1434,6 +1434,47 @@ held_wait rcc 'renamed|6' || fail "RENAME read after"
 held_end rca
 held_end rcc
 
+# Verify that pg_namespace is a catalog relation a query reads, made from
+# the rows compiled in and sm's schemas, so psql's \dn runs; and that it
+# is never written.
+# 1. Make schema dn1: \dn dn* lists it, owned by the superuser.
+# 2. pg_namespace has pg_catalog, pg_toast, public and dn1, by their oids;
+#    a schema made in an open transaction is seen there alone.
+# 3. INSERT, DELETE, UPDATE, TRUNCATE, FOR UPDATE and DROP TABLE of it are
+#    refused, as of a catalog.
+me=$(local_psql -c 'select current_user')
+local_psql -c 'create schema dn1' -c '\dn dn*' \
+  -c "select oid, nspname from pg_namespace
+        where nspname in ('pg_catalog', 'pg_toast', 'public') order by oid" \
+  -c "select count(*) from pg_namespace where nspname = 'dn1'" \
+  -c 'begin' -c 'create schema dn2' \
+  -c "select count(*) from pg_namespace where nspname = 'dn2'" -c 'rollback' \
+  -c "select count(*) from pg_namespace where nspname = 'dn2'" \
+  -c "insert into pg_namespace values (1, 'x', 10, null)" \
+  -c 'delete from pg_namespace' -c 'update pg_namespace set nspacl = null' \
+  -c 'truncate pg_namespace' -c 'select * from pg_namespace for update' \
+  -c 'drop table pg_namespace' > "$work/dn.out" 2>&1
+cat > "$work/dn.expected" << OUT
+CREATE SCHEMA
+dn1|$me
+11|pg_catalog
+99|pg_toast
+2200|public
+1
+BEGIN
+CREATE SCHEMA
+1
+ROLLBACK
+0
+ERROR:  permission denied for table pg_namespace
+ERROR:  permission denied for table pg_namespace
+ERROR:  permission denied for table pg_namespace
+ERROR:  permission denied: "pg_namespace" is a system catalog
+ERROR:  permission denied for table pg_namespace
+ERROR:  permission denied: "pg_namespace" is a system catalog
+OUT
+cmp -s "$work/dn.out" "$work/dn.expected" || fail "pg_namespace and \\dn"
+
 # Verify that text compares, cases and matches, by the database's default
 # collation, C.
 # 1. 'a' < 'b', and ORDER BY sorts B before a, as C's byte order does.

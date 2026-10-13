@@ -17,6 +17,7 @@
 #include "access/attmap.h"
 #include "access/relation.h"
 #include "access/smstore.h"
+#include "catalog/cat_builtin.h"
 #include "access/table.h"
 #include "access/genam.h"
 #include "access/reloptions.h"
@@ -17602,6 +17603,11 @@ static void RangeVarCallbackForTruncate(const RangeVar *relation, Oid relId,
   /* Nothing to do if the relation was not found. */
   if (!OidIsValid(relId))
     return;
+  /* A catalog a query can read has nothing stored to empty. */
+  if (cat_relation(relId) != NULL)
+    ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                    errmsg("permission denied: \"%s\" is a system catalog",
+                           relation->relname)));
 
   tuple = SearchSysCache1(RELOID, ObjectIdGetDatum(relId));
   if (!HeapTupleIsValid(tuple)) /* should not happen */

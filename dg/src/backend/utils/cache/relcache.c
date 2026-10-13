@@ -42,6 +42,7 @@
 #include "access/xact.h"
 #include "catalog/binary_upgrade.h"
 #include "catalog/cat_builtin.h"
+#include "catalog/catrel.h"
 #include "catalog/catalog.h"
 #include "catalog/indexing.h"
 #include "catalog/namespace.h"
@@ -311,6 +312,8 @@ static void RelationParseRelOptions(Relation relation, HeapTuple tuple);
 static void RelationBuildTupleDesc(Relation relation);
 static Relation RelationBuildDesc(Oid targetRelId, bool insertIt);
 static Relation RelationBuildSmDesc(Oid targetRelId, bool insertIt);
+static Relation RelationBuildCatalogDesc(const cat_relation_t *cat,
+                                         bool insertIt);
 static Relation RelationBuildSmIndexDesc(Oid indexoid, Oid table,
                                          bool insertIt);
 static void InitIndexAmRoutine(Relation relation);
@@ -1026,21 +1029,25 @@ static Relation RelationBuildDesc(Oid targetRelId, bool insertIt) {
     return RelationBuildSmDesc(targetRelId, insertIt);
   }
 
-  /*
-   * This function and its subroutines can allocate a good deal of transient
-   * data in CurrentMemoryContext.  Traditionally we've just leaked that
-   * data, reasoning that the caller's context is at worst of transaction
-   * scope, and relcache loads shouldn't happen so often that it's essential
-   * to recover transient data before end of statement/transaction.  However
-   * that's definitely not true when debug_discard_caches is active, and
-   * perhaps it's not true in other cases.
-   *
-   * When debug_discard_caches is active or when forced to by
-   * RECOVER_RELATION_BUILD_MEMORY=1, arrange to allocate the junk in a
-   * temporary context that we'll free before returning.  Make it a child of
-   * caller's context so that it will get cleaned up appropriately if we
-   * error out partway through.
-   */
+  /* A catalog a query can read: its columns are compiled in. */
+  if (cat_relation(targetRelId) != NULL)
+    return RelationBuildCatalogDesc(cat_relation(targetRelId), insertIt);
+
+    /*
+     * This function and its subroutines can allocate a good deal of transient
+     * data in CurrentMemoryContext.  Traditionally we've just leaked that
+     * data, reasoning that the caller's context is at worst of transaction
+     * scope, and relcache loads shouldn't happen so often that it's essential
+     * to recover transient data before end of statement/transaction.  However
+     * that's definitely not true when debug_discard_caches is active, and
+     * perhaps it's not true in other cases.
+     *
+     * When debug_discard_caches is active or when forced to by
+     * RECOVER_RELATION_BUILD_MEMORY=1, arrange to allocate the junk in a
+     * temporary context that we'll free before returning.  Make it a child of
+     * caller's context so that it will get cleaned up appropriately if we
+     * error out partway through.
+     */
 #ifdef MAYBE_RECOVER_RELATION_BUILD_MEMORY
   MemoryContext tmpcxt = NULL;
   MemoryContext oldcxt = NULL;
@@ -1397,6 +1404,83 @@ static Relation RelationBuildSmDesc(Oid targetRelId, bool insertIt) {
    */
   relation->rd_amhandler = F_HEAP_TABLEAM_HANDLER;
   InitTableAmRoutine(relation);
+
+  RelationInitLockInfo(relation);
+  RelationInitPhysicalAddr(relation);
+
+  if (insertIt)
+    RelationCacheInsert(relation, true);
+  relation->rd_isvalid = true;
+  return relation;
+}
+
+/*
+ * Build the descriptor of the catalog relation cat (catalog/catrel.c): a
+ * table in pg_catalog with cat's columns, nothing stored, whose access
+ * method makes its rows as a scan begins.
+ */
+static Relation RelationBuildCatalogDesc(const cat_relation_t *cat,
+                                         bool insertIt) {
+  FormData_pg_class form;
+  Relation relation;
+  MemoryContext oldcxt;
+
+  memset(&form, 0, sizeof(form));
+  form.oid = cat->oid;
+  namestrcpy(&form.relname, cat->name);
+  form.relnamespace = PG_CATALOG_NAMESPACE;
+  form.reltype = cat->rowtype;
+  form.relowner = BOOTSTRAP_SUPERUSERID;
+  form.relam = HEAP_TABLE_AM_OID;
+  /* Not a mapped catalog: it has a file number, for no file. */
+  form.relfilenode = cat->oid;
+  form.relkind = RELKIND_RELATION;
+  form.relpersistence = RELPERSISTENCE_PERMANENT;
+  form.relispopulated = true;
+  form.relnatts = cat->natts;
+  form.relreplident = REPLICA_IDENTITY_NOTHING;
+  relation = AllocateRelationDesc(&form);
+  RelationGetRelid(relation) = cat->oid;
+  relation->rd_refcnt = 0;
+  relation->rd_isnailed = false;
+  relation->rd_createSubid = InvalidSubTransactionId;
+  relation->rd_newRelfilelocatorSubid = InvalidSubTransactionId;
+  relation->rd_firstRelfilelocatorSubid = InvalidSubTransactionId;
+  relation->rd_droppedSubid = InvalidSubTransactionId;
+  relation->rd_backend = INVALID_PROC_NUMBER;
+  relation->rd_islocaltemp = false;
+
+  /* The columns, in the cache's context, as AllocateRelationDesc's are. */
+  oldcxt = MemoryContextSwitchTo(CacheMemoryContext);
+  relation->rd_att->tdtypeid =
+      OidIsValid(cat->rowtype) ? cat->rowtype : RECORDOID;
+  relation->rd_att->tdtypmod = -1;
+  for (int i = 0; i < cat->natts; i++) {
+    TupleDescInitEntry(relation->rd_att, i + 1, cat->columns[i].name,
+                       cat->columns[i].typid, -1, 0);
+    TupleDescAttr(relation->rd_att, i)->attrelid = cat->oid;
+    populate_compact_attribute(relation->rd_att, i);
+  }
+  relation->rd_att->constr = (TupleConstr *)palloc0(sizeof(TupleConstr));
+  MemoryContextSwitchTo(oldcxt);
+
+  /* No index, no constraint, no rule, no trigger. */
+  relation->rd_fkeylist = NIL;
+  relation->rd_fkeyvalid = true;
+  relation->rd_indexlist = NIL;
+  relation->rd_pkindex = InvalidOid;
+  relation->rd_replidindex = InvalidOid;
+  relation->rd_indexvalid = true;
+  relation->rd_statlist = NIL;
+  relation->rd_statvalid = true;
+  relation->rd_rules = NULL;
+  relation->rd_rulescxt = NULL;
+  relation->trigdesc = NULL;
+  relation->rd_rsdesc = NULL;
+
+  /* Its rows are made by its own access method, and never written. */
+  relation->rd_amhandler = F_HEAP_TABLEAM_HANDLER;
+  relation->rd_tableam = catrel_routine();
 
   RelationInitLockInfo(relation);
   RelationInitPhysicalAddr(relation);

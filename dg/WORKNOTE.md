@@ -3224,3 +3224,34 @@ one behind a DROP COLUMN wrote into the dropped column's place.
   it; an INSERT behind a DROP COLUMN fails as PostgreSQL's
   does. Without the lock the last three fail. The early send
   is a race no check holds to.
+
+## Step 112: pg_namespace is read, and \dn runs
+
+The first catalog relation (`SYSCATALOG.md` step 2): a catalog a
+query reads, with nothing stored.
+
+- **`gen_cat.py` writes each catalog relation's oid and
+  columns** (`RELATIONS`, `cat_relation()`), from
+  `postgres.bki`, and every catalog's rows to list
+  (`cat_namespaces()` and the like).
+- **`get_relname_relid()` finds its name in `pg_catalog`**, and
+  `RelationBuildDesc()` builds its descriptor from the
+  compiled-in columns (`RelationBuildCatalogDesc()`), its
+  `relfilenode` its oid so it is not taken for a mapped one.
+- **Its access method is `catrel.c`'s**: a scan begins by making
+  the rows into a tuple store and reads them from it; the
+  planner is told a page and a hundred rows. `pg_namespace` is
+  the rows compiled in, then sm's schemas, owned by the
+  superuser, with no ACL. `pg_publication` and
+  `pg_publication_namespace`, which `\dn PATTERN` reads, are
+  empty.
+- **It is read by anyone and written by no one**: the ACL checks
+  (`aclchk.c`) give SELECT alone, so INSERT, UPDATE, DELETE and
+  FOR UPDATE are `permission denied for table`; TRUNCATE and
+  DROP TABLE say it is a system catalog.
+- **`pg_get_userbyid()` names the superuser** from
+  `GetUserNameFromId()`, not `pg_authid`.
+- sm's `pg_temp` is listed as it is, oid 8846, where PostgreSQL
+  has a `pg_temp_N` a session.
+- `server.sh`: `\dn`, `pg_namespace`'s rows, a schema made in an
+  open transaction, and the writes refused.

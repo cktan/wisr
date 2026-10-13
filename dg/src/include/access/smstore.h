@@ -73,6 +73,7 @@ extern void smstore_subcommit(void);
 extern void smstore_subabort(void);
 extern Oid smstore_namespace_oid(const char *name);
 extern char *smstore_namespace_name(Oid nspoid);
+extern List *smstore_namespace_names(void);
 extern Oid smstore_relation_oid(const char *name, Oid nspoid);
 extern Oid smstore_create_namespace(const char *name);
 extern void smstore_drop_namespaces(DropStmt *stmt);

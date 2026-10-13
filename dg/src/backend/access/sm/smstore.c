@@ -599,6 +599,21 @@ char *smstore_namespace_name(Oid nspoid) {
 }
 
 /*
+ * The names of the schemas in sm, palloc'd, sorted, as this transaction sees
+ * them: pg_namespace's rows (catalog/catrel.c).
+ */
+List *smstore_namespace_names(void) {
+  std::vector<std::string> names;
+  List *out = NIL;
+
+  if (sm_cat_list_namespaces(xact_session(), names) != 0)
+    sm_error("list the schemas");
+  for (const std::string &name : names)
+    out = lappend(out, pstrdup(name.c_str()));
+  return out;
+}
+
+/*
  * The oid of the sequence named name in nspoid, or InvalidOid if there is
  * none.  sm reads it from its catalog in the transaction, which this begins.
  */
@@ -1583,6 +1598,11 @@ static void drop_table(RangeVar *rv, bool missing_ok) {
             (errmsg("table \"%s\" does not exist, skipping", rv->relname)));
     return;
   }
+  /* A catalog a query can read is not sm's to drop. */
+  if (oid < FirstNormalObjectId)
+    ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                    errmsg("permission denied: \"%s\" is a system catalog",
+                           rv->relname)));
   rel = relation_open(oid, NoLock);
   if (rel->rd_rel->relkind != RELKIND_RELATION)
     ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),

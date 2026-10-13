@@ -46,6 +46,7 @@
 #include "access/tableam.h"
 #include "access/xact.h"
 #include "catalog/binary_upgrade.h"
+#include "catalog/cat_builtin.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
@@ -2740,6 +2741,10 @@ static AclMode pg_attribute_aclmask_ext(Oid table_oid, AttrNumber attnum,
   Acl *acl;
   Oid ownerId;
 
+  /* A catalog a query can read: its columns are read, never written. */
+  if (cat_relation(table_oid) != NULL)
+    return mask & ACL_SELECT;
+
   /*
    * First, get the column's ACL from its pg_attribute entry
    */
@@ -2856,6 +2861,14 @@ static AclMode pg_class_aclmask_ext(Oid table_oid, Oid roleid, AclMode mask,
     acl = acldefault(OBJECT_TABLE, BOOTSTRAP_SUPERUSERID);
     return aclmask(acl, roleid, BOOTSTRAP_SUPERUSERID, mask, how);
   }
+
+  /*
+   * A catalog a query can read (catalog/catrel.c) has no pg_class row
+   * either: anyone may read it, as PostgreSQL grants its catalogs, and no
+   * one may write it, as it has nothing stored.
+   */
+  if (cat_relation(table_oid) != NULL)
+    return mask & ACL_SELECT;
 
   /*
    * Must get the relation's tuple from pg_class
@@ -3341,6 +3354,10 @@ AclResult pg_attribute_aclcheck_all_ext(Oid table_oid, Oid roleid, AclMode mode,
   Oid ownerId;
   AttrNumber nattrs;
   AttrNumber curr_att;
+
+  /* A catalog a query can read: its columns are read, never written. */
+  if (cat_relation(table_oid) != NULL)
+    return (mode & ~ACL_SELECT) == 0 ? ACLCHECK_OK : ACLCHECK_NO_PRIV;
 
   /*
    * Must fetch pg_class row to get owner ID and number of attributes.
