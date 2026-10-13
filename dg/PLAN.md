@@ -540,3 +540,10 @@ Do not reopen these without the owner:
 - Time zone abbreviations are not loaded.
 - `initdb` does not clean up when interrupted.
 - A reload with no configuration file logs a complaint.
+- **TODO: the SHARED variables move into `pcb_t`.** Each of
+  the 185 `/*SHARED*/` globals is one value for the process,
+  but is a `thread_local`: a thread is given a copy when it
+  starts, and only the thread that sets it later sees the
+  change. In `pcb_t` there is one, as there should be. Once
+  the last is moved, the copy table and the two-pass link go
+  (§7).

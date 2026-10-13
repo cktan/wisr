@@ -13,6 +13,9 @@ Start with `sm/README.md`.
 ## Building
 
 ```
+make -j4                build everything: sm, sq and digres
+make -j4 test           test sm, then sq, then digres
+make -j4 format         clang-format sm and sq
 make -C sm -j4          build every level of the stack
 make -C sm -j4 test     build and test every level
 make -C dg -j4          build digres, dg/build/postgres
