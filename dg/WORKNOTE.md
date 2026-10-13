@@ -2958,3 +2958,36 @@ put in a memtable and compacted. sm now has a bulk load
   with rows failing at its row. A load never ended, and one
   that takes no lock, each fail it.
 
+## Step 104: an identity column, its sequence its own
+
+- **sm3: a column may be an identity column**, its kind (`a` or
+  `d`, PostgreSQL's `attidentity`) and its sequence appended,
+  nullable fields of the column part (`../sm/sm3/CATALOG.md`).
+  `create_table` makes the column own the sequence; it must be
+  a NOT NULL smallint, integer or bigint with no default, and
+  not in a temporary table. `own_sequence` on that sequence is
+  `SM_ERR_INUSE`, and `add_column` refuses an identity column.
+- **`GENERATED ALWAYS | BY DEFAULT AS IDENTITY`** is taken in
+  CREATE TABLE, with START and INCREMENT. Parse analysis makes
+  the sequence first; `smstore_create_table` passes its oid, and
+  the `OWNED BY` it adds after is a no-op (`AlterSequence`).
+- **The relcache sets `attidentity`**, so the rewriter's rules
+  for ALWAYS, `OVERRIDING SYSTEM | USER VALUE` and UPDATE are
+  PostgreSQL's unchanged. `getIdentitySequence` reads the
+  column's sequence from sm (`smstore_identity_sequence`), not
+  `pg_depend`.
+- **A `NextValueExpr` past its type's range fails**, `integer
+  out of range` or `smallint out of range`, rather than
+  wrapping: sm's sequence keeps no bound, as with `serial`.
+- **EXPLAIN VERBOSE names the sequence from sm**; PostgreSQL
+  read `pg_class`.
+- **ALTER SEQUENCE ... OWNED BY on an identity's sequence** is
+  PostgreSQL's `cannot change ownership of identity sequence`.
+  DROP SEQUENCE of an owned one now hints at dropping the
+  column.
+- ALTER TABLE's identity forms (ADD, SET GENERATED, RESTART,
+  DROP IDENTITY) wait with ALTER TABLE. EXPLAIN VERBOSE of a
+  `serial` INSERT still fails, on `pg_proc`, printing
+  `nextval()`.
+- sm3 `test_ddl`: "an identity column owns its sequence from
+  its CREATE TABLE"; `server.sh`: identity columns.

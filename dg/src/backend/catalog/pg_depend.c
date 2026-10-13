@@ -16,6 +16,7 @@
 
 #include "access/genam.h"
 #include "access/htup_details.h"
+#include "access/smstore.h"
 #include "access/table.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
@@ -1007,11 +1008,11 @@ List *getOwnedSequences(Oid relid) {
 }
 
 /*
- * Get owned identity sequence, error if not exactly one.
+ * Get owned identity sequence, error if none: the one sm keeps with the
+ * column (access/smstore.h).
  */
 Oid getIdentitySequence(Relation rel, AttrNumber attnum, bool missing_ok) {
   Oid relid = RelationGetRelid(rel);
-  List *seqlist;
 
   /*
    * The identity sequence is associated with the topmost partitioned table,
@@ -1029,17 +1030,12 @@ Oid getIdentitySequence(Relation rel, AttrNumber attnum, bool missing_ok) {
     list_free(ancestors);
   }
 
-  seqlist = getOwnedSequences_internal(relid, attnum, DEPENDENCY_INTERNAL);
-  if (list_length(seqlist) > 1)
-    elog(ERROR, "more than one owned sequence found");
-  else if (seqlist == NIL) {
-    if (missing_ok)
-      return InvalidOid;
-    else
-      elog(ERROR, "no owned sequence found");
-  }
+  /* An identity column in sm names its sequence; there is no pg_depend. */
+  Oid seqid = smstore_identity_sequence(relid, attnum);
 
-  return linitial_oid(seqlist);
+  if (!OidIsValid(seqid) && !missing_ok)
+    elog(ERROR, "no owned sequence found");
+  return seqid;
 }
 
 /*

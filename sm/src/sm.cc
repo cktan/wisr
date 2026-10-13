@@ -283,7 +283,8 @@ sm_table_def_t api_def(const sm3::session_t *ss, const sm3::table_def_t &d) {
   sm_table_def_t out{d.oid, d.nspoid, d.name, {}, {}, {}};
   for (const sm3::column_def_t &c : d.columns) {
     out.columns.push_back({c.name, c.type->code, c.typmod, c.not_null,
-                           c.dropped, c.default_expr});
+                           c.dropped, c.default_expr, c.identity,
+                           c.identity_seq});
   }
   for (const sm2::attribute_t &a : d.schema) {
     out.schema.push_back(api_attribute(a));
@@ -1575,7 +1576,8 @@ int sm_cat_create_table(sm_session_t *session, uint64_t nspoid,
       cols.push_back(
           {std::string(name_of(c.name)), c.type_code, c.typmod, c.not_null,
            c.default_expr ? std::optional<std::string>(c.default_expr)
-                          : std::nullopt});
+                          : std::nullopt,
+           c.identity, c.identity_seq});
     }
     return sm3::create_table(session->sm3, nspoid, name_of(name), cols, *oid);
   });
@@ -1594,7 +1596,8 @@ int sm_cat_create_temp_table(sm_session_t *session, const char *name,
       cols.push_back(
           {std::string(name_of(c.name)), c.type_code, c.typmod, c.not_null,
            c.default_expr ? std::optional<std::string>(c.default_expr)
-                          : std::nullopt});
+                          : std::nullopt,
+           c.identity, c.identity_seq});
     }
     return sm3::create_temp_table(session->sm3, name_of(name), cols, *oid);
   });

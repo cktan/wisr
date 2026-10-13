@@ -1344,6 +1344,7 @@ static Relation RelationBuildSmDesc(Oid targetRelId, bool insertIt) {
       att->attnotnull = col->not_null;
       has_not_null |= col->not_null;
       att->atthasdef = col->default_expr != NULL;
+      att->attidentity = col->identity;
     }
     att->attrelid = targetRelId;
     populate_compact_attribute(relation->rd_att, i);

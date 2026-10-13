@@ -22,6 +22,7 @@
 #include "access/amapi.h"
 #include "access/htup_details.h"
 #include "access/relation.h"
+#include "access/smstore.h"
 #include "access/table.h"
 #include "catalog/pg_aggregate.h"
 #include "catalog/pg_am.h"
@@ -9205,7 +9206,8 @@ static void get_rule_expr(Node *node, deparse_context *context,
      * for EXPLAIN's purposes.
      */
     appendStringInfoString(buf, "nextval(");
-    simple_quote_literal(buf, generate_relation_name(nvexpr->seqid, NIL));
+    /* A sequence in sm has no pg_class row: its name from sm. */
+    simple_quote_literal(buf, smstore_sequence_name(nvexpr->seqid));
     appendStringInfoChar(buf, ')');
   } break;
 

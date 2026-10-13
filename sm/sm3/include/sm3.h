@@ -70,6 +70,12 @@ struct column_spec_t {
     bool        not_null;
     /* The host's default for the column, opaque to sm: kept, not run. */
     std::optional<std::string> default_expr = std::nullopt;
+    /*
+     * An identity column's kind, the host's, 'a' (ALWAYS) or 'd' (BY
+     * DEFAULT), or 0 for none; and the sequence its values come from.
+     */
+    char        identity = 0;
+    uint64_t    identity_seq = 0;
 };
 
 /*
@@ -134,6 +140,8 @@ struct column_rec_t {
   std::optional<std::string> missing; /* its bytes; a varlena if variable */
   std::optional<uint64_t> collation;
   std::optional<std::string> default_expr; /* the host's, opaque */
+  char identity = 0;         /* 'a', 'd', or 0: column_spec_t's */
+  uint64_t identity_seq = 0; /* its sequence, with an identity */
   bool operator==(const column_rec_t&) const = default;
 };
 
@@ -182,6 +190,8 @@ struct column_def_t {
     std::optional<std::string> missing;   /* its bytes, as sm2 holds it */
     const sm2::collation_t*    collation; /* nullptr: none */
     std::optional<std::string> default_expr; /* the host's, opaque */
+    char                       identity = 0;     /* column_spec_t's */
+    uint64_t                   identity_seq = 0; /* its sequence */
 };
 
 /* An index of a loaded table. */
@@ -557,6 +567,11 @@ int cat_list_sequences(session_t* s, uint64_t nspoid,
  * SM_ERR_NOTFOUND; a type code sm2 does not have, or a typmod
  * its type refuses, with SM_ERR_INVALID.
  *
+ * An identity column is a NOT NULL smallint, integer or bigint
+ * with no default, whose sequence is in nspoid and owned by no
+ * column; the column then owns it (own_sequence), for good. Any
+ * other is SM_ERR_INVALID.
+ *
  * The session's transaction sees it at once; others once it
  * commits.
  */
@@ -570,7 +585,9 @@ int create_table(session_t* session, uint64_t nspoid, std::string_view name,
  * definition is kept in the session's memory alone. No other
  * session sees it, and it ends with its session. A name another
  * of the session's temporary tables or their indexes has fails
- * with SM_ERR_DUPKEY. It is found by name with nsp_temp.
+ * with SM_ERR_DUPKEY. It is found by name with nsp_temp. An
+ * identity column is SM_ERR_INVALID: a sequence is never
+ * temporary.
  */
 int create_temp_table(session_t* session, std::string_view name,
                       std::span<const column_spec_t> columns, uint64_t& oid);
@@ -610,7 +627,7 @@ int rename_table(session_t* session, uint64_t oid,
  * Append col to the table oid. A row written before it reads it as
  * missing -- its bytes as sm2 holds them, a varlena for a
  * variable-width type -- or as null without one, so a NOT NULL
- * column needs one.
+ * column needs one. An identity column is SM_ERR_INVALID.
  */
 int add_column(session_t* session, uint64_t oid,
                const column_spec_t& col,
@@ -784,7 +801,8 @@ int drop_sequence(session_t* session, uint64_t oid);
  * the column drops it; table 0 makes it owned by none. The table
  * must be in the sequence's namespace, and attnum one of its live
  * columns, or SM_ERR_INVALID. The table is held against a drop to
- * the end of the transaction.
+ * the end of the transaction. An identity column's sequence is its
+ * for good: changing its owner is SM_ERR_INUSE.
  */
 int own_sequence(session_t* session, uint64_t oid, uint64_t table,
                  int32_t attnum);

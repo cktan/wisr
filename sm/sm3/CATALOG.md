@@ -126,6 +126,12 @@ kinds' values are on disk, so frozen.
   written before them. Dropping the table or the column drops
   it; dropping it alone is `SM_ERR_INUSE`. The table's drop
   finds what it owns by reading its namespace's sequences.
+- **An identity column names its sequence**, in its identity
+  fields, and owns it from the `create_table` that made it:
+  the sequence must be in the table's namespace and owned by
+  none. Its owner is then fixed: `own_sequence` on it is
+  `SM_ERR_INUSE`. The column names it so the host finds it
+  without reading the namespace's sequences.
 - **A table's oid lock is no longer a key here.** It is an
   `sm1::LOCKTYPE_OID` lock on the table's oid
   (`SM3_DESIGN.md` §2). Locking the `TABLE` key instead would
@@ -155,7 +161,7 @@ SEQUENCE value    = sequence
 | meta | format version `int4` |
 | name | kind `int2`, oid `int8`, table oid `int8` or null |
 | table | namespace `int8`, name `text`, storeid `int8`, rowno sequence `text`, next index relid `int2` |
-| column | name `text`, type code `int2`, typmod `int4`, not null `bool`, dropped `bool`, missing value `bytea` or null, collation oid `int8` or null, default `bytea` or null: the host's expression, opaque, kept and never run |
+| column | name `text`, type code `int2`, typmod `int4`, not null `bool`, dropped `bool`, missing value `bytea` or null, collation oid `int8` or null, default `bytea` or null: the host's expression, opaque, kept and never run; identity kind `int2` (`a` or `d`) or null, identity sequence `int8` or null |
 | index | oid `int8`, name `text`, relid `int2`, unique `bool`, nkey `int4`, ninclude `int4`, three retired and null, eval `bytea` or null, nread `int4` or null |
 | index state | state `int2`, error `int2` or null, reason `text` or null |
 | key | attnum `int4`, desc `bool`, nulls first `bool`, collation oid `int8` or null, type code `int2` or null, typmod `int4` or null |

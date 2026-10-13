@@ -794,7 +794,8 @@ static bool only_taken(List *constraints) {
     ConstrType type = lfirst_node(Constraint, l)->contype;
 
     if (type != CONSTR_NOTNULL && type != CONSTR_PRIMARY &&
-        type != CONSTR_UNIQUE && type != CONSTR_DEFAULT)
+        type != CONSTR_UNIQUE && type != CONSTR_DEFAULT &&
+        type != CONSTR_IDENTITY)
       return false;
   }
   return true;
@@ -871,7 +872,6 @@ ObjectAddress smstore_create_table(CreateStmt *stmt) {
     int32 typmod;
 
     if (col->collClause != NULL || col->cooked_default != NULL ||
-        col->identity != 0 ||
         col->generated != 0 || !only_taken(col->constraints))
       ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                       errmsg("column \"%s\" asks for what CREATE TABLE "
@@ -884,6 +884,15 @@ ObjectAddress smstore_create_table(CreateStmt *stmt) {
     columns.push_back({col->colname, type_code(typid, typmod), typmod,
                        column_not_null(stmt, col),
                        column_default(col, typid, typmod)});
+    /*
+     * An identity column's sequence was made before the table, by parse
+     * analysis; sm makes the column own it as it makes the table.
+     */
+    if (col->identity != 0) {
+      columns.back().identity = col->identity;
+      columns.back().identity_seq =
+          RangeVarGetRelid(col->identitySequence, NoLock, false);
+    }
   }
   sm_session_t *s = xact_session();
 
@@ -928,8 +937,6 @@ ObjectAddress smstore_create_sequence(CreateSeqStmt *stmt) {
   ObjectAddress address;
   ListCell *l;
 
-  if (stmt->for_identity)
-    refuse_sequence_option("an identity column");
   if (stmt->ownerId != InvalidOid)
     refuse_sequence_option("an owner");
   if (stmt->sequence->relpersistence != RELPERSISTENCE_PERMANENT)
@@ -951,8 +958,11 @@ ObjectAddress smstore_create_sequence(CreateSeqStmt *stmt) {
 
       if (type != INT2OID && type != INT4OID && type != INT8OID)
         ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                        errmsg("sequence type must be smallint, integer, or "
-                               "bigint")));
+                        stmt->for_identity
+                            ? errmsg("identity column type must be smallint, "
+                                     "integer, or bigint")
+                            : errmsg("sequence type must be smallint, "
+                                     "integer, or bigint")));
     } else
       refuse_sequence_option(opt->defname);
   }
@@ -1061,7 +1071,8 @@ static void drop_sequence(RangeVar *rv, bool missing_ok) {
                       "on it",
                       rv->relname),
                errdetail("A column owns it: it is dropped with its table."),
-               errhint("Use ALTER SEQUENCE ... OWNED BY NONE first.")));
+               errhint("Drop the column, or for a SERIAL column's, use ALTER "
+                       "SEQUENCE ... OWNED BY NONE first.")));
     sm_error("drop a sequence");
   }
 }
@@ -1235,6 +1246,7 @@ smstore_table_t *smstore_table_desc(Oid oid) {
     col->dropped = c.dropped;
     col->default_expr =
         c.default_expr ? pstrdup(c.default_expr->c_str()) : NULL;
+    col->identity = c.identity;
     if (!c.dropped) {
       col->typid = type_oid(c.type_code);
       col->typmod = c.typmod;
@@ -1267,6 +1279,20 @@ smstore_table_t *smstore_table_desc(Oid oid) {
     remember_index(ix->oid, oid);
   }
   return desc;
+}
+
+/*
+ * The sequence the identity column attnum (1-based) of the table relid
+ * takes its values from, or InvalidOid if it is not one.
+ */
+Oid smstore_identity_sequence(Oid relid, AttrNumber attnum) {
+  sm_tbl_t *tbl = open_table(relid, SM_LOCKMODE_IS);
+
+  if (tbl == NULL || attnum < 1 ||
+      attnum > (AttrNumber)sm_tbl_def(tbl)->columns.size())
+    return InvalidOid;
+  const sm_column_def_t &c = sm_tbl_def(tbl)->columns[attnum - 1];
+  return c.identity != 0 && !c.dropped ? (Oid)c.identity_seq : InvalidOid;
 }
 
 /*
@@ -2122,8 +2148,15 @@ ObjectAddress smstore_own_sequence(AlterSeqStmt *stmt, List *owned_by) {
     table = relid;
   }
   if (waiting([&] { return sm_cat_own_sequence(s, oid, table, attnum); }) !=
-      0)
+      0) {
+    if (sm_errnum() == SM_ERR_INUSE)
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("cannot change ownership of identity sequence"),
+                      errdetail("Sequence \"%s\" is linked to an identity "
+                                "column.",
+                                seq_name.c_str())));
     sm_error("give a sequence its owner");
+  }
   ObjectAddressSet(address, RelationRelationId, oid);
   return address;
 }

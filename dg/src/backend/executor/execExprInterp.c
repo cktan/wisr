@@ -2882,11 +2882,22 @@ void ExecEvalCurrentOfExpr(ExprState *state, ExprEvalStep *op) {
 void ExecEvalNextValueExpr(ExprState *state, ExprEvalStep *op) {
   int64 newval = nextval_internal(op->d.nextvalueexpr.seqid, false);
 
+  /*
+   * A sequence in sm keeps no bound of its type (commands/sequence.c): a
+   * value past it fails here, as a SERIAL column's does where it is stored,
+   * rather than wrapping.
+   */
   switch (op->d.nextvalueexpr.seqtypid) {
   case INT2OID:
+    if (newval > PG_INT16_MAX)
+      ereport(ERROR, (errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                      errmsg("smallint out of range")));
     *op->resvalue = Int16GetDatum((int16)newval);
     break;
   case INT4OID:
+    if (newval > PG_INT32_MAX)
+      ereport(ERROR, (errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                      errmsg("integer out of range")));
     *op->resvalue = Int32GetDatum((int32)newval);
     break;
   case INT8OID:

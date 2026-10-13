@@ -500,6 +500,8 @@ struct sm_column_spec_t {
     int32_t     typmod;
     bool        not_null;
     const char* default_expr = nullptr; /* the host's default, opaque */
+    char        identity = 0;     /* 'a', 'd' or 0 (sm3::column_spec_t) */
+    uint64_t    identity_seq = 0; /* an identity column's sequence */
 };
 
 /*
@@ -523,6 +525,8 @@ struct sm_column_def_t {
     bool        not_null;
     bool        dropped;
     std::optional<std::string> default_expr; /* the host's, opaque */
+    char        identity;     /* 'a', 'd' or 0 */
+    uint64_t    identity_seq; /* an identity column's sequence */
 };
 
 /* Where an index's build stands (sm3::index_state_t). */
@@ -651,7 +655,8 @@ int sm_cat_drop_sequence(sm_session_t* session, uint64_t oid);
  * sequence oid, SQL's ALTER SEQUENCE ... OWNED BY, in the session's
  * transaction: dropping the table or the column drops it. Table 0
  * is OWNED BY NONE. A table in another namespace, or a column it
- * does not have, fails with SM_ERR_INVALID.
+ * does not have, fails with SM_ERR_INVALID; an identity column's
+ * sequence, which is its for good, with SM_ERR_INUSE.
  */
 int sm_cat_own_sequence(sm_session_t* session, uint64_t oid, uint64_t table,
                         int32_t attnum);
@@ -1052,7 +1057,8 @@ int sm_tbl_stats(sm_session_t* session, uint64_t oid,
 /*
  * Create the table name in nspoid with these columns: its store,
  * its rowno sequence and its definition, seen by the session's
- * transaction at once and by others at commit.
+ * transaction at once and by others at commit. An identity column
+ * owns its sequence from then on (sm3::create_table).
  */
 int sm_cat_create_table(sm_session_t* session, uint64_t nspoid,
                         const char* name,

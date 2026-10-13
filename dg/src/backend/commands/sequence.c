@@ -9,7 +9,8 @@
  * CREATE SEQUENCE makes one, nextval() draws from it, and currval() and
  * lastval() report what this session drew.  sm's counters only go
  * forward, so setval(), ALTER SEQUENCE but its OWNED BY, and a sequence's
- * other options are refused, and an identity column with them.
+ * other options are refused.  An identity column's sequence is its own,
+ * owned from the CREATE TABLE that made the column, in sm.
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -66,16 +67,24 @@ ObjectAddress DefineSequence(ParseState *pstate, CreateSeqStmt *seq) {
 
 /*
  * ALTER SEQUENCE: OWNED BY alone, as a SERIAL column's sequence is given
- * its owner, made in sm (access/smstore.h); anything else is refused.
+ * its owner, made in sm (access/smstore.h); anything else is refused.  The
+ * OWNED BY parse analysis adds after a CREATE TABLE with an identity column
+ * has nothing to do: sm made the column own the sequence with the table.
  */
 ObjectAddress AlterSequence(ParseState *pstate, AlterSeqStmt *stmt) {
   DefElem *opt;
+  ObjectAddress address;
 
-  if (stmt->for_identity || list_length(stmt->options) != 1)
+  if (list_length(stmt->options) != 1)
     refuse("ALTER SEQUENCE");
   opt = linitial_node(DefElem, stmt->options);
   if (strcmp(opt->defname, "owned_by") != 0)
     refuse("ALTER SEQUENCE");
+  if (stmt->for_identity) {
+    ObjectAddressSet(address, RelationRelationId,
+                     RangeVarGetRelid(stmt->sequence, NoLock, false));
+    return address;
+  }
   return smstore_own_sequence(stmt, (List *)opt->arg);
 }
 

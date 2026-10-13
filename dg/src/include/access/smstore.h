@@ -36,6 +36,7 @@ typedef struct smstore_column_t {
   bool not_null;
   bool dropped;
   const char *default_expr; /* its DEFAULT, nodeToString()'s, or NULL */
+  char identity;            /* attidentity's: 'a', 'd', or 0 */
 } smstore_column_t;
 
 /*
@@ -87,6 +88,7 @@ extern ObjectAddress smstore_own_sequence(AlterSeqStmt *stmt, List *owned_by);
 extern int64 smstore_nextval(Oid oid);
 extern bool smstore_sequence_exists(Oid oid);
 extern const char *smstore_sequence_name(Oid oid);
+extern Oid smstore_identity_sequence(Oid relid, AttrNumber attnum);
 extern ObjectAddress smstore_create_table(CreateStmt *stmt);
 extern void smstore_drop_tables(DropStmt *stmt);
 extern void smstore_drop_table(Oid oid);

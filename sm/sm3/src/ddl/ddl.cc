@@ -78,6 +78,19 @@ int check_columns(std::span<const sm3::column_spec_t> columns) {
                              " has a type code sm2 lacks, or a typmod its "
                              "type refuses");
     }
+    if (c.identity == 0) {
+      continue;
+    }
+    // An identity column: a NOT NULL integer with a sequence and
+    // no default, as PostgreSQL's is.
+    if ((c.identity != 'a' && c.identity != 'd') || c.identity_seq == 0 ||
+        !c.not_null || c.default_expr ||
+        (type != &sm2::type_int2 && type != &sm2::type_int4 &&
+         type != &sm2::type_int8)) {
+      return invalid("create table: identity column " + c.name +
+                     " is not a NOT NULL smallint, integer or bigint with "
+                     "a sequence and no default");
+    }
   }
   return 0;
 }
@@ -118,6 +131,28 @@ static int make_table(session_t *session, uint64_t nspoid,
   if (check_columns(columns) != 0) {
     return -1;
   }
+  // Each identity column's sequence, read under its lock: in the
+  // table's namespace and owned by none, so the column can own it.
+  std::vector<std::pair<int32_t, sequence_rec_t>> owned;
+  for (size_t i = 0; i < columns.size(); i++) {
+    const column_spec_t &c = columns[i];
+    if (c.identity == 0) {
+      continue;
+    }
+    if (nspoid == nsp_temp) {
+      return invalid("create table: identity column " + c.name +
+                     " in a temporary table, whose sequence would be");
+    }
+    sequence_rec_t seq;
+    if (cat_get_sequence_rec(session, c.identity_seq, true, seq) != 0) {
+      return -1;
+    }
+    if (seq.nspoid != nspoid || seq.owner) {
+      return invalid("create table: identity column " + c.name +
+                     "'s sequence is in another namespace, or owned");
+    }
+    owned.push_back({static_cast<int32_t>(i), std::move(seq)});
+  }
   uint64_t t;
   if (cat_new_oid(session, t) != 0) {
     return -1;
@@ -131,7 +166,8 @@ static int make_table(session_t *session, uint64_t nspoid,
                   {}};
   for (const column_spec_t &c : columns) {
     rec.columns.push_back({c.name, c.type_code, c.typmod, c.not_null, false,
-                           std::nullopt, std::nullopt, c.default_expr});
+                           std::nullopt, std::nullopt, c.default_expr,
+                           c.identity, c.identity_seq});
   }
   // The table's store and its rowno sequence (DESIGN.md §5): for a
   // temporary table, both temporary, and so the session's alone
@@ -145,6 +181,16 @@ static int make_table(session_t *session, uint64_t nspoid,
   if (sm1::mkseq(session->sm1, rec.rowno_seq, 1, 1, temp) == 0 &&
       sm1::mkseq(session->sm1, toast_seq_name(t), 1, 1, temp) == 0 &&
       cat_put_table(session, t, rec) == 0) {
+    // The identity columns own their sequences, as own_sequence
+    // would make them.
+    for (auto &[attnum, seq] : owned) {
+      seq.owner = t;
+      seq.owner_attnum = attnum;
+      if (cat_put_sequence_rec(session, rec.columns[attnum].identity_seq,
+                               seq) != 0) {
+        return -1;
+      }
+    }
     oid = t;
     return 0;
   }
@@ -283,6 +329,9 @@ int add_column(session_t *session, uint64_t oid, const column_spec_t &col,
   if (col.not_null && !missing) {
     return invalid("add column: " + col.name +
                    " is NOT NULL, so older rows need a missing value");
+  }
+  if (col.identity != 0) {
+    return invalid("add column: " + col.name + " is an identity column");
   }
   table_rec_t rec;
   if (cat_get_table_rec(session, oid, rec) != 0) {
@@ -591,6 +640,19 @@ int own_sequence(session_t *session, uint64_t oid, uint64_t table,
   }
   if (cat_get_sequence_rec(session, oid, true, rec) != 0) {
     return -1;
+  }
+  // An identity column's sequence is its for good.
+  if (rec.owner) {
+    table_rec_t owner;
+    if (cat_get_table_rec(session, *rec.owner, owner) != 0) {
+      return -1;
+    }
+    if (live_attnum(owner, rec.owner_attnum) &&
+        owner.columns[rec.owner_attnum].identity_seq == oid) {
+      return sm1::seterr(sm1::SM_ERR_INUSE,
+                         "own sequence: " + rec.name +
+                             " is an identity column's of table " + owner.name);
+    }
   }
   if (table == 0) {
     rec.owner = std::nullopt;

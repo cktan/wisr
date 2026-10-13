@@ -1069,3 +1069,79 @@ TEST_CASE("a column owns a sequence, which goes with its table or column") {
   CHECK(sm3::cat_get_sequence(db.ss, sm3::nsp_public, "free", oid) == 0);
   db.commit();
 }
+
+TEST_CASE("an identity column owns its sequence from its CREATE TABLE") {
+  // Verify create_table's identity columns, and that their sequence
+  // stays theirs.
+  // 1. Create t with an ALWAYS identity id on sequence q: after a
+  //    restart, id keeps its kind and sequence, and q is owned by
+  //    t's id, so dropping q is SM_ERR_INUSE.
+  // 2. Changing q's owner, to none or to another column, is
+  //    SM_ERR_INUSE.
+  // 3. An identity column that is nullable, of a non-integer type,
+  //    with a default, an unknown kind, a sequence already owned or
+  //    in another namespace, or in a temporary table, is
+  //    SM_ERR_INVALID; so is one added by add_column.
+  // 4. Dropping t drops q.
+  cat_db_t db;
+  uint64_t q = 0, q2 = 0, other = 0, app = 0, t = 0, oid = 0;
+  db.begin();
+  REQUIRE(sm3::create_namespace(db.ss, "app", app) == 0);
+  REQUIRE(sm3::create_sequence(db.ss, sm3::nsp_public, "q", 1, 1, q) == 0);
+  REQUIRE(sm3::create_sequence(db.ss, sm3::nsp_public, "q2", 1, 1, q2) == 0);
+  REQUIRE(sm3::create_sequence(db.ss, app, "o", 1, 1, other) == 0);
+  std::vector<sm3::column_spec_t> cols = {
+      {"id", sm2::type_int4.code, -1, true, std::nullopt, 'a', q},
+      {"v", sm2::type_text.code, -1, false}};
+  REQUIRE_MESSAGE(sm3::create_table(db.ss, sm3::nsp_public, "t", cols, t) == 0,
+                  sm1::errmsg());
+  db.commit();
+  db.reload();
+  db.begin();
+  auto def = sm3::cat_get_table(db.ss, t);
+  REQUIRE(def);
+  CHECK(def->columns[0].identity == 'a');
+  CHECK(def->columns[0].identity_seq == q);
+  CHECK(def->columns[1].identity == 0);
+  CHECK(sm3::drop_sequence(db.ss, q) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INUSE);
+  REQUIRE(sm3::abort(db.ss) == 0);
+
+  for (int32_t attnum : {-1, 1}) {
+    db.begin();
+    CHECK(sm3::own_sequence(db.ss, q, attnum < 0 ? 0 : t, attnum) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_INUSE);
+    REQUIRE(sm3::abort(db.ss) == 0);
+  }
+
+  std::vector<sm3::column_spec_t> bad[] = {
+      {{"id", sm2::type_int4.code, -1, false, std::nullopt, 'a', q2}},
+      {{"id", sm2::type_text.code, -1, true, std::nullopt, 'a', q2}},
+      {{"id", sm2::type_int4.code, -1, true, std::string("x"), 'd', q2}},
+      {{"id", sm2::type_int4.code, -1, true, std::nullopt, 'x', q2}},
+      {{"id", sm2::type_int4.code, -1, true, std::nullopt, 'd', q}},
+      {{"id", sm2::type_int4.code, -1, true, std::nullopt, 'd', other}}};
+  for (const auto &c : bad) {
+    db.begin();
+    CHECK(sm3::create_table(db.ss, sm3::nsp_public, "u", c, oid) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+    REQUIRE(sm3::abort(db.ss) == 0);
+  }
+  db.begin();
+  CHECK(sm3::create_temp_table(db.ss, "u", cols, oid) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  REQUIRE(sm3::abort(db.ss) == 0);
+  db.begin();
+  CHECK(sm3::add_column(
+            db.ss, t,
+            {"w", sm2::type_int8.code, -1, false, std::nullopt, 'd', q2},
+            std::nullopt) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  REQUIRE(sm3::abort(db.ss) == 0);
+
+  db.begin();
+  REQUIRE_MESSAGE(sm3::drop_table(db.ss, t) == 0, sm1::errmsg());
+  CHECK(sm3::cat_get_sequence(db.ss, sm3::nsp_public, "q", oid) == 1);
+  CHECK(sm3::cat_get_sequence(db.ss, sm3::nsp_public, "q2", oid) == 0);
+  db.commit();
+}
