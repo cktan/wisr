@@ -930,12 +930,45 @@ static void count_usable_fds(int max_to_probe, int *usable_fds,
 }
 
 /*
+ * Raise the process's soft limit on open files to its hard limit. Every
+ * session is a thread of this one process, so their files, RocksDB's and
+ * the clients' sockets all count against the one limit.
+ */
+static void raise_open_files_limit(void) {
+#ifdef HAVE_GETRLIMIT
+  struct rlimit rlim;
+  rlim_t soft;
+
+  if (getrlimit(RLIMIT_NOFILE, &rlim) != 0) {
+    ereport(WARNING, (errmsg("getrlimit failed: %m")));
+    return;
+  }
+  if (rlim.rlim_cur >= rlim.rlim_max)
+    return;
+  soft = rlim.rlim_cur;
+  rlim.rlim_cur = rlim.rlim_max;
+  /* Raised once, at start, before any thread or file of ours is open. */
+  if (setrlimit(RLIMIT_NOFILE, &rlim) != 0) {
+    ereport(WARNING,
+            (errmsg("could not raise the limit on open files from %lu to "
+                    "%lu: %m",
+                    (unsigned long)soft, (unsigned long)rlim.rlim_max)));
+    return;
+  }
+  elog(DEBUG1, "raised the limit on open files from %lu to %lu",
+       (unsigned long)soft, (unsigned long)rlim.rlim_max);
+#endif
+}
+
+/*
  * set_max_safe_fds
  *		Determine number of file descriptors that fd.c is allowed to use
  */
 void set_max_safe_fds(void) {
   int usable_fds;
   int already_open;
+
+  raise_open_files_limit();
 
   /*----------
    * We want to set max_safe_fds to

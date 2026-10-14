@@ -3859,3 +3859,34 @@ and `pss_mutex`; these are the rest:
 - **Left**: port `atomics.c`'s emulation of 64-bit atomics by a
   spinlock, compiled out where a platform has them, as both of
   ours do; and `s_lock.c` with it.
+
+## Step 134: the soft limit on open files is raised to the hard
+
+Every session is a thread of one process, so the sessions'
+files, RocksDB's and the clients' sockets count against one
+`RLIMIT_NOFILE`. PostgreSQL gave each process its own; here a
+service started with systemd's default soft limit, 1024, would
+run out after a dozen busy sessions, and fail wherever an
+`open()` or `accept()` landed rather than in fd.c's LRU.
+
+- **At start, the soft limit is raised to the hard one**
+  (storage/file `fd.c` `raise_open_files_limit()`, first in
+  `set_max_safe_fds()`, which the postmaster and a standalone
+  backend each run once). A failure is a WARNING; the server
+  starts on what it has.
+- **MySQL does the same**, one thread a connection too: it
+  asks `setrlimit()` for what `open_files_limit`,
+  `max_connections` and `table_open_cache` need, and shrinks
+  the last two to what it got. Its open tables are one LRU for
+  every thread, and each engine has a cap of its own
+  (`innodb_open_files`, MyRocks's `rocksdb_max_open_files`).
+- **`test/server.sh`** starts the server with the soft limit at
+  1024 and checks `/proc/<pid>/limits` for soft equal to hard.
+- **Left on purpose**: fd.c's budget is still per thread, each
+  thinking it has `max_safe_fds`, and sm leaves RocksDB's
+  `max_open_files` at -1, every SST file open. A budget for the
+  process in the pcb, and a share for RocksDB, wait for a
+  workload that comes near the raised limit.
+- **Not reachable**: libpq `auth.c`'s RADIUS client calls
+  `select()`, which a socket past `FD_SETSIZE` would overflow;
+  authentication is peer or SCRAM, so it never runs.

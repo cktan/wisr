@@ -120,14 +120,25 @@ bg_end() {
 echo "sesame" > "$work/pw"
 build/initdb --pwfile="$work/pw" "$work/data" > "$work/initdb.out" 2>&1 ||
   fail "initdb"
-$digres -D "$work/data" -k "$work" -p "$port" \
-  -c authentication_timeout=1 > "$work/log" 2>&1 &
+# The soft limit on open files is lowered, as a service's often is, for
+# the server to raise (checked below).
+(ulimit -Sn 1024 && exec $digres -D "$work/data" -k "$work" -p "$port" \
+  -c authentication_timeout=1) > "$work/log" 2>&1 &
 server=$!
 for _ in $(seq 100); do
   grep -q "ready to accept connections" "$work/log" && break
   sleep 0.1
 done
 grep -q "ready to accept connections" "$work/log" || fail "start"
+
+# Verify that the server raises its soft limit on open files to the hard
+# limit, since every session is a thread under the one limit.
+# 1. The server was started above with the soft limit at 1024.
+# 2. Read its soft and hard limits from /proc.
+# 3. Confirm the soft limit is now the hard one.
+read -r soft hard < <(awk '/^Max open files/ { print $4, $5 }' \
+  "/proc/$server/limits")
+[ "$soft" = "$hard" ] || fail "open files limit ($soft, not $hard)"
 
 # Verify that a statement runs over the local socket with no password.
 # 1. Connect as the OS user, which peer authentication allows.
