@@ -71,7 +71,7 @@ void InitLatch(Latch *latch) {
   LATCH_SET(latch->owner_tid, gettid());
   /* Other threads set it too: the postmaster's, by its backends. */
   latch->owner = new sm_thread_ref_t(sm_thread_self());
-  SpinLockInit(&latch->owner_lock);
+  /* owner_lock was made with the latch, a thread's LocalLatchData. */
   latch->is_shared = false;
 
 #ifdef WIN32
@@ -117,7 +117,8 @@ void InitSharedLatch(Latch *latch) {
   LATCH_SET(latch->owner_pid, 0);
   LATCH_SET(latch->owner_tid, 0);
   latch->owner = NULL;
-  SpinLockInit(&latch->owner_lock);
+  /* The latch is a PGPROC's, calloc'd: its mutex is made in place. */
+  new (&latch->owner_lock) std::mutex();
   latch->is_shared = true;
 }
 
@@ -141,12 +142,14 @@ void OwnLatch(Latch *latch) {
   if (owner_pid != 0)
     elog(PANIC, "latch already owned by PID %d", owner_pid);
 
-  /* Made before the lock: a spinlock is held for a few instructions. */
+  /* Made before the lock, which is held for a few instructions. */
   owner = new sm_thread_ref_t(sm_thread_self());
-  /* Published under the lock that SetLatch() copies it under. */
-  SpinLockAcquire(&latch->owner_lock);
-  latch->owner = owner;
-  SpinLockRelease(&latch->owner_lock);
+  {
+    /* Published under the lock that SetLatch() copies it under. */
+    std::lock_guard<std::mutex> lock(latch->owner_lock);
+
+    latch->owner = owner;
+  }
 
   LATCH_SET(latch->owner_pid, MyProcPid);
   LATCH_SET(latch->owner_tid, gettid());
@@ -164,11 +167,13 @@ void DisownLatch(Latch *latch) {
   LATCH_SET(latch->owner_pid, 0);
   LATCH_SET(latch->owner_tid, 0);
 
-  /* Unpublished under the lock, so no SetLatch() is copying it. */
-  SpinLockAcquire(&latch->owner_lock);
-  owner = latch->owner;
-  latch->owner = NULL;
-  SpinLockRelease(&latch->owner_lock);
+  {
+    /* Unpublished under the lock, so no SetLatch() is copying it. */
+    std::lock_guard<std::mutex> lock(latch->owner_lock);
+
+    owner = latch->owner;
+    latch->owner = NULL;
+  }
   delete owner;
 }
 
@@ -384,12 +389,11 @@ void SetLatch(Latch *latch) {
  */
 sm_thread_ref_t LatchOwner(Latch *latch) {
   sm_thread_ref_t owner;
-
   /* Copied under the lock that DisownLatch() deletes it under. */
-  SpinLockAcquire(&latch->owner_lock);
+  std::lock_guard<std::mutex> lock(latch->owner_lock);
+
   if (latch->owner != NULL)
     owner = *latch->owner;
-  SpinLockRelease(&latch->owner_lock);
   return owner;
 }
 

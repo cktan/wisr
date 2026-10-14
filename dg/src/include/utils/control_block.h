@@ -54,9 +54,11 @@ struct shmem_index_free_t {
   void operator()(shmem_index_t *index) const;
 };
 
-union LWLockPadded;     /* storage/lwlock.h */
-struct PGSemaphoreData; /* port/posix_sema.c */
-struct SISeg;           /* storage/ipc/sinvaladt.c */
+union LWLockPadded;                    /* storage/lwlock.h */
+struct PGSemaphoreData;                /* port/posix_sema.c */
+struct SISeg;                          /* storage/ipc/sinvaladt.c */
+struct ProcSignalSlot;                 /* storage/ipc/procsignal.c */
+struct FastPathStrongRelationLockData; /* storage/lmgr/lock.c */
 
 /*
  * The process control block: one for the process.  What the process keeps
@@ -78,6 +80,18 @@ typedef struct pcb_t {
 
   /* sinvaladt.c: the shared invalidation queue, malloc'd */
   struct SISeg *sinval = nullptr;
+
+  /* guc.c: postgresql.auto.conf, rewritten by one ALTER SYSTEM at a time */
+  std::mutex auto_file_mutex;
+
+  /* proc.c: the free list of PGPROCs */
+  std::mutex proc_struct_mutex;
+
+  /* procsignal.c: a ProcSignal slot a session, new'd */
+  struct ProcSignalSlot *procsignal = nullptr;
+
+  /* lock.c: the fast path's counts of strong locks, new'd */
+  struct FastPathStrongRelationLockData *fast_path_strong = nullptr;
 } pcb_t;
 
 /* The thread control block: one for each thread that runs digres code. */

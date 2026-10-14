@@ -42,6 +42,7 @@
 #include "storage/procarray.h"
 #include "storage/procsignal.h"
 #include "storage/spin.h"
+#include "utils/control_block.h"
 #include "utils/timeout.h"
 #include "utils/wait_event.h"
 #include "utils/timestamp.h"
@@ -59,13 +60,11 @@ thread_local /*LOCAL*/ bool log_lock_waits = false;
 thread_local /*LOCAL*/ PGPROC *MyProc = NULL;
 
 /*
- * This spinlock protects the freelist of recycled PGPROC structures.
- * We cannot use an LWLock because the LWLock manager depends on already
- * having a PGPROC and a wait semaphore!  But these structures are touched
- * relatively infrequently (only at backend startup or shutdown) and not for
- * very long, so a spinlock is okay.
+ * pcb->proc_struct_mutex protects the freelist of recycled PGPROC
+ * structures.  It cannot be an LWLock, because the LWLock manager depends on
+ * already having a PGPROC and a wait semaphore; and these structures are
+ * touched only at a session's start and end, not for long.
  */
-static thread_local /*SHARED*/ slock_t *ProcStructLock = NULL;
 
 /* Pointers to shared-memory structures */
 thread_local /*SHARED*/ PROC_HDR *ProcGlobal = NULL;
@@ -271,11 +270,6 @@ void InitProcGlobal(void) {
 
   /* Should have consumed exactly the expected amount of fast-path memory. */
   Assert(fpPtr == fpEndPtr);
-
-  /* Create ProcStructLock spinlock, too */
-  ProcStructLock = (slock_t *)ShmemInitStruct("ProcStructLock spinlock",
-                                              sizeof(slock_t), &found);
-  SpinLockInit(ProcStructLock);
 }
 
 /*
@@ -309,24 +303,24 @@ void InitProcess(void) {
    * Try to get a proc struct from the appropriate free list.  If this
    * fails, we must be out of PGPROC structures (not to mention semaphores).
    *
-   * While we are holding the ProcStructLock, also copy the current shared
+   * While we are holding the free list's lock, also copy the current shared
    * estimate of spins_per_delay to local storage.
    */
-  SpinLockAcquire(ProcStructLock);
+  {
+    /* Just long enough to take a PGPROC off the list. */
+    std::lock_guard<std::mutex> lock(pcb->proc_struct_mutex);
 
-  set_spins_per_delay(ProcGlobal->spins_per_delay);
-
-  if (!dlist_is_empty(procgloballist)) {
-    MyProc =
-        dlist_container(PGPROC, links, dlist_pop_head_node(procgloballist));
-    SpinLockRelease(ProcStructLock);
-  } else {
+    set_spins_per_delay(ProcGlobal->spins_per_delay);
+    if (!dlist_is_empty(procgloballist))
+      MyProc =
+          dlist_container(PGPROC, links, dlist_pop_head_node(procgloballist));
+  }
+  if (MyProc == NULL) {
     /*
      * If we reach here, all the PGPROCs are in use.  This is one of the
      * possible places to detect "too many backends", so give the standard
      * error message.
      */
-    SpinLockRelease(ProcStructLock);
     ereport(FATAL, (errcode(ERRCODE_TOO_MANY_CONNECTIONS),
                     errmsg("sorry, too many clients already")));
   }
@@ -455,7 +449,8 @@ bool HaveNFreeProcs(int n, int *nfree) {
   Assert(n > 0);
   Assert(nfree);
 
-  SpinLockAcquire(ProcStructLock);
+  /* The free list's lock, while it is counted. */
+  std::lock_guard<std::mutex> lock(pcb->proc_struct_mutex);
 
   *nfree = 0;
   dlist_foreach(iter, &ProcGlobal->freeProcs) {
@@ -463,8 +458,6 @@ bool HaveNFreeProcs(int n, int *nfree) {
     if (*nfree == n)
       break;
   }
-
-  SpinLockRelease(ProcStructLock);
 
   return (*nfree == n);
 }
@@ -676,7 +669,8 @@ static void ProcKill(int code, Datum arg) {
   proc->vxid.procNumber = INVALID_PROC_NUMBER;
   proc->vxid.lxid = InvalidTransactionId;
 
-  SpinLockAcquire(ProcStructLock);
+  /* The free list's lock, while our PGPROC goes back on it. */
+  std::lock_guard<std::mutex> lock(pcb->proc_struct_mutex);
   if (push_leader) {
     /* Return leader PGPROC (and semaphore) to appropriate freelist */
     dlist_push_head(leader->procgloballist, &leader->links);
@@ -693,8 +687,6 @@ static void ProcKill(int code, Datum arg) {
   /* Update shared estimate of spins_per_delay */
   ProcGlobal->spins_per_delay =
       update_spins_per_delay(ProcGlobal->spins_per_delay);
-
-  SpinLockRelease(ProcStructLock);
 }
 
 /*

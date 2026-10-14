@@ -248,11 +248,13 @@ void InitProcessLocalLatch(void) {
 void ShutdownProcessLocalLatch(void) {
   sm_thread_ref_t *owner;
 
-  /* Unpublished under the lock, so no SetLatch() is copying it. */
-  SpinLockAcquire(&LocalLatchData.owner_lock);
-  owner = LocalLatchData.owner;
-  LocalLatchData.owner = NULL;
-  SpinLockRelease(&LocalLatchData.owner_lock);
+  {
+    /* Unpublished under the lock, so no SetLatch() is copying it. */
+    std::lock_guard<std::mutex> lock(LocalLatchData.owner_lock);
+
+    owner = LocalLatchData.owner;
+    LocalLatchData.owner = NULL;
+  }
   delete owner;
 }
 

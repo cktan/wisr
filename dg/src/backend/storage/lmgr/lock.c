@@ -32,13 +32,15 @@
 #include <signal.h>
 #include <unistd.h>
 
+#include <atomic>
+
 #include "access/transam.h"
 #include "miscadmin.h"
 #include "pg_trace.h"
 #include "storage/lmgr.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
-#include "storage/spin.h"
+#include "utils/control_block.h"
 #include "utils/memutils.h"
 #include "utils/ps_status.h"
 #include "utils/resowner.h"
@@ -280,13 +282,14 @@ static bool FastPathTransferRelationLocks(LockMethod lockMethodTable,
 #define FastPathStrongLockHashPartition(hashcode) \
 	((hashcode) % FAST_PATH_STRONG_LOCK_HASH_PARTITIONS)
 
-typedef struct {
-  slock_t mutex;
-  uint32 count[FAST_PATH_STRONG_LOCK_HASH_PARTITIONS];
+/*
+ * Each count stands alone, and the fast path reads it under another lock
+ * (fpInfoLock): so each is an atomic, which a spinlock guarded.  The
+ * structure is pcb->fast_path_strong, made once by the postmaster.
+ */
+typedef struct FastPathStrongRelationLockData {
+  std::atomic<uint32> count[FAST_PATH_STRONG_LOCK_HASH_PARTITIONS];
 } FastPathStrongRelationLockData;
-
-static thread_local /*SHARED*/ volatile FastPathStrongRelationLockData
-    *FastPathStrongRelationLocks;
 
 /*
  * Pointers to hash tables containing lock state
@@ -442,12 +445,10 @@ void LockManagerShmemInit(void) {
   /*
    * Allocate fast-path structures.
    */
-  FastPathStrongRelationLocks =
-      (volatile FastPathStrongRelationLockData *)ShmemInitStruct(
-          "Fast Path Strong Relation Lock Data",
-          sizeof(FastPathStrongRelationLockData), &found);
-  if (!found)
-    SpinLockInit(&FastPathStrongRelationLocks->mutex);
+  if (pcb->fast_path_strong == NULL) {
+    /* Kept for the process's whole life, as the pcb is: never freed. */
+    pcb->fast_path_strong = new FastPathStrongRelationLockData();
+  }
 }
 
 /*
@@ -863,11 +864,11 @@ LockAcquireResult LockAcquireExtended(const LOCKTAG *locktag, LOCKMODE lockmode,
     /*
      * LWLockAcquire acts as a memory sequencing point, so it's safe to
      * assume that any strong locker whose increment to
-     * FastPathStrongRelationLocks->counts becomes visible after we test
+     * pcb->fast_path_strong->counts becomes visible after we test
      * it has yet to begin to transfer fast-path locks.
      */
     LWLockAcquire(&MyProc->fpInfoLock, LW_EXCLUSIVE);
-    if (FastPathStrongRelationLocks->count[fasthashcode] != 0)
+    if (pcb->fast_path_strong->count[fasthashcode] != 0)
       acquired = false;
     else
       acquired = FastPathGrantRelationLock(locktag->locktag_field2, lockmode);
@@ -1294,11 +1295,9 @@ static void RemoveLocalLock(LOCALLOCK *locallock) {
 
     fasthashcode = FastPathStrongLockHashPartition(locallock->hashcode);
 
-    SpinLockAcquire(&FastPathStrongRelationLocks->mutex);
-    Assert(FastPathStrongRelationLocks->count[fasthashcode] > 0);
-    FastPathStrongRelationLocks->count[fasthashcode]--;
+    Assert(pcb->fast_path_strong->count[fasthashcode] > 0);
+    pcb->fast_path_strong->count[fasthashcode]--;
     locallock->holdsStrongLockCount = false;
-    SpinLockRelease(&FastPathStrongRelationLocks->mutex);
   }
 
   if (!hash_search(LockMethodLocalHash, &(locallock->tag), HASH_REMOVE, NULL))
@@ -1589,15 +1588,12 @@ static void BeginStrongLockAcquire(LOCALLOCK *locallock, uint32 fasthashcode) {
    * ensure we don't collide with someone else trying to bump the count at
    * the same time.
    *
-   * XXX: It might be worth considering using an atomic fetch-and-add
-   * instruction here, on architectures where that is supported.
+   * The count is an atomic: its increment is a fetch-and-add.
    */
 
-  SpinLockAcquire(&FastPathStrongRelationLocks->mutex);
-  FastPathStrongRelationLocks->count[fasthashcode]++;
+  pcb->fast_path_strong->count[fasthashcode]++;
   locallock->holdsStrongLockCount = true;
   StrongLockInProgress = locallock;
-  SpinLockRelease(&FastPathStrongRelationLocks->mutex);
 }
 
 /*
@@ -1619,12 +1615,10 @@ void AbortStrongLockAcquire(void) {
 
   fasthashcode = FastPathStrongLockHashPartition(locallock->hashcode);
   Assert(locallock->holdsStrongLockCount == true);
-  SpinLockAcquire(&FastPathStrongRelationLocks->mutex);
-  Assert(FastPathStrongRelationLocks->count[fasthashcode] > 0);
-  FastPathStrongRelationLocks->count[fasthashcode]--;
+  Assert(pcb->fast_path_strong->count[fasthashcode] > 0);
+  pcb->fast_path_strong->count[fasthashcode]--;
   locallock->holdsStrongLockCount = false;
   StrongLockInProgress = NULL;
-  SpinLockRelease(&FastPathStrongRelationLocks->mutex);
 }
 
 /*
@@ -2839,10 +2833,8 @@ static void LockRefindAndRelease(LockMethod lockMethodTable, PGPROC *proc,
       ConflictsWithRelationFastPath(locktag, lockmode)) {
     uint32 fasthashcode = FastPathStrongLockHashPartition(hashcode);
 
-    SpinLockAcquire(&FastPathStrongRelationLocks->mutex);
-    Assert(FastPathStrongRelationLocks->count[fasthashcode] > 0);
-    FastPathStrongRelationLocks->count[fasthashcode]--;
-    SpinLockRelease(&FastPathStrongRelationLocks->mutex);
+    Assert(pcb->fast_path_strong->count[fasthashcode] > 0);
+    pcb->fast_path_strong->count[fasthashcode]--;
   }
 }
 

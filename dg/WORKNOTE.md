@@ -3795,3 +3795,67 @@ touches. Each went with nothing calling it.
   and `RequestNamedLWLockTranche()`, which a library in
   `shared_preload_libraries` may use, and digres still loads
   libraries (`SHMEM.md` §6).
+
+## Step 132: a lock or two of PostgreSQL's is a C++ mutex
+
+`SHMEM.md` §3. Three locks of the five the survey named for
+this are `std::mutex` now, in the pcb.
+
+- **`held_lock_t`** (`storage/held_lock.h`) holds a
+  `std::mutex` or `std::shared_mutex` as an LWLock is held:
+  interrupts held off while it is, so no cancel taken at a
+  `CHECK_FOR_INTERRUPTS()` inside the section, which
+  `errfinish()` runs after a WARNING or a LOG, ends it midway;
+  and let go, with them, as its scope ends. An error's unwinding
+  lets the lock go and leaves the holdoff count, which
+  `errfinish()` has already set to 0, as `LWLockReleaseAll()`
+  does. A FATAL runs the exit callbacks before it unwinds, so a
+  lock an exit callback takes must be let go before one.
+- **AutoFile** is `pcb->auto_file_mutex`, held by a
+  `held_lock_t` across `AlterSystemSetConfigFile()` (utils/misc
+  `guc.c`). `server.sh` runs ALTER SYSTEM in 8 sessions at
+  once: all 8 settings are kept. Without the lock it loses
+  some, every time.
+- **ProcStructLock**, a spinlock, is `pcb->proc_struct_mutex`,
+  under `std::lock_guard`: its sections raise nothing.
+  `InitProcess()` (storage/lmgr `proc.c`) takes a PGPROC under
+  it and raises "too many clients" after.
+- **ProcSignal's `pss_mutex`**, a spinlock a slot, is a
+  `std::mutex` in each slot, each section a `std::unique_lock`.
+  The slots are `pcb->procsignal`, `new`'d once by the
+  postmaster, as `CODE.md` §3 asks of a global a change
+  touches; the `thread_local` `ProcSignalSlots`, its
+  `ShmemInitStruct()` and `ProcSignalShmemSize()` are gone.
+- **Not converted**: XidGen and OidGen, as transaction ids and
+  OIDs are sm's and PostgreSQL's counters of them are to go;
+  RelationMapping and RelCacheInit, which guard the relation
+  mapper's files and the relcache's init files, never read
+  (`SHMEM.md` §3).
+
+## Step 133: no spinlock is taken
+
+Spinlocks were how processes sharing a segment guarded a few
+words of it; threads of one process have `std::mutex`, whose
+waiter sleeps rather than spins. Step 132 took ProcStructLock
+and `pss_mutex`; these are the rest:
+
+- **The fast path's strong-lock counts** (storage/lmgr
+  `lock.c`) are a `std::atomic<uint32>` each, with no lock: the
+  spinlock guarded only them, each on its own, and the fast
+  path read them under another lock (`fpInfoLock`), which no
+  mutex of theirs would have covered. Their structure is
+  `pcb->fast_path_strong`, `new`'d once, and its
+  `ShmemInitStruct()` is gone.
+- **The latch's `owner_lock`** (storage/ipc `latch.c`) is a
+  `std::mutex`, each section a `std::lock_guard`. A thread's
+  `LocalLatchData` makes its own; `InitSharedLatch()` makes a
+  PGPROC's in place, the PGPROCs being `calloc`'d. No signal
+  handler takes it: one sets only its own thread's latch.
+- **The dynahash free lists** of a partitioned table
+  (utils/hash `dynahash.c`), the lock manager's, are a
+  `std::mutex` each, made in place in the `calloc`'d header,
+  and locked and unlocked where the spinlocks were: the
+  locking depends on `IS_PARTITIONED()`, and no section raises.
+- **Left**: port `atomics.c`'s emulation of 64-bit atomics by a
+  spinlock, compiled out where a platform has them, as both of
+  ours do; and `s_lock.c` with it.

@@ -65,7 +65,7 @@ PG_LWLOCK(25, RelationMapping)
 /* 32 was SyncRepLock */
 /* 33 was BackgroundWorker */
 /* 34 was DynamicSharedMemoryControlLock */
-PG_LWLOCK(35, AutoFile)
+/* 35 was AutoFileLock */
 /* 36 was ReplicationSlotAllocationLock */
 /* 37 was ReplicationSlotControlLock */
 /* 38 was CommitTsSLRULock */

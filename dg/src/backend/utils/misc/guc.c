@@ -40,8 +40,10 @@
 #include "parser/scansup.h"
 #include "port/pg_bitutils.h"
 #include "storage/fd.h"
+#include "storage/held_lock.h"
 #include "storage/lwlock.h"
 #include "storage/shmem.h"
+#include "utils/control_block.h"
 #include "tcop/tcopprot.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
@@ -4026,10 +4028,10 @@ void AlterSystemSetConfigFile(AlterSystemStmt *altersysstmt) {
 
   /*
    * Only one backend is allowed to operate on PG_AUTOCONF_FILENAME at a
-   * time.  Use AutoFileLock to ensure that.  We must hold the lock while
-   * reading the old file contents.
+   * time.  Use pcb->auto_file_mutex to ensure that.  We must hold the lock
+   * while reading the old file contents; it is held to the function's end.
    */
-  LWLockAcquire(AutoFileLock, LW_EXCLUSIVE);
+  held_mutex_t lock(pcb->auto_file_mutex);
 
   /*
    * If we're going to reset everything, then no need to open or parse the
@@ -4128,8 +4130,6 @@ void AlterSystemSetConfigFile(AlterSystemStmt *altersysstmt) {
   PG_END_TRY();
 
   FreeConfigVariables(head);
-
-  LWLockRelease(AutoFileLock);
 }
 
 /*

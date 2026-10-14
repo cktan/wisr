@@ -102,7 +102,8 @@
 
 #include <signal.h>
 
-#include "storage/spin.h"
+#include <mutex>
+
 #include "storage/waiteventset.h" /* for WL_* arguments to WaitLatch */
 #include "sm_sys.h"
 
@@ -132,7 +133,7 @@ typedef struct Latch {
    * to copy it.  NULL while not owned.
    */
   sm_thread_ref_t *owner;
-  slock_t owner_lock;
+  std::mutex owner_lock;
 #ifdef WIN32
   HANDLE event;
 #endif

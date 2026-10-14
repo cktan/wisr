@@ -17,6 +17,8 @@
 #include <signal.h>
 #include <unistd.h>
 
+#include <mutex>
+
 #include "miscadmin.h"
 #include "port/atomics.h"
 #include "port/pg_bitutils.h"
@@ -25,6 +27,7 @@
 #include "storage/proc.h"
 #include "storage/shmem.h"
 #include "storage/sinval.h"
+#include "utils/control_block.h"
 #include "tcop/tcopprot.h"
 #include "utils/memutils.h"
 #include "utils/wait_event.h"
@@ -38,74 +41,48 @@
  * observe it only once.)
  *
  * Each process that wants to receive signals registers its process ID
- * in the ProcSignalSlots array. The array is indexed by ProcNumber to make
+ * in the pcb->procsignal array. The array is indexed by ProcNumber to make
  * slot allocation simple, and to avoid having to search the array when you
  * know the ProcNumber of the process you're signaling.  (We do support
  * signaling without ProcNumber, but it's a bit less efficient.)
  *
- * The fields in each slot are protected by a spinlock, pss_mutex. pss_pid can
- * also be read without holding the spinlock, as a quick preliminary check
+ * The fields in each slot are protected by its std::mutex, pss_mutex.
+ * pss_pid can also be read without holding it, as a quick preliminary check
  * when searching for a particular PID in the array.
  *
  * pss_signalFlags are set where we don't need to keep track of whether or
  * not the target process has handled the signal.
  */
-typedef struct {
+typedef struct ProcSignalSlot {
   pg_atomic_uint32 pss_pid;
   int pss_cancel_key_len; /* 0 means no cancellation is possible */
   uint8 pss_cancel_key[MAX_CANCEL_KEY_LENGTH];
   volatile sig_atomic_t pss_signalFlags[NUM_PROCSIGNALS];
-  slock_t pss_mutex; /* protects the above fields */
+  std::mutex pss_mutex; /* protects the above fields */
 } ProcSignalSlot;
 
-/*
- * We reserve a slot for each possible ProcNumber, plus one for each
- * possible auxiliary process type.  (This scheme assumes there is not
- * more than one of any auxiliary process type at a time.)
- */
+/* We reserve a slot for each possible ProcNumber. */
 #define NumProcSignalSlots	(MaxBackends)
 
-static thread_local /*SHARED*/ ProcSignalSlot *ProcSignalSlots = NULL;
 static thread_local /*LOCAL*/ ProcSignalSlot *MyProcSignalSlot = NULL;
 
 static bool CheckProcSignal(ProcSignalReason reason);
 static void CleanupProcSignalState(int status, Datum arg);
 
 /*
- * ProcSignalShmemSize
- *		Compute space needed for ProcSignal's shared memory
- */
-Size ProcSignalShmemSize(void) {
-  Size size;
-
-  size = mul_size(NumProcSignalSlots, sizeof(ProcSignalSlot));
-  return size;
-}
-
-/*
  * ProcSignalShmemInit
- *		Allocate and initialize ProcSignal's shared memory
+ *		Make and initialize the ProcSignal slots, once
+ *
+ * The postmaster makes them before any session thread starts (CODE.md
+ * section 3); a session thread's call finds them made.
  */
 void ProcSignalShmemInit(void) {
-  Size size = ProcSignalShmemSize();
-  bool found;
-
-  ProcSignalSlots =
-      (ProcSignalSlot *)ShmemInitStruct("ProcSignal", size, &found);
-
-  /* If we're first, initialize. */
-  if (!found) {
-    int i;
-
-    for (i = 0; i < NumProcSignalSlots; ++i) {
-      ProcSignalSlot *slot = &ProcSignalSlots[i];
-
-      SpinLockInit(&slot->pss_mutex);
-      pg_atomic_init_u32(&slot->pss_pid, 0);
-      slot->pss_cancel_key_len = 0;
-      MemSet(slot->pss_signalFlags, 0, sizeof(slot->pss_signalFlags));
-    }
-  }
+  if (pcb->procsignal != NULL)
+    return;
+  /* Kept for the process's whole life, as the pcb is: never freed. */
+  pcb->procsignal = new ProcSignalSlot[NumProcSignalSlots]();
+  for (int i = 0; i < NumProcSignalSlots; ++i)
+    pg_atomic_init_u32(&pcb->procsignal[i].pss_pid, 0);
 }
 
 /*
@@ -122,9 +99,9 @@ void ProcSignalInit(const uint8 *cancel_key, int cancel_key_len) {
   if (MyProcNumber >= NumProcSignalSlots)
     elog(ERROR, "unexpected MyProcNumber %d in ProcSignalInit (max %d)",
          MyProcNumber, NumProcSignalSlots);
-  slot = &ProcSignalSlots[MyProcNumber];
+  slot = &pcb->procsignal[MyProcNumber];
 
-  SpinLockAcquire(&slot->pss_mutex);
+  std::unique_lock<std::mutex> lock(slot->pss_mutex);
 
   /* Value used for sanity check below */
   old_pss_pid = pg_atomic_read_u32(&slot->pss_pid);
@@ -139,9 +116,9 @@ void ProcSignalInit(const uint8 *cancel_key, int cancel_key_len) {
     memcpy(slot->pss_cancel_key, cancel_key, cancel_key_len);
   slot->pss_cancel_key_len = cancel_key_len;
 
-  SpinLockRelease(&slot->pss_mutex);
+  lock.unlock();
 
-  /* Spinlock is released, do the check */
+  /* The lock is released, do the check */
   if (old_pss_pid != 0)
     elog(LOG, "process %d taking over ProcSignal slot %d, but it's not empty",
          MyProcPid, MyProcNumber);
@@ -172,16 +149,16 @@ static void CleanupProcSignalState(int status, Datum arg) {
   MyProcSignalSlot = NULL;
 
   /* sanity check */
-  SpinLockAcquire(&slot->pss_mutex);
+  std::unique_lock<std::mutex> lock(slot->pss_mutex);
   old_pid = pg_atomic_read_u32(&slot->pss_pid);
   if (old_pid != MyProcPid) {
     /*
      * don't ERROR here. We're exiting anyway, and don't want to get into
      * infinite loop trying to exit
      */
-    SpinLockRelease(&slot->pss_mutex);
+    lock.unlock();
     elog(LOG, "process %d releasing ProcSignal slot %d, but it contains %d",
-         MyProcPid, (int)(slot - ProcSignalSlots), (int)old_pid);
+         MyProcPid, (int)(slot - pcb->procsignal), (int)old_pid);
     return; /* XXX better to zero the slot anyway? */
   }
 
@@ -189,7 +166,7 @@ static void CleanupProcSignalState(int status, Datum arg) {
   pg_atomic_write_u32(&slot->pss_pid, 0);
   slot->pss_cancel_key_len = 0;
 
-  SpinLockRelease(&slot->pss_mutex);
+  lock.unlock();
 }
 
 /*
@@ -204,22 +181,22 @@ static void CleanupProcSignalState(int status, Datum arg) {
  * Not to be confused with ProcSendSignal
  */
 int SendProcSignal(pid_t pid, ProcSignalReason reason, ProcNumber procNumber) {
-  volatile ProcSignalSlot *slot;
+  ProcSignalSlot *slot;
 
   if (procNumber != INVALID_PROC_NUMBER) {
     Assert(procNumber < NumProcSignalSlots);
-    slot = &ProcSignalSlots[procNumber];
+    slot = &pcb->procsignal[procNumber];
 
-    SpinLockAcquire(&slot->pss_mutex);
+    std::unique_lock<std::mutex> lock(slot->pss_mutex);
     if (pg_atomic_read_u32(&slot->pss_pid) == pid) {
       /* Atomically set the proper flag */
       slot->pss_signalFlags[reason] = true;
-      SpinLockRelease(&slot->pss_mutex);
+      lock.unlock();
       /* Send signal */
       InterruptProc(GetPGProcByNumber(procNumber), INTERRUPT_PROCSIG);
       return 0;
     }
-    SpinLockRelease(&slot->pss_mutex);
+    lock.unlock();
   } else {
     /*
      * procNumber not provided, so search the array using pid.  We search
@@ -231,19 +208,19 @@ int SendProcSignal(pid_t pid, ProcSignalReason reason, ProcNumber procNumber) {
     int i;
 
     for (i = NumProcSignalSlots - 1; i >= 0; i--) {
-      slot = &ProcSignalSlots[i];
+      slot = &pcb->procsignal[i];
 
       if (pg_atomic_read_u32(&slot->pss_pid) == pid) {
-        SpinLockAcquire(&slot->pss_mutex);
+        std::unique_lock<std::mutex> lock(slot->pss_mutex);
         if (pg_atomic_read_u32(&slot->pss_pid) == pid) {
           /* Atomically set the proper flag */
           slot->pss_signalFlags[reason] = true;
-          SpinLockRelease(&slot->pss_mutex);
+          lock.unlock();
           /* Send signal */
           InterruptProc(GetPGProcByNumber(i), INTERRUPT_PROCSIG);
           return 0;
         }
-        SpinLockRelease(&slot->pss_mutex);
+        lock.unlock();
       }
     }
   }
@@ -311,23 +288,23 @@ void SendCancelRequest(int backendPID, const uint8 *cancel_key,
    * racy anyway, although OS's avoid reusing PIDs too soon.
    */
   for (int i = 0; i < NumProcSignalSlots; i++) {
-    ProcSignalSlot *slot = &ProcSignalSlots[i];
+    ProcSignalSlot *slot = &pcb->procsignal[i];
     bool match;
 
     if (pg_atomic_read_u32(&slot->pss_pid) != backendPID)
       continue;
 
     /* Acquire the spinlock and re-check */
-    SpinLockAcquire(&slot->pss_mutex);
+    std::unique_lock<std::mutex> lock(slot->pss_mutex);
     if (pg_atomic_read_u32(&slot->pss_pid) != backendPID) {
-      SpinLockRelease(&slot->pss_mutex);
+      lock.unlock();
       continue;
     } else {
       match = slot->pss_cancel_key_len == cancel_key_len &&
               timingsafe_bcmp(slot->pss_cancel_key, cancel_key,
                               cancel_key_len) == 0;
 
-      SpinLockRelease(&slot->pss_mutex);
+      lock.unlock();
 
       if (match) {
         /* Found a match; signal that backend to cancel current op */

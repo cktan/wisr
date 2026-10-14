@@ -1917,6 +1917,25 @@ local_psql -c 'create table toast1 (id int4 primary key, a text, b text,
   tr '\n' ,)" = "100001,DELETE 1," ] ||
   fail "DELETE ... RETURNING reads a value out of line"
 
+# Verify that ALTER SYSTEM rewrites postgresql.auto.conf one session at a
+# time (guc.c's pcb->auto_file_mutex).
+# 1. In 8 sessions at once, each sets its own setting with ALTER SYSTEM.
+# 2. The file holds all 8, each once: none was lost to another's rewrite.
+# 3. ALTER SYSTEM RESET ALL leaves none.
+pids=()
+for i in $(seq 8); do
+  local_psql -c "alter system set application_name = 'as$i'" \
+    -c "alter system set statement_timeout = '${i}s'" \
+    -c "alter system set \"dg.as$i\" = 'v$i'" > "$work/as$i.out" 2>&1 &
+  pids+=($!)
+done
+wait "${pids[@]}"
+[ "$(grep -c "^dg\.as[1-8] = 'v[1-8]'$" "$work/data/postgresql.auto.conf")" \
+  = 8 ] || fail "ALTER SYSTEM from 8 sessions"
+local_psql -c 'alter system reset all' > "$work/asreset.out" 2>&1
+grep -q "^dg\.as" "$work/data/postgresql.auto.conf" &&
+  fail "ALTER SYSTEM RESET ALL"
+
 # Verify that date, time, timestamp, timestamptz, interval and uuid columns
 # are stored in sm and keyed in its indexes in PostgreSQL's order.
 # 1. Make t18 with each and an index on each, made empty; insert values at

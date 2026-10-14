@@ -235,7 +235,6 @@ SInvalRead	"Waiting to retrieve messages from the shared catalog invalidation qu
 SInvalWrite	"Waiting to add a message to the shared catalog invalidation queue."
 RelCacheInit	"Waiting to read or update a <filename>pg_internal.init</filename> relation cache initialization file."
 RelationMapping	"Waiting to read or update a <filename>pg_filenode.map</filename> file (used to track the filenode assignments of certain system catalogs)."
-AutoFile	"Waiting to update the <filename>postgresql.auto.conf</filename> file."
 XactTruncation	"Waiting to execute <function>pg_xact_status</function> or update the oldest transaction ID available to it."
 InjectionPoint	"Waiting to read or update information related to injection points."
 

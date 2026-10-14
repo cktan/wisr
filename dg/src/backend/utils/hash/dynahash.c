@@ -96,11 +96,13 @@
 
 #include <limits.h>
 
+#include <mutex>
+#include <new>
+
 #include "access/xact.h"
 #include "common/hashfn.h"
 #include "port/pg_bitutils.h"
 #include "storage/shmem.h"
-#include "storage/spin.h"
 #include "utils/dynahash.h"
 #include "utils/memutils.h"
 
@@ -150,7 +152,7 @@ typedef HASHBUCKET *HASHSEGMENT;
  * different mutexes.
  */
 typedef struct {
-  slock_t mutex;         /* spinlock for this freelist */
+  std::mutex mutex;      /* lock for this freelist, if partitioned */
   long nentries;         /* number of entries in associated buckets */
   HASHELEMENT *freeList; /* chain of free elements */
 } FreeListData;
@@ -646,11 +648,13 @@ static bool init_htab(HTAB *hashp, long nelem) {
   int i;
 
   /*
-   * initialize mutexes if it's a partitioned table
+   * initialize mutexes if it's a partitioned table: the header is shared
+   * memory's, calloc'd, so each is made in place.  Its sections raise
+   * nothing, so it is locked and unlocked as the spinlock it was.
    */
   if (IS_PARTITIONED(hctl))
     for (i = 0; i < NUM_FREELISTS; i++)
-      SpinLockInit(&(hctl->freeList[i].mutex));
+      new (&(hctl->freeList[i].mutex)) std::mutex();
 
   /*
    * Allocate space for the next greater power of two number of buckets,
@@ -912,7 +916,7 @@ void *hash_search_with_hash_value(HTAB *hashp, const void *keyPtr,
     if (currBucket != NULL) {
       /* if partitioned, must lock to touch nentries and freeList */
       if (IS_PARTITIONED(hctl))
-        SpinLockAcquire(&(hctl->freeList[freelist_idx].mutex));
+        hctl->freeList[freelist_idx].mutex.lock();
 
       /* delete the record from the appropriate nentries counter. */
       Assert(hctl->freeList[freelist_idx].nentries > 0);
@@ -926,7 +930,7 @@ void *hash_search_with_hash_value(HTAB *hashp, const void *keyPtr,
       hctl->freeList[freelist_idx].freeList = currBucket;
 
       if (IS_PARTITIONED(hctl))
-        SpinLockRelease(&hctl->freeList[freelist_idx].mutex);
+        hctl->freeList[freelist_idx].mutex.unlock();
 
       /*
        * better hope the caller is synchronizing access to this
@@ -1116,7 +1120,7 @@ static HASHBUCKET get_hash_entry(HTAB *hashp, int freelist_idx) {
   for (;;) {
     /* if partitioned, must lock to touch nentries and freeList */
     if (IS_PARTITIONED(hctl))
-      SpinLockAcquire(&hctl->freeList[freelist_idx].mutex);
+      hctl->freeList[freelist_idx].mutex.lock();
 
     /* try to get an entry from the freelist */
     newElement = hctl->freeList[freelist_idx].freeList;
@@ -1125,7 +1129,7 @@ static HASHBUCKET get_hash_entry(HTAB *hashp, int freelist_idx) {
       break;
 
     if (IS_PARTITIONED(hctl))
-      SpinLockRelease(&hctl->freeList[freelist_idx].mutex);
+      hctl->freeList[freelist_idx].mutex.unlock();
 
     /*
      * No free elements in this freelist.  In a partitioned table, there
@@ -1152,22 +1156,22 @@ static HASHBUCKET get_hash_entry(HTAB *hashp, int freelist_idx) {
         if (borrow_from_idx == freelist_idx)
           break; /* examined all freelists, fail */
 
-        SpinLockAcquire(&(hctl->freeList[borrow_from_idx].mutex));
+        hctl->freeList[borrow_from_idx].mutex.lock();
         newElement = hctl->freeList[borrow_from_idx].freeList;
 
         if (newElement != NULL) {
           hctl->freeList[borrow_from_idx].freeList = newElement->link;
-          SpinLockRelease(&(hctl->freeList[borrow_from_idx].mutex));
+          hctl->freeList[borrow_from_idx].mutex.unlock();
 
           /* careful: count the new element in its proper freelist */
-          SpinLockAcquire(&hctl->freeList[freelist_idx].mutex);
+          hctl->freeList[freelist_idx].mutex.lock();
           hctl->freeList[freelist_idx].nentries++;
-          SpinLockRelease(&hctl->freeList[freelist_idx].mutex);
+          hctl->freeList[freelist_idx].mutex.unlock();
 
           return newElement;
         }
 
-        SpinLockRelease(&(hctl->freeList[borrow_from_idx].mutex));
+        hctl->freeList[borrow_from_idx].mutex.unlock();
       }
 
       /* no elements available to borrow either, so out of memory */
@@ -1180,7 +1184,7 @@ static HASHBUCKET get_hash_entry(HTAB *hashp, int freelist_idx) {
   hctl->freeList[freelist_idx].nentries++;
 
   if (IS_PARTITIONED(hctl))
-    SpinLockRelease(&hctl->freeList[freelist_idx].mutex);
+    hctl->freeList[freelist_idx].mutex.unlock();
 
   return newElement;
 }
@@ -1540,14 +1544,14 @@ static bool element_alloc(HTAB *hashp, int nelem, int freelist_idx) {
 
   /* if partitioned, must lock to touch freeList */
   if (IS_PARTITIONED(hctl))
-    SpinLockAcquire(&hctl->freeList[freelist_idx].mutex);
+    hctl->freeList[freelist_idx].mutex.lock();
 
   /* freelist could be nonempty if two backends did this concurrently */
   firstElement->link = hctl->freeList[freelist_idx].freeList;
   hctl->freeList[freelist_idx].freeList = prevElement;
 
   if (IS_PARTITIONED(hctl))
-    SpinLockRelease(&hctl->freeList[freelist_idx].mutex);
+    hctl->freeList[freelist_idx].mutex.unlock();
 
   return true;
 }

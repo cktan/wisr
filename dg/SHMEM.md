@@ -75,19 +75,29 @@ Beside the registry: the main LWLock array
 - **LWLocks** (storage/lmgr `lwlock.c`). Short critical
   sections, held with interrupts held off. A waiter sleeps on its
   PGPROC's POSIX semaphore (port `posix_sema.c`); nothing cuts
-  that sleep short. Taken still: ProcArray, XidGen, OidGen,
-  SInvalRead and SInvalWrite, RelationMapping, RelCacheInit,
-  AutoFile, the lock manager's partitions and each PGPROC's
-  `fpInfoLock`; XactTruncation, by `pg_xact_status()`; and
-  InjectionPoint, a build option's. **To replace**: a
-  `std::mutex` or `std::shared_mutex` in the structure it
-  guards; `LWLockReleaseAll()` on an error becomes the guards'
-  unwinding.
-- **Spinlocks** (storage/lmgr `s_lock.c`): ProcStructLock, the
-  fast-path strong-lock counts, ProcSignal's `pss_mutex`, the
-  latch's `owner_lock` and the dynahash free lists. **To
-  replace**: `std::mutex`, or an atomic where one word is
-  guarded.
+  that sleep short. Taken still: ProcArray, SInvalRead and
+  SInvalWrite, the lock manager's partitions and each PGPROC's
+  `fpInfoLock`; XactTruncation, by `pg_xact_status()`;
+  InjectionPoint, a build option's; and XidGen, OidGen,
+  RelationMapping and RelCacheInit, each of which goes with what
+  it guards (below). **To replace**: a `std::mutex` or
+  `std::shared_mutex` held by `held_lock_t`
+  (`storage/held_lock.h`), which holds interrupts off as an
+  LWLock does and lets go as an error unwinds it; AutoFile is
+  one (`WORKNOTE.md` step 132).
+- **What XidGen, OidGen, RelationMapping and RelCacheInit
+  guard is to go**, not to be locked otherwise. Transaction ids
+  and OIDs are sm's: PostgreSQL's counters of them in
+  `TransamVariables` are deprecated (below). The relation
+  mapper's files and the relcache's init files are never read:
+  `RelationCacheInitializePhase2()` and `Phase3()`, which load
+  them, have no caller. RelCacheInit is also taken in one
+  function and let go in another, across a sinval send, which
+  no scoped guard can hold.
+- **Spinlocks** (storage/lmgr `s_lock.c`): none is taken.
+  Each is a `std::mutex`, or an atomic where it guarded one word
+  (`WORKNOTE.md` steps 132, 133). Left: port `atomics.c`'s
+  emulation of 64-bit atomics, compiled out on both platforms.
 - **`pg_atomic_*` and the barriers**: in `lwlock.c`, `proc.c`,
   `procarray.c`, `procsignal.c`, postmaster `backend_thread.c`.
   **To replace**: `std::atomic` with explicit orders.
@@ -147,10 +157,13 @@ and the barriers go with it.
   FORCE, the signal functions and `ProcNumberGetProc()`. **To
   replace**: a snapshot that is a constant, taken without a
   lock; the lookups by pid move to the session registry.
-- **TransamVariables** (access/transam `varsup.c`). `nextXid`
-  never moves; `nextOid` serves `GetNewOidWithIndex()`, whose
-  callers write catalogs, which are refused. **To replace**: an
-  `std::atomic<Oid>` in the pcb, or nothing.
+- **TransamVariables** (access/transam `varsup.c`). Transaction
+  ids and OIDs come from sm; PostgreSQL's own are deprecated.
+  `nextXid` never moves; `nextOid` serves
+  `GetNewOidWithIndex()`, whose callers write catalogs, which
+  are refused. **To remove**, with XidGen and OidGen; what reads
+  an xid (`xid8funcs.c`'s `pg_current_xact_id()` and the rest)
+  is to read sm's.
 - **ProcSignal** (storage/ipc `procsignal.c`). Two reasons have
   senders: the sinval catchup and
   `pg_log_backend_memory_contexts()`. It also keeps the cancel
@@ -186,10 +199,9 @@ has a caller still, and goes with the step that removes it:
 
 ## 7. Order of work
 
-1. **Spinlocks and the simple LWLocks** to `std::mutex`,
-   `std::shared_mutex` and atomics: ProcStructLock,
-   `pss_mutex`, OidGen, XidGen, AutoFile, RelationMapping,
-   RelCacheInit.
+1. **PostgreSQL's xid and OID counters, the relation mapper's
+   files and the relcache's init files**, removed, with
+   XidGen, OidGen, RelationMapping and RelCacheInit (§3).
 2. **sm0's `latch_t`** (§4), and `Latch` over it.
 3. **The invalidation bus** (§5), then ProcSignal and
    PMSignalState.
