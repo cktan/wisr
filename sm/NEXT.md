@@ -9,32 +9,16 @@ has sm3's own order of work.
 
 ## 1. Next
 
-**The highest priority is to bring the stack to where work on
-hooking it up to PostgreSQL can begin** (`PART4.md` §7). What
-is listed here is ordered by that, and what does not serve it
-waits. The first target is a spike that inserts into and
-scans a table of integer columns, from one backend, and
-`PART4.md` §9 has the stack's API read against the executor
-for it: nothing in that target waits on the stack, and §9.3
-there lists what the fork would meet next.
+Nothing is queued above low priority. The spike `PART4.md` §7
+aimed the stack at is long past: digres runs on it
+(`PART4.md` §10). Statistics for a planner are built, the
+stack's part and digres's (`../dg/STATISTICS.md`,
+`../dg/WORKNOTE.md` steps 74 to 78), and so are the catalog
+tables psql reads (`../dg/SYSCATALOG.md` §6).
 
-The rest of `sm3/SM3_DESIGN.md` §8.1 step 5.
+Low priority:
 
-1. **Statistics for a planner.** It has a strategy,
-   `STATISTICS.md`, whose measurements are done (§6 there):
-   RocksDB's size estimates are exact once flushed and
-   compacted, and as much as 7x high for rows still
-   unflushed. Its design is `SM3_DESIGN.md` §6, and the
-   stack's part is built: `sm_tbl_analyze` samples a table,
-   within a fixed budget, and records PostgreSQL's statistics
-   of it in sm3's catalog, and `sm_tbl_stats` reads them. Next
-   is the host's: digres's ANALYZE and its planner reading
-   them in place of `pg_statistic` and `pg_class`, designed in
-   `../dg/STATISTICS.md`.
-
-Low priority, and after it:
-
-2. **Bulk load, the rest of it.** File mode into an empty
+1. **Bulk load, the rest of it.** File mode into an empty
    table is built, and digres's `COPY` uses it (`BULKLOAD.md`
    §13). Not built: a load from files into a table that has
    rows, which inserts a row at a time today; rows stored out

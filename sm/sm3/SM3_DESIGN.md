@@ -1086,9 +1086,10 @@ The planner is kept, so statistics are not optional. The
 strategy is `STATISTICS.md`, at the root of the stack, and
 its measurements are done (§6 there). This section is the
 design it asked for (§8 there, step 2): the choices it left
-open, made here, and the format written out. Being built:
-the order of work is §6.9, and every step is done: what is
-left is the host's, the planner's use of these statistics.
+open, made here, and the format written out. Built: the
+order of work is §6.9, and every step is done. The host's
+part, the planner's use of these statistics, is built in
+digres (`../../dg/STATISTICS.md`).
 
 In brief: `tbl_analyze` samples a table by runs of rownos,
 computes PostgreSQL's statistics from the sample with
@@ -1559,7 +1560,7 @@ that matter most are the ones with two sessions in them.
 | 2 | Object mapping | built | §4 |
 | 3 | Indexes | built | §3 |
 | 4 | Scans | settled, nothing to build | §5 |
-| 5 | Statistics, constraints, bulk load | constraints settled; the rest not started | §6, `NEXT.md` |
+| 5 | Statistics, constraints, bulk load | statistics built, constraints settled, bulk load in part | §6, `../BULKLOAD.md`, `NEXT.md` |
 
 1. **Catalog** comes first because everything else needs a
    definition to work from. Tables, indexes, columns, types,
@@ -1595,10 +1596,10 @@ that matter most are the ones with two sessions in them.
 5. **Constraints** are settled: `NOT NULL` is built (§3), and
    the `varchar(n)` limit and foreign keys are the host's,
    with `tbl_lock` as the stack's share of a foreign key
-   (`DESIGN.md` §5). **Statistics** is designed and not
-   built (§6). **Bulk load**, a path that batches within
-   sm1's RAM bound, is not started. `NEXT.md` has what is
-   left and in what order.
+   (`DESIGN.md` §5). **Statistics** is built (§6).
+   **Bulk load** is built for files into an empty table
+   (`../BULKLOAD.md`); the rest of it is not. `NEXT.md` has
+   what is left and in what order.
 
 ### 8.2 Testing
 
