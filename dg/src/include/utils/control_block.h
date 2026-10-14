@@ -41,6 +41,13 @@ struct sequence_state_free_t {
 };
 extern sequence_state_t *sequence_state_new(void);
 
+/* smstore.c: the tables this session's transaction opened in sm. */
+typedef struct smstore_state_t smstore_state_t;
+struct smstore_state_free_t {
+  void operator()(smstore_state_t *state) const;
+};
+extern smstore_state_t *smstore_state_new(void);
+
 /* shmem.c: the index of the structures the threads share, by name. */
 typedef struct shmem_index_t shmem_index_t;
 struct shmem_index_free_t {
@@ -73,6 +80,7 @@ typedef struct pcb_t {
 typedef struct tcb_t {
   std::unique_ptr<timeout_state_t, timeout_state_free_t> timeout;
   std::unique_ptr<sequence_state_t, sequence_state_free_t> sequence;
+  std::unique_ptr<smstore_state_t, smstore_state_free_t> smstore;
 } tcb_t;
 
 extern pcb_t *pcb;

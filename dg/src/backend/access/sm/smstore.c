@@ -19,6 +19,7 @@
 #include <cmath>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "access/detoast.h"
@@ -43,6 +44,7 @@
 #include "access/nbtree.h"
 #include "access/skey.h"
 #include "utils/builtins.h"
+#include "utils/control_block.h"
 #include "utils/fmgrprotos.h"
 #include "utils/datadir.h"
 #include "utils/hsearch.h"
@@ -77,19 +79,36 @@ static thread_local /*LOCAL*/ bool sm_xact_open = false;
  */
 static thread_local /*LOCAL*/ bool statement_pending = false;
 
-/* A table this transaction opened in sm, to read or to write. */
+/* A handle of a table this transaction opened in sm, to read or to write. */
 typedef struct open_table_t {
-  Oid oid;
   sm_lockmode_t mode;
   sm_tbl_t *tbl;
   int level; /* the subtransaction nesting level that holds it */
 } open_table_t;
 
+/* The tables a transaction opened: each oid's handles, one a lock mode. */
+typedef std::unordered_map<Oid, std::vector<open_table_t>> open_tables_t;
+
 /*
- * The tables this transaction opened, open_table_t's in
- * TopTransactionContext, closed as it ends.
+ * This session's state in sm: the tables its transaction opened, closed as
+ * it ends: tcb->smstore.
  */
-static thread_local /*LOCAL*/ List *open_tables = NIL;
+struct smstore_state_t {
+  open_tables_t open_tables;
+};
+
+/* The tables this session's transaction opened. */
+static inline open_tables_t &open_tables(void) {
+  return tcb->smstore->open_tables;
+}
+
+/* Make a thread's state in sm: no table open. */
+smstore_state_t *smstore_state_new(void) { return new smstore_state_t(); }
+
+/* Free a thread's state in sm. */
+void smstore_state_free_t::operator()(smstore_state_t *state) const {
+  delete state;
+}
 
 /*
  * The depth of sm's savepoint for each subtransaction open, the one at
@@ -177,25 +196,28 @@ template <class F> static int waiting(F f) {
  */
 static void close_subxact_tables(void) {
   int level = GetCurrentTransactionNestLevel();
-  ListCell *l;
+  open_tables_t &ots = open_tables();
 
-  foreach (l, open_tables) {
-    open_table_t *ot = (open_table_t *)lfirst(l);
+  for (auto it = ots.begin(); it != ots.end();) {
+    std::vector<open_table_t> &handles = it->second;
 
-    if (ot->level >= level) {
-      sm_tbl_close(ot->tbl);
-      open_tables = foreach_delete_current(open_tables, l);
+    for (size_t i = 0; i < handles.size();) {
+      if (handles[i].level >= level) {
+        sm_tbl_close(handles[i].tbl);
+        handles.erase(handles.begin() + i);
+      } else
+        i++;
     }
+    it = handles.empty() ? ots.erase(it) : std::next(it);
   }
 }
 
 /* Close the tables this transaction opened: a handle is good for it only. */
 static void close_tables(void) {
-  ListCell *l;
-
-  foreach (l, open_tables)
-    sm_tbl_close(((open_table_t *)lfirst(l))->tbl);
-  open_tables = NIL;
+  for (auto &[oid, handles] : open_tables())
+    for (open_table_t &ot : handles)
+      sm_tbl_close(ot.tbl);
+  open_tables().clear();
   savepoints = NIL;
   /* The kept row's memory goes with the transaction. */
   kept_oid = InvalidOid;
@@ -257,18 +279,15 @@ static int subxact_savepoint(void) {
 void smstore_subcommit(void) {
   int depth = subxact_savepoint();
   int level = GetCurrentTransactionNestLevel();
-  ListCell *l;
 
   /* A savepoint sm cannot forget is a transaction it ended: next call says. */
   if (depth > 0)
     (void)sm_forget(session(), depth);
   /* The tables the subtransaction opened are its parent's now. */
-  foreach (l, open_tables) {
-    open_table_t *ot = (open_table_t *)lfirst(l);
-
-    if (ot->level >= level)
-      ot->level = level - 1;
-  }
+  for (auto &[oid, handles] : open_tables())
+    for (open_table_t &ot : handles)
+      if (ot.level >= level)
+        ot.level = level - 1;
 }
 
 /* The subtransaction aborts: its writes are undone, and its savepoint goes. */
@@ -1397,30 +1416,20 @@ static bool mode_covers(sm_lockmode_t held, sm_lockmode_t want) {
  */
 static sm_tbl_t *open_table(Oid oid, sm_lockmode_t mode) {
   sm_session_t *s = xact_session();
-  open_table_t *ot;
+  auto it = open_tables().find(oid);
   sm_tbl_t *tbl;
-  MemoryContext old;
-  ListCell *l;
 
-  foreach (l, open_tables) {
-    ot = (open_table_t *)lfirst(l);
-    if (ot->oid == oid && mode_covers(ot->mode, mode))
-      return ot->tbl;
-  }
+  if (it != open_tables().end())
+    for (open_table_t &ot : it->second)
+      if (mode_covers(ot.mode, mode))
+        return ot.tbl;
   if (waiting([&] { return sm_tbl_open(s, oid, mode, &tbl); }) != 0) {
     if (sm_errnum() == SM_ERR_NOTFOUND)
       return NULL;
     sm_error("open a table");
   }
   /* Kept until the transaction ends, which closes it. */
-  old = MemoryContextSwitchTo(TopTransactionContext);
-  ot = (open_table_t *)palloc(sizeof(open_table_t));
-  ot->oid = oid;
-  ot->mode = mode;
-  ot->tbl = tbl;
-  ot->level = GetCurrentTransactionNestLevel();
-  open_tables = lappend(open_tables, ot);
-  MemoryContextSwitchTo(old);
+  open_tables()[oid].push_back({mode, tbl, GetCurrentTransactionNestLevel()});
   return tbl;
 }
 
@@ -1916,7 +1925,6 @@ void smstore_drop_tables(DropStmt *stmt) {
  */
 static void alter_table_rel(Oid relid, const char *name) {
   Relation rel = relation_open(relid, NoLock);
-  ListCell *l;
 
   if (rel->rd_rel->relkind != RELKIND_RELATION)
     ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
@@ -1925,14 +1933,14 @@ static void alter_table_rel(Oid relid, const char *name) {
   CheckTableNotInUse(rel, "ALTER TABLE");
   CacheInvalidateRelcache(rel);
   relation_close(rel, NoLock);
-  foreach (l, open_tables) {
-    open_table_t *ot = (open_table_t *)lfirst(l);
 
-    if (ot->oid == relid) {
-      sm_tbl_close(ot->tbl);
-      open_tables = foreach_delete_current(open_tables, l);
-    }
-  }
+  auto it = open_tables().find(relid);
+
+  if (it == open_tables().end())
+    return;
+  for (open_table_t &ot : it->second)
+    sm_tbl_close(ot.tbl);
+  open_tables().erase(it);
 }
 
 /* Refuse a column name a system column has, as PostgreSQL does. */
@@ -2691,7 +2699,6 @@ void smstore_lock_relation(Oid relid, LOCKMODE lockmode) {
 void smstore_truncate(Relation rel) {
   Oid oid = RelationGetRelid(rel);
   sm_tbl_t *tbl = open_table(oid, SM_LOCKMODE_EX);
-  ListCell *l;
 
   if (tbl == NULL)
     ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
@@ -2705,13 +2712,14 @@ void smstore_truncate(Relation rel) {
    * truncated it knows: close the transaction's other handles of it, so the
    * next use opens one afresh.
    */
-  foreach (l, open_tables) {
-    open_table_t *ot = (open_table_t *)lfirst(l);
+  std::vector<open_table_t> &handles = open_tables()[oid];
 
-    if (ot->oid == oid && ot->tbl != tbl) {
-      sm_tbl_close(ot->tbl);
-      open_tables = foreach_delete_current(open_tables, l);
-    }
+  for (size_t i = 0; i < handles.size();) {
+    if (handles[i].tbl != tbl) {
+      sm_tbl_close(handles[i].tbl);
+      handles.erase(handles.begin() + i);
+    } else
+      i++;
   }
 }
 

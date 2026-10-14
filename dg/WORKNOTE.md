@@ -3583,3 +3583,30 @@ is only passed along.
   column; inserts copy values into another table and into
   their own; an update rolled back; an index scan keyed by a
   value out of line; `DELETE ... RETURNING`.
+
+## Step 126: the open tables are a hash, in the tcb
+
+The tables a transaction opened in sm were a `List` in
+`TopTransactionContext`, a `thread_local`, and
+`open_table()` walked it on every insert, scan, update and
+lock: a transaction using a thousand tables paid a thousand
+comparisons a call.
+
+- **`open_tables` is a `std::unordered_map` by oid**, of each
+  oid's handles, one a lock mode taken: an IS one and then an
+  IX one for a table read and then written. `open_table()`
+  finds the oid, and looks at its few handles alone; so do
+  `alter_table_rel()` and `smstore_truncate()`, which close
+  the handles of one table.
+- **It is `tcb->smstore`** (`smstore_state_t`), as
+  `CODE.md` §3 asks of a global a change touches: made by
+  `tcb_init()`, freed with the tcb. It is cleared as the
+  transaction ends, by commit and abort alike
+  (`close_tables()`), so its memory need not be the
+  transaction's context.
+- **A subtransaction's end still visits every handle**:
+  `smstore_subcommit()` gives its handles to the parent and
+  `close_subxact_tables()` closes them, by their level. A
+  list of each level's handles would make that the
+  subtransaction's own, which nothing has asked for yet.
+- `open_table_t` loses its oid, which is the key.

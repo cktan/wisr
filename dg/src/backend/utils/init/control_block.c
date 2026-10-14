@@ -35,6 +35,7 @@ void tcb_init(void) {
   tcb = new tcb_t();
   tcb->timeout.reset(timeout_state_new());
   tcb->sequence.reset(sequence_state_new());
+  tcb->smstore.reset(smstore_state_new());
 }
 
 /*
