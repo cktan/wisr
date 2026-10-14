@@ -871,12 +871,17 @@ pointer for each. Built in `src/rel/toast.cc` and
   that read it: at READ COMMITTED a later statement may find
   the row changed and the datum gone, which is
   `SM_ERR_NOTFOUND`.
+- **A fetch needs no rel.** The pointer names its store, and a
+  store's datums out of line are always under relid `0xFFFF`,
+  so `toast_fetch` given a session reads one by the pointer
+  alone, as a host does where it has a value but not its table
+  (`sm_toast_fetch`).
 - **A key is never made of a pointer.** `encode_key` refuses
   one: the caller fetches the value first.
 - **Not built**: compression, and a fetch of part of a datum.
   Above sm2, sm3 gives a table its sequence and fetches for
   its indexes (`sm3/SM3_DESIGN.md` §3.4), once the host turns
-  TOAST on; digres does not yet.
+  TOAST on, as digres does.
 
 ---
 

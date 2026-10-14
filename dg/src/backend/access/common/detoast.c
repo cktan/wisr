@@ -14,6 +14,7 @@
 #include "postgres.h"
 
 #include "access/detoast.h"
+#include "access/smstore.h"
 #include "access/table.h"
 #include "access/tableam.h"
 #include "access/toast_internals.h"
@@ -50,6 +51,9 @@ struct varlena *detoast_external_attr(struct varlena *attr) {
      * This is an external stored plain value
      */
     result = toast_fetch_datum(attr);
+  } else if (VARATT_IS_EXTERNAL_SM(attr)) {
+    /* A value sm stored out of line: read it from its table */
+    result = smstore_fetch_toast(attr);
   } else if (VARATT_IS_EXTERNAL_INDIRECT(attr)) {
     /*
      * This is an indirect pointer --- dereference it
@@ -116,6 +120,9 @@ struct varlena *detoast_attr(struct varlena *attr) {
       attr = toast_decompress_datum(tmp);
       pfree(tmp);
     }
+  } else if (VARATT_IS_EXTERNAL_SM(attr)) {
+    /* A value sm stored out of line, never compressed: read it */
+    attr = smstore_fetch_toast(attr);
   } else if (VARATT_IS_EXTERNAL_INDIRECT(attr)) {
     /*
      * This is an indirect pointer --- dereference it
@@ -235,6 +242,9 @@ struct varlena *detoast_attr_slice(struct varlena *attr, int32 sliceoffset,
       preslice = toast_fetch_datum_slice(attr, 0, max_size);
     } else
       preslice = toast_fetch_datum(attr);
+  } else if (VARATT_IS_EXTERNAL_SM(attr)) {
+    /* sm reads no part of a value: the whole of it, then the slice */
+    preslice = smstore_fetch_toast(attr);
   } else if (VARATT_IS_EXTERNAL_INDIRECT(attr)) {
     struct varatt_indirect redirect;
 
@@ -501,6 +511,9 @@ Size toast_raw_datum_size(Datum value) {
 
     VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr);
     result = toast_pointer.va_rawsize;
+  } else if (VARATT_IS_EXTERNAL_SM(attr)) {
+    /* sm's pointer gives the value's length, its header left out */
+    result = smstore_toast_size(attr) + VARHDRSZ;
   } else if (VARATT_IS_EXTERNAL_INDIRECT(attr)) {
     struct varatt_indirect toast_pointer;
 
@@ -549,6 +562,9 @@ Size toast_datum_size(Datum value) {
 
     VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr);
     result = VARATT_EXTERNAL_GET_EXTSIZE(toast_pointer);
+  } else if (VARATT_IS_EXTERNAL_SM(attr)) {
+    /* Stored as it is, uncompressed */
+    result = smstore_toast_size(attr);
   } else if (VARATT_IS_EXTERNAL_INDIRECT(attr)) {
     struct varatt_indirect toast_pointer;
 

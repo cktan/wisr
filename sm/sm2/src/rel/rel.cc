@@ -529,6 +529,16 @@ int toast_fetch(rel_t *rel, std::string_view ptr, std::string &out) {
   return toast_read(rel->session, p, out);
 }
 
+/* Read the datum a TOAST pointer names, from its store; see sm2.h. */
+int toast_fetch(sm1::session_t *session, std::string_view ptr,
+                std::string &out) {
+  toast_ptr_t p;
+  if (!parse_toast_ptr(ptr, p)) {
+    return sm1::seterr(sm1::SM_ERR_INVALID, "toast: not a TOAST pointer");
+  }
+  return toast_read(session, p, out);
+}
+
 /* Open a cursor over rows first..last, both included. */
 int rel_scan(rel_t *rel, uint64_t first, uint64_t last, rel_scan_t *&out) {
   std::string lo = row_key(rel->relid, first);

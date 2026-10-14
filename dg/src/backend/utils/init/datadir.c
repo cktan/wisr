@@ -100,6 +100,12 @@ void datadir_load(void) {
   if (rc != 0)
     ereport(FATAL, (errmsg("could not attach storage: %s", sm_errmsg())));
   on_proc_exit(detach_sm, 0);
+  /*
+   * Before any database is opened: digres reads sm's TOAST pointers
+   * (smstore_fetch_toast()), so sm may store a row's long values out of line.
+   */
+  if (sm_set_toast(sm_env, 1) != 0)
+    ereport(FATAL, (errmsg("could not turn on TOAST: %s", sm_errmsg())));
 }
 
 /* The name of the superuser, the one role there is. */

@@ -21,6 +21,7 @@
 #include <string>
 #include <vector>
 
+#include "access/detoast.h"
 #include "access/smstore.h"
 #include "access/xact.h"
 #include "access/relation.h"
@@ -473,25 +474,68 @@ static bool has_numeric(TupleDesc desc) {
 }
 
 /*
- * The datums of a row of desc as sm takes them: values itself, or with a
- * numeric column a palloc'd copy, each numeric its integer at its column's
- * scale.
+ * Whether the TOAST pointer val is the one old, the tuple of a row of tbl,
+ * holds for its column at ordinal: what an update that leaves the column
+ * alone gives back, which sm keeps without a write.
  */
-static const sm_datum_t *row_to_sm(TupleDesc desc, Datum *values,
-                                   bool *isnull, int natts) {
-  sm_datum_t *out;
+static bool own_pointer(sm_tbl_t *tbl, const std::string *old, int ordinal,
+                        sm_datum_t val) {
+  sm_datum_t oval;
+  bool onull;
 
-  if (!has_numeric(desc))
-    return (const sm_datum_t *)values;
-  out = (sm_datum_t *)palloc(natts * sizeof(sm_datum_t));
-  for (int i = 0; i < natts; i++) {
+  if (old == NULL ||
+      sm_tbl_decode(tbl, old->data(), old->size(), ordinal, &oval, &onull) !=
+          0)
+    return false;
+  return !onull && sm_datum_is_toast(oval) &&
+         memcmp((const void *)oval, (const void *)val,
+                VARSIZE_EXTERNAL((struct varlena *)val)) == 0;
+}
+
+/*
+ * The datums of a row of desc as sm takes them: values itself, or a
+ * palloc'd copy where one differs: each numeric its integer at its column's
+ * scale, and each TOAST pointer of sm's its value, read, unless it is old's
+ * own for its column -- old the tuple of the row of tbl an update replaces,
+ * or NULL.  sm takes no other pointer.
+ */
+static const sm_datum_t *row_to_sm(sm_tbl_t *tbl, TupleDesc desc,
+                                   Datum *values, bool *isnull, int natts,
+                                   const std::string *old) {
+  sm_datum_t *out = NULL;
+
+  for (int i = 0; i < natts && i < desc->natts; i++) {
     Form_pg_attribute att = TupleDescAttr(desc, i);
+    sm_datum_t val;
 
-    out[i] = (sm_datum_t)values[i];
-    if (i < desc->natts && att->atttypid == NUMERICOID && !isnull[i])
-      out[i] = numeric_to_sm(values[i], att->atttypmod, (uint8 *)palloc(16));
+    if (isnull[i])
+      continue;
+    if (att->atttypid == NUMERICOID)
+      val = numeric_to_sm(values[i], att->atttypmod, (uint8 *)palloc(16));
+    else if (att->attlen == -1 &&
+             VARATT_IS_EXTERNAL_SM(DatumGetPointer(values[i])) &&
+             !own_pointer(tbl, old, i, (sm_datum_t)values[i]))
+      val = (sm_datum_t)detoast_external_attr(
+          (struct varlena *)DatumGetPointer(values[i]));
+    else
+      continue;
+    if (out == NULL) {
+      out = (sm_datum_t *)palloc(natts * sizeof(sm_datum_t));
+      memcpy(out, values, natts * sizeof(sm_datum_t));
+    }
+    out[i] = val;
   }
-  return out;
+  return out != NULL ? out : (const sm_datum_t *)values;
+}
+
+/* Whether a row of desc, natts values, has a TOAST pointer of sm's. */
+static bool has_toast(TupleDesc desc, Datum *values, bool *isnull,
+                      int natts) {
+  for (int i = 0; i < natts && i < desc->natts; i++)
+    if (!isnull[i] && TupleDescAttr(desc, i)->attlen == -1 &&
+        VARATT_IS_EXTERNAL_SM(DatumGetPointer(values[i])))
+      return true;
+  return false;
 }
 
 /*
@@ -1577,9 +1621,9 @@ void smstore_insert(Relation rel, TupleTableSlot *slot) {
                     errmsg("relation \"%s\" does not exist",
                            RelationGetRelationName(rel))));
   slot_getallattrs(slot);
-  const sm_datum_t *row = row_to_sm(slot->tts_tupleDescriptor,
-                                    slot->tts_values, slot->tts_isnull,
-                                    slot->tts_nvalid);
+  const sm_datum_t *row =
+      row_to_sm(tbl, slot->tts_tupleDescriptor, slot->tts_values,
+                slot->tts_isnull, slot->tts_nvalid, NULL);
   if (waiting([&] {
         return sm_tbl_insert(tbl, row, slot->tts_isnull, slot->tts_nvalid,
                              &rowno);
@@ -1620,9 +1664,9 @@ bool smstore_insert_arbiter(Relation rel, TupleTableSlot *slot, List *arbiters,
   foreach (l, arbiters)
     oids.push_back(lfirst_oid(l));
   slot_getallattrs(slot);
-  const sm_datum_t *row = row_to_sm(slot->tts_tupleDescriptor,
-                                    slot->tts_values, slot->tts_isnull,
-                                    slot->tts_nvalid);
+  const sm_datum_t *row =
+      row_to_sm(tbl, slot->tts_tupleDescriptor, slot->tts_values,
+                slot->tts_isnull, slot->tts_nvalid, NULL);
   rc = waiting([&] {
     return sm_tbl_insert_arbiter(tbl, row, slot->tts_isnull, slot->tts_nvalid,
                                  oids.data(), oids.size(), &rowno);
@@ -1683,9 +1727,9 @@ void smstore_load(Relation rel, TupleTableSlot **slots, int n) {
     uint64_t rowno;
 
     slot_getallattrs(slot);
-    const sm_datum_t *row = row_to_sm(slot->tts_tupleDescriptor,
-                                      slot->tts_values, slot->tts_isnull,
-                                      slot->tts_nvalid);
+    const sm_datum_t *row =
+        row_to_sm(tbl, slot->tts_tupleDescriptor, slot->tts_values,
+                  slot->tts_isnull, slot->tts_nvalid, NULL);
     if (waiting([&] {
           return sm_tbl_load_add(tbl, row, slot->tts_isnull, slot->tts_nvalid,
                                  &rowno);
@@ -3308,6 +3352,36 @@ static void keep_row(Oid oid, uint64 rowno, const void *tuple, size_t len) {
 }
 
 /*
+ * The value sm's TOAST pointer attr names, as a palloc'd varlena with a
+ * 4-byte header, read from the store the pointer names.  It is read as the
+ * statement sees the store: a pointer is to be fetched in the statement
+ * that read it.
+ */
+struct varlena *smstore_fetch_toast(struct varlena *attr) {
+  std::string value;
+  struct varlena *result;
+
+  if (sm_toast_fetch(xact_session(), (sm_datum_t)attr, &value) != 0)
+    sm_error("read a value stored out of line");
+  result = (struct varlena *)palloc(value.size() + VARHDRSZ);
+  SET_VARSIZE(result, value.size() + VARHDRSZ);
+  memcpy(VARDATA(result), value.data(), value.size());
+  return result;
+}
+
+/*
+ * The length of the value sm's TOAST pointer attr names, its varlena header
+ * left out: the pointer's 4 bytes after its two, little-endian, as the
+ * machine is (../sm/sm2/VARLENA.md section 2).
+ */
+Size smstore_toast_size(struct varlena *attr) {
+  uint32 len;
+
+  memcpy(&len, (const char *)attr + 2, sizeof(len));
+  return len;
+}
+
+/*
  * The row of rel at tid into slot, as a virtual tuple: the kept one if it
  * is that row, else as the statement sees it; false if it sees none.  The
  * executor fetches the row it is to update, the newest version of one it
@@ -3372,11 +3446,41 @@ TM_Result smstore_update(Relation rel, ItemPointer tid, TupleTableSlot *slot,
                          CommandId cid, TM_FailureData *tmfd) {
   sm_tbl_t *tbl = table_to_write(rel);
   uint64 rowno = smstore_tid_to_rowno(tid);
+  std::string old;
+  bool have_old = false;
 
   slot_getallattrs(slot);
-  const sm_datum_t *row = row_to_sm(slot->tts_tupleDescriptor,
-                                    slot->tts_values, slot->tts_isnull,
-                                    slot->tts_nvalid);
+  /*
+   * The row replaced, to tell its own pointers from others: the kept one if
+   * it is that row, the newest version after a write found it changed, else
+   * as the statement sees it.
+   */
+  if (has_toast(slot->tts_tupleDescriptor, slot->tts_values, slot->tts_isnull,
+                slot->tts_nvalid)) {
+    const void *tuple;
+    size_t len;
+
+    if (kept_oid == RelationGetRelid(rel) && kept_rowno == rowno &&
+        kept_tuple != NULL) {
+      old.assign(kept_tuple, kept_len);
+      have_old = true;
+    } else {
+      switch (sm_tbl_read(tbl, rowno, &tuple, &len)) {
+      case 0:
+        /* sm's bytes last until its next call: a fetch is one. */
+        old.assign((const char *)tuple, len);
+        have_old = true;
+        break;
+      case 1:
+        break;
+      default:
+        sm_error("read a row");
+      }
+    }
+  }
+  const sm_datum_t *row =
+      row_to_sm(tbl, slot->tts_tupleDescriptor, slot->tts_values,
+                slot->tts_isnull, slot->tts_nvalid, have_old ? &old : NULL);
   int rc = waiting([&] {
     return sm_tbl_update(tbl, rowno, row, slot->tts_isnull, slot->tts_nvalid);
   });

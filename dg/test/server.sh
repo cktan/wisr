@@ -1868,6 +1868,55 @@ local_psql -c "insert into t17 values (6, 'x', 'toolong', null)" 2>&1 |
 local_psql -c "insert into t17 values (7, 'q', 'ab', null)" 2>&1 |
   grep -q 'duplicate key' || fail "a unique varchar key"
 
+# Verify that sm stores a long value out of line, and that digres reads it
+# wherever a value is read and writes it back wherever a value is written.
+# 1. Make toast1, toast2, and toast3 with an index; insert a row past
+#    sm's 65535 bytes, which only TOAST stores, and values of 3000 bytes.
+# 2. Read the lengths, sizes, ends and a slice of the values back.
+# 3. An update leaving the value alone keeps it, and one setting another
+#    column to it, the row's own pointer for another column, copies it.
+# 4. Insert the values into another table and into their own.
+# 5. An update of the value, rolled back, leaves the old one.
+# 6. A join keys an index scan of toast3 by a value out of line, which
+#    the executor reads before it keys the scan.
+# 7. DELETE ... RETURNING reads the value it deleted.
+local_psql -c 'create table toast1 (id int4 primary key, a text, b text,
+      n int4)' \
+  -c 'create table toast2 (id int4, a text)' -c 'create table toast3 (k text)' \
+  -c 'create index toast3k on toast3 (k)' \
+  -c "insert into toast1 values (1, repeat('a', 100000) || 'z', 'short', 0),
+      (2, repeat('c', 3000), null, 0)" \
+  -c "insert into toast3 values (repeat('c', 3000)), ('d')" \
+  > "$work/toast.out" 2>&1
+[ "$(local_psql -c 'select id, length(a), octet_length(a), right(a, 1),
+      substr(a, 99999, 3) from toast1 order by id' 2>&1 | tr '\n' ,)" = \
+  "1|100001|100001|z|aaz,2|3000|3000|c|," ] || fail "a value out of line read"
+[ "$(local_psql -c 'update toast1 set n = n + 1' \
+  -c 'update toast1 set b = a where id = 1' \
+  -c 'select id, n, length(b), b = a from toast1 order by id' 2>&1 |
+  tr '\n' ,)" = "UPDATE 2,UPDATE 1,1|1|100001|t,2|1||," ] ||
+  fail "an update keeps and copies a value out of line"
+[ "$(local_psql -c 'insert into toast2 select id, a from toast1' \
+  -c 'insert into toast1 select id + 10, a, b, n from toast1' \
+  -c 'select (select sum(length(a)) from toast2),
+      (select count(*) from toast1 where a = (select a from toast2 where id = 1))' \
+  2>&1 | tr '\n' ,)" = "INSERT 0 2,INSERT 0 2,103001|2," ] ||
+  fail "an insert copies a value out of line"
+[ "$(local_psql -c 'begin' -c "update toast1 set a = a || 'q' where id = 1" \
+  -c 'select length(a), right(a, 2) from toast1 where id = 1' -c 'rollback' \
+  -c 'select length(a), right(a, 1) from toast1 where id = 1' 2>&1 |
+  tr '\n' ,)" = "BEGIN,UPDATE 1,100002|zq,ROLLBACK,100001|z," ] ||
+  fail "a value out of line rolled back"
+[ "$(local_psql -c 'set enable_hashjoin = off' -c 'set enable_mergejoin = off' \
+  -c 'set enable_seqscan = off' -c 'set enable_bitmapscan = off' \
+  -c 'explain (costs off) select count(*) from toast1 join toast3 on toast3.k = toast1.a' \
+  -c 'select count(*) from toast1 join toast3 on toast3.k = toast1.a' 2>&1 |
+  grep -cxE 'SET|.*Index (Only )?Scan using toast3k on toast3|2')" = 6 ] ||
+  fail "an index scan keyed by a value out of line"
+[ "$(local_psql -c 'delete from toast1 where id = 11 returning length(a)' 2>&1 |
+  tr '\n' ,)" = "100001,DELETE 1," ] ||
+  fail "DELETE ... RETURNING reads a value out of line"
+
 # Verify that date, time, timestamp, timestamptz, interval and uuid columns
 # are stored in sm and keyed in its indexes in PostgreSQL's order.
 # 1. Make t18 with each and an index on each, made empty; insert values at

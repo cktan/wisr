@@ -202,6 +202,31 @@ TEST_CASE("a long datum is moved out of line, and read back") {
   sm2::rel_close(other);
 }
 
+TEST_CASE("a pointer is read by its store alone, with no rel") {
+  // Verify a TOAST pointer names enough to read its datum without a rel.
+  // 1. Insert a row with a 20000-byte text, and commit.
+  // 2. Another session, with no rel open, reads the datum by the
+  //    pointer alone.
+  // 3. A varlena that is no pointer is refused as invalid.
+  db_t db;
+  sm1::session_t *s = db.open(), *t = db.open();
+  sm2::rel_t *rel = open_rel(db, s);
+  std::string big = text_of(20000);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  uint64_t rowno = insert(rel, {1, big, std::nullopt});
+  std::string ptr = *held(read(rel, rowno), 1);
+  REQUIRE(sm1::commit(s) == 0);
+
+  REQUIRE(sm1::begin(t, sm1::xctlevel_t::read_committed) == 0);
+  std::string out;
+  REQUIRE_MESSAGE(sm2::toast_fetch(t, ptr, out) == 0, sm1::errmsg());
+  CHECK(out == big);
+  CHECK(sm2::toast_fetch(t, sm2::make_varlena("short"), out) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  REQUIRE(sm1::commit(t) == 0);
+  sm2::rel_close(rel);
+}
+
 TEST_CASE("datums move out longest first, and only while the tuple is long") {
   // Verify which datums a long row moves out.
   // 1. A row of 1500 and 900 bytes is over the threshold: the

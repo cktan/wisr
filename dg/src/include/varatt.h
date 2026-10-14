@@ -82,8 +82,16 @@ typedef enum vartag_external {
   VARTAG_INDIRECT = 1,
   VARTAG_EXPANDED_RO = 2,
   VARTAG_EXPANDED_RW = 3,
-  VARTAG_ONDISK = 18
+  VARTAG_ONDISK = 18,
+  /* sm's pointer to a value stored out of line (../sm/sm2/VARLENA.md) */
+  VARTAG_SM = 0x40
 } vartag_external;
+
+/*
+ * The size of sm's pointer after its two header bytes: the value's length,
+ * the id of its store and its own id, 4, 8 and 8 bytes, little-endian.
+ */
+#define VARTAG_SM_SIZE 20
 
 /* this test relies on the specific tag values above */
 #define VARTAG_IS_EXPANDED(tag) \
@@ -93,6 +101,7 @@ typedef enum vartag_external {
 	((tag) == VARTAG_INDIRECT ? sizeof(varatt_indirect) : \
 	 VARTAG_IS_EXPANDED(tag) ? sizeof(varatt_expanded) : \
 	 (tag) == VARTAG_ONDISK ? sizeof(varatt_external) : \
+	 (tag) == VARTAG_SM ? VARTAG_SM_SIZE : \
 	 (AssertMacro(false), 0))
 
 /*
@@ -282,6 +291,8 @@ typedef struct {
 #define VARATT_IS_EXTERNAL(PTR)				VARATT_IS_1B_E(PTR)
 #define VARATT_IS_EXTERNAL_ONDISK(PTR) \
 	(VARATT_IS_EXTERNAL(PTR) && VARTAG_EXTERNAL(PTR) == VARTAG_ONDISK)
+#define VARATT_IS_EXTERNAL_SM(PTR) \
+	(VARATT_IS_EXTERNAL(PTR) && VARTAG_EXTERNAL(PTR) == VARTAG_SM)
 #define VARATT_IS_EXTERNAL_INDIRECT(PTR) \
 	(VARATT_IS_EXTERNAL(PTR) && VARTAG_EXTERNAL(PTR) == VARTAG_INDIRECT)
 #define VARATT_IS_EXTERNAL_EXPANDED_RO(PTR) \

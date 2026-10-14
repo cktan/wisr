@@ -3527,3 +3527,59 @@ relation 2690, `pg_proc`'s.
   function no oid names gives null, and `pg_language` lists two.
   The `pg_attribute` narrowing check now finds the scan gives
   dd1.t's five rows, with none left for the filter to remove.
+
+## Step 125: sm's TOAST is on
+
+`../sm/NEXT.md` §3. digres read a value straight out of sm's
+tuple, so it left sm's TOAST off, and a row was held to 65535
+bytes. sm's pointer is a PostgreSQL external varlena already,
+`0x01` and then a vartag of its own, `0x40`
+(`../sm/sm2/VARLENA.md` §2), so digres reads it as PostgreSQL
+reads its own: late, where a value is read, and not where it
+is only passed along.
+
+- **`datadir_load()` turns it on** (`sm_set_toast`), after
+  attaching and before any database is opened.
+- **`varatt.h` has `VARTAG_SM`**, 20 bytes after the header,
+  and `VARATT_IS_EXTERNAL_SM()`: a slot, `datumCopy()` and a
+  heap tuple for a sort carry the pointer, 22 bytes, as they
+  carry PostgreSQL's.
+- **`detoast.c` reads one** through `smstore_fetch_toast()`,
+  whole: a slice is cut from the whole value, since sm fetches
+  no part of one. `toast_raw_datum_size()` and
+  `toast_datum_size()` take its length from the pointer
+  (`smstore_toast_size()`), so `octet_length()` and
+  `pg_column_size()` fetch nothing.
+- **A pointer is fetched by its store alone**
+  (`sm_toast_fetch`), as PostgreSQL's names its TOAST
+  relation: the pointer gives the store, and a store's values
+  out of line are under its TOAST relid, `0xFFFF`. No table is
+  looked up. The table the pointer was read from is open in
+  the transaction, which keeps its store from being dropped.
+- **A write is given values, but for the row's own pointers.**
+  `row_to_sm()` fetches every pointer of an insert, an
+  `ON CONFLICT` insert and a load; and of an update, every one
+  but the pointer the replaced row holds for that column, which
+  sm keeps without writing it again. sm refuses any other
+  pointer, after the row is written. To tell them apart, an
+  update whose row has a pointer reads the row it replaces:
+  the kept one after a write found it changed, as
+  `smstore_fetch_row()` does, else as the statement sees it.
+  That is one point read more for such a row.
+- **An index scan's key needs nothing**: the executor detoasts
+  a runtime key of a varlena type before it keys the scan
+  (`ExecIndexEvalRuntimeKeys()`), and sm fetches what its
+  index entries are made of.
+- **A pointer is to be fetched in the statement that read it**
+  (`sm_tbl_fetch`): at READ COMMITTED a later one may find the
+  value gone. PostgreSQL's detoasting of a holdable cursor's
+  rows, before they outlive the transaction, stays.
+- **Left**: compression, and a fetch of part of a value
+  (`../sm/sm2/SM2_DESIGN.md` §4.2).
+  `pg_column_toast_chunk_id()` and `pg_column_compression()`
+  give null for sm's pointer.
+- `server.sh`: a row of 100,000 bytes is read back whole and
+  in part; updates keep a pointer and copy one to another
+  column; inserts copy values into another table and into
+  their own; an update rolled back; an index scan keyed by a
+  value out of line; `DELETE ... RETURNING`.

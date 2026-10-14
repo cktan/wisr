@@ -112,14 +112,6 @@ Owed, and blocking nothing above:
 
 ## 3. Not blocking
 
-- **TOAST in digres.** sm2's and sm3's are built
-  (`sm2/SM2_DESIGN.md` §4.2, `sm3/SM3_DESIGN.md` §3.4), and
-  the C API has `sm_set_toast` and `sm_tbl_fetch`. digres
-  leaves it off: it reads a value straight out of a tuple. It
-  is to fetch a pointer where it reads a value, and give a
-  column's pointer back to an update that leaves the column
-  alone. Also not built: compression, and a fetch of part of a
-  value.
 - **What temporary tables left for later** (`TEMPTABLE.md`
   §9). They are built, in digres too. Not built: skipping the
   sync of a commit that wrote only temporary stores,

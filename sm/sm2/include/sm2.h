@@ -662,6 +662,16 @@ int rel_release(rel_t* rel);
 int toast_fetch(rel_t* rel, std::string_view ptr, std::string& out);
 
 /*
+ * Read the datum the TOAST pointer ptr names as the rel overload
+ * does, with no rel: the pointer names its store, and a store's
+ * datums out of line are under its TOAST relid, 0xFFFF, whatever
+ * table it holds. Fails with SM_ERR_INVALID if ptr is not one of
+ * sm2's pointers.
+ */
+int toast_fetch(sm1::session_t* session, std::string_view ptr,
+                std::string& out);
+
+/*
  * Open a cursor over the rows with rowno from first to last, both
  * included, in rowno order, forward only; its view is fixed now,
  * as sm1::scan's is.

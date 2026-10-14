@@ -1462,6 +1462,23 @@ int sm_tbl_fetch(sm_tbl_t *tbl, sm_datum_t val, std::string *out) {
   });
 }
 
+/* Read the value a TOAST pointer names, by its store alone. */
+int sm_toast_fetch(sm_session_t *session, sm_datum_t val, std::string *out) {
+  return guard(session, [&] {
+    if (!session || !val || !out) {
+      return null_arg("sm_toast_fetch", !session ? "session"
+                                        : !val   ? "val"
+                                                 : "out");
+    }
+    const char *v = static_cast<const char *>(sm2::datum_to_ptr(val));
+    if (v[0] != sm2::varlena_toast) {
+      return sm1::seterr(sm1::SM_ERR_INVALID,
+                         "sm_toast_fetch: not a TOAST pointer");
+    }
+    return sm2::toast_fetch(session_of(session), {v, sm2::toast_ptr_len}, *out);
+  });
+}
+
 /* Open a cursor over one of a table's indexes. */
 int sm_tbl_idx_scan(sm_tbl_t *tbl, uint64_t index, const sm_bound_t *lo,
                     const sm_bound_t *hi, bool *widened, sm_idx_scan_t **out) {

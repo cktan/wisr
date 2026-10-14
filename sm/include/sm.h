@@ -1011,6 +1011,16 @@ int sm_tbl_decode(sm_tbl_t* tbl, const void* tuple, size_t len,
 int sm_tbl_fetch(sm_tbl_t* tbl, sm_datum_t val, std::string* out);
 
 /*
+ * Read the value the TOAST pointer val names as sm_tbl_fetch does,
+ * with no table: the pointer names the store that holds the value.
+ * The table it was read from is open in the session's transaction,
+ * which keeps the store from being dropped. Fails with
+ * SM_ERR_INVALID if val is not a pointer, and SM_ERR_NOTFOUND if
+ * the value is gone.
+ */
+int sm_toast_fetch(sm_session_t* session, sm_datum_t val, std::string* out);
+
+/*
  * Open a cursor over the entries of the table's index, by oid,
  * between lo and hi, either NULL for no bound; SM_ERR_NOTFOUND if
  * the table has no such index. A bound too long to encode widens

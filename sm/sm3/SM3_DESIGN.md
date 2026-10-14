@@ -938,7 +938,9 @@ where a datum was. Built in `src/table/table.cc`, with
   catalog, to say it reads pointers. Off, the default, a
   table's heap is opened with no sequence for TOAST ids, so
   sm2 moves nothing: a host that reads a datum straight out of
-  a tuple, as digres does, is given no pointer.
+  a tuple is given no pointer. digres turns it on, and reads a
+  pointer as PostgreSQL reads its own (`../dg/WORKNOTE.md`
+  step 125).
 - **A table has a sequence for its ids**, `sm3.toast.<oid>`,
   made with it and dropped with it, temporary when the table
   is. It is named by the oid and not kept in the table's
