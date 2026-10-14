@@ -88,7 +88,18 @@ Beside the registry: the main LWLock array
 - **What XidGen, OidGen, RelationMapping and RelCacheInit
   guard is to go**, not to be locked otherwise. Transaction ids
   and OIDs are sm's: PostgreSQL's counters of them in
-  `TransamVariables` are deprecated (below). The relation
+  `TransamVariables` are deprecated (below). An oid digres
+  stores is sm3's: tcop `utility.c` sends CREATE TABLE and
+  CREATE INDEX to access/sm `smstore.c`, whose
+  `sm_cat_create_*` calls take it from sm3's `cat_new_oid()`,
+  sm1's sequence `oid_seq`, 16384 to `UINT32_MAX`.
+  transam `varsup.c` `GetNewObjectId()` is still called, by
+  catalog `catalog.c` `GetNewOidWithIndex()` and
+  `GetNewRelFileNumber()` for CREATE TYPE, FUNCTION, CAST,
+  TRIGGER and the rest, and a foreign table's
+  `heap_create_with_catalog()`; each then writes a catalog
+  table, which catalog `indexing.c` refuses, so the oid it
+  draws is never kept. The relation
   mapper's files and the relcache's init files are never read:
   `RelationCacheInitializePhase2()` and `Phase3()`, which load
   them, have no caller. RelCacheInit is also taken in one
