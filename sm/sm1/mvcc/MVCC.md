@@ -267,6 +267,26 @@ COMMITTED, b35's T2 is not aborted: its write is refused with
 UPDATED, it re-reads 10, re-applies v + 20 and commits 30, so
 neither increment is lost. T1's level changes nothing.
 
+**A writer blocked by another, at each level.** T1 writes R1;
+T2 writes R1 and waits for T1. What T2 gets when the wait ends
+is T2's level's to say, and REPEATABLE READ is not READ
+COMMITTED's: it fails as SERIALIZABLE does. T2's snapshot does
+not hold T1's version, and writing over a version it never saw
+would lose T1's update. First-committer-wins settles it at RR,
+with no SSI; SERIALIZABLE adds nothing to a write-write
+conflict. PostgreSQL does the same: "could not serialize access
+due to concurrent update", SQLSTATE 40001, at both.
+
+| T2's level | T1 commits | T1 aborts | Files |
+|---|---|---|---|
+| READ COMMITTED | UPDATED: T2 re-reads R1, then writes | OK | `in/f01_lost_update_avoided.t`, `in/b35_read_modify_write_first_commits.t`, `in/b36_read_modify_write_first_aborts.t` |
+| REPEATABLE READ | CONFLICT: T2 is aborted | OK | `in/b09_dirty_write_blocks_commit.t`, `in/b10_dirty_write_blocks_abort.t`, `in/f06_higher_levels_unchanged.t`, b35, b36 |
+| SERIALIZABLE | CONFLICT, as at RR | OK | the same, and b35, b36 |
+
+A T2 whose snapshot is taken after T1 commits meets no
+conflict at any level: it sees T1's version, and writes over
+it.
+
 Three distinctions this family pins down, because getting
 them wrong would be invisible in ordinary use:
 
