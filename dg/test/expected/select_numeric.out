@@ -1,204 +1,133 @@
-	 1: ?column?	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 2: ?column?	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 3: ?column?	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 4: ?column?	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 5: numeric	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 6: numeric	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 7: numeric	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1: ?column? = "1.5"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 2: ?column? = "-0.001"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 3: ?column? = "1000"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 4: ?column? = "1.50"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 5: numeric = "12.340"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 6: numeric = "31"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 7: numeric = "1000.5"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1: ?column?	(typeid = 701, len = 8, typmod = -1, byval = t)
-	 2: ?column?	(typeid = 701, len = 8, typmod = -1, byval = t)
-	 3: ?column?	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1: ?column? = "1e+300"	(typeid = 701, len = 8, typmod = -1, byval = t)
-	 2: ?column? = "3.4e+38"	(typeid = 701, len = 8, typmod = -1, byval = t)
-	 3: ?column? = "10000000000000000000000000000000000000"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1: ?column?	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 2: ?column?	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 3: ?column?	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 4: ?column?	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 5: ?column?	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 6: ?column?	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1: ?column? = "3.75"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 2: ?column? = "-0.75"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 3: ?column? = "3.375"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 4: ?column? = "3.3333333333333333"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 5: ?column? = "0.33333333333333333333"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 6: ?column? = "0.66666666666666666667"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1: ?column?	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 2: ?column?	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 3: div	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 4: ?column?	(typeid = 16, len = 1, typmod = -1, byval = t)
-	 5: ?column?	(typeid = 16, len = 1, typmod = -1, byval = t)
-	 6: abs	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 7: ?column?	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1: ?column? = "1.5"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 2: ?column? = "-1.5"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 3: div = "3"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 4: ?column? = "t"	(typeid = 16, len = 1, typmod = -1, byval = t)
-	 5: ?column? = "t"	(typeid = 16, len = 1, typmod = -1, byval = t)
-	 6: abs = "2.5"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 7: ?column? = "-2.5"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1: round	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 2: round	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 3: round	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 4: round	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 5: trunc	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 6: trunc	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 7: ceil	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 8: floor	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1: round = "3"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 2: round = "-3"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 3: round = "1.23"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 4: round = "1200"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 5: trunc = "1.99"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 6: trunc = "-1"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 7: ceil = "2"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 8: floor = "-2"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1: sqrt	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 2: sqrt	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 3: exp	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 4: ln	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 5: log	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 6: log	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1: sqrt = "1.414213562373095"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 2: sqrt = "4.000000000000000"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 3: exp = "2.7182818284590452"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 4: ln = "2.3025850929940457"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 5: log = "2.0000000000000000"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 6: log = "3.0000000000000000"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1: power	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 2: power	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 3: power	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 4: ?column?	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1: power = "1024.0000000000000"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 2: power = "1.4142135623730950"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 3: power = "0.2500000000000000"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 4: ?column? = "8.0000000000000000"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1: ?column?	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 2: numeric	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1: ?column? = "99999999999999999999999999999999999999"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 2: numeric = "1.0000000000000000000000000000000000000"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1: numeric	(typeid = 1700, len = 32, typmod = 327685, byval = f)
-	 2: numeric	(typeid = 1700, len = 32, typmod = 327686, byval = f)
-	 3: numeric	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 4: float8	(typeid = 701, len = 8, typmod = -1, byval = t)
-	 5: int4	(typeid = 23, len = 4, typmod = -1, byval = t)
-	 6: int8	(typeid = 20, len = 8, typmod = -1, byval = t)
-	----
-	 1: numeric = "1.2"	(typeid = 1700, len = 32, typmod = 327685, byval = f)
-	 2: numeric = "123.45"	(typeid = 1700, len = 32, typmod = 327686, byval = f)
-	 3: numeric = "0.1"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 4: float8 = "1.5"	(typeid = 701, len = 8, typmod = -1, byval = t)
-	 5: int4 = "3"	(typeid = 23, len = 4, typmod = -1, byval = t)
-	 6: int8 = "4"	(typeid = 20, len = 8, typmod = -1, byval = t)
-	----
-	 1: scale	(typeid = 23, len = 4, typmod = -1, byval = t)
-	 2: min_scale	(typeid = 23, len = 4, typmod = -1, byval = t)
-	 3: trim_scale	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 4: gcd	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 5: lcm	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 6: factorial	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1: scale = "3"	(typeid = 23, len = 4, typmod = -1, byval = t)
-	 2: min_scale = "2"	(typeid = 23, len = 4, typmod = -1, byval = t)
-	 3: trim_scale = "1.23"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 4: gcd = "6.0"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 5: lcm = "4.50"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 6: factorial = "2432902008176640000"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1: sum	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 2: avg	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 3: min	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 4: max	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1: sum = "6.75"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 2: avg = "2.2500000000000000"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 3: min = "1.5"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 4: max = "3"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1: sum	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 2: avg	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 3: stddev	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 4: variance	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1: sum = "55"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 2: avg = "5.5000000000000000"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 3: stddev = "3.0276503540974917"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 4: variance = "9.1666666666666667"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1: x	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1:  = "0.5"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1:  = "1.0"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1:  = "1.5"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1:  = "2.0"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1: width_bucket	(typeid = 23, len = 4, typmod = -1, byval = t)
-	 2: sign	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1: width_bucket = "3"	(typeid = 23, len = 4, typmod = -1, byval = t)
-	 2: sign = "-1"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1: jsonb	(typeid = 3802, len = -1, typmod = -1, byval = f)
-	 2: ?column?	(typeid = 16, len = 1, typmod = -1, byval = t)
-	----
-	 1: jsonb = "{"a": 1.5, "b": [1, 2.25, -3]}"	(typeid = 3802, len = -1, typmod = -1, byval = f)
-	 2: ?column? = "t"	(typeid = 16, len = 1, typmod = -1, byval = t)
-	----
-	 1: jsonb_path_query	(typeid = 3802, len = -1, typmod = -1, byval = f)
-	----
-	 1: jsonb_path_query = "6.0"	(typeid = 3802, len = -1, typmod = -1, byval = f)
-	----
-	 1: extract	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 2: to_char	(typeid = 25, len = -1, typmod = -1, byval = f)
-	 3: to_char	(typeid = 25, len = -1, typmod = -1, byval = f)
-	 4: to_number	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1: extract = "1704067201.500000"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 2: to_char = " 1234.50"	(typeid = 25, len = -1, typmod = -1, byval = f)
-	 3: to_char = " 1.23e-04"	(typeid = 25, len = -1, typmod = -1, byval = f)
-	 4: to_number = "1234.5"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1: money	(typeid = 790, len = 8, typmod = -1, byval = t)
-	 2: ?column?	(typeid = 3220, len = 8, typmod = -1, byval = t)
-	 3: ?column?	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1: money = "$12.34"	(typeid = 790, len = 8, typmod = -1, byval = t)
-	 2: ?column? = "0/15"	(typeid = 3220, len = 8, typmod = -1, byval = t)
-	 3: ?column? = "16"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	----
-	 1: numeric_send	(typeid = 17, len = -1, typmod = -1, byval = f)
-	 2: numeric_send	(typeid = 17, len = -1, typmod = -1, byval = f)
-	 3: numeric_send	(typeid = 17, len = -1, typmod = -1, byval = f)
-	 4: numeric_send	(typeid = 17, len = -1, typmod = -1, byval = f)
-	----
-	 1: numeric_send = "\x000200000000000100011388"	(typeid = 17, len = -1, typmod = -1, byval = f)
-	 2: numeric_send = "\x0001ffff400000040001"	(typeid = 17, len = -1, typmod = -1, byval = f)
-	 3: numeric_send = "\x0000000000000000"	(typeid = 17, len = -1, typmod = -1, byval = f)
-	 4: numeric_send = "\x000300010000000104d2162e2328"	(typeid = 17, len = -1, typmod = -1, byval = f)
-	----
+-- Verify that numeric, a decimal of at most 38 digits (DECIMAL.md), gives
+-- PostgreSQL's results: its text, its scales, its errors.
+-- 1. Read literals, text with spaces, base 16 and underscores; a literal
+--    past 38 digits is a float8.
+-- 2. Add, subtract, multiply and divide, at PostgreSQL's scales.
+-- 3. Take remainders and integer quotients, compare across scales, and
+--    round, truncate, take ceilings and floors.
+-- 4. Take square roots, exponentials, logarithms and powers.
+-- 5. Keep 38 digits, round to a typmod, and cast to and from the integers
+--    and floats.
+-- 6. Take scales, gcd, lcm and a factorial.
+-- 7. Sum, average and take deviations of numerics and integers.
+-- 8. Make a series and find a bucket.
+-- 9. Use numeric in jsonb, jsonpath, extract, to_char, money and pg_lsn.
+-- 10. Send values in PostgreSQL's binary format.
+-- (Errors are server.sh's: a run stops at its first.)
+SELECT 1.5, -0.001, 1e3, 1.50, '  12.340  '::numeric, '0x1F'::numeric, '1_000.5'::numeric;
+ ?column? | ?column? | ?column? | ?column? | numeric | numeric | numeric 
+----------+----------+----------+----------+---------+---------+---------
+      1.5 |   -0.001 |     1000 |     1.50 |  12.340 |      31 |  1000.5
+(1 row)
+
+SELECT 1e300, 3.4e38, 1e37;
+ ?column? | ?column? |                ?column?                
+----------+----------+----------------------------------------
+   1e+300 |  3.4e+38 | 10000000000000000000000000000000000000
+(1 row)
+
+SELECT 1.5 + 2.25, 1.5 - 2.25, 1.5 * 2.25, 10 / 3.0, 1 / 3::numeric, 2.0 / 3;
+ ?column? | ?column? | ?column? |      ?column?      |        ?column?        |        ?column?        
+----------+----------+----------+--------------------+------------------------+------------------------
+     3.75 |    -0.75 |    3.375 | 3.3333333333333333 | 0.33333333333333333333 | 0.66666666666666666667
+(1 row)
+
+SELECT 7.5 % 2, -7.5 % 2, div(7.5, 2), 1.5 = 1.50, 1.5 < 1.51, abs(-2.5), -(2.5);
+ ?column? | ?column? | div | ?column? | ?column? | abs | ?column? 
+----------+----------+-----+----------+----------+-----+----------
+      1.5 |     -1.5 |   3 | t        | t        | 2.5 |     -2.5
+(1 row)
+
+SELECT round(2.5), round(-2.5), round(1.2345, 2), round(1234.5, -2), trunc(1.999, 2), trunc(-1.999), ceil(1.1), floor(-1.1);
+ round | round | round | round | trunc | trunc | ceil | floor 
+-------+-------+-------+-------+-------+-------+------+-------
+     3 |    -3 |  1.23 |  1200 |  1.99 |    -1 |    2 |    -2
+(1 row)
+
+SELECT sqrt(2::numeric), sqrt(16::numeric), exp(1::numeric), ln(10::numeric), log(100::numeric), log(2, 8::numeric);
+       sqrt        |       sqrt        |        exp         |         ln         |        log         |        log         
+-------------------+-------------------+--------------------+--------------------+--------------------+--------------------
+ 1.414213562373095 | 4.000000000000000 | 2.7182818284590452 | 2.3025850929940457 | 2.0000000000000000 | 3.0000000000000000
+(1 row)
+
+SELECT power(2::numeric, 10), power(2::numeric, 0.5), power(2.0, -2), 2::numeric ^ 3;
+       power        |       power        |       power        |      ?column?      
+--------------------+--------------------+--------------------+--------------------
+ 1024.0000000000000 | 1.4142135623730950 | 0.2500000000000000 | 8.0000000000000000
+(1 row)
+
+SELECT 99999999999999999999999999999999999999::numeric + 0, '1.000000000000000000000000000000000000000000'::numeric;
+                ?column?                |                 numeric                 
+----------------------------------------+-----------------------------------------
+ 99999999999999999999999999999999999999 | 1.0000000000000000000000000000000000000
+(1 row)
+
+SELECT 1.23::numeric(5,1), 123.45::numeric(5,2), 0.1::float8::numeric, 1.5::numeric::float8, 2.5::numeric::int4, 3.5::numeric::int8;
+ numeric | numeric | numeric | float8 | int4 | int8 
+---------+---------+---------+--------+------+------
+     1.2 |  123.45 |     0.1 |    1.5 |    3 |    4
+(1 row)
+
+SELECT scale(1.230), min_scale(1.230), trim_scale(1.230), gcd(12.0, 18), lcm(1.5, 2.25), factorial(20);
+ scale | min_scale | trim_scale | gcd | lcm  |      factorial      
+-------+-----------+------------+-----+------+---------------------
+     3 |         2 |       1.23 | 6.0 | 4.50 | 2432902008176640000
+(1 row)
+
+SELECT sum(x), avg(x), min(x), max(x) FROM (VALUES (1.5), (2.25), (3)) v(x);
+ sum  |        avg         | min | max 
+------+--------------------+-----+-----
+ 6.75 | 2.2500000000000000 | 1.5 |   3
+(1 row)
+
+SELECT sum(x::int8), avg(x::int4), stddev(x::int4), variance(x::numeric) FROM generate_series(1, 10) x;
+ sum |        avg         |       stddev       |      variance      
+-----+--------------------+--------------------+--------------------
+  55 | 5.5000000000000000 | 3.0276503540974917 | 9.1666666666666667
+(1 row)
+
+SELECT x FROM generate_series(0.5, 2, 0.5) x;
+  x  
+-----
+ 0.5
+ 1.0
+ 1.5
+ 2.0
+(4 rows)
+
+SELECT width_bucket(5.35, 0.024, 10.06, 5), sign(-3.2);
+ width_bucket | sign 
+--------------+------
+            3 |   -1
+(1 row)
+
+SELECT '{"a": 1.5, "b": [1, 2.25, -3]}'::jsonb, '{"a": 1}'::jsonb = '{"a": 1.0}'::jsonb;
+             jsonb              | ?column? 
+--------------------------------+----------
+ {"a": 1.5, "b": [1, 2.25, -3]} | t
+(1 row)
+
+SELECT jsonb_path_query('{"x": 2.5}'::jsonb, '$.x * 2 + 1'::jsonpath, '{}'::jsonb, false);
+ jsonb_path_query 
+------------------
+ 6.0
+(1 row)
+
+SELECT extract(epoch FROM timestamp '2024-01-01 00:00:01.5'), to_char(1234.5::numeric, '9999.99'), to_char(0.000123::numeric, '9.99EEEE'), to_number('1,234.5', '9,999.9');
+      extract      | to_char  |  to_char  | to_number 
+-------------------+----------+-----------+-----------
+ 1704067201.500000 |  1234.50 |  1.23e-04 |    1234.5
+(1 row)
+
+SELECT 12.34::numeric::money, '0/10'::pg_lsn + 5::numeric, '0/20'::pg_lsn - '0/10'::pg_lsn;
+ money  | ?column? | ?column? 
+--------+----------+----------
+ $12.34 | 0/15     |       16
+(1 row)
+
+SELECT numeric_send(1.5), numeric_send(-0.0001), numeric_send(0::numeric), numeric_send(12345678.9);
+        numeric_send        |      numeric_send      |    numeric_send    |          numeric_send          
+----------------------------+------------------------+--------------------+--------------------------------
+ \x000200000000000100011388 | \x0001ffff400000040001 | \x0000000000000000 | \x000300010000000104d2162e2328
+(1 row)
+

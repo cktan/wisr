@@ -145,18 +145,21 @@ def tokens(line):
 
 
 def read_bki(path):
-    """The catalogs of postgres.bki: name -> (columns, rows), and each
-    catalog's oid: name -> oid."""
+    """The catalogs of postgres.bki: name -> (columns, rows); each
+    catalog's oid: name -> oid; and what its columns force of NOT NULL:
+    name -> [True for FORCE NOT NULL, False for FORCE NULL, else None]."""
     text = open(path).read()
-    catalogs, oids = {}, {
-  }
+    catalogs, oids, forced = {}, {}, {}
     for m in re.finditer(r"^create (\w+) (\d+).*?\n \(\n(.*?)\n \)\n", text, flags=re.M | re.S):
-        cols = []
+        cols, force = [], []
         for line in m.group(3).split("\n"):
             name, ctype = [p.strip() for p in line.strip(" ,").split("=")]
             cols.append((name, ctype.split()[0]))
+            force.append(True if ctype.endswith("FORCE NOT NULL")
+                         else False if ctype.endswith("FORCE NULL") else None)
         catalogs[m.group(1)] = (cols, [])
         oids[m.group(1)] = int(m.group(2))
+        forced[m.group(1)] = force
     current = None
     for line in text.split("\n"):
 # A bootstrap catalog is open from its "create"; the rest are
@@ -167,7 +170,21 @@ def read_bki(path):
             current = None
         elif line.startswith("insert ( ") and current in catalogs:
             catalogs[current][1].append(tokens(line[len("insert ( ") : -2]))
-    return catalogs, oids
+    return catalogs, oids, forced
+
+
+def not_nulls(cols, force, typlen):
+    """Whether each column is NOT NULL, as PostgreSQL's bootstrap decides:
+    as forced, else if it is fixed-width and so is every column before it,
+    each NOT NULL."""
+    out = []
+    for i, (_, ctype) in enumerate(cols):
+        if force[i] is not None:
+            out.append(force[i])
+        else:
+            out.append(typlen[ctype] > 0 and
+                       all(typlen[c] > 0 and out[j] for j, (_, c) in enumerate(cols[:i])))
+    return out
 
 
 def c_string(value):
@@ -243,8 +260,8 @@ def write_header(catalogs, out):
         w(" * many in *count; NULL and 0 if there are none.\n */\n")
         w(f"extern const cat_{short}_t *const *cat_{short}s_named(const char *name,\n")
         w(f"{' ' * (len(short) * 2 + 43)}int *count);\n")
-    w("\n/* A column of a catalog relation: its name and its type. */\n")
-    w("typedef struct cat_column_t {\n  const char *name;\n  Oid typid;\n} cat_column_t;\n\n")
+    w("\n/* A column of a catalog relation: its name, its type, whether NOT NULL. */\n")
+    w("typedef struct cat_column_t {\n  const char *name;\n  Oid typid;\n  bool notnull;\n} cat_column_t;\n\n")
     w("/* A catalog relation: a catalog a query can read (SYSCATALOG.md). */\n")
     w("typedef struct cat_relation_t {\n  const char *name;\n  Oid oid;\n  Oid rowtype;\n")
     w("  int natts;\n  const cat_column_t *columns;\n")
@@ -329,12 +346,13 @@ def write_source(catalogs, out):
         w(f"  return n > 0 ? &{short}_by_name[lo] : NULL;\n}}\n")
 
 
-def write_relations(catalogs, oids, w):
+def write_relations(catalogs, oids, forced, w):
     """Write the catalog relations of RELATIONS, and their lookups."""
     tcols, trows = catalogs["pg_type"]
     tnames = [c for c, _ in tcols]
-    at = {c: tnames.index(c) for c in ("oid", "typname", "typrelid")}
+    at = {c: tnames.index(c) for c in ("oid", "typname", "typrelid", "typlen")}
     type_oid = {r[at["typname"]][1]: r[at["oid"]][1] for r in trows}
+    typlen = {r[at["typname"]][1]: int(r[at["typlen"]][1]) for r in trows}
     rowtype = {r[at["typrelid"]][1]: r[at["oid"]][1] for r in trows}
     w("\n/* ---- catalog relations ---- */\n\n")
     for view, (oid, cols) in VIEWS.items():
@@ -342,8 +360,12 @@ def write_relations(catalogs, oids, w):
         oids[view] = oid
     for rel in RELATIONS + list(VIEWS):
         w(f"static const cat_column_t {rel}_columns[] = {{\n")
-        for col, ctype in catalogs[rel][0]:
-            w(f"    {{{c_string(col)}, {type_oid[ctype]}}},\n")
+        cols = catalogs[rel][0]
+        # A view's columns are its select list's: none is NOT NULL.
+        notnull = (not_nulls(cols, forced[rel], typlen) if rel in forced
+                   else [False] * len(cols))
+        for (col, ctype), nn in zip(cols, notnull):
+            w(f"    {{{c_string(col)}, {type_oid[ctype]}, {'true' if nn else 'false'}}},\n")
         w("};\n\n")
         if rel in TEXT_ROWS:
             w(f"static const char *const {rel}_text[] = {{\n")
@@ -379,10 +401,10 @@ def main():
     writers = {"header": write_header, "source": write_source}
     if len(sys.argv) != 3 or sys.argv[2] not in writers:
         sys.exit("usage: gen_cat.py POSTGRES_BKI header|source")
-    catalogs, oids = read_bki(sys.argv[1])
+    catalogs, oids, forced = read_bki(sys.argv[1])
     writers[sys.argv[2]](catalogs, sys.stdout)
     if sys.argv[2] == "source":
-        write_relations(catalogs, oids, sys.stdout.write)
+        write_relations(catalogs, oids, forced, sys.stdout.write)
 
 
 if __name__ == "__main__":

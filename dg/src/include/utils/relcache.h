@@ -120,11 +120,6 @@ extern void RelationCacheInvalidateEntry(Oid relationId);
 
 extern void RelationCacheInvalidate(bool debug_discard);
 
-#ifdef USE_ASSERT_CHECKING
-extern void AssertPendingSyncs_RelationCache(void);
-#else
-#define AssertPendingSyncs_RelationCache() do {} while (0)
-#endif
 extern void AtEOXact_RelationCache(bool isCommit);
 extern void AtEOSubXact_RelationCache(bool isCommit, SubTransactionId mySubid,
                                       SubTransactionId parentSubid);

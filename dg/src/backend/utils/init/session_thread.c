@@ -14,8 +14,7 @@
  *
  * A session ends where a process would exit: proc_exit() runs the
  * thread's exit callbacks and throws, and the thread's top catches it.
- * The thread's result is the exit code. A session that returns ends the
- * same way, with code 0.
+ * A session that returns ends the same way.
  *
  * IDENTIFICATION
  *	  src/backend/utils/init/session_thread.c
@@ -44,7 +43,6 @@
 typedef struct session_start_t {
   void (*fn)(void *);
   void *arg;
-  int *exit_code; /* where the session's exit code goes, or NULL */
   char *shared;   /* the SHARED variables, one after another */
   char *settings; /* the non-default settings, as GUC writes them */
   size_t settings_len;
@@ -75,11 +73,15 @@ static void session_thread_end(void) {
   ShutdownFileAccess();
   FreeStaticSnapshots();
 
-  /* Nothing allocates from here on. */
+  /*
+   * Nothing allocates from here on.  TopMemoryContext is cleared before it
+   * is deleted: deleting it is refused otherwise, as no process would.
+   */
   MemoryContextSwitchTo(NULL);
-  MemoryContextDelete(TopMemoryContext);
+  MemoryContext top = TopMemoryContext;
   TopMemoryContext = NULL;
   ErrorContext = NULL;
+  MemoryContextDelete(top);
   AllocSetFreeFreeLists();
 
   /* Last: what the thread owns goes with its control block. */
@@ -142,10 +144,8 @@ static void session_thread_main(session_start_t *p) {
   try {
     start.fn(start.arg);
     proc_exit(0);
-  } catch (const proc_exit_t &e) {
+  } catch (const proc_exit_t &) {
     session_thread_end();
-    if (start.exit_code != NULL)
-      *start.exit_code = e.code;
   }
 }
 
@@ -160,12 +160,10 @@ static size_t shared_len(void) {
 
 /*
  * Start a thread that runs fn(arg) as a session, given what this thread
- * has set that it needs. fn must catch its own errors. As the session
- * ends, its exit code goes to *exit_code unless that is NULL: 0 if fn
- * returned. The caller joins or detaches the thread.
+ * has set that it needs. fn must catch its own errors. The caller joins
+ * or detaches the thread.
  */
-std::thread session_thread_start(void (*fn)(void *), void *arg,
-                                 int *exit_code) {
+std::thread session_thread_start(void (*fn)(void *), void *arg) {
   session_start_t *start = (session_start_t *)malloc(sizeof(*start));
   FILE *fp;
 
@@ -173,7 +171,6 @@ std::thread session_thread_start(void (*fn)(void *), void *arg,
     elog(ERROR, "out of memory");
   start->fn = fn;
   start->arg = arg;
-  start->exit_code = exit_code;
   start->shared = (char *)malloc(shared_len());
   if (start->shared == NULL)
     elog(ERROR, "out of memory");

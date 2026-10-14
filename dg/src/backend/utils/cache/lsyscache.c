@@ -1738,7 +1738,7 @@ Oid get_func_signature(Oid funcid, Oid **argtypes, int *nargs) {
 
   result = procstruct->prorettype;
   *nargs = (int)procstruct->pronargs;
-  Assert(*nargs == procstruct->proargtypes.dim1);
+  Assert(*nargs == procstruct->proargtypes.count);
   *argtypes = (Oid *)palloc(*nargs * sizeof(Oid));
   memcpy(*argtypes, procstruct->proargtypes.values, *nargs * sizeof(Oid));
 

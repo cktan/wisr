@@ -373,18 +373,13 @@ static void printtup_shutdown(DestReceiver *self) {
  */
 static void printtup_destroy(DestReceiver *self) { pfree(self); }
 
-thread_local /*LOCAL*/ FILE *debug_out = NULL;
-
-/* The stream DestDebug prints to. */
-static FILE *debug_stream(void) { return debug_out ? debug_out : stdout; }
-
 /* ----------------
  *		printatt
  * ----------------
  */
 static void printatt(unsigned attributeId, Form_pg_attribute attributeP,
                      char *value) {
-  fprintf(debug_stream(),
+  fprintf(stdout,
           "\t%2d: %s%s%s%s\t(typeid = %u, len = %d, typmod = %d, byval = %c)\n",
           attributeId, NameStr(attributeP->attname),
           value != NULL ? " = \"" : "", value != NULL ? value : "",
@@ -407,7 +402,7 @@ void debugStartup(DestReceiver *self, int operation, TupleDesc typeinfo) {
    */
   for (i = 0; i < natts; ++i)
     printatt((unsigned)i + 1, TupleDescAttr(typeinfo, i), NULL);
-  fprintf(debug_stream(), "\t----\n");
+  fprintf(stdout, "\t----\n");
 }
 
 /* ----------------
@@ -435,7 +430,7 @@ bool debugtup(TupleTableSlot *slot, DestReceiver *self) {
 
     printatt((unsigned)i + 1, TupleDescAttr(typeinfo, i), value);
   }
-  fprintf(debug_stream(), "\t----\n");
+  fprintf(stdout, "\t----\n");
 
   return true;
 }

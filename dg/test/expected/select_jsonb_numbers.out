@@ -1,68 +1,76 @@
-	 1: jsonb	(typeid = 3802, len = -1, typmod = -1, byval = f)
-	----
-	 1: jsonb = "{"a": 1.5, "b": 2.5, "c": 1e+300, "d": -0.03, "e": 12345678901234567890}"	(typeid = 3802, len = -1, typmod = -1, byval = f)
-	----
-	 1: jsonb_typeof	(typeid = 25, len = -1, typmod = -1, byval = f)
-	 2: jsonb_typeof	(typeid = 25, len = -1, typmod = -1, byval = f)
-	 3: ?column?	(typeid = 16, len = 1, typmod = -1, byval = t)
-	 4: ?column?	(typeid = 16, len = 1, typmod = -1, byval = t)
-	 5: ?column?	(typeid = 16, len = 1, typmod = -1, byval = t)
-	----
-	 1: jsonb_typeof = "number"	(typeid = 25, len = -1, typmod = -1, byval = f)
-	 2: jsonb_typeof = "number"	(typeid = 25, len = -1, typmod = -1, byval = f)
-	 3: ?column? = "t"	(typeid = 16, len = 1, typmod = -1, byval = t)
-	 4: ?column? = "t"	(typeid = 16, len = 1, typmod = -1, byval = t)
-	 5: ?column? = "t"	(typeid = 16, len = 1, typmod = -1, byval = t)
-	----
-	 1: ?column?	(typeid = 25, len = -1, typmod = -1, byval = f)
-	 2: float8	(typeid = 701, len = 8, typmod = -1, byval = t)
-	 3: numeric	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 4: int4	(typeid = 23, len = 4, typmod = -1, byval = t)
-	----
-	 1: ?column? = "1e+300"	(typeid = 25, len = -1, typmod = -1, byval = f)
-	 2: float8 = "1e+300"	(typeid = 701, len = 8, typmod = -1, byval = t)
-	 3: numeric = "2.5"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 4: int4 = "25"	(typeid = 23, len = 4, typmod = -1, byval = t)
-	----
-	 1: ?column?	(typeid = 16, len = 1, typmod = -1, byval = t)
-	 2: ?column?	(typeid = 16, len = 1, typmod = -1, byval = t)
-	----
-	 1: ?column? = "t"	(typeid = 16, len = 1, typmod = -1, byval = t)
-	 2: ?column? = "t"	(typeid = 16, len = 1, typmod = -1, byval = t)
-	----
-	 1: jsonb_path_query	(typeid = 3802, len = -1, typmod = -1, byval = f)
-	----
-	 1: jsonb_path_query = "5.0"	(typeid = 3802, len = -1, typmod = -1, byval = f)
-	----
-	 1: jsonb_path_query	(typeid = 3802, len = -1, typmod = -1, byval = f)
-	----
-	 1: jsonb_path_query = "1e+300"	(typeid = 3802, len = -1, typmod = -1, byval = f)
-	----
-	 1: jsonb_path_query	(typeid = 3802, len = -1, typmod = -1, byval = f)
-	----
-	 1: jsonb_path_query = "2"	(typeid = 3802, len = -1, typmod = -1, byval = f)
-	----
-	 1: jsonb_path_query = "3.5"	(typeid = 3802, len = -1, typmod = -1, byval = f)
-	----
-	 1: jsonb_path_query	(typeid = 3802, len = -1, typmod = -1, byval = f)
-	 2: jsonb_path_query	(typeid = 3802, len = -1, typmod = -1, byval = f)
-	 3: jsonb_path_query	(typeid = 3802, len = -1, typmod = -1, byval = f)
-	----
-	 1: jsonb_path_query = "2"	(typeid = 3802, len = -1, typmod = -1, byval = f)
-	 2: jsonb_path_query = ""2.5""	(typeid = 3802, len = -1, typmod = -1, byval = f)
-	 3: jsonb_path_query = ""number""	(typeid = 3802, len = -1, typmod = -1, byval = f)
-	----
-	 1: x	(typeid = 25, len = -1, typmod = -1, byval = f)
-	----
-	 1:  = "1.5"	(typeid = 25, len = -1, typmod = -1, byval = f)
-	----
-	 1:  = "2000"	(typeid = 25, len = -1, typmod = -1, byval = f)
-	----
-	 1: jsonb_agg	(typeid = 3802, len = -1, typmod = -1, byval = f)
-	----
-	 1: jsonb_agg = "[10, 2]"	(typeid = 3802, len = -1, typmod = -1, byval = f)
-	----
-	 1: count	(typeid = 20, len = 8, typmod = -1, byval = t)
-	----
-	 1: count = "1"	(typeid = 20, len = 8, typmod = -1, byval = t)
-	----
+-- Verify that a JSON number with an exponent is a float8 in jsonb, and one
+-- without a numeric (DECIMAL.md), and that the two are one kind of number.
+-- 1. Read a document with both: floats print as float8 does.
+-- 2. Both are numbers: equal, ordered and contained across the kinds.
+-- 3. ->> and casts give each its value; 1e300 keeps its float8.
+-- 4. jsonpath computes with a float as numeric, compares it as float8,
+--    and returns one it only selects as it is.
+-- 5. Text, aggregation and DISTINCT treat equal numbers alike.
+SELECT '{"a": 1.5, "b": 2.5e0, "c": 1e300, "d": -3E-2, "e": 12345678901234567890}'::jsonb;
+                                  jsonb                                   
+--------------------------------------------------------------------------
+ {"a": 1.5, "b": 2.5, "c": 1e+300, "d": -0.03, "e": 12345678901234567890}
+(1 row)
+
+SELECT jsonb_typeof('1e3'::jsonb), jsonb_typeof('1000'::jsonb), '1e3'::jsonb = '1000'::jsonb, '2.5e0'::jsonb = '2.5'::jsonb, '1e3'::jsonb < '1001'::jsonb;
+ jsonb_typeof | jsonb_typeof | ?column? | ?column? | ?column? 
+--------------+--------------+----------+----------+----------
+ number       | number       | t        | t        | t
+(1 row)
+
+SELECT ('{"c": 1e300}'::jsonb ->> 'c'), ('{"c": 1e300}'::jsonb -> 'c')::float8, ('{"b": 2.5e0}'::jsonb -> 'b')::numeric, ('{"b": 2.5e1}'::jsonb -> 'b')::int4;
+ ?column? | float8 | numeric | int4 
+----------+--------+---------+------
+ 1e+300   | 1e+300 |     2.5 |   25
+(1 row)
+
+SELECT '[1, 2e0, 3]'::jsonb @> '[2]'::jsonb, '{"a": 1e2}'::jsonb @> '{"a": 100}'::jsonb;
+ ?column? | ?column? 
+----------+----------
+ t        | t
+(1 row)
+
+SELECT jsonb_path_query('{"x": 2.5e0}'::jsonb, '$.x * 2'::jsonpath, '{}'::jsonb, false);
+ jsonb_path_query 
+------------------
+ 5.0
+(1 row)
+
+SELECT jsonb_path_query('{"x": 1e300}'::jsonb, '$.x'::jsonpath, '{}'::jsonb, false);
+ jsonb_path_query 
+------------------
+ 1e+300
+(1 row)
+
+SELECT jsonb_path_query('{"a": [1, 2e0, 3.5e0]}'::jsonb, '$.a[*] ? (@ > 1.5)'::jsonpath, '{}'::jsonb, false);
+ jsonb_path_query 
+------------------
+ 2
+ 3.5
+(2 rows)
+
+SELECT jsonb_path_query('{"x": 2.5e0}'::jsonb, '$.x.floor()'::jsonpath, '{}'::jsonb, false), jsonb_path_query('{"x": 2.5e0}'::jsonb, '$.x.string()'::jsonpath, '{}'::jsonb, false), jsonb_path_query('{"x": 2.5e0}'::jsonb, '$.x.type()'::jsonpath, '{}'::jsonb, false);
+ jsonb_path_query | jsonb_path_query | jsonb_path_query 
+------------------+------------------+------------------
+ 2                | "2.5"            | "number"
+(1 row)
+
+SELECT x from jsonb_array_elements_text('[1.5, 2e3]'::jsonb) x;
+  x   
+------
+ 1.5
+ 2000
+(2 rows)
+
+SELECT jsonb_agg(x) from (values ('1e1'::jsonb), ('2'::jsonb)) v(x);
+ jsonb_agg 
+-----------
+ [10, 2]
+(1 row)
+
+SELECT count(distinct x) from (values ('1e1'::jsonb), ('10'::jsonb), ('10.0'::jsonb)) v(x);
+ count 
+-------
+     1
+(1 row)
+

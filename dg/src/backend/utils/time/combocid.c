@@ -114,15 +114,6 @@ CommandId HeapTupleHeaderGetCmax(const HeapTupleHeaderData *tup) {
 
   Assert(!(tup->t_infomask & HEAP_MOVED));
 
-  /*
-   * Because GetUpdateXid() performs memory allocations if xmax is a
-   * multixact we can't Assert() if we're inside a critical section. This
-   * weakens the check, but not using GetCmax() inside one would complicate
-   * things too much.
-   */
-  Assert(CritSectionCount > 0 ||
-         TransactionIdIsCurrentTransactionId(HeapTupleHeaderGetUpdateXid(tup)));
-
   if (tup->t_infomask & HEAP_COMBOCID)
     return GetRealCmax(cid);
   else

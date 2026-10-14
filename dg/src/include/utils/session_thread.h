@@ -12,8 +12,7 @@
 
 #include <thread>
 
-extern std::thread session_thread_start(void (*fn)(void *), void *arg,
-                                        int *exit_code);
+extern std::thread session_thread_start(void (*fn)(void *), void *arg);
 
 /*
  * A SHARED variable's place in the thread-local block, and its size: the

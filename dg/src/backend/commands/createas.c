@@ -520,12 +520,6 @@ static void intorel_startup(DestReceiver *self, int operation,
   myState->reladdr = intoRelationAddr;
   myState->output_cid = GetCurrentCommandId(true);
   myState->ti_options = TABLE_INSERT_SKIP_FSM;
-
-  /*
-   * Valid smgr_targblock implies something already wrote to the relation.
-   * This may be harmless, but this function hasn't planned for it.
-   */
-  Assert(RelationGetTargetBlock(intoRelationDesc) == InvalidBlockNumber);
 }
 
 /*

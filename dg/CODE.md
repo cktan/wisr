@@ -47,13 +47,13 @@ The import itself is not built yet (`PLAN.md` §7).
 - **Build with `make -j4`**, never plain `make`, from `dg/`.
   It builds `../sq` and `../sm` as needed.
 - **`make -j4 test`** runs everything: the statements in
-  `test/` alone and in eight threads, `initdb`, and
+  `test/` alone and in eight sessions of a server, `initdb`, and
   `test/server.sh`, which starts a server and connects with
   `psql`. It passes with these lines:
 
   ```
   run: PASSED (118 files)
-  run: PASSED (3 files, alone and in 8 threads)
+  run: PASSED (7 files, alone and in 8 sessions)
   initdb: PASSED
   server: PASSED
   ```

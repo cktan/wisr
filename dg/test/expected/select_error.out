@@ -1,5 +1,16 @@
-	 1: ?column?	(typeid = 23, len = 4, typmod = -1, byval = t)
-	----
-	 1: ?column? = "42"	(typeid = 23, len = 4, typmod = -1, byval = t)
-	----
-ERROR: division by zero
+-- Verify that an error raised deep in the executor reaches the top as
+-- PostgreSQL's error, and that what ran before it has been printed: an
+-- ERROR is a C++ exception here, where PostgreSQL jumps
+-- (sm/PART4.md section 2).
+-- 1. Run a statement that succeeds.
+-- 2. Divide by zero: the function raises, some frames below psql's
+--    statement.
+-- 3. Follow with a statement that must not run.
+SELECT 6 * 7;
+ ?column? 
+----------
+       42
+(1 row)
+
+SELECT 1 / 0;
+psql:test/select_error.sql:10: ERROR:  division by zero

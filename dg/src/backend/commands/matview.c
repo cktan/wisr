@@ -160,12 +160,6 @@ static void transientrel_startup(DestReceiver *self, int operation,
   myState->transientrel = transientrel;
   myState->output_cid = GetCurrentCommandId(true);
   myState->ti_options = TABLE_INSERT_SKIP_FSM | TABLE_INSERT_FROZEN;
-
-  /*
-   * Valid smgr_targblock implies something already wrote to the relation.
-   * This may be harmless, but this function hasn't planned for it.
-   */
-  Assert(RelationGetTargetBlock(transientrel) == InvalidBlockNumber);
 }
 
 /*

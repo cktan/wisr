@@ -26,9 +26,12 @@ else
 OPT ?= -O0 -g
 endif
 STD := -x c++ -std=gnu++20 -fno-rtti -w
+# Assert() checks, on in every build here, which is a debug one; a
+# release build turns them off with "make ASSERT=".
+ASSERT ?= -DUSE_ASSERT_CHECKING
 # Every directory may include sm_sys.h: the services dg is built on,
 # in sm's level 0 (../sm/sm0).
-CPPFLAGS := -I$(top)/src/include -I$(top)/../sm/sm0/include $(INCLUDES) -D_GNU_SOURCE
+CPPFLAGS := -I$(top)/src/include -I$(top)/../sm/sm0/include $(INCLUDES) -D_GNU_SOURCE $(ASSERT)
 
 SRCS := $(filter-out $(SKIP),$(wildcard *.c))
 OBJS := $(SRCS:.c=.$(OBJ))

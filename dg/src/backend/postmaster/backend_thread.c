@@ -145,7 +145,7 @@ pid_t backend_thread_launch(BackendType child_type, int child_slot,
   pg_atomic_init_u32(&t->tid, 0);
 
   /* Nobody joins it: the postmaster learns of its end from the queue. */
-  session_thread_start(backend_thread_main, t, NULL).detach();
+  session_thread_start(backend_thread_main, t).detach();
 
   /* Its pid is its thread id: wait for the thread to say. */
   while ((tid = (pid_t)pg_atomic_read_u32(&t->tid)) == 0)

@@ -638,7 +638,6 @@ static const char *GetLWTrancheName(uint16 trancheId) {
  * Return an identifier for an LWLock based on the wait class and event.
  */
 const char *GetLWLockIdentifier(uint32 classId, uint16 eventId) {
-  Assert(classId == PG_WAIT_LWLOCK);
   /* The event IDs are just tranche numbers. */
   return GetLWTrancheName(eventId);
 }

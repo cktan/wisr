@@ -47,11 +47,9 @@ void AttachSharedMemoryStructs(void) {
   Assert(IsUnderPostmaster);
 
   /*
-   * In EXEC_BACKEND mode, backends don't inherit the number of fast-path
-   * groups we calculated before setting the shmem up, so recalculate it.
+   * The number of fast-path groups is not recalculated: a session thread
+   * copies the postmaster's (FastPathLockGroupsPerBackend is SHARED).
    */
-  InitializeFastPathLocks();
-
   CreateOrAttachShmemStructs();
 
   /*

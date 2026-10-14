@@ -729,7 +729,7 @@ void BumpCheck(MemoryContext context) {
         chunksize = block->endptr - (char *)MemoryChunkGetPointer(chunk);
         has_external_chunk = true;
       } else {
-        chunkblock = MemoryChunkGetBlock(chunk);
+        chunkblock = (BumpBlock *)MemoryChunkGetBlock(chunk);
         chunksize = MemoryChunkGetValue(chunk);
       }
 

@@ -60,10 +60,9 @@ Relation relation_open(Oid relationId, LOCKMODE lockmode) {
     elog(ERROR, "could not open relation with OID %u", relationId);
 
   /*
-   * If we didn't get the lock ourselves, assert that caller holds one,
-   * except in bootstrap mode where no locks are used.
+   * If we didn't get the lock ourselves, assert that caller holds one.
    */
-  Assert(lockmode != NoLock || IsBootstrapProcessingMode() ||
+  Assert(lockmode != NoLock ||
          CheckRelationLockedByMe(r, AccessShareLock, true));
 
   /* Make note that we've accessed a temporary relation */

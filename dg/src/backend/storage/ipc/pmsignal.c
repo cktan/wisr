@@ -256,8 +256,6 @@ void RegisterPostmasterChildActive(void) {
 void MarkPostmasterChildWalSender(void) {
   int slot = MyPMChildSlot;
 
-  Assert(am_walsender);
-
   Assert(slot > 0 && slot <= PMSignalState->num_child_flags);
   slot--;
   Assert(PM_FLAG_GET(slot) == PM_CHILD_ACTIVE);

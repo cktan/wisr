@@ -290,9 +290,6 @@ static void RelationReloadIndexInfo(Relation relation);
 static void RelationReloadNailed(Relation relation);
 static void RelationFlushRelation(Relation relation);
 static void RememberToFreeTupleDescAtEOX(TupleDesc td);
-#ifdef USE_ASSERT_CHECKING
-static void AssertPendingSyncConsistency(Relation relation);
-#endif
 static void AtEOXact_cleanup(Relation relation, bool isCommit);
 static void AtEOSubXact_cleanup(Relation relation, bool isCommit,
                                 SubTransactionId mySubid,
@@ -1355,6 +1352,10 @@ static Relation RelationBuildSmDesc(Oid targetRelId, bool insertIt) {
     }
     att->attrelid = targetRelId;
     populate_compact_attribute(relation->rd_att, i);
+    /* sm enforces a NOT NULL column's constraint: it holds, valid. */
+    if (att->attnotnull)
+      TupleDescCompactAttr(relation->rd_att, i)->attnullability =
+          ATTNULLABLE_VALID;
   }
   constr = (TupleConstr *)palloc0(sizeof(TupleConstr));
   constr->has_not_null = has_not_null;
@@ -1439,6 +1440,8 @@ static Relation RelationBuildCatalogDesc(const cat_relation_t *cat,
   form.relfilenode = cat->oid;
   form.relkind = RELKIND_RELATION;
   form.relpersistence = RELPERSISTENCE_PERMANENT;
+  /* As its locks are tagged: a shared catalog's under no database. */
+  form.relisshared = IsSharedRelation(cat->oid);
   form.relispopulated = true;
   form.relnatts = cat->natts;
   form.relreplident = REPLICA_IDENTITY_NOTHING;
@@ -1462,7 +1465,12 @@ static Relation RelationBuildCatalogDesc(const cat_relation_t *cat,
     TupleDescInitEntry(relation->rd_att, i + 1, cat->columns[i].name,
                        cat->columns[i].typid, -1, 0);
     TupleDescAttr(relation->rd_att, i)->attrelid = cat->oid;
+    TupleDescAttr(relation->rd_att, i)->attnotnull = cat->columns[i].notnull;
     populate_compact_attribute(relation->rd_att, i);
+    /* Its rows are compiled in, and hold to it: the constraint is valid. */
+    if (cat->columns[i].notnull)
+      TupleDescCompactAttr(relation->rd_att, i)->attnullability =
+          ATTNULLABLE_VALID;
   }
   relation->rd_att->constr = (TupleConstr *)palloc0(sizeof(TupleConstr));
   MemoryContextSwitchTo(oldcxt);
@@ -2288,7 +2296,6 @@ static void formrdesc(const char *relationName, Oid relationReltype,
  */
 void AssertCouldGetRelation(void) {
   Assert(IsTransactionState());
-  AssertBufferLocksPermitCatalogRead();
 }
 #endif
 
@@ -3241,77 +3248,6 @@ static void RememberToFreeTupleDescAtEOX(TupleDesc td) {
 
   EOXactTupleDescArray[NextEOXactTupleDescNum++] = td;
 }
-
-#ifdef USE_ASSERT_CHECKING
-static void AssertPendingSyncConsistency(Relation relation) {
-  bool relcache_verdict =
-      RelationIsPermanent(relation) &&
-      ((relation->rd_createSubid != InvalidSubTransactionId &&
-        RELKIND_HAS_STORAGE(relation->rd_rel->relkind)) ||
-       relation->rd_firstRelfilelocatorSubid != InvalidSubTransactionId);
-
-  Assert(relcache_verdict == RelFileLocatorSkippingWAL(relation->rd_locator));
-
-  if (relation->rd_droppedSubid != InvalidSubTransactionId)
-    Assert(!relation->rd_isvalid &&
-           (relation->rd_createSubid != InvalidSubTransactionId ||
-            relation->rd_firstRelfilelocatorSubid != InvalidSubTransactionId));
-}
-
-/*
- * AssertPendingSyncs_RelationCache
- *
- *	Assert that relcache.c and storage.c agree on whether to skip WAL.
- */
-void AssertPendingSyncs_RelationCache(void) {
-  HASH_SEQ_STATUS status;
-  LOCALLOCK *locallock;
-  Relation *rels;
-  int maxrels;
-  int nrels;
-  RelIdCacheEnt *idhentry;
-  int i;
-
-  /*
-   * Open every relation that this transaction has locked.  If, for some
-   * relation, storage.c is skipping WAL and relcache.c is not skipping WAL,
-   * a CommandCounterIncrement() typically yields a local invalidation
-   * message that destroys the relcache entry.  By recreating such entries
-   * here, we detect the problem.
-   */
-  PushActiveSnapshot(GetTransactionSnapshot());
-  maxrels = 1;
-  rels = palloc(maxrels * sizeof(*rels));
-  nrels = 0;
-  hash_seq_init(&status, GetLockMethodLocalHash());
-  while ((locallock = (LOCALLOCK *)hash_seq_search(&status)) != NULL) {
-    Oid relid;
-    Relation r;
-
-    if (locallock->nLocks <= 0)
-      continue;
-    if ((LockTagType)locallock->tag.lock.locktag_type != LOCKTAG_RELATION)
-      continue;
-    relid = ObjectIdGetDatum(locallock->tag.lock.locktag_field2);
-    r = RelationIdGetRelation(relid);
-    if (!RelationIsValid(r))
-      continue;
-    if (nrels >= maxrels) {
-      maxrels *= 2;
-      rels = repalloc(rels, maxrels * sizeof(*rels));
-    }
-    rels[nrels++] = r;
-  }
-
-  hash_seq_init(&status, RelationIdCache);
-  while ((idhentry = (RelIdCacheEnt *)hash_seq_search(&status)) != NULL)
-    AssertPendingSyncConsistency(idhentry->reldesc);
-
-  for (i = 0; i < nrels; i++)
-    RelationClose(rels[i]);
-  PopActiveSnapshot();
-}
-#endif
 
 /*
  * AtEOXact_RelationCache

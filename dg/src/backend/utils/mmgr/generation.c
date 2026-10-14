@@ -1074,7 +1074,7 @@ void GenerationCheck(MemoryContext context) {
         chunksize = block->endptr - (char *)MemoryChunkGetPointer(chunk);
         has_external_chunk = true;
       } else {
-        chunkblock = MemoryChunkGetBlock(chunk);
+        chunkblock = (GenerationBlock *)MemoryChunkGetBlock(chunk);
         chunksize = MemoryChunkGetValue(chunk);
       }
 

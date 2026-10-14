@@ -104,7 +104,7 @@ endef
 
 # The server again, each object compiled once more as NAME.tsan.o for
 # the thread sanitizer, and the statements in test/ run with it, alone
-# and in threads, and test/server.sh run on it. The sanitizer cannot map its memory with the address
+# and in sessions, and test/server.sh run on it. The sanitizer cannot map its memory with the address
 # space randomised, hence setarch -R. Every library that runs threads
 # is instrumented: sm, sm_sys.h's services among it, and RocksDB, built by
 # test/rocksdb_tsan.sh. sq, the parser, is not.

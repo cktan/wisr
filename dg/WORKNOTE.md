@@ -3610,3 +3610,92 @@ comparisons a call.
   list of each level's handles would make that the
   subtransaction's own, which nothing has asked for yet.
 - `open_table_t` loses its oid, which is the key.
+
+## Step 127: asserts are on
+
+`pg_config.h` left `USE_ASSERT_CHECKING` undefined, so no
+`Assert()` had run since the fork; what the modules' removal
+broke of them went unseen. Every build here is a debug one, so
+`dg.mk` defines it (`ASSERT ?= -DUSE_ASSERT_CHECKING`); a
+release build passes `ASSERT=`.
+
+- **Assert-only code that no longer compiled**: casts C++ asks
+  for (utils/mmgr `bump.c`, `generation.c`, tcop `postgres.c`),
+  and asserts of what is gone: bootstrap mode, the heap's target
+  block, `IsMVCCSnapshot()`, the walsender, parallel scans,
+  `PG_WAIT_LWLOCK`, buffer locks, a multixact's updater. A
+  pg_proc row's argument count is `count` in a compiled-in row.
+- **Deleted, of modules removed**: utils/mmgr `freepage.c`,
+  `freepage.h` and `relptr.h`, which only DSA used (step 29);
+  utils/cache relcache's `AssertPendingSyncs_RelationCache()`,
+  which checked WAL skipping, and had no caller.
+- **Made `thread_local`**: the globals assert builds add, as
+  `DEBUG_NODE_TESTS_ENABLED` turns on:
+  `restore_location_fields`, three `Debug_*` settings,
+  fd.c's `temporary_files_allowed` and inval.c's
+  `recursion_depth`, all LOCAL.
+- **What they caught**, each a fault in digres:
+  - `AttachSharedMemoryStructs()` (storage/ipc `ipci.c`) worked
+    out the fast-path lock groups again in each session thread,
+    over the postmaster's SHARED value. It does not now.
+  - `session_thread_end()` (utils/init) deletes the thread's
+    `TopMemoryContext`, which no process does: it clears the
+    global first.
+  - An sm table's NOT NULL column was left of unknown
+    nullability (utils/cache `relcache.c`), so the planner never
+    took it as NOT NULL. sm enforces it: it is valid.
+  - A catalog relation's descriptor
+    (`RelationBuildCatalogDesc()`) never set `relisshared`: `pg_database`'s lock was taken
+    under no database and looked for under this one, so
+    `CheckRelationLockedByMe()` answered wrong.
+  - A catalog relation's columns had no NOT NULL, which a
+    syscache key must have. `gen_cat.py` now decides each as
+    PostgreSQL's bootstrap does, by `FORCE NOT NULL`,
+    `FORCE NULL`, or a fixed width after columns fixed and NOT
+    NULL; `cat_column_t` has `notnull`.
+
+## Step 128: the statement tests run in a server
+
+`test/run.sh` ran each `test/*.sql` through `digres --parse
+--run`, which plans and executes outside any transaction. With
+asserts on, the planner refuses: it needs an active snapshot,
+which needs a transaction, which needs a PGPROC and the lock
+manager the tool does not set up.
+
+- **`run.sh` starts a server**, as `server.sh` does, and runs
+  each file in a session with psql, stopping at its first
+  error, then in 8 sessions at once; each must print what is
+  expected. A FATAL's check is 8 sessions with `exit_on_error`
+  set, each printing the FATAL, then the server answering
+  another.
+- **The expected files are psql's** now, not DestDebug's: the
+  types' details went, and every row and error was compared
+  with the old files' before they were replaced.
+- **Gone from `digres --parse`**: `--run`, `--threads` and
+  `-c`, which only `run.sh` used; with them DestDebug's
+  `debug_out` (access/common `printtup.c`) and
+  `session_thread_start()`'s exit code, which only the tool's
+  threads gave. `--plan` and `--analyze` stay, though no test
+  uses them, and `--plan` fails the planner's assert as `--run`
+  did.
+
+## Step 129: a session's options, parsed without getopt()'s globals
+
+A session's startup options, `PGOPTIONS` for one, are parsed
+by `process_postgres_switches()` (tcop `postgres.c`) with
+`getopt()`, whose state, `optind`, `optarg` and `opterr`, is
+libc's: one for the process, and no `thread_local` reaches it.
+Sessions starting at once raced on it; the thread sanitizer
+found it when step 128's FATAL check started 8 with options.
+
+- **`pg_getopt_ctx`** (port `pg_getopt_ctx.c`,
+  `port/pg_getopt_ctx.h`) is PostgreSQL's re-entrant getopt,
+  from its master branch, after the 18 release digres forked
+  from: the state is a struct the caller keeps. The function
+  keeps one on its stack, and no longer resets libc's
+  `optind`. C++ wants one cast in it, for `EMSG`.
+- `get_stats_option_name()` read the global `optarg` where it
+  meant its argument, which every caller passed: it reads the
+  argument.
+- The postmaster's and initdb's `getopt()` run before any
+  session thread, and keep libc's.

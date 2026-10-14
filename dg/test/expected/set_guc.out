@@ -1,17 +1,35 @@
-	 1: ?column?	(typeid = 701, len = 8, typmod = -1, byval = t)
-	----
-	 1: ?column? = "0.333333333333333"	(typeid = 701, len = 8, typmod = -1, byval = t)
-	----
-	 1: extra_float_digits	(typeid = 25, len = -1, typmod = -1, byval = f)
-	----
-	 1: extra_float_digits = "0"	(typeid = 25, len = -1, typmod = -1, byval = f)
-	----
-	 1: ?column?	(typeid = 701, len = 8, typmod = -1, byval = t)
-	----
-	 1: ?column? = "0.3333333333333333"	(typeid = 701, len = 8, typmod = -1, byval = t)
-	----
-	 1: lc_numeric	(typeid = 25, len = -1, typmod = -1, byval = f)
-	----
-	 1: lc_numeric = "C"	(typeid = 25, len = -1, typmod = -1, byval = f)
-	----
-ERROR: invalid value for parameter "lc_numeric": "xx_YY"
+-- Verify that a setting is set, shown and reset by its utility statements,
+-- each session its own, as in 8 sessions at once.
+-- 1. SET extra_float_digits to 0 rounds a float8 to 15 digits.
+-- 2. SHOW gives the setting.
+-- 3. RESET puts it back: the shortest exact digits again.
+-- 4. SET lc_numeric to C is taken; to a locale that does not exist, refused.
+SET extra_float_digits = 0;
+SELECT 1.0::float8 / 3;
+     ?column?      
+-------------------
+ 0.333333333333333
+(1 row)
+
+SHOW extra_float_digits;
+ extra_float_digits 
+--------------------
+ 0
+(1 row)
+
+RESET extra_float_digits;
+SELECT 1.0::float8 / 3;
+      ?column?      
+--------------------
+ 0.3333333333333333
+(1 row)
+
+SET lc_numeric = 'C';
+SHOW lc_numeric;
+ lc_numeric 
+------------
+ C
+(1 row)
+
+SET lc_numeric = 'xx_YY';
+psql:test/set_guc.sql:14: ERROR:  invalid value for parameter "lc_numeric": "xx_YY"

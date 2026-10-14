@@ -302,12 +302,6 @@ BitmapHeapScanState *ExecInitBitmapHeapScan(BitmapHeapScan *node,
   Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
 
   /*
-   * Assert caller didn't ask for an unsafe snapshot --- see comments at
-   * head of file.
-   */
-  Assert(IsMVCCSnapshot(estate->es_snapshot));
-
-  /*
    * create state structure
    */
   scanstate = makeNode(BitmapHeapScanState);

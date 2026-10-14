@@ -1,26 +1,31 @@
-	 1: ?column?	(typeid = 23, len = 4, typmod = -1, byval = t)
-	----
-	 1: ?column? = "2"	(typeid = 23, len = 4, typmod = -1, byval = t)
-	----
-	 1: ?column?	(typeid = 23, len = 4, typmod = -1, byval = t)
-	 2: ?column?	(typeid = 23, len = 4, typmod = -1, byval = t)
-	 3: ?column?	(typeid = 23, len = 4, typmod = -1, byval = t)
-	----
-	 1: ?column? = "6"	(typeid = 23, len = 4, typmod = -1, byval = t)
-	 2: ?column? = "3"	(typeid = 23, len = 4, typmod = -1, byval = t)
-	 3: ?column? = "-2"	(typeid = 23, len = 4, typmod = -1, byval = t)
-	----
-	 1: ?column?	(typeid = 16, len = 1, typmod = -1, byval = t)
-	 2: ?column?	(typeid = 16, len = 1, typmod = -1, byval = t)
-	 3: ?column?	(typeid = 16, len = 1, typmod = -1, byval = t)
-	----
-	 1: ?column? = "t"	(typeid = 16, len = 1, typmod = -1, byval = t)
-	 2: ?column? = "t"	(typeid = 16, len = 1, typmod = -1, byval = t)
-	 3: ?column? = "f"	(typeid = 16, len = 1, typmod = -1, byval = t)
-	----
-	 1: two	(typeid = 23, len = 4, typmod = -1, byval = t)
-	 2: four	(typeid = 23, len = 4, typmod = -1, byval = t)
-	----
-	 1: two = "2"	(typeid = 23, len = 4, typmod = -1, byval = t)
-	 2: four = "4"	(typeid = 23, len = 4, typmod = -1, byval = t)
-	----
+-- Verify that a statement over constants runs with no catalog tables:
+-- the operators, their functions and the types are found compiled in
+-- (sm/PART4.md section 10, the second thing to run).
+-- 1. Add two integers: the first statement digres ran.
+-- 2. Multiply, divide and subtract integers in one target list.
+-- 3. Compare integers, which yields booleans.
+-- 4. Name the columns, and filter on a constant condition.
+SELECT 1 + 1;
+ ?column? 
+----------
+        2
+(1 row)
+
+SELECT 2 * 3, 10 / 3, 7 - 9;
+ ?column? | ?column? | ?column? 
+----------+----------+----------
+        6 |        3 |       -2
+(1 row)
+
+SELECT 1 < 2, 3 = 3, 4 > 5;
+ ?column? | ?column? | ?column? 
+----------+----------+----------
+ t        | t        | f
+(1 row)
+
+SELECT 1 + 1 AS two, 4 AS four WHERE 1 = 1;
+ two | four 
+-----+------
+   2 |    4
+(1 row)
+

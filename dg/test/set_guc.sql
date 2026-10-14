@@ -1,5 +1,5 @@
--- Verify that a setting is set, shown and reset by its utility statements
--- with no server, each session its own, as in 8 threads at once.
+-- Verify that a setting is set, shown and reset by its utility statements,
+-- each session its own, as in 8 sessions at once.
 -- 1. SET extra_float_digits to 0 rounds a float8 to 15 digits.
 -- 2. SHOW gives the setting.
 -- 3. RESET puts it back: the shortest exact digits again.

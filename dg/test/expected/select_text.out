@@ -1,28 +1,38 @@
-	 1: ?column?	(typeid = 16, len = 1, typmod = -1, byval = t)
-	 2: ?column?	(typeid = 16, len = 1, typmod = -1, byval = t)
-	 3: upper	(typeid = 25, len = -1, typmod = -1, byval = f)
-	----
-	 1: ?column? = "t"	(typeid = 16, len = 1, typmod = -1, byval = t)
-	 2: ?column? = "f"	(typeid = 16, len = 1, typmod = -1, byval = t)
-	 3: upper = "ABC"	(typeid = 25, len = -1, typmod = -1, byval = f)
-	----
-	 1: ?column?	(typeid = 16, len = 1, typmod = -1, byval = t)
-	 2: ?column?	(typeid = 16, len = 1, typmod = -1, byval = t)
-	----
-	 1: ?column? = "t"	(typeid = 16, len = 1, typmod = -1, byval = t)
-	 2: ?column? = "t"	(typeid = 16, len = 1, typmod = -1, byval = t)
-	----
-	 1: ?column?	(typeid = 25, len = -1, typmod = -1, byval = f)
-	----
-	 1: ?column? = "x1"	(typeid = 25, len = -1, typmod = -1, byval = f)
-	----
-	 1: numeric	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 2: varchar	(typeid = 1043, len = -1, typmod = 6, byval = f)
-	----
-	 1: numeric = "1.5"	(typeid = 1700, len = 32, typmod = -1, byval = f)
-	 2: varchar = "ab"	(typeid = 1043, len = -1, typmod = 6, byval = f)
-	----
-	 1: ?column?	(typeid = 16, len = 1, typmod = -1, byval = t)
-	----
-	 1: ?column? = "t"	(typeid = 16, len = 1, typmod = -1, byval = t)
-	----
+-- Verify that text is compared, cased, matched and concatenated with no
+-- server: names are looked up through the search path, which holds the
+-- built-in schemas only, and the default collation is C.
+-- 1. Compare two strings, and upper-case one.
+-- 2. Match a regular expression and a LIKE pattern.
+-- 3. Concatenate text and an integer, which casts the integer to text.
+-- 4. Cast to a type named by the SQL standard, found in pg_catalog.
+-- 5. Compare the current user with the session user: one role, named.
+SELECT 'a' < 'b', 'b' < 'a', upper('abc');
+ ?column? | ?column? | upper 
+----------+----------+-------
+ t        | f        | ABC
+(1 row)
+
+SELECT 'foobar' ~ 'o.b', 'foobar' LIKE 'f%';
+ ?column? | ?column? 
+----------+----------
+ t        | t
+(1 row)
+
+SELECT 'x' || 1;
+ ?column? 
+----------
+ x1
+(1 row)
+
+SELECT 1.5::numeric, 'abc'::varchar(2);
+ numeric | varchar 
+---------+---------
+     1.5 | ab
+(1 row)
+
+SELECT current_user = session_user;
+ ?column? 
+----------
+ t
+(1 row)
+

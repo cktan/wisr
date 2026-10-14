@@ -225,7 +225,7 @@ static thread_local /*LOCAL*/ uint64 temporary_files_size = 0;
 
 /* Temporary file access initialized and not yet shut down? */
 #ifdef USE_ASSERT_CHECKING
-static bool temporary_files_allowed = false;
+static thread_local /*LOCAL*/ bool temporary_files_allowed = false;
 #endif
 
 /*

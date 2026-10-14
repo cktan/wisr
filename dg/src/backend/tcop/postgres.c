@@ -48,7 +48,7 @@
 #include "optimizer/optimizer.h"
 #include "parser/analyze.h"
 #include "parser/parser.h"
-#include "pg_getopt.h"
+#include "port/pg_getopt_ctx.h"
 #include "pg_trace.h"
 #include "postmaster/interrupt.h"
 #include "postmaster/postmaster.h"
@@ -584,7 +584,7 @@ List *pg_parse_query(const char *query_string) {
    */
   if (Debug_write_read_parse_plan_trees) {
     char *str = nodeToStringWithLocations(raw_parsetree_list);
-    List *new_list = stringToNodeWithLocations(str);
+    List *new_list = (List *)stringToNodeWithLocations(str);
 
     pfree(str);
     /* This checks both outfuncs/readfuncs and the equal() routines... */
@@ -777,7 +777,7 @@ List *pg_rewrite_query(Query *query) {
     foreach (lc, querytree_list) {
       Query *curr_query = lfirst_node(Query, lc);
       char *str = nodeToStringWithLocations(curr_query);
-      Query *new_query = stringToNodeWithLocations(str);
+      Query *new_query = (Query *)stringToNodeWithLocations(str);
 
       /*
        * queryId is not saved in stored rules, but we must preserve it
@@ -858,7 +858,7 @@ PlannedStmt *pg_plan_query(Query *querytree, const char *query_string,
     PlannedStmt *new_plan;
 
     str = nodeToStringWithLocations(plan);
-    new_plan = stringToNodeWithLocations(str);
+    new_plan = (PlannedStmt *)stringToNodeWithLocations(str);
     pfree(str);
 
     /*
@@ -3311,9 +3311,9 @@ bool set_plan_disabling_options(const char *arg, GucContext context,
 const char *get_stats_option_name(const char *arg) {
   switch (arg[0]) {
   case 'p':
-    if (optarg[1] == 'a') /* "parser" */
+    if (arg[1] == 'a') /* "parser" */
       return "log_parser_stats";
-    else if (optarg[1] == 'l') /* "planner" */
+    else if (arg[1] == 'l') /* "planner" */
       return "log_planner_stats";
     break;
 
@@ -3350,6 +3350,11 @@ void process_postgres_switches(int argc, char *argv[], GucContext ctx,
   int errs = 0;
   GucSource gucsource;
   int flag;
+  /*
+   * The parse's own state: libc's getopt() keeps it in globals, one for
+   * the process, which sessions starting at once would share.
+   */
+  pg_getopt_ctx optctx;
 
   if (secure) {
     gucsource = PGC_S_ARGV; /* switches came from command line */
@@ -3363,27 +3368,25 @@ void process_postgres_switches(int argc, char *argv[], GucContext ctx,
     gucsource = PGC_S_CLIENT; /* switches came from client */
   }
 
-#ifdef HAVE_INT_OPTERR
+  /*
+   * Parse command-line options.  CAUTION: keep this in sync with
+   * postmaster/postmaster.c (the option sets should not conflict) and with
+   * the common help() function in main/main.c.
+   */
+  pg_getopt_start(&optctx, argc, argv,
+                  "B:bC:c:D:d:EeFf:h:ijk:lN:nOPp:r:S:sTt:v:W:-:");
 
   /*
    * Turn this off because it's either printed to stderr and not the log
    * where we'd want it, or argv[0] is now "--single", which would make for
    * a weird error message.  We print our own error message below.
    */
-  opterr = 0;
-#endif
+  optctx.opterr = 0;
 
-  /*
-   * Parse command-line options.  CAUTION: keep this in sync with
-   * postmaster/postmaster.c (the option sets should not conflict) and with
-   * the common help() function in main/main.c.
-   */
-  while ((flag = getopt(argc, argv,
-                        "B:bC:c:D:d:EeFf:h:ijk:lN:nOPp:r:S:sTt:v:W:-:")) !=
-         -1) {
+  while ((flag = pg_getopt_next(&optctx)) != -1) {
     switch (flag) {
     case 'B':
-      SetConfigOption("shared_buffers", optarg, ctx, gucsource);
+      SetConfigOption("shared_buffers", optctx.optarg, ctx, gucsource);
       break;
 
     case 'b':
@@ -3404,22 +3407,22 @@ void process_postgres_switches(int argc, char *argv[], GucContext ctx,
        * returns DISPATCH_POSTMASTER if it doesn't find a match, so
        * error for anything else.
        */
-      if (parse_dispatch_option(optarg) != DISPATCH_POSTMASTER)
+      if (parse_dispatch_option(optctx.optarg) != DISPATCH_POSTMASTER)
         ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR),
-                        errmsg("--%s must be first argument", optarg)));
+                        errmsg("--%s must be first argument", optctx.optarg)));
 
       /* FALLTHROUGH */
     case 'c': {
       char *name, *value;
 
-      ParseLongOption(optarg, &name, &value);
+      ParseLongOption(optctx.optarg, &name, &value);
       if (!value) {
         if (flag == '-')
           ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR),
-                          errmsg("--%s requires a value", optarg)));
+                          errmsg("--%s requires a value", optctx.optarg)));
         else
           ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR),
-                          errmsg("-c %s requires a value", optarg)));
+                          errmsg("-c %s requires a value", optctx.optarg)));
       }
       SetConfigOption(name, value, ctx, gucsource);
       pfree(name);
@@ -3429,11 +3432,11 @@ void process_postgres_switches(int argc, char *argv[], GucContext ctx,
 
     case 'D':
       if (secure)
-        userDoption = strdup(optarg);
+        userDoption = strdup(optctx.optarg);
       break;
 
     case 'd':
-      set_debug_options(atoi(optarg), ctx, gucsource);
+      set_debug_options(atoi(optctx.optarg), ctx, gucsource);
       break;
 
     case 'E':
@@ -3450,12 +3453,12 @@ void process_postgres_switches(int argc, char *argv[], GucContext ctx,
       break;
 
     case 'f':
-      if (!set_plan_disabling_options(optarg, ctx, gucsource))
+      if (!set_plan_disabling_options(optctx.optarg, ctx, gucsource))
         errs++;
       break;
 
     case 'h':
-      SetConfigOption("listen_addresses", optarg, ctx, gucsource);
+      SetConfigOption("listen_addresses", optctx.optarg, ctx, gucsource);
       break;
 
     case 'i':
@@ -3468,7 +3471,7 @@ void process_postgres_switches(int argc, char *argv[], GucContext ctx,
       break;
 
     case 'k':
-      SetConfigOption("unix_socket_directories", optarg, ctx, gucsource);
+      SetConfigOption("unix_socket_directories", optctx.optarg, ctx, gucsource);
       break;
 
     case 'l':
@@ -3476,7 +3479,7 @@ void process_postgres_switches(int argc, char *argv[], GucContext ctx,
       break;
 
     case 'N':
-      SetConfigOption("max_connections", optarg, ctx, gucsource);
+      SetConfigOption("max_connections", optctx.optarg, ctx, gucsource);
       break;
 
     case 'n':
@@ -3492,17 +3495,17 @@ void process_postgres_switches(int argc, char *argv[], GucContext ctx,
       break;
 
     case 'p':
-      SetConfigOption("port", optarg, ctx, gucsource);
+      SetConfigOption("port", optctx.optarg, ctx, gucsource);
       break;
 
     case 'r':
       /* send output (stdout and stderr) to the given file */
       if (secure)
-        strlcpy(OutputFileName, optarg, MAXPGPATH);
+        strlcpy(OutputFileName, optctx.optarg, MAXPGPATH);
       break;
 
     case 'S':
-      SetConfigOption("work_mem", optarg, ctx, gucsource);
+      SetConfigOption("work_mem", optctx.optarg, ctx, gucsource);
       break;
 
     case 's':
@@ -3514,7 +3517,7 @@ void process_postgres_switches(int argc, char *argv[], GucContext ctx,
       break;
 
     case 't': {
-      const char *tmp = get_stats_option_name(optarg);
+      const char *tmp = get_stats_option_name(optctx.optarg);
 
       if (tmp)
         SetConfigOption(tmp, "true", ctx, gucsource);
@@ -3533,11 +3536,11 @@ void process_postgres_switches(int argc, char *argv[], GucContext ctx,
        * standalone backend.
        */
       if (secure)
-        FrontendProtocol = (ProtocolVersion)atoi(optarg);
+        FrontendProtocol = (ProtocolVersion)atoi(optctx.optarg);
       break;
 
     case 'W':
-      SetConfigOption("post_auth_delay", optarg, ctx, gucsource);
+      SetConfigOption("post_auth_delay", optctx.optarg, ctx, gucsource);
       break;
 
     default:
@@ -3552,34 +3555,25 @@ void process_postgres_switches(int argc, char *argv[], GucContext ctx,
   /*
    * Optional database name should be there only if *dbname is NULL.
    */
-  if (!errs && dbname && *dbname == NULL && argc - optind >= 1)
-    *dbname = strdup(argv[optind++]);
+  if (!errs && dbname && *dbname == NULL && argc - optctx.optind >= 1)
+    *dbname = strdup(argv[optctx.optind++]);
 
-  if (errs || argc != optind) {
+  if (errs || argc != optctx.optind) {
     if (errs)
-      optind--; /* complain about the previous argument */
+      optctx.optind--; /* complain about the previous argument */
 
     /* spell the error message a bit differently depending on context */
     if (IsUnderPostmaster)
       ereport(FATAL, errcode(ERRCODE_SYNTAX_ERROR),
               errmsg("invalid command-line argument for server process: %s",
-                     argv[optind]),
+                     argv[optctx.optind]),
               errhint("Try \"%s --help\" for more information.", progname));
     else
       ereport(FATAL, errcode(ERRCODE_SYNTAX_ERROR),
               errmsg("%s: invalid command-line argument: %s", progname,
-                     argv[optind]),
+                     argv[optctx.optind]),
               errhint("Try \"%s --help\" for more information.", progname));
   }
-
-  /*
-   * Reset getopt(3) library so that it will work correctly in subprocesses
-   * or when this function is called a second time with another array.
-   */
-  optind = 1;
-#ifdef HAVE_INT_OPTRESET
-  optreset = 1; /* some systems need this too */
-#endif
 }
 
 /*

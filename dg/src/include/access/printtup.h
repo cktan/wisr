@@ -23,9 +23,6 @@ extern void SetRemoteDestReceiverParams(DestReceiver *self, Portal portal);
 extern void SendRowDescriptionMessage(StringInfo buf, TupleDesc typeinfo,
                                       List *targetlist, int16 *formats);
 
-/* Where DestDebug prints: standard output if NULL. */
-extern thread_local /*LOCAL*/ PGDLLIMPORT FILE *debug_out;
-
 extern void debugStartup(DestReceiver *self, int operation, TupleDesc typeinfo);
 extern bool debugtup(TupleTableSlot *slot, DestReceiver *self);
 

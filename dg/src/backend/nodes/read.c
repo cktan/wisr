@@ -32,7 +32,7 @@ static thread_local /*LOCAL*/ const char *pg_strtok_ptr = NULL;
 
 /* State flag that determines how readfuncs.c should treat location fields */
 #ifdef DEBUG_NODE_TESTS_ENABLED
-bool restore_location_fields = false;
+thread_local /*LOCAL*/ bool restore_location_fields = false;
 #endif
 
 /*

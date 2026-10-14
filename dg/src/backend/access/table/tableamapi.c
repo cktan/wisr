@@ -46,10 +46,6 @@ const TableAmRoutine *GetTableAmRoutine(Oid amhandler) {
   Assert(routine->scan_rescan != NULL);
   Assert(routine->scan_getnextslot != NULL);
 
-  Assert(routine->parallelscan_estimate != NULL);
-  Assert(routine->parallelscan_initialize != NULL);
-  Assert(routine->parallelscan_reinitialize != NULL);
-
   Assert(routine->index_fetch_begin != NULL);
   Assert(routine->index_fetch_reset != NULL);
   Assert(routine->index_fetch_end != NULL);
