@@ -234,20 +234,9 @@ ProcArray	"Waiting to access the shared per-process data structures (typically, 
 SInvalRead	"Waiting to retrieve messages from the shared catalog invalidation queue."
 SInvalWrite	"Waiting to add a message to the shared catalog invalidation queue."
 RelCacheInit	"Waiting to read or update a <filename>pg_internal.init</filename> relation cache initialization file."
-TablespaceCreate	"Waiting to create or drop a tablespace."
-BtreeVacuum	"Waiting to read or update vacuum-related information for a B-tree index."
-AddinShmemInit	"Waiting to manage an extension's space allocation in shared memory."
 RelationMapping	"Waiting to read or update a <filename>pg_filenode.map</filename> file (used to track the filenode assignments of certain system catalogs)."
-SyncRep	"Waiting to read or update information about the state of synchronous replication."
-DynamicSharedMemoryControl	"Waiting to read or update dynamic shared memory allocation information."
 AutoFile	"Waiting to update the <filename>postgresql.auto.conf</filename> file."
-ReplicationSlotAllocation	"Waiting to allocate or free a replication slot."
-ReplicationSlotControl	"Waiting to read or update replication slot state."
-ReplicationOrigin	"Waiting to create, drop or use a replication origin."
-LogicalRepWorker	"Waiting to read or update the state of logical replication workers."
 XactTruncation	"Waiting to execute <function>pg_xact_status</function> or update the oldest transaction ID available to it."
-WaitEventCustom	"Waiting to read or update custom wait events information."
-WALSummarizer	"Waiting to read or update WAL summarization state."
 InjectionPoint	"Waiting to read or update information related to injection points."
 
 #
@@ -258,8 +247,6 @@ InjectionPoint	"Waiting to read or update information related to injection point
 # lwlocknames.h.  Other LWLocks must be listed in the section below.
 #
 
-ReplicationOriginState	"Waiting to read or update the progress of one replication origin."
-ReplicationSlotIO	"Waiting for I/O on a replication slot."
 LockFastPath	"Waiting to read or update a process' fast-path lock information."
 LockManager	"Waiting to read or update information about <quote>heavyweight</quote> locks."
 

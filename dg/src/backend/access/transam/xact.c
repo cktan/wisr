@@ -33,7 +33,6 @@
 #include "libpq/pqsignal.h"
 #include "miscadmin.h"
 #include "pg_trace.h"
-#include "storage/condition_variable.h"
 #include "storage/fd.h"
 #include "storage/lmgr.h"
 #include "storage/proc.h"
@@ -1155,9 +1154,6 @@ static void AbortTransaction(void) {
    * while cleaning up!
    */
   LWLockReleaseAll();
-
-  /* Cancel condition variable sleep */
-  ConditionVariableCancelSleep();
 
   /*
    * Also clean up any open wait for lock, since the lock manager will choke
@@ -3033,9 +3029,6 @@ static void AbortSubTransaction(void) {
    * Buffer locks, for example?  I don't think so but I'm not sure.
    */
   LWLockReleaseAll();
-
-  /* Cancel condition variable sleep */
-  ConditionVariableCancelSleep();
 
   /*
    * Also clean up any open wait for lock, since the lock manager will choke

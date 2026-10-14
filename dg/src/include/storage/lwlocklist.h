@@ -49,9 +49,9 @@ PG_LWLOCK(6, SInvalWrite)
 PG_LWLOCK(16, RelCacheInit)
 /* 17 was CheckpointerComm */
 /* 18 was TwoPhaseState */
-PG_LWLOCK(19, TablespaceCreate)
-PG_LWLOCK(20, BtreeVacuum)
-PG_LWLOCK(21, AddinShmemInit)
+/* 19 was TablespaceCreateLock */
+/* 20 was BtreeVacuumLock */
+/* 21 was AddinShmemInitLock */
 /* 22 was AutovacuumLock */
 /* 23 was AutovacuumScheduleLock */
 /* 24 was SyncScan */
@@ -62,24 +62,24 @@ PG_LWLOCK(25, RelationMapping)
 /* 29 was SerializableFinishedListLock */
 /* 30 was SerializablePredicateListLock */
 /* 31 was SerialSLRULock */
-PG_LWLOCK(32, SyncRep)
+/* 32 was SyncRepLock */
 /* 33 was BackgroundWorker */
-PG_LWLOCK(34, DynamicSharedMemoryControl)
+/* 34 was DynamicSharedMemoryControlLock */
 PG_LWLOCK(35, AutoFile)
-PG_LWLOCK(36, ReplicationSlotAllocation)
-PG_LWLOCK(37, ReplicationSlotControl)
+/* 36 was ReplicationSlotAllocationLock */
+/* 37 was ReplicationSlotControlLock */
 /* 38 was CommitTsSLRULock */
 /* 39 was CommitTs */
-PG_LWLOCK(40, ReplicationOrigin)
+/* 40 was ReplicationOriginLock */
 /* 41 was MultiXactTruncationLock */
 /* 42 was OldSnapshotTimeMapLock */
-PG_LWLOCK(43, LogicalRepWorker)
+/* 43 was LogicalRepWorkerLock */
 PG_LWLOCK(44, XactTruncation)
 /* 45 was XactTruncationLock until removal of BackendRandomLock */
 /* 46 was WrapLimitsVacuumLock */
 /* 47 was NotifyQueueTail */
-PG_LWLOCK(48, WaitEventCustom)
-PG_LWLOCK(49, WALSummarizer)
+/* 48 was WaitEventCustomLock */
+/* 49 was WALSummarizerLock */
 /* 50 was DSMRegistryLock */
 PG_LWLOCK(51, InjectionPoint)
 /* 52 was SerialControlLock */

@@ -136,8 +136,6 @@ static constexpr auto BuiltinTrancheNames = [] {
 #define PG_LWLOCK(id, lockname) a[id] = CppAsString(lockname);
 #include "storage/lwlocklist.h"
 #undef PG_LWLOCK
-  a[LWTRANCHE_REPLICATION_ORIGIN_STATE] = "ReplicationOriginState";
-  a[LWTRANCHE_REPLICATION_SLOT_IO] = "ReplicationSlotIO";
   a[LWTRANCHE_LOCK_FASTPATH] = "LockFastPath";
   a[LWTRANCHE_LOCK_MANAGER] = "LockManager";
   return a;
@@ -632,14 +630,6 @@ static const char *GetLWTrancheName(uint16 trancheId) {
     return "extension";
 
   return LWLockTrancheNames[trancheId];
-}
-
-/*
- * Return an identifier for an LWLock based on the wait class and event.
- */
-const char *GetLWLockIdentifier(uint32 classId, uint16 eventId) {
-  /* The event IDs are just tranche numbers. */
-  return GetLWTrancheName(eventId);
 }
 
 /*

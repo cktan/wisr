@@ -60,9 +60,9 @@ Beside the registry: the main LWLock array
   from the postmaster already, so this does nothing but for
   the lock manager's two hashes, whose `HTAB` handle each thread
   makes for itself over the shared table.
-- **Sized ahead of time**: `MaxBackends` plus six auxiliary
-  processes that no longer exist, `NLOCKENTS`, the fixed hash
-  directories, `PROCARRAY_MAXPROCS`, `num_os_semaphores`.
+- **Sized ahead of time**: `MaxBackends`, `NLOCKENTS`, the
+  fixed hash directories, `PROCARRAY_MAXPROCS`,
+  `num_os_semaphores`.
 - **To replace**: each block a typed field of `pcb_t`, made by
   the postmaster before the first thread starts (`CODE.md` §3).
   Then `AttachSharedMemoryStructs()`, the registry, the
@@ -78,18 +78,16 @@ Beside the registry: the main LWLock array
   that sleep short. Taken still: ProcArray, XidGen, OidGen,
   SInvalRead and SInvalWrite, RelationMapping, RelCacheInit,
   AutoFile, the lock manager's partitions and each PGPROC's
-  `fpInfoLock`. Named and never taken: thirteen, of modules
-  removed (vacuum, WAL, replication, DSM, pgstat), and two
-  tranches. **To replace**: a `std::mutex` or `std::shared_mutex`
-  in the structure it guards; `LWLockReleaseAll()` on an error
-  becomes the guards' unwinding.
+  `fpInfoLock`; XactTruncation, by `pg_xact_status()`; and
+  InjectionPoint, a build option's. **To replace**: a
+  `std::mutex` or `std::shared_mutex` in the structure it
+  guards; `LWLockReleaseAll()` on an error becomes the guards'
+  unwinding.
 - **Spinlocks** (storage/lmgr `s_lock.c`): ProcStructLock, the
   fast-path strong-lock counts, ProcSignal's `pss_mutex`, the
-  latch's `owner_lock` and the dynahash free lists. **To replace**: `std::mutex`, or an
-  atomic where one word is guarded.
-- **Condition variables** (storage/lmgr
-  `condition_variable.c`): nothing sleeps on one; only
-  `ConditionVariableCancelSleep()` is called. **Delete.**
+  latch's `owner_lock` and the dynahash free lists. **To
+  replace**: `std::mutex`, or an atomic where one word is
+  guarded.
 - **`pg_atomic_*` and the barriers**: in `lwlock.c`, `proc.c`,
   `procarray.c`, `procsignal.c`, postmaster `backend_thread.c`.
   **To replace**: `std::atomic` with explicit orders.
@@ -155,8 +153,7 @@ and the barriers go with it.
   `std::atomic<Oid>` in the pcb, or nothing.
 - **ProcSignal** (storage/ipc `procsignal.c`). Two reasons have
   senders: the sinval catchup and
-  `pg_log_backend_memory_contexts()`; the seven
-  recovery-conflict reasons have none. It also keeps the cancel
+  `pg_log_backend_memory_contexts()`. It also keeps the cancel
   keys. **To replace**: an interrupt bit for the one
   reason left, the cancel key in the session record.
 - **PMSignalState** (storage/ipc `pmsignal.c`, postmaster
@@ -165,48 +162,47 @@ and the barriers go with it.
   flags are dead. **To replace**: an atomic state in the
   thread's launch record, and an atomic quit reason in the pcb.
 
-## 6. Dead code
+## 6. What is left of modules removed
 
-Of modules removed, to delete before the rest:
+The dead code is gone (`WORKNOTE.md` step 131). What is left
+has a caller still, and goes with the step that removes it:
 
-- Recovery conflicts: the `PROCSIG_RECOVERY_CONFLICT_*` reasons
-  and their handling in tcop `postgres.c`,
-  `recoveryConflictPending`, `startupBufferPinWaitBufId`.
-- Auxiliary and prepared-transaction processes:
-  `InitAuxiliaryProcess()`, `AuxiliaryProcKill()`,
-  `NUM_AUXILIARY_PROCS`, `PreparedXactProcs`,
-  `FIRST_PREPARED_XACT_PROC_NUMBER`, `walwriterProc`,
-  `walsenderFreeProcs`, `MarkPostmasterChildWalSender()` and
-  `IsPostmasterChildWalSender()`.
-- The xid machinery of procarray: `ProcArrayGroupClearXid()`,
-  the horizon computations, the `XidCache`, the replication
-  slot xmins, and the counting functions with no callers.
-- Lock groups (`lockGroupLeader`, `lockGroupMembers`), tuple,
-  page, extension and speculative lock tags, condition
-  variables, the unused LWLocks and tranches.
-- The extension hooks `shmem_startup_hook` and
-  `shmem_request_hook`.
+- **With the constant snapshot** (§7, step 4): the proc array's
+  group XID clearing (`ProcArrayGroupClearXid()`), the
+  horizons `GetSnapshotData()` and `GlobalVisTestFor()` compute,
+  the replication slots' xmin fields they read, the
+  `XidCache`.
+- **With the lock manager** (§7, step 5): lock groups
+  (`lockGroupLeader`, `lockGroupMembers`), which `lock.c` and
+  `deadlock.c` test throughout though no proc ever joins one;
+  and the tuple, page, extension and speculative lock tags,
+  which the executor still takes.
+- **Kept, for extensions**: `shmem_request_hook`,
+  `shmem_startup_hook` and `RequestNamedLWLockTranche()`, the
+  API a library in `shared_preload_libraries` uses for state
+  and locks of its own. Nothing in the tree uses them, but
+  digres still loads libraries (utils/fmgr `dfmgr.c`); they go,
+  or become a pcb registry, with §2's registry.
 
 ## 7. Order of work
 
-1. **The dead code** of §6.
-2. **Spinlocks and the simple LWLocks** to `std::mutex`,
+1. **Spinlocks and the simple LWLocks** to `std::mutex`,
    `std::shared_mutex` and atomics: ProcStructLock,
    `pss_mutex`, OidGen, XidGen, AutoFile, RelationMapping,
    RelCacheInit.
-3. **sm0's `latch_t`** (§4), and `Latch` over it.
-4. **The invalidation bus** (§5), then ProcSignal and
+2. **sm0's `latch_t`** (§4), and `Latch` over it.
+3. **The invalidation bus** (§5), then ProcSignal and
    PMSignalState.
-5. **The constant snapshot**: the proc array becomes the
+4. **The constant snapshot**: the proc array becomes the
    session registry.
-6. **The lock manager**: advisory locks into sm, catalog locks
+5. **The lock manager**: advisory locks into sm, catalog locks
    gone; then the lock manager, the remaining LWLocks,
    `posix_sema.c` and PGPROC.
-7. **The registry** of §2, once each block is a pcb field.
+6. **The registry** of §2, once each block is a pcb field.
 
 Each step is checked by the full suite and by `make tsan`;
 asserts are on in every build (`dg.mk`), so a broken invariant
-fails a test. Steps 4 to 6 change what sessions see of each
+fails a test. Steps 3 to 5 change what sessions see of each
 other, which `test/server.sh` checks only in part: DDL seen by
 another session, `pg_cancel_backend()`, a session that ends
 abnormally.

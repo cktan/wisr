@@ -45,9 +45,7 @@ extern void SetQuitSignalReason(QuitSignalReason reason);
 extern QuitSignalReason GetQuitSignalReason(void);
 extern void MarkPostmasterChildSlotAssigned(int slot);
 extern bool MarkPostmasterChildSlotUnassigned(int slot);
-extern bool IsPostmasterChildWalSender(int slot);
 extern void RegisterPostmasterChildActive(void);
-extern void MarkPostmasterChildWalSender(void);
 extern bool PostmasterIsAliveInternal(void);
 extern void PostmasterDeathSignalInit(void);
 

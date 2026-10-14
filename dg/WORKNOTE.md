@@ -3725,3 +3725,73 @@ barriers of the locks around it; in C++ it is a data race.
   `ShmemInitStruct()` are gone. A session thread's
   `SharedInvalShmemInit()` finds it made.
 - `make tsan` passes.
+
+## Step 131: the dead code of the shared-memory machinery
+
+`SHMEM.md` §6: what is left of modules already removed, taken
+out before the rest of that file's work changes what it
+touches. Each went with nothing calling it.
+
+- **Condition variables** (storage/lmgr
+  `condition_variable.c`, `condition_variable.h`): nothing slept
+  on one or signalled one since parallel query and the
+  checkpointer went (steps 10, 14); only
+  `ConditionVariableCancelSleep()` was called, by `ProcKill()`,
+  `AuxiliaryProcKill()` and the two transaction aborts. PGPROC's
+  `cvWaitLink` went with them.
+- **Eleven named LWLocks no one took**: TablespaceCreate,
+  BtreeVacuum, AddinShmemInit, SyncRep,
+  DynamicSharedMemoryControl, ReplicationSlotAllocation,
+  ReplicationSlotControl, ReplicationOrigin, LogicalRepWorker,
+  WaitEventCustom and WALSummarizer, of tablespaces, vacuum,
+  DSM, replication, pgstat and WAL. Each leaves its number in
+  `lwlocklist.h` as a comment, as PostgreSQL's removed ones do,
+  and goes from `wait_event_names.txt`. So do two tranches,
+  ReplicationOriginState and ReplicationSlotIO, and
+  `GetLWLockIdentifier()` (storage/lmgr `lwlock.c`), which
+  nothing called. XactTruncation stays, `pg_xact_status()`'s,
+  and InjectionPoint, a build option's.
+- **Recovery conflicts**, of hot standby, which went with WAL
+  (step 12): the seven `PROCSIG_RECOVERY_CONFLICT_*` reasons,
+  which nothing sent, and their handling in tcop `postgres.c`
+  (`HandleRecoveryConflictInterrupt()`,
+  `ProcessRecoveryConflictInterrupts()`,
+  `errdetail_recovery_conflict()`); PGPROC's
+  `recoveryConflictPending`, never set, and
+  `errdetail_abort()`, which only read it; and the proc header's
+  `startupBufferPinWaitBufId` with its getter.
+- **Auxiliary, walsender and prepared-transaction PGPROCs**,
+  of processes gone in steps 14 to 17 and 23, and of two-phase
+  commit (step 47). `NUM_AUXILIARY_PROCS` reserved six PGPROCs,
+  sinval and ProcSignal slots for the background writer, the
+  checkpointer and the rest; `InitAuxiliaryProcess()`,
+  `AuxiliaryProcKill()` and `AuxiliaryPidGetProc()` served them,
+  and nothing called the first. `MaxBackends` is
+  `max_connections`, so the walsender free list was always
+  empty, and the prepared-transaction PGPROCs began past the
+  array's end. They go with `walwriterProc`, the walsender
+  child flag (storage/ipc `pmsignal.c`) and the postmaster's
+  test of it, and the auxiliary process's resource owner
+  (utils/resowner). Every PGPROC is a session's now.
+- **The proc array's functions no one called** (storage/ipc
+  `procarray.c`), of vacuum's horizons, replication slots and
+  the counting of connections: `TransactionIdIsActive()`,
+  `GetOldestNonRemovableTransactionId()`,
+  `GetOldestTransactionIdConsideredRunning()`,
+  `GetReplicationHorizons()`, the `GlobalVisTestIs*` and
+  `GlobalVisCheck*` tests, `ProcNumberGetTransactionIds()`,
+  `BackendXidGetPid()`, `IsBackendPid()`, `CountDBBackends()`,
+  `CountDBConnections()`, `CountUserBackends()` and the
+  replication slots' xmin setter and getter. What still has a
+  caller stays, though no xid is ever assigned (step 45): the
+  group XID clearing, the horizons `GlobalVisTestFor()` and
+  `GetSnapshotData()` compute, the slots' xmin fields they
+  read. They go with the constant snapshot (`SHMEM.md` §7).
+- **Left on purpose**: what still has a caller, though it does
+  nothing in digres: lock groups, which the lock manager and
+  the deadlock detector test throughout, and the lock tags the
+  executor still takes, both to go with the lock manager; and
+  the extension hooks `shmem_request_hook`, `shmem_startup_hook`
+  and `RequestNamedLWLockTranche()`, which a library in
+  `shared_preload_libraries` may use, and digres still loads
+  libraries (`SHMEM.md` §6).

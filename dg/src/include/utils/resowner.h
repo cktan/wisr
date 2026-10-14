@@ -33,7 +33,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT ResourceOwner
     CurTransactionResourceOwner;
 extern thread_local /*LOCAL*/ PGDLLIMPORT ResourceOwner
     TopTransactionResourceOwner;
-extern thread_local /*LOCAL*/ PGDLLIMPORT ResourceOwner AuxProcessResourceOwner;
 
 /*
  * Resource releasing is done in three phases: pre-locks, locks, and
@@ -153,9 +152,6 @@ extern void RegisterResourceReleaseCallback(ResourceReleaseCallback callback,
                                             void *arg);
 extern void UnregisterResourceReleaseCallback(ResourceReleaseCallback callback,
                                               void *arg);
-
-extern void CreateAuxProcessResourceOwner(void);
-extern void ReleaseAuxProcessResources(bool isCommit);
 
 /* special support for local lock management */
 struct LOCALLOCK;

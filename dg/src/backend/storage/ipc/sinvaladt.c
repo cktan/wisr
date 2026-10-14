@@ -193,7 +193,7 @@ typedef struct SISeg {
  * possible auxiliary process type.  (This scheme assumes there is not
  * more than one of any auxiliary process type at a time.)
  */
-#define NumProcStateSlots	(MaxBackends + NUM_AUXILIARY_PROCS)
+#define NumProcStateSlots	(MaxBackends)
 
 static thread_local /*LOCAL*/ LocalTransactionId nextLocalTransactionId;
 

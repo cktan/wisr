@@ -68,7 +68,6 @@ extern void die(void);
 pg_noreturn extern void quickdie(void);
 extern void StatementCancelHandler(void);
 pg_noreturn extern void FloatExceptionHandler(SIGNAL_ARGS);
-extern void HandleRecoveryConflictInterrupt(ProcSignalReason reason);
 extern void ProcessClientReadInterrupt(bool blocked);
 extern void ProcessClientWriteInterrupt(bool blocked);
 

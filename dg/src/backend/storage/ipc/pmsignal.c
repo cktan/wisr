@@ -59,7 +59,6 @@
 #define PM_CHILD_UNUSED		0 /* these values must fit in sig_atomic_t */
 #define PM_CHILD_ASSIGNED	1
 #define PM_CHILD_ACTIVE		2
-#define PM_CHILD_WALSENDER	3
 
 /* "typedef struct PMSignalData PMSignalData" appears in pmsignal.h */
 struct PMSignalData {
@@ -216,20 +215,6 @@ bool MarkPostmasterChildSlotUnassigned(int slot) {
 }
 
 /*
- * IsPostmasterChildWalSender - check if given slot is in use by a
- * walsender process.  This is called only by the postmaster.
- */
-bool IsPostmasterChildWalSender(int slot) {
-  Assert(slot > 0 && slot <= num_child_flags);
-  slot--;
-
-  if (PM_FLAG_GET(slot) == PM_CHILD_WALSENDER)
-    return true;
-  else
-    return false;
-}
-
-/*
  * RegisterPostmasterChildActive - mark a postmaster child as about to begin
  * actively using shared memory.  This is called in the child process.
  *
@@ -249,20 +234,6 @@ void RegisterPostmasterChildActive(void) {
 }
 
 /*
- * MarkPostmasterChildWalSender - mark a postmaster child as a WAL sender
- * process.  This is called in the child process, sometime after marking the
- * child as active.
- */
-void MarkPostmasterChildWalSender(void) {
-  int slot = MyPMChildSlot;
-
-  Assert(slot > 0 && slot <= PMSignalState->num_child_flags);
-  slot--;
-  Assert(PM_FLAG_GET(slot) == PM_CHILD_ACTIVE);
-  PM_FLAG_SET(slot, PM_CHILD_WALSENDER);
-}
-
-/*
  * MarkPostmasterChildInactive - mark a postmaster child as done using
  * shared memory.  This is called in the child process.
  */
@@ -271,8 +242,7 @@ static void MarkPostmasterChildInactive(int code, Datum arg) {
 
   Assert(slot > 0 && slot <= PMSignalState->num_child_flags);
   slot--;
-  Assert(PM_FLAG_GET(slot) == PM_CHILD_ACTIVE ||
-         PM_FLAG_GET(slot) == PM_CHILD_WALSENDER);
+  Assert(PM_FLAG_GET(slot) == PM_CHILD_ACTIVE);
   PM_FLAG_SET(slot, PM_CHILD_ASSIGNED);
 }
 

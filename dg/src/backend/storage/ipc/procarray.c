@@ -360,8 +360,7 @@ void ProcArrayAdd(PGPROC *proc) {
   for (index = 0; index < arrayP->numProcs; index++) {
     int this_procno = arrayP->pgprocnos[index];
 
-    Assert(this_procno >= 0 &&
-           this_procno < (arrayP->maxProcs + NUM_AUXILIARY_PROCS));
+    Assert(this_procno >= 0 && this_procno < arrayP->maxProcs);
     Assert(allProcs[this_procno].pgxactoff == index);
 
     /* If we have found our right position in the array, break */
@@ -393,7 +392,7 @@ void ProcArrayAdd(PGPROC *proc) {
   for (; index < arrayP->numProcs; index++) {
     int procno = arrayP->pgprocnos[index];
 
-    Assert(procno >= 0 && procno < (arrayP->maxProcs + NUM_AUXILIARY_PROCS));
+    Assert(procno >= 0 && procno < arrayP->maxProcs);
     Assert(allProcs[procno].pgxactoff == index - 1);
 
     allProcs[procno].pgxactoff = index;
@@ -482,7 +481,7 @@ void ProcArrayRemove(PGPROC *proc, TransactionId latestXid) {
   for (int index = myoff; index < arrayP->numProcs; index++) {
     int procno = arrayP->pgprocnos[index];
 
-    Assert(procno >= 0 && procno < (arrayP->maxProcs + NUM_AUXILIARY_PROCS));
+    Assert(procno >= 0 && procno < arrayP->maxProcs);
     Assert(allProcs[procno].pgxactoff - 1 == index);
 
     allProcs[procno].pgxactoff = index;
@@ -542,10 +541,6 @@ void ProcArrayEndTransaction(PGPROC *proc, TransactionId latestXid) {
     proc->vxid.lxid = InvalidLocalTransactionId;
     proc->xmin = InvalidTransactionId;
 
-    /* be sure this is cleared in abort */
-
-    proc->recoveryConflictPending = false;
-
     /* must be cleared with xid/xmin: */
     /* avoid unnecessarily dirtying shared cachelines */
     if (proc->statusFlags & PROC_VACUUM_STATE_MASK) {
@@ -580,10 +575,6 @@ static inline void ProcArrayEndTransactionInternal(PGPROC *proc,
   proc->xid = InvalidTransactionId;
   proc->vxid.lxid = InvalidLocalTransactionId;
   proc->xmin = InvalidTransactionId;
-
-  /* be sure this is cleared in abort */
-
-  proc->recoveryConflictPending = false;
 
   /* must be cleared with xid/xmin: */
   /* avoid unnecessarily dirtying shared cachelines */
@@ -945,54 +936,6 @@ bool TransactionIdIsInProgress(TransactionId xid) {
 }
 
 /*
- * TransactionIdIsActive -- is xid the top-level XID of an active backend?
- *
- * This differs from TransactionIdIsInProgress in that it ignores prepared
- * transactions, as well as transactions running on the primary if we're in
- * hot standby.  Also, we ignore subtransactions since that's not needed
- * for current uses.
- */
-bool TransactionIdIsActive(TransactionId xid) {
-  bool result = false;
-  ProcArrayStruct *arrayP = procArray;
-  TransactionId *other_xids = ProcGlobal->xids;
-  int i;
-
-  /*
-   * Don't bother checking a transaction older than RecentXmin; it could not
-   * possibly still be running.
-   */
-  if (TransactionIdPrecedes(xid, RecentXmin))
-    return false;
-
-  LWLockAcquire(ProcArrayLock, LW_SHARED);
-
-  for (i = 0; i < arrayP->numProcs; i++) {
-    int pgprocno = arrayP->pgprocnos[i];
-    PGPROC *proc = &allProcs[pgprocno];
-    TransactionId pxid;
-
-    /* Fetch xid just once - see GetNewTransactionId */
-    pxid = UINT32_ACCESS_ONCE(other_xids[i]);
-
-    if (!TransactionIdIsValid(pxid))
-      continue;
-
-    if (proc->pid == 0)
-      continue; /* ignore prepared transactions */
-
-    if (TransactionIdEquals(pxid, xid)) {
-      result = true;
-      break;
-    }
-  }
-
-  LWLockRelease(ProcArrayLock);
-
-  return result;
-}
-
-/*
  * Determine XID horizons.
  *
  * This is used by wrapper functions like GetOldestNonRemovableTransactionId()
@@ -1266,69 +1209,6 @@ static inline GlobalVisHorizonKind GlobalVisHorizonKindForRel(Relation rel) {
     return VISHORIZON_DATA;
   else
     return VISHORIZON_TEMP;
-}
-
-/*
- * Return the oldest XID for which deleted tuples must be preserved in the
- * passed table.
- *
- * If rel is not NULL the horizon may be considerably more recent than
- * otherwise (i.e. fewer tuples will be removable). In the NULL case a horizon
- * that is correct (but not optimal) for all relations will be returned.
- *
- * This is used by VACUUM to decide which deleted tuples must be preserved in
- * the passed in table.
- */
-TransactionId GetOldestNonRemovableTransactionId(Relation rel) {
-  ComputeXidHorizonsResult horizons;
-
-  ComputeXidHorizons(&horizons);
-
-  switch (GlobalVisHorizonKindForRel(rel)) {
-  case VISHORIZON_SHARED:
-    return horizons.shared_oldest_nonremovable;
-  case VISHORIZON_CATALOG:
-    return horizons.catalog_oldest_nonremovable;
-  case VISHORIZON_DATA:
-    return horizons.data_oldest_nonremovable;
-  case VISHORIZON_TEMP:
-    return horizons.temp_oldest_nonremovable;
-  }
-
-  /* just to prevent compiler warnings */
-  return InvalidTransactionId;
-}
-
-/*
- * Return the oldest transaction id any currently running backend might still
- * consider running. This should not be used for visibility / pruning
- * determinations (see GetOldestNonRemovableTransactionId()), but for
- * decisions like up to where pg_subtrans can be truncated.
- */
-TransactionId GetOldestTransactionIdConsideredRunning(void) {
-  ComputeXidHorizonsResult horizons;
-
-  ComputeXidHorizons(&horizons);
-
-  return horizons.oldest_considered_running;
-}
-
-/*
- * Return the visibility horizons for a hot standby feedback message.
- */
-void GetReplicationHorizons(TransactionId *xmin, TransactionId *catalog_xmin) {
-  ComputeXidHorizonsResult horizons;
-
-  ComputeXidHorizons(&horizons);
-
-  /*
-   * Don't want to use shared_oldest_nonremovable here, as that contains the
-   * effect of replication slot's catalog_xmin. We want to send a separate
-   * feedback for the catalog horizon, so the primary can remove data table
-   * contents more aggressively.
-   */
-  *xmin = horizons.shared_oldest_nonremovable_raw;
-  *catalog_xmin = horizons.slot_catalog_xmin;
 }
 
 /*
@@ -1865,40 +1745,6 @@ PGPROC *ProcNumberGetProc(ProcNumber procNumber) {
 }
 
 /*
- * ProcNumberGetTransactionIds -- get a backend's transaction status
- *
- * Get the xid, xmin, nsubxid and overflow status of the backend.  The
- * result may be out of date arbitrarily quickly, so the caller must be
- * careful about how this information is used.
- */
-void ProcNumberGetTransactionIds(ProcNumber procNumber, TransactionId *xid,
-                                 TransactionId *xmin, int *nsubxid,
-                                 bool *overflowed) {
-  PGPROC *proc;
-
-  *xid = InvalidTransactionId;
-  *xmin = InvalidTransactionId;
-  *nsubxid = 0;
-  *overflowed = false;
-
-  if (procNumber < 0 || procNumber >= ProcGlobal->allProcCount)
-    return;
-  proc = GetPGProcByNumber(procNumber);
-
-  /* Need to lock out additions/removals of backends */
-  LWLockAcquire(ProcArrayLock, LW_SHARED);
-
-  if (proc->pid != 0) {
-    *xid = proc->xid;
-    *xmin = proc->xmin;
-    *nsubxid = proc->subxidStatus.count;
-    *overflowed = proc->subxidStatus.overflowed;
-  }
-
-  LWLockRelease(ProcArrayLock);
-}
-
-/*
  * BackendPidGetProc -- get a backend's PGPROC given its PID
  *
  * Returns NULL if not found.  Note that it is up to the caller to be
@@ -1945,52 +1791,6 @@ PGPROC *BackendPidGetProcWithLock(int pid) {
 
   return result;
 }
-
-/*
- * BackendXidGetPid -- get a backend's pid given its XID
- *
- * Returns 0 if not found or it's a prepared transaction.  Note that
- * it is up to the caller to be sure that the question remains
- * meaningful for long enough for the answer to be used ...
- *
- * Only main transaction Ids are considered.  This function is mainly
- * useful for determining what backend owns a lock.
- *
- * Beware that not every xact has an XID assigned.  However, as long as you
- * only call this using an XID found on disk, you're safe.
- */
-int BackendXidGetPid(TransactionId xid) {
-  int result = 0;
-  ProcArrayStruct *arrayP = procArray;
-  TransactionId *other_xids = ProcGlobal->xids;
-  int index;
-
-  if (xid == InvalidTransactionId) /* never match invalid xid */
-    return 0;
-
-  LWLockAcquire(ProcArrayLock, LW_SHARED);
-
-  for (index = 0; index < arrayP->numProcs; index++) {
-    if (other_xids[index] == xid) {
-      int pgprocno = arrayP->pgprocnos[index];
-      PGPROC *proc = &allProcs[pgprocno];
-
-      result = proc->pid;
-      break;
-    }
-  }
-
-  LWLockRelease(ProcArrayLock);
-
-  return result;
-}
-
-/*
- * IsBackendPid -- is a given pid a running backend
- *
- * This is not called by the backend, but is called by external modules.
- */
-bool IsBackendPid(int pid) { return (BackendPidGetProc(pid) != NULL); }
 
 /*
  * GetCurrentVirtualXIDs -- returns an array of currently active VXIDs.
@@ -2069,86 +1869,6 @@ VirtualTransactionId *GetCurrentVirtualXIDs(TransactionId limitXmin,
 
   *nvxids = count;
   return vxids;
-}
-
-/*
- * CountDBBackends --- count backends that are using specified database
- */
-int CountDBBackends(Oid databaseid) {
-  ProcArrayStruct *arrayP = procArray;
-  int count = 0;
-  int index;
-
-  LWLockAcquire(ProcArrayLock, LW_SHARED);
-
-  for (index = 0; index < arrayP->numProcs; index++) {
-    int pgprocno = arrayP->pgprocnos[index];
-    PGPROC *proc = &allProcs[pgprocno];
-
-    if (proc->pid == 0)
-      continue; /* do not count prepared xacts */
-    if (!OidIsValid(databaseid) || proc->databaseId == databaseid)
-      count++;
-  }
-
-  LWLockRelease(ProcArrayLock);
-
-  return count;
-}
-
-/*
- * CountDBConnections --- counts database backends (only regular backends)
- */
-int CountDBConnections(Oid databaseid) {
-  ProcArrayStruct *arrayP = procArray;
-  int count = 0;
-  int index;
-
-  LWLockAcquire(ProcArrayLock, LW_SHARED);
-
-  for (index = 0; index < arrayP->numProcs; index++) {
-    int pgprocno = arrayP->pgprocnos[index];
-    PGPROC *proc = &allProcs[pgprocno];
-
-    if (proc->pid == 0)
-      continue; /* do not count prepared xacts */
-    if (!proc->isRegularBackend)
-      continue; /* count only regular backend processes */
-    if (!OidIsValid(databaseid) || proc->databaseId == databaseid)
-      count++;
-  }
-
-  LWLockRelease(ProcArrayLock);
-
-  return count;
-}
-
-/*
- * CountUserBackends --- count backends that are used by specified user
- * (only regular backends, not any type of background worker)
- */
-int CountUserBackends(Oid roleid) {
-  ProcArrayStruct *arrayP = procArray;
-  int count = 0;
-  int index;
-
-  LWLockAcquire(ProcArrayLock, LW_SHARED);
-
-  for (index = 0; index < arrayP->numProcs; index++) {
-    int pgprocno = arrayP->pgprocnos[index];
-    PGPROC *proc = &allProcs[pgprocno];
-
-    if (proc->pid == 0)
-      continue; /* do not count prepared xacts */
-    if (!proc->isRegularBackend)
-      continue; /* count only regular backend processes */
-    if (proc->roleId == roleid)
-      count++;
-  }
-
-  LWLockRelease(ProcArrayLock);
-
-  return count;
 }
 
 /*
@@ -2336,50 +2056,6 @@ void TerminateOtherDBBackends(Oid databaseId) {
   }
 }
 
-/*
- * ProcArraySetReplicationSlotXmin
- *
- * Install limits to future computations of the xmin horizon to prevent vacuum
- * and HOT pruning from removing affected rows still needed by clients with
- * replication slots.
- */
-void ProcArraySetReplicationSlotXmin(TransactionId xmin,
-                                     TransactionId catalog_xmin,
-                                     bool already_locked) {
-  Assert(!already_locked || LWLockHeldByMe(ProcArrayLock));
-
-  if (!already_locked)
-    LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
-
-  procArray->replication_slot_xmin = xmin;
-  procArray->replication_slot_catalog_xmin = catalog_xmin;
-
-  if (!already_locked)
-    LWLockRelease(ProcArrayLock);
-
-  elog(DEBUG1, "xmin required by slots: data %u, catalog %u", xmin,
-       catalog_xmin);
-}
-
-/*
- * ProcArrayGetReplicationSlotXmin
- *
- * Return the current slot xmin limits. That's useful to be able to remove
- * data that's older than those limits.
- */
-void ProcArrayGetReplicationSlotXmin(TransactionId *xmin,
-                                     TransactionId *catalog_xmin) {
-  LWLockAcquire(ProcArrayLock, LW_SHARED);
-
-  if (xmin != NULL)
-    *xmin = procArray->replication_slot_xmin;
-
-  if (catalog_xmin != NULL)
-    *catalog_xmin = procArray->replication_slot_catalog_xmin;
-
-  LWLockRelease(ProcArrayLock);
-}
-
 #ifdef XIDCACHE_DEBUG
 
 /*
@@ -2496,92 +2172,6 @@ static void GlobalVisUpdate(void) {
 
   /* updates the horizons as a side-effect */
   ComputeXidHorizons(&horizons);
-}
-
-/*
- * Return true if no snapshot still considers fxid to be running.
- *
- * The state passed needs to have been initialized for the relation fxid is
- * from (NULL is also OK), otherwise the result may not be correct.
- *
- * See comment for GlobalVisState for details.
- */
-bool GlobalVisTestIsRemovableFullXid(GlobalVisState *state,
-                                     FullTransactionId fxid) {
-  /*
-   * If fxid is older than maybe_needed bound, it definitely is visible to
-   * everyone.
-   */
-  if (FullTransactionIdPrecedes(fxid, state->maybe_needed))
-    return true;
-
-  /*
-   * If fxid is >= definitely_needed bound, it is very likely to still be
-   * considered running.
-   */
-  if (FullTransactionIdFollowsOrEquals(fxid, state->definitely_needed))
-    return false;
-
-  /*
-   * fxid is between maybe_needed and definitely_needed, i.e. there might or
-   * might not exist a snapshot considering fxid running. If it makes sense,
-   * update boundaries and recheck.
-   */
-  if (GlobalVisTestShouldUpdate(state)) {
-    GlobalVisUpdate();
-
-    Assert(FullTransactionIdPrecedes(fxid, state->definitely_needed));
-
-    return FullTransactionIdPrecedes(fxid, state->maybe_needed);
-  } else
-    return false;
-}
-
-/*
- * Wrapper around GlobalVisTestIsRemovableFullXid() for 32bit xids.
- *
- * It is crucial that this only gets called for xids from a source that
- * protects against xid wraparounds (e.g. from a table and thus protected by
- * relfrozenxid).
- */
-bool GlobalVisTestIsRemovableXid(GlobalVisState *state, TransactionId xid) {
-  FullTransactionId fxid;
-
-  /*
-   * Convert 32 bit argument to FullTransactionId. We can do so safely
-   * because we know the xid has to, at the very least, be between
-   * [oldestXid, nextXid), i.e. within 2 billion of xid. To avoid taking a
-   * lock to determine either, we can just compare with
-   * state->definitely_needed, which was based on those value at the time
-   * the current snapshot was built.
-   */
-  fxid = FullXidRelativeTo(state->definitely_needed, xid);
-
-  return GlobalVisTestIsRemovableFullXid(state, fxid);
-}
-
-/*
- * Convenience wrapper around GlobalVisTestFor() and
- * GlobalVisTestIsRemovableFullXid(), see their comments.
- */
-bool GlobalVisCheckRemovableFullXid(Relation rel, FullTransactionId fxid) {
-  GlobalVisState *state;
-
-  state = GlobalVisTestFor(rel);
-
-  return GlobalVisTestIsRemovableFullXid(state, fxid);
-}
-
-/*
- * Convenience wrapper around GlobalVisTestFor() and
- * GlobalVisTestIsRemovableXid(), see their comments.
- */
-bool GlobalVisCheckRemovableXid(Relation rel, TransactionId xid) {
-  GlobalVisState *state;
-
-  state = GlobalVisTestFor(rel);
-
-  return GlobalVisTestIsRemovableXid(state, xid);
 }
 
 /*

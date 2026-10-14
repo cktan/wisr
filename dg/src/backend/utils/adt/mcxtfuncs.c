@@ -251,15 +251,11 @@ Datum pg_log_backend_memory_contexts(PG_FUNCTION_ARGS) {
   PGPROC *proc;
   ProcNumber procNumber = INVALID_PROC_NUMBER;
 
-  /*
-   * See if the process with given pid is a backend or an auxiliary process.
-   */
+  /* See if the process with given pid is a backend. */
   proc = BackendPidGetProc(pid);
-  if (proc == NULL)
-    proc = AuxiliaryPidGetProc(pid);
 
   /*
-   * BackendPidGetProc() and AuxiliaryPidGetProc() return NULL if the pid
+   * BackendPidGetProc() returns NULL if the pid
    * isn't valid; but by the time we reach kill(), a process for which we
    * get a valid proc here might have terminated on its own.  There's no way
    * to acquire a lock on an arbitrary process to prevent that. But since

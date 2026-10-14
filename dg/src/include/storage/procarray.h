@@ -34,37 +34,17 @@ extern bool ProcArrayInstallImportedXmin(TransactionId xmin,
 extern bool ProcArrayInstallRestoredXmin(TransactionId xmin, PGPROC *proc);
 
 extern bool TransactionIdIsInProgress(TransactionId xid);
-extern bool TransactionIdIsActive(TransactionId xid);
-extern TransactionId GetOldestNonRemovableTransactionId(Relation rel);
-extern TransactionId GetOldestTransactionIdConsideredRunning(void);
-extern void GetReplicationHorizons(TransactionId *xmin,
-                                   TransactionId *catalog_xmin);
 
 extern PGPROC *ProcNumberGetProc(int procNumber);
-extern void ProcNumberGetTransactionIds(int procNumber, TransactionId *xid,
-                                        TransactionId *xmin, int *nsubxid,
-                                        bool *overflowed);
 extern PGPROC *BackendPidGetProc(int pid);
 extern PGPROC *BackendPidGetProcWithLock(int pid);
-extern int BackendXidGetPid(TransactionId xid);
-extern bool IsBackendPid(int pid);
 
 extern VirtualTransactionId *
 GetCurrentVirtualXIDs(TransactionId limitXmin, bool excludeXmin0, bool allDbs,
                       int excludeVacuum, int *nvxids);
 
-extern int CountDBBackends(Oid databaseid);
-extern int CountDBConnections(Oid databaseid);
-extern int CountUserBackends(Oid roleid);
 extern bool CountOtherDBBackends(Oid databaseId, int *nbackends,
                                  int *nprepared);
 extern void TerminateOtherDBBackends(Oid databaseId);
-
-extern void ProcArraySetReplicationSlotXmin(TransactionId xmin,
-                                            TransactionId catalog_xmin,
-                                            bool already_locked);
-
-extern void ProcArrayGetReplicationSlotXmin(TransactionId *xmin,
-                                            TransactionId *catalog_xmin);
 
 #endif /* PROCARRAY_H */

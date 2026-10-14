@@ -221,20 +221,10 @@ struct PGPROC {
 
   bool isRegularBackend; /* true if it's a regular backend. */
 
-  /*
-   * While in hot standby mode, shows that a conflict signal has been sent
-   * for the current transaction. Set/cleared while holding ProcArrayLock,
-   * though not required. Accessed without lock, if needed.
-   */
-  bool recoveryConflictPending;
-
   /* Info about LWLock the process is currently waiting for, if any. */
   uint8 lwWaiting;          /* see LWLockWaitState; LWWAITING_GET/SET */
   uint8 lwWaitMode;         /* lwlock mode being waited for */
   proclist_node lwWaitLink; /* position in LW lock wait list */
-
-  /* Support for condition variables. */
-  proclist_node cvWaitLink; /* position in CV wait list */
 
   /* Info about lock the process is currently waiting for, if any. */
   /* waitLock and waitProcLock are NULL if not currently waiting. */
@@ -373,46 +363,20 @@ typedef struct PROC_HDR {
   uint32 allProcCount;
   /* Head of list of free PGPROC structures */
   dlist_head freeProcs;
-  /* Head of list of walsender free PGPROC structures */
-  dlist_head walsenderFreeProcs;
   /* First pgproc waiting for group XID clear */
   pg_atomic_uint32 procArrayGroupFirst;
 
-  /*
-   * Current slot numbers of some auxiliary processes. There can be only one
-   * of each of these running at a time.
-   */
-  ProcNumber walwriterProc;
-
   /* Current shared estimate of appropriate spins_per_delay value */
   int spins_per_delay;
-  /* Buffer id of the buffer that Startup process waits for pin on, or -1 */
-  int startupBufferPinWaitBufId;
 } PROC_HDR;
 
 extern thread_local /*SHARED*/ PGDLLIMPORT PROC_HDR *ProcGlobal;
-
-extern thread_local /*SHARED*/ PGDLLIMPORT PGPROC *PreparedXactProcs;
 
 /*
  * Accessors for getting PGPROC given a ProcNumber and vice versa.
  */
 #define GetPGProcByNumber(n) (&ProcGlobal->allProcs[(n)])
 #define GetNumberFromPGProc(proc) ((proc) - &ProcGlobal->allProcs[0])
-
-/*
- * We set aside some extra PGPROC structures for auxiliary processes,
- * ie things that aren't full-fledged backends (they cannot run transactions
- * or take heavyweight locks) but need shmem access.
- *
- * Background writer, checkpointer, WAL writer, WAL summarizer, and archiver
- * run during normal operation.  Startup process and WAL receiver also consume
- * 2 slots, but WAL writer is launched only after startup has exited, so we
- * only need 6 slots.
- */
-#define NUM_AUXILIARY_PROCS		6
-
-#define FIRST_PREPARED_XACT_PROC_NUMBER	(MaxBackends + NUM_AUXILIARY_PROCS)
 
 /* configurable options */
 extern thread_local /*LOCAL*/ PGDLLIMPORT int DeadlockTimeout;
@@ -430,9 +394,6 @@ extern int ProcGlobalSemas(void);
 extern void InitProcGlobal(void);
 extern void InitProcess(void);
 extern void InitProcessPhase2(void);
-extern void InitAuxiliaryProcess(void);
-
-extern int GetStartupBufferPinWaitBufId(void);
 
 extern bool HaveNFreeProcs(int n, int *nfree);
 extern void ProcReleaseLocks(bool isCommit);
@@ -452,7 +413,6 @@ extern void GetLockHoldersAndWaiters(LOCALLOCK *locallock,
 extern void ProcWaitForSignal(uint32 wait_event_info);
 extern void ProcSendSignal(ProcNumber procNumber);
 
-extern PGPROC *AuxiliaryPidGetProc(int pid);
 extern PGPROC *PostmasterPidGetProc(int pid);
 
 #endif /* _PROC_H_ */

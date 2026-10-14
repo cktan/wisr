@@ -35,7 +35,6 @@
 
 #include "access/transam.h"
 #include "miscadmin.h"
-#include "storage/condition_variable.h"
 #include "storage/ipc.h"
 #include "storage/lmgr.h"
 #include "storage/pmsignal.h"
@@ -70,8 +69,6 @@ static thread_local /*SHARED*/ slock_t *ProcStructLock = NULL;
 
 /* Pointers to shared-memory structures */
 thread_local /*SHARED*/ PROC_HDR *ProcGlobal = NULL;
-static thread_local /*SHARED*/ PGPROC *AuxiliaryProcs = NULL;
-thread_local /*SHARED*/ PGPROC *PreparedXactProcs = NULL;
 
 static thread_local /*LOCAL*/ DeadLockState deadlock_state = DS_NOT_YET_CHECKED;
 
@@ -80,7 +77,6 @@ static thread_local /*LOCAL*/ volatile sig_atomic_t got_deadlock_timeout;
 
 static void RemoveProcFromArray(int code, Datum arg);
 static void ProcKill(int code, Datum arg);
-static void AuxiliaryProcKill(int code, Datum arg);
 static void CheckDeadLock(void);
 
 /*
@@ -88,7 +84,7 @@ static void CheckDeadLock(void);
  */
 static Size PGProcShmemSize(void) {
   Size size = 0;
-  Size TotalProcs = add_size(MaxBackends, NUM_AUXILIARY_PROCS);
+  Size TotalProcs = MaxBackends;
 
   size = add_size(size, mul_size(TotalProcs, sizeof(PGPROC)));
   size = add_size(size, mul_size(TotalProcs, sizeof(*ProcGlobal->xids)));
@@ -104,7 +100,7 @@ static Size PGProcShmemSize(void) {
  */
 static Size FastPathLockShmemSize(void) {
   Size size = 0;
-  Size TotalProcs = add_size(MaxBackends, NUM_AUXILIARY_PROCS);
+  Size TotalProcs = MaxBackends;
   Size fpLockBitsSize, fpRelIdSize;
 
   /*
@@ -123,11 +119,8 @@ static Size FastPathLockShmemSize(void) {
  * Report number of semaphores needed by InitProcGlobal.
  */
 int ProcGlobalSemas(void) {
-  /*
-   * We need a sema per backend, plus one for each
-   * auxiliary process.
-   */
-  return MaxBackends + NUM_AUXILIARY_PROCS;
+  /* We need a sema per backend. */
+  return MaxBackends;
 }
 
 /*
@@ -152,14 +145,14 @@ int ProcGlobalSemas(void) {
  *	  postmaster, not in backends.
  *
  * Note: this is NOT called by individual backends under a postmaster,
- * not even in the EXEC_BACKEND case.  The ProcGlobal and AuxiliaryProcs
- * pointers must be propagated specially for EXEC_BACKEND operation.
+ * not even in the EXEC_BACKEND case.  The ProcGlobal pointer must be
+ * propagated specially for EXEC_BACKEND operation.
  */
 void InitProcGlobal(void) {
   PGPROC *procs;
   int i, j;
   bool found;
-  uint32 TotalProcs = MaxBackends + NUM_AUXILIARY_PROCS;
+  uint32 TotalProcs = MaxBackends;
 
   /* Used for setup of per-backend fast-path slots. */
   char *fpPtr, *fpEndPtr PG_USED_FOR_ASSERTS_ONLY;
@@ -177,9 +170,6 @@ void InitProcGlobal(void) {
    */
   ProcGlobal->spins_per_delay = DEFAULT_SPINS_PER_DELAY;
   dlist_init(&ProcGlobal->freeProcs);
-  dlist_init(&ProcGlobal->walsenderFreeProcs);
-  ProcGlobal->startupBufferPinWaitBufId = -1;
-  ProcGlobal->walwriterProc = INVALID_PROC_NUMBER;
   pg_atomic_init_u32(&ProcGlobal->procArrayGroupFirst, INVALID_PROC_NUMBER);
 
   /*
@@ -200,7 +190,7 @@ void InitProcGlobal(void) {
 
   ProcGlobal->allProcs = procs;
   /* XXX allProcCount isn't really all of them; it excludes prepared xacts */
-  ProcGlobal->allProcCount = MaxBackends + NUM_AUXILIARY_PROCS;
+  ProcGlobal->allProcCount = MaxBackends;
 
   /*
    * Allocate arrays mirroring PGPROC fields in a dense manner. See
@@ -255,35 +245,14 @@ void InitProcGlobal(void) {
 
     Assert(fpPtr <= fpEndPtr);
 
-    /*
-     * Set up per-PGPROC semaphore, latch, and fpInfoLock.  Prepared xact
-     * dummy PGPROCs don't need these though - they're never associated
-     * with a real process
-     */
-    if (i < FIRST_PREPARED_XACT_PROC_NUMBER) {
-      proc->sem = PGSemaphoreCreate();
-      InitSharedLatch(&(proc->procLatch));
-      LWLockInitialize(&(proc->fpInfoLock), LWTRANCHE_LOCK_FASTPATH);
-    }
+    /* Set up per-PGPROC semaphore, latch, and fpInfoLock. */
+    proc->sem = PGSemaphoreCreate();
+    InitSharedLatch(&(proc->procLatch));
+    LWLockInitialize(&(proc->fpInfoLock), LWTRANCHE_LOCK_FASTPATH);
 
-    /*
-     * Newly created PGPROCs for normal backends and walsenders must be
-     * queued up on the
-     * appropriate free list.  Because there can only ever be a small,
-     * fixed number of auxiliary processes, no free list is used in that
-     * case; InitAuxiliaryProcess() instead uses a linear search.  PGPROCs
-     * for prepared transactions are added to a free list by
-     * TwoPhaseShmemInit().
-     */
-    if (i < MaxConnections) {
-      /* PGPROC for normal backend, add to freeProcs list */
-      dlist_push_tail(&ProcGlobal->freeProcs, &proc->links);
-      proc->procgloballist = &ProcGlobal->freeProcs;
-    } else if (i < MaxBackends) {
-      /* PGPROC for walsender, add to walsenderFreeProcs list */
-      dlist_push_tail(&ProcGlobal->walsenderFreeProcs, &proc->links);
-      proc->procgloballist = &ProcGlobal->walsenderFreeProcs;
-    }
+    /* Each is a session's: queue it up on the free list. */
+    dlist_push_tail(&ProcGlobal->freeProcs, &proc->links);
+    proc->procgloballist = &ProcGlobal->freeProcs;
 
     /* Initialize myProcLocks[] shared memory queues. */
     for (j = 0; j < NUM_LOCK_PARTITIONS; j++)
@@ -302,13 +271,6 @@ void InitProcGlobal(void) {
 
   /* Should have consumed exactly the expected amount of fast-path memory. */
   Assert(fpPtr == fpEndPtr);
-
-  /*
-   * Save pointers to the blocks of PGPROC structures reserved for auxiliary
-   * processes and prepared transactions.
-   */
-  AuxiliaryProcs = &procs[MaxBackends];
-  PreparedXactProcs = &procs[FIRST_PREPARED_XACT_PROC_NUMBER];
 
   /* Create ProcStructLock spinlock, too */
   ProcStructLock = (slock_t *)ShmemInitStruct("ProcStructLock spinlock",
@@ -340,14 +302,8 @@ void InitProcess(void) {
   if (IsUnderPostmaster)
     RegisterPostmasterChildActive();
 
-  /*
-   * Decide which list should supply our PGPROC.  This logic must match the
-   * way the freelists were constructed in InitProcGlobal().
-   */
-  if (AmWalSenderProcess())
-    procgloballist = &ProcGlobal->walsenderFreeProcs;
-  else
-    procgloballist = &ProcGlobal->freeProcs;
+  /* The free list supplies our PGPROC (InitProcGlobal()). */
+  procgloballist = &ProcGlobal->freeProcs;
 
   /*
    * Try to get a proc struct from the appropriate free list.  If this
@@ -415,7 +371,6 @@ void InitProcess(void) {
       Assert(dlist_is_empty(&(MyProc->myProcLocks[i])));
   }
 #endif
-  MyProc->recoveryConflictPending = false;
 
   /* Initialize fields for group XID clearing. */
   MyProc->procArrayGroupMember = false;
@@ -485,158 +440,6 @@ void InitProcessPhase2(void) {
    * Arrange to clean that up at backend exit.
    */
   on_shmem_exit(RemoveProcFromArray, 0);
-}
-
-/*
- * InitAuxiliaryProcess -- create a PGPROC entry for an auxiliary process
- *
- * This is called by bgwriter and similar processes so that they will have a
- * MyProc value that's real enough to let them wait for LWLocks.  The PGPROC
- * and sema that are assigned are one of the extra ones created during
- * InitProcGlobal.
- *
- * Auxiliary processes are presently not expected to wait for real (lockmgr)
- * locks, so we need not set up the deadlock checker.  They are never added
- * to the ProcArray or the sinval messaging mechanism, either.  They also
- * don't get a VXID assigned, since this is only useful when we actually
- * hold lockmgr locks.
- *
- * Startup process however uses locks but never waits for them in the
- * normal backend sense. Startup process also takes part in sinval messaging
- * as a sendOnly process, so never reads messages from sinval queue. So
- * Startup process does have a VXID and does show up in pg_locks.
- */
-void InitAuxiliaryProcess(void) {
-  PGPROC *auxproc;
-  int proctype;
-
-  /*
-   * ProcGlobal should be set up already (if we are a backend, we inherit
-   * this by fork() or EXEC_BACKEND mechanism from the postmaster).
-   */
-  if (ProcGlobal == NULL || AuxiliaryProcs == NULL)
-    elog(PANIC, "proc header uninitialized");
-
-  if (MyProc != NULL)
-    elog(ERROR, "you already exist");
-
-  if (IsUnderPostmaster)
-    RegisterPostmasterChildActive();
-
-  /*
-   * We use the ProcStructLock to protect assignment and releasing of
-   * AuxiliaryProcs entries.
-   *
-   * While we are holding the ProcStructLock, also copy the current shared
-   * estimate of spins_per_delay to local storage.
-   */
-  SpinLockAcquire(ProcStructLock);
-
-  set_spins_per_delay(ProcGlobal->spins_per_delay);
-
-  /*
-   * Find a free auxproc ... *big* trouble if there isn't one ...
-   */
-  for (proctype = 0; proctype < NUM_AUXILIARY_PROCS; proctype++) {
-    auxproc = &AuxiliaryProcs[proctype];
-    if (auxproc->pid == 0)
-      break;
-  }
-  if (proctype >= NUM_AUXILIARY_PROCS) {
-    SpinLockRelease(ProcStructLock);
-    elog(FATAL, "all AuxiliaryProcs are in use");
-  }
-
-  /* Mark auxiliary proc as in use by me */
-  /* use volatile pointer to prevent code rearrangement */
-  ((volatile PGPROC *)auxproc)->pid = MyProcPid;
-
-  SpinLockRelease(ProcStructLock);
-
-  MyProc = auxproc;
-  MyProcNumber = GetNumberFromPGProc(MyProc);
-
-  /*
-   * Initialize all fields of MyProc, except for those previously
-   * initialized by InitProcGlobal.
-   */
-  dlist_node_init(&MyProc->links);
-  MyProc->waitStatus = PROC_WAIT_STATUS_OK;
-  MyProc->fpVXIDLock = false;
-  MyProc->fpLocalTransactionId = InvalidLocalTransactionId;
-  MyProc->xid = InvalidTransactionId;
-  MyProc->xmin = InvalidTransactionId;
-  MyProc->vxid.procNumber = INVALID_PROC_NUMBER;
-  MyProc->vxid.lxid = InvalidLocalTransactionId;
-  MyProc->databaseId = InvalidOid;
-  MyProc->roleId = InvalidOid;
-  MyProc->tempNamespaceId = InvalidOid;
-  MyProc->isRegularBackend = false;
-  MyProc->statusFlags = 0;
-  MyProc->lwWaiting = LW_WS_NOT_WAITING;
-  MyProc->lwWaitMode = 0;
-  MyProc->waitLock = NULL;
-  MyProc->waitProcLock = NULL;
-  pg_atomic_write_u64(&MyProc->waitStart, 0);
-#ifdef USE_ASSERT_CHECKING
-  {
-    int i;
-
-    /* Last process should have released all locks. */
-    for (i = 0; i < NUM_LOCK_PARTITIONS; i++)
-      Assert(dlist_is_empty(&(MyProc->myProcLocks[i])));
-  }
-#endif
-
-  /*
-   * Acquire ownership of the PGPROC's latch, so that we can use WaitLatch
-   * on it.  That allows us to repoint the process latch, which so far
-   * points to process local one, to the shared one.
-   */
-  OwnLatch(&MyProc->procLatch);
-  SwitchToSharedLatch();
-
-  /* Check that group locking fields are in a proper initial state. */
-  Assert(MyProc->lockGroupLeader == NULL);
-  Assert(dlist_is_empty(&MyProc->lockGroupMembers));
-
-  /*
-   * We might be reusing a semaphore that belonged to a failed process. So
-   * be careful and reinitialize its value here.  (This is not strictly
-   * necessary anymore, but seems like a good idea for cleanliness.)
-   */
-  PGSemaphoreReset(MyProc->sem);
-
-  /*
-   * Arrange to clean up at process exit.
-   */
-  on_shmem_exit(AuxiliaryProcKill, Int32GetDatum(proctype));
-
-  /*
-   * Now that we have a PGPROC, we could try to acquire lightweight locks.
-   * Initialize local state needed for them.  (Heavyweight locks cannot be
-   * acquired in aux processes.)
-   */
-  InitLWLockAccess();
-
-  /*
-   * Initialize backend-local pointers to all the shared data structures.
-   * (We couldn't do this until now because it needs LWLocks.)  A forked
-   * child inherited them; a session thread, like an EXEC_BACKEND child,
-   * did not, or not all.
-   */
-  if (IsSessionThread)
-    AttachSharedMemoryStructs();
-}
-
-/*
- * Used by backends when they receive a request to check for buffer pin waits.
- */
-int GetStartupBufferPinWaitBufId(void) {
-  /* use volatile pointer to prevent code rearrangement */
-  volatile PROC_HDR *procglobal = ProcGlobal;
-
-  return procglobal->startupBufferPinWaitBufId;
 }
 
 /*
@@ -798,9 +601,6 @@ static void ProcKill(int code, Datum arg) {
    */
   LWLockReleaseAll();
 
-  /* Cancel any pending condition variable sleep, too */
-  ConditionVariableCancelSleep();
-
   /*
    * Reset MyLatch to the process local one and disown the shared latch, so
    * that signal handlers et al can continue using the latch after the
@@ -898,54 +698,6 @@ static void ProcKill(int code, Datum arg) {
 }
 
 /*
- * AuxiliaryProcKill() -- Cut-down version of ProcKill for auxiliary
- *		processes (bgwriter, etc).  The PGPROC and sema are not
- *released, only marked as not-in-use.
- */
-static void AuxiliaryProcKill(int code, Datum arg) {
-  int proctype = DatumGetInt32(arg);
-  PGPROC *auxproc PG_USED_FOR_ASSERTS_ONLY;
-  PGPROC *proc;
-
-  Assert(proctype >= 0 && proctype < NUM_AUXILIARY_PROCS);
-
-  /* not safe if forked by system(), etc. */
-  if (MyProc->pid != CurrentProcPid())
-    elog(PANIC, "AuxiliaryProcKill() called in child process");
-
-  auxproc = &AuxiliaryProcs[proctype];
-
-  Assert(MyProc == auxproc);
-
-  /* Release any LW locks I am holding (see notes above) */
-  LWLockReleaseAll();
-
-  /* Cancel any pending condition variable sleep, too */
-  ConditionVariableCancelSleep();
-
-  /* look at the equivalent ProcKill() code for comments */
-  SwitchBackToLocalLatch();
-
-  proc = MyProc;
-  MyProc = NULL;
-  MyProcNumber = INVALID_PROC_NUMBER;
-  DisownLatch(&proc->procLatch);
-
-  SpinLockAcquire(ProcStructLock);
-
-  /* Mark auxiliary proc no longer in use */
-  proc->pid = 0;
-  proc->vxid.procNumber = INVALID_PROC_NUMBER;
-  proc->vxid.lxid = InvalidTransactionId;
-
-  /* Update shared estimate of spins_per_delay */
-  ProcGlobal->spins_per_delay =
-      update_spins_per_delay(ProcGlobal->spins_per_delay);
-
-  SpinLockRelease(ProcStructLock);
-}
-
-/*
  * The PGPROC of the backend whose pid is pid, or NULL if it has none yet.
  * For the postmaster, which takes no lock: the scan reads each pid without
  * one, so the answer may be stale, as a pid given to kill() may be.
@@ -958,30 +710,6 @@ PGPROC *PostmasterPidGetProc(int pid) {
       return proc;
   }
   return NULL;
-}
-
-/*
- * AuxiliaryPidGetProc -- get PGPROC for an auxiliary process
- * given its PID
- *
- * Returns NULL if not found.
- */
-PGPROC *AuxiliaryPidGetProc(int pid) {
-  PGPROC *result = NULL;
-  int index;
-
-  if (pid == 0) /* never match dummy PGPROCs */
-    return NULL;
-
-  for (index = 0; index < NUM_AUXILIARY_PROCS; index++) {
-    PGPROC *proc = &AuxiliaryProcs[index];
-
-    if (proc->pid == pid) {
-      result = proc;
-      break;
-    }
-  }
-  return result;
 }
 
 /*

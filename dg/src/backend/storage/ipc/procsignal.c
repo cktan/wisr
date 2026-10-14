@@ -20,7 +20,6 @@
 #include "miscadmin.h"
 #include "port/atomics.h"
 #include "port/pg_bitutils.h"
-#include "storage/condition_variable.h"
 #include "storage/ipc.h"
 #include "storage/latch.h"
 #include "storage/proc.h"
@@ -64,7 +63,7 @@ typedef struct {
  * possible auxiliary process type.  (This scheme assumes there is not
  * more than one of any auxiliary process type at a time.)
  */
-#define NumProcSignalSlots	(MaxBackends + NUM_AUXILIARY_PROCS)
+#define NumProcSignalSlots	(MaxBackends)
 
 static thread_local /*SHARED*/ ProcSignalSlot *ProcSignalSlots = NULL;
 static thread_local /*LOCAL*/ ProcSignalSlot *MyProcSignalSlot = NULL;
@@ -285,27 +284,6 @@ void procsignal_sigusr1_handler(void) {
 
   if (CheckProcSignal(PROCSIG_LOG_MEMORY_CONTEXT))
     HandleLogMemoryContextInterrupt();
-
-  if (CheckProcSignal(PROCSIG_RECOVERY_CONFLICT_DATABASE))
-    HandleRecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_DATABASE);
-
-  if (CheckProcSignal(PROCSIG_RECOVERY_CONFLICT_TABLESPACE))
-    HandleRecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_TABLESPACE);
-
-  if (CheckProcSignal(PROCSIG_RECOVERY_CONFLICT_LOCK))
-    HandleRecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_LOCK);
-
-  if (CheckProcSignal(PROCSIG_RECOVERY_CONFLICT_SNAPSHOT))
-    HandleRecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_SNAPSHOT);
-
-  if (CheckProcSignal(PROCSIG_RECOVERY_CONFLICT_LOGICALSLOT))
-    HandleRecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_LOGICALSLOT);
-
-  if (CheckProcSignal(PROCSIG_RECOVERY_CONFLICT_STARTUP_DEADLOCK))
-    HandleRecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_STARTUP_DEADLOCK);
-
-  if (CheckProcSignal(PROCSIG_RECOVERY_CONFLICT_BUFFERPIN))
-    HandleRecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_BUFFERPIN);
 
   SetLatch(MyLatch);
 }
