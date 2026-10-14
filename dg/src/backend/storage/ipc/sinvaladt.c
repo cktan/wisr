@@ -17,6 +17,8 @@
 #include <signal.h>
 #include <unistd.h>
 
+#include <atomic>
+
 #include "miscadmin.h"
 #include "storage/ipc.h"
 #include "storage/proc.h"
@@ -24,7 +26,7 @@
 #include "storage/procsignal.h"
 #include "storage/shmem.h"
 #include "storage/sinvaladt.h"
-#include "storage/spin.h"
+#include "utils/control_block.h"
 
 /*
  * Conceptually, the shared cache invalidation messages are stored in an
@@ -85,20 +87,16 @@
  * can operate in parallel with one or more readers, because the writer
  * has no need to touch anyone's ProcState, except in the infrequent cases
  * when SICleanupQueue is needed.  The only point of overlap is that
- * the writer wants to change maxMsgNum while readers need to read it.
- * We deal with that by having a spinlock that readers must take for just
- * long enough to read maxMsgNum, while writers take it for just long enough
- * to write maxMsgNum.  (The exact rule is that you need the spinlock to
- * read maxMsgNum if you are not holding SInvalWriteLock, and you need the
- * spinlock to write maxMsgNum unless you are holding both locks.)
- *
- * Note: since maxMsgNum is an int and hence presumably atomically readable/
- * writable, the spinlock might seem unnecessary.  The reason it is needed
- * is to provide a memory barrier: we need to be sure that messages written
- * to the array are actually there before maxMsgNum is increased, and that
- * readers will see that data after fetching maxMsgNum.  Multiprocessors
- * that have weak memory-ordering guarantees can fail without the memory
- * barrier instructions that are included in the spinlock sequences.
+ * the writer wants to change maxMsgNum while readers need to read it,
+ * and that the writer sets each reader's hasMessages flag, which the reader
+ * clears.  Both are std::atomic, with sequentially consistent stores and
+ * loads: a writer stores maxMsgNum after the messages, then sets the
+ * flags; a reader clears its flag, then loads maxMsgNum.  So a reader that
+ * loads the old maxMsgNum finds its flag set again by the writer that
+ * stored the new one, and reads the new messages next time; and one that
+ * loads the new maxMsgNum sees the messages stored before it.  (They were
+ * a plain int under a spinlock, and a plain bool written under one lock
+ * and read under another, which the thread sanitizer reported.)
  */
 
 /*
@@ -137,10 +135,10 @@ typedef struct ProcState {
   /* procPid is zero in an inactive ProcState array entry. */
   pid_t procPid; /* PID of backend, for signaling */
   /* nextMsgNum is meaningless if procPid == 0 or resetState is true. */
-  int nextMsgNum;   /* next message number to read */
-  bool resetState;  /* backend needs to reset its state */
-  bool signaled;    /* backend has been sent catchup signal */
-  bool hasMessages; /* backend has unread messages */
+  int nextMsgNum;                /* next message number to read */
+  bool resetState;               /* backend needs to reset its state */
+  bool signaled;                 /* backend has been sent catchup signal */
+  std::atomic<bool> hasMessages; /* backend has unread messages */
 
   /*
    * Backend only sends invalidations, never receives them. This only makes
@@ -164,11 +162,9 @@ typedef struct SISeg {
   /*
    * General state information
    */
-  int minMsgNum;     /* oldest message still needed */
-  int maxMsgNum;     /* next message number to be assigned */
-  int nextThreshold; /* # of messages to call SICleanupQueue */
-
-  slock_t msgnumLock; /* spinlock protecting maxMsgNum */
+  int minMsgNum;              /* oldest message still needed */
+  std::atomic<int> maxMsgNum; /* next message number to be assigned */
+  int nextThreshold;          /* # of messages to call SICleanupQueue */
 
   /*
    * Circular buffer holding shared-inval messages
@@ -199,9 +195,6 @@ typedef struct SISeg {
  */
 #define NumProcStateSlots	(MaxBackends + NUM_AUXILIARY_PROCS)
 
-static thread_local /*SHARED*/ SISeg
-    *shmInvalBuffer; /* pointer to the shared inval buffer */
-
 static thread_local /*LOCAL*/ LocalTransactionId nextLocalTransactionId;
 
 static void CleanupInvalidationState(int status, Datum arg);
@@ -227,33 +220,36 @@ Size SharedInvalShmemSize(void) {
  */
 void SharedInvalShmemInit(void) {
   int i;
-  bool found;
 
-  /* Allocate space in shared memory */
-  shmInvalBuffer = (SISeg *)ShmemInitStruct("shmInvalBuffer",
-                                            SharedInvalShmemSize(), &found);
-  if (found)
+  /*
+   * Made once, by the postmaster before any session thread starts
+   * (CODE.md section 3): a session thread's call finds it made.
+   */
+  if (pcb->sinval != NULL)
     return;
+  /* Kept for the process's whole life, as the pcb is: never freed. */
+  pcb->sinval = (SISeg *)calloc(1, SharedInvalShmemSize());
+  if (pcb->sinval == NULL)
+    elog(FATAL, "out of memory");
 
-  /* Clear message counters, save size of procState array, init spinlock */
-  shmInvalBuffer->minMsgNum = 0;
-  shmInvalBuffer->maxMsgNum = 0;
-  shmInvalBuffer->nextThreshold = CLEANUP_MIN;
-  SpinLockInit(&shmInvalBuffer->msgnumLock);
+  /* Clear message counters, save size of procState array */
+  pcb->sinval->minMsgNum = 0;
+  pcb->sinval->maxMsgNum = 0;
+  pcb->sinval->nextThreshold = CLEANUP_MIN;
 
   /* The buffer[] array is initially all unused, so we need not fill it */
 
   /* Mark all backends inactive, and initialize nextLXID */
   for (i = 0; i < NumProcStateSlots; i++) {
-    shmInvalBuffer->procState[i].procPid = 0;    /* inactive */
-    shmInvalBuffer->procState[i].nextMsgNum = 0; /* meaningless */
-    shmInvalBuffer->procState[i].resetState = false;
-    shmInvalBuffer->procState[i].signaled = false;
-    shmInvalBuffer->procState[i].hasMessages = false;
-    shmInvalBuffer->procState[i].nextLXID = InvalidLocalTransactionId;
+    pcb->sinval->procState[i].procPid = 0;    /* inactive */
+    pcb->sinval->procState[i].nextMsgNum = 0; /* meaningless */
+    pcb->sinval->procState[i].resetState = false;
+    pcb->sinval->procState[i].signaled = false;
+    pcb->sinval->procState[i].hasMessages = false;
+    pcb->sinval->procState[i].nextLXID = InvalidLocalTransactionId;
   }
-  shmInvalBuffer->numProcs = 0;
-  shmInvalBuffer->pgprocnos = (int *)&shmInvalBuffer->procState[i];
+  pcb->sinval->numProcs = 0;
+  pcb->sinval->pgprocnos = (int *)&pcb->sinval->procState[i];
 }
 
 /*
@@ -263,7 +259,7 @@ void SharedInvalShmemInit(void) {
 void SharedInvalBackendInit(bool sendOnly) {
   ProcState *stateP;
   pid_t oldPid;
-  SISeg *segP = shmInvalBuffer;
+  SISeg *segP = pcb->sinval;
 
   if (MyProcNumber < 0)
     elog(ERROR, "MyProcNumber not set");
@@ -286,7 +282,7 @@ void SharedInvalBackendInit(bool sendOnly) {
          MyProcNumber, (int)oldPid);
   }
 
-  shmInvalBuffer->pgprocnos[shmInvalBuffer->numProcs++] = MyProcNumber;
+  pcb->sinval->pgprocnos[pcb->sinval->numProcs++] = MyProcNumber;
 
   /* Fetch next local transaction ID into local memory */
   nextLocalTransactionId = stateP->nextLXID;
@@ -352,7 +348,7 @@ static void CleanupInvalidationState(int status, Datum arg) {
  *		Add new invalidation message(s) to the buffer.
  */
 void SIInsertDataEntries(const SharedInvalidationMessage *data, int n) {
-  SISeg *segP = shmInvalBuffer;
+  SISeg *segP = pcb->sinval;
 
   /*
    * N can be arbitrarily large.  We divide the work into groups of no more
@@ -398,17 +394,13 @@ void SIInsertDataEntries(const SharedInvalidationMessage *data, int n) {
       max++;
     }
 
-    /* Update current value of maxMsgNum using spinlock */
-    SpinLockAcquire(&segP->msgnumLock);
+    /* Publish the new maxMsgNum, after the messages it covers. */
     segP->maxMsgNum = max;
-    SpinLockRelease(&segP->msgnumLock);
 
     /*
      * Now that the maxMsgNum change is globally visible, we give everyone
-     * a swift kick to make sure they read the newly added messages.
-     * Releasing SInvalWriteLock will enforce a full memory barrier, so
-     * these (unlocked) changes will be committed to memory before we exit
-     * the function.
+     * a swift kick to make sure they read the newly added messages: each
+     * store comes after maxMsgNum's (see the head of this file).
      */
     for (i = 0; i < segP->numProcs; i++) {
       ProcState *stateP = &segP->procState[segP->pgprocnos[i]];
@@ -454,7 +446,7 @@ int SIGetDataEntries(SharedInvalidationMessage *data, int datasize) {
   int max;
   int n;
 
-  segP = shmInvalBuffer;
+  segP = pcb->sinval;
   stateP = &segP->procState[MyProcNumber];
 
   /*
@@ -484,10 +476,8 @@ int SIGetDataEntries(SharedInvalidationMessage *data, int datasize) {
    */
   stateP->hasMessages = false;
 
-  /* Fetch current value of maxMsgNum using spinlock */
-  SpinLockAcquire(&segP->msgnumLock);
+  /* Fetch current value of maxMsgNum, after the flag is cleared. */
   max = segP->maxMsgNum;
-  SpinLockRelease(&segP->msgnumLock);
 
   if (stateP->resetState) {
     /*
@@ -549,7 +539,7 @@ int SIGetDataEntries(SharedInvalidationMessage *data, int datasize) {
  * free message slots at exit.  Caller must recheck and perhaps retry.
  */
 void SICleanupQueue(bool callerHasWriteLock, int minFree) {
-  SISeg *segP = shmInvalBuffer;
+  SISeg *segP = pcb->sinval;
   int min, minsig, lowbound, numMsgs, i;
   ProcState *needSig = NULL;
 

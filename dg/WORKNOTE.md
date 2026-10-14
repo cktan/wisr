@@ -3699,3 +3699,29 @@ found it when step 128's FATAL check started 8 with options.
   argument.
 - The postmaster's and initdb's `getopt()` run before any
   session thread, and keep libc's.
+
+## Step 130: the sinval queue's flags are atomics, in the pcb
+
+`SHMEM.md` §5. The thread sanitizer reported a race in
+storage/ipc `sinvaladt.c`: `ProcState.hasMessages`, a plain
+`bool`, was set by a writer under `SInvalWriteLock`, read by
+its reader with no lock and cleared under `SInvalReadLock`.
+PostgreSQL relied on a byte being written whole and on the
+barriers of the locks around it; in C++ it is a data race.
+
+- **`hasMessages` and `maxMsgNum` are `std::atomic`**, every
+  load and store sequentially consistent. A writer stores
+  `maxMsgNum` after the messages, then sets each reader's flag;
+  a reader clears its flag, then loads `maxMsgNum`. One total
+  order of the four means a reader that loads the old
+  `maxMsgNum` finds its flag set again, and reads the new
+  messages next time; and the load acquires the messages stored
+  before it.
+- **`msgnumLock` is gone**, the spinlock that made `maxMsgNum`'s
+  barrier.
+- **The segment is `pcb->sinval`**, `calloc`'d once by the
+  postmaster and never freed, as `CODE.md` §3 asks of a global
+  a change touches: the `thread_local` `shmInvalBuffer` and its
+  `ShmemInitStruct()` are gone. A session thread's
+  `SharedInvalShmemInit()` finds it made.
+- `make tsan` passes.

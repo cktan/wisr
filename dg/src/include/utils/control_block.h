@@ -56,6 +56,7 @@ struct shmem_index_free_t {
 
 union LWLockPadded;     /* storage/lwlock.h */
 struct PGSemaphoreData; /* port/posix_sema.c */
+struct SISeg;           /* storage/ipc/sinvaladt.c */
 
 /*
  * The process control block: one for the process.  What the process keeps
@@ -74,6 +75,9 @@ typedef struct pcb_t {
 
   /* posix_sema.c: the semaphores, malloc'd */
   struct PGSemaphoreData *shared_semas = nullptr;
+
+  /* sinvaladt.c: the shared invalidation queue, malloc'd */
+  struct SISeg *sinval = nullptr;
 } pcb_t;
 
 /* The thread control block: one for each thread that runs digres code. */

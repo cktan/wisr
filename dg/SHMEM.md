@@ -45,7 +45,7 @@ directory fixed in size ahead of time.
 | Fast Path Strong Relation Lock Data | storage/lmgr `lock.c:446` | counts per partition | a spinlock |
 | Proc Header, PGPROC structures, Fast-Path Lock Array | storage/lmgr `proc.c:172,194,234` | a PGPROC a session, free lists | ProcStructLock |
 | Proc Array | storage/ipc `procarray.c:308` | pgprocnos[MaxBackends] | ProcArrayLock |
-| shmInvalBuffer | storage/ipc `sinvaladt.c:233` | the SI ring, procState[] | SInvalRead/Write, msgnumLock |
+| (none: `pcb->sinval`, `WORKNOTE.md` step 130) | storage/ipc `sinvaladt.c` | the SI ring, procState[] | SInvalRead/Write, atomics |
 | PMSignalState | storage/ipc `pmsignal.c:143` | child flags, quit reason | relaxed atomics |
 | ProcSignal | storage/ipc `procsignal.c:95` | a slot a session, cancel keys | pss_mutex |
 
@@ -84,9 +84,8 @@ Beside the registry: the main LWLock array
   in the structure it guards; `LWLockReleaseAll()` on an error
   becomes the guards' unwinding.
 - **Spinlocks** (storage/lmgr `s_lock.c`): ProcStructLock, the
-  fast-path strong-lock counts, sinval's `msgnumLock`,
-  ProcSignal's `pss_mutex`, the latch's `owner_lock` and the
-  dynahash free lists. **To replace**: `std::mutex`, or an
+  fast-path strong-lock counts, ProcSignal's `pss_mutex`, the
+  latch's `owner_lock` and the dynahash free lists. **To replace**: `std::mutex`, or an
   atomic where one word is guarded.
 - **Condition variables** (storage/lmgr
   `condition_variable.c`): nothing sleeps on one; only
@@ -129,15 +128,8 @@ and the barriers go with it.
   `smstore.c`: DROP, ALTER, ANALYZE, CREATE and DROP INDEX) and
   the catalog flush of `pg_namespace` (CREATE and DROP SCHEMA).
   Every catalog write is refused, so the rest of its message
-  kinds are dead. **The thread sanitizer's race**: the field is
-  `ProcState.hasMessages`, a plain `bool`, set by a writer
-  under `SInvalWriteLock` (`sinvaladt.c:416`), read with no lock
-  (471) and cleared under `SInvalReadLock` (485). PostgreSQL
-  relies on a byte being written whole and on the barriers of
-  the locks around it. **To fix now**: `std::atomic<bool>`
-  `hasMessages` and `std::atomic<int>` `maxMsgNum`, `msgnumLock`
-  gone; the reader clears the flag with a sequentially
-  consistent exchange before it loads `maxMsgNum`. **To
+  kinds are dead. Its segment is `pcb->sinval`, and its flags
+  and `maxMsgNum` atomics (`WORKNOTE.md` step 130). **To
   replace**: an `inval_bus_t` in the pcb: a mutex, a queue of
   messages under 64-bit sequence numbers, `published` an atomic,
   and a reader's `next` and `reset` for each session. A reader
@@ -197,26 +189,24 @@ Of modules removed, to delete before the rest:
 
 ## 7. Order of work
 
-1. **The sinval race**, by the atomics of §5: small, and it
-   makes `make tsan` pass.
-2. **The dead code** of §6.
-3. **Spinlocks and the simple LWLocks** to `std::mutex`,
+1. **The dead code** of §6.
+2. **Spinlocks and the simple LWLocks** to `std::mutex`,
    `std::shared_mutex` and atomics: ProcStructLock,
-   `pss_mutex`, `msgnumLock`, OidGen, XidGen, AutoFile,
-   RelationMapping, RelCacheInit.
-4. **sm0's `latch_t`** (§4), and `Latch` over it.
-5. **The invalidation bus** (§5), then ProcSignal and
+   `pss_mutex`, OidGen, XidGen, AutoFile, RelationMapping,
+   RelCacheInit.
+3. **sm0's `latch_t`** (§4), and `Latch` over it.
+4. **The invalidation bus** (§5), then ProcSignal and
    PMSignalState.
-6. **The constant snapshot**: the proc array becomes the
+5. **The constant snapshot**: the proc array becomes the
    session registry.
-7. **The lock manager**: advisory locks into sm, catalog locks
+6. **The lock manager**: advisory locks into sm, catalog locks
    gone; then the lock manager, the remaining LWLocks,
    `posix_sema.c` and PGPROC.
-8. **The registry** of §2, once each block is a pcb field.
+7. **The registry** of §2, once each block is a pcb field.
 
 Each step is checked by the full suite and by `make tsan`;
 asserts are on in every build (`dg.mk`), so a broken invariant
-fails a test. Steps 5 to 7 change what sessions see of each
+fails a test. Steps 4 to 6 change what sessions see of each
 other, which `test/server.sh` checks only in part: DDL seen by
 another session, `pg_cancel_backend()`, a session that ends
 abnormally.
