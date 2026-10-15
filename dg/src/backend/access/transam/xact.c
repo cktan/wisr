@@ -43,7 +43,6 @@
 #include "utils/guc.h"
 #include "utils/inval.h"
 #include "utils/memutils.h"
-#include "utils/relmapper.h"
 #include "utils/snapmgr.h"
 #include "utils/timeout.h"
 #include "utils/timestamp.h"
@@ -324,24 +323,12 @@ FullTransactionId GetCurrentFullTransactionIdIfAny(void) {
 }
 
 /*
- *	GetStableLatestTransactionId
- *
- * The next-to-be-assigned XID, read once and returned for the rest of the
- * transaction: the reference point for the age(xid) function.
+ * The next xid to be assigned, the reference point of age(xid): refused
+ * (NoTransactionId()), as none is.
  */
 TransactionId GetStableLatestTransactionId(void) {
-  static thread_local /*LOCAL*/ LocalTransactionId lxid =
-      InvalidLocalTransactionId;
-  static thread_local /*LOCAL*/ TransactionId stablexid = InvalidTransactionId;
-
-  if (lxid != MyProc->vxid.lxid) {
-    lxid = MyProc->vxid.lxid;
-    stablexid = ReadNextTransactionId();
-  }
-
-  Assert(TransactionIdIsValid(stablexid));
-
-  return stablexid;
+  NoTransactionId();
+  return InvalidTransactionId; /* not reached */
 }
 
 /*
@@ -621,7 +608,6 @@ static void AtCCI_LocalCache(void) {
    * processing local sinval messages, so that the map changes will get
    * reflected into the relcache when relcache invals are processed.
    */
-  AtCCI_RelationMap();
 
   /*
    * Make catalog changes visible to me for the next command.
@@ -1030,7 +1016,6 @@ static void CommitTransaction(void) {
   HOLD_INTERRUPTS();
 
   /* Commit updates to the relation map --- do this as late as possible */
-  AtEOXact_RelationMap(true);
 
   /*
    * set the current transaction state information appropriately during
@@ -1208,7 +1193,6 @@ static void AbortTransaction(void) {
    */
   AfterTriggerEndXact(false); /* 'false' means it's abort */
   AtAbort_Portals();
-  AtEOXact_RelationMap(false);
 
   TRACE_POSTGRESQL_TRANSACTION_ABORT(MyProc->vxid.lxid);
 

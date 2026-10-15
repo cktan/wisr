@@ -91,13 +91,6 @@ typedef struct {
   RelFileLocator rlocator; /* spcOid, dbOid, relNumber */
 } SharedInvalSmgrMsg;
 
-#define SHAREDINVALRELMAP_ID	(-4)
-
-typedef struct {
-  int8 id;  /* type field --- must be first */
-  Oid dbId; /* database ID, or 0 for shared catalogs */
-} SharedInvalRelmapMsg;
-
 #define SHAREDINVALSNAPSHOT_ID	(-5)
 
 typedef struct {
@@ -121,7 +114,6 @@ typedef union {
   SharedInvalCatalogMsg cat;
   SharedInvalRelcacheMsg rc;
   SharedInvalSmgrMsg sm;
-  SharedInvalRelmapMsg rm;
   SharedInvalSnapshotMsg sn;
   SharedInvalRelSyncMsg rs;
 } SharedInvalidationMessage;
@@ -147,14 +139,6 @@ extern void HandleCatchupInterrupt(void);
  * have occurred since the last disable.
  */
 extern void ProcessCatchupInterrupt(void);
-
-extern int
-xactGetCommittedInvalidationMessages(SharedInvalidationMessage **msgs,
-                                     bool *RelcacheInitFileInval);
-extern void
-ProcessCommittedInvalidationMessages(SharedInvalidationMessage *msgs, int nmsgs,
-                                     bool RelcacheInitFileInval, Oid dbid,
-                                     Oid tsid);
 
 extern void LocalExecuteInvalidationMessage(SharedInvalidationMessage *msg);
 

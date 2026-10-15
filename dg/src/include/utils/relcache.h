@@ -18,11 +18,6 @@
 #include "common/relpath.h"
 #include "nodes/bitmapset.h"
 
-/*
- * Name of relcache init file(s), used to speed up backend startup
- */
-#define RELCACHE_INIT_FILENAME	"pg_internal.init"
-
 typedef struct RelationData *Relation;
 
 /* ----------------
@@ -98,8 +93,6 @@ extern int errtableconstraint(Relation rel, const char *conname);
  * Routines for backend startup
  */
 extern void RelationCacheInitialize(void);
-extern void RelationCacheInitializePhase2(void);
-extern void RelationCacheInitializePhase3(void);
 
 /*
  * Routine to create a relcache entry for an about-to-be-created relation
@@ -123,19 +116,5 @@ extern void RelationCacheInvalidate(bool debug_discard);
 extern void AtEOXact_RelationCache(bool isCommit);
 extern void AtEOSubXact_RelationCache(bool isCommit, SubTransactionId mySubid,
                                       SubTransactionId parentSubid);
-
-/*
- * Routines to help manage rebuilding of relcache init files
- */
-extern bool RelationIdIsInInitFile(Oid relationId);
-extern void RelationCacheInitFilePreInvalidate(void);
-extern void RelationCacheInitFilePostInvalidate(void);
-extern void RelationCacheInitFileRemove(void);
-
-/* should be used only by relcache.c and catcache.c */
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool criticalRelcachesBuilt;
-
-/* should be used only by relcache.c and postinit.c */
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool criticalSharedRelcachesBuilt;
 
 #endif /* RELCACHE_H */

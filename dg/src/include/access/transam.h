@@ -200,19 +200,9 @@ static inline void FullTransactionIdAdvance(FullTransactionId *dest) {
  */
 typedef struct TransamVariablesData {
   /*
-   * These fields are protected by OidGenLock.
+   * Set before any thread starts, and constant: digres assigns no xid.
    */
-  Oid nextOid; /* next OID to assign */
-
-  /*
-   * These fields are protected by XidGenLock.
-   */
-  FullTransactionId nextXid; /* next XID to assign */
-
-  TransactionId oldestXid;    /* cluster-wide minimum datfrozenxid */
-  TransactionId xidStopLimit; /* refuse to advance nextXid beyond here */
-  TransactionId xidWrapLimit; /* where the world ends */
-  Oid oldestXidDB;            /* database with minimum datfrozenxid */
+  TransactionId oldestXid; /* cluster-wide minimum datfrozenxid */
 
   /*
    * These fields are protected by ProcArrayLock.
@@ -228,12 +218,6 @@ typedef struct TransamVariablesData {
    * not. There are likely other users of this.  Always above 1.
    */
   uint64 xactCompletionCount;
-
-  /*
-   * These fields are protected by XactTruncationLock
-   */
-  TransactionId oldestClogXid; /* oldest it's safe to look up in clog */
-
 } TransamVariablesData;
 
 /* ----------------
@@ -256,17 +240,6 @@ extern bool TransactionIdFollows(TransactionId id1, TransactionId id2);
 extern bool TransactionIdFollowsOrEquals(TransactionId id1, TransactionId id2);
 
 extern void VarsupShmemInit(void);
-extern FullTransactionId ReadNextFullTransactionId(void);
-extern void SetTransactionIdLimit(TransactionId oldest_datfrozenxid,
-                                  Oid oldest_datoid);
-extern Oid GetNewObjectId(void);
-extern void StopGeneratingPinnedObjectIds(void);
-
-#ifdef USE_ASSERT_CHECKING
-extern void AssertTransactionIdInAllowableRange(TransactionId xid);
-#else
-#define AssertTransactionIdInAllowableRange(xid) ((void)true)
-#endif
 
 /*
  * Some frontend programs include this header.  For compilers that emit static
@@ -274,13 +247,6 @@ extern void AssertTransactionIdInAllowableRange(TransactionId xid);
  * external references; hence hide them with #ifndef FRONTEND.
  */
 #ifndef FRONTEND
-
-/*
- * For callers that just need the XID part of the next transaction ID.
- */
-static inline TransactionId ReadNextTransactionId(void) {
-  return XidFromFullTransactionId(ReadNextFullTransactionId());
-}
 
 /* return transaction ID backed up by amount, handling wraparound correctly */
 static inline TransactionId TransactionIdRetreatedBy(TransactionId xid,
@@ -329,47 +295,6 @@ static inline FullTransactionId FullTransactionIdNewer(FullTransactionId a,
   if (FullTransactionIdFollows(a, b))
     return a;
   return b;
-}
-
-/*
- * Compute FullTransactionId for the given TransactionId, assuming xid was
- * between [oldestXid, nextXid] at the time when TransamVariables->nextXid was
- * nextFullXid.  When adding calls, evaluate what prevents xid from preceding
- * oldestXid if SetTransactionIdLimit() runs between the collection of xid and
- * the collection of nextFullXid.
- */
-static inline FullTransactionId
-FullTransactionIdFromAllowableAt(FullTransactionId nextFullXid,
-                                 TransactionId xid) {
-  uint32 epoch;
-
-  /* Special transaction ID. */
-  if (!TransactionIdIsNormal(xid))
-    return FullTransactionIdFromEpochAndXid(0, xid);
-
-  Assert(TransactionIdPrecedesOrEquals(xid,
-                                       XidFromFullTransactionId(nextFullXid)));
-
-  /*
-   * The 64 bit result must be <= nextFullXid, since nextFullXid hadn't been
-   * issued yet when xid was in the past.  The xid must therefore be from
-   * the epoch of nextFullXid or the epoch before.  We know this because we
-   * must remove (by freezing) an XID before assigning the XID half an epoch
-   * ahead of it.
-   *
-   * The unlikely() branch hint is dubious.  It's perfect for the first 2^32
-   * XIDs of a cluster's life.  Right at 2^32 XIDs, misprediction shoots to
-   * 100%, then improves until perfection returns 2^31 XIDs later.  Since
-   * current callers pass relatively-recent XIDs, expect >90% prediction
-   * accuracy overall.  This favors average latency over tail latency.
-   */
-  epoch = EpochFromFullTransactionId(nextFullXid);
-  if (unlikely(xid > XidFromFullTransactionId(nextFullXid))) {
-    Assert(epoch != 0);
-    epoch--;
-  }
-
-  return FullTransactionIdFromEpochAndXid(epoch, xid);
 }
 
 #endif /* FRONTEND */

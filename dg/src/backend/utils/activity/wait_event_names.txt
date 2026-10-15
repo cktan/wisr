@@ -170,9 +170,6 @@ LOGICAL_REWRITE_MAPPING_WRITE	"Waiting for a write of mapping data during a logi
 LOGICAL_REWRITE_SYNC	"Waiting for logical rewrite mappings to reach durable storage."
 LOGICAL_REWRITE_TRUNCATE	"Waiting for truncate of mapping data during a logical rewrite."
 LOGICAL_REWRITE_WRITE	"Waiting for a write of logical rewrite mappings."
-RELATION_MAP_READ	"Waiting for a read of the relation map file."
-RELATION_MAP_REPLACE	"Waiting for durable replacement of a relation map file."
-RELATION_MAP_WRITE	"Waiting for a write to the relation map file."
 REORDER_BUFFER_READ	"Waiting for a read during reorder buffer management."
 REORDER_BUFFER_WRITE	"Waiting for a write during reorder buffer management."
 REORDER_LOGICAL_MAPPING_READ	"Waiting for a read of a logical mapping during reorder buffer management."
@@ -228,14 +225,9 @@ ABI_compatibility:
 
 Section: ClassName - WaitEventLWLock
 
-OidGen	"Waiting to allocate a new OID."
-XidGen	"Waiting to allocate a new transaction ID."
 ProcArray	"Waiting to access the shared per-process data structures (typically, to get a snapshot or report a session's transaction ID)."
 SInvalRead	"Waiting to retrieve messages from the shared catalog invalidation queue."
 SInvalWrite	"Waiting to add a message to the shared catalog invalidation queue."
-RelCacheInit	"Waiting to read or update a <filename>pg_internal.init</filename> relation cache initialization file."
-RelationMapping	"Waiting to read or update a <filename>pg_filenode.map</filename> file (used to track the filenode assignments of certain system catalogs)."
-XactTruncation	"Waiting to execute <function>pg_xact_status</function> or update the oldest transaction ID available to it."
 InjectionPoint	"Waiting to read or update information related to injection points."
 
 #

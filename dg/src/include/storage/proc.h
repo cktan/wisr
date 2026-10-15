@@ -147,8 +147,8 @@ typedef enum {
  *
  * We allow many fields of this struct to be accessed without locks, such as
  * delayChkptFlags and isRegularBackend. However, keep in mind that writing
- * mirrored ones (see below) requires holding ProcArrayLock or XidGenLock in
- * at least shared mode, so that pgxactoff does not change concurrently.
+ * mirrored ones (see below) requires holding ProcArrayLock in at least
+ * shared mode, so that pgxactoff does not change concurrently.
  *
  * Mirrored fields:
  *
@@ -289,12 +289,9 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT PGPROC *MyProc;
 /*
  * There is one ProcGlobal struct for the whole database cluster.
  *
- * Adding/Removing an entry into the procarray requires holding *both*
- * ProcArrayLock and XidGenLock in exclusive mode (in that order). Both are
- * needed because the dense arrays (see below) are accessed from
- * GetNewTransactionId() and GetSnapshotData(), and we don't want to add
- * further contention by both using the same lock. Adding/Removing a procarray
- * entry is much less frequent.
+ * Adding/Removing an entry into the procarray requires holding ProcArrayLock
+ * in exclusive mode.  PostgreSQL held XidGenLock too, for
+ * GetNewTransactionId(), which digres does not have.
  *
  * Some fields in PGPROC are mirrored into more densely packed arrays (e.g.
  * xids), with one entry for each backend. These arrays only contain entries
@@ -304,7 +301,7 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT PGPROC *MyProc;
  * The dense arrays are indexed by PGPROC->pgxactoff. Any concurrent
  * ProcArrayAdd() / ProcArrayRemove() can lead to pgxactoff of a procarray
  * member to change.  Therefore it is only safe to use PGPROC->pgxactoff to
- * access the dense array while holding either ProcArrayLock or XidGenLock.
+ * access the dense array while holding ProcArrayLock.
  *
  * As long as a PGPROC is in the procarray, the mirrored values need to be
  * maintained in both places in a coherent manner.
@@ -318,7 +315,7 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT PGPROC *MyProc;
  *
  * There are two main reasons to have the data mirrored between these dense
  * arrays and PGPROC. First, as explained above, a PGPROC's array entries can
- * only be accessed with either ProcArrayLock or XidGenLock held, whereas the
+ * only be accessed with ProcArrayLock held, whereas the
  * PGPROC entries do not require that (obviously there may still be locking
  * requirements around the individual field, separate from the concerns
  * here). That is particularly important for a backend to efficiently checks

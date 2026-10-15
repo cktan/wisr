@@ -222,6 +222,29 @@ local_psql -c "commit prepared 'x'" > "$work/prepare2.out" 2>&1
 grep -q 'prepared transaction with identifier "x" does not exist' \
   "$work/prepare2.out" || fail "commit prepared"
 
+# Verify that what needs PostgreSQL's xid or oid counter is refused, since
+# digres assigns no transaction ids and sm gives the oids.
+# 1. Each of pg_current_snapshot(), txid_current_snapshot(),
+#    pg_xact_status() and age(xid) fails: digres assigns no transaction ids.
+# 2. pg_stop_making_pinned_objects(), and CREATE DOMAIN, TYPE and CAST,
+#    which draw an oid for their catalog row, fail: digres has no catalog
+#    tables.
+# 3. Confirm a statement after them answers.
+for sql in "select pg_current_snapshot()" "select txid_current_snapshot()" \
+  "select pg_xact_status('5'::xid8)" "select age('5'::xid)"; do
+  local_psql -c "$sql" 2>&1 | grep -q 'digres assigns no transaction ids' ||
+    fail "refused: $sql"
+done
+for sql in "select pg_stop_making_pinned_objects()" \
+  "create domain d1 as int4" "create type e1 as enum ('a')" \
+  "create cast (int4 as text) with inout"; do
+  local_psql -c "$sql" > "$work/counters.out" 2>&1
+  grep -q 'digres has no catalog tables' "$work/counters.out" ||
+    fail "refused: $sql ($(head -1 "$work/counters.out"))"
+done
+[ "$(local_psql -c 'select 6 + 6' 2> "$work/counters.err")" = 12 ] ||
+  fail "statement after the counters' refusals"
+
 # Verify that a session waits for its own popen() child, which nothing else
 # in the process reaps first.
 # 1. Run COPY TO PROGRAM twenty times, each writing its number to a file.

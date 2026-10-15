@@ -334,9 +334,8 @@ void ProcArrayAdd(PGPROC *proc) {
   int index;
   int movecount;
 
-  /* See ProcGlobal comment explaining why both locks are held */
+  /* See ProcGlobal comment: ProcArrayLock guards the dense arrays */
   LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
-  LWLockAcquire(XidGenLock, LW_EXCLUSIVE);
 
   if (arrayP->numProcs >= arrayP->maxProcs) {
     /*
@@ -398,11 +397,6 @@ void ProcArrayAdd(PGPROC *proc) {
     allProcs[procno].pgxactoff = index;
   }
 
-  /*
-   * Release in reversed acquisition order, to reduce frequency of having to
-   * wait for XidGenLock while holding ProcArrayLock.
-   */
-  LWLockRelease(XidGenLock);
   LWLockRelease(ProcArrayLock);
 }
 
@@ -427,9 +421,8 @@ void ProcArrayRemove(PGPROC *proc, TransactionId latestXid) {
     DisplayXidCache();
 #endif
 
-  /* See ProcGlobal comment explaining why both locks are held */
+  /* See ProcGlobal comment: ProcArrayLock guards the dense arrays */
   LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
-  LWLockAcquire(XidGenLock, LW_EXCLUSIVE);
 
   myoff = proc->pgxactoff;
 
@@ -487,11 +480,6 @@ void ProcArrayRemove(PGPROC *proc, TransactionId latestXid) {
     allProcs[procno].pgxactoff = index;
   }
 
-  /*
-   * Release in reversed acquisition order, to reduce frequency of having to
-   * wait for XidGenLock while holding ProcArrayLock.
-   */
-  LWLockRelease(XidGenLock);
   LWLockRelease(ProcArrayLock);
 }
 
@@ -2191,9 +2179,6 @@ static inline FullTransactionId FullXidRelativeTo(FullTransactionId rel,
 
   Assert(TransactionIdIsValid(xid));
   Assert(TransactionIdIsValid(rel_xid));
-
-  /* not guaranteed to find issues, but likely to catch mistakes */
-  AssertTransactionIdInAllowableRange(xid);
 
   return FullTransactionIdFromU64(U64FromFullTransactionId(rel) +
                                   (int32)(xid - rel_xid));

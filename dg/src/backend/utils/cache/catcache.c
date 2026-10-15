@@ -1119,27 +1119,14 @@ void InitCatCachePhase2(CatCache *cache, bool touch_index) {
  *		certain system indexes that support critical syscaches.
  *		We can't use an indexscan to fetch these, else we'll get into
  *		infinite recursion.  A plain heap scan will work, however.
- *		Once we have completed relcache initialization (signaled by
- *		criticalRelcachesBuilt), we don't have to worry anymore.
- *
- *		Similarly, during backend startup we have to be able to use the
- *		pg_authid, pg_auth_members and pg_database syscaches for
- *		authentication even if we don't yet have relcache entries for
- *those catalogs' indexes.
+ *		digres builds no relcache entries for the catalogs' indexes, so
+ *		these caches, and pg_authid's, pg_auth_members' and
+ *pg_database's, always scan the heap.
  */
 static bool IndexScanOK(CatCache *cache) {
   switch (cache->id) {
   case INDEXRELID:
-
-    /*
-     * Rather than tracking exactly which indexes have to be loaded
-     * before we can use indexscans (which changes from time to time),
-     * just force all pg_index searches to be heap scans until we've
-     * built the critical relcaches.
-     */
-    if (!criticalRelcachesBuilt)
-      return false;
-    break;
+    return false;
 
   case AMOID:
   case AMNAME:
@@ -1156,14 +1143,7 @@ static bool IndexScanOK(CatCache *cache) {
   case AUTHOID:
   case AUTHMEMMEMROLE:
   case DATABASEOID:
-
-    /*
-     * Protect authentication lookups occurring before relcache has
-     * collected entries for shared indexes.
-     */
-    if (!criticalSharedRelcachesBuilt)
-      return false;
-    break;
+    return false;
 
   default:
     break;

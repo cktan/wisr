@@ -3974,3 +3974,44 @@ without losing the wake: a bit raised, then its wake fd written.
 - `server.sh` catches a latch that does not wake: with
   `SetLatch()` on another thread's latch made a no-op, the
   postmaster, which a session's end sets, does not shut down.
+
+## Step 137: PostgreSQL's xid and OID counters go, and the files
+
+`SHMEM.md` §7, step 1. Transaction ids and oids are sm's; what
+PostgreSQL kept of its own, and the files it read at start,
+had no use left but their locks.
+
+- **The relcache's init files**: utils/cache `relcache.c`'s
+  `RelationCacheInitializePhase2()` and `Phase3()`, which load
+  them, had no caller; they go, with `formrdesc()`,
+  `load_critical_index()`, the readers, writers and removers of
+  the files, inval.c's tracking of when to remove them, and
+  RelCacheInit. `criticalRelcachesBuilt` and
+  `criticalSharedRelcachesBuilt`, which only Phase3 set, were
+  always false; they go, and each reader keeps its false branch:
+  a catalog is scanned by heap. inval.c's
+  `xactGetCommittedInvalidationMessages()` and
+  `ProcessCommittedInvalidationMessages()`, for two-phase commit
+  and a standby, had no caller either.
+- **The relation mapper**: utils/cache `relmapper.c` goes, with
+  RelationMapping, its sinval message and its wait events. No
+  relation is mapped: every relcache entry has a relfilenode,
+  and the maps it kept were empty.
+- **The counters**: access/transam `varsup.c` keeps only the
+  struct `GetSnapshotData()` reads, `oldestXid`,
+  `latestCompletedXid` and `xactCompletionCount`, constant until
+  the snapshot is (§7, step 3). `nextXid`, `nextOid`, the wrap
+  limits, `ReadNextFullTransactionId()`, `GetNewObjectId()` and
+  XidGen, OidGen and XactTruncation go. `ProcArrayAdd()` and
+  `Remove()` hold ProcArrayLock alone.
+- **Refused**: catalog `catalog.c` `GetNewOidWithIndex()` and
+  `GetNewRelFileNumber()`, before the oid they would draw, as
+  catalog `indexing.c` refuses the row; `pg_nextoid()` and
+  `pg_stop_making_pinned_objects()` with them.
+  `pg_current_snapshot()`, `pg_xact_status()` and `age(xid)`
+  fail as `txid_current()` does: digres assigns no transaction
+  ids. Left for the constant snapshot: `pg_export_snapshot()`
+  and SET TRANSACTION SNAPSHOT.
+- **`test/server.sh`** checks each refusal, and a statement
+  after them. With `pg_xact_status()` returning NULL instead,
+  it fails.

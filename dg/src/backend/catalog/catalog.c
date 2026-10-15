@@ -122,8 +122,8 @@ bool IsCatalogRelationOid(Oid relid) {
    * (Since it's valid to drop and recreate information_schema, any rule
    * that did not act this way would be wrong.)
    *
-   * This test is reliable since an OID wraparound will skip this range of
-   * OIDs; see GetNewObjectId().
+   * This test is reliable since sm gives no oid in this range: its oid_seq
+   * starts at FirstNormalObjectId.
    */
   return (relid < (Oid)FirstUnpinnedObjectId);
 }
@@ -405,91 +405,16 @@ bool IsPinnedObject(Oid classId, Oid objectId) {
  * Caller must have a suitable lock on the relation.
  */
 Oid GetNewOidWithIndex(Relation relation, Oid indexId, AttrNumber oidcolumn) {
-  Oid newOid;
-  SysScanDesc scan;
-  ScanKeyData key;
-  bool collides;
-  uint64 retries = 0;
-  uint64 retries_before_log = GETNEWOID_LOG_THRESHOLD;
-
-  /* Only system relations are supported */
-  Assert(IsSystemRelation(relation));
-
-  /* In bootstrap mode, we don't have any indexes to use */
-  if (IsBootstrapProcessingMode())
-    return GetNewObjectId();
-
   /*
-   * We should never be asked to generate a new pg_type OID during
-   * pg_upgrade; doing so would risk collisions with the OIDs it wants to
-   * assign.  Hitting this assert means there's some path where we failed to
-   * ensure that a type OID is determined by commands in the dump script.
+   * The row the oid is for would be refused (catalog/indexing.c), and
+   * PostgreSQL's oid counter is gone: sm gives a table's oid.  Refused
+   * first, as the write would be.
    */
-  Assert(!IsBinaryUpgrade || RelationGetRelid(relation) != TypeRelationId);
-
-  /* Generate new OIDs until we find one not in the table */
-  do {
-    CHECK_FOR_INTERRUPTS();
-
-    newOid = GetNewObjectId();
-
-    ScanKeyInit(&key, oidcolumn, BTEqualStrategyNumber, F_OIDEQ,
-                ObjectIdGetDatum(newOid));
-
-    /* see notes above about using SnapshotAny */
-    scan = systable_beginscan(relation, indexId, true, SnapshotAny, 1, &key);
-
-    collides = HeapTupleIsValid(systable_getnext(scan));
-
-    systable_endscan(scan);
-
-    /*
-     * Log that we iterate more than GETNEWOID_LOG_THRESHOLD but have not
-     * yet found OID unused in the relation. Then repeat logging with
-     * exponentially increasing intervals until we iterate more than
-     * GETNEWOID_LOG_MAX_INTERVAL. Finally repeat logging every
-     * GETNEWOID_LOG_MAX_INTERVAL unless an unused OID is found. This
-     * logic is necessary not to fill up the server log with the similar
-     * messages.
-     */
-    if (retries >= retries_before_log) {
-      ereport(LOG,
-              (errmsg("still searching for an unused OID in relation \"%s\"",
-                      RelationGetRelationName(relation)),
-               errdetail_plural("OID candidates have been checked %" PRIu64
-                                " time, but no unused OID has been found yet.",
-                                "OID candidates have been checked %" PRIu64
-                                " times, but no unused OID has been found yet.",
-                                retries, retries)));
-
-      /*
-       * Double the number of retries to do before logging next until it
-       * reaches GETNEWOID_LOG_MAX_INTERVAL.
-       */
-      if (retries_before_log * 2 <= GETNEWOID_LOG_MAX_INTERVAL)
-        retries_before_log *= 2;
-      else
-        retries_before_log += GETNEWOID_LOG_MAX_INTERVAL;
-    }
-
-    retries++;
-  } while (collides);
-
-  /*
-   * If at least one log message is emitted, also log the completion of OID
-   * assignment.
-   */
-  if (retries > GETNEWOID_LOG_THRESHOLD) {
-    ereport(LOG,
-            (errmsg_plural(
-                "new OID has been assigned in relation \"%s\" after %" PRIu64
-                " retry",
-                "new OID has been assigned in relation \"%s\" after %" PRIu64
-                " retries",
-                retries, RelationGetRelationName(relation), retries)));
-  }
-
-  return newOid;
+  ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                  errmsg("relation %u cannot be written: digres has no catalog "
+                         "tables",
+                         RelationGetRelid(relation))));
+  return InvalidOid; /* not reached */
 }
 
 /*
@@ -510,74 +435,11 @@ Oid GetNewOidWithIndex(Relation relation, Oid indexId, AttrNumber oidcolumn) {
  */
 RelFileNumber GetNewRelFileNumber(Oid reltablespace, Relation pg_class,
                                   char relpersistence) {
-  RelFileLocatorBackend rlocator;
-  RelPathStr rpath;
-  bool collides;
-  ProcNumber procNumber;
-
-  /*
-   * If we ever get here during pg_upgrade, there's something wrong; all
-   * relfilenumber assignments during a binary-upgrade run should be
-   * determined by commands in the dump script.
-   */
-  Assert(!IsBinaryUpgrade);
-
-  switch (relpersistence) {
-  case RELPERSISTENCE_TEMP:
-    procNumber = ProcNumberForTempRelations();
-    break;
-  case RELPERSISTENCE_UNLOGGED:
-  case RELPERSISTENCE_PERMANENT:
-    procNumber = INVALID_PROC_NUMBER;
-    break;
-  default:
-    elog(ERROR, "invalid relpersistence: %c", relpersistence);
-    return InvalidRelFileNumber; /* placate compiler */
-  }
-
-  /* This logic should match RelationInitPhysicalAddr */
-  rlocator.locator.spcOid =
-      reltablespace ? reltablespace : MyDatabaseTableSpace;
-  rlocator.locator.dbOid = (rlocator.locator.spcOid == GLOBALTABLESPACE_OID)
-                               ? InvalidOid
-                               : MyDatabaseId;
-
-  /*
-   * The relpath will vary based on the backend number, so we must
-   * initialize that properly here to make sure that any collisions based on
-   * filename are properly detected.
-   */
-  rlocator.backend = procNumber;
-
-  do {
-    CHECK_FOR_INTERRUPTS();
-
-    /* Generate the OID */
-    if (pg_class)
-      rlocator.locator.relNumber =
-          GetNewOidWithIndex(pg_class, ClassOidIndexId, Anum_pg_class_oid);
-    else
-      rlocator.locator.relNumber = GetNewObjectId();
-
-    /* Check for existing file of same name */
-    rpath = relpath(rlocator, MAIN_FORKNUM);
-
-    if (access(rpath.str, F_OK) == 0) {
-      /* definite collision */
-      collides = true;
-    } else {
-      /*
-       * Here we have a little bit of a dilemma: if errno is something
-       * other than ENOENT, should we declare a collision and loop? In
-       * practice it seems best to go ahead regardless of the errno.  If
-       * there is a colliding file we will get an smgr failure when we
-       * attempt to create the new relation file.
-       */
-      collides = false;
-    }
-  } while (collides);
-
-  return rlocator.locator.relNumber;
+  /* Its number came from PostgreSQL's oid counter, which is gone. */
+  ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                  errmsg("a relation's storage cannot be made: digres has no "
+                         "catalog tables")));
+  return InvalidRelFileNumber; /* not reached */
 }
 
 /*
@@ -652,22 +514,18 @@ Datum pg_nextoid(PG_FUNCTION_ARGS) {
 }
 
 /*
- * SQL callable interface for StopGeneratingPinnedObjectIds().
- *
- * This is only to be used by initdb, so it's intentionally not documented in
- * the user facing docs.
+ * SQL callable interface PostgreSQL's initdb used to stop making pinned
+ * objects: refused, as digres's initdb makes none.
  */
 Datum pg_stop_making_pinned_objects(PG_FUNCTION_ARGS) {
-  /*
-   * Belt-and-suspenders check, since StopGeneratingPinnedObjectIds will
-   * fail anyway in non-single-user mode.
-   */
   if (!superuser())
     ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     errmsg("must be superuser to call %s()",
                            "pg_stop_making_pinned_objects")));
 
-  StopGeneratingPinnedObjectIds();
+  /* initdb's, which PostgreSQL's oid counter served: both are gone. */
+  ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                  errmsg("digres has no catalog tables")));
 
-  PG_RETURN_VOID();
+  PG_RETURN_VOID(); /* not reached */
 }

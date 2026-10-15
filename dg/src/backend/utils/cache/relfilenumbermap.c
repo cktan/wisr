@@ -24,7 +24,6 @@
 #include "utils/hsearch.h"
 #include "utils/inval.h"
 #include "utils/relfilenumbermap.h"
-#include "utils/relmapper.h"
 
 /* Hash table for information about each relfilenumber <-> oid pair */
 static thread_local /*LOCAL*/ HTAB *RelfilenumberMapHash = NULL;
@@ -163,10 +162,7 @@ Oid RelidByRelfilenumber(Oid reltablespace, RelFileNumber relfilenumber) {
   relid = InvalidOid;
 
   if (reltablespace == GLOBALTABLESPACE_OID) {
-    /*
-     * Ok, shared table, check relmapper.
-     */
-    relid = RelationMapFilenumberToOid(relfilenumber, true);
+    /* A shared table was found only by the relation mapper: there is none. */
   } else {
     ScanKeyData skey[2];
 
@@ -206,10 +202,6 @@ Oid RelidByRelfilenumber(Oid reltablespace, RelFileNumber relfilenumber) {
 
     systable_endscan(scandesc);
     table_close(relation, AccessShareLock);
-
-    /* check for tables that are mapped but not shared */
-    if (!found)
-      relid = RelationMapFilenumberToOid(relfilenumber, false);
   }
 
   /*

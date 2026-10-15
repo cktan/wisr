@@ -29,7 +29,6 @@
 #include "utils/numeric.h"
 #include "utils/rel.h"
 #include "utils/relfilenumbermap.h"
-#include "utils/relmapper.h"
 #include "utils/syscache.h"
 
 /* Divide by two and round away from zero */
@@ -721,10 +720,8 @@ Datum pg_relation_filenode(PG_FUNCTION_ARGS) {
   relform = (Form_pg_class)GETSTRUCT(tuple);
 
   if (RELKIND_HAS_STORAGE(relform->relkind)) {
-    if (relform->relfilenode)
-      result = relform->relfilenode;
-    else /* Consult the relation mapper */
-      result = RelationMapOidToFilenumber(relid, relform->relisshared);
+    /* No relation is mapped: one without a relfilenode has none. */
+    result = relform->relfilenode;
   } else {
     /* no storage, return NULL */
     result = InvalidRelFileNumber;
@@ -799,11 +796,8 @@ Datum pg_relation_filepath(PG_FUNCTION_ARGS) {
       rlocator.dbOid = InvalidOid;
     else
       rlocator.dbOid = MyDatabaseId;
-    if (relform->relfilenode)
-      rlocator.relNumber = relform->relfilenode;
-    else /* Consult the relation mapper */
-      rlocator.relNumber =
-          RelationMapOidToFilenumber(relid, relform->relisshared);
+    /* No relation is mapped: one without a relfilenode has none. */
+    rlocator.relNumber = relform->relfilenode;
   } else {
     /* no storage, return NULL */
     rlocator.relNumber = InvalidRelFileNumber;

@@ -32,8 +32,6 @@
 
 /* 0 is available; was formerly BufFreelistLock */
 /* 1 was ShmemIndexLock */
-PG_LWLOCK(2, OidGen)
-PG_LWLOCK(3, XidGen)
 PG_LWLOCK(4, ProcArray)
 PG_LWLOCK(5, SInvalRead)
 PG_LWLOCK(6, SInvalWrite)
@@ -46,7 +44,6 @@ PG_LWLOCK(6, SInvalWrite)
 /* 13 was MultiXactGenLock */
 /* 14 was MultiXactOffsetSLRULock */
 /* 15 was MultiXactMemberSLRULock */
-PG_LWLOCK(16, RelCacheInit)
 /* 17 was CheckpointerComm */
 /* 18 was TwoPhaseState */
 /* 19 was TablespaceCreateLock */
@@ -55,7 +52,6 @@ PG_LWLOCK(16, RelCacheInit)
 /* 22 was AutovacuumLock */
 /* 23 was AutovacuumScheduleLock */
 /* 24 was SyncScan */
-PG_LWLOCK(25, RelationMapping)
 /* 26 was NotifySLRULock */
 /* 27 was NotifyQueue */
 /* 28 was SerializableXactHashLock */
@@ -74,7 +70,6 @@ PG_LWLOCK(25, RelationMapping)
 /* 41 was MultiXactTruncationLock */
 /* 42 was OldSnapshotTimeMapLock */
 /* 43 was LogicalRepWorkerLock */
-PG_LWLOCK(44, XactTruncation)
 /* 45 was XactTruncationLock until removal of BackendRandomLock */
 /* 46 was WrapLimitsVacuumLock */
 /* 47 was NotifyQueueTail */

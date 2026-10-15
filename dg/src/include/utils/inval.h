@@ -60,8 +60,6 @@ extern void CacheInvalidateRelSyncAll(void);
 
 extern void CacheInvalidateSmgr(RelFileLocatorBackend rlocator);
 
-extern void CacheInvalidateRelmap(Oid databaseId);
-
 extern void CacheRegisterSyscacheCallback(int cacheid,
                                           SyscacheCallbackFunction func,
                                           Datum arg);

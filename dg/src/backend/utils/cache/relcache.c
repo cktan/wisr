@@ -15,9 +15,7 @@
 /*
  * INTERFACE ROUTINES
  *		RelationCacheInitialize			- initialize relcache
- *(to empty) RelationCacheInitializePhase2	- initialize shared-catalog
- *entries RelationCacheInitializePhase3	- finish initializing relcache
- *		RelationIdGetRelation			- get a reldesc by
+ *(to empty) RelationIdGetRelation			- get a reldesc by
  *relation id RelationClose					- close an open
  *relation
  *
@@ -86,12 +84,9 @@
 #include "utils/inval.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
-#include "utils/relmapper.h"
 #include "utils/resowner.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
-
-#define RELCACHE_INIT_FILEMAGIC		0x573266 /* version ID value */
 
 /*
  * Whether to bother checking if relation cache memory needs to be freed
@@ -112,24 +107,8 @@
  */
 static const FormData_pg_attribute Desc_pg_class[Natts_pg_class] = {
     Schema_pg_class};
-static const FormData_pg_attribute Desc_pg_attribute[Natts_pg_attribute] = {
-    Schema_pg_attribute};
-static const FormData_pg_attribute Desc_pg_proc[Natts_pg_proc] = {
-    Schema_pg_proc};
-static const FormData_pg_attribute Desc_pg_type[Natts_pg_type] = {
-    Schema_pg_type};
-static const FormData_pg_attribute Desc_pg_database[Natts_pg_database] = {
-    Schema_pg_database};
-static const FormData_pg_attribute Desc_pg_authid[Natts_pg_authid] = {
-    Schema_pg_authid};
-static const FormData_pg_attribute Desc_pg_auth_members[Natts_pg_auth_members] =
-    {Schema_pg_auth_members};
 static const FormData_pg_attribute Desc_pg_index[Natts_pg_index] = {
     Schema_pg_index};
-static const FormData_pg_attribute Desc_pg_shseclabel[Natts_pg_shseclabel] = {
-    Schema_pg_shseclabel};
-static const FormData_pg_attribute Desc_pg_subscription[Natts_pg_subscription] =
-    {Schema_pg_subscription};
 
 /*
  *		Hash tables that index the relation cache
@@ -144,25 +123,6 @@ typedef struct relidcacheent {
 
 static thread_local /*LOCAL*/ HTAB *RelationIdCache;
 
-/*
- * This flag is false until we have prepared the critical relcache entries
- * that are needed to do indexscans on the tables read by relcache building.
- */
-thread_local /*LOCAL*/ bool criticalRelcachesBuilt = false;
-
-/*
- * This flag is false until we have prepared the critical relcache entries
- * for shared catalogs (which are the tables needed for login).
- */
-thread_local /*LOCAL*/ bool criticalSharedRelcachesBuilt = false;
-
-/*
- * This counter counts relcache inval events received since backend startup
- * (but only for rels that are actually in cache).  Presently, we use it only
- * to detect whether data about to be written by write_relcache_init_file()
- * might already be obsolete.
- */
-static thread_local /*LOCAL*/ long relcacheInvalsReceived = 0L;
 
 /*
  * in_progress_list is a stack of ongoing RelationBuildDesc() calls.  CREATE
@@ -294,13 +254,6 @@ static void AtEOXact_cleanup(Relation relation, bool isCommit);
 static void AtEOSubXact_cleanup(Relation relation, bool isCommit,
                                 SubTransactionId mySubid,
                                 SubTransactionId parentSubid);
-static bool load_relcache_init_file(bool shared);
-static void write_relcache_init_file(bool shared);
-static void write_item(const void *data, Size len, FILE *fp);
-
-static void formrdesc(const char *relationName, Oid relationReltype,
-                      bool isshared, int natts,
-                      const FormData_pg_attribute *attrs);
 
 static HeapTuple ScanPgRelation(Oid targetRelId, bool indexOK,
                                 bool force_non_historic);
@@ -316,7 +269,6 @@ static Relation RelationBuildSmIndexDesc(Oid indexoid, Oid table,
 static void InitIndexAmRoutine(Relation relation);
 static void InitTableAmRoutine(Relation relation);
 static void RelationInitPhysicalAddr(Relation relation);
-static void load_critical_index(Oid indexoid, Oid heapoid);
 static TupleDesc GetPgClassDescriptor(void);
 static TupleDesc GetPgIndexDescriptor(void);
 static void AttrDefaultFetch(Relation relation, int ndef);
@@ -331,8 +283,6 @@ static void IndexSupportInitialize(oidvector *indclass,
                                    AttrNumber maxAttributeNumber);
 static OpClassCacheEnt *LookupOpclassInfo(Oid operatorClassOid,
                                           StrategyNumber numSupport);
-static void RelationCacheInitFileRemoveInDir(const char *tblspcpath);
-static void unlink_initfile(const char *initfilename, int elevel);
 
 /*
  *		ScanPgRelation
@@ -383,10 +333,8 @@ static HeapTuple ScanPgRelation(Oid targetRelId, bool indexOK,
               ObjectIdGetDatum(targetRelId));
 
   /*
-   * Open pg_class and fetch a tuple.  Force heap scan if we haven't yet
-   * built the critical relcache entries (this includes initdb and startup
-   * without a pg_internal.init file).  The caller can also force a heap
-   * scan by setting indexOK == false.
+   * Open pg_class and fetch a tuple, by a heap scan: no relcache entry
+   * for its index is built.
    */
   pg_class_desc = table_open(RelationRelationId, AccessShareLock);
 
@@ -402,7 +350,7 @@ static HeapTuple ScanPgRelation(Oid targetRelId, bool indexOK,
 
   pg_class_scan =
       systable_beginscan(pg_class_desc, ClassOidIndexId,
-                         indexOK && criticalRelcachesBuilt, snapshot, 1, key);
+                         false, snapshot, 1, key);
 
   pg_class_tuple = systable_getnext(pg_class_scan);
 
@@ -562,14 +510,13 @@ static void RelationBuildTupleDesc(Relation relation) {
               F_INT2GT, Int16GetDatum(0));
 
   /*
-   * Open pg_attribute and begin a scan.  Force heap scan if we haven't yet
-   * built the critical relcache entries (this includes initdb and startup
-   * without a pg_internal.init file).
+   * Open pg_attribute and begin a heap scan: no relcache entry for its
+   * index is built.
    */
   pg_attribute_desc = table_open(AttributeRelationId, AccessShareLock);
   pg_attribute_scan =
       systable_beginscan(pg_attribute_desc, AttributeRelidNumIndexId,
-                         criticalRelcachesBuilt, NULL, 2, skey);
+                         false, NULL, 2, skey);
 
   /*
    * add attribute data to relation->rd_att
@@ -1690,17 +1637,11 @@ static void RelationInitPhysicalAddr(Relation relation) {
   else
     relation->rd_locator.dbOid = MyDatabaseId;
 
-  if (relation->rd_rel->relfilenode) {
-
-    relation->rd_locator.relNumber = relation->rd_rel->relfilenode;
-  } else {
-    /* Consult the relation mapper */
-    relation->rd_locator.relNumber = RelationMapOidToFilenumber(
-        relation->rd_id, relation->rd_rel->relisshared);
-    if (!RelFileNumberIsValid(relation->rd_locator.relNumber))
-      elog(ERROR, "could not find relation mapping for relation \"%s\", OID %u",
-           RelationGetRelationName(relation), relation->rd_id);
-  }
+  /* No relation is mapped: every one has its relfilenode. */
+  if (!relation->rd_rel->relfilenode)
+    elog(ERROR, "relation \"%s\", OID %u, has no relfilenode",
+         RelationGetRelationName(relation), relation->rd_id);
+  relation->rd_locator.relNumber = relation->rd_rel->relfilenode;
 }
 
 /*
@@ -1999,8 +1940,8 @@ static OpClassCacheEnt *LookupOpclassInfo(Oid operatorClassOid,
    * looking up info for the opclasses used by the indexes we would like to
    * reference here.
    */
-  indexOK = criticalRelcachesBuilt || (operatorClassOid != OID_BTREE_OPS_OID &&
-                                       operatorClassOid != INT2_BTREE_OPS_OID);
+  indexOK = operatorClassOid != OID_BTREE_OPS_OID &&
+            operatorClassOid != INT2_BTREE_OPS_OID;
 
   /*
    * We have to fetch the pg_opclass row to determine its opfamily and
@@ -2109,182 +2050,6 @@ void RelationInitTableAccessMethod(Relation relation) {
   InitTableAmRoutine(relation);
 }
 
-/*
- *		formrdesc
- *
- *		This is a special cut-down version of RelationBuildDesc(),
- *		used while initializing the relcache.
- *		The relation descriptor is built just from the supplied
- *parameters, without actually looking at any system table entries.  We cheat
- *		quite a lot since we only need to work for a few basic system
- *		catalogs.
- *
- * The catalogs this is used for can't have constraints (except attnotnull),
- * default values, rules, or triggers, since we don't cope with any of that.
- * (Well, actually, this only matters for properties that need to be valid
- * during bootstrap or before RelationCacheInitializePhase3 runs, and none of
- * these properties matter then...)
- *
- * NOTE: we assume we are already switched into CacheMemoryContext.
- */
-static void formrdesc(const char *relationName, Oid relationReltype,
-                      bool isshared, int natts,
-                      const FormData_pg_attribute *attrs) {
-  Relation relation;
-  int i;
-  bool has_not_null;
-
-  /*
-   * allocate new relation desc, clear all fields of reldesc
-   */
-  relation = (Relation)palloc0(sizeof(RelationData));
-
-
-  /*
-   * initialize reference count: 1 because it is nailed in cache
-   */
-  relation->rd_refcnt = 1;
-
-  /*
-   * all entries built with this routine are nailed-in-cache; none are for
-   * new or temp relations.
-   */
-  relation->rd_isnailed = true;
-  relation->rd_createSubid = InvalidSubTransactionId;
-  relation->rd_newRelfilelocatorSubid = InvalidSubTransactionId;
-  relation->rd_firstRelfilelocatorSubid = InvalidSubTransactionId;
-  relation->rd_droppedSubid = InvalidSubTransactionId;
-  relation->rd_backend = INVALID_PROC_NUMBER;
-  relation->rd_islocaltemp = false;
-
-  /*
-   * initialize relation tuple form
-   *
-   * The data we insert here is pretty incomplete/bogus, but it'll serve to
-   * get us launched.  RelationCacheInitializePhase3() will read the real
-   * data from pg_class and replace what we've done here.  Note in
-   * particular that relowner is left as zero; this cues
-   * RelationCacheInitializePhase3 that the real data isn't there yet.
-   */
-  relation->rd_rel = (Form_pg_class)palloc0(CLASS_TUPLE_SIZE);
-
-  namestrcpy(&relation->rd_rel->relname, relationName);
-  relation->rd_rel->relnamespace = PG_CATALOG_NAMESPACE;
-  relation->rd_rel->reltype = relationReltype;
-
-  /*
-   * It's important to distinguish between shared and non-shared relations,
-   * even at bootstrap time, to make sure we know where they are stored.
-   */
-  relation->rd_rel->relisshared = isshared;
-  if (isshared)
-    relation->rd_rel->reltablespace = GLOBALTABLESPACE_OID;
-
-  /* formrdesc is used only for permanent relations */
-  relation->rd_rel->relpersistence = RELPERSISTENCE_PERMANENT;
-
-  /* ... and they're always populated, too */
-  relation->rd_rel->relispopulated = true;
-
-  relation->rd_rel->relreplident = REPLICA_IDENTITY_NOTHING;
-  relation->rd_rel->relpages = 0;
-  relation->rd_rel->reltuples = -1;
-  relation->rd_rel->relallvisible = 0;
-  relation->rd_rel->relallfrozen = 0;
-  relation->rd_rel->relkind = RELKIND_RELATION;
-  relation->rd_rel->relnatts = (int16)natts;
-
-  /*
-   * initialize attribute tuple form
-   *
-   * Unlike the case with the relation tuple, this data had better be right
-   * because it will never be replaced.  The data comes from
-   * src/include/catalog/ headers via genbki.pl.
-   */
-  relation->rd_att = CreateTemplateTupleDesc(natts);
-  relation->rd_att->tdrefcount = 1; /* mark as refcounted */
-
-  relation->rd_att->tdtypeid = relationReltype;
-  relation->rd_att->tdtypmod = -1; /* just to be sure */
-
-  /*
-   * initialize tuple desc info
-   */
-  has_not_null = false;
-  for (i = 0; i < natts; i++) {
-    memcpy(TupleDescAttr(relation->rd_att, i), &attrs[i],
-           ATTRIBUTE_FIXED_PART_SIZE);
-    has_not_null |= attrs[i].attnotnull;
-
-    populate_compact_attribute(relation->rd_att, i);
-  }
-
-  /* initialize first attribute's attcacheoff, cf RelationBuildTupleDesc */
-  TupleDescCompactAttr(relation->rd_att, 0)->attcacheoff = 0;
-
-  /* mark not-null status */
-  if (has_not_null) {
-    TupleConstr *constr = (TupleConstr *)palloc0(sizeof(TupleConstr));
-
-    constr->has_not_null = true;
-    relation->rd_att->constr = constr;
-  }
-
-  /*
-   * initialize relation id from info in att array (my, this is ugly)
-   */
-  RelationGetRelid(relation) = TupleDescAttr(relation->rd_att, 0)->attrelid;
-
-  /*
-   * All relations made with formrdesc are mapped.  This is necessarily so
-   * because there is no other way to know what filenumber they currently
-   * have.  In bootstrap mode, add them to the initial relation mapper data,
-   * specifying that the initial filenumber is the same as the OID.
-   */
-  relation->rd_rel->relfilenode = InvalidRelFileNumber;
-  if (IsBootstrapProcessingMode())
-    RelationMapUpdateMap(RelationGetRelid(relation), RelationGetRelid(relation),
-                         isshared, true);
-
-  /*
-   * initialize the relation lock manager information
-   */
-  RelationInitLockInfo(relation); /* see lmgr.c */
-
-  /*
-   * initialize physical addressing information for the relation
-   */
-  RelationInitPhysicalAddr(relation);
-
-  /*
-   * initialize the table am handler
-   */
-  relation->rd_rel->relam = HEAP_TABLE_AM_OID;
-  /* One a query can read has its rows made (catalog/catrel.c). */
-  relation->rd_tableam = cat_relation(RelationGetRelid(relation)) != NULL
-                             ? catrel_routine()
-                             : smtable_routine();
-
-  /*
-   * initialize the rel-has-index flag, using hardwired knowledge
-   */
-  if (IsBootstrapProcessingMode()) {
-    /* In bootstrap mode, we have no indexes */
-    relation->rd_rel->relhasindex = false;
-  } else {
-    /* Otherwise, all the rels formrdesc is used for have indexes */
-    relation->rd_rel->relhasindex = true;
-  }
-
-  /*
-   * add new reldesc to relcache
-   */
-  RelationCacheInsert(relation, false);
-
-  /* It's fully valid */
-  relation->rd_isvalid = true;
-}
-
 #ifdef USE_ASSERT_CHECKING
 /*
  *		AssertCouldGetRelation
@@ -2349,7 +2114,7 @@ Relation RelationIdGetRelation(Oid relationId) {
        * change, but we still want to update the rd_rel entry. So
        * rd_isvalid = false is left in place for a later lookup.
        */
-      Assert(rd->rd_isvalid || (rd->rd_isnailed && !criticalRelcachesBuilt));
+      Assert(rd->rd_isvalid || rd->rd_isnailed);
     }
     return rd;
   }
@@ -2496,7 +2261,7 @@ static void RelationReloadIndexInfo(Relation relation) {
    * the physical relfilenumber, mark it valid and return without doing
    * anything more.
    */
-  if (relation->rd_rel->relisshared && !criticalRelcachesBuilt) {
+  if (relation->rd_rel->relisshared) {
     RelationInitPhysicalAddr(relation);
     relation->rd_isvalid = true;
     return;
@@ -2596,33 +2361,9 @@ static void RelationReloadNailed(Relation relation) {
   RelationInitPhysicalAddr(relation);
 
   /*
-   * Reload a non-index entry.  We can't easily do so if relcaches aren't
-   * yet built, but that's fine because at that stage the attributes that
-   * need to be current (like relfrozenxid) aren't yet accessed.  To ensure
-   * the entry will later be revalidated, we leave it in invalid state, but
-   * allow use (cf. RelationIdGetRelation()).
+   * A non-index entry is not reloaded: there is no pg_class to read it
+   * from.  It is left invalid, but allowed use (cf. RelationIdGetRelation()).
    */
-  if (criticalRelcachesBuilt) {
-    HeapTuple pg_class_tuple;
-    Form_pg_class relp;
-
-    /*
-     * NB: Mark the entry as valid before starting to scan, to avoid
-     * self-recursion when re-building pg_class.
-     */
-    relation->rd_isvalid = true;
-
-    pg_class_tuple = ScanPgRelation(RelationGetRelid(relation), true, false);
-    relp = (Form_pg_class)GETSTRUCT(pg_class_tuple);
-    memcpy(relation->rd_rel, relp, CLASS_TUPLE_SIZE);
-    heap_freetuple(pg_class_tuple);
-
-    /*
-     * Again mark as valid, to protect against concurrently arriving
-     * invalidations.
-     */
-    relation->rd_isvalid = true;
-  }
 }
 
 /*
@@ -3084,7 +2825,6 @@ void RelationCacheInvalidateEntry(Oid relationId) {
   RelationIdCacheLookup(relationId, relation);
 
   if (PointerIsValid(relation)) {
-    relcacheInvalsReceived++;
     RelationFlushRelation(relation);
   } else {
     int i;
@@ -3139,11 +2879,6 @@ void RelationCacheInvalidate(bool debug_discard) {
   ListCell *l;
   int i;
 
-  /*
-   * Reload relation mapping data before starting to reconstruct cache.
-   */
-  RelationMapInvalidateAll();
-
   /* Phase 1 */
   hash_seq_init(&status, RelationIdCache);
 
@@ -3159,8 +2894,6 @@ void RelationCacheInvalidate(bool debug_discard) {
     if (relation->rd_createSubid != InvalidSubTransactionId ||
         relation->rd_firstRelfilelocatorSubid != InvalidSubTransactionId)
       continue;
-
-    relcacheInvalsReceived++;
 
     if (RelationHasReferenceCountZero(relation)) {
       /* Delete this entry immediately */
@@ -3537,9 +3270,6 @@ Relation RelationBuildLocalRelation(const char *relname, Oid relnamespace,
 
   /*
    * check for creation of a rel that must be nailed in cache.
-   *
-   * XXX this list had better match the relations specially handled in
-   * RelationCacheInitializePhase2/3.
    */
   switch (relid) {
   case DatabaseRelationId:
@@ -3690,12 +3420,9 @@ Relation RelationBuildLocalRelation(const char *relname, Oid relnamespace,
 
   rel->rd_rel->reltablespace = reltablespace;
 
-  if (mapped_relation) {
-    rel->rd_rel->relfilenode = InvalidRelFileNumber;
-    /* Add it to the active mapping information */
-    RelationMapUpdateMap(relid, relfilenumber, shared_relation, true);
-  } else
-    rel->rd_rel->relfilenode = relfilenumber;
+  /* There is no relation mapper. */
+  Assert(!mapped_relation);
+  rel->rd_rel->relfilenode = relfilenumber;
 
   RelationInitLockInfo(rel); /* see lmgr.c */
 
@@ -3723,10 +3450,7 @@ Relation RelationBuildLocalRelation(const char *relname, Oid relnamespace,
    * Okay to insert into the relcache hash table.
    *
    * Ordinarily, there should certainly not be an existing hash entry for
-   * the same OID; but during bootstrap, when we create a "real" relcache
-   * entry for one of the bootstrap relations, we'll be overwriting the
-   * phony one created with formrdesc.  So allow that to happen for nailed
-   * rels.
+   * the same OID; allow it for nailed rels, as PostgreSQL's bootstrap did.
    */
   RelationCacheInsert(rel, nailit);
 
@@ -3786,360 +3510,6 @@ void RelationCacheInitialize(void) {
   in_progress_list = (InProgressEnt *)MemoryContextAlloc(
       CacheMemoryContext, allocsize * sizeof(*in_progress_list));
   in_progress_list_maxlen = allocsize;
-
-  /*
-   * relation mapper needs to be initialized too
-   */
-  RelationMapInitialize();
-}
-
-/*
- *		RelationCacheInitializePhase2
- *
- *		This is called to prepare for access to shared catalogs during
- *startup. We must at least set up nailed reldescs for pg_database, pg_authid,
- *		pg_auth_members, and pg_shseclabel. Ideally we'd like to have
- *reldescs for their indexes, too.  We attempt to load this information from the
- *		shared relcache init file.  If that's missing or broken, just
- *make phony entries for the catalogs themselves. RelationCacheInitializePhase3
- *will clean up as needed.
- */
-void RelationCacheInitializePhase2(void) {
-  MemoryContext oldcxt;
-
-  /*
-   * relation mapper needs initialized too
-   */
-  RelationMapInitializePhase2();
-
-  /*
-   * In bootstrap mode, the shared catalogs aren't there yet anyway, so do
-   * nothing.
-   */
-  if (IsBootstrapProcessingMode())
-    return;
-
-  /*
-   * switch to cache memory context
-   */
-  oldcxt = MemoryContextSwitchTo(CacheMemoryContext);
-
-  /*
-   * Try to load the shared relcache cache file.  If unsuccessful, bootstrap
-   * the cache with pre-made descriptors for the critical shared catalogs.
-   */
-  if (!load_relcache_init_file(true)) {
-    formrdesc("pg_database", DatabaseRelation_Rowtype_Id, true,
-              Natts_pg_database, Desc_pg_database);
-    formrdesc("pg_authid", AuthIdRelation_Rowtype_Id, true, Natts_pg_authid,
-              Desc_pg_authid);
-    formrdesc("pg_auth_members", AuthMemRelation_Rowtype_Id, true,
-              Natts_pg_auth_members, Desc_pg_auth_members);
-    formrdesc("pg_shseclabel", SharedSecLabelRelation_Rowtype_Id, true,
-              Natts_pg_shseclabel, Desc_pg_shseclabel);
-    formrdesc("pg_subscription", SubscriptionRelation_Rowtype_Id, true,
-              Natts_pg_subscription, Desc_pg_subscription);
-
-#define NUM_CRITICAL_SHARED_RELS	5 /* fix if you change list above */
-  }
-
-  MemoryContextSwitchTo(oldcxt);
-}
-
-/*
- *		RelationCacheInitializePhase3
- *
- *		This is called as soon as the catcache and transaction system
- *		are functional and we have determined MyDatabaseId.  At this
- *point we can actually read data from the database's system catalogs. We first
- *try to read pre-computed relcache entries from the local relcache init file.
- *If that's missing or broken, make phony entries for the minimum set of
- *nailed-in-cache relations.  Then (unless bootstrapping) make sure we have
- *entries for the critical system indexes.  Once we've done all this, we have
- *enough infrastructure to open any system catalog or use any catcache.  The
- *last step is to rewrite the cache files if needed.
- */
-void RelationCacheInitializePhase3(void) {
-  HASH_SEQ_STATUS status;
-  RelIdCacheEnt *idhentry;
-  MemoryContext oldcxt;
-  bool needNewCacheFile = !criticalSharedRelcachesBuilt;
-
-  /*
-   * relation mapper needs initialized too
-   */
-  RelationMapInitializePhase3();
-
-  /*
-   * switch to cache memory context
-   */
-  oldcxt = MemoryContextSwitchTo(CacheMemoryContext);
-
-  /*
-   * Try to load the local relcache cache file.  If unsuccessful, bootstrap
-   * the cache with pre-made descriptors for the critical "nailed-in" system
-   * catalogs.
-   */
-  if (IsBootstrapProcessingMode() || !load_relcache_init_file(false)) {
-    needNewCacheFile = true;
-
-    formrdesc("pg_class", RelationRelation_Rowtype_Id, false, Natts_pg_class,
-              Desc_pg_class);
-    formrdesc("pg_attribute", AttributeRelation_Rowtype_Id, false,
-              Natts_pg_attribute, Desc_pg_attribute);
-    formrdesc("pg_proc", ProcedureRelation_Rowtype_Id, false, Natts_pg_proc,
-              Desc_pg_proc);
-    formrdesc("pg_type", TypeRelation_Rowtype_Id, false, Natts_pg_type,
-              Desc_pg_type);
-
-#define NUM_CRITICAL_LOCAL_RELS 4 /* fix if you change list above */
-  }
-
-  MemoryContextSwitchTo(oldcxt);
-
-  /* In bootstrap mode, the faked-up formrdesc info is all we'll have */
-  if (IsBootstrapProcessingMode())
-    return;
-
-  /*
-   * If we didn't get the critical system indexes loaded into relcache, do
-   * so now.  These are critical because the catcache and/or opclass cache
-   * depend on them for fetches done during relcache load.  Thus, we have an
-   * infinite-recursion problem.  We can break the recursion by doing
-   * heapscans instead of indexscans at certain key spots. To avoid hobbling
-   * performance, we only want to do that until we have the critical indexes
-   * loaded into relcache.  Thus, the flag criticalRelcachesBuilt is used to
-   * decide whether to do heapscan or indexscan at the key spots, and we set
-   * it true after we've loaded the critical indexes.
-   *
-   * The critical indexes are marked as "nailed in cache", partly to make it
-   * easy for load_relcache_init_file to count them, but mainly because we
-   * cannot flush and rebuild them once we've set criticalRelcachesBuilt to
-   * true.  (NOTE: perhaps it would be possible to reload them by
-   * temporarily setting criticalRelcachesBuilt to false again.  For now,
-   * though, we just nail 'em in.)
-   *
-   * RewriteRelRulenameIndexId and TriggerRelidNameIndexId are not critical
-   * in the same way as the others, because the critical catalogs don't
-   * (currently) have any rules or triggers, and so these indexes can be
-   * rebuilt without inducing recursion.  However they are used during
-   * relcache load when a rel does have rules or triggers, so we choose to
-   * nail them for performance reasons.
-   */
-  if (!criticalRelcachesBuilt) {
-    load_critical_index(ClassOidIndexId, RelationRelationId);
-    load_critical_index(AttributeRelidNumIndexId, AttributeRelationId);
-    load_critical_index(IndexRelidIndexId, IndexRelationId);
-    load_critical_index(OpclassOidIndexId, OperatorClassRelationId);
-    load_critical_index(AccessMethodProcedureIndexId,
-                        AccessMethodProcedureRelationId);
-    load_critical_index(RewriteRelRulenameIndexId, RewriteRelationId);
-    load_critical_index(TriggerRelidNameIndexId, TriggerRelationId);
-
-#define NUM_CRITICAL_LOCAL_INDEXES	7 /* fix if you change list above */
-
-    criticalRelcachesBuilt = true;
-  }
-
-  /*
-   * Process critical shared indexes too.
-   *
-   * DatabaseNameIndexId isn't critical for relcache loading, but rather for
-   * initial lookup of MyDatabaseId, without which we'll never find any
-   * non-shared catalogs at all.  Autovacuum calls InitPostgres with a
-   * database OID, so it instead depends on DatabaseOidIndexId.  We also
-   * need to nail up some indexes on pg_authid and pg_auth_members for use
-   * during client authentication.  SharedSecLabelObjectIndexId isn't
-   * critical for the core system, but authentication hooks might be
-   * interested in it.
-   */
-  if (!criticalSharedRelcachesBuilt) {
-    load_critical_index(DatabaseNameIndexId, DatabaseRelationId);
-    load_critical_index(DatabaseOidIndexId, DatabaseRelationId);
-    load_critical_index(AuthIdRolnameIndexId, AuthIdRelationId);
-    load_critical_index(AuthIdOidIndexId, AuthIdRelationId);
-    load_critical_index(AuthMemMemRoleIndexId, AuthMemRelationId);
-    load_critical_index(SharedSecLabelObjectIndexId, SharedSecLabelRelationId);
-
-#define NUM_CRITICAL_SHARED_INDEXES 6 /* fix if you change list above */
-
-    criticalSharedRelcachesBuilt = true;
-  }
-
-  /*
-   * Now, scan all the relcache entries and update anything that might be
-   * wrong in the results from formrdesc or the relcache cache file. If we
-   * faked up relcache entries using formrdesc, then read the real pg_class
-   * rows and replace the fake entries with them. Also, if any of the
-   * relcache entries have rules, triggers, or security policies, load that
-   * info the hard way since it isn't recorded in the cache file.
-   *
-   * Whenever we access the catalogs to read data, there is a possibility of
-   * a shared-inval cache flush causing relcache entries to be removed.
-   * Since hash_seq_search only guarantees to still work after the *current*
-   * entry is removed, it's unsafe to continue the hashtable scan afterward.
-   * We handle this by restarting the scan from scratch after each access.
-   * This is theoretically O(N^2), but the number of entries that actually
-   * need to be fixed is small enough that it doesn't matter.
-   */
-  hash_seq_init(&status, RelationIdCache);
-
-  while ((idhentry = (RelIdCacheEnt *)hash_seq_search(&status)) != NULL) {
-    Relation relation = idhentry->reldesc;
-    bool restart = false;
-
-    /*
-     * Make sure *this* entry doesn't get flushed while we work with it.
-     */
-    RelationIncrementReferenceCount(relation);
-
-    /*
-     * If it's a faked-up entry, read the real pg_class tuple.
-     */
-    if (relation->rd_rel->relowner == InvalidOid) {
-      HeapTuple htup;
-      Form_pg_class relp;
-
-      htup =
-          SearchSysCache1(RELOID, ObjectIdGetDatum(RelationGetRelid(relation)));
-      if (!HeapTupleIsValid(htup))
-        ereport(FATAL, errcode(ERRCODE_UNDEFINED_OBJECT),
-                errmsg_internal("cache lookup failed for relation %u",
-                                RelationGetRelid(relation)));
-      relp = (Form_pg_class)GETSTRUCT(htup);
-
-      /*
-       * Copy tuple to relation->rd_rel. (See notes in
-       * AllocateRelationDesc())
-       */
-      memcpy((char *)relation->rd_rel, (char *)relp, CLASS_TUPLE_SIZE);
-
-      /* Update rd_options while we have the tuple */
-      if (relation->rd_options)
-        pfree(relation->rd_options);
-      RelationParseRelOptions(relation, htup);
-
-      /*
-       * Check the values in rd_att were set up correctly.  (We cannot
-       * just copy them over now: formrdesc must have set up the rd_att
-       * data correctly to start with, because it may already have been
-       * copied into one or more catcache entries.)
-       */
-      Assert(relation->rd_att->tdtypeid == relp->reltype);
-      Assert(relation->rd_att->tdtypmod == -1);
-
-      ReleaseSysCache(htup);
-
-      /* relowner had better be OK now, else we'll loop forever */
-      if (relation->rd_rel->relowner == InvalidOid)
-        elog(ERROR, "invalid relowner in pg_class entry for \"%s\"",
-             RelationGetRelationName(relation));
-
-      restart = true;
-    }
-
-    /*
-     * Fix data that isn't saved in relcache cache file.
-     *
-     * relhasrules or relhastriggers could possibly be wrong or out of
-     * date.  If we don't actually find any rules or triggers, clear the
-     * local copy of the flag so that we don't get into an infinite loop
-     * here.  We don't make any attempt to fix the pg_class entry, though.
-     */
-    if (relation->rd_rel->relhasrules && relation->rd_rules == NULL) {
-      RelationBuildRuleLock(relation);
-      if (relation->rd_rules == NULL)
-        relation->rd_rel->relhasrules = false;
-      restart = true;
-    }
-    if (relation->rd_rel->relhastriggers && relation->trigdesc == NULL) {
-      RelationBuildTriggers(relation);
-      if (relation->trigdesc == NULL)
-        relation->rd_rel->relhastriggers = false;
-      restart = true;
-    }
-
-    /*
-     * Re-load the row security policies if the relation has them, since
-     * they are not preserved in the cache.  Note that we can never NOT
-     * have a policy while relrowsecurity is true,
-     * RelationBuildRowSecurity will create a single default-deny policy
-     * if there is no policy defined in pg_policy.
-     */
-    if (relation->rd_rel->relrowsecurity && relation->rd_rsdesc == NULL) {
-      RelationBuildRowSecurity(relation);
-
-      Assert(relation->rd_rsdesc != NULL);
-      restart = true;
-    }
-
-    /* Reload tableam data if needed */
-    if (relation->rd_tableam == NULL &&
-        (RELKIND_HAS_TABLE_AM(relation->rd_rel->relkind) ||
-         relation->rd_rel->relkind == RELKIND_SEQUENCE)) {
-      RelationInitTableAccessMethod(relation);
-      Assert(relation->rd_tableam != NULL);
-
-      restart = true;
-    }
-
-    /* Release hold on the relation */
-    RelationDecrementReferenceCount(relation);
-
-    /* Now, restart the hashtable scan if needed */
-    if (restart) {
-      hash_seq_term(&status);
-      hash_seq_init(&status, RelationIdCache);
-    }
-  }
-
-  /*
-   * Lastly, write out new relcache cache files if needed.  We don't bother
-   * to distinguish cases where only one of the two needs an update.
-   */
-  if (needNewCacheFile) {
-    /*
-     * Force all the catcaches to finish initializing and thereby open the
-     * catalogs and indexes they use.  This will preload the relcache with
-     * entries for all the most important system catalogs and indexes, so
-     * that the init files will be most useful for future backends.
-     */
-    InitCatalogCachePhase2();
-
-    /* now write the files */
-    write_relcache_init_file(true);
-    write_relcache_init_file(false);
-  }
-}
-
-/*
- * Load one critical system index into the relcache
- *
- * indexoid is the OID of the target index, heapoid is the OID of the catalog
- * it belongs to.
- */
-static void load_critical_index(Oid indexoid, Oid heapoid) {
-  Relation ird;
-
-  /*
-   * We must lock the underlying catalog before locking the index to avoid
-   * deadlock, since RelationBuildDesc might well need to read the catalog,
-   * and if anyone else is exclusive-locking this catalog and index they'll
-   * be doing it in that order.
-   */
-  LockRelationOid(heapoid, AccessShareLock);
-  LockRelationOid(indexoid, AccessShareLock);
-  ird = RelationBuildDesc(indexoid, true);
-  if (ird == NULL)
-    ereport(
-        PANIC, errcode(ERRCODE_DATA_CORRUPTED),
-        errmsg_internal("could not open critical system index %u", indexoid));
-  ird->rd_isnailed = true;
-  ird->rd_refcnt = 1;
-  UnlockRelationOid(indexoid, AccessShareLock);
-  UnlockRelationOid(heapoid, AccessShareLock);
-
-  (void)RelationGetIndexAttOptions(ird, false);
 }
 
 /*
@@ -4149,7 +3519,7 @@ static void load_critical_index(Oid indexoid, Oid heapoid) {
  * We need this kluge because we have to be able to access non-fixed-width
  * fields of pg_class and pg_index before we have the standard catalog caches
  * available.  We use predefined data that's set up in just the same way as
- * the bootstrapped reldescs used by formrdesc().  The resulting tupdesc is
+ * PostgreSQL's bootstrapped reldescs.  The resulting tupdesc is
  * not 100% kosher: it does not have the correct rowtype OID in tdtypeid, nor
  * does it have a TupleConstr field.  But it's good enough for the purpose of
  * extracting fields.
@@ -5434,29 +4804,16 @@ static bytea **CopyIndexAttOptions(bytea **srcopts, int natts) {
 bytea **RelationGetIndexAttOptions(Relation relation, bool copy) {
   MemoryContext oldcxt;
   bytea **opts = relation->rd_opcoptions;
-  Oid relid = RelationGetRelid(relation);
   int natts = RelationGetNumberOfAttributes(
       relation); /* XXX
                   * IndexRelationGetNumberOfKeyAttributes */
-  int i;
 
   /* Try to copy cached options. */
   if (opts)
     return copy ? CopyIndexAttOptions(opts, natts) : opts;
 
-  /* Get and parse opclass options. */
+  /* No opclass options: there is no pg_attribute to read them from. */
   opts = (bytea **)palloc0(sizeof(*opts) * natts);
-
-  for (i = 0; i < natts; i++) {
-    if (criticalRelcachesBuilt && relid != AttributeRelidNumIndexId) {
-      Datum attoptions = get_attoptions(relid, i + 1);
-
-      opts[i] = index_opclass_options(relation, i + 1, attoptions, false);
-
-      if (attoptions != (Datum)0)
-        pfree(DatumGetPointer(attoptions));
-    }
-  }
 
   /* Copy parsed options to the cache. */
   oldcxt = MemoryContextSwitchTo(relation->rd_indexcxt);
@@ -5465,11 +4822,6 @@ bytea **RelationGetIndexAttOptions(Relation relation, bool copy) {
 
   if (copy)
     return opts;
-
-  for (i = 0; i < natts; i++) {
-    if (opts[i])
-      pfree(opts[i]);
-  }
 
   pfree(opts);
 
@@ -5541,792 +4893,6 @@ int errtableconstraint(Relation rel, const char *conname) {
   err_generic_string(PG_DIAG_CONSTRAINT_NAME, conname);
 
   return 0; /* return value does not matter */
-}
-
-/*
- *	load_relcache_init_file, write_relcache_init_file
- *
- *		In late 1992, we started regularly having databases with more
- *than a thousand classes in them.  With this number of classes, it became
- *		critical to do indexed lookups on the system catalogs.
- *
- *		Bootstrapping these lookups is very hard.  We want to be able to
- *		use an index on pg_attribute, for example, but in order to do
- *so, we must have read pg_attribute for the attributes in the index, which
- *implies that we need to use the index.
- *
- *		In order to get around the problem, we do the following:
- *
- *		   +  When the database system is initialized (at initdb time),
- *we don't use indexes.  We do sequential scans.
- *
- *		   +  When the backend is started up in normal mode, we load an
- *image of the appropriate relation descriptors, in internal format, from an
- *initialization file in the data/base/... directory.
- *
- *		   +  If the initialization file isn't there, then we create the
- *			  relation descriptors using sequential scans and write
- *'em to the initialization file for use by subsequent backends.
- *
- *		As of Postgres 9.0, there is one local initialization file in
- *each database, plus one shared initialization file for shared catalogs.
- *
- *		We could dispense with the initialization files and just build
- *the critical reldescs the hard way on every backend startup, but that slows
- *down backend startup noticeably.
- *
- *		We can in fact go further, and save more relcache entries than
- *		just the ones that are absolutely critical; this allows us to
- *speed up backend startup by not having to build such entries the hard way.
- *		Presently, all the catalog and index entries that are referred
- *to by catcaches are stored in the initialization files.
- *
- *		The same mechanism that detects when catcache and relcache
- *entries need to be invalidated (due to catalog updates) also arranges to
- *		unlink the initialization files when the contents may be out of
- *date. The files will then be rebuilt during the next backend startup.
- */
-
-/*
- * load_relcache_init_file -- attempt to load cache from the shared
- * or local cache init file
- *
- * If successful, return true and set criticalRelcachesBuilt or
- * criticalSharedRelcachesBuilt to true.
- * If not successful, return false.
- *
- * NOTE: we assume we are already switched into CacheMemoryContext.
- */
-static bool load_relcache_init_file(bool shared) {
-  FILE *fp;
-  char initfilename[MAXPGPATH];
-  Relation *rels;
-  int relno, num_rels, max_rels, nailed_rels, nailed_indexes, magic;
-  int i;
-
-  if (shared)
-    snprintf(initfilename, sizeof(initfilename), "global/%s",
-             RELCACHE_INIT_FILENAME);
-  else
-    snprintf(initfilename, sizeof(initfilename), "%s/%s", DatabasePath,
-             RELCACHE_INIT_FILENAME);
-
-  fp = AllocateFile(initfilename, PG_BINARY_R);
-  if (fp == NULL)
-    return false;
-
-  /*
-   * Read the index relcache entries from the file.  Note we will not enter
-   * any of them into the cache if the read fails partway through; this
-   * helps to guard against broken init files.
-   */
-  max_rels = 100;
-  rels = (Relation *)palloc(max_rels * sizeof(Relation));
-  num_rels = 0;
-  nailed_rels = nailed_indexes = 0;
-
-  /* check for correct magic number (compatible version) */
-  if (fread(&magic, 1, sizeof(magic), fp) != sizeof(magic))
-    goto read_failed;
-  if (magic != RELCACHE_INIT_FILEMAGIC)
-    goto read_failed;
-
-  for (relno = 0;; relno++) {
-    Size len;
-    size_t nread;
-    Relation rel;
-    Form_pg_class relform;
-    bool has_not_null;
-
-    /* first read the relation descriptor length */
-    nread = fread(&len, 1, sizeof(len), fp);
-    if (nread != sizeof(len)) {
-      if (nread == 0)
-        break; /* end of file */
-      goto read_failed;
-    }
-
-    /* safety check for incompatible relcache layout */
-    if (len != sizeof(RelationData))
-      goto read_failed;
-
-    /* allocate another relcache header */
-    if (num_rels >= max_rels) {
-      max_rels *= 2;
-      rels = (Relation *)repalloc(rels, max_rels * sizeof(Relation));
-    }
-
-    rel = rels[num_rels++] = (Relation)palloc(len);
-
-    /* then, read the Relation structure */
-    if (fread(rel, 1, len, fp) != len)
-      goto read_failed;
-
-    /* next read the relation tuple form */
-    if (fread(&len, 1, sizeof(len), fp) != sizeof(len))
-      goto read_failed;
-
-    relform = (Form_pg_class)palloc(len);
-    if (fread(relform, 1, len, fp) != len)
-      goto read_failed;
-
-    rel->rd_rel = relform;
-
-    /* initialize attribute tuple forms */
-    rel->rd_att = CreateTemplateTupleDesc(relform->relnatts);
-    rel->rd_att->tdrefcount = 1; /* mark as refcounted */
-
-    rel->rd_att->tdtypeid = relform->reltype ? relform->reltype : RECORDOID;
-    rel->rd_att->tdtypmod = -1; /* just to be sure */
-
-    /* next read all the attribute tuple form data entries */
-    has_not_null = false;
-    for (i = 0; i < relform->relnatts; i++) {
-      Form_pg_attribute attr = TupleDescAttr(rel->rd_att, i);
-
-      if (fread(&len, 1, sizeof(len), fp) != sizeof(len))
-        goto read_failed;
-      if (len != ATTRIBUTE_FIXED_PART_SIZE)
-        goto read_failed;
-      if (fread(attr, 1, len, fp) != len)
-        goto read_failed;
-
-      has_not_null |= attr->attnotnull;
-
-      populate_compact_attribute(rel->rd_att, i);
-    }
-
-    /* next read the access method specific field */
-    if (fread(&len, 1, sizeof(len), fp) != sizeof(len))
-      goto read_failed;
-    if (len > 0) {
-      rel->rd_options = (bytea *)palloc(len);
-      if (fread(rel->rd_options, 1, len, fp) != len)
-        goto read_failed;
-      if (len != VARSIZE(rel->rd_options))
-        goto read_failed; /* sanity check */
-    } else {
-      rel->rd_options = NULL;
-    }
-
-    /* mark not-null status */
-    if (has_not_null) {
-      TupleConstr *constr = (TupleConstr *)palloc0(sizeof(TupleConstr));
-
-      constr->has_not_null = true;
-      rel->rd_att->constr = constr;
-    }
-
-    /*
-     * If it's an index, there's more to do.  Note we explicitly ignore
-     * partitioned indexes here.
-     */
-    if (rel->rd_rel->relkind == RELKIND_INDEX) {
-      MemoryContext indexcxt;
-      Oid *opfamily;
-      Oid *opcintype;
-      RegProcedure *support;
-      int nsupport;
-      int16 *indoption;
-      Oid *indcollation;
-
-      /* Count nailed indexes to ensure we have 'em all */
-      if (rel->rd_isnailed)
-        nailed_indexes++;
-
-      /* read the pg_index tuple */
-      if (fread(&len, 1, sizeof(len), fp) != sizeof(len))
-        goto read_failed;
-
-      rel->rd_indextuple = (HeapTuple)palloc(len);
-      if (fread(rel->rd_indextuple, 1, len, fp) != len)
-        goto read_failed;
-
-      /* Fix up internal pointers in the tuple -- see heap_copytuple */
-      rel->rd_indextuple->t_data =
-          (HeapTupleHeader)((char *)rel->rd_indextuple + HEAPTUPLESIZE);
-      rel->rd_index = (Form_pg_index)GETSTRUCT(rel->rd_indextuple);
-
-      /*
-       * prepare index info context --- parameters should match
-       * RelationInitIndexAccessInfo
-       */
-      indexcxt = AllocSetContextCreate(CacheMemoryContext, "index info",
-                                       ALLOCSET_SMALL_SIZES);
-      rel->rd_indexcxt = indexcxt;
-      MemoryContextCopyAndSetIdentifier(indexcxt, RelationGetRelationName(rel));
-
-      /*
-       * Now we can fetch the index AM's API struct.  (We can't store
-       * that in the init file, since it contains function pointers that
-       * might vary across server executions.  Fortunately, it should be
-       * safe to call the amhandler even while bootstrapping indexes.)
-       */
-      InitIndexAmRoutine(rel);
-
-      /* read the vector of opfamily OIDs */
-      if (fread(&len, 1, sizeof(len), fp) != sizeof(len))
-        goto read_failed;
-
-      opfamily = (Oid *)MemoryContextAlloc(indexcxt, len);
-      if (fread(opfamily, 1, len, fp) != len)
-        goto read_failed;
-
-      rel->rd_opfamily = opfamily;
-
-      /* read the vector of opcintype OIDs */
-      if (fread(&len, 1, sizeof(len), fp) != sizeof(len))
-        goto read_failed;
-
-      opcintype = (Oid *)MemoryContextAlloc(indexcxt, len);
-      if (fread(opcintype, 1, len, fp) != len)
-        goto read_failed;
-
-      rel->rd_opcintype = opcintype;
-
-      /* read the vector of support procedure OIDs */
-      if (fread(&len, 1, sizeof(len), fp) != sizeof(len))
-        goto read_failed;
-      support = (RegProcedure *)MemoryContextAlloc(indexcxt, len);
-      if (fread(support, 1, len, fp) != len)
-        goto read_failed;
-
-      rel->rd_support = support;
-
-      /* read the vector of collation OIDs */
-      if (fread(&len, 1, sizeof(len), fp) != sizeof(len))
-        goto read_failed;
-
-      indcollation = (Oid *)MemoryContextAlloc(indexcxt, len);
-      if (fread(indcollation, 1, len, fp) != len)
-        goto read_failed;
-
-      rel->rd_indcollation = indcollation;
-
-      /* read the vector of indoption values */
-      if (fread(&len, 1, sizeof(len), fp) != sizeof(len))
-        goto read_failed;
-
-      indoption = (int16 *)MemoryContextAlloc(indexcxt, len);
-      if (fread(indoption, 1, len, fp) != len)
-        goto read_failed;
-
-      rel->rd_indoption = indoption;
-
-      /* read the vector of opcoptions values */
-      rel->rd_opcoptions = (bytea **)MemoryContextAllocZero(
-          indexcxt, sizeof(*rel->rd_opcoptions) * relform->relnatts);
-
-      for (i = 0; i < relform->relnatts; i++) {
-        if (fread(&len, 1, sizeof(len), fp) != sizeof(len))
-          goto read_failed;
-
-        if (len > 0) {
-          rel->rd_opcoptions[i] = (bytea *)MemoryContextAlloc(indexcxt, len);
-          if (fread(rel->rd_opcoptions[i], 1, len, fp) != len)
-            goto read_failed;
-        }
-      }
-
-      /* set up zeroed fmgr-info vector */
-      nsupport = relform->relnatts * rel->rd_indam->amsupport;
-      rel->rd_supportinfo = (FmgrInfo *)MemoryContextAllocZero(
-          indexcxt, nsupport * sizeof(FmgrInfo));
-    } else {
-      /* Count nailed rels to ensure we have 'em all */
-      if (rel->rd_isnailed)
-        nailed_rels++;
-
-      /* Load table AM data */
-      if (RELKIND_HAS_TABLE_AM(rel->rd_rel->relkind) ||
-          rel->rd_rel->relkind == RELKIND_SEQUENCE)
-        RelationInitTableAccessMethod(rel);
-
-      Assert(rel->rd_index == NULL);
-      Assert(rel->rd_indextuple == NULL);
-      Assert(rel->rd_indexcxt == NULL);
-      Assert(rel->rd_indam == NULL);
-      Assert(rel->rd_opfamily == NULL);
-      Assert(rel->rd_opcintype == NULL);
-      Assert(rel->rd_support == NULL);
-      Assert(rel->rd_supportinfo == NULL);
-      Assert(rel->rd_indoption == NULL);
-      Assert(rel->rd_indcollation == NULL);
-      Assert(rel->rd_opcoptions == NULL);
-    }
-
-    /*
-     * Rules and triggers are not saved (mainly because the internal
-     * format is complex and subject to change).  They must be rebuilt if
-     * needed by RelationCacheInitializePhase3.  This is not expected to
-     * be a big performance hit since few system catalogs have such. Ditto
-     * for RLS policy data, partition info, index expressions, predicates,
-     * exclusion info, and FDW info.
-     */
-    rel->rd_rules = NULL;
-    rel->rd_rulescxt = NULL;
-    rel->trigdesc = NULL;
-    rel->rd_rsdesc = NULL;
-    rel->rd_partkey = NULL;
-    rel->rd_partkeycxt = NULL;
-    rel->rd_partdesc = NULL;
-    rel->rd_partdesc_nodetached = NULL;
-    rel->rd_partdesc_nodetached_xmin = InvalidTransactionId;
-    rel->rd_pdcxt = NULL;
-    rel->rd_pddcxt = NULL;
-    rel->rd_partcheck = NIL;
-    rel->rd_partcheckvalid = false;
-    rel->rd_partcheckcxt = NULL;
-    rel->rd_indexprs = NIL;
-    rel->rd_indpred = NIL;
-    rel->rd_exclops = NULL;
-    rel->rd_exclprocs = NULL;
-    rel->rd_exclstrats = NULL;
-    rel->rd_fdwroutine = NULL;
-
-    /*
-     * Reset transient-state fields in the relcache entry
-     */
-    if (rel->rd_isnailed)
-      rel->rd_refcnt = 1;
-    else
-      rel->rd_refcnt = 0;
-    rel->rd_indexvalid = false;
-    rel->rd_indexlist = NIL;
-    rel->rd_pkindex = InvalidOid;
-    rel->rd_replidindex = InvalidOid;
-    rel->rd_attrsvalid = false;
-    rel->rd_keyattr = NULL;
-    rel->rd_pkattr = NULL;
-    rel->rd_idattr = NULL;
-    rel->rd_statvalid = false;
-    rel->rd_statlist = NIL;
-    rel->rd_fkeyvalid = false;
-    rel->rd_fkeylist = NIL;
-    rel->rd_createSubid = InvalidSubTransactionId;
-    rel->rd_newRelfilelocatorSubid = InvalidSubTransactionId;
-    rel->rd_firstRelfilelocatorSubid = InvalidSubTransactionId;
-    rel->rd_droppedSubid = InvalidSubTransactionId;
-    rel->rd_amcache = NULL;
-
-    /*
-     * Recompute lock and physical addressing info.  This is needed in
-     * case the pg_internal.init file was copied from some other database
-     * by CREATE DATABASE.
-     */
-    RelationInitLockInfo(rel);
-    RelationInitPhysicalAddr(rel);
-  }
-
-  /*
-   * We reached the end of the init file without apparent problem.  Did we
-   * get the right number of nailed items?  This is a useful crosscheck in
-   * case the set of critical rels or indexes changes.  However, that should
-   * not happen in a normally-running system, so let's bleat if it does.
-   *
-   * For the shared init file, we're called before client authentication is
-   * done, which means that elog(WARNING) will go only to the postmaster
-   * log, where it's easily missed.  To ensure that developers notice bad
-   * values of NUM_CRITICAL_SHARED_RELS/NUM_CRITICAL_SHARED_INDEXES, we put
-   * an Assert(false) there.
-   */
-  if (shared) {
-    if (nailed_rels != NUM_CRITICAL_SHARED_RELS ||
-        nailed_indexes != NUM_CRITICAL_SHARED_INDEXES) {
-      elog(WARNING,
-           "found %d nailed shared rels and %d nailed shared indexes in init "
-           "file, but expected %d and %d respectively",
-           nailed_rels, nailed_indexes, NUM_CRITICAL_SHARED_RELS,
-           NUM_CRITICAL_SHARED_INDEXES);
-      /* Make sure we get developers' attention about this */
-      Assert(false);
-      /* In production builds, recover by bootstrapping the relcache */
-      goto read_failed;
-    }
-  } else {
-    if (nailed_rels != NUM_CRITICAL_LOCAL_RELS ||
-        nailed_indexes != NUM_CRITICAL_LOCAL_INDEXES) {
-      elog(WARNING,
-           "found %d nailed rels and %d nailed indexes in init file, but "
-           "expected %d and %d respectively",
-           nailed_rels, nailed_indexes, NUM_CRITICAL_LOCAL_RELS,
-           NUM_CRITICAL_LOCAL_INDEXES);
-      /* We don't need an Assert() in this case */
-      goto read_failed;
-    }
-  }
-
-  /*
-   * OK, all appears well.
-   *
-   * Now insert all the new relcache entries into the cache.
-   */
-  for (relno = 0; relno < num_rels; relno++) {
-    RelationCacheInsert(rels[relno], false);
-  }
-
-  pfree(rels);
-  FreeFile(fp);
-
-  if (shared)
-    criticalSharedRelcachesBuilt = true;
-  else
-    criticalRelcachesBuilt = true;
-  return true;
-
-  /*
-   * init file is broken, so do it the hard way.  We don't bother trying to
-   * free the clutter we just allocated; it's not in the relcache so it
-   * won't hurt.
-   */
-read_failed:
-  pfree(rels);
-  FreeFile(fp);
-
-  return false;
-}
-
-/*
- * Write out a new initialization file with the current contents
- * of the relcache (either shared rels or local rels, as indicated).
- */
-static void write_relcache_init_file(bool shared) {
-  FILE *fp;
-  char tempfilename[MAXPGPATH];
-  char finalfilename[MAXPGPATH];
-  int magic;
-  HASH_SEQ_STATUS status;
-  RelIdCacheEnt *idhentry;
-  int i;
-
-  /*
-   * If we have already received any relcache inval events, there's no
-   * chance of succeeding so we may as well skip the whole thing.
-   */
-  if (relcacheInvalsReceived != 0L)
-    return;
-
-  /*
-   * We must write a temporary file and rename it into place. Otherwise,
-   * another backend starting at about the same time might crash trying to
-   * read the partially-complete file.
-   */
-  if (shared) {
-    snprintf(tempfilename, sizeof(tempfilename), "global/%s.%d",
-             RELCACHE_INIT_FILENAME, MyProcPid);
-    snprintf(finalfilename, sizeof(finalfilename), "global/%s",
-             RELCACHE_INIT_FILENAME);
-  } else {
-    snprintf(tempfilename, sizeof(tempfilename), "%s/%s.%d", DatabasePath,
-             RELCACHE_INIT_FILENAME, MyProcPid);
-    snprintf(finalfilename, sizeof(finalfilename), "%s/%s", DatabasePath,
-             RELCACHE_INIT_FILENAME);
-  }
-
-  unlink(tempfilename); /* in case it exists w/wrong permissions */
-
-  fp = AllocateFile(tempfilename, PG_BINARY_W);
-  if (fp == NULL) {
-    /*
-     * We used to consider this a fatal error, but we might as well
-     * continue with backend startup ...
-     */
-    ereport(
-        WARNING,
-        (errcode_for_file_access(),
-         errmsg(
-             "could not create relation-cache initialization file \"%s\": %m",
-             tempfilename),
-         errdetail("Continuing anyway, but there's something wrong.")));
-    return;
-  }
-
-  /*
-   * Write a magic number to serve as a file version identifier.  We can
-   * change the magic number whenever the relcache layout changes.
-   */
-  magic = RELCACHE_INIT_FILEMAGIC;
-  if (fwrite(&magic, 1, sizeof(magic), fp) != sizeof(magic))
-    ereport(FATAL, errcode_for_file_access(),
-            errmsg_internal("could not write init file: %m"));
-
-  /*
-   * Write all the appropriate reldescs (in no particular order).
-   */
-  hash_seq_init(&status, RelationIdCache);
-
-  while ((idhentry = (RelIdCacheEnt *)hash_seq_search(&status)) != NULL) {
-    Relation rel = idhentry->reldesc;
-    Form_pg_class relform = rel->rd_rel;
-
-    /* ignore if not correct group */
-    if (relform->relisshared != shared)
-      continue;
-
-    /*
-     * Ignore if not supposed to be in init file.  We can allow any shared
-     * relation that's been loaded so far to be in the shared init file,
-     * but unshared relations must be ones that should be in the local
-     * file per RelationIdIsInInitFile.  (Note: if you want to change the
-     * criterion for rels to be kept in the init file, see also inval.c.
-     * The reason for filtering here is to be sure that we don't put
-     * anything into the local init file for which a relcache inval would
-     * not cause invalidation of that init file.)
-     */
-    if (!shared && !RelationIdIsInInitFile(RelationGetRelid(rel))) {
-      /* Nailed rels had better get stored. */
-      Assert(!rel->rd_isnailed);
-      continue;
-    }
-
-    /* first write the relcache entry proper */
-    write_item(rel, sizeof(RelationData), fp);
-
-    /* next write the relation tuple form */
-    write_item(relform, CLASS_TUPLE_SIZE, fp);
-
-    /* next, do all the attribute tuple form data entries */
-    for (i = 0; i < relform->relnatts; i++) {
-      write_item(TupleDescAttr(rel->rd_att, i), ATTRIBUTE_FIXED_PART_SIZE, fp);
-    }
-
-    /* next, do the access method specific field */
-    write_item(rel->rd_options,
-               (rel->rd_options ? VARSIZE(rel->rd_options) : 0), fp);
-
-    /*
-     * If it's an index, there's more to do. Note we explicitly ignore
-     * partitioned indexes here.
-     */
-    if (rel->rd_rel->relkind == RELKIND_INDEX) {
-      /* write the pg_index tuple */
-      /* we assume this was created by heap_copytuple! */
-      write_item(rel->rd_indextuple, HEAPTUPLESIZE + rel->rd_indextuple->t_len,
-                 fp);
-
-      /* write the vector of opfamily OIDs */
-      write_item(rel->rd_opfamily, relform->relnatts * sizeof(Oid), fp);
-
-      /* write the vector of opcintype OIDs */
-      write_item(rel->rd_opcintype, relform->relnatts * sizeof(Oid), fp);
-
-      /* write the vector of support procedure OIDs */
-      write_item(rel->rd_support,
-                 relform->relnatts *
-                     (rel->rd_indam->amsupport * sizeof(RegProcedure)),
-                 fp);
-
-      /* write the vector of collation OIDs */
-      write_item(rel->rd_indcollation, relform->relnatts * sizeof(Oid), fp);
-
-      /* write the vector of indoption values */
-      write_item(rel->rd_indoption, relform->relnatts * sizeof(int16), fp);
-
-      Assert(rel->rd_opcoptions);
-
-      /* write the vector of opcoptions values */
-      for (i = 0; i < relform->relnatts; i++) {
-        bytea *opt = rel->rd_opcoptions[i];
-
-        write_item(opt, opt ? VARSIZE(opt) : 0, fp);
-      }
-    }
-  }
-
-  if (FreeFile(fp))
-    ereport(FATAL, errcode_for_file_access(),
-            errmsg_internal("could not write init file: %m"));
-
-  /*
-   * Now we have to check whether the data we've so painstakingly
-   * accumulated is already obsolete due to someone else's just-committed
-   * catalog changes.  If so, we just delete the temp file and leave it to
-   * the next backend to try again.  (Our own relcache entries will be
-   * updated by SI message processing, but we can't be sure whether what we
-   * wrote out was up-to-date.)
-   *
-   * This mustn't run concurrently with the code that unlinks an init file
-   * and sends SI messages, so grab a serialization lock for the duration.
-   */
-  LWLockAcquire(RelCacheInitLock, LW_EXCLUSIVE);
-
-  /* Make sure we have seen all incoming SI messages */
-  AcceptInvalidationMessages();
-
-  /*
-   * If we have received any SI relcache invals since backend start, assume
-   * we may have written out-of-date data.
-   */
-  if (relcacheInvalsReceived == 0L) {
-    /*
-     * OK, rename the temp file to its final name, deleting any
-     * previously-existing init file.
-     *
-     * Note: a failure here is possible under Cygwin, if some other
-     * backend is holding open an unlinked-but-not-yet-gone init file. So
-     * treat this as a noncritical failure; just remove the useless temp
-     * file on failure.
-     */
-    if (rename(tempfilename, finalfilename) < 0)
-      unlink(tempfilename);
-  } else {
-    /* Delete the already-obsolete temp file */
-    unlink(tempfilename);
-  }
-
-  LWLockRelease(RelCacheInitLock);
-}
-
-/* write a chunk of data preceded by its length */
-static void write_item(const void *data, Size len, FILE *fp) {
-  if (fwrite(&len, 1, sizeof(len), fp) != sizeof(len))
-    ereport(FATAL, errcode_for_file_access(),
-            errmsg_internal("could not write init file: %m"));
-  if (len > 0 && fwrite(data, 1, len, fp) != len)
-    ereport(FATAL, errcode_for_file_access(),
-            errmsg_internal("could not write init file: %m"));
-}
-
-/*
- * Determine whether a given relation (identified by OID) is one of the ones
- * we should store in a relcache init file.
- *
- * We must cache all nailed rels, and for efficiency we should cache every rel
- * that supports a syscache.  The former set is almost but not quite a subset
- * of the latter. The special cases are relations where
- * RelationCacheInitializePhase2/3 chooses to nail for efficiency reasons, but
- * which do not support any syscache.
- */
-bool RelationIdIsInInitFile(Oid relationId) {
-  if (relationId == SharedSecLabelRelationId ||
-      relationId == TriggerRelidNameIndexId ||
-      relationId == DatabaseNameIndexId ||
-      relationId == SharedSecLabelObjectIndexId) {
-    /*
-     * If this Assert fails, we don't need the applicable special case
-     * anymore.
-     */
-    Assert(!RelationSupportsSysCache(relationId));
-    return true;
-  }
-  return RelationSupportsSysCache(relationId);
-}
-
-/*
- * Invalidate (remove) the init file during commit of a transaction that
- * changed one or more of the relation cache entries that are kept in the
- * local init file.
- *
- * To be safe against concurrent inspection or rewriting of the init file,
- * we must take RelCacheInitLock, then remove the old init file, then send
- * the SI messages that include relcache inval for such relations, and then
- * release RelCacheInitLock.  This serializes the whole affair against
- * write_relcache_init_file, so that we can be sure that any other process
- * that's concurrently trying to create a new init file won't move an
- * already-stale version into place after we unlink.  Also, because we unlink
- * before sending the SI messages, a backend that's currently starting cannot
- * read the now-obsolete init file and then miss the SI messages that will
- * force it to update its relcache entries.  (This works because the backend
- * startup sequence gets into the sinval array before trying to load the init
- * file.)
- *
- * We take the lock and do the unlink in RelationCacheInitFilePreInvalidate,
- * then release the lock in RelationCacheInitFilePostInvalidate.  Caller must
- * send any pending SI messages between those calls.
- */
-void RelationCacheInitFilePreInvalidate(void) {
-  char localinitfname[MAXPGPATH];
-  char sharedinitfname[MAXPGPATH];
-
-  if (DatabasePath)
-    snprintf(localinitfname, sizeof(localinitfname), "%s/%s", DatabasePath,
-             RELCACHE_INIT_FILENAME);
-  snprintf(sharedinitfname, sizeof(sharedinitfname), "global/%s",
-           RELCACHE_INIT_FILENAME);
-
-  LWLockAcquire(RelCacheInitLock, LW_EXCLUSIVE);
-
-  /*
-   * The files might not be there if no backend has been started since the
-   * last removal.  But complain about failures other than ENOENT with
-   * ERROR.  Fortunately, it's not too late to abort the transaction if we
-   * can't get rid of the would-be-obsolete init file.
-   */
-  if (DatabasePath)
-    unlink_initfile(localinitfname, ERROR);
-  unlink_initfile(sharedinitfname, ERROR);
-}
-
-void RelationCacheInitFilePostInvalidate(void) {
-  LWLockRelease(RelCacheInitLock);
-}
-
-/*
- * Remove the init files during postmaster startup.
- *
- * We used to keep the init files across restarts, but that is unsafe in PITR
- * scenarios, and even in simple crash-recovery cases there are windows for
- * the init files to become out-of-sync with the database.  So now we just
- * remove them during startup and expect the first backend launch to rebuild
- * them.  Of course, this has to happen in each database of the cluster.
- */
-void RelationCacheInitFileRemove(void) {
-  const char *tblspcdir = PG_TBLSPC_DIR;
-  DIR *dir;
-  struct dirent *de;
-  char path[MAXPGPATH + sizeof(PG_TBLSPC_DIR) +
-            sizeof(TABLESPACE_VERSION_DIRECTORY)];
-
-  snprintf(path, sizeof(path), "global/%s", RELCACHE_INIT_FILENAME);
-  unlink_initfile(path, LOG);
-
-  /* Scan everything in the default tablespace */
-  RelationCacheInitFileRemoveInDir("base");
-
-  /* Scan the tablespace link directory to find non-default tablespaces */
-  dir = AllocateDir(tblspcdir);
-
-  while ((de = ReadDirExtended(dir, tblspcdir, LOG)) != NULL) {
-    if (strspn(de->d_name, "0123456789") == strlen(de->d_name)) {
-      /* Scan the tablespace dir for per-database dirs */
-      snprintf(path, sizeof(path), "%s/%s/%s", tblspcdir, de->d_name,
-               TABLESPACE_VERSION_DIRECTORY);
-      RelationCacheInitFileRemoveInDir(path);
-    }
-  }
-
-  FreeDir(dir);
-}
-
-/* Process one per-tablespace directory for RelationCacheInitFileRemove */
-static void RelationCacheInitFileRemoveInDir(const char *tblspcpath) {
-  DIR *dir;
-  struct dirent *de;
-  char initfilename[MAXPGPATH * 2];
-
-  /* Scan the tablespace directory to find per-database directories */
-  dir = AllocateDir(tblspcpath);
-
-  while ((de = ReadDirExtended(dir, tblspcpath, LOG)) != NULL) {
-    if (strspn(de->d_name, "0123456789") == strlen(de->d_name)) {
-      /* Try to remove the init file in each database */
-      snprintf(initfilename, sizeof(initfilename), "%s/%s/%s", tblspcpath,
-               de->d_name, RELCACHE_INIT_FILENAME);
-      unlink_initfile(initfilename, LOG);
-    }
-  }
-
-  FreeDir(dir);
-}
-
-static void unlink_initfile(const char *initfilename, int elevel) {
-  if (unlink(initfilename) < 0) {
-    /* It might not be there, but log any error other than ENOENT */
-    if (errno != ENOENT)
-      ereport(elevel,
-              (errcode_for_file_access(),
-               errmsg("could not remove cache file \"%s\": %m", initfilename)));
-  }
 }
 
 /*

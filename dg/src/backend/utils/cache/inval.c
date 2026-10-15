@@ -79,12 +79,6 @@
  *	invalidation callback arrives during a build, relcache.c reattempts that
  *	build.  Caches with similar needs could do likewise.
  *
- *	If a relcache flush is issued for a system relation that we preload
- *	from the relcache init file, we must also delete the init file so that
- *	it will be rebuilt during the next backend restart.  The actual work of
- *	manipulating the init file is in relcache.c, but we keep track of the
- *	need for it here.
- *
  *	Currently, inval messages are sent without regard for the possibility
  *	that the object described by the catalog tuple might be a session-local
  *	object such as a temporary table.  This is because (1) this code has
@@ -127,7 +121,6 @@
 #include "utils/memdebug.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
-#include "utils/relmapper.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 
@@ -224,9 +217,6 @@ typedef struct InvalidationMsgsGroup {
 typedef struct InvalidationInfo {
   /* Events emitted by current command */
   InvalidationMsgsGroup CurrentCmdInvalidMsgs;
-
-  /* init file must be invalidated? */
-  bool RelcacheInitFileInval;
 } InvalidationInfo;
 
 /* subclass adding fields specific to transactional invalidation */
@@ -594,15 +584,6 @@ static void RegisterRelcacheInvalidation(InvalidationInfo *info, Oid dbId,
    * need to do CommandEndInvalidationMessages().
    */
   (void)GetCurrentCommandId(true);
-
-  /*
-   * If the relation being invalidated is one of those cached in a relcache
-   * init file, mark that we need to zap that file at commit. For simplicity
-   * invalidations for a specific database always invalidate the shared file
-   * as well.  Also zap when we are invalidating whole relcache.
-   */
-  if (relId == InvalidOid || RelationIdIsInInitFile(relId))
-    info->RelcacheInitFileInval = true;
 }
 
 /*
@@ -796,12 +777,6 @@ void LocalExecuteInvalidationMessage(SharedInvalidationMessage *msg) {
      * short-circuit test is possible here.
      */
     /* There is no smgr to release a relation's files from. */
-  } else if (msg->id == SHAREDINVALRELMAP_ID) {
-    /* We only care about our own database and shared catalogs */
-    if (msg->rm.dbId == InvalidOid)
-      RelationMapInvalidate(true);
-    else if (msg->rm.dbId == MyDatabaseId)
-      RelationMapInvalidate(false);
   } else if (msg->id == SHAREDINVALSNAPSHOT_ID) {
     /* We only care about our own database and shared catalogs */
     if (msg->sn.dbId == InvalidOid)
@@ -888,122 +863,6 @@ void AcceptInvalidationMessages(void) {
 }
 
 /*
- * xactGetCommittedInvalidationMessages() is called by
- * RecordTransactionCommit() to collect invalidation messages to add to the
- * commit record. This applies only to commit message types, never to
- * abort records. Must always run before AtEOXact_Inval(), since that
- * removes the data we need to see.
- *
- * Remember that this runs before we have officially committed, so we
- * must not do anything here to change what might occur *if* we should
- * fail between here and the actual commit.
- *
- * see also xact_redo_commit() and xact_desc_commit()
- */
-int xactGetCommittedInvalidationMessages(SharedInvalidationMessage **msgs,
-                                         bool *RelcacheInitFileInval) {
-  SharedInvalidationMessage *msgarray;
-  int nummsgs;
-  int nmsgs;
-
-  /* Quick exit if we haven't done anything with invalidation messages. */
-  if (transInvalInfo == NULL) {
-    *RelcacheInitFileInval = false;
-    *msgs = NULL;
-    return 0;
-  }
-
-  /* Must be at top of stack */
-  Assert(transInvalInfo->my_level == 1 && transInvalInfo->parent == NULL);
-
-  /*
-   * Relcache init file invalidation requires processing both before and
-   * after we send the SI messages.  However, we need not do anything unless
-   * we committed.
-   */
-  *RelcacheInitFileInval = transInvalInfo->ii.RelcacheInitFileInval;
-
-  /*
-   * Collect all the pending messages into a single contiguous array of
-   * invalidation messages, to simplify what needs to happen while building
-   * the commit WAL message.  Maintain the order that they would be
-   * processed in by AtEOXact_Inval(), to ensure emulated behaviour in redo
-   * is as similar as possible to original.  We want the same bugs, if any,
-   * not new ones.
-   */
-  nummsgs = NumMessagesInGroup(&transInvalInfo->PriorCmdInvalidMsgs) +
-            NumMessagesInGroup(&transInvalInfo->ii.CurrentCmdInvalidMsgs);
-
-  *msgs = msgarray = (SharedInvalidationMessage *)MemoryContextAlloc(
-      CurTransactionContext, nummsgs * sizeof(SharedInvalidationMessage));
-
-  nmsgs = 0;
-  ProcessMessageSubGroupMulti(
-      &transInvalInfo->PriorCmdInvalidMsgs, CatCacheMsgs,
-      (memcpy(msgarray + nmsgs, msgs, n * sizeof(SharedInvalidationMessage)),
-       nmsgs += n));
-  ProcessMessageSubGroupMulti(
-      &transInvalInfo->ii.CurrentCmdInvalidMsgs, CatCacheMsgs,
-      (memcpy(msgarray + nmsgs, msgs, n * sizeof(SharedInvalidationMessage)),
-       nmsgs += n));
-  ProcessMessageSubGroupMulti(
-      &transInvalInfo->PriorCmdInvalidMsgs, RelCacheMsgs,
-      (memcpy(msgarray + nmsgs, msgs, n * sizeof(SharedInvalidationMessage)),
-       nmsgs += n));
-  ProcessMessageSubGroupMulti(
-      &transInvalInfo->ii.CurrentCmdInvalidMsgs, RelCacheMsgs,
-      (memcpy(msgarray + nmsgs, msgs, n * sizeof(SharedInvalidationMessage)),
-       nmsgs += n));
-  Assert(nmsgs == nummsgs);
-
-  return nmsgs;
-}
-
-/*
- * ProcessCommittedInvalidationMessages is executed by xact_redo_commit() or
- * standby_redo() to process invalidation messages. Currently that happens
- * only at end-of-xact.
- *
- * Relcache init file invalidation requires processing both
- * before and after we send the SI messages. See AtEOXact_Inval()
- */
-void ProcessCommittedInvalidationMessages(SharedInvalidationMessage *msgs,
-                                          int nmsgs, bool RelcacheInitFileInval,
-                                          Oid dbid, Oid tsid) {
-  if (nmsgs <= 0)
-    return;
-
-  elog(DEBUG4, "replaying commit with %d messages%s", nmsgs,
-       (RelcacheInitFileInval ? " and relcache file invalidation" : ""));
-
-  if (RelcacheInitFileInval) {
-    elog(DEBUG4, "removing relcache init files for database %u", dbid);
-
-    /*
-     * RelationCacheInitFilePreInvalidate, when the invalidation message
-     * is for a specific database, requires DatabasePath to be set, but we
-     * should not use SetDatabasePath during recovery, since it is
-     * intended to be used only once by normal backends.  Hence, a quick
-     * hack: set DatabasePath directly then unset after use.
-     */
-    if (OidIsValid(dbid))
-      DatabasePath = GetDatabasePath(dbid, tsid);
-
-    RelationCacheInitFilePreInvalidate();
-
-    if (OidIsValid(dbid)) {
-      pfree(DatabasePath);
-      DatabasePath = NULL;
-    }
-  }
-
-  SendSharedInvalidMessages(msgs, nmsgs);
-
-  if (RelcacheInitFileInval)
-    RelationCacheInitFilePostInvalidate();
-}
-
-/*
  * AtEOXact_Inval
  *		Process queued-up invalidation messages at end of main
  *transaction.
@@ -1042,22 +901,11 @@ void AtEOXact_Inval(bool isCommit) {
   INJECTION_POINT("transaction-end-process-inval", NULL);
 
   if (isCommit) {
-    /*
-     * Relcache init file invalidation requires processing both before and
-     * after we send the SI messages.  However, we need not do anything
-     * unless we committed.
-     */
-    if (transInvalInfo->ii.RelcacheInitFileInval)
-      RelationCacheInitFilePreInvalidate();
-
     AppendInvalidationMessages(&transInvalInfo->PriorCmdInvalidMsgs,
                                &transInvalInfo->ii.CurrentCmdInvalidMsgs);
 
     ProcessInvalidationMessagesMulti(&transInvalInfo->PriorCmdInvalidMsgs,
                                      SendSharedInvalidMessages);
-
-    if (transInvalInfo->ii.RelcacheInitFileInval)
-      RelationCacheInitFilePostInvalidate();
   } else {
     ProcessInvalidationMessages(&transInvalInfo->PriorCmdInvalidMsgs,
                                 LocalExecuteInvalidationMessage);
@@ -1093,15 +941,10 @@ void PreCommit_Inval(void) {
  *section.
  *
  * Tasks belong here if they are safe even if the inplace update does not
- * complete.  Currently, this just unlinks a cache file, which can fail.  The
- * sum of this and AtInplace_Inval() mirrors AtEOXact_Inval(isCommit=true).
+ * complete.  There are none: PostgreSQL unlinked the relcache init file here,
+ * and digres has none.
  */
-void PreInplace_Inval(void) {
-  Assert(CritSectionCount == 0);
-
-  if (inplaceInvalInfo && inplaceInvalInfo->RelcacheInitFileInval)
-    RelationCacheInitFilePreInvalidate();
-}
+void PreInplace_Inval(void) { Assert(CritSectionCount == 0); }
 
 /*
  * AtInplace_Inval
@@ -1116,9 +959,6 @@ void AtInplace_Inval(void) {
 
   ProcessInvalidationMessagesMulti(&inplaceInvalInfo->CurrentCmdInvalidMsgs,
                                    SendSharedInvalidMessages);
-
-  if (inplaceInvalInfo->RelcacheInitFileInval)
-    RelationCacheInitFilePostInvalidate();
 
   inplaceInvalInfo = NULL;
 }
@@ -1205,10 +1045,6 @@ void AtEOSubXact_Inval(bool isCommit) {
     /* Must readjust parent's CurrentCmdInvalidMsgs indexes now */
     SetGroupToFollow(&myInfo->parent->ii.CurrentCmdInvalidMsgs,
                      &myInfo->parent->PriorCmdInvalidMsgs);
-
-    /* Pending relcache inval becomes parent's problem too */
-    if (myInfo->ii.RelcacheInitFileInval)
-      myInfo->parent->ii.RelcacheInitFileInval = true;
 
     /* Pop the transaction state stack */
     transInvalInfo = myInfo->parent;
@@ -1557,32 +1393,6 @@ void CacheInvalidateSmgr(RelFileLocatorBackend rlocator) {
   msg.sm.backend_hi = rlocator.backend >> 16;
   msg.sm.backend_lo = rlocator.backend & 0xffff;
   msg.sm.rlocator = rlocator.locator;
-  /* check AddCatcacheInvalidationMessage() for an explanation */
-  VALGRIND_MAKE_MEM_DEFINED(&msg, sizeof(msg));
-
-  SendSharedInvalidMessages(&msg, 1);
-}
-
-/*
- * CacheInvalidateRelmap
- *		Register invalidation of the relation mapping for a database,
- *		or for the shared catalogs if databaseId is zero.
- *
- * Sending this type of invalidation msg forces other backends to re-read
- * the indicated relation mapping file.  It is also necessary to send a
- * relcache inval for the specific relations whose mapping has been altered,
- * else the relcache won't get updated with the new filenode data.
- *
- * Note: because these messages are nontransactional, they won't be captured
- * in commit/abort WAL entries.  Instead, calls to CacheInvalidateRelmap()
- * should happen in low-level relmapper.c routines, which are executed while
- * replaying WAL as well as when creating it.
- */
-void CacheInvalidateRelmap(Oid databaseId) {
-  SharedInvalidationMessage msg;
-
-  msg.rm.id = SHAREDINVALRELMAP_ID;
-  msg.rm.dbId = databaseId;
   /* check AddCatcacheInvalidationMessage() for an explanation */
   VALGRIND_MAKE_MEM_DEFINED(&msg, sizeof(msg));
 

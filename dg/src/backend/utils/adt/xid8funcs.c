@@ -76,68 +76,10 @@ typedef struct {
 StaticAssertDecl(MAX_BACKENDS * 2 <= PG_SNAPSHOT_MAX_NXIP,
                  "possible overflow in pg_current_snapshot()");
 
-/*
- * Helper to get a TransactionId from a 64-bit xid with wraparound detection.
- *
- * It is an ERROR if the xid is in the future.  Otherwise, returns true if
- * the transaction is still new enough that we can determine whether it
- * committed and false otherwise.  If *extracted_xid is not NULL, it is set
- * to the low 32 bits of the transaction ID (i.e. the actual XID, without the
- * epoch).
- *
- * The caller must hold XactTruncationLock since it's dealing with arbitrary
- * XIDs, and must continue to hold it until it's done with any clog lookups
- * relating to those XIDs.
- */
-static bool TransactionIdInRecentPast(FullTransactionId fxid,
-                                      TransactionId *extracted_xid) {
-  TransactionId xid = XidFromFullTransactionId(fxid);
-  FullTransactionId now_fullxid;
-  TransactionId oldest_clog_xid;
-  FullTransactionId oldest_clog_fxid;
-
-  now_fullxid = ReadNextFullTransactionId();
-
-  if (extracted_xid != NULL)
-    *extracted_xid = xid;
-
-  if (!TransactionIdIsValid(xid))
-    return false;
-
-  /* For non-normal transaction IDs, we can ignore the epoch. */
-  if (!TransactionIdIsNormal(xid))
-    return true;
-
-  /* If the transaction ID is in the future, throw an error. */
-  if (!FullTransactionIdPrecedes(fxid, now_fullxid))
-    ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                    errmsg("transaction ID %" PRIu64 " is in the future",
-                           U64FromFullTransactionId(fxid))));
-
-  /*
-   * TransamVariables->oldestClogXid is protected by XactTruncationLock, but
-   * we don't acquire that lock here.  Instead, we require the caller to
-   * acquire it, because the caller is presumably going to look up the
-   * returned XID.  If we took and released the lock within this function, a
-   * CLOG truncation could occur before the caller finished with the XID.
-   */
-  Assert(LWLockHeldByMe(XactTruncationLock));
-
-  /*
-   * If fxid is not older than TransamVariables->oldestClogXid, the relevant
-   * CLOG entry is guaranteed to still exist.
-   *
-   * TransamVariables->oldestXid governs allowable XIDs.  Usually,
-   * oldestClogXid==oldestXid.  It's also possible for oldestClogXid to
-   * follow oldestXid, in which case oldestXid might advance after our
-   * ReadNextFullTransactionId() call.  If oldestXid has advanced, that
-   * advancement reinstated the usual oldestClogXid==oldestXid.  Whether or
-   * not that happened, oldestClogXid is allowable relative to now_fullxid.
-   */
-  oldest_clog_xid = TransamVariables->oldestClogXid;
-  oldest_clog_fxid =
-      FullTransactionIdFromAllowableAt(now_fullxid, oldest_clog_xid);
-  return !FullTransactionIdPrecedes(fxid, oldest_clog_fxid);
+/* Refuse what needs PostgreSQL's next xid: digres assigns none. */
+static void no_transaction_ids(void) {
+  ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                  errmsg("digres assigns no transaction ids")));
 }
 
 /*
@@ -337,44 +279,9 @@ Datum pg_current_xact_id_if_assigned(PG_FUNCTION_ARGS) {
  * Note that only top-transaction XIDs are included in the snapshot.
  */
 Datum pg_current_snapshot(PG_FUNCTION_ARGS) {
-  pg_snapshot *snap;
-  uint32 nxip, i;
-  Snapshot cur;
-  FullTransactionId next_fxid = ReadNextFullTransactionId();
-
-  cur = GetActiveSnapshot();
-  if (cur == NULL)
-    elog(ERROR, "no active snapshot set");
-
-  /* allocate */
-  nxip = cur->xcnt;
-  snap = (pg_snapshot *)palloc(PG_SNAPSHOT_SIZE(nxip));
-
-  /*
-   * Fill.  This is the current backend's active snapshot, so MyProc->xmin
-   * is <= all these XIDs.  As long as that remains so, oldestXid can't
-   * advance past any of these XIDs.  Hence, these XIDs remain allowable
-   * relative to next_fxid.
-   */
-  snap->xmin = FullTransactionIdFromAllowableAt(next_fxid, cur->xmin);
-  snap->xmax = FullTransactionIdFromAllowableAt(next_fxid, cur->xmax);
-  snap->nxip = nxip;
-  for (i = 0; i < nxip; i++)
-    snap->xip[i] = FullTransactionIdFromAllowableAt(next_fxid, cur->xip[i]);
-
-  /*
-   * We want them guaranteed to be in ascending order.  This also removes
-   * any duplicate xids.  Normally, an XID can only be assigned to one
-   * backend, but when preparing a transaction for two-phase commit, there
-   * is a transient state when both the original backend and the dummy
-   * PGPROC entry reserved for the prepared transaction hold the same XID.
-   */
-  sort_snapshot(snap);
-
-  /* set size after sorting, because it may have removed duplicate xips */
-  SET_VARSIZE(snap, PG_SNAPSHOT_SIZE(snap->nxip));
-
-  PG_RETURN_POINTER(snap);
+  /* A snapshot's xids are made full by the next xid, which there is not. */
+  no_transaction_ids();
+  PG_RETURN_NULL(); /* not reached */
 }
 
 /*
@@ -579,41 +486,7 @@ Datum pg_snapshot_xip(PG_FUNCTION_ARGS) {
  * though the parent xact may still be in progress or may have aborted.
  */
 Datum pg_xact_status(PG_FUNCTION_ARGS) {
-  const char *status;
-  FullTransactionId fxid = PG_GETARG_FULLTRANSACTIONID(0);
-  TransactionId xid;
-
-  /*
-   * We must protect against concurrent truncation of clog entries to avoid
-   * an I/O error on SLRU lookup.
-   */
-  LWLockAcquire(XactTruncationLock, LW_SHARED);
-  if (TransactionIdInRecentPast(fxid, &xid)) {
-    Assert(TransactionIdIsValid(xid));
-
-    /*
-     * Like when doing visibility checks on a row, check whether the
-     * transaction is still in progress before looking into the CLOG.
-     * Otherwise we would incorrectly return "committed" for a transaction
-     * that is committing and has already updated the CLOG, but hasn't
-     * removed its XID from the proc array yet. (See comment on that race
-     * condition at the top of heapam_visibility.c)
-     */
-    if (TransactionIdIsInProgress(xid))
-      status = "in progress";
-    else if (TransactionIdDidCommit(xid))
-      status = "committed";
-    else {
-      /* it must have aborted or crashed */
-      status = "aborted";
-    }
-  } else {
-    status = NULL;
-  }
-  LWLockRelease(XactTruncationLock);
-
-  if (status == NULL)
-    PG_RETURN_NULL();
-  else
-    PG_RETURN_TEXT_P(cstring_to_text(status));
+  /* A status is of an xid, which digres never assigns. */
+  no_transaction_ids();
+  PG_RETURN_NULL(); /* not reached */
 }

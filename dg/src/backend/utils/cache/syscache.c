@@ -156,27 +156,6 @@ void InitCatalogCache(void) {
 }
 
 /*
- * InitCatalogCachePhase2 - finish initializing the caches
- *
- * Finish initializing all the caches, including necessary database
- * access.
- *
- * This is *not* essential; normally we allow syscaches to be initialized
- * on first use.  However, it is useful as a mechanism to preload the
- * relcache with entries for the most-commonly-used system catalogs.
- * Therefore, we invoke this routine when we need to write a new relcache
- * init file.
- */
-void InitCatalogCachePhase2(void) {
-  int cacheId;
-
-  Assert(CacheInitialized);
-
-  for (cacheId = 0; cacheId < SysCacheSize; cacheId++)
-    InitCatCachePhase2(SysCache[cacheId], true);
-}
-
-/*
  * SearchSysCache
  *
  *	A layer on top of SearchCatCache that does the initialization and

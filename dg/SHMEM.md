@@ -40,7 +40,7 @@ directory fixed in size ahead of time.
 
 | Block | Made in | Holds | Guard |
 | --- | --- | --- | --- |
-| TransamVariables | access/transam `varsup.c:31` | nextXid, nextOid | XidGen, OidGen LWLocks |
+| TransamVariables | access/transam `varsup.c` | the snapshot's constants | set before threads start |
 | LOCK, PROCLOCK hashes | storage/lmgr `lock.c:422,439` | heavyweight locks | partition LWLocks |
 | Fast Path Strong Relation Lock Data | storage/lmgr `lock.c:446` | counts per partition | a spinlock |
 | Proc Header, PGPROC structures, Fast-Path Lock Array | storage/lmgr `proc.c:172,194,234` | a PGPROC a session, free lists | ProcStructLock |
@@ -77,34 +77,22 @@ Beside the registry: the main LWLock array
   PGPROC's POSIX semaphore (port `posix_sema.c`); nothing cuts
   that sleep short. Taken still: ProcArray, SInvalRead and
   SInvalWrite, the lock manager's partitions and each PGPROC's
-  `fpInfoLock`; XactTruncation, by `pg_xact_status()`;
-  InjectionPoint, a build option's; and XidGen, OidGen,
-  RelationMapping and RelCacheInit, each of which goes with what
-  it guards (below). **To replace**: a `std::mutex` or
+  `fpInfoLock`; and InjectionPoint, a build option's. **To
+  replace**: a `std::mutex` or
   `std::shared_mutex` held by `held_lock_t`
   (`storage/held_lock.h`), which holds interrupts off as an
   LWLock does and lets go as an error unwinds it; AutoFile is
   one (`WORKNOTE.md` step 132).
-- **What XidGen, OidGen, RelationMapping and RelCacheInit
-  guard is to go**, not to be locked otherwise. Transaction ids
-  and OIDs are sm's: PostgreSQL's counters of them in
-  `TransamVariables` are deprecated (below). An oid digres
-  stores is sm3's: tcop `utility.c` sends CREATE TABLE and
-  CREATE INDEX to access/sm `smstore.c`, whose
+- **XidGen, OidGen, XactTruncation, RelationMapping and
+  RelCacheInit are gone**, with what they guarded
+  (`WORKNOTE.md` step 137): PostgreSQL's xid and OID counters,
+  the relation mapper and the relcache's init files. An oid
+  digres stores is sm3's: tcop `utility.c` sends CREATE TABLE
+  and CREATE INDEX to access/sm `smstore.c`, whose
   `sm_cat_create_*` calls take it from sm3's `cat_new_oid()`,
-  sm1's sequence `oid_seq`, 16384 to `UINT32_MAX`.
-  transam `varsup.c` `GetNewObjectId()` is still called, by
-  catalog `catalog.c` `GetNewOidWithIndex()` and
-  `GetNewRelFileNumber()` for CREATE TYPE, FUNCTION, CAST,
-  TRIGGER and the rest, and a foreign table's
-  `heap_create_with_catalog()`; each then writes a catalog
-  table, which catalog `indexing.c` refuses, so the oid it
-  draws is never kept. The relation
-  mapper's files and the relcache's init files are never read:
-  `RelationCacheInitializePhase2()` and `Phase3()`, which load
-  them, have no caller. RelCacheInit is also taken in one
-  function and let go in another, across a sinval send, which
-  no scoped guard can hold.
+  sm1's sequence `oid_seq`, 16384 to `UINT32_MAX`. What would
+  draw one of PostgreSQL's for a catalog row (CREATE TYPE,
+  DOMAIN, CAST and the rest) is refused as the write would be.
 - **Spinlocks** (storage/lmgr `s_lock.c`): none is taken.
   Each is a `std::mutex`, or an atomic where it guarded one word
   (`WORKNOTE.md` steps 132, 133). Left: port `atomics.c`'s
@@ -166,13 +154,11 @@ switches between (`SwitchToSharedLatch()`), which are one bit.
   FORCE, the signal functions and `ProcNumberGetProc()`. **To
   replace**: a snapshot that is a constant, taken without a
   lock; the lookups by pid move to the session registry.
-- **TransamVariables** (access/transam `varsup.c`). Transaction
-  ids and OIDs come from sm; PostgreSQL's own are deprecated.
-  `nextXid` never moves; `nextOid` serves
-  `GetNewOidWithIndex()`, whose callers write catalogs, which
-  are refused. **To remove**, with XidGen and OidGen; what reads
-  an xid (`xid8funcs.c`'s `pg_current_xact_id()` and the rest)
-  is to read sm's.
+- **TransamVariables** (access/transam `varsup.c`). Its
+  counters are gone (`WORKNOTE.md` step 137); left are
+  `oldestXid`, `latestCompletedXid` and `xactCompletionCount`,
+  which `GetSnapshotData()` reads and which never change. **To
+  remove** with the constant snapshot (§7, step 3).
 - **ProcSignal** (storage/ipc `procsignal.c`). Two reasons have
   senders: the sinval catchup and
   `pg_log_backend_memory_contexts()`. It also keeps the cancel
@@ -211,6 +197,7 @@ has a caller still, and goes with the step that removes it:
 1. **PostgreSQL's xid and OID counters, the relation mapper's
    files and the relcache's init files**, removed, with
    XidGen, OidGen, RelationMapping and RelCacheInit (§3).
+   Done (`WORKNOTE.md` step 137).
 2. **The invalidation bus** (§5), then ProcSignal and
    PMSignalState.
 3. **The constant snapshot**: the proc array becomes the
