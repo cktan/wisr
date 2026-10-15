@@ -145,8 +145,8 @@ int analyze_table(table_t *table, int32_t target, std::mt19937_64 &rng,
   }
   // A heap of no bytes and no row read is a new store, a new or
   // truncated table's: the host plans it as PostgreSQL plans one
-  // truncated (§6.7). The bytes are RocksDB's estimate, which may
-  // read 0 mid-flush, so the sample decides.
+  // truncated (§6.7). The bytes in sorted files are RocksDB's
+  // estimate, so the sample decides.
   if (st.heap_disk == 0 && st.heap_mem == 0 && s.rows_read == 0) {
     return 0;
   }

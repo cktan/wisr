@@ -2812,9 +2812,8 @@ TEST_CASE("a table's sizes, rowno limit and probes are read live") {
   // 2. Commit 20,000 rows: N is the last rowno, nothing is on
   //    disk yet, the memtable is a probe, and the heap's and an
   //    index's sizes are their relids' in the table's store.
-  //    The memtable amounts are not checked: RocksDB's estimate
-  //    of one rel among others is an order of magnitude, and
-  //    was measured at 0 (sm1/API.md).
+  //    The memtable amounts are counted as written (sm1/API.md),
+  //    and checked there.
   // 3. An index the table does not have fails with SM_ERR_NOTFOUND.
   // 4. Truncate: the handle sizes the new store, 0 bytes and no
   //    probe, and N carries over.

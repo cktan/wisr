@@ -1835,8 +1835,9 @@ dp1|q|sequence|$me|permanent||
 OUT
 cmp -s "$work/dp.out" "$work/dp.expected" || fail "\\d+, \\dt+ and \\ds+"
 # Verify that the size functions give a table's and its index's bytes in
-# sm, which are 0 while empty (above) and grow with their rows. sm's bytes
-# in memtables are estimates, so no more than that is checked.
+# sm, which are 0 while empty (above) and grow with their rows. sm counts
+# its bytes in memtables, so the index's are never 0 here; what is in
+# files is an estimate, so no more than that is checked.
 # 1. Put a thousand rows in dp1.t.
 # 2. The table and its index have bytes; the total is the two; a fork
 #    other than main has none.

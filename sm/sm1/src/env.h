@@ -18,6 +18,8 @@
 
 #include <rocksdb/db.h>
 
+#include "memcount.h"
+
 namespace wisr {
 struct db_t;
 }
@@ -38,6 +40,8 @@ struct sm1::env_t {
    * (TEMPTABLE.md §2): made empty by each attach, and never logged.
    */
   rocksdb::DB *tmp = nullptr;
+  /* The listener of tmp's memtables, for its stores' counts. */
+  std::shared_ptr<wisr::memcount_listener_t> tmp_listener;
   std::mutex mu; /* guards the root db and the two sets below */
 
   /* Open databases by name, shared by their sessions. */

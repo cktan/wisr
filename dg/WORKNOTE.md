@@ -4201,3 +4201,40 @@ lock (`SHMEM.md` §5.1) needs.
   committed; another table's DDL and inserts do not; an analyze
   does, own until committed; an index's creation does, and its
   becoming valid again; the epoch moves only with a namespace.
+
+## Step 144: a relid's memtable bytes are counted
+
+`server.sh`'s check that an index has bytes failed in about one
+server run in six, on main as well: `pg_relation_size()` of a
+primary key over 1,000 fresh rows read 0. The same rows read from
+0 to 198,000 bytes from run to run while unflushed, and 23,618
+after a restart, which flushed them.
+
+- **The cause is RocksDB's estimate of a range within a
+  memtable.** A table and its indexes are one store, one column
+  family, each under a relid; `GetApproximateMemTableStats()`
+  samples the skip list, whose shape is random per process, so a
+  relid's range among others reads anything from 0 to the whole
+  memtable. The planner sizes a table by it at every plan
+  (`smstore_estimate_size()`), and ANALYZE records it.
+- **sm1 counts what it writes** (`sm1/src/memcount.h`): each
+  write's version key and value, by the key's first two bytes, at
+  the four places a store is written (a version's put, a
+  rollback's delete, a load's batch, GC's range delete). A count
+  is kept for the active memtable and each sealed one; a RocksDB
+  listener on each instance, the temporary one included, starts a
+  count when a memtable is sealed and drops those a flush wrote
+  out. A read counts only as many sealed memtables as RocksDB
+  says are unflushed, since a waiting `Flush()` returns before
+  the listener hears of it.
+- **`sm1::approxsize()` answers a range of whole 2-byte prefixes
+  from the counts**, which is every range sm2 asks for; any other
+  range keeps RocksDB's estimate. The bytes in files are still
+  estimated.
+- Counts start at 0 when a database opens: recovery flushes what
+  the WAL held.
+- 1,000 rows of `(int primary key, text of 100)` now read 140,000
+  bytes for the heap and 39,000 for the index in every run.
+- sm1 `test_stats.cc`: each prefix's memtable bytes are exactly
+  its rows' versions, 0 after a flush, and only the new rows'
+  after more. `sm1/API.md`, `sm1.h`, `STATISTICS.md` §3.1.

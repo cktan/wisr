@@ -1268,13 +1268,20 @@ those in memtables, uncompressed. A NULL `lo` or `hi` leaves
 that end open. Neither part is corrected, and they are not to
 be added as they stand: rows not yet flushed are counted at
 full size, several times what they take once flushed
-(`STATISTICS.md` §6 at the stack's root). `mem` is RocksDB's
+(`STATISTICS.md` §6 at the stack's root).
+
+`mem` is counted, not estimated, for a range of whole 2-byte key
+prefixes — `lo` and `hi` each 2 bytes or NULL, as an sm2 relid's
+range is: the bytes of every version and tombstone written under
+those prefixes into a memtable not yet flushed, each its key and
+value as sm1 writes them, without RocksDB's own overhead. sm1
+counts them as it writes, by prefix, and drops a memtable's count
+once RocksDB has flushed it. A write that races a memtable's
+sealing may be counted in the next memtable's count, until that
+one is flushed too. Of any other range, `mem` is RocksDB's
 estimate from sampling its memtables, an order of magnitude and
-no better: 0 for an empty range, 0.4 to 1.05 times the bytes over
-a whole store of 100 to 100,000 rows, and for a range among
-others measured from 0 to 4 times — for a third of a store, 0 in
-one trial of thirty, and a hundred rows beside 20,000 once
-estimated above them.
+no better: for a range among others it was measured from 0 to 4
+times, and 0 in one trial of thirty.
 
 It reads RocksDB's estimates, not rows, so it needs no
 transaction, takes no lock and sees no snapshot. A store

@@ -359,7 +359,18 @@ int write_batch(sm1::loader_t *l) {
   }
   // One write, not synced, as any version's put is.
   rocksdb::Status st = l->st.rdb->Write(store_write_options(l->st), &batch);
-  return st.ok() ? 0 : set_status_error(st, "load: write the batch");
+  if (!st.ok()) {
+    return set_status_error(st, "load: write the batch");
+  }
+  // Every key is in the memtable now: count each.
+  for (const stream_t &t : l->streams) {
+    for (const entry_t &e : t.buf) {
+      count_write(l->st, e.first,
+                  version_key(e.first, l->wts, l->seq).size() +
+                      version_value(0, l->s->xid, e.second).size());
+    }
+  }
+  return 0;
 }
 
 /* A large load: finish every stream's files, and hand them over. */

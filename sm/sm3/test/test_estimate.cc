@@ -193,7 +193,7 @@ TEST_CASE("tbl_analyze records each column's statistics and the sizes") {
   //    rows, a heap size, and an entry for the index; a is unique
   //    and in rowno order, b has the ten words listed near 0.1
   //    each, and c a null fraction near 0.9. The index's size is
-  //    RocksDB's estimate, which may read 0 mid-flush: unchecked.
+  //    unchecked: what of it is in files is RocksDB's estimate.
   // 3. After TRUNCATE the heap holds no bytes: an analyze records
   //    nothing, and the old statistics stay.
   db_t db;

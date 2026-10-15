@@ -250,6 +250,9 @@ int open_tmp(sm1::env_t *env) {
   rocksdb::Options opt;
   opt.create_if_missing = true;
   opt.error_if_exists = true;
+  // Count its stores' memtable bytes as RocksDB seals and flushes them.
+  env->tmp_listener = std::make_shared<wisr::memcount_listener_t>();
+  opt.listeners.push_back(env->tmp_listener);
   // Open the empty instance every temporary store will live in.
   rocksdb::Status s = rocksdb::DB::Open(opt, path, &env->tmp);
   if (!s.ok()) {

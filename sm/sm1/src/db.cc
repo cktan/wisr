@@ -454,6 +454,9 @@ db_t *db_open(const std::string &path, const char *dbname,
   }
 
   std::vector<rocksdb::ColumnFamilyHandle *> handles;
+  // Count each store's memtable bytes as RocksDB seals and flushes them.
+  db->listener = std::make_shared<memcount_listener_t>();
+  dbo.listeners.push_back(db->listener);
   // Open RocksDB with every column family; this replays the WAL.
   s = rocksdb::DB::Open(dbo, path, cfs, &handles, &db->rdb);
   // Fail if RocksDB could not open it.
@@ -477,7 +480,10 @@ db_t *db_open(const std::string &path, const char *dbname,
       db->cf_meta = handles[i];
       // A store's CF.
     } else if (parse_store_cf_name(name, &storeid)) {
-      db->stores[storeid] = store_t{db->rdb, handles[i]};
+      // Its memtables were flushed in recovery: its counts start at 0.
+      auto mem = std::make_shared<memcount_t>();
+      db->listener->add(name, mem);
+      db->stores[storeid] = store_t{db->rdb, handles[i], nullptr, mem};
     } else {
       // Unknown CF: release its handle and fail the open.
       db->rdb->DestroyColumnFamilyHandle(handles[i]);
@@ -810,10 +816,13 @@ int db_create_store_cf(db_t *db, uint64_t storeid, sm1::session_t *owner) {
   if (!s.ok()) {
     return set_status_error(s, "create column family");
   }
+  // Its memtable bytes, counted from the first write.
+  auto mem = std::make_shared<memcount_t>();
+  (owner ? db->tmp_listener : db->listener.get())->add(name, mem);
   // Hold store_mu exclusively while registering it.
   std::unique_lock<std::shared_mutex> guard(db->store_mu);
   // Register the handle, with the instance it is in.
-  db->stores[storeid] = store_t{rdb, h, owner};
+  db->stores[storeid] = store_t{rdb, h, owner, mem};
   db->had_temp = db->had_temp || owner;
   return 0;
 }
@@ -828,8 +837,9 @@ int db_drop_store_cf(db_t *db, uint64_t storeid) {
   if (it == db->stores.end()) {
     return 0;
   }
-  // Drop the store's column family.
+  // Drop the store's column family, and stop counting its memtables.
   store_t st = it->second;
+  (st.owner ? db->tmp_listener : db->listener.get())->remove(st.cf->GetName());
   rocksdb::Status s = st.rdb->DropColumnFamily(st.cf);
   // Release the handle either way.
   st.rdb->DestroyColumnFamilyHandle(st.cf);

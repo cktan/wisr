@@ -892,10 +892,12 @@ int lsstore(session_t* session, std::vector<uint64_t>& out);
  * in memtables, uncompressed. A NULL lo or hi leaves that end
  * open. Neither part is corrected, and they are not to be added
  * as they stand: rows not yet flushed are counted at full size.
- * mem is RocksDB's estimate from sampling its memtables, an order
- * of magnitude and no better: 0 for an empty range, 0.4 to 1.05
- * times the bytes over a whole store, and for a range among
- * others, however large, measured from 0 to 4 times.
+ * mem is counted for a range of whole 2-byte key prefixes, lo and
+ * hi each 2 bytes or NULL, as sm2's relids give: the bytes written
+ * under them into memtables not yet flushed, each version's key and
+ * value as sm1 writes it. Of any other range it is RocksDB's
+ * estimate from sampling its memtables, an order of magnitude and
+ * no better: for a range among others, measured from 0 to 4 times.
  *
  * Reads RocksDB's estimates, not the rows: it needs no
  * transaction, takes no lock and sees no snapshot. A store

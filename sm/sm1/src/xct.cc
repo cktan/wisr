@@ -433,7 +433,11 @@ int rollback(sm1::session_t *s, int depth) {
     // Skip a CF already dropped.
     if (store.cf) {
       // Delete the exact version: key, its wts, its seq.
-      batches[store.rdb].Delete(store.cf, version_key(u.key, u.wts, u.seq));
+      std::string vkey = version_key(u.key, u.wts, u.seq);
+      batches[store.rdb].Delete(store.cf, vkey);
+      // The tombstone is in the memtable, written or not below: a
+      // failed write fails the transaction, which aborts.
+      count_write(store, u.key, vkey.size());
     }
   }
   // Apply each instance's deletes in one write.

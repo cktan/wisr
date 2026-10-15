@@ -196,6 +196,9 @@ void purge_one(db_t *db, const db_t::purge_t &p) {
   // Done: RocksDB flushes the memtable once range tombstones
   // pile up in it (store_max_range_deletions).
   if (s.ok()) {
+    rocksdb::Slice userkey = version_userkey(p.key);
+    count_write(st, std::string_view(userkey.data(), userkey.size()),
+                p.key.size() + end.size());
     return;
   }
   // On failure the tombstone stays; the next compaction that

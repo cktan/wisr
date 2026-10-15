@@ -28,6 +28,8 @@
 #include <rocksdb/db.h>
 #include <rocksdb/options.h>
 
+#include "memcount.h"
+
 /* Database format version, stored in CF:meta. Version 4 added
  * the mode byte on each lock key of a PREPARED record (§8.4);
  * version 6 renamed each store's column family from rel.<id>
@@ -66,7 +68,25 @@ struct store_t {
   rocksdb::ColumnFamilyHandle *cf = nullptr;
   /* The session a temporary store belongs to; NULL for any other. */
   sm1::session_t *owner = nullptr;
+  /*
+   * The bytes its writes put in its memtables, by key prefix
+   * (memcount.h): shared, so a writer holding this copy may count
+   * into it though the store is dropped meanwhile.
+   */
+  std::shared_ptr<memcount_t> mem;
 };
+
+/*
+ * Count a write that put bytes into store's memtable under the user
+ * key userkey: its version's key and value, or a tombstone's key
+ * (memcount.h).
+ */
+inline void count_write(const store_t &store, std::string_view userkey,
+                        uint64_t bytes) {
+  if (store.mem) {
+    store.mem->add(userkey, bytes);
+  }
+}
 
 /*
  * The options of a write to store: a temporary store's writes are
@@ -132,6 +152,13 @@ struct db_t {
    */
   rocksdb::DB *tmp = nullptr;
   uint64_t dbid = 0;
+  /*
+   * The listeners of rdb's and tmp's memtables, which keep each
+   * store's counts in step with RocksDB's sealing and flushing
+   * (memcount.h). tmp's is the environment's, set with tmp.
+   */
+  std::shared_ptr<memcount_listener_t> listener;
+  memcount_listener_t *tmp_listener = nullptr;
   /* Whether a temporary store was ever made; guarded by store_mu. */
   bool had_temp = false;
   rocksdb::ColumnFamilyHandle *cf_default = nullptr;

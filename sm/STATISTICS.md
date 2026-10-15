@@ -192,6 +192,18 @@ in proportion to the compression ratio while a load or a burst
 of updates is in flight, and the design has to say which it
 reports (§6).
 
+**A relid's memtable bytes are counted, not sampled.** RocksDB
+answers for a store's memtables whole, but for a key range within
+them it samples its skip list, whose shape is random per process:
+a heap or an index among others read anything from 0 to the whole
+memtable, the same rows differently from one server run to the
+next, so a table's index read 0 bytes in about one run in six.
+sm1 counts each write's bytes by the first two bytes of its key,
+which is sm2's relid, for the active memtable and for each sealed
+one until RocksDB flushes it, and answers a relid's range from
+that (`sm1/API.md`, `sm1::approxsize`). The bytes in files are
+still RocksDB's estimate.
+
 `sm_analyze` records the size it saw, beside the row count it
 estimated at the same moment. The size is also answered live,
 so a caller can tell how far a table has moved since.

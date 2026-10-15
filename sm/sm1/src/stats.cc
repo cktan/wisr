@@ -83,10 +83,22 @@ int approxsize(sm1::session_t *s, uint64_t storeid, const char *lo,
   if (!st.ok()) {
     return set_status_error(st, "approximate store size");
   }
-  uint64_t count = 0, bytes = 0;
-  // The memtables' share of the range.
-  store.rdb->GetApproximateMemTableStats(store.cf, range, &count, &bytes);
   *disk = files;
+  // The memtables' share of a range of whole 2-byte prefixes, a heap's
+  // or an index's: counted as written (memcount.h). Of any other
+  // range, RocksDB's sample of its memtables.
+  if ((!lo || lolen == 2) && (!hi || hilen == 2) && store.mem) {
+    uint32_t from = lo ? key_prefix(std::string_view(lo, lolen)) : 0;
+    uint32_t to = hi ? key_prefix(std::string_view(hi, hilen)) : 0x10000;
+    // The sealed memtables RocksDB has not flushed yet.
+    uint64_t unflushed = 0;
+    store.rdb->GetIntProperty(
+        store.cf, rocksdb::DB::Properties::kNumImmutableMemTable, &unflushed);
+    *mem = store.mem->bytes(from, to, unflushed);
+    return 0;
+  }
+  uint64_t count = 0, bytes = 0;
+  store.rdb->GetApproximateMemTableStats(store.cf, range, &count, &bytes);
   *mem = bytes;
   return 0;
 }

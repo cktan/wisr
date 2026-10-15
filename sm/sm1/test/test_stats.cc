@@ -10,6 +10,7 @@
 #include "session.h"
 #include "sm0_codec.h"
 #include "sm1.h"
+#include "version.h"
 
 #include <string>
 
@@ -87,6 +88,46 @@ private:
   uint64_t m_store = 0;
 };
 
+/* A 2-byte prefix, big-endian, as sm2 writes a relid. */
+std::string two_bytes(uint16_t prefix) {
+  return std::string{static_cast<char>(prefix >> 8),
+                     static_cast<char>(prefix & 0xff)};
+}
+
+/*
+ * Insert n rows of width bytes under the 2-byte prefix, keyed from
+ * first on, in one transaction; the bytes they put in the memtable,
+ * each a version's key and value as sm1 writes them.
+ */
+uint64_t load_prefix(sm1::session_t *s, uint64_t store, uint16_t prefix, int n,
+                     size_t width, int first = 0) {
+  uint64_t bytes = 0;
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  for (int i = first; i < first + n; i++) {
+    std::string key = two_bytes(prefix);
+    sm0::put_be32(key, i);
+    std::string val(width, 'v');
+    REQUIRE(sm1::insert(s, store, key, val) == 0);
+    bytes += wisr::version_key(key, 0, 0).size() +
+             wisr::version_value(0, 0, val).size();
+  }
+  REQUIRE(sm1::commit(s) == 0);
+  return bytes;
+}
+
+/* sm1::approxsize's memtable bytes of [lo, hi) as 2-byte prefixes, -1 open. */
+uint64_t mem_of(sm1::session_t *s, uint64_t store, int lo, int hi,
+                uint64_t &disk) {
+  std::string l = lo >= 0 ? two_bytes(static_cast<uint16_t>(lo)) : "";
+  std::string h = hi >= 0 ? two_bytes(static_cast<uint16_t>(hi)) : "";
+  uint64_t mem = 0;
+  REQUIRE_MESSAGE(sm1::approxsize(s, store, lo >= 0 ? l.data() : nullptr,
+                                  l.size(), hi >= 0 ? h.data() : nullptr,
+                                  h.size(), disk, mem) == 0,
+                  sm1::errmsg());
+  return mem;
+}
+
 /* sm1::approxsize of [lo, hi) as one-byte prefixes; 0 is open. */
 void size_of(sm1::session_t *s, uint64_t store, char lo, char hi,
              uint64_t &disk, uint64_t &mem) {
@@ -101,9 +142,8 @@ void size_of(sm1::session_t *s, uint64_t store, char lo, char hi,
 TEST_CASE("sm1_approxsize reports memtable and file bytes apart") {
   // Verify the two parts follow the rows from memtable to file.
   // 1. An empty store is 0 and 0, with no transaction.
-  // 2. Rows not yet flushed are in mem only. Its amount is not
-  //    checked: RocksDB samples its memtables, and over a whole
-  //    store mem was measured from 0.4 to 1.05 times the bytes.
+  // 2. Rows not yet flushed are in mem only. Its amount is checked
+  //    by prefix in the test below.
   // 3. After a flush and a compaction they are in disk only,
   //    and disk is the store's file bytes.
   // 4. An unknown store fails with SM_ERR_NOTFOUND.
@@ -193,4 +233,35 @@ TEST_CASE("sm1_probes counts the sorted runs a lookup may visit") {
   CHECK(f.probes() == 2);
   f.compact();
   CHECK(f.probes() == 1);
+}
+
+TEST_CASE("sm1_approxsize counts a 2-byte prefix's memtable bytes exactly") {
+  // Verify the memtable bytes of a range of whole 2-byte prefixes, a
+  // heap's or an index's in sm2, are what was written there, not a
+  // sample of the memtable that may read 0 for a range among others.
+  // 1. 2,000 rows of 200 bytes under prefix 1 and 1,000 of 20 under
+  //    prefix 2, unflushed: each prefix's mem is exactly its rows'
+  //    versions, a prefix with none is 0, the whole store is both,
+  //    and disk is 0.
+  // 2. After a flush every mem is 0 and the store's disk is not.
+  // 3. 500 more rows under prefix 1: its mem is exactly theirs.
+  stats_fixture_t f;
+  uint64_t a = load_prefix(f.s(), f.store(), 1, 2000, 200);
+  uint64_t b = load_prefix(f.s(), f.store(), 2, 1000, 20);
+  uint64_t disk = 1;
+  CHECK(mem_of(f.s(), f.store(), 1, 2, disk) == a);
+  CHECK(disk == 0);
+  CHECK(mem_of(f.s(), f.store(), 2, 3, disk) == b);
+  CHECK(mem_of(f.s(), f.store(), 3, -1, disk) == 0);
+  CHECK(mem_of(f.s(), f.store(), -1, -1, disk) == a + b);
+
+  f.flush();
+  CHECK(mem_of(f.s(), f.store(), 1, 2, disk) == 0);
+  CHECK(mem_of(f.s(), f.store(), 2, 3, disk) == 0);
+  CHECK(mem_of(f.s(), f.store(), -1, -1, disk) == 0);
+  CHECK(disk > 0);
+
+  uint64_t c = load_prefix(f.s(), f.store(), 1, 500, 200, 2000);
+  CHECK(mem_of(f.s(), f.store(), 1, 2, disk) == c);
+  CHECK(mem_of(f.s(), f.store(), 2, 3, disk) == 0);
 }

@@ -937,14 +937,17 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
   // The previous writer took its commit_ts before it ended.
   assert(commit_ts < wts);
   // Put the version eagerly; it is not synced (§5 step 5).
+  std::string vkey = version_key(key, wts, seq);
+  std::string vval = version_value(
+      flags, s->xid, op == WRITE_DELETE ? rocksdb::Slice() : data);
   rocksdb::Status status =
-      st.rdb->Put(store_write_options(st), st.cf, version_key(key, wts, seq),
-                  version_value(flags, s->xid,
-                                op == WRITE_DELETE ? rocksdb::Slice() : data));
+      st.rdb->Put(store_write_options(st), st.cf, vkey, vval);
   // Fail if the put failed.
   if (!status.ok()) {
     return set_status_error(status, "write version");
   }
+  count_write(st, std::string_view(key.data(), key.size()),
+              vkey.size() + vval.size());
   // Advance seq, and make the write visible to ourselves.
   s->seq = seq;
   s->seq_hwm = seq;
