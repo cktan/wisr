@@ -43,8 +43,8 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT SnapshotData SnapshotToastData;
 
 /*
  * Similarly, some initialization is required for a NonVacuumable snapshot.
- * The caller must supply the visibility cutoff state to use (c.f.
- * GlobalVisTestFor()).
+ * The caller must supply the visibility cutoff state to use; digres keeps
+ * none (procarray.c).
  */
 #define InitNonVacuumableSnapshot(snapshotdata, vistestp)  \
 	((snapshotdata).snapshot_type = SNAPSHOT_NON_VACUUMABLE, \
@@ -89,13 +89,6 @@ extern bool ThereAreNoPriorRegisteredSnapshots(void);
 extern bool HaveRegisteredOrActiveSnapshot(void);
 
 extern char *ExportSnapshot(Snapshot snapshot);
-
-/*
- * These live in procarray.c because they're intimately linked to the
- * procarray contents, but thematically they better fit into snapmgr.h.
- */
-typedef struct GlobalVisState GlobalVisState;
-extern GlobalVisState *GlobalVisTestFor(Relation rel);
 
 /*
  * Utility functions for implementing visibility routines in table AMs.

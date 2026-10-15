@@ -262,18 +262,6 @@ struct PGPROC {
                                 * ProcGlobal->subxidStates[i] */
   struct XidCache subxids;     /* cache for subtransaction XIDs */
 
-  /* Support for group XID clearing. */
-  /* true, if member of ProcArray group waiting for XID clear */
-  bool procArrayGroupMember;
-  /* next ProcArray group member waiting for XID clear */
-  pg_atomic_uint32 procArrayGroupNext;
-
-  /*
-   * latest transaction id among the transaction's main XID and
-   * subtransactions
-   */
-  TransactionId procArrayGroupMemberXid;
-
   /* Lock manager data, recording fast-path locks taken by this backend. */
   LWLock fpInfoLock;  /* protects per-backend fast-path state */
   uint64 *fpLockBits; /* lock modes held for each fast-path slot */
@@ -369,8 +357,6 @@ typedef struct PROC_HDR {
   uint32 allProcCount;
   /* Head of list of free PGPROC structures */
   dlist_head freeProcs;
-  /* First pgproc waiting for group XID clear */
-  pg_atomic_uint32 procArrayGroupFirst;
 
   /* Current shared estimate of appropriate spins_per_delay value */
   int spins_per_delay;

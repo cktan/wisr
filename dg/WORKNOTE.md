@@ -4401,3 +4401,25 @@ snapshot always the same.
   xid clearing, the replication slots' xmins and the `XidCache`
   (`SHMEM.md` §6). `ProcArrayLock` is taken still at a
   transaction's start and end and by the lookups by pid.
+
+## Step 151: what fed the snapshot's scan goes
+
+With the snapshot a constant (step 150), what only the scan
+used, or computed for heap pruning and VACUUM, which do not run,
+goes from storage/ipc `procarray.c`, 1,721 lines to 903.
+
+- **Group XID clearing**: `ProcArrayGroupClearXid()`,
+  `ProcArrayEndTransactionInternal()`, and the PGPROC and
+  ProcGlobal fields for them. `ProcArrayEndTransaction()`
+  asserts the transaction had no xid, as none is assigned.
+- **The horizons**: `ComputeXidHorizons()`, `GlobalVisTestFor()`
+  and `GlobalVisHorizonKindForRel()`, the `GlobalVisUpdate`
+  functions, the `GlobalVis*Rels` state and its types. The
+  planner's `get_actual_variable_range()` gives its
+  non-vacuumable snapshot no horizon: it is reached only for a
+  catalog's index, and there is none.
+- **The replication slots' xmins**, which nothing set.
+- **`CountOtherDBBackends()`**, which had no caller.
+- Left for the session registry: the `XidCache`, its debug
+  counters, and the dense arrays `ProcArrayAdd()` and
+  `ProcArrayRemove()` keep.

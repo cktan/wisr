@@ -6115,8 +6115,11 @@ static bool get_actual_variable_endpoint(
    * a huge amount of time here, so we give up once we've read too many heap
    * pages.  When we fail for that reason, the caller will end up using
    * whatever extremal value is recorded in pg_statistic.
+   *
+   * digres keeps no horizon (procarray.c): this is reached only for a
+   * catalog's index, of which there is none, so the snapshot has none.
    */
-  InitNonVacuumableSnapshot(SnapshotNonVacuumable, GlobalVisTestFor(heapRel));
+  InitNonVacuumableSnapshot(SnapshotNonVacuumable, NULL);
 
   index_scan =
       index_beginscan(heapRel, indexRel, &SnapshotNonVacuumable, NULL, 1, 0);

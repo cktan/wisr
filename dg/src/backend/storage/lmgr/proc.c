@@ -169,7 +169,6 @@ void InitProcGlobal(void) {
    */
   ProcGlobal->spins_per_delay = DEFAULT_SPINS_PER_DELAY;
   dlist_init(&ProcGlobal->freeProcs);
-  pg_atomic_init_u32(&ProcGlobal->procArrayGroupFirst, INVALID_PROC_NUMBER);
 
   /*
    * Create and initialize all the PGPROC structures we'll need.  There are
@@ -264,7 +263,6 @@ void InitProcGlobal(void) {
      * Initialize the atomic variables, otherwise, it won't be safe to
      * access them for backends that aren't currently in use.
      */
-    pg_atomic_init_u32(&(proc->procArrayGroupNext), INVALID_PROC_NUMBER);
     pg_atomic_init_u64(&(proc->waitStart), 0);
   }
 
@@ -370,12 +368,6 @@ void InitProcess(void) {
       Assert(dlist_is_empty(&(MyProc->myProcLocks[i])));
   }
 #endif
-
-  /* Initialize fields for group XID clearing. */
-  MyProc->procArrayGroupMember = false;
-  MyProc->procArrayGroupMemberXid = InvalidTransactionId;
-  Assert(pg_atomic_read_u32(&MyProc->procArrayGroupNext) ==
-         INVALID_PROC_NUMBER);
 
   /* Check that group locking fields are in a proper initial state. */
   Assert(MyProc->lockGroupLeader == NULL);
