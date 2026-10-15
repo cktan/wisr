@@ -25,7 +25,22 @@ the two differ, `CLAUDE.md` wins.
 - **A public header is opaque**: handles, not layouts, no
   private members and no RocksDB type.
 
-## 2. Building and testing
+## 2. The interface to sm's users
+
+- **Only `std::string`, `std::string_view` and `std::vector`
+  cross to sm's users.** No other standard library type
+  appears in what they call (`include/sm.h`, `sm_sys.h`):
+  no `std::optional`, `std::shared_ptr`, `std::span` or
+  `std::function`.
+- **The interface is C-like functions** returning 0 on
+  success and -1 otherwise (§4). Their parameters may be C++
+  references.
+- **sm never throws an exception knowingly** (§5). One may
+  still pass through it: from a callback the user supplied,
+  or from the C++ library, as `std::vector::at()` and `new`
+  may throw.
+
+## 3. Building and testing
 
 - **Build with `make -j4`** in the level you change
   (`make -C sm1 -j4`), never plain `make`. `make -j4` in `sm/`
@@ -49,7 +64,7 @@ the two differ, `CLAUDE.md` wins.
   out `sm1/include/sm1.h`, which is aligned by hand, and
   `sm0/include/sm_sys.h`.
 
-## 3. Errors
+## 4. Errors
 
 - **A call returns 0 on success and -1 on failure**, and the
   code and message are read afterwards from the thread's error
@@ -72,7 +87,7 @@ the two differ, `CLAUDE.md` wins.
   hands it back through its last parameter, set only on
   success.
 
-## 4. Exceptions and memory
+## 5. Exceptions and memory
 
 - **sm never throws.** There is no `throw` in sm's library
   code: a failure is -1 and an error code. Tests may throw.
@@ -96,7 +111,7 @@ the two differ, `CLAUDE.md` wins.
   replay recovers. Do not catch `std::bad_alloc`, and do not
   report a failed allocation as `SM_ERR_NOMEM`.
 
-## 5. Names and headers
+## 6. Names and headers
 
 - **C-style names take one of two prefixes**: `sm_` for what
   sm's users may call (`include/sm.h`, `sm_sys.h`), `sm0_` for
@@ -111,7 +126,7 @@ the two differ, `CLAUDE.md` wins.
   itself, the vendored `doctest.h`, and `sm_sys.h`, which is
   public.
 
-## 6. Threads, waits and logging
+## 7. Threads, waits and logging
 
 - **Every wait can be cut short.** A wait on behalf of a
   caller is an `sm_wait()` with the thread's `sm_wait_mask()`,
@@ -129,7 +144,7 @@ the two differ, `CLAUDE.md` wins.
   they are called with a library lock held, or from sm's own
   threads, where an exception has nowhere to go.
 
-## 7. Style
+## 8. Style
 
 - **Follow `CLAUDE.md`**: `snake_case` names, types ending in
   `_t`, `m_` before a class's private members, a doc comment
@@ -148,7 +163,7 @@ the two differ, `CLAUDE.md` wins.
   Every Makefile compiles with `-fno-rtti`, so the compiler
   refuses the rest.
 
-## 8. Tests
+## 9. Tests
 
 - **Every test opens with a one-line synopsis** of what it
   proves, then a numbered step list, one sentence a step,
@@ -162,7 +177,7 @@ the two differ, `CLAUDE.md` wins.
 - **A level's tests link that level and the ones below it**,
   never one above.
 
-## 9. Documents
+## 10. Documents
 
 - **A decision that crosses levels goes in `DESIGN.md`**, one
   inside a level in that level's design document, and what is
@@ -172,7 +187,7 @@ the two differ, `CLAUDE.md` wins.
 - **Wrap prose at 65 columns** in every `.md` file; code
   blocks, tables and headings are not wrapped.
 
-## 10. Git
+## 11. Git
 
 - **Commit only when asked, and push only when asked.** Merge
   a branch with `git merge --squash`.
