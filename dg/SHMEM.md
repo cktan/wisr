@@ -206,16 +206,20 @@ instead of being told.
   `CheckCachedPlan()`), and the executor opens each relation
   with `NoLock` under those (executor `execUtils.c`,
   `ExecGetRangeTableRelation()`).
-- **Why the check cannot go stale.** DROP, ALTER and DROP INDEX
-  take X, which waits for every IS and IX and is let go only
-  after the DDL commits. So a version checked under IS or IX
-  is the table's until the transaction ends, and one a DDL
-  changed under X is committed by the time the lock is granted.
-  CREATE INDEX and ANALYZE take only IS, so a session holding
-  the table can pass its check and then miss one of them until
-  its next lock: it plans without the new index, or with the
-  old statistics. sm maintains every index and enforces every
-  unique one itself, so this costs a plan, never a row.
+- **Why the check cannot go stale.** DROP, ALTER, CREATE INDEX
+  and DROP INDEX take X in sm (sm3 `cat_get_table_rec()`), which
+  waits for every IS and IX and is let go only after the DDL
+  commits. So a version checked under IS or IX is the table's
+  until the transaction ends, and one a DDL changed under X is
+  committed by the time the lock is granted. Two changes are
+  made without X. ANALYZE opens the table IS and takes only its
+  statistics' own lock (`cat_lock_stats()`), and an index's
+  build marks it valid under IX (`../sm/sm3/SM3_DESIGN.md`
+  §3.3): a session holding the table can pass its check and
+  then miss either until its next lock, planning with the old
+  statistics, or without the new index. sm maintains every
+  index and enforces every unique one itself, so this costs a
+  plan, never a row.
 - **A mismatch is the message that was not sent.** The entry's
   invalidation is processed locally, as utils/cache `inval.c`'s
   `LocalExecuteInvalidationMessage()` processes a session's
@@ -235,14 +239,16 @@ instead of being told.
   of every user object a session has cached is affordable then.
 - **The holes to close first**, each a definition read with no
   lock that conflicts with DDL's X:
-  - `ConditionalLockRelationOid()` takes no lock in sm (step
-    111), so LOCK TABLE ... NOWAIT (commands `lockcmds.c`,
-    catalog `namespace.c`) locks nothing; it is to take
-    `sm_tbl_trylock()`, as NOWAIT on a row does
-    (`../sm/NEXT.md` §2);
-  - a relation opened with `NoLock` by a caller that holds no
-    lock of its own, to be found by an audit (ALTER TABLE's
-    lookup is safe: sm's DDL takes X itself).
+  - `ConditionalLockRelationOid()` took no lock in sm. It takes
+    sm's lock if it is free now (`smstore_trylock_relation()`,
+    `WORKNOTE.md` step 138), so LOCK TABLE ... NOWAIT fails at
+    once where it waited.
+  - A relation opened with `NoLock` by a caller that holds no
+    lock of its own, to be found by an audit. A descriptor
+    built takes IS itself (access/sm `smstore_table_desc()`),
+    so the audit is of descriptors cached and then used with
+    no lock. ALTER TABLE's lookup is safe: sm's DDL takes X
+    itself.
 - **The blocking is the lock's, not this design's.** DDL on a
   table waits for every transaction that holds it, and a
   waiting X may hold back later readers; PostgreSQL's

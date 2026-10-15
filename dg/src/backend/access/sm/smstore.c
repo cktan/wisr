@@ -1409,6 +1409,17 @@ static bool mode_covers(sm_lockmode_t held, sm_lockmode_t want) {
   return false;
 }
 
+/* This transaction's handle of the table oid in a mode covering mode. */
+static sm_tbl_t *held_table(Oid oid, sm_lockmode_t mode) {
+  auto it = open_tables().find(oid);
+
+  if (it != open_tables().end())
+    for (open_table_t &ot : it->second)
+      if (mode_covers(ot.mode, mode))
+        return ot.tbl;
+  return NULL;
+}
+
 /*
  * The table oid, opened in this transaction in mode, taking the lock that
  * goes with it until the transaction ends: IS to read, IX to write, a
@@ -1416,14 +1427,40 @@ static bool mode_covers(sm_lockmode_t held, sm_lockmode_t want) {
  */
 static sm_tbl_t *open_table(Oid oid, sm_lockmode_t mode) {
   sm_session_t *s = xact_session();
-  auto it = open_tables().find(oid);
-  sm_tbl_t *tbl;
+  sm_tbl_t *tbl = held_table(oid, mode);
 
-  if (it != open_tables().end())
-    for (open_table_t &ot : it->second)
-      if (mode_covers(ot.mode, mode))
-        return ot.tbl;
+  if (tbl != NULL)
+    return tbl;
   if (waiting([&] { return sm_tbl_open(s, oid, mode, &tbl); }) != 0) {
+    if (sm_errnum() == SM_ERR_NOTFOUND)
+      return NULL;
+    sm_error("open a table");
+  }
+  /* Kept until the transaction ends, which closes it. */
+  open_tables()[oid].push_back({mode, tbl, GetCurrentTransactionNestLevel()});
+  return tbl;
+}
+
+/*
+ * As open_table, but never waiting for the lock: NULL with *blocked true if
+ * another transaction holds it in a mode that conflicts, NULL with *blocked
+ * false if there is no such table.
+ */
+static sm_tbl_t *try_open_table(Oid oid, sm_lockmode_t mode, bool *blocked) {
+  sm_session_t *s = xact_session();
+  sm_tbl_t *tbl = held_table(oid, mode);
+  int rc;
+
+  *blocked = false;
+  if (tbl != NULL)
+    return tbl;
+  /* Not through waiting(): this call never waits, so is never cut short. */
+  rc = sm_tbl_tryopen(s, oid, mode, &tbl);
+  if (rc == 1) {
+    *blocked = true;
+    return NULL;
+  }
+  if (rc != 0) {
     if (sm_errnum() == SM_ERR_NOTFOUND)
       return NULL;
     sm_error("open a table");
@@ -2575,11 +2612,25 @@ Datum pg_stats_rel(PG_FUNCTION_ARGS) {
  * Analyze the table oid, named name for a message, in sm, in this
  * transaction: opened as a reader, so writers go on meanwhile.  A name
  * that is not a table's, a sequence's or an index's, is passed over with
- * a warning, as PostgreSQL passes over what it cannot analyze.
+ * a warning, as PostgreSQL passes over what it cannot analyze.  With
+ * skip_locked a table whose lock would be waited for, held X, is passed
+ * over too, with a warning if the statement named it.
  */
-static void analyze_table(Oid oid, const char *name, bool verbose) {
-  sm_tbl_t *tbl = open_table(oid, SM_LOCKMODE_IS);
+static void analyze_table(Oid oid, const char *name, bool verbose,
+                          bool skip_locked, bool named) {
+  bool blocked = false;
+  sm_tbl_t *tbl = skip_locked ? try_open_table(oid, SM_LOCKMODE_IS, &blocked)
+                              : open_table(oid, SM_LOCKMODE_IS);
 
+  /* SKIP_LOCKED: a table held X is passed over, said only if named. */
+  if (blocked) {
+    if (named)
+      ereport(
+          WARNING,
+          (errcode(ERRCODE_LOCK_NOT_AVAILABLE),
+           errmsg("skipping analyze of \"%s\" --- lock not available", name)));
+    return;
+  }
   if (tbl == NULL) {
     ereport(WARNING,
             (errmsg("skipping \"%s\" --- cannot analyze non-tables", name)));
@@ -2617,9 +2668,11 @@ static void analyze_table(Oid oid, const char *name, bool verbose) {
  * ANALYZE: each table rels names, or with none every table in sm, analyzed
  * by sm in this transaction, so the statistics commit and roll back with
  * it (STATISTICS.md section 2.1).  Each takes default_statistics_target; a
- * column list is refused.
+ * column list is refused.  skip_locked is SKIP_LOCKED: a table held X is
+ * not waited for.  Another session's ANALYZE of the same table still is,
+ * on sm's lock of its statistics, which has no form that does not wait.
  */
-void smstore_analyze(List *rels, bool verbose) {
+void smstore_analyze(List *rels, bool verbose, bool skip_locked) {
   ListCell *l;
 
   if (rels == NIL) {
@@ -2635,7 +2688,7 @@ void smstore_analyze(List *rels, bool verbose) {
         sm_error("list a schema's tables");
       for (const std::string &t : tables)
         analyze_table(smstore_relation_oid(t.c_str(), nspoid), t.c_str(),
-                      verbose);
+                      verbose, skip_locked, false);
     }
     return;
   }
@@ -2646,7 +2699,7 @@ void smstore_analyze(List *rels, bool verbose) {
       ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                       errmsg("ANALYZE of chosen columns is not supported yet")));
     analyze_table(RangeVarGetRelid(vrel->relation, NoLock, false),
-                  vrel->relation->relname, verbose);
+                  vrel->relation->relname, verbose, skip_locked, true);
   }
 }
 
@@ -2673,6 +2726,16 @@ static sm_lockmode_t table_lock_mode(LOCKMODE lockmode) {
 }
 
 /*
+ * sm's lock for PostgreSQL's lockmode on a relation (smstore_lock_relation()):
+ * X for DDL, IX to write, IS for the rest.
+ */
+static sm_lockmode_t relation_lock_mode(LOCKMODE lockmode) {
+  return lockmode >= ExclusiveLock      ? SM_LOCKMODE_EX
+         : lockmode == RowExclusiveLock ? SM_LOCKMODE_IX
+                                        : SM_LOCKMODE_IS;
+}
+
+/*
  * Lock the relation relid, if it is a table in sm, as PostgreSQL locks a
  * relation before it reads its definition (lmgr.c): so a definition a DDL
  * is changing is read once the DDL has ended.  Only the conflict with DDL,
@@ -2682,12 +2745,21 @@ static sm_lockmode_t table_lock_mode(LOCKMODE lockmode) {
  * sequence is not a table in sm, and takes nothing.
  */
 void smstore_lock_relation(Oid relid, LOCKMODE lockmode) {
-  sm_lockmode_t mode = lockmode >= ExclusiveLock      ? SM_LOCKMODE_EX
-                       : lockmode == RowExclusiveLock ? SM_LOCKMODE_IX
-                                                      : SM_LOCKMODE_IS;
+  /* Held until the transaction ends, as the handle is. */
+  (void)open_table(relid, relation_lock_mode(lockmode));
+}
+
+/*
+ * As smstore_lock_relation, if the lock is free now: false, with nothing
+ * taken, if another transaction holds it in a mode that conflicts.  A
+ * relation that is no table in sm takes nothing, and is true.
+ */
+bool smstore_trylock_relation(Oid relid, LOCKMODE lockmode) {
+  bool blocked;
 
   /* Held until the transaction ends, as the handle is. */
-  (void)open_table(relid, mode);
+  (void)try_open_table(relid, relation_lock_mode(lockmode), &blocked);
+  return !blocked;
 }
 
 /*
@@ -2725,14 +2797,20 @@ void smstore_truncate(Relation rel) {
 
 /*
  * LOCK TABLE on rel, a table in sm: sm's table lock in the mode closest to
- * lockmode, held until the transaction ends.  NOWAIT is refused: sm has no
- * way to ask for it yet.
+ * lockmode, held until the transaction ends.  With nowait, a lock another
+ * transaction holds in a mode that conflicts fails at once, as PostgreSQL's.
  */
 void smstore_lock_table(Relation rel, LOCKMODE lockmode, bool nowait) {
-  if (nowait)
-    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    errmsg("LOCK TABLE ... NOWAIT is not supported yet")));
-  if (open_table(RelationGetRelid(rel), table_lock_mode(lockmode)) == NULL)
+  sm_lockmode_t mode = table_lock_mode(lockmode);
+  bool blocked = false;
+  sm_tbl_t *tbl = nowait ? try_open_table(RelationGetRelid(rel), mode, &blocked)
+                         : open_table(RelationGetRelid(rel), mode);
+
+  if (blocked)
+    ereport(ERROR, (errcode(ERRCODE_LOCK_NOT_AVAILABLE),
+                    errmsg("could not obtain lock on relation \"%s\"",
+                           RelationGetRelationName(rel))));
+  if (tbl == NULL)
     ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
                     errmsg("relation \"%s\" does not exist",
                            RelationGetRelationName(rel))));

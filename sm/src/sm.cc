@@ -1240,6 +1240,25 @@ int sm_tbl_open(sm_session_t *session, uint64_t oid, sm_lockmode_t mode,
   });
 }
 
+/* Open a table if its table-oid lock is free now: 0, 1, or -1. */
+int sm_tbl_tryopen(sm_session_t *session, uint64_t oid, sm_lockmode_t mode,
+                   sm_tbl_t **out) {
+  return guard(session, [&] {
+    if (!session || !out) {
+      return null_arg("sm_tbl_tryopen", !session ? "session" : "out");
+    }
+    auto t = std::make_unique<sm_tbl_t>();
+    t->session = session;
+    int rc = sm3::tbl_tryopen(session->sm3, oid, mode, t->table);
+    if (rc != 0) {
+      return rc;
+    }
+    t->def = api_def(session->sm3, sm3::tbl_def(t->table));
+    *out = t.release();
+    return 0;
+  });
+}
+
 /* Close a table; NULL is a no-op. */
 void sm_tbl_close(sm_tbl_t *tbl) {
   if (tbl) {

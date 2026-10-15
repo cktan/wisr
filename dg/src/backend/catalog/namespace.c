@@ -21,6 +21,7 @@
 
 #include "access/htup_details.h"
 #include "access/smstore.h"
+#include "access/transam.h"
 #include "access/xact.h"
 #include "catalog/cat_builtin.h"
 #include "catalog/dependency.h"
@@ -390,6 +391,23 @@ static SearchPathCacheEntry *spcache_insert(const char *searchPath,
 }
 
 /*
+ * Report that relation's lock could not be had without waiting: an error
+ * for RVR_NOWAIT, a debug message for RVR_SKIP_LOCKED, whose caller skips it.
+ */
+static void lock_not_available(const RangeVar *relation, uint32 flags) {
+  int elevel = (flags & RVR_SKIP_LOCKED) ? DEBUG1 : ERROR;
+
+  if (relation->schemaname)
+    ereport(elevel, (errcode(ERRCODE_LOCK_NOT_AVAILABLE),
+                     errmsg("could not obtain lock on relation \"%s.%s\"",
+                            relation->schemaname, relation->relname)));
+  else
+    ereport(elevel, (errcode(ERRCODE_LOCK_NOT_AVAILABLE),
+                     errmsg("could not obtain lock on relation \"%s\"",
+                            relation->relname)));
+}
+
+/*
  * RangeVarGetRelidExtended
  *		Given a RangeVar describing an existing relation,
  *		select the proper namespace and look up the relation OID.
@@ -506,6 +524,19 @@ Oid RangeVarGetRelidExtended(const RangeVar *relation, LOCKMODE lockmode,
     }
 
     /*
+     * A table in sm, asked for without waiting, is locked before the
+     * callback: a callback reads its definition, which takes sm's lock IS
+     * and so waits out DDL (smstore_table_desc()).  The lock below then
+     * finds it held.
+     */
+    if (OidIsValid(relId) && relId >= FirstNormalObjectId &&
+        lockmode != NoLock && (flags & (RVR_NOWAIT | RVR_SKIP_LOCKED)) &&
+        !ConditionalLockRelationOid(relId, lockmode)) {
+      lock_not_available(relation, flags);
+      return InvalidOid;
+    }
+
+    /*
      * Invoke caller-supplied callback, if any.
      *
      * This callback is a good place to check permissions: we haven't
@@ -556,17 +587,7 @@ Oid RangeVarGetRelidExtended(const RangeVar *relation, LOCKMODE lockmode,
     else if (!(flags & (RVR_NOWAIT | RVR_SKIP_LOCKED)))
       LockRelationOid(relId, lockmode);
     else if (!ConditionalLockRelationOid(relId, lockmode)) {
-      int elevel = (flags & RVR_SKIP_LOCKED) ? DEBUG1 : ERROR;
-
-      if (relation->schemaname)
-        ereport(elevel, (errcode(ERRCODE_LOCK_NOT_AVAILABLE),
-                         errmsg("could not obtain lock on relation \"%s.%s\"",
-                                relation->schemaname, relation->relname)));
-      else
-        ereport(elevel, (errcode(ERRCODE_LOCK_NOT_AVAILABLE),
-                         errmsg("could not obtain lock on relation \"%s\"",
-                                relation->relname)));
-
+      lock_not_available(relation, flags);
       return InvalidOid;
     }
 

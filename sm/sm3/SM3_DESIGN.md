@@ -70,7 +70,7 @@ answer.
 | `SM_ERR_DUPKEY` from sm1's insert | a unique index keyed without `rowno` — the primary key's among them — needs no separate existence check (§3) |
 | `SM_ERR_UPDATED` and `rel_read_latest` at READ COMMITTED | a filtered update or delete must re-check its predicate, and recompute its index entries, from the newest version (§3); the error does not abort and is not retryable |
 | transactions at RC / RR / SERIALIZABLE | index maintenance is atomic with the base write for free, because both are in one transaction |
-| `sm1::lock` in Gray's modes (IS, IX, S, SIX, X) | the DDL and online index build protocol (§2, §3): readers and writers of a table coexist on its schema row, and an index build stops writers without stopping readers |
+| `sm1::lock` in Gray's modes (IS, IX, S, SIX, X) | the DDL and online index build protocol (§2, §3): readers and writers of a table coexist on its table-oid lock, DDL waits them out, and an index build stops neither once its index is recorded |
 | nested savepoints | a statement can be undone without losing the transaction |
 | forward scans | probe loops cost one cursor, not one per probe |
 | `sm1::max_keylen` 4096 | an index entry's key must fit 4094 bytes after the relid, `rowno` included where it carries one; an over-long one is truncated and flagged, and sm3 rechecks it (`sm2/SM2_DESIGN.md` §3.2) |
@@ -114,9 +114,10 @@ locks are:
   PostgreSQL's AccessShareLock and RowExclusiveLock, which
   coexist;
 - DDL takes it X, which waits out the transactions
-  in flight and blocks new ones until it commits; a plain index
-  build takes S, which waits out writers and blocks new ones but
-  lets readers through, as PostgreSQL's ShareLock does (§3);
+  in flight and blocks new ones until it commits. CREATE INDEX
+  is DDL: `create_index` takes X only to record the index as
+  pending, and the build that fills it then runs beside readers
+  and writers, setting its state under IX (§3, §3.3);
 - so once a transaction holds its IS or IX lock, the definition
   in memory cannot change under it. A catalog served from
   memory must take this lock, or DDL has nothing to wait on.

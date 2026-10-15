@@ -625,16 +625,24 @@ std::shared_ptr<const table_def_t> cat_get_table(const session_t *s,
   return cat_get_table(s->cat, oid);
 }
 
-/* Lock a table's schema, then read its definition; see sm3.h. */
-int cat_lock_table(session_t *s, uint64_t oid, sm1::lockmode_t mode,
-                   std::shared_ptr<const table_def_t> &out) {
+namespace {
+
+/*
+ * Lock a table's schema, waiting for it or not, then read its
+ * definition: 0, or 1 with nothing taken if it would have waited, or
+ * -1.
+ */
+int lock_and_get_table(session_t *s, uint64_t oid, sm1::lockmode_t mode,
+                       bool wait, std::shared_ptr<const table_def_t> &out) {
   // A temporary table is the session's alone: no one to lock out.
   out = cat_get_table(s, oid);
   if (out && out->nspoid == nsp_temp) {
     return 0;
   }
-  if (lock_table(s->sm1, oid, mode) != 0) {
-    return -1;
+  int rc =
+      wait ? lock_table(s->sm1, oid, mode) : lock_table_now(s->sm1, oid, mode);
+  if (rc != 0) {
+    return rc;
   }
   // Under the lock, the definition cannot change until commit;
   // one dropped while this waited is gone.
@@ -642,6 +650,20 @@ int cat_lock_table(session_t *s, uint64_t oid, sm1::lockmode_t mode,
   return out ? 0
              : sm1::seterr(sm1::SM_ERR_NOTFOUND,
                            "table " + std::to_string(oid) + " does not exist");
+}
+
+} // namespace
+
+/* Lock a table's schema, then read its definition; see sm3.h. */
+int cat_lock_table(session_t *s, uint64_t oid, sm1::lockmode_t mode,
+                   std::shared_ptr<const table_def_t> &out) {
+  return lock_and_get_table(s, oid, mode, true, out);
+}
+
+/* As cat_lock_table, if the lock is free now; see sm3.h. */
+int cat_trylock_table(session_t *s, uint64_t oid, sm1::lockmode_t mode,
+                      std::shared_ptr<const table_def_t> &out) {
+  return lock_and_get_table(s, oid, mode, false, out);
 }
 
 /* The table names in nspoid as s sees them: its changes over the shared. */

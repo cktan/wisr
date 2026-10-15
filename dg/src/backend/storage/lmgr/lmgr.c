@@ -160,6 +160,9 @@ bool ConditionalLockRelationOid(Oid relid, LOCKMODE lockmode) {
   LockAcquireResult res;
 
   if (locked_by_sm(relid)) {
+    /* sm's lock, if it is free now: else nothing is taken. */
+    if (!smstore_trylock_relation(relid, lockmode))
+      return false;
     AcceptInvalidationMessages();
     return true;
   }

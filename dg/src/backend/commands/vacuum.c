@@ -66,6 +66,7 @@ thread_local /*LOCAL*/ int vacuum_cost_limit = 200;
  */
 void ExecVacuum(ParseState *pstate, VacuumStmt *vacstmt, bool isTopLevel) {
   bool verbose = false;
+  bool skip_locked = false;
   ListCell *lc;
 
   if (vacstmt->is_vacuumcmd)
@@ -78,7 +79,7 @@ void ExecVacuum(ParseState *pstate, VacuumStmt *vacstmt, bool isTopLevel) {
     if (strcmp(opt->defname, "verbose") == 0)
       verbose = defGetBoolean(opt);
     else if (strcmp(opt->defname, "skip_locked") == 0)
-      (void)defGetBoolean(opt); /* nothing to skip: a reader's lock */
+      skip_locked = defGetBoolean(opt);
     else
       ereport(ERROR,
               (errcode(ERRCODE_SYNTAX_ERROR),
@@ -87,7 +88,7 @@ void ExecVacuum(ParseState *pstate, VacuumStmt *vacstmt, bool isTopLevel) {
   }
 
   /* Every table is sm's, and sm analyzes it. */
-  smstore_analyze(vacstmt->rels, verbose);
+  smstore_analyze(vacstmt->rels, verbose, skip_locked);
 }
 
 /*

@@ -832,6 +832,15 @@ typedef struct sm_tbl_t sm_tbl_t;
 int sm_tbl_open(sm_session_t* session, uint64_t oid, sm_lockmode_t mode,
                 sm_tbl_t** out);
 
+/*
+ * As sm_tbl_open, but never waiting for the table-oid lock: 0 with
+ * the table open in *out; 1, with nothing taken and *out untouched,
+ * if another transaction holds the lock in a mode that conflicts; or
+ * -1. SQL's LOCK TABLE ... NOWAIT fails on 1.
+ */
+int sm_tbl_tryopen(sm_session_t* session, uint64_t oid, sm_lockmode_t mode,
+                   sm_tbl_t** out);
+
 /* Close a table; NULL is a no-op. */
 void sm_tbl_close(sm_tbl_t* tbl);
 

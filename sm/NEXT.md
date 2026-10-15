@@ -55,10 +55,11 @@ Owed, and blocking nothing above:
   key alone still waits for a child's transaction, which holds
   the row shared.
 - **`lock_timeout`, and the rest of no-wait.** A lock that
-  does not wait is built for a row and for a table
-  (`sm1::trylock`, `sm_tbl_trylock`), and digres's NOWAIT and
-  SKIP LOCKED use it. Not built: a write that does not wait,
-  which nothing in SQL asks for; `LOCK TABLE ... NOWAIT`; and
+  does not wait is built for a row (`sm1::trylock`,
+  `sm_tbl_trylock`) and for a table's table-oid lock
+  (`sm_tbl_tryopen`), and digres's NOWAIT, SKIP LOCKED and
+  `LOCK TABLE ... NOWAIT` use them. Not built: a write that
+  does not wait, which nothing in SQL asks for; and
   `lock_timeout`, which needs no more than an `sm_sys.h` timer
   that interrupts the waiting thread. sm1's `set_qa_nowait` is
   still for QA only (`sm1/SM1_DESIGN.md` §5.1).

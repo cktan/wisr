@@ -408,6 +408,14 @@ int cat_lock_table(session_t* s, uint64_t oid, sm1::lockmode_t mode,
                    std::shared_ptr<const table_def_t>& out);
 
 /*
+ * As cat_lock_table, but never waiting (sm1::trylock): 0 with the
+ * lock held and out set; 1, with nothing taken, if another
+ * transaction holds the lock in a mode that conflicts; or -1.
+ */
+int cat_trylock_table(session_t* s, uint64_t oid, sm1::lockmode_t mode,
+                      std::shared_ptr<const table_def_t>& out);
+
+/*
  * ---- the catalog's writes: put and del ----
  *
  * The catalog is a repository: it stores what it is given, finds
@@ -866,6 +874,15 @@ struct table_t;
  */
 int tbl_open(session_t* session, uint64_t oid, sm1::lockmode_t mode,
              table_t*& out);
+
+/*
+ * As tbl_open, but never waiting for the table-oid lock: 0 with the
+ * table open; 1, with nothing taken and out untouched, if another
+ * transaction holds the lock in a mode that conflicts; or -1. SQL's
+ * LOCK TABLE ... NOWAIT asks like this.
+ */
+int tbl_tryopen(session_t* session, uint64_t oid, sm1::lockmode_t mode,
+                table_t*& out);
 
 /* Close a table from tbl_open; nullptr is a no-op. */
 void tbl_close(table_t* table);

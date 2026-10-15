@@ -461,15 +461,19 @@ void close_rels(table_t *table) {
   table->rel = nullptr;
 }
 
-} // namespace
-
-/* Lock the table, then open its heap and every index; see sm3.h. */
-int tbl_open(session_t *session, uint64_t oid, sm1::lockmode_t mode,
-             table_t *&out) {
+/*
+ * Lock the table, waiting for it or not, then open its heap and every
+ * index: 0, or 1 with nothing taken if the lock would have waited, or
+ * -1.
+ */
+int open_table(session_t *session, uint64_t oid, sm1::lockmode_t mode,
+               bool wait, table_t *&out) {
   std::unique_ptr<table_t, void (*)(table_t *)> t(new table_t, tbl_close);
   // Take the table-oid lock, so the definition holds to commit.
-  if (cat_lock_table(session, oid, mode, t->def) != 0) {
-    return -1;
+  int rc = wait ? cat_lock_table(session, oid, mode, t->def)
+                : cat_trylock_table(session, oid, mode, t->def);
+  if (rc != 0) {
+    return rc;
   }
   t->session = session;
   t->writable = covers_write(mode);
@@ -483,6 +487,20 @@ int tbl_open(session_t *session, uint64_t oid, sm1::lockmode_t mode,
   }
   out = t.release();
   return 0;
+}
+
+} // namespace
+
+/* Lock the table, then open its heap and every index; see sm3.h. */
+int tbl_open(session_t *session, uint64_t oid, sm1::lockmode_t mode,
+             table_t *&out) {
+  return open_table(session, oid, mode, true, out);
+}
+
+/* As tbl_open, if the table-oid lock is free now; see sm3.h. */
+int tbl_tryopen(session_t *session, uint64_t oid, sm1::lockmode_t mode,
+                table_t *&out) {
+  return open_table(session, oid, mode, false, out);
 }
 
 /* Close the heap and the indexes; the table-oid lock stays to commit. */

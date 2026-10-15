@@ -113,7 +113,7 @@ extern List *smstore_relations_of(Oid oid);
 extern Oid smstore_relation_oid(const char *name, Oid nspoid);
 extern Oid smstore_create_namespace(const char *name);
 extern void smstore_drop_namespaces(DropStmt *stmt);
-extern void smstore_analyze(List *rels, bool verbose);
+extern void smstore_analyze(List *rels, bool verbose, bool skip_locked);
 extern bool smstore_estimate_size(Oid oid, double *pages, double *tuples);
 extern int64 smstore_relation_bytes(Relation rel);
 extern bool smstore_estimate_index_size(Oid table, Oid index, double *pages,
@@ -139,6 +139,7 @@ extern ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt);
 extern void smstore_drop_indexes(DropStmt *stmt);
 extern void smstore_lock_table(Relation rel, LOCKMODE lockmode, bool nowait);
 extern void smstore_lock_relation(Oid relid, LOCKMODE lockmode);
+extern bool smstore_trylock_relation(Oid relid, LOCKMODE lockmode);
 extern void smstore_truncate(Relation rel);
 extern smstore_table_t *smstore_table_desc(Oid oid);
 extern Oid smstore_index_table(Oid indexoid);

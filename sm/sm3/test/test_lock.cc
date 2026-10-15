@@ -492,3 +492,48 @@ TEST_CASE("a NOT NULL column with no missing value needs t empty, free now") {
   CHECK(rc == 0);
   REQUIRE(sm3::abort(f.c) == 0);
 }
+
+TEST_CASE("a table opened without waiting is refused while DDL holds it") {
+  // Verify tbl_tryopen takes the table-oid lock only if it is free,
+  // and takes nothing otherwise, so its transaction goes on.
+  // 1. A holds t X, as DDL does: B's tbl_tryopen of t IS returns 1,
+  //    out untouched, and B can still lock another table.
+  // 2. A commits: B's tbl_tryopen of t IS opens t, with its
+  //    definition.
+  // 3. B holds t IS: C's tbl_tryopen of t X returns 1, and of t IS
+  //    opens it.
+  // 4. B and C commit: C's tbl_tryopen of t X opens it.
+  locks_t f;
+  def_ptr d;
+  sm3::table_t *tb = nullptr, *tc = nullptr;
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::begin(f.b, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::cat_lock_table(f.a, f.t, sm1::SM_LOCKMODE_EX, d) == 0);
+  CHECK(sm3::tbl_tryopen(f.b, f.t, sm1::SM_LOCKMODE_IS, tb) == 1);
+  CHECK(tb == nullptr);
+  uint64_t u = 0;
+  std::vector<sm3::column_spec_t> cols = {
+      {"x", sm2::type_int4.code, -1, false}};
+  REQUIRE(sm3::create_table(f.b, sm3::nsp_public, "u", cols, u) == 0);
+
+  REQUIRE(sm3::commit(f.a) == 0);
+  REQUIRE_MESSAGE(sm3::tbl_tryopen(f.b, f.t, sm1::SM_LOCKMODE_IS, tb) == 0,
+                  sm1::errmsg());
+  REQUIRE(tb != nullptr);
+  CHECK(sm3::tbl_def(tb).columns.size() == 1);
+
+  REQUIRE(sm3::begin(f.c, sm1::xctlevel_t::read_committed) == 0);
+  CHECK(sm3::tbl_tryopen(f.c, f.t, sm1::SM_LOCKMODE_EX, tc) == 1);
+  CHECK(tc == nullptr);
+  REQUIRE(sm3::tbl_tryopen(f.c, f.t, sm1::SM_LOCKMODE_IS, tc) == 0);
+  sm3::tbl_close(tc);
+  tc = nullptr;
+  sm3::tbl_close(tb);
+  REQUIRE(sm3::commit(f.b) == 0);
+  REQUIRE(sm3::commit(f.c) == 0);
+
+  REQUIRE(sm3::begin(f.c, sm1::xctlevel_t::read_committed) == 0);
+  CHECK(sm3::tbl_tryopen(f.c, f.t, sm1::SM_LOCKMODE_EX, tc) == 0);
+  sm3::tbl_close(tc);
+  REQUIRE(sm3::commit(f.c) == 0);
+}

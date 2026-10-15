@@ -35,10 +35,17 @@ CPPFLAGS := -I$(top)/src/include -I$(top)/../sm/sm0/include $(INCLUDES) -D_GNU_S
 
 SRCS := $(filter-out $(SKIP),$(wildcard *.c))
 OBJS := $(SRCS:.c=.$(OBJ))
+# Objects here that no source compiles any more, of a .c deleted or
+# skipped, plain or for the thread sanitizer: the link takes every
+# object under src/, so one left would still be linked.
+STALE := $(filter-out $(SRCS:.c=.o) $(SRCS:.c=.tsan.o),$(wildcard *.o))
 
 .PHONY: all clean format $(SUBDIRS)
 
 all: $(SUBDIRS) $(OBJS)
+ifneq ($(STALE),)
+	rm -f $(STALE)
+endif
 
 # The same goal in each subdirectory: all, clean or format.
 $(SUBDIRS):

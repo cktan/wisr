@@ -4015,3 +4015,63 @@ had no use left but their locks.
 - **`test/server.sh`** checks each refusal, and a statement
   after them. With `pg_xact_status()` returning NULL instead,
   it fails.
+
+## Step 138: LOCK TABLE ... NOWAIT does not wait
+
+`SHMEM.md` §5.1's first hole. `ConditionalLockRelationOid()` took
+no lock in sm and said it had, and LOCK TABLE ... NOWAIT, meant
+to be refused as not supported, waited instead: the permission
+callback that `RangeVarGetRelidExtended()` runs before its lock
+reads the table's definition, and building a descriptor opens
+the table in sm IS (`smstore_table_desc()`), which waits out a
+DDL's or a LOCK's X.
+
+- **sm opens a table without waiting**: `sm_tbl_tryopen()`
+  (`sm.h`), over sm3's `tbl_tryopen()` and `cat_trylock_table()`,
+  which take the table-oid lock with `lock_table_now()`, as
+  `add_column`'s NOT NULL case does (step 110): 0 with the table
+  open, 1 with nothing taken if another transaction holds the
+  lock in a mode that conflicts.
+- **`ConditionalLockRelationOid()` takes sm's lock if it is free
+  now** (`smstore_trylock_relation()`), in the mode
+  `smstore_lock_relation()` would take.
+- **A table in sm asked for with RVR_NOWAIT or RVR_SKIP_LOCKED
+  is locked before the callback** (catalog `namespace.c`), so
+  the callback's descriptor finds the table open and waits for
+  nothing. The report of a lock not had is one function,
+  `lock_not_available()`, for both places.
+- **LOCK TABLE ... NOWAIT takes the LOCK's own mode without
+  waiting** (`smstore_lock_table()`): SHARE is S, which another
+  session's IS lets through and its IX does not. It fails as
+  PostgreSQL's does: `could not obtain lock on relation`, 55P03.
+- Not changed: ANALYZE on a table in sm goes to
+  `smstore_analyze()` (commands `vacuum.c`), which reads no
+  SKIP_LOCKED, so `ANALYZE (SKIP_LOCKED)` still waits.
+- sm3 `test_lock.cc`: a try-open of a table held X, or held IS
+  for X, returns 1 and takes nothing; once free it opens.
+- `server.sh`: under SHARE, ACCESS SHARE NOWAIT is granted and
+  ROW EXCLUSIVE NOWAIT fails, 55P03; under ACCESS EXCLUSIVE,
+  ACCESS SHARE NOWAIT fails at once; free, NOWAIT is granted.
+
+## Step 139: ANALYZE (SKIP_LOCKED) passes over a held table
+
+Step 138 found it: `ExecVacuum()` (commands `vacuum.c`) read
+SKIP_LOCKED and dropped it, as "nothing to skip: a reader's
+lock". A reader's IS still waits out an X, a DDL's or a LOCK's,
+so `ANALYZE (SKIP_LOCKED) t` waited for it.
+
+- **SKIP_LOCKED reaches `analyze_table()`**, which opens the
+  table without waiting (`try_open_table()`, step 138). A table
+  it would wait for is passed over: with PostgreSQL's warning,
+  `skipping analyze of "t" --- lock not available`, if the
+  statement named it, and in silence in an ANALYZE of every
+  table, as PostgreSQL's `vacuum_open_relation()` reports only
+  a relation named.
+- Not done: another session's ANALYZE of the same table is
+  still waited for, on sm's lock of the table's statistics
+  (sm3 `cat_lock_stats()`), which has no form that does not
+  wait. In PostgreSQL the two would conflict on
+  ShareUpdateExclusiveLock, and the second would skip.
+- `server.sh`: with t2 held ACCESS EXCLUSIVE, `ANALYZE
+  (SKIP_LOCKED) t2` warns and `ANALYZE (SKIP_LOCKED)` is silent,
+  and neither waits.

@@ -479,12 +479,17 @@ for sql in "create subscription s connection 'x' publication p" \
 done
 
 # Verify that LOCK TABLE takes sm's table lock: SHARE lets another session
-# read and keeps it from writing; ACCESS EXCLUSIVE keeps it from reading.
+# read and keeps it from writing; ACCESS EXCLUSIVE keeps it from reading;
+# and NOWAIT fails at once on a lock held in a mode that conflicts.
 # 1. In a session of its own, lock t2 in SHARE mode and hold it.
 # 2. From another, a scan of t2 answers; an insert with statement_timeout =
-#    500 times out.
-# 3. Commit, lock t2 in ACCESS EXCLUSIVE mode, and hold it: a scan times out.
-# 4. Confirm NOWAIT is refused, as sm cannot ask for it yet.
+#    500 times out. LOCK ... ACCESS SHARE NOWAIT is granted, and ROW
+#    EXCLUSIVE NOWAIT fails with 55P03.
+# 3. Commit, lock t2 in ACCESS EXCLUSIVE mode, and hold it: a scan times out,
+#    and LOCK ... ACCESS SHARE NOWAIT fails with 55P03, without waiting.
+#    ANALYZE (SKIP_LOCKED) t2 passes t2 over with a warning, and with no
+#    table named passes it over in silence; neither waits.
+# 4. Commit: LOCK t2 NOWAIT, ACCESS EXCLUSIVE, is granted.
 mkfifo "$work/locker.in"
 local_psql < "$work/locker.in" > "$work/locker.out" 2>&1 &
 locker=$!
@@ -501,6 +506,15 @@ timeout 10 psql -X -A -t -h "$work" -p "$port" -d postgres \
   > "$work/locker2.out" 2>&1
 grep -q 'canceling statement due to statement timeout' "$work/locker2.out" ||
   fail "write under a share lock"
+[ "$(timeout 10 psql -X -A -t -h "$work" -p "$port" -d postgres \
+  -c 'begin' -c 'lock table t2 in access share mode nowait' \
+  -c "select 'granted'" -c 'commit' 2>&1 | grep -c granted)" = 1 ] ||
+  fail "nowait under a share lock, granted"
+timeout 10 psql -X -A -t -h "$work" -p "$port" -d postgres \
+  -v VERBOSITY=sqlstate -c 'begin' \
+  -c 'lock table t2 in row exclusive mode nowait' > "$work/locker5.out" 2>&1
+grep -qx 'ERROR:  55P03' "$work/locker5.out" ||
+  fail "nowait under a share lock, refused"
 echo "commit; begin; lock table t2 in access exclusive mode; select 'excl';" >&4
 for _ in $(seq 50); do
   grep -qx excl "$work/locker.out" && break
@@ -511,11 +525,23 @@ timeout 10 psql -X -A -t -h "$work" -p "$port" -d postgres \
   > "$work/locker3.out" 2>&1
 grep -q 'canceling statement due to statement timeout' "$work/locker3.out" ||
   fail "read under an exclusive lock"
+timeout 10 psql -X -A -t -h "$work" -p "$port" -d postgres \
+  -c 'begin' -c 'lock table t2 in access share mode nowait' \
+  > "$work/locker4.out" 2>&1
+grep -qx 'ERROR:  could not obtain lock on relation "t2"' \
+  "$work/locker4.out" || fail "nowait under an exclusive lock"
+timeout 10 psql -X -A -t -h "$work" -p "$port" -d postgres \
+  -c 'analyze (skip_locked) t2' > "$work/locker6.out" 2>&1
+grep -qx 'WARNING:  skipping analyze of "t2" --- lock not available' \
+  "$work/locker6.out" || fail "analyze skip_locked of a held table"
+[ "$(timeout 10 psql -X -A -t -h "$work" -p "$port" -d postgres \
+  -c 'analyze (skip_locked)' 2>&1)" = ANALYZE ] ||
+  fail "analyze skip_locked of every table"
 echo "commit;" >&4
 exec 4>&-
 wait $locker
-local_psql -c 'begin' -c 'lock table t2 nowait' > "$work/locker4.out" 2>&1
-grep -q 'NOWAIT is not supported yet' "$work/locker4.out" || fail "nowait"
+[ "$(local_psql -c 'begin' -c 'lock table t2 nowait' -c "select 'granted'" \
+  -c 'commit' 2>&1 | grep -c granted)" = 1 ] || fail "nowait, granted"
 
 # Verify that CREATE INDEX and DROP INDEX are sm's: a unique index refuses a
 # duplicate, a dropped one no longer does, and names default as PostgreSQL's.
