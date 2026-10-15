@@ -92,9 +92,4 @@ extern int WaitEventSetWait(WaitEventSet *set, long timeout,
 extern int GetNumRegisteredWaitEvents(WaitEventSet *set);
 extern bool WaitEventSetCanReportClosed(void);
 
-#ifndef WIN32
-extern void WakeupMyProc(void);
-extern void WakeupOtherProc(const sm_thread_ref_t &thread);
-#endif
-
 #endif /* WAITEVENTSET_H */

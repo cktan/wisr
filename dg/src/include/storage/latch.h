@@ -113,25 +113,15 @@
  * part of bigger structs.
  */
 /*
- * A latch's flags are read and written as relaxed atomics: the memory
- * barriers around them order them, as they always did, and a thread
- * sanitizer sees them for what they are.
+ * A latch is its owner's: its flag is the owning thread's INTERRUPT_LATCH
+ * bit (sm_sys.h), which SetLatch() raises and ResetLatch() takes.  The
+ * Latch holds only the owner, so that others can find the thread to set:
+ * a handle new'd by OwnLatch() or InitLatch() and deleted by DisownLatch()
+ * or, for a thread's local latch, by ShutdownProcessLocalLatch(), under
+ * owner_lock, which SetLatch() holds to copy it.  NULL while not owned.
  */
-#define LATCH_GET(field) __atomic_load_n(&(field), __ATOMIC_RELAXED)
-#define LATCH_SET(field, value) __atomic_store_n(&(field), (value), __ATOMIC_RELAXED)
-
 typedef struct Latch {
-  sig_atomic_t is_set;
-  sig_atomic_t maybe_sleeping;
   bool is_shared;
-  int owner_pid;
-  int owner_tid; /* the owner's thread: one process has many sessions */
-  /*
-   * The owner, to wake (sm_sys.h): a handle new'd by OwnLatch() or InitLatch()
-   * and deleted by DisownLatch() or, for a thread's local latch, by
-   * ShutdownProcessLocalLatch(), under owner_lock, which SetLatch() holds
-   * to copy it.  NULL while not owned.
-   */
   sm_thread_ref_t *owner;
   std::mutex owner_lock;
 #ifdef WIN32
@@ -149,6 +139,8 @@ extern void DisownLatch(Latch *latch);
 extern void SetLatch(Latch *latch);
 extern sm_thread_ref_t LatchOwner(Latch *latch);
 extern void ResetLatch(Latch *latch);
+extern bool LatchIsSet(Latch *latch);
+extern bool LatchIsMine(Latch *latch);
 
 extern int WaitLatch(Latch *latch, int wakeEvents, long timeout,
                      uint32 wait_event_info);

@@ -126,18 +126,16 @@ Beside the registry: the main LWLock array
   `../sm/sm0/INTERRUPT.md`), then `CHECK_FOR_INTERRUPTS()`. A
   short mutex needs none, but is never held across a wait.
 
-## 4. Latches: sm0's `latch_t`
+## 4. Latches: an interrupt bit
 
-storage/ipc `latch.c`'s `Latch` already wakes its owner through
-`sm_sys.h` (`WORKNOTE.md` step 31), but keeps PostgreSQL's
-shape: `is_set` and `maybe_sleeping` as relaxed atomics ordered
-by hand-placed barriers, the owner's handle under a spinlock,
-`owner_pid`, `is_shared`.
-
-**sm0 is to provide `latch_t`**, in `sm_sys.h`: set, reset and an
-interruptible wait, owned by one thread, its memory orders its
-own. `Latch` becomes a wrapper over it, then goes; the spinlock
-and the barriers go with it.
+Done (`WORKNOTE.md` step 136). A latch was a flag in shared
+memory that other processes set to wake its one owner. In one
+process a latch is always a thread's, and `sm_sys.h` already
+wakes a thread without losing the wake: so a latch is the
+owning thread's `INTERRUPT_LATCH` bit. `Latch` keeps only the
+owner, for others to find the thread by. What is left: the
+`Latch` handle itself, and the local and shared latches a thread
+switches between (`SwitchToSharedLatch()`), which are one bit.
 
 ## 5. Shared structures
 
@@ -191,12 +189,12 @@ and the barriers go with it.
 The dead code is gone (`WORKNOTE.md` step 131). What is left
 has a caller still, and goes with the step that removes it:
 
-- **With the constant snapshot** (§7, step 4): the proc array's
+- **With the constant snapshot** (§7, step 3): the proc array's
   group XID clearing (`ProcArrayGroupClearXid()`), the
   horizons `GetSnapshotData()` and `GlobalVisTestFor()` compute,
   the replication slots' xmin fields they read, the
   `XidCache`.
-- **With the lock manager** (§7, step 5): lock groups
+- **With the lock manager** (§7, step 4): lock groups
   (`lockGroupLeader`, `lockGroupMembers`), which `lock.c` and
   `deadlock.c` test throughout though no proc ever joins one;
   and the tuple, page, extension and speculative lock tags,
@@ -213,19 +211,18 @@ has a caller still, and goes with the step that removes it:
 1. **PostgreSQL's xid and OID counters, the relation mapper's
    files and the relcache's init files**, removed, with
    XidGen, OidGen, RelationMapping and RelCacheInit (§3).
-2. **sm0's `latch_t`** (§4), and `Latch` over it.
-3. **The invalidation bus** (§5), then ProcSignal and
+2. **The invalidation bus** (§5), then ProcSignal and
    PMSignalState.
-4. **The constant snapshot**: the proc array becomes the
+3. **The constant snapshot**: the proc array becomes the
    session registry.
-5. **The lock manager**: advisory locks into sm, catalog locks
+4. **The lock manager**: advisory locks into sm, catalog locks
    gone; then the lock manager, the remaining LWLocks,
    `posix_sema.c` and PGPROC.
-6. **The registry** of §2, once each block is a pcb field.
+5. **The registry** of §2, once each block is a pcb field.
 
 Each step is checked by the full suite and by `make tsan`;
 asserts are on in every build (`dg.mk`), so a broken invariant
-fails a test. Steps 3 to 5 change what sessions see of each
+fails a test. Steps 2 to 4 change what sessions see of each
 other, which `test/server.sh` checks only in part: DDL seen by
 another session, `pg_cancel_backend()`, a session that ends
 abnormally.

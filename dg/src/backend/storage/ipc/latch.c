@@ -21,6 +21,7 @@
 #include "miscadmin.h"
 #include "port/atomics.h"
 #include "storage/latch.h"
+#include "storage/procsignal.h"
 #include "storage/waiteventset.h"
 #include "utils/resowner.h"
 
@@ -65,10 +66,8 @@ void InitializeLatchWaitSet(void) {
  * Initialize a process-local latch.
  */
 void InitLatch(Latch *latch) {
-  LATCH_SET(latch->is_set, false);
-  LATCH_SET(latch->maybe_sleeping, false);
-  LATCH_SET(latch->owner_pid, MyProcPid);
-  LATCH_SET(latch->owner_tid, gettid());
+  /* Not set: a latch bit left from before is taken. */
+  (void)sm_take(INTERRUPT_LATCH);
   /* Other threads set it too: the postmaster's, by its backends. */
   latch->owner = new sm_thread_ref_t(sm_thread_self());
   /* owner_lock was made with the latch, a thread's LocalLatchData. */
@@ -112,10 +111,6 @@ void InitSharedLatch(Latch *latch) {
     elog(ERROR, "CreateEvent failed: error code %lu", GetLastError());
 #endif
 
-  LATCH_SET(latch->is_set, false);
-  LATCH_SET(latch->maybe_sleeping, false);
-  LATCH_SET(latch->owner_pid, 0);
-  LATCH_SET(latch->owner_tid, 0);
   latch->owner = NULL;
   /* The latch is a PGPROC's, calloc'd: its mutex is made in place. */
   new (&latch->owner_lock) std::mutex();
@@ -132,15 +127,10 @@ void InitSharedLatch(Latch *latch) {
  * there is any risk of that, caller must provide an interlock to prevent it.
  */
 void OwnLatch(Latch *latch) {
-  int owner_pid;
   sm_thread_ref_t *owner;
 
   /* Sanity checks */
   Assert(latch->is_shared);
-
-  owner_pid = LATCH_GET(latch->owner_pid);
-  if (owner_pid != 0)
-    elog(PANIC, "latch already owned by PID %d", owner_pid);
 
   /* Made before the lock, which is held for a few instructions. */
   owner = new sm_thread_ref_t(sm_thread_self());
@@ -148,11 +138,10 @@ void OwnLatch(Latch *latch) {
     /* Published under the lock that SetLatch() copies it under. */
     std::lock_guard<std::mutex> lock(latch->owner_lock);
 
+    if (latch->owner != NULL)
+      elog(PANIC, "latch already owned by another thread");
     latch->owner = owner;
   }
-
-  LATCH_SET(latch->owner_pid, MyProcPid);
-  LATCH_SET(latch->owner_tid, gettid());
 }
 
 /*
@@ -162,10 +151,7 @@ void DisownLatch(Latch *latch) {
   sm_thread_ref_t *owner;
 
   Assert(latch->is_shared);
-  Assert(LATCH_GET(latch->owner_pid) == MyProcPid);
-
-  LATCH_SET(latch->owner_pid, 0);
-  LATCH_SET(latch->owner_tid, 0);
+  Assert(LatchIsMine(latch));
 
   {
     /* Unpublished under the lock, so no SetLatch() is copying it. */
@@ -300,86 +286,22 @@ int WaitLatchOrSocket(Latch *latch, int wakeEvents, pgsocket sock, long timeout,
  * throwing an error is not a good idea.
  */
 void SetLatch(Latch *latch) {
-#ifndef WIN32
-  pid_t owner_pid;
-  pid_t owner_tid;
-#else
-  HANDLE handle;
-#endif
-
   /*
-   * The memory barrier has to be placed here to ensure that any flag
-   * variables possibly changed by this process have been flushed to main
-   * memory, before we check/set is_set.
+   * Raise the owner's INTERRUPT_LATCH, which also writes its wake fd, so a
+   * WaitEventSet it sleeps in returns.  The bit's release orders what this
+   * thread wrote before it with the owner's look after it sees the bit.
+   * This thread's own latch is set without a lock: a signal handler sets
+   * only MyLatch.
    */
-  pg_memory_barrier();
-
-  /* Quick exit if already set */
-  if (LATCH_GET(latch->is_set))
+  if (latch == MyLatch) {
+    sm_interrupt_self(INTERRUPT_LATCH);
     return;
-
-  LATCH_SET(latch->is_set, true);
-
-  pg_memory_barrier();
-  if (!LATCH_GET(latch->maybe_sleeping))
-    return;
-
-#ifndef WIN32
-
-  /*
-   * See if anyone's waiting for the latch. It can be the current process if
-   * we're in a signal handler. We use the self-pipe or our wake fd (sm_sys.h)
-   * to wake up WaitEventSetWaitBlock() without races in that case. If it's
-   * another thread, interrupt it through sys.
-   *
-   * Fetch owner_pid only once, in case the latch is concurrently getting
-   * owned or disowned. XXX: This assumes that pid_t is atomic, which isn't
-   * guaranteed to be true! In practice, the effective range of pid_t fits
-   * in a 32 bit integer, and so should be atomic. In the worst case, we
-   * might end up signaling the wrong process. Even then, you're very
-   * unlucky if a process with that bogus pid exists and belongs to
-   * Postgres; and PG database processes should handle excess SIGUSR1
-   * interrupts without a problem anyhow.
-   *
-   * Another sort of race condition that's possible here is for a new
-   * process to own the latch immediately after we look, so we don't signal
-   * it. This is okay so long as all callers of ResetLatch/WaitLatch follow
-   * the standard coding convention of waiting at the bottom of their loops,
-   * not the top, so that they'll correctly process latch-setting events
-   * that happen before they enter the loop.
-   */
-  owner_pid = LATCH_GET(latch->owner_pid);
-  owner_tid = LATCH_GET(latch->owner_tid);
-  if (owner_pid == 0)
-    return;
-  else if (owner_pid == MyProcPid && owner_tid == gettid())
-    WakeupMyProc();
-  else {
-    sm_thread_ref_t owner = LatchOwner(latch);
-
-    if (owner)
-      WakeupOtherProc(owner);
   }
 
-#else
+  sm_thread_ref_t owner = LatchOwner(latch);
 
-  /*
-   * See if anyone's waiting for the latch. It can be the current process if
-   * we're in a signal handler.
-   *
-   * Use a local variable here just in case somebody changes the event field
-   * concurrently (which really should not happen).
-   */
-  handle = latch->event;
-  if (handle) {
-    SetEvent(handle);
-
-    /*
-     * Note that we silently ignore any errors. We might be in a signal
-     * handler or other critical path where it's not safe to call elog().
-     */
-  }
-#endif
+  if (owner)
+    sm_interrupt(owner, INTERRUPT_LATCH);
 }
 
 /*
@@ -403,16 +325,25 @@ sm_thread_ref_t LatchOwner(Latch *latch) {
  */
 void ResetLatch(Latch *latch) {
   /* Only the owner should reset the latch */
-  Assert(LATCH_GET(latch->owner_pid) == MyProcPid);
-  Assert(latch->maybe_sleeping == false);
-
-  LATCH_SET(latch->is_set, false);
+  Assert(LatchIsMine(latch));
 
   /*
-   * Ensure that the write to is_set gets flushed to main memory before we
-   * examine any flag variables.  Otherwise a concurrent SetLatch might
-   * falsely conclude that it needn't signal us, even though we have missed
-   * seeing some flag updates that SetLatch was supposed to inform us of.
+   * Taken with acquire: what a setter wrote before its set is seen by the
+   * look the caller makes next.
    */
-  pg_memory_barrier();
+  (void)sm_take(INTERRUPT_LATCH);
+}
+
+/* Whether the latch, the calling thread's own, is set. */
+bool LatchIsSet(Latch *latch) {
+  Assert(LatchIsMine(latch));
+  return (sm_pending_word()->load(std::memory_order_acquire) &
+          INTERRUPT_LATCH) != 0;
+}
+
+/* Whether the calling thread owns the latch. */
+bool LatchIsMine(Latch *latch) {
+  sm_thread_ref_t owner = LatchOwner(latch);
+
+  return owner && owner.get() == sm_thread_self().get();
 }

@@ -71,6 +71,13 @@ extern void procsignal_sigusr1_handler(void);
   (INTERRUPT_CANCEL | INTERRUPT_DIE | INTERRUPT_QUIT | INTERRUPT_RELOAD |   \
    INTERRUPT_PROCSIG | INTERRUPT_ALARM)
 
+/*
+ * The thread's latch (storage/latch.h): set by SetLatch(), taken by
+ * ResetLatch(), and waited for by a WaitEventSet.  No handler runs for it,
+ * so it is not among INTERRUPT_ALL, and no wait of sm's ends on it.
+ */
+#define INTERRUPT_LATCH (1u << 6)
+
 typedef void (*interrupt_handler_t)(void);
 
 struct PGPROC;

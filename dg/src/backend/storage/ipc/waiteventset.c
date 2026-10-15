@@ -548,8 +548,8 @@ int AddWaitEventToSet(WaitEventSet *set, uint32 events, pgsocket fd,
   }
 
   if (latch) {
-    if (LATCH_GET(latch->owner_pid) != MyProcPid)
-      elog(ERROR, "cannot wait on a latch owned by another process");
+    if (!LatchIsMine(latch))
+      elog(ERROR, "cannot wait on a latch owned by another thread");
     if (set->latch)
       elog(ERROR, "cannot wait on more than one latch");
     if ((events & WL_LATCH_SET) != WL_LATCH_SET)
@@ -656,8 +656,8 @@ void ModifyWaitEvent(WaitEventSet *set, int pos, uint32 events, Latch *latch) {
   event->events = events;
 
   if (events == WL_LATCH_SET) {
-    if (latch && LATCH_GET(latch->owner_pid) != MyProcPid)
-      elog(ERROR, "cannot wait on a latch owned by another process");
+    if (latch && !LatchIsMine(latch))
+      elog(ERROR, "cannot wait on a latch owned by another thread");
     set->latch = latch;
 
     /*
@@ -1002,28 +1002,16 @@ int WaitEventSetWait(WaitEventSet *set, long timeout,
      * latch when blocking, but there's no danger of anything filling up,
      * as "Setting an event that is already set has no effect.".
      *
-     * Note: we assume that the kernel calls involved in latch management
-     * will provide adequate synchronization on machines with weak memory
-     * ordering, so that we cannot miss seeing is_set if a notification
-     * has already been queued.
+     * The latch is the thread's INTERRUPT_LATCH bit: a set after this
+     * look raises it, then writes the wake fd, so the wait below returns.
      */
-    if (set->latch && !LATCH_GET(set->latch->is_set)) {
-      /* about to sleep on a latch */
-      LATCH_SET(set->latch->maybe_sleeping, true);
-      pg_memory_barrier();
-      /* and recheck */
-    }
-
-    if (set->latch && LATCH_GET(set->latch->is_set)) {
+    if (set->latch && LatchIsSet(set->latch)) {
       occurred_events->fd = PGINVALID_SOCKET;
       occurred_events->pos = set->latch_pos;
       occurred_events->user_data = set->events[set->latch_pos].user_data;
       occurred_events->events = WL_LATCH_SET;
       occurred_events++;
       returned_events++;
-
-      /* could have been set above */
-      LATCH_SET(set->latch->maybe_sleeping, false);
 
       if (returned_events == nevents)
         break; /* output buffer full already */
@@ -1045,8 +1033,6 @@ int WaitEventSetWait(WaitEventSet *set, long timeout,
     rc = WaitEventSetWaitBlock(set, cur_timeout, occurred_events,
                                nevents - returned_events);
 
-    if (set->latch && LATCH_GET(set->latch->maybe_sleeping))
-      LATCH_SET(set->latch->maybe_sleeping, false);
 
     if (rc == -1)
       break; /* timeout occurred */
@@ -1126,8 +1112,7 @@ static inline int WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
       /* Drain the wake fd. */
       drain();
 
-      if (set->latch && LATCH_GET(set->latch->maybe_sleeping) &&
-          LATCH_GET(set->latch->is_set)) {
+      if (set->latch && LatchIsSet(set->latch)) {
         occurred_events->fd = PGINVALID_SOCKET;
         occurred_events->events = WL_LATCH_SET;
         occurred_events++;
@@ -1261,8 +1246,7 @@ static int WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
 
     if (cur_event->events == WL_LATCH_SET &&
         cur_kqueue_event->filter == EVFILT_SIGNAL) {
-      if (set->latch && LATCH_GET(set->latch->maybe_sleeping) &&
-          LATCH_GET(set->latch->is_set)) {
+      if (set->latch && LatchIsSet(set->latch)) {
         occurred_events->fd = PGINVALID_SOCKET;
         occurred_events->events = WL_LATCH_SET;
         occurred_events++;
@@ -1367,8 +1351,7 @@ static inline int WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
       /* There's data in the self-pipe, clear it. */
       drain();
 
-      if (set->latch && LATCH_GET(set->latch->maybe_sleeping) &&
-          LATCH_GET(set->latch->is_set)) {
+      if (set->latch && LatchIsSet(set->latch)) {
         occurred_events->fd = PGINVALID_SOCKET;
         occurred_events->events = WL_LATCH_SET;
         occurred_events++;
@@ -1562,8 +1545,7 @@ static inline int WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
       if (!ResetEvent(set->handles[cur_event->pos + 1]))
         elog(ERROR, "ResetEvent failed: error code %lu", GetLastError());
 
-      if (set->latch && LATCH_GET(set->latch->maybe_sleeping) &&
-          LATCH_GET(set->latch->is_set)) {
+      if (set->latch && LatchIsSet(set->latch)) {
         occurred_events->fd = PGINVALID_SOCKET;
         occurred_events->events = WL_LATCH_SET;
         occurred_events++;
@@ -1789,35 +1771,3 @@ static void ResOwnerReleaseWaitEventSet(Datum res) {
   FreeWaitEventSet(set);
 }
 
-#ifndef WIN32
-/*
- * Wake up my process if it's currently sleeping in WaitEventSetWaitBlock()
- *
- * NB: be sure to save and restore errno around it.  (That's standard practice
- * in most signal handlers, of course, but we used to omit it in handlers that
- * only set a flag.) XXX
- *
- * NB: this function is called from critical sections and signal handlers so
- * throwing an error is not a good idea.
- *
- * On Windows, Latch uses SetEvent directly and this is not used.
- */
-void WakeupMyProc(void) {
-#if defined(WAIT_USE_SELF_PIPE)
-  if (waiting)
-    sendSelfPipeByte();
-#else
-  /* No bit: a write to the wake fd, safe in a signal handler. */
-  if (waiting)
-    sm_interrupt_self(0);
-#endif
-}
-
-/*
- * Similar to WakeupMyProc, but wake up another thread, through its wake fd.
- * No bit is raised: the latch is the news.  Not in a signal handler.
- */
-void WakeupOtherProc(const sm_thread_ref_t &thread) {
-  sm_interrupt(thread, 0);
-}
-#endif

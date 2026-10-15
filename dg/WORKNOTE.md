@@ -3937,3 +3937,40 @@ counts against one ceiling for the process.
   eviction disabled it fails at the 61st.
 - **`sm/sm0/test/test_vfd.cc`**: a ceiling set while fds are
   held counts them, measured or given.
+
+## Step 136: a latch is an interrupt bit
+
+`SHMEM.md` §4. A latch was a flag in shared memory, with one
+owner, that other processes set to wake it; storage/ipc
+`latch.c` kept that shape over `sm_sys.h`'s wake: `is_set` and
+`maybe_sleeping`, ordered by `pg_memory_barrier()`s placed by
+hand, and the owner's pid and thread id. In one process a latch
+is always a thread's, and `sm_sys.h` already wakes a thread
+without losing the wake: a bit raised, then its wake fd written.
+
+- **A latch is the owning thread's `INTERRUPT_LATCH`**
+  (storage `procsignal.h`), outside `INTERRUPT_ALL`: no handler
+  runs for it, `DeliverInterrupts()` does not take it, and no
+  wait of sm's ends on it. `SetLatch()` raises it in the owner,
+  `ResetLatch()` takes it, `LatchIsSet()` loads it, with
+  acquire, so what a setter wrote before its set is seen after.
+- **`SetLatch(MyLatch)` takes no lock**: it is
+  `sm_interrupt_self()`, so a signal handler, which sets only
+  `MyLatch`, may call it. Any other latch's owner is copied
+  under its lock, as before, and interrupted.
+- **`Latch` keeps only its owner**, for others to find the
+  thread by: `InterruptProc()` (storage/ipc `procsignal.c`) as
+  well. `is_set`, `maybe_sleeping`, `owner_pid`, `owner_tid`,
+  `LATCH_GET()`/`LATCH_SET()` and the barriers are gone, and
+  `WakeupMyProc()` and `WakeupOtherProc()`.
+- **`WaitEventSetWait()`** (storage/ipc `waiteventset.c`) asks
+  `LatchIsSet()` before it sleeps and after its wake fd is
+  read: a set after the first look writes the fd, so the sleep
+  ends. No announcement of the sleep is needed.
+- **A wait is refused on another thread's latch.** The check
+  compared the owner's pid with `MyProcPid`, which every thread
+  of the process shares, so it refused nothing; `LatchIsMine()`
+  compares the thread.
+- `server.sh` catches a latch that does not wake: with
+  `SetLatch()` on another thread's latch made a no-op, the
+  postmaster, which a session's end sets, does not shut down.
