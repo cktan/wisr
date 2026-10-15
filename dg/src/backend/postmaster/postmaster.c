@@ -1691,19 +1691,12 @@ static void CleanupBackend(PMChild *bp,
 #endif
 
   /*
-   * Release the PMChild entry.
-   *
-   * If the process attached to shared memory, this also checks that it
-   * detached cleanly.
+   * Release the PMChild entry.  A crash is told by the exit status alone: a
+   * session thread that skipped its exit callbacks would have ended the
+   * process, so none ends without cleaning up after itself.
    */
   bp_pid = bp->pid;
-  if (!ReleasePostmasterChildSlot(bp)) {
-    /*
-     * Uh-oh, the child failed to clean itself up.  Treat as a crash after
-     * all.
-     */
-    crashed = true;
-  }
+  ReleasePostmasterChildSlot(bp);
   bp = NULL;
 
   /* In a crash case, exit immediately. */
@@ -2208,7 +2201,7 @@ static int BackendStartup(ClientSocket *client_sock) {
     /* in parent, fork failed */
     int save_errno = errno;
 
-    (void)ReleasePostmasterChildSlot(bn);
+    ReleasePostmasterChildSlot(bn);
     errno = save_errno;
     ereport(LOG, (errmsg("could not fork new process for connection: %m")));
     report_fork_failure_to_client(client_sock, save_errno);

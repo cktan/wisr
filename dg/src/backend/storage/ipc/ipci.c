@@ -119,7 +119,9 @@ static void CreateOrAttachShmemStructs(void) {
   /*
    * Set up interprocess signaling mechanisms
    */
-  PMSignalShmemInit();
+  /* A rebuild after a crash clears why the postmaster sent SIGQUIT. */
+  if (!IsUnderPostmaster)
+    SetQuitSignalReason(PMQUIT_NOT_SENT);
 
   /*
    * Set up other modules that need some shared memory space

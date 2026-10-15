@@ -34,18 +34,12 @@ typedef enum {
 } QuitSignalReason;
 
 /* PMSignalData is an opaque struct, details known only within pmsignal.c */
-typedef struct PMSignalData PMSignalData;
 
 /*
  * prototypes for functions in pmsignal.c
  */
-extern Size PMSignalShmemSize(void);
-extern void PMSignalShmemInit(void);
 extern void SetQuitSignalReason(QuitSignalReason reason);
 extern QuitSignalReason GetQuitSignalReason(void);
-extern void MarkPostmasterChildSlotAssigned(int slot);
-extern bool MarkPostmasterChildSlotUnassigned(int slot);
-extern void RegisterPostmasterChildActive(void);
 extern bool PostmasterIsAliveInternal(void);
 extern void PostmasterDeathSignalInit(void);
 

@@ -98,6 +98,9 @@ typedef struct pcb_t {
   /* proc.c, procsignal.c: guards each PGPROC's cancel key */
   std::mutex cancel_key_mutex;
 
+  /* pmsignal.c: why the postmaster sent SIGQUIT, a QuitSignalReason */
+  std::atomic<int> quit_reason{0};
+
   /* lock.c: the fast path's counts of strong locks, new'd */
   struct FastPathStrongRelationLockData *fast_path_strong = nullptr;
 } pcb_t;

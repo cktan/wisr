@@ -27,8 +27,7 @@ procsignal barriers (66); `barrier.c` (10); shared invalidation,
 
 What is left is built at start by `CreateOrAttachShmemStructs()`
 (storage/ipc `ipci.c`): the init list of LWLocks, `varsup`, the
-lock manager, the PGPROCs, the proc array, PMSignal and
-ProcSignal.
+lock manager, the PGPROCs and the proc array.
 
 ## 2. Allocation: a registry of named blocks
 
@@ -46,7 +45,6 @@ directory fixed in size ahead of time.
 | Fast Path Strong Relation Lock Data | storage/lmgr `lock.c:446` | counts per partition | a spinlock |
 | Proc Header, PGPROC structures, Fast-Path Lock Array | storage/lmgr `proc.c:172,194,234` | a PGPROC a session, free lists | ProcStructLock |
 | Proc Array | storage/ipc `procarray.c:308` | pgprocnos[MaxBackends] | ProcArrayLock |
-| PMSignalState | storage/ipc `pmsignal.c:143` | child flags, quit reason | relaxed atomics |
 | ProcSignal | storage/ipc `procsignal.c:95` | a slot a session, cancel keys | pss_mutex |
 
 Beside the registry: the main LWLock array
@@ -159,11 +157,13 @@ switches between (`SwitchToSharedLatch()`), which are one bit.
   until PGPROC becomes the session record. storage/ipc
   `procsignal.c` keeps the interrupt bits' calls and the cancel
   request.
-- **PMSignalState** (storage/ipc `pmsignal.c`, postmaster
-  `pmchild.c`). It tells an abnormal end of a session thread
-  from a clean one, and keeps the quit reason; the walsender
-  flags are dead. **To replace**: an atomic state in the
-  thread's launch record, and an atomic quit reason in the pcb.
+- **PMSignalState is gone** (`WORKNOTE.md` step 148). Its quit
+  reason is `pcb->quit_reason`, an atomic. Its child flags,
+  which told the postmaster of a child that ended without
+  cleaning up after itself, went with nothing in their place:
+  in one process whatever skips a session's exit callbacks
+  ends the process, so the postmaster tells a crash by exit
+  status alone.
 
 ### 5.1 Invalidation by version, not by message
 
@@ -317,8 +317,8 @@ has a caller still, and goes with the step that removes it:
    checked first; then a relation's version and the schema
    epoch in sm, checked where the queue was drained; then
    sinval, the catchup interrupt and the SInval LWLocks gone.
-   Done (`WORKNOTE.md` steps 141 to 146). ProcSignal is gone
-   too (step 147); next, PMSignalState.
+   Done (`WORKNOTE.md` steps 141 to 146), and ProcSignal and
+   PMSignalState with it (147, 148).
 3. **The constant snapshot**: the proc array becomes the
    session registry.
 4. **The lock manager**: advisory locks into sm, catalog locks

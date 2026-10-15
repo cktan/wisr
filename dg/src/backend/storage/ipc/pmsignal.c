@@ -26,68 +26,17 @@
 #include "storage/ipc.h"
 #include "storage/pmsignal.h"
 #include "storage/shmem.h"
+#include "utils/control_block.h"
 #include "utils/memutils.h"
 
 /*
  * Children no longer signal the postmaster with SIGUSR1 and a reason: the
- * postmaster ignores SIGUSR1.
- *
- * The flags are actually declared as "volatile sig_atomic_t" for maximum
- * portability.  This should ensure that loads and stores of the flag
- * values are atomic, allowing us to dispense with any explicit locking.
- *
- * We store a set of per-child-process flags that are currently used only for
- * detecting whether a backend has exited without performing proper shutdown.
- * The per-child-process flags have three possible states: UNUSED, ASSIGNED,
- * ACTIVE.  An UNUSED slot is available for assignment.  An ASSIGNED slot is
- * associated with a postmaster child process, but either the process has not
- * touched shared memory yet, or it has successfully cleaned up after itself. An
- * ACTIVE slot means the process is actively using shared memory.  The slots are
- * assigned to child processes by postmaster, and pmchild.c is responsible for
- * tracking which one goes with which PID.
- *
- * Actually there is a fourth state, WALSENDER.  This is just like ACTIVE,
- * but carries the extra information that the child is a WAL sender.
- * WAL senders too start in ACTIVE state, but switch to WALSENDER once they
- * start streaming the WAL (and they never go back to ACTIVE after that).
- *
- * We also have a shared-memory field that is used for communication in
- * the opposite direction, from postmaster to children: it tells why the
- * postmaster has broadcasted SIGQUIT signals, if indeed it has done so.
+ * postmaster ignores SIGUSR1.  What was PMSignalState is gone or elsewhere.
+ * Its flags told the postmaster of a child that ended without cleaning up
+ * after itself, which in one process cannot be: whatever skips a session's
+ * exit callbacks ends the process.  Why the postmaster sent SIGQUIT is
+ * pcb->quit_reason.
  */
-
-#define PM_CHILD_UNUSED		0 /* these values must fit in sig_atomic_t */
-#define PM_CHILD_ASSIGNED	1
-#define PM_CHILD_ACTIVE		2
-
-/* "typedef struct PMSignalData PMSignalData" appears in pmsignal.h */
-struct PMSignalData {
-  /* global flags for signals from postmaster to children */
-  QuitSignalReason sigquit_reason; /* why SIGQUIT was sent */
-  /* per-child-process flags */
-  int num_child_flags; /* # of entries in PMChildFlags[] */
-  sig_atomic_t PMChildFlags[FLEXIBLE_ARRAY_MEMBER];
-};
-
-/*
- * A child sets its flag and the postmaster reads it, or the other way, with
- * no lock: relaxed atomics, which a thread sanitizer sees for what they are.
- */
-#define PM_FLAG_GET(slot) \
-	__atomic_load_n(&PMSignalState->PMChildFlags[slot], __ATOMIC_RELAXED)
-#define PM_FLAG_SET(slot, value) \
-	__atomic_store_n(&PMSignalState->PMChildFlags[slot], (value), \
-					 __ATOMIC_RELAXED)
-
-/* PMSignalState pointer is valid in both postmaster and child processes */
-static thread_local /*SHARED*/ volatile PMSignalData *PMSignalState = NULL;
-
-/*
- * Local copy of PMSignalState->num_child_flags, only valid in the
- * postmaster.  Postmaster keeps a local copy so that it doesn't need to
- * trust the value in shared memory.
- */
-static thread_local /*SHARED*/ int num_child_flags;
 
 /*
  * Signal handler to be notified if postmaster dies.
@@ -117,38 +66,6 @@ static void postmaster_death_handler(SIGNAL_ARGS) {
 
 #endif /* USE_POSTMASTER_DEATH_SIGNAL */
 
-static void MarkPostmasterChildInactive(int code, Datum arg);
-
-/*
- * PMSignalShmemSize
- *		Compute space needed for pmsignal.c's shared memory
- */
-Size PMSignalShmemSize(void) {
-  Size size;
-
-  size = offsetof(PMSignalData, PMChildFlags);
-  size = add_size(size,
-                  mul_size(MaxLivePostmasterChildren(), sizeof(sig_atomic_t)));
-
-  return size;
-}
-
-/*
- * PMSignalShmemInit - initialize during shared-memory creation
- */
-void PMSignalShmemInit(void) {
-  bool found;
-
-  PMSignalState = (PMSignalData *)ShmemInitStruct("PMSignalState",
-                                                  PMSignalShmemSize(), &found);
-
-  if (!found) {
-    /* initialize all flags to zeroes */
-    MemSet(unvolatize(PMSignalData *, PMSignalState), 0, PMSignalShmemSize());
-    num_child_flags = MaxLivePostmasterChildren();
-    PMSignalState->num_child_flags = num_child_flags;
-  }
-}
 
 /*
  * SetQuitSignalReason - broadcast the reason for a system shutdown.
@@ -159,7 +76,7 @@ void PMSignalShmemInit(void) {
  * explicitly.
  */
 void SetQuitSignalReason(QuitSignalReason reason) {
-  PMSignalState->sigquit_reason = reason;
+  pcb->quit_reason.store(reason, std::memory_order_release);
 }
 
 /*
@@ -168,82 +85,9 @@ void SetQuitSignalReason(QuitSignalReason reason) {
  * If the postmaster hasn't actually sent SIGQUIT, will return PMQUIT_NOT_SENT.
  */
 QuitSignalReason GetQuitSignalReason(void) {
-  /* This is called in signal handlers, so be extra paranoid. */
-  if (!IsUnderPostmaster || PMSignalState == NULL)
+  if (!IsUnderPostmaster)
     return PMQUIT_NOT_SENT;
-  return PMSignalState->sigquit_reason;
-}
-
-/*
- * MarkPostmasterChildSlotAssigned - mark the given slot as ASSIGNED for a
- * new postmaster child process.
- *
- * Only the postmaster is allowed to execute this routine, so we need no
- * special locking.
- */
-void MarkPostmasterChildSlotAssigned(int slot) {
-  Assert(slot > 0 && slot <= num_child_flags);
-  slot--;
-
-  if (PM_FLAG_GET(slot) != PM_CHILD_UNUSED)
-    elog(FATAL, "postmaster child slot is already in use");
-
-  PM_FLAG_SET(slot, PM_CHILD_ASSIGNED);
-}
-
-/*
- * MarkPostmasterChildSlotUnassigned - release a slot after death of a
- * postmaster child process.  This must be called in the postmaster process.
- *
- * Returns true if the slot had been in ASSIGNED state (the expected case),
- * false otherwise (implying that the child failed to clean itself up).
- */
-bool MarkPostmasterChildSlotUnassigned(int slot) {
-  bool result;
-
-  Assert(slot > 0 && slot <= num_child_flags);
-  slot--;
-
-  /*
-   * Note: the slot state might already be unused, because the logic in
-   * postmaster.c is such that this might get called twice when a child
-   * crashes.  So we don't try to Assert anything about the state.
-   */
-  result = (PM_FLAG_GET(slot) == PM_CHILD_ASSIGNED);
-  PM_FLAG_SET(slot, PM_CHILD_UNUSED);
-  return result;
-}
-
-/*
- * RegisterPostmasterChildActive - mark a postmaster child as about to begin
- * actively using shared memory.  This is called in the child process.
- *
- * This register an shmem exit hook to mark us as inactive again when the
- * process exits normally.
- */
-void RegisterPostmasterChildActive(void) {
-  int slot = MyPMChildSlot;
-
-  Assert(slot > 0 && slot <= PMSignalState->num_child_flags);
-  slot--;
-  Assert(PM_FLAG_GET(slot) == PM_CHILD_ASSIGNED);
-  PM_FLAG_SET(slot, PM_CHILD_ACTIVE);
-
-  /* Arrange to clean up at exit. */
-  on_shmem_exit(MarkPostmasterChildInactive, 0);
-}
-
-/*
- * MarkPostmasterChildInactive - mark a postmaster child as done using
- * shared memory.  This is called in the child process.
- */
-static void MarkPostmasterChildInactive(int code, Datum arg) {
-  int slot = MyPMChildSlot;
-
-  Assert(slot > 0 && slot <= PMSignalState->num_child_flags);
-  slot--;
-  Assert(PM_FLAG_GET(slot) == PM_CHILD_ACTIVE);
-  PM_FLAG_SET(slot, PM_CHILD_ASSIGNED);
+  return (QuitSignalReason)pcb->quit_reason.load(std::memory_order_acquire);
 }
 
 /*

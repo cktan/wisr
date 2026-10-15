@@ -33,7 +33,7 @@
  * memory, but we know they will never become live backends.
  *
  * child_slot is an identifier that is unique across all running child
- * processes.  It is used as an index into the PMChildFlags array.  dead-end
+ * processes, by which pmchild.c counts them against their limits.  dead-end
  * children are not assigned a child_slot and have child_slot == 0 (valid
  * child_slot ids start from 1).
  */
@@ -98,7 +98,7 @@ extern thread_local /*SHARED*/ PGDLLIMPORT dlist_head ActiveChildList;
 extern void InitPostmasterChildSlots(void);
 extern PMChild *AssignPostmasterChildSlot(BackendType btype);
 extern PMChild *AllocDeadEndChild(void);
-extern bool ReleasePostmasterChildSlot(PMChild *pmchild);
+extern void ReleasePostmasterChildSlot(PMChild *pmchild);
 extern PMChild *FindPostmasterChildByPid(int pid);
 
 /*

@@ -301,14 +301,6 @@ void InitProcess(void) {
   if (MyProc != NULL)
     elog(ERROR, "you already exist");
 
-  /*
-   * Before we start accessing the shared memory in a serious way, mark
-   * ourselves as an active postmaster child; this is so that the postmaster
-   * can detect it if we exit without cleaning up.
-   */
-  if (IsUnderPostmaster)
-    RegisterPostmasterChildActive();
-
   /* The free list supplies our PGPROC (InitProcGlobal()). */
   procgloballist = &ProcGlobal->freeProcs;
 

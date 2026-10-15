@@ -4323,3 +4323,31 @@ one interrupt bit's handler. With sinval's catchup gone (step
   `ProcSignalReason` enum.
 - `server.sh`: a session asked by another to log its memory
   contexts logs them; the cancel request's check was there.
+
+## Step 148: PMSignalState is gone
+
+`SHMEM.md` §5, its PMSignalState: a quit reason, and a flag for
+each child slot, set by the child once it took a PGPROC and
+cleared by its exit callback, which the postmaster read when the
+child ended to tell one that had not cleaned up after itself.
+
+- **The quit reason is `pcb->quit_reason`**, an atomic, set by
+  the postmaster before it sends SIGQUIT and read by a session
+  quitting (`SetQuitSignalReason()`, `GetQuitSignalReason()`),
+  and cleared when the postmaster rebuilds shared state after a
+  crash, as PMSignalState's rebuild cleared it.
+- **The child flags go, with nothing in their place.** In
+  PostgreSQL a backend could die without its exit callbacks, to
+  SIGKILL, the OOM killer or a segfault, and leave shared memory
+  half changed. A session thread cannot: whatever skips its
+  callbacks (a segfault, `abort()`, an uncaught exception,
+  `exit()`, a signal to the process) ends the process, the
+  postmaster with it. `CleanupBackend()` tells a crash by the
+  exit status alone. `RegisterPostmasterChildActive()`,
+  `MarkPostmasterChildSlotAssigned()` and `Unassigned()` and
+  `PMSignalShmemInit()` go; `ReleasePostmasterChildSlot()`
+  reports nothing. Two SHARED globals go with them.
+- **Not changed, and noted**: an immediate shutdown (SIGQUIT)
+  ends the process before a session tells its client why, so
+  "terminating connection due to immediate shutdown command"
+  reaches no client; it did not before this step either.

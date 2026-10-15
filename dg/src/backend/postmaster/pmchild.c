@@ -59,8 +59,7 @@ thread_local /*SHARED*/ dlist_head ActiveChildList;
  * MaxLivePostmasterChildren
  *
  * This reports the number of postmaster child processes that can be active.
- * It includes all children except for dead-end children.  This allows the
- * array in shared memory (PMChildFlags) to have a fixed maximum size.
+ * It includes all children except for dead-end children.
  */
 int MaxLivePostmasterChildren(void) {
   if (num_pmchild_slots == 0)
@@ -160,9 +159,6 @@ PMChild *AssignPostmasterChildSlot(BackendType btype) {
 
   dlist_push_head(&ActiveChildList, &pmchild->elem);
 
-  /* Update the status in the shared memory array */
-  MarkPostmasterChildSlotAssigned(pmchild->child_slot);
-
   elog(DEBUG2, "assigned pm child slot %d for %s", pmchild->child_slot,
        PostmasterChildName(btype));
 
@@ -192,18 +188,12 @@ PMChild *AllocDeadEndChild(void) {
   return pmchild;
 }
 
-/*
- * Release a PMChild slot, after the child process has exited.
- *
- * Returns true if the child detached cleanly from shared memory, false
- * otherwise (see MarkPostmasterChildSlotUnassigned).
- */
-bool ReleasePostmasterChildSlot(PMChild *pmchild) {
+/* Release a PMChild slot, after the child process has exited. */
+void ReleasePostmasterChildSlot(PMChild *pmchild) {
   dlist_delete(&pmchild->elem);
   if (pmchild->bkend_type == B_DEAD_END_BACKEND) {
     elog(DEBUG2, "releasing dead-end backend");
     pfree(pmchild);
-    return true;
   } else {
     PMChildPool *pool;
 
@@ -223,7 +213,6 @@ bool ReleasePostmasterChildSlot(PMChild *pmchild) {
     }
 
     dlist_push_head(&pool->freelist, &pmchild->elem);
-    return MarkPostmasterChildSlotUnassigned(pmchild->child_slot);
   }
 }
 
