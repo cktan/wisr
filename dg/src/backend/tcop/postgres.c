@@ -464,10 +464,6 @@ void ProcessClientReadInterrupt(bool blocked) {
   if (DoingCommandRead) {
     /* Check for general interrupts that arrived before/while reading */
     CHECK_FOR_INTERRUPTS();
-
-    /* Process sinval catchup interrupts, if any */
-    if (catchupInterruptPending)
-      ProcessCatchupInterrupt();
   } else if (ProcDiePending) {
     /*
      * We're dying.  If there is no data available to read, then it's safe

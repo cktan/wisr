@@ -4270,3 +4270,30 @@ to another, or reads one. sinval's code stays one step more.
   do nothing, these and four checks already there fail ("ALTER
   TABLE seen by another session" among them); with the epoch's,
   the schema's and "search path finds a schema made later".
+
+## Step 146: sinval is gone
+
+`SHMEM.md` §7 step 2, done. Since step 145 no session sent or
+read a message; the queue that carried them goes.
+
+- **Deleted**: storage/ipc `sinval.c` and `sinvaladt.c`, and
+  `storage/sinvaladt.h`: the ring, the per-session read state,
+  the reset and catchup logic, `pcb->sinval`.
+- **The catchup interrupt goes**: `PROCSIG_CATCHUP_INTERRUPT`
+  (storage/ipc `procsignal.c`), its handler, and its processing
+  at a client read (tcop `postgres.c`). ProcSignal has one
+  reason left.
+- **The SInvalRead and SInvalWrite LWLocks go**, their slots
+  left as gaps (`storage/lwlocklist.h`), with their wait events.
+- **inval.c sends nothing**: `PreCommit_Inval()`, step 111's
+  early send, goes with its call in xact.c; `AtEOXact_Inval()`
+  at commit and `AtInplace_Inval()` have nothing to do;
+  `CacheInvalidateSmgr()`, which only sent and had no caller,
+  goes. `SharedInvalidMessageCounter` is defined in inval.c.
+  `storage/sinval.h` keeps the messages, which a session still
+  processes for itself.
+- **A local transaction id comes from one counter for the
+  process** (`pcb_t::next_lxid`, xact.c): PostgreSQL kept each
+  PGPROC slot's next one in the queue's state, so a slot's next
+  user went on from it and reused no virtual xid soon. One
+  counter reuses none until it wraps.

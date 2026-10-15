@@ -27,7 +27,6 @@
  * defined so that no harm is done if a process mistakenly receives one.
  */
 typedef enum {
-  PROCSIG_CATCHUP_INTERRUPT,  /* sinval catchup interrupt */
   PROCSIG_LOG_MEMORY_CONTEXT, /* ask backend to log the memory contexts */
 } ProcSignalReason;
 

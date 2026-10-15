@@ -171,6 +171,13 @@ typedef struct InvalMessageArray {
 
 static thread_local /*LOCAL*/ InvalMessageArray InvalMessageArrays[2];
 
+/*
+ * The messages this session has processed, and sm's versions and epoch it
+ * found moved: a name looked up before a lock is looked up again if this
+ * moved meanwhile (namespace.c).
+ */
+thread_local /*LOCAL*/ uint64 SharedInvalidMessageCounter;
+
 /* Control information for one logical group of messages */
 typedef struct InvalidationMsgsGroup {
   int firstmsg[2]; /* first index in relevant array */
@@ -915,39 +922,17 @@ void AtEOXact_Inval(bool isCommit) {
 
   INJECTION_POINT("transaction-end-process-inval", NULL);
 
-  if (isCommit) {
-    AppendInvalidationMessages(&transInvalInfo->PriorCmdInvalidMsgs,
-                               &transInvalInfo->ii.CurrentCmdInvalidMsgs);
-
-    ProcessInvalidationMessagesMulti(&transInvalInfo->PriorCmdInvalidMsgs,
-                                     SendSharedInvalidMessages);
-  } else {
+  /*
+   * At commit nothing is sent: the session has processed its own messages
+   * command by command, and another learns of the change from sm's versions
+   * (SHMEM.md section 5.1).  At abort the session undoes its own.
+   */
+  if (!isCommit)
     ProcessInvalidationMessages(&transInvalInfo->PriorCmdInvalidMsgs,
                                 LocalExecuteInvalidationMessage);
-  }
 
   /* Need not free anything explicitly */
   transInvalInfo = NULL;
-}
-
-/*
- * PreCommit_Inval
- *		Send the transaction's invalidation messages before sm's
- *transaction commits, as well as after (AtEOXact_Inval()).
- *
- * sm's commit lets go of its locks, and a session waiting for one then reads
- * the messages waiting: those sent after the commit may not be there yet,
- * and the definition it caches would be the old one.  One that reads them
- * earlier rebuilds nothing old: a rebuild opens the table in sm, which waits
- * for this transaction.  If the commit fails, they cost a rebuild.
- */
-void PreCommit_Inval(void) {
-  if (transInvalInfo == NULL)
-    return;
-  ProcessInvalidationMessagesMulti(&transInvalInfo->PriorCmdInvalidMsgs,
-                                   SendSharedInvalidMessages);
-  ProcessInvalidationMessagesMulti(&transInvalInfo->ii.CurrentCmdInvalidMsgs,
-                                   SendSharedInvalidMessages);
 }
 
 /*
@@ -969,12 +954,7 @@ void PreInplace_Inval(void) { Assert(CritSectionCount == 0); }
 void AtInplace_Inval(void) {
   Assert(CritSectionCount > 0);
 
-  if (inplaceInvalInfo == NULL)
-    return;
-
-  ProcessInvalidationMessagesMulti(&inplaceInvalInfo->CurrentCmdInvalidMsgs,
-                                   SendSharedInvalidMessages);
-
+  /* Its messages were another session's to receive: none is sent. */
   inplaceInvalInfo = NULL;
 }
 
@@ -1371,48 +1351,6 @@ void CacheInvalidateRelSync(Oid relid) {
  *output plugin.
  */
 void CacheInvalidateRelSyncAll(void) { CacheInvalidateRelSync(InvalidOid); }
-
-/*
- * CacheInvalidateSmgr
- *		Register invalidation of smgr references to a physical relation.
- *
- * Sending this type of invalidation msg forces other backends to close open
- * smgr entries for the rel.  This should be done to flush dangling open-file
- * references when the physical rel is being dropped or truncated.  Because
- * these are nontransactional (i.e., not-rollback-able) operations, we just
- * send the inval message immediately without any queuing.
- *
- * Note: in most cases there will have been a relcache flush issued against
- * the rel at the logical level.  We need a separate smgr-level flush because
- * it is possible for backends to have open smgr entries for rels they don't
- * have a relcache entry for, e.g. because the only thing they ever did with
- * the rel is write out dirty shared buffers.
- *
- * Note: because these messages are nontransactional, they won't be captured
- * in commit/abort WAL entries.  Instead, calls to CacheInvalidateSmgr()
- * should happen in low-level smgr.c routines, which are executed while
- * replaying WAL as well as when creating it.
- *
- * Note: In order to avoid bloating SharedInvalidationMessage, we store only
- * three bytes of the ProcNumber using what would otherwise be padding space.
- * Thus, the maximum possible ProcNumber is 2^23-1.
- */
-void CacheInvalidateSmgr(RelFileLocatorBackend rlocator) {
-  SharedInvalidationMessage msg;
-
-  /* verify optimization stated above stays valid */
-  StaticAssertStmt(MAX_BACKENDS_BITS <= 23,
-                   "MAX_BACKENDS_BITS is too big for inval.c");
-
-  msg.sm.id = SHAREDINVALSMGR_ID;
-  msg.sm.backend_hi = rlocator.backend >> 16;
-  msg.sm.backend_lo = rlocator.backend & 0xffff;
-  msg.sm.rlocator = rlocator.locator;
-  /* check AddCatcacheInvalidationMessage() for an explanation */
-  VALGRIND_MAKE_MEM_DEFINED(&msg, sizeof(msg));
-
-  SendSharedInvalidMessages(&msg, 1);
-}
 
 /*
  * CacheRegisterSyscacheCallback

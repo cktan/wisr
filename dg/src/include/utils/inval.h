@@ -29,7 +29,6 @@ extern void AcceptInvalidationMessages(void);
 
 extern void AtEOXact_Inval(bool isCommit);
 
-extern void PreCommit_Inval(void);
 
 extern void PreInplace_Inval(void);
 extern void AtInplace_Inval(void);
@@ -58,7 +57,6 @@ extern void CacheInvalidateRelSync(Oid relid);
 
 extern void CacheInvalidateRelSyncAll(void);
 
-extern void CacheInvalidateSmgr(RelFileLocatorBackend rlocator);
 
 extern void CacheRegisterSyscacheCallback(int cacheid,
                                           SyscacheCallbackFunction func,

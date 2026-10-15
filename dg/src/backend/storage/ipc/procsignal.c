@@ -256,9 +256,6 @@ static bool CheckProcSignal(ProcSignalReason reason) {
  * procsignal_sigusr1_handler - handle INTERRUPT_PROCSIG, once SIGUSR1.
  */
 void procsignal_sigusr1_handler(void) {
-  if (CheckProcSignal(PROCSIG_CATCHUP_INTERRUPT))
-    HandleCatchupInterrupt();
-
   if (CheckProcSignal(PROCSIG_LOG_MEMORY_CONTEXT))
     HandleLogMemoryContextInterrupt();
 

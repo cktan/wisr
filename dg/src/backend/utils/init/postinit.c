@@ -44,7 +44,6 @@
 #include "storage/procarray.h"
 #include "storage/procnumber.h"
 #include "storage/procsignal.h"
-#include "storage/sinvaladt.h"
 #include "tcop/backend_startup.h"
 #include "tcop/tcopprot.h"
 #include "utils/acl.h"
@@ -403,12 +402,6 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
   if (!bootstrap) {
     INJECTION_POINT("init-pre-auth", NULL);
   }
-
-  /*
-   * Initialize my entry in the shared-invalidation manager's array of
-   * per-backend data.
-   */
-  SharedInvalBackendInit(false);
 
   ProcSignalInit(MyCancelKey, MyCancelKeyLength);
 

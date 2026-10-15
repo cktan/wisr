@@ -22,11 +22,12 @@ arithmetic of `CalculateShmemSize` and the private mapping
 (step 26); SLRUs, clog, subtrans, commit timestamps, multixacts
 (steps 19, 46, 67, 68); two-phase commit (47); `NOTIFY` (43);
 predicate locks (68); the buffer manager (65); pgstat (28);
-procsignal barriers (66); `barrier.c` (10).
+procsignal barriers (66); `barrier.c` (10); shared invalidation,
+`sinval.c` and `sinvaladt.c` (146).
 
 What is left is built at start by `CreateOrAttachShmemStructs()`
 (storage/ipc `ipci.c`): the init list of LWLocks, `varsup`, the
-lock manager, the PGPROCs, the proc array, sinval, PMSignal and
+lock manager, the PGPROCs, the proc array, PMSignal and
 ProcSignal.
 
 ## 2. Allocation: a registry of named blocks
@@ -45,7 +46,6 @@ directory fixed in size ahead of time.
 | Fast Path Strong Relation Lock Data | storage/lmgr `lock.c:446` | counts per partition | a spinlock |
 | Proc Header, PGPROC structures, Fast-Path Lock Array | storage/lmgr `proc.c:172,194,234` | a PGPROC a session, free lists | ProcStructLock |
 | Proc Array | storage/ipc `procarray.c:308` | pgprocnos[MaxBackends] | ProcArrayLock |
-| (none: `pcb->sinval`, `WORKNOTE.md` step 130) | storage/ipc `sinvaladt.c` | the SI ring, procState[] | SInvalRead/Write, atomics |
 | PMSignalState | storage/ipc `pmsignal.c:143` | child flags, quit reason | relaxed atomics |
 | ProcSignal | storage/ipc `procsignal.c:95` | a slot a session, cancel keys | pss_mutex |
 
@@ -75,8 +75,8 @@ Beside the registry: the main LWLock array
 - **LWLocks** (storage/lmgr `lwlock.c`). Short critical
   sections, held with interrupts held off. A waiter sleeps on its
   PGPROC's POSIX semaphore (port `posix_sema.c`); nothing cuts
-  that sleep short. Taken still: ProcArray, SInvalRead and
-  SInvalWrite, the lock manager's partitions and each PGPROC's
+  that sleep short. Taken still: ProcArray, the lock manager's
+  partitions and each PGPROC's
   `fpInfoLock`; and InjectionPoint, a build option's. **To
   replace**: a `std::mutex` or
   `std::shared_mutex` held by `held_lock_t`
@@ -127,18 +127,13 @@ switches between (`SwitchToSharedLatch()`), which are one bit.
 
 ## 5. Shared structures
 
-- **Shared invalidation** (storage/ipc `sinval.c`,
-  `sinvaladt.c`; utils/cache `inval.c`). Live: it carries the
-  relcache invalidations of sm's tables and indexes (access/sm
-  `smstore.c`: DROP, ALTER, ANALYZE, CREATE and DROP INDEX) and
-  the catalog flush of `pg_namespace` (CREATE and DROP SCHEMA).
-  Every catalog write is refused, so the rest of its message
-  kinds are dead. Its segment is `pcb->sinval`, and its flags
-  and `maxMsgNum` atomics (`WORKNOTE.md` step 130). **To
-  replace**: by a version checked under the lock, and an epoch
-  for what no lock guards (§5.1). No message crosses sessions,
-  so the queue, the catchup interrupt and the two SInval
-  LWLocks go.
+- **Shared invalidation is gone** (`WORKNOTE.md` step 146): its
+  queue, `sinval.c` and `sinvaladt.c`, the catchup interrupt and
+  the two SInval LWLocks. A session processes its own messages
+  (utils/cache `inval.c`), and learns of another's DDL from sm's
+  versions and epoch (§5.1). A virtual xid's local part comes
+  from one counter for the process (`pcb_t::next_lxid`), where
+  it came from the queue's per-slot state.
 - **PGPROC** (storage/lmgr `proc.c`). One a session: its latch,
   its LWLock and lock waits, its semaphore, its fast-path slots,
   the target of `InterruptProc()`. **To replace**: a session
@@ -157,10 +152,10 @@ switches between (`SwitchToSharedLatch()`), which are one bit.
   `oldestXid`, `latestCompletedXid` and `xactCompletionCount`,
   which `GetSnapshotData()` reads and which never change. **To
   remove** with the constant snapshot (§7, step 3).
-- **ProcSignal** (storage/ipc `procsignal.c`). Two reasons have
-  senders: the sinval catchup and
-  `pg_log_backend_memory_contexts()`. It also keeps the cancel
-  keys. **To replace**: an interrupt bit for the one
+- **ProcSignal** (storage/ipc `procsignal.c`). One reason has a
+  sender, `pg_log_backend_memory_contexts()`, the sinval catchup
+  gone with sinval (`WORKNOTE.md` step 146). It also keeps the
+  cancel keys. **To replace**: an interrupt bit for the one
   reason left, the cancel key in the session record.
 - **PMSignalState** (storage/ipc `pmsignal.c`, postmaster
   `pmchild.c`). It tells an abnormal end of a session thread
@@ -170,8 +165,8 @@ switches between (`SwitchToSharedLatch()`), which are one bit.
 
 ### 5.1 Invalidation by version, not by message
 
-**Built** (`WORKNOTE.md` steps 141 to 145): no session sends or
-reads a message; the queue's code goes next (§7, step 2).
+**Built** (`WORKNOTE.md` steps 141 to 146): no session sends or
+reads a message, and the queue is gone.
 
 sinval, PostgreSQL's shared invalidation, tells every session
 what another's DDL changed, so it drops what it has cached of
@@ -318,9 +313,9 @@ has a caller still, and goes with the step that removes it:
    Done (`WORKNOTE.md` step 137).
 2. **Invalidation by version** (§5.1): the holes closed and
    checked first; then a relation's version and the schema
-   epoch in sm, checked where the queue is drained now (done,
-   `WORKNOTE.md` steps 141 to 145); then sinval, the catchup
-   interrupt and the SInval LWLocks go. Then ProcSignal and
+   epoch in sm, checked where the queue was drained; then
+   sinval, the catchup interrupt and the SInval LWLocks gone.
+   Done (`WORKNOTE.md` steps 141 to 146). Next, ProcSignal and
    PMSignalState.
 3. **The constant snapshot**: the proc array becomes the
    session registry.

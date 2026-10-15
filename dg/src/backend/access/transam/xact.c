@@ -37,9 +37,9 @@
 #include "storage/lmgr.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
-#include "storage/sinvaladt.h"
 #include "utils/builtins.h"
 #include "utils/combocid.h"
+#include "utils/control_block.h"
 #include "utils/guc.h"
 #include "utils/inval.h"
 #include "utils/memutils.h"
@@ -479,6 +479,21 @@ void CommandCounterIncrement(void) {
  *	AtStart_Cache
  */
 static void AtStart_Cache(void) { AcceptInvalidationMessages(); }
+
+/*
+ * The next local transaction id, the low part of a virtual xid: from one
+ * counter for every session (pcb_t::next_lxid), so none is given twice
+ * until it wraps, where PostgreSQL went on from the last of each PGPROC
+ * slot's to keep a slot's new user from reusing one soon.  0 is no id.
+ */
+static LocalTransactionId GetNextLocalTransactionId(void) {
+  LocalTransactionId result;
+
+  do {
+    result = pcb->next_lxid.fetch_add(1, std::memory_order_relaxed);
+  } while (!LocalTransactionIdIsValid(result));
+  return result;
+}
 
 /*
  *	AtStart_Memory
@@ -995,9 +1010,6 @@ static void CommitTransaction(void) {
    * transaction commits: its truncates and drops are part of it.
    */
   PreCommit_on_commit_actions();
-
-  /* A session sm's commit wakes finds the messages there. */
-  PreCommit_Inval();
 
   /* sm's transaction commits first: one sm refuses fails this one. */
   smstore_commit();

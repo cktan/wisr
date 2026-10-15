@@ -1,7 +1,11 @@
 /*-------------------------------------------------------------------------
  *
  * sinval.h
- *	  POSTGRES shared cache invalidation communication definitions.
+ *	  POSTGRES cache invalidation message definitions.
+ *
+ * In digres no message passes between sessions: a session processes its
+ * own (utils/cache/inval.c), and learns of another's DDL from sm's versions
+ * (dg/SHMEM.md section 5.1).  The messages are what it processes.
  *
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
@@ -118,27 +122,11 @@ typedef union {
   SharedInvalRelSyncMsg rs;
 } SharedInvalidationMessage;
 
-/* Counter of messages processed; don't worry about overflow. */
-extern thread_local /*LOCAL*/ PGDLLIMPORT uint64 SharedInvalidMessageCounter;
-
-extern thread_local /*LOCAL*/ PGDLLIMPORT volatile sig_atomic_t
-    catchupInterruptPending;
-
-extern void SendSharedInvalidMessages(const SharedInvalidationMessage *msgs,
-                                      int n);
-extern void ReceiveSharedInvalidMessages(
-    void (*invalFunction)(SharedInvalidationMessage *msg),
-    void (*resetFunction)(void));
-
-/* signal handler for catchup events (PROCSIG_CATCHUP_INTERRUPT) */
-extern void HandleCatchupInterrupt(void);
-
 /*
- * enable/disable processing of catchup events directly from signal handler.
- * The enable routine first performs processing of any catchup events that
- * have occurred since the last disable.
+ * Counter of messages processed, sm's versions and epoch found moved among
+ * them (inval.c); don't worry about overflow.
  */
-extern void ProcessCatchupInterrupt(void);
+extern thread_local /*LOCAL*/ PGDLLIMPORT uint64 SharedInvalidMessageCounter;
 
 extern void LocalExecuteInvalidationMessage(SharedInvalidationMessage *msg);
 

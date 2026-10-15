@@ -24,6 +24,7 @@
 #ifndef CONTROL_BLOCK_H
 #define CONTROL_BLOCK_H
 
+#include <atomic>
 #include <memory>
 #include <mutex>
 
@@ -62,7 +63,6 @@ struct shmem_index_free_t {
 
 union LWLockPadded;                    /* storage/lwlock.h */
 struct PGSemaphoreData;                /* port/posix_sema.c */
-struct SISeg;                          /* storage/ipc/sinvaladt.c */
 struct ProcSignalSlot;                 /* storage/ipc/procsignal.c */
 struct FastPathStrongRelationLockData; /* storage/lmgr/lock.c */
 
@@ -84,8 +84,11 @@ typedef struct pcb_t {
   /* posix_sema.c: the semaphores, malloc'd */
   struct PGSemaphoreData *shared_semas = nullptr;
 
-  /* sinvaladt.c: the shared invalidation queue, malloc'd */
-  struct SISeg *sinval = nullptr;
+  /*
+   * xact.c: the next local transaction id, a virtual xid's low part, given
+   * every session's transactions from one counter, so no two are the same
+   */
+  std::atomic<uint32_t> next_lxid{1};
 
   /* guc.c: postgresql.auto.conf, rewritten by one ALTER SYSTEM at a time */
   std::mutex auto_file_mutex;

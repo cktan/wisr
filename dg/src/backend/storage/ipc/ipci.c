@@ -23,7 +23,6 @@
 #include "storage/proc.h"
 #include "storage/procarray.h"
 #include "storage/procsignal.h"
-#include "storage/sinvaladt.h"
 #include "utils/guc.h"
 #include "utils/injection_point.h"
 
@@ -116,11 +115,6 @@ static void CreateOrAttachShmemStructs(void) {
   if (!IsUnderPostmaster)
     InitProcGlobal();
   ProcArrayShmemInit();
-
-  /*
-   * Set up shared-inval messaging
-   */
-  SharedInvalShmemInit();
 
   /*
    * Set up interprocess signaling mechanisms

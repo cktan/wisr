@@ -33,8 +33,8 @@
 /* 0 is available; was formerly BufFreelistLock */
 /* 1 was ShmemIndexLock */
 PG_LWLOCK(4, ProcArray)
-PG_LWLOCK(5, SInvalRead)
-PG_LWLOCK(6, SInvalWrite)
+/* 5 was SInvalReadLock */
+/* 6 was SInvalWriteLock */
 /* 7 was WALBufMappingLock */
 /* 8 was WALWriteLock */
 /* 9 was ControlFileLock */
