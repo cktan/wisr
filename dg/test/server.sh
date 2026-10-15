@@ -591,6 +591,32 @@ held_wait idxreader t || fail "index definition after its drop is null"
 held_end idxdropper
 held_end idxreader
 
+# Verify that another session's DDL reaches what a session caches with no
+# message sent: a table's definition by its version, checked under sm's
+# lock, and a schema by sm's namespaces' epoch (SHMEM.md section 5.1).
+# 1. A held session reads vt (a int), caching its descriptor.
+# 2. Another session adds column b to vt and commits: the held session's
+#    next read of vt, in a transaction of its own, has b.
+# 3. The held session sets its search path to vs1, public, with no schema
+#    vs1: vt is public's.
+# 4. Another session makes vs1 and vs1.vt (c int): the held session's next
+#    read of vt finds vs1's, with column c.
+local_psql -c 'create table vt(a int)' -c 'insert into vt values (1)' \
+  > /dev/null
+held_start vreader
+held_send vreader "select * from vt;"
+held_wait vreader 1 || fail "version: vt read"
+local_psql -c "alter table vt add column b text default 'x'" > /dev/null
+held_send vreader "select a || '/' || b from vt;"
+held_wait vreader 1/x || fail "version: another session's ADD COLUMN seen"
+held_send vreader "set search_path = vs1, public; select 'path ' || a from vt;"
+held_wait vreader 'path 1' || fail "version: vt is public's"
+local_psql -c 'create schema vs1' -c 'create table vs1.vt(c int)' \
+  -c 'insert into vs1.vt values (7)' > /dev/null
+held_send vreader "select 'schema ' || c from vt;"
+held_wait vreader 'schema 7' || fail "version: another session's schema seen"
+held_end vreader
+
 # Verify that CREATE INDEX and DROP INDEX are sm's: a unique index refuses a
 # duplicate, a dropped one no longer does, and names default as PostgreSQL's.
 # 1. Create t3, a row, a plain index with no name and a unique one.

@@ -95,6 +95,8 @@ typedef std::unordered_map<Oid, std::vector<open_table_t>> open_tables_t;
  */
 struct smstore_state_t {
   open_tables_t open_tables;
+  /* sm's namespaces' epoch when this session last flushed them. */
+  uint64_t nsp_epoch = 0;
 };
 
 /* The tables this session's transaction opened. */
@@ -136,6 +138,25 @@ static thread_local /*LOCAL*/ Oid load_oid = InvalidOid;
 static thread_local /*LOCAL*/ uint64 kept_rowno = 0;
 static thread_local /*LOCAL*/ char *kept_tuple = NULL;
 static thread_local /*LOCAL*/ Size kept_len = 0;
+
+/*
+ * Whether sm's namespaces' epoch has moved since this session last asked
+ * (sm_cat_namespace_epoch()): a schema made or dropped, which no lock
+ * guards the lookup of, so what it caches of them is to go (SHMEM.md
+ * section 5.1).  False for a session with no storage.
+ */
+bool smstore_namespace_epoch_moved(void) {
+  sm_session_t *s = datadir_sm_session();
+  uint64_t epoch;
+
+  if (s == NULL)
+    return false;
+  epoch = sm_cat_namespace_epoch(s);
+  if (epoch == tcb->smstore->nsp_epoch)
+    return false;
+  tcb->smstore->nsp_epoch = epoch;
+  return true;
+}
 
 /* This session's sm session, or an error if it has none. */
 static sm_session_t *session(void) {
@@ -1559,6 +1580,7 @@ smstore_table_t *smstore_table_desc(Oid oid) {
   def = sm_tbl_def(tbl);
   desc = (smstore_table_t *)palloc(sizeof(smstore_table_t));
   desc->oid = oid;
+  desc->version = def->version;
   desc->nspoid =
       def->nspoid == SM_NSP_TEMP ? PG_TEMP_NAMESPACE : (Oid)def->nspoid;
   desc->name = pstrdup(def->name.c_str());
@@ -2794,7 +2816,11 @@ static Oid lock_target(Oid relid) {
  */
 void smstore_lock_relation(Oid relid, LOCKMODE lockmode) {
   /* Held until the transaction ends, as the handle is. */
-  (void)open_table(lock_target(relid), relation_lock_mode(lockmode));
+  sm_tbl_t *tbl = open_table(lock_target(relid), relation_lock_mode(lockmode));
+
+  /* What this session caches of it is from the version now held, or goes. */
+  if (tbl != NULL)
+    RelationCheckSmVersion(relid, lock_target(relid), sm_tbl_def(tbl)->version);
 }
 
 /*
@@ -2806,8 +2832,12 @@ bool smstore_trylock_relation(Oid relid, LOCKMODE lockmode) {
   bool blocked;
 
   /* Held until the transaction ends, as the handle is. */
-  (void)try_open_table(lock_target(relid), relation_lock_mode(lockmode),
-                       &blocked);
+  sm_tbl_t *tbl = try_open_table(lock_target(relid),
+                                 relation_lock_mode(lockmode), &blocked);
+
+  /* What this session caches of it is from the version now held, or goes. */
+  if (tbl != NULL)
+    RelationCheckSmVersion(relid, lock_target(relid), sm_tbl_def(tbl)->version);
   return !blocked;
 }
 

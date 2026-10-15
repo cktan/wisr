@@ -1267,6 +1267,7 @@ static Relation RelationBuildSmDesc(Oid targetRelId, bool insertIt) {
   form.relreplident = REPLICA_IDENTITY_NOTHING;
   relation = AllocateRelationDesc(&form);
   RelationGetRelid(relation) = targetRelId;
+  relation->rd_smversion = desc->version;
   relation->rd_refcnt = 0;
   relation->rd_isnailed = false;
   relation->rd_createSubid = InvalidSubTransactionId;
@@ -1489,6 +1490,8 @@ static Relation RelationBuildSmIndexDesc(Oid indexoid, Oid table,
   form.relnatts = ix->ncolumns;
   relation = AllocateRelationDesc(&form);
   RelationGetRelid(relation) = indexoid;
+  /* An index's definition is its table's, and so is its version. */
+  relation->rd_smversion = desc->version;
   relation->rd_refcnt = 0;
   relation->rd_isnailed = false;
   relation->rd_createSubid = InvalidSubTransactionId;
@@ -2085,6 +2088,67 @@ void AssertCouldGetRelation(void) {
  *		Caller should eventually decrement count.  (Usually,
  *		that happens by calling RelationClose().)
  */
+/*
+ * Process here the invalidation of relid's entry that another session's DDL
+ * would have sent (SHMEM.md section 5.1), counted as a message received, so
+ * a name looked up before the lock is looked up again (namespace.c).
+ */
+static void invalidate_sm_entry(Oid relid) {
+  SharedInvalidationMessage msg;
+
+  msg.rc.id = SHAREDINVALRELCACHE_ID;
+  msg.rc.dbId = MyDatabaseId;
+  msg.rc.relId = relid;
+  LocalExecuteInvalidationMessage(&msg);
+  SharedInvalidMessageCounter++;
+}
+
+/*
+ * After sm's lock on table, taken for relid, the table or one of its
+ * indexes: drop what this session caches of the table, and of its indexes,
+ * built from a version of its definition other than version, the one sm
+ * holds under the lock (SHMEM.md section 5.1).  A version read under the
+ * lock cannot change until the transaction ends but by an analyze or an
+ * index made valid, so an entry kept here is good for the transaction.  An
+ * index's entries are found among the cached when the table's is not
+ * current, which is rare; when it is, they were built at its version too.
+ */
+void RelationCheckSmVersion(Oid relid, Oid table, uint64 version) {
+  Relation rd;
+  List *stale = NIL;
+
+  RelationIdCacheLookup(table, rd);
+  if (RelationIsValid(rd) && rd->rd_smversion == version) {
+    /* An index opened on its own may have an entry older than its table's. */
+    if (relid != table) {
+      RelationIdCacheLookup(relid, rd);
+      if (RelationIsValid(rd) && rd->rd_smversion != version)
+        invalidate_sm_entry(relid);
+    }
+    return;
+  }
+  /* The table's entry, if any, and each of its indexes' not current. */
+  {
+    HASH_SEQ_STATUS status;
+    RelIdCacheEnt *idhentry;
+
+    hash_seq_init(&status, RelationIdCache);
+    while ((idhentry = (RelIdCacheEnt *)hash_seq_search(&status)) != NULL) {
+      Relation r = idhentry->reldesc;
+
+      if (r->rd_smversion == version)
+        continue;
+      if (RelationGetRelid(r) == table ||
+          (r->rd_rel->relkind == RELKIND_INDEX && r->rd_index != NULL &&
+           r->rd_index->indrelid == table))
+        stale = lappend_oid(stale, RelationGetRelid(r));
+    }
+  }
+  /* Invalidated after the scan: an invalidation may rebuild, or drop, one. */
+  foreach_oid(oid, stale) invalidate_sm_entry(oid);
+  list_free(stale);
+}
+
 Relation RelationIdGetRelation(Oid relationId) {
   Relation rd;
 

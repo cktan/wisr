@@ -98,6 +98,7 @@ typedef struct smstore_table_t {
   smstore_column_t *columns;
   int nindexes;
   smstore_index_t *indexes;
+  uint64 version; /* sm_table_def_t::version, as this transaction reads it */
 } smstore_table_t;
 
 extern void smstore_statement_start(void);
@@ -140,6 +141,7 @@ extern void smstore_drop_indexes(DropStmt *stmt);
 extern void smstore_lock_table(Relation rel, LOCKMODE lockmode, bool nowait);
 extern void smstore_lock_relation(Oid relid, LOCKMODE lockmode);
 extern bool smstore_trylock_relation(Oid relid, LOCKMODE lockmode);
+extern bool smstore_namespace_epoch_moved(void);
 extern bool smstore_relation_held(Oid relid, LOCKMODE lockmode);
 extern void smstore_truncate(Relation rel);
 extern smstore_table_t *smstore_table_desc(Oid oid);

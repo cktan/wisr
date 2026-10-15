@@ -41,6 +41,11 @@ thread_local /*LOCAL*/ volatile sig_atomic_t catchupInterruptPending = false;
  *	Add shared-cache-invalidation message(s) to the global SI message queue.
  */
 void SendSharedInvalidMessages(const SharedInvalidationMessage *msgs, int n) {
+  /*
+   * No session reads the queue: each checks sm's versions and epoch instead
+   * (inval.c, SHMEM.md section 5.1).  Nothing is sent.
+   */
+  return;
   SIInsertDataEntries(msgs, n);
 }
 

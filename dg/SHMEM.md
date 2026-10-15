@@ -170,6 +170,9 @@ switches between (`SwitchToSharedLatch()`), which are one bit.
 
 ### 5.1 Invalidation by version, not by message
 
+**Built** (`WORKNOTE.md` steps 141 to 145): no session sends or
+reads a message; the queue's code goes next (§7, step 2).
+
 sinval, PostgreSQL's shared invalidation, tells every session
 what another's DDL changed, so it drops what it has cached of
 it. A session's caches are its own (utils/cache `relcache.c`,
@@ -315,9 +318,10 @@ has a caller still, and goes with the step that removes it:
    Done (`WORKNOTE.md` step 137).
 2. **Invalidation by version** (§5.1): the holes closed and
    checked first; then a relation's version and the schema
-   epoch in sm and the pcb, checked where the queue is drained
-   now; then sinval, the catchup interrupt and the SInval
-   LWLocks go. Then ProcSignal and PMSignalState.
+   epoch in sm, checked where the queue is drained now (done,
+   `WORKNOTE.md` steps 141 to 145); then sinval, the catchup
+   interrupt and the SInval LWLocks go. Then ProcSignal and
+   PMSignalState.
 3. **The constant snapshot**: the proc array becomes the
    session registry.
 4. **The lock manager**: advisory locks into sm, catalog locks

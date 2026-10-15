@@ -115,6 +115,8 @@
 #include "miscadmin.h"
 #include "storage/procnumber.h"
 #include "storage/sinval.h"
+#include "access/smstore.h"
+#include "catalog/pg_namespace_d.h"
 #include "utils/catcache.h"
 #include "utils/injection_point.h"
 #include "utils/inval.h"
@@ -821,8 +823,21 @@ void AcceptInvalidationMessages(void) {
     AssertCouldGetRelation();
 #endif
 
-  ReceiveSharedInvalidMessages(LocalExecuteInvalidationMessage,
-                               InvalidateSystemCaches);
+  /*
+   * Nothing is received from other sessions: what this one caches of a
+   * table of sm's is checked against sm's version under sm's lock
+   * (RelationCheckSmVersion()), and a schema, whose lookup no lock guards,
+   * against sm's namespaces' epoch here (SHMEM.md section 5.1).
+   */
+  if (smstore_namespace_epoch_moved()) {
+    SharedInvalidationMessage msg;
+
+    msg.cat.id = SHAREDINVALCATALOG_ID;
+    msg.cat.dbId = MyDatabaseId;
+    msg.cat.catId = NamespaceRelationId;
+    LocalExecuteInvalidationMessage(&msg);
+    SharedInvalidMessageCounter++;
+  }
 
   /*----------
    * Test code to force cache flushes anytime a flush could happen.

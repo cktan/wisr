@@ -245,6 +245,13 @@ typedef struct RelationData
 	 * causes toast_save_datum() to try to preserve toast value OIDs.
 	 */
 	Oid			rd_toastoid;	/* Real TOAST table's OID, or InvalidOid */
+
+	/*
+	 * For a table or an index of sm's, sm's version of the table's definition
+	 * it was built from (sm_table_def_t::version): compared under sm's lock,
+	 * and the entry rebuilt if sm's has moved (RelationCheckSmVersion()).
+	 */
+	uint64		rd_smversion;
 } RelationData;
 
 

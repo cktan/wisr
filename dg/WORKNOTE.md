@@ -4238,3 +4238,35 @@ after a restart, which flushed them.
 - sm1 `test_stats.cc`: each prefix's memtable bytes are exactly
   its rows' versions, 0 after a flush, and only the new rows'
   after more. `sm1/API.md`, `sm1.h`, `STATISTICS.md` §3.1.
+
+## Step 145: another session's DDL is learned from sm, not sent
+
+`SHMEM.md` §5.1, built: no session sends an invalidation message
+to another, or reads one. sinval's code stays one step more.
+
+- **A descriptor of sm's records sm's version** of the table's
+  definition it was built from (`rd_smversion`, utils `rel.h`;
+  `smstore_table_t::version`), a table's and its indexes' alike.
+- **sm's lock checks it** (`smstore_lock_relation()` and its try
+  form, access/sm `smstore.c`): under the lock, the table's
+  version is the handle's, and `RelationCheckSmVersion()` (utils
+  `relcache.c`) invalidates, as a message received would, each
+  cached entry of the table or its indexes built from another.
+  Their invalidations bump `SharedInvalidMessageCounter`, so
+  `RangeVarGetRelidExtended()` looks the name up again after a
+  wait, as it did after messages.
+- **A schema is checked by sm's namespaces' epoch**
+  (`smstore_namespace_epoch_moved()`):
+  `AcceptInvalidationMessages()` compares it with the one the
+  session last saw, kept in its `smstore_state_t`, in place of
+  reading the queue, and on a change flushes `pg_namespace`'s
+  cache, which drops the search path.
+- **`SendSharedInvalidMessages()` sends nothing.** A session's
+  own DDL still invalidates its own caches as it goes (inval.c's
+  transaction lists).
+- `server.sh`: a held session reads a table, another adds a
+  column; then a schema made by another session after the held
+  one set its search path to it. With the version check made to
+  do nothing, these and four checks already there fail ("ALTER
+  TABLE seen by another session" among them); with the epoch's,
+  the schema's and "search path finds a schema made later".

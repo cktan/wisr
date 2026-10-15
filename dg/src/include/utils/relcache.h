@@ -37,6 +37,7 @@ extern void AssertCouldGetRelation(void);
 static inline void AssertCouldGetRelation(void) {}
 #endif
 extern Relation RelationIdGetRelation(Oid relationId);
+extern void RelationCheckSmVersion(Oid relid, Oid table, uint64 version);
 extern bool RelationGetClassForm(Oid relid, struct FormData_pg_class *form);
 extern void RelationClose(Relation relation);
 
