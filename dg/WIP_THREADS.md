@@ -107,42 +107,10 @@ and a fast shutdown with an idle session open (`SignalProc`).
   session.
 - **A session thread has no `SIGFPE` handler**: the process's
   disposition, the postmaster's, applies.
-- **fd.c's budget is per thread**: each thread thinks it has
-  `max_safe_fds`, and RocksDB's files are counted by no one.
-  The soft limit on open files is raised to the hard one at
-  start (`WORKNOTE.md` step 134), which leaves room; a budget
-  for the process waits for a workload that needs it. When it
-  comes:
-  - **The count moves to the pcb**: `nfile + numAllocatedDescs
-    + numExternalFDs`, the sum storage/file `fd.c` checks
-    before an open, becomes one `std::atomic<int>` for the
-    process, taken with `fetch_add` before the `open()` and
-    given back if the open fails or the total went over. A
-    little overshoot is covered by the reserve.
-  - **The per-thread cap stays.** A thread can close only its
-    own files: `VfdCache`, the LRU ring, is the thread's, and
-    closing another thread's descriptor while it reads is a
-    use after close. A thread closes its LRU files when its own
-    count reaches `max_files_per_process` or the process's
-    reaches its total, and raises an error only when it has
-    nothing left to close. Without the cap, a thread with few
-    files could fail while others hoard closable ones.
-  - **The total is sized from the limit**, not from
-    `max_safe_fds`'s 990, which eight sessions spilling a sort
-    would exhaust: the raised `RLIMIT_NOFILE`, less RocksDB's
-    share, less a socket for each of `max_connections`, less a
-    reserve.
-  - **RocksDB gets a fixed share**: `datadir_load()` sets its
-    `max_open_files`, now -1, every SST file open, so its table
-    cache evicts within the share and never draws on the
-    sessions'. MyRocks ties `rocksdb_max_open_files` to
-    `open_files_limit` the same way.
-  - **Nothing waits for a descriptor.** A thread that is
-    refused closes its own files or raises an error, as fd.c
-    does today, so no thread holds files while it waits for
-    another's: no deadlock. A reservation that blocked would
-    allow one.
-  - What stays the thread's: `numAllocatedDescs` and
-    `maxAllocatedDescs`, `VfdCache`, the temporary files'
-    state.
+- **RocksDB's files are counted by no one.** The sessions'
+  are, under one ceiling for the process (`WORKNOTE.md` step
+  135); RocksDB's `max_open_files` is still -1, every SST file
+  open. `datadir_load()` could set it to a share of the
+  ceiling, as MyRocks ties `rocksdb_max_open_files` to
+  `open_files_limit`.
 - `syslog_ident` (9 bytes) is not freed at a thread's end.

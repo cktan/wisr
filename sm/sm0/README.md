@@ -17,6 +17,7 @@ error codes, besides the C++ standard library and POSIX.
 | fixed-width big-endian integers | `include/sm0_codec.h` | — |
 | the vendored doctest test framework, used by every level | `include/doctest.h` | — |
 | interrupting a thread, interruptible waits, and timers that interrupt (`INTERRUPT.md`) | `include/sm_sys.h` | `src/interrupt.cc` |
+| virtual file descriptors over a share of real ones, under one ceiling for the process (`VFD.md`) | `include/sm_vfd.h` | `src/vfd.cc` |
 
 Everything is in `namespace sm0`. `sm1/include/sm1.h` brings
 the error state and the log hook into `namespace sm1`, so the

@@ -48,6 +48,12 @@ struct smstore_state_free_t {
 };
 extern smstore_state_t *smstore_state_new(void);
 
+/* fd.c: this thread's cache of virtual fds (sm0's sm_vfd.h). */
+struct sm_vfd_cache_t;
+struct sm_vfd_cache_free_t {
+  void operator()(sm_vfd_cache_t *cache) const;
+};
+
 /* shmem.c: the index of the structures the threads share, by name. */
 typedef struct shmem_index_t shmem_index_t;
 struct shmem_index_free_t {
@@ -99,6 +105,8 @@ typedef struct tcb_t {
   std::unique_ptr<timeout_state_t, timeout_state_free_t> timeout;
   std::unique_ptr<sequence_state_t, sequence_state_free_t> sequence;
   std::unique_ptr<smstore_state_t, smstore_state_free_t> smstore;
+  /* made at its first use, by fd.c */
+  std::unique_ptr<sm_vfd_cache_t, sm_vfd_cache_free_t> vfd;
 } tcb_t;
 
 extern pcb_t *pcb;

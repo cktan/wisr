@@ -96,8 +96,15 @@ typedef enum sm_errnum_t {
      */
     SM_ERR_INTERRUPTED   = 28,  /* the wait was interrupted */
 
+    /*
+     * sm0's: no file descriptor to be had -- the process's ceiling,
+     * a cache's share, or the system's limit (EMFILE, ENFILE) is
+     * reached, and nothing could be closed to make room (sm_vfd.h).
+     */
+    SM_ERR_NOFDS         = 29,  /* out of file descriptors */
+
     /* The highest code, for code that walks them all. */
-    SM_ERR_LAST          = SM_ERR_INTERRUPTED
+    SM_ERR_LAST          = SM_ERR_NOFDS
 } sm_errnum_t;
 
 #endif /* SM_ERROR_H */

@@ -4090,15 +4090,14 @@ void AlterSystemSetConfigFile(AlterSystemStmt *altersysstmt) {
    * If there is a temp file left over due to a previous crash, it's okay to
    * truncate and reuse it.
    */
-  Tmpfd = BasicOpenFile(AutoConfTmpFileName, O_CREAT | O_RDWR | O_TRUNC);
+  Tmpfd = OpenTransientFile(AutoConfTmpFileName, O_CREAT | O_RDWR | O_TRUNC);
   if (Tmpfd < 0)
     ereport(ERROR,
             (errcode_for_file_access(),
              errmsg("could not open file \"%s\": %m", AutoConfTmpFileName)));
 
   /*
-   * Use a TRY block to clean up the file if we fail.  Since we need a TRY
-   * block anyway, OK to use BasicOpenFile rather than OpenTransientFile.
+   * Use a TRY block to clean up the file if we fail.
    */
   PG_TRY();
   {
@@ -4106,7 +4105,7 @@ void AlterSystemSetConfigFile(AlterSystemStmt *altersysstmt) {
     write_auto_conf_file(Tmpfd, AutoConfTmpFileName, head);
 
     /* Close before renaming; may be required on some platforms */
-    close(Tmpfd);
+    CloseTransientFile(Tmpfd);
     Tmpfd = -1;
 
     /*
@@ -4120,7 +4119,7 @@ void AlterSystemSetConfigFile(AlterSystemStmt *altersysstmt) {
   {
     /* Close file first, else unlink might fail on some platforms */
     if (Tmpfd >= 0)
-      close(Tmpfd);
+      CloseTransientFile(Tmpfd);
 
     /* Unlink, but ignore any error */
     (void)unlink(AutoConfTmpFileName);

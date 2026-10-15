@@ -164,6 +164,7 @@ const char *errname() {
       "ERR_SELFMODIFIED",
       "ERR_READONLY",
       "ERR_INTERRUPTED",
+      "ERR_NOFDS",
   };
   static_assert(sizeof(names) / sizeof(names[0]) == SM_ERR_LAST + 1,
                 "every error code needs its name");

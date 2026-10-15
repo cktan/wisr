@@ -3890,3 +3890,50 @@ run out after a dozen busy sessions, and fail wherever an
 - **Not reachable**: libpq `auth.c`'s RADIUS client calls
   `select()`, which a socket past `FD_SETSIZE` would overflow;
   authentication is peer or SCRAM, so it never runs.
+
+## Step 135: fd.c's virtual fds are sm0's, under one ceiling
+
+The sessions are threads of one process, but storage/file
+`fd.c` gave each the budget a process had, `max_safe_fds`:
+together they could open far more than the limit holds, and
+fail wherever an `open()` landed. Its LRU of real fds is now
+sm0's (`sm/sm0/VFD.md`, `sm_vfd.h`): each thread has a cache
+of its own, `tcb->vfd`, and every real fd any cache holds
+counts against one ceiling for the process.
+
+- **The ceiling** is measured once, in `set_max_safe_fds()`:
+  the raised limit, less the fds open, less
+  `NUM_RESERVED_FDS`. sm0 lets it be set while fds are held,
+  counting them inside it: the postmaster holds its wake fd
+  before it gets there.
+- **A thread's share**, `max_safe_fds`, is the ceiling over
+  `max_connections` + 1 threads, at most
+  `max_files_per_process`, at least `FD_MINFREE`: the ceiling,
+  not the share, keeps them within the limit. A cache is made
+  at its thread's first use; the postmaster's comes before
+  `set_max_safe_fds()`, and keeps `FD_MINFREE`.
+- **What fd.c keeps** is a table of `File`s over sm0's virtual
+  fds: the resource owner and transaction that hold a file,
+  temporary files deleted at close and counted against
+  `temp_file_limit`, and how an error is reported. The LRU
+  ring, `nfile`, `numExternalFDs` and `count_usable_fds()` go.
+- **Real fds are counted too**: `OpenTransientFile()` is
+  `sm_vfd_open_real()`; `AllocateFile()`, `AllocateDir()` and
+  `OpenPipeStream()` reserve their fd first;
+  `AcquireExternalFD()` reserves, and may be refused;
+  `ReserveExternalFD()` counts an fd already open, past the
+  share if it must. `BasicOpenFile()` goes: guc.c's ALTER
+  SYSTEM writes its temporary file through
+  `OpenTransientFile()`.
+- **Lost on purpose**: an `fopen()` or `opendir()` that fails
+  with `EMFILE` is not retried after closing a VFD (sm0's
+  opens are); a close that fails on an eviction is not
+  reported, where PostgreSQL might PANIC; macOS's `F_NOCACHE`
+  for `PG_O_DIRECT` is an `#error`.
+- **`test/server.sh`** starts the server with
+  `max_files_per_process` at 64, and opens 100 cursors in one
+  transaction, each over a function scan spilled to a
+  temporary file, then reads from each again. With sm0's
+  eviction disabled it fails at the 61st.
+- **`sm/sm0/test/test_vfd.cc`**: a ceiling set while fds are
+  held counts them, measured or given.

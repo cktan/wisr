@@ -25,6 +25,13 @@
  * be through these interfaces (the File type is not a real file
  * descriptor).
  *
+ * The pool is sm0's (sm_vfd.h): each thread has its own cache of virtual
+ * fds, tcb->vfd, holding at most its share of real ones, max_safe_fds, and
+ * every real fd any thread holds through it counts against one ceiling for
+ * the process.  A File is an entry of this thread's table here, which
+ * keeps what sm0 knows nothing of: the transaction or resource owner that
+ * holds the file, and whether it is temporary.
+ *
  * For this scheme to work, most (if not all) routines throughout the
  * server should use these interfaces instead of calling the C library
  * routines (e.g., open(2) and fopen(3)) themselves.  Otherwise, we
@@ -47,17 +54,11 @@
  * reading a configuration file; there is a limit on the number of files that
  * can be opened using these functions at any one time.
  *
- * Finally, BasicOpenFile is just a thin wrapper around open() that can
- * release file descriptors in use by the virtual file descriptors if
- * necessary. There is no automatic cleanup of file descriptors returned by
- * BasicOpenFile, it is solely the caller's responsibility to close the file
- * descriptor by calling close(2).
- *
  * If a non-virtual file descriptor needs to be held open for any length of
  * time, report it to fd.c by calling AcquireExternalFD or ReserveExternalFD
  * (and eventually ReleaseExternalFD), so that we can take it into account
  * while deciding how many VFDs can be open.  This applies to FDs obtained
- * with BasicOpenFile as well as those obtained without use of any fd.c API.
+ * without use of any fd.c API.
  *
  *-------------------------------------------------------------------------
  */
@@ -88,7 +89,16 @@
 #include "utils/guc.h"
 #include "utils/guc_hooks.h"
 #include "utils/resowner.h"
+#include "utils/control_block.h"
 #include "utils/varlena.h"
+
+#include "sm.h"
+#include "sm_vfd.h"
+
+/* sm_vfd.h opens a file with open(2)'s flags alone: there is no F_NOCACHE. */
+#ifdef PG_O_DIRECT_USE_F_NOCACHE
+#error "PG_O_DIRECT by F_NOCACHE is not supported"
+#endif
 
 /* Define PG_FLUSH_DATA_WORKS if we have an implementation for pg_flush_data */
 #if defined(HAVE_SYNC_FILE_RANGE)
@@ -119,9 +129,7 @@
 /*
  * If we have fewer than this many usable FDs after allowing for the reserved
  * ones, choke.  (This value is chosen to work with "ulimit -n 64", but not
- * much less than that.  Note that this value ensures numExternalFDs can be
- * at least 16; as of this writing, the contrib/postgres_fdw regression tests
- * will not pass unless that can grow to at least 14.)
+ * much less than that.)  It is also the smallest share of them a thread gets.
  */
 #define FD_MINFREE				48
 
@@ -134,12 +142,12 @@
 thread_local /*LOCAL*/ int max_files_per_process = 1000;
 
 /*
- * Maximum number of file descriptors to open for operations that fd.c knows
- * about (VFDs, AllocateFile etc, or "external" FDs).  This is initialized
- * to a conservative value, and remains that way indefinitely in bootstrap or
- * standalone-backend cases.  In normal postmaster operation, the postmaster
- * calls set_max_safe_fds() late in initialization to update the value, and
- * that value is then inherited by forked subprocesses.
+ * Maximum number of file descriptors a thread opens for operations that fd.c
+ * knows about (VFDs, AllocateFile etc, or "external" FDs): its share of the
+ * process's ceiling.  This is initialized to a conservative value.  The
+ * postmaster, or a standalone backend, calls set_max_safe_fds() late in
+ * initialization to update the value, and the session threads it starts
+ * then are given it.
  *
  * Note: the value of max_files_per_process is taken into account while
  * setting this variable, and so need not be tested separately.
@@ -170,12 +178,8 @@ thread_local /*LOCAL*/ int io_direct_flags;
 	((void) 0)
 #endif
 
-#define VFD_CLOSED (-1)
-
 #define FileIsValid(file) \
 	((file) > 0 && (file) < (int) SizeVfdCache && VfdCache[file].fileName != NULL)
-
-#define FileIsNotOpen(file) (VfdCache[file].fd == VFD_CLOSED)
 
 /* these are the assigned bits in fdstate below: */
 #define FD_DELETE_AT_CLOSE	(1 << 0) /* T = delete when closed */
@@ -183,17 +187,13 @@ thread_local /*LOCAL*/ int io_direct_flags;
 #define FD_TEMP_FILE_LIMIT	(1 << 2) /* T = respect temp_file_limit */
 
 typedef struct vfd {
-  int fd;                 /* current FD, or VFD_CLOSED if none */
+  sm_vfd_t vfd;           /* sm0's virtual fd, in tcb->vfd */
   unsigned short fdstate; /* bitflags for VFD's state */
   ResourceOwner resowner; /* owner, for automatic cleanup */
   File nextFree;          /* link to next free VFD, if in freelist */
-  File lruMoreRecently;   /* doubly linked recency-of-use list */
-  File lruLessRecently;
-  off_t fileSize; /* current size of file (0 if not temporary) */
-  char *fileName; /* name of file, or NULL for unused VFD */
+  off_t fileSize;         /* current size of file (0 if not temporary) */
+  char *fileName;         /* name of file, or NULL for unused VFD */
   /* NB: fileName is malloc'd, and must be free'd when closing the VFD */
-  int fileFlags;   /* open(2) flags for (re)opening the file */
-  mode_t fileMode; /* mode to pass to open(2) */
 } Vfd;
 
 /*
@@ -203,11 +203,6 @@ typedef struct vfd {
  */
 static thread_local /*LOCAL*/ Vfd *VfdCache;
 static thread_local /*LOCAL*/ Size SizeVfdCache = 0;
-
-/*
- * Number of file descriptors known to be in use by VFD entries.
- */
-static thread_local /*LOCAL*/ int nfile = 0;
 
 /*
  * Flag to tell whether it's worth scanning VfdCache looking for temp files
@@ -254,11 +249,6 @@ static thread_local /*LOCAL*/ int maxAllocatedDescs = 0;
 static thread_local /*LOCAL*/ AllocateDesc *allocatedDescs = NULL;
 
 /*
- * Number of open "external" FDs reported to Reserve/ReleaseExternalFD.
- */
-static thread_local /*LOCAL*/ int numExternalFDs = 0;
-
-/*
  * Number of temporary files opened during the current session;
  * this is used in generation of tempfile names.
  */
@@ -268,45 +258,16 @@ static thread_local /*LOCAL*/ long tempFileCounter = 0;
  *
  * Private Routines
  *
- * Delete		   - delete a file from the Lru ring
- * LruDelete	   - remove a file from the Lru ring and close its FD
- * Insert		   - put a file at the front of the Lru ring
- * LruInsert	   - put a file at the front of the Lru ring and open it
- * ReleaseLruFile  - Release an fd by closing the last entry in the Lru ring
- * ReleaseLruFiles - Release fd(s) until we're under the max_safe_fds limit
  * AllocateVfd	   - grab a free (or new) file record (from VfdCache)
  * FreeVfd		   - free a file record
  *
- * The Least Recently Used ring is a doubly linked list that begins and
- * ends on element zero.  Element zero is special -- it doesn't represent
- * a file and its "fd" field always == VFD_CLOSED.  Element zero is just an
- * anchor that shows us the beginning/end of the ring.
- * Only VFD elements that are currently really open (have an FD assigned) are
- * in the Lru ring.  Elements that are "virtually" open can be recognized
- * by having a non-null fileName field.
- *
- * example:
- *
- *	   /--less----\				   /---------\
- *	   v		   \			  v			  \
- *	 #0 --more---> LeastRecentlyUsed --more-\ \
- *	  ^\									|
- *|
- *	   \\less--> MostRecentlyUsedFile	<---/ |
- *		\more---/					 \--less--/
- *
+ * Elements that are open can be recognized by having a non-null fileName
+ * field.
  *--------------------
  */
-static void Delete(File file);
-static void LruDelete(File file);
-static void Insert(File file);
-static int LruInsert(File file);
-static bool ReleaseLruFile(void);
-static void ReleaseLruFiles(void);
 static File AllocateVfd(void);
 static void FreeVfd(File file);
 
-static int FileAccess(File file);
 static File OpenTemporaryFileInTablespace(Oid tblspcOid, bool rejectError);
 static bool reserveAllocatedDesc(void);
 static int FreeDesc(AllocateDesc *desc);
@@ -338,6 +299,27 @@ static inline void ResourceOwnerRememberFile(ResourceOwner owner, File file) {
 }
 static inline void ResourceOwnerForgetFile(ResourceOwner owner, File file) {
   ResourceOwnerForget(owner, Int32GetDatum(file), &file_resowner_desc);
+}
+
+/*
+ * This thread's cache of virtual fds, made at its first use with the share
+ * max_safe_fds gives it.  The postmaster's is made before set_max_safe_fds()
+ * runs, and keeps the smaller share it was made with.
+ */
+static sm_vfd_cache_t *vfd_cache(void) {
+  if (tcb->vfd == nullptr) {
+    sm_vfd_cache_t *cache = sm_vfd_cache_make(max_safe_fds);
+
+    if (cache == NULL)
+      ereport(FATAL, (errmsg_internal("%s", sm_errmsg())));
+    tcb->vfd.reset(cache);
+  }
+  return tcb->vfd.get();
+}
+
+/* Free a thread's cache of virtual fds: its real fds close, uncounted. */
+void sm_vfd_cache_free_t::operator()(sm_vfd_cache_t *cache) const {
+  sm_vfd_cache_free(cache);
 }
 
 /*
@@ -809,7 +791,6 @@ void InitFileAccess(void) {
     ereport(FATAL, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("out of memory")));
 
   MemSet(&(VfdCache[0]), 0, sizeof(Vfd));
-  VfdCache->fd = VFD_CLOSED;
 
   SizeVfdCache = 1;
 }
@@ -839,94 +820,6 @@ void InitTemporaryFileAccess(void) {
 #ifdef USE_ASSERT_CHECKING
   temporary_files_allowed = true;
 #endif
-}
-
-/*
- * count_usable_fds --- count how many FDs the system will let us open,
- *		and estimate how many are already open.
- *
- * We stop counting if usable_fds reaches max_to_probe.  Note: a small
- * value of max_to_probe might result in an underestimate of already_open;
- * we must fill in any "gaps" in the set of used FDs before the calculation
- * of already_open will give the right answer.  In practice, max_to_probe
- * of a couple of dozen should be enough to ensure good results.
- *
- * We assume stderr (FD 2) is available for dup'ing.  While the calling
- * script could theoretically close that, it would be a really bad idea,
- * since then one risks loss of error messages from, e.g., libc.
- */
-static void count_usable_fds(int max_to_probe, int *usable_fds,
-                             int *already_open) {
-  int *fd;
-  int size;
-  int used = 0;
-  int highestfd = 0;
-  int j;
-
-#ifdef HAVE_GETRLIMIT
-  struct rlimit rlim;
-  int getrlimit_status;
-#endif
-
-  size = 1024;
-  fd = (int *)palloc(size * sizeof(int));
-
-#ifdef HAVE_GETRLIMIT
-  getrlimit_status = getrlimit(RLIMIT_NOFILE, &rlim);
-  if (getrlimit_status != 0)
-    ereport(WARNING, (errmsg("getrlimit failed: %m")));
-#endif /* HAVE_GETRLIMIT */
-
-  /* dup until failure or probe limit reached */
-  for (;;) {
-    int thisfd;
-
-#ifdef HAVE_GETRLIMIT
-
-    /*
-     * don't go beyond RLIMIT_NOFILE; causes irritating kernel logs on
-     * some platforms
-     */
-    if (getrlimit_status == 0 && highestfd >= rlim.rlim_cur - 1)
-      break;
-#endif
-
-    thisfd = dup(2);
-    if (thisfd < 0) {
-      /* Expect EMFILE or ENFILE, else it's fishy */
-      if (errno != EMFILE && errno != ENFILE)
-        elog(WARNING,
-             "duplicating stderr file descriptor failed after %d successes: %m",
-             used);
-      break;
-    }
-
-    if (used >= size) {
-      size *= 2;
-      fd = (int *)repalloc(fd, size * sizeof(int));
-    }
-    fd[used++] = thisfd;
-
-    if (highestfd < thisfd)
-      highestfd = thisfd;
-
-    if (used >= max_to_probe)
-      break;
-  }
-
-  /* release the files we opened */
-  for (j = 0; j < used; j++)
-    close(fd[j]);
-
-  pfree(fd);
-
-  /*
-   * Return results.  usable_fds is just the number of successful dups. We
-   * assume that the system limit is highestfd+1 (remember 0 is a legal FD
-   * number) and so already_open is highestfd+1 - usable_fds.
-   */
-  *usable_fds = used;
-  *already_open = highestfd + 1 - used;
 }
 
 /*
@@ -963,120 +856,43 @@ static void raise_open_files_limit(void) {
 /*
  * set_max_safe_fds
  *		Determine number of file descriptors that fd.c is allowed to use
+ *
+ * Every thread of the process shares one ceiling, sm0's: the open-files
+ * limit less the fds open now and NUM_RESERVED_FDS.  A thread's share of it,
+ * max_safe_fds, is the ceiling over the threads there can be, but no more
+ * than max_files_per_process, and no less than FD_MINFREE: the ceiling, not
+ * the share, keeps the threads together within the limit.
  */
 void set_max_safe_fds(void) {
-  int usable_fds;
-  int already_open;
+  int threads = MaxBackends + 1; /* the sessions, and the postmaster */
+  int ceiling;
 
   raise_open_files_limit();
 
-  /*----------
-   * We want to set max_safe_fds to
-   *			MIN(usable_fds, max_files_per_process)
-   * less the slop factor for files that are opened without consulting
-   * fd.c.  This ensures that we won't allow to open more than
-   * max_files_per_process, or the experimentally-determined EMFILE limit,
-   * additional files.
-   *----------
-   */
-  count_usable_fds(max_files_per_process, &usable_fds, &already_open);
-
-  max_safe_fds = Min(usable_fds, max_files_per_process);
-
-  /*
-   * Take off the FDs reserved for system() etc.
-   */
-  max_safe_fds -= NUM_RESERVED_FDS;
+  /* The ceiling all the threads' fds count against, measured once. */
+  if (sm_fd_ceiling_set(0, NUM_RESERVED_FDS) != 0)
+    ereport(FATAL, (errcode(ERRCODE_INSUFFICIENT_RESOURCES),
+                    errmsg("could not count the file descriptors available: %s",
+                           sm_errmsg())));
+  ceiling = sm_fd_ceiling();
 
   /*
    * Make sure we still have enough to get by.
    */
-  if (max_safe_fds < FD_MINFREE)
+  if (ceiling < FD_MINFREE)
     ereport(
         FATAL,
         (errcode(ERRCODE_INSUFFICIENT_RESOURCES),
          errmsg(
              "insufficient file descriptors available to start server process"),
-         errdetail("System allows %d, server needs at least %d, %d files are "
-                   "already open.",
-                   max_safe_fds + NUM_RESERVED_FDS,
-                   FD_MINFREE + NUM_RESERVED_FDS, already_open)));
+         errdetail("System allows %d, server needs at least %d.",
+                   ceiling + NUM_RESERVED_FDS, FD_MINFREE + NUM_RESERVED_FDS)));
 
-  elog(DEBUG2, "max_safe_fds = %d, usable_fds = %d, already_open = %d",
-       max_safe_fds, usable_fds, already_open);
-}
+  max_safe_fds = Min(ceiling / threads, max_files_per_process);
+  max_safe_fds = Max(max_safe_fds, FD_MINFREE);
 
-/*
- * Open a file with BasicOpenFilePerm() and pass default file mode for the
- * fileMode parameter.
- */
-int BasicOpenFile(const char *fileName, int fileFlags) {
-  return BasicOpenFilePerm(fileName, fileFlags, pg_file_create_mode);
-}
-
-/*
- * BasicOpenFilePerm --- same as open(2) except can free other FDs if needed
- *
- * This is exported for use by places that really want a plain kernel FD,
- * but need to be proof against running out of FDs.  Once an FD has been
- * successfully returned, it is the caller's responsibility to ensure that
- * it will not be leaked on ereport()!	Most users should *not* call this
- * routine directly, but instead use the VFD abstraction level, which
- * provides protection against descriptor leaks as well as management of
- * files that need to be open for more than a short period of time.
- *
- * Ideally this should be the *only* direct call of open() in the backend.
- * In practice, the postmaster calls open() directly, and there are some
- * direct open() calls done early in backend startup.  Those are OK since
- * this module wouldn't have any open files to close at that point anyway.
- */
-int BasicOpenFilePerm(const char *fileName, int fileFlags, mode_t fileMode) {
-  int fd;
-
-tryAgain:
-#ifdef PG_O_DIRECT_USE_F_NOCACHE
-
-  /*
-   * The value we defined to stand in for O_DIRECT when simulating it with
-   * F_NOCACHE had better not collide with any of the standard flags.
-   */
-  StaticAssertStmt(
-      (PG_O_DIRECT & (O_APPEND | O_CLOEXEC | O_CREAT | O_DSYNC | O_EXCL |
-                      O_RDWR | O_RDONLY | O_SYNC | O_TRUNC | O_WRONLY)) == 0,
-      "PG_O_DIRECT value collides with standard flag");
-  fd = open(fileName, fileFlags & ~PG_O_DIRECT, fileMode);
-#else
-  fd = open(fileName, fileFlags, fileMode);
-#endif
-
-  if (fd >= 0) {
-#ifdef PG_O_DIRECT_USE_F_NOCACHE
-    if (fileFlags & PG_O_DIRECT) {
-      if (fcntl(fd, F_NOCACHE, 1) < 0) {
-        int save_errno = errno;
-
-        close(fd);
-        errno = save_errno;
-        return -1;
-      }
-    }
-#endif
-
-    return fd; /* success! */
-  }
-
-  if (errno == EMFILE || errno == ENFILE) {
-    int save_errno = errno;
-
-    ereport(LOG, (errcode(ERRCODE_INSUFFICIENT_RESOURCES),
-                  errmsg("out of file descriptors: %m; release and retry")));
-    errno = 0;
-    if (ReleaseLruFile())
-      goto tryAgain;
-    errno = save_errno;
-  }
-
-  return -1; /* failure */
+  elog(DEBUG2, "max_safe_fds = %d, ceiling = %d, threads = %d", max_safe_fds,
+       ceiling, threads);
 }
 
 /*
@@ -1093,16 +909,8 @@ tryAgain:
  * and small.
  */
 bool AcquireExternalFD(void) {
-  /*
-   * We don't want more than max_safe_fds / 3 FDs to be consumed for
-   * "external" FDs.
-   */
-  if (numExternalFDs < max_safe_fds / 3) {
-    ReserveExternalFD();
-    return true;
-  }
-  errno = EMFILE;
-  return false;
+  /* Counted within this thread's share and the ceiling, or refused. */
+  return sm_vfd_reserve(vfd_cache(), 1) == 0;
 }
 
 /*
@@ -1111,7 +919,8 @@ bool AcquireExternalFD(void) {
  * This should be used by callers that need to hold a file descriptor open
  * over more than a short interval, but cannot use any of the other facilities
  * provided by this module.  This just tracks the use of the FD and closes
- * VFDs if needed to ensure we keep NUM_RESERVED_FDS FDs available.
+ * VFDs if needed to make room for it; it is counted even when no room is
+ * left, as it is open.
  *
  * Call this directly only in code where failure to reserve the FD would be
  * fatal; for example, the WAL-writing code does so, since the alternative is
@@ -1124,16 +933,7 @@ bool AcquireExternalFD(void) {
  * an EMFILE failure if not everybody played nice.  In any case, it's solely
  * caller's responsibility to keep the external-FD count in sync with reality.
  */
-void ReserveExternalFD(void) {
-  /*
-   * Release VFDs if needed to stay safe.  Because we do this before
-   * incrementing numExternalFDs, the final state will be as desired, i.e.,
-   * nfile + numAllocatedDescs + numExternalFDs <= max_safe_fds.
-   */
-  ReleaseLruFiles();
-
-  numExternalFDs++;
-}
+void ReserveExternalFD(void) { sm_vfd_count(vfd_cache(), 1); }
 
 /*
  * ReleaseExternalFD - report release of an external file descriptor
@@ -1141,150 +941,8 @@ void ReserveExternalFD(void) {
  * This is guaranteed not to change errno, so it can be used in failure paths.
  */
 void ReleaseExternalFD(void) {
-  Assert(numExternalFDs > 0);
-  numExternalFDs--;
-}
-
-#if defined(FDDEBUG)
-
-static void _dump_lru(void) {
-  int mru = VfdCache[0].lruLessRecently;
-  Vfd *vfdP = &VfdCache[mru];
-  char buf[2048];
-
-  snprintf(buf, sizeof(buf), "LRU: MOST %d ", mru);
-  while (mru != 0) {
-    mru = vfdP->lruLessRecently;
-    vfdP = &VfdCache[mru];
-    snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), "%d ", mru);
-  }
-  snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), "LEAST");
-  elog(LOG, "%s", buf);
-}
-#endif /* FDDEBUG */
-
-static void Delete(File file) {
-  Vfd *vfdP;
-
-  Assert(file != 0);
-
-  DO_DB(elog(LOG, "Delete %d (%s)", file, VfdCache[file].fileName));
-  DO_DB(_dump_lru());
-
-  vfdP = &VfdCache[file];
-
-  VfdCache[vfdP->lruLessRecently].lruMoreRecently = vfdP->lruMoreRecently;
-  VfdCache[vfdP->lruMoreRecently].lruLessRecently = vfdP->lruLessRecently;
-
-  DO_DB(_dump_lru());
-}
-
-static void LruDelete(File file) {
-  Vfd *vfdP;
-
-  Assert(file != 0);
-
-  DO_DB(elog(LOG, "LruDelete %d (%s)", file, VfdCache[file].fileName));
-
-  vfdP = &VfdCache[file];
-
-  /*
-   * Close the file.  We aren't expecting this to fail; if it does, better
-   * to leak the FD than to mess up our internal state.
-   */
-  if (close(vfdP->fd) != 0)
-    elog(vfdP->fdstate & FD_TEMP_FILE_LIMIT ? LOG : data_sync_elevel(LOG),
-         "could not close file \"%s\": %m", vfdP->fileName);
-  vfdP->fd = VFD_CLOSED;
-  --nfile;
-
-  /* delete the vfd record from the LRU ring */
-  Delete(file);
-}
-
-static void Insert(File file) {
-  Vfd *vfdP;
-
-  Assert(file != 0);
-
-  DO_DB(elog(LOG, "Insert %d (%s)", file, VfdCache[file].fileName));
-  DO_DB(_dump_lru());
-
-  vfdP = &VfdCache[file];
-
-  vfdP->lruMoreRecently = 0;
-  vfdP->lruLessRecently = VfdCache[0].lruLessRecently;
-  VfdCache[0].lruLessRecently = file;
-  VfdCache[vfdP->lruLessRecently].lruMoreRecently = file;
-
-  DO_DB(_dump_lru());
-}
-
-/* returns 0 on success, -1 on re-open failure (with errno set) */
-static int LruInsert(File file) {
-  Vfd *vfdP;
-
-  Assert(file != 0);
-
-  DO_DB(elog(LOG, "LruInsert %d (%s)", file, VfdCache[file].fileName));
-
-  vfdP = &VfdCache[file];
-
-  if (FileIsNotOpen(file)) {
-    /* Close excess kernel FDs. */
-    ReleaseLruFiles();
-
-    /*
-     * The open could still fail for lack of file descriptors, eg due to
-     * overall system file table being full.  So, be prepared to release
-     * another FD if necessary...
-     */
-    vfdP->fd =
-        BasicOpenFilePerm(vfdP->fileName, vfdP->fileFlags, vfdP->fileMode);
-    if (vfdP->fd < 0) {
-      DO_DB(elog(LOG, "re-open failed: %m"));
-      return -1;
-    } else {
-      ++nfile;
-    }
-  }
-
-  /*
-   * put it at the head of the Lru ring
-   */
-
-  Insert(file);
-
-  return 0;
-}
-
-/*
- * Release one kernel FD by closing the least-recently-used VFD.
- */
-static bool ReleaseLruFile(void) {
-  DO_DB(elog(LOG, "ReleaseLruFile. Opened %d", nfile));
-
-  if (nfile > 0) {
-    /*
-     * There are opened files and so there should be at least one used vfd
-     * in the ring.
-     */
-    Assert(VfdCache[0].lruMoreRecently != 0);
-    LruDelete(VfdCache[0].lruMoreRecently);
-    return true; /* freed a file */
-  }
-  return false; /* no files available to free */
-}
-
-/*
- * Release kernel FDs as needed to get under the max_safe_fds limit.
- * After calling this, it's OK to try to open another file.
- */
-static void ReleaseLruFiles(void) {
-  while (nfile + numAllocatedDescs + numExternalFDs >= max_safe_fds) {
-    if (!ReleaseLruFile())
-      break;
-  }
+  Assert(tcb->vfd != nullptr && sm_vfd_cache_held(tcb->vfd.get()) > 0);
+  sm_vfd_unreserve(tcb->vfd.get(), 1);
 }
 
 static File AllocateVfd(void) {
@@ -1321,7 +979,6 @@ static File AllocateVfd(void) {
     for (i = SizeVfdCache; i < newCacheSize; i++) {
       MemSet(&(VfdCache[i]), 0, sizeof(Vfd));
       VfdCache[i].nextFree = i + 1;
-      VfdCache[i].fd = VFD_CLOSED;
     }
     VfdCache[newCacheSize - 1].nextFree = 0;
     VfdCache[0].nextFree = SizeVfdCache;
@@ -1350,37 +1007,10 @@ static void FreeVfd(File file) {
     vfdP->fileName = NULL;
   }
   vfdP->fdstate = 0x0;
+  vfdP->vfd = 0;
 
   vfdP->nextFree = VfdCache[0].nextFree;
   VfdCache[0].nextFree = file;
-}
-
-/* returns 0 on success, -1 on re-open failure (with errno set) */
-static int FileAccess(File file) {
-  int returnValue;
-
-  DO_DB(elog(LOG, "FileAccess %d (%s)", file, VfdCache[file].fileName));
-
-  /*
-   * Is the file open?  If not, open it and put it at the head of the LRU
-   * ring (possibly closing the least recently used file to get an FD).
-   */
-
-  if (FileIsNotOpen(file)) {
-    returnValue = LruInsert(file);
-    if (returnValue != 0)
-      return returnValue;
-  } else if (VfdCache[0].lruLessRecently != file) {
-    /*
-     * We now know that the file is open and that it is not the last one
-     * accessed, so we need to move it to the head of the Lru ring.
-     */
-
-    Delete(file);
-    Insert(file);
-  }
-
-  return 0;
 }
 
 /*
@@ -1415,8 +1045,7 @@ static void RegisterTemporaryFile(File file) {
 #ifdef NOT_USED
 void FileInvalidate(File file) {
   Assert(FileIsValid(file));
-  if (!FileIsNotOpen(file))
-    LruDelete(file);
+  sm_vfd_close_all(vfd_cache());
 }
 #endif
 
@@ -1454,9 +1083,6 @@ File PathNameOpenFilePerm(const char *fileName, int fileFlags,
   file = AllocateVfd();
   vfdP = &VfdCache[file];
 
-  /* Close excess kernel FDs. */
-  ReleaseLruFiles();
-
   /*
    * Descriptors managed by VFDs are implicitly marked O_CLOEXEC.  The
    * client shouldn't be expected to know which kernel descriptors are
@@ -1465,9 +1091,10 @@ File PathNameOpenFilePerm(const char *fileName, int fileFlags,
    */
   fileFlags |= O_CLOEXEC;
 
-  vfdP->fd = BasicOpenFilePerm(fileName, fileFlags, fileMode);
+  /* sm0 closes the thread's least recently used fds to make room. */
+  vfdP->vfd = sm_vfd_open(vfd_cache(), fileName, fileFlags, fileMode);
 
-  if (vfdP->fd < 0) {
+  if (vfdP->vfd < 0) {
     int save_errno = errno;
 
     FreeVfd(file);
@@ -1475,18 +1102,12 @@ File PathNameOpenFilePerm(const char *fileName, int fileFlags,
     errno = save_errno;
     return -1;
   }
-  ++nfile;
-  DO_DB(elog(LOG, "PathNameOpenFile: success %d", vfdP->fd));
+  DO_DB(elog(LOG, "PathNameOpenFile: success %d", vfdP->vfd));
 
   vfdP->fileName = fnamecopy;
-  /* Saved flags are adjusted to be OK for re-opening file */
-  vfdP->fileFlags = fileFlags & ~(O_CREAT | O_TRUNC | O_EXCL);
-  vfdP->fileMode = fileMode;
   vfdP->fileSize = 0;
   vfdP->fdstate = 0x0;
   vfdP->resowner = NULL;
-
-  Insert(file);
 
   return file;
 }
@@ -1610,24 +1231,13 @@ void FileClose(File file) {
 
   vfdP = &VfdCache[file];
 
-  if (!FileIsNotOpen(file)) {
-
-    /* close the file */
-    if (close(vfdP->fd) != 0) {
-      /*
-       * We may need to panic on failure to close non-temporary files;
-       * see LruDelete.
-       */
-      elog(vfdP->fdstate & FD_TEMP_FILE_LIMIT ? LOG : data_sync_elevel(LOG),
-           "could not close file \"%s\": %m", vfdP->fileName);
-    }
-
-    --nfile;
-    vfdP->fd = VFD_CLOSED;
-
-    /* remove the file from the lru ring */
-    Delete(file);
+  /* close the file, and its real fd if it has one */
+  if (sm_vfd_close(vfd_cache(), vfdP->vfd) != 0) {
+    /* We may need to panic on failure to close non-temporary files. */
+    elog(vfdP->fdstate & FD_TEMP_FILE_LIMIT ? LOG : data_sync_elevel(LOG),
+         "could not close file \"%s\": %m", vfdP->fileName);
   }
+  vfdP->vfd = 0;
 
   if (vfdP->fdstate & FD_TEMP_FILE_LIMIT) {
     /* Subtract its size from current usage (do first in case of error) */
@@ -1699,22 +1309,9 @@ int FilePrefetch(File file, off_t offset, off_t amount,
              VfdCache[file].fileName, (int64)offset, (int64)amount));
 
 #if defined(USE_POSIX_FADVISE) && defined(POSIX_FADV_WILLNEED)
-  {
-    int returnCode;
-
-    returnCode = FileAccess(file);
-    if (returnCode < 0)
-      return returnCode;
-
-  retry:
-    returnCode =
-        posix_fadvise(VfdCache[file].fd, offset, amount, POSIX_FADV_WILLNEED);
-
-    if (returnCode == EINTR)
-      goto retry;
-
-    return returnCode;
-  }
+  if (sm_vfd_prefetch(vfd_cache(), VfdCache[file].vfd, offset, amount) != 0)
+    return errno;
+  return 0;
 #elif defined(__darwin__)
   {
     struct radvisory {
@@ -1722,14 +1319,14 @@ int FilePrefetch(File file, off_t offset, off_t amount,
       int ra_count;    /* size of the read     */
     } ra;
     int returnCode;
+    int fd = sm_vfd_raw_fd(vfd_cache(), VfdCache[file].vfd);
 
-    returnCode = FileAccess(file);
-    if (returnCode < 0)
-      return returnCode;
+    if (fd < 0)
+      return fd;
 
     ra.ra_offset = offset;
     ra.ra_count = amount;
-    returnCode = fcntl(VfdCache[file].fd, F_RDADVISE, &ra);
+    returnCode = fcntl(fd, F_RDADVISE, &ra);
     if (returnCode != -1)
       return 0;
     else
@@ -1742,7 +1339,7 @@ int FilePrefetch(File file, off_t offset, off_t amount,
 
 void FileWriteback(File file, off_t offset, off_t nbytes,
                    uint32 wait_event_info) {
-  int returnCode;
+  int fd;
 
   Assert(FileIsValid(file));
 
@@ -1752,62 +1349,25 @@ void FileWriteback(File file, off_t offset, off_t nbytes,
   if (nbytes <= 0)
     return;
 
-  if (VfdCache[file].fileFlags & PG_O_DIRECT)
+  if (sm_vfd_raw_flags(vfd_cache(), VfdCache[file].vfd) & PG_O_DIRECT)
     return;
 
-  returnCode = FileAccess(file);
-  if (returnCode < 0)
+  fd = sm_vfd_raw_fd(vfd_cache(), VfdCache[file].vfd);
+  if (fd < 0)
     return;
 
-  pg_flush_data(VfdCache[file].fd, offset, nbytes);
+  pg_flush_data(fd, offset, nbytes);
 }
 
 ssize_t FileReadV(File file, const struct iovec *iov, int iovcnt, off_t offset,
                   uint32 wait_event_info) {
-  ssize_t returnCode;
-  Vfd *vfdP;
-
   Assert(FileIsValid(file));
 
   DO_DB(elog(LOG, "FileReadV: %d (%s) " INT64_FORMAT " %d", file,
              VfdCache[file].fileName, (int64)offset, iovcnt));
 
-  returnCode = FileAccess(file);
-  if (returnCode < 0)
-    return returnCode;
-
-  vfdP = &VfdCache[file];
-
-retry:
-  returnCode = pg_preadv(vfdP->fd, iov, iovcnt, offset);
-
-  if (returnCode < 0) {
-    /*
-     * Windows may run out of kernel buffers and return "Insufficient
-     * system resources" error.  Wait a bit and retry to solve it.
-     *
-     * It is rumored that EINTR is also possible on some Unix filesystems,
-     * in which case immediate retry is indicated.
-     */
-#ifdef WIN32
-    DWORD error = GetLastError();
-
-    switch (error) {
-    case ERROR_NO_SYSTEM_RESOURCES:
-      pg_usleep(1000L);
-      errno = EINTR;
-      break;
-    default:
-      _dosmaperr(error);
-      break;
-    }
-#endif
-    /* OK to retry if interrupted */
-    if (errno == EINTR)
-      goto retry;
-  }
-
-  return returnCode;
+  /* sm0 reopens the file if it was closed, and retries if interrupted. */
+  return sm_vfd_readv(vfd_cache(), VfdCache[file].vfd, iov, iovcnt, offset);
 }
 
 ssize_t FileWriteV(File file, const struct iovec *iov, int iovcnt, off_t offset,
@@ -1819,10 +1379,6 @@ ssize_t FileWriteV(File file, const struct iovec *iov, int iovcnt, off_t offset,
 
   DO_DB(elog(LOG, "FileWriteV: %d (%s) " INT64_FORMAT " %d", file,
              VfdCache[file].fileName, (int64)offset, iovcnt));
-
-  returnCode = FileAccess(file);
-  if (returnCode < 0)
-    return returnCode;
 
   vfdP = &VfdCache[file];
 
@@ -1853,8 +1409,8 @@ ssize_t FileWriteV(File file, const struct iovec *iov, int iovcnt, off_t offset,
     }
   }
 
-retry:
-  returnCode = pg_pwritev(vfdP->fd, iov, iovcnt, offset);
+  /* sm0 reopens the file if it was closed, and retries if interrupted. */
+  returnCode = sm_vfd_writev(vfd_cache(), vfdP->vfd, iov, iovcnt, offset);
 
   if (returnCode >= 0) {
     /*
@@ -1877,45 +1433,24 @@ retry:
         vfdP->fileSize = past_write;
       }
     }
-  } else {
-    /*
-     * See comments in FileReadV()
-     */
-#ifdef WIN32
-    DWORD error = GetLastError();
-
-    switch (error) {
-    case ERROR_NO_SYSTEM_RESOURCES:
-      pg_usleep(1000L);
-      errno = EINTR;
-      break;
-    default:
-      _dosmaperr(error);
-      break;
-    }
-#endif
-    /* OK to retry if interrupted */
-    if (errno == EINTR)
-      goto retry;
   }
 
   return returnCode;
 }
 
 int FileSync(File file, uint32 wait_event_info) {
-  int returnCode;
+  int fd;
 
   Assert(FileIsValid(file));
 
   DO_DB(elog(LOG, "FileSync: %d (%s)", file, VfdCache[file].fileName));
 
-  returnCode = FileAccess(file);
-  if (returnCode < 0)
-    return returnCode;
+  /* pg_fsync(), for wal_sync_method's choice of how. */
+  fd = sm_vfd_raw_fd(vfd_cache(), VfdCache[file].vfd);
+  if (fd < 0)
+    return fd;
 
-  returnCode = pg_fsync(VfdCache[file].fd);
-
-  return returnCode;
+  return pg_fsync(fd);
 }
 
 /*
@@ -1925,30 +1460,12 @@ int FileSync(File file, uint32 wait_event_info) {
  * appropriate error.
  */
 int FileZero(File file, off_t offset, off_t amount, uint32 wait_event_info) {
-  int returnCode;
-  ssize_t written;
-
   Assert(FileIsValid(file));
 
   DO_DB(elog(LOG, "FileZero: %d (%s) " INT64_FORMAT " " INT64_FORMAT, file,
              VfdCache[file].fileName, (int64)offset, (int64)amount));
 
-  returnCode = FileAccess(file);
-  if (returnCode < 0)
-    return returnCode;
-
-  written = pg_pwrite_zeros(VfdCache[file].fd, amount, offset);
-
-  if (written < 0)
-    return -1;
-  else if (written != amount) {
-    /* if errno is unset, assume problem is no disk space */
-    if (errno == 0)
-      errno = ENOSPC;
-    return -1;
-  }
-
-  return 0;
+  return sm_vfd_zero(vfd_cache(), VfdCache[file].vfd, offset, amount);
 }
 
 /*
@@ -1966,33 +1483,19 @@ int FileZero(File file, off_t offset, off_t amount, uint32 wait_event_info) {
 int FileFallocate(File file, off_t offset, off_t amount,
                   uint32 wait_event_info) {
 #ifdef HAVE_POSIX_FALLOCATE
-  int returnCode;
-
   Assert(FileIsValid(file));
 
   DO_DB(elog(LOG, "FileFallocate: %d (%s) " INT64_FORMAT " " INT64_FORMAT, file,
              VfdCache[file].fileName, (int64)offset, (int64)amount));
 
-  returnCode = FileAccess(file);
-  if (returnCode < 0)
-    return -1;
-
-retry:
-  returnCode = posix_fallocate(VfdCache[file].fd, offset, amount);
-
-  if (returnCode == 0)
+  if (sm_vfd_fallocate(vfd_cache(), VfdCache[file].vfd, offset, amount) == 0)
     return 0;
-  else if (returnCode == EINTR)
-    goto retry;
-
-  /* for compatibility with %m printing etc */
-  errno = returnCode;
 
   /*
    * Return in cases of a "real" failure, if fallocate is not supported,
    * fall through to the FileZero() backed implementation.
    */
-  if (returnCode != EINVAL && returnCode != EOPNOTSUPP)
+  if (errno != EINVAL && errno != EOPNOTSUPP)
     return -1;
 #endif
 
@@ -2004,12 +1507,7 @@ off_t FileSize(File file) {
 
   DO_DB(elog(LOG, "FileSize %d (%s)", file, VfdCache[file].fileName));
 
-  if (FileIsNotOpen(file)) {
-    if (FileAccess(file) < 0)
-      return (off_t)-1;
-  }
-
-  return lseek(VfdCache[file].fd, 0, SEEK_END);
+  return sm_vfd_size(vfd_cache(), VfdCache[file].vfd);
 }
 
 int FileTruncate(File file, off_t offset, uint32 wait_event_info) {
@@ -2019,11 +1517,7 @@ int FileTruncate(File file, off_t offset, uint32 wait_event_info) {
 
   DO_DB(elog(LOG, "FileTruncate %d (%s)", file, VfdCache[file].fileName));
 
-  returnCode = FileAccess(file);
-  if (returnCode < 0)
-    return returnCode;
-
-  returnCode = pg_ftruncate(VfdCache[file].fd, offset);
+  returnCode = sm_vfd_truncate(vfd_cache(), VfdCache[file].vfd, offset);
 
   if (returnCode == 0 && VfdCache[file].fileSize > offset) {
     /* adjust our state for truncation of a temp file */
@@ -2056,14 +1550,8 @@ char *FilePathName(File file) {
  * returned file descriptor.
  */
 int FileGetRawDesc(File file) {
-  int returnCode;
-
-  returnCode = FileAccess(file);
-  if (returnCode < 0)
-    return returnCode;
-
   Assert(FileIsValid(file));
-  return VfdCache[file].fd;
+  return sm_vfd_raw_fd(vfd_cache(), VfdCache[file].vfd);
 }
 
 /*
@@ -2071,7 +1559,7 @@ int FileGetRawDesc(File file) {
  */
 int FileGetRawFlags(File file) {
   Assert(FileIsValid(file));
-  return VfdCache[file].fileFlags;
+  return sm_vfd_raw_flags(vfd_cache(), VfdCache[file].vfd);
 }
 
 /*
@@ -2079,7 +1567,15 @@ int FileGetRawFlags(File file) {
  */
 mode_t FileGetRawMode(File file) {
   Assert(FileIsValid(file));
-  return VfdCache[file].fileMode;
+  return sm_vfd_raw_mode(vfd_cache(), VfdCache[file].vfd);
+}
+
+/* Stop counting the fd a failed fopen(), popen() or opendir() did not take. */
+static void unreserve_saving_errno(void) {
+  int save_errno = errno;
+
+  sm_vfd_unreserve(vfd_cache(), 1);
+  errno = save_errno;
 }
 
 /*
@@ -2169,10 +1665,10 @@ FILE *AllocateFile(const char *name, const char *mode) {
              "exceeded maxAllocatedDescs (%d) while trying to open file \"%s\"",
              maxAllocatedDescs, name)));
 
-  /* Close excess kernel FDs. */
-  ReleaseLruFiles();
+  /* Count the fd fopen() takes; sm0 closes VFDs to make room. */
+  if (sm_vfd_reserve(vfd_cache(), 1) != 0)
+    return NULL;
 
-TryAgain:
   if ((file = fopen(name, mode)) != NULL) {
     AllocateDesc *desc = &allocatedDescs[numAllocatedDescs];
 
@@ -2183,17 +1679,7 @@ TryAgain:
     return desc->desc.file;
   }
 
-  if (errno == EMFILE || errno == ENFILE) {
-    int save_errno = errno;
-
-    ereport(LOG, (errcode(ERRCODE_INSUFFICIENT_RESOURCES),
-                  errmsg("out of file descriptors: %m; release and retry")));
-    errno = 0;
-    if (ReleaseLruFile())
-      goto TryAgain;
-    errno = save_errno;
-  }
-
+  unreserve_saving_errno();
   return NULL;
 }
 
@@ -2224,10 +1710,8 @@ int OpenTransientFilePerm(const char *fileName, int fileFlags,
              "exceeded maxAllocatedDescs (%d) while trying to open file \"%s\"",
              maxAllocatedDescs, fileName)));
 
-  /* Close excess kernel FDs. */
-  ReleaseLruFiles();
-
-  fd = BasicOpenFilePerm(fileName, fileFlags, fileMode);
+  /* Counted, as a VFD is; sm0 closes VFDs to make room. */
+  fd = sm_vfd_open_real(vfd_cache(), fileName, fileFlags, fileMode);
 
   if (fd >= 0) {
     AllocateDesc *desc = &allocatedDescs[numAllocatedDescs];
@@ -2266,10 +1750,10 @@ FILE *OpenPipeStream(const char *command, const char *mode) {
                            "execute command \"%s\"",
                            maxAllocatedDescs, command)));
 
-  /* Close excess kernel FDs. */
-  ReleaseLruFiles();
+  /* Count the pipe's fd; sm0 closes VFDs to make room. */
+  if (sm_vfd_reserve(vfd_cache(), 1) != 0)
+    return NULL;
 
-TryAgain:
   fflush(NULL);
   pqsignal(SIGPIPE, SIG_DFL);
   errno = 0;
@@ -2287,14 +1771,7 @@ TryAgain:
     return desc->desc.file;
   }
 
-  if (errno == EMFILE || errno == ENFILE) {
-    ereport(LOG, (errcode(ERRCODE_INSUFFICIENT_RESOURCES),
-                  errmsg("out of file descriptors: %m; release and retry")));
-    if (ReleaseLruFile())
-      goto TryAgain;
-    errno = save_errno;
-  }
-
+  unreserve_saving_errno();
   return NULL;
 }
 
@@ -2306,19 +1783,22 @@ TryAgain:
 static int FreeDesc(AllocateDesc *desc) {
   int result;
 
-  /* Close the underlying object */
+  /* Close the underlying object, and stop counting its fd */
   switch (desc->kind) {
   case AllocateDescFile:
     result = fclose(desc->desc.file);
+    sm_vfd_unreserve(vfd_cache(), 1);
     break;
   case AllocateDescPipe:
     result = pclose(desc->desc.file);
+    sm_vfd_unreserve(vfd_cache(), 1);
     break;
   case AllocateDescDir:
     result = closedir(desc->desc.dir);
+    sm_vfd_unreserve(vfd_cache(), 1);
     break;
   case AllocateDescRawFD:
-    result = close(desc->desc.fd);
+    result = sm_vfd_close_real(vfd_cache(), desc->desc.fd);
     break;
   default:
     elog(ERROR, "AllocateDesc kind not recognized");
@@ -2409,10 +1889,10 @@ DIR *AllocateDir(const char *dirname) {
                            "open directory \"%s\"",
                            maxAllocatedDescs, dirname)));
 
-  /* Close excess kernel FDs. */
-  ReleaseLruFiles();
+  /* Count the fd opendir() takes; sm0 closes VFDs to make room. */
+  if (sm_vfd_reserve(vfd_cache(), 1) != 0)
+    return NULL;
 
-TryAgain:
   if ((dir = opendir(dirname)) != NULL) {
     AllocateDesc *desc = &allocatedDescs[numAllocatedDescs];
 
@@ -2423,17 +1903,7 @@ TryAgain:
     return desc->desc.dir;
   }
 
-  if (errno == EMFILE || errno == ENFILE) {
-    int save_errno = errno;
-
-    ereport(LOG, (errcode(ERRCODE_INSUFFICIENT_RESOURCES),
-                  errmsg("out of file descriptors: %m; release and retry")));
-    errno = 0;
-    if (ReleaseLruFile())
-      goto TryAgain;
-    errno = save_errno;
-  }
-
+  unreserve_saving_errno();
   return NULL;
 }
 
@@ -2551,12 +2021,14 @@ int ClosePipeStream(FILE *file) {
  * files no process exit closes.
  */
 void ShutdownFileAccess(void) {
-  closeAllVfds();
   for (Size i = 1; i < SizeVfdCache; i++)
     free(VfdCache[i].fileName);
   free(VfdCache);
   VfdCache = NULL;
   SizeVfdCache = 0;
+
+  /* sm0's cache closes the real fds, and uncounts them from the ceiling. */
+  tcb->vfd.reset();
 }
 
 /*
@@ -2567,15 +2039,8 @@ void ShutdownFileAccess(void) {
  * change in the logical state of the VFDs.
  */
 void closeAllVfds(void) {
-  Index i;
-
-  if (SizeVfdCache > 0) {
-    Assert(FileIsNotOpen(0)); /* Make sure ring not corrupted */
-    for (i = 1; i < SizeVfdCache; i++) {
-      if (!FileIsNotOpen(i))
-        LruDelete(i);
-    }
-  }
+  if (tcb->vfd != nullptr)
+    sm_vfd_close_all(tcb->vfd.get());
 }
 
 /*
@@ -2650,7 +2115,6 @@ static void CleanupTempFiles(bool isCommit, bool isProcExit) {
    * xact_temporary files.
    */
   if (isProcExit || have_xact_temporary_files) {
-    Assert(FileIsNotOpen(0)); /* Make sure ring not corrupted */
     for (i = 1; i < SizeVfdCache; i++) {
       unsigned short fdstate = VfdCache[i].fdstate;
 

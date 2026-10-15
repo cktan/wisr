@@ -121,9 +121,11 @@ echo "sesame" > "$work/pw"
 build/initdb --pwfile="$work/pw" "$work/data" > "$work/initdb.out" 2>&1 ||
   fail "initdb"
 # The soft limit on open files is lowered, as a service's often is, for
-# the server to raise (checked below).
+# the server to raise (checked below). A session's share of real fds is
+# max_files_per_process, made small for a join to need more (below).
 (ulimit -Sn 1024 && exec $digres -D "$work/data" -k "$work" -p "$port" \
-  -c authentication_timeout=1) > "$work/log" 2>&1 &
+  -c authentication_timeout=1 -c max_files_per_process=64) \
+  > "$work/log" 2>&1 &
 server=$!
 for _ in $(seq 100); do
   grep -q "ready to accept connections" "$work/log" && break
@@ -697,6 +699,35 @@ local_psql -c "set work_mem = '64kB'" -c 'explain (analyze, costs off,
 [ "$(local_psql -c "set work_mem = '64kB'" \
   -c 'select a from t9 order by b, a limit 5' 2>&1 | grep -v '^SET$' |
   tr '\n' ' ')" = "10 10 10 10 20 " ] || fail "external sort"
+
+# Verify that a session keeps more temporary files open than its share of
+# real fds: sm0's cache closes the one used least recently, and opens it
+# again at its next use.
+# 1. The server was started with max_files_per_process at 64, the most
+#    real fds a session holds.
+# 2. With work_mem at 64kB, a function scan of 20000 rows spills to a
+#    temporary file.
+# 3. In one transaction, open 100 cursors on such a scan, each fetching
+#    a row: 100 temporary files open at once.
+# 4. Fetch a row from each again: every one reads its file, reopened.
+spill_sql="select * from generate_series(1, 20000)"
+local_psql -c "set work_mem = '64kB'" -c "explain (analyze, buffers,
+  costs off, timing off, summary off) $spill_sql" 2>&1 |
+  grep -q 'temp read=[0-9]* written=' || fail "function scan spill"
+{
+  echo "set work_mem = '64kB';"
+  echo "begin;"
+  for i in $(seq 100); do
+    echo "declare c$i cursor for $spill_sql;"
+    echo "fetch 1 from c$i;"
+  done
+  for i in $(seq 100); do echo "fetch 1 from c$i;"; done
+  echo "commit;"
+} > "$work/vfd_cursors.sql"
+local_psql -f "$work/vfd_cursors.sql" > "$work/vfd_cursors.out" 2>&1
+[ "$(grep -c '^1$' "$work/vfd_cursors.out")" = 100 ] &&
+  [ "$(grep -c '^2$' "$work/vfd_cursors.out")" = 100 ] ||
+  fail "cursors over temporary files"
 
 # Verify that CREATE and DROP DATABASE are sm's: a new database is a
 # database of its own, a database in use is not dropped unless forced, and
