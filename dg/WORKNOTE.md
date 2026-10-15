@@ -4075,3 +4075,34 @@ so `ANALYZE (SKIP_LOCKED) t` waited for it.
 - `server.sh`: with t2 held ACCESS EXCLUSIVE, `ANALYZE
   (SKIP_LOCKED) t2` warns and `ANALYZE (SKIP_LOCKED)` is silent,
   and neither waits.
+
+## Step 140: ANALYZE (SKIP_LOCKED) passes over one in progress
+
+Step 139's gap: a second session's `ANALYZE (SKIP_LOCKED) t`
+waited for the first's transaction, on sm's lock of t's
+statistics, which had no form that did not wait. In PostgreSQL
+the two conflict on ShareUpdateExclusiveLock, and SKIP_LOCKED
+skips.
+
+- **sm analyzes without waiting**: `sm_tbl_tryanalyze()`
+  (`sm.h`), over sm3's `tbl_tryanalyze()`; `analyze_table()`
+  takes the statistics' lock with `cat_trylock_stats()`, over
+  sm2's new `catkv_trylock()`, and returns 1 before it samples
+  if another transaction holds it.
+- **`analyze_table()` (access/sm `smstore.c`) uses it under
+  SKIP_LOCKED**, and reports a table passed over as for a table
+  held X: `skip_locked_table()`.
+- **A plain ANALYZE still waits**, then analyzes again: the
+  statistics are the transaction's (`STATISTICS.md` §2.1), so
+  the first may abort, and rows committed after its sample
+  belong in the second's. PostgreSQL does the same.
+- **`waiting()` returns any answer but -1 at once.** It retried
+  while the error was `SM_ERR_INTERRUPTED`, unless the call
+  returned 0, so a call returning 1 after an earlier interrupt
+  would have been made again without end.
+- sm3 `test_lock.cc`: a try-analyze while another transaction's
+  analyze is open returns 1 and records nothing; once that one
+  has ended, it analyzes.
+- `server.sh`: with t2 being analyzed in an open transaction,
+  `ANALYZE (SKIP_LOCKED) t2` warns at once, and a plain ANALYZE
+  t2 waits.

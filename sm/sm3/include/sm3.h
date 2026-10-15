@@ -1227,6 +1227,14 @@ int cat_get_stats(session_t* session, uint64_t oid,
 int tbl_analyze(table_t* table, int32_t target);
 
 /*
+ * As tbl_analyze, but never waiting for another analyze of the table:
+ * 0 analyzed; 1, having sampled and recorded nothing, if another
+ * transaction's analyze of it holds its statistics' lock; or -1.
+ * SQL's ANALYZE (SKIP_LOCKED) asks like this.
+ */
+int tbl_tryanalyze(table_t* table, int32_t target);
+
+/*
  * One batch of the build of the table's index oid, which must be
  * pending (SM3_DESIGN.md §3): cover up to max_rows rows from
  * rowno from on. For each it takes the row's lock shared, reads

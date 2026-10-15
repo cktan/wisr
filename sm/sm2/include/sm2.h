@@ -923,6 +923,13 @@ int catkv_erase(catkv_t* kv, std::string_view key);
 /* Lock key shared or exclusive, to the end of the transaction. */
 int catkv_lock(catkv_t* kv, std::string_view key, sm1::lockmode_t mode);
 
+/*
+ * As catkv_lock, but never waiting (sm1::trylock): 0 with key
+ * locked; 1, with nothing taken, if another transaction holds it in a
+ * mode that conflicts or has written it and not yet ended; or -1.
+ */
+int catkv_trylock(catkv_t* kv, std::string_view key, sm1::lockmode_t mode);
+
 /* Open a cursor over every key that begins with prefix. */
 int catkv_scan(catkv_t* kv, std::string_view prefix, catkv_scan_t*& out);
 

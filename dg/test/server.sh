@@ -543,6 +543,27 @@ wait $locker
 [ "$(local_psql -c 'begin' -c 'lock table t2 nowait' -c "select 'granted'" \
   -c 'commit' 2>&1 | grep -c granted)" = 1 ] || fail "nowait, granted"
 
+# Verify that ANALYZE (SKIP_LOCKED) passes over a table another
+# transaction is analyzing, where a plain ANALYZE waits for it, as each
+# does in PostgreSQL.
+# 1. In a held session, analyze t2 and keep the transaction open.
+# 2. ANALYZE (SKIP_LOCKED) t2 warns that it skips t2, without waiting.
+# 3. A plain ANALYZE t2 with statement_timeout = 500 times out.
+# 4. End the held session.
+held_start analyzer
+held_send analyzer "begin; analyze t2; select 'analyzed';"
+held_wait analyzer analyzed || fail "analyze held"
+[ "$(timeout 10 psql -X -A -t -h "$work" -p "$port" -d postgres \
+  -c 'analyze (skip_locked) t2' 2>&1 | head -1)" = \
+  'WARNING:  skipping analyze of "t2" --- lock not available' ] ||
+  fail "analyze skip_locked of a table being analyzed"
+timeout 10 psql -X -A -t -h "$work" -p "$port" -d postgres \
+  -c 'set statement_timeout = 500' -c 'analyze t2' > "$work/analyzer2.out" 2>&1
+grep -q 'canceling statement due to statement timeout' "$work/analyzer2.out" ||
+  fail "analyze of a table being analyzed waits"
+held_send analyzer "commit;"
+held_end analyzer
+
 # Verify that CREATE INDEX and DROP INDEX are sm's: a unique index refuses a
 # duplicate, a dropped one no longer does, and names default as PostgreSQL's.
 # 1. Create t3, a row, a plain index with no name and a unique one.

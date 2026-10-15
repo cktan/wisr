@@ -120,7 +120,8 @@ int analyze_index(sm3::table_t *table, const sm3::table_def_t &def,
 namespace sm3 {
 
 /* Analyze a table with rng's draws; see analyze.h. */
-int analyze_table(table_t *table, int32_t target, std::mt19937_64 &rng) {
+int analyze_table(table_t *table, int32_t target, std::mt19937_64 &rng,
+                  bool wait) {
   if (target < 1) {
     return sm1::seterr(sm1::SM_ERR_INVALID,
                        "analyze: a statistics target below 1");
@@ -131,9 +132,12 @@ int analyze_table(table_t *table, int32_t target, std::mt19937_64 &rng) {
   if (tbl_size(table, st.heap_disk, st.heap_mem) != 0) {
     return -1;
   }
-  // A second analyze of the table waits here, before it samples.
-  if (cat_lock_stats(session, def.oid) != 0) {
-    return -1;
+  // A second analyze of the table waits here, before it samples, or,
+  // not waiting, returns 1.
+  int held = wait ? cat_lock_stats(session, def.oid)
+                  : cat_trylock_stats(session, def.oid);
+  if (held != 0) {
+    return held;
   }
   sample_t s;
   if (sample_table(table, target, rng, s) != 0) {
@@ -200,12 +204,26 @@ int analyze_table(table_t *table, int32_t target, std::mt19937_64 &rng) {
   return cat_put_stats(session, def.oid, st);
 }
 
+namespace {
+
+/* A fresh seed each time: an analyze is a sample, not a replay. */
+std::mt19937_64 fresh_rng() {
+  std::random_device rd;
+  return std::mt19937_64((static_cast<uint64_t>(rd()) << 32) | rd());
+}
+
+} // namespace
+
 /* Analyze a table; see sm3.h. */
 int tbl_analyze(table_t *table, int32_t target) {
-  // A fresh seed each time: an analyze is a sample, not a replay.
-  std::random_device rd;
-  std::mt19937_64 rng((static_cast<uint64_t>(rd()) << 32) | rd());
+  std::mt19937_64 rng = fresh_rng();
   return analyze_table(table, target, rng);
+}
+
+/* As tbl_analyze, if no other analyze of the table holds it; see sm3.h. */
+int tbl_tryanalyze(table_t *table, int32_t target) {
+  std::mt19937_64 rng = fresh_rng();
+  return analyze_table(table, target, rng, false);
 }
 
 } // namespace sm3

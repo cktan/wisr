@@ -183,7 +183,8 @@ template <class F> static int waiting(F f) {
   for (;;) {
     int rc = f();
 
-    if (rc == 0 || sm_errnum() != SM_ERR_INTERRUPTED)
+    /* Only -1 is an error: 1, a lock not had at once, is an answer. */
+    if (rc != -1 || sm_errnum() != SM_ERR_INTERRUPTED)
       return rc;
     CHECK_FOR_INTERRUPTS();
   }
@@ -2609,26 +2610,35 @@ Datum pg_stats_rel(PG_FUNCTION_ARGS) {
 }
 
 /*
+ * SKIP_LOCKED's report of a table it passed over: PostgreSQL's warning if
+ * the statement named it, nothing in an ANALYZE of every table.
+ */
+static void skip_locked_table(const char *name, bool named) {
+  if (named)
+    ereport(
+        WARNING,
+        (errcode(ERRCODE_LOCK_NOT_AVAILABLE),
+         errmsg("skipping analyze of \"%s\" --- lock not available", name)));
+}
+
+/*
  * Analyze the table oid, named name for a message, in sm, in this
  * transaction: opened as a reader, so writers go on meanwhile.  A name
  * that is not a table's, a sequence's or an index's, is passed over with
  * a warning, as PostgreSQL passes over what it cannot analyze.  With
- * skip_locked a table whose lock would be waited for, held X, is passed
- * over too, with a warning if the statement named it.
+ * skip_locked a table that would be waited for -- held X, or analyzed by
+ * another transaction not ended -- is passed over too, with a warning if
+ * the statement named it.
  */
 static void analyze_table(Oid oid, const char *name, bool verbose,
                           bool skip_locked, bool named) {
   bool blocked = false;
   sm_tbl_t *tbl = skip_locked ? try_open_table(oid, SM_LOCKMODE_IS, &blocked)
                               : open_table(oid, SM_LOCKMODE_IS);
+  int rc;
 
-  /* SKIP_LOCKED: a table held X is passed over, said only if named. */
   if (blocked) {
-    if (named)
-      ereport(
-          WARNING,
-          (errcode(ERRCODE_LOCK_NOT_AVAILABLE),
-           errmsg("skipping analyze of \"%s\" --- lock not available", name)));
+    skip_locked_table(name, named);
     return;
   }
   if (tbl == NULL) {
@@ -2646,8 +2656,17 @@ static void analyze_table(Oid oid, const char *name, bool verbose,
                              name)));
     return;
   }
-  if (waiting([&] { return sm_tbl_analyze(tbl, default_statistics_target); }) !=
-      0)
+  /* An analyze in sm samples, and may be interrupted: so through waiting(). */
+  rc = waiting([&] {
+    return skip_locked ? sm_tbl_tryanalyze(tbl, default_statistics_target)
+                       : sm_tbl_analyze(tbl, default_statistics_target);
+  });
+  if (rc == 1) {
+    relation_close(rel, NoLock);
+    skip_locked_table(name, named);
+    return;
+  }
+  if (rc != 0)
     sm_error("analyze a table");
   /* Plans of the table are made again, with its new statistics. */
   CacheInvalidateRelcache(rel);
@@ -2668,9 +2687,8 @@ static void analyze_table(Oid oid, const char *name, bool verbose,
  * ANALYZE: each table rels names, or with none every table in sm, analyzed
  * by sm in this transaction, so the statistics commit and roll back with
  * it (STATISTICS.md section 2.1).  Each takes default_statistics_target; a
- * column list is refused.  skip_locked is SKIP_LOCKED: a table held X is
- * not waited for.  Another session's ANALYZE of the same table still is,
- * on sm's lock of its statistics, which has no form that does not wait.
+ * column list is refused.  skip_locked is SKIP_LOCKED: a table held X,
+ * or being analyzed by another transaction, is not waited for.
  */
 void smstore_analyze(List *rels, bool verbose, bool skip_locked) {
   ListCell *l;

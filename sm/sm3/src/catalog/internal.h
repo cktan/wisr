@@ -246,6 +246,12 @@ int lock_table_now(sm1::session_t *s, uint64_t oid, sm1::lockmode_t mode);
  */
 int cat_lock_stats(session_t *s, uint64_t oid);
 
+/*
+ * As cat_lock_stats, but never waiting: 0 with the lock held, 1 with
+ * nothing taken if another analyze of the table holds it, or -1.
+ */
+int cat_trylock_stats(session_t *s, uint64_t oid);
+
 /* The name of the sm1 sequence that counts for the sequence oid. */
 std::string sequence_counter(uint64_t oid);
 

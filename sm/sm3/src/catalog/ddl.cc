@@ -832,8 +832,13 @@ int cat_put_stats(session_t *session, uint64_t oid, const stats_t &stats) {
   return 0;
 }
 
-/* Lock a table's STATS entry; see internal.h. */
-int cat_lock_stats(session_t *session, uint64_t oid) {
+namespace {
+
+/*
+ * Take the table oid's STATS entry lock X, waiting for it or not: 0,
+ * or 1 with nothing taken if it would have waited, or -1.
+ */
+int lock_stats(session_t *session, uint64_t oid, bool wait) {
   std::shared_ptr<const table_def_t> def = cat_get_table(session, oid);
   if (def && def->nspoid == nsp_temp) {
     return invalid("statistics are not kept for a temporary table yet");
@@ -843,7 +848,20 @@ int cat_lock_stats(session_t *session, uint64_t oid) {
   if (open_kv(session->sm1, kv) != 0 || stats_key(oid, 0, 0, key) != 0) {
     return -1;
   }
-  return sm2::catkv_lock(kv.get(), key, sm1::SM_LOCKMODE_EX);
+  return wait ? sm2::catkv_lock(kv.get(), key, sm1::SM_LOCKMODE_EX)
+              : sm2::catkv_trylock(kv.get(), key, sm1::SM_LOCKMODE_EX);
+}
+
+} // namespace
+
+/* Lock a table's STATS entry; see internal.h. */
+int cat_lock_stats(session_t *session, uint64_t oid) {
+  return lock_stats(session, oid, true);
+}
+
+/* Lock a table's STATS entry if it is free now; see internal.h. */
+int cat_trylock_stats(session_t *session, uint64_t oid) {
+  return lock_stats(session, oid, false);
 }
 
 /* A table's statistics, loaded on first use; see sm3.h. */

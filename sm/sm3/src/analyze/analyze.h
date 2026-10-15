@@ -78,9 +78,12 @@ int compute_scalar_stats(const sm2::key_column_t &col,
 /*
  * tbl_analyze, with the sample's draws made by rng: sample the table,
  * estimate every live column's statistics, and record them with its
- * sizes and its indexes', in the table's transaction.
+ * sizes and its indexes', in the table's transaction. With wait false
+ * it is tbl_tryanalyze: 1, having sampled nothing, if another analyze
+ * of the table holds its statistics' lock.
  */
-int analyze_table(table_t *table, int32_t target, std::mt19937_64 &rng);
+int analyze_table(table_t *table, int32_t target, std::mt19937_64 &rng,
+                  bool wait = true);
 
 } // namespace sm3
 

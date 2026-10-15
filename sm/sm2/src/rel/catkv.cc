@@ -93,6 +93,13 @@ int catkv_lock(catkv_t *kv, std::string_view key, sm1::lockmode_t mode) {
                    upper_key(key), mode);
 }
 
+/* Lock a catalog key if no one holds it now; see sm2.h. */
+int catkv_trylock(catkv_t *kv, std::string_view key, sm1::lockmode_t mode) {
+  // catkv_lock's lock, asked for without waiting.
+  return sm1::trylock(kv->session, sm1::LOCKTYPE_ROW, catalog_store,
+                      upper_key(key), mode);
+}
+
 /* Open a cursor over the keys under prefix; see sm2.h. */
 int catkv_scan(catkv_t *kv, std::string_view prefix, catkv_scan_t *&out) {
   // [prefix, its successor), both under the upper prefix.

@@ -1131,6 +1131,14 @@ struct sm_stats_t {
 int sm_tbl_analyze(sm_tbl_t* tbl, int32_t target);
 
 /*
+ * As sm_tbl_analyze, but never waiting for another analyze of the
+ * table: 0 analyzed; 1, having recorded nothing, if another
+ * transaction's analyze of it has not ended; or -1. SQL's ANALYZE
+ * (SKIP_LOCKED) passes over the table on 1.
+ */
+int sm_tbl_tryanalyze(sm_tbl_t* tbl, int32_t target);
+
+/*
  * The table oid's statistics, as the session sees them: 0 with them
  * in out, or 1 if it was never analyzed. They are shared, read-only,
  * by every caller in the process: held from memory, loaded once on

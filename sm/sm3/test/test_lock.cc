@@ -537,3 +537,52 @@ TEST_CASE("a table opened without waiting is refused while DDL holds it") {
   sm3::tbl_close(tc);
   REQUIRE(sm3::commit(f.c) == 0);
 }
+
+TEST_CASE("an analyze that does not wait passes over one in progress") {
+  // Verify tbl_tryanalyze returns 1, recording nothing, while another
+  // transaction's analyze of the table is open, and analyzes once it
+  // has ended.
+  // 1. A inserts a row into t and commits.
+  // 2. A analyzes t and holds its transaction open: B's
+  //    tbl_tryanalyze of t returns 1, and B commits.
+  // 3. A aborts: t has no statistics, so B recorded none.
+  // 4. B's tbl_tryanalyze of t now returns 0, and once B commits t
+  //    has statistics.
+  locks_t f;
+  sm3::table_t *ta = nullptr, *tb = nullptr;
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::tbl_open(f.a, f.t, sm1::SM_LOCKMODE_IX, ta) == 0);
+  sm2::datum_t v = sm2::datum_from_int32(7);
+  bool isnull = false;
+  uint64_t rowno = 0;
+  REQUIRE(sm3::tbl_insert(ta, {&v, 1}, {&isnull, 1}, rowno) == 0);
+  sm3::tbl_close(ta);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  REQUIRE(sm3::begin(f.a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::tbl_open(f.a, f.t, sm1::SM_LOCKMODE_IS, ta) == 0);
+  REQUIRE_MESSAGE(sm3::tbl_analyze(ta, 10) == 0, sm1::errmsg());
+  REQUIRE(sm3::begin(f.b, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::tbl_open(f.b, f.t, sm1::SM_LOCKMODE_IS, tb) == 0);
+  CHECK(sm3::tbl_tryanalyze(tb, 10) == 1);
+  sm3::tbl_close(tb);
+  REQUIRE(sm3::commit(f.b) == 0);
+
+  sm3::tbl_close(ta);
+  REQUIRE(sm3::abort(f.a) == 0);
+  std::shared_ptr<const sm3::stats_t> st;
+  REQUIRE(sm3::begin(f.c, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::cat_get_stats(f.c, f.t, st) == 0);
+  CHECK(st == nullptr);
+  REQUIRE(sm3::commit(f.c) == 0);
+
+  REQUIRE(sm3::begin(f.b, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::tbl_open(f.b, f.t, sm1::SM_LOCKMODE_IS, tb) == 0);
+  CHECK_MESSAGE(sm3::tbl_tryanalyze(tb, 10) == 0, sm1::errmsg());
+  sm3::tbl_close(tb);
+  REQUIRE(sm3::commit(f.b) == 0);
+  REQUIRE(sm3::begin(f.c, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::cat_get_stats(f.c, f.t, st) == 0);
+  CHECK(st != nullptr);
+  REQUIRE(sm3::commit(f.c) == 0);
+}

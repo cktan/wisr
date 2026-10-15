@@ -1599,6 +1599,16 @@ int sm_tbl_analyze(sm_tbl_t *tbl, int32_t target) {
   });
 }
 
+/* Analyze a table if no other analyze of it holds it: 0, 1, or -1. */
+int sm_tbl_tryanalyze(sm_tbl_t *tbl, int32_t target) {
+  return guard(tbl ? tbl->session : nullptr, [&] {
+    if (!tbl) {
+      return null_arg("sm_tbl_tryanalyze", "tbl");
+    }
+    return sm3::tbl_tryanalyze(tbl->table, target);
+  });
+}
+
 namespace {
 
 /*
