@@ -152,11 +152,13 @@ switches between (`SwitchToSharedLatch()`), which are one bit.
   `oldestXid`, `latestCompletedXid` and `xactCompletionCount`,
   which `GetSnapshotData()` reads and which never change. **To
   remove** with the constant snapshot (§7, step 3).
-- **ProcSignal** (storage/ipc `procsignal.c`). One reason has a
-  sender, `pg_log_backend_memory_contexts()`, the sinval catchup
-  gone with sinval (`WORKNOTE.md` step 146). It also keeps the
-  cancel keys. **To replace**: an interrupt bit for the one
-  reason left, the cancel key in the session record.
+- **ProcSignal is gone** (`WORKNOTE.md` step 147). Its one
+  reason left, `pg_log_backend_memory_contexts()`, is an
+  interrupt bit of its own, `INTERRUPT_LOG_MEMORY`; a session's
+  cancel key is in its PGPROC, under `pcb->cancel_key_mutex`,
+  until PGPROC becomes the session record. storage/ipc
+  `procsignal.c` keeps the interrupt bits' calls and the cancel
+  request.
 - **PMSignalState** (storage/ipc `pmsignal.c`, postmaster
   `pmchild.c`). It tells an abnormal end of a session thread
   from a clean one, and keeps the quit reason; the walsender
@@ -315,8 +317,8 @@ has a caller still, and goes with the step that removes it:
    checked first; then a relation's version and the schema
    epoch in sm, checked where the queue was drained; then
    sinval, the catchup interrupt and the SInval LWLocks gone.
-   Done (`WORKNOTE.md` steps 141 to 146). Next, ProcSignal and
-   PMSignalState.
+   Done (`WORKNOTE.md` steps 141 to 146). ProcSignal is gone
+   too (step 147); next, PMSignalState.
 3. **The constant snapshot**: the proc array becomes the
    session registry.
 4. **The lock manager**: advisory locks into sm, catalog locks

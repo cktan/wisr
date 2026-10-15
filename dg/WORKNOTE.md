@@ -4297,3 +4297,29 @@ read a message; the queue that carried them goes.
   PGPROC slot's next one in the queue's state, so a slot's next
   user went on from it and reused no virtual xid soon. One
   counter reuses none until it wraps.
+
+## Step 147: ProcSignal is gone
+
+`SHMEM.md` §5, its ProcSignal: a slot a session, by ProcNumber,
+holding a pid, a cancel key and a flag for each reason, read by
+one interrupt bit's handler. With sinval's catchup gone (step
+146) one reason was left.
+
+- **`pg_log_backend_memory_contexts()` raises an interrupt bit
+  of its own**, `INTERRUPT_LOG_MEMORY`, the bit that was
+  `INTERRUPT_PROCSIG`, on the session's PGPROC (adt
+  `mcxtfuncs.c`); its handler is
+  `HandleLogMemoryContextInterrupt()`, which sets the latch as
+  the multiplexer did. SIGUSR1, which nothing sends a session,
+  maps to no bit.
+- **A session's cancel key is in its PGPROC**
+  (`cancelKey`, `cancelKeyLength`), set by `ProcSetCancelKey()`
+  from `InitPostgres()` and cleared with the pid by `ProcKill()`,
+  both under `pcb->cancel_key_mutex`; `SendCancelRequest()`
+  matches a cancel request's pid and key there.
+- **The slots go**: `ProcSignalSlot`, `pcb->procsignal`,
+  `ProcSignalShmemInit()`, `ProcSignalInit()`,
+  `SendProcSignal()`, `procsignal_sigusr1_handler()` and the
+  `ProcSignalReason` enum.
+- `server.sh`: a session asked by another to log its memory
+  contexts logs them; the cancel request's check was there.

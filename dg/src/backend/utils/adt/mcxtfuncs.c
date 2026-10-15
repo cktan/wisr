@@ -249,7 +249,6 @@ Datum pg_get_backend_memory_contexts(PG_FUNCTION_ARGS) {
 Datum pg_log_backend_memory_contexts(PG_FUNCTION_ARGS) {
   int pid = PG_GETARG_INT32(0);
   PGPROC *proc;
-  ProcNumber procNumber = INVALID_PROC_NUMBER;
 
   /* See if the process with given pid is a backend. */
   proc = BackendPidGetProc(pid);
@@ -273,12 +272,7 @@ Datum pg_log_backend_memory_contexts(PG_FUNCTION_ARGS) {
     PG_RETURN_BOOL(false);
   }
 
-  procNumber = GetNumberFromPGProc(proc);
-  if (SendProcSignal(pid, PROCSIG_LOG_MEMORY_CONTEXT, procNumber) < 0) {
-    /* Again, just a warning to allow loops */
-    ereport(WARNING, (errmsg("could not send signal to process %d: %m", pid)));
-    PG_RETURN_BOOL(false);
-  }
-
+  /* Its thread logs them at its next interrupt check. */
+  InterruptProc(proc, INTERRUPT_LOG_MEMORY);
   PG_RETURN_BOOL(true);
 }

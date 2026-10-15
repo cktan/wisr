@@ -617,6 +617,31 @@ held_send vreader "select 'schema ' || c from vt;"
 held_wait vreader 'schema 7' || fail "version: another session's schema seen"
 held_end vreader
 
+# Verify that pg_log_backend_memory_contexts() reaches another session by an
+# interrupt bit of its own, INTERRUPT_LOG_MEMORY, which was a ProcSignal.
+# 1. A held session gives its pid.
+# 2. Another session asks it to log its memory contexts: true.
+# 3. The held session runs a statement, and the server's log says it
+#    logged them.
+held_start memlog
+held_send memlog "select 'pid ' || pg_backend_pid();"
+for _ in $(seq 50); do
+  memlog_pid=$(sed -n 's/^pid //p' "$work/memlog.out")
+  [ -n "$memlog_pid" ] && break
+  sleep 0.1
+done
+[ "$(local_psql -c "select pg_log_backend_memory_contexts($memlog_pid)")" = t ] ||
+  fail "memory contexts: asked"
+held_send memlog "select 'logged';"
+held_wait memlog logged || fail "memory contexts: the session goes on"
+for _ in $(seq 50); do
+  grep -q "logging memory contexts of PID $memlog_pid" "$work/log" && break
+  sleep 0.1
+done
+grep -q "logging memory contexts of PID $memlog_pid" "$work/log" ||
+  fail "memory contexts: logged"
+held_end memlog
+
 # Verify that CREATE INDEX and DROP INDEX are sm's: a unique index refuses a
 # duplicate, a dropped one no longer does, and names default as PostgreSQL's.
 # 1. Create t3, a row, a plain index with no name and a unique one.

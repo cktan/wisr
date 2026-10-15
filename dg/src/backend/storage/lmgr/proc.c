@@ -275,6 +275,19 @@ void InitProcGlobal(void) {
 /*
  * InitProcess -- initialize a per-process PGPROC entry for this backend
  */
+/*
+ * Give this session's PGPROC its cancel key, which a cancel request for its
+ * pid must match (SendCancelRequest()).
+ */
+void ProcSetCancelKey(const uint8 *key, int len) {
+  Assert(len >= 0 && len <= MAX_CANCEL_KEY_LENGTH);
+  std::lock_guard<std::mutex> lock(pcb->cancel_key_mutex);
+
+  if (len > 0)
+    memcpy(MyProc->cancelKey, key, len);
+  MyProc->cancelKeyLength = len;
+}
+
 void InitProcess(void) {
   dlist_head *procgloballist;
 
@@ -664,8 +677,13 @@ static void ProcKill(int code, Datum arg) {
   MyProc = NULL;
   MyProcNumber = INVALID_PROC_NUMBER;
 
-  /* Mark the proc no longer in use */
-  proc->pid = 0;
+  /* Mark the proc no longer in use: no cancel request finds it now. */
+  {
+    std::lock_guard<std::mutex> lock(pcb->cancel_key_mutex);
+
+    proc->cancelKeyLength = 0;
+    proc->pid = 0;
+  }
   proc->vxid.procNumber = INVALID_PROC_NUMBER;
   proc->vxid.lxid = InvalidTransactionId;
 

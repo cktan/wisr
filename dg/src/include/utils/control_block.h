@@ -63,7 +63,6 @@ struct shmem_index_free_t {
 
 union LWLockPadded;                    /* storage/lwlock.h */
 struct PGSemaphoreData;                /* port/posix_sema.c */
-struct ProcSignalSlot;                 /* storage/ipc/procsignal.c */
 struct FastPathStrongRelationLockData; /* storage/lmgr/lock.c */
 
 /*
@@ -96,8 +95,8 @@ typedef struct pcb_t {
   /* proc.c: the free list of PGPROCs */
   std::mutex proc_struct_mutex;
 
-  /* procsignal.c: a ProcSignal slot a session, new'd */
-  struct ProcSignalSlot *procsignal = nullptr;
+  /* proc.c, procsignal.c: guards each PGPROC's cancel key */
+  std::mutex cancel_key_mutex;
 
   /* lock.c: the fast path's counts of strong locks, new'd */
   struct FastPathStrongRelationLockData *fast_path_strong = nullptr;

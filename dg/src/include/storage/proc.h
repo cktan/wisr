@@ -21,6 +21,7 @@
 #include "storage/pg_sema.h"
 #include "storage/proclist_types.h"
 #include "storage/procnumber.h"
+#include "storage/procsignal.h"
 
 /*
  * Each backend advertises up to PGPROC_MAX_CACHED_SUBXIDS TransactionIds
@@ -190,6 +191,14 @@ struct PGPROC {
                        * xid >= xmin ! */
 
   int pid; /* Backend's process ID; 0 if prepared xact */
+
+  /*
+   * The session's cancel key, which a cancel request must match, and its
+   * length, 0 for none: set and read under pcb->cancel_key_mutex
+   * (ProcSetCancelKey(), SendCancelRequest()).
+   */
+  int cancelKeyLength;
+  uint8 cancelKey[MAX_CANCEL_KEY_LENGTH];
 
   int pgxactoff; /* offset into various ProcGlobal->arrays with
                   * data mirrored from this PGPROC */
@@ -389,6 +398,7 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_lock_waits;
  */
 extern int ProcGlobalSemas(void);
 extern void InitProcGlobal(void);
+extern void ProcSetCancelKey(const uint8 *key, int len);
 extern void InitProcess(void);
 extern void InitProcessPhase2(void);
 

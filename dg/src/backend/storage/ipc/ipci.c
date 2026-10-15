@@ -120,7 +120,6 @@ static void CreateOrAttachShmemStructs(void) {
    * Set up interprocess signaling mechanisms
    */
   PMSignalShmemInit();
-  ProcSignalShmemInit();
 
   /*
    * Set up other modules that need some shared memory space

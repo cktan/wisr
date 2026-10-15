@@ -24,6 +24,7 @@
 #include "common/int.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
+#include "storage/latch.h"
 #include "utils/memdebug.h"
 #include "utils/memutils.h"
 #include "utils/memutils_internal.h"
@@ -1172,7 +1173,8 @@ void *MemoryContextAllocExtended(MemoryContext context, Size size, int flags) {
 void HandleLogMemoryContextInterrupt(void) {
   InterruptPending = true;
   LogMemoryContextPending = true;
-  /* latch will be set by procsignal_sigusr1_handler */
+  /* Wake a wait on the latch, to take it at the next interrupt check. */
+  SetLatch(MyLatch);
 }
 
 /*

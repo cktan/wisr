@@ -3498,7 +3498,7 @@ void PostgresMain(const char *dbname, const char *username) {
      * midst of output during who-knows-what operation...
      */
     pqsignal(SIGPIPE, SIG_IGN);
-    SetInterruptHandler(INTERRUPT_PROCSIG, procsignal_sigusr1_handler);
+    SetInterruptHandler(INTERRUPT_LOG_MEMORY, HandleLogMemoryContextInterrupt);
     pqsignal(SIGUSR2, SIG_IGN);
     pqsignal(SIGFPE, FloatExceptionHandler);
 
