@@ -564,6 +564,33 @@ grep -q 'canceling statement due to statement timeout' "$work/analyzer2.out" ||
 held_send analyzer "commit;"
 held_end analyzer
 
+# Verify that an index's definition is read under its table's lock in sm:
+# a session that has the index's descriptor cached waits out a DROP INDEX
+# in flight, and then finds no index, as pg_get_indexdef() in PostgreSQL
+# finds none once it is dropped.
+# 1. Make ix1 (a int) with index ix1_a; a held session reads its
+#    definition, caching its descriptor.
+# 2. Another held session drops ix1_a and holds its transaction open.
+# 3. The first reads the definition again: it waits, printing nothing.
+# 4. The drop commits: the first prints null.
+local_psql -c 'create table ix1(a int)' -c 'create index ix1_a on ix1(a)' \
+  > /dev/null
+held_start idxreader
+held_send idxreader "select pg_get_indexdef('ix1_a'::regclass);"
+held_wait idxreader 'CREATE INDEX ix1_a ON public.ix1 USING btree (a)' ||
+  fail "index definition read"
+held_start idxdropper
+held_send idxdropper "begin; drop index ix1_a; select 'dropped';"
+held_wait idxdropper dropped || fail "index dropped, held"
+held_send idxreader "select pg_get_indexdef('ix1_a'::regclass) is null;"
+sleep 1
+[ "$(grep -c . "$work/idxreader.out")" = 1 ] ||
+  fail "index definition waits out its drop"
+held_send idxdropper "commit;"
+held_wait idxreader t || fail "index definition after its drop is null"
+held_end idxdropper
+held_end idxreader
+
 # Verify that CREATE INDEX and DROP INDEX are sm's: a unique index refuses a
 # duplicate, a dropped one no longer does, and names default as PostgreSQL's.
 # 1. Create t3, a row, a plain index with no name and a unique one.

@@ -1962,7 +1962,17 @@ void smstore_drop_tables(DropStmt *stmt) {
  * afresh.
  */
 static void alter_table_rel(Oid relid, const char *name) {
-  Relation rel = relation_open(relid, NoLock);
+  /*
+   * No sm lock is held yet, and none is taken here: the DDL takes X itself,
+   * and a NOT NULL column with no default asks for it without waiting (step
+   * 110).  What is read -- the relkind, this session's use of the table --
+   * no DDL changes, so the descriptor is had without relation_open(), which
+   * asserts a lock held.
+   */
+  Relation rel = RelationIdGetRelation(relid);
+
+  if (!RelationIsValid(rel))
+    elog(ERROR, "could not open relation with OID %u", relid);
 
   if (rel->rd_rel->relkind != RELKIND_RELATION)
     ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
@@ -2238,7 +2248,14 @@ ObjectAddress smstore_rename_column(RenameStmt *stmt) {
   if (!OidIsValid(relid))
     return InvalidObjectAddress;
   check_column_name(stmt->newname);
-  rel = relation_open(relid, NoLock);
+  /*
+   * The column's attnum, for the address alone: sm renames by name, under
+   * the X it takes.  So the descriptor is had without a lock, as
+   * alter_table_rel() has it.
+   */
+  rel = RelationIdGetRelation(relid);
+  if (!RelationIsValid(rel))
+    elog(ERROR, "could not open relation with OID %u", relid);
   for (int i = 0; i < RelationGetDescr(rel)->natts; i++) {
     Form_pg_attribute att = TupleDescAttr(RelationGetDescr(rel), i);
 
@@ -2754,17 +2771,30 @@ static sm_lockmode_t relation_lock_mode(LOCKMODE lockmode) {
 }
 
 /*
+ * What sm locks for a lock on relid: an index's table, as an index's
+ * definition is its table's (sm3 keeps it in the table's record), so that
+ * opening an index before its table reads no definition a DDL is changing;
+ * else relid itself.
+ */
+static Oid lock_target(Oid relid) {
+  Oid table = smstore_index_table(relid);
+
+  return OidIsValid(table) ? table : relid;
+}
+
+/*
  * Lock the relation relid, if it is a table in sm, as PostgreSQL locks a
  * relation before it reads its definition (lmgr.c): so a definition a DDL
  * is changing is read once the DDL has ended.  Only the conflict with DDL,
  * which takes X, matters here: the call into sm that uses the table takes
  * what it needs, so a writer takes IX and anything not exclusive IS -- an
- * index build or an analyze in sm keeps no writer out.  An index or a
- * sequence is not a table in sm, and takes nothing.
+ * index build or an analyze in sm keeps no writer out.  An index known by
+ * its table (smstore_index_table()) is locked as its table; a sequence is
+ * not a table in sm, and takes nothing.
  */
 void smstore_lock_relation(Oid relid, LOCKMODE lockmode) {
   /* Held until the transaction ends, as the handle is. */
-  (void)open_table(relid, relation_lock_mode(lockmode));
+  (void)open_table(lock_target(relid), relation_lock_mode(lockmode));
 }
 
 /*
@@ -2776,8 +2806,20 @@ bool smstore_trylock_relation(Oid relid, LOCKMODE lockmode) {
   bool blocked;
 
   /* Held until the transaction ends, as the handle is. */
-  (void)try_open_table(relid, relation_lock_mode(lockmode), &blocked);
+  (void)try_open_table(lock_target(relid), relation_lock_mode(lockmode),
+                       &blocked);
   return !blocked;
+}
+
+/*
+ * Whether this transaction holds sm's lock on the relation relid in a mode
+ * covering what lockmode takes (smstore_lock_relation()): on the table, or
+ * for an index, on its table.  A sequence takes no lock in sm, so has none
+ * to hold, and is held.
+ */
+bool smstore_relation_held(Oid relid, LOCKMODE lockmode) {
+  return held_table(lock_target(relid), relation_lock_mode(lockmode)) != NULL ||
+         smstore_sequence_exists(relid);
 }
 
 /*
@@ -3071,8 +3113,14 @@ void smstore_drop_indexes(DropStmt *stmt) {
               (errmsg("index \"%s\" does not exist, skipping", rv->relname)));
       continue;
     }
+    /*
+     * Every session's descriptor of the table relearns its indexes, and
+     * one of the index is gone, as PostgreSQL's index_drop() has it.
+     */
     rel = relation_open((Oid)table, NoLock);
-    /* Every session's descriptor of the table relearns its indexes. */
+    CacheInvalidateRelcache(rel);
+    relation_close(rel, NoLock);
+    rel = relation_open((Oid)index, NoLock);
     CacheInvalidateRelcache(rel);
     relation_close(rel, NoLock);
 

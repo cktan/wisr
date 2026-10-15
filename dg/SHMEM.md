@@ -243,12 +243,31 @@ instead of being told.
     sm's lock if it is free now (`smstore_trylock_relation()`,
     `WORKNOTE.md` step 138), so LOCK TABLE ... NOWAIT fails at
     once where it waited.
-  - A relation opened with `NoLock` by a caller that holds no
-    lock of its own, to be found by an audit. A descriptor
-    built takes IS itself (access/sm `smstore_table_desc()`),
-    so the audit is of descriptors cached and then used with
-    no lock. ALTER TABLE's lookup is safe: sm's DDL takes X
-    itself.
+  - A descriptor used with no lock held. One built takes IS
+    itself (access/sm `smstore_table_desc()`), so the hole is
+    a cached one; an audit (`WORKNOTE.md` step 141) logged each
+    use of a cached descriptor of sm's with no sm lock held,
+    over digres's tests. Four call sites read only what never
+    changes for an oid, or what the DDL then reads again under
+    X: ALTER TABLE's and RENAME COLUMN's lookups, and the
+    permission callbacks of CREATE INDEX and LOCK TABLE. One
+    did not: `pg_get_indexdef()` opened an index before its
+    table, and a lock on an index took nothing in sm, so it
+    printed the definition of an index dropped while it
+    waited. A lock on an index now locks its table, and DROP
+    INDEX invalidates the index's own descriptor too.
+  - **The rule is checked.** `CheckRelationLockedByMe()`
+    (storage/lmgr `lmgr.c`) answers for a relation of sm's
+    whether this transaction holds sm's lock on it
+    (`smstore_relation_held()`), where it said yes always, so
+    `relation_open()`'s assertion that a relation opened with
+    `NoLock` is locked holds for sm's (`WORKNOTE.md` step 142).
+    ALTER TABLE's and RENAME COLUMN's lookups, which may take no
+    lock, have their descriptor without it.
+  - Not closed: lsyscache's `get_rel_name()` and the rest read
+    a cached descriptor through `RelationGetClassForm()` with
+    no lock; of what they serve only the name changes, so a
+    message may name a table by its old name.
 - **The blocking is the lock's, not this design's.** DDL on a
   table waits for every transaction that holds it, and a
   waiting X may hold back later readers; PostgreSQL's

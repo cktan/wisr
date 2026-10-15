@@ -298,8 +298,9 @@ bool CheckRelationLockedByMe(Relation relation, LOCKMODE lockmode,
                              bool orstronger) {
   LOCKTAG tag;
 
+  /* sm's lock, in a mode covering lockmode's: sm has no other test. */
   if (locked_by_sm(RelationGetRelid(relation)))
-    return true;
+    return smstore_relation_held(RelationGetRelid(relation), lockmode);
   SET_LOCKTAG_RELATION(tag, relation->rd_lockInfo.lockRelId.dbId,
                        relation->rd_lockInfo.lockRelId.relId);
 
@@ -314,8 +315,9 @@ bool CheckRelationLockedByMe(Relation relation, LOCKMODE lockmode,
 bool CheckRelationOidLockedByMe(Oid relid, LOCKMODE lockmode, bool orstronger) {
   LOCKTAG tag;
 
+  /* sm's lock, in a mode covering lockmode's: sm has no other test. */
   if (locked_by_sm(relid))
-    return true;
+    return smstore_relation_held(relid, lockmode);
 
   SetLocktagRelationOid(&tag, relid);
 

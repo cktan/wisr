@@ -4106,3 +4106,65 @@ skips.
 - `server.sh`: with t2 being analyzed in an open transaction,
   `ANALYZE (SKIP_LOCKED) t2` warns at once, and a plain ANALYZE
   t2 waits.
+
+## Step 141: a lock on an index locks its table
+
+`SHMEM.md` §5.1's second hole: a relation's descriptor used with
+no lock held, which a version checked under the lock would never
+see stale.
+
+- **The audit**: `RelationIdGetRelation()` logged, for a while,
+  each cached descriptor of sm's it handed out with no sm lock
+  held (`smstore_relation_held()`), and digres's tests ran: 16
+  uses at six call sites, each in a transaction. ALTER TABLE's
+  lookup (`alter_table_rel()`) reads the relkind and whether the
+  session has the table open; RENAME COLUMN's an attnum for the
+  address it returns; the permission callbacks of CREATE INDEX
+  and LOCK TABLE the relkind, persistence and owner. None reads
+  what a DDL changes, or each reads it again under X.
+- **The hole: `pg_get_indexdef()`** (adt `ruleutils.c`,
+  `sm_indexdef()`) opened the index, then its table, and a lock
+  on an index took nothing in sm (step 111). A session with the
+  index's descriptor cached, behind a DROP INDEX in flight,
+  printed the definition of an index that was gone.
+- **A lock on an index locks its table** (`lock_target()`,
+  access/sm `smstore.c`): an index's definition is its table's,
+  in the table's record in sm3. One not yet known by its table
+  (`smstore_index_table()`) takes nothing, as before.
+- **DROP INDEX invalidates the index's descriptor**, as well as
+  its table's, as PostgreSQL's `index_drop()` does. Through the
+  descriptor: `CacheInvalidateRelcacheByRelid()` reads
+  `pg_class`, which digres has not, and failed the drop.
+- **`sm_indexdef()` finds an index gone** after its wait, and
+  is null with `missing_ok`, as PostgreSQL's
+  `pg_get_indexdef()` is.
+- `server.sh`: a session with the index cached waits out a held
+  DROP INDEX, then reads null.
+
+## Step 142: an unlocked use of a descriptor of sm's is caught
+
+Step 141's audit, made a rule: a descriptor of sm's is used
+under sm's lock on its table, which a version checked under the
+lock (`SHMEM.md` §5.1) needs.
+
+- **`CheckRelationLockedByMe()` and
+  `CheckRelationOidLockedByMe()`** (storage/lmgr `lmgr.c`)
+  answer for a relation of sm's whether this transaction holds
+  sm's lock on it, in a mode covering the one asked
+  (`smstore_relation_held()`: the table's lock, an index's
+  table's, and a sequence, which takes none, always). They said
+  yes for any. So PostgreSQL's assertions that a relation opened
+  with `NoLock` is locked (access/common `relation.c`) and that
+  the executor's are (executor `execUtils.c`) hold for sm's.
+  Asserts are on in every build (`dg.mk`).
+- **ALTER TABLE's and RENAME COLUMN's lookups** have the
+  descriptor from `RelationIdGetRelation()`, not
+  `relation_open()`: they take no lock, as sm's DDL takes X
+  itself and a NOT NULL column asks for it without waiting
+  (step 110), and they read only the relkind, this session's
+  use of the table, and an attnum for an address.
+- **`pg_depend.c` asks too**, and on no lock takes one and looks
+  the relation up in `pg_class`, which fails in digres: it comes
+  only before a write to `pg_depend`, refused anyway, so only
+  the error said differs. Not changed.
+- digres's tests trip no assertion.

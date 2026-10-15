@@ -1208,7 +1208,13 @@ static char *sm_indexdef(Oid indexrelid, int colno, bool attrsOnly,
       return NULL;
     elog(ERROR, "cache lookup failed for index %u", indexrelid);
   }
-  index = relation_open(indexrelid, AccessShareLock);
+  /* Locked as its table, so a DROP INDEX in flight is waited out. */
+  index = try_relation_open(indexrelid, AccessShareLock);
+  if (index == NULL) {
+    if (missing_ok)
+      return NULL;
+    elog(ERROR, "cache lookup failed for index %u", indexrelid);
+  }
   idx = index->rd_index;
   table = relation_open(idx->indrelid, AccessShareLock);
   initStringInfo(&buf);
