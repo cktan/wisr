@@ -4367,3 +4367,37 @@ its own, with no error.
   `snapmgr.c`). Sharing a snapshot needs sm to hand one of its
   own to another session.
 - `server.sh` checks both.
+
+## Step 150: a snapshot is a constant
+
+`SHMEM.md` §7 step 3, its first half. `GetSnapshotData()` took
+`ProcArrayLock` and scanned every session's PGPROC for the xid
+it was running, for every snapshot, though no PostgreSQL xid is
+ever assigned (steps 45, 137): the list was always empty and the
+snapshot always the same.
+
+- **The audit**: nothing live reads a snapshot's xids. sm's
+  table access method keeps the snapshot it is given and reads
+  at sm's; the catalog relations make their rows with no
+  snapshot. The readers of `xip` and `xmin` are CREATE INDEX
+  CONCURRENTLY and DETACH PARTITION CONCURRENTLY, refused or
+  with no partition to detach; `pg_current_snapshot()`, which
+  fails (step 137); partitions, enums and logical decoding,
+  which digres has none of; and `XactLockTableWait()`, given
+  only a heap's xids. The planner's `get_actual_variable_range()`
+  takes a horizon, and skips every index of sm's. What is read:
+  the command id each snapshot carries, and `RecentXmin`, which
+  `index_getnext_tid()` asserts. Step 149 came of it.
+- **`GetSnapshotData()` is a constant** (storage/ipc
+  `procarray.c`): xmin and xmax the xid after the last completed,
+  which `TransamVariables` fixes before the first session, an
+  empty list, the caller's command id, and `TransactionXmin`,
+  `RecentXmin` and `MyProc->xmin` as before. No lock, no scan, no
+  horizon advanced. `GetSnapshotDataReuse()`, its one helper,
+  goes.
+- **`TransactionIdIsInProgress()` asks only of this session's own
+  transaction**, as no other holds an xid.
+- Still there, as nothing feeds them now: the horizons, group
+  xid clearing, the replication slots' xmins and the `XidCache`
+  (`SHMEM.md` §6). `ProcArrayLock` is taken still at a
+  transaction's start and end and by the lookups by pid.

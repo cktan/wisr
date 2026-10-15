@@ -139,12 +139,14 @@ switches between (`SwitchToSharedLatch()`), which are one bit.
   pcb (a mutex and a vector), once the lock manager and LWLocks
   are gone.
 - **The proc array** (storage/ipc `procarray.c`). Mostly dead:
-  no xid is ever assigned (step 45), yet `GetSnapshotData()`
-  scans the array under `ProcArrayLock` for every snapshot
-  (utils/time `snapmgr.c`). Its live users are DROP DATABASE
-  FORCE, the signal functions and `ProcNumberGetProc()`. **To
-  replace**: a snapshot that is a constant, taken without a
-  lock; the lookups by pid move to the session registry.
+  no xid is ever assigned (step 45), and a snapshot is a
+  constant, made with no lock and no scan of the array, and
+  `TransactionIdIsInProgress()` asks only of the session's own
+  (`WORKNOTE.md` step 150). Its live users are DROP DATABASE
+  FORCE, the signal functions and `ProcNumberGetProc()`, which
+  take `ProcArrayLock` still, as a transaction's start and end
+  do. **To replace**: the lookups by pid move to the session
+  registry.
 - **TransamVariables** (access/transam `varsup.c`). Its
   counters are gone (`WORKNOTE.md` step 137); left are
   `oldestXid`, `latestCompletedXid` and `xactCompletionCount`,
@@ -290,10 +292,11 @@ instead of being told.
 The dead code is gone (`WORKNOTE.md` step 131). What is left
 has a caller still, and goes with the step that removes it:
 
-- **With the constant snapshot** (§7, step 3): the proc array's
-  group XID clearing (`ProcArrayGroupClearXid()`), the
-  horizons `GetSnapshotData()` and `GlobalVisTestFor()` compute,
-  the replication slots' xmin fields they read, the
+- **Now the snapshot is a constant** (§7, step 3, `WORKNOTE.md`
+  step 150), nothing feeds these, which are to go: the proc
+  array's group XID clearing (`ProcArrayGroupClearXid()`), the
+  horizons `GlobalVisTestFor()` and `ComputeXidHorizons()`
+  compute, the replication slots' xmin fields they read, the
   `XidCache`.
 - **With the lock manager** (§7, step 4): lock groups
   (`lockGroupLeader`, `lockGroupMembers`), which `lock.c` and
@@ -319,8 +322,9 @@ has a caller still, and goes with the step that removes it:
    sinval, the catchup interrupt and the SInval LWLocks gone.
    Done (`WORKNOTE.md` steps 141 to 146), and ProcSignal and
    PMSignalState with it (147, 148).
-3. **The constant snapshot**: the proc array becomes the
-   session registry.
+3. **The constant snapshot**: done (`WORKNOTE.md` step 150);
+   then the code nothing feeds now goes (§6), and the proc
+   array becomes the session registry.
 4. **The lock manager**: advisory locks into sm, catalog locks
    gone; then the lock manager, the remaining LWLocks,
    `posix_sema.c` and PGPROC.
