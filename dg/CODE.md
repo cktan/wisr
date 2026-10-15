@@ -281,8 +281,9 @@ Much of the work is removing what digres does not need.
 ## 11. Git
 
 - **Work on a `wip-*` branch** and commit there; merge into
-  `main` only when asked. The user keeps the branch's commits
-  (fast-forward) rather than squashing.
+  `main` only when asked. A small branch is squashed
+  (`git merge --squash`); a larger one is merged plainly with
+  `git merge`, keeping its commits.
 - **Commit messages**: a short subject in the style
   `dg: the syslogger is gone`, then bullets.
 - **Commit only when asked**, and push only when asked.

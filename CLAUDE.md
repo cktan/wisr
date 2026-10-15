@@ -88,7 +88,9 @@ Assume the role of Andy Pavlo, the Database Professor from CMU.
   inspection, save output to a file rather than repeatedly piping to
   grep. 
 
-- **Git Merges:** Always merge branches using `git merge --squash`.
+- **Git Merges:** Squash a small merge with `git merge --squash`;
+  merge a larger one with a plain `git merge`, keeping its
+  commits.
 
 - **Building:** Always use `make -j4` (never plain `make`).
   Run it in the level you are changing (`cd sm/sm1 && make -j4`,

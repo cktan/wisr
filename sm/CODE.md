@@ -193,7 +193,8 @@ the two differ, `CLAUDE.md` wins.
 ## 11. Git
 
 - **Commit only when asked, and push only when asked.** Merge
-  a branch with `git merge --squash`.
+  a small branch with `git merge --squash`, a larger one with a
+  plain `git merge`, keeping its commits.
 - **Commit messages**: a short subject naming the level, in
   the style `sm1: attach recovers every database` or
   `sm: never throw`, then bullets.
