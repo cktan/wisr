@@ -4168,3 +4168,36 @@ lock (`SHMEM.md` §5.1) needs.
   only before a write to `pg_depend`, refused anyway, so only
   the error said differs. Not changed.
 - digres's tests trip no assertion.
+
+## Step 143: sm gives a table a version
+
+`SHMEM.md` §5.1's version, the sm half; dg does not read it yet.
+
+- **A table's version is a count of publishes**, which sm3
+  already kept (`catalog_t::seq`) and dated an index's becoming
+  valid by. `publish()` now also records the count at which each
+  table's definition (`table_seq`) and statistics (`stats_seq`)
+  were last published, and at which a namespace was last made or
+  dropped (`nsp_seq`).
+- **`cat_table_version()`** is the greatest of the table's
+  definition's, statistics' and indexes' counts, so an ANALYZE
+  or an index made valid, which today send a relcache message so
+  plans are made again, move it too. It is `table_version_own`
+  while the session's own transaction has changed the definition
+  or the statistics. A commit timestamp would have needed sm1's
+  plumbed into sm3, for nothing a count does not give; one count
+  for every table would have made any DDL stale every session's
+  every cache.
+- **`sm_table_def_t::version`** carries it (`sm.h`), filled
+  wherever sm builds one (`api_def()`), so the definition a
+  session reads when it takes sm's lock has it at no extra call.
+  `SM_VERSION_OWN` is `table_version_own`.
+- **`sm_cat_namespace_epoch()`**, over `cat_namespace_epoch()`.
+- Counts are in memory, as `seq` is: after a restart every table
+  is at 0, and so is every host's cache.
+- `../sm/DESIGN.md` §5 has it as a decision across levels: a
+  host's caches are kept fresh by a version, not by a message.
+- sm3 `test_table.cc`: a rename moves the version, own until
+  committed; another table's DDL and inserts do not; an analyze
+  does, own until committed; an index's creation does, and its
+  becoming valid again; the epoch moves only with a namespace.

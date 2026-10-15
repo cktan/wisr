@@ -244,6 +244,20 @@ SEQUENCE value    = sequence
   takes a snapshot, and may scan an index only if it was valid
   by then (`SM3_DESIGN.md` §3). Neither is on disk: no
   snapshot survives a restart.
+- **A table's version** is from the same count: the catalog
+  remembers for each table the count at which its definition,
+  and its statistics, were last published, and
+  `cat_table_version` gives the greatest of those and its
+  indexes' counts of becoming valid; `table_version_own` while
+  the session's own transaction has changed the definition or
+  the statistics. A host that caches what it learns of a table
+  under the table-oid lock (`sm.h`'s `sm_table_def_t::version`)
+  knows from it whether the cache is still good, with no word
+  from the session that changed it (`../dg/SHMEM.md` §5.1).
+  **The namespaces' epoch**, `cat_namespace_epoch`, is the count
+  at which a namespace was last made or dropped. A table not
+  changed since the catalog was loaded is at 0, as is the epoch:
+  a host's caches are as new as the process.
 - **Each index's state**, in a map by index oid beside the
   definitions and not in them. A definition is immutable and
   is replaced whole, under the table's lock X; a state changes

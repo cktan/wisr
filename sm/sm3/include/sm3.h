@@ -407,6 +407,30 @@ bool cat_get_index(const session_t* s, uint64_t nspoid,
 int cat_lock_table(session_t* s, uint64_t oid, sm1::lockmode_t mode,
                    std::shared_ptr<const table_def_t>& out);
 
+/* cat_table_version while s's transaction has changed the table. */
+constexpr uint64_t table_version_own = UINT64_MAX;
+
+/*
+ * The version of the table oid as s sees it: the count of the
+ * catalog's publish that last changed its definition or its
+ * statistics, or made one of its indexes valid, 0 if none has since
+ * the catalog was loaded; table_version_own while s's transaction
+ * has changed its definition or its statistics and not committed. A
+ * host that caches what it learns of a table, under the table-oid
+ * lock, knows it is still good while the version is the same; one
+ * read under the lock IS or IX changes only by an analyze or an
+ * index made valid, which DDL's X does not guard.
+ */
+uint64_t cat_table_version(const session_t* s, uint64_t oid);
+
+/*
+ * The namespaces' epoch: the count of the catalog's publish that last
+ * made or dropped a namespace, 0 if none has since it was loaded. No
+ * lock guards a namespace's lookup by name, so a host that caches
+ * namespaces asks this.
+ */
+uint64_t cat_namespace_epoch(const session_t* s);
+
 /*
  * As cat_lock_table, but never waiting (sm1::trylock): 0 with the
  * lock held and out set; 1, with nothing taken, if another

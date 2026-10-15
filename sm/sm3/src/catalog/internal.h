@@ -84,6 +84,16 @@ struct sm3::catalog_t {
    */
   std::atomic<uint64_t> seq{0};
   std::unordered_map<uint64_t, uint64_t> valid_seq; /* index oid -> count */
+  /*
+   * The count at which each table's definition, and its statistics,
+   * were last published, for its version (cat_table_version); one
+   * not changed since the catalog was loaded has none, 0. And the
+   * count at which a namespace was last made or dropped, the
+   * namespaces' epoch (cat_namespace_epoch).
+   */
+  std::unordered_map<uint64_t, uint64_t> table_seq; /* table oid -> count */
+  std::unordered_map<uint64_t, uint64_t> stats_seq; /* table oid -> count */
+  std::atomic<uint64_t> nsp_seq{0};
 
   /* The host's evaluator of partial and expression indexes; set once. */
   index_eval_fn eval;

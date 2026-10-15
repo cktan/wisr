@@ -184,11 +184,14 @@ instead of being told.
   INDEX and DROP INDEX invalidate the table's relcache entry.
 - **A relation has a version, in sm.** sm gives each table a
   definition version, which each of those but the schema's
-  changes in the DDL's own transaction. sm/sm3 keeps none yet,
-  and sm/sm1's `last_ddl_ts` (`SM1_DESIGN.md` §11) is written
-  down but not built. A version is read as the transaction sees
-  it: its own uncommitted DDL's, else the newest committed,
-  never one at its snapshot, since the catalog is not versioned
+  changes in the DDL's own transaction: sm3's count of the
+  catalog's publishes at which the table's definition or its
+  statistics were last published, or an index of it made valid
+  (`sm_table_def_t::version`, `../sm/sm3/CATALOG.md` §4;
+  `WORKNOTE.md` step 143). A version is read as the transaction
+  sees it: `SM_VERSION_OWN` while its own DDL or ANALYZE of the
+  table is uncommitted, else the newest committed, never one at
+  its snapshot, since the catalog is not versioned
   (`SM3_DESIGN.md` §2). A DDL that aborts leaves it as it was.
   An index has no version of its own: it takes no lock in sm
   (`WORKNOTE.md` step 111), so its entry is checked under its
@@ -228,10 +231,11 @@ instead of being told.
   `TypeCacheRelCallback()`), so a cached plan is planned again.
 - **What no lock guards has an epoch.** A schema is looked up
   by name with no lock, so CREATE and DROP SCHEMA raise a
-  process-wide epoch, an atomic in the pcb. A session compares
-  it with the epoch it last saw wherever the queue is drained
-  now: at a transaction's start (`AtStart_Cache()`, access/
-  transam `xact.c`) and after each lock. On a change it
+  process-wide epoch, sm3's count at which a namespace was last
+  made or dropped (`sm_cat_namespace_epoch()`). A session
+  compares it with the epoch it last saw wherever the queue is
+  drained now: at a transaction's start (`AtStart_Cache()`,
+  access/transam `xact.c`) and after each lock. On a change it
   processes the catalog flush of `pg_namespace` locally, which
   drops its search path too. The check is one atomic load. A
   user's function, type, cast, operator or view, if digres ever

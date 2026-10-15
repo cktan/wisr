@@ -2898,3 +2898,72 @@ TEST_CASE("a table's sizes, rowno limit and probes are read live") {
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.b) == 0);
 }
+
+TEST_CASE("a table's version moves with its definition, statistics and "
+          "indexes") {
+  // Verify cat_table_version counts what a host's cache of the table
+  // depends on, and nothing else, and the namespaces' epoch likewise.
+  // 1. B reads jobs' version, v0, and the epoch.
+  // 2. A renames a column and has not committed: A reads its own, B
+  //    v0. A commits: B reads v1, above v0.
+  // 3. A creates another table, and inserts 200 rows into jobs: jobs'
+  //    version stays v1.
+  // 4. A analyzes jobs: its own until it commits, then v2, above v1.
+  // 5. With the builder started, an index on owner is created: v3,
+  //    above v2; once it is built and valid, v4, above v3.
+  // 6. The epoch has not moved; a namespace created and committed
+  //    moves it.
+  jobs_t f;
+  uint64_t epoch0 = sm3::cat_namespace_epoch(f.b);
+  uint64_t v0 = sm3::cat_table_version(f.b, f.jobs);
+  CHECK(v0 != sm3::table_version_own);
+
+  start(f.a);
+  REQUIRE(sm3::rename_column(f.a, f.jobs, "state", "status") == 0);
+  CHECK(sm3::cat_table_version(f.a, f.jobs) == sm3::table_version_own);
+  CHECK(sm3::cat_table_version(f.b, f.jobs) == v0);
+  REQUIRE(sm3::commit(f.a) == 0);
+  uint64_t v1 = sm3::cat_table_version(f.b, f.jobs);
+  CHECK(v1 > v0);
+
+  start(f.a);
+  std::vector<sm3::column_spec_t> cols = {
+      {"x", sm2::type_int4.code, -1, false}};
+  uint64_t other = 0;
+  REQUIRE(sm3::create_table(f.a, sm3::nsp_public, "other", cols, other) == 0);
+  REQUIRE(sm3::commit(f.a) == 0);
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  for (int i = 1; i <= 200; i++) {
+    put(t, i, "free", "w" + std::to_string(i % 13));
+  }
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  CHECK(sm3::cat_table_version(f.b, f.jobs) == v1);
+
+  start(f.a);
+  t = f.write(f.a, sm1::SM_LOCKMODE_IS);
+  REQUIRE_MESSAGE(sm3::tbl_analyze(t, 10) == 0, sm1::errmsg());
+  sm3::tbl_close(t);
+  CHECK(sm3::cat_table_version(f.a, f.jobs) == sm3::table_version_own);
+  CHECK(sm3::cat_table_version(f.b, f.jobs) == v1);
+  REQUIRE(sm3::commit(f.a) == 0);
+  uint64_t v2 = sm3::cat_table_version(f.b, f.jobs);
+  CHECK(v2 > v1);
+
+  f.builder(4, 40);
+  uint64_t jobs_owner = late_on(f, "jobs_owner", 2);
+  uint64_t v3 = sm3::cat_table_version(f.b, f.jobs);
+  CHECK(v3 > v2);
+  REQUIRE_MESSAGE(sm3::builder_wait(f.a, f.jobs, jobs_owner) == 0,
+                  sm1::errmsg());
+  CHECK(state_of(f, jobs_owner) == sm3::index_state_t::valid);
+  CHECK(sm3::cat_table_version(f.b, f.jobs) > v3);
+
+  CHECK(sm3::cat_namespace_epoch(f.b) == epoch0);
+  start(f.a);
+  uint64_t nsp = 0;
+  REQUIRE(sm3::create_namespace(f.a, "s1", nsp) == 0);
+  REQUIRE(sm3::commit(f.a) == 0);
+  CHECK(sm3::cat_namespace_epoch(f.b) > epoch0);
+}

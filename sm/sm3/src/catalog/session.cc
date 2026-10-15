@@ -112,6 +112,8 @@ void publish_temp(sm3::session_t *s) {
  */
 void publish(sm3::session_t *s) {
   sm3::catalog_t *cat = s->cat;
+  // One more publish: what it changes is dated from it.
+  uint64_t seq = cat->seq.load() + 1;
   for (sm3::collation_change_t &c : s->collations) {
     cat->collations[c.oid] = c.collation;
     cat->collation_nsp[c.oid] = c.nspoid;
@@ -123,6 +125,9 @@ void publish(sm3::session_t *s) {
     } else {
       cat->nspaces.erase(n.oid);
     }
+  }
+  if (!s->nspaces.empty()) {
+    cat->nsp_seq.store(seq);
   }
   s->nspaces.clear();
   for (sm3::sequence_change_t &q : s->sequences) {
@@ -136,13 +141,13 @@ void publish(sm3::session_t *s) {
   for (sm3::stats_change_t &c : s->stats) {
     if (c.stats) {
       cat->stats[c.oid] = std::move(c.stats);
+      cat->stats_seq[c.oid] = seq;
     } else {
       cat->stats.erase(c.oid);
+      cat->stats_seq.erase(c.oid);
     }
   }
   s->stats.clear();
-  // One more publish; an index it makes valid dates from it.
-  uint64_t seq = cat->seq.load() + 1;
   for (sm3::state_change_t &c : s->states) {
     auto old = cat->index_states.find(c.index);
     bool was_valid = old != cat->index_states.end() &&
@@ -163,8 +168,10 @@ void publish(sm3::session_t *s) {
   for (sm3::table_change_t &t : s->tables) {
     if (t.def) {
       cat->tables[t.oid] = std::move(t.def);
+      cat->table_seq[t.oid] = seq;
     } else {
       cat->tables.erase(t.oid);
+      cat->table_seq.erase(t.oid);
     }
   }
   s->tables.clear();
@@ -653,6 +660,42 @@ int lock_and_get_table(session_t *s, uint64_t oid, sm1::lockmode_t mode,
 }
 
 } // namespace
+
+/* A table's version as s sees it; see sm3.h. */
+uint64_t cat_table_version(const session_t *s, uint64_t oid) {
+  // This transaction's own change of it, not yet published.
+  for (const table_change_t &t : s->tables) {
+    if (t.oid == oid) {
+      return table_version_own;
+    }
+  }
+  for (const stats_change_t &c : s->stats) {
+    if (c.oid == oid) {
+      return table_version_own;
+    }
+  }
+  catalog_t *cat = s->cat;
+  std::shared_lock lock(cat->mu);
+  auto count = [](const std::unordered_map<uint64_t, uint64_t> &m,
+                  uint64_t key) {
+    auto it = m.find(key);
+    return it == m.end() ? uint64_t{0} : it->second;
+  };
+  uint64_t v = std::max(count(cat->table_seq, oid), count(cat->stats_seq, oid));
+  // An index of it made valid since: a plan may now use it.
+  auto def = cat->tables.find(oid);
+  if (def != cat->tables.end()) {
+    for (const index_def_t &x : def->second->indexes) {
+      v = std::max(v, count(cat->valid_seq, x.oid));
+    }
+  }
+  return v;
+}
+
+/* The namespaces' epoch; see sm3.h. */
+uint64_t cat_namespace_epoch(const session_t *s) {
+  return s->cat->nsp_seq.load();
+}
 
 /* Lock a table's schema, then read its definition; see sm3.h. */
 int cat_lock_table(session_t *s, uint64_t oid, sm1::lockmode_t mode,

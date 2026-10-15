@@ -567,6 +567,22 @@ design:
   and written through to sm2, so a DDL statement and the data
   it changes commit in one sm1 transaction, and recovery is
   RocksDB's alone (`PART4.md` §4, `sm3/SM3_DESIGN.md` §2).
+- **A host's caches are kept fresh by a version, not by a
+  message.** sm sends no word of a DDL to the sessions that did
+  not make it. A table definition carries a version
+  (`sm_table_def_t::version`): sm3's count of the catalog's
+  publishes at which the definition or the table's statistics
+  were last published, or an index of it made valid, and
+  `SM_VERSION_OWN` while the reader's own transaction has
+  changed it (`sm3/CATALOG.md` §4). A host caching what it
+  learns of a table uses it only under the table-oid lock and
+  compares the version there: read under IS or IX, it changes
+  only by an analyze or an index made valid, since DDL takes X.
+  A namespace, looked up by name with no lock, has an epoch in
+  its place (`sm_cat_namespace_epoch`). The counts are in
+  memory, at 0 after a restart, when no host's cache survives
+  either. digres's use of them replaces PostgreSQL's shared
+  invalidation (`../dg/SHMEM.md` §5.1).
 - **READ COMMITTED writes are resolved above the stack, and
   sm3 fixes the indexes.** `SM_ERR_UPDATED` is answered by
   re-checking the statement's filter against the newest image.

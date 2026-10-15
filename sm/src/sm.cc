@@ -281,6 +281,7 @@ sm_attribute_t api_attribute(const sm2::attribute_t &a) {
  */
 sm_table_def_t api_def(const sm3::session_t *ss, const sm3::table_def_t &d) {
   sm_table_def_t out{d.oid, d.nspoid, d.name, {}, {}, {}};
+  out.version = sm3::cat_table_version(ss, d.oid);
   for (const sm3::column_def_t &c : d.columns) {
     out.columns.push_back({c.name, c.type->code, c.typmod, c.not_null,
                            c.dropped, c.default_expr, c.identity,
@@ -967,6 +968,11 @@ void sm_idx_scanend(sm_idx_scan_t *scan) {
 }
 
 /* A table's oid by name, as the session sees it; 1 if none. */
+/* The namespaces' epoch: 0 for a session with no catalog. */
+uint64_t sm_cat_namespace_epoch(sm_session_t *session) {
+  return session && session->sm3 ? sm3::cat_namespace_epoch(session->sm3) : 0;
+}
+
 /* Create a namespace. */
 int sm_cat_create_namespace(sm_session_t *session, const char *name,
                             uint64_t *oid) {

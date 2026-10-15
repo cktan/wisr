@@ -565,9 +565,20 @@ struct sm_index_def_t {
     bool                         primary = false; /* the primary key */
 };
 
+/* sm_table_def_t's version while its transaction has changed it. */
+#define SM_VERSION_OWN UINT64_MAX
+
 /*
  * A table definition: its columns, with schema their attributes
  * as sm2 lays a row out by, and its indexes.
+ *
+ * version tells a host when what it caches of the table has gone
+ * stale: it is the count of the catalog's publish that last changed
+ * the definition or the table's statistics, or made one of its
+ * indexes valid, and SM_VERSION_OWN while the transaction reading it
+ * has changed the definition or the statistics and not committed.
+ * Read under the table-oid lock IS or IX, it changes only by an
+ * analyze or an index made valid, which no DDL's X keeps out.
  */
 struct sm_table_def_t {
     uint64_t                     oid;
@@ -576,7 +587,16 @@ struct sm_table_def_t {
     std::vector<sm_column_def_t> columns;
     std::vector<sm_attribute_t>  schema;
     std::vector<sm_index_def_t>  indexes;
+    uint64_t                     version = 0;
 };
+
+/*
+ * The namespaces' epoch: the count of the catalog's publish that last
+ * made or dropped a namespace. A namespace's lookup by name takes no
+ * lock, so a host caching namespaces, or a search path over them,
+ * drops them when the epoch has moved.
+ */
+uint64_t sm_cat_namespace_epoch(sm_session_t* session);
 
 /*
  * Create the namespace name, SQL's schema, in the session's
