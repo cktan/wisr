@@ -135,12 +135,10 @@ switches between (`SwitchToSharedLatch()`), which are one bit.
   Every catalog write is refused, so the rest of its message
   kinds are dead. Its segment is `pcb->sinval`, and its flags
   and `maxMsgNum` atomics (`WORKNOTE.md` step 130). **To
-  replace**: an `inval_bus_t` in the pcb: a mutex, a queue of
-  messages under 64-bit sequence numbers, `published` an atomic,
-  and a reader's `next` and `reset` for each session. A reader
-  is caught up when `next == published`; one too far behind is
-  reset. That removes the wraparound arithmetic, the catchup
-  interrupt and the two SInval LWLocks.
+  replace**: by a version checked under the lock, and an epoch
+  for what no lock guards (§5.1). No message crosses sessions,
+  so the queue, the catchup interrupt and the two SInval
+  LWLocks go.
 - **PGPROC** (storage/lmgr `proc.c`). One a session: its latch,
   its LWLock and lock waits, its semaphore, its fast-path slots,
   the target of `InterruptProc()`. **To replace**: a session
@@ -170,6 +168,94 @@ switches between (`SwitchToSharedLatch()`), which are one bit.
   flags are dead. **To replace**: an atomic state in the
   thread's launch record, and an atomic quit reason in the pcb.
 
+### 5.1 Invalidation by version, not by message
+
+sinval, PostgreSQL's shared invalidation, tells every session
+what another's DDL changed, so it drops what it has cached of
+it. A session's caches are its own (utils/cache `relcache.c`,
+`catcache.c`: `thread_local`), and what is cached of a
+compiled-in row never goes stale; what can is what sm keeps: a
+table's or an index's descriptor, and a schema. digres asks
+instead of being told.
+
+- **What sends a message now** (access/sm `smstore.c`): CREATE
+  and DROP SCHEMA flush `pg_namespace`; DROP TABLE, ALTER TABLE
+  (RENAME too, through `alter_table_rel()`), ANALYZE, CREATE
+  INDEX and DROP INDEX invalidate the table's relcache entry.
+- **A relation has a version, in sm.** sm gives each table a
+  definition version, which each of those but the schema's
+  changes in the DDL's own transaction. sm/sm3 keeps none yet,
+  and sm/sm1's `last_ddl_ts` (`SM1_DESIGN.md` §11) is written
+  down but not built. A version is read as the transaction sees
+  it: its own uncommitted DDL's, else the newest committed,
+  never one at its snapshot, since the catalog is not versioned
+  (`SM3_DESIGN.md` §2). A DDL that aborts leaves it as it was.
+  An index has no version of its own: it takes no lock in sm
+  (`WORKNOTE.md` step 111), so its entry is checked under its
+  table's lock, by its table's version.
+- **It is checked under the lock.** A statement takes sm's
+  table-oid lock before it reads a definition (step 111): IS to
+  read, IX to write, held to the end of the transaction. After
+  the lock is granted, storage/lmgr `lmgr.c`'s
+  `LockRelationOid()` family calls
+  `AcceptInvalidationMessages()`; it is to compare the relcache
+  entry's version with sm's instead. No lock is added: the
+  parser locks what a query names, the plancache locks again
+  before it reuses a plan (`AcquirePlannerLocks()` in
+  `RevalidateCachedQuery()`, `AcquireExecutorLocks()` in
+  `CheckCachedPlan()`), and the executor opens each relation
+  with `NoLock` under those (executor `execUtils.c`,
+  `ExecGetRangeTableRelation()`).
+- **Why the check cannot go stale.** DROP, ALTER and DROP INDEX
+  take X, which waits for every IS and IX and is let go only
+  after the DDL commits. So a version checked under IS or IX
+  is the table's until the transaction ends, and one a DDL
+  changed under X is committed by the time the lock is granted.
+  CREATE INDEX and ANALYZE take only IS, so a session holding
+  the table can pass its check and then miss one of them until
+  its next lock: it plans without the new index, or with the
+  old statistics. sm maintains every index and enforces every
+  unique one itself, so this costs a plan, never a row.
+- **A mismatch is the message that was not sent.** The entry's
+  invalidation is processed locally, as utils/cache `inval.c`'s
+  `LocalExecuteInvalidationMessage()` processes a session's
+  own: the relcache entry is rebuilt, and the callbacks run as
+  they do now (`PlanCacheRelCallback()`,
+  `TypeCacheRelCallback()`), so a cached plan is planned again.
+- **What no lock guards has an epoch.** A schema is looked up
+  by name with no lock, so CREATE and DROP SCHEMA raise a
+  process-wide epoch, an atomic in the pcb. A session compares
+  it with the epoch it last saw wherever the queue is drained
+  now: at a transaction's start (`AtStart_Cache()`, access/
+  transam `xact.c`) and after each lock. On a change it
+  processes the catalog flush of `pg_namespace` locally, which
+  drops its search path too. The check is one atomic load. A
+  user's function, type, cast, operator or view, if digres ever
+  has them, raises the same epoch: such DDL is rare, and a flush
+  of every user object a session has cached is affordable then.
+- **The holes to close first**, each a definition read with no
+  lock that conflicts with DDL's X:
+  - `ConditionalLockRelationOid()` takes no lock in sm (step
+    111), so LOCK TABLE ... NOWAIT (commands `lockcmds.c`,
+    catalog `namespace.c`) locks nothing; it is to take
+    `sm_tbl_trylock()`, as NOWAIT on a row does
+    (`../sm/NEXT.md` §2);
+  - a relation opened with `NoLock` by a caller that holds no
+    lock of its own, to be found by an audit (ALTER TABLE's
+    lookup is safe: sm's DDL takes X itself).
+- **The blocking is the lock's, not this design's.** DDL on a
+  table waits for every transaction that holds it, and a
+  waiting X may hold back later readers; PostgreSQL's
+  AccessExclusiveLock does the same, with sinval. `lock_timeout`
+  is not built (`../sm/NEXT.md` §2).
+- **Why PostgreSQL sends messages.** Its catalogs are rows any
+  SQL can change, most looked up with no lock (functions,
+  types, operators), so a version would be checked at every
+  cache hit, and the common case would pay for the rare one. Its
+  invalidations are also replayed on a hot standby from the
+  WAL. In digres only sm's objects change, and each but a
+  schema is behind a lock.
+
 ## 6. What is left of modules removed
 
 The dead code is gone (`WORKNOTE.md` step 131). What is left
@@ -198,8 +284,11 @@ has a caller still, and goes with the step that removes it:
    files and the relcache's init files**, removed, with
    XidGen, OidGen, RelationMapping and RelCacheInit (§3).
    Done (`WORKNOTE.md` step 137).
-2. **The invalidation bus** (§5), then ProcSignal and
-   PMSignalState.
+2. **Invalidation by version** (§5.1): the holes closed and
+   checked first; then a relation's version and the schema
+   epoch in sm and the pcb, checked where the queue is drained
+   now; then sinval, the catchup interrupt and the SInval
+   LWLocks go. Then ProcSignal and PMSignalState.
 3. **The constant snapshot**: the proc array becomes the
    session registry.
 4. **The lock manager**: advisory locks into sm, catalog locks
