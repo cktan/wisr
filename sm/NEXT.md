@@ -25,6 +25,11 @@ Low priority:
    of line, which end a load's files; a `rel` verb; and batch
    mode and mini-batch, which matter less now that no write
    keeps a row lock.
+2. **The public headers to `CODE.md` §2.**
+   `sm_column_def_t::default_expr` is a
+   `std::optional<std::string>` (`include/sm.h`), which the
+   rule does not allow. A `bool has_default` beside a plain
+   `std::string` replaces it; the change reaches dg.
 
 ---
 

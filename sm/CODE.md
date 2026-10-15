@@ -27,11 +27,14 @@ the two differ, `CLAUDE.md` wins.
 
 ## 2. The interface to sm's users
 
-- **Only `std::string`, `std::string_view` and `std::vector`
-  cross to sm's users.** No other standard library type
-  appears in what they call (`include/sm.h`, `sm_sys.h`):
-  no `std::optional`, `std::shared_ptr`, `std::span` or
-  `std::function`.
+- **Only `std::string`, `std::string_view`, `std::vector` and
+  `std::shared_ptr` cross to sm's users.** No other standard
+  library type appears in what they call (`include/sm.h`,
+  `sm_sys.h`): no `std::optional`, `std::span` or
+  `std::function`. A `std::shared_ptr` is for an object whose
+  life sm and its user share, such as a thread's control block
+  or a statistics snapshot, and points to a `const` or opaque
+  type.
 - **The interface is C-like functions** returning 0 on
   success and -1 otherwise (§4). Their parameters may be C++
   references.
