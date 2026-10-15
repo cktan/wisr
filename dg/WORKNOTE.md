@@ -4351,3 +4351,19 @@ child ended to tell one that had not cleaned up after itself.
   ends the process before a session tells its client why, so
   "terminating connection due to immediate shutdown command"
   reaches no client; it did not before this step either.
+
+## Step 149: a snapshot is neither exported nor imported
+
+Found by the audit before `SHMEM.md` §7 step 3, the constant
+snapshot. `pg_export_snapshot()` wrote out PostgreSQL's snapshot,
+and `SET TRANSACTION SNAPSHOT` read one in, so a second session
+would see what the first saw. What a session sees in digres is
+sm's snapshot, which neither carries: the importing session read
+at its own, and `pg_dump -j`, which dumps in parallel at one
+exported snapshot, would have dumped each table at a moment of
+its own, with no error.
+
+- **Both are refused**, "not supported yet" (utils/time
+  `snapmgr.c`). Sharing a snapshot needs sm to hand one of its
+  own to another session.
+- `server.sh` checks both.

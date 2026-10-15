@@ -1151,10 +1151,13 @@ char *ExportSnapshot(Snapshot snapshot) {
  *		SQL-callable wrapper for ExportSnapshot.
  */
 Datum pg_export_snapshot(PG_FUNCTION_ARGS) {
-  char *snapshotName;
-
-  snapshotName = ExportSnapshot(GetActiveSnapshot());
-  PG_RETURN_TEXT_P(cstring_to_text(snapshotName));
+  /*
+   * What a session sees is sm's snapshot, not this one: another session
+   * importing it would not see what this one does (WORKNOTE.md step 149).
+   */
+  ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                  errmsg("exporting a snapshot is not supported yet")));
+  PG_RETURN_NULL(); /* not reached */
 }
 
 /*
@@ -1231,6 +1234,10 @@ static void parseVxidFromText(const char *prefix, char **s,
  *file. This is called by "SET TRANSACTION SNAPSHOT 'foo'".
  */
 void ImportSnapshot(const char *idstr) {
+  /* No snapshot is exported (pg_export_snapshot()), so none is imported. */
+  ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                  errmsg("SET TRANSACTION SNAPSHOT is not supported yet")));
+
   char path[MAXPGPATH];
   FILE *f;
   struct stat stat_buf;

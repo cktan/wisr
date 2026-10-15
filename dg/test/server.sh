@@ -642,6 +642,20 @@ grep -q "logging memory contexts of PID $memlog_pid" "$work/log" ||
   fail "memory contexts: logged"
 held_end memlog
 
+# Verify that a snapshot is neither exported nor imported: what a session
+# sees is sm's snapshot, which PostgreSQL's export does not carry, so an
+# importing session would not see what the exporter does.
+# 1. pg_export_snapshot() fails, not supported yet.
+# 2. SET TRANSACTION SNAPSHOT fails the same way.
+local_psql -c 'begin isolation level repeatable read' \
+  -c 'select pg_export_snapshot()' > "$work/export.out" 2>&1
+grep -q 'exporting a snapshot is not supported yet' "$work/export.out" ||
+  fail "snapshot export refused"
+local_psql -c 'begin isolation level repeatable read' \
+  -c "set transaction snapshot '00000003-00000002-1'" > "$work/import.out" 2>&1
+grep -q 'SET TRANSACTION SNAPSHOT is not supported yet' "$work/import.out" ||
+  fail "snapshot import refused"
+
 # Verify that CREATE INDEX and DROP INDEX are sm's: a unique index refuses a
 # duplicate, a dropped one no longer does, and names default as PostgreSQL's.
 # 1. Create t3, a row, a plain index with no name and a unique one.

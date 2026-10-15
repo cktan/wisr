@@ -102,6 +102,13 @@ Owed, and blocking nothing above:
 
 ## 3. Not blocking
 
+- **A snapshot handed to another session.**
+  `pg_export_snapshot()` and `SET TRANSACTION SNAPSHOT` share
+  PostgreSQL's snapshot, which is not what decides what a
+  session sees in digres, so digres refuses both
+  (`../dg/WORKNOTE.md` step 149). `pg_dump -j` needs them: a
+  session would take an sm1 snapshot another has, at its
+  timestamp, for a transaction of its own.
 - **What temporary tables left for later** (`TEMPTABLE.md`
   §9). They are built, in digres too. Not built: skipping the
   sync of a commit that wrote only temporary stores,
