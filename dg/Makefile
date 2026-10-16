@@ -58,7 +58,7 @@ CATALOG_HEADERS := $(filter-out %_d.h,$(wildcard $(I)/catalog/pg_*.h))
 
 # One stamp a generator, since each writes several files.
 GEN := $(I)/catalog/.stamp $(B)/nodes/.stamp $(B)/utils/.fmgr-stamp \
-    $(I)/utils/errcodes.h $(I)/storage/lwlocknames.h \
+    $(I)/utils/errcodes.h \
     $(B)/utils/activity/.stamp $(I)/utils/probes.h \
     $(I)/pg_config_paths.h src/common/kwlist_d.h \
     $(B)/parser/sq_convert.c $(I)/catalog/cat_builtin.h \
@@ -173,11 +173,6 @@ $(B)/utils/.fmgr-stamp: $(I)/catalog/pg_proc.dat $(B)/utils/Gen_fmgrtab.pl
 
 $(I)/utils/errcodes.h: $(B)/utils/errcodes.txt $(B)/utils/generate-errcodes.pl
 	$(PERL) $(B)/utils/generate-errcodes.pl --outfile $@ $<
-
-$(I)/storage/lwlocknames.h: $(I)/storage/lwlocklist.h \
-        $(B)/utils/activity/wait_event_names.txt
-	$(PERL) $(B)/storage/lmgr/generate-lwlocknames.pl \
-	    --outdir $(I)/storage $^
 
 $(B)/utils/activity/.stamp: $(B)/utils/activity/wait_event_names.txt
 	$(PERL) $(B)/utils/activity/generate-wait_event_types.pl --code \

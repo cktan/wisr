@@ -46,9 +46,8 @@ thread_local /*LOCAL*/ PGPROC *MyProc = NULL;
 
 /*
  * pcb->proc_struct_mutex protects the freelist of recycled PGPROC
- * structures.  It cannot be an LWLock, because the LWLock manager depends on
- * already having a PGPROC and a wait semaphore; and these structures are
- * touched only at a session's start and end, not for long.
+ * structures, which are touched only at a session's start and end, not for
+ * long.
  */
 
 /* Pointers to shared-memory structures */
@@ -70,33 +69,9 @@ static Size PGProcShmemSize(void) {
 }
 
 /*
- * Report number of semaphores needed by InitProcGlobal.
- */
-int ProcGlobalSemas(void) {
-  /* We need a sema per backend. */
-  return MaxBackends;
-}
-
-/*
  * InitProcGlobal -
  *	  Initialize the global process table during postmaster or standalone
  *	  backend startup.
- *
- *	  We also create all the per-process semaphores we will need to support
- *	  the requested number of backends.  We used to allocate semaphores
- *	  only when backends were actually started up, but that is bad because
- *	  it lets Postgres fail under load --- a lot of Unix systems are
- *	  (mis)configured with small limits on the number of semaphores, and
- *	  running out when trying to start another backend is a common failure.
- *	  So, now we grab enough semaphores to support the desired max number
- *	  of backends immediately at initialization --- if the sysadmin has set
- *	  MaxConnections or max_wal_senders
- *	  higher than his kernel will support, he'll
- *	  find out sooner rather than later.
- *
- *	  Another reason for creating semaphores here is that the semaphore
- *	  implementation typically requires us to create semaphores in the
- *	  postmaster, not in backends.
  *
  * Note: this is NOT called by individual backends under a postmaster,
  * not even in the EXEC_BACKEND case.  The ProcGlobal pointer must be
@@ -147,8 +122,7 @@ void InitProcGlobal(void) {
   for (i = 0; i < TotalProcs; i++) {
     PGPROC *proc = &procs[i];
 
-    /* Set up per-PGPROC semaphore and latch. */
-    proc->sem = PGSemaphoreCreate();
+    /* Set up per-PGPROC latch. */
     InitSharedLatch(&(proc->procLatch));
 
     /* Each is a session's: queue it up on the free list. */
@@ -191,7 +165,7 @@ void InitProcess(void) {
 
   /*
    * Try to get a proc struct from the appropriate free list.  If this
-   * fails, we must be out of PGPROC structures (not to mention semaphores).
+   * fails, we must be out of PGPROC structures.
    *
    * While we are holding the free list's lock, also copy the current shared
    * estimate of spins_per_delay to local storage.
@@ -238,8 +212,6 @@ void InitProcess(void) {
   MyProc->tempNamespaceId = InvalidOid;
   MyProc->isRegularBackend = AmRegularBackendProcess();
   MyProc->statusFlags = 0;
-  MyProc->lwWaiting = LW_WS_NOT_WAITING;
-  MyProc->lwWaitMode = 0;
 
   /*
    * Acquire ownership of the PGPROC's latch, so that we can use WaitLatch
@@ -250,28 +222,14 @@ void InitProcess(void) {
   SwitchToSharedLatch();
 
   /*
-   * We might be reusing a semaphore that belonged to a failed process. So
-   * be careful and reinitialize its value here.  (This is not strictly
-   * necessary anymore, but seems like a good idea for cleanliness.)
-   */
-  PGSemaphoreReset(MyProc->sem);
-
-  /*
    * Arrange to clean up at backend exit.
    */
   on_shmem_exit(ProcKill, 0);
 
   /*
-   * Now that we have a PGPROC, we could try to acquire LWLocks, so
-   * initialize the local state they need.
-   */
-  InitLWLockAccess();
-
-  /*
    * Initialize backend-local pointers to all the shared data structures.
-   * (We couldn't do this until now because it needs LWLocks.)  A forked
-   * child inherited them; a session thread, like an EXEC_BACKEND child,
-   * did not, or not all.
+   * A forked child inherited them; a session thread, like an EXEC_BACKEND
+   * child, did not, or not all.
    */
   if (IsSessionThread)
     AttachSharedMemoryStructs();
@@ -363,13 +321,6 @@ static void ProcKill(int code, Datum arg) {
   /* not safe if forked by system(), etc. */
   if (MyProc->pid != CurrentProcPid())
     elog(PANIC, "ProcKill() called in child process");
-
-  /*
-   * Release any LW locks I am holding.  There really shouldn't be any, but
-   * it's cheap to check again before we cut the knees off the LWLock
-   * facility by releasing our PGPROC ...
-   */
-  LWLockReleaseAll();
 
   /*
    * Reset MyLatch to the process local one and disown the shared latch, so

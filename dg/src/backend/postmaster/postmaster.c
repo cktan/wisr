@@ -786,13 +786,6 @@ void PostmasterMain(int argc, char *argv[]) {
   process_shmem_requests();
 
   /*
-   * Now that loadable modules have had their chance to request additional
-   * shared memory, determine the value of any runtime-computed GUCs that
-   * depend on the amount of shared memory required.
-   */
-  InitializeShmemGUCs();
-
-  /*
    * If -C was specified with a runtime-computed GUC, we held off printing
    * the value earlier, as the GUC was not yet initialized.  We handle -C
    * for most GUCs before we lock the data directory so that the option may

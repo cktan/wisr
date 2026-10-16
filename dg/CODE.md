@@ -232,7 +232,7 @@ Much of the work is removing what digres does not need.
   comment that now describes nothing. Leave unused code you
   did not orphan alone, and mention it.
 - **Generated files regenerate.** Edit the sources
-  (`pg_proc.dat`, `wait_event_names.txt`, `lwlocklist.h`) and
+  (`pg_proc.dat`, `wait_event_names.txt`) and
   let the build write `fmgrtab.c`, `cat_builtin.c`,
   `postgres.bki` and the wait-event tables.
 - **Settings**: remove a setting's entry from `guc_tables.c`,

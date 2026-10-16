@@ -1141,14 +1141,6 @@ static void AbortTransaction(void) {
   AtAbort_ResourceOwner();
 
   /*
-   * Release any LW locks we might be holding as quickly as possible.
-   * (Regular locks, however, must be held till we finish aborting.)
-   * Releasing LW locks is critical since we might try to grab them again
-   * while cleaning up!
-   */
-  LWLockReleaseAll();
-
-  /*
    * If any timeout events are still active, make sure the timeout interrupt
    * is scheduled.  This covers possible loss of a timeout interrupt due to
    * longjmp'ing out of the SIGINT handler (see notes in handle_sig_alarm).
@@ -3006,17 +2998,6 @@ static void AbortSubTransaction(void) {
   /* Make sure we have a valid memory context and resource owner */
   AtSubAbort_Memory();
   AtSubAbort_ResourceOwner();
-
-  /*
-   * Release any LW locks we might be holding as quickly as possible.
-   * (Regular locks, however, must be held till we finish aborting.)
-   * Releasing LW locks is critical since we might try to grab them again
-   * while cleaning up!
-   *
-   * FIXME This may be incorrect --- Are there some locks we should keep?
-   * Buffer locks, for example?  I don't think so but I'm not sure.
-   */
-  LWLockReleaseAll();
 
   /*
    * If any timeout events are still active, make sure the timeout interrupt

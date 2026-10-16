@@ -211,30 +211,3 @@ Section: ClassName - WaitEventExtension
 Extension	"Waiting in an extension."
 
 ABI_compatibility:
-
-#
-# Wait Events - LWLock
-#
-# This class of wait events has its own set of C structure, so these are
-# only used for the documentation.
-#
-# NB: Predefined LWLocks (i.e., those declared in lwlocklist.h) must be
-# listed in the top section of locks and must be listed in the same order as in
-# lwlocklist.h.
-#
-
-Section: ClassName - WaitEventLWLock
-
-InjectionPoint	"Waiting to read or update information related to injection points."
-
-#
-# END OF PREDEFINED LWLOCKS (DO NOT CHANGE THIS LINE)
-#
-# Predefined LWLocks (i.e., those declared in lwlocknames.h) must be listed
-# in the section above and must be listed in the same order as in
-# lwlocknames.h.  Other LWLocks must be listed in the section below.
-#
-
-
-# No "ABI_compatibility" region here as WaitEventLWLock has its own C code.
-

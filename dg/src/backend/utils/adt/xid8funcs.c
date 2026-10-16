@@ -32,7 +32,6 @@
 #include "lib/qunique.h"
 #include "libpq/pqformat.h"
 #include "miscadmin.h"
-#include "storage/lwlock.h"
 #include "storage/procarray.h"
 #include "storage/procnumber.h"
 #include "utils/builtins.h"

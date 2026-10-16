@@ -4615,3 +4615,37 @@ structures.
   `elog.c`'s `%P` names no lock group leader.
 - **Left**: storage/lmgr `README`, PostgreSQL's account of
   the lock manager, as `README-SSI` was left.
+
+## Step 157: the LWLocks are gone
+
+`SHMEM.md` §3, §7 step 4. After step 156 one LWLock was left,
+InjectionPoint, taken only by a build option's code
+(`USE_INJECTION_POINTS`, compiled out); and the LWLocks'
+waiters were all a semaphore was for.
+
+- **InjectionPoint is a `std::mutex`**, `pcb_t::
+  injection_point_mutex`, held by `held_mutex_t`. The code
+  stays, compiled out, and compiles with the option on.
+- **Gone**: storage/lmgr `lwlock.c` and
+  `generate-lwlocknames.pl`, `storage/lwlock.h`,
+  `lwlocklist.h` and the generated `lwlocknames.h`, with the
+  pcb's LWLock array and tranche counter; the LWLock class of
+  wait events; `LWLockReleaseAll()` at an abort and at exit;
+  `trace_lwlocks`; PGPROC's LWLock wait fields, and
+  `storage/proclist.h` and `proclist_types.h`, its wait list.
+  `RequestNamedLWLockTranche()` goes with them, which a library
+  in `shared_preload_libraries` could use; none in the tree did.
+- **Semaphores gone**: port `posix_sema.c` and `sysv_sema.c`
+  (skipped already, for another platform), `storage/pg_sema.h`,
+  each PGPROC's semaphore, `pcb->shared_semas`,
+  `ProcGlobalSemas()`, and the runtime-computed
+  `num_os_semaphores` with `InitializeShmemGUCs()`, which only
+  set it.
+- **Also gone**: `src/include/storage/lwlocknames.h.tmp3049571`,
+  a generator's temporary file committed by mistake with
+  "dg: there is no shared memory" (`d4856b6`).
+- `postmaster/backend_thread.c` includes `port/atomics.h`
+  itself, which it had through `lwlock.h`.
+- Left: `held_lock.h`'s comments, which explain it by the
+  LWLock it stands for; storage/lmgr `README`'s account of
+  LWLocks, with the rest of it (step 156).

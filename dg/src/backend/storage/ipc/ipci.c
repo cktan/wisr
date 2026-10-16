@@ -18,7 +18,6 @@
 #include "access/transam.h"
 #include "miscadmin.h"
 #include "storage/ipc.h"
-#include "storage/pg_sema.h"
 #include "storage/pmsignal.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
@@ -65,13 +64,6 @@ void CreateSharedMemoryAndSemaphores(void) {
   /* The index the structures are found by, before any is made. */
   InitShmemIndex();
 
-  /*
-   * Create semaphores.  (This is done here for historical reasons.  We used
-   * to support emulating spinlocks with semaphores, which required
-   * initializing semaphores early.)
-   */
-  PGReserveSemaphores(ProcGlobalSemas());
-
   /* Initialize subsystems */
   CreateOrAttachShmemStructs();
 
@@ -92,9 +84,6 @@ void CreateSharedMemoryAndSemaphores(void) {
  * IsUnderPostmaster to tell the two apart.
  */
 static void CreateOrAttachShmemStructs(void) {
-  /* Now initialize LWLocks */
-  CreateLWLocks();
-
   /*
    * Set up xlog, clog, and buffers
    */
@@ -118,18 +107,4 @@ static void CreateOrAttachShmemStructs(void) {
    * Set up other modules that need some shared memory space
    */
   InjectionPointShmemInit();
-}
-
-/*
- * InitializeShmemGUCs
- *
- * This function initializes runtime-computed GUCs: the number of semaphores
- * the current configuration needs.
- */
-void InitializeShmemGUCs(void) {
-  char buf[64];
-
-  sprintf(buf, "%d", ProcGlobalSemas());
-  SetConfigOption("num_os_semaphores", buf, PGC_INTERNAL,
-                  PGC_S_DYNAMIC_DEFAULT);
 }

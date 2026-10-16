@@ -27,7 +27,6 @@
 #ifdef PROFILE_PID_DIR
 #endif
 #include "storage/ipc.h"
-#include "storage/lwlock.h"
 #include "tcop/tcopprot.h"
 
 /*
@@ -228,12 +227,6 @@ static void proc_exit_prepare(int code) {
  */
 void shmem_exit(int code) {
   shmem_exit_inprogress = true;
-
-  /*
-   * Release any LWLocks we might be holding before callbacks run. This
-   * allows callbacks to acquire new locks.
-   */
-  LWLockReleaseAll();
 
   /*
    * Call before_shmem_exit callbacks.

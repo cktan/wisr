@@ -17,7 +17,6 @@
 #include "nodes/execnodes.h"
 #include "port/atomics.h"
 #include "storage/buffile.h"
-#include "storage/lwlock.h"
 
 /* ----------------------------------------------------------------
  *				hash-join hash table structures

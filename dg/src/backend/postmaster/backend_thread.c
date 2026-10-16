@@ -29,6 +29,7 @@
 #include <signal.h>
 #include <unistd.h>
 
+#include "port/atomics.h"
 #include "postmaster/backend_thread.h"
 #include "postmaster/postmaster.h"
 #include "storage/ipc.h"

@@ -20,7 +20,6 @@
 
 #include "lib/ilist.h"
 #include "storage/lockdefs.h"
-#include "storage/lwlock.h"
 #include "storage/procnumber.h"
 #include "storage/shmem.h"
 #include "utils/timestamp.h"

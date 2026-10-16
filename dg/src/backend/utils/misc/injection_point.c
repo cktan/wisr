@@ -26,8 +26,9 @@
 #include "fmgr.h"
 #include "miscadmin.h"
 #include "storage/fd.h"
-#include "storage/lwlock.h"
+#include "storage/held_lock.h"
 #include "storage/shmem.h"
+#include "utils/control_block.h"
 #include "utils/hsearch.h"
 #include "utils/memutils.h"
 
@@ -263,7 +264,8 @@ void InjectionPointAttach(const char *name, const char *library,
    * Allocate and register a new injection point.  A new point should not
    * exist.  For testing purposes this should be fine.
    */
-  LWLockAcquire(InjectionPointLock, LW_EXCLUSIVE);
+  /* One attach or detach at a time, as the InjectionPoint LWLock did. */
+  held_mutex_t guard(pcb->injection_point_mutex);
   max_inuse = pg_atomic_read_u32(&ActiveInjectionPoints->max_inuse);
   free_idx = -1;
 
@@ -306,7 +308,7 @@ void InjectionPointAttach(const char *name, const char *library,
   if (free_idx + 1 > max_inuse)
     pg_atomic_write_u32(&ActiveInjectionPoints->max_inuse, free_idx + 1);
 
-  LWLockRelease(InjectionPointLock);
+  guard.release();
 
 #else
   elog(ERROR, "injection points are not supported by this build");
@@ -324,7 +326,8 @@ bool InjectionPointDetach(const char *name) {
   int idx;
   int max_inuse;
 
-  LWLockAcquire(InjectionPointLock, LW_EXCLUSIVE);
+  /* One attach or detach at a time, as the InjectionPoint LWLock did. */
+  held_mutex_t guard(pcb->injection_point_mutex);
 
   /* Find it in the shmem array, and mark the slot as unused */
   max_inuse = (int)pg_atomic_read_u32(&ActiveInjectionPoints->max_inuse);
@@ -356,7 +359,7 @@ bool InjectionPointDetach(const char *name) {
     }
     pg_atomic_write_u32(&ActiveInjectionPoints->max_inuse, idx + 1);
   }
-  LWLockRelease(InjectionPointLock);
+  guard.release();
 
   return found;
 #else

@@ -60,7 +60,6 @@
 #include "executor/executor.h"
 #include "optimizer/optimizer.h"
 #include "port/pg_bitutils.h"
-#include "storage/lwlock.h"
 #include "utils/builtins.h"
 #include "utils/catcache.h"
 #include "utils/fmgroids.h"

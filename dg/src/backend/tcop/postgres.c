@@ -3373,13 +3373,6 @@ void PostgresSingleUserMain(int argc, char *argv[], const char *username) {
   process_shmem_requests();
 
   /*
-   * Now that loadable modules have had their chance to request additional
-   * shared memory, determine the value of any runtime-computed GUCs that
-   * depend on the amount of shared memory required.
-   */
-  InitializeShmemGUCs();
-
-  /*
    * Create shared memory etc.  (Nothing's really "shared" in single-user
    * mode, but we must have these data structures anyway.)
    */

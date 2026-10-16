@@ -398,7 +398,6 @@ static thread_local /*LOCAL*/ int max_index_keys;
 static thread_local /*LOCAL*/ int max_identifier_length;
 static thread_local /*LOCAL*/ int block_size;
 static thread_local /*LOCAL*/ int segment_size;
-static thread_local /*LOCAL*/ int num_os_semaphores;
 static thread_local /*LOCAL*/ bool data_checksums;
 static thread_local /*LOCAL*/ bool integer_datetimes;
 
@@ -1022,16 +1021,6 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
      NULL,
      NULL},
 
-#ifdef LOCK_DEBUG
-    {{"trace_lwlocks", PGC_SUSET, DEVELOPER_OPTIONS,
-      gettext_noop("Emits information about lightweight lock usage."), NULL,
-      GUC_NOT_IN_SAMPLE},
-     &Trace_lwlocks,
-     false,
-     NULL,
-     NULL,
-     NULL},
-#endif
 
     {{"log_hostname", PGC_SIGHUP, LOGGING_WHAT,
       gettext_noop("Logs the host name in the connection logs."),
@@ -1451,17 +1440,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      * We sometimes multiply the number of shared buffers by two without
      * checking for overflow, so we mustn't allow more than INT_MAX / 2.
      */
-
-    {{"num_os_semaphores", PGC_INTERNAL, PRESET_OPTIONS,
-      gettext_noop("Shows the number of semaphores required for the server."),
-      NULL, GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE | GUC_RUNTIME_COMPUTED},
-     &num_os_semaphores,
-     0,
-     0,
-     INT_MAX,
-     NULL,
-     NULL,
-     NULL},
 
     {{"port", PGC_POSTMASTER, CONN_AUTH_SETTINGS,
       gettext_noop("Sets the TCP port the server listens on."), NULL},

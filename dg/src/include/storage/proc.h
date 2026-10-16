@@ -18,8 +18,6 @@
 #include "lib/ilist.h"
 #include "storage/latch.h"
 #include "storage/lock.h"
-#include "storage/pg_sema.h"
-#include "storage/proclist_types.h"
 #include "storage/procnumber.h"
 #include "storage/procsignal.h"
 
@@ -102,20 +100,10 @@
  * (storage/session_registry.h), not here: a PGPROC is a slot, which the next
  * session takes over (dg/SHMEM.md section 5.2).
  */
-/*
- * lwWaiting is handed from the process that wakes a waiter to the waiter
- * without a lock: a release store and an acquire load, which order the wait
- * list links around it, as the barriers did, for a thread sanitizer too.
- */
-#define LWWAITING_GET(proc) __atomic_load_n(&(proc)->lwWaiting, __ATOMIC_ACQUIRE)
-#define LWWAITING_SET(proc, value) \
-	__atomic_store_n(&(proc)->lwWaiting, (value), __ATOMIC_RELEASE)
-
 struct PGPROC {
   dlist_node links;           /* list link if process is in a list */
   dlist_head *procgloballist; /* procglobal list that owns this PGPROC */
 
-  PGSemaphore sem; /* ONE semaphore to sleep on */
 
   Latch procLatch; /* generic latch for process */
 
@@ -164,11 +152,6 @@ struct PGPROC {
                         * using */
 
   bool isRegularBackend; /* true if it's a regular backend. */
-
-  /* Info about LWLock the process is currently waiting for, if any. */
-  uint8 lwWaiting;          /* see LWLockWaitState; LWWAITING_GET/SET */
-  uint8 lwWaitMode;         /* lwlock mode being waited for */
-  proclist_node lwWaitLink; /* position in LW lock wait list */
 
   int delayChkptFlags; /* for DELAY_CHKPT_* flags */
 
@@ -219,7 +202,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT int IdleSessionTimeout;
 /*
  * Function Prototypes
  */
-extern int ProcGlobalSemas(void);
 extern void InitProcGlobal(void);
 extern void ProcSetCancelKey(const uint8 *key, int len);
 extern void InitProcess(void);

@@ -78,9 +78,6 @@ struct advisory_state_free_t {
   void operator()(advisory_state_t *state) const;
 };
 
-union LWLockPadded;                    /* storage/lwlock.h */
-struct PGSemaphoreData;                /* port/posix_sema.c */
-
 /*
  * The process control block: one for the process.  What the process keeps
  * for its whole life may be malloc'd, its pointer here, and never freed:
@@ -90,14 +87,8 @@ typedef struct pcb_t {
   std::mutex stderr_mutex; /* elog.c: one message at a time to stderr */
   std::unique_ptr<shmem_index_t, shmem_index_free_t> shmem_index;
 
-  /* lwlock.c: the main LWLock array (MainLWLockArray), malloc'd */
-  union LWLockPadded *main_lwlock_array = nullptr;
-  /* lwlock.c: the next tranche ID to give out, and its lock */
-  std::mutex lwlock_counter_mutex;
-  int lwlock_counter = 0;
-
-  /* posix_sema.c: the semaphores, malloc'd */
-  struct PGSemaphoreData *shared_semas = nullptr;
+  /* injection_point.c: one attach or detach at a time */
+  std::mutex injection_point_mutex;
 
   /*
    * xact.c: the next local transaction id, a virtual xid's low part, given

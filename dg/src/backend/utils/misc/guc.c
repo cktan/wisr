@@ -41,7 +41,6 @@
 #include "port/pg_bitutils.h"
 #include "storage/fd.h"
 #include "storage/held_lock.h"
-#include "storage/lwlock.h"
 #include "storage/shmem.h"
 #include "utils/control_block.h"
 #include "tcop/tcopprot.h"

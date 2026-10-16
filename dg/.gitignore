@@ -17,7 +17,6 @@ src/include/nodes/nodetags.h
 src/backend/parser/sq_convert.c
 src/include/catalog/cat_builtin.h
 src/backend/catalog/cat_builtin.c
-src/include/storage/lwlocknames.h
 src/include/utils/errcodes.h
 src/include/utils/fmgroids.h
 src/include/utils/fmgrprotos.h

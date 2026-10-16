@@ -88,6 +88,5 @@ extern thread_local /*SHARED*/ PGDLLIMPORT shmem_startup_hook_type
 
 extern void CreateSharedMemoryAndSemaphores(void);
 extern void AttachSharedMemoryStructs(void);
-extern void InitializeShmemGUCs(void);
 
 #endif /* IPC_H */

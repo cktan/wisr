@@ -26,8 +26,9 @@ procsignal barriers (66); `barrier.c` (10); shared invalidation,
 `sinval.c` and `sinvaladt.c` (146).
 
 What is left is built at start by `CreateOrAttachShmemStructs()`
-(storage/ipc `ipci.c`): the init list of LWLocks, `varsup`, the
-lock manager, the PGPROCs and the proc array.
+(storage/ipc `ipci.c`): the init list of `varsup`, the PGPROCs
+and the proc array. The lock manager is gone (step 156), and
+the LWLocks and semaphores (step 157).
 
 ## 2. Allocation: a registry of named blocks
 
@@ -41,23 +42,18 @@ directory fixed in size ahead of time.
 | Block | Made in | Holds | Guard |
 | --- | --- | --- | --- |
 | TransamVariables | access/transam `varsup.c` | the snapshot's constants | set before threads start |
-| LOCK, PROCLOCK hashes | storage/lmgr `lock.c:422,439` | heavyweight locks | partition LWLocks |
-| Fast Path Strong Relation Lock Data | storage/lmgr `lock.c:446` | counts per partition | a spinlock |
-| Proc Header, PGPROC structures, Fast-Path Lock Array | storage/lmgr `proc.c:172,194,234` | a PGPROC a session, free lists | ProcStructLock |
+| Proc Header, PGPROC structures | storage/lmgr `proc.c` | a PGPROC a session, free lists | `pcb->proc_struct_mutex` |
 | Proc Array | storage/ipc `procarray.c:308` | pgprocnos[MaxBackends] | ProcArrayLock |
 | ProcSignal | storage/ipc `procsignal.c:95` | a slot a session, cancel keys | pss_mutex |
 
-Beside the registry: the main LWLock array
-(`pcb->main_lwlock_array`) and the semaphores
-(`pcb->shared_semas`), step 27.
+The main LWLock array and the semaphores, beside the registry
+since step 27, are gone (step 157).
 
 - **Each thread attaches again.**
   `AttachSharedMemoryStructs()` (storage/ipc `ipci.c`) runs the
   init list in every session thread, which finds each block by
   name and sets its pointer. The pointers are SHARED, copied
-  from the postmaster already, so this does nothing but for
-  the lock manager's two hashes, whose `HTAB` handle each thread
-  makes for itself over the shared table.
+  from the postmaster already, so this does nothing.
 - **Sized ahead of time**: `MaxBackends`, `NLOCKENTS`, the
   fixed hash directories, `PROCARRAY_MAXPROCS`,
   `num_os_semaphores`.
@@ -70,16 +66,14 @@ Beside the registry: the main LWLock array
 
 ## 3. Locks
 
-- **LWLocks** (storage/lmgr `lwlock.c`). Short critical
-  sections, held with interrupts held off. A waiter sleeps on its
-  PGPROC's POSIX semaphore (port `posix_sema.c`); nothing cuts
-  that sleep short. Taken still: InjectionPoint alone, a build
-  option's (`WORKNOTE.md` step 156). **To replace**: a
-  `std::mutex` or
-  `std::shared_mutex` held by `held_lock_t`
-  (`storage/held_lock.h`), which holds interrupts off as an
-  LWLock does and lets go as an error unwinds it; AutoFile is
-  one (`WORKNOTE.md` step 132).
+- **LWLocks are gone** (`WORKNOTE.md` step 157), with
+  storage/lmgr `lwlock.c`, the semaphores their waiters slept on
+  (port `posix_sema.c`), and the LWLock wait events. A short
+  critical section is a `std::mutex` or `std::shared_mutex`
+  held by `held_lock_t` (`storage/held_lock.h`), which holds
+  interrupts off as an LWLock did and lets go as an error
+  unwinds it: AutoFile (step 132), InjectionPoint, a build
+  option's (157).
 - **XidGen, OidGen, XactTruncation, RelationMapping and
   RelCacheInit are gone**, with what they guarded
   (`WORKNOTE.md` step 137): PostgreSQL's xid and OID counters,
@@ -94,7 +88,7 @@ Beside the registry: the main LWLock array
   Each is a `std::mutex`, or an atomic where it guarded one word
   (`WORKNOTE.md` steps 132, 133). Left: port `atomics.c`'s
   emulation of 64-bit atomics, compiled out on both platforms.
-- **`pg_atomic_*` and the barriers**: in `lwlock.c`, `proc.c`,
+- **`pg_atomic_*` and the barriers**: in `proc.c`,
   `procarray.c`, `procsignal.c`, postmaster `backend_thread.c`.
   **To replace**: `std::atomic` with explicit orders.
 - **The heavyweight lock manager is gone** (`WORKNOTE.md`
@@ -138,10 +132,11 @@ switches between (`SwitchToSharedLatch()`), which are one bit.
   from one counter for the process (`pcb_t::next_lxid`), where
   it came from the queue's per-slot state.
 - **PGPROC** (storage/lmgr `proc.c`). One a session: its latch,
-  its LWLock and lock waits, its semaphore, its fast-path slots,
-  the target of `InterruptProc()`. A slot, reused by the next
-  session. **To replace**: its parts move into the session's
-  record (§5.2) once the lock manager and LWLocks are gone.
+  its cancel key, its virtual xid, its database and role, the
+  target of `InterruptProc()`; its lock waits, semaphore and
+  fast-path slots are gone (steps 156, 157). A slot, reused by
+  the next session. **To replace**: its parts move into the
+  session's record (§5.2).
 - **The proc array** (storage/ipc `procarray.c`). Mostly dead:
   no xid is ever assigned (step 45), and a snapshot is a
   constant, made with no lock and no scan of the array, and
@@ -349,17 +344,16 @@ has a caller still, and goes with the step that removes it:
   `XidCache` and the dense arrays `ProcGlobal->xids`,
   `subxidStates` and `statusFlags`, which `ProcArrayAdd()` and
   `ProcArrayRemove()` keep and nothing reads.
-- **With the lock manager** (§7, step 4): lock groups
-  (`lockGroupLeader`, `lockGroupMembers`), which `lock.c` and
-  `deadlock.c` test throughout though no proc ever joins one;
-  and the tuple, page, extension and speculative lock tags,
-  which the executor still takes.
-- **Kept, for extensions**: `shmem_request_hook`,
-  `shmem_startup_hook` and `RequestNamedLWLockTranche()`, the
-  API a library in `shared_preload_libraries` uses for state
-  and locks of its own. Nothing in the tree uses them, but
-  digres still loads libraries (utils/fmgr `dfmgr.c`); they go,
-  or become a pcb registry, with §2's registry.
+- **Gone with the lock manager** (`WORKNOTE.md` step 156): lock
+  groups, and the page, extension and apply-transaction locks.
+- **Kept, for extensions**: `shmem_request_hook` and
+  `shmem_startup_hook`, the API a library in
+  `shared_preload_libraries` uses for state of its own. Nothing
+  in the tree uses them, but digres still loads libraries
+  (utils/fmgr `dfmgr.c`); they go, or become a pcb registry,
+  with §2's registry. `RequestNamedLWLockTranche()`, for locks
+  of a library's own, went with the LWLocks (step 157): such a
+  library takes a `std::mutex`.
 
 ## 7. Order of work
 
@@ -379,9 +373,9 @@ has a caller still, and goes with the step that removes it:
 4. **The lock manager**: advisory locks into a table of
    digres's own (`WORKNOTE.md` step 153), catalog locks
    gone (step 154), nothing left to take a lock (155), the
-   lock manager gone (156); then the remaining LWLocks,
-   `posix_sema.c` and PGPROC, whose parts the session record
-   takes; `pg_blocking_pids()` asks sm1's lock table.
+   lock manager gone (156), the LWLocks and `posix_sema.c`
+   (157); then PGPROC, whose parts the session record takes,
+   and `pg_blocking_pids()` asks sm1's lock table.
 5. **The registry** of §2, once each block is a pcb field.
 
 Each step is checked by the full suite and by `make tsan`;
