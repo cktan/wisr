@@ -5312,3 +5312,23 @@ padding counts for nothing when they are compared, so `'a'` and
   type, and failed with the key's trim taken out. The isolation
   spec `propagate-lock-delete` gets past its setup now, and
   fails on `FOR KEY SHARE`.
+
+## Step 181: several keys cascading from one row
+
+`test/regress/README.md`'s crash in `foreign_key`:
+`!TTS_EMPTY(slot)`, on an `UPDATE` of a key that three columns
+of one table reference `ON UPDATE CASCADE`.
+
+- A table in sm gives its row triggers their tuples from a
+  tuple store, as a foreign table does (`commands/trigger.c`):
+  a row's first event fetches them, the rest reuse them.
+  `AfterTriggerSaveEvent()` chose which before it asked whether
+  a foreign key's check could be skipped, so when the row's
+  first check was, the next event reused another row's tuples,
+  or an empty slot. PostgreSQL never meets this: a foreign table
+  has no foreign keys. It chooses now as the event is queued.
+- `test/slt/foreign_key.test`: three keys cascading from one
+  parent, in a transaction and out of one, PostgreSQL 18's
+  answers. Before the change it failed with "Key (b)=(3) is not
+  present", a check reading the row of the cascade before. The
+  `foreign_key` file runs to `MATCH FULL` now.
