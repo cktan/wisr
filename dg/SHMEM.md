@@ -159,6 +159,9 @@ switches between (`SwitchToSharedLatch()`), which are one bit.
   in one process whatever skips a session's exit callbacks
   ends the process, so the postmaster tells a crash by exit
   status alone.
+- **The postmaster-death watch is gone** (`WORKNOTE.md` step
+  184): a session cannot outlive the postmaster, its own
+  process.
 
 ### 5.1 Invalidation by version, not by message
 

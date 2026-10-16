@@ -11,7 +11,6 @@
  * - a latch being set from another process or from signal handler in the same
  *   process (WL_LATCH_SET)
  * - data to become readable or writeable on a socket (WL_SOCKET_*)
- * - postmaster death (WL_POSTMASTER_DEATH or WL_EXIT_ON_PM_DEATH)
  * - timeout (WL_TIMEOUT)
  *
  * Implementation
@@ -68,7 +67,6 @@
 #include "libpq/pqsignal.h"
 #include "miscadmin.h"
 #include "portability/instr_time.h"
-#include "postmaster/postmaster.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "storage/pmsignal.h"
@@ -136,13 +134,6 @@ struct WaitEventSet {
   Latch *latch;
   int latch_pos;
 
-  /*
-   * WL_EXIT_ON_PM_DEATH is converted to WL_POSTMASTER_DEATH, but this flag
-   * is set so that we'll exit immediately if postmaster death is detected,
-   * instead of returning.
-   */
-  bool exit_on_postmaster_death;
-
 #if defined(WAIT_USE_EPOLL)
   int epoll_fd;
   /* epoll_wait returns events in a user provided arrays, allocate once */
@@ -151,7 +142,6 @@ struct WaitEventSet {
   int kqueue_fd;
   /* kevent returns events in a user provided arrays, allocate once */
   struct kevent *kqueue_ret_events;
-  bool report_postmaster_not_running;
 #elif defined(WAIT_USE_POLL)
   /* poll expects events to be waited on every poll() call, prepare once */
   struct pollfd *pollfds;
@@ -398,7 +388,6 @@ WaitEventSet *CreateWaitEventSet(ResourceOwner resowner, int nevents) {
 
   set->latch = NULL;
   set->nevents_space = nevents;
-  set->exit_on_postmaster_death = false;
 
   if (resowner != NULL) {
     ResourceOwnerRememberWaitEventSet(resowner, set);
@@ -429,7 +418,6 @@ WaitEventSet *CreateWaitEventSet(ResourceOwner resowner, int nevents) {
     errno = save_errno;
     elog(ERROR, "fcntl(F_SETFD) failed on kqueue descriptor: %m");
   }
-  set->report_postmaster_not_running = false;
 #elif defined(WAIT_USE_WIN32)
 
   /*
@@ -474,8 +462,6 @@ void FreeWaitEventSet(WaitEventSet *set) {
        cur_event < (set->events + set->nevents); cur_event++) {
     if (cur_event->events & WL_LATCH_SET) {
       /* uses the latch's HANDLE */
-    } else if (cur_event->events & WL_POSTMASTER_DEATH) {
-      /* uses PostmasterHandle */
     } else {
       /* Clean up the event object we created for the socket */
       WSAEventSelect(cur_event->fd, NULL, 0);
@@ -505,7 +491,6 @@ void FreeWaitEventSetAfterFork(WaitEventSet *set) {
 /* ---
  * Add an event to the set. Possible events are:
  * - WL_LATCH_SET: Wait for the latch to be set
- * - WL_POSTMASTER_DEATH: Wait for postmaster to die
  * - WL_SOCKET_READABLE: Wait for socket to become readable,
  *	 can be combined in one event with other WL_SOCKET_* events
  * - WL_SOCKET_WRITEABLE: Wait for socket to become writeable,
@@ -517,7 +502,6 @@ void FreeWaitEventSetAfterFork(WaitEventSet *set) {
  *	 can be combined with other WL_SOCKET_* events (on non-Windows
  *	 platforms, this is the same as WL_SOCKET_READABLE)
  * - WL_SOCKET_CLOSED: Wait for socket to be closed by remote peer.
- * - WL_EXIT_ON_PM_DEATH: Exit immediately if the postmaster dies
  *
  * Returns the offset in WaitEventSet->events (starting from 0), which can be
  * used to modify previously added wait events using ModifyWaitEvent().
@@ -539,11 +523,6 @@ int AddWaitEventToSet(WaitEventSet *set, uint32 events, pgsocket fd,
 
   /* not enough space */
   Assert(set->nevents < set->nevents_space);
-
-  if (events == WL_EXIT_ON_PM_DEATH) {
-    events = WL_POSTMASTER_DEATH;
-    set->exit_on_postmaster_death = true;
-  }
 
   if (latch) {
     if (!LatchIsMine(latch))
@@ -583,10 +562,6 @@ int AddWaitEventToSet(WaitEventSet *set, uint32 events, pgsocket fd,
     return event->pos;
 #endif
 #endif
-  } else if (events == WL_POSTMASTER_DEATH) {
-#ifndef WIN32
-    event->fd = postmaster_alive_fds[POSTMASTER_FD_WATCH];
-#endif
   }
 
   /* perform wait primitive specific initialization, if needed */
@@ -622,20 +597,6 @@ void ModifyWaitEvent(WaitEventSet *set, int pos, uint32 events, Latch *latch) {
 #if defined(WAIT_USE_KQUEUE)
   old_events = event->events;
 #endif
-
-  /*
-   * Allow switching between WL_POSTMASTER_DEATH and WL_EXIT_ON_PM_DEATH.
-   *
-   * Note that because WL_EXIT_ON_PM_DEATH is mapped to WL_POSTMASTER_DEATH
-   * in AddWaitEventToSet(), this needs to be checked before the fast-path
-   * below that checks if 'events' has changed.
-   */
-  if (event->events == WL_POSTMASTER_DEATH) {
-    if (events != WL_POSTMASTER_DEATH && events != WL_EXIT_ON_PM_DEATH)
-      elog(ERROR, "cannot remove postmaster death event");
-    set->exit_on_postmaster_death = ((events & WL_EXIT_ON_PM_DEATH) != 0);
-    return;
-  }
 
   /*
    * If neither the event mask nor the associated latch changes, return
@@ -702,8 +663,6 @@ static void WaitEventAdjustEpoll(WaitEventSet *set, WaitEvent *event,
   if (event->events == WL_LATCH_SET) {
     Assert(set->latch != NULL);
     epoll_ev.events |= EPOLLIN;
-  } else if (event->events == WL_POSTMASTER_DEATH) {
-    epoll_ev.events |= EPOLLIN;
   } else {
     Assert(event->fd != PGINVALID_SOCKET);
     Assert(event->events &
@@ -740,8 +699,6 @@ static void WaitEventAdjustPoll(WaitEventSet *set, WaitEvent *event) {
   /* prepare pollfd entry once */
   if (event->events == WL_LATCH_SET) {
     Assert(set->latch != NULL);
-    pollfd->events = POLLIN;
-  } else if (event->events == WL_POSTMASTER_DEATH) {
     pollfd->events = POLLIN;
   } else {
     Assert(event->events &
@@ -781,17 +738,6 @@ static inline void WaitEventAdjustKqueueAdd(struct kevent *k_ev, int filter,
   AccessWaitEvent(k_ev) = event;
 }
 
-static inline void WaitEventAdjustKqueueAddPostmaster(struct kevent *k_ev,
-                                                      WaitEvent *event) {
-  /* For now postmaster death can only be added, not removed. */
-  k_ev->ident = PostmasterPid;
-  k_ev->filter = EVFILT_PROC;
-  k_ev->flags = EV_ADD;
-  k_ev->fflags = NOTE_EXIT;
-  k_ev->data = 0;
-  AccessWaitEvent(k_ev) = event;
-}
-
 static inline void WaitEventAdjustKqueueAddLatch(struct kevent *k_ev,
                                                  WaitEvent *event) {
   /* For now latch can only be added, not removed. */
@@ -821,18 +767,10 @@ static void WaitEventAdjustKqueue(WaitEventSet *set, WaitEvent *event,
 
   Assert(event->events != WL_LATCH_SET || set->latch != NULL);
   Assert(event->events == WL_LATCH_SET ||
-         event->events == WL_POSTMASTER_DEATH ||
          (event->events &
           (WL_SOCKET_READABLE | WL_SOCKET_WRITEABLE | WL_SOCKET_CLOSED)));
 
-  if (event->events == WL_POSTMASTER_DEATH) {
-    /*
-     * Unlike all the other implementations, we detect postmaster death
-     * using process notification instead of waiting on the postmaster
-     * alive pipe.
-     */
-    WaitEventAdjustKqueueAddPostmaster(&k_ev[count++], event);
-  } else if (event->events == WL_LATCH_SET) {
+  if (event->events == WL_LATCH_SET) {
     /* We detect latch wakeup using a signal event. */
     WaitEventAdjustKqueueAddLatch(&k_ev[count++], event);
   } else {
@@ -867,29 +805,9 @@ static void WaitEventAdjustKqueue(WaitEventSet *set, WaitEvent *event,
 
   rc = kevent(set->kqueue_fd, &k_ev[0], count, NULL, 0, NULL);
 
-  /*
-   * When adding the postmaster's pid, we have to consider that it might
-   * already have exited and perhaps even been replaced by another process
-   * with the same pid.  If so, we have to defer reporting this as an event
-   * until the next call to WaitEventSetWaitBlock().
-   */
-
-  if (rc < 0) {
-    if (event->events == WL_POSTMASTER_DEATH &&
-        (errno == ESRCH || errno == EACCES))
-      set->report_postmaster_not_running = true;
-    else
-      ereport(ERROR, (errcode_for_socket_access(),
-                      errmsg("%s() failed: %m", "kevent")));
-  } else if (event->events == WL_POSTMASTER_DEATH &&
-             PostmasterPid != getppid() && !PostmasterIsAlive()) {
-    /*
-     * The extra PostmasterIsAliveInternal() check prevents false alarms
-     * on systems that give a different value for getppid() while being
-     * traced by a debugger.
-     */
-    set->report_postmaster_not_running = true;
-  }
+  if (rc < 0)
+    ereport(ERROR,
+            (errcode_for_socket_access(), errmsg("%s() failed: %m", "kevent")));
 }
 
 #endif
@@ -901,8 +819,6 @@ static void WaitEventAdjustWin32(WaitEventSet *set, WaitEvent *event) {
   if (event->events == WL_LATCH_SET) {
     Assert(set->latch != NULL);
     *handle = set->latch->event;
-  } else if (event->events == WL_POSTMASTER_DEATH) {
-    *handle = PostmasterHandle;
   } else {
     int flags = FD_CLOSE; /* always check for errors/EOF */
 
@@ -1116,27 +1032,6 @@ static inline int WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
         occurred_events++;
         returned_events++;
       }
-    } else if (cur_event->events == WL_POSTMASTER_DEATH &&
-               cur_epoll_event->events & (EPOLLIN | EPOLLERR | EPOLLHUP)) {
-      /*
-       * We expect an EPOLLHUP when the remote end is closed, but
-       * because we don't expect the pipe to become readable or to have
-       * any errors either, treat those cases as postmaster death, too.
-       *
-       * Be paranoid about a spurious event signaling the postmaster as
-       * being dead.  There have been reports about that happening with
-       * older primitives (select(2) to be specific), and a spurious
-       * WL_POSTMASTER_DEATH event would be painful. Re-checking doesn't
-       * cost much.
-       */
-      if (!PostmasterIsAliveInternal()) {
-        if (set->exit_on_postmaster_death)
-          proc_exit(1);
-        occurred_events->fd = PGINVALID_SOCKET;
-        occurred_events->events = WL_POSTMASTER_DEATH;
-        occurred_events++;
-        returned_events++;
-      }
     } else if (cur_event->events &
                (WL_SOCKET_READABLE | WL_SOCKET_WRITEABLE | WL_SOCKET_CLOSED)) {
       Assert(cur_event->fd != PGINVALID_SOCKET);
@@ -1196,18 +1091,6 @@ static int WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
     timeout_p = &timeout;
   }
 
-  /*
-   * Report postmaster events discovered by WaitEventAdjustKqueue() or an
-   * earlier call to WaitEventSetWait().
-   */
-  if (unlikely(set->report_postmaster_not_running)) {
-    if (set->exit_on_postmaster_death)
-      proc_exit(1);
-    occurred_events->fd = PGINVALID_SOCKET;
-    occurred_events->events = WL_POSTMASTER_DEATH;
-    return 1;
-  }
-
   /* Sleep */
   rc = kevent(set->kqueue_fd, NULL, 0, set->kqueue_ret_events,
               Min(nevents, set->nevents_space), timeout_p);
@@ -1250,22 +1133,6 @@ static int WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
         occurred_events++;
         returned_events++;
       }
-    } else if (cur_event->events == WL_POSTMASTER_DEATH &&
-               cur_kqueue_event->filter == EVFILT_PROC &&
-               (cur_kqueue_event->fflags & NOTE_EXIT) != 0) {
-      /*
-       * The kernel will tell this kqueue object only once about the
-       * exit of the postmaster, so let's remember that for next time so
-       * that we provide level-triggered semantics.
-       */
-      set->report_postmaster_not_running = true;
-
-      if (set->exit_on_postmaster_death)
-        proc_exit(1);
-      occurred_events->fd = PGINVALID_SOCKET;
-      occurred_events->events = WL_POSTMASTER_DEATH;
-      occurred_events++;
-      returned_events++;
     } else if (cur_event->events &
                (WL_SOCKET_READABLE | WL_SOCKET_WRITEABLE | WL_SOCKET_CLOSED)) {
       Assert(cur_event->fd >= 0);
@@ -1352,28 +1219,6 @@ static inline int WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
       if (set->latch && LatchIsSet(set->latch)) {
         occurred_events->fd = PGINVALID_SOCKET;
         occurred_events->events = WL_LATCH_SET;
-        occurred_events++;
-        returned_events++;
-      }
-    } else if (cur_event->events == WL_POSTMASTER_DEATH &&
-               (cur_pollfd->revents &
-                (POLLIN | POLLHUP | POLLERR | POLLNVAL))) {
-      /*
-       * We expect an POLLHUP when the remote end is closed, but because
-       * we don't expect the pipe to become readable or to have any
-       * errors either, treat those cases as postmaster death, too.
-       *
-       * Be paranoid about a spurious event signaling the postmaster as
-       * being dead.  There have been reports about that happening with
-       * older primitives (select(2) to be specific), and a spurious
-       * WL_POSTMASTER_DEATH event would be painful. Re-checking doesn't
-       * cost much.
-       */
-      if (!PostmasterIsAliveInternal()) {
-        if (set->exit_on_postmaster_death)
-          proc_exit(1);
-        occurred_events->fd = PGINVALID_SOCKET;
-        occurred_events->events = WL_POSTMASTER_DEATH;
         occurred_events++;
         returned_events++;
       }
@@ -1546,22 +1391,6 @@ static inline int WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
       if (set->latch && LatchIsSet(set->latch)) {
         occurred_events->fd = PGINVALID_SOCKET;
         occurred_events->events = WL_LATCH_SET;
-        occurred_events++;
-        returned_events++;
-      }
-    } else if (cur_event->events == WL_POSTMASTER_DEATH) {
-      /*
-       * Postmaster apparently died.  Since the consequences of falsely
-       * returning WL_POSTMASTER_DEATH could be pretty unpleasant, we
-       * take the trouble to positively verify this with
-       * PostmasterIsAlive(), even though there is no known reason to
-       * think that the event could be falsely set on Windows.
-       */
-      if (!PostmasterIsAliveInternal()) {
-        if (set->exit_on_postmaster_death)
-          proc_exit(1);
-        occurred_events->fd = PGINVALID_SOCKET;
-        occurred_events->events = WL_POSTMASTER_DEATH;
         occurred_events++;
         returned_events++;
       }

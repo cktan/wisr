@@ -60,7 +60,7 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT WaitEventSet *FeBeWaitSet;
 
 #define FeBeWaitSetSocketPos 0
 #define FeBeWaitSetLatchPos 1
-#define FeBeWaitSetNEvents 3
+#define FeBeWaitSetNEvents 2
 
 extern int ListenServerPort(int family, const char *hostName,
                             unsigned short portNumber,

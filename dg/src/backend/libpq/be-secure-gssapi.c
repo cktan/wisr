@@ -430,8 +430,8 @@ static ssize_t read_or_wait(Port *port, ssize_t len) {
      * readable again.
      */
     if (ret <= 0) {
-      WaitLatchOrSocket(NULL, WL_SOCKET_READABLE | WL_EXIT_ON_PM_DEATH,
-                        port->sock, 0, WAIT_EVENT_GSS_OPEN_SERVER);
+      WaitLatchOrSocket(NULL, WL_SOCKET_READABLE, port->sock, 0,
+                        WAIT_EVENT_GSS_OPEN_SERVER);
 
       /*
        * If we got back zero bytes, and then waited on the socket to be
@@ -629,8 +629,8 @@ ssize_t secure_open_gssapi(Port *port) {
 
         /* Wait and retry if we couldn't write yet */
         if (ret <= 0) {
-          WaitLatchOrSocket(NULL, WL_SOCKET_WRITEABLE | WL_EXIT_ON_PM_DEATH,
-                            port->sock, 0, WAIT_EVENT_GSS_OPEN_SERVER);
+          WaitLatchOrSocket(NULL, WL_SOCKET_WRITEABLE, port->sock, 0,
+                            WAIT_EVENT_GSS_OPEN_SERVER);
           continue;
         }
 

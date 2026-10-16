@@ -615,7 +615,7 @@ static bool ExecAppendAsyncRequest(AppendState *node, TupleTableSlot **result) {
  * ----------------------------------------------------------------
  */
 static void ExecAppendAsyncEventWait(AppendState *node) {
-  int nevents = node->as_nasyncplans + 2;
+  int nevents = node->as_nasyncplans + 1;
   long timeout = node->as_syncdone ? -1 : 0;
   WaitEvent occurred_event[EVENT_BUFFER_SIZE];
   int noccurred;
@@ -626,8 +626,6 @@ static void ExecAppendAsyncEventWait(AppendState *node) {
 
   Assert(node->as_eventset == NULL);
   node->as_eventset = CreateWaitEventSet(CurrentResourceOwner, nevents);
-  AddWaitEventToSet(node->as_eventset, WL_EXIT_ON_PM_DEATH, PGINVALID_SOCKET,
-                    NULL, NULL);
 
   /* Give each waiting subplan a chance to add an event. */
   i = -1;
@@ -642,7 +640,7 @@ static void ExecAppendAsyncEventWait(AppendState *node) {
    * No need for further processing if none of the subplans configured any
    * events.
    */
-  if (GetNumRegisteredWaitEvents(node->as_eventset) == 1) {
+  if (GetNumRegisteredWaitEvents(node->as_eventset) == 0) {
     FreeWaitEventSet(node->as_eventset);
     node->as_eventset = NULL;
     return;
@@ -658,7 +656,8 @@ static void ExecAppendAsyncEventWait(AppendState *node) {
    * any other events are in the set.  That's a poor design, it's
    * questionable for postgres_fdw to be doing that in the first place, but
    * we cannot change it now.  The pattern has possibly been copied to other
-   * extensions too.
+   * extensions too.  (In digres the set has no postmaster death event, so
+   * such a check is "== 0".)
    */
   AddWaitEventToSet(node->as_eventset, WL_LATCH_SET, PGINVALID_SOCKET, MyLatch,
                     NULL);

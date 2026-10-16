@@ -63,20 +63,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT char *bonjour_name;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool send_abort_for_crash;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool send_abort_for_kill;
 
-#ifdef WIN32
-extern PGDLLIMPORT HANDLE PostmasterHandle;
-#else
-extern thread_local /*SHARED*/ PGDLLIMPORT int postmaster_alive_fds[2];
-
-/*
- * Constants that represent which of postmaster_alive_fds is held by
- * postmaster, and which is used in children to check for postmaster death.
- */
-#define POSTMASTER_FD_WATCH		0                         /* used in children to check for                   \
-                             * postmaster death */
-#define POSTMASTER_FD_OWN		1 /* kept open by postmaster only */
-#endif
-
 extern thread_local /*SHARED*/ PGDLLIMPORT const char *progname;
 
 extern PGDLLIMPORT bool LoadedSSL;

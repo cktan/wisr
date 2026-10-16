@@ -5375,3 +5375,32 @@ test-and-set assembly.
   utils/error `elog.c`, `pqcomm.c`'s macOS case) and
   utils/cache `typcache.c`'s guard of `bsearch()` over no items
   are left.
+
+## Step 184: the postmaster-death watch is gone
+
+`SHMEM.md` §5. A child process watched for its postmaster's
+death so as not to run on without it: the read end of a pipe
+the postmaster held open, or on macOS the postmaster's pid
+under kqueue, and a parent-death signal (`SIGPWR` by
+`prctl()`). A session is a thread of the postmaster's process,
+and ends with it.
+
+- **Gone**: the pipe, `postmaster_alive_fds` and the postmaster's
+  `InitPostmasterDeathWatchHandle()`; storage/ipc `pmsignal.c`'s
+  `PostmasterIsAlive()`, `PostmasterDeathSignalInit()` (each
+  session installed a process-wide `SIGPWR` handler) and its
+  flag; the wait events `WL_POSTMASTER_DEATH` and
+  `WL_EXIT_ON_PM_DEATH`, in storage/ipc `waiteventset.c`'s four
+  implementations and `latch.c`'s waits, which no longer assert
+  that a caller names one.
+- **Their callers**: libpq `be-secure.c`'s FATAL "unexpected
+  postmaster exit" on a read or write wait, the event in
+  `pqcomm.c`'s client wait set (two events, not three),
+  executor `nodeAppend.c`'s async wait set (an empty one counts
+  0), the flag in `pg_sleep()`, `pg_terminate_backend()`'s wait,
+  and the SSL and GSSAPI handshakes, and commands `vacuum.c`'s
+  check after a cost delay, which called `exit(1)`.
+- `pmsignal.c` keeps the quit reason.
+- The poll and kqueue implementations, not built on Linux, are
+  checked by compiling with each forced, kqueue's against a stub
+  of `sys/event.h`.

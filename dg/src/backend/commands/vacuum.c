@@ -38,7 +38,6 @@
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "storage/lmgr.h"
-#include "storage/pmsignal.h"
 #include "utils/acl.h"
 #include "utils/fmgroids.h"
 #include "utils/guc.h"
@@ -115,15 +114,6 @@ void vacuum_delay_point(bool is_analyze) {
       msec = vacuum_cost_delay * 4;
 
     pg_usleep(msec * 1000);
-
-    /*
-     * We don't want to ignore postmaster death during very long vacuums
-     * with vacuum_cost_delay configured.  We can't use the usual
-     * WaitLatch() approach here because we want microsecond-based sleep
-     * durations above.
-     */
-    if (IsUnderPostmaster && !PostmasterIsAlive())
-      exit(1);
 
     VacuumCostBalance = 0;
 

@@ -35,9 +35,8 @@ void ShutdownLatchWaitSet(void) {
   }
 }
 
-/* The positions of the latch and PM death events in LatchWaitSet */
+/* The position of the latch event in LatchWaitSet */
 #define LatchWaitSetLatchPos 0
-#define LatchWaitSetPostmasterDeathPos 1
 
 void InitializeLatchWaitSet(void) {
   int latch_pos PG_USED_FOR_ASSERTS_ONLY;
@@ -45,20 +44,10 @@ void InitializeLatchWaitSet(void) {
   Assert(LatchWaitSet == NULL);
 
   /* Set up the WaitEventSet used by WaitLatch(). */
-  LatchWaitSet = CreateWaitEventSet(NULL, 2);
+  LatchWaitSet = CreateWaitEventSet(NULL, 1);
   latch_pos = AddWaitEventToSet(LatchWaitSet, WL_LATCH_SET, PGINVALID_SOCKET,
                                 MyLatch, NULL);
   Assert(latch_pos == LatchWaitSetLatchPos);
-
-  /*
-   * WaitLatch will modify this to WL_EXIT_ON_PM_DEATH or
-   * WL_POSTMASTER_DEATH on each call.
-   */
-  if (IsUnderPostmaster) {
-    latch_pos = AddWaitEventToSet(LatchWaitSet, WL_EXIT_ON_PM_DEATH,
-                                  PGINVALID_SOCKET, NULL, NULL);
-    Assert(latch_pos == LatchWaitSetPostmasterDeathPos);
-  }
 }
 
 /*
@@ -79,10 +68,9 @@ void InitLatch(Latch *latch) {
 }
 
 /*
- * Wait for a given latch to be set, or for postmaster death, or until timeout
- * is exceeded. 'wakeEvents' is a bitmask that specifies which of those events
- * to wait for. If the latch is already set (and WL_LATCH_SET is given), the
- * function returns immediately.
+ * Wait for a given latch to be set, or until timeout is exceeded. 'wakeEvents'
+ * is a bitmask that specifies which of those events to wait for. If the latch
+ * is already set (and WL_LATCH_SET is given), the function returns immediately.
  *
  * The "timeout" is given in milliseconds. It must be >= 0 if WL_TIMEOUT flag
  * is given.  Although it is declared as "long", we don't actually support
@@ -100,23 +88,13 @@ int WaitLatch(Latch *latch, int wakeEvents, long timeout,
               uint32 wait_event_info) {
   WaitEvent event;
 
-  /* Postmaster-managed callers must handle postmaster death somehow. */
-  Assert(!IsUnderPostmaster || (wakeEvents & WL_EXIT_ON_PM_DEATH) ||
-         (wakeEvents & WL_POSTMASTER_DEATH));
-
   /*
-   * Some callers may have a latch other than MyLatch, or no latch at all,
-   * or want to handle postmaster death differently.  It's cheap to assign
-   * those, so just do it every time.
+   * Some callers may have a latch other than MyLatch, or no latch at all.
+   * It's cheap to assign, so just do it every time.
    */
   if (!(wakeEvents & WL_LATCH_SET))
     latch = NULL;
   ModifyWaitEvent(LatchWaitSet, LatchWaitSetLatchPos, WL_LATCH_SET, latch);
-
-  if (IsUnderPostmaster)
-    ModifyWaitEvent(LatchWaitSet, LatchWaitSetPostmasterDeathPos,
-                    (wakeEvents & (WL_EXIT_ON_PM_DEATH | WL_POSTMASTER_DEATH)),
-                    NULL);
 
   if (WaitEventSetWait(LatchWaitSet, (wakeEvents & WL_TIMEOUT) ? timeout : -1,
                        &event, 1, wait_event_info) == 0)
@@ -133,11 +111,6 @@ int WaitLatch(Latch *latch, int wakeEvents, long timeout,
  * to be reported as readable/writable/connected, so that the caller can deal
  * with the condition.
  *
- * wakeEvents must include either WL_EXIT_ON_PM_DEATH for automatic exit
- * if the postmaster dies or WL_POSTMASTER_DEATH for a flag set in the
- * return value if the postmaster dies.  The latter is useful for rare cases
- * where some behavior other than immediate exit is needed.
- *
  * NB: These days this is just a wrapper around the WaitEventSet API. When
  * using a latch very frequently, consider creating a longer living
  * WaitEventSet instead; that's more efficient.
@@ -147,7 +120,7 @@ int WaitLatchOrSocket(Latch *latch, int wakeEvents, pgsocket sock, long timeout,
   int ret = 0;
   int rc;
   WaitEvent event;
-  WaitEventSet *set = CreateWaitEventSet(CurrentResourceOwner, 3);
+  WaitEventSet *set = CreateWaitEventSet(CurrentResourceOwner, 2);
 
   if (wakeEvents & WL_TIMEOUT)
     Assert(timeout >= 0);
@@ -156,16 +129,6 @@ int WaitLatchOrSocket(Latch *latch, int wakeEvents, pgsocket sock, long timeout,
 
   if (wakeEvents & WL_LATCH_SET)
     AddWaitEventToSet(set, WL_LATCH_SET, PGINVALID_SOCKET, latch, NULL);
-
-  /* Postmaster-managed callers must handle postmaster death somehow. */
-  Assert(!IsUnderPostmaster || (wakeEvents & WL_EXIT_ON_PM_DEATH) ||
-         (wakeEvents & WL_POSTMASTER_DEATH));
-
-  if ((wakeEvents & WL_POSTMASTER_DEATH) && IsUnderPostmaster)
-    AddWaitEventToSet(set, WL_POSTMASTER_DEATH, PGINVALID_SOCKET, NULL, NULL);
-
-  if ((wakeEvents & WL_EXIT_ON_PM_DEATH) && IsUnderPostmaster)
-    AddWaitEventToSet(set, WL_EXIT_ON_PM_DEATH, PGINVALID_SOCKET, NULL, NULL);
 
   if (wakeEvents & WL_SOCKET_MASK) {
     int ev;
@@ -179,7 +142,7 @@ int WaitLatchOrSocket(Latch *latch, int wakeEvents, pgsocket sock, long timeout,
   if (rc == 0)
     ret |= WL_TIMEOUT;
   else {
-    ret |= event.events & (WL_LATCH_SET | WL_POSTMASTER_DEATH | WL_SOCKET_MASK);
+    ret |= event.events & (WL_LATCH_SET | WL_SOCKET_MASK);
   }
 
   FreeWaitEventSet(set);

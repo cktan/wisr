@@ -16,14 +16,6 @@
 
 #include <signal.h>
 
-#ifdef HAVE_SYS_PRCTL_H
-#include <sys/prctl.h>
-#endif
-
-#ifdef HAVE_SYS_PROCCTL_H
-#include <sys/procctl.h>
-#endif
-
 /*
  * Reasons why the postmaster would send SIGQUIT to its children.
  */
@@ -40,32 +32,5 @@ typedef enum {
  */
 extern void SetQuitSignalReason(QuitSignalReason reason);
 extern QuitSignalReason GetQuitSignalReason(void);
-extern bool PostmasterIsAliveInternal(void);
-extern void PostmasterDeathSignalInit(void);
-
-/*
- * Do we have a way to ask for a signal on parent death?
- *
- * If we do, pmsignal.c will set up a signal handler, that sets a flag when
- * the parent dies.  Checking the flag first makes PostmasterIsAlive() a lot
- * cheaper in usual case that the postmaster is alive.
- */
-#if (defined(HAVE_SYS_PRCTL_H) && defined(PR_SET_PDEATHSIG)) ||                \
-    (defined(HAVE_SYS_PROCCTL_H) && defined(PROC_PDEATHSIG_CTL))
-#define USE_POSTMASTER_DEATH_SIGNAL
-#endif
-
-#ifdef USE_POSTMASTER_DEATH_SIGNAL
-extern thread_local /*LOCAL*/ PGDLLIMPORT volatile sig_atomic_t
-    postmaster_possibly_dead;
-
-static inline bool PostmasterIsAlive(void) {
-  if (likely(!postmaster_possibly_dead))
-    return true;
-  return PostmasterIsAliveInternal();
-}
-#else
-#define PostmasterIsAlive() PostmasterIsAliveInternal()
-#endif
 
 #endif /* PMSIGNAL_H */

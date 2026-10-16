@@ -230,8 +230,8 @@ Datum pg_sleep(PG_FUNCTION_ARGS) {
     else
       break;
 
-    (void)WaitLatch(MyLatch, WL_LATCH_SET | WL_TIMEOUT | WL_EXIT_ON_PM_DEATH,
-                    delay_ms, WAIT_EVENT_PG_SLEEP);
+    (void)WaitLatch(MyLatch, WL_LATCH_SET | WL_TIMEOUT, delay_ms,
+                    WAIT_EVENT_PG_SLEEP);
     ResetLatch(MyLatch);
   }
 
