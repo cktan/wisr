@@ -240,6 +240,15 @@ int sm_set_qa_nowait(sm_session_t* session, bool on);
 int sm_session_tag(sm_session_t* session, uint64_t tag);
 
 /*
+ * Set how long the session waits for a lock or a writer before it
+ * looks for a cycle of waits: ms > 0, or 0 for its database's
+ * deadlock_ms (sm_options_t), the default. PostgreSQL's
+ * deadlock_timeout. A session with a shorter one finds a cycle
+ * first; the transaction ended is still the cycle's youngest.
+ */
+int sm_set_deadlock_ms(sm_session_t* session, int ms);
+
+/*
  * The numbers of the sessions the open session numbered tag waits
  * for now, into *out, cleared first: the holders of the lock it
  * waits on, or the transaction whose uncommitted write it waits

@@ -1605,6 +1605,22 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      NULL,
      NULL},
 
+    /*
+     * sm's wait before it looks for a cycle (smstore.c).  50ms, not
+     * PostgreSQL's 1s: sm1's check walks only the waits, and costs little.
+     */
+    {{"deadlock_timeout", PGC_SUSET, LOCK_MANAGEMENT,
+      gettext_noop(
+          "Sets the time to wait on a lock before checking for deadlock."),
+      NULL, GUC_UNIT_MS},
+     &DeadlockTimeout,
+     50,
+     1,
+     INT_MAX,
+     NULL,
+     assign_deadlock_timeout,
+     NULL},
+
     {{"lock_timeout", PGC_USERSET, CLIENT_CONN_STATEMENT,
       gettext_noop("Sets the maximum allowed duration of any wait for a lock."),
       gettext_noop("0 disables the timeout."), GUC_UNIT_MS},

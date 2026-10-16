@@ -32,9 +32,11 @@
 #include "postmaster/initdb.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
+#include "storage/proc.h"
 #include "storage/session_registry.h"
 #include "utils/control_block.h"
 #include "utils/datadir.h"
+#include "utils/guc_hooks.h"
 #include "utils/memutils.h"
 
 /* The superuser's name, and its SCRAM secret or NULL. */
@@ -210,6 +212,18 @@ void datadir_open_session(const char *dbname) {
    * for (datadir_sm_blockers()). */
   if (tcb->session != nullptr)
     (void)sm_session_tag(sm_session, tcb->session->id);
+  /* sm waits as long as deadlock_timeout says before it looks for a cycle. */
+  (void)sm_set_deadlock_ms(sm_session, DeadlockTimeout);
+}
+
+/*
+ * deadlock_timeout's assign hook: how long this session's waits in sm last
+ * before they look for a cycle.  A session with no sm session yet is given
+ * it as it opens one (datadir_open_session()).
+ */
+void assign_deadlock_timeout(int newval, void *extra) {
+  if (sm_session != NULL)
+    (void)sm_set_deadlock_ms(sm_session, newval);
 }
 
 /*

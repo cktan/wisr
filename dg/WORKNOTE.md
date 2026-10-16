@@ -4981,3 +4981,25 @@ table's lock, went on past it.
   expression (five).
 - Not in `make test`: it needs the PostgreSQL 18 build, and ten
   minutes.
+
+## Step 170: deadlock_timeout is back, for sm's waits
+
+Step 156 removed `deadlock_timeout` with the lock manager, which
+was its only reader; PostgreSQL's isolation specs set it, per
+session, to say which session finds a cycle first.
+
+- **sm1 waits per session**: `sm1::set_deadlock_ms()` sets how
+  long a session waits before it looks for a cycle, 0 for its
+  database's `deadlock_ms`; `sm_set_deadlock_ms()` in `sm.h`.
+  Only the session's own waits read it. The transaction ended
+  is still the cycle's youngest.
+- **`deadlock_timeout`** (utils/misc `guc_tables.c`), as
+  PostgreSQL's, superuser-set, in ms; its assign hook and
+  `datadir_open_session()` hand it to the session's sm session
+  (utils/init `datadir.c`). Its default is 50ms, sm1's, not
+  PostgreSQL's 1s: sm1's check walks only the waits, and is
+  cheap. `postgresql.conf.sample` has it again.
+- `../sm/sm1/test/test_lock.cc`: a cycle between two sessions
+  with 3000ms each is found no sooner than 2.5 seconds, and with
+  the default well before; with the setting ignored it fails.
+  The isolation spec `deadlock-hard` passes now: 17 of 37.

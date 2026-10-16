@@ -117,11 +117,12 @@ Owed, and blocking nothing above:
   169), beyond the key-share modes above: `REFERENCES` in
   `CREATE TABLE` and `ALTER TABLE ... ADD FOREIGN KEY` are
   refused by digres, though sm3 keeps foreign keys
-  (`FEATURELIST.md`); `char(n)` is not a type yet;
-  `deadlock_timeout` is not a setting, so a spec that sets it
-  fails, where it could set sm1's `deadlock_ms` for the
-  session; and sm1 dooms the youngest transaction on a cycle,
-  where PostgreSQL ends the one whose check found it.
+  (`FEATURELIST.md`); `char(n)` is not a type yet; PostgreSQL
+  finds a cycle at once when a waiter joins a queue behind one
+  it blocks, where sm1 looks only after `deadlock_timeout`
+  (`deadlock-simple`): sm1 could look as a wait begins; and
+  sm1 has no wait queue to reorder, so a soft deadlock
+  PostgreSQL untangles ends a transaction (`deadlock-soft`).
 - **A failed index build's detail is sm's.** `CREATE UNIQUE
   INDEX` over duplicates says `index build: two rows of u
   with one key in uk` where PostgreSQL says `Key (k)=(1) is

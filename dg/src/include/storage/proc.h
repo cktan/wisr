@@ -29,6 +29,7 @@
 /* configurable options */
 extern thread_local /*LOCAL*/ PGDLLIMPORT int StatementTimeout;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int LockTimeout;
+extern thread_local /*LOCAL*/ PGDLLIMPORT int DeadlockTimeout;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int IdleInTransactionSessionTimeout;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int TransactionTimeout;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int IdleSessionTimeout;

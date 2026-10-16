@@ -77,6 +77,8 @@ struct sm1::session_t {
   bool qa_nowait = false;   /* QA only: fail, do not wait (§5.1) */
   /* The host's number for the session, 0 for none (sm1::set_tag). */
   std::atomic<uint64_t> tag{0};
+  /* How long a wait lasts before a deadlock check, 0 for the db's. */
+  int deadlock_ms = 0;
   bool stmt_taken = false; /* stmt_snapshot_ts is the one to use */
   uint64_t stmt_snapshot_ts = 0;
   /*

@@ -241,3 +241,15 @@ int sm1::waits_for(sm1::env_t *env, uint64_t tag, std::vector<uint64_t> *out) {
   }
   return 0;
 }
+
+/* Set the session's wait before a deadlock check; 0 is its db's. */
+int sm1::set_deadlock_ms(sm1::session_t *session, int ms) {
+  if (!session) {
+    return set_error(sm1::SM_ERR_INVALID, "NULL session");
+  }
+  if (ms < 0) {
+    return set_error(sm1::SM_ERR_INVALID, "deadlock_ms must not be negative");
+  }
+  session->deadlock_ms = ms;
+  return 0;
+}

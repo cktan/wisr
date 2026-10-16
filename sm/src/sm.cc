@@ -703,6 +703,16 @@ int sm_session_tag(sm_session_t *session, uint64_t tag) {
   });
 }
 
+/* Set how long the session waits before a deadlock check. */
+int sm_set_deadlock_ms(sm_session_t *session, int ms) {
+  return guard(nullptr, [&] {
+    if (!session) {
+      return null_arg("sm_set_deadlock_ms", "session");
+    }
+    return sm1::set_deadlock_ms(session_of(session), ms);
+  });
+}
+
 /* The numbers of the sessions the session numbered tag waits for. */
 int sm_waits_for(sm_env_t *env, uint64_t tag, std::vector<uint64_t> *out) {
   return guard(nullptr, [&] {

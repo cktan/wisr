@@ -264,6 +264,14 @@ bool woke(void *arg) {
 }
 
 /*
+ * How long s waits before it looks for a cycle: its own setting
+ * (sm1::set_deadlock_ms), else its database's.
+ */
+int deadlock_wait_ms(const sm1::session_t *s) {
+  return s->deadlock_ms > 0 ? s->deadlock_ms : s->db->deadlock_ms;
+}
+
+/*
  * Sleep on lock_cv, with lock_mu held in guard, until woken, until
  * a bit in the thread's wait mask is raised (sm_sys.h), or until
  * *deadline_us; at the deadline, look for a cycle through s and
@@ -285,7 +293,7 @@ bool wait_once(db_t *db, sm1::session_t *s, std::unique_lock<std::mutex> &guard,
     // Timed out: look for a cycle through us.
     check_deadlock(db, s);
     // Re-arm the timer for the next check.
-    *deadline_us = sm_now_us() + int64_t(db->deadlock_ms) * 1000;
+    *deadline_us = sm_now_us() + int64_t(deadlock_wait_ms(s)) * 1000;
     return true;
   }
   return true;
@@ -370,7 +378,7 @@ int lock_wait(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
   // Hold lock_mu for the table and the waits-for lists.
   std::unique_lock<std::mutex> guard(db->lock_mu);
   // Time the first deadlock check.
-  int64_t deadline = sm_now_us() + int64_t(db->deadlock_ms) * 1000;
+  int64_t deadline = sm_now_us() + int64_t(deadlock_wait_ms(s)) * 1000;
   for (;;) {
     // A doomed transaction stops waiting and fails.
     if (s->doomed) {
@@ -404,7 +412,7 @@ int lock_wait_xact(sm1::session_t *s, uint64_t xid) {
   std::unique_lock<std::mutex> guard(db->lock_mu);
   // A rollback from now on may delete what we wait for.
   uint64_t epoch = db->rollback_epoch;
-  int64_t deadline = sm_now_us() + int64_t(db->deadlock_ms) * 1000;
+  int64_t deadline = sm_now_us() + int64_t(deadlock_wait_ms(s)) * 1000;
   for (;;) {
     // A doomed transaction stops waiting and fails.
     if (s->doomed) {

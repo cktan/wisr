@@ -923,6 +923,19 @@ open sessions; sm1 does not check.
 
 Errors: `SM_ERR_INVALID`.
 
+### int sm1::set_deadlock_ms(sm1::session_t* session, int ms)
+
+Sets how long the session waits for a lock, or behind another
+transaction's version, before it looks for a cycle of waits
+through itself (`SM1_DESIGN.md` §5.1): `ms` > 0, or 0 for its
+database's `deadlock_ms`, the default. It is PostgreSQL's
+`deadlock_timeout`: of the sessions on a cycle, the one with the
+shortest finds it first. Which transaction is ended does not
+change: the youngest on the cycle. Only the session's own waits
+read it.
+
+Errors: `SM_ERR_INVALID`, for a negative `ms`.
+
 ### int sm1::waits_for(sm1::env_t* env, uint64_t tag, std::vector<uint64_t>* out)
 
 The numbers of the sessions that the open session numbered

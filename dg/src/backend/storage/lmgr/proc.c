@@ -34,6 +34,8 @@
 /* GUC variables */
 thread_local /*LOCAL*/ int StatementTimeout = 0;
 thread_local /*LOCAL*/ int LockTimeout = 0;
+/* How long a wait in sm lasts before it looks for a deadlock (smstore.c). */
+thread_local /*LOCAL*/ int DeadlockTimeout = 50;
 thread_local /*LOCAL*/ int IdleInTransactionSessionTimeout = 0;
 thread_local /*LOCAL*/ int TransactionTimeout = 0;
 thread_local /*LOCAL*/ int IdleSessionTimeout = 0;
