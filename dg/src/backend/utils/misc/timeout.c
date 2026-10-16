@@ -30,9 +30,9 @@
 typedef struct timeout_params {
   TimeoutId index; /* identifier of timeout reason */
 
-  /* volatile because these may be changed from the signal handler */
-  volatile bool active;    /* true if timeout is in active_timeouts[] */
-  volatile bool indicator; /* true if timeout has occurred */
+  /* changed by the alarm's interrupt handler, too (handle_sig_alarm()) */
+  bool active;    /* true if timeout is in active_timeouts[] */
+  bool indicator; /* true if timeout has occurred */
 
   /* callback function for timeout, or NULL if timeout not registered */
   timeout_handler_proc timeout_handler;
@@ -44,7 +44,9 @@ typedef struct timeout_params {
 
 /*
  * This thread's timeouts and its timer: tcb->timeout (utils/control_block.h).
- * The signal handler changes some of them, so those are volatile.
+ * The alarm's interrupt handler changes some of them, but runs in this thread
+ * where its interrupts are delivered, not in a signal handler, so none is
+ * volatile.
  */
 struct timeout_state_t {
   /* List of possible timeout reasons in the order of enum TimeoutId. */
@@ -53,11 +55,10 @@ struct timeout_state_t {
 
   /*
    * List of active timeouts ordered by their fin_time and priority.
-   * This list is subject to change by the interrupt handler, so it's
-   * volatile.
+   * This list is subject to change by the interrupt handler.
    */
-  volatile int num_active_timeouts = 0;
-  timeout_params *volatile active_timeouts[MAX_TIMEOUTS];
+  int num_active_timeouts = 0;
+  timeout_params *active_timeouts[MAX_TIMEOUTS];
 
   /*
    * Flag controlling whether the signal handler is allowed to do anything.
@@ -73,7 +74,7 @@ struct timeout_state_t {
    * We leave this "false" when we're not expecting interrupts, just in
    * case.
    */
-  volatile sig_atomic_t alarm_enabled = false;
+  bool alarm_enabled = false;
 
   /*
    * State recording if and when we next expect the interrupt to fire.
@@ -82,8 +83,8 @@ struct timeout_state_t {
    * to false, so that can change asynchronously even when alarm_enabled is
    * false.
    */
-  volatile sig_atomic_t signal_pending = false;
-  volatile TimestampTz signal_due_at = 0;
+  bool signal_pending = false;
+  TimestampTz signal_due_at = 0;
 
   /*
    * This thread's timer (sm_sys.h), 0 if none is armed: it raises

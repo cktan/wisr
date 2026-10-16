@@ -85,24 +85,24 @@
  *****************************************************************************/
 
 /* in globals.c */
-/* these are marked volatile because they are set by signal handlers: */
-extern thread_local /*LOCAL*/ PGDLLIMPORT volatile sig_atomic_t
+/* set by this thread's interrupt handlers, as its interrupts are delivered: */
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool
     InterruptPending;
-extern thread_local /*LOCAL*/ PGDLLIMPORT volatile sig_atomic_t
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool
     QueryCancelPending;
-extern thread_local /*LOCAL*/ PGDLLIMPORT volatile sig_atomic_t ProcDiePending;
-extern thread_local /*LOCAL*/ PGDLLIMPORT volatile sig_atomic_t
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool ProcDiePending;
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool
     IdleInTransactionSessionTimeoutPending;
-extern thread_local /*LOCAL*/ PGDLLIMPORT volatile sig_atomic_t
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool
     TransactionTimeoutPending;
-extern thread_local /*LOCAL*/ PGDLLIMPORT volatile sig_atomic_t
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool
     IdleSessionTimeoutPending;
-extern thread_local /*LOCAL*/ PGDLLIMPORT volatile sig_atomic_t
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool
     LogMemoryContextPending;
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT volatile sig_atomic_t
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool
     CheckClientConnectionPending;
-extern thread_local /*LOCAL*/ PGDLLIMPORT volatile sig_atomic_t
+extern thread_local /*LOCAL*/ PGDLLIMPORT bool
     ClientConnectionLost;
 
 /* these are marked volatile because they are examined by signal handlers: */

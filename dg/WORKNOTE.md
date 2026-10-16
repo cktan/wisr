@@ -5439,3 +5439,29 @@ utils/init `session_thread.c` and `datadir.c` already were.
   `StartupBlockSig` are one set, every signal but a fault's
   (`session_thread_start()`), so its calls keep it as it is.
 - Windows's `pqsigprocmask()` emulation, compiled out, is left.
+
+## Step 187: the pending flags are plain bools
+
+A session thread takes no asynchronous signal: it blocks all
+but a fault's (`session_thread_start()`), and its handlers run
+where its interrupts are delivered (storage/ipc `procsignal.c`'s
+`DeliverInterrupts()`, at `CHECK_FOR_INTERRUPTS()` and in a
+wait), so what they set needs neither `volatile` nor
+`sig_atomic_t`.
+
+- `InterruptPending`, `QueryCancelPending`, `ProcDiePending`,
+  `CheckClientConnectionPending`, `ClientConnectionLost`, the
+  three timeout flags and `LogMemoryContextPending` (utils/init
+  `globals.c`), and postmaster `interrupt.c`'s
+  `ConfigReloadPending`, are `bool`. `ShutdownRequestPending`,
+  never set or read, is gone.
+- utils/misc `timeout.c`: the alarm's handler,
+  `handle_sig_alarm()`, runs on `INTERRUPT_ALARM` in its own
+  thread, so the timeouts' state is not `volatile` either.
+- **Left**: the postmaster's `pending_pm_*`, set by its real
+  handlers of `SIGHUP`, `SIGINT`, `SIGQUIT` and `SIGTERM`;
+  storage/ipc `waiteventset.c`'s `waiting`, read by the
+  self-pipe's `SIGURG` handler (the poll implementation,
+  compiled out); the frontend's `common/string.h`. The holdoff
+  counts (`InterruptHoldoffCount` and the rest) are `volatile`
+  still.

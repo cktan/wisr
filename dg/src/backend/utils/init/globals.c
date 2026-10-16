@@ -29,20 +29,18 @@
 thread_local /*LOCAL*/ ProtocolVersion FrontendProtocol;
 
 thread_local /*LOCAL*/ bool IsSessionThread = false;
-thread_local /*LOCAL*/ volatile sig_atomic_t InterruptPending = false;
+thread_local /*LOCAL*/ bool InterruptPending = false;
 const std::atomic<uint32_t> NoInterrupts{0};
 thread_local /*LOCAL*/ const std::atomic<uint32_t> *MyInterrupts =
     &NoInterrupts;
-thread_local /*LOCAL*/ volatile sig_atomic_t QueryCancelPending = false;
-thread_local /*LOCAL*/ volatile sig_atomic_t ProcDiePending = false;
-thread_local /*LOCAL*/ volatile sig_atomic_t CheckClientConnectionPending =
-    false;
-thread_local /*LOCAL*/ volatile sig_atomic_t ClientConnectionLost = false;
-thread_local /*LOCAL*/ volatile sig_atomic_t
-    IdleInTransactionSessionTimeoutPending = false;
-thread_local /*LOCAL*/ volatile sig_atomic_t TransactionTimeoutPending = false;
-thread_local /*LOCAL*/ volatile sig_atomic_t IdleSessionTimeoutPending = false;
-thread_local /*LOCAL*/ volatile sig_atomic_t LogMemoryContextPending = false;
+thread_local /*LOCAL*/ bool QueryCancelPending = false;
+thread_local /*LOCAL*/ bool ProcDiePending = false;
+thread_local /*LOCAL*/ bool CheckClientConnectionPending = false;
+thread_local /*LOCAL*/ bool ClientConnectionLost = false;
+thread_local /*LOCAL*/ bool IdleInTransactionSessionTimeoutPending = false;
+thread_local /*LOCAL*/ bool TransactionTimeoutPending = false;
+thread_local /*LOCAL*/ bool IdleSessionTimeoutPending = false;
+thread_local /*LOCAL*/ bool LogMemoryContextPending = false;
 thread_local /*LOCAL*/ volatile uint32 InterruptHoldoffCount = 0;
 thread_local /*LOCAL*/ volatile uint32 QueryCancelHoldoffCount = 0;
 thread_local /*LOCAL*/ volatile uint32 CritSectionCount = 0;

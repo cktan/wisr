@@ -24,8 +24,7 @@
 #include "utils/guc.h"
 #include "utils/memutils.h"
 
-thread_local /*LOCAL*/ volatile sig_atomic_t ConfigReloadPending = false;
-thread_local /*LOCAL*/ volatile sig_atomic_t ShutdownRequestPending = false;
+thread_local /*LOCAL*/ bool ConfigReloadPending = false;
 
 /*
  * Simple signal handler for triggering a configuration reload.
