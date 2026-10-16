@@ -363,8 +363,9 @@ has a caller still, and goes with the step that removes it:
    lock manager gone (156), the LWLocks and `posix_sema.c`
    (157), interrupts and cancels through the session record
    (158), PGPROC gone (159), `pg_blocking_pids()` asking sm1's
-   waits-for graph (166); then `pg_lock_status()` asks sm1's
-   lock table.
+   waits-for graph (166). Left, at low priority:
+   `pg_lock_status()` listing sm1's locks and the advisory
+   table's; it lists none.
 5. **The registry** of §2: done (`WORKNOTE.md` step 173),
    each block a pcb field, and dynahash's shared mode (174).
 
