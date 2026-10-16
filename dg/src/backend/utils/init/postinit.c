@@ -393,8 +393,7 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
 
   /*
    * If this is either a bootstrap process or a standalone backend, register
-   * the shutdown of the server at exit.  The transaction counters got their
-   * first values when shared memory was made (VarsupShmemInit()).
+   * the shutdown of the server at exit.
    */
   if (!IsUnderPostmaster) {
     /*

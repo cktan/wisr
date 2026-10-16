@@ -190,47 +190,6 @@ static inline void FullTransactionIdAdvance(FullTransactionId *dest) {
 #define FirstNormalObjectId		16384
 
 /*
- * TransamVariables is a data structure in shared memory that is used to track
- * OID and XID assignment state.  For largely historical reasons, there is
- * just one struct with different fields that are protected by different
- * LWLocks.
- *
- * Note: xidWrapLimit and oldestXidDB are not "active" values, but are
- * used just to generate useful messages when xidStopLimit is exceeded.
- */
-typedef struct TransamVariablesData {
-  /*
-   * Set before any thread starts, and constant: digres assigns no xid.
-   */
-  TransactionId oldestXid; /* cluster-wide minimum datfrozenxid */
-
-  /*
-   * Set before any thread starts, and constant too: no transaction with an
-   * xid completes.
-   */
-  FullTransactionId latestCompletedXid; /* newest full XID that has
-                                         * committed or aborted */
-
-  /*
-   * Number of top-level transactions with xids (i.e. which may have
-   * modified the database) that completed in some form since the start of
-   * the server. This currently is solely used to check whether
-   * GetSnapshotData() needs to recompute the contents of the snapshot, or
-   * not. There are likely other users of this.  Always above 1.
-   */
-  uint64 xactCompletionCount;
-} TransamVariablesData;
-
-/* ----------------
- *		extern declarations
- * ----------------
- */
-
-/* in transam/varsup.c */
-extern thread_local /*SHARED*/ PGDLLIMPORT TransamVariablesData
-    *TransamVariables;
-
-/*
  * prototypes for functions in transam/transam.c
  */
 extern bool TransactionIdDidCommit(TransactionId transactionId);
@@ -239,8 +198,6 @@ extern bool TransactionIdPrecedes(TransactionId id1, TransactionId id2);
 extern bool TransactionIdPrecedesOrEquals(TransactionId id1, TransactionId id2);
 extern bool TransactionIdFollows(TransactionId id1, TransactionId id2);
 extern bool TransactionIdFollowsOrEquals(TransactionId id1, TransactionId id2);
-
-extern void VarsupShmemInit(void);
 
 /*
  * Some frontend programs include this header.  For compilers that emit static

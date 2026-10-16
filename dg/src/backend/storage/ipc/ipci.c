@@ -25,69 +25,16 @@
 #include "utils/guc.h"
 #include "utils/injection_point.h"
 
-thread_local /*SHARED*/ shmem_startup_hook_type shmem_startup_hook = NULL;
-
-static void CreateOrAttachShmemStructs(void);
-
-/*
- * AttachSharedMemoryStructs
- *		Initialize a postmaster child process's access to shared memory
- *      structures.
- *
- * In !EXEC_BACKEND mode, a child process inherits everything through the
- * fork, and this isn't needed.  A session thread is given its parent's
- * SHARED variables, but some pointers into shared memory sit in LOCAL
- * structures (pgStatLocal's, say): it needs this too.
- */
-void AttachSharedMemoryStructs(void) {
-  /* InitProcess must've been called already */
-  Assert(MyProcNumber != INVALID_PROC_NUMBER);
-  Assert(IsUnderPostmaster);
-
-  CreateOrAttachShmemStructs();
-
-  /*
-   * Now give loadable modules a chance to set up their shmem allocations
-   */
-  if (shmem_startup_hook)
-    shmem_startup_hook();
-}
-
 /*
  * CreateSharedMemoryAndSemaphores
- *		Creates and initializes the structures the threads share, and
- *the semaphores.
+ *		Make the structures the threads share, before any thread starts.
+ *
+ * They are the pcb's (utils/control_block.h): there is no shared memory,
+ * and no registry of named blocks a thread would find them in
+ * (dg/WORKNOTE.md step 173).  A session thread has nothing to attach.
  */
 void CreateSharedMemoryAndSemaphores(void) {
   Assert(!IsUnderPostmaster);
-
-  /* The index the structures are found by, before any is made. */
-  InitShmemIndex();
-
-  /* Initialize subsystems */
-  CreateOrAttachShmemStructs();
-
-  /*
-   * Now give loadable modules a chance to set up their shared structures
-   */
-  if (shmem_startup_hook)
-    shmem_startup_hook();
-}
-
-/*
- * Initialize various subsystems, setting up the data structures the threads
- * share.
- *
- * This is called by the postmaster or by a standalone backend, which make
- * the structures, and by a session thread, which finds them: some pointers
- * to them sit in its LOCAL variables.  The called routines check
- * IsUnderPostmaster to tell the two apart.
- */
-static void CreateOrAttachShmemStructs(void) {
-  /*
-   * Set up xlog, clog, and buffers
-   */
-  VarsupShmemInit();
 
   /*
    * Set up the session registry
@@ -98,11 +45,10 @@ static void CreateOrAttachShmemStructs(void) {
    * Set up interprocess signaling mechanisms
    */
   /* A rebuild after a crash clears why the postmaster sent SIGQUIT. */
-  if (!IsUnderPostmaster)
-    SetQuitSignalReason(PMQUIT_NOT_SENT);
+  SetQuitSignalReason(PMQUIT_NOT_SENT);
 
   /*
-   * Set up other modules that need some shared memory space
+   * Set up other modules that need structures of their own
    */
   InjectionPointShmemInit();
 }

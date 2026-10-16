@@ -5042,3 +5042,32 @@ to find its pid.
   which sm takes for none, is no pid.
 - `server.sh`'s check of step 166 checks it: a row's writer and
   a table lock's holder are named by their pids.
+
+## Step 173: the registry of shared blocks is gone
+
+`SHMEM.md` §2, §7 step 5. storage/ipc `shmem.c` had been a
+registry of named blocks since step 26, found by name by every
+session thread's `AttachSharedMemoryStructs()`. Two blocks were
+left in it: `TransamVariables`, and the injection points',
+under a build option.
+
+- **`TransamVariables` is gone**, with access/transam
+  `varsup.c`: what was left of it never changed.
+  `GetSnapshotData()` takes `FirstNormalTransactionId` as every
+  snapshot's xmin and xmax, the xid after the last completed,
+  and 1 as its completion count, as they were.
+- **The injection points' control struct is the pcb's**
+  (`pcb_t::injection_points`), `calloc()`'d before any thread
+  starts. The code stays behind `USE_INJECTION_POINTS`.
+- **Gone**: the registry, `ShmemInitStruct()`,
+  `ShmemInitHash()`, `ShmemAlloc()`, `InitShmemIndex()`,
+  `pcb->shmem_index` and `storage/shmem.h`;
+  `AttachSharedMemoryStructs()` and the init list a session
+  thread ran, as it has nothing to find; `shmem_request_hook`
+  with `process_shmem_requests()`, and `shmem_startup_hook`, as
+  decided: a library had no registry to use them with, and
+  none in the tree did. `shmem.c` keeps `pg_numa_available()`.
+- `parse_oper.c`, `array_typanalyze.c`, `dynahash.c` and
+  `guc.c` include `utils/hsearch.h` themselves, which they had
+  through `storage/shmem.h`.
+- **Left**: dynahash's shared mode, which no table uses now.

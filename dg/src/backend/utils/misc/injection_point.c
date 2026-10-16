@@ -27,7 +27,6 @@
 #include "miscadmin.h"
 #include "storage/fd.h"
 #include "storage/held_lock.h"
-#include "storage/shmem.h"
 #include "utils/control_block.h"
 #include "utils/hsearch.h"
 #include "utils/memutils.h"
@@ -85,7 +84,8 @@ typedef struct InjectionPointsCtl {
   InjectionPointEntry entries[MAX_INJECTION_POINTS];
 } InjectionPointsCtl;
 
-static InjectionPointsCtl *ActiveInjectionPoints;
+/* The process's control struct: the pcb's (InjectionPointShmemInit()). */
+#define ActiveInjectionPoints (pcb->injection_points)
 
 /*
  * Backend local cache of injection callbacks already loaded, stored in
@@ -215,21 +215,18 @@ static InjectionPointCacheEntry *injection_point_cache_get(const char *name) {
 #endif /* USE_INJECTION_POINTS */
 
 /*
- * Allocate shmem space for dynamic shared hash.
+ * Make the process's control struct of injection points, before any
+ * thread starts: the pcb's, for its whole life.
  */
 void InjectionPointShmemInit(void) {
 #ifdef USE_INJECTION_POINTS
-  bool found;
-
-  ActiveInjectionPoints = ShmemInitStruct("InjectionPoint hash",
-                                          sizeof(InjectionPointsCtl), &found);
-  if (!IsUnderPostmaster) {
-    Assert(!found);
-    pg_atomic_init_u32(&ActiveInjectionPoints->max_inuse, 0);
-    for (int i = 0; i < MAX_INJECTION_POINTS; i++)
-      pg_atomic_init_u64(&ActiveInjectionPoints->entries[i].generation, 0);
-  } else
-    Assert(found);
+  ActiveInjectionPoints =
+      (InjectionPointsCtl *)calloc(1, sizeof(InjectionPointsCtl));
+  if (ActiveInjectionPoints == NULL)
+    elog(FATAL, "out of memory");
+  pg_atomic_init_u32(&ActiveInjectionPoints->max_inuse, 0);
+  for (int i = 0; i < MAX_INJECTION_POINTS; i++)
+    pg_atomic_init_u64(&ActiveInjectionPoints->entries[i].generation, 0);
 #endif
 }
 

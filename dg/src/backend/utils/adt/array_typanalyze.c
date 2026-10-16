@@ -19,6 +19,7 @@
 #include "utils/array.h"
 #include "utils/datum.h"
 #include "utils/fmgrprotos.h"
+#include "utils/hsearch.h"
 #include "utils/lsyscache.h"
 #include "utils/typcache.h"
 

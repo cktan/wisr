@@ -3398,11 +3398,6 @@ void PostgresSingleUserMain(int argc, char *argv[], const char *username) {
   InitPostmasterChildSlots();
 
   /*
-   * Give preloaded libraries a chance to request additional shared memory.
-   */
-  process_shmem_requests();
-
-  /*
    * Create shared memory etc.  (Nothing's really "shared" in single-user
    * mode, but we must have these data structures anyway.)
    */

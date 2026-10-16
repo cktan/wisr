@@ -26,7 +26,6 @@
 #include "storage/latch.h"
 #include "storage/proc.h"
 #include "storage/session_registry.h"
-#include "storage/shmem.h"
 #include "storage/sinval.h"
 #include "utils/control_block.h"
 #include "tcop/tcopprot.h"

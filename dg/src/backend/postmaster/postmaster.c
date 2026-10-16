@@ -781,11 +781,6 @@ void PostmasterMain(int argc, char *argv[]) {
   InitPostmasterChildSlots();
 
   /*
-   * Give preloaded libraries a chance to request additional shared memory.
-   */
-  process_shmem_requests();
-
-  /*
    * If -C was specified with a runtime-computed GUC, we held off printing
    * the value earlier, as the GUC was not yet initialized.  We handle -C
    * for most GUCs before we lock the data directory so that the option may
@@ -1206,9 +1201,9 @@ static void ConfigurePostmasterWaitSet(bool accept_connections) {
 }
 
 /*
- * Open for connections.  Shared memory is made, and with it the transaction
- * counters (VarsupShmemInit()): there is no WAL to recover from, so this is
- * what the startup process's clean exit used to do.
+ * Open for connections.  The structures the threads share are made: there is
+ * no WAL to recover from, so this is what the startup process's clean exit
+ * used to do.
  */
 static void StartRunning(void) {
   ReachedNormalRunning = true;

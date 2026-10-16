@@ -102,8 +102,8 @@
 #include "access/xact.h"
 #include "common/hashfn.h"
 #include "port/pg_bitutils.h"
-#include "storage/shmem.h"
 #include "utils/dynahash.h"
+#include "utils/hsearch.h"
 #include "utils/memutils.h"
 
 /*
@@ -320,7 +320,8 @@ static int string_compare(const char *key1, const char *key2, Size keysize) {
  * under info->hcxt rather than under TopMemoryContext; the default
  * behavior is only suitable for session-lifespan hash tables.
  * Other flags bits are special-purpose and seldom used, except for those
- * associated with shared-memory hash tables, for which see ShmemInitHash().
+ * associated with shared-memory hash tables, which no table is now
+ * (dg/WORKNOTE.md step 173).
  *
  * Fields in *info are read only when the associated flags bit is set.
  * It is not necessary to initialize other fields of *info.

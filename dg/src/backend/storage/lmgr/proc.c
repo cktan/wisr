@@ -57,14 +57,6 @@ void InitProcess(void) {
    * Arrange to clean up at backend exit.
    */
   on_shmem_exit(ProcKill, 0);
-
-  /*
-   * Initialize backend-local pointers to all the shared data structures.
-   * A forked child inherited them; a session thread, like an EXEC_BACKEND
-   * child, did not, or not all.
-   */
-  if (IsSessionThread)
-    AttachSharedMemoryStructs();
 }
 
 /*

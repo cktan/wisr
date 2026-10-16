@@ -28,7 +28,6 @@
 #include "optimizer/optimizer.h"
 #include "optimizer/plancat.h"
 #include "port/pg_bitutils.h"
-#include "storage/shmem.h"
 
 /*
  * Constants to control the behavior of block allocation to parallel workers

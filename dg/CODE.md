@@ -203,10 +203,10 @@ digres is one process; each session is a thread of it.
   session waits for its own `popen()` child.
 - **There is no shared memory.** A structure the threads share
   is an ordinary allocation: `malloc()`'d, its pointer in the
-  pcb. `ShmemInitStruct()` and `ShmemInitHash()` still make
-  the older ones on the heap, zeroed, or find them by name in
-  `pcb->shmem_index`. Nothing is sized ahead of time; do not
-  add a `*ShmemSize()` function.
+  pcb, made before the first thread starts. There is no
+  registry to find one by name (`ShmemInitStruct()` is gone),
+  and nothing is sized ahead of time; do not add a
+  `*ShmemSize()` function.
 - **What a process's exit freed, a thread's end must free:**
   `session_thread_end()` does it, and the tcb's destructors
   do it for what a block owns.

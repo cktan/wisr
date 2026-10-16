@@ -25,7 +25,6 @@
 #include "postmaster/postmaster.h"
 #include "storage/ipc.h"
 #include "storage/pmsignal.h"
-#include "storage/shmem.h"
 #include "utils/control_block.h"
 #include "utils/memutils.h"
 

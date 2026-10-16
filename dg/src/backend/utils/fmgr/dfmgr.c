@@ -24,7 +24,6 @@
 #include "lib/stringinfo.h"
 #include "miscadmin.h"
 #include "storage/fd.h"
-#include "storage/shmem.h"
 #include "utils/hsearch.h"
 
 /* signature for PostgreSQL-specific library init function */

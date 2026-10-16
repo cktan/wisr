@@ -20,7 +20,6 @@
 #include "mb/stringinfo_mb.h"
 #include "nodes/params.h"
 #include "parser/parse_node.h"
-#include "storage/shmem.h"
 #include "utils/datum.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"

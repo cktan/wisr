@@ -19,7 +19,6 @@
 #define IPC_H
 
 typedef void (*pg_on_exit_callback)(int code, Datum arg);
-typedef void (*shmem_startup_hook_type)(void);
 
 /*----------
  * API for handling cleanup that must occur during either ereport(ERROR)
@@ -83,10 +82,6 @@ extern void on_exit_reset(void);
 extern void check_on_shmem_exit_lists_are_empty(void);
 
 /* ipci.c */
-extern thread_local /*SHARED*/ PGDLLIMPORT shmem_startup_hook_type
-    shmem_startup_hook;
-
 extern void CreateSharedMemoryAndSemaphores(void);
-extern void AttachSharedMemoryStructs(void);
 
 #endif /* IPC_H */

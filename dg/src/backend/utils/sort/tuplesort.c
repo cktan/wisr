@@ -96,7 +96,6 @@
 #include "commands/tablespace.h"
 #include "miscadmin.h"
 #include "pg_trace.h"
-#include "storage/shmem.h"
 #include "utils/guc.h"
 #include "utils/memutils.h"
 #include "utils/pg_rusage.h"

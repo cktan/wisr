@@ -30,36 +30,30 @@ What is left is built at start by `CreateOrAttachShmemStructs()`
 session registry. The lock manager is gone (step 156), the
 LWLocks and semaphores (step 157), and PGPROC (step 159).
 
-## 2. Allocation: a registry of named blocks
+## 2. Allocation: the pcb's fields
 
-storage/ipc `shmem.c` is a name registry now: `shmem_index_t`,
-a `std::mutex` and an `unordered_map` of name to block, held in
-`pcb->shmem_index`. `ShmemAlloc()` is `calloc()`, never freed;
-`ShmemInitStruct()` finds a block by name or makes it;
-`ShmemInitHash()` makes a dynahash in shared mode, with a
-directory fixed in size ahead of time.
+**Done** (`WORKNOTE.md` step 173). A structure the threads share
+is a field of `pcb_t` (`utils/control_block.h`), made by the
+postmaster, or a standalone backend, before the first thread
+starts: `CreateSharedMemoryAndSemaphores()` (storage/ipc
+`ipci.c`) makes the session registry, the advisory lock table
+and, with the build option, the injection points'. A session
+thread finds them in the pcb and attaches to nothing.
 
-| Block | Made in | Holds | Guard |
-| --- | --- | --- | --- |
-| TransamVariables | access/transam `varsup.c` | the snapshot's constants | set before threads start |
-| Proc Array | storage/ipc `procarray.c:308` | pgprocnos[MaxBackends] | ProcArrayLock |
-| ProcSignal | storage/ipc `procsignal.c:95` | a slot a session, cancel keys | pss_mutex |
-
-The main LWLock array and the semaphores, beside the registry
-since step 27, are gone (step 157).
-
-- **Each thread attaches again.**
-  `AttachSharedMemoryStructs()` (storage/ipc `ipci.c`) runs the
-  init list in every session thread, which finds each block by
-  name and sets its pointer. The pointers are SHARED, copied
-  from the postmaster already, so this does nothing.
-- **Sized ahead of time**: `MaxBackends`, `NLOCKENTS`, the
-  fixed hash directories, `PROCARRAY_MAXPROCS`,
-  `num_os_semaphores`.
-- **To replace**: each block a typed field of `pcb_t`, made by
-  the postmaster before the first thread starts (`CODE.md` §3).
-  Then `AttachSharedMemoryStructs()`, the registry, the
-  `*ShmemSize()` functions and dynahash's shared mode go.
+- **Gone**: storage/ipc `shmem.c`'s registry of named blocks,
+  `ShmemInitStruct()`, `ShmemInitHash()`, `ShmemAlloc()` and
+  `pcb->shmem_index`; `AttachSharedMemoryStructs()` and the
+  init list a session thread ran; `TransamVariables`, whose
+  constants `GetSnapshotData()` now names; and
+  `shmem_request_hook` and `shmem_startup_hook`, which a
+  library had no registry to use with. `shmem.c` keeps
+  `pg_numa_available()`.
+- **Sized ahead of time** still: `MaxBackends`, the session
+  registry's limit, and `PROCARRAY_MAXPROCS`, a snapshot's
+  arrays.
+- **Left**: dynahash's shared mode (partitioned free lists,
+  their spinlocks, a fixed directory), which no table uses
+  now.
 
 ## 3. Locks
 
@@ -146,11 +140,9 @@ switches between (`SwitchToSharedLatch()`), which are one bit.
   FORCE, the signal functions and `pg_blocking_pids()`, which
   find a session by its record in the session registry (§5.2,
   `WORKNOTE.md` step 152); `ProcArrayLock` is gone.
-- **TransamVariables** (access/transam `varsup.c`). Its
-  counters are gone (`WORKNOTE.md` step 137); left are
-  `oldestXid`, `latestCompletedXid` and `xactCompletionCount`,
-  which `GetSnapshotData()` reads and which never change. **To
-  remove** with the constant snapshot (§7, step 3).
+- **TransamVariables is gone** (`WORKNOTE.md` step 173): its
+  counters went with step 137, and what was left never changed;
+  `GetSnapshotData()` names the constants.
 - **ProcSignal is gone** (`WORKNOTE.md` step 147). Its one
   reason left, `pg_log_backend_memory_contexts()`, is an
   interrupt bit of its own, `INTERRUPT_LOG_MEMORY`; a session's
@@ -342,14 +334,12 @@ has a caller still, and goes with the step that removes it:
   the session registry (step 152).
 - **Gone with the lock manager** (`WORKNOTE.md` step 156): lock
   groups, and the page, extension and apply-transaction locks.
-- **Kept, for extensions**: `shmem_request_hook` and
-  `shmem_startup_hook`, the API a library in
-  `shared_preload_libraries` uses for state of its own. Nothing
-  in the tree uses them, but digres still loads libraries
-  (utils/fmgr `dfmgr.c`); they go, or become a pcb registry,
-  with §2's registry. `RequestNamedLWLockTranche()`, for locks
-  of a library's own, went with the LWLocks (step 157): such a
-  library takes a `std::mutex`.
+- **Gone, the API for extensions' shared state**:
+  `shmem_request_hook` and `shmem_startup_hook` with §2's
+  registry (step 173), and `RequestNamedLWLockTranche()` with
+  the LWLocks (step 157). Nothing in the tree used them; a
+  library in `shared_preload_libraries` keeps state of its own,
+  under a `std::mutex`.
 
 ## 7. Order of work
 
@@ -374,7 +364,8 @@ has a caller still, and goes with the step that removes it:
    (158), PGPROC gone (159), `pg_blocking_pids()` asking sm1's
    waits-for graph (166); then `pg_lock_status()` asks sm1's
    lock table.
-5. **The registry** of §2, once each block is a pcb field.
+5. **The registry** of §2: done (`WORKNOTE.md` step 173),
+   each block a pcb field. Left: dynahash's shared mode.
 
 Each step is checked by the full suite and by `make tsan`;
 asserts are on in every build (`dg.mk`), so a broken invariant

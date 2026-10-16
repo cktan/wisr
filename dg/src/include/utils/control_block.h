@@ -55,12 +55,6 @@ struct sm_vfd_cache_free_t {
   void operator()(sm_vfd_cache_t *cache) const;
 };
 
-/* shmem.c: the index of the structures the threads share, by name. */
-typedef struct shmem_index_t shmem_index_t;
-struct shmem_index_free_t {
-  void operator()(shmem_index_t *index) const;
-};
-
 /* session_registry.c: the sessions registered, and a session's record. */
 struct session_registry_t;
 struct session_registry_free_t {
@@ -85,10 +79,11 @@ struct advisory_state_free_t {
  */
 typedef struct pcb_t {
   std::mutex stderr_mutex; /* elog.c: one message at a time to stderr */
-  std::unique_ptr<shmem_index_t, shmem_index_free_t> shmem_index;
 
   /* injection_point.c: one attach or detach at a time */
   std::mutex injection_point_mutex;
+  /* injection_point.c: its control struct, malloc'd, with the build option */
+  struct InjectionPointsCtl *injection_points = nullptr;
 
   /*
    * xact.c: the next local transaction id, a virtual xid's low part, given

@@ -1417,8 +1417,6 @@ thread_local /*SHARED*/ bool process_shared_preload_libraries_in_progress =
     false;
 thread_local /*SHARED*/ bool process_shared_preload_libraries_done = false;
 
-thread_local /*SHARED*/ shmem_request_hook_type shmem_request_hook = NULL;
-thread_local /*LOCAL*/ bool process_shmem_requests_in_progress = false;
 
 /*
  * load the shared libraries listed in 'libraries'
@@ -1487,16 +1485,6 @@ void process_session_preload_libraries(void) {
                  false);
   load_libraries(local_preload_libraries_string, "local_preload_libraries",
                  true);
-}
-
-/*
- * process any shared memory requests from preloaded libraries
- */
-void process_shmem_requests(void) {
-  process_shmem_requests_in_progress = true;
-  if (shmem_request_hook)
-    shmem_request_hook();
-  process_shmem_requests_in_progress = false;
 }
 
 void pg_bindtextdomain(const char *domain) {

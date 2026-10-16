@@ -64,9 +64,6 @@ static thread_local /*LOCAL*/ TransactionId cachedXidIsNotInProgress =
  * Initialize the session registry during postmaster startup.
  */
 void ProcArrayShmemInit(void) {
-  /* A snapshot's count of completed transactions starts at 1, and stays. */
-  if (!IsUnderPostmaster)
-    TransamVariables->xactCompletionCount = 1;
   /* The sessions are in a registry of the pcb's (SHMEM.md section 5.2). */
   session_registry_init();
   /* Advisory locks are in a table of the pcb's, by the sessions' records. */
@@ -180,14 +177,12 @@ Snapshot GetSnapshotData(Snapshot snapshot) {
   /*
    * No PostgreSQL transaction id is ever assigned (WORKNOTE.md steps 45 and
    * 137), and what a session sees is sm's snapshot, not this one: so no xid
-   * is in progress, and every snapshot is the same, its xmin and xmax the xid
-   * after the last completed, which is set before the first session starts
-   * and never moves.  It is made with no lock and no scan of the proc array
-   * (SHMEM.md section 7, step 3).  The command id is the caller's, as before.
+   * is in progress, and every snapshot is the same, its xmin and xmax the
+   * first normal xid, after the last completed, which none ever is.  It is
+   * made with no lock and no scan of the proc array (SHMEM.md section 7,
+   * step 3).  The command id is the caller's, as before.
    */
-  xmax = XidFromFullTransactionId(TransamVariables->latestCompletedXid);
-  TransactionIdAdvance(xmax);
-  Assert(TransactionIdIsNormal(xmax));
+  xmax = FirstNormalTransactionId;
 
   if (!TransactionIdIsValid(tcb->xmin))
     tcb->xmin = TransactionXmin = xmax;
@@ -198,7 +193,8 @@ Snapshot GetSnapshotData(Snapshot snapshot) {
   snapshot->xcnt = 0;
   snapshot->subxcnt = 0;
   snapshot->suboverflowed = false;
-  snapshot->snapXactCompletionCount = TransamVariables->xactCompletionCount;
+  /* No transaction with an xid completes: the count stays at 1. */
+  snapshot->snapXactCompletionCount = 1;
   snapshot->curcid = GetCurrentCommandId(false);
   snapshot->active_count = 0;
   snapshot->regd_count = 0;
