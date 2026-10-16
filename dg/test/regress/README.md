@@ -125,7 +125,7 @@ tables are missing in every file:
 | 7 | `invalid input syntax for type ?` | numeric `nan`/`Infinity` 3 (no NaN, by design); time zone abbreviations `EDT`, `zulu`, `MET DST` 4 |
 | 7 | `unrecognized configuration parameter "?"` | parallel query settings 5, `max_prepared_transactions`, `track_counts` |
 | 5 | `function ?(...) does not exist` | `normalize`, `gisthandler`, `pg_notify`, `pg_stat_force_next_flush`, `jsonb_path_query` |
-| 5 | `relation pg_attribute cannot be opened` | `ctid`, `cmin`: system columns |
+| 5 | `relation pg_attribute cannot be opened` | `ctid`, `cmin`: system columns, found since `WORKNOTE.md` step 195, not measured since |
 | 3 | `relation pg_class cannot be opened` | `pg_partition_tree`, `\d+`, `GRANT` on a table |
 | 3 | `relation pg_constraint cannot be opened` | `GROUP BY` a primary key, other columns read through it: `select_implicit`, `select_having`, `functional_deps` |
 | 3 | `type "?" does not exist` | `textrange`, `textmultirange` (test_setup's), `tsvector` |
@@ -164,5 +164,5 @@ Bigger, and each needs a decision of record first:
 
 Not worth doing for the suite: the parallel query settings
 (7 files) were removed with their module, and the plans those
-files print would differ anyway; `INHERITS`, partitions and
-`ctid` are refused by design.
+files print would differ anyway; `INHERITS` and partitions are
+refused by design.

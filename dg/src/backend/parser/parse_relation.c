@@ -807,12 +807,13 @@ static int scanRTEForColumn(ParseState *pstate, RangeTblEntry *rte, Alias *eref,
   if (rte->rtekind == RTE_RELATION && rte->relkind != RELKIND_COMPOSITE_TYPE) {
     /* quick check to see if name could be a system column */
     attnum = specialAttNum(colname);
-    if (attnum != InvalidAttrNumber) {
-      /* now check to see if column actually is defined */
-      if (SearchSysCacheExists2(ATTNUM, ObjectIdGetDatum(rte->relid),
-                                Int16GetDatum(attnum)))
-        result = attnum;
-    }
+    /*
+     * Every relation but a view has the system columns (heap.c's
+     * AddNewAttributeTuples()). digres has no pg_attribute rows to ask
+     * (SYSCATALOG.md section 2), so the relkind says.
+     */
+    if (attnum != InvalidAttrNumber && rte->relkind != RELKIND_VIEW)
+      result = attnum;
   }
 
   return result;
@@ -3009,6 +3010,10 @@ char *get_rte_attribute_name(RangeTblEntry *rte, AttrNumber attnum) {
    */
   if (rte->alias && attnum > 0 && attnum <= list_length(rte->alias->colnames))
     return strVal(list_nth(rte->alias->colnames, attnum - 1));
+
+  /* A system column's name is compiled in; digres has no pg_attribute. */
+  if (rte->rtekind == RTE_RELATION && attnum < 0)
+    return pstrdup(NameStr(SystemAttributeDefinition(attnum)->attname));
 
   /*
    * If the RTE is a relation, go to the system catalogs not the

@@ -1,0 +1,52 @@
+# Verify a table's system columns are found by name: ctid and tableoid
+# read, and a row is found, updated and deleted by its ctid.
+# 1. Make a table of three rows.
+# 2. Read each row's ctid, plain and qualified: three, each different.
+# 3. Find one row by its ctid.
+# 4. Read tableoid: each row's is the table's.
+# 5. Update one row and delete another by their ctids.
+# 6. Show the plan's output naming ctid.
+
+statement ok
+create table sc (a int, b text)
+
+statement ok
+insert into sc values (1, 'one'), (2, 'two'), (3, 'three')
+
+query I nosort
+select count(distinct ctid) from sc
+----
+3
+
+query I nosort
+select count(distinct sc.ctid) from sc
+----
+3
+
+query T nosort
+select b from sc where ctid = (select ctid from sc where a = 2)
+----
+two
+
+query T nosort
+select distinct tableoid::regclass from sc
+----
+sc
+
+statement ok
+update sc set b = 'TWO' where ctid = (select ctid from sc where a = 2)
+
+statement ok
+delete from sc where ctid = (select ctid from sc where a = 3)
+
+query IT rowsort
+select a, b from sc
+----
+1	one
+2	TWO
+
+query T nosort
+explain (verbose, costs off) select ctid from sc
+----
+Seq Scan on public.sc
+  Output: ctid

@@ -5662,3 +5662,36 @@ gone.
   import failed, as it did, reached by nothing as
   `ImportSnapshot()` refuses first; and `CountOtherDBBackends()`,
   declared and never defined.
+
+## Step 195: a system column is found by name
+
+Found in step 193: `select ctid from t` failed, "relation 2659
+cannot be opened: digres has no catalog tables". So did
+`tableoid`, `xmin` and the rest, on a table in sm and on a
+catalog relation.
+
+- **The parser asked pg_attribute.** parser
+  `parse_relation.c`'s `scanRTEForColumn()` looked up a system
+  column's name in the `ATTNUM` syscache, to ask whether the
+  relation has it; digres has no `pg_attribute` rows to find
+  (`SYSCATALOG.md` §2). Every relation but a view has them
+  (catalog `heap.c`'s `AddNewAttributeTuples()`), so the
+  relkind answers instead.
+- **EXPLAIN VERBOSE asked it too.** `get_rte_attribute_name()`
+  names a system column from its compiled-in definition
+  (`SystemAttributeDefinition()`).
+- **What each gives.** `ctid` is the row's tid, its rowno
+  (`smstore_rowno_to_tid()`), and `tableoid` the table's oid,
+  which each read sets (step 190). `WHERE ctid =` runs a TID
+  scan, and `UPDATE` and `DELETE` by ctid work. `xmin`, `xmax`,
+  `cmin` and `cmax` are found now, and refused as the row is
+  read: "cannot retrieve a system column in this context", as
+  sm keeps no transaction ids in a row.
+- `test/slt/system_columns.test`: ctid read plain and
+  qualified, a row found, updated and deleted by its ctid,
+  tableoid, and EXPLAIN's output naming ctid. Its answers
+  are written by hand, as PostgreSQL 18 gives them: no
+  PostgreSQL 18 here to fill them. 8 of its 10 records failed
+  without the change.
+- Left: a catalog relation's row has no tid, so its `ctid` is
+  `(4294967295,0)`.
