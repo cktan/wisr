@@ -128,8 +128,9 @@ tsan: gen $(LIBSQ) $(LIBSM_TSAN) $(ROCKSDB_TSAN)
 # tests keep what PostgreSQL's parser printed for each of their files;
 # "digres --parse" prints the same for raw_parser(), so they check
 # that digres still parses to PostgreSQL's nodes.
-# The server is built by a make of its own: a goal named here is passed
-# down to every directory, and none of them has a "test".
+# The server is built by a make of its own, here and in each target below
+# that runs tests: a goal named here is passed down to every directory,
+# and none of them has a "test", or any of the others.
 .PHONY: test
 test:
 	$(MAKE) all
@@ -154,19 +155,20 @@ build/slt: test/slt/slt.cc
 
 # The sqllogictest files under test/slt, on digres.
 .PHONY: slt
-slt: all build/slt
+slt:
+	$(MAKE) all
+	$(MAKE) build/slt
 	test/slt.sh
 
 # PostgreSQL 18's isolation specs on digres, each against what
 # test/isolation_specs.txt says it is to do.
 .PHONY: isolation
-isolation: all
+isolation:
+	$(MAKE) all
 	test/isolation.sh
 
 # PostgreSQL 18's regression suite on digres: a report of what fails and
-# why (test/regress/README.md). It only measures, and never fails. It
-# builds with a make of its own, as test does: a goal named here would
-# be passed down to src/, which has no regress.
+# why (test/regress/README.md). It only measures, and never fails.
 .PHONY: regress
 regress:
 	$(MAKE) all
@@ -175,7 +177,9 @@ regress:
 # A sample of SQLite's whole corpus, fetched into build/slt-corpus, on
 # PostgreSQL 18 and on digres: what digres alone fails.
 .PHONY: slt-corpus
-slt-corpus: all build/slt
+slt-corpus:
+	$(MAKE) all
+	$(MAKE) build/slt
 	test/slt_corpus.sh
 
 # sq builds its own library; whether it is up to date is sq's to say.

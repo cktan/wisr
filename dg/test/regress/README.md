@@ -62,7 +62,7 @@ past their first error, not that N files pass.
 
 ## Results, 2026-10-16
 
-At `0d2bed5` with `WORKNOTE.md` step 188, an assertion build
+At `c1c8b87`, an assertion build
 at `-O0` on x86_64; 230 files in 3.5 minutes. Two runs gave
 the same summary, causes, crashes and setup.
 
@@ -72,26 +72,26 @@ the same summary, causes, crashes and setup.
   skip themselves on this database's encoding and locale, as
   they do on PostgreSQL: `collate.icu.utf8`,
   `collate.linux.utf8`, `collate.windows.win1252`.
-- **211 fail, 3 crash, no timeouts.**
+- **214 fail, no crashes, no timeouts.**
 
 ### Crashes
 
-Two assertions, each reproducible by running the file
-alone:
+None now. The suite found three assertions, all fixed:
 
-| assertion | files | statement |
-|---|---|---|
-| `DatumGetObjectId(ldatum) == table_oid`, execCurrent.c:212 | portals, rowsecurity | `DELETE` / `UPDATE ... WHERE CURRENT OF` |
-| `!TTS_EMPTY(slot)`, execTuples.c:1267 | foreign_key | `UPDATE` of a self-referencing key `ON UPDATE CASCADE`, in a transaction |
+| assertion | files | statement | fixed by |
+|---|---|---|---|
+| `lockmode != NoLock \|\| CheckRelationLockedByMe(...)`, relation.c:65 | insert_conflict, create_index, guc, temp, truncate | DDL on a descriptor cached in an earlier transaction | `WORKNOTE.md` step 188 |
+| `DatumGetObjectId(ldatum) == table_oid`, execCurrent.c:212 | portals, rowsecurity | `DELETE` / `UPDATE ... WHERE CURRENT OF` | `cb2cbac` |
+| `!TTS_EMPTY(slot)`, execTuples.c:1267 | foreign_key | `UPDATE` of a self-referencing key `ON UPDATE CASCADE`, in a transaction | `36ed57b` |
 
-A third, `relation_open()`'s `NoLock` assertion, stopped five
-more files, on DDL that read a descriptor cached in an earlier
-transaction before sm's lock; step 188 fixed it.
+Two bugs that are not crashes:
 
-One more bug, not a crash: in `strings`,
-`SUBSTRING('abcdefg' SIMILAR '#"(b_d)#"%' ESCAPE '#')`, which
-is NULL on PostgreSQL, failed with `function 0x... returned
-NULL`; step 196 fixed it.
+- In `strings`, `SUBSTRING('abcdefg' SIMILAR '#"(b_d)#"%'
+  ESCAPE '#')`, which is NULL on PostgreSQL, failed with
+  `function 0x... returned NULL`; step 196 fixed it.
+- In `temp`, once a temporary table that hid a table of the
+  same name is dropped, `DROP INDEX i_temptest` does not find
+  the other table's index of that name.
 
 ### What test_setup cannot do
 
@@ -114,18 +114,18 @@ tables are missing in every file:
 | files | cause | what it is |
 |---|---|---|
 | 29 | `type ? is not supported yet` | `name` 3, `box` 3, `oid` 2, `point` 2, and 19 more one file each: the other geometric types, `bit`, `money`, `pg_lsn`, `timetz`, `cidr`, `macaddr`, `xid8`, `jsonb`, `xml`, arrays, ranges |
-| 19 | `a relation's storage cannot be made` | views 11 (one inside `CREATE SCHEMA`), `CREATE TYPE ... AS (...)` 4, `CREATE TABLE AS` 4 |
+| 20 | `a relation's storage cannot be made` | views 11 (one inside `CREATE SCHEMA`), `CREATE TYPE ... AS (...)` 4, `CREATE TABLE AS` 4, `CREATE MATERIALIZED VIEW` 1 |
 | 19 | `CREATE TABLE supports only columns, ...` | `WITH (fillfactor, autovacuum_enabled)` 5, `INHERITS` 6, partitions 3, `CHECK` 1, others |
+| 17 | `relation pg_authid cannot be opened` | `CREATE`/`DROP ROLE`, `CREATE USER` |
 | 16 | `language "?" does not exist` | `plpgsql` 10, `sql` 6 |
-| 16 | `relation pg_authid cannot be opened` | `CREATE`/`DROP ROLE`, `CREATE USER` |
-| 15 | `test_setup could not make a table: type ? ...` | `onek` 8 and `tenk1` 5 (`name`), `point_tbl` 1, `road` 1 |
+| 16 | `test_setup could not make a table: type ? ...` | `onek` 8 and `tenk1` 6 (`name`), `point_tbl` 1, `road` 1 |
 | 13 | `relation "?" does not exist` | catalogs and views digres lacks (`pg_prepared_statements`, `pg_locks`, `pg_range`, ...), and tables a file made with what failed |
 | 9 | `relation pg_default_acl cannot be opened` | `CREATE FUNCTION`, `CREATE AGGREGATE` |
 | 9 | `relation pg_type cannot be written` | `CREATE TYPE ... AS ENUM`, `CREATE DOMAIN`, shell types |
 | 7 | `invalid input syntax for type ?` | numeric `nan`/`Infinity` 3 (no NaN, by design); time zone abbreviations `EDT`, `zulu`, `MET DST` 4 |
 | 7 | `unrecognized configuration parameter "?"` | parallel query settings 5, `max_prepared_transactions`, `track_counts` |
 | 5 | `function ?(...) does not exist` | `normalize`, `gisthandler`, `pg_notify`, `pg_stat_force_next_flush`, `jsonb_path_query` |
-| 5 | `relation pg_attribute cannot be opened` | `ctid`, `cmin`: system columns, found since `WORKNOTE.md` step 195, not measured since |
+| 3 | `ALTER TABLE supports only ADD COLUMN, ...` | `vacuum`, `identity`, and `strings` past step 196 |
 | 3 | `relation pg_class cannot be opened` | `pg_partition_tree`, `\d+`, `GRANT` on a table |
 | 3 | `relation pg_constraint cannot be opened` | `GROUP BY` a primary key, other columns read through it: `select_implicit`, `select_having`, `functional_deps` |
 | 3 | `type "?" does not exist` | `textrange`, `textmultirange` (test_setup's), `tsvector` |
@@ -134,28 +134,26 @@ tables are missing in every file:
 
 By files unblocked for the work, the cheapest first:
 
-1. **The crashes**, before any feature: two bugs, three
-   files.
-2. **Load the `Default` time zone abbreviations.**
+1. **Load the `Default` time zone abbreviations.**
    `timezone_abbreviations` is empty, so `EDT` and `zulu` are
    unknown: 4 files (`time`, `timestamp`, `timestamptz`,
    `horology`), likely a setting and an installed file.
-3. **`name`.** 3 files directly, and through `onek` and
-   `tenk1`, 13 more: 16 files, the most of any one change.
+2. **`name`.** 3 files directly, and through `onek` and
+   `tenk1`, 14 more: 17 files, the most of any one change.
    It is what `test_setup`'s busiest tables need. (`char(n)`,
    which they needed too, is done: `char` passes, and 8 more
    files got past it.)
-4. **Accept and ignore `WITH (fillfactor, autovacuum_enabled)`**
+3. **Accept and ignore `WITH (fillfactor, autovacuum_enabled)`**
    on `CREATE TABLE`: sm has no pages to fill. 5 files.
-5. **`CREATE TABLE AS`**, as a `CREATE TABLE` and an
+4. **`CREATE TABLE AS`**, as a `CREATE TABLE` and an
    `INSERT ... SELECT`: 4 files, and `onek2` and `tenk2` in
    `test_setup`.
-6. **The geometric types**, `point`, `box`, `path` and the
+5. **The geometric types**, `point`, `box`, `path` and the
    rest: some 12 files, and `POINT_TBL`, `person`, `road`.
 
 Bigger, and each needs a decision of record first:
 
-- **Roles** (16 files): `pg_authid` is compiled in, and roles
+- **Roles** (17 files): `pg_authid` is compiled in, and roles
   are the instance's, which a database must not depend on.
 - **Views** (10 files, and many more past their first error):
   rules have nowhere to be kept.

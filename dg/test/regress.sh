@@ -103,13 +103,15 @@ n=0
 for t in "${files[@]}"; do
   n=$((n + 1))
   mkdir -p "$work/$t"
+  # The file's part of the log starts before its database is made, so a
+  # crash in making it is the file's, with its TRAP: line.
+  from=$(stat -c %s "$work/log")
   if ! fresh_database > "$work/$t/db" 2>&1; then
     # The server is gone or does not answer: the file before left it so.
     echo "regress: no fresh database for $t; the server is restarted" \
       >> "$work/log"
     restart_server && fresh_database >> "$work/$t/db" 2>&1
   fi
-  from=$(stat -c %s "$work/log")
   # test_setup first, then the file, in the same database. pg_regress
   # finds the .sql and expected files under --inputdir; timeout stops
   # its whole process group, the psql it runs with it.
