@@ -170,7 +170,44 @@ struct index_rec_t {
   bool operator==(const index_rec_t&) const = default;
 };
 
-/* A table, its columns and its indexes: one blob. */
+/*
+ * A foreign key of a table, its child (FOREIGNKEY.md at the top
+ * level): the parent table, the unique index of the parent whose
+ * keys are ref_attnums, and the column pairs. The actions, the
+ * match type and deferrable are kept for the host, which checks the
+ * rows, and acted on by no level; host is the host's blob.
+ */
+struct fkey_rec_t {
+  uint64_t oid;
+  std::string name;
+  uint64_t ref_table;
+  uint64_t ref_index;
+  std::vector<int32_t> attnums;     /* the child's, 0-based */
+  std::vector<int32_t> ref_attnums; /* the parent's, pair by pair */
+  char on_update = 'a';             /* 'a','r','c','n','d' */
+  char on_delete = 'a';
+  char match = 's'; /* 's' simple, 'f' full */
+  bool deferrable = false;
+  bool deferred = false;
+  bool validated = true; /* the rows there were checked */
+  std::string host;
+  bool operator==(const fkey_rec_t &) const = default;
+};
+
+/* A foreign key that references a table: its child, and its oid. */
+struct fkey_ref_t {
+  uint64_t table;
+  uint64_t fkey;
+  bool operator==(const fkey_ref_t &) const = default;
+};
+
+/*
+ * A table, its columns, its indexes and its foreign keys: an entry
+ * each. referenced_by is derived, never stored: the foreign keys of
+ * the tables, this one among them, that reference it, which loading
+ * the catalog and the DDL on a foreign key keep up (FOREIGNKEY.md
+ * §4).
+ */
 struct table_rec_t {
   uint64_t nspoid;
   std::string name;
@@ -179,6 +216,8 @@ struct table_rec_t {
   uint16_t next_relid;
   std::vector<column_rec_t> columns;
   std::vector<index_rec_t> indexes;
+  std::vector<fkey_rec_t> fkeys;
+  std::vector<fkey_ref_t> referenced_by;
 };
 
 /* A column of a loaded table. */
@@ -811,6 +850,36 @@ int cat_set_toast(catalog_t* cat, bool on);
  * table's definition, and its entries.
  */
 int drop_index(session_t* session, uint64_t table, uint64_t oid);
+
+/*
+ * Add the foreign key def to the table, its child (FOREIGNKEY.md §5),
+ * under the child's lock X and then the parent's, def.ref_table; its
+ * oid, def.oid ignored, is set in oid. It needs 1 to 32 column pairs,
+ * every column live, def.ref_index a valid unique index of the parent
+ * with no predicate or expression whose keys are def.ref_attnums in
+ * any order, both tables temporary or neither, and a name free among
+ * the child's foreign keys, else SM_ERR_INVALID, or SM_ERR_DUPKEY for
+ * the name. No row is read: def.validated is the caller's word.
+ */
+int create_fkey(session_t* session, uint64_t table, const fkey_rec_t& def,
+                uint64_t& oid);
+
+/* Drop the foreign key oid of the table, under both tables' locks X. */
+int drop_fkey(session_t* session, uint64_t table, uint64_t oid);
+
+/* Mark the foreign key oid of the table validated: its rows checked. */
+int validate_fkey(session_t* session, uint64_t table, uint64_t oid);
+
+/* Rename the foreign key oid of the table; a taken name is DUPKEY. */
+int rename_fkey(session_t* session, uint64_t table, uint64_t oid,
+                std::string_view name);
+
+/*
+ * The foreign key oid as s sees it, and its table, the child, into
+ * table and out: 0, or 1 if there is none. It takes no lock.
+ */
+int cat_get_fkey(const session_t* s, uint64_t oid, uint64_t& table,
+                 fkey_rec_t& out);
 
 /*
  * Queue every index of cat that is pending, for the builder. An

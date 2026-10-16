@@ -11,6 +11,8 @@
 #include "../catalog/internal.h"
 
 #include <algorithm>
+#include <functional>
+#include <memory>
 #include <string>
 #include <unordered_set>
 
@@ -286,6 +288,44 @@ int create_temp_table(session_t *session, std::string_view name,
  * its columns or by the column attnum alone. A sequence is owned
  * only in its table's namespace, so only that one is looked in.
  */
+/*
+ * Whether a foreign key that references the table rec, under its
+ * lock X, meets pred; by is then its name. Its child's definition is
+ * read without the child's lock: a foreign key of it is made and
+ * dropped only under rec's lock too.
+ */
+static bool referencing(session_t *session, const table_rec_t &rec,
+                        const std::function<bool(const fkey_rec_t &)> &pred,
+                        std::string &by) {
+  for (const fkey_ref_t &r : rec.referenced_by) {
+    std::shared_ptr<const table_def_t> child = cat_get_table(session, r.table);
+    if (!child) {
+      continue;
+    }
+    for (const fkey_rec_t &fk : child->rec.fkeys) {
+      if (fk.oid == r.fkey && pred(fk)) {
+        by = fk.name;
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/*
+ * Take the foreign key fkey out of the referenced_by of its parent,
+ * the table parent, under its lock X.
+ */
+static int unreference(session_t *session, uint64_t parent, uint64_t fkey) {
+  table_rec_t p;
+  if (cat_get_table_rec(session, parent, p) != 0) {
+    return -1;
+  }
+  std::erase_if(p.referenced_by,
+                [&](const fkey_ref_t &r) { return r.fkey == fkey; });
+  return cat_put_table(session, parent, p);
+}
+
 static int drop_owned_sequences(session_t *session, uint64_t oid,
                                 uint64_t nspoid, int32_t attnum) {
   std::vector<std::string> names;
@@ -317,8 +357,27 @@ static int drop_owned_sequences(session_t *session, uint64_t oid,
 /* Drop a table; see sm3.h. */
 int drop_table(session_t *session, uint64_t oid) {
   table_rec_t rec;
-  if (cat_get_table_rec(session, oid, rec) != 0 ||
-      drop_owned_sequences(session, oid, rec.nspoid, -1) != 0 ||
+  if (cat_get_table_rec(session, oid, rec) != 0) {
+    return -1;
+  }
+  // A parent another table's foreign key references stays; one of its
+  // own goes with it (FOREIGNKEY.md §5).
+  for (const fkey_ref_t &r : rec.referenced_by) {
+    if (r.table != oid) {
+      return sm1::seterr(sm1::SM_ERR_INUSE,
+                         "drop table: " + rec.name +
+                             " is referenced by a foreign key of table " +
+                             std::to_string(r.table));
+    }
+  }
+  // Its foreign keys leave their parents' referenced_by.
+  for (const fkey_rec_t &fk : rec.fkeys) {
+    if (fk.ref_table != oid &&
+        unreference(session, fk.ref_table, fk.oid) != 0) {
+      return -1;
+    }
+  }
+  if (drop_owned_sequences(session, oid, rec.nspoid, -1) != 0 ||
       cat_del_table(session, oid) != 0) {
     return -1;
   }
@@ -454,6 +513,16 @@ int drop_column(session_t *session, uint64_t oid, std::string_view name) {
                      std::string(name));
     }
   }
+  for (const fkey_rec_t &fk : rec.fkeys) {
+    if (std::find(fk.attnums.begin(), fk.attnums.end(), at) !=
+        fk.attnums.end()) {
+      return sm1::seterr(sm1::SM_ERR_INUSE, "drop column: foreign key " +
+                                                fk.name + " uses " +
+                                                std::string(name));
+    }
+  }
+  // A column a foreign key references is a key of the parent's
+  // unique index, which the index's check above has refused.
   // The sequences it owns go with it, as PostgreSQL's do.
   if (drop_owned_sequences(session, oid, rec.nspoid, at) != 0) {
     return -1;
@@ -618,6 +687,13 @@ int drop_index(session_t *session, uint64_t table, uint64_t oid) {
     return sm1::seterr(sm1::SM_ERR_NOTFOUND,
                        "drop index: no index " + std::to_string(oid));
   }
+  std::string by;
+  if (referencing(
+          session, rec,
+          [&](const fkey_rec_t &fk) { return fk.ref_index == oid; }, by)) {
+    return sm1::seterr(sm1::SM_ERR_INUSE,
+                       "drop index: foreign key " + by + " uses " + it->name);
+  }
   // Its entries are the keys under its relid in the table's store;
   // sm1 has no range delete, so each is erased.
   uint16_t p = it->relid, q = static_cast<uint16_t>(p + 1);
@@ -773,6 +849,160 @@ int own_sequence(session_t *session, uint64_t oid, uint64_t table,
 /* A sequence's next value; see sm3.h. */
 int nextval(session_t *session, uint64_t oid, uint64_t &out) {
   return sm1::nextseq(session->sm1, sequence_counter(oid), out);
+}
+
+/* Whether attnum is a live column of rec. */
+static bool live_attnum(const table_rec_t &rec, int32_t attnum) {
+  return attnum >= 0 && static_cast<size_t>(attnum) < rec.columns.size() &&
+         !rec.columns[attnum].dropped;
+}
+
+/* The foreign key oid of rec, or nullptr. */
+static fkey_rec_t *fkey_in(table_rec_t &rec, uint64_t oid) {
+  for (fkey_rec_t &fk : rec.fkeys) {
+    if (fk.oid == oid) {
+      return &fk;
+    }
+  }
+  return nullptr;
+}
+
+/* Add a foreign key to the table table; see sm3.h. */
+int create_fkey(session_t *session, uint64_t table, const fkey_rec_t &def,
+                uint64_t &oid) {
+  size_t n = def.attnums.size();
+  if (def.name.empty()) {
+    return invalid("create foreign key: no name");
+  }
+  if (n < 1 || n > 32 || def.ref_attnums.size() != n) {
+    return invalid("create foreign key: 1 to 32 columns at each end, as "
+                   "many at one as at the other");
+  }
+  if (std::string_view("arcnd").find(def.on_update) == std::string_view::npos ||
+      std::string_view("arcnd").find(def.on_delete) == std::string_view::npos ||
+      (def.match != 's' && def.match != 'f')) {
+    return invalid("create foreign key: an action or a match type unknown");
+  }
+  // The child's lock X, then the parent's (FOREIGNKEY.md §7).
+  table_rec_t child, parent;
+  bool self = def.ref_table == table;
+  if (cat_get_table_rec(session, table, child) != 0 ||
+      (!self && cat_get_table_rec(session, def.ref_table, parent) != 0)) {
+    return -1;
+  }
+  table_rec_t &p = self ? child : parent;
+  if ((child.nspoid == nsp_temp) != (p.nspoid == nsp_temp)) {
+    return invalid("create foreign key: between a temporary table and a "
+                   "permanent one");
+  }
+  for (size_t i = 0; i < n; i++) {
+    if (!live_attnum(child, def.attnums[i]) ||
+        !live_attnum(p, def.ref_attnums[i])) {
+      return invalid("create foreign key: a column that is not there");
+    }
+  }
+  for (const fkey_rec_t &fk : child.fkeys) {
+    if (fk.name == def.name) {
+      return sm1::seterr(sm1::SM_ERR_DUPKEY,
+                         "create foreign key: " + def.name + " is taken");
+    }
+  }
+  // The parent's unique index on its columns, in any order, plain and
+  // valid, which a check finds the parent row by.
+  const index_rec_t *x = nullptr;
+  for (const index_rec_t &i : p.indexes) {
+    x = i.oid == def.ref_index ? &i : x;
+  }
+  bool fits = x && x->unique && x->eval.empty() && x->keys.size() == n;
+  for (size_t i = 0; fits && i < n; i++) {
+    fits = x->keys[i].attnum >= 0 &&
+           std::find(def.ref_attnums.begin(), def.ref_attnums.end(),
+                     x->keys[i].attnum) != def.ref_attnums.end();
+  }
+  if (!fits ||
+      cat_get_index_state(session, x->oid).state != index_state_t::valid) {
+    return invalid("create foreign key: no valid unique index of the "
+                   "referenced table has its columns for keys");
+  }
+  if (cat_new_oid(session, oid) != 0) {
+    return -1;
+  }
+  child.fkeys.push_back(def);
+  child.fkeys.back().oid = oid;
+  p.referenced_by.push_back({table, oid});
+  if (cat_put_table(session, table, child) != 0 ||
+      (!self && cat_put_table(session, def.ref_table, parent) != 0)) {
+    return -1;
+  }
+  return 0;
+}
+
+/* Drop a foreign key of the table table; see sm3.h. */
+int drop_fkey(session_t *session, uint64_t table, uint64_t oid) {
+  table_rec_t child;
+  if (cat_get_table_rec(session, table, child) != 0) {
+    return -1;
+  }
+  fkey_rec_t *fk = fkey_in(child, oid);
+  if (!fk) {
+    return sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                       "drop foreign key: no foreign key " +
+                           std::to_string(oid));
+  }
+  uint64_t parent = fk->ref_table;
+  std::erase_if(child.fkeys, [&](const fkey_rec_t &k) { return k.oid == oid; });
+  if (parent == table) {
+    std::erase_if(child.referenced_by,
+                  [&](const fkey_ref_t &r) { return r.fkey == oid; });
+    return cat_put_table(session, table, child);
+  }
+  if (cat_put_table(session, table, child) != 0) {
+    return -1;
+  }
+  return unreference(session, parent, oid);
+}
+
+/* Mark a foreign key's rows checked; see sm3.h. */
+int validate_fkey(session_t *session, uint64_t table, uint64_t oid) {
+  table_rec_t child;
+  if (cat_get_table_rec(session, table, child) != 0) {
+    return -1;
+  }
+  fkey_rec_t *fk = fkey_in(child, oid);
+  if (!fk) {
+    return sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                       "validate foreign key: no foreign key " +
+                           std::to_string(oid));
+  }
+  fk->validated = true;
+  return cat_put_table(session, table, child);
+}
+
+/* Rename a foreign key; see sm3.h. */
+int rename_fkey(session_t *session, uint64_t table, uint64_t oid,
+                std::string_view name) {
+  if (name.empty()) {
+    return invalid("rename foreign key: no name");
+  }
+  table_rec_t child;
+  if (cat_get_table_rec(session, table, child) != 0) {
+    return -1;
+  }
+  fkey_rec_t *fk = fkey_in(child, oid);
+  if (!fk) {
+    return sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                       "rename foreign key: no foreign key " +
+                           std::to_string(oid));
+  }
+  for (const fkey_rec_t &k : child.fkeys) {
+    if (k.oid != oid && k.name == name) {
+      return sm1::seterr(sm1::SM_ERR_DUPKEY,
+                         "rename foreign key: " + std::string(name) +
+                             " is taken");
+    }
+  }
+  fk->name = name;
+  return cat_put_table(session, table, child);
 }
 
 } // namespace sm3

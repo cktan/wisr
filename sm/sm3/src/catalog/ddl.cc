@@ -195,6 +195,17 @@ int put_index(sm3::session_t *session, sm2::catkv_t *kv, uint64_t oid,
   return put_key(session, kv, key, blob);
 }
 
+/* Write the foreign key fk of the table oid, its child. */
+int put_fkey(sm3::session_t *session, sm2::catkv_t *kv, uint64_t oid,
+             const sm3::fkey_rec_t &fk) {
+  std::string key, blob;
+  if (sm3::part_key(sm3::kind_t::constraint, oid, fk.oid, key) != 0 ||
+      sm3::encode_constraint(fk, blob) != 0) {
+    return -1;
+  }
+  return put_key(session, kv, key, blob);
+}
+
 /*
  * Erase the state of the index x of the table oid, if it has one:
  * its entry, and in session's view. A pending index has none.
@@ -526,6 +537,11 @@ int cat_put_table(session_t *session, uint64_t oid, const table_rec_t &rec) {
         return -1;
       }
     }
+    for (const fkey_rec_t &fk : rec.fkeys) {
+      if (put_fkey(session, kv.get(), oid, fk) != 0) {
+        return -1;
+      }
+    }
     if (record_table(session, oid, rec) != 0) {
       return -1;
     }
@@ -605,6 +621,25 @@ int cat_put_table(session_t *session, uint64_t oid, const table_rec_t &rec) {
                                    erase_if_there(session, kv.get(), k) != 0)) {
         return -1;
       }
+    }
+  }
+  // A foreign key new or changed is written, and one gone erased;
+  // referenced_by is derived, and written nowhere.
+  auto fkey_of = [](const table_rec_t &r, uint64_t f) {
+    return std::find_if(r.fkeys.begin(), r.fkeys.end(),
+                        [f](const fkey_rec_t &k) { return k.oid == f; });
+  };
+  for (const fkey_rec_t &fk : rec.fkeys) {
+    auto was = fkey_of(old, fk.oid);
+    if ((was == old.fkeys.end() || !(fk == *was)) &&
+        put_fkey(session, kv.get(), oid, fk) != 0) {
+      return -1;
+    }
+  }
+  for (const fkey_rec_t &fk : old.fkeys) {
+    if (fkey_of(rec, fk.oid) == rec.fkeys.end() &&
+        del_part(session, kv.get(), kind_t::constraint, oid, fk.oid) != 0) {
+      return -1;
     }
   }
   // A column dropped now takes its statistics with it.
@@ -725,6 +760,11 @@ int cat_del_table(session_t *session, uint64_t oid) {
   }
   for (size_t i = 0; i < rec.columns.size(); i++) {
     if (del_part(session, kv.get(), kind_t::column, oid, i) != 0) {
+      return -1;
+    }
+  }
+  for (const fkey_rec_t &fk : rec.fkeys) {
+    if (del_part(session, kv.get(), kind_t::constraint, oid, fk.oid) != 0) {
       return -1;
     }
   }

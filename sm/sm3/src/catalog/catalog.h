@@ -38,6 +38,7 @@ enum class kind_t : int16_t {
   index_state = 9, /* an index's state, keyed as its index is */
   stats = 10,      /* a table's statistics (SM3_DESIGN.md §6.6) */
   sequence = 11,   /* a sequence: its namespace, name and counter */
+  constraint = 12, /* a constraint, keyed by its table's oid and its own */
 };
 
 /* The catalog's format version, which META holds. */
@@ -156,6 +157,9 @@ int encode_collation(const collation_rec_t &rec, std::string &blob);
 int decode_collation(std::string_view blob, collation_rec_t &rec);
 int encode_sequence(const sequence_rec_t &rec, std::string &blob);
 int decode_sequence(std::string_view blob, sequence_rec_t &rec);
+/* A constraint's value: a foreign key's (FOREIGNKEY.md §3). */
+int encode_constraint(const fkey_rec_t &rec, std::string &blob);
+int decode_constraint(std::string_view blob, fkey_rec_t &rec);
 
 /*
  * A table's statistics, as its STATS entries hold them
@@ -192,6 +196,9 @@ enum class part_t {
   stats_table,
   stats_index,
   statistic,
+  constraint,
+  fkey,
+  fkey_pair,
 };
 
 /* A part's schema, and its layout, which the codec encodes by. */

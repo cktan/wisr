@@ -84,6 +84,7 @@ kinds' values are on disk, so frozen.
 | `INDEX_STATE` | 9 | table oid `int8`, index oid `int8` | one index's state, with why its build failed; none for a pending index |
 | `STATS` | 10 | table oid `int8`, index oid `int8`, n `int8` | the table's statistics, an entry for the table, (0, 0), and one a statistic: a column's (0, attnum + 1), an index expression's (index oid, place + 1); `SM3_DESIGN.md` §6.6 |
 | `SEQUENCE` | 11 | oid `int8` | a sequence: its namespace, name, start and increment |
+| `CONSTRAINT` | 12 | table oid `int8`, constraint oid `int8` | one constraint of the table, its child: a foreign key (`../FOREIGNKEY.md`) |
 
 - **A table is several entries.** Its own fields are under
   its `TABLE` key, each column under a `COLUMN` key, and each
@@ -154,6 +155,7 @@ COLUMN value      = column
 INDEX value       = index | key × nkey | include × ninclude | read × nread
 INDEX_STATE value = index state
 SEQUENCE value    = sequence
+CONSTRAINT value  = constraint | fkey | fkey pair × npairs
 ```
 
 | Part | Fields |
@@ -170,6 +172,9 @@ SEQUENCE value    = sequence
 | namespace | name `text` |
 | collation | name `text`, locale `text`, deterministic `bool`, ICU version `text` |
 | sequence | namespace `int8`, name `text`, start `int8`, increment `int8`, owner table `int8` or null, owner column `int4` or null |
+| constraint | oid `int8`, name `text`, type `int2` (`f`), validated `bool`, host `bytea` or null |
+| fkey | parent table `int8`, parent index `int8`, npairs `int4`, on update `int2`, on delete `int2`, match `int2`, deferrable `bool`, deferred `bool` |
+| fkey pair | child attnum `int4`, parent attnum `int4` |
 
 - **A part evolves as a tuple does.** A field appended to a
   part's schema reads as its missing value in a value written
@@ -521,6 +526,15 @@ begins with `cat_get_table_rec` and ends with `cat_put_table`.
   record.
 - **`create_collation(session, nspoid, name, locale,
   deterministic, oid)`** takes an oid and puts the collation.
+- **`create_fkey(session, table, def, oid)`**,
+  **`drop_fkey`**, **`validate_fkey`**, **`rename_fkey`**: a
+  foreign key of the table, its child, under its lock X and,
+  to add or drop one, its parent's (`../FOREIGNKEY.md` §5). Its
+  entry is the child's; the parent's `referenced_by` is derived,
+  at load and by these, and written nowhere. `drop_table` of a
+  parent another table references, `drop_index` of the parent
+  index a foreign key uses and `drop_column` of a child's column
+  in one are `SM_ERR_INUSE`.
 
 `create_index` holds the table's oid lock X to the end of
 its transaction, as every DDL does; it is the build that is

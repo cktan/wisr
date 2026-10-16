@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <map>
 #include <mutex>
+#include <unordered_set>
 
 namespace {
 
@@ -630,6 +631,43 @@ std::shared_ptr<const table_def_t> cat_get_table(const session_t *s,
     return own->second;
   }
   return cat_get_table(s->cat, oid);
+}
+
+/* A foreign key by its oid, as s sees it; see sm3.h. */
+int cat_get_fkey(const session_t *s, uint64_t oid, uint64_t &table,
+                 fkey_rec_t &out) {
+  // A table's newest change hides what the catalog has of it.
+  std::unordered_set<uint64_t> seen;
+  auto look = [&](uint64_t t, const std::shared_ptr<const table_def_t> &d) {
+    if (!seen.insert(t).second || !d) {
+      return false;
+    }
+    for (const fkey_rec_t &fk : d->rec.fkeys) {
+      if (fk.oid == oid) {
+        table = t;
+        out = fk;
+        return true;
+      }
+    }
+    return false;
+  };
+  for (auto it = s->tables.rbegin(); it != s->tables.rend(); ++it) {
+    if (look(it->oid, it->def)) {
+      return 0;
+    }
+  }
+  for (const auto &[t, d] : s->temp_tables) {
+    if (look(t, d)) {
+      return 0;
+    }
+  }
+  std::shared_lock lock(s->cat->mu);
+  for (const auto &[t, d] : s->cat->tables) {
+    if (look(t, d)) {
+      return 0;
+    }
+  }
+  return 1;
 }
 
 namespace {
