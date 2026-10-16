@@ -113,8 +113,10 @@ process a latch is always a thread's, and `sm_sys.h` already
 wakes a thread without losing the wake: so a latch is the
 owning thread's `INTERRUPT_LATCH` bit. `Latch` keeps only the
 owner, for others to find the thread by. What is left: the
-`Latch` handle itself, and the local and shared latches a thread
-switches between (`SwitchToSharedLatch()`), which are one bit.
+`Latch` handle itself, a thread's local latch, with its owner
+and the mutex that guards it. The shared latch a thread
+switched to (`SwitchToSharedLatch()`) went with PGPROC's latch
+(`WORKNOTE.md` step 158).
 
 ## 5. Shared structures
 
