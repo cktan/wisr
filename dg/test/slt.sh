@@ -62,8 +62,10 @@ if ! grep -q "ready to accept connections" "$work/log"; then
   exit 2
 fi
 
-# Run the files; what failed is in build/test/slt/failures.
-build/slt "${args[@]}" "host=$work port=$port dbname=postgres" "${files[@]}" \
+# Run the files; what failed is in build/test/slt/failures, and how long
+# each record took, the slowest first, in build/test/slt/times.
+build/slt "${args[@]}" --times "$work/times" \
+  "host=$work port=$port dbname=postgres" "${files[@]}" \
   > "$work/tally" 2> "$work/failures"
 status=$?
 
@@ -84,8 +86,10 @@ if grep -qE "terminated by signal|ThreadSanitizer|TRAP:" "$work/log"; then
   status=2
 fi
 
-read -r run failed skipped < <(awk '{ r += $2; f += $4; s += $6 }
-  END { print r + 0, f + 0, s + 0 }' "$work/tally")
+read -r run failed skipped secs < <(awk '{ r += $2; f += $4; s += $6;
+  t += $9 } END { printf "%d %d %d %.1f\n", r, f, s, t }' "$work/tally")
+echo "slt: $secs s on $target; the slowest record:"
+head -1 "$work/times" | cut -c1-120
 if [ $status = 0 ]; then
   echo "slt: PASSED (${#files[@]} files on $target, $run records, $skipped skipped)"
 else

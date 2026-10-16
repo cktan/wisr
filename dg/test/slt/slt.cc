@@ -1,17 +1,19 @@
 // slt -- run sqllogictest files on a PostgreSQL server, over libpq.
 //
-//   slt [--engine NAME]... [--rewrite] CONNINFO FILE...
+//   slt [--engine NAME]... [--rewrite] [--times FILE] CONNINFO FILE...
 //
 // Each FILE runs in a database of its own, made for it through CONNINFO
 // and dropped after. The format is SQLite's (README.md here), with
 // "statement error" taking a pattern for the message. --engine names
 // what "skipif" and "onlyif" match; --rewrite writes each query's
-// results back into its file instead of comparing them. The exit status
+// results back into its file instead of comparing them; --times writes
+// how long each record took to FILE, the slowest first. The exit status
 // is 1 if any record failed, 2 if a file could not be run.
 #include <libpq-fe.h>
 #include <openssl/evp.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -29,14 +31,31 @@ struct options_t {
   std::set<std::string> engines;
   bool rewrite = false;
   std::string conninfo;
+  std::string times_path; // where --times writes each record's time
 };
 
-// What one file's run counts.
+// How long one record took, where it is, and its SQL's first line.
+struct record_time_t {
+  double ms;
+  std::string where;
+  std::string sql;
+};
+
+// What one file's run counts, and how long it and each record took.
 struct tally_t {
   int run = 0;
   int failed = 0;
   int skipped = 0;
+  double seconds = 0;
+  std::vector<record_time_t> times;
 };
+
+// Milliseconds since START.
+double ms_since(std::chrono::steady_clock::time_point start) {
+  return std::chrono::duration<double, std::milli>(
+             std::chrono::steady_clock::now() - start)
+      .count();
+}
 
 // A file being run: its lines, the next one to read, and what it
 // holds across records.
@@ -367,6 +386,8 @@ void run_script(script_t &s, PGconn *conn, const options_t &opt, tally_t &t) {
       if (run)
         break;
     } else if (words[0] == "statement" || words[0] == "query") {
+      std::string sql = line < s.lines.size() ? s.lines[line] : "";
+      auto start = std::chrono::steady_clock::now();
       bool ok = words[0] == "statement"
                     ? run_statement(s, conn, words, line, run)
                     : run_query(s, conn, words, line, run, opt);
@@ -374,6 +395,8 @@ void run_script(script_t &s, PGconn *conn, const options_t &opt, tally_t &t) {
         t.skipped++;
         continue;
       }
+      t.times.push_back(
+          {ms_since(start), s.path + ":" + std::to_string(line), sql});
       t.run++;
       if (!ok)
         t.failed++;
@@ -462,31 +485,48 @@ int main(int argc, char **argv) {
       opt.engines.insert(argv[++i]);
     else if (a == "--rewrite")
       opt.rewrite = true;
+    else if (a == "--times" && i + 1 < argc)
+      opt.times_path = argv[++i];
     else if (opt.conninfo.empty())
       opt.conninfo = a;
     else
       files.push_back(a);
   }
   if (files.empty()) {
-    fprintf(stderr,
-            "usage: slt [--engine NAME]... [--rewrite] CONNINFO FILE...\n");
+    fprintf(stderr, "usage: slt [--engine NAME]... [--rewrite] "
+                    "[--times FILE] CONNINFO FILE...\n");
     return 2;
   }
   PGconn *admin = connect_to(opt.conninfo, "");
   if (!admin)
     return 2;
   int status = 0;
+  std::vector<record_time_t> times;
   for (const auto &f : files) {
     tally_t t;
+    auto start = std::chrono::steady_clock::now();
     if (!run_file(f, admin, opt, t)) {
       status = 2;
       continue;
     }
-    printf("%s: %d run, %d failed, %d skipped\n", f.c_str(), t.run, t.failed,
-           t.skipped);
+    t.seconds = ms_since(start) / 1000;
+    printf("%s: %d run, %d failed, %d skipped, in %.1f s\n", f.c_str(), t.run,
+           t.failed, t.skipped, t.seconds);
     if (t.failed && status == 0)
       status = 1;
+    times.insert(times.end(), t.times.begin(), t.times.end());
   }
   PQfinish(admin);
+  // Every record's time, the slowest first.
+  if (!opt.times_path.empty()) {
+    std::sort(times.begin(), times.end(),
+              [](const auto &a, const auto &b) { return a.ms > b.ms; });
+    std::ofstream out(opt.times_path);
+    char ms[32];
+    for (const auto &r : times) {
+      snprintf(ms, sizeof ms, "%10.1f", r.ms);
+      out << ms << " ms  " << r.where << "  " << r.sql << "\n";
+    }
+  }
   return status;
 }

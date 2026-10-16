@@ -4564,7 +4564,21 @@ are PostgreSQL 18's.
   in 51 seconds; digres fails 103 of `select4`'s, joins over
   two bitmap scans (`../sm/NEXT.md` §2), and takes 3 minutes
   55.
-- **Not in `make test`** until those pass.
+- **Each record is timed**: `--times FILE` writes every
+  record's time, the slowest first, and a file's tally line
+  has its time. What it showed: digres took 195 seconds to
+  PostgreSQL 18's 41, 184 of them in `select5`, planning
+  joins of up to 64 tables. The cause is the build: digres's
+  is `-O0` with asserts, so with `MEMORY_CONTEXT_CHECKING`
+  and `CLOBBER_FREED_MEMORY`, and its planning's time went to
+  `bms_is_valid_set()`, `AllocSetCheck()` and
+  `check_list_invariants()`. Built `-O2` without asserts,
+  digres took 46 seconds, and 39 for `select5` to
+  PostgreSQL's 37. Short statements still take about twice
+  PostgreSQL's time; that is not looked into.
+- **Not in `make test`** until those pass, and then
+  `select1` to `select4` only, about 11 seconds: `select5`
+  stays in `make slt`.
 - **Left for later**: named connections in a file, PostgreSQL's
   own regression suite as a measure of what digres runs,
   isolation specs, and moving `server.sh`'s SQL checks over.

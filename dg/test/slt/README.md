@@ -19,8 +19,10 @@ PostgreSQL 18 is the one installed in `$PG18`, `~/pg18` if
 that is not set. Each file runs in a database of its own,
 made for it and dropped after. What failed, with its line,
 its SQL and the expected and actual values, is in
-`build/test/slt/failures`; each file's counts are in
-`build/test/slt/tally`.
+`build/test/slt/failures`; each file's counts and time are in
+`build/test/slt/tally`, and every record's time, the slowest
+first, in `build/test/slt/times`. A time much worse than
+PostgreSQL 18's for the same record is a finding too.
 
 ## The format
 
