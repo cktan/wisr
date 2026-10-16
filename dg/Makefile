@@ -11,6 +11,8 @@
 #   make slt           run every sqllogictest file in test/slt
 #   make slt-corpus    run a sample of SQLite's whole corpus, fetched once
 #   make isolation     run PostgreSQL 18's isolation specs on digres
+#   make regress       run PostgreSQL 18's regression suite on digres, and
+#                      report what stops each file (test/regress/README.md)
 #   make tsan          build build/digres-tsan, under the thread
 #                      sanitizer, and run the statements in test/ with it
 #   make clean         remove objects and generated files
@@ -160,6 +162,15 @@ slt: all build/slt
 .PHONY: isolation
 isolation: all
 	test/isolation.sh
+
+# PostgreSQL 18's regression suite on digres: a report of what fails and
+# why (test/regress/README.md). It only measures, and never fails. It
+# builds with a make of its own, as test does: a goal named here would
+# be passed down to src/, which has no regress.
+.PHONY: regress
+regress:
+	$(MAKE) all
+	test/regress.sh
 
 # A sample of SQLite's whole corpus, fetched into build/slt-corpus, on
 # PostgreSQL 18 and on digres: what digres alone fails.

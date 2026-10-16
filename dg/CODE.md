@@ -71,6 +71,12 @@ The import itself is not built yet (`PLAN.md` §7).
   the others fail. Run it for any change to locks or waits; it
   takes ten minutes.
 
+- **`make -j4 regress`** runs PostgreSQL 18's regression
+  suite on digres, from the same tree, each file alone in a
+  database of its own, and writes which missing features stop
+  the most files (`test/regress/README.md`). It only
+  measures, and is in no `make test`; it takes four minutes.
+
 - **`make -j4 tsan`** builds `build/digres-tsan` under the
   thread sanitizer and runs the threaded tests and
   `server.sh` on it; a report fails it. Run it for any change
