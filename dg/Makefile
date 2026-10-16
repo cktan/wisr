@@ -6,8 +6,9 @@
 #   make gen           only generate
 #   make test          check the parser, with sq's tests given this
 #                      server, run the statements in test/, and check
-#                      initdb and a server that psql connects to
-#   make slt           run the sqllogictest files in test/slt
+#                      initdb and a server that psql connects to, and run
+#                      the sqllogictest files in test/slt but select5
+#   make slt           run every sqllogictest file in test/slt
 #   make tsan          build build/digres-tsan, under the thread
 #                      sanitizer, and run the statements in test/ with it
 #   make clean         remove objects and generated files
@@ -132,6 +133,13 @@ test:
 	test/run.sh
 	test/initdb.sh
 	test/server.sh
+	$(MAKE) build/slt
+	test/slt.sh $(SLT_QUICK)
+
+# The sqllogictest files make test runs: all but select5.test, whose
+# joins of up to 64 tables take three minutes in this build to plan.
+SLT_QUICK = $(filter-out %/select5.test,$(sort $(wildcard test/slt/*.test \
+    test/slt/sqlite/*.test)))
 
 # The sqllogictest runner (test/slt/README.md), a client of the
 # system's libpq, as psql is; it hashes a result with OpenSSL's MD5.

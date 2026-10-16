@@ -4582,3 +4582,35 @@ are PostgreSQL 18's.
 - **Left for later**: named connections in a file, PostgreSQL's
   own regression suite as a measure of what digres runs,
   isolation specs, and moving `server.sh`'s SQL checks over.
+
+## Step 156: a row read by rowno is the slot's own
+
+`../sm/NEXT.md` §2. SQLite's corpus (step 155) found 103
+joins in `select4.test` giving wrong rows: a nested loop over
+two bitmap scans returned the inner table's text in the outer
+table's column too.
+
+- **The cause**: a point read, `sm_tbl_read()`, hands out
+  bytes that last only until the session's next call to sm
+  (`../sm/include/sm.h`). `read_row()` in `access/sm`
+  `smstore.c` left the slot's values by reference pointing
+  into them; only a table with a numeric column was copied,
+  by `slot_from_sm()`. The inner side's next read then
+  overwrote the outer row's text. A cursor's row lasts until
+  that cursor's next call, so a seq scan was never affected.
+- **The fix**: `read_row()` materializes the slot, copying the
+  values passed by reference, as `smstore_lock_latest()`
+  already did. It serves the bitmap scan, the index scan and
+  `smstore_fetch_row()`. An index entry read back from its
+  row (`entry_from_row()`) is copied the same way.
+- **`NEXT.md` said digres copied** the row an index scan or a
+  bitmap scan fetches. It did not; it does now.
+- **`test/slt/point_read.test`**: nested loops of bitmap
+  scans, of index scans, and of an index scan inside, over
+  text columns; three of its four queries failed before the
+  fix. Its indexes are made before its rows: an index built
+  over rows is not planned with for some statements after
+  `CREATE INDEX` returns (`../sm/NEXT.md` §2).
+- **`make test` runs the sqllogictest files** but
+  `select5.test`, about 15 seconds; `make slt` runs them all.
+  All 10,723 records pass.

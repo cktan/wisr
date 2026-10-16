@@ -56,13 +56,13 @@ The import itself is not built yet (`PLAN.md` §7).
   run: PASSED (7 files, alone and in 8 sessions)
   initdb: PASSED
   server: PASSED
+  slt: PASSED (5 files on digres, 9287 records, 0 skipped)
   ```
 
-- **`make -j4 slt`** runs the sqllogictest files in
+- **`make -j4 slt`** runs every sqllogictest file in
   `test/slt` on digres (`test/slt/README.md`); their results
-  are PostgreSQL 18's. It is not in `make test` yet: 103
-  records of SQLite's corpus fail on digres
-  (`../sm/NEXT.md` §2).
+  are PostgreSQL 18's. `make test` runs all but
+  `select5.test`, which takes three minutes in this build.
 
 - **`make -j4 tsan`** builds `build/digres-tsan` under the
   thread sanitizer and runs the threaded tests and

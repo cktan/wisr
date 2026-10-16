@@ -1,0 +1,75 @@
+# Verify that a row read by rowno keeps its values while another scan in
+# the same statement reads rows, as a join's inner side does.
+# 1. Make two tables with text columns, each with an index made
+#    before its rows, so a statement right after may use it.
+# 2. Plan nested loops of bitmap scans, of index scans, and of an index
+#    scan under a seq scan, with every other join and scan turned off.
+# 3. Confirm each joined row has each table's own text.
+
+statement ok
+create table a (k int4, x text)
+
+statement ok
+create table b (k int4, y text)
+
+statement ok
+create index ak on a (k)
+
+statement ok
+create index bk on b (k)
+
+statement ok
+insert into a select i, 'a row ' || i from generate_series(1, 20) i
+
+statement ok
+insert into b select i, 'b row ' || i from generate_series(1, 20) i
+
+statement ok
+set enable_hashjoin = off
+
+statement ok
+set enable_mergejoin = off
+
+statement ok
+set enable_seqscan = off
+
+statement ok
+set enable_indexscan = off
+
+# Bitmap scans on both sides, one rescanned under the other.
+query TT rowsort
+select x, y from a, b where a.k in (3, 4) and b.k = 7
+----
+a row 3	b row 7
+a row 4	b row 7
+
+statement ok
+set enable_indexscan = on
+
+statement ok
+set enable_bitmapscan = off
+
+# Index scans on both sides.
+query TT rowsort
+select x, y from a, b where a.k in (3, 4) and b.k = 7
+----
+a row 3	b row 7
+a row 4	b row 7
+
+# An index scan inside, each outer row's key looked up.
+query ITT rowsort
+select a.k, x, y from a join b on b.k = a.k where a.k < 4
+----
+1	a row 1	b row 1
+2	a row 2	b row 2
+3	a row 3	b row 3
+
+statement ok
+set enable_seqscan = on
+
+# A seq scan outside, its row passed by reference, an index scan inside.
+query TT rowsort
+select x, y from a join b on b.k = a.k + 10 where a.k < 3
+----
+a row 1	b row 11
+a row 2	b row 12

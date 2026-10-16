@@ -3346,6 +3346,12 @@ static bool read_row(sm_tbl_t *tbl, uint64_t rowno, TupleTableSlot *slot) {
     sm_error("read a row");
   }
   tuple_into_slot(tbl, rowno, tuple, len, slot);
+  /*
+   * A point read's bytes last only until the session's next call to sm,
+   * which another scan in the statement makes, as a join's inner side
+   * does: the slot keeps a copy.
+   */
+  ExecMaterializeSlot(slot);
   return true;
 }
 
@@ -3459,6 +3465,8 @@ bool smstore_index_getentry(smstore_scan_t *scan, TupleTableSlot *slot) {
   uint64 rowno;
 
   while (smstore_index_getrowno(scan, &rowno)) {
+    bool from_row = false;
+
     ExecClearTuple(slot);
     switch (sm_idx_scan_key(scan->icursor, (sm_datum_t *)slot->tts_values,
                             slot->tts_isnull, scan->form->indnkeyatts)) {
@@ -3468,12 +3476,16 @@ bool smstore_index_getentry(smstore_scan_t *scan, TupleTableSlot *slot) {
     case 1:
       if (!entry_from_row(scan, rowno, slot))
         continue;
+      from_row = true;
       break;
     default:
       sm_error("read an index entry");
     }
     ExecStoreVirtualTuple(slot);
     slot_from_sm(slot);
+    /* A row read by rowno lasts only until sm's next call, as read_row's. */
+    if (from_row)
+      ExecMaterializeSlot(slot);
     smstore_rowno_to_tid(rowno, &slot->tts_tid);
     if (keys_met(scan, slot, true))
       return true;

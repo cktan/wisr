@@ -95,19 +95,21 @@ Owed, and blocking nothing above:
   (`sm1/SM1_DESIGN.md` §10.1), so the handle would hold the
   iterator, or the read would move to `Get`. Until then
   digres copies: the row an index scan, a bitmap scan or an
-  UPDATE fetches by its rowno is copied once a column is
-  passed by reference.
+  UPDATE fetches by its rowno has its columns passed by
+  reference copied into its slot (`read_row()` in
+  `../dg/src/backend/access/sm/smstore.c`, `../dg/WORKNOTE.md`
+  step 156).
 
-- **A join over two bitmap scans gives wrong rows.** Found by
-  the sqllogictest corpus (`../dg/test/slt/README.md`): 103
-  records of `select4.test` fail on digres and pass on
-  PostgreSQL 18. With `select4`'s `t6`, `t7` and their indexes
-  `t6d6`, `t7e7`, `SELECT x7, x6 FROM t6, t7 WHERE e7=506 AND
-  269=d6` plans a nested loop of a bitmap heap scan of `t6`
-  over a materialized one of `t7`, and returns `table tn7 row
-  51` in both columns: the outer row's text is the inner
-  row's. The cause is not yet found; the copy the point above
-  describes may not reach this plan.
+- **An index built over rows is not planned with at once.**
+  After `CREATE INDEX` on a table that has rows, the next
+  statements, in the same session or a new one, plan as if
+  the index were not there, even with `enable_seqscan` off;
+  some statements later they use it. An index made before the
+  rows is used at once. `smstore_index_usable()` asks sm3's
+  `tbl_index_usable`, which keeps a session off an index
+  valid after its snapshot (`sm3/SM3_DESIGN.md` §3): a
+  statement after `CREATE INDEX` returned should not be one.
+  PostgreSQL plans with the index at once.
 - **A taken index name gives the wrong message.** `CREATE
   INDEX` with a name in use says `could not create unique
   index "t6d6"`, `the name t6d6 is taken`, where PostgreSQL
