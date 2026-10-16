@@ -403,7 +403,7 @@ void PostmasterMain(int argc, char *argv[]) {
    * and postmaster/pgarch.c.
    */
   pqinitmask();
-  sigprocmask(SIG_SETMASK, &BlockSig, NULL);
+  pthread_sigmask(SIG_SETMASK, &BlockSig, NULL);
 
   pqsignal(SIGHUP, handle_pm_reload_request_signal);
   pqsignal(SIGINT, handle_pm_shutdown_request_signal);
@@ -438,7 +438,7 @@ void PostmasterMain(int argc, char *argv[]) {
 #endif
 
   /* Begin accepting signals. */
-  sigprocmask(SIG_SETMASK, &UnBlockSig, NULL);
+  pthread_sigmask(SIG_SETMASK, &UnBlockSig, NULL);
 
   /*
    * Options setup

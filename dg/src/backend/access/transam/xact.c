@@ -1149,7 +1149,7 @@ static void AbortTransaction(void) {
    * handler.  We do this fairly early in the sequence so that the timeout
    * infrastructure will be functional if needed while aborting.
    */
-  sigprocmask(SIG_SETMASK, &UnBlockSig, NULL);
+  pthread_sigmask(SIG_SETMASK, &UnBlockSig, NULL);
 
   /*
    * check the current transaction state
@@ -3008,7 +3008,7 @@ static void AbortSubTransaction(void) {
    * handler.  We do this fairly early in the sequence so that the timeout
    * infrastructure will be functional if needed while aborting.
    */
-  sigprocmask(SIG_SETMASK, &UnBlockSig, NULL);
+  pthread_sigmask(SIG_SETMASK, &UnBlockSig, NULL);
 
   /*
    * check the current transaction state

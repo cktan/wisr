@@ -5422,3 +5422,20 @@ slot before a crash signals the rest), so postmaster
 - An assertion says the child is a thread; asserts are on in
   every build, and the suite's shutdowns, cancels and
   terminations pass through it.
+
+## Step 186: a thread sets its own signal mask
+
+`sigprocmask()` is unspecified in a process with more than one
+thread; digres has one per session, and sm's. Each call
+(postmaster `postmaster.c`'s two, utils/init `miscinit.c`'s
+two, tcop `postgres.c`'s and `backend_startup.c`'s two each,
+access/transam `xact.c`'s two) is `pthread_sigmask()`, as
+utils/init `session_thread.c` and `datadir.c` already were.
+
+- On Linux and macOS `sigprocmask()` set the calling thread's
+  mask, so nothing changes: in the postmaster and a standalone
+  backend the masks are PostgreSQL's (libpq `pqsignal.c`), and
+  in a session thread `BlockSig`, `UnBlockSig` and
+  `StartupBlockSig` are one set, every signal but a fault's
+  (`session_thread_start()`), so its calls keep it as it is.
+- Windows's `pqsigprocmask()` emulation, compiled out, is left.

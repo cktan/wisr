@@ -156,7 +156,7 @@ void InitPostmasterChild(void) {
   SetInterruptHandler(INTERRUPT_QUIT, SignalHandlerForCrashExit);
 
   sigdelset(&BlockSig, SIGQUIT);
-  sigprocmask(SIG_SETMASK, &BlockSig, NULL);
+  pthread_sigmask(SIG_SETMASK, &BlockSig, NULL);
 }
 
 /*
@@ -197,7 +197,7 @@ void InitStandaloneProcess(const char *argv0) {
    * But we don't unblock SIGQUIT or provide a default handler for it.
    */
   pqinitmask();
-  sigprocmask(SIG_SETMASK, &BlockSig, NULL);
+  pthread_sigmask(SIG_SETMASK, &BlockSig, NULL);
 
   /* Compute paths, no postmaster to inherit from */
   if (my_exec_path[0] == '\0') {

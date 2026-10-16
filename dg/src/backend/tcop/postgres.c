@@ -2567,7 +2567,7 @@ static void drop_unnamed_stmt(void) {
  */
 void quickdie(void) {
   sigaddset(&BlockSig, SIGQUIT); /* prevent nested calls */
-  sigprocmask(SIG_SETMASK, &BlockSig, NULL);
+  pthread_sigmask(SIG_SETMASK, &BlockSig, NULL);
 
   /*
    * Prevent interrupts while exiting; though we just blocked signals that
@@ -3509,7 +3509,7 @@ void PostgresMain(const char *dbname, const char *username) {
   BaseInit();
 
   /* We need to allow SIGINT, etc during the initial transaction */
-  sigprocmask(SIG_SETMASK, &UnBlockSig, NULL);
+  pthread_sigmask(SIG_SETMASK, &UnBlockSig, NULL);
 
   /*
    * Generate a random cancel key, if this is a backend serving a
