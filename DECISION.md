@@ -1,10 +1,14 @@
-# Decision for review: CREATE INDEX waits for its build
+# Decisions for review
 
-Branch `wip-slt1`, from `wip-slt`. Made while working
-unattended; implemented as recommended below, and easy to
-revert: the change is in `dg/` alone.
+Made while working unattended, each on a branch of its own:
+`wip-slt1` from `wip-slt`, `wip-slt2` from `wip-slt1`. Each is
+implemented as recommended and can be reverted alone.
 
-## The problem
+---
+
+## wip-slt1: CREATE INDEX waits for its build
+
+### The problem
 
 On a table that has rows, sm3 records a new index as pending
 and builds it in the background once the transaction commits
@@ -27,7 +31,7 @@ blocks until the index is valid ... It is called outside a
 transaction, so that the caller's next snapshot is new enough
 to scan the index" (`sm/sm3/SM3_DESIGN.md` §3).
 
-## Options
+### Options
 
 1. **Wait after the commit, report the build's error, drop the
    failed index** (recommended, implemented). When a
@@ -36,8 +40,8 @@ to scan the index" (`sm/sm3/SM3_DESIGN.md` §3).
    any transaction, as PostgreSQL's `CREATE INDEX
    CONCURRENTLY` waits between its transactions. A build that
    failed is dropped, in a transaction of its own, and its
-   error reported: `could not create unique index` and the
-   duplicate, as PostgreSQL says it.
+   error reported: `could not create unique index` and sm's
+   detail.
    - Autocommit `CREATE INDEX` then behaves as PostgreSQL's:
      an error and no index, or an index usable at once.
    - **Inside a transaction block** the error comes at
@@ -64,8 +68,56 @@ to scan the index" (`sm/sm3/SM3_DESIGN.md` §3).
    (`sm/sm3/SM3_DESIGN.md` §3): an sm3 change, out of scope
    here.
 
-## What to review
+### What to review
 
 - Whether the late error at `COMMIT` in a block (option 1) is
   acceptable, or the refusal of option 3 is wanted instead.
 - Whether a failed index should be dropped (1) or kept (2).
+
+---
+
+## wip-slt2: SQLite's whole corpus, fetched, not kept
+
+### The problem
+
+SQLite's sqllogictest corpus beyond `select1` to `select5` is
+`index/`, `random/` and `evidence/`: about 650 files, 1.2 GB,
+millions of records of standard SQL, with `skipif
+postgresql` already on what PostgreSQL cannot run. It found
+nothing but views wrong in a sample of 1.5 million records,
+which is what makes it worth running; it is too big to keep in
+the repository.
+
+### Options
+
+1. **Fetch it on demand** (recommended, implemented):
+   `test/slt_corpus.sh` clones a mirror on GitHub,
+   `gregrahn/sqllogictest`, at a pinned commit, without file
+   contents, into `build/slt-corpus`, and checks out only the
+   files asked for. It runs them on PostgreSQL 18 and on
+   digres and reports what digres alone fails. `make
+   slt-corpus`; not in `make test`.
+   - Needs the network the first time, and the mirror to
+     stay. The commit pins what is run; SQLite's own fossil
+     repository is the source if the mirror goes.
+2. **Vendor a sample** of a few MB, as `select1` to `select5`
+   are. No network, but a fixed and small part of the corpus.
+3. **Leave it** to be fetched by hand.
+
+### What the sample found
+
+- **Views are missing.** Every one of the 24,408 records
+  digres failed and PostgreSQL 18 passed uses `CREATE VIEW`,
+  which digres refuses: `a relation's storage cannot be made:
+  digres has no catalog table`. A view needs a place in sm3's
+  catalog for its query, which is a design decision, not made
+  here; it is recorded in `sm/NEXT.md` §2.
+- Everything else in the sample, index scans, `IN`,
+  `BETWEEN`, `ORDER BY`, aggregates, expressions, `GROUP BY`,
+  `DELETE`, digres answers as PostgreSQL 18 does.
+
+### What to review
+
+- Whether fetching from the GitHub mirror is acceptable, or
+  the corpus should come from SQLite's fossil repository.
+- Whether views should be next.

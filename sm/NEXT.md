@@ -100,6 +100,17 @@ Owed, and blocking nothing above:
   `../dg/src/backend/access/sm/smstore.c`, `../dg/WORKNOTE.md`
   step 156).
 
+- **Views.** `CREATE VIEW` fails in digres: `a relation's
+  storage cannot be made: digres has no catalog table`
+  (`DefineView()` still makes a PostgreSQL relation). In a
+  sample of 1.5 million records of SQLite's corpus
+  (`../dg/test/slt/README.md`), every one digres fails and
+  PostgreSQL 18 passes, 24,408, uses a view. A view needs a
+  place in sm3's catalog for its query, a tree digres
+  serializes, as an index's predicate is kept
+  (`sm_cat_create_index`'s `eval`), and digres's rewriter to
+  expand it; `information_schema` waits for the same
+  (`../dg/SYSCATALOG.md`).
 - **A failed index build's detail is sm's.** `CREATE UNIQUE
   INDEX` over duplicates says `index build: two rows of u
   with one key in uk` where PostgreSQL says `Key (k)=(1) is

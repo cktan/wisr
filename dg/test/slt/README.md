@@ -69,6 +69,12 @@ select a, b from t
   `postgresql` alone. A divergence digres keeps on purpose is
   a `skipif digres` record with an `onlyif digres` one beside
   it, saying what digres does instead.
+- **`connection NAME`**, on the line before a record: run it
+  in the session NAME, made at its first use, in the file's
+  database. A record with none runs in the session
+  `default`. Sessions run one record at a time, so a record
+  that would wait for another session's lock waits forever:
+  such a test is not one for this format.
 - **`halt`**: stop the file here.
 
 ## Writing a test
@@ -95,3 +101,26 @@ them be used as one sees fit, with no attribution required. They are about 10,70
 aggregates, `CASE` and compound selects over integer and
 text columns, whose results every engine sqllogictest was
 run on agreed on. PostgreSQL 18 passes every record.
+
+## The whole corpus
+
+The rest of SQLite's corpus, `index/`, `random/` and
+`evidence/`, is about 1.2 GB in some 650 files, too much to
+keep here. `test/slt_corpus.sh` (`make -j4 slt-corpus`)
+fetches it once, from a mirror on GitHub at a pinned commit,
+into `build/slt-corpus`, and only the files it is to run:
+
+```
+test/slt_corpus.sh                      the sample, below
+test/slt_corpus.sh '/test/random/expr/' these files: sparse-checkout patterns
+```
+
+It runs them on PostgreSQL 18 and on digres, and reports the
+records digres fails that PostgreSQL 18 passes, file:line, in
+`build/test/slt-corpus/digres-only`. A record PostgreSQL 18
+fails is written for SQLite's or MySQL's dialect, and is not
+held against digres. The sample, the first set of files in
+each directory and `evidence/`, is about 1.5 million records;
+it takes 5 minutes on PostgreSQL 18 and 17 on digres. It is in
+no `make test`: it needs the network once, and takes long.
+

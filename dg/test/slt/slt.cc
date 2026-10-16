@@ -4,7 +4,8 @@
 //
 // Each FILE runs in a database of its own, made for it through CONNINFO
 // and dropped after. The format is SQLite's (README.md here), with
-// "statement error" taking a pattern for the message. --engine names
+// "statement error" taking a pattern for the message and "connection"
+// naming the session a record runs in. --engine names
 // what "skipif" and "onlyif" match; --rewrite writes each query's
 // results back into its file instead of comparing them; --times writes
 // how long each record took to FILE, the slowest first. The exit status
@@ -362,9 +363,16 @@ bool run_query(script_t &s, PGconn *conn, const std::vector<std::string> &words,
   return ok;
 }
 
-// Run the records of S on CONN, counting them in T.
-void run_script(script_t &s, PGconn *conn, const options_t &opt, tally_t &t) {
+PGconn *connect_to(const std::string &conninfo, const std::string &dbname);
+
+// Run the records of S in the database DB, counting them in T. A record
+// runs in the session its "connection NAME" line names, made at its first
+// use, or in the default one.
+void run_script(script_t &s, const std::string &db, const options_t &opt,
+                tally_t &t) {
   std::vector<std::vector<std::string>> cond;
+  std::map<std::string, PGconn *> conns;
+  std::string conn_name = "default";
   while (s.next < s.lines.size()) {
     size_t line = ++s.next;
     const std::string &l = s.lines[line - 1];
@@ -378,8 +386,18 @@ void run_script(script_t &s, PGconn *conn, const options_t &opt, tally_t &t) {
       cond.push_back(words);
       continue;
     }
+    if (words[0] == "connection" && words.size() > 1) {
+      conn_name = words[1];
+      continue;
+    }
     bool run = runs_here(cond, opt.engines);
     cond.clear();
+    // The session, made at its first use: one a name.
+    PGconn *&conn = conns[conn_name];
+    conn_name = "default";
+    if (run && conn == nullptr &&
+        (words[0] == "statement" || words[0] == "query"))
+      conn = connect_to(opt.conninfo, db);
     if (words[0] == "hash-threshold" && words.size() > 1) {
       s.hash_threshold = std::stoul(words[1]);
     } else if (words[0] == "halt") {
@@ -388,9 +406,14 @@ void run_script(script_t &s, PGconn *conn, const options_t &opt, tally_t &t) {
     } else if (words[0] == "statement" || words[0] == "query") {
       std::string sql = line < s.lines.size() ? s.lines[line] : "";
       auto start = std::chrono::steady_clock::now();
+      // A session that could not be made fails the record, unrun.
       bool ok = words[0] == "statement"
-                    ? run_statement(s, conn, words, line, run)
-                    : run_query(s, conn, words, line, run, opt);
+                    ? run_statement(s, conn, words, line, run && conn)
+                    : run_query(s, conn, words, line, run && conn, opt);
+      if (run && conn == nullptr) {
+        report(s, line, sql, "no session to run it in");
+        ok = false;
+      }
       if (!run) {
         t.skipped++;
         continue;
@@ -408,6 +431,10 @@ void run_script(script_t &s, PGconn *conn, const options_t &opt, tally_t &t) {
   // What a halt left unread is copied as it was.
   while (s.next < s.lines.size())
     s.out += s.lines[s.next++] + "\n";
+  // Every session ends, so the database can be dropped.
+  for (auto &[name, conn] : conns)
+    if (conn != nullptr)
+      PQfinish(conn);
 }
 
 // Run CMD on CONN, and say so on stderr if it fails.
@@ -459,11 +486,7 @@ bool run_file(const std::string &path, PGconn *admin, const options_t &opt,
   if (!exec_ok(admin, "DROP DATABASE IF EXISTS " + db) ||
       !exec_ok(admin, "CREATE DATABASE " + db))
     return false;
-  PGconn *conn = connect_to(opt.conninfo, db);
-  if (!conn)
-    return false;
-  run_script(s, conn, opt, t);
-  PQfinish(conn);
+  run_script(s, db, opt, t);
   if (!exec_ok(admin, "DROP DATABASE " + db))
     return false;
   if (opt.rewrite) {

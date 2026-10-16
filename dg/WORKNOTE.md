@@ -4665,3 +4665,49 @@ for both; `CREATE INDEX IF NOT EXISTS` failed the same way.
   since the look-up, and says the same.
 - `test/slt/create_index.test`: a name an index or the table
   holds, unique or not, and `IF NOT EXISTS`.
+
+## Step 159: SQLite's whole corpus, on demand
+
+`../DECISION.md`, for review; `test/slt/README.md`. The rest of
+SQLite's corpus, `index/`, `random/` and `evidence/`, is 1.2
+GB, too much to keep, and the part most likely to find what
+`select4` found.
+
+- **`test/slt_corpus.sh`** (`make slt-corpus`) clones the
+  mirror `github.com/gregrahn/sqllogictest` at a pinned
+  commit, with no file contents, into `build/slt-corpus`,
+  checks out the files its sparse-checkout patterns name, and
+  runs them with `test/slt.sh` on PostgreSQL 18 and on digres.
+  What digres fails and PostgreSQL 18 passes is reported, by
+  file and line. A record PostgreSQL 18 fails is another
+  dialect's.
+- **The sample**: the first set of files in each directory of
+  `index/` and `random/`, and `evidence/`: 1,495,198 records,
+  about 5 minutes on PostgreSQL 18 and 17 on digres.
+  PostgreSQL 18 fails 7,328, digres 31,734.
+- **What digres alone fails is views**: 24,408 records, all
+  of them a `CREATE VIEW` digres refuses, or a query of the
+  view it did not make (`../sm/NEXT.md` §2). The rest of the
+  sample digres answers as PostgreSQL 18 does.
+- Not in `make test`: it needs the network once, and long.
+
+## Step 160: a sqllogictest file runs in more than one session
+
+`test/slt/README.md`. `server.sh` checks what one session sees
+of another's work with held psql sessions on fifos; a
+sqllogictest file can now say it in records.
+
+- **`connection NAME`**, on the line before a record, runs it
+  in the session NAME, made at its first use in the file's
+  database; a record with none runs in `default`. Every
+  session ends before the database is dropped.
+- **One record at a time**: a record that waits for another
+  session's lock waits forever. Blocking needs an isolation
+  format, as PostgreSQL's isolationtester has, and is not
+  built.
+- `test/slt/sessions.test`: a row inserted in an open
+  transaction is not seen by another session until the
+  commit; a REPEATABLE READ transaction keeps its snapshot
+  past another's commit; another session's ADD COLUMN and
+  DROP TABLE are seen by the next statement. Run in one
+  session, two of its records fail.

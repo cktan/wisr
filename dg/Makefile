@@ -9,6 +9,7 @@
 #                      initdb and a server that psql connects to, and run
 #                      the sqllogictest files in test/slt but select5
 #   make slt           run every sqllogictest file in test/slt
+#   make slt-corpus    run a sample of SQLite's whole corpus, fetched once
 #   make tsan          build build/digres-tsan, under the thread
 #                      sanitizer, and run the statements in test/ with it
 #   make clean         remove objects and generated files
@@ -152,6 +153,12 @@ build/slt: test/slt/slt.cc
 .PHONY: slt
 slt: all build/slt
 	test/slt.sh
+
+# A sample of SQLite's whole corpus, fetched into build/slt-corpus, on
+# PostgreSQL 18 and on digres: what digres alone fails.
+.PHONY: slt-corpus
+slt-corpus: all build/slt
+	test/slt_corpus.sh
 
 # sq builds its own library; whether it is up to date is sq's to say.
 .PHONY: $(LIBSQ)
