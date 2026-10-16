@@ -1,16 +1,16 @@
 /*-------------------------------------------------------------------------
  *
  * held_lock.h
- *	  A C++ mutex held as an LWLock is (SHMEM.md section 3).
+ *	  A C++ mutex held as PostgreSQL's LWLock was (SHMEM.md section 3).
  *
- * An LWLock holds interrupts off while it is held, so the section it guards
- * ends at its end or by an error the section raises, never by a cancel
+ * An LWLock held interrupts off while it was held, so the section it guarded
+ * ended at its end or by an error the section raised, never by a cancel
  * taken at a CHECK_FOR_INTERRUPTS() inside it (errfinish() runs one after a
  * WARNING or a LOG).  held_lock_t does the same for a std::mutex or a
  * std::shared_mutex: it takes the lock and holds interrupts off, and lets
  * both go as its scope ends, or at release().
  *
- * An error unwinds it as LWLockReleaseAll() releases an LWLock: errfinish()
+ * An error unwinds it as LWLockReleaseAll() released an LWLock: errfinish()
  * has already set InterruptHoldoffCount to 0 before it throws, so the guard
  * then lets the lock go and leaves the count alone.
  *
@@ -35,7 +35,7 @@
 /* L is std::unique_lock or std::shared_lock over the mutex taken. */
 template <class L> class held_lock_t {
 public:
-  /* Take mutex, waiting as an LWLock does, and hold interrupts off. */
+  /* Take mutex, waiting as an LWLock did, and hold interrupts off. */
   explicit held_lock_t(typename L::mutex_type &mutex)
       : m_lock(mutex), m_unwinding(std::uncaught_exceptions()) {
     HOLD_INTERRUPTS();
