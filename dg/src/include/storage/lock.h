@@ -209,15 +209,6 @@ typedef struct LOCKTAG {
 	 (locktag).locktag_type = LOCKTAG_PAGE, \
 	 (locktag).locktag_lockmethodid = DEFAULT_LOCKMETHOD)
 
-/* ID info for a tuple is PAGE info + OffsetNumber */
-#define SET_LOCKTAG_TUPLE(locktag, dboid, reloid, blocknum, offnum) \
-	((locktag).locktag_field1 = (dboid), \
-	 (locktag).locktag_field2 = (reloid), \
-	 (locktag).locktag_field3 = (blocknum), \
-	 (locktag).locktag_field4 = (offnum), \
-	 (locktag).locktag_type = LOCKTAG_TUPLE, \
-	 (locktag).locktag_lockmethodid = DEFAULT_LOCKMETHOD)
-
 /* ID info for a transaction is its TransactionId */
 #define SET_LOCKTAG_TRANSACTION(locktag, xid) \
 	((locktag).locktag_field1 = (xid), \
@@ -528,7 +519,6 @@ LockAcquireExtended(const LOCKTAG *locktag, LOCKMODE lockmode, bool sessionLock,
                     bool dontWait, bool reportMemoryError,
                     LOCALLOCK **locallockp, bool logLockFailure);
 extern void AbortStrongLockAcquire(void);
-extern void MarkLockClear(LOCALLOCK *locallock);
 extern bool LockRelease(const LOCKTAG *locktag, LOCKMODE lockmode,
                         bool sessionLock);
 extern void LockReleaseAll(LOCKMETHODID lockmethodid, bool allLocks);

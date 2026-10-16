@@ -4508,3 +4508,34 @@ counted holds are PostgreSQL's to keep.
   then passed with no pids and terminated the holder, an idle
   session whose psql never noticed. The second session now asks
   only once the blocker says it holds the lock.
+
+## Step 154: a catalog takes no lock
+
+`SHMEM.md` §3, §7 step 4. A relation not sm's is a catalog,
+compiled in, and every write to one is refused
+(`catalog/indexing.c`): no lock on it guards anything. Step 48
+made the object locks no-ops for the same reason; this does
+the rest.
+
+- **A catalog relation's lock is nothing** (`lmgr.c`):
+  `LockRelationOid()`, `LockRelationId()`, `LockRelation()`
+  and the conditional form take sm's lock for a table of sm's
+  and none for a catalog; each still takes the invalidation
+  messages waiting, now on every call rather than the first
+  in a transaction, which costs an atomic load of sm's
+  namespace epoch. An unlock does nothing, and
+  `CheckRelationLockedByMe()` is true of a catalog, so the
+  asserts that a relation is locked hold.
+- **A tuple lock is nothing**: `LockTuple()` and its forms,
+  which only an inplace update of a catalog row took, and
+  `SearchSysCacheLocked1()`'s lock, so it is one search.
+- **A relation's session lock is nothing**:
+  `LockRelationIdForSession()`, for a catalog as for sm's
+  tables, which sm cannot lock for a session.
+- **Gone**: `SetLocktagRelationOid()`, `MarkLockClear()` and
+  `SET_LOCKTAG_TUPLE`, which nothing uses now. A local lock's
+  `lockCleared` is never set, and is left to go with
+  `lock.c`. `LockApplyTransactionForSession()`, with no
+  caller before this step, is left.
+- `server.sh`: reading `pg_class` and `pg_namespace` leaves
+  no relation lock in `pg_lock_status()`.

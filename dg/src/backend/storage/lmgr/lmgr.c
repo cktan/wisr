@@ -18,7 +18,6 @@
 #include "access/smstore.h"
 #include "access/transam.h"
 #include "access/xact.h"
-#include "catalog/catalog.h"
 #include "miscadmin.h"
 #include "storage/lmgr.h"
 #include "storage/proc.h"
@@ -75,27 +74,17 @@ void RelationInitLockInfo(Relation relation) {
 }
 
 /*
- * SetLocktagRelationOid
- *		Set up a locktag for a relation, given only relation OID
- */
-static inline void SetLocktagRelationOid(LOCKTAG *tag, Oid relid) {
-  Oid dbid;
-
-  if (IsSharedRelation(relid))
-    dbid = InvalidOid;
-  else
-    dbid = MyDatabaseId;
-
-  SET_LOCKTAG_RELATION(*tag, dbid, relid);
-}
-
-/*
- * Whether relid is locked by sm, not here: a relation in sm, any a user made
+ * Whether relid is locked by sm: a relation in sm, any a user made
  * (access/smstore.h).  sm locks it as it is opened, and its records as they
  * are read and written, so a lock asked of this lock manager is held as far
  * as anyone asks.  A lock request takes sm's lock on the table
  * (smstore_lock_relation()), then the invalidation messages waiting, as
  * acquiring a lock does: the definition is read after any DDL on it ends.
+ *
+ * Any other relation is a catalog, compiled in, whose rows never change
+ * (catalog/indexing.c refuses each write): no lock guards anything of it, so
+ * none is taken, and one asked for is held.  The request still takes the
+ * invalidation messages waiting.
  */
 static inline bool locked_by_sm(Oid relid) {
   return relid >= FirstNormalObjectId;
@@ -108,41 +97,10 @@ static inline bool locked_by_sm(Oid relid) {
  * before attempting to open the relation's relcache entry.
  */
 void LockRelationOid(Oid relid, LOCKMODE lockmode) {
-  LOCKTAG tag;
-  LOCALLOCK *locallock;
-  LockAcquireResult res;
-
-  if (locked_by_sm(relid)) {
+  /* sm's lock, for a table of sm's: a catalog takes none. */
+  if (locked_by_sm(relid))
     smstore_lock_relation(relid, lockmode);
-    AcceptInvalidationMessages();
-    return;
-  }
-
-  SetLocktagRelationOid(&tag, relid);
-
-  res = LockAcquireExtended(&tag, lockmode, false, false, true, &locallock,
-                            false);
-
-  /*
-   * Now that we have the lock, check for invalidation messages, so that we
-   * will update or flush any stale relcache entry before we try to use it.
-   * RangeVarGetRelid() specifically relies on us for this.  We can skip
-   * this in the not-uncommon case that we already had the same type of lock
-   * being requested, since then no one else could have modified the
-   * relcache entry in an undesirable way.  (In the case where our own xact
-   * modifies the rel, the relcache update happens via
-   * CommandCounterIncrement, not here.)
-   *
-   * However, in corner cases where code acts on tables (usually catalogs)
-   * recursively, we might get here while still processing invalidation
-   * messages in some outer execution of this function or a sibling.  The
-   * "cleared" status of the lock tells us whether we really are done
-   * absorbing relevant inval messages.
-   */
-  if (res != LOCKACQUIRE_ALREADY_CLEAR) {
-    AcceptInvalidationMessages();
-    MarkLockClear(locallock);
-  }
+  AcceptInvalidationMessages();
 }
 
 /*
@@ -155,35 +113,10 @@ void LockRelationOid(Oid relid, LOCKMODE lockmode) {
  * LockXXX routines in this file, but they could easily be added if needed.
  */
 bool ConditionalLockRelationOid(Oid relid, LOCKMODE lockmode) {
-  LOCKTAG tag;
-  LOCALLOCK *locallock;
-  LockAcquireResult res;
-
-  if (locked_by_sm(relid)) {
-    /* sm's lock, if it is free now: else nothing is taken. */
-    if (!smstore_trylock_relation(relid, lockmode))
-      return false;
-    AcceptInvalidationMessages();
-    return true;
-  }
-
-  SetLocktagRelationOid(&tag, relid);
-
-  res =
-      LockAcquireExtended(&tag, lockmode, false, true, true, &locallock, false);
-
-  if (res == LOCKACQUIRE_NOT_AVAIL)
+  /* sm's lock, if it is free now: else nothing is taken.  A catalog's is. */
+  if (locked_by_sm(relid) && !smstore_trylock_relation(relid, lockmode))
     return false;
-
-  /*
-   * Now that we have the lock, check for invalidation messages; see notes
-   * in LockRelationOid.
-   */
-  if (res != LOCKACQUIRE_ALREADY_CLEAR) {
-    AcceptInvalidationMessages();
-    MarkLockClear(locallock);
-  }
-
+  AcceptInvalidationMessages();
   return true;
 }
 
@@ -194,29 +127,10 @@ bool ConditionalLockRelationOid(Oid relid, LOCKMODE lockmode) {
  * input.
  */
 void LockRelationId(LockRelId *relid, LOCKMODE lockmode) {
-  LOCKTAG tag;
-  LOCALLOCK *locallock;
-  LockAcquireResult res;
-
-  if (locked_by_sm(relid->relId)) {
+  /* sm's lock, for a table of sm's: a catalog takes none. */
+  if (locked_by_sm(relid->relId))
     smstore_lock_relation(relid->relId, lockmode);
-    AcceptInvalidationMessages();
-    return;
-  }
-
-  SET_LOCKTAG_RELATION(tag, relid->dbId, relid->relId);
-
-  res = LockAcquireExtended(&tag, lockmode, false, false, true, &locallock,
-                            false);
-
-  /*
-   * Now that we have the lock, check for invalidation messages; see notes
-   * in LockRelationOid.
-   */
-  if (res != LOCKACQUIRE_ALREADY_CLEAR) {
-    AcceptInvalidationMessages();
-    MarkLockClear(locallock);
-  }
+  AcceptInvalidationMessages();
 }
 
 /*
@@ -226,14 +140,7 @@ void LockRelationId(LockRelId *relid, LOCKMODE lockmode) {
  * for speed reasons.
  */
 void UnlockRelationId(LockRelId *relid, LOCKMODE lockmode) {
-  LOCKTAG tag;
-
-  if (locked_by_sm(relid->relId))
-    return;
-
-  SET_LOCKTAG_RELATION(tag, relid->dbId, relid->relId);
-
-  LockRelease(&tag, lockmode, false);
+  /* sm's lock is held to the transaction's end; a catalog has none. */
 }
 
 /*
@@ -242,14 +149,7 @@ void UnlockRelationId(LockRelId *relid, LOCKMODE lockmode) {
  * Unlock, given only a relation Oid.  Use UnlockRelationId if you can.
  */
 void UnlockRelationOid(Oid relid, LOCKMODE lockmode) {
-  LOCKTAG tag;
-
-  if (locked_by_sm(relid))
-    return;
-
-  SetLocktagRelationOid(&tag, relid);
-
-  LockRelease(&tag, lockmode, false);
+  /* sm's lock is held to the transaction's end; a catalog has none. */
 }
 
 /*
@@ -260,30 +160,10 @@ void UnlockRelationOid(Oid relid, LOCKMODE lockmode) {
  * and then lock with this.
  */
 void LockRelation(Relation relation, LOCKMODE lockmode) {
-  LOCKTAG tag;
-  LOCALLOCK *locallock;
-  LockAcquireResult res;
-
-  if (locked_by_sm(RelationGetRelid(relation))) {
+  /* sm's lock, for a table of sm's: a catalog takes none. */
+  if (locked_by_sm(RelationGetRelid(relation)))
     smstore_lock_relation(RelationGetRelid(relation), lockmode);
-    AcceptInvalidationMessages();
-    return;
-  }
-
-  SET_LOCKTAG_RELATION(tag, relation->rd_lockInfo.lockRelId.dbId,
-                       relation->rd_lockInfo.lockRelId.relId);
-
-  res = LockAcquireExtended(&tag, lockmode, false, false, true, &locallock,
-                            false);
-
-  /*
-   * Now that we have the lock, check for invalidation messages; see notes
-   * in LockRelationOid.
-   */
-  if (res != LOCKACQUIRE_ALREADY_CLEAR) {
-    AcceptInvalidationMessages();
-    MarkLockClear(locallock);
-  }
+  AcceptInvalidationMessages();
 }
 
 /*
@@ -296,15 +176,9 @@ void LockRelation(Relation relation, LOCKMODE lockmode) {
  */
 bool CheckRelationLockedByMe(Relation relation, LOCKMODE lockmode,
                              bool orstronger) {
-  LOCKTAG tag;
-
-  /* sm's lock, in a mode covering lockmode's: sm has no other test. */
-  if (locked_by_sm(RelationGetRelid(relation)))
-    return smstore_relation_held(RelationGetRelid(relation), lockmode);
-  SET_LOCKTAG_RELATION(tag, relation->rd_lockInfo.lockRelId.dbId,
-                       relation->rd_lockInfo.lockRelId.relId);
-
-  return LockHeldByMe(&tag, lockmode, orstronger);
+  /* sm's lock, in a mode covering lockmode's; a catalog's is held. */
+  return !locked_by_sm(RelationGetRelid(relation)) ||
+         smstore_relation_held(RelationGetRelid(relation), lockmode);
 }
 
 /*
@@ -313,15 +187,8 @@ bool CheckRelationLockedByMe(Relation relation, LOCKMODE lockmode,
  * Like the above, but takes an OID as argument.
  */
 bool CheckRelationOidLockedByMe(Oid relid, LOCKMODE lockmode, bool orstronger) {
-  LOCKTAG tag;
-
-  /* sm's lock, in a mode covering lockmode's: sm has no other test. */
-  if (locked_by_sm(relid))
-    return smstore_relation_held(relid, lockmode);
-
-  SetLocktagRelationOid(&tag, relid);
-
-  return LockHeldByMe(&tag, lockmode, orstronger);
+  /* sm's lock, in a mode covering lockmode's; a catalog's is held. */
+  return !locked_by_sm(relid) || smstore_relation_held(relid, lockmode);
 }
 
 /*
@@ -337,29 +204,13 @@ bool CheckRelationOidLockedByMe(Oid relid, LOCKMODE lockmode, bool orstronger) {
  * relcache entry is up to date.
  */
 void LockRelationIdForSession(LockRelId *relid, LOCKMODE lockmode) {
-  LOCKTAG tag;
-
-  if (locked_by_sm(relid->relId))
-    return;
-
-  SET_LOCKTAG_RELATION(tag, relid->dbId, relid->relId);
-
-  (void)LockAcquire(&tag, lockmode, true, false);
+  /* sm holds no lock for a session; a catalog needs none. */
 }
 
 /*
  *		UnlockRelationIdForSession
  */
-void UnlockRelationIdForSession(LockRelId *relid, LOCKMODE lockmode) {
-  LOCKTAG tag;
-
-  if (locked_by_sm(relid->relId))
-    return;
-
-  SET_LOCKTAG_RELATION(tag, relid->dbId, relid->relId);
-
-  LockRelease(&tag, lockmode, true);
-}
+void UnlockRelationIdForSession(LockRelId *relid, LOCKMODE lockmode) {}
 
 /*
  *		LockRelationForExtension
@@ -472,14 +323,7 @@ void UnlockPage(Relation relation, BlockNumber blkno, LOCKMODE lockmode) {
  * tuple.  See heap_lock_tuple before using this!
  */
 void LockTuple(Relation relation, ItemPointer tid, LOCKMODE lockmode) {
-  LOCKTAG tag;
-
-  SET_LOCKTAG_TUPLE(tag, relation->rd_lockInfo.lockRelId.dbId,
-                    relation->rd_lockInfo.lockRelId.relId,
-                    ItemPointerGetBlockNumber(tid),
-                    ItemPointerGetOffsetNumber(tid));
-
-  (void)LockAcquire(&tag, lockmode, false, false);
+  /* Only a catalog's row is locked so, for an inplace update: none is. */
 }
 
 /*
@@ -490,30 +334,14 @@ void LockTuple(Relation relation, ItemPointer tid, LOCKMODE lockmode) {
  */
 bool ConditionalLockTuple(Relation relation, ItemPointer tid, LOCKMODE lockmode,
                           bool logLockFailure) {
-  LOCKTAG tag;
-
-  SET_LOCKTAG_TUPLE(tag, relation->rd_lockInfo.lockRelId.dbId,
-                    relation->rd_lockInfo.lockRelId.relId,
-                    ItemPointerGetBlockNumber(tid),
-                    ItemPointerGetOffsetNumber(tid));
-
-  return (LockAcquireExtended(&tag, lockmode, false, true, true, NULL,
-                              logLockFailure) != LOCKACQUIRE_NOT_AVAIL);
+  /* As LockTuple: no catalog row changes, so the lock is had. */
+  return true;
 }
 
 /*
  *		UnlockTuple
  */
-void UnlockTuple(Relation relation, ItemPointer tid, LOCKMODE lockmode) {
-  LOCKTAG tag;
-
-  SET_LOCKTAG_TUPLE(tag, relation->rd_lockInfo.lockRelId.dbId,
-                    relation->rd_lockInfo.lockRelId.relId,
-                    ItemPointerGetBlockNumber(tid),
-                    ItemPointerGetOffsetNumber(tid));
-
-  LockRelease(&tag, lockmode, false);
-}
+void UnlockTuple(Relation relation, ItemPointer tid, LOCKMODE lockmode) {}
 
 /*
  *		XactLockTableWait

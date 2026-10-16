@@ -1645,18 +1645,6 @@ LOCALLOCK *GetAwaitedLock(void) { return awaitedLock; }
 void ResetAwaitedLock(void) { awaitedLock = NULL; }
 
 /*
- * MarkLockClear -- mark an acquired lock as "clear"
- *
- * This means that we know we have absorbed all sinval messages that other
- * sessions generated before we acquired this lock, and so we can confidently
- * assume we know about any catalog changes protected by this lock.
- */
-void MarkLockClear(LOCALLOCK *locallock) {
-  Assert(locallock->nLocks > 0);
-  locallock->lockCleared = true;
-}
-
-/*
  * WaitOnLock -- wait to acquire a lock
  *
  * This is a wrapper around ProcSleep, with extra tracing and bookkeeping.
