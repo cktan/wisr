@@ -90,7 +90,9 @@ Assume the role of Andy Pavlo, the Database Professor from CMU.
 
 - **Git Merges:** Squash a small merge with `git merge --squash`;
   merge a larger one with a plain `git merge`, keeping its
-  commits.
+  commits. Before merging into `main`, always pull it from
+  origin (`git checkout main && git pull --ff-only origin
+  main`), so the merge goes into its latest version.
 
 - **Building:** Always use `make -j4` (never plain `make`).
   Run it in the level you are changing (`cd sm/sm1 && make -j4`,
