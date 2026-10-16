@@ -23,6 +23,8 @@
 
 #include "postgres.h"
 
+#include "access/smstore.h"
+
 #include "access/htup_details.h"
 #include "access/sysattr.h"
 #include "access/table.h"
@@ -215,7 +217,6 @@ static void ri_CheckTrigger(FunctionCallInfo fcinfo, const char *funcname,
 static const RI_ConstraintInfo *
 ri_FetchConstraintInfo(Trigger *trigger, Relation trig_rel, bool rel_is_pk);
 static const RI_ConstraintInfo *ri_LoadConstraintInfo(Oid constraintOid);
-static Oid get_ri_constraint_root(Oid constrOid);
 static SPIPlanPtr ri_PlanCheck(const char *querystr, int nargs, Oid *argtypes,
                                RI_QueryKey *qkey, Relation fk_rel,
                                Relation pk_rel);
@@ -1354,9 +1355,11 @@ bool RI_FKey_fk_upd_check_required(Trigger *trigger, Relation fk_rel,
    * UPDATE will invalidate the INSERT so that the INSERT RI trigger will
    * not do anything; so we had better do the UPDATE check.  (We could skip
    * this if we knew the INSERT trigger already fired, but there is no easy
-   * way to know that.)
+   * way to know that.)  A row in sm has no xmin to ask; its INSERT check is
+   * not invalidated, as its trigger is given the row it inserted from a
+   * tuple store and checks it whatever came after (smtable.c).
    */
-  if (slot_is_current_xact_tuple(oldslot))
+  if (!RelationIsSm(fk_rel) && slot_is_current_xact_tuple(oldslot))
     return true;
 
   /* If all old and new key values are equal, no check is needed */
@@ -2072,8 +2075,6 @@ ri_FetchConstraintInfo(Trigger *trigger, Relation trig_rel, bool rel_is_pk) {
 static const RI_ConstraintInfo *ri_LoadConstraintInfo(Oid constraintOid) {
   RI_ConstraintInfo *riinfo;
   bool found;
-  HeapTuple tup;
-  Form_pg_constraint conForm;
 
   /*
    * On the first call initialize the hashtable
@@ -2092,53 +2093,37 @@ static const RI_ConstraintInfo *ri_LoadConstraintInfo(Oid constraintOid) {
     return riinfo;
 
   /*
-   * Fetch the pg_constraint row so we can fill in the entry.
+   * The foreign key is sm's, not a pg_constraint row: it has no parent, no
+   * PERIOD, and its operators are those ADD FOREIGN KEY chose
+   * (access/smstore.h).  The relation cache forgets this entry when it
+   * rebuilds either table's descriptor (RI_ForgetConstraint()).
    */
-  tup = SearchSysCache1(CONSTROID, ObjectIdGetDatum(constraintOid));
-  if (!HeapTupleIsValid(tup)) /* should not happen */
+  smstore_fkey_t fk;
+
+  if (!smstore_get_fkey(constraintOid, &fk)) /* should not happen */
     elog(ERROR, "cache lookup failed for constraint %u", constraintOid);
-  conForm = (Form_pg_constraint)GETSTRUCT(tup);
-
-  if (conForm->contype != CONSTRAINT_FOREIGN) /* should not happen */
-    elog(ERROR, "constraint %u is not a foreign key constraint", constraintOid);
-
-  /* And extract data */
   Assert(riinfo->constraint_id == constraintOid);
-  if (OidIsValid(conForm->conparentid))
-    riinfo->constraint_root_id = get_ri_constraint_root(conForm->conparentid);
-  else
-    riinfo->constraint_root_id = constraintOid;
-  riinfo->oidHashValue =
-      GetSysCacheHashValue1(CONSTROID, ObjectIdGetDatum(constraintOid));
-  riinfo->rootHashValue = GetSysCacheHashValue1(
-      CONSTROID, ObjectIdGetDatum(riinfo->constraint_root_id));
-  memcpy(&riinfo->conname, &conForm->conname, sizeof(NameData));
-  riinfo->pk_relid = conForm->confrelid;
-  riinfo->fk_relid = conForm->conrelid;
-  riinfo->confupdtype = conForm->confupdtype;
-  riinfo->confdeltype = conForm->confdeltype;
-  riinfo->confmatchtype = conForm->confmatchtype;
-  riinfo->hasperiod = conForm->conperiod;
-
-  DeconstructFkConstraintRow(tup, &riinfo->nkeys, riinfo->fk_attnums,
-                             riinfo->pk_attnums, riinfo->pf_eq_oprs,
-                             riinfo->pp_eq_oprs, riinfo->ff_eq_oprs,
-                             &riinfo->ndelsetcols, riinfo->confdelsetcols);
-
-  /*
-   * For temporal FKs, get the operators and functions we need. We ask the
-   * opclass of the PK element for these. This all gets cached (as does the
-   * generated plan), so there's no performance issue.
-   */
-  if (riinfo->hasperiod) {
-    Oid opclass = get_index_column_opclass(conForm->conindid, riinfo->nkeys);
-
-    FindFKPeriodOpers(opclass, &riinfo->period_contained_by_oper,
-                      &riinfo->agged_period_contained_by_oper,
-                      &riinfo->period_intersect_oper);
+  riinfo->constraint_root_id = constraintOid;
+  riinfo->oidHashValue = 0;
+  riinfo->rootHashValue = 0;
+  memcpy(&riinfo->conname, &fk.name, sizeof(NameData));
+  riinfo->pk_relid = fk.ref_table;
+  riinfo->fk_relid = fk.table;
+  riinfo->confupdtype = fk.on_update;
+  riinfo->confdeltype = fk.on_delete;
+  riinfo->confmatchtype = fk.match;
+  riinfo->hasperiod = false;
+  riinfo->nkeys = fk.nkeys;
+  for (int i = 0; i < fk.nkeys; i++) {
+    riinfo->fk_attnums[i] = fk.attnums[i];
+    riinfo->pk_attnums[i] = fk.ref_attnums[i];
+    riinfo->pf_eq_oprs[i] = fk.pf_eq_oprs[i];
+    riinfo->pp_eq_oprs[i] = fk.pp_eq_oprs[i];
+    riinfo->ff_eq_oprs[i] = fk.ff_eq_oprs[i];
   }
-
-  ReleaseSysCache(tup);
+  riinfo->ndelsetcols = fk.ndelsetcols;
+  for (int i = 0; i < fk.ndelsetcols; i++)
+    riinfo->confdelsetcols[i] = fk.delsetcols[i];
 
   /*
    * For efficient processing of invalidation messages below, we keep a
@@ -2149,27 +2134,6 @@ static const RI_ConstraintInfo *ri_LoadConstraintInfo(Oid constraintOid) {
   riinfo->valid = true;
 
   return riinfo;
-}
-
-/*
- * get_ri_constraint_root
- *		Returns the OID of the constraint's root parent
- */
-static Oid get_ri_constraint_root(Oid constrOid) {
-  for (;;) {
-    HeapTuple tuple;
-    Oid constrParentOid;
-
-    tuple = SearchSysCache1(CONSTROID, ObjectIdGetDatum(constrOid));
-    if (!HeapTupleIsValid(tuple))
-      elog(ERROR, "cache lookup failed for constraint %u", constrOid);
-    constrParentOid = ((Form_pg_constraint)GETSTRUCT(tuple))->conparentid;
-    ReleaseSysCache(tuple);
-    if (!OidIsValid(constrParentOid))
-      break; /* we reached the root constraint */
-    constrOid = constrParentOid;
-  }
-  return constrOid;
 }
 
 /*
@@ -2216,6 +2180,23 @@ static void InvalidateConstraintCacheCallBack(Datum arg, int cacheid,
       /* Remove invalidated entries from the list, too */
       dclist_delete_from(&ri_constraint_cache_valid_list, iter.cur);
     }
+  }
+}
+
+/*
+ * Forget what is cached of the foreign key oid, as an invalidation of its
+ * pg_constraint row would: its definition in sm may have changed since.
+ */
+void RI_ForgetConstraint(Oid oid) {
+  RI_ConstraintInfo *riinfo;
+
+  if (ri_constraint_cache == NULL)
+    return;
+  riinfo = (RI_ConstraintInfo *)hash_search(ri_constraint_cache, &oid,
+                                            HASH_FIND, NULL);
+  if (riinfo != NULL && riinfo->valid) {
+    riinfo->valid = false;
+    dclist_delete_from(&ri_constraint_cache_valid_list, &riinfo->valid_link);
   }
 }
 

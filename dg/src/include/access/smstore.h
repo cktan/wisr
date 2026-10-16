@@ -89,6 +89,34 @@ typedef struct smstore_index_t {
   bool *nulls_first; /* nkeys of them */
 } smstore_index_t;
 
+/*
+ * A foreign key in sm (../sm/FOREIGNKEY.md), as ri_triggers.c and the
+ * relation cache read it: what PostgreSQL's pg_constraint row holds.
+ * Columns are numbered from 1; the operators are those
+ * ATAddForeignKeyConstraint() chose, kept in sm's host bytes.
+ */
+typedef struct smstore_fkey_t {
+  Oid oid;
+  NameData name;
+  Oid table;     /* the referencing table, conrelid */
+  Oid ref_table; /* the referenced, confrelid */
+  Oid ref_index; /* its unique index on ref_attnums, conindid */
+  int nkeys;
+  AttrNumber attnums[INDEX_MAX_KEYS];
+  AttrNumber ref_attnums[INDEX_MAX_KEYS];
+  Oid pf_eq_oprs[INDEX_MAX_KEYS];
+  Oid pp_eq_oprs[INDEX_MAX_KEYS];
+  Oid ff_eq_oprs[INDEX_MAX_KEYS];
+  int ndelsetcols; /* ON DELETE SET NULL/DEFAULT (cols) */
+  AttrNumber delsetcols[INDEX_MAX_KEYS];
+  char on_update; /* confupdtype */
+  char on_delete; /* confdeltype */
+  char match;     /* confmatchtype */
+  bool deferrable;
+  bool deferred;
+  bool validated;
+} smstore_fkey_t;
+
 /* A table in sm, as its relation descriptor is built from it. */
 typedef struct smstore_table_t {
   Oid oid;
@@ -99,6 +127,10 @@ typedef struct smstore_table_t {
   int nindexes;
   smstore_index_t *indexes;
   uint64 version; /* sm_table_def_t::version, as this transaction reads it */
+  int nfkeys;     /* its foreign keys */
+  smstore_fkey_t *fkeys;
+  int nreferenced; /* those of other tables, and its own, that reference it */
+  smstore_fkey_t *referenced;
 } smstore_table_t;
 
 extern void smstore_statement_start(void);
@@ -138,6 +170,9 @@ extern ObjectAddress smstore_rename_table(RenameStmt *stmt);
 extern ObjectAddress smstore_rename_column(RenameStmt *stmt);
 extern ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt);
 extern void smstore_wait_indexes(void);
+extern bool smstore_get_fkey(Oid oid, smstore_fkey_t *out);
+extern List *smstore_referencing_tables(Oid relid);
+extern ObjectAddress smstore_rename_constraint(RenameStmt *stmt);
 extern void smstore_drop_indexes(DropStmt *stmt);
 extern void smstore_lock_table(Relation rel, LOCKMODE lockmode, bool nowait);
 extern void smstore_lock_relation(Oid relid, LOCKMODE lockmode);

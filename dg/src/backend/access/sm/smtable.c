@@ -115,6 +115,17 @@ static void smtable_finish_bulk_insert(Relation rel, int options) {
   smstore_load_end(rel);
 }
 
+/*
+ * Whether the row in slot is one snapshot sees: always.  A row trigger on
+ * a table in sm is given its row from a tuple store, without its tid
+ * (commands/trigger.c), and fires at its statement's end, as no deferred
+ * one is made (smstore.c); RI_FKey_check() asks, of a row it is to check.
+ */
+static bool smtable_tuple_satisfies_snapshot(Relation, TupleTableSlot *,
+                                             Snapshot) {
+  return true;
+}
+
 /* The row at tid, as the statement sees it, or as it kept it (smstore.c). */
 static bool smtable_fetch_row_version(Relation rel, ItemPointer tid,
                                       Snapshot snapshot, TupleTableSlot *slot) {
@@ -176,7 +187,7 @@ static const TableAmRoutine smtable_methods = [] {
   r.tuple_fetch_row_version = smtable_fetch_row_version;
   r.tuple_tid_valid = refuse;
   r.tuple_get_latest_tid = refuse;
-  r.tuple_satisfies_snapshot = refuse;
+  r.tuple_satisfies_snapshot = smtable_tuple_satisfies_snapshot;
   r.index_delete_tuples = refuse;
   r.tuple_insert = smtable_tuple_insert;
   r.tuple_insert_speculative = refuse;

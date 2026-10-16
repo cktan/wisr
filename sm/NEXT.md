@@ -103,21 +103,24 @@ Owed, and blocking nothing above:
 
 - **Views.** `CREATE VIEW` fails in digres: `a relation's
   storage cannot be made: digres has no catalog table`
-  (`DefineView()` still makes a PostgreSQL relation). In a
-  sample of 1.5 million records of SQLite's corpus
+  (`DefineView()` still makes a PostgreSQL relation). In the
+  whole of SQLite's corpus, 5,675,180 records
   (`../dg/test/slt/README.md`), every one digres fails and
-  PostgreSQL 18 passes, 24,408, uses a view. A view needs a
+  PostgreSQL 18 passes, 48,608, uses a view. A view needs a
   place in sm3's catalog for its query, a tree digres
   serializes, as an index's predicate is kept
   (`sm_cat_create_index`'s `eval`), and digres's rewriter to
   expand it; `information_schema` waits for the same
   (`../dg/SYSCATALOG.md`).
+- **What foreign keys left** (`FOREIGNKEY.md`,
+  `../dg/WORKNOTE.md` step 176): a DEFERRABLE one is refused,
+  as a row trigger on a table in sm is given its rows from a
+  store that lasts only the statement; `pg_constraint` lists
+  none, so `\d` does not show them; `rel` has no verbs for them.
 - **What PostgreSQL's isolation specs found**
   (`../dg/test/isolation_specs.txt`, `../dg/WORKNOTE.md` step
-  169), beyond the key-share modes above: `REFERENCES` in
-  `CREATE TABLE` and `ALTER TABLE ... ADD FOREIGN KEY` are
-  refused by digres, though sm3 keeps foreign keys
-  (`FEATURELIST.md`); `char(n)` is not a type yet; and sm1
+  169), beyond the key-share modes above: `char(n)` is not a
+  type yet; and sm1
   has no wait queue to reorder, so a soft deadlock PostgreSQL
   untangles ends a transaction (`deadlock-soft`).
 - **A failed index build's detail is sm's.** `CREATE UNIQUE

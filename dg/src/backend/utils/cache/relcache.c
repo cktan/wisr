@@ -1231,6 +1231,120 @@ retry:
  * permanent table with no options, rules, triggers or row security, whose
  * row type is a record.  NULL if there is no such table.
  */
+/* Order triggers by name, as pg_trigger's index on them returns them. */
+static int trigger_name_cmp(const void *a, const void *b) {
+  return strcmp(((const Trigger *)a)->tgname, ((const Trigger *)b)->tgname);
+}
+
+/*
+ * The RI trigger of a foreign key fk, its function fn, on the events in
+ * tgtype, its kind k one of the four ('c' check, 'a' action) a foreign key
+ * has; on the table relid, the other end being other.
+ */
+static void sm_fkey_trigger(Trigger *t, const smstore_fkey_t *fk, Oid fn,
+                            int16 tgtype, int k, Oid other) {
+  char name[NAMEDATALEN];
+
+  /* Named by its constraint and its kind; its oid is its place by name. */
+  snprintf(name, sizeof(name), "RI_ConstraintTrigger_%c_%u_%d",
+           k < 2 ? 'c' : 'a', fk->oid, k);
+  t->tgname = MemoryContextStrdup(CacheMemoryContext, name);
+  t->tgfoid = fn;
+  t->tgtype = tgtype;
+  t->tgenabled = TRIGGER_FIRES_ON_ORIGIN;
+  t->tgisinternal = true;
+  t->tgconstrrelid = other;
+  t->tgconstrindid = fk->ref_index;
+  t->tgconstraint = fk->oid;
+  /* A deferrable foreign key is refused (smstore.c), so none defers. */
+  t->tgdeferrable = false;
+  t->tginitdeferred = false;
+}
+
+/*
+ * The triggers that keep the table desc's foreign keys, and those that
+ * reference it, as createForeignKeyCheckTriggers() and
+ * createForeignKeyActionTriggers() make them: sm keeps the foreign keys
+ * and no trigger (../sm/FOREIGNKEY.md), so they are made here, in
+ * CacheMemoryContext.  NULL if there are none.
+ */
+static TriggerDesc *sm_fkey_triggers(const smstore_table_t *desc) {
+  int n = 2 * (desc->nfkeys + desc->nreferenced), i = 0;
+  TriggerDesc *td;
+  Trigger *t;
+
+  if (n == 0)
+    return NULL;
+  td = (TriggerDesc *)MemoryContextAllocZero(CacheMemoryContext,
+                                             sizeof(TriggerDesc));
+  t = (Trigger *)MemoryContextAllocZero(CacheMemoryContext,
+                                        n * sizeof(Trigger));
+  /* On the referencing table: a check of each row inserted or updated. */
+  for (int f = 0; f < desc->nfkeys; f++) {
+    const smstore_fkey_t *fk = &desc->fkeys[f];
+
+    sm_fkey_trigger(&t[i++], fk, F_RI_FKEY_CHECK_INS,
+                    TRIGGER_TYPE_ROW | TRIGGER_TYPE_INSERT, 0, fk->ref_table);
+    sm_fkey_trigger(&t[i++], fk, F_RI_FKEY_CHECK_UPD,
+                    TRIGGER_TYPE_ROW | TRIGGER_TYPE_UPDATE, 1, fk->ref_table);
+  }
+  /* On the referenced: its action on a row deleted, and one updated. */
+  for (int f = 0; f < desc->nreferenced; f++) {
+    const smstore_fkey_t *fk = &desc->referenced[f];
+    Oid del, upd;
+
+    switch (fk->on_delete) {
+    case FKCONSTR_ACTION_RESTRICT:
+      del = F_RI_FKEY_RESTRICT_DEL;
+      break;
+    case FKCONSTR_ACTION_CASCADE:
+      del = F_RI_FKEY_CASCADE_DEL;
+      break;
+    case FKCONSTR_ACTION_SETNULL:
+      del = F_RI_FKEY_SETNULL_DEL;
+      break;
+    case FKCONSTR_ACTION_SETDEFAULT:
+      del = F_RI_FKEY_SETDEFAULT_DEL;
+      break;
+    default:
+      del = F_RI_FKEY_NOACTION_DEL;
+    }
+    switch (fk->on_update) {
+    case FKCONSTR_ACTION_RESTRICT:
+      upd = F_RI_FKEY_RESTRICT_UPD;
+      break;
+    case FKCONSTR_ACTION_CASCADE:
+      upd = F_RI_FKEY_CASCADE_UPD;
+      break;
+    case FKCONSTR_ACTION_SETNULL:
+      upd = F_RI_FKEY_SETNULL_UPD;
+      break;
+    case FKCONSTR_ACTION_SETDEFAULT:
+      upd = F_RI_FKEY_SETDEFAULT_UPD;
+      break;
+    default:
+      upd = F_RI_FKEY_NOACTION_UPD;
+    }
+    sm_fkey_trigger(&t[i++], fk, del, TRIGGER_TYPE_ROW | TRIGGER_TYPE_DELETE,
+                    2, fk->table);
+    sm_fkey_trigger(&t[i++], fk, upd, TRIGGER_TYPE_ROW | TRIGGER_TYPE_UPDATE,
+                    3, fk->table);
+  }
+  /*
+   * An after-trigger event finds its trigger by its oid among its table's
+   * (commands/trigger.c): the place by name is unique there, and the same
+   * in every descriptor of the same foreign keys.
+   */
+  qsort(t, n, sizeof(Trigger), trigger_name_cmp);
+  td->triggers = t;
+  td->numtriggers = n;
+  for (i = 0; i < n; i++) {
+    t[i].tgoid = (Oid)(i + 1);
+    SetTriggerFlags(td, &t[i]);
+  }
+  return td;
+}
+
 static Relation RelationBuildSmDesc(Oid targetRelId, bool insertIt) {
   smstore_table_t *desc = smstore_table_desc(targetRelId);
   FormData_pg_class form;
@@ -1347,8 +1461,14 @@ static Relation RelationBuildSmDesc(Oid targetRelId, bool insertIt) {
   relation->rd_statvalid = true;
   relation->rd_rules = NULL;
   relation->rd_rulescxt = NULL;
-  relation->trigdesc = NULL;
+  relation->trigdesc = sm_fkey_triggers(desc);
+  relation->rd_rel->relhastriggers = relation->trigdesc != NULL;
   relation->rd_rsdesc = NULL;
+  /* What ri_triggers.c cached of its foreign keys may be older than sm's. */
+  for (int i = 0; i < desc->nfkeys; i++)
+    RI_ForgetConstraint(desc->fkeys[i].oid);
+  for (int i = 0; i < desc->nreferenced; i++)
+    RI_ForgetConstraint(desc->referenced[i].oid);
 
   /*
    * The heap's routine, as a plain table's: the executor still asks it for

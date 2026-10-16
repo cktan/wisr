@@ -279,6 +279,25 @@ sm_attribute_t api_attribute(const sm2::attribute_t &a) {
  * each index's state as ss sees it. A pending index a worker is
  * filling is building.
  */
+/* A foreign key as the C API gives it. */
+sm_fkey_def_t api_fkey(const sm3::fkey_rec_t &fk) {
+  sm_fkey_def_t out;
+  out.oid = fk.oid;
+  out.name = fk.name;
+  out.ref_table = fk.ref_table;
+  out.ref_index = fk.ref_index;
+  out.columns = fk.attnums;
+  out.ref_columns = fk.ref_attnums;
+  out.on_update = fk.on_update;
+  out.on_delete = fk.on_delete;
+  out.match = fk.match;
+  out.deferrable = fk.deferrable;
+  out.deferred = fk.deferred;
+  out.validated = fk.validated;
+  out.host = fk.host;
+  return out;
+}
+
 sm_table_def_t api_def(const sm3::session_t *ss, const sm3::table_def_t &d) {
   sm_table_def_t out{d.oid, d.nspoid, d.name, {}, {}, {}};
   out.version = sm3::cat_table_version(ss, d.oid);
@@ -311,6 +330,12 @@ sm_table_def_t api_def(const sm3::session_t *ss, const sm3::table_def_t &d) {
       i.include.push_back(api_attribute(a));
     }
     out.indexes.push_back(std::move(i));
+  }
+  for (const sm3::fkey_rec_t &fk : d.rec.fkeys) {
+    out.fkeys.push_back(api_fkey(fk));
+  }
+  for (const sm3::fkey_ref_t &r : d.rec.referenced_by) {
+    out.referenced_by.push_back({r.table, r.fkey});
   }
   return out;
 }
@@ -1862,4 +1887,64 @@ int sm_cat_create_index(sm_session_t *session, uint64_t table, const char *name,
 int sm_cat_drop_index(sm_session_t *session, uint64_t table, uint64_t index) {
   return guard(session,
                [&] { return sm3::drop_index(session->sm3, table, index); });
+}
+
+/* Add a foreign key in the session's transaction. */
+int sm_cat_create_fkey(sm_session_t *session, uint64_t table,
+                       const sm_fkey_def_t &def, uint64_t *oid) {
+  return guard(session, [&] {
+    if (!oid) {
+      return null_arg("sm_cat_create_fkey", "oid");
+    }
+    sm3::fkey_rec_t fk;
+    fk.name = def.name;
+    fk.ref_table = def.ref_table;
+    fk.ref_index = def.ref_index;
+    fk.attnums = def.columns;
+    fk.ref_attnums = def.ref_columns;
+    fk.on_update = def.on_update;
+    fk.on_delete = def.on_delete;
+    fk.match = def.match;
+    fk.deferrable = def.deferrable;
+    fk.deferred = def.deferred;
+    fk.validated = def.validated;
+    fk.host = def.host;
+    return sm3::create_fkey(session->sm3, table, fk, *oid);
+  });
+}
+
+/* Drop a foreign key in the session's transaction. */
+int sm_cat_drop_fkey(sm_session_t *session, uint64_t table, uint64_t fkey) {
+  return guard(session,
+               [&] { return sm3::drop_fkey(session->sm3, table, fkey); });
+}
+
+/* Mark a foreign key validated in the session's transaction. */
+int sm_cat_validate_fkey(sm_session_t *session, uint64_t table, uint64_t fkey) {
+  return guard(session,
+               [&] { return sm3::validate_fkey(session->sm3, table, fkey); });
+}
+
+/* Rename a foreign key in the session's transaction. */
+int sm_cat_rename_fkey(sm_session_t *session, uint64_t table, uint64_t fkey,
+                       const char *name) {
+  return guard(session, [&] {
+    return sm3::rename_fkey(session->sm3, table, fkey, name_of(name));
+  });
+}
+
+/* A foreign key by its oid, as the session's transaction sees it. */
+int sm_cat_fkey(sm_session_t *session, uint64_t fkey, uint64_t *table,
+                sm_fkey_def_t *out) {
+  return guard(session, [&] {
+    if (!table || !out) {
+      return null_arg("sm_cat_fkey", !table ? "table" : "out");
+    }
+    sm3::fkey_rec_t fk;
+    int rc = sm3::cat_get_fkey(session->sm3, fkey, *table, fk);
+    if (rc == 0) {
+      *out = api_fkey(fk);
+    }
+    return rc;
+  });
 }

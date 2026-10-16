@@ -594,6 +594,36 @@ struct sm_index_def_t {
     bool                         primary = false; /* the primary key */
 };
 
+/*
+ * A foreign key of a table, its child (FOREIGNKEY.md): the parent,
+ * ref_table, its unique index on ref_columns, and the column pairs
+ * by 0-based place. The actions ('a' no action, 'r' restrict, 'c'
+ * cascade, 'n' set null, 'd' set default), the match type ('s'
+ * simple, 'f' full) and deferrable are the host's to act on; sm only
+ * keeps them, and host, the host's bytes.
+ */
+struct sm_fkey_def_t {
+    uint64_t             oid = 0;
+    std::string          name;
+    uint64_t             ref_table = 0;
+    uint64_t             ref_index = 0;
+    std::vector<int32_t> columns;
+    std::vector<int32_t> ref_columns;
+    char                 on_update = 'a';
+    char                 on_delete = 'a';
+    char                 match = 's';
+    bool                 deferrable = false;
+    bool                 deferred = false;
+    bool                 validated = true; /* the rows there were checked */
+    std::string          host;
+};
+
+/* A foreign key that references a table: its child, and its oid. */
+struct sm_fkey_ref_t {
+    uint64_t table;
+    uint64_t fkey;
+};
+
 /* sm_table_def_t's version while its transaction has changed it. */
 #define SM_VERSION_OWN UINT64_MAX
 
@@ -617,6 +647,8 @@ struct sm_table_def_t {
     std::vector<sm_attribute_t>  schema;
     std::vector<sm_index_def_t>  indexes;
     uint64_t                     version = 0;
+    std::vector<sm_fkey_def_t>   fkeys;         /* its own */
+    std::vector<sm_fkey_ref_t>   referenced_by; /* those that reference it */
 };
 
 /*
@@ -1288,5 +1320,40 @@ int sm_cat_create_index(sm_session_t* session, uint64_t table,
 
 /* Drop the index oid of the table, and its entries. */
 int sm_cat_drop_index(sm_session_t* session, uint64_t table, uint64_t index);
+
+/*
+ * Add the foreign key def to the table, its child (FOREIGNKEY.md §5),
+ * in the session's transaction, under the child's table-oid lock X
+ * and then the parent's; its oid, def.oid ignored, is set in oid. It
+ * needs 1 to 32 column pairs, every column live, def.ref_index a
+ * valid unique index of the parent with no predicate or expression
+ * whose keys are def.ref_columns in any order, both tables temporary
+ * or neither, and a name free among the child's foreign keys: else
+ * SM_ERR_INVALID, or SM_ERR_DUPKEY for the name. No row is read:
+ * def.validated is the caller's word, after checking them. Once it
+ * is there, dropping the parent, its index, or a column of the child
+ * it uses is SM_ERR_INUSE.
+ */
+int sm_cat_create_fkey(sm_session_t* session, uint64_t table,
+                       const sm_fkey_def_t& def, uint64_t* oid);
+
+/* Drop the foreign key fkey of the table, under both tables' locks X. */
+int sm_cat_drop_fkey(sm_session_t* session, uint64_t table, uint64_t fkey);
+
+/* Mark the foreign key fkey of the table validated, its rows checked. */
+int sm_cat_validate_fkey(sm_session_t* session, uint64_t table,
+                         uint64_t fkey);
+
+/* Rename the foreign key fkey of the table; a taken name is DUPKEY. */
+int sm_cat_rename_fkey(sm_session_t* session, uint64_t table, uint64_t fkey,
+                       const char* name);
+
+/*
+ * The foreign key with the oid fkey and its table, the child, as the
+ * session's transaction sees them: 0, or 1 if there is none. It
+ * takes no lock: the host holds the child's.
+ */
+int sm_cat_fkey(sm_session_t* session, uint64_t fkey, uint64_t* table,
+                sm_fkey_def_t* out);
 
 #endif /* SM_H */

@@ -13,6 +13,7 @@
  */
 #include "postgres.h"
 
+#include "access/smstore.h"
 #include "access/genam.h"
 #include "access/htup_details.h"
 #include "access/relation.h"
@@ -72,7 +73,14 @@ static void renametrig_internal(Relation tgrel, Relation targetrel,
 static void renametrig_partition(Relation tgrel, Oid partitionId,
                                  Oid parentTriggerOid, const char *newname,
                                  const char *expected_name);
-static void SetTriggerFlags(TriggerDesc *trigdesc, Trigger *trigger);
+/*
+ * Whether rel's row triggers are given their tuples from a tuple store,
+ * not fetched again by ctid: a foreign table's, and a table's in sm, whose
+ * row a statement deleted is not to be read again (access/smstore.h).
+ */
+static bool trigger_tuples_stored(Relation rel) {
+  return rel->rd_rel->relkind == RELKIND_FOREIGN_TABLE || RelationIsSm(rel);
+}
 static bool GetTupleForTrigger(EState *estate, EPQState *epqstate,
                                ResultRelInfo *relinfo, ItemPointer tid,
                                LockTupleMode lockmode, TupleTableSlot *oldslot,
@@ -1798,7 +1806,7 @@ void RelationBuildTriggers(Relation relation) {
 /*
  * Update the TriggerDesc's hint flags to include the specified trigger
  */
-static void SetTriggerFlags(TriggerDesc *trigdesc, Trigger *trigger) {
+void SetTriggerFlags(TriggerDesc *trigdesc, Trigger *trigger) {
   int16 tgtype = trigger->tgtype;
 
   trigdesc->trig_insert_before_row |= TRIGGER_TYPE_MATCHES(
@@ -4194,7 +4202,7 @@ static bool afterTriggerInvokeEvents(AfterTriggerEventList *events,
             ExecDropSingleTupleTableSlot(slot2);
             slot1 = slot2 = NULL;
           }
-          if (rel->rd_rel->relkind == RELKIND_FOREIGN_TABLE) {
+          if (trigger_tuples_stored(rel)) {
             slot1 = MakeSingleTupleTableSlot(rel->rd_att, &TTSOpsMinimalTuple);
             slot2 = MakeSingleTupleTableSlot(rel->rd_att, &TTSOpsMinimalTuple);
           }
@@ -5640,7 +5648,7 @@ static void AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
   }
 
   /* Determine flags */
-  if (!(relkind == RELKIND_FOREIGN_TABLE && row_trigger)) {
+  if (!(trigger_tuples_stored(rel) && row_trigger)) {
     if (row_trigger && event == TRIGGER_EVENT_UPDATE) {
       if (relkind == RELKIND_PARTITIONED_TABLE)
         new_event.ate_flags = AFTER_TRIGGER_CP_UPDATE;
@@ -5688,7 +5696,7 @@ static void AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
                         newslot))
       continue;
 
-    if (relkind == RELKIND_FOREIGN_TABLE && row_trigger) {
+    if (trigger_tuples_stored(rel) && row_trigger) {
       if (fdw_tuplestore == NULL) {
         fdw_tuplestore = GetCurrentFDWTuplestore();
         new_event.ate_flags = AFTER_TRIGGER_FDW_FETCH;

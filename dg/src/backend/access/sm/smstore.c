@@ -44,6 +44,12 @@
 #include "storage/proc.h"
 #include "access/nbtree.h"
 #include "access/skey.h"
+#include "access/table.h"
+#include "access/stratnum.h"
+#include "catalog/pg_am_d.h"
+#include "catalog/pg_constraint_d.h"
+#include "commands/trigger.h"
+#include "parser/parse_coerce.h"
 #include "utils/builtins.h"
 #include "utils/control_block.h"
 #include "utils/fmgrprotos.h"
@@ -1003,7 +1009,8 @@ Oid smstore_relation_oid(const char *name, Oid nspoid) {
   return nspoid == PG_TEMP_NAMESPACE ? InvalidOid : sequence_oid(name, nspoid);
 }
 
-static void drop_table(RangeVar *rv, bool missing_ok);
+static void drop_table(RangeVar *rv, bool missing_ok, bool cascade,
+                       const std::vector<Oid> &dropping);
 static void drop_sequence(RangeVar *rv, bool missing_ok);
 
 /*
@@ -1062,7 +1069,7 @@ static void drop_namespace(const char *nspname, Oid nspoid, bool cascade) {
 
     for (const std::string &t : tables)
       drop_table(makeRangeVar(pstrdup(nspname), pstrdup(t.c_str()), -1),
-                 false);
+                 false, true, {});
     /*
      * The sequences left: an owned one went with its table, unnamed.  The
      * list is read in a new statement, which sees the drops.
@@ -1135,8 +1142,9 @@ void smstore_drop_namespaces(DropStmt *stmt) {
 /*
  * Whether constraints, a column's, are only those sm's tables take: NOT
  * NULL, a PRIMARY KEY or UNIQUE, which parse analysis has made an index
- * statement of its own, and a DEFAULT, which it has made the column's
- * raw_default.
+ * statement of its own, a DEFAULT, which it has made the column's
+ * raw_default, and a REFERENCES, which it has made an ALTER TABLE ... ADD
+ * FOREIGN KEY to follow.
  */
 static bool only_taken(List *constraints) {
   ListCell *l;
@@ -1146,7 +1154,7 @@ static bool only_taken(List *constraints) {
 
     if (type != CONSTR_NOTNULL && type != CONSTR_PRIMARY &&
         type != CONSTR_UNIQUE && type != CONSTR_DEFAULT &&
-        type != CONSTR_IDENTITY)
+        type != CONSTR_IDENTITY && type != CONSTR_FOREIGN)
       return false;
   }
   return true;
@@ -1606,6 +1614,9 @@ static Oid type_oid(uint8_t code) {
   return InvalidOid; /* not reached */
 }
 
+static void fkey_from_sm(const sm_fkey_def_t &def, uint64_t table,
+                         smstore_fkey_t *fk);
+
 /*
  * The table oid as sm3 defines it, palloc'd in the current context, or
  * NULL if there is no such table.  It opens the table to read, in this
@@ -1669,6 +1680,18 @@ smstore_table_t *smstore_table_desc(Oid oid) {
       ix->attnums[ix->nkeys + k] = (int16)(x.include_attnums[k] + 1);
     remember_index(ix->oid, oid);
   }
+  /* Its foreign keys, and those that reference it, whole: their triggers. */
+  desc->nfkeys = (int)def->fkeys.size();
+  desc->fkeys =
+      (smstore_fkey_t *)palloc0(Max(desc->nfkeys, 1) * sizeof(smstore_fkey_t));
+  for (int i = 0; i < desc->nfkeys; i++)
+    fkey_from_sm(def->fkeys[i], oid, &desc->fkeys[i]);
+  desc->nreferenced = 0;
+  desc->referenced = (smstore_fkey_t *)palloc0(
+      Max(def->referenced_by.size(), 1) * sizeof(smstore_fkey_t));
+  for (const sm_fkey_ref_t &r : def->referenced_by)
+    if (smstore_get_fkey((Oid)r.fkey, &desc->referenced[desc->nreferenced]))
+      desc->nreferenced++;
   return desc;
 }
 
@@ -1997,7 +2020,71 @@ void smstore_endscan(smstore_scan_t *scan) {
  * rows and sequence.  One that is not there is an error, or with missing_ok
  * a notice.
  */
-static void drop_table(RangeVar *rv, bool missing_ok) {
+static bool table_def_now(Oid oid, sm_table_def_t &out);
+static void forget_table(Oid relid);
+
+/*
+ * Drop the foreign keys of other tables that reference the table oid,
+ * named relname, as DROP TABLE ... CASCADE does, with PostgreSQL's notice;
+ * without cascade, PostgreSQL's error.  One of a table in dropping, which
+ * the same statement drops, is dropped without a word.
+ */
+static void drop_referencing(Oid oid, const char *relname, bool cascade,
+                             const std::vector<Oid> &dropping) {
+  sm_table_def_t def;
+  std::vector<std::pair<uint64_t, uint64_t>> drop; /* (table, fkey) */
+  StringInfoData detail;
+  int n = 0;
+
+  if (!table_def_now(oid, def))
+    return;
+  initStringInfo(&detail);
+  for (const sm_fkey_ref_t &r : def.referenced_by) {
+    if (r.table == oid)
+      continue;
+    drop.push_back({r.table, r.fkey});
+    if (std::find(dropping.begin(), dropping.end(), (Oid)r.table) !=
+        dropping.end())
+      continue;
+    smstore_fkey_t fk;
+    sm_table_def_t child;
+
+    if (!smstore_get_fkey((Oid)r.fkey, &fk) ||
+        !table_def_now((Oid)r.table, child))
+      continue;
+    /* A line each, as PostgreSQL's reportDependentObjects() writes them. */
+    if (n++ > 0)
+      appendStringInfoChar(&detail, '\n');
+    appendStringInfo(&detail, "%sconstraint %s on table %s",
+                     cascade ? "drop cascades to " : "", NameStr(fk.name),
+                     child.name.c_str());
+    if (!cascade)
+      appendStringInfo(&detail, " depends on table %s", relname);
+  }
+  if (n > 0 && !cascade)
+    ereport(ERROR, (errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+                    errmsg("cannot drop table %s because other objects "
+                           "depend on it",
+                           relname),
+                    errdetail("%s", detail.data),
+                    errhint("Use DROP ... CASCADE to drop the dependent "
+                            "objects too.")));
+  if (n == 1)
+    ereport(NOTICE, (errmsg("%s", detail.data)));
+  else if (n > 1)
+    ereport(NOTICE, (errmsg("drop cascades to %d other objects", n),
+                     errdetail("%s", detail.data)));
+  sm_session_t *s = xact_session();
+
+  for (auto [table, fkey] : drop) {
+    if (waiting([&] { return sm_cat_drop_fkey(s, table, fkey); }) != 0)
+      sm_error("drop a foreign key");
+    forget_table((Oid)table);
+  }
+}
+
+static void drop_table(RangeVar *rv, bool missing_ok, bool cascade,
+                       const std::vector<Oid> &dropping) {
   Oid oid;
   Relation rel;
 
@@ -2021,6 +2108,7 @@ static void drop_table(RangeVar *rv, bool missing_ok) {
     ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
                     errmsg("\"%s\" is not a table", rv->relname)));
   relation_close(rel, NoLock);
+  drop_referencing(oid, rv->relname, cascade, dropping);
   smstore_drop_table(oid);
 }
 
@@ -2057,14 +2145,20 @@ void smstore_drop_temp_tables(void) {
 
 /*
  * Drop the tables a DROP TABLE names, from sm, in this transaction: each
- * with its indexes, rows and sequence.  CASCADE and RESTRICT are the same:
- * nothing but its indexes depends on a table in sm.
+ * with its indexes, rows and sequence.  A foreign key of another table that
+ * references one is what depends on it: CASCADE drops it, RESTRICT is an
+ * error, and one of a table the statement drops too is dropped with it.
  */
 void smstore_drop_tables(DropStmt *stmt) {
+  std::vector<Oid> dropping;
   ListCell *l;
 
   foreach (l, stmt->objects)
-    drop_table(makeRangeVarFromNameList((List *)lfirst(l)), stmt->missing_ok);
+    dropping.push_back(RangeVarGetRelid(
+        makeRangeVarFromNameList((List *)lfirst(l)), NoLock, true));
+  foreach (l, stmt->objects)
+    drop_table(makeRangeVarFromNameList((List *)lfirst(l)), stmt->missing_ok,
+               stmt->behavior == DROP_CASCADE, dropping);
 }
 
 /*
@@ -2093,9 +2187,23 @@ static void alter_table_rel(Oid relid, const char *name) {
                     errmsg("\"%s\" is not a table", name)));
   /* No scan of it is open, so no handle closed below is in use. */
   CheckTableNotInUse(rel, "ALTER TABLE");
-  CacheInvalidateRelcache(rel);
   relation_close(rel, NoLock);
+  forget_table(relid);
+}
 
+/*
+ * Forget the table relid's definition, which DDL has changed or is to:
+ * every session's descriptor of it once this one commits, this one's at
+ * its next command, and this transaction's handles of it, which hold the
+ * definition they were opened with, so the next use opens one afresh.
+ */
+static void forget_table(Oid relid) {
+  Relation rel = RelationIdGetRelation(relid);
+
+  if (RelationIsValid(rel)) {
+    CacheInvalidateRelcache(rel);
+    relation_close(rel, NoLock);
+  }
   auto it = open_tables().find(relid);
 
   if (it == open_tables().end())
@@ -2281,9 +2389,16 @@ static void drop_column(Oid relid, const char *relname, const char *name,
   sm_error("drop a column");
 }
 
+static void add_fkey(Oid relid, const char *relname, Constraint *con);
+static void drop_constraint(Oid relid, const char *relname, const char *name,
+                            bool missing_ok);
+static void validate_constraint(Oid relid, const char *relname,
+                                const char *name);
+
 /*
  * Do an ALTER TABLE of the table relid, in sm, in this transaction, one
- * subcommand after another: ADD COLUMN and DROP COLUMN, the subcommands
+ * subcommand after another: ADD COLUMN, DROP COLUMN, and ADD, DROP and
+ * VALIDATE CONSTRAINT of a foreign key, the subcommands
  * AlterTableLookupRelation() lets through.
  */
 void smstore_alter_table(Oid relid, AlterTableStmt *stmt) {
@@ -2297,6 +2412,18 @@ void smstore_alter_table(Oid relid, AlterTableStmt *stmt) {
     if (cmd->subtype == AT_AddColumn)
       add_column(relid, relname, castNode(ColumnDef, cmd->def),
                  cmd->missing_ok);
+    else if (cmd->subtype == AT_AddConstraint) {
+      Constraint *con = castNode(Constraint, cmd->def);
+
+      if (con->contype != CONSTR_FOREIGN)
+        ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                        errmsg("ALTER TABLE ... ADD CONSTRAINT supports only "
+                               "FOREIGN KEY yet")));
+      add_fkey(relid, relname, con);
+    } else if (cmd->subtype == AT_DropConstraint)
+      drop_constraint(relid, relname, cmd->name, cmd->missing_ok);
+    else if (cmd->subtype == AT_ValidateConstraint)
+      validate_constraint(relid, relname, cmd->name);
     else
       drop_column(relid, relname, cmd->name, cmd->missing_ok);
     /* The next subcommand sees what this one did. */
@@ -2392,6 +2519,583 @@ ObjectAddress smstore_rename_column(RenameStmt *stmt) {
     sm_error("rename a column");
   }
   ObjectAddressSubSet(address, RelationRelationId, relid, attnum);
+  return address;
+}
+
+static void check_fkey_rows(Oid relid, Oid pkoid, Oid oid,
+                            const char *conname);
+
+/*
+ * The bytes sm keeps for a foreign key, the host's: its three operators a
+ * column pair, then its ON DELETE SET columns, each list its length first,
+ * every word 8 bytes, in the machine's order.
+ */
+static std::string fkey_host(const smstore_fkey_t *fk) {
+  std::string b;
+  auto put = [&](uint64_t v) { b.append((const char *)&v, sizeof(v)); };
+
+  put((uint64_t)fk->nkeys);
+  for (int i = 0; i < fk->nkeys; i++) {
+    put(fk->pf_eq_oprs[i]);
+    put(fk->pp_eq_oprs[i]);
+    put(fk->ff_eq_oprs[i]);
+  }
+  put((uint64_t)fk->ndelsetcols);
+  for (int i = 0; i < fk->ndelsetcols; i++)
+    put((uint64_t)fk->delsetcols[i]);
+  return b;
+}
+
+/* The foreign key def of the table table, from sm, into fk. */
+static void fkey_from_sm(const sm_fkey_def_t &def, uint64_t table,
+                         smstore_fkey_t *fk) {
+  const std::string &b = def.host;
+  size_t pos = 0;
+  auto get = [&]() {
+    uint64_t v = 0;
+
+    if (pos + sizeof(v) > b.size())
+      elog(ERROR, "foreign key %llu: its operators are missing",
+           (unsigned long long)def.oid);
+    memcpy(&v, b.data() + pos, sizeof(v));
+    pos += sizeof(v);
+    return v;
+  };
+
+  memset(fk, 0, sizeof(*fk));
+  fk->oid = (Oid)def.oid;
+  namestrcpy(&fk->name, def.name.c_str());
+  fk->table = (Oid)table;
+  fk->ref_table = (Oid)def.ref_table;
+  fk->ref_index = (Oid)def.ref_index;
+  fk->nkeys = (int)def.columns.size();
+  for (int i = 0; i < fk->nkeys; i++) {
+    fk->attnums[i] = (AttrNumber)(def.columns[i] + 1);
+    fk->ref_attnums[i] = (AttrNumber)(def.ref_columns[i] + 1);
+  }
+  if ((int)get() != fk->nkeys)
+    elog(ERROR, "foreign key %llu: its operators are not its columns'",
+         (unsigned long long)def.oid);
+  for (int i = 0; i < fk->nkeys; i++) {
+    fk->pf_eq_oprs[i] = (Oid)get();
+    fk->pp_eq_oprs[i] = (Oid)get();
+    fk->ff_eq_oprs[i] = (Oid)get();
+  }
+  fk->ndelsetcols = (int)get();
+  for (int i = 0; i < fk->ndelsetcols && i < INDEX_MAX_KEYS; i++)
+    fk->delsetcols[i] = (AttrNumber)get();
+  fk->on_update = def.on_update;
+  fk->on_delete = def.on_delete;
+  fk->match = def.match;
+  fk->deferrable = def.deferrable;
+  fk->deferred = def.deferred;
+  fk->validated = def.validated;
+}
+
+/*
+ * The foreign key oid as this transaction sees it, into out: false if
+ * there is none.  sm takes no lock for it: the caller holds its table's.
+ */
+bool smstore_get_fkey(Oid oid, smstore_fkey_t *out) {
+  sm_fkey_def_t def;
+  uint64_t table = 0;
+
+  switch (sm_cat_fkey(xact_session(), oid, &table, &def)) {
+  case 0:
+    fkey_from_sm(def, table, out);
+    return true;
+  case 1:
+    return false;
+  default:
+    sm_error("look up a foreign key");
+  }
+  return false; /* not reached */
+}
+
+/*
+ * The table oid's definition as this transaction sees it now, into out,
+ * under its lock IS: false if there is no such table.  A handle opened
+ * earlier in the transaction keeps the definition it was opened with
+ * (sm_tbl_def()), which DDL since, an index or a foreign key, may have
+ * changed.
+ */
+static bool table_def_now(Oid oid, sm_table_def_t &out) {
+  if (open_table(oid, SM_LOCKMODE_IS) == NULL)
+    return false;
+  int rc = sm_cat_table_def_oid(xact_session(), oid, out);
+
+  if (rc < 0)
+    sm_error("read a table's definition");
+  return rc == 0;
+}
+
+/*
+ * The other tables whose foreign keys reference the table relid, each once,
+ * as this transaction sees them.
+ */
+List *smstore_referencing_tables(Oid relid) {
+  sm_table_def_t def;
+  List *out = NIL;
+
+  if (!table_def_now(relid, def))
+    return NIL;
+  for (const sm_fkey_ref_t &r : def.referenced_by)
+    if ((Oid)r.table != relid)
+      out = list_append_unique_oid(out, (Oid)r.table);
+  return out;
+}
+
+/*
+ * The column named name of rel, its number from 1, type and collation
+ * into the arrays at i; an error if it has none.
+ */
+static void fkey_column(Relation rel, const char *name, int i,
+                        AttrNumber *attnum, Oid *typid, Oid *collid) {
+  TupleDesc td = RelationGetDescr(rel);
+
+  for (int a = 0; a < td->natts; a++) {
+    Form_pg_attribute att = TupleDescAttr(td, a);
+
+    if (!att->attisdropped && strcmp(NameStr(att->attname), name) == 0) {
+      attnum[i] = att->attnum;
+      typid[i] = att->atttypid;
+      collid[i] = att->attcollation;
+      return;
+    }
+  }
+  ereport(ERROR, (errcode(ERRCODE_UNDEFINED_COLUMN),
+                  errmsg("column \"%s\" referenced in foreign key constraint "
+                         "does not exist",
+                         name)));
+}
+
+/*
+ * A name for a foreign key of the table relname on the columns cols, free
+ * among the table's foreign keys, as ChooseConstraintName() makes one.
+ */
+static char *fkey_name(const char *relname, List *cols,
+                       const sm_table_def_t *def) {
+  char buf[NAMEDATALEN * 2];
+  ListCell *l;
+  int n = 0;
+
+  buf[0] = '\0';
+  foreach (l, cols) {
+    size_t used = strlen(buf);
+
+    if (used > 0 && used + 1 < sizeof(buf))
+      strcat(buf, "_");
+    strlcat(buf, strVal(lfirst(l)), sizeof(buf));
+    if (strlen(buf) >= NAMEDATALEN)
+      break;
+  }
+  for (;;) {
+    char suffix[NAMEDATALEN];
+    char *name;
+    bool taken = false;
+
+    if (n == 0)
+      strlcpy(suffix, "fkey", sizeof(suffix));
+    else
+      snprintf(suffix, sizeof(suffix), "fkey%d", n);
+    name = makeObjectName(relname, buf, suffix);
+    for (const sm_fkey_def_t &f : def->fkeys)
+      taken |= f.name == name;
+    if (!taken)
+      return name;
+    n++;
+  }
+}
+
+/*
+ * ALTER TABLE ... ADD FOREIGN KEY, and CREATE TABLE's, which parse analysis
+ * makes one of: choose the referenced columns, their unique index and the
+ * operators as ATAddForeignKeyConstraint() does, and put the foreign key in
+ * sm, which keeps it (../sm/FOREIGNKEY.md).  Unless it is NOT VALID, or the
+ * table is new, the rows there are checked first, by RI_Initial_Check().
+ */
+static void add_fkey(Oid relid, const char *relname, Constraint *con) {
+  AttrNumber fkattnum[INDEX_MAX_KEYS] = {0}, pkattnum[INDEX_MAX_KEYS] = {0};
+  Oid fktypoid[INDEX_MAX_KEYS] = {0}, pktypoid[INDEX_MAX_KEYS] = {0};
+  Oid fkcolloid[INDEX_MAX_KEYS] = {0}, pkcolloid[INDEX_MAX_KEYS] = {0};
+  AttrNumber delsetcols[INDEX_MAX_KEYS] = {0};
+  smstore_fkey_t fk;
+  int numfks = 0, numpks = 0, numdelset = 0;
+  ListCell *l;
+
+  if (con->fk_with_period || con->pk_with_period)
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("a foreign key using PERIOD is not supported")));
+  if (con->fk_matchtype == FKCONSTR_MATCH_PARTIAL)
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("MATCH PARTIAL not yet implemented")));
+  /*
+   * A deferred check fires at commit, past the statement whose tuple store
+   * keeps an sm row's trigger tuples (commands/trigger.c).
+   */
+  if (con->deferrable || con->initdeferred)
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("a DEFERRABLE foreign key is not supported yet")));
+  if (!con->is_enforced)
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("a NOT ENFORCED foreign key is not supported yet")));
+
+  Oid pkoid = RangeVarGetRelid(con->pktable, NoLock, false);
+
+  if (pkoid < FirstNormalObjectId)
+    ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
+                    errmsg("referenced relation \"%s\" is not a table",
+                           con->pktable->relname)));
+  /* The descriptors' columns alone: sm takes the tables' locks, X both. */
+  Relation rel = RelationIdGetRelation(relid);
+  Relation pkrel = RelationIdGetRelation(pkoid);
+
+  if (!RelationIsValid(rel) || !RelationIsValid(pkrel))
+    elog(ERROR, "could not open the relations of a foreign key");
+  if ((rel->rd_rel->relpersistence == RELPERSISTENCE_TEMP) !=
+      (pkrel->rd_rel->relpersistence == RELPERSISTENCE_TEMP))
+    ereport(ERROR,
+            (errcode(ERRCODE_INVALID_TABLE_DEFINITION),
+             errmsg(rel->rd_rel->relpersistence == RELPERSISTENCE_TEMP
+                        ? "constraints on temporary tables may reference "
+                          "only temporary tables"
+                        : "constraints on permanent tables may reference "
+                          "only permanent tables")));
+  foreach (l, con->fk_attrs) {
+    if (numfks >= INDEX_MAX_KEYS)
+      ereport(ERROR, (errcode(ERRCODE_TOO_MANY_COLUMNS),
+                      errmsg("cannot have more than %d keys in a foreign key",
+                             INDEX_MAX_KEYS)));
+    fkey_column(rel, strVal(lfirst(l)), numfks++, fkattnum, fktypoid,
+                fkcolloid);
+  }
+  foreach (l, con->fk_del_set_cols) {
+    Oid t[INDEX_MAX_KEYS], c[INDEX_MAX_KEYS];
+    bool among = false;
+
+    fkey_column(rel, strVal(lfirst(l)), numdelset, delsetcols, t, c);
+    for (int i = 0; i < numfks; i++)
+      among |= fkattnum[i] == delsetcols[numdelset];
+    if (!among)
+      ereport(ERROR, (errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
+                      errmsg("column \"%s\" referenced in ON DELETE SET "
+                             "action must be part of foreign key",
+                             strVal(lfirst(l)))));
+    numdelset++;
+  }
+
+  /* The referenced columns: those named, or the primary key's. */
+  sm_table_def_t pkdef_now;
+
+  if (!table_def_now(pkoid, pkdef_now))
+    ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
+                    errmsg("relation \"%s\" does not exist",
+                           con->pktable->relname)));
+  const sm_table_def_t *pkdef = &pkdef_now;
+  const sm_index_def_t *index = NULL;
+
+  if (con->pk_attrs == NIL) {
+    for (const sm_index_def_t &x : pkdef->indexes)
+      if (x.primary)
+        index = &x;
+    if (index == NULL)
+      ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
+                      errmsg("there is no primary key for referenced table "
+                             "\"%s\"",
+                             RelationGetRelationName(pkrel))));
+    for (int32_t a : index->key_attnums) {
+      Form_pg_attribute att = TupleDescAttr(RelationGetDescr(pkrel), a);
+
+      pkattnum[numpks] = att->attnum;
+      pktypoid[numpks] = att->atttypid;
+      pkcolloid[numpks] = att->attcollation;
+      con->pk_attrs = lappend(con->pk_attrs,
+                              makeString(pstrdup(NameStr(att->attname))));
+      numpks++;
+    }
+  } else {
+    foreach (l, con->pk_attrs) {
+      if (numpks >= INDEX_MAX_KEYS)
+        ereport(ERROR,
+                (errcode(ERRCODE_TOO_MANY_COLUMNS),
+                 errmsg("cannot have more than %d keys in a foreign key",
+                        INDEX_MAX_KEYS)));
+      fkey_column(pkrel, strVal(lfirst(l)), numpks++, pkattnum, pktypoid,
+                  pkcolloid);
+    }
+    /* A unique index whose keys are the columns, in any order. */
+    for (const sm_index_def_t &x : pkdef->indexes) {
+      bool fits = x.unique && x.eval.empty() &&
+                  (int)x.key_attnums.size() == numpks &&
+                  x.state == SM_INDEX_VALID;
+
+      for (int i = 0; fits && i < numpks; i++) {
+        bool found = false;
+
+        for (int32_t a : x.key_attnums)
+          found |= a + 1 == pkattnum[i];
+        fits = found;
+      }
+      if (fits && index == NULL)
+        index = &x;
+    }
+    if (index == NULL)
+      ereport(ERROR, (errcode(ERRCODE_INVALID_FOREIGN_KEY),
+                      errmsg("there is no unique constraint matching given "
+                             "keys for referenced table \"%s\"",
+                             RelationGetRelationName(pkrel))));
+  }
+  if (numfks != numpks)
+    ereport(ERROR, (errcode(ERRCODE_INVALID_FOREIGN_KEY),
+                    errmsg("number of referencing and referenced columns for "
+                           "foreign key disagree")));
+
+  /* Its name, chosen as PostgreSQL chooses one, if not given. */
+  sm_table_def_t def_now;
+
+  if (!table_def_now(relid, def_now))
+    elog(ERROR, "could not open relation with OID %u", relid);
+  const char *conname = con->conname != NULL
+                            ? con->conname
+                            : fkey_name(relname, con->fk_attrs, &def_now);
+
+  /*
+   * The equality operators, as ATAddForeignKeyConstraint() finds them, with
+   * the default btree class of each referenced column's type for its index
+   * column's: sm's index keys have no operator class of their own.
+   */
+  memset(&fk, 0, sizeof(fk));
+  for (int i = 0; i < numpks; i++) {
+    Oid pktype = pktypoid[i], fktype = fktypoid[i];
+    Oid opclass = GetDefaultOpClass(pktype, BTREE_AM_OID);
+    Oid opfamily, opcintype, fktyped, pfeqop, ppeqop, ffeqop = InvalidOid;
+
+    if (!OidIsValid(opclass))
+      ereport(ERROR,
+              (errcode(ERRCODE_UNDEFINED_OBJECT),
+               errmsg("could not identify an equality operator for foreign "
+                      "key")));
+    opfamily = get_opclass_family(opclass);
+    opcintype = get_opclass_input_type(opclass);
+    ppeqop = get_opfamily_member(opfamily, opcintype, opcintype,
+                                 BTEqualStrategyNumber);
+    if (!OidIsValid(ppeqop))
+      elog(ERROR, "missing operator %d(%u,%u) in opfamily %u",
+           BTEqualStrategyNumber, opcintype, opcintype, opfamily);
+    fktyped = getBaseType(fktype);
+    pfeqop = get_opfamily_member(opfamily, opcintype, fktyped,
+                                 BTEqualStrategyNumber);
+    if (OidIsValid(pfeqop))
+      ffeqop = get_opfamily_member(opfamily, fktyped, fktyped,
+                                   BTEqualStrategyNumber);
+    if (!(OidIsValid(pfeqop) && OidIsValid(ffeqop))) {
+      Oid input_typeids[2] = {pktype, fktype};
+      Oid target_typeids[2] = {opcintype, opcintype};
+
+      if (can_coerce_type(2, input_typeids, target_typeids,
+                          COERCION_IMPLICIT))
+        pfeqop = ffeqop = ppeqop;
+    }
+    if (!(OidIsValid(pfeqop) && OidIsValid(ffeqop)))
+      ereport(ERROR,
+              (errcode(ERRCODE_DATATYPE_MISMATCH),
+               errmsg("foreign key constraint \"%s\" cannot be implemented",
+                      conname),
+               errdetail("Key columns \"%s\" of the referencing table and "
+                         "\"%s\" of the referenced table "
+                         "are of incompatible types: %s and %s.",
+                         strVal(list_nth(con->fk_attrs, i)),
+                         strVal(list_nth(con->pk_attrs, i)),
+                         format_type_be(fktype), format_type_be(pktype))));
+    if (OidIsValid(pkcolloid[i]) && OidIsValid(fkcolloid[i]) &&
+        pkcolloid[i] != fkcolloid[i] &&
+        (!get_collation_isdeterministic(pkcolloid[i]) ||
+         !get_collation_isdeterministic(fkcolloid[i])))
+      ereport(ERROR,
+              (errcode(ERRCODE_COLLATION_MISMATCH),
+               errmsg("foreign key constraint \"%s\" cannot be implemented",
+                      conname),
+               errdetail("Key columns \"%s\" of the referencing table and "
+                         "\"%s\" of the referenced table "
+                         "have incompatible collations: \"%s\" and \"%s\".  "
+                         "If either collation is nondeterministic, then both "
+                         "collations have to be the same.",
+                         strVal(list_nth(con->fk_attrs, i)),
+                         strVal(list_nth(con->pk_attrs, i)),
+                         get_collation_name(fkcolloid[i]),
+                         get_collation_name(pkcolloid[i]))));
+    fk.pf_eq_oprs[i] = pfeqop;
+    fk.pp_eq_oprs[i] = ppeqop;
+    fk.ff_eq_oprs[i] = ffeqop;
+  }
+  fk.nkeys = numfks;
+  fk.ndelsetcols = numdelset;
+  memcpy(fk.delsetcols, delsetcols, sizeof(delsetcols));
+
+  /*
+   * The rows there are checked once it is in sm, in this transaction, under
+   * the locks X it takes on both tables, unless the table is new or it is
+   * NOT VALID; validated says whether they were.
+   */
+  bool check = !con->skip_validation && con->initially_valid;
+  sm_fkey_def_t def;
+
+  def.name = conname;
+  def.ref_table = pkoid;
+  def.ref_index = index->oid;
+  for (int i = 0; i < numfks; i++) {
+    def.columns.push_back(fkattnum[i] - 1);
+    def.ref_columns.push_back(pkattnum[i] - 1);
+  }
+  def.on_update = con->fk_upd_action;
+  def.on_delete = con->fk_del_action;
+  def.match = con->fk_matchtype;
+  def.validated = con->initially_valid;
+  def.host = fkey_host(&fk);
+  relation_close(rel, NoLock);
+  relation_close(pkrel, NoLock);
+
+  sm_session_t *s = xact_session();
+  uint64_t oid = 0;
+
+  if (waiting([&] { return sm_cat_create_fkey(s, relid, def, &oid); }) != 0) {
+    if (sm_errnum() == SM_ERR_DUPKEY)
+      ereport(ERROR, (errcode(ERRCODE_DUPLICATE_OBJECT),
+                      errmsg("constraint \"%s\" for relation \"%s\" already "
+                             "exists",
+                             conname, relname)));
+    sm_error("create a foreign key");
+  }
+  /* Both tables' descriptors relearn their triggers, at the next command. */
+  forget_table(relid);
+  forget_table(pkoid);
+  CommandCounterIncrement();
+  if (check)
+    check_fkey_rows(relid, pkoid, (Oid)oid, conname);
+}
+
+/*
+ * Check that every row of the table relid meets its foreign key oid, named
+ * conname, to the table pkoid: RI_Initial_Check()'s one query, as
+ * validateForeignKeyConstraint() makes it.
+ */
+static void check_fkey_rows(Oid relid, Oid pkoid, Oid oid,
+                            const char *conname) {
+  Trigger trig;
+  /*
+   * Held to the end of the transaction, as VALIDATE CONSTRAINT takes them:
+   * the rows checked do not change before it ends.  ADD FOREIGN KEY holds
+   * both X already.
+   */
+  Relation rel = table_open(relid, ShareUpdateExclusiveLock);
+  Relation pkrel = table_open(pkoid, RowShareLock);
+
+  memset(&trig, 0, sizeof(trig));
+  trig.tgoid = InvalidOid;
+  trig.tgname = pstrdup(conname);
+  trig.tgenabled = TRIGGER_FIRES_ON_ORIGIN;
+  trig.tgisinternal = true;
+  trig.tgconstrrelid = pkoid;
+  trig.tgconstraint = oid;
+  if (!RI_Initial_Check(&trig, rel, pkrel))
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("the rows of \"%s\" cannot be checked against "
+                           "foreign key \"%s\"",
+                           RelationGetRelationName(rel), conname)));
+  table_close(pkrel, NoLock);
+  table_close(rel, NoLock);
+}
+
+/* The foreign key of the table relid named name, into out: false if none. */
+static bool fkey_named(Oid relid, const char *name, sm_fkey_def_t &out) {
+  sm_table_def_t def;
+
+  if (!table_def_now(relid, def))
+    return false;
+  for (const sm_fkey_def_t &f : def.fkeys)
+    if (f.name == name) {
+      out = f;
+      return true;
+    }
+  return false;
+}
+
+/* An error for a constraint name the table relname has none of. */
+static void no_constraint(const char *name, const char *relname) {
+  ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
+                  errmsg("constraint \"%s\" of relation \"%s\" does not exist",
+                         name, relname)));
+}
+
+/* ALTER TABLE ... DROP CONSTRAINT: a foreign key, the only one sm keeps. */
+static void drop_constraint(Oid relid, const char *relname, const char *name,
+                            bool missing_ok) {
+  sm_fkey_def_t f;
+
+  if (!fkey_named(relid, name, f)) {
+    if (!missing_ok)
+      no_constraint(name, relname);
+    ereport(NOTICE, (errmsg("constraint \"%s\" of relation \"%s\" does not "
+                            "exist, skipping",
+                            name, relname)));
+    return;
+  }
+  uint64_t oid = f.oid;
+  sm_session_t *s = xact_session();
+
+  if (waiting([&] { return sm_cat_drop_fkey(s, relid, oid); }) != 0)
+    sm_error("drop a foreign key");
+  forget_table(relid);
+  forget_table((Oid)f.ref_table);
+}
+
+/* ALTER TABLE ... VALIDATE CONSTRAINT: check the rows, then say so. */
+static void validate_constraint(Oid relid, const char *relname,
+                                const char *name) {
+  sm_fkey_def_t f;
+
+  if (!fkey_named(relid, name, f))
+    no_constraint(name, relname);
+  if (f.validated)
+    return;
+  uint64_t oid = f.oid;
+  Oid pkoid = (Oid)f.ref_table;
+  std::string conname = f.name;
+
+  check_fkey_rows(relid, pkoid, (Oid)oid, conname.c_str());
+  sm_session_t *s = xact_session();
+
+  if (waiting([&] { return sm_cat_validate_fkey(s, relid, oid); }) != 0)
+    sm_error("validate a foreign key");
+  forget_table(relid);
+}
+
+/* ALTER TABLE ... RENAME CONSTRAINT, of a foreign key.  Returns its address. */
+ObjectAddress smstore_rename_constraint(RenameStmt *stmt) {
+  Oid relid = rename_target(stmt);
+  ObjectAddress address;
+
+  if (!OidIsValid(relid))
+    return InvalidObjectAddress;
+  sm_fkey_def_t f;
+
+  if (!fkey_named(relid, stmt->subname, f))
+    no_constraint(stmt->subname, stmt->relation->relname);
+  uint64_t oid = f.oid;
+  sm_session_t *s = xact_session();
+
+  if (waiting([&] {
+        return sm_cat_rename_fkey(s, relid, oid, stmt->newname);
+      }) != 0) {
+    if (sm_errnum() == SM_ERR_DUPKEY)
+      ereport(ERROR, (errcode(ERRCODE_DUPLICATE_OBJECT),
+                      errmsg("constraint \"%s\" for relation \"%s\" already "
+                             "exists",
+                             stmt->newname, stmt->relation->relname)));
+    sm_error("rename a foreign key");
+  }
+  forget_table(relid);
+  ObjectAddressSet(address, ConstraintRelationId, (Oid)oid);
   return address;
 }
 

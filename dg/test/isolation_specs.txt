@@ -33,7 +33,9 @@ multixact-no-forget             fail
 tuplelock-conflict              fail
 tuplelock-update                fail
 tuplelock-upgrade-no-deadlock   fail
-# REFERENCES in CREATE TABLE is not supported yet
+# the same, met by a foreign key's check: it locks the parent row FOR KEY
+# SHARE, which is FOR SHARE, so an update of the parent's other columns
+# waits for the child's transaction, and two may deadlock
 fk-contention                   fail
 fk-deadlock                     fail
 update-locked-tuple             fail

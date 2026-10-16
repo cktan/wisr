@@ -265,6 +265,13 @@ const std::vector<attribute_t> &schema_of(sm3::part_t part) {
       /* statistic */
       {att(type_int8), att(type_int4), att(type_float4), att(type_int4),
        att(type_float4), att(type_float4), att(type_int4), att(type_int4)},
+      /* constraint */
+      {att(type_int8), att(type_text), att(type_int2), att(type_bool),
+       att(type_bytea)},
+      /* fkey */
+      {att(type_int8), att(type_int8), att(type_int4), att(type_int2),
+       att(type_int2), att(type_int2), att(type_bool), att(type_bool)},
+      /* fkey_pair */ {att(type_int4), att(type_int4)},
   };
   return schemas[static_cast<size_t>(part)];
 }
@@ -293,6 +300,8 @@ const sm2::tup_desc_t &part_desc(part_t part) {
       schema_of(part_t::collation),   schema_of(part_t::index_state),
       schema_of(part_t::sequence),    schema_of(part_t::stats_table),
       schema_of(part_t::stats_index), schema_of(part_t::statistic),
+      schema_of(part_t::constraint),  schema_of(part_t::fkey),
+      schema_of(part_t::fkey_pair),
   };
   return descs[static_cast<size_t>(part)];
 }
@@ -658,6 +667,95 @@ int decode_sequence(std::string_view blob, sequence_rec_t &rec) {
   rec.owner = r.opt_i8(4);
   rec.owner_attnum = r.opt_i4(5).value_or(-1);
   return r.ok ? at_end(blob, pos) : corrupt("a sequence part cut short");
+}
+
+/*
+ * A foreign key's value (FOREIGNKEY.md §3): the constraint, its type
+ * 'f'; the foreign key; a pair a column of each end.
+ */
+int encode_constraint(const fkey_rec_t &rec, std::string &blob) {
+  if (rec.attnums.size() != rec.ref_attnums.size()) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       "a foreign key's two ends have as many columns");
+  }
+  blob.clear();
+  writer_t c(5);
+  c.i8(0, rec.oid);
+  c.bytes(1, rec.name);
+  c.i2(2, 'f');
+  c.b(3, rec.validated);
+  if (!rec.host.empty()) {
+    c.bytes(4, rec.host);
+  }
+  if (c.append(part_desc(part_t::constraint), blob) != 0) {
+    return -1;
+  }
+  writer_t f(8);
+  f.i8(0, rec.ref_table);
+  f.i8(1, rec.ref_index);
+  f.i4(2, static_cast<int32_t>(rec.attnums.size()));
+  f.i2(3, rec.on_update);
+  f.i2(4, rec.on_delete);
+  f.i2(5, rec.match);
+  f.b(6, rec.deferrable);
+  f.b(7, rec.deferred);
+  if (f.append(part_desc(part_t::fkey), blob) != 0) {
+    return -1;
+  }
+  for (size_t i = 0; i < rec.attnums.size(); i++) {
+    writer_t p(2);
+    p.i4(0, rec.attnums[i]);
+    p.i4(1, rec.ref_attnums[i]);
+    if (p.append(part_desc(part_t::fkey_pair), blob) != 0) {
+      return -1;
+    }
+  }
+  return 0;
+}
+
+/* Read a foreign key's value. */
+int decode_constraint(std::string_view blob, fkey_rec_t &rec) {
+  size_t pos = 0;
+  rec = fkey_rec_t{};
+  reader_t c;
+  if (c.read(blob, pos, part_t::constraint) != 0) {
+    return -1;
+  }
+  rec.oid = c.i8(0);
+  rec.name = c.bytes(1);
+  int16_t type = c.i2(2);
+  rec.validated = c.b(3);
+  rec.host = c.opt_bytes(4).value_or("");
+  if (!c.ok || type != 'f') {
+    return corrupt("a constraint part cut short, or not a foreign key");
+  }
+  reader_t f;
+  if (f.read(blob, pos, part_t::fkey) != 0) {
+    return -1;
+  }
+  rec.ref_table = f.i8(0);
+  rec.ref_index = f.i8(1);
+  int32_t npairs = f.i4(2);
+  rec.on_update = static_cast<char>(f.i2(3));
+  rec.on_delete = static_cast<char>(f.i2(4));
+  rec.match = static_cast<char>(f.i2(5));
+  rec.deferrable = f.b(6);
+  rec.deferred = f.b(7);
+  if (!f.ok || npairs < 1) {
+    return corrupt("a foreign key part cut short");
+  }
+  for (int32_t i = 0; i < npairs; i++) {
+    reader_t p;
+    if (p.read(blob, pos, part_t::fkey_pair) != 0) {
+      return -1;
+    }
+    rec.attnums.push_back(p.i4(0));
+    rec.ref_attnums.push_back(p.i4(1));
+    if (!p.ok) {
+      return corrupt("a foreign key's pair cut short");
+    }
+  }
+  return at_end(blob, pos);
 }
 
 } // namespace sm3
