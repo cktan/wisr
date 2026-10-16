@@ -40,7 +40,6 @@
 #include "statistics/extended_stats_internal.h"
 #include "statistics/statistics.h"
 #include "storage/buffile.h"
-#include "storage/procarray.h"
 #include "utils/attoptcache.h"
 #include "utils/datum.h"
 #include "utils/guc.h"

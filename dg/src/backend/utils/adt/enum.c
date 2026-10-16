@@ -18,7 +18,6 @@
 #include "access/table.h"
 #include "catalog/pg_enum.h"
 #include "libpq/pqformat.h"
-#include "storage/procarray.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"

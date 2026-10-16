@@ -43,7 +43,6 @@
 #include "storage/lmgr.h"
 #include "storage/proc.h"
 #include "storage/session_registry.h"
-#include "storage/procarray.h"
 #include "storage/procnumber.h"
 #include "storage/procsignal.h"
 #include "tcop/backend_startup.h"

@@ -44,7 +44,7 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT SnapshotData SnapshotToastData;
 /*
  * Similarly, some initialization is required for a NonVacuumable snapshot.
  * The caller must supply the visibility cutoff state to use; digres keeps
- * none (procarray.c).
+ * none (snapmgr.c, GetSnapshotData()).
  */
 #define InitNonVacuumableSnapshot(snapshotdata, vistestp)  \
 	((snapshotdata).snapshot_type = SNAPSHOT_NON_VACUUMABLE, \

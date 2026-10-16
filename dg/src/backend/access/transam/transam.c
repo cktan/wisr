@@ -20,6 +20,7 @@
 #include "postgres.h"
 
 #include "access/transam.h"
+#include "access/xact.h"
 
 /* ----------------------------------------------------------------
  *						Interface functions
@@ -109,4 +110,15 @@ bool TransactionIdFollowsOrEquals(TransactionId id1, TransactionId id2) {
 
   diff = (int32)(id1 - id2);
   return (diff >= 0);
+}
+
+/*
+ * TransactionIdIsInProgress -- is given transaction running in some backend
+ */
+bool TransactionIdIsInProgress(TransactionId xid) {
+  /*
+   * No other session holds a PostgreSQL xid (GetSnapshotData()): only this
+   * one's own can be in progress.
+   */
+  return TransactionIdIsCurrentTransactionId(xid);
 }

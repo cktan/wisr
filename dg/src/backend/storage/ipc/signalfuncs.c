@@ -20,7 +20,6 @@
 #include "miscadmin.h"
 #include "storage/pmsignal.h"
 #include "storage/proc.h"
-#include "storage/procarray.h"
 #include "storage/procsignal.h"
 #include "storage/session_registry.h"
 #include "utils/acl.h"

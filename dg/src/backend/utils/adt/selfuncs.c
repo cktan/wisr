@@ -6116,8 +6116,9 @@ static bool get_actual_variable_endpoint(
    * pages.  When we fail for that reason, the caller will end up using
    * whatever extremal value is recorded in pg_statistic.
    *
-   * digres keeps no horizon (procarray.c): this is reached only for a
-   * catalog's index, of which there is none, so the snapshot has none.
+   * digres keeps no horizon (snapmgr.c's GetSnapshotData()): this is
+   * reached only for a catalog's index, of which there is none, so the
+   * snapshot has none.
    */
   InitNonVacuumableSnapshot(SnapshotNonVacuumable, NULL);
 

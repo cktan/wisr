@@ -15,7 +15,6 @@
 
 #include "catalog/pg_type.h"
 #include "storage/proc.h"
-#include "storage/procarray.h"
 #include "storage/session_registry.h"
 #include "utils/array.h"
 #include "utils/fmgrprotos.h"

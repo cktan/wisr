@@ -29,7 +29,7 @@
 #include "storage/advisory_lock.h"
 #include "storage/ipc.h"
 #include "storage/proc.h"
-#include "storage/procarray.h"
+#include "storage/session_registry.h"
 
 /* GUC variables */
 thread_local /*LOCAL*/ int StatementTimeout = 0;
@@ -66,9 +66,10 @@ void InitProcessPhase2(void) {
   Assert(MyProcNumber != INVALID_PROC_NUMBER);
 
   /*
-   * Add our record to the session registry.
+   * Add our record to the session registry: other sessions find this one
+   * by it (session_registry.c).
    */
-  ProcArrayAdd();
+  session_register();
 
   /*
    * Arrange to clean that up at backend exit.
@@ -95,7 +96,7 @@ void ProcReleaseLocks(bool isCommit) {
 /*
  * RemoveProcFromArray() -- Remove this session from the session registry.
  */
-static void RemoveProcFromArray(int code, Datum arg) { ProcArrayRemove(); }
+static void RemoveProcFromArray(int code, Datum arg) { session_unregister(); }
 
 /*
  * ProcKill() -- Forget this session's number, as it ends.

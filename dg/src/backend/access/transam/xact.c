@@ -37,7 +37,6 @@
 #include "storage/fd.h"
 #include "storage/lmgr.h"
 #include "storage/proc.h"
-#include "storage/procarray.h"
 #include "utils/builtins.h"
 #include "utils/combocid.h"
 #include "utils/control_block.h"
@@ -1033,10 +1032,11 @@ static void CommitTransaction(void) {
   TRACE_POSTGRESQL_TRANSACTION_COMMIT(tcb->lxid);
 
   /*
-   * Let others know about no transaction in progress by me, before
-   * releasing the locks we hold.  It has no xid to end: digres assigns none.
+   * The transaction's local id and xmin are the session's own, which no
+   * other session reads; it has no xid to end: digres assigns none.
    */
-  ProcArrayEndTransaction(InvalidTransactionId);
+  tcb->lxid = InvalidLocalTransactionId;
+  tcb->xmin = InvalidTransactionId;
 
   /*
    * This is all post-commit cleanup.  Note that if an error is raised here,
@@ -1186,10 +1186,11 @@ static void AbortTransaction(void) {
   TRACE_POSTGRESQL_TRANSACTION_ABORT(tcb->lxid);
 
   /*
-   * Let others know about no transaction in progress by me, before
-   * releasing the locks we hold.
+   * The transaction's local id and xmin are the session's own, which no
+   * other session reads; it has no xid to end: digres assigns none.
    */
-  ProcArrayEndTransaction(InvalidTransactionId);
+  tcb->lxid = InvalidLocalTransactionId;
+  tcb->xmin = InvalidTransactionId;
 
   /*
    * Post-abort cleanup.  See notes in CommitTransaction() concerning

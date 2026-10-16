@@ -26,11 +26,71 @@
 #include "commands/dbcommands.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
-#include "storage/procarray.h"
+#include "storage/procsignal.h"
+#include "storage/session_registry.h"
 #include "utils/acl.h"
+#include "utils/control_block.h"
 #include "utils/datadir.h"
 #include "utils/pg_locale.h"
 #include "utils/syscache.h"
+
+/*
+ * Terminate existing connections to the specified database. This routine
+ * is used by the DROP DATABASE command when user has asked to forcefully
+ * drop the database.
+ *
+ * The current backend is always ignored; it is caller's responsibility to
+ * check whether the current backend uses the given DB, if it's important.
+ *
+ * If the target database has a prepared transaction or permissions checks
+ * fail for a connection, this fails without terminating anything.
+ */
+static void TerminateOtherDBBackends(Oid databaseId) {
+  std::vector<session_ref_t> others;
+
+  /* The records of the database's other sessions (SHMEM.md section 5.2). */
+  for (session_ref_t &record : sessions_all())
+    if (record->database.load(std::memory_order_acquire) == databaseId &&
+        record != tcb->session)
+      others.push_back(std::move(record));
+
+  /*
+   * Permissions checks relax the pg_terminate_backend checks in two ways,
+   * both by omitting the !OidIsValid(role) check:
+   *
+   * - Accept terminating autovacuum workers, since DROP DATABASE without
+   * FORCE terminates them.
+   *
+   * Unlike pg_terminate_backend, we don't raise some warnings - like "PID
+   * %d is not a PostgreSQL server process", because for us already finished
+   * session is not a problem.
+   */
+  for (const session_ref_t &record : others) {
+    Oid role = record->role.load(std::memory_order_acquire);
+
+    if (superuser_arg(role) && !superuser())
+      ereport(ERROR,
+              (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+               errmsg("permission denied to terminate process"),
+               errdetail("Only roles with the %s attribute may terminate "
+                         "processes of roles with the %s attribute.",
+                         "SUPERUSER", "SUPERUSER")));
+
+    if (!has_privs_of_role(GetUserId(), role) &&
+        !has_privs_of_role(GetUserId(), ROLE_PG_SIGNAL_BACKEND))
+      ereport(ERROR,
+              (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+               errmsg("permission denied to terminate process"),
+               errdetail("Only roles with privileges of the role whose "
+                         "process is being terminated or with privileges "
+                         "of the \"%s\" role may terminate this process.",
+                         "pg_signal_backend")));
+  }
+
+  /* Each in its own thread: one that has ended since is not another's. */
+  for (const session_ref_t &record : others)
+    session_interrupt(record, INTERRUPT_DIE);
+}
 
 /* Refuse an ALTER DATABASE: sm has nothing to alter yet. */
 static void refuse_alter(void) {

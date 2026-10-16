@@ -5637,3 +5637,28 @@ queue). Every other `SetLatch()` named `MyLatch`.
   left out.
 - Found on the way, left: `select ctid from t` fails, "relation
   2659 cannot be opened: digres has no catalog tables".
+
+## Step 194: the proc array is gone
+
+`SHMEM.md` §5. Storage/ipc `procarray.c` was left with
+forwarders to the session registry and what had no other home.
+Each piece is with its callers, and the file and its header are
+gone.
+
+- **Inlined**: `ProcArrayShmemInit()` (storage/ipc `ipci.c`
+  makes the registry and the advisory table),
+  `ProcArrayAdd()` and `ProcArrayRemove()` (storage/lmgr
+  `proc.c` registers and unregisters), and
+  `ProcArrayEndTransaction()` (access/transam `xact.c` clears
+  the session's local id and xmin, at commit and at abort).
+- **Moved**: `TransactionIdIsInProgress()` to access/transam
+  `transam.c`, beside `TransactionIdDidCommit()`;
+  `GetSnapshotData()` and the snapshot's xid limits (step 191)
+  to utils/time `snapmgr.c`, static, their one user;
+  `TerminateOtherDBBackends()` to commands `dbcommands.c`,
+  static, DROP DATABASE FORCE's.
+- **Gone**: `ProcArrayInstallImportedXmin()`, which always said
+  no, so `snapmgr.c`'s `SetTransactionSnapshot()` reports the
+  import failed, as it did, reached by nothing as
+  `ImportSnapshot()` refuses first; and `CountOtherDBBackends()`,
+  declared and never defined.

@@ -44,7 +44,6 @@
 #include "storage/pmsignal.h"
 #include "storage/proc.h"
 #include "storage/session_registry.h"
-#include "storage/procarray.h"
 #include "storage/procsignal.h"
 #include "utils/builtins.h"
 #include "utils/datadir.h"

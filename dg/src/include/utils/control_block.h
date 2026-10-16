@@ -119,7 +119,7 @@ typedef struct tcb_t {
   /* advisory_lock.c: the keys this session holds, made at its first lock */
   std::unique_ptr<advisory_state_t, advisory_state_free_t> advisory;
   /*
-   * xact.c, procarray.c, snapmgr.c: this session's transaction's local id,
+   * xact.c, snapmgr.c: this session's transaction's local id,
    * a virtual xid's low part, and its xmin, both invalid between
    * transactions; its PGPROC's once (dg/WORKNOTE.md step 159)
    */

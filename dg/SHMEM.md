@@ -139,14 +139,15 @@ thread raises the bit through the thread's handle
   number is its thread's id (`MyProcNumber`, `MyProcPid`), and
   its transaction's local id and xmin are its tcb's.
   `max_connections` is the registry's limit.
-- **The proc array** (storage/ipc `procarray.c`). Mostly dead:
-  no xid is ever assigned (step 45), and a snapshot is a
-  constant, made with no lock and no scan of the array, and
+- **The proc array is gone** (storage/ipc `procarray.c`,
+  `WORKNOTE.md` step 194). No xid is ever assigned (step 45),
+  so a snapshot is a constant, made with no lock and no scan
+  (utils/time `snapmgr.c`'s `GetSnapshotData()`), and
   `TransactionIdIsInProgress()` asks only of the session's own
-  (`WORKNOTE.md` step 150). Its live users are DROP DATABASE
-  FORCE, the signal functions and `pg_blocking_pids()`, which
-  find a session by its record in the session registry (§5.2,
-  `WORKNOTE.md` step 152); `ProcArrayLock` is gone.
+  (access/transam `transam.c`, step 150). A session is found by
+  its record in the session registry (§5.2, step 152), as DROP
+  DATABASE FORCE, the signal functions and `pg_blocking_pids()`
+  find one.
 - **TransamVariables is gone** (`WORKNOTE.md` step 173): its
   counters went with step 137, and what was left never changed;
   `GetSnapshotData()` names the constants.

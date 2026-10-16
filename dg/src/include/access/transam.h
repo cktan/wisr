@@ -194,6 +194,7 @@ static inline void FullTransactionIdAdvance(FullTransactionId *dest) {
  */
 extern bool TransactionIdDidCommit(TransactionId transactionId);
 extern bool TransactionIdDidAbort(TransactionId transactionId);
+extern bool TransactionIdIsInProgress(TransactionId xid);
 extern bool TransactionIdPrecedes(TransactionId id1, TransactionId id2);
 extern bool TransactionIdPrecedesOrEquals(TransactionId id1, TransactionId id2);
 extern bool TransactionIdFollows(TransactionId id1, TransactionId id2);

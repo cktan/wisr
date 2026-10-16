@@ -17,11 +17,12 @@
 #include "access/nbtree.h"
 #include "access/transam.h"
 #include "miscadmin.h"
+#include "storage/advisory_lock.h"
 #include "storage/ipc.h"
 #include "storage/pmsignal.h"
 #include "storage/proc.h"
-#include "storage/procarray.h"
 #include "storage/procsignal.h"
+#include "storage/session_registry.h"
 #include "utils/guc.h"
 #include "utils/injection_point.h"
 
@@ -39,7 +40,10 @@ void CreateSharedMemoryAndSemaphores(void) {
   /*
    * Set up the session registry
    */
-  ProcArrayShmemInit();
+  /* The sessions are in a registry of the pcb's (SHMEM.md section 5.2). */
+  session_registry_init();
+  /* Advisory locks are in a table of the pcb's, by the sessions' records. */
+  advisory_init();
 
   /*
    * Set up interprocess signaling mechanisms

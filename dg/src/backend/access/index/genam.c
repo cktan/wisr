@@ -29,7 +29,6 @@
 #include "catalog/index.h"
 #include "lib/stringinfo.h"
 #include "miscadmin.h"
-#include "storage/procarray.h"
 #include "utils/acl.h"
 #include "utils/injection_point.h"
 #include "utils/lsyscache.h"

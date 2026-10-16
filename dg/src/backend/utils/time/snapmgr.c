@@ -115,7 +115,6 @@
 #include "port/pg_lfind.h"
 #include "storage/fd.h"
 #include "storage/proc.h"
-#include "storage/procarray.h"
 #include "utils/builtins.h"
 #include "utils/control_block.h"
 #include "utils/memutils.h"
@@ -216,6 +215,9 @@ static Snapshot CopySnapshot(Snapshot snapshot);
 static void UnregisterSnapshotNoOwner(Snapshot snapshot);
 static void FreeSnapshot(Snapshot snapshot);
 static void SnapshotResetXmin(void);
+static int GetMaxSnapshotXidCount(void);
+static int GetMaxSnapshotSubxidCount(void);
+static Snapshot GetSnapshotData(Snapshot snapshot);
 
 /* ResourceOwner callbacks to track snapshot references */
 static void ResOwnerReleaseSnapshot(Datum res);
@@ -491,22 +493,15 @@ static void SetTransactionSnapshot(Snapshot sourcesnap,
   CurrentSnapshot->snapXactCompletionCount = 0;
 
   /*
-   * Now we have to fix what GetSnapshotData did with the session's xmin and
-   * TransactionXmin.  There is a race condition: to make sure we are not
-   * causing the global xmin to go backwards, we have to test that the
-   * source transaction is still running, and that has to be done
-   * atomically. So let procarray.c do it.
-   *
-   * Note: in serializable mode, predicate.c will do this a second time. It
-   * doesn't seem worth contorting the logic here to avoid two calls,
-   * especially since it's not clear that predicate.c *must* do this.
+   * PostgreSQL installed the source's xmin here, as the session's, if the
+   * source transaction still ran.  No snapshot is imported (ImportSnapshot()
+   * refuses), so none is installed.
    */
-  if (!ProcArrayInstallImportedXmin(CurrentSnapshot->xmin, sourcevxid))
-    ereport(ERROR,
-            (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-             errmsg("could not import the requested snapshot"),
-             errdetail("The source process with PID %d is not running anymore.",
-                       sourcepid)));
+  ereport(ERROR,
+          (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+           errmsg("could not import the requested snapshot"),
+           errdetail("The source process with PID %d is not running anymore.",
+                     sourcepid)));
 
   /*
    * In transaction-snapshot mode, the first snapshot must live until end of
@@ -1566,4 +1561,76 @@ bool XidInMVCCSnapshot(TransactionId xid, Snapshot snapshot) {
 
 static void ResOwnerReleaseSnapshot(Datum res) {
   UnregisterSnapshotNoOwner((Snapshot)DatumGetPointer(res));
+}
+
+/*
+ * GetMaxSnapshotXidCount -- get max size for snapshot XID array
+ *
+ * No xid is ever in progress (GetSnapshotData()), so a snapshot holds none.
+ */
+static int GetMaxSnapshotXidCount(void) { return 0; }
+
+/*
+ * GetMaxSnapshotSubxidCount -- get max size for snapshot sub-XID array
+ *
+ * As GetMaxSnapshotXidCount(): a snapshot holds no subtransaction's xid.
+ */
+static int GetMaxSnapshotSubxidCount(void) { return 0; }
+
+/*
+ * GetSnapshotData -- returns information about running transactions.
+ *
+ * The returned snapshot includes xmin (lowest still-running xact ID),
+ * xmax (highest completed xact ID + 1), and a list of running xact IDs
+ * in the range xmin <= xid < xmax.  It is used as follows:
+ *		All xact IDs < xmin are considered finished.
+ *		All xact IDs >= xmax are considered still running.
+ *		For an xact ID xmin <= xid < xmax, consult list to see whether
+ *		it is considered running or not.
+ * This ensures that the set of transactions seen as "running" by the
+ * current xact will not change after it takes the snapshot.
+ *
+ * In digres no xid is ever running, so the list is empty and every snapshot
+ * is the same (see below).
+ *
+ * We also update the following backend-global variables:
+ *		TransactionXmin: the oldest xmin of any snapshot in use in the
+ *			current transaction (the session's xmin).
+ *		RecentXmin: the xmin computed for the most recent snapshot. XIDs
+ *			older than this are known not running any more.
+ *
+ * No horizon is kept: what one serves, heap pruning and VACUUM, does not
+ * run.  A snapshot's xid arrays are not allocated: it holds none.
+ */
+static Snapshot GetSnapshotData(Snapshot snapshot) {
+  TransactionId xmax;
+
+  Assert(snapshot != NULL);
+
+  /*
+   * No PostgreSQL transaction id is ever assigned (WORKNOTE.md steps 45 and
+   * 137), and what a session sees is sm's snapshot, not this one: so no xid
+   * is in progress, and every snapshot is the same, its xmin and xmax the
+   * first normal xid, after the last completed, which none ever is.  It is
+   * made with no lock and no scan of the proc array (SHMEM.md section 7,
+   * step 3).  The command id is the caller's, as before.
+   */
+  xmax = FirstNormalTransactionId;
+
+  if (!TransactionIdIsValid(tcb->xmin))
+    tcb->xmin = TransactionXmin = xmax;
+  RecentXmin = xmax;
+
+  snapshot->xmin = xmax;
+  snapshot->xmax = xmax;
+  snapshot->xcnt = 0;
+  snapshot->subxcnt = 0;
+  snapshot->suboverflowed = false;
+  /* No transaction with an xid completes: the count stays at 1. */
+  snapshot->snapXactCompletionCount = 1;
+  snapshot->curcid = GetCurrentCommandId(false);
+  snapshot->active_count = 0;
+  snapshot->regd_count = 0;
+  snapshot->copied = false;
+  return snapshot;
 }
