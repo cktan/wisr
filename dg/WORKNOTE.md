@@ -5003,3 +5003,26 @@ session, to say which session finds a cycle first.
   with 3000ms each is found no sooner than 2.5 seconds, and with
   the default well before; with the setting ignored it fails.
   The isolation spec `deadlock-hard` passes now: 17 of 37.
+
+## Step 171: a wait looks for a cycle as it begins
+
+The isolation spec `deadlock-simple` failed on timing alone:
+PostgreSQL finds a cycle at once when a waiter's place in a
+lock's queue closes it, and sm1 looked only after a waiter had
+slept `deadlock_ms`. The victim was the same.
+
+- **sm1 searches as a wait begins** (`../sm/sm1/src/lockmgr.cc`,
+  `SM1_DESIGN.md` §5.1): `lock_wait` and `lock_wait_xact` call
+  `check_deadlock()` once their edges are set, before they
+  first sleep; a cycle the wait closes is found at once. One
+  that forms while a session sleeps, its holders changing under
+  it, is still found after `deadlock_ms`, the session's
+  `deadlock_timeout`. The victim is still the cycle's youngest.
+- **So `deadlock_timeout` delays little now**: every edge is
+  set by a session as it waits, so a cycle is nearly always
+  closed by a wait's beginning. Each wait pays for one walk of
+  the edges under `lock_mu`.
+- `../sm/sm1/test/test_lock.cc`: step 170's test now checks that
+  a cycle is found within a second with `deadlock_ms` at 3000;
+  without the search it took 3 seconds. The 109 scenarios of
+  `../sm/sm1/mvcc` match. `deadlock-simple` passes: 18 of 37.

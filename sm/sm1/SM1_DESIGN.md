@@ -715,13 +715,18 @@ poll, with every wait a refused call it repeats; that loses
 the waits-for graph, and with it deadlock detection, which
 `set_qa_nowait` already shows.
 
-Deadlocks are found as PostgreSQL's `deadlock_timeout`
-finds them. A blocked transaction sleeps `deadlock_ms`
-(default 50ms), then searches the waits-for graph from
-itself. If it can reach itself, the **youngest** transaction
-on that cycle — the last to begin — fails with
-`SM_ERR_DEADLOCK`. Short waits never pay for the search and
-there is no detector thread.
+Deadlocks are found as a transaction begins to wait: it
+searches the waits-for graph from itself, so a cycle its wait
+closes is found at once, as PostgreSQL finds one that a
+waiter's place in a lock's queue closes. A cycle that forms
+while it waits, its holders changing under it, is found when
+it has slept `deadlock_ms` (default 50ms, or the session's
+own, `sm1::set_deadlock_ms`: PostgreSQL's `deadlock_timeout`),
+and each `deadlock_ms` after. If it can reach itself, the
+**youngest** transaction on that cycle — the last to begin —
+fails with `SM_ERR_DEADLOCK`. The search is a walk of the
+waits-for edges under `lock_mu`, so a wait pays for one as it
+begins; there is no detector thread.
 
 The waits-for edges form a **graph, not a chain**: a waiter waits
 on every holder whose mode conflicts with the one it asks, and

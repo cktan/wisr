@@ -13,9 +13,12 @@
  * version stands for the lock, a second writer waiting for the
  * transaction that wrote it (WRITELOCK.md).
  *
- * Deadlocks are found the way PostgreSQL's deadlock_timeout
- * finds them: a blocked transaction sleeps deadlock_ms, then
- * searches the waits-for graph from itself. If it can reach
+ * Deadlocks are found as a transaction begins to wait: it
+ * searches the waits-for graph from itself, so a cycle its wait
+ * closes is found at once, as PostgreSQL finds one a waiter's
+ * place in a queue closes. One that forms while it waits is
+ * found when it has slept deadlock_ms, PostgreSQL's
+ * deadlock_timeout, and each deadlock_ms after. If it can reach
  * itself, the youngest transaction on that cycle is doomed and
  * woken; every member of a cycle is blocked, so the victim is
  * always waiting in lock_wait or lock_wait_xact and fails from
@@ -377,8 +380,9 @@ int lock_wait(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
   std::string k = lock_key(type, storeid, key);
   // Hold lock_mu for the table and the waits-for lists.
   std::unique_lock<std::mutex> guard(db->lock_mu);
-  // Time the first deadlock check.
+  // Time the deadlock check after the first, made as the wait begins.
   int64_t deadline = sm_now_us() + int64_t(deadlock_wait_ms(s)) * 1000;
+  bool checked = false;
   for (;;) {
     // A doomed transaction stops waiting and fails.
     if (s->doomed) {
@@ -397,6 +401,14 @@ int lock_wait(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
       s->waiting_for.clear();
       return 1;
     }
+    // As the wait begins, a cycle it closes is found at once.
+    if (!checked) {
+      checked = true;
+      check_deadlock(db, s);
+      if (s->doomed) {
+        continue;
+      }
+    }
     // Interrupted, before the wait or during it: stop waiting.
     if (!wait_once(db, s, guard, &deadline)) {
       s->waiting_for.clear();
@@ -412,7 +424,9 @@ int lock_wait_xact(sm1::session_t *s, uint64_t xid) {
   std::unique_lock<std::mutex> guard(db->lock_mu);
   // A rollback from now on may delete what we wait for.
   uint64_t epoch = db->rollback_epoch;
+  // Time the deadlock check after the first, made as the wait begins.
   int64_t deadline = sm_now_us() + int64_t(deadlock_wait_ms(s)) * 1000;
+  bool checked = false;
   for (;;) {
     // A doomed transaction stops waiting and fails.
     if (s->doomed) {
@@ -444,6 +458,14 @@ int lock_wait_xact(sm1::session_t *s, uint64_t xid) {
     s->waiting_for.clear();
     if (owner && owner != s) {
       s->waiting_for.push_back(owner);
+    }
+    // As the wait begins, a cycle it closes is found at once.
+    if (!checked) {
+      checked = true;
+      check_deadlock(db, s);
+      if (s->doomed) {
+        continue;
+      }
     }
     // Interrupted, before the wait or during it: stop waiting.
     if (!wait_once(db, s, guard, &deadline)) {

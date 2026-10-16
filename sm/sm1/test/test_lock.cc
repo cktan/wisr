@@ -990,51 +990,45 @@ TEST_CASE("waits_for names the sessions a waiting session waits for") {
   sm1::closedb(c);
 }
 
-TEST_CASE("a session's deadlock_ms sets how long it waits before a check") {
-  // Verify set_deadlock_ms, which PostgreSQL's deadlock_timeout sets (§5.1).
-  // 1. A negative value is refused.
-  // 2. A and B hold "x" shared and both write it, with 3000 ms each: the
-  //    cycle is found no sooner than about 3 seconds, and the younger, B,
-  //    loses.
-  // 3. The same with 0, the database's 50 ms: it is found well inside 3
-  //    seconds.
+TEST_CASE("a cycle a wait closes is found as it begins, whatever deadlock_ms") {
+  // Verify that a waiter looks for a cycle as it begins to wait (§5.1), and
+  // that set_deadlock_ms, PostgreSQL's deadlock_timeout, does not delay it.
+  // 1. A negative deadlock_ms is refused.
+  // 2. A and B, with 3000 ms each, hold "x" shared and both write it: B's
+  //    wait closes the cycle, which is found well inside 3 seconds, and the
+  //    younger, B, loses.
   lock_fixture_t f;
   sm1::session_t *a = f.open();
   sm1::session_t *b = f.open();
   CHECK(sm1::set_deadlock_ms(a, -1) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  for (int ms : {3000, 0}) {
-    REQUIRE(sm1::set_deadlock_ms(a, ms) == 0);
-    REQUIRE(sm1::set_deadlock_ms(b, ms) == 0);
-    REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
-    REQUIRE(sm1::begin(b, sm1::xctlevel_t::repeatable_read) == 0);
-    REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "x",
-                      sm1::SM_LOCKMODE_SH) == 0);
-    REQUIRE(sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, "x",
-                      sm1::SM_LOCKMODE_SH) == 0);
-    auto start = std::chrono::steady_clock::now();
-    int rc_a = -2, rc_b = -2, err_b = 0;
-    std::thread ta([&] { rc_a = set(a, "x", "a"); });
-    std::thread tb([&] {
-      rc_b = set(b, "x", "b");
-      err_b = sm1::errnum();
-    });
-    tb.join();
-    auto ms_taken = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        std::chrono::steady_clock::now() - start)
-                        .count();
-    ta.join();
-    CHECK(rc_a == 0);
-    CHECK(rc_b == -1);
-    CHECK(err_b == sm1::SM_ERR_DEADLOCK);
-    if (ms == 3000) {
-      CHECK(ms_taken >= 2500);
-    } else {
-      CHECK(ms_taken < 2500);
-    }
-    REQUIRE(sm1::abort(a) == 0);
-    sm1::abort(b);
-  }
+  REQUIRE(sm1::set_deadlock_ms(a, 3000) == 0);
+  REQUIRE(sm1::set_deadlock_ms(b, 3000) == 0);
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::begin(b, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_SH) ==
+          0);
+  REQUIRE(sm1::lock(b, sm1::LOCKTYPE_ROW, g_store, "x", sm1::SM_LOCKMODE_SH) ==
+          0);
+  int rc_a = -2, rc_b = -2, err_b = 0;
+  std::thread ta([&] { rc_a = set(a, "x", "a"); });
+  settle();
+  auto start = std::chrono::steady_clock::now();
+  std::thread tb([&] {
+    rc_b = set(b, "x", "b");
+    err_b = sm1::errnum();
+  });
+  tb.join();
+  auto ms_taken = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      std::chrono::steady_clock::now() - start)
+                      .count();
+  ta.join();
+  CHECK(rc_a == 0);
+  CHECK(rc_b == -1);
+  CHECK(err_b == sm1::SM_ERR_DEADLOCK);
+  CHECK(ms_taken < 1000);
+  REQUIRE(sm1::commit(a) == 0);
+  sm1::abort(b);
   sm1::closedb(a);
   sm1::closedb(b);
 }
