@@ -5404,3 +5404,21 @@ and ends with it.
 - The poll and kqueue implementations, not built on Linux, are
   checked by compiling with each forced, kqueue's against a stub
   of `sys/event.h`.
+
+## Step 185: the postmaster signals only threads
+
+Every child of the postmaster is a backend thread
+(`BackendStartup()`, `backend_thread_launch()`), and leaves
+`ActiveChildList` as it ends (`CleanupBackend()` releases the
+slot before a crash signals the rest), so postmaster
+`postmaster.c`'s `signal_child()` took its first branch,
+`backend_thread_signal()`, always.
+
+- **Gone** from `signal_child()`: the lookup by pid in the
+  session registry (step 158), and `kill()` of the pid and of
+  its process group, for a child process. A thread's id given
+  to `kill()` names the whole process on Linux, so the
+  fallback, had it run, would have signalled the server.
+- An assertion says the child is a thread; asserts are on in
+  every build, and the suite's shutdowns, cancels and
+  terminations pass through it.

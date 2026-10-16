@@ -103,7 +103,6 @@
 #include "postmaster/backend_thread.h"
 #include "storage/proc.h"
 #include "storage/procsignal.h"
-#include "storage/session_registry.h"
 #include "tcop/backend_startup.h"
 #include "tcop/tcopprot.h"
 #include "utils/datadir.h"
@@ -2038,67 +2037,20 @@ static const char *pm_signame(int signal) {
 }
 
 /*
- * Send a signal to a postmaster child process
- *
- * On systems that have setsid(), each child process sets itself up as a
- * process group leader.  For signals that are generally interpreted in the
- * appropriate fashion, we signal the entire process group not just the
- * direct child process.  This allows us to, for example, SIGQUIT a blocked
- * archive_recovery script, or SIGINT a script being run by a backend via
- * system().
- *
- * There is a race condition for recently-forked children: they might not
- * have executed setsid() yet.  So we signal the child directly as well as
- * the group.  We assume such a child will handle the signal before trying
- * to spawn any grandchild processes.  We also assume that signaling the
- * child twice will not cause any problems.
+ * Send a signal to a postmaster child: every child is a backend thread, sent
+ * the signal as interrupt bits (backend_thread_signal()).  No child is a
+ * process, so none is sent a real signal, nor its process group.
  */
 static void signal_child(PMChild *pmchild, int signal) {
-  pid_t pid = pmchild->pid;
-
   ereport(DEBUG3,
           (errmsg_internal("sending signal %d/%s to %s process with pid %d",
                            signal, pm_signame(signal),
                            GetBackendTypeDesc(pmchild->bkend_type),
                            (int)pmchild->pid)));
 
-  /* A backend that is a thread is sent a flag (backend_thread.c). */
-  if (pmchild->thread != NULL) {
-    backend_thread_signal(pmchild->thread, signal);
-    return;
-  }
-
-  /*
-   * A backend is sent a signal as interrupt bits, through its record in the
-   * session registry (session_interrupt()); one not registered yet, and a
-   * crash or kill, get a real one.
-   */
-  if (pmchild->bkend_type == B_BACKEND && signal != SIGQUIT &&
-      signal != SIGKILL) {
-    session_ref_t record = session_by_pid(pid);
-
-    if (record != nullptr) {
-      session_interrupt(record, InterruptsOfSignal(signal));
-      return;
-    }
-  }
-
-  if (kill(pid, signal) < 0)
-    elog(DEBUG3, "kill(%ld,%d) failed: %m", (long)pid, signal);
-#ifdef HAVE_SETSID
-  switch (signal) {
-  case SIGINT:
-  case SIGTERM:
-  case SIGQUIT:
-  case SIGKILL:
-  case SIGABRT:
-    if (kill(-pid, signal) < 0)
-      elog(DEBUG3, "kill(%ld,%d) failed: %m", (long)(-pid), signal);
-    break;
-  default:
-    break;
-  }
-#endif
+  /* A child leaves ActiveChildList as its thread ends (CleanupBackend()). */
+  Assert(pmchild->thread != NULL);
+  backend_thread_signal(pmchild->thread, signal);
 }
 
 /*
