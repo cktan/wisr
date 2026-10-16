@@ -325,8 +325,8 @@ an object of its own instead.
   a session waits for, from digres's own table (steps 153,
   156), and whom it waits for in sm, a row's writer or a table
   lock's holder (step 166): each sm session is numbered with its
-  record's id (`sm_session_tag`), and sm1's waits-for edges give
-  the numbers (`sm_waits_for`).
+  pid, its thread's id (`sm_session_tag`, step 172), and sm1's
+  waits-for edges give the pids (`sm_waits_for`).
 
 ## 6. What is left of modules removed
 

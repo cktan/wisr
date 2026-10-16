@@ -29,12 +29,11 @@
 
 #include "access/transam.h"
 #include "common/string.h"
+#include "miscadmin.h"
 #include "postmaster/initdb.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "storage/proc.h"
-#include "storage/session_registry.h"
-#include "utils/control_block.h"
 #include "utils/datadir.h"
 #include "utils/guc_hooks.h"
 #include "utils/memutils.h"
@@ -208,10 +207,11 @@ void datadir_open_session(const char *dbname) {
     ereport(FATAL, (errmsg("could not open database \"%s\": %s", dbname,
                            sm_errmsg())));
   on_proc_exit(close_sm_session, 0);
-  /* sm names the session by its record's id to one who asks whom it waits
-   * for (datadir_sm_blockers()). */
-  if (tcb->session != nullptr)
-    (void)sm_session_tag(sm_session, tcb->session->id);
+  /*
+   * sm names the session by its thread's id, its pid, to one who asks whom
+   * it waits for (datadir_sm_blockers()).
+   */
+  (void)sm_session_tag(sm_session, (uint64_t)MyProcPid);
   /* sm waits as long as deadlock_timeout says before it looks for a cycle. */
   (void)sm_set_deadlock_ms(sm_session, DeadlockTimeout);
 }
@@ -229,19 +229,16 @@ void assign_deadlock_timeout(int newval, void *extra) {
 /*
  * The pids of the sessions the session with pid waits for in sm: the
  * holders of the lock it waits on, or the writer whose row it waits behind.
- * sm knows each by its record's id (datadir_open_session()).
+ * sm knows each by its pid, its thread's id (datadir_open_session()).
  */
 std::vector<int> datadir_sm_blockers(int pid) {
   std::vector<int> pids;
-  std::vector<uint64_t> ids;
-  session_ref_t waiter = session_by_pid(pid);
+  std::vector<uint64_t> tags;
 
-  if (waiter == nullptr || sm_waits_for(sm_env, waiter->id, &ids) != 0)
-    return pids;
-  for (const session_ref_t &r : sessions_all())
-    for (uint64_t id : ids)
-      if (r->id == id)
-        pids.push_back(r->pid);
+  /* A pid is never 0, which sm takes for no session. */
+  if (pid > 0 && sm_waits_for(sm_env, (uint64_t)pid, &tags) == 0)
+    for (uint64_t tag : tags)
+      pids.push_back((int)tag);
   return pids;
 }
 

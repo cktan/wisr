@@ -164,6 +164,12 @@ on digres.
    thread may close is a use after free waiting to happen; the
    numbers avoid it.
 
+**Decided on review**: digres numbers each sm session by its
+pid, its thread's id, not its record's id (`dg/WORKNOTE.md`
+step 172). The numbers `sm_waits_for` gives are pids, with no
+lookup in the session registry; a pid is distinct among the
+sessions running, which is what sm asks of the numbers.
+
 ### What to review
 
 - The public API's shape: numbers chosen by the host, asked of

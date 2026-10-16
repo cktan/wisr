@@ -5026,3 +5026,19 @@ slept `deadlock_ms`. The victim was the same.
   a cycle is found within a second with `deadlock_ms` at 3000;
   without the search it took 3 seconds. The 109 scenarios of
   `../sm/sm1/mvcc` match. `deadlock-simple` passes: 18 of 37.
+## Step 172: sm knows a session by its thread's id
+
+`../DECISION.md`, wip-slt3, as decided on review. Step 166
+numbered each sm session by its session record's id, and
+`datadir_sm_blockers()` looked each number up in the registry
+to find its pid.
+
+- **An sm session's number is its pid**
+  (`datadir_open_session()`), its thread's id, as a session's
+  number is since step 159.
+  `sm_waits_for()` so gives pids, and `datadir_sm_blockers()`
+  returns them as they are, with no scan of the registry. A pid
+  is distinct among the sessions running, as sm asks, and 0,
+  which sm takes for none, is no pid.
+- `server.sh`'s check of step 166 checks it: a row's writer and
+  a table lock's holder are named by their pids.
