@@ -1760,9 +1760,11 @@ static void RangeVarCallbackForDropRelation(const RangeVar *rel, Oid relOid,
 
 /*
  * TRUNCATE of tables in sm, if every table it names is one: each truncated
- * by sm (access/smstore.h), in the order named; false if any is not.  sm
- * has no sequences to restart yet, nor inheritance or foreign keys, so
- * RESTART IDENTITY is refused and ONLY and CASCADE change nothing.
+ * by sm (access/smstore.h), in the order named; false if any is not.  A
+ * table another references by a foreign key is truncated only with it, as
+ * heap_truncate_check_FKs() has it: CASCADE adds it, else it is an error.
+ * sm has no sequences to restart yet, nor inheritance, so RESTART IDENTITY
+ * is refused and ONLY changes nothing.
  */
 static bool truncate_in_sm(TruncateStmt *stmt) {
   List *relids = NIL;
@@ -1778,6 +1780,38 @@ static bool truncate_in_sm(TruncateStmt *stmt) {
   if (stmt->restart_seqs)
     ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                     errmsg("sequences are not supported yet")));
+  /* relids grows as CASCADE adds to it, and each added is looked at too. */
+  for (int i = 0; i < list_length(relids); i++) {
+    Oid relid = list_nth_oid(relids, i);
+    ListCell *r;
+
+    foreach (r, smstore_referencing_tables(relid)) {
+      Oid child = lfirst_oid(r);
+
+      if (list_member_oid(relids, child))
+        continue;
+      /* For their names: the truncate takes sm's X on each. */
+      Relation crel = relation_open(child, AccessShareLock);
+      Relation prel = relation_open(relid, AccessShareLock);
+
+      if (stmt->behavior != DROP_CASCADE)
+        ereport(ERROR,
+                (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                 errmsg("cannot truncate a table referenced in a foreign key "
+                        "constraint"),
+                 errdetail("Table \"%s\" references \"%s\".",
+                           RelationGetRelationName(crel),
+                           RelationGetRelationName(prel)),
+                 errhint("Truncate table \"%s\" at the same time, or use "
+                         "TRUNCATE ... CASCADE.",
+                         RelationGetRelationName(crel))));
+      ereport(NOTICE, (errmsg("truncate cascades to table \"%s\"",
+                              RelationGetRelationName(crel))));
+      relation_close(prel, NoLock);
+      relation_close(crel, NoLock);
+      relids = lappend_oid(relids, child);
+    }
+  }
   foreach (cell, relids) {
     Relation rel = relation_open(lfirst_oid(cell), NoLock);
 
@@ -3841,8 +3875,9 @@ ObjectAddress RenameConstraint(RenameStmt *stmt) {
   Oid relid = InvalidOid;
   Oid typid = InvalidOid;
 
+  /* A table's constraint is a foreign key, in sm (access/smstore.h). */
   if (stmt->renameType != OBJECT_DOMCONSTRAINT)
-    refuse_alter("ALTER TABLE ... RENAME CONSTRAINT");
+    return smstore_rename_constraint(stmt);
   if (stmt->renameType == OBJECT_DOMCONSTRAINT) {
     Relation rel;
     HeapTuple tup;
@@ -4142,14 +4177,20 @@ Oid AlterTableLookupRelation(AlterTableStmt *stmt, LOCKMODE lockmode) {
 
   if (stmt->objtype != OBJECT_TABLE)
     refuse_alter(GetCommandTagName(AlterObjectTypeCommandTag(stmt->objtype)));
-  /* sm's tables take ADD COLUMN and DROP COLUMN (smstore_alter_table()). */
+  /*
+   * sm's tables take ADD COLUMN and DROP COLUMN, and ADD, DROP and VALIDATE
+   * CONSTRAINT of a foreign key (smstore_alter_table()).
+   */
   foreach (l, stmt->cmds) {
     AlterTableType subtype = lfirst_node(AlterTableCmd, l)->subtype;
 
-    if (subtype != AT_AddColumn && subtype != AT_DropColumn)
+    if (subtype != AT_AddColumn && subtype != AT_DropColumn &&
+        subtype != AT_AddConstraint && subtype != AT_DropConstraint &&
+        subtype != AT_ValidateConstraint)
       ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                       errmsg("ALTER TABLE supports only ADD COLUMN, DROP "
-                             "COLUMN and RENAME yet")));
+                             "COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE "
+                             "CONSTRAINT, and RENAME yet")));
   }
   /*
    * No permission check: it would open pg_class, which digres has not.  No

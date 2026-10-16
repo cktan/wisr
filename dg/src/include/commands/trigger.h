@@ -186,6 +186,7 @@ extern TransitionCaptureState *MakeTransitionCaptureState(TriggerDesc *trigdesc,
 														  Oid relid, CmdType cmdType);
 
 extern void FreeTriggerDesc(TriggerDesc *trigdesc);
+extern void SetTriggerFlags(TriggerDesc *trigdesc, Trigger *trigger);
 
 extern void ExecBSInsertTriggers(EState *estate,
 								 ResultRelInfo *relinfo);
@@ -277,6 +278,7 @@ extern bool RI_FKey_pk_upd_check_required(Trigger *trigger, Relation pk_rel,
 										  TupleTableSlot *oldslot, TupleTableSlot *newslot);
 extern bool RI_FKey_fk_upd_check_required(Trigger *trigger, Relation fk_rel,
 										  TupleTableSlot *oldslot, TupleTableSlot *newslot);
+extern void RI_ForgetConstraint(Oid oid);
 extern bool RI_Initial_Check(Trigger *trigger,
 							 Relation fk_rel, Relation pk_rel);
 extern void RI_PartitionRemove_Check(Trigger *trigger, Relation fk_rel,

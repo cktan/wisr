@@ -5026,3 +5026,64 @@ slept `deadlock_ms`. The victim was the same.
   a cycle is found within a second with `deadlock_ms` at 3000;
   without the search it took 3 seconds. The 109 scenarios of
   `../sm/sm1/mvcc` match. `deadlock-simple` passes: 18 of 37.
+
+## Step 172: foreign keys
+
+`../sm/FOREIGNKEY.md`. sm3 keeps a foreign key in its catalog
+(`sm_cat_create_fkey` and the rest); digres checks the rows, with
+PostgreSQL's own RI triggers.
+
+- **DDL** (access/sm `smstore.c`): `REFERENCES` and `FOREIGN KEY`
+  in `CREATE TABLE`, which parse analysis makes an `ALTER TABLE ...
+  ADD CONSTRAINT`, and `ALTER TABLE`'s `ADD`, `DROP`, `VALIDATE`
+  and `RENAME CONSTRAINT`. `add_fkey()` chooses the referenced
+  columns, the parent's primary key if none are named, their
+  unique index, and the operators, as
+  `ATAddForeignKeyConstraint()` does; sm's index keys have no
+  operator class, so each referenced type's default btree class
+  stands for one. The operators and `SET NULL (cols)` are sm's
+  host bytes. The rows already there are checked by
+  `RI_Initial_Check()`, unless the table is new or the key is
+  `NOT VALID`. PostgreSQL's messages throughout.
+- **The relation cache** (utils/cache `relcache.c`) makes the
+  RI triggers from the table's foreign keys and those that
+  reference it, as `createForeignKeyCheckTriggers()` and
+  `createForeignKeyActionTriggers()` would have stored them,
+  named by constraint, numbered by name; `SetTriggerFlags()` is
+  exported for it. A rebuild forgets what `ri_triggers.c` cached
+  of them (`RI_ForgetConstraint()`).
+- **`ri_LoadConstraintInfo()`** reads the constraint from sm
+  (`smstore_get_fkey()`), not `pg_constraint`;
+  `get_ri_constraint_root()` went, unused.
+- **A row trigger on a table in sm is given its rows from a
+  tuple store**, as a foreign table's is (commands/trigger.c):
+  sm cannot read again a row its statement deleted. So
+  `smtable.c`'s `tuple_satisfies_snapshot` is true, the store's
+  rows having no tid, and `RI_FKey_fk_upd_check_required()` asks
+  no xmin of an sm row: its insert's check runs whatever came
+  after.
+- **So a DEFERRABLE foreign key is refused**: a deferred check
+  fires at commit, past the statement whose store holds its
+  rows. NOT ENFORCED, MATCH PARTIAL and PERIOD are refused too.
+- **`DROP TABLE`** of a referenced table is PostgreSQL's error,
+  or with `CASCADE` drops the constraints with its notice; one of
+  a table the statement drops too goes with it. **`TRUNCATE`** of
+  one is refused unless its referencing tables are truncated with
+  it, or `CASCADE` adds them.
+- **A definition is read afresh** (`table_def_now()`): a table
+  handle keeps the definition it was opened with, so one opened
+  earlier in the transaction, before the parent's primary key
+  was made, had none. And after each change to a foreign key both
+  tables' descriptors are forgotten and their handles closed
+  (`forget_table()`, the half of `alter_table_rel()` that did
+  it), or a key made in a transaction was checked only after it.
+- `test/slt/foreign_key.test`, PostgreSQL 18's answers: every
+  action, a two-column key MATCH SIMPLE and FULL, a self
+  reference, NOT VALID and VALIDATE, rename, drop, DROP TABLE and
+  TRUNCATE, and a parent and child made in one transaction. The
+  isolation specs `fk-contention`, `fk-deadlock` and
+  `update-locked-tuple` now run, and fail on `FOR KEY SHARE`
+  being `FOR SHARE`. `server.sh`'s check of what ALTER TABLE refuses uses
+  ALTER COLUMN now.
+- **Left**: `pg_constraint` lists no foreign key, so `\d` shows
+  none; DEFERRABLE; `rel` verbs for them.

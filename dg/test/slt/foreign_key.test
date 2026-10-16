@@ -1,0 +1,270 @@
+# Verify that a foreign key is kept as PostgreSQL keeps one: a row that
+# references nothing is refused, and a referenced row's delete or update
+# does what the constraint's action says.
+# 1. Make a parent with a primary key, and a child that references it.
+# 2. Confirm a child row whose parent is there is taken, one whose parent
+#    is not is refused, and a NULL key is taken.
+# 3. Confirm a parent row still referenced cannot be deleted or have its
+#    key changed, and one no longer referenced can.
+
+statement ok
+create table p (id int4 primary key, x text)
+
+statement ok
+create table c (a int4, pid int4 references p)
+
+statement ok
+insert into p values (1, 'one'), (2, 'two'), (3, 'three')
+
+statement ok
+insert into c values (10, 1), (11, 1), (12, null)
+
+statement error violates foreign key constraint "c_pid_fkey"
+insert into c values (13, 9)
+
+statement error violates foreign key constraint "c_pid_fkey"
+update c set pid = 9 where a = 10
+
+statement ok
+update c set pid = 2 where a = 11
+
+statement error violates foreign key constraint "c_pid_fkey" on table "c"
+delete from p where id = 1
+
+statement error violates foreign key constraint "c_pid_fkey" on table "c"
+update p set id = 5 where id = 2
+
+statement ok
+update p set x = 'uno' where id = 1
+
+statement ok
+delete from p where id = 3
+
+query IT rowsort
+select id, x from p
+----
+1	uno
+2	two
+
+# Verify each ON DELETE and ON UPDATE action.
+# 1. Make a child for each of CASCADE, SET NULL, SET DEFAULT and RESTRICT.
+# 2. Delete and update referenced parent rows, and confirm what each child
+#    holds after: its rows gone, set to NULL, set to the default, or the
+#    delete refused.
+
+statement ok
+create table q (id int4 primary key)
+
+statement ok
+insert into q values (0), (1), (2), (3)
+
+statement ok
+create table qc (id int4, qid int4 references q on delete cascade on update cascade)
+
+statement ok
+create table qn (id int4, qid int4 references q on delete set null on update set null)
+
+statement ok
+create table qd (id int4, qid int4 default 0 references q on delete set default)
+
+statement ok
+create table qr (id int4, qid int4 references q on delete restrict)
+
+statement ok
+insert into qc values (1, 1), (2, 2)
+
+statement ok
+insert into qn values (1, 1), (2, 2)
+
+statement ok
+insert into qd values (1, 1)
+
+statement ok
+delete from q where id = 1
+
+statement ok
+update q set id = 20 where id = 2
+
+query II rowsort
+select id, qid from qc
+----
+2	20
+
+query II rowsort
+select id, qid from qn
+----
+1	NULL
+2	NULL
+
+query II rowsort
+select id, qid from qd
+----
+1	0
+
+statement ok
+insert into qr values (1, 3)
+
+statement error violates RESTRICT setting of foreign key constraint "qr_qid_fkey"
+delete from q where id = 3
+
+# Verify a foreign key of two columns, MATCH SIMPLE and MATCH FULL.
+# 1. Reference a parent's unique pair, once MATCH SIMPLE, once MATCH FULL.
+# 2. Confirm a pair with one NULL is taken under SIMPLE and refused under
+#    FULL; a pair with no parent is refused under both.
+
+statement ok
+create table r (a int4, b int4, unique (a, b))
+
+statement ok
+insert into r values (1, 1), (1, 2)
+
+statement ok
+create table rs (a int4, b int4, foreign key (a, b) references r (a, b))
+
+statement ok
+create table rf (a int4, b int4, foreign key (a, b) references r (a, b) match full)
+
+statement ok
+insert into rs values (1, 2), (1, null), (9, null)
+
+statement error violates foreign key constraint "rs_a_b_fkey"
+insert into rs values (2, 2)
+
+statement ok
+insert into rf values (1, 1), (null, null)
+
+statement error violates foreign key constraint "rf_a_b_fkey"
+insert into rf values (1, null)
+
+# Verify a table's foreign key to itself.
+# 1. Make a table whose boss column references its own primary key.
+# 2. Confirm a row may reference one before it, not one that is not there,
+#    and a row cannot be deleted while another references it.
+
+statement ok
+create table e (id int4 primary key, boss int4 references e)
+
+statement ok
+insert into e values (1, null), (2, 1), (3, 2)
+
+statement error violates foreign key constraint "e_boss_fkey"
+insert into e values (4, 9)
+
+statement error violates foreign key constraint "e_boss_fkey" on table "e"
+delete from e where id = 2
+
+statement ok
+delete from e where id = 3
+
+# Verify ALTER TABLE's ADD, VALIDATE, RENAME and DROP CONSTRAINT.
+# 1. Adding a foreign key over a row that breaks it is refused.
+# 2. Adding it NOT VALID is taken, and new rows are checked; VALIDATE is
+#    refused until the old row goes.
+# 3. A renamed constraint is named by its new name; a dropped one checks
+#    nothing, and dropping it again is refused, or with IF EXISTS skipped.
+
+statement ok
+create table v (a int4, pid int4)
+
+statement ok
+insert into v values (1, 99)
+
+statement error violates foreign key constraint "v_pid_fkey"
+alter table v add foreign key (pid) references p
+
+statement ok
+alter table v add constraint v_fk foreign key (pid) references p not valid
+
+statement error violates foreign key constraint "v_fk"
+insert into v values (2, 98)
+
+statement error violates foreign key constraint "v_fk"
+alter table v validate constraint v_fk
+
+statement ok
+delete from v
+
+statement ok
+alter table v validate constraint v_fk
+
+statement ok
+alter table v rename constraint v_fk to v_fk2
+
+statement error violates foreign key constraint "v_fk2"
+insert into v values (3, 97)
+
+statement ok
+alter table v drop constraint v_fk2
+
+statement ok
+insert into v values (3, 97)
+
+statement error constraint "v_fk2" of relation "v" does not exist
+alter table v drop constraint v_fk2
+
+statement ok
+alter table v drop constraint if exists v_fk2
+
+# Verify what a foreign key asks of the table it references.
+# 1. A referenced table with no primary key, or columns no unique index has,
+#    or a key of the wrong width, is refused.
+# 2. A referenced table cannot be dropped or truncated alone; with the
+#    tables that reference it, or with CASCADE, it can.
+
+statement error there is no primary key for referenced table "r"
+create table w1 (a int4 references r)
+
+statement error there is no unique constraint matching given keys for referenced table "p"
+create table w2 (x text references p (x))
+
+statement error number of referencing and referenced columns for foreign key disagree
+create table w3 (a int4, foreign key (a) references r (a, b))
+
+statement error cannot truncate a table referenced in a foreign key constraint
+truncate p
+
+statement error cannot drop table p because other objects depend on it
+drop table p
+
+statement ok
+truncate p, c
+
+statement ok
+drop table c
+
+statement ok
+drop table q cascade
+
+statement ok
+insert into qc values (3, 77)
+
+query I rowsort
+select count(*) from qc
+----
+2
+
+# Verify a foreign key to a table made in the same transaction.
+# 1. In one transaction, make a parent with a primary key and a child
+#    that references it.
+# 2. Confirm the child's rows are checked against the parent's.
+
+statement ok
+begin
+
+statement ok
+create table tp (id int4 primary key)
+
+statement ok
+create table tc (pid int4 references tp)
+
+statement ok
+insert into tp values (1)
+
+statement ok
+insert into tc values (1)
+
+statement error violates foreign key constraint "tc_pid_fkey"
+insert into tc values (2)
+
+statement ok
+rollback
