@@ -20,6 +20,7 @@
 #include "storage/proc.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
+#include "utils/datadir.h"
 #include "utils/timestamp.h"
 
 /*
@@ -349,12 +350,16 @@ Datum pg_blocking_pids(PG_FUNCTION_ARGS) {
   lockData = GetBlockerStatusData(blocked_pid);
   /* And the holders of the advisory lock it waits for, which are not in it */
   std::vector<int> advisory = advisory_blockers(blocked_pid);
+  /* And whom it waits for in sm: a table's lock, a row's, a row's writer */
+  std::vector<int> in_sm = datadir_sm_blockers(blocked_pid);
 
   /* We can't need more output entries than there are reported PROCLOCKs */
-  arrayelems =
-      (Datum *)palloc((lockData->nlocks + advisory.size()) * sizeof(Datum));
+  arrayelems = (Datum *)palloc(
+      (lockData->nlocks + advisory.size() + in_sm.size()) * sizeof(Datum));
   narrayelems = 0;
   for (int pid : advisory)
+    arrayelems[narrayelems++] = Int32GetDatum(pid);
+  for (int pid : in_sm)
     arrayelems[narrayelems++] = Int32GetDatum(pid);
 
   /* For each blocked proc in the lock group ... */
@@ -423,7 +428,8 @@ Datum pg_blocking_pids(PG_FUNCTION_ARGS) {
   }
 
   /* Assert we didn't overrun arrayelems[] */
-  Assert(narrayelems <= lockData->nlocks + (int)advisory.size());
+  Assert(narrayelems <=
+         lockData->nlocks + (int)advisory.size() + (int)in_sm.size());
 
   PG_RETURN_ARRAYTYPE_P(
       construct_array_builtin(arrayelems, narrayelems, INT4OID));

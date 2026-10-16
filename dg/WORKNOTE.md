@@ -4711,3 +4711,35 @@ sqllogictest file can now say it in records.
   past another's commit; another session's ADD COLUMN and
   DROP TABLE are seen by the next statement. Run in one
   session, two of its records fail.
+
+## Step 161: pg_blocking_pids() sees waits in sm
+
+`../DECISION.md`, for review. A session waiting in sm, for a
+row's writer or a table's lock, was blocked by no one as far as
+`pg_blocking_pids()` knew, so PostgreSQL's `isolationtester`,
+which asks `pg_isolation_test_session_is_blocked()`, waited out
+each blocked step for 300 seconds and failed it.
+
+- **sm says whom a session waits for**: `sm_session_tag()`
+  gives an sm session the host's number for it, and
+  `sm_waits_for()` returns the numbers of the sessions it
+  waits for, from sm1's waits-for edges (`sm1::set_tag`,
+  `sm1::waits_for`, `../sm/sm1/API.md`). It reads them under
+  the env's mutex and the database's `lock_mu`, and passes over
+  an edge to a session no longer registered.
+- **digres numbers each sm session by its record's id**
+  (`datadir_open_session()`), and `pg_blocking_pids()` adds the
+  pids of the sessions `datadir_sm_blockers()` finds.
+- `../sm/sm1/test/test_lock.cc`: a writer waiting behind a
+  version and a locker waiting on a lock name their holder;
+  with the edges left out, it fails. `server.sh`: a row's
+  writer and a table lock's holder are named, and the waiter
+  is blocked by no one once it goes through.
+- **Fixed on the way, in `test/slt_corpus.sh`**: a run of the
+  whole corpus reported PASSED with nothing run on digres, as
+  a `make test` beside it had cleared `build/test/slt`, the
+  directory both used. `test/slt.sh` now takes its directory
+  from `SLT_WORK`, the corpus gives each engine its own, and a
+  run that could not be made or ran no record fails. The whole
+  corpus is 622 files, 5,675,180 records; PostgreSQL 18 runs it
+  in about 45 minutes and fails 11,626.

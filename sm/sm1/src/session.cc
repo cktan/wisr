@@ -188,3 +188,56 @@ int sm1::closedb(sm1::session_t *session) {
   delete session;
   return 0;
 }
+
+/* Number the session for waits_for. */
+int sm1::set_tag(sm1::session_t *session, uint64_t tag) {
+  if (!session) {
+    return set_error(sm1::SM_ERR_INVALID, "NULL session");
+  }
+  session->tag.store(tag, std::memory_order_relaxed);
+  return 0;
+}
+
+/*
+ * The numbers of the sessions the session numbered tag waits for.
+ * env->mu keeps every registered session, and its database, from
+ * being freed; its database's lock_mu keeps its waits-for edges
+ * still. An edge may name a session that has since closed, whose
+ * holds are gone: only one still registered is dereferenced.
+ */
+int sm1::waits_for(sm1::env_t *env, uint64_t tag, std::vector<uint64_t> *out) {
+  if (!env) {
+    return set_error(sm1::SM_ERR_INVALID, "NULL env");
+  }
+  if (!out) {
+    return set_error(sm1::SM_ERR_INVALID, "NULL out");
+  }
+  out->clear();
+  if (tag == 0) {
+    return 0;
+  }
+  // Hold the env mutex while reading the registry.
+  std::lock_guard<std::mutex> guard(env->mu);
+  sm1::session_t *waiter = nullptr;
+  for (sm1::session_t *s : env->sessions) {
+    if (s->tag.load(std::memory_order_relaxed) == tag) {
+      waiter = s;
+      break;
+    }
+  }
+  if (!waiter) {
+    return 0;
+  }
+  // Hold the database's lock_mu while reading the waiter's edges.
+  std::lock_guard<std::mutex> lock_guard(waiter->db->lock_mu);
+  for (sm1::session_t *holder : waiter->waiting_for) {
+    if (!env->sessions.count(holder)) {
+      continue;
+    }
+    uint64_t t = holder->tag.load(std::memory_order_relaxed);
+    if (t != 0) {
+      out->push_back(t);
+    }
+  }
+  return 0;
+}

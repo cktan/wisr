@@ -121,6 +121,8 @@ records digres fails that PostgreSQL 18 passes, file:line, in
 fails is written for SQLite's or MySQL's dialect, and is not
 held against digres. The sample, the first set of files in
 each directory and `evidence/`, is about 1.5 million records;
-it takes 5 minutes on PostgreSQL 18 and 17 on digres. It is in
-no `make test`: it needs the network once, and takes long.
+it takes 5 minutes on PostgreSQL 18 and 17 on digres. The
+whole corpus, `test/slt_corpus.sh '/test/'`, is 622 files and
+5.7 million records, about 45 minutes on PostgreSQL 18. It is
+in no `make test`: it needs the network once, and takes long.
 

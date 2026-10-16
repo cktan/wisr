@@ -1,8 +1,9 @@
 # Decisions for review
 
 Made while working unattended, each on a branch of its own:
-`wip-slt1` from `wip-slt`, `wip-slt2` from `wip-slt1`. Each is
-implemented as recommended and can be reverted alone.
+`wip-slt1` from `wip-slt`, `wip-slt2` from `wip-slt1`,
+`wip-slt3` from `wip-slt2`. Each is implemented as recommended
+and can be reverted alone.
 
 ---
 
@@ -121,3 +122,60 @@ the repository.
 - Whether fetching from the GitHub mirror is acceptable, or
   the corpus should come from SQLite's fossil repository.
 - Whether views should be next.
+
+---
+
+## wip-slt3: sm says whom a session waits for
+
+### The problem
+
+`pg_blocking_pids()` returned `{}` for a session waiting in sm,
+on a row's writer or on a table's lock: digres's locks are
+sm1's, and sm told no one about its waits-for graph. PostgreSQL's
+`isolationtester` asks `pg_isolation_test_session_is_blocked()`,
+which reads `pg_blocking_pids()`, to tell a step that waits from
+one still running; without it every blocked step hung for its
+300 seconds and failed. So PostgreSQL's isolation suite, the
+check of concurrency PostgreSQL itself relies on, could not run
+on digres.
+
+### Options
+
+1. **An sm call that reads the waits-for graph**
+   (recommended, implemented). `sm_session_tag(session, n)`
+   gives an sm session the host's number for it;
+   `sm_waits_for(env, n, &numbers)` returns the numbers of the
+   sessions the one numbered n waits for, from sm1's
+   `waiting_for` edges, under the env's mutex and the
+   database's lock mutex. digres numbers each sm session by
+   its session record's id, which is never reused, and
+   `pg_blocking_pids()` adds those sessions' pids.
+   - Public API in `sm.h`, and a new lock order in sm1: the
+     env's mutex, then a database's `lock_mu`. Nothing took them
+     the other way.
+   - Read only: no change to how sm1 waits or orders.
+2. **A flag digres sets around each sm call that may wait.**
+   No sm change, but a call that may wait is not one that is
+   waiting: a long statement would look blocked, and
+   isolationtester would print `<waiting ...>` where PostgreSQL
+   does not.
+3. **Hand sm's session pointers to the host**, and let it map
+   them. Simpler in sm, but a pointer to a session another
+   thread may close is a use after free waiting to happen; the
+   numbers avoid it.
+
+### What to review
+
+- The public API's shape: numbers chosen by the host, asked of
+  the env.
+- What to do with PostgreSQL's isolation suite. A first run of
+  the 37 specs that use nothing digres lacks outright, with
+  this change, had passed 17 of the first 33 when this was
+  written, `lock-nowait`, `skip-locked*`, `nowait*`,
+  `delete-abort-savept` and `insert-conflict-do-*` among them;
+  without it `lock-nowait` hung and failed. The failures, among
+  them the deadlock specs, foreign keys and tuple-lock modes
+  digres does not have (`FOR KEY SHARE`), are not triaged yet.
+  Run with `pg_isolation_regress --use-existing` from
+  `~/p/postgres18/src/test/isolation`; it is in no `make`
+  target yet.

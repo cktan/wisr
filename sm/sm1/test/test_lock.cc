@@ -52,6 +52,9 @@ public:
     return s;
   }
 
+  /* The environment "db" is in. */
+  sm1::env_t *env() const { return m_home.env(); }
+
 private:
   home_t m_home;
 };
@@ -931,4 +934,58 @@ TEST_CASE("trylock takes a row's lock unless it would wait") {
   CHECK(sm1::trylock(c, sm1::LOCKTYPE_ROW, store, "k", sm1::SM_LOCKMODE_EX) ==
         -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_CONFLICT);
+}
+
+TEST_CASE("waits_for names the sessions a waiting session waits for") {
+  // Verify the edges a host reads for pg_blocking_pids() (§5.1).
+  // 1. Number A, B and C; A writes "x" and locks "y" exclusive.
+  // 2. B writes "x" and waits behind A's version; C locks "y" and
+  //    waits on A's lock.
+  // 3. Confirm waits_for names A for B and for C, A waits for none,
+  //    and an unknown number or 0 names none.
+  // 4. A aborts: B and C go through, and wait for none.
+  lock_fixture_t f;
+  sm1::session_t *a = f.open();
+  sm1::session_t *b = f.open();
+  sm1::session_t *c = f.open();
+  REQUIRE(sm1::set_tag(a, 101) == 0);
+  REQUIRE(sm1::set_tag(b, 102) == 0);
+  REQUIRE(sm1::set_tag(c, 103) == 0);
+  REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::begin(c, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(set(a, "x", "a") == 0);
+  REQUIRE(sm1::lock(a, sm1::LOCKTYPE_ROW, g_store, "y", sm1::SM_LOCKMODE_EX) ==
+          0);
+
+  int rc_b = -2, rc_c = -2;
+  std::thread tb([&] { rc_b = set(b, "x", "b"); });
+  std::thread tc([&] {
+    rc_c = sm1::lock(c, sm1::LOCKTYPE_ROW, g_store, "y", sm1::SM_LOCKMODE_SH);
+  });
+  settle();
+  std::vector<uint64_t> out{7};
+  REQUIRE(sm1::waits_for(f.env(), 102, &out) == 0);
+  CHECK(out == std::vector<uint64_t>{101});
+  REQUIRE(sm1::waits_for(f.env(), 103, &out) == 0);
+  CHECK(out == std::vector<uint64_t>{101});
+  REQUIRE(sm1::waits_for(f.env(), 101, &out) == 0);
+  CHECK(out.empty());
+  REQUIRE(sm1::waits_for(f.env(), 999, &out) == 0);
+  CHECK(out.empty());
+  REQUIRE(sm1::waits_for(f.env(), 0, &out) == 0);
+  CHECK(out.empty());
+
+  REQUIRE(sm1::abort(a) == 0);
+  tb.join();
+  tc.join();
+  CHECK(rc_b == 0);
+  CHECK(rc_c == 0);
+  REQUIRE(sm1::waits_for(f.env(), 102, &out) == 0);
+  CHECK(out.empty());
+  REQUIRE(sm1::commit(b) == 0);
+  REQUIRE(sm1::commit(c) == 0);
+  sm1::closedb(a);
+  sm1::closedb(b);
+  sm1::closedb(c);
 }

@@ -690,6 +690,60 @@ grep -q 'terminating connection due to administrator command' \
 held_send blocker "select pg_advisory_unlock(42);"
 held_end blocker
 
+# Verify that pg_blocking_pids() names whom a session waits for in sm: the
+# writer of a row it would write, and the holder of a table's lock, which
+# isolationtester asks through pg_isolation_test_session_is_blocked().
+# 1. A held session updates a row of bp1 in an open transaction, and gives
+#    its pid.
+# 2. A second held session updates the same row, and waits behind it.
+# 3. pg_blocking_pids() of the second is the first's pid, and
+#    pg_isolation_test_session_is_blocked() is true of it.
+# 4. The first commits; the second's update goes through, and it is
+#    blocked by no one.
+# 5. The first locks bp1 ACCESS EXCLUSIVE; the second's LOCK TABLE waits,
+#    and pg_blocking_pids() of it is the first's pid.
+local_psql -c 'create table bp1 (k int4, v int4)' \
+  -c 'insert into bp1 values (1, 1)' > /dev/null
+held_start bp_a
+held_send bp_a "begin; update bp1 set v = 2 where k = 1; select 'pid ' || pg_backend_pid();"
+for _ in $(seq 50); do
+  bp_a_pid=$(sed -n 's/^pid //p' "$work/bp_a.out" 2> /dev/null)
+  [ -n "$bp_a_pid" ] && break
+  sleep 0.1
+done
+held_start bp_b
+held_send bp_b "select 'pid ' || pg_backend_pid(); update bp1 set v = 3 where k = 1; select 'updated';"
+for _ in $(seq 50); do
+  bp_b_pid=$(sed -n 's/^pid //p' "$work/bp_b.out" 2> /dev/null)
+  [ -n "$bp_b_pid" ] && break
+  sleep 0.1
+done
+for _ in $(seq 50); do
+  blockers=$(local_psql -c "select pg_blocking_pids($bp_b_pid)")
+  [ "$blockers" = "{$bp_a_pid}" ] && break
+  sleep 0.1
+done
+[ "$blockers" = "{$bp_a_pid}" ] || fail "pg_blocking_pids names a row's writer"
+[ "$(local_psql -c "select pg_isolation_test_session_is_blocked($bp_b_pid, '{$bp_a_pid}')")" = t ] ||
+  fail "pg_isolation_test_session_is_blocked by a row's writer"
+held_send bp_a "commit;"
+held_wait bp_b updated || fail "the waiting update goes through"
+[ "$(local_psql -c "select pg_blocking_pids($bp_b_pid)")" = "{}" ] ||
+  fail "pg_blocking_pids of a session no longer waiting"
+held_send bp_a "begin; lock table bp1 in access exclusive mode; select 'locked';"
+held_wait bp_a locked || fail "the first locks bp1"
+held_send bp_b "begin; lock table bp1 in access share mode; select 'shared'; commit;"
+for _ in $(seq 50); do
+  blockers=$(local_psql -c "select pg_blocking_pids($bp_b_pid)")
+  [ "$blockers" = "{$bp_a_pid}" ] && break
+  sleep 0.1
+done
+[ "$blockers" = "{$bp_a_pid}" ] || fail "pg_blocking_pids names a table lock's holder"
+held_send bp_a "commit;"
+held_wait bp_b shared || fail "the waiting LOCK TABLE goes through"
+held_end bp_a
+held_end bp_b
+
 # Verify that advisory locks keep PostgreSQL's semantics in digres's own
 # table: holds are counted, a transaction's go as it or a savepoint ends,
 # a wait ends on lock_timeout, on a cancel, and on a deadlock among them.

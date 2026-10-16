@@ -336,6 +336,11 @@ an object of its own instead.
   in sm (§7, step 4), the answer comes from sm1's lock table,
   which knows who waits for whom, and no session reads another's
   PGPROC.
+- **Whom a session waits for in sm is sm's to say**
+  (`WORKNOTE.md` step 161): each sm session is numbered with its
+  record's id (`sm_session_tag`), and `pg_blocking_pids()` adds
+  the sessions `sm_waits_for` numbers: a row's writer, a table's
+  lock holder.
 
 ## 6. What is left of modules removed
 

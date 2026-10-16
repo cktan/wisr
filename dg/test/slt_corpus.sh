@@ -47,13 +47,22 @@ fi
 rm -rf "$work"
 mkdir -p "$work"
 
-# Run the files on ENGINE (pg18 or digres), keeping where each failure is.
+# Run the files on ENGINE (pg18 or digres), keeping where each failure is,
+# in a directory of their own, which no other run of slt.sh clears; a run
+# that could not be made, or ran nothing, fails.
 run_on() {
-  local flag=
+  local flag= status
   [ "$1" = pg18 ] && flag=--pg18
-  test/slt.sh $flag "${files[@]}" > "$work/$1.log" 2>&1
-  cp build/test/slt/failures "$work/$1.failures"
-  cp build/test/slt/tally "$work/$1.tally"
+  SLT_WORK="$work/$1" test/slt.sh $flag "${files[@]}" > "$work/$1.log" 2>&1
+  status=$?
+  cp "$work/$1/failures" "$work/$1.failures" 2> /dev/null
+  cp "$work/$1/tally" "$work/$1.tally" 2> /dev/null
+  if [ $status -gt 1 ] || ! grep -q ' run, ' "$work/$1.tally" 2> /dev/null ||
+      [ "$(awk '{ r += $2 } END { print r + 0 }' "$work/$1.tally")" = 0 ]; then
+    tail -3 "$work/$1.log"
+    echo "slt_corpus: FAILED (the run on $1 did not run; see $work/$1)"
+    exit 2
+  fi
   grep -oE '^/[^ ]*\.test:[0-9]+: ' "$work/$1.failures" |
     sed "s|^$corpus/||; s/: $//" | sort > "$work/$1.locations"
   tail -1 "$work/$1.log"
