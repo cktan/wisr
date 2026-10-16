@@ -113,6 +113,33 @@ bg_end() {
   wait "${bg_pid[$1]}"
 }
 
+# Whether the psql OTHER, whose first statement printed its session's pid
+# ("pid N") into FILE, waits behind another session or runs to its end:
+# "waited" once pg_blocking_pids() names a blocker of it, "passed" if it ends
+# first, "stuck" if neither within ten seconds.  Decided by what the server
+# says, not by how long the statement takes, which a slow build stretches.
+wait_state() {
+  local other=$1 file=$2 pid=
+  for _ in $(seq 100); do
+    pid=$(sed -n 's/^pid \([0-9]*\)$/\1/p' "$file")
+    [ -n "$pid" ] || ! kill -0 "$other" 2> /dev/null && break
+    sleep 0.1
+  done
+  for _ in $(seq 100); do
+    if ! kill -0 "$other" 2> /dev/null; then
+      echo passed
+      return
+    fi
+    if [ -n "$pid" ] && [ "$(local_psql -c \
+      "select pg_blocking_pids($pid) <> '{}'")" = t ]; then
+      echo waited
+      return
+    fi
+    sleep 0.1
+  done
+  echo stuck
+}
+
 # Verify that the server starts on what initdb made, and takes connections.
 # 1. Make a data directory whose superuser has a password.
 # 2. Start the server on it.
@@ -2814,8 +2841,8 @@ local_psql -c 'create table tk1 (a int4 primary key, b int4)' \
 
 # Run the statement given first in a session that then holds its transaction
 # open, run psql with the rest of the arguments in another, commit the first,
-# and print "waited" or "passed", for whether the other was still running a
-# second later, then what the other said, on one line.
+# and print "waited" or "passed", for whether the other waited behind the
+# first (wait_state), then what the other said, on one line.
 against() {
   mkfifo "$work/rowlock.in"
   local_psql < "$work/rowlock.in" > "$work/rowlock_held.out" 2>&1 &
@@ -2826,17 +2853,18 @@ against() {
     grep -qx held "$work/rowlock_held.out" && break
     sleep 0.1
   done
-  local_psql "${@:2}" > "$work/rowlock_other.out" 2>&1 &
+  local_psql -c "select 'pid ' || pg_backend_pid()" "${@:2}" \
+    > "$work/rowlock_other.out" 2>&1 &
   local other=$!
-  sleep 1
-  local state=passed
-  kill -0 $other 2> /dev/null && state=waited
+  local state
+  state=$(wait_state $other "$work/rowlock_other.out")
   echo "commit;" >&4
   exec 4>&-
   wait $holder
   wait $other
   rm "$work/rowlock.in"
-  echo "$state $(tr '\n' ' ' < "$work/rowlock_other.out")"
+  echo "$state $(grep -v '^pid [0-9]*$' "$work/rowlock_other.out" |
+    tr '\n' ' ')"
 }
 [ "$(against 'update tk1 set b = b + 100 where a = 3' \
   -c 'select b from tk1 where a = 3 for update')" = "waited 130 " ] ||
@@ -2944,7 +2972,8 @@ local_psql -c "insert into tu1 values (9, 'one', 7) on conflict (id)
 
 # Run the statement given first in a session, end its transaction with the
 # word given second, run psql with the rest of the arguments in another
-# session meanwhile, and print "waited" or "passed" and what the other said.
+# session meanwhile, and print "waited" or "passed" (wait_state) and what the
+# other said.
 upsert_against() {
   mkfifo "$work/upsert.in"
   local_psql < "$work/upsert.in" > "$work/upsert_held.out" 2>&1 &
@@ -2955,17 +2984,18 @@ upsert_against() {
     grep -qx held "$work/upsert_held.out" && break
     sleep 0.1
   done
-  local_psql "${@:3}" > "$work/upsert_other.out" 2>&1 &
+  local_psql -c "select 'pid ' || pg_backend_pid()" "${@:3}" \
+    > "$work/upsert_other.out" 2>&1 &
   local other=$!
-  sleep 1
-  local state=passed
-  kill -0 $other 2> /dev/null && state=waited
+  local state
+  state=$(wait_state $other "$work/upsert_other.out")
   echo "$2;" >&4
   exec 4>&-
   wait $holder
   wait $other
   rm "$work/upsert.in"
-  echo "$state $(tr '\n' ' ' < "$work/upsert_other.out")"
+  echo "$state $(grep -v '^pid [0-9]*$' "$work/upsert_other.out" |
+    tr '\n' ' ')"
 }
 [ "$(upsert_against "insert into tu1 values (20, 'twenty', 1)" commit \
   -c "insert into tu1 values (20, 'vingt', 5) on conflict (id)

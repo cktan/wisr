@@ -5230,3 +5230,24 @@ PostgreSQL's own RI triggers.
   ALTER COLUMN now.
 - **Left**: `pg_constraint` lists no foreign key, so `\d` shows
   none; DEFERRABLE; `rel` verbs for them.
+
+## Step 178: a row lock's check asks the server whether it waits
+
+`test/server.sh`'s `against()` and `upsert_against()` run a
+statement in one session while another holds a row, and say
+whether it "waited" or "passed". They slept a second and called
+it waiting if it was still running: under the thread sanitizer
+a statement that does not wait can take longer, and "skip
+locked takes the next row" failed so once.
+
+- `wait_state()`: the other session prints its pid first; it
+  "waited" once `pg_blocking_pids()` names a blocker of it,
+  "passed" if it ends first, and is "stuck", which no check
+  expects, if neither within ten seconds.
+- Shown: with every other session slowed by 1.5 s
+  (`pg_sleep()`), the old test failed eight checks and the new
+  one passes; with `pg_blocking_pids()` blinded, the new one
+  fails every check that expects a wait.
+- Left: the checks that only want a statement still running a
+  second later (`bg_waiting()` and four others), which a slow
+  build can pass but not fail.
