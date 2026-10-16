@@ -104,10 +104,6 @@ Owed, and blocking nothing above:
   INDEX` over duplicates says `index build: two rows of u
   with one key in uk` where PostgreSQL says `Key (k)=(1) is
   duplicated.`; sm's error does not carry the key.
-- **A taken index name gives the wrong message.** `CREATE
-  INDEX` with a name in use says `could not create unique
-  index "t6d6"`, `the name t6d6 is taken`, where PostgreSQL
-  says `relation "t6d6" already exists`.
 
 ---
 

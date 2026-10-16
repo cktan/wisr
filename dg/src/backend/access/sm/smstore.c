@@ -3094,6 +3094,18 @@ ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt) {
                                RelationGetNamespace(rel),
                                ChooseIndexColumnNames(stmt->indexParams), NIL,
                                stmt->primary, stmt->isconstraint);
+  /* A table, an index and a sequence share a namespace's names. */
+  if (OidIsValid(smstore_relation_oid(name, RelationGetNamespace(rel)))) {
+    relation_close(rel, NoLock);
+    if (stmt->if_not_exists) {
+      ereport(NOTICE,
+              (errcode(ERRCODE_DUPLICATE_TABLE),
+               errmsg("relation \"%s\" already exists, skipping", name)));
+      return InvalidObjectAddress;
+    }
+    ereport(ERROR, (errcode(ERRCODE_DUPLICATE_TABLE),
+                    errmsg("relation \"%s\" already exists", name)));
+  }
   /* Every session's descriptor of the table relearns its indexes. */
   CacheInvalidateRelcache(rel);
   relation_close(rel, NoLock);
@@ -3104,6 +3116,10 @@ ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt) {
         return sm_cat_create_index(s, relid, name, keys, includes, stmt->unique,
                                    std::string(), {}, &oid, stmt->primary);
       }) != 0) {
+    /* A name taken since it was looked up, or a unique key duplicated. */
+    if (sm_errnum() == SM_ERR_DUPKEY && !stmt->unique)
+      ereport(ERROR, (errcode(ERRCODE_DUPLICATE_TABLE),
+                      errmsg("relation \"%s\" already exists", name)));
     if (sm_errnum() == SM_ERR_DUPKEY)
       ereport(ERROR, (errcode(ERRCODE_UNIQUE_VIOLATION),
                       errmsg("could not create unique index \"%s\"", name),

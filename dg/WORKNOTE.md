@@ -4649,3 +4649,19 @@ ended.
   fails and leaves no index; a plain one over rows is planned
   with by the next statement. Four of its records failed
   before.
+
+## Step 158: an index's name taken is refused as PostgreSQL does
+
+`../sm/NEXT.md` §2. sm refuses a name taken in a namespace with
+`SM_ERR_DUPKEY`, as it refuses a duplicated key, and digres
+said `could not create unique index`, `the name nk is taken`,
+for both; `CREATE INDEX IF NOT EXISTS` failed the same way.
+
+- **`smstore_create_index()` looks the name up first**, with
+  `smstore_relation_oid()`, as `CREATE SEQUENCE` does: a taken
+  one is `relation "nk" already exists`, or with `IF NOT
+  EXISTS` a NOTICE and nothing made.
+- **`SM_ERR_DUPKEY` for an index not unique** is a name taken
+  since the look-up, and says the same.
+- `test/slt/create_index.test`: a name an index or the table
+  holds, unique or not, and `IF NOT EXISTS`.
