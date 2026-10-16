@@ -17524,7 +17524,8 @@ void PreCommit_on_commit_actions(void) {
    * but its indexes depends on it, which go with it.
    */
   foreach (l, oids_to_truncate) {
-    Relation rel = relation_open(lfirst_oid(l), NoLock);
+    /* Locked first, as heap_truncate() locks it, so the descriptor is sm's. */
+    Relation rel = relation_open(lfirst_oid(l), AccessExclusiveLock);
 
     smstore_truncate(rel);
     relation_close(rel, NoLock);

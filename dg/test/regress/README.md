@@ -62,9 +62,9 @@ past their first error, not that N files pass.
 
 ## Results, 2026-10-16
 
-At `6cffc28` (char(n)), an assertion build at `-O0` on
-x86_64; 230 files in 3.5 minutes. Two runs gave the same
-summary, causes, crashes and setup.
+At `0d2bed5` with `WORKNOTE.md` step 188, an assertion build
+at `-O0` on x86_64; 230 files in 3.5 minutes. Two runs gave
+the same summary, causes, crashes and setup.
 
 - **16 pass.** 13 run in full: `boolean`, `char`, `varchar`,
   `text`, `int2`, `int4`, `int8`, `md5`, `comments`, `delete`,
@@ -72,22 +72,21 @@ summary, causes, crashes and setup.
   skip themselves on this database's encoding and locale, as
   they do on PostgreSQL: `collate.icu.utf8`,
   `collate.linux.utf8`, `collate.windows.win1252`.
-- **206 fail, 8 crash, no timeouts.**
+- **211 fail, 3 crash, no timeouts.**
 
 ### Crashes
 
-Three assertions, each reproducible by running the file
+Two assertions, each reproducible by running the file
 alone:
 
 | assertion | files | statement |
 |---|---|---|
-| `lockmode != NoLock \|\| CheckRelationLockedByMe(...)`, relation.c:65 | insert_conflict, create_index, guc, temp, truncate | `DROP INDEX`; `DISCARD TEMP`; a `SELECT` of a temporary table; `ALTER SEQUENCE ... OWNED BY` |
 | `DatumGetObjectId(ldatum) == table_oid`, execCurrent.c:212 | portals, rowsecurity | `DELETE` / `UPDATE ... WHERE CURRENT OF` |
 | `!TTS_EMPTY(slot)`, execTuples.c:1267 | foreign_key | `UPDATE` of a self-referencing key `ON UPDATE CASCADE`, in a transaction |
 
-The first is likely one fix: a relation opened with `NoLock`
-that this session has not locked, on several paths that drop
-or close a relation.
+A third, `relation_open()`'s `NoLock` assertion, stopped five
+more files, on DDL that read a descriptor cached in an earlier
+transaction before sm's lock; step 188 fixed it.
 
 One more bug, not a crash: in `strings`,
 `SUBSTRING('abcdefg' SIMILAR '#"(b_d)#"%' ESCAPE '#')`, which
@@ -115,11 +114,11 @@ tables are missing in every file:
 | files | cause | what it is |
 |---|---|---|
 | 29 | `type ? is not supported yet` | `name` 3, `box` 3, `oid` 2, `point` 2, and 19 more one file each: the other geometric types, `bit`, `money`, `pg_lsn`, `timetz`, `cidr`, `macaddr`, `xid8`, `jsonb`, `xml`, arrays, ranges |
-| 18 | `a relation's storage cannot be made` | views 10 (one inside `CREATE SCHEMA`), `CREATE TYPE ... AS (...)` 4, `CREATE TABLE AS` 4 |
-| 18 | `CREATE TABLE supports only columns, ...` | `WITH (fillfactor, autovacuum_enabled)` 5, `INHERITS` 5, partitions 3, `CHECK` 1, others |
+| 19 | `a relation's storage cannot be made` | views 11 (one inside `CREATE SCHEMA`), `CREATE TYPE ... AS (...)` 4, `CREATE TABLE AS` 4 |
+| 19 | `CREATE TABLE supports only columns, ...` | `WITH (fillfactor, autovacuum_enabled)` 5, `INHERITS` 6, partitions 3, `CHECK` 1, others |
 | 16 | `language "?" does not exist` | `plpgsql` 10, `sql` 6 |
 | 16 | `relation pg_authid cannot be opened` | `CREATE`/`DROP ROLE`, `CREATE USER` |
-| 14 | `test_setup could not make a table: type ? ...` | `onek` 7 and `tenk1` 5 (`name`), `point_tbl` 1, `road` 1 |
+| 15 | `test_setup could not make a table: type ? ...` | `onek` 8 and `tenk1` 5 (`name`), `point_tbl` 1, `road` 1 |
 | 13 | `relation "?" does not exist` | catalogs and views digres lacks (`pg_prepared_statements`, `pg_locks`, `pg_range`, ...), and tables a file made with what failed |
 | 9 | `relation pg_default_acl cannot be opened` | `CREATE FUNCTION`, `CREATE AGGREGATE` |
 | 9 | `relation pg_type cannot be written` | `CREATE TYPE ... AS ENUM`, `CREATE DOMAIN`, shell types |
@@ -135,14 +134,14 @@ tables are missing in every file:
 
 By files unblocked for the work, the cheapest first:
 
-1. **The crashes**, before any feature: three bugs, eight
-   files, and the first is likely one fix.
+1. **The crashes**, before any feature: two bugs, three
+   files.
 2. **Load the `Default` time zone abbreviations.**
    `timezone_abbreviations` is empty, so `EDT` and `zulu` are
    unknown: 4 files (`time`, `timestamp`, `timestamptz`,
    `horology`), likely a setting and an installed file.
 3. **`name`.** 3 files directly, and through `onek` and
-   `tenk1`, 12 more: 15 files, the most of any one change.
+   `tenk1`, 13 more: 16 files, the most of any one change.
    It is what `test_setup`'s busiest tables need. (`char(n)`,
    which they needed too, is done: `char` passes, and 8 more
    files got past it.)

@@ -257,7 +257,12 @@ instead of being told.
     table, and a lock on an index took nothing in sm, so it
     printed the definition of an index dropped while it
     waited. A lock on an index now locks its table, and DROP
-    INDEX invalidates the index's own descriptor too.
+    INDEX invalidates the index's own descriptor too. The audit
+    missed five, which no test cached a descriptor before:
+    DROP INDEX, DISCARD TEMP and ON COMMIT DROP's drop, ON
+    COMMIT DELETE ROWS, OWNED BY and `pg_stats()` read one
+    before sm's lock, and stopped the server on the rule below;
+    each takes its lock first now (`WORKNOTE.md` step 188).
   - **The rule is checked.** `CheckRelationLockedByMe()`
     (storage/lmgr `lmgr.c`) answers for a relation of sm's
     whether this transaction holds sm's lock on it

@@ -2122,7 +2122,8 @@ static void drop_table(RangeVar *rv, bool missing_ok, bool cascade,
  * and sequence: DROP TABLE's, and ON COMMIT DROP's.
  */
 void smstore_drop_table(Oid oid) {
-  Relation rel = relation_open(oid, NoLock);
+  /* Locked first, so the descriptor read is the one sm holds. */
+  Relation rel = relation_open(oid, AccessExclusiveLock);
 
   /* Every session forgets its descriptor once this one commits. */
   CacheInvalidateRelcache(rel);
@@ -3379,8 +3380,12 @@ static void put_stats_rows(ReturnSetInfo *rsinfo, Oid oid) {
   if (st == nullptr)
     return;
   for (const sm_stat_t &x : st->stats) {
-    /* The column is the table's, or the index's for an expression. */
-    Relation rel = relation_open(x.has_index ? (Oid)x.index : oid, NoLock);
+    /*
+     * The column is the table's, or the index's for an expression.  Locked
+     * first, so the descriptor read is the one sm holds.
+     */
+    Relation rel =
+        relation_open(x.has_index ? (Oid)x.index : oid, AccessShareLock);
     Form_pg_attribute att = TupleDescAttr(RelationGetDescr(rel), x.position);
     const sm_type_t *smtype = sm_type(type_code(att->atttypid, att->atttypmod));
     NameData nsp, name;
@@ -3798,7 +3803,8 @@ ObjectAddress smstore_own_sequence(AlterSeqStmt *stmt, List *owned_by) {
       ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
                       errmsg("sequence cannot be owned by relation \"%s\"",
                              rv->relname)));
-    rel = relation_open(relid, NoLock);
+    /* Locked first, as process_owned_by() locks it, to read its columns. */
+    rel = relation_open(relid, AccessShareLock);
     if (RelationGetNamespace(rel) != (Oid)seq_nspoid)
       ereport(ERROR,
               (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
@@ -4008,9 +4014,11 @@ void smstore_drop_indexes(DropStmt *stmt) {
     }
     /*
      * Every session's descriptor of the table relearns its indexes, and
-     * one of the index is gone, as PostgreSQL's index_drop() has it.
+     * one of the index is gone, as PostgreSQL's index_drop() has it.  The
+     * table is locked first, as index_drop() locks it, so the descriptor
+     * read is the one sm holds, and held until the transaction ends.
      */
-    rel = relation_open((Oid)table, NoLock);
+    rel = relation_open((Oid)table, AccessExclusiveLock);
     CacheInvalidateRelcache(rel);
     relation_close(rel, NoLock);
     rel = relation_open((Oid)index, NoLock);

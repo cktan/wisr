@@ -5465,3 +5465,42 @@ wait), so what they set needs neither `volatile` nor
   compiled out); the frontend's `common/string.h`. The holdoff
   counts (`InterruptHoldoffCount` and the rest) are `volatile`
   still.
+
+## Step 188: DDL on a cached descriptor takes sm's lock first
+
+`SHMEM.md` §5.1, step 142. PostgreSQL 18's regression suite
+(`test/regress/README.md`) stopped the server in five files on
+`relation_open()`'s assertion that a relation opened with
+`NoLock` is locked. Five call sites of digres's own read a
+descriptor before sm's lock: when the descriptor was built in
+the statement, building it took IS (`smstore_table_desc()`),
+and the assertion held by chance; when it was cached from an
+earlier transaction, nothing was held. Step 141's audit ran
+over digres's tests, which never cached one first. Asserts are
+on in every build, so each stopped any server:
+
+```
+create table t (k int4);
+create index i on t (k);
+insert into t values (1);
+drop index i;
+```
+
+- **Each takes its lock as it opens the relation**, in the
+  mode PostgreSQL's code takes, so `LockRelationOid()` checks
+  the version (§5.1) before the descriptor is read, and the
+  lock is held to the transaction's end:
+  - DROP INDEX (`smstore_drop_indexes()`): the table, X, as
+    `index_drop()` locks it.
+  - A table's drop (`smstore_drop_table()`): X. DROP TABLE had
+    it already; DISCARD TEMP and ON COMMIT DROP did not.
+  - ON COMMIT DELETE ROWS (commands `tablecmds.c`,
+    `PreCommit_on_commit_actions()`): X, as `heap_truncate()`.
+  - ALTER SEQUENCE ... OWNED BY (`smstore_own_sequence()`): the
+    table, IS, as `process_owned_by()` locks it.
+  - `pg_stats()` (`put_stats_rows()`): the table, IS.
+- `test/server.sh` runs each after caching the descriptor, and
+  failed at each with its lock taken out. The remaining `NoLock`
+  opens in `smstore.c` follow a lock: DROP TABLE's,
+  `smstore_create_index()`'s, ANALYZE's and the planner's
+  statistics' were tried after caching, and hold.

@@ -961,6 +961,42 @@ grep -qx 'INSERT 0 1' "$work/index.out" &&
   grep -q 'index "t3_b" does not exist' "$work/index.out" ||
   fail "drop index"
 
+# Verify that DDL on a relation whose descriptor this session cached in an
+# earlier transaction takes sm's lock before it reads the descriptor: each
+# step stopped an assertion build at relation_open's NoLock check.
+# 1. Insert into a table with an index, caching it; drop the index.
+# 2. Insert into a temporary table; DISCARD TEMP drops it.
+# 3. Insert into an ON COMMIT DELETE ROWS table and commit; a later
+#    transaction that reads another temporary table truncates it.
+# 4. Insert into a table; make a sequence owned by its column.
+# 5. Analyze the table and read it; pg_stats() reads its statistics.
+# 6. Confirm no statement failed and the session ran to its last.
+local_psql > "$work/cached.out" 2>&1 <<'SQL'
+create table cd1 (k int4);
+create index cd1_k on cd1 (k);
+insert into cd1 values (1);
+drop index cd1_k;
+create temp table cd2 (a int4);
+insert into cd2 values (1);
+discard temp;
+create temp table cd3 (a int4) on commit delete rows;
+create temp table cd4 (a int4);
+begin;
+insert into cd3 values (1);
+commit;
+select count(*) from cd4;
+create sequence cd1_s;
+alter sequence cd1_s owned by cd1.k;
+insert into cd1 select generate_series(2, 100);
+analyze cd1;
+select count(*) from cd1;
+select count(*) > 0 from pg_stats();
+select 'cached done';
+SQL
+! grep -q ERROR "$work/cached.out" &&
+  grep -qx 'cached done' "$work/cached.out" ||
+  fail "DDL on a cached descriptor takes sm's lock"
+
 # Verify that an index scan reads a table in sm through its index: equal
 # keys, ranges, a key on a second column, and IS NULL find the rows they
 # should, with the plan an index scan.
