@@ -1825,7 +1825,6 @@ static void ExecGrant_Relation(InternalGrant *istmt) {
                                    nulls, replaces);
 
       CatalogTupleUpdate(relation, &newtuple->t_self, newtuple);
-      UnlockTuple(relation, &tuple->t_self, InplaceUpdateTupleLock);
 
       /* Update initial privileges for extensions */
       recordExtensionInitPriv(relOid, RelationRelationId, 0, new_acl);
@@ -1835,8 +1834,7 @@ static void ExecGrant_Relation(InternalGrant *istmt) {
                             oldmembers, nnewmembers, newmembers);
 
       pfree(new_acl);
-    } else
-      UnlockTuple(relation, &tuple->t_self, InplaceUpdateTupleLock);
+    }
 
     /*
      * Handle column-level privileges, if any were specified or implied.
@@ -2004,7 +2002,6 @@ ExecGrant_common(InternalGrant *istmt, Oid classid, AclMode default_privs,
                                  nulls, replaces);
 
     CatalogTupleUpdate(relation, &newtuple->t_self, newtuple);
-    UnlockTuple(relation, &tuple->t_self, InplaceUpdateTupleLock);
 
     /* Update initial privileges for extensions */
     recordExtensionInitPriv(objectid, classid, 0, new_acl);

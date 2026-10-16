@@ -919,8 +919,6 @@ void AlterObjectOwner_internal(Oid classId, Oid objectId, Oid new_ownerId) {
     /* Perform actual update */
     CatalogTupleUpdate(rel, &newtup->t_self, newtup);
 
-    UnlockTuple(rel, &oldtup->t_self, InplaceUpdateTupleLock);
-
     /* Update owner dependency reference */
     changeDependencyOnOwner(classId, objectId, new_ownerId);
 
@@ -928,8 +926,7 @@ void AlterObjectOwner_internal(Oid classId, Oid objectId, Oid new_ownerId) {
     pfree(values);
     pfree(nulls);
     pfree(replaces);
-  } else
-    UnlockTuple(rel, &oldtup->t_self, InplaceUpdateTupleLock);
+  }
 
   /* Note the post-alter hook gets classId not catalogId */
   InvokeObjectPostAlterHook(classId, objectId, 0);

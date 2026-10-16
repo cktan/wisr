@@ -175,25 +175,6 @@ void LockRelationId(LockRelId *relid, LOCKMODE lockmode) {
 }
 
 /*
- *		UnlockRelationId
- *
- * Unlock, given a LockRelId.  This is preferred over UnlockRelationOid
- * for speed reasons.
- */
-void UnlockRelationId(LockRelId *relid, LOCKMODE lockmode) {
-  /* sm's lock is held to the transaction's end; a catalog has none. */
-}
-
-/*
- *		UnlockRelationOid
- *
- * Unlock, given only a relation Oid.  Use UnlockRelationId if you can.
- */
-void UnlockRelationOid(Oid relid, LOCKMODE lockmode) {
-  /* sm's lock is held to the transaction's end; a catalog has none. */
-}
-
-/*
  *		LockRelation
  *
  * This is a convenience routine for acquiring an additional lock on an
@@ -233,87 +214,11 @@ bool CheckRelationOidLockedByMe(Oid relid, LOCKMODE lockmode, bool orstronger) {
 }
 
 /*
- *		LockRelationIdForSession
- *
- * This routine grabs a session-level lock on the target relation.  The
- * session lock persists across transaction boundaries.  It will be removed
- * when UnlockRelationIdForSession() is called, or if an ereport(ERROR) occurs,
- * or if the backend exits.
- *
- * Note that one should also grab a transaction-level lock on the rel
- * in any transaction that actually uses the rel, to ensure that the
- * relcache entry is up to date.
- */
-void LockRelationIdForSession(LockRelId *relid, LOCKMODE lockmode) {
-  /* sm holds no lock for a session; a catalog needs none. */
-}
-
-/*
- *		UnlockRelationIdForSession
- */
-void UnlockRelationIdForSession(LockRelId *relid, LOCKMODE lockmode) {}
-
-/*
- *		LockTuple
- *
- * Obtain a tuple-level lock.  This is used in a less-than-intuitive fashion
- * because we can't afford to keep a separate lock in shared memory for every
- * tuple.  See heap_lock_tuple before using this!
- */
-void LockTuple(Relation relation, ItemPointer tid, LOCKMODE lockmode) {
-  /* Only a catalog's row is locked so, for an inplace update: none is. */
-}
-
-/*
- *		ConditionalLockTuple
- *
- * As above, but only lock if we can get the lock without blocking.
- * Returns true iff the lock was acquired.
- */
-bool ConditionalLockTuple(Relation relation, ItemPointer tid, LOCKMODE lockmode,
-                          bool logLockFailure) {
-  /* As LockTuple: no catalog row changes, so the lock is had. */
-  return true;
-}
-
-/*
- *		UnlockTuple
- */
-void UnlockTuple(Relation relation, ItemPointer tid, LOCKMODE lockmode) {}
-
-/*
- *		XactLockTableWait
- *
- * Wait for the specified transaction to commit or abort.  If an operation
- * is specified, an error context callback is set up.  If 'oper' is passed as
- * None, no error context callback is set up.
- *
- * Note that this does the right thing for subtransactions: if we wait on a
- * subtransaction, we will exit as soon as it aborts or its top parent commits.
- * It takes some extra work to ensure this, because to save on shared memory
- * the XID lock of a subtransaction is released when it ends, whether
- * successfully or unsuccessfully.  So we have to check if it's "still running"
- * and if so wait for its parent.
- */
-void XactLockTableWait(TransactionId xid, Relation rel, ItemPointer ctid,
-                       XLTW_Oper oper) {
-  /*
-   * Nothing to wait for: no transaction id is locked, and no transaction
-   * but the session's own is in progress to it (TransactionIdIsInProgress()),
-   * which a caller never waits for.  A row's writers are sm's to wait for.
-   */
-}
-
-/*
  *		SpeculativeInsertionLockAcquire
  *
- * Insert a lock showing that the given transaction ID is inserting a tuple,
- * but hasn't yet decided whether it's going to keep it.  The lock can then be
- * used to wait for the decision to go ahead with the insertion, or aborting
- * it.
- *
- * The token is used to distinguish multiple insertions by the same
- * transaction.  It is returned to caller.
+ * A token for a tuple the given transaction is inserting but hasn't yet
+ * decided whether to keep, which tells its insertions apart.  PostgreSQL also
+ * took a lock that others waited on for the decision; no one waits here.
  */
 uint32 SpeculativeInsertionLockAcquire(TransactionId xid) {
   speculativeInsertionToken++;
@@ -330,53 +235,6 @@ uint32 SpeculativeInsertionLockAcquire(TransactionId xid) {
    * would wait for it.
    */
   return speculativeInsertionToken;
-}
-
-/*
- *		SpeculativeInsertionLockRelease
- *
- * Delete the lock showing that the given transaction is speculatively
- * inserting a tuple.
- */
-void SpeculativeInsertionLockRelease(TransactionId xid) {}
-
-/*
- *		SpeculativeInsertionWait
- *
- * Wait for the specified transaction to finish or abort the insertion of a
- * tuple.
- */
-void SpeculativeInsertionWait(TransactionId xid, uint32 token) {
-  /* No speculative insertion holds a lock to wait for. */
-}
-
-/*
- * WaitForLockersMultiple
- *		Wait until no transaction holds locks that conflict with the
- *given locktags at the given lockmode.
- *
- * To do this, obtain the current list of lockers, and wait on their VXIDs
- * until they are finished.
- *
- * Note we don't try to acquire the locks on the given locktags, only the
- * VXIDs and XIDs of their lock holders; if somebody grabs a conflicting lock
- * on the objects after we obtained our initial list of lockers, we will not
- * wait for them.
- */
-void WaitForLockersMultiple(List *locktags, LOCKMODE lockmode) {
-  /*
-   * No locker to wait for: no session holds a lock of this lock manager on
-   * a relation, as a table of sm's is locked by sm and a catalog by none.
-   */
-}
-
-/*
- * WaitForLockers
- *
- * Same as WaitForLockersMultiple, for a single lock tag.
- */
-void WaitForLockers(LOCKTAG heaplocktag, LOCKMODE lockmode) {
-  WaitForLockersMultiple(list_make1(&heaplocktag), lockmode);
 }
 
 /*
@@ -399,12 +257,6 @@ void LockDatabaseObject(Oid classid, Oid objid, uint16 objsubid,
   /* Taking a lock still takes the invalidation messages waiting. */
   AcceptInvalidationMessages();
 }
-
-/*
- *		UnlockDatabaseObject
- */
-void UnlockDatabaseObject(Oid classid, Oid objid, uint16 objsubid,
-                          LOCKMODE lockmode) {}
 
 /*
  *		LockSharedObject
@@ -430,23 +282,3 @@ bool ConditionalLockSharedObject(Oid classid, Oid objid, uint16 objsubid,
   return true;
 }
 
-/*
- *		UnlockSharedObject
- */
-void UnlockSharedObject(Oid classid, Oid objid, uint16 objsubid,
-                        LOCKMODE lockmode) {}
-
-/*
- *		LockSharedObjectForSession
- *
- * Obtain a session-level lock on a shared-across-databases object.
- * See LockRelationIdForSession for notes about session-level locks.
- */
-void LockSharedObjectForSession(Oid classid, Oid objid, uint16 objsubid,
-                                LOCKMODE lockmode) {}
-
-/*
- *		UnlockSharedObjectForSession
- */
-void UnlockSharedObjectForSession(Oid classid, Oid objid, uint16 objsubid,
-                                  LOCKMODE lockmode) {}

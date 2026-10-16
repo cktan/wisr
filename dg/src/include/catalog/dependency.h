@@ -98,7 +98,6 @@ typedef struct ObjectAddresses ObjectAddresses;
 
 extern void AcquireDeletionLock(const ObjectAddress *object, int flags);
 
-extern void ReleaseDeletionLock(const ObjectAddress *object);
 
 extern void performDeletion(const ObjectAddress *object, DropBehavior behavior,
                             int flags);

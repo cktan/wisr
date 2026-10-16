@@ -1464,8 +1464,6 @@ void index_drop(Oid indexId, bool concurrent, bool concurrent_lock_mode) {
   Relation indexRelation;
   HeapTuple tuple;
   bool hasexprs;
-  LockRelId heaprelid, indexrelid;
-  LOCKTAG heaplocktag;
   LOCKMODE lockmode;
 
   /*
@@ -1571,11 +1569,7 @@ void index_drop(Oid indexId, bool concurrent, bool concurrent_lock_mode) {
      */
     CacheInvalidateRelcache(userHeapRelation);
 
-    /* save lockrelid and locktag for below, then close but keep locks */
-    heaprelid = userHeapRelation->rd_lockInfo.lockRelId;
-    SET_LOCKTAG_RELATION(heaplocktag, heaprelid.dbId, heaprelid.relId);
-    indexrelid = userIndexRelation->rd_lockInfo.lockRelId;
-
+    /* close, but keep locks */
     table_close(userHeapRelation, NoLock);
     index_close(userIndexRelation, NoLock);
 
@@ -1585,37 +1579,18 @@ void index_drop(Oid indexId, bool concurrent, bool concurrent_lock_mode) {
      * Note that any previously-built data structures are lost in the
      * commit.  The only data we keep past here are the relation IDs.
      *
-     * Before committing, get a session-level lock on the table, to ensure
-     * that neither it nor the index can be dropped before we finish. This
-     * cannot block, even if someone else is waiting for access, because
-     * we already have the same lock within our transaction.
+     * No session-level lock keeps the table or the index: none is held of
+     * this lock manager (storage/lmgr/README).
      */
-    LockRelationIdForSession(&heaprelid, ShareUpdateExclusiveLock);
-    LockRelationIdForSession(&indexrelid, ShareUpdateExclusiveLock);
-
     PopActiveSnapshot();
     CommitTransactionCommand();
     StartTransactionCommand();
 
     /*
-     * Now we must wait until no running transaction could be using the
-     * index for a query.  Use AccessExclusiveLock here to check for
-     * running transactions that hold locks of any kind on the table. Note
-     * we do not need to worry about xacts that open the table for reading
-     * after this point; they will see the index as invalid when they open
-     * the relation.
-     *
-     * Note: the reason we use actual lock acquisition here, rather than
-     * just checking the ProcArray and sleeping, is that deadlock is
-     * possible if one of the transactions in question is blocked trying
-     * to acquire an exclusive lock on our table.  The lock code will
-     * detect deadlock and error out properly.
-     *
-     * Note: we report progress through WaitForLockers() unconditionally
-     * here, even though it will only be used when we're called by REINDEX
-     * CONCURRENTLY and not when called by DROP INDEX CONCURRENTLY.
+     * PostgreSQL waited here for every transaction that could be using the
+     * index for a query.  No lock of this lock manager is held, so there is
+     * none to wait for (storage/lmgr/README).
      */
-    WaitForLockers(heaplocktag, AccessExclusiveLock);
 
     /*
      * Updating pg_index might involve TOAST table access, so ensure we
@@ -1635,11 +1610,7 @@ void index_drop(Oid indexId, bool concurrent, bool concurrent_lock_mode) {
     CommitTransactionCommand();
     StartTransactionCommand();
 
-    /*
-     * Wait till every transaction that saw the old index state has
-     * finished.  See above about progress reporting.
-     */
-    WaitForLockers(heaplocktag, AccessExclusiveLock);
+    /* Nor for every transaction that saw the old index state. */
 
     /*
      * Re-open relations to allow us to complete our actions.
@@ -1722,14 +1693,6 @@ void index_drop(Oid indexId, bool concurrent, bool concurrent_lock_mode) {
    * Close owning rel, but keep lock
    */
   table_close(userHeapRelation, NoLock);
-
-  /*
-   * Release the session locks before we go.
-   */
-  if (concurrent) {
-    UnlockRelationIdForSession(&heaprelid, ShareUpdateExclusiveLock);
-    UnlockRelationIdForSession(&indexrelid, ShareUpdateExclusiveLock);
-  }
 }
 
 /* ----------------------------------------------------------------

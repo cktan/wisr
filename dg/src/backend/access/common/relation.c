@@ -97,23 +97,15 @@ Relation try_relation_open(Oid relationId, LOCKMODE lockmode) {
     r = relationId >= FirstNormalObjectId && smstore_sequence_exists(relationId)
             ? NULL
             : RelationIdGetRelation(relationId);
-    if (!RelationIsValid(r)) {
-      if (lockmode != NoLock)
-        UnlockRelationOid(relationId, lockmode);
+    if (!RelationIsValid(r))
       return NULL;
-    }
   } else {
     /*
      * Now that we have the lock, probe to see if the relation really exists
      * or not.
      */
-    if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relationId))) {
-      /* Release useless lock */
-      if (lockmode != NoLock)
-        UnlockRelationOid(relationId, lockmode);
-
+    if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relationId)))
       return NULL;
-    }
 
     /* Should be safe to do a relcache load */
     r = RelationIdGetRelation(relationId);
@@ -199,20 +191,13 @@ Relation relation_openrv_extended(const RangeVar *relation, LOCKMODE lockmode,
 /* ----------------
  *		relation_close - close any relation
  *
- *		If lockmode is not "NoLock", we then release the specified lock.
- *
- *		Note that it is often sensible to hold a lock beyond
- *relation_close; in that case, the lock is released automatically at xact end.
+ *		lockmode is not released: a lock is held to the transaction's
+ *		end (storage/lmgr/README).
  * ----------------
  */
 void relation_close(Relation relation, LOCKMODE lockmode) {
-  LockRelId relid = relation->rd_lockInfo.lockRelId;
-
   Assert(lockmode >= NoLock && lockmode < MAX_LOCKMODES);
 
   /* The relcache does the real work... */
   RelationClose(relation);
-
-  if (lockmode != NoLock)
-    UnlockRelationId(&relid, lockmode);
 }

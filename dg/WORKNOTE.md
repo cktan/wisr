@@ -5126,3 +5126,46 @@ that was gone, until the session next locked the table.
 - `test/server.sh`: a held session caches a table and its
   index, then sees another's rename, the index's drop and the
   table's drop by oid as regclass.
+
+## Step 176: lmgr.c's no-ops are gone
+
+`SHMEM.md` §3. Since steps 154 to 156, much of storage/lmgr
+`lmgr.c` did nothing: a lock is held to the transaction's end,
+none is held for a session, a catalog's row is never locked,
+and no one waits for a transaction or a locker.
+
+- **Gone**, with their calls (about 60, in 20 files):
+  `UnlockRelationId()`, `UnlockRelationOid()`,
+  `LockRelationIdForSession()`, `UnlockRelationIdForSession()`,
+  `LockTuple()`, `ConditionalLockTuple()`, `UnlockTuple()`,
+  `XactLockTableWait()` with `XLTW_Oper`,
+  `SpeculativeInsertionLockRelease()`,
+  `SpeculativeInsertionWait()`, `WaitForLockers()`,
+  `WaitForLockersMultiple()`, `UnlockDatabaseObject()`,
+  `UnlockSharedObject()`, `LockSharedObjectForSession()` and
+  `UnlockSharedObjectForSession()`; catalog `dependency.c`'s
+  `ReleaseDeletionLock()`, which only called them.
+- **What their callers lost**: the lock tags and session
+  `LockRelId`s of the concurrent index build and drop (commands
+  `indexcmds.c`, catalog `index.c`) and of DETACH PARTITION
+  CONCURRENTLY; MERGE's and UPDATE's `lockedtid` and `tuplock`
+  (executor `nodeModifyTable.c`); the release of a lock taken on
+  the wrong relation in the retry loops of catalog `namespace.c`,
+  `objectaddress.c`, `tablecmds.c`'s callbacks and
+  `stat_utils.c`; `relation_close()`'s and `index_close()`'s
+  release. Where PostgreSQL waited, a comment says why nothing
+  does.
+- **Kept**: the entry points that take sm's lock
+  (`LockRelationOid()` and the rest) or the invalidations
+  waiting (`LockDatabaseObject()`, `LockSharedObject()`,
+  `ConditionalLockSharedObject()`), and
+  `SpeculativeInsertionLockAcquire()`, which hands out the
+  token `heap_insert()` stores. `SearchSysCacheLocked1()` and
+  `ri_needLockTagTuple` are left: they choose a path, not a
+  lock.
+- executor `execIndexing.c`'s wait for a conflicting inserter
+  is not reached, as no other transaction is in progress to it
+  and only a catalog's index is checked there; it restarts the
+  scan, as it did.
+- storage/lmgr `README` is rewritten for what locks now, and
+  `README-SSI` is gone (commit before this step).

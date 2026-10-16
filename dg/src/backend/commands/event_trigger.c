@@ -384,7 +384,6 @@ void SetDatabaseHasLoginEventTriggers(void) {
     CatalogTupleUpdate(pg_db, &otid, tuple);
     CommandCounterIncrement();
   }
-  UnlockTuple(pg_db, &otid, InplaceUpdateTupleLock);
   table_close(pg_db, RowExclusiveLock);
   heap_freetuple(tuple);
 }

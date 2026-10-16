@@ -201,12 +201,8 @@ List *find_inheritance_children_extended(Oid parentrelId, bool omit_detached,
        * really exists or not.  If not, assume it was dropped while we
        * waited to acquire lock, and ignore it.
        */
-      if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(inhrelid))) {
-        /* Release useless lock */
-        UnlockRelationOid(inhrelid, lockmode);
-        /* And ignore this relation */
+      if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(inhrelid)))
         continue;
-      }
     }
 
     list = lappend_oid(list, inhrelid);

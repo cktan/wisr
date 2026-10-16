@@ -124,11 +124,10 @@ void RangeVarCallbackForStats(const RangeVar *relation, Oid relId, Oid oldRelId,
 
   /*
    * If we previously locked some other index's heap, and the name we're
-   * looking up no longer refers to that relation, release the now-useless
-   * lock.
+   * looking up no longer refers to that relation, forget it: its lock is
+   * held to the transaction's end.
    */
   if (relId != oldRelId && OidIsValid(*locked_oid)) {
-    UnlockRelationOid(*locked_oid, ShareUpdateExclusiveLock);
     *locked_oid = InvalidOid;
   }
 

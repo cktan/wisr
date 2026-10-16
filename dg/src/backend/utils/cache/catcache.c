@@ -1107,7 +1107,6 @@ void InitCatCachePhase2(CatCache *cache, bool touch_index) {
     Assert(idesc->rd_index->indisunique && idesc->rd_index->indimmediate);
 
     index_close(idesc, AccessShareLock);
-    UnlockRelationOid(cache->cc_reloid, AccessShareLock);
   }
 }
 
