@@ -12,27 +12,133 @@
  */
 #include "postgres.h"
 
+#include "access/smstore.h"
+#include "catalog/pg_namespace_d.h"
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "storage/advisory_lock.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/datadir.h"
+#include "utils/lsyscache.h"
+
+/* The columns of pg_lock_status(), in order (pg_proc.dat). */
+enum {
+  LOCKFUNCS_LOCKTYPE,
+  LOCKFUNCS_DATABASE,
+  LOCKFUNCS_RELATION,
+  LOCKFUNCS_PAGE,
+  LOCKFUNCS_TUPLE,
+  LOCKFUNCS_VIRTUALXID,
+  LOCKFUNCS_TRANSACTIONID,
+  LOCKFUNCS_CLASSID,
+  LOCKFUNCS_OBJID,
+  LOCKFUNCS_OBJSUBID,
+  LOCKFUNCS_VIRTUALTRANSACTION,
+  LOCKFUNCS_PID,
+  LOCKFUNCS_MODE,
+  LOCKFUNCS_GRANTED,
+  LOCKFUNCS_FASTPATH,
+  LOCKFUNCS_WAITSTART,
+  LOCKFUNCS_NCOLUMNS
+};
+
+/* Add a row of pg_lock_status(): every column NULL but those given. */
+static void lockfuncs_put_row(ReturnSetInfo *rsinfo, Datum *values,
+                              bool *nulls) {
+  values[LOCKFUNCS_FASTPATH] = BoolGetDatum(false);
+  nulls[LOCKFUNCS_FASTPATH] = false;
+  tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc, values, nulls);
+}
 
 /*
  * pg_lock_status - produce a view with one row per held or awaited lock mode
  *
- * No row: PostgreSQL's lock manager is gone (dg/WORKNOTE.md step 156).  A
- * table's locks are sm's and an advisory lock is digres's own
- * (storage/advisory_lock.h), and neither is listed yet.
+ * PostgreSQL's lock manager is gone (dg/WORKNOTE.md step 156).  A table's
+ * locks, a row's and a catalog key's are sm1's lock table's
+ * (sm_lock_status()), and an advisory lock is digres's own
+ * (storage/advisory_lock.h).  A mode is named as sm names it (IS, IX, S,
+ * SIX, X), and an advisory lock's S or X.  A writer waiting behind another's
+ * uncommitted row takes no lock and is not listed: pg_blocking_pids() names
+ * whom it waits for.  No virtual xid or xid is locked, and nothing waits for
+ * one.
  */
 Datum pg_lock_status(PG_FUNCTION_ARGS) {
-  FuncCallContext *funcctx;
+  ReturnSetInfo *rsinfo = (ReturnSetInfo *)fcinfo->resultinfo;
 
-  if (SRF_IS_FIRSTCALL())
-    (void)SRF_FIRSTCALL_INIT();
-  funcctx = SRF_PERCALL_SETUP();
-  SRF_RETURN_DONE(funcctx);
+  /* Every row is made now, so no lock table is held across calls. */
+  InitMaterializedSRF(fcinfo, 0);
+
+  for (const datadir_lock_t &l : datadir_sm_locks()) {
+    Datum values[LOCKFUNCS_NCOLUMNS] = {0};
+    bool nulls[LOCKFUNCS_NCOLUMNS];
+    const char *locktype = "object";
+
+    memset(nulls, true, sizeof(nulls));
+    values[LOCKFUNCS_DATABASE] = ObjectIdGetDatum(l.database);
+    nulls[LOCKFUNCS_DATABASE] = false;
+    if (l.name == DATADIR_LOCK_OBJECT) {
+      /* A schema of this database is an object; any other oid a relation. */
+      if (l.database == MyDatabaseId && get_namespace_name(l.oid) != NULL) {
+        values[LOCKFUNCS_CLASSID] = ObjectIdGetDatum(NamespaceRelationId);
+        values[LOCKFUNCS_OBJID] = ObjectIdGetDatum(l.oid);
+        values[LOCKFUNCS_OBJSUBID] = Int16GetDatum(0);
+        nulls[LOCKFUNCS_CLASSID] = nulls[LOCKFUNCS_OBJID] =
+            nulls[LOCKFUNCS_OBJSUBID] = false;
+      } else {
+        locktype = "relation";
+        values[LOCKFUNCS_RELATION] = ObjectIdGetDatum(l.oid);
+        nulls[LOCKFUNCS_RELATION] = false;
+      }
+    } else if (l.name == DATADIR_LOCK_ROW) {
+      ItemPointerData tid;
+
+      /* The row's tid, as a scan gives it (smstore_rowno_to_tid()). */
+      locktype = "tuple";
+      smstore_rowno_to_tid(l.rowno, &tid);
+      values[LOCKFUNCS_PAGE] =
+          Int32GetDatum((int32)ItemPointerGetBlockNumber(&tid));
+      values[LOCKFUNCS_TUPLE] =
+          Int16GetDatum((int16)ItemPointerGetOffsetNumber(&tid));
+      nulls[LOCKFUNCS_PAGE] = nulls[LOCKFUNCS_TUPLE] = false;
+      if (l.oid != 0) {
+        values[LOCKFUNCS_RELATION] = ObjectIdGetDatum(l.oid);
+        nulls[LOCKFUNCS_RELATION] = false;
+      }
+    }
+    values[LOCKFUNCS_LOCKTYPE] = CStringGetTextDatum(locktype);
+    nulls[LOCKFUNCS_LOCKTYPE] = false;
+    if (l.pid != 0) {
+      values[LOCKFUNCS_PID] = Int32GetDatum(l.pid);
+      nulls[LOCKFUNCS_PID] = false;
+    }
+    values[LOCKFUNCS_MODE] = CStringGetTextDatum(l.mode);
+    values[LOCKFUNCS_GRANTED] = BoolGetDatum(l.granted);
+    nulls[LOCKFUNCS_MODE] = nulls[LOCKFUNCS_GRANTED] = false;
+    lockfuncs_put_row(rsinfo, values, nulls);
+  }
+
+  for (const advisory_status_t &a : advisory_status()) {
+    Datum values[LOCKFUNCS_NCOLUMNS] = {0};
+    bool nulls[LOCKFUNCS_NCOLUMNS];
+
+    /* Its key as PostgreSQL's pg_locks gives an advisory lock's. */
+    memset(nulls, true, sizeof(nulls));
+    values[LOCKFUNCS_LOCKTYPE] = CStringGetTextDatum("advisory");
+    values[LOCKFUNCS_DATABASE] = ObjectIdGetDatum(a.key.database);
+    values[LOCKFUNCS_CLASSID] = ObjectIdGetDatum(a.key.key1);
+    values[LOCKFUNCS_OBJID] = ObjectIdGetDatum(a.key.key2);
+    values[LOCKFUNCS_OBJSUBID] = Int16GetDatum((int16)a.key.form);
+    values[LOCKFUNCS_PID] = Int32GetDatum(a.pid);
+    values[LOCKFUNCS_MODE] = CStringGetTextDatum(a.exclusive ? "X" : "S");
+    values[LOCKFUNCS_GRANTED] = BoolGetDatum(a.granted);
+    for (int col : {LOCKFUNCS_LOCKTYPE, LOCKFUNCS_DATABASE, LOCKFUNCS_CLASSID,
+                    LOCKFUNCS_OBJID, LOCKFUNCS_OBJSUBID, LOCKFUNCS_PID,
+                    LOCKFUNCS_MODE, LOCKFUNCS_GRANTED})
+      nulls[col] = false;
+    lockfuncs_put_row(rsinfo, values, nulls);
+  }
+  return (Datum)0;
 }
 
 /*

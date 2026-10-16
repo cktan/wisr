@@ -150,6 +150,13 @@ struct sm1::session_t {
    * §5.1's cycle search walks it rather than a chain.
    */
   std::vector<sm1::session_t *> waiting_for;
+  /*
+   * The lock table key and mode of the lock we wait for in
+   * lock_wait, for lock_status; the key is empty when we wait for
+   * none, or behind a writer. Under the database's lock_mu.
+   */
+  std::string waiting_key;
+  sm1::lockmode_t waiting_mode = sm1::SM_LOCKMODE_SH;
 
   wisr::ssi_node_t *ssi = nullptr; /* SERIALIZABLE only (§7) */
 

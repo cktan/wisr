@@ -912,16 +912,92 @@ held_wait adv_c "c got 55" || fail "advisory deadlock: the other gets its lock"
 held_end adv_c
 held_end adv_d
 
-# Verify that a transaction takes no lock of PostgreSQL's lock manager: a
-# catalog's rows are compiled in and never change, so no lock would guard
-# anything of them, and nothing waits on a virtual xid's lock.
+# Verify that pg_lock_status() lists what sm's lock table and the advisory
+# table hold and are waited for, in sm's modes, each with its session's pid
+# and its database.
+# 1. A, in a transaction, locks lkst's row 1 for update and takes advisory
+#    lock 77; B waits to lock row 1 for share; C waits for advisory lock 77.
+# 2. pg_lock_status() lists A's IX on lkst, its X on the row, at the first
+#    row's tid, (0,2) (smstore_rowno_to_tid()), and its X on 77, granted; B's IS on lkst, granted, and its S on
+#    the row, waited for; C's X on 77, waited for; each in this database.
+# 3. A commits: B's S on the row is held, and A's advisory lock, a
+#    session's, still is.
+# 4. A unlocks 77: C holds it.
+local_psql -c 'create table lkst (a int4 primary key, b int4)' \
+  -c 'insert into lkst values (1, 10), (2, 20)' > /dev/null 2>&1
+held_start lk_a
+held_start lk_b
+held_start lk_c
+held_send lk_a "begin; select 'pid ' || pg_backend_pid();
+select a from lkst where a = 1 for update; select pg_advisory_lock(77);
+select 'a locked';"
+held_wait lk_a "a locked" || fail "lock status: A locks"
+held_send lk_b "select 'pid ' || pg_backend_pid(); begin;
+select a from lkst where a = 1 for share; select 'b got';"
+held_send lk_c "select 'pid ' || pg_backend_pid();
+select pg_advisory_lock(77); select 'c got';"
+for _ in $(seq 50); do
+  lk_b_pid=$(sed -n 's/^pid //p' "$work/lk_b.out" 2> /dev/null)
+  lk_c_pid=$(sed -n 's/^pid //p' "$work/lk_c.out" 2> /dev/null)
+  [ -n "$lk_b_pid" ] && [ -n "$lk_c_pid" ] && break
+  sleep 0.1
+done
+lk_a_pid=$(sed -n 's/^pid //p' "$work/lk_a.out")
+# Each row as who, what, where and how, over the three sessions' pids.
+lock_rows() {
+  local_psql -c "select case pid when $lk_a_pid then 'a' when $lk_b_pid
+  then 'b' when $lk_c_pid then 'c' end, locktype, relation::regclass,
+  '(' || page || ',' || tuple || ')', classid, objid, objsubid,
+  mode, granted, database = (select oid from pg_database
+  where datname = current_database())
+  from pg_lock_status() where pid in ($lk_a_pid, $lk_b_pid, $lk_c_pid)
+  order by 1, 2, mode"
+}
+for _ in $(seq 50); do
+  [ "$(lock_rows | grep -c '|f|t$')" = 2 ] && break
+  sleep 0.1
+done
+lock_rows > "$work/lock_status1.out" 2>&1
+cat > "$work/lock_status1.want" <<'ROWS'
+a|advisory|||0|77|1|X|t|t
+a|relation|lkst|||||IX|t|t
+a|tuple|lkst|(0,2)||||X|t|t
+b|relation|lkst|||||IS|t|t
+b|tuple|lkst|(0,2)||||S|f|t
+c|advisory|||0|77|1|X|f|t
+ROWS
+cmp -s "$work/lock_status1.out" "$work/lock_status1.want" ||
+  fail "lock status lists what is held and waited for"
+held_send lk_a "commit; select 'a committed';"
+held_wait lk_b "b got" || fail "lock status: B gets the row"
+lock_rows > "$work/lock_status2.out" 2>&1
+cat > "$work/lock_status2.want" <<'ROWS'
+a|advisory|||0|77|1|X|t|t
+b|relation|lkst|||||IS|t|t
+b|tuple|lkst|(0,2)||||S|t|t
+c|advisory|||0|77|1|X|f|t
+ROWS
+cmp -s "$work/lock_status2.out" "$work/lock_status2.want" ||
+  fail "lock status after a commit"
+held_send lk_a "select pg_advisory_unlock(77);"
+held_wait lk_c "c got" || fail "lock status: C gets 77"
+[ "$(lock_rows | grep '^c|advisory')" = 'c|advisory|||0|77|1|X|t|t' ] ||
+  fail "lock status: C holds 77"
+held_send lk_b "commit;"
+held_end lk_a
+held_end lk_b
+held_end lk_c
+
+# Verify that reading the catalogs takes no lock: a catalog's rows are
+# compiled in and never change, so no lock would guard anything of them,
+# and nothing waits on a virtual xid's lock.
 # 1. In a transaction, read pg_class and pg_namespace.
-# 2. The lock manager holds no lock of the session's.
+# 2. pg_lock_status() lists no lock of the session's.
 [ "$(local_psql -c 'begin' -c 'select count(*) > 0 from pg_class' \
   -c 'select count(*) > 0 from pg_namespace' \
   -c 'select count(*) from pg_lock_status() where pid = pg_backend_pid()' \
   -c 'commit' | sed -n 4p)" = 0 ] ||
-  fail "a transaction takes no lock of the lock manager"
+  fail "reading the catalogs takes no lock"
 
 # Verify that a snapshot is neither exported nor imported: what a session
 # sees is sm's snapshot, which PostgreSQL's export does not carry, so an

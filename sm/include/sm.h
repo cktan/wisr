@@ -260,6 +260,40 @@ int sm_set_deadlock_ms(sm_session_t* session, int ms);
  */
 int sm_waits_for(sm_env_t* env, uint64_t tag, std::vector<uint64_t>* out);
 
+/* What a lock names, as sm_lock_status reports it. */
+typedef enum sm_lockname_t {
+    SM_LOCKNAME_OBJECT = 0, /* an object by its oid: a table, an
+                               index or a namespace */
+    SM_LOCKNAME_ROW    = 1, /* a row of a table: FOR SHARE, FOR
+                               UPDATE, an index build */
+    SM_LOCKNAME_KEY    = 2  /* any other key: one of the catalog's
+                               that DDL locks */
+} sm_lockname_t;
+
+/* A lock held or waited for, as sm_lock_status reports it. */
+typedef struct sm_lock_status_t {
+    uint64_t      dbid;    /* its database's id (sm_dbid) */
+    sm_lockname_t name;    /* what it names */
+    uint64_t      oid;     /* OBJECT: the object's; ROW: its table's,
+                              0 if no committed table has the row's
+                              store */
+    uint64_t      rowno;   /* ROW: the row's */
+    sm_lockmode_t mode;    /* held, or asked */
+    uint64_t      tag;     /* the session's number (sm_session_tag),
+                              0 for none or a prepared transaction */
+    bool          granted; /* held; false if waited for */
+} sm_lock_status_t;
+
+/*
+ * Every lock of env's open databases, into out, cleared first: one
+ * for each holder of each lock, in the mode it holds, and one for
+ * each session waiting for one, in the mode it asks. A writer
+ * waiting behind an uncommitted write holds and asks no lock, and
+ * is not listed: sm_waits_for names whom it waits for. Any thread
+ * may ask: it is what PostgreSQL's pg_locks lists.
+ */
+int sm_lock_status(sm_env_t* env, std::vector<sm_lock_status_t>& out);
+
 /* Set a savepoint; returns its depth (>= 1), or -1. */
 int sm_savepoint(sm_session_t* session);
 

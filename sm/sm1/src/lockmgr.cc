@@ -29,6 +29,7 @@
 #include "error.h"
 #include "session.h"
 #include "sm0_codec.h"
+#include "sm0_defer.h"
 #include "sm_sys.h"
 
 #include <functional>
@@ -380,6 +381,8 @@ int lock_wait(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
   std::string k = lock_key(type, storeid, key);
   // Hold lock_mu for the table and the waits-for lists.
   std::unique_lock<std::mutex> guard(db->lock_mu);
+  // However it returns, it no longer waits for k: still under lock_mu.
+  defer { s->waiting_key.clear(); };
   // Time the deadlock check after the first, made as the wait begins.
   int64_t deadline = sm_now_us() + int64_t(deadlock_wait_ms(s)) * 1000;
   bool checked = false;
@@ -404,6 +407,9 @@ int lock_wait(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
     // As the wait begins, a cycle it closes is found at once.
     if (!checked) {
       checked = true;
+      // What it waits for, for lock_status.
+      s->waiting_key = k;
+      s->waiting_mode = mode;
       check_deadlock(db, s);
       if (s->doomed) {
         continue;

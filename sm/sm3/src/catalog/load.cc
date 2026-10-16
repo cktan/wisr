@@ -437,6 +437,18 @@ std::shared_ptr<const table_def_t> cat_get_table(const catalog_t *cat,
   return it == cat->tables.end() ? nullptr : it->second;
 }
 
+/* The committed table in store storeid, or nullptr: by a scan. */
+std::shared_ptr<const table_def_t> cat_get_table_by_store(const catalog_t *cat,
+                                                          uint64_t storeid) {
+  std::shared_lock lock(cat->mu);
+  for (const auto &[oid, def] : cat->tables) {
+    if (def->storeid == storeid) {
+      return def;
+    }
+  }
+  return nullptr;
+}
+
 /* A committed table by namespace and name, or nullptr. */
 std::shared_ptr<const table_def_t>
 cat_get_table(const catalog_t *cat, uint64_t nspoid, std::string_view name) {

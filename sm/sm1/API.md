@@ -955,6 +955,24 @@ an edge to one that has since closed is passed over.
 
 Errors: `SM_ERR_INVALID`.
 
+### int sm1::lock_status(sm1::env_t* env, std::vector<sm1::lock_status_t>& out)
+
+Every lock of `env`'s open databases, into `out`, cleared
+first: one `lock_status_t` for each holder of each lock, in the
+mode it holds, `granted`; and one for each session waiting in
+`sm1::lock`, in the mode it asks, not `granted`. Each names its
+database (`dbname`, `dbid`), the lock as `sm1::lock` took it
+(`type`, `storeid`, `key`), and the session by its number
+(`set_tag`; 0 for none, or for a prepared transaction). A
+writer waiting behind an uncommitted version holds and asks no
+lock and is not listed: `waits_for` names whom it waits for.
+
+Any thread may ask: it is what PostgreSQL's `pg_locks` lists.
+It takes the env's mutex, then each database's lock mutex in
+turn, so a lock taken or let go meanwhile may be in or out.
+
+Errors: `SM_ERR_INVALID`.
+
 ### int sm1::lock(sm1::session_t* session, sm1::locktype_t type, uint64_t storeid, std::string_view key, sm1::lockmode_t mode)
 
 `type` says what the lock names. `LOCKTYPE_ROW` is a key in a

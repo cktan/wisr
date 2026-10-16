@@ -5593,3 +5593,47 @@ queue). Every other `SetLatch()` named `MyLatch`.
 - **Gone**: the owner, its mutex, `LatchOwner()`, and
   `ShutdownProcessLocalLatch()`, which deleted the handle as a
   thread ended.
+
+## Step 193: pg_lock_status() lists sm's locks and advisory locks
+
+`SHMEM.md` §3, §7 step 4. Since the lock manager went (step
+156), `pg_lock_status()` returned no row.
+
+- **sm1 lists its lock table** (`sm1::lock_status()`,
+  `../sm/sm1/API.md`): a row for each holder of each lock, in
+  its mode, and one for each session waiting in `sm1::lock`, in
+  the mode it asks; a waiter's key and mode are kept while it
+  waits (`lock_wait()`). A writer waiting behind an uncommitted
+  version holds and asks no lock, and is not listed:
+  `pg_blocking_pids()` names whom it waits for.
+- **The C wrapper decodes each** (`sm_lock_status()`): an oid's
+  lock gives the oid; a row's, in a table's store, gives the
+  rowno and the table, the committed one with that store
+  (`sm3::cat_get_table_by_store()`); another key, such as a
+  catalog key DDL locks, gives neither.
+- **digres maps them to pg_locks' columns** (utils/adt
+  `lockfuncs.c`, utils/init `datadir.c`'s `datadir_sm_locks()`):
+  an oid's lock is a `relation`, or an `object` of
+  `pg_namespace` for a schema of this database; a row's is a
+  `tuple` at the row's tid (`smstore_rowno_to_tid()`), its
+  `relation` NULL for a store no committed table has, as a
+  truncate not yet committed makes; another key an `object`.
+  The database is sm's id above the built-in oids, the pid the
+  session's tag (step 172).
+- **Modes are sm's names**, IS, IX, S, SIX and X, and an
+  advisory lock's S or X, not PostgreSQL's eight.
+- **Advisory locks** come from digres's own table
+  (`advisory_status()`): each mode a holder holds, and each
+  wait, keyed as PostgreSQL keys them (`classid`, `objid`,
+  `objsubid` 1 or 2).
+- `virtualxid`, `transactionid`, `virtualtransaction` and
+  `waitstart` are NULL, `fastpath` false; `pg_locks` itself is
+  not a view of digres's.
+- Tests: sm1's `lock_status lists each lock held, and each
+  waited for in lock`, sm3's `cat_get_table_by_store finds a
+  committed table by its store`, and `test/server.sh`'s check
+  of three sessions' table, row and advisory locks, held and
+  waited for. sm1's and `server.sh`'s failed with the waits
+  left out.
+- Found on the way, left: `select ctid from t` fails, "relation
+  2659 cannot be opened: digres has no catalog tables".

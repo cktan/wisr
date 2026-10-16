@@ -242,5 +242,48 @@ std::vector<int> datadir_sm_blockers(int pid) {
   return pids;
 }
 
+/* sm's name for a lock mode, as pg_locks shows it: Gray's, not PostgreSQL's. */
+static const char *datadir_mode_name(sm_lockmode_t mode) {
+  switch (mode) {
+  case SM_LOCKMODE_IS:
+    return "IS";
+  case SM_LOCKMODE_IX:
+    return "IX";
+  case SM_LOCKMODE_SH:
+    return "S";
+  case SM_LOCKMODE_SIX:
+    return "SIX";
+  case SM_LOCKMODE_EX:
+    return "X";
+  }
+  return "?";
+}
+
+/*
+ * Every lock of sm's open databases, held or waited for: a table's, a
+ * row's or a catalog key's (sm_lock_status()), for pg_locks.
+ */
+std::vector<datadir_lock_t> datadir_sm_locks(void) {
+  std::vector<sm_lock_status_t> locks;
+  std::vector<datadir_lock_t> out;
+
+  if (sm_lock_status(sm_env, locks) != 0)
+    ereport(ERROR, (errmsg("could not list sm's locks: %s", sm_errmsg())));
+  for (const sm_lock_status_t &l : locks) {
+    datadir_lockname_t name = l.name == SM_LOCKNAME_OBJECT ? DATADIR_LOCK_OBJECT
+                              : l.name == SM_LOCKNAME_ROW  ? DATADIR_LOCK_ROW
+                                                           : DATADIR_LOCK_KEY;
+
+    /*
+     * A database's oid is its id above the built-in oids
+     * (datadir_database_oid()); sm knows a session by its pid
+     * (datadir_open_session()).
+     */
+    out.push_back({FirstNormalObjectId + (Oid)l.dbid, name, (Oid)l.oid, l.rowno,
+                   datadir_mode_name(l.mode), (int)l.tag, l.granted});
+  }
+  return out;
+}
+
 /* This session's sm session, or NULL if it has opened none. */
 sm_session_t *datadir_sm_session(void) { return sm_session; }

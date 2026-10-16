@@ -147,6 +147,43 @@ TEST_CASE("a created table loads back, across a restart, as it was made") {
   sm3::cat_close(cat);
 }
 
+TEST_CASE("cat_get_table_by_store finds a committed table by its store") {
+  // Verify the lookup a lock's table is named by (sm1::lock_status).
+  // 1. Create orders and commit: its store finds it, and a store no
+  //    table has finds none.
+  // 2. Truncate it, not yet committed: the new store the session sees
+  //    is no committed table's, and the old one still finds it.
+  // 3. Commit: the new store finds it, and the old one none.
+  db_t db;
+  sm1::session_t *s = db.open();
+  REQUIRE(sm3::cat_init(db.env(), "db") == 0);
+  sm3::catalog_t *cat = load(db);
+  sm3::session_t *ss = nullptr;
+  REQUIRE(sm3::session_open(cat, s, ss) == 0);
+  uint64_t oid = 0;
+  REQUIRE(sm3::begin(ss, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::create_table(ss, sm3::nsp_public, "orders", order_columns(),
+                            oid) == 0);
+  REQUIRE(sm3::commit(ss) == 0);
+  uint64_t old_store = sm3::cat_get_table(cat, oid)->storeid;
+  CHECK(sm3::cat_get_table_by_store(cat, old_store) ==
+        sm3::cat_get_table(cat, oid));
+  CHECK(sm3::cat_get_table_by_store(cat, old_store + 999) == nullptr);
+
+  REQUIRE(sm3::begin(ss, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm3::truncate_table(ss, oid) == 0);
+  uint64_t new_store = sm3::cat_get_table(ss, oid)->storeid;
+  REQUIRE(new_store != old_store);
+  CHECK(sm3::cat_get_table_by_store(cat, new_store) == nullptr);
+  CHECK(sm3::cat_get_table_by_store(cat, old_store) != nullptr);
+  REQUIRE(sm3::commit(ss) == 0);
+  CHECK(sm3::cat_get_table_by_store(cat, new_store) ==
+        sm3::cat_get_table(cat, oid));
+  CHECK(sm3::cat_get_table_by_store(cat, old_store) == nullptr);
+  sm3::session_close(ss);
+  sm3::cat_close(cat);
+}
+
 TEST_CASE("create_table refuses what it cannot make") {
   // Verify create_table's errors.
   // 1. A name already taken in the namespace is SM_ERR_DUPKEY; the

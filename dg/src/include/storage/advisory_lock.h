@@ -29,6 +29,14 @@ typedef struct advisory_key_t {
   uint16 form;  /* 1 for an int8 key, 2 for two int4 keys */
 } advisory_key_t;
 
+/* A lock of the table, held or waited for, as pg_locks lists it. */
+typedef struct advisory_status_t {
+  advisory_key_t key;
+  int pid;        /* the holder's, or the waiter's */
+  bool exclusive; /* the mode held or asked: exclusive, else share */
+  bool granted;   /* held; false if waited for */
+} advisory_status_t;
+
 extern void advisory_init(void);
 extern bool advisory_lock(const advisory_key_t &key, bool exclusive,
                           bool session, bool dontwait);
@@ -38,5 +46,6 @@ extern void advisory_release_all(void);
 extern void advisory_xact_end(void);
 extern void advisory_subxact_end(bool commit);
 extern std::vector<int> advisory_blockers(int pid);
+extern std::vector<advisory_status_t> advisory_status(void);
 
 #endif /* ADVISORY_LOCK_H */

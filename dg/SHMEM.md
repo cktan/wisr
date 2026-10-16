@@ -91,10 +91,11 @@ thread finds them in the pcb and attaches to nothing.
   and never change (step 154), and what waited on a lock waits
   for nothing (step 155). `lmgr.c` keeps the entry points that
   take sm's lock or the invalidations waiting; its no-ops are
-  gone with their calls (step 176). `pg_lock_status()` lists no
-  lock, and
-  `pg_blocking_pids()` names an advisory lock's holders and
-  whom a session waits for in sm (step 166).
+  gone with their calls (step 176). `pg_lock_status()` lists
+  sm1's locks, held and waited for, and the advisory table's,
+  in sm's modes (step 193), and `pg_blocking_pids()` names an
+  advisory lock's holders and whom a session waits for in sm
+  (step 166).
 - **Advisory locks** are in a table of digres's own
   (storage/lmgr `advisory_lock.c`, `WORKNOTE.md` step 153), not
   sm's: they guard nothing stored (`PLAN.md` §7). A mutex, the
@@ -380,9 +381,8 @@ has a caller still, and goes with the step that removes it:
    lock manager gone (156), the LWLocks and `posix_sema.c`
    (157), interrupts and cancels through the session record
    (158), PGPROC gone (159), `pg_blocking_pids()` asking sm1's
-   waits-for graph (166). Left, at low priority:
-   `pg_lock_status()` listing sm1's locks and the advisory
-   table's; it lists none.
+   waits-for graph (166), and `pg_lock_status()` listing sm1's
+   locks and the advisory table's (193).
 5. **The registry** of §2: done (`WORKNOTE.md` step 173),
    each block a pcb field, and dynahash's shared mode (174).
 

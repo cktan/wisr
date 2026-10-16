@@ -242,6 +242,44 @@ int sm1::waits_for(sm1::env_t *env, uint64_t tag, std::vector<uint64_t> *out) {
   return 0;
 }
 
+/*
+ * Every lock of env's open databases, held or waited for. env->mu
+ * keeps the databases and the registered sessions from being freed;
+ * each database's lock_mu keeps its table and its sessions' waits
+ * still. A holder is dereferenced only under its database's lock_mu,
+ * which a session's release takes before it closes.
+ */
+int sm1::lock_status(sm1::env_t *env, std::vector<sm1::lock_status_t> &out) {
+  if (!env) {
+    return set_error(sm1::SM_ERR_INVALID, "NULL env");
+  }
+  out.clear();
+  // Hold the env mutex while reading the databases and the registry.
+  std::lock_guard<std::mutex> guard(env->mu);
+  for (const auto &[name, db] : env->dbs) {
+    // Hold the database's lock_mu while reading its table and waits.
+    std::lock_guard<std::mutex> lock_guard(db->lock_mu);
+    // A lock table key is the type byte, be64(storeid), then the key.
+    auto entry = [&](const std::string &k, sm1::lockmode_t mode,
+                     const sm1::session_t *s, bool granted) {
+      out.push_back({name, db->dbid, static_cast<sm1::locktype_t>(k[0]),
+                     sm0::get_be64(k.data() + 1), k.substr(9), mode,
+                     s->tag.load(std::memory_order_relaxed), granted});
+    };
+    for (const auto &[k, ent] : db->lock_table) {
+      for (const auto &h : ent.holders) {
+        entry(k, h.mode, h.session, true);
+      }
+    }
+    for (const sm1::session_t *s : env->sessions) {
+      if (s->db == db && !s->waiting_key.empty()) {
+        entry(s->waiting_key, s->waiting_mode, s, false);
+      }
+    }
+  }
+  return 0;
+}
+
 /* Set the session's wait before a deadlock check; 0 is its db's. */
 int sm1::set_deadlock_ms(sm1::session_t *session, int ms) {
   if (!session) {

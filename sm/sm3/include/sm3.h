@@ -315,6 +315,15 @@ void cat_close(catalog_t* cat);
 std::shared_ptr<const table_def_t> cat_get_table(const catalog_t* cat,
                                              uint64_t oid);
 
+/*
+ * The committed table whose rows are in store storeid, or nullptr:
+ * a store a TRUNCATE not yet committed made, or a temporary
+ * table's, is no committed table's. For a lock's table
+ * (sm1::lock_status).
+ */
+std::shared_ptr<const table_def_t> cat_get_table_by_store(const catalog_t* cat,
+                                                      uint64_t storeid);
+
 /* The committed table named name in namespace nspoid, or nullptr. */
 std::shared_ptr<const table_def_t> cat_get_table(const catalog_t* cat,
                                              uint64_t nspoid,

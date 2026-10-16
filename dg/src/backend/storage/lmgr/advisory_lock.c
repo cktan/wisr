@@ -392,3 +392,20 @@ std::vector<int> advisory_blockers(int pid) {
       out.push_back(h.session->pid);
   return out;
 }
+
+/* Every lock of the table: each mode each holder holds, and each wait. */
+std::vector<advisory_status_t> advisory_status(void) {
+  advisory_table_t *t = pcb->advisory.get();
+  std::vector<advisory_status_t> out;
+
+  /* Hold the table's mutex to read the holders and the waits. */
+  std::lock_guard<std::mutex> guard(t->mu);
+  for (const auto &[key, holders] : t->locks)
+    for (const advisory_holder_t &h : holders)
+      for (int mode = SHARE; mode <= EXCLUSIVE; mode++)
+        if (holds(h, mode))
+          out.push_back({key, h.session->pid, mode == EXCLUSIVE, true});
+  for (const auto &[record, wait] : t->waits)
+    out.push_back({wait.key, record->pid, wait.mode == EXCLUSIVE, false});
+  return out;
+}

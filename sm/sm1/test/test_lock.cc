@@ -18,6 +18,7 @@
 #include "sm1.h"
 #include "sm_sys.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <mutex>
@@ -988,6 +989,81 @@ TEST_CASE("waits_for names the sessions a waiting session waits for") {
   sm1::closedb(a);
   sm1::closedb(b);
   sm1::closedb(c);
+}
+
+TEST_CASE("lock_status lists each lock held, and each waited for in lock") {
+  // Verify the rows a host reads for pg_locks (§5.1).
+  // 1. Number A to D; A writes "x", locks oid 7 IS and "y" exclusive;
+  //    B locks oid 7 IX.
+  // 2. C waits for "y" shared on A's lock; D writes "x" and waits behind
+  //    A's version.
+  // 3. Confirm lock_status lists A's and B's holds, granted, and C's
+  //    wait, not granted, each with its database, name, mode and number,
+  //    and lists nothing for D, who waits for no lock.
+  // 4. A aborts: C and D go through, and lock_status lists B's hold and
+  //    C's, and no wait.
+  lock_fixture_t f;
+  sm1::session_t *s[4];
+  for (int i = 0; i < 4; i++) {
+    s[i] = f.open();
+    REQUIRE(sm1::set_tag(s[i], 101 + i) == 0);
+    REQUIRE(sm1::begin(s[i], sm1::xctlevel_t::read_committed) == 0);
+  }
+  std::string oid(7, '\0');
+  oid.push_back('\x07');
+  REQUIRE(set(s[0], "x", "a") == 0);
+  REQUIRE(sm1::lock(s[0], sm1::LOCKTYPE_OID, 0, oid, sm1::SM_LOCKMODE_IS) == 0);
+  REQUIRE(sm1::lock(s[0], sm1::LOCKTYPE_ROW, g_store, "y",
+                    sm1::SM_LOCKMODE_EX) == 0);
+  REQUIRE(sm1::lock(s[1], sm1::LOCKTYPE_OID, 0, oid, sm1::SM_LOCKMODE_IX) == 0);
+
+  int rc_c = -2, rc_d = -2;
+  std::thread tc([&] {
+    rc_c =
+        sm1::lock(s[2], sm1::LOCKTYPE_ROW, g_store, "y", sm1::SM_LOCKMODE_SH);
+  });
+  std::thread td([&] { rc_d = set(s[3], "x", "d"); });
+  settle();
+
+  // Each row as a comparable string, sorted, so the order is the table's.
+  auto rows = [&] {
+    std::vector<sm1::lock_status_t> out(1); /* cleared first */
+    REQUIRE(sm1::lock_status(f.env(), out) == 0);
+    std::vector<std::string> got;
+    for (const auto &r : out) {
+      got.push_back(r.dbname + " " + std::to_string(r.type) + " " +
+                    std::to_string(r.storeid == g_store ? 1 : r.storeid) + " " +
+                    std::to_string(r.key.size()) + ":" +
+                    std::to_string(uint8_t(r.key.back())) + " " +
+                    std::to_string(r.mode) + " " + std::to_string(r.tag) +
+                    (r.granted ? " held" : " waits"));
+    }
+    std::sort(got.begin(), got.end());
+    return got;
+  };
+  std::string y = std::to_string(uint8_t('y'));
+  CHECK(rows() == std::vector<std::string>{
+                      "db 0 1 1:" + y + " 0 103 waits", /* C: S on "y" */
+                      "db 0 1 1:" + y + " 1 101 held",  /* A: X on "y" */
+                      "db 1 0 8:7 2 101 held",          /* A: IS on oid 7 */
+                      "db 1 0 8:7 3 102 held",          /* B: IX on oid 7 */
+                  });
+
+  REQUIRE(sm1::abort(s[0]) == 0);
+  tc.join();
+  td.join();
+  CHECK(rc_c == 0);
+  CHECK(rc_d == 0);
+  CHECK(rows() == std::vector<std::string>{
+                      "db 0 1 1:" + y + " 0 103 held", /* C: S on "y" */
+                      "db 1 0 8:7 3 102 held",         /* B: IX on oid 7 */
+                  });
+  for (int i = 1; i < 4; i++) {
+    REQUIRE(sm1::commit(s[i]) == 0);
+  }
+  for (int i = 0; i < 4; i++) {
+    sm1::closedb(s[i]);
+  }
 }
 
 TEST_CASE("a cycle a wait closes is found as it begins, whatever deadlock_ms") {

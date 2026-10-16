@@ -9,6 +9,7 @@
 
 #include "sm.h"
 
+#include "sm0_codec.h"
 #include "sm1.h"
 #include "sm2.h"
 #include "sm3.h"
@@ -745,6 +746,47 @@ int sm_waits_for(sm_env_t *env, uint64_t tag, std::vector<uint64_t> *out) {
       return null_arg("sm_waits_for", "env");
     }
     return sm1::waits_for(env_of(env), tag, out);
+  });
+}
+
+/*
+ * Every lock of env's open databases, each decoded from sm1's name
+ * for it: an oid's, a table's row by its store, or another key.
+ */
+int sm_lock_status(sm_env_t *env, std::vector<sm_lock_status_t> &out) {
+  return guard(nullptr, [&] {
+    if (!env) {
+      return null_arg("sm_lock_status", "env");
+    }
+    out.clear();
+    std::vector<sm1::lock_status_t> raw;
+    if (sm1::lock_status(env->env, raw) != 0) {
+      return -1;
+    }
+    // Held while reading the catalogs, which a first session adds to.
+    std::lock_guard lock(env->mu);
+    for (const sm1::lock_status_t &r : raw) {
+      sm_lock_status_t st{
+          r.dbid, SM_LOCKNAME_KEY, 0, 0, static_cast<sm_lockmode_t>(r.mode),
+          r.tag,  r.granted};
+      if (r.type == sm1::LOCKTYPE_OID && r.key.size() == 8) {
+        // An oid's lock: the key is be64(oid) (LOCK.md §1).
+        st.name = SM_LOCKNAME_OBJECT;
+        st.oid = sm0::get_be64(r.key.data());
+      } else if (r.type == sm1::LOCKTYPE_ROW && r.storeid != 0 &&
+                 r.key.size() == 10) {
+        // A row's: be16(relid) then be64(rowno), in its table's store.
+        st.name = SM_LOCKNAME_ROW;
+        st.rowno = sm0::get_be64(r.key.data() + 2);
+        auto it = env->catalogs.find(r.dbname);
+        if (it != env->catalogs.end()) {
+          auto def = sm3::cat_get_table_by_store(it->second, r.storeid);
+          st.oid = def ? def->oid : 0;
+        }
+      }
+      out.push_back(st);
+    }
+    return 0;
   });
 }
 

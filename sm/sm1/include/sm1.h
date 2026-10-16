@@ -714,6 +714,37 @@ int set_deadlock_ms(session_t* session, int ms);
 int waits_for(env_t* env, uint64_t tag, std::vector<uint64_t>* out);
 
 /*
+ * A lock of the lock table, held or waited for, as lock_status
+ * lists it: its database (name and dbid), its name as sm1::lock
+ * took it (type,
+ * storeid, key), the mode, the host's number for the session
+ * (set_tag; 0 for none, or for a prepared transaction), and
+ * whether the session holds it or waits for it.
+ */
+struct lock_status_t {
+  std::string dbname;
+  uint64_t    dbid;
+  locktype_t  type;
+  uint64_t    storeid;
+  std::string key;
+  lockmode_t  mode;
+  uint64_t    tag;
+  bool        granted;
+};
+
+/*
+ * Every lock of env's open databases, into out, cleared first: one
+ * for each holder of each lock, in the mode it holds, and one for
+ * each session waiting in sm1::lock, in the mode it asks. A writer
+ * waiting behind an uncommitted version holds and asks no lock and
+ * is not listed: waits_for names whom it waits for. Any thread may
+ * ask: for PostgreSQL's pg_locks.
+ *
+ * Errors: SM_ERR_INVALID.
+ */
+int lock_status(env_t* env, std::vector<lock_status_t>& out);
+
+/*
  * Set a savepoint at the current point in the transaction and
  * return its DEPTH: 1 for the first, 2 for one set inside it,
  * and so on. Savepoints nest; a transaction may hold up to
