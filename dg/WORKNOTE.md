@@ -4539,3 +4539,32 @@ the rest.
   caller before this step, is left.
 - `server.sh`: reading `pg_class` and `pg_namespace` leaves
   no relation lock in `pg_lock_status()`.
+
+## Step 155: SQL tests say what they expect
+
+`test/slt/README.md`. `run.sh` compares what psql printed with
+a file of it, and most of what SQL is checked is in
+`server.sh`, a check a `psql` call. A test in the
+sqllogictest format, SQLite's, as DuckDB and CockroachDB use
+it, says in each record what it must give, and its answers
+are PostgreSQL 18's.
+
+- **`build/slt`** (`test/slt/slt.cc`): a client of the
+  system's libpq that runs each file in a database of its
+  own. `statement ok`, `statement error PATTERN`, `query
+  TYPES SORT LABEL` with its results or their MD5,
+  `skipif`, `onlyif`, `hash-threshold` and `halt`.
+  `--rewrite` writes a file's results from what the server
+  gave.
+- **`test/slt.sh`** starts digres, or with `--pg18` or
+  `--rewrite` the PostgreSQL 18 in `$PG18` (`~/pg18`), and
+  runs the files on it. `make slt` runs it on digres.
+- **SQLite's corpus**, `select1.test` to `select5.test`,
+  unchanged: 10,706 records. PostgreSQL 18 passes them all,
+  in 51 seconds; digres fails 103 of `select4`'s, joins over
+  two bitmap scans (`../sm/NEXT.md` §2), and takes 3 minutes
+  55.
+- **Not in `make test`** until those pass.
+- **Left for later**: named connections in a file, PostgreSQL's
+  own regression suite as a measure of what digres runs,
+  isolation specs, and moving `server.sh`'s SQL checks over.

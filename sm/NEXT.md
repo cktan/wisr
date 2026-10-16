@@ -98,6 +98,21 @@ Owed, and blocking nothing above:
   UPDATE fetches by its rowno is copied once a column is
   passed by reference.
 
+- **A join over two bitmap scans gives wrong rows.** Found by
+  the sqllogictest corpus (`../dg/test/slt/README.md`): 103
+  records of `select4.test` fail on digres and pass on
+  PostgreSQL 18. With `select4`'s `t6`, `t7` and their indexes
+  `t6d6`, `t7e7`, `SELECT x7, x6 FROM t6, t7 WHERE e7=506 AND
+  269=d6` plans a nested loop of a bitmap heap scan of `t6`
+  over a materialized one of `t7`, and returns `table tn7 row
+  51` in both columns: the outer row's text is the inner
+  row's. The cause is not yet found; the copy the point above
+  describes may not reach this plan.
+- **A taken index name gives the wrong message.** `CREATE
+  INDEX` with a name in use says `could not create unique
+  index "t6d6"`, `the name t6d6 is taken`, where PostgreSQL
+  says `relation "t6d6" already exists`.
+
 ---
 
 ## 3. Not blocking

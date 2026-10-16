@@ -7,6 +7,7 @@
 #   make test          check the parser, with sq's tests given this
 #                      server, run the statements in test/, and check
 #                      initdb and a server that psql connects to
+#   make slt           run the sqllogictest files in test/slt
 #   make tsan          build build/digres-tsan, under the thread
 #                      sanitizer, and run the statements in test/ with it
 #   make clean         remove objects and generated files
@@ -131,6 +132,18 @@ test:
 	test/run.sh
 	test/initdb.sh
 	test/server.sh
+
+# The sqllogictest runner (test/slt/README.md), a client of the
+# system's libpq, as psql is; it hashes a result with OpenSSL's MD5.
+build/slt: test/slt/slt.cc
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -Wall $(shell pkg-config --cflags libpq) \
+	    -o $@ $< -lpq -lcrypto
+
+# The sqllogictest files under test/slt, on digres.
+.PHONY: slt
+slt: all build/slt
+	test/slt.sh
 
 # sq builds its own library; whether it is up to date is sq's to say.
 .PHONY: $(LIBSQ)
