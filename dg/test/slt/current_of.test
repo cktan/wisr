@@ -1,0 +1,168 @@
+# Verify DELETE and UPDATE WHERE CURRENT OF act on the cursor's row, as
+# PostgreSQL's portals test does them.
+# 1. Make a table of three rows.
+# 2. Fetch two rows, delete the current one, and confirm the cursor has
+#    not moved.
+# 3. With a FOR UPDATE cursor, update the current row.
+# 4. Update the current row twice, then delete it twice: the second
+#    delete finds nothing; roll back.
+
+statement ok
+create table uc (f1 int4, f2 text)
+
+statement ok
+insert into uc values (1, 'one'), (2, 'two'), (3, 'three')
+
+statement ok
+begin
+
+statement ok
+declare c1 cursor for select * from uc
+
+query IT nosort
+fetch 2 from c1
+----
+1	one
+2	two
+
+statement ok
+delete from uc where current of c1
+
+query IT rowsort
+select * from uc
+----
+1	one
+3	three
+
+query IT nosort
+fetch all from c1
+----
+3	three
+
+statement ok
+commit
+
+statement ok
+begin
+
+statement ok
+declare c1 cursor for select * from uc where f1 = 1 for update
+
+query IT nosort
+fetch c1
+----
+1	one
+
+statement ok
+update uc set f1 = 8 where current of c1
+
+statement ok
+commit
+
+query IT rowsort
+select * from uc
+----
+3	three
+8	one
+
+statement ok
+begin
+
+statement ok
+declare c1 cursor for select * from uc where f1 = 8
+
+query IT nosort
+fetch c1
+----
+8	one
+
+statement ok
+update uc set f1 = f1 + 10 where current of c1
+
+statement ok
+update uc set f1 = f1 + 10 where current of c1
+
+query IT rowsort
+select * from uc
+----
+28	one
+3	three
+
+query I nosort
+with d as (delete from uc where current of c1 returning 1) select count(*) from d
+----
+1
+
+query I nosort
+with d as (delete from uc where current of c1 returning 1) select count(*) from d
+----
+0
+
+statement ok
+rollback
+
+# Verify WHERE CURRENT OF on a cursor reading an index.
+# 1. Index the table, and turn sequential scans off.
+# 2. Through a cursor reading whole rows, a bitmap scan, update the
+#    current row.
+# 3. Through a cursor reading only the indexed column, an index-only
+#    scan, delete it.
+# 4. With bitmap scans off too, through an index scan, update a row.
+
+statement ok
+create index uci on uc (f1)
+
+statement ok
+set enable_seqscan = off
+
+statement ok
+begin
+
+statement ok
+declare c2 cursor for select * from uc where f1 = 3
+
+query IT nosort
+fetch c2
+----
+3	three
+
+statement ok
+update uc set f2 = 'x' where current of c2
+
+statement ok
+declare c3 cursor for select f1 from uc where f1 = 3
+
+query I nosort
+fetch c3
+----
+3
+
+statement ok
+delete from uc where current of c3
+
+query IT rowsort
+select * from uc
+----
+8	one
+
+statement ok
+set enable_bitmapscan = off
+
+statement ok
+declare c4 cursor for select * from uc where f1 = 8
+
+query IT nosort
+fetch c4
+----
+8	one
+
+statement ok
+update uc set f2 = 'y' where current of c4
+
+query IT rowsort
+select * from uc
+----
+8	y
+
+statement ok
+commit

@@ -5504,3 +5504,52 @@ drop index i;
   opens in `smstore.c` follow a lock: DROP TABLE's,
   `smstore_create_index()`'s, ANALYZE's and the planner's
   statistics' were tried after caching, and hold.
+
+## Step 189: several keys cascading from one row
+
+`test/regress/README.md`'s crash in `foreign_key`:
+`!TTS_EMPTY(slot)`, on an `UPDATE` of a key that three columns
+of one table reference `ON UPDATE CASCADE`.
+
+- A table in sm gives its row triggers their tuples from a
+  tuple store, as a foreign table does (`commands/trigger.c`):
+  a row's first event fetches them, the rest reuse them.
+  `AfterTriggerSaveEvent()` chose which before it asked whether
+  a foreign key's check could be skipped, so when the row's
+  first check was, the next event reused another row's tuples,
+  or an empty slot. PostgreSQL never meets this: a foreign table
+  has no foreign keys. It chooses now as the event is queued.
+- `test/slt/foreign_key.test`: three keys cascading from one
+  parent, in a transaction and out of one, PostgreSQL 18's
+  answers. Before the change it failed with "Key (b)=(3) is not
+  present", a check reading the row of the cascade before. The
+  `foreign_key` file runs to `MATCH FULL` now.
+
+## Step 190: WHERE CURRENT OF
+
+`test/regress/README.md`'s crash in `portals` and
+`rowsecurity`: `DatumGetObjectId(ldatum) == table_oid`, in
+`execCurrent.c`, on `DELETE` or `UPDATE ... WHERE CURRENT OF`.
+
+- **A row sm reads has its table's oid now.** sm gave a slot
+  its row's tid, its rowno, but not `tts_tableOid`, which a heap
+  table's slot has from its tuple; `execCurrent.c` checks the
+  cursor's row is of the table written. A scan of a table in sm
+  keeps the table's oid (access/sm `smstore.c`), and each read
+  sets it: a scan, an index scan, an index-only scan, a bitmap
+  scan's fetch, `smstore_fetch_row()` and `smstore_lock_row()`.
+- **A TID scan runs on a table in sm**, the plan of `WHERE
+  CURRENT OF` (`smtable.c`). Any tid is valid, as fetching it
+  says whether the statement sees a row; a row's newest version
+  has the tid it had, as sm updates a row at its rowno.
+- **An index-only scan's cursor** gives the row's tid from its
+  slot (`execCurrent.c`): sm's index-only scan has no scan
+  descriptor, and sets the slot's tid as a table scan does.
+- `test/slt/current_of.test`, PostgreSQL 18's answers: delete
+  and update through a cursor, the cursor not moving, an update
+  twice and a delete twice, and cursors over a bitmap scan, an
+  index-only scan and an index scan. Without the change the
+  server crashed on its first `WHERE CURRENT OF`. `portals`
+  runs past its `uctest` cases now; where it differs, an
+  updated row keeps its place in a scan, and a scan runs
+  forwards only.

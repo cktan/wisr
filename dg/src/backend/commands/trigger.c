@@ -5696,15 +5696,6 @@ static void AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
                         newslot))
       continue;
 
-    if (trigger_tuples_stored(rel) && row_trigger) {
-      if (fdw_tuplestore == NULL) {
-        fdw_tuplestore = GetCurrentFDWTuplestore();
-        new_event.ate_flags = AFTER_TRIGGER_FDW_FETCH;
-      } else
-        /* subsequent event for the same tuple */
-        new_event.ate_flags = AFTER_TRIGGER_FDW_REUSE;
-    }
-
     /*
      * If the trigger is a foreign key enforcement trigger, there are
      * certain cases where we can skip queueing the event because we can
@@ -5815,6 +5806,20 @@ static void AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
     } else
       new_shared.ats_table = NULL;
     new_shared.ats_modifiedcols = modifiedCols;
+
+    /*
+     * Only an event queued fetches or reuses the stored tuples: a table in
+     * sm has foreign keys, unlike a foreign table, and an event the checks
+     * above skip must not leave the next one reusing another row's.
+     */
+    if (trigger_tuples_stored(rel) && row_trigger) {
+      if (fdw_tuplestore == NULL) {
+        fdw_tuplestore = GetCurrentFDWTuplestore();
+        new_event.ate_flags = AFTER_TRIGGER_FDW_FETCH;
+      } else
+        /* subsequent event for the same tuple */
+        new_event.ate_flags = AFTER_TRIGGER_FDW_REUSE;
+    }
 
     afterTriggerAddEvent(
         &afterTriggers.query_stack[afterTriggers.query_depth].events,

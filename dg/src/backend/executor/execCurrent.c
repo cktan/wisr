@@ -14,6 +14,7 @@
 
 #include "access/genam.h"
 #include "access/relscan.h"
+#include "access/smstore.h"
 #include "access/sysattr.h"
 #include "catalog/pg_type.h"
 #include "executor/executor.h"
@@ -179,7 +180,12 @@ bool execCurrentOf(CurrentOfExpr *cexpr, ExprContext *econtext, Oid table_oid,
      * in principle scan-type-dependent, but for most scan types, we can
      * just dig the TID out of the physical scan tuple.
      */
-    if (IsA(scanstate, IndexOnlyScanState)) {
+    /*
+     * An index-only scan of a table in sm has no scan descriptor: sm gives
+     * its slot the row's tid and table, as a scan of the table does.
+     */
+    if (IsA(scanstate, IndexOnlyScanState) &&
+        !RelationIsSm(scanstate->ss_currentRelation)) {
       /*
        * For IndexOnlyScan, the tuple stored in ss_ScanTupleSlot may be
        * a virtual tuple that does not have the ctid column, so we have

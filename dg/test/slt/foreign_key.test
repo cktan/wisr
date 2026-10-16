@@ -268,3 +268,43 @@ insert into tc values (2)
 
 statement ok
 rollback
+
+# Verify a child with several keys cascading from one parent row: each
+# cascade's check reads its own row, not another's.
+# 1. Make a parent, and a child with three columns that each reference
+#    it ON UPDATE CASCADE, as PostgreSQL's foreign_key test does.
+# 2. Update the parent's key that all three columns hold, and one that
+#    two of them hold, in a transaction and out of one.
+# 3. Confirm every column follows its parent's key.
+
+statement ok
+create table mu (id int4 primary key)
+
+statement ok
+create table mt (a int4 references mu on update cascade,
+  b int4 references mu on update cascade,
+  c int4 references mu on update cascade)
+
+statement ok
+insert into mu values (1), (2), (3)
+
+statement ok
+insert into mt values (1, 1, 1), (2, 3, 2)
+
+statement ok
+update mu set id = 4 where id = 1
+
+statement ok
+begin
+
+statement ok
+update mu set id = 5 where id = 2
+
+statement ok
+commit
+
+query III rowsort
+select a, b, c from mt
+----
+4	4	4
+5	3	5
