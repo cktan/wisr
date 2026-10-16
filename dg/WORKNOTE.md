@@ -4614,3 +4614,38 @@ table's column too.
 - **`make test` runs the sqllogictest files** but
   `select5.test`, about 15 seconds; `make slt` runs them all.
   All 10,723 records pass.
+
+## Step 157: CREATE INDEX waits for its build
+
+`../DECISION.md`, for review. On a table with rows sm builds a
+new index in the background, after the commit
+(`sm_cat_create_index`), and digres never waited: `CREATE
+UNIQUE INDEX` over duplicates returned `CREATE INDEX`, its
+build failed unseen, and duplicates went on being taken; and
+the statements after planned without the index until its build
+ended.
+
+- **`smstore_wait_indexes()`** (access/sm `smstore.c`): a
+  transaction's commit hands the indexes it made to a list,
+  and `finish_xact_command()` (tcop `postgres.c`) waits for
+  each with `sm_cat_index_wait()` once no transaction is open,
+  as `CREATE INDEX CONCURRENTLY` waits between its
+  transactions. A cancel ends the wait; the build goes on.
+- **A build that failed is dropped**, in a transaction of its
+  own, and its error raised: `could not create unique index`
+  with sm's detail for a duplicate. PostgreSQL leaves no index
+  after a failed `CREATE INDEX`, and a failed one in sm is good
+  only for dropping.
+- **In a transaction block** the error comes at `COMMIT`,
+  after the block's other work committed; PostgreSQL fails the
+  `CREATE INDEX` itself. Within the block the index is not
+  planned with until the commit.
+- **Left**: after one failed build the others the transaction
+  made are not waited for; the detail is sm's, `two rows of u
+  with one key in uk`, not PostgreSQL's `Key (k)=(1) is
+  duplicated.` (`../sm/NEXT.md` §2); a session that ends right
+  after its commit waits for nothing.
+- `test/slt/create_index.test`: a unique index over duplicates
+  fails and leaves no index; a plain one over rows is planned
+  with by the next statement. Four of its records failed
+  before.

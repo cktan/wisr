@@ -1,7 +1,6 @@
 # Verify that a row read by rowno keeps its values while another scan in
 # the same statement reads rows, as a join's inner side does.
-# 1. Make two tables with text columns, each with an index made
-#    before its rows, so a statement right after may use it.
+# 1. Make two tables with text columns, each with an index.
 # 2. Plan nested loops of bitmap scans, of index scans, and of an index
 #    scan under a seq scan, with every other join and scan turned off.
 # 3. Confirm each joined row has each table's own text.

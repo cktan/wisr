@@ -100,16 +100,10 @@ Owed, and blocking nothing above:
   `../dg/src/backend/access/sm/smstore.c`, `../dg/WORKNOTE.md`
   step 156).
 
-- **An index built over rows is not planned with at once.**
-  After `CREATE INDEX` on a table that has rows, the next
-  statements, in the same session or a new one, plan as if
-  the index were not there, even with `enable_seqscan` off;
-  some statements later they use it. An index made before the
-  rows is used at once. `smstore_index_usable()` asks sm3's
-  `tbl_index_usable`, which keeps a session off an index
-  valid after its snapshot (`sm3/SM3_DESIGN.md` §3): a
-  statement after `CREATE INDEX` returned should not be one.
-  PostgreSQL plans with the index at once.
+- **A failed index build's detail is sm's.** `CREATE UNIQUE
+  INDEX` over duplicates says `index build: two rows of u
+  with one key in uk` where PostgreSQL says `Key (k)=(1) is
+  duplicated.`; sm's error does not carry the key.
 - **A taken index name gives the wrong message.** `CREATE
   INDEX` with a name in use says `could not create unique
   index "t6d6"`, `the name t6d6 is taken`, where PostgreSQL
