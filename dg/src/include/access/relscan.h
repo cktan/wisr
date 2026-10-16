@@ -19,7 +19,6 @@
 #include "nodes/tidbitmap.h"
 #include "storage/buf.h"
 #include "storage/relfilelocator.h"
-#include "storage/spin.h"
 #include "utils/relcache.h"
 
 /*

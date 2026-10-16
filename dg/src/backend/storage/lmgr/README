@@ -34,5 +34,4 @@ a wait.
 shutdown is sm_wait() (sm_sys.h, ../sm/sm0/INTERRUPT.md), then
 CHECK_FOR_INTERRUPTS().
 
-No spinlock is taken (s_lock.c).  An atomic is a std::atomic, its memory
-order explicit.
+An atomic is a std::atomic, its memory order explicit.

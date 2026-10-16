@@ -125,7 +125,6 @@ Section: ClassName - WaitEventTimeout
 
 BASE_BACKUP_THROTTLE	"Waiting during base backup when throttling activity."
 PG_SLEEP	"Waiting due to a call to <function>pg_sleep</function> or a sibling function."
-SPIN_DELAY	"Waiting while acquiring a contended spinlock."
 VACUUM_DELAY	"Waiting in a cost-based vacuum delay point."
 WAL_SUMMARIZER_ERROR	"Waiting after a WAL summarizer error."
 

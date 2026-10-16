@@ -76,9 +76,9 @@ thread finds them in the pcb and attaches to nothing.
   sm1's sequence `oid_seq`, 16384 to `UINT32_MAX`. What would
   draw one of PostgreSQL's for a catalog row (CREATE TYPE,
   DOMAIN, CAST and the rest) is refused as the write would be.
-- **Spinlocks** (storage/lmgr `s_lock.c`): none is taken.
-  Each is a `std::mutex`, or an atomic where it guarded one word
-  (`WORKNOTE.md` steps 132, 133).
+- **Spinlocks are gone** (`WORKNOTE.md` step 182), with
+  storage/lmgr `s_lock.c`: each was made a `std::mutex`, or an
+  atomic where it guarded one word (steps 132, 133).
 - **`pg_atomic_*` and the barriers are gone** (`WORKNOTE.md`
   step 181), with port `atomics.h` and `atomics.c`: an atomic
   is a `std::atomic`, its order explicit.

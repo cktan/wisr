@@ -5337,3 +5337,15 @@ a `std::atomic`, its order explicit.
   both platforms), and storage/lmgr `README.barrier`, on the
   barriers. Five files included `atomics.h` and used nothing
   of it.
+
+## Step 182: spinlocks are gone
+
+`SHMEM.md` §3. No spinlock had been taken since steps 132 and
+133; the last user of `slock_t`, port `atomics.c`'s emulation
+of 64-bit atomics, went with step 181.
+
+- **Gone**: storage `s_lock.h` and `spin.h`, storage/lmgr
+  `s_lock.c` with its spin delay, the `SpinDelay` wait event,
+  and backend `port/`, which held only the test-and-set
+  assembly of Sun Studio's compilers (`tas/`).
+- access `relscan.h` included `spin.h` and used nothing of it.
