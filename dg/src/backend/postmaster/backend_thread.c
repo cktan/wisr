@@ -41,13 +41,14 @@
 #include "utils/session_thread.h"
 
 /*
- * The postmaster's queue of backend threads that have ended, and the latch
- * that wakes it for them.  Made by the first launch, never freed.
+ * The postmaster's queue of backend threads that have ended, and the
+ * postmaster's thread, whose latch bit wakes it for them.  Made by the first
+ * launch, never freed.
  */
 typedef struct exit_queue_t {
   std::mutex mu;
   backend_thread_t *head;
-  Latch *latch;
+  sm_thread_ref_t postmaster;
 } exit_queue_t;
 
 /* A backend thread's launch record: the postmaster frees it. */
@@ -106,7 +107,8 @@ static void backend_thread_main(void *arg) {
       thread->next_exited = queue->head;
       queue->head = thread;
     }
-    SetLatch(queue->latch);
+    /* Raise the postmaster's latch bit, as SetLatch() raises one's own. */
+    sm_interrupt(queue->postmaster, INTERRUPT_LATCH);
     throw;
   }
 }
@@ -127,7 +129,7 @@ pid_t backend_thread_launch(BackendType child_type, int child_slot,
   if (exit_queue == NULL) {
     exit_queue = new exit_queue_t();
     exit_queue->head = NULL;
-    exit_queue->latch = MyLatch;
+    exit_queue->postmaster = sm_thread_self();
   }
 
   if (IsExternalConnectionBackend(child_type))

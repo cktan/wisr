@@ -69,7 +69,6 @@ static void session_thread_end(void) {
   }
   ShutdownLatchWaitSet();
   ShutdownWaitEventSupport();
-  ShutdownProcessLocalLatch();
   ShutdownFileAccess();
 
   /*

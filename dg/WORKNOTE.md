@@ -5573,3 +5573,23 @@ connections, 78 kB a session.
   storage `proc.h`'s `PGPROC_MAX_CACHED_SUBXIDS`, and
   `FreeStaticSnapshots()`, which freed the arrays as a session
   thread ended.
+
+## Step 192: a latch is a token
+
+`SHMEM.md` §4. Since step 158 a `Latch` held only its owner: a
+handle on the thread, new'd by `InitLatch()`, and a mutex that
+`SetLatch()` held to copy it, so that another thread could find
+the one to wake. One did: a backend thread, as it ended, set
+the postmaster's latch (postmaster `backend_thread.c`'s exit
+queue). Every other `SetLatch()` named `MyLatch`.
+
+- **`Latch` holds nothing**: it is `MyLatch`, a thread's
+  `LocalLatchData`, naming the calling thread's
+  `INTERRUPT_LATCH` to PostgreSQL's API, which is unchanged.
+  `SetLatch()` raises the caller's own bit, and asserts that
+  the latch is its own; `LatchIsMine()` is `latch == MyLatch`.
+- **The exit queue keeps the postmaster's thread**
+  (`sm_thread_ref_t`) and raises its bit with `sm_interrupt()`.
+- **Gone**: the owner, its mutex, `LatchOwner()`, and
+  `ShutdownProcessLocalLatch()`, which deleted the handle as a
+  thread ended.

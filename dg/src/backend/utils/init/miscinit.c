@@ -215,23 +215,6 @@ void InitProcessLocalLatch(void) {
 }
 
 /*
- * Let go of the thread's local latch's handle on the thread, as the thread
- * ends: a process's exit took it with it.
- */
-void ShutdownProcessLocalLatch(void) {
-  sm_thread_ref_t *owner;
-
-  {
-    /* Unpublished under the lock, so no SetLatch() is copying it. */
-    std::lock_guard<std::mutex> lock(LocalLatchData.owner_lock);
-
-    owner = LocalLatchData.owner;
-    LocalLatchData.owner = NULL;
-  }
-  delete owner;
-}
-
-/*
  * Return a human-readable string representation of a BackendType.
  *
  * The string is not localized here, but we mark the strings for translation

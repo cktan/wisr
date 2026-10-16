@@ -322,7 +322,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT char *DatabasePath;
 extern void InitPostmasterChild(void);
 extern void InitStandaloneProcess(const char *argv0);
 extern void InitProcessLocalLatch(void);
-extern void ShutdownProcessLocalLatch(void);
 
 /*
  * MyBackendType indicates what kind of a backend this is.

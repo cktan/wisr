@@ -56,9 +56,6 @@ void InitializeLatchWaitSet(void) {
 void InitLatch(Latch *latch) {
   /* Not set: a latch bit left from before is taken. */
   (void)sm_take(INTERRUPT_LATCH);
-  /* Other threads set it too: the postmaster's, by its backends. */
-  latch->owner = new sm_thread_ref_t(sm_thread_self());
-  /* owner_lock was made with the latch, a thread's LocalLatchData. */
 
 #ifdef WIN32
   latch->event = CreateEvent(NULL, TRUE, FALSE, NULL);
@@ -164,36 +161,13 @@ int WaitLatchOrSocket(Latch *latch, int wakeEvents, pgsocket sock, long timeout,
  */
 void SetLatch(Latch *latch) {
   /*
-   * Raise the owner's INTERRUPT_LATCH, which also writes its wake fd, so a
-   * WaitEventSet it sleeps in returns.  The bit's release orders what this
-   * thread wrote before it with the owner's look after it sees the bit.
-   * This thread's own latch is set without a lock: a signal handler sets
-   * only MyLatch.
+   * Raise this thread's INTERRUPT_LATCH, which also writes its wake fd, so a
+   * WaitEventSet it sleeps in returns; safe in a signal handler.  A latch is
+   * only ever its own thread's to set: another thread raises the bit through
+   * the thread's handle (sm_interrupt()).
    */
-  if (latch == MyLatch) {
-    sm_interrupt_self(INTERRUPT_LATCH);
-    return;
-  }
-
-  sm_thread_ref_t owner = LatchOwner(latch);
-
-  if (owner)
-    sm_interrupt(owner, INTERRUPT_LATCH);
-}
-
-/*
- * A copy of the handle on the latch's owner, empty if no thread owns it:
- * a copy, as the owner may disown the latch meanwhile.  Not in a signal
- * handler.
- */
-sm_thread_ref_t LatchOwner(Latch *latch) {
-  sm_thread_ref_t owner;
-  /* Copied under the lock that DisownLatch() deletes it under. */
-  std::lock_guard<std::mutex> lock(latch->owner_lock);
-
-  if (latch->owner != NULL)
-    owner = *latch->owner;
-  return owner;
+  Assert(LatchIsMine(latch));
+  sm_interrupt_self(INTERRUPT_LATCH);
 }
 
 /*
@@ -218,9 +192,5 @@ bool LatchIsSet(Latch *latch) {
           INTERRUPT_LATCH) != 0;
 }
 
-/* Whether the calling thread owns the latch. */
-bool LatchIsMine(Latch *latch) {
-  sm_thread_ref_t owner = LatchOwner(latch);
-
-  return owner && owner.get() == sm_thread_self().get();
-}
+/* Whether the latch is the calling thread's own, MyLatch. */
+bool LatchIsMine(Latch *latch) { return latch != NULL && latch == MyLatch; }

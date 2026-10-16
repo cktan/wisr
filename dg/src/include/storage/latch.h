@@ -97,8 +97,6 @@
 
 #include <signal.h>
 
-#include <mutex>
-
 #include "storage/waiteventset.h" /* for WL_* arguments to WaitLatch */
 #include "sm_sys.h"
 
@@ -108,16 +106,13 @@
  * part of bigger structs.
  */
 /*
- * A latch is its owner's: its flag is the owning thread's INTERRUPT_LATCH
- * bit (sm_sys.h), which SetLatch() raises and ResetLatch() takes.  The
- * Latch holds only the owner, so that others can find the thread to set:
- * a handle new'd by InitLatch() and deleted by ShutdownProcessLocalLatch(),
- * under owner_lock, which SetLatch() holds to copy it.  NULL while not
- * owned.
+ * A latch is a thread's own: its flag is the thread's INTERRUPT_LATCH bit
+ * (sm_sys.h), which SetLatch() raises and ResetLatch() takes.  The Latch
+ * holds nothing: it is a token, MyLatch, a thread's LocalLatchData, that
+ * names the calling thread's bit to PostgreSQL's API.  Another thread
+ * raises the bit through the thread's handle (sm_interrupt()), not a Latch.
  */
 typedef struct Latch {
-  sm_thread_ref_t *owner;
-  std::mutex owner_lock;
 #ifdef WIN32
   HANDLE event;
 #endif
@@ -128,7 +123,6 @@ typedef struct Latch {
  */
 extern void InitLatch(Latch *latch);
 extern void SetLatch(Latch *latch);
-extern sm_thread_ref_t LatchOwner(Latch *latch);
 extern void ResetLatch(Latch *latch);
 extern bool LatchIsSet(Latch *latch);
 extern bool LatchIsMine(Latch *latch);

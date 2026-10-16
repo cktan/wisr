@@ -112,12 +112,13 @@ Done (`WORKNOTE.md` step 136). A latch was a flag in shared
 memory that other processes set to wake its one owner. In one
 process a latch is always a thread's, and `sm_sys.h` already
 wakes a thread without losing the wake: so a latch is the
-owning thread's `INTERRUPT_LATCH` bit. `Latch` keeps only the
-owner, for others to find the thread by. What is left: the
-`Latch` handle itself, a thread's local latch, with its owner
-and the mutex that guards it. The shared latch a thread
-switched to (`SwitchToSharedLatch()`) went with PGPROC's latch
-(`WORKNOTE.md` step 158).
+owning thread's `INTERRUPT_LATCH` bit. The shared latch a
+thread switched to (`SwitchToSharedLatch()`) went with PGPROC's
+latch (`WORKNOTE.md` step 158), and the owner a `Latch` kept
+with step 192: a `Latch` is an empty token, `MyLatch`, that
+names the calling thread's bit to PostgreSQL's API, and another
+thread raises the bit through the thread's handle
+(`sm_interrupt()`).
 
 ## 5. Shared structures
 
