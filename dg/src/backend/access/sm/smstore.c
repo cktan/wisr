@@ -1950,6 +1950,8 @@ void smstore_load_end(Relation rel) {
  */
 struct smstore_scan_t {
   sm_tbl_t *tbl;
+  /* The table's oid, each row's tableoid, as WHERE CURRENT OF checks. */
+  Oid relid;
   sm_rel_scan_t *cursor;
   sm_idx_scan_t *icursor;
   ScanKey keys;
@@ -1980,6 +1982,7 @@ smstore_scan_t *smstore_beginscan(Relation rel) {
                            RelationGetRelationName(rel))));
   scan = (smstore_scan_t *)palloc0(sizeof(smstore_scan_t));
   scan->tbl = tbl;
+  scan->relid = RelationGetRelid(rel);
   if (sm_tbl_scan(tbl, 0, UINT64_MAX, &scan->cursor) != 0)
     sm_error("scan a table");
   return scan;
@@ -1996,6 +1999,7 @@ bool smstore_getnext(smstore_scan_t *scan, TupleTableSlot *slot) {
   size_t len;
 
   ExecClearTuple(slot);
+  slot->tts_tableOid = scan->relid;
   switch (sm_rel_scannxt(scan->cursor, &rowno, &tuple, &len)) {
   case 0:
     break;
@@ -4166,6 +4170,7 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
 
   scan = (smstore_scan_t *)palloc0(sizeof(smstore_scan_t));
   scan->tbl = tbl;
+  scan->relid = RelationGetRelid(heap);
   scan->keys = keys;
   scan->nkeys = nkeys;
   scan->index = RelationGetRelid(index);
@@ -4225,6 +4230,7 @@ static bool read_row(sm_tbl_t *tbl, uint64_t rowno, TupleTableSlot *slot) {
 bool smstore_index_getnext(smstore_scan_t *scan, TupleTableSlot *slot) {
   uint64 rowno;
 
+  slot->tts_tableOid = scan->relid;
   while (smstore_index_getrowno(scan, &rowno))
     /* A row the transaction does not see is passed. */
     if (read_row(scan->tbl, rowno, slot) && keys_met(scan, slot, false))
@@ -4327,6 +4333,7 @@ static bool entry_from_row(smstore_scan_t *scan, uint64_t rowno,
 bool smstore_index_getentry(smstore_scan_t *scan, TupleTableSlot *slot) {
   uint64 rowno;
 
+  slot->tts_tableOid = scan->relid;
   while (smstore_index_getrowno(scan, &rowno)) {
     bool from_row = false;
 
@@ -4368,6 +4375,7 @@ smstore_scan_t *smstore_beginfetch(Relation rel) {
                            RelationGetRelationName(rel))));
   scan = (smstore_scan_t *)palloc0(sizeof(smstore_scan_t));
   scan->tbl = tbl;
+  scan->relid = RelationGetRelid(rel);
   return scan;
 }
 
@@ -4376,6 +4384,7 @@ smstore_scan_t *smstore_beginfetch(Relation rel) {
  * if the transaction sees none there.
  */
 bool smstore_fetch(smstore_scan_t *scan, uint64 rowno, TupleTableSlot *slot) {
+  slot->tts_tableOid = scan->relid;
   return read_row(scan->tbl, rowno, slot);
 }
 
@@ -4450,6 +4459,7 @@ bool smstore_fetch_row(Relation rel, ItemPointer tid, TupleTableSlot *slot) {
 
   if (tbl == NULL)
     return false;
+  slot->tts_tableOid = RelationGetRelid(rel);
   if (kept_oid == RelationGetRelid(rel) && kept_rowno == rowno &&
       kept_tuple != NULL) {
     ExecClearTuple(slot);
@@ -4598,6 +4608,7 @@ TM_Result smstore_lock_row(Relation rel, ItemPointer tid, TupleTableSlot *slot,
     ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
                     errmsg("relation \"%s\" does not exist",
                            RelationGetRelationName(rel))));
+  slot->tts_tableOid = oid;
   if (!after_write) {
     sm_lockmode_t smmode = share ? SM_LOCKMODE_SH : SM_LOCKMODE_EX;
     int rc;
