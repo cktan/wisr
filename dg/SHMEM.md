@@ -49,8 +49,9 @@ thread finds them in the pcb and attaches to nothing.
   library had no registry to use with. `shmem.c` keeps
   `pg_numa_available()`.
 - **Sized ahead of time** still: `MaxBackends`, the session
-  registry's limit, and `PROCARRAY_MAXPROCS`, a snapshot's
-  arrays.
+  registry's limit. A snapshot's xid arrays, sized by it, are
+  not allocated (`WORKNOTE.md` step 191): a snapshot holds no
+  xid.
 - **dynahash's shared mode is gone too** (`WORKNOTE.md` step
   174): its partitioned free lists and their mutexes, a header
   in shared memory a thread attached to, a fixed directory and

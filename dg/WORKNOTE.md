@@ -5553,3 +5553,23 @@ of one table reference `ON UPDATE CASCADE`.
   runs past its `uctest` cases now; where it differs, an
   updated row keeps its place in a scan, and a scan runs
   forwards only.
+
+## Step 191: a snapshot's xid arrays are not allocated
+
+`SHMEM.md` §2. Each session malloc'd, for each of its three
+static snapshots (current, secondary and catalog), an array of
+`MaxBackends` xids and one of 65 per backend, as PostgreSQL
+sized them to hold every running xid and each PGPROC's cache of
+subtransaction xids. No xid is ever in progress (step 150), so
+nothing was put in them: about 26 kB a snapshot at 100
+connections, 78 kB a session.
+
+- storage/ipc `procarray.c`'s `GetSnapshotData()` allocates
+  nothing; `GetMaxSnapshotXidCount()` and
+  `GetMaxSnapshotSubxidCount()` are 0, so utils/time
+  `snapmgr.c`'s checks of a snapshot it copies or reads refuse
+  any xid.
+- **Gone**: `PROCARRAY_MAXPROCS`, `TOTAL_MAX_CACHED_SUBXIDS`,
+  storage `proc.h`'s `PGPROC_MAX_CACHED_SUBXIDS`, and
+  `FreeStaticSnapshots()`, which freed the arrays as a session
+  thread ended.

@@ -50,16 +50,6 @@
 static thread_local /*LOCAL*/ TransactionId cachedXidIsNotInProgress =
     InvalidTransactionId;
 
-/* Size of the ProcArray structure itself */
-#define PROCARRAY_MAXPROCS	(MaxBackends)
-
-/*
- * Snapshots are sized to hold every xid and cached subxid of every proc;
- * see GetMaxSnapshotSubxidCount().
- */
-#define TOTAL_MAX_CACHED_SUBXIDS \
-	((PGPROC_MAX_CACHED_SUBXIDS + 1) * PROCARRAY_MAXPROCS)
-
 /*
  * Initialize the session registry during postmaster startup.
  */
@@ -117,16 +107,16 @@ bool TransactionIdIsInProgress(TransactionId xid) {
 /*
  * GetMaxSnapshotXidCount -- get max size for snapshot XID array
  *
- * We have to export this for use by snapmgr.c.
+ * No xid is ever in progress (GetSnapshotData()), so a snapshot holds none.
  */
-int GetMaxSnapshotXidCount(void) { return PROCARRAY_MAXPROCS; }
+int GetMaxSnapshotXidCount(void) { return 0; }
 
 /*
  * GetMaxSnapshotSubxidCount -- get max size for snapshot sub-XID array
  *
- * We have to export this for use by snapmgr.c.
+ * As GetMaxSnapshotXidCount(): a snapshot holds no subtransaction's xid.
  */
-int GetMaxSnapshotSubxidCount(void) { return TOTAL_MAX_CACHED_SUBXIDS; }
+int GetMaxSnapshotSubxidCount(void) { return 0; }
 
 /*
  * GetSnapshotData -- returns information about running transactions.
@@ -151,28 +141,12 @@ int GetMaxSnapshotSubxidCount(void) { return TOTAL_MAX_CACHED_SUBXIDS; }
  *			older than this are known not running any more.
  *
  * No horizon is kept: what one serves, heap pruning and VACUUM, does not
- * run.
- *
- * Note: this function should probably not be called with an argument that's
- * not statically allocated (see xip allocation below).
+ * run.  A snapshot's xid arrays are not allocated: it holds none.
  */
 Snapshot GetSnapshotData(Snapshot snapshot) {
   TransactionId xmax;
 
   Assert(snapshot != NULL);
-
-  /* The arrays, as before, though no xid is ever put in them. */
-  if (snapshot->xip == NULL) {
-    snapshot->xip = (TransactionId *)malloc(GetMaxSnapshotXidCount() *
-                                            sizeof(TransactionId));
-    if (snapshot->xip == NULL)
-      ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("out of memory")));
-    Assert(snapshot->subxip == NULL);
-    snapshot->subxip = (TransactionId *)malloc(GetMaxSnapshotSubxidCount() *
-                                               sizeof(TransactionId));
-    if (snapshot->subxip == NULL)
-      ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("out of memory")));
-  }
 
   /*
    * No PostgreSQL transaction id is ever assigned (WORKNOTE.md steps 45 and

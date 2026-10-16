@@ -71,7 +71,6 @@ static void session_thread_end(void) {
   ShutdownWaitEventSupport();
   ShutdownProcessLocalLatch();
   ShutdownFileAccess();
-  FreeStaticSnapshots();
 
   /*
    * Nothing allocates from here on.  TopMemoryContext is cleared before it

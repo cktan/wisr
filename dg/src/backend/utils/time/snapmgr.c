@@ -464,9 +464,9 @@ static void SetTransactionSnapshot(Snapshot sourcesnap,
 
   /*
    * Even though we are not going to use the snapshot it computes, we must
-   * call GetSnapshotData, for two reasons: (1) to be sure that
-   * CurrentSnapshotData's XID arrays have been allocated, and (2) to update
-   * the state for GlobalVis*.
+   * call GetSnapshotData, to set the session's xmin.  The source holds no
+   * xid (GetMaxSnapshotXidCount()), so none is copied into
+   * CurrentSnapshotData's arrays, which are not allocated.
    */
   CurrentSnapshot = GetSnapshotData(&CurrentSnapshotData);
 
@@ -1566,20 +1566,4 @@ bool XidInMVCCSnapshot(TransactionId xid, Snapshot snapshot) {
 
 static void ResOwnerReleaseSnapshot(Datum res) {
   UnregisterSnapshotNoOwner((Snapshot)DatumGetPointer(res));
-}
-
-/*
- * Free the arrays GetSnapshotData() mallocs for the static snapshots: a
- * session thread, as it ends, whose memory no process exit frees.
- */
-void FreeStaticSnapshots(void) {
-  SnapshotData *snapshots[] = {&CurrentSnapshotData, &SecondarySnapshotData,
-                               &CatalogSnapshotData};
-
-  for (int i = 0; i < lengthof(snapshots); i++) {
-    free(snapshots[i]->xip);
-    free(snapshots[i]->subxip);
-    snapshots[i]->xip = NULL;
-    snapshots[i]->subxip = NULL;
-  }
 }
