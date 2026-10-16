@@ -3391,8 +3391,8 @@ void PostgresSingleUserMain(int argc, char *argv[], const char *username) {
   PgStartTime = GetCurrentTimestamp();
 
   /*
-   * Create a per-backend PGPROC struct in shared memory. We must do this
-   * before we can use LWLocks.
+   * Give this session its number, before it can access any shared
+   * structure.
    */
   InitProcess();
 

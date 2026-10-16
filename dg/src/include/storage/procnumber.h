@@ -39,7 +39,7 @@ typedef int ProcNumber;
 #define MAX_BACKENDS			((1U << MAX_BACKENDS_BITS)-1)
 
 /*
- * Proc number of this backend (same as GetNumberFromPGProc(MyProc))
+ * Proc number of this backend: its thread's id (dg/WORKNOTE.md step 159)
  */
 extern thread_local /*LOCAL*/ PGDLLIMPORT ProcNumber MyProcNumber;
 

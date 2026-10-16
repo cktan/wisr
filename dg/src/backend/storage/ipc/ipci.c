@@ -41,7 +41,7 @@ static void CreateOrAttachShmemStructs(void);
  */
 void AttachSharedMemoryStructs(void) {
   /* InitProcess must've been called already */
-  Assert(MyProc != NULL);
+  Assert(MyProcNumber != INVALID_PROC_NUMBER);
   Assert(IsUnderPostmaster);
 
   CreateOrAttachShmemStructs();
@@ -90,10 +90,8 @@ static void CreateOrAttachShmemStructs(void) {
   VarsupShmemInit();
 
   /*
-   * Set up process table
+   * Set up the session registry
    */
-  if (!IsUnderPostmaster)
-    InitProcGlobal();
   ProcArrayShmemInit();
 
   /*

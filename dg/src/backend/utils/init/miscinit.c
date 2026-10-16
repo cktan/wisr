@@ -513,10 +513,7 @@ void SetAuthenticatedUserId(Oid userid) {
 
   AuthenticatedUserId = userid;
 
-  /* Also mark our PGPROC entry with the authenticated user id */
-  /* (We assume this is an atomic store so no lock is needed) */
-  MyProc->roleId = userid;
-  /* And our record, which another session reads it in (SHMEM.md 5.2). */
+  /* Also mark our record, which another session reads it in (SHMEM.md 5.2). */
   session_set_role(userid);
 }
 

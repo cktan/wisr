@@ -19,7 +19,6 @@
 #include <unordered_map>
 
 #include "miscadmin.h"
-#include "storage/proc.h"
 #include "storage/session_registry.h"
 #include "utils/control_block.h"
 
@@ -45,17 +44,16 @@ void session_registry_init(void) {
 }
 
 /*
- * Register this session, whose PGPROC is proc: its record, which other
- * sessions find it by, is made here and kept in its tcb.  As many sessions
- * as MaxBackends may be registered at once.
+ * Register this session: its record, which other sessions find it by, is
+ * made here and kept in its tcb.  As many sessions as MaxBackends may be
+ * registered at once.
  */
-void session_register(PGPROC *proc) {
+void session_register(void) {
   session_registry_t *registry = pcb->session_registry.get();
   session_ref_t record = std::make_shared<session_record_t>();
 
   record->id = registry->next_id.fetch_add(1, std::memory_order_relaxed);
   record->pid = MyProcPid;
-  record->proc = proc;
   record->thread = sm_thread_self();
   {
     std::lock_guard<std::mutex> lock(registry->mu);
@@ -92,9 +90,9 @@ void session_set_cancel_key(const uint8 *key, int len) {
 }
 
 /*
- * Raise interrupt bits in the session's own thread: not its PGPROC's latch
- * owner, which is another session's once its slot is reused, so a session
- * that has ended is interrupted harmlessly, and no other is.
+ * Raise interrupt bits in the session's own thread, which is its record's
+ * alone, so a session that has ended is interrupted harmlessly, and no
+ * other is.
  */
 void session_interrupt(const session_ref_t &record, uint32 bits) {
   sm_interrupt(record->thread, bits);
@@ -138,4 +136,17 @@ std::vector<session_ref_t> sessions_all(void) {
   for (const auto &[pid, record] : registry->sessions)
     out.push_back(record);
   return out;
+}
+
+/*
+ * Whether n more sessions may register: if not, *nfree is how many may.
+ * Else *nfree is n.  The caller is registered already.
+ */
+bool session_have_free(int n, int *nfree) {
+  session_registry_t *registry = pcb->session_registry.get();
+  std::lock_guard<std::mutex> lock(registry->mu);
+  int free = MaxBackends - (int)registry->sessions.size();
+
+  *nfree = Min(n, free);
+  return free >= n;
 }

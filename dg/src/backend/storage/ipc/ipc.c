@@ -329,7 +329,7 @@ void before_shmem_exit(pg_on_exit_callback function, Datum arg) {
  *		on_shmem_exit
  *
  *		Register ordinary callback to perform low-level shutdown
- *		(e.g. releasing our PGPROC); run after before_shmem_exit
+ *		(e.g. leaving the session registry); run after before_shmem_exit
  *		callbacks and before on_proc_exit callbacks.
  * ----------------------------------------------------------------
  */

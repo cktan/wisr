@@ -2824,17 +2824,16 @@ void log_status_format(StringInfo buf, const char *format, ErrorData *edata) {
         return;
       break;
     case 'v':
-      /* keep VXID format in sync with lockfuncs.c */
-      if (MyProc != NULL && MyProc->vxid.procNumber != INVALID_PROC_NUMBER) {
+      /* A session's: its number, its thread's id, and its tcb's lxid. */
+      if (MyProcNumber != INVALID_PROC_NUMBER && tcb != NULL) {
         if (padding != 0) {
           char strfbuf[128];
 
-          snprintf(strfbuf, sizeof(strfbuf) - 1, "%d/%u",
-                   MyProc->vxid.procNumber, MyProc->vxid.lxid);
+          snprintf(strfbuf, sizeof(strfbuf) - 1, "%d/%u", MyProcNumber,
+                   tcb->lxid);
           appendStringInfo(buf, "%*s", padding, strfbuf);
         } else
-          appendStringInfo(buf, "%d/%u", MyProc->vxid.procNumber,
-                           MyProc->vxid.lxid);
+          appendStringInfo(buf, "%d/%u", MyProcNumber, tcb->lxid);
       } else if (padding != 0)
         appendStringInfoSpaces(buf, padding > 0 ? padding : -padding);
       break;

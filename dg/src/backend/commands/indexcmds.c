@@ -59,6 +59,7 @@
 #include "storage/procarray.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
+#include "utils/control_block.h"
 #include "utils/fmgroids.h"
 #include "utils/guc.h"
 #include "utils/injection_point.h"
@@ -1550,7 +1551,7 @@ ObjectAddress DefineIndex(Oid tableId, IndexStmt *stmt, Oid indexRelationId,
     set_indexsafe_procflags();
 
   /* We should now definitely not be advertising any xmin. */
-  Assert(MyProc->xmin == InvalidTransactionId);
+  Assert(tcb->xmin == InvalidTransactionId);
 
   /*
    * The index is now valid in the sense that it contains all currently
@@ -2583,7 +2584,8 @@ static void update_relispartition(Oid relationId, bool newval) {
 }
 
 /*
- * Set the PROC_IN_SAFE_IC flag in MyProc->statusFlags.
+ * Set the PROC_IN_SAFE_IC flag in the session's status flags, which digres
+ * does not keep.
  *
  * When doing concurrent index builds, we can set this flag
  * to tell other processes concurrently running CREATE
@@ -2602,12 +2604,14 @@ static void update_relispartition(Oid relationId, bool newval) {
  */
 static inline void set_indexsafe_procflags(void) {
   /*
-   * This should only be called before installing xid or xmin in MyProc;
+   * This should only be called before installing the session's xmin;
    * otherwise, concurrent processes could see an Xmin that moves backwards.
    */
-  Assert(MyProc->xid == InvalidTransactionId &&
-         MyProc->xmin == InvalidTransactionId);
+  Assert(tcb->xmin == InvalidTransactionId);
 
-  /* The session's own: no other session reads it (SHMEM.md 5.2). */
-  MyProc->statusFlags |= PROC_IN_SAFE_IC;
+  /*
+   * No flag is set: PostgreSQL's PROC_IN_SAFE_IC told other sessions'
+   * concurrent index builds to skip this one, and none waits for another
+   * (WaitForOlderSnapshots()).
+   */
 }

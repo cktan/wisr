@@ -80,8 +80,8 @@ void BackendMain(const void *startup_data, size_t startup_data_len) {
   BackendInitialize(MyClientSocket, bsdata->canAcceptConnections);
 
   /*
-   * Create a per-backend PGPROC struct in shared memory.  We must do this
-   * before we can use LWLocks or access any shared memory.
+   * Give this session its number, before it can access any shared
+   * structure.
    */
   InitProcess();
 

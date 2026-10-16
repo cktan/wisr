@@ -909,13 +909,8 @@ static void StartTransaction(void) {
   vxid.procNumber = MyProcNumber;
   vxid.localTransactionId = GetNextLocalTransactionId();
 
-  /*
-   * Advertise it in the proc array.  We assume assignment of
-   * localTransactionId is atomic, and the proc number should be set
-   * already.
-   */
-  Assert(MyProc->vxid.procNumber == vxid.procNumber);
-  MyProc->vxid.lxid = vxid.localTransactionId;
+  /* The session's own: no other session reads it. */
+  tcb->lxid = vxid.localTransactionId;
 
   TRACE_POSTGRESQL_TRANSACTION_START(vxid.localTransactionId);
 
@@ -1035,13 +1030,13 @@ static void CommitTransaction(void) {
   if (TransactionTimeout > 0)
     disable_timeout(TRANSACTION_TIMEOUT, false);
 
-  TRACE_POSTGRESQL_TRANSACTION_COMMIT(MyProc->vxid.lxid);
+  TRACE_POSTGRESQL_TRANSACTION_COMMIT(tcb->lxid);
 
   /*
    * Let others know about no transaction in progress by me, before
    * releasing the locks we hold.  It has no xid to end: digres assigns none.
    */
-  ProcArrayEndTransaction(MyProc, InvalidTransactionId);
+  ProcArrayEndTransaction(InvalidTransactionId);
 
   /*
    * This is all post-commit cleanup.  Note that if an error is raised here,
@@ -1188,13 +1183,13 @@ static void AbortTransaction(void) {
   AfterTriggerEndXact(false); /* 'false' means it's abort */
   AtAbort_Portals();
 
-  TRACE_POSTGRESQL_TRANSACTION_ABORT(MyProc->vxid.lxid);
+  TRACE_POSTGRESQL_TRANSACTION_ABORT(tcb->lxid);
 
   /*
    * Let others know about no transaction in progress by me, before
    * releasing the locks we hold.
    */
-  ProcArrayEndTransaction(MyProc, InvalidTransactionId);
+  ProcArrayEndTransaction(InvalidTransactionId);
 
   /*
    * Post-abort cleanup.  See notes in CommitTransaction() concerning

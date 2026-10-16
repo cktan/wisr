@@ -41,8 +41,8 @@
  * and popped on return.  Once upon a time, ActiveSnapshot was just a global
  * variable that was saved and restored similar to CurrentMemoryContext, but
  * nowadays it's managed as a separate data structure so that we can keep
- * track of which snapshots are in use and reset MyProc->xmin when there is no
- * active snapshot.
+ * track of which snapshots are in use and reset the session's xmin when
+ * there is no active snapshot.
  *
  * However, there are a couple of exceptions where the active snapshot stack
  * does not strictly mirror the call stack:
@@ -86,11 +86,11 @@
  * their lifetime is managed separately (as they live longer than one xact.c
  * transaction).
  *
- * These arrangements let us reset MyProc->xmin when there are no snapshots
- * referenced by this transaction, and advance it when the one with oldest
- * Xmin is no longer referenced.  For simplicity however, only registered
+ * These arrangements let us reset the session's xmin when there are no
+ * snapshots referenced by this transaction, and advance it when the one with
+ * oldest Xmin is no longer referenced.  For simplicity however, only registered
  * snapshots not active snapshots participate in tracking which one is oldest;
- * we don't try to change MyProc->xmin except when the active-snapshot
+ * we don't try to change the session's xmin except when the active-snapshot
  * stack is empty.
  *
  *
@@ -117,6 +117,7 @@
 #include "storage/proc.h"
 #include "storage/procarray.h"
 #include "utils/builtins.h"
+#include "utils/control_block.h"
 #include "utils/memutils.h"
 #include "utils/resowner.h"
 #include "utils/snapmgr.h"
@@ -180,7 +181,7 @@ static thread_local /*LOCAL*/ ActiveSnapshotElt *ActiveSnapshot = NULL;
 
 /*
  * Currently registered Snapshots.  Ordered in a heap by xmin, so that we can
- * quickly find the one with lowest xmin, to advance our MyProc->xmin.
+ * quickly find the one with lowest xmin, to advance the session's xmin.
  */
 static int xmin_cmp(const pairingheap_node *a, const pairingheap_node *b,
                     void *arg);
@@ -374,7 +375,7 @@ Snapshot GetNonHistoricCatalogSnapshot(Oid relid) {
 
     /*
      * Make sure the catalog snapshot will be accounted for in decisions
-     * about advancing PGPROC->xmin.  We could apply RegisterSnapshot, but
+     * about advancing the session's xmin.  We could apply RegisterSnapshot, but
      * that would result in making a physical copy, which is overkill; and
      * it would also create a dependency on some resource owner, which we
      * do not want for reasons explained at the head of this file. Instead
@@ -450,7 +451,7 @@ void SnapshotSetCommandId(CommandId curcid) {
  */
 static void SetTransactionSnapshot(Snapshot sourcesnap,
                                    VirtualTransactionId *sourcevxid,
-                                   int sourcepid, PGPROC *sourceproc) {
+                                   int sourcepid) {
   /* Caller should have checked this already */
   Assert(!FirstSnapshotSet);
 
@@ -490,7 +491,7 @@ static void SetTransactionSnapshot(Snapshot sourcesnap,
   CurrentSnapshot->snapXactCompletionCount = 0;
 
   /*
-   * Now we have to fix what GetSnapshotData did with MyProc->xmin and
+   * Now we have to fix what GetSnapshotData did with the session's xmin and
    * TransactionXmin.  There is a race condition: to make sure we are not
    * causing the global xmin to go backwards, we have to test that the
    * source transaction is still running, and that has to be done
@@ -500,13 +501,7 @@ static void SetTransactionSnapshot(Snapshot sourcesnap,
    * doesn't seem worth contorting the logic here to avoid two calls,
    * especially since it's not clear that predicate.c *must* do this.
    */
-  if (sourceproc != NULL) {
-    if (!ProcArrayInstallRestoredXmin(CurrentSnapshot->xmin, sourceproc))
-      ereport(ERROR,
-              (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-               errmsg("could not import the requested snapshot"),
-               errdetail("The source transaction is not running anymore.")));
-  } else if (!ProcArrayInstallImportedXmin(CurrentSnapshot->xmin, sourcevxid))
+  if (!ProcArrayInstallImportedXmin(CurrentSnapshot->xmin, sourcevxid))
     ereport(ERROR,
             (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
              errmsg("could not import the requested snapshot"),
@@ -809,14 +804,14 @@ static int xmin_cmp(const pairingheap_node *a, const pairingheap_node *b,
 /*
  * SnapshotResetXmin
  *
- * If there are no more snapshots, we can reset our PGPROC->xmin to
+ * If there are no more snapshots, we can reset the session's xmin to
  * InvalidTransactionId. Note we can do this without locking because we assume
  * that storing an Xid is atomic.
  *
  * Even if there are some remaining snapshots, we may be able to advance our
- * PGPROC->xmin to some degree.  This typically happens when a portal is
- * dropped.  For efficiency, we only consider recomputing PGPROC->xmin when
- * the active snapshot stack is empty; this allows us not to need to track
+ * the session's xmin to some degree.  This typically happens when a portal is
+ * dropped.  For efficiency, we only consider recomputing the session's xmin
+ * when the active snapshot stack is empty; this allows us not to need to track
  * which active snapshot is oldest.
  */
 static void SnapshotResetXmin(void) {
@@ -826,15 +821,15 @@ static void SnapshotResetXmin(void) {
     return;
 
   if (pairingheap_is_empty(&RegisteredSnapshots)) {
-    MyProc->xmin = TransactionXmin = InvalidTransactionId;
+    tcb->xmin = TransactionXmin = InvalidTransactionId;
     return;
   }
 
   minSnapshot = pairingheap_container(SnapshotData, ph_node,
                                       pairingheap_first(&RegisteredSnapshots));
 
-  if (TransactionIdPrecedes(MyProc->xmin, minSnapshot->xmin))
-    MyProc->xmin = TransactionXmin = minSnapshot->xmin;
+  if (TransactionIdPrecedes(tcb->xmin, minSnapshot->xmin))
+    tcb->xmin = TransactionXmin = minSnapshot->xmin;
 }
 
 /*
@@ -964,13 +959,13 @@ void AtEOXact_Snapshot(bool isCommit, bool resetXmin) {
 
   /*
    * During normal commit processing, we call ProcArrayEndTransaction() to
-   * reset the MyProc->xmin. That call happens prior to the call to
+   * reset the session's xmin. That call happens prior to the call to
    * AtEOXact_Snapshot(), so we need not touch xmin here at all.
    */
   if (resetXmin)
     SnapshotResetXmin();
 
-  Assert(resetXmin || MyProc->xmin == 0);
+  Assert(resetXmin || tcb->xmin == 0);
 }
 
 /*
@@ -1032,8 +1027,7 @@ char *ExportSnapshot(Snapshot snapshot) {
    * inside the transaction from 1.
    */
   snprintf(path, sizeof(path), SNAPSHOT_EXPORT_DIR "/%08X-%08X-%d",
-           MyProc->vxid.procNumber, MyProc->vxid.lxid,
-           list_length(exportedSnapshots) + 1);
+           MyProcNumber, tcb->lxid, list_length(exportedSnapshots) + 1);
 
   /*
    * Copy the snapshot into TopTransactionContext, add it to the
@@ -1060,8 +1054,7 @@ char *ExportSnapshot(Snapshot snapshot) {
    */
   initStringInfo(&buf);
 
-  appendStringInfo(&buf, "vxid:%d/%u\n", MyProc->vxid.procNumber,
-                   MyProc->vxid.lxid);
+  appendStringInfo(&buf, "vxid:%d/%u\n", MyProcNumber, tcb->lxid);
   appendStringInfo(&buf, "pid:%d\n", MyProcPid);
   appendStringInfo(&buf, "dbid:%u\n", MyDatabaseId);
   appendStringInfo(&buf, "iso:%d\n", XactIsoLevel);
@@ -1402,7 +1395,7 @@ void ImportSnapshot(const char *idstr) {
              errmsg("cannot import a snapshot from a different database")));
 
   /* OK, install the snapshot */
-  SetTransactionSnapshot(&snapshot, &src_vxid, src_pid, NULL);
+  SetTransactionSnapshot(&snapshot, &src_vxid, src_pid);
 }
 
 /*

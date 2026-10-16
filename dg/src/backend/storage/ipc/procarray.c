@@ -37,6 +37,7 @@
 #include "storage/session_registry.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
+#include "utils/control_block.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 
@@ -60,7 +61,7 @@ static thread_local /*LOCAL*/ TransactionId cachedXidIsNotInProgress =
 	((PGPROC_MAX_CACHED_SUBXIDS + 1) * PROCARRAY_MAXPROCS)
 
 /*
- * Initialize the shared PGPROC array during postmaster startup.
+ * Initialize the session registry during postmaster startup.
  */
 void ProcArrayShmemInit(void) {
   /* A snapshot's count of completed transactions starts at 1, and stays. */
@@ -73,23 +74,17 @@ void ProcArrayShmemInit(void) {
 }
 
 /*
- * Add the specified PGPROC to the shared array.
+ * Add this session to the session registry.
  */
-void ProcArrayAdd(PGPROC *proc) {
+void ProcArrayAdd(void) {
   /* Other sessions find this one by its record (session_registry.c). */
-  session_register(proc);
+  session_register();
 }
 
 /*
- * Remove the specified PGPROC from the shared array: the session leaves the
- * registry.  latestXid is never valid, as no xid is assigned and there is no
- * two-phase commit.
+ * Remove this session from the session registry, as it ends.
  */
-void ProcArrayRemove(PGPROC *proc, TransactionId latestXid) {
-  /* No PostgreSQL xid is ever assigned: none completes here. */
-  Assert(!TransactionIdIsValid(latestXid));
-  session_unregister();
-}
+void ProcArrayRemove(void) { session_unregister(); }
 
 /*
  * ProcArrayEndTransaction -- mark a transaction as no longer running
@@ -97,24 +92,18 @@ void ProcArrayRemove(PGPROC *proc, TransactionId latestXid) {
  * This is used interchangeably for commit and abort cases.  The transaction
  * commit/abort must already be reported to WAL and pg_xact.
  *
- * proc is currently always MyProc, but we pass it explicitly for flexibility.
  * latestXid is the latest Xid among the transaction's main XID and
- * subtransactions, or InvalidTransactionId if it has no XID.  (We must ask
- * the caller to pass latestXid, instead of computing it from the PGPROC's
- * contents, because the subxid information in the PGPROC might be
- * incomplete.)
+ * subtransactions, or InvalidTransactionId if it has no XID.
  */
-void ProcArrayEndTransaction(PGPROC *proc, TransactionId latestXid) {
+void ProcArrayEndTransaction(TransactionId latestXid) {
   /*
    * No PostgreSQL xid is ever assigned (WORKNOTE.md steps 45, 137), so none
    * is cleared.  No other session reads these: they are the session's own.
    */
   Assert(!TransactionIdIsValid(latestXid));
-  Assert(!TransactionIdIsValid(proc->xid));
 
-  proc->vxid.lxid = InvalidLocalTransactionId;
-  proc->xmin = InvalidTransactionId;
-  proc->statusFlags &= ~PROC_VACUUM_STATE_MASK;
+  tcb->lxid = InvalidLocalTransactionId;
+  tcb->xmin = InvalidTransactionId;
 }
 
 /*
@@ -160,7 +149,7 @@ int GetMaxSnapshotSubxidCount(void) { return TOTAL_MAX_CACHED_SUBXIDS; }
  *
  * We also update the following backend-global variables:
  *		TransactionXmin: the oldest xmin of any snapshot in use in the
- *			current transaction (this is the same as MyProc->xmin).
+ *			current transaction (the session's xmin).
  *		RecentXmin: the xmin computed for the most recent snapshot. XIDs
  *			older than this are known not running any more.
  *
@@ -200,8 +189,8 @@ Snapshot GetSnapshotData(Snapshot snapshot) {
   TransactionIdAdvance(xmax);
   Assert(TransactionIdIsNormal(xmax));
 
-  if (!TransactionIdIsValid(MyProc->xmin))
-    MyProc->xmin = TransactionXmin = xmax;
+  if (!TransactionIdIsValid(tcb->xmin))
+    tcb->xmin = TransactionXmin = xmax;
   RecentXmin = xmax;
 
   snapshot->xmin = xmax;
@@ -218,7 +207,7 @@ Snapshot GetSnapshotData(Snapshot snapshot) {
 }
 
 /*
- * ProcArrayInstallImportedXmin -- install imported xmin into MyProc->xmin
+ * ProcArrayInstallImportedXmin -- install imported xmin as the session's
  *
  * This is called when installing a snapshot imported from another
  * transaction.  To ensure that OldestXmin doesn't go backwards, we must
@@ -231,66 +220,6 @@ bool ProcArrayInstallImportedXmin(TransactionId xmin,
                                   VirtualTransactionId *sourcevxid) {
   /* No snapshot is imported (ImportSnapshot() refuses): none installs. */
   return false;
-}
-
-/*
- * ProcArrayInstallRestoredXmin -- install restored xmin into MyProc->xmin
- *
- * This is like ProcArrayInstallImportedXmin, but we have a pointer to the
- * PGPROC of the transaction from which we imported the snapshot, rather than
- * an XID.
- *
- * Note that this function also copies statusFlags from the source `proc` in
- * order to avoid the case where MyProc's xmin needs to be skipped for
- * computing xid horizon.
- *
- * Returns true if successful, false if source xact is no longer running.
- */
-bool ProcArrayInstallRestoredXmin(TransactionId xmin, PGPROC *proc) {
-  /*
-   * Every snapshot is the same constant (GetSnapshotData()), so the one
-   * restored is this session's too, and nothing of proc need be read.
-   */
-  Assert(TransactionIdIsNormal(xmin));
-  MyProc->xmin = TransactionXmin = xmin;
-  return true;
-}
-
-/*
- * ProcNumberGetProc -- get a backend's PGPROC given its proc number
- *
- * The result may be out of date arbitrarily quickly, so the caller
- * must be careful about how this information is used.  NULL is
- * returned if the backend is not active.
- */
-PGPROC *ProcNumberGetProc(ProcNumber procNumber) {
-  PGPROC *result;
-
-  if (procNumber < 0 || procNumber >= ProcGlobal->allProcCount)
-    return NULL;
-  result = GetPGProcByNumber(procNumber);
-
-  if (result->pid == 0)
-    return NULL;
-
-  return result;
-}
-
-/*
- * BackendPidGetProc -- get a backend's PGPROC given its PID
- *
- * Returns NULL if not found.  Note that it is up to the caller to be
- * sure that the question remains meaningful for long enough for the
- * answer to be used ...
- */
-PGPROC *BackendPidGetProc(int pid) {
-  session_ref_t record;
-
-  if (pid == 0) /* never match dummy PGPROCs */
-    return NULL;
-  /* A PGPROC is never freed: the pointer stays good after the record. */
-  record = session_by_pid(pid);
-  return record != nullptr ? record->proc : NULL;
 }
 
 /*
@@ -310,7 +239,7 @@ void TerminateOtherDBBackends(Oid databaseId) {
   /* The records of the database's other sessions (SHMEM.md section 5.2). */
   for (session_ref_t &record : sessions_all())
     if (record->database.load(std::memory_order_acquire) == databaseId &&
-        record->proc != MyProc)
+        record != tcb->session)
       others.push_back(std::move(record));
 
   /*

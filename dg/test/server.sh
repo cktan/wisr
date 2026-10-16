@@ -3195,9 +3195,10 @@ sleep 0.2
   fail "SIGUSR1 and SIGUSR2 ignored"
 
 # Verify that the server stops when asked, with no process lost on the way,
-# and ends a session left open: the postmaster's SIGTERM reaches it as a flag
-# in its PGPROC (SignalProc()). Each side wakes the other's latch from
-# another thread (sm_interrupt()), so a lost wake-up is a stall.
+# and ends a session left open: the postmaster's SIGTERM reaches it as an
+# interrupt bit, through its record in the session registry
+# (session_interrupt()). Each side wakes the other's latch from another
+# thread (sm_interrupt()), so a lost wake-up is a stall.
 # 1. Open a session, run a statement in it, and leave it idle.
 # 2. Interrupt the server, and confirm it stops within ten seconds.
 # 3. Confirm it exited with status 0, and ended the idle session.
@@ -3226,8 +3227,50 @@ grep -q "terminating connection due to administrator command" "$work/log" ||
   fail "idle session ended"
 exec 3>&-
 wait $idle
-grep -q "terminated by signal" "$work/log" && fail "a process crashed"
-grep -q "ThreadSanitizer" "$work/log" && fail "a thread sanitizer report"
+
+# Verify that max_connections holds as many sessions as the session registry
+# takes, which PGPROC's free list did before (WORKNOTE.md step 159).
+# 1. Start the server again with max_connections = 3, none reserved.
+# 2. Hold three sessions open.
+# 3. A fourth is refused: too many clients.
+# 4. End the three, and a new session connects.
+# 5. Stop the server.
+$digres -D "$work/data" -k "$work" -p "$port" -c max_connections=3 \
+  -c superuser_reserved_connections=0 -c reserved_connections=0 \
+  > "$work/log2" 2>&1 &
+server=$!
+for _ in $(seq 100); do
+  grep -q "ready to accept connections" "$work/log2" && break
+  sleep 0.1
+done
+for n in 1 2 3; do
+  held_start "conn$n"
+  held_send "conn$n" "select 'up $n';"
+done
+for n in 1 2 3; do
+  held_wait "conn$n" "up $n" || fail "max_connections: session $n"
+done
+local_psql -c 'select 1' > "$work/conn4.out" 2>&1 &&
+  fail "max_connections: a fourth session is refused"
+grep -q 'sorry, too many clients already' "$work/conn4.out" ||
+  fail "max_connections: too many clients"
+for n in 1 2 3; do
+  held_end "conn$n"
+done
+# A session leaves the registry as its thread ends, a moment after its psql.
+for _ in $(seq 50); do
+  after=$(local_psql -c 'select 5 + 5' 2> "$work/conn5.err")
+  [ "$after" = 10 ] && break
+  sleep 0.1
+done
+[ "$after" = 10 ] || fail "max_connections: a session after the three"
+kill -INT $server
+wait $server || fail "max_connections: shutdown status"
+
+grep -q "terminated by signal" "$work/log" "$work/log2" &&
+  fail "a process crashed"
+grep -q "ThreadSanitizer" "$work/log" "$work/log2" &&
+  fail "a thread sanitizer report"
 
 [ $failed = 0 ] && echo "server: PASSED"
 exit $failed

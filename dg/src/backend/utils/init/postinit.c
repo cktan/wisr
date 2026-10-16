@@ -288,7 +288,7 @@ void InitializeMaxBackends(void) {
  * InitPostgres at all.
  */
 void BaseInit(void) {
-  Assert(MyProc != NULL);
+  Assert(MyProcNumber != INVALID_PROC_NUMBER);
 
   /*
    * Initialize our input/output/debugging file descriptors.
@@ -339,7 +339,7 @@ void BaseInit(void) {
  * background processes.
  *
  * We expect that InitProcess() was already called, so we already have a
- * PGPROC struct ... but it's not completely filled in yet.
+ * session number ... but no record in the session registry yet.
  *
  * Note:
  *		Be very careful with the order of calls in the InitPostgres
@@ -357,7 +357,7 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
   elog(DEBUG3, "InitPostgres");
 
   /*
-   * Add my PGPROC struct to the ProcArray.
+   * Add my record to the session registry.
    *
    * Once I have done this, I am visible to other backends!
    */
@@ -497,17 +497,16 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
   /*
    * The last few regular connection slots are reserved for superusers and
    * roles with privileges of pg_use_reserved_connections.  We do not apply
-   * these limits to background processes, since they all have their own
-   * pools of PGPROC slots.
+   * these limits to background processes.
    *
-   * Note: At this point, the new backend has already claimed a proc struct,
-   * so we must check whether the number of free slots is strictly less than
-   * the reserved connection limits.
+   * Note: At this point, the new backend is registered already, so we must
+   * check whether the number of free slots is strictly less than the
+   * reserved connection limits.
    */
   if (AmRegularBackendProcess() && !am_superuser &&
       (SuperuserReservedConnections + ReservedConnections) > 0 &&
-      !HaveNFreeProcs(SuperuserReservedConnections + ReservedConnections,
-                      &nfree)) {
+      !session_have_free(SuperuserReservedConnections + ReservedConnections,
+                         &nfree)) {
     if (nfree < SuperuserReservedConnections)
       ereport(FATAL, (errcode(ERRCODE_TOO_MANY_CONNECTIONS),
                       errmsg("remaining connection slots are reserved for "
@@ -604,20 +603,7 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
    */
   MyDatabaseId = dboid;
 
-  /*
-   * Now we can mark our PGPROC entry with the database ID.
-   *
-   * We assume this is an atomic store so no lock is needed; though actually
-   * things would work fine even if it weren't atomic.  Anyone searching the
-   * ProcArray for this database's ID should hold the database lock, so they
-   * would not be executing concurrently with this store.  A process looking
-   * for another database's ID could in theory see a chance match if it read
-   * a partially-updated databaseId value; but as long as all such searches
-   * wait and retry, as in CountOtherDBBackends(), they will certainly see
-   * the correct value on their next try.
-   */
-  MyProc->databaseId = MyDatabaseId;
-  /* What another session reads of it, it reads in our record. */
+  /* What another session reads of the database, it reads in our record. */
   session_set_database(MyDatabaseId);
 
   /*

@@ -177,34 +177,6 @@ void finish_spin_delay(SpinDelayStatus *status) {
   }
 }
 
-/*
- * Set local copy of spins_per_delay during backend startup.
- *
- * NB: this has to be pretty fast as it is called while holding a spinlock
- */
-void set_spins_per_delay(int shared_spins_per_delay) {
-  spins_per_delay = shared_spins_per_delay;
-}
-
-/*
- * Update shared estimate of spins_per_delay during backend exit.
- *
- * NB: this has to be pretty fast as it is called while holding a spinlock
- */
-int update_spins_per_delay(int shared_spins_per_delay) {
-  /*
-   * We use an exponential moving average with a relatively slow adaption
-   * rate, so that noise in any one backend's result won't affect the shared
-   * value too much.  As long as both inputs are within the allowed range,
-   * the result must be too, so we need not worry about clamping the result.
-   *
-   * We deliberately truncate rather than rounding; this is so that single
-   * adjustments inside a backend can affect the shared estimate (see the
-   * asymmetric adjustment rules above).
-   */
-  return (shared_spins_per_delay * 15 + spins_per_delay) / 16;
-}
-
 /*****************************************************************************/
 #if defined(S_LOCK_TEST)
 

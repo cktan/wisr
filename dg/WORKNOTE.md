@@ -4675,3 +4675,40 @@ session's record (step 152) holds its thread already.
 - `server.sh` checks it already: a cancel request from psql
   ends a lock wait, and the postmaster's shutdown ends an idle
   session.
+
+## Step 159: PGPROC is gone
+
+`SHMEM.md` §5, §7 step 4. After step 158 a session's PGPROC held
+nothing another session read: its virtual xid, its xmin, its
+database and role, its flags, and its slot on the free list.
+
+- **A session's number is its thread's id**: `InitProcess()`
+  sets `MyProcNumber` to `MyProcPid`, which a session thread
+  takes from `gettid()`. A virtual xid is that and the
+  transaction's local id, `tcb_t::lxid`, so a log line's `%v`
+  shows the thread's id.
+- **The session's xmin is `tcb_t::xmin`**, set and cleared where
+  PGPROC's was. `TransactionXmin` stays apart from it, as
+  before: a transaction's end clears the one and not the other.
+- **Dropped**: `xid`, never assigned; `databaseId` and
+  `roleId`, which the record holds; `statusFlags`, with the
+  `PROC_*` flags and `set_indexsafe_procflags()`'s flag, which
+  nothing read; `delayChkptFlags`, `isRegularBackend`,
+  `tempNamespaceId`, which nothing read.
+- **Gone**: `PGPROC`, `PROC_HDR`, `ProcGlobal`,
+  `InitProcGlobal()`, `MyProc`, the free list and
+  `pcb->proc_struct_mutex`, `GetPGProcByNumber()`,
+  `ProcNumberGetProc()`, `BackendPidGetProc()`,
+  `ProcArrayInstallRestoredXmin()` and the PGPROC argument of
+  `SetTransactionSnapshot()`, whose one caller passed none;
+  `session_record_t::proc`; the shared estimate of
+  `spins_per_delay` with `set_spins_per_delay()` and
+  `update_spins_per_delay()`.
+- **`max_connections` is the registry's**: `session_register()`
+  refuses a session past `MaxBackends`, as the empty free list
+  did, and `session_have_free()` counts the slots left for the
+  reserved connections, as `HaveNFreeProcs()` did.
+- `server.sh`: with `max_connections = 3`, three sessions
+  connect, a fourth is refused with "too many clients", and one
+  connects once the three end. The shutdown check's comment
+  names the record, not the PGPROC.

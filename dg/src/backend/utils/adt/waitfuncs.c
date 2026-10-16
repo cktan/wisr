@@ -16,6 +16,7 @@
 #include "catalog/pg_type.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
+#include "storage/session_registry.h"
 #include "utils/array.h"
 #include "utils/fmgrprotos.h"
 #include "utils/wait_event.h"
@@ -37,7 +38,6 @@
 Datum pg_isolation_test_session_is_blocked(PG_FUNCTION_ARGS) {
   int blocked_pid = PG_GETARG_INT32(0);
   ArrayType *interesting_pids_a = PG_GETARG_ARRAYTYPE_P(1);
-  PGPROC *proc;
   ArrayType *blocking_pids_a;
   int32 *interesting_pids;
   int32 *blocking_pids;
@@ -45,8 +45,7 @@ Datum pg_isolation_test_session_is_blocked(PG_FUNCTION_ARGS) {
   int num_blocking_pids;
   int i, j;
 
-  proc = BackendPidGetProc(blocked_pid);
-  if (proc == NULL)
+  if (session_by_pid(blocked_pid) == nullptr)
     PG_RETURN_BOOL(false); /* session gone: definitely unblocked */
 
   /* Validate the passed-in array */

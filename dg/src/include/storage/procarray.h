@@ -19,10 +19,10 @@
 #include "utils/snapshot.h"
 
 extern void ProcArrayShmemInit(void);
-extern void ProcArrayAdd(PGPROC *proc);
-extern void ProcArrayRemove(PGPROC *proc, TransactionId latestXid);
+extern void ProcArrayAdd(void);
+extern void ProcArrayRemove(void);
 
-extern void ProcArrayEndTransaction(PGPROC *proc, TransactionId latestXid);
+extern void ProcArrayEndTransaction(TransactionId latestXid);
 
 extern int GetMaxSnapshotXidCount(void);
 extern int GetMaxSnapshotSubxidCount(void);
@@ -31,12 +31,9 @@ extern Snapshot GetSnapshotData(Snapshot snapshot);
 
 extern bool ProcArrayInstallImportedXmin(TransactionId xmin,
                                          VirtualTransactionId *sourcevxid);
-extern bool ProcArrayInstallRestoredXmin(TransactionId xmin, PGPROC *proc);
 
 extern bool TransactionIdIsInProgress(TransactionId xid);
 
-extern PGPROC *ProcNumberGetProc(int procNumber);
-extern PGPROC *BackendPidGetProc(int pid);
 
 extern bool CountOtherDBBackends(Oid databaseId, int *nbackends,
                                  int *nprepared);

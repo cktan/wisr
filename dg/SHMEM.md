@@ -26,9 +26,9 @@ procsignal barriers (66); `barrier.c` (10); shared invalidation,
 `sinval.c` and `sinvaladt.c` (146).
 
 What is left is built at start by `CreateOrAttachShmemStructs()`
-(storage/ipc `ipci.c`): the init list of `varsup`, the PGPROCs
-and the proc array. The lock manager is gone (step 156), and
-the LWLocks and semaphores (step 157).
+(storage/ipc `ipci.c`): the init list of `varsup` and the
+session registry. The lock manager is gone (step 156), the
+LWLocks and semaphores (step 157), and PGPROC (step 159).
 
 ## 2. Allocation: a registry of named blocks
 
@@ -42,7 +42,6 @@ directory fixed in size ahead of time.
 | Block | Made in | Holds | Guard |
 | --- | --- | --- | --- |
 | TransamVariables | access/transam `varsup.c` | the snapshot's constants | set before threads start |
-| Proc Header, PGPROC structures | storage/lmgr `proc.c` | a PGPROC a session, free lists | `pcb->proc_struct_mutex` |
 | Proc Array | storage/ipc `procarray.c:308` | pgprocnos[MaxBackends] | ProcArrayLock |
 | ProcSignal | storage/ipc `procsignal.c:95` | a slot a session, cancel keys | pss_mutex |
 
@@ -60,9 +59,7 @@ since step 27, are gone (step 157).
 - **To replace**: each block a typed field of `pcb_t`, made by
   the postmaster before the first thread starts (`CODE.md` §3).
   Then `AttachSharedMemoryStructs()`, the registry, the
-  `*ShmemSize()` functions and dynahash's shared mode go. A
-  PGPROC must not move: pointers to it are held everywhere, so
-  its container is allocated once or keeps addresses stable.
+  `*ShmemSize()` functions and dynahash's shared mode go.
 
 ## 3. Locks
 
@@ -131,13 +128,15 @@ switches between (`SwitchToSharedLatch()`), which are one bit.
   versions and epoch (§5.1). A virtual xid's local part comes
   from one counter for the process (`pcb_t::next_lxid`), where
   it came from the queue's per-slot state.
-- **PGPROC** (storage/lmgr `proc.c`). One a session: its
-  virtual xid, its xmin, its database and role; its lock
-  waits, semaphore and fast-path slots are gone (steps 156,
-  157), and its latch and cancel key (158): a session is
-  interrupted, and a cancel request matched, through its
-  record. A slot, reused by the next session. **To replace**:
-  what is left moves out (§5.2), and the slots go.
+- **PGPROC is gone** (`WORKNOTE.md` step 159), with
+  `ProcGlobal` and its free list. Its lock waits, semaphore and
+  fast-path slots went with the lock manager and the LWLocks
+  (steps 156, 157), its latch and cancel key with step 158: a
+  session is interrupted, and a cancel request matched, through
+  its record (§5.2). What was left is the session's own: its
+  number is its thread's id (`MyProcNumber`, `MyProcPid`), and
+  its transaction's local id and xmin are its tcb's.
+  `max_connections` is the registry's limit.
 - **The proc array** (storage/ipc `procarray.c`). Mostly dead:
   no xid is ever assigned (step 45), and a snapshot is a
   constant, made with no lock and no scan of the array, and
@@ -154,8 +153,8 @@ switches between (`SwitchToSharedLatch()`), which are one bit.
 - **ProcSignal is gone** (`WORKNOTE.md` step 147). Its one
   reason left, `pg_log_backend_memory_contexts()`, is an
   interrupt bit of its own, `INTERRUPT_LOG_MEMORY`; a session's
-  cancel key is in its PGPROC, under `pcb->cancel_key_mutex`,
-  until PGPROC becomes the session record. storage/ipc
+  cancel key is in its record, under `pcb->cancel_key_mutex`
+  (step 158). storage/ipc
   `procsignal.c` keeps the interrupt bits' calls and the cancel
   request.
 - **PMSignalState is gone** (`WORKNOTE.md` step 148). Its quit
@@ -300,10 +299,11 @@ an object of its own instead.
 
 - **A session has a record**, made when it registers and owned
   by `std::shared_ptr`: an id from a counter for the process,
-  never reused, as neither a pid nor a slot is; its pid; its
-  PGPROC; its database; and `ended`, an atomic set as it leaves
-  the registry. What one session reads of another is in the
-  record, set before it registers and fixed after, or atomic.
+  never reused, as a pid is; its pid; its thread; its database
+  and role; its cancel key (step 158); and `ended`, an atomic
+  set as it leaves the registry. What one session reads of
+  another is in the record, set before it registers and fixed
+  after, or atomic, or under a mutex.
 - **The registry is the pcb's**: a mutex, and the records of
   the sessions registered, by pid. A session registers where it
   joined the proc array (`InitProcessPhase2()`) and leaves where
@@ -320,17 +320,10 @@ an object of its own instead.
   nothing reads, `ProcGlobal->xids`, `subxidStates` and
   `statusFlags`, each PGPROC's offset into them, and the
   `XidCache`.
-- **`pg_blocking_pids()` until the lock manager goes**: it keeps
-  the record while it reads the session's lock state from its
-  PGPROC under the partition locks, and reads no state of a
-  session whose record is `ended`. A session releases its locks,
-  which takes the partition locks, before it leaves the registry,
-  and its PGPROC is another's only after that: so while the
-  record is not `ended`, its PGPROC is its own, and what is read
-  of it is what the partition locks guard. With the lock manager
-  in sm (§7, step 4), the answer comes from sm1's lock table,
-  which knows who waits for whom, and no session reads another's
-  PGPROC.
+- **`pg_blocking_pids()`** names the holders of an advisory lock
+  a session waits for, from digres's own table (steps 153,
+  156). With sm1's lock listing (§7, step 4) it names sm's too,
+  from sm1's lock table, which knows who waits for whom.
 
 ## 6. What is left of modules removed
 
@@ -341,10 +334,9 @@ has a caller still, and goes with the step that removes it:
   `WORKNOTE.md` step 150), the proc array's group XID clearing,
   the horizons `ComputeXidHorizons()` and `GlobalVisTestFor()`
   computed and the replication slots' xmin fields they read are
-  gone (step 151). Left, to go with the proc array: the
-  `XidCache` and the dense arrays `ProcGlobal->xids`,
-  `subxidStates` and `statusFlags`, which `ProcArrayAdd()` and
-  `ProcArrayRemove()` keep and nothing reads.
+  gone (step 151), and the `XidCache` and the dense arrays
+  `ProcGlobal->xids`, `subxidStates` and `statusFlags` with
+  the session registry (step 152).
 - **Gone with the lock manager** (`WORKNOTE.md` step 156): lock
   groups, and the page, extension and apply-transaction locks.
 - **Kept, for extensions**: `shmem_request_hook` and
@@ -376,8 +368,8 @@ has a caller still, and goes with the step that removes it:
    gone (step 154), nothing left to take a lock (155), the
    lock manager gone (156), the LWLocks and `posix_sema.c`
    (157), interrupts and cancels through the session record
-   (158); then PGPROC, whose parts the session record takes,
-   and `pg_blocking_pids()` asks sm1's lock table.
+   (158), PGPROC gone (159); then `pg_blocking_pids()` and
+   `pg_lock_status()` ask sm1's lock table.
 5. **The registry** of §2, once each block is a pcb field.
 
 Each step is checked by the full suite and by `make tsan`;

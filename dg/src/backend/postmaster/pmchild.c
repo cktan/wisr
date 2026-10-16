@@ -82,7 +82,7 @@ void InitPostmasterChildSlots(void) {
    * might still be authenticating; they might fail auth, or some existing
    * backend might exit before the auth cycle is completed.  The exact
    * MaxConnections limit is enforced when a new backend tries to join the
-   * PGPROC array.
+   * session registry.
    *
    * WAL senders start out as regular backends, so they share the same pool.
    */

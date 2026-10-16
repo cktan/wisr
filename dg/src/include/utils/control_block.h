@@ -99,9 +99,6 @@ typedef struct pcb_t {
   /* guc.c: postgresql.auto.conf, rewritten by one ALTER SYSTEM at a time */
   std::mutex auto_file_mutex;
 
-  /* proc.c: the free list of PGPROCs */
-  std::mutex proc_struct_mutex;
-
   /* session_registry.c, procsignal.c: guards each record's cancel key */
   std::mutex cancel_key_mutex;
 
@@ -126,6 +123,13 @@ typedef struct tcb_t {
   std::shared_ptr<session_record_t> session;
   /* advisory_lock.c: the keys this session holds, made at its first lock */
   std::unique_ptr<advisory_state_t, advisory_state_free_t> advisory;
+  /*
+   * xact.c, procarray.c, snapmgr.c: this session's transaction's local id,
+   * a virtual xid's low part, and its xmin, both invalid between
+   * transactions; its PGPROC's once (dg/WORKNOTE.md step 159)
+   */
+  uint32 lxid = 0;
+  uint32 xmin = 0;
 } tcb_t;
 
 extern pcb_t *pcb;

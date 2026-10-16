@@ -24,27 +24,22 @@
 #include "storage/shmem.h"
 #include "utils/timestamp.h"
 
-/* struct PGPROC is declared in proc.h, but must forward-reference it */
-typedef struct PGPROC PGPROC;
-
 /*
  * Top-level transactions are identified by VirtualTransactionIDs comprising
- * PGPROC fields procNumber and lxid.  For recovered prepared transactions, the
- * LocalTransactionId is an ordinary XID; LOCKTAG_VIRTUALTRANSACTION never
- * refers to that kind.  These are guaranteed unique over the short term, but
- * will be reused after a database restart or XID wraparound; hence they
- * should never be stored on disk.
+ * the session's number, its thread's id, and its tcb's lxid.  For recovered
+ * prepared transactions, the LocalTransactionId is an ordinary XID;
+ * LOCKTAG_VIRTUALTRANSACTION never refers to that kind.  These are guaranteed
+ * unique over the short term, but will be reused after a database restart or
+ * XID wraparound; hence they should never be stored on disk.
  *
  * Note that struct VirtualTransactionId can not be assumed to be atomically
  * assignable as a whole.  However, type LocalTransactionId is assumed to
  * be atomically assignable, and the proc number doesn't change often enough
  * to be a problem, so we can fetch or assign the two fields separately.
- * We deliberately refrain from using the struct within PGPROC, to prevent
- * coding errors from trying to use struct assignment with it.
  */
 typedef struct {
-  ProcNumber procNumber;                 /* proc number of the PGPROC */
-  LocalTransactionId localTransactionId; /* lxid from PGPROC */
+  ProcNumber procNumber;                 /* the session's number */
+  LocalTransactionId localTransactionId; /* its transaction's lxid */
 } VirtualTransactionId;
 
 #define InvalidLocalTransactionId		0
