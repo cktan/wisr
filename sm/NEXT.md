@@ -116,7 +116,7 @@ Owed, and blocking nothing above:
   `../dg/WORKNOTE.md` step 177): a DEFERRABLE one is refused,
   as a row trigger on a table in sm is given its rows from a
   store that lasts only the statement; `pg_constraint` lists
-  none, so `\d` does not show them; `rel` has no verbs for them.
+  none, so `\d` does not show them.
 - **What PostgreSQL's isolation specs found**
   (`../dg/test/isolation_specs.txt`, `../dg/WORKNOTE.md` step
   169), beyond the key-share modes above: `char(n)` is not a

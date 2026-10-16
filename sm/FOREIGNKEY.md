@@ -1,8 +1,9 @@
 # FOREIGNKEY — foreign keys: sm3 keeps them, the host checks them
 
 **Status: built**: sm3's part and `sm.h`'s (§3 to §6,
-`sm3/test/test_fkey.cc`), and digres's (§8, `../dg/WORKNOTE.md`
-step 177). Not yet: `rel` verbs for them, and a DEFERRABLE one.
+`sm3/test/test_fkey.cc`), digres's (§8, `../dg/WORKNOTE.md`
+step 177), and `rel`'s verbs (`rel/REL.md`,
+`rel/test/test_fkey.rel`). Not yet: a DEFERRABLE one.
 
 `DESIGN.md` §5 settles whose a foreign key is: the host's.
 PostgreSQL checks one with triggers that run queries, and the

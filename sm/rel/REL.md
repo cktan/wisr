@@ -482,6 +482,48 @@ and cannot be scanned; it can only be dropped.
 (assert-eq (index-state idx_users_email) :valid)
 ```
 
+### `(fkey-create name (table child) (columns c...) (references parent p...) ...)`
+Adds the foreign key `name` to the table `child`
+(`../FOREIGNKEY.md`). sm keeps it and checks no row: that is
+the host's. Without parent columns it takes the parent's primary
+key. Its index is the parent's unique index whose keys are the
+referenced columns, in any order, unless `:index` names one.
+
+Options:
+- `:index idx` -- the parent's index it uses.
+- `:on-delete` and `:on-update` -- `:no-action` (the default),
+  `:restrict`, `:cascade`, `:set-null` or `:set-default`; kept,
+  not acted on.
+- `:match :full` -- MATCH FULL; `:simple` is the default.
+- `:not-valid true` -- record the rows there as not checked.
+
+```janet
+(fkey-create orders_user (table orders) (columns user_id)
+  (references users id) :on-delete :cascade)
+```
+
+### `(fkey-drop table name)`, `(fkey-validate table name)`, `(fkey-rename table name new-name)`
+Drop the foreign key `name` of `table`; mark its rows checked;
+rename it. A taken name is `ERR_DUPKEY`.
+
+### `(fkeys table)`
+The table's foreign keys, each a struct of its `:name`,
+`:columns`, the table it `:references` and its `:ref-columns`,
+`:on-delete`, `:on-update`, `:match` and `:validated`.
+
+```janet
+(fkeys orders)
+# => [{:name "orders_user" :columns [user_id] :references "users"
+#      :ref-columns [id] :on-delete :cascade :on-update :no-action
+#      :match :simple :validated true}]
+```
+
+### `(referenced-by table)`
+The foreign keys that reference `table`, its own among them, each
+`[child-table fkey-name]`, sorted. While there is one,
+`table-drop` of the table and `index-drop` of the index it uses
+fail with `ERR_INUSE`.
+
 ---
 
 ## 6. Data Manipulation (DML) & Scans

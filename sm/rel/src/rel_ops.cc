@@ -1136,6 +1136,304 @@ static Janet cfun_index_drop(int32_t argc, Janet *argv) {
   return janet_wrap_nil();
 }
 
+/* The action fkey-create's :on-delete or :on-update names, as sm keeps it. */
+static char fkey_action(const std::string &name) {
+  if (name == "no-action")
+    return 'a';
+  if (name == "restrict")
+    return 'r';
+  if (name == "cascade")
+    return 'c';
+  if (name == "set-null")
+    return 'n';
+  if (name == "set-default")
+    return 'd';
+  janet_panicf("fkey-create: no action '%s'", name.c_str());
+}
+
+/* An action as fkeys prints it. */
+static const char *fkey_action_name(char a) {
+  switch (a) {
+  case 'r':
+    return "restrict";
+  case 'c':
+    return "cascade";
+  case 'n':
+    return "set-null";
+  case 'd':
+    return "set-default";
+  default:
+    return "no-action";
+  }
+}
+
+/* The place of the live column name in def, for op; a panic if none. */
+static int32_t column_place(const sm_table_def_t &def, const std::string &name,
+                            const char *op) {
+  for (size_t i = 0; i < def.columns.size(); i++) {
+    if (!def.columns[i].dropped && def.columns[i].name == name) {
+      return static_cast<int32_t>(i);
+    }
+  }
+  janet_panicf("%s: column '%s' not found in table '%s'", op, name.c_str(),
+               def.name.c_str());
+}
+
+/* The foreign key named name of the table def, for op; a panic if none. */
+static const sm_fkey_def_t &need_fkey(const sm_table_def_t &def,
+                                      const std::string &name, const char *op) {
+  for (const sm_fkey_def_t &f : def.fkeys) {
+    if (f.name == name) {
+      return f;
+    }
+  }
+  janet_panicf("%s: no foreign key '%s' of table '%s'", op, name.c_str(),
+               def.name.c_str());
+}
+
+/*
+ * (fkey-create name (table child) (columns c...) (references parent [p...])
+ *  [:index idx] [:on-delete action] [:on-update action] [:match :full]
+ *  [:not-valid true]): the child's foreign key to the parent
+ * (FOREIGNKEY.md). The parent's columns are its primary key's if none are
+ * named, and its index the unique one whose keys they are, unless :index
+ * names one. sm takes both tables' locks X; it reads no row, so :not-valid
+ * is only what the catalog records.
+ */
+static Janet cfun_fkey_create(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 2);
+  session_ctx_t *s = require_session();
+  sm_fkey_def_t def;
+  def.name = identifier_of(argv[0]);
+  std::string child, parent, index;
+  std::vector<std::string> columns, ref_columns;
+
+  const Janet *clauses = nullptr;
+  int32_t n = 0;
+  if (!janet_indexed_view(argv[1], &clauses, &n)) {
+    janet_panic("fkey-create: its clauses are a list");
+  }
+  for (int32_t i = 0; i < n; i++) {
+    if (janet_checktype(clauses[i], JANET_KEYWORD)) {
+      std::string kw = identifier_of(clauses[i]);
+      if (i + 1 >= n) {
+        janet_panicf("fkey-create: :%s takes a value", kw.c_str());
+      }
+      Janet v = clauses[++i];
+      if (kw == "index") {
+        index = identifier_of(v);
+      } else if (kw == "on-delete") {
+        def.on_delete = fkey_action(identifier_of(v));
+      } else if (kw == "on-update") {
+        def.on_update = fkey_action(identifier_of(v));
+      } else if (kw == "match") {
+        def.match = identifier_of(v) == "full" ? 'f' : 's';
+      } else if (kw == "not-valid") {
+        def.validated = !janet_truthy(v);
+      } else {
+        janet_panicf("fkey-create: no option :%s", kw.c_str());
+      }
+      continue;
+    }
+    const Janet *items = nullptr;
+    int32_t nitems = 0;
+    if (!janet_indexed_view(clauses[i], &items, &nitems) || nitems < 1) {
+      janet_panic("fkey-create: a clause is (table ...), (columns ...) or "
+                  "(references ...)");
+    }
+    std::string head = identifier_of(items[0]);
+    if (head == "table" && nitems == 2) {
+      child = identifier_of(items[1]);
+    } else if (head == "columns") {
+      for (int32_t j = 1; j < nitems; j++) {
+        columns.push_back(identifier_of(items[j]));
+      }
+    } else if (head == "references" && nitems >= 2) {
+      parent = identifier_of(items[1]);
+      for (int32_t j = 2; j < nitems; j++) {
+        ref_columns.push_back(identifier_of(items[j]));
+      }
+    } else {
+      janet_panicf("fkey-create: no clause (%s ...)", head.c_str());
+    }
+  }
+  if (child.empty() || parent.empty()) {
+    janet_panic("fkey-create: (table ...) and (references ...) are required");
+  }
+
+  // The definitions, read as sm keeps them; sm locks both tables itself.
+  const sm_table_def_t &cdef =
+      *need_table(s, child, SM_LOCKMODE_IS, "fkey-create")->def;
+  const sm_table_def_t &pdef =
+      *need_table(s, parent, SM_LOCKMODE_IS, "fkey-create")->def;
+  for (const std::string &c : columns) {
+    def.columns.push_back(column_place(cdef, c, "fkey-create"));
+  }
+  const sm_index_def_t *x = nullptr;
+  if (ref_columns.empty()) {
+    for (const sm_index_def_t &i : pdef.indexes) {
+      x = i.primary ? &i : x;
+    }
+    if (x == nullptr) {
+      janet_panicf("fkey-create: table '%s' has no primary key",
+                   parent.c_str());
+    }
+    def.ref_columns = x->key_attnums;
+  } else {
+    for (const std::string &c : ref_columns) {
+      def.ref_columns.push_back(column_place(pdef, c, "fkey-create"));
+    }
+  }
+  // The index: the one named, or a unique one on the columns, any order.
+  for (const sm_index_def_t &i : pdef.indexes) {
+    if (!index.empty()) {
+      x = i.name == index ? &i : x;
+      continue;
+    }
+    bool fits = x == nullptr && i.unique &&
+                i.key_attnums.size() == def.ref_columns.size();
+    for (int32_t a : i.key_attnums) {
+      fits = fits && std::find(def.ref_columns.begin(), def.ref_columns.end(),
+                               a) != def.ref_columns.end();
+    }
+    x = fits ? &i : x;
+  }
+  if (x == nullptr) {
+    janet_panicf("fkey-create: no index of '%s' for the referenced columns",
+                 parent.c_str());
+  }
+  def.ref_table = pdef.oid;
+  def.ref_index = x->oid;
+  uint64_t oid = 0;
+  if (sm_cat_create_fkey(s->session, cdef.oid, def, &oid) != 0) {
+    panic_sm_error("fkey-create");
+  }
+  return janet_wrap_nil();
+}
+
+/* The foreign key name of the table tbl, with its table, for op. */
+static std::pair<uint64_t, uint64_t> fkey_of(session_ctx_t *s,
+                                             const std::string &tbl,
+                                             const std::string &name,
+                                             const char *op) {
+  const sm_table_def_t &def = *need_table(s, tbl, SM_LOCKMODE_IS, op)->def;
+  return {def.oid, need_fkey(def, name, op).oid};
+}
+
+/* (fkey-drop table name) */
+static Janet cfun_fkey_drop(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 2);
+  session_ctx_t *s = require_session();
+  auto [table, fkey] =
+      fkey_of(s, identifier_of(argv[0]), identifier_of(argv[1]), "fkey-drop");
+  if (sm_cat_drop_fkey(s->session, table, fkey) != 0) {
+    panic_sm_error("fkey-drop");
+  }
+  return janet_wrap_nil();
+}
+
+/* (fkey-validate table name): its rows checked, as the host says. */
+static Janet cfun_fkey_validate(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 2);
+  session_ctx_t *s = require_session();
+  auto [table, fkey] = fkey_of(s, identifier_of(argv[0]),
+                               identifier_of(argv[1]), "fkey-validate");
+  if (sm_cat_validate_fkey(s->session, table, fkey) != 0) {
+    panic_sm_error("fkey-validate");
+  }
+  return janet_wrap_nil();
+}
+
+/* (fkey-rename table name new_name) */
+static Janet cfun_fkey_rename(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 3);
+  session_ctx_t *s = require_session();
+  auto [table, fkey] =
+      fkey_of(s, identifier_of(argv[0]), identifier_of(argv[1]), "fkey-rename");
+  std::string name = identifier_of(argv[2]);
+  if (sm_cat_rename_fkey(s->session, table, fkey, name.c_str()) != 0) {
+    panic_sm_error("fkey-rename");
+  }
+  return janet_wrap_nil();
+}
+
+/* The name of the table oid, as the session sees it; "?" if none. */
+static std::string table_name_of(session_ctx_t *s, uint64_t oid) {
+  sm_table_def_t def;
+  return sm_cat_table_def_oid(s->session, oid, def) == 0 ? def.name : "?";
+}
+
+/*
+ * (fkeys table): the table's foreign keys, each a struct of its name,
+ * columns, the table and columns it references, its actions, match type
+ * and whether its rows were checked.
+ */
+static Janet cfun_fkeys(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 1);
+  session_ctx_t *s = require_session();
+  const sm_table_def_t &def =
+      *need_table(s, identifier_of(argv[0]), SM_LOCKMODE_IS, "fkeys")->def;
+  std::vector<Janet> out;
+  for (const sm_fkey_def_t &f : def.fkeys) {
+    sm_table_def_t pdef;
+    if (sm_cat_table_def_oid(s->session, f.ref_table, pdef) != 0) {
+      panic_sm_error("fkeys");
+    }
+    std::vector<Janet> cols, refs;
+    for (int32_t a : f.columns) {
+      cols.push_back(janet_csymbolv(def.columns[a].name.c_str()));
+    }
+    for (int32_t a : f.ref_columns) {
+      refs.push_back(janet_csymbolv(pdef.columns[a].name.c_str()));
+    }
+    JanetKV *st = janet_struct_begin(8);
+    janet_struct_put(st, janet_ckeywordv("name"),
+                     janet_cstringv(f.name.c_str()));
+    janet_struct_put(st, janet_ckeywordv("columns"), tuple_of(cols));
+    janet_struct_put(st, janet_ckeywordv("references"),
+                     janet_cstringv(pdef.name.c_str()));
+    janet_struct_put(st, janet_ckeywordv("ref-columns"), tuple_of(refs));
+    janet_struct_put(st, janet_ckeywordv("on-delete"),
+                     janet_ckeywordv(fkey_action_name(f.on_delete)));
+    janet_struct_put(st, janet_ckeywordv("on-update"),
+                     janet_ckeywordv(fkey_action_name(f.on_update)));
+    janet_struct_put(st, janet_ckeywordv("match"),
+                     janet_ckeywordv(f.match == 'f' ? "full" : "simple"));
+    janet_struct_put(st, janet_ckeywordv("validated"),
+                     janet_wrap_boolean(f.validated));
+    out.push_back(janet_wrap_struct(janet_struct_end(st)));
+  }
+  return tuple_of(out);
+}
+
+/*
+ * (referenced-by table): the foreign keys that reference the table, its
+ * own among them, each [child-table fkey-name], sorted.
+ */
+static Janet cfun_referenced_by(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 1);
+  session_ctx_t *s = require_session();
+  const sm_table_def_t &def =
+      *need_table(s, identifier_of(argv[0]), SM_LOCKMODE_IS, "referenced-by")
+           ->def;
+  std::vector<std::pair<std::string, std::string>> refs;
+  for (const sm_fkey_ref_t &r : def.referenced_by) {
+    uint64_t table = 0;
+    sm_fkey_def_t f;
+    if (sm_cat_fkey(s->session, r.fkey, &table, &f) != 0) {
+      panic_sm_error("referenced-by");
+    }
+    refs.push_back({table_name_of(s, table), f.name});
+  }
+  std::sort(refs.begin(), refs.end());
+  std::vector<Janet> out;
+  for (const auto &[t, f] : refs) {
+    out.push_back(
+        tuple_of({janet_cstringv(t.c_str()), janet_cstringv(f.c_str())}));
+  }
+  return tuple_of(out);
+}
+
 /* (index-wait idx_name) */
 static Janet cfun_index_wait(int32_t argc, Janet *argv) {
   janet_fixarity(argc, 1);
@@ -1896,6 +2194,12 @@ static const JanetReg s_rel_cfuns[] = {
     {"list-tables", cfun_list_tables,
      "(list-tables) -- the table names in public, sorted"},
     {"_describe-table", cfun_describe_table, "internal"},
+    {"_fkey-create", cfun_fkey_create, "internal"},
+    {"_fkey-drop", cfun_fkey_drop, "internal"},
+    {"_fkey-validate", cfun_fkey_validate, "internal"},
+    {"_fkey-rename", cfun_fkey_rename, "internal"},
+    {"_fkeys", cfun_fkeys, "internal"},
+    {"_referenced-by", cfun_referenced_by, "internal"},
 
     {"_insert", cfun_insert, "internal"},
     {"_read", cfun_read, "internal"},
@@ -1963,6 +2267,24 @@ static const char *s_prelude = R"janet(
 
 (defmacro describe-table [name & flags]
   ~(_describe-table (string ',name) ,;flags))
+
+(defmacro fkey-create [name & body]
+  ~(_fkey-create (string ',name) ',body))
+
+(defmacro fkey-drop [tbl name]
+  ~(_fkey-drop (string ',tbl) (string ',name)))
+
+(defmacro fkey-validate [tbl name]
+  ~(_fkey-validate (string ',tbl) (string ',name)))
+
+(defmacro fkey-rename [tbl name new-name]
+  ~(_fkey-rename (string ',tbl) (string ',name) (string ',new-name)))
+
+(defmacro fkeys [tbl]
+  ~(_fkeys (string ',tbl)))
+
+(defmacro referenced-by [tbl]
+  ~(_referenced-by (string ',tbl)))
 
 (defmacro insert [tbl row]
   ~(_insert (string ',tbl) ,row))
