@@ -38,10 +38,6 @@ extern bool TransactionIdIsInProgress(TransactionId xid);
 extern PGPROC *ProcNumberGetProc(int procNumber);
 extern PGPROC *BackendPidGetProc(int pid);
 
-extern VirtualTransactionId *
-GetCurrentVirtualXIDs(TransactionId limitXmin, bool excludeXmin0, bool allDbs,
-                      int excludeVacuum, int *nvxids);
-
 extern bool CountOtherDBBackends(Oid databaseId, int *nbackends,
                                  int *nprepared);
 extern void TerminateOtherDBBackends(Oid databaseId);

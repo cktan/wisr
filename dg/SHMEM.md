@@ -73,10 +73,9 @@ Beside the registry: the main LWLock array
 - **LWLocks** (storage/lmgr `lwlock.c`). Short critical
   sections, held with interrupts held off. A waiter sleeps on its
   PGPROC's POSIX semaphore (port `posix_sema.c`); nothing cuts
-  that sleep short. Taken still: ProcArray, the lock manager's
-  partitions and each PGPROC's
-  `fpInfoLock`; and InjectionPoint, a build option's. **To
-  replace**: a `std::mutex` or
+  that sleep short. Taken still: InjectionPoint alone, a build
+  option's (`WORKNOTE.md` step 156). **To replace**: a
+  `std::mutex` or
   `std::shared_mutex` held by `held_lock_t`
   (`storage/held_lock.h`), which holds interrupts off as an
   LWLock does and lets go as an error unwinds it; AutoFile is
@@ -98,16 +97,15 @@ Beside the registry: the main LWLock array
 - **`pg_atomic_*` and the barriers**: in `lwlock.c`, `proc.c`,
   `procarray.c`, `procsignal.c`, postmaster `backend_thread.c`.
   **To replace**: `std::atomic` with explicit orders.
-- **The heavyweight lock manager** (storage/lmgr `lock.c`,
-  `lmgr.c`, `deadlock.c`, `proc.c`'s `ProcSleep()`) is live.
-  A user's table is locked by sm (`locked_by_sm()`, `lmgr.c`),
-  and a catalog by nothing, as its rows are compiled in and
-  never change (`WORKNOTE.md` step 154); no transaction takes
-  a lock of it, and its waits wait for nothing (step 155).
-  What is left reads it: `pg_lock_status()`,
-  `pg_blocking_pids()`, and the release at a transaction's
-  end. **To replace**: the lock manager, the deadlock
-  detector, the partition LWLocks and the fast-path arrays go.
+- **The heavyweight lock manager is gone** (`WORKNOTE.md`
+  step 156): `lock.c`, `deadlock.c`, `proc.c`'s `ProcSleep()`,
+  the partition LWLocks and the fast-path arrays. A user's
+  table is locked by sm (`locked_by_sm()`, storage/lmgr
+  `lmgr.c`), a catalog by nothing, as its rows are compiled in
+  and never change (step 154), and what waited on a lock waits
+  for nothing (step 155). `lmgr.c`'s entry points are left, as
+  sm's calls or no-ops. `pg_lock_status()` lists no lock, and
+  `pg_blocking_pids()` names an advisory lock's holders.
 - **Advisory locks** are in a table of digres's own
   (storage/lmgr `advisory_lock.c`, `WORKNOTE.md` step 153), not
   sm's: they guard nothing stored (`PLAN.md` §7). A mutex, the
@@ -380,8 +378,8 @@ has a caller still, and goes with the step that removes it:
    session registry (§5.2, step 152).
 4. **The lock manager**: advisory locks into a table of
    digres's own (`WORKNOTE.md` step 153), catalog locks
-   gone (step 154), nothing left to take a lock (155); then
-   the lock manager, the remaining LWLocks,
+   gone (step 154), nothing left to take a lock (155), the
+   lock manager gone (156); then the remaining LWLocks,
    `posix_sema.c` and PGPROC, whose parts the session record
    takes; `pg_blocking_pids()` asks sm1's lock table.
 5. **The registry** of §2, once each block is a pcb field.

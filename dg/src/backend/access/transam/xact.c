@@ -1149,12 +1149,6 @@ static void AbortTransaction(void) {
   LWLockReleaseAll();
 
   /*
-   * Also clean up any open wait for lock, since the lock manager will choke
-   * if we try to wait for another lock before doing this.
-   */
-  LockErrorCleanup();
-
-  /*
    * If any timeout events are still active, make sure the timeout interrupt
    * is scheduled.  This covers possible loss of a timeout interrupt due to
    * longjmp'ing out of the SIGINT handler (see notes in handle_sig_alarm).
@@ -3023,12 +3017,6 @@ static void AbortSubTransaction(void) {
    * Buffer locks, for example?  I don't think so but I'm not sure.
    */
   LWLockReleaseAll();
-
-  /*
-   * Also clean up any open wait for lock, since the lock manager will choke
-   * if we try to wait for another lock before doing this.
-   */
-  LockErrorCleanup();
 
   /*
    * If any timeout events are still active, make sure the timeout interrupt

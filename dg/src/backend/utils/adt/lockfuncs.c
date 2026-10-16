@@ -12,419 +12,43 @@
  */
 #include "postgres.h"
 
-#include "access/htup_details.h"
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "storage/advisory_lock.h"
-#include "storage/lock.h"
-#include "storage/proc.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
-#include "utils/timestamp.h"
-
-/*
- * This must match enum LockTagType!  Also, be sure to document any changes
- * in the docs for the pg_locks view and update the WaitEventLOCK section in
- * src/backend/utils/activity/wait_event_names.txt.
- */
-const char *const LockTagTypeNames[] = {
-    "relation", "extend",        "frozenid",   "page",
-    "tuple",    "transactionid", "virtualxid", "spectoken",
-    "object",   "userlock",      "advisory",   "applytransaction"};
-
-StaticAssertDecl(lengthof(LockTagTypeNames) == (LOCKTAG_LAST_TYPE + 1),
-                 "array length mismatch");
-
-/* Working status for pg_lock_status */
-typedef struct {
-  LockData *lockData; /* state data from lmgr */
-  int currIdx;        /* current PROCLOCK index */
-} PG_Lock_Status;
-
-/* Number of columns in pg_locks output */
-#define NUM_LOCK_STATUS_COLUMNS		16
-
-/*
- * VXIDGetDatum - Construct a text representation of a VXID
- *
- * This is currently only used in pg_lock_status, so we put it here.
- */
-static Datum VXIDGetDatum(ProcNumber procNumber, LocalTransactionId lxid) {
-  /*
-   * The representation is "<procNumber>/<lxid>", decimal and unsigned
-   * decimal respectively.  Note that elog.c also knows how to format a
-   * vxid.
-   */
-  char vxidstr[32];
-
-  snprintf(vxidstr, sizeof(vxidstr), "%d/%u", procNumber, lxid);
-
-  return CStringGetTextDatum(vxidstr);
-}
 
 /*
  * pg_lock_status - produce a view with one row per held or awaited lock mode
+ *
+ * No row: PostgreSQL's lock manager is gone (dg/WORKNOTE.md step 156).  A
+ * table's locks are sm's and an advisory lock is digres's own
+ * (storage/advisory_lock.h), and neither is listed yet.
  */
 Datum pg_lock_status(PG_FUNCTION_ARGS) {
   FuncCallContext *funcctx;
-  PG_Lock_Status *mystatus;
-  LockData *lockData;
 
-  if (SRF_IS_FIRSTCALL()) {
-    TupleDesc tupdesc;
-    MemoryContext oldcontext;
-
-    /* create a function context for cross-call persistence */
-    funcctx = SRF_FIRSTCALL_INIT();
-
-    /*
-     * switch to memory context appropriate for multiple function calls
-     */
-    oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
-
-    /* build tupdesc for result tuples */
-    /* this had better match function's declaration in pg_proc.h */
-    tupdesc = CreateTemplateTupleDesc(NUM_LOCK_STATUS_COLUMNS);
-    TupleDescInitEntry(tupdesc, (AttrNumber)1, "locktype", TEXTOID, -1, 0);
-    TupleDescInitEntry(tupdesc, (AttrNumber)2, "database", OIDOID, -1, 0);
-    TupleDescInitEntry(tupdesc, (AttrNumber)3, "relation", OIDOID, -1, 0);
-    TupleDescInitEntry(tupdesc, (AttrNumber)4, "page", INT4OID, -1, 0);
-    TupleDescInitEntry(tupdesc, (AttrNumber)5, "tuple", INT2OID, -1, 0);
-    TupleDescInitEntry(tupdesc, (AttrNumber)6, "virtualxid", TEXTOID, -1, 0);
-    TupleDescInitEntry(tupdesc, (AttrNumber)7, "transactionid", XIDOID, -1, 0);
-    TupleDescInitEntry(tupdesc, (AttrNumber)8, "classid", OIDOID, -1, 0);
-    TupleDescInitEntry(tupdesc, (AttrNumber)9, "objid", OIDOID, -1, 0);
-    TupleDescInitEntry(tupdesc, (AttrNumber)10, "objsubid", INT2OID, -1, 0);
-    TupleDescInitEntry(tupdesc, (AttrNumber)11, "virtualtransaction", TEXTOID,
-                       -1, 0);
-    TupleDescInitEntry(tupdesc, (AttrNumber)12, "pid", INT4OID, -1, 0);
-    TupleDescInitEntry(tupdesc, (AttrNumber)13, "mode", TEXTOID, -1, 0);
-    TupleDescInitEntry(tupdesc, (AttrNumber)14, "granted", BOOLOID, -1, 0);
-    TupleDescInitEntry(tupdesc, (AttrNumber)15, "fastpath", BOOLOID, -1, 0);
-    TupleDescInitEntry(tupdesc, (AttrNumber)16, "waitstart", TIMESTAMPTZOID, -1,
-                       0);
-
-    funcctx->tuple_desc = BlessTupleDesc(tupdesc);
-
-    /*
-     * Collect all the locking information that we will format and send
-     * out as a result set.
-     */
-    mystatus = (PG_Lock_Status *)palloc(sizeof(PG_Lock_Status));
-    funcctx->user_fctx = mystatus;
-
-    mystatus->lockData = GetLockStatusData();
-    mystatus->currIdx = 0;
-
-    MemoryContextSwitchTo(oldcontext);
-  }
-
+  if (SRF_IS_FIRSTCALL())
+    (void)SRF_FIRSTCALL_INIT();
   funcctx = SRF_PERCALL_SETUP();
-  mystatus = (PG_Lock_Status *)funcctx->user_fctx;
-  lockData = mystatus->lockData;
-
-  while (mystatus->currIdx < lockData->nelements) {
-    bool granted;
-    LOCKMODE mode = 0;
-    const char *locktypename;
-    char tnbuf[32];
-    Datum values[NUM_LOCK_STATUS_COLUMNS] = {0};
-    bool nulls[NUM_LOCK_STATUS_COLUMNS] = {0};
-    HeapTuple tuple;
-    Datum result;
-    LockInstanceData *instance;
-
-    instance = &(lockData->locks[mystatus->currIdx]);
-
-    /*
-     * Look to see if there are any held lock modes in this PROCLOCK. If
-     * so, report, and destructively modify lockData so we don't report
-     * again.
-     */
-    granted = false;
-    if (instance->holdMask) {
-      for (mode = 0; mode < MAX_LOCKMODES; mode++) {
-        if (instance->holdMask & LOCKBIT_ON(mode)) {
-          granted = true;
-          instance->holdMask &= LOCKBIT_OFF(mode);
-          break;
-        }
-      }
-    }
-
-    /*
-     * If no (more) held modes to report, see if PROC is waiting for a
-     * lock on this lock.
-     */
-    if (!granted) {
-      if (instance->waitLockMode != NoLock) {
-        /* Yes, so report it with proper mode */
-        mode = instance->waitLockMode;
-
-        /*
-         * We are now done with this PROCLOCK, so advance pointer to
-         * continue with next one on next call.
-         */
-        mystatus->currIdx++;
-      } else {
-        /*
-         * Okay, we've displayed all the locks associated with this
-         * PROCLOCK, proceed to the next one.
-         */
-        mystatus->currIdx++;
-        continue;
-      }
-    }
-
-    /*
-     * Form tuple with appropriate data.
-     */
-
-    if (instance->locktag.locktag_type <= LOCKTAG_LAST_TYPE)
-      locktypename = LockTagTypeNames[instance->locktag.locktag_type];
-    else {
-      snprintf(tnbuf, sizeof(tnbuf), "unknown %d",
-               (int)instance->locktag.locktag_type);
-      locktypename = tnbuf;
-    }
-    values[0] = CStringGetTextDatum(locktypename);
-
-    switch ((LockTagType)instance->locktag.locktag_type) {
-    case LOCKTAG_RELATION:
-    case LOCKTAG_RELATION_EXTEND:
-      values[1] = ObjectIdGetDatum(instance->locktag.locktag_field1);
-      values[2] = ObjectIdGetDatum(instance->locktag.locktag_field2);
-      nulls[3] = true;
-      nulls[4] = true;
-      nulls[5] = true;
-      nulls[6] = true;
-      nulls[7] = true;
-      nulls[8] = true;
-      nulls[9] = true;
-      break;
-    case LOCKTAG_DATABASE_FROZEN_IDS:
-      values[1] = ObjectIdGetDatum(instance->locktag.locktag_field1);
-      nulls[2] = true;
-      nulls[3] = true;
-      nulls[4] = true;
-      nulls[5] = true;
-      nulls[6] = true;
-      nulls[7] = true;
-      nulls[8] = true;
-      nulls[9] = true;
-      break;
-    case LOCKTAG_PAGE:
-      values[1] = ObjectIdGetDatum(instance->locktag.locktag_field1);
-      values[2] = ObjectIdGetDatum(instance->locktag.locktag_field2);
-      values[3] = UInt32GetDatum(instance->locktag.locktag_field3);
-      nulls[4] = true;
-      nulls[5] = true;
-      nulls[6] = true;
-      nulls[7] = true;
-      nulls[8] = true;
-      nulls[9] = true;
-      break;
-    case LOCKTAG_TUPLE:
-      values[1] = ObjectIdGetDatum(instance->locktag.locktag_field1);
-      values[2] = ObjectIdGetDatum(instance->locktag.locktag_field2);
-      values[3] = UInt32GetDatum(instance->locktag.locktag_field3);
-      values[4] = UInt16GetDatum(instance->locktag.locktag_field4);
-      nulls[5] = true;
-      nulls[6] = true;
-      nulls[7] = true;
-      nulls[8] = true;
-      nulls[9] = true;
-      break;
-    case LOCKTAG_TRANSACTION:
-      values[6] = TransactionIdGetDatum(instance->locktag.locktag_field1);
-      nulls[1] = true;
-      nulls[2] = true;
-      nulls[3] = true;
-      nulls[4] = true;
-      nulls[5] = true;
-      nulls[7] = true;
-      nulls[8] = true;
-      nulls[9] = true;
-      break;
-    case LOCKTAG_VIRTUALTRANSACTION:
-      values[5] = VXIDGetDatum(instance->locktag.locktag_field1,
-                               instance->locktag.locktag_field2);
-      nulls[1] = true;
-      nulls[2] = true;
-      nulls[3] = true;
-      nulls[4] = true;
-      nulls[6] = true;
-      nulls[7] = true;
-      nulls[8] = true;
-      nulls[9] = true;
-      break;
-    case LOCKTAG_SPECULATIVE_TOKEN:
-      values[6] = TransactionIdGetDatum(instance->locktag.locktag_field1);
-      values[8] = ObjectIdGetDatum(instance->locktag.locktag_field2);
-      nulls[1] = true;
-      nulls[2] = true;
-      nulls[3] = true;
-      nulls[4] = true;
-      nulls[5] = true;
-      nulls[7] = true;
-      nulls[9] = true;
-      break;
-    case LOCKTAG_APPLY_TRANSACTION:
-      values[1] = ObjectIdGetDatum(instance->locktag.locktag_field1);
-      values[8] = ObjectIdGetDatum(instance->locktag.locktag_field2);
-      values[6] = ObjectIdGetDatum(instance->locktag.locktag_field3);
-      values[9] = Int16GetDatum(instance->locktag.locktag_field4);
-      nulls[2] = true;
-      nulls[3] = true;
-      nulls[4] = true;
-      nulls[5] = true;
-      nulls[7] = true;
-      break;
-    case LOCKTAG_OBJECT:
-    case LOCKTAG_USERLOCK:
-    case LOCKTAG_ADVISORY:
-    default: /* treat unknown locktags like OBJECT */
-      values[1] = ObjectIdGetDatum(instance->locktag.locktag_field1);
-      values[7] = ObjectIdGetDatum(instance->locktag.locktag_field2);
-      values[8] = ObjectIdGetDatum(instance->locktag.locktag_field3);
-      values[9] = Int16GetDatum(instance->locktag.locktag_field4);
-      nulls[2] = true;
-      nulls[3] = true;
-      nulls[4] = true;
-      nulls[5] = true;
-      nulls[6] = true;
-      break;
-    }
-
-    values[10] = VXIDGetDatum(instance->vxid.procNumber,
-                              instance->vxid.localTransactionId);
-    if (instance->pid != 0)
-      values[11] = Int32GetDatum(instance->pid);
-    else
-      nulls[11] = true;
-    values[12] = CStringGetTextDatum(
-        GetLockmodeName(instance->locktag.locktag_lockmethodid, mode));
-    values[13] = BoolGetDatum(granted);
-    values[14] = BoolGetDatum(instance->fastpath);
-    if (!granted && instance->waitStart != 0)
-      values[15] = TimestampTzGetDatum(instance->waitStart);
-    else
-      nulls[15] = true;
-
-    tuple = heap_form_tuple(funcctx->tuple_desc, values, nulls);
-    result = HeapTupleGetDatum(tuple);
-    SRF_RETURN_NEXT(funcctx, result);
-  }
-
   SRF_RETURN_DONE(funcctx);
 }
 
 /*
  * pg_blocking_pids - produce an array of the PIDs blocking given PID
  *
- * The reported PIDs are those that hold a lock conflicting with blocked_pid's
- * current request (hard block), or are requesting such a lock and are ahead
- * of blocked_pid in the lock's wait queue (soft block).
- *
- * In parallel-query cases, we report all PIDs blocking any member of the
- * given PID's lock group, and the reported PIDs are those of the blocking
- * PIDs' lock group leaders.  This allows callers to compare the result to
- * lists of clients' pg_backend_pid() results even during a parallel query.
- *
- * Parallel query makes it possible for there to be duplicate PIDs in the
- * result (either because multiple waiters are blocked by same PID, or
- * because multiple blockers have same group leader PID).  We do not bother
- * to eliminate such duplicates from the result.
- *
- * We need not consider predicate locks here, since those don't block anything.
+ * The reported PIDs are those that hold an advisory lock conflicting with
+ * blocked_pid's wait for one (storage/advisory_lock.h).  A wait for a lock
+ * of sm's is not reported yet: sm1 lists no waits.
  */
 Datum pg_blocking_pids(PG_FUNCTION_ARGS) {
   int blocked_pid = PG_GETARG_INT32(0);
-  Datum *arrayelems;
-  int narrayelems;
-  BlockedProcsData *lockData; /* state data from lmgr */
-  int i, j;
-
-  /* Collect a snapshot of lock manager state */
-  lockData = GetBlockerStatusData(blocked_pid);
-  /* And the holders of the advisory lock it waits for, which are not in it */
   std::vector<int> advisory = advisory_blockers(blocked_pid);
+  Datum *arrayelems = (Datum *)palloc((advisory.size() + 1) * sizeof(Datum));
+  int narrayelems = 0;
 
-  /* We can't need more output entries than there are reported PROCLOCKs */
-  arrayelems =
-      (Datum *)palloc((lockData->nlocks + advisory.size()) * sizeof(Datum));
-  narrayelems = 0;
   for (int pid : advisory)
     arrayelems[narrayelems++] = Int32GetDatum(pid);
-
-  /* For each blocked proc in the lock group ... */
-  for (i = 0; i < lockData->nprocs; i++) {
-    BlockedProcData *bproc = &lockData->procs[i];
-    LockInstanceData *instances = &lockData->locks[bproc->first_lock];
-    int *preceding_waiters = &lockData->waiter_pids[bproc->first_waiter];
-    LockInstanceData *blocked_instance;
-    LockMethod lockMethodTable;
-    int conflictMask;
-
-    /*
-     * Locate the blocked proc's own entry in the LockInstanceData array.
-     * There should be exactly one matching entry.
-     */
-    blocked_instance = NULL;
-    for (j = 0; j < bproc->num_locks; j++) {
-      LockInstanceData *instance = &(instances[j]);
-
-      if (instance->pid == bproc->pid) {
-        Assert(blocked_instance == NULL);
-        blocked_instance = instance;
-      }
-    }
-    Assert(blocked_instance != NULL);
-
-    lockMethodTable = GetLockTagsMethodTable(&(blocked_instance->locktag));
-    conflictMask = lockMethodTable->conflictTab[blocked_instance->waitLockMode];
-
-    /* Now scan the PROCLOCK data for conflicting procs */
-    for (j = 0; j < bproc->num_locks; j++) {
-      LockInstanceData *instance = &(instances[j]);
-
-      /* A proc never blocks itself, so ignore that entry */
-      if (instance == blocked_instance)
-        continue;
-      /* Members of same lock group never block each other, either */
-      if (instance->leaderPid == blocked_instance->leaderPid)
-        continue;
-
-      if (conflictMask & instance->holdMask) {
-        /* hard block: blocked by lock already held by this entry */
-      } else if (instance->waitLockMode != NoLock &&
-                 (conflictMask & LOCKBIT_ON(instance->waitLockMode))) {
-        /* conflict in lock requests; who's in front in wait queue? */
-        bool ahead = false;
-        int k;
-
-        for (k = 0; k < bproc->num_waiters; k++) {
-          if (preceding_waiters[k] == instance->pid) {
-            /* soft block: this entry is ahead of blocked proc */
-            ahead = true;
-            break;
-          }
-        }
-        if (!ahead)
-          continue; /* not blocked by this entry */
-      } else {
-        /* not blocked by this entry */
-        continue;
-      }
-
-      /* blocked by this entry, so emit a record */
-      arrayelems[narrayelems++] = Int32GetDatum(instance->leaderPid);
-    }
-  }
-
-  /* Assert we didn't overrun arrayelems[] */
-  Assert(narrayelems <= lockData->nlocks + (int)advisory.size());
-
   PG_RETURN_ARRAYTYPE_P(
       construct_array_builtin(arrayelems, narrayelems, INT4OID));
 }

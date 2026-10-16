@@ -518,8 +518,6 @@
 					#        processes
 					#   %% = '%'
 					# e.g. '<%u%%%d> '
-#log_lock_waits = off			# log lock waits >= deadlock_timeout
-#log_lock_failures = off		# log lock failures
 #log_recovery_conflict_waits = off	# log standby recovery conflict waits
 					# >= deadlock_timeout
 #log_parameter_max_length = -1		# when logging statements, limit logged
@@ -696,15 +694,6 @@
 #extension_control_path = '$system'
 #gin_fuzzy_search_limit = 0
 #output_plugin_libraries = 'pgoutput, test_decoding'  # approved plugins for logical decoding
-
-
-#------------------------------------------------------------------------------
-# LOCK MANAGEMENT
-#------------------------------------------------------------------------------
-
-#deadlock_timeout = 1s
-#max_locks_per_transaction = 64		# min 10
-					# (change requires restart)
 
 
 #------------------------------------------------------------------------------

@@ -685,17 +685,11 @@ static void dependencyLockAndCheckObject(Oid classId, Oid objectId) {
   Assert(!IsPinnedObject(classId, objectId));
 
   if (classId != RelationRelationId) {
-    LOCKTAG tag;
     int cache;
     Relation rel;
     SysScanDesc scan;
     ScanKeyData skey;
     HeapTuple tuple;
-
-    SET_LOCKTAG_OBJECT(tag, MyDatabaseId, classId, objectId, 0);
-
-    if (LockHeldByMe(&tag, AccessShareLock, true))
-      return;
 
     /* Assume we should lock the whole object not a sub-object */
     LockDatabaseObject(classId, objectId, 0, AccessShareLock);

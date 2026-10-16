@@ -136,8 +136,6 @@ static constexpr auto BuiltinTrancheNames = [] {
 #define PG_LWLOCK(id, lockname) a[id] = CppAsString(lockname);
 #include "storage/lwlocklist.h"
 #undef PG_LWLOCK
-  a[LWTRANCHE_LOCK_FASTPATH] = "LockFastPath";
-  a[LWTRANCHE_LOCK_MANAGER] = "LockManager";
   return a;
 }();
 
@@ -428,11 +426,6 @@ static void InitializeLWLocks(void) {
   for (id = 0, lock = MainLWLockArray; id < NUM_INDIVIDUAL_LWLOCKS;
        id++, lock++)
     LWLockInitialize(&lock->lock, id);
-
-  /* Initialize lmgrs' LWLocks in main array */
-  lock = MainLWLockArray + LOCK_MANAGER_LWLOCK_OFFSET;
-  for (id = 0; id < NUM_LOCK_PARTITIONS; id++, lock++)
-    LWLockInitialize(&lock->lock, LWTRANCHE_LOCK_MANAGER);
 
   /*
    * Copy the info about any named tranches into shared memory (so that

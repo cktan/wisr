@@ -45,10 +45,6 @@ void AttachSharedMemoryStructs(void) {
   Assert(MyProc != NULL);
   Assert(IsUnderPostmaster);
 
-  /*
-   * The number of fast-path groups is not recalculated: a session thread
-   * copies the postmaster's (FastPathLockGroupsPerBackend is SHARED).
-   */
   CreateOrAttachShmemStructs();
 
   /*
@@ -103,11 +99,6 @@ static void CreateOrAttachShmemStructs(void) {
    * Set up xlog, clog, and buffers
    */
   VarsupShmemInit();
-
-  /*
-   * Set up lock manager
-   */
-  LockManagerShmemInit();
 
   /*
    * Set up process table

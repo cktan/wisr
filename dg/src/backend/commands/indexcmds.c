@@ -380,45 +380,11 @@ static bool CompareOpclassOptions(const Datum *opts1, const Datum *opts2,
  * doesn't show up in the output, we know we can forget about it.
  */
 void WaitForOlderSnapshots(TransactionId limitXmin) {
-  int n_old_snapshots;
-  int i;
-  VirtualTransactionId *old_snapshots;
-
-  old_snapshots = GetCurrentVirtualXIDs(
-      limitXmin, true, false,
-      PROC_IS_AUTOVACUUM | PROC_IN_VACUUM | PROC_IN_SAFE_IC, &n_old_snapshots);
-
-  for (i = 0; i < n_old_snapshots; i++) {
-    if (!VirtualTransactionIdIsValid(old_snapshots[i]))
-      continue; /* found uninteresting in previous cycle */
-
-    if (i > 0) {
-      /* see if anything's changed ... */
-      VirtualTransactionId *newer_snapshots;
-      int n_newer_snapshots;
-      int j;
-      int k;
-
-      newer_snapshots = GetCurrentVirtualXIDs(
-          limitXmin, true, false,
-          PROC_IS_AUTOVACUUM | PROC_IN_VACUUM | PROC_IN_SAFE_IC,
-          &n_newer_snapshots);
-      for (j = i; j < n_old_snapshots; j++) {
-        if (!VirtualTransactionIdIsValid(old_snapshots[j]))
-          continue; /* found uninteresting in previous cycle */
-        for (k = 0; k < n_newer_snapshots; k++) {
-          if (VirtualTransactionIdEquals(old_snapshots[j], newer_snapshots[k]))
-            break;
-        }
-        if (k >= n_newer_snapshots) /* not there anymore */
-          SetInvalidVirtualTransactionId(old_snapshots[j]);
-      }
-      pfree(newer_snapshots);
-    }
-
-    if (VirtualTransactionIdIsValid(old_snapshots[i]))
-      VirtualXactLock(old_snapshots[i], true);
-  }
+  /*
+   * Nothing to wait for: what a session sees is sm's snapshot, and
+   * PostgreSQL's is a constant that holds back no one (dg/SHMEM.md section
+   * 5), so no virtual xid is waited for.
+   */
 }
 
 /*

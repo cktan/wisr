@@ -1023,22 +1023,6 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
      NULL},
 
 #ifdef LOCK_DEBUG
-    {{"trace_locks", PGC_SUSET, DEVELOPER_OPTIONS,
-      gettext_noop("Emits information about lock usage."), NULL,
-      GUC_NOT_IN_SAMPLE},
-     &Trace_locks,
-     false,
-     NULL,
-     NULL,
-     NULL},
-    {{"trace_userlocks", PGC_SUSET, DEVELOPER_OPTIONS,
-      gettext_noop("Emits information about user lock usage."), NULL,
-      GUC_NOT_IN_SAMPLE},
-     &Trace_userlocks,
-     false,
-     NULL,
-     NULL,
-     NULL},
     {{"trace_lwlocks", PGC_SUSET, DEVELOPER_OPTIONS,
       gettext_noop("Emits information about lightweight lock usage."), NULL,
       GUC_NOT_IN_SAMPLE},
@@ -1047,31 +1031,8 @@ thread_local /*LOCAL*/ struct config_bool ConfigureNamesBool[] = {
      NULL,
      NULL,
      NULL},
-    {{"debug_deadlocks", PGC_SUSET, DEVELOPER_OPTIONS,
-      gettext_noop("Dumps information about all current locks when a deadlock "
-                   "timeout occurs."),
-      NULL, GUC_NOT_IN_SAMPLE},
-     &Debug_deadlocks,
-     false,
-     NULL,
-     NULL,
-     NULL},
 #endif
 
-    {{"log_lock_waits", PGC_SUSET, LOGGING_WHAT,
-      gettext_noop("Logs long lock waits."), NULL},
-     &log_lock_waits,
-     false,
-     NULL,
-     NULL,
-     NULL},
-    {{"log_lock_failures", PGC_SUSET, LOGGING_WHAT,
-      gettext_noop("Logs lock failures."), NULL},
-     &log_lock_failures,
-     false,
-     NULL,
-     NULL,
-     NULL},
     {{"log_hostname", PGC_SIGHUP, LOGGING_WHAT,
       gettext_noop("Logs the host name in the connection logs."),
       gettext_noop(
@@ -1450,18 +1411,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      NULL,
      NULL},
 
-    {/* This is PGC_SUSET to prevent hiding from log_lock_waits. */
-     {"deadlock_timeout", PGC_SUSET, LOCK_MANAGEMENT,
-      gettext_noop(
-          "Sets the time to wait on a lock before checking for deadlock."),
-      NULL, GUC_UNIT_MS},
-     &DeadlockTimeout,
-     1000,
-     1,
-     INT_MAX,
-     NULL,
-     NULL,
-     NULL},
 
     {{"max_connections", PGC_POSTMASTER, CONN_AUTH_SETTINGS,
       gettext_noop("Sets the maximum number of concurrent connections."), NULL},
@@ -1666,30 +1615,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
 /*
  * See also CheckRequiredParameterValues() if this parameter changes
  */
-#ifdef LOCK_DEBUG
-    {{"trace_lock_oidmin", PGC_SUSET, DEVELOPER_OPTIONS,
-      gettext_noop("Sets the minimum OID of tables for tracking locks."),
-      gettext_noop("Is used to avoid output on system tables."),
-      GUC_NOT_IN_SAMPLE},
-     &Trace_lock_oidmin,
-     FirstNormalObjectId,
-     0,
-     INT_MAX,
-     NULL,
-     NULL,
-     NULL},
-    {{"trace_lock_table", PGC_SUSET, DEVELOPER_OPTIONS,
-      gettext_noop(
-          "Sets the OID of the table with unconditionally lock tracing."),
-      NULL, GUC_NOT_IN_SAMPLE},
-     &Trace_lock_table,
-     0,
-     0,
-     INT_MAX,
-     NULL,
-     NULL,
-     NULL},
-#endif
 
     {{"statement_timeout", PGC_USERSET, CLIENT_CONN_STATEMENT,
       gettext_noop("Sets the maximum allowed duration of any statement."),
@@ -1744,24 +1669,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      &IdleSessionTimeout,
      0,
      0,
-     INT_MAX,
-     NULL,
-     NULL,
-     NULL},
-
-    /*
-     * See also CheckRequiredParameterValues() if this parameter changes
-     */
-    {{"max_locks_per_transaction", PGC_POSTMASTER, LOCK_MANAGEMENT,
-      gettext_noop("Sets the maximum number of locks per transaction."),
-      gettext_noop(
-          "The shared lock table is sized on the assumption that at most "
-          "\"max_locks_per_transaction\" objects per server process or "
-          "prepared "
-          "transaction will need to be locked at any one time.")},
-     &max_locks_per_xact,
-     64,
-     10,
      INT_MAX,
      NULL,
      NULL,

@@ -4568,3 +4568,50 @@ lock manager, waited for locks no session holds any more.
   waits for nothing.
 - `server.sh`: a transaction that reads catalogs holds no lock
   in `pg_lock_status()`, its virtual xid's among them.
+
+## Step 156: the lock manager is gone
+
+`SHMEM.md` §3, §7 step 4. After step 155 no transaction took a
+lock of PostgreSQL's lock manager, and nothing waited on one;
+what was left of it read it, released it, and kept its
+structures.
+
+- **Gone**: storage/lmgr `lock.c` and `deadlock.c`; `proc.c`'s
+  wait queue (`JoinWaitQueue()`, `ProcSleep()`,
+  `ProcWakeup()`, `ProcLockWakeup()`, `CheckDeadLock()`,
+  `GetLockHoldersAndWaiters()`) and `LockErrorCleanup()`,
+  with its calls at an abort and in `ProcessInterrupts()`;
+  the lock manager's shared tables and their init; the
+  sixteen partition LWLocks and the LockManager and
+  LockFastPath tranches; each PGPROC's fast-path arrays,
+  `fpInfoLock`, wait fields, PROCLOCK lists and lock-group
+  fields, and `pcb->fast_path_strong`; a resource owner's
+  cache of its locks, and the retail release of a
+  subtransaction's.
+- **Settings gone**: `deadlock_timeout`,
+  `max_locks_per_transaction`, `log_lock_waits`,
+  `log_lock_failures`, and `LOCK_DEBUG`'s `trace_locks`,
+  `trace_userlocks`, `debug_deadlocks`, `trace_lock_oidmin`
+  and `trace_lock_table`; `trace_lwlocks` stays with the
+  LWLocks. The DEADLOCK_TIMEOUT and LOCK_TIMEOUT timeouts go,
+  as no wait arms them: an advisory lock's wait has
+  `lock_timeout` as its deadline. The Lock class of wait
+  events goes.
+- **Kept**: `lmgr.c`'s entry points, as sm's calls or no-ops,
+  and `DoLockModesConflict()` there, with PostgreSQL's
+  conflict table, for `reloptions.c`; `lock.h` keeps the lock
+  modes, the virtual xid and a relation's locktag, which the
+  callers still name.
+- **SQL**: `pg_lock_status()` returns no row: a table's locks
+  are sm's and an advisory lock is digres's own, and neither
+  is listed yet. `pg_blocking_pids()` names the holders of an
+  advisory lock waited for, and not yet a lock of sm's.
+- **Also gone, unused now**: `GetCurrentVirtualXIDs()`,
+  whose one caller, `WaitForOlderSnapshots()`, waits for
+  nothing; `VirtualXactLock()`; lmgr's extension, page and
+  apply-transaction locks and `DescribeLockTag()`, which
+  nothing called; `InitializeFastPathLocks()`;
+  `pg_depend.c`'s test of a lock held, false since step 48;
+  `elog.c`'s `%P` names no lock group leader.
+- **Left**: storage/lmgr `README`, PostgreSQL's account of
+  the lock manager, as `README-SSI` was left.

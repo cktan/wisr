@@ -82,20 +82,8 @@ extern thread_local /*SHARED*/ PGDLLIMPORT NamedLWLockTranche
     *NamedLWLockTrancheArray;
 extern thread_local /*SHARED*/ PGDLLIMPORT int NamedLWLockTrancheRequests;
 
-/*
- * It's a bit odd to declare NUM_LOCK_PARTITIONS here, but we need it to
- * figure out offsets within MainLWLockArray, and having this file include
- * lock.h would be backwards.
- */
-
-/* Number of partitions the shared lock tables are divided into */
-#define LOG2_NUM_LOCK_PARTITIONS  4
-#define NUM_LOCK_PARTITIONS  (1 << LOG2_NUM_LOCK_PARTITIONS)
-
-/* Offsets for various chunks of preallocated lwlocks. */
-#define LOCK_MANAGER_LWLOCK_OFFSET		NUM_INDIVIDUAL_LWLOCKS
-#define NUM_FIXED_LWLOCKS \
-	(LOCK_MANAGER_LWLOCK_OFFSET + NUM_LOCK_PARTITIONS)
+/* The preallocated lwlocks: the individual ones alone. */
+#define NUM_FIXED_LWLOCKS NUM_INDIVIDUAL_LWLOCKS
 
 typedef enum LWLockMode {
   LW_EXCLUSIVE,
@@ -167,9 +155,7 @@ extern void LWLockInitialize(LWLock *lock, int tranche_id);
  * return a value less than LWTRANCHE_FIRST_USER_DEFINED.
  */
 typedef enum BuiltinTrancheIds {
-  LWTRANCHE_LOCK_FASTPATH = NUM_INDIVIDUAL_LWLOCKS,
-  LWTRANCHE_LOCK_MANAGER,
-  LWTRANCHE_FIRST_USER_DEFINED,
+  LWTRANCHE_FIRST_USER_DEFINED = NUM_INDIVIDUAL_LWLOCKS,
 } BuiltinTrancheIds;
 
 /*

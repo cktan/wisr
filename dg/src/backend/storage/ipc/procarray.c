@@ -294,65 +294,6 @@ PGPROC *BackendPidGetProc(int pid) {
 }
 
 /*
- * GetCurrentVirtualXIDs -- returns an array of currently active VXIDs.
- *
- * The array is palloc'd. The number of valid entries is returned into *nvxids.
- *
- * The arguments allow filtering the set of VXIDs returned.  Our own process
- * is always skipped.  In addition:
- *	If limitXmin is not InvalidTransactionId, skip processes with
- *		xmin > limitXmin.
- *	If excludeXmin0 is true, skip processes with xmin = 0.
- *	If allDbs is false, skip processes attached to other databases.
- *	If excludeVacuum isn't zero, skip processes for which
- *		(statusFlags & excludeVacuum) is not zero.
- *
- * Its one caller, CREATE INDEX CONCURRENTLY, is refused in digres; the
- * sessions are the registry's, and every snapshot is the same constant.
- */
-VirtualTransactionId *GetCurrentVirtualXIDs(TransactionId limitXmin,
-                                            bool excludeXmin0, bool allDbs,
-                                            int excludeVacuum, int *nvxids) {
-  VirtualTransactionId *vxids;
-  int count = 0;
-
-  /* allocate what's certainly enough result space */
-  vxids = (VirtualTransactionId *)palloc(sizeof(VirtualTransactionId) *
-                                         PROCARRAY_MAXPROCS);
-
-  for (const session_ref_t &record : sessions_all()) {
-    PGPROC *proc = record->proc;
-
-    if (proc == MyProc || record->ended.load(std::memory_order_acquire))
-      continue;
-
-    if (excludeVacuum & proc->statusFlags)
-      continue;
-
-    if (allDbs ||
-        record->database.load(std::memory_order_acquire) == MyDatabaseId) {
-      /* Fetch xmin just once - might change on us */
-      TransactionId pxmin = UINT32_ACCESS_ONCE(proc->xmin);
-
-      if (excludeXmin0 && !TransactionIdIsValid(pxmin))
-        continue;
-
-      if (!TransactionIdIsValid(limitXmin) ||
-          TransactionIdPrecedesOrEquals(pxmin, limitXmin)) {
-        VirtualTransactionId vxid;
-
-        GET_VXID_FROM_PGPROC(vxid, *proc);
-        if (VirtualTransactionIdIsValid(vxid))
-          vxids[count++] = vxid;
-      }
-    }
-  }
-
-  *nvxids = count;
-  return vxids;
-}
-
-/*
  * Terminate existing connections to the specified database. This routine
  * is used by the DROP DATABASE command when user has asked to forcefully
  * drop the database.

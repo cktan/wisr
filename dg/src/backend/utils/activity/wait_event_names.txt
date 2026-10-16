@@ -235,31 +235,6 @@ InjectionPoint	"Waiting to read or update information related to injection point
 # lwlocknames.h.  Other LWLocks must be listed in the section below.
 #
 
-LockFastPath	"Waiting to read or update a process' fast-path lock information."
-LockManager	"Waiting to read or update information about <quote>heavyweight</quote> locks."
 
 # No "ABI_compatibility" region here as WaitEventLWLock has its own C code.
 
-#
-# Wait Events - Lock
-#
-# This class of wait events has its own set of C structure, so these are
-# only used for the documentation.
-#
-
-Section: ClassName - WaitEventLock
-
-relation	"Waiting to acquire a lock on a relation."
-extend	"Waiting to extend a relation."
-frozenid	"Waiting to update <structname>pg_database</structname>.<structfield>datfrozenxid</structfield> and <structname>pg_database</structname>.<structfield>datminmxid</structfield>."
-page	"Waiting to acquire a lock on a page of a relation."
-tuple	"Waiting to acquire a lock on a tuple."
-transactionid	"Waiting for a transaction to finish."
-virtualxid	"Waiting to acquire a virtual transaction ID lock; see <xref linkend="transaction-id"/>."
-spectoken	"Waiting to acquire a speculative insertion lock."
-object	"Waiting to acquire a lock on a non-relation database object."
-userlock	"Waiting to acquire a user lock."
-advisory	"Waiting to acquire an advisory user lock."
-applytransaction	"Waiting to acquire a lock on a remote transaction being applied by a logical replication subscriber."
-
-# No "ABI_compatibility" region here as WaitEventLock has its own C code.

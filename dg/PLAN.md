@@ -458,9 +458,9 @@ Do not reopen these without the owner:
   table is opened where PostgreSQL locks it, before its
   definition is read, so a statement waits out DDL before it
   plans, not after (`WORKNOTE.md` step 111). One lock manager
-  means one deadlock detector. Tables in sm move
-  first; PostgreSQL's lock manager goes when nothing else uses
-  it.
+  means one deadlock detector. Tables in sm moved
+  first; PostgreSQL's lock manager went when nothing else used
+  it (`WORKNOTE.md` step 156).
 - **Advisory locks are not sm's.** They name a number the
   application picks and guard nothing stored, and their
   session scope, explicit unlock and counted holds are

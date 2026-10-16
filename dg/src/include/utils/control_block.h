@@ -80,7 +80,6 @@ struct advisory_state_free_t {
 
 union LWLockPadded;                    /* storage/lwlock.h */
 struct PGSemaphoreData;                /* port/posix_sema.c */
-struct FastPathStrongRelationLockData; /* storage/lmgr/lock.c */
 
 /*
  * The process control block: one for the process.  What the process keeps
@@ -123,9 +122,6 @@ typedef struct pcb_t {
 
   /* advisory_lock.c: the advisory locks held, and their waiters */
   std::unique_ptr<advisory_table_t, advisory_table_free_t> advisory;
-
-  /* lock.c: the fast path's counts of strong locks, new'd */
-  struct FastPathStrongRelationLockData *fast_path_strong = nullptr;
 } pcb_t;
 
 /* The thread control block: one for each thread that runs digres code. */

@@ -57,28 +57,6 @@
 #define PROC_XMIN_FLAGS (PROC_IN_VACUUM | PROC_IN_SAFE_IC)
 
 /*
- * We allow a limited number of "weak" relation locks (AccessShareLock,
- * RowShareLock, RowExclusiveLock) to be recorded in the PGPROC structure
- * (or rather in shared memory referenced from PGPROC) rather than the main
- * lock table.  This eases contention on the lock manager LWLocks.  See
- * storage/lmgr/README for additional details.
- */
-extern thread_local /*SHARED*/ PGDLLIMPORT int FastPathLockGroupsPerBackend;
-
-/*
- * Define the maximum number of fast-path locking groups per backend.
- * This must be a power-of-two value.  The actual number of fast-path
- * lock groups is calculated in InitializeFastPathLocks() based on
- * max_locks_per_transaction.  1024 is an arbitrary upper limit (matching
- * max_locks_per_transaction = 16k).  Values over 1024 are unlikely to be
- * beneficial as there are bottlenecks we'll hit way before that.
- */
-#define FP_LOCK_GROUPS_PER_BACKEND_MAX	1024
-#define FP_LOCK_SLOTS_PER_GROUP		16 /* don't change */
-#define FastPathLockSlotsPerBackend() \
-	(FP_LOCK_SLOTS_PER_GROUP * FastPathLockGroupsPerBackend)
-
-/*
  * Flags for PGPROC.delayChkptFlags
  *
  * These flags can be used to delay the start or completion of a checkpoint
@@ -113,19 +91,12 @@ extern thread_local /*SHARED*/ PGDLLIMPORT int FastPathLockGroupsPerBackend;
 #define DELAY_CHKPT_START		(1<<0)
 #define DELAY_CHKPT_COMPLETE	(1<<1)
 
-typedef enum {
-  PROC_WAIT_STATUS_OK,
-  PROC_WAIT_STATUS_WAITING,
-  PROC_WAIT_STATUS_ERROR,
-} ProcWaitStatus;
-
 /*
  * Each backend has a PGPROC struct in shared memory.  There is also a list of
  * currently-unused PGPROC structs that will be reallocated to new backends.
  *
- * links: list link for any list the PGPROC is in.  When waiting for a lock,
- * the PGPROC is linked into that lock's waitProcs queue.  A recycled PGPROC
- * is linked into ProcGlobal's freeProcs list.
+ * links: list link for any list the PGPROC is in: a recycled PGPROC is
+ * linked into ProcGlobal's freeProcs list.
  *
  * What another session reads of a session is in its record
  * (storage/session_registry.h), not here: a PGPROC is a slot, which the next
@@ -145,7 +116,6 @@ struct PGPROC {
   dlist_head *procgloballist; /* procglobal list that owns this PGPROC */
 
   PGSemaphore sem; /* ONE semaphore to sleep on */
-  ProcWaitStatus waitStatus;
 
   Latch procLatch; /* generic latch for process */
 
@@ -200,43 +170,10 @@ struct PGPROC {
   uint8 lwWaitMode;         /* lwlock mode being waited for */
   proclist_node lwWaitLink; /* position in LW lock wait list */
 
-  /* Info about lock the process is currently waiting for, if any. */
-  /* waitLock and waitProcLock are NULL if not currently waiting. */
-  LOCK *waitLock;             /* Lock object we're sleeping on ... */
-  PROCLOCK *waitProcLock;     /* Per-holder info for awaited lock */
-  LOCKMODE waitLockMode;      /* type of lock we're waiting for */
-  LOCKMASK heldLocks;         /* bitmask for lock types already held on this
-                               * lock object by this backend */
-  pg_atomic_uint64 waitStart; /* time at which wait for lock acquisition
-                               * started */
-
   int delayChkptFlags; /* for DELAY_CHKPT_* flags */
 
   uint8 statusFlags; /* this backend's status flags, see PROC_*
                       * above */
-
-  /*
-   * All PROCLOCK objects for locks held or awaited by this backend are
-   * linked into one of these lists, according to the partition number of
-   * their lock.
-   */
-  dlist_head myProcLocks[NUM_LOCK_PARTITIONS];
-
-  /* Lock manager data, recording fast-path locks taken by this backend. */
-  LWLock fpInfoLock;  /* protects per-backend fast-path state */
-  uint64 *fpLockBits; /* lock modes held for each fast-path slot */
-  Oid *fpRelId;       /* slots for rel oids */
-  bool fpVXIDLock;    /* are we holding a fast-path VXID lock? */
-  LocalTransactionId fpLocalTransactionId; /* lxid for fast-path VXID
-                                            * lock */
-
-  /*
-   * Support for lock groups.  Use LockHashPartitionLockByProc on the group
-   * leader to get the LWLock protecting these fields.
-   */
-  PGPROC *lockGroupLeader;     /* lock group leader, if I'm a member */
-  dlist_head lockGroupMembers; /* list of members, if I'm a leader */
-  dlist_node lockGroupLink;    /* my member link, if I'm a member */
 };
 
 /* NOTE: "typedef struct PGPROC PGPROC" appears in storage/lock.h. */
@@ -273,13 +210,11 @@ extern thread_local /*SHARED*/ PGDLLIMPORT PROC_HDR *ProcGlobal;
 #define GetNumberFromPGProc(proc) ((proc) - &ProcGlobal->allProcs[0])
 
 /* configurable options */
-extern thread_local /*LOCAL*/ PGDLLIMPORT int DeadlockTimeout;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int StatementTimeout;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int LockTimeout;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int IdleInTransactionSessionTimeout;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int TransactionTimeout;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int IdleSessionTimeout;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool log_lock_waits;
 
 /*
  * Function Prototypes
@@ -292,18 +227,6 @@ extern void InitProcessPhase2(void);
 
 extern bool HaveNFreeProcs(int n, int *nfree);
 extern void ProcReleaseLocks(bool isCommit);
-
-extern ProcWaitStatus JoinWaitQueue(LOCALLOCK *locallock,
-                                    LockMethod lockMethodTable, bool dontWait);
-extern ProcWaitStatus ProcSleep(LOCALLOCK *locallock);
-extern void ProcWakeup(PGPROC *proc, ProcWaitStatus waitStatus);
-extern void ProcLockWakeup(LockMethod lockMethodTable, LOCK *lock);
-extern void CheckDeadLockAlert(void);
-extern void LockErrorCleanup(void);
-extern void GetLockHoldersAndWaiters(LOCALLOCK *locallock,
-                                     StringInfo lock_holders_sbuf,
-                                     StringInfo lock_waiters_sbuf,
-                                     int *lockHoldersNum);
 
 extern void ProcWaitForSignal(uint32 wait_event_info);
 extern void ProcSendSignal(ProcNumber procNumber);

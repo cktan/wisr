@@ -153,11 +153,4 @@ extern void RegisterResourceReleaseCallback(ResourceReleaseCallback callback,
 extern void UnregisterResourceReleaseCallback(ResourceReleaseCallback callback,
                                               void *arg);
 
-/* special support for local lock management */
-struct LOCALLOCK;
-extern void ResourceOwnerRememberLock(ResourceOwner owner,
-                                      struct LOCALLOCK *locallock);
-extern void ResourceOwnerForgetLock(ResourceOwner owner,
-                                    struct LOCALLOCK *locallock);
-
 #endif /* RESOWNER_H */

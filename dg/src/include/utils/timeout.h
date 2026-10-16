@@ -23,8 +23,6 @@
 typedef enum TimeoutId {
   /* Predefined timeout reasons */
   STARTUP_PACKET_TIMEOUT,
-  DEADLOCK_TIMEOUT,
-  LOCK_TIMEOUT,
   STATEMENT_TIMEOUT,
   STANDBY_DEADLOCK_TIMEOUT,
   STANDBY_TIMEOUT,

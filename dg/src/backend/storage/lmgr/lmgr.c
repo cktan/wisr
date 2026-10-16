@@ -58,6 +58,63 @@ void RelationInitLockInfo(Relation relation) {
 }
 
 /*
+ * Data structures defining the semantics of the standard lock methods.
+ *
+ * The conflict table defines the semantics of the various lock modes.
+ */
+static const LOCKMASK LockConflicts[] = {
+    0,
+
+    /* AccessShareLock */
+    LOCKBIT_ON(AccessExclusiveLock),
+
+    /* RowShareLock */
+    LOCKBIT_ON(ExclusiveLock) | LOCKBIT_ON(AccessExclusiveLock),
+
+    /* RowExclusiveLock */
+    LOCKBIT_ON(ShareLock) | LOCKBIT_ON(ShareRowExclusiveLock) |
+        LOCKBIT_ON(ExclusiveLock) | LOCKBIT_ON(AccessExclusiveLock),
+
+    /* ShareUpdateExclusiveLock */
+    LOCKBIT_ON(ShareUpdateExclusiveLock) | LOCKBIT_ON(ShareLock) |
+        LOCKBIT_ON(ShareRowExclusiveLock) | LOCKBIT_ON(ExclusiveLock) |
+        LOCKBIT_ON(AccessExclusiveLock),
+
+    /* ShareLock */
+    LOCKBIT_ON(RowExclusiveLock) | LOCKBIT_ON(ShareUpdateExclusiveLock) |
+        LOCKBIT_ON(ShareRowExclusiveLock) | LOCKBIT_ON(ExclusiveLock) |
+        LOCKBIT_ON(AccessExclusiveLock),
+
+    /* ShareRowExclusiveLock */
+    LOCKBIT_ON(RowExclusiveLock) | LOCKBIT_ON(ShareUpdateExclusiveLock) |
+        LOCKBIT_ON(ShareLock) | LOCKBIT_ON(ShareRowExclusiveLock) |
+        LOCKBIT_ON(ExclusiveLock) | LOCKBIT_ON(AccessExclusiveLock),
+
+    /* ExclusiveLock */
+    LOCKBIT_ON(RowShareLock) | LOCKBIT_ON(RowExclusiveLock) |
+        LOCKBIT_ON(ShareUpdateExclusiveLock) | LOCKBIT_ON(ShareLock) |
+        LOCKBIT_ON(ShareRowExclusiveLock) | LOCKBIT_ON(ExclusiveLock) |
+        LOCKBIT_ON(AccessExclusiveLock),
+
+    /* AccessExclusiveLock */
+    LOCKBIT_ON(AccessShareLock) | LOCKBIT_ON(RowShareLock) |
+        LOCKBIT_ON(RowExclusiveLock) | LOCKBIT_ON(ShareUpdateExclusiveLock) |
+        LOCKBIT_ON(ShareLock) | LOCKBIT_ON(ShareRowExclusiveLock) |
+        LOCKBIT_ON(ExclusiveLock) | LOCKBIT_ON(AccessExclusiveLock)
+
+};
+
+/*
+ * Given two lock modes, return whether they would conflict.
+ */
+bool DoLockModesConflict(LOCKMODE mode1, LOCKMODE mode2) {
+  if (LockConflicts[mode1] & LOCKBIT_ON(mode2))
+    return true;
+
+  return false;
+}
+
+/*
  * Whether relid is locked by sm: a relation in sm, any a user made
  * (access/smstore.h).  sm locks it as it is opened, and its records as they
  * are read and written, so a lock asked of this lock manager is held as far
@@ -195,109 +252,6 @@ void LockRelationIdForSession(LockRelId *relid, LOCKMODE lockmode) {
  *		UnlockRelationIdForSession
  */
 void UnlockRelationIdForSession(LockRelId *relid, LOCKMODE lockmode) {}
-
-/*
- *		LockRelationForExtension
- *
- * This lock tag is used to interlock addition of pages to relations.
- * We need such locking because bufmgr/smgr definition of P_NEW is not
- * race-condition-proof.
- *
- * We assume the caller is already holding some type of regular lock on
- * the relation, so no AcceptInvalidationMessages call is needed here.
- */
-void LockRelationForExtension(Relation relation, LOCKMODE lockmode) {
-  LOCKTAG tag;
-
-  SET_LOCKTAG_RELATION_EXTEND(tag, relation->rd_lockInfo.lockRelId.dbId,
-                              relation->rd_lockInfo.lockRelId.relId);
-
-  (void)LockAcquire(&tag, lockmode, false, false);
-}
-
-/*
- *		ConditionalLockRelationForExtension
- *
- * As above, but only lock if we can get the lock without blocking.
- * Returns true iff the lock was acquired.
- */
-bool ConditionalLockRelationForExtension(Relation relation, LOCKMODE lockmode) {
-  LOCKTAG tag;
-
-  SET_LOCKTAG_RELATION_EXTEND(tag, relation->rd_lockInfo.lockRelId.dbId,
-                              relation->rd_lockInfo.lockRelId.relId);
-
-  return (LockAcquire(&tag, lockmode, false, true) != LOCKACQUIRE_NOT_AVAIL);
-}
-
-/*
- *		RelationExtensionLockWaiterCount
- *
- * Count the number of processes waiting for the given relation extension lock.
- */
-int RelationExtensionLockWaiterCount(Relation relation) {
-  LOCKTAG tag;
-
-  SET_LOCKTAG_RELATION_EXTEND(tag, relation->rd_lockInfo.lockRelId.dbId,
-                              relation->rd_lockInfo.lockRelId.relId);
-
-  return LockWaiterCount(&tag);
-}
-
-/*
- *		UnlockRelationForExtension
- */
-void UnlockRelationForExtension(Relation relation, LOCKMODE lockmode) {
-  LOCKTAG tag;
-
-  SET_LOCKTAG_RELATION_EXTEND(tag, relation->rd_lockInfo.lockRelId.dbId,
-                              relation->rd_lockInfo.lockRelId.relId);
-
-  LockRelease(&tag, lockmode, false);
-}
-
-/*
- *		LockPage
- *
- * Obtain a page-level lock.  This is currently used by some index access
- * methods to lock individual index pages.
- */
-void LockPage(Relation relation, BlockNumber blkno, LOCKMODE lockmode) {
-  LOCKTAG tag;
-
-  SET_LOCKTAG_PAGE(tag, relation->rd_lockInfo.lockRelId.dbId,
-                   relation->rd_lockInfo.lockRelId.relId, blkno);
-
-  (void)LockAcquire(&tag, lockmode, false, false);
-}
-
-/*
- *		ConditionalLockPage
- *
- * As above, but only lock if we can get the lock without blocking.
- * Returns true iff the lock was acquired.
- */
-bool ConditionalLockPage(Relation relation, BlockNumber blkno,
-                         LOCKMODE lockmode) {
-  LOCKTAG tag;
-
-  SET_LOCKTAG_PAGE(tag, relation->rd_lockInfo.lockRelId.dbId,
-                   relation->rd_lockInfo.lockRelId.relId, blkno);
-
-  return (LockAcquire(&tag, lockmode, false, true) != LOCKACQUIRE_NOT_AVAIL);
-}
-
-/*
- *		UnlockPage
- */
-void UnlockPage(Relation relation, BlockNumber blkno, LOCKMODE lockmode) {
-  LOCKTAG tag;
-
-  SET_LOCKTAG_PAGE(tag, relation->rd_lockInfo.lockRelId.dbId,
-                   relation->rd_lockInfo.lockRelId.relId, blkno);
-
-  LockRelease(&tag, lockmode, false);
-}
 
 /*
  *		LockTuple
@@ -496,111 +450,3 @@ void LockSharedObjectForSession(Oid classid, Oid objid, uint16 objsubid,
  */
 void UnlockSharedObjectForSession(Oid classid, Oid objid, uint16 objsubid,
                                   LOCKMODE lockmode) {}
-
-/*
- *		LockApplyTransactionForSession
- *
- * Obtain a session-level lock on a transaction being applied on a logical
- * replication subscriber. See LockRelationIdForSession for notes about
- * session-level locks.
- */
-void LockApplyTransactionForSession(Oid suboid, TransactionId xid, uint16 objid,
-                                    LOCKMODE lockmode) {
-  LOCKTAG tag;
-
-  SET_LOCKTAG_APPLY_TRANSACTION(tag, MyDatabaseId, suboid, xid, objid);
-
-  (void)LockAcquire(&tag, lockmode, true, false);
-}
-
-/*
- *		UnlockApplyTransactionForSession
- */
-void UnlockApplyTransactionForSession(Oid suboid, TransactionId xid,
-                                      uint16 objid, LOCKMODE lockmode) {
-  LOCKTAG tag;
-
-  SET_LOCKTAG_APPLY_TRANSACTION(tag, MyDatabaseId, suboid, xid, objid);
-
-  LockRelease(&tag, lockmode, true);
-}
-
-/*
- * Append a description of a lockable object to buf.
- *
- * Ideally we would print names for the numeric values, but that requires
- * getting locks on system tables, which might cause problems since this is
- * typically used to report deadlock situations.
- */
-void DescribeLockTag(StringInfo buf, const LOCKTAG *tag) {
-  switch ((LockTagType)tag->locktag_type) {
-  case LOCKTAG_RELATION:
-    appendStringInfo(buf, _("relation %u of database %u"), tag->locktag_field2,
-                     tag->locktag_field1);
-    break;
-  case LOCKTAG_RELATION_EXTEND:
-    appendStringInfo(buf, _("extension of relation %u of database %u"),
-                     tag->locktag_field2, tag->locktag_field1);
-    break;
-  case LOCKTAG_DATABASE_FROZEN_IDS:
-    appendStringInfo(buf, _("pg_database.datfrozenxid of database %u"),
-                     tag->locktag_field1);
-    break;
-  case LOCKTAG_PAGE:
-    appendStringInfo(buf, _("page %u of relation %u of database %u"),
-                     tag->locktag_field3, tag->locktag_field2,
-                     tag->locktag_field1);
-    break;
-  case LOCKTAG_TUPLE:
-    appendStringInfo(buf, _("tuple (%u,%u) of relation %u of database %u"),
-                     tag->locktag_field3, tag->locktag_field4,
-                     tag->locktag_field2, tag->locktag_field1);
-    break;
-  case LOCKTAG_TRANSACTION:
-    appendStringInfo(buf, _("transaction %u"), tag->locktag_field1);
-    break;
-  case LOCKTAG_VIRTUALTRANSACTION:
-    appendStringInfo(buf, _("virtual transaction %d/%u"), tag->locktag_field1,
-                     tag->locktag_field2);
-    break;
-  case LOCKTAG_SPECULATIVE_TOKEN:
-    appendStringInfo(buf, _("speculative token %u of transaction %u"),
-                     tag->locktag_field2, tag->locktag_field1);
-    break;
-  case LOCKTAG_OBJECT:
-    appendStringInfo(buf, _("object %u of class %u of database %u"),
-                     tag->locktag_field3, tag->locktag_field2,
-                     tag->locktag_field1);
-    break;
-  case LOCKTAG_USERLOCK:
-    /* reserved for old contrib code, now on pgfoundry */
-    appendStringInfo(buf, _("user lock [%u,%u,%u]"), tag->locktag_field1,
-                     tag->locktag_field2, tag->locktag_field3);
-    break;
-  case LOCKTAG_ADVISORY:
-    appendStringInfo(buf, _("advisory lock [%u,%u,%u,%u]"), tag->locktag_field1,
-                     tag->locktag_field2, tag->locktag_field3,
-                     tag->locktag_field4);
-    break;
-  case LOCKTAG_APPLY_TRANSACTION:
-    appendStringInfo(
-        buf, _("remote transaction %u of subscription %u of database %u"),
-        tag->locktag_field3, tag->locktag_field2, tag->locktag_field1);
-    break;
-  default:
-    appendStringInfo(buf, _("unrecognized locktag type %d"),
-                     (int)tag->locktag_type);
-    break;
-  }
-}
-
-/*
- * GetLockNameFromTagType
- *
- *	Given locktag type, return the corresponding lock name.
- */
-const char *GetLockNameFromTagType(uint16 locktag_type) {
-  if (locktag_type > LOCKTAG_LAST_TYPE)
-    return "???";
-  return LockTagTypeNames[locktag_type];
-}

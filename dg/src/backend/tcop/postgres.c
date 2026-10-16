@@ -2728,7 +2728,6 @@ void ProcessInterrupts(void) {
   if (ProcDiePending) {
     ProcDiePending = false;
     QueryCancelPending = false; /* ProcDie trumps QueryCancel */
-    LockErrorCleanup();
     /* As in quickdie, don't risk sending to client during auth */
     if (ClientAuthInProgress && whereToSendOutput == DestRemote)
       whereToSendOutput = DestNone;
@@ -2761,7 +2760,6 @@ void ProcessInterrupts(void) {
 
   if (ClientConnectionLost) {
     QueryCancelPending = false; /* lost connection trumps QueryCancel */
-    LockErrorCleanup();
     /* don't send to client, we already know the connection to be dead. */
     whereToSendOutput = DestNone;
     ereport(FATAL, (errcode(ERRCODE_CONNECTION_FAILURE),
@@ -2785,50 +2783,24 @@ void ProcessInterrupts(void) {
      */
     InterruptPending = true;
   } else if (QueryCancelPending) {
-    bool lock_timeout_occurred;
-    bool stmt_timeout_occurred;
-
     QueryCancelPending = false;
 
     /*
-     * If LOCK_TIMEOUT and STATEMENT_TIMEOUT indicators are both set, we
-     * need to clear both, so always fetch both.
+     * No lock wait arms a timeout: an advisory lock's wait has lock_timeout
+     * as its deadline (storage/advisory_lock.h).
      */
-    lock_timeout_occurred = get_timeout_indicator(LOCK_TIMEOUT, true);
-    stmt_timeout_occurred = get_timeout_indicator(STATEMENT_TIMEOUT, true);
-
-    /*
-     * If both were set, we want to report whichever timeout completed
-     * earlier; this ensures consistent behavior if the machine is slow
-     * enough that the second timeout triggers before we get here.  A tie
-     * is arbitrarily broken in favor of reporting a lock timeout.
-     */
-    if (lock_timeout_occurred && stmt_timeout_occurred &&
-        get_timeout_finish_time(STATEMENT_TIMEOUT) <
-            get_timeout_finish_time(LOCK_TIMEOUT))
-      lock_timeout_occurred = false; /* report stmt timeout */
-
-    if (lock_timeout_occurred) {
-      LockErrorCleanup();
-      ereport(ERROR, (errcode(ERRCODE_LOCK_NOT_AVAILABLE),
-                      errmsg("canceling statement due to lock timeout")));
-    }
-    if (stmt_timeout_occurred) {
-      LockErrorCleanup();
+    if (get_timeout_indicator(STATEMENT_TIMEOUT, true))
       ereport(ERROR, (errcode(ERRCODE_QUERY_CANCELED),
                       errmsg("canceling statement due to statement timeout")));
-    }
 
     /*
      * If we are reading a command from the client, just ignore the cancel
      * request --- sending an extra error message won't accomplish
      * anything.  Otherwise, go ahead and throw the error.
      */
-    if (!DoingCommandRead) {
-      LockErrorCleanup();
+    if (!DoingCommandRead)
       ereport(ERROR, (errcode(ERRCODE_QUERY_CANCELED),
                       errmsg("canceling statement due to user request")));
-    }
   }
 
   if (IdleInTransactionSessionTimeoutPending) {
@@ -3394,9 +3366,6 @@ void PostgresSingleUserMain(int argc, char *argv[], const char *username) {
    * initialize them anyway to avoid having special handling.
    */
   InitPostmasterChildSlots();
-
-  /* Initialize size of fast-path lock cache. */
-  InitializeFastPathLocks();
 
   /*
    * Give preloaded libraries a chance to request additional shared memory.

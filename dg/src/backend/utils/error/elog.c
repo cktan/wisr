@@ -2686,20 +2686,8 @@ void log_status_format(StringInfo buf, const char *format, ErrorData *edata) {
       break;
 
     case 'P':
-      if (MyProc) {
-        PGPROC *leader = MyProc->lockGroupLeader;
-
-        /*
-         * Show the leader only for active parallel workers. This
-         * leaves out the leader of a parallel group.
-         */
-        if (leader == NULL || leader->pid == MyProcPid)
-          appendStringInfoSpaces(buf, padding > 0 ? padding : -padding);
-        else if (padding != 0)
-          appendStringInfo(buf, "%*d", padding, leader->pid);
-        else
-          appendStringInfo(buf, "%d", leader->pid);
-      } else if (padding != 0)
+      /* A parallel worker's leader: there is no lock group, so no leader. */
+      if (padding != 0)
         appendStringInfoSpaces(buf, padding > 0 ? padding : -padding);
       break;
 

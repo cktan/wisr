@@ -68,7 +68,6 @@ static void CheckMyDatabase(const char *name, bool am_superuser,
 static void ShutdownPostgres(int code, Datum arg);
 static void log_shutdown(int code, Datum arg);
 static void StatementTimeoutHandler(void);
-static void LockTimeoutHandler(void);
 static void IdleInTransactionSessionTimeoutHandler(void);
 static void TransactionTimeoutHandler(void);
 static void IdleSessionTimeoutHandler(void);
@@ -281,35 +280,6 @@ void InitializeMaxBackends(void) {
 }
 
 /*
- * Initialize the number of fast-path lock slots in PGPROC.
- *
- * This must be called after modules have had the chance to alter GUCs in
- * shared_preload_libraries and before shared memory size is determined.
- */
-void InitializeFastPathLocks(void) {
-  /* Should be initialized only once. */
-  Assert(FastPathLockGroupsPerBackend == 0);
-
-  /*
-   * Based on the max_locks_per_transaction GUC, as that's a good indicator
-   * of the expected number of locks, figure out the value for
-   * FastPathLockGroupsPerBackend.  This must be a power-of-two.  We cap the
-   * value at FP_LOCK_GROUPS_PER_BACKEND_MAX and insist the value is at
-   * least 1.
-   *
-   * The default max_locks_per_transaction = 64 means 4 groups by default.
-   */
-  FastPathLockGroupsPerBackend =
-      Max(Min(pg_nextpower2_32(max_locks_per_xact) / FP_LOCK_SLOTS_PER_GROUP,
-              FP_LOCK_GROUPS_PER_BACKEND_MAX),
-          1);
-
-  /* Validate we did get a power-of-two */
-  Assert(FastPathLockGroupsPerBackend ==
-         pg_nextpower2_32(FastPathLockGroupsPerBackend));
-}
-
-/*
  * Early initialization of a backend (either standalone or under postmaster).
  * This happens even before InitPostgres.
  *
@@ -336,9 +306,6 @@ void BaseInit(void) {
    * file shutdown hook can report temporary file statistics.
    */
   InitTemporaryFileAccess();
-
-  /* Initialize lock manager's local structs */
-  InitLockManagerAccess();
 }
 
 /* --------------------------------
@@ -413,9 +380,7 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
    * these in every case except bootstrap.
    */
   if (!bootstrap) {
-    RegisterTimeout(DEADLOCK_TIMEOUT, CheckDeadLockAlert);
     RegisterTimeout(STATEMENT_TIMEOUT, StatementTimeoutHandler);
-    RegisterTimeout(LOCK_TIMEOUT, LockTimeoutHandler);
     RegisterTimeout(IDLE_IN_TRANSACTION_SESSION_TIMEOUT,
                     IdleInTransactionSessionTimeoutHandler);
     RegisterTimeout(TRANSACTION_TIMEOUT, TransactionTimeoutHandler);
@@ -831,11 +796,6 @@ static void StatementTimeoutHandler(void) {
 
   InterruptSelf(bit);
 }
-
-/*
- * LOCK_TIMEOUT handler: trigger a query-cancel interrupt.
- */
-static void LockTimeoutHandler(void) { InterruptSelf(INTERRUPT_CANCEL); }
 
 static void TransactionTimeoutHandler(void) {
   TransactionTimeoutPending = true;
