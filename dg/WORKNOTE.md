@@ -5349,3 +5349,29 @@ of 64-bit atomics, went with step 181.
   and backend `port/`, which held only the test-and-set
   assembly of Sun Studio's compilers (`tas/`).
 - access `relscan.h` included `spin.h` and used nothing of it.
+
+## Step 183: Solaris is gone
+
+digres builds on Linux and macOS. What was left for Solaris and
+Sun's compilers goes; steps 181 and 182 took its atomics and
+test-and-set assembly.
+
+- **Gone**: `port/solaris.h`; `__SUNPRO_C` in `c.h`'s attribute
+  macros; the Sun C++ `restrict` workaround and the Solaris
+  `HAVE_ATOMIC_H`, `HAVE_MBARRIER_H`, `HAVE_GETPEERUCRED` and
+  `HAVE_UCRED_H` in `pg_config.h` and `pg_config.h.in`; port
+  `getpeereid.c`'s `getpeerucred()`; libpq `pqcomm.c`'s
+  `TCP_KEEPALIVE_THRESHOLD`; `SHM_SHARE_MMU` in portability
+  `mem.h`; `__sun` in utils/misc `ps_status.c`.
+- libpq `auth.c`, built only with `USE_PAM`: the conversation
+  callback's `msg` is `const`, as Linux-PAM and OpenPAM declare
+  it, and it takes the password from its `appdata_ptr` alone;
+  the static copy kept for Solaris 2.6's PAM, which did not
+  pass it, is gone. Checked by compiling with the option
+  against a stub of `pam_appl.h`: the file already failed to,
+  on `calloc()`'s `void *` assigned to a `pam_response *`,
+  which is left.
+- Comments that only recall Solaris (timezone `strftime.c`,
+  utils/error `elog.c`, `pqcomm.c`'s macOS case) and
+  utils/cache `typcache.c`'s guard of `bsearch()` over no items
+  are left.

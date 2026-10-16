@@ -14,11 +14,7 @@
 
 #define IPCProtection	(0600) /* access/modify by user only */
 
-#ifdef SHM_SHARE_MMU /* use intimate shared memory on Solaris */
-#define PG_SHMAT_FLAGS			SHM_SHARE_MMU
-#else
 #define PG_SHMAT_FLAGS			0
-#endif
 
 /* Linux prefers MAP_ANONYMOUS, but the flag is called MAP_ANON on other
  * systems. */

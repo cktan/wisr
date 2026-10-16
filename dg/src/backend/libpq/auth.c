@@ -152,22 +152,12 @@ static int auth_peer(hbaPort *port);
 
 #define PGSQL_PAM_SERVICE "postgresql" /* Service name passed to PAM */
 
-/* Work around original Solaris' lack of "const" in the conv_proc signature */
-#ifdef _PAM_LEGACY_NONCONST
-#define PG_PAM_CONST
-#else
-#define PG_PAM_CONST const
-#endif
-
 static int CheckPAMAuth(Port *port, const char *user, const char *password);
-static int pam_passwd_conv_proc(int num_msg,
-                                PG_PAM_CONST struct pam_message **msg,
+static int pam_passwd_conv_proc(int num_msg, const struct pam_message **msg,
                                 struct pam_response **resp, void *appdata_ptr);
 
 static struct pam_conv pam_passw_conv = {&pam_passwd_conv_proc, NULL};
 
-static const char *pam_passwd = NULL; /* Workaround for Solaris 2.6
-                                       * brokenness */
 static Port *pam_port_cludge; /* Workaround for passing "Port *port" into
                                * pam_passwd_conv_proc */
 static bool pam_no_password;  /* For detecting no-password-given */
@@ -1767,22 +1757,13 @@ static int auth_peer(hbaPort *port) {
  * PAM conversation function
  */
 
-static int pam_passwd_conv_proc(int num_msg,
-                                PG_PAM_CONST struct pam_message **msg,
+static int pam_passwd_conv_proc(int num_msg, const struct pam_message **msg,
                                 struct pam_response **resp, void *appdata_ptr) {
   const char *passwd;
   struct pam_response *reply;
   int i;
 
-  if (appdata_ptr)
-    passwd = (char *)appdata_ptr;
-  else {
-    /*
-     * Workaround for Solaris 2.6 where the PAM library is broken and does
-     * not pass appdata_ptr to the conversation routine
-     */
-    passwd = pam_passwd;
-  }
+  passwd = (const char *)appdata_ptr;
 
   *resp = NULL; /* in case of error exit */
 
@@ -1861,11 +1842,9 @@ static int CheckPAMAuth(Port *port, const char *user, const char *password) {
   pam_handle_t *pamh = NULL;
 
   /*
-   * We can't entirely rely on PAM to pass through appdata --- it appears
-   * not to work on at least Solaris 2.6.  So use these ugly static
-   * variables instead.
+   * The conversation's appdata is the password: the port and the
+   * no-password flag reach it through these statics.
    */
-  pam_passwd = password;
   pam_port_cludge = port;
   pam_no_password = false;
 
@@ -1887,7 +1866,6 @@ static int CheckPAMAuth(Port *port, const char *user, const char *password) {
   if (retval != PAM_SUCCESS) {
     ereport(LOG, (errmsg("could not create PAM authenticator: %s",
                          pam_strerror(pamh, retval))));
-    pam_passwd = NULL; /* Unset pam_passwd */
     return STATUS_ERROR;
   }
 
@@ -1896,7 +1874,6 @@ static int CheckPAMAuth(Port *port, const char *user, const char *password) {
   if (retval != PAM_SUCCESS) {
     ereport(LOG, (errmsg("pam_set_item(PAM_USER) failed: %s",
                          pam_strerror(pamh, retval))));
-    pam_passwd = NULL; /* Unset pam_passwd */
     return STATUS_ERROR;
   }
 
@@ -1922,7 +1899,6 @@ static int CheckPAMAuth(Port *port, const char *user, const char *password) {
     if (retval != PAM_SUCCESS) {
       ereport(LOG, (errmsg("pam_set_item(PAM_RHOST) failed: %s",
                            pam_strerror(pamh, retval))));
-      pam_passwd = NULL;
       return STATUS_ERROR;
     }
   }
@@ -1932,7 +1908,6 @@ static int CheckPAMAuth(Port *port, const char *user, const char *password) {
   if (retval != PAM_SUCCESS) {
     ereport(LOG, (errmsg("pam_set_item(PAM_CONV) failed: %s",
                          pam_strerror(pamh, retval))));
-    pam_passwd = NULL; /* Unset pam_passwd */
     return STATUS_ERROR;
   }
 
@@ -1943,7 +1918,6 @@ static int CheckPAMAuth(Port *port, const char *user, const char *password) {
     if (!pam_no_password)
       ereport(LOG, (errmsg("pam_authenticate failed: %s",
                            pam_strerror(pamh, retval))));
-    pam_passwd = NULL; /* Unset pam_passwd */
     return pam_no_password ? STATUS_EOF : STATUS_ERROR;
   }
 
@@ -1954,7 +1928,6 @@ static int CheckPAMAuth(Port *port, const char *user, const char *password) {
     if (!pam_no_password)
       ereport(LOG,
               (errmsg("pam_acct_mgmt failed: %s", pam_strerror(pamh, retval))));
-    pam_passwd = NULL; /* Unset pam_passwd */
     return pam_no_password ? STATUS_EOF : STATUS_ERROR;
   }
 
@@ -1965,7 +1938,6 @@ static int CheckPAMAuth(Port *port, const char *user, const char *password) {
                          pam_strerror(pamh, retval))));
   }
 
-  pam_passwd = NULL; /* Unset pam_passwd */
 
   if (retval == PAM_SUCCESS)
     set_authn_id(port, user);

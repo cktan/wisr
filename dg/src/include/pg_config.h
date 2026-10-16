@@ -55,9 +55,6 @@
 /* Define to 1 if you have the `append_history' function. */
 #define HAVE_APPEND_HISTORY 1
 
-/* Define to 1 if you have the <atomic.h> header file. */
-/* #undef HAVE_ATOMIC_H */
-
 /* Define to 1 if you have the `backtrace_symbols' function. */
 #define HAVE_BACKTRACE_SYMBOLS 1
 
@@ -188,9 +185,6 @@
 /* Define to 1 if you have the `getpeereid' function. */
 /* #undef HAVE_GETPEEREID */
 
-/* Define to 1 if you have the `getpeerucred' function. */
-/* #undef HAVE_GETPEERUCRED */
-
 /* Define to 1 if you have the <gssapi_ext.h> header file. */
 /* #undef HAVE_GSSAPI_EXT_H */
 
@@ -289,9 +283,6 @@
 
 /* Define to 1 if you have the `localeconv_l' function. */
 /* #undef HAVE_LOCALECONV_L */
-
-/* Define to 1 if you have the <mbarrier.h> header file. */
-/* #undef HAVE_MBARRIER_H */
 
 /* Define to 1 if you have the `mbstowcs_l' function. */
 /* #undef HAVE_MBSTOWCS_L */
@@ -472,9 +463,6 @@
 
 /* Define to 1 if your compiler understands `typeof' or something similar. */
 #define HAVE_TYPEOF 1
-
-/* Define to 1 if you have the <ucred.h> header file. */
-/* #undef HAVE_UCRED_H */
 
 /* Define to 1 if the system has the type `union semun'. */
 /* #undef HAVE_UNION_SEMUN */
@@ -818,15 +806,6 @@
    nothing if this is not supported.  Do not define if restrict is
    supported directly.  */
 #define restrict __restrict
-/* Work around a bug in Sun C++: it does not support _Restrict or
-   __restrict__, even though the corresponding Sun C compiler ends up with
-   "#define restrict _Restrict" or "#define restrict __restrict__" in the
-   previous line.  Perhaps some future version of Sun C++ will work with
-   restrict; if so, hopefully it defines __RESTRICT like Sun C does.  */
-#if defined __SUNPRO_CC && !defined __RESTRICT
-#define _Restrict
-#define __restrict__
-#endif
 
 /* Define to how the compiler spells `typeof'. */
 /* #undef typeof */

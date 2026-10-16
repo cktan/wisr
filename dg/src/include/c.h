@@ -147,7 +147,6 @@ inline E operator--(E &e, int) {
  * GCC: https://gcc.gnu.org/onlinedocs/gcc/Function-Attributes.html
  * GCC: https://gcc.gnu.org/onlinedocs/gcc/Type-Attributes.html
  * Clang: https://clang.llvm.org/docs/AttributeReference.html
- * Sunpro: https://docs.oracle.com/cd/E18659_01/html/821-1384/gjzke.html
  */
 
 /*
@@ -190,7 +189,7 @@ inline E operator--(E &e, int) {
  */
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
 #define pg_noreturn _Noreturn
-#elif defined(__GNUC__) || defined(__SUNPRO_C)
+#elif defined(__GNUC__)
 #define pg_noreturn __attribute__((noreturn))
 #elif defined(_MSC_VER)
 #define pg_noreturn __declspec(noreturn)
@@ -276,8 +275,8 @@ inline E operator--(E &e, int) {
 #define pg_attribute_printf(f, a)
 #endif
 
-/* GCC and Sunpro support aligned and packed */
-#if defined(__GNUC__) || defined(__SUNPRO_C)
+/* GCC supports aligned and packed */
+#if defined(__GNUC__)
 #define pg_attribute_aligned(a) __attribute__((aligned(a)))
 #define pg_attribute_packed() __attribute__((packed))
 #elif defined(_MSC_VER)
@@ -306,9 +305,8 @@ inline E operator--(E &e, int) {
  * compatibility with existing code. All new code should use the shorter
  * variant "pg_always_inline."
  */
-#if (defined(__GNUC__) && __GNUC__ > 3 && defined(__OPTIMIZE__)) ||            \
-    defined(__SUNPRO_C)
-/* GCC > 3 and Sunpro support always_inline via __attribute__ */
+#if defined(__GNUC__) && __GNUC__ > 3 && defined(__OPTIMIZE__)
+/* GCC > 3 supports always_inline via __attribute__ */
 #define pg_always_inline __attribute__((always_inline)) inline
 #define pg_attribute_always_inline __attribute__((always_inline)) inline
 #elif defined(_MSC_VER)
@@ -327,8 +325,8 @@ inline E operator--(E &e, int) {
  * for proper cost attribution.  Note that unlike the pg_attribute_XXX macros
  * above, this should be placed before the function's return type and name.
  */
-/* GCC and Sunpro support noinline via __attribute__ */
-#if (defined(__GNUC__) && __GNUC__ > 2) || defined(__SUNPRO_C)
+/* GCC supports noinline via __attribute__ */
+#if defined(__GNUC__) && __GNUC__ > 2
 #define pg_noinline __attribute__((noinline))
 /* msvc via declspec */
 #elif defined(_MSC_VER)

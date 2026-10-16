@@ -89,10 +89,6 @@
 /* TCP_KEEPIDLE is the name of this option on Linux and *BSD */
 #define PG_TCP_KEEPALIVE_IDLE TCP_KEEPIDLE
 #define PG_TCP_KEEPALIVE_IDLE_STR "TCP_KEEPIDLE"
-#elif defined(TCP_KEEPALIVE_THRESHOLD)
-/* TCP_KEEPALIVE_THRESHOLD is the name of this option on Solaris >= 11 */
-#define PG_TCP_KEEPALIVE_IDLE TCP_KEEPALIVE_THRESHOLD
-#define PG_TCP_KEEPALIVE_IDLE_STR "TCP_KEEPALIVE_THRESHOLD"
 #elif defined(TCP_KEEPALIVE) && defined(__darwin__)
 /* TCP_KEEPALIVE is the name of this option on macOS */
 /* Caution: Solaris has this symbol but it means something different */

@@ -18,9 +18,6 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
-#ifdef HAVE_UCRED_H
-#include <ucred.h>
-#endif
 #ifdef HAVE_SYS_UCRED_H
 #include <sys/ucred.h>
 #endif
@@ -50,21 +47,6 @@ int getpeereid(int sock, uid_t *uid, gid_t *gid) {
     return -1;
   *uid = peercred.cr_uid;
   *gid = peercred.cr_gid;
-  return 0;
-#elif defined(HAVE_GETPEERUCRED)
-  /* Solaris: use getpeerucred() */
-  ucred_t *ucred;
-
-  ucred = NULL; /* must be initialized to NULL */
-  if (getpeerucred(sock, &ucred) == -1)
-    return -1;
-
-  *uid = ucred_geteuid(ucred);
-  *gid = ucred_getegid(ucred);
-  ucred_free(ucred);
-
-  if (*uid == (uid_t)(-1) || *gid == (gid_t)(-1))
-    return -1;
   return 0;
 #else
   /* No implementation available on this platform */
