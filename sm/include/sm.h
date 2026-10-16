@@ -231,6 +231,26 @@ int sm_stmt_end(sm_session_t* session, sm_stmt_t* outer);
  */
 int sm_set_qa_nowait(sm_session_t* session, bool on);
 
+/*
+ * Give the session the host's number for it, by which
+ * sm_waits_for names it: nonzero, and distinct among the host's
+ * open sessions. 0, a session's number until this is called, is
+ * none.
+ */
+int sm_session_tag(sm_session_t* session, uint64_t tag);
+
+/*
+ * The numbers of the sessions the open session numbered tag waits
+ * for now, into *out, cleared first: the holders of the lock it
+ * waits on, or the transaction whose uncommitted write it waits
+ * behind. Empty if it waits for none or no session has the
+ * number; a session it waits for that has no number, or a
+ * prepared transaction, is left out. Any thread may ask about any
+ * session of env: it is what PostgreSQL's pg_blocking_pids()
+ * reports.
+ */
+int sm_waits_for(sm_env_t* env, uint64_t tag, std::vector<uint64_t>* out);
+
 /* Set a savepoint; returns its depth (>= 1), or -1. */
 int sm_savepoint(sm_session_t* session);
 

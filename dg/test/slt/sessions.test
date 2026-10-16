@@ -1,0 +1,92 @@
+# Verify that a session sees another's rows only once they commit, and at
+# REPEATABLE READ not even then until its own transaction ends.
+# 1. Insert a row in session a's open transaction.
+# 2. Confirm session b does not see it until a commits.
+# 3. Begin a REPEATABLE READ transaction in b, and commit a second row in a.
+# 4. Confirm b's transaction still sees one row, and b sees two after it.
+
+statement ok
+create table s (k int4, x text)
+
+connection a
+statement ok
+begin
+
+connection a
+statement ok
+insert into s values (1, 'one')
+
+connection b
+query I nosort
+select count(*) from s
+----
+0
+
+connection a
+query I nosort
+select count(*) from s
+----
+1
+
+connection a
+statement ok
+commit
+
+connection b
+query IT nosort
+select k, x from s
+----
+1	one
+
+connection b
+statement ok
+begin isolation level repeatable read
+
+connection b
+query I nosort
+select count(*) from s
+----
+1
+
+connection a
+statement ok
+insert into s values (2, 'two')
+
+connection b
+query I nosort
+select count(*) from s
+----
+1
+
+connection b
+statement ok
+commit
+
+connection b
+query I nosort
+select count(*) from s
+----
+2
+
+# Verify that another session's DDL is seen by a session's next statement.
+# 1. Add a column in session a, and confirm b reads it.
+# 2. Drop the table in a, and confirm b is told it does not exist.
+
+connection a
+statement ok
+alter table s add column y int4
+
+connection b
+query ITI rowsort
+select k, x, y from s
+----
+1	one	NULL
+2	two	NULL
+
+connection a
+statement ok
+drop table s
+
+connection b
+statement error relation "s" does not exist
+select * from s

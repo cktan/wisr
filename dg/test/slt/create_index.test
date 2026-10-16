@@ -1,0 +1,75 @@
+# Verify that CREATE INDEX on a table with rows ends as PostgreSQL's does:
+# with an index the next statement uses, or with an error and no index.
+# 1. Make a table with a duplicated key, and ask for a unique index on it.
+# 2. Confirm the statement fails with the duplicate, and leaves no index:
+#    the name is free and a duplicate is still taken.
+# 3. Make a plain index over the rows, and confirm the next statement
+#    plans with it.
+
+statement ok
+create table u (k int4, x text)
+
+statement ok
+insert into u values (1, 'one'), (1, 'uno'), (2, 'two')
+
+statement error could not create unique index "uk"
+create unique index uk on u (k)
+
+query I nosort
+select count(*) from pg_class where relname = 'uk'
+----
+0
+
+statement ok
+insert into u values (2, 'dos')
+
+statement ok
+create index uk on u (k)
+
+statement ok
+set enable_seqscan = off
+
+statement ok
+set enable_bitmapscan = off
+
+query T nosort
+explain (costs off) select x from u where k = 2
+----
+Index Scan using uk on u
+  Index Cond: (k = 2)
+
+query T rowsort
+select x from u where k = 2
+----
+dos
+two
+
+# Verify that an index's name taken by another relation is refused as
+# PostgreSQL refuses it, and skipped with IF NOT EXISTS.
+# 1. Make a table and an index on it.
+# 2. Confirm another index of that name, or of the table's, is refused,
+#    unique or not, with "already exists".
+# 3. Confirm IF NOT EXISTS succeeds and makes nothing.
+
+statement ok
+create table n (k int4)
+
+statement ok
+create index nk on n (k)
+
+statement error relation "nk" already exists
+create index nk on n (k)
+
+statement error relation "n" already exists
+create index n on n (k)
+
+statement error relation "nk" already exists
+create unique index nk on n (k)
+
+statement ok
+create index if not exists nk on n (k)
+
+query I nosort
+select count(*) from pg_class where relname = 'nk'
+----
+1

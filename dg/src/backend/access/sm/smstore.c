@@ -93,10 +93,21 @@ typedef std::unordered_map<Oid, std::vector<open_table_t>> open_tables_t;
  * This session's state in sm: the tables its transaction opened, closed as
  * it ends: tcb->smstore.
  */
+/* An index CREATE INDEX made: its table, its oid, its name, whether unique. */
+struct made_index_t {
+  uint64_t table;
+  uint64_t index;
+  std::string name;
+  bool unique;
+};
+
 struct smstore_state_t {
   open_tables_t open_tables;
   /* sm's namespaces' epoch when this session last flushed them. */
   uint64_t nsp_epoch = 0;
+  /* The indexes this transaction made, and those its commit is to wait on. */
+  std::vector<made_index_t> made_indexes;
+  std::vector<made_index_t> built_after_commit;
 };
 
 /* The tables this session's transaction opened. */
@@ -253,11 +264,18 @@ static void close_tables(void) {
  * commits, so that a commit sm refuses fails the transaction.
  */
 void smstore_commit(void) {
+  std::vector<made_index_t> made;
+
   if (!sm_xact_open)
     return;
   close_tables();
   sm_xact_open = false;
-  if (sm_commit(session()) != 0) {
+  made.swap(tcb->smstore->made_indexes);
+  if (sm_commit(session()) == 0) {
+    /* Their builds begin now: smstore_wait_indexes() waits for them. */
+    for (made_index_t &m : made)
+      tcb->smstore->built_after_commit.push_back(std::move(m));
+  } else {
     int code = sm_sqlstate();
     std::string why = sm_errmsg();
 
@@ -278,6 +296,8 @@ void smstore_abort(void) {
     return;
   close_tables();
   sm_xact_open = false;
+  /* The indexes it made are gone with it. */
+  tcb->smstore->made_indexes.clear();
   /* An abort that fails here has nowhere to go: sm ends it anyway. */
   (void)sm_abort(session());
 }
@@ -3074,6 +3094,18 @@ ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt) {
                                RelationGetNamespace(rel),
                                ChooseIndexColumnNames(stmt->indexParams), NIL,
                                stmt->primary, stmt->isconstraint);
+  /* A table, an index and a sequence share a namespace's names. */
+  if (OidIsValid(smstore_relation_oid(name, RelationGetNamespace(rel)))) {
+    relation_close(rel, NoLock);
+    if (stmt->if_not_exists) {
+      ereport(NOTICE,
+              (errcode(ERRCODE_DUPLICATE_TABLE),
+               errmsg("relation \"%s\" already exists, skipping", name)));
+      return InvalidObjectAddress;
+    }
+    ereport(ERROR, (errcode(ERRCODE_DUPLICATE_TABLE),
+                    errmsg("relation \"%s\" already exists", name)));
+  }
   /* Every session's descriptor of the table relearns its indexes. */
   CacheInvalidateRelcache(rel);
   relation_close(rel, NoLock);
@@ -3084,14 +3116,64 @@ ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt) {
         return sm_cat_create_index(s, relid, name, keys, includes, stmt->unique,
                                    std::string(), {}, &oid, stmt->primary);
       }) != 0) {
+    /* A name taken since it was looked up, or a unique key duplicated. */
+    if (sm_errnum() == SM_ERR_DUPKEY && !stmt->unique)
+      ereport(ERROR, (errcode(ERRCODE_DUPLICATE_TABLE),
+                      errmsg("relation \"%s\" already exists", name)));
     if (sm_errnum() == SM_ERR_DUPKEY)
       ereport(ERROR, (errcode(ERRCODE_UNIQUE_VIOLATION),
                       errmsg("could not create unique index \"%s\"", name),
                       errdetail("%s", sm_errmsg())));
     sm_error("create an index");
   }
+  tcb->smstore->made_indexes.push_back({relid, oid, name, stmt->unique});
   ObjectAddressSet(address, RelationRelationId, (Oid)oid);
   return address;
+}
+
+/*
+ * Wait for the builds of the indexes the transaction just committed made,
+ * outside any transaction, so the next statement's snapshot may scan them:
+ * sm builds one on a table with rows in the background, after the commit
+ * (sm_cat_create_index()).  A build that failed is dropped, in a
+ * transaction of its own, and its error raised, so CREATE INDEX ends as
+ * PostgreSQL's does: with an index or with none (DECISION.md).
+ */
+void smstore_wait_indexes(void) {
+  std::vector<made_index_t> built;
+
+  if (tcb->smstore == nullptr || tcb->smstore->built_after_commit.empty())
+    return;
+  /* Taken first: a cancel ends the wait with an error, and none is waited
+   * for again. */
+  built.swap(tcb->smstore->built_after_commit);
+  for (const made_index_t &m : built) {
+    if (waiting([&] { return sm_cat_index_wait(session(), m.table, m.index); })
+        == 0)
+      continue;
+    /* Dropped since, in its transaction or by another. */
+    if (sm_errnum() == SM_ERR_NOTFOUND)
+      continue;
+    int errnum = sm_errnum();
+    int code = sm_sqlstate();
+    std::string why = sm_errmsg();
+
+    /* A failed index is good only for dropping: its own transaction does. */
+    StartTransactionCommand();
+    if (waiting([&] {
+          return sm_cat_drop_index(xact_session(), m.table, m.index);
+        }) != 0 &&
+        sm_errnum() != SM_ERR_NOTFOUND)
+      sm_error("drop an index whose build failed");
+    CommitTransactionCommand();
+    if (errnum == SM_ERR_DUPKEY && m.unique)
+      ereport(ERROR, (errcode(ERRCODE_UNIQUE_VIOLATION),
+                      errmsg("could not create unique index \"%s\"",
+                             m.name.c_str()),
+                      errdetail("%s", why.c_str())));
+    ereport(ERROR, (errcode(code), errmsg("could not create index \"%s\": %s",
+                                          m.name.c_str(), why.c_str())));
+  }
 }
 
 /*
@@ -3346,6 +3428,12 @@ static bool read_row(sm_tbl_t *tbl, uint64_t rowno, TupleTableSlot *slot) {
     sm_error("read a row");
   }
   tuple_into_slot(tbl, rowno, tuple, len, slot);
+  /*
+   * A point read's bytes last only until the session's next call to sm,
+   * which another scan in the statement makes, as a join's inner side
+   * does: the slot keeps a copy.
+   */
+  ExecMaterializeSlot(slot);
   return true;
 }
 
@@ -3459,6 +3547,8 @@ bool smstore_index_getentry(smstore_scan_t *scan, TupleTableSlot *slot) {
   uint64 rowno;
 
   while (smstore_index_getrowno(scan, &rowno)) {
+    bool from_row = false;
+
     ExecClearTuple(slot);
     switch (sm_idx_scan_key(scan->icursor, (sm_datum_t *)slot->tts_values,
                             slot->tts_isnull, scan->form->indnkeyatts)) {
@@ -3468,12 +3558,16 @@ bool smstore_index_getentry(smstore_scan_t *scan, TupleTableSlot *slot) {
     case 1:
       if (!entry_from_row(scan, rowno, slot))
         continue;
+      from_row = true;
       break;
     default:
       sm_error("read an index entry");
     }
     ExecStoreVirtualTuple(slot);
     slot_from_sm(slot);
+    /* A row read by rowno lasts only until sm's next call, as read_row's. */
+    if (from_row)
+      ExecMaterializeSlot(slot);
     smstore_rowno_to_tid(rowno, &slot->tts_tid);
     if (keys_met(scan, slot, true))
       return true;

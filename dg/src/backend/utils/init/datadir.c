@@ -32,6 +32,8 @@
 #include "postmaster/initdb.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
+#include "storage/session_registry.h"
+#include "utils/control_block.h"
 #include "utils/datadir.h"
 #include "utils/memutils.h"
 
@@ -204,6 +206,29 @@ void datadir_open_session(const char *dbname) {
     ereport(FATAL, (errmsg("could not open database \"%s\": %s", dbname,
                            sm_errmsg())));
   on_proc_exit(close_sm_session, 0);
+  /* sm names the session by its record's id to one who asks whom it waits
+   * for (datadir_sm_blockers()). */
+  if (tcb->session != nullptr)
+    (void)sm_session_tag(sm_session, tcb->session->id);
+}
+
+/*
+ * The pids of the sessions the session with pid waits for in sm: the
+ * holders of the lock it waits on, or the writer whose row it waits behind.
+ * sm knows each by its record's id (datadir_open_session()).
+ */
+std::vector<int> datadir_sm_blockers(int pid) {
+  std::vector<int> pids;
+  std::vector<uint64_t> ids;
+  session_ref_t waiter = session_by_pid(pid);
+
+  if (waiter == nullptr || sm_waits_for(sm_env, waiter->id, &ids) != 0)
+    return pids;
+  for (const session_ref_t &r : sessions_all())
+    for (uint64_t id : ids)
+      if (r->id == id)
+        pids.push_back(r->pid);
+  return pids;
 }
 
 /* This session's sm session, or NULL if it has opened none. */

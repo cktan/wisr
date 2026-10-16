@@ -680,6 +680,29 @@ int stmt_end(session_t* session, const stmt_t& outer);
 int set_qa_nowait(session_t* session, bool on);
 
 /*
+ * Give the session the host's number for it, by which waits_for
+ * names it; 0, its number until this is called, is none. The
+ * host keeps the numbers distinct among its open sessions.
+ *
+ * Errors: SM_ERR_INVALID.
+ */
+int set_tag(session_t* session, uint64_t tag);
+
+/*
+ * The numbers of the sessions the open session numbered tag
+ * waits for now, into *out, cleared first: the holders of the
+ * lock it waits on, or the transaction whose uncommitted version
+ * it waits behind (SM1_DESIGN.md §5.1). Empty if it waits for
+ * none, or no open session has the number; a session it waits
+ * for that has no number, or is a prepared transaction, is left
+ * out. Any thread may ask about any session of env: for
+ * PostgreSQL's pg_blocking_pids().
+ *
+ * Errors: SM_ERR_INVALID.
+ */
+int waits_for(env_t* env, uint64_t tag, std::vector<uint64_t>* out);
+
+/*
  * Set a savepoint at the current point in the transaction and
  * return its DEPTH: 1 for the first, 2 for one set inside it,
  * and so on. Savepoints nest; a transaction may hold up to

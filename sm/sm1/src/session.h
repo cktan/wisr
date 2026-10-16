@@ -75,7 +75,9 @@ struct sm1::session_t {
    */
   bool stmt_pinned = false; /* sm1::stmt_begin was called */
   bool qa_nowait = false;   /* QA only: fail, do not wait (§5.1) */
-  bool stmt_taken = false;  /* stmt_snapshot_ts is the one to use */
+  /* The host's number for the session, 0 for none (sm1::set_tag). */
+  std::atomic<uint64_t> tag{0};
+  bool stmt_taken = false; /* stmt_snapshot_ts is the one to use */
   uint64_t stmt_snapshot_ts = 0;
   /*
    * The statement mark (§6.2): once a statement has begun, its

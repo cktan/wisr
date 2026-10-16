@@ -17,6 +17,7 @@
 #include "storage/advisory_lock.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
+#include "utils/datadir.h"
 
 /*
  * pg_lock_status - produce a view with one row per held or awaited lock mode
@@ -38,16 +39,21 @@ Datum pg_lock_status(PG_FUNCTION_ARGS) {
  * pg_blocking_pids - produce an array of the PIDs blocking given PID
  *
  * The reported PIDs are those that hold an advisory lock conflicting with
- * blocked_pid's wait for one (storage/advisory_lock.h).  A wait for a lock
- * of sm's is not reported yet: sm1 lists no waits.
+ * blocked_pid's wait for one (storage/advisory_lock.h), and those it waits
+ * for in sm: a table lock's holder, a row's writer (datadir_sm_blockers()).
  */
 Datum pg_blocking_pids(PG_FUNCTION_ARGS) {
   int blocked_pid = PG_GETARG_INT32(0);
   std::vector<int> advisory = advisory_blockers(blocked_pid);
-  Datum *arrayelems = (Datum *)palloc((advisory.size() + 1) * sizeof(Datum));
+  /* And whom it waits for in sm: a table's lock, a row's, a row's writer */
+  std::vector<int> in_sm = datadir_sm_blockers(blocked_pid);
+  Datum *arrayelems =
+      (Datum *)palloc((advisory.size() + in_sm.size() + 1) * sizeof(Datum));
   int narrayelems = 0;
 
   for (int pid : advisory)
+    arrayelems[narrayelems++] = Int32GetDatum(pid);
+  for (int pid : in_sm)
     arrayelems[narrayelems++] = Int32GetDatum(pid);
   PG_RETURN_ARRAYTYPE_P(
       construct_array_builtin(arrayelems, narrayelems, INT4OID));

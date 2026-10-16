@@ -96,7 +96,8 @@ since step 27, are gone (step 157).
   and never change (step 154), and what waited on a lock waits
   for nothing (step 155). `lmgr.c`'s entry points are left, as
   sm's calls or no-ops. `pg_lock_status()` lists no lock, and
-  `pg_blocking_pids()` names an advisory lock's holders.
+  `pg_blocking_pids()` names an advisory lock's holders and
+  whom a session waits for in sm (step 166).
 - **Advisory locks** are in a table of digres's own
   (storage/lmgr `advisory_lock.c`, `WORKNOTE.md` step 153), not
   sm's: they guard nothing stored (`PLAN.md` §7). A mutex, the
@@ -322,8 +323,10 @@ an object of its own instead.
   `XidCache`.
 - **`pg_blocking_pids()`** names the holders of an advisory lock
   a session waits for, from digres's own table (steps 153,
-  156). With sm1's lock listing (§7, step 4) it names sm's too,
-  from sm1's lock table, which knows who waits for whom.
+  156), and whom it waits for in sm, a row's writer or a table
+  lock's holder (step 166): each sm session is numbered with its
+  record's id (`sm_session_tag`), and sm1's waits-for edges give
+  the numbers (`sm_waits_for`).
 
 ## 6. What is left of modules removed
 
@@ -368,8 +371,9 @@ has a caller still, and goes with the step that removes it:
    gone (step 154), nothing left to take a lock (155), the
    lock manager gone (156), the LWLocks and `posix_sema.c`
    (157), interrupts and cancels through the session record
-   (158), PGPROC gone (159); then `pg_blocking_pids()` and
-   `pg_lock_status()` ask sm1's lock table.
+   (158), PGPROC gone (159), `pg_blocking_pids()` asking sm1's
+   waits-for graph (166); then `pg_lock_status()` asks sm1's
+   lock table.
 5. **The registry** of §2, once each block is a pcb field.
 
 Each step is checked by the full suite and by `make tsan`;

@@ -4712,3 +4712,207 @@ database and role, its flags, and its slot on the free list.
   connect, a fourth is refused with "too many clients", and one
   connects once the three end. The shutdown check's comment
   names the record, not the PGPROC.
+
+## Step 160: SQL tests say what they expect
+
+`test/slt/README.md`. `run.sh` compares what psql printed with
+a file of it, and most of what SQL is checked is in
+`server.sh`, a check a `psql` call. A test in the
+sqllogictest format, SQLite's, as DuckDB and CockroachDB use
+it, says in each record what it must give, and its answers
+are PostgreSQL 18's.
+
+- **`build/slt`** (`test/slt/slt.cc`): a client of the
+  system's libpq that runs each file in a database of its
+  own. `statement ok`, `statement error PATTERN`, `query
+  TYPES SORT LABEL` with its results or their MD5,
+  `skipif`, `onlyif`, `hash-threshold` and `halt`.
+  `--rewrite` writes a file's results from what the server
+  gave.
+- **`test/slt.sh`** starts digres, or with `--pg18` or
+  `--rewrite` the PostgreSQL 18 in `$PG18` (`~/pg18`), and
+  runs the files on it. `make slt` runs it on digres.
+- **SQLite's corpus**, `select1.test` to `select5.test`,
+  unchanged: 10,706 records. PostgreSQL 18 passes them all,
+  in 51 seconds; digres fails 103 of `select4`'s, joins over
+  two bitmap scans (`../sm/NEXT.md` §2), and takes 3 minutes
+  55.
+- **Each record is timed**: `--times FILE` writes every
+  record's time, the slowest first, and a file's tally line
+  has its time. What it showed: digres took 195 seconds to
+  PostgreSQL 18's 41, 184 of them in `select5`, planning
+  joins of up to 64 tables. The cause is the build: digres's
+  is `-O0` with asserts, so with `MEMORY_CONTEXT_CHECKING`
+  and `CLOBBER_FREED_MEMORY`, and its planning's time went to
+  `bms_is_valid_set()`, `AllocSetCheck()` and
+  `check_list_invariants()`. Built `-O2` without asserts,
+  digres took 46 seconds, and 39 for `select5` to
+  PostgreSQL's 37. Short statements still take about twice
+  PostgreSQL's time; that is not looked into.
+- **Not in `make test`** until those pass, and then
+  `select1` to `select4` only, about 11 seconds: `select5`
+  stays in `make slt`.
+- **Left for later**: named connections in a file, PostgreSQL's
+  own regression suite as a measure of what digres runs,
+  isolation specs, and moving `server.sh`'s SQL checks over.
+
+## Step 161: a row read by rowno is the slot's own
+
+`../sm/NEXT.md` §2. SQLite's corpus (step 160) found 103
+joins in `select4.test` giving wrong rows: a nested loop over
+two bitmap scans returned the inner table's text in the outer
+table's column too.
+
+- **The cause**: a point read, `sm_tbl_read()`, hands out
+  bytes that last only until the session's next call to sm
+  (`../sm/include/sm.h`). `read_row()` in `access/sm`
+  `smstore.c` left the slot's values by reference pointing
+  into them; only a table with a numeric column was copied,
+  by `slot_from_sm()`. The inner side's next read then
+  overwrote the outer row's text. A cursor's row lasts until
+  that cursor's next call, so a seq scan was never affected.
+- **The fix**: `read_row()` materializes the slot, copying the
+  values passed by reference, as `smstore_lock_latest()`
+  already did. It serves the bitmap scan, the index scan and
+  `smstore_fetch_row()`. An index entry read back from its
+  row (`entry_from_row()`) is copied the same way.
+- **`NEXT.md` said digres copied** the row an index scan or a
+  bitmap scan fetches. It did not; it does now.
+- **`test/slt/point_read.test`**: nested loops of bitmap
+  scans, of index scans, and of an index scan inside, over
+  text columns; three of its four queries failed before the
+  fix. Its indexes are made before its rows: an index built
+  over rows is not planned with for some statements after
+  `CREATE INDEX` returns (`../sm/NEXT.md` §2).
+- **`make test` runs the sqllogictest files** but
+  `select5.test`, about 15 seconds; `make slt` runs them all.
+  All 10,723 records pass.
+
+## Step 162: CREATE INDEX waits for its build
+
+`../DECISION.md`, for review. On a table with rows sm builds a
+new index in the background, after the commit
+(`sm_cat_create_index`), and digres never waited: `CREATE
+UNIQUE INDEX` over duplicates returned `CREATE INDEX`, its
+build failed unseen, and duplicates went on being taken; and
+the statements after planned without the index until its build
+ended.
+
+- **`smstore_wait_indexes()`** (access/sm `smstore.c`): a
+  transaction's commit hands the indexes it made to a list,
+  and `finish_xact_command()` (tcop `postgres.c`) waits for
+  each with `sm_cat_index_wait()` once no transaction is open,
+  as `CREATE INDEX CONCURRENTLY` waits between its
+  transactions. A cancel ends the wait; the build goes on.
+- **A build that failed is dropped**, in a transaction of its
+  own, and its error raised: `could not create unique index`
+  with sm's detail for a duplicate. PostgreSQL leaves no index
+  after a failed `CREATE INDEX`, and a failed one in sm is good
+  only for dropping.
+- **In a transaction block** the error comes at `COMMIT`,
+  after the block's other work committed; PostgreSQL fails the
+  `CREATE INDEX` itself. Within the block the index is not
+  planned with until the commit.
+- **Left**: after one failed build the others the transaction
+  made are not waited for; the detail is sm's, `two rows of u
+  with one key in uk`, not PostgreSQL's `Key (k)=(1) is
+  duplicated.` (`../sm/NEXT.md` §2); a session that ends right
+  after its commit waits for nothing.
+- `test/slt/create_index.test`: a unique index over duplicates
+  fails and leaves no index; a plain one over rows is planned
+  with by the next statement. Four of its records failed
+  before.
+
+## Step 163: an index's name taken is refused as PostgreSQL does
+
+`../sm/NEXT.md` §2. sm refuses a name taken in a namespace with
+`SM_ERR_DUPKEY`, as it refuses a duplicated key, and digres
+said `could not create unique index`, `the name nk is taken`,
+for both; `CREATE INDEX IF NOT EXISTS` failed the same way.
+
+- **`smstore_create_index()` looks the name up first**, with
+  `smstore_relation_oid()`, as `CREATE SEQUENCE` does: a taken
+  one is `relation "nk" already exists`, or with `IF NOT
+  EXISTS` a NOTICE and nothing made.
+- **`SM_ERR_DUPKEY` for an index not unique** is a name taken
+  since the look-up, and says the same.
+- `test/slt/create_index.test`: a name an index or the table
+  holds, unique or not, and `IF NOT EXISTS`.
+
+## Step 164: SQLite's whole corpus, on demand
+
+`../DECISION.md`, for review; `test/slt/README.md`. The rest of
+SQLite's corpus, `index/`, `random/` and `evidence/`, is 1.2
+GB, too much to keep, and the part most likely to find what
+`select4` found.
+
+- **`test/slt_corpus.sh`** (`make slt-corpus`) clones the
+  mirror `github.com/gregrahn/sqllogictest` at a pinned
+  commit, with no file contents, into `build/slt-corpus`,
+  checks out the files its sparse-checkout patterns name, and
+  runs them with `test/slt.sh` on PostgreSQL 18 and on digres.
+  What digres fails and PostgreSQL 18 passes is reported, by
+  file and line. A record PostgreSQL 18 fails is another
+  dialect's.
+- **The sample**: the first set of files in each directory of
+  `index/` and `random/`, and `evidence/`: 1,495,198 records,
+  about 5 minutes on PostgreSQL 18 and 17 on digres.
+  PostgreSQL 18 fails 7,328, digres 31,734.
+- **What digres alone fails is views**: 24,408 records, all
+  of them a `CREATE VIEW` digres refuses, or a query of the
+  view it did not make (`../sm/NEXT.md` §2). The rest of the
+  sample digres answers as PostgreSQL 18 does.
+- Not in `make test`: it needs the network once, and long.
+
+## Step 165: a sqllogictest file runs in more than one session
+
+`test/slt/README.md`. `server.sh` checks what one session sees
+of another's work with held psql sessions on fifos; a
+sqllogictest file can now say it in records.
+
+- **`connection NAME`**, on the line before a record, runs it
+  in the session NAME, made at its first use in the file's
+  database; a record with none runs in `default`. Every
+  session ends before the database is dropped.
+- **One record at a time**: a record that waits for another
+  session's lock waits forever. Blocking needs an isolation
+  format, as PostgreSQL's isolationtester has, and is not
+  built.
+- `test/slt/sessions.test`: a row inserted in an open
+  transaction is not seen by another session until the
+  commit; a REPEATABLE READ transaction keeps its snapshot
+  past another's commit; another session's ADD COLUMN and
+  DROP TABLE are seen by the next statement. Run in one
+  session, two of its records fail.
+
+## Step 166: pg_blocking_pids() sees waits in sm
+
+`../DECISION.md`, for review. A session waiting in sm, for a
+row's writer or a table's lock, was blocked by no one as far as
+`pg_blocking_pids()` knew, so PostgreSQL's `isolationtester`,
+which asks `pg_isolation_test_session_is_blocked()`, waited out
+each blocked step for 300 seconds and failed it.
+
+- **sm says whom a session waits for**: `sm_session_tag()`
+  gives an sm session the host's number for it, and
+  `sm_waits_for()` returns the numbers of the sessions it
+  waits for, from sm1's waits-for edges (`sm1::set_tag`,
+  `sm1::waits_for`, `../sm/sm1/API.md`). It reads them under
+  the env's mutex and the database's `lock_mu`, and passes over
+  an edge to a session no longer registered.
+- **digres numbers each sm session by its record's id**
+  (`datadir_open_session()`), and `pg_blocking_pids()` adds the
+  pids of the sessions `datadir_sm_blockers()` finds.
+- `../sm/sm1/test/test_lock.cc`: a writer waiting behind a
+  version and a locker waiting on a lock name their holder;
+  with the edges left out, it fails. `server.sh`: a row's
+  writer and a table lock's holder are named, and the waiter
+  is blocked by no one once it goes through.
+- **Fixed on the way, in `test/slt_corpus.sh`**: a run of the
+  whole corpus reported PASSED with nothing run on digres, as
+  a `make test` beside it had cleared `build/test/slt`, the
+  directory both used. `test/slt.sh` now takes its directory
+  from `SLT_WORK`, the corpus gives each engine its own, and a
+  run that could not be made or ran no record fails. The whole
+  corpus is 622 files, 5,675,180 records; PostgreSQL 18 runs it
+  in about 45 minutes and fails 11,626.

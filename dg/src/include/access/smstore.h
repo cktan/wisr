@@ -137,6 +137,7 @@ extern void smstore_alter_table(Oid relid, AlterTableStmt *stmt);
 extern ObjectAddress smstore_rename_table(RenameStmt *stmt);
 extern ObjectAddress smstore_rename_column(RenameStmt *stmt);
 extern ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt);
+extern void smstore_wait_indexes(void);
 extern void smstore_drop_indexes(DropStmt *stmt);
 extern void smstore_lock_table(Relation rel, LOCKMODE lockmode, bool nowait);
 extern void smstore_lock_relation(Oid relid, LOCKMODE lockmode);

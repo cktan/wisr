@@ -914,6 +914,34 @@ is the caller's.
 
 Errors: `SM_ERR_INVALID`.
 
+### int sm1::set_tag(sm1::session_t* session, uint64_t tag)
+
+Gives the session the host's number for it, by which
+`sm1::waits_for` names it. 0, a session's number until this is
+called, is none. The host keeps the numbers distinct among its
+open sessions; sm1 does not check.
+
+Errors: `SM_ERR_INVALID`.
+
+### int sm1::waits_for(sm1::env_t* env, uint64_t tag, std::vector<uint64_t>* out)
+
+The numbers of the sessions that the open session numbered
+`tag` waits for now, into `*out`, cleared first: its edges in
+the waits-for graph (`SM1_DESIGN.md` §5.1). That is the holders
+of the lock it waits on, or the transaction whose uncommitted
+version of a key it waits behind. Empty if it waits for none,
+or no open session has the number. A session it waits for
+that has no number, or a prepared transaction, is left out.
+
+Any thread may ask about any session of `env`: it is what
+PostgreSQL's `pg_blocking_pids()` reports, and what its
+isolation tester asks to tell a step that waits from one that
+runs. It takes the env's mutex, then the database's lock
+mutex, and reads only sessions still registered with the env:
+an edge to one that has since closed is passed over.
+
+Errors: `SM_ERR_INVALID`.
+
 ### int sm1::lock(sm1::session_t* session, sm1::locktype_t type, uint64_t storeid, std::string_view key, sm1::lockmode_t mode)
 
 `type` says what the lock names. `LOCKTYPE_ROW` is a key in a

@@ -693,6 +693,26 @@ int sm_set_qa_nowait(sm_session_t *session, bool on) {
   return guard(session, [&] { return sm1::set_qa_nowait(s, on); });
 }
 
+/* Give the session the host's number for it, for sm_waits_for. */
+int sm_session_tag(sm_session_t *session, uint64_t tag) {
+  return guard(nullptr, [&] {
+    if (!session) {
+      return null_arg("sm_session_tag", "session");
+    }
+    return sm1::set_tag(session_of(session), tag);
+  });
+}
+
+/* The numbers of the sessions the session numbered tag waits for. */
+int sm_waits_for(sm_env_t *env, uint64_t tag, std::vector<uint64_t> *out) {
+  return guard(nullptr, [&] {
+    if (!env) {
+      return null_arg("sm_waits_for", "env");
+    }
+    return sm1::waits_for(env_of(env), tag, out);
+  });
+}
+
 /* Set a savepoint and return its depth. */
 int sm_savepoint(sm_session_t *session) {
   return guard(session, [&] { return sm3::savepoint(session->sm3); });

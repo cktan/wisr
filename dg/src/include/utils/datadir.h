@@ -7,6 +7,8 @@
 #ifndef DATADIR_H
 #define DATADIR_H
 
+#include <vector>
+
 #include "nodes/pg_list.h"
 
 extern void datadir_load(void);
@@ -29,5 +31,6 @@ extern datadir_drop_t datadir_drop_database(const char *dbname);
 
 struct sm_session_t;
 extern struct sm_session_t *datadir_sm_session(void);
+extern std::vector<int> datadir_sm_blockers(int pid);
 
 #endif /* DATADIR_H */

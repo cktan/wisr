@@ -32,6 +32,7 @@
 #endif
 
 #include "access/printtup.h"
+#include "access/smstore.h"
 #include "access/xact.h"
 #include "catalog/pg_type.h"
 #include "commands/event_trigger.h"
@@ -2491,6 +2492,13 @@ static void finish_xact_command(void) {
 
     xact_started = false;
   }
+  /*
+   * Once a transaction that made indexes has committed, wait for their
+   * builds, outside it, as CREATE INDEX CONCURRENTLY waits between its
+   * transactions: the command is complete when its index is.
+   */
+  if (!IsTransactionOrTransactionBlock())
+    smstore_wait_indexes();
 }
 
 /*
