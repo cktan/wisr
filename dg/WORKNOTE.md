@@ -5071,3 +5071,26 @@ under a build option.
   `guc.c` include `utils/hsearch.h` themselves, which they had
   through `storage/shmem.h`.
 - **Left**: dynahash's shared mode, which no table uses now.
+
+## Step 174: dynahash's shared mode is gone
+
+`SHMEM.md` §2, §7 step 5. dynahash made PostgreSQL's hash tables
+in shared memory: a header a process attached to by name, a
+directory fixed in size, a size not to grow past, and free lists
+partitioned among locks, each under a mutex of its own. Since
+step 173 no table is made so, and no caller passed the flags.
+
+- **Gone** (utils/hash `dynahash.c`, `utils/hsearch.h`):
+  `HASH_SHARED_MEM`, `HASH_ATTACH`, `HASH_PARTITION`,
+  `HASH_DIRSIZE` and `HASH_FIXED_SIZE`, with `HASHCTL`'s
+  `num_partitions`, `dsize`, `max_dsize` and `hctl` and
+  `NO_MAX_DSIZE`; `hash_select_dirsize()` and
+  `hash_get_shared_size()`; the 32 free lists and their mutexes,
+  for one, a count of entries and a chain, in the header; the
+  borrowing of an entry from another free list; `HTAB`'s
+  `isshared` and `isfixed`; `next_pow2_long()`, which only
+  `hash_select_dirsize()` called. A table never in shared memory
+  reports "out of memory" and FATALs on corruption, as a local
+  one did.
+- **Kept**: the flags a local table uses, at their values, and
+  `HASH_ALLOC` and `HASH_SEGMENT`, which a local table may pass.

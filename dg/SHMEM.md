@@ -51,9 +51,10 @@ thread finds them in the pcb and attaches to nothing.
 - **Sized ahead of time** still: `MaxBackends`, the session
   registry's limit, and `PROCARRAY_MAXPROCS`, a snapshot's
   arrays.
-- **Left**: dynahash's shared mode (partitioned free lists,
-  their spinlocks, a fixed directory), which no table uses
-  now.
+- **dynahash's shared mode is gone too** (`WORKNOTE.md` step
+  174): its partitioned free lists and their mutexes, a header
+  in shared memory a thread attached to, a fixed directory and
+  a fixed size. A hash table is a backend's own.
 
 ## 3. Locks
 
@@ -365,7 +366,7 @@ has a caller still, and goes with the step that removes it:
    waits-for graph (166); then `pg_lock_status()` asks sm1's
    lock table.
 5. **The registry** of §2: done (`WORKNOTE.md` step 173),
-   each block a pcb field. Left: dynahash's shared mode.
+   each block a pcb field, and dynahash's shared mode (174).
 
 Each step is checked by the full suite and by `make tsan`;
 asserts are on in every build (`dg.mk`), so a broken invariant

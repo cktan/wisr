@@ -61,13 +61,8 @@ typedef struct HTAB HTAB;
 /* Parameter data structure for hash_create */
 /* Only those fields indicated by hash_flags need be set */
 typedef struct HASHCTL {
-  /* Used if HASH_PARTITION flag is set: */
-  long num_partitions; /* # partitions (must be power of 2) */
   /* Used if HASH_SEGMENT flag is set: */
   long ssize; /* segment size */
-  /* Used if HASH_DIRSIZE flag is set: */
-  long dsize;     /* (initial) directory size */
-  long max_dsize; /* limit to dsize if dir size is limited */
   /* Used if HASH_ELEM flag is set (which is now required): */
   Size keysize;   /* hash key length in bytes */
   Size entrysize; /* total user element size in bytes */
@@ -81,14 +76,10 @@ typedef struct HASHCTL {
   HashAllocFunc alloc; /* memory allocator */
   /* Used if HASH_CONTEXT flag is set: */
   MemoryContext hcxt; /* memory context to use for allocations */
-  /* Used if HASH_SHARED_MEM flag is set: */
-  HASHHDR *hctl; /* location of header in shared mem */
 } HASHCTL;
 
 /* Flag bits for hash_create; most indicate which parameters are supplied */
-#define HASH_PARTITION	0x0001  /* Hashtable is used w/partitioned locking */
 #define HASH_SEGMENT	0x0002    /* Set segment size */
-#define HASH_DIRSIZE	0x0004    /* Set directory size (initial and max) */
 #define HASH_ELEM		0x0008       /* Set keysize and entrysize (now required!) */
 #define HASH_STRINGS	0x0010    /* Select support functions for string keys */
 #define HASH_BLOBS		0x0020      /* Select support functions for binary keys */
@@ -97,12 +88,6 @@ typedef struct HASHCTL {
 #define HASH_KEYCOPY	0x0100    /* Set user defined key-copying function */
 #define HASH_ALLOC		0x0200      /* Set memory allocator */
 #define HASH_CONTEXT	0x0400    /* Set memory allocation context */
-#define HASH_SHARED_MEM 0x0800 /* Hashtable is in shared memory */
-#define HASH_ATTACH		0x1000     /* Do not initialize hctl */
-#define HASH_FIXED_SIZE 0x2000 /* Initial size is a hard limit */
-
-/* max_dsize value to indicate expansible directory */
-#define NO_MAX_DSIZE			(-1)
 
 /* hash_search operations */
 typedef enum {
@@ -143,8 +128,6 @@ extern void hash_seq_init_with_hash_value(HASH_SEQ_STATUS *status, HTAB *hashp,
 extern void *hash_seq_search(HASH_SEQ_STATUS *status);
 extern void hash_seq_term(HASH_SEQ_STATUS *status);
 extern void hash_freeze(HTAB *hashp);
-extern long hash_select_dirsize(long num_entries);
-extern Size hash_get_shared_size(HASHCTL *info, int flags);
 extern void AtEOXact_HashTables(bool isCommit);
 extern void AtEOSubXact_HashTables(bool isCommit, int nestDepth);
 

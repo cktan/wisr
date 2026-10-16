@@ -3,29 +3,12 @@
  * dynahash.c
  *	  dynamic chained hash tables
  *
- * dynahash.c supports both local-to-a-backend hash tables and hash tables in
- * shared memory.  For shared hash tables, it is the caller's responsibility
- * to provide appropriate access interlocking.  The simplest convention is
- * that a single LWLock protects the whole hash table.  Searches (HASH_FIND or
- * hash_seq_search) need only shared lock, but any update requires exclusive
- * lock.  For heavily-used shared tables, the single-lock approach creates a
- * concurrency bottleneck, so we also support "partitioned" locking wherein
- * there are multiple LWLocks guarding distinct subsets of the table.  To use
- * a hash table in partitioned mode, the HASH_PARTITION flag must be given
- * to hash_create.  This prevents any attempt to split buckets on-the-fly.
- * Therefore, each hash bucket chain operates independently, and no fields
- * of the hash header change after init except nentries and freeList.
- * (A partitioned table uses multiple copies of those fields, guarded by
- * spinlocks, for additional concurrency.)
- * This lets any subset of the hash buckets be treated as a separately
- * lockable partition.  We expect callers to use the low-order bits of a
- * lookup key's hash value as a partition number --- this will work because
- * of the way calc_bucket() maps hash values to bucket numbers.
- *
- * For hash tables in shared memory, the memory allocator function should
- * match malloc's semantics of returning NULL on failure.  For hash tables
- * in local memory, we typically use palloc() which will throw error on
- * failure.  The code in this file has to cope with both cases.
+ * dynahash.c supports hash tables local to a backend.  PostgreSQL's tables in
+ * shared memory, partitioned among locks, with a fixed directory, are gone
+ * (dg/WORKNOTE.md step 174): a structure the threads share is the process
+ * control block's, guarded by a mutex of its own.  The memory allocator may
+ * return NULL on failure, as malloc does, or throw, as palloc does; the code
+ * in this file has to cope with both cases.
  *
  * dynahash.c provides support for these types of lookup keys:
  *
@@ -44,10 +27,6 @@
  *
  * Compared to simplehash, dynahash has the following benefits:
  *
- * - It supports partitioning, which is useful for shared memory access using
- *   locks.
- * - Shared memory hashes are allocated in a fixed size area at startup and
- *   are discoverable by name from other processes.
  * - Because entries don't need to be moved in the case of hash conflicts,
  *   dynahash has better performance for large entries.
  * - Guarantees stable pointers to entries.
@@ -96,9 +75,6 @@
 
 #include <limits.h>
 
-#include <mutex>
-#include <new>
-
 #include "access/xact.h"
 #include "common/hashfn.h"
 #include "port/pg_bitutils.h"
@@ -114,19 +90,10 @@
  * buckets is thus dsize * ssize (but dsize may be expansible).  Of course,
  * the number of records in the table can be larger, but we don't want a
  * whole lot of records per bucket or performance goes down.
- *
- * In a hash table allocated in shared memory, the directory cannot be
- * expanded because it must stay at a fixed address.  The directory size
- * should be selected using hash_select_dirsize (and you'd better have
- * a good idea of the maximum number of entries!).  For non-shared hash
- * tables, the initial directory size can be left at the default.
  */
 #define DEF_SEGSIZE			   256
 #define DEF_SEGSIZE_SHIFT	   8 /* must be log2(DEF_SEGSIZE) */
 #define DEF_DIRSIZE			   256
-
-/* Number of freelists to be used for a partitioned hash table. */
-#define NUM_FREELISTS			32
 
 /* A hash bucket is a linked list of HASHELEMENTs */
 typedef HASHELEMENT *HASHBUCKET;
@@ -135,51 +102,16 @@ typedef HASHELEMENT *HASHBUCKET;
 typedef HASHBUCKET *HASHSEGMENT;
 
 /*
- * Per-freelist data.
- *
- * In a partitioned hash table, each freelist is associated with a specific
- * set of hashcodes, as determined by the FREELIST_IDX() macro below.
- * nentries tracks the number of live hashtable entries having those hashcodes
- * (NOT the number of entries in the freelist, as you might expect).
- *
- * The coverage of a freelist might be more or less than one partition, so it
- * needs its own lock rather than relying on caller locking.  Relying on that
- * wouldn't work even if the coverage was the same, because of the occasional
- * need to "borrow" entries from another freelist; see get_hash_entry().
- *
- * Using an array of FreeListData instead of separate arrays of mutexes,
- * nentries and freeLists helps to reduce sharing of cache lines between
- * different mutexes.
- */
-typedef struct {
-  std::mutex mutex;      /* lock for this freelist, if partitioned */
-  long nentries;         /* number of entries in associated buckets */
-  HASHELEMENT *freeList; /* chain of free elements */
-} FreeListData;
-
-/*
  * Header structure for a hash table --- contains all changeable info
  *
- * In a shared-memory hash table, the HASHHDR is in shared memory, while
- * each backend has a local HTAB struct.  For a non-shared table, there isn't
- * any functional difference between HASHHDR and HTAB, but we separate them
- * anyway to share code between shared and non-shared tables.
+ * There isn't any functional difference between HASHHDR and HTAB, but they
+ * were separate for PostgreSQL's tables in shared memory, and are kept so.
  */
 struct HASHHDR {
-  /*
-   * The freelist can become a point of contention in high-concurrency hash
-   * tables, so we use an array of freelists, each with its own mutex and
-   * nentries count, instead of just a single one.  Although the freelists
-   * normally operate independently, we will scavenge entries from freelists
-   * other than a hashcode's default freelist when necessary.
-   *
-   * If the hash table is not partitioned, only freeList[0] is used and its
-   * spinlock is not used at all; callers' locking is assumed sufficient.
-   */
-  FreeListData freeList[NUM_FREELISTS];
+  long nentries;         /* number of entries in the table */
+  HASHELEMENT *freeList; /* chain of free elements */
 
-  /* These fields can change, but not in a partitioned table */
-  /* Also, dsize can't change in a shared table, even if unpartitioned */
+  /* These fields can change */
   long dsize;        /* directory size */
   long nsegs;        /* number of allocated segments (<= dsize) */
   uint32 max_bucket; /* ID of maximum bucket in use */
@@ -189,34 +121,23 @@ struct HASHHDR {
   /* These fields are fixed at hashtable creation */
   Size keysize;        /* hash key length in bytes */
   Size entrysize;      /* total user element size in bytes */
-  long num_partitions; /* # partitions (must be power of 2), or 0 */
-  long max_dsize;      /* 'dsize' limit if directory is fixed size */
   long ssize;          /* segment size --- must be power of 2 */
   int sshift;          /* segment shift = log2(ssize) */
   int nelem_alloc;     /* number of entries to allocate at once */
 
 #ifdef HASH_STATISTICS
 
-  /*
-   * Count statistics here.  NB: stats code doesn't bother with mutex, so
-   * counts could be corrupted a bit in a partitioned table.
-   */
+  /* Count statistics here. */
   long accesses;
   long collisions;
 #endif
 };
 
-#define IS_PARTITIONED(hctl)  ((hctl)->num_partitions != 0)
-
-#define FREELIST_IDX(hctl, hashcode) \
-	(IS_PARTITIONED(hctl) ? (hashcode) % NUM_FREELISTS : 0)
-
 /*
- * Top control structure for a hashtable --- in a shared table, each backend
- * has its own copy (OK since no fields change at runtime)
+ * Top control structure for a hashtable
  */
 struct HTAB {
-  HASHHDR *hctl;         /* => shared control information */
+  HASHHDR *hctl;         /* => control information */
   HASHSEGMENT *dir;      /* directory of segment starts */
   HashValueFunc hash;    /* hash function */
   HashCompareFunc match; /* key comparison function */
@@ -224,11 +145,7 @@ struct HTAB {
   HashAllocFunc alloc;   /* memory allocator */
   MemoryContext hcxt;    /* memory context if default allocator used */
   char *tabname;         /* table name (for error messages) */
-  bool isshared;         /* true if table is in shared memory */
-  bool isfixed;          /* if true, don't enlarge */
-
-  /* freezing a shared table isn't allowed, so we can keep state here */
-  bool frozen; /* true = no more inserts allowed */
+  bool frozen;           /* true = no more inserts allowed */
 
   /* We keep local copies of these fixed values to reduce contention */
   Size keysize; /* hash key length in bytes */
@@ -261,17 +178,16 @@ static long hash_accesses, hash_collisions, hash_expansions;
  */
 static void *DynaHashAlloc(Size size);
 static HASHSEGMENT seg_alloc(HTAB *hashp);
-static bool element_alloc(HTAB *hashp, int nelem, int freelist_idx);
+static bool element_alloc(HTAB *hashp, int nelem);
 static bool dir_realloc(HTAB *hashp);
 static bool expand_table(HTAB *hashp);
-static HASHBUCKET get_hash_entry(HTAB *hashp, int freelist_idx);
+static HASHBUCKET get_hash_entry(HTAB *hashp);
 static void hdefault(HTAB *hashp);
 static int choose_nelem_alloc(Size entrysize);
 static bool init_htab(HTAB *hashp, long nelem);
 pg_noreturn static void hash_corrupted(HTAB *hashp);
 static uint32 hash_initial_lookup(HTAB *hashp, uint32 hashvalue,
                                   HASHBUCKET **bucketptr);
-static long next_pow2_long(long num);
 static int next_pow2_int(long num);
 static void register_seq_scan(HTAB *hashp);
 static void deregister_seq_scan(HTAB *hashp);
@@ -319,9 +235,7 @@ static int string_compare(const char *key1, const char *key2, Size keysize) {
  * Another often-used flag is HASH_CONTEXT, to allocate the hash table
  * under info->hcxt rather than under TopMemoryContext; the default
  * behavior is only suitable for session-lifespan hash tables.
- * Other flags bits are special-purpose and seldom used, except for those
- * associated with shared-memory hash tables, which no table is now
- * (dg/WORKNOTE.md step 173).
+ * Other flags bits are special-purpose and seldom used.
  *
  * Fields in *info are read only when the associated flags bit is set.
  * It is not necessary to initialize other fields of *info.
@@ -352,27 +266,17 @@ HTAB *hash_create(const char *tabname, long nelem, const HASHCTL *info,
   Assert(info->entrysize >= info->keysize);
 
   /*
-   * For shared hash tables, we have a local hash header (HTAB struct) that
-   * we allocate in TopMemoryContext; all else is in shared memory.
-   *
-   * For non-shared hash tables, everything including the hash header is in
-   * a memory context created specially for the hash table --- this makes
-   * hash_destroy very simple.  The memory context is made a child of either
-   * a context specified by the caller, or TopMemoryContext if nothing is
-   * specified.
+   * Everything including the hash header is in a memory context created
+   * specially for the hash table --- this makes hash_destroy very simple.
+   * The memory context is made a child of either a context specified by the
+   * caller, or TopMemoryContext if nothing is specified.
    */
-  if (flags & HASH_SHARED_MEM) {
-    /* Set up to allocate the hash header */
+  if (flags & HASH_CONTEXT)
+    CurrentDynaHashCxt = info->hcxt;
+  else
     CurrentDynaHashCxt = TopMemoryContext;
-  } else {
-    /* Create the hash table's private memory context */
-    if (flags & HASH_CONTEXT)
-      CurrentDynaHashCxt = info->hcxt;
-    else
-      CurrentDynaHashCxt = TopMemoryContext;
-    CurrentDynaHashCxt = AllocSetContextCreate(CurrentDynaHashCxt, "dynahash",
-                                               ALLOCSET_DEFAULT_SIZES);
-  }
+  CurrentDynaHashCxt = AllocSetContextCreate(CurrentDynaHashCxt, "dynahash",
+                                             ALLOCSET_DEFAULT_SIZES);
 
   /* Initialize the hash header, plus a copy of the table name */
   hashp = (HTAB *)MemoryContextAlloc(CurrentDynaHashCxt,
@@ -382,9 +286,8 @@ HTAB *hash_create(const char *tabname, long nelem, const HASHCTL *info,
   hashp->tabname = (char *)(hashp + 1);
   strcpy(hashp->tabname, tabname);
 
-  /* If we have a private context, label it with hashtable's name */
-  if (!(flags & HASH_SHARED_MEM))
-    MemoryContextSetIdentifier(CurrentDynaHashCxt, hashp->tabname);
+  /* Label the private context with hashtable's name */
+  MemoryContextSetIdentifier(CurrentDynaHashCxt, hashp->tabname);
 
   /*
    * Select the appropriate hash function (see comments at head of file).
@@ -453,40 +356,12 @@ HTAB *hash_create(const char *tabname, long nelem, const HASHCTL *info,
   else
     hashp->alloc = DynaHashAlloc;
 
-  if (flags & HASH_SHARED_MEM) {
-    /*
-     * ctl structure and directory are preallocated for shared memory
-     * tables.  Note that HASH_DIRSIZE and HASH_ALLOC had better be set as
-     * well.
-     */
-    hashp->hctl = info->hctl;
-    hashp->dir = (HASHSEGMENT *)(((char *)info->hctl) + sizeof(HASHHDR));
-    hashp->hcxt = NULL;
-    hashp->isshared = true;
-
-    /* hash table already exists, we're just attaching to it */
-    if (flags & HASH_ATTACH) {
-      /* make local copies of some heavily-used values */
-      hctl = hashp->hctl;
-      hashp->keysize = hctl->keysize;
-      hashp->ssize = hctl->ssize;
-      hashp->sshift = hctl->sshift;
-
-      return hashp;
-    }
-  } else {
-    /* setup hash table defaults */
-    hashp->hctl = NULL;
-    hashp->dir = NULL;
-    hashp->hcxt = CurrentDynaHashCxt;
-    hashp->isshared = false;
-  }
-
-  if (!hashp->hctl) {
-    hashp->hctl = (HASHHDR *)hashp->alloc(sizeof(HASHHDR));
-    if (!hashp->hctl)
-      ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("out of memory")));
-  }
+  /* setup hash table defaults */
+  hashp->dir = NULL;
+  hashp->hcxt = CurrentDynaHashCxt;
+  hashp->hctl = (HASHHDR *)hashp->alloc(sizeof(HASHHDR));
+  if (!hashp->hctl)
+    ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("out of memory")));
 
   hashp->frozen = false;
 
@@ -494,33 +369,11 @@ HTAB *hash_create(const char *tabname, long nelem, const HASHCTL *info,
 
   hctl = hashp->hctl;
 
-  if (flags & HASH_PARTITION) {
-    /* Doesn't make sense to partition a local hash table */
-    Assert(flags & HASH_SHARED_MEM);
-
-    /*
-     * The number of partitions had better be a power of 2. Also, it must
-     * be less than INT_MAX (see init_htab()), so call the int version of
-     * next_pow2.
-     */
-    Assert(info->num_partitions == next_pow2_int(info->num_partitions));
-
-    hctl->num_partitions = info->num_partitions;
-  }
-
   if (flags & HASH_SEGMENT) {
     hctl->ssize = info->ssize;
     hctl->sshift = my_log2(info->ssize);
     /* ssize had better be a power of 2 */
     Assert(hctl->ssize == (1L << hctl->sshift));
-  }
-
-  /*
-   * SHM hash tables have fixed directory size passed by the caller.
-   */
-  if (flags & HASH_DIRSIZE) {
-    hctl->max_dsize = info->max_dsize;
-    hctl->dsize = info->dsize;
   }
 
   /* remember the entry sizes, too */
@@ -537,49 +390,15 @@ HTAB *hash_create(const char *tabname, long nelem, const HASHCTL *info,
     elog(ERROR, "failed to initialize hash table \"%s\"", hashp->tabname);
 
   /*
-   * For a shared hash table, preallocate the requested number of elements.
-   * This reduces problems with run-time out-of-shared-memory conditions.
-   *
-   * For a non-shared hash table, preallocate the requested number of
-   * elements if it's less than our chosen nelem_alloc.  This avoids wasting
-   * space if the caller correctly estimates a small table size.
+   * Preallocate the requested number of elements if it's less than our
+   * chosen nelem_alloc.  This avoids wasting space if the caller correctly
+   * estimates a small table size.
    */
-  if ((flags & HASH_SHARED_MEM) || nelem < hctl->nelem_alloc) {
-    int i, freelist_partitions, nelem_alloc, nelem_alloc_first;
-
-    /*
-     * If hash table is partitioned, give each freelist an equal share of
-     * the initial allocation.  Otherwise only freeList[0] is used.
-     */
-    if (IS_PARTITIONED(hashp->hctl))
-      freelist_partitions = NUM_FREELISTS;
-    else
-      freelist_partitions = 1;
-
-    nelem_alloc = nelem / freelist_partitions;
-    if (nelem_alloc <= 0)
-      nelem_alloc = 1;
-
-    /*
-     * Make sure we'll allocate all the requested elements; freeList[0]
-     * gets the excess if the request isn't divisible by NUM_FREELISTS.
-     */
-    if (nelem_alloc * freelist_partitions < nelem)
-      nelem_alloc_first = nelem - nelem_alloc * (freelist_partitions - 1);
-    else
-      nelem_alloc_first = nelem_alloc;
-
-    for (i = 0; i < freelist_partitions; i++) {
-      int temp = (i == 0) ? nelem_alloc_first : nelem_alloc;
-
-      if (!element_alloc(hashp, temp, i))
-        ereport(ERROR,
-                (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("out of memory")));
-    }
+  if (nelem < hctl->nelem_alloc) {
+    if (!element_alloc(hashp, nelem > 0 ? nelem : 1))
+      ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("out of memory")));
   }
 
-  if (flags & HASH_FIXED_SIZE)
-    hashp->isfixed = true;
   return hashp;
 }
 
@@ -593,11 +412,6 @@ static void hdefault(HTAB *hashp) {
 
   hctl->dsize = DEF_DIRSIZE;
   hctl->nsegs = 0;
-
-  hctl->num_partitions = 0; /* not partitioned */
-
-  /* table has no fixed maximum size */
-  hctl->max_dsize = NO_MAX_DSIZE;
 
   hctl->ssize = DEF_SEGSIZE;
   hctl->sshift = DEF_SEGSIZE_SHIFT;
@@ -646,31 +460,12 @@ static bool init_htab(HTAB *hashp, long nelem) {
   HASHSEGMENT *segp;
   int nbuckets;
   int nsegs;
-  int i;
-
-  /*
-   * initialize mutexes if it's a partitioned table: the header is shared
-   * memory's, calloc'd, so each is made in place.  Its sections raise
-   * nothing, so it is locked and unlocked as the spinlock it was.
-   */
-  if (IS_PARTITIONED(hctl))
-    for (i = 0; i < NUM_FREELISTS; i++)
-      new (&(hctl->freeList[i].mutex)) std::mutex();
 
   /*
    * Allocate space for the next greater power of two number of buckets,
    * assuming a desired maximum load factor of 1.
    */
   nbuckets = next_pow2_int(nelem);
-
-  /*
-   * In a partitioned table, nbuckets must be at least equal to
-   * num_partitions; were it less, keys with apparently different partition
-   * numbers would map to the same bucket, breaking partition independence.
-   * (Normally nbuckets will be much bigger; this is just a safety check.)
-   */
-  while (nbuckets < hctl->num_partitions)
-    nbuckets <<= 1;
 
   hctl->max_bucket = hctl->low_mask = nbuckets - 1;
   hctl->high_mask = (nbuckets << 1) - 1;
@@ -719,41 +514,6 @@ static bool init_htab(HTAB *hashp, long nelem) {
       "LOW  MASK       ", hctl->low_mask, "NSEGS           ", hctl->nsegs);
 #endif
   return true;
-}
-
-/*
- * Select an appropriate directory size for a hashtable with the given
- * maximum number of entries.
- * This is only needed for hashtables in shared memory, whose directories
- * cannot be expanded dynamically.
- * NB: assumes that all hash structure parameters have default values!
- *
- * XXX this had better agree with the behavior of init_htab()...
- */
-long hash_select_dirsize(long num_entries) {
-  long nBuckets, nSegments, nDirEntries;
-
-  /* estimate number of buckets wanted */
-  nBuckets = next_pow2_long(num_entries);
-  /* # of segments needed for nBuckets */
-  nSegments = next_pow2_long((nBuckets - 1) / DEF_SEGSIZE + 1);
-  /* directory entries */
-  nDirEntries = DEF_DIRSIZE;
-  while (nDirEntries < nSegments)
-    nDirEntries <<= 1; /* dir_alloc doubles dsize at each call */
-
-  return nDirEntries;
-}
-
-/*
- * Compute the required initial memory allocation for a shared-memory
- * hashtable with the given parameters.  We need space for the HASHHDR
- * and for the (non expansible) directory.
- */
-Size hash_get_shared_size(HASHCTL *info, int flags) {
-  Assert(flags & HASH_DIRSIZE);
-  Assert(info->dsize == info->max_dsize);
-  return sizeof(HASHHDR) + info->dsize * sizeof(HASHSEGMENT);
 }
 
 /********************** DESTROY ROUTINES ************************/
@@ -848,7 +608,6 @@ void *hash_search_with_hash_value(HTAB *hashp, const void *keyPtr,
                                   uint32 hashvalue, HASHACTION action,
                                   bool *foundPtr) {
   HASHHDR *hctl = hashp->hctl;
-  int freelist_idx = FREELIST_IDX(hctl, hashvalue);
   Size keysize;
   HASHBUCKET currBucket;
   HASHBUCKET *prevBucketPtr;
@@ -869,11 +628,11 @@ void *hash_search_with_hash_value(HTAB *hashp, const void *keyPtr,
    */
   if (action == HASH_ENTER || action == HASH_ENTER_NULL) {
     /*
-     * Can't split if running in partitioned mode, nor if frozen, nor if
-     * table is the subject of any active hash_seq_search scans.
+     * Can't split if frozen, nor if table is the subject of any active
+     * hash_seq_search scans.
      */
-    if (hctl->freeList[0].nentries > (long)hctl->max_bucket &&
-        !IS_PARTITIONED(hctl) && !hashp->frozen && !has_seq_scans(hashp))
+    if (hctl->nentries > (long)hctl->max_bucket && !hashp->frozen &&
+        !has_seq_scans(hashp))
       (void)expand_table(hashp);
   }
 
@@ -915,23 +674,16 @@ void *hash_search_with_hash_value(HTAB *hashp, const void *keyPtr,
 
   case HASH_REMOVE:
     if (currBucket != NULL) {
-      /* if partitioned, must lock to touch nentries and freeList */
-      if (IS_PARTITIONED(hctl))
-        hctl->freeList[freelist_idx].mutex.lock();
-
-      /* delete the record from the appropriate nentries counter. */
-      Assert(hctl->freeList[freelist_idx].nentries > 0);
-      hctl->freeList[freelist_idx].nentries--;
+      /* delete the record from the nentries counter. */
+      Assert(hctl->nentries > 0);
+      hctl->nentries--;
 
       /* remove record from hash bucket's chain. */
       *prevBucketPtr = currBucket->link;
 
-      /* add the record to the appropriate freelist. */
-      currBucket->link = hctl->freeList[freelist_idx].freeList;
-      hctl->freeList[freelist_idx].freeList = currBucket;
-
-      if (IS_PARTITIONED(hctl))
-        hctl->freeList[freelist_idx].mutex.unlock();
+      /* add the record to the freelist. */
+      currBucket->link = hctl->freeList;
+      hctl->freeList = currBucket;
 
       /*
        * better hope the caller is synchronizing access to this
@@ -952,18 +704,13 @@ void *hash_search_with_hash_value(HTAB *hashp, const void *keyPtr,
     if (hashp->frozen)
       elog(ERROR, "cannot insert into frozen hashtable \"%s\"", hashp->tabname);
 
-    currBucket = get_hash_entry(hashp, freelist_idx);
+    currBucket = get_hash_entry(hashp);
     if (currBucket == NULL) {
       /* out of memory */
       if (action == HASH_ENTER_NULL)
         return NULL;
       /* report a generic message */
-      if (hashp->isshared)
-        ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY),
-                        errmsg("out of shared memory")));
-      else
-        ereport(ERROR,
-                (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("out of memory")));
+      ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("out of memory")));
     }
 
     /* link into hashbucket chain */
@@ -1114,78 +861,18 @@ bool hash_update_hash_key(HTAB *hashp, void *existingEntry,
  * (Or, if the underlying space allocator throws error for out-of-memory,
  * we won't return at all.)
  */
-static HASHBUCKET get_hash_entry(HTAB *hashp, int freelist_idx) {
+static HASHBUCKET get_hash_entry(HTAB *hashp) {
   HASHHDR *hctl = hashp->hctl;
   HASHBUCKET newElement;
 
-  for (;;) {
-    /* if partitioned, must lock to touch nentries and freeList */
-    if (IS_PARTITIONED(hctl))
-      hctl->freeList[freelist_idx].mutex.lock();
-
-    /* try to get an entry from the freelist */
-    newElement = hctl->freeList[freelist_idx].freeList;
-
-    if (newElement != NULL)
-      break;
-
-    if (IS_PARTITIONED(hctl))
-      hctl->freeList[freelist_idx].mutex.unlock();
-
-    /*
-     * No free elements in this freelist.  In a partitioned table, there
-     * might be entries in other freelists, but to reduce contention we
-     * prefer to first try to get another chunk of buckets from the main
-     * shmem allocator.  If that fails, though, we *MUST* root through all
-     * the other freelists before giving up.  There are multiple callers
-     * that assume that they can allocate every element in the initially
-     * requested table size, or that deleting an element guarantees they
-     * can insert a new element, even if shared memory is entirely full.
-     * Failing because the needed element is in a different freelist is
-     * not acceptable.
-     */
-    if (!element_alloc(hashp, hctl->nelem_alloc, freelist_idx)) {
-      int borrow_from_idx;
-
-      if (!IS_PARTITIONED(hctl))
-        return NULL; /* out of memory */
-
-      /* try to borrow element from another freelist */
-      borrow_from_idx = freelist_idx;
-      for (;;) {
-        borrow_from_idx = (borrow_from_idx + 1) % NUM_FREELISTS;
-        if (borrow_from_idx == freelist_idx)
-          break; /* examined all freelists, fail */
-
-        hctl->freeList[borrow_from_idx].mutex.lock();
-        newElement = hctl->freeList[borrow_from_idx].freeList;
-
-        if (newElement != NULL) {
-          hctl->freeList[borrow_from_idx].freeList = newElement->link;
-          hctl->freeList[borrow_from_idx].mutex.unlock();
-
-          /* careful: count the new element in its proper freelist */
-          hctl->freeList[freelist_idx].mutex.lock();
-          hctl->freeList[freelist_idx].nentries++;
-          hctl->freeList[freelist_idx].mutex.unlock();
-
-          return newElement;
-        }
-
-        hctl->freeList[borrow_from_idx].mutex.unlock();
-      }
-
-      /* no elements available to borrow either, so out of memory */
-      return NULL;
-    }
-  }
+  /* No free elements: get another chunk of them, if memory allows. */
+  if (hctl->freeList == NULL && !element_alloc(hashp, hctl->nelem_alloc))
+    return NULL; /* out of memory */
 
   /* remove entry from freelist, bump nentries */
-  hctl->freeList[freelist_idx].freeList = newElement->link;
-  hctl->freeList[freelist_idx].nentries++;
-
-  if (IS_PARTITIONED(hctl))
-    hctl->freeList[freelist_idx].mutex.unlock();
+  newElement = hctl->freeList;
+  hctl->freeList = newElement->link;
+  hctl->nentries++;
 
   return newElement;
 }
@@ -1193,22 +880,7 @@ static HASHBUCKET get_hash_entry(HTAB *hashp, int freelist_idx) {
 /*
  * hash_get_num_entries -- get the number of entries in a hashtable
  */
-long hash_get_num_entries(HTAB *hashp) {
-  int i;
-  long sum = hashp->hctl->freeList[0].nentries;
-
-  /*
-   * We currently don't bother with acquiring the mutexes; it's only
-   * sensible to call this function if you've got lock on all partitions of
-   * the table.
-   */
-  if (IS_PARTITIONED(hashp->hctl)) {
-    for (i = 1; i < NUM_FREELISTS; i++)
-      sum += hashp->hctl->freeList[i].nentries;
-  }
-
-  return sum;
-}
+long hash_get_num_entries(HTAB *hashp) { return hashp->hctl->nentries; }
 
 /*
  * hash_seq_init/_search/_term
@@ -1369,8 +1041,6 @@ void hash_seq_term(HASH_SEQ_STATUS *status) {
  * with active scans (since hash_seq_term would then do the wrong thing).
  */
 void hash_freeze(HTAB *hashp) {
-  if (hashp->isshared)
-    elog(ERROR, "cannot freeze shared hashtable \"%s\"", hashp->tabname);
   if (!hashp->frozen && has_seq_scans(hashp))
     elog(ERROR, "cannot freeze hashtable \"%s\" because it has active scans",
          hashp->tabname);
@@ -1390,8 +1060,6 @@ static bool expand_table(HTAB *hashp) {
   long old_segnum, old_segndx;
   HASHBUCKET *oldlink, *newlink;
   HASHBUCKET currElement, nextElement;
-
-  Assert(!IS_PARTITIONED(hctl));
 
 #ifdef HASH_STATISTICS
   hash_expansions++;
@@ -1469,9 +1137,6 @@ static bool dir_realloc(HTAB *hashp) {
   long old_dirsize;
   long new_dirsize;
 
-  if (hashp->hctl->max_dsize != NO_MAX_DSIZE)
-    return false;
-
   /* Reallocate directory */
   new_dsize = hashp->hctl->dsize << 1;
   old_dirsize = hashp->hctl->dsize * sizeof(HASHSEGMENT);
@@ -1514,16 +1179,13 @@ static HASHSEGMENT seg_alloc(HTAB *hashp) {
 /*
  * allocate some new elements and link them into the indicated free list
  */
-static bool element_alloc(HTAB *hashp, int nelem, int freelist_idx) {
+static bool element_alloc(HTAB *hashp, int nelem) {
   HASHHDR *hctl = hashp->hctl;
   Size elementSize;
   HASHELEMENT *firstElement;
   HASHELEMENT *tmpElement;
   HASHELEMENT *prevElement;
   int i;
-
-  if (hashp->isfixed)
-    return false;
 
   /* Each element has a HASHELEMENT header plus user data. */
   elementSize = MAXALIGN(sizeof(HASHELEMENT)) + MAXALIGN(hctl->entrysize);
@@ -1543,16 +1205,9 @@ static bool element_alloc(HTAB *hashp, int nelem, int freelist_idx) {
     tmpElement = (HASHELEMENT *)(((char *)tmpElement) + elementSize);
   }
 
-  /* if partitioned, must lock to touch freeList */
-  if (IS_PARTITIONED(hctl))
-    hctl->freeList[freelist_idx].mutex.lock();
-
-  /* freelist could be nonempty if two backends did this concurrently */
-  firstElement->link = hctl->freeList[freelist_idx].freeList;
-  hctl->freeList[freelist_idx].freeList = prevElement;
-
-  if (IS_PARTITIONED(hctl))
-    hctl->freeList[freelist_idx].mutex.unlock();
+  /* link them in front of what is on the freelist already */
+  firstElement->link = hctl->freeList;
+  hctl->freeList = prevElement;
 
   return true;
 }
@@ -1585,14 +1240,8 @@ static inline uint32 hash_initial_lookup(HTAB *hashp, uint32 hashvalue,
 
 /* complain when we have detected a corrupted hashtable */
 static void hash_corrupted(HTAB *hashp) {
-  /*
-   * If the corruption is in a shared hashtable, we'd better force a
-   * systemwide restart.  Otherwise, just shut down this one backend.
-   */
-  if (hashp->isshared)
-    elog(PANIC, "hash table \"%s\" corrupted", hashp->tabname);
-  else
-    elog(FATAL, "hash table \"%s\" corrupted", hashp->tabname);
+  /* Just shut down this one backend. */
+  elog(FATAL, "hash table \"%s\" corrupted", hashp->tabname);
 }
 
 /* calculate ceil(log base 2) of num */
@@ -1609,12 +1258,6 @@ int my_log2(long num) {
 #else
   return pg_ceil_log2_64(num);
 #endif
-}
-
-/* calculate first power of 2 >= num, bounded to what will fit in a long */
-static long next_pow2_long(long num) {
-  /* my_log2's internal range check is sufficient */
-  return 1L << my_log2(num);
 }
 
 /* calculate first power of 2 >= num, bounded to what will fit in an int */
