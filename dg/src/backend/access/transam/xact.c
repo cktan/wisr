@@ -910,11 +910,6 @@ static void StartTransaction(void) {
   vxid.localTransactionId = GetNextLocalTransactionId();
 
   /*
-   * Lock the virtual transaction id before we announce it in the proc array
-   */
-  VirtualXactLockTableInsert(vxid);
-
-  /*
    * Advertise it in the proc array.  We assume assignment of
    * localTransactionId is atomic, and the proc number should be set
    * already.

@@ -102,11 +102,12 @@ Beside the registry: the main LWLock array
   `lmgr.c`, `deadlock.c`, `proc.c`'s `ProcSleep()`) is live.
   A user's table is locked by sm (`locked_by_sm()`, `lmgr.c`),
   and a catalog by nothing, as its rows are compiled in and
-  never change (`WORKNOTE.md` step 154); but the lock manager
-  still takes the virtual xid's lock at every transaction's
-  start; its waits are a latch's, cut short by an interrupt.
-  **To replace**: the lock manager, the deadlock detector, the
-  partition LWLocks and the fast-path arrays go.
+  never change (`WORKNOTE.md` step 154); no transaction takes
+  a lock of it, and its waits wait for nothing (step 155).
+  What is left reads it: `pg_lock_status()`,
+  `pg_blocking_pids()`, and the release at a transaction's
+  end. **To replace**: the lock manager, the deadlock
+  detector, the partition LWLocks and the fast-path arrays go.
 - **Advisory locks** are in a table of digres's own
   (storage/lmgr `advisory_lock.c`, `WORKNOTE.md` step 153), not
   sm's: they guard nothing stored (`PLAN.md` §7). A mutex, the
@@ -379,7 +380,8 @@ has a caller still, and goes with the step that removes it:
    session registry (§5.2, step 152).
 4. **The lock manager**: advisory locks into a table of
    digres's own (`WORKNOTE.md` step 153), catalog locks
-   gone (step 154); then the lock manager, the remaining LWLocks,
+   gone (step 154), nothing left to take a lock (155); then
+   the lock manager, the remaining LWLocks,
    `posix_sema.c` and PGPROC, whose parts the session record
    takes; `pg_blocking_pids()` asks sm1's lock table.
 5. **The registry** of §2, once each block is a pcb field.

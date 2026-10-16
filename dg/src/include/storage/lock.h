@@ -531,8 +531,6 @@ extern HTAB *GetLockMethodLocalHash(void);
 #endif
 extern bool LockHasWaiters(const LOCKTAG *locktag, LOCKMODE lockmode,
                            bool sessionLock);
-extern VirtualTransactionId *GetLockConflicts(const LOCKTAG *locktag,
-                                              LOCKMODE lockmode, int *countp);
 extern bool LockCheckConflicts(LockMethod lockMethodTable, LOCKMODE lockmode,
                                LOCK *lock, PROCLOCK *proclock);
 extern void GrantLock(LOCK *lock, PROCLOCK *proclock, LOCKMODE lockmode);
@@ -560,8 +558,6 @@ extern void DumpAllLocks(void);
 #endif
 
 /* Lock a VXID (used to wait for a transaction to finish) */
-extern void VirtualXactLockTableInsert(VirtualTransactionId vxid);
-extern void VirtualXactLockTableCleanup(void);
 extern bool VirtualXactLock(VirtualTransactionId vxid, bool wait);
 
 #endif /* LOCK_H_ */

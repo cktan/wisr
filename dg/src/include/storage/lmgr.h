@@ -72,8 +72,6 @@ extern void UnlockTuple(Relation relation, ItemPointer tid, LOCKMODE lockmode);
 /* Lock an XID (used to wait for a transaction to finish) */
 extern void XactLockTableWait(TransactionId xid, Relation rel, ItemPointer ctid,
                               XLTW_Oper oper);
-extern bool ConditionalXactLockTableWait(TransactionId xid,
-                                         bool logLockFailure);
 
 /* Lock VXIDs, specified by conflicting locktags */
 extern void WaitForLockers(LOCKTAG heaplocktag, LOCKMODE lockmode);

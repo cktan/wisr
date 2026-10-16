@@ -771,15 +771,16 @@ held_wait adv_c "c got 55" || fail "advisory deadlock: the other gets its lock"
 held_end adv_c
 held_end adv_d
 
-# Verify that a catalog takes no lock: its rows are compiled in and never
-# change, so no lock would guard anything of them.
+# Verify that a transaction takes no lock of PostgreSQL's lock manager: a
+# catalog's rows are compiled in and never change, so no lock would guard
+# anything of them, and nothing waits on a virtual xid's lock.
 # 1. In a transaction, read pg_class and pg_namespace.
-# 2. The lock manager holds no relation lock of the session's.
+# 2. The lock manager holds no lock of the session's.
 [ "$(local_psql -c 'begin' -c 'select count(*) > 0 from pg_class' \
   -c 'select count(*) > 0 from pg_namespace' \
-  -c "select count(*) from pg_lock_status() where pid = pg_backend_pid()
-      and locktype = 'relation'" -c 'commit' | sed -n 4p)" = 0 ] ||
-  fail "a catalog takes no lock"
+  -c 'select count(*) from pg_lock_status() where pid = pg_backend_pid()' \
+  -c 'commit' | sed -n 4p)" = 0 ] ||
+  fail "a transaction takes no lock of the lock manager"
 
 # Verify that a snapshot is neither exported nor imported: what a session
 # sees is sm's snapshot, which PostgreSQL's export does not carry, so an

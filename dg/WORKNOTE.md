@@ -4539,3 +4539,32 @@ the rest.
   caller before this step, is left.
 - `server.sh`: reading `pg_class` and `pg_namespace` leaves
   no relation lock in `pg_lock_status()`.
+
+## Step 155: nothing takes a lock of the lock manager
+
+`SHMEM.md` §3, §7 step 4. After steps 153 and 154 the lock
+manager's last lock was the virtual xid's, which each
+transaction took at its start for a session that would wait
+for it to end. What waits for one, and the other waits on the
+lock manager, waited for locks no session holds any more.
+
+- **A transaction takes no virtual xid lock**
+  (`StartTransaction()`): `VirtualXactLockTableInsert()` and
+  `VirtualXactLockTableCleanup()` go.
+- **The waits wait for nothing** (`lmgr.c`):
+  `WaitForLockers()` and `WaitForLockersMultiple()`, as no
+  session holds a lock of this lock manager on a relation;
+  `XactLockTableWait()`, as no transaction id is locked and no
+  transaction but the session's own is in progress to it; the
+  speculative insertion lock, which only a catalog's insert
+  takes, and it is refused. What called them is left: the
+  concurrent forms of CREATE INDEX and DROP INDEX on a
+  catalog, DETACH PARTITION CONCURRENTLY, which no sm table
+  reaches, and a catalog's unique check.
+- **Gone**: `GetLockConflicts()` and
+  `ConditionalXactLockTableWait()`, which nothing calls now,
+  and `XactLockTableWait()`'s error context. `VirtualXactLock()`
+  is left to go with `lock.c`: with no virtual xid lock, it
+  waits for nothing.
+- `server.sh`: a transaction that reads catalogs holds no lock
+  in `pg_lock_status()`, its virtual xid's among them.
