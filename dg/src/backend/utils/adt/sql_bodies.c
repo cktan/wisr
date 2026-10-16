@@ -180,14 +180,25 @@ Datum timestamp_age_today(PG_FUNCTION_ARGS) {
 
 /*
  * substring(text, text, text), SUBSTRING ... SIMILAR ... ESCAPE:
- * substring($1, similar_to_escape($2, $3)), in the call's collation.
+ * substring($1, similar_to_escape($2, $3)), in the call's collation.  It is
+ * null when nothing matches, so textregexsubstr is called with a call info
+ * of its own: DirectFunctionCall refuses a null result.
  */
 Datum substring_similar(PG_FUNCTION_ARGS) {
+  LOCAL_FCINFO(sub, 2);
   Datum pattern = DirectFunctionCall2(similar_to_escape_2, PG_GETARG_DATUM(1),
                                       PG_GETARG_DATUM(2));
+  Datum result;
 
-  return DirectFunctionCall2Coll(textregexsubstr, PG_GET_COLLATION(),
-                                 PG_GETARG_DATUM(0), pattern);
+  InitFunctionCallInfoData(*sub, NULL, 2, PG_GET_COLLATION(), NULL, NULL);
+  sub->args[0].value = PG_GETARG_DATUM(0);
+  sub->args[0].isnull = false;
+  sub->args[1].value = pattern;
+  sub->args[1].isnull = false;
+  result = textregexsubstr(sub);
+  if (sub->isnull)
+    PG_RETURN_NULL();
+  return result;
 }
 
 /* A timestamptz in seconds since the epoch, infinite ones infinite. */

@@ -90,8 +90,8 @@ transaction before sm's lock; step 188 fixed it.
 
 One more bug, not a crash: in `strings`,
 `SUBSTRING('abcdefg' SIMILAR '#"(b_d)#"%' ESCAPE '#')`, which
-is NULL on PostgreSQL, fails with `function 0x... returned
-NULL`.
+is NULL on PostgreSQL, failed with `function 0x... returned
+NULL`; step 196 fixed it.
 
 ### What test_setup cannot do
 

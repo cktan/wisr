@@ -5695,3 +5695,23 @@ catalog relation.
   without the change.
 - Left: a catalog relation's row has no tid, so its `ctid` is
   `(4294967295,0)`.
+
+## Step 196: SUBSTRING ... SIMILAR with no match is null
+
+`test/regress/README.md`'s bug in `strings`: `SUBSTRING('abcdefg'
+SIMILAR '#"(b_d)#"%' ESCAPE '#')`, null on PostgreSQL, failed
+with "function 0x... returned NULL".
+
+- **The body called through DirectFunctionCall.** PostgreSQL
+  writes `substring(text, text, text)` in SQL; digres has no
+  SQL language (step 6), and its body, utils/adt
+  `sql_bodies.c`'s `substring_similar()`, called
+  `textregexsubstr()` with `DirectFunctionCall2Coll()`, which
+  refuses a null result. `textregexsubstr()` is null when the
+  pattern does not match. It is called with a call
+  info of its own now, and its null passed on.
+- Of `sql_bodies.c`'s other direct calls, none reaches a
+  function that returns null.
+- `test/select_text.sql` step 6: the PostgreSQL documentation's
+  `oob`, and its null where the pattern does not match. It
+  failed without the change.
