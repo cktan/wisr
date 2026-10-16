@@ -342,6 +342,7 @@ static void signal_child(PMChild *pmchild, int signal);
 static bool SignalChildren(int signal, BackendTypeMask targetMask);
 static void TerminateChildren(int signal);
 static int CountChildren(BackendTypeMask targetMask);
+static int CountThreadChildren(void);
 static bool CreateOptsFile(int argc, char *argv[], char *fullprogname);
 static void InitPostmasterDeathWatchHandle(void);
 
@@ -1312,6 +1313,18 @@ static int ServerLoop(void) {
       TerminateChildren(send_abort_for_kill ? SIGABRT : SIGKILL);
       /* reset flag so we don't SIGKILL again */
       AbortStartTime = 0;
+
+      /*
+       * A thread cannot be killed (backend_thread_signal()): a session that
+       * has not ended by now, after its SIGQUIT, ends with the process, and
+       * its client is told nothing.  Every session ends at its SIGQUIT but
+       * one stuck where no interrupt reaches it.
+       */
+      if (CountThreadChildren() > 0) {
+        ereport(LOG, (errmsg("%d sessions did not end; ending the server",
+                             CountThreadChildren())));
+        _exit(2);
+      }
     }
 
     /*
@@ -2286,6 +2299,20 @@ static int CountChildren(BackendTypeMask targetMask) {
                                      (int)bp->pid)));
 
     cnt++;
+  }
+  return cnt;
+}
+
+/* Count the children that are threads, which no signal can kill. */
+static int CountThreadChildren(void) {
+  dlist_iter iter;
+  int cnt = 0;
+
+  dlist_foreach(iter, &ActiveChildList) {
+    PMChild *bp = dlist_container(PMChild, elem, iter.cur);
+
+    if (bp->thread != NULL)
+      cnt++;
   }
   return cnt;
 }

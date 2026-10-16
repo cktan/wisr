@@ -3435,9 +3435,58 @@ done
 kill -INT $server
 wait $server || fail "max_connections: shutdown status"
 
-grep -q "terminated by signal" "$work/log" "$work/log2" &&
+# Verify that an immediate shutdown (SIGQUIT) tells every client why its
+# session ends: each session ends its own thread, not the server, so none
+# ends the others before they have told theirs.
+# 1. Start the server again.
+# 2. Open five sessions: three run a long statement, two sit idle.
+# 3. Send the server SIGQUIT: it stops within ten seconds, with status 0.
+# 4. Each busy client got the warning; each idle one gets it as it sends
+#    its next statement.
+$digres -D "$work/data" -k "$work" -p "$port" > "$work/log3" 2>&1 &
+server=$!
+for _ in $(seq 100); do
+  grep -q "ready to accept connections" "$work/log3" && break
+  sleep 0.1
+done
+for n in 1 2 3; do
+  bg_start "imm_busy$n" -c "select 'busy'" -c 'select pg_sleep(60)'
+done
+for n in 1 2; do
+  held_start "imm_idle$n"
+  held_send "imm_idle$n" "select 'up $n';"
+  held_wait "imm_idle$n" "up $n" || fail "immediate shutdown: idle session $n"
+done
+# Each busy session is in its long statement once it has said so.
+for _ in $(seq 50); do
+  [ "$(cat "$work"/imm_busy?.out | grep -cx busy)" = 3 ] && break
+  sleep 0.1
+done
+kill -QUIT $server
+for _ in $(seq 100); do
+  kill -0 $server 2> /dev/null || break
+  sleep 0.1
+done
+if kill -0 $server 2> /dev/null; then
+  fail "immediate shutdown: the server stops"
+  kill -KILL $server
+fi
+wait $server || fail "immediate shutdown: status"
+for n in 1 2 3; do
+  bg_end "imm_busy$n"
+  grep -q 'terminating connection due to immediate shutdown command' \
+    "$work/imm_busy$n.out" || fail "immediate shutdown: busy client $n told"
+done
+for n in 1 2; do
+  held_send "imm_idle$n" "select 'after';"
+  held_end "imm_idle$n"
+  grep -q 'terminating connection due to immediate shutdown command' \
+    "$work/imm_idle$n.out" || fail "immediate shutdown: idle client $n told"
+done
+
+grep -q "terminated by signal" "$work/log" "$work/log2" "$work/log3" &&
   fail "a process crashed"
-grep -q "ThreadSanitizer" "$work/log" "$work/log2" &&
+grep -q "ThreadSanitizer" "$work/log" "$work/log2" "$work/log3" &&
   fail "a thread sanitizer report"
 
 [ $failed = 0 ] && echo "server: PASSED"

@@ -2656,7 +2656,15 @@ void quickdie(void) {
    * shared memory state.  (The "dead man switch" mechanism in pmsignal.c
    * should ensure the postmaster sees this as a crash, too, but no harm in
    * being doubly sure.)
+   *
+   * A session thread is not in a signal handler but where its flags are
+   * delivered, and _exit() would end the server, and every other session
+   * before it has told its client why.  It ends the thread, with its exit
+   * callbacks: a crash in digres ends the process, so a SIGQUIT is a stop,
+   * and the state the callbacks leave is whole.
    */
+  if (IsSessionThread)
+    proc_exit(2);
   _exit(2);
 }
 

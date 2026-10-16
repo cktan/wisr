@@ -58,6 +58,10 @@ void SignalHandlerForCrashExit(void) {
    * shared memory state.  (The "dead man switch" mechanism in pmsignal.c
    * should ensure the postmaster sees this as a crash, too, but no harm in
    * being doubly sure.)
+   *
+   * A session thread ends the thread, not the server, as quickdie() does.
    */
+  if (IsSessionThread)
+    proc_exit(2);
   _exit(2);
 }

@@ -5251,3 +5251,34 @@ locked takes the next row" failed so once.
 - Left: the checks that only want a statement still running a
   second later (`bg_waiting()` and four others), which a slow
   build can pass but not fail.
+
+## Step 179: an immediate shutdown tells every client why
+
+On SIGQUIT the postmaster raises `INTERRUPT_QUIT` in every
+session (`backend_thread_signal()`), and each session's
+`quickdie()` (tcop `postgres.c`) sends its client "terminating
+connection due to immediate shutdown command", then called
+`_exit(2)`. A session is a thread: the first to exit ended the
+process, and with it the sessions that had not yet written.
+Four busy clients over ten stops were told 17 times of 40, and
+the server's status was the session's 2 (step 148 noted it).
+
+- `quickdie()` and `SignalHandlerForCrashExit()` (postmaster
+  `interrupt.c`, a session still in its startup) end a session
+  thread with `proc_exit(2)`, as `process_startup_packet_die()`
+  ends one with `proc_exit(1)`: the thread's exit callbacks
+  run, and the postmaster stops once every session has ended.
+  PostgreSQL skipped them as shared memory might be corrupt; a
+  crash in digres ends the process, so a SIGQUIT is a stop.
+- 40 of 40 told; the server exits 0, "database system is shut
+  down", as PostgreSQL's does.
+- **The postmaster's last resort** (postmaster `postmaster.c`):
+  five seconds after its SIGQUIT, it sent SIGKILL to the
+  children still running, which a thread drops. Now, if a
+  session thread remains, it logs how many did not end and
+  ends the process with `_exit(2)` (`CountThreadChildren()`).
+  Shown with every session made to sleep ten seconds first: it
+  stopped at five, status 2.
+- `test/server.sh`: three busy sessions and two idle are each
+  told, and the server stops within ten seconds with status 0.
+  With `_exit(2)` put back it failed three runs of three.
