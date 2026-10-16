@@ -64,6 +64,13 @@ The import itself is not built yet (`PLAN.md` §7).
   are PostgreSQL 18's. `make test` runs all but
   `select5.test`, which takes three minutes in this build.
 
+- **`make -j4 isolation`** runs PostgreSQL 18's isolation specs
+  on digres with its `isolationtester`, from the PostgreSQL 18
+  tree built in `$PG18_SRC` (`~/p/postgres18`), and checks each
+  against `test/isolation_specs.txt`: which are to pass, and why
+  the others fail. Run it for any change to locks or waits; it
+  takes ten minutes.
+
 - **`make -j4 tsan`** builds `build/digres-tsan` under the
   thread sanitizer and runs the threaded tests and
   `server.sh` on it; a report fails it. Run it for any change

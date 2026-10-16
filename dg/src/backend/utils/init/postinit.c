@@ -68,6 +68,7 @@ static void CheckMyDatabase(const char *name, bool am_superuser,
 static void ShutdownPostgres(int code, Datum arg);
 static void log_shutdown(int code, Datum arg);
 static void StatementTimeoutHandler(void);
+static void LockTimeoutHandler(void);
 static void IdleInTransactionSessionTimeoutHandler(void);
 static void TransactionTimeoutHandler(void);
 static void IdleSessionTimeoutHandler(void);
@@ -381,6 +382,8 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
    */
   if (!bootstrap) {
     RegisterTimeout(STATEMENT_TIMEOUT, StatementTimeoutHandler);
+    /* A wait in sm for a lock is cancelled after lock_timeout (smstore.c). */
+    RegisterTimeout(LOCK_TIMEOUT, LockTimeoutHandler);
     RegisterTimeout(IDLE_IN_TRANSACTION_SESSION_TIMEOUT,
                     IdleInTransactionSessionTimeoutHandler);
     RegisterTimeout(TRANSACTION_TIMEOUT, TransactionTimeoutHandler);
@@ -782,6 +785,11 @@ static void StatementTimeoutHandler(void) {
 
   InterruptSelf(bit);
 }
+
+/*
+ * LOCK_TIMEOUT handler: trigger a query-cancel interrupt.
+ */
+static void LockTimeoutHandler(void) { InterruptSelf(INTERRUPT_CANCEL); }
 
 static void TransactionTimeoutHandler(void) {
   TransactionTimeoutPending = true;

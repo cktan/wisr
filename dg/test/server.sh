@@ -744,6 +744,66 @@ held_wait bp_b shared || fail "the waiting LOCK TABLE goes through"
 held_end bp_a
 held_end bp_b
 
+# Verify that a deadlock among sm's locks is reported as PostgreSQL reports
+# one: "deadlock detected", SQLSTATE 40P01, which clients retry on.
+# 1. Session A locks dl1 and session B dl2, each in a transaction.
+# 2. A asks for dl2 and waits; B asks for dl1, which closes the cycle.
+# 3. One of them fails with "deadlock detected" and 40P01; the other's
+#    lock is then granted.
+local_psql -c 'create table dl1 (k int4)' -c 'create table dl2 (k int4)' \
+  > /dev/null
+held_start dl_a
+held_start dl_b
+held_send dl_a "\\set VERBOSITY verbose
+begin; lock table dl1; select 'a has dl1';"
+held_wait dl_a 'a has dl1' || fail "A locks dl1"
+held_send dl_b "\\set VERBOSITY verbose
+begin; lock table dl2; select 'b has dl2';"
+held_wait dl_b 'b has dl2' || fail "B locks dl2"
+held_send dl_a "lock table dl2; select 'a has dl2';"
+sleep 0.5
+held_send dl_b "lock table dl1; select 'b has dl1';"
+for _ in $(seq 100); do
+  grep -q 'deadlock detected' "$work/dl_a.out" "$work/dl_b.out" && break
+  sleep 0.1
+done
+grep -q 'ERROR:  40P01: deadlock detected' "$work/dl_a.out" "$work/dl_b.out" ||
+  fail "a deadlock in sm is deadlock detected, 40P01"
+held_send dl_a "rollback;"
+held_send dl_b "rollback;"
+held_end dl_a
+held_end dl_b
+
+# Verify that lock_timeout ends a wait in sm for a row's writer or a table's
+# lock, as PostgreSQL's ends a wait for a lock, and no statement that does
+# not wait.
+# 1. A held session updates a row of lt1 and locks lt1, in a transaction.
+# 2. With lock_timeout 200ms, an update of that row and a LOCK TABLE each
+#    fail with 55P03, "canceling statement due to lock timeout", promptly.
+# 3. With lock_timeout 1ms, an insert of 100,000 rows into another table,
+#    which waits for nothing, completes.
+local_psql -c 'create table lt1 (k int4, v int4)' \
+  -c 'insert into lt1 values (1, 1)' -c 'create table lt2 (i int4)' > /dev/null
+held_start lt_a
+held_send lt_a "begin; update lt1 set v = 2 where k = 1; lock table lt1 in row exclusive mode; select 'lt held';"
+held_wait lt_a 'lt held' || fail "the holder of lt1"
+start=$(date +%s%N)
+local_psql -c '\set VERBOSITY verbose' -c "set lock_timeout = '200ms'" \
+  -c 'update lt1 set v = 3 where k = 1' 2>&1 |
+  grep -q 'ERROR:  55P03: canceling statement due to lock timeout' ||
+  fail "lock_timeout ends a wait for a row's writer"
+[ $((($(date +%s%N) - start) / 1000000)) -lt 5000 ] ||
+  fail "lock_timeout ends a wait promptly"
+local_psql -c '\set VERBOSITY verbose' -c "set lock_timeout = '200ms'" \
+  -c 'begin' -c 'lock table lt1 in access exclusive mode' 2>&1 |
+  grep -q 'ERROR:  55P03: canceling statement due to lock timeout' ||
+  fail "lock_timeout ends a wait for a table's lock"
+[ "$(local_psql -c "set lock_timeout = '1ms'" \
+  -c 'insert into lt2 select generate_series(1, 100000)' 2>&1 | tail -1)" = \
+  "INSERT 0 100000" ] || fail "lock_timeout leaves a statement that does not wait"
+held_send lt_a "rollback;"
+held_end lt_a
+
 # Verify that advisory locks keep PostgreSQL's semantics in digres's own
 # table: holds are counted, a transaction's go as it or a savepoint ends,
 # a wait ends on lock_timeout, on a cancel, and on a deadlock among them.

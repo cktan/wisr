@@ -41,6 +41,7 @@
 #include "nodes/makefuncs.h"
 #include "parser/parse_type.h"
 #include "storage/lockdefs.h"
+#include "storage/proc.h"
 #include "access/nbtree.h"
 #include "access/skey.h"
 #include "utils/builtins.h"
@@ -53,6 +54,7 @@
 #include "utils/memutils.h"
 #include "utils/numeric.h"
 #include "utils/lsyscache.h"
+#include "utils/timeout.h"
 #include "utils/typcache.h"
 #include "utils/array.h"
 #include "catalog/pg_statistic.h"
@@ -198,6 +200,14 @@ static int sm_sqlstate(void) {
 
 /* Raise the error sm left, saying what was being done. */
 static void sm_error(const char *what) {
+  /* PostgreSQL's words for a deadlock, which clients and tests look for. */
+  if (sm_errnum() == SM_ERR_DEADLOCK)
+    ereport(ERROR,
+            (errcode(ERRCODE_T_R_DEADLOCK_DETECTED),
+             errmsg("deadlock detected"),
+             errdetail("This transaction was chosen to end a cycle of waits "
+                       "while it tried to %s.",
+                       what)));
   ereport(ERROR, (errcode(sm_sqlstate()),
                   errmsg("could not %s: %s", what, sm_errmsg())));
 }
@@ -212,12 +222,23 @@ static void sm_error(const char *what) {
  * and waits again.
  */
 template <class F> static int waiting(F f) {
+  /*
+   * lock_timeout ends a wait for a lock that lasts longer, by a cancel the
+   * timer raises (postinit.c).  It counts from the call, as sm does not say
+   * when the call begins to wait; a call that ends in time disarms it, and
+   * a cancel it raised meanwhile is never taken.
+   */
+  if (LockTimeout > 0)
+    enable_timeout_after(LOCK_TIMEOUT, LockTimeout);
   for (;;) {
     int rc = f();
 
     /* Only -1 is an error: 1, a lock not had at once, is an answer. */
-    if (rc != -1 || sm_errnum() != SM_ERR_INTERRUPTED)
+    if (rc != -1 || sm_errnum() != SM_ERR_INTERRUPTED) {
+      if (LockTimeout > 0)
+        disable_timeout(LOCK_TIMEOUT, false);
       return rc;
+    }
     CHECK_FOR_INTERRUPTS();
   }
 }

@@ -2791,13 +2791,35 @@ void ProcessInterrupts(void) {
      */
     InterruptPending = true;
   } else if (QueryCancelPending) {
+    bool lock_timeout_occurred;
+    bool stmt_timeout_occurred;
+
     QueryCancelPending = false;
 
     /*
-     * No lock wait arms a timeout: an advisory lock's wait has lock_timeout
-     * as its deadline (storage/advisory_lock.h).
+     * If LOCK_TIMEOUT and STATEMENT_TIMEOUT indicators are both set, we
+     * need to clear both, so always fetch both.  LOCK_TIMEOUT is armed
+     * around a call into sm that may wait (smstore.c); an advisory lock's
+     * wait has lock_timeout as its deadline (storage/advisory_lock.h).
      */
-    if (get_timeout_indicator(STATEMENT_TIMEOUT, true))
+    lock_timeout_occurred = get_timeout_indicator(LOCK_TIMEOUT, true);
+    stmt_timeout_occurred = get_timeout_indicator(STATEMENT_TIMEOUT, true);
+
+    /*
+     * If both were set, we want to report whichever timeout completed
+     * earlier; this ensures consistent behavior if the machine is slow
+     * enough that the second timeout triggers before we get here.  A tie
+     * is arbitrarily broken in favor of reporting a lock timeout.
+     */
+    if (lock_timeout_occurred && stmt_timeout_occurred &&
+        get_timeout_finish_time(STATEMENT_TIMEOUT) <
+            get_timeout_finish_time(LOCK_TIMEOUT))
+      lock_timeout_occurred = false; /* report stmt timeout */
+
+    if (lock_timeout_occurred)
+      ereport(ERROR, (errcode(ERRCODE_LOCK_NOT_AVAILABLE),
+                      errmsg("canceling statement due to lock timeout")));
+    if (stmt_timeout_occurred)
       ereport(ERROR, (errcode(ERRCODE_QUERY_CANCELED),
                       errmsg("canceling statement due to statement timeout")));
 

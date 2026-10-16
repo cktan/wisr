@@ -10,6 +10,7 @@
 #                      the sqllogictest files in test/slt but select5
 #   make slt           run every sqllogictest file in test/slt
 #   make slt-corpus    run a sample of SQLite's whole corpus, fetched once
+#   make isolation     run PostgreSQL 18's isolation specs on digres
 #   make tsan          build build/digres-tsan, under the thread
 #                      sanitizer, and run the statements in test/ with it
 #   make clean         remove objects and generated files
@@ -153,6 +154,12 @@ build/slt: test/slt/slt.cc
 .PHONY: slt
 slt: all build/slt
 	test/slt.sh
+
+# PostgreSQL 18's isolation specs on digres, each against what
+# test/isolation_specs.txt says it is to do.
+.PHONY: isolation
+isolation: all
+	test/isolation.sh
 
 # A sample of SQLite's whole corpus, fetched into build/slt-corpus, on
 # PostgreSQL 18 and on digres: what digres alone fails.

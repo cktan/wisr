@@ -1,0 +1,51 @@
+# PostgreSQL 18's isolation specs that test/isolation.sh runs on digres,
+# each with what digres is to do with it: pass, or fail, and why.
+# A spec marked pass that fails is a regression; one marked fail that
+# passes is to be marked pass. The other 87 specs use what digres leaves
+# out (PL/pgSQL, triggers, views, partitions, SERIALIZABLE's own specs,
+# CONCURRENTLY, prepared transactions, ...) and are not listed.
+aborted-keyrevoke               pass
+delete-abort-savept             pass
+inplace-inval                   pass
+insert-conflict-do-nothing      pass
+insert-conflict-do-update       pass
+lock-nowait                     pass
+multixact-no-deadlock           pass
+nowait                          pass
+nowait-2                        pass
+nowait-3                        pass
+nowait-4                        pass
+nowait-5                        pass
+skip-locked                     pass
+skip-locked-2                   pass
+skip-locked-3                   pass
+skip-locked-4                   pass
+# sm1 dooms the youngest transaction on a cycle, not the one that closes it
+deadlock-simple                 fail
+# sm1 does not reorder a lock's wait queue to undo a soft deadlock
+deadlock-soft                   fail
+# deadlock_timeout went with PostgreSQL's lock manager
+deadlock-hard                   fail
+deadlock-soft-2                 fail
+# no FOR KEY SHARE or FOR NO KEY UPDATE: they are FOR SHARE and FOR UPDATE
+delete-abort-savept-2           fail
+lock-update-traversal           fail
+multixact-no-forget             fail
+tuplelock-conflict              fail
+tuplelock-update                fail
+tuplelock-upgrade-no-deadlock   fail
+# REFERENCES in CREATE TABLE is not supported yet
+fk-contention                   fail
+fk-deadlock                     fail
+update-locked-tuple             fail
+# char(n) is not supported yet
+propagate-lock-delete           fail
+# an unconstrained numeric is numeric(18, 3) (DECIMAL.md): 0 prints 0.000
+read-only-anomaly               fail
+timeouts                        fail
+# setup reads a catalog table, or a statement is not supported yet
+drop-owned-grant                fail
+intra-grant-inplace             fail
+truncate-conflict               fail
+insert-conflict-do-update-2     fail
+merge-join                      fail

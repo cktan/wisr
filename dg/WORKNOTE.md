@@ -4916,3 +4916,68 @@ each blocked step for 300 seconds and failed it.
   run that could not be made or ran no record fails. The whole
   corpus is 622 files, 5,675,180 records; PostgreSQL 18 runs it
   in about 45 minutes and fails 11,626.
+
+## Step 167: a deadlock in sm says "deadlock detected"
+
+PostgreSQL's isolation specs (step 169). A transaction sm1 chose
+to end a cycle of waits failed with `could not open a table:
+chosen as a deadlock victim; the transaction was aborted`;
+its SQLSTATE was PostgreSQL's, 40P01, but clients and tests
+look for the words.
+
+- **`sm_error()`** (access/sm `smstore.c`) raises
+  `SM_ERR_DEADLOCK` as `deadlock detected`, with what was being
+  done in the detail, wherever an sm call ends in one.
+- **Which transaction is chosen is sm1's**: the youngest on the
+  cycle (`../sm/sm1/SM1_DESIGN.md` §5.1), not, as PostgreSQL,
+  the one whose check found it. `deadlock-simple` fails on that.
+- `server.sh`: two sessions locking two tables in opposite
+  orders; one fails with `40P01: deadlock detected`. It failed
+  before, on the words.
+
+## Step 168: lock_timeout ends a wait in sm
+
+`../sm/NEXT.md` §2 asked for it. `lock_timeout` ended a wait for
+an advisory lock only; a wait in sm, for a row's writer or a
+table's lock, went on past it.
+
+- **`LOCK_TIMEOUT` is back** (utils `timeout.h`), with its
+  handler, which raises a cancel (utils/init `postinit.c`), and
+  `ProcessInterrupts()`'s choice between it and
+  `statement_timeout` (tcop `postgres.c`), as PostgreSQL has
+  them; step 156 removed them when no wait armed them.
+- **`waiting()`** (access/sm `smstore.c`) arms it around each
+  sm call that may wait, and disarms it as the call returns. sm
+  does not say when a call begins to wait, so the time counts
+  from the call; a row's or a lock's call reaches its wait in
+  microseconds. The cancel ends sm's wait, as any interrupt
+  does, and is reported as `canceling statement due to lock
+  timeout`, 55P03.
+- `server.sh`: a wait for a row's writer and for a table's lock
+  each end with 55P03 within the timeout, and a 100,000-row
+  insert that waits for nothing is not cancelled with
+  `lock_timeout` at 1ms. The isolation spec `timeouts` now
+  differs only in printing `600.000` for `600`.
+
+## Step 169: PostgreSQL's isolation specs run on digres
+
+`test/isolation.sh` (`make isolation`), with step 166's
+`pg_blocking_pids()`.
+
+- **37 of PostgreSQL 18's 124 specs** use nothing digres leaves
+  out outright. Each runs in a database of its own, with
+  PostgreSQL 18's `pg_isolation_regress` and `isolationtester`
+  from the tree built in `$PG18_SRC`; a step stuck 20 seconds
+  is cancelled. `test/isolation_specs.txt` lists each with
+  whether it is to pass, and why not.
+- **16 pass**: NOWAIT, SKIP LOCKED, `INSERT ... ON CONFLICT`,
+  savepoints, `lock-nowait`, `aborted-keyrevoke`.
+- **21 fail, for reasons known** (`../sm/NEXT.md` §2): no `FOR
+  KEY SHARE` or `FOR NO KEY UPDATE` (six); sm1's deadlock
+  victim and its unordered wait queue (two); `deadlock_timeout`
+  gone (two); `REFERENCES` in `CREATE TABLE` and `char(n)` not
+  supported (four); an unconstrained numeric printed with three
+  decimals (two); catalog tables, `MERGE`, an index on an
+  expression (five).
+- Not in `make test`: it needs the PostgreSQL 18 build, and ten
+  minutes.

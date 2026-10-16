@@ -58,11 +58,12 @@ Owed, and blocking nothing above:
   does not wait is built for a row (`sm1::trylock`,
   `sm_tbl_trylock`) and for a table's table-oid lock
   (`sm_tbl_tryopen`), and digres's NOWAIT, SKIP LOCKED and
-  `LOCK TABLE ... NOWAIT` use them. Not built: a write that
-  does not wait, which nothing in SQL asks for; and
-  `lock_timeout`, which needs no more than an `sm_sys.h` timer
-  that interrupts the waiting thread. sm1's `set_qa_nowait` is
-  still for QA only (`sm1/SM1_DESIGN.md` §5.1).
+  `LOCK TABLE ... NOWAIT` use them, and `lock_timeout` ends a
+  wait in sm by a timer's cancel (`../dg/WORKNOTE.md` step
+  168), counted from the call, as sm does not say when a call
+  begins to wait. Not built: a write that does not wait, which
+  nothing in SQL asks for. sm1's `set_qa_nowait` is still for
+  QA only (`sm1/SM1_DESIGN.md` §5.1).
 - **ADD COLUMN with a volatile default is refused.**
   `random()`, `clock_timestamp()`, a `serial` or an identity
   column give each existing row its own value, so PostgreSQL
@@ -111,6 +112,16 @@ Owed, and blocking nothing above:
   (`sm_cat_create_index`'s `eval`), and digres's rewriter to
   expand it; `information_schema` waits for the same
   (`../dg/SYSCATALOG.md`).
+- **What PostgreSQL's isolation specs found**
+  (`../dg/test/isolation_specs.txt`, `../dg/WORKNOTE.md` step
+  169), beyond the key-share modes above: `REFERENCES` in
+  `CREATE TABLE` and `ALTER TABLE ... ADD FOREIGN KEY` are
+  refused by digres, though sm3 keeps foreign keys
+  (`FEATURELIST.md`); `char(n)` is not a type yet;
+  `deadlock_timeout` is not a setting, so a spec that sets it
+  fails, where it could set sm1's `deadlock_ms` for the
+  session; and sm1 dooms the youngest transaction on a cycle,
+  where PostgreSQL ends the one whose check found it.
 - **A failed index build's detail is sm's.** `CREATE UNIQUE
   INDEX` over duplicates says `index build: two rows of u
   with one key in uk` where PostgreSQL says `Key (k)=(1) is
