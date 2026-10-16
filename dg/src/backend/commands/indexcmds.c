@@ -2642,8 +2642,6 @@ static inline void set_indexsafe_procflags(void) {
   Assert(MyProc->xid == InvalidTransactionId &&
          MyProc->xmin == InvalidTransactionId);
 
-  LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
+  /* The session's own: no other session reads it (SHMEM.md 5.2). */
   MyProc->statusFlags |= PROC_IN_SAFE_IC;
-  ProcGlobal->statusFlags[MyProc->pgxactoff] = MyProc->statusFlags;
-  LWLockRelease(ProcArrayLock);
 }

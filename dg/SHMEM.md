@@ -134,19 +134,17 @@ switches between (`SwitchToSharedLatch()`), which are one bit.
   it came from the queue's per-slot state.
 - **PGPROC** (storage/lmgr `proc.c`). One a session: its latch,
   its LWLock and lock waits, its semaphore, its fast-path slots,
-  the target of `InterruptProc()`. **To replace**: a session
-  record owned by its thread's tcb, listed in a registry in the
-  pcb (a mutex and a vector), once the lock manager and LWLocks
-  are gone.
+  the target of `InterruptProc()`. A slot, reused by the next
+  session. **To replace**: its parts move into the session's
+  record (§5.2) once the lock manager and LWLocks are gone.
 - **The proc array** (storage/ipc `procarray.c`). Mostly dead:
   no xid is ever assigned (step 45), and a snapshot is a
   constant, made with no lock and no scan of the array, and
   `TransactionIdIsInProgress()` asks only of the session's own
   (`WORKNOTE.md` step 150). Its live users are DROP DATABASE
-  FORCE, the signal functions and `ProcNumberGetProc()`, which
-  take `ProcArrayLock` still, as a transaction's start and end
-  do. **To replace**: the lookups by pid move to the session
-  registry.
+  FORCE, the signal functions and `pg_blocking_pids()`, which
+  find a session by its record in the session registry (§5.2,
+  `WORKNOTE.md` step 152); `ProcArrayLock` is gone.
 - **TransamVariables** (access/transam `varsup.c`). Its
   counters are gone (`WORKNOTE.md` step 137); left are
   `oldestXid`, `latestCompletedXid` and `xactCompletionCount`,
@@ -287,6 +285,52 @@ instead of being told.
   WAL. In digres only sm's objects change, and each but a
   schema is behind a lock.
 
+### 5.2 The session registry
+
+**Built** (`WORKNOTE.md` step 152).
+
+PostgreSQL's processes share a PGPROC slot and a pid, and nothing
+else, so one session reads another's slot under a lock that
+keeps the slot from being given to the next: `ProcArrayLock`, or
+the lock manager's partition locks. Both a slot and a pid are
+reused, so a reader rechecks that the slot is still the
+session's it looked up. In one process a session can be named by
+an object of its own instead.
+
+- **A session has a record**, made when it registers and owned
+  by `std::shared_ptr`: an id from a counter for the process,
+  never reused, as neither a pid nor a slot is; its pid; its
+  PGPROC; its database; and `ended`, an atomic set as it leaves
+  the registry. What one session reads of another is in the
+  record, set before it registers and fixed after, or atomic.
+- **The registry is the pcb's**: a mutex, and the records of
+  the sessions registered, by pid. A session registers where it
+  joined the proc array (`InitProcessPhase2()`) and leaves where
+  it left it (`RemoveProcFromArray()`). A lookup copies the
+  record's `shared_ptr` under the mutex and lets the mutex go:
+  the record is the caller's for as long as it keeps it, and is
+  never another session's. A pid names whichever session is
+  registered with it then, which PostgreSQL also accepts.
+- **The lookups by pid use it**: the signal functions,
+  `pg_log_backend_memory_contexts()`, the wait functions, and
+  DROP DATABASE FORCE, which signals each other session of the
+  database once the mutex is let go. `ProcArrayLock` goes, and
+  with it the array of PGPROC numbers and the dense arrays
+  nothing reads, `ProcGlobal->xids`, `subxidStates` and
+  `statusFlags`, each PGPROC's offset into them, and the
+  `XidCache`.
+- **`pg_blocking_pids()` until the lock manager goes**: it keeps
+  the record while it reads the session's lock state from its
+  PGPROC under the partition locks, and reads no state of a
+  session whose record is `ended`. A session releases its locks,
+  which takes the partition locks, before it leaves the registry,
+  and its PGPROC is another's only after that: so while the
+  record is not `ended`, its PGPROC is its own, and what is read
+  of it is what the partition locks guard. With the lock manager
+  in sm (§7, step 4), the answer comes from sm1's lock table,
+  which knows who waits for whom, and no session reads another's
+  PGPROC.
+
 ## 6. What is left of modules removed
 
 The dead code is gone (`WORKNOTE.md` step 131). What is left
@@ -325,11 +369,12 @@ has a caller still, and goes with the step that removes it:
    Done (`WORKNOTE.md` steps 141 to 146), and ProcSignal and
    PMSignalState with it (147, 148).
 3. **The constant snapshot**: done (`WORKNOTE.md` step 150),
-   and the code it fed gone (step 151); then the proc array
-   becomes the session registry.
+   the code it fed gone (step 151), and the proc array the
+   session registry (§5.2, step 152).
 4. **The lock manager**: advisory locks into sm, catalog locks
    gone; then the lock manager, the remaining LWLocks,
-   `posix_sema.c` and PGPROC.
+   `posix_sema.c` and PGPROC, whose parts the session record
+   takes; `pg_blocking_pids()` asks sm1's lock table.
 5. **The registry** of §2, once each block is a pcb field.
 
 Each step is checked by the full suite and by `make tsan`;

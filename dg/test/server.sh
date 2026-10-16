@@ -642,6 +642,47 @@ grep -q "logging memory contexts of PID $memlog_pid" "$work/log" ||
   fail "memory contexts: logged"
 held_end memlog
 
+# Verify that a session is found by its record in the session registry
+# (SHMEM.md section 5.2): pg_blocking_pids() names the session blocking
+# another, and pg_terminate_backend() ends a session, in its own thread.
+# Advisory locks are PostgreSQL's lock manager's still, which
+# pg_blocking_pids() reads.
+# 1. A held session takes advisory lock 42, and gives its pid.
+# 2. A second held session asks for it, and waits; it gives its pid first.
+# 3. pg_blocking_pids() of the second is the first's pid.
+# 4. pg_terminate_backend() of the second is true, and it ends.
+held_start blocker
+held_send blocker "select pg_advisory_lock(42); select 'pid ' || pg_backend_pid();"
+held_start blocked
+held_send blocked "select 'pid ' || pg_backend_pid(); select pg_advisory_lock(42);"
+for _ in $(seq 50); do
+  blocker_pid=$(sed -n 's/^pid //p' "$work/blocker.out")
+  blocked_pid=$(sed -n 's/^pid //p' "$work/blocked.out")
+  [ -n "$blocker_pid" ] && [ -n "$blocked_pid" ] && break
+  sleep 0.1
+done
+for _ in $(seq 50); do
+  blockers=$(local_psql -c "select pg_blocking_pids($blocked_pid)")
+  [ "$blockers" = "{$blocker_pid}" ] && break
+  sleep 0.1
+done
+[ "$blockers" = "{$blocker_pid}" ] || fail "pg_blocking_pids names the blocker"
+[ "$(local_psql -c "select pg_terminate_backend($blocked_pid, 0)")" = t ] ||
+  fail "pg_terminate_backend"
+for _ in $(seq 100); do
+  kill -0 "${held_pid[blocked]}" 2> /dev/null || break
+  sleep 0.1
+done
+if kill -0 "${held_pid[blocked]}" 2> /dev/null; then
+  fail "pg_terminate_backend ends the session promptly"
+  kill "${held_pid[blocked]}"
+fi
+held_end blocked
+grep -q 'terminating connection due to administrator command' \
+  "$work/blocked.out" || fail "pg_terminate_backend ends the session"
+held_send blocker "select pg_advisory_unlock(42);"
+held_end blocker
+
 # Verify that a snapshot is neither exported nor imported: what a session
 # sees is sm's snapshot, which PostgreSQL's export does not carry, so an
 # importing session would not see what the exporter does.

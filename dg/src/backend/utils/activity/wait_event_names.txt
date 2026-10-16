@@ -225,7 +225,6 @@ ABI_compatibility:
 
 Section: ClassName - WaitEventLWLock
 
-ProcArray	"Waiting to access the shared per-process data structures (typically, to get a snapshot or report a session's transaction ID)."
 InjectionPoint	"Waiting to read or update information related to injection points."
 
 #

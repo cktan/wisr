@@ -37,7 +37,6 @@ extern bool TransactionIdIsInProgress(TransactionId xid);
 
 extern PGPROC *ProcNumberGetProc(int procNumber);
 extern PGPROC *BackendPidGetProc(int pid);
-extern PGPROC *BackendPidGetProcWithLock(int pid);
 
 extern VirtualTransactionId *
 GetCurrentVirtualXIDs(TransactionId limitXmin, bool excludeXmin0, bool allDbs,

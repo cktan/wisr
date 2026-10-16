@@ -205,7 +205,8 @@ typedef struct TransamVariablesData {
   TransactionId oldestXid; /* cluster-wide minimum datfrozenxid */
 
   /*
-   * These fields are protected by ProcArrayLock.
+   * Set before any thread starts, and constant too: no transaction with an
+   * xid completes.
    */
   FullTransactionId latestCompletedXid; /* newest full XID that has
                                          * committed or aborted */

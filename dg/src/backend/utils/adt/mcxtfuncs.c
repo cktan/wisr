@@ -18,6 +18,7 @@
 #include "funcapi.h"
 #include "mb/pg_wchar.h"
 #include "storage/proc.h"
+#include "storage/session_registry.h"
 #include "storage/procarray.h"
 #include "storage/procsignal.h"
 #include "utils/array.h"
@@ -248,13 +249,11 @@ Datum pg_get_backend_memory_contexts(PG_FUNCTION_ARGS) {
  */
 Datum pg_log_backend_memory_contexts(PG_FUNCTION_ARGS) {
   int pid = PG_GETARG_INT32(0);
-  PGPROC *proc;
-
-  /* See if the process with given pid is a backend. */
-  proc = BackendPidGetProc(pid);
+  /* See if the process with given pid is a backend: its record. */
+  session_ref_t record = pid != 0 ? session_by_pid(pid) : nullptr;
 
   /*
-   * BackendPidGetProc() returns NULL if the pid
+   * session_by_pid() returns none if the pid
    * isn't valid; but by the time we reach kill(), a process for which we
    * get a valid proc here might have terminated on its own.  There's no way
    * to acquire a lock on an arbitrary process to prevent that. But since
@@ -262,7 +261,7 @@ Datum pg_log_backend_memory_contexts(PG_FUNCTION_ARGS) {
    * process running and consuming lots of memory, that it might end on its
    * own first and its memory contexts are not logged is not a problem.
    */
-  if (proc == NULL) {
+  if (record == nullptr) {
     /*
      * This is just a warning so a loop-through-resultset will not abort
      * if one backend terminated on its own during the run.
@@ -273,6 +272,6 @@ Datum pg_log_backend_memory_contexts(PG_FUNCTION_ARGS) {
   }
 
   /* Its thread logs them at its next interrupt check. */
-  InterruptProc(proc, INTERRUPT_LOG_MEMORY);
+  session_interrupt(record, INTERRUPT_LOG_MEMORY);
   PG_RETURN_BOOL(true);
 }

@@ -39,6 +39,7 @@
 #include "pg_trace.h"
 #include "storage/lmgr.h"
 #include "storage/proc.h"
+#include "storage/session_registry.h"
 #include "storage/procarray.h"
 #include "utils/control_block.h"
 #include "utils/memutils.h"
@@ -3049,6 +3050,7 @@ LockData *GetLockStatusData(void) {
 BlockedProcsData *GetBlockerStatusData(int blocked_pid) {
   BlockedProcsData *data;
   PGPROC *proc;
+  session_ref_t record;
   int i;
 
   data = (BlockedProcsData *)palloc(sizeof(BlockedProcsData));
@@ -3068,22 +3070,20 @@ BlockedProcsData *GetBlockerStatusData(int blocked_pid) {
   data->waiter_pids = (int *)palloc(sizeof(int) * data->maxpids);
 
   /*
-   * In order to search the ProcArray for blocked_pid and assume that that
-   * entry won't immediately disappear under us, we must hold ProcArrayLock.
-   * In addition, to examine the lock grouping fields of any other backend,
-   * we must hold all the hash partition locks.  (Only one of those locks is
-   * actually relevant for any one lock group, but we can't know which one
-   * ahead of time.)	It's fairly annoying to hold all those locks
-   * throughout this, but it's no worse than GetLockStatusData(), and it
-   * does have the advantage that we're guaranteed to return a
-   * self-consistent instantaneous state.
+   * The session's record, kept for the call (SHMEM.md section 5.2): it is
+   * this session's alone, as its PGPROC slot is not.  A session releases its
+   * locks, which takes the partition locks, before it leaves the registry,
+   * and its PGPROC is another's only after that.  So with the partition
+   * locks held, a record not ended names a PGPROC that is its session's, and
+   * what is read of it is what those locks guard; one ended holds and awaits
+   * nothing.  To examine the lock grouping fields of any other backend we
+   * must hold all the partition locks anyway, which GetLockStatusData()
+   * does too.
    */
-  LWLockAcquire(ProcArrayLock, LW_SHARED);
-
-  proc = BackendPidGetProcWithLock(blocked_pid);
+  record = blocked_pid != 0 ? session_by_pid(blocked_pid) : nullptr;
 
   /* Nothing to do if it's gone */
-  if (proc != NULL) {
+  if (record != nullptr) {
     /*
      * Acquire lock on the entire shared lock data structure.  See notes
      * in GetLockStatusData().
@@ -3091,7 +3091,10 @@ BlockedProcsData *GetBlockerStatusData(int blocked_pid) {
     for (i = 0; i < NUM_LOCK_PARTITIONS; i++)
       LWLockAcquire(LockHashPartitionLockByIndex(i), LW_SHARED);
 
-    if (proc->lockGroupLeader == NULL) {
+    proc = record->proc;
+    if (record->ended.load(std::memory_order_acquire)) {
+      /* Ended since it was looked up: blocked by nothing. */
+    } else if (proc->lockGroupLeader == NULL) {
       /* Easy case, proc is not a lock group member */
       GetSingleProcBlockerStatusData(proc, data);
     } else {
@@ -3114,8 +3117,6 @@ BlockedProcsData *GetBlockerStatusData(int blocked_pid) {
 
     Assert(data->nprocs <= data->maxprocs);
   }
-
-  LWLockRelease(ProcArrayLock);
 
   return data;
 }

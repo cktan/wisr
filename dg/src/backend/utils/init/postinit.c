@@ -41,6 +41,7 @@
 #include "storage/ipc.h"
 #include "storage/lmgr.h"
 #include "storage/proc.h"
+#include "storage/session_registry.h"
 #include "storage/procarray.h"
 #include "storage/procnumber.h"
 #include "storage/procsignal.h"
@@ -650,6 +651,8 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
    * the correct value on their next try.
    */
   MyProc->databaseId = MyDatabaseId;
+  /* What another session reads of it, it reads in our record. */
+  session_set_database(MyDatabaseId);
 
   /*
    * We established a catalog snapshot while reading pg_authid and/or

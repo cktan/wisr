@@ -4423,3 +4423,40 @@ goes from storage/ipc `procarray.c`, 1,721 lines to 903.
 - Left for the session registry: the `XidCache`, its debug
   counters, and the dense arrays `ProcArrayAdd()` and
   `ProcArrayRemove()` keep.
+
+## Step 152: a session is found by its record
+
+`SHMEM.md` §5.2. The proc array found a session by scanning
+PGPROC slots under `ProcArrayLock`, and a reader rechecked the
+slot, as a slot and a pid are both reused.
+
+- **A session has a record** (`storage/session_registry.h`),
+  made as it registers and owned by `std::shared_ptr`: an id
+  never reused, its pid, its PGPROC, its thread, and as atomics
+  its database and role, set as `InitPostgres()` learns them,
+  and `ended`. The registry is the pcb's: a mutex, and the
+  records by pid. A session registers where it joined the proc
+  array (`ProcArrayAdd()`) and leaves where it left it; its tcb
+  keeps its own record.
+- **A lookup keeps the record**: `pg_signal_backend()`,
+  `pg_log_backend_memory_contexts()` and DROP DATABASE FORCE
+  read the role and database there and interrupt the session's
+  own thread (`session_interrupt()`), not its PGPROC's latch
+  owner, which is the next session's once the slot is reused.
+- **`pg_blocking_pids()`** keeps the record while it reads the
+  session's lock state from its PGPROC under the partition
+  locks. A session releases its locks, which takes those locks,
+  before it leaves the registry, and its PGPROC is another's
+  only after: so a record not ended names its own PGPROC, and
+  one ended holds and awaits nothing.
+- **`ProcArrayLock` goes**, a gap left in `lwlocklist.h`, and
+  its wait event; with it the array of PGPROC numbers, the
+  dense arrays `ProcGlobal->xids`, `subxidStates` and
+  `statusFlags`, each PGPROC's `pgxactoff`, the `XidCache` and
+  its debug counters, and `BackendPidGetProcWithLock()`.
+  `MaintainLatestCompletedXid()` goes, as no xid completes.
+  DROP DATABASE FORCE no longer counts prepared transactions,
+  which digres does not have.
+- `server.sh`: a session waiting on another's advisory lock is
+  named blocked by it in `pg_blocking_pids()`, and
+  `pg_terminate_backend()` ends it.

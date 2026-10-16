@@ -24,30 +24,11 @@
 #include "storage/procsignal.h"
 
 /*
- * Each backend advertises up to PGPROC_MAX_CACHED_SUBXIDS TransactionIds
- * for non-aborted subtransactions of its current top transaction.  These
- * have to be treated as running XIDs by other backends.
- *
- * We also keep track of whether the cache overflowed (ie, the transaction has
- * generated at least one subtransaction that didn't fit in the cache).
- * If none of the caches have overflowed, we can assume that an XID that's not
- * listed anywhere in the PGPROC array is not a running transaction.  Else we
- * have to look at pg_subtrans.
- *
- * See src/test/isolation/specs/subxid-overflow.spec if you change this.
+ * A snapshot's array of subtransaction XIDs is sized by this for each proc,
+ * as PostgreSQL sized each PGPROC's cache of them; digres keeps no cache, as
+ * no XID is ever assigned, and a snapshot's array stays empty.
  */
-#define PGPROC_MAX_CACHED_SUBXIDS 64 /* XXX guessed-at value */
-
-typedef struct XidCacheStatus {
-  /* number of cached subxids, never more than PGPROC_MAX_CACHED_SUBXIDS */
-  uint8 count;
-  /* has PGPROC->subxids overflowed */
-  bool overflowed;
-} XidCacheStatus;
-
-struct XidCache {
-  TransactionId xids[PGPROC_MAX_CACHED_SUBXIDS];
-};
+#define PGPROC_MAX_CACHED_SUBXIDS 64
 
 /*
  * Flags for PGPROC->statusFlags and PROC_HDR->statusFlags[]
@@ -146,21 +127,9 @@ typedef enum {
  * the PGPROC is linked into that lock's waitProcs queue.  A recycled PGPROC
  * is linked into ProcGlobal's freeProcs list.
  *
- * We allow many fields of this struct to be accessed without locks, such as
- * delayChkptFlags and isRegularBackend. However, keep in mind that writing
- * mirrored ones (see below) requires holding ProcArrayLock in at least
- * shared mode, so that pgxactoff does not change concurrently.
- *
- * Mirrored fields:
- *
- * Some fields in PGPROC (see "mirrored in ..." comment) are mirrored into an
- * element of more densely packed ProcGlobal arrays. These arrays are indexed
- * by PGPROC->pgxactoff. Both copies need to be maintained coherently.
- *
- * NB: The pgxactoff indexed value can *never* be accessed without holding
- * locks.
- *
- * See PROC_HDR for details.
+ * What another session reads of a session is in its record
+ * (storage/session_registry.h), not here: a PGPROC is a slot, which the next
+ * session takes over (dg/SHMEM.md section 5.2).
  */
 /*
  * lwWaiting is handed from the process that wakes a waiter to the waiter
@@ -182,8 +151,7 @@ struct PGPROC {
 
   TransactionId xid; /* id of top-level transaction currently being
                       * executed by this proc, if running and XID
-                      * is assigned; else InvalidTransactionId.
-                      * mirrored in ProcGlobal->xids[pgxactoff] */
+                      * is assigned; else InvalidTransactionId. */
 
   TransactionId xmin; /* minimal running XID as it was when we were
                        * starting our xact, excluding LAZY VACUUM:
@@ -199,9 +167,6 @@ struct PGPROC {
    */
   int cancelKeyLength;
   uint8 cancelKey[MAX_CANCEL_KEY_LENGTH];
-
-  int pgxactoff; /* offset into various ProcGlobal->arrays with
-                  * data mirrored from this PGPROC */
 
   /*
    * Currently running top-level transaction's virtual xid. Together these
@@ -248,8 +213,7 @@ struct PGPROC {
   int delayChkptFlags; /* for DELAY_CHKPT_* flags */
 
   uint8 statusFlags; /* this backend's status flags, see PROC_*
-                      * above. mirrored in
-                      * ProcGlobal->statusFlags[pgxactoff] */
+                      * above */
 
   /*
    * All PROCLOCK objects for locks held or awaited by this backend are
@@ -257,10 +221,6 @@ struct PGPROC {
    * their lock.
    */
   dlist_head myProcLocks[NUM_LOCK_PARTITIONS];
-
-  XidCacheStatus subxidStatus; /* mirrored with
-                                * ProcGlobal->subxidStates[i] */
-  struct XidCache subxids;     /* cache for subtransaction XIDs */
 
   /* Lock manager data, recording fast-path locks taken by this backend. */
   LWLock fpInfoLock;  /* protects per-backend fast-path state */
@@ -286,72 +246,14 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT PGPROC *MyProc;
 /*
  * There is one ProcGlobal struct for the whole database cluster.
  *
- * Adding/Removing an entry into the procarray requires holding ProcArrayLock
- * in exclusive mode.  PostgreSQL held XidGenLock too, for
- * GetNewTransactionId(), which digres does not have.
- *
- * Some fields in PGPROC are mirrored into more densely packed arrays (e.g.
- * xids), with one entry for each backend. These arrays only contain entries
- * for PGPROCs that have been added to the shared array with ProcArrayAdd()
- * (in contrast to PGPROC array which has unused PGPROCs interspersed).
- *
- * The dense arrays are indexed by PGPROC->pgxactoff. Any concurrent
- * ProcArrayAdd() / ProcArrayRemove() can lead to pgxactoff of a procarray
- * member to change.  Therefore it is only safe to use PGPROC->pgxactoff to
- * access the dense array while holding ProcArrayLock.
- *
- * As long as a PGPROC is in the procarray, the mirrored values need to be
- * maintained in both places in a coherent manner.
- *
- * The denser separate arrays are beneficial for three main reasons: First, to
- * allow for as tight loops accessing the data as possible. Second, to prevent
- * updates of frequently changing data (e.g. xmin) from invalidating
- * cachelines also containing less frequently changing data (e.g. xid,
- * statusFlags). Third to condense frequently accessed data into as few
- * cachelines as possible.
- *
- * There are two main reasons to have the data mirrored between these dense
- * arrays and PGPROC. First, as explained above, a PGPROC's array entries can
- * only be accessed with ProcArrayLock held, whereas the
- * PGPROC entries do not require that (obviously there may still be locking
- * requirements around the individual field, separate from the concerns
- * here). That is particularly important for a backend to efficiently checks
- * it own values, which it often can safely do without locking.  Second, the
- * PGPROC fields allow to avoid unnecessary accesses and modification to the
- * dense arrays. A backend's own PGPROC is more likely to be in a local cache,
- * whereas the cachelines for the dense array will be modified by other
- * backends (often removing it from the cache for other cores/sockets). At
- * commit/abort time a check of the PGPROC value can avoid accessing/dirtying
- * the corresponding array value.
- *
- * Basically it makes sense to access the PGPROC variable when checking a
- * single backend's data, especially when already looking at the PGPROC for
- * other reasons already.  It makes sense to look at the "dense" arrays if we
- * need to look at many / most entries, because we then benefit from the
- * reduced indirection and better cross-process cache-ability.
- *
- * When entering a PGPROC for 2PC transactions with ProcArrayAdd(), the data
- * in the dense arrays is initialized from the PGPROC while it already holds
- * ProcArrayLock.
+ * A session's entry in the procarray is its record in the session registry
+ * (storage/session_registry.h).  PostgreSQL mirrored some PGPROC fields into
+ * dense arrays here, for its snapshot's scan; digres's snapshot is a
+ * constant, and they are gone.
  */
 typedef struct PROC_HDR {
   /* Array of PGPROC structures (not including dummies for prepared txns) */
   PGPROC *allProcs;
-
-  /* Array mirroring PGPROC.xid for each PGPROC currently in the procarray */
-  TransactionId *xids;
-
-  /*
-   * Array mirroring PGPROC.subxidStatus for each PGPROC currently in the
-   * procarray.
-   */
-  XidCacheStatus *subxidStates;
-
-  /*
-   * Array mirroring PGPROC.statusFlags for each PGPROC currently in the
-   * procarray.
-   */
-  uint8 *statusFlags;
 
   /* Length of allProcs array */
   uint32 allProcCount;

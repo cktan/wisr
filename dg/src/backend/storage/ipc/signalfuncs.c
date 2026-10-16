@@ -22,6 +22,7 @@
 #include "storage/proc.h"
 #include "storage/procarray.h"
 #include "storage/procsignal.h"
+#include "storage/session_registry.h"
 #include "utils/acl.h"
 #include "utils/fmgrprotos.h"
 #include "utils/wait_event.h"
@@ -46,7 +47,9 @@
 #define SIGNAL_BACKEND_NOPERMISSION 2
 #define SIGNAL_BACKEND_NOSUPERUSER 3
 static int pg_signal_backend(int pid, int sig) {
-  PGPROC *proc = BackendPidGetProc(pid);
+  /* The session's record: its role, and the thread to interrupt. */
+  session_ref_t record = pid != 0 ? session_by_pid(pid) : nullptr;
+  Oid role;
 
   /*
    * BackendPidGetProc returns NULL if the pid isn't valid; but by the time
@@ -60,7 +63,7 @@ static int pg_signal_backend(int pid, int sig) {
    * process or the postmaster (neither of which can be signaled via
    * pg_signal_backend()).
    */
-  if (proc == NULL) {
+  if (record == nullptr) {
     /*
      * This is just a warning so a loop-through-resultset will not abort
      * if one backend terminated on its own during the run.
@@ -78,10 +81,11 @@ static int pg_signal_backend(int pid, int sig) {
    *
    * Otherwise, users can signal backends for roles they have privileges of.
    */
-  if (!OidIsValid(proc->roleId) || superuser_arg(proc->roleId)) {
+  role = record->role.load(std::memory_order_acquire);
+  if (!OidIsValid(role) || superuser_arg(role)) {
     if (!superuser())
       return SIGNAL_BACKEND_NOSUPERUSER;
-  } else if (!has_privs_of_role(GetUserId(), proc->roleId) &&
+  } else if (!has_privs_of_role(GetUserId(), role) &&
              !has_privs_of_role(GetUserId(), ROLE_PG_SIGNAL_BACKEND))
     return SIGNAL_BACKEND_NOPERMISSION;
 
@@ -94,7 +98,8 @@ static int pg_signal_backend(int pid, int sig) {
    * too unlikely to worry about.
    */
 
-  InterruptProc(proc, InterruptsOfSignal(sig));
+  /* Its own thread: a session ended since is interrupted harmlessly. */
+  session_interrupt(record, InterruptsOfSignal(sig));
   return SIGNAL_BACKEND_SUCCESS;
 }
 

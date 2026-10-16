@@ -43,6 +43,7 @@
 #include "storage/latch.h"
 #include "storage/pmsignal.h"
 #include "storage/proc.h"
+#include "storage/session_registry.h"
 #include "storage/procarray.h"
 #include "storage/procsignal.h"
 #include "utils/builtins.h"
@@ -544,6 +545,8 @@ void SetAuthenticatedUserId(Oid userid) {
   /* Also mark our PGPROC entry with the authenticated user id */
   /* (We assume this is an atomic store so no lock is needed) */
   MyProc->roleId = userid;
+  /* And our record, which another session reads it in (SHMEM.md 5.2). */
+  session_set_role(userid);
 }
 
 /*

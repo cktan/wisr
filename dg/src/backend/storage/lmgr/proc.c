@@ -86,10 +86,6 @@ static Size PGProcShmemSize(void) {
   Size TotalProcs = MaxBackends;
 
   size = add_size(size, mul_size(TotalProcs, sizeof(PGPROC)));
-  size = add_size(size, mul_size(TotalProcs, sizeof(*ProcGlobal->xids)));
-  size =
-      add_size(size, mul_size(TotalProcs, sizeof(*ProcGlobal->subxidStates)));
-  size = add_size(size, mul_size(TotalProcs, sizeof(*ProcGlobal->statusFlags)));
 
   return size;
 }
@@ -189,22 +185,6 @@ void InitProcGlobal(void) {
   ProcGlobal->allProcs = procs;
   /* XXX allProcCount isn't really all of them; it excludes prepared xacts */
   ProcGlobal->allProcCount = MaxBackends;
-
-  /*
-   * Allocate arrays mirroring PGPROC fields in a dense manner. See
-   * PROC_HDR.
-   *
-   * XXX: It might make sense to increase padding for these arrays, given
-   * how hotly they are accessed.
-   */
-  ProcGlobal->xids = (TransactionId *)ptr;
-  ptr = (char *)ptr + (TotalProcs * sizeof(*ProcGlobal->xids));
-
-  ProcGlobal->subxidStates = (XidCacheStatus *)ptr;
-  ptr = (char *)ptr + (TotalProcs * sizeof(*ProcGlobal->subxidStates));
-
-  ProcGlobal->statusFlags = (uint8 *)ptr;
-  ptr = (char *)ptr + (TotalProcs * sizeof(*ProcGlobal->statusFlags));
 
   /* make sure wer didn't overflow */
   Assert((ptr > (char *)procs) && (ptr <= (char *)procs + requestSize));

@@ -61,6 +61,13 @@ struct shmem_index_free_t {
   void operator()(shmem_index_t *index) const;
 };
 
+/* session_registry.c: the sessions registered, and a session's record. */
+struct session_registry_t;
+struct session_registry_free_t {
+  void operator()(session_registry_t *registry) const;
+};
+struct session_record_t;
+
 union LWLockPadded;                    /* storage/lwlock.h */
 struct PGSemaphoreData;                /* port/posix_sema.c */
 struct FastPathStrongRelationLockData; /* storage/lmgr/lock.c */
@@ -101,6 +108,9 @@ typedef struct pcb_t {
   /* pmsignal.c: why the postmaster sent SIGQUIT, a QuitSignalReason */
   std::atomic<int> quit_reason{0};
 
+  /* session_registry.c: the sessions registered, by pid */
+  std::unique_ptr<session_registry_t, session_registry_free_t> session_registry;
+
   /* lock.c: the fast path's counts of strong locks, new'd */
   struct FastPathStrongRelationLockData *fast_path_strong = nullptr;
 } pcb_t;
@@ -112,6 +122,8 @@ typedef struct tcb_t {
   std::unique_ptr<smstore_state_t, smstore_state_free_t> smstore;
   /* made at its first use, by fd.c */
   std::unique_ptr<sm_vfd_cache_t, sm_vfd_cache_free_t> vfd;
+  /* session_registry.c: this session's record, while it is registered */
+  std::shared_ptr<session_record_t> session;
 } tcb_t;
 
 extern pcb_t *pcb;
