@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "sm_sys.h"
+#include "storage/procsignal.h"
 
 struct PGPROC;
 
@@ -33,6 +34,14 @@ typedef struct session_record_t {
   std::atomic<Oid> database{InvalidOid}; /* its database, once it has one */
   std::atomic<Oid> role{InvalidOid};     /* its role, once it has one */
   std::atomic<bool> ended{false};        /* set as it leaves the registry */
+
+  /*
+   * Its cancel key, which a cancel request must match, and its length, 0
+   * for none: set and read under pcb->cancel_key_mutex
+   * (session_set_cancel_key(), SendCancelRequest()).
+   */
+  int cancel_key_length = 0;
+  uint8 cancel_key[MAX_CANCEL_KEY_LENGTH];
 } session_record_t;
 
 typedef std::shared_ptr<session_record_t> session_ref_t;
@@ -43,6 +52,7 @@ extern void session_registry_init(void);
 extern void session_register(struct PGPROC *proc);
 extern void session_set_database(Oid database);
 extern void session_set_role(Oid role);
+extern void session_set_cancel_key(const uint8 *key, int len);
 extern void session_interrupt(const session_ref_t &record, uint32 bits);
 extern void session_unregister(void);
 extern session_ref_t session_by_pid(int pid);

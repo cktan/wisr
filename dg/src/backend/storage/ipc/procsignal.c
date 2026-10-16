@@ -25,6 +25,7 @@
 #include "storage/ipc.h"
 #include "storage/latch.h"
 #include "storage/proc.h"
+#include "storage/session_registry.h"
 #include "storage/shmem.h"
 #include "storage/sinval.h"
 #include "utils/control_block.h"
@@ -35,55 +36,51 @@
 /*
  * Send a query cancellation signal to backend.
  *
- * Note: This is called from a backend process before authentication.  We
- * cannot take LWLocks yet, but that's OK; each PGPROC's cancel key is read
- * under a mutex of its own.
+ * Note: This is called from a backend process before authentication.  The
+ * session is found by its record, whose cancel key is read under
+ * pcb->cancel_key_mutex (session_set_cancel_key()).  PIDs are reused, so a
+ * signal sent by PID is racy anyway, although OS's avoid reusing PIDs too
+ * soon; the record is the session's alone, so an ended one is interrupted
+ * harmlessly.
  */
 void SendCancelRequest(int backendPID, const uint8 *cancel_key,
                        int cancel_key_len) {
+  session_ref_t record;
+  bool match;
+
   if (backendPID == 0) {
     ereport(LOG, (errmsg("invalid cancel request with PID 0")));
     return;
   }
 
-  /*
-   * See if we have a matching backend: the session's PGPROC, whose pid and
-   * cancel key are read under pcb->cancel_key_mutex, which its session takes
-   * to set the key and to clear it (ProcSetCancelKey(), ProcKill()).  PIDs
-   * are reused, so a signal sent by PID is racy anyway, although OS's avoid
-   * reusing PIDs too soon.
-   */
-  for (uint32 i = 0; i < ProcGlobal->allProcCount; i++) {
-    PGPROC *proc = &ProcGlobal->allProcs[i];
-    bool match;
-
-    {
-      std::lock_guard<std::mutex> lock(pcb->cancel_key_mutex);
-
-      if (proc->pid != backendPID || proc->cancelKeyLength == 0)
-        continue;
-      match = proc->cancelKeyLength == cancel_key_len &&
-              timingsafe_bcmp(proc->cancelKey, cancel_key, cancel_key_len) == 0;
-    }
-    if (match) {
-      /* Found a match; signal that backend to cancel current op */
-      ereport(DEBUG2,
-              (errmsg_internal(
-                  "processing cancel request: sending SIGINT to process %d",
-                  backendPID)));
-
-      InterruptProc(proc, INTERRUPT_CANCEL);
-    } else {
-      /* Right PID, wrong key: no way, Jose */
-      ereport(LOG, (errmsg("wrong key in cancel request for process %d",
-                           backendPID)));
-    }
+  record = session_by_pid(backendPID);
+  if (record == nullptr) {
+    ereport(LOG, (errmsg("PID %d in cancel request did not match any process",
+                         backendPID)));
     return;
   }
+  {
+    /* The session sets its key under this mutex. */
+    std::lock_guard<std::mutex> lock(pcb->cancel_key_mutex);
 
-  /* No matching backend */
-  ereport(LOG, (errmsg("PID %d in cancel request did not match any process",
-                       backendPID)));
+    match =
+        record->cancel_key_length != 0 &&
+        record->cancel_key_length == cancel_key_len &&
+        timingsafe_bcmp(record->cancel_key, cancel_key, cancel_key_len) == 0;
+  }
+  if (match) {
+    /* Found a match; signal that backend to cancel current op */
+    ereport(DEBUG2,
+            (errmsg_internal(
+                "processing cancel request: sending SIGINT to process %d",
+                backendPID)));
+
+    session_interrupt(record, INTERRUPT_CANCEL);
+  } else {
+    /* Right PID, wrong key: no way, Jose */
+    ereport(LOG,
+            (errmsg("wrong key in cancel request for process %d", backendPID)));
+  }
 }
 
 /* This thread's handler of each interrupt bit, NULL for none. */
@@ -93,18 +90,6 @@ static thread_local /*LOCAL*/ interrupt_handler_t interrupt_handlers[32];
 void SetInterruptHandler(uint32 bit, interrupt_handler_t handler) {
   Assert(bit != 0 && (bit & (bit - 1)) == 0);
   interrupt_handlers[pg_rightmost_one_pos32(bit)] = handler;
-}
-
-/*
- * Interrupt the thread that owns proc, which runs the handlers of bits at
- * its next CHECK_FOR_INTERRUPTS() or wait.  sm_sys.h wakes it: a wait it is in
- * returns, and runs them.  A proc that no thread owns is left alone.
- */
-void InterruptProc(PGPROC *proc, uint32 bits) {
-  sm_thread_ref_t owner = LatchOwner(&proc->procLatch);
-
-  if (owner)
-    sm_interrupt(owner, bits);
 }
 
 /* Run this thread's handlers of bits now. */

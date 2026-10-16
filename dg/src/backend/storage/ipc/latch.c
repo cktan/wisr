@@ -71,96 +71,12 @@ void InitLatch(Latch *latch) {
   /* Other threads set it too: the postmaster's, by its backends. */
   latch->owner = new sm_thread_ref_t(sm_thread_self());
   /* owner_lock was made with the latch, a thread's LocalLatchData. */
-  latch->is_shared = false;
 
 #ifdef WIN32
   latch->event = CreateEvent(NULL, TRUE, FALSE, NULL);
   if (latch->event == NULL)
     elog(ERROR, "CreateEvent failed: error code %lu", GetLastError());
 #endif /* WIN32 */
-}
-
-/*
- * Initialize a shared latch that can be set from other processes. The latch
- * is initially owned by no-one; use OwnLatch to associate it with the
- * current process.
- *
- * InitSharedLatch needs to be called in postmaster before forking child
- * processes, usually right after allocating the shared memory block
- * containing the latch with ShmemInitStruct. (The Unix implementation
- * doesn't actually require that, but the Windows one does.) Because of
- * this restriction, we have no concurrency issues to worry about here.
- *
- * Note that other handles created in this module are never marked as
- * inheritable.  Thus we do not need to worry about cleaning up child
- * process references to postmaster-private latches or WaitEventSets.
- */
-void InitSharedLatch(Latch *latch) {
-#ifdef WIN32
-  SECURITY_ATTRIBUTES sa;
-
-  /*
-   * Set up security attributes to specify that the events are inherited.
-   */
-  ZeroMemory(&sa, sizeof(sa));
-  sa.nLength = sizeof(sa);
-  sa.bInheritHandle = TRUE;
-
-  latch->event = CreateEvent(&sa, TRUE, FALSE, NULL);
-  if (latch->event == NULL)
-    elog(ERROR, "CreateEvent failed: error code %lu", GetLastError());
-#endif
-
-  latch->owner = NULL;
-  /* The latch is a PGPROC's, calloc'd: its mutex is made in place. */
-  new (&latch->owner_lock) std::mutex();
-  latch->is_shared = true;
-}
-
-/*
- * Associate a shared latch with the current process, allowing it to
- * wait on the latch.
- *
- * Although there is a sanity check for latch-already-owned, we don't do
- * any sort of locking here, meaning that we could fail to detect the error
- * if two processes try to own the same latch at about the same time.  If
- * there is any risk of that, caller must provide an interlock to prevent it.
- */
-void OwnLatch(Latch *latch) {
-  sm_thread_ref_t *owner;
-
-  /* Sanity checks */
-  Assert(latch->is_shared);
-
-  /* Made before the lock, which is held for a few instructions. */
-  owner = new sm_thread_ref_t(sm_thread_self());
-  {
-    /* Published under the lock that SetLatch() copies it under. */
-    std::lock_guard<std::mutex> lock(latch->owner_lock);
-
-    if (latch->owner != NULL)
-      elog(PANIC, "latch already owned by another thread");
-    latch->owner = owner;
-  }
-}
-
-/*
- * Disown a shared latch currently owned by the current process.
- */
-void DisownLatch(Latch *latch) {
-  sm_thread_ref_t *owner;
-
-  Assert(latch->is_shared);
-  Assert(LatchIsMine(latch));
-
-  {
-    /* Unpublished under the lock, so no SetLatch() is copying it. */
-    std::lock_guard<std::mutex> lock(latch->owner_lock);
-
-    owner = latch->owner;
-    latch->owner = NULL;
-  }
-  delete owner;
 }
 
 /*
@@ -174,9 +90,8 @@ void DisownLatch(Latch *latch) {
  * timeouts longer than INT_MAX milliseconds.  Note that some extra overhead
  * is incurred when WL_TIMEOUT is given, so avoid using a timeout if possible.
  *
- * The latch must be owned by the current process, ie. it must be a
- * process-local latch initialized with InitLatch, or a shared latch
- * associated with the current process by calling OwnLatch.
+ * The latch must be owned by the current thread, ie. it must be a latch
+ * it initialized with InitLatch.
  *
  * Returns bit mask indicating which condition(s) caused the wake-up. Note
  * that if multiple wake-up conditions are true, there is no guarantee that

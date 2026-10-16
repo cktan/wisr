@@ -104,9 +104,6 @@ struct PGPROC {
   dlist_node links;           /* list link if process is in a list */
   dlist_head *procgloballist; /* procglobal list that owns this PGPROC */
 
-
-  Latch procLatch; /* generic latch for process */
-
   TransactionId xid; /* id of top-level transaction currently being
                       * executed by this proc, if running and XID
                       * is assigned; else InvalidTransactionId. */
@@ -117,14 +114,6 @@ struct PGPROC {
                        * xid >= xmin ! */
 
   int pid; /* Backend's process ID; 0 if prepared xact */
-
-  /*
-   * The session's cancel key, which a cancel request must match, and its
-   * length, 0 for none: set and read under pcb->cancel_key_mutex
-   * (ProcSetCancelKey(), SendCancelRequest()).
-   */
-  int cancelKeyLength;
-  uint8 cancelKey[MAX_CANCEL_KEY_LENGTH];
 
   /*
    * Currently running top-level transaction's virtual xid. Together these
@@ -203,16 +192,10 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT int IdleSessionTimeout;
  * Function Prototypes
  */
 extern void InitProcGlobal(void);
-extern void ProcSetCancelKey(const uint8 *key, int len);
 extern void InitProcess(void);
 extern void InitProcessPhase2(void);
 
 extern bool HaveNFreeProcs(int n, int *nfree);
 extern void ProcReleaseLocks(bool isCommit);
-
-extern void ProcWaitForSignal(uint32 wait_event_info);
-extern void ProcSendSignal(ProcNumber procNumber);
-
-extern PGPROC *PostmasterPidGetProc(int pid);
 
 #endif /* _PROC_H_ */

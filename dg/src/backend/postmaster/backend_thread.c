@@ -158,8 +158,8 @@ pid_t backend_thread_launch(BackendType child_type, int child_slot,
 
 /*
  * Send sig to a backend thread, as the postmaster kill()s a child: as its
- * interrupt bits, raised in the thread itself, PGPROC or no.  A signal with
- * no bit, SIGKILL among them, cannot end one thread, and is dropped.
+ * interrupt bits, raised in the thread itself, registered or not.  A signal
+ * with no bit, SIGKILL among them, cannot end one thread, and is dropped.
  */
 void backend_thread_signal(backend_thread_t *thread, int sig) {
   uint32 bits = InterruptsOfSignal(sig);

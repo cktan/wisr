@@ -4649,3 +4649,29 @@ waiters were all a semaphore was for.
 - Left: `held_lock.h`'s comments, which explain it by the
   LWLock it stands for; storage/lmgr `README`'s account of
   LWLocks, with the rest of it (step 156).
+
+## Step 158: a session is reached through its record
+
+`SHMEM.md` §5, §7 step 4. A session was interrupted through its
+PGPROC's latch, whose owner was its thread, and a cancel
+request was matched against each PGPROC's pid and key. The
+session's record (step 152) holds its thread already.
+
+- **The cancel key is the record's**
+  (`session_set_cancel_key()`), set and read under
+  `pcb->cancel_key_mutex`. `SendCancelRequest()` finds the
+  session with `session_by_pid()`, not by a scan of PGPROC
+  slots, and interrupts it with `session_interrupt()`.
+- **The postmaster signals a backend through its record**
+  (`signal_child()`), by `session_by_pid()`.
+- **Gone**: `InterruptProc()`, `PostmasterPidGetProc()`,
+  `ProcSetCancelKey()`, PGPROC's cancel key and latch, and the
+  shared latch with it: `InitSharedLatch()`, `OwnLatch()`,
+  `DisownLatch()`, `SwitchToSharedLatch()`,
+  `SwitchBackToLocalLatch()` and `Latch::is_shared`. A
+  thread's latch is its local latch, which other threads set.
+  `ProcSendSignal()`, which set a PGPROC's latch, and
+  `ProcWaitForSignal()` go: nothing called either.
+- `server.sh` checks it already: a cancel request from psql
+  ends a lock wait, and the postmaster's shutdown ends an idle
+  session.

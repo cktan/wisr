@@ -131,12 +131,13 @@ switches between (`SwitchToSharedLatch()`), which are one bit.
   versions and epoch (§5.1). A virtual xid's local part comes
   from one counter for the process (`pcb_t::next_lxid`), where
   it came from the queue's per-slot state.
-- **PGPROC** (storage/lmgr `proc.c`). One a session: its latch,
-  its cancel key, its virtual xid, its database and role, the
-  target of `InterruptProc()`; its lock waits, semaphore and
-  fast-path slots are gone (steps 156, 157). A slot, reused by
-  the next session. **To replace**: its parts move into the
-  session's record (§5.2).
+- **PGPROC** (storage/lmgr `proc.c`). One a session: its
+  virtual xid, its xmin, its database and role; its lock
+  waits, semaphore and fast-path slots are gone (steps 156,
+  157), and its latch and cancel key (158): a session is
+  interrupted, and a cancel request matched, through its
+  record. A slot, reused by the next session. **To replace**:
+  what is left moves out (§5.2), and the slots go.
 - **The proc array** (storage/ipc `procarray.c`). Mostly dead:
   no xid is ever assigned (step 45), and a snapshot is a
   constant, made with no lock and no scan of the array, and
@@ -374,7 +375,8 @@ has a caller still, and goes with the step that removes it:
    digres's own (`WORKNOTE.md` step 153), catalog locks
    gone (step 154), nothing left to take a lock (155), the
    lock manager gone (156), the LWLocks and `posix_sema.c`
-   (157); then PGPROC, whose parts the session record takes,
+   (157), interrupts and cancels through the session record
+   (158); then PGPROC, whose parts the session record takes,
    and `pg_blocking_pids()` asks sm1's lock table.
 5. **The registry** of §2, once each block is a pcb field.
 

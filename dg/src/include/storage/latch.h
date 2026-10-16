@@ -18,14 +18,10 @@
  * overcome these limitations, allowing you to sleep without polling and
  * ensuring quick response to signals from other processes.
  *
- * There are two kinds of latches: local and shared. A local latch is
- * initialized by InitLatch, and can only be set from the same process.
- * A local latch can be used to wait for a signal to arrive, by calling
- * SetLatch in the signal handler. A shared latch resides in shared memory,
- * and must be initialized at postmaster startup by InitSharedLatch. Before
- * a shared latch can be waited on, it must be associated with a process
- * with OwnLatch. Only the process owning the latch can wait on it, but any
- * process can set it.
+ * A latch is a thread's, initialized by InitLatch: only the thread owning
+ * it can wait on it, but any thread can set it, and a signal handler in the
+ * owning thread.  PostgreSQL's shared latches, a PGPROC's, are gone
+ * (dg/WORKNOTE.md step 158): a session is reached by its thread.
  *
  * There are three basic operations on a latch:
  *
@@ -76,11 +72,10 @@
  * by themselves.  Therefore, it is critical that any signal handler that
  * is meant to terminate a WaitLatch wait calls SetLatch.
  *
- * Note that use of the process latch (PGPROC.procLatch) is generally better
- * than an ad-hoc shared latch for signaling auxiliary processes.  This is
- * because generic signal handlers will call SetLatch on the process latch
- * only, so using any latch other than the process latch effectively precludes
- * use of any generic handler.
+ * Note that use of the thread's latch (MyLatch) is generally better than an
+ * ad-hoc latch for signaling it.  This is because generic signal handlers
+ * will call SetLatch on MyLatch only, so using any other latch effectively
+ * precludes use of any generic handler.
  *
  *
  * See also WaitEventSets in waiteventset.h. They allow to wait for latches
@@ -116,12 +111,11 @@
  * A latch is its owner's: its flag is the owning thread's INTERRUPT_LATCH
  * bit (sm_sys.h), which SetLatch() raises and ResetLatch() takes.  The
  * Latch holds only the owner, so that others can find the thread to set:
- * a handle new'd by OwnLatch() or InitLatch() and deleted by DisownLatch()
- * or, for a thread's local latch, by ShutdownProcessLocalLatch(), under
- * owner_lock, which SetLatch() holds to copy it.  NULL while not owned.
+ * a handle new'd by InitLatch() and deleted by ShutdownProcessLocalLatch(),
+ * under owner_lock, which SetLatch() holds to copy it.  NULL while not
+ * owned.
  */
 typedef struct Latch {
-  bool is_shared;
   sm_thread_ref_t *owner;
   std::mutex owner_lock;
 #ifdef WIN32
@@ -133,9 +127,6 @@ typedef struct Latch {
  * prototypes for functions in latch.c
  */
 extern void InitLatch(Latch *latch);
-extern void InitSharedLatch(Latch *latch);
-extern void OwnLatch(Latch *latch);
-extern void DisownLatch(Latch *latch);
 extern void SetLatch(Latch *latch);
 extern sm_thread_ref_t LatchOwner(Latch *latch);
 extern void ResetLatch(Latch *latch);

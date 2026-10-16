@@ -122,9 +122,6 @@ void InitProcGlobal(void) {
   for (i = 0; i < TotalProcs; i++) {
     PGPROC *proc = &procs[i];
 
-    /* Set up per-PGPROC latch. */
-    InitSharedLatch(&(proc->procLatch));
-
     /* Each is a session's: queue it up on the free list. */
     dlist_push_tail(&ProcGlobal->freeProcs, &proc->links);
     proc->procgloballist = &ProcGlobal->freeProcs;
@@ -134,19 +131,6 @@ void InitProcGlobal(void) {
 /*
  * InitProcess -- initialize a per-process PGPROC entry for this backend
  */
-/*
- * Give this session's PGPROC its cancel key, which a cancel request for its
- * pid must match (SendCancelRequest()).
- */
-void ProcSetCancelKey(const uint8 *key, int len) {
-  Assert(len >= 0 && len <= MAX_CANCEL_KEY_LENGTH);
-  std::lock_guard<std::mutex> lock(pcb->cancel_key_mutex);
-
-  if (len > 0)
-    memcpy(MyProc->cancelKey, key, len);
-  MyProc->cancelKeyLength = len;
-}
-
 void InitProcess(void) {
   dlist_head *procgloballist;
 
@@ -212,14 +196,6 @@ void InitProcess(void) {
   MyProc->tempNamespaceId = InvalidOid;
   MyProc->isRegularBackend = AmRegularBackendProcess();
   MyProc->statusFlags = 0;
-
-  /*
-   * Acquire ownership of the PGPROC's latch, so that we can use WaitLatch
-   * on it.  That allows us to repoint the process latch, which so far
-   * points to process local one, to the shared one.
-   */
-  OwnLatch(&MyProc->procLatch);
-  SwitchToSharedLatch();
 
   /*
    * Arrange to clean up at backend exit.
@@ -322,31 +298,14 @@ static void ProcKill(int code, Datum arg) {
   if (MyProc->pid != CurrentProcPid())
     elog(PANIC, "ProcKill() called in child process");
 
-  /*
-   * Reset MyLatch to the process local one and disown the shared latch, so
-   * that signal handlers et al can continue using the latch after the
-   * shared latch isn't ours anymore.
-   *
-   * DisownLatch() must happen before our PGPROC can appear on a freelist: a
-   * newly-forked backend that pops our slot and calls OwnLatch() would
-   * PANIC on a still-owned latch.
-   */
-  SwitchBackToLocalLatch();
-  DisownLatch(&MyProc->procLatch);
-
   proc = MyProc;
   procgloballist = proc->procgloballist;
 
   MyProc = NULL;
   MyProcNumber = INVALID_PROC_NUMBER;
 
-  /* Mark the proc no longer in use: no cancel request finds it now. */
-  {
-    std::lock_guard<std::mutex> lock(pcb->cancel_key_mutex);
-
-    proc->cancelKeyLength = 0;
-    proc->pid = 0;
-  }
+  /* Mark the proc no longer in use. */
+  proc->pid = 0;
   proc->vxid.procNumber = INVALID_PROC_NUMBER;
   proc->vxid.lxid = InvalidTransactionId;
 
@@ -358,43 +317,4 @@ static void ProcKill(int code, Datum arg) {
   /* Update shared estimate of spins_per_delay */
   ProcGlobal->spins_per_delay =
       update_spins_per_delay(ProcGlobal->spins_per_delay);
-}
-
-/*
- * The PGPROC of the backend whose pid is pid, or NULL if it has none yet.
- * For the postmaster, which takes no lock: the scan reads each pid without
- * one, so the answer may be stale, as a pid given to kill() may be.
- */
-PGPROC *PostmasterPidGetProc(int pid) {
-  for (int i = 0; i < MaxBackends; i++) {
-    PGPROC *proc = GetPGProcByNumber(i);
-
-    if (proc->pid == pid)
-      return proc;
-  }
-  return NULL;
-}
-
-/*
- * ProcWaitForSignal - wait for a signal from another backend.
- *
- * As this uses the generic process latch the caller has to be robust against
- * unrelated wakeups: Always check that the desired state has occurred, and
- * wait again if not.
- */
-void ProcWaitForSignal(uint32 wait_event_info) {
-  (void)WaitLatch(MyLatch, WL_LATCH_SET | WL_EXIT_ON_PM_DEATH, 0,
-                  wait_event_info);
-  ResetLatch(MyLatch);
-  CHECK_FOR_INTERRUPTS();
-}
-
-/*
- * ProcSendSignal - set the latch of a backend identified by ProcNumber
- */
-void ProcSendSignal(ProcNumber procNumber) {
-  if (procNumber < 0 || procNumber >= ProcGlobal->allProcCount)
-    elog(ERROR, "procNumber out of range");
-
-  SetLatch(&ProcGlobal->allProcs[procNumber].procLatch);
 }

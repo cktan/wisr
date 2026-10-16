@@ -58,10 +58,8 @@ thread_local /*LOCAL*/ int MyPMChildSlot;
 
 /*
  * MyLatch points to the latch that should be used for signal handling by the
- * current process. It will either point to a process local latch if the
- * current process does not have a PGPROC entry in that moment, or to
- * PGPROC->procLatch if it has. Thus it can always be used in signal handlers,
- * without checking for its existence.
+ * current thread: its local latch, which it always has.  Thus it can always
+ * be used in signal handlers, without checking for its existence.
  */
 thread_local /*LOCAL*/ struct Latch *MyLatch;
 

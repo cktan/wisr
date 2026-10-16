@@ -373,7 +373,7 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
   }
 
   /* A cancel request for this session must give this key. */
-  ProcSetCancelKey(MyCancelKey, MyCancelKeyLength);
+  session_set_cancel_key(MyCancelKey, MyCancelKeyLength);
 
   /*
    * Also set up timeout handlers needed for backend operation.  We need

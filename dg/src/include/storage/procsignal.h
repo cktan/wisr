@@ -57,9 +57,7 @@ extern void SendCancelRequest(int backendPID, const uint8 *cancel_key,
 
 typedef void (*interrupt_handler_t)(void);
 
-struct PGPROC;
 extern void SetInterruptHandler(uint32 bit, interrupt_handler_t handler);
-extern void InterruptProc(struct PGPROC *proc, uint32 bits);
 extern void InterruptSelf(uint32 bits);
 extern void InterruptSelfLater(uint32 bits);
 extern void DeliverInterrupts(void);

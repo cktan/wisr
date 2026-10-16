@@ -155,17 +155,18 @@ digres is one process; each session is a thread of it.
 - **Threads are `std::thread`, locks `std::mutex`**, not
   pthreads. `pthread_sigmask()` stays: it sets the calling
   thread's signal mask, which the standard library cannot.
-- **Signals between threads are interrupt bits** (sm_sys.h), named
-  in `storage/procsignal.h`: `INTERRUPT_CANCEL`, `_DIE`,
-  `_QUIT`, `_RELOAD`, `_PROCSIG`, `_ALARM`. `InterruptProc()`
-  raises them in the thread that owns a PGPROC; a thread sets a
-  handler for each with `SetInterruptHandler()`, not
-  `pqsignal()`, and it runs at its next `CHECK_FOR_INTERRUPTS()`
-  or wait. Signal
-  numbers are left only where the postmaster speaks to its
-  children and in the SQL functions that send them
-  (`InterruptsOfSignal()`). A session thread blocks every
-  signal but the faults it causes itself.
+- **Signals between threads are interrupt bits** (sm_sys.h),
+  named in `storage/procsignal.h`: `INTERRUPT_CANCEL`, `_DIE`,
+  `_QUIT`, `_RELOAD`, `_PROCSIG`, `_ALARM`.
+  `session_interrupt()` raises them in a session's own thread,
+  found by its record (`storage/session_registry.h`); a thread
+  sets a handler for each with `SetInterruptHandler()`, not
+  `pqsignal()`, and it runs at its next
+  `CHECK_FOR_INTERRUPTS()` or wait. Signal numbers are left
+  only where the postmaster speaks to its children and in the
+  SQL functions that send them (`InterruptsOfSignal()`). A
+  session thread blocks every signal but the faults it causes
+  itself.
 - **Only the postmaster's thread takes a signal.** Every other
   thread blocks them: sessions by their mask, `sm_sys.h`'s timer
   thread by itself, and sm's and RocksDB's because

@@ -135,7 +135,7 @@ void pqsignal(int signo, pqsigfunc func) {
   /*
    * A session thread's handlers are its own, and no signal reaches them: it
    * blocks every signal but its faults, and is interrupted by bits
-   * (InterruptProc()).  The process's handlers stay the postmaster's.
+   * (session_interrupt()).  The process's handlers stay the postmaster's.
    */
   if (IsSessionThread)
     return;

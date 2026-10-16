@@ -250,7 +250,7 @@ void ShutdownWaitEventSupport(void) {
  * Initialize the process-local wait event infrastructure.
  *
  * This must be called once during startup of any process that can wait on
- * latches, before it issues any InitLatch() or OwnLatch() calls.
+ * latches, before it issues any InitLatch() call.
  */
 void InitializeWaitEventSupport(void) {
 #if defined(WAIT_USE_SELF_PIPE)
@@ -523,9 +523,8 @@ void FreeWaitEventSetAfterFork(WaitEventSet *set) {
  * Returns the offset in WaitEventSet->events (starting from 0), which can be
  * used to modify previously added wait events using ModifyWaitEvent().
  *
- * In the WL_LATCH_SET case the latch must be owned by the current process,
- * i.e. it must be a process-local latch initialized with InitLatch, or a
- * shared latch associated with the current process by calling OwnLatch.
+ * In the WL_LATCH_SET case the latch must be owned by the current thread,
+ * i.e. it must be a latch it initialized with InitLatch.
  *
  * In the WL_SOCKET_READABLE/WRITEABLE/CONNECTED/ACCEPT cases, EOF and error
  * conditions cause the socket to be reported as readable/writable/connected,

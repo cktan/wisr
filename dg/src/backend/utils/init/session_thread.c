@@ -113,8 +113,9 @@ static void session_thread_main(session_start_t *p) {
 
   /*
    * A session thread takes no signal but the faults it causes itself: the
-   * rest are the postmaster's, or come as interrupt bits (InterruptProc()),
-   * its timeouts among them.  Every mask the backend sets is this one.
+   * rest are the postmaster's, or come as interrupt bits
+   * (session_interrupt()), its timeouts among them.  Every mask the backend
+   * sets is this one.
    */
   sigfillset(&BlockSig);
   sigdelset(&BlockSig, SIGSEGV);

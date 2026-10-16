@@ -102,7 +102,7 @@ typedef struct pcb_t {
   /* proc.c: the free list of PGPROCs */
   std::mutex proc_struct_mutex;
 
-  /* proc.c, procsignal.c: guards each PGPROC's cancel key */
+  /* session_registry.c, procsignal.c: guards each record's cancel key */
   std::mutex cancel_key_mutex;
 
   /* pmsignal.c: why the postmaster sent SIGQUIT, a QuitSignalReason */

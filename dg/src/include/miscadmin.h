@@ -185,7 +185,7 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT bool IsUnderPostmaster;
 /*
  * Set in a session that is a thread (utils/init/session_thread.c): its
  * MyProcPid is its thread id, proc_exit() ends the thread and not the
- * process, and its signals are interrupt bits (InterruptProc()).
+ * process, and its signals are interrupt bits (session_interrupt()).
  */
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool IsSessionThread;
 extern int CurrentProcPid(void);
@@ -323,8 +323,6 @@ extern void InitPostmasterChild(void);
 extern void InitStandaloneProcess(const char *argv0);
 extern void InitProcessLocalLatch(void);
 extern void ShutdownProcessLocalLatch(void);
-extern void SwitchToSharedLatch(void);
-extern void SwitchBackToLocalLatch(void);
 
 /*
  * MyBackendType indicates what kind of a backend this is.

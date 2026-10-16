@@ -220,23 +220,6 @@ void InitStandaloneProcess(const char *argv0) {
     get_pkglib_path(my_exec_path, pkglib_path);
 }
 
-void SwitchToSharedLatch(void) {
-  Assert(MyLatch == &LocalLatchData);
-  Assert(MyProc != NULL);
-
-  MyLatch = &MyProc->procLatch;
-
-  if (FeBeWaitSet)
-    ModifyWaitEvent(FeBeWaitSet, FeBeWaitSetLatchPos, WL_LATCH_SET, MyLatch);
-
-  /*
-   * Set the shared latch as the local one might have been set. This
-   * shouldn't normally be necessary as code is supposed to check the
-   * condition before waiting for the latch, but a bit care can't hurt.
-   */
-  SetLatch(MyLatch);
-}
-
 void InitProcessLocalLatch(void) {
   MyLatch = &LocalLatchData;
   InitLatch(MyLatch);
@@ -257,18 +240,6 @@ void ShutdownProcessLocalLatch(void) {
     LocalLatchData.owner = NULL;
   }
   delete owner;
-}
-
-void SwitchBackToLocalLatch(void) {
-  Assert(MyLatch != &LocalLatchData);
-  Assert(MyProc != NULL && MyLatch == &MyProc->procLatch);
-
-  MyLatch = &LocalLatchData;
-
-  if (FeBeWaitSet)
-    ModifyWaitEvent(FeBeWaitSet, FeBeWaitSetLatchPos, WL_LATCH_SET, MyLatch);
-
-  SetLatch(MyLatch);
 }
 
 /*

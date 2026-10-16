@@ -80,6 +80,17 @@ void session_set_role(Oid role) {
     tcb->session->role.store(role, std::memory_order_release);
 }
 
+/* Record this session's cancel key, which a cancel request must match. */
+void session_set_cancel_key(const uint8 *key, int len) {
+  Assert(len >= 0 && len <= MAX_CANCEL_KEY_LENGTH);
+  /* A cancel request reads the key under this mutex. */
+  std::lock_guard<std::mutex> lock(pcb->cancel_key_mutex);
+
+  if (len > 0)
+    memcpy(tcb->session->cancel_key, key, len);
+  tcb->session->cancel_key_length = len;
+}
+
 /*
  * Raise interrupt bits in the session's own thread: not its PGPROC's latch
  * owner, which is another session's once its slot is reused, so a session
