@@ -693,6 +693,15 @@ int sm_cat_table_def(sm_session_t* session, uint64_t nspoid,
 int sm_cat_table_def_oid(sm_session_t* session, uint64_t oid,
                          sm_table_def_t& out);
 
+/*
+ * The version of the table oid (sm_table_def_t's) as the session's
+ * transaction sees it, into *version: 0, or 1 if there is none.
+ * It takes no lock and copies no definition: a host that caches
+ * the table asks it whether what it has is still current.
+ */
+int sm_cat_table_version_oid(sm_session_t* session, uint64_t oid,
+                             uint64_t* version);
+
 /* The index named name in nspoid, and its table: 0, or 1 if none. */
 int sm_cat_index_oid(sm_session_t* session, uint64_t nspoid,
                      const char* name, uint64_t* table, uint64_t* index);

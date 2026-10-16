@@ -3270,6 +3270,30 @@ local_psql -c 'create temp table public.tu1 (a int4)' 2>&1 |
   fail "temporary table in public"
 local_psql -c 'drop table tp1' > /dev/null 2>&1
 
+# Verify that a relation's name, looked up by oid with no lock, as regclass's
+# output does, is what another session's DDL has left it: renamed, or gone.
+# 1. A held session reads table rn1, which caches it and its index rn1_b, and
+#    prints both by oid as regclass.
+# 2. Another session renames rn1 to rn2 and drops rn1_b: the held session
+#    prints rn2 and the index's bare oid.
+# 3. Another session drops rn2: the held session prints its bare oid.
+local_psql -c 'create table rn1 (a int4 primary key, b int4)' \
+  -c 'create index rn1_b on rn1 (b)' > "$work/relname.out" 2>&1
+rn_t=$(local_psql -c "select 'rn1'::regclass::oid")
+rn_i=$(local_psql -c "select 'rn1_b'::regclass::oid")
+held_start rn
+held_send rn "select count(*) from rn1 where b = 1;"
+held_send rn "select 'r1 ' || $rn_t::regclass || ' ' || $rn_i::regclass;"
+held_wait rn "r1 rn1 rn1_b" || fail "relation's name"
+local_psql -c 'alter table rn1 rename to rn2' -c 'drop index rn1_b' \
+  >> "$work/relname.out" 2>&1
+held_send rn "select 'r2 ' || $rn_t::regclass || ' ' || $rn_i::regclass;"
+held_wait rn "r2 rn2 $rn_i" || fail "renamed relation's name"
+local_psql -c 'drop table rn2' >> "$work/relname.out" 2>&1
+held_send rn "select 'r3 ' || $rn_t::regclass;"
+held_wait rn "r3 $rn_t" || fail "dropped relation's name"
+held_end rn
+
 # Verify that a signal sent to the server can land only in the postmaster's
 # thread: every other thread, sessions, sm's, RocksDB's and sm_sys.h's,
 # blocks the signals the postmaster handles, whose handlers set the

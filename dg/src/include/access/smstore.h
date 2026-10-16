@@ -147,6 +147,8 @@ extern bool smstore_relation_held(Oid relid, LOCKMODE lockmode);
 extern void smstore_truncate(Relation rel);
 extern smstore_table_t *smstore_table_desc(Oid oid);
 extern Oid smstore_index_table(Oid indexoid);
+extern bool smstore_relation_name(Oid relid, uint64 version, char **name,
+                                  Oid *nspoid);
 extern bool smstore_index_usable(Relation rel, Oid indexoid);
 extern void smstore_insert(Relation rel, TupleTableSlot *slot);
 extern bool smstore_insert_arbiter(Relation rel, TupleTableSlot *slot,

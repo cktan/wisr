@@ -1702,6 +1702,57 @@ Oid smstore_index_table(Oid indexoid) {
 }
 
 /*
+ * Whether sm still has relid, a table or one of its indexes, whose cached
+ * entry was built at version, as this transaction sees it, with no lock: for
+ * a caller that reads the entry without one (RelationGetClassForm()), which
+ * RelationCheckSmVersion() never checks.  If the entry is not current, the
+ * relation's name and schema now, palloc'd, into *name and *nspoid; else
+ * *name is NULL.  false if relid is gone.
+ */
+bool smstore_relation_name(Oid relid, uint64 version, char **name,
+                           Oid *nspoid) {
+  sm_session_t *s = xact_session();
+  Oid table = smstore_index_table(relid);
+  uint64_t now;
+  sm_table_def_t def;
+
+  if (!OidIsValid(table))
+    table = relid;
+  *name = NULL;
+  /* The version alone, which copies nothing, decides the common case. */
+  switch (sm_cat_table_version_oid(s, table, &now)) {
+  case 0:
+    break;
+  case 1:
+    return false;
+  default:
+    sm_error("read a table's version");
+  }
+  /* One the transaction has changed may have changed again since. */
+  if (now == version && now != SM_VERSION_OWN)
+    return true;
+  switch (sm_cat_table_def_oid(s, table, def)) {
+  case 0:
+    break;
+  case 1:
+    return false;
+  default:
+    sm_error("read a table's definition");
+  }
+  *nspoid = def.nspoid == SM_NSP_TEMP ? PG_TEMP_NAMESPACE : (Oid)def.nspoid;
+  if (table == relid) {
+    *name = pstrdup(def.name.c_str());
+    return true;
+  }
+  for (const sm_index_def_t &x : def.indexes)
+    if (x.oid == relid) {
+      *name = pstrdup(x.name.c_str());
+      return true;
+    }
+  return false;
+}
+
+/*
  * A row's rowno as a tid, for the slot that carries it: a tid is 48 bits,
  * and an offset of 0 is no tid, so each block holds 65535 rownos, the
  * offset one above the rowno's remainder.

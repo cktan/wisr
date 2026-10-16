@@ -1590,7 +1590,8 @@ static Relation RelationBuildSmIndexDesc(Oid indexoid, Oid table,
 
 /*
  * Copy relid's pg_class form into *form, from its descriptor: for a caller
- * that read it from pg_class's row, which a relation in sm has none of.  A
+ * that read it from pg_class's row, which a relation in sm has none of, with
+ * no lock.  Its name and schema are sm's now, as pg_class's row would be.  A
  * sequence has no descriptor: its name, schema and kind are sm's.  Returns
  * false if there is no such relation.
  */
@@ -1598,6 +1599,7 @@ bool RelationGetClassForm(Oid relid, FormData_pg_class *form) {
   Relation rel;
   Oid nspoid;
   char *seqname;
+  uint64 version;
 
   if (relid >= FirstNormalObjectId &&
       (seqname = smstore_sequence_lookup(relid, &nspoid)) != NULL) {
@@ -1615,7 +1617,24 @@ bool RelationGetClassForm(Oid relid, FormData_pg_class *form) {
   if (!RelationIsValid(rel))
     return false;
   memcpy(form, rel->rd_rel, CLASS_TUPLE_SIZE);
+  version = rel->rd_smversion;
   RelationClose(rel);
+
+  /*
+   * The entry is checked only under sm's lock, which this takes none of: sm
+   * says whether it is still current, and what of it a DDL may have changed.
+   */
+  if (relid >= FirstNormalObjectId) {
+    char *name;
+
+    if (!smstore_relation_name(relid, version, &name, &nspoid))
+      return false;
+    if (name != NULL) {
+      namestrcpy(&form->relname, name);
+      form->relnamespace = nspoid;
+      pfree(name);
+    }
+  }
   return true;
 }
 

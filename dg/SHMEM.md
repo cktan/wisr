@@ -262,10 +262,14 @@ instead of being told.
     `NoLock` is locked holds for sm's (`WORKNOTE.md` step 142).
     ALTER TABLE's and RENAME COLUMN's lookups, which may take no
     lock, have their descriptor without it.
-  - Not closed: lsyscache's `get_rel_name()` and the rest read
-    a cached descriptor through `RelationGetClassForm()` with
-    no lock; of what they serve only the name changes, so a
-    message may name a table by its old name.
+  - lsyscache's `get_rel_name()` and the rest read a cached
+    descriptor through `RelationGetClassForm()` with no lock,
+    so they gave a renamed table's old name, and a dropped
+    one's. They ask sm's version with no lock
+    (`sm_cat_table_version_oid()`), and when it has moved take
+    the name and schema from sm's definition, or nothing for a
+    table gone (`smstore_relation_name()`, `WORKNOTE.md` step
+    175).
 - **The blocking is the lock's, not this design's.** DDL on a
   table waits for every transaction that holds it, and a
   waiting X may hold back later readers; PostgreSQL's

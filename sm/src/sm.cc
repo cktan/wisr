@@ -1099,6 +1099,21 @@ int sm_cat_table_def_oid(sm_session_t *session, uint64_t oid,
   });
 }
 
+/* A table's version by oid, with no lock; 1 if none. */
+int sm_cat_table_version_oid(sm_session_t *session, uint64_t oid,
+                             uint64_t *version) {
+  return guard(session, [&] {
+    if (!version) {
+      return null_arg("sm_cat_table_version_oid", "version");
+    }
+    if (!sm3::cat_get_table(session->sm3, oid)) {
+      return 1;
+    }
+    *version = sm3::cat_table_version(session->sm3, oid);
+    return 0;
+  });
+}
+
 /* An index's oid and its table's by name; 1 if none. */
 int sm_cat_index_oid(sm_session_t *session, uint64_t nspoid, const char *name,
                      uint64_t *table, uint64_t *index) {

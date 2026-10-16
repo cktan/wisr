@@ -5094,3 +5094,35 @@ step 173 no table is made so, and no caller passed the flags.
   one did.
 - **Kept**: the flags a local table uses, at their values, and
   `HASH_ALLOC` and `HASH_SEGMENT`, which a local table may pass.
+
+## Step 175: a relation's name by oid is sm's now
+
+`get_rel_name()` and its siblings (utils/cache `lsyscache.c`),
+and `regclassout`, read a relation's pg_class form with no lock
+(`RelationGetClassForm()`, utils/cache `relcache.c`), as
+PostgreSQL reads the syscache. digres answered from the
+session's cached descriptor, which since step 145 is checked
+against sm's version only after sm's lock: another session's
+rename left the old name, and its drop left the name of a table
+that was gone, until the session next locked the table.
+
+- **sm** (`sm.h`, `src/sm.cc`): `sm_cat_table_version_oid()`, a
+  table's version by oid with no lock and no definition copied;
+  1 if there is no such table.
+- **dg** (access/sm `smstore.c`): `smstore_relation_name()`.
+  The version alone decides the common case: equal to the one
+  the cached entry was built at, the entry is current. Else, or
+  while the transaction has changed the table itself
+  (`SM_VERSION_OWN`), the name and schema come from sm's
+  definition, read with no lock (`sm_cat_table_def_oid()`); an
+  index's from its table's. No such table, or an index its
+  table no longer has: false.
+- `RelationGetClassForm()` asks it for every relation of sm's,
+  and overwrites the cached form's name and schema when they
+  have moved; the other fields cannot change for an oid. The
+  cached entry itself is left: it is rebuilt under the next
+  lock, as before. Nothing is read from disk: sm3's catalog is
+  in memory.
+- `test/server.sh`: a held session caches a table and its
+  index, then sees another's rename, the index's drop and the
+  table's drop by oid as regclass.
