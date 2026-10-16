@@ -5312,3 +5312,28 @@ padding counts for nothing when they are compared, so `'a'` and
   type, and failed with the key's trim taken out. The isolation
   spec `propagate-lock-delete` gets past its setup now, and
   fails on `FOR KEY SHARE`.
+
+## Step 181: pg_atomic_* is gone
+
+`SHMEM.md` §3. PostgreSQL's atomics, port `atomics.h` and the
+headers under `port/atomics/`, had two users left; an atomic is
+a `std::atomic`, its order explicit.
+
+- postmaster `backend_thread.c`: a launch record's `tid` is a
+  `std::atomic<pid_t>`, stored with release after `self`, and
+  loaded with acquire, so the postmaster that reads the tid
+  sees the thread's handle too (`backend_thread_signal()`).
+- utils/misc `injection_point.c`, built only with
+  `USE_INJECTION_POINTS`: each entry's `generation` and
+  `max_inuse` are `std::atomic`, loaded and stored relaxed, and
+  `pg_write_barrier()` and `pg_read_barrier()` are release and
+  acquire fences, so the generation protocol is as it was. A
+  reader still copies an entry a writer may be changing, which
+  the C++ memory model calls a race. Checked by compiling with
+  the option: the file already failed to, on a `void *`
+  converted to `InjectionPointCallback`, which is left.
+- **Gone**: `port/atomics.h` and its eight headers, port
+  `atomics.c`'s emulation of 64-bit atomics (compiled out on
+  both platforms), and storage/lmgr `README.barrier`, on the
+  barriers. Five files included `atomics.h` and used nothing
+  of it.

@@ -78,11 +78,10 @@ thread finds them in the pcb and attaches to nothing.
   DOMAIN, CAST and the rest) is refused as the write would be.
 - **Spinlocks** (storage/lmgr `s_lock.c`): none is taken.
   Each is a `std::mutex`, or an atomic where it guarded one word
-  (`WORKNOTE.md` steps 132, 133). Left: port `atomics.c`'s
-  emulation of 64-bit atomics, compiled out on both platforms.
-- **`pg_atomic_*` and the barriers**: in `proc.c`,
-  `procarray.c`, `procsignal.c`, postmaster `backend_thread.c`.
-  **To replace**: `std::atomic` with explicit orders.
+  (`WORKNOTE.md` steps 132, 133).
+- **`pg_atomic_*` and the barriers are gone** (`WORKNOTE.md`
+  step 181), with port `atomics.h` and `atomics.c`: an atomic
+  is a `std::atomic`, its order explicit.
 - **The heavyweight lock manager is gone** (`WORKNOTE.md`
   step 156): `lock.c`, `deadlock.c`, `proc.c`'s `ProcSleep()`,
   the partition LWLocks and the fast-path arrays. A user's

@@ -67,7 +67,6 @@
 
 #include "libpq/pqsignal.h"
 #include "miscadmin.h"
-#include "port/atomics.h"
 #include "portability/instr_time.h"
 #include "postmaster/postmaster.h"
 #include "storage/fd.h"

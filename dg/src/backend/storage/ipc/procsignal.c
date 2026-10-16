@@ -20,7 +20,6 @@
 #include <mutex>
 
 #include "miscadmin.h"
-#include "port/atomics.h"
 #include "port/pg_bitutils.h"
 #include "storage/ipc.h"
 #include "storage/latch.h"

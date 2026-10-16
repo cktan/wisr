@@ -19,7 +19,6 @@
 #include "postgres.h"
 
 #include "miscadmin.h"
-#include "port/atomics.h"
 #include "storage/latch.h"
 #include "storage/procsignal.h"
 #include "storage/waiteventset.h"

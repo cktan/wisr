@@ -29,7 +29,6 @@
 #include <signal.h>
 #include <unistd.h>
 
-#include "port/atomics.h"
 #include "postmaster/backend_thread.h"
 #include "postmaster/postmaster.h"
 #include "storage/ipc.h"
@@ -59,9 +58,9 @@ struct backend_thread_t {
   void *startup_data; /* a malloc'd copy */
   size_t startup_data_len;
   exit_queue_t *queue;
-  pg_atomic_uint32 tid;                 /* the thread's id, once it runs */
+  std::atomic<pid_t> tid;              /* the thread's id, once it runs */
   std::atomic<sm_thread_ref_t *> self; /* the thread, to wake */
-  int exit_code;                        /* set as it ends */
+  int exit_code;                       /* set as it ends */
   backend_thread_t *next_exited;
 };
 
@@ -75,7 +74,7 @@ static void backend_thread_main(void *arg) {
   /* Before the tid: the postmaster wakes the thread once it has that. */
   thread->self.store(new sm_thread_ref_t(sm_thread_self()),
                      std::memory_order_release);
-  pg_atomic_write_u32(&thread->tid, MyProcPid);
+  thread->tid.store(MyProcPid, std::memory_order_release);
 
   if (IsExternalConnectionBackend(thread->child_type)) {
     BackendStartupData *bsdata = (BackendStartupData *)thread->startup_data;
@@ -143,13 +142,13 @@ pid_t backend_thread_launch(BackendType child_type, int child_slot,
   memcpy(t->startup_data, startup_data, startup_data_len);
   t->startup_data_len = startup_data_len;
   t->queue = exit_queue;
-  pg_atomic_init_u32(&t->tid, 0);
+  t->tid.store(0, std::memory_order_relaxed);
 
   /* Nobody joins it: the postmaster learns of its end from the queue. */
   session_thread_start(backend_thread_main, t).detach();
 
   /* Its pid is its thread id: wait for the thread to say. */
-  while ((tid = (pid_t)pg_atomic_read_u32(&t->tid)) == 0)
+  while ((tid = t->tid.load(std::memory_order_acquire)) == 0)
     sched_yield();
 
   *thread = t;
@@ -215,5 +214,5 @@ void backend_thread_free(backend_thread_t *thread) {
 
 /* A backend thread's pid: its thread id. */
 pid_t backend_thread_pid(backend_thread_t *thread) {
-  return (pid_t)pg_atomic_read_u32(&thread->tid);
+  return thread->tid.load(std::memory_order_acquire);
 }

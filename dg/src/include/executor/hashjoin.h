@@ -15,7 +15,6 @@
 #define HASHJOIN_H
 
 #include "nodes/execnodes.h"
-#include "port/atomics.h"
 #include "storage/buffile.h"
 
 /* ----------------------------------------------------------------

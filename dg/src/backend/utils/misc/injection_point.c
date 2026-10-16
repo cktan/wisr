@@ -21,6 +21,7 @@
 
 #ifdef USE_INJECTION_POINTS
 
+#include <atomic>
 #include <sys/stat.h>
 
 #include "fmgr.h"
@@ -57,7 +58,7 @@ typedef struct InjectionPointEntry {
    * InjectionPointLock, to prevent two backends from modifying the array at
    * the same time.
    */
-  pg_atomic_uint64 generation;
+  std::atomic<uint64> generation;
 
   char name[INJ_NAME_MAXLEN];     /* point name */
   char library[INJ_LIB_MAXLEN];   /* library */
@@ -80,7 +81,7 @@ typedef struct InjectionPointEntry {
  * that there are no injection points, or only a few.
  */
 typedef struct InjectionPointsCtl {
-  pg_atomic_uint32 max_inuse;
+  std::atomic<uint32> max_inuse;
   InjectionPointEntry entries[MAX_INJECTION_POINTS];
 } InjectionPointsCtl;
 
@@ -224,9 +225,10 @@ void InjectionPointShmemInit(void) {
       (InjectionPointsCtl *)calloc(1, sizeof(InjectionPointsCtl));
   if (ActiveInjectionPoints == NULL)
     elog(FATAL, "out of memory");
-  pg_atomic_init_u32(&ActiveInjectionPoints->max_inuse, 0);
+  ActiveInjectionPoints->max_inuse.store(0, std::memory_order_relaxed);
   for (int i = 0; i < MAX_INJECTION_POINTS; i++)
-    pg_atomic_init_u64(&ActiveInjectionPoints->entries[i].generation, 0);
+    ActiveInjectionPoints->entries[i].generation.store(
+        0, std::memory_order_relaxed);
 #endif
 }
 
@@ -263,12 +265,12 @@ void InjectionPointAttach(const char *name, const char *library,
    */
   /* One attach or detach at a time, as the InjectionPoint LWLock did. */
   held_mutex_t guard(pcb->injection_point_mutex);
-  max_inuse = pg_atomic_read_u32(&ActiveInjectionPoints->max_inuse);
+  max_inuse = ActiveInjectionPoints->max_inuse.load(std::memory_order_relaxed);
   free_idx = -1;
 
   for (int idx = 0; idx < max_inuse; idx++) {
     entry = &ActiveInjectionPoints->entries[idx];
-    generation = pg_atomic_read_u64(&entry->generation);
+    generation = entry->generation.load(std::memory_order_relaxed);
     if (generation % 2 == 0) {
       /*
        * Found a free slot where we can add the new entry, but keep
@@ -285,7 +287,7 @@ void InjectionPointAttach(const char *name, const char *library,
     free_idx = max_inuse;
   }
   entry = &ActiveInjectionPoints->entries[free_idx];
-  generation = pg_atomic_read_u64(&entry->generation);
+  generation = entry->generation.load(std::memory_order_relaxed);
   Assert(generation % 2 == 0);
 
   /* Save the entry */
@@ -299,11 +301,12 @@ void InjectionPointAttach(const char *name, const char *library,
   if (private_data != NULL)
     memcpy(entry->private_data, private_data, private_data_size);
 
-  pg_write_barrier();
-  pg_atomic_write_u64(&entry->generation, generation + 1);
+  std::atomic_thread_fence(std::memory_order_release);
+  entry->generation.store(generation + 1, std::memory_order_relaxed);
 
   if (free_idx + 1 > max_inuse)
-    pg_atomic_write_u32(&ActiveInjectionPoints->max_inuse, free_idx + 1);
+    ActiveInjectionPoints->max_inuse.store(free_idx + 1,
+                                           std::memory_order_relaxed);
 
   guard.release();
 
@@ -327,19 +330,20 @@ bool InjectionPointDetach(const char *name) {
   held_mutex_t guard(pcb->injection_point_mutex);
 
   /* Find it in the shmem array, and mark the slot as unused */
-  max_inuse = (int)pg_atomic_read_u32(&ActiveInjectionPoints->max_inuse);
+  max_inuse =
+      (int)ActiveInjectionPoints->max_inuse.load(std::memory_order_relaxed);
   for (idx = max_inuse - 1; idx >= 0; --idx) {
     InjectionPointEntry *entry = &ActiveInjectionPoints->entries[idx];
     uint64 generation;
 
-    generation = pg_atomic_read_u64(&entry->generation);
+    generation = entry->generation.load(std::memory_order_relaxed);
     if (generation % 2 == 0)
       continue; /* empty slot */
 
     if (strcmp(entry->name, name) == 0) {
       Assert(!found);
       found = true;
-      pg_atomic_write_u64(&entry->generation, generation + 1);
+      entry->generation.store(generation + 1, std::memory_order_relaxed);
       break;
     }
   }
@@ -350,11 +354,11 @@ bool InjectionPointDetach(const char *name) {
       InjectionPointEntry *entry = &ActiveInjectionPoints->entries[idx];
       uint64 generation;
 
-      generation = pg_atomic_read_u64(&entry->generation);
+      generation = entry->generation.load(std::memory_order_relaxed);
       if (generation % 2 != 0)
         break;
     }
-    pg_atomic_write_u32(&ActiveInjectionPoints->max_inuse, idx + 1);
+    ActiveInjectionPoints->max_inuse.store(idx + 1, std::memory_order_relaxed);
   }
   guard.release();
 
@@ -384,7 +388,7 @@ static InjectionPointCacheEntry *InjectionPointCacheRefresh(const char *name) {
    * we're looking for is concurrently added or removed, we might or might
    * not see it.  That's OK.
    */
-  max_inuse = pg_atomic_read_u32(&ActiveInjectionPoints->max_inuse);
+  max_inuse = ActiveInjectionPoints->max_inuse.load(std::memory_order_relaxed);
   if (max_inuse == 0) {
     if (InjectionPointCache) {
       hash_destroy(InjectionPointCache);
@@ -402,7 +406,8 @@ static InjectionPointCacheEntry *InjectionPointCacheRefresh(const char *name) {
     int idx = cached->slot_idx;
     InjectionPointEntry *entry = &ActiveInjectionPoints->entries[idx];
 
-    if (pg_atomic_read_u64(&entry->generation) == cached->generation) {
+    if (entry->generation.load(std::memory_order_relaxed) ==
+        cached->generation) {
       /* still good */
       return cached;
     }
@@ -429,10 +434,10 @@ static InjectionPointCacheEntry *InjectionPointCacheRefresh(const char *name) {
      * modifications.  The read barrier ensures that the generation number
      * is loaded before any of the other fields.
      */
-    generation = pg_atomic_read_u64(&entry->generation);
+    generation = entry->generation.load(std::memory_order_relaxed);
     if (generation % 2 == 0)
       continue; /* empty slot */
-    pg_read_barrier();
+    std::atomic_thread_fence(std::memory_order_acquire);
 
     /* Is this the injection point we're looking for? */
     if (memcmp(entry->name, name, namelen + 1) != 0)
@@ -444,10 +449,10 @@ static InjectionPointCacheEntry *InjectionPointCacheRefresh(const char *name) {
      * generation.  If the generation hasn't changed, we know our local
      * copy is coherent.
      */
-    memcpy(&local_copy, entry, sizeof(InjectionPointEntry));
+    memcpy((void *)&local_copy, entry, sizeof(InjectionPointEntry));
 
-    pg_read_barrier();
-    if (pg_atomic_read_u64(&entry->generation) != generation) {
+    std::atomic_thread_fence(std::memory_order_acquire);
+    if (entry->generation.load(std::memory_order_relaxed) != generation) {
       /*
        * The entry was concurrently detached.
        *
