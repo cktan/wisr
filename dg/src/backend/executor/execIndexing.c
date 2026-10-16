@@ -769,7 +769,6 @@ retry:
 
   while (index_getnext_slot(index_scan, ForwardScanDirection, existing_slot)) {
     TransactionId xwait;
-    XLTW_Oper reason_wait;
     Datum existing_values[INDEX_MAX_KEYS];
     bool existing_isnull[INDEX_MAX_KEYS];
     char *error_new;
@@ -820,14 +819,12 @@ retry:
          (waitMode == CEOUC_LIVELOCK_PREVENTING_WAIT &&
           DirtySnapshot.speculativeToken &&
           TransactionIdPrecedes(GetCurrentTransactionId(), xwait)))) {
-      reason_wait = indexInfo->ii_ExclusionOps ? XLTW_RecheckExclusionConstr
-                                               : XLTW_InsertIndex;
+      /*
+       * Not reached: no transaction but this one is in progress to
+       * TransactionIdIsInProgress(), so there is none to wait for, and only
+       * a catalog's index is checked here, whose rows never change.
+       */
       index_endscan(index_scan);
-      if (DirtySnapshot.speculativeToken)
-        SpeculativeInsertionWait(DirtySnapshot.xmin,
-                                 DirtySnapshot.speculativeToken);
-      else
-        XactLockTableWait(xwait, heap, &existing_slot->tts_tid, reason_wait);
       goto retry;
     }
 

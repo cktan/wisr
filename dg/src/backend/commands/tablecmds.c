@@ -1638,21 +1638,18 @@ static void RangeVarCallbackForDropRelation(const RangeVar *rel, Oid relOid,
 
   /*
    * If we previously locked some other index's heap, and the name we're
-   * looking up no longer refers to that relation, release the now-useless
-   * lock.
+   * looking up no longer refers to that relation, forget it: its lock is
+   * held to the transaction's end.
    */
   if (relOid != oldRelOid && OidIsValid(state->heapOid)) {
-    UnlockRelationOid(state->heapOid, heap_lockmode);
     state->heapOid = InvalidOid;
   }
 
   /*
    * Similarly, if we previously locked some other partition's heap, and the
-   * name we're looking up no longer refers to that relation, release the
-   * now-useless lock.
+   * name we're looking up no longer refers to that relation, forget it.
    */
   if (relOid != oldRelOid && OidIsValid(state->partParentOid)) {
-    UnlockRelationOid(state->partParentOid, AccessExclusiveLock);
     state->partParentOid = InvalidOid;
   }
 
@@ -3524,7 +3521,6 @@ void SetRelationTableSpace(Relation rel, Oid newTableSpaceId,
   if (RelFileNumberIsValid(newRelFilenumber))
     rd_rel->relfilenode = newRelFilenumber;
   CatalogTupleUpdate(pg_class, &otid, tuple);
-  UnlockTuple(pg_class, &otid, InplaceUpdateTupleLock);
 
   /*
    * Record dependency on tablespace.  This is only required for relations
@@ -3954,6 +3950,7 @@ ObjectAddress RenameRelation(RenameStmt *stmt) {
      * to rename a table), but we might've used the wrong lock level.  If
      * that happens, retry with the correct lock level.  We don't bother
      * if we already acquired AccessExclusiveLock with an index, however.
+     * The weaker lock is held too, to the transaction's end.
      */
     relkind = get_rel_relkind(relid);
     obj_is_index =
@@ -3961,7 +3958,6 @@ ObjectAddress RenameRelation(RenameStmt *stmt) {
     if (obj_is_index || is_index_stmt == obj_is_index)
       break;
 
-    UnlockRelationOid(relid, lockmode);
     is_index_stmt = obj_is_index;
   }
 
@@ -4032,7 +4028,6 @@ void RenameRelationInternal(Oid myrelid, const char *newrelname,
   namestrcpy(&(relform->relname), newrelname);
 
   CatalogTupleUpdate(relrelation, &otid, reltup);
-  UnlockTuple(relrelation, &otid, InplaceUpdateTupleLock);
 
   InvokeObjectPostAlterHookArg(RelationRelationId, myrelid, 0, InvalidOid,
                                is_internal);
@@ -15277,7 +15272,6 @@ static void ATExecSetRelOptions(Relation rel, List *defList,
                                repl_null, repl_repl);
 
   CatalogTupleUpdate(pgclass, &newtuple->t_self, newtuple);
-  UnlockTuple(pgclass, &tuple->t_self, InplaceUpdateTupleLock);
 
   InvokeObjectPostAlterHook(RelationRelationId, RelationGetRelid(rel), 0);
 
@@ -17301,7 +17295,6 @@ void AlterRelationNamespaceInternal(Relation classRel, Oid relOid,
     classForm->relnamespace = newNspOid;
 
     CatalogTupleUpdate(classRel, &otid, classTup);
-    UnlockTuple(classRel, &otid, InplaceUpdateTupleLock);
 
     /* Update dependency on schema if caller said so */
     if (hasDependEntry &&
@@ -17309,8 +17302,7 @@ void AlterRelationNamespaceInternal(Relation classRel, Oid relOid,
                             oldNspOid, newNspOid) != 1)
       elog(ERROR, "could not change schema dependency for relation \"%s\"",
            NameStr(classForm->relname));
-  } else
-    UnlockTuple(classRel, &classTup->t_self, InplaceUpdateTupleLock);
+  }
   if (!already_done) {
     add_exact_object_address(&thisobj, objsMoved);
 
@@ -18998,7 +18990,6 @@ static ObjectAddress ATExecDetachPartition(List **wqueue, AlteredTableInfo *tab,
    */
   if (concurrent) {
     Oid partrelid, parentrelid;
-    LOCKTAG tag;
     char *parentrelname;
     char *partrelname;
 
@@ -19043,16 +19034,10 @@ static ObjectAddress ATExecDetachPartition(List **wqueue, AlteredTableInfo *tab,
     StartTransactionCommand();
 
     /*
-     * Now wait.  This ensures that all queries that were planned
-     * including the partition are finished before we remove the rest of
-     * catalog entries.  We don't need or indeed want to acquire this
-     * lock, though -- that would block later queries.
-     *
-     * We don't need to concern ourselves with waiting for a lock on the
-     * partition itself, since we will acquire AccessExclusiveLock below.
+     * PostgreSQL waited here for the queries planned including the
+     * partition.  No lock of this lock manager is held, so there is none to
+     * wait for (storage/lmgr/README).
      */
-    SET_LOCKTAG_RELATION(tag, MyDatabaseId, parentrelid);
-    WaitForLockersMultiple(list_make1(&tag), AccessExclusiveLock);
 
     /*
      * Now acquire locks in both relations again.  Note they may have been
@@ -19559,12 +19544,10 @@ static void RangeVarCallbackForAttachIndex(const RangeVar *rv, Oid relOid,
 
   /*
    * If we previously locked some other heap, and the name we're looking up
-   * no longer refers to an index on that relation, release the now-useless
-   * lock.  XXX maybe we should do *after* we verify whether the index does
-   * not actually belong to the same relation ...
+   * no longer refers to an index on that relation, forget it: its lock is
+   * held to the transaction's end.
    */
   if (relOid != oldRelOid && OidIsValid(state->partitionOid)) {
-    UnlockRelationOid(state->partitionOid, AccessShareLock);
     state->partitionOid = InvalidOid;
   }
 

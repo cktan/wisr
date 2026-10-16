@@ -631,23 +631,14 @@ ObjectAddress get_object_address(ObjectType objtype, Node *object,
 
     /*
      * If we're retrying, see if we got the same answer as last time.  If
-     * so, we're done; if not, we locked the wrong thing, so give up our
-     * lock.
+     * so, we're done; if not, we locked the wrong thing, whose lock is held
+     * to the transaction's end.
      */
-    if (OidIsValid(old_address.classId)) {
-      if (old_address.classId == address.classId &&
-          old_address.objectId == address.objectId &&
-          old_address.objectSubId == address.objectSubId)
-        break;
-      if (old_address.classId != RelationRelationId) {
-        if (IsSharedRelation(old_address.classId))
-          UnlockSharedObject(old_address.classId, old_address.objectId, 0,
-                             lockmode);
-        else
-          UnlockDatabaseObject(old_address.classId, old_address.objectId, 0,
-                               lockmode);
-      }
-    }
+    if (OidIsValid(old_address.classId) &&
+        old_address.classId == address.classId &&
+        old_address.objectId == address.objectId &&
+        old_address.objectSubId == address.objectSubId)
+      break;
 
     /*
      * If we're dealing with a relation or attribute, then the relation is
@@ -2014,9 +2005,9 @@ HeapTuple get_catalog_object_by_oid(Relation catalog, AttrNumber oidcol,
 
 /*
  * Same as get_catalog_object_by_oid(), but with an additional "locktup"
- * argument controlling whether to acquire a LOCKTAG_TUPLE at mode
- * InplaceUpdateTupleLock.  See README.tuplock section "Locking to write
- * inplace-updated tables".
+ * argument: true for a caller that would write the row in place, which
+ * PostgreSQL locked (LOCKTAG_TUPLE).  No catalog row changes in digres, so
+ * none is locked (SearchSysCacheLocked1()).
  */
 HeapTuple get_catalog_object_by_oid_extended(Relation catalog,
                                              AttrNumber oidcol, Oid objectId,
@@ -2048,9 +2039,6 @@ HeapTuple get_catalog_object_by_oid_extended(Relation catalog,
       systable_endscan(scan);
       return NULL;
     }
-
-    if (locktup)
-      LockTuple(catalog, &tuple->t_self, InplaceUpdateTupleLock);
 
     tuple = heap_copytuple(tuple);
 

@@ -561,8 +561,6 @@ static void findDependentObjects(const ObjectAddress *object, int objflags,
         if (pendingObjects &&
             object_address_present(&otherObject, pendingObjects)) {
           systable_endscan(scan);
-          /* need to release caller's lock; see notes below */
-          ReleaseDeletionLock(object);
           return;
         }
 
@@ -598,12 +596,10 @@ static void findDependentObjects(const ObjectAddress *object, int objflags,
        * transform this deletion request into a delete of this
        * owning object.
        *
-       * First, release caller's lock on this object and get
-       * deletion lock on the owning object.  (We must release
-       * caller's lock to avoid deadlock against a concurrent
-       * deletion of the owning object.)
+       * First, get deletion lock on the owning object.  The
+       * caller's lock on this object is held too: a lock is held
+       * to the transaction's end (storage/lmgr/README).
        */
-      ReleaseDeletionLock(object);
       AcquireDeletionLock(&otherObject, 0);
 
       /*
@@ -614,7 +610,6 @@ static void findDependentObjects(const ObjectAddress *object, int objflags,
        */
       if (!systable_recheck_tuple(scan, tup)) {
         systable_endscan(scan);
-        ReleaseDeletionLock(&otherObject);
         return;
       }
 
@@ -782,12 +777,8 @@ static void findDependentObjects(const ObjectAddress *object, int objflags,
      * if the pg_depend tuple we are looking at is still live. (If the
      * object got deleted, the tuple would have been deleted too.)
      */
-    if (!systable_recheck_tuple(scan, tup)) {
-      /* release the now-useless lock */
-      ReleaseDeletionLock(&otherObject);
-      /* and continue scanning for dependencies */
-      continue;
-    }
+    if (!systable_recheck_tuple(scan, tup))
+      continue; /* continue scanning for dependencies */
 
     /*
      * We do need to delete it, so identify objflags to be passed down,
@@ -1350,23 +1341,6 @@ void AcquireDeletionLock(const ObjectAddress *object, int flags) {
     LockDatabaseObject(object->classId, object->objectId, 0,
                        AccessExclusiveLock);
   }
-}
-
-/*
- * ReleaseDeletionLock - release an object deletion lock
- *
- * Companion to AcquireDeletionLock.
- */
-void ReleaseDeletionLock(const ObjectAddress *object) {
-  if (object->classId == RelationRelationId)
-    UnlockRelationOid(object->objectId, AccessExclusiveLock);
-  else if (object->classId == AuthMemRelationId)
-    UnlockSharedObject(object->classId, object->objectId, 0,
-                       AccessExclusiveLock);
-  else
-    /* assume we should lock the whole object not a sub-object */
-    UnlockDatabaseObject(object->classId, object->objectId, 0,
-                         AccessExclusiveLock);
 }
 
 /*

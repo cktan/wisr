@@ -89,8 +89,10 @@ thread finds them in the pcb and attaches to nothing.
   table is locked by sm (`locked_by_sm()`, storage/lmgr
   `lmgr.c`), a catalog by nothing, as its rows are compiled in
   and never change (step 154), and what waited on a lock waits
-  for nothing (step 155). `lmgr.c`'s entry points are left, as
-  sm's calls or no-ops. `pg_lock_status()` lists no lock, and
+  for nothing (step 155). `lmgr.c` keeps the entry points that
+  take sm's lock or the invalidations waiting; its no-ops are
+  gone with their calls (step 176). `pg_lock_status()` lists no
+  lock, and
   `pg_blocking_pids()` names an advisory lock's holders and
   whom a session waits for in sm (step 166).
 - **Advisory locks** are in a table of digres's own

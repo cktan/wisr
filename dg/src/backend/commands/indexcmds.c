@@ -465,7 +465,6 @@ ObjectAddress DefineIndex(Oid tableId, IndexStmt *stmt, Oid indexRelationId,
   TransactionId limitXmin;
   ObjectAddress address;
   LockRelId heaprelid;
-  LOCKTAG heaplocktag;
   LOCKMODE lockmode;
   Snapshot snapshot;
   Oid root_save_userid;
@@ -1395,9 +1394,8 @@ ObjectAddress DefineIndex(Oid tableId, IndexStmt *stmt, Oid indexRelationId,
     return address;
   }
 
-  /* save lockrelid and locktag for below, then close rel */
+  /* save lockrelid for below, then close rel */
   heaprelid = rel->rd_lockInfo.lockRelId;
-  SET_LOCKTAG_RELATION(heaplocktag, heaprelid.dbId, heaprelid.relId);
   table_close(rel, NoLock);
 
   /*
@@ -1412,17 +1410,9 @@ ObjectAddress DefineIndex(Oid tableId, IndexStmt *stmt, Oid indexRelationId,
    * built are lost in the commit.  The only data we keep past here are the
    * relation IDs.
    *
-   * Before committing, get a session-level lock on the table, to ensure
-   * that neither it nor the index can be dropped before we finish. This
-   * cannot block, even if someone else is waiting for access, because we
-   * already have the same lock within our transaction.
-   *
-   * Note: we don't currently bother with a session lock on the index,
-   * because there are no operations that could change its state while we
-   * hold lock on the parent table.  This might need to change later.
+   * No session-level lock keeps the table: none is held of this lock
+   * manager (storage/lmgr/README).
    */
-  LockRelationIdForSession(&heaprelid, ShareUpdateExclusiveLock);
-
   PopActiveSnapshot();
   CommitTransactionCommand();
   StartTransactionCommand();
@@ -1441,19 +1431,10 @@ ObjectAddress DefineIndex(Oid tableId, IndexStmt *stmt, Oid indexRelationId,
    * Phase 2 of concurrent index build (see comments for validate_index()
    * for an overview of how this works)
    *
-   * Now we must wait until no running transaction could have the table open
-   * with the old list of indexes.  Use ShareLock to consider running
-   * transactions that hold locks that permit writing to the table.  Note we
-   * do not need to worry about xacts that open the table for writing after
-   * this point; they will see the new index when they open it.
-   *
-   * Note: the reason we use actual lock acquisition here, rather than just
-   * checking the ProcArray and sleeping, is that deadlock is possible if
-   * one of the transactions in question is blocked trying to acquire an
-   * exclusive lock on our table.  The lock code will detect deadlock and
-   * error out properly.
+   * PostgreSQL waited here for every transaction that could have the table
+   * open with the old list of indexes.  No lock of this lock manager is
+   * held, so there is none to wait for (storage/lmgr/README).
    */
-  WaitForLockers(heaplocktag, ShareLock);
 
   /*
    * At this moment we are sure that there are no transactions with the
@@ -1495,10 +1476,8 @@ ObjectAddress DefineIndex(Oid tableId, IndexStmt *stmt, Oid indexRelationId,
   /*
    * Phase 3 of concurrent index build
    *
-   * We once again wait until no transaction can have the table open with
-   * the index marked as read-only for updates.
+   * As in phase 2, there is no transaction to wait for.
    */
-  WaitForLockers(heaplocktag, ShareLock);
 
   /*
    * Now take the "reference snapshot" that will be used by validate_index()
@@ -1583,11 +1562,6 @@ ObjectAddress DefineIndex(Oid tableId, IndexStmt *stmt, Oid indexRelationId,
    * to replan; so relcache flush on the index itself was sufficient.)
    */
   CacheInvalidateRelcacheByRelid(heaprelid.relId);
-
-  /*
-   * Last thing to do is release the session-level lock on the parent table.
-   */
-  UnlockRelationIdForSession(&heaprelid, ShareUpdateExclusiveLock);
 
   return address;
 }
@@ -2578,7 +2552,6 @@ static void update_relispartition(Oid relationId, bool newval) {
   Assert(((Form_pg_class)GETSTRUCT(tup))->relispartition != newval);
   ((Form_pg_class)GETSTRUCT(tup))->relispartition = newval;
   CatalogTupleUpdate(classRel, &otid, tup);
-  UnlockTuple(classRel, &otid, InplaceUpdateTupleLock);
   heap_freetuple(tup);
   table_close(classRel, RowExclusiveLock);
 }

@@ -2,7 +2,7 @@
 
 **Status: built**: sm3's part and `sm.h`'s (§3 to §6,
 `sm3/test/test_fkey.cc`), and digres's (§8, `../dg/WORKNOTE.md`
-step 176). Not yet: `rel` verbs for them, and a DEFERRABLE one.
+step 177). Not yet: `rel` verbs for them, and a DEFERRABLE one.
 
 `DESIGN.md` §5 settles whose a foreign key is: the host's.
 PostgreSQL checks one with triggers that run queries, and the

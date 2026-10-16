@@ -113,7 +113,7 @@ Owed, and blocking nothing above:
   expand it; `information_schema` waits for the same
   (`../dg/SYSCATALOG.md`).
 - **What foreign keys left** (`FOREIGNKEY.md`,
-  `../dg/WORKNOTE.md` step 176): a DEFERRABLE one is refused,
+  `../dg/WORKNOTE.md` step 177): a DEFERRABLE one is refused,
   as a row trigger on a table in sm is given its rows from a
   store that lasts only the statement; `pg_constraint` lists
   none, so `\d` does not show them; `rel` has no verbs for them.

@@ -223,7 +223,7 @@ void ReleaseSysCache(HeapTuple tuple) { ReleaseCatCache(tuple); }
  * SearchSysCache1(), for a caller that would write the row in place.  The
  * row's LOCKTAG_TUPLE guarded it against an inplace update; no catalog row
  * changes in digres (catalog/indexing.c refuses each write), so none is
- * taken.  The caller's UnlockTuple() does nothing.
+ * taken.
  */
 HeapTuple SearchSysCacheLocked1(int cacheId, Datum key1) {
   return SearchSysCache1(cacheId, key1);
@@ -253,8 +253,7 @@ HeapTuple SearchSysCacheCopy(int cacheId, Datum key1, Datum key2, Datum key3,
  * SearchSysCacheLockedCopy1
  *
  * Meld SearchSysCacheLocked1 with SearchSysCacheCopy().  After the
- * caller's heap_update(), it should UnlockTuple(InplaceUpdateTupleLock) and
- * heap_freetuple().
+ * caller's heap_update(), it should heap_freetuple().
  */
 HeapTuple SearchSysCacheLockedCopy1(int cacheId, Datum key1) {
   HeapTuple tuple, newtuple;

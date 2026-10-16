@@ -1795,12 +1795,11 @@ static void AcquireExecutorLocks(List *stmt_list, bool acquire) {
        * Acquire the appropriate type of lock on each relation OID. Note
        * that we don't actually try to open the rel, and hence will not
        * fail if it's been dropped entirely --- we'll just transiently
-       * acquire a non-conflicting lock.
+       * acquire a non-conflicting lock.  A lock is held to the
+       * transaction's end, so none is released.
        */
       if (acquire)
         LockRelationOid(rte->relid, rte->rellockmode);
-      else
-        UnlockRelationOid(rte->relid, rte->rellockmode);
     }
   }
 }
@@ -1848,21 +1847,15 @@ static void ScanQueryForLocks(Query *parsetree, bool acquire) {
 
     switch (rte->rtekind) {
     case RTE_RELATION:
-      /* Acquire or release the appropriate type of lock */
+      /* Acquire the appropriate type of lock; none is released */
       if (acquire)
         LockRelationOid(rte->relid, rte->rellockmode);
-      else
-        UnlockRelationOid(rte->relid, rte->rellockmode);
       break;
 
     case RTE_SUBQUERY:
-      /* If this was a view, must lock/unlock the view */
-      if (OidIsValid(rte->relid)) {
-        if (acquire)
-          LockRelationOid(rte->relid, rte->rellockmode);
-        else
-          UnlockRelationOid(rte->relid, rte->rellockmode);
-      }
+      /* If this was a view, must lock the view */
+      if (OidIsValid(rte->relid) && acquire)
+        LockRelationOid(rte->relid, rte->rellockmode);
       /* Recurse into subquery-in-FROM */
       ScanQueryForLocks(rte->subquery, acquire);
       break;

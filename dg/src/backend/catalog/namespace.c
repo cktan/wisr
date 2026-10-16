@@ -565,15 +565,11 @@ Oid RangeVarGetRelidExtended(const RangeVar *relation, LOCKMODE lockmode,
      * So we're done.
      *
      * If we got a different OID, we've locked the relation that used to
-     * have this name rather than the one that does now.  So release the
-     * lock.
+     * have this name rather than the one that does now.  Its lock is held
+     * to the transaction's end.
      */
-    if (retry) {
-      if (relId == oldRelId)
-        break;
-      if (OidIsValid(oldRelId))
-        UnlockRelationOid(oldRelId, lockmode);
-    }
+    if (retry && relId == oldRelId)
+      break;
 
     /*
      * Lock relation.  This will also accept any pending invalidation
@@ -760,17 +756,9 @@ Oid RangeVarGetAndCheckCreationNamespace(RangeVar *relation, LOCKMODE lockmode,
     if (aclresult != ACLCHECK_OK)
       aclcheck_error(aclresult, OBJECT_SCHEMA, get_namespace_name(nspid));
 
-    if (retry) {
-      /* If nothing changed, we're done. */
-      if (relid == oldrelid && nspid == oldnspid)
-        break;
-      /* If creation namespace has changed, give up old lock. */
-      if (nspid != oldnspid)
-        UnlockDatabaseObject(NamespaceRelationId, oldnspid, 0, AccessShareLock);
-      /* If name points to something different, give up old lock. */
-      if (relid != oldrelid && OidIsValid(oldrelid) && lockmode != NoLock)
-        UnlockRelationOid(oldrelid, lockmode);
-    }
+    /* If nothing changed, we're done.  An old lock is held to the end. */
+    if (retry && relid == oldrelid && nspid == oldnspid)
+      break;
 
     /* Lock namespace. */
     if (nspid != oldnspid)

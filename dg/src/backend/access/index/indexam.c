@@ -141,22 +141,15 @@ Relation try_index_open(Oid relationId, LOCKMODE lockmode) {
 /* ----------------
  *		index_close - close an index relation
  *
- *		If lockmode is not "NoLock", we then release the specified lock.
- *
- *		Note that it is often sensible to hold a lock beyond
- *index_close; in that case, the lock is released automatically at xact end.
+ *		lockmode is not released: a lock is held to the transaction's
+ *		end (storage/lmgr/README).
  * ----------------
  */
 void index_close(Relation relation, LOCKMODE lockmode) {
-  LockRelId relid = relation->rd_lockInfo.lockRelId;
-
   Assert(lockmode >= NoLock && lockmode < MAX_LOCKMODES);
 
   /* The relcache does the real work... */
   RelationClose(relation);
-
-  if (lockmode != NoLock)
-    UnlockRelationId(&relid, lockmode);
 }
 
 /* ----------------

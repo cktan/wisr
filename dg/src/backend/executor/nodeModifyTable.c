@@ -1134,14 +1134,7 @@ static TupleTableSlot *ExecInsert(ModifyTableContext *context,
       table_tuple_complete_speculative(resultRelationDesc, slot, specToken,
                                        !specConflict);
 
-      /*
-       * Wake up anyone waiting for our decision.  They will re-check
-       * the tuple, see that it's no longer speculative, and wait on our
-       * XID as if this was a regularly inserted tuple all along.  Or if
-       * we killed the tuple, they will see it's dead, and proceed as if
-       * the tuple never existed.
-       */
-      SpeculativeInsertionLockRelease(GetCurrentTransactionId());
+      /* No one waits for our decision (SpeculativeInsertionLockAcquire()). */
 
       /*
        * If there was a conflict, start from the beginning.  We'll do
@@ -2332,8 +2325,6 @@ static TupleTableSlot *ExecUpdate(ModifyTableContext *context,
      */
     slot->tts_tableOid = RelationGetRelid(resultRelationDesc);
   } else {
-    ItemPointerData lockedtid;
-
     /*
      * If we generate a new candidate tuple after EvalPlanQual testing, we
      * must loop back here to try again.  (We don't need to redo triggers,
@@ -2342,7 +2333,6 @@ static TupleTableSlot *ExecUpdate(ModifyTableContext *context,
      * to do them again.)
      */
   redo_act:
-    lockedtid = *tupleid;
     result = ExecUpdateAct(context, resultRelInfo, tupleid, oldtuple, slot,
                            canSetTag, &updateCxt);
 
@@ -2429,11 +2419,6 @@ static TupleTableSlot *ExecUpdate(ModifyTableContext *context,
         /* Make sure ri_oldTupleSlot is initialized. */
         if (unlikely(!resultRelInfo->ri_projectNewInfoValid))
           ExecInitUpdateProjection(context->mtstate, resultRelInfo);
-
-        if (resultRelInfo->ri_needLockTagTuple) {
-          UnlockTuple(resultRelationDesc, &lockedtid, InplaceUpdateTupleLock);
-          LockTuple(resultRelationDesc, tupleid, InplaceUpdateTupleLock);
-        }
 
         /* Fetch the most recent version of old tuple. */
         oldSlot = resultRelInfo->ri_oldTupleSlot;
@@ -2857,7 +2842,6 @@ static TupleTableSlot *ExecMergeMatched(ModifyTableContext *context,
                                         bool canSetTag, bool *matched) {
   ModifyTableState *mtstate = context->mtstate;
   List **mergeActions = resultRelInfo->ri_MergeActions;
-  ItemPointerData lockedtid;
   List *actionStates;
   TupleTableSlot *newslot = NULL;
   TupleTableSlot *rslot = NULL;
@@ -2894,21 +2878,10 @@ static TupleTableSlot *ExecMergeMatched(ModifyTableContext *context,
    * target wholerow junk attr.
    */
   Assert(tupleid != NULL || oldtuple != NULL);
-  ItemPointerSetInvalid(&lockedtid);
   if (oldtuple != NULL) {
     Assert(!resultRelInfo->ri_needLockTagTuple);
     ExecForceStoreHeapTuple(oldtuple, resultRelInfo->ri_oldTupleSlot, false);
   } else {
-    if (resultRelInfo->ri_needLockTagTuple) {
-      /*
-       * This locks even for CMD_DELETE, for CMD_NOTHING, and for tuples
-       * that don't match mas_whenqual.  MERGE on system catalogs is a
-       * minor use case, so don't bother optimizing those.
-       */
-      LockTuple(resultRelInfo->ri_RelationDesc, tupleid,
-                InplaceUpdateTupleLock);
-      lockedtid = *tupleid;
-    }
     if (!table_tuple_fetch_row_version(resultRelInfo->ri_RelationDesc, tupleid,
                                        SnapshotAny,
                                        resultRelInfo->ri_oldTupleSlot))
@@ -3208,15 +3181,6 @@ lmerge_matched:
            * we need to switch to the NOT MATCHED BY
            * SOURCE case.
            */
-          if (resultRelInfo->ri_needLockTagTuple) {
-            if (ItemPointerIsValid(&lockedtid))
-              UnlockTuple(resultRelInfo->ri_RelationDesc, &lockedtid,
-                          InplaceUpdateTupleLock);
-            LockTuple(resultRelInfo->ri_RelationDesc, tupleid,
-                      InplaceUpdateTupleLock);
-            lockedtid = *tupleid;
-          }
-
           if (!table_tuple_fetch_row_version(resultRelationDesc, tupleid,
                                              SnapshotAny,
                                              resultRelInfo->ri_oldTupleSlot))
@@ -3345,9 +3309,6 @@ lmerge_matched:
    * Successfully executed an action or no qualifying action was found.
    */
 out:
-  if (ItemPointerIsValid(&lockedtid))
-    UnlockTuple(resultRelInfo->ri_RelationDesc, &lockedtid,
-                InplaceUpdateTupleLock);
   return rslot;
 }
 
@@ -3864,7 +3825,6 @@ static TupleTableSlot *ExecModifyTable(PlanState *pstate) {
   HeapTupleData oldtupdata;
   HeapTuple oldtuple;
   ItemPointer tupleid;
-  bool tuplock;
 
   CHECK_FOR_INTERRUPTS();
 
@@ -4170,8 +4130,6 @@ static TupleTableSlot *ExecModifyTable(PlanState *pstate) {
       break;
 
     case CMD_UPDATE:
-      tuplock = false;
-
       /* Initialize projection info if first time for this table */
       if (unlikely(!resultRelInfo->ri_projectNewInfoValid))
         ExecInitUpdateProjection(node, resultRelInfo);
@@ -4189,10 +4147,6 @@ static TupleTableSlot *ExecModifyTable(PlanState *pstate) {
         /* Fetch the most recent version of old tuple. */
         Relation relation = resultRelInfo->ri_RelationDesc;
 
-        if (resultRelInfo->ri_needLockTagTuple) {
-          LockTuple(relation, tupleid, InplaceUpdateTupleLock);
-          tuplock = true;
-        }
         if (!table_tuple_fetch_row_version(relation, tupleid, SnapshotAny,
                                            oldSlot))
           elog(ERROR, "failed to fetch tuple being updated");
@@ -4202,9 +4156,6 @@ static TupleTableSlot *ExecModifyTable(PlanState *pstate) {
       /* Now apply the update. */
       slot = ExecUpdate(&context, resultRelInfo, tupleid, oldtuple, oldSlot,
                         slot, node->canSetTag);
-      if (tuplock)
-        UnlockTuple(resultRelInfo->ri_RelationDesc, tupleid,
-                    InplaceUpdateTupleLock);
       break;
 
     case CMD_DELETE:

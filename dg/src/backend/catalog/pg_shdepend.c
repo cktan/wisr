@@ -1235,10 +1235,8 @@ void shdepDropOwned(List *roleids, DropBehavior behavior) {
            * object in that case.
            */
           AcquireDeletionLock(&obj, 0);
-          if (!systable_recheck_tuple(scan, tuple)) {
-            ReleaseDeletionLock(&obj);
+          if (!systable_recheck_tuple(scan, tuple))
             break;
-          }
           add_exact_object_address(&obj, deleteobjs);
         }
         break;
@@ -1272,10 +1270,8 @@ void shdepDropOwned(List *roleids, DropBehavior behavior) {
           obj.objectSubId = sdepForm->objsubid;
           /* as above */
           AcquireDeletionLock(&obj, 0);
-          if (!systable_recheck_tuple(scan, tuple)) {
-            ReleaseDeletionLock(&obj);
+          if (!systable_recheck_tuple(scan, tuple))
             break;
-          }
           add_exact_object_address(&obj, deleteobjs);
         }
         break;
