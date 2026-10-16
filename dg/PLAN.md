@@ -461,6 +461,16 @@ Do not reopen these without the owner:
   means one deadlock detector. Tables in sm move
   first; PostgreSQL's lock manager goes when nothing else uses
   it.
+- **Advisory locks are not sm's.** They name a number the
+  application picks and guard nothing stored, and their
+  session scope, explicit unlock and counted holds are
+  PostgreSQL's, which sm1's locks need not learn. They are in
+  a table of digres's own (`storage/advisory_lock.h`,
+  `WORKNOTE.md` step 153), with a deadlock detector of its own
+  for cycles among advisory waits. A cycle through an advisory
+  lock and an sm lock is not detected, and `lock_timeout` or a
+  cancel ends it; sm1's wait-for graph could take edges from
+  digres to find it (`../sm/NEXT.md` §3).
 - **sm's transactions are the only ones, in the end.** As with
   locks, `xact.c` goes: sm keeps the transaction, its
   statements, savepoints, isolation, visibility and

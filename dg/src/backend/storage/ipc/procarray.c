@@ -30,6 +30,7 @@
 #include "commands/dbcommands.h"
 #include "miscadmin.h"
 #include "port/pg_lfind.h"
+#include "storage/advisory_lock.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
 #include "storage/procsignal.h"
@@ -67,6 +68,8 @@ void ProcArrayShmemInit(void) {
     TransamVariables->xactCompletionCount = 1;
   /* The sessions are in a registry of the pcb's (SHMEM.md section 5.2). */
   session_registry_init();
+  /* Advisory locks are in a table of the pcb's, by the sessions' records. */
+  advisory_init();
 }
 
 /*

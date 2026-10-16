@@ -37,6 +37,7 @@
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
 #include "postmaster/postmaster.h"
+#include "storage/advisory_lock.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "storage/lmgr.h"
@@ -812,7 +813,7 @@ static void ShutdownPostgres(int code, Datum arg) {
    * User locks are not released by transaction end, so be sure to release
    * them explicitly.
    */
-  LockReleaseAll(USER_LOCKMETHOD, true);
+  advisory_release_all();
 }
 
 /*

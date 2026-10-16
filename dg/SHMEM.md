@@ -101,13 +101,20 @@ Beside the registry: the main LWLock array
 - **The heavyweight lock manager** (storage/lmgr `lock.c`,
   `lmgr.c`, `deadlock.c`, `proc.c`'s `ProcSleep()`) is live.
   A user's table is locked by sm (`locked_by_sm()`, `lmgr.c`),
-  but the lock manager still takes catalog relations' locks,
-  advisory locks, and the virtual xid's at every transaction's
-  start; its waits are a latch's, cut short by an interrupt.
-  **To replace**: advisory locks into sm, catalog relations'
-  locks gone (their rows are compiled in and never change), and
-  then the lock manager, the deadlock detector, the partition
-  LWLocks and the fast-path arrays go.
+  but the lock manager still takes catalog relations' locks
+  and the virtual xid's at every transaction's start; its
+  waits are a latch's, cut short by an interrupt. **To
+  replace**: catalog relations' locks gone (their rows are
+  compiled in and never change), and then the lock manager,
+  the deadlock detector, the partition LWLocks and the
+  fast-path arrays go.
+- **Advisory locks** are in a table of digres's own
+  (storage/lmgr `advisory_lock.c`, `WORKNOTE.md` step 153), not
+  sm's: they guard nothing stored (`PLAN.md` §7). A mutex, the
+  holders of each key, and a condition variable its waiters
+  sleep on in `sm_wait()`; a deadlock among advisory waits is
+  found as a session starts to wait. One through an sm lock as
+  well is not.
 - **A wait that must be cut short** is `sm_wait()` (`sm_sys.h`,
   `../sm/sm0/INTERRUPT.md`), then `CHECK_FOR_INTERRUPTS()`. A
   short mutex needs none, but is never held across a wait.
@@ -371,7 +378,8 @@ has a caller still, and goes with the step that removes it:
 3. **The constant snapshot**: done (`WORKNOTE.md` step 150),
    the code it fed gone (step 151), and the proc array the
    session registry (§5.2, step 152).
-4. **The lock manager**: advisory locks into sm, catalog locks
+4. **The lock manager**: advisory locks into a table of
+   digres's own (`WORKNOTE.md` step 153), catalog locks
    gone; then the lock manager, the remaining LWLocks,
    `posix_sema.c` and PGPROC, whose parts the session record
    takes; `pg_blocking_pids()` asks sm1's lock table.

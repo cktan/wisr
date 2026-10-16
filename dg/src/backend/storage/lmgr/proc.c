@@ -35,6 +35,7 @@
 
 #include "access/transam.h"
 #include "miscadmin.h"
+#include "storage/advisory_lock.h"
 #include "storage/ipc.h"
 #include "storage/lmgr.h"
 #include "storage/pmsignal.h"
@@ -526,7 +527,7 @@ void ProcReleaseLocks(bool isCommit) {
   /* Release standard locks, including session-level if aborting */
   LockReleaseAll(DEFAULT_LOCKMETHOD, !isCommit);
   /* Release transaction-level advisory locks */
-  LockReleaseAll(USER_LOCKMETHOD, false);
+  advisory_xact_end();
 }
 
 /*

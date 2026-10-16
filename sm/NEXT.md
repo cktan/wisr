@@ -102,6 +102,17 @@ Owed, and blocking nothing above:
 
 ## 3. Not blocking
 
+- **Edges from digres in sm1's wait-for graph.** digres keeps
+  PostgreSQL's advisory locks (`pg_advisory_lock()`,
+  `pg_advisory_xact_lock()` and the rest) in a table of its
+  own, `../dg/src/backend/storage/lmgr/advisory_lock.c`, with
+  a deadlock detector for cycles among them (`../dg/PLAN.md`
+  §7). A cycle through an advisory lock and an sm1 lock is
+  seen by neither, and waits until `lock_timeout` or a cancel. sm1 could take
+  an edge from its caller -- "session A waits for session B",
+  set while A waits on the advisory lock and cleared after --
+  and follow it in `find_cycle()` as its own, so the one
+  detector finds every cycle.
 - **A snapshot handed to another session.**
   `pg_export_snapshot()` and `SET TRANSACTION SNAPSHOT` share
   PostgreSQL's snapshot, which is not what decides what a

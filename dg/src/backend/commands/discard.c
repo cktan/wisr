@@ -18,6 +18,7 @@
 #include "commands/discard.h"
 #include "commands/prepare.h"
 #include "commands/sequence.h"
+#include "storage/advisory_lock.h"
 #include "utils/guc.h"
 #include "utils/portal.h"
 
@@ -64,7 +65,7 @@ static void DiscardAll(bool isTopLevel) {
   SetPGVariable("session_authorization", NIL, false);
   ResetAllOptions();
   DropAllPreparedStatements();
-  LockReleaseAll(USER_LOCKMETHOD, true);
+  advisory_release_all();
   ResetPlanCache();
   ResetTempTableNamespace();
   ResetSequenceCaches();

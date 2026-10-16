@@ -645,20 +645,27 @@ held_end memlog
 # Verify that a session is found by its record in the session registry
 # (SHMEM.md section 5.2): pg_blocking_pids() names the session blocking
 # another, and pg_terminate_backend() ends a session, in its own thread.
-# Advisory locks are PostgreSQL's lock manager's still, which
-# pg_blocking_pids() reads.
+# Advisory locks are in digres's own table (storage/advisory_lock.h), whose
+# waits pg_blocking_pids() reads.
 # 1. A held session takes advisory lock 42, and gives its pid.
 # 2. A second held session asks for it, and waits; it gives its pid first.
 # 3. pg_blocking_pids() of the second is the first's pid.
 # 4. pg_terminate_backend() of the second is true, and it ends.
 held_start blocker
 held_send blocker "select pg_advisory_lock(42); select 'pid ' || pg_backend_pid();"
+# The blocker gives its pid once it holds the lock: only then does the
+# second ask for it, or it might take the lock first.
+for _ in $(seq 50); do
+  blocker_pid=$(sed -n 's/^pid //p' "$work/blocker.out" 2> /dev/null)
+  [ -n "$blocker_pid" ] && break
+  sleep 0.1
+done
+[ -n "$blocker_pid" ] || fail "the blocker takes the lock"
 held_start blocked
 held_send blocked "select 'pid ' || pg_backend_pid(); select pg_advisory_lock(42);"
 for _ in $(seq 50); do
-  blocker_pid=$(sed -n 's/^pid //p' "$work/blocker.out")
-  blocked_pid=$(sed -n 's/^pid //p' "$work/blocked.out")
-  [ -n "$blocker_pid" ] && [ -n "$blocked_pid" ] && break
+  blocked_pid=$(sed -n 's/^pid //p' "$work/blocked.out" 2> /dev/null)
+  [ -n "$blocked_pid" ] && break
   sleep 0.1
 done
 for _ in $(seq 50); do
@@ -682,6 +689,87 @@ grep -q 'terminating connection due to administrator command' \
   "$work/blocked.out" || fail "pg_terminate_backend ends the session"
 held_send blocker "select pg_advisory_unlock(42);"
 held_end blocker
+
+# Verify that advisory locks keep PostgreSQL's semantics in digres's own
+# table: holds are counted, a transaction's go as it or a savepoint ends,
+# a wait ends on lock_timeout, on a cancel, and on a deadlock among them.
+# 1. A session locks key 50 twice and unlocks it three times: the third
+#    unlock is false, with a warning.
+# 2. Held session A takes transaction lock 51, lock 52 in a savepoint it
+#    rolls back, session lock 53, and unlocks all its session locks.
+# 3. Another session can have 52 and 53, and not 51.
+# 4. Another waits for 51 under lock_timeout, and fails on it.
+# 5. Another waits for 51 until pg_cancel_backend() ends its wait.
+# 6. A commits and stays connected, and 51 can be had.
+# 7. Held sessions C and D take 54 and 55, then each waits for the
+#    other's: D, the second to wait, fails with a deadlock, and once it
+#    unlocks 55, which the error left it holding, C gets it.
+local_psql -c 'select pg_advisory_lock(50)' -c 'select pg_advisory_lock(50)' \
+  -c 'select pg_advisory_unlock(50)' -c 'select pg_advisory_unlock(50)' \
+  -c 'select pg_advisory_unlock(50)' > "$work/adv_count.out" 2>&1
+[ "$(grep -cx t "$work/adv_count.out")" = 2 ] &&
+  grep -qx f "$work/adv_count.out" &&
+  grep -q "you don't own a lock of type ExclusiveLock" \
+    "$work/adv_count.out" || fail "advisory holds are counted"
+held_start adv_a
+held_send adv_a "begin; select pg_advisory_xact_lock(51); savepoint s;
+select pg_advisory_xact_lock(52); rollback to s; select pg_advisory_lock(53);
+select pg_advisory_unlock_all(); select 'pid ' || pg_backend_pid();"
+for _ in $(seq 50); do
+  adv_a_pid=$(sed -n 's/^pid //p' "$work/adv_a.out" 2> /dev/null)
+  [ -n "$adv_a_pid" ] && break
+  sleep 0.1
+done
+[ "$(local_psql -c 'select pg_try_advisory_lock(51), pg_try_advisory_lock(52),
+  pg_try_advisory_lock(53)')" = "f|t|t" ] || fail "advisory scopes"
+local_psql -c 'set lock_timeout = 200' -c 'select pg_advisory_lock(51)' \
+  > "$work/adv_timeout.out" 2>&1
+grep -q 'canceling statement due to lock timeout' "$work/adv_timeout.out" ||
+  fail "advisory wait ends on lock_timeout"
+held_start adv_w
+held_send adv_w "select 'pid ' || pg_backend_pid(); select pg_advisory_lock(51);"
+for _ in $(seq 50); do
+  adv_w_pid=$(sed -n 's/^pid //p' "$work/adv_w.out" 2> /dev/null)
+  [ -n "$adv_w_pid" ] &&
+    [ "$(local_psql -c "select pg_blocking_pids($adv_w_pid)")" = "{$adv_a_pid}" ] &&
+    break
+  sleep 0.1
+done
+local_psql -c "select pg_cancel_backend($adv_w_pid)" > /dev/null
+held_wait adv_w "ERROR:  canceling statement due to user request" ||
+  fail "advisory wait ends on a cancel"
+held_end adv_w
+held_send adv_a "commit; select 'committed';"
+held_wait adv_a committed || fail "advisory session commits"
+[ "$(local_psql -c 'select pg_try_advisory_lock(51)')" = t ] ||
+  fail "advisory transaction lock goes at commit"
+held_end adv_a
+held_start adv_c
+held_start adv_d
+# Under lock_timeout, so that a deadlock not found fails the check, not
+# the suite.
+held_send adv_c "set lock_timeout = '10s'; select pg_advisory_lock(54);
+select 'pid ' || pg_backend_pid();"
+held_send adv_d "set lock_timeout = '10s'; select pg_advisory_lock(55);
+select 'pid ' || pg_backend_pid();"
+for _ in $(seq 50); do
+  adv_c_pid=$(sed -n 's/^pid //p' "$work/adv_c.out" 2> /dev/null)
+  adv_d_pid=$(sed -n 's/^pid //p' "$work/adv_d.out" 2> /dev/null)
+  [ -n "$adv_c_pid" ] && [ -n "$adv_d_pid" ] && break
+  sleep 0.1
+done
+held_send adv_c "select pg_advisory_lock(55); select 'c got 55';"
+for _ in $(seq 50); do
+  [ "$(local_psql -c "select pg_blocking_pids($adv_c_pid)")" = "{$adv_d_pid}" ] &&
+    break
+  sleep 0.1
+done
+held_send adv_d "select pg_advisory_lock(54);"
+held_wait adv_d "ERROR:  deadlock detected" || fail "advisory deadlock detected"
+held_send adv_d "select pg_advisory_unlock(55);"
+held_wait adv_c "c got 55" || fail "advisory deadlock: the other gets its lock"
+held_end adv_c
+held_end adv_d
 
 # Verify that a snapshot is neither exported nor imported: what a session
 # sees is sm's snapshot, which PostgreSQL's export does not carry, so an

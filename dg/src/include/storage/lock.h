@@ -263,14 +263,6 @@ typedef struct LOCKTAG {
 	 (locktag).locktag_type = LOCKTAG_OBJECT, \
 	 (locktag).locktag_lockmethodid = DEFAULT_LOCKMETHOD)
 
-#define SET_LOCKTAG_ADVISORY(locktag, id1, id2, id3, id4) \
-	((locktag).locktag_field1 = (id1), \
-	 (locktag).locktag_field2 = (id2), \
-	 (locktag).locktag_field3 = (id3), \
-	 (locktag).locktag_field4 = (id4), \
-	 (locktag).locktag_type = LOCKTAG_ADVISORY, \
-	 (locktag).locktag_lockmethodid = USER_LOCKMETHOD)
-
 /*
  * ID info for a remote transaction on a logical replication subscriber is: DB
  * OID + SUBSCRIPTION OID + TRANSACTION ID + OBJID
@@ -540,7 +532,6 @@ extern void MarkLockClear(LOCALLOCK *locallock);
 extern bool LockRelease(const LOCKTAG *locktag, LOCKMODE lockmode,
                         bool sessionLock);
 extern void LockReleaseAll(LOCKMETHODID lockmethodid, bool allLocks);
-extern void LockReleaseSession(LOCKMETHODID lockmethodid);
 extern void LockReleaseCurrentOwner(LOCALLOCK **locallocks, int nlocks);
 extern void LockReassignCurrentOwner(LOCALLOCK **locallocks, int nlocks);
 extern bool LockHeldByMe(const LOCKTAG *locktag, LOCKMODE lockmode,

@@ -68,6 +68,16 @@ struct session_registry_free_t {
 };
 struct session_record_t;
 
+/* advisory_lock.c: the advisory locks held, and a session's keys of them. */
+struct advisory_table_t;
+struct advisory_table_free_t {
+  void operator()(advisory_table_t *table) const;
+};
+struct advisory_state_t;
+struct advisory_state_free_t {
+  void operator()(advisory_state_t *state) const;
+};
+
 union LWLockPadded;                    /* storage/lwlock.h */
 struct PGSemaphoreData;                /* port/posix_sema.c */
 struct FastPathStrongRelationLockData; /* storage/lmgr/lock.c */
@@ -111,6 +121,9 @@ typedef struct pcb_t {
   /* session_registry.c: the sessions registered, by pid */
   std::unique_ptr<session_registry_t, session_registry_free_t> session_registry;
 
+  /* advisory_lock.c: the advisory locks held, and their waiters */
+  std::unique_ptr<advisory_table_t, advisory_table_free_t> advisory;
+
   /* lock.c: the fast path's counts of strong locks, new'd */
   struct FastPathStrongRelationLockData *fast_path_strong = nullptr;
 } pcb_t;
@@ -124,6 +137,8 @@ typedef struct tcb_t {
   std::unique_ptr<sm_vfd_cache_t, sm_vfd_cache_free_t> vfd;
   /* session_registry.c: this session's record, while it is registered */
   std::shared_ptr<session_record_t> session;
+  /* advisory_lock.c: the keys this session holds, made at its first lock */
+  std::unique_ptr<advisory_state_t, advisory_state_free_t> advisory;
 } tcb_t;
 
 extern pcb_t *pcb;

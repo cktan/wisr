@@ -33,6 +33,7 @@
 #include "libpq/pqsignal.h"
 #include "miscadmin.h"
 #include "pg_trace.h"
+#include "storage/advisory_lock.h"
 #include "storage/fd.h"
 #include "storage/lmgr.h"
 #include "storage/proc.h"
@@ -2971,6 +2972,8 @@ static void CommitSubTransaction(void) {
    */
   ResourceOwnerRelease(s->curTransactionOwner, RESOURCE_RELEASE_LOCKS, true,
                        false);
+  /* The subtransaction's advisory locks are its parent's now. */
+  advisory_subxact_end(true);
   ResourceOwnerRelease(s->curTransactionOwner, RESOURCE_RELEASE_AFTER_LOCKS,
                        true, false);
 
@@ -3091,6 +3094,8 @@ static void AbortSubTransaction(void) {
     AtEOSubXact_Inval(false);
     ResourceOwnerRelease(s->curTransactionOwner, RESOURCE_RELEASE_LOCKS, false,
                          false);
+    /* Release the advisory locks the subtransaction took. */
+    advisory_subxact_end(false);
     ResourceOwnerRelease(s->curTransactionOwner, RESOURCE_RELEASE_AFTER_LOCKS,
                          false, false);
 

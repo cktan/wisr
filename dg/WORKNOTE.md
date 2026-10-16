@@ -4460,3 +4460,51 @@ slot, as a slot and a pid are both reused.
 - `server.sh`: a session waiting on another's advisory lock is
   named blocked by it in `pg_blocking_pids()`, and
   `pg_terminate_backend()` ends it.
+
+## Step 153: advisory locks are digres's own
+
+`SHMEM.md` §3, §7 step 4. Advisory locks were the lock
+manager's user lock method. They guard nothing stored, so
+they do not go to sm (`PLAN.md` §7): sm1's locks end with
+their transaction, and session scope, explicit unlock and
+counted holds are PostgreSQL's to keep.
+
+- **A table of digres's own** (`storage/advisory_lock.h`,
+  storage/lmgr `advisory_lock.c`), the pcb's: a mutex, the
+  holders of each key, what each waiting session waits for,
+  and a condition variable the waiters sleep on in
+  `sm_wait()`, so an interrupt ends the wait. A key is the
+  locktag's fields: the database, two words, and the form.
+  A holder is a session's record, with its session-scope
+  holds counted by mode and the nest level of each
+  transaction-scope one. A session's tcb lists the keys it
+  holds, so a transaction's end that holds none takes no
+  mutex.
+- **What PostgreSQL did is kept**: a session's own holds
+  never conflict; share conflicts with exclusive; an unlock of
+  a hold not had is false with PostgreSQL's warning;
+  `pg_advisory_unlock_all()` keeps transaction-scope holds; a
+  savepoint rolled back drops the holds taken in it, and one
+  released hands them to its parent; a session's end and
+  DISCARD ALL drop all. `lock_timeout` is the wait's deadline.
+- **A deadlock among advisory waits** is found as a session
+  starts to wait, by following the holders it waits on and
+  what they wait on; it fails with `deadlock detected`. One
+  through an sm lock is not seen, and `lock_timeout` or a
+  cancel ends it: `../sm/NEXT.md` §3 says how sm1 could find it.
+- **Not kept**: the wait queue. A request waits only for
+  conflicting holders, so a stream of share holds can keep an
+  exclusive request waiting. Advisory locks are not in
+  `pg_locks`; `pg_blocking_pids()` reads their waits.
+- **Gone**: `LockReleaseSession()` and `SET_LOCKTAG_ADVISORY`,
+  which nothing else used. The user lock method's table in
+  `lock.c` is left, to go with the lock manager.
+- `server.sh`: counted holds and the warning; the scopes and
+  savepoints; a wait ended by `lock_timeout` and by a cancel;
+  a deadlock between two sessions, of which the second to
+  wait fails.
+- `server.sh`'s check of step 152 raced: the waiting session
+  could take advisory lock 42 before the blocker, and the check
+  then passed with no pids and terminated the holder, an idle
+  session whose psql never noticed. The second session now asks
+  only once the blocker says it holds the lock.

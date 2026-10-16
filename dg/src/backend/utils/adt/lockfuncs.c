@@ -15,6 +15,7 @@
 #include "access/htup_details.h"
 #include "funcapi.h"
 #include "miscadmin.h"
+#include "storage/advisory_lock.h"
 #include "storage/lock.h"
 #include "storage/proc.h"
 #include "utils/array.h"
@@ -346,10 +347,15 @@ Datum pg_blocking_pids(PG_FUNCTION_ARGS) {
 
   /* Collect a snapshot of lock manager state */
   lockData = GetBlockerStatusData(blocked_pid);
+  /* And the holders of the advisory lock it waits for, which are not in it */
+  std::vector<int> advisory = advisory_blockers(blocked_pid);
 
   /* We can't need more output entries than there are reported PROCLOCKs */
-  arrayelems = (Datum *)palloc(lockData->nlocks * sizeof(Datum));
+  arrayelems =
+      (Datum *)palloc((lockData->nlocks + advisory.size()) * sizeof(Datum));
   narrayelems = 0;
+  for (int pid : advisory)
+    arrayelems[narrayelems++] = Int32GetDatum(pid);
 
   /* For each blocked proc in the lock group ... */
   for (i = 0; i < lockData->nprocs; i++) {
@@ -417,41 +423,34 @@ Datum pg_blocking_pids(PG_FUNCTION_ARGS) {
   }
 
   /* Assert we didn't overrun arrayelems[] */
-  Assert(narrayelems <= lockData->nlocks);
+  Assert(narrayelems <= lockData->nlocks + (int)advisory.size());
 
   PG_RETURN_ARRAYTYPE_P(
       construct_array_builtin(arrayelems, narrayelems, INT4OID));
 }
 
 /*
- * Functions for manipulating advisory locks
+ * Functions for manipulating advisory locks, which are digres's own
+ * (storage/advisory_lock.h): a key is the locktag's fields PostgreSQL used.
  *
- * We make use of the locktag fields as follows:
- *
- *	field1: MyDatabaseId ... ensures locks are local to each database
- *	field2: first of 2 int4 keys, or high-order half of an int8 key
- *	field3: second of 2 int4 keys, or low-order half of an int8 key
- *	field4: 1 if using an int8 key, 2 if using 2 int4 keys
+ *	database: MyDatabaseId ... ensures locks are local to each database
+ *	key1: first of 2 int4 keys, or high-order half of an int8 key
+ *	key2: second of 2 int4 keys, or low-order half of an int8 key
+ *	form: 1 if using an int8 key, 2 if using 2 int4 keys
  */
-#define SET_LOCKTAG_INT64(tag, key64) \
-	SET_LOCKTAG_ADVISORY(tag, \
-						 MyDatabaseId, \
-						 (uint32) ((key64) >> 32), \
-						 (uint32) (key64), \
-						 1)
-#define SET_LOCKTAG_INT32(tag, key1, key2) \
-	SET_LOCKTAG_ADVISORY(tag, MyDatabaseId, key1, key2, 2)
+#define ADVISORY_KEY_INT64(key64) \
+	(advisory_key_t{MyDatabaseId, (uint32) ((key64) >> 32), (uint32) (key64), 1})
+#define ADVISORY_KEY_INT32(key1, key2) \
+	(advisory_key_t{MyDatabaseId, (uint32) (key1), (uint32) (key2), 2})
 
 /*
  * pg_advisory_lock(int8) - acquire exclusive lock on an int8 key
  */
 Datum pg_advisory_lock_int8(PG_FUNCTION_ARGS) {
   int64 key = PG_GETARG_INT64(0);
-  LOCKTAG tag;
+  advisory_key_t tag = ADVISORY_KEY_INT64(key);
 
-  SET_LOCKTAG_INT64(tag, key);
-
-  (void)LockAcquire(&tag, ExclusiveLock, true, false);
+  (void)advisory_lock(tag, true, true, false);
 
   PG_RETURN_VOID();
 }
@@ -462,11 +461,9 @@ Datum pg_advisory_lock_int8(PG_FUNCTION_ARGS) {
  */
 Datum pg_advisory_xact_lock_int8(PG_FUNCTION_ARGS) {
   int64 key = PG_GETARG_INT64(0);
-  LOCKTAG tag;
+  advisory_key_t tag = ADVISORY_KEY_INT64(key);
 
-  SET_LOCKTAG_INT64(tag, key);
-
-  (void)LockAcquire(&tag, ExclusiveLock, false, false);
+  (void)advisory_lock(tag, true, false, false);
 
   PG_RETURN_VOID();
 }
@@ -476,11 +473,9 @@ Datum pg_advisory_xact_lock_int8(PG_FUNCTION_ARGS) {
  */
 Datum pg_advisory_lock_shared_int8(PG_FUNCTION_ARGS) {
   int64 key = PG_GETARG_INT64(0);
-  LOCKTAG tag;
+  advisory_key_t tag = ADVISORY_KEY_INT64(key);
 
-  SET_LOCKTAG_INT64(tag, key);
-
-  (void)LockAcquire(&tag, ShareLock, true, false);
+  (void)advisory_lock(tag, false, true, false);
 
   PG_RETURN_VOID();
 }
@@ -491,11 +486,9 @@ Datum pg_advisory_lock_shared_int8(PG_FUNCTION_ARGS) {
  */
 Datum pg_advisory_xact_lock_shared_int8(PG_FUNCTION_ARGS) {
   int64 key = PG_GETARG_INT64(0);
-  LOCKTAG tag;
+  advisory_key_t tag = ADVISORY_KEY_INT64(key);
 
-  SET_LOCKTAG_INT64(tag, key);
-
-  (void)LockAcquire(&tag, ShareLock, false, false);
+  (void)advisory_lock(tag, false, false, false);
 
   PG_RETURN_VOID();
 }
@@ -507,14 +500,12 @@ Datum pg_advisory_xact_lock_shared_int8(PG_FUNCTION_ARGS) {
  */
 Datum pg_try_advisory_lock_int8(PG_FUNCTION_ARGS) {
   int64 key = PG_GETARG_INT64(0);
-  LOCKTAG tag;
-  LockAcquireResult res;
+  advisory_key_t tag = ADVISORY_KEY_INT64(key);
+  bool res;
 
-  SET_LOCKTAG_INT64(tag, key);
+  res = advisory_lock(tag, true, true, true);
 
-  res = LockAcquire(&tag, ExclusiveLock, true, true);
-
-  PG_RETURN_BOOL(res != LOCKACQUIRE_NOT_AVAIL);
+  PG_RETURN_BOOL(res);
 }
 
 /*
@@ -525,14 +516,12 @@ Datum pg_try_advisory_lock_int8(PG_FUNCTION_ARGS) {
  */
 Datum pg_try_advisory_xact_lock_int8(PG_FUNCTION_ARGS) {
   int64 key = PG_GETARG_INT64(0);
-  LOCKTAG tag;
-  LockAcquireResult res;
+  advisory_key_t tag = ADVISORY_KEY_INT64(key);
+  bool res;
 
-  SET_LOCKTAG_INT64(tag, key);
+  res = advisory_lock(tag, true, false, true);
 
-  res = LockAcquire(&tag, ExclusiveLock, false, true);
-
-  PG_RETURN_BOOL(res != LOCKACQUIRE_NOT_AVAIL);
+  PG_RETURN_BOOL(res);
 }
 
 /*
@@ -543,14 +532,12 @@ Datum pg_try_advisory_xact_lock_int8(PG_FUNCTION_ARGS) {
  */
 Datum pg_try_advisory_lock_shared_int8(PG_FUNCTION_ARGS) {
   int64 key = PG_GETARG_INT64(0);
-  LOCKTAG tag;
-  LockAcquireResult res;
+  advisory_key_t tag = ADVISORY_KEY_INT64(key);
+  bool res;
 
-  SET_LOCKTAG_INT64(tag, key);
+  res = advisory_lock(tag, false, true, true);
 
-  res = LockAcquire(&tag, ShareLock, true, true);
-
-  PG_RETURN_BOOL(res != LOCKACQUIRE_NOT_AVAIL);
+  PG_RETURN_BOOL(res);
 }
 
 /*
@@ -561,14 +548,12 @@ Datum pg_try_advisory_lock_shared_int8(PG_FUNCTION_ARGS) {
  */
 Datum pg_try_advisory_xact_lock_shared_int8(PG_FUNCTION_ARGS) {
   int64 key = PG_GETARG_INT64(0);
-  LOCKTAG tag;
-  LockAcquireResult res;
+  advisory_key_t tag = ADVISORY_KEY_INT64(key);
+  bool res;
 
-  SET_LOCKTAG_INT64(tag, key);
+  res = advisory_lock(tag, false, false, true);
 
-  res = LockAcquire(&tag, ShareLock, false, true);
-
-  PG_RETURN_BOOL(res != LOCKACQUIRE_NOT_AVAIL);
+  PG_RETURN_BOOL(res);
 }
 
 /*
@@ -578,12 +563,10 @@ Datum pg_try_advisory_xact_lock_shared_int8(PG_FUNCTION_ARGS) {
  */
 Datum pg_advisory_unlock_int8(PG_FUNCTION_ARGS) {
   int64 key = PG_GETARG_INT64(0);
-  LOCKTAG tag;
+  advisory_key_t tag = ADVISORY_KEY_INT64(key);
   bool res;
 
-  SET_LOCKTAG_INT64(tag, key);
-
-  res = LockRelease(&tag, ExclusiveLock, true);
+  res = advisory_unlock(tag, true);
 
   PG_RETURN_BOOL(res);
 }
@@ -595,12 +578,10 @@ Datum pg_advisory_unlock_int8(PG_FUNCTION_ARGS) {
  */
 Datum pg_advisory_unlock_shared_int8(PG_FUNCTION_ARGS) {
   int64 key = PG_GETARG_INT64(0);
-  LOCKTAG tag;
+  advisory_key_t tag = ADVISORY_KEY_INT64(key);
   bool res;
 
-  SET_LOCKTAG_INT64(tag, key);
-
-  res = LockRelease(&tag, ShareLock, true);
+  res = advisory_unlock(tag, false);
 
   PG_RETURN_BOOL(res);
 }
@@ -611,11 +592,9 @@ Datum pg_advisory_unlock_shared_int8(PG_FUNCTION_ARGS) {
 Datum pg_advisory_lock_int4(PG_FUNCTION_ARGS) {
   int32 key1 = PG_GETARG_INT32(0);
   int32 key2 = PG_GETARG_INT32(1);
-  LOCKTAG tag;
+  advisory_key_t tag = ADVISORY_KEY_INT32(key1, key2);
 
-  SET_LOCKTAG_INT32(tag, key1, key2);
-
-  (void)LockAcquire(&tag, ExclusiveLock, true, false);
+  (void)advisory_lock(tag, true, true, false);
 
   PG_RETURN_VOID();
 }
@@ -627,11 +606,9 @@ Datum pg_advisory_lock_int4(PG_FUNCTION_ARGS) {
 Datum pg_advisory_xact_lock_int4(PG_FUNCTION_ARGS) {
   int32 key1 = PG_GETARG_INT32(0);
   int32 key2 = PG_GETARG_INT32(1);
-  LOCKTAG tag;
+  advisory_key_t tag = ADVISORY_KEY_INT32(key1, key2);
 
-  SET_LOCKTAG_INT32(tag, key1, key2);
-
-  (void)LockAcquire(&tag, ExclusiveLock, false, false);
+  (void)advisory_lock(tag, true, false, false);
 
   PG_RETURN_VOID();
 }
@@ -642,11 +619,9 @@ Datum pg_advisory_xact_lock_int4(PG_FUNCTION_ARGS) {
 Datum pg_advisory_lock_shared_int4(PG_FUNCTION_ARGS) {
   int32 key1 = PG_GETARG_INT32(0);
   int32 key2 = PG_GETARG_INT32(1);
-  LOCKTAG tag;
+  advisory_key_t tag = ADVISORY_KEY_INT32(key1, key2);
 
-  SET_LOCKTAG_INT32(tag, key1, key2);
-
-  (void)LockAcquire(&tag, ShareLock, true, false);
+  (void)advisory_lock(tag, false, true, false);
 
   PG_RETURN_VOID();
 }
@@ -658,11 +633,9 @@ Datum pg_advisory_lock_shared_int4(PG_FUNCTION_ARGS) {
 Datum pg_advisory_xact_lock_shared_int4(PG_FUNCTION_ARGS) {
   int32 key1 = PG_GETARG_INT32(0);
   int32 key2 = PG_GETARG_INT32(1);
-  LOCKTAG tag;
+  advisory_key_t tag = ADVISORY_KEY_INT32(key1, key2);
 
-  SET_LOCKTAG_INT32(tag, key1, key2);
-
-  (void)LockAcquire(&tag, ShareLock, false, false);
+  (void)advisory_lock(tag, false, false, false);
 
   PG_RETURN_VOID();
 }
@@ -676,14 +649,12 @@ Datum pg_advisory_xact_lock_shared_int4(PG_FUNCTION_ARGS) {
 Datum pg_try_advisory_lock_int4(PG_FUNCTION_ARGS) {
   int32 key1 = PG_GETARG_INT32(0);
   int32 key2 = PG_GETARG_INT32(1);
-  LOCKTAG tag;
-  LockAcquireResult res;
+  advisory_key_t tag = ADVISORY_KEY_INT32(key1, key2);
+  bool res;
 
-  SET_LOCKTAG_INT32(tag, key1, key2);
+  res = advisory_lock(tag, true, true, true);
 
-  res = LockAcquire(&tag, ExclusiveLock, true, true);
-
-  PG_RETURN_BOOL(res != LOCKACQUIRE_NOT_AVAIL);
+  PG_RETURN_BOOL(res);
 }
 
 /*
@@ -695,14 +666,12 @@ Datum pg_try_advisory_lock_int4(PG_FUNCTION_ARGS) {
 Datum pg_try_advisory_xact_lock_int4(PG_FUNCTION_ARGS) {
   int32 key1 = PG_GETARG_INT32(0);
   int32 key2 = PG_GETARG_INT32(1);
-  LOCKTAG tag;
-  LockAcquireResult res;
+  advisory_key_t tag = ADVISORY_KEY_INT32(key1, key2);
+  bool res;
 
-  SET_LOCKTAG_INT32(tag, key1, key2);
+  res = advisory_lock(tag, true, false, true);
 
-  res = LockAcquire(&tag, ExclusiveLock, false, true);
-
-  PG_RETURN_BOOL(res != LOCKACQUIRE_NOT_AVAIL);
+  PG_RETURN_BOOL(res);
 }
 
 /*
@@ -714,14 +683,12 @@ Datum pg_try_advisory_xact_lock_int4(PG_FUNCTION_ARGS) {
 Datum pg_try_advisory_lock_shared_int4(PG_FUNCTION_ARGS) {
   int32 key1 = PG_GETARG_INT32(0);
   int32 key2 = PG_GETARG_INT32(1);
-  LOCKTAG tag;
-  LockAcquireResult res;
+  advisory_key_t tag = ADVISORY_KEY_INT32(key1, key2);
+  bool res;
 
-  SET_LOCKTAG_INT32(tag, key1, key2);
+  res = advisory_lock(tag, false, true, true);
 
-  res = LockAcquire(&tag, ShareLock, true, true);
-
-  PG_RETURN_BOOL(res != LOCKACQUIRE_NOT_AVAIL);
+  PG_RETURN_BOOL(res);
 }
 
 /*
@@ -733,14 +700,12 @@ Datum pg_try_advisory_lock_shared_int4(PG_FUNCTION_ARGS) {
 Datum pg_try_advisory_xact_lock_shared_int4(PG_FUNCTION_ARGS) {
   int32 key1 = PG_GETARG_INT32(0);
   int32 key2 = PG_GETARG_INT32(1);
-  LOCKTAG tag;
-  LockAcquireResult res;
+  advisory_key_t tag = ADVISORY_KEY_INT32(key1, key2);
+  bool res;
 
-  SET_LOCKTAG_INT32(tag, key1, key2);
+  res = advisory_lock(tag, false, false, true);
 
-  res = LockAcquire(&tag, ShareLock, false, true);
-
-  PG_RETURN_BOOL(res != LOCKACQUIRE_NOT_AVAIL);
+  PG_RETURN_BOOL(res);
 }
 
 /*
@@ -751,12 +716,10 @@ Datum pg_try_advisory_xact_lock_shared_int4(PG_FUNCTION_ARGS) {
 Datum pg_advisory_unlock_int4(PG_FUNCTION_ARGS) {
   int32 key1 = PG_GETARG_INT32(0);
   int32 key2 = PG_GETARG_INT32(1);
-  LOCKTAG tag;
+  advisory_key_t tag = ADVISORY_KEY_INT32(key1, key2);
   bool res;
 
-  SET_LOCKTAG_INT32(tag, key1, key2);
-
-  res = LockRelease(&tag, ExclusiveLock, true);
+  res = advisory_unlock(tag, true);
 
   PG_RETURN_BOOL(res);
 }
@@ -769,12 +732,10 @@ Datum pg_advisory_unlock_int4(PG_FUNCTION_ARGS) {
 Datum pg_advisory_unlock_shared_int4(PG_FUNCTION_ARGS) {
   int32 key1 = PG_GETARG_INT32(0);
   int32 key2 = PG_GETARG_INT32(1);
-  LOCKTAG tag;
+  advisory_key_t tag = ADVISORY_KEY_INT32(key1, key2);
   bool res;
 
-  SET_LOCKTAG_INT32(tag, key1, key2);
-
-  res = LockRelease(&tag, ShareLock, true);
+  res = advisory_unlock(tag, false);
 
   PG_RETURN_BOOL(res);
 }
@@ -783,7 +744,7 @@ Datum pg_advisory_unlock_shared_int4(PG_FUNCTION_ARGS) {
  * pg_advisory_unlock_all() - release all advisory locks
  */
 Datum pg_advisory_unlock_all(PG_FUNCTION_ARGS) {
-  LockReleaseSession(USER_LOCKMETHOD);
+  advisory_unlock_all();
 
   PG_RETURN_VOID();
 }
