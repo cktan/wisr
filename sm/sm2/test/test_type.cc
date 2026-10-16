@@ -165,15 +165,15 @@ TEST_CASE("each type is found by its frozen code, and only by it") {
     int16_t len;
     bool byval;
     uint8_t align;
-  } want[] = {{1, "bool", 1, true, 1},         {2, "int2", 2, true, 2},
-              {3, "int4", 4, true, 4},         {4, "int8", 8, true, 8},
-              {5, "float4", 4, true, 4},       {6, "float8", 8, true, 8},
-              {8, "text", -1, false, 4},       {9, "varchar", -1, false, 4},
-              {10, "bytea", -1, false, 4},     {11, "date", 4, true, 4},
-              {12, "time", 8, true, 8},        {13, "timestamp", 8, true, 8},
-              {14, "timestamptz", 8, true, 8}, {15, "interval", 16, false, 8},
-              {16, "uuid", 16, false, 1},      {17, "decimal64", 8, true, 8},
-              {18, "decimal128", 16, false, 8}};
+  } want[] = {{1, "bool", 1, true, 1},          {2, "int2", 2, true, 2},
+              {3, "int4", 4, true, 4},          {4, "int8", 8, true, 8},
+              {5, "float4", 4, true, 4},        {6, "float8", 8, true, 8},
+              {8, "text", -1, false, 4},        {9, "varchar", -1, false, 4},
+              {10, "bytea", -1, false, 4},      {11, "date", 4, true, 4},
+              {12, "time", 8, true, 8},         {13, "timestamp", 8, true, 8},
+              {14, "timestamptz", 8, true, 8},  {15, "interval", 16, false, 8},
+              {16, "uuid", 16, false, 1},       {17, "decimal64", 8, true, 8},
+              {18, "decimal128", 16, false, 8}, {19, "bpchar", -1, false, 4}};
   for (auto &w : want) {
     CAPTURE(w.name);
     const sm2::type_t *t = sm2::type_by_code(w.code);
@@ -187,14 +187,15 @@ TEST_CASE("each type is found by its frozen code, and only by it") {
     CHECK(t->out);
     CHECK(t->cmp);
     CHECK(t->key_encode);
-    CHECK(t->key_decode);
+    // A bpchar's key gives no value back: the row has its padding.
+    CHECK((t->key_decode != nullptr) == (t != &sm2::type_bpchar));
     CHECK((t->typmod_valid != nullptr) ==
           (t == &sm2::type_decimal64 || t == &sm2::type_decimal128));
     CHECK_FALSE(t->hash);
     CHECK_FALSE(t->recv);
     CHECK_FALSE(t->send);
   }
-  for (uint8_t code : {0, 7, 19, 64, 255}) {
+  for (uint8_t code : {0, 7, 20, 64, 255}) {
     CAPTURE(code);
     CHECK(sm2::type_by_code(code) == nullptr);
   }
@@ -731,6 +732,41 @@ TEST_CASE("text and varchar hold valid UTF-8, ordered bytewise") {
       CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
     }
   }
+}
+
+TEST_CASE("bpchar is text whose trailing spaces count for nothing") {
+  // Verify bpchar, PostgreSQL's char(n) (TYPE.md §3.5).
+  // 1. A value is kept and printed as given, its padding and all.
+  // 2. cmp leaves trailing spaces out: 'a' and 'a  ' are equal, and
+  //    'a ' orders before 'ab' as 'a' does.
+  // 3. 'a' and 'a  ' have one key; keys order as the values without
+  //    their trailing spaces, under no collation.
+  // 4. A key gives no value back, having no key_decode: an index scan
+  //    reads the row, which has the padding.
+  const sm2::type_t *t = &sm2::type_bpchar;
+  std::string datum, text;
+  REQUIRE(t->in("ab   ", -1, datum) == 0);
+  CHECK(datum == "ab   ");
+  REQUIRE(t->out(datum, -1, text) == 0);
+  CHECK(text == "ab   ");
+  CHECK(t->cmp("a", "a  ", -1) == 0);
+  CHECK(t->cmp("a ", "ab", -1) < 0);
+  CHECK(t->cmp("b", "a   ", -1) > 0);
+  CHECK(t->cmp(" a", "a", -1) < 0);
+  auto key = [&](std::string_view v) {
+    std::string k;
+    REQUIRE(t->key_encode(v, -1, nullptr, k) == 0);
+    return k;
+  };
+  CHECK(key("a") == key("a  "));
+  CHECK(key("") == key("   "));
+  CHECK(key("a ") < key("ab"));
+  CHECK(key("ab  ") < key("b"));
+  CHECK(t->key_decode == nullptr);
+  sm2::key_column_t col{};
+  col.type = t;
+  col.typmod = -1;
+  CHECK_FALSE(sm2::key_decodable(std::span<const sm2::key_column_t>(&col, 1)));
 }
 
 TEST_CASE("bytea is any bytes, printed as hex, ordered bytewise") {

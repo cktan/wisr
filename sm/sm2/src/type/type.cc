@@ -18,7 +18,7 @@ const type_t *type_by_code(uint8_t code) {
       &type_float4,      &type_float8,   &type_text, &type_varchar,
       &type_bytea,       &type_date,     &type_time, &type_timestamp,
       &type_timestamptz, &type_interval, &type_uuid, &type_decimal64,
-      &type_decimal128};
+      &type_decimal128,  &type_bpchar};
   for (const type_t *t : types) {
     if (t->code == code) {
       return t;

@@ -198,6 +198,39 @@ int varchar_unkey(std::string_view &k, int32_t, const sm2::collation_t *c,
   return bytes_unkey("varchar", k, c, d);
 }
 
+/*
+ * A bpchar's value as it is compared: without its trailing spaces, which
+ * PostgreSQL's char(n) pads with and does not count (TYPE.md §3.5).
+ */
+std::string_view bpchar_trim(std::string_view d) {
+  size_t n = d.size();
+  while (n > 0 && d[n - 1] == ' ') {
+    n--;
+  }
+  return d.substr(0, n);
+}
+
+/* Parse a bpchar's text, kept as given: the host pads it. */
+int bpchar_in(std::string_view t, int32_t, std::string &d) {
+  return string_in("bpchar", t, d);
+}
+/* Print a bpchar datum, its padding and all. */
+int bpchar_out(std::string_view d, int32_t, std::string &t) {
+  return string_out("bpchar", d, t);
+}
+/* Order two bpchars as their bytes would, trailing spaces left out. */
+int bpchar_cmp(std::string_view a, std::string_view b, int32_t typmod) {
+  return bytes_cmp(bpchar_trim(a), bpchar_trim(b), typmod);
+}
+
+/*
+ * A bpchar's key: a text's, of the value without its trailing spaces, so
+ * 'a' and 'a  ' are one key, as they are one value in PostgreSQL.
+ */
+int bpchar_key(std::string_view d, int32_t, const sm2::collation_t *c,
+               std::string &k) {
+  return bytes_key(bpchar_trim(d), c, k);
+}
 /* A bytea's key: its bytes, escaped; a bytea has no collation. */
 int bytea_key(std::string_view d, int32_t, const sm2::collation_t *,
               std::string &k) {
@@ -278,6 +311,22 @@ const type_t type_varchar = {.code = 9,
                              .cmp = bytes_cmp,
                              .key_encode = varchar_key,
                              .key_decode = varchar_unkey};
+
+const type_t type_bpchar = {.code = 19,
+                            .name = "bpchar",
+                            .len = -1,
+                            .byval = false,
+                            .align = 4,
+                            .in = bpchar_in,
+                            .out = bpchar_out,
+                            .cmp = bpchar_cmp,
+                            .key_encode = bpchar_key,
+                            /*
+                             * None: its key holds the value without the
+                             * trailing spaces the row has, so an index
+                             * scan reads the row (key_decodable()).
+                             */
+                            .key_decode = nullptr};
 
 const type_t type_bytea = {.code = 10,
                            .name = "bytea",

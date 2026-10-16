@@ -119,8 +119,7 @@ Owed, and blocking nothing above:
   none, so `\d` does not show them.
 - **What PostgreSQL's isolation specs found**
   (`../dg/test/isolation_specs.txt`, `../dg/WORKNOTE.md` step
-  169), beyond the key-share modes above: `char(n)` is not a
-  type yet; and sm1
+  169), beyond the key-share modes above: sm1
   has no wait queue to reorder, so a soft deadlock PostgreSQL
   untangles ends a transaction (`deadlock-soft`).
 - **A failed index build's detail is sm's.** `CREATE UNIQUE

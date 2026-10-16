@@ -104,6 +104,7 @@ null marker and before any inversion.
 | `uuid` | 16 | the 16 bytes | 16 | the same 16 bytes | 16 |
 | `decimal64` | 17 | after DuckDB's decimal, two's complement, LE | 8 | sign-flipped, BE | 8 |
 | `decimal128` | 18 | as `decimal64` | 16 | sign-flipped, BE | 16 |
+| `bpchar` | 19 | payload bytes, padded as given | var | as `text`, of the value without its trailing spaces | var |
 
 The codes are frozen: assigned once, never reused or
 renumbered (`SM2_DESIGN.md` §2). Code 7 was `decimal`, before
@@ -213,7 +214,7 @@ Decided in `SM2_DESIGN.md` §2.2: a typmod is required, and NaN
 and infinity are refused on insert, so no value is reserved as
 a sentinel.
 
-### 3.5 text, varchar
+### 3.5 text, varchar, bpchar
 
 Native is the payload bytes alone — no varlena header, no
 1-byte short form, no PostgreSQL TOAST pointer (`SM2_DESIGN.md`
@@ -269,6 +270,14 @@ key = sortkey(collation, datum) ‖ 0x00 0x00 ‖ escape(datum)
   column's declared type. The `varchar(n)` limit is a
   coercion the host applies; sm2's codec stores what it is
   given (`SM2_DESIGN.md` §2).
+- `bpchar` (19) is PostgreSQL's `char(n)`, whose trailing
+  spaces count for nothing: `'a'` and `'a  '` are one value.
+  It stores what it is given, the host's padding and all, and
+  prints it back; its `cmp` and its key leave the trailing
+  spaces out, so the two are one key, and a unique index takes
+  one of them. A key so holds no value to give back: the type
+  has no `key_decode`, and an index scan reads the row instead,
+  as under a non-deterministic collation.
 
 ### 3.6 bytea
 

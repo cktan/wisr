@@ -157,6 +157,10 @@ int decode_key_front(std::span<const key_column_t> cols, std::string_view &key,
       datums.emplace_back(std::nullopt);
     } else if (marker == value_mark) {
       std::string datum;
+      // A bpchar's key gives no value back (key_decodable()).
+      if (col.type->key_decode == nullptr) {
+        return bad_columns("a key of a type whose key gives no value back");
+      }
       if (col.type->key_decode(rest, col.typmod, col.collation, datum) != 0) {
         return -1;
       }

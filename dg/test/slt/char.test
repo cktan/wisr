@@ -1,0 +1,145 @@
+# Verify that char(n) keeps its values as PostgreSQL does: padded to n,
+# with the padding counting for nothing when values are compared.
+# 1. Make a table with a char(5) column, and rows with and without
+#    trailing spaces.
+# 2. Confirm each value is stored padded, compares equal to itself without
+#    the padding, and sorts and groups as if the padding were not there.
+
+statement ok
+create table c (k char(5), v int4)
+
+statement ok
+insert into c values ('a', 1), ('ab', 2), ('b  ', 3), ('a  ', 4)
+
+query TII rowsort
+select '[' || k || ']', length(k), octet_length(k) from c
+----
+[a]	1	5
+[a]	1	5
+[ab]	2	5
+[b]	1	5
+
+query I rowsort
+select v from c where k = 'a'
+----
+1
+4
+
+query I rowsort
+select v from c where k = 'a    '
+----
+1
+4
+
+query TI nosort
+select k::text, count(*) from c group by k order by k
+----
+a	2
+ab	1
+b	1
+
+query T nosort
+select k from c where k > 'a' order by k
+----
+ab   
+b    
+
+# Verify that a unique index on char(n) takes a value once, its padding
+# or not, and is used to find it.
+# 1. Make a unique index on a char(5) column with distinct values.
+# 2. Confirm a value differing only in trailing spaces is refused.
+# 3. With sequential scans off, confirm lookups and a range find their
+#    rows, whether the value is given padded or not, and an index-only
+#    scan gives the value back padded.
+
+statement ok
+create table u (k char(5), v int4)
+
+statement ok
+insert into u values ('a', 1), ('ab', 2), ('b', 3)
+
+statement ok
+create unique index uk on u (k)
+
+statement error duplicate key value violates
+insert into u values ('a   ', 9)
+
+statement ok
+set enable_seqscan = off
+
+query I nosort
+select v from u where k = 'ab'
+----
+2
+
+query I nosort
+select v from u where k = 'ab   '
+----
+2
+
+query I nosort
+select v from u where k >= 'ab' order by k
+----
+2
+3
+
+query TI nosort
+select '[' || k::varchar || ']', octet_length(k) from u where k = 'b'
+----
+[b]	5
+
+statement ok
+set enable_seqscan = on
+
+# Verify char(n)'s length limit, char's default length, and bpchar.
+# 1. A value longer than n is refused, unless its excess is spaces; an
+#    explicit cast truncates.
+# 2. character with no length is char(1).
+# 3. bpchar with no length keeps a value as given, its spaces too.
+
+statement error value too long for type character\(5\)
+insert into c values ('abcdef', 0)
+
+statement ok
+insert into c values ('xyz      ', 5)
+
+query T nosort
+select 'abcdef'::char(3)
+----
+abc
+
+statement ok
+create table d (x character, y bpchar)
+
+statement ok
+insert into d values ('z', 'q  ')
+
+statement error value too long for type character\(1\)
+insert into d values ('zz', 'q')
+
+query TTI nosort
+select x, '[' || y::varchar || ']', octet_length(y) from d
+----
+z	[q]	3
+
+# Verify a foreign key between char(n) columns: a child's value matches
+# its parent's whatever their padding.
+# 1. Make a parent with a char(4) primary key, and a child with a char(6)
+#    column that references it.
+# 2. Confirm a child row matching a parent padded differently is taken,
+#    and one matching none is refused.
+
+statement ok
+create table cp (id char(4) primary key)
+
+statement ok
+insert into cp values ('ab')
+
+statement ok
+create table cc (pid char(6) references cp)
+
+statement ok
+insert into cc values ('ab    ')
+
+statement error violates foreign key constraint "cc_pid_fkey"
+insert into cc values ('ac')

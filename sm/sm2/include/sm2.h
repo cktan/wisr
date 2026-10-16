@@ -139,6 +139,7 @@ extern const type_t type_interval;    /* code 15 */
 extern const type_t type_uuid;        /* code 16 */
 extern const type_t type_decimal64;   /* code 17 */
 extern const type_t type_decimal128;  /* code 18 */
+extern const type_t type_bpchar;      /* code 19, PostgreSQL's char(n) */
 
 /* The type with this code, or nullptr if there is none. */
 const type_t* type_by_code(uint8_t code);

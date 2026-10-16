@@ -676,6 +676,9 @@ static uint8_t type_code(Oid typid, int32 typmod) {
     return 8;
   case VARCHAROID:
     return 9;
+  /* char(n): stored padded, as given; sm compares it without the padding. */
+  case BPCHAROID:
+    return 19;
   case BYTEAOID:
     return 10;
   case DATEOID:
@@ -1608,6 +1611,8 @@ static Oid type_oid(uint8_t code) {
   case 17:
   case 18:
     return NUMERICOID;
+  case 19:
+    return BPCHAROID;
   default:
     elog(ERROR, "sm type code %d has no type here", code);
   }

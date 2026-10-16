@@ -5282,3 +5282,33 @@ the server's status was the session's 2 (step 148 noted it).
 - `test/server.sh`: three busy sessions and two idle are each
   told, and the server stops within ten seconds with status 0.
   With `_exit(2)` put back it failed three runs of three.
+
+## Step 180: char(n)
+
+`../sm/NEXT.md` §2, `../sm/sm2/TYPE.md` §3.5. PostgreSQL's
+`char(n)`, `bpchar`, was refused: "type character is not
+supported yet". Its values are padded with spaces to n, and the
+padding counts for nothing when they are compared, so `'a'` and
+`'a  '` are one value.
+
+- **sm2 has a type for it**, `bpchar`, code 19: a `text`'s
+  bytes, stored and printed as given, the padding and all. Its
+  `cmp` and its key leave the trailing spaces out, so a lookup
+  finds a value padded or not, and a unique index takes one of
+  `'a'` and `'a  '`. Its key so gives no value back: it has no
+  `key_decode`, and an index-only scan reads the row, as under a
+  non-deterministic collation. sm3 lets a key of it have a
+  collation, as a `text` key may.
+- **digres maps `char(n)` to it and back** (access/sm
+  `smstore.c`), and does nothing else: PostgreSQL pads a value
+  to n as it is cast to the column's type, and reads it back as
+  stored. A `bpchar` of no length keeps a value's spaces, as
+  PostgreSQL's does.
+- `test/slt/char.test`, PostgreSQL 18's answers: padding,
+  length, equality, order and grouping without the padding, a
+  unique index and its lookups and index-only scan, the length
+  limit, `character` as `char(1)`, `bpchar`, and a foreign key
+  between char columns. `../sm/sm2/test/test_type.cc` checks the
+  type, and failed with the key's trim taken out. The isolation
+  spec `propagate-lock-delete` gets past its setup now, and
+  fails on `FOR KEY SHARE`.

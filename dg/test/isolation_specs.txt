@@ -38,9 +38,8 @@ tuplelock-upgrade-no-deadlock   fail
 # waits for the child's transaction, and two may deadlock
 fk-contention                   fail
 fk-deadlock                     fail
-update-locked-tuple             fail
-# char(n) is not supported yet
 propagate-lock-delete           fail
+update-locked-tuple             fail
 # an unconstrained numeric is numeric(18, 3) (DECIMAL.md): 0 prints 0.000
 read-only-anomaly               fail
 timeouts                        fail

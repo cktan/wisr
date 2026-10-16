@@ -604,7 +604,8 @@ int create_index(session_t *session, uint64_t table, std::string_view name,
     }
     if (k.collation) {
       uint8_t code = expr ? k.type_code : rec.columns[k.attnum].type_code;
-      if (code != sm2::type_text.code && code != sm2::type_varchar.code) {
+      if (code != sm2::type_text.code && code != sm2::type_varchar.code &&
+          code != sm2::type_bpchar.code) {
         return invalid("create index: a collation on a column not text");
       }
       const sm2::collation_t *c = nullptr;
