@@ -165,6 +165,7 @@ the two differ, `CLAUDE.md` wins.
   Catching an exception by its type is not this rule's concern.
   Every Makefile compiles with `-fno-rtti`, so the compiler
   refuses the rest.
+- **Use `std::optional` reluctantly.**
 
 ## 9. Tests
 

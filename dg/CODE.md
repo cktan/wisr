@@ -271,6 +271,7 @@ Much of the work is removing what digres does not need.
   comment saying why** — taking a lock, starting a thread,
   freeing a block — even when the call reads plainly.
 - **No `strncpy()`**: `memcpy()` and write the terminator.
+- **Use `std::optional` reluctantly.**
 - **Format with `clang-format -i`** the files you change that
   were already formatted at `HEAD` (format the file at `HEAD`
   and compare); do not reformat a file that was not. Run
