@@ -5978,3 +5978,38 @@ the scan read by, opened in the subtransaction.
   first three failed before, the first stopping the server.
   sm1 `test_savepoint.cc`: the closed cursor's errors, and
   its free at commit.
+
+## Step 205: a rollback sm refuses dooms the transaction
+
+`../sm/NEXT.md`'s bug: access/sm `smstore_subabort()`, which
+`AbortSubTransaction()` calls, discarded `sm_rollback()`'s
+error, taking a savepoint sm could not undo for a transaction
+sm had ended. But a rollback sm refuses changes nothing and
+leaves its transaction running, with the writes it was to
+undo: past `savepoint_undo_bytes` (`SM_ERR_UNDOLIMIT`), or
+with a bulk load open (`SM_ERR_INVALID`).
+
+- **An open load is ended first.** A `COPY` or a `CREATE
+  TABLE AS` that fails after its load began leaves it open;
+  `end_load_quietly()` ends it before the rollback, which then
+  empties the table, as since `a656446`. So the failed
+  statement rolls back to the savepoint and the transaction
+  goes on, as in PostgreSQL. Its rows are written and then
+  deleted, on a path that is rare.
+- **A rollback still refused dooms the transaction.** In an
+  abort an error has nowhere to go, so sm's message is kept in
+  `tcb->smstore`. The next call into sm (`xact_session()`)
+  fails with `the transaction cannot go on`, and `COMMIT`
+  (`smstore_commit()`) with `could not commit`, aborting sm's
+  transaction: what the rollback was to undo never commits.
+  The transaction's end clears it.
+- **Where digres still differs**: a load whose end fails, on a
+  duplicate key, stays open in sm, so its rollback is refused
+  and the transaction doomed, where PostgreSQL goes on.
+- `test/slt/savepoint_load.test`: a `COPY` failing after 1,000
+  rows, and a `CREATE TABLE AS` failing mid-load, each in a
+  savepoint, rolled back to and committed; a duplicate key
+  failing a load's end, then the next statement, and the
+  commit, refused (`onlyif digres`, beside PostgreSQL's
+  answers). 5 of its 49 records failed before. The cap's path
+  is untested (`../sm/NEXT.md` §2).

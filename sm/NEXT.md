@@ -9,37 +9,8 @@ has sm3's own order of work.
 
 ## 1. Next
 
-A bug, to fix first:
-
-1. **digres ignores a rollback sm refuses.**
-   `smstore_subabort()` (`../dg/src/backend/access/sm/
-   smstore.c`) discards `sm_rollback()`'s error, taking a
-   savepoint sm cannot undo for a transaction sm has ended.
-   But on `SM_ERR_UNDOLIMIT` sm1 changes nothing and leaves
-   its transaction open (`sm1/include/sm1.h`): the writes
-   stay, and the next statement and `COMMIT` succeed. A
-   transaction whose undo list passes `savepoint_undo_bytes`,
-   64 MB of ordinary writes after a savepoint, reaches it. The
-   fix: a failed `sm_rollback()` dooms the transaction, and the
-   next call into sm and `COMMIT` refuse it. Its test needs the
-   cap set low, which digres has no way to do yet
-   (`sm_attach()` takes no options from it).
-
-   A `COPY` into an empty table that fails inside a savepoint
-   after its first batch, its load still open, takes the same
-   path, and so does a `CREATE TABLE AS` that fails after its
-   first row: sm refuses the rollback with `SM_ERR_INVALID`
-   (`BULKLOAD.md` §3.5), digres ignores it, and the next call
-   into sm fails (`a savepoint cannot be set with a bulk load
-   open`), or the `COMMIT` does (`a transaction with a bulk
-   load open cannot commit`), aborting the transaction.
-   Nothing wrong commits, but PostgreSQL would roll back to
-   the savepoint and go on. `smstore_subabort()` should end
-   the open load before it rolls back; the rollback then
-   empties the table.
-
-Nothing else is queued above low priority. The spike
-`PART4.md` §7 aimed the stack at is long past: digres runs on it
+Nothing is queued above low priority. The spike `PART4.md` §7
+aimed the stack at is long past: digres runs on it
 (`PART4.md` §10). Statistics for a planner are built, the
 stack's part and digres's (`../dg/STATISTICS.md`,
 `../dg/WORKNOTE.md` steps 74 to 78), and so are the catalog
@@ -89,6 +60,14 @@ Low priority:
 ## 2. Loose ends
 
 Owed, and blocking nothing above:
+
+- **A rollback refused past the undo list's cap is untested in
+  digres.** digres dooms the transaction when sm refuses a
+  rollback to a savepoint (`../dg/WORKNOTE.md` step 205), and
+  a test reaches that through a load whose end fails. Past
+  `savepoint_undo_bytes`, 64 MB of writes after a savepoint,
+  it goes the same way, but no test sets the cap low enough:
+  `sm_attach()` takes no options from digres.
 
 - **The commit cache's size** (`sm1/COMMITCACHE.md` §7).
   65,536 entries reaches back under a second at 100,000

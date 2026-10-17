@@ -116,6 +116,12 @@ struct smstore_state_t {
   /* The indexes this transaction made, and those its commit is to wait on. */
   std::vector<made_index_t> made_indexes;
   std::vector<made_index_t> built_after_commit;
+  /*
+   * Why sm refused to roll back to a savepoint, which changed nothing and
+   * left its transaction to be aborted; empty while it may go on
+   * (smstore_subabort()).
+   */
+  std::string doomed;
 };
 
 /* The tables this session's transaction opened. */
@@ -281,6 +287,8 @@ static void close_tables(void) {
       sm_tbl_close(ot.tbl);
   open_tables().clear();
   savepoints = NIL;
+  /* A doomed transaction is over. */
+  tcb->smstore->doomed.clear();
   /* The kept row's memory goes with the transaction. */
   kept_oid = InvalidOid;
   kept_tuple = NULL;
@@ -297,6 +305,16 @@ void smstore_commit(void) {
 
   if (!sm_xact_open)
     return;
+  /* What a refused rollback kept must not commit (smstore_subabort()). */
+  if (!tcb->smstore->doomed.empty()) {
+    std::string why = tcb->smstore->doomed;
+
+    smstore_abort();
+    ereport(ERROR,
+            (errcode(ERRCODE_IN_FAILED_SQL_TRANSACTION),
+             errmsg("could not commit: a rollback to a savepoint failed: %s",
+                    why.c_str())));
+  }
   close_tables();
   sm_xact_open = false;
   made.swap(tcb->smstore->made_indexes);
@@ -361,16 +379,40 @@ void smstore_subcommit(void) {
         ot.level = level - 1;
 }
 
+static sm_tbl_t *held_table(Oid oid, sm_lockmode_t mode);
+
+/*
+ * End the bulk load a failed statement left open, raising no error: sm
+ * rolls back past a closed load, emptying its table, and refuses to while
+ * one is open.  A load whose end fails stays open in sm, and the rollback
+ * is refused.
+ */
+static void end_load_quietly(void) {
+  sm_tbl_t *tbl;
+
+  if (load_oid == InvalidOid)
+    return;
+  tbl = held_table(load_oid, SM_LOCKMODE_IX);
+  load_oid = InvalidOid;
+  if (tbl != NULL)
+    (void)sm_tbl_load_end(tbl);
+}
+
 /* The subtransaction aborts: its writes are undone, and its savepoint goes. */
 void smstore_subabort(void) {
   int depth = subxact_savepoint();
 
+  end_load_quietly();
   /*
-   * In an abort there is nowhere for an error to go: a savepoint sm cannot
-   * undo is a transaction sm has ended, and the next call says so.
+   * A rollback sm refuses changes nothing and leaves its transaction
+   * running, with the writes it was to undo: past the undo list's cap, or
+   * with a load it could not end.  In an abort there is nowhere for an
+   * error to go, so the transaction is doomed instead: its next call into
+   * sm fails, and so does its commit.
    */
   if (depth > 0) {
-    (void)sm_rollback(session(), depth);
+    if (sm_rollback(session(), depth) != 0 && tcb->smstore->doomed.empty())
+      tcb->smstore->doomed = sm_errmsg();
     (void)sm_forget(session(), depth);
   }
   close_subxact_tables();
@@ -426,6 +468,14 @@ static void statement_begin(sm_session_t *s) {
 static sm_session_t *xact_session(void) {
   sm_session_t *s = session();
 
+  /* A rollback sm refused left the transaction to be aborted. */
+  if (!tcb->smstore->doomed.empty())
+    ereport(ERROR,
+            (errcode(ERRCODE_IN_FAILED_SQL_TRANSACTION),
+             errmsg("the transaction cannot go on: a rollback to a savepoint "
+                    "failed: %s",
+                    tcb->smstore->doomed.c_str()),
+             errhint("Roll back the transaction.")));
   if (sm_xact_open) {
     statement_begin(s);
     savepoints_begin(s);

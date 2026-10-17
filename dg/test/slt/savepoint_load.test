@@ -8,6 +8,15 @@
 #    commit: the table is empty.
 # 3. Create a table after a savepoint, COPY into it, roll back to the
 #    savepoint and commit: the table does not exist.
+# 4. A COPY into an empty table that fails after its load began, in a
+#    savepoint: roll back to it, insert a row and commit; only that row
+#    is there.
+# 5. A CREATE TABLE AS that fails after its load began, in a savepoint:
+#    roll back to it and commit; the table does not exist.
+# 6. A COPY whose load fails at its end, on a duplicate key: sm keeps
+#    the load open and refuses the rollback, so digres refuses the
+#    transaction's next call into sm and its commit, where PostgreSQL
+#    goes on (onlyif digres, beside skipif digres).
 
 statement ok
 create table r (a int4)
@@ -78,3 +87,110 @@ commit
 
 statement error relation "n" does not exist
 select count(*) from n
+
+statement ok
+create table w (a int4)
+
+statement ok
+begin
+
+statement ok
+savepoint one
+
+statement error invalid input syntax for type integer
+copy w from program '(seq 1 2000; echo x)'
+
+statement ok
+rollback to savepoint one
+
+statement ok
+insert into w values (9)
+
+statement ok
+commit
+
+query I nosort
+select a from w
+----
+9
+
+statement ok
+begin
+
+statement ok
+savepoint one
+
+statement error division by zero
+create table f as select 10 / (5 - g) as x from generate_series(1, 9) g
+
+statement ok
+rollback to savepoint one
+
+statement ok
+commit
+
+statement error relation "f" does not exist
+select count(*) from f
+
+statement ok
+create table u (a int4 primary key)
+
+statement ok
+begin
+
+statement ok
+savepoint one
+
+skipif digres
+statement error duplicate key value violates unique constraint
+copy u from program 'printf "1\n1\n"'
+
+onlyif digres
+statement error duplicate key value violates a unique index on "u"
+copy u from program 'printf "1\n1\n"'
+
+statement ok
+rollback to savepoint one
+
+skipif digres
+query I nosort
+select count(*) from u
+----
+0
+
+onlyif digres
+statement error the transaction cannot go on: a rollback to a savepoint failed
+select count(*) from u
+
+statement ok
+commit
+
+statement ok
+begin
+
+statement ok
+savepoint one
+
+skipif digres
+statement error duplicate key value violates unique constraint
+copy u from program 'printf "1\n1\n"'
+
+onlyif digres
+statement error duplicate key value violates a unique index on "u"
+copy u from program 'printf "1\n1\n"'
+
+statement ok
+rollback to savepoint one
+
+skipif digres
+statement ok
+commit
+
+onlyif digres
+statement error could not commit: a rollback to a savepoint failed
+commit
+
+query I nosort
+select count(*) from u
+----
+0
