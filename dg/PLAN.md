@@ -502,6 +502,18 @@ Do not reopen these without the owner:
   would be a row in the database naming a slot of this
   instance, against "a database is its directory"
   (`CODE.md`).
+- **No geometric types** (decided 2026-10-17). PostgreSQL's
+  built-in `point`, `line`, `lseg`, `box`, `path`, `polygon`
+  and `circle` are not supported: sm has no type for them, and
+  a column of one is refused. They are planar, with no
+  coordinate system, and few applications use them; spatial
+  work in PostgreSQL goes through PostGIS, whose model, the
+  OpenGIS one MySQL has too (`geometry`, well-known binary, a
+  coordinate system, an R-tree or GiST index), is a different
+  family. Supporting that would be a decision of its own. The
+  regression files that test the built-in types, and those
+  that read `test_setup`'s `POINT_TBL`, `person` and `road`,
+  fail by design.
 
 ## 8. Working in this tree
 

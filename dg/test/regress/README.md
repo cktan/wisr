@@ -128,8 +128,9 @@ fails here, as each runs in a database of its own:
 Every file starts with these failures, so 10 of `test_setup`'s
 tables are missing in every file:
 
-- `POINT_TBL` and `person` (`point`), `road` (`path`): types
-  not supported yet.
+- `POINT_TBL` and `person` (`point`), `road` (`path`):
+  geometric types, not supported by decision (`../../PLAN.md`
+  §7).
 - `onek2` and `tenk2`: `CREATE TABLE AS`.
 - `emp`, `student`, `stud_emp`, `ihighway`, `shighway`:
   `INHERITS`.
@@ -172,12 +173,10 @@ By files unblocked for the work, the cheapest first:
 2. **`CREATE TABLE AS` and `SELECT INTO`**, as a `CREATE
    TABLE` and an `INSERT ... SELECT`: 7 files directly, and
    through `onek2` and `tenk2`, 3 more: 10 files, the most of
-   any one change now.
+   any one change now. Built since, into sm's bulk load
+   (`../../WORKNOTE.md` step 203); not yet measured here.
 3. **Accept and ignore `WITH (fillfactor, autovacuum_enabled)`**
    on `CREATE TABLE`: sm has no pages to fill. 5 files.
-4. **The geometric types**, `point`, `box`, `path` and the
-   rest: 10 files directly, and 3 more through `POINT_TBL`,
-   `person` and `road`.
 
 Bigger, and each needs a decision of record first:
 
@@ -191,4 +190,6 @@ Bigger, and each needs a decision of record first:
 Not worth doing for the suite: the parallel query settings
 (7 files) were removed with their module, and the plans those
 files print would differ anyway; `INHERITS` and partitions are
-refused by design.
+refused by design, and so are the geometric types
+(`../../PLAN.md` §7): 10 files directly, and 3 more through
+`POINT_TBL`, `person` and `road`.
