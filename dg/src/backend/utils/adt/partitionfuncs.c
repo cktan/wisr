@@ -22,31 +22,15 @@
 #include "funcapi.h"
 #include "utils/fmgrprotos.h"
 #include "utils/lsyscache.h"
-#include "utils/syscache.h"
 
 /*
- * Checks if a given relation can be part of a partition tree.  Returns
- * false if the relation cannot be processed, in which case it is up to
- * the caller to decide what to do, by either raising an error or doing
- * something else.
+ * Checks if a given relation can be part of a partition tree.  digres has
+ * no partitions (CREATE TABLE refuses PARTITION BY and PARTITION OF), so
+ * none can.  PostgreSQL asked pg_class's syscache whether the relation
+ * exists, whose miss opens pg_class's index, which digres has not
+ * (WORKNOTE.md step 198).
  */
-static bool check_rel_can_be_partition(Oid relid) {
-  char relkind;
-  bool relispartition;
-
-  /* Check if relation exists */
-  if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
-    return false;
-
-  relkind = get_rel_relkind(relid);
-  relispartition = get_rel_relispartition(relid);
-
-  /* Only allow relation types that can appear in partition trees. */
-  if (!relispartition && !RELKIND_HAS_PARTITIONS(relkind))
-    return false;
-
-  return true;
-}
+static bool check_rel_can_be_partition(Oid relid) { return false; }
 
 /*
  * pg_partition_tree

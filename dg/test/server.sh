@@ -2197,6 +2197,20 @@ primary key, btree, for table "dd1.t"
 
 OUT
 cmp -s "$work/dd.out" "$work/dd.expected" || fail "\\d of a table and an index"
+
+# Verify that the partition functions answer for a table of sm's, which no
+# partition tree holds, as PostgreSQL does for a table not partitioned:
+# psql 18's \d calls pg_partition_ancestors(), and only its plan kept the
+# call from failing.
+# 1. pg_partition_ancestors() and pg_partition_tree() of dd1.t: no rows.
+# 2. pg_partition_root() of dd1.t: null.
+# 3. pg_partition_tree() of oid 0, no relation: no rows.
+local_psql -c "select count(*) from pg_partition_ancestors('dd1.t')" \
+  -c "select count(*) from pg_partition_tree('dd1.t')" \
+  -c "select pg_partition_root('dd1.t') is null" \
+  -c "select count(*) from pg_partition_tree(0)" > "$work/part.out" 2>&1
+[ "$(tr '\n' ' ' < "$work/part.out")" = "0 0 t 0 " ] ||
+  fail "partition functions of a table of sm's"
 [ "$(local_psql -c '\du')" = \
   "$me|Superuser, Create role, Create DB, Replication, Bypass RLS" ] ||
   fail "\\du"

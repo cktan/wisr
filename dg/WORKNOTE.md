@@ -5744,3 +5744,29 @@ with "function 0x... returned NULL".
   type's bytes, limits, order and key.
 - `test_setup` makes `onek` and `tenk1` now; `select` stops next
   at `onek2`, which is `CREATE TABLE AS`.
+
+## Step 198: the partition functions answer for a table of sm's
+
+`test/server.sh`'s `\d` checks failed on psql 18 with "relation
+2662 cannot be opened": psql 18's `\d` asks which foreign keys
+reference the table, through `pg_partition_ancestors()`, for
+every table, where psql 16 asked only for one with triggers.
+`check_rel_can_be_partition()` (utils/adt `partitionfuncs.c`)
+asked `pg_class`'s syscache whether the relation exists; for a
+table of sm's that misses the compiled-in rows and scans
+`pg_class` through its index, `pg_class_oid_index`, which
+digres has not. Whether `\d` failed was the plan's: a hash
+semi join called the function, a nested loop, at nearly the
+same cost, did not.
+
+- **It says no for every relation**, as digres has no
+  partitions: `CREATE TABLE` refuses `PARTITION BY` and
+  `PARTITION OF`. `pg_partition_tree()`,
+  `pg_partition_ancestors()` and `pg_partition_root()` give
+  what PostgreSQL gives for a table not partitioned: no rows,
+  and null.
+- `test/server.sh` calls each on a table of sm's and on oid 0,
+  so no plan can keep the call away; it failed before the
+  change.
+- Left as it was: any other `RELOID` syscache lookup of a
+  table of sm's still opens `pg_class`'s index, and fails.
