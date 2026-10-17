@@ -1,0 +1,86 @@
+# Verify a ROLLBACK TO SAVEPOINT never lets a COPY it rolled back be
+# committed: into an empty table COPY is sm's bulk load, which a
+# rollback to a savepoint set before it cannot undo (sm/BULKLOAD.md
+# section 3.5).
+# 1. COPY into a table with rows, after a savepoint, roll back to it
+#    and commit: the table keeps only its rows from before.
+# 2. COPY into an empty table, after a savepoint, roll back to it and
+#    commit: the table is empty.
+# 3. Create a table after a savepoint, COPY into it, roll back to the
+#    savepoint and commit: the table does not exist.
+#
+# digres fails steps 2 and 3, committing what was rolled back
+# (../sm/NEXT.md section 1, bug 1): their checks are skipped on it
+# until that is fixed.
+
+statement ok
+create table r (a int4)
+
+statement ok
+insert into r values (0)
+
+statement ok
+begin
+
+statement ok
+savepoint one
+
+statement ok
+copy r from program 'printf "1\n2\n"'
+
+statement ok
+rollback to savepoint one
+
+statement ok
+commit
+
+query I nosort
+select a from r
+----
+0
+
+statement ok
+create table e (a int4)
+
+statement ok
+begin
+
+statement ok
+savepoint one
+
+statement ok
+copy e from program 'printf "1\n2\n"'
+
+statement ok
+rollback to savepoint one
+
+statement ok
+commit
+
+skipif digres
+query I nosort
+select count(*) from e
+----
+0
+
+statement ok
+begin
+
+statement ok
+savepoint one
+
+statement ok
+create table n (a int4)
+
+statement ok
+copy n from program 'printf "1\n2\n"'
+
+statement ok
+rollback to savepoint one
+
+statement ok
+commit
+
+skipif digres
+statement error relation "n" does not exist
+select count(*) from n
