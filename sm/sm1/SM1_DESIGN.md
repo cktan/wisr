@@ -1227,6 +1227,15 @@ before it. Closing releases each cursor's RocksDB snapshot,
 which also lets `gc_watermark` advance past an abandoned
 scan.
 
+**Closed, not freed.** A closed cursor stays the session's:
+each `sm1::scannxt` and `sm1::scan_seek` on it fails with
+`SM_ERR_INVALID`, until its caller ends it with
+`sm1::scanend`, or the transaction's end does. A caller may
+not know that a rollback reached one of its cursors. A SQL
+cursor declared before a savepoint whose plan begins a scan
+again inside it holds such a cursor, and freeing it would
+leave the next `FETCH` a dangling pointer.
+
 Releasing locks acquired after the mark is safe: the row was untouched
 before the savepoint, so no one observed our intent on it. A
 writer waiting for the transaction is woken, since a version

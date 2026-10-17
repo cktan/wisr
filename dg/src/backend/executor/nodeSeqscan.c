@@ -224,6 +224,15 @@ SeqScanState *ExecInitSeqScan(SeqScan *node, EState *estate, int eflags) {
           : table_slot_callbacks(scanstate->ss.ss_currentRelation));
 
   /*
+   * A scan of a table in sm begins as the plan does, not at its first row: a
+   * cursor reads the rows there were when it was declared, by a scan that a
+   * rollback to a savepoint set after it leaves open.
+   */
+  if (RelationIsSm(scanstate->ss.ss_currentRelation) &&
+      !(eflags & EXEC_FLAG_EXPLAIN_ONLY))
+    scanstate->sm_scan = smstore_beginscan(scanstate->ss.ss_currentRelation);
+
+  /*
    * Initialize result type and projection.
    */
   ExecInitResultTypeTL(&scanstate->ss.ps);

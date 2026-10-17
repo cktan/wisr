@@ -5938,3 +5938,43 @@ TOAST table.
   rollback to a savepoint before it. Its answers are written by
   hand, as no PostgreSQL 18 was at hand; `make regress` could
   not be run for the same reason.
+
+## Step 204: a cursor reads on after a rollback to a savepoint
+
+`test/regress/README.md`'s crash in `transactions`: a cursor
+declared before a savepoint, fetched from inside it, used
+after `ROLLBACK TO SAVEPOINT` read freed memory. Its sm scan
+began at its first `FETCH`, inside the savepoint, so sm1's
+rollback closed and freed it, and dg closed the table handle
+the scan read by, opened in the subtransaction.
+
+- **A scan begins with its plan.** executor `nodeSeqscan.c`,
+  `nodeIndexscan.c` and `nodeIndexonlyscan.c` begin the sm
+  scan in `ExecInit*`, at `DECLARE`, not at the first row:
+  the scan, its table handle and its lock all come before a
+  savepoint set after. A cursor also reads the rows there
+  were when it was declared, as PostgreSQL's does; it read
+  the transaction's writes between `DECLARE` and its first
+  `FETCH` before. An index scan with runtime keys still
+  begins when they are known, and a scan begun again (a
+  nested loop's inner side) at its next row.
+- **sm1 closes a cursor without freeing it.** A cursor opened
+  after the mark is closed by the rollback as before, but
+  stays the session's: each read and seek fails with
+  `SM_ERR_INVALID`, until `sm1::scanend()` or the
+  transaction's end frees it (sm1 `SM1_DESIGN.md` §6.5). A
+  cursor whose nested loop began its inner scan again inside
+  the savepoint fails at its next `FETCH`, `could not scan a
+  table: the cursor was closed by a rollback ...`, where
+  PostgreSQL reads on.
+- **Locks are released at the rollback, as before.** Keeping
+  a table's lock past it is not needed: a cursor's locks are
+  all taken at `DECLARE` now. And sm3 relies on the release:
+  `need_empty()` (sm3 `ddl.cc`) gives back a table's X by a
+  rollback to a savepoint set before it.
+- `test/server.sh`: a cursor by seq scan and by index across
+  a rollback to a savepoint, a cursor that does not see a row
+  inserted after `DECLARE`, and the nested loop's error; the
+  first three failed before, the first stopping the server.
+  sm1 `test_savepoint.cc`: the closed cursor's errors, and
+  its free at commit.

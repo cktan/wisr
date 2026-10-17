@@ -252,7 +252,9 @@ template <class F> static int waiting(F f) {
 /*
  * Close the tables the aborting subtransaction opened: sm's rollback undid
  * what they did, a truncate's new store among it, and released their locks,
- * so a handle of them is stale.  The next use opens one afresh.
+ * so a handle of them is stale.  The next use opens one afresh.  A cursor's
+ * scans began with its plan, in the cursor's level, so a handle they read by
+ * is not closed here.
  */
 static void close_subxact_tables(void) {
   int level = GetCurrentTransactionNestLevel();

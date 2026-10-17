@@ -970,6 +970,17 @@ IndexScanState *ExecInitIndexScan(IndexScan *node, EState *estate, int eflags) {
   }
 
   /*
+   * An index scan of a table in sm whose keys are known begins as the plan
+   * does, as a seq scan does (nodeSeqscan.c); one with runtime keys begins
+   * when they are.
+   */
+  if (RelationIsSm(indexstate->ss.ss_currentRelation) &&
+      indexstate->iss_NumRuntimeKeys == 0)
+    indexstate->iss_SmScan = smstore_index_beginscan(
+        indexstate->ss.ss_currentRelation, indexstate->iss_RelationDesc,
+        indexstate->iss_ScanKeys, indexstate->iss_NumScanKeys);
+
+  /*
    * all done.
    */
   return indexstate;

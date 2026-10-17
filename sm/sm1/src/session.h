@@ -206,6 +206,12 @@ struct sm1::scan_t {
   uint64_t xid = 0;
   uint32_t seq_hwm = 0;
   int state = 0; /* 0 open, 1 at end, -1 failed */
+  /*
+   * Closed by a rollback to a savepoint set before it opened
+   * (§6.5): what it held is released, and it waits only for
+   * sm1::scanend to free it.
+   */
+  bool rolled_back = false;
 
   /* The scan's SIREAD range and how far it read (§7.1). */
   bool has_ssi_range = false;
@@ -454,6 +460,13 @@ int xct_resolve(wisr::db_t *db, uint64_t xid, uint64_t *commit_ts);
 
 /* Close every cursor open on session. */
 void xct_end_scans(sm1::session_t *session);
+
+/*
+ * Release what a cursor holds -- its SIREAD range, iterator,
+ * snapshot and read epoch -- but not the cursor itself, which
+ * stays the session's until sm1::scanend frees it.
+ */
+void scan_release(sm1::scan_t *scan);
 
 /*
  * Look storeid up at view: 0 if it names a live store, 1 if

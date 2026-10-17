@@ -465,6 +465,72 @@ SQL
 [ "$(local_psql -c 'select a from t2' 2>&1 | tr '\n' ' ')" = "1 3 5 6 9 " ] ||
   fail "savepoints"
 
+# Verify that a cursor declared before a savepoint reads on after a rollback
+# to it, and reads the rows there were when it was declared.
+# 1. Fill cr1 with 1 to 100, and cr2, indexed on a, with the same.
+# 2. Over cr1, fetch 2 inside a savepoint, roll back to it, fetch 2 more and
+#    close the cursor: 1 to 4.
+# 3. The same over cr2 by its index, from 50, the cursor closed by the
+#    commit: 51 to 54.
+# 4. Declare a cursor of cr1's rows past 98, insert 101, fetch them all: 99
+#    and 100, not 101.
+# 5. A nested loop whose inner scan of cr1 begins again inside a savepoint
+#    fails at the cursor's next fetch after a rollback to it, and the server
+#    answers after.
+local_psql > /dev/null 2>&1 <<'SQL'
+create table cr1 (a int4);
+insert into cr1 select generate_series(1, 100);
+create table cr2 (a int4, b int4);
+create index cr2_a on cr2 (a);
+insert into cr2 select g, g from generate_series(1, 100) g;
+SQL
+[ "$(local_psql 2>&1 <<'SQL' | grep -v '^[A-Z]' | tr '\n' ' '
+begin;
+declare c cursor for select a from cr1;
+savepoint s;
+fetch 2 from c;
+rollback to s;
+fetch 2 from c;
+close c;
+commit;
+SQL
+)" = "1 2 3 4 " ] || fail "cursor over a rollback to a savepoint"
+[ "$(local_psql 2>&1 <<'SQL' | grep -v '^[A-Z]' | tr '\n' ' '
+set enable_seqscan = off;
+begin;
+declare c cursor for select b from cr2 where a > 50 order by a;
+savepoint s;
+fetch 2 from c;
+rollback to s;
+fetch 2 from c;
+commit;
+SQL
+)" = "51 52 53 54 " ] || fail "index cursor over a rollback to a savepoint"
+[ "$(local_psql 2>&1 <<'SQL' | grep -v '^[A-Z]' | tr '\n' ' '
+begin;
+declare c cursor for select a from cr1 where a > 98;
+insert into cr1 values (101);
+fetch all from c;
+rollback;
+SQL
+)" = "99 100 " ] || fail "cursor reads as declared"
+local_psql > "$work/cursor_rescan.out" 2>&1 <<'SQL'
+set enable_hashjoin = off;
+set enable_mergejoin = off;
+set enable_material = off;
+begin;
+declare c cursor for select x.a from cr1 x join cr1 y on x.a = y.a
+  where x.a <= 3;
+fetch 1 from c;
+savepoint s;
+fetch 1 from c;
+rollback to s;
+fetch 1 from c;
+SQL
+grep -q 'closed by a rollback' "$work/cursor_rescan.out" &&
+  [ "$(local_psql -c 'select count(*) from cr1' 2>&1)" = 100 ] ||
+  fail "cursor rescanned in a rolled back savepoint"
+
 # Verify that LISTEN and NOTIFY are refused, and that UNLISTEN and DISCARD
 # ALL, which a pooler sends, still run.
 # 1. Confirm LISTEN and NOTIFY fail, each with its name.

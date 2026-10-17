@@ -272,7 +272,8 @@ TEST_CASE(
   // Verify §6.5's cursor rule and the seq rewind.
   // 1. Insert "b"; open cursor C1; set the savepoint.
   // 2. Insert "c"; open cursor C2.
-  // 3. Roll back: C2 is closed, C1 stays open.
+  // 3. Roll back: C2 is closed, failing each read and seek with
+  //    SM_ERR_INVALID until it is ended; C1 stays open.
   // 4. Insert "d" (it reuses the undone seq number).
   // 5. C1 returns exactly "a" and "b": no row written after
   //    the mark, and nothing written after C1 opened.
@@ -289,6 +290,14 @@ TEST_CASE(
   CHECK(s->scans.size() == 2);
 
   REQUIRE(sm1::rollback(s, 1) == 0);
+  std::string_view k, d;
+  CHECK(sm1::scannxt(c2, k, d) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm1::scannxt(c2, k, d) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm1::scan_seek(c2, "z", 1) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  sm1::scanend(c2);
   CHECK(s->scans.size() == 1);
   CHECK(s->scans.count(c1) == 1);
   put(s, g_store, "d", "3");
@@ -296,6 +305,23 @@ TEST_CASE(
   CHECK(keys_of(scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0)) ==
         std::vector<std::string>{"a", "b", "d"});
   REQUIRE(sm1::commit(s) == 0);
+  sm1::closedb(s);
+}
+
+TEST_CASE("a cursor a rollback closed is freed by the transaction's end") {
+  // Verify a closed cursor its caller never ends is no leak.
+  // 1. Set a savepoint, open a cursor, and roll back.
+  // 2. The cursor is still the session's, until the commit.
+  sp_fixture_t f;
+  sm1::session_t *s = f.open();
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::savepoint(s) == 1);
+  REQUIRE(scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0));
+  REQUIRE(sm1::rollback(s, 1) == 0);
+
+  CHECK(s->scans.size() == 1);
+  REQUIRE(sm1::commit(s) == 0);
+  CHECK(s->scans.empty());
   sm1::closedb(s);
 }
 

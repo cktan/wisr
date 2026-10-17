@@ -529,17 +529,15 @@ int rollback(sm1::session_t *s, int depth) {
 
   // Close the cursors opened after the mark: their snapshot
   // and frozen seq_hwm would still admit the undone versions.
-  std::vector<sm1::scan_t *> later;
-  // Walk the open cursors.
+  // Each stays the session's, failing every read, until its
+  // caller ends it: one that is used again gets an error, not
+  // freed memory.
   for (sm1::scan_t *c : s->scans) {
-    // Opened after the mark.
-    if (c->id > m.scan_id) {
-      later.push_back(c);
+    // Opened after the mark, and not closed by a rollback yet.
+    if (c->id > m.scan_id && !c->rolled_back) {
+      scan_release(c);
+      c->rolled_back = true;
     }
-  }
-  // Close each one.
-  for (sm1::scan_t *c : later) {
-    sm1::scanend(c);
   }
 
   // Drop the stores created after the mark, newest first.

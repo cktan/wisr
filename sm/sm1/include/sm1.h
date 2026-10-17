@@ -783,11 +783,13 @@ int savepoint(session_t* session);
  * Locks taken since the mark are released, locks held from
  * before it are kept, and the transaction stays active.
  *
- * Scan cursors opened AFTER the savepoint are closed, and
- * their sm1::scan_t handles must not be used again; one opened
- * before it stays open and keeps its position. A cursor's view
- * is fixed when it is created, so a later one would otherwise
- * go on returning rows this call just undid.
+ * Scan cursors opened AFTER the savepoint are closed: a
+ * sm1::scannxt() or sm1::scan_seek() on one fails with
+ * SM_ERR_INVALID until sm1::scanend() frees it, as the
+ * transaction's end does. One opened before it stays open
+ * and keeps its position. A cursor's view is fixed when it
+ * is created, so a later one would otherwise go on returning
+ * rows this call just undid.
  *
  * Requires a savepoint at that depth. To roll a transaction
  * back to its start, call sm1::savepoint() immediately after
@@ -1120,9 +1122,10 @@ int read(session_t* session, uint64_t storeid,
  *
  * The cursor is owned by the session, must be used only from
  * the thread using that session, and is invalidated by
- * sm1::commit(), sm1::abort(), sm1::closedb(), and an sm1::rollback()
- * to a savepoint older than it. Multiple cursors may be open
- * on one session at once.
+ * sm1::commit(), sm1::abort() and sm1::closedb(). An
+ * sm1::rollback() to a savepoint older than it closes it: it
+ * then fails each read, and sm1::scanend() frees it. Multiple
+ * cursors may be open on one session at once.
  *
  * Returns 0 with the cursor in out, or -1 on error:
  * SM_ERR_NOTFOUND (no such store), SM_ERR_NOTRANS,

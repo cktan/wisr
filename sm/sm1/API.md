@@ -1101,12 +1101,14 @@ more than once; the savepoints set inside it are gone. Row
 locks acquired since the mark are released; locks held from
 before it are kept. The transaction remains active.
 
-**Scan cursors opened after the savepoint are closed**,
-and their `sm1::scan_t` handles must not be used again; a
-cursor opened before the savepoint stays open and keeps
-its position. A cursor's view is fixed when it is
-created, so one opened after the mark would otherwise go
-on returning rows this call just undid.
+**Scan cursors opened after the savepoint are closed**: a
+read or seek on one fails with `SM_ERR_INVALID` until it
+is ended with `sm1::scanend`, which frees it, as the
+transaction's end does. A cursor opened before the
+savepoint stays open and keeps its position. A cursor's
+view is fixed when it is created, so one opened after the
+mark would otherwise go on returning rows this call just
+undid.
 
 Requires a savepoint at that depth. To be able to roll a
 transaction back to its start, call `sm1::savepoint`

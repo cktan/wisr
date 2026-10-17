@@ -590,6 +590,13 @@ IndexOnlyScanState *ExecInitIndexOnlyScan(IndexOnlyScan *node, EState *estate,
 
   indexstate->ioss_NameCStringCount = namecount;
 
+  /* One of a table in sm begins now, as an index scan's (nodeIndexscan.c). */
+  if (RelationIsSm(indexstate->ss.ss_currentRelation) &&
+      indexstate->ioss_NumRuntimeKeys == 0)
+    indexstate->ioss_SmScan = smstore_index_beginscan(
+        indexstate->ss.ss_currentRelation, indexstate->ioss_RelationDesc,
+        indexstate->ioss_ScanKeys, indexstate->ioss_NumScanKeys);
+
   /*
    * all done.
    */

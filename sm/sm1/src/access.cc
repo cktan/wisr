@@ -611,6 +611,10 @@ sm1::scan_t *access_scan(sm1::session_t *s, uint64_t storeid,
 
 namespace {
 
+/* What a cursor a rollback closed says when it is used (§6.5). */
+constexpr const char *rolled_back_msg =
+    "the cursor was closed by a rollback to a savepoint set before it opened";
+
 /* sm1::scan_seek, minus the out-of-memory guard. */
 int scan_seek(sm1::scan_t *c, const char *key, size_t klen, int inclusive) {
   // Reject a NULL cursor.
@@ -620,6 +624,10 @@ int scan_seek(sm1::scan_t *c, const char *key, size_t klen, int inclusive) {
   // Validate the target key.
   if (check_key(key, klen) != 0) {
     return -1;
+  }
+  // A cursor a rollback closed reads no more.
+  if (c->rolled_back) {
+    return set_error(sm1::SM_ERR_INVALID, rolled_back_msg);
   }
   // A failed cursor stays failed.
   if (c->state == -1) {
@@ -664,6 +672,10 @@ int scan_next(sm1::scan_t *c, const char **key, size_t *klen, const char **data,
   // Report no row until one is found.
   *key = *data = nullptr;
   *klen = *datalen = 0;
+  // A cursor a rollback closed reads no more.
+  if (c->rolled_back) {
+    return set_error(sm1::SM_ERR_INVALID, rolled_back_msg);
+  }
   // A cursor at its end, or failed, stays so.
   if (c->state != 0) {
     return c->state;
@@ -1110,23 +1122,28 @@ int sm1::scannxt(sm1::scan_t *scan, std::string_view &key,
   return rc;
 }
 
-/* Close a cursor: the iterator first, then its snapshot. */
-void sm1::scanend(sm1::scan_t *scan) {
-  // Closing NULL is a no-op.
-  if (!scan) {
-    return;
-  }
-  // Keep the database pointer past the free.
-  db_t *db = scan->session->db;
+/* Release a cursor's hold: the iterator first, then its snapshot. */
+void wisr::scan_release(sm1::scan_t *scan) {
   ssi_range_close(scan); // narrow the SIREAD range to what was read
-  // Unregister the cursor from its session.
-  scan->session->scans.erase(scan);
   // Destroy the iterator before its snapshot and bound.
   scan->it.reset();
   // Release the RocksDB snapshot.
   scan->rdb->ReleaseSnapshot(scan->snap);
   // Stop holding back the CF:txn sweep.
-  db_read_leave(db, scan->epoch);
+  db_read_leave(scan->session->db, scan->epoch);
+}
+
+/* Close a cursor: release its hold, unless a rollback did, and free it. */
+void sm1::scanend(sm1::scan_t *scan) {
+  // Closing NULL is a no-op.
+  if (!scan) {
+    return;
+  }
+  if (!scan->rolled_back) {
+    scan_release(scan);
+  }
+  // Unregister the cursor from its session.
+  scan->session->scans.erase(scan);
   // Free the cursor.
   delete scan;
 }
