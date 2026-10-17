@@ -75,6 +75,9 @@
 #include <sys/mman.h>
 #endif
 #include <limits.h>
+#include <signal.h>
+#include <spawn.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <fcntl.h>
 
@@ -242,6 +245,7 @@ typedef struct {
     DIR *dir;
     int fd;
   } desc;
+  pid_t pid; /* a pipe's program, to wait for as it closes */
 } AllocateDesc;
 
 static thread_local /*LOCAL*/ int numAllocatedDescs = 0;
@@ -1728,17 +1732,96 @@ int OpenTransientFilePerm(const char *fileName, int fileFlags,
 }
 
 /*
+ * Run "sh -c command" with a pipe from its stdout (mode "r") or to its stdin
+ * ("w"): our end as a stream, and the program's pid in *pid; NULL, with
+ * errno set, on failure.  popen() would hand the program this thread's
+ * signal mask, which blocks every signal but the faults, and the process's
+ * ignored signals, SIGPIPE among them, so a kill would not stop it and a
+ * writer whose reader had gone would not end quietly.  It starts instead as
+ * a PostgreSQL backend's program does: nothing blocked, and every signal at
+ * its default but SIGTTIN, SIGTTOU and SIGXFSZ, which the postmaster ignores
+ * for itself and its children.  Nothing of the process's changes, so no
+ * other thread sees a signal handled otherwise meanwhile.
+ */
+static FILE *spawn_pipe(const char *command, const char *mode, pid_t *pid) {
+  bool reading = mode[0] == 'r';
+  char *argv[] = {(char *)"sh", (char *)"-c", (char *)command, NULL};
+  posix_spawn_file_actions_t actions;
+  posix_spawnattr_t attr;
+  sigset_t mask;
+  sigset_t defaults;
+  int fds[2];
+  int ours;
+  int theirs;
+  int rc;
+  FILE *file;
+
+  /* Both ends close on exec: the program has its end only as dup2() puts it. */
+  if (pipe2(fds, O_CLOEXEC) != 0)
+    return NULL;
+  ours = reading ? fds[0] : fds[1];
+  theirs = reading ? fds[1] : fds[0];
+
+  posix_spawn_file_actions_init(&actions);
+  posix_spawn_file_actions_adddup2(&actions, theirs,
+                                   reading ? STDOUT_FILENO : STDIN_FILENO);
+  sigemptyset(&mask);
+  sigfillset(&defaults);
+  sigdelset(&defaults, SIGTTIN);
+  sigdelset(&defaults, SIGTTOU);
+  sigdelset(&defaults, SIGXFSZ);
+  posix_spawnattr_init(&attr);
+  posix_spawnattr_setsigmask(&attr, &mask);
+  posix_spawnattr_setsigdefault(&attr, &defaults);
+  posix_spawnattr_setflags(&attr,
+                           POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF);
+  rc = posix_spawn(pid, "/bin/sh", &actions, &attr, argv, environ);
+  posix_spawnattr_destroy(&attr);
+  posix_spawn_file_actions_destroy(&actions);
+  close(theirs);
+  if (rc != 0) {
+    close(ours);
+    errno = rc;
+    return NULL;
+  }
+
+  file = fdopen(ours, reading ? "r" : "w");
+  if (file == NULL) {
+    int save_errno = errno;
+
+    close(ours);
+    while (waitpid(*pid, NULL, 0) < 0 && errno == EINTR)
+      ;
+    errno = save_errno;
+  }
+  return file;
+}
+
+/*
+ * Close a stream spawn_pipe() made, then wait for its program: the program's
+ * wait status, as pclose() gives it, or -1 with errno set.  Our end closes
+ * first, so the program sees its input end, or its output's reader gone.
+ */
+static int close_pipe(FILE *file, pid_t pid) {
+  int status;
+
+  fclose(file);
+  while (waitpid(pid, &status, 0) < 0)
+    if (errno != EINTR)
+      return -1;
+  return status;
+}
+
+/*
  * Routines that want to initiate a pipe stream should use OpenPipeStream
  * rather than plain popen().  This lets fd.c deal with freeing FDs if
  * necessary.  When done, call ClosePipeStream rather than pclose.
  *
- * This function also ensures that the popen'd program is run with default
- * SIGPIPE processing, rather than the SIG_IGN setting the backend normally
- * uses.  This ensures desirable response to, eg, closing a read pipe early.
+ * The program is started with a signal state of its own (spawn_pipe()).
  */
 FILE *OpenPipeStream(const char *command, const char *mode) {
   FILE *file;
-  int save_errno;
+  pid_t pid;
 
   DO_DB(elog(LOG, "OpenPipeStream: Allocated %d (%s)", numAllocatedDescs,
              command));
@@ -1754,18 +1837,13 @@ FILE *OpenPipeStream(const char *command, const char *mode) {
   if (sm_vfd_reserve(vfd_cache(), 1) != 0)
     return NULL;
 
-  fflush(NULL);
-  pqsignal(SIGPIPE, SIG_DFL);
-  errno = 0;
-  file = popen(command, mode);
-  save_errno = errno;
-  pqsignal(SIGPIPE, SIG_IGN);
-  errno = save_errno;
+  file = spawn_pipe(command, mode, &pid);
   if (file != NULL) {
     AllocateDesc *desc = &allocatedDescs[numAllocatedDescs];
 
     desc->kind = AllocateDescPipe;
     desc->desc.file = file;
+    desc->pid = pid;
     desc->create_subid = GetCurrentSubTransactionId();
     numAllocatedDescs++;
     return desc->desc.file;
@@ -1790,7 +1868,7 @@ static int FreeDesc(AllocateDesc *desc) {
     sm_vfd_unreserve(vfd_cache(), 1);
     break;
   case AllocateDescPipe:
-    result = pclose(desc->desc.file);
+    result = close_pipe(desc->desc.file, desc->pid);
     sm_vfd_unreserve(vfd_cache(), 1);
     break;
   case AllocateDescDir:
@@ -2013,7 +2091,10 @@ int ClosePipeStream(FILE *file) {
   elog(WARNING,
        "file passed to ClosePipeStream was not obtained from OpenPipeStream");
 
-  return pclose(file);
+  /* No program is known to wait for. */
+  fclose(file);
+  errno = ECHILD;
+  return -1;
 }
 
 /*

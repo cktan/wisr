@@ -1,0 +1,43 @@
+# Verify a COPY PROGRAM program starts with a normal signal state, as a
+# PostgreSQL backend's does: no signal blocked, and SIGPIPE at its
+# default, so a writer whose reader has gone ends quietly and a kill
+# stops it. A session thread blocks every signal but its faults, and the
+# process ignores SIGPIPE; neither is the program's.
+# 1. Read the program's blocked signals from /proc: none. The shell
+#    execs the program, so it is the shell's own state.
+# 2. Read its ignored signals: SIGPIPE (13, mask 4096) is not among them.
+# 3. Run a pipeline whose writer outlives its reader: two rows.
+
+statement ok
+create table sig (v text)
+
+statement ok
+copy sig from program 'exec sed -n "s/^SigBlk:\t//p" /proc/self/status'
+
+query T nosort
+select v from sig
+----
+0000000000000000
+
+statement ok
+truncate sig
+
+statement ok
+copy sig from program 'exec sed -n "s/^SigIgn:\t//p" /proc/self/status'
+
+query T nosort
+select ((('x' || v)::bit(64))::bigint & 4096) = 0 from sig
+----
+t
+
+statement ok
+truncate sig
+
+statement ok
+copy sig from program 'seq 1 100000 | head -2'
+
+query T nosort
+select v from sig order by v
+----
+1
+2

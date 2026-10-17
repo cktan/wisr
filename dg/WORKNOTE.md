@@ -6325,3 +6325,43 @@ waiting on a state nothing sets now.
   cache, with `CacheInvalidateRelSync()`, its callbacks and
   their registry. Nothing sent one.
 
+## Step 217: a COPY PROGRAM program starts with its own signals
+
+storage/file `fd.c`'s `OpenPipeStream()` ran `popen()`, as
+PostgreSQL does, around `pqsignal(SIGPIPE, SIG_DFL)` and back
+to `SIG_IGN`, so that the program would take SIGPIPE at its
+default. In a session thread that `pqsignal()` does nothing
+(port `pqsignal.c`: a session's handlers are its own, and the
+process's stay the postmaster's), and `popen()` hands the
+program the calling thread's state:
+
+- **Every signal blocked but the faults**, the session thread's
+  mask (utils/init `session_thread.c`). The shell runs a
+  script's last simple command by `exec`, so `COPY ... TO
+  PROGRAM 'gzip > f'` ran gzip so: a `kill` did not stop it,
+  only SIGKILL.
+- **SIGPIPE, SIGALRM, SIGUSR1 and SIGUSR2 ignored**, as the
+  postmaster ignores them, inherited through every fork and
+  exec. In `seq 1 100000 | head -2`, `seq` failed with `write
+  error: Broken pipe` in the server's log, where in PostgreSQL
+  it ends quietly on SIGPIPE.
+
+- **`spawn_pipe()` runs `sh -c` by `posix_spawn()`** with the
+  signal state a PostgreSQL backend's program has: nothing
+  blocked (`POSIX_SPAWN_SETSIGMASK`), and every signal at its
+  default but SIGTTIN, SIGTTOU and SIGXFSZ
+  (`POSIX_SPAWN_SETSIGDEF`). Nothing of the process changes,
+  so other threads see no signal handled otherwise meanwhile.
+  The pipe is made close-on-exec, and `dup2()` gives the
+  program its end as stdin or stdout.
+- **`close_pipe()` closes our end, then waits** for the
+  program's pid, kept in its `AllocateDesc`: `pclose()`'s
+  wait status, so `ClosePipeStream()`'s callers read it as
+  before. The `fflush(NULL)` before `popen()` goes: nothing is
+  forked with our stdio buffers.
+- `test/slt/copy_program_signals.test`: the program's blocked
+  and ignored signals, read from `/proc/self/status`, and a
+  pipeline whose writer outlives its reader. Without the change
+  2 of its 9 records failed: `SigBlk` was `fffffffe7ffbfa17`,
+  and SIGPIPE ignored.
+
