@@ -107,15 +107,17 @@ The suite found three assertions before, all fixed:
 
 Bugs that are not crashes:
 
-- In `temp`, once a temporary table that hid a table of the
-  same name is dropped, `DROP INDEX i_temptest` does not find
-  the other table's index of that name.
 - Fixed: in `strings`, `SUBSTRING ... SIMILAR` with no match
   failed with `function 0x... returned NULL` (step 196); psql
   18's `\d` failed with `relation 2662 cannot be opened` when
   its plan called `pg_partition_ancestors()` (step 198); `time`
   passes since the time zone abbreviations are compiled in
   (step 199).
+- Fixed: in `temp`, once a temporary table that hid a table of
+  the same name was dropped, `DROP INDEX i_temptest` did not
+  find the other table's index of that name: the first `DROP
+  INDEX` had dropped it, not the temporary one (step 202).
+  `temp` stops next at an expression index.
 
 A file that reads what an earlier file of the schedule made
 fails here, as each runs in a database of its own:

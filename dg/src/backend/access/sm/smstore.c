@@ -3974,16 +3974,18 @@ void smstore_wait_indexes(void) {
 
 /*
  * The index named rv, and its table, in rv's namespace or the first on the
- * search path that has one: false if there is none.
+ * search path that has one: false if there is none.  The path includes the
+ * implicit namespaces, so a temporary index hides one of the same name, and
+ * rv's namespace may be pg_temp.
  */
 static bool find_index(const RangeVar *rv, uint64_t *table, uint64_t *index) {
   List *path;
   ListCell *l;
 
   if (rv->schemaname != NULL)
-    path = list_make1_oid(get_namespace_oid(rv->schemaname, false));
+    path = list_make1_oid(LookupExplicitNamespace(rv->schemaname, false));
   else
-    path = fetch_search_path(false);
+    path = fetch_search_path(true);
   foreach (l, path) {
     switch (sm_cat_index_oid(session(), sm_nspoid(lfirst_oid(l)), rv->relname,
                              table, index)) {

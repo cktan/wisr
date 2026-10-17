@@ -5872,3 +5872,27 @@ back, reached by nothing.
   `test/server.sh` checks both, as it did.
 - Left: the postmaster still makes `pg_snapshots`, among the
   directories nothing opens (`../sm/NEXT.md` item 5, was 6).
+
+## Step 202: DROP INDEX finds a temporary index first
+
+`test/regress/README.md`'s bug in `temp`: with a table and a
+temporary table both named `temptest`, each with an index
+`i_temptest`, the second `DROP INDEX i_temptest` found none.
+
+- **The first had dropped the wrong one.** access/sm
+  `smstore.c`'s `find_index()` searched
+  `fetch_search_path(false)`, which leaves out the implicit
+  namespaces, the session's temporary one among them. So it
+  dropped the table's index, and the temporary index went with
+  its table. It searches the whole path now, as PostgreSQL's
+  `RangeVarGetRelid()` does, and a temporary index hides one of
+  the same name.
+- **`pg_temp.` is found too.** A schema named in `DROP INDEX`
+  was looked up by `get_namespace_oid()`, which knows no
+  `pg_temp`: `schema "pg_temp" does not exist`. It is
+  `LookupExplicitNamespace()` now, which knows it and checks
+  `USAGE`, as PostgreSQL's lookup does.
+- `test/slt/temp_shadow.test`, PostgreSQL 18's answers: the
+  names hidden and found again as `temp` has them, and a drop
+  named in `pg_temp`. 2 of its 18 records failed without the
+  change. `temp` stops next at an expression index.

@@ -1,0 +1,69 @@
+# Verify a temporary table and its index hide a table and an index of
+# the same names only while they exist, as PostgreSQL's temp test
+# does them.
+# 1. Make a table and an index on it, then a temporary table and an
+#    index of the same names.
+# 2. Read the name: it is the temporary table's.
+# 3. Drop the index and the table by name: the temporary ones go.
+# 4. Read the name: it is the table's again.
+# 5. Drop the index and the table by name: the table's go.
+# 6. Confirm neither name is found.
+# 7. Drop a temporary index named in pg_temp.
+
+statement ok
+create table temptest (col int4)
+
+statement ok
+create index i_temptest on temptest (col)
+
+statement ok
+insert into temptest values (1)
+
+statement ok
+create temp table temptest (tcol int4)
+
+statement ok
+create index i_temptest on temptest (tcol)
+
+statement ok
+insert into temptest values (2)
+
+query I nosort
+select * from temptest
+----
+2
+
+statement ok
+drop index i_temptest
+
+statement ok
+drop table temptest
+
+query I nosort
+select * from temptest
+----
+1
+
+statement ok
+drop index i_temptest
+
+statement ok
+drop table temptest
+
+statement error relation "temptest" does not exist
+select * from temptest
+
+statement error index "i_temptest" does not exist
+drop index i_temptest
+
+statement ok
+create temp table temptest (tcol int4)
+
+statement ok
+create index i_temptest on temptest (tcol)
+
+statement ok
+drop index pg_temp.i_temptest
+
+statement error index "i_temptest" does not exist
+drop index i_temptest
