@@ -310,6 +310,7 @@ extern void ExecForceStoreMinimalTuple(MinimalTuple mtup, TupleTableSlot *slot,
 									   bool shouldFree);
 extern TupleTableSlot *ExecStoreVirtualTuple(TupleTableSlot *slot);
 extern TupleTableSlot *ExecStoreAllNullTuple(TupleTableSlot *slot);
+extern int64 ExecSlotRowno(TupleTableSlot *slot);
 extern void ExecStoreHeapTupleDatum(Datum data, TupleTableSlot *slot);
 extern HeapTuple ExecFetchSlotHeapTuple(TupleTableSlot *slot, bool materialize, bool *shouldFree);
 extern MinimalTuple ExecFetchSlotMinimalTuple(TupleTableSlot *slot,
@@ -401,6 +402,12 @@ slot_getsysattr(TupleTableSlot *slot, int attnum, bool *isnull)
 	{
 		*isnull = false;
 		return PointerGetDatum(&slot->tts_tid);
+	}
+	else if (attnum == RownoAttributeNumber)
+	{
+		/* digres: the rowno the slot's tid carries */
+		*isnull = false;
+		return Int64GetDatum(ExecSlotRowno(slot));
 	}
 
 	/* Fetch the system attribute from the underlying tuple. */

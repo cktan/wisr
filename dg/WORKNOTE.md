@@ -5800,3 +5800,48 @@ them.
   PostgreSQL 18 here to fill them. 5 of its 13 records failed
   with the start not installing `Default`.
 - Left: `pg_timezone_abbrevs` is a view, which digres has not.
+
+## Step 200: a row is named by its rowno; ctid and xmin are gone
+
+Decided 2026-10-16, `../sm/PART4.md` §3: digres is a digression
+from PostgreSQL, and says what it has not. sm keeps no
+transaction ids in a row, and names a row by its `rowno`, not a
+tid. Step 195 had made every system column found by name;
+`xmin`, `xmax`, `cmin` and `cmax` were then refused only as a
+row was read, and `ctid` was the rowno packed into a tid,
+`(0,2)` for rowno 1.
+
+- **`rowno` is a system column**, an `int8` (access
+  `sysattr.h`'s `RownoAttributeNumber`, -7, and catalog
+  `heap.c`'s `SysAtt`; `FirstLowInvalidHeapAttributeNumber` is
+  -8). `slot_getsysattr()` gives the rowno the slot's tid
+  carries (executor `execTuples.c`'s `ExecSlotRowno()`), as
+  every read of sm sets the tid (step 190). A table in sm has
+  it; a catalog relation, whose rows have no tid, has not.
+- **The parser finds tableoid and rowno alone** (parser
+  `parse_relation.c`'s `system_column_is_kept()`). `ctid`,
+  `xmin`, `xmax`, `cmin` and `cmax` are no relation's column:
+  `column "xmin" does not exist` (42703), as for any column a
+  relation has not, with a hint saying why. A subquery's own
+  column of that name is found, as it is in PostgreSQL.
+- **The executor still keeps `ctid`**, the junk column
+  `UPDATE`, `DELETE` and `WHERE CURRENT OF` carry; `EXPLAIN
+  VERBOSE` of an `UPDATE` prints it.
+- `test/slt/system_columns.test` is rewritten: rowno read,
+  found, and returned; UPDATE and DELETE by it; tableoid; and
+  ctid, xmin, xmax, cmin and cmax each read on PostgreSQL 18
+  (`skipif digres`) beside its refusal on digres (`onlyif
+  digres`). Without the parser's change it failed, and the
+  server stopped on `select rowno from pg_namespace`, whose
+  rows have no tid.
+- `../sm/PART4.md` §3 and §6, `../sm/sm2/SM2_OBJECTIVE.md` and
+  `../sm/sm2/SM2_DESIGN.md` §5 and §7 say so; `../sm/NEXT.md`
+  items 3 and 4 are done, and two take their place.
+- Left (`../sm/NEXT.md`): `WHERE rowno = n` reads the whole
+  table, as the planner makes a TID scan of `ctid = tid` alone;
+  and a missing qualified column of a table in sm, `t.nosuch`,
+  fails with "does not have a composite type".
+- CREATE TABLE of sm's (access/sm `smstore.c`) takes a column
+  named as a system column is, `xmin` or `rowno`, which ALTER
+  TABLE ADD COLUMN refuses; the user's column hides the system
+  one, as in PostgreSQL. Left as it is.

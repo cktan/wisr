@@ -58,6 +58,7 @@
 #include "postgres.h"
 
 #include "access/heaptoast.h"
+#include "access/smstore.h"
 #include "access/htup_details.h"
 #include "access/tupdesc_details.h"
 #include "access/xact.h"
@@ -1213,6 +1214,15 @@ TupleTableSlot *ExecStoreAllNullTuple(TupleTableSlot *slot) {
          slot->tts_tupleDescriptor->natts * sizeof(bool));
 
   return ExecStoreVirtualTuple(slot);
+}
+
+/*
+ * The rowno of the slot's row, a row of a table in sm: the number its tid
+ * carries (smstore_rowno_to_tid()), for the system column rowno.
+ */
+int64 ExecSlotRowno(TupleTableSlot *slot) {
+  Assert(ItemPointerIsValid(&slot->tts_tid));
+  return (int64)smstore_tid_to_rowno(&slot->tts_tid);
 }
 
 /*

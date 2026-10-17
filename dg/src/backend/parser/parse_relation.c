@@ -20,6 +20,7 @@
 #include "access/relation.h"
 #include "access/sysattr.h"
 #include "access/table.h"
+#include "access/transam.h"
 #include "catalog/heap.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_type.h"
@@ -94,6 +95,7 @@ static void expandTupleDesc(TupleDesc tupdesc, Alias *eref, int count,
                             bool include_dropped, List **colnames,
                             List **colvars);
 static int specialAttNum(const char *attname);
+static bool system_column_is_kept(RangeTblEntry *rte, AttrNumber attnum);
 static bool rte_visible_if_lateral(ParseState *pstate, RangeTblEntry *rte);
 static bool rte_visible_if_qualified(ParseState *pstate, RangeTblEntry *rte);
 static bool isQueryUsingTempRelation_walker(Node *node, void *context);
@@ -809,10 +811,12 @@ static int scanRTEForColumn(ParseState *pstate, RangeTblEntry *rte, Alias *eref,
     attnum = specialAttNum(colname);
     /*
      * Every relation but a view has the system columns (heap.c's
-     * AddNewAttributeTuples()). digres has no pg_attribute rows to ask
-     * (SYSCATALOG.md section 2), so the relkind says.
+     * AddNewAttributeTuples()), of those digres keeps. digres has no
+     * pg_attribute rows to ask (SYSCATALOG.md section 2), so the relkind
+     * says.
      */
-    if (attnum != InvalidAttrNumber && rte->relkind != RELKIND_VIEW)
+    if (attnum != InvalidAttrNumber && rte->relkind != RELKIND_VIEW &&
+        system_column_is_kept(rte, attnum))
       result = attnum;
   }
 
@@ -3240,6 +3244,20 @@ static int specialAttNum(const char *attname) {
 }
 
 /*
+ * Whether a query may name the system column attnum of rte's relation:
+ * tableoid, and a row's rowno in a table of sm's.  sm keeps no transaction
+ * ids in a row, and names a row by its rowno, not by a tid
+ * (../sm/PART4.md section 3), so xmin, xmax, cmin, cmax and ctid are no
+ * relation's column in digres.  The executor still keeps a row's ctid, as
+ * the junk column UPDATE and DELETE carry.
+ */
+static bool system_column_is_kept(RangeTblEntry *rte, AttrNumber attnum) {
+  if (attnum == TableOidAttributeNumber)
+    return true;
+  return attnum == RownoAttributeNumber && rte->relid >= FirstNormalObjectId;
+}
+
+/*
  * given attribute id, return name of that attribute
  *
  *	This should only be used if the relation is already
@@ -3370,6 +3388,7 @@ void errorMissingRTE(ParseState *pstate, RangeVar *relation) {
 void errorMissingColumn(ParseState *pstate, const char *relname,
                         const char *colname, int location) {
   FuzzyAttrMatchState *state;
+  int attnum;
 
   /*
    * Search the entire rtable looking for possible matches.  If we find one,
@@ -3415,6 +3434,22 @@ void errorMissingColumn(ParseState *pstate, const char *relname,
                  : 0,
              parser_errposition(pstate, location)));
   }
+
+  /*
+   * A system column of PostgreSQL's that digres has not
+   * (system_column_is_kept()): say why, before any spelling to offer.
+   */
+  attnum = specialAttNum(colname);
+  if (attnum != InvalidAttrNumber && attnum != TableOidAttributeNumber &&
+      attnum != RownoAttributeNumber)
+    ereport(ERROR,
+            (errcode(ERRCODE_UNDEFINED_COLUMN),
+             relname ? errmsg("column %s.%s does not exist", relname, colname)
+                     : errmsg("column \"%s\" does not exist", colname),
+             attnum == SelfItemPointerAttributeNumber
+                 ? errhint("digres names a row by its rowno.")
+                 : errhint("digres keeps no transaction ids in a row."),
+             parser_errposition(pstate, location)));
 
   if (!state->rsecond) {
     /* If we found no match at all, we have little to report */

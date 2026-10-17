@@ -30,30 +30,17 @@ Low priority:
    `std::optional<std::string>` (`include/sm.h`), which the
    rule does not allow. A `bool has_default` beside a plain
    `std::string` replaces it; the change reaches dg.
-3. **Refuse the system columns digres has not.** `xmin`,
-   `xmax`, `cmin` and `cmax` are found by name since
-   `../dg/WORKNOTE.md` step 195, and refused only as a row is
-   read: "cannot retrieve a system column in this context".
-   sm keeps no transaction ids in a row, so the parser is to
-   refuse them as PostgreSQL refuses a column a relation has
-   not, `column "xmin" does not exist` (42703), with a hint
-   saying why. `ctid` and `tableoid` stay found.
-4. **`rowno` in place of `ctid`, decided first.** `PART4.md`
-   §3 and §6 and `sm2/SM2_OBJECTIVE.md` say the fork redefines
-   `ctid` as a `uint64_t`, so `rowno` is `ctid`. The proposal
-   reverses that for what a query sees: a system column
-   `rowno`, an `int8` with sm's rowno, and `ctid` refused as
-   item 3 refuses `xmin`. Today's `ctid` is the rowno packed
-   into a tid, `(0,2)` for rowno 1. Record the decision in
-   both documents before building it. Then:
-   - the executor keeps `ctid` inside, as the junk column of
-     `UPDATE`, `DELETE`, `WHERE CURRENT OF` and row marks,
-     until the `uint64_t` redefinition; `EXPLAIN VERBOSE` of
-     an `UPDATE` still prints it;
-   - the planner is taught `rowno = n` as a TID scan, which
-     it knows only as `ctid = tid` now;
-   - `../dg/test/slt/system_columns.test` is rewritten for
-     `rowno`; its `tableoid` checks stay.
+3. **`rowno = n` as a TID scan.** A query names a row by its
+   `rowno` (`../dg/WORKNOTE.md` step 200), and `WHERE rowno =
+   n` reads the whole table with a filter: the planner knows a
+   TID scan only as `ctid = tid` (optimizer `tidpath.c`).
+   Taught `rowno`, it fetches the one row, as `UPDATE` and
+   `DELETE` by a row's number want.
+4. **A missing qualified column names the wrong error.** On a
+   table in sm, `t.nosuch` fails with "relation "t" does not
+   have a composite type", not `column t.nosuch does not
+   exist`: the parser tries `nosuch(t)` as a function on the
+   row, which a table in sm has no type for.
 
 ---
 

@@ -929,12 +929,11 @@ is `relid ‖ rowno`:
   build and maintain (`sm3/SM3_DESIGN.md` §3), keyed by the
   encoded key columns and mapping to `rowno`. A table without
   a primary key needs nothing extra: every table is a heap.
-- **`rowno` is PostgreSQL's `ctid`.** The fork redefines
-  `ctid` as a `uint64_t` rather than PostgreSQL's 6-byte
-  `ItemPointerData` (`PART4.md` §3), so every `rowno` is a
-  valid `ctid`. It differs from PostgreSQL's in one way: it
-  names the row, not the row version, so it does not change
-  on `UPDATE`.
+- **`rowno` is in place of PostgreSQL's `ctid`.** A query
+  reads it as the system column `rowno`, an `int8`, and names
+  no `ctid` (`PART4.md` §3). It differs from a `ctid` in one
+  way: it names the row, not the row version, so it does not
+  change on `UPDATE`.
 
 Why a heap and not a table clustered on its primary key:
 PostgreSQL's planner and executor assume a heap with every
@@ -1164,12 +1163,11 @@ will find them:
 - **Every insert writes the row and its primary key entry**,
   two sm1 keys where a clustered table writes one, plus one
   per other index as before.
-- **`ctid` is redefined.** Exposing `rowno` as `ctid` means
-  widening PostgreSQL's 6-byte `ItemPointerData` to 64 bits in
-  the fork, which reaches index tuples, heap tuple headers and
-  TID bitmaps (`PART4.md` §3). And since `rowno` names a row,
-  not a version, code that expects `ctid` to change on
-  `UPDATE` sees it stay put.
+- **`ctid` is gone.** A query that reads `ctid` fails, and
+  reads `rowno` instead (`PART4.md` §3); inside, the fork
+  still carries a small `rowno` in the 6-byte TID. And since
+  `rowno` names a row, not a version, code that expects it to
+  change on `UPDATE` sees it stay put.
 - **Descending order costs an encoding, not a structure.**
   Inverted bytes scanned forward means no mirror relation and
   no second copy, but it also means a column's direction is

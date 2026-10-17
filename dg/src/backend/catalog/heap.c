@@ -211,8 +211,25 @@ static const FormData_pg_attribute a6 = {
     .attislocal = true,
 };
 
-static const FormData_pg_attribute *const SysAtt[] = {&a1, &a2, &a3,
-                                                      &a4, &a5, &a6};
+/*
+ * digres: a row's rowno in sm, its identity in its table (sm2/SM2_DESIGN.md
+ * section 5), which its tid carries (smstore_rowno_to_tid()).
+ */
+static const FormData_pg_attribute a7 = {
+    .attname = {"rowno"},
+    .atttypid = INT8OID,
+    .attlen = sizeof(int64),
+    .attnum = RownoAttributeNumber,
+    .atttypmod = -1,
+    .attbyval = true,
+    .attalign = TYPALIGN_DOUBLE,
+    .attstorage = TYPSTORAGE_PLAIN,
+    .attnotnull = true,
+    .attislocal = true,
+};
+
+static const FormData_pg_attribute *const SysAtt[] = {&a1, &a2, &a3, &a4,
+                                                      &a5, &a6, &a7};
 
 /*
  * This function returns a Form_pg_attribute pointer for a system attribute.

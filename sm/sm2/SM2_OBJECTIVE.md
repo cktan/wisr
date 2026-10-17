@@ -63,8 +63,8 @@ These are settled and drive `SM2_DESIGN.md`.
 - **Row identity is `rowno`, and the table is a heap.** A row
   is keyed by an unsigned 64-bit `rowno` from a per-table sm1
   sequence, never reused and kept across updates; the primary
-  key is an index over it, as in PostgreSQL. The fork
-  redefines `ctid` as a `uint64_t`, so `rowno` is `ctid`
+  key is an index over it, as in PostgreSQL. A query reads it
+  as the system column `rowno`, and has no `ctid`
   (`SM2_DESIGN.md` §5). This reverses an earlier choice to
   cluster the table on its primary key, as YugabyteDB does: a
   heap is what PostgreSQL's planner and executor assume, it

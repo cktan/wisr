@@ -1,11 +1,15 @@
-# Verify a table's system columns are found by name: ctid and tableoid
-# read, and a row is found, updated and deleted by its ctid.
+# Verify the system columns a query can name in digres: rowno, a row's
+# number in sm, and tableoid; and that PostgreSQL's ctid, xmin, xmax,
+# cmin and cmax are columns no relation has.
 # 1. Make a table of three rows.
-# 2. Read each row's ctid, plain and qualified: three, each different.
-# 3. Find one row by its ctid.
+# 2. Read each row's rowno, plain and qualified: 1 to 3, an int8.
+# 3. Find one row by its rowno.
 # 4. Read tableoid: each row's is the table's.
-# 5. Update one row and delete another by their ctids.
-# 6. Show the plan's output naming ctid.
+# 5. Update one row and delete another by their rownos, and insert one,
+#    returning its rowno.
+# 6. Show the plan's output naming rowno.
+# 7. Confirm ctid, xmin, xmax, cmin and cmax do not exist in digres, as
+#    PostgreSQL reads them; and that a catalog relation has no rowno.
 
 statement ok
 create table sc (a int, b text)
@@ -13,18 +17,23 @@ create table sc (a int, b text)
 statement ok
 insert into sc values (1, 'one'), (2, 'two'), (3, 'three')
 
-query I nosort
-select count(distinct ctid) from sc
+onlyif digres
+query II nosort
+select rowno, a from sc order by rowno
 ----
-3
+1	1
+2	2
+3	3
 
-query I nosort
-select count(distinct sc.ctid) from sc
-----
-3
-
+onlyif digres
 query T nosort
-select b from sc where ctid = (select ctid from sc where a = 2)
+select distinct pg_typeof(sc.rowno) from sc
+----
+bigint
+
+onlyif digres
+query T nosort
+select b from sc where rowno = 2
 ----
 two
 
@@ -33,20 +42,85 @@ select distinct tableoid::regclass from sc
 ----
 sc
 
-statement ok
-update sc set b = 'TWO' where ctid = (select ctid from sc where a = 2)
-
-statement ok
-delete from sc where ctid = (select ctid from sc where a = 3)
-
-query IT rowsort
-select a, b from sc
+skipif digres
+query I nosort
+select count(distinct ctid) from sc
 ----
-1	one
-2	TWO
+3
 
+onlyif digres
+statement error column "ctid" does not exist
+select count(distinct ctid) from sc
+
+skipif digres
+query I nosort
+select count(xmin) from sc
+----
+3
+
+onlyif digres
+statement error column "xmin" does not exist
+select count(xmin) from sc
+
+skipif digres
+query I nosort
+select count(xmax) from sc
+----
+3
+
+onlyif digres
+statement error column "xmax" does not exist
+select count(xmax) from sc
+
+skipif digres
+query I nosort
+select count(cmin) from sc
+----
+3
+
+onlyif digres
+statement error column "cmin" does not exist
+select count(cmin) from sc
+
+skipif digres
+query I nosort
+select count(cmax) from sc
+----
+3
+
+onlyif digres
+statement error column "cmax" does not exist
+select count(cmax) from sc
+
+onlyif digres
+statement error column "rowno" does not exist
+select rowno from pg_namespace
+
+onlyif digres
+statement ok
+update sc set b = 'TWO' where rowno = 2
+
+onlyif digres
+statement ok
+delete from sc where rowno = 3
+
+onlyif digres
+query IT nosort
+insert into sc values (4, 'four') returning rowno, b
+----
+4	four
+
+onlyif digres
+query IIT nosort
+select rowno, a, b from sc order by rowno
+----
+1	1	one
+2	2	TWO
+4	4	four
+
+onlyif digres
 query T nosort
-explain (verbose, costs off) select ctid from sc
+explain (verbose, costs off) select rowno from sc
 ----
 Seq Scan on public.sc
-  Output: ctid
+  Output: rowno

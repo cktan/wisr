@@ -23,6 +23,8 @@
 #define MaxTransactionIdAttributeNumber			(-4)
 #define MaxCommandIdAttributeNumber				(-5)
 #define TableOidAttributeNumber					(-6)
-#define FirstLowInvalidHeapAttributeNumber		(-7)
+/* digres: a row's rowno in sm, the number its tid carries */
+#define RownoAttributeNumber					(-7)
+#define FirstLowInvalidHeapAttributeNumber		(-8)
 
 #endif /* SYSATTR_H */
