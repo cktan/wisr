@@ -57,7 +57,6 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -596,7 +595,8 @@ struct sm_column_def_t {
     int32_t     typmod;
     bool        not_null;
     bool        dropped;
-    std::optional<std::string> default_expr; /* the host's, opaque */
+    bool        has_default;
+    std::string default_expr; /* the host's, opaque; "" if none */
     char        identity;     /* 'a', 'd' or 0 */
     uint64_t    identity_seq; /* an identity column's sequence */
 };

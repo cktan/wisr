@@ -362,9 +362,8 @@ and sm is attached once; no auxiliary process is left (step
   background writer, background workers and the startup
   process (`WORKNOTE.md` steps 11 to 17).
 - **What step 9 stubbed goes with them**: `xlog.c` is gone
-  (`WORKNOTE.md` step 18); `make_legacy_dirs()` in
-  `postmaster.c` is left, and its list of directories shrinks
-  as each subsystem is cut.
+  (`WORKNOTE.md` step 18), and so is `make_legacy_dirs()` in
+  `postmaster.c` (step 209).
 
 Success for this step: no `kill()` between sessions, no
 signal handler that touches session state, and the files above

@@ -899,8 +899,8 @@ static void add_table(const sm_table_def_t &def, List **out) {
     const sm_column_def_t &c = def.columns[i];
 
     set_column(r, (int)i, c);
-    if (!c.dropped && c.default_expr)
-      r->defaults[i] = pstrdup(c.default_expr->c_str());
+    if (!c.dropped && c.has_default)
+      r->defaults[i] = pstrdup(c.default_expr.c_str());
     r->identity[i] = c.dropped ? 0 : c.identity;
   }
   for (const sm_index_def_t &x : def.indexes)
@@ -1736,8 +1736,7 @@ smstore_table_t *smstore_table_desc(Oid oid) {
 
     col->name = pstrdup(c.name.c_str());
     col->dropped = c.dropped;
-    col->default_expr =
-        c.default_expr ? pstrdup(c.default_expr->c_str()) : NULL;
+    col->default_expr = c.has_default ? pstrdup(c.default_expr.c_str()) : NULL;
     col->identity = c.identity;
     if (!c.dropped) {
       col->typid = type_oid(c.type_code);

@@ -317,7 +317,6 @@ static DNSServiceRef bonjour_sdref = NULL;
 static void CloseServerPorts(int status, Datum arg);
 static void unlink_external_pid_file(int status, Datum arg);
 static void getInstallationPaths(const char *argv0);
-static void make_legacy_dirs(void);
 static void handle_pm_reload_request_signal(SIGNAL_ARGS);
 static void handle_pm_shutdown_request_signal(SIGNAL_ARGS);
 static void process_pm_child_exit(void);
@@ -671,9 +670,6 @@ void PostmasterMain(int argc, char *argv[]) {
 
   /* And switch working directory into it */
   ChangeToDataDir();
-
-  /* Make the directories PostgreSQL's storage still looks for */
-  make_legacy_dirs();
 
   /* Read the superuser and the databases, which every backend inherits */
   datadir_load();
@@ -1114,26 +1110,6 @@ static void getInstallationPaths(const char *argv0) {
    * digres does not look for the directory: it is one program, and runs
    * from where it was built.
    */
-}
-
-/*
- * Make, in the data directory, the directories that PostgreSQL's initdb
- * makes and digres's does not. The subsystems that open them at startup
- * are still here, though sm is to replace them (sm/PART4.md section 10);
- * a name leaves this list when its subsystem is cut.
- */
-static void make_legacy_dirs(void) {
-  static const char *const dirs[] = {
-      "pg_dynshmem",          "pg_snapshots",
-      "pg_replslot",          "pg_stat",
-      "pg_stat_tmp",          "pg_logical",
-      "pg_logical/snapshots", "pg_logical/mappings"};
-
-  for (int i = 0; i < lengthof(dirs); i++)
-    if (mkdir(dirs[i], pg_dir_create_mode) != 0 && errno != EEXIST)
-      ereport(FATAL,
-              (errcode_for_file_access(),
-               errmsg("could not create directory \"%s\": %m", dirs[i])));
 }
 
 /*

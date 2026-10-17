@@ -25,35 +25,24 @@ Low priority:
    of line, which end a load's files; a `rel` verb; and batch
    mode and mini-batch, which matter less now that no write
    keeps a row lock.
-2. **The public headers to `CODE.md` §2.**
-   `sm_column_def_t::default_expr` is a
-   `std::optional<std::string>` (`include/sm.h`), which the
-   rule does not allow. A `bool has_default` beside a plain
-   `std::string` replaces it; the change reaches dg.
-3. **`rowno = n` as a TID scan.** A query names a row by its
+2. **`rowno = n` as a TID scan.** A query names a row by its
    `rowno` (`../dg/WORKNOTE.md` step 200), and `WHERE rowno =
    n` reads the whole table with a filter: the planner knows a
    TID scan only as `ctid = tid` (optimizer `tidpath.c`).
    Taught `rowno`, it fetches the one row, as `UPDATE` and
    `DELETE` by a row's number want.
-4. **A missing qualified column names the wrong error.** On a
+3. **A missing qualified column names the wrong error.** On a
    table in sm, `t.nosuch` fails with "relation "t" does not
    have a composite type", not `column t.nosuch does not
    exist`: the parser tries `nosuch(t)` as a function on the
    row, which a table in sm has no type for.
-5. **Purge postmaster `make_legacy_dirs()`.** It makes eight
-   directories nothing opens: `pg_dynshmem` (DSM, step 29),
-   `pg_stat` and `pg_stat_tmp` (pgstat, step 28),
-   `pg_replslot` and `pg_logical`'s three (replication, step
-   2), and `pg_snapshots` (snapshot export, step 201). The
-   list is then empty, and the function goes;
-   `../dg/PLAN.md` §6 mentions it.
-6. **Purge the replication catalogs.** `../dg/WORKNOTE.md`
+4. **Purge the replication catalogs.** `../dg/WORKNOTE.md`
    step 2's known leftovers: `pg_subscription`,
    `pg_subscription_rel`, `pg_publication*` and
    `pg_replication_origin`. They reach into generated catalog
    headers (`schemapg.h`, `system_fk_info.h`) and the
-   relcache, so this cut is larger than item 5.
+   relcache, so this cut is larger than `make_legacy_dirs()`'s
+   (`../dg/WORKNOTE.md` step 209).
 
 ---
 

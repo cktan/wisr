@@ -378,7 +378,8 @@ still a postmaster that forks a process a connection.
   (`make_legacy_dirs()`): `pg_wal`, `pg_xact`, `pg_notify` and
   the others its `initdb` makes. A name leaves the list when
   its subsystem is cut. `initdb` does not make them, so that a
-  data directory is not left holding them.
+  data directory is not left holding them. (The list emptied,
+  and the function went, in step 209.)
 - **Autovacuum is off by default.** Its launcher reads catalog
   tables, and sm collects its own garbage.
 - **`pg_hba.conf` and `pg_ident.conf` are not read.**
@@ -6097,3 +6098,28 @@ where every caller gets it.
   and on `CREATE TABLE AS`; the bad values; the others refused
   (`onlyif digres`, beside PostgreSQL's answers, written by
   hand: no PostgreSQL 18 here).
+
+## Step 209: the postmaster makes no legacy directories
+
+`../sm/NEXT.md` §1's fifth item. postmaster
+`make_legacy_dirs()` made eight directories at start that
+nothing opened any more: `pg_dynshmem` (step 29), `pg_stat`
+and `pg_stat_tmp` (step 28), `pg_replslot` and `pg_logical`'s
+three (step 2), and `pg_snapshots` (step 201).
+
+- **The function is gone**, its call and its prototype with it.
+  A data directory made before keeps the empty directories;
+  nothing reads them.
+
+## Step 210: no std::optional in sm.h
+
+`../sm/NEXT.md` §1's second item: `../sm/CODE.md` §2 lets no
+`std::optional` cross to sm's users, and
+`sm_column_def_t::default_expr` was one.
+
+- **`bool has_default` beside a plain `std::string`** replaces
+  it; the string is empty without a default. sm `api_def()`
+  fills both from sm3's column, which keeps its
+  `std::optional`: sm3's header is not the interface.
+- access/sm `add_table()` and `smstore_table_desc()` read
+  `has_default`.

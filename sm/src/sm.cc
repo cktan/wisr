@@ -304,7 +304,8 @@ sm_table_def_t api_def(const sm3::session_t *ss, const sm3::table_def_t &d) {
   out.version = sm3::cat_table_version(ss, d.oid);
   for (const sm3::column_def_t &c : d.columns) {
     out.columns.push_back({c.name, c.type->code, c.typmod, c.not_null,
-                           c.dropped, c.default_expr, c.identity,
+                           c.dropped, c.default_expr.has_value(),
+                           c.default_expr.value_or(""), c.identity,
                            c.identity_seq});
   }
   for (const sm2::attribute_t &a : d.schema) {
