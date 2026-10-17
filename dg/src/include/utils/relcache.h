@@ -75,11 +75,6 @@ extern void RelationGetExclusionInfo(Relation indexRelation, Oid **operators,
 
 extern void RelationInitIndexAccessInfo(Relation relation);
 
-/* caller must include pg_publication.h */
-struct PublicationDesc;
-extern void RelationBuildPublicationDesc(Relation relation,
-                                         struct PublicationDesc *pubdesc);
-
 extern void RelationInitTableAccessMethod(Relation relation);
 
 /*

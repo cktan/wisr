@@ -36,7 +36,6 @@
 #include "catalog/pg_opfamily.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_statistic_ext.h"
-#include "catalog/pg_subscription.h"
 #include "catalog/pg_ts_config.h"
 #include "catalog/pg_ts_dict.h"
 #include "catalog/pg_ts_parser.h"
@@ -84,12 +83,6 @@ static void report_name_conflict(Oid classId, const char *name) {
     break;
   case LanguageRelationId:
     msgfmt = gettext_noop("language \"%s\" already exists");
-    break;
-  case PublicationRelationId:
-    msgfmt = gettext_noop("publication \"%s\" already exists");
-    break;
-  case SubscriptionRelationId:
-    msgfmt = gettext_noop("subscription \"%s\" already exists");
     break;
   default:
     elog(ERROR, "unsupported object class: %u", classId);
@@ -219,31 +212,6 @@ static void AlterObjectRename_internal(Relation rel, Oid objectId,
         aclcheck_error(aclresult, OBJECT_SCHEMA,
                        get_namespace_name(namespaceId));
     }
-
-    if (classId == SubscriptionRelationId) {
-      Form_pg_subscription form;
-
-      /* must have CREATE privilege on database */
-      aclresult = object_aclcheck(DatabaseRelationId, MyDatabaseId, GetUserId(),
-                                  ACL_CREATE);
-      if (aclresult != ACLCHECK_OK)
-        aclcheck_error(aclresult, OBJECT_DATABASE,
-                       get_database_name(MyDatabaseId));
-
-      /*
-       * Don't allow non-superuser modification of a subscription with
-       * password_required=false.
-       */
-      form = (Form_pg_subscription)GETSTRUCT(oldtup);
-      if (!form->subpasswordrequired && !superuser())
-        ereport(
-            ERROR,
-            (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-             errmsg("password_required=false is superuser-only"),
-             errhint(
-                 "Subscriptions with the password_required option set to false "
-                 "may only be created or modified by the superuser.")));
-    }
   }
 
   /*
@@ -268,17 +236,6 @@ static void AlterObjectRename_internal(Relation rel, Oid objectId,
     Form_pg_opfamily opf = (Form_pg_opfamily)GETSTRUCT(oldtup);
 
     IsThereOpFamilyInNamespace(new_name, opf->opfmethod, opf->opfnamespace);
-  } else if (classId == SubscriptionRelationId) {
-    if (SearchSysCacheExists2(SUBSCRIPTIONNAME, ObjectIdGetDatum(MyDatabaseId),
-                              CStringGetDatum(new_name)))
-      report_name_conflict(classId, new_name);
-
-      /* Also enforce regression testing naming rules, if enabled */
-#ifdef ENFORCE_REGRESSION_TEST_NAME_RESTRICTIONS
-    if (strncmp(new_name, "regress_", 8) != 0)
-      elog(WARNING, "subscriptions created by regression test cases should "
-                    "have names starting with \"regress_\"");
-#endif
   } else if (nameCacheId >= 0) {
     if (OidIsValid(namespaceId)) {
       if (SearchSysCacheExists2(nameCacheId, CStringGetDatum(new_name),

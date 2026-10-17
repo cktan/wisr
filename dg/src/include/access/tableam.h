@@ -21,6 +21,7 @@
 #include "access/sdir.h"
 #include "access/xact.h"
 #include "executor/tuptable.h"
+#include "nodes/lockoptions.h"
 #include "utils/rel.h"
 #include "utils/snapshot.h"
 

@@ -47,12 +47,8 @@
 #include "catalog/pg_parameter_acl.h"
 #include "catalog/pg_policy.h"
 #include "catalog/pg_proc.h"
-#include "catalog/pg_publication.h"
-#include "catalog/pg_publication_namespace.h"
-#include "catalog/pg_publication_rel.h"
 #include "catalog/pg_rewrite.h"
 #include "catalog/pg_statistic_ext.h"
-#include "catalog/pg_subscription.h"
 #include "catalog/pg_tablespace.h"
 #include "catalog/pg_transform.h"
 #include "catalog/pg_trigger.h"
@@ -253,15 +249,6 @@ static const ObjectPropertyType ObjectProperty[] = {
     {"type", TypeRelationId, TypeOidIndexId, TYPEOID, TYPENAMENSP,
      Anum_pg_type_oid, Anum_pg_type_typname, Anum_pg_type_typnamespace,
      Anum_pg_type_typowner, Anum_pg_type_typacl, OBJECT_TYPE, true},
-    {"publication", PublicationRelationId, PublicationObjectIndexId,
-     PUBLICATIONOID, PUBLICATIONNAME, Anum_pg_publication_oid,
-     Anum_pg_publication_pubname, InvalidAttrNumber,
-     Anum_pg_publication_pubowner, InvalidAttrNumber, OBJECT_PUBLICATION, true},
-    {"subscription", SubscriptionRelationId, SubscriptionObjectIndexId,
-     SUBSCRIPTIONOID, SUBSCRIPTIONNAME, Anum_pg_subscription_oid,
-     Anum_pg_subscription_subname, InvalidAttrNumber,
-     Anum_pg_subscription_subowner, InvalidAttrNumber, OBJECT_SUBSCRIPTION,
-     true},
     {"extended statistics", StatisticExtRelationId, StatisticExtOidIndexId,
      STATEXTOID, STATEXTNAMENSP, Anum_pg_statistic_ext_oid,
      Anum_pg_statistic_ext_stxname, Anum_pg_statistic_ext_stxnamespace,
@@ -774,16 +761,6 @@ static ObjectAddress get_object_address_unqualified(ObjectType objtype,
   case OBJECT_PARAMETER_ACL:
     address.classId = ParameterAclRelationId;
     address.objectId = ParameterAclLookup(name, missing_ok);
-    address.objectSubId = 0;
-    break;
-  case OBJECT_PUBLICATION:
-    address.classId = PublicationRelationId;
-    address.objectId = get_publication_oid(name, missing_ok);
-    address.objectSubId = 0;
-    break;
-  case OBJECT_SUBSCRIPTION:
-    address.classId = SubscriptionRelationId;
-    address.objectId = get_subscription_oid(name, missing_ok);
     address.objectSubId = 0;
     break;
   default:
@@ -2049,47 +2026,6 @@ HeapTuple get_catalog_object_by_oid_extended(Relation catalog,
 }
 
 /*
- * getPublicationSchemaInfo
- *
- * Get publication name and schema name from the object address into pubname and
- * nspname. Both pubname and nspname are palloc'd strings which will be freed by
- * the caller.
- */
-static bool getPublicationSchemaInfo(const ObjectAddress *object,
-                                     bool missing_ok, char **pubname,
-                                     char **nspname) {
-  HeapTuple tup;
-  Form_pg_publication_namespace pnform;
-
-  tup =
-      SearchSysCache1(PUBLICATIONNAMESPACE, ObjectIdGetDatum(object->objectId));
-  if (!HeapTupleIsValid(tup)) {
-    if (!missing_ok)
-      elog(ERROR, "cache lookup failed for publication schema %u",
-           object->objectId);
-    return false;
-  }
-
-  pnform = (Form_pg_publication_namespace)GETSTRUCT(tup);
-  *pubname = get_publication_name(pnform->pnpubid, missing_ok);
-  if (!(*pubname)) {
-    return false;
-  }
-
-  *nspname = get_namespace_name(pnform->pnnspid);
-  if (!(*nspname)) {
-    Oid schemaid = pnform->pnnspid;
-
-    pfree(*pubname);
-    if (!missing_ok)
-      elog(ERROR, "cache lookup failed for schema %u", schemaid);
-    return false;
-  }
-
-  return true;
-}
-
-/*
  * getObjectDescription: build an object description for messages
  *
  * The result is a palloc'd string.  NULL is returned for an undefined
@@ -3028,63 +2964,6 @@ char *getObjectDescription(const ObjectAddress *object, bool missing_ok) {
     break;
   }
 
-  case PublicationRelationId: {
-    char *pubname = get_publication_name(object->objectId, missing_ok);
-
-    if (pubname)
-      appendStringInfo(&buffer, _("publication %s"), pubname);
-    break;
-  }
-
-  case PublicationNamespaceRelationId: {
-    char *pubname;
-    char *nspname;
-
-    if (!getPublicationSchemaInfo(object, missing_ok, &pubname, &nspname))
-      break;
-
-    appendStringInfo(&buffer, _("publication of schema %s in publication %s"),
-                     nspname, pubname);
-    pfree(pubname);
-    pfree(nspname);
-    break;
-  }
-
-  case PublicationRelRelationId: {
-    HeapTuple tup;
-    char *pubname;
-    Form_pg_publication_rel prform;
-    StringInfoData rel;
-
-    tup = SearchSysCache1(PUBLICATIONREL, ObjectIdGetDatum(object->objectId));
-    if (!HeapTupleIsValid(tup)) {
-      if (!missing_ok)
-        elog(ERROR, "cache lookup failed for publication table %u",
-             object->objectId);
-      break;
-    }
-
-    prform = (Form_pg_publication_rel)GETSTRUCT(tup);
-    pubname = get_publication_name(prform->prpubid, false);
-
-    initStringInfo(&rel);
-    getRelationDescription(&rel, prform->prrelid, false);
-
-    /* translator: first %s is, e.g., "table %s" */
-    appendStringInfo(&buffer, _("publication of %s in publication %s"),
-                     rel.data, pubname);
-    pfree(rel.data);
-    break;
-  }
-
-  case SubscriptionRelationId: {
-    char *subname = get_subscription_name(object->objectId, missing_ok);
-
-    if (subname)
-      appendStringInfo(&buffer, _("subscription %s"), subname);
-    break;
-  }
-
   case TransformRelationId: {
     HeapTuple trfTup;
     Form_pg_transform trfForm;
@@ -3634,22 +3513,6 @@ char *getObjectTypeDescription(const ObjectAddress *object, bool missing_ok) {
 
   case PolicyRelationId:
     appendStringInfoString(&buffer, "policy");
-    break;
-
-  case PublicationRelationId:
-    appendStringInfoString(&buffer, "publication");
-    break;
-
-  case PublicationNamespaceRelationId:
-    appendStringInfoString(&buffer, "publication namespace");
-    break;
-
-  case PublicationRelRelationId:
-    appendStringInfoString(&buffer, "publication relation");
-    break;
-
-  case SubscriptionRelationId:
-    appendStringInfoString(&buffer, "subscription");
     break;
 
   case TransformRelationId:
@@ -4674,76 +4537,6 @@ char *getObjectIdentityParts(const ObjectAddress *object, List **objname,
       *objname = lappend(*objname, pstrdup(NameStr(policy->polname)));
 
     table_close(polDesc, AccessShareLock);
-    break;
-  }
-
-  case PublicationRelationId: {
-    char *pubname;
-
-    pubname = get_publication_name(object->objectId, missing_ok);
-    if (pubname) {
-      appendStringInfoString(&buffer, quote_identifier(pubname));
-      if (objname)
-        *objname = list_make1(pubname);
-    }
-    break;
-  }
-
-  case PublicationNamespaceRelationId: {
-    char *pubname;
-    char *nspname;
-
-    if (!getPublicationSchemaInfo(object, missing_ok, &pubname, &nspname))
-      break;
-    appendStringInfo(&buffer, "%s in publication %s", nspname, pubname);
-
-    if (objargs)
-      *objargs = list_make1(pubname);
-    else
-      pfree(pubname);
-
-    if (objname)
-      *objname = list_make1(nspname);
-    else
-      pfree(nspname);
-
-    break;
-  }
-
-  case PublicationRelRelationId: {
-    HeapTuple tup;
-    char *pubname;
-    Form_pg_publication_rel prform;
-
-    tup = SearchSysCache1(PUBLICATIONREL, ObjectIdGetDatum(object->objectId));
-    if (!HeapTupleIsValid(tup)) {
-      if (!missing_ok)
-        elog(ERROR, "cache lookup failed for publication table %u",
-             object->objectId);
-      break;
-    }
-
-    prform = (Form_pg_publication_rel)GETSTRUCT(tup);
-    pubname = get_publication_name(prform->prpubid, false);
-
-    getRelationIdentity(&buffer, prform->prrelid, objname, false);
-    appendStringInfo(&buffer, " in publication %s", pubname);
-
-    if (objargs)
-      *objargs = list_make1(pubname);
-
-    break;
-  }
-
-  case SubscriptionRelationId: {
-    char *subname;
-
-    subname = get_subscription_name(object->objectId, missing_ok);
-    if (subname) {
-      appendStringInfoString(&buffer, quote_identifier(subname));
-      if (objname)
-        *objname = list_make1(subname);
-    }
     break;
   }
 

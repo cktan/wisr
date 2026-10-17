@@ -154,10 +154,11 @@ Read against the code on 2026-10-14 (step 1 of §5).
   to be built from its compiled-in columns before that
   refusal. Its `relkind` is `r`, its namespace `pg_catalog`,
   and its `rd_tableam` the catalog relations' access method.
-- **Its columns are compiled in for eleven.** `schemapg.h` has
+- **Its columns are compiled in for ten.** `schemapg.h` has
   `pg_attribute`, `pg_auth_members`, `pg_authid`, `pg_class`,
   `pg_database`, `pg_index`, `pg_proc`, `pg_shseclabel`,
-  `pg_statistic`, `pg_subscription` and `pg_type`. The rest --
+  `pg_statistic` and `pg_type` (`pg_subscription` went in
+  `WORKNOTE.md` step 214). The rest --
   `pg_namespace`, `pg_am`, `pg_attrdef`, `pg_constraint`,
   `pg_collation`, `pg_inherits`, `pg_trigger` and the others
   of §4 -- need one each, written by `gen_cat.py` from their

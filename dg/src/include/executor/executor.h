@@ -729,10 +729,6 @@ extern void ExecSimpleRelationUpdate(ResultRelInfo *resultRelInfo,
 extern void ExecSimpleRelationDelete(ResultRelInfo *resultRelInfo,
                                      EState *estate, EPQState *epqstate,
                                      TupleTableSlot *searchslot);
-extern void CheckCmdReplicaIdentity(Relation rel, CmdType cmd);
-
-extern void CheckSubscriptionRelkind(char relkind, const char *nspname,
-                                     const char *relname);
 
 /*
  * prototypes from functions in nodeModifyTable.c

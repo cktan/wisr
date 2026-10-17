@@ -33,12 +33,10 @@
 #include "catalog/pg_largeobject.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_parameter_acl.h"
-#include "catalog/pg_replication_origin.h"
 #include "catalog/pg_seclabel.h"
 #include "catalog/pg_shdepend.h"
 #include "catalog/pg_shdescription.h"
 #include "catalog/pg_shseclabel.h"
-#include "catalog/pg_subscription.h"
 #include "catalog/pg_tablespace.h"
 #include "catalog/pg_type.h"
 #include "miscadmin.h"
@@ -147,7 +145,6 @@ bool IsCatalogRelationOid(Oid relid) {
 bool IsCatalogTextUniqueIndexOid(Oid relid) {
   switch (relid) {
   case ParameterAclParnameIndexId:
-  case ReplicationOriginNameIndex:
   case SecLabelObjectIndexId:
   case SharedSecLabelObjectIndexId:
     return true;
@@ -277,11 +274,9 @@ bool IsSharedRelation(Oid relationId) {
       relationId == DatabaseRelationId ||
       relationId == DbRoleSettingRelationId ||
       relationId == ParameterAclRelationId ||
-      relationId == ReplicationOriginRelationId ||
       relationId == SharedDependRelationId ||
       relationId == SharedDescriptionRelationId ||
       relationId == SharedSecLabelRelationId ||
-      relationId == SubscriptionRelationId ||
       relationId == TableSpaceRelationId)
     return true;
   /* These are their indexes */
@@ -293,14 +288,10 @@ bool IsSharedRelation(Oid relationId) {
       relationId == DbRoleSettingDatidRolidIndexId ||
       relationId == ParameterAclOidIndexId ||
       relationId == ParameterAclParnameIndexId ||
-      relationId == ReplicationOriginIdentIndex ||
-      relationId == ReplicationOriginNameIndex ||
       relationId == SharedDependDependerIndexId ||
       relationId == SharedDependReferenceIndexId ||
       relationId == SharedDescriptionObjIndexId ||
       relationId == SharedSecLabelObjectIndexId ||
-      relationId == SubscriptionNameIndexId ||
-      relationId == SubscriptionObjectIndexId ||
       relationId == TablespaceNameIndexId || relationId == TablespaceOidIndexId)
     return true;
   /* These are their toast tables and toast indexes */
@@ -314,8 +305,6 @@ bool IsSharedRelation(Oid relationId) {
       relationId == PgShdescriptionToastIndex ||
       relationId == PgShseclabelToastTable ||
       relationId == PgShseclabelToastIndex ||
-      relationId == PgSubscriptionToastTable ||
-      relationId == PgSubscriptionToastIndex ||
       relationId == PgTablespaceToastTable ||
       relationId == PgTablespaceToastIndex)
     return true;

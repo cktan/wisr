@@ -127,7 +127,8 @@ limits, `max_active_replication_origins`,
 - The `XACT_XINFO_HAS_ORIGIN` part of a commit record is still
   parsed, never written.
 - The catalogs `pg_replication_origin`, `pg_subscription`,
-  `pg_subscription_rel` and `pg_publication*`.
+  `pg_subscription_rel` and `pg_publication*`. (The first three
+  went, and the last were left empty, in step 214.)
 
 ## Step 3: sq, the base and the raw parser
 
@@ -6214,4 +6215,48 @@ fetches a row by its tid already, for `WHERE CURRENT OF`.
   a TID scan; rownos no row has; another condition beside it;
   update and delete by rowno; a join, plain and left; a range.
   Without the change its 5 plans were sequential scans.
+
+## Step 214: the replication catalogs are purged
+
+`../sm/NEXT.md` §1's last cleanup: step 2's known leftovers,
+the catalogs of replication, which nothing has written since
+step 2 cut replication.
+
+- **`pg_subscription`, `pg_subscription_rel` and
+  `pg_replication_origin` are gone**, headers and all, and with
+  them what `genbki.pl` made of them: their `schemapg.h` entry,
+  their syscaches, their foreign keys in `system_fk_info.h`.
+  catalog `IsSharedRelation()` and
+  `IsCatalogTextUniqueIndexOid()` no longer list them. `select
+  from pg_subscription` already failed: digres never served it.
+- **`pg_publication` and its two relations stay, empty**
+  (`SYSCATALOG.md` §2): psql's `\d name` reads them for a
+  table's publications. Their headers keep the catalog and its
+  indexes, for `cat_builtin.c`; their syscaches go, and so does
+  the rest of PostgreSQL's header, `Publication`,
+  `PublicationDesc` and the like.
+- **What read them as objects is gone**: lsyscache
+  `get_publication_oid()`, `get_publication_name()`,
+  `get_subscription_oid()` and `get_subscription_name()`;
+  relcache `RelationBuildPublicationDesc()`, which nothing
+  called; their cases in objectaddress (the object property
+  table, a description, an identity, a type) and
+  `getPublicationSchemaInfo()`; alter's duplicate-name and
+  subscription checks; dependency's, and tablecmds' column
+  of a publication's `WHERE`. The prototypes
+  `CheckCmdReplicaIdentity()` and `CheckSubscriptionRelkind()`
+  had no body.
+- **The statements still parse and are refused**, as step 2
+  left them: `publications are not supported`, `subscriptions
+  are not supported`. Their nodes and `OBJECT_PUBLICATION`,
+  `OBJECT_SUBSCRIPTION` and the like stay.
+- **`pg_describe_object()` of a publication's class** fails
+  with `unsupported object class`, where it failed before on
+  `relation 6110 cannot be opened`.
+- access `tableam.h` includes `nodes/lockoptions.h` for
+  `LockTupleMode`: it had it through utils `rel.h`, which
+  included `pg_publication.h` for nothing.
+- Left: the replication wait events in
+  `utils/activity/wait_event_names.txt`, slots, WAL senders and
+  receivers, logical apply, which nothing waits on.
 

@@ -50,12 +50,8 @@
 #include "catalog/pg_parameter_acl.h"
 #include "catalog/pg_policy.h"
 #include "catalog/pg_proc.h"
-#include "catalog/pg_publication.h"
-#include "catalog/pg_publication_namespace.h"
-#include "catalog/pg_publication_rel.h"
 #include "catalog/pg_rewrite.h"
 #include "catalog/pg_statistic_ext.h"
-#include "catalog/pg_subscription.h"
 #include "catalog/pg_tablespace.h"
 #include "catalog/pg_transform.h"
 #include "catalog/pg_trigger.h"
@@ -1303,7 +1299,6 @@ static void doDeletion(const ObjectAddress *object, int flags) {
   case AuthIdRelationId:
   case DatabaseRelationId:
   case TableSpaceRelationId:
-  case SubscriptionRelationId:
   case ParameterAclRelationId:
     elog(ERROR, "global objects cannot be deleted by doDeletion");
     break;

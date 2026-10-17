@@ -25,13 +25,6 @@ Low priority:
    of line, which end a load's files; a `rel` verb; and batch
    mode and mini-batch, which matter less now that no write
    keeps a row lock.
-2. **Purge the replication catalogs.** `../dg/WORKNOTE.md`
-   step 2's known leftovers: `pg_subscription`,
-   `pg_subscription_rel`, `pg_publication*` and
-   `pg_replication_origin`. They reach into generated catalog
-   headers (`schemapg.h`, `system_fk_info.h`) and the
-   relcache, so this cut is larger than `make_legacy_dirs()`'s
-   (`../dg/WORKNOTE.md` step 209).
 
 ---
 

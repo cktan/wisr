@@ -55,11 +55,9 @@
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_opclass.h"
 #include "catalog/pg_proc.h"
-#include "catalog/pg_publication.h"
 #include "catalog/pg_rewrite.h"
 #include "catalog/pg_shseclabel.h"
 #include "catalog/pg_statistic_ext.h"
-#include "catalog/pg_subscription.h"
 #include "catalog/pg_tablespace.h"
 #include "catalog/pg_trigger.h"
 #include "catalog/pg_type.h"
@@ -4968,21 +4966,6 @@ void RelationGetExclusionInfo(Relation indexRelation, Oid **operators,
   memcpy(indexRelation->rd_exclprocs, funcs, sizeof(Oid) * indnkeyatts);
   memcpy(indexRelation->rd_exclstrats, strats, sizeof(uint16) * indnkeyatts);
   MemoryContextSwitchTo(oldcxt);
-}
-
-/*
- * RelationBuildPublicationDesc -- what the publications of relation publish,
- * and whether its replica identity covers them: nothing, and it does, as
- * digres has no publications.
- */
-void RelationBuildPublicationDesc(Relation relation, PublicationDesc *pubdesc) {
-  memset(pubdesc, 0, sizeof(PublicationDesc));
-  pubdesc->rf_valid_for_update = true;
-  pubdesc->rf_valid_for_delete = true;
-  pubdesc->cols_valid_for_update = true;
-  pubdesc->cols_valid_for_delete = true;
-  pubdesc->gencols_valid_for_update = true;
-  pubdesc->gencols_valid_for_delete = true;
 }
 
 static bytea **CopyIndexAttOptions(bytea **srcopts, int natts) {
