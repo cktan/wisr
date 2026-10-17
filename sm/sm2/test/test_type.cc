@@ -173,7 +173,8 @@ TEST_CASE("each type is found by its frozen code, and only by it") {
               {12, "time", 8, true, 8},         {13, "timestamp", 8, true, 8},
               {14, "timestamptz", 8, true, 8},  {15, "interval", 16, false, 8},
               {16, "uuid", 16, false, 1},       {17, "decimal64", 8, true, 8},
-              {18, "decimal128", 16, false, 8}, {19, "bpchar", -1, false, 4}};
+              {18, "decimal128", 16, false, 8}, {19, "bpchar", -1, false, 4},
+              {20, "name", 64, false, 1}};
   for (auto &w : want) {
     CAPTURE(w.name);
     const sm2::type_t *t = sm2::type_by_code(w.code);
@@ -195,7 +196,7 @@ TEST_CASE("each type is found by its frozen code, and only by it") {
     CHECK_FALSE(t->recv);
     CHECK_FALSE(t->send);
   }
-  for (uint8_t code : {0, 7, 20, 64, 255}) {
+  for (uint8_t code : {0, 7, 21, 64, 255}) {
     CAPTURE(code);
     CHECK(sm2::type_by_code(code) == nullptr);
   }
@@ -767,6 +768,51 @@ TEST_CASE("bpchar is text whose trailing spaces count for nothing") {
   col.type = t;
   col.typmod = -1;
   CHECK_FALSE(sm2::key_decodable(std::span<const sm2::key_column_t>(&col, 1)));
+}
+
+TEST_CASE("name is PostgreSQL's 64 bytes, NUL-padded, ordered bytewise") {
+  // Verify name, PostgreSQL's NameData (TYPE.md §3.5).
+  // 1. A value's datum is its bytes and NULs to 64, as PostgreSQL
+  //    stores it; out prints the bytes before the NULs.
+  // 2. The empty name and one of 63 bytes are taken; one of 64, and
+  //    one not UTF-8, are refused, as is a datum not 64 bytes.
+  // 3. cmp orders by the bytes before the NULs, a prefix first.
+  // 4. Keys order as the values, and decode to the 64-byte datum.
+  const sm2::type_t *t = &sm2::type_name;
+  std::string datum, text;
+  REQUIRE(t->in("pg_class", -1, datum) == 0);
+  CHECK(datum == std::string("pg_class") + std::string(56, '\0'));
+  REQUIRE(t->out(datum, -1, text) == 0);
+  CHECK(text == "pg_class");
+  REQUIRE(t->in("", -1, datum) == 0);
+  CHECK(datum == std::string(64, '\0'));
+  REQUIRE(t->in(std::string(63, 'x'), -1, datum) == 0);
+  CHECK(datum == std::string(63, 'x') + '\0');
+  CHECK(t->in(std::string(64, 'x'), -1, datum) != 0);
+  CHECK(t->in("\xff", -1, datum) != 0);
+  CHECK(t->out("short", -1, text) != 0);
+  auto name = [&](std::string_view v) {
+    std::string d;
+    REQUIRE(t->in(v, -1, d) == 0);
+    return d;
+  };
+  CHECK(t->cmp(name("a"), name("a"), -1) == 0);
+  CHECK(t->cmp(name("a"), name("ab"), -1) < 0);
+  CHECK(t->cmp(name("B"), name("a"), -1) < 0);
+  CHECK(t->cmp(name("é"), name("z"), -1) > 0);
+  auto key = [&](std::string_view v) {
+    std::string k;
+    REQUIRE(t->key_encode(name(v), -1, nullptr, k) == 0);
+    return k;
+  };
+  CHECK(key("") < key("a"));
+  CHECK(key("a") < key("ab"));
+  CHECK(key("ab") < key("b"));
+  std::string k = key("tenk1"), back;
+  std::string_view rest = k;
+  REQUIRE(t->key_decode(rest, -1, nullptr, back) == 0);
+  CHECK(rest.empty());
+  CHECK(back == name("tenk1"));
 }
 
 TEST_CASE("bytea is any bytes, printed as hex, ordered bytewise") {

@@ -1,0 +1,141 @@
+# Verify name keeps its values as PostgreSQL does: at most 63 bytes,
+# a longer one clipped, ordered bytewise as under collation C.
+# 1. Make a table with a name column, and rows: empty, upper and lower
+#    case, over 63 bytes in ASCII and in two-byte characters.
+# 2. Confirm each value's length, the clipping, and the order.
+# 3. Confirm equality with a name, with text, LIKE, and grouping.
+# 4. Update a value, and confirm it reads back.
+
+statement ok
+create table n (k name, v int4)
+
+statement ok
+insert into n values ('abc', 1), ('ABC', 2), ('', 3), ('pg_class', 4), (repeat('x', 70), 5), (repeat('é', 40), 6), ('abc', 7)
+
+query II nosort
+select v, length(k) from n order by v
+----
+1	3
+2	3
+3	0
+4	8
+5	63
+6	31
+7	3
+
+query T nosort
+select k from n where v in (1, 2, 3, 4) order by k
+----
+(empty)
+ABC
+abc
+pg_class
+
+query I nosort
+select octet_length(k::text) from n where v = 5
+----
+63
+
+query I nosort
+select octet_length(k::text) from n where v = 6
+----
+62
+
+query I rowsort
+select v from n where k = 'abc'
+----
+1
+7
+
+query I rowsort
+select v from n where k = 'abc'::text
+----
+1
+7
+
+query I rowsort
+select v from n where k like 'pg%'
+----
+4
+
+query TI nosort
+select k, count(*) from n where v < 5 group by k order by k
+----
+(empty)	1
+ABC	1
+abc	1
+pg_class	1
+
+statement ok
+update n set k = 'pg_type' where v = 4
+
+query T nosort
+select k from n where v = 4
+----
+pg_type
+
+# Verify a unique index on name takes a value once, and is used to find
+# it, its rows and its own entries.
+# 1. Make a unique index on a name column with distinct values.
+# 2. Confirm a duplicate is refused, and one clipped to a duplicate too.
+# 3. With sequential scans off, confirm a lookup, a range, and an
+#    index-only scan find their rows, in order.
+
+statement ok
+create table u (k name, v int4)
+
+statement ok
+insert into u values ('pg_class', 1), ('pg_type', 2), ('tenk1', 3), (repeat('y', 63), 4)
+
+statement ok
+create unique index uk on u (k)
+
+statement error duplicate key value violates
+insert into u values ('pg_type', 9)
+
+statement error duplicate key value violates
+insert into u values (repeat('y', 64), 9)
+
+statement ok
+set enable_seqscan = off
+
+query I nosort
+select v from u where k = 'tenk1'
+----
+3
+
+query I nosort
+select v from u where k >= 'pg_type' order by k
+----
+2
+3
+4
+
+query T nosort
+select k from u where k < 'pg_z' order by k
+----
+pg_class
+pg_type
+
+statement ok
+set enable_seqscan = on
+
+# Verify a foreign key between name columns.
+# 1. Make a parent with a name primary key, and a child referencing it.
+# 2. Confirm a matching child row is taken, and one matching none is
+#    refused.
+
+statement ok
+create table np (id name primary key)
+
+statement ok
+insert into np values ('alpha')
+
+statement ok
+create table nc (pid name references np)
+
+statement ok
+insert into nc values ('alpha')
+
+statement error violates foreign key constraint "nc_pid_fkey"
+insert into nc values ('beta')

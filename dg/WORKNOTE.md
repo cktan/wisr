@@ -5715,3 +5715,32 @@ with "function 0x... returned NULL".
 - `test/select_text.sql` step 6: the PostgreSQL documentation's
   `oob`, and its null where the pattern does not match. It
   failed without the change.
+
+## Step 197: name
+
+`test/regress/README.md`'s second item: `name` was refused,
+"type name is not supported yet", and `test_setup`'s `onek` and
+`tenk1` have `name` columns, so 17 files lacked them.
+
+- **sm2 has a type for it**, `name`, code 20
+  (`../sm/sm2/TYPE.md` §3.5): PostgreSQL's `NameData`, 64 bytes,
+  the string and then NULs, stored as they are, a fixed-width
+  datum by reference as `uuid` is, so the tuple codec and digres
+  need nothing new. Its `cmp` and key are a `text`'s of the
+  bytes before the NULs: bytewise, as under collation `C`,
+  which a `name` column has. The key decodes, padded again, so
+  an index-only scan gives the value. 64 bytes a value is what
+  PostgreSQL stores too; the storage's compression takes most
+  of the padding back.
+- **digres maps `name` to it and back** (access/sm
+  `smstore.c`). PostgreSQL's `namein` clips a value to 63
+  bytes, at a character's start, before sm sees it.
+- `test/slt/name.test`, PostgreSQL 18's answers: lengths, the
+  clip in one- and two-byte characters, order, equality with a
+  name and with text, `LIKE`, grouping, an update, a unique
+  index and its lookup, range and index-only scan, and a
+  foreign key between name columns. 25 of its 27 records failed
+  without the change. `../sm/sm2/test/test_type.cc` checks the
+  type's bytes, limits, order and key.
+- `test_setup` makes `onek` and `tenk1` now; `select` stops next
+  at `onek2`, which is `CREATE TABLE AS`.

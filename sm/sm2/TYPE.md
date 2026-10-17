@@ -105,6 +105,7 @@ null marker and before any inversion.
 | `decimal64` | 17 | after DuckDB's decimal, two's complement, LE | 8 | sign-flipped, BE | 8 |
 | `decimal128` | 18 | as `decimal64` | 16 | sign-flipped, BE | 16 |
 | `bpchar` | 19 | payload bytes, padded as given | var | as `text`, of the value without its trailing spaces | var |
+| `name` | 20 | the bytes, NUL-padded to 64 | 64 | as `text`, of the bytes before the NULs | var |
 
 The codes are frozen: assigned once, never reused or
 renumbered (`SM2_DESIGN.md` §2). Code 7 was `decimal`, before
@@ -214,7 +215,7 @@ Decided in `SM2_DESIGN.md` §2.2: a typmod is required, and NaN
 and infinity are refused on insert, so no value is reserved as
 a sentinel.
 
-### 3.5 text, varchar, bpchar
+### 3.5 text, varchar, bpchar, name
 
 Native is the payload bytes alone — no varlena header, no
 1-byte short form, no PostgreSQL TOAST pointer (`SM2_DESIGN.md`
@@ -278,6 +279,15 @@ key = sortkey(collation, datum) ‖ 0x00 0x00 ‖ escape(datum)
   one of them. A key so holds no value to give back: the type
   has no `key_decode`, and an index scan reads the row instead,
   as under a non-deterministic collation.
+- `name` (20) is PostgreSQL's `name`, its `NameData`: 64
+  bytes, valid UTF-8 and then NULs, so at most 63 bytes of
+  string. Native is those 64 bytes, as PostgreSQL stores them:
+  a fixed-width datum, not a varlena. `in` refuses a string of
+  64 bytes or more, which PostgreSQL's `namein` clips; that is
+  the host's. Its `cmp` and its key are a `text`'s, of the
+  bytes before the NULs, so names order bytewise, as under
+  PostgreSQL's collation `C`, which a `name` column has; its
+  key decodes, padded again.
 
 ### 3.6 bytea
 

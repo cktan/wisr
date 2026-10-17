@@ -679,6 +679,9 @@ static uint8_t type_code(Oid typid, int32 typmod) {
   /* char(n): stored padded, as given; sm compares it without the padding. */
   case BPCHAROID:
     return 19;
+  /* name: its 64 bytes, NUL-padded, as PostgreSQL stores them. */
+  case NAMEOID:
+    return 20;
   case BYTEAOID:
     return 10;
   case DATEOID:
@@ -1613,6 +1616,8 @@ static Oid type_oid(uint8_t code) {
     return NUMERICOID;
   case 19:
     return BPCHAROID;
+  case 20:
+    return NAMEOID;
   default:
     elog(ERROR, "sm type code %d has no type here", code);
   }

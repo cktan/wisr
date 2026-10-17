@@ -142,7 +142,8 @@ By files unblocked for the work, the cheapest first:
    `tenk1`, 14 more: 17 files, the most of any one change.
    It is what `test_setup`'s busiest tables need. (`char(n)`,
    which they needed too, is done: `char` passes, and 8 more
-   files got past it.)
+   files got past it.) Done since, in step 197: `test_setup`
+   makes `onek` and `tenk1`.
 3. **Accept and ignore `WITH (fillfactor, autovacuum_enabled)`**
    on `CREATE TABLE`: sm has no pages to fill. 5 files.
 4. **`CREATE TABLE AS`**, as a `CREATE TABLE` and an

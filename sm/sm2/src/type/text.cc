@@ -1,6 +1,7 @@
 /*
  * text.cc -- text, varchar and bytea (TYPE.md §3.5, §3.6): the
- * payload bytes alone, with no varlena header.
+ * payload bytes alone, with no varlena header; and name, the
+ * 64 bytes PostgreSQL's NameData is.
  *
  * text and varchar are the same bytes under two codes: valid
  * UTF-8 with no NUL, as a PostgreSQL UTF8 database holds, and
@@ -231,6 +232,65 @@ int bpchar_key(std::string_view d, int32_t, const sm2::collation_t *c,
                std::string &k) {
   return bytes_key(bpchar_trim(d), c, k);
 }
+/* A name datum's width: PostgreSQL's NAMEDATALEN. */
+constexpr size_t name_len = 64;
+
+/*
+ * A name's string: its bytes before the first NUL, which pads it to
+ * name_len (TYPE.md §3.5).
+ */
+std::string_view name_str(std::string_view d) {
+  return d.substr(0, std::min(d.find('\0'), d.size()));
+}
+
+/*
+ * Parse a name's text into its name_len bytes, NUL-padded: at most
+ * name_len - 1 of them, as PostgreSQL's namein leaves; the host
+ * clips a longer one.
+ */
+int name_in(std::string_view t, int32_t, std::string &d) {
+  if (string_in("name", t, d) != 0) {
+    return -1;
+  }
+  // Echoed only once known to be valid UTF-8.
+  if (d.size() >= name_len) {
+    return sm2::bad_input("name", t);
+  }
+  d.resize(name_len, '\0');
+  return 0;
+}
+/* Print a name datum: its string. */
+int name_out(std::string_view d, int32_t, std::string &t) {
+  if (d.size() != name_len) {
+    return sm2::bad_datum("name", d, name_len);
+  }
+  return string_out("name", name_str(d), t);
+}
+/* Order two names as their strings' bytes, as collation C does. */
+int name_cmp(std::string_view a, std::string_view b, int32_t typmod) {
+  return bytes_cmp(name_str(a), name_str(b), typmod);
+}
+/* A name's key: a text's, of its string. */
+int name_key(std::string_view d, int32_t, const sm2::collation_t *c,
+             std::string &k) {
+  if (d.size() != name_len) {
+    return sm2::bad_datum("name", d, name_len);
+  }
+  return bytes_key(name_str(d), c, k);
+}
+/* Read a name's key: its string, NUL-padded again. */
+int name_unkey(std::string_view &k, int32_t, const sm2::collation_t *c,
+               std::string &d) {
+  if (bytes_unkey("name", k, c, d) != 0) {
+    return -1;
+  }
+  if (d.size() >= name_len) {
+    return sm2::bad_key("name");
+  }
+  d.resize(name_len, '\0');
+  return 0;
+}
+
 /* A bytea's key: its bytes, escaped; a bytea has no collation. */
 int bytea_key(std::string_view d, int32_t, const sm2::collation_t *,
               std::string &k) {
@@ -327,6 +387,17 @@ const type_t type_bpchar = {.code = 19,
                              * scan reads the row (key_decodable()).
                              */
                             .key_decode = nullptr};
+
+const type_t type_name = {.code = 20,
+                          .name = "name",
+                          .len = 64,
+                          .byval = false,
+                          .align = 1,
+                          .in = name_in,
+                          .out = name_out,
+                          .cmp = name_cmp,
+                          .key_encode = name_key,
+                          .key_decode = name_unkey};
 
 const type_t type_bytea = {.code = 10,
                            .name = "bytea",
