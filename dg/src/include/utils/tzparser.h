@@ -33,5 +33,6 @@ typedef struct tzEntry {
 } tzEntry;
 
 extern TimeZoneAbbrevTable *load_tzoffsets(const char *filename);
+extern const char *tzparser_builtin_set(const char *name);
 
 #endif /* TZPARSER_H */

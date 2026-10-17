@@ -5770,3 +5770,33 @@ same cost, did not.
   change.
 - Left as it was: any other `RELOID` syscache lookup of a
   table of sm's still opens `pg_class`'s index, and fails.
+
+## Step 199: the time zone abbreviations, compiled in
+
+`test/regress/README.md`'s first item: `timezone_abbreviations`
+was empty, so `EDT`, `zulu` and `MET DST` were not read, and
+`time`, `timestamp`, `timestamptz` and `horology` failed on
+them.
+
+- **Not loaded since step 9.** PostgreSQL reads a set from its
+  installation's `share/timezonesets`, and digres has no
+  installation; the start left `timezone_abbreviations` unset.
+- **The sets are compiled in.** `src/tools/gen_tznames.py`
+  writes utils/misc `tznames_builtin.c` from
+  `src/timezone/tznames`: `Default`, `Australia` and `India`,
+  the sets PostgreSQL installs. The `.txt` lists beside them
+  are to copy from, and no set's name. `tzparser.c`'s
+  `ParseTzFile()` reads a set's text a line at a time, as it
+  read the file, with each check kept; a name that is no set's
+  is a file that does not exist. A set of one's own needs a
+  rebuild.
+- **The start installs `Default`** (utils/misc `guc.c`'s
+  `SelectConfigFiles()`), as PostgreSQL's does when the
+  configuration file sets none.
+- `test/slt/timezone_abbrevs.test`: the setting at start,
+  `Default`'s abbreviations, `Australia`'s `EST` and `India`'s
+  `IST`, `RESET`, and a name that is no set refused. Its
+  answers are written by hand from the sets' offsets: no
+  PostgreSQL 18 here to fill them. 5 of its 13 records failed
+  with the start not installing `Default`.
+- Left: `pg_timezone_abbrevs` is a view, which digres has not.

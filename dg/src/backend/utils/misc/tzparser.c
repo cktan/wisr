@@ -24,8 +24,6 @@
 
 #include <ctype.h>
 
-#include "miscadmin.h"
-#include "storage/fd.h"
 #include "utils/datetime.h"
 #include "utils/guc.h"
 #include "utils/memutils.h"
@@ -245,6 +243,27 @@ static int addToArray(tzEntry **base, int *arraysize, int n, tzEntry *entry,
 }
 
 /*
+ * The next line of a set's text at *pos into buf, as fgets() reads a file:
+ * with its newline, cut at size - 1 bytes.  False at the text's end.
+ */
+static bool tzparser_next_line(const char **pos, char *buf, size_t size) {
+  const char *start = *pos;
+  const char *end;
+  size_t len;
+
+  if (*start == '\0')
+    return false;
+  end = strchr(start, '\n');
+  len = end ? end - start + 1 : strlen(start);
+  if (len > size - 1)
+    len = size - 1;
+  memcpy(buf, start, len);
+  buf[len] = '\0';
+  *pos = start + len;
+  return true;
+}
+
+/*
  * Parse a single timezone abbrev file --- can recurse to handle @INCLUDE
  *
  * filename: user-specified file name (does not include path)
@@ -257,9 +276,7 @@ static int addToArray(tzEntry **base, int *arraysize, int n, tzEntry *entry,
  */
 static int ParseTzFile(const char *filename, int depth, tzEntry **base,
                        int *arraysize, int n) {
-  char share_path[MAXPGPATH];
-  char file_path[MAXPGPATH];
-  FILE *tzFile;
+  const char *text;
   char tzbuf[1024];
   char *line;
   tzEntry tzentry;
@@ -293,54 +310,22 @@ static int ParseTzFile(const char *filename, int depth, tzEntry **base,
     return -1;
   }
 
-  get_share_path(my_exec_path, share_path);
-  snprintf(file_path, sizeof(file_path), "%s/timezonesets/%s", share_path,
-           filename);
-  tzFile = AllocateFile(file_path, "r");
-  if (!tzFile) {
-    /*
-     * Check to see if the problem is not the filename but the directory.
-     * This is worth troubling over because if the installation share/
-     * directory is missing or unreadable, this is likely to be the first
-     * place we notice a problem during postmaster startup.
-     */
-    int save_errno = errno;
-    DIR *tzdir;
-
-    snprintf(file_path, sizeof(file_path), "%s/timezonesets", share_path);
-    tzdir = AllocateDir(file_path);
-    if (tzdir == NULL) {
-      GUC_check_errmsg("could not open directory \"%s\": %m", file_path);
-      GUC_check_errhint(
-          "This may indicate an incomplete PostgreSQL installation, or that "
-          "the file \"%s\" has been moved away from its proper location.",
-          my_exec_path);
-      return -1;
-    }
-    FreeDir(tzdir);
-    errno = save_errno;
-
-    /*
-     * otherwise, if file doesn't exist and it's level 0, guc.c's
-     * complaint is enough
-     */
-    if (errno != ENOENT || depth > 0)
-      GUC_check_errmsg("could not read time zone file \"%s\": %m", filename);
-
+  /*
+   * The sets are compiled in (tznames_builtin.c): digres has no
+   * installation's share directory to read them from.  A name that is no
+   * set's is a file that does not exist; at level 0, guc.c's complaint is
+   * enough.
+   */
+  text = tzparser_builtin_set(filename);
+  if (!text) {
+    if (depth > 0)
+      GUC_check_errmsg("could not read time zone file \"%s\": %s", filename,
+                       strerror(ENOENT));
     return -1;
   }
 
-  while (!feof(tzFile)) {
+  while (tzparser_next_line(&text, tzbuf, sizeof(tzbuf))) {
     lineno++;
-    if (fgets(tzbuf, sizeof(tzbuf), tzFile) == NULL) {
-      if (ferror(tzFile)) {
-        GUC_check_errmsg("could not read time zone file \"%s\": %m", filename);
-        n = -1;
-        break;
-      }
-      /* else we're at EOF after all */
-      break;
-    }
     if (strlen(tzbuf) == sizeof(tzbuf) - 1) {
       /* the line is too long for tzbuf */
       GUC_check_errmsg("line is too long in time zone file \"%s\", line %d",
@@ -395,8 +380,6 @@ static int ParseTzFile(const char *filename, int depth, tzEntry **base,
     if (n < 0)
       break;
   }
-
-  FreeFile(tzFile);
 
   return n;
 }

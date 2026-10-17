@@ -547,7 +547,6 @@ Do not reopen these without the owner:
   compares text runs.
 - Thirteen operators went with the SQL-language functions,
   `interval + date` and `text || anynonarray` among them.
-- Time zone abbreviations are not loaded.
 - `initdb` does not clean up when interrupted.
 - A reload with no configuration file logs a complaint.
 - **TODO: the SHARED variables move into `pcb_t`.** Each of

@@ -122,7 +122,7 @@ tables are missing in every file:
 | 13 | `relation "?" does not exist` | catalogs and views digres lacks (`pg_prepared_statements`, `pg_locks`, `pg_range`, ...), and tables a file made with what failed |
 | 9 | `relation pg_default_acl cannot be opened` | `CREATE FUNCTION`, `CREATE AGGREGATE` |
 | 9 | `relation pg_type cannot be written` | `CREATE TYPE ... AS ENUM`, `CREATE DOMAIN`, shell types |
-| 7 | `invalid input syntax for type ?` | numeric `nan`/`Infinity` 3 (no NaN, by design); time zone abbreviations `EDT`, `zulu`, `MET DST` 4 |
+| 7 | `invalid input syntax for type ?` | numeric `nan`/`Infinity` 3 (no NaN, by design); time zone abbreviations `EDT`, `zulu`, `MET DST` 4, loaded since `WORKNOTE.md` step 199, not measured since |
 | 7 | `unrecognized configuration parameter "?"` | parallel query settings 5, `max_prepared_transactions`, `track_counts` |
 | 5 | `function ?(...) does not exist` | `normalize`, `gisthandler`, `pg_notify`, `pg_stat_force_next_flush`, `jsonb_path_query` |
 | 3 | `ALTER TABLE supports only ADD COLUMN, ...` | `vacuum`, `identity`, and `strings` past step 196 |
@@ -135,9 +135,10 @@ tables are missing in every file:
 By files unblocked for the work, the cheapest first:
 
 1. **Load the `Default` time zone abbreviations.**
-   `timezone_abbreviations` is empty, so `EDT` and `zulu` are
+   `timezone_abbreviations` was empty, so `EDT` and `zulu` were
    unknown: 4 files (`time`, `timestamp`, `timestamptz`,
-   `horology`), likely a setting and an installed file.
+   `horology`). Done in step 199, compiled in; the 4 files are
+   not measured since.
 2. **`name`.** 3 files directly, and through `onek` and
    `tenk1`, 14 more: 17 files, the most of any one change.
    It is what `test_setup`'s busiest tables need. (`char(n)`,

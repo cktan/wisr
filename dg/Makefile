@@ -69,7 +69,8 @@ GEN := $(I)/catalog/.stamp $(B)/nodes/.stamp $(B)/utils/.fmgr-stamp \
     $(I)/pg_config_paths.h src/common/kwlist_d.h \
     $(B)/parser/sq_convert.c $(I)/catalog/cat_builtin.h \
     $(B)/catalog/cat_builtin.c $(B)/utils/adt/jsonpath_gram.c \
-    $(B)/utils/adt/jsonpath_scan.c $(B)/utils/misc/guc-file.c
+    $(B)/utils/adt/jsonpath_scan.c $(B)/utils/misc/guc-file.c \
+    $(B)/utils/misc/tznames_builtin.c
 
 .PHONY: gen
 gen: $(GEN)
@@ -268,6 +269,12 @@ $(B)/utils/adt/jsonpath_scan.c: $(B)/utils/adt/jsonpath_scan.l
 	sed -i 's/\*yy_start_state_list\[/*const yy_start_state_list[/' $@
 $(B)/utils/misc/guc-file.c: $(B)/utils/misc/guc-file.l
 	flex -o $@ $<
+
+# The time zone abbreviation sets, compiled in: digres has no
+# installation to read them from (src/tools/gen_tznames.py).
+$(B)/utils/misc/tznames_builtin.c: src/tools/gen_tznames.py \
+        $(wildcard src/timezone/tznames/*)
+	python3 -B src/tools/gen_tznames.py src/timezone/tznames > $@
 
 # Headers are formatted here: src/include has no Makefile.
 format: format-include

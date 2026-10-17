@@ -38,5 +38,6 @@ src/backend/utils/adt/jsonpath_gram.c
 src/backend/utils/adt/jsonpath_gram.h
 src/backend/utils/adt/jsonpath_scan.c
 src/backend/utils/misc/guc-file.c
+src/backend/utils/misc/tznames_builtin.c
 src/common/kwlist_d.h
 .cxx_casts

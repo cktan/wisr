@@ -1671,10 +1671,10 @@ bool SelectConfigFiles(const char *userDoption, const char *progname) {
     ProcessConfigFile(PGC_POSTMASTER);
 
   /*
-   * The time zone abbreviations are not loaded: they are read from the
-   * installation's share directory, and digres has no installation yet.
-   * Until it does, a time zone is named in full or by its offset.
+   * If timezone_abbreviations wasn't set in the configuration file, install
+   * the default value, the compiled-in set Default (tznames_builtin.c).
    */
+  pg_timezone_abbrev_initialize();
 
   free(configdir);
 

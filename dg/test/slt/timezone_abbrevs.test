@@ -1,0 +1,62 @@
+# Verify the time zone abbreviations are loaded, the Default set at start,
+# and that the other sets PostgreSQL ships can be chosen.
+# 1. Confirm the setting is Default, as nothing set it.
+# 2. Read timestamps with Default's abbreviations, one of two words.
+# 3. Choose Australia, whose EST is Australian, and India, whose IST is
+#    India's; reset to Default.
+# 4. Confirm a name that is no set is refused.
+
+statement ok
+set timezone = 'UTC'
+
+query T nosort
+show timezone_abbreviations
+----
+Default
+
+query T nosort
+select '2026-07-01 12:00 EDT'::timestamptz
+----
+2026-07-01 16:00:00+00
+
+query T nosort
+select '2026-01-01 12:00 zulu'::timestamptz
+----
+2026-01-01 12:00:00+00
+
+query T nosort
+select '2026-01-01 12:00 MET DST'::timestamptz
+----
+2026-01-01 10:00:00+00
+
+query T nosort
+select '2026-01-01 12:00 EST'::timestamptz
+----
+2026-01-01 17:00:00+00
+
+statement ok
+set timezone_abbreviations = 'Australia'
+
+query T nosort
+select '2026-01-01 12:00 EST'::timestamptz
+----
+2026-01-01 02:00:00+00
+
+statement ok
+set timezone_abbreviations = 'India'
+
+query T nosort
+select '2026-01-01 12:00 IST'::timestamptz
+----
+2026-01-01 06:30:00+00
+
+statement ok
+reset timezone_abbreviations
+
+query T nosort
+show timezone_abbreviations
+----
+Default
+
+statement error invalid value for parameter "timezone_abbreviations": "Nope"
+set timezone_abbreviations = 'Nope'
