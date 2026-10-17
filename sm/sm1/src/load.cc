@@ -599,8 +599,12 @@ int sm1::load_close(sm1::loader_t *l) {
     return set_error(sm1::SM_ERR_INVALID, "load: no loader");
   }
   sm1::session_t *s = l->s;
+  // A close that fails ends the load too, with the store still
+  // empty: the batch and the ingest each apply whole or not at
+  // all, so a rollback past the load is let in (BULKLOAD.md §3.5).
   if (check_disjoint(l) != 0 ||
       (l->to_files ? ingest(l) : write_batch(l)) != 0) {
+    load_discard(s);
     return -1;
   }
   // The transaction now reads what it loaded, as its own writes.

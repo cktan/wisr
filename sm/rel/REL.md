@@ -78,11 +78,16 @@ environment.
 (def dbs (db-list))
 ```
 
-### `(db-open name)`
+### `(db-open name [opts])`
 Opens a database and binds it to the current default session.
+`opts` may hold `:savepoint-undo-bytes`, the cap on what one
+transaction keeps to roll back to its savepoints
+(`sm_options_t`). It takes effect if this is the database's
+first session.
 
 ```janet
 (db-open "mydb")
+(db-open "mydb" {:savepoint-undo-bytes 4096})
 ```
 
 ### `(db-close)`

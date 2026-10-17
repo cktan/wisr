@@ -803,13 +803,17 @@ int savepoint(session_t* session);
  * savepoint_undo_bytes option for each transaction. A
  * transaction that writes more than that while a savepoint is
  * set keeps writing, and the savepoints then set are lost: a
- * rollback to one fails with SM_ERR_UNDOLIMIT, changes
- * nothing, and leaves the transaction to be aborted. A
- * savepoint set afterwards works as usual.
+ * rollback to one fails with SM_ERR_UNDOLIMIT. A savepoint set
+ * afterwards works as usual.
+ *
+ * A rollback that fails past its checks, at a lost savepoint or
+ * on SM_ERR_IO, dooms the transaction: the writes it was to undo
+ * are still there, so every later call on it but sm1::abort
+ * fails with SM_ERR_DOOMED, the commit too.
  *
  * Errors: SM_ERR_NOSAVEPOINT (no savepoint at that depth),
- * SM_ERR_UNDOLIMIT, SM_ERR_INVALID (a bulk load is open),
- * SM_ERR_NOTRANS, SM_ERR_PREPARED.
+ * SM_ERR_UNDOLIMIT, SM_ERR_IO, SM_ERR_INVALID (a bulk load is
+ * open), SM_ERR_NOTRANS, SM_ERR_PREPARED, SM_ERR_DOOMED.
  */
 int rollback(session_t* session, int depth);
 
@@ -1284,10 +1288,10 @@ int load_put(loader_t* loader, size_t stream, std::string_view key,
 /*
  * Close the load: sort and merge what is left, check that no two
  * keys are equal and no two streams overlap, and put every key
- * into the store at once. The loader is freed unless the call
- * fails, when the transaction is to be aborted, which frees it.
- * The transaction then reads what it loaded, and is still to
- * commit.
+ * into the store at once. The loader is freed whatever the call
+ * returns. The transaction then reads what it loaded, and is
+ * still to commit; after a failure the store holds nothing of
+ * the load, and the transaction may go on.
  *
  * Errors: SM_ERR_DUPKEY, SM_ERR_INVALID (two streams overlap),
  * SM_ERR_DISKFULL, SM_ERR_IO.

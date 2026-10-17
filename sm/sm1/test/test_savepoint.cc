@@ -474,8 +474,8 @@ TEST_CASE("past savepoint_undo_bytes the undo list is dropped, and the "
   //    is lost.
   // 4. Later writes list nothing.
   // 5. Rolling back to the mark fails with SM_ERR_UNDOLIMIT, and
-  //    the transaction is still active with its writes in view.
-  // 6. It commits, and every write is there.
+  //    dooms the transaction: its commit fails with SM_ERR_DOOMED.
+  // 6. It aborts, and none of its writes is there.
   sp_fixture_t f;
   sm1::options_t opt = undo_cap(3);
   sm1::session_t *s = f.open(&opt);
@@ -498,12 +498,13 @@ TEST_CASE("past savepoint_undo_bytes the undo list is dropped, and the "
 
   CHECK(sm1::rollback(s, 1) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_UNDOLIMIT);
-  CHECK(get(s, g_store, "f") == "1");
+  CHECK(sm1::commit(s) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_DOOMED);
 
-  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::abort(s) == 0);
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(keys_of(scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0)) ==
-        std::vector<std::string>{"a", "b", "c", "d", "e", "f"});
+        std::vector<std::string>{"a"});
   REQUIRE(sm1::commit(s) == 0);
   sm1::closedb(s);
 }
@@ -513,10 +514,9 @@ TEST_CASE("a savepoint set after the undo list was dropped works") {
   // 1. Lose the mark at depth 1 by passing the cap.
   // 2. Set a savepoint at depth 2, write, and roll back to it:
   //    that write is gone and the earlier ones stay.
-  // 3. Depth 1 still cannot be rolled back to.
-  // 4. Forget depth 1: no mark is lost any more, and a new
+  // 3. Forget depth 1: no mark is lost any more, and a new
   //    savepoint at depth 1 rolls back as usual.
-  // 5. Abort: nothing of the transaction is left.
+  // 4. Abort: nothing of the transaction is left.
   sp_fixture_t f;
   sm1::options_t opt = undo_cap(2);
   sm1::session_t *s = f.open(&opt);
@@ -534,9 +534,6 @@ TEST_CASE("a savepoint set after the undo list was dropped works") {
   CHECK(get(s, g_store, "e") == "<none>");
   CHECK(get(s, g_store, "d") == "1");
   CHECK(s->undo_bytes == 0);
-
-  CHECK(sm1::rollback(s, 1) == -1);
-  CHECK(sm1::errnum() == sm1::SM_ERR_UNDOLIMIT);
 
   REQUIRE(sm1::forget(s, 1) == 0);
   CHECK(s->lost_marks == 0);
@@ -562,7 +559,9 @@ TEST_CASE("passing the cap loses every savepoint set, and a rollback gives "
   // 2. Three more writes fit, which they would not had the count
   //    kept the two undone.
   // 3. Set a second savepoint and write once more: both marks
-  //    are lost, and neither can be rolled back to.
+  //    are lost. Rolling back to the inner fails with
+  //    SM_ERR_UNDOLIMIT and dooms the transaction, so rolling
+  //    back to the outer fails with SM_ERR_DOOMED.
   // 4. The next transaction starts with nothing lost.
   sp_fixture_t f;
   sm1::options_t opt = undo_cap(3);
@@ -586,7 +585,7 @@ TEST_CASE("passing the cap loses every savepoint set, and a rollback gives "
   CHECK(sm1::rollback(s, 2) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_UNDOLIMIT);
   CHECK(sm1::rollback(s, 1) == -1);
-  CHECK(sm1::errnum() == sm1::SM_ERR_UNDOLIMIT);
+  CHECK(sm1::errnum() == sm1::SM_ERR_DOOMED);
   REQUIRE(sm1::abort(s) == 0);
 
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
@@ -594,6 +593,72 @@ TEST_CASE("passing the cap loses every savepoint set, and a rollback gives "
   REQUIRE(sm1::savepoint(s) == 1);
   put(s, g_store, "b", "3");
   REQUIRE(sm1::rollback(s, 1) == 0);
+  REQUIRE(sm1::commit(s) == 0);
+  sm1::closedb(s);
+}
+
+TEST_CASE("a rollback that fails dooms the transaction until it aborts") {
+  // Verify a failed rollback leaves nothing to commit: every call on
+  // the transaction but an abort fails, and the abort undoes it all.
+  // 1. With room for one write, make a sequence, open a cursor,
+  //    set a savepoint, and write twice: the mark is lost.
+  // 2. Rolling back to it fails with SM_ERR_UNDOLIMIT.
+  // 3. A read, a write, a new cursor, the open cursor, a sequence
+  //    draw, a savepoint, a forget, a statement, a rollback and
+  //    the commit each fail with SM_ERR_DOOMED, naming the cap.
+  // 4. The abort succeeds, and the next transaction reads only
+  //    what was there before, and draws from its sequence.
+  sp_fixture_t f;
+  sm1::options_t opt = undo_cap(1);
+  sm1::session_t *s = f.open(&opt);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::mkseq(s, "q", 1, 1) == 0);
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  sm1::scan_t *c = scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0);
+  REQUIRE(c);
+  REQUIRE(sm1::savepoint(s) == 1);
+  put(s, g_store, "b", "1");
+  put(s, g_store, "c", "1");
+  REQUIRE(s->lost_marks == 1);
+
+  CHECK(sm1::rollback(s, 1) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_UNDOLIMIT);
+
+  auto doomed = [] {
+    return sm1::errnum() == sm1::SM_ERR_DOOMED &&
+           std::string(sm1::errmsg()).find("savepoint_undo_bytes") !=
+               std::string::npos;
+  };
+  std::string_view k, d;
+  uint64_t v = 0;
+  CHECK(sm1::read(s, g_store, "a", d) == -1);
+  CHECK(doomed());
+  CHECK(sm1::insert(s, g_store, "d", "1") == -1);
+  CHECK(doomed());
+  CHECK(scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0) == nullptr);
+  CHECK(doomed());
+  CHECK(sm1::scannxt(c, k, d) == -1);
+  CHECK(doomed());
+  CHECK(sm1::nextseq(s, "q", v) == -1);
+  CHECK(doomed());
+  CHECK(sm1::savepoint(s) == -1);
+  CHECK(doomed());
+  CHECK(sm1::forget(s, 1) == -1);
+  CHECK(doomed());
+  CHECK(sm1::stmt_begin(s) == -1);
+  CHECK(doomed());
+  CHECK(sm1::rollback(s, 1) == -1);
+  CHECK(doomed());
+  CHECK(sm1::commit(s) == -1);
+  CHECK(doomed());
+
+  sm1::scanend(c);
+  REQUIRE(sm1::abort(s) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(keys_of(scan(s, g_store, nullptr, 0, 0, nullptr, 0, 0)) ==
+        std::vector<std::string>{"a"});
+  REQUIRE(sm1::nextseq(s, "q", v) == 0);
   REQUIRE(sm1::commit(s) == 0);
   sm1::closedb(s);
 }

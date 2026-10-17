@@ -197,6 +197,10 @@ int nextseq(sm1::session_t *s, const char *name, uint64_t *out) {
     return set_error(sm1::SM_ERR_PREPARED, "the transaction is prepared as {}",
                      s->prepared_gid.c_str());
   }
+  // Nor does one a rollback doomed (§6.5).
+  if (s->active && s->doomed == sm1::SM_ERR_DOOMED) {
+    return xct_check_active(s);
+  }
   // The session's temporary sequence, if the name is one's.
   if (sm1::session_t::temp_seq_t *q = temp_seq(s, name)) {
     return temp_seq_next(q, out);
@@ -234,6 +238,10 @@ int lastseq(sm1::session_t *s, const char *name, uint64_t *out) {
   if (!s->active && !s->prepared_gid.empty()) {
     return set_error(sm1::SM_ERR_PREPARED, "the transaction is prepared as {}",
                      s->prepared_gid.c_str());
+  }
+  // Nor does one a rollback doomed (§6.5).
+  if (s->active && s->doomed == sm1::SM_ERR_DOOMED) {
+    return xct_check_active(s);
   }
   // The session's temporary sequence, if the name is one's.
   if (sm1::session_t::temp_seq_t *q = temp_seq(s, name)) {

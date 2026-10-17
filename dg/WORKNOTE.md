@@ -6013,3 +6013,66 @@ with a bulk load open (`SM_ERR_INVALID`).
   commit, refused (`onlyif digres`, beside PostgreSQL's
   answers). 5 of its 49 records failed before. The cap's path
   is untested (`../sm/NEXT.md` §2).
+
+## Step 206: a load whose end fails rolls back to its savepoint
+
+Step 205's last difference from PostgreSQL. A `COPY` into an
+empty table with a primary key, two equal keys in its rows,
+fails at its load's end with `SM_ERR_DUPKEY`. sm1's
+`load_close()` kept its loader open on a failure, for the
+abort it asked for, though sm3 had freed its own handle; so
+nothing could close the load, the rollback to the savepoint was
+refused, and the transaction was doomed.
+
+- **sm1: a close that fails ends the load.** It frees the
+  loader and its files, as an abort would. The store holds
+  nothing of the load: its write batch, or its ingest, applies
+  whole or not at all (`../sm/BULKLOAD.md` §3.5). The rollback
+  is let in and finds the store empty, and the transaction goes
+  on, as in PostgreSQL. digres is unchanged.
+- **The doom stays**, for a rollback past
+  `savepoint_undo_bytes`; it is now untested
+  (`../sm/NEXT.md` §2).
+- **A rollback sm refuses is logged**: `smstore_subabort()`
+  writes a `WARNING` with sm's reason, which does not throw in
+  an abort, before dooming the transaction.
+- `../sm/sm1/test/test_load.cc`: a close failing on a
+  duplicate key, in either of a load's forms, then the
+  rollback, a write and the commit. It failed before.
+- `test/slt/savepoint_load.test`: the duplicate key's case now
+  has PostgreSQL's answers on digres: rolled back to, the table
+  read empty, a row inserted and committed.
+
+## Step 207: sm dooms a transaction whose rollback failed
+
+Step 205 doomed the transaction in digres: `smstore_subabort()`
+kept the message of a rollback sm refused, and digres failed the
+next statement and the commit itself. The doom now lives in sm,
+where every caller gets it.
+
+- **sm1: a rollback that fails dooms its transaction.** At a
+  savepoint lost past `savepoint_undo_bytes`, or on an I/O
+  error, it sets the session's `doomed` to the new
+  `SM_ERR_DOOMED` and keeps its own error as the reason. Every
+  later call on the transaction fails with `SM_ERR_DOOMED`:
+  those that check `doomed` on entry, as for a deadlock victim,
+  and an open cursor's read, and a sequence draw. Only the
+  abort is let through. Unlike a deadlock victim's, the
+  transaction is not aborted at once
+  (`../sm/sm1/SM1_DESIGN.md` §6.5).
+- **A rollback refused by its checks**, at a depth with no
+  savepoint or with a bulk load open, changes nothing and dooms
+  nothing.
+- **digres drops its own doom.** `smstore_subabort()` only logs
+  the failed rollback as a `WARNING`; sm's `SM_ERR_DOOMED` is
+  raised by the next statement and the commit, as SQLSTATE
+  `25P02`, in failed SQL transaction.
+- `rel`: `db-open` takes `:savepoint-undo-bytes`.
+  `test/test_doomed.rel` sets it to 1 byte, fails a rollback,
+  and checks that 15 calls fail with `ERR_DOOMED`, through
+  sm3's tables, indexes and catalog, and that the abort leaves
+  nothing. This closes `../sm/NEXT.md`'s loose end: the cap's
+  path is tested, in sm.
+- `../sm/sm1/test/test_savepoint.cc`: the cap's three tests no
+  longer go on after `SM_ERR_UNDOLIMIT`, and a new one checks
+  each kind of call in a doomed transaction.

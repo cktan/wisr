@@ -1,0 +1,61 @@
+# test_doomed.rel -- a rollback to a savepoint that fails dooms its
+# transaction: every call on it but an abort then fails with
+# ERR_DOOMED, so the writes the rollback was to undo never commit.
+# The rollback fails here past savepoint_undo_bytes, set to 1 byte.
+
+(def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_doomed"))
+(rm-rf test-dir)
+(env-init test-dir)
+(env-attach test-dir)
+
+(db-create "doomdb")
+(db-open "doomdb" {:savepoint-undo-bytes 1})
+(begin :rc)
+(table-create t
+  (columns
+    (id :int4 :not-null)
+    (v :int4)))
+(index-create t_id (table t) (key (id :asc)) :unique true)
+(seq-create q 1 1)
+(insert t [1 10])
+(commit)
+
+# 1. A write after a savepoint passes the cap, so the rollback to it
+#    fails with ERR_UNDOLIMIT.
+(begin :rc)
+(def sp (savepoint))
+(insert t [2 20])
+(assert-err :err-undolimit (rollback sp))
+
+# 2. Every call on the transaction then fails with ERR_DOOMED: reads,
+#    writes, scans, a sequence draw, savepoints, statements, another
+#    rollback and the commit.
+(assert-err :err-doomed (read t 1))
+(assert-err :err-doomed (insert t [3 30]))
+(assert-err :err-doomed (update t 1 [1 11]))
+(assert-err :err-doomed (delete t 1))
+(assert-err :err-doomed (scan t))
+(assert-err :err-doomed (idx-scan t_id :ge [1]))
+(assert-err :err-doomed (lock-row t 1 :shared))
+(assert-err :err-doomed (nextseq q))
+(assert-err :err-doomed (savepoint))
+(assert-err :err-doomed (forget sp))
+(assert-err :err-doomed (stmt-begin))
+(assert-err :err-doomed (stmt-advance))
+(assert-err :err-doomed (rollback sp))
+(assert-err :err-doomed (table-create u (columns (a :int4))))
+(assert-err :err-doomed (commit))
+
+# 3. The abort succeeds and leaves nothing of the transaction: the
+#    next one reads only the first row, and draws the sequence's first
+#    value.
+(abort)
+(begin :rc)
+(assert-eq (map (fn [r] (r 0)) (scan t)) [1])
+(assert-eq (nextseq q) 1)
+(commit)
+
+(db-close)
+(env-detach :force true)
+(rm-rf test-dir)
+(print "test_doomed.rel: PASSED")
