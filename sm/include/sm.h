@@ -222,6 +222,15 @@ int sm_stmt_begin_inner(sm_session_t* session, sm_stmt_t** outer);
 int sm_stmt_end(sm_session_t* session, sm_stmt_t* outer);
 
 /*
+ * Advance the running statement to now, as PostgreSQL's
+ * CommandCounterIncrement does: its later reads see the
+ * transaction's writes so far, its own included, at the same
+ * snapshot. A table the statement made can then be written in
+ * it, as CREATE TABLE AS writes its new table.
+ */
+int sm_stmt_advance(sm_session_t* session);
+
+/*
  * FOR QA ONLY (rel's scripts); not how NOWAIT or SKIP LOCKED is
  * asked for, which is to be a flag on the calls that can wait.
  * Set whether the session waits for locks. On, a call that would

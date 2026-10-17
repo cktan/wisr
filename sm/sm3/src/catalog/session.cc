@@ -277,6 +277,12 @@ int stmt_end(session_t *s, const stmt_t &outer) {
   return 0;
 }
 
+/* Advance the running statement's mark; see sm3.h. */
+int stmt_advance(session_t *s) {
+  // The snapshot stays, so snap_seq does: only sm1's mark moves.
+  return sm1::stmt_advance(s->sm1);
+}
+
 /* Whether session may scan an index; see internal.h. */
 bool index_usable(const session_t *session, const table_def_t &def,
                   uint64_t oid) {

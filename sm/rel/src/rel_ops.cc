@@ -387,6 +387,17 @@ static Janet cfun_stmt_end(int32_t argc, Janet *argv) {
   return janet_wrap_nil();
 }
 
+/* (stmt-advance) */
+static Janet cfun_stmt_advance(int32_t argc, Janet *argv) {
+  (void)argv;
+  janet_fixarity(argc, 0);
+  session_ctx_t *s = require_session();
+  if (sm_stmt_advance(s->session) != 0) {
+    panic_sm_error("stmt-advance");
+  }
+  return janet_wrap_nil();
+}
+
 /* (qa-nowait on) */
 static Janet cfun_qa_nowait(int32_t argc, Janet *argv) {
   janet_fixarity(argc, 1);
@@ -2162,6 +2173,8 @@ static const JanetReg s_rel_cfuns[] = {
      "(stmt-inner) -- begin a statement inside the running one"},
     {"stmt-end", cfun_stmt_end,
      "(stmt-end) -- end the last (stmt-inner), resuming the outer"},
+    {"stmt-advance", cfun_stmt_advance,
+     "(stmt-advance) -- the running statement sees its writes so far"},
     {"qa-nowait", cfun_qa_nowait,
      "(qa-nowait on) -- fail with ERR_BLOCKED where a lock would wait"},
     {"savepoint", cfun_savepoint,

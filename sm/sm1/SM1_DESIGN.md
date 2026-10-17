@@ -972,6 +972,14 @@ Halloween problem.
   still a duplicate.
 - **A rollback lowers the mark** with `seq` (§6.5), since the
   rewound numbers are written again by the same statement.
+- **`sm1::stmt_advance` moves the mark to now** and leaves the
+  snapshot, as PostgreSQL's `CommandCounterIncrement`: the
+  statement's later reads see its writes so far. The rule
+  above is unchanged; only the mark's value moves. It is how a
+  statement uses what it made: a table, its store and its
+  rowno sequence, which `CREATE TABLE AS` makes and fills. A
+  store or a sequence is looked up at the mark like a row, and
+  until the advance the statement does not see it.
 - **A transaction that never calls `sm1::stmt_begin`** sees all
   its own writes, as before.
 

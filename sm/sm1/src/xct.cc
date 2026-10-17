@@ -318,6 +318,19 @@ int stmt_begin(sm1::session_t *s) {
   s->stmt_seq = s->seq;
   return 0;
 }
+/* sm1::stmt_advance, minus the out-of-memory guard. */
+int stmt_advance(sm1::session_t *s) {
+  // Require an active, non-prepared transaction.
+  if (xct_check_active(s) != 0) {
+    return -1;
+  }
+  // Move the mark only: the snapshot stays the statement's (§6.2).
+  if (s->stmt_marked) {
+    s->stmt_seq = s->seq;
+  }
+  return 0;
+}
+
 /*
  * The mark at depth, or NULL with the error set. Depth counts
  * from 1 at the outermost savepoint (§6.5).
@@ -1573,6 +1586,11 @@ int sm1::on_commit(sm1::session_t *session, std::function<void()> fn) {
 
 /* Read the rest of this statement at one snapshot. */
 int sm1::stmt_begin(sm1::session_t *session) { return ::stmt_begin(session); }
+
+/* Advance the running statement's mark; see sm1.h. */
+int sm1::stmt_advance(sm1::session_t *session) {
+  return ::stmt_advance(session);
+}
 
 /* QA only: make the session's lock requests fail where they would wait. */
 int sm1::set_qa_nowait(sm1::session_t *session, bool on) {
