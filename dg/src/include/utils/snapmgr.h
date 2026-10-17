@@ -82,12 +82,9 @@ extern void AtSubAbort_Snapshot(int level);
 extern void AtEOXact_Snapshot(bool isCommit, bool resetXmin);
 
 extern void ImportSnapshot(const char *idstr);
-extern void DeleteAllExportedSnapshotFiles(void);
 extern void WaitForOlderSnapshots(TransactionId limitXmin);
 extern bool ThereAreNoPriorRegisteredSnapshots(void);
 extern bool HaveRegisteredOrActiveSnapshot(void);
-
-extern char *ExportSnapshot(Snapshot snapshot);
 
 /*
  * Utility functions for implementing visibility routines in table AMs.

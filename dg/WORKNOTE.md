@@ -5845,3 +5845,30 @@ row was read, and `ctid` was the rowno packed into a tid,
   named as a system column is, `xmin` or `rowno`, which ALTER
   TABLE ADD COLUMN refuses; the user's column hides the system
   one, as in PostgreSQL. Left as it is.
+
+## Step 201: snapshot export and import are gone
+
+`../sm/NEXT.md` item 5. Step 149 made `pg_export_snapshot()`
+and `SET TRANSACTION SNAPSHOT` refuse, and left behind them
+what wrote a snapshot to a file in `pg_snapshots` and read one
+back, reached by nothing.
+
+- **Gone from utils/time `snapmgr.c`**: `ExportSnapshot()`,
+  which nothing called; `ImportSnapshot()`'s body after its
+  refusal, with its line parsers `parseIntFromText()`,
+  `parseXidFromText()` and `parseVxidFromText()`, and
+  `SetTransactionSnapshot()`, which installed what it read;
+  `DeleteAllExportedSnapshotFiles()`, never called; the list
+  of a transaction's exported snapshots, `exportedSnapshots`,
+  and its cleanup in `AtEOXact_Snapshot()`; and
+  `SNAPSHOT_EXPORT_DIR`.
+- **Orphaned by it, and gone**: `GetMaxSnapshotXidCount()` and
+  `GetMaxSnapshotSubxidCount()`, which only the export and the
+  import asked, and access/transam `xact.c`'s
+  `xactGetCommittedChildren()`, which only the export called.
+- **The refusals stay**: `pg_export_snapshot()` is in
+  `pg_proc`, and utils/misc `guc_funcs.c` calls
+  `ImportSnapshot()` for `SET TRANSACTION SNAPSHOT`.
+  `test/server.sh` checks both, as it did.
+- Left: the postmaster still makes `pg_snapshots`, among the
+  directories nothing opens (`../sm/NEXT.md` item 5, was 6).

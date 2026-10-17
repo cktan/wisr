@@ -41,31 +41,19 @@ Low priority:
    have a composite type", not `column t.nosuch does not
    exist`: the parser tries `nosuch(t)` as a function on the
    row, which a table in sm has no type for.
-5. **Purge snapshot export and import.** Both are refused
-   since `../dg/WORKNOTE.md` step 149, and what was behind
-   the refusals is unreachable, about 450 lines of utils/time
-   `snapmgr.c`: `ExportSnapshot()`, which nothing calls; the
-   body of `ImportSnapshot()` after its error; the
-   `parse*FromText()` helpers;
-   `DeleteAllExportedSnapshotFiles()`, never called;
-   `ExportedSnapshot`, `exportedSnapshots` and their cleanup
-   in `AtEOXact_Snapshot()`; and
-   `SNAPSHOT_EXPORT_DIR`. `pg_export_snapshot()` and
-   `ImportSnapshot()` keep their refusals, as utils/misc
-   `guc_funcs.c` calls the latter.
-6. **Purge postmaster `make_legacy_dirs()`.** It makes eight
+5. **Purge postmaster `make_legacy_dirs()`.** It makes eight
    directories nothing opens: `pg_dynshmem` (DSM, step 29),
    `pg_stat` and `pg_stat_tmp` (pgstat, step 28),
    `pg_replslot` and `pg_logical`'s three (replication, step
-   2), and `pg_snapshots`, read only by what item 5 removes.
-   The list is then empty, and the function goes;
+   2), and `pg_snapshots` (snapshot export, step 201). The
+   list is then empty, and the function goes;
    `../dg/PLAN.md` §6 mentions it.
-7. **Purge the replication catalogs.** `../dg/WORKNOTE.md`
+6. **Purge the replication catalogs.** `../dg/WORKNOTE.md`
    step 2's known leftovers: `pg_subscription`,
    `pg_subscription_rel`, `pg_publication*` and
    `pg_replication_origin`. They reach into generated catalog
    headers (`schemapg.h`, `system_fk_info.h`) and the
-   relcache, so this cut is larger than items 5 and 6.
+   relcache, so this cut is larger than item 5.
 
 ---
 

@@ -174,6 +174,4 @@ extern void RequireTransactionBlock(bool isTopLevel, const char *stmtType);
 extern void WarnNoTransactionBlock(bool isTopLevel, const char *stmtType);
 extern bool IsInTransactionBlock(bool isTopLevel);
 
-extern int xactGetCommittedChildren(TransactionId **ptr);
-
 #endif /* XACT_H */

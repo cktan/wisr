@@ -3307,20 +3307,5 @@ static const char *TransStateAsString(TransState state) {
 }
 
 /*
- * xactGetCommittedChildren
- *
- * Gets the list of committed children of the current transaction.  The return
- * value is the number of child transactions.  *ptr is set to point to an
- * array of TransactionIds.  The array is allocated in TopTransactionContext;
- * the caller should *not* pfree() it (this is a change from pre-8.4 code!).
- * If there are no subxacts, *ptr is set to NULL.
- */
-int xactGetCommittedChildren(TransactionId **ptr) {
-  /* A transaction has no xid, nor its children: digres assigns none. */
-  *ptr = NULL;
-  return 0;
-}
-
-/*
  *	XLOG support routines
  */
