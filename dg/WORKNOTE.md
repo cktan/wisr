@@ -6260,3 +6260,68 @@ step 2 cut replication.
   `utils/activity/wait_event_names.txt`, slots, WAL senders and
   receivers, logical apply, which nothing waits on.
 
+## Step 215: replication's dead declarations
+
+Step 2 cut replication, and steps since took its xlog and
+proc-array parts (steps 18, 151). What was left had no use:
+names, declarations and catalog text of a subsystem that is
+gone.
+
+- **The walsender backend type**, `B_WAL_SENDER`, and
+  `AmWalSenderProcess()`: no connection becomes one, as a
+  replication connection is refused at its startup packet. The
+  postmaster's masks, its child pool and the backend names no
+  longer list it.
+- **`nodes/replnodes.h`**, the replication commands' nodes, out
+  of `NODE_HEADERS` and nodes `gen_node_support.pl`'s lists.
+- **Bodiless or uncalled**: tcop `EndReplicationCommand()`;
+  executor `execReplication.c`'s six prototypes; relcache
+  `RelationGetIdentityKeyBitmap()`, for logical decoding; inval
+  `CacheInvalidateRelcacheAll()`, for ALTER PUBLICATION.
+- **Constants nothing uses**: the GUC group
+  `REPLICATION_SENDING`, the timeouts `STANDBY_*`,
+  `PM_STATUS_STANDBY`, `RepOriginId`,
+  `LOCKTAG_APPLY_TRANSACTION`, and two empty section comments
+  in `pg_proc.dat`.
+- **35 wait events**: logical apply and sync, WAL sender and
+  receiver, synchronous replication, replication slots and
+  origins, reorder buffer, snapshot builder, logical rewrite.
+- **Kept, as live**: `session_replication_role`, which fires
+  triggers, rules and event triggers by it; the `REPLICATION`
+  role attribute, `rolreplication`, which psql reads; replica
+  identity in `pg_class` and `pg_index`; and
+  `pg_relation_is_publishable()`, which psql's `\d` calls
+  (step 214). `postgresql.conf.sample` is not maintained (step
+  11), and still lists replication's settings.
+- Left for the next step: logical decoding's hooks in live
+  code, `CheckXidAlive` and `bsysscan` in the table access
+  method and genam, historic snapshots in snapmgr and the
+  relcache, and the relsync invalidation messages.
+
+## Step 216: logical decoding's hooks in live code
+
+Step 215's last item. Logical decoding went with step 2, but
+three of its hooks stayed in code every statement runs, each
+waiting on a state nothing sets now.
+
+- **`CheckXidAlive` and `bsysscan`** (access/transam
+  `xact.c`): the transaction being decoded, and whether a
+  catalog scan was under way, which logical decoding set to
+  catch a decoded transaction's abort. Nothing sets either, so
+  the six tests in access `tableam.h`'s inline wrappers and the
+  one in `tableam.c` were always false, and access/index
+  `genam.c` set and cleared `bsysscan` and called
+  `HandleConcurrentAbort()` for nothing. All of it is gone.
+- **Historic snapshots** (utils/time `snapmgr.c`):
+  `SetupHistoricSnapshot()`, with no caller, so
+  `HistoricSnapshotActive()` was always false in
+  `GetTransactionSnapshot()`, `GetLatestSnapshot()`,
+  `GetCatalogSnapshot()` and the relcache's
+  `RelationRebuildRelation()`. `SNAPSHOT_HISTORIC_MVCC` goes, and
+  `IsMVCCSnapshot()` asks only for `SNAPSHOT_MVCC`.
+  `GetNonHistoricCatalogSnapshot()` keeps its name.
+- **The relsync invalidation message** (utils/cache `inval.c`,
+  `storage/sinval.h`): `SHAREDINVALRELSYNC_ID`, for pgoutput's
+  cache, with `CacheInvalidateRelSync()`, its callbacks and
+  their registry. Nothing sent one.
+

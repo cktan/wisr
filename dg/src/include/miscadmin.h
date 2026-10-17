@@ -335,7 +335,6 @@ typedef enum BackendType {
   /* Backends and other backend-like processes */
   B_BACKEND,
   B_DEAD_END_BACKEND,
-  B_WAL_SENDER,
 
   B_STANDALONE_BACKEND,
 } BackendType;
@@ -345,15 +344,13 @@ typedef enum BackendType {
 extern thread_local /*LOCAL*/ PGDLLIMPORT BackendType MyBackendType;
 
 #define AmRegularBackendProcess()	(MyBackendType == B_BACKEND)
-#define AmWalSenderProcess()        (MyBackendType == B_WAL_SENDER)
 
 /*
- * Backend types that are spawned by the postmaster to serve a client or
- * replication connection. These backend types have in common that they are
- * externally initiated.
+ * Backend types that are spawned by the postmaster to serve a client
+ * connection, and so are externally initiated.
  */
 #define IsExternalConnectionBackend(backend_type) \
-	(backend_type == B_BACKEND || backend_type == B_WAL_SENDER)
+	(backend_type == B_BACKEND)
 
 extern const char *GetBackendTypeDesc(BackendType backendType);
 

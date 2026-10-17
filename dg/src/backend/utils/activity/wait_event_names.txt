@@ -51,14 +51,7 @@
 
 Section: ClassName - WaitEventActivity
 
-LOGICAL_APPLY_MAIN	"Waiting in main loop of logical replication apply process."
-LOGICAL_LAUNCHER_MAIN	"Waiting in main loop of logical replication launcher process."
-LOGICAL_PARALLEL_APPLY_MAIN	"Waiting in main loop of logical replication parallel apply process."
 RECOVERY_WAL_STREAM	"Waiting in main loop of startup process for WAL to arrive, during streaming recovery."
-REPLICATION_SLOTSYNC_MAIN	"Waiting in main loop of slot sync worker."
-REPLICATION_SLOTSYNC_SHUTDOWN	"Waiting for slot sync worker to shut down."
-WAL_RECEIVER_MAIN	"Waiting in main loop of WAL receiver process."
-WAL_SENDER_MAIN	"Waiting in main loop of WAL sender process."
 WAL_SUMMARIZER_WAL	"Waiting in WAL summarizer for more WAL to be generated."
 
 ABI_compatibility:
@@ -79,9 +72,6 @@ GSS_OPEN_SERVER	"Waiting to read data from the client while establishing a GSSAP
 LIBPQWALRECEIVER_CONNECT	"Waiting in WAL receiver to establish connection to remote server."
 LIBPQWALRECEIVER_RECEIVE	"Waiting in WAL receiver to receive data from remote server."
 SSL_OPEN_SERVER	"Waiting for SSL while attempting connection."
-WAIT_FOR_STANDBY_CONFIRMATION	"Waiting for WAL to be received and flushed by the physical standby."
-WAL_SENDER_WAIT_FOR_WAL	"Waiting for WAL to be flushed in WAL sender process."
-WAL_SENDER_WRITE_DATA	"Waiting for any activity when processing replies from WAL receiver in WAL sender process."
 
 ABI_compatibility:
 
@@ -98,22 +88,12 @@ APPEND_READY	"Waiting for subplan nodes of an <literal>Append</literal> plan nod
 BACKEND_TERMINATION	"Waiting for the termination of another backend."
 BACKUP_WAIT_WAL_ARCHIVE	"Waiting for WAL files required for a backup to be successfully archived."
 BUFFER_IO	"Waiting for buffer I/O to complete."
-LOGICAL_APPLY_SEND_DATA	"Waiting for a logical replication leader apply process to send data to a parallel apply process."
-LOGICAL_PARALLEL_APPLY_STATE_CHANGE	"Waiting for a logical replication parallel apply process to change state."
-LOGICAL_SYNC_DATA	"Waiting for a logical replication remote server to send data for initial table synchronization."
-LOGICAL_SYNC_STATE_CHANGE	"Waiting for a logical replication remote server to change state."
 PROCARRAY_GROUP_UPDATE	"Waiting for the group leader to clear the transaction ID at transaction end."
 RECOVERY_END_COMMAND	"Waiting for <xref linkend="guc-recovery-end-command"/> to complete."
-REPLICATION_ORIGIN_DROP	"Waiting for a replication origin to become inactive so it can be dropped."
-REPLICATION_SLOT_DROP	"Waiting for a replication slot to become inactive so it can be dropped."
-SYNC_REP	"Waiting for confirmation from a remote server during synchronous replication."
-WAL_RECEIVER_EXIT	"Waiting for the WAL receiver to exit."
-WAL_RECEIVER_WAIT_START	"Waiting for startup process to send initial data for streaming replication."
 WAL_SUMMARY_READY	"Waiting for a new WAL summary to be generated."
 XACT_GROUP_UPDATE	"Waiting for the group leader to update transaction status at transaction end."
 
 ABI_compatibility:
-WAL_RECEIVER_UPSTREAM_CATCHUP	"Waiting for upstream server WAL flush position to catch up to requested start point."
 
 #
 # Wait Events - Timeout
@@ -164,24 +144,9 @@ LOCK_FILE_CREATE_READ	"Waiting to read while creating the data directory lock fi
 LOCK_FILE_CREATE_SYNC	"Waiting for data to reach durable storage while creating the data directory lock file."
 LOCK_FILE_CREATE_WRITE	"Waiting for a write while creating the data directory lock file."
 LOCK_FILE_RECHECKDATADIR_READ	"Waiting for a read during recheck of the data directory lock file."
-LOGICAL_REWRITE_MAPPING_SYNC	"Waiting for mapping data to reach durable storage during a logical rewrite."
-LOGICAL_REWRITE_MAPPING_WRITE	"Waiting for a write of mapping data during a logical rewrite."
-LOGICAL_REWRITE_SYNC	"Waiting for logical rewrite mappings to reach durable storage."
-LOGICAL_REWRITE_TRUNCATE	"Waiting for truncate of mapping data during a logical rewrite."
-LOGICAL_REWRITE_WRITE	"Waiting for a write of logical rewrite mappings."
-REORDER_BUFFER_READ	"Waiting for a read during reorder buffer management."
-REORDER_BUFFER_WRITE	"Waiting for a write during reorder buffer management."
-REORDER_LOGICAL_MAPPING_READ	"Waiting for a read of a logical mapping during reorder buffer management."
-REPLICATION_SLOT_READ	"Waiting for a read from a replication slot control file."
-REPLICATION_SLOT_RESTORE_SYNC	"Waiting for a replication slot control file to reach durable storage while restoring it to memory."
-REPLICATION_SLOT_SYNC	"Waiting for a replication slot control file to reach durable storage."
-REPLICATION_SLOT_WRITE	"Waiting for a write to a replication slot control file."
 SLRU_READ	"Waiting for a read of an SLRU page."
 SLRU_SYNC	"Waiting for SLRU data to reach durable storage following a page write."
 SLRU_WRITE	"Waiting for a write of an SLRU page."
-SNAPBUILD_READ	"Waiting for a read of a serialized historical catalog snapshot."
-SNAPBUILD_SYNC	"Waiting for a serialized historical catalog snapshot to reach durable storage."
-SNAPBUILD_WRITE	"Waiting for a write of a serialized historical catalog snapshot."
 WALSENDER_TIMELINE_HISTORY_READ	"Waiting for a read from a timeline history file during a walsender timeline command."
 WAL_COPY_READ	"Waiting for a read when creating a new WAL segment by copying an existing one."
 WAL_COPY_SYNC	"Waiting for a new WAL segment created by copying an existing one to reach durable storage."

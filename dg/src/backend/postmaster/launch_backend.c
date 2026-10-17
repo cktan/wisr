@@ -26,7 +26,6 @@ static const char *const child_process_names[] = {
     [B_INVALID] = "invalid",
     [B_BACKEND] = "backend",
     [B_DEAD_END_BACKEND] = "dead-end backend",
-    [B_WAL_SENDER] = "wal sender",
     [B_STANDALONE_BACKEND] = "standalone backend",
 };
 

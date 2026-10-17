@@ -470,7 +470,6 @@ const char *const config_group_names[] = {
     [RESOURCES_IO] = gettext_noop("Resource Usage / I/O"),
     [RESOURCES_WORKER_PROCESSES] =
         gettext_noop("Resource Usage / Worker Processes"),
-    [REPLICATION_SENDING] = gettext_noop("Replication / Sending Servers"),
     [QUERY_TUNING_METHOD] =
         gettext_noop("Query Tuning / Planner Method Configuration"),
     [QUERY_TUNING_COST] = gettext_noop("Query Tuning / Planner Cost Constants"),

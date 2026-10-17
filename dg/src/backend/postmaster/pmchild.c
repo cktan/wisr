@@ -83,8 +83,6 @@ void InitPostmasterChildSlots(void) {
    * backend might exit before the auth cycle is completed.  The exact
    * MaxConnections limit is enforced when a new backend tries to join the
    * session registry.
-   *
-   * WAL senders start out as regular backends, so they share the same pool.
    */
   pmchild_pools[B_BACKEND].size = 2 * MaxConnections;
 
@@ -199,11 +197,7 @@ void ReleasePostmasterChildSlot(PMChild *pmchild) {
 
     elog(DEBUG2, "releasing pm child slot %d", pmchild->child_slot);
 
-    /* WAL senders start out as regular backends, and share the pool */
-    if (pmchild->bkend_type == B_WAL_SENDER)
-      pool = &pmchild_pools[B_BACKEND];
-    else
-      pool = &pmchild_pools[pmchild->bkend_type];
+    pool = &pmchild_pools[pmchild->bkend_type];
 
     /* sanity check that we return the entry to the right pool */
     if (!(pmchild->child_slot >= pool->first_slotno &&

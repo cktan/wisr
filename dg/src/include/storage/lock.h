@@ -79,8 +79,6 @@ typedef enum LockTagType {
   LOCKTAG_OBJECT,              /* non-relation database object */
   LOCKTAG_USERLOCK,            /* reserved for old contrib/userlock code */
   LOCKTAG_ADVISORY,            /* advisory user locks */
-  LOCKTAG_APPLY_TRANSACTION,   /* transaction being applied on a logical
-                                * replication subscriber */
 } LockTagType;
 
 /*

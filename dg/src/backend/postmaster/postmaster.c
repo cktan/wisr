@@ -1319,8 +1319,6 @@ static int ServerLoop(void) {
 /*
  * canAcceptConnections --- check to see if database state allows connections
  * of the specified type.  backend_type can only be B_BACKEND.
- * (Note that we don't yet know whether a normal B_BACKEND connection might
- * turn into a walsender.)
  */
 static CAC_state canAcceptConnections(BackendType backend_type) {
   CAC_state result = CAC_OK;
@@ -1841,9 +1839,6 @@ static void PostmasterStateMachine(void) {
      */
     targetMask = btmask_add(targetMask, B_BACKEND);
 
-    /* Nor walsenders. */
-    targetMask = btmask_add(targetMask, B_WAL_SENDER);
-
     /*
      * We let dead-end children keep running for now.
      *
@@ -2079,7 +2074,6 @@ static int BackendStartup(ClientSocket *client_sock) {
    */
   cac = canAcceptConnections(B_BACKEND);
   if (cac == CAC_OK) {
-    /* Can change later to B_WAL_SENDER */
     bn = AssignPostmasterChildSlot(B_BACKEND);
     if (!bn) {
       /*

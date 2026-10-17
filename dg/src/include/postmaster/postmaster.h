@@ -21,11 +21,7 @@
  * mainly to keep track of how many children we have and send them appropriate
  * signals when necessary.  All postmaster child processes are assigned a
  * PMChild entry.  That includes "normal" client sessions, but also autovacuum
- * workers, walsenders, background workers, and aux processes.  (Note that at
- * the time of launch, walsenders are labeled B_BACKEND; we relabel them to
- * B_WAL_SENDER upon noticing they've changed their PMChildFlags entry.  Hence
- * that check must be done before any operation that needs to distinguish
- * walsenders from normal backends.)
+ * workers, background workers, and aux processes.
  *
  * "dead-end" children are also allocated a PMChild entry: these are children
  * launched just for the purpose of sending a friendly rejection message to a

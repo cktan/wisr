@@ -96,13 +96,6 @@ typedef enum SnapshotType {
   SNAPSHOT_DIRTY,
 
   /*
-   * A tuple is visible iff it follows the rules of SNAPSHOT_MVCC, but
-   * supports being called in timetravel context (for decoding catalog
-   * contents in the context of logical decoding).
-   */
-  SNAPSHOT_HISTORIC_MVCC,
-
-  /*
    * A tuple is visible iff the tuple might be visible to some transaction;
    * false if it's surely dead to everyone, i.e., vacuumable.
    *
@@ -122,7 +115,6 @@ typedef struct SnapshotData *Snapshot;
  * There are several different kinds of snapshots:
  * * Normal MVCC snapshots
  * * MVCC snapshots taken during recovery (in Hot-Standby mode)
- * * Historic MVCC snapshots used during logical decoding
  * * snapshots passed to HeapTupleSatisfiesDirty()
  * * snapshots passed to HeapTupleSatisfiesNonVacuumable()
  * * snapshots used for SatisfiesAny, Toast, Self where no members are

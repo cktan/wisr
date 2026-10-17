@@ -49,6 +49,5 @@
 #define PM_STATUS_STARTING		"starting" /* still starting up */
 #define PM_STATUS_STOPPING		"stopping" /* in shutdown sequence */
 #define PM_STATUS_READY			"ready   "    /* ready for connections */
-#define PM_STATUS_STANDBY		"standby "  /* up, won't accept connections */
 
 #endif /* UTILS_PIDFILE_H */

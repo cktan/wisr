@@ -64,10 +64,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT bool xact_is_sampled;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool DefaultXactDeferrable;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool XactDeferrable;
 
-/* used during logical streaming of a transaction */
-extern thread_local /*LOCAL*/ PGDLLIMPORT TransactionId CheckXidAlive;
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool bsysscan;
-
 /*
  * Miscellaneous flag bits to record events which occur on the top level
  * transaction. These flags are only persisted in MyXactFlags and are intended

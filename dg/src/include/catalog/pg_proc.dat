@@ -9523,7 +9523,6 @@
   prosrc => 'make_interval' },
 
 # spgist opclasses
-# replication slots
 # event triggers
 { oid => '3566', descr => 'list objects dropped by the current command',
   proname => 'pg_event_trigger_dropped_objects', procost => '10',
@@ -10059,7 +10058,6 @@
   proargtypes => 'internal oid internal int2 internal',
   prosrc => 'matchingjoinsel' },
 
-# replication/origin.h
 # publications
 { oid => '6121',
   descr => 'returns whether a relation can be part of a publication',

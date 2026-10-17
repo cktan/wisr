@@ -57,7 +57,7 @@ NODE_HEADERS := nodes/nodes.h nodes/primnodes.h nodes/parsenodes.h \
     access/cmptype.h access/sdir.h access/tableam.h access/tsmapi.h \
     commands/event_trigger.h commands/trigger.h executor/tuptable.h \
     foreign/fdwapi.h nodes/bitmapset.h nodes/extensible.h \
-    nodes/lockoptions.h nodes/miscnodes.h nodes/replnodes.h \
+    nodes/lockoptions.h nodes/miscnodes.h \
     nodes/supportnodes.h nodes/value.h utils/rel.h
 
 CATALOG_HEADERS := $(filter-out %_d.h,$(wildcard $(I)/catalog/pg_*.h))

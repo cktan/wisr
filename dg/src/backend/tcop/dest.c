@@ -170,16 +170,6 @@ void EndCommand(const QueryCompletion *qc, CommandDest dest,
 }
 
 /* ----------------
- *		EndReplicationCommand - stripped down version of EndCommand
- *
- *		For use by replication commands.
- * ----------------
- */
-void EndReplicationCommand(const char *commandTag) {
-  pq_putmessage(PqMsg_CommandComplete, commandTag, strlen(commandTag) + 1);
-}
-
-/* ----------------
  *		NullCommand - tell dest that an empty query string was
  *recognized
  *

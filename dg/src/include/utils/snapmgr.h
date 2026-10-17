@@ -52,8 +52,7 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT SnapshotData SnapshotToastData;
 
 /* This macro encodes the knowledge of which snapshots are MVCC-safe */
 #define IsMVCCSnapshot(snapshot)  \
-	((snapshot)->snapshot_type == SNAPSHOT_MVCC || \
-	 (snapshot)->snapshot_type == SNAPSHOT_HISTORIC_MVCC)
+	((snapshot)->snapshot_type == SNAPSHOT_MVCC)
 
 extern Snapshot GetTransactionSnapshot(void);
 extern Snapshot GetLatestSnapshot(void);
@@ -90,13 +89,5 @@ extern bool HaveRegisteredOrActiveSnapshot(void);
  * Utility functions for implementing visibility routines in table AMs.
  */
 extern bool XidInMVCCSnapshot(TransactionId xid, Snapshot snapshot);
-
-/* Support for catalog timetravel for logical decoding */
-struct HTAB;
-extern struct HTAB *HistoricSnapshotGetTupleCids(void);
-extern void SetupHistoricSnapshot(Snapshot historic_snapshot,
-                                  struct HTAB *tuplecids);
-extern void TeardownHistoricSnapshot(bool is_error);
-extern bool HistoricSnapshotActive(void);
 
 #endif /* SNAPMGR_H */

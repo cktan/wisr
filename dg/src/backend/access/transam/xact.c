@@ -61,19 +61,6 @@ thread_local /*LOCAL*/ bool DefaultXactDeferrable = false;
 thread_local /*LOCAL*/ bool XactDeferrable;
 
 /*
- * CheckXidAlive is a xid value pointing to a possibly ongoing (sub)
- * transaction.  Currently, it is used in logical decoding.  It's possible
- * that such transactions can get aborted while the decoding is ongoing in
- * which case we skip decoding that particular transaction.  To ensure that we
- * check whether the CheckXidAlive is aborted after fetching the tuple from
- * system tables.  We also ensure that during logical decoding we never
- * directly access the tableam or heap APIs because we are checking for the
- * concurrent aborts only in systable_* APIs.
- */
-thread_local /*LOCAL*/ TransactionId CheckXidAlive = InvalidTransactionId;
-thread_local /*LOCAL*/ bool bsysscan = false;
-
-/*
  * Miscellaneous flag bits to record events which occur on the top level
  * transaction. These flags are only persisted in MyXactFlags and are intended
  * so we remember to do certain things later on in the transaction. This is

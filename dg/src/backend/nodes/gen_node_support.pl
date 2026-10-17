@@ -70,7 +70,6 @@ my @all_input_files = qw(
   nodes/extensible.h
   nodes/lockoptions.h
   nodes/miscnodes.h
-  nodes/replnodes.h
   nodes/supportnodes.h
   nodes/value.h
   utils/rel.h
@@ -92,7 +91,6 @@ my @nodetag_only_files = qw(
   foreign/fdwapi.h
   nodes/lockoptions.h
   nodes/miscnodes.h
-  nodes/replnodes.h
   nodes/supportnodes.h
 );
 

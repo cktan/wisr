@@ -2774,18 +2774,6 @@ static void RelationRebuildRelation(Relation relation) {
 
     if (newrel == NULL) {
       /*
-       * We can validly get here, if we're using a historic snapshot in
-       * which a relation, accessed from outside logical decoding, is
-       * still invisible. In that case it's fine to just mark the
-       * relation as invalid and return - it'll fully get reloaded by
-       * the cache reset at the end of logical decoding (or at the next
-       * access).  During normal processing we don't want to ignore this
-       * case as it shouldn't happen there, as explained below.
-       */
-      if (HistoricSnapshotActive())
-        return;
-
-      /*
        * This shouldn't happen as dropping a relation is intended to be
        * impossible if still referenced (cf. CheckTableNotInUse()). But
        * if we get here anyway, we can't just delete the relcache entry,
@@ -4768,82 +4756,6 @@ restart:
     elog(ERROR, "unknown attrKind %u", attrKind);
     return NULL;
   }
-}
-
-/*
- * RelationGetIdentityKeyBitmap -- get a bitmap of replica identity attribute
- * numbers
- *
- * A bitmap of index attribute numbers for the configured replica identity
- * index is returned.
- *
- * See also comments of RelationGetIndexAttrBitmap().
- *
- * This is a special purpose function used during logical replication. Here,
- * unlike RelationGetIndexAttrBitmap(), we don't acquire a lock on the required
- * index as we build the cache entry using a historic snapshot and all the
- * later changes are absorbed while decoding WAL. Due to this reason, we don't
- * need to retry here in case of a change in the set of indexes.
- */
-Bitmapset *RelationGetIdentityKeyBitmap(Relation relation) {
-  Bitmapset *idindexattrs = NULL; /* columns in the replica identity */
-  Relation indexDesc;
-  int i;
-  Oid replidindex;
-  MemoryContext oldcxt;
-
-  /* Quick exit if we already computed the result */
-  if (relation->rd_idattr != NULL)
-    return bms_copy(relation->rd_idattr);
-
-  /* Fast path if definitely no indexes */
-  if (!RelationGetForm(relation)->relhasindex)
-    return NULL;
-
-  /* Historic snapshot must be set. */
-  Assert(HistoricSnapshotActive());
-
-  replidindex = RelationGetReplicaIndex(relation);
-
-  /* Fall out if there is no replica identity index */
-  if (!OidIsValid(replidindex))
-    return NULL;
-
-  /* Look up the description for the replica identity index */
-  indexDesc = RelationIdGetRelation(replidindex);
-
-  if (!RelationIsValid(indexDesc))
-    elog(ERROR, "could not open relation with OID %u",
-         relation->rd_replidindex);
-
-  /* Add referenced attributes to idindexattrs */
-  for (i = 0; i < indexDesc->rd_index->indnatts; i++) {
-    int attrnum = indexDesc->rd_index->indkey.values[i];
-
-    /*
-     * We don't include non-key columns into idindexattrs bitmaps. See
-     * RelationGetIndexAttrBitmap.
-     */
-    if (attrnum != 0) {
-      if (i < indexDesc->rd_index->indnkeyatts)
-        idindexattrs = bms_add_member(
-            idindexattrs, attrnum - FirstLowInvalidHeapAttributeNumber);
-    }
-  }
-
-  RelationClose(indexDesc);
-
-  /* Don't leak the old values of these bitmaps, if any */
-  bms_free(relation->rd_idattr);
-  relation->rd_idattr = NULL;
-
-  /* Now save copy of the bitmap in the relcache entry */
-  oldcxt = MemoryContextSwitchTo(CacheMemoryContext);
-  relation->rd_idattr = bms_copy(idindexattrs);
-  MemoryContextSwitchTo(oldcxt);
-
-  /* We return our original working copy for caller to play with */
-  return idindexattrs;
 }
 
 /*

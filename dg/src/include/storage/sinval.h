@@ -103,15 +103,6 @@ typedef struct {
   Oid relId; /* relation ID */
 } SharedInvalSnapshotMsg;
 
-#define SHAREDINVALRELSYNC_ID	(-6)
-
-typedef struct {
-  int8 id;   /* type field --- must be first */
-  Oid dbId;  /* database ID */
-  Oid relid; /* relation ID, or 0 if whole
-              * RelationSyncCache */
-} SharedInvalRelSyncMsg;
-
 typedef union {
   int8 id; /* type field --- must be first */
   SharedInvalCatcacheMsg cc;
@@ -119,7 +110,6 @@ typedef union {
   SharedInvalRelcacheMsg rc;
   SharedInvalSmgrMsg sm;
   SharedInvalSnapshotMsg sn;
-  SharedInvalRelSyncMsg rs;
 } SharedInvalidationMessage;
 
 /*

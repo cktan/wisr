@@ -355,31 +355,7 @@ SysScanDesc systable_beginscan(Relation heapRelation, Oid indexId, bool indexOK,
     sysscan->iscan = NULL;
   }
 
-  /*
-   * If CheckXidAlive is set then set a flag to indicate that system table
-   * scan is in-progress.  See detailed comments in xact.c where these
-   * variables are declared.
-   */
-  if (TransactionIdIsValid(CheckXidAlive))
-    bsysscan = true;
-
   return sysscan;
-}
-
-/*
- * HandleConcurrentAbort - Handle concurrent abort of the CheckXidAlive.
- *
- * Error out, if CheckXidAlive is aborted. We can't directly use
- * TransactionIdDidAbort as after crash such transaction might not have been
- * marked as aborted.  See detailed comments in xact.c where the variable
- * is declared.
- */
-static inline void HandleConcurrentAbort() {
-  if (TransactionIdIsValid(CheckXidAlive) &&
-      !TransactionIdIsInProgress(CheckXidAlive) &&
-      !TransactionIdDidCommit(CheckXidAlive))
-    ereport(ERROR, (errcode(ERRCODE_TRANSACTION_ROLLBACK),
-                    errmsg("transaction aborted during system catalog scan")));
 }
 
 /*
@@ -434,12 +410,6 @@ HeapTuple systable_getnext(SysScanDesc sysscan) {
     }
   }
 
-  /*
-   * Handle the concurrent abort while fetching the catalog tuple during
-   * logical streaming of a transaction.
-   */
-  HandleConcurrentAbort();
-
   return htup;
 }
 
@@ -469,12 +439,6 @@ bool systable_recheck_tuple(SysScanDesc sysscan, HeapTuple tup) {
                                           freshsnap);
   UnregisterSnapshot(freshsnap);
 
-  /*
-   * Handle the concurrent abort while fetching the catalog tuple during
-   * logical streaming of a transaction.
-   */
-  HandleConcurrentAbort();
-
   return result;
 }
 
@@ -499,13 +463,6 @@ void systable_endscan(SysScanDesc sysscan) {
 
   if (sysscan->snapshot)
     UnregisterSnapshot(sysscan->snapshot);
-
-  /*
-   * Reset the bsysscan flag at the end of the systable scan.  See detailed
-   * comments in xact.c where these variables are declared.
-   */
-  if (TransactionIdIsValid(CheckXidAlive))
-    bsysscan = false;
 
   pfree(sysscan);
 }
@@ -581,14 +538,6 @@ SysScanDesc systable_beginscan_ordered(Relation heapRelation,
 
   pfree(idxkey);
 
-  /*
-   * If CheckXidAlive is set then set a flag to indicate that system table
-   * scan is in-progress.  See detailed comments in xact.c where these
-   * variables are declared.
-   */
-  if (TransactionIdIsValid(CheckXidAlive))
-    bsysscan = true;
-
   return sysscan;
 }
 
@@ -609,12 +558,6 @@ HeapTuple systable_getnext_ordered(SysScanDesc sysscan,
         ERROR,
         "system catalog scans with lossy index conditions are not implemented");
 
-  /*
-   * Handle the concurrent abort while fetching the catalog tuple during
-   * logical streaming of a transaction.
-   */
-  HandleConcurrentAbort();
-
   return htup;
 }
 
@@ -631,13 +574,6 @@ void systable_endscan_ordered(SysScanDesc sysscan) {
   index_endscan(sysscan->iscan);
   if (sysscan->snapshot)
     UnregisterSnapshot(sysscan->snapshot);
-
-  /*
-   * Reset the bsysscan flag at the end of the systable scan.  See detailed
-   * comments in xact.c where these variables are declared.
-   */
-  if (TransactionIdIsValid(CheckXidAlive))
-    bsysscan = false;
 
   pfree(sysscan);
 }
