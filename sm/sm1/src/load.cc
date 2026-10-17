@@ -491,11 +491,6 @@ int sm1::load_open(sm1::session_t *s, uint64_t storeid, sm1::loader_t *&out) {
   if (db_alloc_ts(s->db, &wts) != 0) {
     return -1;
   }
-  // A rollback to a savepoint set now could not undo the load:
-  // those savepoints are lost, as past the undo list's cap.
-  if (s->savepoints.size() > s->lost_marks) {
-    xct_undo_overflow(s);
-  }
   loader_t *l = new loader_t;
   l->s = s;
   l->storeid = storeid;
@@ -513,6 +508,12 @@ int sm1::load_open(sm1::session_t *s, uint64_t storeid, sm1::loader_t *&out) {
            "-" + std::to_string(s->xid) + "-" + std::to_string(storeid);
   s->loader = l;
   s->loaded = true;
+  // A rollback to a mark set now undoes the load by emptying the
+  // store, which holds nothing else: it is empty, and its caller
+  // keeps every other transaction out (BULKLOAD.md §3.5).
+  if (s->savepoints.size() > s->lost_marks) {
+    s->loaded_stores.push_back(storeid);
+  }
   out = l;
   return 0;
 }

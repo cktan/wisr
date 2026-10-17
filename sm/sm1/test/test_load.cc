@@ -419,8 +419,8 @@ TEST_CASE("a transaction cannot commit with a load open, nor prepare after "
   //    the transaction goes on.
   // 2. After the close, prepare is still SM_ERR_INVALID, and commit
   //    succeeds.
-  // 3. A savepoint set before a load opened cannot be rolled back
-  //    to: SM_ERR_UNDOLIMIT.
+  // 3. A savepoint set before a load opened is rolled back to, and
+  //    the load is gone, after the commit too.
   load_fixture_t f;
   begin_xct(f.s);
   uint64_t store = mkstore(f.s);
@@ -439,9 +439,94 @@ TEST_CASE("a transaction cannot commit with a load open, nor prepare after "
   int sp = sm1::savepoint(f.s);
   REQUIRE(sp >= 1);
   REQUIRE(sm1::load_close(load_two(f.s, other, 10)) == 0);
+  REQUIRE_MESSAGE(sm1::rollback(f.s, sp) == 0, sm1::errmsg());
+  CHECK(keys(f.s, other).empty());
+  commit_xct(f.s);
+  begin_xct(f.s);
+  CHECK(keys(f.s, other).empty());
+  commit_xct(f.s);
+}
+
+TEST_CASE("no savepoint is set or rolled back to while a load is open") {
+  // Verify a load is whole within its transaction: nothing in it
+  // can be undone apart from the rest.
+  // 1. Set a savepoint, then open a load and put keys into it.
+  // 2. With the load open, a savepoint and a rollback are each
+  //    SM_ERR_INVALID.
+  // 3. The load closes with every key, and the transaction commits.
+  load_fixture_t f;
+  begin_xct(f.s);
+  uint64_t store = mkstore(f.s);
+  int sp = sm1::savepoint(f.s);
+  REQUIRE(sp >= 1);
+  sm1::loader_t *l = load_two(f.s, store, 10);
+  CHECK(sm1::savepoint(f.s) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(sm1::rollback(f.s, sp) == -1);
-  CHECK(sm1::errnum() == sm1::SM_ERR_UNDOLIMIT);
-  sm1::abort(f.s);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  REQUIRE_MESSAGE(sm1::load_close(l) == 0, sm1::errmsg());
+  CHECK(keys(f.s, store) == two_keys(10));
+  commit_xct(f.s);
+}
+
+TEST_CASE("a rollback to a savepoint set before a load empties its store") {
+  // Verify a rollback undoes a load it reaches back past, in either
+  // of the load's two forms, and only that.
+  // 1. In a store committed empty, set a savepoint, load and close,
+  //    and write one key more.
+  // 2. Roll back to the savepoint: no key reads, loaded or written.
+  // 3. Load the store again, set a savepoint after the close, write
+  //    a key, and roll back to it: the load stays, the key goes.
+  // 4. Commit and attach the home again: the second load's keys
+  //    read back, and nothing of the first.
+  // 5. Set a savepoint, make a store and load it, and roll back:
+  //    the store is gone, and the first is still listed.
+  for (bool files : {false, true}) {
+    CAPTURE(files);
+    load_fixture_t f(files ? files_options() : sm1::options_t());
+    begin_xct(f.s);
+    uint64_t store = mkstore(f.s);
+    commit_xct(f.s);
+
+    begin_xct(f.s);
+    int sp = sm1::savepoint(f.s);
+    REQUIRE(sp >= 1);
+    REQUIRE_MESSAGE(sm1::load_close(load_two(f.s, store, 300)) == 0,
+                    sm1::errmsg());
+    CHECK((sst_files(f.s, store) > 0) == files);
+    put(f.s, store, "c", "vc");
+    REQUIRE_MESSAGE(sm1::rollback(f.s, sp) == 0, sm1::errmsg());
+    CHECK(keys(f.s, store).empty());
+    CHECK(get(f.s, store, key_of('a', 1)) == "<none>");
+
+    REQUIRE_MESSAGE(sm1::load_close(load_two(f.s, store, 50)) == 0,
+                    sm1::errmsg());
+    int inner = sm1::savepoint(f.s);
+    REQUIRE(inner >= 1);
+    put(f.s, store, "c", "vc");
+    REQUIRE_MESSAGE(sm1::rollback(f.s, inner) == 0, sm1::errmsg());
+    CHECK(keys(f.s, store) == two_keys(50));
+    commit_xct(f.s);
+
+    f.home.detach();
+    f.home.attach();
+    f.s = f.open();
+    begin_xct(f.s);
+    CHECK(keys(f.s, store) == two_keys(50));
+    CHECK(get(f.s, store, key_of('a', 299)) == "<none>");
+    commit_xct(f.s);
+
+    begin_xct(f.s);
+    sp = sm1::savepoint(f.s);
+    REQUIRE(sp >= 1);
+    uint64_t made = mkstore(f.s);
+    REQUIRE_MESSAGE(sm1::load_close(load_two(f.s, made, 10)) == 0,
+                    sm1::errmsg());
+    REQUIRE_MESSAGE(sm1::rollback(f.s, sp) == 0, sm1::errmsg());
+    CHECK(db_store(f.s->db, made).cf == nullptr);
+    CHECK(lsstore(f.s) == std::vector<uint64_t>{store});
+    commit_xct(f.s);
+  }
 }
 
 TEST_CASE("an abort leaves nothing of a load, before its close or after") {
