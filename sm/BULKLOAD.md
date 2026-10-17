@@ -252,15 +252,25 @@ mode.
 
 - **With no savepoint set** nothing is listed by any write,
   and there is nothing to decide.
-- **With one set**, a rollback to it could not undo the load.
-  Until `sm1/SAVEPOINT.md` is built, opening a loader marks
-  the savepoints then set lost, by the mechanism that marks
-  them lost at the undo list's cap: a rollback to one fails
-  with `SM_ERR_UNDOLIMIT`, and the transaction is aborted
-  (`sm1/SM1_DESIGN.md` §6.5).
-- **Once it is built**, a rollback marks a range of `seq`
-  dead, and a load's versions are covered by it like any
-  other. The refusal goes, with no code here.
+- **With one set**, opening a loader lists its store in
+  `T.loaded_stores`, one entry for the whole load. A rollback
+  to a mark set before the load empties the store: one
+  `DeleteRange` from its first key to just past its last, in
+  the write batch that holds the rollback's other deletes. The
+  store was empty when the load opened, and its caller has
+  kept every other transaction out since, so all it holds is
+  this transaction's since then: the load, and any write
+  after it. A store made after the mark is dropped by the
+  rollback instead (`sm1/SM1_DESIGN.md` §6.5).
+- **A load into a store with rows**, batch mode and
+  mini-batch (§4, §4.5), not built, cannot be undone that
+  way. Opening one would mark the savepoints then set lost,
+  by the mechanism that marks them lost at the undo list's
+  cap: a rollback to one fails with `SM_ERR_UNDOLIMIT`, and
+  the transaction is aborted.
+- **Once `sm1/SAVEPOINT.md` is built**, a rollback marks a
+  range of `seq` dead, and a load's versions are covered by it
+  like any other, in every mode.
 - **While a load is open**, between `load_open` and
   `load_close`, no savepoint is set and none is rolled back
   to: each fails with `SM_ERR_INVALID`. A load is whole. Its
@@ -272,6 +282,50 @@ mode.
 
 A failed load needs none of this. The transaction aborts, and
 an abort deletes nothing.
+
+Why the rollback deletes at all, and why with `DeleteRange`:
+
+- **Leaving the versions is not enough.** The rollback rewinds
+  `T.seq_hwm`, which hides them from the transaction's own
+  reads; but every other reader resolves a version by its
+  `xid`, which commits with the rest. A version a rollback
+  leaves in place is committed with the transaction.
+- **RocksDB undoes nothing.** sm1 writes to a plain database,
+  not a transactional one, and a load's files are in its
+  manifest once ingested. An abort deletes nothing because
+  the `xid` dies; a rollback to a savepoint has no such
+  marker until `sm1/SAVEPOINT.md`.
+
+The rejected ways to empty the store:
+
+- **Deleting the files.** Once ingested they are RocksDB's:
+  its manifest lists them, and compaction may rewrite them.
+- **`DeleteFilesInRange`.** It is not atomic with the
+  rollback's other deletes, and it misses what is not in a
+  file: a small load is one write batch in the memtable, and
+  so is a write made after the load. It may still follow the
+  `DeleteRange`, to give the space back sooner, if that ever
+  matters.
+- **A `Delete` for each key.** The store would have to be
+  scanned for them, and each row would cost the tombstone the
+  load was built to avoid.
+- **Dropping the store's column family and making it
+  again.** Other threads hold its handle: the garbage
+  collector's purge, readers, and its compaction filter and
+  memtable counter. sm1 drops a column family only where no
+  one can reach the store, at the commit of its drop or the
+  rollback of its creation. The drop and the creation are two
+  manifest changes outside the log, so a failure between them
+  leaves a store with no column family, where a rollback is
+  otherwise retried whole; and the new family has a new
+  identity, handle and counter. The swap that would be safe,
+  a new store under a new storeid as sm3's truncate makes, is
+  in sm3's catalog, which sm1 cannot change.
+
+`DeleteRange` is one write in the batch the rollback makes
+anyway, logged, ordered before the commit and retried with
+the rest, and leaves the store what it was. RocksDB drops the
+files it covers at compaction.
 
 ### 3.6 Indexes
 
@@ -811,8 +865,8 @@ be aborted.
 // other writers out, held SIX or X; with exclusive false the
 // caller holds no such lock, and checked keys are checked
 // as any write checks them, under their latches, waiting for
-// another writer in flight (mini-batch). Opening marks the
-// savepoints then set lost (§3.5).
+// another writer in flight (mini-batch). Opening lists the
+// store for a rollback, or marks the savepoints set lost (§3.5).
 int load_open(session_t* session, uint64_t storeid,
               uint64_t cover_storeid, std::string_view cover_key,
               bool exclusive, loader_t*& out);
@@ -856,8 +910,10 @@ Every mode:
 - **A load is a long transaction.** It holds back garbage
   collection across the database for as long as any long
   transaction does.
-- **No rollback to a savepoint set before the load**, until
-  `sm1/SAVEPOINT.md` is built (§3.5).
+- **No savepoint set or rolled back to while a load is
+  open**, and in batch and mini-batch mode none rolled back to
+  that was set before the load, until `sm1/SAVEPOINT.md` is
+  built (§3.5).
 - **A second way to write in sm1.** It shares the version
   format, the visibility rules and the commit with the
   ordinary one.
@@ -959,7 +1015,7 @@ chunk as §5.7's threshold.
 | sm1 | batch mode: one `wts` and `seq` a chunk, one write batch | §4 |
 | sm1 | mini-batch: unique keys checked as any write checks them, then the batch | §4.5 |
 | sm1 | file mode: streams, files, the sort and the merge, ingestion; the load directory, emptied when the database opens; a loader's files deleted by abort | §5 |
-| sm1 | commit and prepare refused with a loader open; a rollback refused past a load, until `sm1/SAVEPOINT.md` | §3.5, §4.3, §5.6 |
+| sm1 | commit, prepare, a savepoint and a rollback refused with a loader open; a rollback past a load into an empty store empties it | §3.5, §4.3, §5.6 |
 | sm1 | options: the chunk size, the sort budget, the file size, the small-load threshold | §4.1, §5 |
 | sm2 | `rel_load` and `idx_load`, and a cache of drawn rownos in `rel_t` | §3.2, §7.2 |
 | sm3 | `tbl_load_*`, over `tbl_insert`'s own routines; file mode's two cases, told apart when the loader opens; the table's own reads and writes refused while a file loader is open | §5.1, §5.5, §7 |

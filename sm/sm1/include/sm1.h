@@ -1217,11 +1217,10 @@ void scanend(scan_t* scan);
  *
  * While a load is open its transaction may not commit, set a
  * savepoint or roll back to one, and after one it may not
- * prepare: a load is whole. The savepoints set when a load
- * opens can no longer be rolled back to (SM_ERR_UNDOLIMIT), as
- * past options_t::savepoint_undo_bytes. An abort, of any kind,
- * ends an open load and frees it; the caller must not use it
- * again.
+ * prepare: a load is whole. A rollback after the close to a
+ * savepoint set before the load empties the store, which held
+ * nothing else. An abort, of any kind, ends an open load and
+ * frees it; the caller must not use it again.
  *
  * A load's files, the sorted ones and the runs alike, are kept
  * under the temporary instance, {homedir}/base/pgsql_tmp/sm/load,

@@ -1116,8 +1116,8 @@ int tbl_delete(table_t* table, uint64_t rowno, std::string* old = nullptr);
  *
  * While rows are going to files the transaction cannot commit,
  * set a savepoint or roll back to one, the table's other writes
- * are refused, and its reads do not see the load. After a load the transaction cannot be prepared, and
- * a savepoint set before it cannot be rolled back to.
+ * are refused, and its reads do not see the load. After a load
+ * the transaction cannot be prepared.
  */
 struct loader_t;
 

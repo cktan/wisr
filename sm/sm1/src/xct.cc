@@ -217,6 +217,7 @@ void reset(sm1::session_t *s) {
   s->dropped_seqs.clear();
   s->temp_touched = false;
   s->loaded = false;
+  s->loaded_stores.clear();
   s->temp_seqs_made.clear();
   s->temp_seqs_dropped.clear();
   s->undo.clear();
@@ -366,6 +367,7 @@ int savepoint(sm1::session_t *s) {
   m.temp_seqs_dropped = s->temp_seqs_dropped.size();
   m.scan_id = s->next_scan_id;
   m.on_commit = s->on_commit.size();
+  m.loaded_stores = s->loaded_stores.size();
   {
     // Hold lock_mu while reading the lock list.
     std::lock_guard<std::mutex> guard(s->db->lock_mu);
@@ -397,6 +399,30 @@ int forget(sm1::session_t *s, int depth) {
   if (s->savepoints.size() == s->lost_marks) {
     undo_free(s);
   }
+  return 0;
+}
+
+/*
+ * The range [first, end) that holds every key of store: 0, 1 if it
+ * holds none, or -1 with the error set.
+ */
+int store_range(const store_t &store, std::string &first, std::string &end) {
+  std::unique_ptr<rocksdb::Iterator> it(
+      store.rdb->NewIterator(rocksdb::ReadOptions(), store.cf));
+  it->SeekToFirst();
+  if (it->Valid()) {
+    first = it->key().ToString();
+    it->SeekToLast();
+  }
+  if (!it->Valid()) {
+    return it->status().ok()
+               ? 1
+               : set_status_error(it->status(), "roll back to savepoint");
+  }
+  // Just past the last key: no key sorts between it and itself
+  // with a zero byte added.
+  end = it->key().ToString();
+  end.push_back('\0');
   return 0;
 }
 
@@ -453,6 +479,29 @@ int rollback(sm1::session_t *s, int depth) {
       count_write(store, u.key, vkey.size());
     }
   }
+  // Empty each store loaded since the mark: a load lists no key,
+  // and the store holds only what the transaction wrote since it
+  // opened the load (BULKLOAD.md §3.5). One made since the mark is
+  // dropped below instead.
+  for (size_t i = m.loaded_stores; i < s->loaded_stores.size(); i++) {
+    uint64_t storeid = s->loaded_stores[i];
+    if (std::find(s->created.begin() + m.created, s->created.end(), storeid) !=
+        s->created.end()) {
+      continue;
+    }
+    store_t store = db_store(db, storeid);
+    std::string first, end;
+    int rc = store.cf ? store_range(store, first, end) : 1;
+    if (rc < 0) {
+      return -1;
+    }
+    if (rc == 0) {
+      batches[store.rdb].DeleteRange(store.cf, first, end);
+      rocksdb::Slice userkey = version_userkey(first);
+      count_write(store, std::string_view(userkey.data(), userkey.size()),
+                  first.size() + end.size());
+    }
+  }
   // Apply each instance's deletes in one write.
   for (auto &kv : batches) {
     // The temporary instance is never logged.
@@ -496,6 +545,8 @@ int rollback(sm1::session_t *s, int depth) {
   s->temp_seqs_dropped.resize(m.temp_seqs_dropped);
   // Drop the on_commit functions added after the mark.
   s->on_commit.resize(m.on_commit);
+  // The loads since the mark are undone.
+  s->loaded_stores.resize(m.loaded_stores);
 
   // Stop counting the entries undone.
   for (size_t i = m.undo; i < s->undo.size(); i++) {

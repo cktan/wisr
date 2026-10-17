@@ -51,6 +51,12 @@ struct sm1::session_t {
   /* The transaction bulk loaded: it keeps no write set to prepare. */
   bool loaded = false;
   /*
+   * The stores it loaded while a savepoint was set, in load order
+   * (BULKLOAD.md §3.5): a rollback to a mark set before a load
+   * empties its store, as the load lists no key in the undo list.
+   */
+  std::vector<uint64_t> loaded_stores;
+  /*
    * The session's temporary sequences, by name (sm1.h, mkseq), with
    * those the transaction made and those it dropped: an abort takes
    * the first out again, a commit the second.
@@ -120,6 +126,7 @@ struct sm1::session_t {
     size_t temp_seqs_dropped = 0; /* temp_seqs_dropped.size() at the mark */
     uint64_t scan_id = 0;         /* cursors with a larger id came later */
     size_t on_commit = 0;         /* on_commit.size() at the mark */
+    size_t loaded_stores = 0;     /* loaded_stores.size() at the mark */
   };
   std::vector<mark_t> savepoints;
   /*

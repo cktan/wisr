@@ -1037,11 +1037,10 @@ int sm_tbl_insert_arbiter(sm_tbl_t* tbl, const sm_datum_t* values,
  *
  * While a load into an empty table is under way the transaction
  * cannot commit, set a savepoint or roll back to one, and the
- * table's other writes fail with SM_ERR_INVALID. After one the transaction cannot be prepared,
- * and a savepoint set before it cannot be rolled back to. After a
- * failed call the transaction is to be aborted; a load not ended
- * is ended by its transaction's end, and its handle freed by
- * sm_tbl_close.
+ * table's other writes fail with SM_ERR_INVALID. After one the
+ * transaction cannot be prepared. After a failed call the
+ * transaction is to be aborted; a load not ended is ended by its
+ * transaction's end, and its handle freed by sm_tbl_close.
  */
 int sm_tbl_load_begin(sm_tbl_t* tbl);
 

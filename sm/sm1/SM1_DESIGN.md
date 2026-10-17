@@ -1094,6 +1094,17 @@ created by the transaction are tracked alongside it in
 `T.created`, a vector of storeids in creation order, and
 stores it dropped in `T.dropped`, likewise.
 
+**A bulk load lists one entry, not a key a row**
+(`../BULKLOAD.md` §3.5). Opened while a savepoint is set, it
+adds its store to `T.loaded_stores`, and a rollback to a mark
+set before it empties the store with one `DeleteRange` in the
+batch of its other deletes: the store was empty when the load
+opened, and kept from every other transaction since, so all
+it holds is this transaction's since then. While a load is
+open no savepoint is set and none is rolled back to
+(`SM_ERR_INVALID`): its keys share one `seq` and wait in its
+files, and could not be undone in part.
+
 Savepoints **nest**, because a layer above needs one per
 statement: index maintenance turns one row write into several,
 and a unique violation on the third row of a multi-row insert

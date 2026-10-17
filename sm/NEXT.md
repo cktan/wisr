@@ -9,43 +9,32 @@ has sm3's own order of work.
 
 ## 1. Next
 
-Bugs, to fix first, in this order:
+A bug, to fix first:
 
-1. **A load cannot be rolled back to a savepoint, and digres
-   commits it.** Found writing `CREATE TABLE AS`. A `COPY`
-   into an empty table is sm's bulk load, and opening its
-   loader marks every savepoint then set lost
-   (`sm1/src/load.cc`, `BULKLOAD.md` §3.5): `sm1::rollback`
-   to one fails with `SM_ERR_UNDOLIMIT`. digres ignores that
-   failure (bug 2), so `ROLLBACK TO SAVEPOINT` reports
-   success, and `COMMIT` commits the rows it rolled back, and
-   a `CREATE TABLE` made after the savepoint with them.
-   `../dg/test/slt/savepoint_load.test` shows it; its two
-   records that fail are `skipif digres` until this is fixed.
-   The fix is sm1's: a loaded store was empty at
-   `load_open()` and held exclusively since, so all it holds
-   is the transaction's since then. The load pushes one undo
-   entry, the store, instead of losing the marks, and a
-   rollback that reaches the entry empties the store with
-   `DeleteRange` over its column family. Its files cannot be
-   deleted by hand: `load_close()` moved them into RocksDB.
-   `BULKLOAD.md` §3.5 and `sm1/SM1_DESIGN.md` §6.5 change
-   with it, and `sm1/test/test_load.cc`, which expects
-   `SM_ERR_UNDOLIMIT`.
-2. **digres ignores a rollback sm refuses.**
+1. **digres ignores a rollback sm refuses.**
    `smstore_subabort()` (`../dg/src/backend/access/sm/
    smstore.c`) discards `sm_rollback()`'s error, taking a
    savepoint sm cannot undo for a transaction sm has ended.
    But on `SM_ERR_UNDOLIMIT` sm1 changes nothing and leaves
    its transaction open (`sm1/include/sm1.h`): the writes
-   stay, and the next statement and `COMMIT` succeed. With
-   bug 1 fixed, a transaction whose undo list passes
-   `savepoint_undo_bytes`, 64 MB of ordinary writes after a
-   savepoint, still reaches it. The fix: a failed
-   `sm_rollback()` dooms the transaction, and the next call
-   into sm and `COMMIT` refuse it. Its test needs the cap set
-   low, which digres has no way to do yet (`sm_attach()`
-   takes no options from it).
+   stay, and the next statement and `COMMIT` succeed. A
+   transaction whose undo list passes `savepoint_undo_bytes`,
+   64 MB of ordinary writes after a savepoint, reaches it. The
+   fix: a failed `sm_rollback()` dooms the transaction, and the
+   next call into sm and `COMMIT` refuse it. Its test needs the
+   cap set low, which digres has no way to do yet
+   (`sm_attach()` takes no options from it).
+
+   A `COPY` into an empty table that fails inside a savepoint
+   after its first batch, its load still open, takes the same
+   path: sm refuses the rollback with `SM_ERR_INVALID`
+   (`BULKLOAD.md` §3.5), digres ignores it, and the next
+   statement fails setting the savepoint again (`a savepoint
+   cannot be set with a bulk load open`), aborting the
+   transaction. Nothing wrong commits, but PostgreSQL would
+   roll back to the savepoint and go on. `smstore_subabort()`
+   should end the open load before it rolls back; the rollback
+   then empties the table.
 
 Nothing else is queued above low priority. The spike
 `PART4.md` §7 aimed the stack at is long past: digres runs on it
