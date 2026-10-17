@@ -1284,10 +1284,10 @@ int load_put(loader_t* loader, size_t stream, std::string_view key,
 /*
  * Close the load: sort and merge what is left, check that no two
  * keys are equal and no two streams overlap, and put every key
- * into the store at once. The loader is freed unless the call
- * fails, when the transaction is to be aborted, which frees it.
- * The transaction then reads what it loaded, and is still to
- * commit.
+ * into the store at once. The loader is freed whatever the call
+ * returns. The transaction then reads what it loaded, and is
+ * still to commit; after a failure the store holds nothing of
+ * the load, and the transaction may go on.
  *
  * Errors: SM_ERR_DUPKEY, SM_ERR_INVALID (two streams overlap),
  * SM_ERR_DISKFULL, SM_ERR_IO.

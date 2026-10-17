@@ -280,8 +280,13 @@ mode.
   rollback could not free. SQL never asks for either: a
   `COPY` runs from its start to its end.
 
-A failed load needs none of this. The transaction aborts, and
-an abort deletes nothing.
+A close that fails ends the load too, and frees its loader:
+its write batch or its ingest applies whole or not at all, so
+the store holds nothing of the load. A rollback past it is
+then let in, as after a close that succeeded, and finds the
+store empty; a `COPY` that fails on a duplicate key at its end
+is rolled back to its savepoint, as in PostgreSQL. A
+transaction that aborts instead deletes nothing.
 
 Why the rollback deletes at all, and why with `DeleteRange`:
 

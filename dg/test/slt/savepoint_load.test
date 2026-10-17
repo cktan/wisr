@@ -13,10 +13,9 @@
 #    is there.
 # 5. A CREATE TABLE AS that fails after its load began, in a savepoint:
 #    roll back to it and commit; the table does not exist.
-# 6. A COPY whose load fails at its end, on a duplicate key: sm keeps
-#    the load open and refuses the rollback, so digres refuses the
-#    transaction's next call into sm and its commit, where PostgreSQL
-#    goes on (onlyif digres, beside skipif digres).
+# 6. A COPY whose load fails at its end, on a duplicate key, in a
+#    savepoint: roll back to it, read the table empty, insert a row
+#    and commit; only that row is there.
 
 statement ok
 create table r (a int4)
@@ -152,45 +151,18 @@ copy u from program 'printf "1\n1\n"'
 statement ok
 rollback to savepoint one
 
-skipif digres
 query I nosort
 select count(*) from u
 ----
 0
 
-onlyif digres
-statement error the transaction cannot go on: a rollback to a savepoint failed
-select count(*) from u
+statement ok
+insert into u values (2)
 
 statement ok
-commit
-
-statement ok
-begin
-
-statement ok
-savepoint one
-
-skipif digres
-statement error duplicate key value violates unique constraint
-copy u from program 'printf "1\n1\n"'
-
-onlyif digres
-statement error duplicate key value violates a unique index on "u"
-copy u from program 'printf "1\n1\n"'
-
-statement ok
-rollback to savepoint one
-
-skipif digres
-statement ok
-commit
-
-onlyif digres
-statement error could not commit: a rollback to a savepoint failed
 commit
 
 query I nosort
-select count(*) from u
+select a from u
 ----
-0
+2

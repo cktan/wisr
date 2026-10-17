@@ -63,10 +63,10 @@ Owed, and blocking nothing above:
 
 - **A rollback refused past the undo list's cap is untested in
   digres.** digres dooms the transaction when sm refuses a
-  rollback to a savepoint (`../dg/WORKNOTE.md` step 205), and
-  a test reaches that through a load whose end fails. Past
+  rollback to a savepoint (`../dg/WORKNOTE.md` step 205). Since
+  a load whose end fails is ended too (step 206), only
   `savepoint_undo_bytes`, 64 MB of writes after a savepoint,
-  it goes the same way, but no test sets the cap low enough:
+  leads there, and no test sets the cap low enough:
   `sm_attach()` takes no options from digres.
 
 - **The commit cache's size** (`sm1/COMMITCACHE.md` §7).

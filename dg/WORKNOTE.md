@@ -6013,3 +6013,29 @@ with a bulk load open (`SM_ERR_INVALID`).
   commit, refused (`onlyif digres`, beside PostgreSQL's
   answers). 5 of its 49 records failed before. The cap's path
   is untested (`../sm/NEXT.md` §2).
+
+## Step 206: a load whose end fails rolls back to its savepoint
+
+Step 205's last difference from PostgreSQL. A `COPY` into an
+empty table with a primary key, two equal keys in its rows,
+fails at its load's end with `SM_ERR_DUPKEY`. sm1's
+`load_close()` kept its loader open on a failure, for the
+abort it asked for, though sm3 had freed its own handle; so
+nothing could close the load, the rollback to the savepoint was
+refused, and the transaction was doomed.
+
+- **sm1: a close that fails ends the load.** It frees the
+  loader and its files, as an abort would. The store holds
+  nothing of the load: its write batch, or its ingest, applies
+  whole or not at all (`../sm/BULKLOAD.md` §3.5). The rollback
+  is let in and finds the store empty, and the transaction goes
+  on, as in PostgreSQL. digres is unchanged.
+- **The doom stays**, for a rollback past
+  `savepoint_undo_bytes`; it is now untested
+  (`../sm/NEXT.md` §2).
+- `../sm/sm1/test/test_load.cc`: a close failing on a
+  duplicate key, in either of a load's forms, then the
+  rollback, a write and the commit. It failed before.
+- `test/slt/savepoint_load.test`: the duplicate key's case now
+  has PostgreSQL's answers on digres: rolled back to, the table
+  read empty, a row inserted and committed.

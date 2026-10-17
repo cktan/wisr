@@ -529,6 +529,44 @@ TEST_CASE("a rollback to a savepoint set before a load empties its store") {
   }
 }
 
+TEST_CASE("a load whose close fails is ended, and its savepoint rolled "
+          "back to") {
+  // Verify a failed close leaves no loader open and the store empty,
+  // so the transaction rolls back to its savepoint and goes on.
+  // 1. Set a savepoint, load two equal keys, and close: the close
+  //    fails with SM_ERR_DUPKEY, in either of the load's two forms.
+  // 2. The store holds no key, its files are gone, and a second
+  //    load could open.
+  // 3. Roll back to the savepoint, write a key, and commit.
+  // 4. From a new transaction only that key reads.
+  for (bool files : {false, true}) {
+    CAPTURE(files);
+    load_fixture_t f(files ? files_options() : sm1::options_t());
+    begin_xct(f.s);
+    uint64_t store = mkstore(f.s);
+    commit_xct(f.s);
+
+    begin_xct(f.s);
+    int sp = sm1::savepoint(f.s);
+    REQUIRE(sp >= 1);
+    sm1::loader_t *l = load_two(f.s, store, 300);
+    REQUIRE(sm1::load_put(l, 1, key_of('b', 7), "again") == 0);
+    CHECK(sm1::load_close(l) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
+    CHECK(keys(f.s, store).empty());
+    CHECK_FALSE(has_entries(load_dir(f.s)));
+    CHECK_FALSE(load_open_on(f.s, store));
+
+    REQUIRE_MESSAGE(sm1::rollback(f.s, sp) == 0, sm1::errmsg());
+    put(f.s, store, "c", "vc");
+    commit_xct(f.s);
+
+    begin_xct(f.s);
+    CHECK(keys(f.s, store) == std::vector<std::string>{"c"});
+    commit_xct(f.s);
+  }
+}
+
 TEST_CASE("an abort leaves nothing of a load, before its close or after") {
   // Verify a load ends with its transaction.
   // 1. Load as files and abort with the load open: its files were
