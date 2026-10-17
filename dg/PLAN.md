@@ -404,17 +404,18 @@ Do not reopen these without the owner:
   variables. A SHARED variable that a thread must reset or redo
   after the copy was marked SHARED by mistake: mark it LOCAL
   (`src/include/c.h`).
-- **The globals move into three control blocks**, each as a
-  change touches it, never as a campaign of its own
-  (`utils/control_block.h`, `WORKNOTE.md` steps 22 and 211):
+- **The globals move into three control blocks**: the SHARED
+  ones as work of their own (`../sm/NEXT.md` §1), a LOCAL one
+  as a change touches it (`utils/control_block.h`,
+  `WORKNOTE.md` steps 22 and 211):
   `pcb_t` for the process, fixed before the first thread
   starts and read only after; `shmem_t`, what the threads
   share and write, each field guarding itself; and one
   `tcb_t` for each thread. A field is a value, or a
   `std::unique_ptr` to what the block owns; a module's state
   is a struct only it defines. New state goes into a block at
-  once. If the last SHARED variable ever moves, the copy
-  table and the two-pass link go, and the only writable
+  once. When the last SHARED variable moves, the copy table
+  and the two-pass link go, and the only writable
   globals left outside `thread_local` are `pcb` and `shmem`.
 - **The GUC variables and tables are per thread** (§3.4). GUC
   is not otherwise to be touched until the thread model is

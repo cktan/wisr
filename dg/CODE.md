@@ -166,9 +166,11 @@ digres is one process; each session is a thread of it.
   - `tcb` is a pointer (`thread_local tcb_t *tcb`), made at a
     thread's start and freed at its end, and NULL while it is
     being freed. A signal handler checks for NULL.
-  - **Move a global into a block only when your change
-    touches it.** Put new state there from the start. Do not
-    move untouched globals for the migration's sake.
+  - **The SHARED globals move as work of their own**
+    (`../sm/NEXT.md` §1): each into `pcb_t`, `tcb_t` or
+    `shmem_t`, by who writes it. A LOCAL global moves into
+    `tcb_t` when a change touches it. Put new state in a block
+    from the start.
 - **`src/tools/process_wide.txt`** lists the writable globals
   allowed outside `thread_local`. It holds `pcb` and `shmem`
   alone; keep it that way.
