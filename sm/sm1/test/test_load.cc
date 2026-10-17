@@ -444,6 +444,28 @@ TEST_CASE("a transaction cannot commit with a load open, nor prepare after "
   sm1::abort(f.s);
 }
 
+TEST_CASE("no savepoint is set or rolled back to while a load is open") {
+  // Verify a load is whole within its transaction: nothing in it
+  // can be undone apart from the rest.
+  // 1. Set a savepoint, then open a load and put keys into it.
+  // 2. With the load open, a savepoint and a rollback are each
+  //    SM_ERR_INVALID.
+  // 3. The load closes with every key, and the transaction commits.
+  load_fixture_t f;
+  begin_xct(f.s);
+  uint64_t store = mkstore(f.s);
+  int sp = sm1::savepoint(f.s);
+  REQUIRE(sp >= 1);
+  sm1::loader_t *l = load_two(f.s, store, 10);
+  CHECK(sm1::savepoint(f.s) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm1::rollback(f.s, sp) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  REQUIRE_MESSAGE(sm1::load_close(l) == 0, sm1::errmsg());
+  CHECK(keys(f.s, store) == two_keys(10));
+  commit_xct(f.s);
+}
+
 TEST_CASE("an abort leaves nothing of a load, before its close or after") {
   // Verify a load ends with its transaction.
   // 1. Load as files and abort with the load open: its files were

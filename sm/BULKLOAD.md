@@ -261,6 +261,14 @@ mode.
 - **Once it is built**, a rollback marks a range of `seq`
   dead, and a load's versions are covered by it like any
   other. The refusal goes, with no code here.
+- **While a load is open**, between `load_open` and
+  `load_close`, no savepoint is set and none is rolled back
+  to: each fails with `SM_ERR_INVALID`. A load is whole. Its
+  keys share one `seq` and wait in its buffers and files, so
+  those put after a mark could not be undone apart from those
+  before; and its loader is its caller's to close, which a
+  rollback could not free. SQL never asks for either: a
+  `COPY` runs from its start to its end.
 
 A failed load needs none of this. The transaction aborts, and
 an abort deletes nothing.

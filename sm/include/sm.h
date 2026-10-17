@@ -1036,8 +1036,8 @@ int sm_tbl_insert_arbiter(sm_tbl_t* tbl, const sm_datum_t* values,
  * sm_tbl_insert would, and no lock is taken but the table's own.
  *
  * While a load into an empty table is under way the transaction
- * cannot commit, and the table's other writes fail with
- * SM_ERR_INVALID. After one the transaction cannot be prepared,
+ * cannot commit, set a savepoint or roll back to one, and the
+ * table's other writes fail with SM_ERR_INVALID. After one the transaction cannot be prepared,
  * and a savepoint set before it cannot be rolled back to. After a
  * failed call the transaction is to be aborted; a load not ended
  * is ended by its transaction's end, and its handle freed by

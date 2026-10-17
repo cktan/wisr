@@ -759,7 +759,7 @@ int lock_status(env_t* env, std::vector<lock_status_t>& out);
  * Returns the depth (>= 1), or -1 on error.
  *
  * Errors: SM_ERR_NOTRANS, SM_ERR_PREPARED, SM_ERR_INVALID
- * (the stack is full).
+ * (the stack is full, or a bulk load is open).
  */
 int savepoint(session_t* session);
 
@@ -793,7 +793,8 @@ int savepoint(session_t* session);
  * savepoint set afterwards works as usual.
  *
  * Errors: SM_ERR_NOSAVEPOINT (no savepoint at that depth),
- * SM_ERR_UNDOLIMIT, SM_ERR_NOTRANS, SM_ERR_PREPARED.
+ * SM_ERR_UNDOLIMIT, SM_ERR_INVALID (a bulk load is open),
+ * SM_ERR_NOTRANS, SM_ERR_PREPARED.
  */
 int rollback(session_t* session, int depth);
 
@@ -1214,11 +1215,13 @@ void scanend(scan_t* scan);
  * other is sorted, in memory up to options_t::load_sort_bytes and
  * then in runs on disk that the close merges.
  *
- * While a load is open its transaction may not commit, and after
- * one it may not prepare. The savepoints set when a load opens can
- * no longer be rolled back to (SM_ERR_UNDOLIMIT), as past
- * options_t::savepoint_undo_bytes. An abort, of any kind, ends an
- * open load and frees it; the caller must not use it again.
+ * While a load is open its transaction may not commit, set a
+ * savepoint or roll back to one, and after one it may not
+ * prepare: a load is whole. The savepoints set when a load
+ * opens can no longer be rolled back to (SM_ERR_UNDOLIMIT), as
+ * past options_t::savepoint_undo_bytes. An abort, of any kind,
+ * ends an open load and frees it; the caller must not use it
+ * again.
  *
  * A load's files, the sorted ones and the runs alike, are kept
  * under the temporary instance, {homedir}/base/pgsql_tmp/sm/load,

@@ -344,6 +344,12 @@ int savepoint(sm1::session_t *s) {
   if (xct_check_active(s) != 0) {
     return -1;
   }
+  // A load is whole: a mark inside it could not undo its keys
+  // after the mark apart from those before (BULKLOAD.md §3.5).
+  if (s->loader) {
+    return set_error(sm1::SM_ERR_INVALID,
+                     "a savepoint cannot be set with a bulk load open");
+  }
   // Refuse to nest deeper than the limit.
   if (s->savepoints.size() >= sm1::max_savepoints) {
     return set_error(sm1::SM_ERR_INVALID, "savepoint stack is full at {}",
@@ -399,6 +405,13 @@ int rollback(sm1::session_t *s, int depth) {
   // Require an active, non-prepared transaction.
   if (xct_check_active(s) != 0) {
     return -1;
+  }
+  // A load is whole, and its loader is its caller's to close
+  // (BULKLOAD.md §3.5).
+  if (s->loader) {
+    return set_error(sm1::SM_ERR_INVALID,
+                     "a savepoint cannot be rolled back to with a bulk "
+                     "load open");
   }
   // Require a mark at that depth.
   sm1::session_t::mark_t *mp = mark_at(s, depth);
