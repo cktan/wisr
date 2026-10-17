@@ -6438,3 +6438,30 @@ standalone backend starts, and sessions read, are `pcb_t`'s
   settings are each thread's (`PLAN.md` §7).
 - 56 `/*SHARED*/` globals are left.
 
+## Step 220: the modules' own state in pcb_t
+
+`../sm/NEXT.md` §1's second item, its third batch: 6
+module-private `/*SHARED*/` statics the main thread sets as it
+starts, and sessions read.
+
+- **Each module's state is a struct it defines** (`CODE.md`
+  §3), made by `pcb_init()` through the module's `*_new()`,
+  and held by a plain pointer in `pcb_t`, never freed:
+  datadir `datadir_state_t`, `pcb->datadir` (the superuser's
+  name and SCRAM secret, and sm's home directory, `sm_env`);
+  ps_status `ps_status_state_t`, `pcb->ps_status` (`save_argc`
+  and `save_argv`); auth-scram `auth_scram_state_t`,
+  `pcb->auth_scram` (`mock_auth_nonce`). A `std::unique_ptr`
+  would make `pcb_t` no literal type, which fd's
+  `static_assert` on its `max_safe_fds_per_thread` needs.
+- **const does not reach through those pointers**, so a module
+  reads its state through a const reference (datadir `dds()`,
+  ps_status `pss()`), and writes through `pcb_main()`
+  (datadir `dds_main()`): `load_superuser()`,
+  `datadir_load()`'s `sm_attach()`, `detach_sm()` at exit,
+  `save_ps_display_args()`, `scram_init_mock_nonce()`.
+- **main `reached_main` is gone**: it told the sanitizer's
+  `__ubsan_default_options()` that `main()` had run, which
+  `postmaster_tcb` being set now says.
+- 49 `/*SHARED*/` globals are left.
+

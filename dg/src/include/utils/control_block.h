@@ -90,6 +90,18 @@ struct advisory_state_free_t {
   void operator()(advisory_state_t *state) const;
 };
 
+/* datadir.c: the superuser, and sm's home directory, the process's. */
+struct datadir_state_t;
+extern datadir_state_t *datadir_state_new(void);
+
+/* ps_status.c: where the original argv is, the process's. */
+struct ps_status_state_t;
+extern ps_status_state_t *ps_status_state_new(void);
+
+/* auth-scram.c: the mock authentication nonce, the process's. */
+struct auth_scram_state_t;
+extern auth_scram_state_t *auth_scram_state_new(void);
+
 /* postmaster.c: the postmaster's own state, the main thread's alone. */
 struct postmaster_state_t;
 struct postmaster_state_free_t {
@@ -146,6 +158,14 @@ typedef struct pcb_t {
   /* miscinit.c: shared_preload_libraries being loaded, and loaded */
   bool process_shared_preload_libraries_in_progress = false;
   bool process_shared_preload_libraries_done = false;
+
+  /*
+   * A module's own, made by pcb_init(), never freed: each module reads its
+   * state through a const reference, as const does not reach through these
+   */
+  datadir_state_t *datadir = nullptr;       /* datadir.c */
+  ps_status_state_t *ps_status = nullptr;   /* ps_status.c */
+  auth_scram_state_t *auth_scram = nullptr; /* auth-scram.c */
 } pcb_t;
 
 /*

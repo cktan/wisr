@@ -20,6 +20,7 @@
 #endif
 
 #include "miscadmin.h"
+#include "utils/control_block.h"
 #include "utils/guc.h"
 #include "utils/ps_status.h"
 
@@ -98,9 +99,20 @@ static void flush_ps_display(void);
 
 #endif /* not PS_USE_NONE */
 
-/* save the original argv[] location here */
-static thread_local /*SHARED*/ int save_argc;
-static thread_local /*SHARED*/ char **save_argv;
+/*
+ * The original argv[] location, saved by the main thread as it starts, and
+ * read by every thread: pcb->ps_status (utils/control_block.h).
+ */
+struct ps_status_state_t {
+  int save_argc = 0;
+  char **save_argv = NULL;
+};
+
+/* Make the state, empty: pcb_init() calls it. */
+ps_status_state_t *ps_status_state_new(void) { return new ps_status_state_t(); }
+
+/* The state, to read. */
+static inline const ps_status_state_t &pss(void) { return *pcb->ps_status; }
 
 /*
  * Call this early in startup to save the original argc/argv values.
@@ -117,8 +129,8 @@ static thread_local /*SHARED*/ char **save_argv;
  * initialized yet.  We rely on write_stderr() instead.
  */
 char **save_ps_display_args(int argc, char **argv) {
-  save_argc = argc;
-  save_argv = argv;
+  pcb_main()->ps_status->save_argc = argc;
+  pcb_main()->ps_status->save_argv = argv;
 
 #if defined(PS_USE_CLOBBER_ARGV)
 
@@ -268,7 +280,7 @@ void init_ps_display(const char *fixed_part) {
     return;
 
   /* no ps display if you didn't call save_ps_display_args() */
-  if (!save_argv)
+  if (!pss().save_argv)
     return;
 
 #ifdef PS_USE_CLOBBER_ARGV
@@ -277,8 +289,8 @@ void init_ps_display(const char *fixed_part) {
     return;
 
   /* make extra argv slots point at end_of_area (a NUL) */
-  for (int i = 1; i < save_argc; i++)
-    save_argv[i] = ps_buffer + ps_buffer_size;
+  for (int i = 1; i < pss().save_argc; i++)
+    pss().save_argv[i] = ps_buffer + ps_buffer_size;
 #endif /* PS_USE_CLOBBER_ARGV */
 
     /*

@@ -34,16 +34,32 @@
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "storage/proc.h"
+#include "utils/control_block.h"
 #include "utils/datadir.h"
 #include "utils/guc_hooks.h"
 #include "utils/memutils.h"
 
-/* The superuser's name, and its SCRAM secret or NULL. */
-static thread_local /*SHARED*/ char *superuser_name = NULL;
-static thread_local /*SHARED*/ char *superuser_secret = NULL;
+/*
+ * The process's, set by the main thread as it loads the data directory, and
+ * read by every session: pcb->datadir (utils/control_block.h).
+ */
+struct datadir_state_t {
+  /* The superuser's name, and its SCRAM secret or NULL. */
+  char *superuser_name = NULL;
+  char *superuser_secret = NULL;
 
-/* sm's home directory, attached by the postmaster for every session. */
-static thread_local /*SHARED*/ sm_env_t *sm_env = NULL;
+  /* sm's home directory, attached by the postmaster for every session. */
+  sm_env_t *sm_env = NULL;
+};
+
+/* Make the state, empty: pcb_init() calls it. */
+datadir_state_t *datadir_state_new(void) { return new datadir_state_t(); }
+
+/* The state, to read. */
+static inline const datadir_state_t &dds(void) { return *pcb->datadir; }
+
+/* The state, to write: the main thread's alone. */
+static inline datadir_state_t &dds_main(void) { return *pcb_main()->datadir; }
 
 /* This session's sm session on its database, or NULL. */
 static thread_local /*LOCAL*/ sm_session_t *sm_session = NULL;
@@ -61,18 +77,18 @@ static void load_superuser(void) {
   line = pg_get_line(file, NULL);
   if (line == NULL || pg_strip_crlf(line) == 0)
     ereport(FATAL, (errmsg("file \"%s\" names no superuser", SUPERUSER_FILE)));
-  superuser_name = MemoryContextStrdup(TopMemoryContext, line);
+  dds_main().superuser_name = MemoryContextStrdup(TopMemoryContext, line);
 
   line = pg_get_line(file, NULL);
   if (line != NULL && pg_strip_crlf(line) > 0)
-    superuser_secret = MemoryContextStrdup(TopMemoryContext, line);
+    dds_main().superuser_secret = MemoryContextStrdup(TopMemoryContext, line);
   FreeFile(file);
 }
 
 /* Detach sm's home directory as the postmaster exits. */
 static void detach_sm(int code, Datum arg) {
-  sm_detach(sm_env, 1);
-  sm_env = NULL;
+  sm_detach(dds().sm_env, 1);
+  dds_main().sm_env = NULL;
 }
 
 /* Close the session's sm session as it ends. */
@@ -98,7 +114,7 @@ void datadir_load(void) {
   sigfillset(&all);
   pthread_sigmask(SIG_SETMASK, &all, &old);
   /* Once for the process: every session opens its database on it. */
-  rc = sm_attach(".", &sm_env);
+  rc = sm_attach(".", &dds_main().sm_env);
   pthread_sigmask(SIG_SETMASK, &old, NULL);
   if (rc != 0)
     ereport(FATAL, (errmsg("could not attach storage: %s", sm_errmsg())));
@@ -107,15 +123,15 @@ void datadir_load(void) {
    * Before any database is opened: digres reads sm's TOAST pointers
    * (smstore_fetch_toast()), so sm may store a row's long values out of line.
    */
-  if (sm_set_toast(sm_env, 1) != 0)
+  if (sm_set_toast(dds().sm_env, 1) != 0)
     ereport(FATAL, (errmsg("could not turn on TOAST: %s", sm_errmsg())));
 }
 
 /* The name of the superuser, the one role there is. */
-const char *datadir_superuser(void) { return superuser_name; }
+const char *datadir_superuser(void) { return dds().superuser_name; }
 
 /* The SCRAM secret of the superuser's password, or NULL if it has none. */
-const char *datadir_superuser_secret(void) { return superuser_secret; }
+const char *datadir_superuser_secret(void) { return dds().superuser_secret; }
 
 /*
  * The oid of the database dbname, or InvalidOid if there is none: the id sm
@@ -125,7 +141,7 @@ const char *datadir_superuser_secret(void) { return superuser_secret; }
 Oid datadir_database_oid(const char *dbname) {
   uint64_t dbid;
 
-  if (sm_dbid(sm_env, dbname, &dbid) != 0) {
+  if (sm_dbid(dds().sm_env, dbname, &dbid) != 0) {
     if (sm_errnum() == SM_ERR_NOTFOUND)
       return InvalidOid;
     ereport(FATAL, (errmsg("could not look up database \"%s\": %s", dbname,
@@ -144,7 +160,7 @@ Oid datadir_database_oid(const char *dbname) {
 char *datadir_database_name(Oid dboid) {
   std::vector<std::string> names;
 
-  if (sm_lsdb(sm_env, names) != 0)
+  if (sm_lsdb(dds().sm_env, names) != 0)
     ereport(ERROR, (errmsg("could not list databases: %s", sm_errmsg())));
   for (const std::string &name : names)
     if (datadir_database_oid(name.c_str()) == dboid)
@@ -157,7 +173,7 @@ List *datadir_database_names(void) {
   std::vector<std::string> names;
   List *out = NIL;
 
-  if (sm_lsdb(sm_env, names) != 0)
+  if (sm_lsdb(dds().sm_env, names) != 0)
     ereport(ERROR, (errmsg("could not list databases: %s", sm_errmsg())));
   for (const std::string &name : names)
     out = lappend(out, pstrdup(name.c_str()));
@@ -169,7 +185,7 @@ List *datadir_database_names(void) {
  * DATABASE does outside a transaction: false if it exists already.
  */
 bool datadir_create_database(const char *dbname) {
-  if (sm_mkdb(sm_env, dbname, NULL) == 0)
+  if (sm_mkdb(dds().sm_env, dbname, NULL) == 0)
     return true;
   if (sm_errnum() == SM_ERR_EXISTS)
     return false;
@@ -184,7 +200,7 @@ bool datadir_create_database(const char *dbname) {
  * session has it open.
  */
 datadir_drop_t datadir_drop_database(const char *dbname) {
-  if (sm_rmdb(sm_env, dbname) == 0)
+  if (sm_rmdb(dds().sm_env, dbname) == 0)
     return DATADIR_DROPPED;
   switch (sm_errnum()) {
   case SM_ERR_NOTFOUND:
@@ -203,7 +219,7 @@ datadir_drop_t datadir_drop_database(const char *dbname) {
  * the session lasts.  The first on a database loads its catalog.
  */
 void datadir_open_session(const char *dbname) {
-  if (sm_opendb(sm_env, dbname, NULL, &sm_session) != 0)
+  if (sm_opendb(dds().sm_env, dbname, NULL, &sm_session) != 0)
     ereport(FATAL, (errmsg("could not open database \"%s\": %s", dbname,
                            sm_errmsg())));
   on_proc_exit(close_sm_session, 0);
@@ -236,7 +252,7 @@ std::vector<int> datadir_sm_blockers(int pid) {
   std::vector<uint64_t> tags;
 
   /* A pid is never 0, which sm takes for no session. */
-  if (pid > 0 && sm_waits_for(sm_env, (uint64_t)pid, &tags) == 0)
+  if (pid > 0 && sm_waits_for(dds().sm_env, (uint64_t)pid, &tags) == 0)
     for (uint64_t tag : tags)
       pids.push_back((int)tag);
   return pids;
@@ -267,7 +283,7 @@ std::vector<datadir_lock_t> datadir_sm_locks(void) {
   std::vector<sm_lock_status_t> locks;
   std::vector<datadir_lock_t> out;
 
-  if (sm_lock_status(sm_env, locks) != 0)
+  if (sm_lock_status(dds().sm_env, locks) != 0)
     ereport(ERROR, (errmsg("could not list sm's locks: %s", sm_errmsg())));
   for (const sm_lock_status_t &l : locks) {
     datadir_lockname_t name = l.name == SM_LOCKNAME_OBJECT ? DATADIR_LOCK_OBJECT

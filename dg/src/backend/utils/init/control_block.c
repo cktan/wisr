@@ -32,8 +32,13 @@ thread_local /*LOCAL*/ postmaster_tcb_t *postmaster_tcb = NULL;
  * first, before any thread starts and before anything logs.
  */
 void pcb_init(void) {
+  pcb_t *block = new pcb_t();
+
   Assert(pcb == NULL && shmem == NULL);
-  pcb = new pcb_t();
+  block->datadir = datadir_state_new();
+  block->ps_status = ps_status_state_new();
+  block->auth_scram = auth_scram_state_new();
+  pcb = block;
   shmem = new shmem_t();
 }
 

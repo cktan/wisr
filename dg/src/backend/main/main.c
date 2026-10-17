@@ -43,7 +43,6 @@
 #include "utils/ps_status.h"
 
 thread_local /*SHARED*/ const char *progname;
-static thread_local /*SHARED*/ bool reached_main = false;
 
 /* names of special must-be-first options for dispatching to subprograms */
 static const char *const DispatchOptionNames[] = {
@@ -69,8 +68,6 @@ static void check_root(const char *progname);
 int main(int argc, char *argv[]) {
   bool do_check_root = true;
   DispatchOption dispatch_option = DISPATCH_POSTMASTER;
-
-  reached_main = true;
 
   /* The process's control blocks, and this thread's, before anything else. */
   pcb_init();
@@ -488,8 +485,9 @@ __attribute__((disable_sanitizer_instrumentation))
 #endif
 const char *
 __ubsan_default_options(void) {
-  /* don't call libc before it's guaranteed to be initialized */
-  if (!reached_main)
+  /* don't call libc before it's guaranteed to be initialized: main() made
+   * the postmaster's block first */
+  if (postmaster_tcb == NULL)
     return "";
 
   return getenv("UBSAN_OPTIONS");

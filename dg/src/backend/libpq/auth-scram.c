@@ -100,6 +100,7 @@
 #include "libpq/sasl.h"
 #include "libpq/scram.h"
 #include "miscadmin.h"
+#include "utils/control_block.h"
 
 static void scram_get_mechanisms(Port *port, StringInfo buf);
 static void *scram_init(Port *port, const char *selected_mech,
@@ -189,9 +190,17 @@ static uint8 *scram_mock_salt(const char *username,
 /*
  * Random nonce, used in authentication requests that need to proceed based
  * on values that are server-unique, like a SASL exchange that failed at an
- * early stage.  Made once per run of the server, before any session starts.
+ * early stage.  Made once per run of the server, by the main thread before
+ * any session starts: pcb->auth_scram (utils/control_block.h).
  */
-static thread_local /*SHARED*/ char mock_auth_nonce[MOCK_AUTH_NONCE_LEN];
+struct auth_scram_state_t {
+  char mock_auth_nonce[MOCK_AUTH_NONCE_LEN] = {};
+};
+
+/* Make the state, empty: pcb_init() calls it. */
+auth_scram_state_t *auth_scram_state_new(void) {
+  return new auth_scram_state_t();
+}
 
 /*
  * The number of iterations to use when generating new secrets.
@@ -1423,7 +1432,8 @@ static uint8 *scram_mock_salt(const char *username,
   ctx = pg_cryptohash_create(hash_type);
   if (pg_cryptohash_init(ctx) < 0 ||
       pg_cryptohash_update(ctx, (uint8 *)username, strlen(username)) < 0 ||
-      pg_cryptohash_update(ctx, (uint8 *)mock_auth_nonce, MOCK_AUTH_NONCE_LEN) <
+      pg_cryptohash_update(ctx, (const uint8 *)pcb->auth_scram->mock_auth_nonce,
+                           MOCK_AUTH_NONCE_LEN) <
           0 ||
       pg_cryptohash_final(ctx, sha_digest, key_length) < 0) {
     pg_cryptohash_free(ctx);
@@ -1439,7 +1449,8 @@ static uint8 *scram_mock_salt(const char *username,
  * standalone backend, before any session starts: sessions copy it.
  */
 void scram_init_mock_nonce(void) {
-  if (!pg_strong_random(mock_auth_nonce, MOCK_AUTH_NONCE_LEN))
+  if (!pg_strong_random(pcb_main()->auth_scram->mock_auth_nonce,
+                        MOCK_AUTH_NONCE_LEN))
     ereport(PANIC, (errcode(ERRCODE_INTERNAL_ERROR),
                     errmsg("could not generate secret authorization token")));
 }
