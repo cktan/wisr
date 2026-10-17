@@ -1,0 +1,142 @@
+# Verify CREATE TABLE AS and SELECT INTO make a table in sm and fill it,
+# through sm's bulk load, as PostgreSQL's do.
+# 1. Make a table from a query; its rows, nulls and numerics read back.
+# 2. Name the columns: too few names are fine, too many fail.
+# 3. SELECT INTO makes a table too.
+# 4. WITH NO DATA makes an empty table that takes rows after.
+# 5. A taken name fails, and IF NOT EXISTS skips it.
+# 6. Load many rows, and insert one more after.
+# 7. Values stored out of line end the load: those rows are inserted.
+# 8. A temporary table, and a query prepared before.
+# 9. Roll back to a savepoint set before CREATE TABLE AS, and commit:
+#    the table is not there.
+
+statement ok
+create table k (a int4, b text, n numeric(10,2))
+
+statement ok
+insert into k values (1, 'x', 1.5), (2, null, null), (3, 'z', 3.25)
+
+statement ok
+create table c as select a, b, n from k
+
+query ITT nosort
+select a, b, n from c order by a
+----
+1	x	1.50
+2	NULL	NULL
+3	z	3.25
+
+statement ok
+create table c2 (p) as select a, b from k where a > 1
+
+query IT nosort
+select p, b from c2 order by p
+----
+2	NULL
+3	z
+
+statement error too many column names were specified
+create table c3 (p, q, r, s) as select a, b, n from k
+
+statement ok
+select a * 10 as t into s from k
+
+query I nosort
+select t from s order by t
+----
+10
+20
+30
+
+statement ok
+create table nd as select a, b from k with no data
+
+query I nosort
+select count(*) from nd
+----
+0
+
+statement ok
+insert into nd values (5, 'five')
+
+query IT nosort
+select a, b from nd
+----
+5	five
+
+statement error relation "c" already exists
+create table c as select 1
+
+statement ok
+create table if not exists c as select 1
+
+query I nosort
+select count(*) from c
+----
+3
+
+statement ok
+create table big as select g as a, g::text as b, (g * 1.5)::numeric(12,2) as n from generate_series(1, 100000) g
+
+query IIIT nosort
+select count(*), sum(a), max(a), sum(n) from big
+----
+100000	5000050000	100000	7500075000.00
+
+statement ok
+insert into big values (0, 'zero', 0)
+
+query II nosort
+select count(*), min(a) from big
+----
+100001	0
+
+statement ok
+create table lng as select g, case when g > 2 then repeat('y', 100000) else 'short' end as v from generate_series(1, 4) g
+
+query II nosort
+select g, length(v) from lng order by g
+----
+1	5
+2	5
+3	100000
+4	100000
+
+statement ok
+create temp table tt as select a from k where a <> 2
+
+query I nosort
+select a from tt order by a
+----
+1
+3
+
+statement ok
+prepare q as select a, b from k where a = 3
+
+statement ok
+create table e as execute q
+
+query IT nosort
+select a, b from e
+----
+3	z
+
+statement ok
+begin
+
+statement ok
+savepoint one
+
+statement ok
+create table rb as select g from generate_series(1, 1000) g
+
+statement ok
+rollback to savepoint one
+
+statement ok
+commit
+
+statement error relation "rb" does not exist
+select count(*) from rb

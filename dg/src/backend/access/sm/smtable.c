@@ -102,7 +102,7 @@ static void smtable_tuple_insert(Relation rel, TupleTableSlot *slot,
 
 /*
  * Hand the slots' rows to sm's bulk load of the table, which this begins:
- * COPY's batches come this way, and nothing else does.
+ * COPY's batches come this way, and CREATE TABLE AS's rows.
  */
 static void smtable_multi_insert(Relation rel, TupleTableSlot **slots,
                                  int nslots, CommandId cid, int options,
