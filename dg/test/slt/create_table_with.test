@@ -1,0 +1,84 @@
+# Verify CREATE TABLE ... WITH (fillfactor, autovacuum_enabled) is
+# taken, its values checked as PostgreSQL checks them, and ignored:
+# sm has no pages to fill and no autovacuum.
+# 1. Each of the two, alone, together, and on CREATE TABLE AS, makes a
+#    table that holds its rows.
+# 2. A fillfactor out of its range, given twice, or not a number, and
+#    an autovacuum_enabled not a boolean, fail as in PostgreSQL.
+# 3. Any other storage parameter is refused by digres, where
+#    PostgreSQL takes it or fails it otherwise (onlyif digres, beside
+#    skipif digres).
+
+statement ok
+create table f (a int4 primary key) with (fillfactor = 10)
+
+statement ok
+create table v (a int4) with (autovacuum_enabled = off)
+
+statement ok
+create table b (a int4) with (fillfactor = 100, autovacuum_enabled = true)
+
+statement ok
+create table n (a int4) with (autovacuum_enabled)
+
+statement ok
+insert into f values (1), (2)
+
+statement ok
+insert into v values (3)
+
+statement ok
+create table c with (fillfactor = 50) as select a from f
+
+query I nosort
+select a from c order by a
+----
+1
+2
+
+query I nosort
+select count(*) from v
+----
+1
+
+statement error value 5 out of bounds for option "fillfactor"
+create table e1 (a int4) with (fillfactor = 5)
+
+statement error value 101 out of bounds for option "fillfactor"
+create table e2 (a int4) with (fillfactor = 101)
+
+statement error parameter "fillfactor" specified more than once
+create table e3 (a int4) with (fillfactor = 50, fillfactor = 60)
+
+statement error invalid value for integer option "fillfactor": x
+create table e4 (a int4) with (fillfactor = x)
+
+statement error invalid value for boolean option "autovacuum_enabled": maybe
+create table e5 (a int4) with (autovacuum_enabled = maybe)
+
+statement error relation "e1" does not exist
+select * from e1
+
+skipif digres
+statement ok
+create table t1 (a int4) with (toast_tuple_target = 256)
+
+onlyif digres
+statement error storage parameter "toast_tuple_target" is not supported
+create table t1 (a int4) with (toast_tuple_target = 256)
+
+skipif digres
+statement ok
+create table t2 (a int4) with (toast.autovacuum_enabled = false)
+
+onlyif digres
+statement error storage parameter "toast.autovacuum_enabled" is not supported
+create table t2 (a int4) with (toast.autovacuum_enabled = false)
+
+skipif digres
+statement error unrecognized parameter "nosuch"
+create table t3 (a int4) with (nosuch = 1)
+
+onlyif digres
+statement error storage parameter "nosuch" is not supported
+create table t3 (a int4) with (nosuch = 1)

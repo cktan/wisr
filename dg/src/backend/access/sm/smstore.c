@@ -26,6 +26,7 @@
 #include "access/smstore.h"
 #include "access/xact.h"
 #include "access/relation.h"
+#include "access/reloptions.h"
 #include "catalog/index.h"
 #include "parser/parse_node.h"
 #include "catalog/heap.h"
@@ -1220,16 +1221,58 @@ static bool column_not_null(const CreateStmt *stmt, const ColumnDef *col) {
   return false;
 }
 
+/*
+ * Check a CREATE TABLE's WITH (...) and ignore it: sm has no pages to
+ * fill and no autovacuum, so fillfactor and autovacuum_enabled are taken,
+ * their values checked as PostgreSQL checks them, and kept nowhere.  Any
+ * other storage parameter is refused.
+ */
+static void check_storage_options(List *options) {
+  List *fill = NIL;
+  ListCell *l;
+
+  foreach (l, options) {
+    DefElem *opt = lfirst_node(DefElem, l);
+    bool on;
+
+    if (opt->defnamespace == NULL && strcmp(opt->defname, "fillfactor") == 0)
+      fill = lappend(fill, opt);
+    else if (opt->defnamespace == NULL &&
+             strcmp(opt->defname, "autovacuum_enabled") == 0) {
+      /* A bare name means true, as transformRelOptions() takes it. */
+      const char *value = opt->arg != NULL ? defGetString(opt) : "true";
+
+      if (!parse_bool(value, &on))
+        ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                        errmsg("invalid value for boolean option \"%s\": %s",
+                               opt->defname, value)));
+    } else
+      ereport(ERROR,
+              (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+               errmsg("storage parameter \"%s%s%s\" is not supported",
+                      opt->defnamespace != NULL ? opt->defnamespace : "",
+                      opt->defnamespace != NULL ? "." : "", opt->defname),
+               errdetail("CREATE TABLE takes only fillfactor and "
+                         "autovacuum_enabled, and ignores them.")));
+  }
+  /* PostgreSQL's own check of fillfactor: its range, and given once. */
+  if (fill != NIL)
+    (void)heap_reloptions(
+        RELKIND_RELATION,
+        transformRelOptions((Datum)0, fill, NULL, NULL, false, false), true);
+}
+
 /* Refuse what a CREATE TABLE asks that sm's tables do not have yet. */
 static void check_create_table(const CreateStmt *stmt) {
   if (stmt->inhRelations != NIL || stmt->partbound != NULL ||
       stmt->partspec != NULL || stmt->ofTypename != NULL ||
-      stmt->constraints != NIL || stmt->options != NIL ||
-      stmt->tablespacename != NULL || stmt->accessMethod != NULL ||
+      stmt->constraints != NIL || stmt->tablespacename != NULL ||
+      stmt->accessMethod != NULL ||
       stmt->relation->relpersistence == RELPERSISTENCE_UNLOGGED)
     ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                     errmsg("CREATE TABLE supports only columns, NOT NULL, "
                            "PRIMARY KEY, UNIQUE and TEMPORARY yet")));
+  check_storage_options(stmt->options);
 }
 
 /*

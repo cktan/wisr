@@ -176,7 +176,8 @@ By files unblocked for the work, the cheapest first:
    any one change now. Built since, into sm's bulk load
    (`../../WORKNOTE.md` step 203); not yet measured here.
 3. **Accept and ignore `WITH (fillfactor, autovacuum_enabled)`**
-   on `CREATE TABLE`: sm has no pages to fill. 5 files.
+   on `CREATE TABLE`: sm has no pages to fill. 5 files. Built
+   since (`../../WORKNOTE.md` step 208); not yet measured here.
 
 Bigger, and each needs a decision of record first:
 

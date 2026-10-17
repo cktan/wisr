@@ -6076,3 +6076,24 @@ where every caller gets it.
 - `../sm/sm1/test/test_savepoint.cc`: the cap's three tests no
   longer go on after `SM_ERR_UNDOLIMIT`, and a new one checks
   each kind of call in a doomed transaction.
+
+## Step 208: CREATE TABLE takes WITH (fillfactor, autovacuum_enabled)
+
+`test/regress/README.md`'s third item: 5 files stopped at
+`CREATE TABLE ... WITH (...)`, which access/sm
+`check_create_table()` refused whole.
+
+- **Two storage parameters are taken, and ignored.** sm has no
+  pages to fill and no autovacuum (step 11), so `fillfactor`
+  and `autovacuum_enabled` change nothing and are kept nowhere.
+  `check_storage_options()` checks their values as PostgreSQL
+  does: `fillfactor` through `heap_reloptions()`, its range of
+  10 to 100 and given once; `autovacuum_enabled`, whose
+  reloption went with autovacuum, with `parse_bool()` and
+  PostgreSQL's words. `CREATE TABLE AS` takes them the same way.
+- **Any other is refused**, `toast.` ones included: `storage
+  parameter "x" is not supported`.
+- `test/slt/create_table_with.test`: each taken alone, together
+  and on `CREATE TABLE AS`; the bad values; the others refused
+  (`onlyif digres`, beside PostgreSQL's answers, written by
+  hand: no PostgreSQL 18 here).
