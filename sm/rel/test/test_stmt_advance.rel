@@ -1,0 +1,104 @@
+# test_stmt_advance.rel -- (stmt-advance), a statement's command
+# counter: the running statement sees its writes so far, at the same
+# snapshot, and the visibility rule is otherwise unchanged.
+
+(def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_stmt_advance"))
+(rm-rf test-dir)
+(env-init test-dir)
+(env-attach test-dir)
+
+(db-create "advdb")
+(session-open s1 "advdb")
+(session-open s2 "advdb")
+(session-use s1)
+(begin :rc)
+(table-create accounts
+  (columns
+    (id :int4 :not-null)
+    (balance :int4 :not-null)))
+(insert accounts [1 100])
+(commit)
+
+# 1. A statement sees its own writes once it advances, not before.
+#    1. In a statement, update row 1 and insert row 2: it reads
+#       neither change.
+#    2. Advance: it reads both.
+(begin :rc)
+(stmt-begin)
+(update accounts 1 [1 110])
+(def r2 (insert accounts [2 200]))
+(assert-eq (read accounts 1) [1 100])
+(assert-eq (read accounts r2) nil)
+(stmt-advance)
+(assert-eq (read accounts 1) [1 110])
+(assert-eq (read accounts r2) [2 200])
+(commit)
+
+# 2. The snapshot stays: under READ COMMITTED, a row another session
+#    commits after the statement's first read is not seen after the
+#    advance, as it is after a new statement.
+#    1. Read row 1 in a statement of s1.
+#    2. s2 updates row 1 and commits.
+#    3. s1 advances: it still reads the old value.
+#    4. s1 begins a statement: it reads the new one.
+(begin :rc)
+(stmt-begin)
+(assert-eq (read accounts 1) [1 110])
+(session-use s2)
+(begin :rc)
+(update accounts 1 [1 120])
+(commit)
+(session-use s1)
+(stmt-advance)
+(assert-eq (read accounts 1) [1 110])
+(stmt-begin)
+(assert-eq (read accounts 1) [1 120])
+(commit)
+
+# 3. A row the statement changed may be changed again after the
+#    advance, as after PostgreSQL's command counter.
+#    1. Update row 1 in a statement; a second update fails with
+#       ERR_SELFMODIFIED, and the transaction goes on.
+#    2. Advance: the second update succeeds, and commits.
+(begin :rc)
+(stmt-begin)
+(update accounts 1 [1 130])
+(assert-err :err-selfmodified (update accounts 1 [1 140]))
+(stmt-advance)
+(update accounts 1 [1 140])
+(commit)
+(begin :rc)
+(assert-eq (read accounts 1) [1 140])
+(commit)
+
+# 4. An advance inside an inner statement ends with it: the outer
+#    resumes at its own mark.
+#    1. In the outer statement update row 1, then begin an inner one.
+#    2. The inner inserts row 3 and advances: it reads row 3.
+#    3. End the inner: the outer reads neither its update nor row 3.
+(begin :rc)
+(stmt-begin)
+(update accounts 1 [1 150])
+(stmt-inner)
+(def r3 (insert accounts [3 300]))
+(stmt-advance)
+(assert-eq (read accounts r3) [3 300])
+(stmt-end)
+(assert-eq (read accounts 1) [1 140])
+(assert-eq (read accounts r3) nil)
+(commit)
+
+# 5. With no statement begun an advance changes nothing, and with no
+#    transaction it fails with ERR_NOTRANS.
+(begin :rc)
+(update accounts 1 [1 160])
+(stmt-advance)
+(assert-eq (read accounts 1) [1 160])
+(commit)
+(assert-err :err-notrans (stmt-advance))
+
+(session-close s1)
+(session-close s2)
+(env-detach :force true)
+(rm-rf test-dir)
+(print "test_stmt_advance.rel: PASSED")
