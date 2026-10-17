@@ -75,6 +75,7 @@ static Node *transformColumnRef(ParseState *pstate, ColumnRef *cref);
 static Node *transformWholeRowRef(ParseState *pstate,
                                   ParseNamespaceItem *nsitem, int sublevels_up,
                                   int location);
+static bool has_row_type(ParseNamespaceItem *nsitem);
 static Node *transformIndirection(ParseState *pstate, A_Indirection *ind);
 static Node *transformTypeCast(ParseState *pstate, TypeCast *tc);
 static Node *transformCollateClause(ParseState *pstate, CollateClause *c);
@@ -647,7 +648,7 @@ static Node *transformColumnRef(ParseState *pstate, ColumnRef *cref) {
     /* Try to identify as a column of the nsitem */
     node =
         scanNSItemForColumn(pstate, nsitem, levels_up, colname, cref->location);
-    if (node == NULL) {
+    if (node == NULL && has_row_type(nsitem)) {
       /* Try it as a function call on the whole row */
       node = transformWholeRowRef(pstate, nsitem, levels_up, cref->location);
       node = ParseFuncOrColumn(pstate, list_make1(makeString(colname)),
@@ -683,7 +684,7 @@ static Node *transformColumnRef(ParseState *pstate, ColumnRef *cref) {
     /* Try to identify as a column of the nsitem */
     node =
         scanNSItemForColumn(pstate, nsitem, levels_up, colname, cref->location);
-    if (node == NULL) {
+    if (node == NULL && has_row_type(nsitem)) {
       /* Try it as a function call on the whole row */
       node = transformWholeRowRef(pstate, nsitem, levels_up, cref->location);
       node = ParseFuncOrColumn(pstate, list_make1(makeString(colname)),
@@ -730,7 +731,7 @@ static Node *transformColumnRef(ParseState *pstate, ColumnRef *cref) {
     /* Try to identify as a column of the nsitem */
     node =
         scanNSItemForColumn(pstate, nsitem, levels_up, colname, cref->location);
-    if (node == NULL) {
+    if (node == NULL && has_row_type(nsitem)) {
       /* Try it as a function call on the whole row */
       node = transformWholeRowRef(pstate, nsitem, levels_up, cref->location);
       node = ParseFuncOrColumn(pstate, list_make1(makeString(colname)),
@@ -2292,6 +2293,15 @@ static Node *transformCurrentOfExpr(ParseState *pstate, CurrentOfExpr *cexpr) {
   }
 
   return (Node *)cexpr;
+}
+
+/*
+ * Whether nsitem's row has a type, and so can be a function's argument. A
+ * table of sm's has none, and "t.nosuch" on one is then a missing column.
+ */
+static bool has_row_type(ParseNamespaceItem *nsitem) {
+  return nsitem->p_rte->rtekind != RTE_RELATION ||
+         OidIsValid(get_rel_type_id(nsitem->p_rte->relid));
 }
 
 /*

@@ -25,18 +25,7 @@ Low priority:
    of line, which end a load's files; a `rel` verb; and batch
    mode and mini-batch, which matter less now that no write
    keeps a row lock.
-2. **`rowno = n` as a TID scan.** A query names a row by its
-   `rowno` (`../dg/WORKNOTE.md` step 200), and `WHERE rowno =
-   n` reads the whole table with a filter: the planner knows a
-   TID scan only as `ctid = tid` (optimizer `tidpath.c`).
-   Taught `rowno`, it fetches the one row, as `UPDATE` and
-   `DELETE` by a row's number want.
-3. **A missing qualified column names the wrong error.** On a
-   table in sm, `t.nosuch` fails with "relation "t" does not
-   have a composite type", not `column t.nosuch does not
-   exist`: the parser tries `nosuch(t)` as a function on the
-   row, which a table in sm has no type for.
-4. **Purge the replication catalogs.** `../dg/WORKNOTE.md`
+2. **Purge the replication catalogs.** `../dg/WORKNOTE.md`
    step 2's known leftovers: `pg_subscription`,
    `pg_subscription_rel`, `pg_publication*` and
    `pg_replication_origin`. They reach into generated catalog

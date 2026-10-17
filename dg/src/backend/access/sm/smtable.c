@@ -69,6 +69,18 @@ static TableScanDesc smtable_scan_begin(Relation rel, Snapshot snapshot,
   return &scan->base;
 }
 
+/*
+ * Start a scan again: a TID scan's, as a nested loop rescans one for each
+ * outer row, has nothing to start, as it fetches each row by its tid and
+ * never reads its cursor. No other scan of a table in sm is rescanned here.
+ */
+static void smtable_scan_rescan(TableScanDesc sscan, struct ScanKeyData *key,
+                                bool set_params, bool allow_strat,
+                                bool allow_pagemode) {
+  if (!(sscan->rs_flags & SO_TYPE_TIDSCAN))
+    refuse<void>();
+}
+
 /* End a scan, and let go of a snapshot taken for it alone. */
 static void smtable_scan_end(TableScanDesc sscan) {
   smtable_scan_t *scan = (smtable_scan_t *)sscan;
@@ -187,7 +199,7 @@ static const TableAmRoutine smtable_methods = [] {
   r.slot_callbacks = smtable_slot_callbacks;
   r.scan_begin = smtable_scan_begin;
   r.scan_end = smtable_scan_end;
-  r.scan_rescan = refuse;
+  r.scan_rescan = smtable_scan_rescan;
   r.scan_getnextslot = smtable_scan_getnextslot;
   r.scan_set_tidrange = refuse;
   r.scan_getnextslot_tidrange = refuse;

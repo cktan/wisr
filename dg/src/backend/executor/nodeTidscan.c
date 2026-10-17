@@ -22,6 +22,7 @@
  */
 #include "postgres.h"
 
+#include "access/smstore.h"
 #include "access/sysattr.h"
 #include "access/tableam.h"
 #include "catalog/pg_type.h"
@@ -31,6 +32,7 @@
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
 #include "utils/array.h"
+#include "utils/lsyscache.h"
 #include "utils/rel.h"
 
 /*
@@ -44,10 +46,17 @@
 	 IsA((node), Var) && \
 	 ((Var *) (node))->varattno == SelfItemPointerAttributeNumber)
 
+/* The same for the rowno variable, which names a row of a table in sm. */
+#define IsRownoVar(node)  \
+	((node) != NULL && \
+	 IsA((node), Var) && \
+	 ((Var *) (node))->varattno == RownoAttributeNumber)
+
 /* one element in tss_tidexprs */
 typedef struct TidExpr {
   ExprState *exprstate; /* ExprState for a TID-yielding subexpr */
   bool isarray;         /* if true, it yields tid[] not just tid */
+  Oid rownotype;        /* or rownos of this integer type, if valid */
   CurrentOfExpr *cexpr; /* alternatively, we can have CURRENT OF */
 } TidExpr;
 
@@ -55,6 +64,7 @@ static void TidExprListCreate(TidScanState *tidstate);
 static void TidListEval(TidScanState *tidstate);
 static int itemptr_comparator(const void *a, const void *b);
 static TupleTableSlot *TidNext(TidScanState *node);
+static bool RownoTid(Datum value, Oid typid, ItemPointer tid);
 
 /*
  * Extract the qual subexpressions that yield TIDs to search for,
@@ -80,20 +90,28 @@ static void TidExprListCreate(TidScanState *tidstate) {
 
       arg1 = get_leftop(expr);
       arg2 = get_rightop(expr);
-      if (IsCTIDVar(arg1))
+      if (IsCTIDVar(arg1) || IsRownoVar(arg1))
         tidexpr->exprstate = ExecInitExpr((Expr *)arg2, &tidstate->ss.ps);
-      else if (IsCTIDVar(arg2))
+      else if (IsCTIDVar(arg2) || IsRownoVar(arg2))
         tidexpr->exprstate = ExecInitExpr((Expr *)arg1, &tidstate->ss.ps);
       else
         elog(ERROR, "could not identify CTID variable");
+      if (IsRownoVar(arg1))
+        tidexpr->rownotype = exprType(arg2);
+      else if (IsRownoVar(arg2))
+        tidexpr->rownotype = exprType(arg1);
       tidexpr->isarray = false;
     } else if (expr && IsA(expr, ScalarArrayOpExpr)) {
       ScalarArrayOpExpr *saex = (ScalarArrayOpExpr *)expr;
 
-      Assert(IsCTIDVar(linitial(saex->args)));
+      Assert(IsCTIDVar(linitial(saex->args)) ||
+             IsRownoVar(linitial(saex->args)));
       tidexpr->exprstate =
           ExecInitExpr((Expr *)lsecond(saex->args), &tidstate->ss.ps);
       tidexpr->isarray = true;
+      if (IsRownoVar(linitial(saex->args)))
+        tidexpr->rownotype =
+            get_element_type(exprType((Node *)lsecond(saex->args)));
     } else if (expr && IsA(expr, CurrentOfExpr)) {
       CurrentOfExpr *cexpr = (CurrentOfExpr *)expr;
 
@@ -146,12 +164,20 @@ static void TidListEval(TidScanState *tidstate) {
   foreach (l, tidstate->tss_tidexprs) {
     TidExpr *tidexpr = (TidExpr *)lfirst(l);
     ItemPointer itemptr;
+    ItemPointerData rownotid;
     bool isNull;
 
     if (tidexpr->exprstate && !tidexpr->isarray) {
-      itemptr = (ItemPointer)DatumGetPointer(
-          ExecEvalExprSwitchContext(tidexpr->exprstate, econtext, &isNull));
+      Datum value =
+          ExecEvalExprSwitchContext(tidexpr->exprstate, econtext, &isNull);
+
       if (isNull)
+        continue;
+      if (!OidIsValid(tidexpr->rownotype))
+        itemptr = (ItemPointer)DatumGetPointer(value);
+      else if (RownoTid(value, tidexpr->rownotype, &rownotid))
+        itemptr = &rownotid;
+      else
         continue;
 
       /*
@@ -183,8 +209,18 @@ static void TidListEval(TidScanState *tidstate) {
       if (isNull)
         continue;
       itemarray = DatumGetArrayTypeP(arraydatum);
-      deconstruct_array_builtin(itemarray, TIDOID, &ipdatums, &ipnulls,
-                                &ndatums);
+      if (OidIsValid(tidexpr->rownotype)) {
+        int16 typlen;
+        bool typbyval;
+        char typalign;
+
+        get_typlenbyvalalign(tidexpr->rownotype, &typlen, &typbyval,
+                             &typalign);
+        deconstruct_array(itemarray, tidexpr->rownotype, typlen, typbyval,
+                          typalign, &ipdatums, &ipnulls, &ndatums);
+      } else
+        deconstruct_array_builtin(itemarray, TIDOID, &ipdatums, &ipnulls,
+                                  &ndatums);
       if (numTids + ndatums > numAllocTids) {
         numAllocTids = numTids + ndatums;
         tidList = (ItemPointerData *)repalloc(
@@ -194,7 +230,12 @@ static void TidListEval(TidScanState *tidstate) {
         if (ipnulls[i])
           continue;
 
-        itemptr = (ItemPointer)DatumGetPointer(ipdatums[i]);
+        if (!OidIsValid(tidexpr->rownotype))
+          itemptr = (ItemPointer)DatumGetPointer(ipdatums[i]);
+        else if (RownoTid(ipdatums[i], tidexpr->rownotype, &rownotid))
+          itemptr = &rownotid;
+        else
+          continue;
 
         if (!table_tuple_tid_valid(scan, itemptr))
           continue;
@@ -238,6 +279,27 @@ static void TidListEval(TidScanState *tidstate) {
   tidstate->tss_TidList = tidList;
   tidstate->tss_NumTids = numTids;
   tidstate->tss_TidPtr = -1;
+}
+
+/*
+ * The tid of the row whose rowno is value, of the integer type typid; false
+ * if no row has it, as for a negative one.
+ */
+static bool RownoTid(Datum value, Oid typid, ItemPointer tid) {
+  int64 rowno;
+
+  switch (typid) {
+  case INT2OID:
+    rowno = DatumGetInt16(value);
+    break;
+  case INT4OID:
+    rowno = DatumGetInt32(value);
+    break;
+  default:
+    rowno = DatumGetInt64(value);
+    break;
+  }
+  return rowno >= 0 && smstore_rowno_fits_tid((uint64)rowno, tid);
 }
 
 /*

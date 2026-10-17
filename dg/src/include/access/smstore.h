@@ -220,6 +220,7 @@ extern smstore_scan_t *smstore_beginfetch(Relation rel);
 extern bool smstore_fetch(smstore_scan_t *scan, uint64 rowno,
                           TupleTableSlot *slot);
 extern void smstore_rowno_to_tid(uint64 rowno, ItemPointer tid);
+extern bool smstore_rowno_fits_tid(uint64 rowno, ItemPointer tid);
 extern uint64 smstore_tid_to_rowno(ItemPointer tid);
 
 #endif /* SMSTORE_H */

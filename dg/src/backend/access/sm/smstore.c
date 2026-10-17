@@ -1871,12 +1871,22 @@ bool smstore_relation_name(Oid relid, uint64 version, char **name,
  * offset one above the rowno's remainder.
  */
 void smstore_rowno_to_tid(uint64 rowno, ItemPointer tid) {
-  if (rowno / 0xFFFF > MaxBlockNumber)
+  if (!smstore_rowno_fits_tid(rowno, tid))
     ereport(ERROR, (errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
                     errmsg("row number %llu does not fit a tid",
                            (unsigned long long)rowno)));
+}
+
+/*
+ * rowno as a tid, as smstore_rowno_to_tid() makes it; false if it does not
+ * fit one, so that no row has it. A TID scan of WHERE rowno = n asks.
+ */
+bool smstore_rowno_fits_tid(uint64 rowno, ItemPointer tid) {
+  if (rowno / 0xFFFF > MaxBlockNumber)
+    return false;
   ItemPointerSet(tid, (BlockNumber)(rowno / 0xFFFF),
                  (OffsetNumber)(rowno % 0xFFFF + 1));
+  return true;
 }
 
 /* The rowno a tid carries (smstore_rowno_to_tid()). */

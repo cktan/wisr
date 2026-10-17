@@ -6155,3 +6155,63 @@ each kind has a block of its own (`utils/control_block.h`,
   weighed and not made: no field pairs a mutex with data that
   is reached only under it. The injection points' table is
   read without the lock, by its generation counters.
+
+## Step 212: t.nosuch on a table in sm is a missing column
+
+`../sm/NEXT.md` §1's third item. On a table in sm, `select
+t.nosuch from t` failed with `relation "t" does not have a
+composite type`. The parser, finding no column `nosuch`, tries
+`nosuch(t)` as a function on the row (parser
+`transformColumnRef()`), and a table in sm has no row type to
+make the whole-row reference with (nodes `makeWholeRowVar()`).
+
+- **The function is not tried on a relation without a row
+  type**, parser `has_row_type()`: no function can take a row
+  that has no type, so nothing is lost. The name then fails as
+  PostgreSQL's does, `column t.nosuch does not exist`, with its
+  position. Qualified by schema and table, or by an alias, the
+  same.
+- **A whole-row reference still fails** as before: `select t
+  from t`, `(t).a`, `row_to_json(t)`. A table in sm would need
+  a row type for those.
+- `test/slt/missing_column.test`: the missing column named
+  with the table, its schema, an alias, in `WHERE` and in a
+  subquery, and with a catalog relation. Without the change 4
+  of its 8 records failed.
+
+## Step 213: WHERE rowno = n is a TID scan
+
+`../sm/NEXT.md` §1's second item. A query names a row by its
+`rowno` (step 200), and `WHERE rowno = n` read the whole table
+with a filter: the planner made a TID scan of `ctid = tid`
+alone. The row's tid carries its rowno
+(`smstore_rowno_to_tid()`), and sm's table access method
+fetches a row by its tid already, for `WHERE CURRENT OF`.
+
+- **The planner takes `rowno = n` as it takes `ctid = tid`**
+  (optimizer `tidpath.c`): `IsRownoVar()` and
+  `IsRownoEqualOperator()`, the equality of `integer_ops`, so
+  `n` may be an `int2`, `int4` or `int8`, on either side. With
+  it come `rowno IN (...)`, `rowno = ANY (array)`, an `OR` of
+  them, and a join on `rowno`, whose inner side is a TID scan
+  for each outer row.
+- **The executor makes the tid of each rowno** (executor
+  `nodeTidscan.c`'s `RownoTid()`). A rowno no tid holds,
+  negative or too large, fetches nothing, through access/sm
+  `smstore_rowno_fits_tid()`, which `smstore_rowno_to_tid()`
+  now calls; it still fails on one.
+- **A TID scan is rescanned** (access/sm
+  `smtable_scan_rescan()`), as a nested loop does for each outer
+  row: it has nothing to start again, as it never reads its
+  cursor. Any other rescan through the access method is still
+  refused.
+- **The cost is PostgreSQL's**: a fetch by tid costs a random
+  page. On a table of one page a sequential scan costs less,
+  and is chosen.
+- **A range, `rowno > n`, is still a sequential scan**: sm's
+  access method has no TID range scan.
+- `test/slt/rowno_scan.test`: rowno = n, IN, ANY and OR, each
+  a TID scan; rownos no row has; another condition beside it;
+  update and delete by rowno; a join, plain and left; a range.
+  Without the change its 5 plans were sequential scans.
+

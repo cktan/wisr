@@ -1,0 +1,34 @@
+# Verify a missing column named with its relation fails as a missing
+# column, on a table in sm as on a catalog relation: a table in sm has
+# no row type, so "t.nosuch" is not tried as a function nosuch(t).
+# 1. Make a table.
+# 2. Name a missing column with the table, its schema, an alias, in
+#    WHERE, and in a subquery: each fails as a missing column.
+# 3. Name a missing column with a catalog relation: the same error.
+# 4. Name a column the table has, qualified: it is read.
+
+statement ok
+create table mc (a int4)
+
+statement ok
+insert into mc values (1)
+
+statement error column mc.nosuch does not exist
+select mc.nosuch from mc
+
+statement error column mc.nosuch does not exist
+select public.mc.nosuch from mc
+
+statement error column x.nosuch does not exist
+select x.a from mc x where x.nosuch = 1
+
+statement error column mc.nosuch does not exist
+select (select mc.nosuch) from mc
+
+statement error column pg_class.nosuch does not exist
+select pg_class.nosuch from pg_class
+
+query I nosort
+select mc.a from mc
+----
+1

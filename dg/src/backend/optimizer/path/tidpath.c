@@ -38,8 +38,10 @@
  */
 #include "postgres.h"
 
+#include "access/stratnum.h"
 #include "access/sysattr.h"
 #include "catalog/pg_operator.h"
+#include "catalog/pg_opfamily.h"
 #include "catalog/pg_type.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/cost.h"
@@ -47,6 +49,7 @@
 #include "optimizer/pathnode.h"
 #include "optimizer/paths.h"
 #include "optimizer/restrictinfo.h"
+#include "utils/lsyscache.h"
 
 /*
  * Does this Var represent the CTID column of the specified baserel?
@@ -61,14 +64,34 @@ static inline bool IsCTIDVar(Var *var, RelOptInfo *rel) {
 }
 
 /*
+ * Does this Var represent the rowno column of the specified baserel?  A
+ * table in sm names a row by its rowno, which the row's tid carries
+ * (smstore_rowno_to_tid()), so "rowno = n" fetches the row as "CTID = tid"
+ * does.
+ */
+static inline bool IsRownoVar(Var *var, RelOptInfo *rel) {
+  return var->varattno == RownoAttributeNumber && var->vartype == INT8OID &&
+         var->varno == rel->relid && var->varnullingrels == NULL &&
+         var->varlevelsup == 0;
+}
+
+/* Is opno the equality of int8 with an integer, as "rowno = n" names? */
+static bool IsRownoEqualOperator(Oid opno) {
+  return get_op_opfamily_strategy(opno, INTEGER_BTREE_FAM_OID) ==
+         BTEqualStrategyNumber;
+}
+
+/*
  * Check to see if a RestrictInfo is of the form
  *		CTID OP pseudoconstant
  * or
  *		pseudoconstant OP CTID
  * where OP is a binary operation, the CTID Var belongs to relation "rel",
- * and nothing on the other side of the clause does.
+ * and nothing on the other side of the clause does.  With rowno, the Var
+ * looked for is rowno's instead.
  */
-static bool IsBinaryTidClause(RestrictInfo *rinfo, RelOptInfo *rel) {
+static bool IsBinaryTidClause(RestrictInfo *rinfo, RelOptInfo *rel,
+                              bool rowno) {
   OpExpr *node;
   Node *arg1, *arg2, *other;
   Relids other_relids;
@@ -87,11 +110,13 @@ static bool IsBinaryTidClause(RestrictInfo *rinfo, RelOptInfo *rel) {
   /* Look for CTID as either argument */
   other = NULL;
   other_relids = NULL;
-  if (arg1 && IsA(arg1, Var) && IsCTIDVar((Var *)arg1, rel)) {
+  if (arg1 && IsA(arg1, Var) &&
+      (rowno ? IsRownoVar((Var *)arg1, rel) : IsCTIDVar((Var *)arg1, rel))) {
     other = arg2;
     other_relids = rinfo->right_relids;
   }
-  if (!other && arg2 && IsA(arg2, Var) && IsCTIDVar((Var *)arg2, rel)) {
+  if (!other && arg2 && IsA(arg2, Var) &&
+      (rowno ? IsRownoVar((Var *)arg2, rel) : IsCTIDVar((Var *)arg2, rel))) {
     other = arg1;
     other_relids = rinfo->left_relids;
   }
@@ -112,13 +137,15 @@ static bool IsBinaryTidClause(RestrictInfo *rinfo, RelOptInfo *rel) {
  * or
  *		pseudoconstant = CTID
  * where the CTID Var belongs to relation "rel", and nothing on the
- * other side of the clause does.
+ * other side of the clause does.  "rowno = pseudoconstant" is one too.
  */
 static bool IsTidEqualClause(RestrictInfo *rinfo, RelOptInfo *rel) {
-  if (!IsBinaryTidClause(rinfo, rel))
-    return false;
+  if (IsBinaryTidClause(rinfo, rel, false) &&
+      ((OpExpr *)rinfo->clause)->opno == TIDEqualOperator)
+    return true;
 
-  if (((OpExpr *)rinfo->clause)->opno == TIDEqualOperator)
+  if (IsBinaryTidClause(rinfo, rel, true) &&
+      IsRownoEqualOperator(((OpExpr *)rinfo->clause)->opno))
     return true;
 
   return false;
@@ -135,7 +162,7 @@ static bool IsTidEqualClause(RestrictInfo *rinfo, RelOptInfo *rel) {
 static bool IsTidRangeClause(RestrictInfo *rinfo, RelOptInfo *rel) {
   Oid opno;
 
-  if (!IsBinaryTidClause(rinfo, rel))
+  if (!IsBinaryTidClause(rinfo, rel, false))
     return false;
   opno = ((OpExpr *)rinfo->clause)->opno;
 
@@ -150,7 +177,8 @@ static bool IsTidRangeClause(RestrictInfo *rinfo, RelOptInfo *rel) {
  * Check to see if a RestrictInfo is of the form
  *		CTID = ANY (pseudoconstant_array)
  * where the CTID Var belongs to relation "rel", and nothing on the
- * other side of the clause does.
+ * other side of the clause does.  "rowno = ANY (pseudoconstant_array)" is
+ * one too.
  */
 static bool IsTidEqualAnyClause(PlannerInfo *root, RestrictInfo *rinfo,
                                 RelOptInfo *rel) {
@@ -162,17 +190,16 @@ static bool IsTidEqualAnyClause(PlannerInfo *root, RestrictInfo *rinfo,
     return false;
   node = (ScalarArrayOpExpr *)rinfo->clause;
 
-  /* Operator must be tideq */
-  if (node->opno != TIDEqualOperator)
-    return false;
   if (!node->useOr)
     return false;
   Assert(list_length(node->args) == 2);
   arg1 = (Node *)linitial(node->args);
   arg2 = (Node *)lsecond(node->args);
 
-  /* CTID must be first argument */
-  if (arg1 && IsA(arg1, Var) && IsCTIDVar((Var *)arg1, rel)) {
+  /* CTID must be first argument, and the operator tideq; or rowno's */
+  if (arg1 && IsA(arg1, Var) &&
+      ((node->opno == TIDEqualOperator && IsCTIDVar((Var *)arg1, rel)) ||
+       (IsRownoEqualOperator(node->opno) && IsRownoVar((Var *)arg1, rel)))) {
     /* The other argument must be a pseudoconstant */
     if (bms_is_member(rel->relid, pull_varnos(root, arg2)) ||
         contain_volatile_functions(arg2))
@@ -430,7 +457,8 @@ static void BuildParameterizedTidPaths(PlannerInfo *root, RelOptInfo *rel,
 }
 
 /*
- * Test whether an EquivalenceClass member matches our rel's CTID Var.
+ * Test whether an EquivalenceClass member matches our rel's CTID Var, or
+ * its rowno Var.
  *
  * This is a callback for use by generate_implied_equalities_for_column.
  */
@@ -438,7 +466,8 @@ static bool ec_member_matches_ctid(PlannerInfo *root, RelOptInfo *rel,
                                    EquivalenceClass *ec, EquivalenceMember *em,
                                    void *arg) {
   if (em->em_expr && IsA(em->em_expr, Var) &&
-      IsCTIDVar((Var *)em->em_expr, rel))
+      (IsCTIDVar((Var *)em->em_expr, rel) ||
+       IsRownoVar((Var *)em->em_expr, rel)))
     return true;
   return false;
 }
