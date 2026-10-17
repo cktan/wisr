@@ -65,6 +65,7 @@
 #include "tcop/pquery.h"
 #include "tcop/tcopprot.h"
 #include "tcop/utility.h"
+#include "utils/control_block.h"
 #include "utils/guc_hooks.h"
 #include "utils/injection_point.h"
 #include "utils/lsyscache.h"
@@ -3152,7 +3153,7 @@ void process_postgres_switches(int argc, char *argv[], GucContext ctx,
     case 'b':
       /* Undocumented flag used for binary upgrades */
       if (secure)
-        IsBinaryUpgrade = true;
+        pcb_main()->IsBinaryUpgrade = true;
       break;
 
     case 'C':
@@ -3261,7 +3262,7 @@ void process_postgres_switches(int argc, char *argv[], GucContext ctx,
     case 'r':
       /* send output (stdout and stderr) to the given file */
       if (secure)
-        strlcpy(OutputFileName, optctx.optarg, MAXPGPATH);
+        strlcpy(pcb_main()->OutputFileName, optctx.optarg, MAXPGPATH);
       break;
 
     case 'S':
@@ -3421,7 +3422,7 @@ void PostgresSingleUserMain(int argc, char *argv[], const char *username) {
    * Remember stand-alone backend startup time,roughly at the same point
    * during startup that postmaster does so.
    */
-  PgStartTime = GetCurrentTimestamp();
+  pcb_main()->PgStartTime = GetCurrentTimestamp();
 
   /*
    * Give this session its number, before it can access any shared

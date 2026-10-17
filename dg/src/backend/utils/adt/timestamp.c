@@ -33,6 +33,7 @@
 #include "parser/scansup.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
+#include "utils/control_block.h"
 #include "utils/date.h"
 #include "utils/datetime.h"
 #include "utils/float.h"
@@ -50,8 +51,7 @@
 
 #define SAMESIGN(a, b)	(((a) < 0) == ((b) < 0))
 
-/* Set at postmaster start */
-thread_local /*SHARED*/ TimestampTz PgStartTime;
+/* Set at postmaster start: pcb->PgStartTime */
 
 /* Set at configuration reload */
 thread_local /*SHARED*/ TimestampTz PgReloadTime;
@@ -1404,7 +1404,7 @@ Datum clock_timestamp(PG_FUNCTION_ARGS) {
 }
 
 Datum pg_postmaster_start_time(PG_FUNCTION_ARGS) {
-  PG_RETURN_TIMESTAMPTZ(PgStartTime);
+  PG_RETURN_TIMESTAMPTZ(pcb->PgStartTime);
 }
 
 Datum pg_conf_load_time(PG_FUNCTION_ARGS) {

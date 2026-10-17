@@ -33,6 +33,7 @@
 #include "storage/fd.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
+#include "utils/control_block.h"
 #include "utils/lsyscache.h"
 #include "utils/pg_locale.h"
 #include "utils/rel.h"
@@ -259,7 +260,7 @@ ObjectAddress DefineCollation(ParseState *pstate, List *names, List *parameters,
        * During binary upgrade, preserve the locale string. Otherwise,
        * canonicalize to a language tag.
        */
-      if (!IsBinaryUpgrade) {
+      if (!pcb->IsBinaryUpgrade) {
         char *langtag = icu_language_tag(colllocale, icu_validation_level);
 
         if (langtag && strcmp(colllocale, langtag) != 0) {

@@ -162,6 +162,7 @@ typedef struct {
 #define SH_DECLARE
 #define SH_DEFINE
 #include "lib/simplehash.h"
+#include "utils/control_block.h"
 
 static thread_local /*LOCAL*/ MemoryContext CollationCacheContext = NULL;
 static thread_local /*LOCAL*/ collation_cache_hash *CollationCache = NULL;
@@ -1547,7 +1548,7 @@ void icu_validate_locale(const char *loc_str) {
     return;
 
   /* downgrade to WARNING during pg_upgrade */
-  if (IsBinaryUpgrade && elevel > WARNING)
+  if (pcb->IsBinaryUpgrade && elevel > WARNING)
     elevel = WARNING;
 
   /* validate that we can extract the language */

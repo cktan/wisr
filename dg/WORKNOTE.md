@@ -6400,3 +6400,41 @@ that remove lock and socket files are the main thread's.
   **`postmaster_tcb->sock_paths`** (libpq `pqcomm.c`), lists
   in `TopMemoryContext`.
 - 71 `/*SHARED*/` globals are left.
+
+## Step 219: pcb_t's first fields
+
+`../sm/NEXT.md` §1's second item, its second batch: 15
+`/*SHARED*/` globals the main thread sets as the server or a
+standalone backend starts, and sessions read, are `pcb_t`'s
+(`utils/control_block.h`).
+
+- **globals**: `DataDir`, `OutputFileName`, `my_exec_path`,
+  `pkglib_path`, `PostmasterPid`, `IsPostmasterEnvironment`,
+  `IsBinaryUpgrade`, `MaxBackends`. **common `file_perm.c`**:
+  `pg_dir_create_mode`, `pg_file_create_mode`,
+  `pg_mode_mask`. **fd**: `max_safe_fds_per_thread`, whose start,
+  `FD_MINFREE`, a `static_assert` in `fd.c` checks.
+  **timestamp**: `PgStartTime`. **miscinit**:
+  `process_shared_preload_libraries_in_progress` and `_done`.
+- **Every thread reads them through `const pcb_t *pcb`**
+  (`pcb->DataDir`); a write elsewhere does not compile. **The
+  main thread writes through `pcb_main()`**, which asserts it
+  is the main thread (`postmaster_tcb` is set). Each write is
+  made before the first session starts: `SetDataDir()`,
+  `SetDataDirectoryCreatePerm()`, `set_max_safe_fds()`,
+  `InitializeMaxBackends()`,
+  `process_shared_preload_libraries()`, and the postmaster's
+  and a standalone backend's options and start. `-b` and `-r` in
+  `process_postgres_switches()`, which a session runs too, are
+  taken only from the command line.
+- **`max_safe_fds` is `max_safe_fds_per_thread`**: a thread's
+  share of the process's fds (step 135's ceiling over the
+  threads), which PostgreSQL's name, from when a backend was a
+  process, did not say.
+- postmaster `CreateOptsFile()` takes its path `const`.
+- **Left SHARED, on purpose**: `progname`, whose address is
+  the copy table's anchor (`session_thread.c`'s `tls_block()`),
+  until the table goes; `data_directory_mode`, a setting, and
+  settings are each thread's (`PLAN.md` §7).
+- 56 `/*SHARED*/` globals are left.
+

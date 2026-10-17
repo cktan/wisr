@@ -36,6 +36,7 @@
 #include "utils/acl.h"
 #include "utils/builtins.h"
 #include "utils/catcache.h"
+#include "utils/control_block.h"
 #include "utils/fmgroids.h"
 #include "utils/syscache.h"
 #include "utils/varlena.h"
@@ -401,7 +402,7 @@ Oid CreateRole(ParseState *pstate, CreateRoleStmt *stmt) {
    * pg_largeobject_metadata contains pg_authid.oid's, so we use the
    * binary-upgrade override.
    */
-  if (IsBinaryUpgrade) {
+  if (pcb->IsBinaryUpgrade) {
     if (!OidIsValid(binary_upgrade_next_pg_authid_oid))
       ereport(
           ERROR,

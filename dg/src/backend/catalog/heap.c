@@ -66,6 +66,7 @@
 #include "storage/lmgr.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
+#include "utils/control_block.h"
 #include "utils/fmgroids.h"
 #include "utils/inval.h"
 #include "utils/lsyscache.h"
@@ -1154,7 +1155,7 @@ Oid heap_create_with_catalog(const char *relname, Oid relnamespace,
    */
   if (!OidIsValid(relid)) {
     /* Use binary-upgrade override for pg_class.oid and relfilenumber */
-    if (IsBinaryUpgrade) {
+    if (pcb->IsBinaryUpgrade) {
       /*
        * Indexes are not supported here; they use
        * binary_upgrade_next_index_pg_class_oid.

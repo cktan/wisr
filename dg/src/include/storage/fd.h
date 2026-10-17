@@ -73,7 +73,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT int file_extend_method;
 /*
  * This is private to fd.c, but exported for save/restore_backend_variables()
  */
-extern thread_local /*SHARED*/ PGDLLIMPORT int max_safe_fds;
 
 /*
  * On Windows, we have to interpret EACCES as possibly meaning the same as

@@ -27,6 +27,7 @@
 #include "storage/lmgr.h"
 #include "utils/builtins.h"
 #include "utils/catcache.h"
+#include "utils/control_block.h"
 #include "utils/fmgroids.h"
 #include "utils/hsearch.h"
 #include "utils/memutils.h"
@@ -407,7 +408,7 @@ restart:
   }
 
   /* Get a new OID for the new label */
-  if (IsBinaryUpgrade) {
+  if (pcb->IsBinaryUpgrade) {
     if (!OidIsValid(binary_upgrade_next_pg_enum_oid))
       ereport(
           ERROR,

@@ -53,6 +53,7 @@
 #ifndef FRONTEND
 #include "libpq/pqsignal.h"
 #include "miscadmin.h"
+#include "utils/control_block.h"
 #endif
 
 #ifdef PG_SIGNAL_COUNT /* Windows */
@@ -95,7 +96,7 @@ static void wrapper_handler(SIGNAL_ARGS) {
    * before accepting signals.
    */
   Assert(MyProcPid);
-  Assert(MyProcPid != PostmasterPid || !IsUnderPostmaster);
+  Assert(MyProcPid != pcb->PostmasterPid || !IsUnderPostmaster);
 
   if (unlikely(MyProcPid != CurrentProcPid())) {
     pqsignal(postgres_signal_arg, SIG_DFL);

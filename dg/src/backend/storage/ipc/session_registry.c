@@ -58,7 +58,7 @@ void session_register(void) {
   {
     std::lock_guard<std::mutex> lock(registry->mu);
 
-    if ((int)registry->sessions.size() >= MaxBackends)
+    if ((int)registry->sessions.size() >= pcb->MaxBackends)
       ereport(FATAL, (errcode(ERRCODE_TOO_MANY_CONNECTIONS),
                       errmsg("sorry, too many clients already")));
     registry->sessions[record->pid] = record;
@@ -145,7 +145,7 @@ std::vector<session_ref_t> sessions_all(void) {
 bool session_have_free(int n, int *nfree) {
   session_registry_t *registry = shmem->session_registry.get();
   std::lock_guard<std::mutex> lock(registry->mu);
-  int free = MaxBackends - (int)registry->sessions.size();
+  int free = pcb->MaxBackends - (int)registry->sessions.size();
 
   *nfree = Min(n, free);
   return free >= n;

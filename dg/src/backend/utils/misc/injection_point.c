@@ -171,7 +171,7 @@ injection_point_cache_load(InjectionPointEntry *entry, int slot_idx,
   char path[MAXPGPATH];
   void *injection_callback_local;
 
-  snprintf(path, MAXPGPATH, "%s/%s%s", pkglib_path, entry->library, DLSUFFIX);
+  snprintf(path, MAXPGPATH, "%s/%s%s", pcb->pkglib_path, entry->library, DLSUFFIX);
 
   if (!pg_file_exists(path))
     elog(ERROR, "could not find library \"%s\" for injection point \"%s\"",

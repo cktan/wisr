@@ -164,7 +164,7 @@ void InitPostmasterChild(void) {
  * argv0 has to be suitable to find the program's executable.
  */
 void InitStandaloneProcess(const char *argv0) {
-  Assert(!IsPostmasterEnvironment);
+  Assert(!pcb->IsPostmasterEnvironment);
 
   MyBackendType = B_STANDALONE_BACKEND;
 
@@ -199,13 +199,13 @@ void InitStandaloneProcess(const char *argv0) {
   pthread_sigmask(SIG_SETMASK, &BlockSig, NULL);
 
   /* Compute paths, no postmaster to inherit from */
-  if (my_exec_path[0] == '\0') {
-    if (find_my_exec(argv0, my_exec_path) < 0)
+  if (pcb->my_exec_path[0] == '\0') {
+    if (find_my_exec(argv0, pcb_main()->my_exec_path) < 0)
       elog(FATAL, "%s: could not locate my own executable path", argv0);
   }
 
-  if (pkglib_path[0] == '\0')
-    get_pkglib_path(my_exec_path, pkglib_path);
+  if (pcb->pkglib_path[0] == '\0')
+    get_pkglib_path(pcb->my_exec_path, pcb_main()->pkglib_path);
 }
 
 void InitProcessLocalLatch(void) {
@@ -259,24 +259,24 @@ void SetDatabasePath(const char *path) {
 void checkDataDir(void) {
   struct stat stat_buf;
 
-  Assert(DataDir);
+  Assert(pcb->DataDir);
 
-  if (stat(DataDir, &stat_buf) != 0) {
+  if (stat(pcb->DataDir, &stat_buf) != 0) {
     if (errno == ENOENT)
       ereport(FATAL, (errcode_for_file_access(),
-                      errmsg("data directory \"%s\" does not exist", DataDir)));
+                      errmsg("data directory \"%s\" does not exist", pcb->DataDir)));
     else
       ereport(FATAL,
               (errcode_for_file_access(),
                errmsg("could not read permissions of directory \"%s\": %m",
-                      DataDir)));
+                      pcb->DataDir)));
   }
 
   /* eventual chdir would fail anyway, but let's test ... */
   if (!S_ISDIR(stat_buf.st_mode))
     ereport(FATAL, (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
                     errmsg("specified data directory \"%s\" is not a directory",
-                           DataDir)));
+                           pcb->DataDir)));
 
     /*
      * Check that the directory belongs to my userid; if not, reject.
@@ -291,7 +291,7 @@ void checkDataDir(void) {
   if (stat_buf.st_uid != geteuid())
     ereport(FATAL,
             (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-             errmsg("data directory \"%s\" has wrong ownership", DataDir),
+             errmsg("data directory \"%s\" has wrong ownership", pcb->DataDir),
              errhint("The server must be started by the user that owns the "
                      "data directory.")));
 #endif
@@ -311,7 +311,7 @@ void checkDataDir(void) {
   if (stat_buf.st_mode & PG_MODE_MASK_GROUP)
     ereport(FATAL,
             (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-             errmsg("data directory \"%s\" has invalid permissions", DataDir),
+             errmsg("data directory \"%s\" has invalid permissions", pcb->DataDir),
              errdetail(
                  "Permissions should be u=rwx (0700) or u=rwx,g=rx (0750).")));
 #endif
@@ -331,12 +331,12 @@ void checkDataDir(void) {
 #if !defined(WIN32) && !defined(__CYGWIN__)
   SetDataDirectoryCreatePerm(stat_buf.st_mode);
 
-  umask(pg_mode_mask);
-  data_directory_mode = pg_dir_create_mode;
+  umask(pcb->pg_mode_mask);
+  data_directory_mode = pcb->pg_dir_create_mode;
 #endif
 
   /* Check for PG_VERSION */
-  ValidatePgVersion(DataDir);
+  ValidatePgVersion(pcb->DataDir);
 }
 
 /*
@@ -351,8 +351,8 @@ void SetDataDir(const char *dir) {
   /* If presented path is relative, convert to absolute */
   new_ = make_absolute_path(dir);
 
-  free(DataDir);
-  DataDir = new_;
+  free(pcb->DataDir);
+  pcb_main()->DataDir = new_;
 }
 
 /*
@@ -362,12 +362,12 @@ void SetDataDir(const char *dir) {
  * setup, however, we don't force the chdir to occur during SetDataDir.
  */
 void ChangeToDataDir(void) {
-  Assert(DataDir);
+  Assert(pcb->DataDir);
 
-  if (chdir(DataDir) < 0)
+  if (chdir(pcb->DataDir) < 0)
     ereport(FATAL,
             (errcode_for_file_access(),
-             errmsg("could not change directory to \"%s\": %m", DataDir)));
+             errmsg("could not change directory to \"%s\": %m", pcb->DataDir)));
 }
 
 /* ----------------------------------------------------------------
@@ -852,7 +852,7 @@ static void UnlinkLockFiles(int status, Datum arg) {
    * proc_exit() to do it, but that seems uglier.  In a standalone backend,
    * use NOTICE elevel to be less chatty.
    */
-  ereport(IsPostmasterEnvironment ? LOG : NOTICE,
+  ereport(pcb->IsPostmasterEnvironment ? LOG : NOTICE,
           (errmsg("database system is shut down")));
 }
 
@@ -925,7 +925,7 @@ static void CreateLockFile(const char *filename, bool amPostmaster,
      * Think not to make the file protection weaker than 0600/0640.  See
      * comments below.
      */
-    fd = open(filename, O_RDWR | O_CREAT | O_EXCL, pg_file_create_mode);
+    fd = open(filename, O_RDWR | O_CREAT | O_EXCL, pcb->pg_file_create_mode);
     if (fd >= 0)
       break; /* Success; exit the retry loop */
 
@@ -941,7 +941,7 @@ static void CreateLockFile(const char *filename, bool amPostmaster,
      * Read the file to get the old owner's PID.  Note race condition
      * here: file might have been deleted since we tried to create it.
      */
-    fd = open(filename, O_RDONLY, pg_file_create_mode);
+    fd = open(filename, O_RDONLY, pcb->pg_file_create_mode);
     if (fd < 0) {
       if (errno == ENOENT)
         continue; /* race condition; try again */
@@ -1042,7 +1042,7 @@ static void CreateLockFile(const char *filename, bool amPostmaster,
    * the datadir lockfile later.
    */
   snprintf(buffer, sizeof(buffer), "%d\n%s\n" INT64_FORMAT "\n%d\n%s\n",
-           amPostmaster ? (int)my_pid : -((int)my_pid), DataDir, MyStartTime,
+           amPostmaster ? (int)my_pid : -((int)my_pid), pcb->DataDir, MyStartTime,
            PostPortNumber, socketDir);
 
   /*
@@ -1108,7 +1108,7 @@ static void CreateLockFile(const char *filename, bool amPostmaster,
  * postmaster.c will rewrite it upon creating the first Unix socket.
  */
 void CreateDataDirLockFile(bool amPostmaster) {
-  CreateLockFile(DIRECTORY_LOCK_FILE, amPostmaster, "", true, DataDir);
+  CreateLockFile(DIRECTORY_LOCK_FILE, amPostmaster, "", true, pcb->DataDir);
 }
 
 /*
@@ -1380,10 +1380,10 @@ thread_local /*LOCAL*/ char *session_preload_libraries_string = NULL;
 thread_local /*LOCAL*/ char *shared_preload_libraries_string = NULL;
 thread_local /*LOCAL*/ char *local_preload_libraries_string = NULL;
 
-/* Flag telling that we are loading shared_preload_libraries */
-thread_local /*SHARED*/ bool process_shared_preload_libraries_in_progress =
-    false;
-thread_local /*SHARED*/ bool process_shared_preload_libraries_done = false;
+/*
+ * Whether shared_preload_libraries are being loaded, and are loaded:
+ * pcb->process_shared_preload_libraries_in_progress and _done.
+ */
 
 
 /*
@@ -1438,11 +1438,11 @@ static void load_libraries(const char *libraries, const char *gucname,
  * process any libraries that should be preloaded at postmaster start
  */
 void process_shared_preload_libraries(void) {
-  process_shared_preload_libraries_in_progress = true;
+  pcb_main()->process_shared_preload_libraries_in_progress = true;
   load_libraries(shared_preload_libraries_string, "shared_preload_libraries",
                  false);
-  process_shared_preload_libraries_in_progress = false;
-  process_shared_preload_libraries_done = true;
+  pcb_main()->process_shared_preload_libraries_in_progress = false;
+  pcb_main()->process_shared_preload_libraries_done = true;
 }
 
 /*
@@ -1457,10 +1457,10 @@ void process_session_preload_libraries(void) {
 
 void pg_bindtextdomain(const char *domain) {
 #ifdef ENABLE_NLS
-  if (my_exec_path[0] != '\0') {
+  if (pcb->my_exec_path[0] != '\0') {
     char locale_path[MAXPGPATH];
 
-    get_locale_path(my_exec_path, locale_path);
+    get_locale_path(pcb->my_exec_path, locale_path);
     bindtextdomain(domain, locale_path);
     pg_bind_textdomain_codeset(domain);
   }

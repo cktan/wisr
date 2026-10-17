@@ -293,7 +293,7 @@ ConfigVariable *ProcessConfigFileInternal(GucContext context,
    * is in the data directory, we can't read it until the DataDir has been
    * set.
    */
-  if (DataDir) {
+  if (pcb->DataDir) {
     if (!ParseConfigFile(PG_AUTOCONF_FILENAME, false, NULL, 0,
                          CONF_FILE_START_DEPTH, elevel, &head, &tail)) {
       /* Syntax error(s) detected in the file, so bail out */
@@ -1659,7 +1659,7 @@ bool SelectConfigFiles(const char *userDoption, const char *progname) {
    * chdir to DataDir, EXEC_BACKEND can read the config file without knowing
    * DataDir in advance.)
    */
-  SetConfigOption("data_directory", DataDir, PGC_POSTMASTER, PGC_S_OVERRIDE);
+  SetConfigOption("data_directory", pcb->DataDir, PGC_POSTMASTER, PGC_S_OVERRIDE);
 
   /*
    * Now read the config file a second time, allowing any settings in the
@@ -4148,7 +4148,7 @@ init_custom_variable(const char *name, const char *short_desc,
    * module might already have hooked into.
    */
   if (context == PGC_POSTMASTER &&
-      !process_shared_preload_libraries_in_progress)
+      !pcb->process_shared_preload_libraries_in_progress)
     elog(FATAL, "cannot create PGC_POSTMASTER variables after startup");
 
   /*

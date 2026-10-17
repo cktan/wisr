@@ -30,6 +30,7 @@
 #include "storage/fd.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
+#include "utils/control_block.h"
 #include "utils/memutils.h"
 #include "utils/syscache.h"
 #include "utils/timestamp.h"
@@ -66,7 +67,7 @@ static char *convert_and_check_filename(text *arg) {
    */
   if (is_absolute_path(filename)) {
     /* Allow absolute paths if within DataDir. */
-    if (!path_is_prefix_of_path(DataDir, filename))
+    if (!path_is_prefix_of_path(pcb->DataDir, filename))
       ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
                       errmsg("absolute path not allowed")));
   } else if (!path_is_relative_and_below_cwd(filename))

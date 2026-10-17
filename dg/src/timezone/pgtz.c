@@ -44,7 +44,7 @@ static const char *pg_TZDIR(void) {
   if (done_tzdir)
     return tzdir;
 
-  get_share_path(my_exec_path, tzdir);
+  get_share_path(pcb->my_exec_path, tzdir);
   strlcpy(tzdir + strlen(tzdir), "/timezone", MAXPGPATH - strlen(tzdir));
 
   done_tzdir = true;

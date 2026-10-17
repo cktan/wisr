@@ -24,6 +24,7 @@
 #include "miscadmin.h"
 #include "storage/fd.h"
 #include "utils/conffiles.h"
+#include "utils/control_block.h"
 
 /*
  * AbsoluteConfigLocation
@@ -44,8 +45,8 @@ char *AbsoluteConfigLocation(const char *location, const char *calling_file) {
       join_path_components(abs_path, abs_path, location);
       canonicalize_path(abs_path);
     } else {
-      Assert(DataDir);
-      join_path_components(abs_path, DataDir, location);
+      Assert(pcb->DataDir);
+      join_path_components(abs_path, pcb->DataDir, location);
       canonicalize_path(abs_path);
     }
     return pstrdup(abs_path);

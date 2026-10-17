@@ -86,6 +86,7 @@
 #include "tcop/utility.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
+#include "utils/control_block.h"
 #include "utils/fmgroids.h"
 #include "utils/inval.h"
 #include "utils/lsyscache.h"
@@ -2233,7 +2234,7 @@ static void truncate_check_rel(Oid relid, Form_pg_class reltuple) {
    * TRUNCATE command to be executed is the easiest way of doing that.
    */
   if (!allowSystemTableMods && IsSystemClass(relid, reltuple) &&
-      (!IsBinaryUpgrade || relid != LargeObjectRelationId))
+      (!pcb->IsBinaryUpgrade || relid != LargeObjectRelationId))
     ereport(ERROR,
             (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
              errmsg("permission denied: \"%s\" is a system catalog", relname)));

@@ -354,7 +354,7 @@ static bool SignalChildren(int signal, BackendTypeMask targetMask);
 static void TerminateChildren(int signal);
 static int CountChildren(BackendTypeMask targetMask);
 static int CountThreadChildren(void);
-static bool CreateOptsFile(int argc, char *argv[], char *fullprogname);
+static bool CreateOptsFile(int argc, char *argv[], const char *fullprogname);
 
 /* Macros to check exit status of a child process */
 #define EXIT_STATUS_0(st)  ((st) == 0)
@@ -375,9 +375,9 @@ void PostmasterMain(int argc, char *argv[]) {
 
   InitProcessGlobals();
 
-  PostmasterPid = MyProcPid;
+  pcb_main()->PostmasterPid = MyProcPid;
 
-  IsPostmasterEnvironment = true;
+  pcb_main()->IsPostmasterEnvironment = true;
 
   /*
    * Start our win32 signal implementation
@@ -476,7 +476,7 @@ void PostmasterMain(int argc, char *argv[]) {
 
     case 'b':
       /* Undocumented flag used for binary upgrades */
-      IsBinaryUpgrade = true;
+      pcb_main()->IsBinaryUpgrade = true;
       break;
 
     case 'C':
@@ -986,7 +986,7 @@ void PostmasterMain(int argc, char *argv[]) {
    * Record postmaster options.  We delay this till now to avoid recording
    * bogus options (eg, unusable port number).
    */
-  if (!CreateOptsFile(argc, argv, my_exec_path))
+  if (!CreateOptsFile(argc, argv, pcb->my_exec_path))
     ExitPostmaster(1);
 
   /*
@@ -1046,7 +1046,7 @@ void PostmasterMain(int argc, char *argv[]) {
   /*
    * Remember postmaster startup time
    */
-  PgStartTime = GetCurrentTimestamp();
+  pcb_main()->PgStartTime = GetCurrentTimestamp();
 
   /*
    * Report postmaster status in the postmaster.pid file, to allow pg_ctl to
@@ -1112,7 +1112,7 @@ static void unlink_external_pid_file(int status, Datum arg) {
  */
 static void getInstallationPaths(const char *argv0) {
   /* Locate the postgres executable itself */
-  if (find_my_exec(argv0, my_exec_path) < 0)
+  if (find_my_exec(argv0, pcb_main()->my_exec_path) < 0)
     ereport(FATAL,
             (errmsg("%s: could not locate my own executable path", argv0)));
 
@@ -1120,7 +1120,7 @@ static void getInstallationPaths(const char *argv0) {
    * Locate the pkglib directory --- this has to be set early in case we try
    * to load any modules from it in response to postgresql.conf entries.
    */
-  get_pkglib_path(my_exec_path, pkglib_path);
+  get_pkglib_path(pcb->my_exec_path, pcb_main()->pkglib_path);
 
   /*
    * digres does not look for the directory: it is one program, and runs
@@ -2240,7 +2240,7 @@ static int CountThreadChildren(void) {
 /*
  * Create the opts file
  */
-static bool CreateOptsFile(int argc, char *argv[], char *fullprogname) {
+static bool CreateOptsFile(int argc, char *argv[], const char *fullprogname) {
   FILE *fp;
   int i;
 

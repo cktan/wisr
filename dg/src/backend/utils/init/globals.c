@@ -61,27 +61,13 @@ thread_local /*LOCAL*/ int MyPMChildSlot;
  */
 thread_local /*LOCAL*/ struct Latch *MyLatch;
 
-/*
- * DataDir is the absolute path to the top level of the PGDATA directory tree.
- * Except during early startup, this is also the server's working directory;
- * most code therefore can simply use relative paths and not reference DataDir
- * explicitly.
- */
-thread_local /*SHARED*/ char *DataDir = NULL;
+/* DataDir and the paths below are pcb's (utils/control_block.h). */
 
 /*
  * Mode of the data directory.  The default is 0700 but it may be changed in
  * checkDataDir() to 0750 if the data directory actually has that mode.
  */
 thread_local /*SHARED*/ int data_directory_mode = PG_DIR_MODE_OWNER;
-
-thread_local /*SHARED*/ char
-    OutputFileName[MAXPGPATH]; /* debugging output file */
-
-thread_local /*SHARED*/ char
-    my_exec_path[MAXPGPATH]; /* full path to my executable */
-thread_local /*SHARED*/ char
-    pkglib_path[MAXPGPATH]; /* full path to lib directory */
 
 thread_local /*LOCAL*/ ProcNumber MyProcNumber = INVALID_PROC_NUMBER;
 
@@ -100,8 +86,6 @@ thread_local /*LOCAL*/ bool MyDatabaseHasLoginEventTriggers = false;
  */
 thread_local /*LOCAL*/ char *DatabasePath = NULL;
 
-thread_local /*SHARED*/ pid_t PostmasterPid = 0;
-
 /*
  * IsPostmasterEnvironment is true in a postmaster process and any postmaster
  * child process; it is false in a standalone process (bootstrap or
@@ -112,10 +96,9 @@ thread_local /*SHARED*/ pid_t PostmasterPid = 0;
  * things if an error should occur during process initialization.
  *
  * These are initialized for the bootstrap/standalone case.
+ * IsPostmasterEnvironment, PostmasterPid and IsBinaryUpgrade are pcb's.
  */
-thread_local /*SHARED*/ bool IsPostmasterEnvironment = false;
 thread_local /*LOCAL*/ bool IsUnderPostmaster = false;
-thread_local /*SHARED*/ bool IsBinaryUpgrade = false;
 
 thread_local /*LOCAL*/ bool ExitOnAnyError = false;
 
@@ -132,11 +115,10 @@ thread_local /*LOCAL*/ int maintenance_work_mem = 65536;
 /*
  * Primary determinants of sizes of shared-memory structures.
  *
- * MaxBackends is computed by PostmasterMain after modules have had a chance to
- * register background workers.
+ * MaxBackends, pcb's, is computed by PostmasterMain after modules have had a
+ * chance to register background workers.
  */
 thread_local /*LOCAL*/ int MaxConnections = 100;
-thread_local /*SHARED*/ int MaxBackends = 0;
 
 /* GUC parameters for vacuum */
 

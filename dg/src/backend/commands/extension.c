@@ -62,6 +62,7 @@
 #include "utils/acl.h"
 #include "utils/builtins.h"
 #include "utils/conffiles.h"
+#include "utils/control_block.h"
 #include "utils/fmgroids.h"
 #include "utils/inval.h"
 #include "utils/lsyscache.h"
@@ -436,7 +437,7 @@ static List *get_extension_control_directories(void) {
   char *ecp;
   List *paths = NIL;
 
-  get_share_path(my_exec_path, sharepath);
+  get_share_path(pcb->my_exec_path, sharepath);
 
   system_dir = psprintf("%s/extension", sharepath);
 

@@ -31,6 +31,7 @@
 #include "catalog/toasting.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
+#include "utils/control_block.h"
 #include "utils/fmgroids.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
@@ -142,7 +143,7 @@ static bool create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
   /*
    * Check to see whether the table actually needs a TOAST table.
    */
-  if (!IsBinaryUpgrade) {
+  if (!pcb->IsBinaryUpgrade) {
     /* Normal mode, normal check */
     if (!needs_toast_table(rel))
       return false;

@@ -23,6 +23,7 @@
 #include "storage/procsignal.h"
 #include "storage/session_registry.h"
 #include "utils/acl.h"
+#include "utils/control_block.h"
 #include "utils/fmgrprotos.h"
 #include "utils/wait_event.h"
 
@@ -241,7 +242,7 @@ Datum pg_terminate_backend(PG_FUNCTION_ARGS) {
  * GRANT system.
  */
 Datum pg_reload_conf(PG_FUNCTION_ARGS) {
-  if (kill(PostmasterPid, SIGHUP)) {
+  if (kill(pcb->PostmasterPid, SIGHUP)) {
     ereport(WARNING, (errmsg("failed to send signal to postmaster: %m")));
     PG_RETURN_BOOL(false);
   }

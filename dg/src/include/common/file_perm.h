@@ -40,12 +40,10 @@
 /* Mode for creating files that allows group read */
 #define PG_FILE_MODE_GROUP			(S_IRUSR | S_IWUSR | S_IRGRP)
 
-/* Modes for creating directories and files in the data directory */
-extern thread_local /*SHARED*/ PGDLLIMPORT int pg_dir_create_mode;
-extern thread_local /*SHARED*/ PGDLLIMPORT int pg_file_create_mode;
-
-/* Mode mask to pass to umask() */
-extern thread_local /*SHARED*/ PGDLLIMPORT int pg_mode_mask;
+/*
+ * The modes for creating directories and files in the data directory, and
+ * the mask to pass to umask(), are pcb's (utils/control_block.h).
+ */
 
 /* Set permissions and mask based on the provided mode */
 extern void SetDataDirectoryCreatePerm(int dataDirMode);

@@ -49,6 +49,7 @@
 #include "tcop/tcopprot.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
+#include "utils/control_block.h"
 #include "utils/datadir.h"
 #include "utils/fmgroids.h"
 #include "utils/guc_hooks.h"
@@ -267,12 +268,12 @@ void pg_split_opts(char **argv, int *argcp, const char *optstr) {
  * this.
  */
 void InitializeMaxBackends(void) {
-  Assert(MaxBackends == 0);
+  Assert(pcb->MaxBackends == 0);
 
   /* Note that this does not include "auxiliary" processes */
-  MaxBackends = MaxConnections;
+  pcb_main()->MaxBackends = MaxConnections;
 
-  if (MaxBackends > MAX_BACKENDS)
+  if (pcb->MaxBackends > MAX_BACKENDS)
     ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                     errmsg("too many server processes configured"),
                     errdetail("\"max_connections\" (%d) must be less than %d.",
@@ -489,7 +490,7 @@ void InitPostgres(const char *in_dbname, Oid dboid, const char *username,
   /*
    * Binary upgrades only allowed super-user connections
    */
-  if (IsBinaryUpgrade && !am_superuser) {
+  if (pcb->IsBinaryUpgrade && !am_superuser) {
     ereport(FATAL,
             (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
              errmsg("must be superuser to connect in binary upgrade mode")));

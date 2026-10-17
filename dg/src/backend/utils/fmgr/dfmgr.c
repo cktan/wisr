@@ -24,6 +24,7 @@
 #include "lib/stringinfo.h"
 #include "miscadmin.h"
 #include "storage/fd.h"
+#include "utils/control_block.h"
 #include "utils/hsearch.h"
 
 /* signature for PostgreSQL-specific library init function */
@@ -422,11 +423,11 @@ static char *expand_dynamic_library_name(const char *name) {
 
   if (!have_slash) {
     full = find_in_path(name, Dynamic_library_path, "dynamic_library_path",
-                        "$libdir", pkglib_path);
+                        "$libdir", pcb->pkglib_path);
     if (full)
       return full;
   } else {
-    full = substitute_path_macro(name, "$libdir", pkglib_path);
+    full = substitute_path_macro(name, "$libdir", pcb->pkglib_path);
     if (pg_file_exists(full))
       return full;
     pfree(full);
@@ -436,12 +437,12 @@ static char *expand_dynamic_library_name(const char *name) {
 
   if (!have_slash) {
     full = find_in_path(new_, Dynamic_library_path, "dynamic_library_path",
-                        "$libdir", pkglib_path);
+                        "$libdir", pcb->pkglib_path);
     pfree(new_);
     if (full)
       return full;
   } else {
-    full = substitute_path_macro(new_, "$libdir", pkglib_path);
+    full = substitute_path_macro(new_, "$libdir", pcb->pkglib_path);
     pfree(new_);
     if (pg_file_exists(full))
       return full;

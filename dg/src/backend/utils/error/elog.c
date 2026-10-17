@@ -1941,26 +1941,26 @@ char *GetErrorContextStack(void) {
 void DebugFileOpen(void) {
   int fd, istty;
 
-  if (OutputFileName[0]) {
+  if (pcb->OutputFileName[0]) {
     /*
      * A debug-output file name was given.
      *
      * Make sure we can write the file, and find out if it's a tty.
      */
-    if ((fd = open(OutputFileName, O_CREAT | O_APPEND | O_WRONLY, 0666)) < 0)
+    if ((fd = open(pcb->OutputFileName, O_CREAT | O_APPEND | O_WRONLY, 0666)) < 0)
       ereport(FATAL,
               (errcode_for_file_access(),
-               errmsg("could not open file \"%s\": %m", OutputFileName)));
+               errmsg("could not open file \"%s\": %m", pcb->OutputFileName)));
     istty = isatty(fd);
     close(fd);
 
     /*
      * Redirect our stderr to the debug output file.
      */
-    if (!freopen(OutputFileName, "a", stderr))
+    if (!freopen(pcb->OutputFileName, "a", stderr))
       ereport(FATAL, (errcode_for_file_access(),
                       errmsg("could not reopen file \"%s\" as stderr: %m",
-                             OutputFileName)));
+                             pcb->OutputFileName)));
 
     /*
      * If the file is a tty and we're running under the postmaster, try to
@@ -1969,10 +1969,10 @@ void DebugFileOpen(void) {
      * before).
      */
     if (istty && IsUnderPostmaster)
-      if (!freopen(OutputFileName, "a", stdout))
+      if (!freopen(pcb->OutputFileName, "a", stdout))
         ereport(FATAL, (errcode_for_file_access(),
                         errmsg("could not reopen file \"%s\" as stdout: %m",
-                               OutputFileName)));
+                               pcb->OutputFileName)));
   }
 }
 
@@ -2506,7 +2506,7 @@ bool check_log_of_query(ErrorData *edata) {
 const char *get_backend_type_for_log(void) {
   const char *backend_type_str;
 
-  if (MyProcPid == PostmasterPid)
+  if (MyProcPid == pcb->PostmasterPid)
     backend_type_str = "postmaster";
   else
     backend_type_str = GetBackendTypeDesc(MyBackendType);

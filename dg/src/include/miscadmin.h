@@ -178,8 +178,6 @@ do { \
 /*
  * from utils/init/globals.c
  */
-extern thread_local /*SHARED*/ PGDLLIMPORT pid_t PostmasterPid;
-extern thread_local /*SHARED*/ PGDLLIMPORT bool IsPostmasterEnvironment;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool IsUnderPostmaster;
 
 /*
@@ -189,14 +187,11 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT bool IsUnderPostmaster;
  */
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool IsSessionThread;
 extern int CurrentProcPid(void);
-extern thread_local /*SHARED*/ PGDLLIMPORT bool IsBinaryUpgrade;
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool ExitOnAnyError;
 
-extern thread_local /*SHARED*/ PGDLLIMPORT char *DataDir;
 extern thread_local /*SHARED*/ PGDLLIMPORT int data_directory_mode;
 
-extern thread_local /*SHARED*/ PGDLLIMPORT int MaxBackends;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int MaxConnections;
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT int MyProcPid;
@@ -208,9 +203,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT uint8 MyCancelKey[];
 extern thread_local /*LOCAL*/ PGDLLIMPORT int MyCancelKeyLength;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int MyPMChildSlot;
 
-extern thread_local /*SHARED*/ PGDLLIMPORT char OutputFileName[];
-extern thread_local /*SHARED*/ PGDLLIMPORT char my_exec_path[];
-extern thread_local /*SHARED*/ PGDLLIMPORT char pkglib_path[];
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT Oid MyDatabaseId;
 
@@ -449,10 +441,6 @@ extern void BaseInit(void);
 
 /* in utils/init/miscinit.c */
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool IgnoreSystemIndexes;
-extern thread_local /*SHARED*/ PGDLLIMPORT bool
-    process_shared_preload_libraries_in_progress;
-extern thread_local /*SHARED*/ PGDLLIMPORT bool
-    process_shared_preload_libraries_done;
 extern thread_local /*LOCAL*/ PGDLLIMPORT char
     *session_preload_libraries_string;
 extern thread_local /*LOCAL*/ PGDLLIMPORT char *shared_preload_libraries_string;

@@ -66,6 +66,7 @@
 #include "parser/parse_func.h"
 #include "parser/parse_type.h"
 #include "utils/builtins.h"
+#include "utils/control_block.h"
 #include "utils/fmgroids.h"
 #include "utils/inval.h"
 #include "utils/lsyscache.h"
@@ -2296,7 +2297,7 @@ Oid AssignTypeArrayOid(void) {
   Oid type_array_oid;
 
   /* Use binary-upgrade override for pg_type.typarray? */
-  if (IsBinaryUpgrade) {
+  if (pcb->IsBinaryUpgrade) {
     if (!OidIsValid(binary_upgrade_next_array_pg_type_oid))
       ereport(
           ERROR,
@@ -2326,7 +2327,7 @@ Oid AssignTypeMultirangeOid(void) {
   Oid type_multirange_oid;
 
   /* Use binary-upgrade override for pg_type.oid? */
-  if (IsBinaryUpgrade) {
+  if (pcb->IsBinaryUpgrade) {
     if (!OidIsValid(binary_upgrade_next_mrng_pg_type_oid))
       ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                       errmsg("pg_type multirange OID value not set when in "
@@ -2355,7 +2356,7 @@ Oid AssignTypeMultirangeArrayOid(void) {
   Oid type_multirange_array_oid;
 
   /* Use binary-upgrade override for pg_type.oid? */
-  if (IsBinaryUpgrade) {
+  if (pcb->IsBinaryUpgrade) {
     if (!OidIsValid(binary_upgrade_next_mrng_array_pg_type_oid))
       ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                       errmsg("pg_type multirange array OID value not set when "

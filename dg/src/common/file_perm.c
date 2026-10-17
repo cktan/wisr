@@ -13,16 +13,14 @@
 #include "c.h"
 
 #include "common/file_perm.h"
-
-/* Modes for creating directories and files in the data directory */
-thread_local /*SHARED*/ int pg_dir_create_mode = PG_DIR_MODE_OWNER;
-thread_local /*SHARED*/ int pg_file_create_mode = PG_FILE_MODE_OWNER;
+#include "utils/control_block.h"
 
 /*
- * Mode mask to pass to umask().  This is more of a preventative measure since
- * all file/directory creates should be performed using the create modes above.
+ * The modes for creating directories and files in the data directory, and
+ * the mask to pass to umask(), are pcb's (utils/control_block.h).  The mask
+ * is more of a preventative measure since all file/directory creates should
+ * be performed using the create modes.
  */
-thread_local /*SHARED*/ int pg_mode_mask = PG_MODE_MASK_OWNER;
 
 /*
  * Set create modes and mask to use when writing to PGDATA based on the data
@@ -33,15 +31,15 @@ thread_local /*SHARED*/ int pg_mode_mask = PG_MODE_MASK_OWNER;
 void SetDataDirectoryCreatePerm(int dataDirMode) {
   /* If the data directory mode has group access */
   if ((PG_DIR_MODE_GROUP & dataDirMode) == PG_DIR_MODE_GROUP) {
-    pg_dir_create_mode = PG_DIR_MODE_GROUP;
-    pg_file_create_mode = PG_FILE_MODE_GROUP;
-    pg_mode_mask = PG_MODE_MASK_GROUP;
+    pcb_main()->pg_dir_create_mode = PG_DIR_MODE_GROUP;
+    pcb_main()->pg_file_create_mode = PG_FILE_MODE_GROUP;
+    pcb_main()->pg_mode_mask = PG_MODE_MASK_GROUP;
   }
   /* Else use default permissions */
   else {
-    pg_dir_create_mode = PG_DIR_MODE_OWNER;
-    pg_file_create_mode = PG_FILE_MODE_OWNER;
-    pg_mode_mask = PG_MODE_MASK_OWNER;
+    pcb_main()->pg_dir_create_mode = PG_DIR_MODE_OWNER;
+    pcb_main()->pg_file_create_mode = PG_FILE_MODE_OWNER;
+    pcb_main()->pg_mode_mask = PG_MODE_MASK_OWNER;
   }
 }
 

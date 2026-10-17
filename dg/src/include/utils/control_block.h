@@ -43,6 +43,9 @@
 #include <memory>
 #include <mutex>
 
+#include "common/file_perm.h"
+#include "datatype/timestamp.h"
+
 /* timeout.c: this thread's timeouts and its timer. */
 typedef struct timeout_state_t timeout_state_t;
 struct timeout_state_free_t {
@@ -101,9 +104,48 @@ struct pmchild_state_free_t {
 
 /*
  * The process control block: one for the process, what the main thread
- * owns and the other threads read.  Nothing is in it yet.
+ * owns and the other threads read.  The main thread sets each field before
+ * the first thread starts, through pcb_main(), and no thread writes it after.
  */
 typedef struct pcb_t {
+  /*
+   * globals.c: the absolute path to the top level of the data directory.
+   * Except during early startup, this is also the server's working
+   * directory; most code can use relative paths and not reference it.
+   */
+  char *DataDir = NULL;
+  char OutputFileName[MAXPGPATH] = ""; /* debugging output file */
+  char my_exec_path[MAXPGPATH] = "";   /* full path to my executable */
+  char pkglib_path[MAXPGPATH] = "";    /* full path to lib directory */
+  pid_t PostmasterPid = 0;
+
+  /*
+   * globals.c: true in the postmaster and its sessions; false in a
+   * standalone process (bootstrap or standalone backend).
+   */
+  bool IsPostmasterEnvironment = false;
+  bool IsBinaryUpgrade = false;
+
+  /* globals.c: the session registry's limit, from MaxConnections */
+  int MaxBackends = 0;
+
+  /* file_perm.c: modes for creating directories and files in the data
+   * directory, and the mask to pass to umask() */
+  int pg_dir_create_mode = PG_DIR_MODE_OWNER;
+  int pg_file_create_mode = PG_FILE_MODE_OWNER;
+  int pg_mode_mask = PG_MODE_MASK_OWNER;
+
+  /*
+   * fd.c: how many fds a session thread may hold, its share of the
+   * process's ceiling, from set_max_safe_fds(); conservative before that
+   */
+  int max_safe_fds_per_thread = 48; /* fd.c's FD_MINFREE, which it checks */
+
+  TimestampTz PgStartTime = 0; /* timestamp.c: when the server started */
+
+  /* miscinit.c: shared_preload_libraries being loaded, and loaded */
+  bool process_shared_preload_libraries_in_progress = false;
+  bool process_shared_preload_libraries_done = false;
 } pcb_t;
 
 /*
@@ -187,5 +229,14 @@ extern void pcb_init(void);
 extern void tcb_init(void);
 extern void tcb_free(void);
 extern void postmaster_tcb_init(void);
+
+/*
+ * The process control block, to write: the main thread's alone, before the
+ * first thread starts.  Every other use reads it, through pcb.
+ */
+static inline pcb_t *pcb_main(void) {
+  Assert(postmaster_tcb != NULL);
+  return const_cast<pcb_t *>(pcb);
+}
 
 #endif /* CONTROL_BLOCK_H */

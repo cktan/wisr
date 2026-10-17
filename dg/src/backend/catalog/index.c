@@ -61,6 +61,7 @@
 #include "rewrite/rewriteManip.h"
 #include "storage/lmgr.h"
 #include "utils/builtins.h"
+#include "utils/control_block.h"
 #include "utils/fmgroids.h"
 #include "utils/guc.h"
 #include "utils/inval.h"
@@ -835,7 +836,7 @@ Oid index_create(Relation heapRelation, const char *indexRelationName,
    */
   if (!OidIsValid(indexRelationId)) {
     /* Use binary-upgrade override for pg_class.oid and relfilenumber */
-    if (IsBinaryUpgrade) {
+    if (pcb->IsBinaryUpgrade) {
       if (!OidIsValid(binary_upgrade_next_index_pg_class_oid))
         ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                         errmsg("pg_class index OID value not set when in "
@@ -2040,7 +2041,7 @@ static void index_update_stats(Relation rel, bool hasindex, double reltuples) {
    * Don't update statistics during binary upgrade, because the indexes are
    * created before the data is moved into place.
    */
-  update_stats = reltuples >= 0 && !IsBinaryUpgrade;
+  update_stats = reltuples >= 0 && !pcb->IsBinaryUpgrade;
 
   /*
    * There is no autovacuum, so the user may not be expecting table relstats

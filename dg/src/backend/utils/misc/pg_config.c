@@ -18,6 +18,7 @@
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "utils/builtins.h"
+#include "utils/control_block.h"
 
 Datum pg_config(PG_FUNCTION_ARGS) {
   ReturnSetInfo *rsinfo = (ReturnSetInfo *)fcinfo->resultinfo;
@@ -28,7 +29,7 @@ Datum pg_config(PG_FUNCTION_ARGS) {
   /* initialize our tuplestore */
   InitMaterializedSRF(fcinfo, 0);
 
-  configdata = get_configdata(my_exec_path, &configdata_len);
+  configdata = get_configdata(pcb->my_exec_path, &configdata_len);
   for (i = 0; i < configdata_len; i++) {
     Datum values[2];
     bool nulls[2];

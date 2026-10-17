@@ -26,7 +26,8 @@
  * descriptor).
  *
  * The pool is sm0's (sm_vfd.h): each thread has its own cache of virtual
- * fds, tcb->vfd, holding at most its share of real ones, max_safe_fds, and
+ * fds, tcb->vfd, holding at most its share of real ones,
+ * max_safe_fds_per_thread, and
  * every real fd any thread holds through it counts against one ceiling for
  * the process.  A File is an entry of this thread's table here, which
  * keeps what sm0 knows nothing of: the transaction or resource owner that
@@ -139,7 +140,8 @@
 /*
  * A number of platforms allow individual processes to open many more files
  * than they can really support when *many* processes do the same thing.
- * This GUC parameter lets the DBA limit max_safe_fds to something less than
+ * This GUC parameter lets the DBA limit max_safe_fds_per_thread to something
+ * less than
  * what the postmaster's initial probe suggests will work.
  */
 thread_local /*LOCAL*/ int max_files_per_process = 1000;
@@ -154,9 +156,11 @@ thread_local /*LOCAL*/ int max_files_per_process = 1000;
  *
  * Note: the value of max_files_per_process is taken into account while
  * setting this variable, and so need not be tested separately.
+ *
+ * It is pcb->max_safe_fds_per_thread, FD_MINFREE until set.
  */
-thread_local /*SHARED*/ int max_safe_fds =
-    FD_MINFREE; /* default if not changed */
+static_assert(pcb_t{}.max_safe_fds_per_thread == FD_MINFREE,
+              "pcb->max_safe_fds_per_thread starts at FD_MINFREE");
 
 /* Whether it is safe to continue running after fsync() fails. */
 thread_local /*LOCAL*/ bool data_sync_retry = false;
@@ -307,12 +311,13 @@ static inline void ResourceOwnerForgetFile(ResourceOwner owner, File file) {
 
 /*
  * This thread's cache of virtual fds, made at its first use with the share
- * max_safe_fds gives it.  The postmaster's is made before set_max_safe_fds()
+ * max_safe_fds_per_thread gives it.  The postmaster's is made before
+ * set_max_safe_fds()
  * runs, and keeps the smaller share it was made with.
  */
 static sm_vfd_cache_t *vfd_cache(void) {
   if (tcb->vfd == nullptr) {
-    sm_vfd_cache_t *cache = sm_vfd_cache_make(max_safe_fds);
+    sm_vfd_cache_t *cache = sm_vfd_cache_make(pcb->max_safe_fds_per_thread);
 
     if (cache == NULL)
       ereport(FATAL, (errmsg_internal("%s", sm_errmsg())));
@@ -863,12 +868,13 @@ static void raise_open_files_limit(void) {
  *
  * Every thread of the process shares one ceiling, sm0's: the open-files
  * limit less the fds open now and NUM_RESERVED_FDS.  A thread's share of it,
- * max_safe_fds, is the ceiling over the threads there can be, but no more
+ * max_safe_fds_per_thread, is the ceiling over the threads there can be, but
+ * no more
  * than max_files_per_process, and no less than FD_MINFREE: the ceiling, not
  * the share, keeps the threads together within the limit.
  */
 void set_max_safe_fds(void) {
-  int threads = MaxBackends + 1; /* the sessions, and the postmaster */
+  int threads = pcb->MaxBackends + 1; /* the sessions, and the postmaster */
   int ceiling;
 
   raise_open_files_limit();
@@ -892,11 +898,11 @@ void set_max_safe_fds(void) {
          errdetail("System allows %d, server needs at least %d.",
                    ceiling + NUM_RESERVED_FDS, FD_MINFREE + NUM_RESERVED_FDS)));
 
-  max_safe_fds = Min(ceiling / threads, max_files_per_process);
-  max_safe_fds = Max(max_safe_fds, FD_MINFREE);
+  pcb_main()->max_safe_fds_per_thread =
+      Max(Min(ceiling / threads, max_files_per_process), FD_MINFREE);
 
-  elog(DEBUG2, "max_safe_fds = %d, ceiling = %d, threads = %d", max_safe_fds,
-       ceiling, threads);
+  elog(DEBUG2, "max_safe_fds_per_thread = %d, ceiling = %d, threads = %d",
+       pcb->max_safe_fds_per_thread, ceiling, threads);
 }
 
 /*
@@ -1058,7 +1064,7 @@ void FileInvalidate(File file) {
  * fileMode parameter.
  */
 File PathNameOpenFile(const char *fileName, int fileFlags) {
-  return PathNameOpenFilePerm(fileName, fileFlags, pg_file_create_mode);
+  return PathNameOpenFilePerm(fileName, fileFlags, pcb->pg_file_create_mode);
 }
 
 /*
@@ -1597,7 +1603,8 @@ static bool reserveAllocatedDesc(void) {
   /*
    * If the array hasn't yet been created in the current process, initialize
    * it with FD_MINFREE / 3 elements.  In many scenarios this is as many as
-   * we will ever need, anyway.  We don't want to look at max_safe_fds
+   * we will ever need, anyway.  We don't want to look at
+   * max_safe_fds_per_thread
    * immediately because set_max_safe_fds() may not have run yet.
    */
   if (allocatedDescs == NULL) {
@@ -1613,16 +1620,18 @@ static bool reserveAllocatedDesc(void) {
 
   /*
    * Consider enlarging the array beyond the initial allocation used above.
-   * By the time this happens, max_safe_fds should be known accurately.
+   * By the time this happens, max_safe_fds_per_thread should be known
+   * accurately.
    *
    * We mustn't let allocated descriptors hog all the available FDs, and in
    * practice we'd better leave a reasonable number of FDs for VFD use.  So
-   * set the maximum to max_safe_fds / 3.  (This should certainly be at
+   * set the maximum to max_safe_fds_per_thread / 3.  (This should certainly
+   * be at
    * least as large as the initial size, FD_MINFREE / 3, so we aren't
    * tightening the restriction here.)  Recall that "external" FDs are
-   * allowed to consume another third of max_safe_fds.
+   * allowed to consume another third of max_safe_fds_per_thread.
    */
-  newMax = max_safe_fds / 3;
+  newMax = pcb->max_safe_fds_per_thread / 3;
   if (newMax > maxAllocatedDescs) {
     newDescs =
         (AllocateDesc *)realloc(allocatedDescs, newMax * sizeof(AllocateDesc));
@@ -1692,7 +1701,7 @@ FILE *AllocateFile(const char *name, const char *mode) {
  * the fileMode parameter.
  */
 int OpenTransientFile(const char *fileName, int fileFlags) {
-  return OpenTransientFilePerm(fileName, fileFlags, pg_file_create_mode);
+  return OpenTransientFilePerm(fileName, fileFlags, pcb->pg_file_create_mode);
 }
 
 /*
@@ -2578,7 +2587,7 @@ static int fsync_parent_path(const char *fname, int elevel) {
  * processes to fail.
  */
 int MakePGDirectory(const char *directoryName) {
-  return mkdir(directoryName, pg_dir_create_mode);
+  return mkdir(directoryName, pcb->pg_dir_create_mode);
 }
 
 /*

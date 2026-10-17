@@ -143,9 +143,10 @@ digres is one process; each session is a thread of it.
   four, by who owns a field and who reads it:
   - **`pcb_t`**: what the main thread owns and other threads
     read. They read it through `const pcb_t *pcb`; the main
-    thread alone writes it. A field it writes after the first
-    thread starts is an atomic, or guarded by a mutex its
-    comment names.
+    thread alone writes it, through `pcb_main()`, which
+    asserts it is the main thread. A field it writes after
+    the first thread starts is an atomic, or guarded by a
+    mutex its comment names.
   - **`shmem_t`**: what the threads share and write. Each
     field is an atomic, a mutex whose comment names what it
     guards, or an object that guards itself.
