@@ -39,8 +39,8 @@ void session_registry_free_t::operator()(session_registry_t *registry) const {
  * before any session thread starts; a session thread's call finds it made.
  */
 void session_registry_init(void) {
-  if (pcb->session_registry == nullptr)
-    pcb->session_registry.reset(new session_registry_t());
+  if (shmem->session_registry == nullptr)
+    shmem->session_registry.reset(new session_registry_t());
 }
 
 /*
@@ -49,7 +49,7 @@ void session_registry_init(void) {
  * registered at once.
  */
 void session_register(void) {
-  session_registry_t *registry = pcb->session_registry.get();
+  session_registry_t *registry = shmem->session_registry.get();
   session_ref_t record = std::make_shared<session_record_t>();
 
   record->id = registry->next_id.fetch_add(1, std::memory_order_relaxed);
@@ -82,7 +82,7 @@ void session_set_role(Oid role) {
 void session_set_cancel_key(const uint8 *key, int len) {
   Assert(len >= 0 && len <= MAX_CANCEL_KEY_LENGTH);
   /* A cancel request reads the key under this mutex. */
-  std::lock_guard<std::mutex> lock(pcb->cancel_key_mutex);
+  std::lock_guard<std::mutex> lock(shmem->cancel_key_mutex);
 
   if (len > 0)
     memcpy(tcb->session->cancel_key, key, len);
@@ -103,7 +103,7 @@ void session_interrupt(const session_ref_t &record, uint32 bits) {
  * A caller keeping it reads ended, and no more of the session.
  */
 void session_unregister(void) {
-  session_registry_t *registry = pcb->session_registry.get();
+  session_registry_t *registry = shmem->session_registry.get();
   session_ref_t record = tcb->session;
 
   if (record == nullptr)
@@ -119,7 +119,7 @@ void session_unregister(void) {
 
 /* The session registered with pid, or none. */
 session_ref_t session_by_pid(int pid) {
-  session_registry_t *registry = pcb->session_registry.get();
+  session_registry_t *registry = shmem->session_registry.get();
   std::lock_guard<std::mutex> lock(registry->mu);
   auto it = registry->sessions.find(pid);
 
@@ -128,7 +128,7 @@ session_ref_t session_by_pid(int pid) {
 
 /* Every session registered now. */
 std::vector<session_ref_t> sessions_all(void) {
-  session_registry_t *registry = pcb->session_registry.get();
+  session_registry_t *registry = shmem->session_registry.get();
   std::vector<session_ref_t> out;
   std::lock_guard<std::mutex> lock(registry->mu);
 
@@ -143,7 +143,7 @@ std::vector<session_ref_t> sessions_all(void) {
  * Else *nfree is n.  The caller is registered already.
  */
 bool session_have_free(int n, int *nfree) {
-  session_registry_t *registry = pcb->session_registry.get();
+  session_registry_t *registry = shmem->session_registry.get();
   std::lock_guard<std::mutex> lock(registry->mu);
   int free = MaxBackends - (int)registry->sessions.size();
 

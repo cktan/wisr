@@ -139,23 +139,30 @@ digres is one process; each session is a thread of it.
   later, others never see. A SHARED variable that a thread
   must reset or redo after the copy was marked SHARED by
   mistake: mark it LOCAL.
-- **The control blocks replace them** (`utils/control_block.h`).
-  `pcb_t`, made once by `main()`, holds what there is one of
-  for the process; `tcb_t`, one per thread, holds what each
-  thread has its own of.
+- **The control blocks replace them** (`utils/control_block.h`),
+  three, by who may write a field:
+  - **`pcb_t`**: what the main thread sets before the first
+    thread starts, and no thread writes after. Every thread
+    reads it through `const pcb_t *pcb`.
+  - **`shmem_t`**: what the threads share and write. Each
+    field is an atomic, a mutex whose comment names what it
+    guards, or an object that guards itself.
+  - **`tcb_t`**: what one thread has, alone, one per thread.
+    What a thread inherits from the one that started it is
+    copied in at its start, and is its own after: a SHARED
+    variable that a session changes, a setting among them,
+    comes here, not to `pcb_t`. A tcb may point into
+    `shmem_t`; nothing of it is reached from another thread.
   - A field is a value, or a `std::unique_ptr` to what the
     block owns. A non-owning raw pointer is fine, with a
-    comment naming its owner (a memory context, the pcb).
+    comment naming its owner (a memory context, shmem).
   - Memory the process keeps for its whole life is
-    `malloc()`'d, and its pointer is a plain `pcb_t` field:
-    the pcb is never freed. Do not call `ShmemAlloc()` for
-    it.
+    `malloc()`'d, and its pointer is a plain field of `pcb_t`
+    or `shmem_t`: neither is ever freed. Do not call
+    `ShmemAlloc()` for it.
   - A module's state is a struct the header only declares;
     the module defines it, the function that makes it and its
     deleter.
-  - A `pcb_t` field is set before the first thread starts and
-    only read after, or guards itself with a mutex or an
-    atomic.
   - `tcb` is a pointer (`thread_local tcb_t *tcb`), made at a
     thread's start and freed at its end, and NULL while it is
     being freed. A signal handler checks for NULL.
@@ -163,8 +170,8 @@ digres is one process; each session is a thread of it.
     touches it.** Put new state there from the start. Do not
     move untouched globals for the migration's sake.
 - **`src/tools/process_wide.txt`** lists the writable globals
-  allowed outside `thread_local`. It holds `pcb` alone; keep
-  it that way.
+  allowed outside `thread_local`. It holds `pcb` and `shmem`
+  alone; keep it that way.
 
 ## 4. Threads, signals and processes
 
@@ -208,8 +215,8 @@ digres is one process; each session is a thread of it.
   no crash restart. The postmaster reaps no child process; a
   session waits for its own `popen()` child.
 - **There is no shared memory.** A structure the threads share
-  is an ordinary allocation: `malloc()`'d, its pointer in the
-  pcb, made before the first thread starts. There is no
+  is an ordinary allocation: `malloc()`'d, its pointer in
+  shmem, made before the first thread starts. There is no
   registry to find one by name (`ShmemInitStruct()` is gone),
   and nothing is sized ahead of time; do not add a
   `*ShmemSize()` function.
@@ -230,7 +237,7 @@ digres is one process; each session is a thread of it.
 ## 6. Logging
 
 - **Every message goes to stderr**, through `write_console()`
-  in `elog.c`, one `write()` under `pcb->stderr_mutex`. There
+  in `elog.c`, one `write()` under `shmem->stderr_mutex`. There
   is no log collector, no csvlog and no jsonlog; a logger
   that writes files is to come.
 

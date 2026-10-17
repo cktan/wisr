@@ -26,7 +26,7 @@
  * Its flags told the postmaster of a child that ended without cleaning up
  * after itself, which in one process cannot be: whatever skips a session's
  * exit callbacks ends the process.  Why the postmaster sent SIGQUIT is
- * pcb->quit_reason.
+ * shmem->quit_reason.
  */
 
 /*
@@ -38,7 +38,7 @@
  * explicitly.
  */
 void SetQuitSignalReason(QuitSignalReason reason) {
-  pcb->quit_reason.store(reason, std::memory_order_release);
+  shmem->quit_reason.store(reason, std::memory_order_release);
 }
 
 /*
@@ -49,5 +49,5 @@ void SetQuitSignalReason(QuitSignalReason reason) {
 QuitSignalReason GetQuitSignalReason(void) {
   if (!IsUnderPostmaster)
     return PMQUIT_NOT_SENT;
-  return (QuitSignalReason)pcb->quit_reason.load(std::memory_order_acquire);
+  return (QuitSignalReason)shmem->quit_reason.load(std::memory_order_acquire);
 }

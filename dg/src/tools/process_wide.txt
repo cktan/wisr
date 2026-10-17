@@ -3,3 +3,4 @@
 # thread_local. Each line names the object, from src, and the variable
 # as objdump -C names it, with the reason after a '#'.
 backend/utils/init/control_block.o pcb  # the process control block (utils/control_block.h)
+backend/utils/init/control_block.o shmem  # the shared block (utils/control_block.h)

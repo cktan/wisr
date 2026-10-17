@@ -30,15 +30,18 @@ What is left is built at start by `CreateOrAttachShmemStructs()`
 session registry. The lock manager is gone (step 156), the
 LWLocks and semaphores (step 157), and PGPROC (step 159).
 
-## 2. Allocation: the pcb's fields
+## 2. Allocation: shmem's fields
 
-**Done** (`WORKNOTE.md` step 173). A structure the threads share
-is a field of `pcb_t` (`utils/control_block.h`), made by the
-postmaster, or a standalone backend, before the first thread
-starts: `CreateSharedMemoryAndSemaphores()` (storage/ipc
-`ipci.c`) makes the session registry, the advisory lock table
-and, with the build option, the injection points'. A session
-thread finds them in the pcb and attaches to nothing.
+**Done** (`WORKNOTE.md` steps 173 and 211). A structure the
+threads share is a field of `shmem_t`
+(`utils/control_block.h`), made by the postmaster, or a
+standalone backend, before the first thread starts:
+`CreateSharedMemoryAndSemaphores()` (storage/ipc `ipci.c`)
+makes the session registry, the advisory lock table and, with
+the build option, the injection points'. A session thread
+finds them in shmem and attaches to nothing. What the main
+thread fixes before then and no thread writes after is
+`pcb_t`'s, read through a const pointer; nothing is in it yet.
 
 - **Gone**: storage/ipc `shmem.c`'s registry of named blocks,
   `ShmemInitStruct()`, `ShmemInitHash()`, `ShmemAlloc()` and
@@ -128,7 +131,7 @@ thread raises the bit through the thread's handle
   the two SInval LWLocks. A session processes its own messages
   (utils/cache `inval.c`), and learns of another's DDL from sm's
   versions and epoch (§5.1). A virtual xid's local part comes
-  from one counter for the process (`pcb_t::next_lxid`), where
+  from one counter for the process (`shmem_t::next_lxid`), where
   it came from the queue's per-slot state.
 - **PGPROC is gone** (`WORKNOTE.md` step 159), with
   `ProcGlobal` and its free list. Its lock waits, semaphore and
@@ -154,12 +157,12 @@ thread raises the bit through the thread's handle
 - **ProcSignal is gone** (`WORKNOTE.md` step 147). Its one
   reason left, `pg_log_backend_memory_contexts()`, is an
   interrupt bit of its own, `INTERRUPT_LOG_MEMORY`; a session's
-  cancel key is in its record, under `pcb->cancel_key_mutex`
+  cancel key is in its record, under `shmem->cancel_key_mutex`
   (step 158). storage/ipc
   `procsignal.c` keeps the interrupt bits' calls and the cancel
   request.
 - **PMSignalState is gone** (`WORKNOTE.md` step 148). Its quit
-  reason is `pcb->quit_reason`, an atomic. Its child flags,
+  reason is `shmem->quit_reason`, an atomic. Its child flags,
   which told the postmaster of a child that ended without
   cleaning up after itself, went with nothing in their place:
   in one process whatever skips a session's exit callbacks
@@ -317,7 +320,7 @@ an object of its own instead.
   set as it leaves the registry. What one session reads of
   another is in the record, set before it registers and fixed
   after, or atomic, or under a mutex.
-- **The registry is the pcb's**: a mutex, and the records of
+- **The registry is shmem's**: a mutex, and the records of
   the sessions registered, by pid. A session registers where it
   joined the proc array (`InitProcessPhase2()`) and leaves where
   it left it (`RemoveProcFromArray()`). A lookup copies the
@@ -385,7 +388,8 @@ has a caller still, and goes with the step that removes it:
    waits-for graph (166), and `pg_lock_status()` listing sm1's
    locks and the advisory table's (193).
 5. **The registry** of §2: done (`WORKNOTE.md` step 173),
-   each block a pcb field, and dynahash's shared mode (174).
+   each block a field of the pcb, now shmem (211), and
+   dynahash's shared mode (174).
 
 Each step is checked by the full suite and by `make tsan`;
 asserts are on in every build (`dg.mk`), so a broken invariant

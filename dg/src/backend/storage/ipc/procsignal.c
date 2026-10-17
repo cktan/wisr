@@ -36,7 +36,7 @@
  *
  * Note: This is called from a backend process before authentication.  The
  * session is found by its record, whose cancel key is read under
- * pcb->cancel_key_mutex (session_set_cancel_key()).  PIDs are reused, so a
+ * shmem->cancel_key_mutex (session_set_cancel_key()).  PIDs are reused, so a
  * signal sent by PID is racy anyway, although OS's avoid reusing PIDs too
  * soon; the record is the session's alone, so an ended one is interrupted
  * harmlessly.
@@ -59,7 +59,7 @@ void SendCancelRequest(int backendPID, const uint8 *cancel_key,
   }
   {
     /* The session sets its key under this mutex. */
-    std::lock_guard<std::mutex> lock(pcb->cancel_key_mutex);
+    std::lock_guard<std::mutex> lock(shmem->cancel_key_mutex);
 
     match =
         record->cancel_key_length != 0 &&

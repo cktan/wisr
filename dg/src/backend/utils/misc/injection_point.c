@@ -85,8 +85,8 @@ typedef struct InjectionPointsCtl {
   InjectionPointEntry entries[MAX_INJECTION_POINTS];
 } InjectionPointsCtl;
 
-/* The process's control struct: the pcb's (InjectionPointShmemInit()). */
-#define ActiveInjectionPoints (pcb->injection_points)
+/* The process's control struct: shmem's (InjectionPointShmemInit()). */
+#define ActiveInjectionPoints (shmem->injection_points)
 
 /*
  * Backend local cache of injection callbacks already loaded, stored in
@@ -217,7 +217,7 @@ static InjectionPointCacheEntry *injection_point_cache_get(const char *name) {
 
 /*
  * Make the process's control struct of injection points, before any
- * thread starts: the pcb's, for its whole life.
+ * thread starts: shmem's, for its whole life.
  */
 void InjectionPointShmemInit(void) {
 #ifdef USE_INJECTION_POINTS
@@ -264,7 +264,7 @@ void InjectionPointAttach(const char *name, const char *library,
    * exist.  For testing purposes this should be fine.
    */
   /* One attach or detach at a time, as the InjectionPoint LWLock did. */
-  held_mutex_t guard(pcb->injection_point_mutex);
+  held_mutex_t guard(shmem->injection_point_mutex);
   max_inuse = ActiveInjectionPoints->max_inuse.load(std::memory_order_relaxed);
   free_idx = -1;
 
@@ -327,7 +327,7 @@ bool InjectionPointDetach(const char *name) {
   int max_inuse;
 
   /* One attach or detach at a time, as the InjectionPoint LWLock did. */
-  held_mutex_t guard(pcb->injection_point_mutex);
+  held_mutex_t guard(shmem->injection_point_mutex);
 
   /* Find it in the shmem array, and mark the slot as unused */
   max_inuse =

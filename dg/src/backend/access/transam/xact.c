@@ -482,7 +482,7 @@ static void AtStart_Cache(void) { AcceptInvalidationMessages(); }
 
 /*
  * The next local transaction id, the low part of a virtual xid: from one
- * counter for every session (pcb_t::next_lxid), so none is given twice
+ * counter for every session (shmem_t::next_lxid), so none is given twice
  * until it wraps, where PostgreSQL went on from the last of each PGPROC
  * slot's to keep a slot's new user from reusing one soon.  0 is no id.
  */
@@ -490,7 +490,7 @@ static LocalTransactionId GetNextLocalTransactionId(void) {
   LocalTransactionId result;
 
   do {
-    result = pcb->next_lxid.fetch_add(1, std::memory_order_relaxed);
+    result = shmem->next_lxid.fetch_add(1, std::memory_order_relaxed);
   } while (!LocalTransactionIdIsValid(result));
   return result;
 }

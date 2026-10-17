@@ -4027,10 +4027,10 @@ void AlterSystemSetConfigFile(AlterSystemStmt *altersysstmt) {
 
   /*
    * Only one backend is allowed to operate on PG_AUTOCONF_FILENAME at a
-   * time.  Use pcb->auto_file_mutex to ensure that.  We must hold the lock
+   * time.  Use shmem->auto_file_mutex to ensure that.  We must hold the lock
    * while reading the old file contents; it is held to the function's end.
    */
-  held_mutex_t lock(pcb->auto_file_mutex);
+  held_mutex_t lock(shmem->auto_file_mutex);
 
   /*
    * If we're going to reset everything, then no need to open or parse the

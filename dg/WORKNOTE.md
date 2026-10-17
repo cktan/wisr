@@ -6123,3 +6123,35 @@ three (step 2), and `pg_snapshots` (step 201).
   `std::optional`: sm3's header is not the interface.
 - access/sm `add_table()` and `smstore_table_desc()` read
   `has_default`.
+
+## Step 211: shmem_t, what the threads share and write
+
+The pcb held two kinds of field under one rule, "set before
+the first thread starts and only read after, or guards
+itself", and every field it had was of the second kind. Now
+each kind has a block of its own (`utils/control_block.h`,
+`CODE.md` section 3):
+
+- **`shmem_t`, what the threads share and write**: the pcb's
+  fields, all of them, moved as they were. Each is an atomic,
+  a mutex whose comment names what it guards, or an object
+  that guards itself: the stderr, ALTER SYSTEM and cancel-key
+  mutexes, the injection points' mutex and table, `next_lxid`,
+  `quit_reason`, the session registry and the advisory table.
+  `shmem->` for `pcb->` in their eight files.
+- **`pcb_t`, what the main thread fixes before the first
+  thread starts**, read through `const pcb_t *pcb`, so a write
+  from a session does not compile. It is empty: a SHARED
+  variable no thread writes after the start comes here as a
+  change touches it.
+- **`tcb_t`, the thread's alone**, as before; what it inherits
+  from the thread that started it is copied in at its start,
+  and is its own after. A SHARED variable a session changes,
+  a setting, comes here, not to `pcb_t`: the postmaster's
+  settings change at a reload, after threads have started.
+- `pcb_init()` makes `pcb` and `shmem`, and
+  `src/tools/process_wide.txt` allows both outside
+  `thread_local`. A guard type for a mutex and its data was
+  weighed and not made: no field pairs a mutex with data that
+  is reached only under it. The injection points' table is
+  read without the lock, by its generation counters.

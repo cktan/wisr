@@ -404,17 +404,18 @@ Do not reopen these without the owner:
   variables. A SHARED variable that a thread must reset or redo
   after the copy was marked SHARED by mistake: mark it LOCAL
   (`src/include/c.h`).
-- **The globals move into two control blocks**, each as a
+- **The globals move into three control blocks**, each as a
   change touches it, never as a campaign of its own
-  (`utils/control_block.h`, `WORKNOTE.md` step 22): one
-  `pcb_t` for the process, made by `main()`, and one `tcb_t`
-  for each thread. A field is a value, or a `std::unique_ptr`
-  to what the block owns; a module's state is a struct only it
-  defines. A pcb field is fixed before the first thread starts,
-  or guards itself. New state goes into a block at once. If
-  the last SHARED variable ever moves, the copy table and the
-  two-pass link go, and the only writable global left outside
-  `thread_local` is `pcb`.
+  (`utils/control_block.h`, `WORKNOTE.md` steps 22 and 211):
+  `pcb_t` for the process, fixed before the first thread
+  starts and read only after; `shmem_t`, what the threads
+  share and write, each field guarding itself; and one
+  `tcb_t` for each thread. A field is a value, or a
+  `std::unique_ptr` to what the block owns; a module's state
+  is a struct only it defines. New state goes into a block at
+  once. If the last SHARED variable ever moves, the copy
+  table and the two-pass link go, and the only writable
+  globals left outside `thread_local` are `pcb` and `shmem`.
 - **The GUC variables and tables are per thread** (§3.4). GUC
   is not otherwise to be touched until the thread model is
   done.
@@ -560,10 +561,12 @@ Do not reopen these without the owner:
   `interval + date` and `text || anynonarray` among them.
 - `initdb` does not clean up when interrupted.
 - A reload with no configuration file logs a complaint.
-- **TODO: the SHARED variables move into `pcb_t`.** Each of
-  the 185 `/*SHARED*/` globals is one value for the process,
-  but is a `thread_local`: a thread is given a copy when it
-  starts, and only the thread that sets it later sees the
-  change. In `pcb_t` there is one, as there should be. Once
-  the last is moved, the copy table and the two-pass link go
-  (§7).
+- **TODO: the SHARED variables move into the blocks.** Each
+  of the 185 `/*SHARED*/` globals is a `thread_local`: a
+  thread is given a copy when it starts, and only the thread
+  that sets it later sees the change. One no thread writes
+  after the first starts goes into `pcb_t`, one value for the
+  process, as there should be; one a session changes, as a
+  setting, is the thread's, and goes into `tcb_t`, copied
+  from the parent's as the thread starts. Once the last is
+  moved, the copy table and the two-pass link go (§7).

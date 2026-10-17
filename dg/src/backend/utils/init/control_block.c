@@ -1,7 +1,8 @@
 /*-------------------------------------------------------------------------
  *
  * control_block.c
- *	  The process control block and the thread control block.
+ *	  The process control block, the shared block and the thread control
+ *	  block.
  *
  * See utils/control_block.h.
  *
@@ -15,18 +16,22 @@
 #include "utils/control_block.h"
 
 /* The process's control block: one for the process, never freed. */
-pcb_t *pcb = NULL;
+const pcb_t *pcb = NULL;
+
+/* What the threads share and write: one for the process, never freed. */
+shmem_t *shmem = NULL;
 
 /* This thread's control block, or NULL if it runs no digres code. */
 thread_local /*LOCAL*/ tcb_t *tcb = NULL;
 
 /*
- * Make the process control block.  main() calls it first, before any
- * thread starts and before anything logs.
+ * Make the process control block and the shared block.  main() calls it
+ * first, before any thread starts and before anything logs.
  */
 void pcb_init(void) {
-  Assert(pcb == NULL);
+  Assert(pcb == NULL && shmem == NULL);
   pcb = new pcb_t();
+  shmem = new shmem_t();
 }
 
 /* Make this thread's control block, as the thread starts. */

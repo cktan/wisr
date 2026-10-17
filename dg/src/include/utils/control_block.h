@@ -1,21 +1,30 @@
 /*-------------------------------------------------------------------------
  *
  * control_block.h
- *	  The process control block and the thread control block.
+ *	  The process control block, the shared block and the thread control
+ *	  block.
  *
- * digres is one process of threads.  What there is one of for the process
- * is in the pcb_t, made once by main() before any thread starts; what each
- * thread has its own of is in its tcb_t, made as the thread starts and
- * freed as it ends.  They replace the SHARED and LOCAL thread_local
- * variables (c.h), a module at a time.
+ * digres is one process of threads, and each block holds state by who may
+ * write it (CODE.md section 3):
+ *
+ * - pcb_t: what the main thread sets before the first thread starts, and
+ *   no thread writes after; every thread reads it, through a const pointer.
+ * - shmem_t: what the threads share and write.  Each field is an atomic, a
+ *   mutex, whose comment names what it guards, or an object that guards
+ *   itself.
+ * - tcb_t: what one thread has, alone, its own: one for each thread, made
+ *   as it starts and freed as it ends.  What a thread inherits from the one
+ *   that started it is copied in at the start, and is its own after.  It
+ *   may point into shmem_t; nothing of it is reached from another thread.
+ *
+ * They replace the SHARED and LOCAL thread_local variables (c.h), a module
+ * at a time.  pcb and shmem are made once by main(), before any thread
+ * starts, and never freed.
  *
  * A field is a value, or a std::unique_ptr to what the block owns: freeing
  * the block frees it.  A module keeps its state's layout to itself: the
  * block holds a pointer to a struct only declared here, and the module
  * defines the struct, the function that makes it and the deleter.
- *
- * A pcb_t field is either set before the first thread starts and only
- * read after, or guards itself (a mutex, an atomic).
  *
  * src/include/utils/control_block.h
  *
@@ -73,11 +82,20 @@ struct advisory_state_free_t {
 };
 
 /*
- * The process control block: one for the process.  What the process keeps
- * for its whole life may be malloc'd, its pointer here, and never freed:
- * the block itself never is.
+ * The process control block: one for the process, set by the main thread
+ * before the first thread starts, and read only after.  Nothing is in it
+ * yet: a SHARED variable that no thread writes comes here as a change
+ * touches it.
  */
 typedef struct pcb_t {
+} pcb_t;
+
+/*
+ * The shared block: what the threads share and write, one for the process.
+ * What the process keeps for its whole life may be malloc'd, its pointer
+ * here, and never freed: the block itself never is.
+ */
+typedef struct shmem_t {
   std::mutex stderr_mutex; /* elog.c: one message at a time to stderr */
 
   /* injection_point.c: one attach or detach at a time */
@@ -105,7 +123,7 @@ typedef struct pcb_t {
 
   /* advisory_lock.c: the advisory locks held, and their waiters */
   std::unique_ptr<advisory_table_t, advisory_table_free_t> advisory;
-} pcb_t;
+} shmem_t;
 
 /* The thread control block: one for each thread that runs digres code. */
 typedef struct tcb_t {
@@ -127,7 +145,8 @@ typedef struct tcb_t {
   uint32 xmin = 0;
 } tcb_t;
 
-extern pcb_t *pcb;
+extern const pcb_t *pcb;
+extern shmem_t *shmem;
 extern thread_local /*LOCAL*/ tcb_t *tcb;
 
 extern void pcb_init(void);

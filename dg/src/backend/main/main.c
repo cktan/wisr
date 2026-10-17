@@ -72,7 +72,7 @@ int main(int argc, char *argv[]) {
 
   reached_main = true;
 
-  /* The process's control block, and this thread's, before anything else. */
+  /* The process's control blocks, and this thread's, before anything else. */
   pcb_init();
   tcb_init();
 

@@ -34,7 +34,7 @@ typedef struct session_record_t {
 
   /*
    * Its cancel key, which a cancel request must match, and its length, 0
-   * for none: set and read under pcb->cancel_key_mutex
+   * for none: set and read under shmem->cancel_key_mutex
    * (session_set_cancel_key(), SendCancelRequest()).
    */
   int cancel_key_length = 0;
@@ -43,7 +43,7 @@ typedef struct session_record_t {
 
 typedef std::shared_ptr<session_record_t> session_ref_t;
 
-/* The registry is the pcb's (utils/control_block.h), and declared there. */
+/* The registry is shmem's (utils/control_block.h), and declared there. */
 
 extern void session_registry_init(void);
 extern void session_register(void);

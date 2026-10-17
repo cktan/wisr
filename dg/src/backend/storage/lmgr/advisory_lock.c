@@ -71,7 +71,7 @@ struct advisory_key_eq_t {
   }
 };
 
-/* The table: the pcb's. */
+/* The table: shmem's. */
 struct advisory_table_t {
   std::mutex mu;              /* guards locks and waits */
   std::condition_variable cv; /* a waiter sleeps on it; a release wakes all */
@@ -101,8 +101,8 @@ void advisory_state_free_t::operator()(advisory_state_t *state) const {
  * before any session thread starts; a session thread's call finds it made.
  */
 void advisory_init(void) {
-  if (pcb->advisory == nullptr)
-    pcb->advisory.reset(new advisory_table_t());
+  if (shmem->advisory == nullptr)
+    shmem->advisory.reset(new advisory_table_t());
 }
 
 /* The session's state, made at its first use. */
@@ -211,7 +211,7 @@ static void grant(advisory_table_t *t, const advisory_key_t &key, int mode,
  */
 bool advisory_lock(const advisory_key_t &key, bool exclusive, bool session,
                    bool dontwait) {
-  advisory_table_t *t = pcb->advisory.get();
+  advisory_table_t *t = shmem->advisory.get();
   const session_record_t *me = tcb->session.get();
   int mode = exclusive ? EXCLUSIVE : SHARE;
   int64 deadline =
@@ -263,7 +263,7 @@ bool advisory_lock(const advisory_key_t &key, bool exclusive, bool session,
  * forgetting the holders left with none, and waking the waiters.
  */
 template <class F> static void release(F drop) {
-  advisory_table_t *t = pcb->advisory.get();
+  advisory_table_t *t = shmem->advisory.get();
   advisory_state_t *st = tcb->advisory.get();
 
   /* Nothing held: no mutex to take. */
@@ -295,7 +295,7 @@ template <class F> static void release(F drop) {
  * with a warning, if the session holds none.
  */
 bool advisory_unlock(const advisory_key_t &key, bool exclusive) {
-  advisory_table_t *t = pcb->advisory.get();
+  advisory_table_t *t = shmem->advisory.get();
   int mode = exclusive ? EXCLUSIVE : SHARE;
   bool held = false;
 
@@ -373,7 +373,7 @@ void advisory_subxact_end(bool commit) {
 
 /* The pids of the sessions holding the advisory lock pid waits for. */
 std::vector<int> advisory_blockers(int pid) {
-  advisory_table_t *t = pcb->advisory.get();
+  advisory_table_t *t = shmem->advisory.get();
   session_ref_t s = session_by_pid(pid);
   std::vector<int> out;
 
@@ -395,7 +395,7 @@ std::vector<int> advisory_blockers(int pid) {
 
 /* Every lock of the table: each mode each holder holds, and each wait. */
 std::vector<advisory_status_t> advisory_status(void) {
-  advisory_table_t *t = pcb->advisory.get();
+  advisory_table_t *t = shmem->advisory.get();
   std::vector<advisory_status_t> out;
 
   /* Hold the table's mutex to read the holders and the waits. */

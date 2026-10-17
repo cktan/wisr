@@ -30,9 +30,10 @@
  * CreateSharedMemoryAndSemaphores
  *		Make the structures the threads share, before any thread starts.
  *
- * They are the pcb's (utils/control_block.h): there is no shared memory,
- * and no registry of named blocks a thread would find them in
- * (dg/WORKNOTE.md step 173).  A session thread has nothing to attach.
+ * They are shmem's (utils/control_block.h), a struct of the process, not
+ * shared memory: there is no registry of named blocks a thread would find
+ * them in (dg/WORKNOTE.md step 173).  A session thread has nothing to
+ * attach.
  */
 void CreateSharedMemoryAndSemaphores(void) {
   Assert(!IsUnderPostmaster);
@@ -40,9 +41,9 @@ void CreateSharedMemoryAndSemaphores(void) {
   /*
    * Set up the session registry
    */
-  /* The sessions are in a registry of the pcb's (SHMEM.md section 5.2). */
+  /* The sessions are in a registry of shmem's (SHMEM.md section 5.2). */
   session_registry_init();
-  /* Advisory locks are in a table of the pcb's, by the sessions' records. */
+  /* Advisory locks are in a table of shmem's, by the sessions' records. */
   advisory_init();
 
   /*

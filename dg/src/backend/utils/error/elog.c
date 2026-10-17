@@ -2404,7 +2404,7 @@ void write_console(const char *line, int len) {
    */
   {
     /* One message at a time: the threads share stderr. */
-    std::lock_guard<std::mutex> guard(pcb->stderr_mutex);
+    std::lock_guard<std::mutex> guard(shmem->stderr_mutex);
     rc = write(fileno(stderr), line, len);
   }
   (void)rc;
