@@ -25,7 +25,7 @@
 #include "common/md5.h"
 
 static void bytesToHex(uint8 b[16], char *s) {
-  static thread_local /*SHARED*/ const char *hex = "0123456789abcdef";
+  static const char hex[] = "0123456789abcdef";
   int q, w;
 
   for (q = 0, w = 0; q < 16; q++) {

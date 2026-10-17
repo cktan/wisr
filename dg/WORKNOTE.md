@@ -6465,3 +6465,21 @@ starts, and sessions read.
   `postmaster_tcb` being set now says.
 - 49 `/*SHARED*/` globals are left.
 
+## Step 221: three constants are const
+
+`../sm/NEXT.md` §1's second item, its fourth batch: three
+`/*SHARED*/` globals were constants nothing writes, made
+`thread_local` only because they were not `const` all the way
+down.
+
+- common `md5_common.c`'s `hex`, in `bytesToHex()`, is a
+  `static const char[]`, in `.rodata`.
+- common `encnames.c`'s `pg_enc2gettext_tbl` is `const char
+  *const[]`, and tcop `dest.c`'s `None_Receiver` is
+  `DestReceiver *const`: both in `.data.rel.ro`, which
+  `src/tools/cxx_thread_local.py` counts read-only. Their
+  `extern` declarations (`mb/pg_wchar.h`, `tcop/dest.h`) say
+  `const` too, which also gives the definitions external
+  linkage.
+- 46 `/*SHARED*/` globals are left.
+

@@ -563,7 +563,7 @@ Do not reopen these without the owner:
 - `initdb` does not clean up when interrupted.
 - A reload with no configuration file logs a complaint.
 - **TODO: the SHARED variables move into the blocks.** Each
-  of the 49 `/*SHARED*/` globals is a `thread_local`: a
+  of the 46 `/*SHARED*/` globals is a `thread_local`: a
   thread is given a copy when it starts, and only the thread
   that sets it later sees the change. One the main thread
   owns and others read goes into `pcb_t`, one value for the
