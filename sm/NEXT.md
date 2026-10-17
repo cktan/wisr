@@ -25,6 +25,18 @@ Low priority:
    of line, which end a load's files; a `rel` verb; and batch
    mode and mini-batch, which matter less now that no write
    keeps a row lock.
+2. **digres's SHARED globals into the control blocks.**
+   `../dg/WORKNOTE.md` step 211 split the pcb in three
+   (`../dg/CODE.md` §3): `shmem_t`, what the threads share and
+   write; `pcb_t`, what the main thread fixes before the first
+   thread starts, empty so far; and `tcb_t`, a thread's own.
+   89 `thread_local /*SHARED*/` globals are left, each copied
+   into a thread as it starts (`../dg/src/tools/shared_tls.py`).
+   One no thread writes after the start goes to `pcb_t`; one a
+   session changes, a setting, to `tcb_t`; one the threads
+   write and must all see, to `shmem_t`. When the last has
+   moved, the copy table and the two-pass link go
+   (`../dg/PLAN.md` §9).
 
 ---
 
