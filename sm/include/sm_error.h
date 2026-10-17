@@ -103,8 +103,15 @@ typedef enum sm_errnum_t {
      */
     SM_ERR_NOFDS         = 29,  /* out of file descriptors */
 
+    /*
+     * sm1's: a rollback to a savepoint failed, leaving the writes
+     * it was to undo (SM1_DESIGN.md §6.5). Every call on the
+     * transaction but an abort then fails with it.
+     */
+    SM_ERR_DOOMED        = 30,  /* the transaction can only be aborted */
+
     /* The highest code, for code that walks them all. */
-    SM_ERR_LAST          = SM_ERR_NOFDS
+    SM_ERR_LAST          = SM_ERR_DOOMED
 } sm_errnum_t;
 
 #endif /* SM_ERROR_H */

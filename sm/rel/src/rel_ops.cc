@@ -240,8 +240,24 @@ static Janet cfun_db_list(int32_t argc, Janet *argv) {
 static Janet cfun_db_open(int32_t argc, Janet *argv) {
   janet_arity(argc, 1, 2);
   std::string dbname = identifier_of(argv[0]);
+  sm_options_t opt;
+  sm_options_init(&opt);
+  const sm_options_t *popt = nullptr;
+  // {:savepoint-undo-bytes n}, for the first session on the database.
+  if (argc >= 2) {
+    Janet key = janet_ckeywordv("savepoint-undo-bytes");
+    Janet u = janet_checktype(argv[1], JANET_STRUCT)
+                  ? janet_struct_get(janet_unwrap_struct(argv[1]), key)
+              : janet_checktype(argv[1], JANET_TABLE)
+                  ? janet_table_get(janet_unwrap_table(argv[1]), key)
+                  : janet_wrap_nil();
+    if (!janet_checktype(u, JANET_NIL)) {
+      opt.savepoint_undo_bytes = janet_unwrap_integer(u);
+    }
+    popt = &opt;
+  }
   // Open default session on database.
-  if (get_catalog().session_open("default", dbname, nullptr) != 0) {
+  if (get_catalog().session_open("default", dbname, popt) != 0) {
     panic_sm_error("db-open");
   }
   return janet_wrap_nil();
@@ -2157,7 +2173,8 @@ static const JanetReg s_rel_cfuns[] = {
     {"db-create", cfun_db_create, "(db-create name [opt]) -- create database"},
     {"db-drop", cfun_db_drop, "(db-drop name) -- drop database"},
     {"db-list", cfun_db_list, "(db-list) -- list databases"},
-    {"db-open", cfun_db_open, "(db-open name [opt]) -- open default session"},
+    {"db-open", cfun_db_open,
+     "(db-open name [{:savepoint-undo-bytes n}]) -- open default session"},
     {"db-close", cfun_db_close, "(db-close) -- close active session"},
 
     {"_session-open", cfun_session_open, "internal"},

@@ -138,9 +138,12 @@ struct sm1::session_t {
 
   /*
    * Why the transaction must fail at its next call (§5.1):
-   * SM_ERR_DEADLOCK once chosen as a deadlock victim, else 0.
+   * SM_ERR_DEADLOCK once chosen as a deadlock victim,
+   * SM_ERR_DOOMED once a rollback failed (§6.5), else 0.
    */
   std::atomic<int> doomed{0};
+  /* The failed rollback's message, while doomed is SM_ERR_DOOMED. */
+  std::string doom_msg;
 
   /* Locks, row and OID (§5.1); guarded by the database's lock_mu. */
   struct lockref_t {

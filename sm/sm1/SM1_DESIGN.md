@@ -753,7 +753,8 @@ which fails with the reason and does nothing else. Every
 entry point checks `doomed` first, so a doomed transaction
 can only be aborted. Deadlock detection only ever dooms a
 waiter; the running case is for the doom flag that §8.4
-sets on a serializable reader.
+sets on a serializable reader. A rollback that fails dooms
+its own transaction with `SM_ERR_DOOMED` (§6.5).
 
 **What a transaction holds in memory.** Row values stream
 to RocksDB, so a transaction is bounded by disk, but
@@ -1062,10 +1063,10 @@ it is not refused. The list is freed, a warning is logged,
 and every mark then on the stack is **lost**: `T.lost_marks`
 records how many, from the bottom of the stack up.
 
-- A rollback to a lost mark fails with `SM_ERR_UNDOLIMIT` and
-  changes nothing. The versions to delete are no longer
-  known, so the transaction can only be aborted, which needs
-  no list.
+- A rollback to a lost mark fails with `SM_ERR_UNDOLIMIT`.
+  The versions to delete are no longer known, so the
+  transaction can only be aborted, which needs no list: the
+  rollback dooms it (below).
 - Writes go on, and list nothing while every mark is lost.
 - A savepoint set afterwards starts a new list, counted
   against the cap again, and rolls back as usual.
@@ -1078,6 +1079,21 @@ is nearly all of them, is not made to fail for the sake of
 one that might have been rolled back. The price is paid only
 by the rare one: its rollback becomes an abort of the whole
 transaction.
+
+**A rollback that fails dooms the transaction.** One at a lost
+mark, or one whose deletes RocksDB fails to read or write
+(`SM_ERR_IO`), leaves the writes it was to undo in place, some
+of them perhaps deleted. Nothing of that may commit, so the
+rollback sets `T.doomed` to `SM_ERR_DOOMED` and keeps its own
+error as the reason. Every later call on the transaction fails
+with `SM_ERR_DOOMED`, naming that reason: each entry point that
+checks `T.doomed` (§5.1), and an open cursor's next read or
+seek, and a sequence draw. Only `sm1::abort` is let through. A
+caller that has nowhere for the rollback's error to go, as
+PostgreSQL's subtransaction abort has not, finds it again at
+its next call. A rollback refused by its checks, at a depth
+with no mark or with a bulk load open, changes nothing and
+dooms nothing.
 
 **A savepoint is expensive by design.** Setting one is a
 mark and costs nothing. Holding one costs memory in
@@ -1162,7 +1178,7 @@ sm1::forget(depth):                      # SQL's RELEASE SAVEPOINT
 
 sm1::rollback(depth):
     if no mark at depth: fail with SM_ERR_NOSAVEPOINT # API.md divergence 8
-    if depth <= T.lost_marks: fail with SM_ERR_UNDOLIMIT
+    if depth <= T.lost_marks: doom T; fail with SM_ERR_UNDOLIMIT
     m = T.savepoints[depth-1].undo
     for e in reverse(T.undo[m..]):
         db.Delete(cf(e.storeid), encode(e.key, ~T.xid, ~e.seq))
@@ -2585,6 +2601,7 @@ SM_ERR_NOTFOUND        store or key does not exist
 SM_ERR_DUPKEY          insert onto a live key (§5)
 SM_ERR_NOSAVEPOINT     no savepoint at the given depth (§6.5)
 SM_ERR_UNDOLIMIT       the savepoint was lost at savepoint_undo_bytes (§6.5)
+SM_ERR_DOOMED          a rollback failed; only an abort is let through (§6.5)
 SM_ERR_SELFMODIFIED    update or erase of a key the running statement
                        wrote (§6.2); not an abort
 SM_ERR_NOTRANS         data op outside a transaction (§6.1)

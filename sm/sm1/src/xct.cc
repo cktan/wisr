@@ -439,6 +439,17 @@ int store_range(const store_t &store, std::string &first, std::string &end) {
   return 0;
 }
 
+/*
+ * Doom the transaction a rollback failed for, keeping the error set:
+ * the writes it was to undo are still there, so every later call but
+ * an abort fails (§6.5).
+ */
+int doom(sm1::session_t *s) {
+  s->doom_msg = sm1::errmsg();
+  s->doomed = sm1::SM_ERR_DOOMED;
+  return -1;
+}
+
 /* sm1::rollback, minus the out-of-memory guard. */
 int rollback(sm1::session_t *s, int depth) {
   // Require an active, non-prepared transaction.
@@ -457,13 +468,14 @@ int rollback(sm1::session_t *s, int depth) {
   if (!mp) {
     return -1;
   }
-  // Refuse a mark whose undo list was dropped at the cap: the
+  // Fail at a mark whose undo list was dropped at the cap: the
   // versions to delete are no longer known (§6.5).
   if (static_cast<size_t>(depth) <= s->lost_marks) {
-    return set_error(sm1::SM_ERR_UNDOLIMIT,
-                     "savepoint {} can no longer be rolled back to: the "
-                     "transaction passed savepoint_undo_bytes",
-                     depth);
+    set_error(sm1::SM_ERR_UNDOLIMIT,
+              "savepoint {} can no longer be rolled back to: the "
+              "transaction passed savepoint_undo_bytes",
+              depth);
+    return doom(s);
   }
   // Copy it: the stack is truncated before it is used below.
   const sm1::session_t::mark_t m = *mp;
@@ -472,9 +484,8 @@ int rollback(sm1::session_t *s, int depth) {
 
   // Delete exactly the versions written since the mark, in one
   // batch for each instance that holds some (TEMPTABLE.md §3.1). If
-  // one fails the marks and the undo list stay as they were, so the
-  // rollback can be asked for again: deleting a version twice is
-  // harmless.
+  // one fails the transaction is doomed: some deletes may be written
+  // and others not.
   std::map<rocksdb::DB *, rocksdb::WriteBatch> batches;
   // Queue a delete for each version written after the mark.
   for (size_t i = s->undo.size(); i-- > m.undo;) {
@@ -506,7 +517,7 @@ int rollback(sm1::session_t *s, int depth) {
     std::string first, end;
     int rc = store.cf ? store_range(store, first, end) : 1;
     if (rc < 0) {
-      return -1;
+      return doom(s);
     }
     if (rc == 0) {
       batches[store.rdb].DeleteRange(store.cf, first, end);
@@ -521,9 +532,9 @@ int rollback(sm1::session_t *s, int depth) {
     rocksdb::WriteOptions wo;
     wo.disableWAL = kv.first == db->tmp;
     rocksdb::Status st = kv.first->Write(wo, &kv.second);
-    // Fail with the marks and the undo list unchanged.
     if (!st.ok()) {
-      return set_status_error(st, "roll back to savepoint");
+      set_status_error(st, "roll back to savepoint");
+      return doom(s);
     }
   }
 
@@ -619,6 +630,7 @@ int begin(sm1::session_t *s, sm1::xctlevel_t level, bool read_only) {
   s->begin_seq = ++s->db->begin_seq;
   // A new transaction starts undoomed.
   s->doomed = 0;
+  s->doom_msg.clear();
   // Take the snapshot: the current visible_ts (§4.1). Read
   // committed also counts in the watermark at this one, for
   // its whole life (§8.3).
@@ -1203,6 +1215,13 @@ int xct_check_active(sm1::session_t *s) {
                        s->prepared_gid.c_str());
     }
     return set_error(sm1::SM_ERR_NOTRANS, "no active transaction");
+  }
+  // One a rollback failed for fails here until it is aborted.
+  if (s->doomed == sm1::SM_ERR_DOOMED) {
+    return set_error(sm1::SM_ERR_DOOMED,
+                     "the transaction can only be aborted: a rollback to a "
+                     "savepoint failed: {}",
+                     s->doom_msg);
   }
   // A doomed transaction fails here, before doing anything.
   if (s->doomed) {

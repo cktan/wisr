@@ -629,6 +629,10 @@ int scan_seek(sm1::scan_t *c, const char *key, size_t klen, int inclusive) {
   if (c->rolled_back) {
     return set_error(sm1::SM_ERR_INVALID, rolled_back_msg);
   }
+  // Nor does one of a transaction a rollback doomed (§6.5).
+  if (c->session->active && c->session->doomed == sm1::SM_ERR_DOOMED) {
+    return xct_check_active(c->session);
+  }
   // A failed cursor stays failed.
   if (c->state == -1) {
     return set_error(sm1::SM_ERR_INVALID,
@@ -675,6 +679,10 @@ int scan_next(sm1::scan_t *c, const char **key, size_t *klen, const char **data,
   // A cursor a rollback closed reads no more.
   if (c->rolled_back) {
     return set_error(sm1::SM_ERR_INVALID, rolled_back_msg);
+  }
+  // Nor does one of a transaction a rollback doomed (§6.5).
+  if (c->session->active && c->session->doomed == sm1::SM_ERR_DOOMED) {
+    return xct_check_active(c->session);
   }
   // A cursor at its end, or failed, stays so.
   if (c->state != 0) {
