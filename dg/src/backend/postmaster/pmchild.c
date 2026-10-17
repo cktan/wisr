@@ -32,6 +32,7 @@
 
 #include "miscadmin.h"
 #include "postmaster/postmaster.h"
+#include "utils/control_block.h"
 #include "storage/pmsignal.h"
 #include "storage/proc.h"
 
@@ -47,13 +48,31 @@ typedef struct PMChildPool {
   dlist_head freelist; /* currently unused PMChild entries */
 } PMChildPool;
 
-static thread_local /*SHARED*/ PMChildPool pmchild_pools[BACKEND_NUM_TYPES];
-static thread_local /*SHARED*/ int num_pmchild_slots = 0;
-
 /*
- * List of active child processes.  This includes dead-end children.
+ * The child slots: the main thread's, in the postmaster's thread control
+ * block (postmaster_tcb->pmchild, utils/control_block.h), and read by no
+ * other thread.
  */
-thread_local /*SHARED*/ dlist_head ActiveChildList;
+struct pmchild_state_t {
+  PMChildPool pmchild_pools[BACKEND_NUM_TYPES] = {};
+  int num_pmchild_slots = 0;
+
+  /*
+   * List of active child processes.  This includes dead-end children.
+   */
+  dlist_head ActiveChildList = {};
+};
+
+/* The child slots, in the postmaster's thread control block. */
+static inline pmchild_state_t &pcs(void) { return *postmaster_tcb->pmchild; }
+
+/* Free the child slots' state, with its block. */
+void pmchild_state_free_t::operator()(pmchild_state_t *state) const {
+  delete state;
+}
+
+/* The list of active child processes, dead-end children among them. */
+dlist_head *pmchild_active_list(void) { return &pcs().ActiveChildList; }
 
 /*
  * MaxLivePostmasterChildren
@@ -62,9 +81,9 @@ thread_local /*SHARED*/ dlist_head ActiveChildList;
  * It includes all children except for dead-end children.
  */
 int MaxLivePostmasterChildren(void) {
-  if (num_pmchild_slots == 0)
+  if (postmaster_tcb->pmchild == NULL || pcs().num_pmchild_slots == 0)
     elog(ERROR, "PM child array not initialized yet");
-  return num_pmchild_slots;
+  return pcs().num_pmchild_slots;
 }
 
 /*
@@ -77,6 +96,9 @@ void InitPostmasterChildSlots(void) {
   int slotno;
   PMChild *slots;
 
+  /* The slots are the main thread's: the postmaster's, or a standalone's. */
+  postmaster_tcb->pmchild.reset(new pmchild_state_t());
+
   /*
    * We allow more connections here than we can have backends because some
    * might still be authenticating; they might fail auth, or some existing
@@ -84,7 +106,7 @@ void InitPostmasterChildSlots(void) {
    * MaxConnections limit is enforced when a new backend tries to join the
    * session registry.
    */
-  pmchild_pools[B_BACKEND].size = 2 * MaxConnections;
+  pcs().pmchild_pools[B_BACKEND].size = 2 * MaxConnections;
 
   /*
    * There can be only one of each of these running at a time.  They each
@@ -94,30 +116,30 @@ void InitPostmasterChildSlots(void) {
   /* The rest of the pmchild_pools are left at zero size */
 
   /* Count the total number of slots */
-  num_pmchild_slots = 0;
+  pcs().num_pmchild_slots = 0;
   for (int i = 0; i < BACKEND_NUM_TYPES; i++)
-    num_pmchild_slots += pmchild_pools[i].size;
+    pcs().num_pmchild_slots += pcs().pmchild_pools[i].size;
 
   /* Initialize them */
-  slots = (PMChild *)palloc(num_pmchild_slots * sizeof(PMChild));
+  slots = (PMChild *)palloc(pcs().num_pmchild_slots * sizeof(PMChild));
   slotno = 0;
   for (int btype = 0; btype < BACKEND_NUM_TYPES; btype++) {
-    pmchild_pools[btype].first_slotno = slotno + 1;
-    dlist_init(&pmchild_pools[btype].freelist);
+    pcs().pmchild_pools[btype].first_slotno = slotno + 1;
+    dlist_init(&pcs().pmchild_pools[btype].freelist);
 
-    for (int j = 0; j < pmchild_pools[btype].size; j++) {
+    for (int j = 0; j < pcs().pmchild_pools[btype].size; j++) {
       slots[slotno].pid = 0;
       slots[slotno].child_slot = slotno + 1;
       slots[slotno].bkend_type = B_INVALID;
       slots[slotno].thread = NULL;
-      dlist_push_tail(&pmchild_pools[btype].freelist, &slots[slotno].elem);
+      dlist_push_tail(&pcs().pmchild_pools[btype].freelist, &slots[slotno].elem);
       slotno++;
     }
   }
-  Assert(slotno == num_pmchild_slots);
+  Assert(slotno == pcs().num_pmchild_slots);
 
   /* Initialize other structures */
-  dlist_init(&ActiveChildList);
+  dlist_init(&pcs().ActiveChildList);
 }
 
 /*
@@ -132,10 +154,10 @@ PMChild *AssignPostmasterChildSlot(BackendType btype) {
   dlist_head *freelist;
   PMChild *pmchild;
 
-  if (pmchild_pools[btype].size == 0)
+  if (pcs().pmchild_pools[btype].size == 0)
     elog(ERROR, "cannot allocate a PMChild slot for backend type %d", btype);
 
-  freelist = &pmchild_pools[btype].freelist;
+  freelist = &pcs().pmchild_pools[btype].freelist;
   if (dlist_is_empty(freelist))
     return NULL;
 
@@ -148,14 +170,14 @@ PMChild *AssignPostmasterChildSlot(BackendType btype) {
    * pmchild->child_slot for each entry was initialized when the array of
    * slots was allocated.  Sanity check it.
    */
-  if (!(pmchild->child_slot >= pmchild_pools[btype].first_slotno &&
+  if (!(pmchild->child_slot >= pcs().pmchild_pools[btype].first_slotno &&
         pmchild->child_slot <
-            pmchild_pools[btype].first_slotno + pmchild_pools[btype].size)) {
+            pcs().pmchild_pools[btype].first_slotno + pcs().pmchild_pools[btype].size)) {
     elog(ERROR, "pmchild freelist for backend type %d is corrupt",
          pmchild->bkend_type);
   }
 
-  dlist_push_head(&ActiveChildList, &pmchild->elem);
+  dlist_push_head(&pcs().ActiveChildList, &pmchild->elem);
 
   elog(DEBUG2, "assigned pm child slot %d for %s", pmchild->child_slot,
        PostmasterChildName(btype));
@@ -180,7 +202,7 @@ PMChild *AllocDeadEndChild(void) {
     pmchild->bkend_type = B_DEAD_END_BACKEND;
     pmchild->thread = NULL;
 
-    dlist_push_head(&ActiveChildList, &pmchild->elem);
+    dlist_push_head(&pcs().ActiveChildList, &pmchild->elem);
   }
 
   return pmchild;
@@ -197,7 +219,7 @@ void ReleasePostmasterChildSlot(PMChild *pmchild) {
 
     elog(DEBUG2, "releasing pm child slot %d", pmchild->child_slot);
 
-    pool = &pmchild_pools[pmchild->bkend_type];
+    pool = &pcs().pmchild_pools[pmchild->bkend_type];
 
     /* sanity check that we return the entry to the right pool */
     if (!(pmchild->child_slot >= pool->first_slotno &&
@@ -216,7 +238,7 @@ void ReleasePostmasterChildSlot(PMChild *pmchild) {
 PMChild *FindPostmasterChildByPid(int pid) {
   dlist_iter iter;
 
-  dlist_foreach(iter, &ActiveChildList) {
+  dlist_foreach(iter, &pcs().ActiveChildList) {
     PMChild *bp = dlist_container(PMChild, elem, iter.cur);
 
     if (bp->pid == pid)

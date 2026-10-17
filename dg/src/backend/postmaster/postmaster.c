@@ -105,6 +105,7 @@
 #include "storage/procsignal.h"
 #include "tcop/backend_startup.h"
 #include "tcop/tcopprot.h"
+#include "utils/control_block.h"
 #include "utils/datadir.h"
 #include "utils/datetime.h"
 #include "utils/memutils.h"
@@ -192,10 +193,8 @@ thread_local /*LOCAL*/ char *ListenAddresses;
 thread_local /*LOCAL*/ int SuperuserReservedConnections;
 thread_local /*LOCAL*/ int ReservedConnections;
 
-/* The socket(s) we're listening to. */
+/* The socket(s) we're listening to: at most this many. */
 #define MAXLISTEN	64
-static thread_local /*SHARED*/ int NumListenSockets = 0;
-static thread_local /*SHARED*/ pgsocket *ListenSockets = NULL;
 
 /* still more option variables */
 thread_local /*LOCAL*/ bool EnableSSL = false;
@@ -224,11 +223,6 @@ thread_local /*LOCAL*/ bool send_abort_for_kill = false;
 #define SmartShutdown	1
 #define FastShutdown	2
 #define ImmediateShutdown	3
-
-static thread_local /*SHARED*/ int Shutdown = NoShutdown;
-
-static thread_local /*SHARED*/ bool FatalError =
-    false; /* T if recovering from backend crash */
 
 /*
  * We use a simple state machine to control startup, shutdown, and
@@ -265,42 +259,61 @@ typedef enum {
   PM_NO_CHILDREN,   /* all important children have exited */
 } PMState;
 
-static thread_local /*SHARED*/ PMState pmState = PM_INIT;
-
-/*
- * While performing a "smart shutdown", we restrict new connections but stay
- * in PM_RUN state until all the client backends are gone.  connsAllowed is a
- * sub-state indicator showing the active restriction.  It is of no interest
- * unless pmState is PM_RUN.
- */
-static thread_local /*SHARED*/ bool connsAllowed = true;
-
-/* Start time of SIGKILL timeout during immediate shutdown or child crash */
-/* Zero means timeout is not running */
-static thread_local /*SHARED*/ time_t AbortStartTime = 0;
-
-/* Length of said timeout */
+/* Length of the SIGKILL timeout, AbortStartTime's */
 #define SIGKILL_CHILDREN_AFTER_SECS		5
-
-static thread_local /*SHARED*/ bool ReachedNormalRunning =
-    false; /* T if we've reached PM_RUN */
 
 thread_local /*LOCAL*/ bool ClientAuthInProgress = false; /* T during new-client
                                                            * authentication */
 
 /* set when there's a worker that needs to be started up */
 
-/* set when signals arrive */
-static thread_local /*SHARED*/ volatile sig_atomic_t pending_pm_reload_request;
-static thread_local /*SHARED*/ volatile sig_atomic_t
-    pending_pm_shutdown_request;
-static thread_local /*SHARED*/ volatile sig_atomic_t
-    pending_pm_fast_shutdown_request;
-static thread_local /*SHARED*/ volatile sig_atomic_t
-    pending_pm_immediate_shutdown_request;
+/*
+ * The postmaster's own state: the main thread's, in its tcb
+ * (postmaster_tcb->postmaster, utils/control_block.h), and read by no
+ * other thread.
+ */
+struct postmaster_state_t {
+  /* The socket(s) we're listening to. */
+  int NumListenSockets = 0;
+  pgsocket *ListenSockets = NULL;
 
-/* event multiplexing object */
-static thread_local /*SHARED*/ WaitEventSet *pm_wait_set;
+  int Shutdown = NoShutdown;
+  bool FatalError = false; /* T if recovering from backend crash */
+  PMState pmState = PM_INIT;
+
+  /*
+   * While performing a "smart shutdown", we restrict new connections but
+   * stay in PM_RUN state until all the client backends are gone.
+   * connsAllowed is a sub-state indicator showing the active restriction.
+   * It is of no interest unless pmState is PM_RUN.
+   */
+  bool connsAllowed = true;
+
+  /* Start time of SIGKILL timeout during immediate shutdown or child crash */
+  /* Zero means timeout is not running */
+  time_t AbortStartTime = 0;
+
+  bool ReachedNormalRunning = false; /* T if we've reached PM_RUN */
+
+  /* set when signals arrive */
+  volatile sig_atomic_t pending_pm_reload_request = false;
+  volatile sig_atomic_t pending_pm_shutdown_request = false;
+  volatile sig_atomic_t pending_pm_fast_shutdown_request = false;
+  volatile sig_atomic_t pending_pm_immediate_shutdown_request = false;
+
+  /* event multiplexing object */
+  WaitEventSet *pm_wait_set = NULL;
+};
+
+/* The postmaster's state, in the postmaster's thread control block. */
+static inline postmaster_state_t &pms(void) {
+  return *postmaster_tcb->postmaster;
+}
+
+/* Free the postmaster's state, with its block. */
+void postmaster_state_free_t::operator()(postmaster_state_t *state) const {
+  delete state;
+}
 
 #ifdef USE_SSL
 /* Set when and if SSL has been initialized properly */
@@ -356,6 +369,9 @@ void PostmasterMain(int argc, char *argv[]) {
   char *userDoption = NULL;
   bool listen_addr_saved = false;
   char *output_config_variable = NULL;
+
+  /* The postmaster's state is the main thread's: it is made first. */
+  postmaster_tcb->postmaster.reset(new postmaster_state_t());
 
   InitProcessGlobals();
 
@@ -830,7 +846,7 @@ void PostmasterMain(int argc, char *argv[]) {
    * First set up an on_proc_exit function that's charged with closing the
    * sockets again at postmaster shutdown.
    */
-  ListenSockets = (pgsocket *)palloc(MAXLISTEN * sizeof(pgsocket));
+  pms().ListenSockets = (pgsocket *)palloc(MAXLISTEN * sizeof(pgsocket));
   on_proc_exit(CloseServerPorts, 0);
 
   if (ListenAddresses) {
@@ -856,11 +872,11 @@ void PostmasterMain(int argc, char *argv[]) {
       if (strcmp(curhost, "*") == 0)
         status =
             ListenServerPort(AF_UNSPEC, NULL, (unsigned short)PostPortNumber,
-                             NULL, ListenSockets, &NumListenSockets, MAXLISTEN);
+                             NULL, pms().ListenSockets, &pms().NumListenSockets, MAXLISTEN);
       else
         status =
             ListenServerPort(AF_UNSPEC, curhost, (unsigned short)PostPortNumber,
-                             NULL, ListenSockets, &NumListenSockets, MAXLISTEN);
+                             NULL, pms().ListenSockets, &pms().NumListenSockets, MAXLISTEN);
 
       if (status == STATUS_OK) {
         success++;
@@ -883,7 +899,7 @@ void PostmasterMain(int argc, char *argv[]) {
 
 #ifdef USE_BONJOUR
   /* Register for Bonjour only if we opened TCP socket(s) */
-  if (enable_bonjour && NumListenSockets > 0) {
+  if (enable_bonjour && pms().NumListenSockets > 0) {
     DNSServiceErrorType err;
 
     /*
@@ -930,7 +946,7 @@ void PostmasterMain(int argc, char *argv[]) {
       char *socketdir = (char *)lfirst(l);
 
       status = ListenServerPort(AF_UNIX, NULL, (unsigned short)PostPortNumber,
-                                socketdir, ListenSockets, &NumListenSockets,
+                                socketdir, pms().ListenSockets, &pms().NumListenSockets,
                                 MAXLISTEN);
 
       if (status == STATUS_OK) {
@@ -955,7 +971,7 @@ void PostmasterMain(int argc, char *argv[]) {
   /*
    * check that we have some socket to listen on
    */
-  if (NumListenSockets == 0)
+  if (pms().NumListenSockets == 0)
     ereport(FATAL, (errmsg("no socket created for listening")));
 
   /*
@@ -1063,11 +1079,11 @@ static void CloseServerPorts(int status, Datum arg) {
    * before we remove the postmaster.pid lockfile; otherwise there's a race
    * condition if a new postmaster wants to re-use the TCP port number.
    */
-  for (i = 0; i < NumListenSockets; i++) {
-    if (closesocket(ListenSockets[i]) != 0)
+  for (i = 0; i < pms().NumListenSockets; i++) {
+    if (closesocket(pms().ListenSockets[i]) != 0)
       elog(LOG, "could not close listen socket: %m");
   }
-  NumListenSockets = 0;
+  pms().NumListenSockets = 0;
 
   /*
    * Next, remove any filesystem entries for Unix sockets.  To avoid race
@@ -1122,11 +1138,11 @@ static void getInstallationPaths(const char *argv0) {
  * cases are as shown in the code.
  */
 static int DetermineSleepTime(void) {
-  if (AbortStartTime != 0) {
+  if (pms().AbortStartTime != 0) {
     int seconds;
 
     /* time left to abort; clamp to 0 in case it already expired */
-    seconds = SIGKILL_CHILDREN_AFTER_SECS - (time(NULL) - AbortStartTime);
+    seconds = SIGKILL_CHILDREN_AFTER_SECS - (time(NULL) - pms().AbortStartTime);
 
     return Max(seconds * 1000, 0);
   }
@@ -1143,17 +1159,17 @@ static int DetermineSleepTime(void) {
  * children by ClosePostmasterPorts().
  */
 static void ConfigurePostmasterWaitSet(bool accept_connections) {
-  if (pm_wait_set)
-    FreeWaitEventSet(pm_wait_set);
-  pm_wait_set = NULL;
+  if (pms().pm_wait_set)
+    FreeWaitEventSet(pms().pm_wait_set);
+  pms().pm_wait_set = NULL;
 
-  pm_wait_set =
-      CreateWaitEventSet(NULL, accept_connections ? (1 + NumListenSockets) : 1);
-  AddWaitEventToSet(pm_wait_set, WL_LATCH_SET, PGINVALID_SOCKET, MyLatch, NULL);
+  pms().pm_wait_set =
+      CreateWaitEventSet(NULL, accept_connections ? (1 + pms().NumListenSockets) : 1);
+  AddWaitEventToSet(pms().pm_wait_set, WL_LATCH_SET, PGINVALID_SOCKET, MyLatch, NULL);
 
   if (accept_connections) {
-    for (int i = 0; i < NumListenSockets; i++)
-      AddWaitEventToSet(pm_wait_set, WL_SOCKET_ACCEPT, ListenSockets[i], NULL,
+    for (int i = 0; i < pms().NumListenSockets; i++)
+      AddWaitEventToSet(pms().pm_wait_set, WL_SOCKET_ACCEPT, pms().ListenSockets[i], NULL,
                         NULL);
   }
 }
@@ -1164,9 +1180,9 @@ static void ConfigurePostmasterWaitSet(bool accept_connections) {
  * used to do.
  */
 static void StartRunning(void) {
-  ReachedNormalRunning = true;
+  pms().ReachedNormalRunning = true;
   UpdatePMState(PM_RUN);
-  connsAllowed = true;
+  pms().connsAllowed = true;
 
   /* at this point we are really open for business */
   ereport(LOG, (errmsg("database system is ready to accept connections")));
@@ -1192,7 +1208,7 @@ static int ServerLoop(void) {
   for (;;) {
     time_t now;
 
-    nevents = WaitEventSetWait(pm_wait_set, DetermineSleepTime(), events,
+    nevents = WaitEventSetWait(pms().pm_wait_set, DetermineSleepTime(), events,
                                lengthof(events),
                                0 /* postmaster posts no wait_events */);
 
@@ -1211,9 +1227,9 @@ static int ServerLoop(void) {
        * events[] or will be reported by a later call to
        * WaitEventSetWait().
        */
-      if (pending_pm_shutdown_request)
+      if (pms().pending_pm_shutdown_request)
         process_pm_shutdown_request();
-      if (pending_pm_reload_request)
+      if (pms().pending_pm_reload_request)
         process_pm_reload_request();
       if (backend_thread_ended())
         process_pm_child_exit();
@@ -1260,8 +1276,8 @@ static int ServerLoop(void) {
      *
      * Note we also do this during recovery from a process crash.
      */
-    if ((Shutdown >= ImmediateShutdown || FatalError) && AbortStartTime != 0 &&
-        (now - AbortStartTime) >= SIGKILL_CHILDREN_AFTER_SECS) {
+    if ((pms().Shutdown >= ImmediateShutdown || pms().FatalError) && pms().AbortStartTime != 0 &&
+        (now - pms().AbortStartTime) >= SIGKILL_CHILDREN_AFTER_SECS) {
       /* We were gentle with them before. Not anymore */
       ereport(LOG,
               /* translator: %s is SIGKILL or SIGABRT */
@@ -1269,7 +1285,7 @@ static int ServerLoop(void) {
                       send_abort_for_kill ? "SIGABRT" : "SIGKILL")));
       TerminateChildren(send_abort_for_kill ? SIGABRT : SIGKILL);
       /* reset flag so we don't SIGKILL again */
-      AbortStartTime = 0;
+      pms().AbortStartTime = 0;
 
       /*
        * A thread cannot be killed (backend_thread_signal()): a session that
@@ -1326,8 +1342,8 @@ static CAC_state canAcceptConnections(BackendType backend_type) {
   Assert(backend_type == B_BACKEND);
 
   /* Can't start backends when shutting down or recovering from a crash. */
-  if (pmState != PM_RUN) {
-    if (Shutdown > NoShutdown)
+  if (pms().pmState != PM_RUN) {
+    if (pms().Shutdown > NoShutdown)
       return CAC_SHUTDOWN; /* shutdown is pending */
     else
       return CAC_RECOVERY; /* else must be crash recovery */
@@ -1336,7 +1352,7 @@ static CAC_state canAcceptConnections(BackendType backend_type) {
   /*
    * "Smart shutdown" restrictions are applied only to normal connections.
    */
-  if (!connsAllowed && backend_type == B_BACKEND)
+  if (!pms().connsAllowed && backend_type == B_BACKEND)
     return CAC_SHUTDOWN; /* shutdown is pending */
 
   return result;
@@ -1385,7 +1401,7 @@ void InitProcessGlobals(void) {
  * pg_ctl uses SIGHUP to request a reload of the configuration files.
  */
 static void handle_pm_reload_request_signal(SIGNAL_ARGS) {
-  pending_pm_reload_request = true;
+  pms().pending_pm_reload_request = true;
   SetLatch(MyLatch);
 }
 
@@ -1393,12 +1409,12 @@ static void handle_pm_reload_request_signal(SIGNAL_ARGS) {
  * Re-read config files, and tell children to do same.
  */
 static void process_pm_reload_request(void) {
-  pending_pm_reload_request = false;
+  pms().pending_pm_reload_request = false;
 
   ereport(DEBUG2,
           (errmsg_internal("postmaster received reload request signal")));
 
-  if (Shutdown <= SmartShutdown) {
+  if (pms().Shutdown <= SmartShutdown) {
     ereport(LOG, (errmsg("received SIGHUP, reloading configuration files")));
     ProcessConfigFile(PGC_SIGHUP);
     SignalChildren(SIGHUP, btmask_all_except(B_DEAD_END_BACKEND));
@@ -1426,15 +1442,15 @@ static void handle_pm_shutdown_request_signal(SIGNAL_ARGS) {
   switch (postgres_signal_arg) {
   case SIGTERM:
     /* smart is implied if the other two flags aren't set */
-    pending_pm_shutdown_request = true;
+    pms().pending_pm_shutdown_request = true;
     break;
   case SIGINT:
-    pending_pm_fast_shutdown_request = true;
-    pending_pm_shutdown_request = true;
+    pms().pending_pm_fast_shutdown_request = true;
+    pms().pending_pm_shutdown_request = true;
     break;
   case SIGQUIT:
-    pending_pm_immediate_shutdown_request = true;
-    pending_pm_shutdown_request = true;
+    pms().pending_pm_immediate_shutdown_request = true;
+    pms().pending_pm_shutdown_request = true;
     break;
   }
   SetLatch(MyLatch);
@@ -1449,19 +1465,19 @@ static void process_pm_shutdown_request(void) {
   ereport(DEBUG2,
           (errmsg_internal("postmaster received shutdown request signal")));
 
-  pending_pm_shutdown_request = false;
+  pms().pending_pm_shutdown_request = false;
 
   /*
    * If more than one shutdown request signal arrived since the last server
    * loop, take the one that is the most immediate.  That matches the
    * priority that would apply if we processed them one by one in any order.
    */
-  if (pending_pm_immediate_shutdown_request) {
-    pending_pm_immediate_shutdown_request = false;
-    pending_pm_fast_shutdown_request = false;
+  if (pms().pending_pm_immediate_shutdown_request) {
+    pms().pending_pm_immediate_shutdown_request = false;
+    pms().pending_pm_fast_shutdown_request = false;
     mode = ImmediateShutdown;
-  } else if (pending_pm_fast_shutdown_request) {
-    pending_pm_fast_shutdown_request = false;
+  } else if (pms().pending_pm_fast_shutdown_request) {
+    pms().pending_pm_fast_shutdown_request = false;
     mode = FastShutdown;
   } else
     mode = SmartShutdown;
@@ -1474,9 +1490,9 @@ static void process_pm_shutdown_request(void) {
      *
      * Wait for children to end their work, then shut down.
      */
-    if (Shutdown >= SmartShutdown)
+    if (pms().Shutdown >= SmartShutdown)
       break;
-    Shutdown = SmartShutdown;
+    pms().Shutdown = SmartShutdown;
     ereport(LOG, (errmsg("received smart shutdown request")));
 
     /* Report status */
@@ -1490,8 +1506,8 @@ static void process_pm_shutdown_request(void) {
      * client backends to exit.  If already in PM_STOP_BACKENDS or a
      * later state, do not change it.
      */
-    if (pmState == PM_RUN)
-      connsAllowed = false;
+    if (pms().pmState == PM_RUN)
+      pms().connsAllowed = false;
 
     /*
      * Now wait for online backup mode to end and backends to exit. If
@@ -1509,9 +1525,9 @@ static void process_pm_shutdown_request(void) {
      * Abort all children with SIGTERM (rollback active transactions
      * and exit) and shut down when they are gone.
      */
-    if (Shutdown >= FastShutdown)
+    if (pms().Shutdown >= FastShutdown)
       break;
-    Shutdown = FastShutdown;
+    pms().Shutdown = FastShutdown;
     ereport(LOG, (errmsg("received fast shutdown request")));
 
     /* Report status */
@@ -1520,7 +1536,7 @@ static void process_pm_shutdown_request(void) {
     sd_notify(0, "STOPPING=1");
 #endif
 
-    if (pmState == PM_RUN) {
+    if (pms().pmState == PM_RUN) {
       /* Report that we're about to zap live client sessions */
       ereport(LOG, (errmsg("aborting any active transactions")));
       UpdatePMState(PM_STOP_BACKENDS);
@@ -1542,9 +1558,9 @@ static void process_pm_shutdown_request(void) {
      * terminate remaining ones with SIGKILL, then exit without
      * attempt to properly shut down the data base system.
      */
-    if (Shutdown >= ImmediateShutdown)
+    if (pms().Shutdown >= ImmediateShutdown)
       break;
-    Shutdown = ImmediateShutdown;
+    pms().Shutdown = ImmediateShutdown;
     ereport(LOG, (errmsg("received immediate shutdown request")));
 
     /* Report status */
@@ -1560,7 +1576,7 @@ static void process_pm_shutdown_request(void) {
     UpdatePMState(PM_WAIT_BACKENDS);
 
     /* set stopwatch for them to die */
-    AbortStartTime = time(NULL);
+    pms().AbortStartTime = time(NULL);
 
     /*
      * Now wait for backends to exit.  If there are none,
@@ -1671,8 +1687,8 @@ static void CleanupBackend(PMChild *bp,
 static void HandleFatalError(QuitSignalReason reason, bool consider_sigabrt) {
   int sigtosend;
 
-  Assert(!FatalError);
-  Assert(Shutdown != ImmediateShutdown);
+  Assert(!pms().FatalError);
+  Assert(pms().Shutdown != ImmediateShutdown);
 
   SetQuitSignalReason(reason);
 
@@ -1689,7 +1705,7 @@ static void HandleFatalError(QuitSignalReason reason, bool consider_sigabrt) {
    */
   TerminateChildren(sigtosend);
 
-  FatalError = true;
+  pms().FatalError = true;
 
   /*
    * Choose the appropriate new state to react to the fatal error. Unless we
@@ -1697,7 +1713,7 @@ static void HandleFatalError(QuitSignalReason reason, bool consider_sigabrt) {
    * PM_WAIT_BACKENDS. For errors during the shutdown sequence, we directly
    * switch to PM_WAIT_DEAD_END.
    */
-  switch (pmState) {
+  switch (pms().pmState) {
   case PM_INIT:
     /* shouldn't have any children */
     Assert(false);
@@ -1722,8 +1738,8 @@ static void HandleFatalError(QuitSignalReason reason, bool consider_sigabrt) {
    * .. and if this doesn't happen quickly enough, now the clock is ticking
    * for us to kill them without mercy.
    */
-  if (AbortStartTime == 0)
-    AbortStartTime = time(NULL);
+  if (pms().AbortStartTime == 0)
+    pms().AbortStartTime = time(NULL);
 }
 
 /*
@@ -1743,7 +1759,7 @@ static void HandleChildCrash(int pid, int exitstatus, const char *procname) {
    * signaled children, nonzero exit status is to be expected, so don't
    * clutter log.
    */
-  if (FatalError || Shutdown == ImmediateShutdown)
+  if (pms().FatalError || pms().Shutdown == ImmediateShutdown)
     return;
 
   LogChildExit(LOG, procname, pid, exitstatus);
@@ -1810,8 +1826,8 @@ static void LogChildExit(int lev, const char *procname, int pid,
  */
 static void PostmasterStateMachine(void) {
   /* If we're doing a smart shutdown, try to advance that state. */
-  if (pmState == PM_RUN) {
-    if (!connsAllowed) {
+  if (pms().pmState == PM_RUN) {
+    if (!pms().connsAllowed) {
       /*
        * This state ends when we have no normal client backends running.
        * Then we're ready to stop other children.
@@ -1831,7 +1847,7 @@ static void PostmasterStateMachine(void) {
    * them.  Treating it as a distinct pmState allows us to share this code
    * across multiple shutdown code paths.
    */
-  if (pmState == PM_STOP_BACKENDS || pmState == PM_WAIT_BACKENDS) {
+  if (pms().pmState == PM_STOP_BACKENDS || pms().pmState == PM_WAIT_BACKENDS) {
     BackendTypeMask targetMask = BTYPE_MASK_NONE;
 
     /*
@@ -1861,7 +1877,7 @@ static void PostmasterStateMachine(void) {
 #endif
 
     /* If we had not yet signaled the processes to exit, do so now */
-    if (pmState == PM_STOP_BACKENDS) {
+    if (pms().pmState == PM_STOP_BACKENDS) {
       SignalChildren(SIGTERM, targetMask);
 
       UpdatePMState(PM_WAIT_BACKENDS);
@@ -1869,7 +1885,7 @@ static void PostmasterStateMachine(void) {
 
     /* Are any of the target processes still running? */
     if (CountChildren(targetMask) == 0) {
-      if (Shutdown >= ImmediateShutdown || FatalError) {
+      if (pms().Shutdown >= ImmediateShutdown || pms().FatalError) {
         /*
          * Stop any dead-end children and stop creating new ones.
          *
@@ -1891,7 +1907,7 @@ static void PostmasterStateMachine(void) {
          * the regular children are gone.  There is no shutdown checkpoint
          * to write: sm keeps what is durable.  Stop any dead-end children.
          */
-        Assert(Shutdown > NoShutdown);
+        Assert(pms().Shutdown > NoShutdown);
         ereport(LOG, (errmsg("shutting down")));
         UpdatePMState(PM_WAIT_DEAD_END);
         ConfigurePostmasterWaitSet(false);
@@ -1900,7 +1916,7 @@ static void PostmasterStateMachine(void) {
     }
   }
 
-  if (pmState == PM_WAIT_DEAD_END) {
+  if (pms().pmState == PM_WAIT_DEAD_END) {
     /*
      * PM_WAIT_DEAD_END state ends when all other children are gone except
      * for the logger.  During normal shutdown, all that remains are
@@ -1927,8 +1943,8 @@ static void PostmasterStateMachine(void) {
    * we got SIGTERM from init --- there may well not be time for recovery
    * before init decides to SIGKILL us.)
    */
-  if (Shutdown > NoShutdown && pmState == PM_NO_CHILDREN) {
-    if (FatalError) {
+  if (pms().Shutdown > NoShutdown && pms().pmState == PM_NO_CHILDREN) {
+    if (pms().FatalError) {
       ereport(LOG, (errmsg("abnormal database system shutdown")));
       ExitPostmaster(1);
     } else {
@@ -1946,7 +1962,7 @@ static void PostmasterStateMachine(void) {
    * ended abnormally may have left the state all threads share half
    * changed, and that state cannot be made anew under the running process.
    */
-  if (FatalError && pmState == PM_NO_CHILDREN) {
+  if (pms().FatalError && pms().pmState == PM_NO_CHILDREN) {
     ereport(LOG, (errmsg("abnormal database system shutdown")));
     ExitPostmaster(1);
   }
@@ -1973,9 +1989,9 @@ static const char *pmstate_name(PMState state) {
  * is that it makes it easy to log all state transitions.
  */
 static void UpdatePMState(PMState newState) {
-  elog(DEBUG1, "updating PMState from %s to %s", pmstate_name(pmState),
+  elog(DEBUG1, "updating PMState from %s to %s", pmstate_name(pms().pmState),
        pmstate_name(newState));
-  pmState = newState;
+  pms().pmState = newState;
 }
 
 /*
@@ -2031,7 +2047,7 @@ static bool SignalChildren(int signal, BackendTypeMask targetMask) {
   dlist_iter iter;
   bool signaled = false;
 
-  dlist_foreach(iter, &ActiveChildList) {
+  dlist_foreach(iter, pmchild_active_list()) {
     PMChild *bp = dlist_container(PMChild, elem, iter.cur);
 
     if (!btmask_contains(targetMask, bp->bkend_type))
@@ -2192,7 +2208,7 @@ static int CountChildren(BackendTypeMask targetMask) {
   dlist_iter iter;
   int cnt = 0;
 
-  dlist_foreach(iter, &ActiveChildList) {
+  dlist_foreach(iter, pmchild_active_list()) {
     PMChild *bp = dlist_container(PMChild, elem, iter.cur);
 
     if (!btmask_contains(targetMask, bp->bkend_type))
@@ -2212,7 +2228,7 @@ static int CountThreadChildren(void) {
   dlist_iter iter;
   int cnt = 0;
 
-  dlist_foreach(iter, &ActiveChildList) {
+  dlist_foreach(iter, pmchild_active_list()) {
     PMChild *bp = dlist_container(PMChild, elem, iter.cur);
 
     if (bp->thread != NULL)

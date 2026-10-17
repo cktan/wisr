@@ -6365,3 +6365,38 @@ program the calling thread's state:
   2 of its 9 records failed: `SigBlk` was `fffffffe7ffbfa17`,
   and SIGPIPE ignored.
 
+## Step 218: postmaster_tcb_t, the postmaster's own state
+
+`../sm/NEXT.md` §1's second item, its first batch, under the
+rule this step states (`CODE.md` §3): `pcb_t` holds what the
+main thread owns and other threads read; what it owns and no
+other thread reads is in a block of its own,
+`postmaster_tcb_t`. 18 `/*SHARED*/` globals were the
+postmaster's alone, copied into every session as it started
+and never read there: a session's end is queued and the
+postmaster cleans up after it (`CleanupBackend()`), signals
+reach the postmaster's thread alone, and the exit callbacks
+that remove lock and socket files are the main thread's.
+
+- **`postmaster_tcb_t`** (`utils/control_block.h`), reached
+  through `thread_local /*LOCAL*/ postmaster_tcb_t
+  *postmaster_tcb`: `main()` makes it for the main thread
+  after its tcb (`postmaster_tcb_init()`), whether it is to be
+  the postmaster or a standalone backend, and never frees it.
+  It is NULL in every other thread, so a session cannot reach
+  the postmaster's state.
+- **postmaster `postmaster_state_t`**,
+  `postmaster_tcb->postmaster`, made as `PostmasterMain()`
+  starts: `NumListenSockets`, `ListenSockets`, `Shutdown`,
+  `FatalError`, `pmState`, `connsAllowed`, `AbortStartTime`,
+  `ReachedNormalRunning`, the four `pending_pm_*` signal flags
+  and `pm_wait_set`, read through `pms()`.
+- **pmchild `pmchild_state_t`**, `postmaster_tcb->pmchild`,
+  made by `InitPostmasterChildSlots()`, the postmaster's or a
+  standalone backend's: `pmchild_pools`, `num_pmchild_slots`
+  and `ActiveChildList`, which postmaster reads through
+  `pmchild_active_list()`.
+- **`postmaster_tcb->lock_files`** (miscinit) and
+  **`postmaster_tcb->sock_paths`** (libpq `pqcomm.c`), lists
+  in `TopMemoryContext`.
+- 71 `/*SHARED*/` globals are left.

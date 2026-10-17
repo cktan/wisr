@@ -4,18 +4,24 @@
  *	  The process control block, the shared block and the thread control
  *	  block.
  *
- * digres is one process of threads, and each block holds state by who may
- * write it (CODE.md section 3):
+ * digres is one process of threads, and each block holds state by who owns
+ * it and who reads it (CODE.md section 3):
  *
- * - pcb_t: what the main thread sets before the first thread starts, and
- *   no thread writes after; every thread reads it, through a const pointer.
+ * - pcb_t: what the main thread owns and other threads read, through a
+ *   const pointer.  The main thread alone writes it; a field it writes
+ *   after the first thread starts is an atomic, or guarded by a mutex.
  * - shmem_t: what the threads share and write.  Each field is an atomic, a
  *   mutex, whose comment names what it guards, or an object that guards
  *   itself.
  * - tcb_t: what one thread has, alone, its own: one for each thread, made
  *   as it starts and freed as it ends.  What a thread inherits from the one
- *   that started it is copied in at the start, and is its own after.  It
- *   may point into shmem_t; nothing of it is reached from another thread.
+ *   that started it is copied in at the start, and is its own after.  What
+ *   the main thread owns and no other thread reads is in the main thread's
+ *   postmaster_tcb_t.  It may point into shmem_t; nothing of it is reached
+ *   from another thread.
+ * - postmaster_tcb_t: the main thread's alone, the postmaster's: what the
+ *   main thread owns and no other thread reads.  It is NULL in every other
+ *   thread.
  *
  * They replace the SHARED and LOCAL thread_local variables (c.h), a module
  * at a time.  pcb and shmem are made once by main(), before any thread
@@ -81,11 +87,21 @@ struct advisory_state_free_t {
   void operator()(advisory_state_t *state) const;
 };
 
+/* postmaster.c: the postmaster's own state, the main thread's alone. */
+struct postmaster_state_t;
+struct postmaster_state_free_t {
+  void operator()(postmaster_state_t *state) const;
+};
+
+/* pmchild.c: the postmaster's child slots, the main thread's alone. */
+struct pmchild_state_t;
+struct pmchild_state_free_t {
+  void operator()(pmchild_state_t *state) const;
+};
+
 /*
- * The process control block: one for the process, set by the main thread
- * before the first thread starts, and read only after.  Nothing is in it
- * yet: a SHARED variable that no thread writes comes here as a change
- * touches it.
+ * The process control block: one for the process, what the main thread
+ * owns and the other threads read.  Nothing is in it yet.
  */
 typedef struct pcb_t {
 } pcb_t;
@@ -145,12 +161,31 @@ typedef struct tcb_t {
   uint32 xmin = 0;
 } tcb_t;
 
+/*
+ * The postmaster's thread control block: what the main thread owns and no
+ * other thread reads, the postmaster's own state, or a standalone
+ * backend's.  main() makes it for the main thread, and it is never freed;
+ * it is NULL in every other thread.
+ */
+typedef struct postmaster_tcb_t {
+  /* postmaster.c: the postmaster's state, made as PostmasterMain() starts */
+  std::unique_ptr<postmaster_state_t, postmaster_state_free_t> postmaster;
+  /* pmchild.c: the child slots, made by InitPostmasterChildSlots() */
+  std::unique_ptr<pmchild_state_t, pmchild_state_free_t> pmchild;
+  /* miscinit.c: the lock files to remove at exit, in TopMemoryContext */
+  struct List *lock_files = nullptr;
+  /* pqcomm.c: the socket files to remove at exit, in TopMemoryContext */
+  struct List *sock_paths = nullptr;
+} postmaster_tcb_t;
+
 extern const pcb_t *pcb;
 extern shmem_t *shmem;
 extern thread_local /*LOCAL*/ tcb_t *tcb;
+extern thread_local /*LOCAL*/ postmaster_tcb_t *postmaster_tcb;
 
 extern void pcb_init(void);
 extern void tcb_init(void);
 extern void tcb_free(void);
+extern void postmaster_tcb_init(void);
 
 #endif /* CONTROL_BLOCK_H */

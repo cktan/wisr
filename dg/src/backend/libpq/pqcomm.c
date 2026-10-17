@@ -78,6 +78,7 @@
 #include "port/pg_bswap.h"
 #include "postmaster/postmaster.h"
 #include "storage/ipc.h"
+#include "utils/control_block.h"
 #include "utils/guc_hooks.h"
 #include "utils/memutils.h"
 
@@ -102,8 +103,10 @@
 thread_local /*LOCAL*/ int Unix_socket_permissions;
 thread_local /*LOCAL*/ char *Unix_socket_group;
 
-/* Where the Unix socket files are (list of palloc'd strings) */
-static thread_local /*SHARED*/ List *sock_paths = NIL;
+/*
+ * Where the Unix socket files are (list of palloc'd strings):
+ * postmaster_tcb->sock_paths.
+ */
 
 /*
  * Buffers for low-level I/O.
@@ -657,7 +660,7 @@ static int Lock_AF_UNIX(const char *unixSocketDir, const char *unixSocketPath) {
   /*
    * Remember socket file pathnames for later maintenance.
    */
-  sock_paths = lappend(sock_paths, pstrdup(unixSocketPath));
+  postmaster_tcb->sock_paths = lappend(postmaster_tcb->sock_paths, pstrdup(unixSocketPath));
 
   return STATUS_OK;
 }
@@ -763,7 +766,7 @@ void TouchSocketFiles(void) {
   ListCell *l;
 
   /* Loop through all created sockets... */
-  foreach (l, sock_paths) {
+  foreach (l, postmaster_tcb->sock_paths) {
     char *sock_path = (char *)lfirst(l);
 
     /* Ignore errors; there's no point in complaining */
@@ -778,14 +781,14 @@ void RemoveSocketFiles(void) {
   ListCell *l;
 
   /* Loop through all created sockets... */
-  foreach (l, sock_paths) {
+  foreach (l, postmaster_tcb->sock_paths) {
     char *sock_path = (char *)lfirst(l);
 
     /* Ignore any error. */
     (void)unlink(sock_path);
   }
   /* Since we're about to exit, no need to reclaim storage */
-  sock_paths = NIL;
+  postmaster_tcb->sock_paths = NIL;
 }
 
 /* --------------------------------

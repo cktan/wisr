@@ -140,10 +140,12 @@ digres is one process; each session is a thread of it.
   must reset or redo after the copy was marked SHARED by
   mistake: mark it LOCAL.
 - **The control blocks replace them** (`utils/control_block.h`),
-  three, by who may write a field:
-  - **`pcb_t`**: what the main thread sets before the first
-    thread starts, and no thread writes after. Every thread
-    reads it through `const pcb_t *pcb`.
+  four, by who owns a field and who reads it:
+  - **`pcb_t`**: what the main thread owns and other threads
+    read. They read it through `const pcb_t *pcb`; the main
+    thread alone writes it. A field it writes after the first
+    thread starts is an atomic, or guarded by a mutex its
+    comment names.
   - **`shmem_t`**: what the threads share and write. Each
     field is an atomic, a mutex whose comment names what it
     guards, or an object that guards itself.
@@ -153,6 +155,11 @@ digres is one process; each session is a thread of it.
     variable that a session changes, a setting among them,
     comes here, not to `pcb_t`. A tcb may point into
     `shmem_t`; nothing of it is reached from another thread.
+  - **`postmaster_tcb_t`**: what the main thread owns and no
+    other thread reads, the postmaster's own state, or a
+    standalone backend's. `main()` makes it; it is reached
+    through `thread_local postmaster_tcb_t *postmaster_tcb`,
+    NULL in every other thread, and never freed.
   - A field is a value, or a `std::unique_ptr` to what the
     block owns. A non-owning raw pointer is fine, with a
     comment naming its owner (a memory context, shmem).
@@ -167,8 +174,10 @@ digres is one process; each session is a thread of it.
     thread's start and freed at its end, and NULL while it is
     being freed. A signal handler checks for NULL.
   - **The SHARED globals move as work of their own**
-    (`../sm/NEXT.md` §1): each into `pcb_t`, `tcb_t` or
-    `shmem_t`, by who writes it. A LOCAL global moves into
+    (`../sm/NEXT.md` §1): each into `pcb_t`, `tcb_t`,
+    `postmaster_tcb_t` or `shmem_t`, by who owns it and who
+    reads it. A LOCAL
+    global moves into
     `tcb_t` when a change touches it. Put new state in a block
     from the start.
 - **`src/tools/process_wide.txt`** lists the writable globals

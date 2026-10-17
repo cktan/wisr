@@ -75,7 +75,7 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT struct ClientSocket *MyClientSocket;
 const char *PostmasterChildName(BackendType child_type);
 
 /* defined in pmchild.c */
-extern thread_local /*SHARED*/ PGDLLIMPORT dlist_head ActiveChildList;
+extern dlist_head *pmchild_active_list(void);
 
 extern void InitPostmasterChildSlots(void);
 extern PMChild *AssignPostmasterChildSlot(BackendType btype);

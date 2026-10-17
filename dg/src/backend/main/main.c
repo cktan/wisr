@@ -75,6 +75,8 @@ int main(int argc, char *argv[]) {
   /* The process's control blocks, and this thread's, before anything else. */
   pcb_init();
   tcb_init();
+  /* What the main thread owns and no other thread reads: the postmaster's. */
+  postmaster_tcb_init();
 
   /*
    * If supported on the current platform, set up a handler to be called if

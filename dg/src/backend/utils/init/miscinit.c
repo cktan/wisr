@@ -52,6 +52,7 @@
 #include "utils/memutils.h"
 #include "utils/pidfile.h"
 #include "utils/syscache.h"
+#include "utils/control_block.h"
 #include "utils/varlena.h"
 
 #define DIRECTORY_LOCK_FILE		"postmaster.pid"
@@ -60,8 +61,7 @@ thread_local /*LOCAL*/ ProcessingMode Mode = InitProcessing;
 
 thread_local /*LOCAL*/ BackendType MyBackendType;
 
-/* List of lock files to be removed at proc exit */
-static thread_local /*SHARED*/ List *lock_files = NIL;
+/* The lock files to remove at proc exit: postmaster_tcb->lock_files */
 
 static thread_local /*LOCAL*/ Latch LocalLatchData;
 
@@ -835,14 +835,14 @@ typedef struct SerializedClientConnectionInfo {
 static void UnlinkLockFiles(int status, Datum arg) {
   ListCell *l;
 
-  foreach (l, lock_files) {
+  foreach (l, postmaster_tcb->lock_files) {
     char *curfile = (char *)lfirst(l);
 
     unlink(curfile);
     /* Should we complain if the unlink fails? */
   }
   /* Since we're about to exit, no need to reclaim storage */
-  lock_files = NIL;
+  postmaster_tcb->lock_files = NIL;
 
   /*
    * Lock file removal should always be the last externally visible action
@@ -1087,14 +1087,14 @@ static void CreateLockFile(const char *filename, bool amPostmaster,
    * one, set up the on_proc_exit function to do it; then add this lock file
    * to the list of files to unlink.
    */
-  if (lock_files == NIL)
+  if (postmaster_tcb->lock_files == NIL)
     on_proc_exit(UnlinkLockFiles, 0);
 
   /*
    * Use lcons so that the lock files are unlinked in reverse order of
    * creation; this is critical!
    */
-  lock_files = lcons(pstrdup(filename), lock_files);
+  postmaster_tcb->lock_files = lcons(pstrdup(filename), postmaster_tcb->lock_files);
 }
 
 /*
@@ -1133,7 +1133,7 @@ void CreateSocketLockFile(const char *socketfile, bool amPostmaster,
 void TouchSocketLockFiles(void) {
   ListCell *l;
 
-  foreach (l, lock_files) {
+  foreach (l, postmaster_tcb->lock_files) {
     char *socketLockFile = (char *)lfirst(l);
 
     /* No need to touch the data directory lock file, we trust */

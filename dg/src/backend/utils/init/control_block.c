@@ -24,6 +24,9 @@ shmem_t *shmem = NULL;
 /* This thread's control block, or NULL if it runs no digres code. */
 thread_local /*LOCAL*/ tcb_t *tcb = NULL;
 
+/* The postmaster's thread control block: the main thread's, else NULL. */
+thread_local /*LOCAL*/ postmaster_tcb_t *postmaster_tcb = NULL;
+
 /*
  * Make the process control block and the shared block.  main() calls it
  * first, before any thread starts and before anything logs.
@@ -54,4 +57,13 @@ void tcb_free(void) {
   tcb = NULL;
   std::atomic_signal_fence(std::memory_order_seq_cst);
   delete block;
+}
+
+/*
+ * Make the postmaster's thread control block, the main thread's, never
+ * freed.  main() calls it after tcb_init(), before any thread starts.
+ */
+void postmaster_tcb_init(void) {
+  Assert(postmaster_tcb == NULL);
+  postmaster_tcb = new postmaster_tcb_t();
 }
