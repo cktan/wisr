@@ -392,6 +392,12 @@ int stmt_begin(session_t* s, stmt_t& outer);
 
 /* End a statement begun inside another, resuming the outer one. */
 int stmt_end(session_t* s, const stmt_t& outer);
+
+/*
+ * Advance the running statement's mark, as sm1::stmt_advance
+ * does. Its snapshot stays, and so does its view of the catalog.
+ */
+int stmt_advance(session_t* s);
 int savepoint(session_t* s);
 int rollback(session_t* s, int depth);
 int forget(session_t* s, int depth);

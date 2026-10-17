@@ -26,6 +26,7 @@
 
 #include "access/reloptions.h"
 #include "access/relation.h"
+#include "access/smstore.h"
 #include "access/table.h"
 #include "access/tableam.h"
 #include "access/xact.h"
@@ -46,6 +47,7 @@
 #include "tcop/tcopprot.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
+#include "utils/memutils.h"
 #include "utils/rls.h"
 #include "utils/snapmgr.h"
 
@@ -57,6 +59,7 @@ typedef struct {
   ObjectAddress reladdr; /* address of rel, for ExecCreateTableAs */
   CommandId output_cid;  /* cmin to insert in output tuples */
   int ti_options;        /* table_tuple_insert performance options */
+  MemoryContext rowcxt;  /* what handing over one row allocates */
 } DR_intorel;
 
 /* utility functions for CTAS definition creation */
@@ -103,6 +106,17 @@ static ObjectAddress create_ctas_internal(List *attrList, IntoClause *into) {
   create->tablespacename = into->tableSpaceName;
   create->if_not_exists = false;
   create->accessMethod = into->accessMethod;
+
+  /*
+   * The table is sm's: no heap, and no TOAST table beside it.  sm's
+   * statement advances as CommandCounterIncrement() does below, so that
+   * the statement can fill the table it made.
+   */
+  if (!is_matview) {
+    intoRelationAddr = smstore_create_table(create);
+    smstore_statement_advance();
+    return intoRelationAddr;
+  }
 
   /*
    * Create the relation.  (This will error out if there's an existing view,
@@ -520,6 +534,8 @@ static void intorel_startup(DestReceiver *self, int operation,
   myState->reladdr = intoRelationAddr;
   myState->output_cid = GetCurrentCommandId(true);
   myState->ti_options = TABLE_INSERT_SKIP_FSM;
+  myState->rowcxt = AllocSetContextCreate(CurrentMemoryContext, "CTAS row",
+                                          ALLOCSET_DEFAULT_SIZES);
 }
 
 /*
@@ -530,16 +546,18 @@ static bool intorel_receive(TupleTableSlot *slot, DestReceiver *self) {
 
   /* Nothing to insert if WITH NO DATA is specified. */
   if (!myState->into->skipData) {
+    MemoryContext oldcxt = MemoryContextSwitchTo(myState->rowcxt);
+
     /*
-     * Note that the input slot might not be of the type of the target
-     * relation. That's supported by table_tuple_insert(), but slightly
-     * less efficient than inserting with the right slot - but the
-     * alternative would be to copy into a slot of the right type, which
-     * would not be cheap either. This also doesn't allow accessing per-AM
-     * data (say a tuple's xmin), but since we don't do that here...
+     * Into sm's bulk load of the new table, which is empty: its rows go to
+     * sorted files the table takes whole when intorel_shutdown() ends the
+     * load (access/sm/smstore.c).  What the row's handing over allocates
+     * goes with it.
      */
-    table_tuple_insert(myState->rel, slot, myState->output_cid,
+    table_multi_insert(myState->rel, &slot, 1, myState->output_cid,
                        myState->ti_options, NULL);
+    MemoryContextSwitchTo(oldcxt);
+    MemoryContextReset(myState->rowcxt);
   }
 
   /* We know this is a newly created relation, so there are no indexes */
@@ -561,6 +579,7 @@ static void intorel_shutdown(DestReceiver *self) {
   /* close rel, but keep lock until commit */
   table_close(myState->rel, NoLock);
   myState->rel = NULL;
+  MemoryContextDelete(myState->rowcxt);
 }
 
 /*

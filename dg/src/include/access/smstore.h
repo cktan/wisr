@@ -134,6 +134,7 @@ typedef struct smstore_table_t {
 } smstore_table_t;
 
 extern void smstore_statement_start(void);
+extern void smstore_statement_advance(void);
 extern void smstore_commit(void);
 extern void smstore_abort(void);
 extern void smstore_subcommit(void);

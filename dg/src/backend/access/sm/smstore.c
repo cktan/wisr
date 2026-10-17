@@ -453,6 +453,17 @@ void smstore_statement_start(void) {
 }
 
 /*
+ * Advance sm's statement to now, keeping its snapshot, as
+ * CommandCounterIncrement() advances PostgreSQL's command id: what the
+ * statement made in sm, a table and its rowno sequence, it may now write
+ * (sm_stmt_advance).
+ */
+void smstore_statement_advance(void) {
+  if (sm_stmt_advance(xact_session()) != 0)
+    sm_error("advance a statement");
+}
+
+/*
  * A numeric column with no precision is numeric(18, 3), DuckDB's DECIMAL
  * (DECIMAL.md section 2.3): sm keeps a decimal's scale in its schema.
  */

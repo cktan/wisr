@@ -115,6 +115,29 @@
 (commit)
 (assert-err :notfound (nextseq s1))
 
+# 9. What a statement made it sees only once it advances, as
+#    PostgreSQL's command counter: so CREATE TABLE AS fills the
+#    table it made, which draws its rownos from its new sequence.
+#    1. In one statement, make a sequence: it is not seen yet.
+#    2. Advance the statement, and draw from it.
+#    3. In the same statement, make a table, advance, insert a row.
+#    4. After the commit the row is there.
+(begin :rc)
+(stmt-begin)
+(seq-create s3 10 1)
+(assert-err :notfound (nextseq s3))
+(stmt-advance)
+(assert-eq (nextseq s3) 10)
+(table-create made
+  (columns
+    (id :int4)))
+(stmt-advance)
+(assert-eq (insert made [1]) 1)
+(commit)
+(begin :rc)
+(assert-eq (map (fn [r] (r 0)) (scan made)) [1])
+(commit)
+
 (db-close)
 (env-detach :force true)
 (rm-rf test-dir)

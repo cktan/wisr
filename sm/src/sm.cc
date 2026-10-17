@@ -713,6 +713,11 @@ int sm_stmt_end(sm_session_t *session, sm_stmt_t *outer) {
   });
 }
 
+/* Advance the running statement's mark to now. */
+int sm_stmt_advance(sm_session_t *session) {
+  return guard(session, [&] { return sm3::stmt_advance(session->sm3); });
+}
+
 /* QA only: make the session's lock requests fail where they would wait. */
 int sm_set_qa_nowait(sm_session_t *session, bool on) {
   sm1::session_t *s = session_of(session);

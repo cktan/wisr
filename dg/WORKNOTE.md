@@ -5896,3 +5896,45 @@ temporary table both named `temptest`, each with an index
   names hidden and found again as `temp` has them, and a drop
   named in `pg_temp`. 2 of its 18 records failed without the
   change. `temp` stops next at an expression index.
+
+## Step 203: CREATE TABLE AS, into sm's bulk load
+
+`test/regress/README.md`'s cheapest unblocking: `CREATE TABLE
+AS` and `SELECT INTO` failed with `a relation's storage cannot
+be made`, as `create_ctas_internal()` still made a heap and its
+TOAST table.
+
+- **The table is sm's.** commands `createas.c` makes it with
+  access/sm `smstore_create_table()`, as `CREATE TABLE` does
+  (`utility.c`): no TOAST table. `CREATE MATERIALIZED VIEW`
+  still takes the old path, and fails there, as views do.
+- **Its rows go to sm's bulk load.** `intorel_receive()` hands
+  each to `table_multi_insert()`, which is `smstore_load()`
+  (access/sm `smtable.c`), and `intorel_shutdown()`'s
+  `table_finish_bulk_insert()` ends the load. The table is new
+  and empty, so its rows go to sorted files the store takes
+  whole. PostgreSQL inserts them a row at a time. A row's
+  conversion allocates, so each is handed over in a memory
+  context of its own, reset after it.
+- **A savepoint set before it can be rolled back to**: since
+  `a656446` a rollback past a load empties the table
+  (`../sm/BULKLOAD.md` §3.5).
+- **sm's statement advances after the table is made**, as
+  PostgreSQL's command counter does at the same place:
+  access/sm `smstore_statement_advance()`, over
+  `sm_stmt_advance()` (`9cb37a0`). The statement's mark hid
+  what it made, the table's store and its rowno sequence, so
+  no row could be loaded, nor inserted once a value stored out
+  of line ends the load. The snapshot stays the statement's,
+  and sm's visibility rule is unchanged.
+- **Left**: a `CREATE TABLE AS` that fails inside a savepoint
+  after its first row ends the transaction, not the savepoint
+  alone: its load is still open, sm refuses the rollback, and
+  the next call into sm or the `COMMIT` fails, as after a
+  `COPY` (`../sm/NEXT.md` §1). Nothing of it is committed.
+- `test/slt/create_table_as.test`: the forms, a column list,
+  `SELECT INTO`, `WITH NO DATA`, `IF NOT EXISTS`, 100,000 rows,
+  values out of line, a temporary table, `EXECUTE`, and a
+  rollback to a savepoint before it. Its answers are written by
+  hand, as no PostgreSQL 18 was at hand; `make regress` could
+  not be run for the same reason.

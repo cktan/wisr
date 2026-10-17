@@ -178,6 +178,20 @@ outer statement resumes with its own view.
 (stmt-end)
 ```
 
+### `(stmt-advance)`
+Advances the running statement to now, as PostgreSQL's
+`CommandCounterIncrement` does: its later reads see the
+transaction's writes so far, its own included, at the same
+snapshot. A sequence or a table the statement made is usable
+after it.
+
+```janet
+(stmt-begin)
+(table-create t (columns (id :int4)))
+(stmt-advance)
+(insert t [1])
+```
+
 ### `(qa-nowait on)`
 Sets whether the active session waits for locks. With `true`,
 an operation that would wait for another session's lock fails

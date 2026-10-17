@@ -27,14 +27,16 @@ A bug, to fix first:
 
    A `COPY` into an empty table that fails inside a savepoint
    after its first batch, its load still open, takes the same
-   path: sm refuses the rollback with `SM_ERR_INVALID`
-   (`BULKLOAD.md` §3.5), digres ignores it, and the next
-   statement fails setting the savepoint again (`a savepoint
-   cannot be set with a bulk load open`), aborting the
-   transaction. Nothing wrong commits, but PostgreSQL would
-   roll back to the savepoint and go on. `smstore_subabort()`
-   should end the open load before it rolls back; the rollback
-   then empties the table.
+   path, and so does a `CREATE TABLE AS` that fails after its
+   first row: sm refuses the rollback with `SM_ERR_INVALID`
+   (`BULKLOAD.md` §3.5), digres ignores it, and the next call
+   into sm fails (`a savepoint cannot be set with a bulk load
+   open`), or the `COMMIT` does (`a transaction with a bulk
+   load open cannot commit`), aborting the transaction.
+   Nothing wrong commits, but PostgreSQL would roll back to
+   the savepoint and go on. `smstore_subabort()` should end
+   the open load before it rolls back; the rollback then
+   empties the table.
 
 Nothing else is queued above low priority. The spike
 `PART4.md` §7 aimed the stack at is long past: digres runs on it

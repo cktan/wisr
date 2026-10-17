@@ -657,6 +657,19 @@ int stmt_begin(session_t* session, stmt_t& outer);
 int stmt_end(session_t* session, const stmt_t& outer);
 
 /*
+ * Advance the running statement's mark to now, as PostgreSQL's
+ * CommandCounterIncrement does: its later reads see the
+ * transaction's writes so far, the statement's own included,
+ * at the statement's snapshot, which stays. A store or a
+ * sequence the statement made is usable after it, as by a
+ * statement that makes a table and fills it. With no statement
+ * begun every own write is seen already, and it does nothing.
+ *
+ * Errors: SM_ERR_NOTRANS, SM_ERR_PREPARED.
+ */
+int stmt_advance(session_t* session);
+
+/*
  * FOR QA ONLY: it lets one thread play several sessions in a
  * test, and is not how a caller asks for NOWAIT or SKIP LOCKED.
  * Those are to be explicit flags on the calls that can wait.
