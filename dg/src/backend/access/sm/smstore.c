@@ -407,12 +407,19 @@ void smstore_subabort(void) {
    * A rollback sm refuses changes nothing and leaves its transaction
    * running, with the writes it was to undo: past the undo list's cap, or
    * with a load it could not end.  In an abort there is nowhere for an
-   * error to go, so the transaction is doomed instead: its next call into
-   * sm fails, and so does its commit.
+   * error to go, so it is logged as a warning, which does not throw, and
+   * the transaction is doomed instead: its next call into sm fails, and so
+   * does its commit.
    */
   if (depth > 0) {
-    if (sm_rollback(session(), depth) != 0 && tcb->smstore->doomed.empty())
-      tcb->smstore->doomed = sm_errmsg();
+    if (sm_rollback(session(), depth) != 0) {
+      std::string why = sm_errmsg();
+
+      ereport(WARNING,
+              (errmsg("could not roll back to a savepoint: %s", why.c_str())));
+      if (tcb->smstore->doomed.empty())
+        tcb->smstore->doomed = why;
+    }
     (void)sm_forget(session(), depth);
   }
   close_subxact_tables();

@@ -6033,6 +6033,9 @@ refused, and the transaction was doomed.
 - **The doom stays**, for a rollback past
   `savepoint_undo_bytes`; it is now untested
   (`../sm/NEXT.md` §2).
+- **A rollback sm refuses is logged**: `smstore_subabort()`
+  writes a `WARNING` with sm's reason, which does not throw in
+  an abort, before dooming the transaction.
 - `../sm/sm1/test/test_load.cc`: a close failing on a
   duplicate key, in either of a load's forms, then the
   rollback, a write and the commit. It failed before.
