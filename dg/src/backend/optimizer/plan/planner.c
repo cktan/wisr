@@ -302,7 +302,6 @@ PlannedStmt *standard_planner(Query *parse, const char *query_string,
   glob->lastPHId = 0;
   glob->lastRowMarkId = 0;
   glob->lastPlanNodeId = 0;
-  glob->transientPlan = false;
   glob->dependsOnRole = false;
   glob->partition_directory = NULL;
 
@@ -390,7 +389,6 @@ PlannedStmt *standard_planner(Query *parse, const char *query_string,
   result->hasReturning = (parse->returningList != NIL);
   result->hasModifyingCTE = parse->hasModifyingCTE;
   result->canSetTag = parse->canSetTag;
-  result->transientPlan = glob->transientPlan;
   result->dependsOnRole = glob->dependsOnRole;
   result->planTree = top_plan;
   result->partPruneInfos = glob->partPruneInfos;
@@ -5750,9 +5748,8 @@ bool plan_cluster_use_sort(Oid tableOid, Oid indexOid) {
 
   /*
    * It's possible that get_relation_info did not generate an IndexOptInfo
-   * for the desired index; this could happen if it's not yet reached its
-   * indcheckxmin usability horizon, or if it's a system index and we're
-   * ignoring system indexes.  In such cases we should tell CLUSTER to not
+   * for the desired index; this could happen if it's a system index and
+   * we're ignoring system indexes.  In such cases we should tell CLUSTER to not
    * trust the index contents but use seqscan-and-sort.
    */
   if (lc == NULL) /* not in the list? */

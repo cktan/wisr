@@ -6825,3 +6825,33 @@ prepared transactions.
   with the snapshots, next.
 - `server.sh`: `pg_current_xact_id()` and `txid_current()` are
   refused; the `if_assigned` forms are null.
+
+## Step 233: combo cids, the current xid and xmin are gone
+
+The second step of `../sm/NEXT.md` §1's `xact.c` item, its
+first part. digres has no heap, assigns no xid, and every
+snapshot is the same, so what told one transaction's tuples
+from another's had nothing to tell.
+
+- **`combocid.c`**: its functions had no caller left;
+  `xact.c`'s `AtEOXact_ComboCid()` went with it.
+- **`TransactionIdIsCurrentTransactionId()`**, always false.
+  `TransactionIdIsInProgress()` and the heap slot's
+  `is_current_xact_tuple` say false themselves; a serialization
+  failure above READ COMMITTED on a relation not in sm no
+  longer asks whose the tuple is.
+- **"cannot affect row a second time"**: ON CONFLICT DO UPDATE
+  and MERGE told the case by the row's xmin being their own
+  transaction's, which never held. The checks are gone, and the
+  gap they leave is `ISSUE.md` issue 2: digres keeps the first
+  row and drops the second's update. MERGE does not write yet.
+  `test/slt/on_conflict_twice.test` holds PostgreSQL's answer
+  and digres's, so the gap is not forgotten.
+- **xmin**: `tcb_t`'s `xmin`, `TransactionXmin`, `RecentXmin`,
+  `SnapshotResetXmin()` and `AtEOXact_Snapshot()`'s `resetXmin`,
+  and the asserts on them in `indexcmds.c` and `indexam.c`.
+- **Transient plans**: a plan was transient when it skipped an
+  index with `indcheckxmin` not yet past `TransactionXmin`;
+  `indcheckxmin` is always false in digres. `plancat.c`'s check,
+  `transientPlan` in `PlannerGlobal` and `PlannedStmt`, and the
+  plan cache's `saved_xmin` are gone.

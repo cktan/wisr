@@ -67,9 +67,6 @@ typedef struct PlannedStmt
 	/* do I set the command result tag? */
 	bool		canSetTag;
 
-	/* redo plan when TransactionXmin changes? */
-	bool		transientPlan;
-
 	/* is plan specific to current role? */
 	bool		dependsOnRole;
 

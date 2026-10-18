@@ -162,9 +162,6 @@ typedef struct PlannerGlobal
 	/* highest plan node ID assigned */
 	int			lastPlanNodeId;
 
-	/* redo plan when TransactionXmin changes? */
-	bool		transientPlan;
-
 	/* is plan specific to current role? */
 	bool		dependsOnRole;
 

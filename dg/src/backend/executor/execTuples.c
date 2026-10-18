@@ -318,7 +318,6 @@ static Datum tts_heap_getsysattr(TupleTableSlot *slot, int attnum,
 
 static bool tts_heap_is_current_xact_tuple(TupleTableSlot *slot) {
   HeapTupleTableSlot *hslot = (HeapTupleTableSlot *)slot;
-  TransactionId xmin;
 
   Assert(!TTS_EMPTY(slot));
 
@@ -331,9 +330,8 @@ static bool tts_heap_is_current_xact_tuple(TupleTableSlot *slot) {
     ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                     errmsg("don't have a storage tuple in this context")));
 
-  xmin = HeapTupleHeaderGetRawXmin(hslot->tuple->t_data);
-
-  return TransactionIdIsCurrentTransactionId(xmin);
+  /* No tuple is this transaction's own: digres assigns no xid. */
+  return false;
 }
 
 static void tts_heap_materialize(TupleTableSlot *slot) {

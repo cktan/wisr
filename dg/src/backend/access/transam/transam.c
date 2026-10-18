@@ -116,9 +116,6 @@ bool TransactionIdFollowsOrEquals(TransactionId id1, TransactionId id2) {
  * TransactionIdIsInProgress -- is given transaction running in some backend
  */
 bool TransactionIdIsInProgress(TransactionId xid) {
-  /*
-   * No other session holds a PostgreSQL xid (GetSnapshotData()): only this
-   * one's own can be in progress.
-   */
-  return TransactionIdIsCurrentTransactionId(xid);
+  /* No session holds a PostgreSQL xid: digres assigns none. */
+  return false;
 }

@@ -351,26 +351,11 @@ static void ExecCheckTupleVisible(EState *estate, Relation rel,
   if (RelationIsSm(rel))
     return;
 
-  if (!table_tuple_satisfies_snapshot(rel, slot, estate->es_snapshot)) {
-    Datum xminDatum;
-    TransactionId xmin;
-    bool isnull;
-
-    xminDatum = slot_getsysattr(slot, MinTransactionIdAttributeNumber, &isnull);
-    Assert(!isnull);
-    xmin = DatumGetTransactionId(xminDatum);
-
-    /*
-     * We should not raise a serialization failure if the conflict is
-     * against a tuple inserted by our own transaction, even if it's not
-     * visible to our snapshot.  (This would happen, for example, if
-     * conflicting keys are proposed for insertion in a single command.)
-     */
-    if (!TransactionIdIsCurrentTransactionId(xmin))
-      ereport(ERROR,
-              (errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
-               errmsg("could not serialize access due to concurrent update")));
-  }
+  /* No tuple is this transaction's own: digres assigns no xid. */
+  if (!table_tuple_satisfies_snapshot(rel, slot, estate->es_snapshot))
+    ereport(ERROR,
+            (errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+             errmsg("could not serialize access due to concurrent update")));
 }
 
 /*
@@ -2407,9 +2392,6 @@ static bool ExecOnConflictUpdate(ModifyTableContext *context,
   TM_FailureData tmfd;
   LockTupleMode lockmode;
   TM_Result test;
-  Datum xminDatum;
-  TransactionId xmin;
-  bool isnull;
 
   /*
    * Parse analysis should have blocked ON CONFLICT for all system
@@ -2453,20 +2435,10 @@ static bool ExecOnConflictUpdate(ModifyTableContext *context,
      * occurring.  These problems are why the SQL standard similarly
      * specifies that for SQL MERGE, an exception must be raised in
      * the event of an attempt to update the same row twice.
+     *
+     * PostgreSQL told that case by the row's xmin being this transaction's;
+     * digres assigns no xid, so it cannot (dg/ISSUE.md issue 2).
      */
-    xminDatum =
-        slot_getsysattr(existing, MinTransactionIdAttributeNumber, &isnull);
-    Assert(!isnull);
-    xmin = DatumGetTransactionId(xminDatum);
-
-    if (TransactionIdIsCurrentTransactionId(xmin))
-      ereport(ERROR,
-              (errcode(ERRCODE_CARDINALITY_VIOLATION),
-               /* translator: %s is a SQL command name */
-               errmsg("%s command cannot affect row a second time",
-                      "ON CONFLICT DO UPDATE"),
-               errhint("Ensure that no rows proposed for insertion within the "
-                       "same command have duplicate constrained values.")));
 
     /* This shouldn't happen */
     elog(ERROR, "attempted to lock invisible tuple");
@@ -2957,14 +2929,6 @@ lmerge_matched:
                  errhint("Consider using an AFTER trigger instead of a BEFORE "
                          "trigger to propagate changes to other rows.")));
 
-      if (TransactionIdIsCurrentTransactionId(context->tmfd.xmax))
-        ereport(ERROR,
-                (errcode(ERRCODE_CARDINALITY_VIOLATION),
-                 /* translator: %s is a SQL command name */
-                 errmsg("%s command cannot affect row a second time", "MERGE"),
-                 errhint("Ensure that not more than one source row matches any "
-                         "one target row.")));
-
       /* This shouldn't happen */
       elog(ERROR, "attempted to update or delete invisible tuple");
       break;
@@ -3137,14 +3101,6 @@ lmerge_matched:
                       "an operation triggered by the current command"),
                errhint("Consider using an AFTER trigger instead of a BEFORE "
                        "trigger to propagate changes to other rows.")));
-
-        if (TransactionIdIsCurrentTransactionId(context->tmfd.xmax))
-          ereport(ERROR, (errcode(ERRCODE_CARDINALITY_VIOLATION),
-                          /* translator: %s is a SQL command name */
-                          errmsg("%s command cannot affect row a second time",
-                                 "MERGE"),
-                          errhint("Ensure that not more than one source row "
-                                  "matches any one target row.")));
 
         /* This shouldn't happen */
         elog(ERROR, "attempted to update or delete invisible tuple");

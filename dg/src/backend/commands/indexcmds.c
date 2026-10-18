@@ -1528,9 +1528,6 @@ ObjectAddress DefineIndex(Oid tableId, IndexStmt *stmt, Oid indexRelationId,
   if (safe_index)
     set_indexsafe_procflags();
 
-  /* We should now definitely not be advertising any xmin. */
-  Assert(tcb->xmin == InvalidTransactionId);
-
   /*
    * The index is now valid in the sense that it contains all currently
    * interesting tuples.  But since it might not contain tuples deleted just
@@ -2575,12 +2572,6 @@ static void update_relispartition(Oid relationId, bool newval) {
  * set for each transaction.)
  */
 static inline void set_indexsafe_procflags(void) {
-  /*
-   * This should only be called before installing the session's xmin;
-   * otherwise, concurrent processes could see an Xmin that moves backwards.
-   */
-  Assert(tcb->xmin == InvalidTransactionId);
-
   /*
    * No flag is set: PostgreSQL's PROC_IN_SAFE_IC told other sessions'
    * concurrent index builds to skip this one, and none waits for another

@@ -142,14 +142,6 @@ static thread_local /*LOCAL*/ Snapshot SecondarySnapshot = NULL;
 static thread_local /*LOCAL*/ Snapshot CatalogSnapshot = NULL;
 
 /*
- * These are updated by GetSnapshotData.  We initialize them this way
- * for the convenience of TransactionIdIsInProgress: even in bootstrap
- * mode, we don't want it to say that BootstrapTransactionId is in progress.
- */
-thread_local /*LOCAL*/ TransactionId TransactionXmin = FirstNormalTransactionId;
-thread_local /*LOCAL*/ TransactionId RecentXmin = FirstNormalTransactionId;
-
-/*
  * Elements of the active snapshot stack.
  *
  * Each element here accounts for exactly one active_count on SnapshotData.
@@ -190,7 +182,6 @@ static thread_local /*LOCAL*/ Snapshot FirstXactSnapshot = NULL;
 static Snapshot CopySnapshot(Snapshot snapshot);
 static void UnregisterSnapshotNoOwner(Snapshot snapshot);
 static void FreeSnapshot(Snapshot snapshot);
-static void SnapshotResetXmin(void);
 static Snapshot GetSnapshotData(Snapshot snapshot);
 
 /* ResourceOwner callbacks to track snapshot references */
@@ -347,7 +338,6 @@ void InvalidateCatalogSnapshot(void) {
   if (CatalogSnapshot) {
     pairingheap_remove(&RegisteredSnapshots, &CatalogSnapshot->ph_node);
     CatalogSnapshot = NULL;
-    SnapshotResetXmin();
   }
 }
 
@@ -541,8 +531,6 @@ void PopActiveSnapshot(void) {
 
   pfree(ActiveSnapshot);
   ActiveSnapshot = newstack;
-
-  SnapshotResetXmin();
 }
 
 /*
@@ -636,7 +624,6 @@ static void UnregisterSnapshotNoOwner(Snapshot snapshot) {
 
   if (snapshot->regd_count == 0 && snapshot->active_count == 0) {
     FreeSnapshot(snapshot);
-    SnapshotResetXmin();
   }
 }
 
@@ -657,37 +644,6 @@ static int xmin_cmp(const pairingheap_node *a, const pairingheap_node *b,
     return -1;
   else
     return 0;
-}
-
-/*
- * SnapshotResetXmin
- *
- * If there are no more snapshots, we can reset the session's xmin to
- * InvalidTransactionId. Note we can do this without locking because we assume
- * that storing an Xid is atomic.
- *
- * Even if there are some remaining snapshots, we may be able to advance our
- * the session's xmin to some degree.  This typically happens when a portal is
- * dropped.  For efficiency, we only consider recomputing the session's xmin
- * when the active snapshot stack is empty; this allows us not to need to track
- * which active snapshot is oldest.
- */
-static void SnapshotResetXmin(void) {
-  Snapshot minSnapshot;
-
-  if (ActiveSnapshot != NULL)
-    return;
-
-  if (pairingheap_is_empty(&RegisteredSnapshots)) {
-    tcb->xmin = TransactionXmin = InvalidTransactionId;
-    return;
-  }
-
-  minSnapshot = pairingheap_container(SnapshotData, ph_node,
-                                      pairingheap_first(&RegisteredSnapshots));
-
-  if (TransactionIdPrecedes(tcb->xmin, minSnapshot->xmin))
-    tcb->xmin = TransactionXmin = minSnapshot->xmin;
 }
 
 /*
@@ -734,15 +690,13 @@ void AtSubAbort_Snapshot(int level) {
 
     ActiveSnapshot = next;
   }
-
-  SnapshotResetXmin();
 }
 
 /*
  * AtEOXact_Snapshot
  *		Snapshot manager's cleanup function for end of transaction
  */
-void AtEOXact_Snapshot(bool isCommit, bool resetXmin) {
+void AtEOXact_Snapshot(bool isCommit) {
   /*
    * In transaction-snapshot mode we must release our privately-managed
    * reference to the transaction snapshot.  We must remove it from
@@ -785,16 +739,6 @@ void AtEOXact_Snapshot(bool isCommit, bool resetXmin) {
   SecondarySnapshot = NULL;
 
   FirstSnapshotSet = false;
-
-  /*
-   * During normal commit processing, we call ProcArrayEndTransaction() to
-   * reset the session's xmin. That call happens prior to the call to
-   * AtEOXact_Snapshot(), so we need not touch xmin here at all.
-   */
-  if (resetXmin)
-    SnapshotResetXmin();
-
-  Assert(resetXmin || tcb->xmin == 0);
 }
 
 /*
@@ -944,12 +888,6 @@ static void ResOwnerReleaseSnapshot(Datum res) {
  * In digres no xid is ever running, so the list is empty and every snapshot
  * is the same (see below).
  *
- * We also update the following backend-global variables:
- *		TransactionXmin: the oldest xmin of any snapshot in use in the
- *			current transaction (the session's xmin).
- *		RecentXmin: the xmin computed for the most recent snapshot. XIDs
- *			older than this are known not running any more.
- *
  * No horizon is kept: what one serves, heap pruning and VACUUM, does not
  * run.  A snapshot's xid arrays are not allocated: it holds none.
  */
@@ -967,10 +905,6 @@ static Snapshot GetSnapshotData(Snapshot snapshot) {
    * step 3).  The command id is the caller's, as before.
    */
   xmax = FirstNormalTransactionId;
-
-  if (!TransactionIdIsValid(tcb->xmin))
-    tcb->xmin = TransactionXmin = xmax;
-  RecentXmin = xmax;
 
   snapshot->xmin = xmax;
   snapshot->xmax = xmax;

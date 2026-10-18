@@ -248,12 +248,11 @@ typedef struct tcb_t {
 
   /* -- its transaction -- */
   /*
-   * xact.c, snapmgr.c: this session's transaction's local id,
-   * a virtual xid's low part, and its xmin, both invalid between
-   * transactions; its PGPROC's once (dg/WORKNOTE.md step 159)
+   * xact.c: this session's transaction's local id, a virtual xid's low
+   * part, invalid between transactions; its PGPROC's once
+   * (dg/WORKNOTE.md step 159)
    */
   uint32 lxid = 0;
-  uint32 xmin = 0;
   std::unique_ptr<smstore_state_t, smstore_state_free_t> smstore;
 
   /* -- the thread's resources -- */

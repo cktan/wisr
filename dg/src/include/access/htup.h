@@ -76,12 +76,6 @@ typedef HeapTupleData *HeapTuple;
  */
 #define HeapTupleIsValid(tuple) PointerIsValid(tuple)
 
-/* HeapTupleHeader functions implemented in utils/time/combocid.c */
-extern CommandId HeapTupleHeaderGetCmin(const HeapTupleHeaderData *tup);
-extern CommandId HeapTupleHeaderGetCmax(const HeapTupleHeaderData *tup);
-extern void HeapTupleHeaderAdjustCmax(const HeapTupleHeaderData *tup,
-                                      CommandId *cmax, bool *iscombo);
-
 /* Prototype for HeapTupleHeader accessors in heapam.c */
 extern TransactionId HeapTupleGetUpdateXid(const HeapTupleHeaderData *tup);
 

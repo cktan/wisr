@@ -910,14 +910,6 @@ static bool CheckCachedPlan(CachedPlanSource *plansource) {
     AcquireExecutorLocks(plan->stmt_list, true);
 
     /*
-     * If plan was transient, check to see if TransactionXmin has
-     * advanced, and if so invalidate it.
-     */
-    if (plan->is_valid && TransactionIdIsValid(plan->saved_xmin) &&
-        !TransactionIdEquals(plan->saved_xmin, TransactionXmin))
-      plan->is_valid = false;
-
-    /*
      * By now, if any invalidation has happened, the inval callback
      * functions will have marked the plan invalid.
      */
@@ -960,7 +952,6 @@ static CachedPlan *BuildCachedPlan(CachedPlanSource *plansource, List *qlist,
   CachedPlan *plan;
   List *plist;
   bool snapshot_set;
-  bool is_transient;
   MemoryContext plan_context;
   MemoryContext oldcxt = CurrentMemoryContext;
   ListCell *lc;
@@ -1042,28 +1033,19 @@ static CachedPlan *BuildCachedPlan(CachedPlanSource *plansource, List *qlist,
 
   /*
    * CachedPlan is dependent on role either if RLS affected the rewrite
-   * phase or if a role dependency was injected during planning.  And it's
-   * transient if any plan is marked so.
+   * phase or if a role dependency was injected during planning.
    */
   plan->planRoleId = GetUserId();
   plan->dependsOnRole = plansource->dependsOnRLS;
-  is_transient = false;
   foreach (lc, plist) {
     PlannedStmt *plannedstmt = lfirst_node(PlannedStmt, lc);
 
     if (plannedstmt->commandType == CMD_UTILITY)
       continue; /* Ignore utility statements */
 
-    if (plannedstmt->transientPlan)
-      is_transient = true;
     if (plannedstmt->dependsOnRole)
       plan->dependsOnRole = true;
   }
-  if (is_transient) {
-    Assert(TransactionIdIsNormal(TransactionXmin));
-    plan->saved_xmin = TransactionXmin;
-  } else
-    plan->saved_xmin = InvalidTransactionId;
   plan->refcount = 0;
   plan->context = plan_context;
   plan->is_oneshot = plansource->is_oneshot;
@@ -1379,15 +1361,13 @@ bool CachedPlanAllowsSimpleValidityCheck(CachedPlanSource *plansource,
   Assert(!plan->is_oneshot);
 
   /*
-   * If the plan is dependent on RLS considerations, or it's transient,
-   * reject.  These things probably can't ever happen for table-free
-   * queries, but for safety's sake let's check.
+   * If the plan is dependent on RLS considerations, reject.  These things
+   * probably can't ever happen for table-free queries, but for safety's sake
+   * let's check.
    */
   if (plansource->dependsOnRLS)
     return false;
   if (plan->dependsOnRole)
-    return false;
-  if (TransactionIdIsValid(plan->saved_xmin))
     return false;
 
   /*

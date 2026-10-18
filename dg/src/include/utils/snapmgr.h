@@ -20,9 +20,6 @@
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool FirstSnapshotSet;
 
-extern thread_local /*LOCAL*/ PGDLLIMPORT TransactionId TransactionXmin;
-extern thread_local /*LOCAL*/ PGDLLIMPORT TransactionId RecentXmin;
-
 /* Variables representing various special snapshot semantics */
 extern thread_local /*LOCAL*/ PGDLLIMPORT SnapshotData SnapshotSelfData;
 extern thread_local /*LOCAL*/ PGDLLIMPORT SnapshotData SnapshotAnyData;
@@ -78,7 +75,7 @@ extern void UnregisterSnapshotFromOwner(Snapshot snapshot, ResourceOwner owner);
 
 extern void AtSubCommit_Snapshot(int level);
 extern void AtSubAbort_Snapshot(int level);
-extern void AtEOXact_Snapshot(bool isCommit, bool resetXmin);
+extern void AtEOXact_Snapshot(bool isCommit);
 
 extern void ImportSnapshot(const char *idstr);
 extern void WaitForOlderSnapshots(TransactionId limitXmin);

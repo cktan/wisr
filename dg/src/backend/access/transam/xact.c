@@ -38,7 +38,6 @@
 #include "storage/lmgr.h"
 #include "storage/proc.h"
 #include "utils/builtins.h"
-#include "utils/combocid.h"
 #include "utils/control_block.h"
 #include "utils/guc.h"
 #include "utils/inval.h"
@@ -307,14 +306,6 @@ int GetCurrentTransactionNestLevel(void) {
   TransactionState s = CurrentTransactionState;
 
   return s->nestingLevel;
-}
-
-/*
- *	TransactionIdIsCurrentTransactionId
- */
-bool TransactionIdIsCurrentTransactionId(TransactionId xid) {
-  /* digres assigns no xid, so none is this transaction's. */
-  return false;
 }
 
 /*
@@ -914,11 +905,10 @@ static void CommitTransaction(void) {
   TRACE_POSTGRESQL_TRANSACTION_COMMIT(tcb->lxid);
 
   /*
-   * The transaction's local id and xmin are the session's own, which no
-   * other session reads; it has no xid to end: digres assigns none.
+   * The transaction's local id is the session's own, which no other
+   * session reads; it has no xid to end: digres assigns none.
    */
   tcb->lxid = InvalidLocalTransactionId;
-  tcb->xmin = InvalidTransactionId;
 
   /*
    * This is all post-commit cleanup.  Note that if an error is raised here,
@@ -976,9 +966,8 @@ static void CommitTransaction(void) {
   AtEOXact_on_commit_actions(true);
   AtEOXact_Namespace(true);
   AtEOXact_Files(true);
-  AtEOXact_ComboCid();
   AtEOXact_HashTables(true);
-  AtEOXact_Snapshot(true, false);
+  AtEOXact_Snapshot(true);
 
   ResourceOwnerDelete(TopTransactionResourceOwner);
   s->curTransactionOwner = NULL;
@@ -1061,11 +1050,10 @@ static void AbortTransaction(void) {
   TRACE_POSTGRESQL_TRANSACTION_ABORT(tcb->lxid);
 
   /*
-   * The transaction's local id and xmin are the session's own, which no
-   * other session reads; it has no xid to end: digres assigns none.
+   * The transaction's local id is the session's own, which no other
+   * session reads; it has no xid to end: digres assigns none.
    */
   tcb->lxid = InvalidLocalTransactionId;
-  tcb->xmin = InvalidTransactionId;
 
   /*
    * Post-abort cleanup.  See notes in CommitTransaction() concerning
@@ -1091,7 +1079,6 @@ static void AbortTransaction(void) {
     AtEOXact_on_commit_actions(false);
     AtEOXact_Namespace(false);
     AtEOXact_Files(false);
-    AtEOXact_ComboCid();
     AtEOXact_HashTables(false);
   }
 
@@ -1118,7 +1105,7 @@ static void CleanupTransaction(void) {
    * do abort cleanup processing
    */
   AtCleanup_Portals();            /* now safe to release portal memory */
-  AtEOXact_Snapshot(false, true); /* and release the transaction's snapshots */
+  AtEOXact_Snapshot(false);       /* and release the transaction's snapshots */
 
   CurrentResourceOwner = NULL; /* and resource owner */
   if (TopTransactionResourceOwner)
