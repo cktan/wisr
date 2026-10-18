@@ -145,19 +145,6 @@ bool ConditionalLockRelationOid(Oid relid, LOCKMODE lockmode) {
 }
 
 /*
- *		LockRelationId
- *
- * Lock, given a LockRelId.  Same as LockRelationOid but take LockRelId as an
- * input.
- */
-void LockRelationId(LockRelId *relid, LOCKMODE lockmode) {
-  /* sm's lock, for a table of sm's: a catalog takes none. */
-  if (locked_by_sm(relid->relId))
-    smstore_lock_relation(relid->relId, lockmode);
-  AcceptInvalidationMessages();
-}
-
-/*
  *		LockRelation
  *
  * This is a convenience routine for acquiring an additional lock on an
