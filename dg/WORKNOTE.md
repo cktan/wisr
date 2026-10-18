@@ -7314,3 +7314,20 @@ keep which.
 - A table made before this keeps its unique constraints unmarked:
   `\d` shows them `UNIQUE`, with no row.
 - `test/slt/key_constraint_catalog.test`.
+
+## Step 249: the planner's page costs are the settings
+
+`spccache.c` cached each tablespace's `seq_page_cost` and
+`random_page_cost`, which `ALTER TABLESPACE ... SET` gave it; digres
+has only the default tablespace, no `pg_tablespace` and no `ALTER
+TABLESPACE`, so every lookup gave the settings.
+
+- **`spccache.c` and `spccache.h` are gone**; the planner's six
+  calls in `costsize.c` and the index cost's in `selfuncs.c`
+  take `seq_page_cost` and `random_page_cost` themselves. Costs
+  are what they were.
+- **The tablespace options** are gone with it:
+  `tablespace_reloptions()`, `TableSpaceOpts`, and the
+  `seq_page_cost` and `random_page_cost` entries of
+  `reloptions.c`'s table, of kind `RELOPT_KIND_TABLESPACE`,
+  whose name the enum keeps with PostgreSQL's other kinds.

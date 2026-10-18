@@ -18,12 +18,6 @@
 #include "lib/stringinfo.h"
 #include "nodes/parsenodes.h"
 
-typedef struct TableSpaceOpts {
-  int32 vl_len_; /* varlena header (do not touch directly!) */
-  float8 random_page_cost;
-  float8 seq_page_cost;
-} TableSpaceOpts;
-
 extern Oid get_tablespace_oid(const char *tablespacename, bool missing_ok);
 extern char *get_tablespace_name(Oid spc_oid);
 

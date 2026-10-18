@@ -45,7 +45,6 @@
 #include "miscadmin.h"
 #include "nodes/rowbitmap.h"
 #include "utils/rel.h"
-#include "utils/spccache.h"
 
 static void BitmapTableScanSetup(BitmapHeapScanState *node);
 static TupleTableSlot *BitmapHeapNext(BitmapHeapScanState *node);

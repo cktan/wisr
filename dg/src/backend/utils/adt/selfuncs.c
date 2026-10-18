@@ -135,7 +135,6 @@
 #include "utils/rel.h"
 #include "utils/selfuncs.h"
 #include "utils/snapmgr.h"
-#include "utils/spccache.h"
 #include "utils/syscache.h"
 #include "utils/timestamp.h"
 #include "utils/typcache.h"
@@ -6403,8 +6402,8 @@ void genericcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
   else
     numIndexPages = 1.0;
 
-  /* fetch estimated page cost for tablespace containing index */
-  get_tablespace_page_costs(index->reltablespace, &spc_random_page_cost, NULL);
+  /* The settings': digres has no tablespace with costs of its own. */
+  spc_random_page_cost = random_page_cost;
 
   /*
    * Now compute the disk access costs.

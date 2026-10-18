@@ -125,20 +125,6 @@ static thread_local /*LOCAL*/ relopt_int intRelOpts[] = {
 
 static thread_local /*LOCAL*/ relopt_real realRelOpts[] = {
 
-    {{"seq_page_cost",
-      "Sets the planner's estimate of the cost of a sequentially fetched disk "
-      "page.",
-      RELOPT_KIND_TABLESPACE, ShareUpdateExclusiveLock},
-     -1,
-     0.0,
-     DBL_MAX},
-    {{"random_page_cost",
-      "Sets the planner's estimate of the cost of a nonsequentially fetched "
-      "disk page.",
-      RELOPT_KIND_TABLESPACE, ShareUpdateExclusiveLock},
-     -1,
-     0.0,
-     DBL_MAX},
     {{"n_distinct",
       "Sets the planner's estimate of the number of distinct values appearing "
       "in a column (excluding child relations).",
@@ -1502,21 +1488,6 @@ bytea *attribute_reloptions(Datum reloptions, bool validate) {
 
   return (bytea *)build_reloptions(reloptions, validate, RELOPT_KIND_ATTRIBUTE,
                                    sizeof(AttributeOpts), tab, lengthof(tab));
-}
-
-/*
- * Option parser for tablespace reloptions
- */
-bytea *tablespace_reloptions(Datum reloptions, bool validate) {
-  static const relopt_parse_elt tab[] = {
-      {"random_page_cost", RELOPT_TYPE_REAL,
-       offsetof(TableSpaceOpts, random_page_cost)},
-      {"seq_page_cost", RELOPT_TYPE_REAL,
-       offsetof(TableSpaceOpts, seq_page_cost)},
-  };
-
-  return (bytea *)build_reloptions(reloptions, validate, RELOPT_KIND_TABLESPACE,
-                                   sizeof(TableSpaceOpts), tab, lengthof(tab));
 }
 
 /*
