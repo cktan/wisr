@@ -13,9 +13,10 @@
 -- 8. Make a series and find a bucket.
 -- 9. Use numeric in jsonb, jsonpath, extract, to_char, money and pg_lsn.
 -- 10. Send values in PostgreSQL's binary format.
--- 11. Add, subtract, multiply, divide, sum and average numerics of at most
---     17 digits by their own paths, and get what decimal128's give, a
---     product past 17 digits and sums across scales and windows among them.
+-- 11. Add, subtract, multiply, divide, sum, average, round and format
+--     numerics of at most 17 digits by their own paths, and get what
+--     decimal128's give, a product past 17 digits and sums across scales
+--     and windows among them.
 -- (Errors are server.sh's: a run stops at its first.)
 SELECT 1.5, -0.001, 1e3, 1.50, '  12.340  '::numeric, '0x1F'::numeric, '1_000.5'::numeric;
 SELECT 1e300, 3.4e38, 1e35;
@@ -39,3 +40,4 @@ SELECT numeric_send(1.5), numeric_send(-0.0001), numeric_send(0::numeric), numer
 SELECT a * b, bool_and((a + b)::text = (a::decimal128 + b::decimal128)::text AND (a - b)::text = (a::decimal128 - b::decimal128)::text AND (a * b)::text = (a::decimal128 * b::decimal128)::text AND (a / b)::text = (a::decimal128 / b::decimal128)::text AND (-a)::text = (-(a::decimal128))::text AND abs(a)::text = abs(a::decimal128)::text) OVER () FROM (VALUES (1.5, 2.25), (-99999999999999.999, 0.001), (12345678901234567::numeric(17,0), -3), (0.00000000000000001, 7), (99999999999999999::numeric(17,0), 99999999999999999::numeric(17,0))) v(a, b);
 SELECT sum(x), avg(x), sum(x)::text = sum(x::decimal128)::text, avg(x)::text = avg(x::decimal128)::text FROM (VALUES (1.5), (2.25), (-3), (0.001), (99999999999999999::numeric(17,0))) v(x);
 SELECT i, sum(x) OVER w, avg(x) OVER w FROM (VALUES (1, 1.5), (2, 2.25), (3, -3), (4, 0.001)) v(i, x) WINDOW w AS (ORDER BY i ROWS BETWEEN 1 PRECEDING AND CURRENT ROW);
+SELECT x, round(x, 1), round(x), round(x, -2), to_char(x, '999,999.99'), bool_and(round(x, 1)::text = round(x::decimal128, 1)::text AND round(x)::text = round(x::decimal128)::text AND round(x, -2)::text = round(x::decimal128, -2)::text AND to_char(x, '999,999.99') = to_char(x::decimal128, '999,999.99')) OVER () FROM (VALUES (1234.567), (-0.05), (99.95), (-151.25), (-149.5), (149.5)) v(x);

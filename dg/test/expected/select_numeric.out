@@ -13,9 +13,10 @@
 -- 8. Make a series and find a bucket.
 -- 9. Use numeric in jsonb, jsonpath, extract, to_char, money and pg_lsn.
 -- 10. Send values in PostgreSQL's binary format.
--- 11. Add, subtract, multiply, divide, sum and average numerics of at most
---     17 digits by their own paths, and get what decimal128's give, a
---     product past 17 digits and sums across scales and windows among them.
+-- 11. Add, subtract, multiply, divide, sum, average, round and format
+--     numerics of at most 17 digits by their own paths, and get what
+--     decimal128's give, a product past 17 digits and sums across scales
+--     and windows among them.
 -- (Errors are server.sh's: a run stops at its first.)
 SELECT 1.5, -0.001, 1e3, 1.50, '  12.340  '::numeric, '0x1F'::numeric, '1_000.5'::numeric;
  ?column? | ?column? | ?column? | ?column? | numeric | numeric | numeric  
@@ -158,4 +159,15 @@ SELECT i, sum(x) OVER w, avg(x) OVER w FROM (VALUES (1, 1.5), (2, 2.25), (3, -3)
  3 |  -0.75 | -0.37500000000000000000
  4 | -2.999 | -1.49950000000000000000
 (4 rows)
+
+SELECT x, round(x, 1), round(x), round(x, -2), to_char(x, '999,999.99'), bool_and(round(x, 1)::text = round(x::decimal128, 1)::text AND round(x)::text = round(x::decimal128)::text AND round(x, -2)::text = round(x::decimal128, -2)::text AND to_char(x, '999,999.99') = to_char(x::decimal128, '999,999.99')) OVER () FROM (VALUES (1234.567), (-0.05), (99.95), (-151.25), (-149.5), (149.5)) v(x);
+    x     | round  | round | round |   to_char   | bool_and 
+----------+--------+-------+-------+-------------+----------
+ 1234.567 | 1234.6 |  1235 |  1200 |    1,234.57 | t
+    -0.05 |   -0.1 |     0 |     0 |        -.05 | t
+    99.95 |  100.0 |   100 |   100 |       99.95 | t
+  -151.25 | -151.3 |  -151 |  -200 |     -151.25 | t
+   -149.5 | -149.5 |  -150 |  -100 |     -149.50 | t
+    149.5 |  149.5 |   150 |   100 |      149.50 | t
+(6 rows)
 

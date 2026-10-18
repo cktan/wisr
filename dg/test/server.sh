@@ -2789,7 +2789,8 @@ local_psql -c 'create index t18iv on t18 (iv)' 2>&1 |
 # as PostgreSQL words each error.
 # 1. NaN and infinity are not values; text past 36 digits is refused.
 # 2. Division by zero, the root of a negative, the logarithm of zero.
-# 3. A precision past 36, a field overflow, a result past 36 digits.
+# 3. A precision past 36, a field overflow, a result past 36 digits, and
+#    a round of a numeric of at most 17 digits to more of them.
 for c in "'NaN'::numeric|invalid input syntax for type numeric" \
   "'Infinity'::numeric|invalid input syntax for type numeric" \
   "'0.123456789012345678901234567890123456789'::numeric|value overflows numeric format" \
@@ -2798,6 +2799,8 @@ for c in "'NaN'::numeric|invalid input syntax for type numeric" \
   "ln(0::numeric)|cannot take logarithm of zero" \
   "1::numeric(50,2)|NUMERIC precision 50 must be between 1 and 36" \
   "12345.6::numeric(5,2)|numeric field overflow" \
+  "round(99999999999999999::numeric(17,0), -1)|value overflows numeric format" \
+  "round(1.5, 20)|value overflows numeric format" \
   "999999999999999999999999999999999999::numeric * 10|value overflows numeric format"; do
   local_psql -c "select ${c%%|*}" 2>&1 | grep -q "${c#*|}" ||
     fail "numeric refuses ${c%%|*}"

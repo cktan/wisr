@@ -1127,30 +1127,38 @@ Datum numeric_sign(PG_FUNCTION_ARGS) {
   PG_RETURN_NUMERIC(dec_make(dec_sign(PG_GETARG_NUMERIC(0)), 0));
 }
 
+
+/*
+ * w rounded to scale places, half away from zero, as round(numeric, int)
+ * rounds: a negative scale rounds left of the point, to scale 0.
+ */
+static wide_t wide_round_at(const wide_t &w, int32 scale) {
+  wide_t r;
+
+  scale = Max(scale, -154);
+  scale = Min(scale, NUMERIC_MAX_SCALE);
+  if (scale >= 0)
+    return wide_round(w, scale, false);
+  /*
+   * Round once at 10^-scale: w read as its integer over 10^-scale more,
+   * rounded to an integer, then scaled back up.  Rounding to an integer
+   * first would round twice: -149.5 to -150, then to -200, not -100.
+   */
+  r = w;
+  r.scale = w.scale - scale;
+  r = wide_round(r, 0, false);
+  r = wide_scale_up(r, -scale);
+  r.scale = 0;
+  return r;
+}
+
 /*
  * num rounded to scale places, half away from zero; a negative scale
  * rounds to tens, hundreds and so on, and gives scale 0.
  */
 Datum numeric_round(PG_FUNCTION_ARGS) {
-  wide_t w = dec_wide(PG_GETARG_NUMERIC(0));
-  int32 scale = PG_GETARG_INT32(1);
-
-  scale = Max(scale, -154);
-  scale = Min(scale, NUMERIC_MAX_SCALE);
-  if (scale >= 0)
-    PG_RETURN_NUMERIC(dec_from_wide(wide_round(w, scale, false)));
-  w = wide_round(w, 0, false);
-  w = wide_round(wide_strip_zeros(w, 0), 0, false);
-  {
-    wide_t r = w;
-
-    /* Round at 10^-scale: as a value of scale -scale, then back up. */
-    r.scale = -scale;
-    r = wide_round(r, 0, false);
-    r = wide_scale_up(r, -scale);
-    r.scale = 0;
-    PG_RETURN_NUMERIC(dec_from_wide(r));
-  }
+  PG_RETURN_NUMERIC(dec_from_wide(
+      wide_round_at(dec_wide(PG_GETARG_NUMERIC(0)), PG_GETARG_INT32(1))));
 }
 
 /* num truncated to scale places, as numeric_round(). */
@@ -3429,4 +3437,40 @@ Datum decimal64_accum_inv(PG_FUNCTION_ARGS) {
   if (!PG_ARGISNULL(1) && !agg_discard(state, d64_wide(PG_GETARG_DATUM(1))))
     PG_RETURN_NULL();
   PG_RETURN_POINTER(state);
+}
+
+/*
+ * w as a decimal64, exactly: a result of more than 17 digits or places is
+ * an error, not rounded to fit (DG_DECIMAL_PLAN.md).
+ */
+static Datum d64_exact(const wide_t &w) {
+  if (w.scale > D64_MAX_DIGITS || mag_digits(w.mag) > D64_MAX_DIGITS)
+    ereport(ERROR,
+            (errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+             errmsg("value overflows numeric format"),
+             errdetail("A numeric of precision %d or less has at most %d "
+                       "digits.",
+                       D64_MAX_DIGITS, D64_MAX_DIGITS)));
+  return d64_from_wide(w);
+}
+
+/* round(decimal64, int), a decimal64, as numeric's; past 17 digits an error. */
+Datum decimal64_round(PG_FUNCTION_ARGS) {
+  return d64_exact(wide_round_at(d64_wide(PG_GETARG_DATUM(0)),
+                                 PG_GETARG_INT32(1)));
+}
+
+/* round(decimal64): round(x, 0). */
+Datum decimal64_round0(PG_FUNCTION_ARGS) {
+  return d64_exact(wide_round_at(d64_wide(PG_GETARG_DATUM(0)), 0));
+}
+
+/* to_char(decimal64, text), as numeric's: its value as a decimal128 on the stack. */
+Datum decimal64_to_char(PG_FUNCTION_ARGS) {
+  Datum d = PG_GETARG_DATUM(0);
+  decimal_t num;
+
+  decimal_set(&num, d64_value(d), d64_scale(d));
+  return DirectFunctionCall2Coll(numeric_to_char, PG_GET_COLLATION(),
+                                 PointerGetDatum(&num), PG_GETARG_DATUM(1));
 }
