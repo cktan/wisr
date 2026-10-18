@@ -7015,3 +7015,26 @@ views (`../sm/sm3/test/test_view.cc`).
 - **SQLite's sample** (`make slt-corpus`, step 164): digres
   fails nothing PostgreSQL 18 passes, of 1,495,198 records; it
   failed 24,408 more before, every one a view's.
+
+## Step 239: a view in the catalog relations
+
+`../sm/VIEW.md` §10, its third step; `SYSCATALOG.md` §3.
+
+- **`pg_class` lists a view**, `relkind` `v`, `relhasrules`
+  true, no `relfilenode`; **`pg_attribute`** its columns, its
+  query's select list, as the relation cache makes them
+  (`smstore_relations()`, `add_view()`).
+- **`pg_rewrite` has a row a view**, its `_RETURN` rule, its oid
+  the view's, its `ev_action` the query sm keeps; a scan by
+  `ev_class` or `oid` makes that view's alone.
+  `pg_get_viewdef()` reads it over SPI, unchanged.
+- **`pg_views`** is a catalog relation, oid 12101, as `pg_roles`
+  is: a view of sm's, a row, its definition `pg_get_viewdef()`'s.
+- **ruleutils.c names a relation from its descriptor**:
+  `generate_relation_name()` and
+  `generate_qualified_relation_name()` call
+  `RelationGetClassForm()`, as `get_rel_name()` does, in place
+  of a `pg_class` row a table in sm has none of.
+- psql's `\dv`, `\d` and `\d+` of a view give PostgreSQL 18's
+  output. `test/slt/view_catalog.test`; `server.sh` runs `\dv`
+  and `\d+`.

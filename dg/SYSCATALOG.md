@@ -84,9 +84,10 @@ and after).
   writes are refused, and it tells the planner its size. So
   the executor's and the planner's paths are PostgreSQL's, and
   no new branch is made in `nodeSeqscan.c`.
-- **They are not views.** A view is a stored rule
-  (`pg_rewrite`), which is among what was cut. A catalog
-  relation gives a client the same thing.
+- **They are not views.** A system view is SQL over the
+  catalogs, which `initdb` no longer runs; a catalog relation
+  gives a client the same thing. A user's view is sm's
+  (`../sm/VIEW.md`), and is listed in them as §3 says.
 - **A row comes from the two sources of §1**, the compiled-in
   rows first and sm's after:
   - a built-in object's row is its compiled-in one;
@@ -132,8 +133,8 @@ and after).
   an ANALYZE, as PostgreSQL has it.
 - **A catalog that digres has nothing of is empty**, and still
   readable: `pg_trigger`, `pg_policy`, `pg_inherits`,
-  `pg_rewrite`, `pg_publication`. `\d` reads them, and an
-  empty answer is the right one.
+  `pg_publication`. `\d` reads them, and an empty answer is
+  the right one.
 
 ---
 
@@ -195,19 +196,31 @@ run.
 | `\di` | those, `pg_index` | the same |
 | `\l` | `pg_database` | `pg_get_userbyid`, `pg_encoding_to_char`, `array_to_string` |
 | `\du` | `pg_roles`, a view on `pg_authid` | |
-| `\d name` | `pg_class`, `pg_namespace`, `pg_attribute`, `pg_attrdef`, `pg_type`, `pg_collation`, `pg_index`, `pg_constraint`, `pg_am`, and, empty: `pg_inherits`, `pg_trigger`, `pg_policy`, `pg_rewrite`, `pg_statistic_ext`, `pg_publication` and its two relations | `format_type`, `pg_get_indexdef`, `pg_get_constraintdef`, `pg_get_expr`, `pg_table_is_visible` |
+| `\d name` | `pg_class`, `pg_namespace`, `pg_attribute`, `pg_attrdef`, `pg_type`, `pg_collation`, `pg_index`, `pg_constraint`, `pg_am`, `pg_rewrite`, and, empty: `pg_inherits`, `pg_trigger`, `pg_policy`, `pg_statistic_ext`, `pg_publication` and its two relations | `format_type`, `pg_get_indexdef`, `pg_get_constraintdef`, `pg_get_expr`, `pg_table_is_visible`, `pg_get_viewdef` |
+| `\dv` | `pg_class`, `pg_namespace` | `pg_get_userbyid`, `pg_table_is_visible` |
 
 What a row says, for the first of them:
 
 - **`pg_namespace`**: the compiled-in ones, then sm's
   (`sm_cat_list_namespaces`). `nspowner` is the superuser;
   `nspacl` is null.
-- **`pg_class`**: a row a table, an index and a sequence of
-  sm's, and one a catalog relation. `relnamespace`, `relname`,
-  `relkind`, `relnatts`, `relpersistence` and `relam` are
-  true; `relowner` is the superuser; `relfilenode` is the oid;
+- **`pg_class`**: a row a table, an index, a view and a
+  sequence of sm's, and one a catalog relation.
+  `relnamespace`, `relname`, `relkind`, `relnatts`,
+  `relpersistence` and `relam` are true; `relowner` is the
+  superuser; `relfilenode` is the oid, and 0 for a view;
   `reltablespace` is 0; `relhasindex` is whether sm has an
-  index of it; `relacl` and `reloptions` are null.
+  index of it; `relhasrules` is true of a view alone; `relacl`
+  and `reloptions` are null.
+- **`pg_attribute`**: a view's columns are its query's select
+  list, as the relation cache makes them.
+- **`pg_rewrite`**: a row a view of sm's, its `_RETURN` rule,
+  whose oid is the view's, and whose `ev_action` is the query
+  sm keeps. `pg_get_viewdef()` reads it, over SPI, as it
+  always has.
+- **`pg_views`**: a view of sm's, a row, its definition
+  `pg_get_viewdef()`'s; a view in PostgreSQL, a catalog
+  relation here, as `pg_roles` is.
 - **`pg_am`**: the compiled-in rows (`cat_am`).
 - **`pg_database`**: a row a database of sm's; its oid is
   `FirstNormalObjectId` plus its `dbid` (`CODE.md` §5).
@@ -253,14 +266,16 @@ runs the psql command and reads its output.
 | 6. `\d name` | done: a table and an index, `WORKNOTE.md` step 115; a sequence, step 119; `\d+`, step 120; sizes, step 121 |
 | 7. The other compiled-in catalogs | `pg_proc`, `pg_operator`, `pg_cast`, `pg_extension`, `pg_description`: `\df`, `\do`, `\dC`, `\dx`, step 123 |
 | 8. A syscache miss in a compiled-in catalog | `pg_language` too; `pg_get_functiondef()`, `\sf`, step 124 |
+| 9. Views | `pg_rewrite`, `pg_views`, `\dv`, `\d+` of a view, `pg_get_viewdef()`, step 239 |
 
 ---
 
 ## 7. Left out
 
 - **`information_schema`**: views over the catalogs, in SQL.
-  It waits for views, or is written as catalog relations of
-  its own.
+  Views are sm's now (`../sm/VIEW.md`), so it can be made of
+  views in each database, or written as catalog relations of
+  its own; neither is done.
 - **The statistics views** (`pg_stat_activity`,
   `pg_stat_user_tables`, `pg_locks`): each is a function
   behind a view, and a separate piece.

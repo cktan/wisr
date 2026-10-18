@@ -105,12 +105,11 @@ Owed, and blocking nothing above:
 - **Views, the rest of them** (`VIEW.md` §10). CREATE, OR
   REPLACE, DROP and the cascades are built, sm3's and digres's
   (`../dg/WORKNOTE.md` step 238), and of SQLite's sample digres
-  now fails nothing PostgreSQL 18 passes. Not built: a view's
-  rows in the catalog relations, so `\d`, `\dv` and
-  `pg_get_viewdef()`; ALTER VIEW; a view's options, `WITH
-  CHECK OPTION` among them; and a temporary view.
-  `information_schema` waits for the catalog relations
-  (`../dg/SYSCATALOG.md`).
+  now fails nothing PostgreSQL 18 passes; psql's `\dv` and
+  `\d+` and `pg_get_viewdef()` read them (step 239). Not
+  built: ALTER VIEW; a view's options, `WITH CHECK OPTION`
+  among them; a temporary view; and `information_schema`
+  (`../dg/SYSCATALOG.md` §7).
 - **What foreign keys left** (`FOREIGNKEY.md`,
   `../dg/WORKNOTE.md` step 177): a DEFERRABLE one is refused,
   as a row trigger on a table in sm is given its rows from a

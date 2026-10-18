@@ -11763,18 +11763,17 @@ static char *get_relation_name(Oid relid) {
  * visible in the namespace list.
  */
 static char *generate_relation_name(Oid relid, List *namespaces) {
-  HeapTuple tp;
-  Form_pg_class reltup;
+  FormData_pg_class form;
+  Form_pg_class reltup = &form;
   bool need_qual;
   ListCell *nslist;
   char *relname;
   char *nspname;
   char *result;
 
-  tp = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
-  if (!HeapTupleIsValid(tp))
+  /* From the descriptor: a user's relation has no pg_class row. */
+  if (!RelationGetClassForm(relid, &form))
     elog(ERROR, "cache lookup failed for relation %u", relid);
-  reltup = (Form_pg_class)GETSTRUCT(tp);
   relname = NameStr(reltup->relname);
 
   /* Check for conflicting CTE name */
@@ -11806,8 +11805,6 @@ static char *generate_relation_name(Oid relid, List *namespaces) {
 
   result = quote_qualified_identifier(nspname, relname);
 
-  ReleaseSysCache(tp);
-
   return result;
 }
 
@@ -11818,16 +11815,15 @@ static char *generate_relation_name(Oid relid, List *namespaces) {
  * As above, but unconditionally schema-qualify the name.
  */
 static char *generate_qualified_relation_name(Oid relid) {
-  HeapTuple tp;
-  Form_pg_class reltup;
+  FormData_pg_class form;
+  Form_pg_class reltup = &form;
   char *relname;
   char *nspname;
   char *result;
 
-  tp = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
-  if (!HeapTupleIsValid(tp))
+  /* From the descriptor: a user's relation has no pg_class row. */
+  if (!RelationGetClassForm(relid, &form))
     elog(ERROR, "cache lookup failed for relation %u", relid);
-  reltup = (Form_pg_class)GETSTRUCT(tp);
   relname = NameStr(reltup->relname);
 
   nspname = get_namespace_name_or_temp(reltup->relnamespace);
@@ -11835,8 +11831,6 @@ static char *generate_qualified_relation_name(Oid relid) {
     elog(ERROR, "cache lookup failed for namespace %u", reltup->relnamespace);
 
   result = quote_qualified_identifier(nspname, relname);
-
-  ReleaseSysCache(tp);
 
   return result;
 }

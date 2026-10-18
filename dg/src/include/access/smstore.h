@@ -33,7 +33,7 @@ typedef struct smstore_relation_t {
   Oid oid;
   char *name;
   Oid nspoid;
-  char kind;     /* RELKIND_RELATION, RELKIND_INDEX or RELKIND_SEQUENCE */
+  char kind;     /* RELKIND_RELATION, _INDEX, _SEQUENCE or _VIEW */
   int natts;     /* its columns; an index's key and include columns */
   bool hasindex; /* a table with an index */
   bool temp;     /* a temporary table, or an index on one */
@@ -59,6 +59,8 @@ typedef struct smstore_relation_t {
   bool owner_identity; /* the column is an identity column */
   bool *desc;          /* each key column's */
   bool *nulls_first; /* each key column's */
+  /* A view's, as pg_rewrite lists it: its ev_action, nodeToString()'s. */
+  char *query;
 } smstore_relation_t;
 
 /* A column of a table in sm. */

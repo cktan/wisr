@@ -77,6 +77,9 @@ VIEWS = {
         ("rolconnlimit", "int4"), ("rolpassword", "text"),
         ("rolvaliduntil", "timestamptz"), ("rolbypassrls", "bool"),
         ("rolconfig", "_text"), ("oid", "oid")]),
+    "pg_views": (12101, [
+        ("schemaname", "name"), ("viewname", "name"), ("viewowner", "name"),
+        ("definition", "text")]),
 }
 
 # Of those, the ones whose rows are postgres.bki's, written out as the text

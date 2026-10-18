@@ -2,9 +2,9 @@
 
 **Status: sm3's part and `sm.h`'s are built** (§3 to §7,
 `sm3/test/test_view.cc`), as proposed in §11, and digres's
-CREATE, query and DROP (§8, `../dg/WORKNOTE.md` step 238).
-Not yet: the catalog relations, ALTER VIEW, a view's options
-and a temporary view (§10, steps 3 and 4).
+CREATE, query and DROP (§8, `../dg/WORKNOTE.md` step 238),
+and the catalog relations (step 239). Not yet: ALTER VIEW, a
+view's options and a temporary view (§10, step 4, and §9).
 
 `CREATE VIEW` fails in digres: `DefineView()` still makes a
 PostgreSQL relation, which digres has no catalog for

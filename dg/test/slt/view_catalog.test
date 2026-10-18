@@ -1,0 +1,117 @@
+# Verify a view's rows in the catalogs a client reads, as PostgreSQL keeps
+# them: pg_class, pg_attribute, pg_rewrite and pg_views.
+# 1. Make t and u, and views over them: of one table, a join with column
+#    names given, an aggregate, a view of a view, and one in a schema.
+# 2. Read each view's pg_class row, its columns, its rule, and its
+#    definition as pg_get_viewdef() and pg_views give it.
+
+statement ok
+create table t (a int4, b text)
+
+statement ok
+create table u (a int4, c numeric(10,2))
+
+statement ok
+create view v as select a, b from t where a > 1
+
+statement ok
+create view vj (x, y, z) as select t.a, t.b, u.c from t join u on t.a = u.a
+
+statement ok
+create view va as select a, count(*) as n from u group by a order by a
+
+statement ok
+create view vv as select b from v where a < 3
+
+statement ok
+create schema s
+
+statement ok
+create view s.sv as select * from t
+
+query TTIT rowsort
+select relname, relkind, relnatts, relhasrules from pg_class
+where relname in ('t', 'v', 'vj', 'va', 'vv', 'sv')
+----
+sv	v	2	t
+t	r	2	f
+v	v	2	t
+va	v	2	t
+vj	v	3	t
+vv	v	1	t
+
+query TITI
+select attname, attnum, format_type(atttypid, atttypmod), attnotnull::int
+from pg_attribute where attrelid = 'vj'::regclass and attnum > 0
+order by attnum
+----
+x	1	integer	0
+y	2	text	0
+z	3	numeric(10,2)	0
+
+query TTTT
+select rulename, ev_class::regclass::text, ev_type, is_instead::text
+from pg_rewrite where ev_class = 'v'::regclass
+----
+_RETURN	v	1	true
+
+query T
+select pg_get_viewdef('v'::regclass)
+----
+ SELECT a,@    b@   FROM t@  WHERE (a > 1);
+
+query T
+select pg_get_viewdef('vj'::regclass, true)
+----
+ SELECT t.a AS x,@    t.b AS y,@    u.c AS z@   FROM t@     JOIN u ON t.a = u.a;
+
+query T
+select pg_get_viewdef('va'::regclass)
+----
+ SELECT a,@    count(*) AS n@   FROM u@  GROUP BY a@  ORDER BY a;
+
+query T
+select pg_get_viewdef('vv')
+----
+ SELECT b@   FROM v@  WHERE (a < 3);
+
+query TTT rowsort
+select schemaname, viewname, definition from pg_views
+where viewname in ('v', 'sv')
+----
+public	v	 SELECT a,@    b@   FROM t@  WHERE (a > 1);
+s	sv	 SELECT a,@    b@   FROM t;
+
+# Verify a replaced or dropped view's rows follow it.
+# 1. Replace v with another query: pg_get_viewdef and pg_attribute give
+#    the new one.
+# 2. Drop vv: it is in no catalog.
+
+statement ok
+create or replace view v as select a, b, a * 2 as d from t
+
+query T
+select pg_get_viewdef('v'::regclass)
+----
+ SELECT a,@    b,@    (a * 2) AS d@   FROM t;
+
+query TI
+select attname, attnum from pg_attribute
+where attrelid = 'v'::regclass and attnum > 0 order by attnum
+----
+a	1
+b	2
+d	3
+
+statement ok
+drop view vv
+
+query I
+select count(*) from pg_class where relname = 'vv'
+----
+0
+
+query I
+select count(*) from pg_views where viewname = 'vv'
+----
+0

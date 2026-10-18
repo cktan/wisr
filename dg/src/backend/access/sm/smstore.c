@@ -41,6 +41,7 @@
 #include "lib/stringinfo.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
+#include "nodes/nodeFuncs.h"
 #include "parser/parse_type.h"
 #include "storage/lockdefs.h"
 #include "storage/proc.h"
@@ -904,6 +905,52 @@ static void add_sequence(sm_session_t *s, uint64_t oid, const char *name,
     r->owner_identity = owner.columns[seq.owner_attnum].identity != 0;
 }
 
+/*
+ * Add to *out the view oid, if there is one: its columns those of its
+ * query's select list, as the relation cache makes them
+ * (RelationBuildSmViewDesc()), and its query.  Not locked, as a listing is
+ * not.
+ */
+static void add_view(sm_session_t *s, uint64_t oid, List **out) {
+  sm_view_def_t def;
+  Query *query;
+  smstore_relation_t *r;
+  int natts = 0, i = 0;
+
+  if (sm_cat_view_def(s, oid, def) != 0)
+    return;
+  query = linitial_node(Query, (List *)stringToNode(def.query.c_str()));
+  foreach_node(TargetEntry, tle, query->targetList) {
+    if (!tle->resjunk)
+      natts++;
+  }
+  r = add_relation(out, oid, def.name, (Oid)def.nspoid, RELKIND_VIEW, natts,
+                   false, false);
+  foreach_node(TargetEntry, tle, query->targetList) {
+    if (tle->resjunk)
+      continue;
+    r->attnames[i] = pstrdup(tle->resname);
+    r->typids[i] = exprType((Node *)tle->expr);
+    r->typmods[i] = exprTypmod((Node *)tle->expr);
+    i++;
+  }
+  r->query = pstrdup(def.query.c_str());
+}
+
+/* Add to *out the views of sm's namespace nspoid. */
+static void add_views(sm_session_t *s, uint64_t nspoid, List **out) {
+  std::vector<std::string> names;
+
+  if (sm_cat_list_views(s, nspoid, names) != 0)
+    sm_error("list a schema's views");
+  for (const std::string &name : names) {
+    uint64_t oid;
+
+    if (sm_cat_view_oid(s, nspoid, name.c_str(), &oid) == 0)
+      add_view(s, oid, out);
+  }
+}
+
 /* Add to *out the table def, with its columns, and its indexes. */
 static void add_table(const sm_table_def_t &def, List **out) {
   bool temp = def.nspoid == SM_NSP_TEMP;
@@ -948,10 +995,10 @@ static void add_tables(sm_session_t *s, uint64_t nspoid, List **out) {
 
 /*
  * The relations of sm's that smstore_relations() would give for the one
- * relation oid, a table, an index or a sequence: it and, for a table or an
- * index, the table and all its indexes.  Every relation if oid is an index
- * whose table this thread has not met; none if there is no such relation.
- * For a catalog query on one relation, which needs no other's rows.
+ * relation oid, a table, an index, a view or a sequence: it and, for a
+ * table or an index, the table and all its indexes.  Every relation if oid is
+ * an index whose table this thread has not met; none if there is no such
+ * relation. For a catalog query on one relation, which needs no other's rows.
  */
 List *smstore_relations_of(Oid oid) {
   sm_session_t *s = xact_session();
@@ -978,14 +1025,17 @@ List *smstore_relations_of(Oid oid) {
     add_sequence(s, oid, seq, nspoid, &out);
     return out;
   }
+  add_view(s, oid, &out);
+  if (out != NIL)
+    return out;
   /* An index of a table not met: it may be any table's. */
   return OidIsValid(table) ? NIL : smstore_relations();
 }
 
 /*
  * Every relation in sm, palloc'd smstore_relation_t, as this transaction
- * sees them: each schema's tables, their indexes and its sequences, and the
- * session's temporary tables, in pg_temp.  pg_class's rows
+ * sees them: each schema's tables, their indexes, its views and its
+ * sequences, and the session's temporary tables, in pg_temp.  pg_class's rows
  * (catalog/catrel.c).
  */
 List *smstore_relations(void) {
@@ -1002,6 +1052,7 @@ List *smstore_relations(void) {
     if (sm_cat_namespace_oid(s, nsp.c_str(), &nspoid) != 0)
       continue;
     add_tables(s, nspoid, &out);
+    add_views(s, nspoid, &out);
     if (sm_cat_list_sequences(s, nspoid, seqs) != 0)
       sm_error("list a schema's sequences");
     for (const std::string &seq : seqs)

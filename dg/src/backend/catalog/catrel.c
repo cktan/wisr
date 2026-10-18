@@ -44,6 +44,8 @@
 #include "catalog/pg_policy_d.h"
 #include "catalog/pg_publication_rel_d.h"
 #include "catalog/pg_rewrite_d.h"
+#include "rewrite/rewriteDefine.h"
+#include "rewrite/rewriteSupport.h"
 #include "catalog/pg_statistic_ext_d.h"
 #include "catalog/pg_trigger_d.h"
 #include "catalog/pg_type_d.h"
@@ -142,7 +144,7 @@ static void gen_pg_namespace(Tuplestorestate *ts, TupleDesc desc) {
 /*
  * A row of pg_class, into ts: a relation's own columns given, the rest as
  * digres has them -- owned by the superuser, in no tablespace, with no
- * statistics, no ACL and no options.
+ * statistics, no ACL and no options.  A view has its rule, and no storage.
  */
 static void class_row(Tuplestorestate *ts, TupleDesc desc, Oid oid,
                       const char *name, Oid nspoid, Oid reltype, char kind,
@@ -161,7 +163,8 @@ static void class_row(Tuplestorestate *ts, TupleDesc desc, Oid oid,
       ObjectIdGetDatum(kind == RELKIND_RELATION ? HEAP_TABLE_AM_OID
                        : kind == RELKIND_INDEX  ? BTREE_AM_OID
                                                 : InvalidOid);
-  values[Anum_pg_class_relfilenode - 1] = ObjectIdGetDatum(oid);
+  values[Anum_pg_class_relfilenode - 1] =
+      ObjectIdGetDatum(kind == RELKIND_VIEW ? InvalidOid : oid);
   /* Never analyzed, as PostgreSQL says it: no pages, -1 rows. */
   values[Anum_pg_class_reltuples - 1] = Float4GetDatum(-1);
   values[Anum_pg_class_relhasindex - 1] = BoolGetDatum(hasindex);
@@ -169,6 +172,7 @@ static void class_row(Tuplestorestate *ts, TupleDesc desc, Oid oid,
       CharGetDatum(temp ? RELPERSISTENCE_TEMP : RELPERSISTENCE_PERMANENT);
   values[Anum_pg_class_relkind - 1] = CharGetDatum(kind);
   values[Anum_pg_class_relnatts - 1] = Int16GetDatum(natts);
+  values[Anum_pg_class_relhasrules - 1] = BoolGetDatum(kind == RELKIND_VIEW);
   values[Anum_pg_class_relispopulated - 1] = BoolGetDatum(true);
   values[Anum_pg_class_relreplident - 1] =
       CharGetDatum(kind == RELKIND_RELATION ? REPLICA_IDENTITY_DEFAULT
@@ -181,7 +185,7 @@ static void class_row(Tuplestorestate *ts, TupleDesc desc, Oid oid,
 
 /*
  * pg_class's rows: the catalog relations, in pg_catalog, then sm's tables,
- * indexes and sequences, the session's temporary tables among them.
+ * indexes, views and sequences, the session's temporary tables among them.
  */
 static void gen_pg_class(Tuplestorestate *ts, TupleDesc desc, Oid only) {
   int count;
@@ -311,7 +315,7 @@ static void attribute_row(Tuplestorestate *ts, TupleDesc desc, Oid relid,
 
 /*
  * pg_attribute's rows: the columns of the catalog relations, then of sm's
- * tables and indexes.  A sequence's, and the system columns, are not
+ * tables, indexes and views.  A sequence's, and the system columns, are not
  * listed.
  */
 static void gen_pg_attribute(Tuplestorestate *ts, TupleDesc desc, Oid only) {
@@ -532,6 +536,58 @@ static void gen_pg_depend(Tuplestorestate *ts, TupleDesc desc, Oid only) {
   }
 }
 
+/*
+ * pg_rewrite's rows: a view of sm's, a row, its _RETURN rule, ON SELECT DO
+ * INSTEAD its query, the view's oid its own, as the relation cache makes it
+ * (RelationBuildSmViewDesc()).  digres has no other rule.
+ */
+static void gen_pg_rewrite(Tuplestorestate *ts, TupleDesc desc, Oid only) {
+  Datum values[Natts_pg_rewrite];
+  bool nulls[Natts_pg_rewrite];
+  ListCell *l;
+
+  memset(nulls, false, sizeof(nulls));
+  foreach (l, sm_relations(only)) {
+    smstore_relation_t *r = (smstore_relation_t *)lfirst(l);
+
+    if (r->kind != RELKIND_VIEW)
+      continue;
+    values[Anum_pg_rewrite_oid - 1] = ObjectIdGetDatum(r->oid);
+    values[Anum_pg_rewrite_rulename - 1] = name_datum(ViewSelectRuleName);
+    values[Anum_pg_rewrite_ev_class - 1] = ObjectIdGetDatum(r->oid);
+    values[Anum_pg_rewrite_ev_type - 1] = CharGetDatum('0' + (int)CMD_SELECT);
+    values[Anum_pg_rewrite_ev_enabled - 1] = CharGetDatum(RULE_FIRES_ON_ORIGIN);
+    values[Anum_pg_rewrite_is_instead - 1] = BoolGetDatum(true);
+    /* No qual: what nodeToString() writes of a NULL. */
+    values[Anum_pg_rewrite_ev_qual - 1] = CStringGetTextDatum("<>");
+    values[Anum_pg_rewrite_ev_action - 1] = CStringGetTextDatum(r->query);
+    tuplestore_putvalues(ts, desc, values, nulls);
+  }
+}
+
+/*
+ * pg_views's rows: a view of sm's, a row, its definition pg_get_viewdef()'s,
+ * as PostgreSQL's view over pg_class lists them.  The catalog relations
+ * compiled in are not views here, as pg_class lists them.
+ */
+static void gen_pg_views(Tuplestorestate *ts, TupleDesc desc) {
+  Datum values[4];
+  bool nulls[4] = {false, false, false, false};
+  ListCell *l;
+
+  foreach (l, sm_relations(InvalidOid)) {
+    smstore_relation_t *r = (smstore_relation_t *)lfirst(l);
+
+    if (r->kind != RELKIND_VIEW)
+      continue;
+    values[0] = name_datum(get_namespace_name(r->nspoid));
+    values[1] = name_datum(r->name);
+    values[2] = name_datum(GetUserNameFromId(BOOTSTRAP_SUPERUSERID, false));
+    values[3] = DirectFunctionCall1(pg_get_viewdef, ObjectIdGetDatum(r->oid));
+    tuplestore_putvalues(ts, desc, values, nulls);
+  }
+}
+
 /* pg_am's rows: those compiled in. */
 static void gen_pg_am(Tuplestorestate *ts, TupleDesc desc) {
   int count;
@@ -567,6 +623,8 @@ static bool is_filter_column(Oid relid, AttrNumber attno) {
     return attno == Anum_pg_sequence_seqrelid;
   case DependRelationId:
     return attno == Anum_pg_depend_objid;
+  case RewriteRelationId:
+    return attno == Anum_pg_rewrite_oid || attno == Anum_pg_rewrite_ev_class;
   default:
     return false;
   }
@@ -617,6 +675,12 @@ static void generate(Relation rel, Tuplestorestate *ts, int nkeys,
   case CATREL_PG_ROLES:
     gen_pg_roles(ts, desc);
     break;
+  case CATREL_PG_VIEWS:
+    gen_pg_views(ts, desc);
+    break;
+  case RewriteRelationId:
+    gen_pg_rewrite(ts, desc, only);
+    break;
   case TypeRelationId:
   case CollationRelationId:
   case LanguageRelationId:
@@ -638,7 +702,6 @@ static void generate(Relation rel, Tuplestorestate *ts, int nkeys,
   case PublicationRelationId:
   case PublicationNamespaceRelationId:
   case PublicationRelRelationId:
-  case RewriteRelationId:
   case StatisticExtRelationId:
   case TriggerRelationId:
     break;

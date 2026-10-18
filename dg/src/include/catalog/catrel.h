@@ -15,6 +15,8 @@
 
 /* pg_roles's oid: a view in PostgreSQL, with none fixed (gen_cat.py). */
 #define CATREL_PG_ROLES 12100
+/* pg_views's, likewise. */
+#define CATREL_PG_VIEWS 12101
 
 /* The table access method of a catalog relation (catalog/catrel.c). */
 extern const TableAmRoutine *catrel_routine(void);

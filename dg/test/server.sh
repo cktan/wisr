@@ -1660,7 +1660,8 @@ local_psql -c 'create sequence q2' -c "select nextval('q2')" \
 #    then drops it.
 # 3. A prepares a query over sv2 and runs it; B replaces sv2; A's prepared
 #    query reads the new definition.
-# 4. A makes sv3 over svt in a transaction; B's DROP TABLE svt waits until A
+# 4. psql's \dv lists sv2, and \d+ gives its definition, as replaced.
+# 5. A makes sv3 over svt in a transaction; B's DROP TABLE svt waits until A
 #    commits, then is refused; with CASCADE it tells of the views it drops.
 local_psql -c 'create table svt (a int4)' -c 'insert into svt values (1), (2)' \
   -c 'create view sv1 as select a from svt' \
@@ -1679,6 +1680,11 @@ local_psql -c 'create or replace view sv2 as select a * 10 as a from svt' \
   >> "$work/view.out" 2>&1
 held_send va "execute vq;"
 held_wait va "got 30" || fail "view: a prepared query sees the replace"
+local_psql -c '\dv' 2>&1 | grep -q '^public|sv2|view|' || fail "view: \\dv"
+# Its footer, the definition, is left out of a listing of tuples only.
+local_psql -P tuples_only=off -c '\d+ sv2' 2>&1 |
+  grep -q 'SELECT a \* 10 AS a' ||
+  fail "view: \\d+ gives its definition"
 held_send va "begin; create view sv3 as select a from svt; select 'made';"
 held_wait va "made" || fail "view: made in a transaction"
 bg_start vtab -c 'drop table svt'
