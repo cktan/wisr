@@ -110,8 +110,6 @@ void InitPostmasterChild(void) {
   /* We don't want the postmaster's proc_exit() handlers */
   on_exit_reset();
 
-  /* In EXEC_BACKEND case we will not have inherited BlockSig etc values */
-
   /* Initialize process-local latch support */
   InitializeWaitEventSupport();
   InitProcessLocalLatch();
@@ -147,15 +145,11 @@ void InitPostmasterChild(void) {
 
   /*
    * Every postmaster child process is expected to respond promptly to
-   * SIGQUIT at all times.  Therefore we centrally remove SIGQUIT from
-   * BlockSig and install a suitable signal handler.  (Client-facing
-   * processes may choose to replace this default choice of handler with
-   * quickdie().)  All other blockable signals remain blocked for now.
+   * SIGQUIT at all times.  Therefore we centrally install a suitable
+   * handler.  (Client-facing processes may choose to replace this default
+   * choice of handler with quickdie().)
    */
   SetInterruptHandler(INTERRUPT_QUIT, SignalHandlerForCrashExit);
-
-  sigdelset(&BlockSig, SIGQUIT);
-  pthread_sigmask(SIG_SETMASK, &BlockSig, NULL);
 }
 
 /*
@@ -190,13 +184,6 @@ void InitStandaloneProcess(const char *argv0) {
    */
   sm_set_wait_mask(INTERRUPT_CANCEL | INTERRUPT_DIE | INTERRUPT_QUIT |
                     INTERRUPT_ALARM);
-
-  /*
-   * For consistency with InitPostmasterChild, initialize signal mask here.
-   * But we don't unblock SIGQUIT or provide a default handler for it.
-   */
-  pqinitmask();
-  pthread_sigmask(SIG_SETMASK, &BlockSig, NULL);
 
   /* Compute paths, no postmaster to inherit from */
   if (pcb->my_exec_path[0] == '\0') {

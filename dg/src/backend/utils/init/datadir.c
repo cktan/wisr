@@ -102,20 +102,11 @@ static void close_sm_session(int code, Datum arg) {
  * calls this once it is in the data directory.
  */
 void datadir_load(void) {
-  sigset_t all, old;
   int rc;
 
   load_superuser();
-  /*
-   * Every signal blocked while sm attaches: the threads it and RocksDB start
-   * inherit the mask, so a signal to the process lands only in the
-   * postmaster's thread, whose handlers set its latch.
-   */
-  sigfillset(&all);
-  pthread_sigmask(SIG_SETMASK, &all, &old);
   /* Once for the process: every session opens its database on it. */
   rc = sm_attach(".", &dds_main().sm_env);
-  pthread_sigmask(SIG_SETMASK, &old, NULL);
   if (rc != 0)
     ereport(FATAL, (errmsg("could not attach storage: %s", sm_errmsg())));
   on_proc_exit(detach_sm, 0);

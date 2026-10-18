@@ -780,6 +780,37 @@ fi
 held_end blocked
 grep -q 'terminating connection due to administrator command' \
   "$work/blocked.out" || fail "pg_terminate_backend ends the session"
+# Verify that pg_cancel_backend() ends a session's wait for a lock, and
+# leaves the session: the cancel reaches its thread as an interrupt bit,
+# no signal.
+# 1. A third held session asks for advisory lock 42, still held, and waits.
+# 2. pg_cancel_backend() of it is true, and its statement fails, cancelled.
+# 3. The session still runs a statement.
+held_start cancelled
+held_send cancelled "select 'pid ' || pg_backend_pid(); select pg_advisory_lock(42);"
+for _ in $(seq 50); do
+  cancelled_pid=$(sed -n 's/^pid //p' "$work/cancelled.out" 2> /dev/null)
+  [ -n "$cancelled_pid" ] && break
+  sleep 0.1
+done
+for _ in $(seq 50); do
+  blockers=$(local_psql -c "select pg_blocking_pids($cancelled_pid)")
+  [ "$blockers" = "{$blocker_pid}" ] && break
+  sleep 0.1
+done
+[ "$blockers" = "{$blocker_pid}" ] || fail "pg_cancel_backend: the session waits"
+[ "$(local_psql -c "select pg_cancel_backend($cancelled_pid)")" = t ] ||
+  fail "pg_cancel_backend"
+for _ in $(seq 50); do
+  grep -q 'canceling statement due to user request' "$work/cancelled.out" &&
+    break
+  sleep 0.1
+done
+grep -q 'canceling statement due to user request' "$work/cancelled.out" ||
+  fail "pg_cancel_backend ends a lock wait"
+held_send cancelled "select 'alive';"
+held_wait cancelled "alive" || fail "pg_cancel_backend leaves the session"
+held_end cancelled
 held_send blocker "select pg_advisory_unlock(42);"
 held_end blocker
 
@@ -3516,23 +3547,20 @@ held_send rn "select 'r3 ' || $rn_t::regclass;"
 held_wait rn "r3 $rn_t" || fail "dropped relation's name"
 held_end rn
 
-# Verify that a signal sent to the server can land only in the postmaster's
-# thread: every other thread, sessions, sm's, RocksDB's and sm_sys.h's,
-# blocks the signals the postmaster handles, whose handlers set the
-# postmaster's latch.
+# Verify that no thread takes the signals the postmaster reads from its
+# signalfd: every thread, the postmaster's, sessions, sm's, RocksDB's and
+# sm_sys.h's, blocks them, so no handler runs and no system call is
+# interrupted.
 # 1. With a session idle (opened above), list the server's threads.
-# 2. Confirm each but the main one blocks SIGHUP, SIGINT, SIGQUIT, SIGTERM,
-#    SIGUSR1, SIGUSR2 and SIGALRM.
-python3 - "$server" > "$work/sigblk.out" 2>&1 <<'PY' || fail "only the postmaster takes signals"
+# 2. Confirm each blocks SIGHUP, SIGINT, SIGQUIT and SIGTERM.
+python3 - "$server" > "$work/sigblk.out" 2>&1 <<'PY' || fail "only the signalfd takes signals"
 import os, sys
 pid = sys.argv[1]
 want = 0
-for sig in (1, 2, 3, 10, 12, 14, 15):
+for sig in (1, 2, 3, 15):
     want |= 1 << (sig - 1)
 bad = []
 for tid in os.listdir(f"/proc/{pid}/task"):
-    if tid == pid:
-        continue
     try:
         with open(f"/proc/{pid}/task/{tid}/status") as f:
             status = dict(l.split(":", 1) for l in f if ":" in l)
@@ -3543,6 +3571,22 @@ for tid in os.listdir(f"/proc/{pid}/task"):
 print("\n".join(bad))
 sys.exit(1 if bad else 0)
 PY
+
+# Verify that pg_reload_conf() reloads the configuration: a session sends
+# the postmaster SIGHUP, which the postmaster reads from its signalfd.
+# 1. Call pg_reload_conf(): the postmaster logs the reload.
+# 2. Confirm it took the signalfd for no listen socket, and still runs a
+#    statement.
+[ "$(local_psql -c 'select pg_reload_conf()')" = t ] || fail "pg_reload_conf"
+for _ in $(seq 50); do
+  grep -q "received SIGHUP, reloading configuration files" "$work/log" && break
+  sleep 0.1
+done
+grep -q "received SIGHUP, reloading configuration files" "$work/log" ||
+  fail "SIGHUP read"
+grep -q "could not accept new connection" "$work/log" &&
+  fail "the signalfd is no listen socket"
+[ "$(local_psql -c 'select 3 + 3')" = 6 ] || fail "a statement after SIGHUP"
 
 # Verify that SIGUSR1 and SIGUSR2 are ignored: there is no log rotation, nor
 # pmsignal, and no child to reserve SIGUSR2 for.
@@ -3676,10 +3720,47 @@ for n in 1 2; do
     "$work/imm_idle$n.out" || fail "immediate shutdown: idle client $n told"
 done
 
-grep -q "terminated by signal" "$work/log" "$work/log2" "$work/log3" &&
-  fail "a process crashed"
-grep -q "ThreadSanitizer" "$work/log" "$work/log2" "$work/log3" &&
-  fail "a thread sanitizer report"
+# Verify that a smart shutdown (SIGTERM) waits for its sessions: the
+# postmaster reads it from its signalfd, refuses new sessions, and stops
+# once the last has ended.
+# 1. Start the server again, and hold a session open.
+# 2. Send the server SIGTERM: it logs the request and refuses a new session,
+#    but keeps running.
+# 3. End the held session: the server stops within ten seconds, status 0.
+$digres -D "$work/data" -k "$work" -p "$port" > "$work/log4" 2>&1 &
+server=$!
+for _ in $(seq 100); do
+  grep -q "ready to accept connections" "$work/log4" && break
+  sleep 0.1
+done
+held_start smart
+held_send smart "select 'up';"
+held_wait smart "up" || fail "smart shutdown: session"
+kill -TERM $server
+for _ in $(seq 50); do
+  grep -q "received smart shutdown request" "$work/log4" && break
+  sleep 0.1
+done
+grep -q "received smart shutdown request" "$work/log4" ||
+  fail "smart shutdown: request read"
+local_psql -c 'select 1' > "$work/smart.out" 2>&1 &&
+  fail "smart shutdown: a new session is refused"
+kill -0 $server 2> /dev/null || fail "smart shutdown: waits for its session"
+held_end smart
+for _ in $(seq 100); do
+  kill -0 $server 2> /dev/null || break
+  sleep 0.1
+done
+if kill -0 $server 2> /dev/null; then
+  fail "smart shutdown: the server stops"
+  kill -KILL $server
+fi
+wait $server || fail "smart shutdown: status"
+
+grep -q "terminated by signal" "$work/log" "$work/log2" "$work/log3" \
+  "$work/log4" && fail "a process crashed"
+grep -q "ThreadSanitizer" "$work/log" "$work/log2" "$work/log3" \
+  "$work/log4" && fail "a thread sanitizer report"
 
 [ $failed = 0 ] && echo "server: PASSED"
 exit $failed

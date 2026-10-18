@@ -2567,13 +2567,9 @@ static void drop_unnamed_stmt(void) {
  * "immediately"; so we need to stop what we're doing and exit.
  */
 void quickdie(void) {
-  sigaddset(&BlockSig, SIGQUIT); /* prevent nested calls */
-  pthread_sigmask(SIG_SETMASK, &BlockSig, NULL);
-
   /*
-   * Prevent interrupts while exiting; though we just blocked signals that
-   * would queue new interrupts, one may have been pending.  We don't want a
-   * quickdie() downgraded to a mere query cancel.
+   * Prevent interrupts while exiting.  We don't want a quickdie()
+   * downgraded to a mere query cancel.
    */
   HOLD_INTERRUPTS();
 
@@ -3463,10 +3459,9 @@ void PostgresMain(const char *dbname, const char *username) {
 
   /*
    * Set up the handlers of the interrupt bits, and of the signals a
-   * standalone backend takes.  (InitPostmasterChild or InitStandaloneProcess
-   * has already set up BlockSig and made that the active signal mask.)  A
-   * session thread takes no signal: an interrupt delivered before its
-   * handler is set is dropped, as such a signal was.
+   * standalone backend takes.  A session thread takes no signal: an
+   * interrupt delivered before its handler is set is dropped, as such a
+   * signal was.
    */
   {
     SetInterruptHandler(INTERRUPT_RELOAD, SignalHandlerForConfigReload);
@@ -3508,9 +3503,6 @@ void PostgresMain(const char *dbname, const char *username) {
 
   /* Early initialization */
   BaseInit();
-
-  /* We need to allow SIGINT, etc during the initial transaction */
-  pthread_sigmask(SIG_SETMASK, &UnBlockSig, NULL);
 
   /*
    * Generate a random cancel key, if this is a backend serving a
@@ -3623,13 +3615,6 @@ void PostgresMain(const char *dbname, const char *username) {
    * always active, we have at least some chance of recovering from an error
    * during error recovery.  (If we get into an infinite loop thereby, it
    * will soon be stopped by overflow of elog.c's internal state stack.)
-   *
-   * Note that we use sigsetjmp(..., 1), so that this function's signal mask
-   * (to wit, UnBlockSig) will be restored when longjmp'ing to here.  This
-   * is essential in case we longjmp'd out of a signal handler on a platform
-   * where that leaves the signal blocked.  It's not redundant with the
-   * unblock in AbortTransaction() because the latter is only called if we
-   * were inside a transaction.
    */
 
   PG_ERROR_LOOP_BEGIN() {

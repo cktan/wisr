@@ -46,14 +46,10 @@
 #include "c.h"
 
 #include <signal.h>
-#ifndef FRONTEND
-#include <unistd.h>
-#endif
 
 #ifndef FRONTEND
 #include "libpq/pqsignal.h"
 #include "miscadmin.h"
-#include "utils/control_block.h"
 #endif
 
 #ifdef PG_SIGNAL_COUNT /* Windows */
@@ -70,50 +66,6 @@ StaticAssertDecl(SIGHUP < PG_NSIG, "SIGHUP >= PG_NSIG");
 StaticAssertDecl(SIGTERM < PG_NSIG, "SIGTERM >= PG_NSIG");
 StaticAssertDecl(SIGALRM < PG_NSIG, "SIGALRM >= PG_NSIG");
 
-static thread_local /*SHARED*/ volatile pqsigfunc pqsignal_handlers[PG_NSIG];
-
-/*
- * Except when called with SIG_IGN or SIG_DFL, pqsignal() sets up this function
- * as the handler for all signals.  This wrapper handler function checks that
- * it is called within a process that knew to maintain MyProcPid, and not a
- * child process forked by system(3), etc.  This check ensures that such child
- * processes do not modify shared memory, which is often detrimental.  If the
- * check succeeds, the function originally provided to pqsignal() is called.
- * Otherwise, the default signal handler is installed and then called.
- *
- * This wrapper also handles restoring the value of errno.
- */
-static void wrapper_handler(SIGNAL_ARGS) {
-  int save_errno = errno;
-
-  Assert(postgres_signal_arg > 0);
-  Assert(postgres_signal_arg < PG_NSIG);
-
-#ifndef FRONTEND
-
-  /*
-   * We expect processes to set MyProcPid before calling pqsignal() or
-   * before accepting signals.
-   */
-  Assert(MyProcPid);
-  Assert(MyProcPid != pcb->PostmasterPid || !IsUnderPostmaster);
-
-  if (unlikely(MyProcPid != CurrentProcPid())) {
-    pqsignal(postgres_signal_arg, SIG_DFL);
-    raise(postgres_signal_arg);
-    return;
-  }
-#endif
-
-  /* A thread that ignores the signal, where another installed a handler. */
-  if (pqsignal_handlers[postgres_signal_arg] != SIG_IGN &&
-      pqsignal_handlers[postgres_signal_arg] != SIG_DFL &&
-      pqsignal_handlers[postgres_signal_arg] != NULL)
-    (*pqsignal_handlers[postgres_signal_arg])(postgres_signal_arg);
-
-  errno = save_errno;
-}
-
 /*
  * Set up a signal handler, with SA_RESTART, for signal "signo"
  *
@@ -129,20 +81,15 @@ void pqsignal(int signo, pqsigfunc func) {
   Assert(signo > 0);
   Assert(signo < PG_NSIG);
 
-  /* Kept for SIG_IGN and SIG_DFL too. */
-  pqsignal_handlers[signo] = func; /* assumed atomic */
 #ifndef FRONTEND
 
   /*
-   * A session thread's handlers are its own, and no signal reaches them: it
-   * blocks every signal but its faults, and is interrupted by bits
-   * (session_interrupt()).  The process's handlers stay the postmaster's.
+   * A session thread sets no handler: the process's are the main thread's,
+   * and a session is interrupted by bits (session_interrupt()).
    */
   if (IsSessionThread)
     return;
 #endif
-  if (func != SIG_IGN && func != SIG_DFL)
-    func = wrapper_handler;
 
 #if !(defined(WIN32) && defined(FRONTEND))
   act.sa_handler = func;

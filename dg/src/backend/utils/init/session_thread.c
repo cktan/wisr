@@ -123,20 +123,11 @@ static void session_thread_main(session_start_t *p) {
   (void)set_stack_base();
 
   /*
-   * A session thread takes no signal but the faults it causes itself: the
-   * rest are the postmaster's, or come as interrupt bits
-   * (session_interrupt()), its timeouts among them.  Every mask the backend
-   * sets is this one.
+   * A session thread keeps its parent's signal mask: the signals the process
+   * takes are the postmaster's to read (PostmasterMain()), and a session is
+   * interrupted by bits (session_interrupt()), its timeouts among them.
    */
-  sigfillset(&BlockSig);
-  sigdelset(&BlockSig, SIGSEGV);
-  sigdelset(&BlockSig, SIGBUS);
-  sigdelset(&BlockSig, SIGFPE);
-  sigdelset(&BlockSig, SIGILL);
-  sigdelset(&BlockSig, SIGABRT);
-  UnBlockSig = BlockSig;
-  StartupBlockSig = BlockSig;
-  pthread_sigmask(SIG_SETMASK, &BlockSig, NULL);
+
   /* Errors and allocations need the memory contexts, so they come first. */
   MemoryContextInit();
 

@@ -6551,3 +6551,47 @@ file through the postmaster's last node, and a session's
   loads a library.
 - 10 `/*SHARED*/` globals are left; step 222's 16 counted the
   three signal masks, declared together, as one.
+
+## Step 224: the postmaster reads its signals from a signalfd
+
+`../sm/NEXT.md` §1's second item, its seventh batch. Only the
+main thread took a signal, and only to set a flag and wake its
+own loop; sessions blocked every signal but their faults and
+are interrupted by bits. Each thread still carried three masks
+(`BlockSig`, `UnBlockSig`, `StartupBlockSig`) and a table of
+handlers (`pqsignal_handlers`), all SHARED, and a session
+switched among masks that were the same.
+
+- **`PostmasterMain()` blocks SIGHUP, SIGINT, SIGQUIT and
+  SIGTERM before any thread starts**, so every thread inherits
+  the mask, and opens a signalfd for them, which
+  `ConfigurePostmasterWaitSet()` adds to the postmaster's wait
+  set. `read_pm_signals()` reads it in `ServerLoop()` and sets
+  the pending flags the handlers set, now plain `bool`s; no
+  handler runs, and no thread's system call is interrupted.
+  The other signals stay ignored, and faults keep their
+  default action.
+- On Linux `WL_SOCKET_ACCEPT` is `WL_SOCKET_READABLE`:
+  `ServerLoop()` must not `accept()` on the signalfd.
+- **Gone**: `libpq/pqsignal.c` (`pqinitmask()` and the masks),
+  every `pthread_sigmask()` a backend made (`xact.c`,
+  `postgres.c`, `backend_startup.c`, `miscinit.c`,
+  `session_thread.c`), and the mask `datadir_load()` set around
+  `sm_attach()`. `port/pqsignal.c` keeps `pqsignal()`, which
+  installs the function itself: `wrapper_handler` and its
+  table are gone. A session's `pqsignal()` still sets nothing.
+- **A standalone backend blocks no signal**, as before its
+  `PostgresMain()` unblocked them all: SIGINT or SIGTERM ends
+  it, having no handler.
+- `server.sh`: the mask check now wants every thread, the
+  postmaster's too, to block the four. New checks: a
+  `pg_reload_conf()` reaches the postmaster, which takes the
+  signalfd for no listen socket, and a smart shutdown
+  (SIGTERM) refuses new sessions and stops when the last ends.
+  Interrupting a blocked query still works: a client's cancel
+  request, `statement_timeout` and `lock_timeout` were checked
+  already, and `pg_cancel_backend()` of a session waiting for
+  an advisory lock now is too, which leaves the session. A
+  reload in the test's data directory applies nothing: it has
+  no `postgresql.conf` (`PLAN.md` §9).
+- 6 `/*SHARED*/` globals are left.

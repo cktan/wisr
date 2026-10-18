@@ -1132,13 +1132,6 @@ static void AbortTransaction(void) {
   reschedule_timeouts();
 
   /*
-   * Re-enable signals, in case we got here by longjmp'ing out of a signal
-   * handler.  We do this fairly early in the sequence so that the timeout
-   * infrastructure will be functional if needed while aborting.
-   */
-  pthread_sigmask(SIG_SETMASK, &UnBlockSig, NULL);
-
-  /*
    * check the current transaction state
    */
   if (s->state != TRANS_INPROGRESS && s->state != TRANS_PREPARE)
@@ -2990,13 +2983,6 @@ static void AbortSubTransaction(void) {
    * reschedule lock or deadlock check timeouts.
    */
   reschedule_timeouts();
-
-  /*
-   * Re-enable signals, in case we got here by longjmp'ing out of a signal
-   * handler.  We do this fairly early in the sequence so that the timeout
-   * infrastructure will be functional if needed while aborting.
-   */
-  pthread_sigmask(SIG_SETMASK, &UnBlockSig, NULL);
 
   /*
    * check the current transaction state

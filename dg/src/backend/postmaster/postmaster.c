@@ -66,6 +66,7 @@
 
 #include <unistd.h>
 #include <signal.h>
+#include <sys/signalfd.h>
 #include <time.h>
 #include <sys/wait.h>
 #include <ctype.h>
@@ -295,11 +296,14 @@ struct postmaster_state_t {
 
   bool ReachedNormalRunning = false; /* T if we've reached PM_RUN */
 
-  /* set when signals arrive */
-  volatile sig_atomic_t pending_pm_reload_request = false;
-  volatile sig_atomic_t pending_pm_shutdown_request = false;
-  volatile sig_atomic_t pending_pm_fast_shutdown_request = false;
-  volatile sig_atomic_t pending_pm_immediate_shutdown_request = false;
+  /* set when read_pm_signals() reads a signal */
+  bool pending_pm_reload_request = false;
+  bool pending_pm_shutdown_request = false;
+  bool pending_pm_fast_shutdown_request = false;
+  bool pending_pm_immediate_shutdown_request = false;
+
+  /* the signalfd pg_ctl's signals are read from */
+  int signal_fd = -1;
 
   /* event multiplexing object */
   WaitEventSet *pm_wait_set = NULL;
@@ -330,8 +334,7 @@ static DNSServiceRef bonjour_sdref = NULL;
 static void CloseServerPorts(int status, Datum arg);
 static void unlink_external_pid_file(int status, Datum arg);
 static void getInstallationPaths(const char *argv0);
-static void handle_pm_reload_request_signal(SIGNAL_ARGS);
-static void handle_pm_shutdown_request_signal(SIGNAL_ARGS);
+static void read_pm_signals(void);
 static void process_pm_child_exit(void);
 static void process_pm_reload_request(void);
 static void process_pm_shutdown_request(void);
@@ -410,26 +413,32 @@ void PostmasterMain(int argc, char *argv[]) {
   getInstallationPaths(argv[0]);
 
   /*
-   * Set up signal handlers for the postmaster process.
-   *
-   * CAUTION: when changing this list, check for side-effects on the signal
-   * handling setup of child processes.  See tcop/postgres.c,
-   * bootstrap/bootstrap.c, postmaster/bgwriter.c, postmaster/walwriter.c,
-   * and postmaster/pgarch.c.
+   * The signals pg_ctl and pg_reload_conf() send are blocked in every
+   * thread and read from a signalfd by ServerLoop(): no handler runs, and
+   * no thread's system call is interrupted.  Blocked before any thread
+   * starts, so that every thread inherits the mask.  The process takes no
+   * other signal but its faults, which keep their default action.
    */
-  pqinitmask();
-  pthread_sigmask(SIG_SETMASK, &BlockSig, NULL);
+  {
+    sigset_t pm_signals;
 
-  pqsignal(SIGHUP, handle_pm_reload_request_signal);
-  pqsignal(SIGINT, handle_pm_shutdown_request_signal);
-  pqsignal(SIGQUIT, handle_pm_shutdown_request_signal);
-  pqsignal(SIGTERM, handle_pm_shutdown_request_signal);
+    sigemptyset(&pm_signals);
+    sigaddset(&pm_signals, SIGHUP);
+    sigaddset(&pm_signals, SIGINT);
+    sigaddset(&pm_signals, SIGQUIT);
+    sigaddset(&pm_signals, SIGTERM);
+    pthread_sigmask(SIG_BLOCK, &pm_signals, NULL);
+    pms().signal_fd = signalfd(-1, &pm_signals, SFD_NONBLOCK | SFD_CLOEXEC);
+    if (pms().signal_fd < 0)
+      elog(FATAL, "could not create the signalfd: %m");
+    ReserveExternalFD();
+  }
   pqsignal(SIGALRM, SIG_IGN); /* ignored */
   pqsignal(SIGPIPE, SIG_IGN); /* ignored */
   pqsignal(SIGUSR1, SIG_IGN); /* ignored: no log rotation, nor pmsignals */
   pqsignal(SIGUSR2, SIG_IGN); /* ignored */
 
-  /* The wake fd, which the signal handlers' SetLatch() writes. */
+  /* The wake fd, which a session's end writes (backend_thread.c). */
   InitializeWaitEventSupport();
   InitProcessLocalLatch();
 
@@ -451,9 +460,6 @@ void PostmasterMain(int argc, char *argv[]) {
 #ifdef SIGXFSZ
   pqsignal(SIGXFSZ, SIG_IGN); /* ignored */
 #endif
-
-  /* Begin accepting signals. */
-  pthread_sigmask(SIG_SETMASK, &UnBlockSig, NULL);
 
   /*
    * Options setup
@@ -1163,9 +1169,11 @@ static void ConfigurePostmasterWaitSet(bool accept_connections) {
     FreeWaitEventSet(pms().pm_wait_set);
   pms().pm_wait_set = NULL;
 
-  pms().pm_wait_set =
-      CreateWaitEventSet(NULL, accept_connections ? (1 + pms().NumListenSockets) : 1);
+  pms().pm_wait_set = CreateWaitEventSet(
+      NULL, accept_connections ? (2 + pms().NumListenSockets) : 2);
   AddWaitEventToSet(pms().pm_wait_set, WL_LATCH_SET, PGINVALID_SOCKET, MyLatch, NULL);
+  AddWaitEventToSet(pms().pm_wait_set, WL_SOCKET_READABLE, pms().signal_fd,
+                    NULL, NULL);
 
   if (accept_connections) {
     for (int i = 0; i < pms().NumListenSockets; i++)
@@ -1213,12 +1221,17 @@ static int ServerLoop(void) {
                                0 /* postmaster posts no wait_events */);
 
     /*
-     * Latch set by signal handler, or new connection pending on any of
-     * our sockets? If the latter, fork a child process to deal with it.
+     * A signal, the latch set by a session's end, or a new connection
+     * pending on any of our sockets?  If the last, start a session for it.
      */
     for (int i = 0; i < nevents; i++) {
+      /* The signalfd is readable as a listen socket is: accept() is not. */
+      bool is_signal = events[i].fd == pms().signal_fd;
+
       if (events[i].events & WL_LATCH_SET)
         ResetLatch(MyLatch);
+      if (is_signal)
+        read_pm_signals();
 
       /*
        * The following requests are handled unconditionally, even if we
@@ -1234,7 +1247,7 @@ static int ServerLoop(void) {
       if (backend_thread_ended())
         process_pm_child_exit();
 
-      if (events[i].events & WL_SOCKET_ACCEPT) {
+      if ((events[i].events & WL_SOCKET_ACCEPT) && !is_signal) {
         ClientSocket s;
 
         if (AcceptConnection(events[i].fd, &s) == STATUS_OK)
@@ -1398,11 +1411,32 @@ void InitProcessGlobals(void) {
 }
 
 /*
- * pg_ctl uses SIGHUP to request a reload of the configuration files.
+ * Read the signals pending on the signalfd.  pg_ctl uses SIGHUP to request a
+ * reload of the configuration files, and SIGTERM, SIGINT and SIGQUIT to
+ * request different types of shutdown.
  */
-static void handle_pm_reload_request_signal(SIGNAL_ARGS) {
-  pms().pending_pm_reload_request = true;
-  SetLatch(MyLatch);
+static void read_pm_signals(void) {
+  struct signalfd_siginfo si;
+
+  while (read(pms().signal_fd, &si, sizeof(si)) == sizeof(si)) {
+    switch (si.ssi_signo) {
+    case SIGHUP:
+      pms().pending_pm_reload_request = true;
+      break;
+    case SIGTERM:
+      /* smart is implied if the other two flags aren't set */
+      pms().pending_pm_shutdown_request = true;
+      break;
+    case SIGINT:
+      pms().pending_pm_fast_shutdown_request = true;
+      pms().pending_pm_shutdown_request = true;
+      break;
+    case SIGQUIT:
+      pms().pending_pm_immediate_shutdown_request = true;
+      pms().pending_pm_shutdown_request = true;
+      break;
+    }
+  }
 }
 
 /*
@@ -1432,28 +1466,6 @@ static void process_pm_reload_request(void) {
     }
 #endif
   }
-}
-
-/*
- * pg_ctl uses SIGTERM, SIGINT and SIGQUIT to request different types of
- * shutdown.
- */
-static void handle_pm_shutdown_request_signal(SIGNAL_ARGS) {
-  switch (postgres_signal_arg) {
-  case SIGTERM:
-    /* smart is implied if the other two flags aren't set */
-    pms().pending_pm_shutdown_request = true;
-    break;
-  case SIGINT:
-    pms().pending_pm_fast_shutdown_request = true;
-    pms().pending_pm_shutdown_request = true;
-    break;
-  case SIGQUIT:
-    pms().pending_pm_immediate_shutdown_request = true;
-    pms().pending_pm_shutdown_request = true;
-    break;
-  }
-  SetLatch(MyLatch);
 }
 
 /*

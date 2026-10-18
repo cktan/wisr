@@ -164,7 +164,6 @@ static void BackendInitialize(ClientSocket *client_sock, CAC_state cac) {
   SetInterruptHandler(INTERRUPT_DIE, process_startup_packet_die);
   /* SIGQUIT handler was already set up by InitPostmasterChild */
   InitializeTimeouts(); /* establishes INTERRUPT_ALARM's handler */
-  pthread_sigmask(SIG_SETMASK, &StartupBlockSig, NULL);
 
   /*
    * Get the remote host name and port for logging and status display.
@@ -278,10 +277,9 @@ static void BackendInitialize(ClientSocket *client_sock, CAC_state cac) {
   }
 
   /*
-   * Disable the timeout, and prevent SIGTERM again.
+   * Disable the timeout.
    */
   disable_timeout(STARTUP_PACKET_TIMEOUT, false);
-  pthread_sigmask(SIG_SETMASK, &BlockSig, NULL);
 
   /*
    * As a safety check that nothing in startup has yet performed

@@ -202,15 +202,16 @@ digres is one process; each session is a thread of it.
   `pqsignal()`, and it runs at its next
   `CHECK_FOR_INTERRUPTS()` or wait. Signal numbers are left
   only where the postmaster speaks to its children and in the
-  SQL functions that send them (`InterruptsOfSignal()`). A
-  session thread blocks every signal but the faults it causes
-  itself.
-- **Only the postmaster's thread takes a signal.** Every other
-  thread blocks them: sessions by their mask, `sm_sys.h`'s timer
-  thread by itself, and sm's and RocksDB's because
-  `datadir_load()` attaches sm with every signal blocked, which
-  the threads it starts inherit. Start no thread from the
-  postmaster with its signals unblocked.
+  SQL functions that send them (`InterruptsOfSignal()`).
+- **No thread takes a signal; the postmaster reads them.**
+  `PostmasterMain()` blocks SIGHUP, SIGINT, SIGQUIT and SIGTERM
+  before any thread starts, so every thread inherits the mask,
+  and `ServerLoop()` reads them from a signalfd: no handler
+  runs, and no system call is interrupted. The other signals
+  the process may be sent are ignored, and faults keep their
+  default action. Start no thread before `PostmasterMain()`
+  blocks them, and install no handler. A standalone backend
+  blocks none: SIGINT or SIGTERM ends it.
 - **A latch wakes one thread** through `sm_sys.h`: it keeps its
   owner's handle, and `SetLatch()` writes the owner's wake fd
   (`sm_interrupt()`, or `sm_interrupt_self()` in a signal
