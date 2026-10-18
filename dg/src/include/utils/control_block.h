@@ -139,8 +139,9 @@ struct pmchild_state_free_t {
 
 /*
  * The process control block: one for the process, what the main thread
- * owns and the other threads read.  The main thread sets each field before
- * the first thread starts, through pcb_main(), and no thread writes it after.
+ * owns and the other threads read.  The main thread alone writes it,
+ * through pcb_main(): each field before the first thread starts, and after
+ * only an atomic one.
  */
 typedef struct pcb_t {
   /*
@@ -293,7 +294,8 @@ extern void postmaster_tcb_init(void);
 
 /*
  * The process control block, to write: the main thread's alone, before the
- * first thread starts.  Every other use reads it, through pcb.
+ * first thread starts, or an atomic field after.  Every other use reads it,
+ * through pcb.
  */
 static inline pcb_t *pcb_main(void) {
   Assert(postmaster_tcb != NULL);
