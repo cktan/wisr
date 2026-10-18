@@ -53,9 +53,7 @@ typedef uint32 pg_crc32c;
 	((crc) = pg_comp_crc32c_dispatch((crc), (data), (len)))
 #define FIN_CRC32C(crc) ((crc) ^= 0xFFFFFFFF)
 
-extern thread_local /*SHARED*/ pg_crc32c (*pg_comp_crc32c)(pg_crc32c crc,
-                                                           const void *data,
-                                                           size_t len);
+extern pg_crc32c (*pg_comp_crc32c)(pg_crc32c crc, const void *data, size_t len);
 extern pg_crc32c pg_comp_crc32c_sse42(pg_crc32c crc, const void *data,
                                       size_t len);
 #ifdef USE_AVX512_CRC32C_WITH_RUNTIME_CHECK
@@ -108,8 +106,8 @@ pg_attribute_no_sanitize_alignment()
 
 extern pg_crc32c pg_comp_crc32c_sb8(pg_crc32c crc, const void *data,
                                     size_t len);
-extern thread_local /*SHARED*/ PGDLLIMPORT
-    pg_crc32c (*pg_comp_crc32c)(pg_crc32c crc, const void *data, size_t len);
+extern PGDLLIMPORT pg_crc32c (*pg_comp_crc32c)(pg_crc32c crc, const void *data,
+                                               size_t len);
 extern pg_crc32c pg_comp_crc32c_sse42(pg_crc32c crc, const void *data,
                                       size_t len);
 #ifdef USE_AVX512_CRC32C_WITH_RUNTIME_CHECK
@@ -149,9 +147,7 @@ extern pg_crc32c pg_comp_crc32c_loongarch(pg_crc32c crc, const void *data,
 
 extern pg_crc32c pg_comp_crc32c_sb8(pg_crc32c crc, const void *data,
                                     size_t len);
-extern thread_local /*SHARED*/ pg_crc32c (*pg_comp_crc32c)(pg_crc32c crc,
-                                                           const void *data,
-                                                           size_t len);
+extern pg_crc32c (*pg_comp_crc32c)(pg_crc32c crc, const void *data, size_t len);
 extern pg_crc32c pg_comp_crc32c_armv8(pg_crc32c crc, const void *data,
                                       size_t len);
 

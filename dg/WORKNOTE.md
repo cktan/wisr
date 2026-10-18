@@ -6624,3 +6624,25 @@ postmaster.
   file, a held session and a new one report the same load
   time, later than before.
 - 5 `/*SHARED*/` globals are left.
+
+## Step 226: the CPU dispatch pointers are plain globals
+
+`../sm/NEXT.md` §1's second item, its ninth batch.
+`pg_comp_crc32c`, `pg_popcount_optimized` and
+`pg_popcount_masked_optimized` were marked SHARED, but none is
+compiled: `pg_config.h` chooses slicing-by-8 and no runtime
+check, and `src/port/Makefile` skips the processor's files
+(bc6b8c1). The copy table held none of them.
+
+- Each is a plain global again, as `pg_popcount32` and
+  `pg_popcount64` beside them are, and as the definitions in
+  `pg_bitutils.c` and `pg_crc32c_sse42_choose.c` already were:
+  a build with the option would not have compiled. The first
+  call chooses, and every thread chooses the same.
+- Not `pcb_t`: `src/port` is linked into the frontend programs
+  too, which have no `pcb`.
+- A build that turns an option on lists the pointers in
+  `src/tools/process_wide.txt`, for
+  `cxx_thread_local.py --check`.
+- 2 `/*SHARED*/` globals are left: `progname` and
+  `data_directory_mode`.
