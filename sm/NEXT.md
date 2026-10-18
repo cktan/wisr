@@ -29,15 +29,14 @@ Low priority:
    digres keeps only what a session needs around it
    (`../dg/PLAN.md` §7): its block state, memory and resource
    cleanup, and the hooks that end a statement. In steps, each
-   removing one of PostgreSQL's concepts
-   (`../dg/WORKNOTE.md` step 232 was the first, the dead API):
-   the command counter and snapshots, which sm's statement
-   replaced (`combocid.c`, most of `snapmgr.c`); the
+   removing one of PostgreSQL's concepts: the dead API
+   (`../dg/WORKNOTE.md` step 232), then the command counter and
+   snapshots (steps 233 to 235) are done. Left: the
    subtransaction stack, cut to what digres keeps per
    savepoint; then what is left moves to a module of digres's
    own. digres keeps the transaction block's state, and
    PostgreSQL's names stay until the last step. `xact.c` is
-   2,990 lines.
+   2,935 lines.
 
 ---
 

@@ -6887,3 +6887,31 @@ no heap.
 - Kept: the `CommandId` type, of the `cid` SQL type and the
   system columns `cmin` and `cmax`, and `trigger.c`'s firing
   counter, which only borrows the type.
+
+## Step 235: snapmgr.c hands out one snapshot
+
+The second step's last part. Every MVCC snapshot was the same
+(steps 233 and 234): what a session sees is sm's snapshot. So
+`snapmgr.c`, 987 lines, is 313, and its callers are untouched.
+
+- **One snapshot**: `GetTransactionSnapshot()`,
+  `GetLatestSnapshot()` and the catalog snapshot functions
+  return the one MVCC snapshot, filled at each call. Gone:
+  copies, `CopySnapshot()` and `FreeSnapshot()`, the pairing
+  heap of registered snapshots ordered by xmin, the transaction
+  snapshot of REPEATABLE READ, the secondary and catalog
+  snapshots, and `GetSnapshotData()`.
+  `InvalidateCatalogSnapshot()` does nothing, there being no
+  catalog snapshot.
+- **Kept, as callers ask**: the active snapshot stack, a
+  `std::vector` of each snapshot pushed and the nesting level
+  that owns it, so a subtransaction's abort pops what it pushed;
+  a count of registrations, each tracked by a resource owner,
+  for `ThereAreNoPriorRegisteredSnapshots()` (COPY FREEZE) and
+  `HaveRegisteredOrActiveSnapshot()` (TOAST); and
+  `FirstSnapshotSet`, for SET TRANSACTION ISOLATION LEVEL.
+- **`SnapshotData`** loses `copied`, `active_count`,
+  `regd_count`, `ph_node` and `snapXactCompletionCount`.
+- Callers that compared snapshots, all in asserts, compare the
+  same pointer now; `PushCopiedSnapshot()` pushes without a
+  copy, as no snapshot changes.

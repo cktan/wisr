@@ -13,7 +13,6 @@
 #ifndef SNAPSHOT_H
 #define SNAPSHOT_H
 
-#include "lib/pairingheap.h"
 
 /*
  * The different snapshot types.  We use SnapshotData structures to represent
@@ -166,8 +165,6 @@ typedef struct SnapshotData {
   int32 subxcnt;      /* # of xact ids in subxip[] */
   bool suboverflowed; /* has the subxip array overflowed? */
 
-  bool copied; /* false if it's a static snapshot */
-
   /*
    * An extra return value for HeapTupleSatisfiesDirty, not used in MVCC
    * snapshots.
@@ -180,19 +177,6 @@ typedef struct SnapshotData {
    */
   struct GlobalVisState *vistest;
 
-  /*
-   * Book-keeping information, used by the snapshot manager
-   */
-  uint32 active_count;      /* refcount on ActiveSnapshot stack */
-  uint32 regd_count;        /* refcount on RegisteredSnapshots */
-  pairingheap_node ph_node; /* link in the RegisteredSnapshots heap */
-
-  /*
-   * The transaction completion count at the time GetSnapshotData() built
-   * this snapshot. Allows to avoid re-computing static snapshots when no
-   * transactions completed since the last GetSnapshotData().
-   */
-  uint64 snapXactCompletionCount;
 } SnapshotData;
 
 #endif /* SNAPSHOT_H */
