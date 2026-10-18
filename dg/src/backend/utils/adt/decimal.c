@@ -3522,3 +3522,48 @@ Datum decimal64_sign(PG_FUNCTION_ARGS) {
 
   return d64_make((v > 0) - (v < 0), 0);
 }
+
+/* The greatest common divisor of the magnitudes of x and y, by Euclid. */
+static u128 u128_gcd(i128 x, i128 y) {
+  u128 a = x < 0 ? -(u128)x : (u128)x, b = y < 0 ? -(u128)y : (u128)y;
+
+  while (b != 0) {
+    u128 r = a % b;
+
+    a = b;
+    b = r;
+  }
+  return a;
+}
+
+/*
+ * gcd(decimal64, decimal64) at the larger scale, as numeric's: in 128 bits,
+ * and a decimal64, as it is no larger than either.
+ */
+Datum decimal64_gcd(PG_FUNCTION_ARGS) {
+  i128 x, y;
+  int s = d64_common_scale(PG_GETARG_DATUM(0), PG_GETARG_DATUM(1), &x, &y);
+
+  return d64_make((int64)u128_gcd(x, y), s);
+}
+
+/*
+ * lcm(decimal64, decimal64) at the larger scale, a decimal128, as a product
+ * is: in 128 bits, and by the wide path, as numeric's, only past them.
+ */
+Datum decimal64_lcm(PG_FUNCTION_ARGS) {
+  Datum a = PG_GETARG_DATUM(0), b = PG_GETARG_DATUM(1);
+  i128 x, y, l;
+  int s = d64_common_scale(a, b, &x, &y);
+  u128 g;
+
+  if (x == 0 || y == 0)
+    PG_RETURN_NUMERIC(dec_make(0, s));
+  g = u128_gcd(x, y);
+  x = x < 0 ? -x : x;
+  y = y < 0 ? -y : y;
+  if (!__builtin_mul_overflow(x / (i128)g, y, &l) && dec_fits(l))
+    PG_RETURN_NUMERIC(dec_make(l, s));
+  return DirectFunctionCall2(numeric_lcm, NumericGetDatum(d64_numeric(a)),
+                             NumericGetDatum(d64_numeric(b)));
+}

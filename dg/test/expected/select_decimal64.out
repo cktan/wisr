@@ -10,6 +10,10 @@
 --    a hash join of a decimal64 and a decimal128 key, a GROUP BY, a UNION
 --    and min and max of decimal64s treat values equal at any scale alike.
 -- 5. decimal64's binary form is numeric's.
+-- 6. decimal64's own operators and functions are in the catalog, each with
+--    the type it gives, and are the ones chosen: what gives a decimal64 is
+--    decimal64's, not decimal128's by a cast; an lcm past 128 bits is
+--    decimal128's, places dropped to fit 36 digits.
 -- (Errors are server.sh's: a run stops at its first.)
 SELECT pg_typeof(1.5)::oid, pg_typeof(0.00000000000000001)::oid, pg_typeof(123456789012345678.5)::oid, pg_typeof(1e3)::oid, 1.23456::numeric, pg_typeof(1.5::numeric(18,2))::oid;
  pg_typeof | pg_typeof | pg_typeof | pg_typeof | numeric | pg_typeof 
@@ -85,5 +89,65 @@ SELECT decimal64_send(1.5), decimal64_send(1.5) = numeric_send(1.5::decimal128),
        decimal64_send       | ?column? | ?column? | ?column? | ?column? 
 ----------------------------+----------+----------+----------+----------
  \x000200000000000100011388 | t        | t        | t        | t
+(1 row)
+
+SELECT oprname, oprcode, oprresult FROM pg_operator WHERE oprleft IN (0, 1700) AND oprright = 1700 ORDER BY 1, 2;
+ oprname |     oprcode      | oprresult 
+---------+------------------+-----------
+ %       | decimal64_mod    |      1700
+ *       | decimal64_mul    |      8383
+ +       | decimal64_add    |      8383
+ -       | decimal64_sub    |      8383
+ -       | decimal64_uminus |      1700
+ /       | decimal64_div    |      8383
+ <       | decimal64_lt     |        16
+ <=      | decimal64_le     |        16
+ <>      | decimal64_ne     |        16
+ =       | decimal64_eq     |        16
+ >       | decimal64_gt     |        16
+ >=      | decimal64_ge     |        16
+(12 rows)
+
+SELECT proname, prosrc, prorettype, pronargs FROM pg_proc WHERE proargtypes[0] = 1700 AND prokind = 'f' AND proname NOT LIKE 'decimal64%' AND proname NOT LIKE 'hash%' ORDER BY 1, 4, 3;
+  proname   |        prosrc        | prorettype | pronargs 
+------------+----------------------+------------+----------
+ abs        | decimal64_abs        |       1700 |        1
+ ceil       | decimal64_ceil       |       1700 |        1
+ ceiling    | decimal64_ceil       |       1700 |        1
+ decimal128 | decimal64_decimal128 |       8383 |        1
+ float4     | decimal64_float4     |        700 |        1
+ float8     | decimal64_float8     |        701 |        1
+ floor      | decimal64_floor      |       1700 |        1
+ gcd        | decimal64_gcd        |       1700 |        2
+ int2       | decimal64_int2       |         21 |        1
+ int4       | decimal64_int4       |         23 |        1
+ int8       | decimal64_int8       |         20 |        1
+ lcm        | decimal64_lcm        |       8383 |        2
+ mod        | decimal64_mod        |       1700 |        2
+ money      | decimal64_cash       |        790 |        1
+ round      | decimal64_round0     |       1700 |        1
+ round      | decimal64_round      |       1700 |        2
+ sign       | decimal64_sign       |       1700 |        1
+ to_char    | decimal64_to_char    |         25 |        2
+ trunc      | decimal64_trunc0     |       1700 |        1
+ trunc      | decimal64_trunc      |       1700 |        2
+(20 rows)
+
+SELECT pg_typeof(-x)::oid, pg_typeof(abs(x))::oid, pg_typeof(sign(x))::oid, pg_typeof(x % x)::oid, pg_typeof(mod(x, x))::oid, pg_typeof(gcd(x, x))::oid, pg_typeof(round(x))::oid, pg_typeof(round(x, 1))::oid, pg_typeof(trunc(x))::oid, pg_typeof(trunc(x, 1))::oid, pg_typeof(ceil(x))::oid, pg_typeof(ceiling(x))::oid, pg_typeof(floor(x))::oid, pg_typeof(x + x)::oid, pg_typeof(x * x)::oid, pg_typeof(lcm(x, x))::oid FROM (VALUES (1.5)) v(x);
+ pg_typeof | pg_typeof | pg_typeof | pg_typeof | pg_typeof | pg_typeof | pg_typeof | pg_typeof | pg_typeof | pg_typeof | pg_typeof | pg_typeof | pg_typeof | pg_typeof | pg_typeof | pg_typeof 
+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------
+      1700 |      1700 |      1700 |      1700 |      1700 |      1700 |      1700 |      1700 |      1700 |      1700 |      1700 |      1700 |      1700 |      8383 |      8383 |      8383
+(1 row)
+
+SELECT pg_typeof(min(x))::oid, pg_typeof(max(x))::oid, pg_typeof(sum(x))::oid, pg_typeof(avg(x))::oid FROM (VALUES (1.5)) v(x);
+ pg_typeof | pg_typeof | pg_typeof | pg_typeof 
+-----------+-----------+-----------+-----------
+      1700 |      1700 |      8383 |      8383
+(1 row)
+
+SELECT lcm(99999999999999999::numeric(17,0), 0.99999999999999997), lcm(99999999999999999::numeric(17,0), 0.99999999999999997)::text = lcm(99999999999999999::decimal128, 0.99999999999999997::decimal128)::text;
+                  lcm                  | ?column? 
+---------------------------------------+----------
+ 9999999999999999600000000000000003.00 | t
 (1 row)
 
