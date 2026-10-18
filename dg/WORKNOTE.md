@@ -6786,3 +6786,42 @@ removed now, but for what psql reads.
   and `ALTER SUBSCRIPTION`, are refused; REPLICATION is refused
   and NOREPLICATION passes; `REPLICA IDENTITY` is refused; `\du`
   shows no Replication.
+
+## Step 232: xact.c's dead API is gone
+
+The first step of `../sm/NEXT.md` §1's `xact.c` item: what
+nothing needs, as digres assigns no transaction id and has no
+prepared transactions.
+
+- **The xid functions**: `GetTopTransactionId()`,
+  `GetCurrentTransactionId()`, their `IfAny` and `Full`
+  forms, `GetStableLatestTransactionId()` and
+  `NoTransactionId()`. Their callers answer directly:
+  `log_line_prefix`'s `%x` prints 0; `pg_current_xact_id()`,
+  `txid_current()` and `age(xid)` refuse, as they did;
+  `pg_current_xact_id_if_assigned()` and
+  `txid_current_if_assigned()` are null; DROP INDEX
+  CONCURRENTLY no longer checks for an xid.
+- **ON CONFLICT on a heap**: the speculative insertion that asked
+  for an xid is gone, as only a table in sm takes a row and its
+  ON CONFLICT is sm's; the branch is an internal error. With it
+  went what only it used: `ExecCheckIndexConstraints()`,
+  `ExecCheckTIDVisible()`, `SpeculativeInsertionLockAcquire()`
+  and its counter, and `tableam.h`'s two speculative wrappers.
+  An exclusion check's livelock-preventing wait, which ordered
+  this transaction's xid against another's, waits as NOWAIT
+  does; it was not reached.
+- **PREPARE TRANSACTION**: `utility.c` refuses it, and
+  `PrepareTransactionBlock()` and `TRANS_PREPARE` are gone.
+- **No callers**: `SubTransactionIsActive()`,
+  `IsInTransactionBlock()`, `GetCurrentTransactionStopTimestamp()`
+  and its timestamp, `BeginInternalSubTransaction()`,
+  `ReleaseCurrentSubTransaction()` and
+  `RollbackAndReleaseCurrentSubTransaction()`.
+- Kept, as they are live: `MyXactFlags` (pipelining, the
+  extended protocol's immediate commit) and `xact_is_sampled`
+  (`log_transaction_sample_rate`).
+  `TransactionIdIsCurrentTransactionId()`, always false, goes
+  with the snapshots, next.
+- `server.sh`: `pg_current_xact_id()` and `txid_current()` are
+  refused; the `if_assigned` forms are null.

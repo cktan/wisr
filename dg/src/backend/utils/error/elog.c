@@ -2839,10 +2839,11 @@ void log_status_format(StringInfo buf, const char *format, ErrorData *edata) {
         appendStringInfoSpaces(buf, padding > 0 ? padding : -padding);
       break;
     case 'x':
+      /* The transaction's xid: 0, as digres assigns none. */
       if (padding != 0)
-        appendStringInfo(buf, "%*u", padding, GetTopTransactionIdIfAny());
+        appendStringInfo(buf, "%*u", padding, InvalidTransactionId);
       else
-        appendStringInfo(buf, "%u", GetTopTransactionIdIfAny());
+        appendStringInfo(buf, "%u", InvalidTransactionId);
       break;
     case 'e':
       if (padding != 0)

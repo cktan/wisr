@@ -516,11 +516,9 @@ void standard_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
       break;
 
     case TRANS_STMT_PREPARE:
-      if (!PrepareTransactionBlock(stmt->gid)) {
-        /* report unsuccessful commit in qc */
-        if (qc)
-          SetQueryCompletion(qc, CMDTAG_ROLLBACK, 0);
-      }
+      /* A prepared transaction's state was kept in WAL; digres has none. */
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("PREPARE TRANSACTION is not supported")));
       break;
 
     case TRANS_STMT_COMMIT_PREPARED:

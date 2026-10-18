@@ -688,11 +688,6 @@ extern List *ExecInsertIndexTuples(ResultRelInfo *resultRelInfo,
                                    bool update, bool noDupErr,
                                    bool *specConflict, List *arbiterIndexes,
                                    bool onlySummarizing);
-extern bool ExecCheckIndexConstraints(ResultRelInfo *resultRelInfo,
-                                      TupleTableSlot *slot, EState *estate,
-                                      ItemPointer conflictTid,
-                                      ItemPointer tupleid,
-                                      List *arbiterIndexes);
 extern void check_exclusion_constraint(Relation heap, Relation index,
                                        IndexInfo *indexInfo,
                                        ItemPointer tupleid, const Datum *values,

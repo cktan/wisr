@@ -1547,17 +1547,10 @@ void index_drop(Oid indexId, bool concurrent, bool concurrent_lock_mode) {
      * permanent, which would leave us with inconsistent catalog state if
      * we fail partway through the following sequence.  Since DROP INDEX
      * CONCURRENTLY is restricted to dropping just one index that has no
-     * dependencies, we should get here before anything's been done ---
-     * but let's check that to be sure.  We can verify that the current
-     * transaction has not executed any transactional updates by checking
-     * that no XID has been assigned.
+     * dependencies, we should get here before anything's been done.
+     * PostgreSQL checked that no XID had been assigned; digres assigns
+     * none, so there is nothing to check.
      */
-    if (GetTopTransactionIdIfAny() != InvalidTransactionId)
-      ereport(
-          ERROR,
-          (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-           errmsg(
-               "DROP INDEX CONCURRENTLY must be first action in transaction")));
 
     /*
      * Mark index invalid by updating its pg_index entry

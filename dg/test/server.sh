@@ -259,16 +259,22 @@ grep -q 'prepared transaction with identifier "x" does not exist' \
 # Verify that what needs PostgreSQL's xid or oid counter is refused, since
 # digres assigns no transaction ids and sm gives the oids.
 # 1. Each of pg_current_snapshot(), txid_current_snapshot(),
-#    pg_xact_status() and age(xid) fails: digres assigns no transaction ids.
+#    pg_xact_status(), age(xid), pg_current_xact_id() and txid_current()
+#    fails: digres assigns no transaction ids. pg_current_xact_id_if_assigned()
+#    and txid_current_if_assigned() are null, as none is ever assigned.
 # 2. pg_stop_making_pinned_objects(), and CREATE DOMAIN, TYPE and CAST,
 #    which draw an oid for their catalog row, fail: digres has no catalog
 #    tables.
 # 3. Confirm a statement after them answers.
 for sql in "select pg_current_snapshot()" "select txid_current_snapshot()" \
-  "select pg_xact_status('5'::xid8)" "select age('5'::xid)"; do
+  "select pg_xact_status('5'::xid8)" "select age('5'::xid)" \
+  "select pg_current_xact_id()" "select txid_current()"; do
   local_psql -c "$sql" 2>&1 | grep -q 'digres assigns no transaction ids' ||
     fail "refused: $sql"
 done
+[ "$(local_psql -c 'select pg_current_xact_id_if_assigned() is null,
+                           txid_current_if_assigned() is null')" = "t|t" ] ||
+  fail "no xid is assigned"
 for sql in "select pg_stop_making_pinned_objects()" \
   "create domain d1 as int4" "create type e1 as enum ('a')" \
   "create cast (int4 as text) with inout"; do

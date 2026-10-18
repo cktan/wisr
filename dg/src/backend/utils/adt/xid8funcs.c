@@ -239,27 +239,20 @@ bad_format:
 }
 
 /*
- * pg_current_xact_id() returns xid8
- *
- *	Return the current toplevel full transaction ID.
- *	If the current transaction does not have one, one is assigned.
+ * pg_current_xact_id() returns xid8: refused, as digres assigns no
+ * transaction id (PLAN.md section 7).
  */
 Datum pg_current_xact_id(PG_FUNCTION_ARGS) {
-  PG_RETURN_FULLTRANSACTIONID(GetTopFullTransactionId());
+  ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                  errmsg("digres assigns no transaction ids")));
+  PG_RETURN_NULL(); /* not reached */
 }
 
 /*
  * Same as pg_current_xact_id() but doesn't assign a new xid if there
- * isn't one yet.
+ * isn't one yet: null, as there never is.
  */
-Datum pg_current_xact_id_if_assigned(PG_FUNCTION_ARGS) {
-  FullTransactionId topfxid = GetTopFullTransactionIdIfAny();
-
-  if (!FullTransactionIdIsValid(topfxid))
-    PG_RETURN_NULL();
-
-  PG_RETURN_FULLTRANSACTIONID(topfxid);
-}
+Datum pg_current_xact_id_if_assigned(PG_FUNCTION_ARGS) { PG_RETURN_NULL(); }
 
 /*
  * pg_current_snapshot() returns pg_snapshot

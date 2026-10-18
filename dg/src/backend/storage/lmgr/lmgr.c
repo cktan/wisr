@@ -23,23 +23,6 @@
 #include "utils/inval.h"
 
 /*
- * Per-backend counter for generating speculative insertion tokens.
- *
- * This may wrap around, but that's OK as it's only used for the short
- * duration between inserting a tuple and checking that there are no (unique)
- * constraint violations.  It's theoretically possible that a backend sees a
- * tuple that was speculatively inserted by another backend, but before it has
- * started waiting on the token, the other backend completes its insertion,
- * and then performs 2^32 unrelated insertions.  And after all that, the
- * first backend finally calls SpeculativeInsertionLockAcquire(), with the
- * intention of waiting for the first insertion to complete, but ends up
- * waiting for the latest unrelated insertion instead.  Even then, nothing
- * particularly bad happens: in the worst case they deadlock, causing one of
- * the transactions to abort.
- */
-static thread_local /*LOCAL*/ uint32 speculativeInsertionToken = 0;
-
-/*
  * RelationInitLockInfo
  *		Initializes the lock information in a relation descriptor.
  *
@@ -211,30 +194,6 @@ bool CheckRelationLockedByMe(Relation relation, LOCKMODE lockmode,
 bool CheckRelationOidLockedByMe(Oid relid, LOCKMODE lockmode, bool orstronger) {
   /* sm's lock, in a mode covering lockmode's; a catalog's is held. */
   return !locked_by_sm(relid) || smstore_relation_held(relid, lockmode);
-}
-
-/*
- *		SpeculativeInsertionLockAcquire
- *
- * A token for a tuple the given transaction is inserting but hasn't yet
- * decided whether to keep, which tells its insertions apart.  PostgreSQL also
- * took a lock that others waited on for the decision; no one waits here.
- */
-uint32 SpeculativeInsertionLockAcquire(TransactionId xid) {
-  speculativeInsertionToken++;
-
-  /*
-   * Check for wrap-around. Zero means no token is held, so don't use that.
-   */
-  if (speculativeInsertionToken == 0)
-    speculativeInsertionToken = 1;
-
-  /*
-   * No lock: only a catalog's insert is speculative, as sm's is sm's
-   * (ExecInsert()), and a catalog's insert is refused, so no other session
-   * would wait for it.
-   */
-  return speculativeInsertionToken;
 }
 
 /*

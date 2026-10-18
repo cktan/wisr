@@ -78,7 +78,6 @@ typedef enum TransState {
   TRANS_INPROGRESS, /* inside a valid transaction */
   TRANS_COMMIT,     /* commit in progress */
   TRANS_ABORT,      /* abort in progress */
-  TRANS_PREPARE,    /* prepare in progress */
 } TransState;
 
 /*
@@ -160,16 +159,12 @@ static thread_local /*LOCAL*/ bool currentCommandIdUsed;
 /*
  * xactStartTimestamp is the value of transaction_timestamp().
  * stmtStartTimestamp is the value of statement_timestamp().
- * xactStopTimestamp is the time at which we log a commit / abort WAL record,
- * or if that was skipped, the time of the first subsequent
- * GetCurrentTransactionStopTimestamp() call.
  *
  * These do not change as we enter and exit subtransactions, so we don't
  * keep them inside the TransactionState stack.
  */
 static thread_local /*LOCAL*/ TimestampTz xactStartTimestamp;
 static thread_local /*LOCAL*/ TimestampTz stmtStartTimestamp;
-static thread_local /*LOCAL*/ TimestampTz xactStopTimestamp;
 
 /* Flag for logging statements in a transaction. */
 thread_local /*LOCAL*/ bool xact_is_sampled = false;
@@ -235,8 +230,8 @@ bool IsTransactionState(void) {
 
   /*
    * TRANS_DEFAULT and TRANS_ABORT are obviously unsafe states.  However, we
-   * also reject the startup/shutdown states TRANS_START, TRANS_COMMIT,
-   * TRANS_PREPARE since it might be too soon or too late within those
+   * also reject the startup/shutdown states TRANS_START and TRANS_COMMIT,
+   * since it might be too soon or too late within those
    * transition states to do anything interesting.  Hence, the only "valid"
    * state is TRANS_INPROGRESS.
    */
@@ -258,91 +253,12 @@ bool IsAbortedTransactionBlockState(void) {
 }
 
 /*
- * Refuse a transaction id: digres assigns none.  A transaction is sm's
- * (PLAN.md section 7); only what writes a heap asks for a PostgreSQL xid,
- * and a table in sm is no heap.
- */
-static void NoTransactionId(void) {
-  ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                  errmsg("digres assigns no transaction ids")));
-}
-
-/* The main transaction's xid: refused (NoTransactionId()). */
-TransactionId GetTopTransactionId(void) {
-  NoTransactionId();
-  return InvalidTransactionId; /* not reached */
-}
-
-/* The main transaction's xid if it has one: never. */
-TransactionId GetTopTransactionIdIfAny(void) { return InvalidTransactionId; }
-
-/* The current (sub)transaction's xid: refused (NoTransactionId()). */
-TransactionId GetCurrentTransactionId(void) {
-  NoTransactionId();
-  return InvalidTransactionId; /* not reached */
-}
-
-/* The current (sub)transaction's xid if it has one: never. */
-TransactionId GetCurrentTransactionIdIfAny(void) {
-  return InvalidTransactionId;
-}
-
-/* The main transaction's FullTransactionId: refused. */
-FullTransactionId GetTopFullTransactionId(void) {
-  NoTransactionId();
-  return InvalidFullTransactionId; /* not reached */
-}
-
-/* The main transaction's FullTransactionId if it has one: never. */
-FullTransactionId GetTopFullTransactionIdIfAny(void) {
-  return InvalidFullTransactionId;
-}
-
-/* The current (sub)transaction's FullTransactionId: refused. */
-FullTransactionId GetCurrentFullTransactionId(void) {
-  NoTransactionId();
-  return InvalidFullTransactionId; /* not reached */
-}
-
-/* The current (sub)transaction's FullTransactionId if it has one: never. */
-FullTransactionId GetCurrentFullTransactionIdIfAny(void) {
-  return InvalidFullTransactionId;
-}
-
-/*
- * The next xid to be assigned, the reference point of age(xid): refused
- * (NoTransactionId()), as none is.
- */
-TransactionId GetStableLatestTransactionId(void) {
-  NoTransactionId();
-  return InvalidTransactionId; /* not reached */
-}
-
-/*
  *	GetCurrentSubTransactionId
  */
 SubTransactionId GetCurrentSubTransactionId(void) {
   TransactionState s = CurrentTransactionState;
 
   return s->subTransactionId;
-}
-
-/*
- *	SubTransactionIsActive
- *
- * Test if the specified subxact ID is still active.  Note caller is
- * responsible for checking whether this ID is relevant to the current xact.
- */
-bool SubTransactionIsActive(SubTransactionId subxid) {
-  TransactionState s;
-
-  for (s = CurrentTransactionState; s != NULL; s = s->parent) {
-    if (s->state == TRANS_ABORT)
-      continue;
-    if (s->subTransactionId == subxid)
-      return true;
-  }
-  return false;
 }
 
 /*
@@ -372,25 +288,6 @@ TimestampTz GetCurrentTransactionStartTimestamp(void) {
  */
 TimestampTz GetCurrentStatementStartTimestamp(void) {
   return stmtStartTimestamp;
-}
-
-/*
- *	GetCurrentTransactionStopTimestamp
- *
- * If the transaction stop time hasn't already been set, which can happen if
- * we decided we don't need to log an XLOG record, set xactStopTimestamp.
- */
-TimestampTz GetCurrentTransactionStopTimestamp(void) {
-  TransactionState s PG_USED_FOR_ASSERTS_ONLY = CurrentTransactionState;
-
-  /* should only be called after commit / abort processing */
-  Assert(s->state == TRANS_DEFAULT || s->state == TRANS_COMMIT ||
-         s->state == TRANS_ABORT || s->state == TRANS_PREPARE);
-
-  if (xactStopTimestamp == 0)
-    xactStopTimestamp = GetCurrentTimestamp();
-
-  return xactStopTimestamp;
 }
 
 /*
@@ -911,8 +808,6 @@ static void StartTransaction(void) {
     xactStartTimestamp = stmtStartTimestamp;
   else
     xactStartTimestamp = GetCurrentTimestamp();
-  /* Mark xactStopTimestamp as unset. */
-  xactStopTimestamp = 0;
 
   /*
    * initialize other subsystems for new transaction
@@ -1134,7 +1029,7 @@ static void AbortTransaction(void) {
   /*
    * check the current transaction state
    */
-  if (s->state != TRANS_INPROGRESS && s->state != TRANS_PREPARE)
+  if (s->state != TRANS_INPROGRESS)
     elog(WARNING, "AbortTransaction while in %s state",
          TransStateAsString(s->state));
   Assert(s->parent == NULL);
@@ -1869,43 +1764,6 @@ static void CheckTransactionBlock(bool isTopLevel, bool throwError,
            errmsg("%s can only be used in transaction blocks", stmtType)));
 }
 
-/*
- *	IsInTransactionBlock
- *
- *	This routine is for statements that need to behave differently inside
- *	a transaction block than when running as single commands.  ANALYZE is
- *	currently the only example.
- *
- *	If this routine returns "false", then the calling statement is allowed
- *	to perform internal transaction-commit-and-start cycles; there is not a
- *	risk of messing up any transaction already in progress.  (Note that this
- *	is not the identical guarantee provided by PreventInTransactionBlock,
- *	since we will not force a post-statement commit.)
- *
- *	isTopLevel: passed down from ProcessUtility to determine whether we are
- *	inside a function.
- */
-bool IsInTransactionBlock(bool isTopLevel) {
-  /*
-   * Return true on same conditions that would make
-   * PreventInTransactionBlock error out
-   */
-  if (IsTransactionBlock())
-    return true;
-
-  if (IsSubTransaction())
-    return true;
-
-  if (!isTopLevel)
-    return true;
-
-  if (CurrentTransactionState->blockState != TBLOCK_DEFAULT &&
-      CurrentTransactionState->blockState != TBLOCK_STARTED)
-    return true;
-
-  return false;
-}
-
 /* ----------------------------------------------------------------
  *					   transaction block support
  * ----------------------------------------------------------------
@@ -1963,17 +1821,6 @@ void BeginTransactionBlock(void) {
          BlockStateAsString(s->blockState));
     break;
   }
-}
-
-/*
- *	PrepareTransactionBlock
- *		This executes a PREPARE command, which is refused: a prepared
- *		transaction's state was kept in WAL, and digres has none.
- */
-bool PrepareTransactionBlock(const char *gid) {
-  ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                  errmsg("PREPARE TRANSACTION is not supported")));
-  return false;
 }
 
 /*
@@ -2526,145 +2373,6 @@ void RollbackToSavepoint(const char *name) {
   else
     elog(FATAL, "RollbackToSavepoint: unexpected state %s",
          BlockStateAsString(xact->blockState));
-}
-
-/*
- * BeginInternalSubTransaction
- *		This is the same as DefineSavepoint except it allows
- *TBLOCK_STARTED, TBLOCK_IMPLICIT_INPROGRESS,
- *and TBLOCK_END states, and therefore it can safely be used in
- *		functions that might be called when not inside a BEGIN block or
- *when running deferred triggers at COMMIT/PREPARE time.  Also, it automatically
- *does CommitTransactionCommand/StartTransactionCommand instead of expecting the
- *caller to do it.
- */
-void BeginInternalSubTransaction(const char *name) {
-  TransactionState s = CurrentTransactionState;
-  bool save_ExitOnAnyError = ExitOnAnyError;
-
-  /*
-   * Errors within this function are improbable, but if one does happen we
-   * force a FATAL exit.  Callers generally aren't prepared to handle losing
-   * control, and moreover our transaction state is probably corrupted if we
-   * fail partway through; so an ordinary ERROR longjmp isn't okay.
-   */
-  ExitOnAnyError = true;
-
-  switch (s->blockState) {
-  case TBLOCK_STARTED:
-  case TBLOCK_INPROGRESS:
-  case TBLOCK_IMPLICIT_INPROGRESS:
-  case TBLOCK_END:
-  case TBLOCK_SUBINPROGRESS:
-    /* Normal subtransaction start */
-    PushTransaction();
-    s = CurrentTransactionState; /* changed by push */
-
-    /*
-     * Savepoint names, like the TransactionState block itself, live
-     * in TopTransactionContext.
-     */
-    if (name)
-      s->name = MemoryContextStrdup(TopTransactionContext, name);
-    break;
-
-    /* These cases are invalid. */
-  case TBLOCK_DEFAULT:
-  case TBLOCK_BEGIN:
-  case TBLOCK_SUBBEGIN:
-  case TBLOCK_SUBRELEASE:
-  case TBLOCK_SUBCOMMIT:
-  case TBLOCK_ABORT:
-  case TBLOCK_SUBABORT:
-  case TBLOCK_ABORT_END:
-  case TBLOCK_SUBABORT_END:
-  case TBLOCK_ABORT_PENDING:
-  case TBLOCK_SUBABORT_PENDING:
-  case TBLOCK_SUBRESTART:
-  case TBLOCK_SUBABORT_RESTART:
-    elog(FATAL, "BeginInternalSubTransaction: unexpected state %s",
-         BlockStateAsString(s->blockState));
-    break;
-  }
-
-  CommitTransactionCommand();
-  StartTransactionCommand();
-
-  ExitOnAnyError = save_ExitOnAnyError;
-}
-
-/*
- * ReleaseCurrentSubTransaction
- *
- * RELEASE (ie, commit) the innermost subtransaction, regardless of its
- * savepoint name (if any).
- * NB: do NOT use CommitTransactionCommand/StartTransactionCommand with this.
- */
-void ReleaseCurrentSubTransaction(void) {
-  TransactionState s = CurrentTransactionState;
-
-  if (s->blockState != TBLOCK_SUBINPROGRESS)
-    elog(ERROR, "ReleaseCurrentSubTransaction: unexpected state %s",
-         BlockStateAsString(s->blockState));
-  Assert(s->state == TRANS_INPROGRESS);
-  MemoryContextSwitchTo(CurTransactionContext);
-  CommitSubTransaction();
-  s = CurrentTransactionState; /* changed by pop */
-  Assert(s->state == TRANS_INPROGRESS);
-}
-
-/*
- * RollbackAndReleaseCurrentSubTransaction
- *
- * ROLLBACK and RELEASE (ie, abort) the innermost subtransaction, regardless
- * of its savepoint name (if any).
- * NB: do NOT use CommitTransactionCommand/StartTransactionCommand with this.
- */
-void RollbackAndReleaseCurrentSubTransaction(void) {
-  TransactionState s = CurrentTransactionState;
-
-  switch (s->blockState) {
-    /* Must be in a subtransaction */
-  case TBLOCK_SUBINPROGRESS:
-  case TBLOCK_SUBABORT:
-    break;
-
-    /* These cases are invalid. */
-  case TBLOCK_DEFAULT:
-  case TBLOCK_STARTED:
-  case TBLOCK_BEGIN:
-  case TBLOCK_IMPLICIT_INPROGRESS:
-  case TBLOCK_SUBBEGIN:
-  case TBLOCK_INPROGRESS:
-  case TBLOCK_END:
-  case TBLOCK_SUBRELEASE:
-  case TBLOCK_SUBCOMMIT:
-  case TBLOCK_ABORT:
-  case TBLOCK_ABORT_END:
-  case TBLOCK_SUBABORT_END:
-  case TBLOCK_ABORT_PENDING:
-  case TBLOCK_SUBABORT_PENDING:
-  case TBLOCK_SUBRESTART:
-  case TBLOCK_SUBABORT_RESTART:
-    elog(FATAL, "RollbackAndReleaseCurrentSubTransaction: unexpected state %s",
-         BlockStateAsString(s->blockState));
-    break;
-  }
-
-  /*
-   * Abort the current subtransaction, if needed.
-   */
-  if (s->blockState == TBLOCK_SUBINPROGRESS)
-    AbortSubTransaction();
-
-  /* And clean it up, too */
-  CleanupSubTransaction();
-
-  s = CurrentTransactionState; /* changed by pop */
-  Assert(s->blockState == TBLOCK_SUBINPROGRESS ||
-         s->blockState == TBLOCK_INPROGRESS ||
-         s->blockState == TBLOCK_IMPLICIT_INPROGRESS ||
-         s->blockState == TBLOCK_STARTED);
 }
 
 /*
@@ -3273,8 +2981,6 @@ static const char *TransStateAsString(TransState state) {
     return "COMMIT";
   case TRANS_ABORT:
     return "ABORT";
-  case TRANS_PREPARE:
-    return "PREPARE";
   }
   return "UNRECOGNIZED";
 }

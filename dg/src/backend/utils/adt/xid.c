@@ -98,14 +98,10 @@ Datum hashxidextended(PG_FUNCTION_ARGS) {
  *latest stable xid)
  */
 Datum xid_age(PG_FUNCTION_ARGS) {
-  TransactionId xid = PG_GETARG_TRANSACTIONID(0);
-  TransactionId now = GetStableLatestTransactionId();
-
-  /* Permanent XIDs are always infinitely old */
-  if (!TransactionIdIsNormal(xid))
-    PG_RETURN_INT32(INT_MAX);
-
-  PG_RETURN_INT32((int32)(now - xid));
+  /* Refused: digres assigns no xid to measure from (PLAN.md section 7). */
+  ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                  errmsg("digres assigns no transaction ids")));
+  PG_RETURN_NULL(); /* not reached */
 }
 
 /*

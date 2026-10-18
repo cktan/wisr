@@ -374,23 +374,6 @@ static void ExecCheckTupleVisible(EState *estate, Relation rel,
 }
 
 /*
- * ExecCheckTIDVisible -- convenience variant of ExecCheckTupleVisible()
- */
-static void ExecCheckTIDVisible(EState *estate, ResultRelInfo *relinfo,
-                                ItemPointer tid, TupleTableSlot *tempSlot) {
-  Relation rel = relinfo->ri_RelationDesc;
-
-  /* Redundantly check isolation level */
-  if (!IsolationUsesXactSnapshot())
-    return;
-
-  if (!table_tuple_fetch_row_version(rel, tid, SnapshotAny, tempSlot))
-    elog(ERROR, "failed to fetch conflicting tuple for ON CONFLICT");
-  ExecCheckTupleVisible(estate, rel, tempSlot);
-  ExecClearTuple(tempSlot);
-}
-
-/*
  * Initialize generated columns handling for a tuple
  *
  * This fills the resultRelInfo's ri_GeneratedExprsI/ri_NumGeneratedNeededI or
@@ -1049,104 +1032,11 @@ static TupleTableSlot *ExecInsert(ModifyTableContext *context,
       }
     } else if (onconflict != ONCONFLICT_NONE &&
                resultRelInfo->ri_NumIndices > 0) {
-      /* Perform a speculative insertion. */
-      uint32 specToken;
-      ItemPointerData conflictTid;
-      ItemPointerData invalidItemPtr;
-      bool specConflict;
-      List *arbiterIndexes;
-
-      ItemPointerSetInvalid(&invalidItemPtr);
-      arbiterIndexes = resultRelInfo->ri_onConflictArbiterIndexes;
-
       /*
-       * Do a non-conclusive check for conflicts first.
-       *
-       * We're not holding any locks yet, so this doesn't guarantee that
-       * the later insert won't conflict.  But it avoids leaving behind
-       * a lot of canceled speculative insertions, if you run a lot of
-       * INSERT ON CONFLICT statements that do conflict.
-       *
-       * We loop back here if we find a conflict below, either during
-       * the pre-check, or when we re-check after inserting the tuple
-       * speculatively.  Better allow interrupts in case some bug makes
-       * this an infinite loop.
+       * Not reached: only a table in sm takes a row, and its ON CONFLICT is
+       * sm's (smstore_insert_arbiter()), above.
        */
-    vlock:
-      CHECK_FOR_INTERRUPTS();
-      specConflict = false;
-      if (!ExecCheckIndexConstraints(resultRelInfo, slot, estate, &conflictTid,
-                                     &invalidItemPtr, arbiterIndexes)) {
-        /* committed conflict tuple found */
-        if (onconflict == ONCONFLICT_UPDATE) {
-          /*
-           * In case of ON CONFLICT DO UPDATE, execute the UPDATE
-           * part.  Be prepared to retry if the UPDATE fails because
-           * of another concurrent UPDATE/DELETE to the conflict
-           * tuple.
-           */
-          TupleTableSlot *returning = NULL;
-
-          if (ExecOnConflictUpdate(context, resultRelInfo, &conflictTid, slot,
-                                   canSetTag, &returning)) {
-            InstrCountTuples2(&mtstate->ps, 1);
-            return returning;
-          } else
-            goto vlock;
-        } else {
-          /*
-           * In case of ON CONFLICT DO NOTHING, do nothing. However,
-           * verify that the tuple is visible to the executor's MVCC
-           * snapshot at higher isolation levels.
-           *
-           * Using ExecGetReturningSlot() to store the tuple for the
-           * recheck isn't that pretty, but we can't trivially use
-           * the input slot, because it might not be of a compatible
-           * type. As there's no conflicting usage of
-           * ExecGetReturningSlot() in the DO NOTHING case...
-           */
-          Assert(onconflict == ONCONFLICT_NOTHING);
-          ExecCheckTIDVisible(estate, resultRelInfo, &conflictTid,
-                              ExecGetReturningSlot(estate, resultRelInfo));
-          InstrCountTuples2(&mtstate->ps, 1);
-          return NULL;
-        }
-      }
-
-      /*
-       * Before we start insertion proper, acquire our "speculative
-       * insertion lock".  Others can use that to wait for us to decide
-       * if we're going to go ahead with the insertion, instead of
-       * waiting for the whole transaction to complete.
-       */
-      specToken = SpeculativeInsertionLockAcquire(GetCurrentTransactionId());
-
-      /* insert the tuple, with the speculative token */
-      table_tuple_insert_speculative(resultRelationDesc, slot,
-                                     estate->es_output_cid, 0, NULL, specToken);
-
-      /* insert index entries for tuple */
-      recheckIndexes =
-          ExecInsertIndexTuples(resultRelInfo, slot, estate, false, true,
-                                &specConflict, arbiterIndexes, false);
-
-      /* adjust the tuple's state accordingly */
-      table_tuple_complete_speculative(resultRelationDesc, slot, specToken,
-                                       !specConflict);
-
-      /* No one waits for our decision (SpeculativeInsertionLockAcquire()). */
-
-      /*
-       * If there was a conflict, start from the beginning.  We'll do
-       * the pre-check again, which will now find the conflicting tuple
-       * (unless it aborts before we get there).
-       */
-      if (specConflict) {
-        list_free(recheckIndexes);
-        goto vlock;
-      }
-
-      /* Since there was no insertion conflict, we're done */
+      elog(ERROR, "ON CONFLICT on a relation that is not in sm");
     } else {
       /*
        * The row goes to sm, which writes every index of the table with it

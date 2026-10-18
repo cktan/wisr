@@ -489,135 +489,6 @@ List *ExecInsertIndexTuples(ResultRelInfo *resultRelInfo, TupleTableSlot *slot,
   return result;
 }
 
-/* ----------------------------------------------------------------
- *		ExecCheckIndexConstraints
- *
- *		This routine checks if a tuple violates any unique or
- *		exclusion constraints.  Returns true if there is no conflict.
- *		Otherwise returns false, and the TID of the conflicting
- *		tuple is returned in *conflictTid.
- *
- *		If 'arbiterIndexes' is given, only those indexes are checked.
- *		NIL means all indexes.
- *
- *		Note that this doesn't lock the values in any way, so it's
- *		possible that a conflicting tuple is inserted immediately
- *		after this returns.  This can be used for either a pre-check
- *		before insertion or a re-check after finding a conflict.
- *
- *		'tupleid' should be the TID of the tuple that has been recently
- *		inserted (or can be invalid if we haven't inserted a new tuple
- *yet). This tuple will be excluded from conflict checking.
- * ----------------------------------------------------------------
- */
-bool ExecCheckIndexConstraints(ResultRelInfo *resultRelInfo,
-                               TupleTableSlot *slot, EState *estate,
-                               ItemPointer conflictTid, ItemPointer tupleid,
-                               List *arbiterIndexes) {
-  int i;
-  int numIndices;
-  RelationPtr relationDescs;
-  Relation heapRelation;
-  IndexInfo **indexInfoArray;
-  ExprContext *econtext;
-  Datum values[INDEX_MAX_KEYS];
-  bool isnull[INDEX_MAX_KEYS];
-  ItemPointerData invalidItemPtr;
-  bool checkedIndex = false;
-
-  ItemPointerSetInvalid(conflictTid);
-  ItemPointerSetInvalid(&invalidItemPtr);
-
-  /*
-   * Get information from the result relation info structure.
-   */
-  numIndices = resultRelInfo->ri_NumIndices;
-  relationDescs = resultRelInfo->ri_IndexRelationDescs;
-  indexInfoArray = resultRelInfo->ri_IndexRelationInfo;
-  heapRelation = resultRelInfo->ri_RelationDesc;
-
-  /*
-   * We will use the EState's per-tuple context for evaluating predicates
-   * and index expressions (creating it if it's not already there).
-   */
-  econtext = GetPerTupleExprContext(estate);
-
-  /* Arrange for econtext's scan tuple to be the tuple under test */
-  econtext->ecxt_scantuple = slot;
-
-  /*
-   * For each index, form index tuple and check if it satisfies the
-   * constraint.
-   */
-  for (i = 0; i < numIndices; i++) {
-    Relation indexRelation = relationDescs[i];
-    IndexInfo *indexInfo;
-    bool satisfiesConstraint;
-
-    if (indexRelation == NULL)
-      continue;
-
-    indexInfo = indexInfoArray[i];
-
-    if (!indexInfo->ii_Unique && !indexInfo->ii_ExclusionOps)
-      continue;
-
-    /* If the index is marked as read-only, ignore it */
-    if (!indexInfo->ii_ReadyForInserts)
-      continue;
-
-    /* When specific arbiter indexes requested, only examine them */
-    if (arbiterIndexes != NIL &&
-        !list_member_oid(arbiterIndexes, indexRelation->rd_index->indexrelid))
-      continue;
-
-    if (!indexRelation->rd_index->indimmediate)
-      ereport(ERROR, (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-                      errmsg("ON CONFLICT does not support deferrable unique "
-                             "constraints/exclusion constraints as arbiters"),
-                      errtableconstraint(heapRelation, RelationGetRelationName(
-                                                           indexRelation))));
-
-    checkedIndex = true;
-
-    /* Check for partial index */
-    if (indexInfo->ii_Predicate != NIL) {
-      ExprState *predicate;
-
-      /*
-       * If predicate state not set up yet, create it (in the estate's
-       * per-query context)
-       */
-      predicate = indexInfo->ii_PredicateState;
-      if (predicate == NULL) {
-        predicate = ExecPrepareQual(indexInfo->ii_Predicate, estate);
-        indexInfo->ii_PredicateState = predicate;
-      }
-
-      /* Skip this index-update if the predicate isn't satisfied */
-      if (!ExecQual(predicate, econtext))
-        continue;
-    }
-
-    /*
-     * FormIndexDatum fills in its values and isnull parameters with the
-     * appropriate values for the column(s) of the index.
-     */
-    FormIndexDatum(indexInfo, slot, estate, values, isnull);
-
-    satisfiesConstraint = check_exclusion_or_unique_constraint(
-        heapRelation, indexRelation, indexInfo, tupleid, values, isnull, estate,
-        false, CEOUC_WAIT, true, conflictTid);
-    if (!satisfiesConstraint)
-      return false;
-  }
-
-  if (arbiterIndexes != NIL && !checkedIndex)
-    elog(ERROR, "unexpected failure to find arbiter index");
-
-  return true;
-}
-
 /*
  * Check for violation of an exclusion or unique constraint
  *
@@ -814,11 +685,11 @@ retry:
     xwait = TransactionIdIsValid(DirtySnapshot.xmin) ? DirtySnapshot.xmin
                                                      : DirtySnapshot.xmax;
 
-    if (TransactionIdIsValid(xwait) &&
-        (waitMode == CEOUC_WAIT ||
-         (waitMode == CEOUC_LIVELOCK_PREVENTING_WAIT &&
-          DirtySnapshot.speculativeToken &&
-          TransactionIdPrecedes(GetCurrentTransactionId(), xwait)))) {
+    /*
+     * CEOUC_LIVELOCK_PREVENTING_WAIT waits as NOWAIT does: it ordered this
+     * transaction's xid against xwait's, and digres assigns none.
+     */
+    if (TransactionIdIsValid(xwait) && waitMode == CEOUC_WAIT) {
       /*
        * Not reached: no transaction but this one is in progress to
        * TransactionIdIsInProgress(), so there is none to wait for, and only

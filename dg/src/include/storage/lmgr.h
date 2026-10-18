@@ -32,7 +32,6 @@ extern bool CheckRelationOidLockedByMe(Oid relid, LOCKMODE lockmode,
                                        bool orstronger);
 
 /* A token for a speculative insertion, which no one waits for */
-extern uint32 SpeculativeInsertionLockAcquire(TransactionId xid);
 
 /* Lock a general object (other than a relation) of the current database */
 extern void LockDatabaseObject(Oid classid, Oid objid, uint16 objsubid,

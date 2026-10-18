@@ -123,21 +123,10 @@ typedef struct xl_xact_stats_item {
  */
 extern bool IsTransactionState(void);
 extern bool IsAbortedTransactionBlockState(void);
-extern TransactionId GetTopTransactionId(void);
-extern TransactionId GetTopTransactionIdIfAny(void);
-extern TransactionId GetCurrentTransactionId(void);
-extern TransactionId GetCurrentTransactionIdIfAny(void);
-extern TransactionId GetStableLatestTransactionId(void);
 extern SubTransactionId GetCurrentSubTransactionId(void);
-extern FullTransactionId GetTopFullTransactionId(void);
-extern FullTransactionId GetTopFullTransactionIdIfAny(void);
-extern FullTransactionId GetCurrentFullTransactionId(void);
-extern FullTransactionId GetCurrentFullTransactionIdIfAny(void);
-extern bool SubTransactionIsActive(SubTransactionId subxid);
 extern CommandId GetCurrentCommandId(bool used);
 extern TimestampTz GetCurrentTransactionStartTimestamp(void);
 extern TimestampTz GetCurrentStatementStartTimestamp(void);
-extern TimestampTz GetCurrentTransactionStopTimestamp(void);
 extern void SetCurrentStatementStartTimestamp(void);
 extern int GetCurrentTransactionNestLevel(void);
 extern bool TransactionIdIsCurrentTransactionId(TransactionId xid);
@@ -150,16 +139,12 @@ extern void CommitTransactionCommand(void);
 extern void AbortCurrentTransaction(void);
 extern void BeginTransactionBlock(void);
 extern bool EndTransactionBlock(bool chain);
-extern bool PrepareTransactionBlock(const char *gid);
 extern void UserAbortTransactionBlock(bool chain);
 extern void BeginImplicitTransactionBlock(void);
 extern void EndImplicitTransactionBlock(void);
 extern void ReleaseSavepoint(const char *name);
 extern void DefineSavepoint(const char *name);
 extern void RollbackToSavepoint(const char *name);
-extern void BeginInternalSubTransaction(const char *name);
-extern void ReleaseCurrentSubTransaction(void);
-extern void RollbackAndReleaseCurrentSubTransaction(void);
 extern bool IsSubTransaction(void);
 extern bool IsTransactionBlock(void);
 extern bool IsTransactionOrTransactionBlock(void);
@@ -168,6 +153,5 @@ extern void AbortOutOfAnyTransaction(void);
 extern void PreventInTransactionBlock(bool isTopLevel, const char *stmtType);
 extern void RequireTransactionBlock(bool isTopLevel, const char *stmtType);
 extern void WarnNoTransactionBlock(bool isTopLevel, const char *stmtType);
-extern bool IsInTransactionBlock(bool isTopLevel);
 
 #endif /* XACT_H */
