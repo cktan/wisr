@@ -63,6 +63,14 @@ struct sm3::catalog_t {
    * catalog store in the transaction.
    */
   std::unordered_map<uint64_t, uint64_t> sequence_nsp;
+  /*
+   * Each view's definition, and its oid by its namespace and name
+   * (VIEW.md §4). What reads a relation is found by a pass over
+   * views: it is derived, and kept nowhere.
+   */
+  std::unordered_map<uint64_t, std::shared_ptr<const view_def_t>> views;
+  std::unordered_map<std::pair<uint64_t, std::string>, uint64_t, tblname_hash_t>
+      view_names;
 
   /*
    * Each table's committed statistics, loaded on first use: nullptr
@@ -93,6 +101,7 @@ struct sm3::catalog_t {
    */
   std::unordered_map<uint64_t, uint64_t> table_seq; /* table oid -> count */
   std::unordered_map<uint64_t, uint64_t> stats_seq; /* table oid -> count */
+  std::unordered_map<uint64_t, uint64_t> view_seq;  /* view oid -> count */
   std::atomic<uint64_t> nsp_seq{0};
 
   /* The host's evaluator of partial and expression indexes; set once. */
@@ -146,6 +155,11 @@ struct sequence_change_t {
   uint64_t oid;
   std::optional<uint64_t> nspoid; /* nullopt: dropped */
 };
+struct view_change_t {
+  int depth;
+  uint64_t oid;
+  std::shared_ptr<const view_def_t> def; /* nullptr: dropped */
+};
 struct stats_change_t {
   int depth;
   uint64_t oid;                         /* the table's */
@@ -171,6 +185,7 @@ struct sm3::session_t {
   std::vector<state_change_t> states;
   std::vector<sequence_change_t> sequences;
   std::vector<stats_change_t> stats;
+  std::vector<view_change_t> views;
   bool in_txn = false;      /* between begin and commit or abort */
   uint64_t snap_seq = 0;    /* cat->seq, noted before the snapshot */
   bool stmt_pinned = false; /* stmt_begin was called: statement snapshots */
@@ -323,11 +338,25 @@ void overlay_sequence(session_t *s, uint64_t oid,
                       std::optional<uint64_t> nspoid);
 void overlay_stats(session_t *s, uint64_t oid,
                    std::shared_ptr<const stats_t> stats);
+void overlay_view(session_t *s, uint64_t oid,
+                  std::shared_ptr<const view_def_t> def);
+
+/*
+ * Store the view oid's record, def, new or changed, in s's
+ * transaction: a new one takes its name and holds its namespace
+ * shared, and a changed one, whose old record is old, moves its
+ * name if def's differs. Nothing is checked of what it reads.
+ */
+int cat_put_view(session_t *s, uint64_t oid, const view_def_t &def,
+                 const view_def_t *old);
+
+/* Erase the view oid's record, def, and its name. */
+int cat_del_view(session_t *s, uint64_t oid, const view_def_t &def);
 
 /*
  * Whether there is a namespace oid as session sees it, its name
- * set in name; and whether a table, a collation or a sequence is
- * in it. Both
+ * set in name; and whether a table, a collation, a sequence or a
+ * view is in it. Both
  * read the catalog in memory, which holds every commit published
  * so far, not what the transaction's snapshot shows (CATALOG.md
  * §5).

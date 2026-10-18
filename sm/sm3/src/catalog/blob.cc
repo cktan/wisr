@@ -272,6 +272,10 @@ const std::vector<attribute_t> &schema_of(sm3::part_t part) {
       {att(type_int8), att(type_int8), att(type_int4), att(type_int2),
        att(type_int2), att(type_int2), att(type_bool), att(type_bool)},
       /* fkey_pair */ {att(type_int4), att(type_int4)},
+      /* view */
+      {att(type_int8), att(type_text), att(type_bytea), att(type_bytea),
+       att(type_int4)},
+      /* view_read */ {att(type_int8), att(type_int4)},
   };
   return schemas[static_cast<size_t>(part)];
 }
@@ -301,7 +305,8 @@ const sm2::tup_desc_t &part_desc(part_t part) {
       schema_of(part_t::sequence),    schema_of(part_t::stats_table),
       schema_of(part_t::stats_index), schema_of(part_t::statistic),
       schema_of(part_t::constraint),  schema_of(part_t::fkey),
-      schema_of(part_t::fkey_pair),
+      schema_of(part_t::fkey_pair),   schema_of(part_t::view),
+      schema_of(part_t::view_read),
   };
   return descs[static_cast<size_t>(part)];
 }
@@ -753,6 +758,60 @@ int decode_constraint(std::string_view blob, fkey_rec_t &rec) {
     rec.ref_attnums.push_back(p.i4(1));
     if (!p.ok) {
       return corrupt("a foreign key's pair cut short");
+    }
+  }
+  return at_end(blob, pos);
+}
+
+/* A view's value: the view, then a part for each relation it reads. */
+int encode_view(const view_def_t &rec, std::string &blob) {
+  blob.clear();
+  writer_t v(5);
+  v.i8(0, rec.nspoid);
+  v.bytes(1, rec.name);
+  v.bytes(2, rec.query);
+  if (!rec.options.empty()) {
+    v.bytes(3, rec.options);
+  }
+  v.i4(4, static_cast<int32_t>(rec.reads.size()));
+  if (v.append(part_desc(part_t::view), blob) != 0) {
+    return -1;
+  }
+  for (const view_read_t &r : rec.reads) {
+    writer_t p(2);
+    p.i8(0, r.relation);
+    p.i4(1, r.attnum);
+    if (p.append(part_desc(part_t::view_read), blob) != 0) {
+      return -1;
+    }
+  }
+  return 0;
+}
+
+/* Read a view's value. */
+int decode_view(std::string_view blob, view_def_t &rec) {
+  size_t pos = 0;
+  rec = view_def_t{};
+  reader_t v;
+  if (v.read(blob, pos, part_t::view) != 0) {
+    return -1;
+  }
+  rec.nspoid = v.i8(0);
+  rec.name = v.bytes(1);
+  rec.query = v.bytes(2);
+  rec.options = v.opt_bytes(3).value_or("");
+  int32_t nread = v.i4(4);
+  if (!v.ok || nread < 0) {
+    return corrupt("a view part cut short");
+  }
+  for (int32_t i = 0; i < nread; i++) {
+    reader_t p;
+    if (p.read(blob, pos, part_t::view_read) != 0) {
+      return -1;
+    }
+    rec.reads.push_back({p.i8(0), p.i4(1)});
+    if (!p.ok) {
+      return corrupt("a view's read cut short");
     }
   }
   return at_end(blob, pos);

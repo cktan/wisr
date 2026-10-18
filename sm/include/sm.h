@@ -712,8 +712,8 @@ int sm_cat_create_namespace(sm_session_t* session, const char* name,
                             uint64_t* oid);
 
 /*
- * Drop the namespace oid. One that still holds a table or a
- * collation fails with SM_ERR_INUSE, and SM_NSP_PG_CATALOG and
+ * Drop the namespace oid. One that still holds a table, a
+ * collation or a view fails with SM_ERR_INUSE, and SM_NSP_PG_CATALOG and
  * SM_NSP_PUBLIC with SM_ERR_INVALID.
  */
 int sm_cat_drop_namespace(sm_session_t* session, uint64_t oid);
@@ -856,6 +856,104 @@ int sm_cat_list_sequences(sm_session_t* session, uint64_t nspoid,
  * SM_ERR_NOTFOUND; one past UINT64_MAX with SM_ERR_INVALID.
  */
 int sm_cat_nextval(sm_session_t* session, uint64_t oid, uint64_t* out);
+
+/*
+ * ---- views (VIEW.md) ----
+ *
+ * A view is a name in a namespace, a relation's, with the host's
+ * query behind it: sm keeps the query and never reads it, and keeps
+ * the view true to the relations it reads. A view has a table's
+ * oid lock: a query takes it SM_LOCKMODE_IS, and DDL on the view
+ * SM_LOCKMODE_EX, so each waits for the other.
+ */
+
+/* A relation a view reads: a table's column, 0-based, or -1 for all. */
+struct sm_view_read_t {
+    uint64_t relation;
+    int32_t  attnum;
+};
+
+/* A view: its namespace, name, the host's query and what it reads. */
+struct sm_view_def_t {
+    uint64_t                    nspoid = 0;
+    std::string                 name;
+    std::string                 query;    /* the host's, opaque */
+    std::string                 options;  /* the host's, or empty */
+    std::vector<sm_view_read_t> reads;
+    uint64_t                    version = 0;
+};
+
+/*
+ * Create the view name in nspoid, in the session's transaction; its
+ * oid is set in oid. def's query, options and reads are kept, and
+ * its name, namespace and version ignored. Each relation read is
+ * locked SM_LOCKMODE_IS to the end of the transaction, and must be
+ * a table, with a live column where one is named, or a view, with
+ * none named: or SM_ERR_NOTFOUND, or SM_ERR_INVALID. A temporary
+ * view, or one reading a temporary table, is SM_ERR_INVALID; a name
+ * a relation of nspoid has, SM_ERR_DUPKEY.
+ */
+int sm_cat_create_view(sm_session_t* session, uint64_t nspoid,
+                       const char* name, const sm_view_def_t& def,
+                       uint64_t* oid);
+
+/*
+ * Replace the query, options and reads of the view oid with def's,
+ * SQL's CREATE OR REPLACE VIEW, under its lock SM_LOCKMODE_EX. The
+ * reads are checked as sm_cat_create_view's, and one that reaches
+ * the view itself, through other views, is SM_ERR_INVALID.
+ */
+int sm_cat_replace_view(sm_session_t* session, uint64_t oid,
+                        const sm_view_def_t& def);
+
+/* Rename the view oid, under its lock SM_LOCKMODE_EX. */
+int sm_cat_rename_view(sm_session_t* session, uint64_t oid, const char* name);
+
+/*
+ * Drop the view oid, under its lock SM_LOCKMODE_EX. One another
+ * view reads is SM_ERR_INUSE: the host drops those first, for
+ * CASCADE. So is a table, a column or a namespace a view reads or
+ * holds, to sm_cat_drop_table, sm_cat_drop_column and
+ * sm_cat_drop_namespace.
+ */
+int sm_cat_drop_view(sm_session_t* session, uint64_t oid);
+
+/*
+ * Take the view oid's lock in mode, held to the end of the
+ * transaction, and set *version to its version under the lock, as
+ * sm_table_def_t's of a table: 0, or 1 if there is no such view,
+ * one dropped while the caller waited among them.
+ */
+int sm_cat_lock_view(sm_session_t* session, uint64_t oid, sm_lockmode_t mode,
+                     uint64_t* version);
+
+/*
+ * The oid of the view named name in nspoid, as the session's
+ * transaction sees it, with no lock: 0, or 1 if there is none.
+ */
+int sm_cat_view_oid(sm_session_t* session, uint64_t nspoid, const char* name,
+                    uint64_t* oid);
+
+/*
+ * The view oid, as the session's transaction sees it, with no lock,
+ * into out: 0, or 1 if there is none.
+ */
+int sm_cat_view_def(sm_session_t* session, uint64_t oid, sm_view_def_t& out);
+
+/*
+ * The names of the views in nspoid, sorted, as the session's
+ * transaction sees them, into names, which it replaces.
+ */
+int sm_cat_list_views(sm_session_t* session, uint64_t nspoid,
+                      std::vector<std::string>& names);
+
+/*
+ * The views that read the relation oid, a table or a view, directly,
+ * sorted by oid, as the session's transaction sees them, into
+ * views, which it replaces.
+ */
+int sm_cat_view_readers(sm_session_t* session, uint64_t oid,
+                        std::vector<uint64_t>& views);
 
 /*
  * Wait until the build of the table's index has ended. An index
@@ -1307,7 +1405,10 @@ int sm_cat_create_temp_table(sm_session_t* session, const char* name,
                              const std::vector<sm_column_spec_t>& columns,
                              uint64_t* oid);
 
-/* Drop the table oid: its store, rows, indexes and sequence. */
+/*
+ * Drop the table oid: its store, rows, indexes and sequence. One a
+ * view reads fails with SM_ERR_INUSE.
+ */
 int sm_cat_drop_table(sm_session_t* session, uint64_t oid);
 
 /* Rename the table oid to name, in its namespace (sm3::rename_table). */
@@ -1330,7 +1431,8 @@ int sm_cat_rename_column(sm_session_t* session, uint64_t oid,
 
 /*
  * Drop the column name of the table oid: it reads as null from then
- * on, and the sequences it owns go with it (sm3::drop_column).
+ * on, and the sequences it owns go with it (sm3::drop_column). One
+ * a view reads fails with SM_ERR_INUSE.
  */
 int sm_cat_drop_column(sm_session_t* session, uint64_t oid,
                        const char* name);

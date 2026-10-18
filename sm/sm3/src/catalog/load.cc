@@ -335,6 +335,19 @@ int load(sm2::catkv_t *kv, sm3::catalog_t &cat) {
     cat.table_names[{rec.nspoid, rec.name}] = oid;
     cat.tables[oid] = std::move(def);
   }
+  // Each view, its record whole under its one key.
+  entries.clear();
+  if (scan_kind(kv, sm3::kind_t::view, entries) != 0) {
+    return -1;
+  }
+  for (auto &[oid, blob] : entries) {
+    auto def = std::make_shared<sm3::view_def_t>();
+    if (sm3::decode_view(blob, *def) != 0) {
+      return -1;
+    }
+    cat.view_names[{def->nspoid, def->name}] = oid;
+    cat.views[oid] = std::move(def);
+  }
   return 0;
 }
 

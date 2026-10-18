@@ -1279,6 +1279,120 @@ int sm_cat_list_sequences(sm_session_t *session, uint64_t nspoid,
   });
 }
 
+namespace {
+
+/* sm3's definition of a view from the API's. */
+sm3::view_def_t sm3_view(const sm_view_def_t &def) {
+  sm3::view_def_t v;
+  v.query = def.query;
+  v.options = def.options;
+  for (const sm_view_read_t &r : def.reads) {
+    v.reads.push_back({r.relation, r.attnum});
+  }
+  return v;
+}
+
+} // namespace
+
+/* Create a view in the catalog. */
+int sm_cat_create_view(sm_session_t *session, uint64_t nspoid, const char *name,
+                       const sm_view_def_t &def, uint64_t *oid) {
+  return guard(session, [&] {
+    if (!oid) {
+      return null_arg("sm_cat_create_view", "oid");
+    }
+    return sm3::create_view(session->sm3, nspoid, name_of(name), sm3_view(def),
+                            *oid);
+  });
+}
+
+/* Replace a view's query and reads. */
+int sm_cat_replace_view(sm_session_t *session, uint64_t oid,
+                        const sm_view_def_t &def) {
+  return guard(session, [&] {
+    return sm3::replace_view(session->sm3, oid, sm3_view(def));
+  });
+}
+
+/* Rename a view. */
+int sm_cat_rename_view(sm_session_t *session, uint64_t oid, const char *name) {
+  return guard(session, [&] {
+    return sm3::rename_view(session->sm3, oid, name_of(name));
+  });
+}
+
+/* Drop a view from the catalog. */
+int sm_cat_drop_view(sm_session_t *session, uint64_t oid) {
+  return guard(session, [&] { return sm3::drop_view(session->sm3, oid); });
+}
+
+/* Lock a view and give its version: 0, or 1 if there is none. */
+int sm_cat_lock_view(sm_session_t *session, uint64_t oid, sm_lockmode_t mode,
+                     uint64_t *version) {
+  return guard(session, [&] {
+    if (!version) {
+      return null_arg("sm_cat_lock_view", "version");
+    }
+    std::shared_ptr<const sm3::view_def_t> def;
+    // Held to the end of the transaction, as a table's handle is.
+    if (sm3::cat_lock_view(session->sm3, oid, mode, def) != 0) {
+      return sm1::errnum() == sm1::SM_ERR_NOTFOUND ? 1 : -1;
+    }
+    *version = sm3::cat_view_version(session->sm3, oid);
+    return 0;
+  });
+}
+
+/* A view's oid by name: 0, or 1 if there is none. */
+int sm_cat_view_oid(sm_session_t *session, uint64_t nspoid, const char *name,
+                    uint64_t *oid) {
+  return guard(session, [&] {
+    if (!oid) {
+      return null_arg("sm_cat_view_oid", "oid");
+    }
+    return sm3::cat_get_view(session->sm3, nspoid, name_of(name), *oid) ? 0 : 1;
+  });
+}
+
+/* A view's definition, with no lock: 0, or 1 if there is none. */
+int sm_cat_view_def(sm_session_t *session, uint64_t oid, sm_view_def_t &out) {
+  return guard(session, [&] {
+    std::shared_ptr<const sm3::view_def_t> d =
+        sm3::cat_get_view(session->sm3, oid);
+    if (!d) {
+      return 1;
+    }
+    out.nspoid = d->nspoid;
+    out.name = d->name;
+    out.query = d->query;
+    out.options = d->options;
+    out.reads.clear();
+    for (const sm3::view_read_t &r : d->reads) {
+      out.reads.push_back({r.relation, r.attnum});
+    }
+    out.version = sm3::cat_view_version(session->sm3, oid);
+    return 0;
+  });
+}
+
+/* The views' names in a namespace, sorted. */
+int sm_cat_list_views(sm_session_t *session, uint64_t nspoid,
+                      std::vector<std::string> &names) {
+  return guard(session, [&] {
+    names = sm3::cat_list_views(session->sm3, nspoid);
+    return 0;
+  });
+}
+
+/* The views that read a relation, by oid. */
+int sm_cat_view_readers(sm_session_t *session, uint64_t oid,
+                        std::vector<uint64_t> &views) {
+  return guard(session, [&] {
+    views = sm3::cat_view_readers(session->sm3, oid);
+    return 0;
+  });
+}
+
 /* A sequence's next value. */
 int sm_cat_nextval(sm_session_t *session, uint64_t oid, uint64_t *out) {
   return guard(session, [&] {

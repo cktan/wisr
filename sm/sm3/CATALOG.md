@@ -85,6 +85,7 @@ kinds' values are on disk, so frozen.
 | `STATS` | 10 | table oid `int8`, index oid `int8`, n `int8` | the table's statistics, an entry for the table, (0, 0), and one a statistic: a column's (0, attnum + 1), an index expression's (index oid, place + 1); `SM3_DESIGN.md` §6.6 |
 | `SEQUENCE` | 11 | oid `int8` | a sequence: its namespace, name, start and increment |
 | `CONSTRAINT` | 12 | table oid `int8`, constraint oid `int8` | one constraint of the table, its child: a foreign key (`../FOREIGNKEY.md`) |
+| `VIEW` | 13 | oid `int8` | a view: its namespace, name, the host's query and options, and the relations it reads (`../VIEW.md`) |
 
 - **A table is several entries.** Its own fields are under
   its `TABLE` key, each column under a `COLUMN` key, and each
@@ -133,6 +134,11 @@ kinds' values are on disk, so frozen.
   none. Its owner is then fixed: `own_sequence` on it is
   `SM_ERR_INUSE`. The column names it so the host finds it
   without reading the namespace's sequences.
+- **A view is one entry**, its reads in its value, and its
+  name a `NAME` key in its namespace, shared with the
+  relations there. It has a table's oid lock, on its oid. What
+  reads a relation is found by a pass over the views in memory,
+  and stored nowhere (`../VIEW.md` §4).
 - **A table's oid lock is no longer a key here.** It is an
   `sm1::LOCKTYPE_OID` lock on the table's oid
   (`SM3_DESIGN.md` §2). Locking the `TABLE` key instead would
@@ -156,6 +162,7 @@ INDEX value       = index | key × nkey | include × ninclude | read × nread
 INDEX_STATE value = index state
 SEQUENCE value    = sequence
 CONSTRAINT value  = constraint | fkey | fkey pair × npairs
+VIEW value        = view | view read × nread
 ```
 
 | Part | Fields |
@@ -175,6 +182,8 @@ CONSTRAINT value  = constraint | fkey | fkey pair × npairs
 | constraint | oid `int8`, name `text`, type `int2` (`f`), validated `bool`, host `bytea` or null |
 | fkey | parent table `int8`, parent index `int8`, npairs `int4`, on update `int2`, on delete `int2`, match `int2`, deferrable `bool`, deferred `bool` |
 | fkey pair | child attnum `int4`, parent attnum `int4` |
+| view | namespace `int8`, name `text`, query `bytea`: the host's, opaque; options `bytea` or null: the host's; nread `int4` |
+| view read | relation `int8`, attnum `int4`: a table's column, 0-based, or -1 for the relation whole |
 
 - **A part evolves as a tuple does.** A field appended to a
   part's schema reads as its missing value in a value written

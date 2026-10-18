@@ -1189,6 +1189,55 @@ int cat_list_sequences(session_t *session, uint64_t nspoid,
   return rc == 1 ? 0 : -1;
 }
 
+/* Store a view's record, new or changed; see internal.h. */
+int cat_put_view(session_t *session, uint64_t oid, const view_def_t &def,
+                 const view_def_t *old) {
+  kv_ptr kv(nullptr, &sm2::catkv_close);
+  std::string key, blob;
+  if (open_kv(session->sm1, kv) != 0 ||
+      entity_key(kind_t::view, oid, key) != 0 || encode_view(def, blob) != 0) {
+    return -1;
+  }
+  if (!old) {
+    // Shared: a drop of the namespace waits this transaction out.
+    // The name first, so a taken one fails before the record is
+    // written.
+    if (use_nspace(session, def.nspoid, sm1::SM_LOCKMODE_SH, key) != 0 ||
+        insert_name(kv.get(), def.nspoid, def.name,
+                    {kind_t::view, oid, std::nullopt}) != 0 ||
+        entity_key(kind_t::view, oid, key) != 0 ||
+        sm2::catkv_insert(kv.get(), key, blob) != 0) {
+      return -1;
+    }
+  } else {
+    if (old->name != def.name &&
+        (insert_name(kv.get(), def.nspoid, def.name,
+                     {kind_t::view, oid, std::nullopt}) != 0 ||
+         erase_name(kv.get(), old->nspoid, old->name) != 0)) {
+      return -1;
+    }
+    if (put_key(session, kv.get(), key, blob) != 0) {
+      return -1;
+    }
+  }
+  overlay_view(session, oid, std::make_shared<const view_def_t>(def));
+  return 0;
+}
+
+/* Erase a view's record and its name; see internal.h. */
+int cat_del_view(session_t *session, uint64_t oid, const view_def_t &def) {
+  kv_ptr kv(nullptr, &sm2::catkv_close);
+  std::string key;
+  if (open_kv(session->sm1, kv) != 0 ||
+      entity_key(kind_t::view, oid, key) != 0 ||
+      del_key(session, kv.get(), key) != 0 ||
+      erase_name(kv.get(), def.nspoid, def.name) != 0) {
+    return -1;
+  }
+  overlay_view(session, oid, nullptr);
+  return 0;
+}
+
 /* Take a table's oid lock; see internal.h. */
 int lock_table(sm1::session_t *s, uint64_t oid, sm1::lockmode_t mode) {
   // The name is the oid, big-endian: it is persisted in a

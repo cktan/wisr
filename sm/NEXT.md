@@ -119,7 +119,7 @@ Owed, and blocking nothing above:
   serializes, as an index's predicate is kept
   (`sm_cat_create_index`'s `eval`), and digres's rewriter to
   expand it; `information_schema` waits for the same
-  (`../dg/SYSCATALOG.md`).
+  (`../dg/SYSCATALOG.md`). Designed, for review: `VIEW.md`.
 - **What foreign keys left** (`FOREIGNKEY.md`,
   `../dg/WORKNOTE.md` step 177): a DEFERRABLE one is refused,
   as a row trigger on a table in sm is given its rows from a

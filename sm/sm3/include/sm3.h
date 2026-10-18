@@ -278,6 +278,30 @@ struct table_def_t {
     table_rec_t                   rec;     /* the record it was built from */
 };
 
+/*
+ * A relation a view reads (VIEW.md §3): a table's column, by its
+ * place, or -1 for the relation as a whole -- a view, or a table
+ * read with no column named.
+ */
+struct view_read_t {
+    uint64_t relation;
+    int32_t  attnum;
+
+    bool operator==(const view_read_t&) const = default;
+};
+
+/*
+ * A view (VIEW.md §3): its namespace and name, the host's query and
+ * options, kept and never read, and what the query reads.
+ */
+struct view_def_t {
+    uint64_t                 nspoid = 0;
+    std::string              name;
+    std::string              query;
+    std::string              options;
+    std::vector<view_read_t> reads;
+};
+
 /* A database's catalog, loaded into memory, shared by sessions. */
 struct catalog_t;
 
@@ -576,7 +600,7 @@ int cat_put_namespace(session_t* s, uint64_t namespace_oid,
 
 /*
  * Erase the namespace namespace_oid. One that still holds a table,
- * a collation or a sequence is refused with SM_ERR_INUSE, and the two built
+ * a collation, a sequence or a view is refused with SM_ERR_INUSE, and the two built
  * in, pg_catalog and public, with SM_ERR_INVALID. It waits for
  * every transaction that is putting something in the namespace,
  * and one that tries after it has committed finds no namespace
@@ -704,7 +728,8 @@ int create_temp_table(session_t* session, std::string_view name,
 /*
  * Drop the table oid: its name, its indexes' names, its
  * definition, its store with its rows and index entries, its
- * rowno sequence, and the sequences its columns own.
+ * rowno sequence, and the sequences its columns own. One a view
+ * reads is refused with SM_ERR_INUSE.
  */
 int drop_table(session_t* session, uint64_t oid);
 
@@ -750,7 +775,8 @@ int rename_column(session_t* session, uint64_t oid,
 /*
  * Drop the column name of the table oid. It keeps its place, read
  * as null from then on (SM2_DESIGN.md §4); one an index uses is
- * refused. The sequences it owns are dropped with it.
+ * refused, and one a view reads with SM_ERR_INUSE. The sequences
+ * it owns are dropped with it.
  */
 int drop_column(session_t* session, uint64_t oid,
                 std::string_view name);
@@ -768,7 +794,7 @@ int create_namespace(session_t* session, std::string_view name,
 
 /*
  * Drop the namespace oid. One that still holds a table, a
- * collation or a sequence is refused with SM_ERR_INUSE, and the two built in,
+ * collation, a sequence or a view is refused with SM_ERR_INUSE, and the two built in,
  * pg_catalog and public, with SM_ERR_INVALID. It waits for every
  * transaction that is creating something in the namespace, and
  * one that tries after it has committed finds no namespace
@@ -963,6 +989,80 @@ int own_sequence(session_t* session, uint64_t oid, uint64_t table,
  * SM_ERR_NOTFOUND.
  */
 int nextval(session_t* session, uint64_t oid, uint64_t& out);
+
+/*
+ * ---- views (VIEW.md) ----
+ *
+ * A view is its record alone: there is nothing outside the catalog
+ * to make or drop. Its name is a relation's, taken from the
+ * namespace's tables, indexes and sequences. A view has a table's
+ * oid lock, on its oid: a query takes it intent_shared, DDL on the
+ * view exclusive.
+ */
+
+/*
+ * Create the view def describes, def's name and namespace being
+ * name and nspoid, its oid set in oid. Each relation it reads is
+ * locked intent_shared to the end of the transaction, and must be
+ * a table, with a live column where one is named, or a view, with
+ * none named: or SM_ERR_NOTFOUND, or SM_ERR_INVALID. A temporary
+ * view, or one that reads a temporary table, is SM_ERR_INVALID; a
+ * taken name SM_ERR_DUPKEY.
+ */
+int create_view(session_t* session, uint64_t nspoid, std::string_view name,
+                const view_def_t& def, uint64_t& oid);
+
+/*
+ * Replace the query, options and reads of the view oid with def's,
+ * SQL's CREATE OR REPLACE VIEW, under its lock exclusive; its name
+ * and namespace stay. The reads are checked and locked as
+ * create_view's, and one that reaches the view itself, through
+ * other views, is SM_ERR_INVALID.
+ */
+int replace_view(session_t* session, uint64_t oid, const view_def_t& def);
+
+/* Rename the view oid to name, in its namespace, under its lock X. */
+int rename_view(session_t* session, uint64_t oid, std::string_view name);
+
+/*
+ * Drop the view oid, under its lock exclusive. One another view
+ * reads is SM_ERR_INUSE.
+ */
+int drop_view(session_t* session, uint64_t oid);
+
+/*
+ * Take the view oid's lock in mode, held to the end of s's
+ * transaction, then set out to its definition as s sees it, which
+ * cannot change under the lock. A view dropped while s waited, or
+ * none, fails with SM_ERR_NOTFOUND.
+ */
+int cat_lock_view(session_t* s, uint64_t oid, sm1::lockmode_t mode,
+                  std::shared_ptr<const view_def_t>& out);
+
+/* The view oid as s sees it, with no lock, or nullptr. */
+std::shared_ptr<const view_def_t> cat_get_view(const session_t* s,
+                                               uint64_t oid);
+
+/* The view named name in nspoid as s sees it: true with its oid set. */
+bool cat_get_view(const session_t* s, uint64_t nspoid, std::string_view name,
+                  uint64_t& oid);
+
+/*
+ * The version of the view oid as s sees it, as cat_table_version's
+ * of a table: the count of the publish that last changed it, 0 if
+ * none has since the catalog was loaded, table_version_own while
+ * s's transaction has changed it.
+ */
+uint64_t cat_view_version(const session_t* s, uint64_t oid);
+
+/* The names of the views in nspoid as s sees them, sorted. */
+std::vector<std::string> cat_list_views(const session_t* s, uint64_t nspoid);
+
+/*
+ * The views that read the relation oid, a table or a view, directly,
+ * as s sees them, sorted by oid.
+ */
+std::vector<uint64_t> cat_view_readers(const session_t* s, uint64_t oid);
 
 /*
  * ---- tables: a row and its index entries (SM3_DESIGN.md §3) ----

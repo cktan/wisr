@@ -360,6 +360,13 @@ int drop_table(session_t *session, uint64_t oid) {
   if (cat_get_table_rec(session, oid, rec) != 0) {
     return -1;
   }
+  // A table a view reads stays (VIEW.md §5).
+  std::vector<uint64_t> readers = cat_view_readers(session, oid);
+  if (!readers.empty()) {
+    return sm1::seterr(sm1::SM_ERR_INUSE, "drop table: " + rec.name +
+                                              " is read by view " +
+                                              std::to_string(readers[0]));
+  }
   // A parent another table's foreign key references stays; one of its
   // own goes with it (FOREIGNKEY.md §5).
   for (const fkey_ref_t &r : rec.referenced_by) {
@@ -519,6 +526,17 @@ int drop_column(session_t *session, uint64_t oid, std::string_view name) {
       return sm1::seterr(sm1::SM_ERR_INUSE, "drop column: foreign key " +
                                                 fk.name + " uses " +
                                                 std::string(name));
+    }
+  }
+  // A column a view reads stays (VIEW.md §5).
+  for (uint64_t v : cat_view_readers(session, oid)) {
+    std::shared_ptr<const view_def_t> def = cat_get_view(session, v);
+    for (const view_read_t &r : def->reads) {
+      if (r.relation == oid && r.attnum == at) {
+        return sm1::seterr(sm1::SM_ERR_INUSE, "drop column: view " + def->name +
+                                                  " reads " +
+                                                  std::string(name));
+      }
     }
   }
   // A column a foreign key references is a key of the parent's
@@ -1004,6 +1022,155 @@ int rename_fkey(session_t *session, uint64_t table, uint64_t oid,
   }
   fk->name = name;
   return cat_put_table(session, table, child);
+}
+
+} // namespace sm3
+
+namespace sm3 {
+
+/* Whether the view from reads target, directly or through other views. */
+static bool view_reaches(const session_t *session, uint64_t from,
+                         uint64_t target) {
+  std::unordered_set<uint64_t> seen;
+  std::vector<uint64_t> todo{from};
+  while (!todo.empty()) {
+    uint64_t v = todo.back();
+    todo.pop_back();
+    if (v == target) {
+      return true;
+    }
+    std::shared_ptr<const view_def_t> def = cat_get_view(session, v);
+    if (!def || !seen.insert(v).second) {
+      continue;
+    }
+    for (const view_read_t &r : def->reads) {
+      todo.push_back(r.relation);
+    }
+  }
+  return false;
+}
+
+/*
+ * Lock each relation reads names intent_shared, to the end of the
+ * transaction, and check it is one a view may read (VIEW.md §5): a
+ * table, not temporary, with a live column where one is named; or a
+ * view, with none named, that does not read self, the view being
+ * replaced, or 0 for a new one.
+ */
+static int check_reads(session_t *session,
+                       const std::vector<view_read_t> &reads, uint64_t self) {
+  std::unordered_set<uint64_t> locked;
+  for (const view_read_t &r : reads) {
+    if (self != 0 && r.relation == self) {
+      return invalid("view: view " + std::to_string(self) + " reads itself");
+    }
+    // Held to the end of the transaction, as a reader's: a drop of
+    // the relation waits for this one, then finds the view.
+    if (locked.insert(r.relation).second &&
+        lock_table(session->sm1, r.relation, sm1::SM_LOCKMODE_IS) != 0) {
+      return -1;
+    }
+    // Read under the lock, from memory, which has every commit by now.
+    std::shared_ptr<const table_def_t> t = cat_get_table(session, r.relation);
+    if (t) {
+      if (t->nspoid == nsp_temp) {
+        return invalid("view: a view of a temporary table is not supported "
+                       "yet");
+      }
+      if (r.attnum != -1 && !live_attnum(t->rec, r.attnum)) {
+        return invalid("view: table " + t->name + " has no live column " +
+                       std::to_string(r.attnum));
+      }
+      continue;
+    }
+    if (!cat_get_view(session, r.relation)) {
+      return sm1::seterr(sm1::SM_ERR_NOTFOUND, "view: relation " +
+                                                   std::to_string(r.relation) +
+                                                   " does not exist");
+    }
+    if (r.attnum != -1) {
+      return invalid("view: a read of a view names no column");
+    }
+    if (self != 0 && view_reaches(session, r.relation, self)) {
+      return invalid("view: view " + std::to_string(self) +
+                     " reads itself through view " +
+                     std::to_string(r.relation));
+    }
+  }
+  return 0;
+}
+
+/* Create a view; see sm3.h. */
+int create_view(session_t *session, uint64_t nspoid, std::string_view name,
+                const view_def_t &def, uint64_t &oid) {
+  if (name.empty()) {
+    return invalid("create view: no name");
+  }
+  if (nspoid == nsp_temp) {
+    return invalid("create view: a temporary view is not supported yet");
+  }
+  if (check_reads(session, def.reads, 0) != 0) {
+    return -1;
+  }
+  view_def_t rec = def;
+  rec.nspoid = nspoid;
+  rec.name = std::string(name);
+  uint64_t v;
+  if (cat_new_oid(session, v) != 0 ||
+      cat_put_view(session, v, rec, nullptr) != 0) {
+    return -1;
+  }
+  oid = v;
+  return 0;
+}
+
+/* Replace a view's query and reads; see sm3.h. */
+int replace_view(session_t *session, uint64_t oid, const view_def_t &def) {
+  std::shared_ptr<const view_def_t> old;
+  // Exclusive: this waits out the view's readers, and they it.
+  if (cat_lock_view(session, oid, sm1::SM_LOCKMODE_EX, old) != 0 ||
+      check_reads(session, def.reads, oid) != 0) {
+    return -1;
+  }
+  view_def_t rec = def;
+  rec.nspoid = old->nspoid;
+  rec.name = old->name;
+  return cat_put_view(session, oid, rec, old.get());
+}
+
+/* Rename a view; see sm3.h. */
+int rename_view(session_t *session, uint64_t oid, std::string_view name) {
+  if (name.empty()) {
+    return invalid("rename view: no name");
+  }
+  std::shared_ptr<const view_def_t> old;
+  // Exclusive, as any DDL on the view.
+  if (cat_lock_view(session, oid, sm1::SM_LOCKMODE_EX, old) != 0) {
+    return -1;
+  }
+  if (old->name == name) {
+    return 0;
+  }
+  view_def_t rec = *old;
+  rec.name = std::string(name);
+  return cat_put_view(session, oid, rec, old.get());
+}
+
+/* Drop a view, if no other view reads it; see sm3.h. */
+int drop_view(session_t *session, uint64_t oid) {
+  std::shared_ptr<const view_def_t> old;
+  // Exclusive: this waits out the view's readers, and a view being
+  // made on it, which then fails to find it.
+  if (cat_lock_view(session, oid, sm1::SM_LOCKMODE_EX, old) != 0) {
+    return -1;
+  }
+  std::vector<uint64_t> readers = cat_view_readers(session, oid);
+  if (!readers.empty()) {
+    return sm1::seterr(sm1::SM_ERR_INUSE, "drop view: " + old->name +
+                                              " is read by view " +
+                                              std::to_string(readers[0]));
+  }
+  return cat_del_view(session, oid, *old);
 }
 
 } // namespace sm3
