@@ -7,7 +7,7 @@
  * postmaster, before any session starts, and every session starts with
  * them: session_thread_start() copies the parent's into the new thread
  * (utils/control_block.h).  A library a session LOADs sets that session's
- * alone.
+ * alone, but a session may not load one (dg/ISSUE.md issue 1).
  *
  * src/include/utils/hooks.h
  *

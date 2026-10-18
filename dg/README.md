@@ -34,8 +34,9 @@ strict C++ with no `-fpermissive`, and links `build/digres`
 with `../sq` and `../sm`. The server has no catalog tables:
 its catalog is being replaced, not created (`../sm/PART4.md`
 §10). `DGWORK.md` is the plan, `WORKNOTE.md` the decisions
-taken along the way, and `CODE.md` the rules for changing the
-code. `SYSCATALOG.md` is a proposal, not built, for making
+taken along the way, `CODE.md` the rules for changing the
+code, and `ISSUE.md` the problems known and left unfixed.
+`SYSCATALOG.md` is a proposal, not built, for making
 the catalog tables readable again, so that psql's `\dt` and
 `\d` run.
 

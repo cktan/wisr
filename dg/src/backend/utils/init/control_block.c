@@ -51,6 +51,8 @@ void tcb_init(void) {
   tcb->sequence.reset(sequence_state_new());
   tcb->smstore.reset(smstore_state_new());
   tcb->hooks.reset(new hooks_t());
+  tcb->dfmgr.reset(dfmgr_state_new());
+  tcb->explain.reset(explain_registry_new());
 }
 
 /* Free a thread's hooks, with its control block. */

@@ -96,6 +96,23 @@ struct hooks_free_t {
   void operator()(hooks_t *hooks) const;
 };
 
+/* dfmgr.c: the libraries this session has loaded. */
+typedef struct dfmgr_state_t dfmgr_state_t;
+struct dfmgr_state_free_t {
+  void operator()(dfmgr_state_t *state) const;
+};
+extern dfmgr_state_t *dfmgr_state_new(void);
+extern dfmgr_state_t *dfmgr_state_copy(const dfmgr_state_t *state);
+
+/* explain_state.c: the EXPLAIN extensions and options registered. */
+typedef struct explain_registry_t explain_registry_t;
+struct explain_registry_free_t {
+  void operator()(explain_registry_t *registry) const;
+};
+extern explain_registry_t *explain_registry_new(void);
+extern explain_registry_t *
+explain_registry_copy(const explain_registry_t *registry);
+
 /* datadir.c: the superuser, and sm's home directory, the process's. */
 struct datadir_state_t;
 extern datadir_state_t *datadir_state_new(void);
@@ -229,9 +246,17 @@ typedef struct tcb_t {
   uint32 xmin = 0;
   /*
    * utils/hooks.h: the hooks loaded libraries set, all NULL at first; a
-   * session starts with its parent's (session_thread_start())
+   * session starts with its parent's (session_thread_start()).  A
+   * library's own statics are not the session's (dg/ISSUE.md issue 1).
    */
   std::unique_ptr<hooks_t, hooks_free_t> hooks;
+  /*
+   * dfmgr.c, explain_state.c: the libraries loaded and the EXPLAIN
+   * extensions registered; a session starts with its parent's, and loads
+   * none of its own (dg/ISSUE.md issue 1)
+   */
+  std::unique_ptr<dfmgr_state_t, dfmgr_state_free_t> dfmgr;
+  std::unique_ptr<explain_registry_t, explain_registry_free_t> explain;
 } tcb_t;
 
 /*

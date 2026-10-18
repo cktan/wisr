@@ -16,6 +16,9 @@
 
 #include <sys/stat.h>
 
+#include <algorithm>
+#include <vector>
+
 #ifndef WIN32
 #include <dlfcn.h>
 #endif /* !WIN32 */
@@ -37,12 +40,12 @@ typedef struct {
 } rendezvousHashEntry;
 
 /*
- * List of dynamically loaded files (kept in malloc'd memory).
+ * A dynamically loaded file (kept in malloc'd memory).  Once loaded, it is
+ * never written or freed: a session's list may hold its parent's.
  *
  * Note: "typedef struct DynamicFileList DynamicFileList" appears in fmgr.h.
  */
 struct DynamicFileList {
-  DynamicFileList *next; /* List link */
   dev_t device;          /* Device file is on */
 #ifndef WIN32            /* ensures we never again depend on this under        \
                           * win32 */
@@ -53,8 +56,30 @@ struct DynamicFileList {
   char filename[FLEXIBLE_ARRAY_MEMBER]; /* Full pathname of file */
 };
 
-static thread_local /*SHARED*/ DynamicFileList *file_list = NULL;
-static thread_local /*SHARED*/ DynamicFileList *file_tail = NULL;
+/*
+ * This session's loaded files, oldest first: tcb->dfmgr.  A library's own
+ * statics are the process's, not the session's: a session loads none
+ * (dg/ISSUE.md issue 1).
+ */
+struct dfmgr_state_t {
+  std::vector<DynamicFileList *> files;
+};
+
+/* This session's loaded files. */
+static inline dfmgr_state_t &dfs(void) { return *tcb->dfmgr; }
+
+/* Make a thread's empty list of loaded files. */
+dfmgr_state_t *dfmgr_state_new(void) { return new dfmgr_state_t(); }
+
+/* Copy a list for a new session: the files themselves are shared. */
+dfmgr_state_t *dfmgr_state_copy(const dfmgr_state_t *state) {
+  return new dfmgr_state_t(*state);
+}
+
+/* Free a thread's list, with its control block; not the files. */
+void dfmgr_state_free_t::operator()(dfmgr_state_t *state) const {
+  delete state;
+}
 
 /* stat() call under Win32 returns an st_ino field, but it has no meaning */
 #ifndef WIN32
@@ -183,10 +208,12 @@ static void *internal_load_library(const char *libname) {
   /*
    * Scan the list of loaded FILES to see if the file has been loaded.
    */
-  for (file_scanner = file_list;
-       file_scanner != NULL && strcmp(libname, file_scanner->filename) != 0;
-       file_scanner = file_scanner->next)
-    ;
+  file_scanner = NULL;
+  for (DynamicFileList *file : dfs().files)
+    if (strcmp(libname, file->filename) == 0) {
+      file_scanner = file;
+      break;
+    }
 
   if (file_scanner == NULL) {
     /*
@@ -196,16 +223,20 @@ static void *internal_load_library(const char *libname) {
       ereport(ERROR, (errcode_for_file_access(),
                       errmsg("could not access file \"%s\": %m", libname)));
 
-    for (file_scanner = file_list;
-         file_scanner != NULL && !SAME_INODE(stat_buf, *file_scanner);
-         file_scanner = file_scanner->next)
-      ;
+    for (DynamicFileList *file : dfs().files)
+      if (SAME_INODE(stat_buf, *file)) {
+        file_scanner = file;
+        break;
+      }
   }
 
   if (file_scanner == NULL) {
     /*
-     * File not loaded yet.
+     * File not loaded yet.  Only the postmaster or a standalone backend
+     * loads one: a session would run _PG_init() again on the library's
+     * statics, which all sessions share (dg/ISSUE.md issue 1).
      */
+    Assert(!IsSessionThread);
     file_scanner = (DynamicFileList *)malloc(
         offsetof(DynamicFileList, filename) + strlen(libname) + 1);
     if (file_scanner == NULL)
@@ -217,7 +248,6 @@ static void *internal_load_library(const char *libname) {
 #ifndef WIN32
     file_scanner->inode = stat_buf.st_ino;
 #endif
-    file_scanner->next = NULL;
 
     file_scanner->handle =
         dlopen(file_scanner->filename, RTLD_NOW | RTLD_GLOBAL);
@@ -272,11 +302,7 @@ static void *internal_load_library(const char *libname) {
       (*PG_init)();
 
     /* OK to link it into list */
-    if (file_list == NULL)
-      file_list = file_scanner;
-    else
-      file_tail->next = file_scanner;
-    file_tail = file_scanner;
+    dfs().files.push_back(file_scanner);
   }
 
   return file_scanner->handle;
@@ -380,10 +406,15 @@ static void incompatible_module_error(const char *libname,
  * Note: currently, there is no special provision for dealing with changes
  * in the list while a scan is happening.  Current callers don't need it.
  */
-DynamicFileList *get_first_loaded_module(void) { return file_list; }
+DynamicFileList *get_first_loaded_module(void) {
+  return dfs().files.empty() ? NULL : dfs().files.front();
+}
 
 DynamicFileList *get_next_loaded_module(DynamicFileList *dfptr) {
-  return dfptr->next;
+  std::vector<DynamicFileList *> &files = dfs().files;
+  auto it = std::find(files.begin(), files.end(), dfptr);
+
+  return (it == files.end() || ++it == files.end()) ? NULL : *it;
 }
 
 /*

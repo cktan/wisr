@@ -6516,3 +6516,38 @@ and a library a session `LOAD`s set that session's alone.
   parent's pointers.
 - 16 `/*SHARED*/` globals are left.
 
+
+## Step 223: the loaded libraries and EXPLAIN registry are the thread's
+
+`../sm/NEXT.md` §1's second item, its sixth batch, and the
+hazard step 222 left: dfmgr's list of loaded libraries and the
+EXPLAIN extension registry were SHARED, a pointer copy each,
+so a session's copy was the postmaster's memory. With
+`shared_preload_libraries` set, a session's `LOAD` linked its
+file through the postmaster's last node, and a session's
+`GetExplainExtensionId()` wrote the postmaster's array, or
+`repalloc`ed it from another thread.
+
+- **`tcb->dfmgr`** (`dfmgr_state_t`, dfmgr.c) is the session's
+  list, a `std::vector` of its files, oldest first, in place of
+  `file_list`, `file_tail` and the files' `next` links. A file
+  once loaded is never written or freed, so a session's list
+  holds its parent's files themselves; `get_next_loaded_module()`
+  finds the file in the list.
+- **`tcb->explain`** (`explain_registry_t`, explain_state.c) is
+  the session's extension names, by ID, and options, two
+  `std::vector`s in place of the six arrays and counts. The
+  names are the extensions' own, never freed, and shared.
+- **A session starts with its parent's**:
+  `session_thread_start()` copies both, as it copies the hooks,
+  and the new thread takes them after its `tcb_init()`. Each is
+  the session's alone after: a `LOAD` or a registration changes
+  no other's.
+- No library is built in the tree, so no test loads one.
+- A library's own statics are still the process's: a second
+  session that `LOAD`s it runs its `_PG_init()` again on them.
+  `ISSUE.md` issue 1 records it, not to be fixed soon, and
+  `internal_load_library()` asserts that no session thread
+  loads a library.
+- 10 `/*SHARED*/` globals are left; step 222's 16 counted the
+  three signal masks, declared together, as one.

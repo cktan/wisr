@@ -46,6 +46,8 @@ typedef struct session_start_t {
   void *arg;
   char *shared;   /* the SHARED variables, one after another */
   hooks_t *hooks; /* the parent's hooks, copied */
+  dfmgr_state_t *dfmgr;        /* the parent's loaded libraries, copied */
+  explain_registry_t *explain; /* the parent's EXPLAIN registry, copied */
   char *settings; /* the non-default settings, as GUC writes them */
   size_t settings_len;
 } session_start_t;
@@ -108,9 +110,14 @@ static void session_thread_main(session_start_t *p) {
   /* This thread's control block: what it has its own of. */
   tcb_init();
 
-  /* The hooks its parent's libraries set: shared_preload_libraries'. */
+  /*
+   * Its parent's libraries, shared_preload_libraries', and the hooks and
+   * EXPLAIN options they set.
+   */
   *tcb->hooks = *start.hooks;
   delete start.hooks;
+  tcb->dfmgr.reset(start.dfmgr);
+  tcb->explain.reset(start.explain);
 
   /* check_stack_depth() measures from here: this thread's stack is its own. */
   (void)set_stack_base();
@@ -185,6 +192,8 @@ std::thread session_thread_start(void (*fn)(void *), void *arg) {
     at += shared_tls_table[i].size;
   }
   start->hooks = new hooks_t(*tcb->hooks);
+  start->dfmgr = dfmgr_state_copy(tcb->dfmgr.get());
+  start->explain = explain_registry_copy(tcb->explain.get());
   fp = open_memstream(&start->settings, &start->settings_len);
   if (fp == NULL)
     elog(ERROR, "could not write the settings: %m");
@@ -197,6 +206,8 @@ std::thread session_thread_start(void (*fn)(void *), void *arg) {
   } catch (const std::system_error &e) {
     free(start->shared);
     delete start->hooks;
+    dfmgr_state_free_t()(start->dfmgr);
+    explain_registry_free_t()(start->explain);
     free(start->settings);
     free(start);
     elog(ERROR, "could not start a thread: %s", e.what());

@@ -33,6 +33,8 @@
  */
 #include "postgres.h"
 
+#include <vector>
+
 #include "commands/defrem.h"
 #include "commands/explain.h"
 #include "commands/explain_state.h"
@@ -45,14 +47,29 @@ typedef struct {
   ExplainOptionHandler option_handler;
 } ExplainExtensionOption;
 
-static thread_local /*SHARED*/ const char **ExplainExtensionNameArray = NULL;
-static thread_local /*SHARED*/ int ExplainExtensionNamesAssigned = 0;
-static thread_local /*SHARED*/ int ExplainExtensionNamesAllocated = 0;
+/* This session's EXPLAIN extensions, by ID, and options: tcb->explain. */
+struct explain_registry_t {
+  std::vector<const char *> names;
+  std::vector<ExplainExtensionOption> options;
+};
 
-static thread_local /*SHARED*/ ExplainExtensionOption
-    *ExplainExtensionOptionArray = NULL;
-static thread_local /*SHARED*/ int ExplainExtensionOptionsAssigned = 0;
-static thread_local /*SHARED*/ int ExplainExtensionOptionsAllocated = 0;
+/* This session's EXPLAIN registry. */
+static inline explain_registry_t &ers(void) { return *tcb->explain; }
+
+/* Make a thread's empty EXPLAIN registry. */
+explain_registry_t *explain_registry_new(void) {
+  return new explain_registry_t();
+}
+
+/* Copy a registry for a new session: the names themselves are shared. */
+explain_registry_t *explain_registry_copy(const explain_registry_t *registry) {
+  return new explain_registry_t(*registry);
+}
+
+/* Free a thread's EXPLAIN registry, with its control block. */
+void explain_registry_free_t::operator()(explain_registry_t *registry) const {
+  delete registry;
+}
 
 /*
  * Create a new ExplainState struct initialized with default options.
@@ -196,30 +213,16 @@ void ParseExplainOptionList(ExplainState *es, List *options,
  * that will never be freed.
  */
 int GetExplainExtensionId(const char *extension_name) {
+  std::vector<const char *> &names = ers().names;
+
   /* Search for an existing extension by this name; if found, return ID. */
-  for (int i = 0; i < ExplainExtensionNamesAssigned; ++i)
-    if (strcmp(ExplainExtensionNameArray[i], extension_name) == 0)
+  for (size_t i = 0; i < names.size(); ++i)
+    if (strcmp(names[i], extension_name) == 0)
       return i;
 
-  /* If there is no array yet, create one. */
-  if (ExplainExtensionNameArray == NULL) {
-    ExplainExtensionNamesAllocated = 16;
-    ExplainExtensionNameArray = (const char **)MemoryContextAlloc(
-        TopMemoryContext, ExplainExtensionNamesAllocated * sizeof(char *));
-  }
-
-  /* If there's an array but it's currently full, expand it. */
-  if (ExplainExtensionNamesAssigned >= ExplainExtensionNamesAllocated) {
-    int i = pg_nextpower2_32(ExplainExtensionNamesAssigned + 1);
-
-    ExplainExtensionNameArray =
-        (const char **)repalloc(ExplainExtensionNameArray, i * sizeof(char *));
-    ExplainExtensionNamesAllocated = i;
-  }
-
   /* Assign and return new ID. */
-  ExplainExtensionNameArray[ExplainExtensionNamesAssigned] = extension_name;
-  return ExplainExtensionNamesAssigned++;
+  names.push_back(extension_name);
+  return names.size() - 1;
 }
 
 /*
@@ -281,37 +284,18 @@ void SetExplainExtensionState(ExplainState *es, int extension_id,
  */
 void RegisterExtensionExplainOption(const char *option_name,
                                     ExplainOptionHandler handler) {
-  ExplainExtensionOption *exopt;
+  std::vector<ExplainExtensionOption> &options = ers().options;
 
   /* Search for an existing option by this name; if found, update handler. */
-  for (int i = 0; i < ExplainExtensionOptionsAssigned; ++i) {
-    if (strcmp(ExplainExtensionOptionArray[i].option_name, option_name) == 0) {
-      ExplainExtensionOptionArray[i].option_handler = handler;
+  for (ExplainExtensionOption &exopt : options) {
+    if (strcmp(exopt.option_name, option_name) == 0) {
+      exopt.option_handler = handler;
       return;
     }
   }
 
-  /* If there is no array yet, create one. */
-  if (ExplainExtensionOptionArray == NULL) {
-    ExplainExtensionOptionsAllocated = 16;
-    ExplainExtensionOptionArray = (ExplainExtensionOption *)MemoryContextAlloc(
-        TopMemoryContext,
-        ExplainExtensionOptionsAllocated * sizeof(ExplainExtensionOption));
-  }
-
-  /* If there's an array but it's currently full, expand it. */
-  if (ExplainExtensionOptionsAssigned >= ExplainExtensionOptionsAllocated) {
-    int i = pg_nextpower2_32(ExplainExtensionOptionsAssigned + 1);
-
-    ExplainExtensionOptionArray = (ExplainExtensionOption *)repalloc(
-        ExplainExtensionOptionArray, i * sizeof(ExplainExtensionOption));
-    ExplainExtensionOptionsAllocated = i;
-  }
-
-  /* Assign and return new ID. */
-  exopt = &ExplainExtensionOptionArray[ExplainExtensionOptionsAssigned++];
-  exopt->option_name = option_name;
-  exopt->option_handler = handler;
+  /* Add the new option. */
+  options.push_back({option_name, handler});
 }
 
 /*
@@ -322,9 +306,9 @@ void RegisterExtensionExplainOption(const char *option_name,
  */
 bool ApplyExtensionExplainOption(ExplainState *es, DefElem *opt,
                                  ParseState *pstate) {
-  for (int i = 0; i < ExplainExtensionOptionsAssigned; ++i) {
-    if (strcmp(ExplainExtensionOptionArray[i].option_name, opt->defname) == 0) {
-      ExplainExtensionOptionArray[i].option_handler(es, opt, pstate);
+  for (const ExplainExtensionOption &exopt : ers().options) {
+    if (strcmp(exopt.option_name, opt->defname) == 0) {
+      exopt.option_handler(es, opt, pstate);
       return true;
     }
   }
