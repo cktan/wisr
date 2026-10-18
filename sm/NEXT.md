@@ -35,6 +35,19 @@ Low priority:
    (`../dg/src/tools/shared_tls.py`), whose address is the copy
    table's anchor. When it has moved, the copy table and the
    two-pass link go (`../dg/PLAN.md` §9).
+3. **digres's replication code, the rest of it.** Replication
+   is gone: its modules are deleted and a replication
+   connection is refused (`../dg/WORKNOTE.md` step 2).
+   What is left goes too, not kept inert: publications (34
+   files) and subscriptions (27), their grammar, catalog
+   headers and statements; the `REPLICATION` role attribute
+   (19); the walsender and walreceiver references (11); and
+   what recovery kept for a standby.
+4. **digres's `xact.c` goes.** sm keeps the transaction, and
+   digres keeps only what a session needs around it
+   (`../dg/PLAN.md` §7): its block state, memory and resource
+   cleanup, and the hooks that end a statement. `xact.c` is
+   3,284 lines, and 74 files include `access/xact.h`.
 
 ---
 
