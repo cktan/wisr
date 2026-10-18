@@ -473,10 +473,12 @@ design:
   `SMSTORE_ROWS_PER_BLOCK`). A block of 256 rownos is what
   `TABLESAMPLE` picks, as PostgreSQL's picks a page
   (`../dg/WORKNOTE.md` step 244), and a tid holds a rowno up
-  to about 2^40. This matches the heap PostgreSQL's planner
-  and executor assume, serves tables without a primary key,
-  and keeps a primary key change from rewriting every index;
-  a primary key lookup costs two reads.
+  to about 2^40. The mapping is a bridge: the aim, in the long
+  term, is to remove the concept of ctid from digres, so that
+  a row is named by its `rowno` alone. This matches the heap
+  PostgreSQL's planner and executor assume, serves tables
+  without a primary key, and keeps a primary key change from
+  rewriting every index; a primary key lookup costs two reads.
 - **One sm1 store per table.** A table's heap, all its
   indexes and its TOAST data are rels in one sm1 store, told
   apart by a 2-byte relid whose values `sm3/SM3_DESIGN.md` §4
