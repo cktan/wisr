@@ -314,10 +314,11 @@ and sm is attached once; no auxiliary process is left (step
   thread's top, which queues the exit code for the postmaster
   and sets its latch; `process_pm_child_exit()` takes it as it
   takes a child from `waitpid()`.
-- **The thread is given every SHARED variable** of the
-  postmaster, by a table the build writes from the marks and
-  the linker map (`src/tools/shared_tls.py`), and the settings
-  not at their defaults; it then runs
+- **The thread is given the settings** not at their defaults,
+  and was given every SHARED variable of the postmaster, by a
+  table the build wrote from the marks and the linker map,
+  until the last moved into `pcb_t` (`WORKNOTE.md` step 229);
+  it then runs
   `AttachSharedMemoryStructs()`, as an EXEC_BACKEND child does,
   for the pointers into shared memory that LOCAL structures
   hold. `MyProcPid` is the thread id.
@@ -398,13 +399,11 @@ Do not reopen these without the owner:
   (`WORKNOTE.md` step 92): what replaces the rule, once there
   are roles, will not be that file.
 - **Every writable global is `thread_local`**, marked
-  `/*SHARED*/` or `/*LOCAL*/`, and the build fails otherwise
-  (§3.2, §3.6). A new thread is given its parent's SHARED
-  variables. A SHARED variable that a thread must reset or redo
-  after the copy was marked SHARED by mistake: mark it LOCAL
+  `/*LOCAL*/`, and the build fails otherwise (§3.2, §3.6). A
+  thread shares only through `pcb` and `shmem`
   (`src/include/c.h`).
 - **The globals move into four control blocks**: the SHARED ones
-  as work of their own (`../sm/NEXT.md` §1), a LOCAL one as a
+  did, as work of their own, and a LOCAL one does as a
   change touches it (`utils/control_block.h`, `WORKNOTE.md` steps
   22 and 211): `pcb_t`, what the main thread owns and the others
   read; `shmem_t`, what the threads share and write, each field
@@ -412,10 +411,10 @@ Do not reopen these without the owner:
   `postmaster_tcb_t`, what the main thread owns and no other
   reads. A field is a value, or a `std::unique_ptr` to what the
   block owns; a module's state is a struct only it defines. New
-  state goes into a block at once. When the last SHARED variable
-  moves, the copy table and the two-pass link go, and the only
-  writable globals left outside `thread_local` are `pcb` and
-  `shmem`.
+  state goes into a block at once. The last SHARED variable
+  moved in `WORKNOTE.md` step 229, with the copy table and the
+  two-pass link: the only writable globals outside
+  `thread_local` are `pcb` and `shmem`.
 - **The GUC variables and tables are per thread** (§3.4). GUC
   is not otherwise to be touched until the thread model is
   done.
@@ -561,8 +560,3 @@ Do not reopen these without the owner:
   `interval + date` and `text || anynonarray` among them.
 - `initdb` does not clean up when interrupted.
 - A reload with no configuration file logs a complaint.
-- **TODO: the last SHARED variable moves into the blocks.**
-  `progname`, the one `/*SHARED*/` global left, is a
-  `thread_local`: a thread is given a copy when it starts.
-  Its address is the copy table's anchor. Once it is moved,
-  the copy table and the two-pass link go (§7).

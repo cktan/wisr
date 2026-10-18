@@ -543,8 +543,8 @@ void PostmasterMain(int argc, char *argv[]) {
 
     case 'f':
       if (!set_plan_disabling_options(optarg, PGC_POSTMASTER, PGC_S_ARGV)) {
-        write_stderr("%s: invalid argument for option -f: \"%s\"\n", progname,
-                     optarg);
+        write_stderr("%s: invalid argument for option -f: \"%s\"\n",
+                     pcb->progname, optarg);
         ExitPostmaster(1);
       }
       break;
@@ -617,8 +617,8 @@ void PostmasterMain(int argc, char *argv[]) {
       if (tmp) {
         SetConfigOption(tmp, "true", PGC_POSTMASTER, PGC_S_ARGV);
       } else {
-        write_stderr("%s: invalid argument for option -t: \"%s\"\n", progname,
-                     optarg);
+        write_stderr("%s: invalid argument for option -t: \"%s\"\n",
+                     pcb->progname, optarg);
         ExitPostmaster(1);
       }
       break;
@@ -629,7 +629,7 @@ void PostmasterMain(int argc, char *argv[]) {
       break;
 
     default:
-      write_stderr("Try \"%s --help\" for more information.\n", progname);
+      write_stderr("Try \"%s --help\" for more information.\n", pcb->progname);
       ExitPostmaster(1);
     }
   }
@@ -638,8 +638,8 @@ void PostmasterMain(int argc, char *argv[]) {
    * Postmaster accepts no non-option switch arguments.
    */
   if (optind < argc) {
-    write_stderr("%s: invalid argument: \"%s\"\n", progname, argv[optind]);
-    write_stderr("Try \"%s --help\" for more information.\n", progname);
+    write_stderr("%s: invalid argument: \"%s\"\n", pcb->progname, argv[optind]);
+    write_stderr("Try \"%s --help\" for more information.\n", pcb->progname);
     ExitPostmaster(1);
   }
 
@@ -647,7 +647,7 @@ void PostmasterMain(int argc, char *argv[]) {
    * Locate the proper configuration files and data directory, and read
    * postgresql.conf for the first time.
    */
-  if (!SelectConfigFiles(userDoption, progname))
+  if (!SelectConfigFiles(userDoption, pcb->progname))
     ExitPostmaster(2);
 
   if (output_config_variable != NULL) {
@@ -703,8 +703,8 @@ void PostmasterMain(int argc, char *argv[]) {
     write_stderr("%s: \"superuser_reserved_connections\" (%d) plus "
                  "\"reserved_connections\" (%d) must be less than "
                  "\"max_connections\" (%d)\n",
-                 progname, SuperuserReservedConnections, ReservedConnections,
-                 MaxConnections);
+                 pcb->progname, SuperuserReservedConnections,
+                 ReservedConnections, MaxConnections);
     ExitPostmaster(1);
   }
 
@@ -713,7 +713,7 @@ void PostmasterMain(int argc, char *argv[]) {
    * (Put any slow processing further down, after postmaster.pid creation.)
    */
   if (!CheckDateTokenTables()) {
-    write_stderr("%s: invalid datetoken tables, please fix\n", progname);
+    write_stderr("%s: invalid datetoken tables, please fix\n", pcb->progname);
     ExitPostmaster(1);
   }
 
@@ -1009,10 +1009,10 @@ void PostmasterMain(int argc, char *argv[]) {
       if (chmod(external_pid_file, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH) != 0)
         write_stderr("%s: could not change permissions of external PID file "
                      "\"%s\": %m\n",
-                     progname, external_pid_file);
+                     pcb->progname, external_pid_file);
     } else
       write_stderr("%s: could not write external PID file \"%s\": %m\n",
-                   progname, external_pid_file);
+                   pcb->progname, external_pid_file);
 
     on_proc_exit(unlink_external_pid_file, 0);
   }

@@ -127,18 +127,14 @@ Every `.c` file is compiled as strict C++20 (`g++ -x c++
 
 digres is one process; each session is a thread of it.
 
-- **Every writable global is `thread_local`**, with a comment
-  after the keyword saying what it is:
-  `thread_local /*SHARED*/ int x;` is copied from the parent
-  into each new thread; `thread_local /*LOCAL*/ int y;` starts
-  at its initial value in each thread.
-  `src/tools/cxx_thread_local.py --check` fails the build on
-  anything else, and on any static initialiser.
-- **SHARED does not mean shared.** Each thread has its own
-  copy, taken when the thread starts; what one thread sets
-  later, others never see. A SHARED variable that a thread
-  must reset or redo after the copy was marked SHARED by
-  mistake: mark it LOCAL.
+- **Every writable global is `thread_local`**, marked
+  `thread_local /*LOCAL*/ int y;`: it starts at its initial
+  value in each thread, and what one thread sets, others never
+  see. `src/tools/cxx_thread_local.py --check` fails the build
+  on anything else, and on any static initialiser.
+- **A thread shares only through `pcb` and `shmem`.** Nothing
+  is copied from a parent's thread-local variables; there is
+  no `/*SHARED*/` mark (`WORKNOTE.md` step 229).
 - **The control blocks replace them** (`utils/control_block.h`),
   four, by who owns a field and who reads it:
   - **`pcb_t`**: what the main thread owns and other threads
@@ -152,9 +148,9 @@ digres is one process; each session is a thread of it.
     guards, or an object that guards itself.
   - **`tcb_t`**: what one thread has, alone, one per thread.
     What a thread inherits from the one that started it is
-    copied in at its start, and is its own after: a SHARED
-    variable that a session changes, a setting among them,
-    comes here, not to `pcb_t`. A tcb may point into
+    copied in at its start, and is its own after: what a
+    session changes, a setting among them, comes here, not to
+    `pcb_t`. A tcb may point into
     `shmem_t`; nothing of it is reached from another thread.
   - **`postmaster_tcb_t`**: what the main thread owns and no
     other thread reads, the postmaster's own state, or a
@@ -174,13 +170,8 @@ digres is one process; each session is a thread of it.
   - `tcb` is a pointer (`thread_local tcb_t *tcb`), made at a
     thread's start and freed at its end, and NULL while it is
     being freed. A signal handler checks for NULL.
-  - **The SHARED globals move as work of their own**
-    (`../sm/NEXT.md` §1): each into `pcb_t`, `tcb_t`,
-    `postmaster_tcb_t` or `shmem_t`, by who owns it and who
-    reads it. A LOCAL
-    global moves into
-    `tcb_t` when a change touches it. Put new state in a block
-    from the start.
+  - **A LOCAL global moves into `tcb_t`** when a change
+    touches it. Put new state in a block from the start.
 - **`src/tools/process_wide.txt`** lists the writable globals
   allowed outside `thread_local`. It holds `pcb` and `shmem`
   alone; keep it that way.

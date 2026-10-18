@@ -154,6 +154,7 @@ typedef struct pcb_t {
   char my_exec_path[MAXPGPATH] = "";   /* full path to my executable */
   char pkglib_path[MAXPGPATH] = "";    /* full path to lib directory */
   pid_t PostmasterPid = 0;
+  const char *progname = NULL; /* main.c: the program's name, from argv[0] */
 
   /*
    * globals.c: true in the postmaster and its sessions; false in a

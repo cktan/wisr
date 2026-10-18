@@ -59,8 +59,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT char *bonjour_name;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool send_abort_for_crash;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool send_abort_for_kill;
 
-extern thread_local /*SHARED*/ PGDLLIMPORT const char *progname;
-
 extern PGDLLIMPORT bool LoadedSSL;
 
 pg_noreturn extern void PostmasterMain(int argc, char *argv[]);

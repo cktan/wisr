@@ -42,8 +42,6 @@
 #include "utils/pg_locale.h"
 #include "utils/ps_status.h"
 
-thread_local /*SHARED*/ const char *progname;
-
 /* names of special must-be-first options for dispatching to subprograms */
 static const char *const DispatchOptionNames[] = {
     [DISPATCH_CHECK] = "check",
@@ -83,12 +81,12 @@ int main(int argc, char *argv[]) {
   pgwin32_install_crashdump_handler();
 #endif
 
-  progname = get_progname(argv[0]);
+  pcb_main()->progname = get_progname(argv[0]);
 
   /*
    * Platform-specific startup hacks
    */
-  startup_hacks(progname);
+  startup_hacks(pcb->progname);
 
   /*
    * Remember the physical location of the initially given argv[] array for
@@ -131,7 +129,7 @@ int main(int argc, char *argv[]) {
    * Nor is "initdb", which is this program under another name, or
    * "digres --init": it makes a data directory.
    */
-  if (strcmp(progname, "initdb") == 0 ||
+  if (strcmp(pcb->progname, "initdb") == 0 ||
       (argc > 1 && strcmp(argv[1], "--init") == 0))
     exit(initdb_main(argc, argv));
 
@@ -174,7 +172,7 @@ int main(int argc, char *argv[]) {
    */
   if (argc > 1) {
     if (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-?") == 0) {
-      help(progname);
+      help(pcb->progname);
       exit(0);
     }
     if (strcmp(argv[1], "--version") == 0 || strcmp(argv[1], "-V") == 0) {
@@ -203,7 +201,7 @@ int main(int argc, char *argv[]) {
    * option.
    */
   if (do_check_root)
-    check_root(progname);
+    check_root(pcb->progname);
 
   /*
    * Dispatch to one of various subprograms depending on first argument.
@@ -215,14 +213,15 @@ int main(int argc, char *argv[]) {
   switch (dispatch_option) {
   case DISPATCH_CHECK:
   case DISPATCH_BOOT:
-    write_stderr("%s: there is no bootstrap mode\n", progname);
+    write_stderr("%s: there is no bootstrap mode\n", pcb->progname);
     exit(1);
     break;
   case DISPATCH_DESCRIBE_CONFIG:
     GucInfoMain();
     break;
   case DISPATCH_SINGLE:
-    PostgresSingleUserMain(argc, argv, strdup(get_user_name_or_exit(progname)));
+    PostgresSingleUserMain(argc, argv,
+                           strdup(get_user_name_or_exit(pcb->progname)));
     break;
   case DISPATCH_POSTMASTER:
     PostmasterMain(argc, argv);

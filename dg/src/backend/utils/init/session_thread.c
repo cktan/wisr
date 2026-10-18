@@ -6,11 +6,11 @@
  * A new thread's thread_local variables hold what the source wrote, not
  * what its parent has set since (c.h). So the thread is given, as
  * PostgreSQL's EXEC_BACKEND child is given by its postmaster, what it
- * cannot work out for itself: a copy of every SHARED variable the parent
- * has, found by the table src/tools/shared_tls.py writes, and the
- * settings that are not at their defaults. The rest it sets up itself,
- * memory contexts first; nothing of the parent's private memory is
- * copied.
+ * cannot work out for itself: the settings that are not at their
+ * defaults, and its parent's hooks and loaded libraries. What the main
+ * thread owns it reads through pcb (utils/control_block.h). The rest it
+ * sets up itself, memory contexts first; nothing of the parent's private
+ * memory is copied.
  *
  * A session ends where a process would exit: proc_exit() runs the
  * thread's exit callbacks and throws, and the thread's top catches it.
@@ -28,7 +28,6 @@
 #include "libpq/pqsignal.h"
 #include "libpq/libpq.h"
 #include "miscadmin.h"
-#include "postmaster/postmaster.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "storage/latch.h"
@@ -44,22 +43,12 @@
 typedef struct session_start_t {
   void (*fn)(void *);
   void *arg;
-  char *shared;   /* the SHARED variables, one after another */
   hooks_t *hooks; /* the parent's hooks, copied */
   dfmgr_state_t *dfmgr;        /* the parent's loaded libraries, copied */
   explain_registry_t *explain; /* the parent's EXPLAIN registry, copied */
   char *settings; /* the non-default settings, as GUC writes them */
   size_t settings_len;
 } session_start_t;
-
-/*
- * This thread's thread-local block: where progname is, less its offset.
- * Through an integer, so _FORTIFY_SOURCE does not take the block for
- * progname alone.
- */
-static char *tls_block(void) {
-  return (char *)((uintptr_t)&progname - shared_tls_anchor);
-}
 
 /*
  * Free what the session's exit left, which a process's exit would have
@@ -95,14 +84,6 @@ static void session_thread_main(session_start_t *p) {
   session_start_t start = *p;
 
   free(p);
-
-  /* The parent's SHARED variables, before anything reads one. */
-  for (int i = 0, at = 0; i < shared_tls_count; i++) {
-    memcpy(tls_block() + shared_tls_table[i].offset, start.shared + at,
-           shared_tls_table[i].size);
-    at += shared_tls_table[i].size;
-  }
-  free(start.shared);
 
   IsSessionThread = true;
   MyProcPid = gettid();
@@ -152,15 +133,6 @@ static void session_thread_main(session_start_t *p) {
   }
 }
 
-/* The bytes of all the SHARED variables together. */
-static size_t shared_len(void) {
-  size_t len = 0;
-
-  for (int i = 0; i < shared_tls_count; i++)
-    len += shared_tls_table[i].size;
-  return len;
-}
-
 /*
  * Start a thread that runs fn(arg) as a session, given what this thread
  * has set that it needs. fn must catch its own errors. The caller joins
@@ -174,14 +146,6 @@ std::thread session_thread_start(void (*fn)(void *), void *arg) {
     elog(ERROR, "out of memory");
   start->fn = fn;
   start->arg = arg;
-  start->shared = (char *)malloc(shared_len());
-  if (start->shared == NULL)
-    elog(ERROR, "out of memory");
-  for (int i = 0, at = 0; i < shared_tls_count; i++) {
-    memcpy(start->shared + at, tls_block() + shared_tls_table[i].offset,
-           shared_tls_table[i].size);
-    at += shared_tls_table[i].size;
-  }
   start->hooks = new hooks_t(*tcb->hooks);
   start->dfmgr = dfmgr_state_copy(tcb->dfmgr.get());
   start->explain = explain_registry_copy(tcb->explain.get());
@@ -195,7 +159,6 @@ std::thread session_thread_start(void (*fn)(void *), void *arg) {
   try {
     return std::thread(session_thread_main, start);
   } catch (const std::system_error &e) {
-    free(start->shared);
     delete start->hooks;
     dfmgr_state_free_t()(start->dfmgr);
     explain_registry_free_t()(start->explain);

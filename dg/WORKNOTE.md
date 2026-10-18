@@ -6682,3 +6682,33 @@ digres refuses a replication connection and has no WAL.
   directory digres makes: `pcb->pg_dir_create_mode`,
   `pg_file_create_mode` and `pg_mode_mask`, as before.
 - 1 `/*SHARED*/` global is left: `progname`.
+
+## Step 229: progname is pcb's, and the copy table is gone
+
+`../sm/NEXT.md` §1's second item, its last batch. `progname` was
+the last SHARED global, and its address was the copy table's
+anchor (`session_thread.c`'s `tls_block()`), so it moved with
+the table.
+
+- **`pcb->progname`**: `main()` sets it from `argv[0]`, through
+  `pcb_main()`, before any thread starts; `main.c`,
+  `postmaster.c` and `postgres.c` read it. A session reads it in
+  one place, the hint for a bad option in its startup packet.
+  `main.c`'s static functions keep their `progname` parameter.
+  `server.sh`: a session refusing `PGOPTIONS="-Q"` names the
+  program in its hint, which no test checked before.
+- **The copy table is gone**: `src/tools/shared_tls.py`, the
+  table and its anchor in `session_thread.h`, `tls_block()`,
+  and the copy in `session_thread_start()` and in the new
+  thread. A thread is still given the settings not at their
+  defaults, its parent's hooks, loaded libraries and EXPLAIN
+  registry.
+- **One link**: the Makefile's `link_shared`, which linked
+  twice and read the table between, then checked a third read
+  matched, is `link_server`, one link with no map.
+- **The `/*LOCAL*/` marks stay**: each marks a thread's own
+  variable, to move into `tcb_t` when a change touches it.
+  `c.h` and `CODE.md` §3 say a thread shares only through
+  `pcb` and `shmem`. `cxx_thread_local.py --check` still fails
+  the build on a writable global not `thread_local`.
+- No `/*SHARED*/` global is left.

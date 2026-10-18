@@ -25,17 +25,7 @@ Low priority:
    of line, which end a load's files; a `rel` verb; and batch
    mode and mini-batch, which matter less now that no write
    keeps a row lock.
-2. **digres's SHARED globals into the control blocks.**
-   `../dg/WORKNOTE.md` step 211 split the pcb in three
-   (`../dg/CODE.md` §3): `shmem_t`, what the threads share and
-   write; `pcb_t`, what the main thread owns and the others
-   read, empty so far; and `tcb_t`, a thread's own.
-   1 `thread_local /*SHARED*/` global is left, `progname`,
-   copied into a thread as it starts
-   (`../dg/src/tools/shared_tls.py`), whose address is the copy
-   table's anchor. When it has moved, the copy table and the
-   two-pass link go (`../dg/PLAN.md` §9).
-3. **digres's replication code, the rest of it.** Replication
+2. **digres's replication code, the rest of it.** Replication
    is gone: its modules are deleted and a replication
    connection is refused (`../dg/WORKNOTE.md` step 2).
    What is left goes too, not kept inert: publications (34
@@ -43,7 +33,7 @@ Low priority:
    headers and statements; the `REPLICATION` role attribute
    (19); the walsender and walreceiver references (11); and
    what recovery kept for a standby.
-4. **digres's `xact.c` goes.** sm keeps the transaction, and
+3. **digres's `xact.c` goes.** sm keeps the transaction, and
    digres keeps only what a session needs around it
    (`../dg/PLAN.md` §7): its block state, memory and resource
    cleanup, and the hooks that end a statement. `xact.c` is

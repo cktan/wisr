@@ -3627,6 +3627,17 @@ held_wait loadtime "lt1 true" ||
 held_end loadtime
 rm "$work/data/postgresql.conf"
 
+# Verify that a session reads the program's name the main thread set
+# (pcb->progname), as a new thread is no longer given a copy of it.
+# 1. Connect with a switch the server does not know in PGOPTIONS.
+# 2. Confirm the session refuses it, and its hint names the program.
+PGOPTIONS="-Q" local_psql -c 'select 1' > "$work/progname.out" 2>&1 &&
+  fail "a bad startup option is refused"
+grep -q 'invalid command-line argument for server process: -Q' \
+  "$work/progname.out" || fail "a bad startup option's error"
+grep -q 'Try "digres[^"]* --help"' "$work/progname.out" ||
+  fail "a session's hint names the program"
+
 # Verify that SIGUSR1 and SIGUSR2 are ignored: there is no log rotation, nor
 # pmsignal, and no child to reserve SIGUSR2 for.
 # 1. Send the server SIGUSR1 and SIGUSR2.
