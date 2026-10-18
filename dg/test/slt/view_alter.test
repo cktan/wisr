@@ -1,0 +1,217 @@
+# Verify ALTER VIEW ... RENAME TO, and ALTER TABLE ... RENAME TO of a view:
+# the view goes by its new name, and what reads it goes on reading it.
+# 1. Make t, v over it and w over v.
+# 2. Rename v to v2 by ALTER VIEW, then to v3 by ALTER TABLE: v is gone,
+#    v3 reads as v did, and w reads it, its definition naming v3.
+# 3. A name taken, ALTER VIEW of a table, and no such view are refused.
+# 4. A rename rolled back leaves the old name.
+
+statement ok
+create table t (a int4, b text)
+
+statement ok
+insert into t values (1, 'one'), (2, 'two'), (3, 'three')
+
+statement ok
+create view v as select a, b from t where a > 1
+
+statement ok
+create view w as select b from v
+
+statement ok
+alter view v rename to v2
+
+statement ok
+alter table v2 rename to v3
+
+statement error relation "v" does not exist
+select * from v
+
+query IT rowsort
+select * from v3
+----
+2	two
+3	three
+
+query T rowsort
+select * from w
+----
+three
+two
+
+query T
+select pg_get_viewdef('w'::regclass)
+----
+ SELECT b@   FROM v3;
+
+statement error relation "t" already exists
+alter view v3 rename to t
+
+statement error "t" is not a view
+alter view t rename to t2
+
+statement error relation "nosuch" does not exist
+alter view nosuch rename to other
+
+statement ok
+alter view if exists nosuch rename to other
+
+statement ok
+begin
+
+statement ok
+alter view v3 rename to v4
+
+statement ok
+rollback
+
+query I
+select count(*) from v3
+----
+2
+
+# Verify ALTER VIEW ... RENAME COLUMN, and ALTER TABLE's of a view's column.
+# 1. Rename v3's a to x, then x to y by ALTER TABLE: the view reads by
+#    the new name, its definition says so, and w, which reads its b, goes
+#    on.
+# 2. A column it has not, and a name another of its columns has, are
+#    refused.
+
+statement ok
+alter view v3 rename column a to x
+
+statement ok
+alter table v3 rename column x to y
+
+query IT rowsort
+select y, b from v3
+----
+2	two
+3	three
+
+query T
+select pg_get_viewdef('v3'::regclass)
+----
+ SELECT a AS y,@    b@   FROM t@  WHERE (a > 1);
+
+query T rowsort
+select * from w
+----
+three
+two
+
+statement error column "nosuch" does not exist
+alter view v3 rename column nosuch to z
+
+statement error column "b" of relation "v3" already exists
+alter view v3 rename column y to b
+
+# Verify a view's options: kept, listed in pg_class, set, reset, replaced,
+# and checked.
+# 1. Make sb with security_barrier: pg_class lists it; it reads as usual.
+# 2. SET security_invoker, then RESET security_barrier: pg_class follows.
+# 3. CREATE OR REPLACE with no options leaves it none.
+# 4. An option views do not take is refused.
+
+statement ok
+create view sb with (security_barrier) as select a from t where a < 3
+
+query T
+select array_to_string(reloptions, ',') from pg_class where relname = 'sb'
+----
+security_barrier=true
+
+query I rowsort
+select * from sb
+----
+1
+2
+
+statement ok
+alter view sb set (security_invoker = true)
+
+statement ok
+alter view sb reset (security_barrier)
+
+query T
+select array_to_string(reloptions, ',') from pg_class where relname = 'sb'
+----
+security_invoker=true
+
+statement ok
+create or replace view sb as select a from t where a < 3
+
+query T
+select (reloptions is null)::text from pg_class where relname = 'sb'
+----
+true
+
+statement error unrecognized parameter "fillfactor"
+create view bad with (fillfactor = 10) as select a from t
+
+# Verify WITH CHECK OPTION: a row written through the view must be one the
+# view shows.
+# 1. Make lv, LOCAL CHECK OPTION, over t where a < 10, and cv, CASCADED,
+#    over lv where a > 0.
+# 2. Rows inside both are taken; one outside lv's qual is refused through
+#    either; one outside cv's own qual is refused through cv alone.
+# 3. A view that is not automatically updatable cannot take the option,
+#    by CREATE or by ALTER VIEW SET.
+# 4. ALTER VIEW SET (check_option) on lv2 makes it check.
+
+statement ok
+create view lv as select a, b from t where a < 10 with local check option
+
+statement ok
+create view cv as select a, b from lv where a > 0 with cascaded check option
+
+statement ok
+insert into lv values (5, 'five')
+
+statement ok
+insert into cv values (6, 'six')
+
+statement error new row violates check option for view "lv"
+insert into lv values (20, 'twenty')
+
+statement error new row violates check option for view "lv"
+insert into cv values (21, 'twenty-one')
+
+statement error new row violates check option for view "cv"
+insert into cv values (-1, 'minus one')
+
+statement ok
+insert into lv values (-1, 'minus one')
+
+statement error new row violates check option for view "lv"
+update lv set a = 30 where a = 5
+
+query IT rowsort
+select a, b from t where a < 0 or a > 3
+----
+-1	minus one
+5	five
+6	six
+
+statement error WITH CHECK OPTION is supported only on automatically updatable views
+create view nv as select count(*) as n from t with check option
+
+statement ok
+create view nv as select count(*) as n from t
+
+statement error WITH CHECK OPTION is supported only on automatically updatable views
+alter view nv set (check_option = local)
+
+statement ok
+create view lv2 as select a, b from t where a < 100
+
+statement ok
+alter view lv2 set (check_option = local)
+
+statement error new row violates check option for view "lv2"
+insert into lv2 values (200, 'big')
+
+query T
+select array_to_string(reloptions, ',') from pg_class where relname = 'lv2'
+----
+check_option=local

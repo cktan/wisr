@@ -54,9 +54,6 @@ static ObjectAddress DefineVirtualRelation(RangeVar *relation, List *tlist,
   if (relation->relpersistence == RELPERSISTENCE_TEMP)
     ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                     errmsg("temporary views are not supported yet")));
-  if (options != NIL)
-    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    errmsg("view options are not supported yet")));
 
   /*
    * create a list of ColumnDef nodes based on the names and types of the
@@ -124,15 +121,18 @@ static ObjectAddress DefineVirtualRelation(RangeVar *relation, List *tlist,
     checkViewColumns(BuildDescForRelation(attrList), rel->rd_att);
     relation_close(rel, NoLock); /* keep the lock! */
 
-    /* The query, in sm, in place of the view's _RETURN rule. */
-    return smstore_replace_view(viewOid, relation->relname, viewParse);
+    /*
+     * The query, in sm, in place of the view's _RETURN rule, and the
+     * options, which replace the view's, even if there are none.
+     */
+    return smstore_replace_view(viewOid, relation->relname, viewParse, options);
   }
 
   /*
    * The view, in sm: its query in place of a relation and its rule.  A name
    * a relation already has is an error, replace or not.
    */
-  return smstore_create_view(relation, viewParse);
+  return smstore_create_view(relation, viewParse, options);
 }
 
 /*

@@ -7099,3 +7099,34 @@ longer needs is gone, 2,715 lines to 2,215:
   the sample configuration's entry.
 - `server.sh`: a temporary file a prior run left is removed at
   startup, and the log names no `pg_tblspc`.
+
+## Step 240: ALTER VIEW, and a view's options
+
+`../sm/VIEW.md` §10, its fourth step.
+
+- **ALTER VIEW ... RENAME TO** is `sm_cat_rename_view`, and so is
+  ALTER TABLE ... RENAME TO of a view, as PostgreSQL takes it;
+  ALTER VIEW of a table is refused, `"t" is not a view`.
+  `rename_target()` says which it named.
+- **RENAME COLUMN of a view**, by ALTER VIEW or ALTER TABLE,
+  renames the column in its query's select list, which sm keeps
+  (`rename_view_column()`): PostgreSQL renames its
+  `pg_attribute` row, and the view's rule names it no more.
+  What reads the view reads the column by place.
+- **A view's options are kept**: `WITH (...)` and `WITH CHECK
+  OPTION`, checked by `view_reloptions()`, kept in sm as
+  `untransformRelOptions()`'s list, `nodeToString()`'s. The
+  relation cache makes the view's `rd_options` of them, and
+  `pg_class.reloptions` lists them, so a check option is
+  checked by the executor and `security_barrier` and
+  `security_invoker` are PostgreSQL's. CREATE OR REPLACE
+  replaces them; `ALTER VIEW ... SET` and `RESET` change them,
+  refusing a check option on a view not automatically
+  updatable, as `ATExecSetRelOptions()` does.
+- **`AlterTableLookupRelation()`** takes ALTER VIEW, and of a
+  view SET and RESET alone; `smstore_alter_table()` hands a
+  view's to `alter_view()`.
+- `test/slt/view_alter.test`. PostgreSQL's `create_view` still
+  fails, first on CREATE FUNCTION; its diff goes from 934 lines
+  to 873. What is left of views there is a temporary view, 15
+  statements and those after them, and SET SCHEMA.

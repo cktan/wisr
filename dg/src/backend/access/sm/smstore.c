@@ -43,6 +43,7 @@
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "parser/parse_type.h"
+#include "rewrite/rewriteHandler.h"
 #include "storage/lockdefs.h"
 #include "storage/proc.h"
 #include "access/nbtree.h"
@@ -935,6 +936,7 @@ static void add_view(sm_session_t *s, uint64_t oid, List **out) {
     i++;
   }
   r->query = pstrdup(def.query.c_str());
+  r->options = def.options.empty() ? NULL : pstrdup(def.options.c_str());
 }
 
 /* Add to *out the views of sm's namespace nspoid. */
@@ -2430,6 +2432,7 @@ smstore_view_t *smstore_view_desc(Oid oid) {
   desc->nspoid = (Oid)def.nspoid;
   desc->name = pstrdup(def.name.c_str());
   desc->query = pstrdup(def.query.c_str());
+  desc->options = def.options.empty() ? NULL : pstrdup(def.options.c_str());
   desc->version = def.version;
   return desc;
 }
@@ -2465,11 +2468,41 @@ static std::vector<sm_view_read_t> view_reads(sm_session_t *s, Query *query) {
   return out;
 }
 
-/* The view's record for query: its query, as pg_rewrite's ev_action. */
-static sm_view_def_t view_def(sm_session_t *s, Query *query) {
+/*
+ * The options of a view, a text[] as pg_class's reloptions holds them, as
+ * sm keeps them: untransformRelOptions()'s DefElem list, nodeToString()'s;
+ * empty if there are none.
+ */
+static std::string view_options(Datum reloptions) {
+  List *l = reloptions != (Datum)0 ? untransformRelOptions(reloptions) : NIL;
+
+  return l != NIL ? nodeToString(l) : "";
+}
+
+/*
+ * The text[] of options, a view's as sm keeps them (view_options()), as
+ * pg_class's reloptions holds them; (Datum) 0 for none.
+ */
+Datum smstore_view_reloptions(const char *options) {
+  if (options == NULL || options[0] == '\0')
+    return (Datum)0;
+  return transformRelOptions((Datum)0, (List *)stringToNode(options), NULL,
+                             NULL, false, false);
+}
+
+/*
+ * The view's record for query, with options, CREATE VIEW's DefElems: its
+ * query, as pg_rewrite's ev_action, and its options, checked as PostgreSQL
+ * checks a view's.
+ */
+static sm_view_def_t view_def(sm_session_t *s, Query *query, List *options) {
+  Datum reloptions =
+      transformRelOptions((Datum)0, options, NULL, NULL, false, false);
   sm_view_def_t def;
 
+  (void)view_reloptions(reloptions, true);
   def.query = nodeToString(list_make1(query));
+  def.options = view_options(reloptions);
   def.reads = view_reads(s, query);
   return def;
 }
@@ -2487,13 +2520,14 @@ static void view_error(const char *name, const char *what) {
 }
 
 /*
- * Create the view rv names, its query query, in sm, in this transaction.
- * A name a relation of its schema has is an error.
+ * Create the view rv names, its query query and its options options, in
+ * sm, in this transaction.  A name a relation of its schema has is an
+ * error.
  */
-ObjectAddress smstore_create_view(RangeVar *rv, Query *query) {
+ObjectAddress smstore_create_view(RangeVar *rv, Query *query, List *options) {
   Oid nspoid = RangeVarGetCreationNamespace(rv);
   sm_session_t *s = xact_session();
-  sm_view_def_t def = view_def(s, query);
+  sm_view_def_t def = view_def(s, query, options);
   uint64_t oid;
   ObjectAddress address;
 
@@ -2508,13 +2542,14 @@ ObjectAddress smstore_create_view(RangeVar *rv, Query *query) {
 static void forget_table(Oid relid);
 
 /*
- * Replace the query of the view oid, named name, with query, in sm, in this
- * transaction: CREATE OR REPLACE VIEW's, whose columns the caller has
- * checked against the view's.
+ * Replace the query and the options of the view oid, named name, with query
+ * and options, in sm, in this transaction: CREATE OR REPLACE VIEW's, whose
+ * columns the caller has checked against the view's.
  */
-ObjectAddress smstore_replace_view(Oid oid, const char *name, Query *query) {
+ObjectAddress smstore_replace_view(Oid oid, const char *name, Query *query,
+                                   List *options) {
   sm_session_t *s = xact_session();
-  sm_view_def_t def = view_def(s, query);
+  sm_view_def_t def = view_def(s, query, options);
   ObjectAddress address;
 
   if (waiting([&] { return sm_cat_replace_view(s, oid, def); }) != 0)
@@ -2918,16 +2953,22 @@ static void drop_constraint(Oid relid, const char *relname, const char *name,
 static void validate_constraint(Oid relid, const char *relname,
                                 const char *name);
 
+static void alter_view(Oid relid, AlterTableStmt *stmt);
+
 /*
  * Do an ALTER TABLE of the table relid, in sm, in this transaction, one
  * subcommand after another: ADD COLUMN, DROP COLUMN, and ADD, DROP and
  * VALIDATE CONSTRAINT of a foreign key, the subcommands
- * AlterTableLookupRelation() lets through.
+ * AlterTableLookupRelation() lets through.  A view's is alter_view()'s.
  */
 void smstore_alter_table(Oid relid, AlterTableStmt *stmt) {
   const char *relname = stmt->relation->relname;
   ListCell *l;
 
+  if (get_rel_relkind(relid) == RELKIND_VIEW) {
+    alter_view(relid, stmt);
+    return;
+  }
   foreach (l, stmt->cmds) {
     AlterTableCmd *cmd = lfirst_node(AlterTableCmd, l);
 
@@ -2956,10 +2997,11 @@ void smstore_alter_table(Oid relid, AlterTableStmt *stmt) {
 }
 
 /*
- * The table an ALTER TABLE ... RENAME names, locked, or InvalidOid if it is
- * not there and stmt says IF EXISTS.
+ * The table or view an ALTER ... RENAME names, locked, or InvalidOid if it
+ * is not there and stmt says IF EXISTS.  ALTER VIEW names a view, and ALTER
+ * TABLE either, as type says; *view is whether it is one.
  */
-static Oid rename_target(RenameStmt *stmt) {
+static Oid rename_target(RenameStmt *stmt, ObjectType type, bool *view) {
   /* Locked against other sessions' use until the transaction ends. */
   Oid relid = RangeVarGetRelid(stmt->relation, AccessExclusiveLock, true);
 
@@ -2972,24 +3014,39 @@ static Oid rename_target(RenameStmt *stmt) {
                             stmt->relation->relname)));
     return InvalidOid;
   }
+  *view = get_rel_relkind(relid) == RELKIND_VIEW;
+  if (*view) {
+    /* Every session builds its descriptor afresh once this one commits. */
+    forget_table(relid);
+    return relid;
+  }
+  if (type == OBJECT_VIEW)
+    ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
+                    errmsg("\"%s\" is not a view", stmt->relation->relname),
+                    errhint("Use ALTER TABLE instead.")));
   alter_table_rel(relid, stmt->relation->relname);
   return relid;
 }
 
+static void rename_view_column(Oid relid, RenameStmt *stmt);
+
 /*
- * ALTER TABLE ... RENAME TO: rename the table in sm, in this transaction,
- * in its schema.  Returns its address.
+ * ALTER TABLE or ALTER VIEW ... RENAME TO: rename the table or the view in
+ * sm, in this transaction, in its schema.  Returns its address.
  */
 ObjectAddress smstore_rename_table(RenameStmt *stmt) {
-  Oid relid = rename_target(stmt);
+  bool view;
+  Oid relid = rename_target(stmt, stmt->renameType, &view);
   ObjectAddress address;
 
   if (!OidIsValid(relid))
     return InvalidObjectAddress;
   sm_session_t *s = xact_session();
 
-  if (waiting([&] { return sm_cat_rename_table(s, relid, stmt->newname); }) !=
-      0) {
+  if (waiting([&] {
+        return view ? sm_cat_rename_view(s, relid, stmt->newname)
+                    : sm_cat_rename_table(s, relid, stmt->newname);
+      }) != 0) {
     if (sm_errnum() == SM_ERR_DUPKEY)
       ereport(ERROR, (errcode(ERRCODE_DUPLICATE_TABLE),
                       errmsg("relation \"%s\" already exists", stmt->newname)));
@@ -3000,11 +3057,12 @@ ObjectAddress smstore_rename_table(RenameStmt *stmt) {
 }
 
 /*
- * ALTER TABLE ... RENAME COLUMN: rename the column in sm, in this
- * transaction; its indexes go on using it.  Returns its address.
+ * ALTER TABLE or ALTER VIEW ... RENAME COLUMN: rename the column in sm, in
+ * this transaction; a table's indexes go on using it.  Returns its address.
  */
 ObjectAddress smstore_rename_column(RenameStmt *stmt) {
-  Oid relid = rename_target(stmt);
+  bool view;
+  Oid relid = rename_target(stmt, stmt->relationType, &view);
   const char *relname = stmt->relation->relname;
   AttrNumber attnum = InvalidAttrNumber;
   ObjectAddress address;
@@ -3028,6 +3086,11 @@ ObjectAddress smstore_rename_column(RenameStmt *stmt) {
       attnum = att->attnum;
   }
   relation_close(rel, NoLock);
+  if (view) {
+    rename_view_column(relid, stmt);
+    ObjectAddressSubSet(address, RelationRelationId, relid, attnum);
+    return address;
+  }
   sm_session_t *s = xact_session();
 
   if (waiting([&] {
@@ -3044,6 +3107,105 @@ ObjectAddress smstore_rename_column(RenameStmt *stmt) {
   }
   ObjectAddressSubSet(address, RelationRelationId, relid, attnum);
   return address;
+}
+
+/*
+ * The view relid's record, read under its lock X, taken here, as DDL that
+ * changes it reads it: the lock sm's replace takes, which no reader of the
+ * view holds with it.
+ */
+static sm_view_def_t view_def_locked(Oid relid) {
+  sm_view_def_t def;
+  uint64_t version;
+
+  if (!lock_view(relid, SM_LOCKMODE_EX, &version) ||
+      sm_cat_view_def(xact_session(), relid, def) != 0)
+    elog(ERROR, "could not open view with OID %u", relid);
+  return def;
+}
+
+/* Replace the view relid's record with def, in sm, in this transaction. */
+static void put_view_def(Oid relid, const sm_view_def_t &def) {
+  sm_session_t *s = xact_session();
+
+  if (waiting([&] { return sm_cat_replace_view(s, relid, def); }) != 0)
+    sm_error("change a view");
+  /* Every session builds its descriptor afresh, this one at its next use. */
+  forget_table(relid);
+}
+
+/*
+ * RENAME COLUMN of the view relid: the name its query's select list gives
+ * the column, kept in sm with the query, where PostgreSQL renames its
+ * pg_attribute row.  What reads the view reads its columns by place.
+ */
+static void rename_view_column(Oid relid, RenameStmt *stmt) {
+  sm_view_def_t def = view_def_locked(relid);
+  List *actions = (List *)stringToNode(def.query.c_str());
+  TargetEntry *old = NULL;
+  bool taken = false;
+
+  foreach_node(TargetEntry, tle, linitial_node(Query, actions)->targetList) {
+    if (tle->resjunk)
+      continue;
+    if (strcmp(tle->resname, stmt->subname) == 0)
+      old = tle;
+    taken |= strcmp(tle->resname, stmt->newname) == 0;
+  }
+  if (old == NULL)
+    ereport(ERROR, (errcode(ERRCODE_UNDEFINED_COLUMN),
+                    errmsg("column \"%s\" does not exist", stmt->subname)));
+  if (taken)
+    ereport(ERROR, (errcode(ERRCODE_DUPLICATE_COLUMN),
+                    errmsg("column \"%s\" of relation \"%s\" already exists",
+                           stmt->newname, stmt->relation->relname)));
+  old->resname = pstrdup(stmt->newname);
+  def.query = nodeToString(actions);
+  put_view_def(relid, def);
+}
+
+/*
+ * ALTER VIEW ... SET or RESET (option, ...) of the view relid, in sm, as
+ * PostgreSQL's ATExecSetRelOptions() does a view's: the options checked, and
+ * check_option kept only on a view that is automatically updatable.
+ */
+static void alter_view_options(Oid relid, AlterTableCmd *cmd) {
+  sm_view_def_t def = view_def_locked(relid);
+  Datum reloptions = transformRelOptions(
+      smstore_view_reloptions(def.options.c_str()), castNode(List, cmd->def),
+      NULL, NULL, false, cmd->subtype == AT_ResetRelOptions);
+  Query *query = linitial_node(Query, (List *)stringToNode(def.query.c_str()));
+
+  (void)view_reloptions(reloptions, true);
+  def.options = view_options(reloptions);
+  foreach_node(DefElem, d,
+               reloptions != (Datum)0 ? untransformRelOptions(reloptions)
+                                      : NIL) {
+    const char *error;
+
+    if (strcmp(d->defname, "check_option") != 0)
+      continue;
+    error = view_query_is_auto_updatable(query, true);
+    if (error != NULL)
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("WITH CHECK OPTION is supported only on "
+                             "automatically updatable views"),
+                      errhint("%s", _(error))));
+  }
+  put_view_def(relid, def);
+}
+
+/*
+ * ALTER VIEW, or ALTER TABLE, of the view relid, in sm, one subcommand after
+ * another: SET and RESET of its options, the subcommands
+ * AlterTableLookupRelation() lets through for a view.
+ */
+static void alter_view(Oid relid, AlterTableStmt *stmt) {
+  foreach_node(AlterTableCmd, cmd, stmt->cmds) {
+    alter_view_options(relid, cmd);
+    /* The next subcommand sees what this one did. */
+    CommandCounterIncrement();
+  }
 }
 
 static void check_fkey_rows(Oid relid, Oid pkoid, Oid oid,
@@ -3596,11 +3758,16 @@ static void validate_constraint(Oid relid, const char *relname,
 
 /* ALTER TABLE ... RENAME CONSTRAINT, of a foreign key.  Returns its address. */
 ObjectAddress smstore_rename_constraint(RenameStmt *stmt) {
-  Oid relid = rename_target(stmt);
+  bool view;
+  Oid relid = rename_target(stmt, OBJECT_TABLE, &view);
   ObjectAddress address;
 
   if (!OidIsValid(relid))
     return InvalidObjectAddress;
+  /* A view has no constraint of its own. */
+  if (view)
+    ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
+                    errmsg("\"%s\" is not a table", stmt->relation->relname)));
   sm_fkey_def_t f;
 
   if (!fkey_named(relid, stmt->subname, f))

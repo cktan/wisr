@@ -106,10 +106,12 @@ Owed, and blocking nothing above:
   REPLACE, DROP and the cascades are built, sm3's and digres's
   (`../dg/WORKNOTE.md` step 238), and of SQLite's sample digres
   now fails nothing PostgreSQL 18 passes; psql's `\dv` and
-  `\d+` and `pg_get_viewdef()` read them (step 239). Not
-  built: ALTER VIEW; a view's options, `WITH CHECK OPTION`
-  among them; a temporary view; and `information_schema`
-  (`../dg/SYSCATALOG.md` §7).
+  `\d+` and `pg_get_viewdef()` read them (step 239), and
+  ALTER VIEW renames one and sets its options, `WITH CHECK
+  OPTION` among them (step 240). Not built: a temporary view,
+  which `VIEW.md` §9 says needs a design of its own; ALTER
+  VIEW's `OWNER TO`, `SET SCHEMA` and a column's DEFAULT; and
+  `information_schema` (`../dg/SYSCATALOG.md` §7).
 - **What foreign keys left** (`FOREIGNKEY.md`,
   `../dg/WORKNOTE.md` step 177): a DEFERRABLE one is refused,
   as a row trigger on a table in sm is given its rows from a

@@ -1408,6 +1408,17 @@ static Relation RelationBuildSmViewDesc(const smstore_view_t *view,
   }
   MemoryContextSwitchTo(oldcxt);
 
+  /* Its options, as RelationParseRelOptions() makes them of reloptions. */
+  relation->rd_options = NULL;
+  if (view->options != NULL) {
+    bytea *options =
+        view_reloptions(smstore_view_reloptions(view->options), false);
+
+    relation->rd_options =
+        (bytea *)MemoryContextAlloc(CacheMemoryContext, VARSIZE(options));
+    memcpy(relation->rd_options, options, VARSIZE(options));
+  }
+
   /* Its rule, in a context of its own, as RelationBuildRuleLock()'s is. */
   relation->rd_rulescxt = AllocSetContextCreate(
       CacheMemoryContext, "relation rules", ALLOCSET_SMALL_SIZES);
@@ -1421,7 +1432,10 @@ static Relation RelationBuildSmViewDesc(const smstore_view_t *view,
   rule->isInstead = true;
   rule->qual = NULL;
   rule->actions = (List *)stringToNode(view->query);
-  setRuleCheckAsUser((Node *)rule->actions, BOOTSTRAP_SUPERUSERID);
+  /* A security_invoker view's are checked as the user that reads it. */
+  setRuleCheckAsUser((Node *)rule->actions, RelationHasSecurityInvoker(relation)
+                                                ? InvalidOid
+                                                : BOOTSTRAP_SUPERUSERID);
   rulelock = (RuleLock *)palloc(sizeof(RuleLock));
   rulelock->numLocks = 1;
   rulelock->rules = (RewriteRule **)palloc(sizeof(RewriteRule *));
@@ -1440,7 +1454,6 @@ static Relation RelationBuildSmViewDesc(const smstore_view_t *view,
   relation->rd_statvalid = true;
   relation->trigdesc = NULL;
   relation->rd_rsdesc = NULL;
-  relation->rd_options = NULL;
 
   RelationInitLockInfo(relation);
   RelationInitPhysicalAddr(relation);

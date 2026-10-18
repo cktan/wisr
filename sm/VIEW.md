@@ -3,8 +3,9 @@
 **Status: sm3's part and `sm.h`'s are built** (§3 to §7,
 `sm3/test/test_view.cc`), as proposed in §11, and digres's
 CREATE, query and DROP (§8, `../dg/WORKNOTE.md` step 238),
-and the catalog relations (step 239). Not yet: ALTER VIEW, a
-view's options and a temporary view (§10, step 4, and §9).
+the catalog relations (step 239), and ALTER VIEW's RENAME and
+a view's options (step 240). Not yet: a temporary view, and
+the rest of §9.
 
 `CREATE VIEW` fails in digres: `DefineView()` still makes a
 PostgreSQL relation, which digres has no catalog for
@@ -245,10 +246,16 @@ struct sm_view_def_t {
   `CASCADE`, PostgreSQL's error: `cannot drop table t because
   other objects depend on it`, a `DETAIL` line naming each
   view, and its `HINT`.
-- **`ALTER VIEW ... RENAME TO`** is `smstore_rename_view()`;
+- **`ALTER VIEW ... RENAME TO`** is `sm_cat_rename_view`, and
+  `ALTER TABLE ... RENAME TO` of a view the same;
   `ALTER VIEW ... RENAME COLUMN` a replace with the select
   list's names changed, as PostgreSQL renames a view's column
   in `pg_attribute` alone.
+- **A view's options** are its `reloptions`, kept in sm as
+  `untransformRelOptions()`'s list of them; the relation cache
+  makes `rd_options` of them, so the rewriter's check option,
+  `security_barrier` and `security_invoker` are PostgreSQL's.
+  `ALTER VIEW ... SET` and `RESET` replace them.
 - **The catalog relations** (`../dg/SYSCATALOG.md`): a view's
   `pg_class` row, `relkind` `v`, `relhasrules` true; its
   `pg_attribute` rows; and its `pg_rewrite` row, the rule's
@@ -284,9 +291,8 @@ struct sm_view_def_t {
   same checks for tables do (`NEXT.md` §3).
 - **A view's row type**: a view's whole-row value is a
   record, as a table's in sm is, not a named composite type.
-- **`ALTER VIEW ... SET (option)`, `ALTER VIEW ... ALTER
-  COLUMN SET DEFAULT`, `OWNER TO`, `SET SCHEMA`**: refused
-  until asked for.
+- **`ALTER VIEW ... ALTER COLUMN SET DEFAULT`, `OWNER TO`,
+  `SET SCHEMA`**: refused until asked for.
 - **One lookup for a relation's name**: `NAME` already says
   which kind a name is, and `smstore_relation_oid()` asks for
   each kind in turn. A call that reads the key once would

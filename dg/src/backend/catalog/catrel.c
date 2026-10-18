@@ -144,11 +144,13 @@ static void gen_pg_namespace(Tuplestorestate *ts, TupleDesc desc) {
 /*
  * A row of pg_class, into ts: a relation's own columns given, the rest as
  * digres has them -- owned by the superuser, in no tablespace, with no
- * statistics, no ACL and no options.  A view has its rule, and no storage.
+ * statistics, no ACL, and no options but a view's.  A view has its rule,
+ * and no storage.
  */
 static void class_row(Tuplestorestate *ts, TupleDesc desc, Oid oid,
                       const char *name, Oid nspoid, Oid reltype, char kind,
-                      int natts, bool hasindex, bool temp) {
+                      int natts, bool hasindex, bool temp,
+                      Datum reloptions = (Datum)0) {
   Datum values[Natts_pg_class];
   bool nulls[Natts_pg_class];
 
@@ -178,7 +180,8 @@ static void class_row(Tuplestorestate *ts, TupleDesc desc, Oid oid,
       CharGetDatum(kind == RELKIND_RELATION ? REPLICA_IDENTITY_DEFAULT
                                             : REPLICA_IDENTITY_NOTHING);
   nulls[Anum_pg_class_relacl - 1] = true;
-  nulls[Anum_pg_class_reloptions - 1] = true;
+  values[Anum_pg_class_reloptions - 1] = reloptions;
+  nulls[Anum_pg_class_reloptions - 1] = reloptions == (Datum)0;
   nulls[Anum_pg_class_relpartbound - 1] = true;
   tuplestore_putvalues(ts, desc, values, nulls);
 }
@@ -199,7 +202,8 @@ static void gen_pg_class(Tuplestorestate *ts, TupleDesc desc, Oid only) {
     smstore_relation_t *r = (smstore_relation_t *)lfirst(l);
 
     class_row(ts, desc, r->oid, r->name, r->nspoid, InvalidOid, r->kind,
-              r->natts, r->hasindex, r->temp);
+              r->natts, r->hasindex, r->temp,
+              smstore_view_reloptions(r->options));
   }
 }
 

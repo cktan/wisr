@@ -61,6 +61,7 @@ typedef struct smstore_relation_t {
   bool *nulls_first; /* each key column's */
   /* A view's, as pg_rewrite lists it: its ev_action, nodeToString()'s. */
   char *query;
+  char *options; /* a view's, as smstore_view_reloptions() takes, or NULL */
 } smstore_relation_t;
 
 /* A column of a table in sm. */
@@ -144,6 +145,7 @@ typedef struct smstore_view_t {
   Oid nspoid;
   const char *name;
   const char *query;
+  const char *options; /* its options, as smstore_view_reloptions() takes */
   uint64 version; /* sm_view_def_t::version, as this transaction reads it */
 } smstore_view_t;
 
@@ -197,9 +199,11 @@ extern bool smstore_relation_held(Oid relid, LOCKMODE lockmode);
 extern void smstore_truncate(Relation rel);
 extern smstore_table_t *smstore_table_desc(Oid oid);
 extern smstore_view_t *smstore_view_desc(Oid oid);
-extern ObjectAddress smstore_create_view(RangeVar *rv, Query *query);
+extern ObjectAddress smstore_create_view(RangeVar *rv, Query *query,
+                                         List *options);
 extern ObjectAddress smstore_replace_view(Oid oid, const char *name,
-                                          Query *query);
+                                          Query *query, List *options);
+extern Datum smstore_view_reloptions(const char *options);
 extern void smstore_drop_views(DropStmt *stmt);
 extern Oid smstore_index_table(Oid indexoid);
 extern bool smstore_relation_name(Oid relid, uint64 version, char **name,

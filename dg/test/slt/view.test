@@ -297,8 +297,9 @@ execute q
 ----
 2	bb!
 
-# Verify what digres refuses of views, for now.
-# 1. A temporary view, and a view's options, are refused.
+# Verify what digres refuses of views, for now, and takes.
+# 1. A temporary view is refused.
+# 2. A view's options are taken, WITH CHECK OPTION among them.
 
 skipif digres
 statement ok
@@ -308,18 +309,8 @@ onlyif digres
 statement error temporary views are not supported yet
 create temporary view tv as select 1 as a
 
-skipif digres
 statement ok
 create view ov with (security_barrier) as select k from w
 
-onlyif digres
-statement error view options are not supported yet
-create view ov with (security_barrier) as select k from w
-
-skipif digres
 statement ok
-create view cv as select k from w with check option
-
-onlyif digres
-statement error view options are not supported yet
 create view cv as select k from w with check option

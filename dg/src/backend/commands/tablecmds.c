@@ -3743,8 +3743,8 @@ ObjectAddress renameatt(RenameStmt *stmt) {
   AttrNumber attnum;
   ObjectAddress address;
 
-  /* A table's column is sm's to rename; nothing else's is yet. */
-  if (stmt->relationType == OBJECT_TABLE)
+  /* A table's or a view's column is sm's to rename; nothing else's is yet. */
+  if (stmt->relationType == OBJECT_TABLE || stmt->relationType == OBJECT_VIEW)
     return smstore_rename_column(stmt);
   refuse_alter("ALTER TABLE ... RENAME COLUMN");
   /* lock level taken here should match renameatt_internal */
@@ -3913,8 +3913,8 @@ ObjectAddress RenameRelation(RenameStmt *stmt) {
   Oid relid;
   ObjectAddress address;
 
-  /* A table is sm's to rename; nothing else is yet. */
-  if (stmt->renameType == OBJECT_TABLE)
+  /* A table or a view is sm's to rename; nothing else is yet. */
+  if (stmt->renameType == OBJECT_TABLE || stmt->renameType == OBJECT_VIEW)
     return smstore_rename_table(stmt);
   refuse_alter(GetCommandTagName(AlterObjectTypeCommandTag(stmt->renameType)));
   /*
@@ -4167,17 +4167,40 @@ static void CheckAlterTableIsSafe(Relation rel) {
  */
 Oid AlterTableLookupRelation(AlterTableStmt *stmt, LOCKMODE lockmode) {
   ListCell *l;
+  Oid relid;
+  bool view;
 
-  if (stmt->objtype != OBJECT_TABLE)
+  if (stmt->objtype != OBJECT_TABLE && stmt->objtype != OBJECT_VIEW)
     refuse_alter(GetCommandTagName(AlterObjectTypeCommandTag(stmt->objtype)));
   /*
+   * No permission check: it would open pg_class, which digres has not.  No
+   * lock: sm's DDL takes the table's own, and a NOT NULL column with no
+   * default asks for it without waiting (smstore_alter_table()).
+   */
+  (void)lockmode;
+  relid = RangeVarGetRelidExtended(stmt->relation, NoLock,
+                                   stmt->missing_ok ? RVR_MISSING_OK : 0, NULL,
+                                   NULL);
+  if (!OidIsValid(relid))
+    return relid;
+  view = get_rel_relkind(relid) == RELKIND_VIEW;
+  if (stmt->objtype == OBJECT_VIEW && !view)
+    ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
+                    errmsg("\"%s\" is not a view", stmt->relation->relname),
+                    errhint("Use ALTER TABLE instead.")));
+  /*
    * sm's tables take ADD COLUMN and DROP COLUMN, and ADD, DROP and VALIDATE
-   * CONSTRAINT of a foreign key (smstore_alter_table()).
+   * CONSTRAINT of a foreign key; its views SET and RESET of their options
+   * (smstore_alter_table()).
    */
   foreach (l, stmt->cmds) {
     AlterTableType subtype = lfirst_node(AlterTableCmd, l)->subtype;
 
-    if (subtype != AT_AddColumn && subtype != AT_DropColumn &&
+    if (view && subtype != AT_SetRelOptions && subtype != AT_ResetRelOptions)
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("ALTER VIEW supports only SET and RESET of "
+                             "options, and RENAME yet")));
+    if (!view && subtype != AT_AddColumn && subtype != AT_DropColumn &&
         subtype != AT_AddConstraint && subtype != AT_DropConstraint &&
         subtype != AT_ValidateConstraint)
       ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -4185,15 +4208,7 @@ Oid AlterTableLookupRelation(AlterTableStmt *stmt, LOCKMODE lockmode) {
                              "COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE "
                              "CONSTRAINT, and RENAME yet")));
   }
-  /*
-   * No permission check: it would open pg_class, which digres has not.  No
-   * lock: sm's DDL takes the table's own, and a NOT NULL column with no
-   * default asks for it without waiting (smstore_alter_table()).
-   */
-  (void)lockmode;
-  return RangeVarGetRelidExtended(stmt->relation, NoLock,
-                                  stmt->missing_ok ? RVR_MISSING_OK : 0, NULL,
-                                  NULL);
+  return relid;
 }
 
 /*
