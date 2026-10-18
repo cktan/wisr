@@ -337,10 +337,54 @@ static void fkey_row(Tuplestorestate *ts, TupleDesc desc, Oid nspoid,
 }
 
 /*
- * pg_constraint's rows: each foreign key of a table in sm, those of the
- * table only if it is given (a scan by conrelid), else every table's.  sm
- * keeps no other constraint as one: NOT NULL is pg_attribute's, and a
- * primary key or unique constraint is its index, pg_index's.
+ * A primary key's or unique constraint's row of pg_constraint, into ts, for
+ * r, the index of sm's it made: named as its index, on the index's key
+ * columns, not deferrable, enforced and validated.
+ */
+static void key_row(Tuplestorestate *ts, TupleDesc desc,
+                    const smstore_relation_t *r) {
+  Datum values[Natts_pg_constraint];
+  bool nulls[Natts_pg_constraint];
+  AttrNumber attnums[INDEX_MAX_KEYS];
+
+  memset(values, 0, sizeof(values));
+  memset(nulls, true, sizeof(nulls));
+  for (int i = 0; i < Natts_pg_constraint; i++)
+    nulls[i] = i >= Anum_pg_constraint_conkey - 1;
+  for (int i = 0; i < r->nkeys; i++)
+    attnums[i] = r->attnums[i];
+  values[Anum_pg_constraint_oid - 1] = ObjectIdGetDatum(r->oid);
+  values[Anum_pg_constraint_conname - 1] = name_datum(r->name);
+  values[Anum_pg_constraint_connamespace - 1] = ObjectIdGetDatum(r->nspoid);
+  values[Anum_pg_constraint_contype - 1] =
+      CharGetDatum(r->primary ? CONSTRAINT_PRIMARY : CONSTRAINT_UNIQUE);
+  values[Anum_pg_constraint_condeferrable - 1] = BoolGetDatum(false);
+  values[Anum_pg_constraint_condeferred - 1] = BoolGetDatum(false);
+  values[Anum_pg_constraint_conenforced - 1] = BoolGetDatum(true);
+  values[Anum_pg_constraint_convalidated - 1] = BoolGetDatum(true);
+  values[Anum_pg_constraint_conrelid - 1] = ObjectIdGetDatum(r->table);
+  values[Anum_pg_constraint_contypid - 1] = ObjectIdGetDatum(InvalidOid);
+  values[Anum_pg_constraint_conindid - 1] = ObjectIdGetDatum(r->oid);
+  values[Anum_pg_constraint_conparentid - 1] = ObjectIdGetDatum(InvalidOid);
+  values[Anum_pg_constraint_confrelid - 1] = ObjectIdGetDatum(InvalidOid);
+  values[Anum_pg_constraint_confupdtype - 1] = CharGetDatum(' ');
+  values[Anum_pg_constraint_confdeltype - 1] = CharGetDatum(' ');
+  values[Anum_pg_constraint_confmatchtype - 1] = CharGetDatum(' ');
+  values[Anum_pg_constraint_conislocal - 1] = BoolGetDatum(true);
+  values[Anum_pg_constraint_coninhcount - 1] = Int16GetDatum(0);
+  values[Anum_pg_constraint_connoinherit - 1] = BoolGetDatum(true);
+  values[Anum_pg_constraint_conperiod - 1] = BoolGetDatum(false);
+  values[Anum_pg_constraint_conkey - 1] = int2_array(attnums, r->nkeys);
+  nulls[Anum_pg_constraint_conkey - 1] = false;
+  tuplestore_putvalues(ts, desc, values, nulls);
+}
+
+/*
+ * pg_constraint's rows, for the tables of sm's, those of the table only if
+ * it is given (a scan by conrelid), else every table's: a primary key's or
+ * unique constraint's, its index's (key_row()), and each foreign key's.  A
+ * unique index CREATE UNIQUE INDEX made has none, as in PostgreSQL; nor
+ * does NOT NULL, which is pg_attribute's.
  */
 static void gen_pg_constraint(Tuplestorestate *ts, TupleDesc desc, Oid only) {
   ListCell *l;
@@ -349,6 +393,9 @@ static void gen_pg_constraint(Tuplestorestate *ts, TupleDesc desc, Oid only) {
     smstore_relation_t *r = (smstore_relation_t *)lfirst(l);
     smstore_table_t *t;
 
+    if (r->kind == RELKIND_INDEX && r->constraint &&
+        (!OidIsValid(only) || r->table == only))
+      key_row(ts, desc, r);
     if (r->kind != RELKIND_RELATION || r->nfkeys == 0 ||
         (OidIsValid(only) && r->oid != only))
       continue;

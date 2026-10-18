@@ -167,6 +167,7 @@ struct index_rec_t {
   std::string eval;                 /* the host's blob; empty: plain */
   std::vector<int32_t> reads;       /* the columns it reads, 0-based */
   bool primary = false;             /* the table's primary key */
+  bool constraint = false;          /* a UNIQUE or PRIMARY KEY's */
   bool operator==(const index_rec_t&) const = default;
 };
 
@@ -253,6 +254,7 @@ struct index_def_t {
     std::string                       eval;
     std::vector<int32_t>              reads;
     bool                              primary = false; /* the table's primary key */
+    bool                              constraint = false; /* a UNIQUE or PRIMARY KEY's */
 };
 
 /*
@@ -814,13 +816,16 @@ int drop_namespace(session_t* session, uint64_t oid);
  *
  * A primary one is the table's primary key, a mark the host reads:
  * it must be unique, on columns alone, every one NOT NULL, and the
- * table's only one, or it is SM_ERR_INVALID.
+ * table's only one, or it is SM_ERR_INVALID. A constraint one is a
+ * UNIQUE or PRIMARY KEY constraint's, another mark the host reads:
+ * it must be unique and on columns alone.
  */
 int create_index(session_t* session, uint64_t table,
                  std::string_view name,
                  std::span<const index_key_spec_t> keys,
                  std::span<const int32_t> includes, bool unique,
-                 uint64_t& oid, bool primary = false);
+                 uint64_t& oid, bool primary = false,
+                 bool constraint = false);
 
 /*
  * As create_index, for a partial or an expression index
@@ -839,7 +844,8 @@ int create_index(session_t* session, uint64_t table,
                  std::span<const index_key_spec_t> keys,
                  std::span<const int32_t> includes, bool unique,
                  std::string_view eval, std::span<const int32_t> reads,
-                 uint64_t& oid, bool primary = false);
+                 uint64_t& oid, bool primary = false,
+                 bool constraint = false);
 
 /*
  * The host's evaluator of partial and expression indexes

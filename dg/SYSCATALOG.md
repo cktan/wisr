@@ -267,7 +267,7 @@ runs the psql command and reads its output.
 | 7. The other compiled-in catalogs | `pg_proc`, `pg_operator`, `pg_cast`, `pg_extension`, `pg_description`: `\df`, `\do`, `\dC`, `\dx`, step 123 |
 | 8. A syscache miss in a compiled-in catalog | `pg_language` too; `pg_get_functiondef()`, `\sf`, step 124 |
 | 9. Views | `pg_rewrite`, `pg_views`, `\dv`, `\d+` of a view, `pg_get_viewdef()`, step 239 |
-| 10. Foreign keys | `pg_constraint`'s rows of type `f`, `relhastriggers`, `\d`'s Foreign-key constraints and Referenced by, `pg_get_constraintdef()`, step 246; a primary key or unique constraint has no row yet |
+| 10. Foreign keys | `pg_constraint`'s rows of type `f`, `relhastriggers`, `\d`'s Foreign-key constraints and Referenced by, `pg_get_constraintdef()`, step 246; a primary key's and a unique constraint's, `\d`'s UNIQUE CONSTRAINT, step 248 |
 
 ---
 

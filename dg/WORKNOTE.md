@@ -7284,3 +7284,33 @@ belonged to modules digres removed is gone:
 - Left for a pass of its own: `spccache.c`, the planner's costs
   per tablespace, and `tablespace_reloptions()`, digres having
   no tablespace but the default.
+
+## Step 248: pg_constraint lists a primary key and a unique constraint
+
+Step 246 gave `pg_constraint` a row for each foreign key; a
+primary key and a unique constraint had none, so a tool reading
+`pg_constraint` missed them, and `\d` called a `UNIQUE`
+constraint's index plain `UNIQUE`, where PostgreSQL says `UNIQUE
+CONSTRAINT`. PostgreSQL gives a unique index a row only when a
+constraint made it, not `CREATE UNIQUE INDEX`, and sm did not
+keep which.
+
+- **sm marks a constraint's index** (`sm_index_def_t::constraint`,
+  `sm_cat_create_index()`'s and `sm3::create_index()`'s
+  `constraint`, `sm3/CATALOG.md`): kept in the index's part of the
+  catalog blob as a thirteenth attribute, null unless set, so an
+  index written before reads false. It must be unique and on
+  columns alone. `sm3/test/test_ddl.cc` checks it, and that it
+  survives a restart.
+- **digres sets it** from `IndexStmt.isconstraint`, true for an
+  index a `UNIQUE` or `PRIMARY KEY` constraint makes, at `CREATE
+  TABLE`; `smstore_relation_t` carries it to `catrel.c`.
+- **`pg_constraint`'s rows** (`key_row()`): one of type `p` or `u`
+  for each such index, named as it, its oid, on its key
+  columns, its `conindid` itself. `pg_get_constraintdef()` writes
+  `PRIMARY KEY (a)` and `UNIQUE (b, c) INCLUDE (d)`; `\d` says
+  `UNIQUE CONSTRAINT` for the one and `UNIQUE` for an index
+  `CREATE UNIQUE INDEX` made, as PostgreSQL does.
+- A table made before this keeps its unique constraints unmarked:
+  `\d` shows them `UNIQUE`, with no row.
+- `test/slt/key_constraint_catalog.test`.

@@ -635,6 +635,7 @@ struct sm_index_def_t {
     std::string                  eval;
     std::vector<int32_t>         reads;
     bool                         primary = false; /* the primary key */
+    bool                         constraint = false; /* of a UNIQUE or PRIMARY KEY constraint */
 };
 
 /*
@@ -1472,7 +1473,9 @@ int sm_cat_drop_column(sm_session_t* session, uint64_t oid,
  *
  * A primary index is the table's primary key: unique, on columns
  * alone, each NOT NULL, and the table's only one, or it fails with
- * SM_ERR_INVALID (sm3::create_index).
+ * SM_ERR_INVALID (sm3::create_index). A constraint index is one a
+ * UNIQUE or PRIMARY KEY constraint made, not CREATE UNIQUE INDEX:
+ * unique and on columns alone, a mark the host reads.
  */
 int sm_cat_create_index(sm_session_t* session, uint64_t table,
                         const char* name,
@@ -1480,7 +1483,7 @@ int sm_cat_create_index(sm_session_t* session, uint64_t table,
                         const std::vector<int32_t>& includes, bool unique,
                         const std::string& eval,
                         const std::vector<int32_t>& reads, uint64_t* oid,
-                        bool primary = false);
+                        bool primary = false, bool constraint = false);
 
 /* Drop the index oid of the table, and its entries. */
 int sm_cat_drop_index(sm_session_t* session, uint64_t table, uint64_t index);

@@ -51,6 +51,7 @@ typedef struct smstore_relation_t {
   Oid table;
   bool unique;
   bool primary;
+  bool constraint;   /* a UNIQUE or PRIMARY KEY constraint's */
   bool valid;        /* built, and used by the planner */
   int nkeys;         /* its key columns, the first of its columns */
   int16 *attnums;    /* each column's place in the table, from 1 */

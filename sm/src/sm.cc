@@ -323,6 +323,7 @@ sm_table_def_t api_def(const sm3::session_t *ss, const sm3::table_def_t &d) {
         x.oid, x.name, x.unique, x.key_attnums, {},     x.include_attnums,
         {},    state,  st.error, st.reason,     x.eval, x.reads};
     i.primary = x.primary;
+    i.constraint = x.constraint;
     for (const sm2::key_column_t &k : x.key) {
       i.key.push_back({reinterpret_cast<const sm_type_t *>(k.type), k.typmod,
                        reinterpret_cast<const sm_collation_t *>(k.collation),
@@ -2038,7 +2039,7 @@ int sm_cat_create_index(sm_session_t *session, uint64_t table, const char *name,
                         const std::vector<int32_t> &includes, bool unique,
                         const std::string &eval,
                         const std::vector<int32_t> &reads, uint64_t *oid,
-                        bool primary) {
+                        bool primary, bool constraint) {
   return guard(session, [&] {
     if (!oid) {
       return null_arg("sm_cat_create_index", "oid");
@@ -2049,7 +2050,7 @@ int sm_cat_create_index(sm_session_t *session, uint64_t table, const char *name,
                    key.type_code, key.typmod});
     }
     return sm3::create_index(session->sm3, table, name_of(name), k, includes,
-                             unique, eval, reads, *oid, primary);
+                             unique, eval, reads, *oid, primary, constraint);
   });
 }
 

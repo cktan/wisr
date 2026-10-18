@@ -557,9 +557,9 @@ int drop_column(session_t *session, uint64_t oid, std::string_view name) {
 int create_index(session_t *session, uint64_t table, std::string_view name,
                  std::span<const index_key_spec_t> keys,
                  std::span<const int32_t> includes, bool unique, uint64_t &oid,
-                 bool primary) {
+                 bool primary, bool constraint) {
   return create_index(session, table, name, keys, includes, unique, {}, {}, oid,
-                      primary);
+                      primary, constraint);
 }
 
 /* Create an index, plain, partial or of expressions; see sm3.h. */
@@ -567,7 +567,7 @@ int create_index(session_t *session, uint64_t table, std::string_view name,
                  std::span<const index_key_spec_t> keys,
                  std::span<const int32_t> includes, bool unique,
                  std::string_view eval, std::span<const int32_t> reads,
-                 uint64_t &oid, bool primary) {
+                 uint64_t &oid, bool primary, bool constraint) {
   if (name.empty() || keys.empty()) {
     return invalid("create index: no name, or no key column");
   }
@@ -588,7 +588,12 @@ int create_index(session_t *session, uint64_t table, std::string_view name,
   x.relid = rec.next_relid;
   x.unique = unique;
   x.primary = primary;
+  x.constraint = constraint;
   x.eval = std::string(eval);
+  if (constraint && (!unique || !eval.empty())) {
+    return invalid("create index: a constraint's index not unique, or not "
+                   "on columns alone");
+  }
   if (primary && (!unique || !eval.empty())) {
     return invalid("create index: a primary key not unique, or not on "
                    "columns alone");

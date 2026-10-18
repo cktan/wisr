@@ -243,7 +243,8 @@ const std::vector<attribute_t> &schema_of(sm3::part_t part) {
       /* index */
       {att(type_int8), att(type_text), att(type_int2), att(type_bool),
        att(type_int4), att(type_int4), att(type_int2), att(type_int2),
-       att(type_text), att(type_bytea), att(type_int4), att(type_bool)},
+       att(type_text), att(type_bytea), att(type_int4), att(type_bool),
+       att(type_bool)},
       /* index_key */
       {att(type_int4), att(type_bool), att(type_bool), att(type_int8),
        att(type_int2), att(type_int4)},
@@ -455,7 +456,7 @@ int decode_column(std::string_view blob, column_rec_t &c) {
 /* An index's value: the index, then its key, INCLUDE and read columns. */
 int encode_index(const index_rec_t &x, std::string &blob) {
   blob.clear();
-  writer_t w(12);
+  writer_t w(13);
   w.i8(0, x.oid);
   w.bytes(1, x.name);
   w.i2(2, static_cast<int16_t>(x.relid));
@@ -474,6 +475,11 @@ int encode_index(const index_rec_t &x, std::string &blob) {
   // kept has it, for any other.
   if (x.primary) {
     w.b(11, true);
+  }
+  // A UNIQUE or PRIMARY KEY constraint's mark; null, as an index
+  // written before it was kept has it, for any other.
+  if (x.constraint) {
+    w.b(12, true);
   }
   if (w.append(part_desc(part_t::index), blob) != 0) {
     return -1;
@@ -529,6 +535,7 @@ int decode_index(std::string_view blob, index_rec_t &x) {
   }
   x.eval = r.opt_bytes(9).value_or("");
   x.primary = r.opt_b(11).value_or(false);
+  x.constraint = r.opt_b(12).value_or(false);
   int32_t nread = r.opt_i4(10).value_or(0);
   if (nread < 0) {
     return corrupt("an index part cut short");

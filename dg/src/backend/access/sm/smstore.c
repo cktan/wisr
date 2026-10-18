@@ -904,6 +904,7 @@ static void add_index(List **out, const sm_table_def_t &def,
   r->table = (Oid)def.oid;
   r->unique = x.unique;
   r->primary = x.primary;
+  r->constraint = x.constraint;
   r->valid = x.state == SM_INDEX_VALID;
   r->nkeys = nkeys;
   r->attnums = (int16 *)palloc0(natts * sizeof(int16));
@@ -4799,7 +4800,8 @@ ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt) {
 
   if (waiting([&] {
         return sm_cat_create_index(s, relid, name, keys, includes, stmt->unique,
-                                   std::string(), {}, &oid, stmt->primary);
+                                   std::string(), {}, &oid, stmt->primary,
+                                   stmt->isconstraint);
       }) != 0) {
     /* A name taken since it was looked up, or a unique key duplicated. */
     if (sm_errnum() == SM_ERR_DUPKEY && !stmt->unique)

@@ -642,6 +642,38 @@ TEST_CASE("a primary key is marked, one a table, on NOT NULL columns") {
   CHECK_FALSE(d->indexes[1].primary);
 }
 
+TEST_CASE("a constraint's index is marked, unique and on columns") {
+  // Verify create_index's constraint mark and its rule.
+  // 1. A unique index a UNIQUE constraint made on b, and one CREATE
+  //    UNIQUE INDEX made on a.
+  // 2. A constraint's index that is not unique is SM_ERR_INVALID.
+  // 3. After a restart the constraint's index keeps its mark, and the
+  //    other has none.
+  cat_db_t db;
+  db.begin();
+  uint64_t t = make_t(db), ub = 0, ua = 0, other = 0;
+  std::vector<sm3::index_key_spec_t> on_a = {{0, false, false, std::nullopt}};
+  std::vector<sm3::index_key_spec_t> on_b = {{1, false, false, std::nullopt}};
+  REQUIRE(sm3::create_index(db.ss, t, "t_b_key", on_b, {}, true, ub, false,
+                            true) == 0);
+  REQUIRE(sm3::create_index(db.ss, t, "t_a", on_a, {}, true, ua) == 0);
+
+  CHECK(sm3::create_index(db.ss, t, "t_b_key2", on_b, {}, false, other, false,
+                          true) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  db.commit();
+
+  sm3::catalog_t *cat = db.reload();
+  auto d = sm3::cat_get_table(cat, t);
+  REQUIRE(d != nullptr);
+  REQUIRE(d->indexes.size() == 2);
+  CHECK(d->indexes[0].oid == ub);
+  CHECK(d->indexes[0].constraint);
+  CHECK_FALSE(d->indexes[0].primary);
+  CHECK(d->indexes[1].oid == ua);
+  CHECK_FALSE(d->indexes[1].constraint);
+}
+
 TEST_CASE("the DDL refuses what the catalog cannot hold") {
   // Verify each call's errors.
   // 1. add column: a live name again is SM_ERR_DUPKEY; a missing

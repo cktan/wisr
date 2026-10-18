@@ -523,7 +523,11 @@ begins with `cat_get_table_rec` and ends with `cat_put_table`.
   written, and records the index valid. With `primary` it marks
   the index the table's primary key, a mark sm3 keeps for the
   host and acts on no further: unique, on columns alone, each
-  `NOT NULL`, and the table's only one.
+  `NOT NULL`, and the table's only one. With `constraint` it
+  marks the index one a `UNIQUE` or `PRIMARY KEY` constraint
+  made, not `CREATE UNIQUE INDEX`, another mark for the host:
+  unique, on columns alone. An index written before the mark
+  was kept reads it false.
 - **`create_index(…, eval, reads, oid)`** is the same for
   a partial or an expression index: `eval` its blob, `reads`
   the columns it reads. It needs the catalog to have an
