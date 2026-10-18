@@ -1,9 +1,12 @@
 # Decimal in digres
 
-PostgreSQL's `numeric` is replaced by a fixed-width decimal of
-at most 38 digits, the one sm stores (`../sm/sm2/TYPE.md`
-§3.4). Reviewed; §4 records the answers. All of §3 is built
-(`WORKNOTE.md` steps 95 to 97).
+PostgreSQL's `numeric` is replaced by two fixed-width
+decimals, the ones sm stores (`../sm/sm2/TYPE.md` §3.4):
+`decimal64`, of at most 17 digits, passed by value, and
+`decimal128`, of at most 36; `numeric` is a name for them.
+Reviewed; §4 records the answers. All of §3 is built
+(`WORKNOTE.md` steps 95 to 97), and §5 by
+`DG_DECIMAL_PLAN.md`, which holds its decisions in full.
 
 ## 1. Where digres stands
 
@@ -26,42 +29,53 @@ at most 38 digits, the one sm stores (`../sm/sm2/TYPE.md`
 
 ## 2. Decisions
 
-### 2.1 One SQL type, still called numeric
+### 2.1 Two types, and numeric a name for them
 
-- **The type keeps PostgreSQL's oid, 1700, and its name,
-  `numeric`, with `decimal` its alias**, as in PostgreSQL. What
-  changes is its representation and its range, not its name: a
-  client, a driver or a query that says `numeric` is unchanged.
-- **Its text is PostgreSQL's**, and so is its binary wire
-  format (`numeric_send`, `numeric_recv`), which drivers decode:
-  the value is converted to PostgreSQL's base-10000 digits on
-  the way out, and from them on the way in.
+- **`decimal64` and `decimal128` are the types**, sm's two
+  (`DG_DECIMAL_PLAN.md` §3.1): `decimal64` takes PostgreSQL's
+  oid for numeric, 1700, `decimal128` 8383.
+- **`numeric` and `decimal` are names only**, resolved where a
+  type name is (`parse_type.c`): a bare one is
+  `decimal64(17, 3)`, everywhere, a cast included;
+  `numeric(p, s)` is `decimal64` up to 17 digits, `decimal128`
+  up to 36, and refused past them.
+- **A client sees `numeric`**: oid 1700 for either type, 1231
+  for an array of either, and `numeric(p, s)` as its name, so a
+  client, a driver or a query that says `numeric` is unchanged
+  but for a bare `numeric`'s scale. A parameter a client types
+  1700 is a `decimal128`.
+- **Their text is PostgreSQL's**, and so is their binary wire
+  format (`numeric_send`, `numeric_recv`), which drivers
+  decode: the value is converted to PostgreSQL's base-10000
+  digits on the way out, and from them on the way in.
 
 ### 2.2 A value carries its scale
 
 PostgreSQL's executor does not carry a typmod through an
 expression: `a * b`, a function's result, an aggregate's are
 typmod -1. A scaled integer means nothing without its scale,
-so the in-memory value carries it:
+so the value carries it, as sm's datum does, in the low bits
+of its word:
 
 ```
-typedef struct decimal_t {
-  int128 value;   /* the number times 10^scale */
-  int16  scale;   /* 0 to 38 */
-  int16  pad[7];  /* to 32 bytes, zero */
-} decimal_t;      /* pass by reference, typlen 32 */
+decimal64:  int64,  (value << 5) | scale   /* by value, typlen 8 */
+decimal128: int128, (value << 6) | scale   /* by reference, typlen 16 */
+typedef struct decimal_t {  /* decimal128's, in two halves */
+  uint64 lo;
+  int64  hi;
+} decimal_t;
 ```
 
-- **Fixed length, by reference**, 32 bytes: no varlena header,
-  no detoasting.
+- **sm's datum bit for bit**: no varlena header, no
+  detoasting, and no conversion at the sm border (§2.3).
 - **The precision is not kept**: a value's digits are what
-  they are, at most 38; a column's or a cast's precision is a
-  check, as PostgreSQL's typmod is.
+  they are, at most 17 or 36; a column's or a cast's precision
+  is a check, as PostgreSQL's typmod is.
 - **Equal values compare equal at any scale**: `1.5 = 1.50`.
-  Comparison rescales the lower scale up (at most 38 digits,
-  so it fits in 128 bits after a check) and compares the
-  integers; hashing first strips trailing zeros, so equal
-  values hash alike.
+  Comparison rescales the lower scale up and compares the
+  integers, and at one scale compares the words; hashing first
+  strips trailing zeros, so equal values hash alike, a
+  `decimal64` as a `decimal128` of its value.
 
 ### 2.3 Stored as sm2's decimal, at the column's scale
 
@@ -74,36 +88,52 @@ typedef struct decimal_t {
   past 36 digits is refused.
 - **Writing rescales to the column's scale**, rounding half
   away from zero as PostgreSQL's assignment does, and checks
-  the precision; reading attaches the column's scale. Both are
-  integer work at the sm boundary, in `smstore.c`: a row's
-  insert and update, its deform, an index scan's keys, an
-  index-only scan's values, and statistics' values.
+  the precision; then the value is sm's datum as it is, a
+  `decimal64`'s word, a `decimal128`'s pointer. Reading takes
+  sm's datum as it is too, the word into the `Datum`, a pointer
+  into sm's tuple. All in `smstore.c`: a row's insert and
+  update, its deform, an index scan's keys, an index-only
+  scan's values, and statistics' values.
 - **An unconstrained `numeric` column is `numeric(17, 3)`**,
   the widest of sm2's `decimal64`, as sm2 requires a typmod
-  (§4.1). A value with more places is rounded to three, as an
-  assignment to `numeric(17, 3)` is.
+  (§4.1); so is any bare `numeric` now (§2.1). A value with
+  more places is rounded to three, as an assignment to
+  `numeric(17, 3)` is.
 
 ### 2.4 Literals and casts
 
-- **A literal with a point or an exponent is `numeric`** with
-  the scale it is written with: `1.50` has scale 2, `1e3`
-  scale 0. One past 38 digits is a `float8`, as DuckDB makes
-  it: `1e300` and `3.4e38` are ordinary float literals, and
-  refusing them broke them. Text past 38 significant digits,
-  `'0.1234...'::numeric`, is refused (§4.2).
+- **A literal with a point** is a `decimal64` of at most 17
+  digits, a `decimal128` of at most 36, with the scale it is
+  written with: `1.50` has scale 2. One past 36 digits is a
+  `float8`, as DuckDB makes it, and so is one with an
+  exponent, `1e3` or `3.4e38`: refusing those broke them. Text
+  past 36 significant digits, `'0.1234...'::numeric(36, 35)`,
+  is refused (§4.2).
 - **Casts**: from and to the integers, `float4`, `float8`,
   `text`, `money`; `numeric(p, s)` rescales and checks, as
-  PostgreSQL's typmod coercion does.
+  PostgreSQL's typmod coercion does. `decimal64` widens to
+  `decimal128` implicitly, `int2` and `int4` to either, `int8`
+  only to `decimal128`: `int8` and `decimal64` have no common
+  type, and a user casts (`DG_DECIMAL_PLAN.md` §3.4).
+- **A `decimal64` finds `decimal128`'s functions**, where it
+  has none of its own, before `float8`'s, the numeric
+  category's preferred type (`parse_func.c`,
+  `DG_DECIMAL_PLAN.md` §3.2).
 
 ### 2.5 Arithmetic
 
 Results are exact or an error, never silently wrong.
 
 - **`+`, `-`**: scale `max(s1, s2)`.
-- **`*`**: scale `s1 + s2`; past 38 digits, rounded to fewer
+- **`*`**: scale `s1 + s2`; past 36 digits, rounded to fewer
   places where the integer part still fits, else an error.
 - **`/`**: PostgreSQL's choice of scale (`select_div_scale()`,
-  at least 16 significant digits, at most 38 in all), rounded.
+  at least 16 significant digits, at most 36 in all), rounded.
+- **A result that may pass 17 digits is a `decimal128`**.
+  `decimal64`'s `+`, `-` and `*` compute it in 128 bits, its
+  `/` without casting; `decimal128`'s `+`, `-` and `*` take the
+  same 128-bit path while the result fits 36 digits. Only past
+  that, and for the rest, is the 512-bit wide path taken.
 - **`%`, `div`, `abs`, `sign`, `ceil`, `floor`, `round(x, n)`,
   `trunc(x, n)`, `gcd`, `lcm`, `factorial`, `min`, `max`**:
   exact, as PostgreSQL's.
@@ -118,9 +148,11 @@ Results are exact or an error, never silently wrong.
 
 ### 2.6 Aggregates
 
-- **`sum(int8)`, `sum(numeric)`** accumulate in 128 bits:
-  exact to 38 digits, then an error, where PostgreSQL never
-  overflows (§4.5).
+- **`sum(int8)`, `sum(numeric)`** accumulate exactly: exact
+  to 36 digits, then an error, where PostgreSQL never
+  overflows (§4.5). A `decimal64`'s sum is kept in 128 bits
+  in the state, with no palloc a row, and flushed to the wide
+  sum when its scale changes or it is read.
 - **`avg` of integers and numerics** divides by the count at
   `/`'s scale (§2.5).
 - **`stddev`, `variance`** of them: in `long double`.
@@ -181,34 +213,15 @@ Each is moved to `decimal_t`, keeping its SQL signature:
    the first answer, to keep each number's text as written.
 5. **`sum(int8)` past 38 digits** is an error.
 
-## 5. To do: decimal64 by value
+## 5. decimal64 by value: built
 
-Most numerics fit in 18 digits. If `numeric(p <= 18)` were an
-8-byte by-value datum, the common case would lose the palloc
-of `numeric_from_sm()` (`access/sm/smstore.c`) and the pointer
-chase: sorts compare `datum1` itself, spill files, hash join
-and hash agg rows shrink, and hashing and comparison are of an
-`int64`. Worth doing if it covers some 99% of uses.
-
-- **What stops it**: §2.2. `typlen` and `typbyval` are the
-  type's, not the typmod's, so `numeric(p <= 18)` would be a
-  type of its own, and an 8-byte datum has no room for its
-  scale, which PostgreSQL's typmod -1 expressions lose.
-- **Ways in, to be weighed**:
-  1. Carry `(p, s)` through every expression, as DuckDB's
-     binder does (`+` gives `max(s1, s2)`, `*` gives
-     `s1 + s2`): `numeric(p <= 18)` resolves to a by-value
-     decimal64 type, others to decimal128. Clean, but a
-     change to the parser, planner and function resolution.
-  2. Keep the scale in the datum: some 6 bits of scale and
-     58 of value, about 17 digits. No typmod needed, but the
-     range shrinks and sm's datum is repacked at the border.
-  3. Keep `decimal_t`, and make sorts fast where the scale is
-     known: an abbreviated key in `datum1`. Little work, part
-     of the gain.
-- **First step**: map where a typmod is lost on the way
-  through dg's parser and planner, to size option 1.
-- **sm's half of option 2 is built**: sm's decimals carry
-  their scale, at 17 and 36 digits
-  (`../sm/SM_DECIMAL_PLAN.md`), so a `decimal64` datum is a
-  value dg could pass by value as it is.
+Most numerics fit in 17 digits, so a `numeric(p <= 17)` is a
+by-value `decimal64`: no palloc and no conversion at the sm
+border, sorts compare `datum1` itself, and spill files and
+hash tables shrink. It was built by this section's option 2,
+the scale kept in the datum, as sm keeps it
+(`../sm/SM_DECIMAL_PLAN.md`), which costs a digit of
+`decimal64` and two of `decimal128`. Carrying `(p, s)` through
+every expression, as DuckDB does, and an abbreviated sort key
+were the other options. `DG_DECIMAL_PLAN.md` holds the design
+and its answers; §2 here is what it made.

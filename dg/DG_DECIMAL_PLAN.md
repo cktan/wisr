@@ -10,7 +10,8 @@ This plan gives digres the same two types, `decimal64`, a
 value read from sm is used as sm gave it, in either width.
 `numeric` and `decimal` stay as names only, which the parser
 turns into one of the two. It is the to-do of `DECIMAL.md` §5,
-by its option 2. Reviewed; §6 records the answers.
+by its option 2. Reviewed; §6 records the answers. Built: all
+of §5, but for step 6's timing, which was not taken.
 
 ## 1. Why
 
