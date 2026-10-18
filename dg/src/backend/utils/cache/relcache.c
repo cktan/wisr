@@ -4731,23 +4731,31 @@ restart:
      * eliminate columns, but the practical impact of this is limited.)
      */
 
-    datum = heap_getattr(indexDesc->rd_indextuple, Anum_pg_index_indexprs,
-                         GetPgIndexDescriptor(), &isnull);
-    if (!isnull)
-      indexExpressions = (Node *)stringToNode(TextDatumGetCString(datum));
-    else
-      indexExpressions = NULL;
+    indexExpressions = NULL;
+    indexPredicate = NULL;
+    /*
+     * An index of sm's has no pg_index row: its form is made from sm's
+     * definition (RelationBuildSmIndexDesc), with no expression or predicate
+     * kept, an expression column's attnum 0.
+     */
+    if (indexDesc->rd_indextuple != NULL) {
+      datum = heap_getattr(indexDesc->rd_indextuple, Anum_pg_index_indexprs,
+                           GetPgIndexDescriptor(), &isnull);
+      if (!isnull)
+        indexExpressions = (Node *)stringToNode(TextDatumGetCString(datum));
 
-    datum = heap_getattr(indexDesc->rd_indextuple, Anum_pg_index_indpred,
-                         GetPgIndexDescriptor(), &isnull);
-    if (!isnull)
-      indexPredicate = (Node *)stringToNode(TextDatumGetCString(datum));
-    else
-      indexPredicate = NULL;
+      datum = heap_getattr(indexDesc->rd_indextuple, Anum_pg_index_indpred,
+                           GetPgIndexDescriptor(), &isnull);
+      if (!isnull)
+        indexPredicate = (Node *)stringToNode(TextDatumGetCString(datum));
+    }
 
     /* Can this index be referenced by a foreign key? */
     isKey = indexDesc->rd_index->indisunique && indexExpressions == NULL &&
             indexPredicate == NULL;
+    for (i = 0; i < indexDesc->rd_index->indnkeyatts; i++)
+      if (indexDesc->rd_index->indkey.values[i] == 0)
+        isKey = false; /* an expression, of an index of sm's */
 
     /* Is this a primary key? */
     isPK = (indexOid == relpkindex);

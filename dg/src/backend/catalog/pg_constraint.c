@@ -1279,9 +1279,8 @@ Oid get_domain_constraint_oid(Oid typid, const char *conname, bool missing_ok) {
  */
 Bitmapset *get_primary_key_attnos(Oid relid, bool deferrableOk,
                                   Oid *constraintOid) {
-  Relation rel, index;
+  Relation rel;
   Bitmapset *pkattnos = NULL;
-  Oid pkindex;
 
   *constraintOid = InvalidOid;
   /* A compiled-in catalog's indexes cannot be opened: it has no key here. */
@@ -1289,19 +1288,9 @@ Bitmapset *get_primary_key_attnos(Oid relid, bool deferrableOk,
     return NULL;
   /* The caller holds a lock on relid, as the parser does on what it reads. */
   rel = table_open(relid, NoLock);
-  pkindex = RelationGetPrimaryKeyIndex(rel, deferrableOk);
+  if (deferrableOk || !rel->rd_ispkdeferrable)
+    pkattnos = RelationGetIndexAttrBitmap(rel, INDEX_ATTR_BITMAP_PRIMARY_KEY);
   table_close(rel, NoLock);
-  if (!OidIsValid(pkindex))
-    return NULL;
-  /*
-   * The key columns of its pg_index form, which the relcache makes from
-   * sm's definition; a primary key has no expression.
-   */
-  index = index_open(pkindex, AccessShareLock);
-  for (int i = 0; i < index->rd_index->indnkeyatts; i++)
-    pkattnos = bms_add_member(pkattnos, index->rd_index->indkey.values[i] -
-                                            FirstLowInvalidHeapAttributeNumber);
-  index_close(index, AccessShareLock);
   return pkattnos;
 }
 
