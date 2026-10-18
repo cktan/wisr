@@ -889,9 +889,12 @@ struct sm_view_def_t {
  * its name, namespace and version ignored. Each relation read is
  * locked SM_LOCKMODE_IS to the end of the transaction, and must be
  * a table, with a live column where one is named, or a view, with
- * none named: or SM_ERR_NOTFOUND, or SM_ERR_INVALID. A temporary
- * view, or one reading a temporary table, is SM_ERR_INVALID; a name
- * a relation of nspoid has, SM_ERR_DUPKEY.
+ * none named: or SM_ERR_NOTFOUND, or SM_ERR_INVALID. SM_NSP_TEMP
+ * makes a temporary view, the session's (VIEW.md section 12), which
+ * alone may read a temporary table or view: a permanent one that
+ * would is SM_ERR_INVALID. A name a relation of nspoid has, or for a
+ * temporary view one of the session's temporary relations, is
+ * SM_ERR_DUPKEY.
  */
 int sm_cat_create_view(sm_session_t* session, uint64_t nspoid,
                        const char* name, const sm_view_def_t& def,
@@ -914,7 +917,11 @@ int sm_cat_rename_view(sm_session_t* session, uint64_t oid, const char* name);
  * view reads is SM_ERR_INUSE: the host drops those first, for
  * CASCADE. So is a table, a column or a namespace a view reads or
  * holds, to sm_cat_drop_table, sm_cat_drop_column and
- * sm_cat_drop_namespace.
+ * sm_cat_drop_namespace. Another session's temporary view, a reader
+ * sm_cat_view_readers gives as other, takes no lock: once this
+ * transaction commits, its session sees it no more, nor its own
+ * temporary views that read it, and drops them at its next
+ * transaction (VIEW.md section 12.4).
  */
 int sm_cat_drop_view(sm_session_t* session, uint64_t oid);
 
@@ -948,12 +955,25 @@ int sm_cat_list_views(sm_session_t* session, uint64_t nspoid,
                       std::vector<std::string>& names);
 
 /*
+ * A view that reads a relation: its oid, name and what it reads, and
+ * whether it is another session's temporary view, which
+ * sm_cat_view_def does not find (VIEW.md section 12.3).
+ */
+struct sm_view_reader_t {
+    uint64_t                    oid;
+    std::string                 name;
+    std::vector<sm_view_read_t> reads;
+    bool                        other = false;
+};
+
+/*
  * The views that read the relation oid, a table or a view, directly,
- * sorted by oid, as the session's transaction sees them, into
- * views, which it replaces.
+ * sorted by oid, as the session's transaction sees them, and other
+ * sessions' temporary views that do, but those the transaction has
+ * dropped, into views, which it replaces.
  */
 int sm_cat_view_readers(sm_session_t* session, uint64_t oid,
-                        std::vector<uint64_t>& views);
+                        std::vector<sm_view_reader_t>& views);
 
 /*
  * Wait until the build of the table's index has ended. An index

@@ -1005,9 +1005,12 @@ int nextval(session_t* session, uint64_t oid, uint64_t& out);
  * name and nspoid, its oid set in oid. Each relation it reads is
  * locked intent_shared to the end of the transaction, and must be
  * a table, with a live column where one is named, or a view, with
- * none named: or SM_ERR_NOTFOUND, or SM_ERR_INVALID. A temporary
- * view, or one that reads a temporary table, is SM_ERR_INVALID; a
- * taken name SM_ERR_DUPKEY.
+ * none named: or SM_ERR_NOTFOUND, or SM_ERR_INVALID. nspoid nsp_temp
+ * makes a temporary view, in the session's temporary catalog
+ * (VIEW.md §12.2), which alone may read a temporary table or view,
+ * locking none: a permanent one that would is SM_ERR_INVALID. A
+ * taken name is SM_ERR_DUPKEY, a temporary view's among the
+ * session's temporary names.
  */
 int create_view(session_t* session, uint64_t nspoid, std::string_view name,
                 const view_def_t& def, uint64_t& oid);
@@ -1026,7 +1029,11 @@ int rename_view(session_t* session, uint64_t oid, std::string_view name);
 
 /*
  * Drop the view oid, under its lock exclusive. One another view
- * reads is SM_ERR_INUSE.
+ * reads is SM_ERR_INUSE. Another session's temporary view, an oid
+ * cat_view_readers gives as other, takes no lock: at commit it
+ * leaves the register, and its session sees it no more, nor its own
+ * temporary views that read it, and drops them at its next begin
+ * (VIEW.md §12.4).
  */
 int drop_view(session_t* session, uint64_t oid);
 
@@ -1034,7 +1041,7 @@ int drop_view(session_t* session, uint64_t oid);
  * Take the view oid's lock in mode, held to the end of s's
  * transaction, then set out to its definition as s sees it, which
  * cannot change under the lock. A view dropped while s waited, or
- * none, fails with SM_ERR_NOTFOUND.
+ * none, fails with SM_ERR_NOTFOUND. A temporary view takes no lock.
  */
 int cat_lock_view(session_t* s, uint64_t oid, sm1::lockmode_t mode,
                   std::shared_ptr<const view_def_t>& out);
@@ -1059,10 +1066,22 @@ uint64_t cat_view_version(const session_t* s, uint64_t oid);
 std::vector<std::string> cat_list_views(const session_t* s, uint64_t nspoid);
 
 /*
- * The views that read the relation oid, a table or a view, directly,
- * as s sees them, sorted by oid.
+ * A view that reads a relation: its oid and definition, and whether
+ * it is another session's temporary view, which s finds nowhere else
+ * (VIEW.md §12.3).
  */
-std::vector<uint64_t> cat_view_readers(const session_t* s, uint64_t oid);
+struct view_reader_t {
+    uint64_t                          oid;
+    std::shared_ptr<const view_def_t> def;
+    bool                              other;
+};
+
+/*
+ * The views that read the relation oid, a table or a view, directly,
+ * as s sees them, and other sessions' temporary views that do, but
+ * those s's transaction has dropped; sorted by oid.
+ */
+std::vector<view_reader_t> cat_view_readers(const session_t* s, uint64_t oid);
 
 /*
  * ---- tables: a row and its index entries (SM3_DESIGN.md §3) ----

@@ -257,6 +257,10 @@ transaction at a time. So, for a temporary store:
   catalog, and a temporary table is never in it.
 - **TRUNCATE** is a new temporary store and a drop of the
   old, as for a table (`sm3/SM3_DESIGN.md` §4).
+- **A temporary view is kept there too** (`VIEW.md` §12.2),
+  its name among the session's temporary names, and in the
+  shared catalog's register of temporary readers (§12.3),
+  for another session's drop to find.
 - **Not kept yet, and refused**: statistics of a temporary
   table (`tbl_analyze` fails, and `cat_get_stats` gives
   none), and a temporary sequence or collation.

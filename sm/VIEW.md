@@ -4,8 +4,8 @@
 `sm3/test/test_view.cc`), as proposed in §11, and digres's
 CREATE, query and DROP (§8, `../dg/WORKNOTE.md` step 238),
 the catalog relations (step 239), and ALTER VIEW's RENAME and
-a view's options (step 240). Not yet: a temporary view, and
-the rest of §9.
+a view's options (step 240). Not yet: a temporary view, whose
+design is §12, its first step built, and the rest of §9.
 
 `CREATE VIEW` fails in digres: `DefineView()` still makes a
 PostgreSQL relation, which digres has no catalog for
@@ -272,14 +272,8 @@ struct sm_view_def_t {
 
 ## 9. Not here
 
-- **Temporary views.** PostgreSQL makes a view temporary when
-  it reads a temporary table. A temporary view in a
-  session's temporary catalog (`TEMPTABLE.md` §4) is easy;
-  one that reads a permanent table is not: the table's drop
-  in another session would not see it, as no session sees
-  another's temporary catalog. Refused, `not supported yet`,
-  until that is designed; so is a view that reads a
-  temporary table.
+- **Temporary views**: refused, `not supported yet`, as is a
+  view that reads a temporary table. §12 is their design.
 - **Materialized views**: they have storage, and are refused
   as they are now (`../dg/WORKNOTE.md` step 64).
 - **`INSTEAD OF` triggers and user rules** (`CREATE RULE`):
@@ -316,6 +310,7 @@ struct sm_view_def_t {
 4. **digres: the rest of §8**: `ALTER VIEW ... RENAME`,
    updatable views and `WITH CHECK OPTION` → verify: the
    regression file `create_view`, measured.
+5. **Temporary views**: §12.7.
 
 ## 11. For review
 
@@ -347,3 +342,208 @@ struct sm_view_def_t {
 - **The rule's oid is the view's.** `pg_rewrite` rows need an
   oid, unique among themselves; a view has one rule, so its
   oid serves, and no oid is allocated for it.
+
+---
+
+## 12. Temporary views
+
+**Status: built**, as proposed in §12.8: in sm3
+(`sm3/test/test_view.cc`) and in digres
+(`../dg/test/slt/view_temp.test`, `../dg/test/server.sh`,
+`../dg/WORKNOTE.md` step 245).
+
+A temporary view is a session's, as a temporary table is: no
+other session sees it, and it is gone when the session ends.
+PostgreSQL makes one by `CREATE TEMPORARY VIEW`, and makes a
+view temporary when it reads a temporary table or view,
+saying so in a notice. It is the largest part of what
+`create_view` still fails on (`../dg/WORKNOTE.md` step 240).
+
+### 12.1 What PostgreSQL does
+
+- **It may read anything**: a temporary table or view of its
+  session, and a permanent table or view. A permanent view
+  may read no temporary relation; one that would is made
+  temporary.
+- **What it reads is kept true for it**, as for a permanent
+  view, by `pg_depend`, which every session shares. So
+  another session's `DROP TABLE t` of a permanent table that
+  a temporary view reads is refused, naming that view:
+
+  ```
+  ERROR:  cannot drop table pt because other objects depend on it
+  DETAIL:  view pg_temp_1.tv depends on table pt
+  ```
+
+- **CASCADE drops the other session's view.** The drop
+  succeeds, and the view's own session next finds no
+  relation of that name. Checked on PostgreSQL 18, with two
+  sessions.
+
+### 12.2 The view: the temporary catalog
+
+- **A temporary view is in the session's temporary catalog**
+  (`TEMPTABLE.md` §4), in namespace 0 (`sm3::nsp_temp`), as a
+  temporary table is: made in the transaction's overlay, kept
+  in the temporary catalog from commit to commit, dropped
+  when the session closes, and written nowhere. Nothing of it
+  is in store 0, so nothing survives a crash, and a database
+  copied as its directory has none.
+- **`create_view` takes namespace 0**, which it refuses now,
+  and makes one. Its oid comes from `sm3.oid`, as a temporary
+  table's does.
+- **Its name** is one of the session's temporary names,
+  shared with its temporary tables and their indexes, and
+  checked in memory.
+- **No lock.** `cat_lock_view` of a temporary view returns
+  its definition and takes nothing, as `cat_lock_table` does
+  for a temporary table: no other session can reach it.
+- **What it reads is checked** as a permanent view's is
+  (§5), and each permanent relation it reads is locked IS to
+  the end of the transaction. A temporary relation takes no
+  lock.
+- **A permanent view still reads no temporary relation**:
+  `SM_ERR_INVALID`, as now. The host makes such a view
+  temporary first, as PostgreSQL does.
+- **In its own session it is a reader like any other**:
+  `cat_view_readers` lists it, so the session's own drop of a
+  table, a column or a view it reads is refused or cascades
+  as §5 and §8 say, a temporary table's among them.
+
+### 12.3 The hazard: another session's drop
+
+A temporary view that reads a permanent relation is in no
+catalog another session reads. Another session's `DROP
+TABLE` of that relation would find no reader, drop it, and
+leave the view reading nothing. §12.1 says PostgreSQL refuses
+the drop; for that, the other session must learn of the view.
+
+- **The shared catalog keeps a register of temporary
+  readers**: every session's committed temporary views, by
+  oid, each with its session and its definition, so its name
+  and what it reads, columns and all. A view that reads only
+  temporary relations is in it too, and harmless: no other
+  session has a relation of an oid it reads. It is in memory,
+  and never in store 0, as the views it names are not. It is
+  all a session learns of another's temporary views.
+- **It changes at commit**, with the temporary catalog: a
+  commit that makes, replaces or drops a temporary view
+  changes the register under the shared catalog's mutex, as
+  a commit of shared DDL does (`sm3/CATALOG.md` §4). Such a
+  commit counts as shared DDL.
+- **A session's close takes its entries out**, under the
+  same mutex, as it drops its temporary catalog.
+- **`cat_view_readers` lists them**, so the checks of §5 on a
+  permanent relation see another session's temporary views,
+  though `cat_get_view` does not find them:
+  `drop_table`, `drop_column` and `drop_view` are
+  `SM_ERR_INUSE` while one reads it.
+- **No race**, by the locks of §7: the view's create holds
+  the relation IS until it commits, and the register changes
+  before that commit's locks are seen to go, so a drop that
+  waited for them finds the view; a drop that came first
+  holds X, and the create waits, then finds no relation.
+
+### 12.4 CASCADE: another session's view
+
+Of the three ways to answer `DROP TABLE pt CASCADE` while
+another session's temporary view reads `pt`, the first is
+proposed:
+
+- **Drop it, as PostgreSQL does.** The drop records, in its
+  transaction's overlay, that the other session's view goes.
+  At its commit the register loses the view's entries, and
+  the other session's list of views dropped by others gains
+  it, under the mutex. That session takes the list at its
+  next `begin`, and drops each view from its temporary
+  catalog, with every temporary view of its own that reads
+  one, directly or through others: one made on a doomed view
+  while the drop was under way, which the drop could not
+  see, as its make took no lock. Until then it sees none of
+  them, in a transaction or out of one, as PostgreSQL's
+  session sees no relation another has dropped: a view kept
+  to its next `begin` would read a relation that is gone.
+  A query on the view
+  meanwhile takes `pt` IS: the drop waited out any that held
+  it, and one that comes later waits for the drop's X, then
+  finds `pt` gone, as it would in PostgreSQL. A drop rolled
+  back records nothing.
+- **It takes no lock** on the other session's view, which
+  has none: that session alone uses it, and drops it itself
+  at its next `begin`.
+- **Refuse it**, a divergence: `cannot drop table pt because
+  view pg_temp.tv of another session depends on it`, with
+  CASCADE too. Simpler by the list above, and a session never
+  loses a view to another.
+- **Let it dangle**: no register; the view's next query
+  fails on the dropped relation. Simplest, and wrong where
+  PostgreSQL is right.
+
+### 12.5 The calls in `sm.h`
+
+- **`sm_cat_create_view`** takes `SM_NSP_TEMP` for a
+  temporary view.
+- **`sm_cat_view_readers`** gives, for each reader, whether
+  it is another session's, its name and what it reads, which
+  `sm_cat_view_def` cannot give for a view the caller does
+  not see: a reader becomes a struct, `sm_view_reader_t`,
+  its oid, its name, its reads, for a column's drop to ask,
+  and that flag. A view the transaction has dropped is no
+  reader. sm3's `cat_view_readers` gives `view_reader_t`,
+  the view's definition and the flag.
+- **`sm_cat_drop_view`** of another session's temporary view,
+  an oid from the register, is §12.4's drop. Of any other oid
+  it does what it does now.
+
+### 12.6 What digres builds on it
+
+- **`DefineVirtualRelation()`** stops refusing a temporary
+  view, and passes `SM_NSP_TEMP` for one in `pg_temp`, as
+  `smstore_create_table()` does for a temporary table.
+- **The relation cache** makes a temporary view's entry in
+  `pg_temp`, `relpersistence` `t`, `rd_islocaltemp`.
+- **The lookups and the listing** ask `SM_NSP_TEMP` as they
+  do for a temporary table: `smstore_relation_oid()` already
+  asks sm for a view in it, and `smstore_relations()` adds
+  the session's temporary views to `pg_class`.
+- **The messages** name another session's view as
+  `pg_temp.tv`: digres has one temporary namespace,
+  `pg_temp`, for every session, where PostgreSQL has one a
+  backend, `pg_temp_1`.
+- **`DISCARD TEMP`** and the session's end drop its
+  temporary views, readers first, before its temporary
+  tables (`smstore_drop_temp_tables()`).
+
+### 12.7 Order of work
+
+1. **sm3: the temporary view**, §12.2: namespace 0 in
+   `create_view`, the temporary catalog's views, their
+   names and no lock, with tests in
+   `sm3/test/test_view.cc` → verify: `make test` in `sm/`.
+2. **sm3: the register**, §12.3, and its tests: a temporary
+   view's create racing another session's drop both ways, a
+   close taking its entries out → verify: the same.
+3. **sm3: the cascade**, §12.4, and `sm.h`, §12.5: the
+   other session's view gone at its next transaction, and
+   kept if the drop rolls back → verify: the same.
+4. **digres**, §12.6 → verify: an slt file of a session's
+   own temporary views; `server.sh` for another session's
+   drop, refused and cascaded; `create_view` measured;
+   `make test`, `make tsan`.
+
+### 12.8 For review
+
+- **CASCADE across sessions (§12.4)**: drop the other
+  session's view, as PostgreSQL does, or refuse. Proposed:
+  drop it. Refusing saves the list of views dropped by
+  others and its handling at `begin`, about a quarter of the
+  work, and leaves a `DROP ... CASCADE` that PostgreSQL runs
+  failing in digres.
+- **A register at all (§12.3)**, or let a view dangle.
+  Proposed: the register. It is small, in memory alone, and
+  without it a drop PostgreSQL refuses goes through.
+- **Columns in the register**, so another session's
+  `DROP COLUMN` of a column a temporary view does not read
+  goes through, as PostgreSQL's does. Proposed: kept, as a
+  permanent view's reads keep them.
+

@@ -311,21 +311,12 @@ int record_table(sm3::session_t *s, uint64_t oid, const sm3::table_rec_t &rec,
 int put_temp_table(sm3::session_t *session, uint64_t oid,
                    const sm3::table_rec_t &rec,
                    const std::map<std::string, sm3::name_rec_t> &names) {
-  std::map<uint64_t, std::shared_ptr<const sm3::table_def_t>> mine =
-      sm3::temp_tables_of(session);
-  // A name is taken once among the session's temporary tables and
-  // their indexes; the table's own are its to keep or change.
-  for (const auto &[t, def] : mine) {
-    if (t == oid) {
-      continue;
-    }
-    if (names.count(def->name)) {
-      return taken(def->name);
-    }
-    for (const sm3::index_def_t &x : def->indexes) {
-      if (names.count(x.name)) {
-        return taken(x.name);
-      }
+  // A name is taken once among the session's temporary tables, their
+  // indexes and its temporary views; the table's own are its to keep
+  // or change.
+  for (const auto &[name, what] : names) {
+    if (sm3::temp_name_taken(session, name, oid)) {
+      return taken(name);
     }
   }
   std::shared_ptr<const sm3::table_def_t> old =
@@ -1192,6 +1183,15 @@ int cat_list_sequences(session_t *session, uint64_t nspoid,
 /* Store a view's record, new or changed; see internal.h. */
 int cat_put_view(session_t *session, uint64_t oid, const view_def_t &def,
                  const view_def_t *old) {
+  // A temporary view is kept in the session, not in the store, and
+  // its name among the session's temporary names (VIEW.md §12.2).
+  if (def.nspoid == nsp_temp) {
+    if (temp_name_taken(session, def.name, oid)) {
+      return taken(def.name);
+    }
+    overlay_view(session, oid, std::make_shared<const view_def_t>(def), true);
+    return 0;
+  }
   kv_ptr kv(nullptr, &sm2::catkv_close);
   std::string key, blob;
   if (open_kv(session->sm1, kv) != 0 ||
@@ -1226,6 +1226,11 @@ int cat_put_view(session_t *session, uint64_t oid, const view_def_t &def,
 
 /* Erase a view's record and its name; see internal.h. */
 int cat_del_view(session_t *session, uint64_t oid, const view_def_t &def) {
+  // A temporary view has no entry in the store.
+  if (def.nspoid == nsp_temp) {
+    overlay_view(session, oid, nullptr, true);
+    return 0;
+  }
   kv_ptr kv(nullptr, &sm2::catkv_close);
   std::string key;
   if (open_kv(session->sm1, kv) != 0 ||

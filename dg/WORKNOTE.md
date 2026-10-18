@@ -7188,3 +7188,42 @@ offsets; sm has no pages, so a block is a tid's.
 - `test/slt/tablesample.test`: both methods at 0 and 100, a
   fraction near BERNOULLI's, REPEATABLE taking the same rows,
   deleted rows not sampled, a rescan, and no SYSTEM_ROWS.
+
+## Step 245: temporary views
+
+`../sm/VIEW.md` §12, its fourth step, on sm3's temporary view,
+its register of temporary readers and its cascade across
+sessions (steps 1 to 3 there).
+
+- **CREATE TEMP VIEW** is made in sm's namespace 0, as a
+  temporary table is, and so is a view that reads a temporary
+  relation, with PostgreSQL's notice. `DefineVirtualRelation()`
+  refuses it no more.
+- **In `pg_temp`**: the relation cache makes its entry
+  `relpersistence` `t` and `rd_islocaltemp`, and `pg_class`
+  lists the session's temporary views (`smstore_relations()`);
+  `add_view()`, `smstore_view_desc()` and `view_name()` give
+  `pg_temp` for sm's namespace 0.
+- **What reads or is read across sessions**: another session's
+  DROP of a table or view a temporary view reads is refused,
+  naming it `pg_temp.tv`, as digres has one temporary schema
+  where PostgreSQL names `pg_temp_1`; with CASCADE it drops the
+  view. `find_readers()` takes the reader's name and reads from
+  `sm_cat_view_readers()`, which gives them now, as
+  `sm_cat_view_def()` finds no other session's view.
+- **The session whose view another dropped** sees it no more at
+  once, in a transaction or out of one, as PostgreSQL's does.
+  Kept to its next sm transaction, a view the name lookup
+  found, outside one, read a view gone, and the rewriter opened
+  that unlocked: an assertion failed.
+- **DISCARD TEMP** drops the temporary views, readers first,
+  before the temporary tables (`drop_temp_views()`).
+- `test/slt/view_temp.test`, which PostgreSQL 18 passes too, and
+  `view.test` refuses no temporary view;
+  `server.sh`, another session's drop refused and cascaded, in
+  a transaction of the view's session and out of one.
+  PostgreSQL's `create_view` diff goes from 1,324 lines to
+  1,208 (from 1,486 to 1,370 with `test_setup`'s; step 240's
+  873 was measured before `test_setup` changed). Its temporary
+  views are PostgreSQL's but for one that reads a temporary
+  sequence, which digres refuses.

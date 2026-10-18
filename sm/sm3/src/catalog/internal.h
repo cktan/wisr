@@ -71,6 +71,17 @@ struct sm3::catalog_t {
   std::unordered_map<uint64_t, std::shared_ptr<const view_def_t>> views;
   std::unordered_map<std::pair<uint64_t, std::string>, uint64_t, tblname_hash_t>
       view_names;
+  /*
+   * The register of temporary readers (VIEW.md §12.3): every session's
+   * committed temporary views, by oid, with the session that has each,
+   * so that another session's drop finds what reads a permanent
+   * relation. In memory alone, as the views are.
+   */
+  struct temp_reader_t {
+    session_t *session;
+    std::shared_ptr<const view_def_t> def;
+  };
+  std::unordered_map<uint64_t, temp_reader_t> temp_readers;
 
   /*
    * Each table's committed statistics, loaded on first use: nullptr
@@ -159,6 +170,8 @@ struct view_change_t {
   int depth;
   uint64_t oid;
   std::shared_ptr<const view_def_t> def; /* nullptr: dropped */
+  bool temp = false;                     /* a temporary view's */
+  bool other = false; /* a drop of another session's temporary view */
 };
 struct stats_change_t {
   int depth;
@@ -192,13 +205,22 @@ struct sm3::session_t {
 
   /*
    * The session's temporary catalog (TEMPTABLE.md §4): its committed
-   * temporary tables, their names, and their indexes'
-   * states. A commit moves the overlay's temporary changes here, and
+   * temporary tables, their names, their indexes' states, and its
+   * temporary views. A commit moves the overlay's temporary changes here, and
    * never into the shared catalog; nothing else reads or writes it.
    */
   std::unordered_map<uint64_t, std::shared_ptr<const table_def_t>> temp_tables;
   std::unordered_map<std::string, uint64_t> temp_names;
   std::unordered_map<uint64_t, index_status_t> temp_states;
+  /* Its committed temporary views (VIEW.md §12.2), by oid. */
+  std::unordered_map<uint64_t, std::shared_ptr<const view_def_t>> temp_views;
+  /*
+   * Its temporary views other sessions have dropped (VIEW.md §12.4),
+   * for its next begin to drop: guarded by the catalog's mutex, and
+   * has_doomed set while there are any.
+   */
+  std::vector<uint64_t> doomed;
+  std::atomic<bool> has_doomed{false};
 };
 
 namespace sm3 {
@@ -339,7 +361,23 @@ void overlay_sequence(session_t *s, uint64_t oid,
 void overlay_stats(session_t *s, uint64_t oid,
                    std::shared_ptr<const stats_t> stats);
 void overlay_view(session_t *s, uint64_t oid,
-                  std::shared_ptr<const view_def_t> def);
+                  std::shared_ptr<const view_def_t> def, bool temp = false);
+
+/*
+ * Whether name is one of session's temporary names, as it sees them: a
+ * temporary table's, one of their indexes', or a temporary view's, but
+ * those of the object oid.
+ */
+bool temp_name_taken(const session_t *s, std::string_view name, uint64_t oid);
+
+/*
+ * Another session's temporary view oid, from the register (VIEW.md
+ * §12.3), unless s's transaction has dropped it; nullptr if none.
+ */
+std::shared_ptr<const view_def_t> other_view(const session_t *s, uint64_t oid);
+
+/* Record the drop of another session's temporary view (VIEW.md §12.4). */
+void overlay_other_drop(session_t *s, uint64_t oid);
 
 /*
  * Store the view oid's record, def, new or changed, in s's

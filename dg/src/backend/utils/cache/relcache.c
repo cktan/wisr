@@ -1373,7 +1373,10 @@ static Relation RelationBuildSmViewDesc(const smstore_view_t *view,
   form.relnamespace = view->nspoid;
   form.relowner = BOOTSTRAP_SUPERUSERID;
   form.relkind = RELKIND_VIEW;
-  form.relpersistence = RELPERSISTENCE_PERMANENT;
+  /* A view in pg_temp is the session's temporary one (../sm/VIEW.md 12). */
+  form.relpersistence = view->nspoid == PG_TEMP_NAMESPACE
+                            ? RELPERSISTENCE_TEMP
+                            : RELPERSISTENCE_PERMANENT;
   form.relispopulated = true;
   form.relnatts = natts;
   form.relhasrules = true;
@@ -1388,7 +1391,7 @@ static Relation RelationBuildSmViewDesc(const smstore_view_t *view,
   relation->rd_firstRelfilelocatorSubid = InvalidSubTransactionId;
   relation->rd_droppedSubid = InvalidSubTransactionId;
   relation->rd_backend = INVALID_PROC_NUMBER;
-  relation->rd_islocaltemp = false;
+  relation->rd_islocaltemp = view->nspoid == PG_TEMP_NAMESPACE;
 
   /* The columns, in the cache's context, as AllocateRelationDesc's are. */
   oldcxt = MemoryContextSwitchTo(CacheMemoryContext);
