@@ -7541,10 +7541,6 @@
   proname => 'pg_get_triggerdef', provolatile => 's', prorettype => 'text',
   proargtypes => 'oid bool', prosrc => 'pg_get_triggerdef_ext' },
 
-{ oid => '4099', descr => 'Is NUMA support available?',
-  proname => 'pg_numa_available', provolatile => 's', prorettype => 'bool',
-  proargtypes => '', prosrc => 'pg_numa_available' },
-
 # memory context of local backend
 { oid => '2282',
   descr => 'information about all memory contexts of local backend',

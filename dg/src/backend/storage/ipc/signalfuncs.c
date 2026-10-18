@@ -52,16 +52,9 @@ static int pg_signal_backend(int pid, int sig) {
   Oid role;
 
   /*
-   * BackendPidGetProc returns NULL if the pid isn't valid; but by the time
-   * we reach kill(), a process for which we get a valid proc here might
-   * have terminated on its own.  There's no way to acquire a lock on an
-   * arbitrary process to prevent that. But since so far all the callers of
-   * this mechanism involve some request for ending the process anyway, that
-   * it might end on its own first is not a problem.
-   *
-   * Note that proc will also be NULL if the pid refers to an auxiliary
-   * process or the postmaster (neither of which can be signaled via
-   * pg_signal_backend()).
+   * No record if the pid is no session's, the postmaster's included.  A
+   * session found here may end before it is interrupted; as every caller
+   * asks for it to end anyway, that is no problem.
    */
   if (record == nullptr) {
     /*
@@ -88,15 +81,6 @@ static int pg_signal_backend(int pid, int sig) {
   } else if (!has_privs_of_role(GetUserId(), role) &&
              !has_privs_of_role(GetUserId(), ROLE_PG_SIGNAL_BACKEND))
     return SIGNAL_BACKEND_NOPERMISSION;
-
-  /*
-   * Can the process we just validated above end, followed by the pid being
-   * recycled for a new process, before reaching here?  Then we'd be trying
-   * to kill the wrong thing.  Seems near impossible when sequential pid
-   * assignment and wraparound is used.  Perhaps it could happen on a system
-   * where pid re-use is randomized.  That race condition possibility seems
-   * too unlikely to worry about.
-   */
 
   /* Its own thread: a session ended since is interrupted harmlessly. */
   session_interrupt(record, InterruptsOfSignal(sig));

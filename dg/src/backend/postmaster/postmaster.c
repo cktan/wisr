@@ -805,13 +805,7 @@ void PostmasterMain(int argc, char *argv[]) {
     ExitPostmaster(0);
   }
 
-  /*
-   * Set up shared memory and semaphores.
-   *
-   * Note: if using SysV shmem and/or semas, each postmaster startup will
-   * normally choose the same IPC keys.  This helps ensure that we will
-   * clean up dead IPC objects if the postmaster crashes and is restarted.
-   */
+  /* Set up what the threads share: the session registry and the rest. */
   CreateSharedMemoryAndSemaphores();
 
   /*

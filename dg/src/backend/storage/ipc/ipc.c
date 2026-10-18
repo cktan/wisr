@@ -264,10 +264,6 @@ void shmem_exit(int code) {
  *		atexit_callback
  *
  *		Backstop to ensure that direct calls of exit() don't mess us up.
- *
- * Somebody who was being really uncooperative could call _exit(),
- * but for that case we have a "dead man switch" that will make the
- * postmaster treat it as a crash --- see pmsignal.c.
  * ----------------------------------------------------------------
  */
 static void atexit_callback(void) {
@@ -370,21 +366,6 @@ void cancel_before_shmem_exit(pg_on_exit_callback function, Datum arg) {
          "before_shmem_exit callback (%p,0x%" PRIxPTR
          ") is not the latest entry",
          function, arg);
-}
-
-/* ----------------------------------------------------------------
- *		on_exit_reset
- *
- *		this function clears all on_proc_exit() and on_shmem_exit()
- *		registered functions.  This is used just after forking a
- *backend, so that the backend doesn't believe it should call the postmaster's
- *		on-exit routines when it exits...
- * ----------------------------------------------------------------
- */
-void on_exit_reset(void) {
-  before_shmem_exit_index = 0;
-  on_shmem_exit_index = 0;
-  on_proc_exit_index = 0;
 }
 
 /* ----------------------------------------------------------------

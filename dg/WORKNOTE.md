@@ -7038,3 +7038,36 @@ views (`../sm/sm3/test/test_view.cc`).
 - psql's `\dv`, `\d` and `\d+` of a view give PostgreSQL 18's
   output. `test/slt/view_catalog.test`; `server.sh` runs `\dv`
   and `\d+`.
+
+## Step 238: storage/ipc stripped
+
+A pass over `storage/ipc/*.c` for what digres no longer needs.
+Most of it is digres's own and live: the session registry,
+cancel requests and interrupt delivery (`procsignal.c`), the
+quit reason (`pmsignal.c`), the exit callbacks (`ipc.c`),
+latches, and `pg_cancel_backend()` and its kin
+(`signalfuncs.c`).
+
+- **Wait sets are epoll's alone**: digres runs on Linux alone
+  (`../sm/PART4.md` section 10). `waiteventset.c`, 1,600 lines,
+  is 590: PostgreSQL's poll(), kqueue() and Windows
+  implementations and the self-pipe are gone, none of which
+  could wake on sm's wake fd, the latch of a digres thread.
+  Gone with them: `FreeWaitEventSetAfterFork()`, the `waiting`
+  flag only a signal handler read, and the WIN32 branches of
+  `latch.c`, `latch.h` and `waiteventset.h`.
+  `WaitEventSetCanReportClosed()` says true, as epoll does.
+- **`shmem.c` is gone**: it held `pg_numa_available()` alone,
+  whether NUMA serves PostgreSQL's shared memory, which digres
+  has not. Its `pg_proc` entry and `src/port/pg_numa.c` went
+  with it.
+- **`ipc.c`**: `on_exit_reset()`, which dropped the callbacks a
+  forked child inherited; a thread's start empty, being
+  `thread_local`. Kept: `cancel_before_shmem_exit()`, which
+  `PG_ENSURE_ERROR_CLEANUP` uses, a facility for code to come.
+- **`ipci.c`**: the reset of the quit reason "after a crash",
+  which runs once, at startup, where `shmem_t` already starts
+  at `PMQUIT_NOT_SENT`.
+- Stale comments: the "dead man switch" of `atexit_callback()`,
+  the SysV keys at `CreateSharedMemoryAndSemaphores()`'s caller,
+  and `kill()` and PID reuse in `pg_signal_backend()`.

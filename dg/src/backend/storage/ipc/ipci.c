@@ -19,7 +19,6 @@
 #include "miscadmin.h"
 #include "storage/advisory_lock.h"
 #include "storage/ipc.h"
-#include "storage/pmsignal.h"
 #include "storage/proc.h"
 #include "storage/procsignal.h"
 #include "storage/session_registry.h"
@@ -45,12 +44,6 @@ void CreateSharedMemoryAndSemaphores(void) {
   session_registry_init();
   /* Advisory locks are in a table of shmem's, by the sessions' records. */
   advisory_init();
-
-  /*
-   * Set up interprocess signaling mechanisms
-   */
-  /* A rebuild after a crash clears why the postmaster sent SIGQUIT. */
-  SetQuitSignalReason(PMQUIT_NOT_SENT);
 
   /*
    * Set up other modules that need structures of their own

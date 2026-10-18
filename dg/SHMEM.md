@@ -49,8 +49,9 @@ thread fixes before then and no thread writes after is
   init list a session thread ran; `TransamVariables`, whose
   constants `GetSnapshotData()` now names; and
   `shmem_request_hook` and `shmem_startup_hook`, which a
-  library had no registry to use with. `shmem.c` keeps
-  `pg_numa_available()`.
+  library had no registry to use with. `shmem.c` kept
+  `pg_numa_available()`, until it went too (`WORKNOTE.md` step
+  238).
 - **Sized ahead of time** still: `MaxBackends`, the session
   registry's limit. A snapshot's xid arrays, sized by it, are
   not allocated (`WORKNOTE.md` step 191): a snapshot holds no

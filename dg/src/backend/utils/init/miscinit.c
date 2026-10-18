@@ -107,9 +107,6 @@ void InitPostmasterChild(void) {
   _setmode(fileno(stderr), _O_BINARY);
 #endif
 
-  /* We don't want the postmaster's proc_exit() handlers */
-  on_exit_reset();
-
   /* Initialize process-local latch support */
   InitializeWaitEventSupport();
   InitProcessLocalLatch();
