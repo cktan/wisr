@@ -1,0 +1,55 @@
+# Verify that pg_constraint lists a foreign key of a table in sm, as
+# PostgreSQL does, so that psql's \d shows it (dg/WORKNOTE.md step 246).
+# 1. A table with two foreign keys to another: each is a row of type f,
+#    on the referencing table, to the referenced one.
+# 2. pg_get_constraintdef() writes each, actions and columns named.
+# 3. Its columns, actions, match type and deferrability are the row's;
+#    neither is deferrable, as digres refuses DEFERRABLE yet.
+# 4. pg_class says both tables have triggers, as \d asks before it lists
+#    them.
+# 5. Dropping the referencing table drops its rows.
+
+statement ok
+create table fp (a int4 primary key, b int4 unique)
+
+statement ok
+create table fc (x int4 references fp on delete cascade, y int4,
+                 constraint fc_y foreign key (y) references fp (b)
+                   match full on update set null)
+
+query TTTT nosort
+select conname, contype, conrelid::regclass::text, confrelid::regclass::text
+  from pg_constraint where contype = 'f' order by conname
+----
+fc_x_fkey	f	fc	fp
+fc_y	f	fc	fp
+
+query TT nosort
+select conname, pg_get_constraintdef(oid) from pg_constraint
+ where contype = 'f' order by conname
+----
+fc_x_fkey	FOREIGN KEY (x) REFERENCES fp(a) ON DELETE CASCADE
+fc_y	FOREIGN KEY (y) REFERENCES fp(b) MATCH FULL ON UPDATE SET NULL
+
+query TTTTTTTT nosort
+select conname, conkey::text, confkey::text, confupdtype, confdeltype,
+       confmatchtype, condeferrable, condeferred
+  from pg_constraint where contype = 'f' order by conname
+----
+fc_x_fkey	{1}	{1}	a	c	s	f	f
+fc_y	{2}	{2}	n	a	f	f	f
+
+query TT nosort
+select relname, relhastriggers from pg_class
+ where relname in ('fc', 'fp') order by relname
+----
+fc	t
+fp	t
+
+statement ok
+drop table fc
+
+query I nosort
+select count(*) from pg_constraint where contype = 'f'
+----
+0

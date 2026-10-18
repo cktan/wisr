@@ -2420,6 +2420,37 @@ primary key, btree, for table "dd1.t"
 OUT
 cmp -s "$work/dd.out" "$work/dd.expected" || fail "\\d of a table and an index"
 
+# Verify that psql's \d shows a foreign key, on the table that has it and on
+# the one it references, from pg_constraint's rows (WORKNOTE.md step 246).
+# 1. In dd1 make table p with a primary key, and c with a foreign key to it.
+# 2. \d dd1.c lists the key under Foreign-key constraints; \d dd1.p under
+#    Referenced by.
+local_psql -c 'create table dd1.p (a int4 primary key)' \
+  -c 'create table dd1.c (x int4 references dd1.p on delete cascade)' \
+  -P format=aligned -P tuples_only=off -c '\d dd1.c' -c '\d dd1.p' 2>&1 |
+  sed 's/ *$//' > "$work/fk.out"
+cat > "$work/fk.expected" << OUT
+CREATE TABLE
+CREATE TABLE
+                   Table "dd1.c"
+ Column |  Type   | Collation | Nullable | Default
+--------+---------+-----------+----------+---------
+ x      | integer |           |          |
+Foreign-key constraints:
+    "c_x_fkey" FOREIGN KEY (x) REFERENCES dd1.p(a) ON DELETE CASCADE
+
+                   Table "dd1.p"
+ Column |  Type   | Collation | Nullable | Default
+--------+---------+-----------+----------+---------
+ a      | integer |           | not null |
+Indexes:
+    "p_pkey" PRIMARY KEY, btree (a)
+Referenced by:
+    TABLE "dd1.c" CONSTRAINT "c_x_fkey" FOREIGN KEY (x) REFERENCES dd1.p(a) ON DELETE CASCADE
+
+OUT
+cmp -s "$work/fk.out" "$work/fk.expected" || fail "\\d of a foreign key"
+
 # Verify that the partition functions answer for a table of sm's, which no
 # partition tree holds, as PostgreSQL does for a table not partitioned:
 # psql 18's \d calls pg_partition_ancestors(), and only its plan kept the

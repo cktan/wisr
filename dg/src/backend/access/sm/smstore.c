@@ -1012,6 +1012,8 @@ static void add_table(const sm_table_def_t &def, List **out) {
       add_relation(out, def.oid, def.name, pgnsp, RELKIND_RELATION,
                    (int)def.columns.size(), !def.indexes.empty(), temp);
 
+  r->nfkeys = (int)def.fkeys.size();
+  r->referenced = !def.referenced_by.empty();
   for (size_t i = 0; i < def.columns.size(); i++) {
     const sm_column_def_t &c = def.columns[i];
 
