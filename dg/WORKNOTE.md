@@ -6646,3 +6646,19 @@ check, and `src/port/Makefile` skips the processor's files
   `cxx_thread_local.py --check`.
 - 2 `/*SHARED*/` globals are left: `progname` and
   `data_directory_mode`.
+
+## Step 227: server.sh fails when the server does not start
+
+A `make -j4 tsan` run failed `server.sh`'s max_connections check:
+the server took thirteen seconds to log that it was ready, the
+wait gave up after ten without a word, and the three sessions
+connected before the socket was there. Started alone, the tsan
+server is ready in about a second: the machine was loaded.
+
+- **`server_ready()`**, in `server.sh`: waits up to thirty
+  seconds for "ready to accept connections", stops at once if
+  the server has exited, and returns false on either. The four
+  starts use it, and each fails its check by name ("start",
+  "max_connections: start", ...) rather than going on.
+- `isolation.sh`, `run.sh`, `slt.sh` and `regress.sh` already
+  fail when the server does not start, after ten seconds.

@@ -31,6 +31,17 @@ fail() {
   failed=1
 }
 
+# Wait for the server PID to log to LOG that it accepts connections: up to
+# thirty seconds, as a loaded machine (make -j4 tsan) has taken thirteen.
+server_ready() {
+  for _ in $(seq 300); do
+    grep -q "ready to accept connections" "$2" && return 0
+    kill -0 "$1" 2> /dev/null || return 1
+    sleep 0.1
+  done
+  return 1
+}
+
 # Run psql on the local socket with the arguments given, bare output.
 local_psql() {
   psql -X -A -t -h "$work" -p "$port" -d postgres "$@"
@@ -154,11 +165,7 @@ build/initdb --pwfile="$work/pw" "$work/data" > "$work/initdb.out" 2>&1 ||
   -c authentication_timeout=1 -c max_files_per_process=64) \
   > "$work/log" 2>&1 &
 server=$!
-for _ in $(seq 100); do
-  grep -q "ready to accept connections" "$work/log" && break
-  sleep 0.1
-done
-grep -q "ready to accept connections" "$work/log" || fail "start"
+server_ready $server "$work/log" || fail "start"
 
 # Verify that the server raises its soft limit on open files to the hard
 # limit, since every session is a thread under the one limit.
@@ -3675,10 +3682,7 @@ $digres -D "$work/data" -k "$work" -p "$port" -c max_connections=3 \
   -c superuser_reserved_connections=0 -c reserved_connections=0 \
   > "$work/log2" 2>&1 &
 server=$!
-for _ in $(seq 100); do
-  grep -q "ready to accept connections" "$work/log2" && break
-  sleep 0.1
-done
+server_ready $server "$work/log2" || fail "max_connections: start"
 for n in 1 2 3; do
   held_start "conn$n"
   held_send "conn$n" "select 'up $n';"
@@ -3713,10 +3717,7 @@ wait $server || fail "max_connections: shutdown status"
 #    its next statement.
 $digres -D "$work/data" -k "$work" -p "$port" > "$work/log3" 2>&1 &
 server=$!
-for _ in $(seq 100); do
-  grep -q "ready to accept connections" "$work/log3" && break
-  sleep 0.1
-done
+server_ready $server "$work/log3" || fail "immediate shutdown: start"
 for n in 1 2 3; do
   bg_start "imm_busy$n" -c "select 'busy'" -c 'select pg_sleep(60)'
 done
@@ -3761,10 +3762,7 @@ done
 # 3. End the held session: the server stops within ten seconds, status 0.
 $digres -D "$work/data" -k "$work" -p "$port" > "$work/log4" 2>&1 &
 server=$!
-for _ in $(seq 100); do
-  grep -q "ready to accept connections" "$work/log4" && break
-  sleep 0.1
-done
+server_ready $server "$work/log4" || fail "smart shutdown: start"
 held_start smart
 held_send smart "select 'up';"
 held_wait smart "up" || fail "smart shutdown: session"
