@@ -2334,9 +2334,6 @@ void aclcheck_error(AclResult aclerr, ObjectType objtype,
     case OBJECT_PROCEDURE:
       msg = gettext_noop("permission denied for procedure %s");
       break;
-    case OBJECT_PUBLICATION:
-      msg = gettext_noop("permission denied for publication %s");
-      break;
     case OBJECT_ROUTINE:
       msg = gettext_noop("permission denied for routine %s");
       break;
@@ -2348,9 +2345,6 @@ void aclcheck_error(AclResult aclerr, ObjectType objtype,
       break;
     case OBJECT_STATISTIC_EXT:
       msg = gettext_noop("permission denied for statistics object %s");
-      break;
-    case OBJECT_SUBSCRIPTION:
-      msg = gettext_noop("permission denied for subscription %s");
       break;
     case OBJECT_TABLE:
       msg = gettext_noop("permission denied for table %s");
@@ -2379,8 +2373,6 @@ void aclcheck_error(AclResult aclerr, ObjectType objtype,
     case OBJECT_DEFAULT:
     case OBJECT_DEFACL:
     case OBJECT_DOMCONSTRAINT:
-    case OBJECT_PUBLICATION_NAMESPACE:
-    case OBJECT_PUBLICATION_REL:
     case OBJECT_ROLE:
     case OBJECT_RULE:
     case OBJECT_TABCONSTRAINT:
@@ -2457,17 +2449,11 @@ void aclcheck_error(AclResult aclerr, ObjectType objtype,
     case OBJECT_PROCEDURE:
       msg = gettext_noop("must be owner of procedure %s");
       break;
-    case OBJECT_PUBLICATION:
-      msg = gettext_noop("must be owner of publication %s");
-      break;
     case OBJECT_ROUTINE:
       msg = gettext_noop("must be owner of routine %s");
       break;
     case OBJECT_SEQUENCE:
       msg = gettext_noop("must be owner of sequence %s");
-      break;
-    case OBJECT_SUBSCRIPTION:
-      msg = gettext_noop("must be owner of subscription %s");
       break;
     case OBJECT_TABLE:
       msg = gettext_noop("must be owner of table %s");
@@ -2517,8 +2503,6 @@ void aclcheck_error(AclResult aclerr, ObjectType objtype,
     case OBJECT_DEFACL:
     case OBJECT_DOMCONSTRAINT:
     case OBJECT_PARAMETER_ACL:
-    case OBJECT_PUBLICATION_NAMESPACE:
-    case OBJECT_PUBLICATION_REL:
     case OBJECT_ROLE:
     case OBJECT_TRANSFORM:
     case OBJECT_TSPARSER:

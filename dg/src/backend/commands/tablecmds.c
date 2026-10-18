@@ -191,7 +191,6 @@ typedef struct AlteredTableInfo {
   List *changedConstraintDefs;   /* string definitions of same */
   List *changedIndexOids;        /* OIDs of indexes to rebuild */
   List *changedIndexDefs;        /* string definitions of same */
-  char *replicaIdentityIndex;    /* index to reset as REPLICA IDENTITY */
   char *clusterOnIndex;          /* index to use for CLUSTER */
   List *changedStatisticsOids;   /* OIDs of statistics to rebuild */
   List *changedStatisticsDefs;   /* string definitions of same */
@@ -694,8 +693,6 @@ static void drop_parent_dependency(Oid relid, Oid refclassid, Oid refobjid,
 static ObjectAddress ATExecAddOf(Relation rel, const TypeName *ofTypename,
                                  LOCKMODE lockmode);
 static void ATExecDropOf(Relation rel, LOCKMODE lockmode);
-static void ATExecReplicaIdentity(Relation rel, ReplicaIdentityStmt *stmt,
-                                  LOCKMODE lockmode);
 static void ATExecGenericOptions(Relation rel, List *options);
 static void ATExecSetRowSecurity(Relation rel, bool rls);
 static void ATExecForceNoForceRowSecurity(Relation rel, bool force_rls);
@@ -4922,13 +4919,6 @@ static void ATPrepCmd(List **wqueue, Relation rel, AlterTableCmd *cmd,
       cmd->recurse = true;
     pass = AT_PASS_MISC;
     break;
-  case AT_ReplicaIdentity: /* REPLICA IDENTITY ... */
-    ATSimplePermissions(cmd->subtype, rel,
-                        ATT_TABLE | ATT_PARTITIONED_TABLE | ATT_MATVIEW);
-    pass = AT_PASS_MISC;
-    /* This command never recurses */
-    /* No command-specific prep needed */
-    break;
   case AT_EnableTrig: /* ENABLE TRIGGER variants */
   case AT_EnableAlwaysTrig:
   case AT_EnableReplicaTrig:
@@ -5292,9 +5282,6 @@ static void ATExecCmd(List **wqueue, AlteredTableInfo *tab, AlterTableCmd *cmd,
     break;
   case AT_DropOf:
     ATExecDropOf(rel, lockmode);
-    break;
-  case AT_ReplicaIdentity:
-    ATExecReplicaIdentity(rel, (ReplicaIdentityStmt *)cmd->def, lockmode);
     break;
   case AT_EnableRowSecurity:
     ATExecSetRowSecurity(rel, true);
@@ -13900,22 +13887,6 @@ static void RememberAllDependentForRebuilding(AlteredTableInfo *tab,
 }
 
 /*
- * Subroutine for ATExecAlterColumnType: remember that a replica identity
- * needs to be reset.
- */
-static void RememberReplicaIdentityForRebuilding(Oid indoid,
-                                                 AlteredTableInfo *tab) {
-  if (!get_index_isreplident(indoid))
-    return;
-
-  if (tab->replicaIdentityIndex)
-    elog(ERROR, "relation %u has multiple indexes marked as replica identity",
-         tab->relid);
-
-  tab->replicaIdentityIndex = get_rel_name(indoid);
-}
-
-/*
  * Subroutine for ATExecAlterColumnType: remember any clustered index.
  */
 static void RememberClusterOnForRebuilding(Oid indoid, AlteredTableInfo *tab) {
@@ -13963,16 +13934,13 @@ static void RememberConstraintForRebuilding(Oid conoid, AlteredTableInfo *tab) {
     }
 
     /*
-     * For the index of a constraint, if any, remember if it is used for
-     * the table's replica identity or if it is a clustered index, so that
-     * ATPostAlterTypeCleanup() can queue up commands necessary to restore
-     * those properties.
+     * For the index of a constraint, if any, remember if it is a clustered
+     * index, so that ATPostAlterTypeCleanup() can queue up the command
+     * necessary to restore that.
      */
     indoid = get_constraint_index(conoid);
-    if (OidIsValid(indoid)) {
-      RememberReplicaIdentityForRebuilding(indoid, tab);
+    if (OidIsValid(indoid))
       RememberClusterOnForRebuilding(indoid, tab);
-    }
   }
 }
 
@@ -14009,11 +13977,10 @@ static void RememberIndexForRebuilding(Oid indoid, AlteredTableInfo *tab) {
       tab->changedIndexDefs = lappend(tab->changedIndexDefs, defstring);
 
       /*
-       * Remember if this index is used for the table's replica identity
-       * or if it is a clustered index, so that ATPostAlterTypeCleanup()
-       * can queue up commands necessary to restore those properties.
+       * Remember if this index is a clustered index, so that
+       * ATPostAlterTypeCleanup() can queue up the command necessary to
+       * restore that.
        */
-      RememberReplicaIdentityForRebuilding(indoid, tab);
       RememberClusterOnForRebuilding(indoid, tab);
     }
   }
@@ -14194,23 +14161,6 @@ static void ATPostAlterTypeCleanup(List **wqueue, AlteredTableInfo *tab,
 
     ObjectAddressSet(obj, StatisticExtRelationId, oldId);
     add_exact_object_address(&obj, objects);
-  }
-
-  /*
-   * Queue up command to restore replica identity index marking
-   */
-  if (tab->replicaIdentityIndex) {
-    AlterTableCmd *cmd = makeNode(AlterTableCmd);
-    ReplicaIdentityStmt *subcmd = makeNode(ReplicaIdentityStmt);
-
-    subcmd->identity_type = REPLICA_IDENTITY_INDEX;
-    subcmd->name = tab->replicaIdentityIndex;
-    cmd->subtype = AT_ReplicaIdentity;
-    cmd->def = (Node *)subcmd;
-
-    /* do it after indexes and constraints */
-    tab->subcmds[AT_PASS_OLD_CONSTR] =
-        lappend(tab->subcmds[AT_PASS_OLD_CONSTR], cmd);
   }
 
   /*
@@ -16654,191 +16604,6 @@ static void ATExecDropOf(Relation rel, LOCKMODE lockmode) {
 
   heap_freetuple(tuple);
   table_close(relationRelation, RowExclusiveLock);
-}
-
-/*
- * relation_mark_replica_identity: Update a table's replica identity
- *
- * Iff ri_type = REPLICA_IDENTITY_INDEX, indexOid must be the Oid of a suitable
- * index. Otherwise, it must be InvalidOid.
- *
- * Caller had better hold an exclusive lock on the relation, as the results
- * of running two of these concurrently wouldn't be pretty.
- */
-static void relation_mark_replica_identity(Relation rel, char ri_type,
-                                           Oid indexOid, bool is_internal) {
-  Relation pg_index;
-  Relation pg_class;
-  HeapTuple pg_class_tuple;
-  HeapTuple pg_index_tuple;
-  Form_pg_class pg_class_form;
-  Form_pg_index pg_index_form;
-  ListCell *index;
-
-  /*
-   * Check whether relreplident has changed, and update it if so.
-   */
-  pg_class = table_open(RelationRelationId, RowExclusiveLock);
-  pg_class_tuple =
-      SearchSysCacheCopy1(RELOID, ObjectIdGetDatum(RelationGetRelid(rel)));
-  if (!HeapTupleIsValid(pg_class_tuple))
-    elog(ERROR, "cache lookup failed for relation \"%s\"",
-         RelationGetRelationName(rel));
-  pg_class_form = (Form_pg_class)GETSTRUCT(pg_class_tuple);
-  if (pg_class_form->relreplident != ri_type) {
-    pg_class_form->relreplident = ri_type;
-    CatalogTupleUpdate(pg_class, &pg_class_tuple->t_self, pg_class_tuple);
-  }
-  table_close(pg_class, RowExclusiveLock);
-  heap_freetuple(pg_class_tuple);
-
-  /*
-   * Update the per-index indisreplident flags correctly.
-   */
-  pg_index = table_open(IndexRelationId, RowExclusiveLock);
-  foreach (index, RelationGetIndexList(rel)) {
-    Oid thisIndexOid = lfirst_oid(index);
-    bool dirty = false;
-
-    pg_index_tuple =
-        SearchSysCacheCopy1(INDEXRELID, ObjectIdGetDatum(thisIndexOid));
-    if (!HeapTupleIsValid(pg_index_tuple))
-      elog(ERROR, "cache lookup failed for index %u", thisIndexOid);
-    pg_index_form = (Form_pg_index)GETSTRUCT(pg_index_tuple);
-
-    if (thisIndexOid == indexOid) {
-      /* Set the bit if not already set. */
-      if (!pg_index_form->indisreplident) {
-        dirty = true;
-        pg_index_form->indisreplident = true;
-      }
-    } else {
-      /* Unset the bit if set. */
-      if (pg_index_form->indisreplident) {
-        dirty = true;
-        pg_index_form->indisreplident = false;
-      }
-    }
-
-    if (dirty) {
-      CatalogTupleUpdate(pg_index, &pg_index_tuple->t_self, pg_index_tuple);
-      InvokeObjectPostAlterHookArg(IndexRelationId, thisIndexOid, 0, InvalidOid,
-                                   is_internal);
-
-      /*
-       * Invalidate the relcache for the table, so that after we commit
-       * all sessions will refresh the table's replica identity index
-       * before attempting any UPDATE or DELETE on the table.  (If we
-       * changed the table's pg_class row above, then a relcache inval
-       * is already queued due to that; but we might not have.)
-       */
-      CacheInvalidateRelcache(rel);
-    }
-    heap_freetuple(pg_index_tuple);
-  }
-
-  table_close(pg_index, RowExclusiveLock);
-}
-
-/*
- * ALTER TABLE <name> REPLICA IDENTITY ...
- */
-static void ATExecReplicaIdentity(Relation rel, ReplicaIdentityStmt *stmt,
-                                  LOCKMODE lockmode) {
-  Oid indexOid;
-  Relation indexRel;
-  int key;
-
-  if (stmt->identity_type == REPLICA_IDENTITY_DEFAULT) {
-    relation_mark_replica_identity(rel, stmt->identity_type, InvalidOid, true);
-    return;
-  } else if (stmt->identity_type == REPLICA_IDENTITY_FULL) {
-    relation_mark_replica_identity(rel, stmt->identity_type, InvalidOid, true);
-    return;
-  } else if (stmt->identity_type == REPLICA_IDENTITY_NOTHING) {
-    relation_mark_replica_identity(rel, stmt->identity_type, InvalidOid, true);
-    return;
-  } else if (stmt->identity_type == REPLICA_IDENTITY_INDEX) {
-    /* fallthrough */;
-  } else
-    elog(ERROR, "unexpected identity type %u", stmt->identity_type);
-
-  /* Check that the index exists */
-  indexOid = get_relname_relid(stmt->name, rel->rd_rel->relnamespace);
-  if (!OidIsValid(indexOid))
-    ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
-                    errmsg("index \"%s\" for table \"%s\" does not exist",
-                           stmt->name, RelationGetRelationName(rel))));
-
-  indexRel = index_open(indexOid, ShareLock);
-
-  /* Check that the index is on the relation we're altering. */
-  if (indexRel->rd_index == NULL ||
-      indexRel->rd_index->indrelid != RelationGetRelid(rel))
-    ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
-                    errmsg("\"%s\" is not an index for table \"%s\"",
-                           RelationGetRelationName(indexRel),
-                           RelationGetRelationName(rel))));
-
-  /*
-   * The AM must support uniqueness, and the index must in fact be unique.
-   * If we have a WITHOUT OVERLAPS constraint (identified by uniqueness +
-   * exclusion), we can use that too.
-   */
-  if ((!indexRel->rd_indam->amcanunique || !indexRel->rd_index->indisunique) &&
-      !(indexRel->rd_index->indisunique && indexRel->rd_index->indisexclusion))
-    ereport(ERROR,
-            (errcode(ERRCODE_WRONG_OBJECT_TYPE),
-             errmsg("cannot use non-unique index \"%s\" as replica identity",
-                    RelationGetRelationName(indexRel))));
-  /* Deferred indexes are not guaranteed to be always unique. */
-  if (!indexRel->rd_index->indimmediate)
-    ereport(ERROR,
-            (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-             errmsg("cannot use non-immediate index \"%s\" as replica identity",
-                    RelationGetRelationName(indexRel))));
-  /* Expression indexes aren't supported. */
-  if (RelationGetIndexExpressions(indexRel) != NIL)
-    ereport(ERROR,
-            (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-             errmsg("cannot use expression index \"%s\" as replica identity",
-                    RelationGetRelationName(indexRel))));
-  /* Predicate indexes aren't supported. */
-  if (RelationGetIndexPredicate(indexRel) != NIL)
-    ereport(ERROR,
-            (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-             errmsg("cannot use partial index \"%s\" as replica identity",
-                    RelationGetRelationName(indexRel))));
-
-  /* Check index for nullable columns. */
-  for (key = 0; key < IndexRelationGetNumberOfKeyAttributes(indexRel); key++) {
-    int16 attno = indexRel->rd_index->indkey.values[key];
-    Form_pg_attribute attr;
-
-    /*
-     * Reject any other system columns.  (Going forward, we'll disallow
-     * indexes containing such columns in the first place, but they might
-     * exist in older branches.)
-     */
-    if (attno <= 0)
-      ereport(ERROR, (errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
-                      errmsg("index \"%s\" cannot be used as replica identity "
-                             "because column %d is a system column",
-                             RelationGetRelationName(indexRel), attno)));
-
-    attr = TupleDescAttr(rel->rd_att, attno - 1);
-    if (!attr->attnotnull)
-      ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
-                      errmsg("index \"%s\" cannot be used as replica identity "
-                             "because column \"%s\" is nullable",
-                             RelationGetRelationName(indexRel),
-                             NameStr(attr->attname))));
-  }
-
-  /* This index is suitable for use as a replica identity. Mark it. */
-  relation_mark_replica_identity(rel, stmt->identity_type, indexOid, true);
-
-  index_close(indexRel, NoLock);
 }
 
 /*

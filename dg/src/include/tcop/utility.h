@@ -42,21 +42,15 @@ typedef struct AlterTableUtilityContext {
  * XactReadOnly is set. This bit should be set for commands that don't change
  * the state of the database (data or schema) in a way that would affect the
  * output of pg_dump.
- *
- * COMMAND_OK_IN_RECOVERY means that the command is permissible even when in
- * recovery. It can't write WAL, nor can it do things that would imperil
- * replay of future WAL received from the primary.
  */
 #define COMMAND_OK_IN_READ_ONLY_TXN	0x0001
-#define COMMAND_OK_IN_RECOVERY		0x0004
 
 /*
  * We say that a command is strictly read-only if it is sufficiently read-only
  * for all purposes. For clarity, we also have a constant for commands that are
  * in no way read-only.
  */
-#define COMMAND_IS_STRICTLY_READ_ONLY \
-	(COMMAND_OK_IN_READ_ONLY_TXN | COMMAND_OK_IN_RECOVERY)
+#define COMMAND_IS_STRICTLY_READ_ONLY	COMMAND_OK_IN_READ_ONLY_TXN
 #define COMMAND_IS_NOT_READ_ONLY	0
 
 /* Hook for plugins to get control in ProcessUtility() */

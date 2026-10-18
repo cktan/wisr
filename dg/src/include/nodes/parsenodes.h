@@ -2349,6 +2349,10 @@ typedef enum ObjectType
 	OBJECT_PARAMETER_ACL,
 	OBJECT_POLICY,
 	OBJECT_PROCEDURE,
+	/*
+	 * Publications and subscriptions: kept so each value is PostgreSQL's, as
+	 * sq's converter copies an ObjectType by value, and refused there.
+	 */
 	OBJECT_PUBLICATION,
 	OBJECT_PUBLICATION_NAMESPACE,
 	OBJECT_PUBLICATION_REL,
@@ -4229,107 +4233,5 @@ typedef struct AlterTSConfigurationStmt
 	bool		replace;		/* if true - replace dictionary by another */
 	bool		missing_ok;		/* for DROP - skip error if missing? */
 } AlterTSConfigurationStmt;
-
-typedef struct PublicationTable
-{
-	NodeTag		type;
-	RangeVar   *relation;		/* relation to be published */
-	Node	   *whereClause;	/* qualifications */
-	List	   *columns;		/* List of columns in a publication table */
-} PublicationTable;
-
-/*
- * Publication object type
- */
-typedef enum PublicationObjSpecType
-{
-	PUBLICATIONOBJ_TABLE,		/* A table */
-	PUBLICATIONOBJ_TABLES_IN_SCHEMA,	/* All tables in schema */
-	PUBLICATIONOBJ_TABLES_IN_CUR_SCHEMA,	/* All tables in first element of
-											 * search_path */
-	PUBLICATIONOBJ_CONTINUATION,	/* Continuation of previous type */
-} PublicationObjSpecType;
-
-typedef struct PublicationObjSpec
-{
-	NodeTag		type;
-	PublicationObjSpecType pubobjtype;	/* type of this publication object */
-	char	   *name;
-	PublicationTable *pubtable;
-	ParseLoc	location;		/* token location, or -1 if unknown */
-} PublicationObjSpec;
-
-typedef struct CreatePublicationStmt
-{
-	NodeTag		type;
-	char	   *pubname;		/* Name of the publication */
-	List	   *options;		/* List of DefElem nodes */
-	List	   *pubobjects;		/* Optional list of publication objects */
-	bool		for_all_tables; /* Special publication for all tables in db */
-} CreatePublicationStmt;
-
-typedef enum AlterPublicationAction
-{
-	AP_AddObjects,				/* add objects to publication */
-	AP_DropObjects,				/* remove objects from publication */
-	AP_SetObjects,				/* set list of objects */
-} AlterPublicationAction;
-
-typedef struct AlterPublicationStmt
-{
-	NodeTag		type;
-	char	   *pubname;		/* Name of the publication */
-
-	/* parameters used for ALTER PUBLICATION ... WITH */
-	List	   *options;		/* List of DefElem nodes */
-
-	/*
-	 * Parameters used for ALTER PUBLICATION ... ADD/DROP/SET publication
-	 * objects.
-	 */
-	List	   *pubobjects;		/* Optional list of publication objects */
-	bool		for_all_tables; /* Special publication for all tables in db */
-	AlterPublicationAction action;	/* What action to perform with the given
-									 * objects */
-} AlterPublicationStmt;
-
-typedef struct CreateSubscriptionStmt
-{
-	NodeTag		type;
-	char	   *subname;		/* Name of the subscription */
-	char	   *conninfo;		/* Connection string to publisher */
-	List	   *publication;	/* One or more publication to subscribe to */
-	List	   *options;		/* List of DefElem nodes */
-} CreateSubscriptionStmt;
-
-typedef enum AlterSubscriptionType
-{
-	ALTER_SUBSCRIPTION_OPTIONS,
-	ALTER_SUBSCRIPTION_CONNECTION,
-	ALTER_SUBSCRIPTION_SET_PUBLICATION,
-	ALTER_SUBSCRIPTION_ADD_PUBLICATION,
-	ALTER_SUBSCRIPTION_DROP_PUBLICATION,
-	ALTER_SUBSCRIPTION_REFRESH,
-	ALTER_SUBSCRIPTION_ENABLED,
-	ALTER_SUBSCRIPTION_SKIP,
-} AlterSubscriptionType;
-
-typedef struct AlterSubscriptionStmt
-{
-	NodeTag		type;
-	AlterSubscriptionType kind; /* ALTER_SUBSCRIPTION_OPTIONS, etc */
-	char	   *subname;		/* Name of the subscription */
-	char	   *conninfo;		/* Connection string to publisher */
-	List	   *publication;	/* One or more publication to subscribe to */
-	List	   *options;		/* List of DefElem nodes */
-} AlterSubscriptionStmt;
-
-typedef struct DropSubscriptionStmt
-{
-	NodeTag		type;
-	char	   *subname;		/* Name of the subscription */
-	bool		missing_ok;		/* Skip error if missing? */
-	DropBehavior behavior;		/* RESTRICT or CASCADE behavior */
-} DropSubscriptionStmt;
 
 #endif							/* PARSENODES_H */

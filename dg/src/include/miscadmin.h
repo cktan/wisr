@@ -294,7 +294,6 @@ extern ssize_t get_stack_depth_rlimit(void);
 
 /* in tcop/utility.c */
 extern void PreventCommandIfReadOnly(const char *cmdname);
-extern void PreventCommandDuringRecovery(const char *cmdname);
 
 /*****************************************************************************
  *	  pdir.h --
@@ -454,7 +453,6 @@ extern void ValidatePgVersion(const char *path);
 extern void process_shared_preload_libraries(void);
 extern void process_session_preload_libraries(void);
 extern void pg_bindtextdomain(const char *domain);
-extern bool has_rolreplication(Oid roleid);
 
 /* in executor/nodeHash.c */
 extern size_t get_hash_memory_limit(void);

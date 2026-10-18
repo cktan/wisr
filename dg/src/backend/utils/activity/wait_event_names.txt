@@ -51,7 +51,6 @@
 
 Section: ClassName - WaitEventActivity
 
-RECOVERY_WAL_STREAM	"Waiting in main loop of startup process for WAL to arrive, during streaming recovery."
 WAL_SUMMARIZER_WAL	"Waiting in WAL summarizer for more WAL to be generated."
 
 ABI_compatibility:
@@ -69,8 +68,6 @@ Section: ClassName - WaitEventClient
 CLIENT_READ	"Waiting to read data from the client."
 CLIENT_WRITE	"Waiting to write data to the client."
 GSS_OPEN_SERVER	"Waiting to read data from the client while establishing a GSSAPI session."
-LIBPQWALRECEIVER_CONNECT	"Waiting in WAL receiver to establish connection to remote server."
-LIBPQWALRECEIVER_RECEIVE	"Waiting in WAL receiver to receive data from remote server."
 SSL_OPEN_SERVER	"Waiting for SSL while attempting connection."
 
 ABI_compatibility:
@@ -89,7 +86,6 @@ BACKEND_TERMINATION	"Waiting for the termination of another backend."
 BACKUP_WAIT_WAL_ARCHIVE	"Waiting for WAL files required for a backup to be successfully archived."
 BUFFER_IO	"Waiting for buffer I/O to complete."
 PROCARRAY_GROUP_UPDATE	"Waiting for the group leader to clear the transaction ID at transaction end."
-RECOVERY_END_COMMAND	"Waiting for <xref linkend="guc-recovery-end-command"/> to complete."
 WAL_SUMMARY_READY	"Waiting for a new WAL summary to be generated."
 XACT_GROUP_UPDATE	"Waiting for the group leader to update transaction status at transaction end."
 
@@ -147,7 +143,6 @@ LOCK_FILE_RECHECKDATADIR_READ	"Waiting for a read during recheck of the data dir
 SLRU_READ	"Waiting for a read of an SLRU page."
 SLRU_SYNC	"Waiting for SLRU data to reach durable storage following a page write."
 SLRU_WRITE	"Waiting for a write of an SLRU page."
-WALSENDER_TIMELINE_HISTORY_READ	"Waiting for a read from a timeline history file during a walsender timeline command."
 WAL_COPY_READ	"Waiting for a read when creating a new WAL segment by copying an existing one."
 WAL_COPY_SYNC	"Waiting for a new WAL segment created by copying an existing one to reach durable storage."
 WAL_COPY_WRITE	"Waiting for a write when creating a new WAL segment by copying an existing one."

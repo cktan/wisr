@@ -130,12 +130,10 @@ static int ClassifyUtilityCommandAsReadOnly(Node *parsetree) {
   case T_AlterOperatorStmt:
   case T_AlterOwnerStmt:
   case T_AlterPolicyStmt:
-  case T_AlterPublicationStmt:
   case T_AlterRoleSetStmt:
   case T_AlterRoleStmt:
   case T_AlterSeqStmt:
   case T_AlterStatsStmt:
-  case T_AlterSubscriptionStmt:
   case T_AlterTSConfigurationStmt:
   case T_AlterTSDictionaryStmt:
   case T_AlterTableMoveAllStmt:
@@ -160,14 +158,12 @@ static int ClassifyUtilityCommandAsReadOnly(Node *parsetree) {
   case T_CreateOpFamilyStmt:
   case T_CreatePLangStmt:
   case T_CreatePolicyStmt:
-  case T_CreatePublicationStmt:
   case T_CreateRangeStmt:
   case T_CreateRoleStmt:
   case T_CreateSchemaStmt:
   case T_CreateSeqStmt:
   case T_CreateStatsStmt:
   case T_CreateStmt:
-  case T_CreateSubscriptionStmt:
   case T_CreateTableAsStmt:
   case T_CreateTableSpaceStmt:
   case T_CreateTransformStmt:
@@ -178,7 +174,6 @@ static int ClassifyUtilityCommandAsReadOnly(Node *parsetree) {
   case T_DropOwnedStmt:
   case T_DropRoleStmt:
   case T_DropStmt:
-  case T_DropSubscriptionStmt:
   case T_DropTableSpaceStmt:
   case T_DropUserMappingStmt:
   case T_DropdbStmt:
@@ -246,12 +241,9 @@ static int ClassifyUtilityCommandAsReadOnly(Node *parsetree) {
   case T_VariableSetStmt: {
     /*
      * These modify only backend-local state, so they're OK to run
-     * in a read-only transaction or on a standby. However, they
-     * are disallowed in parallel mode, because they either rely
-     * upon or modify backend-local state that might not be
-     * synchronized among cooperating backends.
+     * in a read-only transaction.
      */
-    return COMMAND_OK_IN_RECOVERY | COMMAND_OK_IN_READ_ONLY_TXN;
+    return COMMAND_OK_IN_READ_ONLY_TXN;
   }
 
   case T_ClusterStmt:
@@ -367,16 +359,6 @@ void PreventCommandIfReadOnly(const char *cmdname) {
 }
 
 /*
- * PreventCommandDuringRecovery: throw error if RecoveryInProgress
- *
- * The majority of operations that are unsafe in a Hot Standby
- * will be rejected by XactReadOnly tests.  However there are a few
- * commands that are allowed in "read-only" xacts but cannot be allowed
- * in Hot Standby mode.  Those commands should call this function.
- */
-void PreventCommandDuringRecovery(const char *cmdname) {}
-
-/*
  * CheckRestrictedOperation: throw error for hazardous command if we're
  * inside a security restriction context.
  *
@@ -490,8 +472,6 @@ void standard_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 
     if ((readonly_flags & COMMAND_OK_IN_READ_ONLY_TXN) == 0)
       PreventCommandIfReadOnly(GetCommandTagName(commandtag));
-    if ((readonly_flags & COMMAND_OK_IN_RECOVERY) == 0)
-      PreventCommandDuringRecovery(GetCommandTagName(commandtag));
   }
 
   pstate = make_parsestate(NULL);
@@ -1538,19 +1518,6 @@ static void ProcessUtilitySlow(ParseState *pstate, PlannedStmt *pstmt,
       address = CreateAccessMethod((CreateAmStmt *)parsetree);
       break;
 
-    case T_CreatePublicationStmt:
-    case T_AlterPublicationStmt:
-      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      errmsg("publications are not supported")));
-      break;
-
-    case T_CreateSubscriptionStmt:
-    case T_AlterSubscriptionStmt:
-    case T_DropSubscriptionStmt:
-      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      errmsg("subscriptions are not supported")));
-      break;
-
     case T_CreateStatsStmt: {
       Oid relid;
       CreateStatsStmt *stmt = (CreateStatsStmt *)parsetree;
@@ -1993,12 +1960,6 @@ CommandTag AlterObjectTypeCommandTag(ObjectType objtype) {
   case OBJECT_MATVIEW:
     tag = CMDTAG_ALTER_MATERIALIZED_VIEW;
     break;
-  case OBJECT_PUBLICATION:
-    tag = CMDTAG_ALTER_PUBLICATION;
-    break;
-  case OBJECT_SUBSCRIPTION:
-    tag = CMDTAG_ALTER_SUBSCRIPTION;
-    break;
   case OBJECT_STATISTIC_EXT:
     tag = CMDTAG_ALTER_STATISTICS;
     break;
@@ -2292,9 +2253,6 @@ CommandTag CreateCommandTag(Node *parsetree) {
       break;
     case OBJECT_ACCESS_METHOD:
       tag = CMDTAG_DROP_ACCESS_METHOD;
-      break;
-    case OBJECT_PUBLICATION:
-      tag = CMDTAG_DROP_PUBLICATION;
       break;
     case OBJECT_STATISTIC_EXT:
       tag = CMDTAG_DROP_STATISTICS;
@@ -2691,26 +2649,6 @@ CommandTag CreateCommandTag(Node *parsetree) {
 
   case T_CreateAmStmt:
     tag = CMDTAG_CREATE_ACCESS_METHOD;
-    break;
-
-  case T_CreatePublicationStmt:
-    tag = CMDTAG_CREATE_PUBLICATION;
-    break;
-
-  case T_AlterPublicationStmt:
-    tag = CMDTAG_ALTER_PUBLICATION;
-    break;
-
-  case T_CreateSubscriptionStmt:
-    tag = CMDTAG_CREATE_SUBSCRIPTION;
-    break;
-
-  case T_AlterSubscriptionStmt:
-    tag = CMDTAG_ALTER_SUBSCRIPTION;
-    break;
-
-  case T_DropSubscriptionStmt:
-    tag = CMDTAG_DROP_SUBSCRIPTION;
     break;
 
   case T_AlterCollationStmt:
@@ -3279,26 +3217,6 @@ LogStmtLevel GetCommandLogLevel(Node *parsetree) {
     break;
 
   case T_CreateAmStmt:
-    lev = LOGSTMT_DDL;
-    break;
-
-  case T_CreatePublicationStmt:
-    lev = LOGSTMT_DDL;
-    break;
-
-  case T_AlterPublicationStmt:
-    lev = LOGSTMT_DDL;
-    break;
-
-  case T_CreateSubscriptionStmt:
-    lev = LOGSTMT_DDL;
-    break;
-
-  case T_AlterSubscriptionStmt:
-    lev = LOGSTMT_DDL;
-    break;
-
-  case T_DropSubscriptionStmt:
     lev = LOGSTMT_DDL;
     break;
 

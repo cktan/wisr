@@ -333,7 +333,6 @@ void BaseInit(void) {
  * or by OID using the useroid parameter.
  *
  * In bootstrap mode the database and username parameters are NULL/InvalidOid.
- * A physical walsender specifies username but not database.
  *
  * By convention, INIT_PG_LOAD_SESSION_LIBS should be passed in "flags" in
  * "interactive" sessions (including standalone backends), but not in

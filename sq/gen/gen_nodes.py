@@ -60,6 +60,28 @@ CUSTOM_PRINT = {
     "BitString",
 }
 
+# Statements digres has no part of, which the converter refuses, by what
+# it says digres does not support; digres has no node for them.
+REFUSED = {
+    "CreatePublicationStmt": "publications",
+    "AlterPublicationStmt": "publications",
+    "CreateSubscriptionStmt": "subscriptions",
+    "AlterSubscriptionStmt": "subscriptions",
+    "DropSubscriptionStmt": "subscriptions",
+}
+
+# Nodes found only under a refused statement: no converter for them.
+UNDER_REFUSED = {"PublicationTable", "PublicationObjSpec"}
+
+# Kinds of object digres has none of, refused wherever a statement names
+# one (DROP, COMMENT, ALTER ... RENAME or OWNER, and the rest).
+REFUSED_OBJECTS = {
+    "OBJECT_PUBLICATION": "publications",
+    "OBJECT_PUBLICATION_NAMESPACE": "publications",
+    "OBJECT_PUBLICATION_REL": "publications",
+    "OBJECT_SUBSCRIPTION": "subscriptions",
+}
+
 # Enums no node's field is typed with, whose values the grammar stores
 # in an int field or passes between its rules.
 EXTRA_ENUMS = ["SetQuantifier", "TableLikeOption"]
@@ -561,6 +583,8 @@ def convert_calls(model, struct, to, frm, out):
             out.write(f"  {dst} = convert_text({src});\n")
         elif kind in ("node", "typed"):
             out.write(f"  {dst} = (decltype({dst}))sq_convert({src});\n")
+        elif kind == "enum" and f.ctype == "ObjectType":
+            out.write(f"  {dst} = (decltype({dst}))convert_object_type({src});\n")
         elif kind == "enum":
             # The values are PostgreSQL's (sq_nodes.h).
             out.write(f"  {dst} = (decltype({dst}))(int){src};\n")
@@ -572,7 +596,17 @@ def write_converter(model, out):
     """Write digres's src/backend/parser/sq_convert.c."""
     w = out.write
     w(CONVERTER_TOP)
+    w("\n/* An ObjectType, refusing a kind of object digres has none of. */\n")
+    w("static int convert_object_type(int objtype) {\n")
+    for what in sorted(set(REFUSED_OBJECTS.values())):
+        names = [n for n, v in REFUSED_OBJECTS.items() if v == what]
+        w("  if (" + " ||\n      ".join(f"objtype == SQ_{n}" for n in names) + ")\n")
+        w("    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),\n")
+        w(f'                    errmsg("{what} are not supported")));\n')
+    w("  return objtype;\n}\n")
     for s in model.structs:
+        if s in REFUSED or s in UNDER_REFUSED:
+            continue
         w(f"\n/* Convert a {s}. */\n")
         w(f"static Node *convert_{snake(s)}(const {type_name(s)} *f) {{\n")
         w(f"  {s} *t = makeNode({s});\n\n")
@@ -608,7 +642,14 @@ def write_converter(model, out):
     w("  case SQ_T_LIST:\n")
     w("    return (Node *)convert_items(((const sq_list_t *)node)->items);\n")
     for s in model.structs:
+        if s in UNDER_REFUSED:
+            continue
         w(f"  case {tag_name(s)}:\n")
+        if s in REFUSED:
+            w("    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),\n")
+            w(f'                    errmsg("{REFUSED[s]} are not supported")));\n')
+            w("    return NULL;\n")
+            continue
         w(f"    return convert_{snake(s)}((const {type_name(s)} *)node);\n")
     w("  default:\n")
     w('    elog(ERROR, "unexpected node from the parser: %d", (int)node->tag);\n')

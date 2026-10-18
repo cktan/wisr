@@ -339,9 +339,7 @@ ObjectAddress ExecRenameStmt(RenameStmt *stmt) {
   case OBJECT_TSCONFIGURATION:
   case OBJECT_TSDICTIONARY:
   case OBJECT_TSPARSER:
-  case OBJECT_TSTEMPLATE:
-  case OBJECT_PUBLICATION:
-  case OBJECT_SUBSCRIPTION: {
+  case OBJECT_TSTEMPLATE: {
     ObjectAddress address;
     Relation catalog;
 
@@ -716,16 +714,6 @@ ObjectAddress ExecAlterOwnerStmt(AlterOwnerStmt *stmt) {
 
   case OBJECT_EVENT_TRIGGER:
     return AlterEventTriggerOwner(strVal(stmt->object), newowner);
-
-  case OBJECT_PUBLICATION:
-    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    errmsg("publications are not supported")));
-    return InvalidObjectAddress; /* not reached */
-
-  case OBJECT_SUBSCRIPTION:
-    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    errmsg("subscriptions are not supported")));
-    break;
 
     /* Generic cases */
   case OBJECT_AGGREGATE:

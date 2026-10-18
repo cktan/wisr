@@ -330,10 +330,6 @@ ObjectTypeMap[] = {{"table", OBJECT_TABLE},
                    {"event trigger", OBJECT_EVENT_TRIGGER},
                    {"parameter ACL", OBJECT_PARAMETER_ACL},
                    {"policy", OBJECT_POLICY},
-                   {"publication", OBJECT_PUBLICATION},
-                   {"publication namespace", OBJECT_PUBLICATION_NAMESPACE},
-                   {"publication relation", OBJECT_PUBLICATION_REL},
-                   {"subscription", OBJECT_SUBSCRIPTION},
                    {"transform", OBJECT_TRANSFORM},
                    {"statistics object", OBJECT_STATISTIC_EXT}};
 
@@ -582,16 +578,6 @@ ObjectAddress get_object_address(ObjectType objtype, Node *object,
     case OBJECT_USER_MAPPING:
       address =
           get_object_address_usermapping(castNode(List, object), missing_ok);
-      break;
-    case OBJECT_PUBLICATION:
-    case OBJECT_PUBLICATION_NAMESPACE:
-    case OBJECT_PUBLICATION_REL:
-      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      errmsg("publications are not supported")));
-      break;
-    case OBJECT_SUBSCRIPTION:
-      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      errmsg("subscriptions are not supported")));
       break;
     case OBJECT_DEFACL:
       address = get_object_address_defacl(castNode(List, object), missing_ok);
@@ -1479,7 +1465,6 @@ Datum pg_get_object_address(PG_FUNCTION_ARGS) {
    * lists; check that they're what it wants.
    */
   switch (type) {
-  case OBJECT_PUBLICATION_NAMESPACE:
   case OBJECT_USER_MAPPING:
     if (list_length(name) != 1)
       ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1488,7 +1473,6 @@ Datum pg_get_object_address(PG_FUNCTION_ARGS) {
     /* FALLTHROUGH */
   case OBJECT_DOMCONSTRAINT:
   case OBJECT_CAST:
-  case OBJECT_PUBLICATION_REL:
   case OBJECT_DEFACL:
   case OBJECT_TRANSFORM:
     if (list_length(args) != 1)
@@ -1554,10 +1538,8 @@ Datum pg_get_object_address(PG_FUNCTION_ARGS) {
   case OBJECT_FOREIGN_SERVER:
   case OBJECT_LANGUAGE:
   case OBJECT_PARAMETER_ACL:
-  case OBJECT_PUBLICATION:
   case OBJECT_ROLE:
   case OBJECT_SCHEMA:
-  case OBJECT_SUBSCRIPTION:
   case OBJECT_TABLESPACE:
     if (list_length(name) != 1)
       ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1573,10 +1555,6 @@ Datum pg_get_object_address(PG_FUNCTION_ARGS) {
   case OBJECT_TRANSFORM:
     objnode = (Node *)list_make2(typename_, linitial(args));
     break;
-  case OBJECT_PUBLICATION_REL:
-    objnode = (Node *)list_make2(name, linitial(args));
-    break;
-  case OBJECT_PUBLICATION_NAMESPACE:
   case OBJECT_USER_MAPPING:
     objnode = (Node *)list_make2(linitial(name), linitial(args));
     break;
@@ -1693,9 +1671,7 @@ void check_object_ownership(Oid roleid, ObjectType objtype,
   case OBJECT_FDW:
   case OBJECT_FOREIGN_SERVER:
   case OBJECT_LANGUAGE:
-  case OBJECT_PUBLICATION:
   case OBJECT_SCHEMA:
-  case OBJECT_SUBSCRIPTION:
   case OBJECT_TABLESPACE:
     if (!object_ownercheck(address.classId, address.objectId, roleid))
       aclcheck_error(ACLCHECK_NOT_OWNER, objtype, strVal(object));
@@ -1782,8 +1758,6 @@ void check_object_ownership(Oid roleid, ObjectType objtype,
   case OBJECT_AMPROC:
   case OBJECT_DEFAULT:
   case OBJECT_DEFACL:
-  case OBJECT_PUBLICATION_NAMESPACE:
-  case OBJECT_PUBLICATION_REL:
   case OBJECT_USER_MAPPING:
     /* These are currently not supported or don't make sense here. */
     elog(ERROR, "unsupported object type: %d", (int)objtype);

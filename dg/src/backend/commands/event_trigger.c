@@ -1036,7 +1036,7 @@ bool EventTriggerSupportsObjectType(ObjectType obtype) {
   case OBJECT_TABLESPACE:
   case OBJECT_ROLE:
   case OBJECT_PARAMETER_ACL:
-    /* no support for global objects (except subscriptions) */
+    /* no support for global objects */
     return false;
   case OBJECT_EVENT_TRIGGER:
     /* no support for event triggers on event triggers */
@@ -1058,7 +1058,7 @@ bool EventTriggerSupportsObject(const ObjectAddress *object) {
   case AuthIdRelationId:
   case AuthMemRelationId:
   case ParameterAclRelationId:
-    /* no support for global objects (except subscriptions) */
+    /* no support for global objects */
     return false;
   case EventTriggerRelationId:
     /* no support for event triggers on event triggers */
@@ -2111,13 +2111,9 @@ static const char *stringify_grant_objtype(ObjectType objtype) {
   case OBJECT_OPERATOR:
   case OBJECT_OPFAMILY:
   case OBJECT_POLICY:
-  case OBJECT_PUBLICATION:
-  case OBJECT_PUBLICATION_NAMESPACE:
-  case OBJECT_PUBLICATION_REL:
   case OBJECT_ROLE:
   case OBJECT_RULE:
   case OBJECT_STATISTIC_EXT:
-  case OBJECT_SUBSCRIPTION:
   case OBJECT_TABCONSTRAINT:
   case OBJECT_TRANSFORM:
   case OBJECT_TRIGGER:
@@ -2192,13 +2188,9 @@ static const char *stringify_adefprivs_objtype(ObjectType objtype) {
   case OBJECT_OPFAMILY:
   case OBJECT_PARAMETER_ACL:
   case OBJECT_POLICY:
-  case OBJECT_PUBLICATION:
-  case OBJECT_PUBLICATION_NAMESPACE:
-  case OBJECT_PUBLICATION_REL:
   case OBJECT_ROLE:
   case OBJECT_RULE:
   case OBJECT_STATISTIC_EXT:
-  case OBJECT_SUBSCRIPTION:
   case OBJECT_TABCONSTRAINT:
   case OBJECT_TRANSFORM:
   case OBJECT_TRIGGER:

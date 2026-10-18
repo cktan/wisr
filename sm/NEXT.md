@@ -25,15 +25,7 @@ Low priority:
    of line, which end a load's files; a `rel` verb; and batch
    mode and mini-batch, which matter less now that no write
    keeps a row lock.
-2. **digres's replication code, the rest of it.** Replication
-   is gone: its modules are deleted and a replication
-   connection is refused (`../dg/WORKNOTE.md` step 2).
-   What is left goes too, not kept inert: publications (34
-   files) and subscriptions (27), their grammar, catalog
-   headers and statements; the `REPLICATION` role attribute
-   (19); the walsender and walreceiver references (11); and
-   what recovery kept for a standby.
-3. **digres's `xact.c` goes.** sm keeps the transaction, and
+2. **digres's `xact.c` goes.** sm keeps the transaction, and
    digres keeps only what a session needs around it
    (`../dg/PLAN.md` §7): its block state, memory and resource
    cleanup, and the hooks that end a statement. `xact.c` is

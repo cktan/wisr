@@ -118,6 +118,16 @@ static bool have_createrole_privilege(void) {
 }
 
 /*
+ * Refuse REPLICATION: digres has no replication.  NOREPLICATION, which
+ * pg_dumpall writes for every role, is what every role has, so it passes.
+ */
+static void refuse_replication(DefElem *defel) {
+  if (boolVal(defel->arg))
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("the REPLICATION attribute is not supported")));
+}
+
+/*
  * CREATE ROLE
  */
 Oid CreateRole(ParseState *pstate, CreateRoleStmt *stmt) {
@@ -136,7 +146,6 @@ Oid CreateRole(ParseState *pstate, CreateRoleStmt *stmt) {
   bool createrole = false;    /* Can this user create roles? */
   bool createdb = false;      /* Can the user create databases? */
   bool canlogin = false;      /* Can this user login? */
-  bool isreplication = false; /* Is this a replication role? */
   bool bypassrls = false;     /* Is this a row security enabled role? */
   int connlimit = -1;         /* maximum connections allowed */
   List *addroleto = NIL;      /* roles to make this a member of */
@@ -151,7 +160,6 @@ Oid CreateRole(ParseState *pstate, CreateRoleStmt *stmt) {
   DefElem *dcreaterole = NULL;
   DefElem *dcreatedb = NULL;
   DefElem *dcanlogin = NULL;
-  DefElem *disreplication = NULL;
   DefElem *dconnlimit = NULL;
   DefElem *daddroleto = NULL;
   DefElem *drolemembers = NULL;
@@ -203,9 +211,7 @@ Oid CreateRole(ParseState *pstate, CreateRoleStmt *stmt) {
         errorConflictingDefElem(defel, pstate);
       dcanlogin = defel;
     } else if (strcmp(defel->defname, "isreplication") == 0) {
-      if (disreplication)
-        errorConflictingDefElem(defel, pstate);
-      disreplication = defel;
+      refuse_replication(defel);
     } else if (strcmp(defel->defname, "connectionlimit") == 0) {
       if (dconnlimit)
         errorConflictingDefElem(defel, pstate);
@@ -246,8 +252,6 @@ Oid CreateRole(ParseState *pstate, CreateRoleStmt *stmt) {
     createdb = boolVal(dcreatedb->arg);
   if (dcanlogin)
     canlogin = boolVal(dcanlogin->arg);
-  if (disreplication)
-    isreplication = boolVal(disreplication->arg);
   if (dconnlimit) {
     connlimit = intVal(dconnlimit->arg);
     if (connlimit < -1)
@@ -285,12 +289,6 @@ Oid CreateRole(ParseState *pstate, CreateRoleStmt *stmt) {
                       errdetail("Only roles with the %s attribute may create "
                                 "roles with the %s attribute.",
                                 "CREATEDB", "CREATEDB")));
-    if (isreplication && !has_rolreplication(currentUserId))
-      ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                      errmsg("permission denied to create role"),
-                      errdetail("Only roles with the %s attribute may create "
-                                "roles with the %s attribute.",
-                                "REPLICATION", "REPLICATION")));
     if (bypassrls && !has_bypassrls_privilege(currentUserId))
       ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
                       errmsg("permission denied to create role"),
@@ -358,7 +356,8 @@ Oid CreateRole(ParseState *pstate, CreateRoleStmt *stmt) {
   new_record[Anum_pg_authid_rolcreaterole - 1] = BoolGetDatum(createrole);
   new_record[Anum_pg_authid_rolcreatedb - 1] = BoolGetDatum(createdb);
   new_record[Anum_pg_authid_rolcanlogin - 1] = BoolGetDatum(canlogin);
-  new_record[Anum_pg_authid_rolreplication - 1] = BoolGetDatum(isreplication);
+  /* No role has REPLICATION: digres has no replication. */
+  new_record[Anum_pg_authid_rolreplication - 1] = BoolGetDatum(false);
   new_record[Anum_pg_authid_rolconnlimit - 1] = Int32GetDatum(connlimit);
 
   if (password) {
@@ -566,7 +565,6 @@ Oid AlterRole(ParseState *pstate, AlterRoleStmt *stmt) {
   DefElem *dcreaterole = NULL;
   DefElem *dcreatedb = NULL;
   DefElem *dcanlogin = NULL;
-  DefElem *disreplication = NULL;
   DefElem *dconnlimit = NULL;
   DefElem *drolemembers = NULL;
   DefElem *dvalidUntil = NULL;
@@ -606,9 +604,7 @@ Oid AlterRole(ParseState *pstate, AlterRoleStmt *stmt) {
         errorConflictingDefElem(defel, pstate);
       dcanlogin = defel;
     } else if (strcmp(defel->defname, "isreplication") == 0) {
-      if (disreplication)
-        errorConflictingDefElem(defel, pstate);
-      disreplication = defel;
+      refuse_replication(defel);
     } else if (strcmp(defel->defname, "connectionlimit") == 0) {
       if (dconnlimit)
         errorConflictingDefElem(defel, pstate);
@@ -675,7 +671,7 @@ Oid AlterRole(ParseState *pstate, AlterRoleStmt *stmt) {
   if (!have_createrole_privilege() || !is_admin_of_role(GetUserId(), roleid)) {
     /* things an unprivileged user certainly can't do */
     if (dinherit || dcreaterole || dcreatedb || dcanlogin || dconnlimit ||
-        dvalidUntil || disreplication || dbypassRLS)
+        dvalidUntil || dbypassRLS)
       ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
                       errmsg("permission denied to alter role"),
                       errdetail("Only roles with the %s attribute and the %s "
@@ -694,7 +690,7 @@ Oid AlterRole(ParseState *pstate, AlterRoleStmt *stmt) {
   } else if (!superuser()) {
     /*
      * Even if you have both CREATEROLE and ADMIN OPTION on a role, you
-     * can only change the CREATEDB, REPLICATION, or BYPASSRLS attributes
+     * can only change the CREATEDB or BYPASSRLS attributes
      * if they are set for your own role (or you are the superuser).
      */
     if (dcreatedb && !have_createdb_privilege())
@@ -705,14 +701,6 @@ Oid AlterRole(ParseState *pstate, AlterRoleStmt *stmt) {
            errdetail(
                "Only roles with the %s attribute may change the %s attribute.",
                "CREATEDB", "CREATEDB")));
-    if (disreplication && !has_rolreplication(currentUserId))
-      ereport(
-          ERROR,
-          (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-           errmsg("permission denied to alter role"),
-           errdetail(
-               "Only roles with the %s attribute may change the %s attribute.",
-               "REPLICATION", "REPLICATION")));
     if (dbypassRLS && !has_bypassrls_privilege(currentUserId))
       ereport(
           ERROR,
@@ -793,12 +781,6 @@ Oid AlterRole(ParseState *pstate, AlterRoleStmt *stmt) {
     new_record[Anum_pg_authid_rolcanlogin - 1] =
         BoolGetDatum(boolVal(dcanlogin->arg));
     new_record_repl[Anum_pg_authid_rolcanlogin - 1] = true;
-  }
-
-  if (disreplication) {
-    new_record[Anum_pg_authid_rolreplication - 1] =
-        BoolGetDatum(boolVal(disreplication->arg));
-    new_record_repl[Anum_pg_authid_rolreplication - 1] = true;
   }
 
   if (dconnlimit) {

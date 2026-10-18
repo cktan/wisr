@@ -45,12 +45,10 @@ static bool SecLabelSupportsObjectType(ObjectType objtype) {
   case OBJECT_LARGEOBJECT:
   case OBJECT_MATVIEW:
   case OBJECT_PROCEDURE:
-  case OBJECT_PUBLICATION:
   case OBJECT_ROLE:
   case OBJECT_ROUTINE:
   case OBJECT_SCHEMA:
   case OBJECT_SEQUENCE:
-  case OBJECT_SUBSCRIPTION:
   case OBJECT_TABLE:
   case OBJECT_TABLESPACE:
   case OBJECT_TYPE:
@@ -76,8 +74,6 @@ static bool SecLabelSupportsObjectType(ObjectType objtype) {
   case OBJECT_OPFAMILY:
   case OBJECT_PARAMETER_ACL:
   case OBJECT_POLICY:
-  case OBJECT_PUBLICATION_NAMESPACE:
-  case OBJECT_PUBLICATION_REL:
   case OBJECT_RULE:
   case OBJECT_STATISTIC_EXT:
   case OBJECT_TABCONSTRAINT:

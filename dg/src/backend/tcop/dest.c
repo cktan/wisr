@@ -28,7 +28,6 @@
 
 #include "postgres.h"
 
-#include "access/printsimple.h"
 #include "access/printtup.h"
 #include "access/xact.h"
 #include "commands/copy.h"
@@ -66,10 +65,6 @@ static const DestReceiver donothingDR = {donothingReceive, donothingStartup,
 static const DestReceiver debugtupDR = {
     debugtup, debugStartup, donothingCleanup, donothingCleanup, DestDebug};
 
-static const DestReceiver printsimpleDR = {printsimple, printsimple_startup,
-                                           donothingCleanup, donothingCleanup,
-                                           DestRemoteSimple};
-
 static const DestReceiver spi_printtupDR = {spi_printtup, spi_dest_startup,
                                             donothingCleanup, donothingCleanup,
                                             DestSPI};
@@ -105,9 +100,6 @@ DestReceiver *CreateDestReceiver(CommandDest dest) {
   case DestRemote:
   case DestRemoteExecute:
     return printtup_create_DR(dest);
-
-  case DestRemoteSimple:
-    return unconstify(DestReceiver *, &printsimpleDR);
 
   case DestNone:
     return unconstify(DestReceiver *, &donothingDR);
@@ -150,7 +142,6 @@ void EndCommand(const QueryCompletion *qc, CommandDest dest,
   switch (dest) {
   case DestRemote:
   case DestRemoteExecute:
-  case DestRemoteSimple:
 
     len =
         BuildQueryCompletionString(completionTag, qc, force_undecorated_output);
@@ -180,7 +171,6 @@ void NullCommand(CommandDest dest) {
   switch (dest) {
   case DestRemote:
   case DestRemoteExecute:
-  case DestRemoteSimple:
 
     /* Tell the FE that we saw an empty query string */
     pq_putemptymessage(PqMsg_EmptyQueryResponse);
@@ -213,8 +203,7 @@ void NullCommand(CommandDest dest) {
 void ReadyForQuery(CommandDest dest) {
   switch (dest) {
   case DestRemote:
-  case DestRemoteExecute:
-  case DestRemoteSimple: {
+  case DestRemoteExecute: {
     StringInfoData buf;
 
     pq_beginmessage(&buf, PqMsg_ReadyForQuery);

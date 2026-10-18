@@ -3321,10 +3321,8 @@ ObjectAddress ExecAlterExtensionContentsStmt(AlterExtensionContentsStmt *stmt,
   case OBJECT_DATABASE:
   case OBJECT_EXTENSION:
   case OBJECT_INDEX:
-  case OBJECT_PUBLICATION:
   case OBJECT_ROLE:
   case OBJECT_STATISTIC_EXT:
-  case OBJECT_SUBSCRIPTION:
   case OBJECT_TABLESPACE:
     ereport(ERROR,
             (errcode(ERRCODE_INVALID_OBJECT_DEFINITION),

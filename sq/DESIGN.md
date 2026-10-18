@@ -289,7 +289,11 @@ SQL of its own. Its `raw_parser()` is sq's one caller there
   `sq_convert.c`. The converter is digres's code, and the only
   code that names both sets of nodes; sq's generator writes it,
   when digres is built, because it is the same walk over the
-  same fields as the printer.
+  same fields as the printer. It refuses what digres has no
+  part of: a publication's or subscription's statement, and
+  any statement naming one as an object (`REFUSED` and
+  `REFUSED_OBJECTS` in `gen/gen_nodes.py`). It copies an enum
+  by value, so digres keeps every member of PostgreSQL's.
 - It raises sq's error as the server's own, with its SQLSTATE,
   position, detail and hint.
 

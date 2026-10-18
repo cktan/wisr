@@ -416,7 +416,7 @@ static void gen_text_rows(const cat_relation_t *cat, Tuplestorestate *ts,
 
 /*
  * pg_roles's rows: digres has one role, the superuser, named as initdb
- * named it (GetUserNameFromId()), who may do anything.
+ * named it (GetUserNameFromId()), who may do anything but replicate.
  */
 static void gen_pg_roles(Tuplestorestate *ts, TupleDesc desc) {
   Datum values[13];
@@ -427,6 +427,7 @@ static void gen_pg_roles(Tuplestorestate *ts, TupleDesc desc) {
     nulls[i] = false;
   }
   values[0] = name_datum(GetUserNameFromId(BOOTSTRAP_SUPERUSERID, false));
+  values[6] = BoolGetDatum(false); /* rolreplication: there is none */
   values[7] = Int32GetDatum(-1);
   values[8] = CStringGetTextDatum("********");
   nulls[9] = true;

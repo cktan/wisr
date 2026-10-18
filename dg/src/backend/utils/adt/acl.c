@@ -4515,11 +4515,7 @@ static List *roles_is_member_of(Oid roleid, enum RoleRecurseType type,
       OidIsValid(cached_role[type]))
     return cached_roles[type];
 
-  /*
-   * Role expansion happens in a non-database backend when guc.c checks
-   * ROLE_PG_READ_ALL_SETTINGS for a physical walsender SHOW command.  In
-   * that case, no role gets pg_database_owner.
-   */
+  /* With no database chosen yet, no role gets pg_database_owner. */
   if (!OidIsValid(MyDatabaseId))
     dba = InvalidOid;
   else {

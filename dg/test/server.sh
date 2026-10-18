@@ -568,15 +568,37 @@ done
 #    supported.
 for sql in "create publication p for all tables" \
   "alter publication p add table t" "drop publication p" \
-  "comment on publication p is 'x'"; do
+  "comment on publication p is 'x'" "alter publication p rename to q" \
+  "alter publication p owner to current_user"; do
   local_psql -c "$sql" 2>&1 | grep -q 'publications are not supported' ||
     fail "publication refused: $sql"
 done
 for sql in "create subscription s connection 'x' publication p" \
-  "drop subscription s"; do
+  "alter subscription s disable" "drop subscription s" \
+  "alter subscription s rename to q"; do
   local_psql -c "$sql" 2>&1 | grep -q 'subscriptions are not supported' ||
     fail "subscription refused: $sql"
 done
+
+# Verify that a role cannot be given REPLICATION, as digres has no
+# replication, while NOREPLICATION, which pg_dumpall writes, passes it by.
+# 1. CREATE ROLE and ALTER ROLE with REPLICATION each fail, saying so.
+# 2. With NOREPLICATION neither fails on the attribute (it fails later, as
+#    digres has no roles to make yet).
+# 3. ALTER TABLE ... REPLICA IDENTITY on a table made for it is refused.
+for sql in "create role r replication" "alter role current_user replication"; do
+  local_psql -c "$sql" 2>&1 |
+    grep -q 'the REPLICATION attribute is not supported' ||
+    fail "REPLICATION refused: $sql"
+done
+for sql in "create role r noreplication" \
+  "alter role current_user noreplication"; do
+  local_psql -c "$sql" 2>&1 | grep -q 'REPLICATION attribute' &&
+    fail "NOREPLICATION passes: $sql"
+done
+local_psql -c "create table ri (a int4 primary key)" \
+  -c "alter table ri replica identity full" -c "drop table ri" 2>&1 |
+  grep -q 'ERROR:  ALTER TABLE supports only' || fail "REPLICA IDENTITY refused"
 
 # Verify that LOCK TABLE takes sm's table lock: SHARE lets another session
 # read and keeps it from writing; ACCESS EXCLUSIVE keeps it from reading;
@@ -2316,7 +2338,7 @@ local_psql -c "select count(*) from pg_partition_ancestors('dd1.t')" \
 [ "$(tr '\n' ' ' < "$work/part.out")" = "0 0 t 0 " ] ||
   fail "partition functions of a table of sm's"
 [ "$(local_psql -c '\du')" = \
-  "$me|Superuser, Create role, Create DB, Replication, Bypass RLS" ] ||
+  "$me|Superuser, Create role, Create DB, Bypass RLS" ] ||
   fail "\\du"
 # Verify that a scan of pg_attribute for one table gives that table's rows
 # alone (catalog/catrel.c): its key passes dd1.t's five columns and none of

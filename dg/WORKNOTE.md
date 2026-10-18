@@ -6734,3 +6734,55 @@ each under a `/* -- name -- */` heading:
 - `tcb_t`'s members are now freed in another order. Each
   deleter is a plain `delete`, and `tcb_free()` clears `tcb`
   first, so none reaches another member.
+
+## Step 231: what replication left is gone
+
+`../sm/NEXT.md` §1's replication item. Replication's modules
+went in step 2; what they left was refused or inert. It is
+removed now, but for what psql reads.
+
+- **Kept, for psql**: `pg_publication` and its two relations,
+  empty, and `pg_relation_is_publishable()`, which `\d` reads;
+  `rolreplication`, which `\du` reads; `relreplident` and
+  `indisreplident`, which `\d+` reads. A replication
+  connection is still refused at the startup packet.
+- **Publications and subscriptions are refused by sq's
+  converter**, before digres has a node for them: their five
+  statements, and any statement naming one as an object (DROP,
+  COMMENT, ALTER ... RENAME or OWNER, SECURITY LABEL), by
+  `REFUSED` and `REFUSED_OBJECTS` in `../sq/gen/gen_nodes.py`.
+  A string of statements is converted whole, so one of these
+  stops the statements before it from running too, as a syntax
+  error does. Gone from digres: the seven nodes and three enums
+  in `nodes/parsenodes.h`, their cases in `utility.c`, six
+  command tags, and the object-type cases in `alter.c`,
+  `dropcmds.c`, `seclabel.c`, `extension.c`, `event_trigger.c`,
+  `aclchk.c` and `objectaddress.c`, whose names map no longer
+  takes "publication" or "subscription".
+- **`ObjectType` keeps its four members**: the converter copies
+  an enum by value, so a member removed would shift every later
+  one; they are commented as kept for that.
+- **REPLICATION**: `CREATE ROLE` and `ALTER ROLE` refuse it;
+  `NOREPLICATION`, which `pg_dumpall` writes, passes. Gone:
+  `has_rolreplication()` and `user.c`'s checks of it. A new
+  role's `rolreplication` is false, and so is the superuser's,
+  in `pg_roles` and `pg_authid.dat`: `\du` no longer says
+  Replication.
+- **REPLICA IDENTITY**: `ALTER TABLE` refused it already, before
+  its executor. Gone: `ATExecReplicaIdentity()`,
+  `relation_mark_replica_identity()`, the rebuild of a replica
+  identity index after ALTER COLUMN TYPE, and
+  `get_index_isreplident()`.
+- **Recovery**: `PreventCommandDuringRecovery()`, which did
+  nothing, and `COMMAND_OK_IN_RECOVERY`, which only it read.
+- **walsender and walreceiver**: `printsimple.c` and
+  `DestRemoteSimple`, which only a walsender used; three wait
+  events of theirs and two of streaming recovery; comments in
+  `acl.c` and `postinit.c`.
+- Left: `session_replication_role` and `ENABLE REPLICA
+  TRIGGER`, which are about triggers, which digres has none of;
+  and `system_views.sql`, which nothing loads.
+- `server.sh`: RENAME and OWNER of a publication or subscription,
+  and `ALTER SUBSCRIPTION`, are refused; REPLICATION is refused
+  and NOREPLICATION passes; `REPLICA IDENTITY` is refused; `\du`
+  shows no Replication.

@@ -434,10 +434,6 @@ static void does_not_exist_skipping(ObjectType objtype, Node *object) {
       args = strVal(linitial(castNode(List, object)));
     }
   } break;
-  case OBJECT_PUBLICATION:
-    msg = gettext_noop("publication \"%s\" does not exist, skipping");
-    name = strVal(object);
-    break;
 
   case OBJECT_COLUMN:
   case OBJECT_DATABASE:
@@ -446,7 +442,6 @@ static void does_not_exist_skipping(ObjectType objtype, Node *object) {
   case OBJECT_MATVIEW:
   case OBJECT_ROLE:
   case OBJECT_SEQUENCE:
-  case OBJECT_SUBSCRIPTION:
   case OBJECT_TABLE:
   case OBJECT_TABLESPACE:
   case OBJECT_VIEW:
@@ -466,8 +461,6 @@ static void does_not_exist_skipping(ObjectType objtype, Node *object) {
   case OBJECT_DOMCONSTRAINT:
   case OBJECT_LARGEOBJECT:
   case OBJECT_PARAMETER_ACL:
-  case OBJECT_PUBLICATION_NAMESPACE:
-  case OBJECT_PUBLICATION_REL:
   case OBJECT_TABCONSTRAINT:
   case OBJECT_USER_MAPPING:
     /* These are currently not used or needed. */
