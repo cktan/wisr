@@ -848,7 +848,6 @@ static const TableAmRoutine catrel_methods = [] {
   r.relation_size = refuse;
   r.relation_needs_toast_table = refuse;
   r.relation_toast_am = refuse;
-  r.relation_fetch_toast_slice = refuse;
   r.relation_estimate_size = catrel_estimate_size;
   r.scan_bitmap_next_tuple = refuse;
   r.scan_sample_next_block = refuse;

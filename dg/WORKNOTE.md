@@ -7039,7 +7039,38 @@ views (`../sm/sm3/test/test_view.cc`).
   output. `test/slt/view_catalog.test`; `server.sh` runs `\dv`
   and `\d+`.
 
-## Step 238: storage/ipc stripped
+## Step 240: ALTER VIEW, and a view's options
+
+`../sm/VIEW.md` §10, its fourth step.
+
+- **ALTER VIEW ... RENAME TO** is `sm_cat_rename_view`, and so is
+  ALTER TABLE ... RENAME TO of a view, as PostgreSQL takes it;
+  ALTER VIEW of a table is refused, `"t" is not a view`.
+  `rename_target()` says which it named.
+- **RENAME COLUMN of a view**, by ALTER VIEW or ALTER TABLE,
+  renames the column in its query's select list, which sm keeps
+  (`rename_view_column()`): PostgreSQL renames its
+  `pg_attribute` row, and the view's rule names it no more.
+  What reads the view reads the column by place.
+- **A view's options are kept**: `WITH (...)` and `WITH CHECK
+  OPTION`, checked by `view_reloptions()`, kept in sm as
+  `untransformRelOptions()`'s list, `nodeToString()`'s. The
+  relation cache makes the view's `rd_options` of them, and
+  `pg_class.reloptions` lists them, so a check option is
+  checked by the executor and `security_barrier` and
+  `security_invoker` are PostgreSQL's. CREATE OR REPLACE
+  replaces them; `ALTER VIEW ... SET` and `RESET` change them,
+  refusing a check option on a view not automatically
+  updatable, as `ATExecSetRelOptions()` does.
+- **`AlterTableLookupRelation()`** takes ALTER VIEW, and of a
+  view SET and RESET alone; `smstore_alter_table()` hands a
+  view's to `alter_view()`.
+- `test/slt/view_alter.test`. PostgreSQL's `create_view` still
+  fails, first on CREATE FUNCTION; its diff goes from 934 lines
+  to 873. What is left of views there is a temporary view, 15
+  statements and those after them, and SET SCHEMA.
+
+## Step 241: storage/ipc stripped
 
 A pass over `storage/ipc/*.c` for what digres no longer needs.
 Most of it is digres's own and live: the session registry,
@@ -7072,7 +7103,7 @@ latches, and `pg_cancel_backend()` and its kin
   the SysV keys at `CreateSharedMemoryAndSemaphores()`'s caller,
   and `kill()` and PID reuse in `pg_signal_backend()`.
 
-## Step 239: fd.c stripped
+## Step 242: fd.c stripped
 
 `fd.c` stays: sm0's `sm_vfd.h` keeps the pool of virtual fds and
 the process's ceiling, and `fd.c` keeps what sm0 knows nothing
@@ -7100,33 +7131,27 @@ longer needs is gone, 2,715 lines to 2,215:
 - `server.sh`: a temporary file a prior run left is removed at
   startup, and the log names no `pg_tblspc`.
 
-## Step 240: ALTER VIEW, and a view's options
+## Step 243: heap pages, data checksums and heap TOAST are gone
 
-`../sm/VIEW.md` §10, its fourth step.
+A pass over what PostgreSQL's heap left in `storage/page`,
+`lib` and `access/common`.
 
-- **ALTER VIEW ... RENAME TO** is `sm_cat_rename_view`, and so is
-  ALTER TABLE ... RENAME TO of a view, as PostgreSQL takes it;
-  ALTER VIEW of a table is refused, `"t" is not a view`.
-  `rename_target()` says which it named.
-- **RENAME COLUMN of a view**, by ALTER VIEW or ALTER TABLE,
-  renames the column in its query's select list, which sm keeps
-  (`rename_view_column()`): PostgreSQL renames its
-  `pg_attribute` row, and the view's rule names it no more.
-  What reads the view reads the column by place.
-- **A view's options are kept**: `WITH (...)` and `WITH CHECK
-  OPTION`, checked by `view_reloptions()`, kept in sm as
-  `untransformRelOptions()`'s list, `nodeToString()`'s. The
-  relation cache makes the view's `rd_options` of them, and
-  `pg_class.reloptions` lists them, so a check option is
-  checked by the executor and `security_barrier` and
-  `security_invoker` are PostgreSQL's. CREATE OR REPLACE
-  replaces them; `ALTER VIEW ... SET` and `RESET` change them,
-  refusing a check option on a view not automatically
-  updatable, as `ATExecSetRelOptions()` does.
-- **`AlterTableLookupRelation()`** takes ALTER VIEW, and of a
-  view SET and RESET alone; `smstore_alter_table()` hands a
-  view's to `alter_view()`.
-- `test/slt/view_alter.test`. PostgreSQL's `create_view` still
-  fails, first on CREATE FUNCTION; its diff goes from 934 lines
-  to 873. What is left of views there is a temporary view, 15
-  statements and those after them, and SET SCHEMA.
+- **`storage/page`**: `bufpage.c`, PostgreSQL's slotted page,
+  none of whose functions had a caller; `checksum.c`,
+  `checksum.h`, `checksum_impl.h` and the `ignore_checksum_failure`
+  setting, as digres writes no page to check; and the README of
+  checksums. `bufpage.h` keeps the page layout's types and
+  macros, by which `htup_details.h` and `itup.h` size a tuple.
+  `itemptr.c` stays: a row's tid is an item pointer.
+- **`lib/integerset.c`**, which VACUUM's GiST pass used.
+- **Heap TOAST**: a value sm stores out of line has its own
+  pointer, `VARATT_IS_EXTERNAL_SM`, and nothing makes
+  PostgreSQL's on-disk one. `detoast.c` loses its five branches
+  for it and `toast_fetch_datum()` and `toast_fetch_datum_slice()`,
+  589 lines to 386; the table AM, `relation_fetch_toast_slice`
+  and its wrapper, which sm's and the catalog's AMs set to a
+  refusal; `toast_internals.c`, the TOAST table's index helpers
+  and `get_toast_snapshot()`, with `SnapshotToastData`, 219 lines
+  to 88. `toast_compress_datum()` stays, for index tuples.
+- Left: `toasting.c`, which makes a TOAST table, with the
+  catalog DDL kept to be ported (`PLAN.md` §7).

@@ -51,7 +51,7 @@ thread fixes before then and no thread writes after is
   `shmem_request_hook` and `shmem_startup_hook`, which a
   library had no registry to use with. `shmem.c` kept
   `pg_numa_available()`, until it went too (`WORKNOTE.md` step
-  238).
+  241).
 - **Sized ahead of time** still: `MaxBackends`, the session
   registry's limit. A snapshot's xid arrays, sized by it, are
   not allocated (`WORKNOTE.md` step 191): a snapshot holds no

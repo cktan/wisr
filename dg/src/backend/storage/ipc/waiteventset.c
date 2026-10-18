@@ -21,7 +21,7 @@
  * a latch's setter writes through sm_interrupt(), or the thread itself
  * through sm_interrupt_self(), so a set latch is never missed: no signal is
  * sent.  PostgreSQL's poll(), kqueue() and Windows implementations, and the
- * self-pipe, are gone (WORKNOTE.md step 238).
+ * self-pipe, are gone (WORKNOTE.md step 241).
  *
  * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
