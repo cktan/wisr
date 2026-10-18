@@ -7155,3 +7155,36 @@ A pass over what PostgreSQL's heap left in `storage/page`,
   to 88. `toast_compress_datum()` stays, for index tuples.
 - Left: `toasting.c`, which makes a TOAST table, with the
   catalog DDL kept to be ported (`PLAN.md` §7).
+
+## Step 244: TABLESAMPLE on a table in sm
+
+`TABLESAMPLE` was parsed, planned and run by PostgreSQL's sample
+scan, but sm's table access method refused the two callbacks
+it calls. A sampling method picks blocks and, in each, row
+offsets; sm has no pages, so a block is a tid's.
+
+- **A tid's block is 256 rownos** (`SMSTORE_ROWS_PER_BLOCK`,
+  `access/smstore.h`): block rowno / 256, offset one above the
+  remainder, as an offset of 0 is no tid. It was 65535 rownos a
+  block, which would make a table under 65535 rows one block,
+  and `SYSTEM` take all or none. A tid now holds a rowno up to
+  2^40 or so. No test showed a tid: digres has no `ctid` column.
+- **`scan_sample_next_block`**: the method's pick, as `SYSTEM`
+  makes one, or the next block, as `BERNOULLI` reads them all;
+  the blocks are as many as hold the table's highest rowno
+  (`smstore_rowno_limit()`). The cursor moves to the block's
+  first rowno (`smstore_scan_seek()`, forward only).
+- **`scan_sample_next_tuple`**: the method's next offset that has
+  a row (`smstore_scan_row()`), which reads forward and keeps a
+  row read past the rowno asked for, the offsets coming in
+  increasing order. A rowno with no row, deleted or never used,
+  is passed over, as an unused line pointer is.
+- **Rescan** starts the cursor and the blocks again, as under
+  `LATERAL`.
+- **Cost**: the planner's pages for a table in sm are its bytes
+  over 8 KB (`STATISTICS.md` section 2.2), not its blocks of
+  rownos, so a `SYSTEM` scan's I/O cost is an estimate of its
+  own; its rows, the table's times the fraction, are right.
+- `test/slt/tablesample.test`: both methods at 0 and 100, a
+  fraction near BERNOULLI's, REPEATABLE taking the same rows,
+  deleted rows not sampled, a rescan, and no SYSTEM_ROWS.

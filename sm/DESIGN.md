@@ -466,13 +466,17 @@ design:
   from a per-table sm1 sequence, never reused and unchanged by
   `UPDATE` (`sm2/SM2_DESIGN.md` §5). Every index, the primary
   key's included, is sm3's and points at `rowno`
-  (`sm3/SM3_DESIGN.md` §3). The fork redefines `ctid` as a
-  `uint64_t`, so `rowno` is `ctid` — a core patch to
-  PostgreSQL's 6-byte `ItemPointerData` (`PART4.md` §3). This
-  matches the heap PostgreSQL's planner and executor assume,
-  serves tables without a primary key, and keeps a primary
-  key change from rewriting every index; a primary key lookup
-  costs two reads.
+  (`sm3/SM3_DESIGN.md` §3). digres keeps PostgreSQL's 6-byte
+  `ItemPointerData` and maps `rowno` into it: block
+  `rowno / 256`, offset `rowno % 256 + 1`, as an offset of 0
+  is no tid (`../dg/src/backend/access/sm/smstore.c`,
+  `SMSTORE_ROWS_PER_BLOCK`). A block of 256 rownos is what
+  `TABLESAMPLE` picks, as PostgreSQL's picks a page
+  (`../dg/WORKNOTE.md` step 244), and a tid holds a rowno up
+  to about 2^40. This matches the heap PostgreSQL's planner
+  and executor assume, serves tables without a primary key,
+  and keeps a primary key change from rewriting every index;
+  a primary key lookup costs two reads.
 - **One sm1 store per table.** A table's heap, all its
   indexes and its TOAST data are rels in one sm1 store, told
   apart by a 2-byte relid whose values `sm3/SM3_DESIGN.md` §4

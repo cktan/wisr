@@ -12,7 +12,9 @@
  * deletes it, and reads its newest version when another transaction changed
  * it first, in many places, and each is a callback here over smstore.c.  So
  * does COPY, which scans a table and inserts into one through the access
- * method.  Every other callback raises an error: nothing should reach it.
+ * method, and TABLESAMPLE, whose blocks are a tid's, SMSTORE_ROWS_PER_BLOCK
+ * rownos each.  Every other callback raises an error: nothing should reach
+ * it.
  *
  * IDENTIFICATION
  *	  src/backend/access/sm/smtable.c
@@ -24,8 +26,11 @@
 #include "access/relscan.h"
 #include "access/smstore.h"
 #include "access/tableam.h"
+#include "access/tsmapi.h"
 #include "executor/tuptable.h"
 #include "fmgr.h"
+#include "miscadmin.h"
+#include "nodes/execnodes.h"
 #include "utils/snapmgr.h"
 #include "utils/fmgrprotos.h"
 
@@ -42,11 +47,28 @@ static const TupleTableSlotOps *smtable_slot_callbacks(Relation rel) {
   return &TTSOpsVirtual;
 }
 
-/* A scan of a table in sm by the access method: sm's cursor behind it. */
+/*
+ * A scan of a table in sm by the access method: sm's cursor behind it.  A
+ * sample scan's blocks are a tid's, SMSTORE_ROWS_PER_BLOCK rownos each: the
+ * table's count of them, as its highest rowno makes it, and the one read.
+ */
 typedef struct smtable_scan_t {
   TableScanDescData base; /* what tableam.h reads */
   smstore_scan_t *scan;
+  BlockNumber nblocks;
+  BlockNumber block;
+  bool started;
 } smtable_scan_t;
+
+/* A sample scan's blocks: as many as hold the table's rownos. */
+static BlockNumber sample_blocks(Relation rel) {
+  uint64 limit = smstore_rowno_limit(rel);
+
+  if (limit == 0)
+    return 0;
+  return (BlockNumber)Min(limit / SMSTORE_ROWS_PER_BLOCK + 1,
+                          (uint64)MaxBlockNumber);
+}
 
 /*
  * Begin a scan of every row of rel, in rowno order.  sm reads at its own
@@ -66,19 +88,88 @@ static TableScanDesc smtable_scan_begin(Relation rel, Snapshot snapshot,
   scan->base.rs_snapshot = snapshot;
   scan->base.rs_flags = flags;
   scan->scan = smstore_beginscan(rel);
+  if (flags & SO_TYPE_SAMPLESCAN)
+    scan->nblocks = sample_blocks(rel);
   return &scan->base;
 }
 
 /*
  * Start a scan again: a TID scan's, as a nested loop rescans one for each
  * outer row, has nothing to start, as it fetches each row by its tid and
- * never reads its cursor. No other scan of a table in sm is rescanned here.
+ * never reads its cursor; a sample scan's starts its cursor and its blocks
+ * again, as the table may have grown. No other scan of a table in sm is
+ * rescanned here.
  */
 static void smtable_scan_rescan(TableScanDesc sscan, struct ScanKeyData *key,
                                 bool set_params, bool allow_strat,
                                 bool allow_pagemode) {
-  if (!(sscan->rs_flags & SO_TYPE_TIDSCAN))
+  smtable_scan_t *scan = (smtable_scan_t *)sscan;
+
+  if (sscan->rs_flags & SO_TYPE_TIDSCAN)
+    return;
+  if (!(sscan->rs_flags & SO_TYPE_SAMPLESCAN))
     refuse<void>();
+  smstore_endscan(scan->scan);
+  scan->scan = smstore_beginscan(sscan->rs_rd);
+  scan->nblocks = sample_blocks(sscan->rs_rd);
+  scan->started = false;
+}
+
+/*
+ * A sample scan's next block: the one the sampling method picks, as SYSTEM
+ * does, or else the next; false when there are no more.  The cursor moves to
+ * its first rowno.
+ */
+static bool smtable_scan_sample_next_block(TableScanDesc sscan,
+                                           SampleScanState *scanstate) {
+  smtable_scan_t *scan = (smtable_scan_t *)sscan;
+  TsmRoutine *tsm = scanstate->tsmroutine;
+  BlockNumber block;
+
+  if (scan->nblocks == 0)
+    return false;
+  if (tsm->NextSampleBlock)
+    block = tsm->NextSampleBlock(scanstate, scan->nblocks);
+  else if (!scan->started)
+    block = 0;
+  else if (scan->block + 1 < scan->nblocks)
+    block = scan->block + 1;
+  else
+    block = InvalidBlockNumber;
+  if (!BlockNumberIsValid(block))
+    return false;
+  scan->block = block;
+  scan->started = true;
+  smstore_scan_seek(scan->scan, (uint64)block * SMSTORE_ROWS_PER_BLOCK);
+  return true;
+}
+
+/*
+ * A sample scan's next row of its block into slot: at the next offset the
+ * sampling method picks that has a row, a tid's offset, one above the
+ * rowno's place in the block; false when the block has no more.
+ */
+static bool smtable_scan_sample_next_tuple(TableScanDesc sscan,
+                                           SampleScanState *scanstate,
+                                           TupleTableSlot *slot) {
+  smtable_scan_t *scan = (smtable_scan_t *)sscan;
+  TsmRoutine *tsm = scanstate->tsmroutine;
+
+  for (;;) {
+    OffsetNumber offset;
+
+    CHECK_FOR_INTERRUPTS();
+    offset =
+        tsm->NextSampleTuple(scanstate, scan->block, SMSTORE_ROWS_PER_BLOCK);
+    if (!OffsetNumberIsValid(offset)) {
+      ExecClearTuple(slot);
+      return false;
+    }
+    if (smstore_scan_row(
+            scan->scan,
+            (uint64)scan->block * SMSTORE_ROWS_PER_BLOCK + offset - 1, slot))
+      return true;
+  }
 }
 
 /* End a scan, and let go of a snapshot taken for it alone. */
@@ -232,8 +323,8 @@ static const TableAmRoutine smtable_methods = [] {
   r.relation_estimate_size = refuse;
   /* Set, so the planner plans bitmap scans; nodeBitmapHeapscan.c runs them. */
   r.scan_bitmap_next_tuple = refuse;
-  r.scan_sample_next_block = refuse;
-  r.scan_sample_next_tuple = refuse;
+  r.scan_sample_next_block = smtable_scan_sample_next_block;
+  r.scan_sample_next_tuple = smtable_scan_sample_next_tuple;
   return r;
 }();
 

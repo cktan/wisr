@@ -2046,9 +2046,10 @@ bool smstore_relation_name(Oid relid, uint64 version, char **name,
 }
 
 /*
- * A row's rowno as a tid, for the slot that carries it: a tid is 48 bits,
- * and an offset of 0 is no tid, so each block holds 65535 rownos, the
- * offset one above the rowno's remainder.
+ * A row's rowno as a tid, for the slot that carries it: block rowno / 256,
+ * SMSTORE_ROWS_PER_BLOCK, and offset one above the remainder, as an offset
+ * of 0 is no tid.  A sample scan reads a block of rownos as PostgreSQL's
+ * reads a page (access/sm/smtable.c).
  */
 void smstore_rowno_to_tid(uint64 rowno, ItemPointer tid) {
   if (!smstore_rowno_fits_tid(rowno, tid))
@@ -2062,16 +2063,16 @@ void smstore_rowno_to_tid(uint64 rowno, ItemPointer tid) {
  * fit one, so that no row has it. A TID scan of WHERE rowno = n asks.
  */
 bool smstore_rowno_fits_tid(uint64 rowno, ItemPointer tid) {
-  if (rowno / 0xFFFF > MaxBlockNumber)
+  if (rowno / SMSTORE_ROWS_PER_BLOCK > MaxBlockNumber)
     return false;
-  ItemPointerSet(tid, (BlockNumber)(rowno / 0xFFFF),
-                 (OffsetNumber)(rowno % 0xFFFF + 1));
+  ItemPointerSet(tid, (BlockNumber)(rowno / SMSTORE_ROWS_PER_BLOCK),
+                 (OffsetNumber)(rowno % SMSTORE_ROWS_PER_BLOCK + 1));
   return true;
 }
 
 /* The rowno a tid carries (smstore_rowno_to_tid()). */
 uint64 smstore_tid_to_rowno(ItemPointer tid) {
-  return (uint64)ItemPointerGetBlockNumber(tid) * 0xFFFF +
+  return (uint64)ItemPointerGetBlockNumber(tid) * SMSTORE_ROWS_PER_BLOCK +
          ItemPointerGetOffsetNumber(tid) - 1;
 }
 
@@ -2244,7 +2245,33 @@ struct smstore_scan_t {
   Datum *row_values;
   bool *row_isnull;
   int row_natts;
+  /*
+   * smstore_scan_row()'s row read ahead, past the rowno it was asked for,
+   * kept for a later call: valid until the cursor's next call.  at_end once
+   * the cursor has none left.
+   */
+  bool ahead;
+  bool at_end;
+  uint64_t ahead_rowno;
+  const void *ahead_tuple;
+  size_t ahead_len;
 };
+
+/*
+ * A row the scan's cursor read into slot, as a virtual tuple, its tid its
+ * rowno.  A value by reference points into sm's tuple, good until the
+ * cursor's next call.
+ */
+static void scan_row_into_slot(smstore_scan_t *scan, uint64_t rowno,
+                               const void *tuple, size_t len,
+                               TupleTableSlot *slot) {
+  if (sm_tbl_deform(scan->tbl, tuple, len, (sm_datum_t *)slot->tts_values,
+                    slot->tts_isnull, slot->tts_tupleDescriptor->natts) != 0)
+    sm_error("read a row");
+  ExecStoreVirtualTuple(slot);
+  slot_from_sm(slot);
+  smstore_rowno_to_tid(rowno, &slot->tts_tid);
+}
 
 /* Begin a scan of every row of rel, a table in sm, in rowno order. */
 smstore_scan_t *smstore_beginscan(Relation rel) {
@@ -2283,13 +2310,66 @@ bool smstore_getnext(smstore_scan_t *scan, TupleTableSlot *slot) {
   default:
     sm_error("scan a table");
   }
-  if (sm_tbl_deform(scan->tbl, tuple, len, (sm_datum_t *)slot->tts_values,
-                    slot->tts_isnull, slot->tts_tupleDescriptor->natts) != 0)
-    sm_error("read a row");
-  ExecStoreVirtualTuple(slot);
-  slot_from_sm(slot);
-  smstore_rowno_to_tid(rowno, &slot->tts_tid);
+  scan_row_into_slot(scan, rowno, tuple, len, slot);
   return true;
+}
+
+/*
+ * Move the scan forward to rowno, as a sample scan does to the start of a
+ * block of rows: a row read ahead at rowno or after is kept, as the cursor
+ * is past it already, and only moves forward.
+ */
+void smstore_scan_seek(smstore_scan_t *scan, uint64 rowno) {
+  if (scan->at_end || (scan->ahead && scan->ahead_rowno >= rowno))
+    return;
+  scan->ahead = false;
+  if (sm_rel_scan_seek(scan->cursor, rowno) != 0)
+    sm_error("move a table's scan");
+}
+
+/*
+ * The row at rowno into slot, read forward from where the scan is; false if
+ * the table has none there, as a row deleted, or a rowno never used, has
+ * none.  A row read past rowno is kept for the next call, so rownos asked
+ * for in increasing order read each row once at most.
+ */
+bool smstore_scan_row(smstore_scan_t *scan, uint64 rowno,
+                      TupleTableSlot *slot) {
+  ExecClearTuple(slot);
+  slot->tts_tableOid = scan->relid;
+  while (!scan->at_end && (!scan->ahead || scan->ahead_rowno < rowno)) {
+    switch (sm_rel_scannxt(scan->cursor, &scan->ahead_rowno, &scan->ahead_tuple,
+                           &scan->ahead_len)) {
+    case 0:
+      scan->ahead = true;
+      break;
+    case 1:
+      scan->ahead = false;
+      scan->at_end = true;
+      break;
+    default:
+      sm_error("scan a table");
+    }
+  }
+  if (!scan->ahead || scan->ahead_rowno != rowno)
+    return false;
+  scan->ahead = false;
+  scan_row_into_slot(scan, rowno, scan->ahead_tuple, scan->ahead_len, slot);
+  return true;
+}
+
+/* The highest rowno rel, a table in sm, has handed out; 0 if none. */
+uint64 smstore_rowno_limit(Relation rel) {
+  sm_tbl_t *tbl = open_table(RelationGetRelid(rel), SM_LOCKMODE_IS);
+  uint64_t n;
+
+  if (tbl == NULL)
+    ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
+                    errmsg("relation \"%s\" does not exist",
+                           RelationGetRelationName(rel))));
+  if (sm_tbl_rowno_limit(tbl, &n) != 0)
+    sm_error("read a table's row numbers");
+  return n;
 }
 
 /* End a scan; the table stays open until the transaction ends. */

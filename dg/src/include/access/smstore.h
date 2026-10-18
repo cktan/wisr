@@ -227,12 +227,22 @@ extern TM_Result smstore_lock_row(Relation rel, ItemPointer tid,
                                   LockWaitPolicy wait_policy,
                                   TM_FailureData *tmfd);
 
+/*
+ * The rownos a tid's block holds (smstore_rowno_to_tid()): a block of rownos
+ * is what a sample scan picks, as PostgreSQL's picks a page.
+ */
+#define SMSTORE_ROWS_PER_BLOCK 256
+
 /* A scan of a table in sm, in rowno order. */
 typedef struct smstore_scan_t smstore_scan_t;
 
 extern smstore_scan_t *smstore_beginscan(Relation rel);
 extern bool smstore_getnext(smstore_scan_t *scan, TupleTableSlot *slot);
 extern void smstore_endscan(smstore_scan_t *scan);
+extern void smstore_scan_seek(smstore_scan_t *scan, uint64 rowno);
+extern bool smstore_scan_row(smstore_scan_t *scan, uint64 rowno,
+                             TupleTableSlot *slot);
+extern uint64 smstore_rowno_limit(Relation rel);
 extern smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
                                                ScanKey keys, int nkeys);
 extern bool smstore_index_getnext(smstore_scan_t *scan, TupleTableSlot *slot);
