@@ -7357,3 +7357,21 @@ to be ported (`toasting.c`, `EventTriggerTableRewrite()`), and
   `snapmgr.c` left uncalled.
 - **Compiled out already** (`#ifdef NOT_USED`): `FileInvalidate()`
   and `equalTriggerDescs()`.
+
+## Step 251: no library is loaded
+
+A session that loaded a library, by `LOAD` or a C function's
+first call, failed `internal_load_library()`'s assertion that
+no session thread loads one, and took the server down:
+PostgreSQL's `create_function_c`, on its first statement.
+Dynamic loading is to be redesigned and redone (`ISSUE.md`
+issue 1); until then it is disabled.
+
+- **`internal_load_library()` refuses every library**, with
+  `loading library "..." is not supported yet`: `LOAD`, a C
+  function, `shared_preload_libraries` and the session's
+  preload settings alike. What only a load used goes:
+  `incompatible_module_error()`, the ABI block it checked,
+  `PG_init_t` and `SAME_INODE`. The list of loaded modules
+  stays, empty.
+- `test/slt/load.test`.

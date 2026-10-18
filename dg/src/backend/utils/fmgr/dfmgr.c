@@ -14,8 +14,6 @@
  */
 #include "postgres.h"
 
-#include <sys/stat.h>
-
 #include <algorithm>
 #include <vector>
 
@@ -29,9 +27,6 @@
 #include "storage/fd.h"
 #include "utils/control_block.h"
 #include "utils/hsearch.h"
-
-/* signature for PostgreSQL-specific library init function */
-typedef void (*PG_init_t)(void);
 
 /* hashtable entry for rendezvous variables */
 typedef struct {
@@ -57,9 +52,8 @@ struct DynamicFileList {
 };
 
 /*
- * This session's loaded files, oldest first: tcb->dfmgr.  A library's own
- * statics are the process's, not the session's: a session loads none
- * (dg/ISSUE.md issue 1).
+ * This session's loaded files, oldest first: tcb->dfmgr.  Empty: digres
+ * loads no library (internal_load_library(), dg/ISSUE.md issue 1).
  */
 struct dfmgr_state_t {
   std::vector<DynamicFileList *> files;
@@ -81,24 +75,11 @@ void dfmgr_state_free_t::operator()(dfmgr_state_t *state) const {
   delete state;
 }
 
-/* stat() call under Win32 returns an st_ino field, but it has no meaning */
-#ifndef WIN32
-#define SAME_INODE(A, B) ((A).st_ino == (B).inode && (A).st_dev == (B).device)
-#else
-#define SAME_INODE(A, B) false
-#endif
-
 thread_local /*LOCAL*/ char *Dynamic_library_path;
 
 static void *internal_load_library(const char *libname);
-pg_noreturn static void
-incompatible_module_error(const char *libname,
-                          const Pg_abi_values *module_magic_data);
 static char *expand_dynamic_library_name(const char *name);
 static void check_restricted_library_name(const char *name);
-
-/* ABI values that module needs to match to be accepted */
-static const Pg_abi_values magic_data = PG_MODULE_ABI_DATA;
 
 /*
  * Load the specified dynamic-link library file, and look for a function
@@ -188,216 +169,15 @@ void *lookup_external_function(void *filehandle, const char *funcname) {
 }
 
 /*
- * Load the specified dynamic-link library file, unless it already is
- * loaded.  Return the pg_dl* handle for the file.
- *
- * Note: libname is expected to be an exact name for the library file.
- *
- * NB: There is presently no way to unload a dynamically loaded file.  We might
- * add one someday if we can convince ourselves we have safe protocols for un-
- * hooking from hook function pointers, releasing custom GUC variables, and
- * perhaps other things that are definitely unsafe currently.
+ * Load the library libname, an exact path: refused, as digres loads no
+ * library until loading is redesigned (dg/ISSUE.md issue 1).  Its statics
+ * would be one for every session, each a thread of one process.
  */
 static void *internal_load_library(const char *libname) {
-  DynamicFileList *file_scanner;
-  PGModuleMagicFunction magic_func;
-  char *load_error;
-  struct stat stat_buf;
-  PG_init_t PG_init;
-
-  /*
-   * Scan the list of loaded FILES to see if the file has been loaded.
-   */
-  file_scanner = NULL;
-  for (DynamicFileList *file : dfs().files)
-    if (strcmp(libname, file->filename) == 0) {
-      file_scanner = file;
-      break;
-    }
-
-  if (file_scanner == NULL) {
-    /*
-     * Check for same files - different paths (ie, symlink or link)
-     */
-    if (stat(libname, &stat_buf) == -1)
-      ereport(ERROR, (errcode_for_file_access(),
-                      errmsg("could not access file \"%s\": %m", libname)));
-
-    for (DynamicFileList *file : dfs().files)
-      if (SAME_INODE(stat_buf, *file)) {
-        file_scanner = file;
-        break;
-      }
-  }
-
-  if (file_scanner == NULL) {
-    /*
-     * File not loaded yet.  Only the postmaster or a standalone backend
-     * loads one: a session would run _PG_init() again on the library's
-     * statics, which all sessions share (dg/ISSUE.md issue 1).
-     */
-    Assert(!IsSessionThread);
-    file_scanner = (DynamicFileList *)malloc(
-        offsetof(DynamicFileList, filename) + strlen(libname) + 1);
-    if (file_scanner == NULL)
-      ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("out of memory")));
-
-    MemSet(file_scanner, 0, offsetof(DynamicFileList, filename));
-    strcpy(file_scanner->filename, libname);
-    file_scanner->device = stat_buf.st_dev;
-#ifndef WIN32
-    file_scanner->inode = stat_buf.st_ino;
-#endif
-
-    file_scanner->handle =
-        dlopen(file_scanner->filename, RTLD_NOW | RTLD_GLOBAL);
-    if (file_scanner->handle == NULL) {
-      load_error = dlerror();
-      free(file_scanner);
-      /* errcode_for_file_access might not be appropriate here? */
-      ereport(ERROR, (errcode_for_file_access(),
-                      errmsg("could not load library \"%s\": %s", libname,
-                             load_error)));
-    }
-
-    /* Check the magic function to determine compatibility */
-    magic_func = (PGModuleMagicFunction)dlsym(file_scanner->handle,
-                                              PG_MAGIC_FUNCTION_NAME_STRING);
-    if (magic_func) {
-      const Pg_magic_struct *magic_data_ptr = (*magic_func)();
-
-      /* Check ABI compatibility fields */
-      if (magic_data_ptr->len != sizeof(Pg_magic_struct) ||
-          memcmp(&magic_data_ptr->abi_fields, &magic_data,
-                 sizeof(Pg_abi_values)) != 0) {
-        /* copy data block before unlinking library */
-        Pg_magic_struct module_magic_data = *magic_data_ptr;
-
-        /* try to close library */
-        dlclose(file_scanner->handle);
-        free(file_scanner);
-
-        /* issue suitable complaint */
-        incompatible_module_error(libname, &module_magic_data.abi_fields);
-      }
-
-      /* Remember the magic block's location for future use */
-      file_scanner->magic = magic_data_ptr;
-    } else {
-      /* try to close library */
-      dlclose(file_scanner->handle);
-      free(file_scanner);
-      /* complain */
-      ereport(ERROR, (errmsg("incompatible library \"%s\": missing magic block",
-                             libname),
-                      errhint("Extension libraries are required to use the "
-                              "PG_MODULE_MAGIC macro.")));
-    }
-
-    /*
-     * If the library has a _PG_init() function, call it.
-     */
-    PG_init = (PG_init_t)dlsym(file_scanner->handle, "_PG_init");
-    if (PG_init)
-      (*PG_init)();
-
-    /* OK to link it into list */
-    dfs().files.push_back(file_scanner);
-  }
-
-  return file_scanner->handle;
-}
-
-/*
- * Report a suitable error for an incompatible magic block.
- */
-static void incompatible_module_error(const char *libname,
-                                      const Pg_abi_values *module_magic_data) {
-  StringInfoData details;
-
-  /*
-   * If the version doesn't match, just report that, because the rest of the
-   * block might not even have the fields we expect.
-   */
-  if (magic_data.version != module_magic_data->version) {
-    char library_version[32];
-
-    if (module_magic_data->version >= 1000)
-      snprintf(library_version, sizeof(library_version), "%d",
-               module_magic_data->version / 100);
-    else
-      snprintf(library_version, sizeof(library_version), "%d.%d",
-               module_magic_data->version / 100,
-               module_magic_data->version % 100);
-    ereport(ERROR,
-            (errmsg("incompatible library \"%s\": version mismatch", libname),
-             errdetail("Server is version %d, library is version %s.",
-                       magic_data.version / 100, library_version)));
-  }
-
-  /*
-   * Similarly, if the ABI extra field doesn't match, error out.  Other
-   * fields below might also mismatch, but that isn't useful information if
-   * you're using the wrong product altogether.
-   */
-  if (strcmp(module_magic_data->abi_extra, magic_data.abi_extra) != 0) {
-    ereport(ERROR,
-            (errmsg("incompatible library \"%s\": ABI mismatch", libname),
-             errdetail("Server has ABI \"%s\", library has \"%s\".",
-                       magic_data.abi_extra, module_magic_data->abi_extra)));
-  }
-
-  /*
-   * Otherwise, spell out which fields don't agree.
-   *
-   * XXX this code has to be adjusted any time the set of fields in a magic
-   * block change!
-   */
-  initStringInfo(&details);
-
-  if (module_magic_data->funcmaxargs != magic_data.funcmaxargs) {
-    if (details.len)
-      appendStringInfoChar(&details, '\n');
-    appendStringInfo(&details,
-                     /* translator: %s is a variable name and %d its values */
-                     _("Server has %s = %d, library has %d."), "FUNC_MAX_ARGS",
-                     magic_data.funcmaxargs, module_magic_data->funcmaxargs);
-  }
-  if (module_magic_data->indexmaxkeys != magic_data.indexmaxkeys) {
-    if (details.len)
-      appendStringInfoChar(&details, '\n');
-    appendStringInfo(&details,
-                     /* translator: %s is a variable name and %d its values */
-                     _("Server has %s = %d, library has %d."), "INDEX_MAX_KEYS",
-                     magic_data.indexmaxkeys, module_magic_data->indexmaxkeys);
-  }
-  if (module_magic_data->namedatalen != magic_data.namedatalen) {
-    if (details.len)
-      appendStringInfoChar(&details, '\n');
-    appendStringInfo(&details,
-                     /* translator: %s is a variable name and %d its values */
-                     _("Server has %s = %d, library has %d."), "NAMEDATALEN",
-                     magic_data.namedatalen, module_magic_data->namedatalen);
-  }
-  if (module_magic_data->float8byval != magic_data.float8byval) {
-    if (details.len)
-      appendStringInfoChar(&details, '\n');
-    appendStringInfo(&details,
-                     /* translator: %s is a variable name and %d its values */
-                     _("Server has %s = %s, library has %s."),
-                     "FLOAT8PASSBYVAL",
-                     magic_data.float8byval ? "true" : "false",
-                     module_magic_data->float8byval ? "true" : "false");
-  }
-
-  if (details.len == 0)
-    appendStringInfoString(
-        &details,
-        _("Magic block has unexpected length or padding difference."));
-
   ereport(ERROR,
-          (errmsg("incompatible library \"%s\": magic block mismatch", libname),
-           errdetail_internal("%s", details.data)));
+          (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+           errmsg("loading library \"%s\" is not supported yet", libname)));
+  return NULL; /* not reached */
 }
 
 /*

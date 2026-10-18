@@ -56,7 +56,7 @@ The import itself is not built yet (`PLAN.md` §7).
   run: PASSED (8 files, alone and in 8 sessions)
   initdb: PASSED
   server: PASSED
-  slt: PASSED (26 files on digres, 9894 records, 9 skipped)
+  slt: PASSED (29 files on digres, 9911 records, 9 skipped)
   ```
 
 - **`make -j4 slt`** runs every sqllogictest file in

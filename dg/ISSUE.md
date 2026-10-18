@@ -33,11 +33,17 @@ the postmaster, and each session starts with a copy of what it
 set (`session_thread_start()`: `tcb->hooks`, `tcb->dfmgr`,
 `tcb->explain`).
 
-No library is built in the tree, so nothing loads one. dfmgr.c's
-`internal_load_library()` asserts that no session thread loads
-a library, so a test that does fails loudly rather than racing.
+**Loading is disabled until it is redesigned.** dfmgr.c's
+`internal_load_library()` refuses every library with an error,
+`loading library "..." is not supported yet`: `LOAD`, a C
+function, `shared_preload_libraries` and the session's preload
+settings alike. It asserted that no session thread loaded one,
+which took the server down on PostgreSQL's
+`create_function_c`. No library is built in the tree, so
+nothing digres runs loaded one.
 
-**The fix, not planned soon**, is one of:
+**The fix is to redesign dynamic loading and redo it**, from
+one of:
 
 - **Load libraries only through `shared_preload_libraries`**,
   and refuse a session's `LOAD` and later loads with an error,

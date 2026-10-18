@@ -1,0 +1,19 @@
+# Verify digres loads no library, until loading is redesigned
+# (ISSUE.md issue 1): LOAD is refused with an error, and the session
+# goes on.
+# 1. LOAD of a name and of a path are refused, each naming its
+#    library.
+# 2. A statement after them runs.
+
+onlyif digres
+statement error loading library "nosuch" is not supported yet
+load 'nosuch'
+
+onlyif digres
+statement error loading library "/tmp/nosuch\.so" is not supported yet
+load '/tmp/nosuch.so'
+
+query I
+select 1
+----
+1
