@@ -111,6 +111,7 @@ tsan: gen $(LIBSQ) $(LIBSM_TSAN) $(ROCKSDB_TSAN)
 	@mkdir -p build
 	$(call link_server,build/digres-tsan,.tsan.o,-O1 -g -fsanitize=thread)
 	DIGRES="setarch $$(uname -m) -R build/digres-tsan" test/run.sh
+	$(MAKE) build/numbin
 	DIGRES="setarch $$(uname -m) -R build/digres-tsan" test/server.sh
 
 # The parser is sq and a converter (src/backend/parser/parser.c). sq's
@@ -126,6 +127,7 @@ test:
 	SQ_PARSE="$(CURDIR)/build/digres --parse" $(SQ)/test/run.sh
 	test/run.sh
 	test/initdb.sh
+	$(MAKE) build/numbin
 	test/server.sh
 	$(MAKE) build/slt
 	test/slt.sh $(SLT_QUICK)
@@ -141,6 +143,13 @@ build/slt: test/slt/slt.cc
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -Wall $(shell pkg-config --cflags libpq) \
 	    -o $@ $< -lpq -lcrypto
+
+# A client binding numerics in binary, as a driver does (test/numbin),
+# which test/server.sh runs; a client of the system's libpq, as slt is.
+build/numbin: test/numbin/numbin.cc
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -Wall $(shell pkg-config --cflags libpq) \
+	    -o $@ $< -lpq
 
 # The sqllogictest files under test/slt, on digres.
 .PHONY: slt

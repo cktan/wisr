@@ -2858,6 +2858,39 @@ local_psql -c 'create table t24 (a numeric(17,17), b numeric(36,0))' \
 local_psql -c 'create table t25 (a numeric(37,0))' 2>&1 |
   grep -q 'must be between 1 and 36' || fail "numeric(37,0) refused"
 
+# Verify that numerics bound and fetched in binary, as a driver does, are
+# PostgreSQL's numeric to the client, both decimals of digres alike.
+# 1. build/numbin binds values typed 1700 in numeric's binary format into
+#    numeric(10,2) and numeric(30,5): rounded to each, and one of 21 digits
+#    refused by the first; it compares with them and computes.
+# 2. It fetches in binary: oid 1700 and numeric's digits, weight, sign and
+#    scale for both columns and what is computed of them.
+# 3. COPY in binary format writes both columns and reads them back.
+build/numbin "host=$work port=$port dbname=postgres" > "$work/numbin.out" 2>&1
+cat > "$work/numbin.expected" <<'OUT'
+insert into nb values ($1, $2): INSERT 0 1
+insert into nb (b) values ($1): INSERT 0 1
+insert into nb (a) values ($1): value overflows numeric format
+delete from nb where b = $1 * 2 - $1: DELETE 1
+select a, b, a * b, sum(a) over (), -a from nb:
+  a: oid 1700 nd=3 w=1 pos dscale=2 digits=1,2345,6800
+  b: oid 1700 nd=3 w=1 pos dscale=5 digits=1,2345,6780
+  ?column?: oid 1700 nd=5 w=2 pos dscale=7 digits=1,5241,5789,9710,4000
+  sum: oid 1700 nd=3 w=1 pos dscale=2 digits=1,2345,6800
+  ?column?: oid 1700 nd=3 w=1 neg dscale=2 digits=1,2345,6800
+OUT
+cmp -s "$work/numbin.out" "$work/numbin.expected" ||
+  fail "numerics bound and fetched in binary"
+[ "$(local_psql -c 'create table t26 (a numeric(10,2), b numeric(30,5))' \
+  -c 'create table t27 (a numeric(10,2), b numeric(30,5))' \
+  -c "insert into t26 values (-12345.67, 123456789012345678901234.12345),
+      (0.01, null)" \
+  -c "copy t26 to '$work/numeric.bin' with (format binary)" \
+  -c "copy t27 from '$work/numeric.bin' with (format binary)" \
+  -c 'select * from t27 order by a' 2>&1 | tail -2 | tr '\n' ,)" = \
+  "-12345.67|123456789012345678901234.12345,0.01|," ] ||
+  fail "numerics copied in binary"
+
 # Verify that a column's DEFAULT is kept in sm and fills what an INSERT or
 # UPDATE leaves to it, in later sessions too.
 # 1. Make t22 with constant, expression, now() and numeric defaults.
