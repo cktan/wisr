@@ -13,6 +13,9 @@
 -- 8. Make a series and find a bucket.
 -- 9. Use numeric in jsonb, jsonpath, extract, to_char, money and pg_lsn.
 -- 10. Send values in PostgreSQL's binary format.
+-- 11. Add, subtract, multiply, divide, sum and average numerics of at most
+--     17 digits by their own paths, and get what decimal128's give, a
+--     product past 17 digits and sums across scales and windows among them.
 -- (Errors are server.sh's: a run stops at its first.)
 SELECT 1.5, -0.001, 1e3, 1.50, '  12.340  '::numeric, '0x1F'::numeric, '1_000.5'::numeric;
 SELECT 1e300, 3.4e38, 1e35;
@@ -33,3 +36,6 @@ SELECT jsonb_path_query('{"x": 2.5}'::jsonb, '$.x * 2 + 1'::jsonpath, '{}'::json
 SELECT extract(epoch FROM timestamp '2024-01-01 00:00:01.5'), to_char(1234.5::numeric, '9999.99'), to_char(0.000123::numeric(17,6), '9.99EEEE'), to_number('1,234.5', '9,999.9');
 SELECT 12.34::numeric::money, '0/10'::pg_lsn + 5::numeric, '0/20'::pg_lsn - '0/10'::pg_lsn;
 SELECT numeric_send(1.5), numeric_send(-0.0001), numeric_send(0::numeric), numeric_send(12345678.9);
+SELECT a * b, bool_and((a + b)::text = (a::decimal128 + b::decimal128)::text AND (a - b)::text = (a::decimal128 - b::decimal128)::text AND (a * b)::text = (a::decimal128 * b::decimal128)::text AND (a / b)::text = (a::decimal128 / b::decimal128)::text AND (-a)::text = (-(a::decimal128))::text AND abs(a)::text = abs(a::decimal128)::text) OVER () FROM (VALUES (1.5, 2.25), (-99999999999999.999, 0.001), (12345678901234567::numeric(17,0), -3), (0.00000000000000001, 7), (99999999999999999::numeric(17,0), 99999999999999999::numeric(17,0))) v(a, b);
+SELECT sum(x), avg(x), sum(x)::text = sum(x::decimal128)::text, avg(x)::text = avg(x::decimal128)::text FROM (VALUES (1.5), (2.25), (-3), (0.001), (99999999999999999::numeric(17,0))) v(x);
+SELECT i, sum(x) OVER w, avg(x) OVER w FROM (VALUES (1, 1.5), (2, 2.25), (3, -3), (4, 0.001)) v(i, x) WINDOW w AS (ORDER BY i ROWS BETWEEN 1 PRECEDING AND CURRENT ROW);

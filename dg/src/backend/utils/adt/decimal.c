@@ -1508,6 +1508,22 @@ static bool division_by_zero(bool *have_error) {
   return false;
 }
 
+/*
+ * Whether v, a value's integer, has at most 36 digits: a result that does
+ * is made as it is, without the wide path (DG_DECIMAL_PLAN.md section 3.3).
+ */
+static bool dec_fits(i128 v) {
+  constexpr i128 limit = [] {
+    i128 r = 1;
+
+    for (int i = 0; i < DEC_MAX_DIGITS; i++)
+      r *= 10;
+    return r;
+  }();
+
+  return v < limit && v > -limit;
+}
+
 /* num1 + num2, or NULL with *have_error set past 36 digits. */
 Numeric numeric_add_opt_error(Numeric num1, Numeric num2, bool *have_error) {
   Numeric res;
@@ -1515,12 +1531,9 @@ Numeric numeric_add_opt_error(Numeric num1, Numeric num2, bool *have_error) {
   if (dec_scale(num1) == dec_scale(num2)) {
     i128 r;
 
-    if (!__builtin_add_overflow(dec_value(num1), dec_value(num2), &r)) {
-      wide_t w = wide_of_int(r);
-
-      w.scale = dec_scale(num1);
-      return dec_pack(w, &res, have_error) ? res : NULL;
-    }
+    if (!__builtin_add_overflow(dec_value(num1), dec_value(num2), &r) &&
+        dec_fits(r))
+      return dec_make(r, dec_scale(num1));
   }
   return dec_pack(wide_add(dec_wide(num1), dec_wide(num2), false), &res,
                   have_error)
@@ -1532,6 +1545,13 @@ Numeric numeric_add_opt_error(Numeric num1, Numeric num2, bool *have_error) {
 Numeric numeric_sub_opt_error(Numeric num1, Numeric num2, bool *have_error) {
   Numeric res;
 
+  if (dec_scale(num1) == dec_scale(num2)) {
+    i128 r;
+
+    if (!__builtin_sub_overflow(dec_value(num1), dec_value(num2), &r) &&
+        dec_fits(r))
+      return dec_make(r, dec_scale(num1));
+  }
   return dec_pack(wide_add(dec_wide(num1), dec_wide(num2), true), &res,
                   have_error)
              ? res
@@ -1544,7 +1564,13 @@ Numeric numeric_sub_opt_error(Numeric num1, Numeric num2, bool *have_error) {
  */
 Numeric numeric_mul_opt_error(Numeric num1, Numeric num2, bool *have_error) {
   Numeric res;
+  int s = dec_scale(num1) + dec_scale(num2);
+  i128 r;
 
+  if (s <= NUMERIC_MAX_SCALE &&
+      !__builtin_mul_overflow(dec_value(num1), dec_value(num2), &r) &&
+      dec_fits(r))
+    return dec_make(r, s);
   return dec_pack(wide_mul(dec_wide(num1), dec_wide(num2)), &res, have_error)
              ? res
              : NULL;
@@ -2183,6 +2209,14 @@ typedef struct dec_agg_t {
   wide_t sumX2;          /* the sum of their squares, exact */
   int max_scale;         /* the largest scale among them */
   int64 max_scale_count; /* how many have it */
+  /*
+   * A decimal64 sum not yet in sumX (agg_flush()): 128 bits in two halves,
+   * as a state is only 8-byte aligned, at fast_scale, if fast.
+   */
+  bool fast;
+  int fast_scale;
+  uint64 fast_lo;
+  int64 fast_hi;
 } dec_agg_t;
 
 /* A new state in the aggregate's memory context. */
@@ -2200,14 +2234,44 @@ static dec_agg_t *make_agg_state(FunctionCallInfo fcinfo, bool calc_sumX2) {
   return state;
 }
 
+/* Count a value of scale into state, but for its sum. */
+static void agg_count(dec_agg_t *state, int scale) {
+  state->N++;
+  if (scale > state->max_scale) {
+    state->max_scale = scale;
+    state->max_scale_count = 1;
+  } else if (scale == state->max_scale)
+    state->max_scale_count++;
+}
+
+/* state's decimal64 sum not yet in sumX. */
+static i128 agg_fast_sum(const dec_agg_t *state) {
+  return (i128)(((u128)(uint64)state->fast_hi << 64) | state->fast_lo);
+}
+
+/* Set state's decimal64 sum not yet in sumX to v at scale. */
+static void agg_set_fast(dec_agg_t *state, i128 v, int scale) {
+  state->fast = true;
+  state->fast_scale = scale;
+  state->fast_lo = (uint64)(u128)v;
+  state->fast_hi = (int64)((u128)v >> 64);
+}
+
+/* Add state's decimal64 sum into sumX, before sumX is read. */
+static void agg_flush(dec_agg_t *state) {
+  wide_t w;
+
+  if (!state->fast)
+    return;
+  w = wide_of_int(agg_fast_sum(state));
+  w.scale = state->fast_scale;
+  state->sumX = wide_add(state->sumX, w, false);
+  state->fast = false;
+}
+
 /* Count x into state. */
 static void agg_accum(dec_agg_t *state, const wide_t &x) {
-  state->N++;
-  if (x.scale > state->max_scale) {
-    state->max_scale = x.scale;
-    state->max_scale_count = 1;
-  } else if (x.scale == state->max_scale)
-    state->max_scale_count++;
+  agg_count(state, x.scale);
   state->sumX = wide_add(state->sumX, x, false);
   if (state->calc_sumX2)
     state->sumX2 = wide_add(state->sumX2, wide_mul(x, x), false);
@@ -2219,6 +2283,7 @@ static void agg_accum(dec_agg_t *state, const wide_t &x) {
  * and the aggregate must be computed again.
  */
 static bool agg_discard(dec_agg_t *state, const wide_t &x) {
+  agg_flush(state);
   if (x.scale == state->max_scale) {
     if (state->max_scale_count > 1 || state->max_scale == 0)
       state->max_scale_count--;
@@ -2345,6 +2410,10 @@ static Datum agg_combine(FunctionCallInfo fcinfo) {
     elog(ERROR, "aggregate function called in non-aggregate context");
   state1 = PG_ARGISNULL(0) ? NULL : (dec_agg_t *)PG_GETARG_POINTER(0);
   state2 = PG_ARGISNULL(1) ? NULL : (dec_agg_t *)PG_GETARG_POINTER(1);
+  if (state1 != NULL)
+    agg_flush(state1);
+  if (state2 != NULL)
+    agg_flush(state2);
   if (state2 == NULL)
     PG_RETURN_POINTER(state1);
   if (state1 == NULL) {
@@ -2406,6 +2475,7 @@ static Datum agg_serialize(FunctionCallInfo fcinfo) {
   if (!AggCheckCallContext(fcinfo, NULL))
     elog(ERROR, "aggregate function called in non-aggregate context");
   state = (dec_agg_t *)PG_GETARG_POINTER(0);
+  agg_flush(state);
   pq_begintypsend(&buf);
   pq_sendbyte(&buf, state->calc_sumX2 ? 1 : 0);
   pq_sendint64(&buf, state->N);
@@ -2467,7 +2537,12 @@ Datum int8_avg_deserialize(PG_FUNCTION_ARGS) { return agg_deserialize(fcinfo); }
 
 /* The state of a final function, argument 0, or NULL. */
 static dec_agg_t *final_state(FunctionCallInfo fcinfo) {
-  return PG_ARGISNULL(0) ? NULL : (dec_agg_t *)PG_GETARG_POINTER(0);
+  dec_agg_t *state =
+      PG_ARGISNULL(0) ? NULL : (dec_agg_t *)PG_GETARG_POINTER(0);
+
+  if (state != NULL)
+    agg_flush(state);
+  return state;
 }
 
 /* sum: the sum, or null of no values; past 36 digits is an error. */
@@ -3249,4 +3324,109 @@ Datum jsonb_decimal64(PG_FUNCTION_ARGS) {
 Datum decimal64_cash(PG_FUNCTION_ARGS) {
   return DirectFunctionCall1(numeric_cash,
                              NumericGetDatum(d64_numeric(PG_GETARG_DATUM(0))));
+}
+
+/*
+ * a and b's values at the larger of their scales, which 128 bits hold:
+ * their sum or difference, at that scale, is a decimal128 as it is.
+ */
+static int d64_common_scale(Datum a, Datum b, i128 *x, i128 *y) {
+  int sa = d64_scale(a), sb = d64_scale(b);
+
+  *x = d64_value(a);
+  *y = d64_value(b);
+  for (; sa < sb; sa++)
+    *x *= 10;
+  for (; sb < sa; sb++)
+    *y *= 10;
+  return sa;
+}
+
+/* a + b, a decimal128, in 128 bits: no wide path, one palloc. */
+Datum decimal64_add(PG_FUNCTION_ARGS) {
+  i128 x, y;
+  int s = d64_common_scale(PG_GETARG_DATUM(0), PG_GETARG_DATUM(1), &x, &y);
+
+  PG_RETURN_NUMERIC(dec_make(x + y, s));
+}
+
+/* a - b, a decimal128, in 128 bits. */
+Datum decimal64_sub(PG_FUNCTION_ARGS) {
+  i128 x, y;
+  int s = d64_common_scale(PG_GETARG_DATUM(0), PG_GETARG_DATUM(1), &x, &y);
+
+  PG_RETURN_NUMERIC(dec_make(x - y, s));
+}
+
+/* a * b at the sum of their scales, a decimal128, in 128 bits. */
+Datum decimal64_mul(PG_FUNCTION_ARGS) {
+  Datum a = PG_GETARG_DATUM(0), b = PG_GETARG_DATUM(1);
+
+  PG_RETURN_NUMERIC(dec_make((i128)d64_value(a) * d64_value(b),
+                             d64_scale(a) + d64_scale(b)));
+}
+
+/* a / b at numeric's scale, a decimal128, without casting either. */
+Datum decimal64_div(PG_FUNCTION_ARGS) {
+  wide_t a = d64_wide(PG_GETARG_DATUM(0)), b = d64_wide(PG_GETARG_DATUM(1));
+
+  if (wide_is_zero(b))
+    division_by_zero(NULL);
+  PG_RETURN_NUMERIC(dec_from_wide(wide_div(a, b, select_div_scale(a, b),
+                                           false)));
+}
+
+/* -a. */
+Datum decimal64_uminus(PG_FUNCTION_ARGS) {
+  Datum a = PG_GETARG_DATUM(0);
+
+  return d64_make(-d64_value(a), d64_scale(a));
+}
+
+/* |a|. */
+Datum decimal64_abs(PG_FUNCTION_ARGS) {
+  Datum a = PG_GETARG_DATUM(0);
+
+  return d64_make(d64_value(a) < 0 ? -d64_value(a) : d64_value(a),
+                  d64_scale(a));
+}
+
+/*
+ * Accumulate a decimal64 for sum and avg: into a 128-bit sum while the
+ * scale stays, without the wide path; sumX takes it when the scale
+ * changes, the sum would overflow, or sumX is read (agg_flush()).
+ */
+Datum decimal64_avg_accum(PG_FUNCTION_ARGS) {
+  dec_agg_t *state = agg_state_arg(fcinfo, false);
+  Datum d;
+  int s;
+  i128 sum;
+
+  if (PG_ARGISNULL(1))
+    PG_RETURN_POINTER(state);
+  d = PG_GETARG_DATUM(1);
+  s = d64_scale(d);
+  agg_count(state, s);
+  if (!state->fast || state->fast_scale != s) {
+    agg_flush(state);
+    agg_set_fast(state, 0, s);
+  }
+  if (__builtin_add_overflow(agg_fast_sum(state), (i128)d64_value(d), &sum)) {
+    agg_flush(state);
+    sum = d64_value(d);
+  }
+  agg_set_fast(state, sum, s);
+  PG_RETURN_POINTER(state);
+}
+
+/* Take a decimal64 out of a moving aggregate; null to compute it again. */
+Datum decimal64_accum_inv(PG_FUNCTION_ARGS) {
+  dec_agg_t *state;
+
+  if (PG_ARGISNULL(0))
+    elog(ERROR, "decimal64_accum_inv called with NULL state");
+  state = (dec_agg_t *)PG_GETARG_POINTER(0);
+  if (!PG_ARGISNULL(1) && !agg_discard(state, d64_wide(PG_GETARG_DATUM(1))))
+    PG_RETURN_NULL();
+  PG_RETURN_POINTER(state);
 }

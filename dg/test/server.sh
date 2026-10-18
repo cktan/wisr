@@ -2518,7 +2518,8 @@ local_psql -c "comment on table dp1.t is 'x'" 2>&1 |
 
 # Verify that psql's \df, \do, \dC, \dT and \dx run: pg_proc, pg_operator,
 # pg_cast and pg_type are the rows compiled in, pg_extension empty.
-# 1. \df lists abs's six functions, and pg_get_keywords's OUT arguments.
+# 1. \df lists abs's seven functions, numeric's twice as both decimals
+#    are named numeric, and pg_get_keywords's OUT arguments.
 # 2. \do lists the operators named ->; \dC the casts to and from inet;
 #    \dT the type int2vector; \dx no extension.
 local_psql -c '\df abs' -c '\df pg_get_keywords' -c '\do -> ' \
@@ -2527,6 +2528,7 @@ cat > "$work/df.expected" << 'OUT'
 pg_catalog|abs|bigint|bigint|func
 pg_catalog|abs|double precision|double precision|func
 pg_catalog|abs|integer|integer|func
+pg_catalog|abs|numeric|numeric|func
 pg_catalog|abs|numeric|numeric|func
 pg_catalog|abs|real|real|func
 pg_catalog|abs|smallint|smallint|func
