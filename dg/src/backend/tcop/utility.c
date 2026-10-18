@@ -1691,6 +1691,9 @@ static void ExecDropStmt(DropStmt *stmt, bool isTopLevel) {
     smstore_drop_sequences(stmt);
     break;
   case OBJECT_VIEW:
+    /* A view is sm's (access/smstore.h). */
+    smstore_drop_views(stmt);
+    break;
   case OBJECT_MATVIEW:
   case OBJECT_FOREIGN_TABLE:
     RemoveRelations(stmt);

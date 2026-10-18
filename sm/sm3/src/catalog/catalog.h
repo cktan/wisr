@@ -161,7 +161,10 @@ int decode_sequence(std::string_view blob, sequence_rec_t &rec);
 /* A constraint's value: a foreign key's (FOREIGNKEY.md §3). */
 int encode_constraint(const fkey_rec_t &rec, std::string &blob);
 int decode_constraint(std::string_view blob, fkey_rec_t &rec);
-/* A view's value: the view, then each relation it reads (VIEW.md §3). */
+/*
+ * A view's value: the view, each relation it reads, then its query in
+ * pieces (VIEW.md §3).
+ */
 int encode_view(const view_def_t &rec, std::string &blob);
 int decode_view(std::string_view blob, view_def_t &rec);
 
@@ -205,6 +208,7 @@ enum class part_t {
   fkey_pair,
   view,
   view_read,
+  view_query,
 };
 
 /* A part's schema, and its layout, which the codec encodes by. */

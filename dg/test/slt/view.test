@@ -1,0 +1,325 @@
+# Verify that a view reads as its query does: over a table, a join, an
+# aggregate and another view, with its columns named by the query or by
+# CREATE VIEW, and that it sees the table's rows as they are now.
+# 1. Make t and u, and views over them of each kind.
+# 2. Query each, then change t's rows and query them again.
+
+statement ok
+create table t (a int4, b text)
+
+statement ok
+create table u (a int4, c int4)
+
+statement ok
+insert into t values (1, 'one'), (2, 'two'), (3, 'three')
+
+statement ok
+insert into u values (1, 10), (2, 20), (2, 21)
+
+statement ok
+create view v as select a, b from t where a > 1
+
+statement ok
+create view vj (x, y, z) as select t.a, t.b, u.c from t join u on t.a = u.a
+
+statement ok
+create view va as select a, count(*) as n, sum(c) as s from u group by a
+
+statement ok
+create view vv as select b from v where a < 3
+
+query IT rowsort
+select * from v
+----
+2	two
+3	three
+
+query ITI rowsort
+select x, y, z from vj
+----
+1	one	10
+2	two	20
+2	two	21
+
+query III rowsort
+select a, n, s from va
+----
+1	1	10
+2	2	41
+
+query T rowsort
+select * from vv
+----
+two
+
+query IT rowsort
+select v.a, vj.y from v join vj on v.a = vj.x where vj.z > 20
+----
+2	two
+
+statement ok
+insert into t values (4, 'four')
+
+statement ok
+delete from t where a = 2
+
+query IT rowsort
+select * from v
+----
+3	three
+4	four
+
+query T rowsort
+select * from vv
+----
+
+# Verify a view's name is a relation's, and what CREATE VIEW refuses.
+# 1. A view named as a table, or a table named as a view, is refused.
+# 2. More column names than the query has columns is refused.
+# 3. A view of a relation that is not there is refused.
+
+statement error relation "t" already exists
+create view t as select 1
+
+statement error relation "v" already exists
+create table v (a int4)
+
+statement error relation "v" already exists
+create view v as select 1
+
+statement error CREATE VIEW specifies more column names than columns
+create view w (p, q, r) as select a, b from t
+
+statement error relation "nosuch" does not exist
+create view w as select * from nosuch
+
+# Verify CREATE OR REPLACE VIEW: a new query, columns added at the end,
+# and what it may not change.
+# 1. Replace v with a query that adds a column; it reads the new query.
+# 2. Dropping a column, renaming one or changing its type is refused.
+# 3. Replacing a table is refused.
+
+statement ok
+create or replace view v as select a, b, a * 10 as a10 from t where a > 0
+
+query ITI rowsort
+select * from v
+----
+1	one	10
+3	three	30
+4	four	40
+
+statement error cannot drop columns from view
+create or replace view v as select a from t
+
+statement error cannot change name of view column "b" to "bb"
+create or replace view v as select a, b as bb, a * 10 as a10 from t
+
+statement error cannot change data type of view column "a" from integer to bigint
+create or replace view v as select a::int8 as a, b, a * 10 as a10 from t
+
+statement error "t" is not a view
+create or replace view t as select 1 as a
+
+# Verify a view's DDL is transactional.
+# 1. Make a view and roll back: it is gone.
+# 2. Drop a view and roll back: it is there, as it was.
+
+statement ok
+begin
+
+statement ok
+create view w as select a from t
+
+query I rowsort
+select * from w
+----
+1
+3
+4
+
+statement ok
+rollback
+
+statement error relation "w" does not exist
+select * from w
+
+statement ok
+begin
+
+statement ok
+drop view vv
+
+statement ok
+rollback
+
+query T rowsort
+select * from vv
+----
+one
+
+# Verify what depends on a view, and on what it reads, is kept.
+# 1. DROP TABLE t, DROP VIEW v, and DROP COLUMN of a column a view reads
+#    are refused; DROP COLUMN of one no view reads is not.
+# 2. DROP VIEW of a table, or DROP TABLE of a view, is refused.
+# 3. DROP VIEW IF EXISTS of no view is a notice.
+
+statement error cannot drop table t because other objects depend on it
+drop table t
+
+statement error cannot drop view v because other objects depend on it
+drop view v
+
+statement error cannot drop column c of table u because other objects depend on it
+alter table u drop column c
+
+statement ok
+alter table t add column d int4
+
+statement ok
+alter table t drop column d
+
+statement error "t" is not a view
+drop view t
+
+statement error "v" is not a table
+drop table v
+
+statement ok
+drop view if exists nosuch
+
+statement error view "nosuch" does not exist
+drop view nosuch
+
+# Verify CASCADE drops what reads what is dropped, and RESTRICT does not.
+# 1. DROP VIEW v, vv drops both, the reader named with it.
+# 2. DROP TABLE u CASCADE drops vj and va with it.
+# 3. DROP COLUMN ... CASCADE drops the view reading the column.
+# 4. DROP SCHEMA ... CASCADE drops its views, and a view elsewhere that
+#    reads one of its tables.
+
+statement ok
+drop view v, vv
+
+statement error relation "v" does not exist
+select * from v
+
+statement ok
+drop table u cascade
+
+statement error relation "vj" does not exist
+select * from vj
+
+statement error relation "va" does not exist
+select * from va
+
+statement ok
+create view vb as select a, b from t
+
+statement ok
+alter table t drop column b cascade
+
+statement error relation "vb" does not exist
+select * from vb
+
+statement ok
+create schema s
+
+statement ok
+create table s.r (k int4)
+
+statement ok
+insert into s.r values (7)
+
+statement ok
+create view s.rv as select k from s.r
+
+statement ok
+create view outside as select k from s.rv
+
+query I rowsort
+select * from outside
+----
+7
+
+statement error cannot drop schema s because other objects depend on it
+drop schema s
+
+statement ok
+drop schema s cascade
+
+statement error relation "outside" does not exist
+select * from outside
+
+# Verify a simple view is updatable through to its table.
+# 1. Make a view over t that leaves out a column, and INSERT, UPDATE and
+#    DELETE through it.
+# 2. Confirm t holds what they did.
+
+statement ok
+create table w (k int4, x text, y int4)
+
+statement ok
+create view wv as select k, x from w where k < 100
+
+statement ok
+insert into wv values (1, 'a'), (2, 'b')
+
+statement ok
+update wv set x = 'bb' where k = 2
+
+statement ok
+delete from wv where k = 1
+
+query ITI rowsort
+select k, x, y from w
+----
+2	bb	NULL
+
+# Verify a prepared query over a view is planned again when the view is
+# replaced.
+# 1. Prepare a query over wv, and run it.
+# 2. Replace wv; the prepared query reads the new definition.
+
+statement ok
+prepare q as select * from wv
+
+query IT rowsort
+execute q
+----
+2	bb
+
+statement ok
+create or replace view wv as select k, x || '!' as x from w
+
+query IT rowsort
+execute q
+----
+2	bb!
+
+# Verify what digres refuses of views, for now.
+# 1. A temporary view, and a view's options, are refused.
+
+skipif digres
+statement ok
+create temporary view tv as select 1 as a
+
+onlyif digres
+statement error temporary views are not supported yet
+create temporary view tv as select 1 as a
+
+skipif digres
+statement ok
+create view ov with (security_barrier) as select k from w
+
+onlyif digres
+statement error view options are not supported yet
+create view ov with (security_barrier) as select k from w
+
+skipif digres
+statement ok
+create view cv as select k from w with check option
+
+onlyif digres
+statement error view options are not supported yet
+create view cv as select k from w with check option

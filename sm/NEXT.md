@@ -109,17 +109,15 @@ Owed, and blocking nothing above:
   `../dg/src/backend/access/sm/smstore.c`, `../dg/WORKNOTE.md`
   step 161).
 
-- **Views.** `CREATE VIEW` fails in digres: `a relation's
-  storage cannot be made: digres has no catalog table`
-  (`DefineView()` still makes a PostgreSQL relation). In the
-  whole of SQLite's corpus, 5,675,180 records
-  (`../dg/test/slt/README.md`), every one digres fails and
-  PostgreSQL 18 passes, 48,608, uses a view. A view needs a
-  place in sm3's catalog for its query, a tree digres
-  serializes, as an index's predicate is kept
-  (`sm_cat_create_index`'s `eval`), and digres's rewriter to
-  expand it; `information_schema` waits for the same
-  (`../dg/SYSCATALOG.md`). Designed, for review: `VIEW.md`.
+- **Views, the rest of them** (`VIEW.md` §10). CREATE, OR
+  REPLACE, DROP and the cascades are built, sm3's and digres's
+  (`../dg/WORKNOTE.md` step 231), and of SQLite's sample digres
+  now fails nothing PostgreSQL 18 passes. Not built: a view's
+  rows in the catalog relations, so `\d`, `\dv` and
+  `pg_get_viewdef()`; ALTER VIEW; a view's options, `WITH
+  CHECK OPTION` among them; and a temporary view.
+  `information_schema` waits for the catalog relations
+  (`../dg/SYSCATALOG.md`).
 - **What foreign keys left** (`FOREIGNKEY.md`,
   `../dg/WORKNOTE.md` step 177): a DEFERRABLE one is refused,
   as a row trigger on a table in sm is given its rows from a

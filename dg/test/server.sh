@@ -1623,6 +1623,47 @@ local_psql -c 'create sequence q2' -c "select nextval('q2')" \
   grep -q 'currval of sequence "q2" is not yet defined' ||
   fail "discard sequences forgets the draws"
 
+# Verify that a view's lock and what it reads hold across sessions
+# (../sm/VIEW.md section 7): a view's drop waits for a transaction reading
+# it, a replace is seen by another session's prepared query, and a table's
+# drop waits for a view being made on it, then refuses.
+# 1. Make svt (a) with rows 1 and 2, and views sv1 and sv2 over it.
+# 2. A reads sv1 in a transaction; B's DROP VIEW sv1 waits until A commits,
+#    then drops it.
+# 3. A prepares a query over sv2 and runs it; B replaces sv2; A's prepared
+#    query reads the new definition.
+# 4. A makes sv3 over svt in a transaction; B's DROP TABLE svt waits until A
+#    commits, then is refused; with CASCADE it tells of the views it drops.
+local_psql -c 'create table svt (a int4)' -c 'insert into svt values (1), (2)' \
+  -c 'create view sv1 as select a from svt' \
+  -c 'create view sv2 as select a from svt' > "$work/view.out" 2>&1
+held_start va
+held_send va "begin; select 'count ' || count(*) from sv1;"
+held_wait va "count 2" || fail "view: a reader"
+bg_start vdrop -c 'drop view sv1'
+bg_waiting vdrop || fail "view: a drop waits for its reader"
+held_send va "commit;"
+bg_end vdrop || fail "view: the drop ends"
+grep -qx "DROP VIEW" "$work/vdrop.out" || fail "view: dropped after its reader"
+held_send va "prepare vq as select 'got ' || sum(a) from sv2; execute vq;"
+held_wait va "got 3" || fail "view: a prepared query"
+local_psql -c 'create or replace view sv2 as select a * 10 as a from svt' \
+  >> "$work/view.out" 2>&1
+held_send va "execute vq;"
+held_wait va "got 30" || fail "view: a prepared query sees the replace"
+held_send va "begin; create view sv3 as select a from svt; select 'made';"
+held_wait va "made" || fail "view: made in a transaction"
+bg_start vtab -c 'drop table svt'
+bg_waiting vtab || fail "view: a table's drop waits for a view's create"
+held_send va "commit;"
+held_end va
+# Its psql fails, as it should: the message below says it ended.
+bg_end vtab
+grep -q 'cannot drop table svt because other objects depend on it' \
+  "$work/vtab.out" || fail "view: a table's drop is refused"
+local_psql -c 'drop table svt cascade' 2>&1 |
+  grep -q 'drop cascades to view sv' || fail "view: drop table cascade"
+
 # Verify that a SERIAL column draws from a sequence its column owns, which
 # goes with the table.
 # 1. sr1's serial, sr2's bigserial and smallserial number their rows from

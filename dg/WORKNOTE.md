@@ -6734,3 +6734,51 @@ each under a `/* -- name -- */` heading:
 - `tcb_t`'s members are now freed in another order. Each
   deleter is a plain `delete`, and `tcb_free()` clears `tcb`
   first, so none reaches another member.
+
+## Step 231: views are sm's
+
+`../sm/VIEW.md` is the design; this is its second step, on sm3's
+views (`../sm/sm3/test/test_view.cc`).
+
+- **CREATE [OR REPLACE] VIEW** keeps PostgreSQL's parse analysis
+  and checks, and `DefineVirtualRelation()` hands the query to
+  `smstore_create_view()` or `smstore_replace_view()` in place
+  of `DefineRelation()` and its rule. sm keeps the query as
+  `pg_rewrite`'s `ev_action` would hold it, `nodeToString()` of
+  a list of the one Query, and what it reads, found by
+  `find_expr_references()`, the walker `recordDependencyOnExpr()`
+  uses, its relations and a table's columns kept.
+- **The relation cache builds a view's entry** from sm's record
+  (`RelationBuildSmViewDesc()`): its columns its query's select
+  list, its rule `_RETURN`, `ON SELECT DO INSTEAD` the query, the
+  view's oid its own. The rewriter, planner and executor are
+  PostgreSQL's: a simple view's INSERT, UPDATE and DELETE reach
+  its table.
+- **A view has a lock in sm**: `smstore_lock_relation()` takes it
+  where an oid opens no table, and the version it reads under
+  the lock keeps the entry current, so another session's replace
+  is seen, a prepared query over the view planned again. The
+  views a transaction locked are kept with its open tables, and
+  go with them.
+- **DROP VIEW is `smstore_drop_views()`.** What reads a view, a
+  table, or a column of one is found through sm, transitively:
+  RESTRICT is PostgreSQL's error, naming each view; CASCADE its
+  notice, and the readers go first. DROP TABLE, ALTER TABLE ...
+  DROP COLUMN and DROP SCHEMA cascade to views; a schema's own
+  views go before its tables.
+- **`get_rte_attribute_is_dropped()`** reads a relation's
+  descriptor, not its `pg_attribute` row, which a table in sm
+  does not have: the rewriter asks it of a view's join.
+- **Refused, not supported yet**: a temporary view, and a view's
+  options, `WITH CHECK OPTION` among them.
+- **Not done**: a view's rows in the catalog relations
+  (`pg_class`, `pg_attribute`, `pg_rewrite`), so `\d` and
+  `pg_get_viewdef()`; ALTER VIEW.
+- **sm3 keeps a view's query in pieces** of 60,000 bytes, a part
+  each: a part is an sm2 tuple, at most 65,535 bytes, and one of
+  SQLite's views serializes to 100 KB.
+- `test/slt/view.test`, its answers PostgreSQL 18's; `server.sh`
+  checks a view's lock and what it reads across sessions.
+- **SQLite's sample** (`make slt-corpus`, step 164): digres
+  fails nothing PostgreSQL 18 passes, of 1,495,198 records; it
+  failed 24,408 more before, every one a view's.

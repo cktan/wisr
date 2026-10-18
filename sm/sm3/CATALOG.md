@@ -134,6 +134,9 @@ kinds' values are on disk, so frozen.
   none. Its owner is then fixed: `own_sequence` on it is
   `SM_ERR_INUSE`. The column names it so the host finds it
   without reading the namespace's sequences.
+- **A view's query is in pieces**, its parts in order: a part
+  is an sm2 tuple, at most 65,535 bytes, and a query may be
+  longer. SQLite's corpus has one of 100 KB.
 - **A view is one entry**, its reads in its value, and its
   name a `NAME` key in its namespace, shared with the
   relations there. It has a table's oid lock, on its oid. What
@@ -162,7 +165,7 @@ INDEX value       = index | key × nkey | include × ninclude | read × nread
 INDEX_STATE value = index state
 SEQUENCE value    = sequence
 CONSTRAINT value  = constraint | fkey | fkey pair × npairs
-VIEW value        = view | view read × nread
+VIEW value        = view | view read × nread | view query × npiece
 ```
 
 | Part | Fields |
@@ -182,8 +185,9 @@ VIEW value        = view | view read × nread
 | constraint | oid `int8`, name `text`, type `int2` (`f`), validated `bool`, host `bytea` or null |
 | fkey | parent table `int8`, parent index `int8`, npairs `int4`, on update `int2`, on delete `int2`, match `int2`, deferrable `bool`, deferred `bool` |
 | fkey pair | child attnum `int4`, parent attnum `int4` |
-| view | namespace `int8`, name `text`, query `bytea`: the host's, opaque; options `bytea` or null: the host's; nread `int4` |
+| view | namespace `int8`, name `text`, options `bytea` or null: the host's; nread `int4`, npiece `int4` |
 | view read | relation `int8`, attnum `int4`: a table's column, 0-based, or -1 for the relation whole |
+| view query | a piece of the host's query, opaque, `bytea` of at most 60,000 bytes |
 
 - **A part evolves as a tuple does.** A field appended to a
   part's schema reads as its missing value in a value written

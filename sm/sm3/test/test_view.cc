@@ -140,6 +140,32 @@ TEST_CASE("a view is kept, and loads back") {
         std::vector<std::string>{"t"});
 }
 
+TEST_CASE("a view's query longer than a tuple is kept whole") {
+  // Verify a query past a part's 65535 bytes is kept in pieces
+  // (CATALOG.md §3).
+  // 1. Make v with a query of 200,000 bytes, and one of 60,000, a
+  //    piece's length exactly.
+  // 2. Restart: both load back byte for byte.
+  views_t f;
+  std::string longq(200000, 'q'), exact(60000, 'e');
+  for (size_t i = 0; i < longq.size(); i += 7) {
+    longq[i] = static_cast<char>('a' + i % 26);
+  }
+  uint64_t v = 0, w = 0;
+  f.begin(f.a);
+  REQUIRE(sm3::create_view(f.a, sm3::nsp_public, "v",
+                           view_of({{f.t, 0}}, longq), v) == 0);
+  REQUIRE(sm3::create_view(f.a, sm3::nsp_public, "w", view_of({}, exact), w) ==
+          0);
+  f.commit(f.a);
+
+  f.reload();
+  REQUIRE(sm3::cat_get_view(f.a, v) != nullptr);
+  REQUIRE(sm3::cat_get_view(f.a, w) != nullptr);
+  CHECK(sm3::cat_get_view(f.a, v)->query == longq);
+  CHECK(sm3::cat_get_view(f.a, w)->query == exact);
+}
+
 TEST_CASE("a view's name is a relation's") {
   // Verify a view shares its namespace's names with the relations.
   // 1. A view named t, the table's name, is SM_ERR_DUPKEY.

@@ -1,8 +1,10 @@
 # VIEW — views: sm3 keeps the query, the host expands it
 
 **Status: sm3's part and `sm.h`'s are built** (§3 to §7,
-`sm3/test/test_view.cc`), as proposed in §11. Not yet:
-digres's (§8).
+`sm3/test/test_view.cc`), as proposed in §11, and digres's
+CREATE, query and DROP (§8, `../dg/WORKNOTE.md` step 231).
+Not yet: the catalog relations, ALTER VIEW, a view's options
+and a temporary view (§10, steps 3 and 4).
 
 `CREATE VIEW` fails in digres: `DefineView()` still makes a
 PostgreSQL relation, which digres has no catalog for
@@ -71,13 +73,14 @@ A new kind in `sm3/CATALOG.md` §2, and a part in §3:
 | `VIEW` | 13 | oid `int8` | a view: its namespace, name, query, options, and what it reads |
 
 ```
-VIEW value = view | read × nread
+VIEW value = view | read × nread | query × npiece
 ```
 
 | Part | Fields |
 | --- | --- |
-| view | namespace `int8`, name `text`, query `bytea`, options `bytea` or null, nread `int4` |
+| view | namespace `int8`, name `text`, options `bytea` or null, nread `int4`, npiece `int4` |
 | view read | relation `int8`, attnum `int4` |
+| view query | a piece of the query, `bytea`, at most 60,000 bytes |
 
 - **A read is a relation and a column**: a table's column,
   0-based as sm's attnums are, or -1 for the relation as a
@@ -88,6 +91,9 @@ VIEW value = view | read × nread
 - **Its name is a relation's**: a `NAME` key in its namespace,
   kind `VIEW`, shared with the namespace's tables, indexes and
   sequences, so a name taken fails with `SM_ERR_DUPKEY`.
+- **The query is in pieces**, in order. A part is an sm2
+  tuple, at most 65,535 bytes, and a query is not bounded:
+  one of SQLite's corpus serializes to 100 KB.
 - **The query and the options are opaque**: kept and handed
   back, never run, never parsed. Options are the host's
   `reloptions`: `check_option`, `security_barrier`,
@@ -208,10 +214,11 @@ struct sm_view_def_t {
   `WITH CHECK OPTION` among them; `DefineVirtualRelation()`
   calls `smstore_create_view()` or `smstore_replace_view()`
   in place of `DefineRelation()` and `StoreViewQuery()`. The
-  query is `nodeToString()` of the analyzed `Query`; the reads
-  are found by the walker `recordDependencyOnExpr()` uses,
-  `find_expr_references_walker()`, its relations and columns
-  kept and the rest dropped.
+  query is `nodeToString()` of a list of the analyzed `Query`,
+  as `ev_action` holds it; the reads are found by the walker
+  `recordDependencyOnExpr()` uses, through
+  `find_expr_references()`, its relations and columns kept and
+  the rest dropped.
 - **Lookup**: `smstore_relation_oid()` finds a view after a
   table, an index and a sequence.
 - **The relation cache**: `RelationBuildSmDesc()` builds a

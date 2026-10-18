@@ -3050,19 +3050,16 @@ bool get_rte_attribute_is_dropped(RangeTblEntry *rte, AttrNumber attnum) {
   switch (rte->rtekind) {
   case RTE_RELATION: {
     /*
-     * Plain relation RTE --- get the attribute's catalog entry
+     * Plain relation RTE --- its descriptor, which digres reads in place of
+     * the attribute's pg_attribute row: a relation in sm has none.  The
+     * caller has it locked (AcquireRewriteLocks()).
      */
-    HeapTuple tp;
-    Form_pg_attribute att_tup;
+    Relation rel = relation_open(rte->relid, NoLock);
 
-    tp = SearchSysCache2(ATTNUM, ObjectIdGetDatum(rte->relid),
-                         Int16GetDatum(attnum));
-    if (!HeapTupleIsValid(tp)) /* shouldn't happen */
-      elog(ERROR, "cache lookup failed for attribute %d of relation %u", attnum,
-           rte->relid);
-    att_tup = (Form_pg_attribute)GETSTRUCT(tp);
-    result = att_tup->attisdropped;
-    ReleaseSysCache(tp);
+    if (attnum <= 0 || attnum > RelationGetNumberOfAttributes(rel))
+      elog(ERROR, "invalid attribute %d of relation %u", attnum, rte->relid);
+    result = TupleDescAttr(RelationGetDescr(rel), attnum - 1)->attisdropped;
+    relation_close(rel, NoLock);
   } break;
   case RTE_SUBQUERY:
   case RTE_TABLEFUNC:
