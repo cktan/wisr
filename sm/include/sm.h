@@ -919,8 +919,9 @@ int sm_cat_rename_view(sm_session_t* session, uint64_t oid, const char* name);
  * holds, to sm_cat_drop_table, sm_cat_drop_column and
  * sm_cat_drop_namespace. Another session's temporary view, a reader
  * sm_cat_view_readers gives as other, takes no lock: once this
- * transaction commits, its session drops it, and its own temporary
- * views that read it, at its next transaction (VIEW.md section 12.4).
+ * transaction commits, its session sees it no more, nor its own
+ * temporary views that read it, and drops them at its next
+ * transaction (VIEW.md section 12.4).
  */
 int sm_cat_drop_view(sm_session_t* session, uint64_t oid);
 

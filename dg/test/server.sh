@@ -1709,6 +1709,38 @@ grep -q 'cannot drop table svt because other objects depend on it' \
 local_psql -c 'drop table svt cascade' 2>&1 |
   grep -q 'drop cascades to view sv' || fail "view: drop table cascade"
 
+# Verify that another session's temporary views hold what they read, and go
+# with it as PostgreSQL's DROP ... CASCADE takes them (../sm/VIEW.md section
+# 12).
+# 1. Make tvt (a) and tpv over it; A makes temporary ttv over tpv, a
+#    permanent view, and ttw over ttv, a temporary one, and reads ttw.
+# 2. B's DROP TABLE tvt is refused, naming A's views in pg_temp.
+# 3. A begins a transaction and reads tvo; B's DROP TABLE tvt CASCADE drops
+#    tpv and A's views: A's next statement, in that transaction, finds no
+#    ttw, and A makes ttv again.
+local_psql -c 'create table tvt (a int4)' -c 'insert into tvt values (1), (2)' \
+  -c 'create view tpv as select a from tvt' -c 'create table tvo (a int4)' \
+  > "$work/tview.out" 2>&1
+held_start ta
+held_send ta "create temp view ttv as select a from tpv;
+  create temp view ttw as select a * 10 as a from ttv;
+  select 'sum ' || sum(a) from ttw;"
+held_wait ta "sum 30" || fail "temporary view: made and read"
+local_psql -c 'drop table tvt' > "$work/tdrop.out" 2>&1
+grep -q 'view pg_temp.ttw depends on view pg_temp.ttv' "$work/tdrop.out" ||
+  fail "temporary view: another session's drop is refused"
+held_send ta "begin; select 'tvo ' || count(*) from tvo;"
+held_wait ta "tvo 0" || fail "temporary view: a transaction begun"
+local_psql -c 'drop table tvt cascade' > "$work/tdrop.out" 2>&1
+grep -q 'drop cascades to view pg_temp.ttv' "$work/tdrop.out" ||
+  fail "temporary view: another session's drop cascades"
+held_send ta "select * from ttw; rollback;
+  create temp view ttv as select 1 as a; select 'again ' || a from ttv;"
+held_wait ta "again 1" || fail "temporary view: made again"
+held_end ta
+grep -q 'relation "ttw" does not exist' "$work/ta.out" ||
+  fail "temporary view: dropped by another session"
+
 # Verify that a SERIAL column draws from a sequence its column owns, which
 # goes with the table.
 # 1. sr1's serial, sr2's bigserial and smallserial number their rows from

@@ -51,29 +51,51 @@ bool reads(const sm3::view_def_t &def, uint64_t oid) {
 }
 
 /*
- * Drop s's temporary views other sessions have dropped, and those of
- * its own that read them, directly or through others (VIEW.md
- * §12.4): one may have been made on a doomed view while the drop was
- * under way, and read nothing now.
+ * s's temporary views other sessions have dropped, and those of its own
+ * that read them, directly or through others (VIEW.md §12.4): one may
+ * have been made on a doomed view while the drop was under way, and read
+ * nothing now. The caller holds the catalog's mutex.
  */
-void drop_doomed(sm3::session_t *s) {
-  std::unique_lock lock(s->cat->mu);
-  std::vector<uint64_t> todo;
-  todo.swap(s->doomed);
-  s->has_doomed.store(false);
+std::unordered_set<uint64_t> doomed_views(const sm3::session_t *s) {
+  std::unordered_set<uint64_t> out;
+  std::vector<uint64_t> todo = s->doomed;
   while (!todo.empty()) {
     uint64_t v = todo.back();
     todo.pop_back();
-    if (s->temp_views.erase(v) == 0) {
+    if (!out.insert(v).second) {
       continue;
     }
-    s->cat->temp_readers.erase(v);
     for (const auto &[w, def] : s->temp_views) {
       if (reads(*def, v)) {
         todo.push_back(w);
       }
     }
   }
+  return out;
+}
+
+/* Drop s's doomed temporary views (doomed_views), at its begin. */
+void drop_doomed(sm3::session_t *s) {
+  std::unique_lock lock(s->cat->mu);
+  for (uint64_t v : doomed_views(s)) {
+    s->temp_views.erase(v);
+    s->cat->temp_readers.erase(v);
+  }
+  s->doomed.clear();
+  s->has_doomed.store(false);
+}
+
+/*
+ * s's doomed temporary views (doomed_views), which it sees no more, as
+ * PostgreSQL's session sees no relation another has dropped, though its
+ * next begin drops them.
+ */
+std::unordered_set<uint64_t> hidden_views(const sm3::session_t *s) {
+  if (!s->has_doomed.load()) {
+    return {};
+  }
+  std::shared_lock lock(s->cat->mu);
+  return doomed_views(s);
 }
 
 /* Whether s's transaction has made any DDL. */
@@ -977,6 +999,9 @@ static std::map<uint64_t, std::shared_ptr<const view_def_t>>
 views_of(const session_t *s) {
   std::map<uint64_t, std::shared_ptr<const view_def_t>> out(
       s->temp_views.begin(), s->temp_views.end());
+  for (uint64_t v : hidden_views(s)) {
+    out.erase(v);
+  }
   {
     std::shared_lock lock(s->cat->mu);
     out.insert(s->cat->views.begin(), s->cat->views.end());
@@ -1002,7 +1027,7 @@ std::shared_ptr<const view_def_t> cat_get_view(const session_t *s,
   // Its own temporary view, which the catalog never has.
   auto own = s->temp_views.find(oid);
   if (own != s->temp_views.end()) {
-    return own->second;
+    return hidden_views(s).count(oid) ? nullptr : own->second;
   }
   std::shared_lock lock(s->cat->mu);
   auto it = s->cat->views.find(oid);
@@ -1025,8 +1050,9 @@ bool cat_get_view(const session_t *s, uint64_t nspoid, std::string_view name,
   }
   // Its own temporary views: few, and no map of their names.
   if (nspoid == nsp_temp) {
+    std::unordered_set<uint64_t> hidden = hidden_views(s);
     for (const auto &[v, def] : s->temp_views) {
-      if (def->name == name && !own.count(v)) {
+      if (def->name == name && !own.count(v) && !hidden.count(v)) {
         oid = v;
         return true;
       }

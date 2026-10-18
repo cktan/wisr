@@ -108,8 +108,8 @@ Owed, and blocking nothing above:
   now fails nothing PostgreSQL 18 passes; psql's `\dv` and
   `\d+` and `pg_get_viewdef()` read them (step 239), and
   ALTER VIEW renames one and sets its options, `WITH CHECK
-  OPTION` among them (step 240). Not built: a temporary view,
-  which `VIEW.md` §9 says needs a design of its own; ALTER
+  OPTION` among them (step 240), and a temporary view is
+  a session's (`VIEW.md` §12, step 244). Not built: ALTER
   VIEW's `OWNER TO`, `SET SCHEMA` and a column's DEFAULT; and
   `information_schema` (`../dg/SYSCATALOG.md` §7).
 - **What foreign keys left** (`FOREIGNKEY.md`,

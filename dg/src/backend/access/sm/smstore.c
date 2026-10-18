@@ -918,6 +918,8 @@ static void add_view(sm_session_t *s, uint64_t oid, List **out) {
   smstore_relation_t *r;
   int natts = 0, i = 0;
 
+  bool temp;
+
   if (sm_cat_view_def(s, oid, def) != 0)
     return;
   query = linitial_node(Query, (List *)stringToNode(def.query.c_str()));
@@ -925,8 +927,10 @@ static void add_view(sm_session_t *s, uint64_t oid, List **out) {
     if (!tle->resjunk)
       natts++;
   }
-  r = add_relation(out, oid, def.name, (Oid)def.nspoid, RELKIND_VIEW, natts,
-                   false, false);
+  temp = def.nspoid == SM_NSP_TEMP;
+  r = add_relation(out, oid, def.name,
+                   temp ? PG_TEMP_NAMESPACE : (Oid)def.nspoid, RELKIND_VIEW,
+                   natts, false, temp);
   foreach_node(TargetEntry, tle, query->targetList) {
     if (tle->resjunk)
       continue;
@@ -1037,8 +1041,8 @@ List *smstore_relations_of(Oid oid) {
 /*
  * Every relation in sm, palloc'd smstore_relation_t, as this transaction
  * sees them: each schema's tables, their indexes, its views and its
- * sequences, and the session's temporary tables, in pg_temp.  pg_class's rows
- * (catalog/catrel.c).
+ * sequences, and the session's temporary tables and views, in pg_temp.
+ * pg_class's rows (catalog/catrel.c).
  */
 List *smstore_relations(void) {
   sm_session_t *s = xact_session();
@@ -1062,6 +1066,7 @@ List *smstore_relations(void) {
         add_sequence(s, oid, seq.c_str(), (Oid)nspoid, &out);
   }
   add_tables(s, SM_NSP_TEMP, &out);
+  add_views(s, SM_NSP_TEMP, &out);
   return out;
 }
 
@@ -1942,7 +1947,7 @@ static bool view_name(sm_session_t *s, Oid relid, uint64 version, char **name,
   if (def.version == version && def.version != SM_VERSION_OWN)
     return true;
   *name = pstrdup(def.name.c_str());
-  *nspoid = (Oid)def.nspoid;
+  *nspoid = def.nspoid == SM_NSP_TEMP ? PG_TEMP_NAMESPACE : (Oid)def.nspoid;
   return true;
 }
 
@@ -2373,13 +2378,18 @@ void smstore_drop_table(Oid oid) {
     sm_error("drop a table");
 }
 
+static void drop_temp_views(void);
+
 /*
- * Drop every temporary table of the session, in this transaction: DISCARD
- * TEMP's.  sm drops them itself when the session closes its database.
+ * Drop every temporary view and table of the session, in this transaction:
+ * DISCARD TEMP's.  sm drops them itself when the session closes its
+ * database.
  */
 void smstore_drop_temp_tables(void) {
   std::vector<std::string> names;
 
+  /* A view first, as it may read a table. */
+  drop_temp_views();
   if (sm_cat_list_tables(xact_session(), SM_NSP_TEMP, names) != 0)
     sm_error("list the temporary tables");
   for (const std::string &name : names)
@@ -2429,7 +2439,8 @@ smstore_view_t *smstore_view_desc(Oid oid) {
   }
   desc = (smstore_view_t *)palloc(sizeof(smstore_view_t));
   desc->oid = oid;
-  desc->nspoid = (Oid)def.nspoid;
+  desc->nspoid =
+      def.nspoid == SM_NSP_TEMP ? PG_TEMP_NAMESPACE : (Oid)def.nspoid;
   desc->name = pstrdup(def.name.c_str());
   desc->query = pstrdup(def.query.c_str());
   desc->options = def.options.empty() ? NULL : pstrdup(def.options.c_str());
@@ -2573,6 +2584,8 @@ struct reader_t {
  * a view before those that read it, and into order in an order they can be
  * dropped in, a view after those that read it.  attnum, 0-based, takes
  * only the views that read that column of a table; -1 takes every one.
+ * Another session's temporary view is named in pg_temp, the one temporary
+ * schema digres has, where PostgreSQL names the session's own, pg_temp_1.
  */
 static void find_readers(Oid oid, int32_t attnum, const std::string &what,
                          std::vector<reader_t> &found,
@@ -2592,8 +2605,10 @@ static void find_readers(Oid oid, int32_t attnum, const std::string &what,
     if (std::any_of(found.begin(), found.end(),
                     [&](const reader_t &r) { return r.oid == (Oid)v.oid; }))
       continue;
-    found.push_back({(Oid)v.oid, v.name, what});
-    find_readers((Oid)v.oid, -1, "view " + v.name, found, order);
+    std::string name = v.other ? "pg_temp." + v.name : v.name;
+
+    found.push_back({(Oid)v.oid, name, what});
+    find_readers((Oid)v.oid, -1, "view " + name, found, order);
     order.push_back((Oid)v.oid);
   }
 }
@@ -2700,6 +2715,30 @@ void smstore_drop_views(DropStmt *stmt) {
                  stmt->behavior == DROP_CASCADE, dropping, &dropped);
     drop_view_oid(oid);
     dropped.push_back(oid);
+  }
+}
+
+/*
+ * Drop every temporary view of the session, in this transaction, each after
+ * the views that read it.  One dropped already, as a reader of another, has
+ * no name any more.
+ */
+static void drop_temp_views(void) {
+  std::vector<std::string> names;
+
+  if (sm_cat_list_views(xact_session(), SM_NSP_TEMP, names) != 0)
+    sm_error("list the temporary views");
+  for (const std::string &name : names) {
+    Oid oid = smstore_relation_oid(name.c_str(), PG_TEMP_NAMESPACE);
+    std::vector<reader_t> found;
+    std::vector<Oid> order;
+
+    if (!OidIsValid(oid))
+      continue;
+    find_readers(oid, -1, "", found, order);
+    order.push_back(oid);
+    for (Oid v : order)
+      drop_view_oid(v);
   }
 }
 

@@ -1031,8 +1031,9 @@ int rename_view(session_t* session, uint64_t oid, std::string_view name);
  * Drop the view oid, under its lock exclusive. One another view
  * reads is SM_ERR_INUSE. Another session's temporary view, an oid
  * cat_view_readers gives as other, takes no lock: at commit it
- * leaves the register, and its session drops it, with its own
- * temporary views that read it, at its next begin (VIEW.md §12.4).
+ * leaves the register, and its session sees it no more, nor its own
+ * temporary views that read it, and drops them at its next begin
+ * (VIEW.md §12.4).
  */
 int drop_view(session_t* session, uint64_t oid);
 

@@ -1,0 +1,178 @@
+# Verify a session's temporary views (../sm/VIEW.md section 12): made
+# by CREATE TEMP VIEW, or by reading a temporary relation, kept in
+# pg_temp, and read as a view is.
+# 1. Make t, pv over it, and temporary tt.
+# 2. Make tv by CREATE TEMP VIEW over t, tw over tv, a temporary view,
+#    tp over pv, a permanent view, and ti over tt with no TEMP, which
+#    reading tt makes temporary.
+# 3. Read each: they read as views do.
+# 4. pg_class lists them temporary, in the temporary schema.
+
+statement ok
+create table t (a int4, b text)
+
+statement ok
+insert into t values (1, 'one'), (2, 'two'), (3, 'three')
+
+statement ok
+create view pv as select a, b from t where a > 1
+
+statement ok
+create temp table tt (x int4)
+
+statement ok
+insert into tt values (10), (20)
+
+statement ok
+create temp view tv as select a, b from t where a < 3
+
+statement ok
+create temporary view tw as select b from tv where a = 2
+
+statement ok
+create temp view tp as select a from pv
+
+statement ok
+create view ti as select x + 1 as y from tt
+
+query IT rowsort
+select * from tv
+----
+1	one
+2	two
+
+query T
+select * from tw
+----
+two
+
+query I rowsort
+select * from tp
+----
+2
+3
+
+query I rowsort
+select * from ti
+----
+11
+21
+
+query TTTT rowsort
+select relname, relkind, relpersistence,
+       (relnamespace = pg_my_temp_schema())::text
+from pg_class where relname in ('tv', 'tw', 'tp', 'ti', 'pv')
+----
+pv	v	p	false
+ti	v	t	true
+tp	v	t	true
+tv	v	t	true
+tw	v	t	true
+
+query T
+select pg_get_viewdef('tw'::regclass)
+----
+ SELECT b@   FROM tv@  WHERE (a = 2);
+
+# Verify a temporary view's name, and what a permanent view may read.
+# 1. A temporary table named as a temporary view is refused, and the
+#    view named in pg_temp is the temporary one.
+# 2. A permanent view named for a temporary one is made, and the
+#    temporary one hides it until it is dropped.
+# 3. A view in a schema named that reads a temporary view is refused.
+
+statement error relation "tv" already exists
+create temp table tv (c int4)
+
+query I
+select count(*) from pg_temp.tv
+----
+2
+
+statement ok
+create view public.tv as select 42 as answer
+
+query IT rowsort
+select * from tv
+----
+1	one
+2	two
+
+statement error cannot create temporary relation in non-temporary schema
+create view public.bad as select * from tv
+
+# Verify what reads a temporary view, or what it reads, holds it, as
+# DROP ... CASCADE takes it.
+# 1. Dropping tv, t's column a and tt is refused, naming the views.
+# 2. Dropping tv with CASCADE drops tw; then tt with CASCADE drops ti.
+# 3. CREATE OR REPLACE and ALTER VIEW RENAME of a temporary view.
+
+statement error cannot drop view tv because other objects depend on it
+drop view tv
+
+statement error cannot drop column a of table t because other objects depend on it
+alter table t drop column a
+
+statement error cannot drop table tt because other objects depend on it
+drop table tt
+
+statement ok
+drop view tv cascade
+
+statement error relation "tw" does not exist
+select * from tw
+
+statement ok
+drop table tt cascade
+
+statement error relation "ti" does not exist
+select * from ti
+
+query I
+select * from tv
+----
+42
+
+statement ok
+create or replace temp view tp as select a, a * 10 as a10 from pv
+
+query II rowsort
+select * from tp
+----
+2	20
+3	30
+
+statement ok
+alter view tp rename to tp2
+
+query I
+select count(*) from tp2
+----
+2
+
+# Verify DISCARD TEMP drops the temporary views, readers first, and
+# the temporary tables.
+# 1. Make temporary tt2, ta over it and tb over ta.
+# 2. DISCARD TEMP: none of them, nor tp2, is left; pv and t are.
+
+statement ok
+create temp table tt2 (x int4)
+
+statement ok
+create temp view ta as select x from tt2
+
+statement ok
+create temp view tb as select x from ta
+
+statement ok
+discard temp
+
+query I
+select count(*) from pg_class where relname in ('tt2', 'ta', 'tb', 'tp2')
+----
+0
+
+query I
+select count(*) from pv
+----
+2

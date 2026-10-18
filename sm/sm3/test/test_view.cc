@@ -700,9 +700,10 @@ TEST_CASE("another session's drop cascades to its temporary views") {
   // 2. B finds them as readers; it cannot drop tv while tw reads it,
   //    nor pv, nor t; its drops rolled back, by abort and to a
   //    savepoint, leave A's views as they were.
-  // 3. B drops tw, tv, pv, tx and t, readers first, and commits: A
-  //    keeps its views until its next transaction, which has none;
-  //    their names are free again.
+  // 3. B drops tw, tv, pv, tx and t, readers first, and commits: A,
+  //    in a transaction begun before, sees its views no more, by oid,
+  //    by name or listed; its next transaction has none; their names
+  //    are free again.
   views_t f;
   f.begin(f.a);
   uint64_t pv = make_view(f.a, "pv", {{f.t, 0}});
@@ -738,6 +739,7 @@ TEST_CASE("another session's drop cascades to its temporary views") {
         std::vector<std::string>{"tv", "tw", "tx"});
   f.commit(f.a);
 
+  f.begin(f.a);
   f.begin(f.b);
   REQUIRE(sm3::drop_view(f.b, tw) == 0);
   REQUIRE(sm3::drop_view(f.b, tv) == 0);
@@ -745,7 +747,10 @@ TEST_CASE("another session's drop cascades to its temporary views") {
   REQUIRE(sm3::drop_view(f.b, tx) == 0);
   REQUIRE_MESSAGE(sm3::drop_table(f.b, f.t) == 0, sm1::errmsg());
   f.commit(f.b);
-  CHECK(sm3::cat_get_view(f.a, tw) != nullptr);
+  CHECK(sm3::cat_get_view(f.a, tw) == nullptr);
+  CHECK_FALSE(sm3::cat_get_view(f.a, sm3::nsp_temp, "tv", oid));
+  CHECK(sm3::cat_list_views(f.a, sm3::nsp_temp).empty());
+  f.commit(f.a);
   f.begin(f.a);
   CHECK(sm3::cat_list_views(f.a, sm3::nsp_temp).empty());
   CHECK(sm3::cat_get_view(f.a, tv) == nullptr);
@@ -760,8 +765,8 @@ TEST_CASE("a temporary view made on one another session drops goes too") {
   // 1. A makes pv over t and temporary tv over pv.
   // 2. A makes temporary tw over tv, and has not committed; B drops tv
   //    and pv, and commits; then A commits.
-  // 3. A's next transaction has neither tv nor tw, and B finds no
-  //    reader of t.
+  // 3. A sees neither tv nor tw at once, nor in its next transaction,
+  //    and B finds no reader of t.
   views_t f;
   f.begin(f.a);
   uint64_t pv = make_view(f.a, "pv", {{f.t, 0}});
@@ -778,6 +783,8 @@ TEST_CASE("a temporary view made on one another session drops goes too") {
   REQUIRE(sm3::drop_view(f.b, pv) == 0);
   f.commit(f.b);
   f.commit(f.a);
+  CHECK(sm3::cat_list_views(f.a, sm3::nsp_temp).empty());
+  CHECK(sm3::cat_get_view(f.a, tw) == nullptr);
 
   f.begin(f.a);
   CHECK(sm3::cat_list_views(f.a, sm3::nsp_temp).empty());

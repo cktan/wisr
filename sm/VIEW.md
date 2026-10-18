@@ -347,10 +347,10 @@ struct sm_view_def_t {
 
 ## 12. Temporary views
 
-**Status: steps 1 to 3 of §12.7 are built**, the temporary
-view in sm3, the register and the cascade
-(`sm3/test/test_view.cc`), as proposed in §12.8; step 4,
-digres, is not.
+**Status: built**, as proposed in §12.8: in sm3
+(`sm3/test/test_view.cc`) and in digres
+(`../dg/test/slt/view_temp.test`, `../dg/test/server.sh`,
+`../dg/WORKNOTE.md` step 244).
 
 A temporary view is a session's, as a temporary table is: no
 other session sees it, and it is gone when the session ends.
@@ -459,7 +459,11 @@ proposed:
   catalog, with every temporary view of its own that reads
   one, directly or through others: one made on a doomed view
   while the drop was under way, which the drop could not
-  see, as its make took no lock. A query on the view
+  see, as its make took no lock. Until then it sees none of
+  them, in a transaction or out of one, as PostgreSQL's
+  session sees no relation another has dropped: a view kept
+  to its next `begin` would read a relation that is gone.
+  A query on the view
   meanwhile takes `pt` IS: the drop waited out any that held
   it, and one that comes later waits for the drop's X, then
   finds `pt` gone, as it would in PostgreSQL. A drop rolled

@@ -50,11 +50,6 @@ static ObjectAddress DefineVirtualRelation(RangeVar *relation, List *tlist,
   List *attrList;
   ListCell *t;
 
-  /* Not kept in sm yet (../sm/VIEW.md section 9). */
-  if (relation->relpersistence == RELPERSISTENCE_TEMP)
-    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    errmsg("temporary views are not supported yet")));
-
   /*
    * create a list of ColumnDef nodes based on the names and types of the
    * (non-junk) targetlist items from the view's SELECT list.
