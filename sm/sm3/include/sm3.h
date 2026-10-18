@@ -1063,7 +1063,8 @@ std::vector<std::string> cat_list_views(const session_t* s, uint64_t nspoid);
 
 /*
  * The views that read the relation oid, a table or a view, directly,
- * as s sees them, sorted by oid.
+ * as s sees them, and other sessions' temporary views that do, which
+ * s cannot look up (VIEW.md §12.3); sorted by oid.
  */
 std::vector<uint64_t> cat_view_readers(const session_t* s, uint64_t oid);
 

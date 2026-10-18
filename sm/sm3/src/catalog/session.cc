@@ -58,7 +58,8 @@ bool temp_name(const sm3::name_change_t &c) {
 
 /*
  * Whether s's transaction has made DDL the shared catalog is to
- * learn of: any but a temporary table's or a temporary view's.
+ * learn of: any but a temporary table's. A temporary view's change
+ * is in the register of temporary readers (VIEW.md §12.3).
  */
 bool made_shared_ddl(const sm3::session_t *s) {
   auto shared = [](const auto &c) { return !c.temp; };
@@ -66,14 +67,16 @@ bool made_shared_ddl(const sm3::session_t *s) {
          !std::all_of(s->names.begin(), s->names.end(), temp_name) ||
          std::any_of(s->states.begin(), s->states.end(), shared) ||
          !s->collations.empty() || !s->nspaces.empty() ||
-         !s->sequences.empty() || !s->stats.empty() ||
-         std::any_of(s->views.begin(), s->views.end(), shared);
+         !s->sequences.empty() || !s->stats.empty() || !s->views.empty();
 }
 
 /*
  * Move s's changes to temporary tables and views into its temporary
  * catalog, in the order they were made, and take them out of the
- * overlay: the shared catalog never learns of them (TEMPTABLE.md §4).
+ * overlay: the shared catalog never learns of them (TEMPTABLE.md §4),
+ * but for the register of temporary readers, which a temporary view's
+ * change also goes to. The caller holds the catalog's mutex exclusive
+ * when s has one.
  */
 void publish_temp(sm3::session_t *s) {
   for (const sm3::state_change_t &c : s->states) {
@@ -114,8 +117,10 @@ void publish_temp(sm3::session_t *s) {
       continue;
     }
     if (v.def) {
+      s->cat->temp_readers[v.oid] = {s, v.def};
       s->temp_views[v.oid] = std::move(v.def);
     } else {
+      s->cat->temp_readers.erase(v.oid);
       s->temp_views.erase(v.oid);
     }
   }
@@ -241,6 +246,14 @@ void session_close(session_t *s) {
     return;
   }
   drop_from(s, 0);
+  // Its temporary views go, and another session's drop no longer
+  // finds them in the register (VIEW.md §12.3).
+  if (!s->temp_views.empty()) {
+    std::unique_lock lock(s->cat->mu);
+    for (const auto &[v, def] : s->temp_views) {
+      s->cat->temp_readers.erase(v);
+    }
+  }
   delete s;
 }
 
@@ -1026,17 +1039,37 @@ bool temp_name_taken(const session_t *s, std::string_view name, uint64_t oid) {
   return false;
 }
 
-/* The views that read a relation, as s sees them; see sm3.h. */
+/* Whether def reads the relation oid. */
+static bool reads(const view_def_t &def, uint64_t oid) {
+  return std::any_of(def.reads.begin(), def.reads.end(),
+                     [&](const view_read_t &r) { return r.relation == oid; });
+}
+
+/* The views that read a relation, with their definitions; see internal.h. */
+std::map<uint64_t, std::shared_ptr<const view_def_t>>
+view_readers(const session_t *s, uint64_t oid) {
+  std::map<uint64_t, std::shared_ptr<const view_def_t>> out;
+  for (const auto &[v, def] : views_of(s)) {
+    if (reads(*def, oid)) {
+      out[v] = def;
+    }
+  }
+  // Other sessions' temporary views; s's own are in views_of.
+  std::shared_lock lock(s->cat->mu);
+  for (const auto &[v, r] : s->cat->temp_readers) {
+    if (r.session != s && reads(*r.def, oid)) {
+      out[v] = r.def;
+    }
+  }
+  return out;
+}
+
+/* The views that read a relation; see sm3.h. */
 std::vector<uint64_t> cat_view_readers(const session_t *s, uint64_t oid) {
   std::vector<uint64_t> out;
   // The map is in oid order, so out is too.
-  for (const auto &[v, def] : views_of(s)) {
-    for (const view_read_t &r : def->reads) {
-      if (r.relation == oid) {
-        out.push_back(v);
-        break;
-      }
-    }
+  for (const auto &[v, def] : view_readers(s, oid)) {
+    out.push_back(v);
   }
   return out;
 }

@@ -529,8 +529,8 @@ int drop_column(session_t *session, uint64_t oid, std::string_view name) {
     }
   }
   // A column a view reads stays (VIEW.md §5).
-  for (uint64_t v : cat_view_readers(session, oid)) {
-    std::shared_ptr<const view_def_t> def = cat_get_view(session, v);
+  // Another session's temporary view among them (VIEW.md §12.3).
+  for (const auto &[v, def] : view_readers(session, oid)) {
     for (const view_read_t &r : def->reads) {
       if (r.relation == oid && r.attnum == at) {
         return sm1::seterr(sm1::SM_ERR_INUSE, "drop column: view " + def->name +

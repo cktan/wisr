@@ -952,8 +952,9 @@ int sm_cat_list_views(sm_session_t* session, uint64_t nspoid,
 
 /*
  * The views that read the relation oid, a table or a view, directly,
- * sorted by oid, as the session's transaction sees them, into
- * views, which it replaces.
+ * sorted by oid, as the session's transaction sees them, and other
+ * sessions' temporary views that do, which sm_cat_view_def does not
+ * find (VIEW.md §12.3), into views, which it replaces.
  */
 int sm_cat_view_readers(sm_session_t* session, uint64_t oid,
                         std::vector<uint64_t>& views);

@@ -347,9 +347,9 @@ struct sm_view_def_t {
 
 ## 12. Temporary views
 
-**Status: step 1 of §12.7 is built**, the temporary view in
-sm3 (`sm3/test/test_view.cc`), as proposed in §12.8; steps 2
-to 4 are not.
+**Status: steps 1 and 2 of §12.7 are built**, the temporary
+view in sm3 and the register (`sm3/test/test_view.cc`), as
+proposed in §12.8; steps 3 and 4 are not.
 
 A temporary view is a session's, as a temporary table is: no
 other session sees it, and it is gone when the session ends.
@@ -418,20 +418,23 @@ leave the view reading nothing. §12.1 says PostgreSQL refuses
 the drop; for that, the other session must learn of the view.
 
 - **The shared catalog keeps a register of temporary
-  readers**: for each permanent relation a temporary view
-  reads, the session, the view's oid and name, and the
-  columns it reads. It is in memory, and never in store 0,
-  as the views it names are not. It is all a session learns
-  of another's temporary views.
+  readers**: every session's committed temporary views, by
+  oid, each with its session and its definition, so its name
+  and what it reads, columns and all. A view that reads only
+  temporary relations is in it too, and harmless: no other
+  session has a relation of an oid it reads. It is in memory,
+  and never in store 0, as the views it names are not. It is
+  all a session learns of another's temporary views.
 - **It changes at commit**, with the temporary catalog: a
-  commit that makes, replaces or drops a temporary view that
-  reads a permanent relation changes the register under the
-  shared catalog's mutex, as a commit of shared DDL does
-  (`sm3/CATALOG.md` §4). Such a commit counts as shared DDL.
+  commit that makes, replaces or drops a temporary view
+  changes the register under the shared catalog's mutex, as
+  a commit of shared DDL does (`sm3/CATALOG.md` §4). Such a
+  commit counts as shared DDL.
 - **A session's close takes its entries out**, under the
   same mutex, as it drops its temporary catalog.
 - **`cat_view_readers` lists them**, so the checks of §5 on a
-  permanent relation see another session's temporary views:
+  permanent relation see another session's temporary views,
+  though `cat_get_view` does not find them:
   `drop_table`, `drop_column` and `drop_view` are
   `SM_ERR_INUSE` while one reads it.
 - **No race**, by the locks of §7: the view's create holds

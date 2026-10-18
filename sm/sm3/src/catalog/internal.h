@@ -71,6 +71,17 @@ struct sm3::catalog_t {
   std::unordered_map<uint64_t, std::shared_ptr<const view_def_t>> views;
   std::unordered_map<std::pair<uint64_t, std::string>, uint64_t, tblname_hash_t>
       view_names;
+  /*
+   * The register of temporary readers (VIEW.md §12.3): every session's
+   * committed temporary views, by oid, with the session that has each,
+   * so that another session's drop finds what reads a permanent
+   * relation. In memory alone, as the views are.
+   */
+  struct temp_reader_t {
+    const session_t *session;
+    std::shared_ptr<const view_def_t> def;
+  };
+  std::unordered_map<uint64_t, temp_reader_t> temp_readers;
 
   /*
    * Each table's committed statistics, loaded on first use: nullptr
@@ -350,6 +361,14 @@ void overlay_view(session_t *s, uint64_t oid,
  * those of the object oid.
  */
 bool temp_name_taken(const session_t *s, std::string_view name, uint64_t oid);
+
+/*
+ * The views that read the relation oid, by oid, with their
+ * definitions: those s sees, and other sessions' temporary views from
+ * the register (VIEW.md §12.3).
+ */
+std::map<uint64_t, std::shared_ptr<const view_def_t>>
+view_readers(const session_t *s, uint64_t oid);
 
 /*
  * Store the view oid's record, def, new or changed, in s's
