@@ -2858,6 +2858,32 @@ local_psql -c 'create table t24 (a numeric(17,17), b numeric(36,0))' \
 local_psql -c 'create table t25 (a numeric(37,0))' 2>&1 |
   grep -q 'must be between 1 and 36' || fail "numeric(37,0) refused"
 
+# Verify that a column neither grouped nor aggregated is refused as
+# PostgreSQL refuses it, and that one a grouped primary key determines is
+# not: the key is the table's primary index, as digres has no pg_constraint.
+# 1. A column beside an aggregate, with no GROUP BY, of a table, a temporary
+#    table and a compiled-in catalog, is refused, named as PostgreSQL names
+#    it.
+# 2. One beside a GROUP BY of another column that is no key is refused.
+# 3. Grouping by the primary key lets the table's other columns be selected,
+#    through a join too; a catalog has no key here, and is refused.
+local_psql -c 'create table t28 (id int4 primary key, v text, n int4)' \
+  -c "insert into t28 values (1, 'a', 10), (2, 'b', 20), (3, 'b', 30)" \
+  > "$work/groupby.out" 2>&1
+for c in "select v, sum(n) from t28|column \"t28.v\" must appear in the GROUP BY clause or be used in an aggregate function" \
+  "create temp table t29 (a int4); select a, count(*) from t29|column \"t29.a\" must appear in the GROUP BY clause" \
+  "select relname, count(*) from pg_class|column \"pg_class.relname\" must appear in the GROUP BY clause" \
+  "select v, sum(n) from t28 group by n|column \"t28.v\" must appear in the GROUP BY clause" \
+  "select relname from pg_class group by oid|column \"pg_class.relname\" must appear in the GROUP BY clause"; do
+  local_psql -c "${c%%|*}" 2>&1 | grep -qF "${c#*|}" ||
+    fail "an ungrouped column refused: ${c%%|*}"
+done
+[ "$(local_psql -c 'select id, v, sum(n) from t28 group by id order by id' \
+  -c 'select x.id, x.v, count(*) from t28 x join t28 y on x.id = y.id
+      group by x.id order by 1' 2>&1 | tr '\n' ,)" = \
+  "1|a|10,2|b|20,3|b|30,1|a|1,2|b|1,3|b|1," ] ||
+  fail "a column the grouped primary key determines"
+
 # Verify that numerics bound and fetched in binary, as a driver does, are
 # PostgreSQL's numeric to the client, both decimals of digres alike.
 # 1. build/numbin binds values typed 1700 in numeric's binary format into

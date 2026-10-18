@@ -3020,13 +3020,24 @@ char *get_rte_attribute_name(RangeTblEntry *rte, AttrNumber attnum) {
     return pstrdup(NameStr(SystemAttributeDefinition(attnum)->attname));
 
   /*
-   * If the RTE is a relation, go to the system catalogs not the
-   * eref->colnames list.  This is a little slower but it will give the
-   * right answer if the column has been renamed since the eref list was
-   * built (which can easily happen for rules).
+   * If the RTE is a relation, go to the relation not the eref->colnames
+   * list.  This is a little slower but it will give the right answer if the
+   * column has been renamed since the eref list was built (which can easily
+   * happen for rules).  digres has no pg_attribute for get_attname() to
+   * read: the relcache's descriptor, a compiled-in catalog's or one sm
+   * keeps, names the column.
    */
-  if (rte->rtekind == RTE_RELATION)
-    return get_attname(rte->relid, attnum, false);
+  if (rte->rtekind == RTE_RELATION) {
+    Relation rel = relation_open(rte->relid, AccessShareLock);
+    char *name;
+
+    if (attnum < 1 || attnum > RelationGetNumberOfAttributes(rel))
+      elog(ERROR, "invalid attnum %d for relation \"%s\"", attnum,
+           RelationGetRelationName(rel));
+    name = pstrdup(NameStr(TupleDescAttr(RelationGetDescr(rel), attnum - 1)->attname));
+    relation_close(rel, AccessShareLock);
+    return name;
+  }
 
   /*
    * Otherwise use the column name from eref.  There should always be one.

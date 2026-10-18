@@ -1272,76 +1272,36 @@ Oid get_domain_constraint_oid(Oid typid, const char *conname, bool missing_ok) {
  *
  * *constraintOid is set to the OID of the pkey constraint, or InvalidOid
  * on failure.
+ *
+ * digres has no pg_constraint to scan: a table's primary key is its
+ * primary index, which the relcache keeps from sm's definition of the
+ * table, and it has no constraint OID, so *constraintOid is InvalidOid.
  */
 Bitmapset *get_primary_key_attnos(Oid relid, bool deferrableOk,
                                   Oid *constraintOid) {
+  Relation rel, index;
   Bitmapset *pkattnos = NULL;
-  Relation pg_constraint;
-  HeapTuple tuple;
-  SysScanDesc scan;
-  ScanKeyData skey[1];
+  Oid pkindex;
 
-  /* Set *constraintOid, to avoid complaints about uninitialized vars */
   *constraintOid = InvalidOid;
-
-  /* Scan pg_constraint for constraints of the target rel */
-  pg_constraint = table_open(ConstraintRelationId, AccessShareLock);
-
-  ScanKeyInit(&skey[0], Anum_pg_constraint_conrelid, BTEqualStrategyNumber,
-              F_OIDEQ, ObjectIdGetDatum(relid));
-
-  scan = systable_beginscan(pg_constraint, ConstraintRelidTypidNameIndexId,
-                            true, NULL, 1, skey);
-
-  while (HeapTupleIsValid(tuple = systable_getnext(scan))) {
-    Form_pg_constraint con = (Form_pg_constraint)GETSTRUCT(tuple);
-    Datum adatum;
-    bool isNull;
-    ArrayType *arr;
-    int16 *attnums;
-    int numkeys;
-    int i;
-
-    /* Skip constraints that are not PRIMARY KEYs */
-    if (con->contype != CONSTRAINT_PRIMARY)
-      continue;
-
-    /*
-     * If the primary key is deferrable, but we've been instructed to
-     * ignore deferrable constraints, then we might as well give up
-     * searching, since there can only be a single primary key on a table.
-     */
-    if (con->condeferrable && !deferrableOk)
-      break;
-
-    /* Extract the conkey array, ie, attnums of PK's columns */
-    adatum = heap_getattr(tuple, Anum_pg_constraint_conkey,
-                          RelationGetDescr(pg_constraint), &isNull);
-    if (isNull)
-      elog(ERROR, "null conkey for constraint %u",
-           ((Form_pg_constraint)GETSTRUCT(tuple))->oid);
-    arr = DatumGetArrayTypeP(adatum); /* ensure not toasted */
-    numkeys = ARR_DIMS(arr)[0];
-    if (ARR_NDIM(arr) != 1 || numkeys < 0 || ARR_HASNULL(arr) ||
-        ARR_ELEMTYPE(arr) != INT2OID)
-      elog(ERROR, "conkey is not a 1-D smallint array");
-    attnums = (int16 *)ARR_DATA_PTR(arr);
-
-    /* Construct the result value */
-    for (i = 0; i < numkeys; i++) {
-      pkattnos = bms_add_member(
-          pkattnos, attnums[i] - FirstLowInvalidHeapAttributeNumber);
-    }
-    *constraintOid = ((Form_pg_constraint)GETSTRUCT(tuple))->oid;
-
-    /* No need to search further */
-    break;
-  }
-
-  systable_endscan(scan);
-
-  table_close(pg_constraint, AccessShareLock);
-
+  /* A compiled-in catalog's indexes cannot be opened: it has no key here. */
+  if (IsCatalogRelationOid(relid))
+    return NULL;
+  /* The caller holds a lock on relid, as the parser does on what it reads. */
+  rel = table_open(relid, NoLock);
+  pkindex = RelationGetPrimaryKeyIndex(rel, deferrableOk);
+  table_close(rel, NoLock);
+  if (!OidIsValid(pkindex))
+    return NULL;
+  /*
+   * The key columns of its pg_index form, which the relcache makes from
+   * sm's definition; a primary key has no expression.
+   */
+  index = index_open(pkindex, AccessShareLock);
+  for (int i = 0; i < index->rd_index->indnkeyatts; i++)
+    pkattnos = bms_add_member(pkattnos, index->rd_index->indkey.values[i] -
+                                            FirstLowInvalidHeapAttributeNumber);
+  index_close(index, AccessShareLock);
   return pkattnos;
 }
 
@@ -1545,8 +1505,13 @@ bool check_functional_grouping(Oid relid, Index varno, Index varlevelsup,
   }
 
   if (bms_is_subset(pkattnos, groupbyattnos)) {
-    /* The PK is a subset of grouping_columns, so we win */
-    *constraintDeps = lappend_oid(*constraintDeps, constraintOid);
+    /*
+     * The PK is a subset of grouping_columns, so we win; a dependency on
+     * it only if it is a constraint of pg_constraint's, which digres has
+     * none of (get_primary_key_attnos()).
+     */
+    if (OidIsValid(constraintOid))
+      *constraintDeps = lappend_oid(*constraintDeps, constraintOid);
     return true;
   }
 
