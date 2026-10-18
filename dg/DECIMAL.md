@@ -134,6 +134,7 @@ Results are exact or an error, never silently wrong.
   `/` without casting; `decimal128`'s `+`, `-` and `*` take the
   same 128-bit path while the result fits 36 digits. Only past
   that, and for the rest, is the 512-bit wide path taken.
+  What `decimal64` does itself is listed in §2.8.
 - **`%`, `div`, `abs`, `sign`, `ceil`, `floor`, `round(x, n)`,
   `trunc(x, n)`, `gcd`, `lcm`, `factorial`, `min`, `max`**:
   exact, as PostgreSQL's.
@@ -175,6 +176,36 @@ Each is moved to `decimal_t`, keeping its SQL signature:
   `generate_series(numeric, ...)`, `width_bucket`;
 - the planner's selectivity, which reads a value as a
   `double` (`convert_numeric_to_scalar()`).
+
+### 2.8 What decimal64 does itself
+
+A `decimal64` keeps to its own operators and functions where
+it has them; `func_select_candidate()` chooses an exact one
+first (§2.4). Each is in `decimal.c`, and
+`test/select_decimal64.sql` lists them with the types they
+give.
+
+| Operator or function | Gives | How |
+| --- | --- | --- |
+| `=`, `<>`, `<`, `<=`, `>`, `>=`, btree and hash opclasses, sort support | `bool`, `int4` | the words at one scale, else rescaled in 128 bits |
+| `min`, `max`, unary `-`, `abs`, `sign` | `decimal64` | in 64 bits |
+| `ceil`, `ceiling`, `floor` | `decimal64` | in 64 bits; a value with places has at most 16 digits before the point, so never past 17 |
+| `%`, `mod`, `gcd` | `decimal64` | in 128 bits at the larger scale; no more digits than the smaller operand's before the point, nor places than the larger scale |
+| `round(x)`, `round(x, n)`, `trunc(x)`, `trunc(x, n)` | `decimal64` | as numeric's; past 17 digits or places, as a carry or `n` past 17 makes, an error, not a `decimal128` |
+| `+`, `-`, `*` | `decimal128` | in 128 bits, one palloc for the result |
+| `/` | `decimal128` | the wide path, without casting either side |
+| `lcm` | `decimal128` | in 128 bits, the wide path only past them |
+| `sum`, `avg` | `decimal128` | a 128-bit sum in the state, no palloc a row |
+| `to_char(x, fmt)` | `text` | numeric's, on a `decimal128` built on the stack |
+| casts to and from the integers, `float4`, `float8`, `money`, `jsonb` | | §2.4 |
+
+Everything else, `sqrt`, `ln`, `log`, `exp`, `power`, `div`,
+`factorial`, `width_bucket` and the rest, is `decimal128`'s,
+reached by the implicit cast: one 16-byte palloc for the
+argument. Their results need more than 17 digits as often as
+not, so a `decimal64` version of them would save only that
+cast, next to a computation in `long double` and the wide
+path.
 
 ## 3. Order of work
 
