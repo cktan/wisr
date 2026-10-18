@@ -5,7 +5,7 @@
 CREATE, query and DROP (§8, `../dg/WORKNOTE.md` step 238),
 the catalog relations (step 239), and ALTER VIEW's RENAME and
 a view's options (step 240). Not yet: a temporary view, whose
-design is §12, proposed, and the rest of §9.
+design is §12, its first step built, and the rest of §9.
 
 `CREATE VIEW` fails in digres: `DefineView()` still makes a
 PostgreSQL relation, which digres has no catalog for
@@ -347,7 +347,9 @@ struct sm_view_def_t {
 
 ## 12. Temporary views
 
-**Status: proposed**, for review (§12.8).
+**Status: step 1 of §12.7 is built**, the temporary view in
+sm3 (`sm3/test/test_view.cc`), as proposed in §12.8; steps 2
+to 4 are not.
 
 A temporary view is a session's, as a temporary table is: no
 other session sees it, and it is gone when the session ends.

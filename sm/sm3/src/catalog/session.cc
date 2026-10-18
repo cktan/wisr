@@ -58,7 +58,7 @@ bool temp_name(const sm3::name_change_t &c) {
 
 /*
  * Whether s's transaction has made DDL the shared catalog is to
- * learn of: any but a temporary table's.
+ * learn of: any but a temporary table's or a temporary view's.
  */
 bool made_shared_ddl(const sm3::session_t *s) {
   auto shared = [](const auto &c) { return !c.temp; };
@@ -66,13 +66,14 @@ bool made_shared_ddl(const sm3::session_t *s) {
          !std::all_of(s->names.begin(), s->names.end(), temp_name) ||
          std::any_of(s->states.begin(), s->states.end(), shared) ||
          !s->collations.empty() || !s->nspaces.empty() ||
-         !s->sequences.empty() || !s->stats.empty() || !s->views.empty();
+         !s->sequences.empty() || !s->stats.empty() ||
+         std::any_of(s->views.begin(), s->views.end(), shared);
 }
 
 /*
- * Move s's changes to temporary tables into its temporary catalog,
- * in the order they were made, and take them out of the overlay:
- * the shared catalog never learns of them (TEMPTABLE.md §4).
+ * Move s's changes to temporary tables and views into its temporary
+ * catalog, in the order they were made, and take them out of the
+ * overlay: the shared catalog never learns of them (TEMPTABLE.md §4).
  */
 void publish_temp(sm3::session_t *s) {
   for (const sm3::state_change_t &c : s->states) {
@@ -108,6 +109,17 @@ void publish_temp(sm3::session_t *s) {
     }
   }
   std::erase_if(s->names, temp_name);
+  for (sm3::view_change_t &v : s->views) {
+    if (!v.temp) {
+      continue;
+    }
+    if (v.def) {
+      s->temp_views[v.oid] = std::move(v.def);
+    } else {
+      s->temp_views.erase(v.oid);
+    }
+  }
+  std::erase_if(s->views, [](const auto &c) { return c.temp; });
 }
 
 /*
@@ -475,8 +487,8 @@ void overlay_sequence(session_t *s, uint64_t oid,
 
 /* Record a view's new definition, or its drop. */
 void overlay_view(session_t *s, uint64_t oid,
-                  std::shared_ptr<const view_def_t> def) {
-  s->views.push_back({s->depth, oid, std::move(def)});
+                  std::shared_ptr<const view_def_t> def, bool temp) {
+  s->views.push_back({s->depth, oid, std::move(def), temp});
 }
 
 /* Record an index's state set, or its going with its index. */
@@ -892,12 +904,14 @@ cat_get_table(const session_t *s, uint64_t nspoid, std::string_view name) {
 namespace sm3 {
 
 /*
- * The views as s sees them, by oid: the shared ones with its own
- * changes over them, the newest of each winning.
+ * The views as s sees them, by oid: the shared ones and its own
+ * temporary ones, with its own changes over them, the newest of each
+ * winning.
  */
 static std::map<uint64_t, std::shared_ptr<const view_def_t>>
 views_of(const session_t *s) {
-  std::map<uint64_t, std::shared_ptr<const view_def_t>> out;
+  std::map<uint64_t, std::shared_ptr<const view_def_t>> out(
+      s->temp_views.begin(), s->temp_views.end());
   {
     std::shared_lock lock(s->cat->mu);
     out.insert(s->cat->views.begin(), s->cat->views.end());
@@ -920,6 +934,11 @@ std::shared_ptr<const view_def_t> cat_get_view(const session_t *s,
       return it->def;
     }
   }
+  // Its own temporary view, which the catalog never has.
+  auto own = s->temp_views.find(oid);
+  if (own != s->temp_views.end()) {
+    return own->second;
+  }
   std::shared_lock lock(s->cat->mu);
   auto it = s->cat->views.find(oid);
   return it == s->cat->views.end() ? nullptr : it->second;
@@ -938,6 +957,16 @@ bool cat_get_view(const session_t *s, uint64_t nspoid, std::string_view name,
       oid = v;
       return true;
     }
+  }
+  // Its own temporary views: few, and no map of their names.
+  if (nspoid == nsp_temp) {
+    for (const auto &[v, def] : s->temp_views) {
+      if (def->name == name && !own.count(v)) {
+        oid = v;
+        return true;
+      }
+    }
+    return false;
   }
   std::shared_lock lock(s->cat->mu);
   auto it = s->cat->view_names.find({nspoid, std::string(name)});
@@ -974,6 +1003,29 @@ std::vector<std::string> cat_list_views(const session_t *s, uint64_t nspoid) {
   return out;
 }
 
+/* Whether a temporary name is taken; see internal.h. */
+bool temp_name_taken(const session_t *s, std::string_view name, uint64_t oid) {
+  for (const auto &[t, def] : temp_tables_of(s)) {
+    if (t == oid) {
+      continue;
+    }
+    if (def->name == name) {
+      return true;
+    }
+    for (const index_def_t &x : def->indexes) {
+      if (x.name == name) {
+        return true;
+      }
+    }
+  }
+  for (const auto &[v, def] : views_of(s)) {
+    if (v != oid && def->nspoid == nsp_temp && def->name == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /* The views that read a relation, as s sees them; see sm3.h. */
 std::vector<uint64_t> cat_view_readers(const session_t *s, uint64_t oid) {
   std::vector<uint64_t> out;
@@ -992,6 +1044,11 @@ std::vector<uint64_t> cat_view_readers(const session_t *s, uint64_t oid) {
 /* Lock a view, then read its definition; see sm3.h. */
 int cat_lock_view(session_t *s, uint64_t oid, sm1::lockmode_t mode,
                   std::shared_ptr<const view_def_t> &out) {
+  // A temporary view is the session's alone: no one to lock out.
+  out = cat_get_view(s, oid);
+  if (out && out->nspoid == nsp_temp) {
+    return 0;
+  }
   // Held to the end of the transaction, as a table's is: DDL on the
   // view waits out its readers, and they it.
   if (lock_table(s->sm1, oid, mode) != 0) {

@@ -159,6 +159,7 @@ struct view_change_t {
   int depth;
   uint64_t oid;
   std::shared_ptr<const view_def_t> def; /* nullptr: dropped */
+  bool temp = false;                     /* a temporary view's */
 };
 struct stats_change_t {
   int depth;
@@ -192,13 +193,15 @@ struct sm3::session_t {
 
   /*
    * The session's temporary catalog (TEMPTABLE.md §4): its committed
-   * temporary tables, their names, and their indexes'
-   * states. A commit moves the overlay's temporary changes here, and
+   * temporary tables, their names, their indexes' states, and its
+   * temporary views. A commit moves the overlay's temporary changes here, and
    * never into the shared catalog; nothing else reads or writes it.
    */
   std::unordered_map<uint64_t, std::shared_ptr<const table_def_t>> temp_tables;
   std::unordered_map<std::string, uint64_t> temp_names;
   std::unordered_map<uint64_t, index_status_t> temp_states;
+  /* Its committed temporary views (VIEW.md §12.2), by oid. */
+  std::unordered_map<uint64_t, std::shared_ptr<const view_def_t>> temp_views;
 };
 
 namespace sm3 {
@@ -339,7 +342,14 @@ void overlay_sequence(session_t *s, uint64_t oid,
 void overlay_stats(session_t *s, uint64_t oid,
                    std::shared_ptr<const stats_t> stats);
 void overlay_view(session_t *s, uint64_t oid,
-                  std::shared_ptr<const view_def_t> def);
+                  std::shared_ptr<const view_def_t> def, bool temp = false);
+
+/*
+ * Whether name is one of session's temporary names, as it sees them: a
+ * temporary table's, one of their indexes', or a temporary view's, but
+ * those of the object oid.
+ */
+bool temp_name_taken(const session_t *s, std::string_view name, uint64_t oid);
 
 /*
  * Store the view oid's record, def, new or changed, in s's

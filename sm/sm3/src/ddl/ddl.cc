@@ -1051,32 +1051,48 @@ static bool view_reaches(const session_t *session, uint64_t from,
 }
 
 /*
+ * Whether the relation oid is one of session's temporary tables or
+ * views, which it alone reaches, and so locks none of.
+ */
+static bool temp_relation(const session_t *session, uint64_t oid) {
+  std::shared_ptr<const table_def_t> t = cat_get_table(session, oid);
+  if (t) {
+    return t->nspoid == nsp_temp;
+  }
+  std::shared_ptr<const view_def_t> v = cat_get_view(session, oid);
+  return v && v->nspoid == nsp_temp;
+}
+
+/*
  * Lock each relation reads names intent_shared, to the end of the
  * transaction, and check it is one a view may read (VIEW.md §5): a
- * table, not temporary, with a live column where one is named; or a
- * view, with none named, that does not read self, the view being
- * replaced, or 0 for a new one.
+ * table, with a live column where one is named; or a view, with none
+ * named, that does not read self, the view being replaced, or 0 for a
+ * new one. A temporary relation is read by a temporary view alone,
+ * temp, and takes no lock (§12.2).
  */
 static int check_reads(session_t *session,
-                       const std::vector<view_read_t> &reads, uint64_t self) {
+                       const std::vector<view_read_t> &reads, uint64_t self,
+                       bool temp) {
   std::unordered_set<uint64_t> locked;
   for (const view_read_t &r : reads) {
     if (self != 0 && r.relation == self) {
       return invalid("view: view " + std::to_string(self) + " reads itself");
     }
-    // Held to the end of the transaction, as a reader's: a drop of
-    // the relation waits for this one, then finds the view.
-    if (locked.insert(r.relation).second &&
-        lock_table(session->sm1, r.relation, sm1::SM_LOCKMODE_IS) != 0) {
+    if (temp_relation(session, r.relation)) {
+      if (!temp) {
+        return invalid("view: a permanent view cannot read a temporary "
+                       "relation");
+      }
+    } else if (locked.insert(r.relation).second &&
+               lock_table(session->sm1, r.relation, sm1::SM_LOCKMODE_IS) != 0) {
+      // Held to the end of the transaction, as a reader's: a drop of
+      // the relation waits for this one, then finds the view.
       return -1;
     }
     // Read under the lock, from memory, which has every commit by now.
     std::shared_ptr<const table_def_t> t = cat_get_table(session, r.relation);
     if (t) {
-      if (t->nspoid == nsp_temp) {
-        return invalid("view: a view of a temporary table is not supported "
-                       "yet");
-      }
       if (r.attnum != -1 && !live_attnum(t->rec, r.attnum)) {
         return invalid("view: table " + t->name + " has no live column " +
                        std::to_string(r.attnum));
@@ -1106,10 +1122,7 @@ int create_view(session_t *session, uint64_t nspoid, std::string_view name,
   if (name.empty()) {
     return invalid("create view: no name");
   }
-  if (nspoid == nsp_temp) {
-    return invalid("create view: a temporary view is not supported yet");
-  }
-  if (check_reads(session, def.reads, 0) != 0) {
+  if (check_reads(session, def.reads, 0, nspoid == nsp_temp) != 0) {
     return -1;
   }
   view_def_t rec = def;
@@ -1129,7 +1142,7 @@ int replace_view(session_t *session, uint64_t oid, const view_def_t &def) {
   std::shared_ptr<const view_def_t> old;
   // Exclusive: this waits out the view's readers, and they it.
   if (cat_lock_view(session, oid, sm1::SM_LOCKMODE_EX, old) != 0 ||
-      check_reads(session, def.reads, oid) != 0) {
+      check_reads(session, def.reads, oid, old->nspoid == nsp_temp) != 0) {
     return -1;
   }
   view_def_t rec = def;

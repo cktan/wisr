@@ -889,9 +889,12 @@ struct sm_view_def_t {
  * its name, namespace and version ignored. Each relation read is
  * locked SM_LOCKMODE_IS to the end of the transaction, and must be
  * a table, with a live column where one is named, or a view, with
- * none named: or SM_ERR_NOTFOUND, or SM_ERR_INVALID. A temporary
- * view, or one reading a temporary table, is SM_ERR_INVALID; a name
- * a relation of nspoid has, SM_ERR_DUPKEY.
+ * none named: or SM_ERR_NOTFOUND, or SM_ERR_INVALID. SM_NSP_TEMP
+ * makes a temporary view, the session's (VIEW.md section 12), which
+ * alone may read a temporary table or view: a permanent one that
+ * would is SM_ERR_INVALID. A name a relation of nspoid has, or for a
+ * temporary view one of the session's temporary relations, is
+ * SM_ERR_DUPKEY.
  */
 int sm_cat_create_view(sm_session_t* session, uint64_t nspoid,
                        const char* name, const sm_view_def_t& def,

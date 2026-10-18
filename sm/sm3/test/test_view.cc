@@ -203,11 +203,11 @@ TEST_CASE("a view's name is a relation's") {
 TEST_CASE("what a view reads is checked") {
   // Verify create_view refuses a read that is not a relation it may
   // read (VIEW.md §5).
-  // 1. No name, and a temporary view, are SM_ERR_INVALID.
+  // 1. No name is SM_ERR_INVALID.
   // 2. A relation that is not there is SM_ERR_NOTFOUND.
   // 3. A column t has not, and one dropped, are SM_ERR_INVALID.
   // 4. A column of a view is SM_ERR_INVALID; the view whole is not.
-  // 5. A temporary table is SM_ERR_INVALID.
+  // 5. A temporary table is SM_ERR_INVALID, for a permanent view.
   views_t f;
   uint64_t oid = 0, tmp = 0;
   auto refused = [&](std::vector<sm3::view_read_t> reads, sm1::errnum_t err) {
@@ -218,8 +218,6 @@ TEST_CASE("what a view reads is checked") {
   };
   f.begin(f.a);
   fails(sm3::create_view(f.a, sm3::nsp_public, "", view_of({}), oid),
-        sm1::SM_ERR_INVALID);
-  fails(sm3::create_view(f.a, sm3::nsp_temp, "w", view_of({}), oid),
         sm1::SM_ERR_INVALID);
   REQUIRE(sm3::abort(f.a) == 0);
 
@@ -439,4 +437,130 @@ TEST_CASE("a view's DDL waits for its readers") {
   fails(sm3::cat_lock_view(f.a, v, sm1::SM_LOCKMODE_IS, d),
         sm1::SM_ERR_NOTFOUND);
   REQUIRE(sm3::abort(f.a) == 0);
+}
+
+TEST_CASE("a temporary view is the session's") {
+  // Verify a temporary view is kept in the session's temporary
+  // catalog (VIEW.md §12.2).
+  // 1. A makes tv in namespace 0 over t: A finds it by name at once,
+  //    and after its commit; B never does.
+  // 2. A rolled-back create, and one under a savepoint rolled back,
+  //    leave nothing.
+  // 3. A session opened afresh on the catalog has none.
+  views_t f;
+  uint64_t found = 0;
+  f.begin(f.a);
+  uint64_t tv = 0;
+  REQUIRE(sm3::create_view(f.a, sm3::nsp_temp, "tv", view_of({{f.t, 0}}), tv) ==
+          0);
+  CHECK(sm3::cat_get_view(f.a, sm3::nsp_temp, "tv", found));
+  CHECK(found == tv);
+  CHECK_FALSE(sm3::cat_get_view(f.a, sm3::nsp_public, "tv", found));
+  f.commit(f.a);
+  CHECK(sm3::cat_get_view(f.a, sm3::nsp_temp, "tv", found));
+  CHECK(sm3::cat_get_view(f.a, tv)->nspoid == sm3::nsp_temp);
+  CHECK(sm3::cat_list_views(f.a, sm3::nsp_temp) ==
+        std::vector<std::string>{"tv"});
+  CHECK(sm3::cat_list_views(f.a, sm3::nsp_public).empty());
+  CHECK_FALSE(sm3::cat_get_view(f.b, sm3::nsp_temp, "tv", found));
+  CHECK(sm3::cat_get_view(f.b, tv) == nullptr);
+
+  uint64_t gone = 0;
+  f.begin(f.a);
+  REQUIRE(sm3::create_view(f.a, sm3::nsp_temp, "gone", view_of({}), gone) == 0);
+  REQUIRE(sm3::abort(f.a) == 0);
+  f.begin(f.a);
+  int sp = sm3::savepoint(f.a);
+  REQUIRE(sp > 0);
+  REQUIRE(sm3::create_view(f.a, sm3::nsp_temp, "gone", view_of({}), gone) == 0);
+  REQUIRE(sm3::rollback(f.a, sp) == 0);
+  f.commit(f.a);
+  CHECK_FALSE(sm3::cat_get_view(f.a, sm3::nsp_temp, "gone", found));
+
+  f.reload();
+  CHECK_FALSE(sm3::cat_get_view(f.a, sm3::nsp_temp, "tv", found));
+  CHECK(sm3::cat_get_view(f.a, tv) == nullptr);
+}
+
+TEST_CASE("a temporary view's name and what it reads") {
+  // Verify a temporary view's name is one of the session's temporary
+  // names, and what it may read (VIEW.md §12.2).
+  // 1. A temporary view named as a temporary table, and a temporary
+  //    table named as a temporary view, are SM_ERR_DUPKEY; a permanent
+  //    view of that name is not.
+  // 2. A temporary view reads a temporary table, a temporary view and
+  //    t; a permanent view of a temporary view is SM_ERR_INVALID.
+  // 3. It is renamed and replaced as a permanent view is.
+  views_t f;
+  std::vector<sm3::column_spec_t> cols = {
+      {"x", sm2::type_int4.code, -1, false}};
+  uint64_t tt = 0, tv = 0, tw = 0, oid = 0, found = 0;
+  f.begin(f.a);
+  REQUIRE(sm3::create_temp_table(f.a, "tt", cols, tt) == 0);
+  REQUIRE(sm3::create_view(f.a, sm3::nsp_temp, "tv", view_of({{tt, 0}}), tv) ==
+          0);
+  f.commit(f.a);
+
+  f.begin(f.a);
+  fails(sm3::create_view(f.a, sm3::nsp_temp, "tt", view_of({}), oid),
+        sm1::SM_ERR_DUPKEY);
+  REQUIRE(sm3::abort(f.a) == 0);
+  f.begin(f.a);
+  fails(sm3::create_temp_table(f.a, "tv", cols, oid), sm1::SM_ERR_DUPKEY);
+  REQUIRE(sm3::abort(f.a) == 0);
+  f.begin(f.a);
+  REQUIRE(sm3::create_view(f.a, sm3::nsp_public, "tv", view_of({{f.t, 0}}),
+                           oid) == 0);
+  REQUIRE(sm3::abort(f.a) == 0);
+
+  f.begin(f.a);
+  REQUIRE(sm3::create_view(f.a, sm3::nsp_temp, "tw",
+                           view_of({{tv, -1}, {tt, 0}, {f.t, 1}}), tw) == 0);
+  fails(sm3::create_view(f.a, sm3::nsp_public, "pw", view_of({{tv, -1}}), oid),
+        sm1::SM_ERR_INVALID);
+  f.commit(f.a);
+
+  f.begin(f.a);
+  REQUIRE(sm3::rename_view(f.a, tw, "tw2") == 0);
+  REQUIRE(sm3::replace_view(f.a, tw, view_of({{tt, 0}}, "new")) == 0);
+  f.commit(f.a);
+  CHECK(sm3::cat_get_view(f.a, sm3::nsp_temp, "tw2", found));
+  CHECK_FALSE(sm3::cat_get_view(f.a, sm3::nsp_temp, "tw", found));
+  CHECK(sm3::cat_get_view(f.a, tw)->query == "new");
+}
+
+TEST_CASE("what a temporary view reads is kept in its session") {
+  // Verify the session's own drops see its temporary views (VIEW.md
+  // §12.2).
+  // 1. A's tv reads its temporary table tt and t's x.
+  // 2. In A, dropping tt, t, t's x and tv's reader tw is SM_ERR_INUSE.
+  // 3. Dropped readers first, tw, tv, then tt and t, all go.
+  views_t f;
+  std::vector<sm3::column_spec_t> cols = {
+      {"x", sm2::type_int4.code, -1, false}};
+  uint64_t tt = 0;
+  f.begin(f.a);
+  REQUIRE(sm3::create_temp_table(f.a, "tt", cols, tt) == 0);
+  uint64_t tv = 0, tw = 0;
+  REQUIRE(sm3::create_view(f.a, sm3::nsp_temp, "tv",
+                           view_of({{tt, 0}, {f.t, 0}}), tv) == 0);
+  REQUIRE(sm3::create_view(f.a, sm3::nsp_temp, "tw", view_of({{tv, -1}}), tw) ==
+          0);
+  f.commit(f.a);
+  CHECK(sm3::cat_view_readers(f.a, f.t) == std::vector<uint64_t>{tv});
+
+  f.begin(f.a);
+  fails(sm3::drop_table(f.a, tt), sm1::SM_ERR_INUSE);
+  fails(sm3::drop_table(f.a, f.t), sm1::SM_ERR_INUSE);
+  fails(sm3::drop_column(f.a, f.t, "x"), sm1::SM_ERR_INUSE);
+  fails(sm3::drop_view(f.a, tv), sm1::SM_ERR_INUSE);
+  REQUIRE(sm3::abort(f.a) == 0);
+
+  f.begin(f.a);
+  REQUIRE(sm3::drop_view(f.a, tw) == 0);
+  REQUIRE(sm3::drop_view(f.a, tv) == 0);
+  REQUIRE(sm3::drop_table(f.a, tt) == 0);
+  REQUIRE(sm3::drop_table(f.a, f.t) == 0);
+  f.commit(f.a);
+  CHECK(sm3::cat_list_views(f.a, sm3::nsp_temp).empty());
 }

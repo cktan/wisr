@@ -1005,9 +1005,12 @@ int nextval(session_t* session, uint64_t oid, uint64_t& out);
  * name and nspoid, its oid set in oid. Each relation it reads is
  * locked intent_shared to the end of the transaction, and must be
  * a table, with a live column where one is named, or a view, with
- * none named: or SM_ERR_NOTFOUND, or SM_ERR_INVALID. A temporary
- * view, or one that reads a temporary table, is SM_ERR_INVALID; a
- * taken name SM_ERR_DUPKEY.
+ * none named: or SM_ERR_NOTFOUND, or SM_ERR_INVALID. nspoid nsp_temp
+ * makes a temporary view, in the session's temporary catalog
+ * (VIEW.md §12.2), which alone may read a temporary table or view,
+ * locking none: a permanent one that would is SM_ERR_INVALID. A
+ * taken name is SM_ERR_DUPKEY, a temporary view's among the
+ * session's temporary names.
  */
 int create_view(session_t* session, uint64_t nspoid, std::string_view name,
                 const view_def_t& def, uint64_t& oid);
@@ -1034,7 +1037,7 @@ int drop_view(session_t* session, uint64_t oid);
  * Take the view oid's lock in mode, held to the end of s's
  * transaction, then set out to its definition as s sees it, which
  * cannot change under the lock. A view dropped while s waited, or
- * none, fails with SM_ERR_NOTFOUND.
+ * none, fails with SM_ERR_NOTFOUND. A temporary view takes no lock.
  */
 int cat_lock_view(session_t* s, uint64_t oid, sm1::lockmode_t mode,
                   std::shared_ptr<const view_def_t>& out);
