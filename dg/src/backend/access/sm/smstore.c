@@ -2578,27 +2578,23 @@ static void find_readers(Oid oid, int32_t attnum, const std::string &what,
                          std::vector<reader_t> &found,
                          std::vector<Oid> &order) {
   sm_session_t *s = xact_session();
-  std::vector<uint64_t> views;
+  std::vector<sm_view_reader_t> views;
 
   if (sm_cat_view_readers(s, oid, views) != 0)
     sm_error("find the views that read a relation");
-  for (uint64_t v : views) {
-    sm_view_def_t def;
-
-    if (sm_cat_view_def(s, v, def) != 0)
-      continue;
-    if (attnum >= 0 && std::none_of(def.reads.begin(), def.reads.end(),
+  for (const sm_view_reader_t &v : views) {
+    if (attnum >= 0 && std::none_of(v.reads.begin(), v.reads.end(),
                                     [&](const sm_view_read_t &r) {
                                       return r.relation == oid &&
                                              r.attnum == attnum;
                                     }))
       continue;
     if (std::any_of(found.begin(), found.end(),
-                    [&](const reader_t &r) { return r.oid == (Oid)v; }))
+                    [&](const reader_t &r) { return r.oid == (Oid)v.oid; }))
       continue;
-    found.push_back({(Oid)v, def.name, what});
-    find_readers((Oid)v, -1, "view " + def.name, found, order);
-    order.push_back((Oid)v);
+    found.push_back({(Oid)v.oid, v.name, what});
+    find_readers((Oid)v.oid, -1, "view " + v.name, found, order);
+    order.push_back((Oid)v.oid);
   }
 }
 

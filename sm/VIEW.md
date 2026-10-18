@@ -347,9 +347,10 @@ struct sm_view_def_t {
 
 ## 12. Temporary views
 
-**Status: steps 1 and 2 of §12.7 are built**, the temporary
-view in sm3 and the register (`sm3/test/test_view.cc`), as
-proposed in §12.8; steps 3 and 4 are not.
+**Status: steps 1 to 3 of §12.7 are built**, the temporary
+view in sm3, the register and the cascade
+(`sm3/test/test_view.cc`), as proposed in §12.8; step 4,
+digres, is not.
 
 A temporary view is a session's, as a temporary table is: no
 other session sees it, and it is gone when the session ends.
@@ -455,10 +456,17 @@ proposed:
   the other session's list of views dropped by others gains
   it, under the mutex. That session takes the list at its
   next `begin`, and drops each view from its temporary
-  catalog. A query on the view meanwhile takes `pt` IS: the
-  drop waited out any that held it, and one that comes later
-  waits for the drop's X, then finds `pt` gone, as it would
-  in PostgreSQL. A drop rolled back records nothing.
+  catalog, with every temporary view of its own that reads
+  one, directly or through others: one made on a doomed view
+  while the drop was under way, which the drop could not
+  see, as its make took no lock. A query on the view
+  meanwhile takes `pt` IS: the drop waited out any that held
+  it, and one that comes later waits for the drop's X, then
+  finds `pt` gone, as it would in PostgreSQL. A drop rolled
+  back records nothing.
+- **It takes no lock** on the other session's view, which
+  has none: that session alone uses it, and drops it itself
+  at its next `begin`.
 - **Refuse it**, a divergence: `cannot drop table pt because
   view pg_temp.tv of another session depends on it`, with
   CASCADE too. Simpler by the list above, and a session never
@@ -472,10 +480,13 @@ proposed:
 - **`sm_cat_create_view`** takes `SM_NSP_TEMP` for a
   temporary view.
 - **`sm_cat_view_readers`** gives, for each reader, whether
-  it is another session's, and its name, which
+  it is another session's, its name and what it reads, which
   `sm_cat_view_def` cannot give for a view the caller does
   not see: a reader becomes a struct, `sm_view_reader_t`,
-  its oid, its name and that flag.
+  its oid, its name, its reads, for a column's drop to ask,
+  and that flag. A view the transaction has dropped is no
+  reader. sm3's `cat_view_readers` gives `view_reader_t`,
+  the view's definition and the flag.
 - **`sm_cat_drop_view`** of another session's temporary view,
   an oid from the register, is §12.4's drop. Of any other oid
   it does what it does now.

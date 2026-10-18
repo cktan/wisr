@@ -96,6 +96,15 @@ uint64_t make_view(sm3::session_t *s, const std::string &name,
   return oid;
 }
 
+/* The oids of the views that read oid, as s sees them. */
+std::vector<uint64_t> readers(const sm3::session_t *s, uint64_t oid) {
+  std::vector<uint64_t> out;
+  for (const sm3::view_reader_t &r : sm3::cat_view_readers(s, oid)) {
+    out.push_back(r.oid);
+  }
+  return out;
+}
+
 /* Expect rc to be a failure with err. */
 void fails(int rc, sm1::errnum_t err) {
   CHECK(rc == -1);
@@ -257,8 +266,8 @@ TEST_CASE("what a view reads is not dropped from under it") {
   uint64_t v = make_view(f.a, "v", {{f.t, 0}});
   uint64_t w = make_view(f.a, "w", {{v, -1}});
   f.commit(f.a);
-  CHECK(sm3::cat_view_readers(f.a, f.t) == std::vector<uint64_t>{v});
-  CHECK(sm3::cat_view_readers(f.a, v) == std::vector<uint64_t>{w});
+  CHECK(readers(f.a, f.t) == std::vector<uint64_t>{v});
+  CHECK(readers(f.a, v) == std::vector<uint64_t>{w});
 
   f.begin(f.a);
   fails(sm3::drop_table(f.a, f.t), sm1::SM_ERR_INUSE);
@@ -547,7 +556,7 @@ TEST_CASE("what a temporary view reads is kept in its session") {
   REQUIRE(sm3::create_view(f.a, sm3::nsp_temp, "tw", view_of({{tv, -1}}), tw) ==
           0);
   f.commit(f.a);
-  CHECK(sm3::cat_view_readers(f.a, f.t) == std::vector<uint64_t>{tv});
+  CHECK(readers(f.a, f.t) == std::vector<uint64_t>{tv});
 
   f.begin(f.a);
   fails(sm3::drop_table(f.a, tt), sm1::SM_ERR_INUSE);
@@ -580,7 +589,10 @@ TEST_CASE("another session's drop finds a temporary view") {
                            view_of({{f.t, 0}, {pv, -1}}), tv) == 0);
   f.commit(f.a);
 
-  CHECK(sm3::cat_view_readers(f.b, f.t) == std::vector<uint64_t>{pv, tv});
+  CHECK(readers(f.b, f.t) == std::vector<uint64_t>{pv, tv});
+  CHECK(sm3::cat_view_readers(f.b, f.t)[1].other);
+  CHECK(sm3::cat_view_readers(f.b, f.t)[1].def->name == "tv");
+  CHECK_FALSE(sm3::cat_view_readers(f.a, f.t)[1].other);
   CHECK(sm3::cat_get_view(f.b, tv) == nullptr);
   f.begin(f.b);
   fails(sm3::drop_table(f.b, f.t), sm1::SM_ERR_INUSE);
@@ -601,7 +613,7 @@ TEST_CASE("another session's drop finds a temporary view") {
   f.begin(f.a);
   REQUIRE(sm3::replace_view(f.a, tv, view_of({})) == 0);
   f.commit(f.a);
-  CHECK(sm3::cat_view_readers(f.b, f.t) == std::vector<uint64_t>{pv});
+  CHECK(readers(f.b, f.t) == std::vector<uint64_t>{pv});
   f.begin(f.b);
   REQUIRE(sm3::drop_view(f.b, pv) == 0);
   REQUIRE(sm3::drop_table(f.b, f.t) == 0);
@@ -669,12 +681,107 @@ TEST_CASE("a session's close takes its temporary views out of the register") {
   REQUIRE(sm3::create_view(f.a, sm3::nsp_temp, "tv", view_of({{f.t, 0}}), tv) ==
           0);
   f.commit(f.a);
-  CHECK(sm3::cat_view_readers(f.b, f.t) == std::vector<uint64_t>{tv});
+  CHECK(readers(f.b, f.t) == std::vector<uint64_t>{tv});
 
   sm3::session_close(f.a);
   f.a = nullptr;
-  CHECK(sm3::cat_view_readers(f.b, f.t).empty());
+  CHECK(readers(f.b, f.t).empty());
   f.begin(f.b);
   REQUIRE(sm3::drop_table(f.b, f.t) == 0);
   f.commit(f.b);
+}
+
+TEST_CASE("another session's drop cascades to its temporary views") {
+  // Verify another session drops a temporary view, as PostgreSQL's
+  // DROP ... CASCADE does (VIEW.md §12.4).
+  // 1. A makes pv over t; temporary tv over pv, a permanent view;
+  //    temporary tw over tv, a temporary view; and temporary tx
+  //    over t.
+  // 2. B finds them as readers; it cannot drop tv while tw reads it,
+  //    nor pv, nor t; its drops rolled back, by abort and to a
+  //    savepoint, leave A's views as they were.
+  // 3. B drops tw, tv, pv, tx and t, readers first, and commits: A
+  //    keeps its views until its next transaction, which has none;
+  //    their names are free again.
+  views_t f;
+  f.begin(f.a);
+  uint64_t pv = make_view(f.a, "pv", {{f.t, 0}});
+  uint64_t tv = 0, tw = 0, tx = 0, oid = 0;
+  REQUIRE(sm3::create_view(f.a, sm3::nsp_temp, "tv", view_of({{pv, -1}}), tv) ==
+          0);
+  REQUIRE(sm3::create_view(f.a, sm3::nsp_temp, "tw", view_of({{tv, -1}}), tw) ==
+          0);
+  REQUIRE(sm3::create_view(f.a, sm3::nsp_temp, "tx", view_of({{f.t, 1}}), tx) ==
+          0);
+  f.commit(f.a);
+
+  CHECK(readers(f.b, f.t) == std::vector<uint64_t>{pv, tx});
+  CHECK(readers(f.b, pv) == std::vector<uint64_t>{tv});
+  CHECK(readers(f.b, tv) == std::vector<uint64_t>{tw});
+  f.begin(f.b);
+  fails(sm3::drop_view(f.b, tv), sm1::SM_ERR_INUSE);
+  fails(sm3::drop_view(f.b, pv), sm1::SM_ERR_INUSE);
+  REQUIRE(sm3::drop_view(f.b, tw) == 0);
+  REQUIRE(sm3::drop_view(f.b, tv) == 0);
+  CHECK(readers(f.b, pv).empty());
+  fails(sm3::drop_view(f.b, tv), sm1::SM_ERR_NOTFOUND);
+  REQUIRE(sm3::abort(f.b) == 0);
+  f.begin(f.b);
+  int sp = sm3::savepoint(f.b);
+  REQUIRE(sp > 0);
+  REQUIRE(sm3::drop_view(f.b, tw) == 0);
+  REQUIRE(sm3::rollback(f.b, sp) == 0);
+  f.commit(f.b);
+  CHECK(readers(f.b, tv) == std::vector<uint64_t>{tw});
+  f.begin(f.a);
+  CHECK(sm3::cat_list_views(f.a, sm3::nsp_temp) ==
+        std::vector<std::string>{"tv", "tw", "tx"});
+  f.commit(f.a);
+
+  f.begin(f.b);
+  REQUIRE(sm3::drop_view(f.b, tw) == 0);
+  REQUIRE(sm3::drop_view(f.b, tv) == 0);
+  REQUIRE(sm3::drop_view(f.b, pv) == 0);
+  REQUIRE(sm3::drop_view(f.b, tx) == 0);
+  REQUIRE_MESSAGE(sm3::drop_table(f.b, f.t) == 0, sm1::errmsg());
+  f.commit(f.b);
+  CHECK(sm3::cat_get_view(f.a, tw) != nullptr);
+  f.begin(f.a);
+  CHECK(sm3::cat_list_views(f.a, sm3::nsp_temp).empty());
+  CHECK(sm3::cat_get_view(f.a, tv) == nullptr);
+  REQUIRE(sm3::create_view(f.a, sm3::nsp_temp, "tv", view_of({}), oid) == 0);
+  f.commit(f.a);
+  CHECK(readers(f.b, pv).empty());
+}
+
+TEST_CASE("a temporary view made on one another session drops goes too") {
+  // Verify a temporary view made on a doomed one, while the drop was
+  // under way, goes with it (VIEW.md §12.4).
+  // 1. A makes pv over t and temporary tv over pv.
+  // 2. A makes temporary tw over tv, and has not committed; B drops tv
+  //    and pv, and commits; then A commits.
+  // 3. A's next transaction has neither tv nor tw, and B finds no
+  //    reader of t.
+  views_t f;
+  f.begin(f.a);
+  uint64_t pv = make_view(f.a, "pv", {{f.t, 0}});
+  uint64_t tv = 0, tw = 0;
+  REQUIRE(sm3::create_view(f.a, sm3::nsp_temp, "tv", view_of({{pv, -1}}), tv) ==
+          0);
+  f.commit(f.a);
+
+  f.begin(f.a);
+  REQUIRE(sm3::create_view(f.a, sm3::nsp_temp, "tw", view_of({{tv, -1}}), tw) ==
+          0);
+  f.begin(f.b);
+  REQUIRE(sm3::drop_view(f.b, tv) == 0);
+  REQUIRE(sm3::drop_view(f.b, pv) == 0);
+  f.commit(f.b);
+  f.commit(f.a);
+
+  f.begin(f.a);
+  CHECK(sm3::cat_list_views(f.a, sm3::nsp_temp).empty());
+  f.commit(f.a);
+  CHECK(readers(f.b, tv).empty());
+  CHECK(readers(f.b, f.t).empty());
 }

@@ -1386,9 +1386,17 @@ int sm_cat_list_views(sm_session_t *session, uint64_t nspoid,
 
 /* The views that read a relation, by oid. */
 int sm_cat_view_readers(sm_session_t *session, uint64_t oid,
-                        std::vector<uint64_t> &views) {
+                        std::vector<sm_view_reader_t> &views) {
   return guard(session, [&] {
-    views = sm3::cat_view_readers(session->sm3, oid);
+    views.clear();
+    for (const sm3::view_reader_t &v :
+         sm3::cat_view_readers(session->sm3, oid)) {
+      sm_view_reader_t r{v.oid, v.def->name, {}, v.other};
+      for (const sm3::view_read_t &x : v.def->reads) {
+        r.reads.push_back({x.relation, x.attnum});
+      }
+      views.push_back(std::move(r));
+    }
     return 0;
   });
 }

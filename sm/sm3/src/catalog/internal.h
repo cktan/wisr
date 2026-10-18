@@ -78,7 +78,7 @@ struct sm3::catalog_t {
    * relation. In memory alone, as the views are.
    */
   struct temp_reader_t {
-    const session_t *session;
+    session_t *session;
     std::shared_ptr<const view_def_t> def;
   };
   std::unordered_map<uint64_t, temp_reader_t> temp_readers;
@@ -171,6 +171,7 @@ struct view_change_t {
   uint64_t oid;
   std::shared_ptr<const view_def_t> def; /* nullptr: dropped */
   bool temp = false;                     /* a temporary view's */
+  bool other = false; /* a drop of another session's temporary view */
 };
 struct stats_change_t {
   int depth;
@@ -213,6 +214,13 @@ struct sm3::session_t {
   std::unordered_map<uint64_t, index_status_t> temp_states;
   /* Its committed temporary views (VIEW.md §12.2), by oid. */
   std::unordered_map<uint64_t, std::shared_ptr<const view_def_t>> temp_views;
+  /*
+   * Its temporary views other sessions have dropped (VIEW.md §12.4),
+   * for its next begin to drop: guarded by the catalog's mutex, and
+   * has_doomed set while there are any.
+   */
+  std::vector<uint64_t> doomed;
+  std::atomic<bool> has_doomed{false};
 };
 
 namespace sm3 {
@@ -363,12 +371,13 @@ void overlay_view(session_t *s, uint64_t oid,
 bool temp_name_taken(const session_t *s, std::string_view name, uint64_t oid);
 
 /*
- * The views that read the relation oid, by oid, with their
- * definitions: those s sees, and other sessions' temporary views from
- * the register (VIEW.md §12.3).
+ * Another session's temporary view oid, from the register (VIEW.md
+ * §12.3), unless s's transaction has dropped it; nullptr if none.
  */
-std::map<uint64_t, std::shared_ptr<const view_def_t>>
-view_readers(const session_t *s, uint64_t oid);
+std::shared_ptr<const view_def_t> other_view(const session_t *s, uint64_t oid);
+
+/* Record the drop of another session's temporary view (VIEW.md §12.4). */
+void overlay_other_drop(session_t *s, uint64_t oid);
 
 /*
  * Store the view oid's record, def, new or changed, in s's

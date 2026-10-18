@@ -44,6 +44,38 @@ void drop_from(sm3::session_t *s, int d) {
   }
 }
 
+/* Whether def reads the relation oid. */
+bool reads(const sm3::view_def_t &def, uint64_t oid) {
+  return std::any_of(def.reads.begin(), def.reads.end(),
+                     [&](const auto &r) { return r.relation == oid; });
+}
+
+/*
+ * Drop s's temporary views other sessions have dropped, and those of
+ * its own that read them, directly or through others (VIEW.md
+ * §12.4): one may have been made on a doomed view while the drop was
+ * under way, and read nothing now.
+ */
+void drop_doomed(sm3::session_t *s) {
+  std::unique_lock lock(s->cat->mu);
+  std::vector<uint64_t> todo;
+  todo.swap(s->doomed);
+  s->has_doomed.store(false);
+  while (!todo.empty()) {
+    uint64_t v = todo.back();
+    todo.pop_back();
+    if (s->temp_views.erase(v) == 0) {
+      continue;
+    }
+    s->cat->temp_readers.erase(v);
+    for (const auto &[w, def] : s->temp_views) {
+      if (reads(*def, v)) {
+        todo.push_back(w);
+      }
+    }
+  }
+}
+
 /* Whether s's transaction has made any DDL. */
 bool made_ddl(const sm3::session_t *s) {
   return !s->tables.empty() || !s->names.empty() || !s->collations.empty() ||
@@ -197,6 +229,18 @@ void publish(sm3::session_t *s) {
   }
   s->tables.clear();
   for (sm3::view_change_t &v : s->views) {
+    if (v.other) {
+      // Another session's temporary view leaves the register, and
+      // its session drops it at its next begin (VIEW.md §12.4). One
+      // whose session has closed is out of it already.
+      auto r = cat->temp_readers.find(v.oid);
+      if (r != cat->temp_readers.end()) {
+        r->second.session->doomed.push_back(v.oid);
+        r->second.session->has_doomed.store(true);
+        cat->temp_readers.erase(r);
+      }
+      continue;
+    }
     // A view renamed or dropped frees the name it had.
     auto old = cat->views.find(v.oid);
     if (old != cat->views.end()) {
@@ -272,6 +316,9 @@ int begin(session_t *s, sm1::xctlevel_t level, bool read_only) {
     return -1;
   }
   drop_from(s, 0);
+  if (s->has_doomed.load()) {
+    drop_doomed(s);
+  }
   s->level = level;
   s->depth = 0;
   s->snap_seq = seq;
@@ -502,6 +549,11 @@ void overlay_sequence(session_t *s, uint64_t oid,
 void overlay_view(session_t *s, uint64_t oid,
                   std::shared_ptr<const view_def_t> def, bool temp) {
   s->views.push_back({s->depth, oid, std::move(def), temp});
+}
+
+/* Record the drop of another session's temporary view; see internal.h. */
+void overlay_other_drop(session_t *s, uint64_t oid) {
+  s->views.push_back({s->depth, oid, nullptr, false, true});
 }
 
 /* Record an index's state set, or its going with its index. */
@@ -1039,37 +1091,48 @@ bool temp_name_taken(const session_t *s, std::string_view name, uint64_t oid) {
   return false;
 }
 
-/* Whether def reads the relation oid. */
-static bool reads(const view_def_t &def, uint64_t oid) {
-  return std::any_of(def.reads.begin(), def.reads.end(),
-                     [&](const view_read_t &r) { return r.relation == oid; });
-}
-
-/* The views that read a relation, with their definitions; see internal.h. */
-std::map<uint64_t, std::shared_ptr<const view_def_t>>
-view_readers(const session_t *s, uint64_t oid) {
-  std::map<uint64_t, std::shared_ptr<const view_def_t>> out;
-  for (const auto &[v, def] : views_of(s)) {
-    if (reads(*def, oid)) {
-      out[v] = def;
+/* Another session's temporary view; see internal.h. */
+std::shared_ptr<const view_def_t> other_view(const session_t *s, uint64_t oid) {
+  for (const view_change_t &c : s->views) {
+    if (c.other && c.oid == oid) {
+      return nullptr;
     }
   }
-  // Other sessions' temporary views; s's own are in views_of.
   std::shared_lock lock(s->cat->mu);
-  for (const auto &[v, r] : s->cat->temp_readers) {
-    if (r.session != s && reads(*r.def, oid)) {
-      out[v] = r.def;
-    }
-  }
-  return out;
+  auto it = s->cat->temp_readers.find(oid);
+  return it == s->cat->temp_readers.end() || it->second.session == s
+             ? nullptr
+             : it->second.def;
 }
 
 /* The views that read a relation; see sm3.h. */
-std::vector<uint64_t> cat_view_readers(const session_t *s, uint64_t oid) {
-  std::vector<uint64_t> out;
+std::vector<view_reader_t> cat_view_readers(const session_t *s, uint64_t oid) {
+  std::map<uint64_t, view_reader_t> found;
+  for (const auto &[v, def] : views_of(s)) {
+    if (reads(*def, oid)) {
+      found[v] = {v, def, false};
+    }
+  }
+  // Other sessions' temporary views, s's own being in views_of, but
+  // those its transaction has dropped.
+  std::unordered_set<uint64_t> dropped;
+  for (const view_change_t &c : s->views) {
+    if (c.other) {
+      dropped.insert(c.oid);
+    }
+  }
+  {
+    std::shared_lock lock(s->cat->mu);
+    for (const auto &[v, r] : s->cat->temp_readers) {
+      if (r.session != s && !dropped.count(v) && reads(*r.def, oid)) {
+        found[v] = {v, r.def, true};
+      }
+    }
+  }
   // The map is in oid order, so out is too.
-  for (const auto &[v, def] : view_readers(s, oid)) {
-    out.push_back(v);
+  std::vector<view_reader_t> out;
+  for (auto &[v, r] : found) {
+    out.push_back(std::move(r));
   }
   return out;
 }
