@@ -79,8 +79,7 @@ static inline uint64 TimestampDifferenceMicroseconds(TimestampTz start_time,
 
 /* Set at postmaster start */
 
-/* Set at configuration reload */
-extern thread_local /*SHARED*/ PGDLLIMPORT TimestampTz PgReloadTime;
+/* Set at configuration reload: pcb->PgReloadTime (utils/control_block.h) */
 
 /* Internal routines (not fmgr-callable) */
 

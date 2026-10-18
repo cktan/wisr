@@ -3588,6 +3588,38 @@ grep -q "could not accept new connection" "$work/log" &&
   fail "the signalfd is no listen socket"
 [ "$(local_psql -c 'select 3 + 3')" = 6 ] || fail "a statement after SIGHUP"
 
+# Verify that pg_conf_load_time() is when the main thread last applied the
+# configuration file, which every session reads (pcb->PgReloadTime): a
+# session's own reload leaves it be.
+# 1. Hold a session open, and note its pg_conf_load_time().
+# 2. Give the data directory a configuration file, and call
+#    pg_reload_conf(): a new session's pg_conf_load_time() is later.
+# 3. The held session reports the same time as the new one.
+# 4. Remove the file.
+held_start loadtime
+held_send loadtime "select 'lt0 ' || pg_conf_load_time();"
+for _ in $(seq 50); do
+  lt0=$(sed -n 's/^lt0 //p' "$work/loadtime.out")
+  [ -n "$lt0" ] && break
+  sleep 0.1
+done
+[ -n "$lt0" ] || fail "pg_conf_load_time in a held session"
+: > "$work/data/postgresql.conf"
+[ "$(local_psql -c 'select pg_reload_conf()')" = t ] ||
+  fail "pg_reload_conf with a configuration file"
+for _ in $(seq 50); do
+  [ "$(local_psql -c "select pg_conf_load_time() > '$lt0'")" = t ] && break
+  sleep 0.1
+done
+lt1=$(local_psql -c 'select pg_conf_load_time()')
+[ "$(local_psql -c "select '$lt1'::timestamptz > '$lt0'")" = t ] ||
+  fail "pg_conf_load_time after a reload"
+held_send loadtime "select 'lt1 ' || (pg_conf_load_time() = '$lt1');"
+held_wait loadtime "lt1 true" ||
+  fail "a held session's pg_conf_load_time is the main thread's"
+held_end loadtime
+rm "$work/data/postgresql.conf"
+
 # Verify that SIGUSR1 and SIGUSR2 are ignored: there is no log rotation, nor
 # pmsignal, and no child to reserve SIGUSR2 for.
 # 1. Send the server SIGUSR1 and SIGUSR2.

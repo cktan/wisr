@@ -53,8 +53,7 @@
 
 /* Set at postmaster start: pcb->PgStartTime */
 
-/* Set at configuration reload */
-thread_local /*SHARED*/ TimestampTz PgReloadTime;
+/* Set at configuration reload: pcb->PgReloadTime */
 
 typedef struct {
   Timestamp current;
@@ -1408,7 +1407,7 @@ Datum pg_postmaster_start_time(PG_FUNCTION_ARGS) {
 }
 
 Datum pg_conf_load_time(PG_FUNCTION_ARGS) {
-  PG_RETURN_TIMESTAMPTZ(PgReloadTime);
+  PG_RETURN_TIMESTAMPTZ(pcb->PgReloadTime.load(std::memory_order_relaxed));
 }
 
 /*

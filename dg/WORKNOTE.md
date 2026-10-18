@@ -6595,3 +6595,32 @@ switched among masks that were the same.
   reload in the test's data directory applies nothing: it has
   no `postgresql.conf` (`PLAN.md` §9).
 - 6 `/*SHARED*/` globals are left.
+
+## Step 225: PgReloadTime is the main thread's, in pcb_t
+
+`../sm/NEXT.md` §1's second item, its eighth batch.
+`PgReloadTime`, what `pg_conf_load_time()` reports, was SHARED:
+a session started with the postmaster's, then wrote its own when
+it re-read the file on `INTERRUPT_RELOAD`, a moment after the
+postmaster.
+
+- **`pcb->PgReloadTime`**, a `std::atomic<TimestampTz>`: the
+  main thread writes it after threads start. `pcb_t` stays a
+  literal type (fd.c's `static_assert`).
+- **Only the main thread writes it**:
+  `ProcessConfigFileInternal()` stores it when it applies the
+  file and is not in a session thread, so the postmaster or a
+  standalone backend. A session still re-reads the file, to
+  apply it to its own settings, but leaves the time be.
+- Re-reading the file once, in the main thread, and having
+  sessions apply its result was weighed and not taken: a
+  session must still apply the settings to its own GUCs, keep
+  what it `SET` and reset what was removed, which is most of a
+  reload; the parse saved is small and rare.
+- Without a configuration file, as `initdb` leaves the data
+  directory, nothing is applied and `pg_conf_load_time()` is
+  2000-01-01, as before.
+- `server.sh`: after `pg_reload_conf()` with a configuration
+  file, a held session and a new one report the same load
+  time, later than before.
+- 5 `/*SHARED*/` globals are left.

@@ -548,9 +548,13 @@ ConfigVariable *ProcessConfigFileInternal(GucContext context,
       pfree(pre_value);
   }
 
-  /* Remember when we last successfully loaded the config file. */
-  if (applySettings)
-    PgReloadTime = GetCurrentTimestamp();
+  /*
+   * Remember when we last successfully loaded the config file: the main
+   * thread's load, which each session's follows.
+   */
+  if (applySettings && !IsSessionThread)
+    pcb_main()->PgReloadTime.store(GetCurrentTimestamp(),
+                                   std::memory_order_relaxed);
 
 bail_out:
   if (error && applySettings) {

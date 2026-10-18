@@ -177,6 +177,11 @@ typedef struct pcb_t {
   int max_safe_fds_per_thread = 48; /* fd.c's FD_MINFREE, which it checks */
 
   TimestampTz PgStartTime = 0; /* timestamp.c: when the server started */
+  /*
+   * guc.c: when the main thread last applied the configuration file; a
+   * session's reload of it leaves this be
+   */
+  std::atomic<TimestampTz> PgReloadTime{0};
 
   /* miscinit.c: shared_preload_libraries being loaded, and loaded */
   bool process_shared_preload_libraries_in_progress = false;
