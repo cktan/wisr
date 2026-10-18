@@ -97,6 +97,8 @@ the wrapper through the `rel/` test suite.
 - `BULKLOAD.md` — the design of a bulk load: one
   transaction in one of three modes, mini-batch, batch and
   file, the last writing sorted files that RocksDB ingests
+- `VIEW.md` — the design of views, proposed: sm3 keeps a
+  view's query and what it reads, and the host expands it
 - `TEMPTABLE.md` — the design of temporary tables, which is
   built: their rows in one unlogged RocksDB instance of their
   own, under the database's transactions, with no locks

@@ -39,6 +39,7 @@ enum class kind_t : int16_t {
   stats = 10,      /* a table's statistics (SM3_DESIGN.md §6.6) */
   sequence = 11,   /* a sequence: its namespace, name and counter */
   constraint = 12, /* a constraint, keyed by its table's oid and its own */
+  view = 13,       /* a view: its namespace, name, query and reads */
 };
 
 /* The catalog's format version, which META holds. */
@@ -160,6 +161,12 @@ int decode_sequence(std::string_view blob, sequence_rec_t &rec);
 /* A constraint's value: a foreign key's (FOREIGNKEY.md §3). */
 int encode_constraint(const fkey_rec_t &rec, std::string &blob);
 int decode_constraint(std::string_view blob, fkey_rec_t &rec);
+/*
+ * A view's value: the view, each relation it reads, then its query in
+ * pieces (VIEW.md §3).
+ */
+int encode_view(const view_def_t &rec, std::string &blob);
+int decode_view(std::string_view blob, view_def_t &rec);
 
 /*
  * A table's statistics, as its STATS entries hold them
@@ -199,6 +206,9 @@ enum class part_t {
   constraint,
   fkey,
   fkey_pair,
+  view,
+  view_read,
+  view_query,
 };
 
 /* A part's schema, and its layout, which the codec encodes by. */

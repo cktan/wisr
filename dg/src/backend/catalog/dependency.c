@@ -1340,6 +1340,24 @@ void AcquireDeletionLock(const ObjectAddress *object, int flags) {
 }
 
 /*
+ * The objects expr refers to, as recordDependencyOnExpr() finds them, with
+ * no duplicates, palloc'd into *out; their count is returned.  For a caller
+ * that keeps them itself, as sm keeps a view's (access/smstore.c).
+ */
+int find_expr_references(Node *expr, List *rtable, ObjectAddress **out) {
+  find_expr_references_context context;
+  int n;
+
+  context.addrs = new_object_addresses();
+  context.rtables = list_make1(rtable);
+  find_expr_references_walker(expr, &context);
+  eliminate_duplicate_dependencies(context.addrs);
+  n = context.addrs->numrefs;
+  *out = context.addrs->refs;
+  return n;
+}
+
+/*
  * recordDependencyOnExpr - find expression dependencies
  *
  * This is used to find the dependencies of rules, constraint expressions,

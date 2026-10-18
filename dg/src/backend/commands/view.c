@@ -15,6 +15,7 @@
 #include "postgres.h"
 
 #include "access/relation.h"
+#include "access/smstore.h"
 #include "access/xact.h"
 #include "catalog/namespace.h"
 #include "commands/tablecmds.h"
@@ -35,8 +36,8 @@ static void checkViewColumns(TupleDesc newdesc, TupleDesc olddesc);
 /*---------------------------------------------------------------------
  * DefineVirtualRelation
  *
- * Create a view relation and use the rules system to store the query
- * for the view.
+ * Create a view in sm, or replace one's query: sm keeps the query, and
+ * the relation cache makes the view's rule of it (access/smstore.h).
  *
  * EventTriggerAlterTableStart must have been called already.
  *---------------------------------------------------------------------
@@ -48,6 +49,14 @@ static ObjectAddress DefineVirtualRelation(RangeVar *relation, List *tlist,
   LOCKMODE lockmode;
   List *attrList;
   ListCell *t;
+
+  /* Not kept in sm yet (../sm/VIEW.md section 9). */
+  if (relation->relpersistence == RELPERSISTENCE_TEMP)
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("temporary views are not supported yet")));
+  if (options != NIL)
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("view options are not supported yet")));
 
   /*
    * create a list of ColumnDef nodes based on the names and types of the
@@ -94,10 +103,6 @@ static ObjectAddress DefineVirtualRelation(RangeVar *relation, List *tlist,
 
   if (OidIsValid(viewOid) && replace) {
     Relation rel;
-    TupleDesc descriptor;
-    List *atcmds = NIL;
-    AlterTableCmd *atcmd;
-    ObjectAddress address;
 
     /* Relation is already locked, but we must build a relcache entry. */
     rel = relation_open(viewOid, NoLock);
@@ -112,138 +117,22 @@ static ObjectAddress DefineVirtualRelation(RangeVar *relation, List *tlist,
     CheckTableNotInUse(rel, "CREATE OR REPLACE VIEW");
 
     /*
-     * Due to the namespace visibility rules for temporary objects, we
-     * should only end up replacing a temporary view with another
-     * temporary view, and similarly for permanent views.
+     * Verify that the old column list is an initial prefix of the new
+     * column list.  A view's columns are its query's select list in sm
+     * (access/smstore.h), so new ones need nothing added.
      */
-    Assert(relation->relpersistence == rel->rd_rel->relpersistence);
-
-    /*
-     * Create a tuple descriptor to compare against the existing view, and
-     * verify that the old column list is an initial prefix of the new
-     * column list.
-     */
-    descriptor = BuildDescForRelation(attrList);
-    checkViewColumns(descriptor, rel->rd_att);
-
-    /*
-     * If new attributes have been added, we must add pg_attribute entries
-     * for them.  It is convenient (although overkill) to use the ALTER
-     * TABLE ADD COLUMN infrastructure for this.
-     *
-     * Note that we must do this before updating the query for the view,
-     * since the rules system requires that the correct view columns be in
-     * place when defining the new rules.
-     *
-     * Also note that ALTER TABLE doesn't run parse transformation on
-     * AT_AddColumnToView commands.  The ColumnDef we supply must be ready
-     * to execute as-is.
-     */
-    if (list_length(attrList) > rel->rd_att->natts) {
-      ListCell *c;
-      int skip = rel->rd_att->natts;
-
-      foreach (c, attrList) {
-        if (skip > 0) {
-          skip--;
-          continue;
-        }
-        atcmd = makeNode(AlterTableCmd);
-        atcmd->subtype = AT_AddColumnToView;
-        atcmd->def = (Node *)lfirst(c);
-        atcmds = lappend(atcmds, atcmd);
-      }
-
-      /* EventTriggerAlterTableStart called by ProcessUtilitySlow */
-      AlterTableInternal(viewOid, atcmds, true);
-
-      /* Make the new view columns visible */
-      CommandCounterIncrement();
-    }
-
-    /*
-     * Update the query for the view.
-     *
-     * Note that we must do this before updating the view options, because
-     * the new options may not be compatible with the old view query (for
-     * example if we attempt to add the WITH CHECK OPTION, we require that
-     * the new view be automatically updatable, but the old view may not
-     * have been).
-     */
-    StoreViewQuery(viewOid, viewParse, replace);
-
-    /* Make the new view query visible */
-    CommandCounterIncrement();
-
-    /*
-     * Update the view's options.
-     *
-     * The new options list replaces the existing options list, even if
-     * it's empty.
-     */
-    atcmd = makeNode(AlterTableCmd);
-    atcmd->subtype = AT_ReplaceRelOptions;
-    atcmd->def = (Node *)options;
-    atcmds = list_make1(atcmd);
-
-    /* EventTriggerAlterTableStart called by ProcessUtilitySlow */
-    AlterTableInternal(viewOid, atcmds, true);
-
-    /*
-     * There is very little to do here to update the view's dependencies.
-     * Most view-level dependency relationships, such as those on the
-     * owner, schema, and associated composite type, aren't changing.
-     * Because we don't allow changing type or collation of an existing
-     * view column, those dependencies of the existing columns don't
-     * change either, while the AT_AddColumnToView machinery took care of
-     * adding such dependencies for new view columns.  The dependencies of
-     * the view's query could have changed arbitrarily, but that was dealt
-     * with inside StoreViewQuery.  What remains is only to check that
-     * view replacement is allowed when we're creating an extension.
-     */
-    ObjectAddressSet(address, RelationRelationId, viewOid);
-
-    recordDependencyOnCurrentExtension(&address, true);
-
-    /*
-     * Seems okay, so return the OID of the pre-existing view.
-     */
+    checkViewColumns(BuildDescForRelation(attrList), rel->rd_att);
     relation_close(rel, NoLock); /* keep the lock! */
 
-    return address;
-  } else {
-    CreateStmt *createStmt = makeNode(CreateStmt);
-    ObjectAddress address;
-
-    /*
-     * Set the parameters for keys/inheritance etc. All of these are
-     * uninteresting for views...
-     */
-    createStmt->relation = relation;
-    createStmt->tableElts = attrList;
-    createStmt->inhRelations = NIL;
-    createStmt->constraints = NIL;
-    createStmt->options = options;
-    createStmt->oncommit = ONCOMMIT_NOOP;
-    createStmt->tablespacename = NULL;
-    createStmt->if_not_exists = false;
-
-    /*
-     * Create the relation (this will error out if there's an existing
-     * view, so we don't need more code to complain if "replace" is
-     * false).
-     */
-    address = DefineRelation(createStmt, RELKIND_VIEW, InvalidOid, NULL, NULL);
-    Assert(address.objectId != InvalidOid);
-
-    /* Make the new view relation visible */
-    CommandCounterIncrement();
-
-    /* Store the query for the view */
-    StoreViewQuery(address.objectId, viewParse, replace);
-
-    return address;
+    /* The query, in sm, in place of the view's _RETURN rule. */
+    return smstore_replace_view(viewOid, relation->relname, viewParse);
   }
+
+  /*
+   * The view, in sm: its query in place of a relation and its rule.  A name
+   * a relation already has is an error, replace or not.
+   */
+  return smstore_create_view(relation, viewParse);
 }
 
 /*

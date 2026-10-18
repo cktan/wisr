@@ -27,6 +27,7 @@
 #include "access/xact.h"
 #include "access/relation.h"
 #include "access/reloptions.h"
+#include "catalog/dependency.h"
 #include "catalog/index.h"
 #include "parser/parse_node.h"
 #include "catalog/heap.h"
@@ -110,8 +111,17 @@ struct made_index_t {
   bool unique;
 };
 
+/* A view this transaction locked (lock_view()): in mode, at level. */
+struct held_view_t {
+  Oid oid;
+  sm_lockmode_t mode;
+  int level;
+};
+
 struct smstore_state_t {
   open_tables_t open_tables;
+  /* The views it locked, as a table's lock is its handle's (open_tables). */
+  std::vector<held_view_t> held_views;
   /* sm's namespaces' epoch when this session last flushed them. */
   uint64_t nsp_epoch = 0;
   /* The indexes this transaction made, and those its commit is to wait on. */
@@ -275,6 +285,9 @@ static void close_subxact_tables(void) {
     }
     it = handles.empty() ? ots.erase(it) : std::next(it);
   }
+  /* A view's lock goes with the subtransaction's, as a table's does. */
+  std::erase_if(tcb->smstore->held_views,
+                [level](const held_view_t &h) { return h.level >= level; });
 }
 
 /* Close the tables this transaction opened: a handle is good for it only. */
@@ -283,6 +296,7 @@ static void close_tables(void) {
     for (open_table_t &ot : handles)
       sm_tbl_close(ot.tbl);
   open_tables().clear();
+  tcb->smstore->held_views.clear();
   savepoints = NIL;
   /* The kept row's memory goes with the transaction. */
   kept_oid = InvalidOid;
@@ -362,6 +376,9 @@ void smstore_subcommit(void) {
     for (open_table_t &ot : handles)
       if (ot.level >= level)
         ot.level = level - 1;
+  for (held_view_t &h : tcb->smstore->held_views)
+    if (h.level >= level)
+      h.level = level - 1;
 }
 
 static sm_tbl_t *held_table(Oid oid, sm_lockmode_t mode);
@@ -1023,8 +1040,8 @@ static uint64_t sm_nspoid(Oid nspoid) {
 }
 
 /*
- * The oid of the relation named name in nspoid, a table, an index or a
- * sequence, or InvalidOid if there is none.
+ * The oid of the relation named name in nspoid, a table, an index, a view
+ * or a sequence, or InvalidOid if there is none.
  */
 Oid smstore_relation_oid(const char *name, Oid nspoid) {
   uint64_t oid, table;
@@ -1049,6 +1066,14 @@ Oid smstore_relation_oid(const char *name, Oid nspoid) {
     break;
   default:
     sm_error("look up an index");
+  }
+  switch (sm_cat_view_oid(session(), sm_nspoid(nspoid), name, &oid)) {
+  case 0:
+    return (Oid)oid;
+  case 1:
+    break;
+  default:
+    sm_error("look up a view");
   }
   /* A sequence is never temporary yet. */
   return nspoid == PG_TEMP_NAMESPACE ? InvalidOid : sequence_oid(name, nspoid);
@@ -1099,19 +1124,47 @@ static std::vector<std::string> namespace_sequences(Oid nspoid) {
   return names;
 }
 
+/* The views in the schema nspoid, sorted by name, as for its tables. */
+static std::vector<std::string> namespace_views(Oid nspoid) {
+  std::vector<std::string> names;
+
+  if (sm_cat_list_views(xact_session(), nspoid, names) != 0)
+    sm_error("list a schema's views");
+  return names;
+}
+
+static void drop_readers(Oid oid, int32_t attnum, const std::string &what,
+                         bool cascade, const std::vector<Oid> &dropping,
+                         std::vector<Oid> *dropped);
+static void drop_view_oid(Oid oid);
+
 /*
  * Drop the schema nspname, nspoid, from sm, in this transaction.  With
- * cascade its tables go first, each with its indexes and the sequences its
- * columns own, then its other sequences; without, a schema that holds any
- * fails.
+ * cascade its views go first, with the views elsewhere that read them, then
+ * its tables, each with its indexes and the sequences its columns own, then
+ * its other sequences; without, a schema that holds any fails.
  */
 static void drop_namespace(const char *nspname, Oid nspoid, bool cascade) {
   if (cascade) {
+    std::vector<std::string> views = namespace_views(nspoid);
     std::vector<std::string> tables = namespace_tables(nspoid);
     std::vector<std::string> sequences;
+    std::vector<Oid> view_oids, dropped;
     int n;
     StringInfoData detail;
 
+    for (const std::string &v : views)
+      view_oids.push_back(smstore_relation_oid(v.c_str(), nspoid));
+    for (size_t i = 0; i < views.size(); i++) {
+      Oid v = view_oids[i];
+
+      /* Dropped already, as a reader of another of the schema's views. */
+      if (std::find(dropped.begin(), dropped.end(), v) != dropped.end())
+        continue;
+      drop_readers(v, -1, "view " + views[i], true, view_oids, &dropped);
+      drop_view_oid(v);
+      dropped.push_back(v);
+    }
     for (const std::string &t : tables)
       drop_table(makeRangeVar(pstrdup(nspname), pstrdup(t.c_str()), -1),
                  false, true, {});
@@ -1121,9 +1174,12 @@ static void drop_namespace(const char *nspname, Oid nspoid, bool cascade) {
      */
     CommandCounterIncrement();
     sequences = namespace_sequences(nspoid);
-    n = (int)(tables.size() + sequences.size());
+    n = (int)(views.size() + tables.size() + sequences.size());
 
     initStringInfo(&detail);
+    for (const std::string &v : views)
+      appendStringInfo(&detail, "%sdrop cascades to view %s.%s",
+                       detail.len > 0 ? "\n" : "", nspname, v.c_str());
     for (const std::string &t : tables)
       appendStringInfo(&detail, "%sdrop cascades to table %s.%s",
                        detail.len > 0 ? "\n" : "", nspname, t.c_str());
@@ -1815,12 +1871,35 @@ Oid smstore_index_table(Oid indexoid) {
 }
 
 /*
- * Whether sm still has relid, a table or one of its indexes, whose cached
- * entry was built at version, as this transaction sees it, with no lock: for
- * a caller that reads the entry without one (RelationGetClassForm()), which
- * RelationCheckSmVersion() never checks.  If the entry is not current, the
- * relation's name and schema now, palloc'd, into *name and *nspoid; else
- * *name is NULL.  false if relid is gone.
+ * smstore_relation_name of relid, which is no table: false if it is no
+ * view either.
+ */
+static bool view_name(sm_session_t *s, Oid relid, uint64 version, char **name,
+                      Oid *nspoid) {
+  sm_view_def_t def;
+
+  switch (sm_cat_view_def(s, relid, def)) {
+  case 0:
+    break;
+  case 1:
+    return false;
+  default:
+    sm_error("read a view's definition");
+  }
+  if (def.version == version && def.version != SM_VERSION_OWN)
+    return true;
+  *name = pstrdup(def.name.c_str());
+  *nspoid = (Oid)def.nspoid;
+  return true;
+}
+
+/*
+ * Whether sm still has relid, a table, one of its indexes or a view, whose
+ * cached entry was built at version, as this transaction sees it, with no
+ * lock: for a caller that reads the entry without one
+ * (RelationGetClassForm()), which RelationCheckSmVersion() never checks.  If
+ * the entry is not current, the relation's name and schema now, palloc'd,
+ * into *name and *nspoid; else *name is NULL.  false if relid is gone.
  */
 bool smstore_relation_name(Oid relid, uint64 version, char **name,
                            Oid *nspoid) {
@@ -1837,7 +1916,7 @@ bool smstore_relation_name(Oid relid, uint64 version, char **name,
   case 0:
     break;
   case 1:
-    return false;
+    return view_name(s, relid, version, name, nspoid);
   default:
     sm_error("read a table's version");
   }
@@ -2187,6 +2266,10 @@ static void drop_referencing(Oid oid, const char *relname, bool cascade,
   }
 }
 
+static void drop_readers(Oid oid, int32_t attnum, const std::string &what,
+                         bool cascade, const std::vector<Oid> &dropping,
+                         std::vector<Oid> *dropped);
+
 static void drop_table(RangeVar *rv, bool missing_ok, bool cascade,
                        const std::vector<Oid> &dropping) {
   Oid oid;
@@ -2212,6 +2295,8 @@ static void drop_table(RangeVar *rv, bool missing_ok, bool cascade,
     ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
                     errmsg("\"%s\" is not a table", rv->relname)));
   relation_close(rel, NoLock);
+  drop_readers(oid, -1, std::string("table ") + rv->relname, cascade, {},
+               nullptr);
   drop_referencing(oid, rv->relname, cascade, dropping);
   smstore_drop_table(oid);
 }
@@ -2264,6 +2349,276 @@ void smstore_drop_tables(DropStmt *stmt) {
   foreach (l, stmt->objects)
     drop_table(makeRangeVarFromNameList((List *)lfirst(l)), stmt->missing_ok,
                stmt->behavior == DROP_CASCADE, dropping);
+}
+
+static bool view_held(Oid oid, sm_lockmode_t mode);
+static bool lock_view(Oid oid, sm_lockmode_t mode, uint64_t *version);
+
+/*
+ * The view oid as sm keeps it, palloc'd in the current context, or NULL if
+ * there is no such view.  It takes the view's lock IS, in this transaction.
+ */
+smstore_view_t *smstore_view_desc(Oid oid) {
+  sm_view_def_t def;
+  uint64_t version;
+  smstore_view_t *desc;
+
+  if (!view_held(oid, SM_LOCKMODE_IS) &&
+      !lock_view(oid, SM_LOCKMODE_IS, &version))
+    return NULL;
+  switch (sm_cat_view_def(xact_session(), oid, def)) {
+  case 0:
+    break;
+  case 1:
+    return NULL;
+  default:
+    sm_error("read a view's definition");
+  }
+  desc = (smstore_view_t *)palloc(sizeof(smstore_view_t));
+  desc->oid = oid;
+  desc->nspoid = (Oid)def.nspoid;
+  desc->name = pstrdup(def.name.c_str());
+  desc->query = pstrdup(def.query.c_str());
+  desc->version = def.version;
+  return desc;
+}
+
+/*
+ * What the view's query reads, as sm keeps it (../sm/VIEW.md section 3):
+ * each relation of sm's it names, as recordDependencyOnExpr() finds them,
+ * and of a table, each column by its place.  A view is read whole, and a
+ * system column is the table's.
+ */
+static std::vector<sm_view_read_t> view_reads(sm_session_t *s, Query *query) {
+  ObjectAddress *refs;
+  int n = find_expr_references((Node *)query, NIL, &refs);
+  std::vector<sm_view_read_t> out;
+
+  for (int i = 0; i < n; i++) {
+    const ObjectAddress &ref = refs[i];
+    int32_t attnum = ref.objectSubId > 0 ? ref.objectSubId - 1 : -1;
+    sm_view_def_t def;
+
+    /* A compiled-in catalog is no relation of sm's, and is never dropped. */
+    if (ref.classId != RelationRelationId || ref.objectId < FirstNormalObjectId)
+      continue;
+    if (attnum >= 0 && sm_cat_view_def(s, ref.objectId, def) == 0)
+      attnum = -1;
+    sm_view_read_t r = {ref.objectId, attnum};
+
+    if (std::none_of(out.begin(), out.end(), [&](const sm_view_read_t &o) {
+          return o.relation == r.relation && o.attnum == r.attnum;
+        }))
+      out.push_back(r);
+  }
+  return out;
+}
+
+/* The view's record for query: its query, as pg_rewrite's ev_action. */
+static sm_view_def_t view_def(sm_session_t *s, Query *query) {
+  sm_view_def_t def;
+
+  def.query = nodeToString(list_make1(query));
+  def.reads = view_reads(s, query);
+  return def;
+}
+
+/* Raise the error sm left creating or replacing the view name. */
+static void view_error(const char *name, const char *what) {
+  if (sm_errnum() == SM_ERR_DUPKEY)
+    ereport(ERROR, (errcode(ERRCODE_DUPLICATE_TABLE),
+                    errmsg("relation \"%s\" already exists", name)));
+  if (sm_errnum() == SM_ERR_INVALID)
+    ereport(ERROR,
+            (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+             errmsg("view \"%s\" cannot be made: %s", name, sm_errmsg())));
+  sm_error(what);
+}
+
+/*
+ * Create the view rv names, its query query, in sm, in this transaction.
+ * A name a relation of its schema has is an error.
+ */
+ObjectAddress smstore_create_view(RangeVar *rv, Query *query) {
+  Oid nspoid = RangeVarGetCreationNamespace(rv);
+  sm_session_t *s = xact_session();
+  sm_view_def_t def = view_def(s, query);
+  uint64_t oid;
+  ObjectAddress address;
+
+  if (waiting([&] {
+        return sm_cat_create_view(s, sm_nspoid(nspoid), rv->relname, def, &oid);
+      }) != 0)
+    view_error(rv->relname, "create a view");
+  ObjectAddressSet(address, RelationRelationId, (Oid)oid);
+  return address;
+}
+
+static void forget_table(Oid relid);
+
+/*
+ * Replace the query of the view oid, named name, with query, in sm, in this
+ * transaction: CREATE OR REPLACE VIEW's, whose columns the caller has
+ * checked against the view's.
+ */
+ObjectAddress smstore_replace_view(Oid oid, const char *name, Query *query) {
+  sm_session_t *s = xact_session();
+  sm_view_def_t def = view_def(s, query);
+  ObjectAddress address;
+
+  if (waiting([&] { return sm_cat_replace_view(s, oid, def); }) != 0)
+    view_error(name, "replace a view");
+  /* Every session builds its descriptor afresh, this one at its next use. */
+  forget_table(oid);
+  ObjectAddressSet(address, RelationRelationId, oid);
+  return address;
+}
+
+/* A view that reads what is dropped, as drop_readers() finds it. */
+struct reader_t {
+  Oid oid;
+  std::string name;
+  std::string reads; /* what it reads, for the message: "table t" */
+};
+
+/*
+ * The views that read the relation oid, named what, directly or through
+ * other views, each once: into found in the order PostgreSQL reports them,
+ * a view before those that read it, and into order in an order they can be
+ * dropped in, a view after those that read it.  attnum, 0-based, takes
+ * only the views that read that column of a table; -1 takes every one.
+ */
+static void find_readers(Oid oid, int32_t attnum, const std::string &what,
+                         std::vector<reader_t> &found,
+                         std::vector<Oid> &order) {
+  sm_session_t *s = xact_session();
+  std::vector<uint64_t> views;
+
+  if (sm_cat_view_readers(s, oid, views) != 0)
+    sm_error("find the views that read a relation");
+  for (uint64_t v : views) {
+    sm_view_def_t def;
+
+    if (sm_cat_view_def(s, v, def) != 0)
+      continue;
+    if (attnum >= 0 && std::none_of(def.reads.begin(), def.reads.end(),
+                                    [&](const sm_view_read_t &r) {
+                                      return r.relation == oid &&
+                                             r.attnum == attnum;
+                                    }))
+      continue;
+    if (std::any_of(found.begin(), found.end(),
+                    [&](const reader_t &r) { return r.oid == (Oid)v; }))
+      continue;
+    found.push_back({(Oid)v, def.name, what});
+    find_readers((Oid)v, -1, "view " + def.name, found, order);
+    order.push_back((Oid)v);
+  }
+}
+
+/* Drop the view oid from sm, in this transaction. */
+static void drop_view_oid(Oid oid) {
+  sm_session_t *s = xact_session();
+
+  /* Every session forgets its descriptor once this one commits. */
+  forget_table(oid);
+  if (waiting([&] { return sm_cat_drop_view(s, oid); }) != 0)
+    sm_error("drop a view");
+}
+
+/*
+ * Drop the views that read the relation oid, what ("table t", "view v",
+ * "column c of table t", with attnum its place), as DROP ... CASCADE does,
+ * with PostgreSQL's notice; without cascade, PostgreSQL's error.  One the
+ * statement drops too, in dropping, is dropped without a word.  Each view
+ * dropped is added to *dropped, if given.
+ */
+static void drop_readers(Oid oid, int32_t attnum, const std::string &what,
+                         bool cascade, const std::vector<Oid> &dropping,
+                         std::vector<Oid> *dropped) {
+  std::vector<reader_t> found;
+  std::vector<Oid> order;
+  StringInfoData detail;
+  int n = 0;
+
+  find_readers(oid, attnum, what, found, order);
+  initStringInfo(&detail);
+  for (const reader_t &r : found) {
+    if (std::find(dropping.begin(), dropping.end(), r.oid) != dropping.end())
+      continue;
+    /* A line each, as PostgreSQL's reportDependentObjects() writes them. */
+    if (n++ > 0)
+      appendStringInfoChar(&detail, '\n');
+    if (cascade)
+      appendStringInfo(&detail, "drop cascades to view %s", r.name.c_str());
+    else
+      appendStringInfo(&detail, "view %s depends on %s", r.name.c_str(),
+                       r.reads.c_str());
+  }
+  if (n > 0 && !cascade)
+    ereport(ERROR, (errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+                    errmsg("cannot drop %s because other objects depend on it",
+                           what.c_str()),
+                    errdetail("%s", detail.data),
+                    errhint("Use DROP ... CASCADE to drop the dependent "
+                            "objects too.")));
+  if (n == 1)
+    ereport(NOTICE, (errmsg("%s", detail.data)));
+  else if (n > 1)
+    ereport(NOTICE, (errmsg("drop cascades to %d other objects", n),
+                     errdetail("%s", detail.data)));
+  for (Oid v : order) {
+    drop_view_oid(v);
+    if (dropped != nullptr)
+      dropped->push_back(v);
+  }
+}
+
+/*
+ * Drop the views a DROP VIEW names, from sm, in this transaction.  A view
+ * another reads is what depends on it: CASCADE drops the reader, RESTRICT
+ * is an error, and one the statement drops too is dropped with it.
+ */
+void smstore_drop_views(DropStmt *stmt) {
+  std::vector<Oid> dropping, dropped;
+  ListCell *l;
+
+  foreach (l, stmt->objects)
+    dropping.push_back(RangeVarGetRelid(
+        makeRangeVarFromNameList((List *)lfirst(l)), NoLock, true));
+  foreach (l, stmt->objects) {
+    RangeVar *rv = makeRangeVarFromNameList((List *)lfirst(l));
+    Oid named = dropping[foreach_current_index(l)];
+    Oid oid;
+    Relation rel;
+
+    /* Dropped already, as a reader of one named before it. */
+    if (OidIsValid(named) &&
+        std::find(dropped.begin(), dropped.end(), named) != dropped.end())
+      continue;
+    /* Locked against other sessions' use until the transaction ends. */
+    oid = RangeVarGetRelid(rv, AccessExclusiveLock, true);
+    if (!OidIsValid(oid)) {
+      if (!stmt->missing_ok)
+        ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
+                        errmsg("view \"%s\" does not exist", rv->relname)));
+      ereport(NOTICE,
+              (errmsg("view \"%s\" does not exist, skipping", rv->relname)));
+      continue;
+    }
+    rel = relation_open(oid, NoLock);
+    if (rel->rd_rel->relkind != RELKIND_VIEW)
+      ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
+                      errmsg("\"%s\" is not a view", rv->relname),
+                      rel->rd_rel->relkind == RELKIND_RELATION
+                          ? errhint("Use DROP TABLE to remove a table.")
+                          : 0));
+    relation_close(rel, NoLock);
+    drop_readers(oid, -1, std::string("view ") + rv->relname,
+                 stmt->behavior == DROP_CASCADE, dropping, &dropped);
+    drop_view_oid(oid);
+    dropped.push_back(oid);
+  }
 }
 
 /*
@@ -2466,10 +2821,22 @@ static void add_column(Oid relid, const char *relname, ColumnDef *col,
   sm_error("add a column");
 }
 
-/* DROP COLUMN name of the table relid, in sm; it reads as null from now. */
+/*
+ * DROP COLUMN name of the table relid, in sm; it reads as null from now.  A
+ * view that reads it is what depends on it: CASCADE drops the view, RESTRICT
+ * is an error.
+ */
 static void drop_column(Oid relid, const char *relname, const char *name,
-                        bool missing_ok) {
+                        bool missing_ok, bool cascade) {
   sm_session_t *s = xact_session();
+  sm_table_def_t def;
+
+  if (table_def_now(relid, def))
+    for (size_t i = 0; i < def.columns.size(); i++)
+      if (!def.columns[i].dropped && def.columns[i].name == name)
+        drop_readers(relid, (int32_t)i,
+                     std::string("column ") + name + " of table " + relname,
+                     cascade, {}, nullptr);
 
   if (waiting([&] { return sm_cat_drop_column(s, relid, name); }) == 0)
     return;
@@ -2530,7 +2897,8 @@ void smstore_alter_table(Oid relid, AlterTableStmt *stmt) {
     else if (cmd->subtype == AT_ValidateConstraint)
       validate_constraint(relid, relname, cmd->name);
     else
-      drop_column(relid, relname, cmd->name, cmd->missing_ok);
+      drop_column(relid, relname, cmd->name, cmd->missing_ok,
+                  cmd->behavior == DROP_CASCADE);
     /* The next subcommand sees what this one did. */
     CommandCounterIncrement();
   }
@@ -3709,6 +4077,37 @@ static Oid lock_target(Oid relid) {
   return OidIsValid(table) ? table : relid;
 }
 
+/* Whether this transaction holds the view oid's lock in a mode covering mode.
+ */
+static bool view_held(Oid oid, sm_lockmode_t mode) {
+  for (const held_view_t &h : tcb->smstore->held_views)
+    if (h.oid == oid && mode_covers(h.mode, mode))
+      return true;
+  return false;
+}
+
+/*
+ * Take the view oid's lock in mode, until the transaction ends, and set
+ * *version to its version under the lock: false if oid is no view.  A view
+ * has a table's lock in sm (../sm/VIEW.md section 7): a query takes it
+ * IS, its DDL X.
+ */
+static bool lock_view(Oid oid, sm_lockmode_t mode, uint64_t *version) {
+  sm_session_t *s = xact_session();
+  int rc;
+
+  rc = waiting([&] { return sm_cat_lock_view(s, oid, mode, version); });
+  if (rc < 0)
+    sm_error("lock a view");
+  if (rc == 1)
+    return false;
+  /* Remembered until the transaction ends, which releases it. */
+  if (!view_held(oid, mode))
+    tcb->smstore->held_views.push_back(
+        {oid, mode, GetCurrentTransactionNestLevel()});
+  return true;
+}
+
 /*
  * Lock the relation relid, if it is a table in sm, as PostgreSQL locks a
  * relation before it reads its definition (lmgr.c): so a definition a DDL
@@ -3716,16 +4115,23 @@ static Oid lock_target(Oid relid) {
  * which takes X, matters here: the call into sm that uses the table takes
  * what it needs, so a writer takes IX and anything not exclusive IS -- an
  * index build or an analyze in sm keeps no writer out.  An index known by
- * its table (smstore_index_table()) is locked as its table; a sequence is
- * not a table in sm, and takes nothing.
+ * its table (smstore_index_table()) is locked as its table, and a view by a
+ * lock of its own; a sequence is not a table in sm, and takes nothing.
  */
 void smstore_lock_relation(Oid relid, LOCKMODE lockmode) {
+  sm_lockmode_t mode = relation_lock_mode(lockmode);
+  uint64_t version;
+
+  if (view_held(relid, mode))
+    return;
   /* Held until the transaction ends, as the handle is. */
-  sm_tbl_t *tbl = open_table(lock_target(relid), relation_lock_mode(lockmode));
+  sm_tbl_t *tbl = open_table(lock_target(relid), mode);
 
   /* What this session caches of it is from the version now held, or goes. */
   if (tbl != NULL)
     RelationCheckSmVersion(relid, lock_target(relid), sm_tbl_def(tbl)->version);
+  else if (lock_view(relid, mode, &version))
+    RelationCheckSmVersion(relid, relid, version);
 }
 
 /*
@@ -3734,26 +4140,36 @@ void smstore_lock_relation(Oid relid, LOCKMODE lockmode) {
  * relation that is no table in sm takes nothing, and is true.
  */
 bool smstore_trylock_relation(Oid relid, LOCKMODE lockmode) {
+  sm_lockmode_t mode = relation_lock_mode(lockmode);
   bool blocked;
+  uint64_t version;
 
+  if (view_held(relid, mode))
+    return true;
   /* Held until the transaction ends, as the handle is. */
-  sm_tbl_t *tbl = try_open_table(lock_target(relid),
-                                 relation_lock_mode(lockmode), &blocked);
+  sm_tbl_t *tbl = try_open_table(lock_target(relid), mode, &blocked);
 
   /* What this session caches of it is from the version now held, or goes. */
   if (tbl != NULL)
     RelationCheckSmVersion(relid, lock_target(relid), sm_tbl_def(tbl)->version);
+  /*
+   * A view's lock, which sm's open of no table took as it would a table's,
+   * if it was free: so this does not wait.
+   */
+  else if (!blocked && lock_view(relid, mode, &version))
+    RelationCheckSmVersion(relid, relid, version);
   return !blocked;
 }
 
 /*
  * Whether this transaction holds sm's lock on the relation relid in a mode
  * covering what lockmode takes (smstore_lock_relation()): on the table, or
- * for an index, on its table.  A sequence takes no lock in sm, so has none
- * to hold, and is held.
+ * for an index, on its table, or on a view.  A sequence takes no lock in sm,
+ * so has none to hold, and is held.
  */
 bool smstore_relation_held(Oid relid, LOCKMODE lockmode) {
   return held_table(lock_target(relid), relation_lock_mode(lockmode)) != NULL ||
+         view_held(relid, relation_lock_mode(lockmode)) ||
          smstore_sequence_exists(relid);
 }
 

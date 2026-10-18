@@ -105,6 +105,8 @@ extern void performDeletion(const ObjectAddress *object, DropBehavior behavior,
 extern void performMultipleDeletions(const ObjectAddresses *objects,
                                      DropBehavior behavior, int flags);
 
+extern int find_expr_references(Node *expr, List *rtable, ObjectAddress **out);
+
 extern void recordDependencyOnExpr(const ObjectAddress *depender, Node *expr,
                                    List *rtable, DependencyType behavior);
 

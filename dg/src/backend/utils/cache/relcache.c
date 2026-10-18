@@ -1343,6 +1343,113 @@ static TriggerDesc *sm_fkey_triggers(const smstore_table_t *desc) {
   return td;
 }
 
+/*
+ * Build the descriptor of a view in sm (access/smstore.h) from view: its
+ * columns its query's select list, as DefineVirtualRelation() made
+ * pg_attribute's rows of them, and its one rule, _RETURN, the query, as
+ * RelationBuildRuleLock() would make it of pg_rewrite's row.  Its row type
+ * is a record, as a table's in sm is.
+ */
+static Relation RelationBuildSmViewDesc(const smstore_view_t *view,
+                                        bool insertIt) {
+  List *actions = (List *)stringToNode(view->query);
+  Query *query = linitial_node(Query, actions);
+  FormData_pg_class form;
+  Relation relation;
+  MemoryContext oldcxt;
+  RewriteRule *rule;
+  RuleLock *rulelock;
+  int natts = 0;
+  int i = 0;
+
+  foreach_node(TargetEntry, tle, query->targetList) {
+    if (!tle->resjunk)
+      natts++;
+  }
+  memset(&form, 0, sizeof(form));
+  form.oid = view->oid;
+  namestrcpy(&form.relname, view->name);
+  form.relnamespace = view->nspoid;
+  form.relowner = BOOTSTRAP_SUPERUSERID;
+  form.relkind = RELKIND_VIEW;
+  form.relpersistence = RELPERSISTENCE_PERMANENT;
+  form.relispopulated = true;
+  form.relnatts = natts;
+  form.relhasrules = true;
+  form.relreplident = REPLICA_IDENTITY_NOTHING;
+  relation = AllocateRelationDesc(&form);
+  RelationGetRelid(relation) = view->oid;
+  relation->rd_smversion = view->version;
+  relation->rd_refcnt = 0;
+  relation->rd_isnailed = false;
+  relation->rd_createSubid = InvalidSubTransactionId;
+  relation->rd_newRelfilelocatorSubid = InvalidSubTransactionId;
+  relation->rd_firstRelfilelocatorSubid = InvalidSubTransactionId;
+  relation->rd_droppedSubid = InvalidSubTransactionId;
+  relation->rd_backend = INVALID_PROC_NUMBER;
+  relation->rd_islocaltemp = false;
+
+  /* The columns, in the cache's context, as AllocateRelationDesc's are. */
+  oldcxt = MemoryContextSwitchTo(CacheMemoryContext);
+  relation->rd_att->tdtypeid = RECORDOID;
+  relation->rd_att->tdtypmod = -1;
+  foreach_node(TargetEntry, tle, query->targetList) {
+    if (tle->resjunk)
+      continue;
+    TupleDescInitEntry(relation->rd_att, i + 1, tle->resname,
+                       exprType((Node *)tle->expr),
+                       exprTypmod((Node *)tle->expr), 0);
+    TupleDescInitEntryCollation(relation->rd_att, i + 1,
+                                exprCollation((Node *)tle->expr));
+    TupleDescAttr(relation->rd_att, i)->attrelid = view->oid;
+    populate_compact_attribute(relation->rd_att, i);
+    i++;
+  }
+  MemoryContextSwitchTo(oldcxt);
+
+  /* Its rule, in a context of its own, as RelationBuildRuleLock()'s is. */
+  relation->rd_rulescxt = AllocSetContextCreate(
+      CacheMemoryContext, "relation rules", ALLOCSET_SMALL_SIZES);
+  MemoryContextCopyAndSetIdentifier(relation->rd_rulescxt, view->name);
+  oldcxt = MemoryContextSwitchTo(relation->rd_rulescxt);
+  rule = (RewriteRule *)palloc(sizeof(RewriteRule));
+  /* A view has one rule: its oid serves as the rule's (../sm/VIEW.md). */
+  rule->ruleId = view->oid;
+  rule->event = CMD_SELECT;
+  rule->enabled = RULE_FIRES_ON_ORIGIN;
+  rule->isInstead = true;
+  rule->qual = NULL;
+  rule->actions = (List *)stringToNode(view->query);
+  setRuleCheckAsUser((Node *)rule->actions, BOOTSTRAP_SUPERUSERID);
+  rulelock = (RuleLock *)palloc(sizeof(RuleLock));
+  rulelock->numLocks = 1;
+  rulelock->rules = (RewriteRule **)palloc(sizeof(RewriteRule *));
+  rulelock->rules[0] = rule;
+  MemoryContextSwitchTo(oldcxt);
+  relation->rd_rules = rulelock;
+
+  /* No storage: no indexes, foreign keys, triggers or statistics. */
+  relation->rd_fkeylist = NIL;
+  relation->rd_fkeyvalid = true;
+  relation->rd_indexlist = NIL;
+  relation->rd_indexvalid = true;
+  relation->rd_pkindex = InvalidOid;
+  relation->rd_replidindex = InvalidOid;
+  relation->rd_statlist = NIL;
+  relation->rd_statvalid = true;
+  relation->trigdesc = NULL;
+  relation->rd_rsdesc = NULL;
+  relation->rd_options = NULL;
+
+  RelationInitLockInfo(relation);
+  RelationInitPhysicalAddr(relation);
+
+  if (insertIt)
+    RelationCacheInsert(relation, true);
+  relation->rd_isvalid = true;
+  return relation;
+}
+
 static Relation RelationBuildSmDesc(Oid targetRelId, bool insertIt) {
   smstore_table_t *desc = smstore_table_desc(targetRelId);
   FormData_pg_class form;
@@ -1352,6 +1459,10 @@ static Relation RelationBuildSmDesc(Oid targetRelId, bool insertIt) {
   bool has_not_null = false;
 
   if (desc == NULL) {
+    smstore_view_t *view = smstore_view_desc(targetRelId);
+
+    if (view != NULL)
+      return RelationBuildSmViewDesc(view, insertIt);
     /* A sequence has a name in sm but no descriptor (commands/sequence.c). */
     if (smstore_sequence_exists(targetRelId))
       ereport(ERROR,

@@ -39,13 +39,16 @@ void drop_from(sm3::session_t *s, int d) {
   while (!s->stats.empty() && s->stats.back().depth >= d) {
     s->stats.pop_back();
   }
+  while (!s->views.empty() && s->views.back().depth >= d) {
+    s->views.pop_back();
+  }
 }
 
 /* Whether s's transaction has made any DDL. */
 bool made_ddl(const sm3::session_t *s) {
   return !s->tables.empty() || !s->names.empty() || !s->collations.empty() ||
          !s->nspaces.empty() || !s->states.empty() || !s->sequences.empty() ||
-         !s->stats.empty();
+         !s->stats.empty() || !s->views.empty();
 }
 
 /* Whether a name change is of a temporary table's name. */
@@ -63,7 +66,7 @@ bool made_shared_ddl(const sm3::session_t *s) {
          !std::all_of(s->names.begin(), s->names.end(), temp_name) ||
          std::any_of(s->states.begin(), s->states.end(), shared) ||
          !s->collations.empty() || !s->nspaces.empty() ||
-         !s->sequences.empty() || !s->stats.empty();
+         !s->sequences.empty() || !s->stats.empty() || !s->views.empty();
 }
 
 /*
@@ -176,6 +179,22 @@ void publish(sm3::session_t *s) {
     }
   }
   s->tables.clear();
+  for (sm3::view_change_t &v : s->views) {
+    // A view renamed or dropped frees the name it had.
+    auto old = cat->views.find(v.oid);
+    if (old != cat->views.end()) {
+      cat->view_names.erase({old->second->nspoid, old->second->name});
+    }
+    if (v.def) {
+      cat->view_names[{v.def->nspoid, v.def->name}] = v.oid;
+      cat->views[v.oid] = std::move(v.def);
+      cat->view_seq[v.oid] = seq;
+    } else {
+      cat->views.erase(v.oid);
+      cat->view_seq.erase(v.oid);
+    }
+  }
+  s->views.clear();
   cat->seq.store(seq);
   for (sm3::name_change_t &n : s->names) {
     if (n.oid) {
@@ -365,6 +384,9 @@ int forget(session_t *s, int depth) {
   for (stats_change_t &c : s->stats) {
     c.depth = std::min(c.depth, depth - 1);
   }
+  for (view_change_t &c : s->views) {
+    c.depth = std::min(c.depth, depth - 1);
+  }
   s->depth = depth - 1;
   return 0;
 }
@@ -449,6 +471,12 @@ void overlay_stats(session_t *s, uint64_t oid,
 void overlay_sequence(session_t *s, uint64_t oid,
                       std::optional<uint64_t> nspoid) {
   s->sequences.push_back({s->depth, oid, nspoid});
+}
+
+/* Record a view's new definition, or its drop. */
+void overlay_view(session_t *s, uint64_t oid,
+                  std::shared_ptr<const view_def_t> def) {
+  s->views.push_back({s->depth, oid, std::move(def)});
 }
 
 /* Record an index's state set, or its going with its index. */
@@ -587,9 +615,25 @@ bool nspace_in_use(const session_t *s, uint64_t oid) {
       return true;
     }
   }
-  // The shared ones, but for the tables and sequences it has changed.
+  // Its own views as they now stand, the last change to each.
+  std::map<uint64_t, bool> own_view; /* view oid -> in the namespace */
+  for (const view_change_t &c : s->views) {
+    own_view[c.oid] = c.def && c.def->nspoid == oid;
+  }
+  for (const auto &[v, in] : own_view) {
+    if (in) {
+      return true;
+    }
+  }
+  // The shared ones, but for the tables, sequences and views it has
+  // changed.
   const catalog_t *cat = s->cat;
   std::shared_lock lock(cat->mu);
+  for (const auto &[v, def] : cat->views) {
+    if (def->nspoid == oid && !own_view.count(v)) {
+      return true;
+    }
+  }
   for (const auto &[c, nsp] : cat->collation_nsp) {
     if (nsp == oid) {
       return true;
@@ -841,6 +885,124 @@ cat_get_table(const session_t *s, uint64_t nspoid, std::string_view name) {
     oid = it->second;
   }
   return cat_get_table(s, oid);
+}
+
+} // namespace sm3
+
+namespace sm3 {
+
+/*
+ * The views as s sees them, by oid: the shared ones with its own
+ * changes over them, the newest of each winning.
+ */
+static std::map<uint64_t, std::shared_ptr<const view_def_t>>
+views_of(const session_t *s) {
+  std::map<uint64_t, std::shared_ptr<const view_def_t>> out;
+  {
+    std::shared_lock lock(s->cat->mu);
+    out.insert(s->cat->views.begin(), s->cat->views.end());
+  }
+  for (const view_change_t &c : s->views) {
+    if (c.def) {
+      out[c.oid] = c.def;
+    } else {
+      out.erase(c.oid);
+    }
+  }
+  return out;
+}
+
+/* A view by oid as s sees it: its newest change, else the shared one. */
+std::shared_ptr<const view_def_t> cat_get_view(const session_t *s,
+                                               uint64_t oid) {
+  for (auto it = s->views.rbegin(); it != s->views.rend(); ++it) {
+    if (it->oid == oid) {
+      return it->def;
+    }
+  }
+  std::shared_lock lock(s->cat->mu);
+  auto it = s->cat->views.find(oid);
+  return it == s->cat->views.end() ? nullptr : it->second;
+}
+
+/* A view by name as s sees it; see sm3.h. */
+bool cat_get_view(const session_t *s, uint64_t nspoid, std::string_view name,
+                  uint64_t &oid) {
+  // Its own changes first: the newest definition of each view.
+  std::map<uint64_t, std::shared_ptr<const view_def_t>> own;
+  for (const view_change_t &c : s->views) {
+    own[c.oid] = c.def;
+  }
+  for (const auto &[v, def] : own) {
+    if (def && def->nspoid == nspoid && def->name == name) {
+      oid = v;
+      return true;
+    }
+  }
+  std::shared_lock lock(s->cat->mu);
+  auto it = s->cat->view_names.find({nspoid, std::string(name)});
+  // A view this transaction renamed or dropped has the name no more.
+  if (it == s->cat->view_names.end() || own.count(it->second)) {
+    return false;
+  }
+  oid = it->second;
+  return true;
+}
+
+/* A view's version as s sees it; see sm3.h. */
+uint64_t cat_view_version(const session_t *s, uint64_t oid) {
+  // This transaction's own change of it, not yet published.
+  for (const view_change_t &c : s->views) {
+    if (c.oid == oid) {
+      return table_version_own;
+    }
+  }
+  std::shared_lock lock(s->cat->mu);
+  auto it = s->cat->view_seq.find(oid);
+  return it == s->cat->view_seq.end() ? 0 : it->second;
+}
+
+/* The views' names in nspoid as s sees them, sorted; see sm3.h. */
+std::vector<std::string> cat_list_views(const session_t *s, uint64_t nspoid) {
+  std::vector<std::string> out;
+  for (const auto &[v, def] : views_of(s)) {
+    if (def->nspoid == nspoid) {
+      out.push_back(def->name);
+    }
+  }
+  std::sort(out.begin(), out.end());
+  return out;
+}
+
+/* The views that read a relation, as s sees them; see sm3.h. */
+std::vector<uint64_t> cat_view_readers(const session_t *s, uint64_t oid) {
+  std::vector<uint64_t> out;
+  // The map is in oid order, so out is too.
+  for (const auto &[v, def] : views_of(s)) {
+    for (const view_read_t &r : def->reads) {
+      if (r.relation == oid) {
+        out.push_back(v);
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+/* Lock a view, then read its definition; see sm3.h. */
+int cat_lock_view(session_t *s, uint64_t oid, sm1::lockmode_t mode,
+                  std::shared_ptr<const view_def_t> &out) {
+  // Held to the end of the transaction, as a table's is: DDL on the
+  // view waits out its readers, and they it.
+  if (lock_table(s->sm1, oid, mode) != 0) {
+    return -1;
+  }
+  // Under the lock the definition cannot change until commit, and
+  // memory has every commit by the time it is granted.
+  out = cat_get_view(s, oid);
+  return out ? 0
+             : sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                           "view " + std::to_string(oid) + " does not exist");
 }
 
 } // namespace sm3

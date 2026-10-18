@@ -133,6 +133,18 @@ typedef struct smstore_table_t {
   smstore_fkey_t *referenced;
 } smstore_table_t;
 
+/*
+ * A view in sm (../sm/VIEW.md), as its relation descriptor is built from
+ * it: its query is pg_rewrite's ev_action, a list of the one Query.
+ */
+typedef struct smstore_view_t {
+  Oid oid;
+  Oid nspoid;
+  const char *name;
+  const char *query;
+  uint64 version; /* sm_view_def_t::version, as this transaction reads it */
+} smstore_view_t;
+
 extern void smstore_statement_start(void);
 extern void smstore_statement_advance(void);
 extern void smstore_commit(void);
@@ -182,6 +194,11 @@ extern bool smstore_namespace_epoch_moved(void);
 extern bool smstore_relation_held(Oid relid, LOCKMODE lockmode);
 extern void smstore_truncate(Relation rel);
 extern smstore_table_t *smstore_table_desc(Oid oid);
+extern smstore_view_t *smstore_view_desc(Oid oid);
+extern ObjectAddress smstore_create_view(RangeVar *rv, Query *query);
+extern ObjectAddress smstore_replace_view(Oid oid, const char *name,
+                                          Query *query);
+extern void smstore_drop_views(DropStmt *stmt);
 extern Oid smstore_index_table(Oid indexoid);
 extern bool smstore_relation_name(Oid relid, uint64 version, char **name,
                                   Oid *nspoid);
