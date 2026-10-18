@@ -117,7 +117,6 @@ typedef enum TBlockState {
 typedef struct TransactionStateData {
   SubTransactionId subTransactionId;   /* my subxact ID */
   char *name;                          /* savepoint name, if any */
-  int savepointLevel;                  /* savepoint level */
   TransState state;                    /* low-level state */
   TBlockState blockState;              /* high-level state */
   int nestingLevel;                    /* transaction nesting depth */
@@ -782,8 +781,6 @@ static void StartTransaction(void) {
 
 /*
  *	CommitTransaction
- *
- * NB: if you change this routine, better look at PrepareTransaction too!
  */
 static void CommitTransaction(void) {
   TransactionState s = CurrentTransactionState;
@@ -840,17 +837,8 @@ static void CommitTransaction(void) {
   /* Shut down the deferred-trigger manager */
   AfterTriggerEndXact(true);
 
-  /*
-   * Insert notifications sent by NOTIFY commands into the queue.  This
-   * should be late in the pre-commit sequence to minimize time spent
-   * holding the notify-insertion lock.  However, this could result in
-   * creating a snapshot, so we must do it before serializable cleanup.
-   */
-
   /* Prevent cancel/die interrupt while cleaning up */
   HOLD_INTERRUPTS();
-
-  /* Commit updates to the relation map --- do this as late as possible */
 
   /*
    * set the current transaction state information appropriately during
@@ -911,12 +899,6 @@ static void CommitTransaction(void) {
                        RESOURCE_RELEASE_AFTER_LOCKS, true, true);
 
   /*
-   * Send out notification signals to other backends (and do other
-   * post-commit NOTIFY cleanup).  This must not happen until after our
-   * transaction is fully done from the viewpoint of other backends.
-   */
-
-  /*
    * Everything after this should be purely internal-to-this-backend
    * cleanup.
    */
@@ -967,11 +949,8 @@ static void AbortTransaction(void) {
   AtAbort_ResourceOwner();
 
   /*
-   * If any timeout events are still active, make sure the timeout interrupt
-   * is scheduled.  This covers possible loss of a timeout interrupt due to
-   * longjmp'ing out of the SIGINT handler (see notes in handle_sig_alarm).
-   * We delay this till after LockErrorCleanup so that we don't uselessly
-   * reschedule lock or deadlock check timeouts.
+   * If any timeouts are still active, make sure the timer is armed for
+   * them: the error may have come between disarming and rearming it.
    */
   reschedule_timeouts();
 
@@ -1384,12 +1363,10 @@ static bool CommitTransactionCommandInternal(void) {
      */
   case TBLOCK_SUBRESTART: {
     char *name;
-    int savepointLevel;
 
     /* save name and keep Cleanup from freeing it */
     name = s->name;
     s->name = NULL;
-    savepointLevel = s->savepointLevel;
 
     AbortSubTransaction();
     CleanupSubTransaction();
@@ -1397,7 +1374,6 @@ static bool CommitTransactionCommandInternal(void) {
     DefineSavepoint(NULL);
     s = CurrentTransactionState; /* changed by push */
     s->name = name;
-    s->savepointLevel = savepointLevel;
 
     /* This is the same as TBLOCK_SUBBEGIN case */
     Assert(s->blockState == TBLOCK_SUBBEGIN);
@@ -1411,19 +1387,16 @@ static bool CommitTransactionCommandInternal(void) {
      */
   case TBLOCK_SUBABORT_RESTART: {
     char *name;
-    int savepointLevel;
 
     /* save name and keep Cleanup from freeing it */
     name = s->name;
     s->name = NULL;
-    savepointLevel = s->savepointLevel;
 
     CleanupSubTransaction();
 
     DefineSavepoint(NULL);
     s = CurrentTransactionState; /* changed by push */
     s->name = name;
-    s->savepointLevel = savepointLevel;
 
     /* This is the same as TBLOCK_SUBBEGIN case */
     Assert(s->blockState == TBLOCK_SUBBEGIN);
@@ -2194,15 +2167,6 @@ void ReleaseSavepoint(const char *name) {
     ereport(ERROR, (errcode(ERRCODE_S_E_INVALID_SPECIFICATION),
                     errmsg("savepoint \"%s\" does not exist", name)));
 
-  /* disallow crossing savepoint level boundaries */
-  if (target->savepointLevel != s->savepointLevel)
-    ereport(
-        ERROR,
-        (errcode(ERRCODE_S_E_INVALID_SPECIFICATION),
-         errmsg(
-             "savepoint \"%s\" does not exist within current savepoint level",
-             name)));
-
   /*
    * Mark "commit pending" all subtransactions up to the target
    * subtransaction.  The actual commits will happen when control gets to
@@ -2282,15 +2246,6 @@ void RollbackToSavepoint(const char *name) {
   if (!PointerIsValid(target))
     ereport(ERROR, (errcode(ERRCODE_S_E_INVALID_SPECIFICATION),
                     errmsg("savepoint \"%s\" does not exist", name)));
-
-  /* disallow crossing savepoint level boundaries */
-  if (target->savepointLevel != s->savepointLevel)
-    ereport(
-        ERROR,
-        (errcode(ERRCODE_S_E_INVALID_SPECIFICATION),
-         errmsg(
-             "savepoint \"%s\" does not exist within current savepoint level",
-             name)));
 
   /*
    * Mark "abort pending" all subtransactions up to the target
@@ -2556,12 +2511,6 @@ static void CommitSubTransaction(void) {
   /* Must CCI to ensure commands of subtransaction are seen as done */
   CommandCounterIncrement();
 
-  /*
-   * Prior to 8.4 we marked subcommit in clog at this point.  We now only
-   * perform that step, if required, as part of the atomic update of the
-   * whole transaction tree at top level commit or abort.
-   */
-
   /* Post-commit cleanup */
   AfterTriggerEndSubXact(true);
   AtSubCommit_Portals(s->subTransactionId, s->parent->subTransactionId,
@@ -2631,11 +2580,8 @@ static void AbortSubTransaction(void) {
   AtSubAbort_ResourceOwner();
 
   /*
-   * If any timeout events are still active, make sure the timeout interrupt
-   * is scheduled.  This covers possible loss of a timeout interrupt due to
-   * longjmp'ing out of the SIGINT handler (see notes in handle_sig_alarm).
-   * We delay this till after LockErrorCleanup so that we don't uselessly
-   * reschedule lock or deadlock check timeouts.
+   * If any timeouts are still active, make sure the timer is armed for
+   * them: the error may have come between disarming and rearming it.
    */
   reschedule_timeouts();
 
@@ -2655,11 +2601,6 @@ static void AbortSubTransaction(void) {
    * AbortTransaction.)
    */
   SetUserIdAndSecContext(s->prevUser, s->prevSecContext);
-
-  /*
-   * No need for SnapBuildResetExportedSnapshotState() here, snapshot
-   * exports are not supported in subtransactions.
-   */
 
   /*
    * We can skip all this stuff if the subxact failed before creating a
@@ -2777,7 +2718,6 @@ static void PushTransaction(void) {
   s->parent = p;
   s->nestingLevel = p->nestingLevel + 1;
   s->gucNestLevel = NewGUCNestLevel();
-  s->savepointLevel = p->savepointLevel;
   s->state = TRANS_DEFAULT;
   s->blockState = TBLOCK_SUBBEGIN;
   GetUserIdAndSecContext(&s->prevUser, &s->prevSecContext);
@@ -2788,8 +2728,7 @@ static void PushTransaction(void) {
   /*
    * AbortSubTransaction and CleanupSubTransaction have to be able to cope
    * with the subtransaction from here on out; in particular they should not
-   * assume that it necessarily has a transaction context, resource owner,
-   * or XID.
+   * assume that it necessarily has a transaction context or resource owner.
    */
 }
 

@@ -16,18 +16,6 @@
 
 #include "access/transam.h"
 #include "datatype/timestamp.h"
-#include "lib/stringinfo.h"
-#include "nodes/pg_list.h"
-#include "storage/relfilelocator.h"
-#include "storage/sinval.h"
-
-/*
- * Maximum size of Global Transaction ID (including '\0').
- *
- * Note that the max value of GIDSIZE must fit in the uint16 gidlen,
- * specified in TwoPhaseFileHeader.
- */
-#define GIDSIZE 200
 
 /*
  * Xact isolation levels
@@ -41,14 +29,10 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT int DefaultXactIsoLevel;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int XactIsoLevel;
 
 /*
- * We implement three isolation levels internally.
- * The two stronger ones use one snapshot per database transaction;
- * the others use one snapshot per statement.
- * Serializable uses predicate locks in addition to snapshots.
- * These macros should be used to check which isolation level is selected.
+ * Whether the isolation level reads the whole transaction at one snapshot,
+ * sm's (access/smstore.h), rather than each statement at its own.
  */
 #define IsolationUsesXactSnapshot() (XactIsoLevel >= XACT_REPEATABLE_READ)
-#define IsolationIsSerializable() (XactIsoLevel == XACT_SERIALIZABLE)
 
 /* Xact read-only state */
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool DefaultXactReadOnly;
@@ -74,16 +58,10 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT bool XactDeferrable;
 extern thread_local /*LOCAL*/ PGDLLIMPORT int MyXactFlags;
 
 /*
- * XACT_FLAGS_ACCESSEDTEMPNAMESPACE - set when a temporary object is accessed.
- * We don't allow PREPARE TRANSACTION in that case.
+ * XACT_FLAGS_ACCESSEDTEMPNAMESPACE - set when a temporary object is accessed:
+ * without it, an ON COMMIT DELETE ROWS table need not be truncated.
  */
 #define XACT_FLAGS_ACCESSEDTEMPNAMESPACE		(1U << 0)
-
-/*
- * XACT_FLAGS_ACQUIREDACCESSEXCLUSIVELOCK - records whether the top level xact
- * logged any Access Exclusive Locks.
- */
-#define XACT_FLAGS_ACQUIREDACCESSEXCLUSIVELOCK	(1U << 1)
 
 /*
  * XACT_FLAGS_NEEDIMMEDIATECOMMIT - records whether the top level statement
@@ -104,18 +82,6 @@ typedef struct SavedTransactionCharacteristics {
   bool save_XactReadOnly;
   bool save_XactDeferrable;
 } SavedTransactionCharacteristics;
-
-/*
- * A transactionally dropped statistics entry.
- */
-typedef struct xl_xact_stats_item {
-  int kind;
-  Oid dboid;
-
-  /* The value of PgStat_HashKey.objid, as two uint32 */
-  uint32 objid_lo;
-  uint32 objid_hi;
-} xl_xact_stats_item;
 
 /* ----------------
  *		extern definitions

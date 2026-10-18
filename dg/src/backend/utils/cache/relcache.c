@@ -74,6 +74,7 @@
 #include "rewrite/rowsecurity.h"
 #include "storage/fd.h"
 #include "storage/lmgr.h"
+#include "storage/sinval.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/catcache.h"

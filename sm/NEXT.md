@@ -25,18 +25,12 @@ Low priority:
    of line, which end a load's files; a `rel` verb; and batch
    mode and mini-batch, which matter less now that no write
    keeps a row lock.
-2. **digres's `xact.c` goes.** sm keeps the transaction, and
-   digres keeps only what a session needs around it
-   (`../dg/PLAN.md` §7): its block state, memory and resource
-   cleanup, and the hooks that end a statement. In steps, each
-   removing one of PostgreSQL's concepts: the dead API
-   (`../dg/WORKNOTE.md` step 232), then the command counter and
-   snapshots (steps 233 to 235) are done. Left: the
-   subtransaction stack, cut to what digres keeps per
-   savepoint; then what is left moves to a module of digres's
-   own. digres keeps the transaction block's state, and
-   PostgreSQL's names stay until the last step. `xact.c` is
-   2,935 lines.
+2. **digres's `xact.c`, until it is empty.** sm keeps the
+   transaction; `xact.c` keeps only what a session needs
+   around it (`../dg/PLAN.md` §7), and what it no longer needs
+   is deleted as it is found. Nothing is moved out of it just
+   so the file goes (`../dg/WORKNOTE.md` steps 232 to 236).
+   It is 2,874 lines.
 
 ---
 
@@ -110,7 +104,7 @@ Owed, and blocking nothing above:
 
 - **Views, the rest of them** (`VIEW.md` §10). CREATE, OR
   REPLACE, DROP and the cascades are built, sm3's and digres's
-  (`../dg/WORKNOTE.md` step 236), and of SQLite's sample digres
+  (`../dg/WORKNOTE.md` step 238), and of SQLite's sample digres
   now fails nothing PostgreSQL 18 passes. Not built: a view's
   rows in the catalog relations, so `\d`, `\dv` and
   `pg_get_viewdef()`; ALTER VIEW; a view's options, `WITH

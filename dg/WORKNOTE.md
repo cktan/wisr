@@ -6916,7 +6916,59 @@ The second step's last part. Every MVCC snapshot was the same
   same pointer now; `PushCopiedSnapshot()` pushes without a
   copy, as no snapshot changes.
 
-## Step 236: views are sm's
+## Step 236: xact.c is stripped, and stays until it is empty
+
+What `xact.c` still does is digres's own: the transaction
+block's state (BEGIN, COMMIT, SAVEPOINT, the aborted block, the
+protocol's status byte), per-transaction and per-savepoint
+memory and resource owners, and the hooks that end each, sm's
+among them. It stays until it is empty: it is not moved to a
+module of another name just so the file goes, and what it no
+longer needs is deleted, as here:
+
+- **`savepointLevel`**: only `BeginInternalSubTransaction()`
+  changed it (step 232), so it was always 0, and the checks
+  against crossing a savepoint level never fired.
+- **Comments of what is gone**: NOTIFY's queue and signals, the
+  relation map, clog, logical decoding's exported snapshot, a
+  subtransaction's XID, `PrepareTransaction`; and the reason
+  for `reschedule_timeouts()`, which no longer longjmps out of a
+  signal handler.
+- **`xact.h`**: `GIDSIZE`, `IsolationIsSerializable()`,
+  `XACT_FLAGS_ACQUIREDACCESSEXCLUSIVELOCK`, `xl_xact_stats_item`,
+  and the includes the WAL records needed; `namespace.c` and
+  `relcache.c` include `storage/sinval.h` themselves.
+- **Kept**: SPI, nonatomic contexts included, as a scripting
+  language is to use it: `SPI_inside_nonatomic_context()` and the
+  advance of `transaction_timestamp()` for a transaction a
+  procedure starts. Also kept, as live: `MyXactFlags`,
+  `xact_is_sampled`, the after-trigger hooks (foreign keys run
+  as RI triggers), `AtEOXact_Enum()`.
+- `xact.c` is 2874 lines, from 3,284 before step 232.
+
+## Step 237: ON CONFLICT DO UPDATE refuses a row twice
+
+`ISSUE.md` issue 2, from step 233. An `INSERT ... ON CONFLICT DO
+UPDATE` whose rows conflict with each other, as `values (1, 0),
+(1, 1)` on a key, kept the first row and dropped the second's
+update, where PostgreSQL refuses the statement: "ON CONFLICT DO
+UPDATE command cannot affect row a second time". PostgreSQL
+told the case by the row's xmin; digres assigns none.
+
+- **sm tells it**: the conflicting row was written by this
+  statement, so ON CONFLICT's update of it fails with
+  `SM_ERR_SELFMODIFIED`, `TM_SelfModified` to the executor, as
+  sm's contract for `sm_stmt_begin()` says ON CONFLICT should
+  take it. `ExecUpdate()` passed over the row, as an UPDATE
+  does; it now calls `refuse_on_conflict_twice()`, which raises
+  the error when the ModifyTable is an INSERT, so ON CONFLICT's.
+- A join UPDATE that reaches one row twice still passes over
+  the second change, as in PostgreSQL.
+- `test/slt/on_conflict_twice.test` holds PostgreSQL's answers
+  alone now: both cases fail and leave the table as it was, and
+  the join UPDATE passes. Issue 2 is removed from `ISSUE.md`.
+
+## Step 238: views are sm's
 
 `../sm/VIEW.md` is the design; this is its second step, on sm3's
 views (`../sm/sm3/test/test_view.cc`).

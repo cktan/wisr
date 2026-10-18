@@ -1,7 +1,10 @@
 # Known issues
 
 Problems found and left unfixed, each with what it would take
-to fix. The code it concerns points here by number.
+to fix. The code it concerns points here by number. A fixed
+issue is removed, and its number is not used again: issue 2,
+ON CONFLICT DO UPDATE affecting a row twice, was fixed in
+`WORKNOTE.md` step 237.
 
 ---
 
@@ -44,34 +47,3 @@ a library, so a test that does fails loudly rather than racing.
 - **Run `_PG_init()` once per process**, with process-wide
   hooks under a lock. Undoes the per-session hooks
   (`WORKNOTE.md` step 222).
-
----
-
-## Issue 2: ON CONFLICT DO UPDATE may affect a row twice, silently
-
-PostgreSQL refuses an `INSERT ... ON CONFLICT DO UPDATE` whose
-rows conflict with each other:
-
-```sql
-insert into t values (1, 0), (1, 1)
-  on conflict (a) do update set b = excluded.b;
--- PostgreSQL: ERROR: ON CONFLICT DO UPDATE command cannot
---   affect row a second time
-```
-
-It told the case by the conflicting row's xmin being its own
-transaction's. digres assigns no xid, so the check never fired,
-and was removed (`WORKNOTE.md` step 233): digres answers
-`INSERT 0 1` and keeps the first row, `b = 0`, the second
-row's update dropped.
-
-**The fix**: sm reports a row written by the statement itself
-as `SM_ERR_SELFMODIFIED`, which `smstore.c`'s `write_result()`
-turns into `TM_SelfModified`. `ExecOnConflictUpdate()`
-(`nodeModifyTable.c`) can raise the cardinality violation in
-that case instead of skipping the row. MERGE has the same
-check, but does not write to a table in sm yet.
-
-`test/slt/on_conflict_twice.test` holds both answers:
-PostgreSQL's under `skipif digres`, digres's under `onlyif
-digres`. The fix drops the `onlyif digres` records.
