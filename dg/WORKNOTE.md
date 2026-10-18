@@ -6712,3 +6712,25 @@ the table.
   `pcb` and `shmem`. `cxx_thread_local.py --check` still fails
   the build on a writable global not `thread_local`.
 - No `/*SHARED*/` global is left.
+
+## Step 230: the control blocks' fields in groups
+
+`utils/control_block.h`'s fields had been added a batch at a
+time, each where the last one ended. They are in groups now,
+each under a `/* -- name -- */` heading:
+
+- **`pcb_t`**: the program and where it runs (`progname`,
+  `DataDir`, the paths, `PostmasterPid`, `PgStartTime`); how
+  the process runs; limits; file permissions; configuration and
+  libraries (`PgReloadTime`, the preload flags); module state.
+- **`tcb_t`**: the session (its record, sequences, advisory
+  keys); its transaction (`lxid`, `xmin`, `smstore`); the
+  thread's resources (timeouts, the vfd cache); loaded
+  libraries (hooks, dfmgr, EXPLAIN registry).
+- **`postmaster_tcb_t`**: the postmaster's state; what to
+  remove at exit.
+- The forward declarations at the top follow the same order.
+  No field is added or removed, and `shmem_t` is unchanged.
+- `tcb_t`'s members are now freed in another order. Each
+  deleter is a plain `delete`, and `tcb_free()` clears `tcb`
+  first, so none reaches another member.
