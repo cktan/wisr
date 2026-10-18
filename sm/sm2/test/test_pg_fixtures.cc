@@ -48,7 +48,7 @@ TEST_CASE("every datum is the bytes PostgreSQL stores") {
 
 TEST_CASE("every decimal datum is PostgreSQL's value, scaled, with its scale") {
   // Verify each decimal fixture both ways, under its typmod, as
-  // sm3 maps numeric(p, s): decimal64 up to 17 digits, decimal128
+  // digres maps numeric(p, s): decimal64 up to 17 digits, decimal128
   // up to 36, and past 36 neither.
   // 1. A fixture's hex is the value times 10^s; its datum is that
   //    integer shifted left past the scale, 5 bits for decimal64

@@ -65,9 +65,11 @@ typedef struct decimal_t {
 
 ### 2.3 Stored as sm2's decimal, at the column's scale
 
-- **A column is `numeric(p, s)`**: `p <= 17` is sm2's
-  `decimal64`, `p <= 36` its `decimal128`, whose datums carry
-  their scale below their value (`../sm/SM_DECIMAL_PLAN.md`).
+- **A column is `numeric(p, s)`**, and dg, not sm, chooses
+  its width (`../sm/sm3/SM3_DESIGN.md` §2.1): `p <= 17` is
+  sm2's `decimal64`, `p <= 36` its `decimal128`, whose datums
+  carry their scale below their value
+  (`../sm/SM_DECIMAL_PLAN.md`).
   Its typmod is PostgreSQL's, which sm2 takes as is; a column
   past 36 digits is refused.
 - **Writing rescales to the column's scale**, rounding half

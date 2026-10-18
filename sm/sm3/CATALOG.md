@@ -214,9 +214,9 @@ VIEW value        = view | view read × nread | view query × npiece
   code its build failed with and its reason that error's
   message, both null in any other state.
 - **Type codes are sm2's frozen codes** (`sm2/TYPE.md` §3); code
-  7, the retired `decimal`, is never written. A declared
-  `decimal(p, s)` is stored as the sm2 type it maps to
-  (`SM3_DESIGN.md` §2.1).
+  7, the retired `decimal`, is never written. A decimal
+  column is stored as the sm2 type its host declared, with
+  no mapping in sm (`SM3_DESIGN.md` §2.1).
 - **Column positions are 0-based**, in key and include parts as
   in memory.
 - **A missing value is its bytes**, a varlena for a

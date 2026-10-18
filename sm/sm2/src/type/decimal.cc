@@ -3,8 +3,9 @@
  * SM2_DESIGN.md §2.2): a two's complement integer, little-endian,
  * 8 bytes for decimal64 and 16 for decimal128, holding the value
  * scaled by 10^s shifted left past the scale s itself: (value << 5)
- * | s for decimal64, (value << 6) | s for decimal128. sm3 maps SQL's
- * decimal(p, s) and numeric(p, s) to one of the two.
+ * | s for decimal64, (value << 6) | s for decimal128. The host maps
+ * SQL's decimal(p, s) and numeric(p, s) to one of the two; sm does not
+ * choose.
  *
  * The typmod is PostgreSQL's numeric typmod, ((p << 16) | s) + 4,
  * with 0 <= s <= p and 1 <= p <= 17 for decimal64, 36 for

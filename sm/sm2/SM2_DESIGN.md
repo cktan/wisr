@@ -224,15 +224,17 @@ later:
 - **The scale must be declared.** The decimal puts `(precision,
   scale)` in the schema; PG allows a bare `numeric` where
   every datum carries its own. A bare `decimal` column has no
-  equivalent, so it defaults to `decimal(17, 3)`, the widest
-  `decimal64`, near DuckDB's bare `DECIMAL`, `(18, 3)`, which
-  can round a datum its user believed exact.
+  equivalent, so its host gives it a declared `(p, s)` —
+  digres gives `(17, 3)`, the widest `decimal64` — which can
+  round a datum its user believed exact.
 - **They are the types that are converted** at the executor
   boundary, in both directions, while §2.1 makes every other
   type a copy.
-- **SQL's `decimal(p, s)` is not an sm2 type.** sm3 maps it to
-  one of the two (`sm3/SM3_DESIGN.md` §2.1), so the names a
-  user writes are resolved above sm2.
+- **SQL's `decimal(p, s)` is not an sm type.** The host maps
+  it to one of the two, choosing the width
+  (`sm3/SM3_DESIGN.md` §2.1; digres's rules are
+  `../../dg/DECIMAL.md` §2.3), so the names a user writes are
+  resolved above sm.
 
 What a column may declare, and what a datum may hold:
 
@@ -249,8 +251,9 @@ What a column may declare, and what a datum may hold:
 - **The typmod is required.** There is no bare form: `-1` is
   refused, like any typmod outside the type's range, by the
   type's `typmod_valid`, which `rel_open` and the codec check
-  through `datum_width`. sm3 resolves a bare `decimal`,
-  `decimal(p)` and the `numeric` alias to a declared `(p, s)`.
+  through `datum_width`. The host resolves a bare `decimal`,
+  `decimal(p)` and the `numeric` alias to a declared `(p, s)`;
+  sm takes what it is given.
 - **The scale is in the datum**, below the value:
   `(value << 5) | s` for `decimal64`, `(value << 6) | s` for
   `decimal128` (`TYPE.md` §3.4), so a datum means a value
@@ -1185,10 +1188,10 @@ will find them:
 - **The type set is closed at the format.** New types are
   cheap, but only while the type code and the tuple layout
   leave room for them; that room is spent once.
-- **A bare `decimal` can round.** It defaults to
-  `decimal(18, 3)` (§2.2), so a datum a user believed exact
-  loses digits past the third fractional place, with no error,
-  and one of 10^15 or more is refused.
+- **A bare `decimal` can round.** Its host gives it a default,
+  digres `decimal(17, 3)` (§2.2), so a datum a user believed
+  exact loses digits past the third fractional place, with no
+  error, and one of 10^14 or more is refused.
   Refusing a bare `decimal` would have been louder; the default
   was chosen for compatibility.
 - **Every key column pays a null marker byte**, `NOT NULL`

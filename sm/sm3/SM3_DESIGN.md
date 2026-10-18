@@ -189,26 +189,21 @@ Settled for the layout, whatever its shape:
 
 ### 2.1 Decimal columns
 
-sm2 has no `decimal(p, s)`: it has `decimal64` and
-`decimal128`, one per width (`sm2/SM2_DESIGN.md` §2.2). The
-catalog maps a declared column to one of them.
+sm has no `decimal(p, s)`: a decimal column is sm2's
+`decimal64` or `decimal128`, one per width
+(`sm2/SM2_DESIGN.md` §2.2), with its `(p, s)` typmod, as the
+host declares it.
 
-**Decision: the narrowest that holds the precision.**
-
-| Declared | sm2 type | typmod |
-| --- | --- | --- |
-| `decimal(p, s)`, `numeric(p, s)`, `p <= 17` | `decimal64` | `(p, s)` |
-| `decimal(p, s)`, `numeric(p, s)`, `18 <= p <= 36` | `decimal128` | `(p, s)` |
-| `decimal(p)` | as `decimal(p, 0)` | |
-| bare `decimal` or `numeric` | `decimal64` | `(17, 3)`, the widest `decimal64` |
-
-A precision past 36 is refused at `CREATE TABLE`. A bare
-`decimal` rounds a datum past 3 fractional digits, as PostgreSQL
-rounds for a declared typmod, and refuses one whose integer part
-needs more than 14 digits; refusing a bare `decimal` was the
-alternative. Widening a column from `decimal64` to `decimal128`,
-as `ALTER COLUMN TYPE decimal(30, 2)` on a `decimal(10, 2)`
-does, changes its type and so rewrites the table.
+**Decision: the host chooses the width, not sm3.** SQL's
+`decimal(p, s)` and `numeric(p, s)`, `decimal(p)` and a bare
+`numeric` are resolved above sm, to one of the two and a
+declared `(p, s)`: digres's rules, and its default for a bare
+`numeric`, are in `../../dg/DECIMAL.md` §2.3. sm3 takes the
+type and typmod it is given, and supplies no default; a typmod
+the type refuses, `-1` or a precision past its 17 or 36 digits
+among them, fails `CREATE TABLE` with `SM_ERR_INVALID`.
+Changing a column from `decimal64` to `decimal128` changes its
+type and so rewrites the table.
 
 ---
 

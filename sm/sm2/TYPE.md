@@ -190,9 +190,9 @@ the subnormal and huge boundaries, and random datums.
 
 ### 3.4 decimal64, decimal128
 
-SQL's `decimal(p, s)`, and `numeric` its alias, are not sm2
-types: sm3 maps them to one of these two
-(`sm3/SM3_DESIGN.md` §2.1).
+SQL's `decimal(p, s)`, and `numeric` its alias, are not sm
+types: the host maps them to one of these two, choosing the
+width (`sm3/SM3_DESIGN.md` §2.1).
 
 Native follows DuckDB's decimal (`SM2_DESIGN.md` §2.2), with
 the scale in it: the value times 10^s as a two's complement
