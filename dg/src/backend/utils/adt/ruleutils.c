@@ -1186,6 +1186,27 @@ char *pg_get_indexdef_columns_extended(Oid indexrelid, bits16 flags) {
  * NULL then it points to an array of exclusion operator OIDs.
  */
 /*
+ * The name of column attnum of relid: a table of sm's has no pg_attribute
+ * row to look it up by, so it comes from the table's descriptor, as
+ * sm_indexdef()'s do; a catalog's from its cached row.
+ */
+static char *column_name(Oid relid, AttrNumber attnum) {
+  Relation rel;
+  char *name;
+
+  if (relid < FirstNormalObjectId)
+    return get_attname(relid, attnum, false);
+  rel = relation_open(relid, AccessShareLock);
+  if (attnum < 1 || attnum > RelationGetDescr(rel)->natts)
+    elog(ERROR, "cache lookup failed for attribute %d of relation %u", attnum,
+         relid);
+  name = pstrdup(
+      NameStr(TupleDescAttr(RelationGetDescr(rel), attnum - 1)->attname));
+  relation_close(rel, AccessShareLock);
+  return name;
+}
+
+/*
  * pg_get_indexdef_worker() for an index of sm's, from its descriptor: there
  * is no pg_index row.  It is a btree on columns, each with its type's
  * default operator class and collation, so only its uniqueness, its
@@ -2124,7 +2145,8 @@ static char *pg_get_constraintdef_worker(Oid constraintId, bool fullCommand,
   ScanKeyInit(&scankey[0], Anum_pg_constraint_oid, BTEqualStrategyNumber,
               F_OIDEQ, ObjectIdGetDatum(constraintId));
 
-  scandesc = systable_beginscan(relation, ConstraintOidIndexId, true, snapshot,
+  /* No index: digres makes pg_constraint's rows (catalog/catrel.c). */
+  scandesc = systable_beginscan(relation, ConstraintOidIndexId, false, snapshot,
                                 1, scankey);
 
   /*
@@ -2329,7 +2351,7 @@ static char *pg_get_constraintdef_worker(Oid constraintId, bool fullCommand,
       for (j = keyatts; j < nKeys; j++) {
         char *colName;
 
-        colName = get_attname(conForm->conrelid, DatumGetInt16(keys[j]), false);
+        colName = column_name(conForm->conrelid, DatumGetInt16(keys[j]));
         if (j > keyatts)
           appendStringInfoString(&buf, ", ");
         appendStringInfoString(&buf, quote_identifier(colName));
@@ -2499,7 +2521,7 @@ static int decompile_column_index_array(Datum column_index_array, Oid relId,
   for (j = 0; j < nKeys; j++) {
     char *colName;
 
-    colName = get_attname(relId, DatumGetInt16(keys[j]), false);
+    colName = column_name(relId, DatumGetInt16(keys[j]));
 
     if (j == 0)
       appendStringInfoString(buf, quote_identifier(colName));

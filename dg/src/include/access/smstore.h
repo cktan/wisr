@@ -37,6 +37,9 @@ typedef struct smstore_relation_t {
   int natts;     /* its columns; an index's key and include columns */
   bool hasindex; /* a table with an index */
   bool temp;     /* a temporary table, or an index on one */
+  /* A table's foreign keys, and whether one of any table references it. */
+  int nfkeys;
+  bool referenced;
   /* A table's and an index's columns, natts of them, for pg_attribute. */
   char **attnames;
   Oid *typids; /* InvalidOid for a dropped column */

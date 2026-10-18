@@ -236,7 +236,8 @@ Outlined here; designed with the work, in `../dg`.
   oid. The lookups `ri_triggers.c` makes, `CONSTROID` and
   `pg_constraint` and `pg_trigger` rows, are answered from
   `sm_cat_fkey` by the lookup layer, as `pg_class` is today
-  (`../dg/SYSCATALOG.md`).
+  (`../dg/SYSCATALOG.md`). `pg_constraint` lists each foreign
+  key, so `\d` shows it (`../dg/WORKNOTE.md` step 246).
 - **The check of rows already there** is PostgreSQL's
   `RI_Initial_Check`, over SPI, before `validated` is passed
   true.

@@ -7188,3 +7188,36 @@ offsets; sm has no pages, so a block is a tid's.
 - `test/slt/tablesample.test`: both methods at 0 and 100, a
   fraction near BERNOULLI's, REPEATABLE taking the same rows,
   deleted rows not sampled, a rescan, and no SYSTEM_ROWS.
+
+## Step 246: pg_constraint lists a foreign key
+
+digres enforced a foreign key, but `pg_constraint` was read
+empty, so psql's `\d` showed none. (Step 245 is on a branch not
+yet merged.)
+
+- **`pg_constraint`'s rows** (`catalog/catrel.c`,
+  `gen_pg_constraint()`): one of type `f` for each foreign key of
+  a table in sm, from what sm keeps of it (`smstore_fkey_t`):
+  its columns, the referenced table, its unique index and
+  columns, the three operator arrays, the actions, the match
+  type, and `ON DELETE SET NULL (...)`'s columns. A scan keyed by
+  `conrelid` makes that table's rows alone; the lookup by oid
+  and \d's Referenced by read them all, opening only the tables
+  that have a foreign key. A primary key or unique constraint
+  has no row yet: it is its index, `pg_index`'s, and \d lists it
+  so.
+- **`relhastriggers`** is true in `pg_class` for a table with a
+  foreign key or that one references, as the relation cache
+  gives each RI triggers: \d asks it before it lists them.
+  `smstore_relation_t` has the table's count of foreign keys and
+  whether one references it, from the definition `add_table()`
+  reads already.
+- **`pg_get_constraintdef()`** scans `pg_constraint` with no
+  index, as digres makes its rows, and names a column of a table
+  in sm from the table's descriptor (`column_name()`), as
+  `sm_indexdef()` does: there is no `pg_attribute` row to look it
+  up by.
+- `test/slt/foreign_key_catalog.test`: the rows, their
+  definitions and columns, `relhastriggers`, and the rows gone
+  with their table. `server.sh`: \d of a table with a foreign key
+  and of the one it references.

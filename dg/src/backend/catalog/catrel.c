@@ -29,7 +29,7 @@
 #include "catalog/pg_attribute_d.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_cast_d.h"
-#include "catalog/pg_constraint_d.h"
+#include "catalog/pg_constraint.h"
 #include "catalog/pg_description_d.h"
 #include "catalog/pg_extension_d.h"
 #include "catalog/pg_operator_d.h"
@@ -63,6 +63,7 @@
 #include "commands/defrem.h"
 #include "optimizer/optimizer.h"
 #include "mb/pg_wchar.h"
+#include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/datadir.h"
 #include "utils/fmgroids.h"
@@ -145,12 +146,13 @@ static void gen_pg_namespace(Tuplestorestate *ts, TupleDesc desc) {
  * A row of pg_class, into ts: a relation's own columns given, the rest as
  * digres has them -- owned by the superuser, in no tablespace, with no
  * statistics, no ACL, and no options but a view's.  A view has its rule,
- * and no storage.
+ * and no storage.  A table with a foreign key, or that one references, has
+ * triggers: the relation cache gives it RI triggers (sm_fkey_triggers()).
  */
 static void class_row(Tuplestorestate *ts, TupleDesc desc, Oid oid,
                       const char *name, Oid nspoid, Oid reltype, char kind,
                       int natts, bool hasindex, bool temp,
-                      Datum reloptions = (Datum)0) {
+                      Datum reloptions = (Datum)0, bool hastriggers = false) {
   Datum values[Natts_pg_class];
   bool nulls[Natts_pg_class];
 
@@ -175,6 +177,7 @@ static void class_row(Tuplestorestate *ts, TupleDesc desc, Oid oid,
   values[Anum_pg_class_relkind - 1] = CharGetDatum(kind);
   values[Anum_pg_class_relnatts - 1] = Int16GetDatum(natts);
   values[Anum_pg_class_relhasrules - 1] = BoolGetDatum(kind == RELKIND_VIEW);
+  values[Anum_pg_class_relhastriggers - 1] = BoolGetDatum(hastriggers);
   values[Anum_pg_class_relispopulated - 1] = BoolGetDatum(true);
   values[Anum_pg_class_relreplident - 1] =
       CharGetDatum(kind == RELKIND_RELATION ? REPLICA_IDENTITY_DEFAULT
@@ -203,7 +206,8 @@ static void gen_pg_class(Tuplestorestate *ts, TupleDesc desc, Oid only) {
 
     class_row(ts, desc, r->oid, r->name, r->nspoid, InvalidOid, r->kind,
               r->natts, r->hasindex, r->temp,
-              smstore_view_reloptions(r->options));
+              smstore_view_reloptions(r->options),
+              r->nfkeys > 0 || r->referenced);
   }
 }
 
@@ -260,6 +264,99 @@ static void gen_pg_index(Tuplestorestate *ts, TupleDesc desc, Oid only) {
 
     if (r->kind == RELKIND_INDEX)
       index_row(ts, desc, r);
+  }
+}
+
+/* An int2[] of n column numbers, as pg_constraint's conkey holds them. */
+static Datum int2_array(const AttrNumber *attnums, int n) {
+  Datum *elems = (Datum *)palloc(sizeof(Datum) * Max(n, 1));
+
+  for (int i = 0; i < n; i++)
+    elems[i] = Int16GetDatum(attnums[i]);
+  return PointerGetDatum(construct_array_builtin(elems, n, INT2OID));
+}
+
+/* An oid[] of n operators, as pg_constraint's conpfeqop holds them. */
+static Datum oid_array(const Oid *oids, int n) {
+  Datum *elems = (Datum *)palloc(sizeof(Datum) * Max(n, 1));
+
+  for (int i = 0; i < n; i++)
+    elems[i] = ObjectIdGetDatum(oids[i]);
+  return PointerGetDatum(construct_array_builtin(elems, n, OIDOID));
+}
+
+/*
+ * A foreign key's row of pg_constraint, into ts, from what sm keeps of it
+ * (../sm/FOREIGNKEY.md): in the namespace of its table, enforced, local and
+ * inheritable, with no parent.
+ */
+static void fkey_row(Tuplestorestate *ts, TupleDesc desc, Oid nspoid,
+                     const smstore_fkey_t *fk) {
+  Datum values[Natts_pg_constraint];
+  bool nulls[Natts_pg_constraint];
+
+  memset(values, 0, sizeof(values));
+  memset(nulls, false, sizeof(nulls));
+  values[Anum_pg_constraint_oid - 1] = ObjectIdGetDatum(fk->oid);
+  values[Anum_pg_constraint_conname - 1] = NameGetDatum(&fk->name);
+  values[Anum_pg_constraint_connamespace - 1] = ObjectIdGetDatum(nspoid);
+  values[Anum_pg_constraint_contype - 1] = CharGetDatum(CONSTRAINT_FOREIGN);
+  values[Anum_pg_constraint_condeferrable - 1] = BoolGetDatum(fk->deferrable);
+  values[Anum_pg_constraint_condeferred - 1] = BoolGetDatum(fk->deferred);
+  values[Anum_pg_constraint_conenforced - 1] = BoolGetDatum(true);
+  values[Anum_pg_constraint_convalidated - 1] = BoolGetDatum(fk->validated);
+  values[Anum_pg_constraint_conrelid - 1] = ObjectIdGetDatum(fk->table);
+  values[Anum_pg_constraint_contypid - 1] = ObjectIdGetDatum(InvalidOid);
+  values[Anum_pg_constraint_conindid - 1] = ObjectIdGetDatum(fk->ref_index);
+  values[Anum_pg_constraint_conparentid - 1] = ObjectIdGetDatum(InvalidOid);
+  values[Anum_pg_constraint_confrelid - 1] = ObjectIdGetDatum(fk->ref_table);
+  values[Anum_pg_constraint_confupdtype - 1] = CharGetDatum(fk->on_update);
+  values[Anum_pg_constraint_confdeltype - 1] = CharGetDatum(fk->on_delete);
+  values[Anum_pg_constraint_confmatchtype - 1] = CharGetDatum(fk->match);
+  values[Anum_pg_constraint_conislocal - 1] = BoolGetDatum(true);
+  values[Anum_pg_constraint_coninhcount - 1] = Int16GetDatum(0);
+  values[Anum_pg_constraint_connoinherit - 1] = BoolGetDatum(false);
+  values[Anum_pg_constraint_conperiod - 1] = BoolGetDatum(false);
+  values[Anum_pg_constraint_conkey - 1] = int2_array(fk->attnums, fk->nkeys);
+  values[Anum_pg_constraint_confkey - 1] =
+      int2_array(fk->ref_attnums, fk->nkeys);
+  values[Anum_pg_constraint_conpfeqop - 1] =
+      oid_array(fk->pf_eq_oprs, fk->nkeys);
+  values[Anum_pg_constraint_conppeqop - 1] =
+      oid_array(fk->pp_eq_oprs, fk->nkeys);
+  values[Anum_pg_constraint_conffeqop - 1] =
+      oid_array(fk->ff_eq_oprs, fk->nkeys);
+  if (fk->ndelsetcols > 0)
+    values[Anum_pg_constraint_confdelsetcols - 1] =
+        int2_array(fk->delsetcols, fk->ndelsetcols);
+  else
+    nulls[Anum_pg_constraint_confdelsetcols - 1] = true;
+  nulls[Anum_pg_constraint_conexclop - 1] = true;
+  nulls[Anum_pg_constraint_conbin - 1] = true;
+  tuplestore_putvalues(ts, desc, values, nulls);
+}
+
+/*
+ * pg_constraint's rows: each foreign key of a table in sm, those of the
+ * table only if it is given (a scan by conrelid), else every table's.  sm
+ * keeps no other constraint as one: NOT NULL is pg_attribute's, and a
+ * primary key or unique constraint is its index, pg_index's.
+ */
+static void gen_pg_constraint(Tuplestorestate *ts, TupleDesc desc, Oid only) {
+  ListCell *l;
+
+  foreach (l, sm_relations(only)) {
+    smstore_relation_t *r = (smstore_relation_t *)lfirst(l);
+    smstore_table_t *t;
+
+    if (r->kind != RELKIND_RELATION || r->nfkeys == 0 ||
+        (OidIsValid(only) && r->oid != only))
+      continue;
+    t = smstore_table_desc(r->oid);
+    if (t == NULL)
+      continue;
+    for (int i = 0; i < t->nfkeys; i++)
+      fkey_row(ts, desc, t->nspoid, &t->fkeys[i]);
   }
 }
 
@@ -629,6 +726,8 @@ static bool is_filter_column(Oid relid, AttrNumber attno) {
     return attno == Anum_pg_depend_objid;
   case RewriteRelationId:
     return attno == Anum_pg_rewrite_oid || attno == Anum_pg_rewrite_ev_class;
+  case ConstraintRelationId:
+    return attno == Anum_pg_constraint_conrelid;
   default:
     return false;
   }
@@ -685,6 +784,9 @@ static void generate(Relation rel, Tuplestorestate *ts, int nkeys,
   case RewriteRelationId:
     gen_pg_rewrite(ts, desc, only);
     break;
+  case ConstraintRelationId:
+    gen_pg_constraint(ts, desc, only);
+    break;
   case TypeRelationId:
   case CollationRelationId:
   case LanguageRelationId:
@@ -694,11 +796,8 @@ static void generate(Relation rel, Tuplestorestate *ts, int nkeys,
     gen_text_rows(cat_relation(RelationGetRelid(rel)), ts, desc, nkeys, key);
     break;
   /*
-   * What digres has none of: read, and empty.  sm keeps no constraint but
-   * NOT NULL, which is pg_attribute's, and a unique index, which is
-   * pg_index's.
+   * What digres has none of: read, and empty.
    */
-  case ConstraintRelationId:
   case DescriptionRelationId:
   case ExtensionRelationId:
   case InheritsRelationId:
