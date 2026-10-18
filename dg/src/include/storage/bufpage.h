@@ -19,9 +19,6 @@
 #include "storage/item.h"
 #include "storage/off.h"
 
-/* GUC variable */
-extern thread_local /*LOCAL*/ PGDLLIMPORT bool ignore_checksum_failure;
-
 /*
  * A postgres disk page is an abstraction layered on top of a postgres
  * disk block (which is simply a unit of i/o, see block.h).
@@ -408,60 +405,5 @@ do { \
 } while (0)
 #define PageClearPrunable(page) \
 	(((PageHeader) (page))->pd_prune_xid = InvalidTransactionId)
-
-/* ----------------------------------------------------------------
- *		extern declarations
- * ----------------------------------------------------------------
- */
-
-/* flags for PageAddItemExtended() */
-#define PAI_OVERWRITE			(1 << 0)
-#define PAI_IS_HEAP				(1 << 1)
-
-/* flags for PageIsVerified() */
-#define PIV_LOG_WARNING			(1 << 0)
-#define PIV_LOG_LOG				(1 << 1)
-#define PIV_IGNORE_CHECKSUM_FAILURE (1 << 2)
-
-#define PageAddItem(page, item, size, offsetNumber, overwrite, is_heap) \
-	PageAddItemExtended(page, item, size, offsetNumber, \
-						((overwrite) ? PAI_OVERWRITE : 0) | \
-						((is_heap) ? PAI_IS_HEAP : 0))
-
-/*
- * Check that BLCKSZ is a multiple of sizeof(size_t).  In PageIsVerified(), it
- * is much faster to check if a page is full of zeroes using the native word
- * size.  Note that this assertion is kept within a header to make sure that
- * StaticAssertDecl() works across various combinations of platforms and
- * compilers.
- */
-StaticAssertDecl(BLCKSZ == ((BLCKSZ / sizeof(size_t)) * sizeof(size_t)),
-                 "BLCKSZ has to be a multiple of sizeof(size_t)");
-
-extern void PageInit(Page page, Size pageSize, Size specialSize);
-extern bool PageIsVerified(PageData *page, BlockNumber blkno, int flags,
-                           bool *checksum_failure_p);
-extern OffsetNumber PageAddItemExtended(Page page, Item item, Size size,
-                                        OffsetNumber offsetNumber, int flags);
-extern Page PageGetTempPage(const PageData *page);
-extern Page PageGetTempPageCopy(const PageData *page);
-extern Page PageGetTempPageCopySpecial(const PageData *page);
-extern void PageRestoreTempPage(Page tempPage, Page oldPage);
-extern void PageRepairFragmentation(Page page);
-extern void PageTruncateLinePointerArray(Page page);
-extern Size PageGetFreeSpace(const PageData *page);
-extern Size PageGetFreeSpaceForMultipleTuples(const PageData *page, int ntups);
-extern Size PageGetExactFreeSpace(const PageData *page);
-extern Size PageGetHeapFreeSpace(const PageData *page);
-extern void PageIndexTupleDelete(Page page, OffsetNumber offnum);
-extern void PageIndexMultiDelete(Page page, OffsetNumber *itemnos, int nitems);
-extern void PageIndexTupleDeleteNoCompact(Page page, OffsetNumber offnum);
-extern bool PageIndexTupleOverwrite(Page page, OffsetNumber offnum, Item newtup,
-                                    Size newsize);
-extern char *PageSetChecksumCopy(Page page, BlockNumber blkno);
-extern void PageSetChecksumInplace(Page page, BlockNumber blkno);
-
-/* Are data pages protected by checksums?  Never: digres makes none. */
-static inline bool DataChecksumsEnabled(void) { return false; }
 
 #endif /* BUFPAGE_H */
