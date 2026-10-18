@@ -165,12 +165,6 @@ static_assert(pcb_t{}.max_safe_fds_per_thread == FD_MINFREE,
 /* Whether it is safe to continue running after fsync() fails. */
 thread_local /*LOCAL*/ bool data_sync_retry = false;
 
-/* How data files should be bulk-extended with zeros. */
-thread_local /*LOCAL*/ int file_extend_method = DEFAULT_FILE_EXTEND_METHOD;
-
-/* Which kinds of files should be opened with PG_O_DIRECT. */
-thread_local /*LOCAL*/ int io_direct_flags;
-
 /* Debugging.... */
 
 #ifdef FDDEBUG
@@ -282,8 +276,6 @@ static int FreeDesc(AllocateDesc *desc);
 
 static void BeforeShmemExit_Files(int code, Datum arg);
 static void CleanupTempFiles(bool isCommit, bool isProcExit);
-static void RemovePgTempRelationFiles(const char *tsdirname);
-static void RemovePgTempRelationFilesInDbspace(const char *dbspacedirname);
 
 #ifdef PG_FLUSH_DATA_WORKS
 #endif
@@ -410,24 +402,6 @@ int pg_fsync_writethrough(int fd) {
 #endif
   } else
     return 0;
-}
-
-/*
- * pg_fdatasync --- same as fdatasync except does nothing if enableFsync is off
- */
-int pg_fdatasync(int fd) {
-  int rc;
-
-  if (!enableFsync)
-    return 0;
-
-retry:
-  rc = fdatasync(fd);
-
-  if (rc == -1 && errno == EINTR)
-    goto retry;
-
-  return rc;
 }
 
 /*
@@ -615,50 +589,6 @@ void pg_flush_data(int fd, off_t offset, off_t nbytes) {
 }
 
 /*
- * Truncate an open file to a given length.
- */
-static int pg_ftruncate(int fd, off_t length) {
-  int ret;
-
-retry:
-  ret = ftruncate(fd, length);
-
-  if (ret == -1 && errno == EINTR)
-    goto retry;
-
-  return ret;
-}
-
-/*
- * Truncate a file to a given length by name.
- */
-int pg_truncate(const char *path, off_t length) {
-  int ret;
-#ifdef WIN32
-  int save_errno;
-  int fd;
-
-  fd = OpenTransientFile(path, O_RDWR | PG_BINARY);
-  if (fd >= 0) {
-    ret = pg_ftruncate(fd, length);
-    save_errno = errno;
-    CloseTransientFile(fd);
-    errno = save_errno;
-  } else
-    ret = -1;
-#else
-
-retry:
-  ret = truncate(path, length);
-
-  if (ret == -1 && errno == EINTR)
-    goto retry;
-#endif
-
-  return ret;
-}
-
-/*
  * fsync_fname -- fsync a file or directory, handling errors properly
  *
  * Try to fsync a file or directory. When doing the latter, ignore errors that
@@ -745,38 +675,6 @@ int durable_rename(const char *oldfile, const char *newfile, int elevel) {
     return -1;
 
   if (fsync_parent_path(newfile, elevel) != 0)
-    return -1;
-
-  return 0;
-}
-
-/*
- * durable_unlink -- remove a file in a durable manner
- *
- * This routine ensures that, after returning, the effect of removing file
- * persists in case of a crash. A crash while this routine is running will
- * leave the system in no mixed state.
- *
- * It does so by using fsync on the parent directory of the file after the
- * actual removal is done.
- *
- * Log errors with the severity specified by caller.
- *
- * Returns 0 if the operation succeeded, -1 otherwise. Note that errno is not
- * valid upon return.
- */
-int durable_unlink(const char *fname, int elevel) {
-  if (unlink(fname) < 0) {
-    ereport(elevel, (errcode_for_file_access(),
-                     errmsg("could not remove file \"%s\": %m", fname)));
-    return -1;
-  }
-
-  /*
-   * To guarantee that the removal of the file is persistent, fsync its
-   * parent directory.
-   */
-  if (fsync_parent_path(fname, elevel) != 0)
     return -1;
 
   return 0;
@@ -1303,72 +1201,6 @@ void FileClose(File file) {
   FreeVfd(file);
 }
 
-/*
- * FilePrefetch - initiate asynchronous read of a given range of the file.
- *
- * Returns 0 on success, otherwise an errno error code (like posix_fadvise()).
- *
- * posix_fadvise() is the simplest standardized interface that accomplishes
- * this.
- */
-int FilePrefetch(File file, off_t offset, off_t amount,
-                 uint32 wait_event_info) {
-  Assert(FileIsValid(file));
-
-  DO_DB(elog(LOG, "FilePrefetch: %d (%s) " INT64_FORMAT " " INT64_FORMAT, file,
-             VfdCache[file].fileName, (int64)offset, (int64)amount));
-
-#if defined(USE_POSIX_FADVISE) && defined(POSIX_FADV_WILLNEED)
-  if (sm_vfd_prefetch(vfd_cache(), VfdCache[file].vfd, offset, amount) != 0)
-    return errno;
-  return 0;
-#elif defined(__darwin__)
-  {
-    struct radvisory {
-      off_t ra_offset; /* offset into the file */
-      int ra_count;    /* size of the read     */
-    } ra;
-    int returnCode;
-    int fd = sm_vfd_raw_fd(vfd_cache(), VfdCache[file].vfd);
-
-    if (fd < 0)
-      return fd;
-
-    ra.ra_offset = offset;
-    ra.ra_count = amount;
-    returnCode = fcntl(fd, F_RDADVISE, &ra);
-    if (returnCode != -1)
-      return 0;
-    else
-      return errno;
-  }
-#else
-  return 0;
-#endif
-}
-
-void FileWriteback(File file, off_t offset, off_t nbytes,
-                   uint32 wait_event_info) {
-  int fd;
-
-  Assert(FileIsValid(file));
-
-  DO_DB(elog(LOG, "FileWriteback: %d (%s) " INT64_FORMAT " " INT64_FORMAT, file,
-             VfdCache[file].fileName, (int64)offset, (int64)nbytes));
-
-  if (nbytes <= 0)
-    return;
-
-  if (sm_vfd_raw_flags(vfd_cache(), VfdCache[file].vfd) & PG_O_DIRECT)
-    return;
-
-  fd = sm_vfd_raw_fd(vfd_cache(), VfdCache[file].vfd);
-  if (fd < 0)
-    return;
-
-  pg_flush_data(fd, offset, nbytes);
-}
-
 ssize_t FileReadV(File file, const struct iovec *iov, int iovcnt, off_t offset,
                   uint32 wait_event_info) {
   Assert(FileIsValid(file));
@@ -1448,95 +1280,12 @@ ssize_t FileWriteV(File file, const struct iovec *iov, int iovcnt, off_t offset,
   return returnCode;
 }
 
-int FileSync(File file, uint32 wait_event_info) {
-  int fd;
-
-  Assert(FileIsValid(file));
-
-  DO_DB(elog(LOG, "FileSync: %d (%s)", file, VfdCache[file].fileName));
-
-  /* pg_fsync(), for wal_sync_method's choice of how. */
-  fd = sm_vfd_raw_fd(vfd_cache(), VfdCache[file].vfd);
-  if (fd < 0)
-    return fd;
-
-  return pg_fsync(fd);
-}
-
-/*
- * Zero a region of the file.
- *
- * Returns 0 on success, -1 otherwise. In the latter case errno is set to the
- * appropriate error.
- */
-int FileZero(File file, off_t offset, off_t amount, uint32 wait_event_info) {
-  Assert(FileIsValid(file));
-
-  DO_DB(elog(LOG, "FileZero: %d (%s) " INT64_FORMAT " " INT64_FORMAT, file,
-             VfdCache[file].fileName, (int64)offset, (int64)amount));
-
-  return sm_vfd_zero(vfd_cache(), VfdCache[file].vfd, offset, amount);
-}
-
-/*
- * Try to reserve file space with posix_fallocate(). If posix_fallocate() is
- * not implemented on the operating system or fails with EINVAL / EOPNOTSUPP,
- * use FileZero() instead.
- *
- * Note that at least glibc() implements posix_fallocate() in userspace if not
- * implemented by the filesystem. That's not the case for all environments
- * though.
- *
- * Returns 0 on success, -1 otherwise. In the latter case errno is set to the
- * appropriate error.
- */
-int FileFallocate(File file, off_t offset, off_t amount,
-                  uint32 wait_event_info) {
-#ifdef HAVE_POSIX_FALLOCATE
-  Assert(FileIsValid(file));
-
-  DO_DB(elog(LOG, "FileFallocate: %d (%s) " INT64_FORMAT " " INT64_FORMAT, file,
-             VfdCache[file].fileName, (int64)offset, (int64)amount));
-
-  if (sm_vfd_fallocate(vfd_cache(), VfdCache[file].vfd, offset, amount) == 0)
-    return 0;
-
-  /*
-   * Return in cases of a "real" failure, if fallocate is not supported,
-   * fall through to the FileZero() backed implementation.
-   */
-  if (errno != EINVAL && errno != EOPNOTSUPP)
-    return -1;
-#endif
-
-  return FileZero(file, offset, amount, wait_event_info);
-}
-
 off_t FileSize(File file) {
   Assert(FileIsValid(file));
 
   DO_DB(elog(LOG, "FileSize %d (%s)", file, VfdCache[file].fileName));
 
   return sm_vfd_size(vfd_cache(), VfdCache[file].vfd);
-}
-
-int FileTruncate(File file, off_t offset, uint32 wait_event_info) {
-  int returnCode;
-
-  Assert(FileIsValid(file));
-
-  DO_DB(elog(LOG, "FileTruncate %d (%s)", file, VfdCache[file].fileName));
-
-  returnCode = sm_vfd_truncate(vfd_cache(), VfdCache[file].vfd, offset);
-
-  if (returnCode == 0 && VfdCache[file].fileSize > offset) {
-    /* adjust our state for truncation of a temp file */
-    Assert(VfdCache[file].fdstate & FD_TEMP_FILE_LIMIT);
-    temporary_files_size -= VfdCache[file].fileSize - offset;
-    VfdCache[file].fileSize = offset;
-  }
-
-  return returnCode;
 }
 
 /*
@@ -1549,35 +1298,6 @@ char *FilePathName(File file) {
   Assert(FileIsValid(file));
 
   return VfdCache[file].fileName;
-}
-
-/*
- * Return the raw file descriptor of an opened file.
- *
- * The returned file descriptor will be valid until the file is closed, but
- * there are a lot of things that can make that happen.  So the caller should
- * be careful not to do much of anything else before it finishes using the
- * returned file descriptor.
- */
-int FileGetRawDesc(File file) {
-  Assert(FileIsValid(file));
-  return sm_vfd_raw_fd(vfd_cache(), VfdCache[file].vfd);
-}
-
-/*
- * FileGetRawFlags - returns the file flags on open(2)
- */
-int FileGetRawFlags(File file) {
-  Assert(FileIsValid(file));
-  return sm_vfd_raw_flags(vfd_cache(), VfdCache[file].vfd);
-}
-
-/*
- * FileGetRawMode - returns the mode bitmask passed to open(2)
- */
-mode_t FileGetRawMode(File file) {
-  Assert(FileIsValid(file));
-  return sm_vfd_raw_mode(vfd_cache(), VfdCache[file].vfd);
 }
 
 /* Stop counting the fd a failed fopen(), popen() or opendir() did not take. */
@@ -2242,60 +1962,19 @@ static void CleanupTempFiles(bool isCommit, bool isProcExit) {
 }
 
 /*
- * Remove temporary and temporary relation files left over from a prior
- * postmaster session
+ * Remove the temporary files a prior postmaster session left, in
+ * base/pgsql_tmp: OpenTemporaryFile()'s, as digres has no other tablespace
+ * and no temporary relation files.
  *
- * This should be called during postmaster startup.  It will forcibly
- * remove any leftover files created by OpenTemporaryFile and any leftover
- * temporary relation files created by mdcreate.
- *
- * This does mean that OpenTemporaryFile had better allow for collision with
- * an existing temp file name.
- *
- * NOTE: this function and its subroutines generally report syscall failures
- * with ereport(LOG) and keep going.  Removing temp files is not so critical
- * that we should fail to start the database when we can't do it.
+ * This should be called during postmaster startup.  It reports a failed
+ * syscall with ereport(LOG) and keeps going: removing temp files is not so
+ * critical that we should fail to start the database when we can't do it.
  */
 void RemovePgTempFiles(void) {
-  char temp_path[MAXPGPATH + sizeof(PG_TBLSPC_DIR) +
-                 sizeof(TABLESPACE_VERSION_DIRECTORY) +
-                 sizeof(PG_TEMP_FILES_DIR)];
-  DIR *spc_dir;
-  struct dirent *spc_de;
+  char temp_path[MAXPGPATH];
 
-  /*
-   * First process temp files in pg_default ($PGDATA/base)
-   */
   snprintf(temp_path, sizeof(temp_path), "base/%s", PG_TEMP_FILES_DIR);
   RemovePgTempFilesInDir(temp_path, true, false);
-  RemovePgTempRelationFiles("base");
-
-  /*
-   * Cycle through temp directories for all non-default tablespaces.
-   */
-  spc_dir = AllocateDir(PG_TBLSPC_DIR);
-
-  while ((spc_de = ReadDirExtended(spc_dir, PG_TBLSPC_DIR, LOG)) != NULL) {
-    if (strcmp(spc_de->d_name, ".") == 0 || strcmp(spc_de->d_name, "..") == 0)
-      continue;
-
-    snprintf(temp_path, sizeof(temp_path), "%s/%s/%s/%s", PG_TBLSPC_DIR,
-             spc_de->d_name, TABLESPACE_VERSION_DIRECTORY, PG_TEMP_FILES_DIR);
-    RemovePgTempFilesInDir(temp_path, true, false);
-
-    snprintf(temp_path, sizeof(temp_path), "%s/%s/%s", PG_TBLSPC_DIR,
-             spc_de->d_name, TABLESPACE_VERSION_DIRECTORY);
-    RemovePgTempRelationFiles(temp_path);
-  }
-
-  FreeDir(spc_dir);
-
-  /*
-   * In EXEC_BACKEND case there is a pgsql_tmp directory at the top level of
-   * DataDir as well.  However, that is *not* cleaned here because doing so
-   * would create a race condition.  It's done separately, earlier in
-   * postmaster startup.
-   */
 }
 
 /*
@@ -2364,98 +2043,6 @@ void RemovePgTempFilesInDir(const char *tmpdirname, bool missing_ok,
   }
 
   FreeDir(temp_dir);
-}
-
-/* Process one tablespace directory, look for per-DB subdirectories */
-static void RemovePgTempRelationFiles(const char *tsdirname) {
-  DIR *ts_dir;
-  struct dirent *de;
-  char dbspace_path[MAXPGPATH * 2];
-
-  ts_dir = AllocateDir(tsdirname);
-
-  while ((de = ReadDirExtended(ts_dir, tsdirname, LOG)) != NULL) {
-    /*
-     * We're only interested in the per-database directories, which have
-     * numeric names.  Note that this code will also (properly) ignore "."
-     * and "..".
-     */
-    if (strspn(de->d_name, "0123456789") != strlen(de->d_name))
-      continue;
-
-    snprintf(dbspace_path, sizeof(dbspace_path), "%s/%s", tsdirname,
-             de->d_name);
-    RemovePgTempRelationFilesInDbspace(dbspace_path);
-  }
-
-  FreeDir(ts_dir);
-}
-
-/* Process one per-dbspace directory for RemovePgTempRelationFiles */
-static void RemovePgTempRelationFilesInDbspace(const char *dbspacedirname) {
-  DIR *dbspace_dir;
-  struct dirent *de;
-  char rm_path[MAXPGPATH * 2];
-
-  dbspace_dir = AllocateDir(dbspacedirname);
-
-  while ((de = ReadDirExtended(dbspace_dir, dbspacedirname, LOG)) != NULL) {
-    if (!looks_like_temp_rel_name(de->d_name))
-      continue;
-
-    snprintf(rm_path, sizeof(rm_path), "%s/%s", dbspacedirname, de->d_name);
-
-    if (unlink(rm_path) < 0)
-      ereport(LOG, (errcode_for_file_access(),
-                    errmsg("could not remove file \"%s\": %m", rm_path)));
-  }
-
-  FreeDir(dbspace_dir);
-}
-
-/* t<digits>_<digits>, or t<digits>_<digits>_<forkname> */
-bool looks_like_temp_rel_name(const char *name) {
-  int pos;
-  int savepos;
-
-  /* Must start with "t". */
-  if (name[0] != 't')
-    return false;
-
-  /* Followed by a non-empty string of digits and then an underscore. */
-  for (pos = 1; isdigit((unsigned char)name[pos]); ++pos)
-    ;
-  if (pos == 1 || name[pos] != '_')
-    return false;
-
-  /* Followed by another nonempty string of digits. */
-  for (savepos = ++pos; isdigit((unsigned char)name[pos]); ++pos)
-    ;
-  if (savepos == pos)
-    return false;
-
-  /* We might have _forkname or .segment or both. */
-  if (name[pos] == '_') {
-    int forkchar = forkname_chars(&name[pos + 1], NULL);
-
-    if (forkchar <= 0)
-      return false;
-    pos += forkchar + 1;
-  }
-  if (name[pos] == '.') {
-    int segchar;
-
-    for (segchar = 1; isdigit((unsigned char)name[pos + segchar]); ++segchar)
-      ;
-    if (segchar <= 1)
-      return false;
-    pos += segchar;
-  }
-
-  /* Now we should be at the end. */
-  if (name[pos] != '\0')
-    return false;
-  return true;
 }
 
 #ifdef HAVE_SYNCFS
@@ -2608,93 +2195,6 @@ int MakePGDirectory(const char *directoryName) {
  * filter the error level with this function.
  */
 int data_sync_elevel(int elevel) { return data_sync_retry ? elevel : PANIC; }
-
-bool check_debug_io_direct(char **newval, void **extra, GucSource source) {
-  bool result = true;
-  int flags;
-
-#if PG_O_DIRECT == 0
-  if (strcmp(*newval, "") != 0) {
-    GUC_check_errdetail("\"%s\" is not supported on this platform.",
-                        "debug_io_direct");
-    result = false;
-  }
-  flags = 0;
-#else
-  List *elemlist;
-  ListCell *l;
-  char *rawstring;
-
-  /* Need a modifiable copy of string */
-  rawstring = pstrdup(*newval);
-
-  if (!SplitGUCList(rawstring, ',', &elemlist)) {
-    GUC_check_errdetail("Invalid list syntax in parameter \"%s\".",
-                        "debug_io_direct");
-    pfree(rawstring);
-    list_free(elemlist);
-    return false;
-  }
-
-  flags = 0;
-  foreach (l, elemlist) {
-    char *item = (char *)lfirst(l);
-
-    if (pg_strcasecmp(item, "data") == 0)
-      flags |= IO_DIRECT_DATA;
-    else if (pg_strcasecmp(item, "wal") == 0)
-      flags |= IO_DIRECT_WAL;
-    else if (pg_strcasecmp(item, "wal_init") == 0)
-      flags |= IO_DIRECT_WAL_INIT;
-    else {
-      GUC_check_errdetail("Invalid option \"%s\".", item);
-      result = false;
-      break;
-    }
-  }
-
-  /*
-   * It's possible to configure block sizes smaller than our assumed I/O
-   * alignment size, which could result in invalid I/O requests.
-   */
-#if XLOG_BLCKSZ < PG_IO_ALIGN_SIZE
-  if (result && (flags & (IO_DIRECT_WAL | IO_DIRECT_WAL_INIT))) {
-    GUC_check_errdetail(
-        "\"%s\" is not supported for WAL because %s is too small.",
-        "debug_io_direct", "XLOG_BLCKSZ");
-    result = false;
-  }
-#endif
-#if BLCKSZ < PG_IO_ALIGN_SIZE
-  if (result && (flags & IO_DIRECT_DATA)) {
-    GUC_check_errdetail(
-        "\"%s\" is not supported for data because %s is too small.",
-        "debug_io_direct", "BLCKSZ");
-    result = false;
-  }
-#endif
-
-  pfree(rawstring);
-  list_free(elemlist);
-#endif
-
-  if (!result)
-    return result;
-
-  /* Save the flags in *extra, for use by assign_debug_io_direct */
-  *extra = guc_malloc(LOG, sizeof(int));
-  if (!*extra)
-    return false;
-  *((int *)*extra) = flags;
-
-  return result;
-}
-
-void assign_debug_io_direct(const char *newval, void *extra) {
-  int *flags = (int *)extra;
-
-  io_direct_flags = *flags;
-}
 
 /* ResourceOwner callbacks */
 

@@ -7071,3 +7071,31 @@ latches, and `pg_cancel_backend()` and its kin
 - Stale comments: the "dead man switch" of `atexit_callback()`,
   the SysV keys at `CreateSharedMemoryAndSemaphores()`'s caller,
   and `kill()` and PID reuse in `pg_signal_backend()`.
+
+## Step 239: fd.c stripped
+
+`fd.c` stays: sm0's `sm_vfd.h` keeps the pool of virtual fds and
+the process's ceiling, and `fd.c` keeps what sm0 knows nothing
+of -- a file's transaction or resource owner, temporary files
+(sorts' and hashes' spills, through `buffile.c`), the wrappers
+of fopen, opendir, popen and open that close on abort, each
+thread's share of fds, and the fsync helpers. What digres no
+longer needs is gone, 2,715 lines to 2,215:
+
+- **PostgreSQL's relation-file calls**, which md.c made:
+  `FilePrefetch()`, `FileWriteback()`, `FileSync()`,
+  `FileZero()`, `FileFallocate()`, `FileTruncate()` and the
+  `FileGetRaw*()` three; and `pg_fdatasync()`, `pg_truncate()`,
+  `pg_ftruncate()` and `durable_unlink()`. Nothing called them.
+- **Temporary relation files**: `RemovePgTempRelationFiles()`,
+  its per-database half and `looks_like_temp_rel_name()`.
+  `RemovePgTempFiles()` empties `base/pgsql_tmp` alone, digres
+  having no other tablespace; it no longer logs that it could
+  not open `pg_tblspc` at every start.
+- **Two settings that drove nothing**: `file_extend_method`,
+  md.c's way to extend a relation file, and `debug_io_direct`,
+  whose flags no open read; their hooks, `io_direct_flags` and
+  the `IO_DIRECT_*` and `FILE_EXTEND_METHOD_*` constants, and
+  the sample configuration's entry.
+- `server.sh`: a temporary file a prior run left is removed at
+  startup, and the log names no `pg_tblspc`.

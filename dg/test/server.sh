@@ -158,6 +158,9 @@ wait_state() {
 echo "sesame" > "$work/pw"
 build/initdb --pwfile="$work/pw" "$work/data" > "$work/initdb.out" 2>&1 ||
   fail "initdb"
+# A temporary file a prior run left, for startup to remove (checked below).
+mkdir -p "$work/data/base/pgsql_tmp"
+echo leftover > "$work/data/base/pgsql_tmp/pgsql_tmp99.0"
 # The soft limit on open files is lowered, as a service's often is, for
 # the server to raise (checked below). A session's share of real fds is
 # max_files_per_process, made small for a join to need more (below).
@@ -166,6 +169,14 @@ build/initdb --pwfile="$work/pw" "$work/data" > "$work/initdb.out" 2>&1 ||
   > "$work/log" 2>&1 &
 server=$!
 server_ready $server "$work/log" || fail "start"
+
+# Verify that startup removes the temporary files a prior run left, in
+# base/pgsql_tmp alone: there is no other tablespace to look in.
+# 1. Before the start above, a leftover temporary file was planted.
+# 2. Confirm it is gone, and the log names no pg_tblspc.
+[ -e "$work/data/base/pgsql_tmp/pgsql_tmp99.0" ] &&
+  fail "a leftover temporary file is removed"
+grep -q pg_tblspc "$work/log" && fail "startup looks for no tablespace"
 
 # Verify that the server raises its soft limit on open files to the hard
 # limit, since every session is a thread under the one limit.

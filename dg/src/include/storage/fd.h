@@ -50,25 +50,9 @@
 
 typedef int File;
 
-#define IO_DIRECT_DATA			0x01
-#define IO_DIRECT_WAL			0x02
-#define IO_DIRECT_WAL_INIT		0x04
-
-enum FileExtendMethod {
-#ifdef HAVE_POSIX_FALLOCATE
-  FILE_EXTEND_METHOD_POSIX_FALLOCATE,
-#endif
-  FILE_EXTEND_METHOD_WRITE_ZEROS,
-};
-
-/* Default to the first available file_extend_method. */
-#define DEFAULT_FILE_EXTEND_METHOD 0
-
 /* GUC parameter */
 extern thread_local /*LOCAL*/ PGDLLIMPORT int max_files_per_process;
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool data_sync_retry;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int io_direct_flags;
-extern thread_local /*LOCAL*/ PGDLLIMPORT int file_extend_method;
 
 /*
  * This is private to fd.c, but exported for save/restore_backend_variables()
@@ -114,26 +98,13 @@ extern File PathNameOpenFilePerm(const char *fileName, int fileFlags,
                                  mode_t fileMode);
 extern File OpenTemporaryFile(bool interXact);
 extern void FileClose(File file);
-extern int FilePrefetch(File file, off_t offset, off_t amount,
-                        uint32 wait_event_info);
 extern ssize_t FileReadV(File file, const struct iovec *iov, int iovcnt,
                          off_t offset, uint32 wait_event_info);
 extern ssize_t FileWriteV(File file, const struct iovec *iov, int iovcnt,
                           off_t offset, uint32 wait_event_info);
-extern int FileSync(File file, uint32 wait_event_info);
-extern int FileZero(File file, off_t offset, off_t amount,
-                    uint32 wait_event_info);
-extern int FileFallocate(File file, off_t offset, off_t amount,
-                         uint32 wait_event_info);
 
 extern off_t FileSize(File file);
-extern int FileTruncate(File file, off_t offset, uint32 wait_event_info);
-extern void FileWriteback(File file, off_t offset, off_t nbytes,
-                          uint32 wait_event_info);
 extern char *FilePathName(File file);
-extern int FileGetRawDesc(File file);
-extern int FileGetRawFlags(File file);
-extern mode_t FileGetRawMode(File file);
 
 extern void TempTablespacePath(char *path, Oid tablespace);
 
@@ -178,20 +149,16 @@ extern void AtEOSubXact_Files(bool isCommit, SubTransactionId mySubid,
 extern void RemovePgTempFiles(void);
 extern void RemovePgTempFilesInDir(const char *tmpdirname, bool missing_ok,
                                    bool unlink_all);
-extern bool looks_like_temp_rel_name(const char *name);
 
 extern int pg_fsync(int fd);
 extern int pg_fsync_no_writethrough(int fd);
 extern int pg_fsync_writethrough(int fd);
-extern int pg_fdatasync(int fd);
 extern bool pg_file_exists(const char *name);
 extern void pg_flush_data(int fd, off_t offset, off_t nbytes);
-extern int pg_truncate(const char *path, off_t length);
 extern void fsync_fname(const char *fname, bool isdir);
 extern int fsync_fname_ext(const char *fname, bool isdir, bool ignore_perm,
                            int elevel);
 extern int durable_rename(const char *oldfile, const char *newfile, int elevel);
-extern int durable_unlink(const char *fname, int elevel);
 extern int data_sync_elevel(int elevel);
 
 static inline ssize_t FileRead(File file, void *buffer, size_t amount,

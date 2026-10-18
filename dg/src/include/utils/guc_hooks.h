@@ -41,9 +41,6 @@ extern void assign_client_encoding(const char *newval, void *extra);
 extern bool check_cluster_name(char **newval, void **extra, GucSource source);
 extern bool check_datestyle(char **newval, void **extra, GucSource source);
 extern void assign_datestyle(const char *newval, void *extra);
-extern bool check_debug_io_direct(char **newval, void **extra,
-                                  GucSource source);
-extern void assign_debug_io_direct(const char *newval, void *extra);
 extern bool check_log_connections(char **newval, void **extra,
                                   GucSource source);
 extern void assign_log_connections(const char *newval, void *extra);

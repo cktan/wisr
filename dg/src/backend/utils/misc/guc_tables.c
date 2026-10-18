@@ -284,13 +284,6 @@ static const struct config_enum_entry default_toast_compression_options[] = {
 #endif
     {NULL, 0, false}};
 
-static const struct config_enum_entry file_extend_method_options[] = {
-#ifdef HAVE_POSIX_FALLOCATE
-    {"posix_fallocate", FILE_EXTEND_METHOD_POSIX_FALLOCATE, false},
-#endif
-    {"write_zeros", FILE_EXTEND_METHOD_WRITE_ZEROS, false},
-    {NULL, 0, false}};
-
 /*
  * Options for enum values stored in other modules
  */
@@ -378,7 +371,6 @@ static thread_local /*LOCAL*/ char *datestyle_string;
 static thread_local /*LOCAL*/ char *server_encoding_string;
 static thread_local /*LOCAL*/ char *server_version_string;
 static thread_local /*LOCAL*/ int server_version_num;
-static thread_local /*LOCAL*/ char *debug_io_direct_string;
 static thread_local /*LOCAL*/ char *restrict_nonsystem_relation_kind_string;
 
 #ifdef HAVE_SYSLOG
@@ -2616,16 +2608,6 @@ thread_local /*LOCAL*/ struct config_string ConfigureNamesString[] = {
      assign_backtrace_functions,
      NULL},
 
-    {{"debug_io_direct", PGC_POSTMASTER, DEVELOPER_OPTIONS,
-      gettext_noop("Use direct I/O for file access."),
-      gettext_noop("An empty string disables direct I/O."),
-      GUC_LIST_INPUT | GUC_NOT_IN_SAMPLE},
-     &debug_io_direct_string,
-     "",
-     check_debug_io_direct,
-     assign_debug_io_direct,
-     NULL},
-
     {{"restrict_nonsystem_relation_kind", PGC_USERSET, CLIENT_CONN_STATEMENT,
       gettext_noop(
           "Prohibits access to non-system relations of specified kinds."),
@@ -2834,15 +2816,6 @@ thread_local /*LOCAL*/ struct config_enum ConfigureNamesEnum[] = {
      session_replication_role_options,
      NULL,
      assign_session_replication_role,
-     NULL},
-
-    {{"file_extend_method", PGC_SIGHUP, RESOURCES_DISK,
-      gettext_noop("Selects the method used for extending data files."), NULL},
-     &file_extend_method,
-     DEFAULT_FILE_EXTEND_METHOD,
-     file_extend_method_options,
-     NULL,
-     NULL,
      NULL},
 
     {{"xmlbinary", PGC_USERSET, CLIENT_CONN_STATEMENT,
