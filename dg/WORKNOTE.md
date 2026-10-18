@@ -7227,3 +7227,28 @@ sessions (steps 1 to 3 there).
   873 was measured before `test_setup` changed). Its temporary
   views are PostgreSQL's but for one that reads a temporary
   sequence, which digres refuses.
+
+## Step 247: base backup's leftovers in src/common are gone
+
+A scan of the backend, `src/common` and `src/port` for exported
+functions nothing references found 185. Most are kept on
+purpose: an extension's API (custom settings, scan methods,
+label providers, resource owner callbacks, `regexport.c`), SPI
+(a scripting language is to use it), general utilities
+(`list.c`, `pg_prng.c`, the multibyte and Unicode helpers), and
+the catalog DDL kept to be ported (`PLAN.md` section 7). What
+belonged to modules digres removed is gone:
+
+- **`src/common`**: `blkreftable.c`, the block reference tables
+  of incremental backup's WAL summaries; `parse_manifest.c`, a
+  base backup's manifest; `checksum_helper.c`, its checksums;
+  and `compression.c`, `pg_basebackup`'s compression options;
+  with their headers, 2,743 lines. Nothing included any of
+  them but each other.
+- **`LockRelationId()`** in `lmgr.c`, which nothing called. The
+  rest of `lmgr.c`, `proc.c`, `launch_backend.c` and
+  `interrupt.c` is digres's own and live: `lmgr.c` takes sm's
+  table locks.
+- Left for a pass of its own: `spccache.c`, the planner's costs
+  per tablespace, and `tablespace_reloptions()`, digres having
+  no tablespace but the default.

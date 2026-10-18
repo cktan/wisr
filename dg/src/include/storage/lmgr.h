@@ -22,7 +22,6 @@ extern void RelationInitLockInfo(Relation relation);
 
 /* Lock a relation */
 extern void LockRelationOid(Oid relid, LOCKMODE lockmode);
-extern void LockRelationId(LockRelId *relid, LOCKMODE lockmode);
 extern bool ConditionalLockRelationOid(Oid relid, LOCKMODE lockmode);
 
 extern void LockRelation(Relation relation, LOCKMODE lockmode);
