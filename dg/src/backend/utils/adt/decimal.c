@@ -1130,15 +1130,16 @@ Datum numeric_sign(PG_FUNCTION_ARGS) {
 
 /*
  * w rounded to scale places, half away from zero, as round(numeric, int)
- * rounds: a negative scale rounds left of the point, to scale 0.
+ * rounds, or with trunc truncated, as trunc(numeric, int): a negative
+ * scale rounds left of the point, to scale 0.
  */
-static wide_t wide_round_at(const wide_t &w, int32 scale) {
+static wide_t wide_round_at(const wide_t &w, int32 scale, bool trunc) {
   wide_t r;
 
   scale = Max(scale, -154);
   scale = Min(scale, NUMERIC_MAX_SCALE);
   if (scale >= 0)
-    return wide_round(w, scale, false);
+    return wide_round(w, scale, trunc);
   /*
    * Round once at 10^-scale: w read as its integer over 10^-scale more,
    * rounded to an integer, then scaled back up.  Rounding to an integer
@@ -1146,7 +1147,7 @@ static wide_t wide_round_at(const wide_t &w, int32 scale) {
    */
   r = w;
   r.scale = w.scale - scale;
-  r = wide_round(r, 0, false);
+  r = wide_round(r, 0, trunc);
   r = wide_scale_up(r, -scale);
   r.scale = 0;
   return r;
@@ -1157,29 +1158,14 @@ static wide_t wide_round_at(const wide_t &w, int32 scale) {
  * rounds to tens, hundreds and so on, and gives scale 0.
  */
 Datum numeric_round(PG_FUNCTION_ARGS) {
-  PG_RETURN_NUMERIC(dec_from_wide(
-      wide_round_at(dec_wide(PG_GETARG_NUMERIC(0)), PG_GETARG_INT32(1))));
+  PG_RETURN_NUMERIC(dec_from_wide(wide_round_at(
+      dec_wide(PG_GETARG_NUMERIC(0)), PG_GETARG_INT32(1), false)));
 }
 
 /* num truncated to scale places, as numeric_round(). */
 Datum numeric_trunc(PG_FUNCTION_ARGS) {
-  wide_t w = dec_wide(PG_GETARG_NUMERIC(0));
-  int32 scale = PG_GETARG_INT32(1);
-
-  scale = Max(scale, -154);
-  scale = Min(scale, NUMERIC_MAX_SCALE);
-  if (scale >= 0)
-    PG_RETURN_NUMERIC(dec_from_wide(wide_round(w, scale, true)));
-  w = wide_round(w, 0, true);
-  {
-    wide_t r = w;
-
-    r.scale = -scale;
-    r = wide_round(r, 0, true);
-    r = wide_scale_up(r, -scale);
-    r.scale = 0;
-    PG_RETURN_NUMERIC(dec_from_wide(r));
-  }
+  PG_RETURN_NUMERIC(dec_from_wide(wide_round_at(
+      dec_wide(PG_GETARG_NUMERIC(0)), PG_GETARG_INT32(1), true)));
 }
 
 /* The smallest integer not below w, or with floor the largest not above. */
@@ -3457,12 +3443,23 @@ static Datum d64_exact(const wide_t &w) {
 /* round(decimal64, int), a decimal64, as numeric's; past 17 digits an error. */
 Datum decimal64_round(PG_FUNCTION_ARGS) {
   return d64_exact(wide_round_at(d64_wide(PG_GETARG_DATUM(0)),
-                                 PG_GETARG_INT32(1)));
+                                 PG_GETARG_INT32(1), false));
 }
 
 /* round(decimal64): round(x, 0). */
 Datum decimal64_round0(PG_FUNCTION_ARGS) {
-  return d64_exact(wide_round_at(d64_wide(PG_GETARG_DATUM(0)), 0));
+  return d64_exact(wide_round_at(d64_wide(PG_GETARG_DATUM(0)), 0, false));
+}
+
+/* trunc(decimal64, int), a decimal64, as numeric's; past 17 places an error. */
+Datum decimal64_trunc(PG_FUNCTION_ARGS) {
+  return d64_exact(wide_round_at(d64_wide(PG_GETARG_DATUM(0)),
+                                 PG_GETARG_INT32(1), true));
+}
+
+/* trunc(decimal64): trunc(x, 0). */
+Datum decimal64_trunc0(PG_FUNCTION_ARGS) {
+  return d64_exact(wide_round_at(d64_wide(PG_GETARG_DATUM(0)), 0, true));
 }
 
 /* to_char(decimal64, text), as numeric's: its value as a decimal128 on the stack. */
