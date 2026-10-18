@@ -175,3 +175,31 @@ Each is moved to `decimal_t`, keeping its SQL signature:
    without a numeric (an error past 38 digits). This replaced
    the first answer, to keep each number's text as written.
 5. **`sum(int8)` past 38 digits** is an error.
+
+## 5. To do: decimal64 by value
+
+Most numerics fit in 18 digits. If `numeric(p <= 18)` were an
+8-byte by-value datum, the common case would lose the palloc
+of `numeric_from_sm()` (`access/sm/smstore.c`) and the pointer
+chase: sorts compare `datum1` itself, spill files, hash join
+and hash agg rows shrink, and hashing and comparison are of an
+`int64`. Worth doing if it covers some 99% of uses.
+
+- **What stops it**: §2.2. `typlen` and `typbyval` are the
+  type's, not the typmod's, so `numeric(p <= 18)` would be a
+  type of its own, and an 8-byte datum has no room for its
+  scale, which PostgreSQL's typmod -1 expressions lose.
+- **Ways in, to be weighed**:
+  1. Carry `(p, s)` through every expression, as DuckDB's
+     binder does (`+` gives `max(s1, s2)`, `*` gives
+     `s1 + s2`): `numeric(p <= 18)` resolves to a by-value
+     decimal64 type, others to decimal128. Clean, but a
+     change to the parser, planner and function resolution.
+  2. Keep the scale in the datum: some 6 bits of scale and
+     58 of value, about 17 digits. No typmod needed, but the
+     range shrinks and sm's datum is repacked at the border.
+  3. Keep `decimal_t`, and make sorts fast where the scale is
+     known: an abbreviated key in `datum1`. Little work, part
+     of the gain.
+- **First step**: map where a typmod is lost on the way
+  through dg's parser and planner, to size option 1.
