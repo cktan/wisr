@@ -67,12 +67,25 @@ typedef decimal_t *Numeric;
  */
 #define NUMERIC_WIRE_OID 1700
 
-/* The OID a client is told for type typid. */
+/* The OID a client knows numeric[] by, PostgreSQL's. */
+#define NUMERIC_ARRAY_WIRE_OID 1231
+
+/*
+ * The OID a client is told for type typid: numeric's for either decimal,
+ * decimal64's being numeric's own, and numeric[]'s for an array of either.
+ */
 static inline Oid numeric_wire_oid(Oid typid) {
-  return typid == DECIMAL128OID ? NUMERIC_WIRE_OID : typid;
+  if (typid == DECIMAL128OID)
+    return NUMERIC_WIRE_OID;
+  if (typid == DECIMAL64ARRAYOID)
+    return NUMERIC_ARRAY_WIRE_OID;
+  return typid;
 }
 
-/* The type a client's OID typid names. */
+/*
+ * The type a client's OID typid names: numeric's names decimal128, which
+ * holds any value a client sends (DG_DECIMAL_PLAN.md section 3.5).
+ */
 static inline Oid numeric_oid_from_wire(Oid typid) {
   return typid == NUMERIC_WIRE_OID ? DECIMAL128OID : typid;
 }
@@ -136,6 +149,7 @@ extern char *numeric_out_sci(Numeric num, int scale);
 extern char *numeric_normalize(Numeric num);
 
 extern Numeric int64_to_numeric(int64 val);
+extern bool numeric_to_decimal64(Numeric num, Datum *out);
 extern Numeric int64_div_fast_to_numeric(int64 val1, int log10val2);
 
 extern Numeric numeric_add_opt_error(Numeric num1, Numeric num2,

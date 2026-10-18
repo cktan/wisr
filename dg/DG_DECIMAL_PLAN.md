@@ -85,7 +85,9 @@ by its option 2. Reviewed; §6 records the answers.
   past that, as past 38 now (`src/backend/parser/
   parse_node.c`); as an integer literal is `int4` when it
   fits and `int8` when not. A literal keeps its own scale:
-  `1.23456` is a `decimal64` at scale 5, not rounded to 3.
+  `1.23456` is a `decimal64` at scale 5, not rounded to 3. A
+  literal with an exponent, `1e3`, is a `float8` whatever its
+  digits.
 
 ### 3.2 What runs on decimal64 itself
 
@@ -96,11 +98,22 @@ most:
   `decimal64` against `decimal64` and across to `decimal128`.
   At one scale, an integer comparison of the words; across
   scales, the lower rescaled.
-- **Indexes and sorts**: a btree and a hash opclass for each
-  type, in one family per method (`btree/numeric_ops`,
-  `hash/numeric_ops`) with the cross-type operators, as int4
-  and int8 share `integer_ops`. So an index on either type
-  serves a key of the other. Sort support compares words.
+- **Indexes and sorts**: a btree and a hash opclass for
+  `decimal64`, in families of its own (`decimal64_ops`), with
+  no cross-type operators: with them, `a = 1` on a
+  `decimal64` column would find `(decimal64, decimal64)` and
+  `(decimal64, decimal128)` equally good. A `decimal128` key
+  on a `decimal64` column compares as `decimal128`s, by the
+  implicit cast, and uses no index on the column, which holds
+  no value of more than 17 digits anyway. Sort support
+  compares words.
+- **Overload resolution**: where no function or operator
+  takes a `decimal64`, `func_select_candidate()`
+  (`src/backend/parser/parse_func.c`) counts a `decimal64`
+  taken as a `decimal128` as half an exact match, so a
+  `decimal64` finds `decimal128`'s `sqrt`, `round` or `+`
+  before `float8`'s, the category's preferred type, and an
+  exact `decimal64` one before either.
 - **Hashing** alike for equal values of either type: trailing
   zeros stripped first (`DECIMAL.md` §2.2), so a hash join of
   a `decimal64` and a `decimal128` key works.
@@ -149,15 +162,22 @@ cases go around that path:
 | `int2`, `int4`, `int8` | `decimal128` | implicit |
 | `float4`, `float8` | `decimal64`, `decimal128` | assignment |
 | `decimal64`, `decimal128` | `int2`, `int4`, `int8`, `float4`, `float8` | as numeric's now |
+| `decimal64` | `money` | assignment, as numeric's |
+| `jsonb` | `decimal64` | explicit, as numeric's |
 
 PostgreSQL does not chain casts, so each of these is an entry
-of its own in `pg_cast`.
+of its own in `pg_cast`. So `int8` and `decimal64` have no
+common type: `coalesce(int8_col, 1.5)` is an error, and a
+user casts one of them.
 
 ### 3.5 What a client sees
 
 - **The OID on the wire is 1700** for both types, in the row
-  description (`printtup.c`), so drivers decode either as
-  they decode `numeric` now.
+  and parameter descriptions (`printtup.c`, `postgres.c`), so
+  drivers decode either as they decode `numeric` now; 1231,
+  numeric[]'s, for an array of either. A parameter a client
+  types 1700 is a `decimal128`, which holds whatever it
+  sends.
 - **Their text and binary forms are numeric's**: `out`
   prints as `numeric(p, s)` does, `send` writes PostgreSQL's
   base-10000 digits.
@@ -222,10 +242,12 @@ suite before the next.
    `1.23456::numeric` is `1.235`, `(2^62)::numeric` an error
    and `(2^62)::numeric(30, 0)` not; `'numeric'::regtype` is
    1700.
-5. **Comparison, indexes, sorts and hashing** (§3.2).
-   → verify: an index on a `decimal64` column is used for a
-   `decimal128` key and ranges, and the other way; a hash join
-   across the two; sorts and `GROUP BY`.
+5. **Comparison, indexes, sorts and hashing** (§3.2), in
+   step 4's commit: `server.sh` sorts and indexes
+   `numeric(10, 2)` columns, so step 4 alone fails the suite.
+   → verify: an index on a `decimal64` column is used for
+   `= 1.5` and ranges; a hash join of a `decimal64` and a
+   `decimal128` key; sorts and `GROUP BY`.
 6. **Arithmetic and aggregates** (§3.3): the native
    operators, `sum` and `avg`, then `decimal128`'s fast path.
    → verify: `select_numeric.sql`'s arithmetic over
@@ -255,9 +277,10 @@ suite before the next.
    comes from native integer arithmetic, which §3.3 has
    anyway.
 3. **A literal.** Settled: **a `decimal64`** while it fits, 17
-   digits; past them a `decimal128` (§3.1).
-4. **The OID on the wire.** Settled: **1700 for both**
-   (§3.5).
+   digits; past them a `decimal128`; with an exponent a
+   `float8` (§3.1).
+4. **The OID on the wire.** Settled: **1700 for both**, and a
+   client's 1700 a `decimal128` (§3.5).
 5. **A bare `numeric`.** Settled: **`decimal64(17, 3)`
    everywhere** (§3.1), a cast included, so there is no
    unconstrained numeric; a user who needs more digits names
@@ -267,3 +290,11 @@ suite before the next.
    both types (§3.5), so tools that look for `numeric` keep
    working. `decimal64(p, s)` and `decimal128(p, s)`, true to
    the types but unknown to tools, was the alternative.
+7. **Overload resolution.** Settled: **a `decimal64` taken as a
+   `decimal128` counts as a match** (§3.2). Else a `decimal64`
+   would find `float8`'s functions, the category's preferred
+   type's.
+8. **`int8` with `decimal64`.** Settled: **no common type**; a
+   user casts (§3.4). Widening to `decimal128`, or an implicit
+   `int8` to `decimal64` that fails past 17 digits, were the
+   alternatives.

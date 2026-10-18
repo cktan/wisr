@@ -678,4 +678,12 @@
 { aggfnoid => 'any_value(anyelement)', aggtransfn => 'any_value_transfn',
   aggcombinefn => 'any_value_transfn', aggtranstype => 'anyelement' },
 
+
+# decimal64 (DG_DECIMAL_PLAN.md)
+{ aggfnoid => 'max(decimal64)', aggtransfn => 'decimal64_larger',
+  aggcombinefn => 'decimal64_larger', aggsortop => '>(decimal64,decimal64)',
+  aggtranstype => 'decimal64' },
+{ aggfnoid => 'min(decimal64)', aggtransfn => 'decimal64_smaller',
+  aggcombinefn => 'decimal64_smaller', aggsortop => '<(decimal64,decimal64)',
+  aggtranstype => 'decimal64' },
 ]

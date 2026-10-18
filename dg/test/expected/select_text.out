@@ -29,7 +29,7 @@ SELECT 'x' || 1;
 SELECT 1.5::numeric, 'abc'::varchar(2);
  numeric | varchar 
 ---------+---------
-     1.5 | ab
+   1.500 | ab
 (1 row)
 
 SELECT current_user = session_user;

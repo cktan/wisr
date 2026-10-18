@@ -222,4 +222,10 @@
 
 # no brin opclass for the geometric types except box
 
+
+# decimal64 (DG_DECIMAL_PLAN.md)
+{ opcmethod => 'btree', opcname => 'decimal64_ops',
+  opcfamily => 'btree/decimal64_ops', opcintype => 'decimal64' },
+{ opcmethod => 'hash', opcname => 'decimal64_ops',
+  opcfamily => 'hash/decimal64_ops', opcintype => 'decimal64' },
 ]

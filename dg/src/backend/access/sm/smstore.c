@@ -554,31 +554,43 @@ static sm_datum_t numeric_pack(__int128 i, int32 typmod, uint8 *buf) {
   return (sm_datum_t)buf;
 }
 
-/*
- * sm's datum for num in a column of typmod.  The value is rounded to the
- * column's scale and checked against its precision, as an assignment is;
- * for decimal128 the rounded numeric is sm's datum as it is, for decimal64
- * it is packed (numeric_pack()).
- */
-static sm_datum_t numeric_to_sm(Datum num, int32 typmod, uint8 *buf) {
-  int32 t = typmod < (int32)VARHDRSZ ? NUMERIC_DEFAULT_TYPMOD : typmod;
-  Numeric v = DatumGetNumeric(
-      DirectFunctionCall2(numeric, num, Int32GetDatum(t)));
+/* Whether typid is one of the decimals (DG_DECIMAL_PLAN.md). */
+static bool is_decimal(Oid typid) {
+  return typid == DECIMAL64OID || typid == DECIMAL128OID;
+}
 
+/*
+ * sm's datum for num, of the decimal typid, in a column of typmod.  The
+ * value is rounded to the column's scale and checked against its
+ * precision, as an assignment is; then a decimal64's word, and a
+ * decimal128's in a column of decimal128, are sm's datum as they are, and
+ * a decimal128's in a column of decimal64 is packed (numeric_pack()).
+ */
+static sm_datum_t numeric_to_sm(Datum num, Oid typid, int32 typmod,
+                                uint8 *buf) {
+  int32 t = typmod < (int32)VARHDRSZ ? NUMERIC_DEFAULT_TYPMOD : typmod;
+  Numeric v;
+
+  if (typid == DECIMAL64OID)
+    return (sm_datum_t)DirectFunctionCall2(decimal64, num, Int32GetDatum(t));
+  v = DatumGetNumeric(DirectFunctionCall2(numeric, num, Int32GetDatum(t)));
   if (numeric_scale_bits(typmod) == NUMERIC_SCALE_BITS)
     return (sm_datum_t)v;
   return numeric_pack(decimal_value(v), typmod, buf);
 }
 
 /*
- * The numeric of sm's datum d, of a column of typmod: for decimal128 d
- * itself, a numeric as it is, pointing into sm's tuple; for decimal64 one
- * palloc'd.
+ * The datum of the decimal typid of sm's datum d, of a column of typmod:
+ * d itself for a decimal64, and for a decimal128 of a column of
+ * decimal128, pointing into sm's tuple; a decimal128 palloc'd from a
+ * column of decimal64.
  */
-static Datum numeric_from_sm(sm_datum_t d, int32 typmod) {
+static Datum numeric_from_sm(sm_datum_t d, Oid typid, int32 typmod) {
   Numeric res;
   int64 w;
 
+  if (typid == DECIMAL64OID)
+    return (Datum)d;
   if (numeric_scale_bits(typmod) == NUMERIC_SCALE_BITS)
     return PointerGetDatum((const void *)d);
   w = (int64)d;
@@ -588,18 +600,26 @@ static Datum numeric_from_sm(sm_datum_t d, int32 typmod) {
 }
 
 /*
- * sm's datum for a scan's bound num on a numeric column of typmod: the
- * column's integer at or below it, or with upper at or above it, kept
- * within the column's precision.  So the bound takes in every value the
- * key's own would, and the keys, checked again on each row, decide.
+ * sm's datum for a scan's bound num, of the decimal typid, on a decimal
+ * column of typmod: the column's integer at or below it, or with upper at
+ * or above it, kept within the column's precision.  So the bound takes in
+ * every value the key's own would, and the keys, checked again on each
+ * row, decide.
  */
-static sm_datum_t numeric_bound(Datum num, int32 typmod, bool upper,
-                                uint8 *buf) {
-  const decimal_t *v = DatumGetNumeric(num);
-  int s = numeric_scale_of(typmod), vs = decimal_scale(v);
+static sm_datum_t numeric_bound(Datum num, Oid typid, int32 typmod,
+                                bool upper, uint8 *buf) {
+  int s = numeric_scale_of(typmod), vs;
   int p = numeric_precision(typmod);
-  __int128 i = decimal_value(v), limit = 1;
+  __int128 i, limit = 1;
   bool clamped = false;
+
+  if (typid == DECIMAL64OID) {
+    i = DatumGetInt64(num) >> 5;
+    vs = (int)(DatumGetInt64(num) & 31);
+  } else {
+    i = decimal_value(DatumGetNumeric(num));
+    vs = decimal_scale(DatumGetNumeric(num));
+  }
 
   for (int k = 0; k < p; k++)
     limit *= 10;
@@ -626,11 +646,19 @@ static sm_datum_t numeric_bound(Datum num, int32 typmod, bool upper,
   return numeric_pack(i, typmod, buf);
 }
 
-/* Whether a row of desc has a numeric column, whose datums are converted. */
+/*
+ * Whether attribute att is a decimal128 kept in sm as a decimal64, whose
+ * datums are converted: of an expression's column, made without a typmod.
+ */
+static bool converted_decimal(Form_pg_attribute att) {
+  return att->atttypid == DECIMAL128OID && !att->attisdropped &&
+         numeric_scale_bits(att->atttypmod) != NUMERIC_SCALE_BITS;
+}
+
+/* Whether a row of desc has a decimal whose datums are converted. */
 static bool has_numeric(TupleDesc desc) {
   for (int i = 0; i < desc->natts; i++)
-    if (TupleDescAttr(desc, i)->atttypid == DECIMAL128OID &&
-        !TupleDescAttr(desc, i)->attisdropped)
+    if (converted_decimal(TupleDescAttr(desc, i)))
       return true;
   return false;
 }
@@ -672,8 +700,9 @@ static const sm_datum_t *row_to_sm(sm_tbl_t *tbl, TupleDesc desc,
 
     if (isnull[i])
       continue;
-    if (att->atttypid == DECIMAL128OID)
-      val = numeric_to_sm(values[i], att->atttypmod, (uint8 *)palloc(16));
+    if (is_decimal(att->atttypid))
+      val = numeric_to_sm(values[i], att->atttypid, att->atttypmod,
+                          (uint8 *)palloc(16));
     else if (att->attlen == -1 &&
              VARATT_IS_EXTERNAL_SM(DatumGetPointer(values[i])) &&
              !own_pointer(tbl, old, i, (sm_datum_t)values[i]))
@@ -701,9 +730,9 @@ static bool has_toast(TupleDesc desc, Datum *values, bool *isnull,
 }
 
 /*
- * The numeric columns of a row of desc in slot, as sm gave them, made
- * numerics, and the slot made to own its values: sm's point into a tuple
- * kept only until the next row.
+ * The decimal128s of a row of desc in slot that sm keeps as decimal64s
+ * (has_numeric()), made decimal128s, and the slot made to own its values.
+ * Every other decimal is sm's datum as it is.
  */
 static void slot_from_sm(TupleTableSlot *slot) {
   TupleDesc desc = slot->tts_tupleDescriptor;
@@ -718,20 +747,22 @@ static void slot_from_sm(TupleTableSlot *slot) {
   MemoryContextReset(numeric_scratch);
   old = MemoryContextSwitchTo(numeric_scratch);
   for (int i = 0; i < desc->natts && i < slot->tts_nvalid; i++)
-    if (TupleDescAttr(desc, i)->atttypid == DECIMAL128OID && !slot->tts_isnull[i])
-      slot->tts_values[i] =
-          numeric_from_sm((sm_datum_t)slot->tts_values[i],
-                          TupleDescAttr(desc, i)->atttypmod);
+    if (converted_decimal(TupleDescAttr(desc, i)) && !slot->tts_isnull[i])
+      slot->tts_values[i] = numeric_from_sm((sm_datum_t)slot->tts_values[i],
+                                            DECIMAL128OID,
+                                            TupleDescAttr(desc, i)->atttypmod);
   MemoryContextSwitchTo(old);
   ExecMaterializeSlot(slot);
 }
 
 /*
  * sm's type code for a column of type typid and typmod (sm2/TYPE.md section
- * 3): numeric is decimal64 up to 17 digits, decimal128 up to 36.
+ * 3): a decimal is sm's decimal64 up to 17 digits, decimal128 up to 36, and
+ * one with no typmod numeric(17, 3)'s.
  */
 static uint8_t type_code(Oid typid, int32 typmod) {
   switch (typid) {
+  case DECIMAL64OID:
   case DECIMAL128OID:
     return numeric_precision(typmod) <= 17 ? 17 : 18;
   case BOOLOID:
@@ -1450,7 +1481,7 @@ ObjectAddress smstore_create_table(CreateStmt *stmt) {
                              col->colname)));
     typenameTypeIdAndMod(NULL, col->typeName, &typid, &typmod);
     /* A numeric with no precision is the default one, kept in sm. */
-    if (typid == DECIMAL128OID && typmod < (int32)VARHDRSZ)
+    if (is_decimal(typid) && typmod < (int32)VARHDRSZ)
       typmod = NUMERIC_DEFAULT_TYPMOD;
     columns.push_back({col->colname, type_code(typid, typmod), typmod,
                        column_not_null(stmt, col),
@@ -1818,6 +1849,7 @@ static Oid type_oid(uint8_t code) {
   case 16:
     return UUIDOID;
   case 17:
+    return DECIMAL64OID;
   case 18:
     return DECIMAL128OID;
   case 19:
@@ -2820,8 +2852,8 @@ static bool default_value(Expr *expr, Oid typid, int32 typmod, sm_datum_t *out,
   value = ExecEvalExpr(state, GetPerTupleExprContext(estate), &isnull);
   if (!isnull) {
     get_typlenbyval(typid, &typlen, &typbyval);
-    if (typid == DECIMAL128OID)
-      *out = numeric_to_sm(value, typmod, buf);
+    if (is_decimal(typid))
+      *out = numeric_to_sm(value, typid, typmod, buf);
     else if (typlen == -1)
       *out = (sm_datum_t)PointerGetDatum(
           pg_detoast_datum_copy((struct varlena *)DatumGetPointer(value)));
@@ -2875,7 +2907,7 @@ static void add_column(Oid relid, const char *relname, ColumnDef *col,
                            "NULL and DEFAULT yet")));
   typenameTypeIdAndMod(NULL, col->typeName, &typid, &typmod);
   /* A numeric with no precision is the default one, kept in sm. */
-  if (typid == DECIMAL128OID && typmod < (int32)VARHDRSZ)
+  if (is_decimal(typid) && typmod < (int32)VARHDRSZ)
     typmod = NUMERIC_DEFAULT_TYPMOD;
   if (raw_default != NULL) {
     ParseState *pstate = make_parsestate(NULL);
@@ -3946,7 +3978,7 @@ static Datum stat_datum(const sm_type_t *smtype, Oid typid, int32 typmod,
                         const std::string &bytes) {
   sm_datum_t d = sm_datum_of_bytes(smtype, bytes);
 
-  return typid == DECIMAL128OID ? numeric_from_sm(d, typmod) : (Datum)d;
+  return is_decimal(typid) ? numeric_from_sm(d, typid, typmod) : (Datum)d;
 }
 
 /*
@@ -4867,12 +4899,14 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
     Form_pg_attribute att = TupleDescAttr(RelationGetDescr(index), c);
     /* A key's datum as sm takes it: a numeric's integer at the scale. */
     auto bound = [&](ScanKey key, bool upper) {
-      if (att->atttypid != DECIMAL128OID)
+      if (!is_decimal(att->atttypid))
         return (sm_datum_t)key->sk_argument;
-      return numeric_bound(key->sk_argument, att->atttypmod, upper,
-                           (uint8 *)palloc(16));
+      return numeric_bound(key->sk_argument,
+                           OidIsValid(key->sk_subtype) ? key->sk_subtype
+                                                       : att->atttypid,
+                           att->atttypmod, upper, (uint8 *)palloc(16));
     };
-    bool numeric_col = att->atttypid == DECIMAL128OID;
+    bool numeric_col = is_decimal(att->atttypid);
 
     for (int i = 0; i < nkeys; i++) {
       ScanKey key = &keys[i];

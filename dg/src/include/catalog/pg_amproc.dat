@@ -553,4 +553,16 @@
 # minmax multi pg_lsn
 # bloom pg_lsn
 # inclusion box
+
+# decimal64 (DG_DECIMAL_PLAN.md)
+{ amprocfamily => 'btree/decimal64_ops', amproclefttype => 'decimal64',
+  amprocrighttype => 'decimal64', amprocnum => '1', amproc => 'decimal64_cmp' },
+{ amprocfamily => 'btree/decimal64_ops', amproclefttype => 'decimal64',
+  amprocrighttype => 'decimal64', amprocnum => '2',
+  amproc => 'decimal64_sortsupport' },
+{ amprocfamily => 'hash/decimal64_ops', amproclefttype => 'decimal64',
+  amprocrighttype => 'decimal64', amprocnum => '1', amproc => 'hash_decimal64' },
+{ amprocfamily => 'hash/decimal64_ops', amproclefttype => 'decimal64',
+  amprocrighttype => 'decimal64', amprocnum => '2',
+  amproc => 'hash_decimal64_extended' },
 ]

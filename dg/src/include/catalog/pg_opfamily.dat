@@ -150,4 +150,10 @@
   opfmethod => 'btree', opfname => 'multirange_ops' },
 { oid => '4225',
   opfmethod => 'hash', opfname => 'multirange_ops' },
+
+# decimal64 (DG_DECIMAL_PLAN.md)
+{ oid => '8423',
+  opfmethod => 'btree', opfname => 'decimal64_ops' },
+{ oid => '8424',
+  opfmethod => 'hash', opfname => 'decimal64_ops' },
 ]

@@ -1032,7 +1032,10 @@ FuncCandidateList func_select_candidate(int nargs, Oid *input_typeids,
 
   /*
    * Run through all candidates and keep those with the most matches on
-   * exact types. Keep all candidates if none match.
+   * exact types. Keep all candidates if none match.  An exact match counts
+   * two, and a decimal64 taken as a decimal128 one, so that a decimal64
+   * finds decimal128's functions before float8's, as PostgreSQL's numeric
+   * finds its own, and an exact one first (DG_DECIMAL_PLAN.md).
    */
   ncandidates = 0;
   nbestMatch = 0;
@@ -1044,6 +1047,9 @@ FuncCandidateList func_select_candidate(int nargs, Oid *input_typeids,
     for (i = 0; i < nargs; i++) {
       if (input_base_typeids[i] != UNKNOWNOID &&
           current_typeids[i] == input_base_typeids[i])
+        nmatch += 2;
+      else if (input_base_typeids[i] == DECIMAL64OID &&
+               current_typeids[i] == DECIMAL128OID)
         nmatch++;
     }
 

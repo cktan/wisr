@@ -21,7 +21,7 @@ SELECT jsonb_typeof('1e3'::jsonb), jsonb_typeof('1000'::jsonb), '1e3'::jsonb = '
 SELECT ('{"c": 1e300}'::jsonb ->> 'c'), ('{"c": 1e300}'::jsonb -> 'c')::float8, ('{"b": 2.5e0}'::jsonb -> 'b')::numeric, ('{"b": 2.5e1}'::jsonb -> 'b')::int4;
  ?column? | float8 | numeric | int4 
 ----------+--------+---------+------
- 1e+300   | 1e+300 |     2.5 |   25
+ 1e+300   | 1e+300 |   2.500 |   25
 (1 row)
 
 SELECT '[1, 2e0, 3]'::jsonb @> '[2]'::jsonb, '{"a": 1e2}'::jsonb @> '{"a": 100}'::jsonb;

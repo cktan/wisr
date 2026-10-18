@@ -1257,4 +1257,24 @@
 # minmax multi pg_lsn
 # bloom pg_lsn
 # inclusion box
+
+# decimal64 (DG_DECIMAL_PLAN.md)
+{ amopfamily => 'btree/decimal64_ops', amoplefttype => 'decimal64',
+  amoprighttype => 'decimal64', amopstrategy => '1',
+  amopopr => '<(decimal64,decimal64)', amopmethod => 'btree' },
+{ amopfamily => 'btree/decimal64_ops', amoplefttype => 'decimal64',
+  amoprighttype => 'decimal64', amopstrategy => '2',
+  amopopr => '<=(decimal64,decimal64)', amopmethod => 'btree' },
+{ amopfamily => 'btree/decimal64_ops', amoplefttype => 'decimal64',
+  amoprighttype => 'decimal64', amopstrategy => '3',
+  amopopr => '=(decimal64,decimal64)', amopmethod => 'btree' },
+{ amopfamily => 'btree/decimal64_ops', amoplefttype => 'decimal64',
+  amoprighttype => 'decimal64', amopstrategy => '4',
+  amopopr => '>=(decimal64,decimal64)', amopmethod => 'btree' },
+{ amopfamily => 'btree/decimal64_ops', amoplefttype => 'decimal64',
+  amoprighttype => 'decimal64', amopstrategy => '5',
+  amopopr => '>(decimal64,decimal64)', amopmethod => 'btree' },
+{ amopfamily => 'hash/decimal64_ops', amoplefttype => 'decimal64',
+  amoprighttype => 'decimal64', amopstrategy => '1',
+  amopopr => '=(decimal64,decimal64)', amopmethod => 'hash' },
 ]

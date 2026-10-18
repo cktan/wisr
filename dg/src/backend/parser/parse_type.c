@@ -74,6 +74,7 @@ LookupTypeNameExtended(ParseState *pstate,
 	Oid			typoid;
 	Type		tup;
 	int32		typmod;
+	bool		bare_numeric = false;
 
 	if (typeName->names == NIL)
 	{
@@ -165,10 +166,24 @@ LookupTypeNameExtended(ParseState *pstate,
 		/* deconstruct the name list */
 		DeconstructQualifiedName(typeName->names, &schemaname, &typname);
 
-		/* numeric is a name for a decimal, not a type (DG_DECIMAL_PLAN.md) */
+		/*
+		 * numeric is a name for a decimal, not a type (DG_DECIMAL_PLAN.md
+		 * section 3.1): decimal64 up to 17 digits, decimal128 past them, and
+		 * a bare numeric decimal64(17, 3).
+		 */
 		if (strcmp(typname, "numeric") == 0 &&
 			(schemaname == NULL || strcmp(schemaname, "pg_catalog") == 0))
-			typname = pstrdup("decimal128");
+		{
+			Node	   *p = typeName->typmods ? (Node *) linitial(typeName->typmods) : NULL;
+
+			bare_numeric = p == NULL;
+			if (p != NULL && IsA(p, A_Const) &&
+				IsA(&((A_Const *) p)->val, Integer) &&
+				intVal(&((A_Const *) p)->val) > 17)
+				typname = pstrdup("decimal128");
+			else
+				typname = pstrdup("decimal64");
+		}
 
 		if (schemaname)
 		{
@@ -210,6 +225,8 @@ LookupTypeNameExtended(ParseState *pstate,
 		elog(ERROR, "cache lookup failed for type %u", typoid);
 
 	typmod = typenameTypeMod(pstate, typeName, tup);
+	if (bare_numeric)
+		typmod = ((17 << 16) | 3) + VARHDRSZ;
 
 	if (typmod_p)
 		*typmod_p = typmod;

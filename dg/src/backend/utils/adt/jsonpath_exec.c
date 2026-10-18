@@ -2791,6 +2791,10 @@ static void JsonItemFromDatum(Datum val, Oid typid, int32 typmod,
     res->type = jbvBool;
     res->val.boolean = DatumGetBool(val);
     break;
+  case DECIMAL64OID:
+    JsonbValueInitNumericDatum(res,
+                               DirectFunctionCall1(decimal64_decimal128, val));
+    break;
   case DECIMAL128OID:
     JsonbValueInitNumericDatum(res, val);
     break;

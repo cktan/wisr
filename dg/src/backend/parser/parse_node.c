@@ -372,15 +372,26 @@ Const *make_const(ParseState *pstate, A_Const *aconst) {
       ErrorSaveContext numeric_escontext = {T_ErrorSaveContext};
 
       /*
-       * A numeric, if it has at most 36 digits (DECIMAL.md); else, as in
-       * DuckDB, a float8, which takes 1e300 and loses digits past its own.
+       * A decimal64 if it has at most 17 digits, a decimal128 if at most 36
+       * (DG_DECIMAL_PLAN.md section 3.1); else, as in DuckDB, a float8,
+       * which takes 1e300 and loses digits past its own.  A literal with an
+       * exponent is a float8 whatever its digits.
        */
-      if (DirectInputFunctionCallSafe(numeric_in, aconst->val.fval.fval,
+      bool exponent = strpbrk(aconst->val.fval.fval, "eE") != NULL;
+
+      if (!exponent &&
+          DirectInputFunctionCallSafe(numeric_in, aconst->val.fval.fval,
                                       InvalidOid, -1,
                                       (Node *)&numeric_escontext, &val)) {
-        typeid_ = DECIMAL128OID;
-        typelen = sizeof(decimal_t);
-        typebyval = false;
+        if (numeric_to_decimal64(DatumGetNumeric(val), &val)) {
+          typeid_ = DECIMAL64OID;
+          typelen = sizeof(int64);
+          typebyval = FLOAT8PASSBYVAL;
+        } else {
+          typeid_ = DECIMAL128OID;
+          typelen = sizeof(decimal_t);
+          typebyval = false;
+        }
       } else {
         /* arrange to report location if float8in() fails */
         setup_parser_errposition_callback(&pcbstate, pstate, aconst->location);

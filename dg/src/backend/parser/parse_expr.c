@@ -2973,6 +2973,7 @@ static Node *transformJsonValueExpr(ParseState *pstate,
      */
     switch (exprtype) {
     case BOOLOID:
+    case DECIMAL64OID:
     case DECIMAL128OID:
     case INT2OID:
     case INT4OID:

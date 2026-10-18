@@ -2926,3 +2926,327 @@ Datum int2int4_sum(PG_FUNCTION_ARGS) {
 
   PG_RETURN_DATUM(Int64GetDatumFast(transdata->sum));
 }
+
+/* ----------------------------------------------------------------------
+ * decimal64: sm's decimal64 by value, the word (value << 5) | scale, of at
+ * most 17 digits (DG_DECIMAL_PLAN.md).  It compares, hashes and sorts on
+ * its own; what else is done to it is done to it as a decimal128.
+ * ----------------------------------------------------------------------
+ */
+
+#define D64_SCALE_BITS 5
+#define D64_MAX_DIGITS 17
+
+/* The value of the decimal64 d, the number times 10^scale. */
+static int64 d64_value(Datum d) { return DatumGetInt64(d) >> D64_SCALE_BITS; }
+
+/* The scale of the decimal64 d. */
+static int d64_scale(Datum d) {
+  return (int)(DatumGetInt64(d) & ((1 << D64_SCALE_BITS) - 1));
+}
+
+/* The decimal64 of v at scale, |v| below 10^17. */
+static Datum d64_make(int64 v, int scale) {
+  return Int64GetDatum((int64)((uint64)v << D64_SCALE_BITS) | scale);
+}
+
+/* The wide value of the decimal64 d. */
+static wide_t d64_wide(Datum d) {
+  wide_t w = wide_of_int(d64_value(d));
+
+  w.scale = d64_scale(d);
+  return w;
+}
+
+/* The decimal128 of the decimal64 d, palloc'd. */
+static Numeric d64_numeric(Datum d) {
+  return dec_make(d64_value(d), d64_scale(d));
+}
+
+/*
+ * w as a decimal64 in *out: places past the point rounded away, half away
+ * from zero, until it has at most 17 digits and places; false, with the
+ * error saved in escontext, if its integer part has more than 17 digits.
+ */
+static bool d64_of_wide(const wide_t &w, Datum *out, Node *escontext) {
+  wide_t r = w;
+  int digits;
+
+  if (r.scale > D64_MAX_DIGITS)
+    r = wide_round(r, D64_MAX_DIGITS, false);
+  digits = mag_digits(r.mag);
+  if (digits > D64_MAX_DIGITS && digits - D64_MAX_DIGITS <= r.scale) {
+    r = wide_round(r, r.scale - (digits - D64_MAX_DIGITS), false);
+    /* Rounding up may add a digit: 99.95 to 100.0. */
+    if (mag_digits(r.mag) > D64_MAX_DIGITS && r.scale > 0)
+      r = wide_round(r, r.scale - 1, false);
+  }
+  if (mag_digits(r.mag) > D64_MAX_DIGITS)
+    ereturn(escontext, false,
+            (errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+             errmsg("value overflows numeric format"),
+             errdetail("A numeric of precision %d or less has at most %d "
+                       "digits.",
+                       D64_MAX_DIGITS, D64_MAX_DIGITS)));
+  *out = d64_make(r.neg ? -(int64)r.mag.limb[0] : (int64)r.mag.limb[0],
+                  r.scale);
+  return true;
+}
+
+/* w as a decimal64; more than 17 digits before the point is an error. */
+static Datum d64_from_wide(const wide_t &w) {
+  Datum d;
+
+  d64_of_wide(w, &d, NULL);
+  return d;
+}
+
+/*
+ * num as a decimal64 in *out, exactly: false if it has more than 17 digits
+ * or places.  What a literal is typed by (parse_node.c).
+ */
+bool numeric_to_decimal64(Numeric num, Datum *out) {
+  wide_t w = dec_wide(num);
+
+  if (w.scale > D64_MAX_DIGITS || mag_digits(w.mag) > D64_MAX_DIGITS)
+    return false;
+  *out = d64_from_wide(w);
+  return true;
+}
+
+/* Input: numeric's text, under typmod, as a decimal64. */
+Datum decimal64_in(PG_FUNCTION_ARGS) {
+  Datum num, res;
+
+  if (!DirectInputFunctionCallSafe(numeric_in, PG_GETARG_CSTRING(0),
+                                   InvalidOid, PG_GETARG_INT32(2),
+                                   fcinfo->context, &num) ||
+      !d64_of_wide(dec_wide(DatumGetNumeric(num)), &res, fcinfo->context))
+    PG_RETURN_NULL();
+  return res;
+}
+
+/* Output: every place of its scale, as numeric's. */
+Datum decimal64_out(PG_FUNCTION_ARGS) {
+  PG_RETURN_CSTRING(wide_text(d64_wide(PG_GETARG_DATUM(0))));
+}
+
+/* Binary input: numeric's format, as a decimal64. */
+Datum decimal64_recv(PG_FUNCTION_ARGS) {
+  Datum num = DirectFunctionCall3(numeric_recv, PG_GETARG_DATUM(0),
+                                  PG_GETARG_DATUM(1), PG_GETARG_DATUM(2));
+
+  return d64_from_wide(dec_wide(DatumGetNumeric(num)));
+}
+
+/* Binary output: numeric's format. */
+Datum decimal64_send(PG_FUNCTION_ARGS) {
+  return DirectFunctionCall1(numeric_send,
+                             NumericGetDatum(d64_numeric(PG_GETARG_DATUM(0))));
+}
+
+/* The typmod of decimal64(p) or decimal64(p, s): p at most 17. */
+Datum decimal64typmodin(PG_FUNCTION_ARGS) {
+  int32 typmod = DatumGetInt32(numerictypmodin(fcinfo));
+
+  if (numeric_typmod_precision(typmod) > D64_MAX_DIGITS)
+    ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                    errmsg("NUMERIC precision %d must be between 1 and %d",
+                           numeric_typmod_precision(typmod), D64_MAX_DIGITS)));
+  PG_RETURN_INT32(typmod);
+}
+
+/* The length coercion: d rounded to typmod's scale, checked against it. */
+Datum decimal64(PG_FUNCTION_ARGS) {
+  wide_t w = d64_wide(PG_GETARG_DATUM(0));
+
+  (void)apply_typmod(&w, PG_GETARG_INT32(1), NULL);
+  return d64_from_wide(w);
+}
+
+/* decimal64 to decimal128. */
+Datum decimal64_decimal128(PG_FUNCTION_ARGS) {
+  PG_RETURN_NUMERIC(d64_numeric(PG_GETARG_DATUM(0)));
+}
+
+/* decimal128 to decimal64: places rounded away to fit 17 digits. */
+Datum decimal128_decimal64(PG_FUNCTION_ARGS) {
+  return d64_from_wide(dec_wide(PG_GETARG_NUMERIC(0)));
+}
+
+/* int2 to decimal64. */
+Datum int2_decimal64(PG_FUNCTION_ARGS) {
+  return d64_make(PG_GETARG_INT16(0), 0);
+}
+
+/* int4 to decimal64. */
+Datum int4_decimal64(PG_FUNCTION_ARGS) {
+  return d64_make(PG_GETARG_INT32(0), 0);
+}
+
+/* int8 to decimal64: past 17 digits is an error. */
+Datum int8_decimal64(PG_FUNCTION_ARGS) {
+  return d64_from_wide(wide_of_int(PG_GETARG_INT64(0)));
+}
+
+/* float4 to decimal64, as to numeric. */
+Datum float4_decimal64(PG_FUNCTION_ARGS) {
+  Datum num = DirectFunctionCall1(float4_numeric, PG_GETARG_DATUM(0));
+
+  return d64_from_wide(dec_wide(DatumGetNumeric(num)));
+}
+
+/* float8 to decimal64, as to numeric. */
+Datum float8_decimal64(PG_FUNCTION_ARGS) {
+  Datum num = DirectFunctionCall1(float8_numeric, PG_GETARG_DATUM(0));
+
+  return d64_from_wide(dec_wide(DatumGetNumeric(num)));
+}
+
+/* decimal64 to int2, as numeric's. */
+Datum decimal64_int2(PG_FUNCTION_ARGS) {
+  return DirectFunctionCall1(numeric_int2,
+                             NumericGetDatum(d64_numeric(PG_GETARG_DATUM(0))));
+}
+
+/* decimal64 to int4, as numeric's. */
+Datum decimal64_int4(PG_FUNCTION_ARGS) {
+  return DirectFunctionCall1(numeric_int4,
+                             NumericGetDatum(d64_numeric(PG_GETARG_DATUM(0))));
+}
+
+/* decimal64 to int8, as numeric's. */
+Datum decimal64_int8(PG_FUNCTION_ARGS) {
+  return DirectFunctionCall1(numeric_int8,
+                             NumericGetDatum(d64_numeric(PG_GETARG_DATUM(0))));
+}
+
+/* decimal64 to float4, by its text. */
+Datum decimal64_float4(PG_FUNCTION_ARGS) {
+  PG_RETURN_FLOAT4(strtof(wide_text(d64_wide(PG_GETARG_DATUM(0))), NULL));
+}
+
+/* decimal64 to float8, by its text. */
+Datum decimal64_float8(PG_FUNCTION_ARGS) {
+  PG_RETURN_FLOAT8(strtod(wide_text(d64_wide(PG_GETARG_DATUM(0))), NULL));
+}
+
+/*
+ * -1, 0 or 1 as a is below, equal to or above b: at one scale their words'
+ * order, else the lower scale's value scaled up, which 128 bits hold.
+ */
+static int d64_cmp(Datum a, Datum b) {
+  int sa = d64_scale(a), sb = d64_scale(b);
+  i128 x, y;
+
+  if (sa == sb) {
+    int64 wa = DatumGetInt64(a), wb = DatumGetInt64(b);
+
+    return wa < wb ? -1 : (wa > wb ? 1 : 0);
+  }
+  x = d64_value(a);
+  y = d64_value(b);
+  for (; sa < sb; sa++)
+    x *= 10;
+  for (; sb < sa; sb++)
+    y *= 10;
+  return x < y ? -1 : (x > y ? 1 : 0);
+}
+
+/* The comparator of a sort of decimal64s. */
+static int decimal64_fast_cmp(Datum x, Datum y, SortSupport ssup) {
+  return d64_cmp(x, y);
+}
+
+/* Sort support: a comparator of words. */
+Datum decimal64_sortsupport(PG_FUNCTION_ARGS) {
+  SortSupport ssup = (SortSupport)PG_GETARG_POINTER(0);
+
+  ssup->comparator = decimal64_fast_cmp;
+  PG_RETURN_VOID();
+}
+
+/* btree comparison: -1, 0 or 1. */
+Datum decimal64_cmp(PG_FUNCTION_ARGS) {
+  PG_RETURN_INT32(d64_cmp(PG_GETARG_DATUM(0), PG_GETARG_DATUM(1)));
+}
+
+/* a = b, at any scales. */
+Datum decimal64_eq(PG_FUNCTION_ARGS) {
+  PG_RETURN_BOOL(d64_cmp(PG_GETARG_DATUM(0), PG_GETARG_DATUM(1)) == 0);
+}
+
+/* a <> b. */
+Datum decimal64_ne(PG_FUNCTION_ARGS) {
+  PG_RETURN_BOOL(d64_cmp(PG_GETARG_DATUM(0), PG_GETARG_DATUM(1)) != 0);
+}
+
+/* a < b. */
+Datum decimal64_lt(PG_FUNCTION_ARGS) {
+  PG_RETURN_BOOL(d64_cmp(PG_GETARG_DATUM(0), PG_GETARG_DATUM(1)) < 0);
+}
+
+/* a <= b. */
+Datum decimal64_le(PG_FUNCTION_ARGS) {
+  PG_RETURN_BOOL(d64_cmp(PG_GETARG_DATUM(0), PG_GETARG_DATUM(1)) <= 0);
+}
+
+/* a > b. */
+Datum decimal64_gt(PG_FUNCTION_ARGS) {
+  PG_RETURN_BOOL(d64_cmp(PG_GETARG_DATUM(0), PG_GETARG_DATUM(1)) > 0);
+}
+
+/* a >= b. */
+Datum decimal64_ge(PG_FUNCTION_ARGS) {
+  PG_RETURN_BOOL(d64_cmp(PG_GETARG_DATUM(0), PG_GETARG_DATUM(1)) >= 0);
+}
+
+/* d's hash key: a decimal128's of the same value, so both hash alike. */
+static hash_key_t d64_hash_key(Datum d) {
+  decimal_t num;
+
+  decimal_set(&num, d64_value(d), d64_scale(d));
+  return dec_hash_key(&num);
+}
+
+/* hash_decimal64: as hash_numeric of the same value. */
+Datum hash_decimal64(PG_FUNCTION_ARGS) {
+  hash_key_t k = d64_hash_key(PG_GETARG_DATUM(0));
+
+  return hash_any((const unsigned char *)&k, sizeof(k));
+}
+
+/* hash_decimal64_extended: as hash_numeric_extended of the same value. */
+Datum hash_decimal64_extended(PG_FUNCTION_ARGS) {
+  hash_key_t k = d64_hash_key(PG_GETARG_DATUM(0));
+
+  return hash_any_extended((const unsigned char *)&k, sizeof(k),
+                           PG_GETARG_INT64(1));
+}
+
+/* The larger of two decimal64s. */
+Datum decimal64_larger(PG_FUNCTION_ARGS) {
+  Datum a = PG_GETARG_DATUM(0), b = PG_GETARG_DATUM(1);
+
+  return d64_cmp(a, b) >= 0 ? a : b;
+}
+
+/* The smaller of two decimal64s. */
+Datum decimal64_smaller(PG_FUNCTION_ARGS) {
+  Datum a = PG_GETARG_DATUM(0), b = PG_GETARG_DATUM(1);
+
+  return d64_cmp(a, b) <= 0 ? a : b;
+}
+
+/* jsonb to decimal64: its number, as to numeric, fitted to 17 digits. */
+Datum jsonb_decimal64(PG_FUNCTION_ARGS) {
+  Datum num = DirectFunctionCall1(jsonb_numeric, PG_GETARG_DATUM(0));
+
+  return d64_from_wide(dec_wide(DatumGetNumeric(num)));
+}
+
+/* decimal64 to money, as numeric's. */
+Datum decimal64_cash(PG_FUNCTION_ARGS) {
+  return DirectFunctionCall1(numeric_cash,
+                             NumericGetDatum(d64_numeric(PG_GETARG_DATUM(0))));
+}

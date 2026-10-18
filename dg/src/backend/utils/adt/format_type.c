@@ -222,6 +222,7 @@ char *format_type_extended(Oid type_oid, int32 typemod, bits16 flags) {
     buf = pstrdup("bigint");
     break;
 
+  case DECIMAL64OID:
   case DECIMAL128OID:
     if (with_typemod)
       buf = printTypmod("numeric", typemod, typeform->typmodout);

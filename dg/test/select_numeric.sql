@@ -21,7 +21,7 @@ SELECT 7.5 % 2, -7.5 % 2, div(7.5, 2), 1.5 = 1.50, 1.5 < 1.51, abs(-2.5), -(2.5)
 SELECT round(2.5), round(-2.5), round(1.2345, 2), round(1234.5, -2), trunc(1.999, 2), trunc(-1.999), ceil(1.1), floor(-1.1);
 SELECT sqrt(2::numeric), sqrt(16::numeric), exp(1::numeric), ln(10::numeric), log(100::numeric), log(2, 8::numeric);
 SELECT power(2::numeric, 10), power(2::numeric, 0.5), power(2.0, -2), 2::numeric ^ 3;
-SELECT 999999999999999999999999999999999999::numeric + 0, '1.000000000000000000000000000000000000000000'::numeric;
+SELECT 999999999999999999999999999999999999::numeric(36,0) + 0, '1.000000000000000000000000000000000000000000'::numeric(36,35);
 SELECT 1.23::numeric(5,1), 123.45::numeric(5,2), 0.1::float8::numeric, 1.5::numeric::float8, 2.5::numeric::int4, 3.5::numeric::int8;
 SELECT scale(1.230), min_scale(1.230), trim_scale(1.230), gcd(12.0, 18), lcm(1.5, 2.25), factorial(20);
 SELECT sum(x), avg(x), min(x), max(x) FROM (VALUES (1.5), (2.25), (3)) v(x);
@@ -30,6 +30,6 @@ SELECT x FROM generate_series(0.5, 2, 0.5) x;
 SELECT width_bucket(5.35, 0.024, 10.06, 5), sign(-3.2);
 SELECT '{"a": 1.5, "b": [1, 2.25, -3]}'::jsonb, '{"a": 1}'::jsonb = '{"a": 1.0}'::jsonb;
 SELECT jsonb_path_query('{"x": 2.5}'::jsonb, '$.x * 2 + 1'::jsonpath, '{}'::jsonb, false);
-SELECT extract(epoch FROM timestamp '2024-01-01 00:00:01.5'), to_char(1234.5::numeric, '9999.99'), to_char(0.000123::numeric, '9.99EEEE'), to_number('1,234.5', '9,999.9');
+SELECT extract(epoch FROM timestamp '2024-01-01 00:00:01.5'), to_char(1234.5::numeric, '9999.99'), to_char(0.000123::numeric(17,6), '9.99EEEE'), to_number('1,234.5', '9,999.9');
 SELECT 12.34::numeric::money, '0/10'::pg_lsn + 5::numeric, '0/20'::pg_lsn - '0/10'::pg_lsn;
 SELECT numeric_send(1.5), numeric_send(-0.0001), numeric_send(0::numeric), numeric_send(12345678.9);

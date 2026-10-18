@@ -10302,6 +10302,7 @@ static void get_const_expr(Const *constval, deparse_context *context,
     }
     break;
 
+  case DECIMAL64OID:
   case DECIMAL128OID:
 
     /*
@@ -10351,6 +10352,7 @@ static void get_const_expr(Const *constval, deparse_context *context,
   case INT4OID:
     /* We determined above whether a label is needed */
     break;
+  case DECIMAL64OID:
   case DECIMAL128OID:
 
     /*

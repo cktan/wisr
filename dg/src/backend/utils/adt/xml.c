@@ -3324,6 +3324,7 @@ static const char *map_sql_type_to_xml_name(Oid typeoid, int typmod) {
     else
       appendStringInfo(&result, "VARCHAR_%d", typmod - VARHDRSZ);
     break;
+  case DECIMAL64OID:
   case DECIMAL128OID:
     if (typmod == -1)
       appendStringInfoString(&result, "NUMERIC");
@@ -3491,6 +3492,7 @@ static const char *map_sql_type_to_xmlschema_type(Oid typeoid, int typmod) {
                                                      : "hexBinary");
       break;
 
+    case DECIMAL64OID:
     case DECIMAL128OID:
       if (typmod != -1)
         appendStringInfo(&result,
