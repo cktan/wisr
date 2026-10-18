@@ -35,6 +35,7 @@
 #include "storage/buffile.h"
 #include "utils/builtins.h"
 #include "utils/guc_tables.h"
+#include "utils/hooks.h"
 #include "utils/json.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
@@ -45,15 +46,10 @@
 #include "utils/xml.h"
 
 /* Hook for plugins to get control in ExplainOneQuery() */
-thread_local /*SHARED*/ ExplainOneQuery_hook_type ExplainOneQuery_hook = NULL;
 
 /* Hook for plugins to get control in explain_get_index_name() */
-thread_local /*SHARED*/ explain_get_index_name_hook_type
-    explain_get_index_name_hook = NULL;
 
 /* per-plan and per-node hooks for plugins to print additional info */
-thread_local /*SHARED*/ explain_per_plan_hook_type explain_per_plan_hook = NULL;
-thread_local /*SHARED*/ explain_per_node_hook_type explain_per_node_hook = NULL;
 
 /*
  * Various places within need to convert bytes to kilobytes.  Round these up
@@ -177,8 +173,8 @@ void ExplainQuery(ParseState *pstate, ExplainStmt *stmt, ParamListInfo params,
   if (IsQueryIdEnabled())
     jstate = JumbleQuery(query);
 
-  if (post_parse_analyze_hook)
-    (*post_parse_analyze_hook)(pstate, query, jstate);
+  if (tcb->hooks->post_parse_analyze_hook)
+    (*tcb->hooks->post_parse_analyze_hook)(pstate, query, jstate);
 
   /*
    * Parse analysis was done already, but we still have to run the rule
@@ -276,8 +272,8 @@ static void ExplainOneQuery(Query *query, int cursorOptions, IntoClause *into,
   }
 
   /* if an advisor plugin is present, let it manage things */
-  if (ExplainOneQuery_hook)
-    (*ExplainOneQuery_hook)(query, cursorOptions, into, es,
+  if (tcb->hooks->ExplainOneQuery_hook)
+    (*tcb->hooks->ExplainOneQuery_hook)(query, cursorOptions, into, es,
                             pstate->p_sourcetext, params, pstate->p_queryEnv);
   else
     standard_ExplainOneQuery(query, cursorOptions, into, es,
@@ -385,8 +381,8 @@ void ExplainOneUtility(Node *utilityStmt, IntoClause *into, ExplainState *es,
     ctas_query = castNode(Query, copyObject(ctas->query));
     if (IsQueryIdEnabled())
       jstate = JumbleQuery(ctas_query);
-    if (post_parse_analyze_hook)
-      (*post_parse_analyze_hook)(pstate, ctas_query, jstate);
+    if (tcb->hooks->post_parse_analyze_hook)
+      (*tcb->hooks->post_parse_analyze_hook)(pstate, ctas_query, jstate);
     rewritten = QueryRewrite(ctas_query);
     Assert(list_length(rewritten) == 1);
     ExplainOneQuery(linitial_node(Query, rewritten), CURSOR_OPT_PARALLEL_OK,
@@ -408,8 +404,8 @@ void ExplainOneUtility(Node *utilityStmt, IntoClause *into, ExplainState *es,
     dcs_query = castNode(Query, copyObject(dcs->query));
     if (IsQueryIdEnabled())
       jstate = JumbleQuery(dcs_query);
-    if (post_parse_analyze_hook)
-      (*post_parse_analyze_hook)(pstate, dcs_query, jstate);
+    if (tcb->hooks->post_parse_analyze_hook)
+      (*tcb->hooks->post_parse_analyze_hook)(pstate, dcs_query, jstate);
 
     rewritten = QueryRewrite(dcs_query);
     Assert(list_length(rewritten) == 1);
@@ -584,8 +580,8 @@ void ExplainOnePlan(PlannedStmt *plannedstmt, IntoClause *into,
     ExplainPrintSerialize(es, &serializeMetrics);
 
   /* Allow plugins to print additional information */
-  if (explain_per_plan_hook)
-    (*explain_per_plan_hook)(plannedstmt, into, es, queryString, params,
+  if (tcb->hooks->explain_per_plan_hook)
+    (*tcb->hooks->explain_per_plan_hook)(plannedstmt, into, es, queryString, params,
                              queryEnv);
 
   /*
@@ -1805,8 +1801,8 @@ static void ExplainNode(PlanState *planstate, List *ancestors,
     show_wal_usage(es, &planstate->instrument->walusage);
 
   /* Allow plugins to print additional information */
-  if (explain_per_node_hook)
-    (*explain_per_node_hook)(planstate, ancestors, relationship, plan_name, es);
+  if (tcb->hooks->explain_per_node_hook)
+    (*tcb->hooks->explain_per_node_hook)(planstate, ancestors, relationship, plan_name, es);
 
   /*
    * If partition pruning was done during executor initialization, the
@@ -3030,8 +3026,8 @@ static void show_foreignscan_info(ForeignScanState *fsstate, ExplainState *es) {
 static const char *explain_get_index_name(Oid indexId) {
   const char *result;
 
-  if (explain_get_index_name_hook)
-    result = (*explain_get_index_name_hook)(indexId);
+  if (tcb->hooks->explain_get_index_name_hook)
+    result = (*tcb->hooks->explain_get_index_name_hook)(indexId);
   else
     result = NULL;
   if (result == NULL) {

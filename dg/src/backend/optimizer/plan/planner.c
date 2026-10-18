@@ -57,6 +57,7 @@
 #include "partitioning/partdesc.h"
 #include "rewrite/rewriteManip.h"
 #include "utils/acl.h"
+#include "utils/hooks.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/selfuncs.h"
@@ -67,11 +68,8 @@ thread_local /*LOCAL*/ double cursor_tuple_fraction =
 thread_local /*LOCAL*/ bool enable_distinct_reordering = true;
 
 /* Hook for plugins to get control in planner() */
-thread_local /*SHARED*/ planner_hook_type planner_hook = NULL;
 
 /* Hook for plugins to get control when grouping_planner() plans upper rels */
-thread_local /*SHARED*/ create_upper_paths_hook_type create_upper_paths_hook =
-    NULL;
 
 /* Expression kind codes for preprocess_expression */
 #define EXPRKIND_QUAL				0
@@ -258,8 +256,8 @@ PlannedStmt *planner(Query *parse, const char *query_string, int cursorOptions,
                      ParamListInfo boundParams) {
   PlannedStmt *result;
 
-  if (planner_hook)
-    result = (*planner_hook)(parse, query_string, cursorOptions, boundParams);
+  if (tcb->hooks->planner_hook)
+    result = (*tcb->hooks->planner_hook)(parse, query_string, cursorOptions, boundParams);
   else
     result = standard_planner(parse, query_string, cursorOptions, boundParams);
 
@@ -1845,8 +1843,8 @@ static void grouping_planner(PlannerInfo *root, double tuple_fraction,
                                                 current_rel, final_rel, &extra);
 
   /* Let extensions possibly add some more paths */
-  if (create_upper_paths_hook)
-    (*create_upper_paths_hook)(root, UPPERREL_FINAL, current_rel, final_rel,
+  if (tcb->hooks->create_upper_paths_hook)
+    (*tcb->hooks->create_upper_paths_hook)(root, UPPERREL_FINAL, current_rel, final_rel,
                                &extra);
 
   /* Note: currently, we leave it to callers to do set_cheapest() */
@@ -3559,8 +3557,8 @@ static void create_ordinary_grouping_paths(
         root, UPPERREL_GROUP_AGG, input_rel, grouped_rel, extra);
 
   /* Let extensions possibly add some more paths */
-  if (create_upper_paths_hook)
-    (*create_upper_paths_hook)(root, UPPERREL_GROUP_AGG, input_rel, grouped_rel,
+  if (tcb->hooks->create_upper_paths_hook)
+    (*tcb->hooks->create_upper_paths_hook)(root, UPPERREL_GROUP_AGG, input_rel, grouped_rel,
                                extra);
 }
 
@@ -3931,8 +3929,8 @@ static RelOptInfo *create_window_paths(PlannerInfo *root, RelOptInfo *input_rel,
                                                  input_rel, window_rel, NULL);
 
   /* Let extensions possibly add some more paths */
-  if (create_upper_paths_hook)
-    (*create_upper_paths_hook)(root, UPPERREL_WINDOW, input_rel, window_rel,
+  if (tcb->hooks->create_upper_paths_hook)
+    (*tcb->hooks->create_upper_paths_hook)(root, UPPERREL_WINDOW, input_rel, window_rel,
                                NULL);
 
   /* Now choose the best path(s) */
@@ -4126,8 +4124,8 @@ static RelOptInfo *create_distinct_paths(PlannerInfo *root,
         root, UPPERREL_DISTINCT, input_rel, distinct_rel, NULL);
 
   /* Let extensions possibly add some more paths */
-  if (create_upper_paths_hook)
-    (*create_upper_paths_hook)(root, UPPERREL_DISTINCT, input_rel, distinct_rel,
+  if (tcb->hooks->create_upper_paths_hook)
+    (*tcb->hooks->create_upper_paths_hook)(root, UPPERREL_DISTINCT, input_rel, distinct_rel,
                                NULL);
 
   /* Now choose the best path(s) */
@@ -4450,8 +4448,8 @@ static RelOptInfo *create_ordered_paths(PlannerInfo *root,
                                                   input_rel, ordered_rel, NULL);
 
   /* Let extensions possibly add some more paths */
-  if (create_upper_paths_hook)
-    (*create_upper_paths_hook)(root, UPPERREL_ORDERED, input_rel, ordered_rel,
+  if (tcb->hooks->create_upper_paths_hook)
+    (*tcb->hooks->create_upper_paths_hook)(root, UPPERREL_ORDERED, input_rel, ordered_rel,
                                NULL);
 
   /*

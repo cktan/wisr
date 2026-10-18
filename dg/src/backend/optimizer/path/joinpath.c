@@ -26,12 +26,11 @@
 #include "optimizer/placeholder.h"
 #include "optimizer/planmain.h"
 #include "optimizer/restrictinfo.h"
+#include "utils/hooks.h"
 #include "utils/lsyscache.h"
 #include "utils/typcache.h"
 
 /* Hook for plugins to get control in add_paths_to_joinrel() */
-thread_local /*SHARED*/ set_join_pathlist_hook_type set_join_pathlist_hook =
-    NULL;
 
 /*
  * Paths parameterized by a parent rel can be considered to be parameterized
@@ -280,8 +279,8 @@ void add_paths_to_joinrel(PlannerInfo *root, RelOptInfo *joinrel,
    * could add new paths (such as CustomPaths) by calling add_path().  They
    * could also delete or modify paths added by the core code.
    */
-  if (set_join_pathlist_hook)
-    set_join_pathlist_hook(root, joinrel, outerrel, innerrel, jointype, &extra);
+  if (tcb->hooks->set_join_pathlist_hook)
+    tcb->hooks->set_join_pathlist_hook(root, joinrel, outerrel, innerrel, jointype, &extra);
 }
 
 /*

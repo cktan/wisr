@@ -812,10 +812,8 @@ typedef bool (*needs_fmgr_hook_type)(Oid fn_oid);
 typedef void (*fmgr_hook_type)(FmgrHookEventType event, FmgrInfo *flinfo,
                                Datum *arg);
 
-extern thread_local /*SHARED*/ PGDLLIMPORT needs_fmgr_hook_type needs_fmgr_hook;
-extern thread_local /*SHARED*/ PGDLLIMPORT fmgr_hook_type fmgr_hook;
-
+/* The hooks are this thread's, tcb->hooks: a user includes utils/hooks.h. */
 #define FmgrHookIsNeeded(fn_oid)							\
-	(!needs_fmgr_hook ? false : (*needs_fmgr_hook)(fn_oid))
+	(!tcb->hooks->needs_fmgr_hook ? false : (*tcb->hooks->needs_fmgr_hook)(fn_oid))
 
 #endif /* FMGR_H */

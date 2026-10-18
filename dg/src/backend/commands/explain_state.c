@@ -36,10 +36,9 @@
 #include "commands/defrem.h"
 #include "commands/explain.h"
 #include "commands/explain_state.h"
+#include "utils/hooks.h"
 
 /* Hook to perform additional EXPLAIN options validation */
-thread_local /*SHARED*/ explain_validate_options_hook_type
-    explain_validate_options_hook = NULL;
 
 typedef struct {
   const char *option_name;
@@ -181,8 +180,8 @@ void ParseExplainOptionList(ExplainState *es, List *options,
   es->summary = (summary_set) ? es->summary : es->analyze;
 
   /* plugin specific option validation */
-  if (explain_validate_options_hook)
-    (*explain_validate_options_hook)(es, options, pstate);
+  if (tcb->hooks->explain_validate_options_hook)
+    (*tcb->hooks->explain_validate_options_hook)(es, options, pstate);
 }
 
 /*

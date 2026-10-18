@@ -35,6 +35,7 @@
 #include "optimizer/prep.h"
 #include "optimizer/tlist.h"
 #include "parser/parse_coerce.h"
+#include "utils/hooks.h"
 #include "utils/selfuncs.h"
 
 static RelOptInfo *recurse_set_operations(Node *setOp, PlannerInfo *root,
@@ -1010,8 +1011,8 @@ static void postprocess_setop_rel(PlannerInfo *root, RelOptInfo *rel) {
    * We don't currently worry about allowing FDWs to contribute paths to
    * this relation, but give extensions a chance.
    */
-  if (create_upper_paths_hook)
-    (*create_upper_paths_hook)(root, UPPERREL_SETOP, NULL, rel, NULL);
+  if (tcb->hooks->create_upper_paths_hook)
+    (*tcb->hooks->create_upper_paths_hook)(root, UPPERREL_SETOP, NULL, rel, NULL);
 
   /* Select cheapest path */
   set_cheapest(rel);

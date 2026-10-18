@@ -280,6 +280,7 @@ static inline bool spcachekey_equal(SearchPathCacheKey a,
 #define SH_DECLARE
 #define SH_DEFINE
 #include "lib/simplehash.h"
+#include "utils/hooks.h"
 
 /*
  * We only expect a small number of unique search_path strings to be used. If
@@ -3677,7 +3678,7 @@ static const SearchPathCacheEntry *cachedNamespacePath(const char *searchPath,
    * than recomputing from the string (and doing catalog lookups and ACL
    * checks).
    */
-  if (entry->finalPath == NIL || object_access_hook || entry->forceRecompute) {
+  if (entry->finalPath == NIL || tcb->hooks->object_access_hook || entry->forceRecompute) {
     list_free(entry->finalPath);
     entry->finalPath = NIL;
 
@@ -3691,7 +3692,7 @@ static const SearchPathCacheEntry *cachedNamespacePath(const char *searchPath,
      * finalPath the next time this cache entry is used, even if the
      * object_access_hook is not set at that time.
      */
-    entry->forceRecompute = object_access_hook ? true : false;
+    entry->forceRecompute = tcb->hooks->object_access_hook ? true : false;
   }
 
   return entry;

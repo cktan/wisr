@@ -46,6 +46,7 @@
 #include "rewrite/rewriteHandler.h"
 #include "tcop/tcopprot.h"
 #include "utils/builtins.h"
+#include "utils/hooks.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/rls.h"
@@ -242,8 +243,8 @@ ObjectAddress ExecCreateTableAs(ParseState *pstate, CreateTableAsStmt *stmt,
   if (IsQueryIdEnabled())
     jstate = JumbleQuery(query);
 
-  if (post_parse_analyze_hook)
-    (*post_parse_analyze_hook)(pstate, query, jstate);
+  if (tcb->hooks->post_parse_analyze_hook)
+    (*tcb->hooks->post_parse_analyze_hook)(pstate, query, jstate);
 
   /*
    * The contained Query could be a SELECT, or an EXECUTE utility command.

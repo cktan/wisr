@@ -22,6 +22,7 @@
 #include "catalog/objectaccess.h"
 #include "catalog/pg_namespace.h"
 #include "utils/builtins.h"
+#include "utils/hooks.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
 

@@ -38,6 +38,7 @@
 #include "utils/catcache.h"
 #include "utils/control_block.h"
 #include "utils/fmgroids.h"
+#include "utils/hooks.h"
 #include "utils/syscache.h"
 #include "utils/varlena.h"
 
@@ -87,7 +88,6 @@ static thread_local /*LOCAL*/ bool createrole_self_grant_enabled = false;
 static thread_local /*LOCAL*/ GrantRoleOptions createrole_self_grant_options;
 
 /* Hook to check passwords in CreateRole() and AlterRole() */
-thread_local /*SHARED*/ check_password_hook_type check_password_hook = NULL;
 
 static void AddRoleMems(Oid currentUserId, const char *rolename, Oid roleid,
                         List *memberSpecs, List *memberIds, Oid grantorId,
@@ -344,8 +344,8 @@ Oid CreateRole(ParseState *pstate, CreateRoleStmt *stmt) {
   /*
    * Call the password checking hook if there is one defined
    */
-  if (check_password_hook && password)
-    (*check_password_hook)(stmt->role, password, get_password_type(password),
+  if (tcb->hooks->check_password_hook && password)
+    (*tcb->hooks->check_password_hook)(stmt->role, password, get_password_type(password),
                            validUntil_datum, validUntil_null);
 
   /*
@@ -746,8 +746,8 @@ Oid AlterRole(ParseState *pstate, AlterRoleStmt *stmt) {
   /*
    * Call the password checking hook if there is one defined
    */
-  if (check_password_hook && password)
-    (*check_password_hook)(rolename, password, get_password_type(password),
+  if (tcb->hooks->check_password_hook && password)
+    (*tcb->hooks->check_password_hook)(rolename, password, get_password_type(password),
                            validUntil_datum, validUntil_null);
 
   /*

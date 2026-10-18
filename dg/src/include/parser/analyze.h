@@ -21,8 +21,6 @@
 /* Hook for plugins to get control at end of parse analysis */
 typedef void (*post_parse_analyze_hook_type)(ParseState *pstate, Query *query,
                                              JumbleState *jstate);
-extern thread_local /*SHARED*/ PGDLLIMPORT post_parse_analyze_hook_type
-    post_parse_analyze_hook;
 
 extern Query *parse_analyze_fixedparams(RawStmt *parseTree,
                                         const char *sourceText,

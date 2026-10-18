@@ -533,7 +533,6 @@ extern char *GetErrorContextStack(void);
 
 /* Hook for intercepting messages before they are sent to the server log */
 typedef void (*emit_log_hook_type)(ErrorData *edata);
-extern thread_local /*SHARED*/ PGDLLIMPORT emit_log_hook_type emit_log_hook;
 
 /* GUC-configurable parameters */
 

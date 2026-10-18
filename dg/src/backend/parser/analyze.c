@@ -51,12 +51,11 @@
 #include "parser/parsetree.h"
 #include "utils/builtins.h"
 #include "utils/guc.h"
+#include "utils/hooks.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
 
 /* Hook for plugins to get control at end of parse analysis */
-thread_local /*SHARED*/ post_parse_analyze_hook_type post_parse_analyze_hook =
-    NULL;
 
 static Query *transformOptionalSelectInto(ParseState *pstate, Node *parseTree);
 static Query *transformDeleteStmt(ParseState *pstate, DeleteStmt *stmt);
@@ -119,8 +118,8 @@ Query *parse_analyze_fixedparams(RawStmt *parseTree, const char *sourceText,
   if (IsQueryIdEnabled())
     jstate = JumbleQuery(query);
 
-  if (post_parse_analyze_hook)
-    (*post_parse_analyze_hook)(pstate, query, jstate);
+  if (tcb->hooks->post_parse_analyze_hook)
+    (*tcb->hooks->post_parse_analyze_hook)(pstate, query, jstate);
 
   free_parsestate(pstate);
 
@@ -157,8 +156,8 @@ Query *parse_analyze_varparams(RawStmt *parseTree, const char *sourceText,
   if (IsQueryIdEnabled())
     jstate = JumbleQuery(query);
 
-  if (post_parse_analyze_hook)
-    (*post_parse_analyze_hook)(pstate, query, jstate);
+  if (tcb->hooks->post_parse_analyze_hook)
+    (*tcb->hooks->post_parse_analyze_hook)(pstate, query, jstate);
 
   free_parsestate(pstate);
 
@@ -189,8 +188,8 @@ Query *parse_analyze_withcb(RawStmt *parseTree, const char *sourceText,
   if (IsQueryIdEnabled())
     jstate = JumbleQuery(query);
 
-  if (post_parse_analyze_hook)
-    (*post_parse_analyze_hook)(pstate, query, jstate);
+  if (tcb->hooks->post_parse_analyze_hook)
+    (*tcb->hooks->post_parse_analyze_hook)(pstate, query, jstate);
 
   free_parsestate(pstate);
 

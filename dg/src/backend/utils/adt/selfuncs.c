@@ -127,6 +127,7 @@
 #include "utils/date.h"
 #include "utils/datum.h"
 #include "utils/fmgroids.h"
+#include "utils/hooks.h"
 #include "utils/index_selfuncs.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
@@ -142,9 +143,6 @@
 #define DEFAULT_PAGE_CPU_MULTIPLIER 50.0
 
 /* Hooks for plugins to get control when we ask for stats */
-thread_local /*SHARED*/ get_relation_stats_hook_type get_relation_stats_hook =
-    NULL;
-thread_local /*SHARED*/ get_index_stats_hook_type get_index_stats_hook = NULL;
 
 static double eqsel_internal(PG_FUNCTION_ARGS, bool negate);
 static double
@@ -4885,8 +4883,8 @@ void examine_variable(PlannerInfo *root, Node *node, int varRelid,
              * An index stats hook, however, must make its own
              * decisions about what to do with partial indexes.
              */
-            if (get_index_stats_hook &&
-                (*get_index_stats_hook)(root, index->indexoid, pos + 1,
+            if (tcb->hooks->get_index_stats_hook &&
+                (*tcb->hooks->get_index_stats_hook)(root, index->indexoid, pos + 1,
                                         vardata)) {
               /*
                * The hook took control of acquiring a stats
@@ -5088,8 +5086,8 @@ static void examine_simple_variable(PlannerInfo *root, Var *var,
 
   Assert(IsA(rte, RangeTblEntry));
 
-  if (get_relation_stats_hook &&
-      (*get_relation_stats_hook)(root, rte, var->varattno, vardata)) {
+  if (tcb->hooks->get_relation_stats_hook &&
+      (*tcb->hooks->get_relation_stats_hook)(root, rte, var->varattno, vardata)) {
     /*
      * The hook took control of acquiring a stats tuple.  If it did supply
      * a tuple, it'd better have supplied a freefunc.
@@ -5525,8 +5523,8 @@ static void examine_indexcol_variable(PlannerInfo *root, IndexOptInfo *index,
     colnum = index->indexkeys[indexcol];
     vardata->rel = index->rel;
 
-    if (get_relation_stats_hook &&
-        (*get_relation_stats_hook)(root, rte, colnum, vardata)) {
+    if (tcb->hooks->get_relation_stats_hook &&
+        (*tcb->hooks->get_relation_stats_hook)(root, rte, colnum, vardata)) {
       /*
        * The hook took control of acquiring a stats tuple.  If it did
        * supply a tuple, it'd better have supplied a freefunc.
@@ -5542,8 +5540,8 @@ static void examine_indexcol_variable(PlannerInfo *root, IndexOptInfo *index,
     relid = index->indexoid;
     colnum = indexcol + 1;
 
-    if (get_index_stats_hook &&
-        (*get_index_stats_hook)(root, relid, colnum, vardata)) {
+    if (tcb->hooks->get_index_stats_hook &&
+        (*tcb->hooks->get_index_stats_hook)(root, relid, colnum, vardata)) {
       /*
        * The hook took control of acquiring a stats tuple.  If it did
        * supply a tuple, it'd better have supplied a freefunc.

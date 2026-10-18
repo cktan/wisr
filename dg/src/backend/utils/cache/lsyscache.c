@@ -47,12 +47,12 @@
 #include "utils/catcache.h"
 #include "utils/datum.h"
 #include "utils/fmgroids.h"
+#include "utils/hooks.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
 
 /* Hook for plugins to get control in get_attavgwidth() */
-thread_local /*SHARED*/ get_attavgwidth_hook_type get_attavgwidth_hook = NULL;
 
 /*				---------- AMOP CACHES ----------
  */
@@ -2893,8 +2893,8 @@ int32 get_attavgwidth(Oid relid, AttrNumber attnum) {
   HeapTuple tp;
   int32 stawidth;
 
-  if (get_attavgwidth_hook) {
-    stawidth = (*get_attavgwidth_hook)(relid, attnum);
+  if (tcb->hooks->get_attavgwidth_hook) {
+    stawidth = (*tcb->hooks->get_attavgwidth_hook)(relid, attnum);
     if (stawidth > 0)
       return stawidth;
   }

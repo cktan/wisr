@@ -24,6 +24,7 @@
 #include "catalog/pg_proc.h"
 #include "catalog/pg_type.h"
 #include "utils/builtins.h"
+#include "utils/hooks.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
 

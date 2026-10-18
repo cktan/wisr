@@ -268,6 +268,7 @@
 #include "utils/datum.h"
 #include "utils/dynahash.h"
 #include "utils/expandeddatum.h"
+#include "utils/hooks.h"
 #include "utils/injection_point.h"
 #include "utils/logtape.h"
 #include "utils/lsyscache.h"

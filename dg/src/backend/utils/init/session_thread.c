@@ -37,6 +37,7 @@
 #include "utils/guc.h"
 #include "utils/memutils.h"
 #include "utils/session_thread.h"
+#include "utils/hooks.h"
 #include "utils/snapmgr.h"
 
 /* What a parent hands its new thread, in malloc'd memory the thread frees. */
@@ -44,6 +45,7 @@ typedef struct session_start_t {
   void (*fn)(void *);
   void *arg;
   char *shared;   /* the SHARED variables, one after another */
+  hooks_t *hooks; /* the parent's hooks, copied */
   char *settings; /* the non-default settings, as GUC writes them */
   size_t settings_len;
 } session_start_t;
@@ -105,6 +107,10 @@ static void session_thread_main(session_start_t *p) {
 
   /* This thread's control block: what it has its own of. */
   tcb_init();
+
+  /* The hooks its parent's libraries set: shared_preload_libraries'. */
+  *tcb->hooks = *start.hooks;
+  delete start.hooks;
 
   /* check_stack_depth() measures from here: this thread's stack is its own. */
   (void)set_stack_base();
@@ -178,6 +184,7 @@ std::thread session_thread_start(void (*fn)(void *), void *arg) {
            shared_tls_table[i].size);
     at += shared_tls_table[i].size;
   }
+  start->hooks = new hooks_t(*tcb->hooks);
   fp = open_memstream(&start->settings, &start->settings_len);
   if (fp == NULL)
     elog(ERROR, "could not write the settings: %m");
@@ -189,6 +196,7 @@ std::thread session_thread_start(void (*fn)(void *), void *arg) {
     return std::thread(session_thread_main, start);
   } catch (const std::system_error &e) {
     free(start->shared);
+    delete start->hooks;
     free(start->settings);
     free(start);
     elog(ERROR, "could not start a thread: %s", e.what());

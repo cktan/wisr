@@ -43,8 +43,6 @@ extern void set_authn_id(Port *port, const char *id);
 
 /* Hook for plugins to get control in ClientAuthentication() */
 typedef void (*ClientAuthentication_hook_type)(Port *, int);
-extern thread_local /*SHARED*/ PGDLLIMPORT ClientAuthentication_hook_type
-    ClientAuthentication_hook;
 
 /* hook type for password manglers */
 typedef char *(*auth_password_hook_typ)(char *input);

@@ -90,6 +90,12 @@ struct advisory_state_free_t {
   void operator()(advisory_state_t *state) const;
 };
 
+/* hooks.h: the hooks a loaded library sets, this thread's. */
+struct hooks_t;
+struct hooks_free_t {
+  void operator()(hooks_t *hooks) const;
+};
+
 /* datadir.c: the superuser, and sm's home directory, the process's. */
 struct datadir_state_t;
 extern datadir_state_t *datadir_state_new(void);
@@ -221,6 +227,11 @@ typedef struct tcb_t {
    */
   uint32 lxid = 0;
   uint32 xmin = 0;
+  /*
+   * utils/hooks.h: the hooks loaded libraries set, all NULL at first; a
+   * session starts with its parent's (session_thread_start())
+   */
+  std::unique_ptr<hooks_t, hooks_free_t> hooks;
 } tcb_t;
 
 /*

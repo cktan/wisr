@@ -57,20 +57,15 @@
 #include "rewrite/rewriteHandler.h"
 #include "tcop/utility.h"
 #include "utils/acl.h"
+#include "utils/hooks.h"
 #include "utils/lsyscache.h"
 #include "utils/partcache.h"
 #include "utils/rls.h"
 #include "utils/snapmgr.h"
 
 /* Hooks for plugins to get control in ExecutorStart/Run/Finish/End */
-thread_local /*SHARED*/ ExecutorStart_hook_type ExecutorStart_hook = NULL;
-thread_local /*SHARED*/ ExecutorRun_hook_type ExecutorRun_hook = NULL;
-thread_local /*SHARED*/ ExecutorFinish_hook_type ExecutorFinish_hook = NULL;
-thread_local /*SHARED*/ ExecutorEnd_hook_type ExecutorEnd_hook = NULL;
 
 /* Hook for plugin to get control in ExecCheckPermissions() */
-thread_local /*SHARED*/ ExecutorCheckPerms_hook_type ExecutorCheckPerms_hook =
-    NULL;
 
 /* decls for local routines only used within this module */
 static void InitPlan(QueryDesc *queryDesc, int eflags);
@@ -123,8 +118,8 @@ void ExecutorStart(QueryDesc *queryDesc, int eflags) {
    * reported.
    */
 
-  if (ExecutorStart_hook)
-    (*ExecutorStart_hook)(queryDesc, eflags);
+  if (tcb->hooks->ExecutorStart_hook)
+    (*tcb->hooks->ExecutorStart_hook)(queryDesc, eflags);
   else
     standard_ExecutorStart(queryDesc, eflags);
 }
@@ -269,8 +264,8 @@ void standard_ExecutorStart(QueryDesc *queryDesc, int eflags) {
  * ----------------------------------------------------------------
  */
 void ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count) {
-  if (ExecutorRun_hook)
-    (*ExecutorRun_hook)(queryDesc, direction, count);
+  if (tcb->hooks->ExecutorRun_hook)
+    (*tcb->hooks->ExecutorRun_hook)(queryDesc, direction, count);
   else
     standard_ExecutorRun(queryDesc, direction, count);
 }
@@ -368,8 +363,8 @@ void standard_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction,
  * ----------------------------------------------------------------
  */
 void ExecutorFinish(QueryDesc *queryDesc) {
-  if (ExecutorFinish_hook)
-    (*ExecutorFinish_hook)(queryDesc);
+  if (tcb->hooks->ExecutorFinish_hook)
+    (*tcb->hooks->ExecutorFinish_hook)(queryDesc);
   else
     standard_ExecutorFinish(queryDesc);
 }
@@ -424,8 +419,8 @@ void standard_ExecutorFinish(QueryDesc *queryDesc) {
  * ----------------------------------------------------------------
  */
 void ExecutorEnd(QueryDesc *queryDesc) {
-  if (ExecutorEnd_hook)
-    (*ExecutorEnd_hook)(queryDesc);
+  if (tcb->hooks->ExecutorEnd_hook)
+    (*tcb->hooks->ExecutorEnd_hook)(queryDesc);
   else
     standard_ExecutorEnd(queryDesc);
 }
@@ -575,8 +570,8 @@ bool ExecCheckPermissions(List *rangeTable, List *rteperminfos,
     }
   }
 
-  if (ExecutorCheckPerms_hook)
-    result = (*ExecutorCheckPerms_hook)(rangeTable, rteperminfos,
+  if (tcb->hooks->ExecutorCheckPerms_hook)
+    result = (*tcb->hooks->ExecutorCheckPerms_hook)(rangeTable, rteperminfos,
                                         ereport_on_violation);
   return result;
 }

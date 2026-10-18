@@ -127,10 +127,6 @@ typedef void (*object_access_hook_type_str)(ObjectAccessType access,
                                             int subId, void *arg);
 
 /* Plugin sets this variable to a suitable hook function. */
-extern thread_local /*SHARED*/ PGDLLIMPORT object_access_hook_type
-    object_access_hook;
-extern thread_local /*SHARED*/ PGDLLIMPORT object_access_hook_type_str
-    object_access_hook_str;
 
 /* Core code uses these functions to call the hook (see macros below). */
 extern void RunObjectPostCreateHook(Oid classId, Oid objectId, int subId,
@@ -157,6 +153,9 @@ extern bool RunNamespaceSearchHookStr(const char *objectName,
 extern void RunFunctionExecuteHookStr(const char *objectName);
 
 /*
+ * The hooks are this thread's, tcb->hooks: a user of these macros includes
+ * utils/hooks.h.
+ *
  * The following macros are wrappers around the functions above; these should
  * normally be used to invoke the hook in lieu of calling the above functions
  * directly.
@@ -166,7 +165,7 @@ extern void RunFunctionExecuteHookStr(const char *objectName);
 	InvokeObjectPostCreateHookArg((classId),(objectId),(subId),false)
 #define InvokeObjectPostCreateHookArg(classId, objectId, subId, is_internal) \
 	do {															\
-		if (object_access_hook)										\
+		if (tcb->hooks->object_access_hook)										\
 			RunObjectPostCreateHook((classId),(objectId),(subId),	\
 									(is_internal));					\
 	} while(0)
@@ -175,14 +174,14 @@ extern void RunFunctionExecuteHookStr(const char *objectName);
 	InvokeObjectDropHookArg((classId),(objectId),(subId),0)
 #define InvokeObjectDropHookArg(classId, objectId, subId, dropflags)	\
 	do {															\
-		if (object_access_hook)										\
+		if (tcb->hooks->object_access_hook)										\
 			RunObjectDropHook((classId),(objectId),(subId),			\
 							  (dropflags));							\
 	} while(0)
 
 #define InvokeObjectTruncateHook(objectId)							\
 	do {															\
-		if (object_access_hook)										\
+		if (tcb->hooks->object_access_hook)										\
 			RunObjectTruncateHook(objectId);						\
 	} while(0)
 
@@ -192,19 +191,19 @@ extern void RunFunctionExecuteHookStr(const char *objectName);
 #define InvokeObjectPostAlterHookArg(classId, objectId, subId, auxiliaryId,    \
                                      is_internal)		\
 	do {															\
-		if (object_access_hook)										\
+		if (tcb->hooks->object_access_hook)										\
 			RunObjectPostAlterHook((classId),(objectId),(subId),	\
 								   (auxiliaryId),(is_internal));	\
 	} while(0)
 
 #define InvokeNamespaceSearchHook(objectId, ereport_on_violation)	\
-	(!object_access_hook											\
+	(!tcb->hooks->object_access_hook											\
 	 ? true															\
 	 : RunNamespaceSearchHook((objectId), (ereport_on_violation)))
 
 #define InvokeFunctionExecuteHook(objectId)		\
 	do {										\
-		if (object_access_hook)					\
+		if (tcb->hooks->object_access_hook)					\
 			RunFunctionExecuteHook(objectId);	\
 	} while(0)
 
@@ -213,7 +212,7 @@ extern void RunFunctionExecuteHookStr(const char *objectName);
 #define InvokeObjectPostCreateHookArgStr(classId, objectName, subId,           \
                                          is_internal) \
 	do {															\
-		if (object_access_hook_str)										\
+		if (tcb->hooks->object_access_hook_str)										\
 			RunObjectPostCreateHookStr((classId),(objectName),(subId),	\
 									(is_internal));					\
 	} while(0)
@@ -222,14 +221,14 @@ extern void RunFunctionExecuteHookStr(const char *objectName);
 	InvokeObjectDropHookArgStr((classId),(objectName),(subId),0)
 #define InvokeObjectDropHookArgStr(classId, objectName, subId, dropflags)	\
 	do {															\
-		if (object_access_hook_str)										\
+		if (tcb->hooks->object_access_hook_str)										\
 			RunObjectDropHookStr((classId),(objectName),(subId),			\
 							  (dropflags));							\
 	} while(0)
 
 #define InvokeObjectTruncateHookStr(objectName)							\
 	do {															\
-		if (object_access_hook_str)										\
+		if (tcb->hooks->object_access_hook_str)										\
 			RunObjectTruncateHookStr(objectName);						\
 	} while(0)
 
@@ -239,19 +238,19 @@ extern void RunFunctionExecuteHookStr(const char *objectName);
 #define InvokeObjectPostAlterHookArgStr(classId, objectName, subId,            \
                                         auxiliaryId, is_internal)		\
 	do {															\
-		if (object_access_hook_str)										\
+		if (tcb->hooks->object_access_hook_str)										\
 			RunObjectPostAlterHookStr((classId),(objectName),(subId),	\
 								   (auxiliaryId),(is_internal));	\
 	} while(0)
 
 #define InvokeNamespaceSearchHookStr(objectName, ereport_on_violation)	\
-	(!object_access_hook_str										\
+	(!tcb->hooks->object_access_hook_str										\
 	 ? true															\
 	 : RunNamespaceSearchHookStr((objectName), (ereport_on_violation)))
 
 #define InvokeFunctionExecuteHookStr(objectName)		\
 	do {										\
-		if (object_access_hook_str)					\
+		if (tcb->hooks->object_access_hook_str)					\
 			RunFunctionExecuteHookStr(objectName);	\
 	} while(0)
 

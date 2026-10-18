@@ -71,31 +71,21 @@
 
 /* Hook for plugins to get control in ExecutorStart() */
 typedef void (*ExecutorStart_hook_type)(QueryDesc *queryDesc, int eflags);
-extern thread_local /*SHARED*/ PGDLLIMPORT ExecutorStart_hook_type
-    ExecutorStart_hook;
 
 /* Hook for plugins to get control in ExecutorRun() */
 typedef void (*ExecutorRun_hook_type)(QueryDesc *queryDesc,
                                       ScanDirection direction, uint64 count);
-extern thread_local /*SHARED*/ PGDLLIMPORT ExecutorRun_hook_type
-    ExecutorRun_hook;
 
 /* Hook for plugins to get control in ExecutorFinish() */
 typedef void (*ExecutorFinish_hook_type)(QueryDesc *queryDesc);
-extern thread_local /*SHARED*/ PGDLLIMPORT ExecutorFinish_hook_type
-    ExecutorFinish_hook;
 
 /* Hook for plugins to get control in ExecutorEnd() */
 typedef void (*ExecutorEnd_hook_type)(QueryDesc *queryDesc);
-extern thread_local /*SHARED*/ PGDLLIMPORT ExecutorEnd_hook_type
-    ExecutorEnd_hook;
 
 /* Hook for plugins to get control in ExecCheckPermissions() */
 typedef bool (*ExecutorCheckPerms_hook_type)(List *rangeTable,
                                              List *rtePermInfos,
                                              bool ereport_on_violation);
-extern thread_local /*SHARED*/ PGDLLIMPORT ExecutorCheckPerms_hook_type
-    ExecutorCheckPerms_hook;
 
 /*
  * prototypes from functions in execAmi.c

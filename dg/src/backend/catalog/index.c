@@ -64,6 +64,7 @@
 #include "utils/control_block.h"
 #include "utils/fmgroids.h"
 #include "utils/guc.h"
+#include "utils/hooks.h"
 #include "utils/inval.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"

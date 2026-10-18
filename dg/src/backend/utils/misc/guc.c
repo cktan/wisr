@@ -47,6 +47,7 @@
 #include "utils/builtins.h"
 #include "utils/conffiles.h"
 #include "utils/guc_tables.h"
+#include "utils/hooks.h"
 #include "utils/hsearch.h"
 #include "utils/memutils.h"
 #include "utils/timestamp.h"

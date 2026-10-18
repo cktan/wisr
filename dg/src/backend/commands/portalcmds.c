@@ -33,6 +33,7 @@
 #include "rewrite/rewriteHandler.h"
 #include "tcop/pquery.h"
 #include "tcop/tcopprot.h"
+#include "utils/hooks.h"
 #include "utils/memutils.h"
 #include "utils/snapmgr.h"
 
@@ -74,8 +75,8 @@ void PerformCursorOpen(ParseState *pstate, DeclareCursorStmt *cstmt,
   if (IsQueryIdEnabled())
     jstate = JumbleQuery(query);
 
-  if (post_parse_analyze_hook)
-    (*post_parse_analyze_hook)(pstate, query, jstate);
+  if (tcb->hooks->post_parse_analyze_hook)
+    (*tcb->hooks->post_parse_analyze_hook)(pstate, query, jstate);
 
   /*
    * Parse analysis was done already, but we still have to run the rule

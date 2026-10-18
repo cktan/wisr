@@ -14,6 +14,7 @@
 #include "postgres.h"
 
 #include "utils/control_block.h"
+#include "utils/hooks.h"
 
 /* The process's control block: one for the process, never freed. */
 const pcb_t *pcb = NULL;
@@ -49,7 +50,11 @@ void tcb_init(void) {
   tcb->timeout.reset(timeout_state_new());
   tcb->sequence.reset(sequence_state_new());
   tcb->smstore.reset(smstore_state_new());
+  tcb->hooks.reset(new hooks_t());
 }
+
+/* Free a thread's hooks, with its control block. */
+void hooks_free_t::operator()(hooks_t *hooks) const { delete hooks; }
 
 /*
  * Free this thread's control block, and all it owns, as the thread ends.

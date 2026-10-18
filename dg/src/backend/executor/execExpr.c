@@ -45,6 +45,7 @@
 #include "utils/acl.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
+#include "utils/hooks.h"
 #include "utils/jsonfuncs.h"
 #include "utils/jsonpath.h"
 #include "utils/lsyscache.h"

@@ -29,6 +29,7 @@
 #include "utils/acl.h"
 #include "utils/builtins.h"
 #include "utils/guc_tables.h"
+#include "utils/hooks.h"
 #include "utils/snapmgr.h"
 
 static char *flatten_set_variable_args(const char *name, List *args);

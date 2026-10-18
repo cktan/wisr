@@ -56,10 +56,10 @@
 #include "tcop/utility.h"
 #include "utils/acl.h"
 #include "utils/guc.h"
+#include "utils/hooks.h"
 #include "utils/lsyscache.h"
 
 /* Hook for plugins to get control in ProcessUtility() */
-thread_local /*SHARED*/ ProcessUtility_hook_type ProcessUtility_hook = NULL;
 
 /* local function declarations */
 static int ClassifyUtilityCommandAsReadOnly(Node *parsetree);
@@ -434,8 +434,8 @@ void ProcessUtility(PlannedStmt *pstmt, const char *queryString,
    * control when ProcessUtility is called.  Such a plugin would normally
    * call standard_ProcessUtility().
    */
-  if (ProcessUtility_hook)
-    (*ProcessUtility_hook)(pstmt, queryString, readOnlyTree, context, params,
+  if (tcb->hooks->ProcessUtility_hook)
+    (*tcb->hooks->ProcessUtility_hook)(pstmt, queryString, readOnlyTree, context, params,
                            queryEnv, dest, qc);
   else
     standard_ProcessUtility(pstmt, queryString, readOnlyTree, context, params,

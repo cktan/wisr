@@ -46,6 +46,7 @@
 #include "partitioning/partbounds.h"
 #include "port/pg_bitutils.h"
 #include "rewrite/rewriteManip.h"
+#include "utils/hooks.h"
 #include "utils/lsyscache.h"
 
 /* Bitmask flags for pushdown_safety_info.unsafeFlags */
@@ -78,10 +79,8 @@ thread_local /*LOCAL*/ bool enable_geqo =
 thread_local /*LOCAL*/ int geqo_threshold;
 
 /* Hook for plugins to get control in set_rel_pathlist() */
-thread_local /*SHARED*/ set_rel_pathlist_hook_type set_rel_pathlist_hook = NULL;
 
 /* Hook for plugins to replace standard_join_search() */
-thread_local /*SHARED*/ join_search_hook_type join_search_hook = NULL;
 
 static void set_base_rel_consider_startup(PlannerInfo *root);
 static void set_base_rel_sizes(PlannerInfo *root);
@@ -473,8 +472,8 @@ static void set_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
    * add_path().  It could also
    * delete or modify paths added by the core code.
    */
-  if (set_rel_pathlist_hook)
-    (*set_rel_pathlist_hook)(root, rel, rti, rte);
+  if (tcb->hooks->set_rel_pathlist_hook)
+    (*tcb->hooks->set_rel_pathlist_hook)(root, rel, rti, rte);
 
   /* Now find the cheapest of the paths for this rel */
   set_cheapest(rel);
@@ -2383,8 +2382,8 @@ static RelOptInfo *make_rel_from_joinlist(PlannerInfo *root, List *joinlist) {
      */
     root->initial_rels = initial_rels;
 
-    if (join_search_hook)
-      return (*join_search_hook)(root, levels_needed, initial_rels);
+    if (tcb->hooks->join_search_hook)
+      return (*tcb->hooks->join_search_hook)(root, levels_needed, initial_rels);
     else if (enable_geqo && levels_needed >= geqo_threshold)
       return geqo(root, levels_needed, initial_rels);
     else

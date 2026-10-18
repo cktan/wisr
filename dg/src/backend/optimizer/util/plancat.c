@@ -49,6 +49,7 @@
 #include "statistics/statistics.h"
 #include "tcop/tcopprot.h"
 #include "utils/builtins.h"
+#include "utils/hooks.h"
 #include "utils/lsyscache.h"
 #include "utils/partcache.h"
 #include "utils/rel.h"
@@ -60,8 +61,6 @@ thread_local /*LOCAL*/ int constraint_exclusion =
     CONSTRAINT_EXCLUSION_PARTITION;
 
 /* Hook for plugins to get control in get_relation_info() */
-thread_local /*SHARED*/ get_relation_info_hook_type get_relation_info_hook =
-    NULL;
 
 static void get_relation_foreign_keys(PlannerInfo *root, RelOptInfo *rel,
                                       Relation relation, bool inhparent);
@@ -523,8 +522,8 @@ void get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
    * catalogs.  Actions might include altering the assumed relation size,
    * removing an index, or adding a hypothetical index to the indexlist.
    */
-  if (get_relation_info_hook)
-    (*get_relation_info_hook)(root, relationObjectId, inhparent, rel);
+  if (tcb->hooks->get_relation_info_hook)
+    (*tcb->hooks->get_relation_info_hook)(root, relationObjectId, inhparent, rel);
 }
 
 /*

@@ -45,6 +45,7 @@
 #include "parser/parse_oper.h"
 #include "parser/parse_type.h"
 #include "utils/acl.h"
+#include "utils/hooks.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"

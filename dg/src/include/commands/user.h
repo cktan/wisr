@@ -29,8 +29,6 @@ typedef void (*check_password_hook_type)(const char *username,
                                          Datum validuntil_time,
                                          bool validuntil_null);
 
-extern thread_local /*SHARED*/ PGDLLIMPORT check_password_hook_type
-    check_password_hook;
 
 extern Oid CreateRole(ParseState *pstate, CreateRoleStmt *stmt);
 extern Oid AlterRole(ParseState *pstate, AlterRoleStmt *stmt);

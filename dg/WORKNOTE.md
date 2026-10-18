@@ -6483,3 +6483,36 @@ down.
   linkage.
 - 46 `/*SHARED*/` globals are left.
 
+## Step 222: the hooks are the thread's, copied at its start
+
+`../sm/NEXT.md` §1's second item, its fifth batch: the 30 hooks
+a loaded library sets, each a `/*SHARED*/` global, so that a
+session started with the postmaster's: what
+`shared_preload_libraries` set there reached every session,
+and a library a session `LOAD`s set that session's alone.
+
+- **`hooks_t`** (`utils/hooks.h`) holds them, each NULL until a
+  library sets it, and **`tcb->hooks`** is the thread's,
+  made by `tcb_init()`. A module calls its hook as
+  `tcb->hooks->planner_hook`; `fmgr.h`'s `FmgrHookIsNeeded()`
+  and `catalog/objectaccess.h`'s `Invoke...Hook()` macros read
+  it so, and a file that uses one includes `utils/hooks.h`.
+- **A session starts with its parent's**:
+  `session_thread_start()` copies the parent's `hooks_t` into
+  what it hands the new thread, which takes it after its
+  `tcb_init()`. The behaviour is the one the SHARED copy gave.
+- **An extension sets `tcb->hooks->X`** where it set the global
+  `X`: the hooks' names are now fields. No library in the tree
+  sets one, so no test calls a hook.
+- elog's `emit_log_hook` is asked only where the thread has a
+  block: a thread may report before `tcb_init()`.
+- **Left, and not safe as copied**: dfmgr's list of loaded
+  libraries (`file_list`, `file_tail`) and the explain
+  extension registry (`ExplainExtensionNameArray` and the rest)
+  are still SHARED, a pointer copy each. A session's `LOAD`
+  appends to the list through the parent's last node, and a
+  session's registration reallocates the parent's array, both
+  from another thread: they need copies of their own, not the
+  parent's pointers.
+- 16 `/*SHARED*/` globals are left.
+

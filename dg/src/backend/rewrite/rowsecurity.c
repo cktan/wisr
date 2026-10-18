@@ -45,6 +45,7 @@
 #include "rewrite/rewriteManip.h"
 #include "rewrite/rowsecurity.h"
 #include "utils/acl.h"
+#include "utils/hooks.h"
 #include "utils/rel.h"
 #include "utils/rls.h"
 
@@ -77,10 +78,6 @@ static bool check_role_for_policy(ArrayType *policy_roles, Oid user_id);
  * row_security_policy_hook_restrictive can be used to add policies which
  * are enforced, regardless of other policies (they are combined using AND).
  */
-thread_local /*SHARED*/ row_security_policy_hook_type
-    row_security_policy_hook_permissive = NULL;
-thread_local /*SHARED*/ row_security_policy_hook_type
-    row_security_policy_hook_restrictive = NULL;
 
 /*
  * Get any row security quals and WithCheckOption checks that should be
@@ -547,9 +544,9 @@ static void get_policies_for_relation(Relation relation, CmdType cmd,
    * These are simply appended to the lists of internal policies, if they
    * apply to the specified role.
    */
-  if (row_security_policy_hook_restrictive) {
+  if (tcb->hooks->row_security_policy_hook_restrictive) {
     List *hook_policies =
-        (*row_security_policy_hook_restrictive)(cmd, relation);
+        (*tcb->hooks->row_security_policy_hook_restrictive)(cmd, relation);
 
     /*
      * As with built-in restrictive policies, we sort any hook-provided
@@ -567,8 +564,8 @@ static void get_policies_for_relation(Relation relation, CmdType cmd,
     }
   }
 
-  if (row_security_policy_hook_permissive) {
-    List *hook_policies = (*row_security_policy_hook_permissive)(cmd, relation);
+  if (tcb->hooks->row_security_policy_hook_permissive) {
+    List *hook_policies = (*tcb->hooks->row_security_policy_hook_permissive)(cmd, relation);
 
     foreach (item, hook_policies) {
       RowSecurityPolicy *policy = (RowSecurityPolicy *)lfirst(item);

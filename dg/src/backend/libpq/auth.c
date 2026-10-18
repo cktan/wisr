@@ -38,6 +38,7 @@
 #include "postmaster/postmaster.h"
 #include "storage/ipc.h"
 #include "tcop/backend_startup.h"
+#include "utils/hooks.h"
 #include "utils/memutils.h"
 
 /*
@@ -259,8 +260,6 @@ static int PerformRadiusTransaction(const char *server, const char *secret,
  * but before the user has been informed about the results.  It could be used
  * to record login events, insert a delay after failed authentication, etc.
  */
-thread_local /*SHARED*/ ClientAuthentication_hook_type
-    ClientAuthentication_hook = NULL;
 
 /*
  * Tell the user the authentication failed, but not (much about) why.
@@ -642,8 +641,8 @@ void ClientAuthentication(Port *port) {
                         port->user_name, hba_authname(port->hba->auth_method)));
   }
 
-  if (ClientAuthentication_hook)
-    (*ClientAuthentication_hook)(port, status);
+  if (tcb->hooks->ClientAuthentication_hook)
+    (*tcb->hooks->ClientAuthentication_hook)(port, status);
 
   if (status == STATUS_OK)
     sendAuthRequest(port, AUTH_REQ_OK, NULL, 0);

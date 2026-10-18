@@ -68,8 +68,6 @@ typedef void (*ExplainOptionHandler)(ExplainState *, DefElem *, ParseState *);
 typedef void (*explain_validate_options_hook_type)(struct ExplainState *es,
                                                    List *options,
                                                    ParseState *pstate);
-extern thread_local /*SHARED*/ PGDLLIMPORT explain_validate_options_hook_type
-    explain_validate_options_hook;
 
 extern ExplainState *NewExplainState(void);
 extern void ParseExplainOptionList(ExplainState *es, List *options,

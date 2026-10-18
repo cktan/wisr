@@ -77,6 +77,7 @@
 #include "rewrite/rewriteRemove.h"
 #include "storage/lmgr.h"
 #include "utils/fmgroids.h"
+#include "utils/hooks.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 

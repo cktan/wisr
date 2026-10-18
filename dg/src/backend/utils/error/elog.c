@@ -81,6 +81,7 @@
 #include "utils/memutils.h"
 #include "utils/ps_status.h"
 #include "utils/control_block.h"
+#include "utils/hooks.h"
 #include "utils/varlena.h"
 
 /* In this module, access gettext() via err_gettext() */
@@ -99,7 +100,6 @@ thread_local /*LOCAL*/ bool PG_exception_handled = false;
  * libraries will miss any log messages that are generated before the
  * library is loaded.
  */
-thread_local /*SHARED*/ emit_log_hook_type emit_log_hook = NULL;
 
 /* GUC parameters */
 thread_local /*LOCAL*/ int Log_error_verbosity = PGERROR_DEFAULT;
@@ -1571,8 +1571,9 @@ void EmitErrorReport(void) {
    * message identifier. Note that the original text is not available for
    * detail, detail_log, hint and context text elements.
    */
-  if (edata->output_to_server && emit_log_hook)
-    (*emit_log_hook)(edata);
+  /* A thread may report before it has a block, or after it freed it. */
+  if (edata->output_to_server && tcb != NULL && tcb->hooks->emit_log_hook)
+    (*tcb->hooks->emit_log_hook)(edata);
 
   /* Send to server log, if enabled */
   if (edata->output_to_server)

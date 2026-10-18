@@ -24,6 +24,7 @@
 #include "catalog/pg_namespace.h"
 #include "mb/pg_wchar.h"
 #include "utils/builtins.h"
+#include "utils/hooks.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
 

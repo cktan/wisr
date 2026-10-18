@@ -14,14 +14,12 @@
 #include "catalog/pg_class.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_proc.h"
+#include "utils/hooks.h"
 
 /*
  * Hook on object accesses.  This is intended as infrastructure for security
  * and logging plugins.
  */
-thread_local /*SHARED*/ object_access_hook_type object_access_hook = NULL;
-thread_local /*SHARED*/ object_access_hook_type_str object_access_hook_str =
-    NULL;
 
 /*
  * RunObjectPostCreateHook
@@ -33,12 +31,12 @@ void RunObjectPostCreateHook(Oid classId, Oid objectId, int subId,
   ObjectAccessPostCreate pc_arg;
 
   /* caller should check, but just in case... */
-  Assert(object_access_hook != NULL);
+  Assert(tcb->hooks->object_access_hook != NULL);
 
   memset(&pc_arg, 0, sizeof(ObjectAccessPostCreate));
   pc_arg.is_internal = is_internal;
 
-  (*object_access_hook)(OAT_POST_CREATE, classId, objectId, subId, &pc_arg);
+  (*tcb->hooks->object_access_hook)(OAT_POST_CREATE, classId, objectId, subId, &pc_arg);
 }
 
 /*
@@ -50,12 +48,12 @@ void RunObjectDropHook(Oid classId, Oid objectId, int subId, int dropflags) {
   ObjectAccessDrop drop_arg;
 
   /* caller should check, but just in case... */
-  Assert(object_access_hook != NULL);
+  Assert(tcb->hooks->object_access_hook != NULL);
 
   memset(&drop_arg, 0, sizeof(ObjectAccessDrop));
   drop_arg.dropflags = dropflags;
 
-  (*object_access_hook)(OAT_DROP, classId, objectId, subId, &drop_arg);
+  (*tcb->hooks->object_access_hook)(OAT_DROP, classId, objectId, subId, &drop_arg);
 }
 
 /*
@@ -65,9 +63,9 @@ void RunObjectDropHook(Oid classId, Oid objectId, int subId, int dropflags) {
  */
 void RunObjectTruncateHook(Oid objectId) {
   /* caller should check, but just in case... */
-  Assert(object_access_hook != NULL);
+  Assert(tcb->hooks->object_access_hook != NULL);
 
-  (*object_access_hook)(OAT_TRUNCATE, RelationRelationId, objectId, 0, NULL);
+  (*tcb->hooks->object_access_hook)(OAT_TRUNCATE, RelationRelationId, objectId, 0, NULL);
 }
 
 /*
@@ -80,13 +78,13 @@ void RunObjectPostAlterHook(Oid classId, Oid objectId, int subId,
   ObjectAccessPostAlter pa_arg;
 
   /* caller should check, but just in case... */
-  Assert(object_access_hook != NULL);
+  Assert(tcb->hooks->object_access_hook != NULL);
 
   memset(&pa_arg, 0, sizeof(ObjectAccessPostAlter));
   pa_arg.auxiliary_id = auxiliaryId;
   pa_arg.is_internal = is_internal;
 
-  (*object_access_hook)(OAT_POST_ALTER, classId, objectId, subId, &pa_arg);
+  (*tcb->hooks->object_access_hook)(OAT_POST_ALTER, classId, objectId, subId, &pa_arg);
 }
 
 /*
@@ -98,13 +96,13 @@ bool RunNamespaceSearchHook(Oid objectId, bool ereport_on_violation) {
   ObjectAccessNamespaceSearch ns_arg;
 
   /* caller should check, but just in case... */
-  Assert(object_access_hook != NULL);
+  Assert(tcb->hooks->object_access_hook != NULL);
 
   memset(&ns_arg, 0, sizeof(ObjectAccessNamespaceSearch));
   ns_arg.ereport_on_violation = ereport_on_violation;
   ns_arg.result = true;
 
-  (*object_access_hook)(OAT_NAMESPACE_SEARCH, NamespaceRelationId, objectId, 0,
+  (*tcb->hooks->object_access_hook)(OAT_NAMESPACE_SEARCH, NamespaceRelationId, objectId, 0,
                         &ns_arg);
 
   return ns_arg.result;
@@ -117,9 +115,9 @@ bool RunNamespaceSearchHook(Oid objectId, bool ereport_on_violation) {
  */
 void RunFunctionExecuteHook(Oid objectId) {
   /* caller should check, but just in case... */
-  Assert(object_access_hook != NULL);
+  Assert(tcb->hooks->object_access_hook != NULL);
 
-  (*object_access_hook)(OAT_FUNCTION_EXECUTE, ProcedureRelationId, objectId, 0,
+  (*tcb->hooks->object_access_hook)(OAT_FUNCTION_EXECUTE, ProcedureRelationId, objectId, 0,
                         NULL);
 }
 
@@ -135,12 +133,12 @@ void RunObjectPostCreateHookStr(Oid classId, const char *objectName, int subId,
   ObjectAccessPostCreate pc_arg;
 
   /* caller should check, but just in case... */
-  Assert(object_access_hook_str != NULL);
+  Assert(tcb->hooks->object_access_hook_str != NULL);
 
   memset(&pc_arg, 0, sizeof(ObjectAccessPostCreate));
   pc_arg.is_internal = is_internal;
 
-  (*object_access_hook_str)(OAT_POST_CREATE, classId, objectName, subId,
+  (*tcb->hooks->object_access_hook_str)(OAT_POST_CREATE, classId, objectName, subId,
                             &pc_arg);
 }
 
@@ -154,12 +152,12 @@ void RunObjectDropHookStr(Oid classId, const char *objectName, int subId,
   ObjectAccessDrop drop_arg;
 
   /* caller should check, but just in case... */
-  Assert(object_access_hook_str != NULL);
+  Assert(tcb->hooks->object_access_hook_str != NULL);
 
   memset(&drop_arg, 0, sizeof(ObjectAccessDrop));
   drop_arg.dropflags = dropflags;
 
-  (*object_access_hook_str)(OAT_DROP, classId, objectName, subId, &drop_arg);
+  (*tcb->hooks->object_access_hook_str)(OAT_DROP, classId, objectName, subId, &drop_arg);
 }
 
 /*
@@ -169,9 +167,9 @@ void RunObjectDropHookStr(Oid classId, const char *objectName, int subId,
  */
 void RunObjectTruncateHookStr(const char *objectName) {
   /* caller should check, but just in case... */
-  Assert(object_access_hook_str != NULL);
+  Assert(tcb->hooks->object_access_hook_str != NULL);
 
-  (*object_access_hook_str)(OAT_TRUNCATE, RelationRelationId, objectName, 0,
+  (*tcb->hooks->object_access_hook_str)(OAT_TRUNCATE, RelationRelationId, objectName, 0,
                             NULL);
 }
 
@@ -185,13 +183,13 @@ void RunObjectPostAlterHookStr(Oid classId, const char *objectName, int subId,
   ObjectAccessPostAlter pa_arg;
 
   /* caller should check, but just in case... */
-  Assert(object_access_hook_str != NULL);
+  Assert(tcb->hooks->object_access_hook_str != NULL);
 
   memset(&pa_arg, 0, sizeof(ObjectAccessPostAlter));
   pa_arg.auxiliary_id = auxiliaryId;
   pa_arg.is_internal = is_internal;
 
-  (*object_access_hook_str)(OAT_POST_ALTER, classId, objectName, subId,
+  (*tcb->hooks->object_access_hook_str)(OAT_POST_ALTER, classId, objectName, subId,
                             &pa_arg);
 }
 
@@ -205,13 +203,13 @@ bool RunNamespaceSearchHookStr(const char *objectName,
   ObjectAccessNamespaceSearch ns_arg;
 
   /* caller should check, but just in case... */
-  Assert(object_access_hook_str != NULL);
+  Assert(tcb->hooks->object_access_hook_str != NULL);
 
   memset(&ns_arg, 0, sizeof(ObjectAccessNamespaceSearch));
   ns_arg.ereport_on_violation = ereport_on_violation;
   ns_arg.result = true;
 
-  (*object_access_hook_str)(OAT_NAMESPACE_SEARCH, NamespaceRelationId,
+  (*tcb->hooks->object_access_hook_str)(OAT_NAMESPACE_SEARCH, NamespaceRelationId,
                             objectName, 0, &ns_arg);
 
   return ns_arg.result;
@@ -224,8 +222,8 @@ bool RunNamespaceSearchHookStr(const char *objectName,
  */
 void RunFunctionExecuteHookStr(const char *objectName) {
   /* caller should check, but just in case... */
-  Assert(object_access_hook_str != NULL);
+  Assert(tcb->hooks->object_access_hook_str != NULL);
 
-  (*object_access_hook_str)(OAT_FUNCTION_EXECUTE, ProcedureRelationId,
+  (*tcb->hooks->object_access_hook_str)(OAT_FUNCTION_EXECUTE, ProcedureRelationId,
                             objectName, 0, NULL);
 }

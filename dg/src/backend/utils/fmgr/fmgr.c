@@ -28,14 +28,13 @@
 #include "utils/builtins.h"
 #include "utils/fmgrtab.h"
 #include "utils/guc.h"
+#include "utils/hooks.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 
 /*
  * Hooks for function calls
  */
-thread_local /*SHARED*/ PGDLLIMPORT needs_fmgr_hook_type needs_fmgr_hook = NULL;
-thread_local /*SHARED*/ PGDLLIMPORT fmgr_hook_type fmgr_hook = NULL;
 
 /*
  * Hashtable for fast lookup of external C functions
@@ -644,8 +643,8 @@ extern Datum fmgr_security_definer(PG_FUNCTION_ARGS) {
   }
 
   /* function manager hook */
-  if (fmgr_hook)
-    (*fmgr_hook)(FHET_START, &fcache->flinfo, &fcache->arg);
+  if (tcb->hooks->fmgr_hook)
+    (*tcb->hooks->fmgr_hook)(FHET_START, &fcache->flinfo, &fcache->arg);
 
   /*
    * We don't need to restore GUC or userid settings on error, because the
@@ -663,8 +662,8 @@ extern Datum fmgr_security_definer(PG_FUNCTION_ARGS) {
   PG_CATCH();
   {
     fcinfo->flinfo = save_flinfo;
-    if (fmgr_hook)
-      (*fmgr_hook)(FHET_ABORT, &fcache->flinfo, &fcache->arg);
+    if (tcb->hooks->fmgr_hook)
+      (*tcb->hooks->fmgr_hook)(FHET_ABORT, &fcache->flinfo, &fcache->arg);
     PG_RE_THROW();
   }
   PG_END_TRY();
@@ -675,8 +674,8 @@ extern Datum fmgr_security_definer(PG_FUNCTION_ARGS) {
     AtEOXact_GUC(true, save_nestlevel);
   if (OidIsValid(fcache->userid))
     SetUserIdAndSecContext(save_userid, save_sec_context);
-  if (fmgr_hook)
-    (*fmgr_hook)(FHET_END, &fcache->flinfo, &fcache->arg);
+  if (tcb->hooks->fmgr_hook)
+    (*tcb->hooks->fmgr_hook)(FHET_END, &fcache->flinfo, &fcache->arg);
 
   return result;
 }

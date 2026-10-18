@@ -20,6 +20,7 @@
 #include "catalog/objectaccess.h"
 #include "catalog/pg_db_role_setting.h"
 #include "utils/fmgroids.h"
+#include "utils/hooks.h"
 #include "utils/rel.h"
 
 void AlterSetting(Oid databaseid, Oid roleid, VariableSetStmt *setstmt) {
