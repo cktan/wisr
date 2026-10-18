@@ -1,60 +1,46 @@
 # Verify that an INSERT ... ON CONFLICT DO UPDATE whose rows conflict
 # with each other is refused, as PostgreSQL refuses it: it would update
-# one row twice. digres does not yet: it keeps the first row and drops
-# the second's update (dg/ISSUE.md issue 2). The onlyif digres records
-# say what digres does now; when the issue is fixed they go, and the
-# skipif digres ones run on digres too.
-# 1. Two rows with one key, in one INSERT ... ON CONFLICT DO UPDATE, fail
-#    in PostgreSQL; digres takes the first and answers one row inserted.
-# 2. The table then holds nothing in PostgreSQL; in digres, the first row.
-# 3. Two rows with one key that conflict with a row already there fail
-#    in PostgreSQL; digres updates the row once, from the first.
+# one row twice. sm tells the case by the update finding the row written
+# by this statement (dg/WORKNOTE.md step 237).
+# 1. Two rows with one key, in one INSERT ... ON CONFLICT DO UPDATE, fail.
+# 2. The table then holds nothing: the statement's first row went with it.
+# 3. Two rows with one key that conflict with a row already there fail.
+# 4. The row there is as it was.
+# 5. A join UPDATE that reaches one row twice is still allowed, as in
+#    PostgreSQL: the second change of the row is passed over.
 
 statement ok
 create table t (a int4 primary key, b int4)
 
-skipif digres
 statement error ON CONFLICT DO UPDATE command cannot affect row a second time
 insert into t values (1, 0), (1, 1) on conflict (a) do update set b = excluded.b
 
-onlyif digres
-statement ok
-insert into t values (1, 0), (1, 1) on conflict (a) do update set b = excluded.b
-
-skipif digres
 query I nosort
 select count(*) from t
 ----
 0
 
-onlyif digres
-query II nosort
-select a, b from t
-----
-1	0
-
-statement ok
-truncate t
-
 statement ok
 insert into t values (2, 0)
 
-skipif digres
 statement error ON CONFLICT DO UPDATE command cannot affect row a second time
 insert into t values (2, 1), (2, 2) on conflict (a) do update set b = excluded.b
 
-onlyif digres
-statement ok
-insert into t values (2, 1), (2, 2) on conflict (a) do update set b = excluded.b
-
-skipif digres
 query II nosort
 select a, b from t
 ----
 2	0
 
-onlyif digres
+statement ok
+create table s (a int4, b int4)
+
+statement ok
+insert into s values (2, 7), (2, 7)
+
+statement ok
+update t set b = s.b from s where t.a = s.a
+
 query II nosort
 select a, b from t
 ----
-2	1
+2	7

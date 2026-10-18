@@ -2092,6 +2092,23 @@ static void ExecCrossPartitionUpdateForeignKey(ModifyTableContext *context,
                        destPartInfo, tupleid, NULL, newslot, NIL, NULL, true);
 }
 
+/*
+ * Refuse INSERT ... ON CONFLICT DO UPDATE's update of a row this statement
+ * has already written, as PostgreSQL does: two of its rows conflict with
+ * each other, and the update would affect the row a second time.  sm says
+ * so with SM_ERR_SELFMODIFIED (sm_stmt_begin()), which an UPDATE skips.
+ */
+static void refuse_on_conflict_twice(ModifyTableContext *context) {
+  if (context->mtstate->operation == CMD_INSERT)
+    ereport(ERROR,
+            (errcode(ERRCODE_CARDINALITY_VIOLATION),
+             /* translator: %s is a SQL command name */
+             errmsg("%s command cannot affect row a second time",
+                    "ON CONFLICT DO UPDATE"),
+             errhint("Ensure that no rows proposed for insertion within the "
+                     "same command have duplicate constrained values.")));
+}
+
 /* ----------------------------------------------------------------
  *		ExecUpdate
  *
@@ -2232,6 +2249,7 @@ static TupleTableSlot *ExecUpdate(ModifyTableContext *context,
        * and then return NULL to cancel the outer update.
        */
       /* sm reports only a change by this statement (write_result()). */
+      refuse_on_conflict_twice(context);
 
       /* Else, already updated by self; nothing to do */
       return NULL;
@@ -2301,6 +2319,7 @@ static TupleTableSlot *ExecUpdate(ModifyTableContext *context,
          * table_tuple_update() above.
          */
         /* sm reports only a change by this statement (write_result()). */
+        refuse_on_conflict_twice(context);
         return NULL;
 
       default:
@@ -2408,8 +2427,9 @@ static bool ExecOnConflictUpdate(ModifyTableContext *context,
      * specifies that for SQL MERGE, an exception must be raised in
      * the event of an attempt to update the same row twice.
      *
-     * PostgreSQL told that case by the row's xmin being this transaction's;
-     * digres assigns no xid, so it cannot (dg/ISSUE.md issue 2).
+     * PostgreSQL told that case by the row's xmin being this transaction's.
+     * digres assigns no xid: sm locks the row, and the update finds it
+     * written by this statement (refuse_on_conflict_twice()).
      */
 
     /* This shouldn't happen */

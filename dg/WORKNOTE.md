@@ -6945,3 +6945,25 @@ longer needs is deleted, as here:
   `xact_is_sampled`, the after-trigger hooks (foreign keys run
   as RI triggers), `AtEOXact_Enum()`.
 - `xact.c` is 2874 lines, from 3,284 before step 232.
+
+## Step 237: ON CONFLICT DO UPDATE refuses a row twice
+
+`ISSUE.md` issue 2, from step 233. An `INSERT ... ON CONFLICT DO
+UPDATE` whose rows conflict with each other, as `values (1, 0),
+(1, 1)` on a key, kept the first row and dropped the second's
+update, where PostgreSQL refuses the statement: "ON CONFLICT DO
+UPDATE command cannot affect row a second time". PostgreSQL
+told the case by the row's xmin; digres assigns none.
+
+- **sm tells it**: the conflicting row was written by this
+  statement, so ON CONFLICT's update of it fails with
+  `SM_ERR_SELFMODIFIED`, `TM_SelfModified` to the executor, as
+  sm's contract for `sm_stmt_begin()` says ON CONFLICT should
+  take it. `ExecUpdate()` passed over the row, as an UPDATE
+  does; it now calls `refuse_on_conflict_twice()`, which raises
+  the error when the ModifyTable is an INSERT, so ON CONFLICT's.
+- A join UPDATE that reaches one row twice still passes over
+  the second change, as in PostgreSQL.
+- `test/slt/on_conflict_twice.test` holds PostgreSQL's answers
+  alone now: both cases fail and leave the table as it was, and
+  the join UPDATE passes. Issue 2 is removed from `ISSUE.md`.
