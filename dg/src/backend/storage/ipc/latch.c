@@ -56,12 +56,6 @@ void InitializeLatchWaitSet(void) {
 void InitLatch(Latch *latch) {
   /* Not set: a latch bit left from before is taken. */
   (void)sm_take(INTERRUPT_LATCH);
-
-#ifdef WIN32
-  latch->event = CreateEvent(NULL, TRUE, FALSE, NULL);
-  if (latch->event == NULL)
-    elog(ERROR, "CreateEvent failed: error code %lu", GetLastError());
-#endif /* WIN32 */
 }
 
 /*

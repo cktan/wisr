@@ -113,9 +113,6 @@
  * raises the bit through the thread's handle (sm_interrupt()), not a Latch.
  */
 typedef struct Latch {
-#ifdef WIN32
-  HANDLE event;
-#endif
 } Latch;
 
 /*

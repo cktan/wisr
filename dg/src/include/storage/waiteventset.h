@@ -36,19 +36,11 @@
 #define WL_SOCKET_READABLE	 (1 << 1)
 #define WL_SOCKET_WRITEABLE  (1 << 2)
 #define WL_TIMEOUT			 (1 << 3) /* not for WaitEventSetWait() */
-#ifdef WIN32
-#define WL_SOCKET_CONNECTED  (1 << 6)
-#else
 /* avoid having to deal with case on platforms not requiring it */
 #define WL_SOCKET_CONNECTED  WL_SOCKET_WRITEABLE
-#endif
 #define WL_SOCKET_CLOSED 	 (1 << 7)
-#ifdef WIN32
-#define WL_SOCKET_ACCEPT	 (1 << 8)
-#else
 /* avoid having to deal with case on platforms not requiring it */
 #define WL_SOCKET_ACCEPT	WL_SOCKET_READABLE
-#endif
 #define WL_SOCKET_MASK		(WL_SOCKET_READABLE | \
 							 WL_SOCKET_WRITEABLE | \
 							 WL_SOCKET_CONNECTED | \
@@ -60,9 +52,6 @@ typedef struct WaitEvent {
   uint32 events;   /* triggered events */
   pgsocket fd;     /* socket fd associated with event */
   void *user_data; /* pointer provided in AddWaitEventToSet */
-#ifdef WIN32
-  bool reset; /* Is reset of the event required? */
-#endif
 } WaitEvent;
 
 /* forward declarations to avoid exposing waiteventset.c implementation details
@@ -79,7 +68,6 @@ extern void ShutdownWaitEventSupport(void);
 
 extern WaitEventSet *CreateWaitEventSet(ResourceOwner resowner, int nevents);
 extern void FreeWaitEventSet(WaitEventSet *set);
-extern void FreeWaitEventSetAfterFork(WaitEventSet *set);
 extern int AddWaitEventToSet(WaitEventSet *set, uint32 events, pgsocket fd,
                              struct Latch *latch, void *user_data);
 extern void ModifyWaitEvent(WaitEventSet *set, int pos, uint32 events,
