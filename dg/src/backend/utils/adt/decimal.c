@@ -3471,3 +3471,33 @@ Datum decimal64_to_char(PG_FUNCTION_ARGS) {
   return DirectFunctionCall2Coll(numeric_to_char, PG_GET_COLLATION(),
                                  PointerGetDatum(&num), PG_GETARG_DATUM(1));
 }
+
+/*
+ * The decimal64 d at scale 0, toward zero, then one up for ceil of a
+ * positive value with places, or one down for floor of a negative one: in
+ * 64 bits, and never past 17 digits, as a value with places has at most
+ * 16 before the point.
+ */
+static Datum d64_ceil_floor(Datum d, bool floor) {
+  int64 v = d64_value(d), p = 1, q;
+  int s = d64_scale(d);
+
+  if (s == 0)
+    return d;
+  while (s-- > 0)
+    p *= 10;
+  q = v / p;
+  if (v % p != 0 && (v < 0) == floor)
+    q += floor ? -1 : 1;
+  return d64_make(q, 0);
+}
+
+/* ceil(decimal64) and ceiling(decimal64): the nearest integer >= it. */
+Datum decimal64_ceil(PG_FUNCTION_ARGS) {
+  return d64_ceil_floor(PG_GETARG_DATUM(0), false);
+}
+
+/* floor(decimal64): the nearest integer <= it. */
+Datum decimal64_floor(PG_FUNCTION_ARGS) {
+  return d64_ceil_floor(PG_GETARG_DATUM(0), true);
+}
