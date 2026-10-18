@@ -708,7 +708,6 @@ CopyToState BeginCopyTo(ParseState *pstate, Relation rel, RawStmt *raw_query,
      * results of any previously executed queries.
      */
     PushCopiedSnapshot(GetActiveSnapshot());
-    UpdateActiveSnapshotCommandId();
 
     /* Create dest receiver for COPY OUT */
     dest = CreateDestReceiver(DestCopyOut);

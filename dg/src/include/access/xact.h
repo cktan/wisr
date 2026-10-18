@@ -124,7 +124,6 @@ typedef struct xl_xact_stats_item {
 extern bool IsTransactionState(void);
 extern bool IsAbortedTransactionBlockState(void);
 extern SubTransactionId GetCurrentSubTransactionId(void);
-extern CommandId GetCurrentCommandId(bool used);
 extern TimestampTz GetCurrentTransactionStartTimestamp(void);
 extern TimestampTz GetCurrentStatementStartTimestamp(void);
 extern void SetCurrentStatementStartTimestamp(void);

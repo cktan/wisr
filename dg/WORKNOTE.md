@@ -6855,3 +6855,35 @@ from another's had nothing to tell.
   `indcheckxmin` is always false in digres. `plancat.c`'s check,
   `transientPlan` in `PlannerGlobal` and `PlannedStmt`, and the
   plan cache's `saved_xmin` are gone.
+
+## Step 234: the command id is gone
+
+The second step's second part. A command id told one command's
+tuples from another's in a heap; sm's statement does that now
+(`CommandCounterIncrement()` starts sm's next), and digres has
+no heap.
+
+- **`xact.c`**: `currentCommandId`, `GetCurrentCommandId()` and
+  the "used" flag. `CommandCounterIncrement()` starts sm's next
+  statement and processes the queued invalidations after every
+  command, there being no command id to tell a read-only one by;
+  with none queued that does nothing. slt's time is unchanged.
+  `inval.c`'s hack to mark the id used goes with it.
+- **The table AM**: `tuple_insert`, `multi_insert`,
+  `tuple_delete`, `tuple_update` and `tuple_lock`, and their
+  `table_*` wrappers, take no `CommandId`; nor do `smtable.c`'s,
+  `smstore_update()` and `smstore_delete()`.
+  `TM_FailureData` has no `cmax`.
+- **The executor**: `EState`'s `es_output_cid`, and the
+  `output_cid` and `mycid` of CREATE TABLE AS, REFRESH
+  MATERIALIZED VIEW, COPY FROM and ALTER TABLE's rewrite.
+  `TM_SelfModified` is a change by this statement, as sm reports
+  only that (`write_result()`): the six checks in
+  `nodeModifyTable.c` and one in `trigger.c` that told it from a
+  later command's, for the "triggered by the current command"
+  error, never fired, and are gone.
+- **Snapshots**: `curcid`, `SnapshotSetCommandId()` and
+  `UpdateActiveSnapshotCommandId()`, and its five callers.
+- Kept: the `CommandId` type, of the `cid` SQL type and the
+  system columns `cmin` and `cmax`, and `trigger.c`'s firing
+  counter, which only borrows the type.

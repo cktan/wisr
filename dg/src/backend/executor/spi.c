@@ -2358,10 +2358,8 @@ static int _SPI_execute_plan(SPIPlanPtr plan, const SPIExecuteOptions *options,
        * command and update the snapshot.  (But skip it if the snapshot
        * isn't under our control.)
        */
-      if (!options->read_only && pushed_active_snap) {
+      if (!options->read_only && pushed_active_snap)
         CommandCounterIncrement();
-        UpdateActiveSnapshotCommandId();
-      }
 
       /*
        * Select appropriate tuple receiver.  Output from non-canSetTag

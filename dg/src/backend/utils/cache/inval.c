@@ -550,14 +550,6 @@ static void RegisterCatalogInvalidation(InvalidationInfo *info, Oid dbId,
 static void RegisterRelcacheInvalidation(InvalidationInfo *info, Oid dbId,
                                          Oid relId) {
   AddRelcacheInvalidationMessage(&info->CurrentCmdInvalidMsgs, dbId, relId);
-
-  /*
-   * Most of the time, relcache invalidation is associated with system
-   * catalog updates, but there are a few cases where it isn't.  Quick hack
-   * to ensure that the next CommandCounterIncrement() will think that we
-   * need to do CommandEndInvalidationMessages().
-   */
-  (void)GetCurrentCommandId(true);
 }
 
 /*

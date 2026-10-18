@@ -168,8 +168,6 @@ typedef struct SnapshotData {
 
   bool copied; /* false if it's a static snapshot */
 
-  CommandId curcid; /* in my xact, CID < curcid are visible */
-
   /*
    * An extra return value for HeapTupleSatisfiesDirty, not used in MVCC
    * snapshots.

@@ -476,7 +476,6 @@ void ExplainOnePlan(PlannedStmt *plannedstmt, IntoClause *into,
    * results of any previously executed queries.
    */
   PushCopiedSnapshot(GetActiveSnapshot());
-  UpdateActiveSnapshotCommandId();
 
   /*
    * We discard the output if we have no use for it.  If we're explaining

@@ -58,7 +58,6 @@ typedef struct {
   /* These fields are filled by intorel_startup: */
   Relation rel;          /* relation to write to */
   ObjectAddress reladdr; /* address of rel, for ExecCreateTableAs */
-  CommandId output_cid;  /* cmin to insert in output tuples */
   int ti_options;        /* table_tuple_insert performance options */
   MemoryContext rowcxt;  /* what handing over one row allocates */
 } DR_intorel;
@@ -324,7 +323,6 @@ ObjectAddress ExecCreateTableAs(ParseState *pstate, CreateTableAsStmt *stmt,
      * parallel to the EXPLAIN code path.)
      */
     PushCopiedSnapshot(GetActiveSnapshot());
-    UpdateActiveSnapshotCommandId();
 
     /* Create a QueryDesc, redirecting output to our tuple receiver */
     queryDesc = CreateQueryDesc(plan, pstate->p_sourcetext, GetActiveSnapshot(),
@@ -533,7 +531,6 @@ static void intorel_startup(DestReceiver *self, int operation,
    */
   myState->rel = intoRelationDesc;
   myState->reladdr = intoRelationAddr;
-  myState->output_cid = GetCurrentCommandId(true);
   myState->ti_options = TABLE_INSERT_SKIP_FSM;
   myState->rowcxt = AllocSetContextCreate(CurrentMemoryContext, "CTAS row",
                                           ALLOCSET_DEFAULT_SIZES);
@@ -555,8 +552,7 @@ static bool intorel_receive(TupleTableSlot *slot, DestReceiver *self) {
      * load (access/sm/smstore.c).  What the row's handing over allocates
      * goes with it.
      */
-    table_multi_insert(myState->rel, &slot, 1, myState->output_cid,
-                       myState->ti_options, NULL);
+    table_multi_insert(myState->rel, &slot, 1, myState->ti_options, NULL);
     MemoryContextSwitchTo(oldcxt);
     MemoryContextReset(myState->rowcxt);
   }

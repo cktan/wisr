@@ -93,7 +93,6 @@ typedef struct CopyMultiInsertInfo {
   int bufferedBytes;        /* number of bytes from all buffered tuples */
   CopyFromState cstate;     /* Copy state for this CopyMultiInsertInfo */
   EState *estate;           /* Executor state used for COPY */
-  CommandId mycid;          /* Command Id used for COPY */
   int ti_options;           /* table insert options */
 } CopyMultiInsertInfo;
 
@@ -341,14 +340,12 @@ static inline void CopyMultiInsertInfoSetupBuffer(CopyMultiInsertInfo *miinfo,
  */
 static void CopyMultiInsertInfoInit(CopyMultiInsertInfo *miinfo,
                                     ResultRelInfo *rri, CopyFromState cstate,
-                                    EState *estate, CommandId mycid,
-                                    int ti_options) {
+                                    EState *estate, int ti_options) {
   miinfo->multiInsertBuffers = NIL;
   miinfo->bufferedTuples = 0;
   miinfo->bufferedBytes = 0;
   miinfo->cstate = cstate;
   miinfo->estate = estate;
-  miinfo->mycid = mycid;
   miinfo->ti_options = ti_options;
 
   /*
@@ -453,7 +450,6 @@ static inline void CopyMultiInsertBufferFlush(CopyMultiInsertInfo *miinfo,
     /* reset relname_only */
     cstate->relname_only = false;
   } else {
-    CommandId mycid = miinfo->mycid;
     int ti_options = miinfo->ti_options;
     bool line_buf_valid = cstate->line_buf_valid;
     uint64 save_cur_lineno = cstate->cur_lineno;
@@ -470,8 +466,8 @@ static inline void CopyMultiInsertBufferFlush(CopyMultiInsertInfo *miinfo,
      * context before calling it.
      */
     oldcontext = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
-    table_multi_insert(resultRelInfo->ri_RelationDesc, slots, nused, mycid,
-                       ti_options, NULL);
+    table_multi_insert(resultRelInfo->ri_RelationDesc, slots, nused, ti_options,
+                       NULL);
     MemoryContextSwitchTo(oldcontext);
 
     for (i = 0; i < nused; i++) {
@@ -678,7 +674,6 @@ uint64 CopyFrom(CopyFromState cstate) {
 
   PartitionTupleRouting *proute = NULL;
   ErrorContextCallback errcallback;
-  CommandId mycid = GetCurrentCommandId(true);
   int ti_options = 0; /* start with default options for insert */
   CopyInsertMethod insertMethod;
   CopyMultiInsertInfo multiInsertInfo = {0}; /* pacify compiler */
@@ -939,7 +934,7 @@ uint64 CopyFrom(CopyFromState cstate) {
       insertMethod = CIM_MULTI;
 
     CopyMultiInsertInfoInit(&multiInsertInfo, resultRelInfo, cstate, estate,
-                            mycid, ti_options);
+                            ti_options);
   }
 
   /*
@@ -1250,7 +1245,7 @@ uint64 CopyFrom(CopyFromState cstate) {
                 RelationGetRelid(resultRelInfo->ri_RelationDesc);
           } else {
             /* OK, store the tuple and create index entries for it */
-            table_tuple_insert(resultRelInfo->ri_RelationDesc, myslot, mycid,
+            table_tuple_insert(resultRelInfo->ri_RelationDesc, myslot,
                                ti_options, NULL);
 
             if (resultRelInfo->ri_NumIndices > 0)

@@ -669,9 +669,6 @@ typedef struct EState
 
 	JunkFilter *es_junkFilter;	/* top-level junk filter, if any */
 
-	/* If query can insert/delete tuples, the command ID to mark them with */
-	CommandId	es_output_cid;
-
 	/* Info about target table(s) for insert/update/delete queries: */
 	ResultRelInfo **es_result_relations;	/* Array of per-range-table-entry
 											 * ResultRelInfo pointers, or NULL

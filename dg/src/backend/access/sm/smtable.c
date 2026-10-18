@@ -106,7 +106,7 @@ static bool smtable_scan_getnextslot(TableScanDesc sscan,
 
 /* Insert the slot's row: sm writes the table's indexes with it. */
 static void smtable_tuple_insert(Relation rel, TupleTableSlot *slot,
-                                 CommandId cid, int options,
+                                 int options,
                                  struct BulkInsertStateData *bistate) {
   smstore_insert(rel, slot);
   slot->tts_tableOid = RelationGetRelid(rel);
@@ -117,7 +117,7 @@ static void smtable_tuple_insert(Relation rel, TupleTableSlot *slot,
  * COPY's batches come this way, and CREATE TABLE AS's rows.
  */
 static void smtable_multi_insert(Relation rel, TupleTableSlot **slots,
-                                 int nslots, CommandId cid, int options,
+                                 int nslots, int options,
                                  struct BulkInsertStateData *bistate) {
   smstore_load(rel, slots, nslots);
 }
@@ -157,10 +157,10 @@ static void smtable_tuple_get_latest_tid(TableScanDesc, ItemPointer) {}
 
 /* Delete the row at tid: sm's snapshot and its waits are its own. */
 static TM_Result smtable_tuple_delete(Relation rel, ItemPointer tid,
-                                      CommandId cid, Snapshot snapshot,
-                                      Snapshot crosscheck, bool wait,
-                                      TM_FailureData *tmfd, bool changingPart) {
-  return smstore_delete(rel, tid, cid, tmfd);
+                                      Snapshot snapshot, Snapshot crosscheck,
+                                      bool wait, TM_FailureData *tmfd,
+                                      bool changingPart) {
+  return smstore_delete(rel, tid, tmfd);
 }
 
 /*
@@ -168,14 +168,14 @@ static TM_Result smtable_tuple_delete(Relation rel, ItemPointer tid,
  * itself, so the executor is told to write none.
  */
 static TM_Result smtable_tuple_update(Relation rel, ItemPointer otid,
-                                      TupleTableSlot *slot, CommandId cid,
-                                      Snapshot snapshot, Snapshot crosscheck,
-                                      bool wait, TM_FailureData *tmfd,
+                                      TupleTableSlot *slot, Snapshot snapshot,
+                                      Snapshot crosscheck, bool wait,
+                                      TM_FailureData *tmfd,
                                       LockTupleMode *lockmode,
                                       TU_UpdateIndexes *update_indexes) {
   *lockmode = LockTupleExclusive;
   *update_indexes = TU_None;
-  return smstore_update(rel, otid, slot, cid, tmfd);
+  return smstore_update(rel, otid, slot, tmfd);
 }
 
 /*
@@ -185,7 +185,7 @@ static TM_Result smtable_tuple_update(Relation rel, ItemPointer otid,
  */
 static TM_Result smtable_tuple_lock(Relation rel, ItemPointer tid,
                                     Snapshot snapshot, TupleTableSlot *slot,
-                                    CommandId cid, LockTupleMode mode,
+                                    LockTupleMode mode,
                                     LockWaitPolicy wait_policy, uint8 flags,
                                     TM_FailureData *tmfd) {
   return smstore_lock_row(rel, tid, slot, mode, wait_policy, tmfd);

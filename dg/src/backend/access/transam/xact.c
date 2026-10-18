@@ -152,8 +152,6 @@ static thread_local /*LOCAL*/ TransactionState CurrentTransactionState =
  * to a whole transaction, so we do not keep them in the state stack.
  */
 static thread_local /*LOCAL*/ SubTransactionId currentSubTransactionId;
-static thread_local /*LOCAL*/ CommandId currentCommandId;
-static thread_local /*LOCAL*/ bool currentCommandIdUsed;
 
 /*
  * xactStartTimestamp is the value of transaction_timestamp().
@@ -261,21 +259,6 @@ SubTransactionId GetCurrentSubTransactionId(void) {
 }
 
 /*
- *	GetCurrentCommandId
- *
- * "used" must be true if the caller intends to use the command ID to mark
- * inserted/updated/deleted tuples.  false means the ID is being fetched
- * for read-only purposes (ie, as a snapshot validity cutoff).  See
- * CommandCounterIncrement() for discussion.
- */
-CommandId GetCurrentCommandId(bool used) {
-  /* this is global to a transaction, not subtransaction-local */
-  if (used)
-    currentCommandIdUsed = true;
-  return currentCommandId;
-}
-
-/*
  *	GetCurrentTransactionStartTimestamp
  */
 TimestampTz GetCurrentTransactionStartTimestamp(void) {
@@ -316,33 +299,12 @@ void CommandCounterIncrement(void) {
   smstore_statement_start();
 
   /*
-   * If the current value of the command counter hasn't been "used" to mark
-   * tuples, we need not increment it, since there's no need to distinguish
-   * a read-only command from others.  This helps postpone command counter
-   * overflow, and keeps no-op CommandCounterIncrement operations cheap.
+   * Make any catalog changes done by the just-completed command visible in
+   * the local syscache.  There is no command id to tell a read-only command
+   * by, as sm's statement is what sees, so this runs after every command;
+   * with no message queued it does nothing.
    */
-  if (currentCommandIdUsed) {
-    currentCommandId += 1;
-    if (currentCommandId == InvalidCommandId) {
-      currentCommandId -= 1;
-      ereport(
-          ERROR,
-          (errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-           errmsg("cannot have more than 2^32-2 commands in a transaction")));
-    }
-    currentCommandIdUsed = false;
-
-    /* Propagate new command ID into static snapshots */
-    SnapshotSetCommandId(currentCommandId);
-
-    /*
-     * Make any catalog changes done by the just-completed command visible
-     * in the local syscache.  We obviously don't need to do this after a
-     * read-only command.  (But see hacks in inval.c to make real sure we
-     * don't think a command that queued inval messages was read-only.)
-     */
-    AtCCI_LocalCache();
-  }
+  AtCCI_LocalCache();
 }
 
 /* ----------------------------------------------------------------
@@ -767,8 +729,6 @@ static void StartTransaction(void) {
    */
   s->subTransactionId = TopSubTransactionId;
   currentSubTransactionId = TopSubTransactionId;
-  currentCommandId = FirstCommandId;
-  currentCommandIdUsed = false;
 
   /*
    * must initialize resource-management stuff first
@@ -2896,14 +2856,12 @@ static void ShowTransactionStateRec(const char *str, TransactionState s) {
       ShowTransactionStateRec(str, s->parent);
   }
 
-  ereport(
-      DEBUG5,
-      (errmsg_internal(
-          "%s(%d) name: %s; blockState: %s; state: %s, subid/cid: %u/%u%s", str,
-          s->nestingLevel, PointerIsValid(s->name) ? s->name : "unnamed",
-          BlockStateAsString(s->blockState), TransStateAsString(s->state),
-          (unsigned int)s->subTransactionId, (unsigned int)currentCommandId,
-          currentCommandIdUsed ? " (used)" : "")));
+  ereport(DEBUG5,
+          (errmsg_internal(
+              "%s(%d) name: %s; blockState: %s; state: %s, subid: %u", str,
+              s->nestingLevel, PointerIsValid(s->name) ? s->name : "unnamed",
+              BlockStateAsString(s->blockState), TransStateAsString(s->state),
+              (unsigned int)s->subTransactionId)));
 }
 
 /*

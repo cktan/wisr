@@ -173,19 +173,8 @@ void standard_ExecutorStart(QueryDesc *queryDesc, int eflags) {
    */
   estate->es_queryEnv = queryDesc->queryEnv;
 
-  /*
-   * If non-read-only query, set the command ID to mark output tuples with
-   */
   switch (queryDesc->operation) {
   case CMD_SELECT:
-
-    /*
-     * SELECT FOR [KEY] UPDATE/SHARE and modifying CTEs need to mark
-     * tuples
-     */
-    if (queryDesc->plannedstmt->rowMarks != NIL ||
-        queryDesc->plannedstmt->hasModifyingCTE)
-      estate->es_output_cid = GetCurrentCommandId(true);
 
     /*
      * A SELECT without modifying CTEs can't possibly queue triggers,
@@ -201,7 +190,6 @@ void standard_ExecutorStart(QueryDesc *queryDesc, int eflags) {
   case CMD_DELETE:
   case CMD_UPDATE:
   case CMD_MERGE:
-    estate->es_output_cid = GetCurrentCommandId(true);
     break;
 
   default:
@@ -2717,7 +2705,6 @@ static void EvalPlanQualStart(EPQState *epqstate, Plan *planTree) {
   rcestate->es_rteperminfos = parentestate->es_rteperminfos;
   rcestate->es_plannedstmt = parentestate->es_plannedstmt;
   rcestate->es_junkFilter = parentestate->es_junkFilter;
-  rcestate->es_output_cid = parentestate->es_output_cid;
   rcestate->es_queryEnv = parentestate->es_queryEnv;
 
   /*

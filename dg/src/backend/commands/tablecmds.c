@@ -5630,7 +5630,6 @@ static void ATRewriteTable(AlteredTableInfo *tab, Oid OIDNewHeap) {
   int i;
   ListCell *l;
   EState *estate;
-  CommandId mycid;
   int ti_options;
   ExprState *partqualstate = NULL;
 
@@ -5652,14 +5651,10 @@ static void ATRewriteTable(AlteredTableInfo *tab, Oid OIDNewHeap) {
    * Prepare options for table_tuple_insert.  The FSM is empty, so don't
    * bother using it.
    */
-  if (newrel) {
-    mycid = GetCurrentCommandId(true);
+  if (newrel)
     ti_options = TABLE_INSERT_SKIP_FSM;
-  } else {
-    /* keep compiler quiet about using these uninitialized */
-    mycid = 0;
-    ti_options = 0;
-  }
+  else
+    ti_options = 0; /* keep compiler quiet about using it uninitialized */
 
   /*
    * Generate the constraint and default execution states
@@ -5963,7 +5958,7 @@ static void ATRewriteTable(AlteredTableInfo *tab, Oid OIDNewHeap) {
 
       /* Write the tuple out to the new relation */
       if (newrel)
-        table_tuple_insert(newrel, insertslot, mycid, ti_options, NULL);
+        table_tuple_insert(newrel, insertslot, ti_options, NULL);
 
       ResetExprContext(econtext);
 

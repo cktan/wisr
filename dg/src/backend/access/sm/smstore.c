@@ -4583,7 +4583,7 @@ bool smstore_fetch_row(Relation rel, ItemPointer tid, TupleTableSlot *slot) {
  * executor passes over it.  At the other levels sm has aborted the
  * transaction instead, which is an error here, as any other failure is.
  */
-static TM_Result write_result(Relation rel, uint64 rowno, int rc, CommandId cid,
+static TM_Result write_result(Relation rel, uint64 rowno, int rc,
                               TM_FailureData *tmfd, const char *what) {
   if (rc == 0)
     return TM_Ok;
@@ -4594,7 +4594,6 @@ static TM_Result write_result(Relation rel, uint64 rowno, int rc, CommandId cid,
     keep_row(RelationGetRelid(rel), rowno, NULL, 0);
     return TM_Updated;
   case SM_ERR_SELFMODIFIED:
-    tmfd->cmax = cid;
     return TM_SelfModified;
   case SM_ERR_NOTFOUND:
     return TM_Deleted;
@@ -4615,7 +4614,7 @@ static TM_Result write_result(Relation rel, uint64 rowno, int rc, CommandId cid,
  * the table with it, and the row keeps its rowno, so its tid.
  */
 TM_Result smstore_update(Relation rel, ItemPointer tid, TupleTableSlot *slot,
-                         CommandId cid, TM_FailureData *tmfd) {
+                         TM_FailureData *tmfd) {
   sm_tbl_t *tbl = table_to_write(rel);
   uint64 rowno = smstore_tid_to_rowno(tid);
   std::string old;
@@ -4659,15 +4658,14 @@ TM_Result smstore_update(Relation rel, ItemPointer tid, TupleTableSlot *slot,
 
   if (rc == 0)
     slot->tts_tid = *tid;
-  return write_result(rel, rowno, rc, cid, tmfd, "update a row");
+  return write_result(rel, rowno, rc, tmfd, "update a row");
 }
 
 /*
  * Delete the row of rel at tid, with its entry in every index.  The row is
  * kept as it was, for RETURNING to fetch.
  */
-TM_Result smstore_delete(Relation rel, ItemPointer tid, CommandId cid,
-                         TM_FailureData *tmfd) {
+TM_Result smstore_delete(Relation rel, ItemPointer tid, TM_FailureData *tmfd) {
   sm_tbl_t *tbl = table_to_write(rel);
   uint64 rowno = smstore_tid_to_rowno(tid);
   std::string old;
@@ -4675,7 +4673,7 @@ TM_Result smstore_delete(Relation rel, ItemPointer tid, CommandId cid,
 
   if (rc == 0)
     keep_row(RelationGetRelid(rel), rowno, old.data(), old.size());
-  return write_result(rel, rowno, rc, cid, tmfd, "delete a row");
+  return write_result(rel, rowno, rc, tmfd, "delete a row");
 }
 
 /*

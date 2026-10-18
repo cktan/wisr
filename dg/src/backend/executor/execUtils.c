@@ -117,8 +117,6 @@ EState *CreateExecutorState(void) {
 
   estate->es_junkFilter = NULL;
 
-  estate->es_output_cid = (CommandId)0;
-
   estate->es_result_relations = NULL;
   estate->es_opened_result_relations = NIL;
   estate->es_tuple_routing_result_relations = NIL;

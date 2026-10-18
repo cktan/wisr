@@ -358,22 +358,6 @@ void InvalidateCatalogSnapshotConditionally(void) {
 }
 
 /*
- * SnapshotSetCommandId
- *		Propagate CommandCounterIncrement into the static snapshots, if
- *set
- */
-void SnapshotSetCommandId(CommandId curcid) {
-  if (!FirstSnapshotSet)
-    return;
-
-  if (CurrentSnapshot)
-    CurrentSnapshot->curcid = curcid;
-  if (SecondarySnapshot)
-    SecondarySnapshot->curcid = curcid;
-  /* Should we do the same with CatalogSnapshot? */
-}
-
-/*
  * CopySnapshot
  *		Copy the given snapshot.
  *
@@ -485,29 +469,10 @@ void PushActiveSnapshotWithLevel(Snapshot snapshot, int snap_level) {
  * PushCopiedSnapshot
  *		As above, except forcibly copy the presented snapshot.
  *
- * This should be used when the ActiveSnapshot has to be modifiable, for
- * example if the caller intends to call UpdateActiveSnapshotCommandId.
  * The new snapshot will be released when popped from the stack.
  */
 void PushCopiedSnapshot(Snapshot snapshot) {
   PushActiveSnapshot(CopySnapshot(snapshot));
-}
-
-/*
- * UpdateActiveSnapshotCommandId
- *
- * Update the current CID of the active snapshot.  This can only be applied
- * to a snapshot that is not referenced elsewhere.
- */
-void UpdateActiveSnapshotCommandId(void) {
-  CommandId curcid;
-
-  Assert(ActiveSnapshot != NULL);
-  Assert(ActiveSnapshot->as_snap->active_count == 1);
-  Assert(ActiveSnapshot->as_snap->regd_count == 0);
-
-  curcid = GetCurrentCommandId(false);
-  ActiveSnapshot->as_snap->curcid = curcid;
 }
 
 /*
@@ -902,7 +867,7 @@ static Snapshot GetSnapshotData(Snapshot snapshot) {
    * is in progress, and every snapshot is the same, its xmin and xmax the
    * first normal xid, after the last completed, which none ever is.  It is
    * made with no lock and no scan of the proc array (SHMEM.md section 7,
-   * step 3).  The command id is the caller's, as before.
+   * step 3).
    */
   xmax = FirstNormalTransactionId;
 
@@ -913,7 +878,6 @@ static Snapshot GetSnapshotData(Snapshot snapshot) {
   snapshot->suboverflowed = false;
   /* No transaction with an xid completes: the count stays at 1. */
   snapshot->snapXactCompletionCount = 1;
-  snapshot->curcid = GetCurrentCommandId(false);
   snapshot->active_count = 0;
   snapshot->regd_count = 0;
   snapshot->copied = false;

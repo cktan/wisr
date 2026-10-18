@@ -196,9 +196,8 @@ extern Size smstore_toast_size(struct varlena *attr);
 extern bool smstore_fetch_row(Relation rel, ItemPointer tid,
                               TupleTableSlot *slot);
 extern TM_Result smstore_update(Relation rel, ItemPointer tid,
-                                TupleTableSlot *slot, CommandId cid,
-                                TM_FailureData *tmfd);
-extern TM_Result smstore_delete(Relation rel, ItemPointer tid, CommandId cid,
+                                TupleTableSlot *slot, TM_FailureData *tmfd);
+extern TM_Result smstore_delete(Relation rel, ItemPointer tid,
                                 TM_FailureData *tmfd);
 extern TM_Result smstore_lock_row(Relation rel, ItemPointer tid,
                                   TupleTableSlot *slot, LockTupleMode mode,

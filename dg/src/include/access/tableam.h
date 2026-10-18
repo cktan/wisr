@@ -131,12 +131,6 @@ typedef enum TU_UpdateIndexes
  * replacement is really a match.  This is InvalidTransactionId if the target
  * was !LP_NORMAL (expected only for a TID retrieved from syscache).
  *
- * cmax is the outdating command's CID, but only when the failure code is
- * TM_SelfModified (i.e., something in the current transaction outdated the
- * tuple); otherwise cmax is zero.  (We make this restriction because
- * HeapTupleHeaderGetCmax doesn't work for tuples outdated in other
- * transactions.)
- *
  * traversed indicates if an update chain was followed in order to try to lock
  * the target tuple.  (This may be set in both success and failure cases.)
  */
@@ -144,7 +138,6 @@ typedef struct TM_FailureData
 {
 	ItemPointerData ctid;
 	TransactionId xmax;
-	CommandId	cmax;
 	bool		traversed;
 } TM_FailureData;
 
@@ -472,13 +465,12 @@ typedef struct TableAmRoutine
 
 	/* see table_tuple_insert() for reference about parameters */
 	void		(*tuple_insert) (Relation rel, TupleTableSlot *slot,
-								 CommandId cid, int options,
+								 int options,
 								 struct BulkInsertStateData *bistate);
 
 	/* a speculative insertion: unused, as ON CONFLICT is sm's */
 	void		(*tuple_insert_speculative) (Relation rel,
 											 TupleTableSlot *slot,
-											 CommandId cid,
 											 int options,
 											 struct BulkInsertStateData *bistate,
 											 uint32 specToken);
@@ -491,12 +483,11 @@ typedef struct TableAmRoutine
 
 	/* see table_multi_insert() for reference about parameters */
 	void		(*multi_insert) (Relation rel, TupleTableSlot **slots, int nslots,
-								 CommandId cid, int options, struct BulkInsertStateData *bistate);
+								 int options, struct BulkInsertStateData *bistate);
 
 	/* see table_tuple_delete() for reference about parameters */
 	TM_Result	(*tuple_delete) (Relation rel,
 								 ItemPointer tid,
-								 CommandId cid,
 								 Snapshot snapshot,
 								 Snapshot crosscheck,
 								 bool wait,
@@ -507,7 +498,6 @@ typedef struct TableAmRoutine
 	TM_Result	(*tuple_update) (Relation rel,
 								 ItemPointer otid,
 								 TupleTableSlot *slot,
-								 CommandId cid,
 								 Snapshot snapshot,
 								 Snapshot crosscheck,
 								 bool wait,
@@ -520,7 +510,6 @@ typedef struct TableAmRoutine
 							   ItemPointer tid,
 							   Snapshot snapshot,
 							   TupleTableSlot *slot,
-							   CommandId cid,
 							   LockTupleMode mode,
 							   LockWaitPolicy wait_policy,
 							   uint8 flags,
@@ -1190,10 +1179,9 @@ table_index_delete_tuples(Relation rel, TM_IndexDeleteOp *delstate)
  * reflected in the slots contents.
  */
 static inline void
-table_tuple_insert(Relation rel, TupleTableSlot *slot, CommandId cid,
-				   int options, struct BulkInsertStateData *bistate)
+table_tuple_insert(Relation rel, TupleTableSlot *slot, int options, struct BulkInsertStateData *bistate)
 {
-	rel->rd_tableam->tuple_insert(rel, slot, cid, options,
+	rel->rd_tableam->tuple_insert(rel, slot, options,
 								  bistate);
 }
 
@@ -1213,10 +1201,10 @@ table_tuple_insert(Relation rel, TupleTableSlot *slot, CommandId cid,
  */
 static inline void
 table_multi_insert(Relation rel, TupleTableSlot **slots, int nslots,
-				   CommandId cid, int options, struct BulkInsertStateData *bistate)
+				   int options, struct BulkInsertStateData *bistate)
 {
 	rel->rd_tableam->multi_insert(rel, slots, nslots,
-								  cid, options, bistate);
+								  options, bistate);
 }
 
 /*
@@ -1228,8 +1216,6 @@ table_multi_insert(Relation rel, TupleTableSlot **slots, int nslots,
  * Input parameters:
  *	relation - table to be modified (caller must hold suitable lock)
  *	tid - TID of tuple to be deleted
- *	cid - delete command ID (used for visibility test, and stored into
- *		cmax if successful)
  *	crosscheck - if not InvalidSnapshot, also check tuple against this
  *	wait - true if should wait for any conflicting update to commit/abort
  * Output parameters:
@@ -1246,12 +1232,10 @@ table_multi_insert(Relation rel, TupleTableSlot **slots, int nslots,
  * TM_FailureData for additional info.
  */
 static inline TM_Result
-table_tuple_delete(Relation rel, ItemPointer tid, CommandId cid,
-				   Snapshot snapshot, Snapshot crosscheck, bool wait,
+table_tuple_delete(Relation rel, ItemPointer tid, Snapshot snapshot, Snapshot crosscheck, bool wait,
 				   TM_FailureData *tmfd, bool changingPart)
 {
-	return rel->rd_tableam->tuple_delete(rel, tid, cid,
-										 snapshot, crosscheck,
+	return rel->rd_tableam->tuple_delete(rel, tid, snapshot, crosscheck,
 										 wait, tmfd, changingPart);
 }
 
@@ -1265,8 +1249,6 @@ table_tuple_delete(Relation rel, ItemPointer tid, CommandId cid,
  *	relation - table to be modified (caller must hold suitable lock)
  *	otid - TID of old tuple to be replaced
  *	slot - newly constructed tuple data to store
- *	cid - update command ID (used for visibility test, and stored into
- *		cmax/cmin if successful)
  *	crosscheck - if not InvalidSnapshot, also check old tuple against this
  *	wait - true if should wait for any conflicting update to commit/abort
  * Output parameters:
@@ -1291,12 +1273,12 @@ table_tuple_delete(Relation rel, ItemPointer tid, CommandId cid,
  */
 static inline TM_Result
 table_tuple_update(Relation rel, ItemPointer otid, TupleTableSlot *slot,
-				   CommandId cid, Snapshot snapshot, Snapshot crosscheck,
+				   Snapshot snapshot, Snapshot crosscheck,
 				   bool wait, TM_FailureData *tmfd, LockTupleMode *lockmode,
 				   TU_UpdateIndexes *update_indexes)
 {
 	return rel->rd_tableam->tuple_update(rel, otid, slot,
-										 cid, snapshot, crosscheck,
+										 snapshot, crosscheck,
 										 wait, tmfd,
 										 lockmode, update_indexes);
 }
@@ -1308,8 +1290,6 @@ table_tuple_update(Relation rel, ItemPointer otid, TupleTableSlot *slot,
  *	relation: relation containing tuple (caller must hold suitable lock)
  *	tid: TID of tuple to lock (updated if an update chain was followed)
  *	snapshot: snapshot to use for visibility determinations
- *	cid: current command ID (used for visibility test, and stored into
- *		tuple's cmax if lock is successful)
  *	mode: lock mode desired
  *	wait_policy: what to do if tuple lock is not available
  *	flags:
@@ -1338,12 +1318,12 @@ table_tuple_update(Relation rel, ItemPointer otid, TupleTableSlot *slot,
  */
 static inline TM_Result
 table_tuple_lock(Relation rel, ItemPointer tid, Snapshot snapshot,
-				 TupleTableSlot *slot, CommandId cid, LockTupleMode mode,
+				 TupleTableSlot *slot, LockTupleMode mode,
 				 LockWaitPolicy wait_policy, uint8 flags,
 				 TM_FailureData *tmfd)
 {
 	return rel->rd_tableam->tuple_lock(rel, tid, snapshot, slot,
-									   cid, mode, wait_policy,
+									   mode, wait_policy,
 									   flags, tmfd);
 }
 

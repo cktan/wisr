@@ -182,7 +182,7 @@ void table_tuple_get_latest_tid(TableScanDesc scan, ItemPointer tid) {
  * default command ID and not allowing access to the speedup options.
  */
 void simple_table_tuple_insert(Relation rel, TupleTableSlot *slot) {
-  table_tuple_insert(rel, slot, GetCurrentCommandId(true), 0, NULL);
+  table_tuple_insert(rel, slot, 0, NULL);
 }
 
 /*
@@ -198,9 +198,9 @@ void simple_table_tuple_delete(Relation rel, ItemPointer tid,
   TM_Result result;
   TM_FailureData tmfd;
 
-  result = table_tuple_delete(rel, tid, GetCurrentCommandId(true), snapshot,
-                              InvalidSnapshot, true /* wait for commit */,
-                              &tmfd, false /* changingPart */);
+  result = table_tuple_delete(rel, tid, snapshot, InvalidSnapshot,
+                              true /* wait for commit */, &tmfd,
+                              false /* changingPart */);
 
   switch (result) {
   case TM_SelfModified:
@@ -241,9 +241,9 @@ void simple_table_tuple_update(Relation rel, ItemPointer otid,
   TM_FailureData tmfd;
   LockTupleMode lockmode;
 
-  result = table_tuple_update(
-      rel, otid, slot, GetCurrentCommandId(true), snapshot, InvalidSnapshot,
-      true /* wait for commit */, &tmfd, &lockmode, update_indexes);
+  result = table_tuple_update(rel, otid, slot, snapshot, InvalidSnapshot,
+                              true /* wait for commit */, &tmfd, &lockmode,
+                              update_indexes);
 
   switch (result) {
   case TM_SelfModified:

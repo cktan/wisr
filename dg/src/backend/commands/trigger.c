@@ -2952,8 +2952,7 @@ static bool GetTupleForTrigger(EState *estate, EPQState *epqstate,
     if (!IsolationUsesXactSnapshot())
       lockflags |= TUPLE_LOCK_FLAG_FIND_LAST_VERSION;
     test = table_tuple_lock(relation, tid, estate->es_snapshot, oldslot,
-                            estate->es_output_cid, lockmode, LockWaitBlock,
-                            lockflags, &tmfd);
+                            lockmode, LockWaitBlock, lockflags, &tmfd);
 
     /* Let the caller know about the status of this operation */
     if (tmresultp)
@@ -2972,13 +2971,7 @@ static bool GetTupleForTrigger(EState *estate, EPQState *epqstate,
        * enumerated in ExecUpdate and ExecDelete in
        * nodeModifyTable.c.
        */
-      if (tmfd.cmax != estate->es_output_cid)
-        ereport(ERROR,
-                (errcode(ERRCODE_TRIGGERED_DATA_CHANGE_VIOLATION),
-                 errmsg("tuple to be updated was already modified by an "
-                        "operation triggered by the current command"),
-                 errhint("Consider using an AFTER trigger instead of a BEFORE "
-                         "trigger to propagate changes to other rows.")));
+      /* sm reports only a change by this statement (write_result()). */
 
       /* treat it as deleted; do not process */
       return false;

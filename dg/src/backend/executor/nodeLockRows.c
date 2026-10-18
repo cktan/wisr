@@ -165,8 +165,7 @@ lnext:
       lockflags |= TUPLE_LOCK_FLAG_FIND_LAST_VERSION;
 
     test = table_tuple_lock(erm->relation, &tid, estate->es_snapshot, markSlot,
-                            estate->es_output_cid, lockmode, erm->waitPolicy,
-                            lockflags, &tmfd);
+                            lockmode, erm->waitPolicy, lockflags, &tmfd);
 
     switch (test) {
     case TM_WouldBlock:

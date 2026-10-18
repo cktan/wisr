@@ -44,7 +44,6 @@ typedef struct {
   Oid transientoid; /* OID of new heap into which to store */
   /* These fields are filled by transientrel_startup: */
   Relation transientrel; /* relation to write to */
-  CommandId output_cid;  /* cmin to insert in output tuples */
   int ti_options;        /* table_tuple_insert performance options */
 } DR_transientrel;
 
@@ -158,7 +157,6 @@ static void transientrel_startup(DestReceiver *self, int operation,
    * Fill private fields of myState for use by later routines
    */
   myState->transientrel = transientrel;
-  myState->output_cid = GetCurrentCommandId(true);
   myState->ti_options = TABLE_INSERT_SKIP_FSM | TABLE_INSERT_FROZEN;
 }
 
@@ -177,8 +175,7 @@ static bool transientrel_receive(TupleTableSlot *slot, DestReceiver *self) {
    * tuple's xmin), but since we don't do that here...
    */
 
-  table_tuple_insert(myState->transientrel, slot, myState->output_cid,
-                     myState->ti_options, NULL);
+  table_tuple_insert(myState->transientrel, slot, myState->ti_options, NULL);
 
   /* We know this is a newly created relation, so there are no indexes */
 

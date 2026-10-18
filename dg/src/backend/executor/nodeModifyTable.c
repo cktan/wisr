@@ -1251,10 +1251,10 @@ static TM_Result ExecDeleteAct(ModifyTableContext *context,
                                ItemPointer tupleid, bool changingPart) {
   EState *estate = context->estate;
 
-  return table_tuple_delete(
-      resultRelInfo->ri_RelationDesc, tupleid, estate->es_output_cid,
-      estate->es_snapshot, estate->es_crosscheck_snapshot,
-      true /* wait for commit */, &context->tmfd, changingPart);
+  return table_tuple_delete(resultRelInfo->ri_RelationDesc, tupleid,
+                            estate->es_snapshot, estate->es_crosscheck_snapshot,
+                            true /* wait for commit */, &context->tmfd,
+                            changingPart);
 }
 
 /*
@@ -1414,13 +1414,7 @@ ExecDelete(ModifyTableContext *context, ResultRelInfo *resultRelInfo,
        * can re-execute the DELETE and then return NULL to cancel
        * the outer delete.
        */
-      if (context->tmfd.cmax != estate->es_output_cid)
-        ereport(ERROR,
-                (errcode(ERRCODE_TRIGGERED_DATA_CHANGE_VIOLATION),
-                 errmsg("tuple to be deleted was already modified by an "
-                        "operation triggered by the current command"),
-                 errhint("Consider using an AFTER trigger instead of a BEFORE "
-                         "trigger to propagate changes to other rows.")));
+      /* sm reports only a change by this statement (write_result()). */
 
       /* Else, already deleted by self; nothing to do */
       return NULL;
@@ -1446,10 +1440,10 @@ ExecDelete(ModifyTableContext *context, ResultRelInfo *resultRelInfo,
       inputslot = EvalPlanQualSlot(context->epqstate, resultRelationDesc,
                                    resultRelInfo->ri_RangeTableIndex);
 
-      result = table_tuple_lock(
-          resultRelationDesc, tupleid, estate->es_snapshot, inputslot,
-          estate->es_output_cid, LockTupleExclusive, LockWaitBlock,
-          TUPLE_LOCK_FLAG_FIND_LAST_VERSION, &context->tmfd);
+      result =
+          table_tuple_lock(resultRelationDesc, tupleid, estate->es_snapshot,
+                           inputslot, LockTupleExclusive, LockWaitBlock,
+                           TUPLE_LOCK_FLAG_FIND_LAST_VERSION, &context->tmfd);
 
       switch (result) {
       case TM_Ok:
@@ -1483,14 +1477,7 @@ ExecDelete(ModifyTableContext *context, ResultRelInfo *resultRelInfo,
          * See also TM_SelfModified response to
          * table_tuple_delete() above.
          */
-        if (context->tmfd.cmax != estate->es_output_cid)
-          ereport(
-              ERROR,
-              (errcode(ERRCODE_TRIGGERED_DATA_CHANGE_VIOLATION),
-               errmsg("tuple to be deleted was already modified by an "
-                      "operation triggered by the current command"),
-               errhint("Consider using an AFTER trigger instead of a BEFORE "
-                       "trigger to propagate changes to other rows.")));
+        /* sm reports only a change by this statement (write_result()). */
         return NULL;
 
       case TM_Deleted:
@@ -1989,11 +1976,10 @@ lreplace:
    * for referential integrity updates in transaction-snapshot mode
    * transactions.
    */
-  result = table_tuple_update(resultRelationDesc, tupleid, slot,
-                              estate->es_output_cid, estate->es_snapshot,
-                              estate->es_crosscheck_snapshot,
-                              true /* wait for commit */, &context->tmfd,
-                              &updateCxt->lockmode, &updateCxt->updateIndexes);
+  result = table_tuple_update(
+      resultRelationDesc, tupleid, slot, estate->es_snapshot,
+      estate->es_crosscheck_snapshot, true /* wait for commit */,
+      &context->tmfd, &updateCxt->lockmode, &updateCxt->updateIndexes);
 
   return result;
 }
@@ -2245,13 +2231,7 @@ static TupleTableSlot *ExecUpdate(ModifyTableContext *context,
        * can re-execute the UPDATE (assuming it can figure out how)
        * and then return NULL to cancel the outer update.
        */
-      if (context->tmfd.cmax != estate->es_output_cid)
-        ereport(ERROR,
-                (errcode(ERRCODE_TRIGGERED_DATA_CHANGE_VIOLATION),
-                 errmsg("tuple to be updated was already modified by an "
-                        "operation triggered by the current command"),
-                 errhint("Consider using an AFTER trigger instead of a BEFORE "
-                         "trigger to propagate changes to other rows.")));
+      /* sm reports only a change by this statement (write_result()). */
 
       /* Else, already updated by self; nothing to do */
       return NULL;
@@ -2276,10 +2256,10 @@ static TupleTableSlot *ExecUpdate(ModifyTableContext *context,
       inputslot = EvalPlanQualSlot(context->epqstate, resultRelationDesc,
                                    resultRelInfo->ri_RangeTableIndex);
 
-      result = table_tuple_lock(
-          resultRelationDesc, tupleid, estate->es_snapshot, inputslot,
-          estate->es_output_cid, updateCxt.lockmode, LockWaitBlock,
-          TUPLE_LOCK_FLAG_FIND_LAST_VERSION, &context->tmfd);
+      result =
+          table_tuple_lock(resultRelationDesc, tupleid, estate->es_snapshot,
+                           inputslot, updateCxt.lockmode, LockWaitBlock,
+                           TUPLE_LOCK_FLAG_FIND_LAST_VERSION, &context->tmfd);
 
       switch (result) {
       case TM_Ok:
@@ -2320,14 +2300,7 @@ static TupleTableSlot *ExecUpdate(ModifyTableContext *context,
          * See also TM_SelfModified response to
          * table_tuple_update() above.
          */
-        if (context->tmfd.cmax != estate->es_output_cid)
-          ereport(
-              ERROR,
-              (errcode(ERRCODE_TRIGGERED_DATA_CHANGE_VIOLATION),
-               errmsg("tuple to be updated was already modified by an "
-                      "operation triggered by the current command"),
-               errhint("Consider using an AFTER trigger instead of a BEFORE "
-                       "trigger to propagate changes to other rows.")));
+        /* sm reports only a change by this statement (write_result()). */
         return NULL;
 
       default:
@@ -2411,8 +2384,7 @@ static bool ExecOnConflictUpdate(ModifyTableContext *context,
    * true anymore.
    */
   test = table_tuple_lock(relation, conflictTid, context->estate->es_snapshot,
-                          existing, context->estate->es_output_cid, lockmode,
-                          LockWaitBlock, 0, &tmfd);
+                          existing, lockmode, LockWaitBlock, 0, &tmfd);
   switch (test) {
   case TM_Ok:
     /* success! */
@@ -2921,13 +2893,7 @@ lmerge_matched:
        * action while discarding the updates that it triggered.  So
        * throwing an error is the only safe course.
        */
-      if (context->tmfd.cmax != estate->es_output_cid)
-        ereport(ERROR,
-                (errcode(ERRCODE_TRIGGERED_DATA_CHANGE_VIOLATION),
-                 errmsg("tuple to be updated or deleted was already modified "
-                        "by an operation triggered by the current command"),
-                 errhint("Consider using an AFTER trigger instead of a BEFORE "
-                         "trigger to propagate changes to other rows.")));
+      /* sm reports only a change by this statement (write_result()). */
 
       /* This shouldn't happen */
       elog(ERROR, "attempted to update or delete invisible tuple");
@@ -2980,9 +2946,8 @@ lmerge_matched:
         inputslot = resultRelInfo->ri_oldTupleSlot;
 
       result = table_tuple_lock(
-          resultRelationDesc, tupleid, estate->es_snapshot, inputslot,
-          estate->es_output_cid, lockmode, LockWaitBlock,
-          TUPLE_LOCK_FLAG_FIND_LAST_VERSION, &context->tmfd);
+          resultRelationDesc, tupleid, estate->es_snapshot, inputslot, lockmode,
+          LockWaitBlock, TUPLE_LOCK_FLAG_FIND_LAST_VERSION, &context->tmfd);
       switch (result) {
       case TM_Ok:
 
@@ -3093,14 +3058,7 @@ lmerge_matched:
          * command in the current transaction. As above,
          * this should always be treated as an error.
          */
-        if (context->tmfd.cmax != estate->es_output_cid)
-          ereport(
-              ERROR,
-              (errcode(ERRCODE_TRIGGERED_DATA_CHANGE_VIOLATION),
-               errmsg("tuple to be updated or deleted was already modified by "
-                      "an operation triggered by the current command"),
-               errhint("Consider using an AFTER trigger instead of a BEFORE "
-                       "trigger to propagate changes to other rows.")));
+        /* sm reports only a change by this statement (write_result()). */
 
         /* This shouldn't happen */
         elog(ERROR, "attempted to update or delete invisible tuple");

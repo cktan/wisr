@@ -1112,15 +1112,6 @@ static void PortalRunMulti(Portal portal, bool isTopLevel, bool setHoldSnapshot,
           portal->holdSnapshot = snapshot;
         }
 
-        /*
-         * We can't have the holdSnapshot also be the active one,
-         * because UpdateActiveSnapshotCommandId would complain.  So
-         * force an extra snapshot copy.  Plain PushActiveSnapshot
-         * would have copied the transaction snapshot anyway, so this
-         * only adds a copy step when setHoldSnapshot is true.  (It's
-         * okay for the command ID of the active snapshot to diverge
-         * from what holdSnapshot has.)
-         */
         PushCopiedSnapshot(snapshot);
 
         /*
@@ -1129,8 +1120,7 @@ static void PortalRunMulti(Portal portal, bool isTopLevel, bool setHoldSnapshot,
          */
 
         active_snapshot_set = true;
-      } else
-        UpdateActiveSnapshotCommandId();
+      }
 
       if (pstmt->canSetTag) {
         /* statement can set tag string */

@@ -53,7 +53,6 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT SnapshotData SnapshotToastData;
 
 extern Snapshot GetTransactionSnapshot(void);
 extern Snapshot GetLatestSnapshot(void);
-extern void SnapshotSetCommandId(CommandId curcid);
 
 extern Snapshot GetCatalogSnapshot(Oid relid);
 extern Snapshot GetNonHistoricCatalogSnapshot(Oid relid);
@@ -63,7 +62,6 @@ extern void InvalidateCatalogSnapshotConditionally(void);
 extern void PushActiveSnapshot(Snapshot snapshot);
 extern void PushActiveSnapshotWithLevel(Snapshot snapshot, int snap_level);
 extern void PushCopiedSnapshot(Snapshot snapshot);
-extern void UpdateActiveSnapshotCommandId(void);
 extern void PopActiveSnapshot(void);
 extern Snapshot GetActiveSnapshot(void);
 extern bool ActiveSnapshotSet(void);
