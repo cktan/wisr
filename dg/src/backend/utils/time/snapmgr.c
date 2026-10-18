@@ -49,7 +49,6 @@
 static thread_local /*LOCAL*/ SnapshotData MVCCSnapshotData = {SNAPSHOT_MVCC};
 thread_local /*LOCAL*/ SnapshotData SnapshotSelfData = {SNAPSHOT_SELF};
 thread_local /*LOCAL*/ SnapshotData SnapshotAnyData = {SNAPSHOT_ANY};
-thread_local /*LOCAL*/ SnapshotData SnapshotToastData = {SNAPSHOT_TOAST};
 
 /*
  * The active snapshot stack, its top last: each snapshot pushed and the

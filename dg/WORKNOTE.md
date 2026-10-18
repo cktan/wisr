@@ -7099,3 +7099,28 @@ longer needs is gone, 2,715 lines to 2,215:
   the sample configuration's entry.
 - `server.sh`: a temporary file a prior run left is removed at
   startup, and the log names no `pg_tblspc`.
+
+## Step 240: heap pages, data checksums and heap TOAST are gone
+
+A pass over what PostgreSQL's heap left in `storage/page`,
+`lib` and `access/common`.
+
+- **`storage/page`**: `bufpage.c`, PostgreSQL's slotted page,
+  none of whose functions had a caller; `checksum.c`,
+  `checksum.h`, `checksum_impl.h` and the `ignore_checksum_failure`
+  setting, as digres writes no page to check; and the README of
+  checksums. `bufpage.h` keeps the page layout's types and
+  macros, by which `htup_details.h` and `itup.h` size a tuple.
+  `itemptr.c` stays: a row's tid is an item pointer.
+- **`lib/integerset.c`**, which VACUUM's GiST pass used.
+- **Heap TOAST**: a value sm stores out of line has its own
+  pointer, `VARATT_IS_EXTERNAL_SM`, and nothing makes
+  PostgreSQL's on-disk one. `detoast.c` loses its five branches
+  for it and `toast_fetch_datum()` and `toast_fetch_datum_slice()`,
+  589 lines to 386; the table AM, `relation_fetch_toast_slice`
+  and its wrapper, which sm's and the catalog's AMs set to a
+  refusal; `toast_internals.c`, the TOAST table's index helpers
+  and `get_toast_snapshot()`, with `SnapshotToastData`, 219 lines
+  to 88. `toast_compress_datum()` stays, for index tuples.
+- Left: `toasting.c`, which makes a TOAST table, with the
+  catalog DDL kept to be ported (`PLAN.md` §7).

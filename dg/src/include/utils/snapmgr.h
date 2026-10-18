@@ -23,12 +23,9 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT bool FirstSnapshotSet;
 /* Variables representing various special snapshot semantics */
 extern thread_local /*LOCAL*/ PGDLLIMPORT SnapshotData SnapshotSelfData;
 extern thread_local /*LOCAL*/ PGDLLIMPORT SnapshotData SnapshotAnyData;
-extern thread_local /*LOCAL*/ PGDLLIMPORT SnapshotData SnapshotToastData;
 
 #define SnapshotSelf		(&SnapshotSelfData)
 #define SnapshotAny			(&SnapshotAnyData)
-
-/* Use get_toast_snapshot() for the TOAST snapshot */
 
 /*
  * We don't provide a static SnapshotDirty variable because it would be
