@@ -5,7 +5,7 @@ nothing else; the scale is the column's typmod's
 (`sm2/TYPE.md` §3.4, `sm2/SM2_DESIGN.md` §2.2). This plan puts
 the scale into the datum itself, at the same widths, so that a
 datum means a value on its own. Reviewed; §5 records the
-answers.
+answers. Built: §3 and §4.
 
 ## 1. Why
 

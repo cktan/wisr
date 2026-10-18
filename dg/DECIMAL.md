@@ -65,19 +65,21 @@ typedef struct decimal_t {
 
 ### 2.3 Stored as sm2's decimal, at the column's scale
 
-- **A column is `numeric(p, s)`**: `p <= 18` is sm2's
-  `decimal64`, `p <= 38` its `decimal128`. Its typmod is
-  PostgreSQL's, which sm2 takes as is.
+- **A column is `numeric(p, s)`**: `p <= 17` is sm2's
+  `decimal64`, `p <= 36` its `decimal128`, whose datums carry
+  their scale below their value (`../sm/SM_DECIMAL_PLAN.md`).
+  Its typmod is PostgreSQL's, which sm2 takes as is; a column
+  past 36 digits is refused.
 - **Writing rescales to the column's scale**, rounding half
   away from zero as PostgreSQL's assignment does, and checks
   the precision; reading attaches the column's scale. Both are
   integer work at the sm boundary, in `smstore.c`: a row's
   insert and update, its deform, an index scan's keys, an
   index-only scan's values, and statistics' values.
-- **An unconstrained `numeric` column is `numeric(18, 3)`**,
-  DuckDB's default for a bare `DECIMAL`, as sm2 requires a
-  typmod (§4.1). A value with more places is rounded to three,
-  as an assignment to `numeric(18, 3)` is.
+- **An unconstrained `numeric` column is `numeric(17, 3)`**,
+  the widest of sm2's `decimal64`, as sm2 requires a typmod
+  (§4.1). A value with more places is rounded to three, as an
+  assignment to `numeric(17, 3)` is.
 
 ### 2.4 Literals and casts
 
@@ -164,7 +166,8 @@ Each is moved to `decimal_t`, keeping its SQL signature:
 ## 4. Answers of the review
 
 1. **An unconstrained `numeric` column** is given a default,
-   DuckDB's `DECIMAL(18, 3)`.
+   DuckDB's `DECIMAL(18, 3)`; `(17, 3)` since sm's decimals
+   carry their scale (`../sm/SM_DECIMAL_PLAN.md`).
 2. **A literal past 38 digits** was to be an error; building
    it showed that this refuses `1e300` as a float, so it is a
    `float8`, as in DuckDB. Text cast to numeric past 38 digits
@@ -203,3 +206,7 @@ and hash agg rows shrink, and hashing and comparison are of an
      of the gain.
 - **First step**: map where a typmod is lost on the way
   through dg's parser and planner, to size option 1.
+- **sm's half of option 2 is built**: sm's decimals carry
+  their scale, at 17 and 36 digits
+  (`../sm/SM_DECIMAL_PLAN.md`), so a `decimal64` datum is a
+  value dg could pass by value as it is.

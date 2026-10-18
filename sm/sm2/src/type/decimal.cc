@@ -1,14 +1,16 @@
 /*
  * decimal.cc -- decimal64 and decimal128 (TYPE.md §3.4,
- * SM2_DESIGN.md §2.2): after DuckDB's decimal, a two's complement
- * integer scaled by 10^s, little-endian, 8 bytes for decimal64 and
- * 16 for decimal128, with (precision, scale) in the typmod rather
- * than the datum. sm3 maps SQL's decimal(p, s) and numeric(p, s)
- * to one of the two.
+ * SM2_DESIGN.md §2.2): a two's complement integer, little-endian,
+ * 8 bytes for decimal64 and 16 for decimal128, holding the value
+ * scaled by 10^s shifted left past the scale s itself: (value << 5)
+ * | s for decimal64, (value << 6) | s for decimal128. sm3 maps SQL's
+ * decimal(p, s) and numeric(p, s) to one of the two.
  *
  * The typmod is PostgreSQL's numeric typmod, ((p << 16) | s) + 4,
- * with 0 <= s <= p and 1 <= p <= 18 for decimal64, 38 for
- * decimal128; there is no bare form, so -1 is refused. The text is
+ * with 0 <= s <= p and 1 <= p <= 17 for decimal64, 36 for
+ * decimal128; there is no bare form, so -1 is refused. Every datum
+ * of a column carries the column's scale, so two of them order as
+ * their words do. The text is
  * what PostgreSQL prints for numeric(p, s): exactly s fraction
  * digits, a minus sign only on a value below zero. As for the
  * other types, in accepts only text that prints back unchanged,
@@ -38,8 +40,11 @@ template <size_t W> constexpr const char *decimal_name() {
   return W == 8 ? "decimal64" : "decimal128";
 }
 
-/* The most digits a W-byte decimal holds. */
-template <size_t W> constexpr int max_precision() { return W == 8 ? 18 : 38; }
+/* The most digits a W-byte decimal holds, past its scale bits. */
+template <size_t W> constexpr int max_precision() { return W == 8 ? 17 : 36; }
+
+/* The bits of a W-byte decimal's datum that hold its scale. */
+template <size_t W> constexpr int scale_bits() { return W == 8 ? 5 : 6; }
 
 /* Decode typmod; false if it is not a (p, s) a W-byte decimal holds. */
 template <size_t W> bool decode_typmod(int32_t typmod, numtype_t &t) {
@@ -91,6 +96,19 @@ __int128 load(std::string_view datum) {
   uint64_t lo = sm2::load_le<uint64_t>(datum.substr(0, 8));
   uint64_t hi = sm2::load_le<uint64_t>(datum.substr(8, 8));
   return static_cast<__int128>(static_cast<unsigned __int128>(hi) << 64 | lo);
+}
+
+/* A W-byte decimal's datum word for value v at scale s. */
+template <size_t W> __int128 pack(__int128 v, int s) {
+  return static_cast<__int128>(static_cast<unsigned __int128>(v)
+                               << scale_bits<W>()) |
+         s;
+}
+
+/* A W-byte decimal's value and scale, out of its datum word d. */
+template <size_t W> void unpack(__int128 d, __int128 &v, int &s) {
+  v = d >> scale_bits<W>();
+  s = static_cast<int>(d & ((1 << scale_bits<W>()) - 1));
 }
 
 /* Replace datum with v's low width bytes, little-endian. */
@@ -160,7 +178,7 @@ int decimal_in(std::string_view text, int32_t typmod, std::string &datum) {
   if (decimal_text(v, t.scale) != text) {
     return sm2::bad_input(decimal_name<W>(), text);
   }
-  store(v, W, datum);
+  store(pack<W>(v, t.scale), W, datum);
   return 0;
 }
 
@@ -174,7 +192,15 @@ int decimal_out(std::string_view datum, int32_t typmod, std::string &text) {
   if (datum.size() != W) {
     return sm2::bad_datum(decimal_name<W>(), datum, W);
   }
-  __int128 v = load(datum);
+  __int128 v;
+  int s;
+  unpack<W>(load(datum), v, s);
+  if (s != t.scale) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       std::string("a ") + decimal_name<W>() +
+                           " datum's scale " + std::to_string(s) +
+                           " is not its column's " + std::to_string(t.scale));
+  }
   if (magnitude(v) >= pow10(t.precision)) {
     return sm1::seterr(sm1::SM_ERR_INVALID,
                        std::string("a ") + decimal_name<W>() +
@@ -185,16 +211,19 @@ int decimal_out(std::string_view datum, int32_t typmod, std::string &text) {
   return 0;
 }
 
-/* Order two decimal datums of one column: integer order. */
+/*
+ * Order two decimal datums of one column: their words' order, as
+ * their scale bits are the column's.
+ */
 int decimal_cmp(std::string_view a, std::string_view b, int32_t) {
   __int128 x = load(a), y = load(b);
   return (x > y) - (x < y);
 }
 
 /*
- * A decimal's key (TYPE.md §3.4): the integer at the datum's
- * width, sign bit flipped, big-endian, which orders a column's
- * values, since the typmod fixes their scale.
+ * A decimal's key (TYPE.md §3.4): the datum's word, sign bit
+ * flipped, big-endian, which orders a column's values, since the
+ * typmod fixes their scale bits.
  */
 template <size_t W>
 int decimal_key(std::string_view datum, int32_t typmod,

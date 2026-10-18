@@ -197,15 +197,15 @@ catalog maps a declared column to one of them.
 
 | Declared | sm2 type | typmod |
 | --- | --- | --- |
-| `decimal(p, s)`, `numeric(p, s)`, `p <= 18` | `decimal64` | `(p, s)` |
-| `decimal(p, s)`, `numeric(p, s)`, `19 <= p <= 38` | `decimal128` | `(p, s)` |
+| `decimal(p, s)`, `numeric(p, s)`, `p <= 17` | `decimal64` | `(p, s)` |
+| `decimal(p, s)`, `numeric(p, s)`, `18 <= p <= 36` | `decimal128` | `(p, s)` |
 | `decimal(p)` | as `decimal(p, 0)` | |
-| bare `decimal` or `numeric` | `decimal64` | `(18, 3)`, DuckDB's default |
+| bare `decimal` or `numeric` | `decimal64` | `(17, 3)`, the widest `decimal64` |
 
-A precision past 38 is refused at `CREATE TABLE`. A bare
+A precision past 36 is refused at `CREATE TABLE`. A bare
 `decimal` rounds a datum past 3 fractional digits, as PostgreSQL
 rounds for a declared typmod, and refuses one whose integer part
-needs more than 15 digits; refusing a bare `decimal` was the
+needs more than 14 digits; refusing a bare `decimal` was the
 alternative. Widening a column from `decimal64` to `decimal128`,
 as `ALTER COLUMN TYPE decimal(30, 2)` on a `decimal(10, 2)`
 does, changes its type and so rewrites the table.

@@ -895,7 +895,7 @@ int decimal_text_order(const std::string &a, const std::string &b) {
 
 TEST_CASE("decimal64 and decimal128 round trip, in integer order") {
   // Verify both decimals by property, from test_seed(), for
-  // precisions up to each one's limit, decimal128's also below 18.
+  // precisions up to each one's limit, decimal128's also below 17.
   // 1. Every generated text of at most p digits at scale s reads
   //    into a datum of the type's width and prints back.
   // 2. cmp orders the datums as their values.
@@ -905,12 +905,12 @@ TEST_CASE("decimal64 and decimal128 round trip, in integer order") {
   std::mt19937_64 rng(test_seed());
   for (auto [t, p, s] : {std::tuple{&sm2::type_decimal64, 1, 0},
                          {&sm2::type_decimal64, 5, 2},
-                         {&sm2::type_decimal64, 18, 3},
-                         {&sm2::type_decimal64, 18, 18},
+                         {&sm2::type_decimal64, 17, 3},
+                         {&sm2::type_decimal64, 17, 17},
                          {&sm2::type_decimal128, 5, 2},
-                         {&sm2::type_decimal128, 19, 0},
-                         {&sm2::type_decimal128, 38, 10},
-                         {&sm2::type_decimal128, 38, 38}}) {
+                         {&sm2::type_decimal128, 18, 0},
+                         {&sm2::type_decimal128, 36, 10},
+                         {&sm2::type_decimal128, 36, 36}}) {
     CAPTURE(t->name);
     CAPTURE(p);
     CAPTURE(s);
@@ -981,8 +981,8 @@ TEST_CASE("a decimal typmod is numeric(p, s) within the type's digits") {
   // Verify the typmod checks on in, out and typmod_valid.
   // 1. A typmod with p of 0, s greater than p, below the +4
   //    offset, or -1 is refused by both decimals.
-  // 2. p up to 18 is decimal64's, and 19 is refused; p up to 38
-  //    is decimal128's, 39 refused, and 18 or fewer accepted too.
+  // 2. p up to 17 is decimal64's, and 18 is refused; p up to 36
+  //    is decimal128's, 37 refused, and 17 or fewer accepted too.
   // 3. out refuses a datum of the other type's width, and one
   //    whose value needs more than p digits.
   std::string datum, text;
@@ -1000,22 +1000,55 @@ TEST_CASE("a decimal typmod is numeric(p, s) within the type's digits") {
     }
   }
   const sm2::type_t &d64 = sm2::type_decimal64, &d128 = sm2::type_decimal128;
-  CHECK(d64.typmod_valid(decimal_typmod(18, 0)));
-  CHECK_FALSE(d64.typmod_valid(decimal_typmod(19, 0)));
+  CHECK(d64.typmod_valid(decimal_typmod(17, 0)));
+  CHECK_FALSE(d64.typmod_valid(decimal_typmod(18, 0)));
   CHECK(d128.typmod_valid(decimal_typmod(1, 0)));
-  CHECK(d128.typmod_valid(decimal_typmod(38, 0)));
-  CHECK_FALSE(d128.typmod_valid(decimal_typmod(39, 0)));
-  CHECK(sm2::datum_width(&d64, decimal_typmod(18, 0)) == 8);
+  CHECK(d128.typmod_valid(decimal_typmod(36, 0)));
+  CHECK_FALSE(d128.typmod_valid(decimal_typmod(37, 0)));
+  CHECK(sm2::datum_width(&d64, decimal_typmod(17, 0)) == 8);
   CHECK(sm2::datum_width(&d128, decimal_typmod(5, 0)) == 16);
-  CHECK(d64.out(std::string(16, '\0'), decimal_typmod(18, 0), text) == -1);
+  CHECK(d64.out(std::string(16, '\0'), decimal_typmod(17, 0), text) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(d128.out(std::string(8, '\0'), decimal_typmod(5, 0), text) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   // 100000, which needs six digits, under decimal(5, 0).
-  std::string six = le_bytes(int64_t{100000});
+  std::string six = le_bytes(int64_t{100000 * 32});
   CHECK(d64.out(six, decimal_typmod(5, 0), text) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  six = le_bytes(int64_t{-99999});
+  six = le_bytes(int64_t{-99999 * 32});
   CHECK(d64.out(six, decimal_typmod(5, 0), text) == 0);
   CHECK(text == "-99999");
+}
+
+TEST_CASE("a decimal datum carries its scale below its value") {
+  // Verify the datum's layout and its scale check.
+  // 1. in under (5, 2) makes 123.45 and -123.45 the integer 12345
+  //    shifted past 5 scale bits for decimal64, 6 for decimal128,
+  //    with 2 in them, at 8 and 16 bytes.
+  // 2. The largest magnitudes, 17 and 36 digits at scale 0, fit
+  //    their words and print back.
+  // 3. out refuses a datum whose scale is not its typmod's.
+  const sm2::type_t &d64 = sm2::type_decimal64, &d128 = sm2::type_decimal128;
+  int32_t typmod = decimal_typmod(5, 2);
+  std::string datum, text;
+  REQUIRE(d64.in("123.45", typmod, datum) == 0);
+  CHECK(datum == le_bytes(int64_t{12345 * 32 + 2}));
+  REQUIRE(d64.in("-123.45", typmod, datum) == 0);
+  CHECK(datum == le_bytes(int64_t{-12345 * 32 + 2}));
+  REQUIRE(d128.in("-123.45", typmod, datum) == 0);
+  CHECK(datum == le_bytes(int64_t{-12345 * 64 + 2}) + le_bytes(int64_t{-1}));
+  for (auto [t, p] : {std::pair{&d64, 17}, {&d128, 36}}) {
+    CAPTURE(t->name);
+    for (const std::string &m :
+         {std::string(p, '9'), "-" + std::string(p, '9')}) {
+      REQUIRE(t->in(m, decimal_typmod(p, 0), datum) == 0);
+      REQUIRE(t->out(datum, decimal_typmod(p, 0), text) == 0);
+      CHECK(text == m);
+    }
+  }
+  REQUIRE(d64.in("123.45", typmod, datum) == 0);
+  CHECK(d64.out(datum, decimal_typmod(5, 3), text) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(d64.out(le_bytes(int64_t{12345 * 32 + 3}), typmod, text) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 }

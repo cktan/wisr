@@ -2804,12 +2804,14 @@ done
 # Verify that numeric columns are stored in sm as decimals at their scale,
 # indexed, keyed and analyzed.
 # 1. Make t20 with numeric(10,2), numeric(30,5) and a bare numeric, which is
-#    numeric(18,3), and indexes; values are rounded to the column's scale.
+#    numeric(17,3), and indexes; values are rounded to the column's scale.
 # 2. A value past the precision is refused, as an assignment is.
 # 3. Index scans find = and ranges whose keys have more places than the
 #    column, and keys past its range.
 # 4. A unique numeric(30,5) index refuses a value that rounds to a taken one.
 # 5. ANALYZE gives common values at the column's scale, and = is estimated.
+# 6. numeric(17,17) and numeric(36,0), the widest of sm's decimal64 and
+#    decimal128, keep their largest values; numeric(37,0) is refused.
 local_psql -c 'create table t20 (id int4 primary key, a numeric(10,2),
       b numeric(30,5), c numeric)' \
   -c 'create index t20a on t20 (a)' -c 'create unique index t20b on t20 (b)' \
@@ -2836,6 +2838,14 @@ local_psql -c 'create table t21 (a numeric(10,2))' \
 [ "$(local_psql -c "select (most_common_vals::text[])[1] from pg_stats('t21')" \
   2>&1)" = "0.00" ] && [ "$(rows_of 'select * from t21 where a = 0.5')" = 500 ] ||
   fail "numeric statistics"
+local_psql -c 'create table t24 (a numeric(17,17), b numeric(36,0))' \
+  -c 'insert into t24 values (0.99999999999999999, 999999999999999999999999999999999999),
+      (-0.99999999999999999, -999999999999999999999999999999999999)' >> "$work/numeric.out" 2>&1
+[ "$(local_psql -c 'select * from t24 order by a' 2>&1 | tr '\n' ,)" = \
+  "-0.99999999999999999|-999999999999999999999999999999999999,0.99999999999999999|999999999999999999999999999999999999," ] ||
+  fail "numeric columns at sm's widest"
+local_psql -c 'create table t25 (a numeric(37,0))' 2>&1 |
+  grep -q 'at most 36 digits' || fail "numeric(37,0) refused"
 
 # Verify that a column's DEFAULT is kept in sm and fills what an INSERT or
 # UPDATE leaves to it, in later sessions too.

@@ -14,7 +14,7 @@ decisions in `SM2_OBJECTIVE.md`:
 | Decision | Choice |
 | --- | --- |
 | Types | a fixed set, each an ADT in `pg_type`'s shape, each with a stable on-disk type code |
-| Representation | PostgreSQL's, type by type, little-endian — except the decimals, which follow DuckDB's |
+| Representation | PostgreSQL's, type by type, little-endian — except the decimals, which follow DuckDB's, with their scale |
 | Key encoding | order-preserving per type; descending is the inverted encoding |
 | Tuple format | null bitmap, fixed/variable split, an attribute count per row, as PostgreSQL's `natts` |
 | Tuple codec | an API of its own, with its own header and its own tests |
@@ -191,8 +191,10 @@ effectively unbounded in length. DuckDB's is a two's-complement
 integer, the value times 10^s, with `(precision, scale)` held
 in the schema and at most 38 digits of precision. sm2 takes that
 with two of DuckDB's four widths, each its own type:
-`decimal64`, 64 bits for a precision up to 18, and
-`decimal128`, 128 bits up to 38. (DuckDB also has 16- and
+`decimal64`, 64 bits for a precision up to 17, and
+`decimal128`, 128 bits up to 36, the scale in the low bits of
+each, which costs a digit and two of DuckDB's 18 and 38
+(`../SM_DECIMAL_PLAN.md`). (DuckDB also has 16- and
 32-bit forms up to 4 and 9 digits; sm2 does not.) An earlier
 draft took Arrow's decimal, with a 256-bit form up to 76
 digits; DuckDB's limit of 38 was preferred. Three things
@@ -212,7 +214,7 @@ follow, and they are why the exception is worth making:
 The costs are real and are named here rather than discovered
 later:
 
-- **Precision stops at 38 digits.** PG allows 1000 for a
+- **Precision stops at 36 digits.** PG allows 1000 for a
   declared typmod, and far more for an undeclared one. A
   column that needs more has no representation at all.
 - **There is no NaN and no infinity.** PG's numeric has had
@@ -222,9 +224,9 @@ later:
 - **The scale must be declared.** The decimal puts `(precision,
   scale)` in the schema; PG allows a bare `numeric` where
   every datum carries its own. A bare `decimal` column has no
-  equivalent, so it defaults to `decimal(18, 3)`, as DuckDB's
-  bare `DECIMAL` does, which can round a datum its user believed
-  exact.
+  equivalent, so it defaults to `decimal(17, 3)`, the widest
+  `decimal64`, near DuckDB's bare `DECIMAL`, `(18, 3)`, which
+  can round a datum its user believed exact.
 - **They are the types that are converted** at the executor
   boundary, in both directions, while §2.1 makes every other
   type a copy.
@@ -238,7 +240,7 @@ What a column may declare, and what a datum may hold:
   like `int8`, passed by value; `decimal128` is 16 bytes and
   passed by reference, like `uuid`. Each takes PostgreSQL's
   numeric typmod, `(p, s)`, and accepts any precision up to its
-  capacity — 18 for `decimal64`, 38 for `decimal128` — so a
+  capacity — 17 for `decimal64`, 36 for `decimal128` — so a
   `decimal128(10, 2)` is legal, if wider than it need be. Every
   sm2 type's width is then its type's alone, not its typmod's.
   An earlier design had one type, `decimal`, code 7, whose
@@ -249,6 +251,12 @@ What a column may declare, and what a datum may hold:
   type's `typmod_valid`, which `rel_open` and the codec check
   through `datum_width`. sm3 resolves a bare `decimal`,
   `decimal(p)` and the `numeric` alias to a declared `(p, s)`.
+- **The scale is in the datum**, below the value:
+  `(value << 5) | s` for `decimal64`, `(value << 6) | s` for
+  `decimal128` (`TYPE.md` §3.4), so a datum means a value
+  without its typmod, and a host can pass a `decimal64` by
+  value as it is. It is always the column's scale, so the
+  scale bits of a column's datums are equal.
 - **One key rule at two widths.** Both are the same
   two's-complement integer, so the key is §3.2's at 8 or 16
   bytes and comparison is integer comparison. A variable-width
@@ -256,9 +264,10 @@ What a column may declare, and what a datum may hold:
   and comparison path is most of what this section avoids.
 - **NaN and infinities are refused** on insert with a clear
   error, and no value is reserved as a sentinel. That door is
-  not closed: 18 digits do not reach the 64-bit limit, nor 38
-  the 128-bit one, so the extreme integers are never written
-  and could still be reserved later without changing what
+  not closed: 17 digits do not reach the limit of the 59 bits
+  above the scale, nor 36 that of the 122, so the extreme
+  integers are never written and could still be reserved
+  later without changing what
   stored bytes mean — provided the codec keeps refusing every
   value outside the declared precision.
 

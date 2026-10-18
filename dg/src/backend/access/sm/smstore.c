@@ -511,10 +511,10 @@ void smstore_statement_advance(void) {
 }
 
 /*
- * A numeric column with no precision is numeric(18, 3), DuckDB's DECIMAL
- * (DECIMAL.md section 2.3): sm keeps a decimal's scale in its schema.
+ * A numeric column with no precision is numeric(17, 3), the widest that is
+ * sm's decimal64 (DECIMAL.md section 2.3, sm/SM_DECIMAL_PLAN.md).
  */
-#define NUMERIC_DEFAULT_TYPMOD (((18 << 16) | 3) + VARHDRSZ)
+#define NUMERIC_DEFAULT_TYPMOD (((17 << 16) | 3) + VARHDRSZ)
 
 /* The precision of a numeric column's typmod, the default's if none. */
 static int numeric_precision(int32 typmod) {
@@ -536,35 +536,56 @@ static __int128 numeric_value(const decimal_t *num) {
 }
 
 /*
- * sm's datum for num in a column of typmod: its integer at the column's
- * scale, by value for decimal64, for decimal128 16 bytes in buf.  The
- * value is rounded to the column's scale and checked against its
- * precision, as an assignment is.
+ * The bits of sm's decimal datum below its value that hold its scale: 5
+ * for decimal64, a numeric column of up to 17 digits, 6 for decimal128
+ * (sm/sm2/TYPE.md section 3.4).
+ */
+static int numeric_scale_bits(int32 typmod) {
+  return numeric_precision(typmod) <= 17 ? 5 : 6;
+}
+
+/*
+ * sm's datum for i, an integer at the scale of a column of typmod: i
+ * shifted past the column's scale, by value for decimal64, for decimal128
+ * 16 bytes in buf.
+ */
+static sm_datum_t numeric_pack(__int128 i, int32 typmod, uint8 *buf) {
+  int bits = numeric_scale_bits(typmod);
+  __int128 d = i * ((__int128)1 << bits) + numeric_scale_of(typmod);
+
+  if (bits == 5)
+    return (sm_datum_t)(int64)d;
+  memcpy(buf, &d, 16);
+  return (sm_datum_t)buf;
+}
+
+/*
+ * sm's datum for num in a column of typmod (numeric_pack()).  The value is
+ * rounded to the column's scale and checked against its precision, as an
+ * assignment is.
  */
 static sm_datum_t numeric_to_sm(Datum num, int32 typmod, uint8 *buf) {
   int32 t = typmod < (int32)VARHDRSZ ? NUMERIC_DEFAULT_TYPMOD : typmod;
   Numeric v = DatumGetNumeric(
       DirectFunctionCall2(numeric, num, Int32GetDatum(t)));
-  __int128 i = numeric_value(v);
 
-  if (numeric_precision(typmod) <= 18)
-    return (sm_datum_t)(int64)i;
-  memcpy(buf, &i, 16);
-  return (sm_datum_t)buf;
+  return numeric_pack(numeric_value(v), typmod, buf);
 }
 
 /* The numeric of sm's datum d, of a column of typmod, palloc'd. */
 static Datum numeric_from_sm(sm_datum_t d, int32 typmod) {
   Numeric res = (Numeric)palloc0(sizeof(decimal_t));
-  __int128 i;
+  int bits = numeric_scale_bits(typmod);
+  __int128 w, i;
 
-  if (numeric_precision(typmod) <= 18)
-    i = (int64)d;
+  if (bits == 5)
+    w = (int64)d;
   else
-    memcpy(&i, (const void *)d, 16);
+    memcpy(&w, (const void *)d, 16);
+  i = w >> bits;
   res->lo = (uint64)(unsigned __int128)i;
   res->hi = (int64)((unsigned __int128)i >> 64);
-  res->scale = (int16)numeric_scale_of(typmod);
+  res->scale = (int16)(w & ((1 << bits) - 1));
   return NumericGetDatum(res);
 }
 
@@ -604,10 +625,7 @@ static sm_datum_t numeric_bound(Datum num, int32 typmod, bool upper,
     i = limit;
   if (i < -limit)
     i = -limit;
-  if (p <= 18)
-    return (sm_datum_t)(int64)i;
-  memcpy(buf, &i, 16);
-  return (sm_datum_t)buf;
+  return numeric_pack(i, typmod, buf);
 }
 
 /* Whether a row of desc has a numeric column, whose datums are converted. */
@@ -712,12 +730,16 @@ static void slot_from_sm(TupleTableSlot *slot) {
 
 /*
  * sm's type code for a column of type typid and typmod (sm2/TYPE.md section
- * 3): numeric is decimal64 up to 18 digits, decimal128 up to 38.
+ * 3): numeric is decimal64 up to 17 digits, decimal128 up to 36.
  */
 static uint8_t type_code(Oid typid, int32 typmod) {
   switch (typid) {
   case NUMERICOID:
-    return numeric_precision(typmod) <= 18 ? 17 : 18;
+    if (numeric_precision(typmod) > 36)
+      ereport(ERROR,
+              (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+               errmsg("a numeric column holds at most 36 digits")));
+    return numeric_precision(typmod) <= 17 ? 17 : 18;
   case BOOLOID:
     return 1;
   case INT2OID:

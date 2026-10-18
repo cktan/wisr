@@ -196,7 +196,7 @@ inline std::string gen_datum(const typed_t &t, std::mt19937_64 &rng) {
     return le(gen_float<double>(rng));
   }
   if (type == &sm2::type_decimal64 || type == &sm2::type_decimal128) {
-    int p = (t.typmod - 4) >> 16;
+    int p = (t.typmod - 4) >> 16, s = (t.typmod - 4) & 0xFFFF;
     unsigned __int128 limit = 1;
     for (int i = 0; i < p; i++) {
       limit *= 10;
@@ -204,7 +204,11 @@ inline std::string gen_datum(const typed_t &t, std::mt19937_64 &rng) {
     unsigned __int128 mag = rng() % 3 == 0 ? rng() % 3 : below(rng, limit);
     __int128 v =
         rng() % 2 ? -static_cast<__int128>(mag) : static_cast<__int128>(mag);
-    return p <= 18 ? le(static_cast<int64_t>(v)) : le(v);
+    // The value shifted past its scale (TYPE.md §3.4).
+    if (type == &sm2::type_decimal64) {
+      return le(static_cast<int64_t>(v * 32 + s));
+    }
+    return le(v * 64 + s);
   }
   if (type == &sm2::type_text || type == &sm2::type_varchar) {
     return gen_utf8(rng);

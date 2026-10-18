@@ -220,9 +220,10 @@ TEST_CASE("an index entry gives back its key columns") {
   sm2::index_t *uix = open_index(db, s, ucols, true, 2);
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
   std::vector<std::vector<std::optional<std::string>>> rows = {
-      {le(int16_t{-1}), std::string("hello"), le(int64_t{125}), le(1.5)},
+      {le(int16_t{-1}), std::string("hello"), le(int64_t{125 * 32 + 2}),
+       le(1.5)},
       {std::nullopt, std::string(""), std::nullopt, le(-2.0)},
-      {le(int16_t{300}), std::nullopt, le(int64_t{-7}), std::nullopt}};
+      {le(int16_t{300}), std::nullopt, le(int64_t{-7 * 32 + 2}), std::nullopt}};
   std::vector<values_t> vals;
   for (size_t i = 0; i < rows.size(); i++) {
     vals.push_back(datums_of(cols, rows[i]));

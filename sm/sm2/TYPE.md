@@ -194,22 +194,26 @@ SQL's `decimal(p, s)`, and `numeric` its alias, are not sm2
 types: sm3 maps them to one of these two
 (`sm3/SM3_DESIGN.md` §2.1).
 
-Native follows DuckDB's decimal (`SM2_DESIGN.md` §2.2): the
-value times 10^s as a two's complement integer, little-endian,
-8 bytes for `decimal64` and 16 for `decimal128`, with
-`(precision, scale)` held in the schema rather than in the
-datum. The typmod is PostgreSQL's numeric typmod,
-`((p << 16) | s) + 4`, with `0 <= s <= p` and `1 <= p <= 18`
-for `decimal64`, `38` for `decimal128`; `-1` is refused.
+Native follows DuckDB's decimal (`SM2_DESIGN.md` §2.2), with
+the scale in it: the value times 10^s as a two's complement
+integer, shifted left past s itself, little-endian —
+`(value << 5) | s` in 8 bytes for `decimal64`,
+`(value << 6) | s` in 16 for `decimal128`. The typmod is
+PostgreSQL's numeric typmod, `((p << 16) | s) + 4`, with
+`0 <= s <= p` and `1 <= p <= 17` for `decimal64`, `36` for
+`decimal128`, the digits the bits above the scale hold; `-1`
+is refused. A datum's scale is its column's: `out` refuses one
+whose scale is not the typmod's.
 
 The key is §3.2's, at the datum's width — sign bit flipped,
 big-endian. Nothing bespoke, which is the point of the whole
 exception.
 
-Two datums compare correctly only at a common scale, and the
-schema fixes the scale per column, so the encoder never
-rescales. Comparing two columns of different scale, or a
-`decimal64` with a `decimal128`, is a cast, above sm2.
+Two datums compare correctly only at a common scale, where
+their scale bits are equal, and the schema fixes the scale per
+column, so the encoder never rescales. Comparing two columns
+of different scale, or a `decimal64` with a `decimal128`, is a
+cast, above sm2.
 
 Decided in `SM2_DESIGN.md` §2.2: a typmod is required, and NaN
 and infinity are refused on insert, so no value is reserved as
