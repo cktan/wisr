@@ -7331,3 +7331,29 @@ TABLESPACE`, so every lookup gave the settings.
   `seq_page_cost` and `random_page_cost` entries of
   `reloptions.c`'s table, of kind `RELOPT_KIND_TABLESPACE`,
   whose name the enum keeps with PostgreSQL's other kinds.
+
+## Step 250: what removed modules left uncalled
+
+A second scan for exported functions nothing references (step
+247's), for those whose module digres has removed, or which a
+strip since left alone. Kept, as before: an extension's or a
+procedural language's API (`get_transform_fromsql()` and
+`_tosql()` among them), general utilities, the catalog DDL kept
+to be ported (`toasting.c`, `EventTriggerTableRewrite()`), and
+`varsize_any()`, a debugger's.
+
+- **nbtree's and the index access methods'**: `skipsupport.c`, its
+  skip scan's support; `amvalidate.c` and its header, the
+  helpers an index AM's validator called;
+  `PrepareSortSupportFromIndexRel()`, an index build's sort;
+  `index_truncate_tuple()`, its suffix truncation;
+  `hashcostestimate()`, the hash index's cost.
+- **The heap's**: `heap_expand_tuple()`, `minimal_expand_tuple()`
+  and their `expand_tuple()`, a tuple of fewer columns than its
+  table; `table_index_fetch_tuple_check()`, heapam's unique check.
+- **The catalog snapshot's**: `RelationHasSysCache()` and
+  `RelationSupportsSysCache()`, with the sorted OID lists
+  `InitCatalogCache()` built for them, which step 235's
+  `snapmgr.c` left uncalled.
+- **Compiled out already** (`#ifdef NOT_USED`): `FileInvalidate()`
+  and `equalTriggerDescs()`.

@@ -1040,10 +1040,6 @@ table_index_fetch_tuple(struct IndexFetchTableData *scan,
  * entry.  This likely is only useful to verify if there's a conflict in a
  * unique index.
  */
-extern bool table_index_fetch_tuple_check(Relation rel,
-										  ItemPointer tid,
-										  Snapshot snapshot,
-										  bool *all_dead);
 
 
 /* ------------------------------------------------------------------------

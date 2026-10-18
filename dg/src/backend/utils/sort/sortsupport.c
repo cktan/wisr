@@ -135,25 +135,3 @@ void PrepareSortSupportFromOrderingOp(Oid orderingOp, SortSupport ssup) {
 
   FinishSortSupportFunction(opfamily, opcintype, ssup);
 }
-
-/*
- * Fill in SortSupport given an index relation and attribute.
- *
- * Caller must previously have zeroed the SortSupportData structure and then
- * filled in ssup_cxt, ssup_attno, ssup_collation, and ssup_nulls_first.  This
- * will fill in ssup_reverse (based on the supplied argument), as well as the
- * comparator function pointer.
- */
-void PrepareSortSupportFromIndexRel(Relation indexRel, bool reverse,
-                                    SortSupport ssup) {
-  Oid opfamily = indexRel->rd_opfamily[ssup->ssup_attno - 1];
-  Oid opcintype = indexRel->rd_opcintype[ssup->ssup_attno - 1];
-
-  Assert(ssup->comparator == NULL);
-
-  if (!indexRel->rd_indam->amcanorder)
-    elog(ERROR, "unexpected non-amcanorder AM: %u", indexRel->rd_rel->relam);
-  ssup->ssup_reverse = reverse;
-
-  FinishSortSupportFunction(opfamily, opcintype, ssup);
-}

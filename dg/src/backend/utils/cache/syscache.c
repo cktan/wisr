@@ -29,7 +29,6 @@
 #include "catalog/pg_shdescription_d.h"
 #include "catalog/pg_shseclabel_d.h"
 #include "common/int.h"
-#include "lib/qunique.h"
 #include "miscadmin.h"
 #include "utils/catcache.h"
 #include "utils/inval.h"
@@ -86,16 +85,6 @@ static thread_local /*LOCAL*/ CatCache *SysCache[SysCacheSize];
 
 static thread_local /*LOCAL*/ bool CacheInitialized = false;
 
-/* Sorted array of OIDs of tables that have caches on them */
-static thread_local /*LOCAL*/ Oid SysCacheRelationOid[SysCacheSize];
-static thread_local /*LOCAL*/ int SysCacheRelationOidSize;
-
-/* Sorted array of OIDs of tables and indexes used by caches */
-static thread_local /*LOCAL*/ Oid SysCacheSupportingRelOid[SysCacheSize * 2];
-static thread_local /*LOCAL*/ int SysCacheSupportingRelOidSize;
-
-static int oid_compare(const void *a, const void *b);
-
 /*
  * InitCatalogCache - initialize the caches
  *
@@ -108,8 +97,6 @@ void InitCatalogCache(void) {
   int cacheId;
 
   Assert(!CacheInitialized);
-
-  SysCacheRelationOidSize = SysCacheSupportingRelOidSize = 0;
 
   for (cacheId = 0; cacheId < SysCacheSize; cacheId++) {
     /*
@@ -127,29 +114,9 @@ void InitCatalogCache(void) {
     if (!PointerIsValid(SysCache[cacheId]))
       elog(ERROR, "could not initialize cache %u (%d)",
            cacheinfo[cacheId].reloid, cacheId);
-    /* Accumulate data for OID lists, too */
-    SysCacheRelationOid[SysCacheRelationOidSize++] = cacheinfo[cacheId].reloid;
-    SysCacheSupportingRelOid[SysCacheSupportingRelOidSize++] =
-        cacheinfo[cacheId].reloid;
-    SysCacheSupportingRelOid[SysCacheSupportingRelOidSize++] =
-        cacheinfo[cacheId].indoid;
     /* see comments for RelationInvalidatesSnapshotsOnly */
     Assert(!RelationInvalidatesSnapshotsOnly(cacheinfo[cacheId].reloid));
   }
-
-  Assert(SysCacheRelationOidSize <= lengthof(SysCacheRelationOid));
-  Assert(SysCacheSupportingRelOidSize <= lengthof(SysCacheSupportingRelOid));
-
-  /* Sort and de-dup OID arrays, so we can use binary search. */
-  qsort(SysCacheRelationOid, SysCacheRelationOidSize, sizeof(Oid), oid_compare);
-  SysCacheRelationOidSize = qunique(
-      SysCacheRelationOid, SysCacheRelationOidSize, sizeof(Oid), oid_compare);
-
-  qsort(SysCacheSupportingRelOid, SysCacheSupportingRelOidSize, sizeof(Oid),
-        oid_compare);
-  SysCacheSupportingRelOidSize =
-      qunique(SysCacheSupportingRelOid, SysCacheSupportingRelOidSize,
-              sizeof(Oid), oid_compare);
 
   CacheInitialized = true;
 }
@@ -536,55 +503,4 @@ bool RelationInvalidatesSnapshotsOnly(Oid relid) {
   }
 
   return false;
-}
-
-/*
- * Test whether a relation has a system cache.
- */
-bool RelationHasSysCache(Oid relid) {
-  int low = 0, high = SysCacheRelationOidSize - 1;
-
-  while (low <= high) {
-    int middle = low + (high - low) / 2;
-
-    if (SysCacheRelationOid[middle] == relid)
-      return true;
-    if (SysCacheRelationOid[middle] < relid)
-      low = middle + 1;
-    else
-      high = middle - 1;
-  }
-
-  return false;
-}
-
-/*
- * Test whether a relation supports a system cache, ie it is either a
- * cached table or the index used for a cache.
- */
-bool RelationSupportsSysCache(Oid relid) {
-  int low = 0, high = SysCacheSupportingRelOidSize - 1;
-
-  while (low <= high) {
-    int middle = low + (high - low) / 2;
-
-    if (SysCacheSupportingRelOid[middle] == relid)
-      return true;
-    if (SysCacheSupportingRelOid[middle] < relid)
-      low = middle + 1;
-    else
-      high = middle - 1;
-  }
-
-  return false;
-}
-
-/*
- * OID comparator for qsort
- */
-static int oid_compare(const void *a, const void *b) {
-  Oid oa = *((const Oid *)a);
-  Oid ob = *((const Oid *)b);
-
-  return pg_cmp_u32(oa, ob);
 }

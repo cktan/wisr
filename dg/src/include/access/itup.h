@@ -93,8 +93,6 @@ extern void index_deform_tuple_internal(TupleDesc tupleDescriptor,
                                         Datum *values, bool *isnull, char *tp,
                                         bits8 *bp, int hasnulls);
 extern IndexTuple CopyIndexTuple(IndexTuple source);
-extern IndexTuple index_truncate_tuple(TupleDesc sourceDescriptor,
-                                       IndexTuple source, int leavenatts);
 
 /*
  * Takes an infomask as argument (primarily because this needs to be usable

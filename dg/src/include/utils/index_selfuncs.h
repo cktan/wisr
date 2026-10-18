@@ -26,10 +26,5 @@ extern void btcostestimate(struct PlannerInfo *root, struct IndexPath *path,
                            double loop_count, Cost *indexStartupCost,
                            Cost *indexTotalCost, Selectivity *indexSelectivity,
                            double *indexCorrelation, double *indexPages);
-extern void hashcostestimate(struct PlannerInfo *root, struct IndexPath *path,
-                             double loop_count, Cost *indexStartupCost,
-                             Cost *indexTotalCost,
-                             Selectivity *indexSelectivity,
-                             double *indexCorrelation, double *indexPages);
 
 #endif /* INDEX_SELFUNCS_H */

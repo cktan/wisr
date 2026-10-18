@@ -948,16 +948,6 @@ static void RegisterTemporaryFile(File file) {
 }
 
 /*
- *	Called when we get a shared invalidation message on some relation.
- */
-#ifdef NOT_USED
-void FileInvalidate(File file) {
-  Assert(FileIsValid(file));
-  sm_vfd_close_all(vfd_cache());
-}
-#endif
-
-/*
  * Open a file with PathNameOpenFilePerm() and pass default file mode for the
  * fileMode parameter.
  */

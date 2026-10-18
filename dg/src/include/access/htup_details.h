@@ -739,9 +739,6 @@ extern MinimalTuple heap_copy_minimal_tuple(MinimalTuple mtup, Size extra);
 extern HeapTuple heap_tuple_from_minimal_tuple(MinimalTuple mtup);
 extern MinimalTuple minimal_tuple_from_heap_tuple(HeapTuple htup, Size extra);
 extern size_t varsize_any(void *p);
-extern HeapTuple heap_expand_tuple(HeapTuple sourceTuple, TupleDesc tupleDesc);
-extern MinimalTuple minimal_expand_tuple(HeapTuple sourceTuple,
-                                         TupleDesc tupleDesc);
 
 #ifndef FRONTEND
 /*

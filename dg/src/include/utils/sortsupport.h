@@ -348,7 +348,5 @@ extern int ssup_datum_int32_cmp(Datum x, Datum y, SortSupport ssup);
 /* Other functions in utils/sort/sortsupport.c */
 extern void PrepareSortSupportComparisonShim(Oid cmpFunc, SortSupport ssup);
 extern void PrepareSortSupportFromOrderingOp(Oid orderingOp, SortSupport ssup);
-extern void PrepareSortSupportFromIndexRel(Relation indexRel, bool reverse,
-                                           SortSupport ssup);
 
 #endif /* SORTSUPPORT_H */
