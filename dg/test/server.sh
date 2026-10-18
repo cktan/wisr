@@ -2797,6 +2797,7 @@ for c in "'NaN'::numeric|invalid input syntax for type numeric" \
   "'Infinity'::numeric|invalid input syntax for type numeric" \
   "'0.123456789012345678901234567890123456789'::numeric|value overflows numeric format" \
   "1 / 0::numeric|division by zero" \
+  "1.5 % 0.0|division by zero" \
   "sqrt(-1::numeric)|cannot take square root of a negative number" \
   "ln(0::numeric)|cannot take logarithm of zero" \
   "1::numeric(50,2)|NUMERIC precision 50 must be between 1 and 36" \

@@ -3501,3 +3501,24 @@ Datum decimal64_ceil(PG_FUNCTION_ARGS) {
 Datum decimal64_floor(PG_FUNCTION_ARGS) {
   return d64_ceil_floor(PG_GETARG_DATUM(0), true);
 }
+
+/*
+ * a mod b at the larger of their scales, the sign of a, as numeric's: in
+ * 128 bits, and a decimal64, as a remainder has no more digits before the
+ * point than the smaller of a and b, nor more places than the larger.
+ */
+Datum decimal64_mod(PG_FUNCTION_ARGS) {
+  i128 x, y;
+  int s = d64_common_scale(PG_GETARG_DATUM(0), PG_GETARG_DATUM(1), &x, &y);
+
+  if (y == 0)
+    division_by_zero(NULL);
+  return d64_make((int64)(x % y), s);
+}
+
+/* sign(decimal64): -1, 0 or 1, at scale 0, as numeric's. */
+Datum decimal64_sign(PG_FUNCTION_ARGS) {
+  int64 v = d64_value(PG_GETARG_DATUM(0));
+
+  return d64_make((v > 0) - (v < 0), 0);
+}
