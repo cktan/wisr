@@ -2783,20 +2783,20 @@ local_psql -c 'create index t18iv on t18 (iv)' 2>&1 |
   grep -q 'an index key of type interval is not supported' ||
   fail "an interval key refused"
 
-# Verify that numeric refuses what a decimal of 38 digits has no value for,
+# Verify that numeric refuses what a decimal of 36 digits has no value for,
 # as PostgreSQL words each error.
-# 1. NaN and infinity are not values; text past 38 digits is refused.
+# 1. NaN and infinity are not values; text past 36 digits is refused.
 # 2. Division by zero, the root of a negative, the logarithm of zero.
-# 3. A precision past 38, a field overflow, a result past 38 digits.
+# 3. A precision past 36, a field overflow, a result past 36 digits.
 for c in "'NaN'::numeric|invalid input syntax for type numeric" \
   "'Infinity'::numeric|invalid input syntax for type numeric" \
   "'0.123456789012345678901234567890123456789'::numeric|value overflows numeric format" \
   "1 / 0::numeric|division by zero" \
   "sqrt(-1::numeric)|cannot take square root of a negative number" \
   "ln(0::numeric)|cannot take logarithm of zero" \
-  "1::numeric(50,2)|NUMERIC precision 50 must be between 1 and 38" \
+  "1::numeric(50,2)|NUMERIC precision 50 must be between 1 and 36" \
   "12345.6::numeric(5,2)|numeric field overflow" \
-  "99999999999999999999999999999999999999::numeric * 10|value overflows numeric format"; do
+  "999999999999999999999999999999999999::numeric * 10|value overflows numeric format"; do
   local_psql -c "select ${c%%|*}" 2>&1 | grep -q "${c#*|}" ||
     fail "numeric refuses ${c%%|*}"
 done
@@ -2845,7 +2845,7 @@ local_psql -c 'create table t24 (a numeric(17,17), b numeric(36,0))' \
   "-0.99999999999999999|-999999999999999999999999999999999999,0.99999999999999999|999999999999999999999999999999999999," ] ||
   fail "numeric columns at sm's widest"
 local_psql -c 'create table t25 (a numeric(37,0))' 2>&1 |
-  grep -q 'at most 36 digits' || fail "numeric(37,0) refused"
+  grep -q 'must be between 1 and 36' || fail "numeric(37,0) refused"
 
 # Verify that a column's DEFAULT is kept in sm and fills what an INSERT or
 # UPDATE leaves to it, in later sessions too.

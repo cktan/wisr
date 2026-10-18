@@ -372,7 +372,7 @@ Const *make_const(ParseState *pstate, A_Const *aconst) {
       ErrorSaveContext numeric_escontext = {T_ErrorSaveContext};
 
       /*
-       * A numeric, if it has at most 38 digits (DECIMAL.md); else, as in
+       * A numeric, if it has at most 36 digits (DECIMAL.md); else, as in
        * DuckDB, a float8, which takes 1e300 and loses digits past its own.
        */
       if (DirectInputFunctionCallSafe(numeric_in, aconst->val.fval.fval,

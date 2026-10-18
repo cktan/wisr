@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * numeric.h
- *	  numeric, a decimal of at most 38 digits (DECIMAL.md)
+ *	  numeric, a decimal of at most 36 digits (DECIMAL.md)
  *
  * Original coding 1998, Jan Wieck.  Heavily revised 2003, Tom Lane.
  *
@@ -21,14 +21,14 @@
 struct Node;
 
 /*
- * numeric is a decimal of at most 38 digits (DECIMAL.md): a typmod's
- * precision is 1 to 38, its scale 0 to the precision, and a value's scale
- * at most 38.
+ * numeric is a decimal of at most 36 digits (DECIMAL.md): a typmod's
+ * precision is 1 to 36, its scale 0 to the precision, and a value's scale
+ * at most 36.
  */
-#define NUMERIC_MAX_PRECISION		38
+#define NUMERIC_MAX_PRECISION		36
 
 #define NUMERIC_MIN_SCALE			0
-#define NUMERIC_MAX_SCALE			38
+#define NUMERIC_MAX_SCALE			36
 
 /*
  * Limits on the scales chosen for calculation results
@@ -47,18 +47,46 @@ struct Node;
 #define NUMERIC_MIN_SIG_DIGITS		16
 
 /*
- * A numeric value: the number times 10^scale, a 128-bit two's complement
- * integer in two halves, so that it needs no 16-byte alignment, and its
- * scale.  32 bytes, passed by reference; there is no NaN or infinity.
+ * A numeric value, sm's decimal128 bit for bit (sm/sm2/TYPE.md section
+ * 3.4): a 128-bit two's complement word, in two halves so that it needs no
+ * 16-byte alignment, holding the number times 10^scale shifted left past
+ * the scale, (value << 6) | scale.  16 bytes, passed by reference; there
+ * is no NaN or infinity.
  */
 typedef struct decimal_t {
-  uint64 lo;    /* the integer's low 64 bits */
-  int64 hi;     /* its high 64 bits */
-  int16 scale;  /* 0 to NUMERIC_MAX_SCALE */
-  int16 pad[7]; /* zero */
+  uint64 lo; /* the word's low 64 bits */
+  int64 hi;  /* its high 64 bits */
 } decimal_t;
 
 typedef decimal_t *Numeric;
+
+/* The bits of a numeric's word below its value, which hold its scale. */
+#define NUMERIC_SCALE_BITS 6
+
+/* num's word, (value << 6) | scale. */
+static inline __int128 decimal_word(const decimal_t *num) {
+  return (__int128)(((unsigned __int128)(uint64)num->hi << 64) | num->lo);
+}
+
+/* num's value, the number times 10^scale. */
+static inline __int128 decimal_value(const decimal_t *num) {
+  return decimal_word(num) >> NUMERIC_SCALE_BITS;
+}
+
+/* num's scale. */
+static inline int decimal_scale(const decimal_t *num) {
+  return (int)(num->lo & ((1 << NUMERIC_SCALE_BITS) - 1));
+}
+
+/* Set num to v at scale, |v| below 10^36. */
+static inline void decimal_set(decimal_t *num, __int128 v, int scale) {
+  unsigned __int128 w =
+      (unsigned __int128)v * ((unsigned __int128)1 << NUMERIC_SCALE_BITS) +
+      (unsigned __int128)scale;
+
+  num->lo = (uint64)w;
+  num->hi = (int64)(w >> 64);
+}
 
 /*
  * fmgr interface macros

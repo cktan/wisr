@@ -1,16 +1,16 @@
 /*-------------------------------------------------------------------------
  *
  * decimal.c
- *	  numeric, as a decimal of at most 38 digits (DECIMAL.md).
+ *	  numeric, as a decimal of at most 36 digits (DECIMAL.md).
  *
- * A value is a 128-bit integer, the number times 10^scale, with its scale
- * (utils/numeric.h): there is no NaN and no infinity, and a result past 38
- * digits loses places after the point, or is an error.  What PostgreSQL's
- * numeric did with arbitrary precision this does exactly, in a 512-bit
- * integer where 128 bits do not reach, and rounds to 38 digits; ln, exp,
- * log and a power to a fraction are computed in long double.  The scale of
- * each result is the one PostgreSQL's numeric would give it, as far as 38
- * digits allow.
+ * A value is sm's decimal128, a 128-bit word holding the number times
+ * 10^scale shifted past its scale (utils/numeric.h): there is no NaN and
+ * no infinity, and a result past 36 digits loses places after the point,
+ * or is an error.  What PostgreSQL's numeric did with arbitrary precision
+ * this does exactly, in a 512-bit integer where 128 bits do not reach, and
+ * rounds to 36 digits; ln, exp, log and a power to a fraction are computed
+ * in long double.  The scale of each result is the one PostgreSQL's numeric
+ * would give it, as far as 36 digits allow.
  *
  *-------------------------------------------------------------------------
  */
@@ -404,19 +404,16 @@ static wide_t wide_div(const wide_t &a, const wide_t &b, int rscale,
 #define DEC_MAX_DIGITS NUMERIC_MAX_PRECISION
 
 /* The value of num, the number times 10^scale. */
-static i128 dec_value(const decimal_t *num) {
-  u128 v = ((u128)(uint64)num->hi << 64) | num->lo;
+static i128 dec_value(const decimal_t *num) { return decimal_value(num); }
 
-  return (i128)v;
-}
+/* The scale of num. */
+static int dec_scale(const decimal_t *num) { return decimal_scale(num); }
 
 /* A new value of v at scale, palloc'd. */
 static Numeric dec_make(i128 v, int scale) {
-  Numeric res = (Numeric)palloc0(sizeof(decimal_t));
+  Numeric res = (Numeric)palloc(sizeof(decimal_t));
 
-  res->lo = (uint64)(u128)v;
-  res->hi = (int64)((u128)v >> 64);
-  res->scale = (int16)scale;
+  decimal_set(res, v, scale);
   return res;
 }
 
@@ -424,14 +421,14 @@ static Numeric dec_make(i128 v, int scale) {
 static wide_t dec_wide(const decimal_t *num) {
   wide_t w = wide_of_int(dec_value(num));
 
-  w.scale = num->scale;
+  w.scale = dec_scale(num);
   return w;
 }
 
 /*
- * w as a value, or false with *have_error set if it has more than 38
+ * w as a value, or false with *have_error set if it has more than 36
  * digits before the point: places past the point are rounded away, half
- * away from zero, until it has at most 38 digits.
+ * away from zero, until it has at most 36 digits.
  */
 static bool dec_pack(const wide_t &w, Numeric *out, bool *have_error) {
   wide_t r = w;
@@ -467,7 +464,7 @@ overflow:
   return false;
 }
 
-/* w as a value; more than 38 digits before the point is an error. */
+/* w as a value; more than 36 digits before the point is an error. */
 static Numeric dec_from_wide(const wide_t &w) {
   Numeric res;
 
@@ -695,7 +692,7 @@ static bool parse_nondecimal(const char *str, const char *cp, int base,
 
 /* ----------------------------------------------------------------------
  * Typmods: PostgreSQL's ((precision << 16) | scale) + VARHDRSZ, with
- * 1 <= precision <= 38 and 0 <= scale <= precision.
+ * 1 <= precision <= 36 and 0 <= scale <= precision.
  * ----------------------------------------------------------------------
  */
 
@@ -766,7 +763,7 @@ static wide_t wide_strip_zeros(const wide_t &w, int floor) {
   return r;
 }
 
-/* The error for a value of more than 38 significant digits. */
+/* The error for a value of more than 36 significant digits. */
 static bool too_many_digits(Node *escontext) {
   ereturn(
       escontext, false,
@@ -780,7 +777,7 @@ static bool too_many_digits(Node *escontext) {
  *
  *	Input function for numeric: a decimal number, or an integer in base 16,
  *	8 or 2 after 0x, 0o or 0b.  NaN and infinity are not values.  A value of
- *	more than 38 significant digits is refused, not rounded, unless a typmod
+ *	more than 36 significant digits is refused, not rounded, unless a typmod
  *	rounds it.
  */
 Datum numeric_in(PG_FUNCTION_ARGS) {
@@ -837,7 +834,7 @@ Datum numeric_in(PG_FUNCTION_ARGS) {
     PG_RETURN_NULL();
   /*
    * Zeros at the end, past the point, are dropped one by one while the
-   * value has more than 38 digits or places: no other digit may be.
+   * value has more than 36 digits or places: no other digit may be.
    */
   while ((mag_digits(w.mag) > DEC_MAX_DIGITS || w.scale > NUMERIC_MAX_SCALE) &&
          w.scale > 0) {
@@ -896,7 +893,7 @@ char *numeric_normalize(Numeric num) {
   return wide_text(wide_strip_zeros(dec_wide(num), 0));
 }
 
-/* The largest number of digits a base-10,000 value of 38 digits has. */
+/* The largest number of digits a base-10,000 value of 36 digits has. */
 #define DEC_MAX_NBASE_DIGITS 21
 
 /*
@@ -1041,7 +1038,7 @@ Datum numeric(PG_FUNCTION_ARGS) {
 
 /*
  * Validate a numeric precision and scale and pack them into a typmod, with
- * soft error handling: 1 to 38 digits, a scale from 0 to the precision.
+ * soft error handling: 1 to 36 digits, a scale from 0 to the precision.
  */
 int32 make_numeric_typmod_safe(int32 precision, int32 scale, Node *escontext) {
   if (precision < 1 || precision > NUMERIC_MAX_PRECISION)
@@ -1201,7 +1198,7 @@ Datum numeric_floor(PG_FUNCTION_ARGS) {
 
 /* num's scale. */
 Datum numeric_scale(PG_FUNCTION_ARGS) {
-  PG_RETURN_INT32(PG_GETARG_NUMERIC(0)->scale);
+  PG_RETURN_INT32(dec_scale(PG_GETARG_NUMERIC(0)));
 }
 
 /* The fewest places num needs: its scale with no zeros at the end. */
@@ -1363,7 +1360,7 @@ Datum width_bucket_numeric(PG_FUNCTION_ARGS) {
 static int dec_cmp(const decimal_t *a, const decimal_t *b) {
   i128 va = dec_value(a), vb = dec_value(b);
 
-  if (a->scale == b->scale)
+  if (dec_scale(a) == dec_scale(b))
     return va < vb ? -1 : (va > vb ? 1 : 0);
   return wide_cmp(dec_wide(a), dec_wide(b));
 }
@@ -1449,7 +1446,7 @@ typedef struct hash_key_t {
 static hash_key_t dec_hash_key(const decimal_t *num) {
   hash_key_t k;
   i128 v = dec_value(num);
-  int s = num->scale;
+  int s = dec_scale(num);
 
   memset(&k, 0, sizeof(k));
   while (s > 0 && v % 10 == 0) {
@@ -1485,7 +1482,7 @@ Datum hash_numeric_extended(PG_FUNCTION_ARGS) {
 
 /*
  * The scale of a quotient, PostgreSQL's: at least 16 significant digits,
- * not below either operand's scale, at most 38.
+ * not below either operand's scale, at most 36.
  */
 static int select_div_scale(const wide_t &a, const wide_t &b) {
   nbase_t na = dec_nbase(a), nb = dec_nbase(b);
@@ -1511,17 +1508,17 @@ static bool division_by_zero(bool *have_error) {
   return false;
 }
 
-/* num1 + num2, or NULL with *have_error set past 38 digits. */
+/* num1 + num2, or NULL with *have_error set past 36 digits. */
 Numeric numeric_add_opt_error(Numeric num1, Numeric num2, bool *have_error) {
   Numeric res;
 
-  if (num1->scale == num2->scale) {
+  if (dec_scale(num1) == dec_scale(num2)) {
     i128 r;
 
     if (!__builtin_add_overflow(dec_value(num1), dec_value(num2), &r)) {
       wide_t w = wide_of_int(r);
 
-      w.scale = num1->scale;
+      w.scale = dec_scale(num1);
       return dec_pack(w, &res, have_error) ? res : NULL;
     }
   }
@@ -1531,7 +1528,7 @@ Numeric numeric_add_opt_error(Numeric num1, Numeric num2, bool *have_error) {
              : NULL;
 }
 
-/* num1 - num2, or NULL with *have_error set past 38 digits. */
+/* num1 - num2, or NULL with *have_error set past 36 digits. */
 Numeric numeric_sub_opt_error(Numeric num1, Numeric num2, bool *have_error) {
   Numeric res;
 
@@ -1542,8 +1539,8 @@ Numeric numeric_sub_opt_error(Numeric num1, Numeric num2, bool *have_error) {
 }
 
 /*
- * num1 * num2 at the sum of their scales, places past 38 digits rounded
- * away; NULL with *have_error set if the integer part is past 38 digits.
+ * num1 * num2 at the sum of their scales, places past 36 digits rounded
+ * away; NULL with *have_error set if the integer part is past 36 digits.
  */
 Numeric numeric_mul_opt_error(Numeric num1, Numeric num2, bool *have_error) {
   Numeric res;
@@ -1724,7 +1721,7 @@ static long double wide_ld(const wide_t &w) {
 }
 
 /*
- * x, a finite long double, as a value at scale rscale; past 38 digits
+ * x, a finite long double, as a value at scale rscale; past 36 digits
  * before the point is an error.
  */
 static Numeric dec_of_ld(long double x, int rscale) {
@@ -2473,7 +2470,7 @@ static dec_agg_t *final_state(FunctionCallInfo fcinfo) {
   return PG_ARGISNULL(0) ? NULL : (dec_agg_t *)PG_GETARG_POINTER(0);
 }
 
-/* sum: the sum, or null of no values; past 38 digits is an error. */
+/* sum: the sum, or null of no values; past 36 digits is an error. */
 static Datum agg_sum(FunctionCallInfo fcinfo) {
   dec_agg_t *state = final_state(fcinfo);
 

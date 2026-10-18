@@ -346,8 +346,8 @@
 # OIDS 1700 - 1799
 
 { oid => '1700', array_type_oid => '1231',
-  descr => '\'numeric(precision, scale)\' decimal of up to 38 digits',
-  typname => 'numeric', typlen => '32', typbyval => 'f', typcategory => 'N',
+  descr => '\'numeric(precision, scale)\' decimal of up to 36 digits',
+  typname => 'numeric', typlen => '16', typbyval => 'f', typcategory => 'N',
   typinput => 'numeric_in', typoutput => 'numeric_out',
   typreceive => 'numeric_recv', typsend => 'numeric_send',
   typmodin => 'numerictypmodin', typmodout => 'numerictypmodout',

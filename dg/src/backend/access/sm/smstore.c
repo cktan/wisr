@@ -530,11 +530,6 @@ static int numeric_scale_of(int32 typmod) {
   return (typmod - VARHDRSZ) & 0x7ff;
 }
 
-/* The integer of num, the number times 10^scale, as it is. */
-static __int128 numeric_value(const decimal_t *num) {
-  return (__int128)(((unsigned __int128)(uint64)num->hi << 64) | num->lo);
-}
-
 /*
  * The bits of sm's decimal datum below its value that hold its scale: 5
  * for decimal64, a numeric column of up to 17 digits, 6 for decimal128
@@ -560,32 +555,35 @@ static sm_datum_t numeric_pack(__int128 i, int32 typmod, uint8 *buf) {
 }
 
 /*
- * sm's datum for num in a column of typmod (numeric_pack()).  The value is
- * rounded to the column's scale and checked against its precision, as an
- * assignment is.
+ * sm's datum for num in a column of typmod.  The value is rounded to the
+ * column's scale and checked against its precision, as an assignment is;
+ * for decimal128 the rounded numeric is sm's datum as it is, for decimal64
+ * it is packed (numeric_pack()).
  */
 static sm_datum_t numeric_to_sm(Datum num, int32 typmod, uint8 *buf) {
   int32 t = typmod < (int32)VARHDRSZ ? NUMERIC_DEFAULT_TYPMOD : typmod;
   Numeric v = DatumGetNumeric(
       DirectFunctionCall2(numeric, num, Int32GetDatum(t)));
 
-  return numeric_pack(numeric_value(v), typmod, buf);
+  if (numeric_scale_bits(typmod) == NUMERIC_SCALE_BITS)
+    return (sm_datum_t)v;
+  return numeric_pack(decimal_value(v), typmod, buf);
 }
 
-/* The numeric of sm's datum d, of a column of typmod, palloc'd. */
+/*
+ * The numeric of sm's datum d, of a column of typmod: for decimal128 d
+ * itself, a numeric as it is, pointing into sm's tuple; for decimal64 one
+ * palloc'd.
+ */
 static Datum numeric_from_sm(sm_datum_t d, int32 typmod) {
-  Numeric res = (Numeric)palloc0(sizeof(decimal_t));
-  int bits = numeric_scale_bits(typmod);
-  __int128 w, i;
+  Numeric res;
+  int64 w;
 
-  if (bits == 5)
-    w = (int64)d;
-  else
-    memcpy(&w, (const void *)d, 16);
-  i = w >> bits;
-  res->lo = (uint64)(unsigned __int128)i;
-  res->hi = (int64)((unsigned __int128)i >> 64);
-  res->scale = (int16)(w & ((1 << bits) - 1));
+  if (numeric_scale_bits(typmod) == NUMERIC_SCALE_BITS)
+    return PointerGetDatum((const void *)d);
+  w = (int64)d;
+  res = (Numeric)palloc(sizeof(decimal_t));
+  decimal_set(res, w >> 5, (int)(w & 31));
   return NumericGetDatum(res);
 }
 
@@ -598,9 +596,9 @@ static Datum numeric_from_sm(sm_datum_t d, int32 typmod) {
 static sm_datum_t numeric_bound(Datum num, int32 typmod, bool upper,
                                 uint8 *buf) {
   const decimal_t *v = DatumGetNumeric(num);
-  int s = numeric_scale_of(typmod), vs = v->scale;
+  int s = numeric_scale_of(typmod), vs = decimal_scale(v);
   int p = numeric_precision(typmod);
-  __int128 i = numeric_value(v), limit = 1;
+  __int128 i = decimal_value(v), limit = 1;
   bool clamped = false;
 
   for (int k = 0; k < p; k++)
@@ -735,10 +733,6 @@ static void slot_from_sm(TupleTableSlot *slot) {
 static uint8_t type_code(Oid typid, int32 typmod) {
   switch (typid) {
   case NUMERICOID:
-    if (numeric_precision(typmod) > 36)
-      ereport(ERROR,
-              (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-               errmsg("a numeric column holds at most 36 digits")));
     return numeric_precision(typmod) <= 17 ? 17 : 18;
   case BOOLOID:
     return 1;

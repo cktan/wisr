@@ -1,12 +1,12 @@
--- Verify that numeric, a decimal of at most 38 digits (DECIMAL.md), gives
+-- Verify that numeric, a decimal of at most 36 digits (DECIMAL.md), gives
 -- PostgreSQL's results: its text, its scales, its errors.
 -- 1. Read literals, text with spaces, base 16 and underscores; a literal
---    past 38 digits is a float8.
+--    past 36 digits is a float8.
 -- 2. Add, subtract, multiply and divide, at PostgreSQL's scales.
 -- 3. Take remainders and integer quotients, compare across scales, and
 --    round, truncate, take ceilings and floors.
 -- 4. Take square roots, exponentials, logarithms and powers.
--- 5. Keep 38 digits, round to a typmod, and cast to and from the integers
+-- 5. Keep 36 digits, round to a typmod, and cast to and from the integers
 --    and floats.
 -- 6. Take scales, gcd, lcm and a factorial.
 -- 7. Sum, average and take deviations of numerics and integers.
@@ -15,13 +15,13 @@
 -- 10. Send values in PostgreSQL's binary format.
 -- (Errors are server.sh's: a run stops at its first.)
 SELECT 1.5, -0.001, 1e3, 1.50, '  12.340  '::numeric, '0x1F'::numeric, '1_000.5'::numeric;
-SELECT 1e300, 3.4e38, 1e37;
+SELECT 1e300, 3.4e38, 1e35;
 SELECT 1.5 + 2.25, 1.5 - 2.25, 1.5 * 2.25, 10 / 3.0, 1 / 3::numeric, 2.0 / 3;
 SELECT 7.5 % 2, -7.5 % 2, div(7.5, 2), 1.5 = 1.50, 1.5 < 1.51, abs(-2.5), -(2.5);
 SELECT round(2.5), round(-2.5), round(1.2345, 2), round(1234.5, -2), trunc(1.999, 2), trunc(-1.999), ceil(1.1), floor(-1.1);
 SELECT sqrt(2::numeric), sqrt(16::numeric), exp(1::numeric), ln(10::numeric), log(100::numeric), log(2, 8::numeric);
 SELECT power(2::numeric, 10), power(2::numeric, 0.5), power(2.0, -2), 2::numeric ^ 3;
-SELECT 99999999999999999999999999999999999999::numeric + 0, '1.000000000000000000000000000000000000000000'::numeric;
+SELECT 999999999999999999999999999999999999::numeric + 0, '1.000000000000000000000000000000000000000000'::numeric;
 SELECT 1.23::numeric(5,1), 123.45::numeric(5,2), 0.1::float8::numeric, 1.5::numeric::float8, 2.5::numeric::int4, 3.5::numeric::int8;
 SELECT scale(1.230), min_scale(1.230), trim_scale(1.230), gcd(12.0, 18), lcm(1.5, 2.25), factorial(20);
 SELECT sum(x), avg(x), min(x), max(x) FROM (VALUES (1.5), (2.25), (3)) v(x);
