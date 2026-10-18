@@ -470,15 +470,17 @@ Do not reopen these without the owner:
   lock and an sm lock is not detected, and `lock_timeout` or a
   cancel ends it; sm1's wait-for graph could take edges from
   digres to find it (`../sm/NEXT.md` §3).
-- **sm's transactions are the only ones, in the end.** As with
-  locks, `xact.c` goes: sm keeps the transaction, its
-  statements, savepoints, isolation, visibility and
-  durability, and digres keeps only what a session needs
-  around it -- its block state, memory and resource cleanup,
-  and the hooks that end a statement. PostgreSQL's
-  transaction ids, commit log, snapshots and two-phase commit
-  go with it. Until then sm's transaction follows
-  PostgreSQL's (`access/smstore.h`).
+- **sm's transactions are the only ones.** sm keeps the
+  transaction, its statements, savepoints, isolation,
+  visibility and durability; `xact.c` keeps only what a
+  session needs around it -- its block state, memory and
+  resource cleanup, and the hooks that end a statement. It
+  stays until it is empty: what it no longer needs is deleted,
+  and nothing is moved out just so the file goes
+  (`WORKNOTE.md` steps 232 to 236).
+  PostgreSQL's transaction ids, command ids, combo cids and
+  two-phase commit are gone, and every snapshot is the same
+  one (`utils/time/snapmgr.c`).
 - **A bitmap of rows in sm holds rownos.** A row in sm is a
   64-bit rowno, with no page or block: a bitmap scan maps each
   rowno to its bit in that space (`nodes/rowbitmap.h`), and

@@ -6915,3 +6915,33 @@ The second step's last part. Every MVCC snapshot was the same
 - Callers that compared snapshots, all in asserts, compare the
   same pointer now; `PushCopiedSnapshot()` pushes without a
   copy, as no snapshot changes.
+
+## Step 236: xact.c is stripped, and stays until it is empty
+
+What `xact.c` still does is digres's own: the transaction
+block's state (BEGIN, COMMIT, SAVEPOINT, the aborted block, the
+protocol's status byte), per-transaction and per-savepoint
+memory and resource owners, and the hooks that end each, sm's
+among them. It stays until it is empty: it is not moved to a
+module of another name just so the file goes, and what it no
+longer needs is deleted, as here:
+
+- **`savepointLevel`**: only `BeginInternalSubTransaction()`
+  changed it (step 232), so it was always 0, and the checks
+  against crossing a savepoint level never fired.
+- **Comments of what is gone**: NOTIFY's queue and signals, the
+  relation map, clog, logical decoding's exported snapshot, a
+  subtransaction's XID, `PrepareTransaction`; and the reason
+  for `reschedule_timeouts()`, which no longer longjmps out of a
+  signal handler.
+- **`xact.h`**: `GIDSIZE`, `IsolationIsSerializable()`,
+  `XACT_FLAGS_ACQUIREDACCESSEXCLUSIVELOCK`, `xl_xact_stats_item`,
+  and the includes the WAL records needed; `namespace.c` and
+  `relcache.c` include `storage/sinval.h` themselves.
+- **Kept**: SPI, nonatomic contexts included, as a scripting
+  language is to use it: `SPI_inside_nonatomic_context()` and the
+  advance of `transaction_timestamp()` for a transaction a
+  procedure starts. Also kept, as live: `MyXactFlags`,
+  `xact_is_sampled`, the after-trigger hooks (foreign keys run
+  as RI triggers), `AtEOXact_Enum()`.
+- `xact.c` is 2874 lines, from 3,284 before step 232.
