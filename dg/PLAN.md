@@ -169,9 +169,9 @@ rather than leave them shared until the GUC replacement.
 - `guc.c`'s own state (`guc_hashtab`, the lists) is
   `thread_local` too, so each session has its own settings and
   `SET` stays per session.
-- One exception: `data_directory_mode` is a GUC variable the
-  postmaster assigns directly, not through GUC, so it is
-  marked `/*SHARED*/`.
+- One exception: `data_directory_mode` was a GUC variable the
+  postmaster assigned directly, not through GUC, so it was
+  marked `/*SHARED*/`; it is gone (WORKNOTE.md step 228).
 
 What this leaves for step 3 is in §5.
 
@@ -281,8 +281,7 @@ process today.
   `write_nondefault_variables()` and
   `read_nondefault_variables()`, carries every setting not at
   its default. Neither carries a GUC variable assigned directly
-  instead of through GUC; look for more like
-  `data_directory_mode`.
+  instead of through GUC, as `data_directory_mode` was.
 - **The process attaches sm once**, at startup, and a session
   opens a database on it (`sm_opendb`).
 - **Then delete what the fork made necessary**, all in
@@ -562,13 +561,8 @@ Do not reopen these without the owner:
   `interval + date` and `text || anynonarray` among them.
 - `initdb` does not clean up when interrupted.
 - A reload with no configuration file logs a complaint.
-- **TODO: the SHARED variables move into the blocks.** Each
-  of the 2 `/*SHARED*/` globals is a `thread_local`: a
-  thread is given a copy when it starts, and only the thread
-  that sets it later sees the change. One the main thread
-  owns and others read goes into `pcb_t`, one value for the
-  process, as there should be; one only the main thread
-  uses, into `postmaster_tcb_t`; one a session changes, as a
-  setting, is the thread's, and goes into `tcb_t`, copied
-  from the parent's as the thread starts. Once the last is
-  moved, the copy table and the two-pass link go (§7).
+- **TODO: the last SHARED variable moves into the blocks.**
+  `progname`, the one `/*SHARED*/` global left, is a
+  `thread_local`: a thread is given a copy when it starts.
+  Its address is the copy table's anchor. Once it is moved,
+  the copy table and the two-pass link go (§7).

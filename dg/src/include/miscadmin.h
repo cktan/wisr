@@ -190,8 +190,6 @@ extern int CurrentProcPid(void);
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT bool ExitOnAnyError;
 
-extern thread_local /*SHARED*/ PGDLLIMPORT int data_directory_mode;
-
 extern thread_local /*LOCAL*/ PGDLLIMPORT int MaxConnections;
 
 extern thread_local /*LOCAL*/ PGDLLIMPORT int MyProcPid;

@@ -309,8 +309,7 @@ void checkDataDir(void) {
      * The mask was set earlier in startup to disallow group permissions on
      * newly created files and directories.  However, if group read/execute
      * are present on the data directory then modify the create modes and mask
-     * to allow group read/execute on newly created files and directories and
-     * set the data_directory_mode GUC.
+     * to allow group read/execute on newly created files and directories.
      *
      * Suppress when on Windows, because there may not be proper support for
      * Unix-y file permissions.
@@ -319,7 +318,6 @@ void checkDataDir(void) {
   SetDataDirectoryCreatePerm(stat_buf.st_mode);
 
   umask(pcb->pg_mode_mask);
-  data_directory_mode = pcb->pg_dir_create_mode;
 #endif
 
   /* Check for PG_VERSION */

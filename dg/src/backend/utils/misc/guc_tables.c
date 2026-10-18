@@ -1466,21 +1466,6 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      NULL,
      show_unix_socket_permissions},
 
-    {{"data_directory_mode", PGC_INTERNAL, PRESET_OPTIONS,
-      gettext_noop("Shows the mode of the data directory."),
-      gettext_noop("The parameter value is a numeric mode specification "
-                   "in the form accepted by the chmod and umask system "
-                   "calls. (To use the customary octal format the number "
-                   "must start with a 0 (zero).)"),
-      GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE | GUC_RUNTIME_COMPUTED},
-     &data_directory_mode,
-     0700,
-     0000,
-     0777,
-     NULL,
-     NULL,
-     show_data_directory_mode},
-
     {{"work_mem", PGC_USERSET, RESOURCES_MEM,
       gettext_noop("Sets the maximum memory to be used for query workspaces."),
       gettext_noop("This much memory can be used by each internal "

@@ -39,7 +39,6 @@ extern bool check_client_encoding(char **newval, void **extra,
                                   GucSource source);
 extern void assign_client_encoding(const char *newval, void *extra);
 extern bool check_cluster_name(char **newval, void **extra, GucSource source);
-extern const char *show_data_directory_mode(void);
 extern bool check_datestyle(char **newval, void **extra, GucSource source);
 extern void assign_datestyle(const char *newval, void *extra);
 extern bool check_debug_io_direct(char **newval, void **extra,

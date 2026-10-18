@@ -30,14 +30,11 @@ Low priority:
    (`../dg/CODE.md` §3): `shmem_t`, what the threads share and
    write; `pcb_t`, what the main thread owns and the others
    read, empty so far; and `tcb_t`, a thread's own.
-   2 `thread_local /*SHARED*/` globals are left, each copied
-   into a thread as it starts (`../dg/src/tools/shared_tls.py`).
-   One the main thread owns and others read goes to `pcb_t`;
-   one only the main thread uses, to `postmaster_tcb_t`; one a
-   session changes, a setting, to `tcb_t`; one the threads
-   write and must all see, to `shmem_t`. When the last has
-   moved, the copy table and the two-pass link go
-   (`../dg/PLAN.md` §9).
+   1 `thread_local /*SHARED*/` global is left, `progname`,
+   copied into a thread as it starts
+   (`../dg/src/tools/shared_tls.py`), whose address is the copy
+   table's anchor. When it has moved, the copy table and the
+   two-pass link go (`../dg/PLAN.md` §9).
 
 ---
 

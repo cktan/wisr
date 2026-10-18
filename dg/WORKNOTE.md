@@ -6662,3 +6662,23 @@ server is ready in about a second: the machine was loaded.
   "max_connections: start", ...) rather than going on.
 - `isolation.sh`, `run.sh`, `slt.sh` and `regress.sh` already
   fail when the server does not start, after ten seconds.
+
+## Step 228: data_directory_mode is gone
+
+`../sm/NEXT.md` §1's second item, its tenth batch.
+`data_directory_mode` was SHARED: `checkDataDir()` assigned it
+directly, not through GUC, and a session was given the
+postmaster's copy. It was the variable of a read-only setting,
+which `pg_basebackup` and `pg_receivewal` read over a
+replication connection to give their files the server's mode.
+digres refuses a replication connection and has no WAL.
+
+- The variable, its setting, `show_data_directory_mode()` and
+  the assignment in `checkDataDir()` are removed, and
+  `globals.c`'s include of `common/file_perm.h`, which only it
+  used. `SHOW data_directory_mode` is now an unrecognized
+  parameter.
+- The data directory's mode still sets every file and
+  directory digres makes: `pcb->pg_dir_create_mode`,
+  `pg_file_create_mode` and `pg_mode_mask`, as before.
+- 1 `/*SHARED*/` global is left: `progname`.

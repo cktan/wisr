@@ -928,16 +928,6 @@ bool check_cluster_name(char **newval, void **extra, GucSource source) {
  */
 
 /*
- * GUC show_hook for data_directory_mode
- */
-const char *show_data_directory_mode(void) {
-  static thread_local /*LOCAL*/ char buf[12];
-
-  snprintf(buf, sizeof(buf), "%04o", data_directory_mode);
-  return buf;
-}
-
-/*
  * GUC show_hook for unix_socket_permissions
  */
 const char *show_unix_socket_permissions(void) {
