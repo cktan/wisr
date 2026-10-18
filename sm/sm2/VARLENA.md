@@ -95,8 +95,10 @@ value, which starts at no particular alignment, so sm2 never
 pads (`SM2_DESIGN.md` §4.1):
 
 - a **short** varlena can be handed to PostgreSQL in place;
-- a **long** one is copied by the glue into aligned memory
-  before PostgreSQL reads it.
+- a **long** one is handed to PostgreSQL in place too,
+  unaligned: its header is read as one 4-byte load, which on
+  the targets, x86-64 and ARMv8, takes any address. The glue
+  copies neither form.
 
 ## 6. Examples
 

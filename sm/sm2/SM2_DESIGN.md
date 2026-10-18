@@ -747,19 +747,20 @@ schema order too.
   every datum. And a `Datum` is one pointer, so the length must
   be in the bytes it points at; an earlier draft's tag byte
   without a length could not be handed out alone.
-- **Alignment: short in place, long copied.** PostgreSQL reads
-  a 4-byte header only on data it knows is aligned, and pads
-  to make it so; an sm2 tuple starts unaligned inside a RocksDB
+- **Alignment: every varlena in place.** PostgreSQL reads a
+  4-byte header only on data it knows is aligned, and pads to
+  make it so; an sm2 tuple starts unaligned inside a RocksDB
   block, so padding would buy nothing (above). The codec
   stores every varlena in its shortest form, unpadded: up to
   126 bytes takes the 1-byte header, which PostgreSQL reads
-  unaligned, so most text goes to the executor in place; a
-  longer one takes the 4-byte header, and the glue copies it to
-  aligned memory before PostgreSQL reads it. A datum that long
-  is the costly case anyway, and a TOASTed one is copied when
-  fetched. Copying every tuple into an aligned buffer and
-  padding within it was the alternative; it would copy every
-  row to save copying the long datums. The codec takes either
+  unaligned; a longer one takes the 4-byte header, which the
+  glue hands to the executor in place too, unaligned. Its
+  header is one 4-byte load, which on the targets, x86-64 and
+  ARMv8, takes any address, as a fixed-width datum's does
+  (above). A TOASTed datum is copied when fetched. Copying
+  every tuple into an aligned buffer and padding within it was
+  the alternative; it would copy every row for loads the
+  targets do unaligned anyway. The codec takes either
   header on input — PostgreSQL makes 4-byte headers for short
   data after it detoasts — and writes the shortest.
 - **A slot holds where its varlena starts, and nothing else.**
