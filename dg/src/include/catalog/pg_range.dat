@@ -15,7 +15,7 @@
 { rngtypid => 'int4range', rngsubtype => 'int4',
   rngmultitypid => 'int4multirange', rngsubopc => 'btree/int4_ops',
   rngcanonical => 'int4range_canonical', rngsubdiff => 'int4range_subdiff' },
-{ rngtypid => 'numrange', rngsubtype => 'numeric',
+{ rngtypid => 'numrange', rngsubtype => 'decimal128',
   rngmultitypid => 'nummultirange', rngsubopc => 'btree/numeric_ops',
   rngcanonical => '-', rngsubdiff => 'numrange_subdiff' },
 { rngtypid => 'tsrange', rngsubtype => 'timestamp',

@@ -10302,7 +10302,7 @@ static void get_const_expr(Const *constval, deparse_context *context,
     }
     break;
 
-  case NUMERICOID:
+  case DECIMAL128OID:
 
     /*
      * NUMERIC can be printed without quotes if it looks like a float
@@ -10351,7 +10351,7 @@ static void get_const_expr(Const *constval, deparse_context *context,
   case INT4OID:
     /* We determined above whether a label is needed */
     break;
-  case NUMERICOID:
+  case DECIMAL128OID:
 
     /*
      * Float-looking constants will be typed as numeric, which we

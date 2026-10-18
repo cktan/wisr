@@ -165,6 +165,11 @@ LookupTypeNameExtended(ParseState *pstate,
 		/* deconstruct the name list */
 		DeconstructQualifiedName(typeName->names, &schemaname, &typname);
 
+		/* numeric is a name for a decimal, not a type (DG_DECIMAL_PLAN.md) */
+		if (strcmp(typname, "numeric") == 0 &&
+			(schemaname == NULL || strcmp(schemaname, "pg_catalog") == 0))
+			typname = pstrdup("decimal128");
+
 		if (schemaname)
 		{
 			/* Look in specific schema only */

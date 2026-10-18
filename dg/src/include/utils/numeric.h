@@ -14,6 +14,7 @@
 #ifndef _PG_NUMERIC_H_
 #define _PG_NUMERIC_H_
 
+#include "catalog/pg_type_d.h"
 #include "common/pg_prng.h"
 #include "fmgr.h"
 
@@ -59,6 +60,22 @@ typedef struct decimal_t {
 } decimal_t;
 
 typedef decimal_t *Numeric;
+
+/*
+ * The OID a client knows numeric by, PostgreSQL's: digres's decimals go
+ * to a client and come from one under it (DG_DECIMAL_PLAN.md section 3.5).
+ */
+#define NUMERIC_WIRE_OID 1700
+
+/* The OID a client is told for type typid. */
+static inline Oid numeric_wire_oid(Oid typid) {
+  return typid == DECIMAL128OID ? NUMERIC_WIRE_OID : typid;
+}
+
+/* The type a client's OID typid names. */
+static inline Oid numeric_oid_from_wire(Oid typid) {
+  return typid == NUMERIC_WIRE_OID ? DECIMAL128OID : typid;
+}
 
 /* The bits of a numeric's word below its value, which hold its scale. */
 #define NUMERIC_SCALE_BITS 6

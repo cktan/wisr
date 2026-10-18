@@ -118,6 +118,11 @@ RETURN
                    THEN null
                    ELSE (($2 - 4) >> 16) & 0xFFFF
                    END
+         WHEN 8383 /*decimal128*/ THEN
+              CASE WHEN $2 = -1
+                   THEN null
+                   ELSE (($2 - 4) >> 16) & 0xFFFF
+                   END
          WHEN 700 /*float4*/ THEN 24 /*FLT_MANT_DIG*/
          WHEN 701 /*float8*/ THEN 53 /*DBL_MANT_DIG*/
          ELSE null
@@ -130,7 +135,7 @@ CREATE FUNCTION _pg_numeric_precision_radix(typid oid, typmod int4) RETURNS inte
     RETURNS NULL ON NULL INPUT
 RETURN
   CASE WHEN $1 IN (21, 23, 20, 700, 701) THEN 2
-       WHEN $1 IN (1700) THEN 10
+       WHEN $1 IN (1700, 8383) THEN 10
        ELSE null
   END;
 
@@ -141,7 +146,7 @@ CREATE FUNCTION _pg_numeric_scale(typid oid, typmod int4) RETURNS integer
     RETURNS NULL ON NULL INPUT
 RETURN
   CASE WHEN $1 IN (21, 23, 20) THEN 0
-       WHEN $1 IN (1700) THEN
+       WHEN $1 IN (1700, 8383) THEN
             CASE WHEN $2 = -1
                  THEN null
                  ELSE ($2 - 4) & 0xFFFF

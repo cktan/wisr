@@ -22,6 +22,7 @@
 #include "utils/lsyscache.h"
 #include "utils/memdebug.h"
 #include "utils/memutils.h"
+#include "utils/numeric.h"
 
 static void printtup_startup(DestReceiver *self, int operation,
                              TupleDesc typeinfo);
@@ -216,7 +217,7 @@ void SendRowDescriptionMessage(StringInfo buf, TupleDesc typeinfo,
     pq_writestring(buf, NameStr(att->attname));
     pq_writeint32(buf, resorigtbl);
     pq_writeint16(buf, resorigcol);
-    pq_writeint32(buf, atttypid);
+    pq_writeint32(buf, numeric_wire_oid(atttypid));
     pq_writeint16(buf, att->attlen);
     pq_writeint32(buf, atttypmod);
     pq_writeint16(buf, format);

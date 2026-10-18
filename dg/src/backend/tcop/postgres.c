@@ -70,6 +70,7 @@
 #include "utils/injection_point.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
+#include "utils/numeric.h"
 #include "utils/ps_status.h"
 #include "utils/snapmgr.h"
 #include "utils/timeout.h"
@@ -2374,7 +2375,7 @@ static void exec_describe_statement_message(const char *stmt_name) {
   for (int i = 0; i < psrc->num_params; i++) {
     Oid ptype = psrc->param_types[i];
 
-    pq_sendint32(&row_description_buf, (int)ptype);
+    pq_sendint32(&row_description_buf, (int)numeric_wire_oid(ptype));
   }
   pq_endmessage_reuse(&row_description_buf);
 
@@ -3927,7 +3928,7 @@ void PostgresMain(const char *dbname, const char *username) {
       if (numParams > 0) {
         paramTypes = palloc_array(Oid, numParams);
         for (int i = 0; i < numParams; i++)
-          paramTypes[i] = pq_getmsgint(&input_message, 4);
+          paramTypes[i] = numeric_oid_from_wire(pq_getmsgint(&input_message, 4));
       }
       pq_getmsgend(&input_message);
 

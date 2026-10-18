@@ -222,7 +222,7 @@ char *format_type_extended(Oid type_oid, int32 typemod, bits16 flags) {
     buf = pstrdup("bigint");
     break;
 
-  case NUMERICOID:
+  case DECIMAL128OID:
     if (with_typemod)
       buf = printTypmod("numeric", typemod, typeform->typmodout);
     else
@@ -388,7 +388,7 @@ int32 type_maximum_size(Oid type_oid, int32 typemod) {
                pg_encoding_max_length(GetDatabaseEncoding()) +
            VARHDRSZ;
 
-  case NUMERICOID:
+  case DECIMAL128OID:
     return numeric_maximum_size(typemod);
 
   case VARBITOID:

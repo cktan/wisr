@@ -681,21 +681,21 @@
 
 # btree numeric
 
-{ amopfamily => 'btree/numeric_ops', amoplefttype => 'numeric',
-  amoprighttype => 'numeric', amopstrategy => '1',
-  amopopr => '<(numeric,numeric)', amopmethod => 'btree' },
-{ amopfamily => 'btree/numeric_ops', amoplefttype => 'numeric',
-  amoprighttype => 'numeric', amopstrategy => '2',
-  amopopr => '<=(numeric,numeric)', amopmethod => 'btree' },
-{ amopfamily => 'btree/numeric_ops', amoplefttype => 'numeric',
-  amoprighttype => 'numeric', amopstrategy => '3',
-  amopopr => '=(numeric,numeric)', amopmethod => 'btree' },
-{ amopfamily => 'btree/numeric_ops', amoplefttype => 'numeric',
-  amoprighttype => 'numeric', amopstrategy => '4',
-  amopopr => '>=(numeric,numeric)', amopmethod => 'btree' },
-{ amopfamily => 'btree/numeric_ops', amoplefttype => 'numeric',
-  amoprighttype => 'numeric', amopstrategy => '5',
-  amopopr => '>(numeric,numeric)', amopmethod => 'btree' },
+{ amopfamily => 'btree/numeric_ops', amoplefttype => 'decimal128',
+  amoprighttype => 'decimal128', amopstrategy => '1',
+  amopopr => '<(decimal128,decimal128)', amopmethod => 'btree' },
+{ amopfamily => 'btree/numeric_ops', amoplefttype => 'decimal128',
+  amoprighttype => 'decimal128', amopstrategy => '2',
+  amopopr => '<=(decimal128,decimal128)', amopmethod => 'btree' },
+{ amopfamily => 'btree/numeric_ops', amoplefttype => 'decimal128',
+  amoprighttype => 'decimal128', amopstrategy => '3',
+  amopopr => '=(decimal128,decimal128)', amopmethod => 'btree' },
+{ amopfamily => 'btree/numeric_ops', amoplefttype => 'decimal128',
+  amoprighttype => 'decimal128', amopstrategy => '4',
+  amopopr => '>=(decimal128,decimal128)', amopmethod => 'btree' },
+{ amopfamily => 'btree/numeric_ops', amoplefttype => 'decimal128',
+  amoprighttype => 'decimal128', amopstrategy => '5',
+  amopopr => '>(decimal128,decimal128)', amopmethod => 'btree' },
 
 # btree bool
 
@@ -1071,9 +1071,9 @@
   amopmethod => 'hash' },
 
 # numeric_ops
-{ amopfamily => 'hash/numeric_ops', amoplefttype => 'numeric',
-  amoprighttype => 'numeric', amopstrategy => '1',
-  amopopr => '=(numeric,numeric)', amopmethod => 'hash' },
+{ amopfamily => 'hash/numeric_ops', amoplefttype => 'decimal128',
+  amoprighttype => 'decimal128', amopstrategy => '1',
+  amopopr => '=(decimal128,decimal128)', amopmethod => 'hash' },
 
 # array_ops
 { amopfamily => 'hash/array_ops', amoplefttype => 'anyarray',

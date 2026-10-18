@@ -5320,7 +5320,7 @@ void json_categorize_type(Oid typoid, bool is_jsonb,
   case INT8OID:
   case FLOAT4OID:
   case FLOAT8OID:
-  case NUMERICOID:
+  case DECIMAL128OID:
     getTypeOutputInfo(typoid, outfuncoid, &typisvarlena);
     *tcategory = JSONTYPE_NUMERIC;
     break;

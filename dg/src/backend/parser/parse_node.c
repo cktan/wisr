@@ -378,7 +378,7 @@ Const *make_const(ParseState *pstate, A_Const *aconst) {
       if (DirectInputFunctionCallSafe(numeric_in, aconst->val.fval.fval,
                                       InvalidOid, -1,
                                       (Node *)&numeric_escontext, &val)) {
-        typeid_ = NUMERICOID;
+        typeid_ = DECIMAL128OID;
         typelen = sizeof(decimal_t);
         typebyval = false;
       } else {
