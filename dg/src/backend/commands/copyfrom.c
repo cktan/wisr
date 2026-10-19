@@ -26,6 +26,7 @@
 
 #include "access/tableam.h"
 #include "access/relation.h"
+#include "access/smstore.h"
 #include "access/table.h"
 #include "access/xact.h"
 #include "catalog/namespace.h"
@@ -466,8 +467,20 @@ static inline void CopyMultiInsertBufferFlush(CopyMultiInsertInfo *miinfo,
      * context before calling it.
      */
     oldcontext = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
-    table_multi_insert(resultRelInfo->ri_RelationDesc, slots, nused, ti_options,
-                       NULL);
+    if (RelationIsSm(resultRelInfo->ri_RelationDesc)) {
+      /*
+       * sm writes a row's index entries as it takes the row, and checks its
+       * keys then: each row is handed over at its own line, so an error
+       * names it.
+       */
+      for (i = 0; i < nused; i++) {
+        cstate->cur_lineno = buffer->linenos[i];
+        table_multi_insert(resultRelInfo->ri_RelationDesc, &slots[i], 1,
+                           ti_options, NULL);
+      }
+    } else
+      table_multi_insert(resultRelInfo->ri_RelationDesc, slots, nused,
+                         ti_options, NULL);
     MemoryContextSwitchTo(oldcontext);
 
     for (i = 0; i < nused; i++) {

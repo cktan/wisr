@@ -155,9 +155,7 @@ Owed, and blocking nothing above:
   (`../dg/WORKNOTE.md` steps 260 and 261). A COPY in file mode
   finds a duplicate when the load closes, in sm1's sort, which
   knows a stream, not the index, and has no row to read: it
-  says `key already exists`. And a COPY's error names the line
-  after its batch, not the row's, as COPY hands sm its rows a
-  batch at a time.
+  says `key already exists`.
 
 ---
 

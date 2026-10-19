@@ -2207,8 +2207,7 @@ cmp -s "$work/dupkey.out" "$work/dupkey.expected" ||
 # 2. ON CONFLICT on one index, meeting the key in another.
 # 3. COPY into a table with rows, a row at a time.
 # 4. A key of two columns, one quoted, in a table whose name is.
-# COPY's CONTEXT line is left out: it names the line after the batch, not
-# the row's, as COPY hands sm its rows a batch at a time.
+# 5. COPY's error names the line of the row, not the batch's end.
 local_psql -c 'create table dw (a int4 primary key, b text unique)' \
   -c "insert into dw values (1, 'x'), (2, 'y')" \
   -c "insert into dw values (1, 'z')" \
@@ -2217,8 +2216,8 @@ local_psql -c 'create table dw (a int4 primary key, b text unique)' \
   -c "insert into dw values (3, 'y') on conflict (a) do nothing" \
   -c "copy dw from program 'printf \"4\\tw\\n2\\tv\\n\"'" \
   -c 'create table "D w" ("K 2" int4, k text, unique ("K 2", k))' \
-  -c "insert into \"D w\" values (5, 'a''b'), (5, 'a''b')" 2>&1 |
-  grep -v '^CONTEXT:' > "$work/dupwrite.out"
+  -c "insert into \"D w\" values (5, 'a''b'), (5, 'a''b')" \
+  > "$work/dupwrite.out" 2>&1
 cat > "$work/dupwrite.expected" << 'OUT'
 CREATE TABLE
 INSERT 0 2
@@ -2231,6 +2230,7 @@ ERROR:  duplicate key value violates unique constraint "dw_b_key"
 DETAIL:  Key (b)=(y) already exists.
 ERROR:  duplicate key value violates unique constraint "dw_pkey"
 DETAIL:  Key (a)=(2) already exists.
+CONTEXT:  COPY dw, line 2
 CREATE TABLE
 ERROR:  duplicate key value violates unique constraint "D w_K 2_k_key"
 DETAIL:  Key ("K 2", k)=(5, a'b) already exists.

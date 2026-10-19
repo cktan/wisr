@@ -7598,8 +7598,27 @@ exists`. PostgreSQL names the index and the key.
   the error's fields (`duplicate_write()` in `smstore.c`).
 - **No index named, sm's words**: a load's duplicate found at
   its close, in sm1's sort, names none (`../sm/NEXT.md` §2).
-- **A COPY's CONTEXT line is wrong**, before and after: it
-  names the line after the batch COPY handed sm, not the
-  row's. `test/server.sh` leaves it out of its check.
+- **A COPY's CONTEXT line was wrong**, before and after: it
+  named the line after the batch COPY handed sm, not the
+  row's. Step 262 mends it.
 - `test/server.sh`, "a write of a taken key"; five older
   checks now look for PostgreSQL's words.
+
+## Step 262: a COPY's error names its row's line
+
+A COPY into a table in sm whose row sm refused, for a
+duplicate key, said `CONTEXT: COPY t, line 3` for a row on
+line 2: the line after the batch.
+PostgreSQL's COPY buffers rows and inserts a batch with one
+`table_multi_insert()`, then sets each row's line before its
+index entries and triggers, where heap's errors come from. sm
+writes a row's entries, and checks its keys, as it takes the
+row, inside `table_multi_insert()`.
+
+- **`copyfrom.c` hands a table in sm its rows one call each**,
+  at each row's own line (`CopyMultiInsertBufferFlush()`). The
+  load goes on as before: `smstore_load()` took the rows one at
+  a time already.
+- A million-row COPY takes as long, into an empty table and a
+  table with rows, within a few percent.
+- `test/server.sh`, "a write of a taken key", checks the line.
