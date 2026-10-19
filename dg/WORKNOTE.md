@@ -7419,3 +7419,32 @@ each row with every column deformed.
 - **Left as it was**: a bitmap index scan and an index-only
   scan read no row through it, and pass every column.
 - `test/slt/scan_columns.test`, by index scans.
+
+## Step 254: PostgreSQL 18's planner fixes since 18.6
+
+PostgreSQL's regression suite stopped the server twice in the
+planner, in `subselect` and `join`, on bugs REL_18_STABLE has
+fixed since 18.6, which digres forked from; past them `join`
+found two more. Every commit to REL_18_STABLE after 18.6
+(`724edf9bde9`) that touches `src/backend/optimizer`,
+`src/backend/parser` or `src/backend/rewrite`, 31 to
+`d7938ff3085`, is taken, each whole but for its tests.
+
+- **How**: each commit's change to a file was merged into
+  digres's copy (`git merge-file`), the two upstream versions
+  formatted as digres's file is. Where that conflicted,
+  digres's own edits to the file were reapplied to upstream's
+  new version instead.
+- **By hand**: `create_append_path()` keeps digres's single
+  child with no parallel test, and takes the commit's
+  `disabled_nodes`; two casts for C++ in `prepjointree.c`.
+  A cast `analyzejoins.c` had went with the code that
+  `9f25197bf27` removed.
+- **Not taken**: `src/tools/pgindent/typedefs.list`, which
+  digres does not keep; the tests, which `make regress` reads
+  from PostgreSQL 18's tree.
+- **The regression suite**: no crash; `subselect` and `join`
+  fail on what digres does not support (`road`, `b_star`).
+  No other file's outcome changed.
+- `test/slt/planner_upstream.test`: the queries that crashed
+  or failed.

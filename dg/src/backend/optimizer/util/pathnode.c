@@ -973,13 +973,14 @@ AppendPath *create_append_path(PlannerInfo *root, RelOptInfo *rel,
    * necessarily ordered the same as the child's, so we can inherit the
    * child's pathkeys if any, overriding whatever the caller might've said.
    * Furthermore, the Append is a no-op and will be discarded later (in
-   * setrefs.c).  Then we can inherit the child's size and cost too,
-   * effectively charging zero for the Append.
+   * setrefs.c).  Then we can inherit the child's size, cost and disabled-node
+   * count too, effectively charging zero for the Append.
    */
   if (list_length(pathnode->subpaths) == 1) {
     Path *child = (Path *)linitial(pathnode->subpaths);
 
     pathnode->path.rows = child->rows;
+    pathnode->path.disabled_nodes = child->disabled_nodes;
     pathnode->path.startup_cost = child->startup_cost;
     pathnode->path.total_cost = child->total_cost;
     pathnode->path.pathkeys = child->pathkeys;

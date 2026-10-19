@@ -87,6 +87,7 @@ typedef struct reduce_outer_joins_pass1_state {
 typedef struct reduce_outer_joins_pass2_state {
   Relids inner_reduced;  /* OJ relids reduced to plain inner joins */
   List *partial_reduced; /* List of partially reduced FULL joins */
+  Relids anti_reduced;   /* OJ relids reduced to antijoins */
 } reduce_outer_joins_pass2_state;
 
 typedef struct reduce_outer_joins_partial_state {
@@ -130,6 +131,8 @@ static bool is_safe_append_member(Query *subquery);
 static bool jointree_contains_lateral_outer_refs(PlannerInfo *root,
                                                  Node *jtnode, bool restricted,
                                                  Relids safe_upper_varnos);
+static void flatten_join_alias_vars_in_jointree(PlannerInfo *root,
+                                                Node *jtnode);
 static void perform_pullup_replace_vars(PlannerInfo *root,
                                         pullup_replace_vars_context *rvcontext,
                                         AppendRelInfo *containing_appendrel);
@@ -150,6 +153,8 @@ static void reduce_outer_joins_pass2(Node *jtnode,
                                      List *forced_null_vars);
 static void report_reduced_full_join(reduce_outer_joins_pass2_state *state2,
                                      int rtindex, Relids relids);
+static void remove_redundant_nullability_quals(Node *jtnode, Relids antijoins);
+static Node *strip_redundant_nullability_quals(Node *quals, Relids antijoins);
 static Node *remove_useless_results_recurse(PlannerInfo *root, Node *jtnode,
                                             Relids baserels,
                                             Node **parent_quals,
@@ -1214,6 +1219,24 @@ static Node *pull_up_simple_subquery(PlannerInfo *root, Node *jtnode,
   pull_up_subqueries(subroot);
 
   /*
+   * We must flatten any join alias Vars in the subquery's targetlist,
+   * because pulling up the subquery's subqueries might have changed their
+   * expansions into arbitrary expressions.  That could affect
+   * pullup_replace_vars' decisions about whether PlaceHolderVar wrappers
+   * are needed for tlist entries, and if the subquery is LATERAL, the
+   * expansions might contain lateral references that the is_simple_subquery
+   * recheck below has to see.  The latter also requires flattening join
+   * alias Vars in the jointree quals of a LATERAL subquery.  (Likely it'd
+   * be better to do flatten_join_alias_vars on the whole query tree at some
+   * earlier stage, maybe even in the rewriter; but for now let's just fix
+   * these cases here.)
+   */
+  subquery->targetList = (List *)flatten_join_alias_vars(
+      subroot, subroot->parse, (Node *)subquery->targetList);
+  if (rte->lateral)
+    flatten_join_alias_vars_in_jointree(subroot, (Node *)subquery->jointree);
+
+  /*
    * Now we must recheck whether the subquery is still simple enough to pull
    * up.  If not, abandon processing it.
    *
@@ -1235,18 +1258,6 @@ static Node *pull_up_simple_subquery(PlannerInfo *root, Node *jtnode,
      */
     return jtnode;
   }
-
-  /*
-   * We must flatten any join alias Vars in the subquery's targetlist,
-   * because pulling up the subquery's subqueries might have changed their
-   * expansions into arbitrary expressions, which could affect
-   * pullup_replace_vars' decisions about whether PlaceHolderVar wrappers
-   * are needed for tlist entries.  (Likely it'd be better to do
-   * flatten_join_alias_vars on the whole query tree at some earlier stage,
-   * maybe even in the rewriter; but for now let's just fix this case here.)
-   */
-  subquery->targetList = (List *)flatten_join_alias_vars(
-      subroot, subroot->parse, (Node *)subquery->targetList);
 
   /*
    * Adjust level-0 varnos in subquery so that we can append its rangetable
@@ -2154,6 +2165,34 @@ static bool jointree_contains_lateral_outer_refs(PlannerInfo *root,
 }
 
 /*
+ * flatten_join_alias_vars_in_jointree
+ *		Apply flatten_join_alias_vars to all quals in the given
+ *jointree, replacing them in place.  The jointree must belong to root->parse.
+ */
+static void flatten_join_alias_vars_in_jointree(PlannerInfo *root,
+                                                Node *jtnode) {
+  if (jtnode == NULL)
+    return;
+  if (IsA(jtnode, RangeTblRef))
+    return;
+  else if (IsA(jtnode, FromExpr)) {
+    FromExpr *f = (FromExpr *)jtnode;
+    ListCell *l;
+
+    foreach (l, f->fromlist)
+      flatten_join_alias_vars_in_jointree(root, (Node *)lfirst(l));
+    f->quals = flatten_join_alias_vars(root, root->parse, f->quals);
+  } else if (IsA(jtnode, JoinExpr)) {
+    JoinExpr *j = (JoinExpr *)jtnode;
+
+    flatten_join_alias_vars_in_jointree(root, j->larg);
+    flatten_join_alias_vars_in_jointree(root, j->rarg);
+    j->quals = flatten_join_alias_vars(root, root->parse, j->quals);
+  } else
+    elog(ERROR, "unrecognized node type: %d", (int)nodeTag(jtnode));
+}
+
+/*
  * Perform pullup_replace_vars everyplace it's needed in the query tree.
  *
  * Caller has already filled *rvcontext with data describing what to
@@ -2752,9 +2791,8 @@ void flatten_simple_union_all(PlannerInfo *root) {
  * If the join clause is strict for b.y, then only null-extended rows could
  * pass the upper WHERE, and we can conclude that what the query is really
  * specifying is an anti-semijoin.  We change the join type from JOIN_LEFT
- * to JOIN_ANTI.  The IS NULL clause then becomes redundant, and must be
- * removed to prevent bogus selectivity calculations, but we leave it to
- * distribute_qual_to_rels to get rid of such clauses.
+ * to JOIN_ANTI.  The IS NULL clause then becomes redundant, and is removed
+ * at the end of this phase; see remove_redundant_nullability_quals.
  *
  * Also, we get rid of JOIN_RIGHT cases by flipping them around to become
  * JOIN_LEFT.  This saves some code here and in some later planner routines;
@@ -2788,6 +2826,7 @@ void reduce_outer_joins(PlannerInfo *root) {
 
   state2.inner_reduced = NULL;
   state2.partial_reduced = NIL;
+  state2.anti_reduced = NULL;
 
   reduce_outer_joins_pass2((Node *)root->parse->jointree, state1, &state2, root,
                            NULL, NIL);
@@ -2821,6 +2860,63 @@ void reduce_outer_joins(PlannerInfo *root) {
         (List *)remove_nulling_relids((Node *)root->append_rel_list,
                                       full_join_relids, statep->unreduced_side);
   }
+
+  /*
+   * Finally, remove any quals made redundant by reducing outer joins to
+   * antijoins.
+   */
+  if (!bms_is_empty(state2.anti_reduced))
+    remove_redundant_nullability_quals((Node *)root->parse->jointree,
+                                       state2.anti_reduced);
+}
+
+/*
+ * remove_redundant_nullability_quals
+ *		Remove quals made redundant by reducing outer joins to
+ *antijoins.
+ *
+ * An IS NULL qual on a Var from the nullable side of a lower antijoin is
+ * necessarily true.  Keeping such a qual would not be wrong, but it would
+ * generate bogus selectivity estimates, and it could prevent join removal
+ * from later removing the rel(s) it references.
+ */
+static void remove_redundant_nullability_quals(Node *jtnode, Relids antijoins) {
+  if (jtnode == NULL)
+    return;
+  if (IsA(jtnode, RangeTblRef)) {
+    /* nothing to do here */
+  } else if (IsA(jtnode, FromExpr)) {
+    FromExpr *f = (FromExpr *)jtnode;
+    ListCell *l;
+
+    foreach (l, f->fromlist)
+      remove_redundant_nullability_quals((Node *)lfirst(l), antijoins);
+    f->quals = strip_redundant_nullability_quals(f->quals, antijoins);
+  } else if (IsA(jtnode, JoinExpr)) {
+    JoinExpr *j = (JoinExpr *)jtnode;
+
+    remove_redundant_nullability_quals(j->larg, antijoins);
+    remove_redundant_nullability_quals(j->rarg, antijoins);
+    j->quals = strip_redundant_nullability_quals(j->quals, antijoins);
+  } else
+    elog(ERROR, "unrecognized jointree node type: %d", (int)nodeTag(jtnode));
+}
+
+/*
+ * strip_redundant_nullability_quals
+ *		Strip redundant IS NULL quals from one implicit-AND qual list.
+ */
+static Node *strip_redundant_nullability_quals(Node *quals, Relids antijoins) {
+  List *newquals = NIL;
+
+  foreach_ptr(Node, clause, castNode(List, quals)) {
+    Var *var = find_forced_null_var(clause);
+
+    if (var && bms_overlap(var->varnullingrels, antijoins))
+      continue;
+    newquals = lappend(newquals, clause);
+  }
+  return (Node *)newquals;
 }
 
 /*
@@ -2889,9 +2985,10 @@ static reduce_outer_joins_pass1_state *reduce_outer_joins_pass1(Node *jtnode) {
  *
  * Returns info in state2 about outer joins that were successfully simplified.
  * Joins that were fully reduced to inner joins are all added to
- * state2->inner_reduced.  If a full join is reduced to a left join,
- * it needs its own entry in state2->partial_reduced, since that will
- * require custom processing to remove only the correct nullingrel markers.
+ * state2->inner_reduced, and joins that became antijoins are all added to
+ * state2->anti_reduced.  If a full join is reduced to a left join, it also
+ * needs its own entry in state2->partial_reduced, since that will require
+ * custom processing to remove only the correct nullingrel markers.
  */
 static void reduce_outer_joins_pass2(Node *jtnode,
                                      reduce_outer_joins_pass1_state *state1,
@@ -3034,7 +3131,8 @@ static void reduce_outer_joins_pass2(Node *jtnode,
 
     /*
      * Apply the jointype change, if any, to both jointree node and RTE.
-     * Also, if we changed an RTE to INNER, add its RTI to inner_reduced.
+     * Also, if we changed an RTE to INNER, add its RTI to inner_reduced;
+     * if we changed it to ANTI, add its RTI to anti_reduced.
      */
     if (rtindex && jointype != j->jointype) {
       RangeTblEntry *rte = rt_fetch(rtindex, root->parse->rtable);
@@ -3044,6 +3142,8 @@ static void reduce_outer_joins_pass2(Node *jtnode,
       rte->jointype = jointype;
       if (jointype == JOIN_INNER)
         state2->inner_reduced = bms_add_member(state2->inner_reduced, rtindex);
+      else if (jointype == JOIN_ANTI)
+        state2->anti_reduced = bms_add_member(state2->anti_reduced, rtindex);
     }
     j->jointype = jointype;
 
