@@ -18,7 +18,7 @@
 SELECT pg_typeof(1.5)::oid, pg_typeof(0.00000000000000001)::oid, pg_typeof(123456789012345678.5)::oid, pg_typeof(1e3)::oid, 1.23456::numeric, pg_typeof(1.5::numeric(18,2))::oid;
  pg_typeof | pg_typeof | pg_typeof | pg_typeof | numeric | pg_typeof 
 -----------+-----------+-----------+-----------+---------+-----------
-      1700 |      1700 |      8383 |       701 |   1.235 |      8383
+      1700 |      1700 |      8383 |       701 | 1.23456 |      8383
 (1 row)
 
 SELECT 'numeric'::regtype::oid, 'decimal(5)'::regtype::oid, 'numeric(17,2)'::regtype::oid, 'numeric(18,2)'::regtype::oid, format_type(1700, ((10 << 16) | 2) + 4), format_type(8383, ((30 << 16) | 5) + 4), format_type(1700, -1);

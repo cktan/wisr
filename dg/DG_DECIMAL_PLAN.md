@@ -65,18 +65,20 @@ of §5, but for step 6's timing, which was not taken.
 
   | Written | Type | typmod |
   | --- | --- | --- |
-  | `numeric`, `decimal` | `decimal64` | `(17, 3)` |
+  | `numeric`, `decimal` | `decimal64` | none; a column's `(17, 3)` |
   | `numeric(p)`, `decimal(p)` | as `(p, 0)` | |
   | `numeric(p, s)`, `p <= 17` | `decimal64` | `(p, s)` |
   | `numeric(p, s)`, `18 <= p <= 36` | `decimal128` | `(p, s)` |
   | `numeric(p, s)`, `p > 36` | refused | |
 
-- **A bare `numeric` means `decimal64(17, 3)` everywhere**,
-  not only in a column (`DECIMAL.md` §2.3): there is no
-  unconstrained numeric. So `x::numeric` rounds to 3 places
-  and refuses past 14 integer digits, where PostgreSQL's would
-  keep them; a user who wants more says so, as
-  `x::numeric(30, 0)`.
+- **A bare `numeric` is a `decimal64` with no typmod**: a
+  value keeps its scale, as PostgreSQL's does, and a column of
+  it is `numeric(17, 3)` (`DECIMAL.md` §2.3). It was
+  `decimal64(17, 3)` everywhere, a cast included, until
+  `x::numeric` rounding to 3 places failed PostgreSQL's `int2`,
+  `int4` and `int8` (`WORKNOTE.md` step 256). It still refuses
+  past 17 digits, where PostgreSQL's would keep them; a user
+  who wants more says so, as `x::numeric(30, 0)`.
 - **A typmod applies where PostgreSQL applies one**: to a
   column and to a cast. A function's argument and result
   ignore it, as in PostgreSQL, so `f(numeric)` takes a
@@ -282,11 +284,13 @@ suite before the next.
    `float8` (§3.1).
 4. **The OID on the wire.** Settled: **1700 for both**, and a
    client's 1700 a `decimal128` (§3.5).
-5. **A bare `numeric`.** Settled: **`decimal64(17, 3)`
-   everywhere** (§3.1), a cast included, so there is no
-   unconstrained numeric; a user who needs more digits names
-   them. Making it `decimal128` outside a column, as
-   PostgreSQL's unbounded numeric, was the alternative.
+5. **A bare `numeric`.** Settled: **a `decimal64` with no
+   typmod**, its value keeping its scale, and a column of it
+   `numeric(17, 3)` (§3.1); first settled as `decimal64(17,
+   3)` everywhere, a cast included, and changed for
+   PostgreSQL's scale (`WORKNOTE.md` step 256). Making it
+   `decimal128` outside a column, as PostgreSQL's unbounded
+   numeric, was the alternative.
 6. **The name a user sees.** Settled: **`numeric(p, s)`** for
    both types (§3.5), so tools that look for `numeric` keep
    working. `decimal64(p, s)` and `decimal128(p, s)`, true to

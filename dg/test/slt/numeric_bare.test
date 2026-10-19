@@ -1,0 +1,39 @@
+# Verify a bare numeric keeps a value's scale, as PostgreSQL's does, while
+# a column of it is stored as numeric(17, 3), as sm needs a scale.
+# 1. A cast to a bare numeric, of a literal, of text and of a float8,
+#    keeps the scale the value has.
+# 2. A bare numeric column rounds what it is given to three places, and
+#    says numeric(17,3).
+# 3. CREATE TABLE AS from a bare numeric expression makes such a column.
+
+query TTTT nosort
+select -2.5::numeric, '1.23456'::numeric, '0x1F'::numeric, 0.1::float8::numeric
+----
+-2.5	1.23456	31	0.1
+
+statement ok
+create table n (a numeric)
+
+statement ok
+insert into n values (2.5), (1.23456), ('7')
+
+query T nosort
+select a from n order by a
+----
+1.235
+2.500
+7.000
+
+query T nosort
+select format_type(atttypid, atttypmod) from pg_attribute
+  where attrelid = 'n'::regclass and attname = 'a'
+----
+numeric(17,3)
+
+statement ok
+create table m as select 1.5::numeric as b
+
+query TT nosort
+select b, pg_typeof(b) from m
+----
+1.500	numeric

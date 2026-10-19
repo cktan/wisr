@@ -35,15 +35,18 @@ Reviewed; §4 records the answers. All of §3 is built
   (`DG_DECIMAL_PLAN.md` §3.1): `decimal64` takes PostgreSQL's
   oid for numeric, 1700, `decimal128` 8383.
 - **`numeric` and `decimal` are names only**, resolved where a
-  type name is (`parse_type.c`): a bare one is
-  `decimal64(17, 3)`, everywhere, a cast included;
-  `numeric(p, s)` is `decimal64` up to 17 digits, `decimal128`
-  up to 36, and refused past them.
+  type name is (`parse_type.c`): a bare one is `decimal64`
+  with no typmod, so a cast to it keeps a value's scale, as
+  PostgreSQL's does: `-2.5::numeric` is `-2.5`. A column of it
+  is `numeric(17, 3)` (§2.3). `numeric(p, s)` is `decimal64`
+  up to 17 digits, `decimal128` up to 36, and refused past
+  them.
 - **A client sees `numeric`**: oid 1700 for either type, 1231
   for an array of either, and `numeric(p, s)` as its name, so a
   client, a driver or a query that says `numeric` is unchanged
-  but for a bare `numeric`'s scale. A parameter a client types
-  1700 is a `decimal128`.
+  but for a bare `numeric` column's scale and a bare
+  `numeric`'s 17 digits. A parameter a client types 1700 is a
+  `decimal128`.
 - **Their text is PostgreSQL's**, and so is their binary wire
   format (`numeric_send`, `numeric_recv`), which drivers
   decode: the value is converted to PostgreSQL's base-10000
@@ -96,9 +99,10 @@ typedef struct decimal_t {  /* decimal128's, in two halves */
   scan's values, and statistics' values.
 - **An unconstrained `numeric` column is `numeric(17, 3)`**,
   the widest of sm2's `decimal64`, as sm2 requires a typmod
-  (§4.1); so is any bare `numeric` now (§2.1). A value with
-  more places is rounded to three, as an assignment to
-  `numeric(17, 3)` is.
+  (§4.1): `smstore.c` gives it that typmod when the table is
+  made, so a value with more places is rounded to three, as
+  an assignment to `numeric(17, 3)` is. A bare `numeric`
+  anywhere else keeps its value's scale (§2.1).
 
 ### 2.4 Literals and casts
 

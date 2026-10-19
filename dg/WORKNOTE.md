@@ -7466,3 +7466,24 @@ step 254's were, cleanly.
   typmod printed at scale 3, as `int2` and `int8` do
   (`test/regress/README.md`).
 - `test/slt/adt_upstream.test`.
+
+## Step 256: a bare numeric keeps its value's scale
+
+A bare `numeric` was `decimal64(17, 3)` everywhere, a cast
+included (`DG_DECIMAL_PLAN.md` §3.1), so `-2.5::numeric` was
+`-2.500` and `'1.23456'::numeric` `1.235`, where PostgreSQL
+keeps the scale written: its `int2`, `int4` and `int8` failed
+on it. A value carries its scale (`DECIMAL.md` §2.2), so a
+bare `numeric` needs none of its own.
+
+- **`parse_type.c`** gives a bare `numeric` no typmod: a
+  `decimal64` whose value keeps its scale, at most 17 digits.
+- **A column of it is still `numeric(17, 3)`**: `smstore.c`
+  gave an unconstrained column that typmod already, as sm2
+  needs a scale to store at, and a `CREATE TABLE AS` from a
+  bare `numeric` makes one.
+- **Expected output**: `select_decimal64`, `select_numeric`,
+  `select_text` and `select_jsonb_numbers`, and two checks in
+  `server.sh`, print the scale written, as PostgreSQL does.
+- PostgreSQL's `int2`, `int4` and `int8` pass.
+- `test/slt/numeric_bare.test`.

@@ -109,12 +109,12 @@ takes every planner fix since.
   `ahoj`, not the empty string (`bfb08d0946e`). Both are taken
   (`../../WORKNOTE.md` step 255): `text` passes, and `int4`
   fails only as `int2` and `int8` do, below.
-- **`int2`, `int4` and `int8`: a numeric literal prints at
-  scale 3.**
-  `VALUES (-2.5::numeric)` prints `-2.500` where PostgreSQL
-  prints `-2.5`: a numeric of no typmod is digres's
-  `numeric(17, 3)` since the decimals were reworked
-  (`../../DECIMAL.md`).
+- Fixed since this run: `int2`, `int4` and `int8` printed
+  `-2.5::numeric` as `-2.500`, a bare numeric being
+  `numeric(17, 3)` everywhere since the decimals were
+  reworked; it keeps its value's scale now, and only a column
+  of it is `numeric(17, 3)` (`../../WORKNOTE.md` step 256).
+  The three pass.
 - Fixed before: `SUBSTRING ... SIMILAR` with no match
   (step 196), psql 18's `\d` and `pg_partition_ancestors()`
   (step 198), the time zone abbreviations (step 199), and
@@ -166,10 +166,8 @@ Every file starts with these failures, so 8 of
 
 ### What to do first
 
-By files unblocked for the work, the cheapest first:
-
-1. **A numeric of no typmod printed as given**, not at scale
-   3: `int2`, `int4` and `int8`, which passed.
+Nothing cheap is left: the four files that passed on
+2026-10-17 and failed here pass again (steps 255, 256).
 
 Done since 2026-10-17: the crash in `transactions`;
 `CREATE TABLE AS` and `SELECT INTO` (step 203), which make

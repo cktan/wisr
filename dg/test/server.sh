@@ -1983,12 +1983,12 @@ local_psql -c 'create table t15 (a int4)' >> "$work/stats.out" 2>&1
 # Verify that a type named by its schema, as the SQL standard's names are
 # (integer is pg_catalog.int4), is found among the compiled-in types.
 # 1. Casts to integer, bigint, real, double precision, varchar(3) and
-#    numeric give their values, numeric's at numeric(17,3)'s scale.
+#    numeric give their values, numeric's at the scale it is written with.
 # 2. pg_catalog.int4 is found; public.int4 is not a type, and nope.int4
 #    names no schema.
 [ "$(local_psql -c "select 1::integer, 2::bigint, 1.5::real,
       2.5::double precision, 'xyz1'::varchar(3), 1.25::numeric" 2>&1)" = \
-  "1|2|1.5|2.5|xyz|1.250" ] || fail "casts to the standard's type names"
+  "1|2|1.5|2.5|xyz|1.25" ] || fail "casts to the standard's type names"
 [ "$(local_psql -c "select '7'::pg_catalog.int4" 2>&1)" = 7 ] ||
   fail "a type qualified by its schema"
 local_psql -c "select '1'::public.int4" 2>&1 |
@@ -2079,7 +2079,7 @@ local_psql -c "set timezone = 'UTC'" \
       xpath('/a', null::xml) is null" > "$work/sqlbodies.out" 2>&1
 cat > "$work/sqlbodies.expected" <<'OUT'
 SET
-a1|1a|atrue|x1.500|'42'|'true'|NULL|'7'
+a1|1a|atrue|x1.5|'42'|'true'|NULL|'7'
    ab|ab   ||3|2|2.0000000000000000|3.0000000000000000|24|16|5
 2024-02-01|2024-01-02 00:00:00|2024-01-01 10:00:00|11:00:00|2024-01-02 00:00:00|2024-01-01 08:00:00+00|11:00:00+02|2024-01-02 00:00:00+00
 10.0.0.11|0/11|t|12
