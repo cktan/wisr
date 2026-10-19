@@ -31,6 +31,9 @@ if [ ! -x "$src/pg_regress" ]; then
 fi
 # PostgreSQL 18's psql, the one pg_regress is told to run too.
 bindir=$pg/src/bin/psql
+# Its libpq, the tree's own: a system libpq of an older PostgreSQL lacks
+# what psql 18 calls, and psql then fails to start.
+export LD_LIBRARY_PATH=$pg/src/interfaces/libpq${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
 files=("$@")
 [ ${#files[@]} -gt 0 ] || files=($(sed -n 's/^test: //p' \
   "$src/parallel_schedule" | tr ' ' '\n' | grep -vx 'test_setup'))
