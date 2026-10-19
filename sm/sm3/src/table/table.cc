@@ -346,12 +346,22 @@ int keys_equal(const sm3::index_def_t &x, const entry_t &a, const entry_t &b) {
   return 1;
 }
 
-/* Add index i's entry e for the row r at rowno. */
+/*
+ * Add index i's entry e for the row r at rowno. A key the index holds
+ * already is SM_ERR_DUPKEY, with the index in sm1::errdup().
+ */
 int add_entry(sm3::table_t *t, size_t i, const entry_t &e, const vals_t &r,
               uint64_t rowno) {
   picked_t inc(r, t->def->indexes[i].include_attnums);
-  return sm2::idx_insert(t->indexes[i], e.d(), e.null(), rowno, inc.d(),
-                         inc.null());
+  if (sm2::idx_insert(t->indexes[i], e.d(), e.null(), rowno, inc.d(),
+                      inc.null()) == 0) {
+    return 0;
+  }
+  // Which index has the key, for the host to say it.
+  if (sm1::errnum() == sm1::SM_ERR_DUPKEY) {
+    sm1::setdup({t->def->indexes[i].oid, {0, 0}, 0});
+  }
+  return -1;
 }
 
 /*
@@ -920,6 +930,11 @@ int tbl_load_add(loader_t *l, std::span<const sm2::datum_t> values,
     picked_t inc(row, table->def->indexes[i].include_attnums);
     if (sm2::idx_load(table->indexes[i], l->load, l->streams[i], e.d(),
                       e.null(), r, inc.d(), inc.null()) != 0) {
+      // Which index has the key, when it is found now, not at the
+      // close.
+      if (sm1::errnum() == sm1::SM_ERR_DUPKEY) {
+        sm1::setdup({table->def->indexes[i].oid, {0, 0}, 0});
+      }
       return -1;
     }
   }

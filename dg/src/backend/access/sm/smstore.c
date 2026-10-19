@@ -2085,6 +2085,43 @@ uint64 smstore_tid_to_rowno(ItemPointer tid) {
          ItemPointerGetOffsetNumber(tid) - 1;
 }
 
+/*
+ * Raise the error of a write to rel that sm refused, a unique index holding
+ * the key already: PostgreSQL's, naming the index sm names, with the key of
+ * the row in slot, all of whose columns are read; sm's words if it names no
+ * index, or there is no row, as at a bulk load's end.
+ */
+[[noreturn]] static void duplicate_write(Relation rel, TupleTableSlot *slot) {
+  uint64_t indexoid, rownos[2];
+  Datum values[INDEX_MAX_KEYS];
+  bool isnull[INDEX_MAX_KEYS];
+
+  sm_errdup(&indexoid, rownos);
+  if (indexoid == 0 || slot == NULL)
+    ereport(ERROR,
+            (errcode(ERRCODE_UNIQUE_VIOLATION),
+             errmsg("duplicate key value violates a unique index on \"%s\"",
+                    RelationGetRelationName(rel)),
+             errdetail("%s", sm_errmsg())));
+  Relation index = index_open((Oid)indexoid, AccessShareLock);
+
+  for (int i = 0; i < IndexRelationGetNumberOfKeyAttributes(index); i++) {
+    AttrNumber attno = index->rd_index->indkey.values[i];
+
+    values[i] = slot->tts_values[attno - 1];
+    isnull[i] = slot->tts_isnull[attno - 1];
+  }
+  char *key = BuildIndexValueDescription(index, values, isnull);
+
+  ereport(ERROR,
+          (errcode(ERRCODE_UNIQUE_VIOLATION),
+           errmsg("duplicate key value violates unique constraint \"%s\"",
+                  RelationGetRelationName(index)),
+           key ? errdetail("Key %s already exists.", key) : 0,
+           errtableconstraint(rel, RelationGetRelationName(index))));
+  pg_unreachable();
+}
+
 /* Insert the slot's row into rel, a table in sm; its tid is its rowno. */
 void smstore_insert(Relation rel, TupleTableSlot *slot) {
   sm_tbl_t *tbl = open_table(RelationGetRelid(rel), SM_LOCKMODE_IX);
@@ -2103,11 +2140,7 @@ void smstore_insert(Relation rel, TupleTableSlot *slot) {
                              &rowno);
       }) != 0) {
     if (sm_errnum() == SM_ERR_DUPKEY)
-      ereport(ERROR,
-              (errcode(ERRCODE_UNIQUE_VIOLATION),
-               errmsg("duplicate key value violates a unique index on \"%s\"",
-                      RelationGetRelationName(rel)),
-               errdetail("%s", sm_errmsg())));
+      duplicate_write(rel, slot);
     sm_error("insert a row");
   }
   smstore_rowno_to_tid(rowno, &slot->tts_tid);
@@ -2147,11 +2180,7 @@ bool smstore_insert_arbiter(Relation rel, TupleTableSlot *slot, List *arbiters,
   });
   if (rc < 0) {
     if (sm_errnum() == SM_ERR_DUPKEY)
-      ereport(ERROR,
-              (errcode(ERRCODE_UNIQUE_VIOLATION),
-               errmsg("duplicate key value violates a unique index on \"%s\"",
-                      RelationGetRelationName(rel)),
-               errdetail("%s", sm_errmsg())));
+      duplicate_write(rel, slot);
     sm_error("insert a row");
   }
   if (rc == 1) {
@@ -2162,14 +2191,13 @@ bool smstore_insert_arbiter(Relation rel, TupleTableSlot *slot, List *arbiters,
   return false;
 }
 
-/* Raise the error of a bulk load's call that failed, on rel. */
-static void load_error(Relation rel, const char *what) {
+/*
+ * Raise the error of a bulk load's call that failed, on rel: of the row in
+ * slot, or of none, as at the load's end.
+ */
+static void load_error(Relation rel, TupleTableSlot *slot, const char *what) {
   if (sm_errnum() == SM_ERR_DUPKEY)
-    ereport(ERROR,
-            (errcode(ERRCODE_UNIQUE_VIOLATION),
-             errmsg("duplicate key value violates a unique index on \"%s\"",
-                    RelationGetRelationName(rel)),
-             errdetail("%s", sm_errmsg())));
+    duplicate_write(rel, slot);
   sm_error(what);
 }
 
@@ -2193,7 +2221,7 @@ void smstore_load(Relation rel, TupleTableSlot **slots, int n) {
   if (load_oid != oid) {
     /* Waits for the table's other users, if it is empty. */
     if (waiting([&] { return sm_tbl_load_begin(tbl); }) != 0)
-      load_error(rel, "begin a bulk load");
+      load_error(rel, NULL, "begin a bulk load");
     load_oid = oid;
   }
   for (int i = 0; i < n; i++) {
@@ -2208,7 +2236,7 @@ void smstore_load(Relation rel, TupleTableSlot **slots, int n) {
           return sm_tbl_load_add(tbl, row, slot->tts_isnull, slot->tts_nvalid,
                                  &rowno);
         }) != 0)
-      load_error(rel, "load a row");
+      load_error(rel, slot, "load a row");
     smstore_rowno_to_tid(rowno, &slot->tts_tid);
     slot->tts_tableOid = oid;
   }
@@ -2225,7 +2253,7 @@ void smstore_load_end(Relation rel) {
     return;
   load_oid = InvalidOid;
   if (sm_tbl_load_end(open_table(oid, SM_LOCKMODE_IX)) != 0)
-    load_error(rel, "end a bulk load");
+    load_error(rel, NULL, "end a bulk load");
 }
 
 /*
@@ -5556,10 +5584,12 @@ bool smstore_fetch_row(Relation rel, ItemPointer tid, int natts,
  * for smstore_lock_latest() to read; sm holds its lock.  The statement has
  * already changed the row: TM_SelfModified, by this command, so the
  * executor passes over it.  At the other levels sm has aborted the
- * transaction instead, which is an error here, as any other failure is.
+ * transaction instead, which is an error here, as any other failure is; a
+ * duplicate key is the new row's, in slot.
  */
 static TM_Result write_result(Relation rel, uint64 rowno, int rc,
-                              TM_FailureData *tmfd, const char *what) {
+                              TupleTableSlot *slot, TM_FailureData *tmfd,
+                              const char *what) {
   if (rc == 0)
     return TM_Ok;
   tmfd->xmax = InvalidTransactionId;
@@ -5573,11 +5603,7 @@ static TM_Result write_result(Relation rel, uint64 rowno, int rc,
   case SM_ERR_NOTFOUND:
     return TM_Deleted;
   case SM_ERR_DUPKEY:
-    ereport(ERROR,
-            (errcode(ERRCODE_UNIQUE_VIOLATION),
-             errmsg("duplicate key value violates a unique index on \"%s\"",
-                    RelationGetRelationName(rel)),
-             errdetail("%s", sm_errmsg())));
+    duplicate_write(rel, slot);
   default:
     sm_error(what);
   }
@@ -5633,7 +5659,7 @@ TM_Result smstore_update(Relation rel, ItemPointer tid, TupleTableSlot *slot,
 
   if (rc == 0)
     slot->tts_tid = *tid;
-  return write_result(rel, rowno, rc, tmfd, "update a row");
+  return write_result(rel, rowno, rc, slot, tmfd, "update a row");
 }
 
 /*
@@ -5648,7 +5674,7 @@ TM_Result smstore_delete(Relation rel, ItemPointer tid, TM_FailureData *tmfd) {
 
   if (rc == 0)
     keep_row(RelationGetRelid(rel), rowno, old.data(), old.size());
-  return write_result(rel, rowno, rc, tmfd, "delete a row");
+  return write_result(rel, rowno, rc, NULL, tmfd, "delete a row");
 }
 
 /*

@@ -1172,8 +1172,10 @@ SQL
 local_psql -c 'drop index t3_a_idx1' > "$work/index.out" 2>&1
 grep -qx 'DROP INDEX' "$work/index.out" || fail "index default name"
 local_psql -c 'insert into t3 values (2, 10)' > "$work/index.out" 2>&1
-grep -q 'duplicate key value violates a unique index on "t3"' \
-  "$work/index.out" || fail "unique index"
+grep -q 'duplicate key value violates unique constraint "t3_b"' \
+  "$work/index.out" &&
+  grep -qx 'DETAIL:  Key (b)=(10) already exists.' "$work/index.out" ||
+  fail "unique index"
 local_psql -c 'drop index t3_b' -c 'insert into t3 values (2, 10)' \
   -c 'drop index t3_b' > "$work/index.out" 2>&1
 grep -qx 'INSERT 0 1' "$work/index.out" &&
@@ -2198,6 +2200,43 @@ ROLLBACK
 OUT
 cmp -s "$work/dupkey.out" "$work/dupkey.expected" ||
   fail "a duplicated key's build"
+
+# A write of a key a unique index holds fails with PostgreSQL's words: the
+# index, and the row's key in it.
+# 1. An insert, and an update to a taken key.
+# 2. ON CONFLICT on one index, meeting the key in another.
+# 3. COPY into a table with rows, a row at a time.
+# 4. A key of two columns, one quoted, in a table whose name is.
+# COPY's CONTEXT line is left out: it names the line after the batch, not
+# the row's, as COPY hands sm its rows a batch at a time.
+local_psql -c 'create table dw (a int4 primary key, b text unique)' \
+  -c "insert into dw values (1, 'x'), (2, 'y')" \
+  -c "insert into dw values (1, 'z')" \
+  -c 'update dw set a = 2 where a = 1' \
+  -c "insert into dw values (1, 'y') on conflict (a) do nothing" \
+  -c "insert into dw values (3, 'y') on conflict (a) do nothing" \
+  -c "copy dw from program 'printf \"4\\tw\\n2\\tv\\n\"'" \
+  -c 'create table "D w" ("K 2" int4, k text, unique ("K 2", k))' \
+  -c "insert into \"D w\" values (5, 'a''b'), (5, 'a''b')" 2>&1 |
+  grep -v '^CONTEXT:' > "$work/dupwrite.out"
+cat > "$work/dupwrite.expected" << 'OUT'
+CREATE TABLE
+INSERT 0 2
+ERROR:  duplicate key value violates unique constraint "dw_pkey"
+DETAIL:  Key (a)=(1) already exists.
+ERROR:  duplicate key value violates unique constraint "dw_pkey"
+DETAIL:  Key (a)=(2) already exists.
+INSERT 0 0
+ERROR:  duplicate key value violates unique constraint "dw_b_key"
+DETAIL:  Key (b)=(y) already exists.
+ERROR:  duplicate key value violates unique constraint "dw_pkey"
+DETAIL:  Key (a)=(2) already exists.
+CREATE TABLE
+ERROR:  duplicate key value violates unique constraint "D w_K 2_k_key"
+DETAIL:  Key ("K 2", k)=(5, a'b) already exists.
+OUT
+cmp -s "$work/dupwrite.out" "$work/dupwrite.expected" ||
+  fail "a write of a taken key"
 mkfifo "$work/alter.in"
 local_psql < "$work/alter.in" > "$work/alter2.out" 2>&1 &
 alter=$!
@@ -3255,7 +3294,7 @@ local_psql -c 'create table tw1 (a int4 primary key, b int4 not null)' \
   "11|110 12|121 UPDATE 2 121 11|110 DELETE 1 3 4 12 " ] ||
   fail "update a key, delete"
 local_psql -c 'update tw1 set a = 4 where a = 3' 2>&1 |
-  grep -q 'duplicate key value violates a unique index on "tw1"' ||
+  grep -q 'duplicate key value violates unique constraint "tw1_pkey"' ||
   fail "update to a taken key"
 local_psql -c 'update tw1 set b = null where a = 3' 2>&1 |
   grep -q 'violates not-null constraint' || fail "update to null"
@@ -3468,7 +3507,7 @@ local_psql -c 'create table tu1 (id int4 primary key, name text unique, n int4)'
   fail "on conflict do update"
 local_psql -c "insert into tu1 values (9, 'one', 7) on conflict (id)
     do update set n = 0" 2>&1 |
-  grep -q 'duplicate key value violates a unique index on "tu1"' ||
+  grep -q 'duplicate key value violates unique constraint "tu1_name_key"' ||
   fail "on conflict with another unique index"
 [ "$(local_psql -c "insert into tu1 values (5, 'five', 1), (1, 'q', 100),
     (6, 'six', 1) on conflict (id) do update set n = excluded.n" \
@@ -3614,7 +3653,7 @@ local_psql -c "\\copy tc1 to '$work/copy_out.tsv'" >> "$work/copy.out" 2>&1
 [ "$(wc -l < "$work/copy_out.tsv")" = 5 ] &&
   grep -qx "$(printf '6\t60\tsix')" "$work/copy_out.tsv" || fail "psql's copy"
 local_psql -c "copy tc1 from '$work/copy_dup.tsv'" 2>&1 |
-  grep -q 'duplicate key value violates a unique index on "tc1"' ||
+  grep -q 'duplicate key value violates unique constraint "tc1_pkey"' ||
   fail "copy of a taken key"
 local_psql -c "copy tc1 from '$work/copy_null.tsv'" 2>&1 |
   grep -q 'violates not-null constraint' || fail "copy of a null"
@@ -3712,7 +3751,7 @@ exec 4>&-
 wait $reader
 printf '100001\t1\tnew\n77\t7\tagain\n' > "$work/load_more.tsv"
 local_psql -c "copy tl1 from '$work/load_more.tsv'" 2>&1 |
-  grep -q 'duplicate key value violates a unique index on "tl1"' ||
+  grep -q 'duplicate key value violates unique constraint "tl1_pkey"' ||
   fail "copy of a taken key into a table with rows"
 [ "$(local_psql -c 'select count(*) from tl1')" = 100000 ] ||
   fail "a failed copy into a table with rows"

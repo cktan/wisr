@@ -503,8 +503,9 @@ TEST_CASE("a write that fails partway is the caller's to roll back") {
   // Verify the contract: no savepoint is set inside a write.
   // 1. A inserts row 7, then sets a savepoint.
   // 2. A inserts a second row with id 7: SM_ERR_DUPKEY from jobs_id,
-  //    after the heap row and its jobs_state entry went in, so the
-  //    heap holds two rows.
+  //    which errdup() names, after the heap row and its jobs_state
+  //    entry went in, so the heap holds two rows. An update of row
+  //    8 to id 7 fails the same way.
   // 3. A rolls back to its savepoint: one row, and the indexes agree.
   // 4. A table opened intent_shared refuses a write.
   jobs_t f;
@@ -517,7 +518,14 @@ TEST_CASE("a write that fails partway is the caller's to roll back") {
   uint64_t rowno;
   CHECK(sm3::tbl_insert(t, dup.d(), dup.null(), rowno) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
+  CHECK(sm1::errdup().index == f.jobs_id);
+  CHECK(sm1::errdup().nrows == 0);
   CHECK(rows(t).size() == 2);
+  REQUIRE(sm3::rollback(f.a, sp) == 0);
+  uint64_t r8 = put(t, 8, "free", std::nullopt);
+  CHECK(set(t, r8, 7, "free", std::nullopt) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
+  CHECK(sm1::errdup().index == f.jobs_id);
   REQUIRE(sm3::rollback(f.a, sp) == 0);
   REQUIRE(sm3::forget(f.a, sp) == 0);
   CHECK(rows(t).size() == 1);

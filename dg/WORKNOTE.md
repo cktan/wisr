@@ -7580,3 +7580,26 @@ commit, in the background, where no row is at hand.
 - `test/server.sh`, "a duplicated key's build": a build after
   the commit, a key of two columns, and one in the creating
   transaction.
+
+## Step 261: a write of a taken key says PostgreSQL's error
+
+An insert, an update, ON CONFLICT on another index, or a COPY
+of a key a unique index held said `duplicate key value
+violates a unique index on "t"` and sm's `key already
+exists`. PostgreSQL names the index and the key.
+
+- **sm3 names the index**: `add_entry()`, which every write's
+  entry goes through, and a load's `idx_load`, put its oid in
+  the duplicate's record (`sm1::errdup()`, step 260).
+- **digres says the key** from the row it wrote, with
+  PostgreSQL's own `BuildIndexValueDescription()`:
+  `duplicate key value violates unique constraint "t_pkey"`,
+  `Key (a)=(1) already exists.`, and the constraint's name in
+  the error's fields (`duplicate_write()` in `smstore.c`).
+- **No index named, sm's words**: a load's duplicate found at
+  its close, in sm1's sort, names none (`../sm/NEXT.md` §2).
+- **A COPY's CONTEXT line is wrong**, before and after: it
+  names the line after the batch COPY handed sm, not the
+  row's. `test/server.sh` leaves it out of its check.
+- `test/server.sh`, "a write of a taken key"; five older
+  checks now look for PostgreSQL's words.

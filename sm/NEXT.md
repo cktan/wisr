@@ -150,16 +150,14 @@ Owed, and blocking nothing above:
   169), beyond the key-share modes above: sm1
   has no wait queue to reorder, so a soft deadlock PostgreSQL
   untangles ends a transaction (`deadlock-soft`).
-- **A duplicate key's detail on a write is sm's.** A unique
-  index build that meets one says PostgreSQL's `Key (k)=(1) is
-  duplicated.`, from the rows `sm1::errdup()` names
-  (`../dg/WORKNOTE.md` step 260). An insert, an update or ON
-  CONFLICT still says sm's `key already exists`, where
-  PostgreSQL says `duplicate key value violates unique
-  constraint "uk"` and `Key (k)=(1) already exists.`: sm3
-  would name the index in `errdup()`, and digres format the key
-  from the row it holds. A COPY in file mode finds a duplicate
-  at its close, with no row to read.
+- **A bulk load's duplicate at its close is sm's.** A unique
+  build and every write say PostgreSQL's key now
+  (`../dg/WORKNOTE.md` steps 260 and 261). A COPY in file mode
+  finds a duplicate when the load closes, in sm1's sort, which
+  knows a stream, not the index, and has no row to read: it
+  says `key already exists`. And a COPY's error names the line
+  after its batch, not the row's, as COPY hands sm its rows a
+  batch at a time.
 
 ---
 

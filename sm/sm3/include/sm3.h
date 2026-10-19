@@ -1159,7 +1159,9 @@ index_state_t tbl_index_state(const table_t* table, uint64_t index);
  * and the transaction goes on as sm1 says (SM1_DESIGN.md §5.4).
  * A table opened in a mode that does not cover intent_exclusive
  * fails with SM_ERR_INVALID, and a row with a NULL in a NOT NULL
- * column with SM_ERR_NOTNULL; both before anything is written.
+ * column with SM_ERR_NOTNULL; both before anything is written. A
+ * key a unique index holds already is SM_ERR_DUPKEY, the index in
+ * sm1::errdup(): the host has the row, to say the key.
  */
 
 /*

@@ -1116,7 +1116,9 @@ const sm_table_def_t* sm_tbl_def(const sm_tbl_t* tbl);
  * on. SM_ERR_UPDATED needs no rollback; it comes from the heap
  * write, the first step. A table not opened to write fails with
  * SM_ERR_INVALID, and a row with a NULL in a NOT NULL column with
- * SM_ERR_NOTNULL; both before anything is written.
+ * SM_ERR_NOTNULL; both before anything is written. A key a unique
+ * index holds already is SM_ERR_DUPKEY, the index's oid in
+ * sm_errdup().
  */
 
 /* Insert a row of n values and null flags; *rowno is its id. */

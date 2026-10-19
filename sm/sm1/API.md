@@ -152,10 +152,11 @@ a known state.
 far as the level that raised it knows: the unique index's oid,
 0 if not known, and the rownos of up to two rows that hold the
 key, `nrows` of them. A failed index build gives both rows
-(`sm3/SM3_DESIGN.md` §3). `sm1::setdup(d)` records it with the
-error just set, and a level above may call it again to add
-what it knows; setting the next error, or `reseterr()`, clears
-it. In C it is `sm_errdup()`.
+(`sm3/SM3_DESIGN.md` §3); a write sm3 refuses gives the index
+alone, as its caller has the row. `sm1::setdup(d)` records it
+with the error just set, and a level above may call it again
+to add what it knows; setting the next error, or
+`reseterr()`, clears it. In C it is `sm_errdup()`.
 
 #### Retryable errors
 
