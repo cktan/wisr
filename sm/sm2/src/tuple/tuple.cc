@@ -343,22 +343,50 @@ size_t null_width(const parsed_t &t, const sm2::tup_desc_t &desc, size_t k) {
 }
 
 /*
- * Every attribute of a tuple, in one pass: put(i, datum) for each,
- * datum as tup_decode's view gives it. The whole tuple is checked
- * (parse), since the pass reads all of it anyway.
+ * Check what reading attribute i, non-null, needs of its entry at
+ * pos: that the entry lies within the tuple, and for a variable
+ * attribute that its slot points past the entry to a varlena the
+ * codec reads, ending within the tuple.
+ */
+int check_entry(const parsed_t &t, const sm2::tup_desc_t &desc, size_t i,
+                size_t pos) {
+  // A truncated or damaged tuple could place the entry past it.
+  if (pos + entry_width(desc, i) > t.tuple.size()) {
+    return corrupt("cut short in its fixed part");
+  }
+  if (desc.width[i] < 0) {
+    size_t start = slot_at(t, pos), len;
+    if (start < pos || start >= t.tuple.size()) {
+      return corrupt("a slot that does not point to its varlena");
+    }
+    if (const char *why = varlena_extent(t.tuple.substr(start), len)) {
+      return corrupt(why);
+    }
+  }
+  return 0;
+}
+
+/*
+ * The first n attributes of a tuple, in one pass: put(i, datum)
+ * for each, datum as tup_decode's view gives it. When n is every
+ * attribute, the whole tuple is checked (parse), since the pass
+ * reads all of it anyway; otherwise only what the pass reads, as
+ * tup_decode checks.
  */
 template <class F>
-int deform_each(const sm2::tup_desc_t &desc, std::string_view tuple, F &&put) {
+int deform_each(const sm2::tup_desc_t &desc, std::string_view tuple, size_t n,
+                F &&put) {
   if (check_desc(desc) != 0) {
     return -1;
   }
   const auto &schema = desc.schema;
+  bool whole = n == schema.size();
   parsed_t t;
-  if (parse(desc, tuple, t) != 0) {
+  if ((whole ? parse(desc, tuple, t) : parse_head(desc, tuple, t)) != 0) {
     return -1;
   }
   size_t pos = t.fixed;
-  for (size_t i = 0; i < schema.size(); i++) {
+  for (size_t i = 0; i < n; i++) {
     // Past the row's attributes: the value it was added with.
     if (i >= t.natts) {
       const auto &m = schema[i].missing;
@@ -369,6 +397,9 @@ int deform_each(const sm2::tup_desc_t &desc, std::string_view tuple, F &&put) {
     if (t.nulls && bit(t.nulls, i)) {
       put(i, std::nullopt);
       continue;
+    }
+    if (!whole && check_entry(t, desc, i, pos) != 0) {
+      return -1;
     }
     std::string_view d = datum_at(t, desc, i, pos);
     pos += entry_width(desc, i);
@@ -424,21 +455,10 @@ int decode_view(const sm2::tup_desc_t &desc, std::string_view tuple,
   // entry widths the nulls before it do not take.
   size_t pos = t.fixed + desc.off[ordinal] - null_width(t, desc, ordinal);
   // The entry -- a datum, or a 2-byte slot -- must lie within the
-  // tuple; a truncated or damaged tuple could place it past.
-  if (pos + entry_width(desc, ordinal) > tuple.size()) {
-    return corrupt("cut short in its fixed part");
-  }
-  // Step 5, variable width: the slot must point past its own
-  // entry and into the tuple, and the varlena there must be one
-  // the codec reads, ending within the tuple.
-  if (desc.width[ordinal] < 0) {
-    size_t start = slot_at(t, pos), len;
-    if (start < pos || start >= tuple.size()) {
-      return corrupt("a slot that does not point to its varlena");
-    }
-    if (const char *why = varlena_extent(tuple.substr(start), len)) {
-      return corrupt(why);
-    }
+  // tuple; and, variable width, the slot must point past its own
+  // entry to a varlena the codec reads, ending within the tuple.
+  if (check_entry(t, desc, ordinal, pos) != 0) {
+    return -1;
   }
   // Step 5: the fixed-width datum itself, or the varlena whole,
   // header included, as a view into tuple.
@@ -677,14 +697,14 @@ int tup_check(const tup_desc_t &desc, std::string_view tuple) {
   return 0;
 }
 
-/* Deform every attribute of tuple into datums and isnull; see sm2.h. */
+/* Deform the first attributes of tuple into datums and isnull; see sm2.h. */
 int tup_deform(const tup_desc_t &desc, std::string_view tuple,
                std::span<datum_t> datums, std::span<bool> isnull) {
   const auto &schema = desc.schema;
-  if (datums.size() != schema.size() || isnull.size() != schema.size()) {
-    return invalid("deform: output spans must match schema size");
+  if (datums.size() > schema.size() || isnull.size() != datums.size()) {
+    return invalid("deform: output spans must match, at most schema size");
   }
-  return deform_each(desc, tuple,
+  return deform_each(desc, tuple, datums.size(),
                      [&](size_t i, std::optional<std::string_view> d) {
                        isnull[i] = !d;
                        datums[i] = 0;

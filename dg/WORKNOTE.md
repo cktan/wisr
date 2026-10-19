@@ -7375,3 +7375,26 @@ issue 1); until then it is disabled.
   `PG_init_t` and `SAME_INODE`. The list of loaded modules
   stays, empty.
 - `test/slt/load.test`.
+
+## Step 252: a table scan reads the columns it needs
+
+A sequential scan of a table in sm deformed every column of
+each row, and sm checked the whole row, though its
+projection and quals used only some: `select a from t` on a
+wide table cost what `select *` did.
+
+- **`scan_natts()` in `nodeSeqscan.c`** counts the columns a
+  scan reads, from the first: up to the last its target list
+  and quals name, or every one for a whole-row reference. A
+  scan with no projection names every column. It is passed to
+  `smstore_beginscan()`, which deforms that many
+  (`sm_tbl_deform()` takes a prefix now, and sm checks only
+  what it reads, `../sm/sm2/TUPLE.md` §8).
+- **The slot stays virtual.** The columns left out are null
+  to a materializing, and not valid: the executor reads a
+  virtual slot with no deform, so a count too few trips an
+  assertion, or reads null.
+- **Left as it was**: the table AM's scans (sample, TID,
+  ANALYZE) and the index and bitmap scans read every column
+  (`../sm/NEXT.md` §2).
+- `test/slt/scan_columns.test`.

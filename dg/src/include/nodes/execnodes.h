@@ -1584,6 +1584,7 @@ typedef struct SeqScanState
 {
 	ScanState	ss;				/* its first field is NodeTag */
 	struct smstore_scan_t *sm_scan; /* a table in sm's: access/smstore.h */
+	int			sm_natts;		/* the columns of each row sm_scan reads */
 	List	   *cat_keys;		/* a catalog relation's: catalog/catrel.h */
 } SeqScanState;
 

@@ -87,7 +87,7 @@ static TableScanDesc smtable_scan_begin(Relation rel, Snapshot snapshot,
   scan->base.rs_rd = rel;
   scan->base.rs_snapshot = snapshot;
   scan->base.rs_flags = flags;
-  scan->scan = smstore_beginscan(rel);
+  scan->scan = smstore_beginscan(rel, RelationGetNumberOfAttributes(rel));
   if (flags & SO_TYPE_SAMPLESCAN)
     scan->nblocks = sample_blocks(rel);
   return &scan->base;
@@ -110,7 +110,8 @@ static void smtable_scan_rescan(TableScanDesc sscan, struct ScanKeyData *key,
   if (!(sscan->rs_flags & SO_TYPE_SAMPLESCAN))
     refuse<void>();
   smstore_endscan(scan->scan);
-  scan->scan = smstore_beginscan(sscan->rs_rd);
+  scan->scan = smstore_beginscan(sscan->rs_rd,
+                                 RelationGetNumberOfAttributes(sscan->rs_rd));
   scan->nblocks = sample_blocks(sscan->rs_rd);
   scan->started = false;
 }

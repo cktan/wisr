@@ -2236,6 +2236,8 @@ struct smstore_scan_t {
   sm_tbl_t *tbl;
   /* The table's oid, each row's tableoid, as WHERE CURRENT OF checks. */
   Oid relid;
+  /* A table scan's: the columns of each row it reads, from the first. */
+  int natts;
   sm_rel_scan_t *cursor;
   sm_idx_scan_t *icursor;
   ScanKey keys;
@@ -2267,22 +2269,35 @@ struct smstore_scan_t {
 
 /*
  * A row the scan's cursor read into slot, as a virtual tuple, its tid its
- * rowno.  A value by reference points into sm's tuple, good until the
- * cursor's next call.
+ * rowno: the scan's first natts columns, the only ones valid.  A value by
+ * reference points into sm's tuple, good until the cursor's next call.
  */
 static void scan_row_into_slot(smstore_scan_t *scan, uint64_t rowno,
                                const void *tuple, size_t len,
                                TupleTableSlot *slot) {
+  int natts = slot->tts_tupleDescriptor->natts;
+
   if (sm_tbl_deform(scan->tbl, tuple, len, (sm_datum_t *)slot->tts_values,
-                    slot->tts_isnull, slot->tts_tupleDescriptor->natts) != 0)
+                    slot->tts_isnull, scan->natts) != 0)
     sm_error("read a row");
+  /* The columns left out are null to a materializing, which copies all. */
+  memset(slot->tts_isnull + scan->natts, true, natts - scan->natts);
   ExecStoreVirtualTuple(slot);
+  /*
+   * Only they are valid.  The executor reads a virtual slot's values with
+   * no deform, so a read past them, of a natts too few, trips an assertion
+   * or reads null.
+   */
+  slot->tts_nvalid = scan->natts;
   slot_from_sm(slot);
   smstore_rowno_to_tid(rowno, &slot->tts_tid);
 }
 
-/* Begin a scan of every row of rel, a table in sm, in rowno order. */
-smstore_scan_t *smstore_beginscan(Relation rel) {
+/*
+ * Begin a scan of every row of rel, a table in sm, in rowno order, each
+ * row's first natts columns read.
+ */
+smstore_scan_t *smstore_beginscan(Relation rel, int natts) {
   sm_tbl_t *tbl = open_table(RelationGetRelid(rel), SM_LOCKMODE_IS);
   smstore_scan_t *scan;
 
@@ -2293,6 +2308,7 @@ smstore_scan_t *smstore_beginscan(Relation rel) {
   scan = (smstore_scan_t *)palloc0(sizeof(smstore_scan_t));
   scan->tbl = tbl;
   scan->relid = RelationGetRelid(rel);
+  scan->natts = natts;
   if (sm_tbl_scan(tbl, 0, UINT64_MAX, &scan->cursor) != 0)
     sm_error("scan a table");
   return scan;

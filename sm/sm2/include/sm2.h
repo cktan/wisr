@@ -462,8 +462,10 @@ int tup_decode(const tup_desc_t& desc, std::string_view tuple, size_t ordinal,
                datum_t& val, bool& isnull);
 
 /*
- * Deform every attribute of tuple into datums and isnull in one
- * pass. datums and isnull must both have size equal to schema.size().
+ * Deform the first n attributes of tuple into datums and isnull in
+ * one pass, n the size of both, at most schema.size(). Every
+ * attribute checks the whole tuple (TUPLE.md §8); fewer check only
+ * what the pass reads, as tup_decode does.
  * Any by-reference datum_t points directly into tuple (or schema missing).
  */
 int tup_deform(const tup_desc_t& desc, std::string_view tuple,

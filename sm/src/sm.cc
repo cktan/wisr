@@ -219,15 +219,15 @@ int decode(const char *fn, const sm2::tup_desc_t &desc, const void *tuple,
   return sm2::tup_decode(desc, v, ordinal, *val, *isnull);
 }
 
-/* Every attribute of tuple under desc into values and isnull, for fn. */
+/* The first n attributes of tuple under desc into values and isnull. */
 int deform(const char *fn, const sm2::tup_desc_t &desc, const void *tuple,
            size_t len, sm_datum_t *values, bool *isnull, size_t n) {
   if (!tuple || (n && !values) || (n && !isnull)) {
     return null_arg(fn, !tuple ? "tuple" : n && !values ? "values" : "isnull");
   }
-  if (n != desc.schema.size()) {
+  if (n > desc.schema.size()) {
     return sm1::seterr(sm1::SM_ERR_INVALID,
-                       std::string(fn) + ": n is not the attribute count");
+                       std::string(fn) + ": n is past the attribute count");
   }
   std::string_view v(static_cast<const char *>(tuple), len);
   return sm2::tup_deform(desc, v, std::span<sm2::datum_t>(values, n),

@@ -1,0 +1,116 @@
+# Verify a table scan that reads only a row's first columns, up to the
+# last its output and filter name, gives what reading every one does.
+# 1. Make a table of eight columns, numerics and nulls among them.
+# 2. Read its first column, none (count), and every one.
+# 3. Filter on a later column than the one read, and on an earlier.
+# 4. Join the table to itself, each side reading different columns.
+# 5. Read through a cursor, and from a subquery naming an outer column.
+# 6. Update and delete by a later column, reading the rows back.
+# 7. Drop a column, and read the columns before and after it.
+
+statement ok
+create table w (a int4, b text, c int4, d numeric(10,2), e text,
+                f int8, g bool, h int4)
+
+statement ok
+insert into w values
+  (1, 'x', 10, 1.50, 'e1', 100, true, 1000),
+  (2, null, 20, null, 'e2', null, false, 2000),
+  (3, 'z', null, 3.25, null, 300, null, 3000)
+
+query I nosort
+select a from w order by a
+----
+1
+2
+3
+
+query I nosort
+select count(*) from w
+----
+3
+
+query ITITTITI nosort
+select * from w order by a
+----
+1	x	10	1.50	e1	100	t	1000
+2	NULL	20	NULL	e2	NULL	f	2000
+3	z	NULL	3.25	NULL	300	NULL	3000
+
+query I nosort
+select a from w where h > 1500 order by a
+----
+2
+3
+
+query T nosort
+select e from w where a < 3 order by e
+----
+e1
+e2
+
+query T nosort
+select d from w where g order by d
+----
+1.50
+
+query II nosort
+select x.a, y.h from w x join w y on x.c = y.c order by x.a
+----
+1	1000
+2	2000
+
+statement ok
+begin
+
+statement ok
+declare cur cursor for select b, c from w order by a
+
+query TI nosort
+fetch 2 from cur
+----
+x	10
+NULL	20
+
+statement ok
+commit
+
+query II nosort
+select a, (select count(*) from w y where y.f < x.h) from w x order by a
+----
+1	2
+2	2
+3	2
+
+statement ok
+update w set b = 'u' where h = 2000
+
+statement ok
+delete from w where f = 300
+
+query IT nosort
+select a, b from w order by a
+----
+1	x
+2	u
+
+statement ok
+alter table w drop column c
+
+query IT nosort
+select a, b from w order by a
+----
+1	x
+2	u
+
+query IT nosort
+select a, h from w order by a
+----
+1	1000
+2	2000
+
+query ITTTITI nosort
+select * from w order by a
+----
+1	x	1.50	e1	100	t	1000
+2	u	NULL	e2	NULL	f	2000

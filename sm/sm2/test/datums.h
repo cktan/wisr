@@ -105,13 +105,14 @@ values_t values_of(const std::vector<const sm2::type_t *> &types,
 /*
  * Deform tuple under schema into each attribute's bytes, as
  * values_of takes them back: a fixed-width datum's bytes, a
- * variable one's varlena, std::nullopt for null. Returns what
- * tup_deform does.
+ * variable one's varlena, std::nullopt for null; the first n
+ * attributes only, if n is given. Returns what tup_deform does.
  */
 inline int bytes_of(std::span<const sm2::attribute_t> schema,
                     std::string_view tuple,
-                    std::vector<std::optional<std::string>> &out) {
-  size_t n = schema.size();
+                    std::vector<std::optional<std::string>> &out,
+                    std::optional<size_t> first = std::nullopt) {
+  size_t n = first.value_or(schema.size());
   std::vector<sm2::datum_t> d(n);
   auto nulls = std::make_unique<bool[]>(n);
   out.clear();

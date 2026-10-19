@@ -102,30 +102,16 @@ Owed, and blocking nothing above:
   `../dg/src/backend/access/sm/smstore.c`, `../dg/WORKNOTE.md`
   step 161).
 
-- **A scan pays for the whole row, whatever it reads.**
-  `SELECT a FROM t` on a wide table costs as `SELECT *` does,
-  three times over. Measure first: a scan of one column and
-  of all of them, on a table of 50 columns, split between
-  `memcpy`, `parse()` and `deform_each`.
-  - *Deform lazily.* digres's slot is `TTSOpsVirtual`
-    (`smtable_slot_callbacks()` in
-    `../dg/src/backend/access/sm/smtable.c`), and
-    `scan_row_into_slot()` in `smstore.c` deforms every
-    column into it, so the projection's
-    `slot_getsomeattrs(slot, 1)` finds them all done.
-    PostgreSQL's heap slot deforms only as far as asked.
-    digres should have slot ops of its own that hold sm's
-    tuple and, in `getsomeattrs(slot, n)`, deform its first
-    `n` columns only; sm2 needs a deform of a prefix, which
-    `decode_view()` already shows how to find. The tuple's
-    bytes are valid until the cursor's next call, as the
-    virtual slot's are now, and a decimal of `slot_from_sm()`
-    is made as its column is deformed.
-  - *Check only what is read.* `parse()` in
-    `sm2/src/tuple/tuple.cc` checks every slot and varlena
-    before `deform_each` reads one. The lazy deform should
-    check only what it reads, as `decode_view()` does;
-    RocksDB's block checksums cover the rest.
+- **A scan still pays for the whole row in two ways.** A
+  sequential scan reads each row's first columns only, up to
+  the last its output and quals name (`scan_natts()` in
+  `../dg/src/backend/executor/nodeSeqscan.c`), and sm checks
+  only those (`tup_deform`, `sm2/TUPLE.md` §8). Not yet:
+  - *Other scans.* An index scan, a bitmap scan, a sample
+    scan and a TID scan still deform every column
+    (`smstore.c`, `smtable.c` in
+    `../dg/src/backend/access/sm`); each would count its
+    columns from its plan as the sequential scan does.
   - *Lend the row, not a copy.* sm1's `scan_next` copies each
     row it hands out into the cursor
     (`sm1/src/access.cc`), because it steps past the key's
@@ -135,8 +121,10 @@ Owed, and blocking nothing above:
     RocksDB's block, valid until then. The SIREAD range
     (`last_examined`) and `skip_version()` move with it; or
     `ReadOptions::pin_data`, which pins every block the scan
-    reads until it ends. Last of the three: one `memcpy`, and
-    the change touches SSI.
+    reads until it ends. It touches SSI.
+  Measure both: a scan of one column and of all of them, on
+  a table of 50 columns, split between `memcpy` and
+  `deform_each`.
 
 - **Views, the rest of them** (`VIEW.md` §10). CREATE, OR
   REPLACE, DROP and the cascades are built, sm3's and digres's

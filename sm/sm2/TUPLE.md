@@ -169,8 +169,8 @@ taking nothing; then at byte 10, the varlena `07 68 69`,
 
 ## 8. A malformed tuple
 
-`tup_deform`, which reads the whole tuple, refuses with
-`SM_ERR_CORRUPT` a tuple that is empty
+`tup_deform` of every attribute, which reads the whole tuple,
+refuses with `SM_ERR_CORRUPT` a tuple that is empty
 or longer than 65535 bytes; has a reserved flag set; has a
 malformed `natts`, or one past the schema's count; is cut short
 in its bitmap or fixed part; has a slot that does not point
@@ -185,6 +185,10 @@ variable attribute its slot and varlena, each within the tuple.
 A flaw elsewhere in the tuple is not its to find, as a
 PostgreSQL attribute fetch does not check the rest of its row;
 it never reads outside the tuple.
+
+`tup_deform` of fewer than every attribute checks only what
+it reads, in the same way: the header and bitmap, and the
+entry and varlena of each attribute it reads.
 
 ## 9. Codec API
 
@@ -202,9 +206,11 @@ it never reads outside the tuple.
     finds its entry by `off[]` less the nulls before it (§6),
     one step per earlier null, and checks only what it reads
     (§8).
-  - `tup_deform(desc, tuple, datums, isnull)` decodes
-    every attribute in one pass into the caller's arrays. It
-    allocates only the schema's widths, not its output.
+  - `tup_deform(desc, tuple, datums, isnull)` decodes the
+    first attributes, as many as `datums` has room for, every
+    one at most, in one pass into the caller's arrays; fewer
+    than every one are checked as `tup_decode` checks (§8).
+    It allocates only the schema's widths, not its output.
 
   A by-reference `datum_t` either one hands back points into
   the tuple, or into the schema's missing value, and lives

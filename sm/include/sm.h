@@ -1243,9 +1243,11 @@ int sm_tbl_scan(sm_tbl_t* tbl, uint64_t first, uint64_t last,
                 sm_rel_scan_t** out);
 
 /*
- * Every attribute of a row's tuple into values and isnull, n of
- * each, one per column. A by-reference value points into the tuple,
- * so it shares the tuple's lifetime.
+ * The first n attributes of a row's tuple into values and isnull,
+ * n of each, one per column, n at most the table's column count.
+ * Every column checks the whole tuple; fewer, only what is read.
+ * A by-reference value points into the tuple, so it shares the
+ * tuple's lifetime.
  */
 int sm_tbl_deform(sm_tbl_t* tbl, const void* tuple, size_t len,
                   sm_datum_t* values, bool* isnull, size_t n);
@@ -1305,7 +1307,10 @@ bool sm_tbl_index_usable(const sm_tbl_t* tbl, uint64_t index);
  */
 size_t sm_tbl_idx_ncols(const sm_tbl_t* tbl, uint64_t index);
 
-/* Every attribute of an entry's value in that index, as sm_tbl_deform. */
+/*
+ * The first n attributes of an entry's value in that index, as
+ * sm_tbl_deform.
+ */
 int sm_tbl_idx_deform(sm_tbl_t* tbl, uint64_t index, const void* value,
                       size_t len, sm_datum_t* values, bool* isnull,
                       size_t n);

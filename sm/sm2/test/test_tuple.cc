@@ -372,6 +372,77 @@ TEST_CASE("a malformed tuple is refused as corrupt") {
   CHECK(d == std::string_view(bad).substr(first, 5));
 }
 
+TEST_CASE("deforming the first n attributes reads only them") {
+  // Verify tup_deform of a prefix: it gives what a whole deform
+  // does for those attributes, and checks only what it reads.
+  // 1. Over random schemas and rows, from test_seed(), deforming
+  //    the first n, for every n, gives the row's first n.
+  // 2. A flaw past the prefix -- the last varlena made a TOAST
+  //    pointer, or a byte added past the tuple's end -- fails a
+  //    whole deform, and not one of the first three attributes.
+  // 3. A flaw within the prefix, the text's slot pointing a byte
+  //    on, fails it as corrupt.
+  // 4. More outputs than the schema has, or an isnull of another
+  //    size than datums, is SM_ERR_INVALID.
+  INFO("seed ", test_seed());
+  std::mt19937_64 rng(test_seed());
+  const std::vector<typed_t> &types = all_types();
+  std::vector<std::optional<std::string>> out;
+  for (int round = 0; round < 100; round++) {
+    std::vector<sm2::attribute_t> schema;
+    for (size_t n = 1 + rng() % 12; n > 0; n--) {
+      const typed_t &t = types[rng() % types.size()];
+      schema.push_back({t.type, t.typmod, false, std::nullopt});
+    }
+    std::vector<std::optional<std::string>> row;
+    for (const auto &a : schema) {
+      row.push_back(rng() % 4 == 0
+                        ? std::nullopt
+                        : std::optional(codec_form(
+                              a, gen_datum({a.type, a.typmod}, rng))));
+    }
+    std::string tuple = encode(schema, row);
+    for (size_t n = 0; n <= schema.size(); n++) {
+      CAPTURE(n);
+      REQUIRE(bytes_of(schema, tuple, out, n) == 0);
+      CHECK(out == std::vector(row.begin(), row.begin() + n));
+    }
+  }
+
+  // The tuple of the malformed case above: "de" is its last
+  // varlena, at byte 15, and the text's slot is at byte 7.
+  std::vector<sm2::attribute_t> schema = {
+      attr(sm2::type_int4), attr(sm2::type_text), attr(sm2::type_int8),
+      attr(sm2::type_bytea)};
+  std::string good =
+      encode(schema, {le(int32_t{7}), vl("abc"), std::nullopt, vl("de")});
+  REQUIRE(good[15] == '\x07');
+  std::string bad = good;
+  bad[15] = sm2::varlena_toast;
+  for (const std::string &t : {bad, good + "!"}) {
+    CAPTURE(hex(t));
+    CHECK(bytes_of(schema, t, out) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_CORRUPT);
+    REQUIRE(bytes_of(schema, t, out, 3) == 0);
+    CHECK(out == std::vector<std::optional<std::string>>{
+                     le(int32_t{7}), vl("abc"), std::nullopt});
+  }
+  bad = good;
+  REQUIRE(bad[7] == 11);
+  bad[7] = 12;
+  CHECK(bytes_of(schema, bad, out, 2) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_CORRUPT);
+
+  sm2::tup_desc_t desc(schema);
+  sm2::datum_t d[5];
+  bool nulls[5];
+  CHECK(sm2::tup_deform(desc, good, d, nulls) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm2::tup_deform(desc, good, std::span<sm2::datum_t>(d, 2),
+                        std::span<bool>(nulls, 3)) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+}
+
 TEST_CASE("the codec refuses arguments that do not fit the schema") {
   // Verify tup_encode and tup_decode's SM_ERR_INVALID cases.
   // 1. Fewer datums than attributes leaves the tuple as it was.
