@@ -75,8 +75,8 @@ mode**
 **What has to be built**
 
 - sm1: a loader on a store, writing in batches or to files,
-  locking unique keys when the table is not held, and a sweep
-  of leftover files at startup.
+  checking unique keys under their latches when the table is
+  not held, and a sweep of leftover files at startup.
 - sm2: heap and index inserts that feed it.
 - sm3: a loader on an open table.
 - `include/sm.h` and `rel`: the calls, and a verb.
@@ -351,10 +351,12 @@ natural next step and is not part of this design.
 A backfill batch holds the table-oid lock IX. So a load waits
 for the batch in flight, and the build waits for the load.
 
-`TRUNCATE` and then `COPY` in one transaction is the other
-common way to fill a table. The truncate gives the table a new,
-empty store under the table-oid lock X (`sm3/SM3_DESIGN.md` §4),
-which is exactly what file mode requires (§5.1).
+`TRUNCATE` and then `COPY` or `INSERT ... SELECT` in one
+transaction is the other common way to fill a table. File
+mode needs only an empty table (§5.1), but the truncate makes
+sure of it: it gives the table a new store, holding no
+version of any kind, under the table-oid lock X
+(`sm3/SM3_DESIGN.md` §4).
 
 ---
 
@@ -429,8 +431,9 @@ Nothing here is new.
 - **Prepare** records the locks the transaction holds, with
   their modes. The SIX table-oid lock is one of them, so after a
   restart an in-doubt load still keeps writers out, as the
-  row locks would have. A mini-batch load's locks on unique
-  keys are recorded like any others.
+  row locks would have. A mini-batch load holds the table IX
+  and keeps no row lock (§4.5): its uncommitted versions keep
+  other writers of its unique keys waiting, as any write's do.
 
 ### 4.4 What batch mode does not save
 
@@ -481,13 +484,23 @@ in the fork does this.
 
 The loader decides which when it opens.
 
-**An empty table.** Its store was made in the loader's
-transaction, by `CREATE TABLE` or by `TRUNCATE`, and holds
-nothing yet: the store is not the one in the table's
-committed definition, and one seek finds no key in it. Such a
-table is held X by that transaction already. Everything goes
-to files: the heap and every index. This is a restore,
-`CREATE TABLE AS`, and `TRUNCATE` then `COPY`.
+**An empty table.** Its store holds no version of any kind,
+live, dead or deleted, of any transaction: one seek finds no
+key in it. Call this **truly empty**, as against
+**transactionally empty**, where no row is visible to the
+snapshot but versions remain: a table whose rows were deleted
+or whose inserts aborted is that until their versions are
+purged, and is loaded as a table with rows. Emptiness is the
+store's, not what a snapshot sees: after a `TRUNCATE` the new
+store is truly empty while other transactions still see the
+old one's rows. "Empty" in this document means truly empty.
+The loader takes the table X, and
+only if the lock is free at once (§13). Everything goes to
+files: the heap and every index. This is a restore, `CREATE
+TABLE AS`, and a `COPY` or an `INSERT ... SELECT` into an
+empty table. A table made or truncated in the transaction is
+empty and held X already, so a load into it always takes
+this path.
 
 **A table with rows**, or one the transaction has written to,
 under SIX. The heap goes to files and the index entries go in
@@ -737,8 +750,10 @@ host's, by what the statement needs:
 
 By statement, that is usually:
 
-- **A restore, `CREATE TABLE AS`, `TRUNCATE` then `COPY`**:
-  file mode, everything to files.
+- **A restore, `CREATE TABLE AS`, a `COPY` or an `INSERT ...
+  SELECT` into an empty table**: file mode, everything to
+  files. `TRUNCATE` first makes sure the table is empty and
+  its lock held.
 - **A `COPY` that appends**: file mode, the heap to files and
   the index entries in batches.
 - **A `COPY` that appends, where other writers must not
@@ -746,10 +761,10 @@ By statement, that is usually:
 - **A `COPY` into a table with triggers that read it**:
   `tbl_insert`, as PostgreSQL's own `COPY` falls back to one
   row at a time for such a table.
-- **`INSERT ... SELECT`**: mini-batch, which blocks no one,
-  as PostgreSQL's does not; batch mode where the host may
-  block writers. The planner's row estimate says whether it
-  is worth leaving `tbl_insert` for.
+- **`INSERT ... SELECT` into a table with rows**: mini-batch,
+  which blocks no one, as PostgreSQL's does not; batch mode
+  where the host may block writers. The planner's row
+  estimate says whether it is worth leaving `tbl_insert` for.
 
 ### 6.1 The row locks each path holds
 
@@ -1058,7 +1073,7 @@ and the interface in place.
    → verify: a writer of other rows goes on during the load; a
    second inserter of a unique key waits for the load's
    transaction, then fails or goes ahead as it commits or
-   aborts; locks are held on unique keys only.
+   aborts; the load keeps no row lock.
 6. File mode for the heap: one ascending stream, into a table
    with rows, the index entries in batches.
    → verify: the rows invisible to others until commit and
