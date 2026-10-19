@@ -7448,3 +7448,21 @@ found two more. Every commit to REL_18_STABLE after 18.6
   No other file's outcome changed.
 - `test/slt/planner_upstream.test`: the queries that crashed
   or failed.
+
+## Step 255: two of PostgreSQL 18's function fixes since 18.6
+
+PostgreSQL's regression suite failed `int4` and `text` on two
+bugs REL_18_STABLE fixed after 18.6, in commits outside step
+254's planner, parser and rewriter. Both are taken, merged as
+step 254's were, cleanly.
+
+- **`ec434db1f49`**: `int4_to_char()` scales a value for the
+  `V` format with `int4mul()`, so one that overflows fails with
+  `integer out of range` instead of wrapping.
+- **`bfb08d0946e`**: `text_right()` clamps a count of
+  `PG_INT32_MIN`, whose negation overflowed, so it skips the
+  whole string as any count past its length does.
+- `text` passes now; `int4` fails only on a numeric of no
+  typmod printed at scale 3, as `int2` and `int8` do
+  (`test/regress/README.md`).
+- `test/slt/adt_upstream.test`.

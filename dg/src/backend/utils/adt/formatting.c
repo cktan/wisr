@@ -6042,14 +6042,16 @@ Datum int4_to_char(PG_FUNCTION_ARGS) {
     int numstr_pre_len;
 
     if (IS_MULTI(&Num)) {
-      orgnum = DatumGetCString(DirectFunctionCall1(
-          int4out,
-          Int32GetDatum(value * ((int32)pow((double)10, (double)Num.multi)))));
+      double multi = pow((double)10, (double)Num.multi);
+
+      value = DatumGetInt32(DirectFunctionCall2(
+          int4mul, Int32GetDatum(value),
+          DirectFunctionCall1(dtoi4, Float8GetDatum(multi))));
       Num.pre += Num.multi;
-    } else {
-      orgnum =
-          DatumGetCString(DirectFunctionCall1(int4out, Int32GetDatum(value)));
     }
+
+    orgnum =
+        DatumGetCString(DirectFunctionCall1(int4out, Int32GetDatum(value)));
 
     if (*orgnum == '-') {
       sign = '-';

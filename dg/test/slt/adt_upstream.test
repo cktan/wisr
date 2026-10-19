@@ -1,0 +1,38 @@
+# Verify the fixes to PostgreSQL 18's functions digres takes from after
+# its fork, each a value 18.6 got wrong.
+# 1. to_char() of an int4 with the V format fails when the scaled value
+#    overflows, and is right when it fits (upstream ec434db1f49).
+# 2. right() and left() of the most negative int4 skip the whole string,
+#    as any count past its length does (upstream bfb08d0946e).
+
+query T nosort
+select to_char(2, '9V999999999')
+----
+ 2000000000
+
+statement error integer out of range
+select to_char(3, '9V999999999')
+
+query T nosort
+select to_char(214748364, '999999999V9')
+----
+ 2147483640
+
+statement error integer out of range
+select to_char(2147483647, '9V9')
+
+query T nosort
+select to_char(-2, '9V999999999')
+----
+-2000000000
+
+statement error integer out of range
+select to_char((-2147483648)::int4, '9V9')
+
+statement error integer out of range
+select to_char(1, '9V9999999999')
+
+query TT nosort
+select left('ahoj', (-2147483648)::int4), right('ahoj', (-2147483648)::int4)
+----
+(empty)	(empty)

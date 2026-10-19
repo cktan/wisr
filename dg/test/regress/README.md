@@ -101,14 +101,16 @@ takes every planner fix since.
 
 ### Bugs that are not crashes
 
-- **`int4` and `text`: PostgreSQL's bugs, fixed after 18.6.**
-  `to_char(3, '9V999999999')` gives `-1294967296` where
-  PostgreSQL now fails with `integer out of range`
-  (`ec434db1f49`), and `right('ahoj', -2147483648)` gives
-  `ahoj` where it now gives the empty string (`bfb08d0946e`).
-  The expected output is REL_18_STABLE's; both passed against
-  an older tree.
-- **`int2` and `int8`: a numeric literal prints at scale 3.**
+- Fixed since this run: `int4` and `text` met two of
+  PostgreSQL's bugs, fixed after 18.6, which REL_18_STABLE's
+  expected output shows: `to_char(3, '9V999999999')` gave
+  `-1294967296`, not `integer out of range`
+  (`ec434db1f49`), and `right('ahoj', -2147483648)` gave
+  `ahoj`, not the empty string (`bfb08d0946e`). Both are taken
+  (`../../WORKNOTE.md` step 255): `text` passes, and `int4`
+  fails only as `int2` and `int8` do, below.
+- **`int2`, `int4` and `int8`: a numeric literal prints at
+  scale 3.**
   `VALUES (-2.5::numeric)` prints `-2.500` where PostgreSQL
   prints `-2.5`: a numeric of no typmod is digres's
   `numeric(17, 3)` since the decimals were reworked
@@ -166,11 +168,8 @@ Every file starts with these failures, so 8 of
 
 By files unblocked for the work, the cheapest first:
 
-1. **PostgreSQL's two fixes**, `ec434db1f49` in
-   `formatting.c` and `bfb08d0946e` in `varlena.c`: `int4`
-   and `text`, which passed.
-2. **A numeric of no typmod printed as given**, not at scale
-   3: `int2` and `int8`, which passed.
+1. **A numeric of no typmod printed as given**, not at scale
+   3: `int2`, `int4` and `int8`, which passed.
 
 Done since 2026-10-17: the crash in `transactions`;
 `CREATE TABLE AS` and `SELECT INTO` (step 203), which make

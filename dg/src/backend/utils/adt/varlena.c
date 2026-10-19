@@ -5158,9 +5158,17 @@ Datum text_right(PG_FUNCTION_ARGS) {
   int n = PG_GETARG_INT32(1);
   int off;
 
-  if (n < 0)
-    n = -n;
-  else
+  if (n < 0) {
+    /*
+     * Negating PG_INT32_MIN would overflow, so clamp instead.  Any n whose
+     * absolute value is at least the string's length skips the whole
+     * string, and len can't exceed PG_INT32_MAX, so this is equivalent.
+     */
+    if (unlikely(n == PG_INT32_MIN))
+      n = PG_INT32_MAX;
+    else
+      n = -n;
+  } else
     n = pg_mbstrlen_with_len(p, len) - n;
   off = pg_mbcharcliplen(p, len, n);
 
