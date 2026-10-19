@@ -708,7 +708,7 @@ dels it.
 | `create_index(ss, table_oid, name, keys, includes, unique, index_oid&, primary, constraint)` | Adds an index to the record as `pending` and queues it for the builder at commit. On a table made in the same transaction, fills it at once and records it `valid`. `primary` marks the table's one primary key; `constraint` an index a `UNIQUE` or `PRIMARY KEY` constraint made. |
 | `create_index(ss, table_oid, name, keys, includes, unique, eval, reads, index_oid&)` | The same for a partial or expression index: `eval` is the host's blob, `reads` the columns it reads. |
 | `enqueue_pending_indexes(cat)` | Queues every pending index for the builder; called when a database is opened, for what a crash left unqueued. |
-| `set_index_state(ss, table_oid, index_oid, state, error = SM_OK, reason = {})` | Puts a pending index's state, `valid` or `failed`, keeping the error and message for a failed one. Does not wait for the table's users. |
+| `set_index_state(ss, table_oid, index_oid, state, error = SM_OK, reason = {}, dup = {})` | Puts a pending index's state, `valid` or `failed`, keeping the error and message for a failed one, and a duplicated key's two rows. Does not wait for the table's users. |
 | `drop_index(ss, table_oid, index_oid)` | Erases the index's entries and takes it out of the record. |
 | `create_collation(ss, namespace_oid, name, locale, deterministic, collation_oid&)` | Takes an oid and puts the collation. |
 
@@ -978,7 +978,8 @@ and the index's:
 ```
 INDEX_STATE | 16384 | 16385  →  valid
 INDEX_STATE | 16384 | 16387  →  failed, error SM_ERR_DUPKEY,
-                                reason "two rows of orders …"
+                                reason "rows 3 and 1 of orders …",
+                                rows 3 and 1
 ```
 
 An index's state is not in its `INDEX` entry. It changes when

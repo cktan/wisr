@@ -1164,20 +1164,27 @@ int tbl_index_backfill(table_t *table, uint64_t index, uint64_t from,
     if (sm2::idx_scan(table->indexes[i], &eq, &eq, is) != 0) {
       return -1;
     }
-    uint64_t owner;
+    uint64_t owner, other = 0;
     bool cut, mine = false;
     std::string_view value;
     while ((more = sm2::idx_scannxt(is, owner, cut, value)) == 0) {
       mine |= owner == r;
+      if (owner != r) {
+        other = owner;
+      }
     }
     sm2::idx_scanend(is);
     if (more < 0) {
       return -1;
     }
     if (!mine) {
-      return sm1::seterr(sm1::SM_ERR_DUPKEY, "index build: two rows of " +
-                                                 def.name +
-                                                 " with one key in " + x.name);
+      sm1::seterr(sm1::SM_ERR_DUPKEY, "index build: rows " + std::to_string(r) +
+                                          " and " + std::to_string(other) +
+                                          " of " + def.name +
+                                          " have one key in " + x.name);
+      // The rows, for the host to show the key they hold.
+      sm1::setdup({x.oid, {r, other}, 2});
+      return -1;
     }
   }
   done = rownos.size() < max_rows;

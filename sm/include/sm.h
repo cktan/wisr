@@ -100,6 +100,15 @@ void sm_reseterr(void);
  */
 int sm_seterr(sm_errnum_t code, const char* msg);
 
+/*
+ * Where the calling thread's last error, SM_ERR_DUPKEY, met its
+ * key, as far as the stack knows: the unique index's oid in
+ * *index, 0 if not known, and the rownos of the rows that hold
+ * the key in rownos, up to two. Returns how many rownos; 0, with
+ * *index 0, after any other error.
+ */
+int sm_errdup(uint64_t* index, uint64_t rownos[2]);
+
 /* ---- the log hook ---- */
 
 enum sm_loglevel_t {

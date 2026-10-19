@@ -1,7 +1,8 @@
 /*
  * error.cc -- the per-thread error state behind sm0::errnum(),
  * sm0::errmsg(), sm0::retryable(), sm0::seterr(),
- * sm0::reseterr(), and sm0::errname().
+ * sm0::reseterr(), sm0::errdup(), sm0::setdup() and
+ * sm0::errname().
  *
  * The message is formatted eagerly, with std::format, straight
  * into a thread-local buffer: nothing is allocated, so the SSI
@@ -23,6 +24,7 @@ constexpr size_t errmsg_size = 4096 + 256;
 
 thread_local sm0::errnum_t t_errno = sm0::SM_OK;
 thread_local char t_errmsg[errmsg_size] = "no error";
+thread_local sm0::dupkey_t t_dup;
 
 } // namespace
 
@@ -32,8 +34,9 @@ namespace sm0 {
 int set_error_v(errnum_t e, std::string_view fmt, std::format_args args) {
   // Format the message into the thread-local buffer.
   format_into(t_errmsg, sizeof(t_errmsg), fmt, args);
-  // Record the error code.
+  // Record the error code, which knows of no duplicate yet.
   t_errno = e;
+  t_dup = {};
   return -1;
 }
 
@@ -118,8 +121,9 @@ int seterr(errnum_t code, std::string_view msg) {
       msg.size() < sizeof(t_errmsg) - 1 ? msg.size() : sizeof(t_errmsg) - 1;
   memcpy(t_errmsg, msg.data(), n);
   t_errmsg[n] = '\0';
-  // Record the error code.
+  // Record the error code, which knows of no duplicate yet.
   t_errno = code;
+  t_dup = {};
   return -1;
 }
 
@@ -129,7 +133,14 @@ void reseterr() {
   static constexpr char none[] = "no error";
   memcpy(t_errmsg, none, sizeof(none));
   t_errno = SM_OK;
+  t_dup = {};
 }
+
+/* Where this thread's last error, a duplicate key, met its key. */
+const dupkey_t &errdup() { return t_dup; }
+
+/* Record d with this thread's error, a duplicate key. */
+void setdup(const dupkey_t &d) { t_dup = d; }
 
 /* The name of this thread's error code, without its SM_ prefix. */
 const char *errname() {

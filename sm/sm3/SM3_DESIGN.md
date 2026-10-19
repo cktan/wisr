@@ -415,9 +415,11 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   - **A failed build keeps its reason.** Any error from a
     batch that is not retryable fails the build: a duplicate,
     a key too long for a unique index, or anything else. The
-    index's state keeps the error's code and its message,
-    across restarts, and `builder_wait` returns them to
-    whoever waits.
+    index's state keeps the error's code and its message, and
+    for a duplicate the rownos of the two rows that hold the
+    key, across restarts, and `builder_wait` returns them to
+    whoever waits, the rows in `sm1::errdup()`, so the host
+    can show the key.
   - **A reader with an older snapshot is kept off the index.**
     Entries are versioned as rows are, so a snapshot older
     than the last batch sees the index partly filled.

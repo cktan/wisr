@@ -1710,16 +1710,17 @@ TEST_CASE("a failed build keeps its reason, for whoever waits for it") {
   // 1. Two rows with one owner are committed; the builder is started.
   // 2. A unique index on owner is created: its build fails.
   // 3. builder_wait returns the build's own error, SM_ERR_DUPKEY,
-  //    with its message, which names the table and the index.
-  // 4. The index is failed, and its definition holds the code and
-  //    the message.
-  // 5. Both survive a restart, and the wait gives them again.
+  //    with its message, which names the table, the index and the
+  //    two rows, and with the index and the rows in errdup().
+  // 4. The index is failed, and its definition holds the code, the
+  //    message and the rows.
+  // 5. All survive a restart, and the wait gives them again.
   jobs_t f;
   f.builder();
   start(f.a);
   sm3::table_t *t = f.write(f.a);
-  put(t, 1, "free", "same");
-  put(t, 2, "free", "same");
+  uint64_t r1 = put(t, 1, "free", "same");
+  uint64_t r2 = put(t, 2, "free", "same");
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
   uint64_t jobs_owner = late_on(f, "jobs_owner", 2, true);
@@ -1728,12 +1729,23 @@ TEST_CASE("a failed build keeps its reason, for whoever waits for it") {
   CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
   std::string why = sm1::errmsg();
   CHECK(why.find("jobs_owner") != std::string::npos);
-  CHECK(why.find("two rows of jobs") != std::string::npos);
+  CHECK(why.find("of jobs") != std::string::npos);
+  // The two rows, either first: the build meets one, finding the
+  // other's entry.
+  auto both = [&](const sm1::dupkey_t &d) {
+    return d.nrows == 2 && ((d.rownos[0] == r1 && d.rownos[1] == r2) ||
+                            (d.rownos[0] == r2 && d.rownos[1] == r1));
+  };
+  CHECK(sm1::errdup().index == jobs_owner);
+  CHECK(both(sm1::errdup()));
+  CHECK(why.find("rows " + std::to_string(sm1::errdup().rownos[0]) + " and " +
+                 std::to_string(sm1::errdup().rownos[1])) != std::string::npos);
   CHECK(state_of(f, jobs_owner) == sm3::index_state_t::failed);
   auto d = sm3::cat_get_table(f.cat, f.jobs);
   CHECK(sm3::cat_get_index_state(f.cat, d->indexes[2].oid).error ==
         sm1::SM_ERR_DUPKEY);
   CHECK(sm3::cat_get_index_state(f.cat, d->indexes[2].oid).reason == why);
+  CHECK(both(sm3::cat_get_index_state(f.cat, d->indexes[2].oid).dup));
 
   f.reload();
   d = sm3::cat_get_table(f.cat, f.jobs);
@@ -1746,6 +1758,8 @@ TEST_CASE("a failed build keeps its reason, for whoever waits for it") {
   CHECK(sm3::builder_wait(f.a, f.jobs, jobs_owner) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
   CHECK(why == sm1::errmsg());
+  CHECK(sm1::errdup().index == jobs_owner);
+  CHECK(both(sm1::errdup()));
 }
 
 TEST_CASE("a build fails on any error the rows cause, and says which") {

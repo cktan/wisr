@@ -84,18 +84,20 @@ bool stopping(const catalog_t *cat) {
 /*
  * Set the index's state in a transaction of ws's own, again after
  * a retryable error; any other error gives up. A failed index is
- * given why: the error its build met, and that error's message.
+ * given why: the error its build met, that error's message, and
+ * the rows of a duplicate key.
  */
 void set_state(catalog_t *cat, session_t *ws, uint64_t table, uint64_t index,
                index_state_t state, sm1::errnum_t error = sm1::SM_OK,
-               const std::string &reason = {}) {
+               const std::string &reason = {}, const sm1::dupkey_t &dup = {}) {
   while (!stopping(cat)) {
     if (sm3::begin(ws, sm1::xctlevel_t::read_committed) != 0) {
       return;
     }
     // The table-oid lock IX, as a batch takes: no reader or writer
     // of the table is waited for, only DDL on it.
-    if (sm3::set_index_state(ws, table, index, state, error, reason) == 0 &&
+    if (sm3::set_index_state(ws, table, index, state, error, reason, dup) ==
+            0 &&
         sm3::commit(ws) == 0) {
       return;
     }
@@ -153,6 +155,7 @@ void build_one(catalog_t *cat, session_t *ws, uint64_t table, uint64_t index,
       bool again = sm1::retryable() == 1;
       sm1::errnum_t error = sm1::errnum();
       std::string reason = sm1::errmsg();
+      sm1::dupkey_t dup = sm1::errdup();
       sm3::abort(ws);
       if (again) {
         continue;
@@ -165,7 +168,8 @@ void build_one(catalog_t *cat, session_t *ws, uint64_t table, uint64_t index,
       // A table that would not open has gone; anything else is the
       // build's failure, kept for whoever asks why.
       if (opened) {
-        set_state(cat, ws, table, index, index_state_t::failed, error, reason);
+        set_state(cat, ws, table, index, index_state_t::failed, error, reason,
+                  dup);
       }
       return;
     }
@@ -394,7 +398,14 @@ int builder_wait(session_t *session, uint64_t table, uint64_t oid) {
     if (st.state == index_state_t::failed) {
       // The build's own error, as the index's state keeps it.
       if (st.error != sm1::SM_OK) {
-        return sm1::seterr(st.error, st.reason);
+        sm1::seterr(st.error, st.reason);
+        // With the rows of a duplicate key, the index this one.
+        if (st.dup.nrows > 0) {
+          sm1::dupkey_t dup = st.dup;
+          dup.index = oid;
+          sm1::setdup(dup);
+        }
+        return -1;
       }
       return sm1::seterr(sm1::SM_ERR_INVALID, "index wait: the build failed");
     }

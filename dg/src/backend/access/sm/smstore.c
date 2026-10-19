@@ -111,6 +111,7 @@ struct made_index_t {
   uint64_t index;
   std::string name;
   bool unique;
+  std::vector<int32_t> keys; /* its key columns' 0-based places */
 };
 
 /* A view this transaction locked (lock_view()): in mode, at level. */
@@ -2457,6 +2458,8 @@ void smstore_endscan(smstore_scan_t *scan) {
  * a notice.
  */
 static bool table_def_now(Oid oid, sm_table_def_t &out);
+static bool read_row(sm_tbl_t *tbl, uint64_t rowno, int natts,
+                     TupleTableSlot *slot);
 static void forget_table(Oid relid);
 
 /*
@@ -4792,6 +4795,95 @@ ObjectAddress smstore_own_sequence(AlterSeqStmt *stmt, List *owned_by) {
 }
 
 /*
+ * The rows of the duplicate key sm's last error met, as sm_errdup() gives
+ * them: nrows of them, up to two.
+ */
+struct dup_rows_t {
+  uint64_t rownos[2];
+  int nrows;
+};
+
+/* The rows of the duplicate key sm's last error met. */
+static dup_rows_t error_dup_rows(void) {
+  dup_rows_t d;
+  uint64_t index;
+
+  d.nrows = sm_errdup(&index, d.rownos);
+  return d;
+}
+
+/*
+ * PostgreSQL's words for the key a row of dup holds in the columns keys of
+ * the table relid, "(k)=(1)", the first of them the transaction sees; empty
+ * if it sees neither, or the table is gone.
+ */
+static std::string dup_key(Oid relid, const std::vector<int32_t> &keys,
+                           const dup_rows_t &dup) {
+  Relation rel = try_relation_open(relid, AccessShareLock);
+  sm_tbl_t *tbl;
+  std::string out;
+  int natts = 0;
+
+  if (rel == NULL)
+    return out;
+  tbl = open_table(relid, SM_LOCKMODE_IS);
+  for (int32_t k : keys)
+    natts = Max(natts, k + 1);
+  TupleTableSlot *slot =
+      MakeSingleTupleTableSlot(RelationGetDescr(rel), &TTSOpsVirtual);
+  for (int i = 0; tbl != NULL && i < dup.nrows && out.empty(); i++) {
+    if (!read_row(tbl, dup.rownos[i], natts, slot))
+      continue;
+    std::string names, values;
+
+    for (int32_t k : keys) {
+      Form_pg_attribute att = TupleDescAttr(RelationGetDescr(rel), k);
+      Oid output;
+      bool varlena;
+
+      if (!names.empty()) {
+        names += ", ";
+        values += ", ";
+      }
+      names += quote_identifier(NameStr(att->attname));
+      if (slot->tts_isnull[k]) {
+        values += "null";
+        continue;
+      }
+      getTypeOutputInfo(att->atttypid, &output, &varlena);
+      values += OidOutputFunctionCall(output, slot->tts_values[k]);
+    }
+    out = "(" + names + ")=(" + values + ")";
+  }
+  ExecDropSingleTupleTableSlot(slot);
+  relation_close(rel, AccessShareLock);
+  return out;
+}
+
+/*
+ * Raise the error of the unique index name whose build met a duplicate key:
+ * the key, as PostgreSQL says it, and the two rows of dup in a hint, the
+ * lower first; why, sm's message, in place of the key if it could not be
+ * read.
+ */
+[[noreturn]] static void duplicate_build(const char *name,
+                                         const std::string &key,
+                                         const dup_rows_t &dup,
+                                         const char *why) {
+  ereport(ERROR,
+          (errcode(ERRCODE_UNIQUE_VIOLATION),
+           errmsg("could not create unique index \"%s\"", name),
+           key.empty() ? errdetail("%s", why)
+                       : errdetail("Key %s is duplicated.", key.c_str()),
+           dup.nrows == 2
+               ? errhint("Rows %llu and %llu have it.",
+                         (unsigned long long)Min(dup.rownos[0], dup.rownos[1]),
+                         (unsigned long long)Max(dup.rownos[0], dup.rownos[1]))
+               : 0));
+  pg_unreachable();
+}
+
+/*
  * Create the index a CREATE INDEX, after parse analysis, describes on relid,
  * a table in sm, in this transaction: btree, on columns, UNIQUE or not, with
  * INCLUDE columns.  On a table made in this transaction it is filled now; on
@@ -4871,13 +4963,22 @@ ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt) {
     if (sm_errnum() == SM_ERR_DUPKEY && !stmt->unique)
       ereport(ERROR, (errcode(ERRCODE_DUPLICATE_TABLE),
                       errmsg("relation \"%s\" already exists", name)));
-    if (sm_errnum() == SM_ERR_DUPKEY)
-      ereport(ERROR, (errcode(ERRCODE_UNIQUE_VIOLATION),
-                      errmsg("could not create unique index \"%s\"", name),
-                      errdetail("%s", sm_errmsg())));
+    if (sm_errnum() == SM_ERR_DUPKEY) {
+      std::string why = sm_errmsg();
+      dup_rows_t dup = error_dup_rows();
+      std::vector<int32_t> places;
+
+      for (const sm_index_key_spec_t &k : keys)
+        places.push_back(k.attnum);
+      duplicate_build(name, dup_key(relid, places, dup), dup, why.c_str());
+    }
     sm_error("create an index");
   }
-  tcb->smstore->made_indexes.push_back({relid, oid, name, stmt->unique});
+  made_index_t made = {relid, oid, name, stmt->unique, {}};
+
+  for (const sm_index_key_spec_t &k : keys)
+    made.keys.push_back(k.attnum);
+  tcb->smstore->made_indexes.push_back(std::move(made));
   ObjectAddressSet(address, RelationRelationId, (Oid)oid);
   return address;
 }
@@ -4908,9 +5009,16 @@ void smstore_wait_indexes(void) {
     int errnum = sm_errnum();
     int code = sm_sqlstate();
     std::string why = sm_errmsg();
+    dup_rows_t dup = error_dup_rows();
+    std::string key;
 
-    /* A failed index is good only for dropping: its own transaction does. */
+    /*
+     * A failed index is good only for dropping: its own transaction does,
+     * reading first the key a duplicate's row holds.
+     */
     StartTransactionCommand();
+    if (errnum == SM_ERR_DUPKEY && m.unique)
+      key = dup_key(m.table, m.keys, dup);
     if (waiting([&] {
           return sm_cat_drop_index(xact_session(), m.table, m.index);
         }) != 0 &&
@@ -4918,10 +5026,7 @@ void smstore_wait_indexes(void) {
       sm_error("drop an index whose build failed");
     CommitTransactionCommand();
     if (errnum == SM_ERR_DUPKEY && m.unique)
-      ereport(ERROR, (errcode(ERRCODE_UNIQUE_VIOLATION),
-                      errmsg("could not create unique index \"%s\"",
-                             m.name.c_str()),
-                      errdetail("%s", why.c_str())));
+      duplicate_build(m.name.c_str(), key, dup, why.c_str());
     ereport(ERROR, (errcode(code), errmsg("could not create index \"%s\": %s",
                                           m.name.c_str(), why.c_str())));
   }

@@ -683,10 +683,11 @@ int cat_put_index_state(session_t *session, uint64_t table_oid,
     return 0;
   }
   // Only a failed index keeps why.
-  index_status_t st{status.state, sm1::SM_OK, {}};
+  index_status_t st{status.state, sm1::SM_OK, {}, {}};
   if (status.state == index_state_t::failed) {
     st.error = status.error;
     st.reason = status.reason;
+    st.dup = status.dup;
   }
   // A temporary table's index: its state is the session's to keep.
   if (d->nspoid == nsp_temp) {

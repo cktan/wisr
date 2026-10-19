@@ -40,6 +40,34 @@ TEST_CASE("an error is recorded, named, and cleared per thread") {
   CHECK(sm0::retryable() == 0);
 }
 
+TEST_CASE("a duplicate key's record lasts until the next error") {
+  // Verify setdup() annotates the error just set, and only it.
+  // 1. Set a duplicate key error and check it knows no record.
+  // 2. Record an index and two rows, and read them back.
+  // 3. Set another error, by each setter, and check it is gone.
+  // 4. Record one again, clear the state, and check it is gone.
+  sm0::seterr(sm0::SM_ERR_DUPKEY, "key already exists");
+  CHECK(sm0::errdup().index == 0);
+  CHECK(sm0::errdup().nrows == 0);
+
+  sm0::setdup({7, {3, 9}, 2});
+  CHECK(sm0::errdup().index == 7);
+  CHECK(sm0::errdup().rownos[0] == 3);
+  CHECK(sm0::errdup().rownos[1] == 9);
+  CHECK(sm0::errdup().nrows == 2);
+
+  sm0::seterr(sm0::SM_ERR_IO, "disk");
+  CHECK(sm0::errdup().nrows == 0);
+  sm0::setdup({7, {3, 9}, 2});
+  sm0::set_error(sm0::SM_ERR_IO, "{}", "disk");
+  CHECK(sm0::errdup().index == 0);
+
+  sm0::setdup({7, {3, 0}, 1});
+  sm0::reseterr();
+  CHECK(sm0::errdup().index == 0);
+  CHECK(sm0::errdup().nrows == 0);
+}
+
 TEST_CASE("a message too long for the buffer is cut short") {
   // Verify both setters truncate rather than overrun.
   // 1. Set a message far longer than the buffer with seterr.

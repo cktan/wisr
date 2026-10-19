@@ -103,7 +103,8 @@ enum class index_state_t : uint8_t { pending = 0, valid = 1, failed = 2 };
 
 /*
  * An index's state, with why its build failed: the error's code
- * and message, SM_OK and empty unless failed. It is no part of the
+ * and message, SM_OK and empty unless failed, and for a duplicate
+ * key the two rows that hold it (sm1::errdup()). It is no part of the
  * table's record or of its definition: it is kept by index, and
  * changes without the table being changed (cat_put_index_state).
  */
@@ -111,6 +112,7 @@ struct index_status_t {
   index_state_t state = index_state_t::pending;
   sm1::errnum_t error = sm1::SM_OK;
   std::string reason;
+  sm1::dupkey_t dup;
 };
 
 /*
@@ -941,13 +943,15 @@ int enqueue_pending_indexes(catalog_t* cat);
 /*
  * Set the state of the table's index oid, which must be pending,
  * as the build does when it ends: valid, or failed. A failed index
- * keeps why, error and reason. It is cat_put_index_state,
+ * keeps why, error and reason, and dup for a duplicate key. It is
+ * cat_put_index_state,
  * and like it does not wait for the table's readers or writers.
  */
 int set_index_state(session_t* session, uint64_t table, uint64_t oid,
                     index_state_t state,
                     sm1::errnum_t error = sm1::SM_OK,
-                    std::string_view reason = {});
+                    std::string_view reason = {},
+                    const sm1::dupkey_t &dup = {});
 
 /*
  * Create a collation named name in namespace nspoid for locale,

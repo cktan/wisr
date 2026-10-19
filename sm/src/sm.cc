@@ -365,6 +365,15 @@ int sm_seterr(sm_errnum_t code, const char *msg) {
   return sm1::seterr(code, name_of(msg));
 }
 
+/* Where the thread's last error, a duplicate key, met its key. */
+int sm_errdup(uint64_t *index, uint64_t rownos[2]) {
+  const sm1::dupkey_t &d = sm1::errdup();
+  *index = d.index;
+  rownos[0] = d.rownos[0];
+  rownos[1] = d.rownos[1];
+  return d.nrows;
+}
+
 /*
  * Install fn as the log hook, through log_trampoline. Each hook
  * installed is kept for the life of the process, since a thread

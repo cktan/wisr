@@ -772,9 +772,9 @@ int enqueue_pending_indexes(catalog_t *cat) {
 /* Set an index's state; see sm3.h. */
 int set_index_state(session_t *session, uint64_t table, uint64_t oid,
                     index_state_t state, sm1::errnum_t error,
-                    std::string_view reason) {
+                    std::string_view reason, const sm1::dupkey_t &dup) {
   return cat_put_index_state(session, table, oid,
-                             {state, error, std::string(reason)});
+                             {state, error, std::string(reason), dup});
 }
 
 /* Create a collation; see sm3.h. */

@@ -126,6 +126,8 @@ const char* errmsg();
 const char* errname();
 int         seterr(errnum_t code, std::string_view msg);
 void        reseterr();
+const dupkey_t& errdup();
+void        setdup(const dupkey_t& d);
 ```
 
 `sm1::errnum()` and `sm1::errmsg()` report the last error
@@ -145,6 +147,15 @@ does not fit), and returns -1, so a failing path is
 `return sm1::seterr(...);`. `sm1::reseterr()` restores `SM_OK`
 and "no error", the one way to start a sequence of calls from
 a known state.
+
+`sm1::errdup()` says where an `SM_ERR_DUPKEY` met its key, as
+far as the level that raised it knows: the unique index's oid,
+0 if not known, and the rownos of up to two rows that hold the
+key, `nrows` of them. A failed index build gives both rows
+(`sm3/SM3_DESIGN.md` §3). `sm1::setdup(d)` records it with the
+error just set, and a level above may call it again to add
+what it knows; setting the next error, or `reseterr()`, clears
+it. In C it is `sm_errdup()`.
 
 #### Retryable errors
 

@@ -150,10 +150,16 @@ Owed, and blocking nothing above:
   169), beyond the key-share modes above: sm1
   has no wait queue to reorder, so a soft deadlock PostgreSQL
   untangles ends a transaction (`deadlock-soft`).
-- **A failed index build's detail is sm's.** `CREATE UNIQUE
-  INDEX` over duplicates says `index build: two rows of u
-  with one key in uk` where PostgreSQL says `Key (k)=(1) is
-  duplicated.`; sm's error does not carry the key.
+- **A duplicate key's detail on a write is sm's.** A unique
+  index build that meets one says PostgreSQL's `Key (k)=(1) is
+  duplicated.`, from the rows `sm1::errdup()` names
+  (`../dg/WORKNOTE.md` step 260). An insert, an update or ON
+  CONFLICT still says sm's `key already exists`, where
+  PostgreSQL says `duplicate key value violates unique
+  constraint "uk"` and `Key (k)=(1) already exists.`: sm3
+  would name the index in `errdup()`, and digres format the key
+  from the row it holds. A COPY in file mode finds a duplicate
+  at its close, with no row to read.
 
 ---
 

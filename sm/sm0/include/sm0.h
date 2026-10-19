@@ -12,6 +12,7 @@
 
 #include "sm_error.h"
 
+#include <cstdint>
 #include <string_view>
 
 namespace sm0 {
@@ -76,6 +77,31 @@ int seterr(errnum_t code, std::string_view msg);
  * a sequence of calls from a known state.
  */
 void reseterr();
+
+/*
+ * Where an SM_ERR_DUPKEY met its key, as far as the level that
+ * raised it knows: the unique index's oid, 0 if not known, and
+ * the rownos of up to two rows that hold the key, nrows of them.
+ */
+struct dupkey_t {
+  uint64_t index = 0;
+  uint64_t rownos[2] = {0, 0};
+  int nrows = 0;
+};
+
+/*
+ * What the calling thread's last error knows of a duplicate key:
+ * all zero unless setdup() was called after the error was set.
+ * Valid until the thread's next error.
+ */
+const dupkey_t &errdup();
+
+/*
+ * Record d with the calling thread's error, the SM_ERR_DUPKEY
+ * just set; a level above may call it again to add what it
+ * knows. Setting the next error, or reseterr(), clears it.
+ */
+void setdup(const dupkey_t &d);
 
 /*
  * The name of the current error code, without its SM_ prefix:

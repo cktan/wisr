@@ -7551,3 +7551,32 @@ the other scans do (steps 252, 253, 257 and 258).
 - `test/slt/scan_columns.test`, step 11; with one column too
   few at the begin, or at the rescan under a nested loop, it
   trips the slot's assertion.
+
+## Step 260: a failed unique build says the duplicated key
+
+`CREATE UNIQUE INDEX` over a duplicated key said sm's
+`index build: two rows of u with one key in uk`, where
+PostgreSQL says `Key (k)=(1) is duplicated.`: sm's error named
+no row, and a build on a table with rows fails after the
+commit, in the background, where no row is at hand.
+
+- **sm keeps the two rows.** sm0's error state carries a
+  duplicate's record, the index and up to two rownos
+  (`sm1::errdup()`, `sm_errdup()`); sm3's build sets it, a
+  failed index's catalog state keeps it, and `builder_wait`
+  raises it again (`../sm/sm3/SM3_DESIGN.md` §3).
+- **digres reads one of them** and says its key as PostgreSQL
+  does, the columns quoted as `pg_get_indexdef_columns()`
+  quotes them (`dup_key()` in `smstore.c`); the rows go in a
+  hint, `Rows 1 and 3 have it.`, so PostgreSQL's detail stays
+  as its tests expect. For a build after the commit the key is
+  read in the transaction that drops the failed index. A row
+  neither of which the transaction sees leaves sm's message.
+- **Column keys only**: digres makes no expression index, so
+  a key is the row's columns, and needs no evaluator.
+- PostgreSQL's checks of the user's right to see the columns,
+  row security and SELECT, are not made: digres's roles are
+  compiled in (`test/regress/README.md`).
+- `test/server.sh`, "a duplicated key's build": a build after
+  the commit, a key of two columns, and one in the creating
+  transaction.

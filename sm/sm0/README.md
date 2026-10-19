@@ -8,7 +8,7 @@ error codes, besides the C++ standard library and POSIX.
 
 | What | Header | Source |
 | --- | --- | --- |
-| the calling thread's error state: `errnum`, `errmsg`, `errname`, `retryable`, `seterr`, `reseterr` | `include/sm0.h` | `src/error.cc` |
+| the calling thread's error state: `errnum`, `errmsg`, `errname`, `retryable`, `seterr`, `reseterr`, and where a duplicate key was met, `errdup`, `setdup` | `include/sm0.h` | `src/error.cc` |
 | the process-wide log hook: `loglevel_t`, `log_fn`, `set_log` | `include/sm0.h` | `src/log.cc` |
 | setting an error with a formatted message, from an errno, or for a bad name | `include/sm0_error.h` | `src/error.cc` |
 | reporting through the log hook: `log_msg` | `include/sm0_log.h` | `src/log.cc` |

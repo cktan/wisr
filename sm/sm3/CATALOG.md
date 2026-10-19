@@ -175,7 +175,7 @@ VIEW value        = view | view read × nread | view query × npiece
 | table | namespace `int8`, name `text`, storeid `int8`, rowno sequence `text`, next index relid `int2` |
 | column | name `text`, type code `int2`, typmod `int4`, not null `bool`, dropped `bool`, missing value `bytea` or null, collation oid `int8` or null, default `bytea` or null: the host's expression, opaque, kept and never run; identity kind `int2` (`a` or `d`) or null, identity sequence `int8` or null |
 | index | oid `int8`, name `text`, relid `int2`, unique `bool`, nkey `int4`, ninclude `int4`, three retired and null, eval `bytea` or null, nread `int4` or null |
-| index state | state `int2`, error `int2` or null, reason `text` or null |
+| index state | state `int2`, error `int2` or null, reason `text` or null, the rownos of a duplicated key's two rows, `int8` or null each |
 | key | attnum `int4`, desc `bool`, nulls first `bool`, collation oid `int8` or null, type code `int2` or null, typmod `int4` or null |
 | include | attnum `int4` |
 | read | attnum `int4` |
@@ -533,8 +533,9 @@ begins with `cat_get_table_rec` and ends with `cat_put_table`.
   the columns it reads. It needs the catalog to have an
   evaluator, **`cat_set_evaluator(cat, eval)`**, given once.
 - **`set_index_state(session, table, oid, state, error,
-  reason)`** puts an index's state, as the build does when it
-  ends, with the error and its message for a failed one. It
+  reason, dup)`** puts an index's state, as the build does when
+  it ends, with the error and its message for a failed one,
+  and a duplicated key's rows. It
   is `cat_put_index_state` and nothing more, so it does not
   wait for the table's users.
 - **`drop_index(session, table, oid)`** erases the index's
