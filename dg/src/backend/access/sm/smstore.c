@@ -2236,7 +2236,7 @@ struct smstore_scan_t {
   sm_tbl_t *tbl;
   /* The table's oid, each row's tableoid, as WHERE CURRENT OF checks. */
   Oid relid;
-  /* A table scan's: the columns of each row it reads, from the first. */
+  /* A table or index scan's: the columns it reads of each row, the first. */
   int natts;
   sm_rel_scan_t *cursor;
   sm_idx_scan_t *icursor;
@@ -2268,29 +2268,51 @@ struct smstore_scan_t {
 };
 
 /*
- * A row the scan's cursor read into slot, as a virtual tuple, its tid its
- * rowno: the scan's first natts columns, the only ones valid.  A value by
- * reference points into sm's tuple, good until the cursor's next call.
+ * The tuple of the row at rowno into slot, cleared, as a virtual tuple, its
+ * tid its rowno: its first natts columns, the only ones valid.  A value by
+ * reference points into sm's tuple, and lasts as long as it does.
  */
-static void scan_row_into_slot(smstore_scan_t *scan, uint64_t rowno,
-                               const void *tuple, size_t len,
-                               TupleTableSlot *slot) {
-  int natts = slot->tts_tupleDescriptor->natts;
+static void tuple_into_slot(sm_tbl_t *tbl, uint64_t rowno, const void *tuple,
+                            size_t len, int natts, TupleTableSlot *slot) {
+  int all = slot->tts_tupleDescriptor->natts;
 
-  if (sm_tbl_deform(scan->tbl, tuple, len, (sm_datum_t *)slot->tts_values,
-                    slot->tts_isnull, scan->natts) != 0)
+  if (sm_tbl_deform(tbl, tuple, len, (sm_datum_t *)slot->tts_values,
+                    slot->tts_isnull, natts) != 0)
     sm_error("read a row");
   /* The columns left out are null to a materializing, which copies all. */
-  memset(slot->tts_isnull + scan->natts, true, natts - scan->natts);
+  memset(slot->tts_isnull + natts, true, all - natts);
   ExecStoreVirtualTuple(slot);
   /*
    * Only they are valid.  The executor reads a virtual slot's values with
    * no deform, so a read past them, of a natts too few, trips an assertion
    * or reads null.
    */
-  slot->tts_nvalid = scan->natts;
+  slot->tts_nvalid = natts;
   slot_from_sm(slot);
   smstore_rowno_to_tid(rowno, &slot->tts_tid);
+}
+
+/*
+ * The columns of each row of rel a scan of plan reads, from the first: up
+ * to the last its target list and quals name, or every one for a reference
+ * to the whole row.  Its projection and quals fetch no more; a scan with no
+ * projection names every column, as its target list is the table's.
+ */
+int smstore_scan_natts(const Scan *plan, Relation rel) {
+  Bitmapset *attrs = NULL;
+  int last = 0;
+  int x = -1;
+
+  pull_varattnos((Node *)plan->plan.targetlist, plan->scanrelid, &attrs);
+  pull_varattnos((Node *)plan->plan.qual, plan->scanrelid, &attrs);
+  while ((x = bms_next_member(attrs, x)) >= 0) {
+    AttrNumber attno = x + FirstLowInvalidHeapAttributeNumber;
+
+    if (attno == InvalidAttrNumber)
+      return RelationGetNumberOfAttributes(rel);
+    last = Max(last, attno);
+  }
+  return last;
 }
 
 /*
@@ -2334,7 +2356,7 @@ bool smstore_getnext(smstore_scan_t *scan, TupleTableSlot *slot) {
   default:
     sm_error("scan a table");
   }
-  scan_row_into_slot(scan, rowno, tuple, len, slot);
+  tuple_into_slot(scan->tbl, rowno, tuple, len, scan->natts, slot);
   return true;
 }
 
@@ -2378,7 +2400,8 @@ bool smstore_scan_row(smstore_scan_t *scan, uint64 rowno,
   if (!scan->ahead || scan->ahead_rowno != rowno)
     return false;
   scan->ahead = false;
-  scan_row_into_slot(scan, rowno, scan->ahead_tuple, scan->ahead_len, slot);
+  tuple_into_slot(scan->tbl, rowno, scan->ahead_tuple, scan->ahead_len,
+                  scan->natts, slot);
   return true;
 }
 
@@ -4999,14 +5022,15 @@ static bool keys_met(smstore_scan_t *scan, TupleTableSlot *slot,
 
 /*
  * Begin a scan of index, a btree of heap, a table in sm, for the rows that
- * meet keys: btree scan keys on the index's columns.  Equal keys on its
+ * meet keys: btree scan keys on the index's columns, each row's first natts
+ * columns read, and the keys' columns.  Equal keys on its
  * leading columns are a prefix both bounds share; the next column's ranges
  * bound it below and above, in the index's own order, so a DESC column's
  * upper value is its lower bound.  Every row read is checked against every
  * key, so a key that bounds nothing still holds.
  */
 smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
-                                        ScanKey keys, int nkeys) {
+                                        ScanKey keys, int nkeys, int natts) {
   sm_tbl_t *tbl = open_table(RelationGetRelid(heap), SM_LOCKMODE_IS);
   Form_pg_index form = index->rd_index;
   int ncols = form->indnkeyatts;
@@ -5101,30 +5125,25 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
   scan->form = form;
   scan->row_natts = RelationGetDescr(heap)->natts;
   scan->keycols = (AttrNumber *)palloc(Max(nkeys, 1) * sizeof(AttrNumber));
-  for (int i = 0; i < nkeys; i++)
+  scan->natts = natts;
+  for (int i = 0; i < nkeys; i++) {
     scan->keycols[i] = form->indkey.values[keys[i].sk_attno - 1];
+    /* Each row is checked against every key (keys_met()). */
+    scan->natts = Max(scan->natts, scan->keycols[i]);
+  }
   if (sm_tbl_idx_scan(tbl, RelationGetRelid(index), lo.n > 0 ? &lo : NULL,
                       hi.n > 0 ? &hi : NULL, NULL, &scan->icursor) != 0)
     sm_error("scan an index");
   return scan;
 }
 
-/* The tuple of the row at rowno into slot, cleared, as a virtual tuple. */
-static void tuple_into_slot(sm_tbl_t *tbl, uint64_t rowno, const void *tuple,
-                            size_t len, TupleTableSlot *slot) {
-  if (sm_tbl_deform(tbl, tuple, len, (sm_datum_t *)slot->tts_values,
-                    slot->tts_isnull, slot->tts_tupleDescriptor->natts) != 0)
-    sm_error("read a row");
-  ExecStoreVirtualTuple(slot);
-  slot_from_sm(slot);
-  smstore_rowno_to_tid(rowno, &slot->tts_tid);
-}
-
 /*
  * The row at rowno, as this transaction sees it, into slot, as a virtual
- * tuple, its tid its rowno; false, the slot empty, if it sees none.
+ * tuple of its first natts columns, its tid its rowno; false, the slot
+ * empty, if it sees none.
  */
-static bool read_row(sm_tbl_t *tbl, uint64_t rowno, TupleTableSlot *slot) {
+static bool read_row(sm_tbl_t *tbl, uint64_t rowno, int natts,
+                     TupleTableSlot *slot) {
   const void *tuple;
   size_t len;
 
@@ -5137,7 +5156,7 @@ static bool read_row(sm_tbl_t *tbl, uint64_t rowno, TupleTableSlot *slot) {
   default:
     sm_error("read a row");
   }
-  tuple_into_slot(tbl, rowno, tuple, len, slot);
+  tuple_into_slot(tbl, rowno, tuple, len, natts, slot);
   /*
    * A point read's bytes last only until the session's next call to sm,
    * which another scan in the statement makes, as a join's inner side
@@ -5157,7 +5176,8 @@ bool smstore_index_getnext(smstore_scan_t *scan, TupleTableSlot *slot) {
   slot->tts_tableOid = scan->relid;
   while (smstore_index_getrowno(scan, &rowno))
     /* A row the transaction does not see is passed. */
-    if (read_row(scan->tbl, rowno, slot) && keys_met(scan, slot, false))
+    if (read_row(scan->tbl, rowno, scan->natts, slot) &&
+        keys_met(scan, slot, false))
       return true;
   ExecClearTuple(slot);
   return false;
@@ -5309,7 +5329,7 @@ smstore_scan_t *smstore_beginfetch(Relation rel) {
  */
 bool smstore_fetch(smstore_scan_t *scan, uint64 rowno, TupleTableSlot *slot) {
   slot->tts_tableOid = scan->relid;
-  return read_row(scan->tbl, rowno, slot);
+  return read_row(scan->tbl, rowno, slot->tts_tupleDescriptor->natts, slot);
 }
 
 /* rel, a table in sm, opened to write in this transaction. */
@@ -5387,10 +5407,11 @@ bool smstore_fetch_row(Relation rel, ItemPointer tid, TupleTableSlot *slot) {
   if (kept_oid == RelationGetRelid(rel) && kept_rowno == rowno &&
       kept_tuple != NULL) {
     ExecClearTuple(slot);
-    tuple_into_slot(tbl, rowno, kept_tuple, kept_len, slot);
+    tuple_into_slot(tbl, rowno, kept_tuple, kept_len,
+                    slot->tts_tupleDescriptor->natts, slot);
     return true;
   }
-  return read_row(tbl, rowno, slot);
+  return read_row(tbl, rowno, slot->tts_tupleDescriptor->natts, slot);
 }
 
 /*
@@ -5570,7 +5591,8 @@ TM_Result smstore_lock_row(Relation rel, ItemPointer tid, TupleTableSlot *slot,
       sm_error("read a row");
     }
     tmfd->traversed = false;
-    tuple_into_slot(tbl, rowno, tuple, len, slot);
+    tuple_into_slot(tbl, rowno, tuple, len, slot->tts_tupleDescriptor->natts,
+                    slot);
     /* sm's bytes last until its next call. */
     ExecMaterializeSlot(slot);
     return TM_Ok;
@@ -5587,7 +5609,8 @@ TM_Result smstore_lock_row(Relation rel, ItemPointer tid, TupleTableSlot *slot,
   }
   if (after_write) {
     keep_row(oid, rowno, tuple, len);
-    tuple_into_slot(tbl, rowno, kept_tuple, kept_len, slot);
+    tuple_into_slot(tbl, rowno, kept_tuple, kept_len,
+                    slot->tts_tupleDescriptor->natts, slot);
     tmfd->traversed = true;
     return TM_Ok;
   }
@@ -5605,7 +5628,8 @@ TM_Result smstore_lock_row(Relation rel, ItemPointer tid, TupleTableSlot *slot,
   default:
     sm_error("read a row");
   }
-  tuple_into_slot(tbl, rowno, latest.data(), latest.size(), slot);
+  tuple_into_slot(tbl, rowno, latest.data(), latest.size(),
+                  slot->tts_tupleDescriptor->natts, slot);
   /* Copied out of latest, which ends with this call. */
   ExecMaterializeSlot(slot);
   return TM_Ok;

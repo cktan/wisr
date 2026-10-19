@@ -1684,6 +1684,7 @@ typedef struct IndexScanState
 	int16	   *iss_OrderByTypLens;
 	Size		iss_PscanLen;
 	struct smstore_scan_t *iss_SmScan;	/* a table in sm's: access/smstore.h */
+	int			iss_SmNatts;	/* the columns of each row iss_SmScan reads */
 } IndexScanState;
 
 /* ----------------

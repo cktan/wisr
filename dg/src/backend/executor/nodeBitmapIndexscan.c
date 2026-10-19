@@ -51,9 +51,9 @@ static double sm_index_bitmap(BitmapIndexScanState *node, RowBitmap *rbm) {
   BitmapIndexScan *plan = (BitmapIndexScan *)node->ss.ps.plan;
   Relation heap =
       ExecGetRangeTableRelation(node->ss.ps.state, plan->scan.scanrelid, false);
-  smstore_scan_t *scan =
-      smstore_index_beginscan(heap, node->biss_RelationDesc,
-                              node->biss_ScanKeys, node->biss_NumScanKeys);
+  smstore_scan_t *scan = smstore_index_beginscan(
+      heap, node->biss_RelationDesc, node->biss_ScanKeys,
+      node->biss_NumScanKeys, RelationGetNumberOfAttributes(heap));
   uint64 rowno;
   double n = 0;
 

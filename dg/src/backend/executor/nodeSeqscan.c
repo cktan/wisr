@@ -24,13 +24,11 @@
 
 #include "access/relscan.h"
 #include "access/smstore.h"
-#include "access/sysattr.h"
 #include "catalog/catrel.h"
 #include "access/tableam.h"
 #include "executor/execScan.h"
 #include "executor/executor.h"
 #include "executor/nodeSeqscan.h"
-#include "optimizer/optimizer.h"
 #include "utils/rel.h"
 
 static TupleTableSlot *SeqNext(SeqScanState *node);
@@ -184,30 +182,6 @@ static TupleTableSlot *ExecSeqScanEPQ(PlanState *pstate) {
                   (ExecScanRecheckMtd)SeqRecheck);
 }
 
-/*
- * The columns of each row of rel the scan reads, from the first: up to the
- * last its target list and quals name, or every one for a reference to the
- * whole row.  Its projection and quals fetch no more; a scan with no
- * projection names every column, as its target list is the table's.
- */
-static int scan_natts(SeqScan *plan, Relation rel) {
-  Bitmapset *attrs = NULL;
-  int last = 0;
-  int x = -1;
-
-  pull_varattnos((Node *)plan->scan.plan.targetlist, plan->scan.scanrelid,
-                 &attrs);
-  pull_varattnos((Node *)plan->scan.plan.qual, plan->scan.scanrelid, &attrs);
-  while ((x = bms_next_member(attrs, x)) >= 0) {
-    AttrNumber attno = x + FirstLowInvalidHeapAttributeNumber;
-
-    if (attno == InvalidAttrNumber)
-      return RelationGetNumberOfAttributes(rel);
-    last = Max(last, attno);
-  }
-  return last;
-}
-
 /* ----------------------------------------------------------------
  *		ExecInitSeqScan
  * ----------------------------------------------------------------
@@ -256,7 +230,8 @@ SeqScanState *ExecInitSeqScan(SeqScan *node, EState *estate, int eflags) {
    * rollback to a savepoint set after it leaves open.
    */
   if (RelationIsSm(scanstate->ss.ss_currentRelation)) {
-    scanstate->sm_natts = scan_natts(node, scanstate->ss.ss_currentRelation);
+    scanstate->sm_natts =
+        smstore_scan_natts(&node->scan, scanstate->ss.ss_currentRelation);
     if (!(eflags & EXEC_FLAG_EXPLAIN_ONLY))
       scanstate->sm_scan = smstore_beginscan(scanstate->ss.ss_currentRelation,
                                              scanstate->sm_natts);

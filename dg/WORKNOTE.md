@@ -7398,3 +7398,24 @@ wide table cost what `select *` did.
   ANALYZE) and the index and bitmap scans read every column
   (`../sm/NEXT.md` §2).
 - `test/slt/scan_columns.test`.
+
+## Step 253: an index scan reads the columns it needs
+
+Step 252, for an index scan: `smstore_index_getnext()` read
+each row with every column deformed.
+
+- **`smstore_scan_natts()`**, step 252's `scan_natts()` moved
+  to `smstore.c` for both scans, counts the columns from the
+  plan, kept in `IndexScanState`'s `iss_SmNatts` for the scan
+  that begins at the first row, as one with runtime keys does.
+- **The keys' columns too.** sm checks each row against every
+  scan key (`keys_met()`), on the key's column in the table,
+  which the projection and quals need not name:
+  `smstore_index_beginscan()` reads up to the last of them.
+- **One deform for every row read**: `tuple_into_slot()` takes
+  the columns to read, and step 252's `scan_row_into_slot()`
+  is gone into it. A fetch by tid, a row lock and the newest
+  version of a row read every column, as they did.
+- **Left as it was**: a bitmap index scan and an index-only
+  scan read no row through it, and pass every column.
+- `test/slt/scan_columns.test`, by index scans.

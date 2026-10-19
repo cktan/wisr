@@ -7,6 +7,10 @@
 # 5. Read through a cursor, and from a subquery naming an outer column.
 # 6. Update and delete by a later column, reading the rows back.
 # 7. Drop a column, and read the columns before and after it.
+# 8. By index scans: read a column before the key's, which sm checks
+#    every row against; filter on a later column; read none, and
+#    every one; update by the key; and join, the inner side's key
+#    known only at each outer row.
 
 statement ok
 create table w (a int4, b text, c int4, d numeric(10,2), e text,
@@ -114,3 +118,78 @@ select * from w order by a
 ----
 1	x	1.50	e1	100	t	1000
 2	u	NULL	e2	NULL	f	2000
+
+statement ok
+create table v (a int4, b text, c int4, d numeric(10,2), e text, f int4,
+                g int4)
+
+statement ok
+insert into v values
+  (1, 'x', 2, 1.50, 'e1', 1, 10),
+  (2, null, 3, null, 'e2', 2, 20),
+  (3, 'z', 1, 3.25, null, 3, 30)
+
+statement ok
+create index v_f on v (f)
+
+statement ok
+set enable_seqscan = off
+
+statement ok
+set enable_bitmapscan = off
+
+query T nosort
+explain (costs off) select a from v where f = 2
+----
+Index Scan using v_f on v
+  Index Cond: (f = 2)
+
+query I nosort
+select a from v where f = 2
+----
+2
+
+query T nosort
+select b from v where f > 1 and g = 30
+----
+z
+
+query I nosort
+select count(*) from v where f >= 2
+----
+2
+
+query ITITTII nosort
+select * from v where f = 1
+----
+1	x	2	1.50	e1	1	10
+
+statement ok
+update v set b = 'u' where f = 2
+
+query IT nosort
+select a, b from v where f = 2
+----
+2	u
+
+statement ok
+set enable_hashjoin = off
+
+statement ok
+set enable_mergejoin = off
+
+query T nosort
+explain (costs off) select x.a, y.e from v x join v y on y.f = x.c
+----
+Nested Loop
+  ->  Seq Scan on v x
+        Disabled: true
+  ->  Index Scan using v_f on v y
+        Index Cond: (f = x.c)
+
+query IT rowsort
+select x.a, y.e from v x join v y on y.f = x.c
+----
+1	e2
+2	NULL
+3	e1

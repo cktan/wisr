@@ -79,7 +79,8 @@ static TupleTableSlot *IndexOnlyNext(IndexOnlyScanState *node) {
     if (node->ioss_SmScan == NULL)
       node->ioss_SmScan = smstore_index_beginscan(
           node->ss.ss_currentRelation, node->ioss_RelationDesc,
-          node->ioss_ScanKeys, node->ioss_NumScanKeys);
+          node->ioss_ScanKeys, node->ioss_NumScanKeys,
+          RelationGetNumberOfAttributes(node->ss.ss_currentRelation));
     return smstore_index_getentry(node->ioss_SmScan, slot) ? slot : NULL;
   }
 
@@ -595,7 +596,8 @@ IndexOnlyScanState *ExecInitIndexOnlyScan(IndexOnlyScan *node, EState *estate,
       indexstate->ioss_NumRuntimeKeys == 0)
     indexstate->ioss_SmScan = smstore_index_beginscan(
         indexstate->ss.ss_currentRelation, indexstate->ioss_RelationDesc,
-        indexstate->ioss_ScanKeys, indexstate->ioss_NumScanKeys);
+        indexstate->ioss_ScanKeys, indexstate->ioss_NumScanKeys,
+        RelationGetNumberOfAttributes(indexstate->ss.ss_currentRelation));
 
   /*
    * all done.

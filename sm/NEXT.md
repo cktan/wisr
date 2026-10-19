@@ -103,15 +103,16 @@ Owed, and blocking nothing above:
   step 161).
 
 - **A scan still pays for the whole row in two ways.** A
-  sequential scan reads each row's first columns only, up to
-  the last its output and quals name (`scan_natts()` in
-  `../dg/src/backend/executor/nodeSeqscan.c`), and sm checks
-  only those (`tup_deform`, `sm2/TUPLE.md` §8). Not yet:
-  - *Other scans.* An index scan, a bitmap scan, a sample
-    scan and a TID scan still deform every column
-    (`smstore.c`, `smtable.c` in
-    `../dg/src/backend/access/sm`); each would count its
-    columns from its plan as the sequential scan does.
+  sequential scan and an index scan read each row's first
+  columns only, up to the last its output and quals name, and
+  an index scan its keys' (`smstore_scan_natts()` in
+  `../dg/src/backend/access/sm/smstore.c`); sm checks only
+  those (`tup_deform`, `sm2/TUPLE.md` §8). Not yet:
+  - *Other scans.* A bitmap heap scan, a sample scan and a
+    TID scan still deform every column (`smstore_fetch()`,
+    `smtable.c`), and so does an index-only scan whose key
+    does not give its columns back (`entry_from_row()`); each
+    would count its columns from its plan as the others do.
   - *Lend the row, not a copy.* sm1's `scan_next` copies each
     row it hands out into the cursor
     (`sm1/src/access.cc`), because it steps past the key's
