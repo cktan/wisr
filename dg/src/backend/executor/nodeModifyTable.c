@@ -1563,8 +1563,19 @@ ExecDelete(ModifyTableContext *context, ResultRelInfo *resultRelInfo,
       if (oldtuple != NULL) {
         ExecForceStoreHeapTuple(oldtuple, slot, false);
       } else {
-        if (!table_tuple_fetch_row_version(resultRelationDesc, tupleid,
-                                           SnapshotAny, slot))
+        /*
+         * A table in sm's row is read up to the last column RETURNING
+         * names; the whole of it for a row moving to another partition,
+         * which ExecInsert() is given.
+         */
+        int natts = resultRelInfo->ri_SmReturningNatts;
+
+        if (natts < 0 || saveOld)
+          natts = RelationGetNumberOfAttributes(resultRelationDesc);
+        if (!(RelationIsSm(resultRelationDesc)
+                  ? smstore_fetch_row(resultRelationDesc, tupleid, natts, slot)
+                  : table_tuple_fetch_row_version(resultRelationDesc, tupleid,
+                                                  SnapshotAny, slot)))
           elog(ERROR, "failed to fetch deleted tuple for DELETE RETURNING");
       }
     }
@@ -4440,6 +4451,10 @@ ModifyTableState *ExecInitModifyTable(ModifyTable *node, EState *estate,
       resultRelInfo->ri_projectReturning =
           ExecBuildProjectionInfo(rlist, econtext, slot, &mtstate->ps,
                                   resultRelInfo->ri_RelationDesc->rd_att);
+      if (RelationIsSm(resultRelInfo->ri_RelationDesc))
+        resultRelInfo->ri_SmReturningNatts =
+            smstore_expr_natts((Node *)rlist, resultRelInfo->ri_RangeTableIndex,
+                               resultRelInfo->ri_RelationDesc);
       resultRelInfo++;
     }
   } else {

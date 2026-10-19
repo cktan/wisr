@@ -220,7 +220,7 @@ extern void smstore_load(Relation rel, TupleTableSlot **slots, int n);
 extern void smstore_load_end(Relation rel);
 extern struct varlena *smstore_fetch_toast(struct varlena *attr);
 extern Size smstore_toast_size(struct varlena *attr);
-extern bool smstore_fetch_row(Relation rel, ItemPointer tid,
+extern bool smstore_fetch_row(Relation rel, ItemPointer tid, int natts,
                               TupleTableSlot *slot);
 extern TM_Result smstore_update(Relation rel, ItemPointer tid,
                                 TupleTableSlot *slot, TM_FailureData *tmfd);
@@ -248,6 +248,7 @@ extern bool smstore_scan_row(smstore_scan_t *scan, uint64 rowno,
                              TupleTableSlot *slot);
 extern uint64 smstore_rowno_limit(Relation rel);
 extern int smstore_scan_natts(const struct Scan *plan, Relation rel);
+extern int smstore_expr_natts(Node *expr, Index varno, Relation rel);
 extern smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
                                                ScanKey keys, int nkeys,
                                                int natts);

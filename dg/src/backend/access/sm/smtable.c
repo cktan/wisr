@@ -233,7 +233,7 @@ static bool smtable_tuple_satisfies_snapshot(Relation, TupleTableSlot *,
 /* The row at tid, as the statement sees it, or as it kept it (smstore.c). */
 static bool smtable_fetch_row_version(Relation rel, ItemPointer tid,
                                       Snapshot snapshot, TupleTableSlot *slot) {
-  return smstore_fetch_row(rel, tid, slot);
+  return smstore_fetch_row(rel, tid, slot->tts_tupleDescriptor->natts, slot);
 }
 
 /*

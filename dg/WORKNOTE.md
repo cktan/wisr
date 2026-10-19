@@ -7508,3 +7508,26 @@ as a sequential and an index scan do (steps 252 and 253).
 - `test/slt/scan_columns.test`, step 9; without the recheck's
   columns, or with one column too few, it trips the slot's
   assertion.
+
+## Step 258: a read by tid takes the columns it needs
+
+`smstore_fetch_row()`, the read of a row by its tid, deformed
+every column. It now takes the count, and the two callers that
+know a smaller one pass it; the others need the whole row.
+
+- **A TID scan** (`rowno = n`) counts its columns from its plan
+  with `smstore_scan_natts()`, and `nodeTidscan.c` calls
+  `smstore_fetch_row()` for a table in sm, not
+  `table_tuple_fetch_row_version()`.
+- **DELETE RETURNING** reads the deleted row up to the last
+  column RETURNING names of the table, counted once in
+  `ExecInitModifyTable()` (`ri_SmReturningNatts`, by the new
+  `smstore_expr_natts()`); all of it for a row moving to
+  another partition, which `ExecInsert()` is given, and for a
+  result relation whose count was not made.
+- **The tableam's callback passes every column**: an update's
+  old row, whose unchanged columns it copies, the newest
+  version of a locked row, a trigger's rows and EvalPlanQual's.
+- `test/slt/scan_columns.test`, step 10; with one column too
+  few the TID scan trips the slot's assertion and DELETE
+  RETURNING fails in its projection.

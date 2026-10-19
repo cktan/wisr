@@ -567,6 +567,9 @@ typedef struct ResultRelInfo
 	/* for computing a RETURNING list */
 	ProjectionInfo *ri_projectReturning;
 
+	/* for a table in sm, the columns RETURNING reads of a deleted row */
+	int			ri_SmReturningNatts;
+
 	/* list of arbiter indexes to use to check conflicts */
 	List	   *ri_onConflictArbiterIndexes;
 
@@ -1814,6 +1817,7 @@ typedef struct BitmapHeapScanState
  *		NumTids		   number of tids in this scan
  *		TidPtr		   index of currently fetched tid
  *		TidList		   evaluated item pointers (array of size NumTids)
+ *		SmNatts		   for a table in sm, the columns of each row read
  * ----------------
  */
 typedef struct TidScanState
@@ -1824,6 +1828,7 @@ typedef struct TidScanState
 	int			tss_NumTids;
 	int			tss_TidPtr;
 	ItemPointerData *tss_TidList;
+	int			tss_SmNatts;
 } TidScanState;
 
 /* ----------------

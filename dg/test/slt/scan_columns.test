@@ -14,6 +14,9 @@
 # 9. By bitmap heap scans: read a column before the key's, which
 #    the recheck reads every row by; filter on a later column; read
 #    none, and every one.
+# 10. By a TID scan, and by DELETE RETURNING, which read a row by its
+#    tid: a column before a later one in the filter or RETURNING;
+#    none; and every one.
 
 statement ok
 create table w (a int4, b text, c int4, d numeric(10,2), e text,
@@ -235,3 +238,71 @@ select * from v where f = 1 or f = 3
 ----
 1	x	2	1.50	e1	1	10
 3	z	1	3.25	NULL	3	30
+
+statement ok
+insert into v values
+  (4, 'p', 5, 4.75, 'e4', 4, 40),
+  (5, 'q', 6, null, 'e5', 5, 50),
+  (6, 'r', 7, 6.00, 'e6', 6, 60),
+  (7, 's', 8, 7.25, 'e7', 7, 70)
+
+onlyif digres
+query T nosort
+explain (costs off) select a from v where rowno = (select rowno from v where f = 2) and g > 15
+----
+Tid Scan on v
+  TID Cond: (rowno = (InitPlan 1).col1)
+  Filter: (g > 15)
+  InitPlan 1
+    ->  Bitmap Heap Scan on v v_1
+          Recheck Cond: (f = 2)
+          ->  Bitmap Index Scan on v_f
+                Index Cond: (f = 2)
+
+onlyif digres
+query I nosort
+select a from v where rowno = (select rowno from v where f = 2) and g > 15
+----
+2
+
+onlyif digres
+query I nosort
+select a from v where rowno = (select rowno from v where f = 2) and g > 25
+----
+
+onlyif digres
+query I nosort
+select count(*) from v where rowno = (select rowno from v where f = 3)
+----
+1
+
+onlyif digres
+query ITITTII nosort
+select * from v where rowno = (select rowno from v where f = 3)
+----
+3	z	1	3.25	NULL	3	30
+
+query T nosort
+delete from v where f = 4 returning b
+----
+p
+
+query IT nosort
+delete from v where f = 5 returning a, e
+----
+5	e5
+
+query I nosort
+delete from v where f = 6 returning 1
+----
+1
+
+query ITITTII nosort
+delete from v where f = 7 returning *
+----
+7	s	8	7.25	e7	7	70
+
+query I nosort
+select count(*) from v
+----
+3

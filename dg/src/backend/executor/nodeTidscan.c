@@ -391,7 +391,11 @@ static TupleTableSlot *TidNext(TidScanState *node) {
     if (node->tss_isCurrentOf)
       table_tuple_get_latest_tid(scan, &tid);
 
-    if (table_tuple_fetch_row_version(heapRelation, &tid, snapshot, slot))
+    /* A table in sm's row is read up to the last column the plan names. */
+    if (RelationIsSm(heapRelation)
+            ? smstore_fetch_row(heapRelation, &tid, node->tss_SmNatts, slot)
+            : table_tuple_fetch_row_version(heapRelation, &tid, snapshot,
+                                            slot))
       return slot;
 
     /* Bad TID or failed snapshot qual; try next */
@@ -533,6 +537,8 @@ TidScanState *ExecInitTidScan(TidScan *node, EState *estate, int eflags) {
 
   tidstate->ss.ss_currentRelation = currentRelation;
   tidstate->ss.ss_currentScanDesc = NULL; /* no heap scan here */
+  if (RelationIsSm(currentRelation))
+    tidstate->tss_SmNatts = smstore_scan_natts(&node->scan, currentRelation);
 
   /*
    * get the scan type from the relation descriptor.

@@ -1143,6 +1143,7 @@ void InitResultRelInfo(ResultRelInfo *resultRelInfo,
   resultRelInfo->ri_GeneratedExprsI = NULL;
   resultRelInfo->ri_GeneratedExprsU = NULL;
   resultRelInfo->ri_projectReturning = NULL;
+  resultRelInfo->ri_SmReturningNatts = -1;
   resultRelInfo->ri_onConflictArbiterIndexes = NIL;
   resultRelInfo->ri_onConflict = NULL;
   resultRelInfo->ri_ReturningSlot = NULL;

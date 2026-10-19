@@ -2293,22 +2293,14 @@ static void tuple_into_slot(sm_tbl_t *tbl, uint64_t rowno, const void *tuple,
 }
 
 /*
- * The columns of each row of rel a scan of plan reads, from the first: up
- * to the last its target list and quals name, a bitmap heap scan's recheck
- * among them, or every one for a reference to the whole row.  Its
- * projection and quals fetch no more; a scan with no projection names every
- * column, as its target list is the table's.
+ * The columns of rel from the first up to the last of attrs, attribute
+ * numbers offset as pull_varattnos() gives them; every one if attrs has the
+ * whole row's.
  */
-int smstore_scan_natts(const Scan *plan, Relation rel) {
-  Bitmapset *attrs = NULL;
+static int attrs_natts(const Bitmapset *attrs, Relation rel) {
   int last = 0;
   int x = -1;
 
-  pull_varattnos((Node *)plan->plan.targetlist, plan->scanrelid, &attrs);
-  pull_varattnos((Node *)plan->plan.qual, plan->scanrelid, &attrs);
-  if (IsA(plan, BitmapHeapScan))
-    pull_varattnos((Node *)((const BitmapHeapScan *)plan)->bitmapqualorig,
-                   plan->scanrelid, &attrs);
   while ((x = bms_next_member(attrs, x)) >= 0) {
     AttrNumber attno = x + FirstLowInvalidHeapAttributeNumber;
 
@@ -2317,6 +2309,35 @@ int smstore_scan_natts(const Scan *plan, Relation rel) {
     last = Max(last, attno);
   }
   return last;
+}
+
+/*
+ * The columns of each row of rel a scan of plan reads, from the first: up
+ * to the last its target list and quals name, a bitmap heap scan's recheck
+ * among them, or every one for a reference to the whole row.  Its
+ * projection and quals fetch no more; a scan with no projection names every
+ * column, as its target list is the table's.
+ */
+int smstore_scan_natts(const Scan *plan, Relation rel) {
+  Bitmapset *attrs = NULL;
+
+  pull_varattnos((Node *)plan->plan.targetlist, plan->scanrelid, &attrs);
+  pull_varattnos((Node *)plan->plan.qual, plan->scanrelid, &attrs);
+  if (IsA(plan, BitmapHeapScan))
+    pull_varattnos((Node *)((const BitmapHeapScan *)plan)->bitmapqualorig,
+                   plan->scanrelid, &attrs);
+  return attrs_natts(attrs, rel);
+}
+
+/*
+ * The columns of rel that expr reads of the relation varno, from the first:
+ * up to the last it names, or every one for a reference to the whole row.
+ */
+int smstore_expr_natts(Node *expr, Index varno, Relation rel) {
+  Bitmapset *attrs = NULL;
+
+  pull_varattnos(expr, varno, &attrs);
+  return attrs_natts(attrs, rel);
 }
 
 /*
@@ -5400,12 +5421,14 @@ Size smstore_toast_size(struct varlena *attr) {
 }
 
 /*
- * The row of rel at tid into slot, as a virtual tuple: the kept one if it
- * is that row, else as the statement sees it; false if it sees none.  The
- * executor fetches the row it is to update, the newest version of one it
- * locked, and the row it deleted, for RETURNING.
+ * The row of rel at tid into slot, as a virtual tuple of its first natts
+ * columns: the kept one if it is that row, else as the statement sees it;
+ * false if it sees none.  The executor fetches the row it is to update, the
+ * newest version of one it locked, the row it deleted, for RETURNING, and a
+ * TID scan's rows.
  */
-bool smstore_fetch_row(Relation rel, ItemPointer tid, TupleTableSlot *slot) {
+bool smstore_fetch_row(Relation rel, ItemPointer tid, int natts,
+                       TupleTableSlot *slot) {
   sm_tbl_t *tbl = open_table(RelationGetRelid(rel), SM_LOCKMODE_IS);
   uint64 rowno = smstore_tid_to_rowno(tid);
 
@@ -5415,11 +5438,10 @@ bool smstore_fetch_row(Relation rel, ItemPointer tid, TupleTableSlot *slot) {
   if (kept_oid == RelationGetRelid(rel) && kept_rowno == rowno &&
       kept_tuple != NULL) {
     ExecClearTuple(slot);
-    tuple_into_slot(tbl, rowno, kept_tuple, kept_len,
-                    slot->tts_tupleDescriptor->natts, slot);
+    tuple_into_slot(tbl, rowno, kept_tuple, kept_len, natts, slot);
     return true;
   }
-  return read_row(tbl, rowno, slot->tts_tupleDescriptor->natts, slot);
+  return read_row(tbl, rowno, natts, slot);
 }
 
 /*
