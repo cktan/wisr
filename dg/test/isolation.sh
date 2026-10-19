@@ -23,6 +23,9 @@ if [ ! -x "$src/pg_isolation_regress" ]; then
   echo "isolation: SKIPPED (no PostgreSQL 18 build in $src; set PG18_SRC)"
   exit 0
 fi
+# The tree's own libpq, for isolationtester: a system libpq of an older
+# PostgreSQL lacks what it calls, and it then fails to start.
+export LD_LIBRARY_PATH=$src/../../interfaces/libpq${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
 declare -A want
 while read -r spec outcome _; do
   want[$spec]=$outcome
