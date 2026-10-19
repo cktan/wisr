@@ -15,6 +15,7 @@
 #include "postgres.h"
 
 #include "access/relscan.h"
+#include "access/smstore.h"
 #include "access/tableam.h"
 #include "access/tsmapi.h"
 #include "common/pg_prng.h"
@@ -114,6 +115,9 @@ SampleScanState *ExecInitSampleScan(SampleScan *node, EState *estate,
 
   /* we won't set up the HeapScanDesc till later */
   scanstate->ss.ss_currentScanDesc = NULL;
+  if (RelationIsSm(scanstate->ss.ss_currentRelation))
+    scanstate->sm_natts =
+        smstore_scan_natts(&node->scan, scanstate->ss.ss_currentRelation);
 
   /* and create slot with appropriate rowtype */
   ExecInitScanTupleSlot(estate, &scanstate->ss,
@@ -259,6 +263,10 @@ static void tablesample_init(SampleScanState *scanstate) {
     scanstate->ss.ss_currentScanDesc = table_beginscan_sampling(
         scanstate->ss.ss_currentRelation, scanstate->ss.ps.state->es_snapshot,
         0, NULL, scanstate->use_bulkread, scanstate->use_pagemode);
+    /* A table in sm's rows are read up to the last column the plan names. */
+    if (RelationIsSm(scanstate->ss.ss_currentRelation))
+      smtable_scan_set_natts(scanstate->ss.ss_currentScanDesc,
+                             scanstate->sm_natts);
   } else {
     table_rescan_set_params(scanstate->ss.ss_currentScanDesc, NULL,
                             scanstate->use_bulkread, scanstate->use_pagemode);

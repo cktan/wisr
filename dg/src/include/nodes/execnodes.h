@@ -1610,6 +1610,7 @@ typedef struct SampleScanState
 	int64		donetuples;		/* number of tuples already returned */
 	bool		haveblock;		/* has a block for sampling been determined */
 	bool		done;			/* exhausted all tuples? */
+	int			sm_natts;		/* a table in sm's: the columns of each row read */
 } SampleScanState;
 
 /*

@@ -51,10 +51,12 @@ static const TupleTableSlotOps *smtable_slot_callbacks(Relation rel) {
  * A scan of a table in sm by the access method: sm's cursor behind it.  A
  * sample scan's blocks are a tid's, SMSTORE_ROWS_PER_BLOCK rownos each: the
  * table's count of them, as its highest rowno makes it, and the one read.
+ * Each row's first natts columns are read.
  */
 typedef struct smtable_scan_t {
   TableScanDescData base; /* what tableam.h reads */
   smstore_scan_t *scan;
+  int natts;
   BlockNumber nblocks;
   BlockNumber block;
   bool started;
@@ -87,7 +89,8 @@ static TableScanDesc smtable_scan_begin(Relation rel, Snapshot snapshot,
   scan->base.rs_rd = rel;
   scan->base.rs_snapshot = snapshot;
   scan->base.rs_flags = flags;
-  scan->scan = smstore_beginscan(rel, RelationGetNumberOfAttributes(rel));
+  scan->natts = RelationGetNumberOfAttributes(rel);
+  scan->scan = smstore_beginscan(rel, scan->natts);
   if (flags & SO_TYPE_SAMPLESCAN)
     scan->nblocks = sample_blocks(rel);
   return &scan->base;
@@ -110,10 +113,21 @@ static void smtable_scan_rescan(TableScanDesc sscan, struct ScanKeyData *key,
   if (!(sscan->rs_flags & SO_TYPE_SAMPLESCAN))
     refuse<void>();
   smstore_endscan(scan->scan);
-  scan->scan = smstore_beginscan(sscan->rs_rd,
-                                 RelationGetNumberOfAttributes(sscan->rs_rd));
+  scan->scan = smstore_beginscan(sscan->rs_rd, scan->natts);
   scan->nblocks = sample_blocks(sscan->rs_rd);
   scan->started = false;
+}
+
+/*
+ * Read each row's first natts columns only, from the start: a sample scan's
+ * plan names no more.  Its cursor is begun again, before any row is read.
+ */
+void smtable_scan_set_natts(TableScanDesc sscan, int natts) {
+  smtable_scan_t *scan = (smtable_scan_t *)sscan;
+
+  scan->natts = natts;
+  smstore_endscan(scan->scan);
+  scan->scan = smstore_beginscan(sscan->rs_rd, natts);
 }
 
 /*

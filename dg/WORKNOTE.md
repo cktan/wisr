@@ -7531,3 +7531,23 @@ know a smaller one pass it; the others need the whole row.
 - `test/slt/scan_columns.test`, step 10; with one column too
   few the TID scan trips the slot's assertion and DELETE
   RETURNING fails in its projection.
+
+## Step 259: a sample scan reads the columns it needs
+
+A `TABLESAMPLE` scan deformed every column of each row it
+sampled, as `smtable_scan_begin()` opened its cursor so. It now
+reads the first columns only, up to the last its plan names, as
+the other scans do (steps 252, 253, 257 and 258).
+
+- **`nodeSamplescan.c`** counts the columns with
+  `smstore_scan_natts()` when it initializes, and hands them to
+  the scan the access method begins, by
+  `smtable_scan_set_natts()`, which begins its cursor again
+  before any row is read.
+- **A rescan keeps the count**: `smtable_scan_t` holds it, and
+  `smtable_scan_rescan()` begins the cursor with it.
+- The access method's other scans, a utility's of the whole
+  table, read every column.
+- `test/slt/scan_columns.test`, step 11; with one column too
+  few at the begin, or at the rescan under a nested loop, it
+  trips the slot's assertion.

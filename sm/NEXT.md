@@ -106,18 +106,17 @@ Owed, and blocking nothing above:
   step 161).
 
 - **A scan still pays for the whole row in two ways.** A
-  sequential, an index, a bitmap heap and a TID scan read each
-  row's first columns only, up to the last its output and
-  quals name, an index scan its keys' too, and a DELETE the
-  last its RETURNING names (`smstore_scan_natts()` in
+  sequential, an index, a bitmap heap, a TID and a sample scan
+  read each row's first columns only, up to the last its
+  output and quals name, an index scan its keys' too, and a
+  DELETE the last its RETURNING names (`smstore_scan_natts()` in
   `../dg/src/backend/access/sm/smstore.c`); sm checks only
   those (`tup_deform`, `sm2/TUPLE.md` §8). Not yet:
-  - *Other scans.* A sample scan still deforms every column
-    (`smtable.c`), and so does an index-only scan whose key
-    does not give its columns back (`entry_from_row()`); each
-    would count its columns from its plan as the others do. A
-    point read by tid for an update, a lock or a trigger reads
-    every column, as it must.
+  - *Other scans.* An index-only scan whose key does not give
+    its columns back still deforms every column
+    (`entry_from_row()`); it would count its columns from its
+    plan as the others do. A point read by tid for an update, a
+    lock or a trigger reads every column, as it must.
   - *Lend the row, not a copy.* sm1's `scan_next` copies each
     row it hands out into the cursor
     (`sm1/src/access.cc`), because it steps past the key's
