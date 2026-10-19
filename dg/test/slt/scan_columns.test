@@ -11,6 +11,9 @@
 #    every row against; filter on a later column; read none, and
 #    every one; update by the key; and join, the inner side's key
 #    known only at each outer row.
+# 9. By bitmap heap scans: read a column before the key's, which
+#    the recheck reads every row by; filter on a later column; read
+#    none, and every one.
 
 statement ok
 create table w (a int4, b text, c int4, d numeric(10,2), e text,
@@ -193,3 +196,42 @@ select x.a, y.e from v x join v y on y.f = x.c
 1	e2
 2	NULL
 3	e1
+
+statement ok
+set enable_indexscan = off
+
+statement ok
+set enable_bitmapscan = on
+
+query T nosort
+explain (costs off) select a from v where f = 1 or f = 3
+----
+Bitmap Heap Scan on v
+  Recheck Cond: ((f = 1) OR (f = 3))
+  ->  BitmapOr
+        ->  Bitmap Index Scan on v_f
+              Index Cond: (f = 1)
+        ->  Bitmap Index Scan on v_f
+              Index Cond: (f = 3)
+
+query I rowsort
+select a from v where f = 1 or f = 3
+----
+1
+3
+
+query I rowsort
+select a from v where (f = 1 or f = 3) and g > 15
+----
+3
+
+query I nosort
+select count(*) from v where f = 1 or f = 3
+----
+2
+
+query ITITTII rowsort
+select * from v where f = 1 or f = 3
+----
+1	x	2	1.50	e1	1	10
+3	z	1	3.25	NULL	3	30

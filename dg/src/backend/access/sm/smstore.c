@@ -2294,9 +2294,10 @@ static void tuple_into_slot(sm_tbl_t *tbl, uint64_t rowno, const void *tuple,
 
 /*
  * The columns of each row of rel a scan of plan reads, from the first: up
- * to the last its target list and quals name, or every one for a reference
- * to the whole row.  Its projection and quals fetch no more; a scan with no
- * projection names every column, as its target list is the table's.
+ * to the last its target list and quals name, a bitmap heap scan's recheck
+ * among them, or every one for a reference to the whole row.  Its
+ * projection and quals fetch no more; a scan with no projection names every
+ * column, as its target list is the table's.
  */
 int smstore_scan_natts(const Scan *plan, Relation rel) {
   Bitmapset *attrs = NULL;
@@ -2305,6 +2306,9 @@ int smstore_scan_natts(const Scan *plan, Relation rel) {
 
   pull_varattnos((Node *)plan->plan.targetlist, plan->scanrelid, &attrs);
   pull_varattnos((Node *)plan->plan.qual, plan->scanrelid, &attrs);
+  if (IsA(plan, BitmapHeapScan))
+    pull_varattnos((Node *)((const BitmapHeapScan *)plan)->bitmapqualorig,
+                   plan->scanrelid, &attrs);
   while ((x = bms_next_member(attrs, x)) >= 0) {
     AttrNumber attno = x + FirstLowInvalidHeapAttributeNumber;
 
@@ -5308,8 +5312,11 @@ bool smstore_index_getentry(smstore_scan_t *scan, TupleTableSlot *slot) {
   return false;
 }
 
-/* Begin reading rows of rel, a table in sm, by rowno (smstore_fetch()). */
-smstore_scan_t *smstore_beginfetch(Relation rel) {
+/*
+ * Begin reading rows of rel, a table in sm, by rowno (smstore_fetch()),
+ * each row's first natts columns read.
+ */
+smstore_scan_t *smstore_beginfetch(Relation rel, int natts) {
   sm_tbl_t *tbl = open_table(RelationGetRelid(rel), SM_LOCKMODE_IS);
   smstore_scan_t *scan;
 
@@ -5320,16 +5327,17 @@ smstore_scan_t *smstore_beginfetch(Relation rel) {
   scan = (smstore_scan_t *)palloc0(sizeof(smstore_scan_t));
   scan->tbl = tbl;
   scan->relid = RelationGetRelid(rel);
+  scan->natts = natts;
   return scan;
 }
 
 /*
- * The row at rowno into slot, as a virtual tuple, its tid its rowno; false
- * if the transaction sees none there.
+ * The row at rowno into slot, as a virtual tuple of the scan's first natts
+ * columns, its tid its rowno; false if the transaction sees none there.
  */
 bool smstore_fetch(smstore_scan_t *scan, uint64 rowno, TupleTableSlot *slot) {
   slot->tts_tableOid = scan->relid;
-  return read_row(scan->tbl, rowno, slot->tts_tupleDescriptor->natts, slot);
+  return read_row(scan->tbl, rowno, scan->natts, slot);
 }
 
 /* rel, a table in sm, opened to write in this transaction. */

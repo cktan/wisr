@@ -1789,6 +1789,7 @@ typedef struct BitmapHeapScanInstrumentation
  *		rbm				   for a table in sm, bitmap of rownos from child
  *		rbm_iter		   iteration over rbm
  *		sm_fetch		   reader of the sm table's rows by rowno
+ *		sm_natts		   the columns of each row sm_fetch reads
  * ----------------
  */
 typedef struct BitmapHeapScanState
@@ -1802,6 +1803,7 @@ typedef struct BitmapHeapScanState
 	struct RowBitmap *rbm;
 	struct RowBitmapIterator *rbm_iter;
 	struct smstore_scan_t *sm_fetch;	/* access/smstore.h */
+	int			sm_natts;		/* the columns of each row sm_fetch reads */
 } BitmapHeapScanState;
 
 /* ----------------

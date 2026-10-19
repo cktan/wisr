@@ -20,11 +20,14 @@ Low priority:
 
 1. **Bulk load, the rest of it.** File mode into an empty
    table is built, and digres's `COPY` uses it (`BULKLOAD.md`
-   §13). Not built: a load from files into a table that has
-   rows, which inserts a row at a time today; rows stored out
-   of line, which end a load's files; a `rel` verb; and batch
-   mode and mini-batch, which matter less now that no write
-   keeps a row lock.
+   §13). Not built: `INSERT ... SELECT` into an empty table,
+   which digres inserts a row at a time
+   (`smtable_tuple_insert()` in
+   `../dg/src/backend/access/sm/smtable.c`); a load from
+   files into a table that has rows, which inserts a row at a
+   time today; rows stored out of line, which end a load's
+   files; a `rel` verb; and batch mode and mini-batch, which
+   matter less now that no write keeps a row lock.
 2. **digres's `xact.c`, until it is empty.** sm keeps the
    transaction; `xact.c` keeps only what a session needs
    around it (`../dg/PLAN.md` §7), and what it no longer needs
@@ -103,16 +106,17 @@ Owed, and blocking nothing above:
   step 161).
 
 - **A scan still pays for the whole row in two ways.** A
-  sequential scan and an index scan read each row's first
-  columns only, up to the last its output and quals name, and
-  an index scan its keys' (`smstore_scan_natts()` in
+  sequential, an index and a bitmap heap scan read each row's
+  first columns only, up to the last its output and quals
+  name, and an index scan its keys' (`smstore_scan_natts()` in
   `../dg/src/backend/access/sm/smstore.c`); sm checks only
   those (`tup_deform`, `sm2/TUPLE.md` §8). Not yet:
-  - *Other scans.* A bitmap heap scan, a sample scan and a
-    TID scan still deform every column (`smstore_fetch()`,
-    `smtable.c`), and so does an index-only scan whose key
-    does not give its columns back (`entry_from_row()`); each
-    would count its columns from its plan as the others do.
+  - *Other scans.* A sample scan and a TID scan still deform
+    every column (`smtable.c`), and so does an index-only scan
+    whose key does not give its columns back
+    (`entry_from_row()`); each would count its columns from
+    its plan as the others do. A point read by tid for a write
+    or a trigger reads every column, as it must.
   - *Lend the row, not a copy.* sm1's `scan_next` copies each
     row it hands out into the cursor
     (`sm1/src/access.cc`), because it steps past the key's

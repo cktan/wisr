@@ -7487,3 +7487,24 @@ bare `numeric` needs none of its own.
   `server.sh`, print the scale written, as PostgreSQL does.
 - PostgreSQL's `int2`, `int4` and `int8` pass.
 - `test/slt/numeric_bare.test`.
+
+## Step 257: a bitmap heap scan reads the columns it needs
+
+A bitmap heap scan read every column of each row it fetched by
+rowno, as `smstore_fetch()` deformed the whole tuple. It now
+reads the first columns only, up to the last its plan names,
+as a sequential and an index scan do (steps 252 and 253).
+
+- **`smstore_scan_natts()`** counts a bitmap heap scan's
+  recheck too, `bitmapqualorig`, which is a field of its own
+  and not among the plan's quals: the recheck runs on every
+  row.
+- **`smstore_beginfetch(rel, natts)`**: `nodeBitmapHeapscan.c`
+  counts the columns when it initializes, and
+  `smstore_fetch()` passes them to `read_row()`.
+- **A point read by tid stays whole**: `smstore_fetch_row()`
+  gives an update its old row, whose unchanged columns it
+  copies, and a trigger and EvalPlanQual their rows.
+- `test/slt/scan_columns.test`, step 9; without the recheck's
+  columns, or with one column too few, it trips the slot's
+  assertion.
