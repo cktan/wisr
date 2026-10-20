@@ -83,6 +83,23 @@ struct row_values_t {
   explicit row_values_t(size_t n) : bufs(n), values(n), isnull(new bool[n]()) {}
 };
 
+/*
+ * An index cursor a script opened with (idx-open), and the table
+ * handle it reads through, which it keeps past its statement. It
+ * is ended before the handle is closed, and before its
+ * transaction ends, which would close it under rel.
+ */
+struct cursor_t {
+  std::unique_ptr<table_def_t> table;
+  index_def_t *idef = nullptr;   /* table's */
+  sm_idx_scan_t *scan = nullptr; /* owned; ended with this */
+
+  cursor_t() = default;
+  cursor_t(const cursor_t &) = delete;
+  cursor_t &operator=(const cursor_t &) = delete;
+  ~cursor_t();
+};
+
 /* Context for one active database session. */
 struct session_ctx_t {
   std::string name;
@@ -90,7 +107,18 @@ struct session_ctx_t {
   sm_session_t *session = nullptr;
   std::vector<std::unique_ptr<table_def_t>> stmt_tables; /* this statement's */
   std::vector<sm_stmt_t *> outer_stmts; /* put aside by (stmt-inner) */
+  std::map<int32_t, std::unique_ptr<cursor_t>> cursors; /* by handle */
+  int32_t next_cursor = 0; /* the last handle given out */
 };
+
+/* End every cursor s has open, before its transaction ends. */
+void end_cursors(session_ctx_t *s);
+
+/*
+ * Forget every cursor s has open without ending it: the engine
+ * aborted their transaction, which closed them.
+ */
+void forget_cursors(session_ctx_t *s);
 
 /* The global catalog tracking environment, sessions and active state. */
 class catalog_t {

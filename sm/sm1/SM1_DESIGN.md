@@ -1245,12 +1245,15 @@ scan.
 
 **Closed, not freed.** A closed cursor stays the session's:
 each `sm1::scannxt` and `sm1::scan_seek` on it fails with
-`SM_ERR_INVALID`, until its caller ends it with
+`SM_ERR_SCANCLOSED`, until its caller ends it with
 `sm1::scanend`, or the transaction's end does. A caller may
 not know that a rollback reached one of its cursors. A SQL
 cursor declared before a savepoint whose plan begins a scan
 again inside it holds such a cursor, and freeing it would
-leave the next `FETCH` a dangling pointer.
+leave the next `FETCH` a dangling pointer. The code is its
+own, not `SM_ERR_INVALID`, so a host can tell it from a
+misuse and say why: the cursor's old view cannot be
+recreated, and digres reports so.
 
 Releasing locks acquired after the mark is safe: the row was untouched
 before the savepoint, so no one observed our intent on it. A
@@ -2602,6 +2605,8 @@ SM_ERR_DUPKEY          insert onto a live key (§5)
 SM_ERR_NOSAVEPOINT     no savepoint at the given depth (§6.5)
 SM_ERR_UNDOLIMIT       the savepoint was lost at savepoint_undo_bytes (§6.5)
 SM_ERR_DOOMED          a rollback failed; only an abort is let through (§6.5)
+SM_ERR_SCANCLOSED      a read or seek on a cursor a rollback closed (§6.5);
+                       not an abort
 SM_ERR_SELFMODIFIED    update or erase of a key the running statement
                        wrote (§6.2); not an abort
 SM_ERR_NOTRANS         data op outside a transaction (§6.1)

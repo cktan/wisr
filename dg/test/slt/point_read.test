@@ -7,6 +7,10 @@
 # 4. Fetch from a cursor over a nested loop of index scans, its outer
 #    row held from one FETCH to the next across a rollback to a
 #    savepoint a FETCH was made in, and confirm the row is kept.
+# 5. Fetch from such a cursor inside a savepoint, so its inner scan begins
+#    again there, roll back to the savepoint, and confirm the next FETCH
+#    fails on digres, as the scan's old view cannot be recreated, where
+#    PostgreSQL goes on (onlyif digres, beside skipif digres).
 
 statement ok
 create table a (k int4, x text)
@@ -89,7 +93,7 @@ statement ok
 declare c cursor for select x, y from a join b on b.k = a.k where a.k in (5, 6)
 
 # The first of a row 5's three matches: the inner scan opens before the
-# savepoint, as sm closes a cursor opened after one at a rollback to it.
+# savepoint, as a rollback to one closes the scans begun after it (step 5).
 query TT
 fetch 1 from c
 ----
@@ -120,3 +124,43 @@ a row 6	b row 6
 
 statement ok
 commit
+
+statement ok
+begin
+
+statement ok
+declare c cursor for select x, y from a join b on b.k = a.k where a.k in (5, 6)
+
+# Row 5's three matches, the inner scan begun before the savepoint.
+query TT
+fetch 3 from c
+----
+a row 5	b row 5
+a row 5	b row 5
+a row 5	b row 5
+
+statement ok
+savepoint s
+
+# Row 6: the inner scan begins again, after the savepoint.
+query TT
+fetch 1 from c
+----
+a row 6	b row 6
+
+statement ok
+rollback to s
+
+# PostgreSQL goes on, to no more rows; digres cannot go on with the inner
+# scan.
+skipif digres
+query TT
+fetch 1 from c
+----
+
+onlyif digres
+statement error cannot recreate the old view of a scan closed by a rollback to a savepoint
+fetch 1 from c
+
+statement ok
+rollback

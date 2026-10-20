@@ -808,7 +808,7 @@ int savepoint(session_t* session);
  *
  * Scan cursors opened AFTER the savepoint are closed: a
  * sm1::scannxt() or sm1::scan_seek() on one fails with
- * SM_ERR_INVALID until sm1::scanend() frees it, as the
+ * SM_ERR_SCANCLOSED until sm1::scanend() frees it, as the
  * transaction's end does. One opened before it stays open
  * and keeps its position. A cursor's view is fixed when it
  * is created, so a later one would otherwise go on returning

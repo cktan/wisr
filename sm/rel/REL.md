@@ -673,6 +673,31 @@ holds it only in its sort-key encoding.
 (def hits (idx-scan idx_users_email :ge ["alice@"] :le ["alice@~"]))
 ```
 
+### `(idx-open index [:ge lo] [:gt lo] [:le hi] [:lt hi])`
+Opens a cursor over the index, with `idx-scan`'s bounds, and
+returns its handle, an integer. The cursor stays open across
+calls until `cursor-close` ends it, or the transaction's end
+does: `commit`, `abort` and `prepare` end the cursors still
+open, as do `session-close` and `env-detach`. It reads at the
+view it opened with, so rows written after it are not among
+its entries.
+
+### `(cursor-next c)`
+The cursor's next entry, as `idx-scan` gives each, or nil at
+its end. A cursor that a rollback to a savepoint set before it
+opened has closed fails with `ERR_SCANCLOSED`, on every call,
+as its old view cannot be recreated. A handle that names no
+open cursor panics.
+
+### `(cursor-close c)`
+Ends the cursor; its handle names none after.
+
+```janet
+(def c (idx-open idx_users_email :ge ["alice@"]))
+(def first (cursor-next c))
+(cursor-close c)
+```
+
 ---
 
 ## 7. Diagnostics & Error Handling

@@ -110,8 +110,15 @@ typedef enum sm_errnum_t {
      */
     SM_ERR_DOOMED        = 30,  /* the transaction can only be aborted */
 
+    /*
+     * sm1's, and not an abort: a read or seek on a cursor a
+     * rollback to a savepoint set before it opened has closed
+     * (SM1_DESIGN.md §6.5). Its old view cannot be recreated.
+     */
+    SM_ERR_SCANCLOSED    = 31,  /* a rollback closed the cursor */
+
     /* The highest code, for code that walks them all. */
-    SM_ERR_LAST          = SM_ERR_DOOMED
+    SM_ERR_LAST          = SM_ERR_SCANCLOSED
 } sm_errnum_t;
 
 #endif /* SM_ERROR_H */

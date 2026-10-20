@@ -1115,7 +1115,7 @@ locks acquired since the mark are released; locks held from
 before it are kept. The transaction remains active.
 
 **Scan cursors opened after the savepoint are closed**: a
-read or seek on one fails with `SM_ERR_INVALID` until it
+read or seek on one fails with `SM_ERR_SCANCLOSED` until it
 is ended with `sm1::scanend`, which frees it, as the
 transaction's end does. A cursor opened before the
 savepoint stays open and keeps its position. A cursor's

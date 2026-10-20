@@ -873,6 +873,54 @@ TEST_CASE("a scanned row outlives other calls on its session") {
   REQUIRE(sm3::commit(f.a) == 0);
 }
 
+TEST_CASE("an index cursor begun after a savepoint fails once rolled back "
+          "to it") {
+  // Verify a cursor a rollback closed fails with SM_ERR_SCANCLOSED,
+  // the code digres reports as the scan's old view lost.
+  // 1. Two rows are committed.
+  // 2. Cursor A over the index gives its first entry; a savepoint is
+  //    set; cursor B over the index, begun after it, gives its first.
+  // 3. The session rolls back to the savepoint.
+  // 4. B's next read fails with SM_ERR_SCANCLOSED, every time, and
+  //    gives no entry.
+  // 5. A, begun before the savepoint, gives its second entry.
+  jobs_t f;
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  put(t, 1, "free", "a");
+  put(t, 2, "taken", "b");
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  start(f.a);
+  t = f.write(f.a);
+  sm2::index_scan_t *a = nullptr, *b = nullptr;
+  uint64_t rowno = 0;
+  bool cut = false;
+  std::string_view entry;
+  REQUIRE(sm3::tbl_idx_scan(t, f.jobs_id, nullptr, nullptr, a) == 0);
+  REQUIRE(sm2::idx_scannxt(a, rowno, cut, entry) == 0);
+  int depth = sm3::savepoint(f.a);
+  REQUIRE(depth > 0);
+  REQUIRE(sm3::tbl_idx_scan(t, f.jobs_id, nullptr, nullptr, b) == 0);
+  REQUIRE(sm2::idx_scannxt(b, rowno, cut, entry) == 0);
+
+  REQUIRE(sm3::rollback(f.a, depth) == 0);
+  for (int i = 0; i < 2; i++) {
+    entry = "unset";
+    CHECK(sm2::idx_scannxt(b, rowno, cut, entry) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_SCANCLOSED);
+    CHECK(std::string(sm1::errname()) == "ERR_SCANCLOSED");
+    CHECK(entry.empty());
+  }
+  CHECK(sm2::idx_scannxt(a, rowno, cut, entry) == 0);
+  CHECK(sm2::idx_scannxt(a, rowno, cut, entry) == 1);
+  sm2::idx_scanend(b);
+  sm2::idx_scanend(a);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+}
+
 TEST_CASE("while an index is pending, rows it has not reached are written") {
   // Verify maintenance of a pending index (SM3_DESIGN.md §3).
   // 1. Rows 7, 8 and 10 are committed; then an index on owner is

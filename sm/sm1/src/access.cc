@@ -644,7 +644,8 @@ namespace {
 
 /* What a cursor a rollback closed says when it is used (§6.5). */
 constexpr const char *rolled_back_msg =
-    "the cursor was closed by a rollback to a savepoint set before it opened";
+    "the cursor was closed by a rollback to a savepoint set before it opened; "
+    "its old view cannot be recreated";
 
 /* sm1::scan_seek, minus the out-of-memory guard. */
 int scan_seek(sm1::scan_t *c, const char *key, size_t klen, int inclusive) {
@@ -658,7 +659,7 @@ int scan_seek(sm1::scan_t *c, const char *key, size_t klen, int inclusive) {
   }
   // A cursor a rollback closed reads no more.
   if (c->rolled_back) {
-    return set_error(sm1::SM_ERR_INVALID, rolled_back_msg);
+    return set_error(sm1::SM_ERR_SCANCLOSED, rolled_back_msg);
   }
   // Nor does one of a transaction a rollback doomed (§6.5).
   if (c->session->active && c->session->doomed == sm1::SM_ERR_DOOMED) {
@@ -709,7 +710,7 @@ int scan_next(sm1::scan_t *c, const char **key, size_t *klen, const char **data,
   *klen = *datalen = 0;
   // A cursor a rollback closed reads no more.
   if (c->rolled_back) {
-    return set_error(sm1::SM_ERR_INVALID, rolled_back_msg);
+    return set_error(sm1::SM_ERR_SCANCLOSED, rolled_back_msg);
   }
   // Nor does one of a transaction a rollback doomed (§6.5).
   if (c->session->active && c->session->doomed == sm1::SM_ERR_DOOMED) {

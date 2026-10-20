@@ -147,6 +147,24 @@ to travel with the code.
 
 More is to be cut, a piece at a time.
 
+## Known incompatibilities
+
+Where digres behaves otherwise than PostgreSQL, by choice;
+`ISSUE.md` has the bugs.
+
+- **A scan begun inside a savepoint ends at a rollback to
+  it.** A FETCH inside a savepoint may begin a scan again, as
+  a nested loop's inner index scan begins for each outer row.
+  After `ROLLBACK TO` that savepoint, a FETCH that reads on
+  from that scan fails with "cannot recreate the old view of
+  a scan closed by a rollback to a savepoint" (SQLSTATE
+  0A000), where PostgreSQL goes on. sm closes every scan
+  begun after a savepoint at a rollback to it, as its view,
+  fixed when it began, would still show the rows the rollback
+  undid (`../sm/sm1/SM1_DESIGN.md` §6.5), and does not
+  recreate it. A cursor whose scans all began before the
+  savepoint goes on. `test/slt/point_read.test` shows both.
+
 ## Formatting
 
 Every `.c` and `.h` file was reformatted once with the

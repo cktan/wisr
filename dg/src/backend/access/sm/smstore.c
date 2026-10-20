@@ -230,6 +230,17 @@ static void sm_error(const char *what) {
              errdetail("This transaction was chosen to end a cycle of waits "
                        "while it tried to %s.",
                        what)));
+  /*
+   * A scan begun inside a savepoint, such as a cursor's inner scan begun
+   * again there, which a rollback to it closed: PostgreSQL would go on.
+   */
+  if (sm_errnum() == SM_ERR_SCANCLOSED)
+    ereport(ERROR,
+            (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+             errmsg("could not %s: cannot recreate the old view of a scan "
+                    "closed by a rollback to a savepoint",
+                    what),
+             errdetail("The scan began after the savepoint was set.")));
   ereport(ERROR, (errcode(sm_sqlstate()),
                   errmsg("could not %s: %s", what, sm_errmsg())));
 }

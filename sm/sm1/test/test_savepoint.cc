@@ -273,7 +273,7 @@ TEST_CASE(
   // 1. Insert "b"; open cursor C1; set the savepoint.
   // 2. Insert "c"; open cursor C2.
   // 3. Roll back: C2 is closed, failing each read and seek with
-  //    SM_ERR_INVALID until it is ended; C1 stays open.
+  //    SM_ERR_SCANCLOSED until it is ended; C1 stays open.
   // 4. Insert "d" (it reuses the undone seq number).
   // 5. C1 returns exactly "a" and "b": no row written after
   //    the mark, and nothing written after C1 opened.
@@ -292,11 +292,11 @@ TEST_CASE(
   REQUIRE(sm1::rollback(s, 1) == 0);
   std::string_view k, d;
   CHECK(sm1::scannxt(c2, k, d) == -1);
-  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_SCANCLOSED);
   CHECK(sm1::scannxt(c2, k, d) == -1);
-  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_SCANCLOSED);
   CHECK(sm1::scan_seek(c2, "z", 1) == -1);
-  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm1::errnum() == sm1::SM_ERR_SCANCLOSED);
   sm1::scanend(c2);
   CHECK(s->scans.size() == 1);
   CHECK(s->scans.count(c1) == 1);

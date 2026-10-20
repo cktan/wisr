@@ -7652,3 +7652,30 @@ which keeps it in memory where RocksDB has it
 - `test/slt/point_read.test` fetches from a cursor over a
   nested loop of index scans across a rollback to a
   savepoint, its outer row held from one FETCH to the next.
+
+## Step 264: a scan a rollback closed says its view is lost
+
+A rollback to a savepoint closes every sm cursor opened after
+it (`../sm/sm1/SM1_DESIGN.md` §6.5). A SQL cursor declared
+before the savepoint and fetched inside it may begin its
+inner scan again there, as a nested loop does for each outer
+row; after `ROLLBACK TO`, its next FETCH read on from that
+cursor and failed with an internal error naming sm's rule.
+PostgreSQL goes on.
+
+- **sm1 gives it a code of its own**, `SM_ERR_SCANCLOSED`, in
+  place of `SM_ERR_INVALID`, so a host can tell it from a
+  misuse.
+- **`sm_error()` reports it** as "cannot recreate the old
+  view of a scan closed by a rollback to a savepoint", with
+  SQLSTATE 0A000: sm does not reopen the cursor at the
+  savepoint's view.
+- **It is documented** as a known incompatibility, in a new
+  section of `README.md`.
+- `test/slt/point_read.test` fetches row 6 inside a
+  savepoint, so its inner scan begins there, rolls back, and
+  checks that the next FETCH fails on digres and finds no row
+  on PostgreSQL. Below digres, `../sm/sm3/test/test_table.cc`
+  checks the code on an index cursor, and
+  `../sm/rel/test/test_cursor.rel` with rel's new cursor
+  commands, `idx-open`, `cursor-next` and `cursor-close`.

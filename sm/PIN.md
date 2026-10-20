@@ -550,10 +550,13 @@ its ref (§6.4).
   (`sm1/src/xct.cc`). An outer SQL cursor over a nested loop,
   fetched inside a savepoint, may rescan its inner index scan
   there, which opens a new sm cursor; after `ROLLBACK TO` its
-  next FETCH fails, where PostgreSQL goes on. So digres cannot
-  yet hold a join's outer row read by rowno after a mark across
-  a rollback to it: `../dg/test/slt/point_read.test` fetches
-  the first row before the savepoint for that reason.
+  next FETCH fails with `SM_ERR_SCANCLOSED`, which digres
+  reports as the scan's old view not being recreated, where
+  PostgreSQL goes on: a known incompatibility
+  (`../dg/README.md`). So a join's outer row read by rowno
+  after a mark is never held across a rollback to it:
+  `../dg/test/slt/point_read.test` fetches the first row
+  before the savepoint for that reason.
 - **A held pin holds a SuperVersion.** A cursor left open for
   hours keeps the memtables and files its rows are in (§4.7);
   PostgreSQL's pin keeps a page, which is cheaper, but blocks

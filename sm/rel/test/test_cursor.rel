@@ -1,0 +1,77 @@
+# test_cursor.rel -- an index cursor kept open across calls: it reads
+# an entry at a time, a rollback to a savepoint set before it opened
+# closes it with ERR_SCANCLOSED, one opened before the savepoint goes
+# on, and the transaction's end ends what is still open.
+
+(def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_cursor"))
+(rm-rf test-dir)
+(env-init test-dir)
+(env-attach test-dir)
+
+# The handle's message, if the call fails with no sm error.
+(defn refused [thunk]
+  (try (do (thunk) nil) ([err] (string err))))
+
+(db-create "curdb")
+(db-open "curdb")
+(begin :rc)
+(table-create t
+  (columns
+    (id :int4 :not-null)
+    (v :int4)))
+(index-create t_id (table t) (key (id :asc)) :unique true :include (v))
+(insert t [1 10])
+(insert t [2 20])
+(insert t [3 30])
+(commit)
+
+# 1. A cursor gives one entry a call, in key order, while the session
+#    inserts a row and scans the index between them; the row inserted
+#    after it opened is not among them. At its end it gives nil, and
+#    again. Once closed, its handle names no cursor.
+(begin :rc)
+(def c (idx-open t_id :ge [1]))
+(assert-eq ((cursor-next c) 2) [10])
+(insert t [4 40])
+(assert-count 4 (idx-scan t_id))
+(assert-eq ((cursor-next c) 2) [20])
+(assert-eq ((cursor-next c) 2) [30])
+(assert-nil (cursor-next c))
+(assert-nil (cursor-next c))
+(cursor-close c)
+(assert-eq (refused (fn [] (cursor-next c))) "cursor-next: no open cursor 1")
+(commit)
+
+# 2. Cursor a opens and gives its first entry; a savepoint is set;
+#    cursor b opens after it and gives its first.
+(begin :rc)
+(def a (idx-open t_id))
+(assert-eq ((cursor-next a) 2) [10])
+(def sp (savepoint))
+(def b (idx-open t_id))
+(assert-eq ((cursor-next b) 2) [10])
+
+# 3. The rollback to the savepoint closes b: each read on it fails
+#    with ERR_SCANCLOSED, as its old view cannot be recreated.
+(rollback sp)
+(assert-err :err-scanclosed (cursor-next b))
+(assert-err :err-scanclosed (cursor-next b))
+(cursor-close b)
+
+# 4. a, opened before the savepoint, goes on to its end.
+(assert-eq (map (fn [_] ((cursor-next a) 2)) [1 2 3]) @[[20] [30] [40]])
+(assert-nil (cursor-next a))
+
+# 5. A cursor left open is ended by the commit: its handle then names
+#    no cursor, and the next transaction runs as before.
+(def d (idx-open t_id :ge [3]))
+(commit)
+(assert-eq (refused (fn [] (cursor-next d))) "cursor-next: no open cursor 4")
+(begin :rc)
+(assert-count 4 (idx-scan t_id))
+(commit)
+
+(db-close)
+(env-detach :force true)
+(rm-rf test-dir)
+(print "test_cursor.rel: PASSED")

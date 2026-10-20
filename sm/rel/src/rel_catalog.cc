@@ -56,6 +56,7 @@ int catalog_t::env_detach(int force) {
   }
   // Close all open tables and sessions before detaching.
   for (auto &[sname, sctx] : m_sessions) {
+    end_cursors(&sctx);
     sctx.stmt_tables.clear();
     // Free the statements a script put aside and never ended.
     for (sm_stmt_t *outer : sctx.outer_stmts) {
@@ -123,6 +124,7 @@ int catalog_t::session_close(const std::string &name) {
     return 0;
   }
 
+  end_cursors(&it->second);
   it->second.stmt_tables.clear();
   // Free the statements a script put aside and never ended.
   for (sm_stmt_t *outer : it->second.outer_stmts) {
@@ -160,6 +162,22 @@ session_ctx_t *catalog_t::get_session(const std::string &name) {
 
 /* Close a statement's table: its handles, then its definition. */
 table_def_t::~table_def_t() { sm_tbl_close(tbl); }
+
+/* End the cursor; its table handle closes after, as a member. */
+cursor_t::~cursor_t() { sm_idx_scanend(scan); }
+
+/* End every cursor s has open, before its transaction ends. */
+void end_cursors(session_ctx_t *s) { s->cursors.clear(); }
+
+/* Forget every cursor s has open, which its transaction's abort closed. */
+void forget_cursors(session_ctx_t *s) {
+  for (auto &[handle, c] : s->cursors) {
+    // sm closed it; ending it again would free it twice. Its
+    // handle's few bytes are left.
+    c->scan = nullptr;
+  }
+  s->cursors.clear();
+}
 
 /* rel's view of the open table tbl, which it takes over. */
 static std::unique_ptr<table_def_t> view_of(const std::string &name,

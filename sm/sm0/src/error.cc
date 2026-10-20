@@ -177,6 +177,7 @@ const char *errname() {
       "ERR_INTERRUPTED",
       "ERR_NOFDS",
       "ERR_DOOMED",
+      "ERR_SCANCLOSED",
   };
   static_assert(sizeof(names) / sizeof(names[0]) == SM_ERR_LAST + 1,
                 "every error code needs its name");
