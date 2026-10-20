@@ -2129,6 +2129,13 @@ int sm_cat_rename_column(sm_session_t *session, uint64_t oid, const char *name,
   });
 }
 
+/* Make a column NOT NULL in the session's transaction. */
+int sm_cat_set_not_null(sm_session_t *session, uint64_t oid, const char *name) {
+  return guard(session, [&] {
+    return sm3::set_not_null(session->sm3, oid, name_of(name));
+  });
+}
+
 /* Drop a column in the session's transaction. */
 int sm_cat_drop_column(sm_session_t *session, uint64_t oid, const char *name) {
   return guard(session, [&] {

@@ -3010,6 +3010,23 @@ static bool is_serial(const TypeName *type) {
 }
 
 /*
+ * value, of the type typid and typmod, as sm takes a datum, in the current
+ * memory context: a varlena untoasted, a numeric made sm's.
+ */
+static sm_datum_t value_to_sm(Datum value, Oid typid, int32 typmod) {
+  int16 typlen;
+  bool typbyval;
+
+  if (is_decimal(typid))
+    return numeric_to_sm(value, typid, typmod);
+  get_typlenbyval(typid, &typlen, &typbyval);
+  if (-1 == typlen)
+    return (sm_datum_t)PointerGetDatum(
+        pg_detoast_datum_copy((struct varlena *)DatumGetPointer(value)));
+  return (sm_datum_t)datumCopy(value, typbyval, typlen);
+}
+
+/*
  * The value of expr, a column's DEFAULT that calls nothing volatile, as sm
  * takes a datum: what rows older than the column read it as.  False if it
  * is null.  A varlena is untoasted, a numeric made sm's.
@@ -3020,32 +3037,84 @@ static bool default_value(Expr *expr, Oid typid, int32 typmod,
   ExprState *state;
   Datum value;
   bool isnull;
-  int16 typlen;
-  bool typbyval;
 
   /* Evaluated once, now, as PostgreSQL's attmissingval is. */
   state = ExecPrepareExpr(expression_planner(expr), estate);
   value = ExecEvalExpr(state, GetPerTupleExprContext(estate), &isnull);
-  if (!isnull) {
-    get_typlenbyval(typid, &typlen, &typbyval);
-    if (is_decimal(typid))
-      *out = numeric_to_sm(value, typid, typmod);
-    else if (typlen == -1)
-      *out = (sm_datum_t)PointerGetDatum(
-          pg_detoast_datum_copy((struct varlena *)DatumGetPointer(value)));
-    else
-      *out = (sm_datum_t)datumCopy(value, typbyval, typlen);
-  }
+  if (!isnull)
+    *out = value_to_sm(value, typid, typmod);
   FreeExecutorState(estate);
   return !isnull;
 }
 
 /*
+ * Give each row of tbl, the table relid, its own value of the column it
+ * was just given, last of its columns: expr, its volatile DEFAULT, evaluated
+ * for the row, as PostgreSQL's rewrite of the table gives one.  Until then
+ * every row reads it as null.
+ */
+static void fill_column(Oid relid, Expr *expr, Oid typid, int32 typmod) {
+  /* A statement of its own, which sees the new column. */
+  CommandCounterIncrement();
+  sm_tbl_t *tbl = open_table(relid, SM_LOCKMODE_IX);
+
+  if (NULL == tbl)
+    ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
+                    errmsg("relation with OID %u does not exist", relid)));
+  size_t n = sm_tbl_def(tbl)->columns.size();
+  std::vector<sm_datum_t> values(n);
+  std::unique_ptr<bool[]> isnull(new bool[n]);
+  EState *estate = CreateExecutorState();
+  ExprContext *econtext = GetPerTupleExprContext(estate);
+  ExprState *state = ExecPrepareExpr(expression_planner(expr), estate);
+  sm_rel_scan_t *scan;
+
+  /*
+   * The cursor does not see the rows this loop writes, so each row is
+   * filled once.  An error leaves it to the transaction's end to close.
+   */
+  if (0 != sm_tbl_scan(tbl, 0, UINT64_MAX, &scan))
+    sm_error("scan a table");
+  for (;;) {
+    uint64_t rowno;
+    const void *tuple;
+    size_t len;
+    bool null;
+    Datum v;
+    int rc;
+
+    CHECK_FOR_INTERRUPTS();
+    rc = sm_rel_scannxt(scan, &rowno, &tuple, &len);
+    if (1 == rc)
+      break;
+    if (0 != rc)
+      sm_error("scan a table");
+    /* Its other columns as they are, its pointers out of line its own. */
+    if (0 != sm_tbl_deform(tbl, tuple, len, values.data(), isnull.get(), n))
+      sm_error("read a row");
+    ResetExprContext(econtext);
+    MemoryContext old = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
+
+    v = ExecEvalExpr(state, econtext, &null);
+    isnull[n - 1] = null;
+    if (!null)
+      values[n - 1] = value_to_sm(v, typid, typmod);
+    MemoryContextSwitchTo(old);
+    if (0 != waiting([&] {
+          return sm_tbl_update(tbl, rowno, values.data(), isnull.get(), n);
+        }))
+      sm_error("give a row its column's default");
+  }
+  sm_rel_scanend(scan);
+  FreeExecutorState(estate);
+}
+
+/*
  * ADD COLUMN col to rel, the table relid, in sm: NOT NULL and a DEFAULT
- * only.  Rows already there read the default, evaluated now, so one that
- * calls something volatile is refused, as is a serial column: PostgreSQL
- * rewrites the table for those (../sm/NEXT.md).  NOT NULL with no default
- * needs the table empty.
+ * only.  Rows already there read the default, evaluated now; one that calls
+ * something volatile is evaluated for each row instead, which is given its
+ * value (fill_column()), and NOT NULL is then checked of every row.  A
+ * serial column is refused.  NOT NULL with no default needs the table empty.
  */
 static void add_column(Oid relid, const char *relname, ColumnDef *col,
                        bool if_not_exists) {
@@ -3056,6 +3125,7 @@ static void add_column(Oid relid, const char *relname, ColumnDef *col,
   const char *default_expr = NULL;
   sm_datum_t missing = 0;
   bool has_missing = false;
+  Expr *volatile_default = NULL;
   ListCell *l;
 
   check_column_name(col->colname);
@@ -3090,22 +3160,48 @@ static void add_column(Oid relid, const char *relname, ColumnDef *col,
         cookDefault(pstate, raw_default, typid, typmod, col->colname, 0);
 
     free_parsestate(pstate);
-    if (contain_volatile_functions(expr))
-      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      errmsg("ALTER TABLE ... ADD COLUMN with a volatile "
-                             "DEFAULT is not supported yet")));
     default_expr = nodeToString(expr);
-    has_missing = default_value((Expr *)expr, typid, typmod, &missing);
+    /* Each row its own value, given after the column is made. */
+    if (contain_volatile_functions(expr))
+      volatile_default = (Expr *)expr;
+    else
+      has_missing = default_value((Expr *)expr, typid, typmod, &missing);
   }
+  /* NOT NULL only once every row holds its value. */
   sm_column_spec_t spec = {col->colname, type_code(typid), typmod,
-                           not_null, default_expr};
+                           not_null && NULL == volatile_default, default_expr};
   sm_session_t *s = xact_session();
 
-  if (waiting([&] {
+  if (0 == waiting([&] {
         return sm_cat_add_column(s, relid, spec,
                                  has_missing ? &missing : nullptr);
-      }) == 0)
+      })) {
+    if (NULL == volatile_default)
+      return;
+    fill_column(relid, volatile_default, typid, typmod);
+    if (not_null) {
+      /*
+       * A statement of its own, which sees the rows filled: the session's
+       * next fetch begins it in sm.
+       */
+      CommandCounterIncrement();
+      s = xact_session();
+      if (0 != waiting([&] {
+            return sm_cat_set_not_null(s, relid, col->colname);
+          })) {
+        if (SM_ERR_NOTNULL == sm_errnum())
+          ereport(ERROR,
+                  (errcode(ERRCODE_NOT_NULL_VIOLATION),
+                   errmsg("column \"%s\" of relation \"%s\" contains null "
+                          "values",
+                          col->colname, relname)));
+        sm_error("make a column NOT NULL");
+      }
+    }
+    /* The handles opened to fill it hold the column as it was made. */
+    forget_table(relid);
     return;
+  }
   if (sm_errnum() == SM_ERR_DUPKEY) {
     if (!if_not_exists)
       ereport(ERROR, (errcode(ERRCODE_DUPLICATE_COLUMN),

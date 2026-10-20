@@ -769,6 +769,17 @@ int add_column(session_t* session, uint64_t oid,
                std::optional<std::string_view> missing);
 
 /*
+ * Make the live column name of the table oid NOT NULL. Every row
+ * the transaction sees must hold a value in it, or it fails with
+ * SM_ERR_NOTNULL and changes nothing: the table is opened
+ * exclusive (tbl_open), so no row is written meanwhile, and a
+ * scan reads each. One NOT NULL already is no error. ADD COLUMN
+ * with a volatile default makes the column, gives each row its
+ * value, and then calls this.
+ */
+int set_not_null(session_t* session, uint64_t oid, std::string_view name);
+
+/*
  * Rename the live column name of the table oid to new_name. Its
  * indexes name it by place, so they are untouched. One another live
  * column has is SM_ERR_DUPKEY.

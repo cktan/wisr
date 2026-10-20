@@ -1,0 +1,112 @@
+# Verify ALTER TABLE ... ADD COLUMN with a volatile DEFAULT gives each row
+# already there a value of its own, as PostgreSQL's rewrite of the table
+# does, and that NOT NULL then holds of every row.
+# 1. Fill a table with an index; add a column whose default is random():
+#    every row has a value of its own, and the index still finds them.
+# 2. Add one whose default draws from a sequence: the rows take its values
+#    in the order the table holds them.
+# 3. Add one NOT NULL whose default is clock_timestamp(): no row is null,
+#    a row inserted after takes the default, and an explicit null is
+#    refused.
+# 4. Add one NOT NULL whose volatile default is null: refused, and the
+#    table is as it was.
+# 5. A volatile default added in a transaction rolled back leaves no
+#    column, and one added to an empty table makes it.
+
+statement ok
+create table t (k int4, x text)
+
+statement ok
+create index tk on t (k)
+
+statement ok
+insert into t select i, 'row ' || i from generate_series(1, 5) i
+
+statement ok
+alter table t add column r float8 default random()
+
+query IIII nosort
+select count(*), count(distinct r), count(*) filter (where r >= 0 and r < 1),
+       count(r)
+from t
+----
+5	5	5	5
+
+statement ok
+set enable_seqscan = off
+
+query IT nosort
+select k, x from t where k = 3 and r is not null
+----
+3	row 3
+
+statement ok
+set enable_seqscan = on
+
+statement ok
+create sequence s
+
+statement ok
+alter table t add column n int8 default nextval('s')
+
+query II nosort
+select k, n from t order by k
+----
+1	1
+2	2
+3	3
+4	4
+5	5
+
+statement ok
+alter table t add column c timestamptz not null default clock_timestamp()
+
+query I nosort
+select count(*) from t where c is null
+----
+0
+
+statement ok
+insert into t (k, x) values (6, 'row 6')
+
+query II nosort
+select k, n from t where c is not null and k = 6
+----
+6	6
+
+statement error null value in column "c" of relation "t" violates not-null constraint
+insert into t (k, x, c) values (7, 'row 7', null)
+
+statement error column "z" of relation "t" contains null values
+alter table t add column z int4 not null default (case when random() > 2 then 1 end)
+
+query I nosort
+select count(*) from t
+----
+6
+
+statement ok
+begin
+
+statement ok
+alter table t add column w float8 default random()
+
+statement ok
+rollback
+
+statement error column "w" does not exist
+select w from t
+
+statement ok
+create table e (k int4)
+
+statement ok
+alter table e add column r float8 not null default random()
+
+statement ok
+insert into e (k) values (1)
+
+query I nosort
+select count(*) from e where r is not null
+----
+1

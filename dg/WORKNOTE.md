@@ -7840,3 +7840,33 @@ sees it, which is that version, so digres agrees too.
   And a self-join updates none, where PostgreSQL would update
   one. `after_update` is now `after_held` with the update it
   held.
+
+## Step 271: ADD COLUMN with a volatile default
+
+ALTER TABLE ... ADD COLUMN with a default that calls something
+volatile, `random()`, `clock_timestamp()` or `nextval()`, was
+refused: sm3's `add_column` gives the rows already there one
+value, evaluated once. PostgreSQL rewrites the table, so each
+row gets a value of its own.
+
+- **`add_column()`** makes such a column without NOT NULL and
+  with no value for the rows there, then `fill_column()`, in a
+  statement of its own that sees the column, scans the table
+  and updates each row with the default evaluated for it. The
+  cursor does not see the rows the loop writes, so each is
+  filled once; the column is in no index, so no index changes.
+  It costs a version a row, which compaction removes.
+- **NOT NULL is set after**, by sm3's new `set_not_null`
+  (`sm_cat_set_not_null()`), in another statement, which opens
+  the table exclusive and refuses if a row holds a null:
+  PostgreSQL's "column ... contains null values".
+- **A new statement is begun by the session's next fetch**,
+  `xact_session()`, not by `CommandCounterIncrement()` alone,
+  so the check fetches the session again after it.
+- **`value_to_sm()`** is `default_value()`'s conversion of a
+  value to sm's datum, which both now use.
+- A `serial` or an identity column is still refused.
+- `test/slt/add_column_volatile.test`; `../sm/sm3/test/
+  test_table.cc` tests `set_not_null`. `test/server.sh`'s
+  ALTER TABLE, which expected the refusal, now adds such a
+  column to al1, counts three values, and drops it.

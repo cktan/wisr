@@ -64,14 +64,12 @@ Owed, and blocking nothing above:
   begins to wait. Not built: a write that does not wait, which
   nothing in SQL asks for. sm1's `set_qa_nowait` is still for
   QA only (`sm1/SM1_DESIGN.md` §5.1).
-- **ADD COLUMN with a volatile default is refused.**
-  `random()`, `clock_timestamp()`, a `serial` or an identity
-  column give each existing row its own value, so PostgreSQL
-  rewrites the table. sm3's `add_column` gives older rows one
-  missing value and has no rewrite; digres says it is not
-  supported yet. It needs a pass that writes the value into
-  every row under the table's X lock, or a rewrite into a new
-  store as `truncate_table` swaps one in.
+- **ADD COLUMN of a `serial` or an identity column is
+  refused.** A volatile default is built: digres gives each
+  row its value after the column is made, and sm3's
+  `set_not_null` then checks NOT NULL (`../dg/WORKNOTE.md`
+  step 271). A `serial` column needs its sequence made too,
+  and an identity column sm3's `add_column` refuses.
 - **The evaluator's cost is unmeasured**: what a call a row
   adds to a write on a table with a partial or an expression
   index.

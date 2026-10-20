@@ -2098,7 +2098,8 @@ cmp -s "$work/sqlbodies.out" "$work/sqlbodies.expected" ||
 # 1. Add to al1, which has rows, c with a constant DEFAULT and d with an
 #    expression one: the rows read them, and a new row takes them.
 # 2. A NOT NULL column with no DEFAULT is refused on al1, which has rows,
-#    and taken by the empty ale1; a volatile DEFAULT and a serial are
+#    and taken by the empty ale1; a volatile DEFAULT gives each row a
+#    value of its own, and that column is dropped again; a serial is
 #    refused; a taken name is an error, or with IF NOT EXISTS a notice.
 # 3. Drop b: al1 reads without it. One an index uses is refused.
 # 4. Rename c to cc and al1 to al2: al1 is gone, al2 has cc.
@@ -2119,6 +2120,7 @@ local_psql -c 'create table al1 (a int4, b text)' \
   -c 'alter table ale1 add column y int4 not null' \
   -c 'insert into ale1 values (1, null)' \
   -c 'alter table al1 add column f float8 default random()' \
+  -c 'select count(distinct f) from al1' -c 'alter table al1 drop column f' \
   -c 'alter table al1 add column f serial' \
   -c 'alter table al1 add column a int4' \
   -c 'alter table al1 add column if not exists a int4' \
@@ -2141,7 +2143,9 @@ CREATE TABLE
 ALTER TABLE
 ERROR:  null value in column "y" of relation "ale1" violates not-null constraint
 DETAIL:  Failing row contains (1, null).
-ERROR:  ALTER TABLE ... ADD COLUMN with a volatile DEFAULT is not supported yet
+ALTER TABLE
+3
+ALTER TABLE
 ERROR:  ALTER TABLE ... ADD COLUMN of a serial column is not supported yet
 ERROR:  column "a" of relation "al1" already exists
 NOTICE:  column "a" of relation "al1" already exists, skipping

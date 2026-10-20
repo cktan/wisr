@@ -884,6 +884,69 @@ TEST_CASE("a write's old row, pinned, outlives other calls on its session") {
   REQUIRE(0 == sm3::commit(f.a));
 }
 
+TEST_CASE("set_not_null makes a column NOT NULL once every row holds a "
+          "value") {
+  // Verify set_not_null, as ADD COLUMN with a volatile default uses it.
+  // 1. Two rows are committed; then a nullable int4 column n is added,
+  //    with no value for the rows already there.
+  // 2. set_not_null fails with SM_ERR_NOTNULL, as both read n as null,
+  //    and n stays nullable.
+  // 3. Each row is given a value of n: set_not_null succeeds, and again.
+  // 4. A row inserted with n null is refused; a column not there is
+  //    SM_ERR_NOTFOUND.
+  // 5. After the commit, the column is NOT NULL to another session.
+  jobs_t f;
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  uint64_t r1 = put(t, 1, "free", "a");
+  uint64_t r2 = put(t, 2, "taken", "b");
+  sm3::tbl_close(t);
+  REQUIRE(0 == sm3::commit(f.a));
+
+  start(f.a);
+  REQUIRE(0 == sm3::add_column(f.a, f.jobs,
+                               {"n", sm2::type_int4.code, -1, false},
+                               std::nullopt));
+  CHECK(-1 == sm3::set_not_null(f.a, f.jobs, "n"));
+  CHECK(sm1::SM_ERR_NOTNULL == sm1::errnum());
+  t = f.write(f.a);
+  CHECK(!sm3::tbl_def(t).columns[3].not_null);
+
+  std::string state = sm2::make_varlena("s"), owner = sm2::make_varlena("o");
+  auto row = [&](int32_t id, std::optional<int32_t> n) {
+    return std::vector<sm2::datum_t>{sm2::datum_from_int32(id),
+                                     sm2::datum_from_ptr(state.data()),
+                                     sm2::datum_from_ptr(owner.data()),
+                                     sm2::datum_from_int32(n.value_or(0))};
+  };
+  const bool some[4] = {false, false, false, false};
+  const bool none[4] = {false, false, false, true};
+  for (auto [rowno, id] : {std::pair{r1, 1}, std::pair{r2, 2}}) {
+    std::vector<sm2::datum_t> v = row(id, id * 10);
+    REQUIRE_MESSAGE(0 == sm3::tbl_update(t, rowno, v, some), sm1::errmsg());
+  }
+  sm3::tbl_close(t);
+  REQUIRE_MESSAGE(0 == sm3::set_not_null(f.a, f.jobs, "n"), sm1::errmsg());
+  CHECK(0 == sm3::set_not_null(f.a, f.jobs, "n"));
+
+  t = f.write(f.a);
+  CHECK(sm3::tbl_def(t).columns[3].not_null);
+  std::vector<sm2::datum_t> v = row(3, std::nullopt);
+  uint64_t r3 = 0;
+  CHECK(-1 == sm3::tbl_insert(t, v, none, r3));
+  CHECK(sm1::SM_ERR_NOTNULL == sm1::errnum());
+  CHECK(-1 == sm3::set_not_null(f.a, f.jobs, "nope"));
+  CHECK(sm1::SM_ERR_NOTFOUND == sm1::errnum());
+  sm3::tbl_close(t);
+  REQUIRE(0 == sm3::commit(f.a));
+
+  start(f.b);
+  t = f.write(f.b, sm1::SM_LOCKMODE_IS);
+  CHECK(sm3::tbl_def(t).columns[3].not_null);
+  sm3::tbl_close(t);
+  REQUIRE(0 == sm3::commit(f.b));
+}
+
 TEST_CASE("a scanned row outlives other calls on its session") {
   // Verify how long a cursor's row is good for (include/sm.h).
   // 1. Three rows are committed. A cursor over the heap is opened,

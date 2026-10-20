@@ -1508,6 +1508,13 @@ int sm_cat_rename_table(sm_session_t* session, uint64_t oid,
 int sm_cat_add_column(sm_session_t* session, uint64_t oid,
                       const sm_column_spec_t& col, const sm_datum_t* missing);
 
+/*
+ * Make the column name of the table oid NOT NULL, SM_ERR_NOTNULL if
+ * a row holds a null in it (sm3::set_not_null).
+ */
+int sm_cat_set_not_null(sm_session_t* session, uint64_t oid,
+                        const char* name);
+
 /* Rename the column name of the table oid (sm3::rename_column). */
 int sm_cat_rename_column(sm_session_t* session, uint64_t oid,
                          const char* name, const char* new_name);

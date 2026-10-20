@@ -470,6 +470,52 @@ int add_column(session_t *session, uint64_t oid, const column_spec_t &col,
   return cat_put_table(session, oid, rec);
 }
 
+/* Make a column NOT NULL, once no row holds a null in it; see sm3.h. */
+int set_not_null(session_t *session, uint64_t oid, std::string_view name) {
+  table_rec_t rec;
+  if (0 != cat_get_table_rec(session, oid, rec)) {
+    return -1;
+  }
+  int at = live_column(rec, name);
+  if (at < 0) {
+    return sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                       "set not null: no column " + std::string(name));
+  }
+  if (rec.columns[at].not_null) {
+    return 0;
+  }
+  // Open exclusive, so no other transaction writes a row between
+  // the scan and the catalog's change.
+  table_t *t = nullptr;
+  if (0 != tbl_open(session, oid, sm1::SM_LOCKMODE_EX, t)) {
+    return -1;
+  }
+  sm2::rel_scan_t *scan = nullptr;
+  int rc = tbl_scan(t, 0, UINT64_MAX, scan);
+  uint64_t rowno = 0;
+  std::string_view tuple;
+  while (0 == rc && 0 == (rc = sm2::rel_scannxt(scan, rowno, tuple))) {
+    sm2::datum_t d;
+    bool isnull = false;
+    // A row older than the column reads its missing value, or null.
+    if (0 != sm2::tup_decode(tbl_def(t).desc, tuple, at, d, isnull)) {
+      rc = -1;
+    } else if (isnull) {
+      rc = sm1::seterr(sm1::SM_ERR_NOTNULL, "set not null: column " +
+                                                std::string(name) +
+                                                " holds a null");
+    }
+  }
+  sm2::rel_scanend(scan);
+  tbl_close(t);
+  // The scan's end, 1, is the one way through.
+  if (1 != rc) {
+    return -1;
+  }
+  rec.columns[at].not_null = true;
+  return cat_put_table(session, oid, rec);
+}
+
 /* Rename a column; see sm3.h. */
 int rename_column(session_t *session, uint64_t oid, std::string_view name,
                   std::string_view new_name) {
