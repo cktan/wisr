@@ -49,10 +49,6 @@ Owed, and blocking nothing above:
   long stamping takes under load, which is what the size
   should be set from.
 
-- **Check `EvalPlanQual` against PostgreSQL's source.**
-  `SM3_DESIGN.md` §3.1 says the re-check of a join uses the
-  row of the other table that was already joined, not its
-  newest version. That is from memory.
 - **A parent's other columns wait for its children.** sm1 has
   no pair of modes like PostgreSQL's `FOR KEY SHARE` and `FOR
   NO KEY UPDATE`, so an update of a parent row that leaves its

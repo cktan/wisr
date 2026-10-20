@@ -7815,3 +7815,28 @@ pin a turn (`../sm/PIN.md` §7).
   not seen from SQL: a released row in a memtable still reads
   right, so neither case fails without a sanitizer if the
   check were wrong.
+
+## Step 270: a join's re-check checked against PostgreSQL
+
+`../sm/sm3/SM3_DESIGN.md` §3.1 said, from memory, that under
+READ COMMITTED the re-check of an UPDATE whose target row
+changed uses the rows of the other tables it joined as they
+were, not their newest versions. PostgreSQL 18's source
+agrees: a table read and not locked gets `ROW_MARK_REFERENCE`
+(`select_rowmark_type()`), and `EvalPlanQualFetchRowMark()`
+fetches its row by the joined ctid with `SnapshotAny`.
+`smtable_fetch_row_version()` reads a row as the statement
+sees it, which is that version, so digres agrees too.
+
+- **One case differs**: a table joined to itself. Its copy
+  has the target's rowno, and `smstore_fetch_row()` gives the
+  newest version the write kept, where PostgreSQL gives the
+  one joined, by a ctid digres has no version in. Recorded in
+  `README.md`'s known incompatibilities.
+- **`test/server.sh`** joins the target of a held update to
+  `tj`: on a column the first session changed, the second
+  updates none; on one it did not, it updates the first's row,
+  though the first also moved the `tj` row out of the WHERE.
+  And a self-join updates none, where PostgreSQL would update
+  one. `after_update` is now `after_held` with the update it
+  held.

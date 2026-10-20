@@ -164,6 +164,15 @@ Where digres behaves otherwise than PostgreSQL, by choice;
   undid (`../sm/sm1/SM1_DESIGN.md` §6.5), and does not
   recreate it. A cursor whose scans all began before the
   savepoint goes on. `test/slt/point_read.test` shows both.
+- **A self-join's re-check reads the newest row.** Under READ
+  COMMITTED, an UPDATE or DELETE that finds its target row
+  changed checks its WHERE again on the newest version, and on
+  the rows of the other tables it joined, as they were. When
+  the other table is the target itself, PostgreSQL fetches the
+  copy's row by its ctid, the version it joined; a digres ctid
+  is a rowno, which names the row and not a version, so the
+  copy reads as the newest one too, and the statement may skip
+  a row PostgreSQL writes. `test/server.sh` shows it.
 
 ## Formatting
 

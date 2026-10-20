@@ -3280,6 +3280,15 @@ grep -q 'does not exist, skipping' "$work/drop2.out" || fail "drop if exists"
 # 6. The same, the second's WHERE no longer true of the first's row: it
 #    updates none.  And a DELETE ... RETURNING gives the first's row.
 # 7. The same at REPEATABLE READ: the second fails, and can be retried.
+# 8. The second's UPDATE joins tj: the re-check uses the tj row it joined,
+#    not a newer one, as PostgreSQL's EvalPlanQual fetches it
+#    (ROW_MARK_REFERENCE).  Joined on b, which the first changed, it no
+#    longer matches, and updates none; joined on a, it still does, and
+#    updates the first's row, though the first also moved the tj row it
+#    joined out of 'EU'.
+# 9. Joined to tw1 itself, the copy's re-check reads the first's row too,
+#    where PostgreSQL reads the version it joined, by its ctid: a known
+#    incompatibility (README.md), so the second updates none.
 local_psql -c 'create table tw1 (a int4 primary key, b int4 not null)' \
   -c 'insert into tw1 values (1, 10), (2, 20), (3, 30), (4, 40)' \
   > "$work/write.out" 2>&1
@@ -3309,15 +3318,17 @@ local_psql -c 'update tw1 set b = null where a = 3' 2>&1 |
   -c 'select a, b from tw2' 2>&1 | tail -1)" = "1|9" ] ||
   fail "update and delete of a temporary table"
 
-# Hold row 3 of tw1 updated (b + 1000) in a session of its own, run the
-# statements given in another, which waits, commit the first, and print what
-# the other said, on one line.
-after_update() {
+# Run the writes $1 in a session of its own and hold its transaction, run
+# the statements given after them in another, which waits, commit the
+# first, and print what the other said, on one line.
+after_held() {
+  local held=$1
+  shift
   mkfifo "$work/write.in"
   local_psql < "$work/write.in" > "$work/write_held.out" 2>&1 &
   local holder=$!
   exec 4> "$work/write.in"
-  echo "begin; update tw1 set b = b + 1000 where a = 3; select 'held';" >&4
+  echo "begin; $held select 'held';" >&4
   for _ in $(seq 50); do
     grep -qx held "$work/write_held.out" && break
     sleep 0.1
@@ -3331,6 +3342,11 @@ after_update() {
   wait $other
   rm "$work/write.in"
   tr '\n' ' ' < "$work/write_other.out"
+}
+
+# after_held, holding row 3 of tw1 updated (b + 1000).
+after_update() {
+  after_held 'update tw1 set b = b + 1000 where a = 3;' "$@"
 }
 [ "$(after_update -c 'update tw1 set b = b + 1 where a = 3 returning b')" = \
   "1131 UPDATE 1 " ] || fail "update after a concurrent update"
@@ -3347,6 +3363,21 @@ after_update -v VERBOSITY=verbose -c 'begin isolation level repeatable read' \
   grep -q 'ERROR:  40001' || fail "update at repeatable read"
 [ "$(after_update -c 'delete from tw1 where a = 3 returning b')" = \
   "6131 DELETE 1 " ] || fail "delete after a concurrent update"
+local_psql -c 'insert into tw1 values (3, 30)' \
+  -c 'create table tj (k int4 primary key, region text)' \
+  -c "insert into tj values (3, 'EU'), (30, 'EU')" > /dev/null 2>&1
+[ "$(after_update -c "update tw1 set b = b + 1 from tj where tj.k = tw1.b
+  and tj.region = 'EU' and tw1.a = 3")" = "UPDATE 0 " ] ||
+  fail "a join's re-check uses the row it joined"
+[ "$(after_held "update tw1 set b = b + 1000 where a = 3;
+  update tj set region = 'US' where k = 3;" \
+  -c "update tw1 set b = b + 1 from tj where tj.k = tw1.a
+  and tj.region = 'EU' returning tw1.b")" = "2031 UPDATE 1 " ] ||
+  fail "a join's re-check that still holds, on the row it joined"
+[ "$(after_update -c 'update tw1 set b = 0 from tw1 t2 where t2.a = tw1.a
+  and tw1.a = 3 and t2.b < 3000')" = "UPDATE 0 " ] ||
+  fail "a self-join's re-check reads the newest row"
+local_psql -c 'drop table tj' > /dev/null 2>&1
 local_psql -c 'drop table tw1' > /dev/null 2>&1
 
 # Verify that SELECT ... FOR UPDATE and FOR SHARE lock rows in sm, until the

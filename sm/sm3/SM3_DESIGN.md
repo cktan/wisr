@@ -769,8 +769,22 @@ and never locked.
 In all three sm3 sees one row of `orders` and the image sm1
 hands back. That the re-check uses the customer row already
 joined, and not the newest, is `EvalPlanQual`'s treatment of
-non-target tables as recalled here; it is to be checked
-against the PostgreSQL source before the fork relies on it.
+non-target tables, checked against PostgreSQL 18's source:
+the planner gives a table the statement reads and does not
+lock `ROW_MARK_REFERENCE` (`select_rowmark_type()`,
+`optimizer/plan/planner.c`), and the re-check fetches its row
+by the ctid the scan joined, with `SnapshotAny`
+(`EvalPlanQualFetchRowMark()`, `executor/execMain.c`): that
+version, whatever has committed since. digres's fetch by ctid
+reads the row as the statement sees it, which at READ
+COMMITTED is the version the scan joined
+(`smtable_fetch_row_version()`), so it agrees, and
+`../dg/test/server.sh` checks it with a customer row moved
+meanwhile. One case differs: a table joined to itself, whose
+copy has the target's rowno. A digres ctid names a row, not a
+version, so the copy's re-check reads the newest version the
+write kept, where PostgreSQL reads the one it joined
+(`../dg/README.md`, known incompatibilities).
 
 ### 3.2 How it is tested
 
