@@ -1,0 +1,90 @@
+# Verify a decimal128 column is stored as sm's decimal128 whatever its
+# precision, so it holds what its type holds, and reads back unconverted.
+# 1. CREATE TABLE AS from a 22-digit literal, a decimal128 with no typmod,
+#    makes a numeric(36,3) column that keeps the value; one from a literal
+#    of 34 integer digits is refused past that precision.
+# 2. A decimal128(10, 2) column, of a precision decimal64 would hold,
+#    rounds to its scale and refuses past its precision, as its type does.
+# 3. Two such tables, each with an index, joined by a nested loop of index
+#    scans and read by an index-only scan: each row has its own values.
+
+statement ok
+create table w as select 123456789012345678901.5 as x
+
+query TT nosort
+select x, pg_typeof(x) from w
+----
+123456789012345678901.500	numeric
+
+query T nosort
+select format_type(atttypid, atttypmod) from pg_attribute
+  where attrelid = 'w'::regclass and attname = 'x'
+----
+numeric(36,3)
+
+statement ok
+insert into w values (-999999999999999999999999999999999.999)
+
+# One integer digit past numeric(36, 3)'s 33, a decimal128 literal still,
+# is refused.
+statement error numeric field overflow
+create table w2 as select 1234567890123456789012345678901234.5 as x
+
+query T nosort
+select x from w order by x
+----
+-999999999999999999999999999999999.999
+123456789012345678901.500
+
+statement ok
+create table a (k int4, v decimal128(10, 2))
+
+statement ok
+create table b (k int4, v decimal128(10, 2))
+
+statement ok
+insert into a select i, i + 0.125 from generate_series(1, 20) i
+
+statement ok
+insert into b select i, i * 1000 + 0.5 from generate_series(1, 20) i
+
+statement error numeric field overflow
+insert into a values (99, 123456789.5)
+
+query T nosort
+select v from a where k = 3
+----
+3.13
+
+statement ok
+create index av on a (v)
+
+statement ok
+create index bk on b (k)
+
+statement ok
+set enable_hashjoin = off
+
+statement ok
+set enable_mergejoin = off
+
+statement ok
+set enable_seqscan = off
+
+statement ok
+set enable_bitmapscan = off
+
+# A nested loop of index scans: the outer row's decimal outlives the inner's.
+query ITT rowsort
+select a.k, a.v, b.v from a join b on b.k = a.k where a.v between 2 and 4.5
+----
+2	2.13	2000.50
+3	3.13	3000.50
+4	4.13	4000.50
+
+# An index-only scan of the decimal key, bounded by a decimal64 value.
+query T nosort
+select v from a where v > 18.5 order by v
+----
+19.13
+20.13

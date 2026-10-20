@@ -76,12 +76,6 @@
 #include "optimizer/optimizer.h"
 #include "utils/datum.h"
 
-/*
- * Where a row's numerics are made from sm's datums, reset at each row: the
- * slot copies them when it is materialized (slot_from_sm()).
- */
-static thread_local /*LOCAL*/ MemoryContext numeric_scratch = NULL;
-
 /* Whether this session's PostgreSQL transaction has begun an sm one. */
 static thread_local /*LOCAL*/ bool sm_xact_open = false;
 
@@ -523,44 +517,43 @@ void smstore_statement_advance(void) {
 }
 
 /*
- * A numeric column with no precision is numeric(17, 3), the widest that is
- * sm's decimal64 (DECIMAL.md section 2.3, sm/SM_DECIMAL_PLAN.md).
+ * A decimal column with no precision is the widest of its sm type at three
+ * places: numeric(17, 3) for decimal64, numeric(36, 3) for decimal128
+ * (DECIMAL.md section 2.3), as sm needs a scale to store at.
  */
-#define NUMERIC_DEFAULT_TYPMOD (((17 << 16) | 3) + VARHDRSZ)
+#define DECIMAL64_DEFAULT_TYPMOD (((17 << 16) | 3) + VARHDRSZ)
+#define DECIMAL128_DEFAULT_TYPMOD (((36 << 16) | 3) + VARHDRSZ)
 
-/* The precision of a numeric column's typmod, the default's if none. */
+/* The typmod a decimal column of typid stores at: typmod, or its default. */
+static int32 numeric_typmod(Oid typid, int32 typmod) {
+  if (typmod >= (int32)VARHDRSZ)
+    return typmod;
+  return typid == DECIMAL64OID ? DECIMAL64_DEFAULT_TYPMOD
+                               : DECIMAL128_DEFAULT_TYPMOD;
+}
+
+/* The precision of a decimal column's typmod, given (numeric_typmod()). */
 static int numeric_precision(int32 typmod) {
-  if (typmod < (int32)VARHDRSZ)
-    typmod = NUMERIC_DEFAULT_TYPMOD;
   return ((typmod - VARHDRSZ) >> 16) & 0xffff;
 }
 
-/* The scale of a numeric column's typmod. */
+/* The scale of a decimal column's typmod, given. */
 static int numeric_scale_of(int32 typmod) {
-  if (typmod < (int32)VARHDRSZ)
-    typmod = NUMERIC_DEFAULT_TYPMOD;
   return (typmod - VARHDRSZ) & 0x7ff;
 }
 
 /*
- * The bits of sm's decimal datum below its value that hold its scale: 5
- * for decimal64, a numeric column of up to 17 digits, 6 for decimal128
- * (sm/sm2/TYPE.md section 3.4).
+ * sm's datum for i, an integer at the scale of a column of the decimal typid
+ * and typmod, given: i shifted past the scale's bits, 5 by value for
+ * decimal64, 6 in 16 bytes of buf for decimal128 (sm/sm2/TYPE.md section
+ * 3.4).
  */
-static int numeric_scale_bits(int32 typmod) {
-  return numeric_precision(typmod) <= 17 ? 5 : 6;
-}
-
-/*
- * sm's datum for i, an integer at the scale of a column of typmod: i
- * shifted past the column's scale, by value for decimal64, for decimal128
- * 16 bytes in buf.
- */
-static sm_datum_t numeric_pack(__int128 i, int32 typmod, uint8 *buf) {
-  int bits = numeric_scale_bits(typmod);
+static sm_datum_t numeric_pack(__int128 i, Oid typid, int32 typmod,
+                               uint8 *buf) {
+  int bits = typid == DECIMAL64OID ? 5 : NUMERIC_SCALE_BITS;
   __int128 d = i * ((__int128)1 << bits) + numeric_scale_of(typmod);
 
-  if (bits == 5)
+  if (typid == DECIMAL64OID)
     return (sm_datum_t)(int64)d;
   memcpy(buf, &d, 16);
   return (sm_datum_t)buf;
@@ -572,56 +565,31 @@ static bool is_decimal(Oid typid) {
 }
 
 /*
- * sm's datum for num, of the decimal typid, in a column of typmod.  The
- * value is rounded to the column's scale and checked against its
- * precision, as an assignment is; then a decimal64's word, and a
- * decimal128's in a column of decimal128, are sm's datum as they are, and
- * a decimal128's in a column of decimal64 is packed (numeric_pack()).
+ * sm's datum for num, of a column of the decimal typid and typmod: the
+ * value rounded to the column's scale and checked against its precision,
+ * as an assignment is, a decimal64's word or a pointer to a decimal128's,
+ * which sm stores as they are.
  */
-static sm_datum_t numeric_to_sm(Datum num, Oid typid, int32 typmod,
-                                uint8 *buf) {
-  int32 t = typmod < (int32)VARHDRSZ ? NUMERIC_DEFAULT_TYPMOD : typmod;
-  Numeric v;
+static sm_datum_t numeric_to_sm(Datum num, Oid typid, int32 typmod) {
+  int32 t = numeric_typmod(typid, typmod);
 
   if (typid == DECIMAL64OID)
     return (sm_datum_t)DirectFunctionCall2(decimal64, num, Int32GetDatum(t));
-  v = DatumGetNumeric(DirectFunctionCall2(numeric, num, Int32GetDatum(t)));
-  if (numeric_scale_bits(typmod) == NUMERIC_SCALE_BITS)
-    return (sm_datum_t)v;
-  return numeric_pack(decimal_value(v), typmod, buf);
+  return (sm_datum_t)DirectFunctionCall2(numeric, num, Int32GetDatum(t));
 }
 
 /*
- * The datum of the decimal typid of sm's datum d, of a column of typmod:
- * d itself for a decimal64, and for a decimal128 of a column of
- * decimal128, pointing into sm's tuple; a decimal128 palloc'd from a
- * column of decimal64.
+ * sm's datum for a scan's bound num, of the decimal typid, on a column of
+ * the decimal coltypid and typmod: the column's integer at or below it, or
+ * with upper at or above it, kept within the column's precision.  So the
+ * bound takes in every value the key's own would, and the keys, checked
+ * again on each row, decide.
  */
-static Datum numeric_from_sm(sm_datum_t d, Oid typid, int32 typmod) {
-  Numeric res;
-  int64 w;
-
-  if (typid == DECIMAL64OID)
-    return (Datum)d;
-  if (numeric_scale_bits(typmod) == NUMERIC_SCALE_BITS)
-    return PointerGetDatum((const void *)d);
-  w = (int64)d;
-  res = (Numeric)palloc(sizeof(decimal_t));
-  decimal_set(res, w >> 5, (int)(w & 31));
-  return NumericGetDatum(res);
-}
-
-/*
- * sm's datum for a scan's bound num, of the decimal typid, on a decimal
- * column of typmod: the column's integer at or below it, or with upper at
- * or above it, kept within the column's precision.  So the bound takes in
- * every value the key's own would, and the keys, checked again on each
- * row, decide.
- */
-static sm_datum_t numeric_bound(Datum num, Oid typid, int32 typmod,
-                                bool upper, uint8 *buf) {
-  int s = numeric_scale_of(typmod), vs;
-  int p = numeric_precision(typmod);
+static sm_datum_t numeric_bound(Datum num, Oid typid, Oid coltypid,
+                                int32 typmod, bool upper, uint8 *buf) {
+  int32 t = numeric_typmod(coltypid, typmod);
+  int s = numeric_scale_of(t), vs;
+  int p = numeric_precision(t);
   __int128 i, limit = 1;
   bool clamped = false;
 
@@ -655,24 +623,7 @@ static sm_datum_t numeric_bound(Datum num, Oid typid, int32 typmod,
     i = limit;
   if (i < -limit)
     i = -limit;
-  return numeric_pack(i, typmod, buf);
-}
-
-/*
- * Whether attribute att is a decimal128 kept in sm as a decimal64, whose
- * datums are converted: of an expression's column, made without a typmod.
- */
-static bool converted_decimal(Form_pg_attribute att) {
-  return att->atttypid == DECIMAL128OID && !att->attisdropped &&
-         numeric_scale_bits(att->atttypmod) != NUMERIC_SCALE_BITS;
-}
-
-/* Whether a row of desc has a decimal whose datums are converted. */
-static bool has_numeric(TupleDesc desc) {
-  for (int i = 0; i < desc->natts; i++)
-    if (converted_decimal(TupleDescAttr(desc, i)))
-      return true;
-  return false;
+  return numeric_pack(i, coltypid, t, buf);
 }
 
 /*
@@ -713,8 +664,7 @@ static const sm_datum_t *row_to_sm(sm_tbl_t *tbl, TupleDesc desc,
     if (isnull[i])
       continue;
     if (is_decimal(att->atttypid))
-      val = numeric_to_sm(values[i], att->atttypid, att->atttypmod,
-                          (uint8 *)palloc(16));
+      val = numeric_to_sm(values[i], att->atttypid, att->atttypmod);
     else if (att->attlen == -1 &&
              VARATT_IS_EXTERNAL_SM(DatumGetPointer(values[i])) &&
              !own_pointer(tbl, old, i, (sm_datum_t)values[i]))
@@ -742,41 +692,15 @@ static bool has_toast(TupleDesc desc, Datum *values, bool *isnull,
 }
 
 /*
- * The decimal128s of a row of desc in slot that sm keeps as decimal64s
- * (has_numeric()), made decimal128s, and the slot made to own its values.
- * Every other decimal is sm's datum as it is.
+ * sm's type code for a column of type typid (sm2/TYPE.md section 3): each
+ * decimal is sm's of its width, whatever its precision.
  */
-static void slot_from_sm(TupleTableSlot *slot) {
-  TupleDesc desc = slot->tts_tupleDescriptor;
-  MemoryContext old;
-
-  if (!has_numeric(desc))
-    return;
-  /* The numerics are copied into the slot by its materializing. */
-  if (numeric_scratch == NULL)
-    numeric_scratch = AllocSetContextCreate(
-        TopMemoryContext, "sm numerics", ALLOCSET_SMALL_SIZES);
-  MemoryContextReset(numeric_scratch);
-  old = MemoryContextSwitchTo(numeric_scratch);
-  for (int i = 0; i < desc->natts && i < slot->tts_nvalid; i++)
-    if (converted_decimal(TupleDescAttr(desc, i)) && !slot->tts_isnull[i])
-      slot->tts_values[i] = numeric_from_sm((sm_datum_t)slot->tts_values[i],
-                                            DECIMAL128OID,
-                                            TupleDescAttr(desc, i)->atttypmod);
-  MemoryContextSwitchTo(old);
-  ExecMaterializeSlot(slot);
-}
-
-/*
- * sm's type code for a column of type typid and typmod (sm2/TYPE.md section
- * 3): a decimal is sm's decimal64 up to 17 digits, decimal128 up to 36, and
- * one with no typmod numeric(17, 3)'s.
- */
-static uint8_t type_code(Oid typid, int32 typmod) {
+static uint8_t type_code(Oid typid) {
   switch (typid) {
   case DECIMAL64OID:
+    return 17;
   case DECIMAL128OID:
-    return numeric_precision(typmod) <= 17 ? 17 : 18;
+    return 18;
   case BOOLOID:
     return 1;
   case INT2OID:
@@ -1500,10 +1424,10 @@ ObjectAddress smstore_create_table(CreateStmt *stmt) {
                              "does not support yet",
                              col->colname)));
     typenameTypeIdAndMod(NULL, col->typeName, &typid, &typmod);
-    /* A numeric with no precision is the default one, kept in sm. */
-    if (is_decimal(typid) && typmod < (int32)VARHDRSZ)
-      typmod = NUMERIC_DEFAULT_TYPMOD;
-    columns.push_back({col->colname, type_code(typid, typmod), typmod,
+    /* A numeric with no precision is its type's default one, kept in sm. */
+    if (is_decimal(typid))
+      typmod = numeric_typmod(typid, typmod);
+    columns.push_back({col->colname, type_code(typid), typmod,
                        column_not_null(stmt, col),
                        column_default(col, typid, typmod)});
     /*
@@ -2334,7 +2258,6 @@ static void tuple_into_slot(sm_tbl_t *tbl, uint64_t rowno, const void *tuple,
    * or reads null.
    */
   slot->tts_nvalid = natts;
-  slot_from_sm(slot);
   smstore_rowno_to_tid(rowno, &slot->tts_tid);
 }
 
@@ -3068,10 +2991,10 @@ static bool is_serial(const TypeName *type) {
 /*
  * The value of expr, a column's DEFAULT that calls nothing volatile, as sm
  * takes a datum: what rows older than the column read it as.  False if it
- * is null.  A varlena is untoasted, a numeric made sm's in buf.
+ * is null.  A varlena is untoasted, a numeric made sm's.
  */
-static bool default_value(Expr *expr, Oid typid, int32 typmod, sm_datum_t *out,
-                          uint8 *buf) {
+static bool default_value(Expr *expr, Oid typid, int32 typmod,
+                          sm_datum_t *out) {
   EState *estate = CreateExecutorState();
   ExprState *state;
   Datum value;
@@ -3085,7 +3008,7 @@ static bool default_value(Expr *expr, Oid typid, int32 typmod, sm_datum_t *out,
   if (!isnull) {
     get_typlenbyval(typid, &typlen, &typbyval);
     if (is_decimal(typid))
-      *out = numeric_to_sm(value, typid, typmod, buf);
+      *out = numeric_to_sm(value, typid, typmod);
     else if (typlen == -1)
       *out = (sm_datum_t)PointerGetDatum(
           pg_detoast_datum_copy((struct varlena *)DatumGetPointer(value)));
@@ -3112,7 +3035,6 @@ static void add_column(Oid relid, const char *relname, ColumnDef *col,
   const char *default_expr = NULL;
   sm_datum_t missing = 0;
   bool has_missing = false;
-  uint8 buf[16];
   ListCell *l;
 
   check_column_name(col->colname);
@@ -3138,9 +3060,9 @@ static void add_column(Oid relid, const char *relname, ColumnDef *col,
                     errmsg("ALTER TABLE ... ADD COLUMN supports only NOT "
                            "NULL and DEFAULT yet")));
   typenameTypeIdAndMod(NULL, col->typeName, &typid, &typmod);
-  /* A numeric with no precision is the default one, kept in sm. */
-  if (is_decimal(typid) && typmod < (int32)VARHDRSZ)
-    typmod = NUMERIC_DEFAULT_TYPMOD;
+  /* A numeric with no precision is its type's default one, kept in sm. */
+  if (is_decimal(typid))
+    typmod = numeric_typmod(typid, typmod);
   if (raw_default != NULL) {
     ParseState *pstate = make_parsestate(NULL);
     Node *expr =
@@ -3152,9 +3074,9 @@ static void add_column(Oid relid, const char *relname, ColumnDef *col,
                       errmsg("ALTER TABLE ... ADD COLUMN with a volatile "
                              "DEFAULT is not supported yet")));
     default_expr = nodeToString(expr);
-    has_missing = default_value((Expr *)expr, typid, typmod, &missing, buf);
+    has_missing = default_value((Expr *)expr, typid, typmod, &missing);
   }
-  sm_column_spec_t spec = {col->colname, type_code(typid, typmod), typmod,
+  sm_column_spec_t spec = {col->colname, type_code(typid), typmod,
                            not_null, default_expr};
   sm_session_t *s = xact_session();
 
@@ -4203,14 +4125,11 @@ static Datum float4_array(const float *f, int n) {
 }
 
 /*
- * The datum of a value sm kept in a statistic, bytes, of a column of typid
- * and typmod: sm's datum, or for numeric the numeric made of it.
+ * The datum of a value sm kept in a statistic, bytes: sm's datum, a
+ * decimal's as it is.
  */
-static Datum stat_datum(const sm_type_t *smtype, Oid typid, int32 typmod,
-                        const std::string &bytes) {
-  sm_datum_t d = sm_datum_of_bytes(smtype, bytes);
-
-  return is_decimal(typid) ? numeric_from_sm(d, typid, typmod) : (Datum)d;
+static Datum stat_datum(const sm_type_t *smtype, const std::string &bytes) {
+  return (Datum)sm_datum_of_bytes(smtype, bytes);
 }
 
 /*
@@ -4252,17 +4171,16 @@ HeapTuple smstore_statistic_tuple(Oid relid, AttrNumber attnum, bool inh) {
   int16 typlen = att->attlen;
   bool typbyval = att->attbyval;
   char typalign = att->attalign;
-  int32 typmod = att->atttypmod;
 
   relation_close(rel, NoLock);
   TypeCacheEntry *tc =
       lookup_type_cache(typid, TYPECACHE_EQ_OPR | TYPECACHE_LT_OPR);
-  const sm_type_t *smtype = sm_type(type_code(typid, typmod));
+  const sm_type_t *smtype = sm_type(type_code(typid));
   auto values_array = [&](const std::vector<std::string> &bytes) {
     std::vector<Datum> d;
 
     for (const std::string &b : bytes)
-      d.push_back(stat_datum(smtype, typid, typmod, b));
+      d.push_back(stat_datum(smtype, b));
     return PointerGetDatum(construct_array(d.data(), (int)d.size(), typid,
                                            typlen, typbyval, typalign));
   };
@@ -4319,7 +4237,7 @@ HeapTuple smstore_statistic_tuple(Oid relid, AttrNumber attnum, bool inh) {
 }
 
 /* An array of values' text, by the type's output function, as text[]. */
-static Datum text_array(const sm_type_t *smtype, Oid typid, int32 typmod,
+static Datum text_array(const sm_type_t *smtype, Oid typid,
                         const std::vector<std::string> &bytes) {
   Oid out;
   bool varlena;
@@ -4328,7 +4246,7 @@ static Datum text_array(const sm_type_t *smtype, Oid typid, int32 typmod,
   getTypeOutputInfo(typid, &out, &varlena);
   for (const std::string &b : bytes)
     d.push_back(CStringGetTextDatum(
-        OidOutputFunctionCall(out, stat_datum(smtype, typid, typmod, b))));
+        OidOutputFunctionCall(out, stat_datum(smtype, b))));
   return PointerGetDatum(
       construct_array_builtin(d.data(), (int)d.size(), TEXTOID));
 }
@@ -4352,7 +4270,7 @@ static void put_stats_rows(ReturnSetInfo *rsinfo, Oid oid) {
     Relation rel =
         relation_open(x.has_index ? (Oid)x.index : oid, AccessShareLock);
     Form_pg_attribute att = TupleDescAttr(RelationGetDescr(rel), x.position);
-    const sm_type_t *smtype = sm_type(type_code(att->atttypid, att->atttypmod));
+    const sm_type_t *smtype = sm_type(type_code(att->atttypid));
     NameData nsp, name;
     Datum values[17];
     bool nulls[17];
@@ -4370,12 +4288,12 @@ static void put_stats_rows(ReturnSetInfo *rsinfo, Oid oid) {
     for (int i = 0; i <= 6; i++)
       nulls[i] = false;
     if (!x.mcv.empty()) {
-      values[7] = text_array(smtype, att->atttypid, att->atttypmod, x.mcv);
+      values[7] = text_array(smtype, att->atttypid, x.mcv);
       values[8] = float4_array(x.mcv_freq.data(), (int)x.mcv_freq.size());
       nulls[7] = nulls[8] = false;
     }
     if (x.bounds.size() >= 2) {
-      values[9] = text_array(smtype, att->atttypid, att->atttypmod, x.bounds);
+      values[9] = text_array(smtype, att->atttypid, x.bounds);
       nulls[9] = false;
     }
     if (x.has_correlation) {
@@ -5240,7 +5158,8 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
       return numeric_bound(key->sk_argument,
                            OidIsValid(key->sk_subtype) ? key->sk_subtype
                                                        : att->atttypid,
-                           att->atttypmod, upper, (uint8 *)palloc(16));
+                           att->atttypid, att->atttypmod, upper,
+                           (uint8 *)palloc(16));
     };
     bool numeric_col = is_decimal(att->atttypid);
 
@@ -5477,7 +5396,6 @@ bool smstore_index_getentry(smstore_scan_t *scan, TupleTableSlot *slot) {
       sm_error("read an index entry");
     }
     ExecStoreVirtualTuple(slot);
-    slot_from_sm(slot);
     smstore_rowno_to_tid(rowno, &slot->tts_tid);
     if (keys_met(scan, slot, true))
       return true;

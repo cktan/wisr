@@ -7679,3 +7679,33 @@ PostgreSQL goes on.
   checks the code on an index cursor, and
   `../sm/rel/test/test_cursor.rel` with rel's new cursor
   commands, `idx-open`, `cursor-next` and `cursor-close`.
+
+## Step 265: a decimal128 column is sm's decimal128
+
+A decimal column with no typmod was given numeric(17, 3)
+whatever its type, and `type_code()` chose sm's type by the
+precision, not the type. So a `decimal128` column of 17
+digits or fewer, or of none, was stored as sm's `decimal64`:
+each write packed its value (`numeric_pack()`), and each read
+converted it back into memory reset at the next row and
+materialized the slot (`slot_from_sm()`), a copy of the whole
+row (`../sm/PIN.md` §2, D). And a `CREATE TABLE AS` from a
+`decimal128` expression, such as a literal of 22 digits, made
+a numeric(17, 3) column and failed with a numeric field
+overflow, where PostgreSQL stores the value.
+
+- **`type_code()` takes the type alone**: `decimal64` is sm's
+  17, `decimal128` its 18, whatever the precision; sm2 takes
+  a `decimal128` of 1 to 36 digits.
+- **A `decimal128` column with no typmod is numeric(36, 3)**,
+  the widest of its type at the three places a bare numeric
+  column has (`numeric_typmod()`, `DECIMAL.md` §2.3).
+- **Nothing is converted**: every decimal datum is sm's as it
+  is, a word or a pointer into sm's tuple. Gone with it:
+  `numeric_from_sm()`, `converted_decimal()`, `has_numeric()`,
+  `slot_from_sm()` and its `numeric_scratch`. A scan bound
+  is packed at its column's type (`numeric_bound()`).
+- `test/slt/decimal128_column.test`: the CREATE TABLE AS of
+  a 22-digit literal, which failed before, a `decimal128(10,
+  2)` column's rounding and overflow, and a nested loop of
+  index scans and an index-only scan on such columns.

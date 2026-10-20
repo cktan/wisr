@@ -74,7 +74,10 @@ The copies:
   by-reference columns, because B's bytes last only until
   sm's next call (`../dg/src/backend/access/sm/smstore.c`).
 - **D** — `slot_from_sm()` materializes the slot, only on a
-  table with a `decimal128` column.
+  table with a `decimal128` column of 17 digits or none,
+  which sm stored as a `decimal64`, converted on each read.
+  Gone: such a column is now sm's `decimal128`, its datums
+  sm's as they are (`../dg/WORKNOTE.md` step 265).
 
 Copying nothing: sm2's `tup_deform`, whose by-reference
 values point into the row (`sm2/TUPLE.md` §8), and the C
@@ -472,9 +475,10 @@ What a held pin costs is space, not a wait (§7):
 - **`keep_row()` keeps a pin ref, not a `memcpy`**, for the
   statement: the deleted row for RETURNING and the newest
   version for a recheck.
-- **A decimal does not materialize the slot.** The converted
-  numerics go into memory the slot frees when it is cleared,
-  and the other columns stay where they point. Removes D.
+- **A decimal does not materialize the slot.** *Done
+  otherwise*: no decimal is converted any more, as each
+  column is stored as sm's type of its width, so there is
+  nothing to keep for the slot. Removes D.
 - **All pins released at the end of a statement**, by
   `sm_release_all_pins()`, when no row pinned is wanted after
   it. That shortens a pin left behind by an error from the
@@ -586,7 +590,8 @@ its ref (§6.4).
 4. **The old row of a write** in a ref: sm1's `update` and
    `erase`, sm2's `rel->old` copy, `tbl_update` and
    `tbl_delete`'s copies, and `keep_row()`.
-5. **The decimal slot.**
+5. **The decimal slot.** *Done* by storing each decimal
+   column as sm's type of its width (§6.4).
 6. **The index-only scan's key decoding.**
 7. **`scan_next` lends its row**, with the SSI change.
 8. **`sm_release_all_pins()` at the end of a statement**,

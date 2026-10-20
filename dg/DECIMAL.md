@@ -103,6 +103,14 @@ typedef struct decimal_t {  /* decimal128's, in two halves */
   made, so a value with more places is rounded to three, as
   an assignment to `numeric(17, 3)` is. A bare `numeric`
   anywhere else keeps its value's scale (§2.1).
+- **An unconstrained `decimal128` column is `numeric(36,
+  3)`**, the widest of sm2's `decimal128`, at the same three
+  places. `CREATE TABLE AS` makes one from a `decimal128`
+  expression, such as a literal of 18 to 36 digits.
+- **Each decimal column is stored as sm's type of its
+  width**, whatever its precision: a `decimal128(10, 2)` is
+  sm's `decimal128`, not a `decimal64`, so its datums too are
+  sm's as they are, with nothing to convert on a read.
 
 ### 2.4 Literals and casts
 
