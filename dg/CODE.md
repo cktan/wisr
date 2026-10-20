@@ -283,6 +283,11 @@ Much of the work is removing what digres does not need.
   freeing a block — even when the call reads plainly.
 - **No `strncpy()`**: `memcpy()` and write the terminator.
 - **Use `std::optional` reluctantly.**
+- **A constant goes on the left of `==` and `!=`**:
+  `if (0 == x)`, `if (NULL != p)`, `if (SM_OK == rc)`, not
+  `if (x == 0)`. A `=` typed for `==` then fails to compile.
+  It is for the code you write and the lines you change;
+  comparisons already there are not rewritten for it.
 - **Format with `clang-format -i`** the files you change that
   were already formatted at `HEAD` (format the file at `HEAD`
   and compare); do not reformat a file that was not. Run

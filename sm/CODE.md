@@ -166,6 +166,11 @@ the two differ, `CLAUDE.md` wins.
   Every Makefile compiles with `-fno-rtti`, so the compiler
   refuses the rest.
 - **Use `std::optional` reluctantly.**
+- **A constant goes on the left of `==` and `!=`**:
+  `if (0 == x)`, `if (nullptr != p)`, `if (SM_OK == rc)`, not
+  `if (x == 0)`. A `=` typed for `==` then fails to compile.
+  It is for the code you write and the lines you change;
+  comparisons already there are not rewritten for it.
 
 ## 9. Tests
 
