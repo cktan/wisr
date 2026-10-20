@@ -147,6 +147,12 @@ using log_fn = void (*)(void *arg, loglevel_t level, const char *msg) noexcept;
  */
 void set_log(log_fn fn, void *arg);
 
+/*
+ * The compiler flags this level was built with, its Makefile's
+ * OPTFLAGS: "-O3", or "-O3 -DNDEBUG" for digres's release build.
+ */
+const char *build_flags();
+
 } // namespace sm0
 
 #endif /* SM0_H */

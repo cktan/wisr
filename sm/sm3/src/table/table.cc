@@ -1275,4 +1275,13 @@ std::span<const sm2::attribute_t> tbl_idx_value_schema(const table_t *table,
   return {};
 }
 
+/* The flags this level was built with; see sm3.h. */
+const char *build_flags() {
+#ifdef SM3_BUILD_FLAGS
+  return SM3_BUILD_FLAGS;
+#else
+  return "unknown";
+#endif
+}
+
 } // namespace sm3

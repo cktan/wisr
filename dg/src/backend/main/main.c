@@ -41,6 +41,8 @@
 #include "utils/memutils.h"
 #include "utils/pg_locale.h"
 #include "utils/ps_status.h"
+#include "sm.h"
+#include "sq.h"
 
 /* names of special must-be-first options for dispatching to subprograms */
 static const char *const DispatchOptionNames[] = {
@@ -58,6 +60,7 @@ static void startup_hacks(const char *progname);
 static void init_locale(const char *categoryname, int category,
                         const char *locale);
 static void help(const char *progname);
+static void print_build(void);
 static void check_root(const char *progname);
 
 /*
@@ -124,6 +127,12 @@ int main(int argc, char *argv[]) {
    */
   if (argc > 1 && strcmp(argv[1], "--parse") == 0)
     exit(parse_tool_main(argc, argv));
+
+  /* Nor is "digres --build": it says how the program was built. */
+  if (argc > 1 && strcmp(argv[1], "--build") == 0) {
+    print_build();
+    exit(0);
+  }
 
   /*
    * Nor is "initdb", which is this program under another name, or
@@ -353,6 +362,28 @@ static void init_locale(const char *categoryname, int category,
  * correctly if the console output code page covers the necessary characters.
  * Messages emitted in write_console() do not exhibit this problem.
  */
+/*
+ * The RocksDB the server links, as the link step says it
+ * (rocksdb_build.cc): its version, and the system's or one built for it.
+ */
+extern "C" const char dg_rocksdb_build[];
+
+#ifndef DG_BUILD_FLAGS
+#define DG_BUILD_FLAGS "unknown"
+#endif
+
+/*
+ * Print how the program was built: the compiler flags of its own objects,
+ * of sq's and of sm's, and the RocksDB it links.  A benchmark is run only
+ * on a build optimized and without assertions (../bench/CODE.md).
+ */
+static void print_build(void) {
+  printf("digres   %s\n", DG_BUILD_FLAGS);
+  printf("sq       %s\n", sq_build_flags());
+  printf("sm       %s\n", sm_build_flags());
+  printf("RocksDB  %s\n", dg_rocksdb_build);
+}
+
 static void help(const char *progname) {
   printf(_("%s is the PostgreSQL server.\n\n"), progname);
   printf(_("Usage:\n  %s [OPTION]...\n\n"), progname);
@@ -380,6 +411,7 @@ static void help(const char *progname) {
   printf(
       _("  --describe-config  describe configuration parameters, then exit\n"));
   printf(_("  -?, --help         show this help, then exit\n"));
+  printf(_("  --build            show how this program was built, then exit\n"));
 
   printf(_("\nDeveloper options:\n"));
   printf(_("  -f s|i|o|b|t|n|m|h forbid use of some plan types\n"));

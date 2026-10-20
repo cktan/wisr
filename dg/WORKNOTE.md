@@ -7909,3 +7909,29 @@ table gives one.
   test_table.cc` tests `set_identity`. `test/server.sh`'s
   ALTER TABLE, which expected a serial refused, now adds one,
   lists 1 to 3, and drops it.
+
+## Step 273: a release build, and digres --build
+
+The benchmark of `../bench/` measures digres against
+PostgreSQL 18, so only builds optimized and without
+assertions (`../bench/CODE.md`). digres's build is the tests':
+`-O0 -g` with `Assert()`; sq's is `-O0 -g`; and the system's
+RocksDB, which it links, Ubuntu's, keeps its `assert()`s.
+
+- **`make release`** builds `build/digres-release`, every
+  object again as NAME.rel.o at `-O2 -DNDEBUG` without
+  `USE_ASSERT_CHECKING`, as `make tsan` has its own objects.
+  It links sq's new `libsq-release.a` (`-O2 -DNDEBUG`), sm
+  built into `sm/build/release` (`-O3 -DNDEBUG`), and RocksDB
+  8.9.1 built from source at `-O3 -DNDEBUG`, statically. `dg.mk`
+  keeps the `.rel.o` objects from its stale list and from the
+  debug link; `cxx_thread_local.py` checks the debug objects
+  alone, as the release ones are of the same sources.
+- **`test/rocksdb_tsan.sh` is `test/rocksdb.sh tsan|release`**,
+  and writes the flags it builds with beside the library.
+- **`digres --build`** prints the flags of the server's
+  objects, of sq (`sq_build_flags()`) and of sm
+  (`sm_build_flags()`, from each level's `build_flags()` and
+  the wrapper's), and the RocksDB it links, which the link
+  step compiles in (`rocksdb_build.cc`): its version, and the
+  system's or a static one, with its flags.

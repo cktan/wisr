@@ -1368,6 +1368,12 @@ int load_put(loader_t* loader, size_t stream, std::string_view key,
  */
 int load_close(loader_t* loader);
 
+/*
+ * The compiler flags this level was built with, its Makefile's
+ * OPTFLAGS: "-O3", or "-O3 -DNDEBUG" for digres's release build.
+ */
+const char* build_flags();
+
 } // namespace sm1
 
 #endif /* SM1_H */

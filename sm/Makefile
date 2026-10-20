@@ -74,9 +74,10 @@ sm3/$(BUILD)/libsm3.a: sm2/$(BUILD)/libsm2.a
 .PHONY: $(LEVEL_LIBS)
 endif
 
+# The wrapper's flags, which sm_build_flags() reports with the levels'.
 $(BUILD)/src/sm.o: src/sm.cc
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) -c -o $@ $<
+	$(CXX) $(CXXFLAGS) -D'SM_BUILD_FLAGS="$(OPTFLAGS)"' -c -o $@ $<
 
 # One archive of every level's objects and the wrapper's, by an
 # ar script: ADDLIB keeps two levels' same-named objects apart.

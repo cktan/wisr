@@ -125,3 +125,12 @@ const char *sq_errdetail(void) { return t_errdetail; }
 
 /* The hint of the last error raised on this thread, or "". */
 const char *sq_errhint(void) { return t_errhint; }
+
+/* The flags the library was built with; see sq.h. */
+const char *sq_build_flags(void) {
+#ifdef SQ_BUILD_FLAGS
+  return SQ_BUILD_FLAGS;
+#else
+  return "unknown";
+#endif
+}

@@ -743,4 +743,13 @@ int tup_decode(const tup_desc_t &desc, std::string_view tuple, size_t ordinal,
   return 0;
 }
 
+/* The flags this level was built with; see sm2.h. */
+const char *build_flags() {
+#ifdef SM2_BUILD_FLAGS
+  return SM2_BUILD_FLAGS;
+#else
+  return "unknown";
+#endif
+}
+
 } // namespace sm2

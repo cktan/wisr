@@ -545,3 +545,12 @@ int sm1::detach(sm1::env_t *env, int force) {
   delete env;
   return 0;
 }
+
+/* The flags this level was built with; see sm1.h. */
+const char *sm1::build_flags() {
+#ifdef SM1_BUILD_FLAGS
+  return SM1_BUILD_FLAGS;
+#else
+  return "unknown";
+#endif
+}

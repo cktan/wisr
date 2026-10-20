@@ -80,6 +80,13 @@ typedef struct sm_env_t sm_env_t;
  */
 typedef struct sm_session_t sm_session_t;
 
+/*
+ * The compiler flags sm was built with: one string if its levels
+ * and the wrapper agree, "-O3 -DNDEBUG" for digres's release
+ * build, else each one's, as "sm0 -O3; ...; wrapper -O1 -g".
+ */
+const char* sm_build_flags(void);
+
 /* ---- errors: sm1's thread-local error state ---- */
 
 /* The last error raised on the calling thread. */

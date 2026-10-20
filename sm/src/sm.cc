@@ -2129,6 +2129,32 @@ int sm_cat_rename_column(sm_session_t *session, uint64_t oid, const char *name,
   });
 }
 
+/* The flags sm was built with; see sm.h. */
+const char *sm_build_flags(void) {
+#ifndef SM_BUILD_FLAGS
+#define SM_BUILD_FLAGS "unknown"
+#endif
+  static const std::string flags = [] {
+    const char *each[] = {sm0::build_flags(), sm1::build_flags(),
+                          sm2::build_flags(), sm3::build_flags(),
+                          SM_BUILD_FLAGS};
+    const char *names[] = {"sm0", "sm1", "sm2", "sm3", "wrapper"};
+    bool same = true;
+    for (const char *f : each) {
+      same &= 0 == std::strcmp(f, each[0]);
+    }
+    if (same) {
+      return std::string(each[0]);
+    }
+    std::string all;
+    for (size_t i = 0; i < 5; i++) {
+      all += std::string(i ? "; " : "") + names[i] + " " + each[i];
+    }
+    return all;
+  }();
+  return flags.c_str();
+}
+
 /* Make a column NOT NULL in the session's transaction. */
 int sm_cat_set_not_null(sm_session_t *session, uint64_t oid, const char *name) {
   return guard(session, [&] {

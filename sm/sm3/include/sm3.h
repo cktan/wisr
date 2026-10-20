@@ -1621,6 +1621,12 @@ bool builder_building(const catalog_t* cat, uint64_t oid);
  */
 int builder_wait(session_t* session, uint64_t table, uint64_t oid);
 
+/*
+ * The compiler flags this level was built with, its Makefile's
+ * OPTFLAGS: "-O3", or "-O3 -DNDEBUG" for digres's release build.
+ */
+const char* build_flags();
+
 } // namespace sm3
 
 #endif /* SM3_H */

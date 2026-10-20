@@ -982,6 +982,12 @@ int catkv_scannxt(catkv_scan_t* scan, std::string_view& key,
 /* Close a cursor; nullptr is a no-op. */
 void catkv_scanend(catkv_scan_t* scan);
 
+/*
+ * The compiler flags this level was built with, its Makefile's
+ * OPTFLAGS: "-O3", or "-O3 -DNDEBUG" for digres's release build.
+ */
+const char* build_flags();
+
 } // namespace sm2
 
 #endif /* SM2_H */

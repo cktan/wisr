@@ -36,9 +36,11 @@ CPPFLAGS := -I$(top)/src/include -I$(top)/../sm/sm0/include $(INCLUDES) -D_GNU_S
 SRCS := $(filter-out $(SKIP),$(wildcard *.c))
 OBJS := $(SRCS:.c=.$(OBJ))
 # Objects here that no source compiles any more, of a .c deleted or
-# skipped, plain or for the thread sanitizer: the link takes every
-# object under src/, so one left would still be linked.
-STALE := $(filter-out $(SRCS:.c=.o) $(SRCS:.c=.tsan.o),$(wildcard *.o))
+# skipped, plain, for the thread sanitizer or for the release build:
+# the link takes every object under src/, so one left would still be
+# linked.
+STALE := $(filter-out $(SRCS:.c=.o) $(SRCS:.c=.tsan.o) $(SRCS:.c=.rel.o),\
+                      $(wildcard *.o))
 
 .PHONY: all clean format $(SUBDIRS)
 
@@ -56,7 +58,8 @@ $(SUBDIRS):
 
 # Not *.d: utils/probes.d is a source file.
 clean: $(SUBDIRS)
-	rm -f $(SRCS:.c=.o) $(SRCS:.c=.d) $(SRCS:.c=.tsan.o) $(SRCS:.c=.tsan.d)
+	rm -f $(SRCS:.c=.o) $(SRCS:.c=.d) $(SRCS:.c=.tsan.o) $(SRCS:.c=.tsan.d) \
+	    $(SRCS:.c=.rel.o) $(SRCS:.c=.rel.d)
 
 # .clang-format-ignore at dg/ keeps the generators' headers as they are.
 format: $(SUBDIRS)

@@ -186,4 +186,13 @@ const char *errname() {
   return i < sizeof(names) / sizeof(names[0]) ? names[i] : "ERR_UNKNOWN";
 }
 
+/* The flags this level was built with; see sm0.h. */
+const char *build_flags() {
+#ifdef SM0_BUILD_FLAGS
+  return SM0_BUILD_FLAGS;
+#else
+  return "unknown";
+#endif
+}
+
 } // namespace sm0

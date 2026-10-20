@@ -100,6 +100,35 @@ build/test/%.o: test/%.cc | build/gen/gram.hh
 	@mkdir -p $(dir $@)
 	$(CXX) $(LIB_CXXFLAGS) -c -o $@ $<
 
+# The library again, optimized, its objects apart in build/rel: what
+# digres's release build links (../bench/DESIGN.md section 2).
+REL_OBJS := $(LIB_OBJS:build/%=build/rel/%)
+REL_OPT := -O2 -DNDEBUG
+REL_LIB_CXXFLAGS := $(filter-out -O0 -g,$(LIB_CXXFLAGS)) $(REL_OPT)
+REL_GEN_CXXFLAGS := $(filter-out -O0 -g,$(GEN_CXXFLAGS)) $(REL_OPT)
+
+# The flags each is built with, which sq_build_flags() reports.
+build/src/error.o: LIB_CXXFLAGS += -D'SQ_BUILD_FLAGS="$(OPT)"'
+build/rel/src/error.o: REL_LIB_CXXFLAGS += -D'SQ_BUILD_FLAGS="$(REL_OPT)"'
+
+build/libsq-release.a: $(REL_OBJS)
+	rm -f $@
+	$(AR) rcs $@ $^
+
+build/rel/src/%.o: src/%.cc | build/gen/gram.hh
+	@mkdir -p $(dir $@)
+	$(CXX) $(REL_LIB_CXXFLAGS) -c -o $@ $<
+
+build/rel/gen/print_nodes.o build/rel/gen/node_funcs.o: \
+        build/rel/gen/%.o: build/gen/%.cc | build/gen/gram.hh
+	@mkdir -p $(dir $@)
+	$(CXX) $(REL_LIB_CXXFLAGS) -c -o $@ $<
+
+build/rel/gen/scan.o build/rel/gen/gram.o: \
+        build/rel/gen/%.o: build/gen/%.cc | build/gen/gram.hh
+	@mkdir -p $(dir $@)
+	$(CXX) $(REL_GEN_CXXFLAGS) -c -o $@ $<
+
 # The tests again, with the library built into them under the thread
 # sanitizer: slow to build, so it is a target of its own. What it is
 # for is the test that parses on eight threads at once.
@@ -138,4 +167,4 @@ clean:
 format:
 	clang-format -i src/*.cc src/*.h test/*.cc test/tool/*.cc
 
--include $(LIB_OBJS:.o=.d) $(TEST_OBJS:.o=.d) $(TOOLS:=.d)
+-include $(LIB_OBJS:.o=.d) $(TEST_OBJS:.o=.d) $(TOOLS:=.d) $(REL_OBJS:.o=.d)

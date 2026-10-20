@@ -30,13 +30,15 @@ I := src/include
 B := src/backend
 PERL := perl
 # RocksDB, which sm links: the system's, or, for the thread sanitizer, one
-# built for it with its compression libraries (test/rocksdb_tsan.sh).
+# built for it with its compression libraries (test/rocksdb.sh).
 LINK_ROCKSDB = -lrocksdb
 ROCKSDB_TSAN := build/rocksdb-tsan/librocksdb.a
+ROCKSDB_REL := build/rocksdb-release/librocksdb.a
 LDLIBS = $(LINK_ROCKSDB) -licui18n -licuuc -licudata -lm -lpthread -ldl -lrt
 # The parser, a library of its own (../sq).
 SQ := ../sq
 LIBSQ := $(SQ)/build/libsq.a
+LIBSQ_REL := $(SQ)/build/libsq-release.a
 # The storage stack, a library of its own too (../sm). Its level 0,
 # sm0, holds the system services digres builds on (sm_sys.h), so this
 # one library brings them.
@@ -46,6 +48,7 @@ LIBSM := $(SM)/build/libsm.a
 # share, and a sanitizer that cannot see them reports races that are
 # not.
 LIBSM_TSAN := $(SM)/build/tsan/libsm.a
+LIBSM_REL := $(SM)/build/release/libsm.a
 # The sm library a link takes: the tsan build overrides it.
 LINK_SM = $(LIBSM)
 # Where digres is installed, which the server is built knowing.
@@ -90,22 +93,30 @@ build/digres: src $(LIBSQ) $(LIBSM)
 	ln -sf digres build/initdb
 
 # Link $(1) from the objects under src/ named *$(2), compiling with
-# $(3).
+# $(3), and with what it says of the RocksDB it links, ROCKSDB_BUILD,
+# for "digres --build" (src/backend/main/rocksdb_build.cc).
 define link_server
-	$(CXX) $(3) -o $(1) \
-	    $$(find src -name '*$(2)' $(if $(filter .o,$(2)),! -name '*.tsan.o')) \
+	$(CXX) $(3) -DDG_ROCKSDB_BUILD="\"$(ROCKSDB_BUILD)\"" -c \
+	    -o build/rocksdb_build$(2) src/backend/main/rocksdb_build.cc
+	$(CXX) $(3) -o $(1) build/rocksdb_build$(2) \
+	    $$(find src -name '*$(2)' \
+	        $(if $(filter .o,$(2)),! -name '*.tsan.o' ! -name '*.rel.o')) \
 	    $(LIBSQ) $(LINK_SM) $(LDLIBS)
 endef
+
+# The RocksDB each build links, as "digres --build" names it.
+ROCKSDB_BUILD = shared, the system's (Ubuntu's build, with its assert()s)
 
 # The server again, each object compiled once more as NAME.tsan.o for
 # the thread sanitizer, and the statements in test/ run with it, alone
 # and in sessions, and test/server.sh run on it. The sanitizer cannot map its memory with the address
 # space randomised, hence setarch -R. Every library that runs threads
 # is instrumented: sm, sm_sys.h's services among it, and RocksDB, built by
-# test/rocksdb_tsan.sh. sq, the parser, is not.
+# test/rocksdb.sh. sq, the parser, is not.
 .PHONY: tsan
 tsan: LINK_SM = $(LIBSM_TSAN)
 tsan: LINK_ROCKSDB = $(ROCKSDB_TSAN) -lsnappy -llz4 -lzstd -lz -lbz2
+tsan: ROCKSDB_BUILD = static, $$(cat $(dir $(ROCKSDB_TSAN))flags)
 tsan: gen $(LIBSQ) $(LIBSM_TSAN) $(ROCKSDB_TSAN)
 	$(MAKE) -C src OBJ=tsan.o
 	@mkdir -p build
@@ -180,22 +191,43 @@ slt-corpus:
 	$(MAKE) build/slt
 	test/slt_corpus.sh
 
+# The server again, each object compiled once more as NAME.rel.o,
+# optimized and without Assert() or assert(), on sq, sm and RocksDB built
+# the same way: what bench/ measures (../bench/DESIGN.md section 2).
+# "digres-release --init" makes a data directory.
+.PHONY: release
+release: LIBSQ = $(LIBSQ_REL)
+release: LINK_SM = $(LIBSM_REL)
+release: LINK_ROCKSDB = $(ROCKSDB_REL) -lsnappy -llz4 -lzstd -lz -lbz2
+release: ROCKSDB_BUILD = static, $$(cat $(dir $(ROCKSDB_REL))flags)
+release: gen $(LIBSQ_REL) $(LIBSM_REL) $(ROCKSDB_REL)
+	$(MAKE) -C src OBJ=rel.o OPT="-O2 -DNDEBUG" ASSERT=
+	@mkdir -p build
+	$(call link_server,build/digres-release,.rel.o,-O2)
+
 # sq builds its own library; whether it is up to date is sq's to say.
-.PHONY: $(LIBSQ)
+.PHONY: $(LIBSQ) $(LIBSQ_REL)
 $(LIBSQ):
 	$(MAKE) -C $(SQ) build/libsq.a
+$(LIBSQ_REL):
+	$(MAKE) -C $(SQ) build/libsq-release.a
 
-# So does sm, plain and for the thread sanitizer.
-.PHONY: $(LIBSM) $(LIBSM_TSAN)
+# So does sm, plain, for the thread sanitizer, and for the release build.
+.PHONY: $(LIBSM) $(LIBSM_TSAN) $(LIBSM_REL)
 $(LIBSM):
 	$(MAKE) -C $(SM)
 $(LIBSM_TSAN):
 	$(MAKE) -C $(SM) BUILD=build/tsan OPTFLAGS="-O1 -g -fsanitize=thread" \
 	    build/tsan/libsm.a
+$(LIBSM_REL):
+	$(MAKE) -C $(SM) BUILD=build/release OPTFLAGS="-O3 -DNDEBUG" build/release/libsm.a
 
-# RocksDB for the thread sanitizer, built once.
+# RocksDB for the thread sanitizer, and for the release build, each built
+# once.
 $(ROCKSDB_TSAN):
-	test/rocksdb_tsan.sh
+	test/rocksdb.sh tsan
+$(ROCKSDB_REL):
+	test/rocksdb.sh release
 
 # The catalogs' #defines: pg_*_d.h and the syscache tables.
 $(I)/catalog/.stamp: $(CATALOG_HEADERS) $(wildcard $(I)/catalog/*.dat) \

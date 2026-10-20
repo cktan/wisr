@@ -113,6 +113,9 @@ $(BUILD)/example/%.o: example/%.cc $(FLAGS_FILE)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
+# The flags it is built with, which build_flags() reports.
+$(BUILD)/src/env.o: CXXFLAGS += -D'SM1_BUILD_FLAGS="$(OPTFLAGS)"'
+
 $(BUILD)/src/%.o: src/%.cc $(FLAGS_FILE)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<

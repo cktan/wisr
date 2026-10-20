@@ -102,6 +102,12 @@ const char* sq_errdetail(void);
 /* Its hint, or "" when it has none. */
 const char* sq_errhint(void);
 
+/*
+ * The compiler flags the library was built with: "-O0 -g", or
+ * "-O2 -DNDEBUG" for libsq-release.a.
+ */
+const char* sq_build_flags(void);
+
 /* ---- options, and notices ---- */
 
 /* PostgreSQL's backslash_quote: whether \' may stand for a quote. */

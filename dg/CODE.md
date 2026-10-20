@@ -83,7 +83,7 @@ The import itself is not built yet (`PLAN.md` §7).
   to threads, signals, latches, locks or shared state. RocksDB
   and sm, sm_sys.h's services with it, are instrumented with it;
   the first run builds RocksDB for it
-  (`test/rocksdb_tsan.sh`), which takes a while.
+  (`test/rocksdb.sh tsan`), which takes a while.
 - **Run the full suite before every commit** that touches
   source. A commit of documents alone needs none.
 - **Save test output to a file** and read the file, rather

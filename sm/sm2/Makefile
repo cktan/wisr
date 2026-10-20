@@ -85,6 +85,9 @@ $(TEST_BIN): $(TEST_OBJS) $(LIB) $(SM1_LIB) $(SM0_LIB)
 	$(CXX) $(CXXFLAGS) -o $@ $(TEST_OBJS) $(LIB) $(SM1_LIB) $(SM0_LIB) \
 	    $(LDLIBS)
 
+# The flags it is built with, which build_flags() reports.
+$(BUILD)/src/tuple/tuple.o: CXXFLAGS += -D'SM2_BUILD_FLAGS="$(OPTFLAGS)"'
+
 $(BUILD)/src/%.o: src/%.cc $(FLAGS_FILE)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
