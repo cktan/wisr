@@ -11532,20 +11532,18 @@ static void get_tablesample_def(TableSampleClause *tablesample,
  * InvalidOid for actual_datatype.)
  */
 static void get_opclass_name(Oid opclass, Oid actual_datatype, StringInfo buf) {
-  HeapTuple ht_opc;
-  Form_pg_opclass opcrec;
-  char *opcname;
+  /* Every opclass is compiled in (catalog/cat_builtin.h). */
+  const cat_opclass_t *opcrec = cat_opclass(opclass);
+  const char *opcname;
   char *nspname;
 
-  ht_opc = SearchSysCache1(CLAOID, ObjectIdGetDatum(opclass));
-  if (!HeapTupleIsValid(ht_opc))
+  if (opcrec == NULL)
     elog(ERROR, "cache lookup failed for opclass %u", opclass);
-  opcrec = (Form_pg_opclass)GETSTRUCT(ht_opc);
 
   if (!OidIsValid(actual_datatype) ||
       GetDefaultOpClass(actual_datatype, opcrec->opcmethod) != opclass) {
     /* Okay, we need the opclass name.  Do we need to qualify it? */
-    opcname = NameStr(opcrec->opcname);
+    opcname = opcrec->opcname;
     if (OpclassIsVisible(opclass))
       appendStringInfo(buf, " %s", quote_identifier(opcname));
     else {
@@ -11554,7 +11552,6 @@ static void get_opclass_name(Oid opclass, Oid actual_datatype, StringInfo buf) {
                        quote_identifier(opcname));
     }
   }
-  ReleaseSysCache(ht_opc);
 }
 
 /*

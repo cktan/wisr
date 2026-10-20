@@ -1950,8 +1950,7 @@ Oid ResolveOpClass(const List *opclass, Oid attrType,
                    const char *accessMethodName, Oid accessMethodId) {
   char *schemaname;
   char *opcname;
-  HeapTuple tuple;
-  Form_pg_opclass opform;
+  const cat_opclass_t *opform = NULL;
   Oid opClassId, opInputType;
 
   if (opclass == NIL) {
@@ -1979,10 +1978,16 @@ Oid ResolveOpClass(const List *opclass, Oid attrType,
     /* Look in specific schema only */
     Oid namespaceId;
 
+    int nrows;
+    const cat_opclass_t *rows = cat_opclasses(&nrows);
+
     namespaceId = LookupExplicitNamespace(schemaname, false);
-    tuple = SearchSysCache3(CLAAMNAMENSP, ObjectIdGetDatum(accessMethodId),
-                            PointerGetDatum(opcname),
-                            ObjectIdGetDatum(namespaceId));
+    /* Every opclass is compiled in (catalog/cat_builtin.h). */
+    for (int i = 0; i < nrows && opform == NULL; i++)
+      if (rows[i].opcmethod == accessMethodId &&
+          rows[i].opcnamespace == namespaceId &&
+          strcmp(rows[i].opcname, opcname) == 0)
+        opform = &rows[i];
   } else {
     /* Unqualified opclass name, so search the search path */
     opClassId = OpclassnameGetOpcid(accessMethodId, opcname);
@@ -1993,10 +1998,10 @@ Oid ResolveOpClass(const List *opclass, Oid attrType,
            errmsg(
                "operator class \"%s\" does not exist for access method \"%s\"",
                opcname, accessMethodName)));
-    tuple = SearchSysCache1(CLAOID, ObjectIdGetDatum(opClassId));
+    opform = cat_opclass(opClassId);
   }
 
-  if (!HeapTupleIsValid(tuple))
+  if (opform == NULL)
     ereport(
         ERROR,
         (errcode(ERRCODE_UNDEFINED_OBJECT),
@@ -2007,7 +2012,6 @@ Oid ResolveOpClass(const List *opclass, Oid attrType,
    * Verify that the index operator class accepts this datatype.  Note we
    * will accept binary compatibility.
    */
-  opform = (Form_pg_opclass)GETSTRUCT(tuple);
   opClassId = opform->oid;
   opInputType = opform->opcintype;
 
@@ -2016,8 +2020,6 @@ Oid ResolveOpClass(const List *opclass, Oid attrType,
             (errcode(ERRCODE_DATATYPE_MISMATCH),
              errmsg("operator class \"%s\" does not accept data type %s",
                     NameListToString(opclass), format_type_be(attrType))));
-
-  ReleaseSysCache(tuple);
 
   return opClassId;
 }

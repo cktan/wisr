@@ -1820,8 +1820,9 @@ static bool OperatorIsVisibleExt(Oid oprid, bool *is_missing) {
  * an extra argument for the index AM OID.
  */
 Oid OpclassnameGetOpcid(Oid amid, const char *opcname) {
-  Oid opcid;
   ListCell *l;
+  int nrows;
+  const cat_opclass_t *rows = cat_opclasses(&nrows);
 
   recomputeNamespacePath();
 
@@ -1831,11 +1832,11 @@ Oid OpclassnameGetOpcid(Oid amid, const char *opcname) {
     if (namespaceId == myTempNamespace)
       continue; /* do not look in temp namespace */
 
-    opcid = GetSysCacheOid3(CLAAMNAMENSP, Anum_pg_opclass_oid,
-                            ObjectIdGetDatum(amid), PointerGetDatum(opcname),
-                            ObjectIdGetDatum(namespaceId));
-    if (OidIsValid(opcid))
-      return opcid;
+    /* Every opclass is compiled in (catalog/cat_builtin.h). */
+    for (int i = 0; i < nrows; i++)
+      if (rows[i].opcmethod == amid && rows[i].opcnamespace == namespaceId &&
+          strcmp(rows[i].opcname, opcname) == 0)
+        return rows[i].oid;
   }
 
   /* Not found in path */
@@ -1857,20 +1858,17 @@ bool OpclassIsVisible(Oid opcid) { return OpclassIsVisibleExt(opcid, NULL); }
  *error.  (Caller must initialize *is_missing = false.)
  */
 static bool OpclassIsVisibleExt(Oid opcid, bool *is_missing) {
-  HeapTuple opctup;
-  Form_pg_opclass opcform;
+  const cat_opclass_t *opcform = cat_opclass(opcid);
   Oid opcnamespace;
   bool visible;
 
-  opctup = SearchSysCache1(CLAOID, ObjectIdGetDatum(opcid));
-  if (!HeapTupleIsValid(opctup)) {
+  if (opcform == NULL) {
     if (is_missing != NULL) {
       *is_missing = true;
       return false;
     }
     elog(ERROR, "cache lookup failed for opclass %u", opcid);
   }
-  opcform = (Form_pg_opclass)GETSTRUCT(opctup);
 
   recomputeNamespacePath();
 
@@ -1890,12 +1888,9 @@ static bool OpclassIsVisibleExt(Oid opcid, bool *is_missing) {
      * we must do a slow check to see if this opclass would be found by
      * OpclassnameGetOpcid.
      */
-    char *opcname = NameStr(opcform->opcname);
-
-    visible = (OpclassnameGetOpcid(opcform->opcmethod, opcname) == opcid);
+    visible =
+        (OpclassnameGetOpcid(opcform->opcmethod, opcform->opcname) == opcid);
   }
-
-  ReleaseSysCache(opctup);
 
   return visible;
 }

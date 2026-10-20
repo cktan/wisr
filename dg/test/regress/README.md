@@ -160,7 +160,6 @@ Every file starts with these failures, so 8 of
 | 6 | `column "?" does not exist` | `ctid` 5, `xmin` 1: gone since `a7cd3ab`, by design (a row is named by its rowno) |
 | 6 | `function ?(...) does not exist` | `normalize`, `gisthandler`, `pg_notify`, `pg_stat_force_next_flush`, `jsonb_path_query`, `pg_numa_available` |
 | 6 | `invalid input syntax for type ?` | numeric `nan`, `Infinity`, `-Infinity` 5: no NaN or infinity, by design (`DECIMAL.md`); a float with `_` 1 |
-| 5 | `an index key is a column, with no collation or operator class, yet` | `insert_conflict`, `create_index`, `btree_index`, `plpgsql`, `temp` |
 | 5 | `test_setup could not make a table: type ? ...` | `person` 3, `point_tbl` 1 (`point`), `road` 1 (`path`) |
 | 4 | `ALTER TABLE supports only ADD COLUMN, ...` | `strings`, `insert`, `vacuum`, `identity` |
 
@@ -172,7 +171,10 @@ Nothing cheap is left: the four files that passed on
 Done since 2026-10-17: the crash in `transactions`;
 `CREATE TABLE AS` and `SELECT INTO` (step 203), which make
 `onek2` and `tenk2`; `WITH (fillfactor, autovacuum_enabled)`
-accepted (step 208); views (`../../../sm/VIEW.md`).
+accepted (step 208); views (`../../../sm/VIEW.md`); an index
+key naming its type's default operator class or its column's
+collation (step 274), which leaves `insert_conflict` at
+`text_pattern_ops` and `temp` at an expression key.
 
 Bigger, and each needs a decision of record first:
 

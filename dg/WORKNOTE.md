@@ -7935,3 +7935,36 @@ RocksDB, which it links, Ubuntu's, keeps its `assert()`s.
   the wrapper's), and the RocksDB it links, which the link
   step compiles in (`rocksdb_build.cc`): its version, and the
   system's or a static one, with its flags.
+
+## Step 274: an index key names its default operator class
+
+`test/regress/README.md`: 5 files stopped at `an index key is
+a column, with no collation or operator class, yet`, which
+access/sm `check_create_index()` raised for any key that named
+either. An sm index is keyed by its type's default btree
+operator class and its column's collation, as the relcache
+describes it (`RelationInitIndexAccessInfo()`): naming those
+asks for nothing else.
+
+- **`check_index_key()`** takes an operator class that
+  `ResolveOpClass()` finds is the type's default, and a
+  collation that is the column's. It refuses another
+  (`text_pattern_ops`, `collate "C"` on a column of the
+  default), and raises PostgreSQL's errors for an operator
+  class that does not exist or does not take the type, for
+  options (no core btree operator class has any), and for a
+  collation on a type without.
+- **An expression key is refused alone**: `an index key is a
+  column, not an expression, yet`.
+- **Opclasses are read from the compiled-in catalog**:
+  `OpclassnameGetOpcid()`, `OpclassIsVisibleExt()`,
+  `ResolveOpClass()` and ruleutils `get_opclass_name()` read
+  `cat_opclass()` and `cat_opclasses()` for the syscache of a
+  `pg_opclass` digres has not.
+- `test/slt/index_key.test`: default operator classes named,
+  descending and with the default collation, used by a plan
+  and by UNIQUE; PostgreSQL's errors; the refusals.
+- The regression suite: `create_index` (81 to 77 hunks),
+  `btree_index` (27 to 26) and `plpgsql` (223 to 218) pass
+  their index keys; `insert_conflict` and `temp` stop at
+  `text_pattern_ops` and an expression key.

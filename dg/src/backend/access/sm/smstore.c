@@ -67,6 +67,7 @@
 #include "utils/numeric.h"
 #include "utils/portal.h"
 #include "utils/lsyscache.h"
+#include "utils/ruleutils.h"
 #include "utils/timeout.h"
 #include "utils/typcache.h"
 #include "utils/array.h"
@@ -4870,11 +4871,51 @@ static void check_create_index(const IndexStmt *stmt) {
   foreach (l, stmt->indexParams) {
     IndexElem *elem = lfirst_node(IndexElem, l);
 
-    if (elem->name == NULL || elem->collation != NIL || elem->opclass != NIL)
+    if (elem->name == NULL)
       ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      errmsg("an index key is a column, with no collation "
-                             "or operator class, yet")));
+                      errmsg("an index key is a column, not an expression, "
+                             "yet")));
   }
+}
+
+/*
+ * Refuse an operator class or a collation elem names for a key of type
+ * atttype and collation attcollation that is not the one sm keys it by:
+ * the type's default btree operator class and the column's collation, as
+ * the relcache describes the index (RelationInitIndexAccessInfo()).
+ */
+static void check_index_key(const IndexElem *elem, Oid atttype,
+                            Oid attcollation) {
+  if (elem->opclass != NIL) {
+    Oid opclass = ResolveOpClass(elem->opclass, atttype, DEFAULT_INDEX_TYPE,
+                                 BTREE_AM_OID);
+
+    if (opclass !=
+        ResolveOpClass(NIL, atttype, DEFAULT_INDEX_TYPE, BTREE_AM_OID))
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("operator class %s is not supported yet",
+                             generate_opclass_name(opclass)),
+                      errdetail("An index key takes only its type's default "
+                                "operator class.")));
+    /* No core btree operator class has options. */
+    if (elem->opclassopts != NIL)
+      ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                      errmsg("operator class %s has no options",
+                             generate_opclass_name(opclass))));
+  }
+  if (elem->collation == NIL)
+    return;
+  if (!type_is_collatable(atttype))
+    ereport(ERROR, (errcode(ERRCODE_DATATYPE_MISMATCH),
+                    errmsg("collations are not supported by type %s",
+                           format_type_be(atttype))));
+  if (LookupCollation(NULL, elem->collation, -1) != attcollation)
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("collation \"%s\" is not supported for an index "
+                           "key yet",
+                           NameListToString(elem->collation)),
+                    errdetail("An index key takes only its column's "
+                              "collation.")));
 }
 
 /* The 0-based place of rel's column name, or an error if it has none. */
@@ -5082,6 +5123,9 @@ ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt) {
     bool desc = elem->ordering == SORTBY_DESC;
 
     key.attnum = column_place(rel, elem->name);
+    Form_pg_attribute att = TupleDescAttr(RelationGetDescr(rel), key.attnum);
+
+    check_index_key(elem, att->atttypid, att->attcollation);
     /*
      * sm keys an interval in an order finer than PostgreSQL's: '1 mon' and
      * '30 days', which PostgreSQL calls equal, are two keys
@@ -5089,8 +5133,7 @@ ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt) {
      * one and UNIQUE would take both.  So an interval is never an index
      * key; it may be an INCLUDE column.
      */
-    if (TupleDescAttr(RelationGetDescr(rel), key.attnum)->atttypid ==
-        INTERVALOID)
+    if (att->atttypid == INTERVALOID)
       ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                       errmsg("an index key of type interval is not "
                              "supported"),
