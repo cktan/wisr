@@ -43,6 +43,8 @@
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "parser/parse_type.h"
+#include "parser/parse_utilcmd.h"
+#include "commands/sequence.h"
 #include "rewrite/rewriteHandler.h"
 #include "storage/lockdefs.h"
 #include "storage/proc.h"
@@ -2998,7 +3000,9 @@ static bool is_serial(const TypeName *type) {
                                         "serial4",     "bigserial", "serial8"};
   const char *name;
 
-  if (type->arrayBounds != NIL || list_length(type->names) > 2 ||
+  /* A type parse analysis resolved, a serial's among them, by its oid. */
+  if (NIL == type->names || type->arrayBounds != NIL ||
+      list_length(type->names) > 2 ||
       (list_length(type->names) == 2 &&
        strcmp(strVal(linitial(type->names)), "pg_catalog") != 0))
     return false;
@@ -3114,7 +3118,8 @@ static void fill_column(Oid relid, Expr *expr, Oid typid, int32 typmod) {
  * only.  Rows already there read the default, evaluated now; one that calls
  * something volatile is evaluated for each row instead, which is given its
  * value (fill_column()), and NOT NULL is then checked of every row.  A
- * serial column is refused.  NOT NULL with no default needs the table empty.
+ * serial or an identity column comes as parse analysis made it
+ * (add_generated_column()).  NOT NULL with no default needs the table empty.
  */
 static void add_column(Oid relid, const char *relname, ColumnDef *col,
                        bool if_not_exists) {
@@ -3126,13 +3131,10 @@ static void add_column(Oid relid, const char *relname, ColumnDef *col,
   sm_datum_t missing = 0;
   bool has_missing = false;
   Expr *volatile_default = NULL;
+  Oid identity_seq = InvalidOid;
   ListCell *l;
 
   check_column_name(col->colname);
-  if (col->typeName != NULL && is_serial(col->typeName))
-    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    errmsg("ALTER TABLE ... ADD COLUMN of a serial column is "
-                           "not supported yet")));
   foreach (l, col->constraints) {
     Constraint *c = lfirst_node(Constraint, l);
 
@@ -3145,11 +3147,14 @@ static void add_column(Oid relid, const char *relname, ColumnDef *col,
                       errmsg("ALTER TABLE ... ADD COLUMN supports only NOT "
                              "NULL and DEFAULT yet")));
   }
-  if (col->collClause != NULL || col->generated != 0 || col->identity != 0 ||
-      col->compression != NULL || col->storage_name != NULL)
+  if (NULL != col->collClause || 0 != col->generated ||
+      NULL != col->compression || NULL != col->storage_name)
     ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                     errmsg("ALTER TABLE ... ADD COLUMN supports only NOT "
                            "NULL and DEFAULT yet")));
+  /* What parse analysis made of a serial's: its nextval() and NOT NULL. */
+  if (NULL != col->raw_default)
+    raw_default = col->raw_default;
   typenameTypeIdAndMod(NULL, col->typeName, &typid, &typmod);
   /* A numeric with no precision is its type's default one, kept in sm. */
   if (is_decimal(typid))
@@ -3166,6 +3171,19 @@ static void add_column(Oid relid, const char *relname, ColumnDef *col,
       volatile_default = (Expr *)expr;
     else
       has_missing = default_value((Expr *)expr, typid, typmod, &missing);
+  }
+  /*
+   * An identity column, its sequence made by parse analysis: each row is
+   * given the sequence's next value, as its default would be, and the
+   * column is made identity once it is NOT NULL.
+   */
+  if (0 != col->identity) {
+    NextValueExpr *next = makeNode(NextValueExpr);
+
+    identity_seq = RangeVarGetRelid(col->identitySequence, NoLock, false);
+    next->seqid = identity_seq;
+    next->typeId = typid;
+    volatile_default = (Expr *)next;
   }
   /* NOT NULL only once every row holds its value. */
   sm_column_spec_t spec = {col->colname, type_code(typid), typmod,
@@ -3197,6 +3215,16 @@ static void add_column(Oid relid, const char *relname, ColumnDef *col,
                           col->colname, relname)));
         sm_error("make a column NOT NULL");
       }
+    }
+    if (OidIsValid(identity_seq)) {
+      /* A statement of its own, which sees the column NOT NULL. */
+      CommandCounterIncrement();
+      s = xact_session();
+      if (0 != waiting([&] {
+            return sm_cat_set_identity(s, relid, col->colname, col->identity,
+                                       identity_seq);
+          }))
+        sm_error("make a column an identity column");
     }
     /* The handles opened to fill it hold the column as it was made. */
     forget_table(relid);
@@ -3274,6 +3302,69 @@ static void validate_constraint(Oid relid, const char *relname,
 
 static void alter_view(Oid relid, AlterTableStmt *stmt);
 
+/* Whether cmd adds a serial or an identity column, for parse analysis. */
+static bool generated_column(AlterTableCmd *cmd) {
+  ColumnDef *col = castNode(ColumnDef, cmd->def);
+
+  if (NULL != col->typeName && is_serial(col->typeName))
+    return true;
+  foreach_node(Constraint, c, col->constraints) {
+    if (CONSTR_IDENTITY == c->contype)
+      return true;
+  }
+  return false;
+}
+
+/*
+ * ADD COLUMN of a serial or an identity column, cmd of stmt: parse analysis
+ * makes it a column with its sequence, as PostgreSQL's ALTER TABLE does,
+ * the sequence's CREATE SEQUENCE before it and the OWNED BY that gives a
+ * serial's sequence its owner after; add_column() gives each row a value.
+ */
+static void add_generated_column(Oid relid, const char *relname,
+                                 AlterTableStmt *stmt, AlterTableCmd *cmd) {
+  AlterTableStmt *one = makeNode(AlterTableStmt);
+  ParseState *pstate = make_parsestate(NULL);
+  List *before = NIL, *after = NIL;
+
+  one->relation = stmt->relation;
+  one->objtype = stmt->objtype;
+  one->cmds = list_make1(cmd);
+  /* Locked first, as parse analysis opens the table assuming it is. */
+  relation_close(relation_open(relid, AccessShareLock), NoLock);
+  one = transformAlterTableStmt(relid, one, NULL, &before, &after);
+  foreach_ptr(Node, n, before) {
+    if (!IsA(n, CreateSeqStmt))
+      elog(ERROR, "unexpected statement before ADD COLUMN: %d",
+           (int)nodeTag(n));
+    /*
+     * Parse analysis gives it the table's owner, as a role; a sequence in sm
+     * has none, as the one CREATE TABLE makes for a serial has none.
+     */
+    castNode(CreateSeqStmt, n)->ownerId = InvalidOid;
+    DefineSequence(pstate, castNode(CreateSeqStmt, n));
+  }
+  /* The column's default names the sequence, which it must see. */
+  CommandCounterIncrement();
+  foreach_node(AlterTableCmd, c, one->cmds) {
+    if (AT_AddColumn == c->subtype)
+      add_column(relid, relname, castNode(ColumnDef, c->def), c->missing_ok);
+    /* The column's NOT NULL, which add_column() made already. */
+    else if (AT_AddConstraint != c->subtype ||
+             CONSTR_NOTNULL != castNode(Constraint, c->def)->contype)
+      elog(ERROR, "unexpected ALTER TABLE subcommand: %d", (int)c->subtype);
+  }
+  /* The OWNED BY names the column, which it must see. */
+  CommandCounterIncrement();
+  foreach_ptr(Node, n, after) {
+    if (!IsA(n, AlterSeqStmt))
+      elog(ERROR, "unexpected statement after ADD COLUMN: %d",
+           (int)nodeTag(n));
+    AlterSequence(pstate, castNode(AlterSeqStmt, n));
+  }
+  free_parsestate(pstate);
+}
+
 /*
  * Do an ALTER TABLE of the table relid, in sm, in this transaction, one
  * subcommand after another: ADD COLUMN, DROP COLUMN, and ADD, DROP and
@@ -3292,7 +3383,9 @@ void smstore_alter_table(Oid relid, AlterTableStmt *stmt) {
     AlterTableCmd *cmd = lfirst_node(AlterTableCmd, l);
 
     alter_table_rel(relid, relname);
-    if (cmd->subtype == AT_AddColumn)
+    if (AT_AddColumn == cmd->subtype && generated_column(cmd))
+      add_generated_column(relid, relname, stmt, cmd);
+    else if (AT_AddColumn == cmd->subtype)
       add_column(relid, relname, castNode(ColumnDef, cmd->def),
                  cmd->missing_ok);
     else if (cmd->subtype == AT_AddConstraint) {

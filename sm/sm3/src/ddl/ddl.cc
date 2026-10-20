@@ -516,6 +516,52 @@ int set_not_null(session_t *session, uint64_t oid, std::string_view name) {
   return cat_put_table(session, oid, rec);
 }
 
+/* Make a column an identity column, owning its sequence; see sm3.h. */
+int set_identity(session_t *session, uint64_t oid, std::string_view name,
+                 char identity, uint64_t seq) {
+  table_rec_t rec;
+  if (0 != cat_get_table_rec(session, oid, rec)) {
+    return -1;
+  }
+  int at = live_column(rec, name);
+  if (at < 0) {
+    return sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                       "set identity: no column " + std::string(name));
+  }
+  column_rec_t &c = rec.columns[at];
+  const sm2::type_t *type = sm2::type_by_code(c.type_code);
+  // As create_table checks an identity column (check_columns).
+  if (('a' != identity && 'd' != identity) || 0 == seq || 0 != c.identity ||
+      !c.not_null || c.default_expr ||
+      (type != &sm2::type_int2 && type != &sm2::type_int4 &&
+       type != &sm2::type_int8)) {
+    return invalid("set identity: column " + std::string(name) +
+                   " is not a NOT NULL smallint, integer or bigint with no "
+                   "default");
+  }
+  if (nsp_temp == rec.nspoid) {
+    return invalid("set identity: column " + std::string(name) +
+                   " in a temporary table, whose sequence would be");
+  }
+  // Read under its lock, as make_table reads one.
+  sequence_rec_t s;
+  if (0 != cat_get_sequence_rec(session, seq, true, s)) {
+    return -1;
+  }
+  if (s.nspoid != rec.nspoid || s.owner) {
+    return invalid("set identity: column " + std::string(name) +
+                   "'s sequence is in another namespace, or owned");
+  }
+  c.identity = identity;
+  c.identity_seq = seq;
+  s.owner = oid;
+  s.owner_attnum = at;
+  if (0 != cat_put_table(session, oid, rec)) {
+    return -1;
+  }
+  return cat_put_sequence_rec(session, seq, s);
+}
+
 /* Rename a column; see sm3.h. */
 int rename_column(session_t *session, uint64_t oid, std::string_view name,
                   std::string_view new_name) {

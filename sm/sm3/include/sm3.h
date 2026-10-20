@@ -780,6 +780,20 @@ int add_column(session_t* session, uint64_t oid,
 int set_not_null(session_t* session, uint64_t oid, std::string_view name);
 
 /*
+ * Make the live column name of the table oid an identity column,
+ * GENERATED ALWAYS ('a') or BY DEFAULT ('d'), whose values come
+ * from the sequence seq, which it then owns for good, as
+ * create_table makes one. The column must be a NOT NULL
+ * smallint, integer or bigint with no default, the sequence in
+ * the table's namespace and owned by none, and the table not
+ * temporary, or SM_ERR_INVALID. ADD COLUMN of an identity column
+ * makes it a plain one, gives each row a value from seq, makes it
+ * NOT NULL, and then calls this.
+ */
+int set_identity(session_t* session, uint64_t oid, std::string_view name,
+                 char identity, uint64_t seq);
+
+/*
  * Rename the live column name of the table oid to new_name. Its
  * indexes name it by place, so they are untouched. One another live
  * column has is SM_ERR_DUPKEY.

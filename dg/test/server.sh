@@ -2099,8 +2099,8 @@ cmp -s "$work/sqlbodies.out" "$work/sqlbodies.expected" ||
 #    expression one: the rows read them, and a new row takes them.
 # 2. A NOT NULL column with no DEFAULT is refused on al1, which has rows,
 #    and taken by the empty ale1; a volatile DEFAULT gives each row a
-#    value of its own, and that column is dropped again; a serial is
-#    refused; a taken name is an error, or with IF NOT EXISTS a notice.
+#    value of its own, and a serial numbers the rows, each column dropped
+#    again; a taken name is an error, or with IF NOT EXISTS a notice.
 # 3. Drop b: al1 reads without it. One an index uses is refused.
 # 4. Rename c to cc and al1 to al2: al1 is gone, al2 has cc.
 # 5. A session that read al1 before an ADD COLUMN reads the new column
@@ -2122,6 +2122,7 @@ local_psql -c 'create table al1 (a int4, b text)' \
   -c 'alter table al1 add column f float8 default random()' \
   -c 'select count(distinct f) from al1' -c 'alter table al1 drop column f' \
   -c 'alter table al1 add column f serial' \
+  -c 'select f from al1 order by f' -c 'alter table al1 drop column f' \
   -c 'alter table al1 add column a int4' \
   -c 'alter table al1 add column if not exists a int4' \
   -c 'alter table al1 drop column b' -c 'select * from al1 order by a' \
@@ -2146,7 +2147,11 @@ DETAIL:  Failing row contains (1, null).
 ALTER TABLE
 3
 ALTER TABLE
-ERROR:  ALTER TABLE ... ADD COLUMN of a serial column is not supported yet
+ALTER TABLE
+1
+2
+3
+ALTER TABLE
 ERROR:  column "a" of relation "al1" already exists
 NOTICE:  column "a" of relation "al1" already exists, skipping
 ALTER TABLE

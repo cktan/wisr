@@ -2136,6 +2136,14 @@ int sm_cat_set_not_null(sm_session_t *session, uint64_t oid, const char *name) {
   });
 }
 
+/* Make a column an identity column in the session's transaction. */
+int sm_cat_set_identity(sm_session_t *session, uint64_t oid, const char *name,
+                        char identity, uint64_t seq) {
+  return guard(session, [&] {
+    return sm3::set_identity(session->sm3, oid, name_of(name), identity, seq);
+  });
+}
+
 /* Drop a column in the session's transaction. */
 int sm_cat_drop_column(sm_session_t *session, uint64_t oid, const char *name) {
   return guard(session, [&] {

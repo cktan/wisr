@@ -7870,3 +7870,42 @@ row gets a value of its own.
   test_table.cc` tests `set_not_null`. `test/server.sh`'s
   ALTER TABLE, which expected the refusal, now adds such a
   column to al1, counts three values, and drops it.
+
+## Step 272: ADD COLUMN of a serial or an identity column
+
+ALTER TABLE ... ADD COLUMN of a `serial`, `bigserial` or
+`smallserial` column, or of one `GENERATED ... AS IDENTITY`,
+was refused. Each needs a sequence of its own, and every row
+already there its next value, as PostgreSQL's rewrite of the
+table gives one.
+
+- **`add_generated_column()`** runs such an ADD COLUMN through
+  PostgreSQL's parse analysis, `transformAlterTableStmt()`, on
+  a statement of that one subcommand, as CREATE TABLE's goes
+  through `transformCreateStmt()`. It makes the sequence its
+  CREATE SEQUENCE describes, adds the column it rewrote, and
+  then runs the OWNED BY that gives a serial's sequence its
+  column; a statement of its own between each, so each sees
+  what the last made. The NOT NULL constraint it adds as a
+  subcommand is the column's own already.
+- **The table is locked first** (AccessShareLock): parse
+  analysis opens it assuming so, and digres's ALTER TABLE
+  locks in sm only.
+- **The sequence has no role owner**: parse analysis gives it
+  the table's, which digres's CREATE SEQUENCE refuses, and
+  the one CREATE TABLE makes for a serial has none either.
+- **`add_column()`** takes the column as parse analysis made
+  it: its default in `raw_default`, `nextval()` for a serial,
+  so the fill of step 271 numbers the rows. An identity
+  column is filled from its sequence by a `NextValueExpr`,
+  then made NOT NULL, then identity by sm3's new
+  `set_identity` (`sm_cat_set_identity()`), which makes the
+  column own the sequence for good, as `create_table` does.
+- **A draw is not a flush**: each row's `nextval()` takes the
+  next value of sm1's lease, a million values a synced write
+  (`../sm/sm1/SM1_DESIGN.md` §4.2), and reads the sequence's
+  definition. No batch of values is taken for the fill.
+- `test/slt/add_column_serial.test`; `../sm/sm3/test/
+  test_table.cc` tests `set_identity`. `test/server.sh`'s
+  ALTER TABLE, which expected a serial refused, now adds one,
+  lists 1 to 3, and drops it.

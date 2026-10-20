@@ -1515,6 +1515,13 @@ int sm_cat_add_column(sm_session_t* session, uint64_t oid,
 int sm_cat_set_not_null(sm_session_t* session, uint64_t oid,
                         const char* name);
 
+/*
+ * Make the column name of the table oid an identity column, 'a' or
+ * 'd', owning the sequence seq (sm3::set_identity).
+ */
+int sm_cat_set_identity(sm_session_t* session, uint64_t oid,
+                        const char* name, char identity, uint64_t seq);
+
 /* Rename the column name of the table oid (sm3::rename_column). */
 int sm_cat_rename_column(sm_session_t* session, uint64_t oid,
                          const char* name, const char* new_name);

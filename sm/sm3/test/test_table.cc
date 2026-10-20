@@ -947,6 +947,57 @@ TEST_CASE("set_not_null makes a column NOT NULL once every row holds a "
   REQUIRE(0 == sm3::commit(f.b));
 }
 
+TEST_CASE("set_identity makes a filled NOT NULL column an identity column") {
+  // Verify set_identity, as ADD COLUMN of an identity column uses it.
+  // 1. A row is committed; a nullable int8 column g is added, and a
+  //    sequence s made in public.
+  // 2. While g is nullable, set_identity is SM_ERR_INVALID.
+  // 3. The row is given g, g made NOT NULL: set_identity with 'a'
+  //    succeeds, g is identity 'a' over s, and s is its for good:
+  //    giving s another owner is SM_ERR_INUSE.
+  // 4. A second set_identity is SM_ERR_INVALID; one of a column not
+  //    there SM_ERR_NOTFOUND.
+  jobs_t f;
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  uint64_t r1 = put(t, 1, "free", "a");
+  sm3::tbl_close(t);
+  REQUIRE(0 == sm3::commit(f.a));
+
+  start(f.a);
+  uint64_t seq = 0;
+  REQUIRE(0 == sm3::add_column(f.a, f.jobs,
+                               {"g", sm2::type_int8.code, -1, false},
+                               std::nullopt));
+  REQUIRE(0 == sm3::create_sequence(f.a, sm3::nsp_public, "s", 1, 1, seq));
+  CHECK(-1 == sm3::set_identity(f.a, f.jobs, "g", 'a', seq));
+  CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+
+  t = f.write(f.a);
+  std::string state = sm2::make_varlena("s"), owner = sm2::make_varlena("o");
+  std::vector<sm2::datum_t> v = {
+      sm2::datum_from_int32(1), sm2::datum_from_ptr(state.data()),
+      sm2::datum_from_ptr(owner.data()), sm2::datum_from_int64(1)};
+  const bool some[4] = {false, false, false, false};
+  REQUIRE_MESSAGE(0 == sm3::tbl_update(t, r1, v, some), sm1::errmsg());
+  sm3::tbl_close(t);
+  REQUIRE(0 == sm3::set_not_null(f.a, f.jobs, "g"));
+  REQUIRE_MESSAGE(0 == sm3::set_identity(f.a, f.jobs, "g", 'a', seq),
+                  sm1::errmsg());
+  t = f.write(f.a);
+  CHECK('a' == sm3::tbl_def(t).columns[3].identity);
+  CHECK(seq == sm3::tbl_def(t).columns[3].identity_seq);
+  sm3::tbl_close(t);
+  CHECK(-1 == sm3::own_sequence(f.a, seq, 0, -1));
+  CHECK(sm1::SM_ERR_INUSE == sm1::errnum());
+
+  CHECK(-1 == sm3::set_identity(f.a, f.jobs, "g", 'a', seq));
+  CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+  CHECK(-1 == sm3::set_identity(f.a, f.jobs, "nope", 'a', seq));
+  CHECK(sm1::SM_ERR_NOTFOUND == sm1::errnum());
+  REQUIRE(0 == sm3::commit(f.a));
+}
+
 TEST_CASE("a scanned row outlives other calls on its session") {
   // Verify how long a cursor's row is good for (include/sm.h).
   // 1. Three rows are committed. A cursor over the heap is opened,
