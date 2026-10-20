@@ -195,7 +195,13 @@ struct sm1::session_t {
   std::vector<std::unique_ptr<sm1::pin_t>> pins;
   sm1::pin_t *pins_free = nullptr;
   sm1::pin_t *pins_held = nullptr;
-  sm1::pin_ref_t readref; /* what sm1::read hands out without a ref */
+  /*
+   * The ref sm1::read and sm1::read_latest share when the caller
+   * gives none: each such read releases the last one's pin, so they
+   * hold one pin at most, and their row lasts until the next of
+   * them, longer than the "next call on the session" they promise.
+   */
+  sm1::pin_ref_t readref;
 };
 
 /* A pin: keeps one row's bytes in memory. The session owns it. */
