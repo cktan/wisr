@@ -253,6 +253,62 @@ TEST_CASE("sm1_read_latest reads into a pin") {
   REQUIRE(sm1::closedb(s) == 0);
 }
 
+TEST_CASE("an update and an erase pin the row they replace") {
+  // Verify a write's old row is pinned into a ref, as a read's row is.
+  // 1. Update "x" into ref ru, and erase "y" into ref re: each hands
+  //    back the row it replaced, and the session holds two pins.
+  // 2. Make a lent read, an insert and a scan: both rows still read
+  //    as they did, from the same bytes.
+  // 3. A failed update into ru, of a key not there, leaves ru's row,
+  //    and hands back none.
+  // 4. Update "x" into ru again, with ru's own row as the data: the
+  //    write keeps the bytes it was given, and ru then holds "11".
+  // 5. The lent form pins into the session's ref, which a lent read
+  //    shares: the pins held stay three.
+  pin_fixture_t f;
+  sm1::session_t *s = f.open();
+  REQUIRE(0 == sm1::begin(s, sm1::xctlevel_t::read_committed));
+  sm1::pin_ref_t ru, re;
+  std::string_view x, y;
+  REQUIRE(0 == sm1::update(s, g_store, "x", "11", ru, x));
+  REQUIRE(0 == sm1::erase(s, g_store, "y", re, y));
+  CHECK("1" == x);
+  CHECK("2" == y);
+  const char *xp = x.data();
+  CHECK(2 == held(s));
+
+  CHECK("11" == get(s, g_store, "x"));
+  put(s, g_store, "z", "3");
+  sm1::scan_t *c = scan(s, g_store, nullptr, 0, 1, nullptr, 0, 1);
+  REQUIRE(c);
+  std::string_view k, v;
+  while (0 == sm1::scannxt(c, k, v)) {
+  }
+  sm1::scanend(c);
+  CHECK("1" == x);
+  CHECK(x.data() == xp);
+  CHECK("2" == y);
+
+  std::string_view none = "unset";
+  CHECK(-1 == sm1::update(s, g_store, "nope", "0", ru, none));
+  CHECK(sm1::SM_ERR_NOTFOUND == sm1::errnum());
+  CHECK(none.empty());
+  CHECK("1" == x);
+
+  std::string_view was;
+  REQUIRE(0 == sm1::update(s, g_store, "x", x, ru, was));
+  CHECK("11" == was);
+  CHECK("1" == get(s, g_store, "x"));
+
+  std::string_view lent;
+  REQUIRE(0 == sm1::update(s, g_store, "z", "33", &lent));
+  CHECK("3" == lent);
+  CHECK(3 == held(s));
+  REQUIRE(0 == sm1::commit(s));
+  CHECK(0 == held(s));
+  REQUIRE(0 == sm1::closedb(s));
+}
+
 TEST_CASE("a pinned row outlives the drop of its store") {
   // Verify RocksDB keeps a dropped store's bytes while a pin holds them.
   // 1. Set a savepoint, make a store, write a row, pin it.

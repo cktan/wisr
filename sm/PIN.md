@@ -434,10 +434,13 @@ What a held pin costs is space, not a wait (§7):
 - **`rel_read`, `rel_read_latest`, `tbl_read`,
   `tbl_read_latest`** and the index's point reads take a ref
   and pass it down.
-- **`tbl_delete` keeps the old row in a ref of its own**, not
-  a copy (`sm3/src/table/table.cc:804`): the copy is there
-  because index maintenance's reads overwrite the session's
-  buffer, which a ref of its own is not.
+- **`tbl_update` and `tbl_delete` keep the old row in a
+  ref**, the caller's or one of their own, not a copy: the
+  copy was there because index maintenance's reads overwrote
+  the session's buffer, which a ref is not. sm2's
+  `rel_update` and `rel_delete` do the same for a row with
+  datums out of line, whose erasing makes more calls.
+  *Built* (§8 step 4).
 - **An index-only scan decodes a key column once**:
   `decode_key_front` unescapes straight into the varlena
   `key_datum` hands out, with no `std::string` between them.
@@ -589,7 +592,9 @@ its ref (§6.4).
    *Built.*
 4. **The old row of a write** in a ref: sm1's `update` and
    `erase`, sm2's `rel->old` copy, `tbl_update` and
-   `tbl_delete`'s copies, and `keep_row()`.
+   `tbl_delete`'s copies, and `keep_row()`. *Built*, with the
+   copy of an update's old row that digres read to tell its
+   own TOAST pointers (`../dg/WORKNOTE.md` step 266).
 5. **The decimal slot.** *Done* by storing each decimal
    column as sm's type of its width (§6.4).
 6. **The index-only scan's key decoding.**

@@ -396,12 +396,23 @@ uint64_t put(sm3::table_t *t, int32_t id, std::optional<std::string> state,
   return rowno;
 }
 
-/* Replace the row at rowno with (id, state, owner); tbl_update's result. */
+/*
+ * Replace the row at rowno with (id, state, owner); tbl_update's
+ * result. old, if not null, gets a copy of the row replaced.
+ */
 int set(sm3::table_t *t, uint64_t rowno, int32_t id,
         std::optional<std::string> state, std::optional<std::string> owner,
         std::string *old = nullptr) {
   row_t r(id, std::move(state), std::move(owner));
-  return sm3::tbl_update(t, rowno, r.d(), r.null(), old);
+  if (!old) {
+    return sm3::tbl_update(t, rowno, r.d(), r.null());
+  }
+  sm1::pin_ref_t ref;
+  std::string_view was;
+  int rc = sm3::tbl_update(t, rowno, r.d(), r.null(), ref, was);
+  old->assign(was);
+  sm1::unpin(ref);
+  return rc;
 }
 
 } // namespace
@@ -438,8 +449,10 @@ TEST_CASE("a table's writes keep every index in step with its heap") {
     REQUIRE(set(t, r7, 7, "taken", "w2") == 0);
     check_agree(t);
 
-    REQUIRE(sm3::tbl_delete(t, r9, &old) == 0);
-    CHECK(show(t, old) == "9|-|w9");
+    sm1::pin_ref_t ref;
+    std::string_view gone;
+    REQUIRE(0 == sm3::tbl_delete(t, r9, ref, gone));
+    CHECK("9|-|w9" == show(t, gone));
     CHECK(get(t, r9) == "<none>");
     check_agree(t);
     sm3::tbl_close(t);
@@ -822,6 +835,53 @@ TEST_CASE("a row read into a pin outlives other calls on its session") {
   sm1::unpin(p2);
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
+}
+
+TEST_CASE("a write's old row, pinned, outlives other calls on its session") {
+  // Verify tbl_update and tbl_delete hand back the row replaced pinned.
+  // 1. Three rows are committed, on a table with two indexes.
+  // 2. Row 1 is updated into ref pu, and row 2 deleted into ref pd:
+  //    each hands back the row as it was, its indexes maintained.
+  // 3. The session reads row 3, inserts a row and updates row 3.
+  // 4. Both old rows still read as they did, from the same bytes.
+  // 5. A failed delete into pd, of a row gone, leaves pd's row.
+  jobs_t f;
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  uint64_t r1 = put(t, 1, "free", "a");
+  uint64_t r2 = put(t, 2, "taken", "b");
+  uint64_t r3 = put(t, 3, "free", "c");
+  sm3::tbl_close(t);
+  REQUIRE(0 == sm3::commit(f.a));
+
+  start(f.a);
+  t = f.write(f.a);
+  sm1::pin_ref_t pu, pd;
+  std::string_view one, two;
+  row_t r(1, "taken", "a");
+  REQUIRE(0 == sm3::tbl_update(t, r1, r.d(), r.null(), pu, one));
+  REQUIRE(0 == sm3::tbl_delete(t, r2, pd, two));
+  CHECK("1|free|a" == show(t, one));
+  CHECK("2|taken|b" == show(t, two));
+  const char *was = one.data();
+  check_agree(t);
+
+  CHECK("3|free|c" == get(t, r3));
+  put(t, 4, "free", "d");
+  REQUIRE(0 == set(t, r3, 3, "taken", "c"));
+
+  CHECK("1|free|a" == show(t, one));
+  CHECK(one.data() == was);
+  CHECK("2|taken|b" == show(t, two));
+
+  std::string_view none = "unset";
+  CHECK(-1 == sm3::tbl_delete(t, r2, pd, none));
+  CHECK(none.empty());
+  CHECK("2|taken|b" == show(t, two));
+  sm1::unpin(pu);
+  sm1::unpin(pd);
+  sm3::tbl_close(t);
+  REQUIRE(0 == sm3::commit(f.a));
 }
 
 TEST_CASE("a scanned row outlives other calls on its session") {

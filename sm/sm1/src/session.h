@@ -185,7 +185,6 @@ struct sm1::session_t {
 
   std::unordered_set<sm1::scan_t *> scans; /* open cursors */
   uint64_t next_scan_id = 0;               /* hands out sm1::scan_t::id */
-  std::string readbuf; /* the old row an update or erase hands out */
 
   /*
    * The pool of pins (../PIN.md §4): every pin made, freed at the
@@ -550,13 +549,13 @@ sm1::scan_t *access_scan(sm1::session_t *session, uint64_t storeid,
 
 /*
  * Write one version of key into storeid, checking that the key
- * exists (update, delete) or does not (insert). With old
- * non-NULL, it is filled with the row the write replaces, which
- * the existence check has already decoded. Returns 0, or -1
- * with SM_ERR_DUPKEY / SM_ERR_NOTFOUND / another error.
+ * exists (update, delete) or does not (insert). With pin, a taken
+ * one, the row the write replaces, which the existence check has
+ * already found, is left in it on success. Returns 0, or -1 with
+ * SM_ERR_DUPKEY / SM_ERR_NOTFOUND / another error.
  */
 int access_write(sm1::session_t *session, uint64_t storeid, write_op_t op,
-                 rocksdb::Slice key, rocksdb::Slice data, std::string *old);
+                 rocksdb::Slice key, rocksdb::Slice data, sm1::pin_t *pin);
 
 } // namespace wisr
 

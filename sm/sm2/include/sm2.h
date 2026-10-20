@@ -593,21 +593,27 @@ int rel_trylock(rel_t* rel, uint64_t rowno, sm1::lockmode_t mode);
 
 /*
  * Replace the row at rowno with tuple, which must pass
- * tup_check; it keeps its rowno. With
- * old non-null, the tuple replaced is handed back there, which
- * the caller maintaining indexes needs.
+ * tup_check; it keeps its rowno. The forms with ref hand back the
+ * tuple replaced, which the caller maintaining indexes needs,
+ * pinned into ref, as sm1::update pins it: valid until the pin is
+ * released, and on failure empty, ref keeping what it held.
  */
+int rel_update(rel_t* rel, uint64_t rowno, std::string_view tuple);
 int rel_update(rel_t* rel, uint64_t rowno, std::string_view tuple,
-               std::string_view* old = nullptr, bool hold = false);
+               sm1::pin_ref_t& ref, std::string_view& old,
+               bool hold = false);
 
 /* Encode datums and isnull, then replace the row at rowno. */
 int rel_update(rel_t* rel, uint64_t rowno, std::span<const datum_t> datums,
-               std::span<const bool> isnull, std::string_view* old = nullptr,
-               bool hold = false);
+               std::span<const bool> isnull);
+int rel_update(rel_t* rel, uint64_t rowno, std::span<const datum_t> datums,
+               std::span<const bool> isnull, sm1::pin_ref_t& ref,
+               std::string_view& old, bool hold = false);
 
-/* Delete the row at rowno, handing back its tuple through old. */
-int rel_delete(rel_t* rel, uint64_t rowno, std::string_view* old = nullptr,
-               bool hold = false);
+/* Delete the row at rowno; with ref, its tuple pinned into it. */
+int rel_delete(rel_t* rel, uint64_t rowno);
+int rel_delete(rel_t* rel, uint64_t rowno, sm1::pin_ref_t& ref,
+               std::string_view& old, bool hold = false);
 
 /*
  * Put a row into a bulk load (sm1::load_open) of the rel's store,
@@ -660,9 +666,9 @@ int rel_release(rel_t* rel);
  * rel_update and rel_delete; or, when they are called with hold,
  * by the rel_release that follows.
  *
- * The old tuple rel_update and rel_delete hand back is the rel's
- * copy when the rel has a toast_seq, valid until the next call on
- * the rel.
+ * The old tuple rel_update and rel_delete hand back is pinned
+ * into the caller's ref, whether or not the rel moves datums out
+ * of line: the erasing of its datums reads it there.
  */
 
 /*

@@ -1627,22 +1627,56 @@ int sm_tbl_load_end(sm_tbl_t *tbl) {
 
 /* Replace a row and fix its index entries. */
 int sm_tbl_update(sm_tbl_t *tbl, uint64_t rowno, const sm_datum_t *values,
-                  const bool *isnull, size_t n, std::string *old) {
+                  const bool *isnull, size_t n, sm_pin_ref_t *ref,
+                  const void **old, size_t *len) {
   return guard(tbl ? tbl->session : nullptr, [&] {
     if (check_row("sm_tbl_update", tbl, values, isnull, n) != 0) {
       return -1;
     }
-    return sm3::tbl_update(tbl->table, rowno, {values, n}, {isnull, n}, old);
+    if (!ref) {
+      return sm3::tbl_update(tbl->table, rowno, {values, n}, {isnull, n});
+    }
+    if (!old || !len) {
+      return null_arg("sm_tbl_update", "old or len");
+    }
+    sm1::pin_ref_t r = pin_ref_of(*ref);
+    std::string_view v;
+    int rc = sm3::tbl_update(tbl->table, rowno, {values, n}, {isnull, n}, r, v);
+    // The ref is sm1's again either way: the old row, or what it held.
+    *ref = sm_pin_ref_t{r.pin, r.gen};
+    *old = nullptr;
+    *len = 0;
+    if (0 == rc) {
+      view_out(v, old, len);
+    }
+    return rc;
   });
 }
 
 /* Delete a row and its index entries. */
-int sm_tbl_delete(sm_tbl_t *tbl, uint64_t rowno, std::string *old) {
+int sm_tbl_delete(sm_tbl_t *tbl, uint64_t rowno, sm_pin_ref_t *ref,
+                  const void **old, size_t *len) {
   return guard(tbl ? tbl->session : nullptr, [&] {
     if (!tbl) {
       return null_arg("sm_tbl_delete", "tbl");
     }
-    return sm3::tbl_delete(tbl->table, rowno, old);
+    if (!ref) {
+      return sm3::tbl_delete(tbl->table, rowno);
+    }
+    if (!old || !len) {
+      return null_arg("sm_tbl_delete", "old or len");
+    }
+    sm1::pin_ref_t r = pin_ref_of(*ref);
+    std::string_view v;
+    int rc = sm3::tbl_delete(tbl->table, rowno, r, v);
+    // The ref is sm1's again either way: the old row, or what it held.
+    *ref = sm_pin_ref_t{r.pin, r.gen};
+    *old = nullptr;
+    *len = 0;
+    if (0 == rc) {
+      view_out(v, old, len);
+    }
+    return rc;
   });
 }
 

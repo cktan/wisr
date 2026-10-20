@@ -1066,12 +1066,16 @@ int probes(session_t* session, uint64_t storeid, uint64_t& out);
  * indexes needs in order to remove the entries the old value
  * produced. Leave it nullptr, the default, to skip it. The
  * write already reads that row to check the key exists, so
- * asking for it costs a copy, not another seek.
+ * asking for it costs no seek, and no copy: the row is pinned
+ * where RocksDB has it (../PIN.md).
  *
- * *old views session-owned memory and is valid only until the
- * next call on this session -- the same rule as sm1::read(), and
- * the same buffer, so either call invalidates what the other
- * handed out. Copy it to keep it. On failure *old is empty.
+ * *old is valid only until the next call on this session -- the
+ * same rule as sm1::read(), and the same pin, so either call
+ * invalidates what the other handed out. The forms that take a
+ * pin_ref_t pin it into ref instead, valid until the pin is
+ * released, as a read into a ref is. The row ref held before is
+ * released only when the write succeeds, so data may view it.
+ * On failure old is empty, and ref keeps what it held.
  *
  * Errors for all three: SM_ERR_CONFLICT / SM_ERR_DEADLOCK
  * (retryable), SM_ERR_NOTFOUND (store, or key for
@@ -1084,9 +1088,14 @@ int insert(session_t* session, uint64_t storeid,
 int update(session_t* session, uint64_t storeid,
            std::string_view key, std::string_view data,
            std::string_view* old = nullptr);
+int update(session_t* session, uint64_t storeid,
+           std::string_view key, std::string_view data,
+           pin_ref_t& ref, std::string_view& old);
 
 int erase(session_t* session, uint64_t storeid,
           std::string_view key, std::string_view* old = nullptr);
+int erase(session_t* session, uint64_t storeid,
+          std::string_view key, pin_ref_t& ref, std::string_view& old);
 
 /*
  * Read one key.

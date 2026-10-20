@@ -7709,3 +7709,35 @@ overflow, where PostgreSQL stores the value.
   a 22-digit literal, which failed before, a `decimal128(10,
   2)` column's rounding and overflow, and a nested loop of
   index scans and an index-only scan on such columns.
+
+## Step 266: a write's old row is pinned, not copied
+
+The row an update or a delete replaces was copied at every
+level: sm1 into the session's `readbuf`, sm2 again for a row
+with datums out of line, sm3 always, before its index
+maintenance, and digres's `keep_row()` into
+`TopTransactionContext` for RETURNING. A DELETE paid three
+copies of each row, four with TOAST. Each level now hands the
+old row back pinned into a ref (`../sm/PIN.md` §8 step 4).
+
+- **sm1's `update` and `erase`** take a ref and pin the row
+  their existence check found. The form without one pins into
+  the session's own ref, which a lent read shares, so
+  `readbuf` is gone. The row a ref held is released only when
+  the write succeeds, as the new row may view it.
+- **sm2's and sm3's writes** take the caller's ref, or use one
+  of their own for the call: the erasing of the old row's
+  datums out of line and the index maintenance read it there.
+- **`sm_tbl_update()` and `sm_tbl_delete()`** take an
+  `sm_pin_ref_t` and hand back a view, in place of a
+  `std::string`.
+- **`keep_row()` keeps `kept_ref`**: `smstore_delete()` deletes
+  into it, and `smstore_lock_row()` reads the newest version
+  into it after a write found the row changed. A new
+  statement unpins it, and the transaction's end releases it.
+- **`smstore_update()`** reads the old row, to tell its own
+  TOAST pointers from others, into a ref of its own, not a
+  `std::string`.
+- `test/slt/write_old_row.test`: DELETE ... RETURNING by an
+  index and a sequential scan, and an UPDATE and a DELETE of a
+  row stored out of line.

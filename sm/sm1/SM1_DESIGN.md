@@ -797,11 +797,13 @@ entries to delete are computed from it — and without this it
 paid a whole `sm1::read`, an iterator and a seek of its own,
 for something the write had in hand.
 
-The bytes go in the session's read buffer, the one `sm1::read`
-uses, so either call invalidates what the other returned.
-Sharing it is deliberate: one buffer per session, one rule to
-state, and a caller that needs the value to outlive the next
-call copies it, exactly as it must after `sm1::read`.
+The bytes are not copied: the iterator that found the version
+is kept in a pin (`../PIN.md`), in the session's own ref, the
+one `sm1::read` uses, so either call invalidates what the
+other returned; or in a ref the caller gives, which keeps the
+row until the caller releases it. A write releases the row its
+ref held only once it has succeeded, as its new value may
+view that row.
 
 The value is only produced for a live version. A write that
 fails — `SM_ERR_NOTFOUND` on a missing key, a conflict, a
@@ -2769,8 +2771,9 @@ bullets below cover the rest of the engine.
   replaced, then its own previous value on a second update,
   and a delete returns the last value written. An empty old
   value comes back empty, and a failed write reports none. A
-  read on the same session overwrites
-  the buffer the old row was handed out in (§5.3).
+  read on the same session releases the pin the old row was
+  handed out in, unless it was pinned into the caller's ref
+  (§5.3).
 - **Cursor reposition.** A cursor seeks forward over rows and
   resumes there, with the bounds and view it opened with;
   seeking backwards, or below the start key, fails. Under

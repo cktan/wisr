@@ -156,12 +156,13 @@ TEST_CASE("an update keeps its rowno, and update and delete hand back the "
   REQUIRE(sm2::rel_insert(rel, d.d(), d.null(), rowno) == 0);
   d = datums_of(schema, after);
   std::string_view old;
-  REQUIRE(sm2::rel_update(rel, rowno, d.d(), d.null(), &old) == 0);
+  sm1::pin_ref_t ref;
+  REQUIRE(0 == sm2::rel_update(rel, rowno, d.d(), d.null(), ref, old));
   CHECK(decode(schema, old) == before);
   std::string_view tuple;
   REQUIRE(sm2::rel_read(rel, rowno, tuple) == 0);
   CHECK(decode(schema, tuple) == after);
-  REQUIRE(sm2::rel_delete(rel, rowno, &old) == 0);
+  REQUIRE(0 == sm2::rel_delete(rel, rowno, ref, old));
   CHECK(decode(schema, old) == after);
   CHECK(sm2::rel_read(rel, rowno, tuple) == 1);
   CHECK(sm2::rel_update(rel, rowno, d.d(), d.null()) == -1);
@@ -448,7 +449,8 @@ TEST_CASE("rel supports raw tuple bytes and datum_t/isnull writes") {
   REQUIRE(sm2::tup_encode(schema, d2, nulls2, tuple2) == 0);
 
   std::string_view old_t;
-  REQUIRE(sm2::rel_update(rel, r1, tuple2, &old_t) == 0);
+  sm1::pin_ref_t ref;
+  REQUIRE(0 == sm2::rel_update(rel, r1, tuple2, ref, old_t));
   CHECK(old_t == tuple1);
 
   std::string_view read_t2;
@@ -463,7 +465,7 @@ TEST_CASE("rel supports raw tuple bytes and datum_t/isnull writes") {
   CHECK(read_t1 == tuple1);
 
   // 4. rel_update taking (datum_t, isnull) directly.
-  REQUIRE(sm2::rel_update(rel, r2, d2, nulls2, &old_t) == 0);
+  REQUIRE(0 == sm2::rel_update(rel, r2, d2, nulls2, ref, old_t));
   CHECK(old_t == tuple1);
   REQUIRE(sm2::rel_read(rel, r2, read_t2) == 0);
   CHECK(read_t2 == tuple2);

@@ -1838,17 +1838,20 @@ static Janet cfun_update(int32_t argc, Janet *argv) {
     }
   }
 
-  // The heap write and every index it changes, in one call.
-  std::string old_tuple;
-  if (sm_tbl_update(tbl, rowno, row.values.data(), row.isnull.get(),
-                    row.values.size(), &old_tuple) != 0) {
+  // The heap write and every index it changes, in one call; the
+  // row replaced pinned until its values are Janet's.
+  sm_pin_ref_t ref = {};
+  const void *old_tuple = nullptr;
+  size_t old_len = 0;
+  if (0 != sm_tbl_update(tbl, rowno, row.values.data(), row.isnull.get(),
+                         row.values.size(), &ref, &old_tuple, &old_len)) {
     abort_failed_write(s);
     panic_sm_error("update sm_tbl_update");
   }
 
   size_t ncols = p_tdef->columns.size();
   row_values_t old(ncols);
-  if (sm_tbl_deform(tbl, old_tuple.data(), old_tuple.size(), old.values.data(),
+  if (sm_tbl_deform(tbl, old_tuple, old_len, old.values.data(),
                     old.isnull.get(), ncols) != 0) {
     panic_sm_error("update sm_tbl_deform");
   }
@@ -1858,6 +1861,7 @@ static Janet cfun_update(int32_t argc, Janet *argv) {
         value_to_janet(old.values[i], old.isnull[i],
                        p_tdef->columns[i].type_code, p_tdef->columns[i].typmod);
   }
+  sm_unpin(&ref);
   return janet_wrap_tuple(janet_tuple_end(old_vals));
 }
 
@@ -1871,15 +1875,18 @@ static Janet cfun_delete(int32_t argc, Janet *argv) {
   table_def_t *p_tdef = need_table(s, tbl_name, SM_LOCKMODE_IX, "delete");
   sm_tbl_t *tbl = p_tdef->tbl;
 
-  std::string old_tuple;
-  if (sm_tbl_delete(tbl, rowno, &old_tuple) != 0) {
+  // The row deleted, pinned until its values are Janet's.
+  sm_pin_ref_t ref = {};
+  const void *old_tuple = nullptr;
+  size_t old_len = 0;
+  if (0 != sm_tbl_delete(tbl, rowno, &ref, &old_tuple, &old_len)) {
     abort_failed_write(s);
     panic_sm_error("delete sm_tbl_delete");
   }
 
   size_t ncols = p_tdef->columns.size();
   row_values_t old(ncols);
-  if (sm_tbl_deform(tbl, old_tuple.data(), old_tuple.size(), old.values.data(),
+  if (sm_tbl_deform(tbl, old_tuple, old_len, old.values.data(),
                     old.isnull.get(), ncols) != 0) {
     panic_sm_error("delete sm_tbl_deform");
   }
@@ -1889,6 +1896,7 @@ static Janet cfun_delete(int32_t argc, Janet *argv) {
         value_to_janet(old.values[i], old.isnull[i],
                        p_tdef->columns[i].type_code, p_tdef->columns[i].typmod);
   }
+  sm_unpin(&ref);
   return janet_wrap_tuple(janet_tuple_end(old_vals));
 }
 

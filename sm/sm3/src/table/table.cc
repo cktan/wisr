@@ -8,6 +8,7 @@
  */
 
 #include "../catalog/internal.h"
+#include "sm0_defer.h"
 
 #include <cstring>
 #include <memory>
@@ -713,26 +714,35 @@ look:
   return 0;
 }
 
-/* Replace the row, then fix each index it changed; see sm3.h. */
-int tbl_update(table_t *table, uint64_t rowno,
-               std::span<const sm2::datum_t> values,
-               std::span<const bool> isnull, std::string *old) {
+/*
+ * tbl_update, with ref and old both given or both null: with them,
+ * the old row is pinned into ref, and old views it.
+ */
+static int update_row(table_t *table, uint64_t rowno,
+                      std::span<const sm2::datum_t> values,
+                      std::span<const bool> isnull, sm1::pin_ref_t *ref,
+                      std::string_view *old) {
+  // No old row until the write succeeds.
+  if (old) {
+    *old = {};
+  }
   if (need_writable(table) != 0 || need_not_null(table, isnull) != 0) {
     return -1;
   }
-  // The old row's datums out of line are held until its index
-  // entries are found and removed, below.
+  // The old row is pinned, into ref or one of this call's, so the
+  // index calls below leave it where it is; and its datums out of
+  // line are held until its index entries are found and removed.
+  sm1::pin_ref_t mine;
+  defer { sm1::unpin(mine); };
   std::string_view image;
-  if (sm2::rel_update(table->rel, rowno, values, isnull, &image, true) != 0) {
+  if (0 != sm2::rel_update(table->rel, rowno, values, isnull, ref ? *ref : mine,
+                           image, true)) {
     return -1;
   }
-  // Copy the old image: it views session memory that the index
-  // calls below reuse.
-  std::string copy(image);
   const table_def_t &def = *table->def;
   deformed_t before(def.schema.size());
   if (!table->indexes.empty() &&
-      sm2::tup_deform(def.desc, copy, before.d,
+      sm2::tup_deform(def.desc, image, before.d,
                       {before.null.get(), before.n}) != 0) {
     return -1;
   }
@@ -785,29 +795,52 @@ int tbl_update(table_t *table, uint64_t rowno,
     return -1;
   }
   if (old) {
-    *old = std::move(copy);
+    *old = image;
   }
   return 0;
 }
 
-/* Delete the row, then its entry in every index; see sm3.h. */
-int tbl_delete(table_t *table, uint64_t rowno, std::string *old) {
+/* Replace the row, then fix each index it changed; see sm3.h. */
+int tbl_update(table_t *table, uint64_t rowno,
+               std::span<const sm2::datum_t> values,
+               std::span<const bool> isnull) {
+  return update_row(table, rowno, values, isnull, nullptr, nullptr);
+}
+
+/* As above, pinning the row replaced into ref; see sm3.h. */
+int tbl_update(table_t *table, uint64_t rowno,
+               std::span<const sm2::datum_t> values,
+               std::span<const bool> isnull, sm1::pin_ref_t &ref,
+               std::string_view &old) {
+  return update_row(table, rowno, values, isnull, &ref, &old);
+}
+
+/*
+ * tbl_delete, with ref and old both given or both null: with them,
+ * the row deleted is pinned into ref, and old views it.
+ */
+static int delete_row(table_t *table, uint64_t rowno, sm1::pin_ref_t *ref,
+                      std::string_view *old) {
+  // No old row until the write succeeds.
+  if (old) {
+    *old = {};
+  }
   if (need_writable(table) != 0) {
     return -1;
   }
-  // The row's datums out of line are held until its index entries
-  // are found and removed, below.
+  // The row is pinned, into ref or one of this call's, so the
+  // index calls below leave it where it is; and its datums out of
+  // line are held until its index entries are found and removed.
+  sm1::pin_ref_t mine;
+  defer { sm1::unpin(mine); };
   std::string_view image;
-  if (sm2::rel_delete(table->rel, rowno, &image, true) != 0) {
+  if (0 != sm2::rel_delete(table->rel, rowno, ref ? *ref : mine, image, true)) {
     return -1;
   }
-  // Copy the old image: it views session memory that the index
-  // calls below reuse.
-  std::string copy(image);
   const table_def_t &def = *table->def;
   deformed_t before(def.schema.size());
   if (!table->indexes.empty() &&
-      sm2::tup_deform(def.desc, copy, before.d,
+      sm2::tup_deform(def.desc, image, before.d,
                       {before.null.get(), before.n}) != 0) {
     return -1;
   }
@@ -828,9 +861,20 @@ int tbl_delete(table_t *table, uint64_t rowno, std::string *old) {
     return -1;
   }
   if (old) {
-    *old = std::move(copy);
+    *old = image;
   }
   return 0;
+}
+
+/* Delete the row, then its entry in every index; see sm3.h. */
+int tbl_delete(table_t *table, uint64_t rowno) {
+  return delete_row(table, rowno, nullptr, nullptr);
+}
+
+/* As above, pinning the row deleted into ref; see sm3.h. */
+int tbl_delete(table_t *table, uint64_t rowno, sm1::pin_ref_t &ref,
+               std::string_view &old) {
+  return delete_row(table, rowno, &ref, &old);
 }
 
 /* Begin a bulk load into the table; see sm3.h. */

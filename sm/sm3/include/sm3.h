@@ -1214,18 +1214,25 @@ int tbl_insert_arbiter(table_t* table, std::span<const sm2::datum_t> values,
  * an old entry that is not there is no error: the build has not
  * reached the row. A failed index is left alone by every write. The old entry is computed
  * from the image the heap write replaced, which at read committed
- * is the newest, not the one the caller read. old, if not null,
- * gets that image.
+ * is the newest, not the one the caller read. The form with ref
+ * hands that image back pinned into ref, as sm1::update pins it:
+ * valid until the pin is released, and on failure empty.
  */
 int tbl_update(table_t* table, uint64_t rowno,
                std::span<const sm2::datum_t> values,
-               std::span<const bool> isnull, std::string* old = nullptr);
+               std::span<const bool> isnull);
+int tbl_update(table_t* table, uint64_t rowno,
+               std::span<const sm2::datum_t> values,
+               std::span<const bool> isnull, sm1::pin_ref_t& ref,
+               std::string_view& old);
 
 /*
- * Delete the row at rowno, and its entry in every index. old, if
- * not null, gets the image deleted.
+ * Delete the row at rowno, and its entry in every index. The form
+ * with ref hands back the image deleted, pinned into ref.
  */
-int tbl_delete(table_t* table, uint64_t rowno, std::string* old = nullptr);
+int tbl_delete(table_t* table, uint64_t rowno);
+int tbl_delete(table_t* table, uint64_t rowno, sm1::pin_ref_t& ref,
+               std::string_view& old);
 
 /*
  * A BULK LOAD into an open table (BULKLOAD.md §5, §13): many rows

@@ -152,8 +152,8 @@ static thread_local /*LOCAL*/ List *savepoints = NIL;
  * write found changed by a commit since the statement's snapshot, then its
  * newest version, which smstore_lock_latest() read; or one just deleted, as
  * it was.  The statement's own read of the rowno would give neither.
- * kept_tuple is in TopTransactionContext, and NULL when the row is yet to
- * be read; kept_oid is InvalidOid when none is kept.
+ * kept_tuple views the row pinned in kept_ref, and is NULL when the row is
+ * yet to be read; kept_oid is InvalidOid when none is kept.
  */
 static thread_local /*LOCAL*/ Oid kept_oid = InvalidOid;
 
@@ -163,8 +163,9 @@ static thread_local /*LOCAL*/ Oid kept_oid = InvalidOid;
  */
 static thread_local /*LOCAL*/ Oid load_oid = InvalidOid;
 static thread_local /*LOCAL*/ uint64 kept_rowno = 0;
-static thread_local /*LOCAL*/ char *kept_tuple = NULL;
+static thread_local /*LOCAL*/ const char *kept_tuple = NULL;
 static thread_local /*LOCAL*/ Size kept_len = 0;
+static thread_local /*LOCAL*/ sm_pin_ref_t kept_ref = {};
 
 /*
  * Whether sm's namespaces' epoch has moved since this session last asked
@@ -306,9 +307,10 @@ static void close_tables(void) {
   open_tables().clear();
   tcb->smstore->held_views.clear();
   savepoints = NIL;
-  /* The kept row's memory goes with the transaction. */
+  /* The kept row's pin goes with the transaction, which releases it. */
   kept_oid = InvalidOid;
   kept_tuple = NULL;
+  kept_ref = {};
   /* And so does a bulk load: sm ended it, and the handle is closed. */
   load_oid = InvalidOid;
 }
@@ -499,8 +501,7 @@ static sm_session_t *xact_session(void) {
 void smstore_statement_start(void) {
   statement_pending = true;
   /* A row is kept for the statement that wrote it, and no longer. */
-  if (kept_tuple != NULL)
-    pfree(kept_tuple);
+  sm_unpin(&kept_ref);
   kept_oid = InvalidOid;
   kept_tuple = NULL;
 }
@@ -631,8 +632,8 @@ static sm_datum_t numeric_bound(Datum num, Oid typid, Oid coltypid,
  * holds for its column at ordinal: what an update that leaves the column
  * alone gives back, which sm keeps without a write.
  */
-static bool own_pointer(sm_tbl_t *tbl, const std::string *old, int ordinal,
-                        sm_datum_t val) {
+static bool own_pointer(sm_tbl_t *tbl, const std::string_view *old,
+                        int ordinal, sm_datum_t val) {
   sm_datum_t oval;
   bool onull;
 
@@ -654,7 +655,7 @@ static bool own_pointer(sm_tbl_t *tbl, const std::string *old, int ordinal,
  */
 static const sm_datum_t *row_to_sm(sm_tbl_t *tbl, TupleDesc desc,
                                    Datum *values, bool *isnull, int natts,
-                                   const std::string *old) {
+                                   const std::string_view *old) {
   sm_datum_t *out = NULL;
 
   for (int i = 0; i < natts && i < desc->natts; i++) {
@@ -5444,21 +5445,17 @@ static sm_tbl_t *table_to_write(Relation rel) {
 }
 
 /*
- * Keep the row at rowno of the table oid for the statement, with a copy of
- * its tuple, or with none yet if tuple is NULL.
+ * Keep the row at rowno of the table oid for the statement: its tuple, the
+ * row the caller pinned in kept_ref, or none yet if tuple is NULL.
  */
 static void keep_row(Oid oid, uint64 rowno, const void *tuple, size_t len) {
-  if (kept_tuple != NULL)
-    pfree(kept_tuple);
+  /* Until the statement ends, or the transaction. */
+  if (NULL == tuple)
+    sm_unpin(&kept_ref);
   kept_oid = oid;
   kept_rowno = rowno;
-  kept_tuple = NULL;
+  kept_tuple = (const char *)tuple;
   kept_len = len;
-  if (tuple != NULL) {
-    /* Until the statement ends, or the transaction: its context's. */
-    kept_tuple = (char *)MemoryContextAlloc(TopTransactionContext, Max(len, 1));
-    memcpy(kept_tuple, tuple, len);
-  }
 }
 
 /*
@@ -5556,7 +5553,8 @@ TM_Result smstore_update(Relation rel, ItemPointer tid, TupleTableSlot *slot,
                          TM_FailureData *tmfd) {
   sm_tbl_t *tbl = table_to_write(rel);
   uint64 rowno = smstore_tid_to_rowno(tid);
-  std::string old;
+  std::string_view old;
+  sm_pin_ref_t ref = {};
   bool have_old = false;
 
   slot_getallattrs(slot);
@@ -5572,13 +5570,13 @@ TM_Result smstore_update(Relation rel, ItemPointer tid, TupleTableSlot *slot,
 
     if (kept_oid == RelationGetRelid(rel) && kept_rowno == rowno &&
         kept_tuple != NULL) {
-      old.assign(kept_tuple, kept_len);
+      old = std::string_view(kept_tuple, kept_len);
       have_old = true;
     } else {
-      switch (sm_tbl_read(tbl, rowno, &tuple, &len)) {
+      switch (sm_tbl_read(tbl, rowno, &ref, &tuple, &len)) {
       case 0:
-        /* sm's bytes last until its next call: a fetch is one. */
-        old.assign((const char *)tuple, len);
+        /* Pinned, as the fetches of the values out of line are calls. */
+        old = std::string_view((const char *)tuple, len);
         have_old = true;
         break;
       case 1:
@@ -5595,6 +5593,7 @@ TM_Result smstore_update(Relation rel, ItemPointer tid, TupleTableSlot *slot,
     return sm_tbl_update(tbl, rowno, row, slot->tts_isnull, slot->tts_nvalid);
   });
 
+  sm_unpin(&ref);
   if (rc == 0)
     slot->tts_tid = *tid;
   return write_result(rel, rowno, rc, slot, tmfd, "update a row");
@@ -5607,11 +5606,14 @@ TM_Result smstore_update(Relation rel, ItemPointer tid, TupleTableSlot *slot,
 TM_Result smstore_delete(Relation rel, ItemPointer tid, TM_FailureData *tmfd) {
   sm_tbl_t *tbl = table_to_write(rel);
   uint64 rowno = smstore_tid_to_rowno(tid);
-  std::string old;
-  int rc = waiting([&] { return sm_tbl_delete(tbl, rowno, &old); });
+  const void *old;
+  size_t len;
+  /* The row deleted, pinned in kept_ref, which lets go of the last. */
+  int rc = waiting(
+      [&] { return sm_tbl_delete(tbl, rowno, &kept_ref, &old, &len); });
 
   if (rc == 0)
-    keep_row(RelationGetRelid(rel), rowno, old.data(), old.size());
+    keep_row(RelationGetRelid(rel), rowno, old, len);
   return write_result(rel, rowno, rc, NULL, tmfd, "delete a row");
 }
 
@@ -5696,7 +5698,9 @@ TM_Result smstore_lock_row(Relation rel, ItemPointer tid, TupleTableSlot *slot,
     ExecMaterializeSlot(slot);
     return TM_Ok;
   }
-  switch (sm_tbl_read_latest(tbl, rowno, &tuple, &len)) {
+  /* After a write, the version is kept, pinned in kept_ref. */
+  switch (after_write ? sm_tbl_read_latest(tbl, rowno, &kept_ref, &tuple, &len)
+                      : sm_tbl_read_latest(tbl, rowno, &tuple, &len)) {
   case 0:
     break;
   case 1:

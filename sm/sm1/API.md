@@ -222,7 +222,7 @@ failure. Their validity windows differ and are narrow:
 | Producer | View stays valid until |
 | --- | --- |
 | `sm1::read`, `sm1::read_latest`, the old row | the next call on that **session** |
-| `sm1::read`, `sm1::read_latest` into a pin ref | the release of its **pin** (below) |
+| `sm1::read`, `sm1::read_latest`, the old row, into a pin ref | the release of its **pin** (below) |
 | `sm1::scannxt` | the next call on that **scan cursor** |
 
 A caller that needs a value beyond that window must copy it.
@@ -1501,13 +1501,27 @@ row they replaced through `old`. A caller maintaining
 secondary indexes needs it, to remove the entries the old
 value produced; leave it `nullptr`, the default, to skip it.
 The write already reads that row to check the key exists, so
-asking for it costs a copy, not another seek.
+asking for it costs no seek and no copy: the row is pinned
+where RocksDB has it.
 
-`*old` views session-owned memory and is valid only until
-the next call on this session — the same rule as
-`sm1::read`, and the same buffer, so either call invalidates
-what the other returned. Copy it to keep it. On failure
-`*old` is empty.
+`*old` is valid only until the next call on this session —
+the same rule as `sm1::read`, and the same pin, so either
+call invalidates what the other returned. The forms that
+take a `pin_ref_t&` pin the old row into it instead, valid
+until the pin is released, as a read into a ref is:
+
+```cpp
+int update(session_t* session, uint64_t storeid,
+           std::string_view key, std::string_view data,
+           pin_ref_t& ref, std::string_view& old);
+int erase(session_t* session, uint64_t storeid,
+          std::string_view key, pin_ref_t& ref,
+          std::string_view& old);
+```
+
+The row `ref` held before is released only when the write
+succeeds, so `data` may view it. On failure `old` is empty,
+and `ref` keeps what it held.
 
 Errors for all three: `SM_ERR_CONFLICT` /
 `SM_ERR_DEADLOCK` (retryable), `SM_ERR_UPDATED` (READ

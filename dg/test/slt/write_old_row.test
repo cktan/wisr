@@ -1,0 +1,67 @@
+# Verify the old row of a write, which sm pins and no level copies, keeps
+# its values for as long as the statement needs them.
+# 1. Make a table with a text column, an index on its key, and one row
+#    whose text is stored out of line.
+# 2. DELETE ... RETURNING by an index scan, then by a sequential scan:
+#    each row returned has its own text, while the statement goes on to
+#    delete the next.
+# 3. UPDATE the row stored out of line, leaving its text alone: the text
+#    is kept, and a DELETE ... RETURNING of the row reads it whole.
+
+statement ok
+create table t (k int4, x text)
+
+statement ok
+create index tk on t (k)
+
+statement ok
+insert into t select i, 'row ' || i || ' ' || repeat('x', i) from generate_series(1, 20) i
+
+statement ok
+insert into t values (100, repeat('long', 20000))
+
+statement ok
+set enable_seqscan = off
+
+statement ok
+set enable_bitmapscan = off
+
+query IT rowsort
+delete from t where k between 3 and 6 returning k, x
+----
+3	row 3 xxx
+4	row 4 xxxx
+5	row 5 xxxxx
+6	row 6 xxxxxx
+
+statement ok
+set enable_seqscan = on
+
+statement ok
+set enable_indexscan = off
+
+query IT rowsort
+delete from t where k > 16 and k < 100 returning k, x
+----
+17	row 17 xxxxxxxxxxxxxxxxx
+18	row 18 xxxxxxxxxxxxxxxxxx
+19	row 19 xxxxxxxxxxxxxxxxxxx
+20	row 20 xxxxxxxxxxxxxxxxxxxx
+
+statement ok
+update t set k = 101 where k = 100
+
+query II nosort
+select k, length(x) from t where k > 99
+----
+101	80000
+
+query IIT nosort
+delete from t where k = 101 returning k, length(x), substr(x, 79997)
+----
+101	80000	long
+
+query I nosort
+select count(*) from t
+----
+12

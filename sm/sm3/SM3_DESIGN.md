@@ -63,7 +63,7 @@ answer.
 | sm2's index `rel`: entries keyed by encoded columns, each pointing at a `rowno` | sm2 lays out an entry's bytes and scan bounds; which indexes exist, and writing their entries on every heap write, are sm3's (§3) |
 | sm2's key encoder | every index key, the primary key's included, sorts by the same rules, because it is the same code (`sm2/SM2_DESIGN.md` §3) |
 | sm2's 2-byte relid | a table's heap, indexes and TOAST data are rels in its one sm1 store (§4) |
-| `rel_update` / `rel_delete` returning the old image as a tuple | the old index entries can be computed without a read of their own; the image views sm1 session memory, valid until the next call, so sm3 copies it before any index call (§3) |
+| `rel_update` / `rel_delete` returning the old image as a tuple | the old index entries can be computed without a read of their own; the image is pinned into a ref, the caller's or one of the write's own, so the index calls leave it where it is and sm3 copies nothing (§3, `../PIN.md`) |
 | sm2's codec over `datum_t` values and null flags, as PostgreSQL's `Datum` (`sm2/TUPLE.md` §9) | sm3 never handles a value's bytes: rows, index keys and bounds are `datum_t`s, and `encode_key` strips a varlena's header itself |
 | `tup_desc_t`: a schema's widths and entry offsets, built once (`sm2/TUPLE.md` §6) | sm3 builds one per table and per index value when a definition loads or changes, so a one-column read costs a step per earlier null, not a pass over the row |
 | a tuple of at most 64 KB, its long datums out of line with TOAST (`sm2/SM2_DESIGN.md` §4.2) | a row is as long as its datums once the host reads TOAST pointers (§3.4); without, or in an index entry, a longer one fails with `SM_ERR_ROWTOOLONG`, which sm3 passes up, as PostgreSQL's `program_limit_exceeded` |
@@ -715,8 +715,8 @@ happens instead:
 | 5 | executor | It evaluates T2's qual against that image, whose `state` is now `'taken'`. `'taken' <> 'done'` is true, so the row still qualifies. It rebuilds the new tuple from the image: `(7, 'done', 'w1')`. |
 | 6 | executor | It calls `tbl_update(jobs, 7, (7, 'done', 'w1'))`. Steps 6a to 6c run inside that one call. |
 | 6a | sm3 | `rel_update` again. sm1 accepts it and hands back the old image `(7, 'taken', 'w1')`. |
-| 6b | sm3 | It copies that old image, because the next sm2 call on the session reuses the memory. |
-| 6c | sm3 | For each index it takes the old key from the copy and the new key from the new values. For the index on `state`, `'taken'` and `'done'` differ, so `idx_delete('taken', 7)` then `idx_insert('done', 7)`. |
+| 6b | sm3 | The old image is pinned, so the sm2 calls that follow on the session leave it where it is. |
+| 6c | sm3 | For each index it takes the old key from the image and the new key from the new values. For the index on `state`, `'taken'` and `'done'` differ, so `idx_delete('taken', 7)` then `idx_insert('done', 7)`. |
 | 7 | — | The heap holds `(7, 'done', 'w1')` and the index holds `('done', 7)` only. |
 
 Steps 6a to 6c are the code of an ordinary update, and step

@@ -92,10 +92,9 @@ Owed, and blocking nothing above:
   `sm1::read_latest` read into a pin, and the lent forms into
   a pin the session keeps, so neither copies the row; digres's
   index, index-only and bitmap heap scans hold a pin ref each
-  and copy nothing (`../dg/WORKNOTE.md` step 263). Not yet:
-  the old row of an update or an erase, which sm1, sm2's
-  TOAST code, sm3's index maintenance and digres's
-  `keep_row()` still copy; the rest is `PIN.md` §8.
+  and copy nothing (`../dg/WORKNOTE.md` step 263), and so
+  is the old row of an update or an erase, at every level
+  (step 266). The rest is `PIN.md` §8.
 
 - **A scan still pays for the whole row in two ways.** A
   sequential, an index, a bitmap heap, a TID and a sample scan

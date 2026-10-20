@@ -34,8 +34,8 @@
  *         side of a join, a heap fetch and an insert.
  *       - from a point read (sm_tbl_read, sm_tbl_read_latest),
  *         until the next call on the same session.
- *       - from a point read into a pin ref, until the pin is
- *         released: by the next read into the same ref, by
+ *       - from a point read into a pin ref, or the old row of
+ *         a write into one, until the pin is released: by the next read into the same ref, by
  *         sm_unpin, by sm_release_all_pins, or at the end of the
  *         session's transaction. Nothing else releases it.
  *     What sm_tbl_deform and sm_tbl_idx_deform hand out points
@@ -1220,15 +1220,20 @@ int sm_tbl_load_add(sm_tbl_t* tbl, const sm_datum_t* values,
 int sm_tbl_load_end(sm_tbl_t* tbl);
 
 /*
- * Replace the row at rowno. old, if not NULL, gets the tuple
- * replaced -- at read committed the newest, not the one the caller
- * read.
+ * Replace the row at rowno. With ref, the tuple replaced -- at
+ * read committed the newest, not the one the caller read -- is
+ * pinned into *ref, and *old and *len view it until the pin is
+ * released. The row *ref held before is released only when the
+ * write succeeds, so values may point into it. On failure *old is
+ * NULL, and *ref keeps what it held.
  */
 int sm_tbl_update(sm_tbl_t* tbl, uint64_t rowno, const sm_datum_t* values,
-                  const bool* isnull, size_t n, std::string* old = nullptr);
+                  const bool* isnull, size_t n, sm_pin_ref_t* ref = nullptr,
+                  const void** old = nullptr, size_t* len = nullptr);
 
-/* Delete the row at rowno; old as sm_tbl_update's. */
-int sm_tbl_delete(sm_tbl_t* tbl, uint64_t rowno, std::string* old = nullptr);
+/* Delete the row at rowno; ref, old and len as sm_tbl_update's. */
+int sm_tbl_delete(sm_tbl_t* tbl, uint64_t rowno, sm_pin_ref_t* ref = nullptr,
+                  const void** old = nullptr, size_t* len = nullptr);
 
 /*
  * Read the row at rowno: 0 with its tuple, 1 if none, or -1. The

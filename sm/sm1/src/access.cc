@@ -268,15 +268,15 @@ int enter(sm1::session_t *s, const view_t &view, uint64_t storeid,
   return r;
 }
 
-/* sm1::insert / sm1::update / sm1::erase, minus the out-of-memory guard. */
+/*
+ * sm1::insert / sm1::update / sm1::erase, minus the out-of-memory
+ * guard. With ref, the row an update or erase replaces is pinned
+ * into it, and old and oldlen view it.
+ */
 int write_row(sm1::session_t *s, write_op_t op, uint64_t storeid,
               const char *key, size_t klen, const char *data, size_t datalen,
-              const char **old, size_t *oldlen) {
-  // The out-parameters come as a pair; check before either is
-  // written to.
-  if ((old != nullptr) != (oldlen != nullptr)) {
-    return set_error(sm1::SM_ERR_INVALID, "old and oldlen must both be given");
-  }
+              sm1::pin_ref_t *ref = nullptr, const char **old = nullptr,
+              size_t *oldlen = nullptr) {
   // Report no old row until the write finds one.
   if (old) {
     *old = nullptr;
@@ -299,16 +299,25 @@ int write_row(sm1::session_t *s, write_op_t op, uint64_t storeid,
   if (enter(s, xct_view(s), storeid, key, klen) != 0) {
     return -1;
   }
-  // Write the version, keeping the row it replaces when asked.
+  // Write the version, keeping the row it replaces in a pin when
+  // asked.
+  sm1::pin_t *p = ref ? pin_take(s) : nullptr;
   int r = access_write(s, storeid, op, rocksdb::Slice(key ? key : "", klen),
-                       rocksdb::Slice(data ? data : "", datalen),
-                       old ? &s->readbuf : nullptr);
-  // Hand out the session-owned bytes of the old row.
-  if (r == 0 && old) {
-    *old = s->readbuf.data();
-    *oldlen = s->readbuf.size();
+                       rocksdb::Slice(data ? data : "", datalen), p);
+  if (!ref) {
+    return r;
   }
-  return r;
+  // Failed: the pin goes back, and ref keeps what it held.
+  if (0 != r) {
+    pin_put(p);
+    return r;
+  }
+  // The row ref held goes only now, as data may have viewed it.
+  sm1::unpin(*ref);
+  pin_hold(p, *ref);
+  *old = p->row.data();
+  *oldlen = p->row.size();
+  return 0;
 }
 
 /*
@@ -880,7 +889,7 @@ int access_read(sm1::session_t *s, uint64_t storeid, const view_t &view,
 
 /* Check existence, then put one new version (§5). */
 int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
-                 rocksdb::Slice key, rocksdb::Slice data, std::string *old) {
+                 rocksdb::Slice key, rocksdb::Slice data, sm1::pin_t *pin) {
   // Find the store's CF.
   store_t st = store_of(s->db, storeid);
   if (!st.cf) {
@@ -914,10 +923,10 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
           lock_wait(s, sm1::LOCKTYPE_ROW, storeid, key, sm1::SM_LOCKMODE_EX);
     } else {
       uint64_t inflight;
-      // Find the version this write checks against, keeping its
-      // value when the caller asked for the old image.
-      if (latest_version(s, st, key, &live, &commit_ts, old, &own_seq,
-                         &inflight) != 0) {
+      // Find the version this write checks against, keeping it in
+      // pin when the caller asked for the old image.
+      if (0 != latest_version(s, st, key, &live, &commit_ts, nullptr, &own_seq,
+                              &inflight, pin)) {
         return -1;
       }
       // Done looking: this write goes on with the latch held.
@@ -1085,37 +1094,63 @@ int sm1::trylock(sm1::session_t *session, sm1::locktype_t type,
 int sm1::insert(sm1::session_t *session, uint64_t storeid, std::string_view key,
                 std::string_view data) {
   return write_row(session, WRITE_INSERT, storeid, key.data(), key.size(),
-                   data.data(), data.size(), nullptr, nullptr);
+                   data.data(), data.size());
 }
 
 /* Replace a row's value; the key must exist. */
 int sm1::update(sm1::session_t *session, uint64_t storeid, std::string_view key,
                 std::string_view data, std::string_view *old) {
-  // Ask for the old row only if the caller wants it.
+  if (!old) {
+    return write_row(session, WRITE_UPDATE, storeid, key.data(), key.size(),
+                     data.data(), data.size());
+  }
+  // A null session fails in write_row; it has no ref of its own.
+  if (!session) {
+    *old = {};
+    return xct_check_active(session);
+  }
+  // Into the session's own ref, which sm1::read shares.
+  return sm1::update(session, storeid, key, data, session->readref, *old);
+}
+
+/* Replace a row's value, pinning the row replaced into ref. */
+int sm1::update(sm1::session_t *session, uint64_t storeid, std::string_view key,
+                std::string_view data, sm1::pin_ref_t &ref,
+                std::string_view &old) {
   const char *o = nullptr;
   size_t olen = 0;
   int rc = write_row(session, WRITE_UPDATE, storeid, key.data(), key.size(),
-                     data.data(), data.size(), old ? &o : nullptr,
-                     old ? &olen : nullptr);
+                     data.data(), data.size(), &ref, &o, &olen);
   // Hand it back: the old row, or empty on failure.
-  if (old) {
-    *old = std::string_view(o, olen);
-  }
+  old = std::string_view(o, olen);
   return rc;
 }
 
 /* Delete a row; the key must exist. */
 int sm1::erase(sm1::session_t *session, uint64_t storeid, std::string_view key,
                std::string_view *old) {
-  // Ask for the old row only if the caller wants it.
+  if (!old) {
+    return write_row(session, WRITE_DELETE, storeid, key.data(), key.size(),
+                     nullptr, 0);
+  }
+  // A null session fails in write_row; it has no ref of its own.
+  if (!session) {
+    *old = {};
+    return xct_check_active(session);
+  }
+  // Into the session's own ref, which sm1::read shares.
+  return sm1::erase(session, storeid, key, session->readref, *old);
+}
+
+/* Delete a row, pinning the row deleted into ref. */
+int sm1::erase(sm1::session_t *session, uint64_t storeid, std::string_view key,
+               sm1::pin_ref_t &ref, std::string_view &old) {
   const char *o = nullptr;
   size_t olen = 0;
   int rc = write_row(session, WRITE_DELETE, storeid, key.data(), key.size(),
-                     nullptr, 0, old ? &o : nullptr, old ? &olen : nullptr);
+                     nullptr, 0, &ref, &o, &olen);
   // Hand it back: the old row, or empty on failure.
-  if (old) {
-    *old = std::string_view(o, olen);
-  }
+  old = std::string_view(o, olen);
   return rc;
 }
 
