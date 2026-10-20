@@ -85,12 +85,21 @@ static void abort_failed_write(session_ctx_t *s) {
   sm_abort(s->session);
 }
 
+/*
+ * Whether the engine aborted the transaction on the last error, so
+ * closing its cursors: after a retryable error, SM_ERR_NOMEM or
+ * SM_ERR_EXCEPTION (sm.h).
+ */
+static bool engine_aborted() {
+  return sm_retryable() == 1 || sm_errnum() == SM_ERR_NOMEM ||
+         sm_errnum() == SM_ERR_EXCEPTION;
+}
+
 /* Fail with last sm_ error. */
 [[noreturn]] static void panic_sm_error(const char *action) {
   // An error the engine aborted the transaction on closed its cursors.
   session_ctx_t *s = get_catalog().active_session();
-  if (s != nullptr && (sm_retryable() == 1 || sm_errnum() == SM_ERR_NOMEM ||
-                       sm_errnum() == SM_ERR_EXCEPTION)) {
+  if (s != nullptr && engine_aborted()) {
     forget_cursors(s);
   }
   janet_panicf("%s failed: [%s] %s", action, sm_errname(), sm_errmsg());
@@ -1919,7 +1928,8 @@ static Janet cfun_scan(int32_t argc, Janet *argv) {
   size_t len = 0;
   size_t ncols = p_tdef->columns.size();
 
-  while (sm_rel_scannxt(rscan, &rowno, &tuple, &len) == 0) {
+  int rc;
+  while ((rc = sm_rel_scannxt(rscan, &rowno, &tuple, &len)) == 0) {
     Janet *vals = janet_tuple_begin(ncols);
     for (size_t i = 0; i < ncols; i++) {
       sm_datum_t val = 0;
@@ -1939,6 +1949,14 @@ static Janet cfun_scan(int32_t argc, Janet *argv) {
     janet_array_push(rows, janet_wrap_tuple(janet_tuple_end(pair)));
   }
 
+  // A cursor that failed, not one at its end: what it gave is not
+  // the scan's rows. One the engine's abort closed is not ended.
+  if (rc < 0) {
+    if (!engine_aborted()) {
+      sm_rel_scanend(rscan);
+    }
+    panic_sm_error("scan sm_rel_scannxt");
+  }
   sm_rel_scanend(rscan);
   return janet_wrap_array(rows);
 }
@@ -2077,11 +2095,19 @@ static Janet cfun_idx_scan(int32_t argc, Janet *argv) {
 
   row_values_t entry(sm_tbl_idx_ncols(p_tdef->tbl, p_idef->def->oid));
 
-  while (sm_idx_scannxt(iscan, &rowno, &cut, &val, &val_len) == 0) {
+  int rc;
+  while ((rc = sm_idx_scannxt(iscan, &rowno, &cut, &val, &val_len)) == 0) {
     janet_array_push(res, idx_entry_to_janet(p_tdef, p_idef, rowno, cut, val,
                                              val_len, entry));
   }
 
+  // As (scan): a failed cursor's entries are not the scan's.
+  if (rc < 0) {
+    if (!engine_aborted()) {
+      sm_idx_scanend(iscan);
+    }
+    panic_sm_error("idx-scan sm_idx_scannxt");
+  }
   sm_idx_scanend(iscan);
   return janet_wrap_array(res);
 }
