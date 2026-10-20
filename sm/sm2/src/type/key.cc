@@ -132,7 +132,8 @@ int decode_key(std::span<const key_column_t> cols, std::string_view key,
 
 /* Decode the columns at the front of key, advancing key past them. */
 int decode_key_front(std::span<const key_column_t> cols, std::string_view &key,
-                     std::vector<std::optional<std::string>> &datums) {
+                     std::vector<std::optional<std::string>> &datums,
+                     bool room) {
   datums.clear();
   for (const key_column_t &col : cols) {
     if (col.type == nullptr) {
@@ -156,7 +157,9 @@ int decode_key_front(std::span<const key_column_t> cols, std::string_view &key,
     if (marker == null_marker(col)) {
       datums.emplace_back(std::nullopt);
     } else if (marker == value_mark) {
-      std::string datum;
+      // Room for a variable-width datum's varlena header, so it
+      // is not copied to make one (varlena_in_room).
+      std::string datum(room && col.type->len < 0 ? varlena_room : 0, '\0');
       // A bpchar's key gives no value back (key_decodable()).
       if (col.type->key_decode == nullptr) {
         return bad_columns("a key of a type whose key gives no value back");

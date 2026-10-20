@@ -48,7 +48,6 @@ void put_escaped(std::string_view s, std::string &key) {
 
 /* Read put_escaped's bytes from the front of key; false if malformed. */
 bool get_escaped(std::string_view &key, std::string &s) {
-  s.clear();
   for (size_t i = 0; i < key.size(); i++) {
     if (key[i] != '\0') {
       s += key[i];

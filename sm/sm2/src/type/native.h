@@ -135,7 +135,10 @@ int int_unkey(const char *type, std::string_view &key, std::string &datum) {
  */
 void put_escaped(std::string_view s, std::string &key);
 
-/* Read put_escaped's bytes from the front of key; false if malformed. */
+/*
+ * Read put_escaped's bytes from the front of key, appending them to
+ * s; false if malformed.
+ */
 bool get_escaped(std::string_view &key, std::string &s);
 
 /* Fail with SM_ERR_INVALID: text is not a valid value of type. */

@@ -447,6 +447,9 @@ What a held pin costs is space, not a wait (§7):
 - **An index-only scan decodes a key column once**:
   `decode_key_front` unescapes straight into the varlena
   `key_datum` hands out, with no `std::string` between them.
+  *Built* (§8 step 6): a variable-width column is decoded
+  behind `varlena_room` bytes, and `varlena_in_room` writes its
+  header there; a variable-width type's `key_decode` appends.
 
 ### 6.3 The C wrapper
 
@@ -605,7 +608,7 @@ its ref (§6.4).
    own TOAST pointers (`../dg/WORKNOTE.md` step 266).
 5. **The decimal slot.** *Done* by storing each decimal
    column as sm's type of its width (§6.4).
-6. **The index-only scan's key decoding.**
+6. **The index-only scan's key decoding.** *Built* (§6.2).
 7. **`scan_next` lends its row**, with the SSI change. *Built*:
    SSI sees no change (§6.1), and the 109 scenarios match.
 8. **`sm_release_all_pins()` at the end of a statement**,

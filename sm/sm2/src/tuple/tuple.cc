@@ -533,6 +533,20 @@ std::string make_varlena(std::string_view datum) {
   return v;
 }
 
+/* Write the varlena header into buf's room; see sm2.h. */
+const char *varlena_in_room(std::string &buf) {
+  size_t n = buf.size() - varlena_room;
+  // The 1-byte header goes just before the datum, as make_varlena's.
+  if (n <= short_max) {
+    buf[varlena_room - 1] = static_cast<char>((n + 1) << 1 | 0x01);
+    return buf.data() + varlena_room - 1;
+  }
+  std::string head;
+  store_le(static_cast<uint32_t>((n + 4) << 2), head);
+  std::memcpy(buf.data(), head.data(), varlena_room);
+  return buf.data();
+}
+
 /* True if v is a TOAST pointer: its first byte is varlena_toast. */
 bool varlena_is_toast(std::string_view v) {
   return !v.empty() && v[0] == varlena_toast;

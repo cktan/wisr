@@ -98,7 +98,10 @@ struct type_t {
      * PostgreSQL calls equal -- a float's -0 and its NaNs -- the
      * datum is the one the key keeps (TYPE.md §3.3). A text key
      * under a non-deterministic collation keeps no datum, and
-     * fails with SM_ERR_INVALID (TYPE.md §3.5).
+     * fails with SM_ERR_INVALID (TYPE.md §3.5). A fixed-width
+     * type's sets datum; a variable-width one's appends to it,
+     * which may hold room for a varlena header already
+     * (decode_key_front).
      */
     int (*key_decode)(std::string_view& key, int32_t typmod,
                       const collation_t* collation, std::string& datum);
@@ -348,6 +351,17 @@ constexpr char varlena_toast = '\x01';
  * header up to 126 bytes, the 4-byte one past that.
  */
 std::string make_varlena(std::string_view datum);
+
+/* The bytes left before a datum for its varlena header. */
+constexpr size_t varlena_room = 4;
+
+/*
+ * A varlena made in place, as make_varlena makes it: buf holds
+ * varlena_room bytes, then the datum. The header is written into
+ * the room, and the varlena begins at the pointer returned, valid
+ * while buf is.
+ */
+const char* varlena_in_room(std::string& buf);
 
 /* True if v is a TOAST pointer: its first byte is varlena_toast. */
 bool varlena_is_toast(std::string_view v);
@@ -885,11 +899,14 @@ int decode_key(std::span<const key_column_t> cols, std::string_view key,
 
 /*
  * Decode the columns at the front of key as decode_key does,
- * advancing key past them; what follows them is left.
+ * advancing key past them; what follows them is left. With room,
+ * a variable-width column's datum follows varlena_room bytes left
+ * for its header, for varlena_in_room.
  */
 int decode_key_front(std::span<const key_column_t> cols,
                      std::string_view& key,
-                     std::vector<std::optional<std::string>>& datums);
+                     std::vector<std::optional<std::string>>& datums,
+                     bool room = false);
 
 /*
  * Whether keys under cols decode: every column's type has a

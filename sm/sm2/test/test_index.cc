@@ -200,11 +200,13 @@ std::string bytes_of(const sm2::type_t *type, int32_t typmod, sm2::datum_t d) {
 TEST_CASE("an index entry gives back its key columns") {
   // Verify idx_scan_key returns the key columns idx_insert was given.
   // 1. A non-unique index on a descending int2 with nulls first, a
-  //    text, a decimal and a float8 takes three entries, one with
-  //    nulls; a unique int4 index takes a value and a null, whose
-  //    entry carries its rowno.
+  //    text, a decimal and a float8 takes four entries, one with
+  //    nulls, and one with a text past the 1-byte header's 126 bytes
+  //    and a NUL in it; a unique int4 index takes a value and a
+  //    null, whose entry carries its rowno.
   // 2. Each entry a scan yields decodes to its columns' bytes and
-  //    nulls, and a negative int2 is sign-extended, as a tuple's is.
+  //    nulls, and a negative int2 is sign-extended, as a tuple's is;
+  //    a text is the varlena make_varlena makes, in either header.
   // 3. A key column count that does not match is refused.
   db_t db;
   sm1::session_t *s = db.open();
@@ -223,7 +225,9 @@ TEST_CASE("an index entry gives back its key columns") {
       {le(int16_t{-1}), std::string("hello"), le(int64_t{125 * 32 + 2}),
        le(1.5)},
       {std::nullopt, std::string(""), std::nullopt, le(-2.0)},
-      {le(int16_t{300}), std::nullopt, le(int64_t{-7 * 32 + 2}), std::nullopt}};
+      {le(int16_t{300}), std::nullopt, le(int64_t{-7 * 32 + 2}), std::nullopt},
+      {le(int16_t{5}), std::string(300, 'x') + std::string(1, '\0') + "y",
+       le(int64_t{1 * 32 + 2}), le(0.5)}};
   std::vector<values_t> vals;
   for (size_t i = 0; i < rows.size(); i++) {
     vals.push_back(datums_of(cols, rows[i]));
@@ -268,8 +272,13 @@ TEST_CASE("an index entry gives back its key columns") {
                 bytes_of(k.type, k.typmod, w.d()[c]));
         }
       }
-      if (k.index == ix && rowno == 1) {
-        CHECK(got[0] == sm2::datum_from_int16(-1));
+      if (k.index == ix && 1 == rowno) {
+        CHECK(sm2::datum_from_int16(-1) == got[0]);
+      }
+      if (k.index == ix && !null[1]) {
+        std::string vl = sm2::make_varlena(*want[1]);
+        CHECK(vl == std::string_view(reinterpret_cast<const char *>(got[1]),
+                                     vl.size()));
       }
       seen++;
     }

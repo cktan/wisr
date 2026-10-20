@@ -7763,3 +7763,20 @@ entries through it, so none copies a row in sm now.
 - `../sm/sm1/test/test_access.cc` checks a cursor's row
   through other calls, the key's older versions passed over,
   and a seek after a row handed out.
+
+## Step 268: an index-only scan's key column is decoded once
+
+sm2's `idx_scan_key`, which gives an index-only scan its key
+columns, unescaped a text column's key into a `std::string`,
+then copied it into a varlena with `make_varlena`. It now
+decodes it behind four bytes of room and writes the varlena's
+header there (`varlena_in_room`), so the key is copied once,
+as PostgreSQL's btree copies an entry into `currTuples`
+(`../sm/PIN.md` §8 step 6). digres changes nothing.
+
+- **A variable-width type's `key_decode` appends** to the
+  string it is given, which may hold the room; a fixed-width
+  one's still sets it.
+- `../sm/sm2/test/test_index.cc` gives back a text past the
+  1-byte header's 126 bytes, with a NUL in it, as the varlena
+  `make_varlena` makes.

@@ -36,8 +36,8 @@ struct sm2::index_scan_t {
   const index_t *index = nullptr;
   std::string_view key; /* the last entry's sm1 key, sm1's to keep */
   bool cut = false;     /* the last entry's cut flag */
-  std::vector<std::optional<std::string>> datums; /* idx_scan_key's */
-  std::vector<std::string> varlenas;              /* idx_scan_key's */
+  /* idx_scan_key's, a variable-width one made a varlena in place */
+  std::vector<std::optional<std::string>> datums;
 };
 
 namespace {
@@ -419,11 +419,10 @@ int idx_scannxt(index_scan_t *scan, uint64_t &rowno, bool &cut,
 /*
  * A datum_t over a key column's decoded bytes: a by-value one
  * sign-extended to 8 bytes as tuples give them (sm2.h), a varlena
- * made for a variable-width one and kept in the cursor, else a
- * pointer to the bytes.
+ * made in place for a variable-width one, decoded with room for
+ * its header, else a pointer to the bytes.
  */
-static datum_t key_datum(index_scan_t *scan, const type_t *type,
-                         const std::string &bytes) {
+static datum_t key_datum(const type_t *type, std::string &bytes) {
   if (type->byval) {
     if (bytes.size() == sizeof(int32_t)) {
       int32_t v;
@@ -440,8 +439,7 @@ static datum_t key_datum(index_scan_t *scan, const type_t *type,
     return d;
   }
   if (type->len < 0) {
-    scan->varlenas.push_back(make_varlena(bytes));
-    return datum_from_ptr(scan->varlenas.back().data());
+    return datum_from_ptr(varlena_in_room(bytes));
   }
   return datum_from_ptr(bytes.data());
 }
@@ -463,17 +461,14 @@ int idx_scan_key(index_scan_t *scan, std::span<datum_t> values,
     return sm1::seterr(sm1::SM_ERR_CORRUPT, "index: an entry key too short");
   }
   key.remove_prefix(sizeof(ix->relid));
-  scan->varlenas.clear();
-  scan->varlenas.reserve(ix->key.size());
-  if (decode_key_front(ix->key, key, scan->datums) != 0) {
+  if (0 != decode_key_front(ix->key, key, scan->datums, true)) {
     return -1;
   }
   bool has_null = false;
   for (size_t i = 0; i < ix->key.size(); i++) {
     isnull[i] = !scan->datums[i].has_value();
     has_null |= isnull[i];
-    values[i] =
-        isnull[i] ? 0 : key_datum(scan, ix->key[i].type, *scan->datums[i]);
+    values[i] = isnull[i] ? 0 : key_datum(ix->key[i].type, *scan->datums[i]);
   }
   size_t suffix = !ix->unique || has_null ? sizeof(uint64_t) : 0;
   if (key.size() != suffix) {

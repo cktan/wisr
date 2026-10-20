@@ -281,6 +281,8 @@ int name_key(std::string_view d, int32_t, const sm2::collation_t *c,
 /* Read a name's key: its string, NUL-padded again. */
 int name_unkey(std::string_view &k, int32_t, const sm2::collation_t *c,
                std::string &d) {
+  // A name is fixed-width: its key sets d, not appends to it.
+  d.clear();
   if (bytes_unkey("name", k, c, d) != 0) {
     return -1;
   }
