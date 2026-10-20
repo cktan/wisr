@@ -2494,6 +2494,8 @@ static void finish_xact_command(void) {
 
     xact_started = false;
   }
+  /* The client's statement has ended: sm lets go of the rows it pinned. */
+  smstore_statement_end();
   /*
    * Once a transaction that made indexes has committed, wait for their
    * builds, outside it, as CREATE INDEX CONCURRENTLY waits between its

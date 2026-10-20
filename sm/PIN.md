@@ -490,10 +490,15 @@ What a held pin costs is space, not a wait (§7):
   nothing to keep for the slot. Removes D.
 - **All pins released at the end of a statement**, by
   `sm_release_all_pins()`, when no row pinned is wanted after
-  it. That shortens a pin left behind by an error from the
-  transaction's life to the statement's. It is safe only when
-  no portal outlives the statement with a slot that holds a
-  ref:
+  it. *Built* (§8 step 8): `smstore_statement_end()`, from
+  `finish_xact_command()`, with PostgreSQL's
+  `ThereAreNoReadyPortals()` for the open cursor's check. It
+  counts a suspended portal of the extended protocol, and a
+  holdable cursor, too: the release is then skipped where it
+  need not be, which is safe. That shortens a pin left
+  behind by an error from the transaction's life to the
+  statement's. It is safe only when no portal outlives the
+  statement with a slot that holds a ref:
   - *An open cursor* is such a portal. A FETCH leaves its
     plan's slots holding rows, and the next FETCH, in another
     statement, may read them: a nested loop's outer row, a
@@ -612,4 +617,5 @@ its ref (§6.4).
 7. **`scan_next` lends its row**, with the SSI change. *Built*:
    SSI sees no change (§6.1), and the 109 scenarios match.
 8. **`sm_release_all_pins()` at the end of a statement**,
-   with the open cursor check of §6.4.
+   with the open cursor check of §6.4. *Built*
+   (`../dg/WORKNOTE.md` step 269).

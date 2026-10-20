@@ -7780,3 +7780,38 @@ as PostgreSQL's btree copies an entry into `currTuples`
 - `../sm/sm2/test/test_index.cc` gives back a text past the
   1-byte header's 126 bytes, with a NUL in it, as the varlena
   `make_varlena` makes.
+
+## Step 269: a statement's pins go at its end
+
+A pin is released by its ref's next read, an unpin, or the end
+of the transaction. A scan an error frees leaves its ref
+behind, and its pin, an iterator and the blocks it holds,
+lasted until the transaction's end: in a transaction that
+loops on a savepoint, a failing statement and `ROLLBACK TO`, a
+pin a turn (`../sm/PIN.md` §7).
+
+- **`smstore_statement_end()`**, called by
+  `finish_xact_command()` at the end of each client statement,
+  releases every pin the session holds (`sm_release_all_pins`),
+  and forgets the kept row, whose pin goes with them. A
+  statement SPI runs is no client statement, and ends nothing.
+- **Not while a cursor is open**: a FETCH leaves its plan's
+  slots holding rows that the next FETCH may read, so with
+  any portal ready (`ThereAreNoReadyPortals()`) nothing is
+  released, and the pins wait for the cursor's close and the
+  next statement's end, or the transaction's. A suspended
+  portal of the extended protocol and a holdable cursor count
+  too, which only keeps pins longer.
+- **`ThereAreNoReadyPortals()` ends its scan** of the portals
+  before it returns false. PostgreSQL's left it open, which
+  COPY FREEZE, its one caller, could afford; called at every
+  statement's end with a cursor open, it leaked a scan each
+  time, until "too many active hash_seq_search scans" and a
+  PANIC. `test/server.sh`'s cursors over temporary files met
+  it, and are its test.
+- `test/slt/statement_pins.test`: a cursor over a nested loop
+  fetched across other statements, and a read after a
+  savepoint undid a failed statement. The release itself is
+  not seen from SQL: a released row in a memtable still reads
+  right, so neither case fails without a sanitizer if the
+  check were wrong.

@@ -1066,8 +1066,14 @@ bool ThereAreNoReadyPortals(void) {
   while ((hentry = (PortalHashEnt *)hash_seq_search(&status)) != NULL) {
     Portal portal = hentry->portal;
 
-    if (portal->status == PORTAL_READY)
+    /*
+     * End the scan before leaving it: one left open is leaked, and a caller
+     * at every statement's end (smstore_statement_end()) would exhaust them.
+     */
+    if (portal->status == PORTAL_READY) {
+      hash_seq_term(&status);
       return false;
+    }
   }
 
   return true;

@@ -63,6 +63,7 @@
 #include "utils/rel.h"
 #include "utils/memutils.h"
 #include "utils/numeric.h"
+#include "utils/portal.h"
 #include "utils/lsyscache.h"
 #include "utils/timeout.h"
 #include "utils/typcache.h"
@@ -504,6 +505,25 @@ void smstore_statement_start(void) {
   sm_unpin(&kept_ref);
   kept_oid = InvalidOid;
   kept_tuple = NULL;
+}
+
+/*
+ * The client's statement has ended: release every pin the session holds,
+ * as no row the statement pinned is wanted after it, so that one an error
+ * left behind lasts no longer than its statement.  Not while a cursor is
+ * open: a FETCH leaves its plan's slots holding rows the next FETCH may
+ * read, a nested loop's outer row (../sm/PIN.md section 6.4).
+ */
+void smstore_statement_end(void) {
+  sm_session_t *s = datadir_sm_session();
+
+  if (NULL == s || !ThereAreNoReadyPortals())
+    return;
+  /* The kept row is the statement's, and its pin goes with the rest. */
+  kept_oid = InvalidOid;
+  kept_tuple = NULL;
+  kept_ref = {};
+  sm_release_all_pins(s);
 }
 
 /*
