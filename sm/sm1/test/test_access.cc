@@ -434,6 +434,71 @@ TEST_CASE("commit closes open cursors") {
   REQUIRE(sm1::commit(s) == 0);
 }
 
+TEST_CASE("a cursor lends its row until its next call, and passes over the "
+          "key's older versions") {
+  // Verify the row scannxt hands out where the iterator has it.
+  // 1. Commit "a", "b" and "c"; update "b" twice and delete "c", each
+  //    in a transaction of its own; then, in the reading one, update
+  //    "a" without committing.
+  // 2. A cursor gives "a" at its own write. While it is on "a", the
+  //    session reads a key, inserts "d" and drains a second cursor:
+  //    "a"'s row and key still read as they did.
+  // 3. The cursor then gives "b" at its newest version, passes over
+  //    the deleted "c" and the "d" written after it opened, and ends.
+  // 4. A third cursor gives "a"; a seek to "a" gives it again, and a
+  //    seek past "b" gives "d", which it opened after.
+  db_fixture_t f;
+  sm1::session_t *s = f.session();
+  uint64_t store = mkstore_committed(s);
+  REQUIRE(0 == sm1::begin(s, sm1::xctlevel_t::read_committed));
+  put(s, store, "a", "1");
+  put(s, store, "b", "1");
+  put(s, store, "c", "1");
+  REQUIRE(0 == sm1::commit(s));
+  for (const char *v : {"2", "3"}) {
+    REQUIRE(0 == sm1::begin(s, sm1::xctlevel_t::read_committed));
+    REQUIRE(0 == sm1::update(s, store, "b", v));
+    REQUIRE(0 == sm1::commit(s));
+  }
+  REQUIRE(0 == sm1::begin(s, sm1::xctlevel_t::read_committed));
+  REQUIRE(0 == sm1::erase(s, store, "c"));
+  REQUIRE(0 == sm1::commit(s));
+  REQUIRE(0 == sm1::begin(s, sm1::xctlevel_t::repeatable_read));
+  REQUIRE(0 == sm1::update(s, store, "a", "own"));
+
+  sm1::scan_t *c = scan(s, store, nullptr, 0, 0, nullptr, 0, 0);
+  REQUIRE(c);
+  std::string_view k, d;
+  REQUIRE(0 == sm1::scannxt(c, k, d));
+  CHECK("a" == k);
+  CHECK("own" == d);
+  CHECK("3" == get(s, store, "b"));
+  put(s, store, "d", "4");
+  CHECK(rows_t{{"a", "own"}, {"b", "3"}, {"d", "4"}} == scan_all(s, store));
+  CHECK("a" == k);
+  CHECK("own" == d);
+
+  REQUIRE(0 == sm1::scannxt(c, k, d));
+  CHECK("b" == k);
+  CHECK("3" == d);
+  CHECK(1 == sm1::scannxt(c, k, d));
+  sm1::scanend(c);
+
+  c = scan(s, store, nullptr, 0, 0, nullptr, 0, 0);
+  REQUIRE(c);
+  REQUIRE(0 == sm1::scannxt(c, k, d));
+  CHECK("a" == k);
+  REQUIRE(0 == sm1::scan_seek(c, "a", 1));
+  REQUIRE(0 == sm1::scannxt(c, k, d));
+  CHECK("a" == k);
+  CHECK("own" == d);
+  REQUIRE(0 == sm1::scan_seek(c, "b", 0));
+  CHECK(0 == sm1::scannxt(c, k, d));
+  CHECK("d" == k);
+  sm1::scanend(c);
+  REQUIRE(0 == sm1::commit(s));
+}
+
 TEST_CASE("a scan from an absent key crosses many userkeys in SSTs") {
   // Regression for inheriting RocksDB's prefix seek mode (§10.2, §12.5).
   // 1. Insert 5000 keys "k00000".."k04999" (every other number

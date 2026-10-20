@@ -420,14 +420,17 @@ What a held pin costs is space, not a wait (§7):
 - **The end of the transaction** releases the pins still
   held, where `xct_end_scans()` closes the cursors: at
   commit, at abort and in `discard()`.
-- **`scan_next` lends its row** (`NEXT.md`): it returns on
-  the visible version and steps past the key's older ones at
-  the next call, so the row is a view into the iterator's
-  block until then. `last_examined` and `skip_version()` move
-  with it, which touches SSI. Removes A.
-- **The userkey is not copied twice**: `last_examined` takes
-  it by swap or move, not by assignment. Removes half of A′,
-  and the rest with the lent row.
+- **`scan_next` lends its row**: it returns on the visible
+  version and steps past the key's older ones at the next
+  call (`on_row`), so the row is a view into the iterator's
+  block until then. SSI sees nothing move: the versions newer
+  than the visible one are judged, and `skip_version()` called,
+  before it returns, as before; the older ones were only ever
+  stepped over; and `last_examined` is set when the key's run
+  begins. Removes A. *Built* (§8 step 7).
+- **The userkey is copied once**: into `last_examined`, which
+  is also the key handed out; the cursor's `key` and `data`
+  buffers are gone. Removes half of A′.
 
 ### 6.2 sm2 and sm3
 
@@ -570,10 +573,15 @@ its ref (§6.4).
   VACUUM on it. A session idle in a transaction with a cursor
   open is the case to watch; the release at the end of a
   statement (§8 step 8) limits the rest to the open scans.
-- **The lent cursor row touches SSI.** `last_examined`
-  narrows the SIREAD range at the cursor's close; returning
-  before the older versions are stepped past moves where it
-  is set. The isolation scenarios in `sm1/mvcc` are its test.
+- **A rollback that closes a cursor takes its lent row.** A
+  rollback to a savepoint the cursor opened after releases its
+  iterator (the hazard above), and with it the row it handed out
+  last, which a copy used to keep. A caller reads that row
+  only before the cursor's next call, which fails after such a
+  rollback anyway; digres's nested loop, the case of the
+  hazard above, projects its row before it asks the inner
+  scan for the next. The lent row did not touch SSI after all
+  (§6.1); the scenarios in `sm1/mvcc` match.
 
 ---
 
@@ -598,6 +606,7 @@ its ref (§6.4).
 5. **The decimal slot.** *Done* by storing each decimal
    column as sm's type of its width (§6.4).
 6. **The index-only scan's key decoding.**
-7. **`scan_next` lends its row**, with the SSI change.
+7. **`scan_next` lends its row**, with the SSI change. *Built*:
+   SSI sees no change (§6.1), and the 109 scenarios match.
 8. **`sm_release_all_pins()` at the end of a statement**,
    with the open cursor check of §6.4.

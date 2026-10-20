@@ -7741,3 +7741,25 @@ old row back pinned into a ref (`../sm/PIN.md` §8 step 4).
 - `test/slt/write_old_row.test`: DELETE ... RETURNING by an
   index and a sequential scan, and an UPDATE and a DELETE of a
   row stored out of line.
+
+## Step 267: a cursor's row is lent, not copied
+
+sm1's `scan_next` copied every row it handed out into the
+cursor, and its key twice, because it stepped past the key's
+older versions before it returned. It now returns on the
+visible version, the row a view into RocksDB's block, and
+steps past the rest at the next call (`../sm/PIN.md` §8 step
+7). A sequential, a sample and every index scan read rows and
+entries through it, so none copies a row in sm now.
+
+- **digres changes nothing**: a cursor's row lasted until the
+  cursor's next call before, and still does.
+- **SSI sees no change**: the versions newer than the visible
+  one are judged before it returns, as before, the older ones
+  were only ever stepped over, and `last_examined` is set when
+  the key's run begins. The 109 isolation scenarios match.
+- **The key is copied once**, into `last_examined`, which is
+  also the key handed out.
+- `../sm/sm1/test/test_access.cc` checks a cursor's row
+  through other calls, the key's older versions passed over,
+  and a seek after a row handed out.

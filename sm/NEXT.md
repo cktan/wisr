@@ -108,18 +108,9 @@ Owed, and blocking nothing above:
     (`entry_from_row()`); it would count its columns from its
     plan as the others do. A point read by tid for an update, a
     lock or a trigger reads every column, as it must.
-  - *Lend the row, not a copy.* sm1's `scan_next` copies each
-    row it hands out into the cursor
-    (`sm1/src/access.cc`), because it steps past the key's
-    older versions with `it->Next()` before it returns. It
-    could return on the visible version and step past the
-    rest at the next call, so the row is a view into
-    RocksDB's block, valid until then. The SIREAD range
-    (`last_examined`) and `skip_version()` move with it; or
-    `ReadOptions::pin_data`, which pins every block the scan
-    reads until it ends. It touches SSI.
-  Measure both: a scan of one column and of all of them, on
-  a table of 50 columns, split between `memcpy` and
+  Measure it: a scan of one column and of all of them, on a
+  table of 50 columns. sm1's `scan_next` no longer copies the
+  row it hands out (`PIN.md` §8 step 7), so what is left is
   `deform_each`.
 
 - **Views, the rest of them** (`VIEW.md` §10). CREATE, OR

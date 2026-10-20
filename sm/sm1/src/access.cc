@@ -702,7 +702,8 @@ int scan_seek(sm1::scan_t *c, const char *key, size_t klen, int inclusive) {
     return 0;
   }
   // Reposition, keeping the iterator, its snapshot, and its
-  // upper bound.
+  // upper bound; the row handed out last is left behind.
+  c->on_row = false;
   c->it->Seek(bound);
   return 0;
 }
@@ -734,15 +735,31 @@ int scan_next(sm1::scan_t *c, const char **key, size_t *klen, const char **data,
   view_t view = {c->snapshot_ts, c->xid, c->seq_hwm};
   rocksdb::Iterator *it = c->it.get();
 
+  // Step past the older versions of the row handed out last: the
+  // visible one decided its key, so they are only stepped over,
+  // as they would have been before it was handed out.
+  if (c->on_row) {
+    c->on_row = false;
+    rocksdb::Slice uk(c->last_examined);
+    for (it->Next(); it->Valid(); it->Next()) {
+      version_t v;
+      version_decode_key(it->key(), &v);
+      if (v.userkey != uk) {
+        break;
+      }
+    }
+  }
+
   // Advance one userkey's run of versions at a time.
   while (it->Valid()) {
     version_t v;
     // Decode the next run's userkey.
     version_decode_key(it->key(), &v);
-    std::string uk = v.userkey.ToString();
-    // Record how far the scan has read, for SIREAD narrowing.
+    // Record how far the scan has read, for SIREAD narrowing; the
+    // key's one copy, which is also what is handed out.
     c->examined = true;
-    c->last_examined = uk;
+    c->last_examined.assign(v.userkey.data(), v.userkey.size());
+    rocksdb::Slice uk(c->last_examined);
     // Nothing decided about this key yet.
     bool found = false;
     bool live = false;
@@ -752,7 +769,7 @@ int scan_next(sm1::scan_t *c, const char **key, size_t *klen, const char **data,
       // Decode this version's userkey, wts, and seq.
       version_decode_key(it->key(), &v);
       // Past the last version of this key.
-      if (v.userkey != rocksdb::Slice(uk)) {
+      if (v.userkey != uk) {
         break;
       }
       // Once decided, only step past the older versions.
@@ -772,29 +789,25 @@ int scan_next(sm1::scan_t *c, const char **key, size_t *klen, const char **data,
         return -1;
       }
       // Visible: this version decides the key.
-      if (r == 1) {
+      if (1 == r) {
         // Stop judging this key's older versions.
         found = true;
         // A tombstone hides the key.
         live = !(v.flags & version_tombstone);
-        // Copy the value out before the iterator moves.
+        // A live row: hand it out where the iterator has it, which
+        // stays on it until the next call (on_row).
         if (live) {
-          c->data.assign(v.payload.data(), v.payload.size());
+          c->on_row = true;
+          *key = c->last_examined.data();
+          *klen = c->last_examined.size();
+          *data = v.payload.data();
+          *datalen = v.payload.size();
+          return 0;
         }
-      } else if (skip_version(c->session, v, view) != 0) {
+      } else if (0 != skip_version(c->session, v, view)) {
         c->state = -1;
         return -1;
       }
-    }
-    // A live row: hand it out.
-    if (live) {
-      // Keep the key in the cursor's buffer.
-      c->key = std::move(uk);
-      *key = c->key.data();
-      *klen = c->key.size();
-      *data = c->data.data();
-      *datalen = c->data.size();
-      return 0;
     }
   }
   // Fail the cursor if the iterator failed.

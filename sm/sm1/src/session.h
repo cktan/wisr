@@ -246,8 +246,13 @@ struct sm1::scan_t {
   uint64_t ssi_storeid = 0;
   std::list<wisr::ssi_range_t>::iterator ssi_range;
   bool examined = false;     /* some userkey's run was inspected */
-  std::string last_examined; /* the last one */
-  std::string key, data;     /* what sm1::scannxt hands out */
+  std::string last_examined; /* the last one, the key scannxt hands out */
+  /*
+   * The iterator is still on the version sm1::scannxt handed out,
+   * whose value it lends; the key's older versions are stepped
+   * past at the next call.
+   */
+  bool on_row = false;
 };
 
 namespace wisr {
