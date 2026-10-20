@@ -4,6 +4,9 @@
 # 2. Plan nested loops of bitmap scans, of index scans, and of an index
 #    scan under a seq scan, with every other join and scan turned off.
 # 3. Confirm each joined row has each table's own text.
+# 4. Fetch from a cursor over a nested loop of index scans, its outer
+#    row held from one FETCH to the next across a rollback to a
+#    savepoint a FETCH was made in, and confirm the row is kept.
 
 statement ok
 create table a (k int4, x text)
@@ -72,3 +75,48 @@ select x, y from a join b on b.k = a.k + 10 where a.k < 3
 ----
 a row 1	b row 11
 a row 2	b row 12
+
+statement ok
+set enable_seqscan = off
+
+statement ok
+insert into b values (5, 'b row 5'), (5, 'b row 5')
+
+statement ok
+begin
+
+statement ok
+declare c cursor for select x, y from a join b on b.k = a.k where a.k in (5, 6)
+
+# The first of a row 5's three matches: the inner scan opens before the
+# savepoint, as sm closes a cursor opened after one at a rollback to it.
+query TT
+fetch 1 from c
+----
+a row 5	b row 5
+
+statement ok
+savepoint s
+
+# The second, its inner row read by rowno after the savepoint.
+query TT
+fetch 1 from c
+----
+a row 5	b row 5
+
+statement ok
+rollback to s
+
+# The third: the join reads the outer row it held across the rollback.
+query TT
+fetch 1 from c
+----
+a row 5	b row 5
+
+query TT
+fetch 1 from c
+----
+a row 6	b row 6
+
+statement ok
+commit

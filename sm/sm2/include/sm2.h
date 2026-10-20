@@ -558,12 +558,24 @@ int rel_insert_at(rel_t* rel, uint64_t rowno,
 int rel_read(rel_t* rel, uint64_t rowno, std::string_view& tuple);
 
 /*
+ * Read the row at rowno into a pin, as sm1::read into one: the
+ * tuple, and the by-reference datum_t decoded from it, last
+ * until the pin ref names is released (../PIN.md).
+ */
+int rel_read(rel_t* rel, uint64_t rowno, sm1::pin_ref_t& ref,
+             std::string_view& tuple);
+
+/*
  * Read the newest committed version of the row at rowno, as
  * sm1::read_latest does, for a READ COMMITTED writer that met
  * SM_ERR_UPDATED to check its filter against. The tuple views sm1
  * memory and is valid only until the next call on this session.
  */
 int rel_read_latest(rel_t* rel, uint64_t rowno, std::string_view& tuple);
+
+/* rel_read_latest into a pin, as rel_read into one. */
+int rel_read_latest(rel_t* rel, uint64_t rowno, sm1::pin_ref_t& ref,
+                    std::string_view& tuple);
 
 /*
  * Lock the row at rowno in mode without writing it, as sm1::lock

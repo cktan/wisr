@@ -109,6 +109,23 @@ store_t store_of(db_t *db, uint64_t storeid) {
 }
 
 /*
+ * Hand back the payload of a live version the iterator is on:
+ * left in the iterator the pin then holds, or copied into value.
+ */
+void keep_value(const version_t &v, std::unique_ptr<rocksdb::Iterator> &it,
+                std::string *value, sm1::pin_t *pin, bool live) {
+  if (!live) {
+    return;
+  }
+  if (pin) {
+    pin->row = v.payload;
+    pin->it = std::move(it);
+  } else if (value) {
+    value->assign(v.payload.data(), v.payload.size());
+  }
+}
+
+/*
  * The version a write checks against (§5 step 3): the newest
  * own version still visible to the transaction, else the newest
  * committed version, whatever its commit_ts. Sets *live to
@@ -118,12 +135,14 @@ store_t store_of(db_t *db, uint64_t storeid) {
  * decides). With inflight given, a version written by another
  * transaction still running stops the search: *inflight is set to
  * its xid, for the caller to wait for (WRITELOCK.md §3.2), and is
- * 0 otherwise. Without it such a version is skipped. Returns 0 or
- * -1.
+ * 0 otherwise. Without it such a version is skipped. A live
+ * version's payload is copied into *value, or, with pin given,
+ * left in the iterator the pin then holds. Returns 0 or -1.
  */
 int latest_version(sm1::session_t *s, store_t st, rocksdb::Slice key,
                    bool *live, uint64_t *commit_ts, std::string *value,
-                   uint32_t *own_seq = nullptr, uint64_t *inflight = nullptr) {
+                   uint32_t *own_seq = nullptr, uint64_t *inflight = nullptr,
+                   sm1::pin_t *pin = nullptr) {
   // Assume no version until one is found.
   *live = false;
   *commit_ts = 0;
@@ -168,9 +187,7 @@ int latest_version(sm1::session_t *s, store_t st, rocksdb::Slice key,
           *own_seq = v.seq;
         }
         // Hand back what it holds, for the old image.
-        if (value && *live) {
-          value->assign(v.payload.data(), v.payload.size());
-        }
+        keep_value(v, it, value, pin, *live);
         return 0;
       }
       continue;
@@ -198,9 +215,7 @@ int latest_version(sm1::session_t *s, store_t st, rocksdb::Slice key,
       *live = !(v.flags & version_tombstone);
       *commit_ts = ts;
       // Hand back what it holds, for the old image.
-      if (value && *live) {
-        value->assign(v.payload.data(), v.payload.size());
-      }
+      keep_value(v, it, value, pin, *live);
       return 0;
     }
   }
@@ -407,9 +422,9 @@ int lock_row(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
   return access_check_current(s, storeid, k);
 }
 
-/* sm1::read, minus the out-of-memory guard. */
+/* sm1::read into ref, minus the out-of-memory guard. */
 int read_row(sm1::session_t *s, uint64_t storeid, const char *key, size_t klen,
-             const char **data, size_t *datalen) {
+             sm1::pin_ref_t &ref, const char **data, size_t *datalen) {
   // Require the out-parameters.
   if (!data || !datalen) {
     return set_error(sm1::SM_ERR_INVALID, "sm1_read: data or datalen is NULL");
@@ -417,6 +432,8 @@ int read_row(sm1::session_t *s, uint64_t storeid, const char *key, size_t klen,
   // Report no row until one is found.
   *data = nullptr;
   *datalen = 0;
+  // A read into ref replaces the row it held.
+  sm1::unpin(ref);
   // Require an active, non-prepared transaction.
   if (xct_check_active(s) != 0) {
     return -1;
@@ -427,20 +444,26 @@ int read_row(sm1::session_t *s, uint64_t storeid, const char *key, size_t klen,
   if (enter(s, view, storeid, key, klen) != 0) {
     return -1;
   }
-  // Read the key into the session's buffer.
+  // Read the key into a pin, which keeps the row where it is.
+  sm1::pin_t *p = pin_take(s);
   int r = access_read(s, storeid, view, rocksdb::Slice(key ? key : "", klen),
-                      &s->readbuf);
-  // Found: hand out the session-owned bytes.
-  if (r == 0) {
-    *data = s->readbuf.data();
-    *datalen = s->readbuf.size();
+                      nullptr, p);
+  // No row: the pin goes back unused.
+  if (r != 0) {
+    pin_put(p);
+    return r;
   }
-  return r;
+  // Found: hold it, and hand out its bytes.
+  pin_hold(p, ref);
+  *data = p->row.data();
+  *datalen = p->row.size();
+  return 0;
 }
 
-/* sm1::read_latest, minus the out-of-memory guard. */
+/* sm1::read_latest into ref, minus the out-of-memory guard. */
 int read_latest_row(sm1::session_t *s, uint64_t storeid, const char *key,
-                    size_t klen, const char **data, size_t *datalen) {
+                    size_t klen, sm1::pin_ref_t &ref, const char **data,
+                    size_t *datalen) {
   // Require the out-parameters.
   if (!data || !datalen) {
     return set_error(sm1::SM_ERR_INVALID,
@@ -449,6 +472,8 @@ int read_latest_row(sm1::session_t *s, uint64_t storeid, const char *key,
   // Report no row until one is found.
   *data = nullptr;
   *datalen = 0;
+  // A read into ref replaces the row it held.
+  sm1::unpin(ref);
   // Require an active, non-prepared transaction.
   if (xct_check_active(s) != 0) {
     return -1;
@@ -471,8 +496,12 @@ int read_latest_row(sm1::session_t *s, uint64_t storeid, const char *key,
   bool live;
   uint64_t commit_ts;
   uint32_t own_seq;
-  // Read the newest version, ignoring the snapshot.
-  if (latest_version(s, st, k, &live, &commit_ts, &s->readbuf, &own_seq) != 0) {
+  // Read the newest version into a pin, ignoring the snapshot;
+  // the pin goes back unused unless a row is handed out.
+  sm1::pin_t *p = pin_take(s);
+  sm0::scope_guard_t put([&] { pin_put(p); });
+  if (latest_version(s, st, k, &live, &commit_ts, nullptr, &own_seq, nullptr,
+                     p) != 0) {
     return -1;
   }
   // Something must keep the newest version from changing: a lock
@@ -494,9 +523,11 @@ int read_latest_row(sm1::session_t *s, uint64_t storeid, const char *key,
   if (!live) {
     return 1;
   }
-  // Hand out the session-owned bytes.
-  *data = s->readbuf.data();
-  *datalen = s->readbuf.size();
+  // Found: hold it, and hand out its bytes.
+  put.dismiss();
+  pin_hold(p, ref);
+  *data = p->row.data();
+  *datalen = p->row.size();
   return 0;
 }
 
@@ -772,7 +803,7 @@ namespace wisr {
 
 /* Seek to the newest version a reader at view could see (§10.1). */
 int access_read(sm1::session_t *s, uint64_t storeid, const view_t &view,
-                rocksdb::Slice key, std::string *out) {
+                rocksdb::Slice key, std::string *out, sm1::pin_t *pin) {
   // Find the store's CF.
   store_t st = store_of(s->db, storeid);
   if (!st.cf) {
@@ -825,8 +856,13 @@ int access_read(sm1::session_t *s, uint64_t storeid, const view_t &view,
       if (v.flags & version_tombstone) {
         return 1;
       }
-      // Copy the value out.
-      out->assign(v.payload.data(), v.payload.size());
+      // Keep the iterator on the value for the pin, or copy it out.
+      if (pin) {
+        pin->row = v.payload;
+        pin->it = std::move(it);
+      } else {
+        out->assign(v.payload.data(), v.payload.size());
+      }
       return 0;
     }
     // Invisible: under SSI, owe its writer an edge.
@@ -1082,26 +1118,52 @@ int sm1::erase(sm1::session_t *session, uint64_t storeid, std::string_view key,
   return rc;
 }
 
-/* Read one key. */
+/* Read one key into ref. */
 int sm1::read(sm1::session_t *session, uint64_t storeid, std::string_view key,
-              std::string_view &data) {
+              sm1::pin_ref_t &ref, std::string_view &data) {
   const char *d = nullptr;
   size_t dlen = 0;
-  int rc = read_row(session, storeid, key.data(), key.size(), &d, &dlen);
+  int rc = read_row(session, storeid, key.data(), key.size(), ref, &d, &dlen);
   // Hand back the value: empty for none (1) and on failure.
   data = std::string_view(d, dlen);
   return rc;
 }
 
-/* Read the newest committed version of a key. */
+/* Read one key, lent until the session's next call. */
+int sm1::read(sm1::session_t *session, uint64_t storeid, std::string_view key,
+              std::string_view &data) {
+  // A NULL session has no ref: fail as any call on it does.
+  if (!session) {
+    data = std::string_view();
+    return xct_check_active(session);
+  }
+  // Into the session's own ref, which the next such read reuses.
+  return sm1::read(session, storeid, key, session->readref, data);
+}
+
+/* Read the newest committed version of a key into ref. */
 int sm1::read_latest(sm1::session_t *session, uint64_t storeid,
-                     std::string_view key, std::string_view &data) {
+                     std::string_view key, sm1::pin_ref_t &ref,
+                     std::string_view &data) {
   const char *d = nullptr;
   size_t dlen = 0;
-  int rc = read_latest_row(session, storeid, key.data(), key.size(), &d, &dlen);
+  int rc =
+      read_latest_row(session, storeid, key.data(), key.size(), ref, &d, &dlen);
   // Hand back the value: empty for none (1) and on failure.
   data = std::string_view(d, dlen);
   return rc;
+}
+
+/* Read the newest committed version of a key, lent as sm1::read's. */
+int sm1::read_latest(sm1::session_t *session, uint64_t storeid,
+                     std::string_view key, std::string_view &data) {
+  // A NULL session has no ref: fail as any call on it does.
+  if (!session) {
+    data = std::string_view();
+    return xct_check_active(session);
+  }
+  // Into the session's own ref, which sm1::read shares.
+  return sm1::read_latest(session, storeid, key, session->readref, data);
 }
 
 /* Open a cursor over a key range. */

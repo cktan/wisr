@@ -185,7 +185,27 @@ struct sm1::session_t {
 
   std::unordered_set<sm1::scan_t *> scans; /* open cursors */
   uint64_t next_scan_id = 0;               /* hands out sm1::scan_t::id */
-  std::string readbuf;                     /* what sm1::read hands out */
+  std::string readbuf; /* the old row an update or erase hands out */
+
+  /*
+   * The pool of pins (../PIN.md §4): every pin made, freed at the
+   * session's close, so a stale ref always points to a pin; those
+   * released, ready to take; and those holding a row.
+   */
+  std::vector<std::unique_ptr<sm1::pin_t>> pins;
+  sm1::pin_t *pins_free = nullptr;
+  sm1::pin_t *pins_held = nullptr;
+  sm1::pin_ref_t readref; /* what sm1::read hands out without a ref */
+};
+
+/* A pin: keeps one row's bytes in memory. The session owns it. */
+struct sm1::pin_t {
+  std::unique_ptr<rocksdb::Iterator> it; /* found the row; null when free */
+  rocksdb::Slice row;                /* the row's bytes, in a block it holds */
+  uint64_t gen = 1;                  /* increased on each release */
+  sm1::session_t *session = nullptr; /* whose pool it is in */
+  sm1::pin_t *prev = nullptr;        /* in the session's held list, */
+  sm1::pin_t *next = nullptr;        /* or next in its free list */
 };
 
 struct sm1::scan_t {
@@ -479,11 +499,39 @@ int catalog_lookup(sm1::session_t *session, const view_t &view,
                    uint64_t storeid);
 
 /*
- * Point read of key in storeid at view: 0 and *out = payload if
- * a live version is visible, 1 if none, -1 on error.
+ * Point read of key in storeid at view: 0 if a live version is
+ * visible, 1 if none, -1 on error. On 0 the payload is copied
+ * into *out, or, with pin given, left in the iterator the pin
+ * then holds, its bytes in pin->row.
  */
 int access_read(sm1::session_t *session, uint64_t storeid, const view_t &view,
-                rocksdb::Slice key, std::string *out);
+                rocksdb::Slice key, std::string *out,
+                sm1::pin_t *pin = nullptr);
+
+/*
+ * Take a pin from the session's pool, a free one or a new one,
+ * to read a row into: it is on neither list until pin_hold or
+ * pin_put.
+ */
+sm1::pin_t *pin_take(sm1::session_t *session);
+
+/* Hold the row a taken pin now has, and point ref at the pin. */
+void pin_hold(sm1::pin_t *pin, sm1::pin_ref_t &ref);
+
+/* Give back a taken pin that found no row. */
+void pin_put(sm1::pin_t *pin);
+
+/* Whether ref names a pin still held. */
+bool pin_live(const sm1::pin_ref_t &ref);
+
+/*
+ * Release a held pin: destroy its iterator, make every ref to
+ * it stale, and return it to the pool.
+ */
+void pin_release(sm1::pin_t *pin);
+
+/* Release every pin the session holds. */
+void pin_release_all(sm1::session_t *session);
 
 /*
  * Open a cursor over storeid at view, between the bounds as

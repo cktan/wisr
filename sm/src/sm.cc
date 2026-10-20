@@ -234,6 +234,11 @@ int deform(const char *fn, const sm2::tup_desc_t &desc, const void *tuple,
                          std::span<bool>(isnull, n));
 }
 
+/* The sm1 pin ref a C one names. */
+sm1::pin_ref_t pin_ref_of(const sm_pin_ref_t &ref) {
+  return sm1::pin_ref_t{static_cast<sm1::pin_t *>(ref.pin), ref.gen};
+}
+
 /* A C view out-parameter pair, set from v. */
 void view_out(std::string_view v, const void **data, size_t *len) {
   *data = v.data();
@@ -692,6 +697,23 @@ int sm_abort(sm_session_t *session) {
 /* Begin a statement. */
 int sm_stmt_begin(sm_session_t *session) {
   return guard(session, [&] { return sm3::stmt_begin(session->sm3); });
+}
+
+/* Release the pin a ref names. */
+void sm_unpin(sm_pin_ref_t *ref) {
+  if (!ref) {
+    return;
+  }
+  sm1::pin_ref_t r = pin_ref_of(*ref);
+  sm1::unpin(r);
+  *ref = sm_pin_ref_t{};
+}
+
+/* Release every pin the session holds. */
+void sm_release_all_pins(sm_session_t *session) {
+  if (session) {
+    sm1::release_all_pins(session->sm1);
+  }
 }
 
 struct sm_stmt_t {
@@ -1630,6 +1652,44 @@ int sm_tbl_read(sm_tbl_t *tbl, uint64_t rowno, const void **tuple,
   return guard(tbl->session, [&] {
     std::string_view v;
     int rc = sm3::tbl_read(tbl->table, rowno, v);
+    if (rc == 0) {
+      view_out(v, tuple, len);
+    }
+    return rc;
+  });
+}
+
+/* Read a row into the pin *ref then names. */
+int sm_tbl_read(sm_tbl_t *tbl, uint64_t rowno, sm_pin_ref_t *ref,
+                const void **tuple, size_t *len) {
+  return guard(tbl->session, [&] {
+    if (!ref) {
+      return null_arg("sm_tbl_read", "ref");
+    }
+    sm1::pin_ref_t r = pin_ref_of(*ref);
+    std::string_view v;
+    int rc = sm3::tbl_read(tbl->table, rowno, r, v);
+    // The ref is sm1's again either way: a pin, or none.
+    *ref = sm_pin_ref_t{r.pin, r.gen};
+    if (rc == 0) {
+      view_out(v, tuple, len);
+    }
+    return rc;
+  });
+}
+
+/* Read the newest committed version of a row into a pin. */
+int sm_tbl_read_latest(sm_tbl_t *tbl, uint64_t rowno, sm_pin_ref_t *ref,
+                       const void **tuple, size_t *len) {
+  return guard(tbl->session, [&] {
+    if (!ref) {
+      return null_arg("sm_tbl_read_latest", "ref");
+    }
+    sm1::pin_ref_t r = pin_ref_of(*ref);
+    std::string_view v;
+    int rc = sm3::tbl_read_latest(tbl->table, rowno, r, v);
+    // The ref is sm1's again either way: a pin, or none.
+    *ref = sm_pin_ref_t{r.pin, r.gen};
     if (rc == 0) {
       view_out(v, tuple, len);
     }

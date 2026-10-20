@@ -2285,6 +2285,12 @@ struct smstore_scan_t {
   bool *row_isnull;
   int row_natts;
   /*
+   * An index or a fetch scan's pin on the row it read last by rowno, which
+   * its slot's values point into: released by the next read into it, the
+   * scan's end, or the transaction's (../sm/PIN.md).
+   */
+  sm_pin_ref_t ref;
+  /*
    * smstore_scan_row()'s row read ahead, past the rowno it was asked for,
    * kept for a later call: valid until the cursor's next call.  at_end once
    * the cursor has none left.
@@ -2477,6 +2483,8 @@ uint64 smstore_rowno_limit(Relation rel) {
 void smstore_endscan(smstore_scan_t *scan) {
   sm_rel_scanend(scan->cursor);
   sm_idx_scanend(scan->icursor);
+  /* The row it read last by rowno is no one's now. */
+  sm_unpin(&scan->ref);
   pfree(scan);
 }
 
@@ -2487,7 +2495,7 @@ void smstore_endscan(smstore_scan_t *scan) {
  */
 static bool table_def_now(Oid oid, sm_table_def_t &out);
 static bool read_row(sm_tbl_t *tbl, uint64_t rowno, int natts,
-                     TupleTableSlot *slot);
+                     TupleTableSlot *slot, sm_pin_ref_t *ref = NULL);
 static void forget_table(Oid relid);
 
 /*
@@ -5298,15 +5306,18 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
 /*
  * The row at rowno, as this transaction sees it, into slot, as a virtual
  * tuple of its first natts columns, its tid its rowno; false, the slot
- * empty, if it sees none.
+ * empty, if it sees none.  With ref, the row is read into the pin it names,
+ * and the slot's values point into it until the pin is released; without,
+ * the slot keeps a copy.
  */
 static bool read_row(sm_tbl_t *tbl, uint64_t rowno, int natts,
-                     TupleTableSlot *slot) {
+                     TupleTableSlot *slot, sm_pin_ref_t *ref) {
   const void *tuple;
   size_t len;
 
   ExecClearTuple(slot);
-  switch (sm_tbl_read(tbl, rowno, &tuple, &len)) {
+  switch (ref ? sm_tbl_read(tbl, rowno, ref, &tuple, &len)
+              : sm_tbl_read(tbl, rowno, &tuple, &len)) {
   case 0:
     break;
   case 1:
@@ -5316,11 +5327,13 @@ static bool read_row(sm_tbl_t *tbl, uint64_t rowno, int natts,
   }
   tuple_into_slot(tbl, rowno, tuple, len, natts, slot);
   /*
-   * A point read's bytes last only until the session's next call to sm,
-   * which another scan in the statement makes, as a join's inner side
-   * does: the slot keeps a copy.
+   * A pinned row lasts until the scan reads its next, as a cursor's row
+   * does.  A lent one only until the session's next call to sm, which
+   * another scan in the statement makes, as a join's inner side does: the
+   * slot keeps a copy.
    */
-  ExecMaterializeSlot(slot);
+  if (ref == NULL)
+    ExecMaterializeSlot(slot);
   return true;
 }
 
@@ -5334,7 +5347,7 @@ bool smstore_index_getnext(smstore_scan_t *scan, TupleTableSlot *slot) {
   slot->tts_tableOid = scan->relid;
   while (smstore_index_getrowno(scan, &rowno))
     /* A row the transaction does not see is passed. */
-    if (read_row(scan->tbl, rowno, scan->natts, slot) &&
+    if (read_row(scan->tbl, rowno, scan->natts, slot, &scan->ref) &&
         keys_met(scan, slot, false))
       return true;
   ExecClearTuple(slot);
@@ -5405,7 +5418,8 @@ static bool entry_from_row(smstore_scan_t *scan, uint64_t rowno,
     scan->row_values = (Datum *)palloc(scan->row_natts * sizeof(Datum));
     scan->row_isnull = (bool *)palloc(scan->row_natts * sizeof(bool));
   }
-  switch (sm_tbl_read(scan->tbl, rowno, &tuple, &len)) {
+  /* Into the scan's pin, which the slot's values then point into. */
+  switch (sm_tbl_read(scan->tbl, rowno, &scan->ref, &tuple, &len)) {
   case 0:
     break;
   case 1:
@@ -5437,8 +5451,6 @@ bool smstore_index_getentry(smstore_scan_t *scan, TupleTableSlot *slot) {
 
   slot->tts_tableOid = scan->relid;
   while (smstore_index_getrowno(scan, &rowno)) {
-    bool from_row = false;
-
     ExecClearTuple(slot);
     switch (sm_idx_scan_key(scan->icursor, (sm_datum_t *)slot->tts_values,
                             slot->tts_isnull, scan->form->indnkeyatts)) {
@@ -5446,18 +5458,15 @@ bool smstore_index_getentry(smstore_scan_t *scan, TupleTableSlot *slot) {
       entry_includes(scan, slot);
       break;
     case 1:
+      /* Its row, pinned until the scan reads the next. */
       if (!entry_from_row(scan, rowno, slot))
         continue;
-      from_row = true;
       break;
     default:
       sm_error("read an index entry");
     }
     ExecStoreVirtualTuple(slot);
     slot_from_sm(slot);
-    /* A row read by rowno lasts only until sm's next call, as read_row's. */
-    if (from_row)
-      ExecMaterializeSlot(slot);
     smstore_rowno_to_tid(rowno, &slot->tts_tid);
     if (keys_met(scan, slot, true))
       return true;
@@ -5491,7 +5500,7 @@ smstore_scan_t *smstore_beginfetch(Relation rel, int natts) {
  */
 bool smstore_fetch(smstore_scan_t *scan, uint64 rowno, TupleTableSlot *slot) {
   slot->tts_tableOid = scan->relid;
-  return read_row(scan->tbl, rowno, scan->natts, slot);
+  return read_row(scan->tbl, rowno, scan->natts, slot, &scan->ref);
 }
 
 /* rel, a table in sm, opened to write in this transaction. */

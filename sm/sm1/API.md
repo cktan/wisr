@@ -222,6 +222,7 @@ failure. Their validity windows differ and are narrow:
 | Producer | View stays valid until |
 | --- | --- |
 | `sm1::read`, `sm1::read_latest`, the old row | the next call on that **session** |
+| `sm1::read`, `sm1::read_latest` into a pin ref | the release of its **pin** (below) |
 | `sm1::scannxt` | the next call on that **scan cursor** |
 
 A caller that needs a value beyond that window must copy it.
@@ -1644,6 +1645,65 @@ Errors: `SM_ERR_NOTFOUND` (the *store* does not exist),
 (not READ COMMITTED, or neither a lock held nor a write of the
 key), `SM_ERR_CORRUPT`,
 `SM_ERR_IO`.
+
+### Pins
+
+A read into a pin hands out the row without copying it: the
+session keeps the iterator that found it, in one of a pool of
+pins it owns, and the caller gets a `sm1::pin_ref_t`, a plain
+value naming the pin and the pin's generation when it was
+taken (`../PIN.md`). The row stays valid until its pin is
+released, which happens at the first of:
+
+- the next read into the same ref;
+- `sm1::unpin(ref)`;
+- `sm1::release_all_pins(session)`;
+- the end of the session's transaction: its commit, abort or
+  prepare, or the session's close.
+
+A rollback to a savepoint releases no pin: the row was read
+already, and only the caller knows whether it still wants it.
+Neither does the drop of the row's store: RocksDB keeps a
+column family's data while an iterator holds it.
+
+Releasing a pin increases its generation, so every ref to it
+is stale from then on. A stale ref names nothing: unpinning
+it does nothing, and a read into it takes a fresh pin. The
+pin itself stays the session's until the session closes, so a
+stale ref never points to freed memory. A ref of zeros names
+no pin; it is what a caller starts with.
+
+The pins in use at once are the rows pinned at once: a caller
+reading a million rows into one ref holds one pin at a time.
+
+The lent forms of `sm1::read` and `sm1::read_latest` above
+read into a ref the session keeps, which the next lent read
+reuses.
+
+### int sm1::read(sm1::session_t* session, uint64_t storeid, std::string_view key, sm1::pin_ref_t& ref, std::string_view& data)
+
+### int sm1::read_latest(sm1::session_t* session, uint64_t storeid, std::string_view key, sm1::pin_ref_t& ref, std::string_view& data)
+
+Read as the forms without `ref` do, into a pin. If `ref` names
+a pin still held, that pin is released first, so a caller
+reading into one ref holds one pin at most. On **0** `ref`
+names the pin and `data` views its row; on **1** or **-1**
+`ref` names no pin and `data` is empty. Errors as the forms
+without `ref`.
+
+### void sm1::unpin(sm1::pin_ref_t& ref)
+
+Release the pin `ref` names, if it is still held, and set
+`ref` to name none. A stale ref, or one naming no pin, is left
+alone, so unpinning twice is harmless.
+
+### void sm1::release_all_pins(sm1::session_t* session)
+
+Release every pin the session holds, as the end of its
+transaction does, and leave the transaction open: for a
+caller that knows none of the rows it pinned is still wanted,
+as digres at the end of a statement. Every ref to them is
+stale afterwards. A `NULL` session is a no-op.
 
 ### int sm1::scan(sm1::session_t* session, uint64_t storeid, const char* skey, size_t sklen, int skey_inclusive, const char* ekey, size_t eklen, int ekey_inclusive, sm1::scan_t*& out)
 

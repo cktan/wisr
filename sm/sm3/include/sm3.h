@@ -1298,6 +1298,10 @@ int tbl_fetch(table_t* table, std::string_view ptr, std::string& out);
 /* Read the row at rowno, as sm2::rel_read does. */
 int tbl_read(table_t* table, uint64_t rowno, std::string_view& tuple);
 
+/* Read the row at rowno into a pin, as sm2::rel_read into one. */
+int tbl_read(table_t* table, uint64_t rowno, sm1::pin_ref_t& ref,
+             std::string_view& tuple);
+
 /*
  * Read the newest committed version of the row at rowno, as
  * sm2::rel_read_latest does: what a read committed writer that met
@@ -1305,6 +1309,10 @@ int tbl_read(table_t* table, uint64_t rowno, std::string_view& tuple);
  * its write again.
  */
 int tbl_read_latest(table_t* table, uint64_t rowno, std::string_view& tuple);
+
+/* tbl_read_latest into a pin, as tbl_read into one. */
+int tbl_read_latest(table_t* table, uint64_t rowno, sm1::pin_ref_t& ref,
+                    std::string_view& tuple);
 
 /*
  * Lock the row at rowno in mode without writing it, as

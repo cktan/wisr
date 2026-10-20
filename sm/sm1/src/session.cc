@@ -148,8 +148,9 @@ int sm1::closedb(sm1::session_t *session) {
   if (!session) {
     return 0;
   }
-  // Close the session's cursors first.
+  // Close the session's cursors first, and release its pins.
   xct_end_scans(session);
+  pin_release_all(session);
   // Abort an active transaction; a prepared one stays in doubt.
   if (session->active) {
     sm1::abort(session);

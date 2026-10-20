@@ -88,22 +88,14 @@ Owed, and blocking nothing above:
   (`SM3_DESIGN.md` §7). The primitive is built when a workload
   asks.
 
-- **A point read should pin its row, not lend it.** The bytes
-  `sm1::read`, `sm1::read_latest` and the old row of a write
-  hand out are valid only until the next call on the session
-  (`sm1/API.md`), so a caller holding two rows read by rowno
-  must copy one. PostgreSQL pins a page a row and holds any
-  number at once. sm should give the same: a read that
-  returns a handle the caller releases, over RocksDB's
-  `PinnableSlice`, which keeps the block in memory and copies
-  nothing. sm1's point read is an iterator's `Seek` today
-  (`sm1/SM1_DESIGN.md` §10.1), so the handle would hold the
-  iterator, or the read would move to `Get`. Until then
-  digres copies: the row an index scan, a bitmap scan or an
-  UPDATE fetches by its rowno has its columns passed by
-  reference copied into its slot (`read_row()` in
-  `../dg/src/backend/access/sm/smstore.c`, `../dg/WORKNOTE.md`
-  step 161).
+- **A point read pins its row** (`PIN.md`). `sm1::read` and
+  `sm1::read_latest` read into a pin, and the lent forms into
+  a pin the session keeps, so neither copies the row; digres's
+  index, index-only and bitmap heap scans hold a pin ref each
+  and copy nothing (`../dg/WORKNOTE.md` step 263). Not yet:
+  the old row of an update or an erase, which sm1, sm2's
+  TOAST code, sm3's index maintenance and digres's
+  `keep_row()` still copy; the rest is `PIN.md` §8.
 
 - **A scan still pays for the whole row in two ways.** A
   sequential, an index, a bitmap heap, a TID and a sample scan

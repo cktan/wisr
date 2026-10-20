@@ -130,6 +130,21 @@ struct scan_t;
 /* A bulk load into one store (load_open). */
 struct loader_t;
 
+/* A pin: keeps one row read by sm1::read in memory (../PIN.md). */
+struct pin_t;
+
+/*
+ * A pin ref: what a read into a pin hands the caller, a plain
+ * value the caller keeps where it likes. It names a pin of the
+ * session's and the pin's generation when it was taken; once
+ * the pin is released the ref is stale, and a stale ref names
+ * nothing. A ref of zeros names no pin.
+ */
+struct pin_ref_t {
+    pin_t*   pin = nullptr;
+    uint64_t gen = 0;
+};
+
 /*
  * Isolation levels.
  *
@@ -595,6 +610,11 @@ int trylock(session_t* session, locktype_t type, uint64_t storeid,
  */
 int read_latest(session_t* session, uint64_t storeid,
                 std::string_view key, std::string_view& data);
+
+/* sm1::read_latest into a pin, as sm1::read into one. */
+int read_latest(session_t* session, uint64_t storeid,
+                std::string_view key, pin_ref_t& ref,
+                std::string_view& data);
 
 /*
  * Begin a statement: read committed then reads every row of
@@ -1092,6 +1112,44 @@ int erase(session_t* session, uint64_t storeid,
  */
 int read(session_t* session, uint64_t storeid,
          std::string_view key, std::string_view& data);
+
+/*
+ * Read one key into a pin: as sm1::read, but the row is not
+ * copied. The session keeps it in memory in one of its pins,
+ * and ref is set to that pin; data views the row until the pin
+ * is released, which happens at the first of:
+ *
+ *   - the next read into the same ref;
+ *   - sm1::unpin(ref);
+ *   - sm1::release_all_pins(session);
+ *   - the end of the session's transaction: its commit, abort
+ *     or prepare.
+ *
+ * A rollback to a savepoint releases no pin: the row was read
+ * already, and only the caller knows whether it still wants
+ * it. Neither does the drop of the row's store.
+ *
+ * If ref names a pin still held, that pin is released first, so
+ * a caller reading into one ref holds one pin at most. On 1 or
+ * -1 ref is left naming no pin, and data empty.
+ */
+int read(session_t* session, uint64_t storeid,
+         std::string_view key, pin_ref_t& ref, std::string_view& data);
+
+/*
+ * Release the pin ref names, and set ref to name none. A stale
+ * ref, or one naming no pin, is left alone: unpinning twice is
+ * harmless.
+ */
+void unpin(pin_ref_t& ref);
+
+/*
+ * Release every pin the session holds, as the end of its
+ * transaction does, leaving the transaction open. For a caller
+ * that knows none of the rows it pinned is still wanted. Every
+ * ref to them is then stale.
+ */
+void release_all_pins(session_t* session);
 
 /*
  * Open a cursor over the keys of storeid in ascending bytewise

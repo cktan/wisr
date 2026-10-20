@@ -983,6 +983,18 @@ int tbl_read_latest(table_t *table, uint64_t rowno, std::string_view &tuple) {
   return sm2::rel_read_latest(table->rel, rowno, tuple);
 }
 
+/* Read the row at rowno into the pin ref names. */
+int tbl_read(table_t *table, uint64_t rowno, sm1::pin_ref_t &ref,
+             std::string_view &tuple) {
+  return sm2::rel_read(table->rel, rowno, ref, tuple);
+}
+
+/* Read the newest committed version of the row at rowno into a pin. */
+int tbl_read_latest(table_t *table, uint64_t rowno, sm1::pin_ref_t &ref,
+                    std::string_view &tuple) {
+  return sm2::rel_read_latest(table->rel, rowno, ref, tuple);
+}
+
 /* Lock the row at rowno without writing it; see sm3.h. */
 int tbl_lock(table_t *table, uint64_t rowno, sm1::lockmode_t mode) {
   // Only a shared lock sits under a table opened to read.

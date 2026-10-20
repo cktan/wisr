@@ -25,9 +25,9 @@ Paths are relative to `sm/`; digres's are under `../dg/`.
   caller a pin ref, a plain value; the caller never holds sm's
   memory, and sm never touches the caller's.
 - **A pin is released** by the next read into the same ref,
-  by an unpin, by a release of all the session's pins, at the
-  end of the transaction, or when its store is dropped. Never
-  at a rollback to a savepoint.
+  by an unpin, by a release of all the session's pins, or at
+  the end of the transaction. Never at a rollback to a
+  savepoint, nor when its store is dropped.
 - **A generation on each pin** makes a stale ref harmless, so
   digres needs no ResourceOwner and no memory context
   callback: a ref it loses on an error is left behind, and
@@ -155,8 +155,8 @@ the first of:
 1. the next read into the same ref;
 2. `sm1::unpin(ref)`;
 3. `sm1::release_all_pins(session)`;
-4. the end of the session's transaction, commit or abort;
-5. the drop of the pin's store (§4.4).
+4. the end of the session's transaction, commit, abort or
+   prepare, or the session's close.
 
 ### 4.2 Releasing a pin
 
@@ -228,15 +228,21 @@ and its iterator still holds the bytes, so the rollback has no
 reason to release it. Whether the row is still wanted only the
 caller knows.
 
-### 4.4 A dropped store releases its pins
+### 4.4 A dropped store keeps its pins
 
 A rollback to a savepoint drops the column families created
-after its mark (`sm1/src/xct.cc`), and commit drops those of
-the stores dropped in the transaction. An iterator must not
-outlive its column family's handle, so sm releases the pins
-on a store before it drops it. At commit and at abort every
-pin is released first anyway; at a savepoint only those on
-the stores it drops.
+after its mark (`sm1/src/xct.cc`), and the garbage collector
+drops those of the stores whose drop has committed, in any
+session's. Neither releases a pin. RocksDB keeps a column
+family's data while an iterator holds it: the iterator's
+SuperVersion holds a reference on it, which outlives both
+`DropColumnFamily` and `DestroyColumnFamilyHandle`. So a
+pinned row stays readable after its store is gone, until its
+pin is released, and its files stay on disk until then.
+Releasing first was considered, and dropped: a session could
+release only its own pins, not those another session holds on
+a store the collector drops. `test_pin.cc` reads a pinned row
+after its store is dropped, under the address sanitizer too.
 
 ### 4.5 The lending form, and cursors
 
@@ -268,7 +274,6 @@ struct pin_ref_t {
 struct pin_t {
   std::unique_ptr<rocksdb::Iterator> it; /* found the row; null when free */
   rocksdb::Slice row;                    /* the row's bytes, in a block it holds */
-  uint64_t storeid = 0;                  /* for releasing on a store's drop */
   uint64_t gen = 1;                      /* increased on each release */
   sm1::session_t *session = nullptr;     /* whose pool it is in */
   pin_t *prev = nullptr;                 /* in the session's held list, */
@@ -288,18 +293,15 @@ What each operation does to them:
   ref check it first.
 - **Take**, a read into `ref`: if `ref` is not stale, its pin
   is released first. A pin is popped from `pins_free`, or
-  made and appended to `pins` if none is free; its `it`,
-  `row` and `storeid` are set, it is linked into
-  `pins_held`, and `ref` becomes `{pin, pin->gen}`.
+  made and appended to `pins` if none is free; its `it` and
+  `row` are set, it is linked into `pins_held`, and `ref`
+  becomes `{pin, pin->gen}`.
 - **Release**: `it` is reset, `row` cleared and `gen`
   increased; the pin is unlinked from `pins_held` and pushed
   onto `pins_free`. Every ref to it is now stale.
 - **`sm1::release_all_pins`, and the end of the
   transaction**, release every pin on `pins_held`, which then
   is empty, and every pin is on `pins_free`.
-- **A store's drop** walks `pins_held` and releases the pins
-  whose `storeid` is the store's. The list is as long as the
-  rows pinned at that moment.
 - **The session's close** frees every pin, through `pins`.
   Until then no pin is freed, so `ref.pin` always points to a
   pin, held or free.
@@ -319,6 +321,62 @@ Why it is laid out so:
   matches a pin.
 - **The C wrapper's `sm_pin_ref_t`** is the same two words,
   `{void *pin; uint64_t gen;}`, opaque to digres.
+
+### 4.7 No content lock
+
+A PostgreSQL pin is only a count. Its shared and exclusive
+modes are those of the buffer's content lock, taken beside the
+pin, because a heap page changes in place: a writer sets a
+tuple's xmax, hint bits and line pointers under an exclusive
+lock, and a reader takes a shared one so as not to see them
+half-written. Its cleanup lock, for pruning and VACUUM, waits
+until it holds the page's only pin, as it moves tuples whose
+addresses other pins hold; a cursor left on a page blocks it.
+
+sm needs neither, as nothing changes a row's bytes once
+written:
+
+- **A write adds a version.** Every write is a new key put
+  with `rdb->Put` (`sm1/src/access.cc`); sm1 has no write
+  batch, so even a transaction's own rows are memtable
+  entries already.
+- **RocksDB changes nothing in place.** A memtable's entries
+  are in an append-only arena, and an SST file's blocks are
+  never written again. `inplace_update_support`, the one
+  exception, is off: sm does not set it, and it defaults to
+  false.
+- **Nothing moves a row.** Compaction writes new files, and
+  does not wait for a reader; the pinned iterator's
+  SuperVersion keeps the old memtable and files, as it keeps a
+  dropped store's (§4.4).
+- **A reader sees only whole rows**, so it has nothing to
+  wait on a writer for, nor a writer on it.
+
+What a held pin costs is space, not a wait (§7):
+
+- **Memory.** A memtable stays in memory after its flush,
+  while a SuperVersion holds it. It does not hold writes up:
+  RocksDB stops writes only when the column family has
+  `max_write_buffer_number` memtables not yet flushed
+  (`GetWriteStallConditionAndCause`, `db/column_family.cc`),
+  and the pin holds a flushed one. Nor does a pin on the
+  active memtable hold them up, as inserts go on beside its
+  iterator. The exception would be a write buffer manager,
+  a memory limit shared across column families, which sm does
+  not set: sm1 opens with the default options
+  (`sm1/src/db.cc`), so `db_write_buffer_size` is 0 and the
+  manager is off. Were one set, as every store being a column
+  family may one day call for, a held memtable's memory would
+  count against it until `~MemTable` runs. That brings flushes
+  early, and so more L0 files and maybe an L0 stall, or, with
+  `allow_stall`, stalls writes outright. A long-held pin would
+  then slow writes, and the release at the end of a statement
+  (§8 step 8) would matter more.
+- **Disk.** The files a compaction replaced are deleted only
+  when the last iterator on them goes.
+- **The block cache.** A block a pin holds is not evicted; as
+  `strict_capacity_limit` is false by default, the cache grows
+  past its capacity rather than failing.
 
 ---
 
@@ -359,7 +417,6 @@ Why it is laid out so:
 - **The end of the transaction** releases the pins still
   held, where `xct_end_scans()` closes the cursors: at
   commit, at abort and in `discard()`.
-- **Dropping a store** releases its pins first (§4.4).
 - **`scan_next` lends its row** (`NEXT.md`): it returns on
   the visible version and steps past the key's older ones at
   the next call, so the row is a view into the iterator's
@@ -392,16 +449,26 @@ Why it is laid out so:
 
 ### 6.4 digres
 
-- **A slot holds a pin ref.** A virtual slot with an
-  `sm_pin_ref_t`, whose clear unpins it and whose materialize
-  copies, then unpins, as PostgreSQL's buffer heap slot does
-  with its buffer. sm tables' slot callbacks return it.
-- **Nothing on an error.** A slot freed by an error leaves its
+- **A scan holds a pin ref.** An index scan, an index-only
+  scan and a bitmap heap scan's fetch keep one `sm_pin_ref_t`
+  in their `smstore_scan_t`, which each row they read by rowno
+  is read into, and the scan's end unpins. Its slot's values
+  point into the row until the scan reads its next: the
+  lifetime a cursor's row has, which the executor already
+  keeps to, as a scan's slot is overwritten at its next
+  fetch. No new kind of slot. A slot that holds the ref, with
+  a `TupleTableSlotOps` of its own whose clear unpins it, was
+  considered: it would cover `smstore_fetch_row()` too, but
+  every slot of an sm table would change kind.
+- **Nothing on an error.** A scan freed by an error leaves its
   ref behind; the pin is released at the end of the
   transaction (§4.1). No ResourceOwner kind, no callback.
-- **`read_row()` stops materializing.** Removes C from the
-  index scan, the bitmap heap scan, the TID scan, the fetch of
-  a write's target, and `entry_from_row()`'s.
+- **`read_row()` stops materializing** when its caller has a
+  scan, and so a ref. Removes C from the index scan, the
+  bitmap heap scan, and `entry_from_row()`'s. A TID scan, the
+  fetch of a write's target and a recheck have no scan, and
+  still read lent and copy once: B is gone from them, as the
+  lent read is a pin of the session's.
 - **`keep_row()` keeps a pin ref, not a `memcpy`**, for the
   statement: the deleted row for RETURNING and the newest
   version for a recheck.
@@ -450,13 +517,14 @@ at their commit.
 |---|---|---|
 | Sequential, sample | — | 0 |
 | Index, bitmap heap | 0 | 0 |
-| TID, a write's target, a recheck | — | 0 |
+| TID, a write's target, a recheck | — | 1, the slot's copy |
 | Index-only | key columns 1, INCLUDE 0 | — |
 | DELETE's old row | — | 0 |
 
-The one left is the index-only scan's unescaping of a key,
-which PostgreSQL's btree matches with its copy into
-`currTuples`.
+Left are the index-only scan's unescaping of a key, which
+PostgreSQL's btree matches with its copy into `currTuples`,
+and the one copy of a read by rowno that has no scan to hold
+its ref (§6.4).
 
 ---
 
@@ -477,9 +545,21 @@ which PostgreSQL's btree matches with its copy into
   that statement ends, cursor or none. Either case, if seen,
   is met by a ref marked as the statement's, which a rollback
   to a savepoint releases: an addition, not a change to §4.
+- **A cursor opened inside a savepoint is closed by a rollback
+  to it**, and that is sm1's rule for cursors, not pins
+  (`sm1/src/xct.cc`). An outer SQL cursor over a nested loop,
+  fetched inside a savepoint, may rescan its inner index scan
+  there, which opens a new sm cursor; after `ROLLBACK TO` its
+  next FETCH fails, where PostgreSQL goes on. So digres cannot
+  yet hold a join's outer row read by rowno after a mark across
+  a rollback to it: `../dg/test/slt/point_read.test` fetches
+  the first row before the savepoint for that reason.
 - **A held pin holds a SuperVersion.** A cursor left open for
-  hours keeps the files its rows are in; PostgreSQL's pin
-  keeps a page, which is cheaper.
+  hours keeps the memtables and files its rows are in (§4.7);
+  PostgreSQL's pin keeps a page, which is cheaper, but blocks
+  VACUUM on it. A session idle in a transaction with a cursor
+  open is the case to watch; the release at the end of a
+  statement (§8 step 8) limits the rest to the open scans.
 - **The lent cursor row touches SSI.** `last_examined`
   narrows the SIREAD range at the cursor's close; returning
   before the older versions are stepped past moves where it
@@ -493,12 +573,18 @@ which PostgreSQL's btree matches with its copy into
    over the session's ref; sm1's tests unchanged, and new ones
    for two rows pinned at once, a stale ref, a ref across a
    transaction's end, and a pin on a store a rollback to a
-   savepoint drops.
-2. **sm2, sm3 and the wrapper** pass the ref through;
-   `tbl_delete` drops its copy.
-3. **digres's slot**; `read_row()` and `keep_row()` stop
-   copying. The cursor and savepoint case of §5 as a
-   regression test.
-4. **The decimal slot.**
-5. **The index-only scan's key decoding.**
-6. **`scan_next` lends its row**, with the SSI change.
+   savepoint drops. *Built.*
+2. **sm2, sm3 and the wrapper** pass the ref through for a
+   point read. *Built.*
+3. **digres's scans** hold a ref; `read_row()` stops copying
+   for them. The cursor and savepoint case of §5 as a
+   regression test, in `../dg/test/slt/point_read.test`.
+   *Built.*
+4. **The old row of a write** in a ref: sm1's `update` and
+   `erase`, sm2's `rel->old` copy, `tbl_update` and
+   `tbl_delete`'s copies, and `keep_row()`.
+5. **The decimal slot.**
+6. **The index-only scan's key decoding.**
+7. **`scan_next` lends its row**, with the SSI change.
+8. **`sm_release_all_pins()` at the end of a statement**,
+   with the open cursor check of §6.4.

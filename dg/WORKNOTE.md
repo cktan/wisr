@@ -7622,3 +7622,33 @@ row, inside `table_multi_insert()`.
 - A million-row COPY takes as long, into an empty table and a
   table with rows, within a few percent.
 - `test/server.sh`, "a write of a taken key", checks the line.
+
+## Step 263: a row read by rowno is pinned, not copied
+
+A row an index scan, an index-only scan or a bitmap heap scan
+read by its rowno was copied twice: sm copied it into the
+session's buffer, and `read_row()` copied its columns passed
+by reference into the slot (step 161), as the buffer lasted
+only until sm's next call. sm now reads a row into a pin,
+which keeps it in memory where RocksDB has it
+(`../sm/PIN.md`).
+
+- **Each of those scans holds a pin ref** in its
+  `smstore_scan_t`, which every row it reads by rowno is read
+  into: `read_row()` with a ref, and `entry_from_row()`. The
+  slot's values point into the pinned row until the scan
+  reads its next, as a cursor's row lasts, and
+  `smstore_endscan()` unpins it. Neither copy is left.
+- **A read with no scan** (a TID scan, the fetch of a write's
+  target, a recheck, the rows of a duplicate's message) still
+  reads lent and copies into the slot: sm's own copy is gone
+  from it, as a lent read is now a pin the session keeps.
+- **Nothing on an error**: a scan an error frees leaves its
+  ref behind, and sm releases the pin at the end of the
+  transaction. sm releases none at a rollback to a savepoint.
+- Left for later: the old row of an update or a delete, which
+  sm2, sm3 and `keep_row()` still copy, and releasing every
+  pin at the end of a statement (`../sm/PIN.md` §8).
+- `test/slt/point_read.test` fetches from a cursor over a
+  nested loop of index scans across a rollback to a
+  savepoint, its outer row held from one FETCH to the next.

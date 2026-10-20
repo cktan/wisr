@@ -401,6 +401,13 @@ int rel_read(rel_t *rel, uint64_t rowno, std::string_view &tuple) {
                    tuple);
 }
 
+/* Read the row at rowno into the pin ref names. */
+int rel_read(rel_t *rel, uint64_t rowno, sm1::pin_ref_t &ref,
+             std::string_view &tuple) {
+  return sm1::read(rel->session, rel->storeid, row_key(rel->relid, rowno), ref,
+                   tuple);
+}
+
 /* Lock the row at rowno in mode, without writing it. */
 int rel_lock(rel_t *rel, uint64_t rowno, sm1::lockmode_t mode) {
   // Held to the end of the transaction, as a write's lock is.
@@ -419,6 +426,13 @@ int rel_trylock(rel_t *rel, uint64_t rowno, sm1::lockmode_t mode) {
 int rel_read_latest(rel_t *rel, uint64_t rowno, std::string_view &tuple) {
   return sm1::read_latest(rel->session, rel->storeid,
                           row_key(rel->relid, rowno), tuple);
+}
+
+/* Read the newest committed version of the row at rowno into a pin. */
+int rel_read_latest(rel_t *rel, uint64_t rowno, sm1::pin_ref_t &ref,
+                    std::string_view &tuple) {
+  return sm1::read_latest(rel->session, rel->storeid,
+                          row_key(rel->relid, rowno), ref, tuple);
 }
 
 /* Replace the row at rowno with an already-encoded tuple; see sm2.h. */

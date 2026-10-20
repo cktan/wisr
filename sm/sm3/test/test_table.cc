@@ -786,6 +786,44 @@ TEST_CASE("an inserter that began before its rival committed, at every level") {
   }
 }
 
+TEST_CASE("a row read into a pin outlives other calls on its session") {
+  // Verify how long a row read into a pin is good for (include/sm.h).
+  // 1. Three rows are committed.
+  // 2. Rows 1 and 2 are read, each into a pin ref of its own.
+  // 3. The session reads row 3 lent, inserts a row and updates row 3.
+  // 4. Both pinned rows still read as they did, from the same bytes.
+  // 5. Unpinning one leaves the other.
+  jobs_t f;
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  uint64_t r1 = put(t, 1, "free", "a");
+  uint64_t r2 = put(t, 2, "taken", "b");
+  uint64_t r3 = put(t, 3, "free", "c");
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+
+  start(f.a);
+  t = f.write(f.a);
+  sm1::pin_ref_t p1, p2;
+  std::string_view one, two;
+  REQUIRE(sm3::tbl_read(t, r1, p1, one) == 0);
+  REQUIRE(sm3::tbl_read(t, r2, p2, two) == 0);
+  const char *was = one.data();
+
+  CHECK(get(t, r3) == "3|free|c");
+  put(t, 4, "free", "d");
+  REQUIRE(set(t, r3, 3, "taken", "c") == 0);
+
+  CHECK(show(t, one) == "1|free|a");
+  CHECK(one.data() == was);
+  CHECK(show(t, two) == "2|taken|b");
+  sm1::unpin(p1);
+  CHECK(show(t, two) == "2|taken|b");
+  sm1::unpin(p2);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+}
+
 TEST_CASE("a scanned row outlives other calls on its session") {
   // Verify how long a cursor's row is good for (include/sm.h).
   // 1. Three rows are committed. A cursor over the heap is opened,

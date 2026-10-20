@@ -34,6 +34,10 @@
  *         side of a join, a heap fetch and an insert.
  *       - from a point read (sm_tbl_read, sm_tbl_read_latest),
  *         until the next call on the same session.
+ *       - from a point read into a pin ref, until the pin is
+ *         released: by the next read into the same ref, by
+ *         sm_unpin, by sm_release_all_pins, or at the end of the
+ *         session's transaction. Nothing else releases it.
  *     What sm_tbl_deform and sm_tbl_idx_deform hand out points
  *     into the row given to them, and lasts as long as it does.
  *   - Anything else handed out is the caller's own: a list is a
@@ -210,6 +214,31 @@ int sm_abort(sm_session_t* session);
  * never calls it sees all its own writes, call by call.
  */
 int sm_stmt_begin(sm_session_t* session);
+
+/*
+ * A pin ref: what a point read into a pin hands back, naming the
+ * pin the session keeps the row in and the pin's generation. A
+ * plain value, zero for none, which the caller keeps where it
+ * likes and never frees; once its pin is released it is stale,
+ * and names nothing (../PIN.md).
+ */
+typedef struct sm_pin_ref_t {
+    void*    pin;
+    uint64_t gen;
+} sm_pin_ref_t;
+
+/*
+ * Release the pin *ref names, if it is still held, and zero *ref.
+ * A stale ref, or a zero one, is left alone.
+ */
+void sm_unpin(sm_pin_ref_t* ref);
+
+/*
+ * Release every pin the session holds, as the end of its
+ * transaction does, leaving the transaction open: every ref to
+ * them is stale afterwards.
+ */
+void sm_release_all_pins(sm_session_t* session);
 
 /* A statement put aside by sm_stmt_begin_inner: opaque. */
 typedef struct sm_stmt_t sm_stmt_t;
@@ -1215,6 +1244,18 @@ int sm_tbl_read(sm_tbl_t* tbl, uint64_t rowno, const void** tuple,
  */
 int sm_tbl_read_latest(sm_tbl_t* tbl, uint64_t rowno, const void** tuple,
                        size_t* len);
+
+/*
+ * sm_tbl_read into a pin, with no copy: the tuple is valid until
+ * the pin *ref then names is released. A pin *ref names already
+ * is released first; on 1 or -1 *ref is zero.
+ */
+int sm_tbl_read(sm_tbl_t* tbl, uint64_t rowno, sm_pin_ref_t* ref,
+                const void** tuple, size_t* len);
+
+/* sm_tbl_read_latest into a pin, as sm_tbl_read into one. */
+int sm_tbl_read_latest(sm_tbl_t* tbl, uint64_t rowno, sm_pin_ref_t* ref,
+                       const void** tuple, size_t* len);
 
 /*
  * Lock the row at rowno in mode without writing it, to the end of
