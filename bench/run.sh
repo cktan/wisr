@@ -107,14 +107,19 @@ measure() {
     sql -c 'analyze' || exit 1
   fi
   : > "$out"
-  local index_only="set enable_seqscan = off; set enable_bitmapscan = off;"
-  grep -v '^#' sql/queries.txt | while IFS='|' read -r name table query; do
-    local set="" a=1 times=()
-    [ "$name" = q6 ] && set=$index_only
-    # The plan's scan, as a check that it is the one the query names.
+  grep -v '^#' sql/queries.txt | while IFS='|' read -r name table scan query; do
+    local set a=1 times=()
+    # The plan the query is to have: only sequential scans, or only index.
+    if [ "$scan" = seq ]; then
+      set="set enable_indexscan = off; set enable_indexonlyscan = off;
+        set enable_bitmapscan = off;"
+    else
+      set="set enable_seqscan = off; set enable_bitmapscan = off;"
+    fi
+    # The plan's scan node, for the report to show it is the one meant.
     local plan
     plan=$(sql -c "$set explain (costs off) ${query//:a/1}" | grep -m1 -o \
-      '\(Seq Scan\|Index Scan\|Index Only Scan\|Bitmap Heap Scan\) on [a-z_]*')
+      '[A-Z][A-Za-z ]*Scan\( using [a-z_]*\)\? on [a-z_]*')
     for r in $(seq $((warm + runs))); do
       a=$(((r * 90001) % 990000 + 1))
       local t
@@ -152,7 +157,11 @@ report() {
   {
     echo "# bench run $stamp"
     echo
-    echo "- Machine: $(lscpu | sed -n 's/^Model name: *//p' | head -1)," \
+    local cpu
+    cpu=$(lscpu | sed -n 's/^Model name: *//p' | head -1)
+    [ -n "$cpu" ] && [ "$cpu" != - ] ||
+      cpu="$(uname -m), $(lscpu | sed -n 's/^Vendor ID: *//p' | head -1)"
+    echo "- Machine: $cpu," \
       "$(nproc) cores, $(free -g | awk '/^Mem:/ { print $2 }') GB," \
       "$(uname -sr)"
     echo "- digres: $(git -C "$here/.." rev-parse --short HEAD)," \
@@ -166,15 +175,20 @@ report() {
     echo "Execution time in ms, median (least-greatest); Q7 in" \
       "transactions a second."
     echo
-    echo "| Query | Table | PostgreSQL | digres | digres / PostgreSQL | Plan |"
-    echo "| --- | --- | --- | --- | --- | --- |"
+    echo "| Query | Table | PostgreSQL | digres | digres / PostgreSQL |" \
+      "Plan, PostgreSQL | Plan, digres |"
+    echo "| --- | --- | --- | --- | --- | --- | --- |"
     grep -v '^size' "$work/pg.results" | while IFS='|' read -r n t p plan; do
-      local d ratio
+      local d dplan ratio
       d=$(field "$work/dg.results" "$n" "$t" 3)
+      dplan=$(field "$work/dg.results" "$n" "$t" 4)
       ratio=$(awk -v p="${p%% *}" -v d="${d%% *}" \
         'BEGIN { if (p > 0) printf "%.2f", d / p }')
-      echo "| $n | $t | $p | $d | $ratio | $plan |"
+      echo "| $n | $t | $p | $d | $ratio | $plan | $dplan |"
     done
+    echo
+    echo "Sizes as each system reports them; digres's leaves out values" \
+      "stored out of line, which the data directory's size holds."
     echo
     echo "| Size | PostgreSQL | digres |"
     echo "| --- | --- | --- |"

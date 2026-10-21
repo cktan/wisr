@@ -64,8 +64,7 @@ static TupleTableSlot *SeqNext(SeqScanState *node) {
       ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                       errmsg("a table scan runs forwards only")));
     if (node->sm_scan == NULL)
-      node->sm_scan =
-          smstore_beginscan(node->ss.ss_currentRelation, node->sm_natts);
+      node->sm_scan = smstore_beginscan(node->ss.ss_currentRelation);
     return smstore_getnext(node->sm_scan, slot) ? slot : NULL;
   }
 
@@ -217,25 +216,18 @@ SeqScanState *ExecInitSeqScan(SeqScan *node, EState *estate, int eflags) {
       ExecOpenScanRelation(estate, node->scan.scanrelid, eflags);
 
   /* and create slot with the appropriate rowtype */
-  ExecInitScanTupleSlot(
-      estate, &scanstate->ss,
-      RelationGetDescr(scanstate->ss.ss_currentRelation),
-      RelationIsSm(scanstate->ss.ss_currentRelation)
-          ? &TTSOpsVirtual
-          : table_slot_callbacks(scanstate->ss.ss_currentRelation));
+  ExecInitScanTupleSlot(estate, &scanstate->ss,
+                        RelationGetDescr(scanstate->ss.ss_currentRelation),
+                        table_slot_callbacks(scanstate->ss.ss_currentRelation));
 
   /*
    * A scan of a table in sm begins as the plan does, not at its first row: a
    * cursor reads the rows there were when it was declared, by a scan that a
    * rollback to a savepoint set after it leaves open.
    */
-  if (RelationIsSm(scanstate->ss.ss_currentRelation)) {
-    scanstate->sm_natts =
-        smstore_scan_natts(&node->scan, scanstate->ss.ss_currentRelation);
-    if (!(eflags & EXEC_FLAG_EXPLAIN_ONLY))
-      scanstate->sm_scan = smstore_beginscan(scanstate->ss.ss_currentRelation,
-                                             scanstate->sm_natts);
-  }
+  if (RelationIsSm(scanstate->ss.ss_currentRelation) &&
+      !(eflags & EXEC_FLAG_EXPLAIN_ONLY))
+    scanstate->sm_scan = smstore_beginscan(scanstate->ss.ss_currentRelation);
 
   /*
    * Initialize result type and projection.

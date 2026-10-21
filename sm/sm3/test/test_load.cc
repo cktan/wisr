@@ -127,15 +127,15 @@ std::vector<uint64_t> add_rows(sm3::loader_t *l, int first, int last) {
 
 /* How many rows t's transaction sees in its heap. */
 size_t count(sm3::table_t *t) {
-  sm2::rel_scan_t *scan = nullptr;
+  sm3::scan_t *scan = nullptr;
   REQUIRE(sm3::tbl_scan(t, 0, UINT64_MAX, scan) == 0);
   size_t n = 0;
   uint64_t rowno;
   std::string_view tuple;
-  while (sm2::rel_scannxt(scan, rowno, tuple) == 0) {
+  while (sm3::tbl_scannxt(scan, rowno, tuple) == 0) {
     n++;
   }
-  sm2::rel_scanend(scan);
+  sm3::tbl_scanend(scan);
   return n;
 }
 

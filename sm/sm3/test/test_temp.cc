@@ -78,16 +78,16 @@ size_t count(sm3::session_t *s, uint64_t oid) {
   sm3::table_t *t = nullptr;
   REQUIRE_MESSAGE(sm3::tbl_open(s, oid, sm1::SM_LOCKMODE_IS, t) == 0,
                   sm1::errmsg());
-  sm2::rel_scan_t *scan = nullptr;
+  sm3::scan_t *scan = nullptr;
   REQUIRE(sm3::tbl_scan(t, 0, UINT64_MAX, scan) == 0);
   uint64_t rowno;
   std::string_view tuple;
   size_t n = 0;
   int rc;
-  while ((rc = sm2::rel_scannxt(scan, rowno, tuple)) == 0) {
+  while ((rc = sm3::tbl_scannxt(scan, rowno, tuple)) == 0) {
     n++;
   }
-  sm2::rel_scanend(scan);
+  sm3::tbl_scanend(scan);
   REQUIRE(rc == 1);
   sm3::tbl_close(t);
   return n;

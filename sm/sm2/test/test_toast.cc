@@ -380,9 +380,9 @@ TEST_CASE("an update keeps a datum it is given back, and erases one it "
 
   datums_t change({1, text_of(10000, 'y'), "b2"});
   std::string_view old;
-  sm1::pin_ref_t ref;
+  rawpin_ptr_t pin;
   REQUIRE_MESSAGE(
-      0 == sm2::rel_update(rel, rowno, change.d, change.null, ref, old),
+      0 == sm2::rel_update(rel, rowno, change.d, change.null, pin.get(), old),
       sm1::errmsg());
   CHECK(*held(old, 1) == ptr);
   tuple = read(rel, rowno);
@@ -410,8 +410,9 @@ TEST_CASE("a delete erases the row's datums, and hands back its tuple") {
   uint64_t rowno = insert(rel, {1, text_of(20000), text_of(10000)});
   CHECK(chunks(db, s) == 5);
   std::string_view old;
-  sm1::pin_ref_t ref;
-  REQUIRE_MESSAGE(0 == sm2::rel_delete(rel, rowno, ref, old), sm1::errmsg());
+  rawpin_ptr_t pin;
+  REQUIRE_MESSAGE(0 == sm2::rel_delete(rel, rowno, pin.get(), old),
+                  sm1::errmsg());
   CHECK(sm2::varlena_is_toast(*held(old, 1)));
   CHECK(sm2::varlena_is_toast(*held(old, 2)));
   std::string_view tuple;
@@ -439,9 +440,9 @@ TEST_CASE("a write with hold keeps the old datums until rel_release") {
   uint64_t rowno = insert(rel, {1, first, std::nullopt});
   datums_t change({1, second, std::nullopt});
   std::string_view old;
-  sm1::pin_ref_t ref;
-  REQUIRE(0 ==
-          sm2::rel_update(rel, rowno, change.d, change.null, ref, old, true));
+  rawpin_ptr_t pin;
+  REQUIRE(0 == sm2::rel_update(rel, rowno, change.d, change.null, pin.get(),
+                               old, true));
   std::string ptr = *held(old, 1), out;
   REQUIRE_MESSAGE(sm2::toast_fetch(rel, ptr, out) == 0, sm1::errmsg());
   CHECK(out == first);
@@ -450,7 +451,7 @@ TEST_CASE("a write with hold keeps the old datums until rel_release") {
   CHECK(chunks(db, s) == 2);
   CHECK(sm2::toast_fetch(rel, ptr, out) == -1);
 
-  REQUIRE(0 == sm2::rel_delete(rel, rowno, ref, old, true));
+  REQUIRE(0 == sm2::rel_delete(rel, rowno, pin.get(), old, true));
   ptr = *held(old, 1);
   REQUIRE(sm2::toast_fetch(rel, ptr, out) == 0);
   CHECK(out == second);

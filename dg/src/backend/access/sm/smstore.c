@@ -2223,8 +2223,6 @@ struct smstore_scan_t {
   sm_tbl_t *tbl;
   /* The table's oid, each row's tableoid, as WHERE CURRENT OF checks. */
   Oid relid;
-  /* A table or index scan's: the columns it reads of each row, the first. */
-  int natts;
   sm_rel_scan_t *cursor;
   sm_idx_scan_t *icursor;
   ScanKey keys;
@@ -2244,21 +2242,158 @@ struct smstore_scan_t {
   int row_natts;
   /*
    * An index or a fetch scan's pin on the row it read last by rowno, which
-   * its slot's values point into: released by the next read into it, the
-   * scan's end, or the transaction's (../sm/PIN.md).
+   * its slot holds: released by the next read into it, the scan's end, or
+   * the transaction's (../sm/ROW.md section 4).
    */
   sm_pin_ref_t ref;
   /*
    * smstore_scan_row()'s row read ahead, past the rowno it was asked for,
-   * kept for a later call: valid until the cursor's next call.  at_end once
-   * the cursor has none left.
+   * kept for a later call in the cursor's pin: valid until the cursor's next
+   * call.  at_end once the cursor has none left.
    */
   bool ahead;
   bool at_end;
   uint64_t ahead_rowno;
-  const void *ahead_tuple;
-  size_t ahead_len;
+  sm_pin_ref_t ahead_ref;
 };
+
+/*
+ * A slot holding a row of a table in sm (../sm/ROW.md section 6): the ref
+ * of the pin the row is in, deformed only as far as the executor reads it.
+ * With no ref it is a virtual slot, its columns filled by whoever stored
+ * them.  Not being virtual, it gets the executor's fetch steps
+ * (execExpr.c), so a scan's filter deforms the columns it reads, and its
+ * target list those it reads, of the rows the filter passes only.
+ */
+typedef struct SmRowTupleTableSlot {
+  VirtualTupleTableSlot base; /* what a virtual slot keeps */
+  sm_pin_ref_t ref;           /* the row's pin, or zero */
+} SmRowTupleTableSlot;
+
+/* The ref of the row slot holds, zero if none. */
+static sm_pin_ref_t &slot_ref(TupleTableSlot *slot) {
+  return ((SmRowTupleTableSlot *)slot)->ref;
+}
+
+/* Make a slot: nothing to set up, as a virtual one has none. */
+static void sm_row_init(TupleTableSlot *slot) { TTSOpsVirtual.init(slot); }
+
+/* Free what the slot owns, as a virtual one does. */
+static void sm_row_release(TupleTableSlot *slot) {
+  TTSOpsVirtual.release(slot);
+}
+
+/*
+ * Empty the slot.  Its row's ref goes, not the pin, which is the reader's:
+ * the scan's, or the index scan's ref.
+ */
+static void sm_row_clear(TupleTableSlot *slot) {
+  slot_ref(slot) = {};
+  TTSOpsVirtual.clear(slot);
+}
+
+/*
+ * Deform the slot's row up to column natts, from where it stopped; the
+ * columns before stay as they are.  A stale ref is an error: the row's pin
+ * was released while the slot still held it.
+ */
+static void sm_row_getsomeattrs(TupleTableSlot *slot, int natts) {
+  if (slot_ref(slot).pin == NULL) {
+    /* As a virtual slot, every column is filled already. */
+    TTSOpsVirtual.getsomeattrs(slot, natts);
+    return;
+  }
+  if (sm_pin_deform(slot_ref(slot), slot->tts_nvalid, natts,
+                    (sm_datum_t *)slot->tts_values, slot->tts_isnull) != 0)
+    sm_error("read a row");
+  slot->tts_nvalid = natts;
+}
+
+/* A system column: the executor serves the ones sm has (tuptable.h). */
+static Datum sm_row_getsysattr(TupleTableSlot *slot, int attnum,
+                               bool *isnull) {
+  return TTSOpsVirtual.getsysattr(slot, attnum, isnull);
+}
+
+/* Whether this transaction wrote the row: sm keeps no such thing. */
+static bool sm_row_is_current_xact_tuple(TupleTableSlot *slot) {
+  return TTSOpsVirtual.is_current_xact_tuple(slot);
+}
+
+/* Every column of the slot's row, deformed now if it holds a ref. */
+static void sm_row_deform_all(TupleTableSlot *slot) {
+  if (slot_ref(slot).pin != NULL)
+    slot_getallattrs(slot);
+}
+
+/*
+ * Make the slot independent of sm's memory: every column deformed, the ref
+ * dropped, and the values by reference copied into the slot's own memory,
+ * as a virtual slot materializes.
+ */
+static void sm_row_materialize(TupleTableSlot *slot) {
+  sm_row_deform_all(slot);
+  slot_ref(slot) = {};
+  TTSOpsVirtual.materialize(slot);
+}
+
+/* Copy src into dst, which then owns its values, as a virtual slot does. */
+static void sm_row_copyslot(TupleTableSlot *dst, TupleTableSlot *src) {
+  slot_ref(dst) = {};
+  TTSOpsVirtual.copyslot(dst, src);
+}
+
+/* The slot's row as a heap tuple of its own. */
+static HeapTuple sm_row_copy_heap_tuple(TupleTableSlot *slot) {
+  sm_row_deform_all(slot);
+  return TTSOpsVirtual.copy_heap_tuple(slot);
+}
+
+/* The slot's row as a minimal tuple of its own. */
+static MinimalTuple sm_row_copy_minimal_tuple(TupleTableSlot *slot,
+                                              Size extra) {
+  sm_row_deform_all(slot);
+  return TTSOpsVirtual.copy_minimal_tuple(slot, extra);
+}
+
+/* The slot type of a table in sm (smtable_slot_callbacks()). */
+const TupleTableSlotOps TTSOpsSmRow = {
+    .base_slot_size = sizeof(SmRowTupleTableSlot),
+    .init = sm_row_init,
+    .release = sm_row_release,
+    .clear = sm_row_clear,
+    .getsomeattrs = sm_row_getsomeattrs,
+    .getsysattr = sm_row_getsysattr,
+    .is_current_xact_tuple = sm_row_is_current_xact_tuple,
+    .materialize = sm_row_materialize,
+    .copyslot = sm_row_copyslot,
+    /* It holds no heap or minimal tuple of its own, as a virtual slot. */
+    .get_heap_tuple = NULL,
+    .get_minimal_tuple = NULL,
+    .copy_heap_tuple = sm_row_copy_heap_tuple,
+    .copy_minimal_tuple = sm_row_copy_minimal_tuple,
+};
+
+/*
+ * The row ref pins into slot, cleared, its tid its rowno.  A slot of sm's
+ * type keeps the ref, and deforms the row as the executor reads it; another
+ * is filled whole now, as a virtual tuple.  Either way a value by reference
+ * points into the row, and lasts as long as the pin.
+ */
+static void ref_into_slot(sm_pin_ref_t ref, uint64_t rowno,
+                          TupleTableSlot *slot) {
+  if (slot->tts_ops == &TTSOpsSmRow) {
+    slot_ref(slot) = ref;
+    slot->tts_flags &= ~TTS_FLAG_EMPTY;
+    slot->tts_nvalid = 0;
+  } else {
+    if (sm_pin_deform(ref, 0, slot->tts_tupleDescriptor->natts,
+                      (sm_datum_t *)slot->tts_values, slot->tts_isnull) != 0)
+      sm_error("read a row");
+    ExecStoreVirtualTuple(slot);
+  }
+  smstore_rowno_to_tid(rowno, &slot->tts_tid);
+}
 
 /*
  * The tuple of the row at rowno into slot, cleared, as a virtual tuple, its
@@ -2304,20 +2439,17 @@ static int attrs_natts(const Bitmapset *attrs, Relation rel) {
 }
 
 /*
- * The columns of each row of rel a scan of plan reads, from the first: up
- * to the last its target list and quals name, a bitmap heap scan's recheck
- * among them, or every one for a reference to the whole row.  Its
- * projection and quals fetch no more; a scan with no projection names every
- * column, as its target list is the table's.
+ * The columns of each row of rel a TID scan of plan reads, from the first:
+ * up to the last its target list and quals name, or every one for a
+ * reference to the whole row.  Its projection and quals fetch no more; a
+ * scan with no projection names every column, as its target list is the
+ * table's.  Other scans deform a row as they read it (TTSOpsSmRow).
  */
 int smstore_scan_natts(const Scan *plan, Relation rel) {
   Bitmapset *attrs = NULL;
 
   pull_varattnos((Node *)plan->plan.targetlist, plan->scanrelid, &attrs);
   pull_varattnos((Node *)plan->plan.qual, plan->scanrelid, &attrs);
-  if (IsA(plan, BitmapHeapScan))
-    pull_varattnos((Node *)((const BitmapHeapScan *)plan)->bitmapqualorig,
-                   plan->scanrelid, &attrs);
   return attrs_natts(attrs, rel);
 }
 
@@ -2333,10 +2465,10 @@ int smstore_expr_natts(Node *expr, Index varno, Relation rel) {
 }
 
 /*
- * Begin a scan of every row of rel, a table in sm, in rowno order, each
- * row's first natts columns read.
+ * Begin a scan of every row of rel, a table in sm, in rowno order, each row
+ * deformed as it is read.
  */
-smstore_scan_t *smstore_beginscan(Relation rel, int natts) {
+smstore_scan_t *smstore_beginscan(Relation rel) {
   sm_tbl_t *tbl = open_table(RelationGetRelid(rel), SM_LOCKMODE_IS);
   smstore_scan_t *scan;
 
@@ -2347,25 +2479,24 @@ smstore_scan_t *smstore_beginscan(Relation rel, int natts) {
   scan = (smstore_scan_t *)palloc0(sizeof(smstore_scan_t));
   scan->tbl = tbl;
   scan->relid = RelationGetRelid(rel);
-  scan->natts = natts;
   if (sm_tbl_scan(tbl, 0, UINT64_MAX, &scan->cursor) != 0)
     sm_error("scan a table");
   return scan;
 }
 
 /*
- * The scan's next row into slot, as a virtual tuple, its tid its rowno;
- * false at the end.  A value by reference points into sm's tuple, good
- * until the next row.
+ * The scan's next row into slot, by its pin's ref (ref_into_slot()), its
+ * tid its rowno; false at the end.  The ref, and a value by reference, is
+ * good until the next row.
  */
 bool smstore_getnext(smstore_scan_t *scan, TupleTableSlot *slot) {
   uint64_t rowno;
-  const void *tuple;
-  size_t len;
+  sm_pin_ref_t ref;
 
   ExecClearTuple(slot);
   slot->tts_tableOid = scan->relid;
-  switch (sm_rel_scannxt(scan->cursor, &rowno, &tuple, &len)) {
+  /* Into the cursor's pin, which its next row makes stale. */
+  switch (sm_rel_scannxt(scan->cursor, &rowno, &ref)) {
   case 0:
     break;
   case 1:
@@ -2373,7 +2504,7 @@ bool smstore_getnext(smstore_scan_t *scan, TupleTableSlot *slot) {
   default:
     sm_error("scan a table");
   }
-  tuple_into_slot(scan->tbl, rowno, tuple, len, scan->natts, slot);
+  ref_into_slot(ref, rowno, slot);
   return true;
 }
 
@@ -2401,8 +2532,7 @@ bool smstore_scan_row(smstore_scan_t *scan, uint64 rowno,
   ExecClearTuple(slot);
   slot->tts_tableOid = scan->relid;
   while (!scan->at_end && (!scan->ahead || scan->ahead_rowno < rowno)) {
-    switch (sm_rel_scannxt(scan->cursor, &scan->ahead_rowno, &scan->ahead_tuple,
-                           &scan->ahead_len)) {
+    switch (sm_rel_scannxt(scan->cursor, &scan->ahead_rowno, &scan->ahead_ref)) {
     case 0:
       scan->ahead = true;
       break;
@@ -2417,8 +2547,7 @@ bool smstore_scan_row(smstore_scan_t *scan, uint64 rowno,
   if (!scan->ahead || scan->ahead_rowno != rowno)
     return false;
   scan->ahead = false;
-  tuple_into_slot(scan->tbl, rowno, scan->ahead_tuple, scan->ahead_len,
-                  scan->natts, slot);
+  ref_into_slot(scan->ahead_ref, rowno, slot);
   return true;
 }
 
@@ -2452,7 +2581,7 @@ void smstore_endscan(smstore_scan_t *scan) {
  */
 static bool table_def_now(Oid oid, sm_table_def_t &out);
 static bool read_row(sm_tbl_t *tbl, uint64_t rowno, int natts,
-                     TupleTableSlot *slot, sm_pin_ref_t *ref = NULL);
+                     TupleTableSlot *slot);
 static void forget_table(Oid relid);
 
 /*
@@ -5285,11 +5414,53 @@ bool smstore_index_usable(Relation rel, Oid indexoid) {
   return tbl != NULL && sm_tbl_index_usable(tbl, indexoid);
 }
 
-/* Whether a scan key is a plain comparison with a value, usable as a bound. */
+/* Whether type is one of the integers, int2, int4 and int8. */
+static bool int_type(Oid type) {
+  return INT2OID == type || INT4OID == type || INT8OID == type;
+}
+
+/* The integer d, of the integer type type, widened. */
+static int64 int_value(Datum d, Oid type) {
+  if (INT2OID == type)
+    return DatumGetInt16(d);
+  if (INT4OID == type)
+    return DatumGetInt32(d);
+  return DatumGetInt64(d);
+}
+
+/*
+ * A key of an integer type other than its column's, an int4 constant on an
+ * int8 column, as most are: its value as a datum of the column's type, which
+ * an index bound takes; false if the value does not fit it.
+ */
+static bool int_key_datum(ScanKey key, Oid coltype, Datum *out) {
+  int64 v = int_value(key->sk_argument, key->sk_subtype);
+
+  if (INT2OID == coltype && (v < PG_INT16_MIN || v > PG_INT16_MAX))
+    return false;
+  if (INT4OID == coltype && (v < PG_INT32_MIN || v > PG_INT32_MAX))
+    return false;
+  *out = INT2OID == coltype   ? Int16GetDatum((int16)v)
+         : INT4OID == coltype ? Int32GetDatum((int32)v)
+                              : Int64GetDatum(v);
+  return true;
+}
+
+/*
+ * Whether a scan key is a plain comparison with a value, usable as a bound:
+ * of the column's type, or an integer of another integer type that the
+ * column's holds.  The others are checked of each row alone (keys_met()).
+ */
 static bool plain_key(ScanKey key, Oid coltype) {
-  return (key->sk_flags & (SK_ISNULL | SK_ROW_HEADER | SK_SEARCHARRAY |
-                           SK_SEARCHNULL | SK_SEARCHNOTNULL)) == 0 &&
-         (key->sk_subtype == InvalidOid || key->sk_subtype == coltype);
+  Datum d;
+
+  if (0 != (key->sk_flags & (SK_ISNULL | SK_ROW_HEADER | SK_SEARCHARRAY |
+                             SK_SEARCHNULL | SK_SEARCHNOTNULL)))
+    return false;
+  if (InvalidOid == key->sk_subtype || coltype == key->sk_subtype)
+    return true;
+  return int_type(coltype) && int_type(key->sk_subtype) &&
+         int_key_datum(key, coltype, &d);
 }
 
 /*
@@ -5303,7 +5474,11 @@ static bool keys_met(smstore_scan_t *scan, TupleTableSlot *slot,
   for (int i = 0; i < scan->nkeys; i++) {
     ScanKey key = &scan->keys[i];
     int col = (index_shaped ? key->sk_attno : scan->keycols[i]) - 1;
-    bool isnull = slot->tts_isnull[col];
+    bool isnull;
+
+    /* A row's slot deforms as it is read: up to the key's column. */
+    slot_getsomeattrs(slot, col + 1);
+    isnull = slot->tts_isnull[col];
 
     if (key->sk_flags & SK_SEARCHNULL) {
       if (!isnull)
@@ -5327,15 +5502,15 @@ static bool keys_met(smstore_scan_t *scan, TupleTableSlot *slot,
 
 /*
  * Begin a scan of index, a btree of heap, a table in sm, for the rows that
- * meet keys: btree scan keys on the index's columns, each row's first natts
- * columns read, and the keys' columns.  Equal keys on its
+ * meet keys: btree scan keys on the index's columns, each row deformed as it
+ * is read.  Equal keys on its
  * leading columns are a prefix both bounds share; the next column's ranges
  * bound it below and above, in the index's own order, so a DESC column's
  * upper value is its lower bound.  Every row read is checked against every
  * key, so a key that bounds nothing still holds.
  */
 smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
-                                        ScanKey keys, int nkeys, int natts) {
+                                        ScanKey keys, int nkeys) {
   sm_tbl_t *tbl = open_table(RelationGetRelid(heap), SM_LOCKMODE_IS);
   Form_pg_index form = index->rd_index;
   int ncols = form->indnkeyatts;
@@ -5361,8 +5536,16 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
     bool desc = (index->rd_indoption[c] & INDOPTION_DESC) != 0;
     ScanKey eq = NULL, below = NULL, above = NULL;
     Form_pg_attribute att = TupleDescAttr(RelationGetDescr(index), c);
-    /* A key's datum as sm takes it: a numeric's integer at the scale. */
+    /*
+     * A key's datum as sm takes it: a numeric's integer at the scale, an
+     * integer of another integer type the column's (plain_key()).
+     */
     auto bound = [&](ScanKey key, bool upper) {
+      Datum d;
+
+      if (OidIsValid(key->sk_subtype) && coltype != key->sk_subtype &&
+          int_type(coltype) && int_key_datum(key, coltype, &d))
+        return (sm_datum_t)d;
       if (!is_decimal(att->atttypid))
         return (sm_datum_t)key->sk_argument;
       return numeric_bound(key->sk_argument,
@@ -5431,12 +5614,9 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
   scan->form = form;
   scan->row_natts = RelationGetDescr(heap)->natts;
   scan->keycols = (AttrNumber *)palloc(Max(nkeys, 1) * sizeof(AttrNumber));
-  scan->natts = natts;
-  for (int i = 0; i < nkeys; i++) {
+  /* Each row is checked against every key (keys_met()). */
+  for (int i = 0; i < nkeys; i++)
     scan->keycols[i] = form->indkey.values[keys[i].sk_attno - 1];
-    /* Each row is checked against every key (keys_met()). */
-    scan->natts = Max(scan->natts, scan->keycols[i]);
-  }
   if (sm_tbl_idx_scan(tbl, RelationGetRelid(index), lo.n > 0 ? &lo : NULL,
                       hi.n > 0 ? &hi : NULL, NULL, &scan->icursor) != 0)
     sm_error("scan an index");
@@ -5444,20 +5624,43 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
 }
 
 /*
- * The row at rowno, as this transaction sees it, into slot, as a virtual
- * tuple of its first natts columns, its tid its rowno; false, the slot
- * empty, if it sees none.  With ref, the row is read into the pin it names,
- * and the slot's values point into it until the pin is released; without,
- * the slot keeps a copy.
+ * The row at rowno, as this transaction sees it, read into the pin ref
+ * names, and into slot by the ref (ref_into_slot()), its tid its rowno;
+ * false, the slot empty, if it sees none.  A pinned row lasts until the
+ * scan reads its next, as a cursor's row does.
  */
-static bool read_row(sm_tbl_t *tbl, uint64_t rowno, int natts,
-                     TupleTableSlot *slot, sm_pin_ref_t *ref) {
+static bool pin_row(sm_tbl_t *tbl, uint64_t rowno, TupleTableSlot *slot,
+                    sm_pin_ref_t *ref) {
   const void *tuple;
   size_t len;
 
   ExecClearTuple(slot);
-  switch (ref ? sm_tbl_read(tbl, rowno, ref, &tuple, &len)
-              : sm_tbl_read(tbl, rowno, &tuple, &len)) {
+  switch (sm_tbl_read(tbl, rowno, ref, &tuple, &len)) {
+  case 0:
+    break;
+  case 1:
+    return false;
+  default:
+    sm_error("read a row");
+  }
+  ref_into_slot(*ref, rowno, slot);
+  return true;
+}
+
+/*
+ * The row at rowno, as this transaction sees it, into slot, as a virtual
+ * tuple of its first natts columns, its tid its rowno; false, the slot
+ * empty, if it sees none.  The row is lent only until the session's next
+ * call to sm, which another scan in the statement makes, as a join's inner
+ * side does: the slot keeps a copy.
+ */
+static bool read_row(sm_tbl_t *tbl, uint64_t rowno, int natts,
+                     TupleTableSlot *slot) {
+  const void *tuple;
+  size_t len;
+
+  ExecClearTuple(slot);
+  switch (sm_tbl_read(tbl, rowno, &tuple, &len)) {
   case 0:
     break;
   case 1:
@@ -5466,20 +5669,13 @@ static bool read_row(sm_tbl_t *tbl, uint64_t rowno, int natts,
     sm_error("read a row");
   }
   tuple_into_slot(tbl, rowno, tuple, len, natts, slot);
-  /*
-   * A pinned row lasts until the scan reads its next, as a cursor's row
-   * does.  A lent one only until the session's next call to sm, which
-   * another scan in the statement makes, as a join's inner side does: the
-   * slot keeps a copy.
-   */
-  if (ref == NULL)
-    ExecMaterializeSlot(slot);
+  ExecMaterializeSlot(slot);
   return true;
 }
 
 /*
- * The index scan's next row that meets its keys into slot, as a virtual
- * tuple, its tid its rowno; false at the end.
+ * The index scan's next row that meets its keys into slot, by its pin
+ * (pin_row()), its tid its rowno; false at the end.
  */
 bool smstore_index_getnext(smstore_scan_t *scan, TupleTableSlot *slot) {
   uint64 rowno;
@@ -5487,7 +5683,7 @@ bool smstore_index_getnext(smstore_scan_t *scan, TupleTableSlot *slot) {
   slot->tts_tableOid = scan->relid;
   while (smstore_index_getrowno(scan, &rowno))
     /* A row the transaction does not see is passed. */
-    if (read_row(scan->tbl, rowno, scan->natts, slot, &scan->ref) &&
+    if (pin_row(scan->tbl, rowno, slot, &scan->ref) &&
         keys_met(scan, slot, false))
       return true;
   ExecClearTuple(slot);
@@ -5616,9 +5812,9 @@ bool smstore_index_getentry(smstore_scan_t *scan, TupleTableSlot *slot) {
 
 /*
  * Begin reading rows of rel, a table in sm, by rowno (smstore_fetch()),
- * each row's first natts columns read.
+ * each row deformed as it is read.
  */
-smstore_scan_t *smstore_beginfetch(Relation rel, int natts) {
+smstore_scan_t *smstore_beginfetch(Relation rel) {
   sm_tbl_t *tbl = open_table(RelationGetRelid(rel), SM_LOCKMODE_IS);
   smstore_scan_t *scan;
 
@@ -5629,17 +5825,16 @@ smstore_scan_t *smstore_beginfetch(Relation rel, int natts) {
   scan = (smstore_scan_t *)palloc0(sizeof(smstore_scan_t));
   scan->tbl = tbl;
   scan->relid = RelationGetRelid(rel);
-  scan->natts = natts;
   return scan;
 }
 
 /*
- * The row at rowno into slot, as a virtual tuple of the scan's first natts
- * columns, its tid its rowno; false if the transaction sees none there.
+ * The row at rowno into slot, by the scan's pin (pin_row()), its tid its
+ * rowno; false if the transaction sees none there.
  */
 bool smstore_fetch(smstore_scan_t *scan, uint64 rowno, TupleTableSlot *slot) {
   slot->tts_tableOid = scan->relid;
-  return read_row(scan->tbl, rowno, scan->natts, slot, &scan->ref);
+  return pin_row(scan->tbl, rowno, slot, &scan->ref);
 }
 
 /* rel, a table in sm, opened to write in this transaction. */

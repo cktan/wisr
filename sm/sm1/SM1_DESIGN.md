@@ -798,11 +798,11 @@ paid a whole `sm1::read`, an iterator and a seek of its own,
 for something the write had in hand.
 
 The bytes are not copied: the iterator that found the version
-is kept in a pin (`../PIN.md`), in the session's own ref, the
+is kept in a raw pin (`../ROW.md` §2), the session's own, the
 one `sm1::read` uses, so either call invalidates what the
-other returned; or in a ref the caller gives, which keeps the
-row until the caller releases it. A write releases the row its
-ref held only once it has succeeded, as its new value may
+other returned; or one the caller gives, which keeps the row
+until the caller empties it. A write lets go of the row its
+pin held only once it has succeeded, as its new value may
 view that row.
 
 The value is only produced for a live version. A write that

@@ -367,6 +367,40 @@ int check_entry(const parsed_t &t, const sm2::tup_desc_t &desc, size_t i,
 }
 
 /*
+ * Attributes from to n - 1 of a parsed tuple, attribute from's
+ * entry at pos: put(i, datum) for each, datum as tup_decode's
+ * view gives it, and pos left past the last entry read. With
+ * check, each entry read is checked as tup_decode checks it;
+ * without, the caller has checked the whole tuple.
+ */
+template <class F>
+int read_each(const parsed_t &t, const sm2::tup_desc_t &desc, size_t from,
+              size_t n, size_t &pos, bool check, F &&put) {
+  const auto &schema = desc.schema;
+  for (size_t i = from; i < n; i++) {
+    // Past the row's attributes: the value it was added with.
+    if (i >= t.natts) {
+      const auto &m = schema[i].missing;
+      put(i, !schema[i].dropped && m ? std::optional(std::string_view(*m))
+                                     : std::nullopt);
+      continue;
+    }
+    if (t.nulls && bit(t.nulls, i)) {
+      put(i, std::nullopt);
+      continue;
+    }
+    if (check && check_entry(t, desc, i, pos) != 0) {
+      return -1;
+    }
+    std::string_view d = datum_at(t, desc, i, pos);
+    pos += entry_width(desc, i);
+    // A dropped attribute's old bytes are skipped.
+    put(i, schema[i].dropped ? std::nullopt : std::optional(d));
+  }
+  return 0;
+}
+
+/*
  * The first n attributes of a tuple, in one pass: put(i, datum)
  * for each, datum as tup_decode's view gives it. When n is every
  * attribute, the whole tuple is checked (parse), since the pass
@@ -379,34 +413,23 @@ int deform_each(const sm2::tup_desc_t &desc, std::string_view tuple, size_t n,
   if (check_desc(desc) != 0) {
     return -1;
   }
-  const auto &schema = desc.schema;
-  bool whole = n == schema.size();
+  bool whole = n == desc.schema.size();
   parsed_t t;
   if ((whole ? parse(desc, tuple, t) : parse_head(desc, tuple, t)) != 0) {
     return -1;
   }
   size_t pos = t.fixed;
-  for (size_t i = 0; i < n; i++) {
-    // Past the row's attributes: the value it was added with.
-    if (i >= t.natts) {
-      const auto &m = schema[i].missing;
-      put(i, !schema[i].dropped && m ? std::optional(std::string_view(*m))
-                                     : std::nullopt);
-      continue;
-    }
-    if (t.nulls && bit(t.nulls, i)) {
-      put(i, std::nullopt);
-      continue;
-    }
-    if (!whole && check_entry(t, desc, i, pos) != 0) {
-      return -1;
-    }
-    std::string_view d = datum_at(t, desc, i, pos);
-    pos += entry_width(desc, i);
-    // A dropped attribute's old bytes are skipped.
-    put(i, schema[i].dropped ? std::nullopt : std::optional(d));
+  return read_each(t, desc, 0, n, pos, !whole, put);
+}
+
+/* A datum view into datums[i] and isnull[i], as tup_deform stores it. */
+void put_datum(const sm2::attribute_t &attr, std::optional<std::string_view> d,
+               sm2::datum_t &datum, bool &isnull) {
+  isnull = !d;
+  datum = 0;
+  if (d) {
+    bytes_to_datum(attr, *d, datum);
   }
-  return 0;
 }
 
 /*
@@ -720,12 +743,47 @@ int tup_deform(const tup_desc_t &desc, std::string_view tuple,
   }
   return deform_each(desc, tuple, datums.size(),
                      [&](size_t i, std::optional<std::string_view> d) {
-                       isnull[i] = !d;
-                       datums[i] = 0;
-                       if (d) {
-                         bytes_to_datum(schema[i], *d, datums[i]);
-                       }
+                       put_datum(schema[i], d, datums[i], isnull[i]);
                      });
+}
+
+/* Parse tuple's header into r, at attribute 0; see sm2.h. */
+int tup_read_begin(const tup_desc_t &desc, std::string_view tuple,
+                   tup_reader_t &r) {
+  parsed_t t;
+  // Only the header and bitmap: each attribute is checked as it
+  // is read (../ROW.md §4.6).
+  if (check_desc(desc) != 0 || parse_head(desc, tuple, t) != 0) {
+    return -1;
+  }
+  r = tup_reader_t{&desc, tuple, t.nulls, t.natts, 0, t.fixed};
+  return 0;
+}
+
+/* Attributes r.next to n - 1 into datums and isnull; see sm2.h. */
+int tup_read(tup_reader_t &r, size_t n, std::span<datum_t> datums,
+             std::span<bool> isnull) {
+  if (!r.desc || n > r.desc->schema.size() || datums.size() < n ||
+      isnull.size() < n) {
+    return invalid("read: past the schema, or outputs too short");
+  }
+  const auto &schema = r.desc->schema;
+  parsed_t t;
+  t.tuple = r.tuple;
+  t.natts = r.natts;
+  t.nulls = r.nulls;
+  size_t pos = r.pos;
+  int rc = read_each(t, *r.desc, r.next, n, pos, true,
+                     [&](size_t i, std::optional<std::string_view> d) {
+                       put_datum(schema[i], d, datums[i], isnull[i]);
+                     });
+  // Only a read that succeeded moves on; a failed one may be
+  // retried, and fails the same way.
+  if (rc == 0 && n > r.next) {
+    r.next = n;
+    r.pos = pos;
+  }
+  return rc;
 }
 
 /* One attribute of a tuple, by ordinal, into val and isnull; see sm2.h. */

@@ -7935,3 +7935,62 @@ RocksDB, which it links, Ubuntu's, keeps its `assert()`s.
   the wrapper's), and the RocksDB it links, which the link
   step compiles in (`rocksdb_build.cc`): its version, and the
   system's or a static one, with its flags.
+
+## Step 274: an index scan keyed by another integer type is bounded
+
+`smstore_beginscan()` made an index bound only of a key of
+the column's own type. `WHERE id = 500000` on an `int8` column
+compares with an `int4` constant, by a cross-type operator, so
+the scan had no bound: it read every entry of the index, and
+for an index scan every row, and kept the one `keys_met()`
+passed. The benchmark of `../bench/` met it: a point read of
+a million rows took 5 seconds where PostgreSQL takes 2 ms.
+
+- **`plain_key()` takes an integer key of another integer
+  type**, `int2`, `int4` or `int8`, whose value the column's
+  type holds, and the bound is the value as a datum of the
+  column's type (`int_key_datum()`). A value it does not hold
+  is no bound, as before; every key is still checked of each
+  row, so a bound only narrows the scan.
+- `test/server.sh`: two SERIALIZABLE transactions read one key
+  each of an `int8` table by its index, with an `int4`
+  constant, and insert one far from the other's; both commit.
+  Without the bound each read's range was the whole index,
+  and the second failed with SQLSTATE 40001.
+
+## Step 275: a row is deformed as far as it is read
+
+A table in sm's slot was virtual: the executor compiles no
+fetch steps for one, so `tuple_into_slot()` deformed every
+column a plan might read before any was asked for, and a
+plan's physical target list asked for all of them. `count(*)`
+of a table of 50 columns spent a quarter of its time
+deforming columns nobody read (`../bench/`). sm's pin now
+deforms its row as far as it is read (`../sm/ROW.md`), and
+digres's slot holds the pin's ref.
+
+- **`TTSOpsSmRow`** (`smstore.c`): a virtual slot with the ref
+  of its row. `getsomeattrs()` deforms from `tts_nvalid` by
+  `sm_pin_deform()`; `materialize()`, `copyslot()` and the
+  tuple copies deform every column first, then do as a
+  virtual slot does. With no ref it is a virtual slot.
+- **The sequential, index, bitmap heap and sample scans store
+  the ref** (`ref_into_slot()`): a cursor's row by
+  `sm_rel_scannxt()`'s ref form, a row by rowno by
+  `pin_row()`. A lent copy, read by tid for a TID scan, an
+  update, a lock or RETURNING, is deformed as before
+  (`read_row()`, `tuple_into_slot()`).
+- **`keys_met()` asks the slot for each key's column** before
+  it reads it: it read `tts_values` as an eager deform left
+  them.
+- **The column counts go** from the scans that store a ref:
+  `smstore_beginscan()`, `smstore_index_beginscan()` and
+  `smstore_beginfetch()` take none, `smtable_scan_set_natts()`
+  and the executor states' `sm_natts` are gone, and the scans
+  take their slot type from `table_slot_callbacks()`.
+- `test/slt/row_deform.test`: a filter on a late column with
+  every column read, sorts and hash joins that copy rows,
+  nested loops keeping the outer row, cursors with and without
+  hold, UPDATE and DELETE RETURNING. It failed at the index
+  scans before `keys_met()` asked the slot, and crashes the
+  server when the copies do not deform first.

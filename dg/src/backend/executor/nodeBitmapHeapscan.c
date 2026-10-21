@@ -149,8 +149,7 @@ static TupleTableSlot *SmBitmapNext(BitmapHeapScanState *node) {
     node->rbm = castNode(RowBitmap, bitmap);
     node->rbm_iter = rbm_begin_iterate(node->rbm);
     if (node->sm_fetch == NULL)
-      node->sm_fetch =
-          smstore_beginfetch(node->ss.ss_currentRelation, node->sm_natts);
+      node->sm_fetch = smstore_beginfetch(node->ss.ss_currentRelation);
     node->initialized = true;
   }
 
@@ -337,10 +336,9 @@ BitmapHeapScanState *ExecInitBitmapHeapScan(BitmapHeapScan *node,
   /*
    * get the scan type from the relation descriptor.
    */
-  ExecInitScanTupleSlot(
-      estate, &scanstate->ss, RelationGetDescr(currentRelation),
-      RelationIsSm(currentRelation) ? &TTSOpsVirtual
-                                    : table_slot_callbacks(currentRelation));
+  ExecInitScanTupleSlot(estate, &scanstate->ss,
+                        RelationGetDescr(currentRelation),
+                        table_slot_callbacks(currentRelation));
 
   /*
    * Initialize result type and projection.
@@ -357,9 +355,6 @@ BitmapHeapScanState *ExecInitBitmapHeapScan(BitmapHeapScan *node,
       ExecInitQual(node->bitmapqualorig, (PlanState *)scanstate);
 
   scanstate->ss.ss_currentRelation = currentRelation;
-  /* A table in sm's rows are read up to the last column the plan names. */
-  if (RelationIsSm(currentRelation))
-    scanstate->sm_natts = smstore_scan_natts(&node->scan, currentRelation);
 
   /*
    * all done.

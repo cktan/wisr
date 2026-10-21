@@ -102,7 +102,7 @@ static TupleTableSlot *IndexNext(IndexScanState *node) {
     if (node->iss_SmScan == NULL)
       node->iss_SmScan = smstore_index_beginscan(
           node->ss.ss_currentRelation, node->iss_RelationDesc,
-          node->iss_ScanKeys, node->iss_NumScanKeys, node->iss_SmNatts);
+          node->iss_ScanKeys, node->iss_NumScanKeys);
     return smstore_index_getnext(node->iss_SmScan, slot) ? slot : NULL;
   }
 
@@ -832,10 +832,9 @@ IndexScanState *ExecInitIndexScan(IndexScan *node, EState *estate, int eflags) {
   /*
    * get the scan type from the relation descriptor.
    */
-  ExecInitScanTupleSlot(
-      estate, &indexstate->ss, RelationGetDescr(currentRelation),
-      RelationIsSm(currentRelation) ? &TTSOpsVirtual
-                                    : table_slot_callbacks(currentRelation));
+  ExecInitScanTupleSlot(estate, &indexstate->ss,
+                        RelationGetDescr(currentRelation),
+                        table_slot_callbacks(currentRelation));
 
   /*
    * Initialize result type and projection.
@@ -974,15 +973,11 @@ IndexScanState *ExecInitIndexScan(IndexScan *node, EState *estate, int eflags) {
    * does, as a seq scan does (nodeSeqscan.c); one with runtime keys begins
    * when they are.
    */
-  if (RelationIsSm(indexstate->ss.ss_currentRelation)) {
-    indexstate->iss_SmNatts =
-        smstore_scan_natts(&node->scan, indexstate->ss.ss_currentRelation);
-    if (indexstate->iss_NumRuntimeKeys == 0)
-      indexstate->iss_SmScan = smstore_index_beginscan(
-          indexstate->ss.ss_currentRelation, indexstate->iss_RelationDesc,
-          indexstate->iss_ScanKeys, indexstate->iss_NumScanKeys,
-          indexstate->iss_SmNatts);
-  }
+  if (RelationIsSm(indexstate->ss.ss_currentRelation) &&
+      indexstate->iss_NumRuntimeKeys == 0)
+    indexstate->iss_SmScan = smstore_index_beginscan(
+        indexstate->ss.ss_currentRelation, indexstate->iss_RelationDesc,
+        indexstate->iss_ScanKeys, indexstate->iss_NumScanKeys);
 
   /*
    * all done.

@@ -286,9 +286,9 @@ void drop_temp_seqs_made(sm1::session_t *s, size_t from) {
 void discard(sm1::session_t *s) {
   // A load still open ends here, and its files with it.
   load_discard(s);
-  // Close the transaction's cursors, and release its pins.
+  // Close the transaction's cursors, and let go of its lent row.
   xct_end_scans(s);
-  pin_release_all(s);
+  sm1::unpin(&s->readpin);
   ssi_end(s); // an aborted node constrains nobody: freed
   // Take a writer out of the active table: its versions die.
   if (s->xid != 0) {
@@ -663,9 +663,9 @@ int commit(sm1::session_t *s) {
   }
   // Close cursors first, releasing their snapshots and
   // narrowing their SIREAD ranges before validation (§8.2).
-  // The pins go with them: the transaction ends here.
+  // The lent row goes with them: the transaction ends here.
   xct_end_scans(s);
-  pin_release_all(s);
+  sm1::unpin(&s->readpin);
   // The shared database object.
   db_t *db = s->db;
   // No xid: the transaction never wrote.
@@ -996,9 +996,9 @@ int prepare(sm1::session_t *s, const char *gid) {
 
   // Close cursors, then validate: the last moment the engine
   // may still say no (§8.4). A passed node counts as committed.
-  // The pins go with the cursors: the session's transaction ends.
+  // The lent row goes with the cursors: the transaction ends.
   xct_end_scans(s);
-  pin_release_all(s);
+  sm1::unpin(&s->readpin);
   // Validate; a passed node counts as committed.
   if (ssi_precommit(s, UINT64_MAX) != 0) {
     return xct_fail_retryable(s, sm1::SM_ERR_SERIALIZATION, "not serializable");

@@ -11,6 +11,12 @@ and to digres.
 
 Paths are relative to `sm/`; digres's are under `../dg/`.
 
+**The pool has moved** (`ROW.md`). sm1 now keeps only a raw
+pin, which its caller owns (`ROW.md` §2); the pool, the refs,
+their generations and the release rules of §4 are sm3's
+(`ROW.md` §4), where a pin also deforms its row as far as it
+is read. What follows is the design as first built in sm1.
+
 ---
 
 ## 0. In brief

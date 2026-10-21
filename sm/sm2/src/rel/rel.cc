@@ -26,6 +26,12 @@ struct sm2::rel_t {
   std::string toast_seq; /* "" if the rel moves no datum out of line */
   bool toasts;           /* a toast_seq, and a variable-width attribute */
   std::vector<sm2::toast_ptr_t> held; /* datums rel_release is to erase */
+  /*
+   * The pin a write keeps the old row in when the caller gives
+   * none, while its datums out of line are found: made on first
+   * use, emptied after each, freed at rel_close.
+   */
+  sm1::rawpin_t *scratch = nullptr;
 };
 
 struct sm2::rel_scan_t {
@@ -65,27 +71,42 @@ int write_new(sm2::rel_t *rel, std::string_view tuple, uint64_t &rowno,
 }
 
 /*
- * Replace the row at rowno with tuple, already checked; with ref,
+ * Replace the row at rowno with tuple, already checked; with pin,
  * the tuple replaced pinned into it, and old viewing it.
  */
 int write_update(sm2::rel_t *rel, uint64_t rowno, std::string_view tuple,
-                 sm1::pin_ref_t *ref, std::string_view *old) {
-  if (!ref) {
+                 sm1::rawpin_t *pin, std::string_view *old) {
+  if (!pin) {
     return sm1::update(rel->session, rel->storeid, row_key(rel->relid, rowno),
                        tuple);
   }
   return sm1::update(rel->session, rel->storeid, row_key(rel->relid, rowno),
-                     tuple, *ref, *old);
+                     tuple, pin, *old);
 }
 
-/* Delete the row at rowno; with ref, its tuple pinned into it. */
-int write_delete(sm2::rel_t *rel, uint64_t rowno, sm1::pin_ref_t *ref,
+/* Delete the row at rowno; with pin, its tuple pinned into it. */
+int write_delete(sm2::rel_t *rel, uint64_t rowno, sm1::rawpin_t *pin,
                  std::string_view *old) {
-  if (!ref) {
+  if (!pin) {
     return sm1::erase(rel->session, rel->storeid, row_key(rel->relid, rowno));
   }
-  return sm1::erase(rel->session, rel->storeid, row_key(rel->relid, rowno),
-                    *ref, *old);
+  return sm1::erase(rel->session, rel->storeid, row_key(rel->relid, rowno), pin,
+                    *old);
+}
+
+/*
+ * The pin a write keeps the old row in: pin, or else the rel's
+ * scratch pin, made now if it has none; nullptr with
+ * SM_ERR_NOMEM if it cannot be.
+ */
+sm1::rawpin_t *old_pin(sm2::rel_t *rel, sm1::rawpin_t *pin) {
+  if (pin) {
+    return pin;
+  }
+  if (!rel->scratch) {
+    rel->scratch = sm1::rawpin_new();
+  }
+  return rel->scratch;
 }
 
 /* A datum to be written out of line: its pointer, and its bytes. */
@@ -288,12 +309,12 @@ int insert_row(sm2::rel_t *rel, std::span<const sm2::datum_t> datums,
  * Replace the row at rowno with the one datums and isnull make:
  * the row first, so that a write sm1 refuses has written nothing,
  * then what the old row held and the new does not is erased, and
- * what the new row moves out is written. With ref, the old row is
+ * what the new row moves out is written. With pin, the old row is
  * pinned into it, and old views it.
  */
 int update_row(sm2::rel_t *rel, uint64_t rowno,
                std::span<const sm2::datum_t> datums,
-               std::span<const bool> isnull, sm1::pin_ref_t *ref,
+               std::span<const bool> isnull, sm1::rawpin_t *pin,
                std::string_view *old, bool hold) {
   // No old row until the write succeeds.
   if (nullptr != old) {
@@ -304,19 +325,23 @@ int update_row(sm2::rel_t *rel, uint64_t rowno,
     return -1;
   }
   if (!rel->toasts) {
-    return write_update(rel, rowno, row.tuple, ref, old);
+    return write_update(rel, rowno, row.tuple, pin, old);
   }
   // The old row's pointers are read after more calls on the
-  // session, so it is pinned: into ref, or one of this call's.
-  sm1::pin_ref_t mine;
-  sm1::pin_ref_t *r = ref ? ref : &mine;
+  // session, so it is pinned: into pin, or the rel's own.
+  sm1::rawpin_t *p = old_pin(rel, pin);
+  if (!p) {
+    return -1;
+  }
   std::string_view was;
-  int rc = 0 != write_update(rel, rowno, row.tuple, r, &was) ||
+  int rc = 0 != write_update(rel, rowno, row.tuple, p, &was) ||
                    0 != settle_old(rel, was, row.kept, hold) ||
                    0 != write_moved(rel, row)
                ? -1
                : 0;
-  sm1::unpin(mine);
+  if (p != pin) {
+    sm1::unpin(p);
+  }
   if (0 == rc && nullptr != old) {
     *old = was;
   }
@@ -369,8 +394,13 @@ int rel_open(sm1::session_t *session, uint64_t storeid, uint16_t relid,
   return 0;
 }
 
-/* Close a rel; nullptr is a no-op. */
-void rel_close(rel_t *rel) { delete rel; }
+/* Close a rel, and free its scratch pin; nullptr is a no-op. */
+void rel_close(rel_t *rel) {
+  if (rel) {
+    sm1::rawpin_free(rel->scratch);
+  }
+  delete rel;
+}
 
 /* The schema a rel lays its rows out by. */
 std::span<const attribute_t> rel_schema(const rel_t *rel) {
@@ -424,10 +454,10 @@ int rel_read(rel_t *rel, uint64_t rowno, std::string_view &tuple) {
                    tuple);
 }
 
-/* Read the row at rowno into the pin ref names. */
-int rel_read(rel_t *rel, uint64_t rowno, sm1::pin_ref_t &ref,
+/* Read the row at rowno into pin. */
+int rel_read(rel_t *rel, uint64_t rowno, sm1::rawpin_t *pin,
              std::string_view &tuple) {
-  return sm1::read(rel->session, rel->storeid, row_key(rel->relid, rowno), ref,
+  return sm1::read(rel->session, rel->storeid, row_key(rel->relid, rowno), pin,
                    tuple);
 }
 
@@ -452,18 +482,18 @@ int rel_read_latest(rel_t *rel, uint64_t rowno, std::string_view &tuple) {
 }
 
 /* Read the newest committed version of the row at rowno into a pin. */
-int rel_read_latest(rel_t *rel, uint64_t rowno, sm1::pin_ref_t &ref,
+int rel_read_latest(rel_t *rel, uint64_t rowno, sm1::rawpin_t *pin,
                     std::string_view &tuple) {
   return sm1::read_latest(rel->session, rel->storeid,
-                          row_key(rel->relid, rowno), ref, tuple);
+                          row_key(rel->relid, rowno), pin, tuple);
 }
 
 /*
- * rel_update of an already-encoded tuple, with ref and old both
+ * rel_update of an already-encoded tuple, with pin and old both
  * given or both null.
  */
 static int update_tuple(rel_t *rel, uint64_t rowno, std::string_view tuple,
-                        sm1::pin_ref_t *ref, std::string_view *old, bool hold) {
+                        sm1::rawpin_t *pin, std::string_view *old, bool hold) {
   // No old row until the write succeeds.
   if (nullptr != old) {
     *old = {};
@@ -472,7 +502,7 @@ static int update_tuple(rel_t *rel, uint64_t rowno, std::string_view tuple,
     return -1;
   }
   if (!rel->toasts) {
-    return write_update(rel, rowno, tuple, ref, old);
+    return write_update(rel, rowno, tuple, pin, old);
   }
   // Its datums may be moved out of line, as any row's.
   std::vector<datum_t> datums;
@@ -481,7 +511,7 @@ static int update_tuple(rel_t *rel, uint64_t rowno, std::string_view tuple,
     return -1;
   }
   return update_row(rel, rowno, datums,
-                    std::span<const bool>(isnull.get(), datums.size()), ref,
+                    std::span<const bool>(isnull.get(), datums.size()), pin,
                     old, hold);
 }
 
@@ -490,10 +520,10 @@ int rel_update(rel_t *rel, uint64_t rowno, std::string_view tuple) {
   return update_tuple(rel, rowno, tuple, nullptr, nullptr, false);
 }
 
-/* As above, pinning the tuple replaced into ref; see sm2.h. */
+/* As above, pinning the tuple replaced into pin; see sm2.h. */
 int rel_update(rel_t *rel, uint64_t rowno, std::string_view tuple,
-               sm1::pin_ref_t &ref, std::string_view &old, bool hold) {
-  return update_tuple(rel, rowno, tuple, &ref, &old, hold);
+               sm1::rawpin_t *pin, std::string_view &old, bool hold) {
+  return update_tuple(rel, rowno, tuple, pin, &old, hold);
 }
 
 /* Replace the row at rowno with datum_t and isnull; see sm2.h. */
@@ -502,34 +532,38 @@ int rel_update(rel_t *rel, uint64_t rowno, std::span<const datum_t> datums,
   return update_row(rel, rowno, datums, isnull, nullptr, nullptr, false);
 }
 
-/* As above, pinning the tuple replaced into ref; see sm2.h. */
+/* As above, pinning the tuple replaced into pin; see sm2.h. */
 int rel_update(rel_t *rel, uint64_t rowno, std::span<const datum_t> datums,
-               std::span<const bool> isnull, sm1::pin_ref_t &ref,
+               std::span<const bool> isnull, sm1::rawpin_t *pin,
                std::string_view &old, bool hold) {
-  return update_row(rel, rowno, datums, isnull, &ref, &old, hold);
+  return update_row(rel, rowno, datums, isnull, pin, &old, hold);
 }
 
 /*
- * rel_delete, with ref and old both given or both null: the datums
+ * rel_delete, with pin and old both given or both null: the datums
  * the row held out of line go with it, read from the row pinned.
  */
-static int delete_row(rel_t *rel, uint64_t rowno, sm1::pin_ref_t *ref,
+static int delete_row(rel_t *rel, uint64_t rowno, sm1::rawpin_t *pin,
                       std::string_view *old, bool hold) {
   // No old row until the write succeeds.
   if (nullptr != old) {
     *old = {};
   }
   if (!rel->toasts) {
-    return write_delete(rel, rowno, ref, old);
+    return write_delete(rel, rowno, pin, old);
   }
-  sm1::pin_ref_t mine;
-  sm1::pin_ref_t *r = ref ? ref : &mine;
+  sm1::rawpin_t *p = old_pin(rel, pin);
+  if (!p) {
+    return -1;
+  }
   std::string_view was;
-  int rc = 0 != write_delete(rel, rowno, r, &was) ||
+  int rc = 0 != write_delete(rel, rowno, p, &was) ||
                    0 != settle_old(rel, was, {}, hold)
                ? -1
                : 0;
-  sm1::unpin(mine);
+  if (p != pin) {
+    sm1::unpin(p);
+  }
   if (0 == rc && nullptr != old) {
     *old = was;
   }
@@ -541,10 +575,10 @@ int rel_delete(rel_t *rel, uint64_t rowno) {
   return delete_row(rel, rowno, nullptr, nullptr, false);
 }
 
-/* Delete the row at rowno, pinning its tuple into ref. */
-int rel_delete(rel_t *rel, uint64_t rowno, sm1::pin_ref_t &ref,
+/* Delete the row at rowno, pinning its tuple into pin. */
+int rel_delete(rel_t *rel, uint64_t rowno, sm1::rawpin_t *pin,
                std::string_view &old, bool hold) {
-  return delete_row(rel, rowno, &ref, &old, hold);
+  return delete_row(rel, rowno, pin, &old, hold);
 }
 
 /* Put a row into a load under a new rowno; see sm2.h. */
@@ -663,6 +697,11 @@ void rel_scanend(rel_scan_t *scan) {
   // Release sm1's cursor and its snapshot.
   sm1::scanend(scan->scan);
   delete scan;
+}
+
+/* Whether a rollback closed the cursor; see sm2.h. */
+bool rel_scan_rolled_back(const rel_scan_t *scan) {
+  return sm1::scan_rolled_back(scan->scan);
 }
 
 /* The bytes under relid, from sm1's estimate of its key range. */
