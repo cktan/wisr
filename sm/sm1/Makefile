@@ -6,7 +6,8 @@
 #   make format       clang-format src/, test/, and example/ in place
 #   make clean        remove build/
 #
-# Setting DEBUG in the environment builds -O1 -g instead of -O3:
+# Setting DEBUG=1 in the environment builds -O0 -g instead of
+# -O3 -DNDEBUG:
 #
 #   DEBUG=1 make -j4
 #
@@ -16,11 +17,12 @@
 #
 # include/sm1.h is aligned by hand and is not formatted.
 
-# DEBUG set and non-empty: optimize lightly and keep the symbols.
-ifdef DEBUG
-OPTFLAGS := -O1 -g
+# DEBUG=1: no optimization, the symbols, and assert(); otherwise -O3
+# with NDEBUG, so assert() is compiled out.
+ifeq ($(DEBUG),1)
+OPTFLAGS := -O0 -g
 else
-OPTFLAGS := -O3
+OPTFLAGS := -O3 -DNDEBUG
 endif
 
 CXX      ?= g++

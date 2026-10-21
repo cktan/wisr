@@ -1363,6 +1363,14 @@ estimate from sampling its memtables, an order of magnitude and
 no better: for a range among others it was measured from 0 to 4
 times, and 0 in one trial of thirty.
 
+`disk` is RocksDB's estimate, which reads the index of every
+sorted file the range touches. The store keeps it for the range,
+under the version of its LSM tree it was made at (RocksDB's
+super version number, which a flush, a compaction or an ingest
+raises before it returns), and answers from it until that
+version moves: the same answer, without the reads. It keeps 4096
+ranges at most, and starts over past them.
+
 It reads RocksDB's estimates, not rows, so it needs no
 transaction, takes no lock and sees no snapshot. A store
 created by a transaction not yet committed, and one dropped and

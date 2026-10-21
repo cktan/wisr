@@ -119,9 +119,13 @@ kinds' values are on disk, so frozen.
   transaction; `nextval` is sm1's `nextseq` on it, and so not
   transactional. Its name is a `NAME` key in its namespace, so
   it shares names with the namespace's tables and indexes, as a
-  relation does in PostgreSQL. Only which namespace holds it is
-  kept in memory, for a namespace's drop (§5); its name and
-  record are read from the store in the transaction.
+  relation does in PostgreSQL. Its namespace and name are kept
+  in memory, by its oid and its oid by them, for a namespace's
+  drop (§5) and so that it is found either way as a table is:
+  the transaction's own creates and drops, then every committed
+  one, not as of the snapshot, as PostgreSQL finds a name in its
+  latest catalog. Its record and counter are read from the
+  store in the transaction.
 - **A sequence may be owned by a column**, SQL's `OWNED BY`, of
   a table in its namespace: its owner fields name the table and
   the column's place, and are null otherwise, as in a sequence

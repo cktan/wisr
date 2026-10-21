@@ -73,15 +73,28 @@ int approxsize(sm1::session_t *s, uint64_t storeid, const char *lo,
   rocksdb::Range range(start, limit);
 
   // Sorted files only: the memtables are reported apart, since
-  // they hold versions uncompressed.
-  rocksdb::SizeApproximationOptions so;
-  so.include_memtables = false;
-  so.include_files = true;
+  // they hold versions uncompressed. The files change only with the
+  // tree's version, read first, so an estimate kept under it is one
+  // RocksDB made of those files or newer ones.
+  uint64_t version = 0;
+  bool versioned =
+      store.files &&
+      store.rdb->GetIntProperty(
+          store.cf, rocksdb::DB::Properties::kCurrentSuperVersionNumber,
+          &version);
   uint64_t files = 0;
-  rocksdb::Status st =
-      store.rdb->GetApproximateSizes(so, store.cf, &range, 1, &files);
-  if (!st.ok()) {
-    return set_status_error(st, "approximate store size");
+  if (!versioned || !store.files->find(start, limit, version, files)) {
+    rocksdb::SizeApproximationOptions so;
+    so.include_memtables = false;
+    so.include_files = true;
+    rocksdb::Status st =
+        store.rdb->GetApproximateSizes(so, store.cf, &range, 1, &files);
+    if (!st.ok()) {
+      return set_status_error(st, "approximate store size");
+    }
+    if (versioned) {
+      store.files->put(start, limit, version, files);
+    }
   }
   *disk = files;
   // The memtables' share of a range of whole 2-byte prefixes, a heap's

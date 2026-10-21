@@ -521,8 +521,9 @@ Do not reopen these without the owner:
 - **Build and test**: `make -C dg -j4`, then
   `make -C dg -j4 test`. Never plain `make`. Save test output
   to a file and read the file.
-- **`DEBUG=1` is set in the owner's shell**, so sm builds `-O1
-  -g`. Changing it rebuilds sm.
+- **`DEBUG=1` is set in the owner's shell**, so sm builds `-O0
+  -g`, with `assert()`; without it, `-O3 -DNDEBUG`. Changing
+  it rebuilds sm.
 - **`make format` in `dg/` is not clean**: it reformats 13
   files nobody touched. Format only the files you changed that
   were clean before, with `clang-format -i`. Run `make format`

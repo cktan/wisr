@@ -643,17 +643,18 @@ int cat_put_sequence(session_t* s, uint64_t sequence_oid,
 int cat_del_sequence(session_t* s, uint64_t sequence_oid);
 
 /*
- * The sequence named name in nspoid, as s's transaction sees it --
- * read from the catalog store, so s needs one open: 0 with its oid
+ * The sequence named name in nspoid, as a table is found by its
+ * name: s's own creates and drops, then every committed one, from
+ * memory, not as of the transaction's snapshot -- 0 with its oid
  * set in oid, 1 if there is none, or -1.
  */
 int cat_get_sequence(session_t* s, uint64_t nspoid, std::string_view name,
                      uint64_t& oid);
 
 /*
- * The namespace and name of the sequence oid, as s's transaction
- * sees it, which must be open: 0 with them set, 1 if there is no
- * such sequence -- an oid of another kind among them -- or -1.
+ * The namespace and name of the sequence oid, as cat_get_sequence
+ * finds a sequence by them: 0 with them set, 1 if there is no such
+ * sequence -- an oid of another kind among them -- or -1.
  */
 int cat_get_sequence_name(session_t* s, uint64_t oid, uint64_t& nspoid,
                           std::string& name);

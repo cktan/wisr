@@ -70,8 +70,8 @@ int part_key(kind_t kind, uint64_t table_oid, uint64_t n, std::string &key);
 int part_ids(kind_t kind, std::string_view key, uint64_t &table_oid,
              uint64_t &n);
 
-/* The namespace the NAME key is in. */
-int name_nspoid(std::string_view key, uint64_t &nspoid);
+/* The namespace the NAME key is in, and the name. */
+int name_nspoid(std::string_view key, uint64_t &nspoid, std::string &name);
 
 /*
  * The key of one of the table table_oid's statistics entries

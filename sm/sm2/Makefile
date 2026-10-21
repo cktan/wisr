@@ -10,18 +10,20 @@
 # library is built through sm1's own Makefile when it is missing
 # or out of date.
 #
-# Setting DEBUG in the environment builds -O1 -g instead of -O3,
+# Setting DEBUG=1 in the environment builds -O0 -g instead of
+# -O3 -DNDEBUG,
 # and the flags are recorded in build/flags, as in sm1.
 #
 # include/sm2.h is aligned by hand and is not formatted, nor is
 # src/ryu/, PostgreSQL's float printers copied verbatim and built
 # as C (src/ryu/postgres_fe.h).
 
-# DEBUG set and non-empty: optimize lightly and keep the symbols.
-ifdef DEBUG
-OPTFLAGS := -O1 -g
+# DEBUG=1: no optimization, the symbols, and assert(); otherwise -O3
+# with NDEBUG, so assert() is compiled out.
+ifeq ($(DEBUG),1)
+OPTFLAGS := -O0 -g
 else
-OPTFLAGS := -O3
+OPTFLAGS := -O3 -DNDEBUG
 endif
 
 SM0 := ../sm0

@@ -74,8 +74,8 @@ template <typename F> int scan_parts(sm2::catkv_t *kv, sm3::kind_t kind, F f) {
 }
 
 /*
- * Set cat's collation_nsp and sequence_nsp from the NAME entries, in
- * one scan of them.
+ * Set cat's collation_nsp, sequence_by_oid and sequence_names from
+ * the NAME entries, in one scan of them.
  */
 int member_nspaces(sm2::catkv_t *kv, sm3::catalog_t &cat) {
   std::string prefix;
@@ -91,13 +91,16 @@ int member_nspaces(sm2::catkv_t *kv, sm3::catalog_t &cat) {
   while ((rc = sm2::catkv_scannxt(c, k, v)) == 0) {
     sm3::name_rec_t rec;
     uint64_t nspoid;
-    if (sm3::decode_name(v, rec) != 0 || sm3::name_nspoid(k, nspoid) != 0) {
+    std::string name;
+    if (sm3::decode_name(v, rec) != 0 ||
+        sm3::name_nspoid(k, nspoid, name) != 0) {
       return -1;
     }
     if (rec.kind == sm3::kind_t::collation) {
       cat.collation_nsp[rec.oid] = nspoid;
     } else if (rec.kind == sm3::kind_t::sequence) {
-      cat.sequence_nsp[rec.oid] = nspoid;
+      cat.sequence_by_oid[rec.oid] = {nspoid, name};
+      cat.sequence_names[{nspoid, std::move(name)}] = rec.oid;
     }
   }
   return rc == 1 ? 0 : -1;

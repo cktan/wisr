@@ -1003,7 +1003,7 @@ int cat_put_sequence(session_t *session, uint64_t oid, uint64_t nspoid,
       sm1::mkseq(session->sm1, sequence_counter(oid), start, increment) != 0) {
     return -1;
   }
-  overlay_sequence(session, oid, nspoid);
+  overlay_sequence(session, oid, nspoid, nspoid, name);
   return 0;
 }
 
@@ -1074,55 +1074,55 @@ int cat_del_sequence(session_t *session, uint64_t oid) {
       sm1::rmseq(session->sm1, sequence_counter(oid)) != 0) {
     return -1;
   }
-  overlay_sequence(session, oid, std::nullopt);
+  overlay_sequence(session, oid, std::nullopt, rec.nspoid, rec.name);
   return 0;
 }
 
-/* A sequence by name, read in the transaction; see sm3.h. */
+/* A sequence by name, as tables are found by theirs; see sm3.h. */
 int cat_get_sequence(session_t *session, uint64_t nspoid, std::string_view name,
                      uint64_t &oid) {
-  kv_ptr kv(nullptr, &sm2::catkv_close);
-  std::string key;
-  std::string_view v;
-  if (open_kv(session->sm1, kv) != 0 || name_key(nspoid, name, key) != 0) {
-    return -1;
+  // Its own creates and drops first, the newest winning.
+  for (auto it = session->sequences.rbegin(); it != session->sequences.rend();
+       ++it) {
+    if (it->name.first == nspoid && it->name.second == name) {
+      if (!it->nspoid) {
+        return 1;
+      }
+      oid = it->oid;
+      return 0;
+    }
   }
-  int rc = sm2::catkv_get(kv.get(), key, v);
-  if (rc != 0) {
-    return rc;
-  }
-  name_rec_t rec;
-  if (decode_name(v, rec) != 0) {
-    return -1;
-  }
-  // The name may be a table's or an index's.
-  if (rec.kind != kind_t::sequence) {
+  std::shared_lock lock(session->cat->mu);
+  auto it = session->cat->sequence_names.find({nspoid, std::string(name)});
+  if (it == session->cat->sequence_names.end()) {
     return 1;
   }
-  oid = rec.oid;
+  oid = it->second;
   return 0;
 }
 
-/* A sequence's namespace and name by its oid; see sm3.h. */
+/* A sequence's namespace and name by its oid, as by name; see sm3.h. */
 int cat_get_sequence_name(session_t *session, uint64_t oid, uint64_t &nspoid,
                           std::string &name) {
-  kv_ptr kv(nullptr, &sm2::catkv_close);
-  std::string key;
-  std::string_view v;
-  if (open_kv(session->sm1, kv) != 0 ||
-      entity_key(kind_t::sequence, oid, key) != 0) {
-    return -1;
+  // Its own creates and drops first, the newest winning.
+  for (auto it = session->sequences.rbegin(); it != session->sequences.rend();
+       ++it) {
+    if (it->oid == oid) {
+      if (!it->nspoid) {
+        return 1;
+      }
+      nspoid = it->name.first;
+      name = it->name.second;
+      return 0;
+    }
   }
-  int rc = sm2::catkv_get(kv.get(), key, v);
-  if (rc != 0) {
-    return rc;
+  std::shared_lock lock(session->cat->mu);
+  auto it = session->cat->sequence_by_oid.find(oid);
+  if (it == session->cat->sequence_by_oid.end()) {
+    return 1;
   }
-  sequence_rec_t rec;
-  if (decode_sequence(v, rec) != 0) {
-    return -1;
-  }
-  nspoid = rec.nspoid;
-  name = std::move(rec.name);
+  nspoid = it->second.first;
+  name = it->second.second;
   return 0;
 }
 

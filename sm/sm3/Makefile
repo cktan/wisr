@@ -10,14 +10,16 @@
 # libraries, each built through its own Makefile when it is
 # missing or out of date.
 #
-# Setting DEBUG in the environment builds -O1 -g instead of -O3,
+# Setting DEBUG=1 in the environment builds -O0 -g instead of
+# -O3 -DNDEBUG,
 # and the flags are recorded in build/flags, as in sm1 and sm2.
 
-# DEBUG set and non-empty: optimize lightly and keep the symbols.
-ifdef DEBUG
-OPTFLAGS := -O1 -g
+# DEBUG=1: no optimization, the symbols, and assert(); otherwise -O3
+# with NDEBUG, so assert() is compiled out.
+ifeq ($(DEBUG),1)
+OPTFLAGS := -O0 -g
 else
-OPTFLAGS := -O3
+OPTFLAGS := -O3 -DNDEBUG
 endif
 
 SM0 := ../sm0

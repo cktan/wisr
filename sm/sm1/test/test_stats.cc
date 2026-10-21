@@ -102,6 +102,26 @@ public:
     return out;
   }
 
+  /* The version of the store's LSM tree, RocksDB's super version. */
+  uint64_t tree_version() {
+    uint64_t v = 0;
+    REQUIRE(m_s->db->rdb->GetIntProperty(
+        cf(), rocksdb::DB::Properties::kCurrentSuperVersionNumber, &v));
+    return v;
+  }
+
+  /*
+   * Keep bytes as the whole store's file bytes at the tree's version
+   * now, under the range sm1::approxsize asks for with no bounds.
+   */
+  void plant_files(uint64_t bytes) {
+    std::string top(sm1::max_keylen + 1, '\xff');
+    wisr::db_store(m_s->db, m_store)
+        .files->put(wisr::version_bound(rocksdb::Slice(), '\x00'),
+                    wisr::version_bound(rocksdb::Slice(top), '\x00'),
+                    tree_version(), bytes);
+  }
+
   /* The store's sm1::probes. */
   uint64_t probes() {
     uint64_t n = 0;
@@ -203,6 +223,55 @@ TEST_CASE("sm1_approxsize reports memtable and file bytes apart") {
   CHECK(sm1::approxsize(f.s(), f.store() + 1000, nullptr, 0, nullptr, 0, disk,
                         mem) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+}
+
+TEST_CASE("sm1_approxsize keeps a store's file bytes until its tree changes") {
+  // Verify the file bytes are estimated once a version of the tree.
+  // 1. An empty store is 0 on disk; a bulk load, past the small
+  //    load's bytes, then ingests a file, and disk is its bytes, not
+  //    the 0 kept.
+  // 2. Another estimate kept for the whole store at the tree's
+  //    version now is what approxsize answers: RocksDB is not asked.
+  // 3. Rows loaded and flushed move the version: disk is RocksDB's
+  //    estimate again, greater than before.
+  // 4. A compaction moves it too: disk is the store's file bytes.
+  stats_fixture_t f;
+  uint64_t disk = 1, mem = 1, before = 0;
+  size_of(f.s(), f.store(), 0, 0, disk, mem);
+  CHECK(disk == 0);
+  f.s()->db->load_small_bytes = 1;
+  REQUIRE(sm1::begin(f.s(), sm1::xctlevel_t::repeatable_read) == 0);
+  sm1::loader_t *l = nullptr;
+  REQUIRE_MESSAGE(sm1::load_open(f.s(), f.store(), l) == 0, sm1::errmsg());
+  size_t stream = 0;
+  REQUIRE(sm1::load_stream(l, true, stream) == 0);
+  for (int i = 0; i < 1000; i++) {
+    std::string key(1, 'a');
+    sm0::put_be32(key, i);
+    REQUIRE(sm1::load_put(l, stream, key, std::string(200, 'v')) == 0);
+  }
+  REQUIRE_MESSAGE(sm1::load_close(l) == 0, sm1::errmsg());
+  REQUIRE(sm1::commit(f.s()) == 0);
+  size_of(f.s(), f.store(), 0, 0, disk, mem);
+  CHECK(disk > 0);
+  before = disk;
+
+  // 2. Plant an estimate at the version now.
+  f.plant_files(7);
+  size_of(f.s(), f.store(), 0, 0, disk, mem);
+  CHECK(disk == 7);
+
+  // 3. Load and flush.
+  f.load('b', 20000, 200);
+  f.flush();
+  size_of(f.s(), f.store(), 0, 0, disk, mem);
+  CHECK(disk > before);
+
+  // 4. Plant again, then compact.
+  f.plant_files(7);
+  f.compact();
+  size_of(f.s(), f.store(), 0, 0, disk, mem);
+  CHECK(disk == f.sst_bytes());
 }
 
 TEST_CASE("sm1_approxsize charges a small range its own bytes") {

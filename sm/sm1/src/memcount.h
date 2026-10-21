@@ -13,6 +13,10 @@
  * A count is kept for the active memtable and for each sealed one
  * until a flush writes it out: a sealed memtable's bytes are still in
  * memory, and the writes after its sealing are in the next.
+ *
+ * Beside it, filesize_t keeps the bytes RocksDB last estimated for a
+ * key range of the store's sorted files, which change only when its
+ * LSM tree does (STATISTICS.md §3.1).
  */
 #ifndef SM1_MEMCOUNT_H
 #define SM1_MEMCOUNT_H
@@ -22,6 +26,7 @@
 #include <atomic>
 #include <cstdint>
 #include <deque>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
@@ -72,6 +77,36 @@ private:
   mutable std::shared_mutex m_mu;
   std::unordered_map<uint16_t, std::atomic<uint64_t>> m_active;
   std::deque<sealed_t> m_sealed;
+};
+
+/*
+ * One store's sorted files' bytes by key range, as RocksDB estimated
+ * them at a version of its LSM tree: RocksDB's super version number,
+ * which a flush, a compaction or an ingest raises before it returns.
+ * An estimate made at another version is not used.
+ */
+class filesize_t {
+public:
+  /* The bytes of [start, limit) estimated at version, if known. */
+  bool find(const std::string &start, const std::string &limit,
+            uint64_t version, uint64_t &bytes) const;
+
+  /* Keep bytes as [start, limit)'s at version. */
+  void put(const std::string &start, const std::string &limit, uint64_t version,
+           uint64_t bytes);
+
+private:
+  /* At most this many ranges are kept; past it, they are forgotten. */
+  static constexpr size_t m_max = 4096;
+
+  /* An estimate, and the version of the tree it was made at. */
+  struct estimate_t {
+    uint64_t version;
+    uint64_t bytes;
+  };
+
+  mutable std::mutex m_mu; /* guards m_sizes */
+  std::map<std::pair<std::string, std::string>, estimate_t> m_sizes;
 };
 
 /*

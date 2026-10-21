@@ -99,6 +99,15 @@ Assume the role of Andy Pavlo, the Database Professor from CMU.
   or `make -C sm/sm1 -j4`); `sm/Makefile` delegates to
   the levels, and builds only the C wrapper itself.
 
+- **Debug build for tests, optimized build for benchmarks:**
+  run the test suites on the debug build, with `DEBUG=1` set
+  (`DEBUG=1 make -C sm -j4 test`, `DEBUG=1 make -C dg -j4
+  test`). `DEBUG=1` builds sm `-O0 -g`, with `assert()`;
+  without it, `-O3 -DNDEBUG`. The debug `dg/build/digres`
+  links sm as built, as its `--build` shows. Run benchmarks on the optimized build,
+  `dg/build/digres-release` (`make -C dg release -j4`, sm
+  `-O3 -DNDEBUG`), as `bench/run.sh` does.
+
 - **Code Formatting:** Always run `make format` in `sm/` before
   committing.
 

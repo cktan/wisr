@@ -511,7 +511,8 @@ db_t *db_open(const std::string &path, const char *dbname,
       // Its memtables were flushed in recovery: its counts start at 0.
       auto mem = std::make_shared<memcount_t>();
       db->listener->add(name, mem);
-      db->stores[storeid] = store_t{db->rdb, handles[i], nullptr, mem};
+      db->stores[storeid] = store_t{db->rdb, handles[i], nullptr, mem,
+                                    std::make_shared<filesize_t>()};
     } else {
       // Unknown CF: release its handle and fail the open.
       db->rdb->DestroyColumnFamilyHandle(handles[i]);
@@ -850,7 +851,8 @@ int db_create_store_cf(db_t *db, uint64_t storeid, sm1::session_t *owner) {
   // Hold store_mu exclusively while registering it.
   std::unique_lock<std::shared_mutex> guard(db->store_mu);
   // Register the handle, with the instance it is in.
-  db->stores[storeid] = store_t{rdb, h, owner, mem};
+  db->stores[storeid] =
+      store_t{rdb, h, owner, mem, std::make_shared<filesize_t>()};
   db->had_temp = db->had_temp || owner;
   return 0;
 }
