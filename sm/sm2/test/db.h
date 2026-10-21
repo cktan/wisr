@@ -12,7 +12,21 @@
 #include <stdlib.h>
 
 #include <filesystem>
+#include <memory>
 #include <string>
+
+/*
+ * A raw pin a test owns, freed when it goes out of scope; made
+ * after the db_t, so it is emptied before the database closes.
+ */
+struct rawpin_ptr_t
+    : std::unique_ptr<sm1::rawpin_t, void (*)(sm1::rawpin_t *)> {
+  rawpin_ptr_t()
+      : std::unique_ptr<sm1::rawpin_t, void (*)(sm1::rawpin_t *)>(
+            sm1::rawpin_new(), sm1::rawpin_free) {
+    REQUIRE(get());
+  }
+};
 
 /*
  * A fresh sm1 home, database and store with a rowno sequence and

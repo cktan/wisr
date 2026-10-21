@@ -35,11 +35,16 @@
  *       - from a point read (sm_tbl_read, sm_tbl_read_latest),
  *         until the next call on the same session.
  *       - from a point read into a pin ref, or the old row of
- *         a write into one, until the pin is released: by the next read into the same ref, by
- *         sm_unpin, by sm_release_all_pins, or at the end of the
- *         session's transaction. Nothing else releases it.
- *     What sm_tbl_deform and sm_tbl_idx_deform hand out points
- *     into the row given to them, and lasts as long as it does.
+ *         a write into one, until the pin is released: by the
+ *         next read into the same ref, by sm_unpin, by
+ *         sm_release_all_pins, or at the end of the session's
+ *         transaction. Nothing else releases it.
+ *       - from a cursor into a pin ref (sm_rel_scannxt with a
+ *         ref), as from the cursor: the ref goes stale with the
+ *         row.
+ *     What sm_tbl_deform, sm_tbl_idx_deform and sm_pin_deform
+ *     hand out points into the row given to them, and lasts as
+ *     long as it does.
  *   - Anything else handed out is the caller's own: a list is a
  *     std::vector and bytes are a std::string, filled by the call.
  *     Nothing is freed by hand.
@@ -67,6 +72,7 @@
 #include "sm_error.h"
 #include "sm_lock.h"
 #include "sm_options.h"
+#include "sm_stats.h"
 
 /*
  * An attached home directory: sm1::env_t, and the sm3 catalog of
@@ -148,8 +154,14 @@ int sm_set_log(sm_log_fn fn, void* arg);
 /* Make homedir, which must exist, a wisr home directory. */
 int sm_init(const char* homedir);
 
-/* Attach the home directory homedir, recovering every database. */
-int sm_attach(const char* homedir, sm_env_t** out);
+/*
+ * Attach the home directory homedir, recovering every database,
+ * with opt's environment options (sm_options.h): the size of the
+ * one block cache every database reads through. NULL means the
+ * defaults.
+ */
+int sm_attach(const char* homedir, sm_env_t** out,
+              const sm_env_options_t* opt = nullptr);
 
 /* Detach env; force != 0 closes its open sessions first. */
 int sm_detach(sm_env_t* env, int force);
@@ -223,11 +235,11 @@ int sm_abort(sm_session_t* session);
 int sm_stmt_begin(sm_session_t* session);
 
 /*
- * A pin ref: what a point read into a pin hands back, naming the
- * pin the session keeps the row in and the pin's generation. A
- * plain value, zero for none, which the caller keeps where it
- * likes and never frees; once its pin is released it is stale,
- * and names nothing (../PIN.md).
+ * A pin ref: what a read into a pin, a write's old row or a
+ * cursor's row hands back, naming the pin the session keeps the
+ * row in and the pin's generation. A plain value, zero for none,
+ * which the caller keeps where it likes and never frees; once its
+ * pin is released it is stale, and names nothing (../ROW.md §4).
  */
 typedef struct sm_pin_ref_t {
     void*    pin;
@@ -552,6 +564,14 @@ typedef struct sm_rel_scan_t sm_rel_scan_t;
  */
 int sm_rel_scannxt(sm_rel_scan_t* scan, uint64_t* rowno, const void** tuple,
                    size_t* len);
+
+/*
+ * The next row, as above, in the cursor's pin, which *ref then
+ * names, for sm_pin_deform; *ref is zero on 1 or -1. The cursor's
+ * next call, its close, and the end of its transaction make the ref
+ * stale; sm_unpin leaves the cursor's pin alone.
+ */
+int sm_rel_scannxt(sm_rel_scan_t* scan, uint64_t* rowno, sm_pin_ref_t* ref);
 
 /* Move the cursor forward to rowno. */
 int sm_rel_scan_seek(sm_rel_scan_t* scan, uint64_t rowno);
@@ -1317,6 +1337,24 @@ int sm_tbl_deform(sm_tbl_t* tbl, const void* tuple, size_t len,
                   sm_datum_t* values, bool* isnull, size_t n);
 
 /*
+ * Attributes from to n - 1 of the row ref pins, into values and
+ * isnull at those places, each indexed by attribute and at least n
+ * long, as sm3::pin_deform: resuming where the last deform of the
+ * row stopped when from is there, and checking only what it reads.
+ * A by-reference value points into the row. SM_ERR_INVALID if ref
+ * is stale.
+ */
+int sm_pin_deform(sm_pin_ref_t ref, size_t from, size_t n,
+                  sm_datum_t* values, bool* isnull);
+
+/* One attribute of the row ref pins, by ordinal; as sm_tbl_decode. */
+int sm_pin_decode(sm_pin_ref_t ref, size_t ordinal, sm_datum_t* val,
+                  bool* isnull);
+
+/* The bytes of the row ref pins; SM_ERR_INVALID if ref is stale. */
+int sm_pin_tuple(sm_pin_ref_t ref, const void** tuple, size_t* len);
+
+/*
  * One attribute of a row's tuple, by ordinal, into *val and
  * *isnull; a null or dropped attribute sets *isnull.
  */
@@ -1395,49 +1433,10 @@ int sm_tbl_rowno_limit(sm_tbl_t* tbl, uint64_t* n);
 int sm_tbl_probes(sm_tbl_t* tbl, uint64_t* n);
 
 /*
- * The statistics of one column, or of one expression of an index:
- * PostgreSQL's six. A value is its bytes as a datum of the column's
- * or expression's type, a varlena for a variable-width one.
+ * A table's statistics, sm_stats_t, and its parts, sm_stat_t and
+ * sm_stats_index_t, are in sm_stats.h: sm3's own, handed out as
+ * sm3 keeps them.
  */
-struct sm_stat_t {
-    bool                     has_index;   /* an expression's, not a column's */
-    uint64_t                 index;
-    int32_t                  position;    /* the column's 0-based place, or
-                                             the expression's among the
-                                             index's keys */
-    float                    null_frac;
-    int32_t                  width;
-    float                    distinct;    /* a count, or minus a fraction
-                                             of the rows */
-    bool                     has_correlation;
-    float                    correlation;
-    std::vector<std::string> mcv;         /* most common values */
-    std::vector<float>       mcv_freq;
-    std::vector<std::string> bounds;      /* histogram bounds */
-};
-
-/* An index's sizes and entries as the analyze found them. */
-struct sm_stats_index_t {
-    uint64_t oid;
-    uint64_t disk;
-    uint64_t mem;
-    double   entries;
-    float    belongs;   /* the fraction of rows in a partial index */
-};
-
-/* A table's statistics, as its last analyze recorded them. */
-struct sm_stats_t {
-    int32_t                       target;
-    int32_t                       run_length;
-    uint64_t                      rows_sampled;
-    uint64_t                      rowno_limit;
-    double                        live_rows;
-    uint64_t                      heap_disk;
-    uint64_t                      heap_mem;
-    int32_t                       avg_row_bytes;
-    std::vector<sm_stats_index_t> indexes;
-    std::vector<sm_stat_t>        stats;
-};
 
 /*
  * Analyze the table, in its transaction: sample up to 300 x target
@@ -1460,10 +1459,10 @@ int sm_tbl_tryanalyze(sm_tbl_t* tbl, int32_t target);
 
 /*
  * The table oid's statistics, as the session sees them: 0 with them
- * in out, or 1 if it was never analyzed. They are shared, read-only,
- * by every caller in the process: held from memory, loaded once on
- * first use, built into this form once, and taking no lock. A
- * holder keeps the ones it was given, whatever is analyzed since.
+ * in out, or 1 if it was never analyzed. They are sm3's, shared,
+ * read-only, by every caller in the process: held in memory, loaded
+ * once on first use, never copied, and taking no lock. A holder
+ * keeps the ones it was given, whatever is analyzed since.
  */
 int sm_tbl_stats(sm_session_t* session, uint64_t oid,
                  std::shared_ptr<const sm_stats_t>& out);

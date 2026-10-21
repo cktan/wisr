@@ -1455,7 +1455,7 @@ size, and nothing of the truncate.
 | sm3 | `tbl_analyze(table, target)` | §6.4 to §6.7 |
 | sm3 | `cat_put_stats(session, table oid, stats)` | records a `stats_t` in the session's transaction, published at its commit |
 | sm3 | `cat_get_stats(session, table oid, out)` | the session's own, else the published `shared_ptr<const stats_t>`, loading it on first use in a READ COMMITTED transaction of the catalog's own; null if never analyzed |
-| top | `sm_tbl_analyze`, `sm_tbl_stats`, and the four live calls | the same, in `include/sm.h` |
+| top | `sm_tbl_analyze`, `sm_tbl_stats`, and the four live calls | the same, in `include/sm.h`; `sm_tbl_stats` hands out `cat_get_stats`'s object itself, `stats_t` being the root's `sm_stats_t` (`include/sm_stats.h`) |
 | `rel` | `analyze`, and a verb that prints a table's statistics | testing |
 
 The calls of sm1, sm2 and the live four of sm3 are built

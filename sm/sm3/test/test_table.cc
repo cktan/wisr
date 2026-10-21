@@ -224,15 +224,15 @@ std::string latest(sm3::table_t *t, uint64_t rowno) {
 /* Every row of t, as (rowno, tuple) in rowno order. */
 std::vector<std::pair<uint64_t, std::string>> rows(sm3::table_t *t) {
   std::vector<std::pair<uint64_t, std::string>> out;
-  sm2::rel_scan_t *scan = nullptr;
+  sm3::scan_t *scan = nullptr;
   REQUIRE(sm3::tbl_scan(t, 0, UINT64_MAX, scan) == 0);
   uint64_t rowno;
   std::string_view tuple;
   int rc;
-  while ((rc = sm2::rel_scannxt(scan, rowno, tuple)) == 0) {
+  while ((rc = sm3::tbl_scannxt(scan, rowno, tuple)) == 0) {
     out.emplace_back(rowno, std::string(tuple));
   }
-  sm2::rel_scanend(scan);
+  sm3::tbl_scanend(scan);
   REQUIRE(rc == 1);
   return out;
 }
@@ -407,11 +407,11 @@ int set(sm3::table_t *t, uint64_t rowno, int32_t id,
   if (!old) {
     return sm3::tbl_update(t, rowno, r.d(), r.null());
   }
-  sm1::pin_ref_t ref;
+  sm3::pin_ref_t ref;
   std::string_view was;
   int rc = sm3::tbl_update(t, rowno, r.d(), r.null(), ref, was);
   old->assign(was);
-  sm1::unpin(ref);
+  sm3::unpin(ref);
   return rc;
 }
 
@@ -449,7 +449,7 @@ TEST_CASE("a table's writes keep every index in step with its heap") {
     REQUIRE(set(t, r7, 7, "taken", "w2") == 0);
     check_agree(t);
 
-    sm1::pin_ref_t ref;
+    sm3::pin_ref_t ref;
     std::string_view gone;
     REQUIRE(0 == sm3::tbl_delete(t, r9, ref, gone));
     CHECK("9|-|w9" == show(t, gone));
@@ -817,7 +817,7 @@ TEST_CASE("a row read into a pin outlives other calls on its session") {
 
   start(f.a);
   t = f.write(f.a);
-  sm1::pin_ref_t p1, p2;
+  sm3::pin_ref_t p1, p2;
   std::string_view one, two;
   REQUIRE(sm3::tbl_read(t, r1, p1, one) == 0);
   REQUIRE(sm3::tbl_read(t, r2, p2, two) == 0);
@@ -830,9 +830,9 @@ TEST_CASE("a row read into a pin outlives other calls on its session") {
   CHECK(show(t, one) == "1|free|a");
   CHECK(one.data() == was);
   CHECK(show(t, two) == "2|taken|b");
-  sm1::unpin(p1);
+  sm3::unpin(p1);
   CHECK(show(t, two) == "2|taken|b");
-  sm1::unpin(p2);
+  sm3::unpin(p2);
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
 }
@@ -856,7 +856,7 @@ TEST_CASE("a write's old row, pinned, outlives other calls on its session") {
 
   start(f.a);
   t = f.write(f.a);
-  sm1::pin_ref_t pu, pd;
+  sm3::pin_ref_t pu, pd;
   std::string_view one, two;
   row_t r(1, "taken", "a");
   REQUIRE(0 == sm3::tbl_update(t, r1, r.d(), r.null(), pu, one));
@@ -878,8 +878,8 @@ TEST_CASE("a write's old row, pinned, outlives other calls on its session") {
   CHECK(-1 == sm3::tbl_delete(t, r2, pd, none));
   CHECK(none.empty());
   CHECK("2|taken|b" == show(t, two));
-  sm1::unpin(pu);
-  sm1::unpin(pd);
+  sm3::unpin(pu);
+  sm3::unpin(pd);
   sm3::tbl_close(t);
   REQUIRE(0 == sm3::commit(f.a));
 }
@@ -1017,31 +1017,31 @@ TEST_CASE("a scanned row outlives other calls on its session") {
 
   start(f.a);
   t = f.write(f.a);
-  sm2::rel_scan_t *heap = nullptr, *other = nullptr;
+  sm3::scan_t *heap = nullptr, *other = nullptr;
   sm2::index_scan_t *idx = nullptr;
   REQUIRE(sm3::tbl_scan(t, 0, UINT64_MAX, heap) == 0);
   REQUIRE(sm3::tbl_idx_scan(t, f.jobs_id, nullptr, nullptr, idx) == 0);
   uint64_t rowno = 0, xrow = 0, orow = 0;
   bool cut = false;
   std::string_view row, entry, tmp;
-  REQUIRE(sm2::rel_scannxt(heap, rowno, row) == 0);
+  REQUIRE(sm3::tbl_scannxt(heap, rowno, row) == 0);
   REQUIRE(sm2::idx_scannxt(idx, xrow, cut, entry) == 0);
   const std::string row_was(row), entry_was(entry);
 
   REQUIRE(sm3::tbl_read(t, r2, tmp) == 0);
   put(t, 4, "free", "d");
   REQUIRE(sm3::tbl_scan(t, 0, UINT64_MAX, other) == 0);
-  REQUIRE(sm2::rel_scannxt(other, orow, tmp) == 0);
-  REQUIRE(sm2::rel_scannxt(other, orow, tmp) == 0);
+  REQUIRE(sm3::tbl_scannxt(other, orow, tmp) == 0);
+  REQUIRE(sm3::tbl_scannxt(other, orow, tmp) == 0);
 
   CHECK(row == row_was);
   CHECK(entry == entry_was);
 
   uint64_t next = 0;
-  REQUIRE(sm2::rel_scannxt(heap, next, row) == 0);
+  REQUIRE(sm3::tbl_scannxt(heap, next, row) == 0);
   CHECK(next > rowno);
-  sm2::rel_scanend(heap);
-  sm2::rel_scanend(other);
+  sm3::tbl_scanend(heap);
+  sm3::tbl_scanend(other);
   sm2::idx_scanend(idx);
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);

@@ -1,0 +1,175 @@
+# Verify a row of a table in sm, deformed only as far as the executor
+# reads it (../sm/ROW.md section 6), gives what deforming it whole does,
+# wherever the executor keeps or copies it.
+# 1. Make a table of eight columns, nulls among them, and an index.
+# 2. Filter on a late column and read every one; filter on an early
+#    column and read a late one; read a late column of rows whose
+#    filter reads an early one, then a later one.
+# 3. Sort by a late column, which copies each row into the sort; and
+#    hash join, which copies the inner side's rows into its table.
+# 4. Nested loops: an outer row kept while an inner index scan, then
+#    an inner seq scan, reads, its late columns read after.
+# 5. A cursor: fetch a row, run another statement, fetch on, reading
+#    late columns each time; and one WITH HOLD, read after commit.
+# 6. UPDATE and DELETE RETURNING every column, and a row the update
+#    reads a late column of to compute the new one.
+# 7. A subquery naming the outer row's late column, run per row.
+
+statement ok
+create table r (a int4, b text, c int4, d numeric(10,2), e text,
+                f int8, g bool, h int4)
+
+statement ok
+insert into r select i, 'b' || i, case when i % 3 = 0 then null else i * 10 end,
+  i * 1.25, case when i % 4 = 0 then null else 'e' || i end, i * 100,
+  i % 2 = 0, i * 1000 from generate_series(1, 40) i
+
+statement ok
+create index r_a on r (a)
+
+query ITITTITI nosort
+select * from r where h = 7000
+----
+7	b7	70	8.75	e7	700	f	7000
+
+query T nosort
+select e from r where a between 3 and 5 order by a
+----
+e3
+NULL
+e5
+
+query II nosort
+select a, h from r where a < 4 and g order by a
+----
+2	2000
+
+query I nosort
+select sum(h) from r where c is null
+----
+273000
+
+query IT nosort
+select a, e from r where a <= 8 order by h desc
+----
+8	NULL
+7	e7
+6	e6
+5	e5
+4	NULL
+3	e3
+2	e2
+1	e1
+
+query IIT nosort
+select x.a, y.h, y.e from r x join r y on x.c = y.c where x.a < 3 order by x.a
+----
+1	1000	e1
+2	2000	e2
+
+statement ok
+set enable_hashjoin = off
+
+statement ok
+set enable_mergejoin = off
+
+query ITIT nosort
+select x.a, x.e, y.h, y.b from r x join r y on y.a = x.a + 1
+where x.a in (1, 4, 39) order by x.a
+----
+1	e1	2000	b2
+4	NULL	5000	b5
+39	e39	40000	b40
+
+statement ok
+set enable_indexscan = off
+
+statement ok
+set enable_bitmapscan = off
+
+query ITI nosort
+select x.a, x.e, y.h from r x join r y on y.f = x.h / 10
+where x.a in (2, 3) order by x.a
+----
+2	e2	2000
+3	e3	3000
+
+statement ok
+reset enable_indexscan
+
+statement ok
+reset enable_bitmapscan
+
+statement ok
+reset enable_hashjoin
+
+statement ok
+reset enable_mergejoin
+
+statement ok
+begin
+
+statement ok
+declare cur cursor for select a, h, e from r where a > 36 order by a
+
+query IIT nosort
+fetch 1 from cur
+----
+37	37000	e37
+
+query I nosort
+select count(*) from r where h > 20000
+----
+20
+
+query IIT nosort
+fetch 2 from cur
+----
+38	38000	e38
+39	39000	e39
+
+statement ok
+commit
+
+statement ok
+begin
+
+statement ok
+declare held cursor with hold for select a, e, h from r where a % 10 = 0 order by a
+
+statement ok
+commit
+
+query ITI nosort
+fetch 3 from held
+----
+10	e10	10000
+20	NULL	20000
+30	e30	30000
+
+statement ok
+close held
+
+query ITITTITI nosort
+update r set e = 'u' || h where a = 12 returning *
+----
+12	b12	NULL	15.00	u12000	1200	t	12000
+
+query ITITTITI nosort
+delete from r where a = 13 returning *
+----
+13	b13	130	16.25	e13	1300	f	13000
+
+query IT nosort
+select a, e from r where a between 11 and 14 order by a
+----
+11	e11
+12	u12000
+14	e14
+
+query II nosort
+select a, (select count(*) from r y where y.f < x.h / 10) from r x
+where a in (1, 20) order by a
+----
+1	0
+20	18

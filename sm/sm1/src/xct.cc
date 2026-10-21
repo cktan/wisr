@@ -286,9 +286,9 @@ void drop_temp_seqs_made(sm1::session_t *s, size_t from) {
 void discard(sm1::session_t *s) {
   // A load still open ends here, and its files with it.
   load_discard(s);
-  // Close the transaction's cursors, and release its pins.
+  // Close the transaction's cursors, and let go of its lent row.
   xct_end_scans(s);
-  pin_release_all(s);
+  sm1::unpin(&s->readpin);
   ssi_end(s); // an aborted node constrains nobody: freed
   // Take a writer out of the active table: its versions die.
   if (s->xid != 0) {
@@ -663,9 +663,9 @@ int commit(sm1::session_t *s) {
   }
   // Close cursors first, releasing their snapshots and
   // narrowing their SIREAD ranges before validation (§8.2).
-  // The pins go with them: the transaction ends here.
+  // The lent row goes with them: the transaction ends here.
   xct_end_scans(s);
-  pin_release_all(s);
+  sm1::unpin(&s->readpin);
   // The shared database object.
   db_t *db = s->db;
   // No xid: the transaction never wrote.
@@ -785,6 +785,17 @@ int finish_commit(sm1::session_t *s, uint64_t commit_ts) {
 void publish_commit(sm1::session_t *s, uint64_t xid,
                     uint64_t commit_ts) noexcept {
   db_t *db = s->db;
+  // A commit that made or dropped a store raises last_ddl_ts
+  // before its commit_ts is published, so no store cache trusts
+  // an entry across it (§11). A prepared one restored from the
+  // log has both lists from its record (§3.2).
+  if (!s->created.empty() || !s->dropped.empty()) {
+    // Only ever raise it: commits reach here out of order.
+    uint64_t ddl_ts = db->last_ddl_ts.load();
+    while (ddl_ts < commit_ts &&
+           !db->last_ddl_ts.compare_exchange_weak(ddl_ts, commit_ts)) {
+    }
+  }
   // Resolve before publishing: a reader that misses the xid in
   // the active table finds it in the cache or CF:txn (§3.4).
   enter_cache(db, xid, commit_ts);
@@ -996,9 +1007,9 @@ int prepare(sm1::session_t *s, const char *gid) {
 
   // Close cursors, then validate: the last moment the engine
   // may still say no (§8.4). A passed node counts as committed.
-  // The pins go with the cursors: the session's transaction ends.
+  // The lent row goes with the cursors: the transaction ends.
   xct_end_scans(s);
-  pin_release_all(s);
+  sm1::unpin(&s->readpin);
   // Validate; a passed node counts as committed.
   if (ssi_precommit(s, UINT64_MAX) != 0) {
     return xct_fail_retryable(s, sm1::SM_ERR_SERIALIZATION, "not serializable");

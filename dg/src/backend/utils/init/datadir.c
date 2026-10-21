@@ -105,8 +105,14 @@ void datadir_load(void) {
   int rc;
 
   load_superuser();
-  /* Once for the process: every session opens its database on it. */
-  rc = sm_attach(".", &dds_main().sm_env);
+  /*
+   * Once for the process: every session opens its database on it, and reads
+   * through one block cache of shared_buffers.
+   */
+  sm_env_options_t opt;
+  sm_env_options_init(&opt);
+  opt.block_cache_bytes = (long long)NBuffers * BLCKSZ;
+  rc = sm_attach(".", &dds_main().sm_env, &opt);
   if (rc != 0)
     ereport(FATAL, (errmsg("could not attach storage: %s", sm_errmsg())));
   on_proc_exit(detach_sm, 0);

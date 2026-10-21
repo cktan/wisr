@@ -486,6 +486,39 @@ int tup_deform(const tup_desc_t& desc, std::string_view tuple,
                std::span<datum_t> datums, std::span<bool> isnull);
 
 /*
+ * A tuple being read attribute by attribute (../ROW.md §3): its
+ * header and null bitmap, parsed once by tup_read_begin, and
+ * where the next attribute's entry is. It views the tuple and
+ * desc, so it lasts as long as both.
+ */
+struct tup_reader_t {
+    const tup_desc_t* desc  = nullptr;
+    std::string_view  tuple;
+    const char*       nulls = nullptr; /* the null bitmap, or none */
+    size_t            natts = 0;       /* attributes the tuple has */
+    size_t            next  = 0;       /* the next attribute to read */
+    size_t            pos   = 0;       /* where its entry starts */
+};
+
+/*
+ * Parse tuple's header and null bitmap under desc into r, which
+ * is then at attribute 0. Checks only them, as tup_decode does.
+ */
+int tup_read_begin(const tup_desc_t& desc, std::string_view tuple,
+                   tup_reader_t& r);
+
+/*
+ * Attributes r.next to n - 1 into datums and isnull at those
+ * places, each indexed by attribute and at least n long, n at
+ * most the schema's size; r is then at n, or stays where it is
+ * if it is there already. Each attribute checks only what it
+ * reads, its entry and its varlena, as tup_decode does; a
+ * by-reference datum points into the tuple, as tup_deform's do.
+ */
+int tup_read(tup_reader_t& r, size_t n, std::span<datum_t> datums,
+             std::span<bool> isnull);
+
+/*
  * Check that tuple is one tup_encode could have written under
  * schema: well formed (TUPLE.md §8), with an attribute for every
  * one in schema and none dropped that is not null. Fails with
@@ -572,11 +605,11 @@ int rel_insert_at(rel_t* rel, uint64_t rowno,
 int rel_read(rel_t* rel, uint64_t rowno, std::string_view& tuple);
 
 /*
- * Read the row at rowno into a pin, as sm1::read into one: the
- * tuple, and the by-reference datum_t decoded from it, last
- * until the pin ref names is released (../PIN.md).
+ * Read the row at rowno into a raw pin, as sm1::read into one:
+ * the tuple, and the by-reference datum_t decoded from it, last
+ * until the pin is emptied (../ROW.md §2).
  */
-int rel_read(rel_t* rel, uint64_t rowno, sm1::pin_ref_t& ref,
+int rel_read(rel_t* rel, uint64_t rowno, sm1::rawpin_t* pin,
              std::string_view& tuple);
 
 /*
@@ -588,7 +621,7 @@ int rel_read(rel_t* rel, uint64_t rowno, sm1::pin_ref_t& ref,
 int rel_read_latest(rel_t* rel, uint64_t rowno, std::string_view& tuple);
 
 /* rel_read_latest into a pin, as rel_read into one. */
-int rel_read_latest(rel_t* rel, uint64_t rowno, sm1::pin_ref_t& ref,
+int rel_read_latest(rel_t* rel, uint64_t rowno, sm1::rawpin_t* pin,
                     std::string_view& tuple);
 
 /*
@@ -607,26 +640,26 @@ int rel_trylock(rel_t* rel, uint64_t rowno, sm1::lockmode_t mode);
 
 /*
  * Replace the row at rowno with tuple, which must pass
- * tup_check; it keeps its rowno. The forms with ref hand back the
+ * tup_check; it keeps its rowno. The forms with pin hand back the
  * tuple replaced, which the caller maintaining indexes needs,
- * pinned into ref, as sm1::update pins it: valid until the pin is
- * released, and on failure empty, ref keeping what it held.
+ * pinned into pin, as sm1::update pins it: valid until the pin is
+ * emptied, and on failure empty, pin keeping what it held.
  */
 int rel_update(rel_t* rel, uint64_t rowno, std::string_view tuple);
 int rel_update(rel_t* rel, uint64_t rowno, std::string_view tuple,
-               sm1::pin_ref_t& ref, std::string_view& old,
+               sm1::rawpin_t* pin, std::string_view& old,
                bool hold = false);
 
 /* Encode datums and isnull, then replace the row at rowno. */
 int rel_update(rel_t* rel, uint64_t rowno, std::span<const datum_t> datums,
                std::span<const bool> isnull);
 int rel_update(rel_t* rel, uint64_t rowno, std::span<const datum_t> datums,
-               std::span<const bool> isnull, sm1::pin_ref_t& ref,
+               std::span<const bool> isnull, sm1::rawpin_t* pin,
                std::string_view& old, bool hold = false);
 
-/* Delete the row at rowno; with ref, its tuple pinned into it. */
+/* Delete the row at rowno; with pin, its tuple pinned into it. */
 int rel_delete(rel_t* rel, uint64_t rowno);
-int rel_delete(rel_t* rel, uint64_t rowno, sm1::pin_ref_t& ref,
+int rel_delete(rel_t* rel, uint64_t rowno, sm1::rawpin_t* pin,
                std::string_view& old, bool hold = false);
 
 /*
@@ -728,6 +761,9 @@ int rel_scan_seek(rel_scan_t* scan, uint64_t rowno);
 
 /* Close a cursor from rel_scan; nullptr is a no-op. */
 void rel_scanend(rel_scan_t* scan);
+
+/* Whether a rollback closed the cursor, as sm1::scan_rolled_back. */
+bool rel_scan_rolled_back(const rel_scan_t* scan);
 
 /*
  * Estimate the bytes of the rel under relid in storeid, a heap's

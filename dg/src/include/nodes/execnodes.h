@@ -1587,7 +1587,6 @@ typedef struct SeqScanState
 {
 	ScanState	ss;				/* its first field is NodeTag */
 	struct smstore_scan_t *sm_scan; /* a table in sm's: access/smstore.h */
-	int			sm_natts;		/* the columns of each row sm_scan reads */
 	List	   *cat_keys;		/* a catalog relation's: catalog/catrel.h */
 } SeqScanState;
 
@@ -1610,7 +1609,6 @@ typedef struct SampleScanState
 	int64		donetuples;		/* number of tuples already returned */
 	bool		haveblock;		/* has a block for sampling been determined */
 	bool		done;			/* exhausted all tuples? */
-	int			sm_natts;		/* a table in sm's: the columns of each row read */
 } SampleScanState;
 
 /*
@@ -1688,7 +1686,6 @@ typedef struct IndexScanState
 	int16	   *iss_OrderByTypLens;
 	Size		iss_PscanLen;
 	struct smstore_scan_t *iss_SmScan;	/* a table in sm's: access/smstore.h */
-	int			iss_SmNatts;	/* the columns of each row iss_SmScan reads */
 } IndexScanState;
 
 /* ----------------
@@ -1793,7 +1790,6 @@ typedef struct BitmapHeapScanInstrumentation
  *		rbm				   for a table in sm, bitmap of rownos from child
  *		rbm_iter		   iteration over rbm
  *		sm_fetch		   reader of the sm table's rows by rowno
- *		sm_natts		   the columns of each row sm_fetch reads
  * ----------------
  */
 typedef struct BitmapHeapScanState
@@ -1807,7 +1803,6 @@ typedef struct BitmapHeapScanState
 	struct RowBitmap *rbm;
 	struct RowBitmapIterator *rbm_iter;
 	struct smstore_scan_t *sm_fetch;	/* access/smstore.h */
-	int			sm_natts;		/* the columns of each row sm_fetch reads */
 } BitmapHeapScanState;
 
 /* ----------------

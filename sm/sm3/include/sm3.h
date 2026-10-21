@@ -13,6 +13,7 @@
 
 #include "sm1.h"
 #include "sm2.h"
+#include "sm_stats.h"
 
 #include <cstdint>
 #include <atomic>
@@ -1128,6 +1129,65 @@ std::vector<view_reader_t> cat_view_readers(const session_t* s, uint64_t oid);
 struct table_t;
 
 /*
+ * ---- pins: a row kept in memory, deformed as far as it is read
+ * (../ROW.md §4) ----
+ *
+ * A pin keeps one row's bytes where RocksDB has them, read by
+ * tbl_read or replaced by a write into a ref, or a cursor's current
+ * row (tbl_scannxt), and remembers how far they are deformed. The
+ * session owns every pin, in a pool; the caller holds a ref.
+ */
+struct pin_t;
+
+/*
+ * A pin ref: a plain value the caller keeps where it likes,
+ * naming a pin and the pin's generation when it was taken. Once
+ * the pin is released the ref is stale, and names nothing. A ref
+ * of zeros names no pin.
+ */
+struct pin_ref_t {
+    pin_t*   pin = nullptr;
+    uint64_t gen = 0;
+};
+
+/*
+ * Release the pin ref names, if it is still held, and zero ref. A
+ * stale ref, or one naming no pin, is left alone; so is a cursor's,
+ * which its cursor releases.
+ */
+void unpin(pin_ref_t& ref);
+
+/*
+ * Release every pin the session holds, leaving its transaction
+ * open; a cursor's pin goes stale, and stays with its cursor. The
+ * end of the transaction does the same: commit, prepare and abort.
+ */
+void release_all_pins(session_t* s);
+
+/*
+ * Attributes from to n - 1 of the row ref pins, into datums and
+ * isnull at those places, each indexed by attribute and at least n
+ * long. It resumes where the last deform stopped when from is
+ * there; otherwise it reads from the row's header again, and may
+ * write attributes before from again, with the values they had.
+ * Each attribute checks only what it reads (../ROW.md §4.6). A
+ * by-reference datum points into the row, and lasts as long as the
+ * pin. SM_ERR_INVALID if ref is stale, or n is past the schema.
+ */
+int pin_deform(pin_ref_t ref, size_t from, size_t n,
+               std::span<sm2::datum_t> datums, std::span<bool> isnull);
+
+/*
+ * One attribute of the row ref pins, by ordinal, as sm2::tup_decode
+ * gives it; SM_ERR_INVALID if ref is stale.
+ */
+int pin_decode(pin_ref_t ref, size_t ordinal, sm2::datum_t& val,
+               bool& isnull);
+
+/* The row's bytes, valid while the pin is; SM_ERR_INVALID if stale. */
+int pin_tuple(pin_ref_t ref, std::string_view& tuple);
+
+/*
  * Open the table oid in session's transaction, taking its schema
  * lock in mode as cat_lock_table does: intent_shared to read its
  * rows, intent_exclusive to write them. The handle is good for
@@ -1240,23 +1300,26 @@ int tbl_insert_arbiter(table_t* table, std::span<const sm2::datum_t> values,
  * reached the row. A failed index is left alone by every write. The old entry is computed
  * from the image the heap write replaced, which at read committed
  * is the newest, not the one the caller read. The form with ref
- * hands that image back pinned into ref, as sm1::update pins it:
- * valid until the pin is released, and on failure empty.
+ * hands that image back pinned into ref: valid until the pin is
+ * released. The pin ref held before is released only when the
+ * write succeeds, so values may point into its row; on failure old
+ * is empty, and ref keeps what it held.
  */
 int tbl_update(table_t* table, uint64_t rowno,
                std::span<const sm2::datum_t> values,
                std::span<const bool> isnull);
 int tbl_update(table_t* table, uint64_t rowno,
                std::span<const sm2::datum_t> values,
-               std::span<const bool> isnull, sm1::pin_ref_t& ref,
+               std::span<const bool> isnull, pin_ref_t& ref,
                std::string_view& old);
 
 /*
  * Delete the row at rowno, and its entry in every index. The form
- * with ref hands back the image deleted, pinned into ref.
+ * with ref hands back the image deleted, pinned into ref, as
+ * tbl_update's does.
  */
 int tbl_delete(table_t* table, uint64_t rowno);
-int tbl_delete(table_t* table, uint64_t rowno, sm1::pin_ref_t& ref,
+int tbl_delete(table_t* table, uint64_t rowno, pin_ref_t& ref,
                std::string_view& old);
 
 /*
@@ -1330,8 +1393,14 @@ int tbl_fetch(table_t* table, std::string_view ptr, std::string& out);
 /* Read the row at rowno, as sm2::rel_read does. */
 int tbl_read(table_t* table, uint64_t rowno, std::string_view& tuple);
 
-/* Read the row at rowno into a pin, as sm2::rel_read into one. */
-int tbl_read(table_t* table, uint64_t rowno, sm1::pin_ref_t& ref,
+/*
+ * Read the row at rowno into a pin, with no copy: 0 with ref naming
+ * it and tuple viewing its row, valid until the pin is released, 1
+ * if there is none, or -1. A pin ref names still is released
+ * first; on 1 or -1 ref is zero. A rollback to a savepoint releases
+ * no pin, nor does the drop of the row's store.
+ */
+int tbl_read(table_t* table, uint64_t rowno, pin_ref_t& ref,
              std::string_view& tuple);
 
 /*
@@ -1343,7 +1412,7 @@ int tbl_read(table_t* table, uint64_t rowno, sm1::pin_ref_t& ref,
 int tbl_read_latest(table_t* table, uint64_t rowno, std::string_view& tuple);
 
 /* tbl_read_latest into a pin, as tbl_read into one. */
-int tbl_read_latest(table_t* table, uint64_t rowno, sm1::pin_ref_t& ref,
+int tbl_read_latest(table_t* table, uint64_t rowno, pin_ref_t& ref,
                     std::string_view& tuple);
 
 /*
@@ -1375,9 +1444,36 @@ int tbl_trylock(table_t* table, uint64_t rowno, sm1::lockmode_t mode);
  */
 int tbl_truncate(table_t* table);
 
-/* Open a cursor over the rows first..last, as sm2::rel_scan does. */
-int tbl_scan(table_t* table, uint64_t first, uint64_t last,
-             sm2::rel_scan_t*& out);
+/*
+ * A cursor over a table's rows, in rowno order (../ROW.md §4.3):
+ * an sm2 rel scan, and one pin, which holds the cursor's current
+ * row.
+ */
+struct scan_t;
+
+/*
+ * Open a cursor over the rows first..last, as sm2::rel_scan does,
+ * taking its pin from the session's pool.
+ */
+int tbl_scan(table_t* table, uint64_t first, uint64_t last, scan_t*& out);
+
+/*
+ * The next row: 0 with rowno, and the row in the cursor's pin, which
+ * ref then names and tuple views; 1 at the end; -1 on error. Each
+ * call makes every ref to the row before stale; so do the end of the
+ * transaction, a rollback that closes the cursor, and tbl_scanend.
+ */
+int tbl_scannxt(scan_t* scan, uint64_t& rowno, pin_ref_t& ref,
+                std::string_view& tuple);
+
+/* tbl_scannxt for a caller that wants the bytes only. */
+int tbl_scannxt(scan_t* scan, uint64_t& rowno, std::string_view& tuple);
+
+/* Move the cursor forward to rowno, as sm2::rel_scan_seek does. */
+int tbl_scan_seek(scan_t* scan, uint64_t rowno);
+
+/* Close a cursor, releasing its pin; nullptr is a no-op. */
+void tbl_scanend(scan_t* scan);
 
 /*
  * Open a cursor over the entries of the table's index oid between
@@ -1426,48 +1522,15 @@ int tbl_probes(table_t* table, uint64_t& n);
  */
 sm2::datum_t datum_of_bytes(const sm2::type_t* type, std::string_view bytes);
 
-/* The version of the parts below; 1 for now. */
-constexpr int32_t stats_format = 1;
-
-/* The statistics of one column, or of one expression of an index. */
-struct stat_t {
-    std::optional<uint64_t>  index;       /* nullopt: a column's */
-    int32_t                  position;    /* the column's attnum, 0-based,
-                                             or the expression's place
-                                             among the index's keys */
-    float                    null_frac;
-    int32_t                  width;       /* average bytes of a value */
-    float                    distinct;    /* a count, or, below 0, minus
-                                             a fraction of the rows */
-    std::optional<float>     correlation;
-    std::vector<std::string> mcv;         /* most common values */
-    std::vector<float>       mcv_freq;    /* each one's frequency */
-    std::vector<std::string> bounds;      /* histogram bounds */
-};
-
-/* An index's sizes and entries as the analyze found them. */
-struct stats_index_t {
-    uint64_t oid;
-    uint64_t disk;
-    uint64_t mem;
-    double   entries;
-    float    belongs;  /* the fraction of rows in it; 1 if not partial */
-};
-
-/* A table's statistics. */
-struct stats_t {
-    int32_t                    format = stats_format;
-    int32_t                    target;        /* the statistics target */
-    int32_t                    run_length;    /* B, rownos a run */
-    uint64_t                   rows_sampled;
-    uint64_t                   rowno_limit;   /* N when analyzed */
-    double                     live_rows;
-    uint64_t                   heap_disk;
-    uint64_t                   heap_mem;
-    int32_t                    avg_row_bytes;
-    std::vector<stats_index_t> indexes;
-    std::vector<stat_t>        stats;
-};
+/*
+ * A table's statistics, their parts, and the version of the parts,
+ * as the root's include/sm_stats.h lays them out: sm.h hands out
+ * the ones cat_get_stats keeps as they are.
+ */
+constexpr int32_t stats_format = ::sm_stats_format;
+using stat_t = ::sm_stat_t;
+using stats_index_t = ::sm_stats_index_t;
+using stats_t = ::sm_stats_t;
 
 /*
  * Record stats as the table oid's in session's transaction,

@@ -234,9 +234,9 @@ int deform(const char *fn, const sm2::tup_desc_t &desc, const void *tuple,
                          std::span<bool>(isnull, n));
 }
 
-/* The sm1 pin ref a C one names. */
-sm1::pin_ref_t pin_ref_of(const sm_pin_ref_t &ref) {
-  return sm1::pin_ref_t{static_cast<sm1::pin_t *>(ref.pin), ref.gen};
+/* The sm3 pin ref a C one names. */
+sm3::pin_ref_t pin_ref_of(const sm_pin_ref_t &ref) {
+  return sm3::pin_ref_t{static_cast<sm3::pin_t *>(ref.pin), ref.gen};
 }
 
 /* A C view out-parameter pair, set from v. */
@@ -249,9 +249,9 @@ void view_out(std::string_view v, const void **data, size_t *len) {
 
 namespace {
 
-/* The sm2 cursor behind a C heap cursor. */
-sm2::rel_scan_t *rel_scan_of(sm_rel_scan_t *scan) {
-  return reinterpret_cast<sm2::rel_scan_t *>(scan);
+/* The sm3 cursor behind a C heap cursor. */
+sm3::scan_t *rel_scan_of(sm_rel_scan_t *scan) {
+  return reinterpret_cast<sm3::scan_t *>(scan);
 }
 
 /* The sm2 cursor behind a C index cursor. */
@@ -450,11 +450,16 @@ static int set_evaluator(sm_env_t *env, sm3::catalog_t *cat) {
 }
 
 /* Attach homedir. */
-int sm_attach(const char *homedir, sm_env_t **out) {
+int sm_attach(const char *homedir, sm_env_t **out,
+              const sm_env_options_t *opt) {
   return guard(nullptr, [&] {
     sm1::env_t *env = nullptr;
+    sm1::env_options_t o;
+    if (opt != nullptr) {
+      static_cast<sm_env_options_t &>(o) = *opt;
+    }
     // Attach: opens the root db and starts sm1's threads.
-    if (sm1::attach(name_of(homedir), env) != 0) {
+    if (sm1::attach(name_of(homedir), env, &o) != 0) {
       return -1;
     }
     *out = new sm_env_t;
@@ -704,16 +709,42 @@ void sm_unpin(sm_pin_ref_t *ref) {
   if (!ref) {
     return;
   }
-  sm1::pin_ref_t r = pin_ref_of(*ref);
-  sm1::unpin(r);
+  sm3::pin_ref_t r = pin_ref_of(*ref);
+  sm3::unpin(r);
   *ref = sm_pin_ref_t{};
 }
 
 /* Release every pin the session holds. */
 void sm_release_all_pins(sm_session_t *session) {
   if (session) {
-    sm1::release_all_pins(session->sm1);
+    sm3::release_all_pins(session->sm3);
   }
+}
+
+/* Attributes from to n - 1 of the row a ref pins. */
+int sm_pin_deform(sm_pin_ref_t ref, size_t from, size_t n, sm_datum_t *values,
+                  bool *isnull) {
+  return guard(nullptr, [&] {
+    return sm3::pin_deform(pin_ref_of(ref), from, n, {values, n}, {isnull, n});
+  });
+}
+
+/* One attribute of the row a ref pins. */
+int sm_pin_decode(sm_pin_ref_t ref, size_t ordinal, sm_datum_t *val,
+                  bool *isnull) {
+  return guard(nullptr, [&] {
+    return sm3::pin_decode(pin_ref_of(ref), ordinal, *val, *isnull);
+  });
+}
+
+/* The bytes of the row a ref pins. */
+int sm_pin_tuple(sm_pin_ref_t ref, const void **tuple, size_t *len) {
+  return guard(nullptr, [&] {
+    std::string_view v;
+    int rc = sm3::pin_tuple(pin_ref_of(ref), v);
+    view_out(v, tuple, len);
+    return rc;
+  });
 }
 
 struct sm_stmt_t {
@@ -1025,7 +1056,7 @@ int sm_rel_scannxt(sm_rel_scan_t *scan, uint64_t *rowno, const void **tuple,
                    size_t *len) {
   return guard(nullptr, [&] {
     std::string_view v;
-    int rc = sm2::rel_scannxt(rel_scan_of(scan), *rowno, v);
+    int rc = sm3::tbl_scannxt(rel_scan_of(scan), *rowno, v);
     if (rc == 0) {
       view_out(v, tuple, len);
     }
@@ -1033,15 +1064,26 @@ int sm_rel_scannxt(sm_rel_scan_t *scan, uint64_t *rowno, const void **tuple,
   });
 }
 
+/* The next row, in the cursor's pin, which *ref then names. */
+int sm_rel_scannxt(sm_rel_scan_t *scan, uint64_t *rowno, sm_pin_ref_t *ref) {
+  return guard(nullptr, [&] {
+    sm3::pin_ref_t r;
+    std::string_view v;
+    int rc = sm3::tbl_scannxt(rel_scan_of(scan), *rowno, r, v);
+    *ref = sm_pin_ref_t{r.pin, r.gen};
+    return rc;
+  });
+}
+
 /* Move a heap cursor forward to rowno. */
 int sm_rel_scan_seek(sm_rel_scan_t *scan, uint64_t rowno) {
   return guard(nullptr,
-               [&] { return sm2::rel_scan_seek(rel_scan_of(scan), rowno); });
+               [&] { return sm3::tbl_scan_seek(rel_scan_of(scan), rowno); });
 }
 
-/* Close a heap cursor. */
+/* Close a heap cursor, and release its pin. */
 void sm_rel_scanend(sm_rel_scan_t *scan) {
-  sm2::rel_scanend(rel_scan_of(scan));
+  sm3::tbl_scanend(rel_scan_of(scan));
 }
 
 /* Encode values and isnull into a tuple. */
@@ -1639,10 +1681,10 @@ int sm_tbl_update(sm_tbl_t *tbl, uint64_t rowno, const sm_datum_t *values,
     if (!old || !len) {
       return null_arg("sm_tbl_update", "old or len");
     }
-    sm1::pin_ref_t r = pin_ref_of(*ref);
+    sm3::pin_ref_t r = pin_ref_of(*ref);
     std::string_view v;
     int rc = sm3::tbl_update(tbl->table, rowno, {values, n}, {isnull, n}, r, v);
-    // The ref is sm1's again either way: the old row, or what it held.
+    // The ref is set either way: the old row, or what it held.
     *ref = sm_pin_ref_t{r.pin, r.gen};
     *old = nullptr;
     *len = 0;
@@ -1666,10 +1708,10 @@ int sm_tbl_delete(sm_tbl_t *tbl, uint64_t rowno, sm_pin_ref_t *ref,
     if (!old || !len) {
       return null_arg("sm_tbl_delete", "old or len");
     }
-    sm1::pin_ref_t r = pin_ref_of(*ref);
+    sm3::pin_ref_t r = pin_ref_of(*ref);
     std::string_view v;
     int rc = sm3::tbl_delete(tbl->table, rowno, r, v);
-    // The ref is sm1's again either way: the old row, or what it held.
+    // The ref is set either way: the old row, or what it held.
     *ref = sm_pin_ref_t{r.pin, r.gen};
     *old = nullptr;
     *len = 0;
@@ -1700,10 +1742,10 @@ int sm_tbl_read(sm_tbl_t *tbl, uint64_t rowno, sm_pin_ref_t *ref,
     if (!ref) {
       return null_arg("sm_tbl_read", "ref");
     }
-    sm1::pin_ref_t r = pin_ref_of(*ref);
+    sm3::pin_ref_t r = pin_ref_of(*ref);
     std::string_view v;
     int rc = sm3::tbl_read(tbl->table, rowno, r, v);
-    // The ref is sm1's again either way: a pin, or none.
+    // The ref is set either way: a pin, or none.
     *ref = sm_pin_ref_t{r.pin, r.gen};
     if (rc == 0) {
       view_out(v, tuple, len);
@@ -1719,10 +1761,10 @@ int sm_tbl_read_latest(sm_tbl_t *tbl, uint64_t rowno, sm_pin_ref_t *ref,
     if (!ref) {
       return null_arg("sm_tbl_read_latest", "ref");
     }
-    sm1::pin_ref_t r = pin_ref_of(*ref);
+    sm3::pin_ref_t r = pin_ref_of(*ref);
     std::string_view v;
     int rc = sm3::tbl_read_latest(tbl->table, rowno, r, v);
-    // The ref is sm1's again either way: a pin, or none.
+    // The ref is set either way: a pin, or none.
     *ref = sm_pin_ref_t{r.pin, r.gen};
     if (rc == 0) {
       view_out(v, tuple, len);
@@ -1783,7 +1825,7 @@ int sm_tbl_truncate(sm_tbl_t *tbl) {
 int sm_tbl_scan(sm_tbl_t *tbl, uint64_t first, uint64_t last,
                 sm_rel_scan_t **out) {
   return guard(tbl->session, [&] {
-    sm2::rel_scan_t *scan = nullptr;
+    sm3::scan_t *scan = nullptr;
     if (sm3::tbl_scan(tbl->table, first, last, scan) != 0) {
       return -1;
     }
@@ -1959,66 +2001,6 @@ int sm_tbl_tryanalyze(sm_tbl_t *tbl, int32_t target) {
   });
 }
 
-namespace {
-
-/*
- * The statistics in sm.h's form, each built once from sm3's and shared:
- * by the address of sm3's, which a view keeps alive, so the address is
- * never another's while its view is held.  An expired view is built again.
- */
-std::mutex g_stats_mu;
-std::unordered_map<const sm3::stats_t *, std::weak_ptr<const sm_stats_t>>
-    g_stats_views;
-
-/* sm3's statistics in sm.h's form, with what they were built from. */
-struct stats_view_t {
-  std::shared_ptr<const sm3::stats_t> from;
-  sm_stats_t view;
-};
-
-/* The view of st, built now if no holder has one. */
-std::shared_ptr<const sm_stats_t>
-stats_view(std::shared_ptr<const sm3::stats_t> st) {
-  // One build at a time, so two callers share the first's.
-  std::lock_guard<std::mutex> lock(g_stats_mu);
-  auto it = g_stats_views.find(st.get());
-  if (it != g_stats_views.end()) {
-    if (auto held = it->second.lock()) {
-      return held;
-    }
-  }
-  auto v = std::make_shared<stats_view_t>();
-  v->view = {st->target,
-             st->run_length,
-             st->rows_sampled,
-             st->rowno_limit,
-             st->live_rows,
-             st->heap_disk,
-             st->heap_mem,
-             st->avg_row_bytes,
-             {},
-             {}};
-  for (const sm3::stats_index_t &x : st->indexes) {
-    v->view.indexes.push_back({x.oid, x.disk, x.mem, x.entries, x.belongs});
-  }
-  for (const sm3::stat_t &c : st->stats) {
-    v->view.stats.push_back(
-        {c.index.has_value(), c.index.value_or(0), c.position, c.null_frac,
-         c.width, c.distinct, c.correlation.has_value(),
-         c.correlation.value_or(0), c.mcv, c.mcv_freq, c.bounds});
-  }
-  v->from = std::move(st);
-  std::shared_ptr<const sm_stats_t> out(v, &v->view);
-  // Views no one holds any more go, so the map stays small.
-  for (auto e = g_stats_views.begin(); e != g_stats_views.end();) {
-    e = e->second.expired() ? g_stats_views.erase(e) : std::next(e);
-  }
-  g_stats_views[v->from.get()] = out;
-  return out;
-}
-
-} // namespace
-
 /* A table's statistics: 0, or 1 if never analyzed. */
 int sm_tbl_stats(sm_session_t *session, uint64_t oid,
                  std::shared_ptr<const sm_stats_t> &out) {
@@ -2031,7 +2013,8 @@ int sm_tbl_stats(sm_session_t *session, uint64_t oid,
       out = nullptr;
       return 1;
     }
-    out = stats_view(std::move(st));
+    // sm3's own, as it keeps them: sm.h's form is sm3's.
+    out = std::move(st);
     return 0;
   });
 }

@@ -221,6 +221,17 @@ struct sm3::session_t {
    */
   std::vector<uint64_t> doomed;
   std::atomic<bool> has_doomed{false};
+
+  /*
+   * The pool of pins (../ROW.md §4.1): every pin made, freed at
+   * session_close, so a stale ref always points to a pin; those
+   * released, ready to take; those holding a read's or a write's
+   * row; and the cursors'.
+   */
+  std::vector<sm3::pin_t *> pins;
+  sm3::pin_t *pins_free = nullptr;
+  sm3::pin_t *pins_held = nullptr;
+  sm3::pin_t *pins_scan = nullptr;
 };
 
 namespace sm3 {

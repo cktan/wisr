@@ -241,7 +241,10 @@ extern TM_Result smstore_lock_row(Relation rel, ItemPointer tid,
 /* A scan of a table in sm, in rowno order. */
 typedef struct smstore_scan_t smstore_scan_t;
 
-extern smstore_scan_t *smstore_beginscan(Relation rel, int natts);
+/* The slot type of a table in sm: a row deformed as it is read. */
+extern PGDLLIMPORT const TupleTableSlotOps TTSOpsSmRow;
+
+extern smstore_scan_t *smstore_beginscan(Relation rel);
 extern bool smstore_getnext(smstore_scan_t *scan, TupleTableSlot *slot);
 extern void smstore_endscan(smstore_scan_t *scan);
 extern void smstore_scan_seek(smstore_scan_t *scan, uint64 rowno);
@@ -251,12 +254,11 @@ extern uint64 smstore_rowno_limit(Relation rel);
 extern int smstore_scan_natts(const struct Scan *plan, Relation rel);
 extern int smstore_expr_natts(Node *expr, Index varno, Relation rel);
 extern smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
-                                               ScanKey keys, int nkeys,
-                                               int natts);
+                                               ScanKey keys, int nkeys);
 extern bool smstore_index_getnext(smstore_scan_t *scan, TupleTableSlot *slot);
 extern bool smstore_index_getrowno(smstore_scan_t *scan, uint64 *rowno);
 extern bool smstore_index_getentry(smstore_scan_t *scan, TupleTableSlot *slot);
-extern smstore_scan_t *smstore_beginfetch(Relation rel, int natts);
+extern smstore_scan_t *smstore_beginfetch(Relation rel);
 extern bool smstore_fetch(smstore_scan_t *scan, uint64 rowno,
                           TupleTableSlot *slot);
 extern void smstore_rowno_to_tid(uint64 rowno, ItemPointer tid);

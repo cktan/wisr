@@ -113,7 +113,7 @@ store_t store_of(db_t *db, uint64_t storeid) {
  * left in the iterator the pin then holds, or copied into value.
  */
 void keep_value(const version_t &v, std::unique_ptr<rocksdb::Iterator> &it,
-                std::string *value, sm1::pin_t *pin, bool live) {
+                std::string *value, sm1::rawpin_t *pin, bool live) {
   if (!live) {
     return;
   }
@@ -123,6 +123,22 @@ void keep_value(const version_t &v, std::unique_ptr<rocksdb::Iterator> &it,
   } else if (value) {
     value->assign(v.payload.data(), v.payload.size());
   }
+}
+
+/*
+ * Whether the iterator pin holds may serve a read of storeid at
+ * view, entered in read epoch epoch (§10.1): a point read of this
+ * session opened it on the store, in the epoch still current,
+ * after every commit the view sees and after the session's last
+ * write. Not under SERIALIZABLE, whose SIREAD must come before the
+ * iterator.
+ */
+bool reusable(const sm1::session_t *s, const sm1::rawpin_t &pin,
+              uint64_t storeid, const view_t &view, uint64_t epoch) {
+  const sm1::rawpin_t::reuse_t &r = pin.reuse;
+  return pin.it && r.session == s && r.storeid == storeid &&
+         r.write_gen == s->write_gen && view.snapshot_ts <= r.visible_ts &&
+         r.epoch == epoch && !s->ssi && pin.it->status().ok();
 }
 
 /*
@@ -142,7 +158,7 @@ void keep_value(const version_t &v, std::unique_ptr<rocksdb::Iterator> &it,
 int latest_version(sm1::session_t *s, store_t st, rocksdb::Slice key,
                    bool *live, uint64_t *commit_ts, std::string *value,
                    uint32_t *own_seq = nullptr, uint64_t *inflight = nullptr,
-                   sm1::pin_t *pin = nullptr) {
+                   sm1::rawpin_t *pin = nullptr) {
   // Assume no version until one is found.
   *live = false;
   *commit_ts = 0;
@@ -270,12 +286,12 @@ int enter(sm1::session_t *s, const view_t &view, uint64_t storeid,
 
 /*
  * sm1::insert / sm1::update / sm1::erase, minus the out-of-memory
- * guard. With ref, the row an update or erase replaces is pinned
+ * guard. With pin, the row an update or erase replaces is pinned
  * into it, and old and oldlen view it.
  */
 int write_row(sm1::session_t *s, write_op_t op, uint64_t storeid,
               const char *key, size_t klen, const char *data, size_t datalen,
-              sm1::pin_ref_t *ref = nullptr, const char **old = nullptr,
+              sm1::rawpin_t *pin = nullptr, const char **old = nullptr,
               size_t *oldlen = nullptr) {
   // Report no old row until the write finds one.
   if (old) {
@@ -299,24 +315,20 @@ int write_row(sm1::session_t *s, write_op_t op, uint64_t storeid,
   if (enter(s, xct_view(s), storeid, key, klen) != 0) {
     return -1;
   }
-  // Write the version, keeping the row it replaces in a pin when
-  // asked.
-  sm1::pin_t *p = ref ? pin_take(s) : nullptr;
+  // Write the version, keeping the row it replaces in a pin of
+  // its own when asked, as data may view the row pin holds.
+  sm1::rawpin_t got;
   int r = access_write(s, storeid, op, rocksdb::Slice(key ? key : "", klen),
-                       rocksdb::Slice(data ? data : "", datalen), p);
-  if (!ref) {
+                       rocksdb::Slice(data ? data : "", datalen),
+                       pin ? &got : nullptr);
+  // Failed, or not asked: the pin keeps what it held.
+  if (!pin || 0 != r) {
     return r;
   }
-  // Failed: the pin goes back, and ref keeps what it held.
-  if (0 != r) {
-    pin_put(p);
-    return r;
-  }
-  // The row ref held goes only now, as data may have viewed it.
-  sm1::unpin(*ref);
-  pin_hold(p, *ref);
-  *old = p->row.data();
-  *oldlen = p->row.size();
+  // The row pin held goes only now, its iterator with it.
+  *pin = std::move(got);
+  *old = pin->row.data();
+  *oldlen = pin->row.size();
   return 0;
 }
 
@@ -431,9 +443,9 @@ int lock_row(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
   return access_check_current(s, storeid, k);
 }
 
-/* sm1::read into ref, minus the out-of-memory guard. */
+/* sm1::read into pin, minus the out-of-memory guard. */
 int read_row(sm1::session_t *s, uint64_t storeid, const char *key, size_t klen,
-             sm1::pin_ref_t &ref, const char **data, size_t *datalen) {
+             sm1::rawpin_t *pin, const char **data, size_t *datalen) {
   // Require the out-parameters.
   if (!data || !datalen) {
     return set_error(sm1::SM_ERR_INVALID, "sm1_read: data or datalen is NULL");
@@ -441,8 +453,16 @@ int read_row(sm1::session_t *s, uint64_t storeid, const char *key, size_t klen,
   // Report no row until one is found.
   *data = nullptr;
   *datalen = 0;
-  // A read into ref replaces the row it held.
-  sm1::unpin(ref);
+  // A read into pin replaces the row it held. The pin keeps its
+  // iterator for access_read to seek again (§10.1), and is emptied
+  // unless a row is found.
+  pin->row = rocksdb::Slice();
+  bool found = false;
+  defer {
+    if (!found) {
+      sm1::unpin(pin);
+    }
+  };
   // Require an active, non-prepared transaction.
   if (xct_check_active(s) != 0) {
     return -1;
@@ -453,25 +473,23 @@ int read_row(sm1::session_t *s, uint64_t storeid, const char *key, size_t klen,
   if (enter(s, view, storeid, key, klen) != 0) {
     return -1;
   }
-  // Read the key into a pin, which keeps the row where it is.
-  sm1::pin_t *p = pin_take(s);
+  // Read the key into the pin, which keeps the row where it is;
+  // with no row it stays empty.
   int r = access_read(s, storeid, view, rocksdb::Slice(key ? key : "", klen),
-                      nullptr, p);
-  // No row: the pin goes back unused.
+                      nullptr, pin);
   if (r != 0) {
-    pin_put(p);
     return r;
   }
-  // Found: hold it, and hand out its bytes.
-  pin_hold(p, ref);
-  *data = p->row.data();
-  *datalen = p->row.size();
+  // Found: hand out its bytes.
+  found = true;
+  *data = pin->row.data();
+  *datalen = pin->row.size();
   return 0;
 }
 
-/* sm1::read_latest into ref, minus the out-of-memory guard. */
+/* sm1::read_latest into pin, minus the out-of-memory guard. */
 int read_latest_row(sm1::session_t *s, uint64_t storeid, const char *key,
-                    size_t klen, sm1::pin_ref_t &ref, const char **data,
+                    size_t klen, sm1::rawpin_t *pin, const char **data,
                     size_t *datalen) {
   // Require the out-parameters.
   if (!data || !datalen) {
@@ -481,8 +499,8 @@ int read_latest_row(sm1::session_t *s, uint64_t storeid, const char *key,
   // Report no row until one is found.
   *data = nullptr;
   *datalen = 0;
-  // A read into ref replaces the row it held.
-  sm1::unpin(ref);
+  // A read into pin replaces the row it held.
+  sm1::unpin(pin);
   // Require an active, non-prepared transaction.
   if (xct_check_active(s) != 0) {
     return -1;
@@ -505,12 +523,11 @@ int read_latest_row(sm1::session_t *s, uint64_t storeid, const char *key,
   bool live;
   uint64_t commit_ts;
   uint32_t own_seq;
-  // Read the newest version into a pin, ignoring the snapshot;
-  // the pin goes back unused unless a row is handed out.
-  sm1::pin_t *p = pin_take(s);
-  sm0::scope_guard_t put([&] { pin_put(p); });
+  // Read the newest version into the pin, ignoring the snapshot;
+  // it is emptied again unless a row is handed out.
+  sm0::scope_guard_t put([&] { sm1::unpin(pin); });
   if (latest_version(s, st, k, &live, &commit_ts, nullptr, &own_seq, nullptr,
-                     p) != 0) {
+                     pin) != 0) {
     return -1;
   }
   // Something must keep the newest version from changing: a lock
@@ -532,11 +549,10 @@ int read_latest_row(sm1::session_t *s, uint64_t storeid, const char *key,
   if (!live) {
     return 1;
   }
-  // Found: hold it, and hand out its bytes.
+  // Found: keep it, and hand out its bytes.
   put.dismiss();
-  pin_hold(p, ref);
-  *data = p->row.data();
-  *datalen = p->row.size();
+  *data = pin->row.data();
+  *datalen = pin->row.size();
   return 0;
 }
 
@@ -826,7 +842,7 @@ namespace wisr {
 
 /* Seek to the newest version a reader at view could see (§10.1). */
 int access_read(sm1::session_t *s, uint64_t storeid, const view_t &view,
-                rocksdb::Slice key, std::string *out, sm1::pin_t *pin) {
+                rocksdb::Slice key, std::string *out, sm1::rawpin_t *pin) {
   // Find the store's CF.
   store_t st = store_of(s->db, storeid);
   if (!st.cf) {
@@ -845,8 +861,19 @@ int access_read(sm1::session_t *s, uint64_t storeid, const view_t &view,
   // Stay within this userkey's versions.
   rocksdb::ReadOptions ro;
   ro.prefix_same_as_start = true;
-  // Open an iterator on the store.
-  std::unique_ptr<rocksdb::Iterator> it(st.rdb->NewIterator(ro, st.cf));
+  // Seek again the iterator pin holds when it can serve this
+  // read, else open one on the store (§10.1).
+  std::unique_ptr<rocksdb::Iterator> it;
+  sm1::rawpin_t::reuse_t reuse;
+  if (pin && reusable(s, *pin, storeid, view, epoch)) {
+    it = std::move(pin->it);
+    reuse = pin->reuse;
+  } else {
+    sm1::unpin(pin);
+    // Every commit published by now is in an iterator opened next.
+    reuse = {s, storeid, s->write_gen, s->db->visible_ts.load(), epoch};
+    it.reset(st.rdb->NewIterator(ro, st.cf));
+  }
   // Seek to the newest version the reader could see; ~seq of 0
   // lands before every own version of the key. Under SSI, start
   // before every version instead: the newer ones are exactly
@@ -883,6 +910,7 @@ int access_read(sm1::session_t *s, uint64_t storeid, const view_t &view,
       if (pin) {
         pin->row = v.payload;
         pin->it = std::move(it);
+        pin->reuse = reuse;
       } else {
         out->assign(v.payload.data(), v.payload.size());
       }
@@ -902,7 +930,7 @@ int access_read(sm1::session_t *s, uint64_t storeid, const view_t &view,
 
 /* Check existence, then put one new version (§5). */
 int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
-                 rocksdb::Slice key, rocksdb::Slice data, sm1::pin_t *pin) {
+                 rocksdb::Slice key, rocksdb::Slice data, sm1::rawpin_t *pin) {
   // Find the store's CF.
   store_t st = store_of(s->db, storeid);
   if (!st.cf) {
@@ -1004,6 +1032,8 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
   }
   // This write's seq, one past the last.
   uint32_t seq = s->seq + 1;
+  // No iterator opened before now serves the session's reads.
+  s->write_gen++;
   // A delete writes a tombstone version.
   uint8_t flags = op == WRITE_DELETE ? version_tombstone : 0;
   // Allocate the write timestamp now that no other writer of the
@@ -1117,23 +1147,23 @@ int sm1::update(sm1::session_t *session, uint64_t storeid, std::string_view key,
     return write_row(session, WRITE_UPDATE, storeid, key.data(), key.size(),
                      data.data(), data.size());
   }
-  // A null session fails in write_row; it has no ref of its own.
+  // A null session fails in write_row; it has no pin of its own.
   if (!session) {
     *old = {};
     return xct_check_active(session);
   }
-  // Into the session's own ref, which sm1::read shares.
-  return sm1::update(session, storeid, key, data, session->readref, *old);
+  // Into the session's own pin, which sm1::read shares.
+  return sm1::update(session, storeid, key, data, &session->readpin, *old);
 }
 
-/* Replace a row's value, pinning the row replaced into ref. */
+/* Replace a row's value, pinning the row replaced into pin. */
 int sm1::update(sm1::session_t *session, uint64_t storeid, std::string_view key,
-                std::string_view data, sm1::pin_ref_t &ref,
+                std::string_view data, sm1::rawpin_t *pin,
                 std::string_view &old) {
   const char *o = nullptr;
   size_t olen = 0;
   int rc = write_row(session, WRITE_UPDATE, storeid, key.data(), key.size(),
-                     data.data(), data.size(), &ref, &o, &olen);
+                     data.data(), data.size(), pin, &o, &olen);
   // Hand it back: the old row, or empty on failure.
   old = std::string_view(o, olen);
   return rc;
@@ -1146,33 +1176,33 @@ int sm1::erase(sm1::session_t *session, uint64_t storeid, std::string_view key,
     return write_row(session, WRITE_DELETE, storeid, key.data(), key.size(),
                      nullptr, 0);
   }
-  // A null session fails in write_row; it has no ref of its own.
+  // A null session fails in write_row; it has no pin of its own.
   if (!session) {
     *old = {};
     return xct_check_active(session);
   }
-  // Into the session's own ref, which sm1::read shares.
-  return sm1::erase(session, storeid, key, session->readref, *old);
+  // Into the session's own pin, which sm1::read shares.
+  return sm1::erase(session, storeid, key, &session->readpin, *old);
 }
 
-/* Delete a row, pinning the row deleted into ref. */
+/* Delete a row, pinning the row deleted into pin. */
 int sm1::erase(sm1::session_t *session, uint64_t storeid, std::string_view key,
-               sm1::pin_ref_t &ref, std::string_view &old) {
+               sm1::rawpin_t *pin, std::string_view &old) {
   const char *o = nullptr;
   size_t olen = 0;
   int rc = write_row(session, WRITE_DELETE, storeid, key.data(), key.size(),
-                     nullptr, 0, &ref, &o, &olen);
+                     nullptr, 0, pin, &o, &olen);
   // Hand it back: the old row, or empty on failure.
   old = std::string_view(o, olen);
   return rc;
 }
 
-/* Read one key into ref. */
+/* Read one key into pin. */
 int sm1::read(sm1::session_t *session, uint64_t storeid, std::string_view key,
-              sm1::pin_ref_t &ref, std::string_view &data) {
+              sm1::rawpin_t *pin, std::string_view &data) {
   const char *d = nullptr;
   size_t dlen = 0;
-  int rc = read_row(session, storeid, key.data(), key.size(), ref, &d, &dlen);
+  int rc = read_row(session, storeid, key.data(), key.size(), pin, &d, &dlen);
   // Hand back the value: empty for none (1) and on failure.
   data = std::string_view(d, dlen);
   return rc;
@@ -1181,23 +1211,23 @@ int sm1::read(sm1::session_t *session, uint64_t storeid, std::string_view key,
 /* Read one key, lent until the session's next call. */
 int sm1::read(sm1::session_t *session, uint64_t storeid, std::string_view key,
               std::string_view &data) {
-  // A NULL session has no ref: fail as any call on it does.
+  // A NULL session has no pin: fail as any call on it does.
   if (!session) {
     data = std::string_view();
     return xct_check_active(session);
   }
-  // Into the session's own ref, which the next such read reuses.
-  return sm1::read(session, storeid, key, session->readref, data);
+  // Into the session's own pin, which the next such read reuses.
+  return sm1::read(session, storeid, key, &session->readpin, data);
 }
 
-/* Read the newest committed version of a key into ref. */
+/* Read the newest committed version of a key into pin. */
 int sm1::read_latest(sm1::session_t *session, uint64_t storeid,
-                     std::string_view key, sm1::pin_ref_t &ref,
+                     std::string_view key, sm1::rawpin_t *pin,
                      std::string_view &data) {
   const char *d = nullptr;
   size_t dlen = 0;
   int rc =
-      read_latest_row(session, storeid, key.data(), key.size(), ref, &d, &dlen);
+      read_latest_row(session, storeid, key.data(), key.size(), pin, &d, &dlen);
   // Hand back the value: empty for none (1) and on failure.
   data = std::string_view(d, dlen);
   return rc;
@@ -1206,13 +1236,13 @@ int sm1::read_latest(sm1::session_t *session, uint64_t storeid,
 /* Read the newest committed version of a key, lent as sm1::read's. */
 int sm1::read_latest(sm1::session_t *session, uint64_t storeid,
                      std::string_view key, std::string_view &data) {
-  // A NULL session has no ref: fail as any call on it does.
+  // A NULL session has no pin: fail as any call on it does.
   if (!session) {
     data = std::string_view();
     return xct_check_active(session);
   }
-  // Into the session's own ref, which sm1::read shares.
-  return sm1::read_latest(session, storeid, key, session->readref, data);
+  // Into the session's own pin, which sm1::read shares.
+  return sm1::read_latest(session, storeid, key, &session->readpin, data);
 }
 
 /* Open a cursor over a key range. */
@@ -1265,4 +1295,9 @@ void sm1::scanend(sm1::scan_t *scan) {
   scan->session->scans.erase(scan);
   // Free the cursor.
   delete scan;
+}
+
+/* Whether a rollback to a savepoint closed the cursor. */
+bool sm1::scan_rolled_back(const sm1::scan_t *scan) {
+  return scan->rolled_back;
 }

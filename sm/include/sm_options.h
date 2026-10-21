@@ -74,4 +74,24 @@ static inline void sm_options_init(sm_options_t* opt) {
     opt->load_file_bytes      = 256LL << 20;
 }
 
+/*
+ * Environment options, taken by attach: what every database of
+ * the home directory shares. NULL means all defaults, which
+ * sm_env_options_init() fills a struct with.
+ *
+ * block_cache_bytes is the size of the one block cache every
+ * RocksDB instance of the environment reads its sorted files
+ * through, every column family of each, as PostgreSQL's
+ * shared_buffers is the one pool of a cluster (sm1/SM1_DESIGN.md
+ * section 12.2). It must be at least 1.
+ */
+typedef struct sm_env_options_t {
+    long long   block_cache_bytes;
+} sm_env_options_t;
+
+/* Fill opt with the defaults. */
+static inline void sm_env_options_init(sm_env_options_t* opt) {
+    opt->block_cache_bytes = 128LL << 20;
+}
+
 #endif /* SM_OPTIONS_H */

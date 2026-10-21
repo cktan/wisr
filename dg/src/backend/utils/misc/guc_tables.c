@@ -1414,6 +1414,17 @@ thread_local /*LOCAL*/ struct config_int ConfigureNamesInt[] = {
      * We sometimes multiply the number of shared buffers by two without
      * checking for overflow, so we mustn't allow more than INT_MAX / 2.
      */
+    {{"shared_buffers", PGC_POSTMASTER, RESOURCES_MEM,
+      gettext_noop("Sets the size of the block cache every database reads "
+                   "its tables and indexes through."),
+      NULL, GUC_UNIT_BLOCKS},
+     &NBuffers,
+     16384,
+     16,
+     INT_MAX / 2,
+     NULL,
+     NULL,
+     NULL},
 
     {{"port", PGC_POSTMASTER, CONN_AUTH_SETTINGS,
       gettext_noop("Sets the TCP port the server listens on."), NULL},

@@ -8,6 +8,7 @@
  */
 
 #include "../catalog/internal.h"
+#include "pin.h"
 #include "sm0_defer.h"
 
 #include <cstring>
@@ -720,7 +721,7 @@ look:
  */
 static int update_row(table_t *table, uint64_t rowno,
                       std::span<const sm2::datum_t> values,
-                      std::span<const bool> isnull, sm1::pin_ref_t *ref,
+                      std::span<const bool> isnull, pin_ref_t *ref,
                       std::string_view *old) {
   // No old row until the write succeeds.
   if (old) {
@@ -729,14 +730,24 @@ static int update_row(table_t *table, uint64_t rowno,
   if (need_writable(table) != 0 || need_not_null(table, isnull) != 0) {
     return -1;
   }
-  // The old row is pinned, into ref or one of this call's, so the
-  // index calls below leave it where it is; and its datums out of
-  // line are held until its index entries are found and removed.
-  sm1::pin_ref_t mine;
-  defer { sm1::unpin(mine); };
+  // The old row is pinned, in a pin of this call's, so the index
+  // calls below leave it where it is; and its datums out of line
+  // are held until its index entries are found and removed. The
+  // pin goes to ref only once all of it succeeds, as values may
+  // point into the row ref holds.
+  pin_t *p = pin_take(table->session);
+  if (!p) {
+    return -1;
+  }
+  bool kept = false;
+  defer {
+    if (!kept) {
+      pin_put(p);
+    }
+  };
   std::string_view image;
-  if (0 != sm2::rel_update(table->rel, rowno, values, isnull, ref ? *ref : mine,
-                           image, true)) {
+  if (0 !=
+      sm2::rel_update(table->rel, rowno, values, isnull, p->raw, image, true)) {
     return -1;
   }
   const table_def_t &def = *table->def;
@@ -794,7 +805,10 @@ static int update_row(table_t *table, uint64_t rowno,
   if (sm2::rel_release(table->rel) != 0) {
     return -1;
   }
-  if (old) {
+  if (ref) {
+    unpin(*ref);
+    pin_hold(p, table->def, image, *ref);
+    kept = true;
     *old = image;
   }
   return 0;
@@ -810,7 +824,7 @@ int tbl_update(table_t *table, uint64_t rowno,
 /* As above, pinning the row replaced into ref; see sm3.h. */
 int tbl_update(table_t *table, uint64_t rowno,
                std::span<const sm2::datum_t> values,
-               std::span<const bool> isnull, sm1::pin_ref_t &ref,
+               std::span<const bool> isnull, pin_ref_t &ref,
                std::string_view &old) {
   return update_row(table, rowno, values, isnull, &ref, &old);
 }
@@ -819,7 +833,7 @@ int tbl_update(table_t *table, uint64_t rowno,
  * tbl_delete, with ref and old both given or both null: with them,
  * the row deleted is pinned into ref, and old views it.
  */
-static int delete_row(table_t *table, uint64_t rowno, sm1::pin_ref_t *ref,
+static int delete_row(table_t *table, uint64_t rowno, pin_ref_t *ref,
                       std::string_view *old) {
   // No old row until the write succeeds.
   if (old) {
@@ -828,13 +842,22 @@ static int delete_row(table_t *table, uint64_t rowno, sm1::pin_ref_t *ref,
   if (need_writable(table) != 0) {
     return -1;
   }
-  // The row is pinned, into ref or one of this call's, so the
-  // index calls below leave it where it is; and its datums out of
-  // line are held until its index entries are found and removed.
-  sm1::pin_ref_t mine;
-  defer { sm1::unpin(mine); };
+  // The row is pinned, in a pin of this call's, so the index calls
+  // below leave it where it is; and its datums out of line are
+  // held until its index entries are found and removed. The pin
+  // goes to ref only once all of it succeeds.
+  pin_t *p = pin_take(table->session);
+  if (!p) {
+    return -1;
+  }
+  bool kept = false;
+  defer {
+    if (!kept) {
+      pin_put(p);
+    }
+  };
   std::string_view image;
-  if (0 != sm2::rel_delete(table->rel, rowno, ref ? *ref : mine, image, true)) {
+  if (0 != sm2::rel_delete(table->rel, rowno, p->raw, image, true)) {
     return -1;
   }
   const table_def_t &def = *table->def;
@@ -860,7 +883,10 @@ static int delete_row(table_t *table, uint64_t rowno, sm1::pin_ref_t *ref,
   if (sm2::rel_release(table->rel) != 0) {
     return -1;
   }
-  if (old) {
+  if (ref) {
+    unpin(*ref);
+    pin_hold(p, table->def, image, *ref);
+    kept = true;
     *old = image;
   }
   return 0;
@@ -872,7 +898,7 @@ int tbl_delete(table_t *table, uint64_t rowno) {
 }
 
 /* As above, pinning the row deleted into ref; see sm3.h. */
-int tbl_delete(table_t *table, uint64_t rowno, sm1::pin_ref_t &ref,
+int tbl_delete(table_t *table, uint64_t rowno, pin_ref_t &ref,
                std::string_view &old) {
   return delete_row(table, rowno, &ref, &old);
 }
@@ -1027,16 +1053,48 @@ int tbl_read_latest(table_t *table, uint64_t rowno, std::string_view &tuple) {
   return sm2::rel_read_latest(table->rel, rowno, tuple);
 }
 
-/* Read the row at rowno into the pin ref names. */
-int tbl_read(table_t *table, uint64_t rowno, sm1::pin_ref_t &ref,
+/*
+ * Read the row at rowno into a pin, by read, sm2::rel_read or
+ * sm2::rel_read_latest, pointing ref at it; ref's pin is released
+ * first, and on 1 or -1 ref names none.
+ */
+template <typename F>
+static int read_into(table_t *table, pin_ref_t &ref, std::string_view &tuple,
+                     F read) {
+  tuple = {};
+  // A read into ref replaces the row it held, in the same pin when
+  // there is one, whose iterator sm1 may seek again.
+  pin_t *p = pin_reread(ref);
+  if (!p) {
+    p = pin_take(table->session);
+  }
+  if (!p) {
+    return -1;
+  }
+  int rc = read(p->raw);
+  if (rc != 0) {
+    pin_put(p);
+    tuple = {};
+    return rc;
+  }
+  pin_hold(p, table->def, tuple, ref);
+  return 0;
+}
+
+/* Read the row at rowno into a pin; see sm3.h. */
+int tbl_read(table_t *table, uint64_t rowno, pin_ref_t &ref,
              std::string_view &tuple) {
-  return sm2::rel_read(table->rel, rowno, ref, tuple);
+  return read_into(table, ref, tuple, [&](sm1::rawpin_t *raw) {
+    return sm2::rel_read(table->rel, rowno, raw, tuple);
+  });
 }
 
 /* Read the newest committed version of the row at rowno into a pin. */
-int tbl_read_latest(table_t *table, uint64_t rowno, sm1::pin_ref_t &ref,
+int tbl_read_latest(table_t *table, uint64_t rowno, pin_ref_t &ref,
                     std::string_view &tuple) {
-  return sm2::rel_read_latest(table->rel, rowno, ref, tuple);
+  return read_into(table, ref, tuple, [&](sm1::rawpin_t *raw) {
+    return sm2::rel_read_latest(table->rel, rowno, raw, tuple);
+  });
 }
 
 /* Lock the row at rowno without writing it; see sm3.h. */
@@ -1078,10 +1136,55 @@ int tbl_truncate(table_t *table) {
   return open_rels(table);
 }
 
-/* Open a cursor over the rows first..last. */
-int tbl_scan(table_t *table, uint64_t first, uint64_t last,
-             sm2::rel_scan_t *&out) {
-  return sm2::rel_scan(table->rel, first, last, out);
+/* Open a cursor over the rows first..last, with its pin. */
+int tbl_scan(table_t *table, uint64_t first, uint64_t last, scan_t *&out) {
+  out = nullptr;
+  pin_t *p = pin_take(table->session);
+  if (!p) {
+    return -1;
+  }
+  sm2::rel_scan_t *rel = nullptr;
+  if (sm2::rel_scan(table->rel, first, last, rel) != 0) {
+    pin_put(p);
+    return -1;
+  }
+  out = new scan_t{rel, p};
+  pin_scan_hold(p, out, table->def);
+  return 0;
+}
+
+/* The next row, in the cursor's pin; see sm3.h. */
+int tbl_scannxt(scan_t *scan, uint64_t &rowno, pin_ref_t &ref,
+                std::string_view &tuple) {
+  ref = pin_ref_t{};
+  int rc = sm2::rel_scannxt(scan->rel, rowno, tuple);
+  // Every ref to the row before goes stale, whatever comes next.
+  pin_scan_move(scan->pin, rc == 0 ? tuple : std::string_view());
+  if (rc == 0) {
+    ref = pin_ref_t{scan->pin, scan->pin->gen};
+  }
+  return rc;
+}
+
+/* The next row's bytes; see sm3.h. */
+int tbl_scannxt(scan_t *scan, uint64_t &rowno, std::string_view &tuple) {
+  pin_ref_t ref;
+  return tbl_scannxt(scan, rowno, ref, tuple);
+}
+
+/* Move the cursor forward to rowno; see sm3.h. */
+int tbl_scan_seek(scan_t *scan, uint64_t rowno) {
+  return sm2::rel_scan_seek(scan->rel, rowno);
+}
+
+/* Close a cursor, releasing its pin; see sm3.h. */
+void tbl_scanend(scan_t *scan) {
+  if (!scan) {
+    return;
+  }
+  sm2::rel_scanend(scan->rel);
+  pin_release(scan->pin);
+  delete scan;
 }
 
 /* Open a cursor over one of the table's indexes; see sm3.h. */

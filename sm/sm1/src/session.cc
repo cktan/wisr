@@ -74,7 +74,7 @@ db_t *find_or_open(sm1::env_t *env, const char *dbname,
   }
   // Open the database: its first session in this process.
   uint64_t dbid = sm0::get_be64(val.data());
-  db_t *db = db_open(env_db_path(env, dbid), dbname, opt);
+  db_t *db = db_open(env_db_path(env, dbid), dbname, opt, env->block_cache);
   // Register the newly opened database.
   if (db) {
     // Its temporary stores go in the environment's instance.
@@ -148,9 +148,10 @@ int sm1::closedb(sm1::session_t *session) {
   if (!session) {
     return 0;
   }
-  // Close the session's cursors first, and release its pins.
+  // Close the session's cursors first, and let go of its lent
+  // row, so no iterator outlives the database.
   xct_end_scans(session);
-  pin_release_all(session);
+  sm1::unpin(&session->readpin);
   // Abort an active transaction; a prepared one stays in doubt.
   if (session->active) {
     sm1::abort(session);

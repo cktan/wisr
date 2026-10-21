@@ -35,18 +35,18 @@ struct run_t {
 template <typename F>
 int read_runs(sm3::table_t *table, uint64_t n, const std::vector<run_t> &runs,
               F emit) {
-  sm2::rel_scan_t *c = nullptr;
+  sm3::scan_t *c = nullptr;
   if (sm3::tbl_scan(table, 1, n, c) != 0) {
     return -1;
   }
-  std::unique_ptr<sm2::rel_scan_t, decltype(&sm2::rel_scanend)> guard(
-      c, &sm2::rel_scanend);
+  std::unique_ptr<sm3::scan_t, decltype(&sm3::tbl_scanend)> guard(
+      c, &sm3::tbl_scanend);
   bool have = false, done = false;
   uint64_t rowno = 0;
   std::string_view tuple;
   // The next row, into rowno and tuple: have it, or be done.
   auto next = [&]() {
-    int rc = sm2::rel_scannxt(c, rowno, tuple);
+    int rc = sm3::tbl_scannxt(c, rowno, tuple);
     have = rc == 0;
     done = rc == 1;
     return rc < 0 ? -1 : 0;
@@ -57,7 +57,7 @@ int read_runs(sm3::table_t *table, uint64_t n, const std::vector<run_t> &runs,
     }
     // Move to the run, unless the row in hand is in it or past it.
     if (!have || rowno < r.first) {
-      if (sm2::rel_scan_seek(c, r.first) != 0 || next() != 0) {
+      if (sm3::tbl_scan_seek(c, r.first) != 0 || next() != 0) {
         return -1;
       }
     }

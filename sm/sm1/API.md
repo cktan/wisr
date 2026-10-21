@@ -222,7 +222,7 @@ failure. Their validity windows differ and are narrow:
 | Producer | View stays valid until |
 | --- | --- |
 | `sm1::read`, `sm1::read_latest`, the old row | the next call on that **session** |
-| `sm1::read`, `sm1::read_latest`, the old row, into a pin ref | the release of its **pin** (below) |
+| `sm1::read`, `sm1::read_latest`, the old row, into a raw pin | the pin is **emptied** (below) |
 | `sm1::scannxt` | the next call on that **scan cursor** |
 
 A caller that needs a value beyond that window must copy it.
@@ -501,11 +501,17 @@ Errors: `SM_ERR_EXISTS` (already a wisr home directory),
 `SM_ERR_NOTFOUND` (no such directory), `SM_ERR_PERMISSION`,
 `SM_ERR_IO`, `SM_ERR_DISKFULL`, `SM_ERR_INVALID`.
 
-### int sm1::attach(std::string_view homedir, sm1::env_t*& out)
+### int sm1::attach(std::string_view homedir, sm1::env_t*& out, const sm1::env_options_t* opt = nullptr)
 
 Create an environment on a home directory `sm1::init` has
 already prepared. Every database is recovered, then closed
 again: none stays open.
+
+`opt`'s `block_cache_bytes`, 128 MB by default, sizes the one
+block cache the environment makes: every database's RocksDB
+instance, every column family of each, and the root and
+temporary instances read their sorted files through it. A
+size less than 1 fails with `SM_ERR_INVALID`.
 
 The caller must ensure that no other environment, in this
 process or another, has `homedir` attached; the library
@@ -1337,8 +1343,8 @@ Errors: `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`,
 
 Estimate the bytes of the userkeys from `lo` up to but
 excluding `hi`, every version and tombstone counted, in two
-parts: `disk`, those in sorted files, compressed, and `mem`,
-those in memtables, uncompressed. A NULL `lo` or `hi` leaves
+parts: `disk`, those in sorted files, as stored, and `mem`,
+those in memtables, as a memtable holds them. A NULL `lo` or `hi` leaves
 that end open. Neither part is corrected, and they are not to
 be added as they stand: rows not yet flushed are counted at
 full size, several times what they take once flushed
@@ -1507,21 +1513,21 @@ where RocksDB has it.
 `*old` is valid only until the next call on this session —
 the same rule as `sm1::read`, and the same pin, so either
 call invalidates what the other returned. The forms that
-take a `pin_ref_t&` pin the old row into it instead, valid
-until the pin is released, as a read into a ref is:
+take a `rawpin_t*` pin the old row there instead, valid
+until the pin is emptied, as a read into a raw pin is:
 
 ```cpp
 int update(session_t* session, uint64_t storeid,
            std::string_view key, std::string_view data,
-           pin_ref_t& ref, std::string_view& old);
+           rawpin_t* pin, std::string_view& old);
 int erase(session_t* session, uint64_t storeid,
-          std::string_view key, pin_ref_t& ref,
+          std::string_view key, rawpin_t* pin,
           std::string_view& old);
 ```
 
-The row `ref` held before is released only when the write
+The row `pin` held before is let go only when the write
 succeeds, so `data` may view it. On failure `old` is empty,
-and `ref` keeps what it held.
+and `pin` keeps what it held.
 
 Errors for all three: `SM_ERR_CONFLICT` /
 `SM_ERR_DEADLOCK` (retryable), `SM_ERR_UPDATED` (READ
@@ -1660,64 +1666,55 @@ Errors: `SM_ERR_NOTFOUND` (the *store* does not exist),
 key), `SM_ERR_CORRUPT`,
 `SM_ERR_IO`.
 
-### Pins
+### Raw pins
 
-A read into a pin hands out the row without copying it: the
-session keeps the iterator that found it, in one of a pool of
-pins it owns, and the caller gets a `sm1::pin_ref_t`, a plain
-value naming the pin and the pin's generation when it was
-taken (`../PIN.md`). The row stays valid until its pin is
-released, which happens at the first of:
+A read into a raw pin hands out the row without copying it:
+the pin keeps the iterator that found it, and the row's bytes
+stay where RocksDB has them (`../ROW.md` §2). The caller owns
+the pin: it makes it with `sm1::rawpin_new`, keeps it where it
+likes, and frees it with `sm1::rawpin_free`. sm1 keeps no list
+of them; sm3 keeps the pool, the refs and their generations
+that its clients use (`../ROW.md` §4). The row stays valid
+until the pin is emptied, which happens at the first of:
 
-- the next read into the same ref;
-- `sm1::unpin(ref)`;
-- `sm1::release_all_pins(session)`;
-- the end of the session's transaction: its commit, abort or
-  prepare, or the session's close.
+- the next read or write into the same pin;
+- `sm1::unpin(pin)`;
+- `sm1::rawpin_free(pin)`.
 
-A rollback to a savepoint releases no pin: the row was read
-already, and only the caller knows whether it still wants it.
-Neither does the drop of the row's store: RocksDB keeps a
-column family's data while an iterator holds it.
+Nothing else empties it: not the end of the transaction, a
+rollback to a savepoint, nor the drop of the row's store,
+whose column family's data RocksDB keeps while an iterator
+holds it. A point read's iterator holds no RocksDB snapshot,
+so a pin left past its transaction holds memory, not a view.
+Every raw pin is emptied before its database closes, since
+RocksDB closes none with an iterator open.
 
-Releasing a pin increases its generation, so every ref to it
-is stale from then on. A stale ref names nothing: unpinning
-it does nothing, and a read into it takes a fresh pin. The
-pin itself stays the session's until the session closes, so a
-stale ref never points to freed memory. A ref of zeros names
-no pin; it is what a caller starts with.
+The lent forms of `sm1::read` and `sm1::read_latest` above,
+and a write's old row with no pin, use a raw pin the session
+keeps, which the next of them reuses, and which the end of
+the transaction and the session's close empty.
 
-The pins in use at once are the rows pinned at once: a caller
-reading a million rows into one ref holds one pin at a time.
+### int sm1::read(sm1::session_t* session, uint64_t storeid, std::string_view key, sm1::rawpin_t* pin, std::string_view& data)
 
-The lent forms of `sm1::read` and `sm1::read_latest` above
-read into a ref the session keeps, which the next lent read
-reuses.
+### int sm1::read_latest(sm1::session_t* session, uint64_t storeid, std::string_view key, sm1::rawpin_t* pin, std::string_view& data)
 
-### int sm1::read(sm1::session_t* session, uint64_t storeid, std::string_view key, sm1::pin_ref_t& ref, std::string_view& data)
+Read as the forms without `pin` do, into the raw pin, which
+lets go of the row it held first. On **0** `data` views the
+pin's row; on **1** or **-1** the pin is empty and `data` is
+empty. Errors as the forms without `pin`.
 
-### int sm1::read_latest(sm1::session_t* session, uint64_t storeid, std::string_view key, sm1::pin_ref_t& ref, std::string_view& data)
+### sm1::rawpin_t* sm1::rawpin_new()
 
-Read as the forms without `ref` do, into a pin. If `ref` names
-a pin still held, that pin is released first, so a caller
-reading into one ref holds one pin at most. On **0** `ref`
-names the pin and `data` views its row; on **1** or **-1**
-`ref` names no pin and `data` is empty. Errors as the forms
-without `ref`.
+Make an empty raw pin, or return `NULL` with `SM_ERR_NOMEM`.
 
-### void sm1::unpin(sm1::pin_ref_t& ref)
+### void sm1::rawpin_free(sm1::rawpin_t* pin)
 
-Release the pin `ref` names, if it is still held, and set
-`ref` to name none. A stale ref, or one naming no pin, is left
-alone, so unpinning twice is harmless.
+Empty `pin`, then free it. A `NULL` pin is a no-op.
 
-### void sm1::release_all_pins(sm1::session_t* session)
+### void sm1::unpin(sm1::rawpin_t* pin)
 
-Release every pin the session holds, as the end of its
-transaction does, and leave the transaction open: for a
-caller that knows none of the rows it pinned is still wanted,
-as digres at the end of a statement. Every ref to them is
-stale afterwards. A `NULL` session is a no-op.
+Let go of the row `pin` holds, if any; it is then empty.
+Unpinning an empty pin, or `NULL`, does nothing.
 
 ### int sm1::scan(sm1::session_t* session, uint64_t storeid, const char* skey, size_t sklen, int skey_inclusive, const char* ekey, size_t eklen, int ekey_inclusive, sm1::scan_t*& out)
 
@@ -1820,6 +1817,13 @@ to draining a scan whose rows are not needed.
 `scan` is invalid after this call. Closing a cursor never
 fails, which is why it returns nothing: a caller has no
 useful recovery from a failure to release resources.
+
+### bool sm1::scan_rolled_back(const sm1::scan_t* scan)
+
+Whether a rollback to a savepoint set before the cursor
+opened has closed it: its last row is then gone, and it reads
+no more. sm3 asks it after a rollback, to make the refs to
+such a cursor's row stale (`../ROW.md` §4.5).
 
 ---
 

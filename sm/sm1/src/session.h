@@ -16,10 +16,33 @@
 #include <list>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 #include <rocksdb/db.h>
+
+/*
+ * A raw pin: keeps one row's bytes in memory (../ROW.md §2). Its
+ * caller owns it; empty, both members are.
+ */
+struct sm1::rawpin_t {
+  std::unique_ptr<rocksdb::Iterator> it; /* found the row; null when empty */
+  rocksdb::Slice row; /* the row's bytes, in a block it holds */
+  /*
+   * For an iterator a point read opened (access_read), what
+   * decides whether the next read into the pin may seek it again
+   * instead of opening another (SM1_DESIGN.md §10.1). No session
+   * for any other.
+   */
+  struct reuse_t {
+    const sm1::session_t *session = nullptr; /* whose read; compared only */
+    uint64_t storeid = 0;
+    uint64_t write_gen = 0;  /* the session's write_gen when opened */
+    uint64_t visible_ts = 0; /* every commit at or below it is in it */
+    uint64_t epoch = 0;      /* the read epoch it was opened in */
+  } reuse;
+};
 
 struct sm1::session_t {
   sm1::env_t *env = nullptr;
@@ -32,12 +55,19 @@ struct sm1::session_t {
   sm1::xctlevel_t level = sm1::xctlevel_t::read_committed;
   bool read_only = false; /* declared at sm1::begin (§7.4) */
   uint64_t snapshot_ts = 0;
-  uint64_t xid = 0;              /* 0 until the first write (§4.1) */
-  uint32_t seq = 0;              /* last write's seq; the next is seq + 1 */
-  uint32_t seq_hwm = 0;          /* own versions above this are invisible */
-  uint64_t wts_hi = 0;           /* largest wts written; bounds own seeks */
-  std::vector<uint64_t> created; /* storeids made by sm1::mkstore */
-  std::vector<uint64_t> dropped; /* storeids removed by sm1::rmstore */
+  uint64_t xid = 0;     /* 0 until the first write (§4.1) */
+  uint32_t seq = 0;     /* last write's seq; the next is seq + 1 */
+  uint32_t seq_hwm = 0; /* own versions above this are invisible */
+  uint64_t wts_hi = 0;  /* largest wts written; bounds own seeks */
+  /*
+   * Raised by every write the session makes, and by each bulk
+   * load as it closes, in any transaction, and never lowered as
+   * seq is by a rollback: an iterator opened before it last rose
+   * may lack the session's own versions.
+   */
+  uint64_t write_gen = 0;
+  std::vector<uint64_t> created;      /* storeids made by sm1::mkstore */
+  std::vector<uint64_t> dropped;      /* storeids removed by sm1::rmstore */
   std::vector<uint64_t> dropped_seqs; /* seqids removed by sm1::rmseq */
   /*
    * The temporary stores the session holds, from sm1::mkstore to the
@@ -183,34 +213,29 @@ struct sm1::session_t {
   bool restored = false;     /* rebuilt from its record at open (§9.1) */
   bool limbo = false;        /* its prepare write failed (§8.4) */
 
+  /*
+   * The session's store cache (§11): whether each storeid it
+   * looked up was live, at the snapshot it was read at, by the
+   * transaction (its begin_seq) that read it.
+   */
+  struct store_seen_t {
+    uint64_t snapshot_ts = 0;
+    uint64_t begin_seq = 0;
+    bool live = false;
+  };
+  std::unordered_map<uint64_t, store_seen_t> store_cache;
+
   std::unordered_set<sm1::scan_t *> scans; /* open cursors */
   uint64_t next_scan_id = 0;               /* hands out sm1::scan_t::id */
 
   /*
-   * The pool of pins (../PIN.md §4): every pin made, freed at the
-   * session's close, so a stale ref always points to a pin; those
-   * released, ready to take; and those holding a row.
+   * The raw pin sm1::read and sm1::read_latest share when the
+   * caller gives none, and a write's old row with it: each such
+   * call lets go of the last one's row, so their row lasts until
+   * the next of them, longer than the "next call on the session"
+   * they promise.
    */
-  std::vector<std::unique_ptr<sm1::pin_t>> pins;
-  sm1::pin_t *pins_free = nullptr;
-  sm1::pin_t *pins_held = nullptr;
-  /*
-   * The ref sm1::read and sm1::read_latest share when the caller
-   * gives none: each such read releases the last one's pin, so they
-   * hold one pin at most, and their row lasts until the next of
-   * them, longer than the "next call on the session" they promise.
-   */
-  sm1::pin_ref_t readref;
-};
-
-/* A pin: keeps one row's bytes in memory. The session owns it. */
-struct sm1::pin_t {
-  std::unique_ptr<rocksdb::Iterator> it; /* found the row; null when free */
-  rocksdb::Slice row;                /* the row's bytes, in a block it holds */
-  uint64_t gen = 1;                  /* increased on each release */
-  sm1::session_t *session = nullptr; /* whose pool it is in */
-  sm1::pin_t *prev = nullptr;        /* in the session's held list, */
-  sm1::pin_t *next = nullptr;        /* or next in its free list */
+  sm1::rawpin_t readpin;
 };
 
 struct sm1::scan_t {
@@ -516,32 +541,7 @@ int catalog_lookup(sm1::session_t *session, const view_t &view,
  */
 int access_read(sm1::session_t *session, uint64_t storeid, const view_t &view,
                 rocksdb::Slice key, std::string *out,
-                sm1::pin_t *pin = nullptr);
-
-/*
- * Take a pin from the session's pool, a free one or a new one,
- * to read a row into: it is on neither list until pin_hold or
- * pin_put.
- */
-sm1::pin_t *pin_take(sm1::session_t *session);
-
-/* Hold the row a taken pin now has, and point ref at the pin. */
-void pin_hold(sm1::pin_t *pin, sm1::pin_ref_t &ref);
-
-/* Give back a taken pin that found no row. */
-void pin_put(sm1::pin_t *pin);
-
-/* Whether ref names a pin still held. */
-bool pin_live(const sm1::pin_ref_t &ref);
-
-/*
- * Release a held pin: destroy its iterator, make every ref to
- * it stale, and return it to the pool.
- */
-void pin_release(sm1::pin_t *pin);
-
-/* Release every pin the session holds. */
-void pin_release_all(sm1::session_t *session);
+                sm1::rawpin_t *pin = nullptr);
 
 /*
  * Open a cursor over storeid at view, between the bounds as
@@ -554,13 +554,13 @@ sm1::scan_t *access_scan(sm1::session_t *session, uint64_t storeid,
 
 /*
  * Write one version of key into storeid, checking that the key
- * exists (update, delete) or does not (insert). With pin, a taken
- * one, the row the write replaces, which the existence check has
- * already found, is left in it on success. Returns 0, or -1 with
+ * exists (update, delete) or does not (insert). With pin, an
+ * empty one, the row the write replaces, which the existence
+ * check has already found, is left in it on success. Returns 0, or -1 with
  * SM_ERR_DUPKEY / SM_ERR_NOTFOUND / another error.
  */
 int access_write(sm1::session_t *session, uint64_t storeid, write_op_t op,
-                 rocksdb::Slice key, rocksdb::Slice data, sm1::pin_t *pin);
+                 rocksdb::Slice key, rocksdb::Slice data, sm1::rawpin_t *pin);
 
 } // namespace wisr
 

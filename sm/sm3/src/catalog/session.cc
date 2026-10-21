@@ -6,6 +6,7 @@
  * sm1 has committed.
  */
 
+#include "../table/pin.h"
 #include "internal.h"
 
 #include <algorithm>
@@ -311,6 +312,8 @@ void session_close(session_t *s) {
   if (s == nullptr) {
     return;
   }
+  // Its pins go first, so no iterator outlives sm1's session.
+  pins_close(s);
   drop_from(s, 0);
   // Its temporary views go, and another session's drop no longer
   // finds them in the register (VIEW.md §12.3).
@@ -442,6 +445,8 @@ int rollback(session_t *s, int depth) {
   if (sm1::rollback(s->sm1, depth) != 0) {
     return -1;
   }
+  // A pinned row stays; a cursor sm1 closed has no row any more.
+  pins_rolled_back(s);
   // The mark at depth survives; everything made under it goes.
   drop_from(s, depth);
   s->depth = depth;
@@ -493,8 +498,9 @@ int forget(session_t *s, int depth) {
  * so it sees the new one, never the old (CATALOG.md §4).
  */
 int commit(session_t *s) {
-  // Committed or not, the transaction is over.
+  // Committed or not, the transaction is over, and its pins with it.
   s->in_txn = false;
+  release_all_pins(s);
   if (!made_shared_ddl(s)) {
     // Nothing for the shared catalog: what there is, is the session's.
     if (sm1::commit(s->sm1) != 0) {
@@ -522,6 +528,9 @@ int prepare(session_t *s, std::string_view gid) {
                        "prepare: a transaction that made DDL cannot be "
                        "prepared");
   }
+  // Its pins go before the prepare, as sm1's went, whether or not
+  // it succeeds.
+  release_all_pins(s);
   if (sm1::prepare(s->sm1, gid) != 0) {
     return -1;
   }
@@ -532,6 +541,7 @@ int prepare(session_t *s, std::string_view gid) {
 
 /* Abort, dropping the overlay. */
 int abort(session_t *s) {
+  release_all_pins(s);
   drop_from(s, 0);
   s->in_txn = false;
   return sm1::abort(s->sm1);

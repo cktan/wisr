@@ -490,11 +490,11 @@ int set_not_null(session_t *session, uint64_t oid, std::string_view name) {
   if (0 != tbl_open(session, oid, sm1::SM_LOCKMODE_EX, t)) {
     return -1;
   }
-  sm2::rel_scan_t *scan = nullptr;
+  scan_t *scan = nullptr;
   int rc = tbl_scan(t, 0, UINT64_MAX, scan);
   uint64_t rowno = 0;
   std::string_view tuple;
-  while (0 == rc && 0 == (rc = sm2::rel_scannxt(scan, rowno, tuple))) {
+  while (0 == rc && 0 == (rc = tbl_scannxt(scan, rowno, tuple))) {
     sm2::datum_t d;
     bool isnull = false;
     // A row older than the column reads its missing value, or null.
@@ -506,7 +506,7 @@ int set_not_null(session_t *session, uint64_t oid, std::string_view name) {
                                                 " holds a null");
     }
   }
-  sm2::rel_scanend(scan);
+  tbl_scanend(scan);
   tbl_close(t);
   // The scan's end, 1, is the one way through.
   if (1 != rc) {

@@ -22,7 +22,9 @@
 #include <new>
 #include <string>
 
+#include <rocksdb/advanced_cache.h>
 #include <rocksdb/db.h>
+#include <rocksdb/table.h>
 
 TEST_CASE("sm1_init refuses a missing, non-directory, or empty homedir") {
   // Verify sm1::init validates homedir before creating anything.
@@ -329,4 +331,58 @@ TEST_CASE("seterr, reseterr and errname drive the thread's error state") {
   CHECK(sm1::errnum() == sm1::SM_OK);
   CHECK(std::string(sm1::errmsg()) == "no error");
   CHECK(std::string(sm1::errname()) == "OK");
+}
+
+namespace {
+
+/* The block cache the column family cf of rdb reads through. */
+rocksdb::Cache *cache_of(rocksdb::DB *rdb, rocksdb::ColumnFamilyHandle *cf) {
+  rocksdb::Options o = rdb->GetOptions(cf);
+  const auto *t =
+      o.table_factory->GetOptions<rocksdb::BlockBasedTableOptions>();
+  REQUIRE(t);
+  return t->block_cache.get();
+}
+
+} // namespace
+
+TEST_CASE("every column family of the environment shares one block cache") {
+  // Verify sm1::attach's block cache is the one every instance uses.
+  // 1. Attach with block_cache_bytes of 8 MB: the cache holds 8 MB.
+  // 2. The root and the temporary instance read through it.
+  // 3. So do a database's default CF, CF:txn, CF:meta, the
+  //    catalog's store and a store made now.
+  // 4. A size less than 1 fails with SM_ERR_INVALID.
+  tmpdir_t tmp;
+  REQUIRE(sm1::init(tmp.path()) == 0);
+  sm1::env_options_t opt;
+  opt.block_cache_bytes = 8 << 20;
+  sm1::env_t *env = nullptr;
+  REQUIRE_MESSAGE(sm1::attach(tmp.path(), env, &opt) == 0, sm1::errmsg());
+  rocksdb::Cache *cache = env->block_cache.get();
+  REQUIRE(cache);
+  CHECK(cache->GetCapacity() == size_t{8} << 20);
+
+  CHECK(cache_of(env->root, env->root->DefaultColumnFamily()) == cache);
+  CHECK(cache_of(env->tmp, env->tmp->DefaultColumnFamily()) == cache);
+
+  REQUIRE(sm1::mkdb(env, "db", nullptr) == 0);
+  sm1::session_t *s = opendb(env, "db");
+  REQUIRE(s);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  uint64_t store = mkstore(s);
+  REQUIRE(sm1::commit(s) == 0);
+  wisr::db_t *db = s->db;
+  for (rocksdb::ColumnFamilyHandle *cf :
+       {db->cf_default, db->cf_txn, db->cf_meta, wisr::db_store(db, 0).cf,
+        wisr::db_store(db, store).cf}) {
+    REQUIRE(cf);
+    CHECK(cache_of(db->rdb, cf) == cache);
+  }
+  REQUIRE(sm1::closedb(s) == 0);
+  REQUIRE(sm1::detach(env, 0) == 0);
+
+  opt.block_cache_bytes = 0;
+  CHECK(sm1::attach(tmp.path(), env, &opt) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 }

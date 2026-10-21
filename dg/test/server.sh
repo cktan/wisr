@@ -3155,8 +3155,8 @@ done
 # 2. In two sessions, begin SERIALIZABLE, read a > 10 (nothing), and insert
 #    a row of a > 10; commit the first, then the second.
 # 3. Confirm the first commits, and the second fails with SQLSTATE 40001.
-# 4. Confirm max_pred_locks_per_transaction and shared_buffers are not
-#    settings, and the data directory has no pg_serial.
+# 4. Confirm max_pred_locks_per_transaction is not a setting, and the data
+#    directory has no pg_serial.
 local_psql -c 'create table t10 (a int4)' -c 'insert into t10 values (1), (2)' \
   > "$work/skew.out" 2>&1
 for n in 1 2; do
@@ -3184,11 +3184,52 @@ wait $skew2
 grep -q '^COMMIT$' "$work/skew1.out" || fail "serializable first commit"
 grep -q 'ERROR:  40001: could not commit: not serializable' \
   "$work/skew2.out" || fail "serializable write skew"
-for guc in max_pred_locks_per_transaction shared_buffers; do
+for guc in max_pred_locks_per_transaction; do
   local_psql -c "show $guc" 2>&1 |
     grep -q 'unrecognized configuration parameter' || fail "setting $guc"
 done
 [ ! -e "$work/data/pg_serial" ] || fail "no pg_serial"
+
+# Verify that an index scan keyed by a constant of another integer type, an
+# int4 on an int8 column, as most are, reads only the key's range: two
+# SERIALIZABLE transactions that each read one key by the index and insert
+# one far from the other's do not conflict.  Read without a bound, each
+# range would be the whole index and hold the other's insert, and the
+# second would fail with SQLSTATE 40001.
+# 1. Create tb1 (a int8 primary key) with rows 1 to 100.
+# 2. In two sessions, with only index scans, begin SERIALIZABLE, read a = 5
+#    and a = 50, and insert 200 and 300; commit the first, then the second.
+# 3. Confirm both commit.
+local_psql -c 'create table tb1 (a int8 primary key)' \
+  -c 'insert into tb1 select generate_series(1, 100)' > "$work/bound.out" 2>&1
+for n in 1 2; do
+  mkfifo "$work/bound$n.in"
+  psql -X -A -t -v VERBOSITY=verbose -h "$work" -p "$port" -d postgres \
+    < "$work/bound$n.in" > "$work/bound$n.out" 2>&1 &
+  eval "bound$n=\$!"
+done
+exec 5> "$work/bound1.in" 6> "$work/bound2.in"
+for n in 5 6; do
+  echo "set enable_seqscan = off; set enable_bitmapscan = off;
+    begin isolation level serializable;" >&$n
+done
+echo "select a from tb1 where a = 5; insert into tb1 values (200);
+  select 'inserted';" >&5
+echo "select a from tb1 where a = 50; insert into tb1 values (300);
+  select 'inserted';" >&6
+for _ in $(seq 50); do
+  grep -q '^inserted$' "$work/bound1.out" &&
+    grep -q '^inserted$' "$work/bound2.out" && break
+  sleep 0.1
+done
+echo "commit;" >&5
+exec 5>&-
+wait $bound1
+echo "commit;" >&6
+exec 6>&-
+wait $bound2
+grep -q '^COMMIT$' "$work/bound1.out" && grep -q '^COMMIT$' "$work/bound2.out" ||
+  fail "an index scan of an int4 key on an int8 column is bounded"
 
 # Verify that TRUNCATE empties a table in sm, in its transaction: a rollback,
 # or a rollback to a savepoint taken before it, brings the rows back, and the

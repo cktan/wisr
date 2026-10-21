@@ -798,11 +798,11 @@ paid a whole `sm1::read`, an iterator and a seek of its own,
 for something the write had in hand.
 
 The bytes are not copied: the iterator that found the version
-is kept in a pin (`../PIN.md`), in the session's own ref, the
+is kept in a raw pin (`../ROW.md` §2), the session's own, the
 one `sm1::read` uses, so either call invalidates what the
-other returned; or in a ref the caller gives, which keeps the
-row until the caller releases it. A write releases the row its
-ref held only once it has succeeded, as its new value may
+other returned; or one the caller gives, which keeps the row
+until the caller empties it. A write lets go of the row its
+pin held only once it has succeeded, as its new value may
 view that row.
 
 The value is only produced for a live version. A write that
@@ -1510,7 +1510,7 @@ sm1::commit(T):
   3. batch = { CF:txn[T.xid] = {COMMITTED, T.snapshot_ts, commit_ts} }
   4. db.Write(batch, sync = durability_sync)   ← group-committed
   5. commit_cache.insert(T.xid → commit_ts);  active_table.remove(T.xid)
-     if T wrote CF:store.0: last_ddl_ts = max(last_ddl_ts, commit_ts)  (§11)
+     if T made or dropped a store: last_ddl_ts = max(last_ddl_ts, commit_ts)  (§11)
      sequencer.done(commit_ts);  advancer moves visible_ts      (§4.3)
   6. lockmgr.release(T);  ssi.on_commit(T)
      queue (T.dropped, commit_ts) for CF removal     (§8.3)
@@ -2083,7 +2083,8 @@ sm1::read(session, storeid, key, &val):
     hi    = max(T.xid, snap)                             # own writes, §4.4
     if SERIALIZABLE:
         ssi.on_read(T, storeid, key)                     # SIREAD, §7.1
-    it = db.NewIterator(cf(storeid))
+    it = pin.reusable ? pin.it                           # below
+                      : db.NewIterator(cf(storeid))
     if SERIALIZABLE:
         it.Seek(key | 00×12)                             # every version
     else:
@@ -2133,15 +2134,50 @@ Versions from other transactions with `snap < wts <= T.wts_hi`
 are stepped past as in-flight or committed too late, which the
 loop already handles.
 
+**A pin's iterator is sought again.** A read into a raw pin
+leaves the row in the iterator that found it (`../ROW.md` §2),
+and opening that iterator -- a merging iterator over the
+memtables and every level -- was over half of a point read: on
+the bench's `wide_mixed`, 1.3 µs of a 2.3 µs read in key order.
+So the next read into the same pin seeks the
+iterator it holds instead (`reusable()` in `src/access.cc`)
+when that iterator holds everything the read may see:
+
+- **Its session and store.** The pin records which read opened
+  it.
+- **Every commit the view sees.** An iterator holds the store
+  as it was when opened. The pin records `visible_ts` read just
+  before it was opened, so every commit at or below is in it;
+  it serves a view whose snapshot is no later. Under read
+  committed the next statement's snapshot may pass it.
+- **The session's own writes.** `session_t::write_gen` rises
+  with every write, and as a bulk load closes, and never falls,
+  as `seq` does on a rollback (§6.5); an iterator serves only
+  reads made at the generation it was opened at.
+- **The read epoch it was opened in** (§8.3 step 3). Between
+  reads the pin is no reader, so the sweep may delete the
+  records of versions the iterator holds unstamped; once the
+  epoch has moved on, a new iterator, opened after the pass,
+  holds them stamped. Within the epoch, the read entered it
+  before seeking, so no deletion passes it.
+- **Not SERIALIZABLE.** The SIREAD must exist before the
+  iterator (above): an older iterator misses a concurrent write
+  made between the two, and with it the rw-edge (scenario c36).
+
+The same reuse with no pin of the caller's: `sm1::read`'s
+lending form reads into the session's own pin. A write's
+existence check (§5) and `sm1::read_latest` still open their
+own. With it a read into one pin costs what RocksDB's `Get` of
+the exact version key does: 3.6 against 3.3 µs at random, 0.9
+against 1.1 µs in key order.
+
 **No batched read.** An index lookup followed by N base reads
 costs N reads, and a call taking N keys was considered. RocksDB's
 `MultiGet` does not apply: a read here is an iterator seek
-across a key's version run, not a point `Get`. What a batched
-call would save is per-key iterator construction and read-epoch
-bookkeeping, plus seeking in sorted order, and it would need an
-ownership model for N values, since the session has one read
-buffer (§5.3). It is left unbuilt until a benchmark shows that
-setup dominating a probe loop.
+across a key's version run, not a point `Get`. With the pin's
+iterator sought again, what a batched call would add is seeking
+in sorted order, which an index range already does, so it is
+not built.
 
 ### 10.2 Scan
 
@@ -2366,9 +2402,8 @@ and versions like any row but never reads: `sm1::lsstore` scans
 `["R", "S")`, and the startup sweep keeps a store only for an
 `"R"` row. Callers reach store 0 under `"U"` and nowhere else
 (`sm1::upper_prefix`), so they cannot touch a store's or a
-sequence's row. A commit that writes a `"U"` row still counts as
-a write to `CF:store.0`, so it raises `last_ddl_ts`, which costs
-nothing until the store cache below exists.
+sequence's row. A commit that writes only `"U"` or `"S"` rows
+leaves `last_ddl_ts` alone: no store lookup reads them.
 
 A store's row carries nothing: that the row exists at a
 snapshot is what makes the store exist there. The design's
@@ -2412,25 +2447,35 @@ so under SERIALIZABLE it registers the whole range as read: a
 concurrent `sm1::mkstore` or `sm1::rmstore` of any storeid is an
 rw-conflict with it.
 
-A session may cache which storeids are live (not yet implemented:
-every lookup reads `CF:store.0`), but the answer depends on the
-snapshot. After a committed `sm1::rmstore`, a transaction with an
-older snapshot must still find the store, since it may still
+Every data call looks its storeid up first, and a lookup that
+read `CF:store.0` each time would build a second iterator for
+every point read, about a third of its cost. So a session
+caches which storeids are live (`session_t::store_cache`,
+`catalog_lookup()`). The answer depends on the snapshot: after
+a committed `sm1::rmstore`, a transaction with an older
+snapshot must still find the store, since it may still
 legitimately read it. A cache invalidated at DDL commit would
 hide it, so the cache is checked by timestamp instead:
 
-- The process keeps `last_ddl_ts`, the largest `commit_ts` of
-  any committed transaction that wrote the catalog. Commit raises
-  it before publishing that `commit_ts` (§8.2 step 5), so a
-  snapshot that includes a DDL commit always sees it.
-- Each cache entry records the snapshot it was read at. A hit is
-  used only if `last_ddl_ts` is at or below both that snapshot
-  and the lookup's; then no DDL committed between the two, and
-  the answer is the same at both. Otherwise the lookup reads
+- The database keeps `last_ddl_ts` (`db_t`), the largest
+  `commit_ts` of any committed transaction that made or dropped
+  a store, its `T.created` or `T.dropped` not empty. Commit
+  raises it before publishing that `commit_ts` (§8.2 step 5), so
+  a snapshot that includes a DDL commit always sees it. A
+  prepared transaction restored at open has both lists from its
+  record (§3.2).
+- Each cache entry records the snapshot it was read at and
+  whether the store was live then. A hit is used only if
+  `last_ddl_ts` is at or below both that snapshot and the
+  lookup's; then no DDL committed between the two, and the
+  answer is the same at both. Otherwise the lookup reads
   `CF:store.0` and replaces the entry.
-- `sm1::mkstore` and `sm1::rmstore` evict their storeid's entry,
-  and a lookup that resolves to the transaction's own uncommitted
-  catalog version does not populate the cache.
+- A transaction that has made or dropped a store neither uses
+  nor fills the cache: its lookups see its own uncommitted
+  catalog versions, which no entry stands for. That covers what
+  evicting at `sm1::mkstore` and `sm1::rmstore` would, and a
+  rollback to a savepoint besides.
+- The cache starts over at 4096 entries (`store_cache_max`).
 
 The comparison is against both snapshots because a session's
 snapshots do not only move forward: under read committed, a
@@ -2461,9 +2506,10 @@ SERIALIZABLE:
   by the rule above, yet it steps past nothing, and the dropper's
   `on_write` ran before any SIREAD existed: the edge is missed.
   Each cache entry therefore also records the transaction that
-  read it from `store.0`, and a serializable lookup uses a hit
+  read it from `store.0` (its `begin_seq`, since a read-only
+  transaction has no xid), and a serializable lookup uses a hit
   only if that is the current transaction. Its SIREAD already
-  catches every later writer of the storeid.
+  catches every later writer of the storeid (scenario c35).
 
 ### 11.1 Sequences
 
@@ -2650,8 +2696,18 @@ Two consequences for the implementation:
 `ssi_max_entries`, `commit_cache_entries`,
 `savepoint_undo_bytes`, `ts_lease`, plus
 pass-through RocksDB options (block cache size, write buffer
-size, compaction style). Bloom filters
-are worth enabling on store CFs, and `CF:txn` benefits from a
+size, compaction style). No column family is compressed, at
+any level: a block is read as it is stored, so a scan pays no
+decompression and no copy out of a compressed block, for the
+price of the disk the bytes take (`fixed_cf_options()`).
+A store CF's data blocks are 16 KB (`store_block_size`), as
+MyRocks sets them, not RocksDB's 4 KB: a scan looks up a
+quarter as many blocks in the block cache, about 19% off a scan
+of 566-byte rows, and a point read by key ran no slower in the
+benchmark (`bench/`), faster while the cache warms. Fixed CFs
+keep 4 KB; they are small and read by key.
+Bloom filters are worth enabling on store CFs, and `CF:txn`
+benefits from a
 large block cache since it is small and hot. For store CFs the
 prefix extractor strips the 12-byte tail, so the bloom key is the
 userkey; the comparator keeps each userkey's versions contiguous,
@@ -2669,9 +2725,14 @@ when one is configured (§8.3). And each sets
 the purge's range tombstones pile up in it (§8.3); the option
 needs RocksDB 8.9 or later.
 
-Store CFs share one block cache and one `WriteBufferManager`,
-so total memtable memory is a single budget rather than
-`write_buffer_size × stores`. `max_total_wal_size` bounds how
+Every CF of every instance shares one block cache, the
+environment's, sized at `sm1::attach` (`env_options_t`): a
+table's blocks compete with every other's for one budget, as
+in PostgreSQL's shared buffers, instead of each CF keeping a
+32 MB cache of its own. Store CFs are to share one
+`WriteBufferManager` too, so total memtable memory is a single
+budget rather than `write_buffer_size × stores`; it is not
+built. `max_total_wal_size` bounds how
 long a rarely-written CF can hold old WAL files alive.
 
 **Logging.** wisr writes no log of its own; a host installs a

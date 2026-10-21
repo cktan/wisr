@@ -443,6 +443,87 @@ TEST_CASE("deforming the first n attributes reads only them") {
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 }
 
+TEST_CASE("a tuple read in steps gives what one deform does") {
+  // Verify tup_read: attributes read in steps, each step resuming
+  // where the last stopped, are those tup_deform gives whole, and
+  // each step checks only the attributes it reads.
+  // 1. Over random schemas and rows, from test_seed(), read in
+  //    random steps; the datums equal tup_deform's.
+  // 2. A step to where the reader already is reads nothing.
+  // 3. The text's slot pointing a byte on: the step to attribute 1
+  //    reads, the step over the text fails as corrupt, and the
+  //    reader stays where it was.
+  // 4. A step past the schema, or into outputs too short, is
+  //    SM_ERR_INVALID.
+  INFO("seed ", test_seed());
+  std::mt19937_64 rng(test_seed());
+  const std::vector<typed_t> &types = all_types();
+  for (int round = 0; round < 100; round++) {
+    std::vector<sm2::attribute_t> schema;
+    for (size_t n = 1 + rng() % 12; n > 0; n--) {
+      const typed_t &t = types[rng() % types.size()];
+      schema.push_back({t.type, t.typmod, false, std::nullopt});
+    }
+    std::vector<std::optional<std::string>> row;
+    for (const auto &a : schema) {
+      row.push_back(rng() % 4 == 0
+                        ? std::nullopt
+                        : std::optional(codec_form(
+                              a, gen_datum({a.type, a.typmod}, rng))));
+    }
+    std::string tuple = encode(schema, row);
+    sm2::tup_desc_t desc(schema);
+    size_t n = schema.size();
+    std::vector<sm2::datum_t> whole(n), stepped(n);
+    std::unique_ptr<bool[]> whole_null(new bool[n]), stepped_null(new bool[n]);
+    REQUIRE(sm2::tup_deform(desc, tuple, whole, {whole_null.get(), n}) == 0);
+    sm2::tup_reader_t r;
+    REQUIRE(sm2::tup_read_begin(desc, tuple, r) == 0);
+    while (r.next < n) {
+      size_t to = r.next + 1 + rng() % (n - r.next);
+      CAPTURE(to);
+      REQUIRE(sm2::tup_read(r, to, stepped, {stepped_null.get(), n}) == 0);
+      REQUIRE(r.next == to);
+    }
+    for (size_t i = 0; i < n; i++) {
+      CAPTURE(i);
+      CHECK(stepped_null[i] == whole_null[i]);
+      if (!whole_null[i]) {
+        CHECK(stepped[i] == whole[i]);
+      }
+    }
+    // 2. Nothing left to read.
+    REQUIRE(sm2::tup_read(r, n, stepped, {stepped_null.get(), n}) == 0);
+    CHECK(r.next == n);
+  }
+
+  // 3. The tuple of the prefix test above: the text's slot is at
+  // byte 7.
+  std::vector<sm2::attribute_t> schema = {
+      attr(sm2::type_int4), attr(sm2::type_text), attr(sm2::type_int8),
+      attr(sm2::type_bytea)};
+  std::string bad =
+      encode(schema, {le(int32_t{7}), vl("abc"), std::nullopt, vl("de")});
+  REQUIRE(bad[7] == 11);
+  bad[7] = 12;
+  sm2::tup_desc_t desc(schema);
+  sm2::datum_t d[4];
+  bool nulls[4];
+  sm2::tup_reader_t r;
+  REQUIRE(sm2::tup_read_begin(desc, bad, r) == 0);
+  REQUIRE(sm2::tup_read(r, 1, d, nulls) == 0);
+  CHECK(sm2::datum_to_int32(d[0]) == 7);
+  CHECK(sm2::tup_read(r, 2, d, nulls) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_CORRUPT);
+  CHECK(r.next == 1);
+
+  // 4. Past the schema, and outputs shorter than the step.
+  CHECK(sm2::tup_read(r, 5, d, nulls) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm2::tup_read(r, 3, std::span<sm2::datum_t>(d, 2), nulls) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+}
+
 TEST_CASE("the codec refuses arguments that do not fit the schema") {
   // Verify tup_encode and tup_decode's SM_ERR_INVALID cases.
   // 1. Fewer datums than attributes leaves the tuple as it was.

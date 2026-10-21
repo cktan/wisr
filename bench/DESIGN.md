@@ -44,14 +44,11 @@ Chosen so neither side does work the other cannot:
   0` on PostgreSQL. digres has none: its parallel backend is
   gone (`../dg/WORKNOTE.md` step 10).
 - **No JIT**: `jit = off`. digres was built without it.
-- **Memory**: PostgreSQL's `shared_buffers` 2 GB, large
-  enough to hold the data. sm's block cache cannot be set: sm
-  leaves each store RocksDB's default, a cache of 32 MB of its
-  own (`store_cf_options()`, `../sm/sm1/src/db.cc`), so a scan
-  of a table larger than that reads its blocks from the OS's
-  page cache, and decompresses them, each time. That is how
-  digres runs today, and is measured as it is; making the
-  cache settable is a change to sm of its own.
+- **Memory**: `shared_buffers` 2 GB on both, large enough to
+  hold the data. On digres it sizes sm's block cache, the one
+  every database's RocksDB reads through
+  (`../sm/sm1/SM1_DESIGN.md` §12.2), whose blocks sm stores
+  uncompressed.
 - **PostgreSQL's heap settled**: `VACUUM (FREEZE, ANALYZE)`
   after the load, so no scan pays for setting hint bits or
   pruning, and autovacuum off, so none starts during a run.

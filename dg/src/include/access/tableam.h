@@ -1665,6 +1665,5 @@ extern const TableAmRoutine *GetTableAmRoutine(Oid amhandler);
  */
 
 extern const TableAmRoutine *smtable_routine(void);
-extern void smtable_scan_set_natts(TableScanDesc scan, int natts);
 
 #endif							/* TABLEAM_H */

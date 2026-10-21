@@ -16,6 +16,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include <rocksdb/cache.h>
 #include <rocksdb/db.h>
 
 #include "memcount.h"
@@ -34,6 +35,11 @@ struct db_t;
 
 struct sm1::env_t {
   std::string homedir;
+  /*
+   * The block cache every instance below and every database's
+   * reads through (env_options_t), made by attach.
+   */
+  std::shared_ptr<rocksdb::Cache> block_cache;
   rocksdb::DB *root = nullptr; /* {homedir}/global/root */
   /*
    * The temporary instance, {homedir}/base/pgsql_tmp/sm

@@ -3,7 +3,8 @@
 -- 1. SET extra_float_digits to 0 rounds a float8 to 15 digits.
 -- 2. SHOW gives the setting.
 -- 3. RESET puts it back: the shortest exact digits again.
--- 4. SET lc_numeric to C is taken; to a locale that does not exist, refused.
+-- 4. SHOW shared_buffers gives the default size of sm's block cache.
+-- 5. SET lc_numeric to C is taken; to a locale that does not exist, refused.
 SET extra_float_digits = 0;
 SELECT 1.0::float8 / 3;
      ?column?      
@@ -24,6 +25,12 @@ SELECT 1.0::float8 / 3;
  0.3333333333333333
 (1 row)
 
+SHOW shared_buffers;
+ shared_buffers 
+----------------
+ 128MB
+(1 row)
+
 SET lc_numeric = 'C';
 SHOW lc_numeric;
  lc_numeric 
@@ -32,4 +39,4 @@ SHOW lc_numeric;
 (1 row)
 
 SET lc_numeric = 'xx_YY';
-psql:test/set_guc.sql:14: ERROR:  invalid value for parameter "lc_numeric": "xx_YY"
+psql:test/set_guc.sql:16: ERROR:  invalid value for parameter "lc_numeric": "xx_YY"

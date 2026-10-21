@@ -130,20 +130,13 @@ struct scan_t;
 /* A bulk load into one store (load_open). */
 struct loader_t;
 
-/* A pin: keeps one row read by sm1::read in memory (../PIN.md). */
-struct pin_t;
-
 /*
- * A pin ref: what a read into a pin hands the caller, a plain
- * value the caller keeps where it likes. It names a pin of the
- * session's and the pin's generation when it was taken; once
- * the pin is released the ref is stale, and a stale ref names
- * nothing. A ref of zeros names no pin.
+ * A raw pin: keeps one row read or replaced in memory, where
+ * RocksDB has it, until it is emptied (../ROW.md §2). The caller
+ * makes it with sm1::rawpin_new, keeps it, and frees it; sm1
+ * keeps no list of them.
  */
-struct pin_ref_t {
-    pin_t*   pin = nullptr;
-    uint64_t gen = 0;
-};
+struct rawpin_t;
 
 /*
  * Isolation levels.
@@ -168,6 +161,16 @@ enum class xctlevel_t {
  */
 struct options_t : ::sm_options_t {
     options_t() { sm_options_init(this); }
+};
+
+/*
+ * Environment options, taken by sm1::attach. NULL means all
+ * defaults, and a default-constructed env_options_t holds them.
+ * The fields and their defaults are the root's
+ * include/sm_options.h.
+ */
+struct env_options_t : ::sm_env_options_t {
+    env_options_t() { sm_env_options_init(this); }
 };
 
 /*
@@ -200,8 +203,14 @@ int init(std::string_view homedir);
  * RocksDB leaves it unreliable, and only a fresh open's WAL
  * replay recovers safely. A handler the process already has is
  * kept, but one that throws is unsupported.
+ *
+ * opt's block_cache_bytes sizes the one block cache every
+ * database, every column family and the root and temporary
+ * instances read through; NULL means the defaults. A size less
+ * than 1 fails with SM_ERR_INVALID.
  */
-int attach(std::string_view homedir, env_t*& out);
+int attach(std::string_view homedir, env_t*& out,
+           const env_options_t* opt = nullptr);
 
 /*
  * Release an environment, leaving the home directory intact.
@@ -611,9 +620,9 @@ int trylock(session_t* session, locktype_t type, uint64_t storeid,
 int read_latest(session_t* session, uint64_t storeid,
                 std::string_view key, std::string_view& data);
 
-/* sm1::read_latest into a pin, as sm1::read into one. */
+/* sm1::read_latest into a raw pin, as sm1::read into one. */
 int read_latest(session_t* session, uint64_t storeid,
-                std::string_view key, pin_ref_t& ref,
+                std::string_view key, rawpin_t* pin,
                 std::string_view& data);
 
 /*
@@ -1072,10 +1081,10 @@ int probes(session_t* session, uint64_t storeid, uint64_t& out);
  * *old is valid only until the next call on this session -- the
  * same rule as sm1::read(), and the same pin, so either call
  * invalidates what the other handed out. The forms that take a
- * pin_ref_t pin it into ref instead, valid until the pin is
- * released, as a read into a ref is. The row ref held before is
- * released only when the write succeeds, so data may view it.
- * On failure old is empty, and ref keeps what it held.
+ * rawpin_t pin it there instead, valid until the pin is emptied,
+ * as a read into a raw pin is. The row the pin held before is
+ * let go only when the write succeeds, so data may view it. On
+ * failure old is empty, and the pin keeps what it held.
  *
  * Errors for all three: SM_ERR_CONFLICT / SM_ERR_DEADLOCK
  * (retryable), SM_ERR_NOTFOUND (store, or key for
@@ -1090,12 +1099,12 @@ int update(session_t* session, uint64_t storeid,
            std::string_view* old = nullptr);
 int update(session_t* session, uint64_t storeid,
            std::string_view key, std::string_view data,
-           pin_ref_t& ref, std::string_view& old);
+           rawpin_t* pin, std::string_view& old);
 
 int erase(session_t* session, uint64_t storeid,
           std::string_view key, std::string_view* old = nullptr);
 int erase(session_t* session, uint64_t storeid,
-          std::string_view key, pin_ref_t& ref, std::string_view& old);
+          std::string_view key, rawpin_t* pin, std::string_view& old);
 
 /*
  * Read one key.
@@ -1123,42 +1132,29 @@ int read(session_t* session, uint64_t storeid,
          std::string_view key, std::string_view& data);
 
 /*
- * Read one key into a pin: as sm1::read, but the row is not
- * copied. The session keeps it in memory in one of its pins,
- * and ref is set to that pin; data views the row until the pin
- * is released, which happens at the first of:
- *
- *   - the next read into the same ref;
- *   - sm1::unpin(ref);
- *   - sm1::release_all_pins(session);
- *   - the end of the session's transaction: its commit, abort
- *     or prepare.
- *
- * A rollback to a savepoint releases no pin: the row was read
- * already, and only the caller knows whether it still wants
- * it. Neither does the drop of the row's store.
- *
- * If ref names a pin still held, that pin is released first, so
- * a caller reading into one ref holds one pin at most. On 1 or
- * -1 ref is left naming no pin, and data empty.
+ * Read one key into a raw pin: as sm1::read, but the row is not
+ * copied. The pin keeps it in memory, and data views it until
+ * the pin is emptied: by the next read or write into the pin, by
+ * sm1::unpin, or by sm1::rawpin_free. Nothing else lets it go:
+ * not the end of the transaction, a rollback to a savepoint, nor
+ * the drop of the row's store. A row the pin held before is let
+ * go first. On 1 or -1 the pin is left empty, and data empty.
  */
 int read(session_t* session, uint64_t storeid,
-         std::string_view key, pin_ref_t& ref, std::string_view& data);
+         std::string_view key, rawpin_t* pin, std::string_view& data);
 
 /*
- * Release the pin ref names, and set ref to name none. A stale
- * ref, or one naming no pin, is left alone: unpinning twice is
- * harmless.
+ * Make an empty raw pin: nullptr with SM_ERR_NOMEM if there is
+ * no memory for it. Every raw pin is emptied before the database
+ * it read closes, since RocksDB closes none with an iterator open.
  */
-void unpin(pin_ref_t& ref);
+rawpin_t* rawpin_new();
 
-/*
- * Release every pin the session holds, as the end of its
- * transaction does, leaving the transaction open. For a caller
- * that knows none of the rows it pinned is still wanted. Every
- * ref to them is then stale.
- */
-void release_all_pins(session_t* session);
+/* Empty pin, then free it; nullptr is a no-op. */
+void rawpin_free(rawpin_t* pin);
+
+/* Let go of the row pin holds, if any; it is then empty. */
+void unpin(rawpin_t* pin);
 
 /*
  * Open a cursor over the keys of storeid in ascending bytewise
@@ -1272,6 +1268,12 @@ int scan_seek(scan_t* scan, std::string_view key, int inclusive);
  * a failure to release resources.
  */
 void scanend(scan_t* scan);
+
+/*
+ * Whether a rollback to a savepoint set before the cursor opened
+ * has closed it: its last row is then gone, and it reads no more.
+ */
+bool scan_rolled_back(const scan_t* scan);
 
 /*
  * BULK LOAD (BULKLOAD.md section 5, file mode).
