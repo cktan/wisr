@@ -8062,3 +8062,26 @@ sm3's object (`../sm/OBJECTIVE.md`, `../sm/DESIGN.md`).
   `index` and `correlation` are `std::optional`, as sm3's
   were; `smstore_statistic_tuple()` and `put_stats_rows()`
   test them as such.
+
+## Step 279: an index-only scan decodes only the index's columns
+
+`../sm/NEXT.md`'s scan item: an index-only scan reads the row
+when sm says the entry's key does not give its columns back --
+the key was cut, or a text column is under a non-deterministic
+collation -- and `entry_from_row()` then deformed every column
+of the row, to take the few the index holds.
+
+- **Each index column is decoded alone**, with
+  `sm_tbl_decode()`, straight into the slot: sm2 finds an
+  attribute by its offset, less the widths of the nulls before
+  it (`../sm/sm2/TUPLE.md` §6), so the cost is the index's
+  column count, not the row's. A dropped column, a null and a
+  column added after the row read as `sm_tbl_deform()` reads
+  them.
+- **The scan's room for a row is gone**: `row_values`,
+  `row_isnull` and `row_natts`.
+- `test/slt/index_only_cut.test`: an index on a table's fifth
+  and third columns, INCLUDE the second, whose 5,000-byte keys
+  sm cuts, read by an index-only scan beside short keys and
+  nulls. A log line put in `entry_from_row()` for the run
+  showed the three cut keys read through it.

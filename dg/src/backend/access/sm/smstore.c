@@ -2234,13 +2234,10 @@ struct smstore_scan_t {
   Form_pg_index form;
   const void *value;
   size_t len;
-  /* smstore_index_getentry()'s room for an entry's value and a row. */
+  /* smstore_index_getentry()'s room for an entry's value. */
   sm_datum_t *entry_values;
   bool *entry_isnull;
   size_t entry_ncols;
-  Datum *row_values;
-  bool *row_isnull;
-  int row_natts;
   /*
    * An index or a fetch scan's pin on the row it read last by rowno, which
    * its slot holds: released by the next read into it, the scan's end, or
@@ -5655,7 +5652,6 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
   scan->nkeys = nkeys;
   scan->index = RelationGetRelid(index);
   scan->form = form;
-  scan->row_natts = RelationGetDescr(heap)->natts;
   scan->keycols = (AttrNumber *)palloc(Max(nkeys, 1) * sizeof(AttrNumber));
   /* Each row is checked against every key (keys_met()). */
   for (int i = 0; i < nkeys; i++)
@@ -5786,17 +5782,14 @@ static void entry_includes(smstore_scan_t *scan, TupleTableSlot *slot) {
 /*
  * The row at rowno's columns the index holds into slot, in the index's
  * order: false if the transaction does not see the row.  For an entry
- * whose key does not give its columns back.
+ * whose key does not give its columns back.  Each is decoded alone, so the
+ * row's other columns cost nothing (../sm/sm2/TUPLE.md section 6).
  */
 static bool entry_from_row(smstore_scan_t *scan, uint64_t rowno,
                            TupleTableSlot *slot) {
   const void *tuple;
   size_t len;
 
-  if (scan->row_values == NULL) {
-    scan->row_values = (Datum *)palloc(scan->row_natts * sizeof(Datum));
-    scan->row_isnull = (bool *)palloc(scan->row_natts * sizeof(bool));
-  }
   /* Into the scan's pin, which the slot's values then point into. */
   switch (sm_tbl_read(scan->tbl, rowno, &scan->ref, &tuple, &len)) {
   case 0:
@@ -5806,15 +5799,11 @@ static bool entry_from_row(smstore_scan_t *scan, uint64_t rowno,
   default:
     sm_error("read a row");
   }
-  if (sm_tbl_deform(scan->tbl, tuple, len, (sm_datum_t *)scan->row_values,
-                    scan->row_isnull, scan->row_natts) != 0)
-    sm_error("read a row");
-  for (int i = 0; i < scan->form->indnatts; i++) {
-    int col = scan->form->indkey.values[i] - 1;
-
-    slot->tts_values[i] = scan->row_values[col];
-    slot->tts_isnull[i] = scan->row_isnull[col];
-  }
+  for (int i = 0; i < scan->form->indnatts; i++)
+    if (sm_tbl_decode(scan->tbl, tuple, len, scan->form->indkey.values[i] - 1,
+                      (sm_datum_t *)&slot->tts_values[i],
+                      &slot->tts_isnull[i]) != 0)
+      sm_error("read a row");
   return true;
 }
 

@@ -1,0 +1,58 @@
+# Verify that an index-only scan of a cut key reads the index's columns
+# from the row, whatever their place in it, and only theirs.
+# 1. Make a table of six columns, with an index on the fifth and third,
+#    INCLUDE the second, and rows whose fifth column is too long for a
+#    key, so sm cuts it, beside short ones.
+# 2. Confirm the plan is an index-only scan, and that it returns each
+#    row's values, the long ones whole, the null ones null.
+
+statement ok
+create table ioc (a int4, b text, c int4, d text, e text, f int4)
+
+statement ok
+create index ioc_ec on ioc (e, c) include (b)
+
+statement ok
+insert into ioc select i, 'b' || i, i * 10, 'd' || i, repeat(chr(96 + i), 5000), i from generate_series(1, 3) i
+
+statement ok
+insert into ioc values (4, 'b4', 40, 'd4', 'short', 4), (5, null, null, 'd5', 'zz', 5)
+
+statement ok
+vacuum analyze ioc
+
+statement ok
+set enable_seqscan = off
+
+statement ok
+set enable_bitmapscan = off
+
+query T nosort
+explain (costs off) select e, c, b from ioc where e > 'a'
+----
+Index Only Scan using ioc_ec on ioc
+  Index Cond: (e > 'a'::text)
+
+query IITT nosort
+select length(e), c, b, left(e, 3) from ioc where e > 'a'
+----
+5000
+10
+b1
+aaa
+5000
+20
+b2
+bbb
+5000
+30
+b3
+ccc
+5
+40
+b4
+sho
+2
+NULL
+NULL
+zz

@@ -89,15 +89,13 @@ Owed, and blocking nothing above:
   sequential, an index, a bitmap heap and a sample scan hand
   digres's slot a pin ref (`TTSOpsSmRow`), which the
   executor's fetch steps deform column by column, checking
-  only what they read (`../dg/WORKNOTE.md` step 276). Not yet:
+  only what they read (`../dg/WORKNOTE.md` step 276), and an
+  index-only scan whose key does not give its columns back
+  decodes the index's columns alone (step 279). Not yet:
   - *A TID scan and a DELETE's RETURNING* read a lent copy by
     tid, their first columns up to the last the plan names
     (`smstore_scan_natts()`, `smstore_expr_natts()`); they
     would read into a pin of their own.
-  - *An index-only scan whose key does not give its columns
-    back* deforms every column (`entry_from_row()`); it would
-    deform through the pin by `sm_pin_deform` as far as its
-    entry needs.
 
 - **Views, the rest of them** (`VIEW.md` §10). CREATE, OR
   REPLACE, DROP and the cascades are built, sm3's and digres's
