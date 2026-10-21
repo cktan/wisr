@@ -25,7 +25,12 @@ LEVELS := sm0 sm1 sm2 sm3
 
 CC       ?= gcc
 CXX      ?= g++
-OPTFLAGS ?= -O1 -g
+# As the levels': DEBUG=1, -O0 -g; otherwise -O3 -DNDEBUG.
+ifeq ($(DEBUG),1)
+OPTFLAGS ?= -O0 -g
+else
+OPTFLAGS ?= -O3 -DNDEBUG
+endif
 CXXFLAGS ?= $(OPTFLAGS)
 CXXFLAGS += -std=c++20 -fno-rtti -Wall -Wextra -Iinclude -Ism0/include \
             -Ism1/include -Ism2/include -Ism3/include -MMD -MP
@@ -74,8 +79,16 @@ sm3/$(BUILD)/libsm3.a: sm2/$(BUILD)/libsm2.a
 .PHONY: $(LEVEL_LIBS)
 endif
 
+# The compiler and flags the wrapper is built with, recorded as the
+# levels record theirs, so a change of DEBUG rebuilds it.
+FLAGS      := $(CXX) $(CXXFLAGS)
+FLAGS_FILE := $(BUILD)/flags
+$(shell mkdir -p $(BUILD); \
+        [ "$$(cat $(FLAGS_FILE) 2>/dev/null)" = '$(FLAGS)' ] || \
+        echo '$(FLAGS)' > $(FLAGS_FILE))
+
 # The wrapper's flags, which sm_build_flags() reports with the levels'.
-$(BUILD)/src/sm.o: src/sm.cc
+$(BUILD)/src/sm.o: src/sm.cc $(FLAGS_FILE)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -D'SM_BUILD_FLAGS="$(OPTFLAGS)"' -c -o $@ $<
 

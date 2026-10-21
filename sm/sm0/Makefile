@@ -9,7 +9,8 @@
 #   make format       clang-format include/, src/ and test/ in place
 #   make clean        remove build/
 #
-# Setting DEBUG in the environment builds -O1 -g instead of -O3:
+# Setting DEBUG=1 in the environment builds -O0 -g instead of
+# -O3 -DNDEBUG:
 #
 #   DEBUG=1 make -j4
 #
@@ -17,11 +18,12 @@
 # CXX, or CXXFLAGS) rebuilds everything rather than linking
 # objects compiled with the old ones.
 
-# DEBUG set and non-empty: optimize lightly and keep the symbols.
-ifdef DEBUG
-OPTFLAGS := -O1 -g
+# DEBUG=1: no optimization, the symbols, and assert(); otherwise -O3
+# with NDEBUG, so assert() is compiled out.
+ifeq ($(DEBUG),1)
+OPTFLAGS := -O0 -g
 else
-OPTFLAGS := -O3
+OPTFLAGS := -O3 -DNDEBUG
 endif
 
 CXX      ?= g++

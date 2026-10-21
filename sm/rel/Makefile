@@ -1,7 +1,12 @@
 # rel/Makefile -- build the rel test driver.
 
 CXX      ?= g++
-OPTFLAGS ?= -O1 -g
+# As the levels': DEBUG=1, -O0 -g; otherwise -O3 -DNDEBUG.
+ifeq ($(DEBUG),1)
+OPTFLAGS ?= -O0 -g
+else
+OPTFLAGS ?= -O3 -DNDEBUG
+endif
 CXXFLAGS ?= $(OPTFLAGS)
 CXXFLAGS += -std=c++20 -fno-rtti -Wall -Wextra -I../include -I/usr/local/include -Isrc -MMD -MP
 LDLIBS   += -L/usr/local/lib -ljanet -lrocksdb -licui18n -licuuc -licudata -lpthread -ldl -lm
@@ -17,7 +22,15 @@ DEPS     := $(OBJS:.o=.d)
 
 all: $(BIN)
 
-$(OBJDIR)/%.o: src/%.cc
+# The compiler and flags, recorded as the levels record theirs, so a
+# change of DEBUG rebuilds the driver.
+FLAGS      := $(CXX) $(CXXFLAGS)
+FLAGS_FILE := $(OBJDIR)/flags
+$(shell mkdir -p $(OBJDIR); \
+        [ "$$(cat $(FLAGS_FILE) 2>/dev/null)" = '$(FLAGS)' ] || \
+        echo '$(FLAGS)' > $(FLAGS_FILE))
+
+$(OBJDIR)/%.o: src/%.cc $(FLAGS_FILE)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
