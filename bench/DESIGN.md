@@ -153,6 +153,9 @@ of §3, each table's size on disk on both sides, and a table of
 §5's numbers with their ratios. A run is the unit: numbers
 from two runs are not mixed in one table.
 
+Each report also gets a row in `results/LOG.md`, the log of
+every run: its date, commit, machine and file (`CODE.md`).
+
 ## 8. What can mislead
 
 - **WSL2's clock and scheduler**: a run is repeated, and the

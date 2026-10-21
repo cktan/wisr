@@ -41,3 +41,16 @@ be reported.
 - **Each report says so**: the builds and their flags are in
   its header (`DESIGN.md` §7), and a run on any other build is
   not a result.
+
+## Reports: logged, with date and commit
+
+- **Every report is logged**: `results/LOG.md` has one row
+  per report, oldest first: the date and time of the run,
+  the digres commit it measured, the machine, and a link to
+  the report. `run.sh` appends the row when it writes the
+  report; a report written any other way gets its row by
+  hand.
+- **A report names its commit and date**: its file name is
+  the date (`YYYYMMDD-HHMM.md`), and its header the commit
+  (`DESIGN.md` §7). Commit the report and its log row
+  together.

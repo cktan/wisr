@@ -154,21 +154,21 @@ field() {
 
 # Write the report of DESIGN.md section 7 from both systems' results.
 report() {
-  local stamp file
+  local stamp file commit cpu
   stamp=$(date +%Y%m%d-%H%M)
   file=$here/results/$stamp.md
+  commit=$(git -C "$here/.." rev-parse --short HEAD)
+  cpu=$(lscpu | sed -n 's/^Model name: *//p' | head -1)
+  [ -n "$cpu" ] && [ "$cpu" != - ] ||
+    cpu="$(uname -m), $(lscpu | sed -n 's/^Vendor ID: *//p' | head -1)"
   mkdir -p "$here/results"
   {
     echo "# bench run $stamp"
     echo
-    local cpu
-    cpu=$(lscpu | sed -n 's/^Model name: *//p' | head -1)
-    [ -n "$cpu" ] && [ "$cpu" != - ] ||
-      cpu="$(uname -m), $(lscpu | sed -n 's/^Vendor ID: *//p' | head -1)"
     echo "- Machine: $cpu," \
       "$(nproc) cores, $(free -g | awk '/^Mem:/ { print $2 }') GB," \
       "$(uname -sr)"
-    echo "- digres: $(git -C "$here/.." rev-parse --short HEAD)," \
+    echo "- digres: $commit," \
       "make release (DESIGN.md section 2); digres --build says:"
     echo
     "$digres" --build | sed 's/^/      /'
@@ -200,6 +200,9 @@ report() {
       echo "| $t | $p | $(field "$work/dg.results" size "$t" 3) |"
     done
   } > "$file"
+  # Every report has a row in the log, with its date and commit (CODE.md).
+  echo "| ${stamp:0:4}-${stamp:4:2}-${stamp:6:2} ${stamp:9:2}:${stamp:11:2}" \
+    "| $commit | $cpu | [$stamp]($stamp.md) |" >> "$here/results/LOG.md"
   echo "run: report in $file"
 }
 

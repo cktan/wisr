@@ -39,6 +39,7 @@ fair.
 | `run.sh` | builds, loads, runs, and writes a report |
 | `sql/` | the schema, the load, and one file per query |
 | `results/` | one report per run, dated, with the machine and commits |
+| `results/LOG.md` | the log of every report: date, commit, machine |
 
 ## Status
 
