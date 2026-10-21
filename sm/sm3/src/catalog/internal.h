@@ -58,11 +58,15 @@ struct sm3::catalog_t {
   /* The namespace of each collation, for a namespace's drop to ask. */
   std::unordered_map<uint64_t, uint64_t> collation_nsp;
   /*
-   * The namespace of each sequence, for the same: all of a sequence
-   * that is kept in memory, its name and counter being read from the
-   * catalog store in the transaction.
+   * The namespace and name of each sequence by its oid, for the same,
+   * and its oid by them, so a lookup either way reads no store: all
+   * of a sequence that is kept in memory, its record and counter
+   * being read from the catalog store in the transaction.
    */
-  std::unordered_map<uint64_t, uint64_t> sequence_nsp;
+  std::unordered_map<uint64_t, std::pair<uint64_t, std::string>>
+      sequence_by_oid;
+  std::unordered_map<std::pair<uint64_t, std::string>, uint64_t, tblname_hash_t>
+      sequence_names;
   /*
    * Each view's definition, and its oid by its namespace and name
    * (VIEW.md §4). What reads a relation is found by a pass over
@@ -164,7 +168,8 @@ struct nspace_change_t {
 struct sequence_change_t {
   int depth;
   uint64_t oid;
-  std::optional<uint64_t> nspoid; /* nullopt: dropped */
+  std::optional<uint64_t> nspoid;        /* nullopt: dropped */
+  std::pair<uint64_t, std::string> name; /* made or dropped */
 };
 struct view_change_t {
   int depth;
@@ -368,7 +373,8 @@ void overlay_nspace(session_t *s, uint64_t oid,
 void overlay_state(session_t *s, uint64_t index,
                    std::optional<index_status_t> status, bool temp = false);
 void overlay_sequence(session_t *s, uint64_t oid,
-                      std::optional<uint64_t> nspoid);
+                      std::optional<uint64_t> nspoid, uint64_t name_nspoid,
+                      std::string_view name);
 void overlay_stats(session_t *s, uint64_t oid,
                    std::shared_ptr<const stats_t> stats);
 void overlay_view(session_t *s, uint64_t oid,

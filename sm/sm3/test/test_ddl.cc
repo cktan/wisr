@@ -1125,6 +1125,51 @@ TEST_CASE("a sequence is dropped, and holds its namespace until it is") {
   db.commit();
 }
 
+TEST_CASE("a sequence's name is found as committed, not as of a snapshot") {
+  // Verify cat_get_sequence and cat_get_sequence_name find a
+  // sequence as a table is found.
+  // 1. other begins at repeatable read and reads the catalog, so
+  //    its snapshot is taken.
+  // 2. db makes the sequence late and commits: other finds it by
+  //    name and its name by oid.
+  // 3. db drops it: db finds it no longer either way, other still
+  //    does.
+  // 4. db commits: other finds it no longer, though its snapshot
+  //    still holds it.
+  cat_db_t db;
+  uint64_t late = 0, oid = 0, nsp = 0;
+  std::string name;
+  std::vector<std::string> names;
+  sm3::session_t *other = nullptr;
+  REQUIRE(sm3::session_open(db.cat, db.open(), other) == 0);
+  REQUIRE(sm3::begin(other, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm3::cat_list_sequences(other, sm3::nsp_public, names) == 0);
+  CHECK(names.empty());
+
+  db.begin();
+  REQUIRE(sm3::create_sequence(db.ss, sm3::nsp_public, "late", 1, 1, late) ==
+          0);
+  db.commit();
+  CHECK(sm3::cat_get_sequence(other, sm3::nsp_public, "late", oid) == 0);
+  CHECK(oid == late);
+  REQUIRE(sm3::cat_get_sequence_name(other, late, nsp, name) == 0);
+  CHECK(nsp == sm3::nsp_public);
+  CHECK(name == "late");
+
+  db.begin();
+  REQUIRE_MESSAGE(sm3::drop_sequence(db.ss, late) == 0, sm1::errmsg());
+  CHECK(sm3::cat_get_sequence(db.ss, sm3::nsp_public, "late", oid) == 1);
+  CHECK(sm3::cat_get_sequence_name(db.ss, late, nsp, name) == 1);
+  CHECK(sm3::cat_get_sequence(other, sm3::nsp_public, "late", oid) == 0);
+  CHECK(sm3::cat_get_sequence_name(other, late, nsp, name) == 0);
+
+  db.commit();
+  CHECK(sm3::cat_get_sequence(other, sm3::nsp_public, "late", oid) == 1);
+  CHECK(sm3::cat_get_sequence_name(other, late, nsp, name) == 1);
+  REQUIRE(sm3::commit(other) == 0);
+  sm3::session_close(other);
+}
+
 TEST_CASE("a column owns a sequence, which goes with its table or column") {
   // Verify own_sequence, and the drops it makes a sequence follow.
   // 1. A sequence owned by t's column a is SM_ERR_INUSE to drop, also

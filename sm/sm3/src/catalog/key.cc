@@ -89,16 +89,18 @@ int part_ids(kind_t kind, std::string_view key, uint64_t &table_oid,
   return 0;
 }
 
-/* The namespace a NAME key is in. */
-int name_nspoid(std::string_view key, uint64_t &nspoid) {
+/* The namespace a NAME key is in, and the name. */
+int name_nspoid(std::string_view key, uint64_t &nspoid, std::string &name) {
   std::vector<std::optional<std::string>> cols;
-  if (sm2::decode_key(name_cols, key, cols) != 0 || !cols[1]) {
+  if (sm2::decode_key(name_cols, key, cols) != 0 || !cols[1] || !cols[2]) {
     return sm1::seterr(sm1::SM_ERR_CORRUPT, "catalog: not a name key");
   }
-  // The column comes back as its native bytes, little-endian.
+  // The namespace comes back as its native bytes, little-endian, and
+  // the name as its text, with no varlena header.
   int64_t n;
   std::memcpy(&n, cols[1]->data(), sizeof(n));
   nspoid = static_cast<uint64_t>(n);
+  name = std::move(*cols[2]);
   return 0;
 }
 

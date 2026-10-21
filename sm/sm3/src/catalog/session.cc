@@ -208,9 +208,11 @@ void publish(sm3::session_t *s) {
   s->nspaces.clear();
   for (sm3::sequence_change_t &q : s->sequences) {
     if (q.nspoid) {
-      cat->sequence_nsp[q.oid] = *q.nspoid;
+      cat->sequence_by_oid[q.oid] = q.name;
+      cat->sequence_names[std::move(q.name)] = q.oid;
     } else {
-      cat->sequence_nsp.erase(q.oid);
+      cat->sequence_by_oid.erase(q.oid);
+      cat->sequence_names.erase(q.name);
     }
   }
   s->sequences.clear();
@@ -571,10 +573,15 @@ void overlay_stats(session_t *s, uint64_t oid,
   s->stats.push_back({s->depth, oid, std::move(stats)});
 }
 
-/* Record a sequence created in nspoid, or dropped. */
+/*
+ * Record a sequence created in nspoid, or dropped; either way, with
+ * the namespace and name it took or freed.
+ */
 void overlay_sequence(session_t *s, uint64_t oid,
-                      std::optional<uint64_t> nspoid) {
-  s->sequences.push_back({s->depth, oid, nspoid});
+                      std::optional<uint64_t> nspoid, uint64_t name_nspoid,
+                      std::string_view name) {
+  s->sequences.push_back(
+      {s->depth, oid, nspoid, {name_nspoid, std::string(name)}});
 }
 
 /* Record a view's new definition, or its drop. */
@@ -748,8 +755,8 @@ bool nspace_in_use(const session_t *s, uint64_t oid) {
       return true;
     }
   }
-  for (const auto &[q, nsp] : cat->sequence_nsp) {
-    if (nsp == oid && !own_seq.count(q)) {
+  for (const auto &[q, named] : cat->sequence_by_oid) {
+    if (named.first == oid && !own_seq.count(q)) {
       return true;
     }
   }

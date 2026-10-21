@@ -876,17 +876,18 @@ int sm_cat_own_sequence(sm_session_t* session, uint64_t oid, uint64_t table,
                         int32_t attnum);
 
 /*
- * The oid of the sequence named name in nspoid, as the session's
- * transaction sees it: 0, or 1 if there is none. It reads the
- * catalog in that transaction, which must be open.
+ * The oid of the sequence named name in nspoid, as a table's oid is
+ * found by its name: the transaction's own creates and drops, then
+ * every committed sequence, not as of the transaction's snapshot --
+ * 0, or 1 if there is none. It reads no store.
  */
 int sm_cat_sequence_oid(sm_session_t* session, uint64_t nspoid,
                         const char* name, uint64_t* oid);
 
 /*
- * The namespace and name of the sequence oid, as the session's
- * transaction, which must be open, sees it: 0, or 1 if there is no
- * such sequence, an oid of a table or an index among them.
+ * The namespace and name of the sequence oid, as sm_cat_sequence_oid
+ * finds a sequence by them: 0, or 1 if there is no such sequence, an
+ * oid of a table or an index among them. It reads no store.
  */
 int sm_cat_sequence_name(sm_session_t* session, uint64_t oid,
                          uint64_t* nspoid, std::string& name);
