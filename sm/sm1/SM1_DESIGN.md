@@ -2673,9 +2673,14 @@ when one is configured (§8.3). And each sets
 the purge's range tombstones pile up in it (§8.3); the option
 needs RocksDB 8.9 or later.
 
-Store CFs share one block cache and one `WriteBufferManager`,
-so total memtable memory is a single budget rather than
-`write_buffer_size × stores`. `max_total_wal_size` bounds how
+Every CF of every instance shares one block cache, the
+environment's, sized at `sm1::attach` (`env_options_t`): a
+table's blocks compete with every other's for one budget, as
+in PostgreSQL's shared buffers, instead of each CF keeping a
+32 MB cache of its own. Store CFs are to share one
+`WriteBufferManager` too, so total memtable memory is a single
+budget rather than `write_buffer_size × stores`; it is not
+built. `max_total_wal_size` bounds how
 long a rarely-written CF can hold old WAL files alive.
 
 **Logging.** wisr writes no log of its own; a host installs a

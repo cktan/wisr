@@ -109,8 +109,10 @@ thread_local /*LOCAL*/ int maintenance_work_mem = 65536;
  * Primary determinants of sizes of shared-memory structures.
  *
  * MaxBackends, pcb's, is computed by PostmasterMain after modules have had a
- * chance to register background workers.
+ * chance to register background workers.  NBuffers sizes sm's block cache,
+ * in blocks (datadir_load()).
  */
+thread_local /*LOCAL*/ int NBuffers = 16384;
 thread_local /*LOCAL*/ int MaxConnections = 100;
 
 /* GUC parameters for vacuum */

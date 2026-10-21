@@ -501,11 +501,17 @@ Errors: `SM_ERR_EXISTS` (already a wisr home directory),
 `SM_ERR_NOTFOUND` (no such directory), `SM_ERR_PERMISSION`,
 `SM_ERR_IO`, `SM_ERR_DISKFULL`, `SM_ERR_INVALID`.
 
-### int sm1::attach(std::string_view homedir, sm1::env_t*& out)
+### int sm1::attach(std::string_view homedir, sm1::env_t*& out, const sm1::env_options_t* opt = nullptr)
 
 Create an environment on a home directory `sm1::init` has
 already prepared. Every database is recovered, then closed
 again: none stays open.
+
+`opt`'s `block_cache_bytes`, 128 MB by default, sizes the one
+block cache the environment makes: every database's RocksDB
+instance, every column family of each, and the root and
+temporary instances read their sorted files through it. A
+size less than 1 fails with `SM_ERR_INVALID`.
 
 The caller must ensure that no other environment, in this
 process or another, has `homedir` attached; the library

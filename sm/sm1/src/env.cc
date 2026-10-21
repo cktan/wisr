@@ -188,7 +188,7 @@ int recover_dbs(sm1::env_t *env) {
             path.c_str());
     // Open the database with the defaults: this is its recovery,
     // done when db_open returns (WAL replay, then §9.1 steps 2-6).
-    db_t *db = db_open(path, name.c_str(), nullptr);
+    db_t *db = db_open(path, name.c_str(), nullptr, env->block_cache);
     // Fail the attach: a database that cannot recover.
     if (!db) {
       return -1;
@@ -247,7 +247,9 @@ int open_tmp(sm1::env_t *env) {
   if (env_destroy_db_dir(path) != 0) {
     return -1;
   }
-  rocksdb::Options opt;
+  // Its default CF as a fixed CF of a database's, through the cache.
+  rocksdb::Options opt(rocksdb::DBOptions(),
+                       fixed_cf_options(env->block_cache));
   opt.create_if_missing = true;
   opt.error_if_exists = true;
   // Count its stores' memtable bytes as RocksDB seals and flushes them.
@@ -262,7 +264,17 @@ int open_tmp(sm1::env_t *env) {
 }
 
 /* sm1::attach, minus the out-of-memory guard. */
-sm1::env_t *attach(const char *homedir) {
+sm1::env_t *attach(const char *homedir, const sm1::env_options_t *opt) {
+  sm1::env_options_t defaults;
+  // No options: use the defaults.
+  if (!opt) {
+    opt = &defaults;
+  }
+  // Reject a cache that could hold nothing.
+  if (opt->block_cache_bytes < 1) {
+    set_error(sm1::SM_ERR_INVALID, "block_cache_bytes must be at least 1");
+    return nullptr;
+  }
   // Validate the home directory path.
   if (check_homedir(homedir) != 0) {
     return nullptr;
@@ -270,6 +282,10 @@ sm1::env_t *attach(const char *homedir) {
   // Allocate the environment.
   std::unique_ptr<sm1::env_t> env(new sm1::env_t);
   env->homedir = homedir;
+  // The one block cache every instance of the environment reads
+  // through, made before the first of them opens.
+  env->block_cache =
+      rocksdb::NewLRUCache(static_cast<size_t>(opt->block_cache_bytes));
 
   // Open the root db. It must exist: attach creates nothing.
   std::string rootpath = root_path(env->homedir);
@@ -279,9 +295,11 @@ sm1::env_t *attach(const char *homedir) {
     set_error(sm1::SM_ERR_NOTFOUND, "{}: not a wisr home directory", homedir);
     return nullptr;
   }
-  rocksdb::Options opt;
+  // Its default CF as a fixed CF of a database's, through the cache.
+  rocksdb::Options ropt(rocksdb::DBOptions(),
+                        fixed_cf_options(env->block_cache));
   // Open the root db.
-  rocksdb::Status s = rocksdb::DB::Open(opt, rootpath, &env->root);
+  rocksdb::Status s = rocksdb::DB::Open(ropt, rootpath, &env->root);
   // Fail if it cannot be opened.
   if (!s.ok()) {
     set_status_error(s, rootpath.c_str());
@@ -492,7 +510,8 @@ int sm1::init(std::string_view homedir_arg) {
 }
 
 /* Create an environment on an initialized home directory. */
-int sm1::attach(std::string_view homedir_arg, sm1::env_t *&out) {
+int sm1::attach(std::string_view homedir_arg, sm1::env_t *&out,
+                const sm1::env_options_t *opt) {
   // Make running out of memory fatal, unless the host process
   // already has an out-of-memory policy of its own.
   if (!std::get_new_handler()) {
@@ -505,7 +524,7 @@ int sm1::attach(std::string_view homedir_arg, sm1::env_t *&out) {
   }
   const char *homedir = homedir_str.c_str();
   // Attach, handing the environment back only on success.
-  sm1::env_t *env = ::attach(homedir);
+  sm1::env_t *env = ::attach(homedir, opt);
   if (!env) {
     return -1;
   }

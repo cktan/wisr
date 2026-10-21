@@ -450,11 +450,16 @@ static int set_evaluator(sm_env_t *env, sm3::catalog_t *cat) {
 }
 
 /* Attach homedir. */
-int sm_attach(const char *homedir, sm_env_t **out) {
+int sm_attach(const char *homedir, sm_env_t **out,
+              const sm_env_options_t *opt) {
   return guard(nullptr, [&] {
     sm1::env_t *env = nullptr;
+    sm1::env_options_t o;
+    if (opt != nullptr) {
+      static_cast<sm_env_options_t &>(o) = *opt;
+    }
     // Attach: opens the root db and starts sm1's threads.
-    if (sm1::attach(name_of(homedir), env) != 0) {
+    if (sm1::attach(name_of(homedir), env, &o) != 0) {
       return -1;
     }
     *out = new sm_env_t;

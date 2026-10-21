@@ -24,11 +24,14 @@ q7_seconds=${Q7_SECONDS:-30}
 which=${1:-both}
 mkdir -p "$work"
 
-# The server's settings of DESIGN.md section 3, for PostgreSQL.
+# The server's settings of DESIGN.md section 3, for PostgreSQL, and for
+# digres, which has no JIT, parallel query or autovacuum to turn off.
 pg_settings="shared_buffers = 2GB
 jit = off
 max_parallel_workers_per_gather = 0
 autovacuum = off
+listen_addresses = ''"
+dg_settings="shared_buffers = 2GB
 listen_addresses = ''"
 
 # Make system $1's data directory and start its server on port $2; wait
@@ -45,6 +48,7 @@ start() {
   else
     "$digres" --init "$data" > "$work/$sys.initdb" 2>&1 ||
       { echo "run: initdb failed; see $work/$sys.initdb"; exit 1; }
+    echo "$dg_settings" >> "$data/postgresql.conf"
     "$digres" -D "$data" -k "$work" -p "$port" > "$work/$sys.log" 2>&1 &
   fi
   server=$!

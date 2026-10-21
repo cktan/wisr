@@ -303,11 +303,19 @@ std::string store_cf_name(uint64_t storeid) {
  * RocksDB's default options with no compression, at any level:
  * a block is read as it is stored, so a scan pays no
  * decompression and no copy out of the compressed block (§12.2).
+ * With cache, the CF's blocks are read through it, the one block
+ * cache of the environment, not a cache of the CF's own.
  */
-rocksdb::ColumnFamilyOptions fixed_cf_options() {
+rocksdb::ColumnFamilyOptions
+fixed_cf_options(const std::shared_ptr<rocksdb::Cache> &cache) {
   rocksdb::ColumnFamilyOptions cfo;
   // Every level, the bottommost too, as it follows compression.
   cfo.compression = rocksdb::kNoCompression;
+  if (cache) {
+    rocksdb::BlockBasedTableOptions bbto;
+    bbto.block_cache = cache;
+    cfo.table_factory.reset(rocksdb::NewBlockBasedTableFactory(bbto));
+  }
   return cfo;
 }
 
@@ -331,8 +339,12 @@ rocksdb::ColumnFamilyOptions store_cf_options(db_t *db, uint64_t storeid) {
   cfo.comparator = version_comparator();
   // Key bloom filters on the userkey.
   cfo.prefix_extractor = version_prefix_extractor();
-  // Build a table with a userkey bloom filter.
+  // Build a table with a userkey bloom filter, read through the
+  // environment's block cache when the database has one.
   rocksdb::BlockBasedTableOptions bbto;
+  if (db) {
+    bbto.block_cache = db->block_cache;
+  }
   // Ten bits per key.
   bbto.filter_policy.reset(rocksdb::NewBloomFilterPolicy(10));
   // Whole version keys are never looked up.
@@ -394,7 +406,8 @@ static bool read_meta(db_t *db, rocksdb::Slice key, uint64_t *out) {
 
 /* Open every column family of the database and load CF:meta. */
 db_t *db_open(const std::string &path, const char *dbname,
-              const sm1::options_t *opt) {
+              const sm1::options_t *opt,
+              const std::shared_ptr<rocksdb::Cache> &cache) {
   sm1::options_t defaults;
   // No options: use the defaults.
   if (!opt) {
@@ -448,6 +461,7 @@ db_t *db_open(const std::string &path, const char *dbname,
   // Allocate the shared database object.
   std::unique_ptr<db_t> db(new db_t);
   db->name = dbname;
+  db->block_cache = cache;
   db->idle_close_ms = opt->idle_close_ms;
   db->opts = *opt;
   db->rocksdb_options = opt->rocksdb_options ? opt->rocksdb_options : "";
@@ -461,7 +475,7 @@ db_t *db_open(const std::string &path, const char *dbname,
       cfs.emplace_back(name, store_cf_options(db.get(), storeid));
     } else {
       // A fixed CF: default options, uncompressed.
-      cfs.emplace_back(name, fixed_cf_options());
+      cfs.emplace_back(name, fixed_cf_options(cache));
     }
   }
 

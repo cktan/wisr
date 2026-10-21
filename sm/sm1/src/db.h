@@ -24,6 +24,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include <rocksdb/cache.h>
 #include <rocksdb/compaction_filter.h>
 #include <rocksdb/db.h>
 #include <rocksdb/options.h>
@@ -144,6 +145,8 @@ struct ssi_range_t {
 struct db_t {
   std::string name;
   rocksdb::DB *rdb = nullptr;
+  /* The environment's block cache, every CF of rdb's reads through. */
+  std::shared_ptr<rocksdb::Cache> block_cache;
   /*
    * The environment's temporary instance and this database's dbid,
    * which names its stores there (TEMPTABLE.md §2). Set once a
@@ -408,10 +411,12 @@ struct db_t {
 /*
  * Open database dbname at path with every column family it
  * has, and load its allocators from CF:meta (SM1_DESIGN.md §9.1
- * steps 1-3). Returns NULL with the error set.
+ * steps 1-3), every column family reading through cache, the
+ * environment's block cache. Returns NULL with the error set.
  */
 db_t *db_open(const std::string &path, const char *dbname,
-              const sm1::options_t *opt);
+              const sm1::options_t *opt,
+              const std::shared_ptr<rocksdb::Cache> &cache);
 
 /* Allocate a timestamp: lock-free within the lease. Returns 0 or -1. */
 int db_alloc_ts(db_t *db, uint64_t *out);
@@ -485,8 +490,12 @@ std::string store_cf_name(uint64_t storeid);
  */
 constexpr uint32_t store_max_range_deletions = 1000;
 
-/* Options for a fixed CF: RocksDB's defaults, uncompressed. */
-rocksdb::ColumnFamilyOptions fixed_cf_options();
+/*
+ * Options for a fixed CF: RocksDB's defaults, uncompressed, its
+ * blocks read through cache when one is given.
+ */
+rocksdb::ColumnFamilyOptions
+fixed_cf_options(const std::shared_ptr<rocksdb::Cache> &cache = nullptr);
 
 /*
  * Options for a store CF: a fixed CF's, with the comparator,

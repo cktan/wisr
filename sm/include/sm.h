@@ -153,8 +153,14 @@ int sm_set_log(sm_log_fn fn, void* arg);
 /* Make homedir, which must exist, a wisr home directory. */
 int sm_init(const char* homedir);
 
-/* Attach the home directory homedir, recovering every database. */
-int sm_attach(const char* homedir, sm_env_t** out);
+/*
+ * Attach the home directory homedir, recovering every database,
+ * with opt's environment options (sm_options.h): the size of the
+ * one block cache every database reads through. NULL means the
+ * defaults.
+ */
+int sm_attach(const char* homedir, sm_env_t** out,
+              const sm_env_options_t* opt = nullptr);
 
 /* Detach env; force != 0 closes its open sessions first. */
 int sm_detach(sm_env_t* env, int force);

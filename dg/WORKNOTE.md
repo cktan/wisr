@@ -7994,3 +7994,21 @@ digres's slot holds the pin's ref.
   hold, UPDATE and DELETE RETURNING. It failed at the index
   scans before `keys_met()` asked the slot, and crashes the
   server when the copies do not deform first.
+
+## Step 276: shared_buffers sizes sm's block cache
+
+sm gave each store's column family RocksDB's default block
+cache, 32 MB of its own, so a scan of a table larger than that
+read every block from the OS each time and put it in the cache
+again. sm1 now makes one block cache an environment's every
+instance and column family reads through, sized at attach
+(`../sm/sm1/SM1_DESIGN.md` §12.2).
+
+- **`shared_buffers` is back**, `PGC_POSTMASTER`, in 8 kB
+  blocks, 128 MB by default, as PostgreSQL's: `datadir_load()`
+  hands it to `sm_attach()` as `block_cache_bytes`. It was
+  deleted with the buffer pool (step 68).
+- `postgresql.conf.sample` has it again; `test/set_guc.sql`
+  shows its default.
+- `../bench/run.sh` sets it to 2 GB on digres as on
+  PostgreSQL.

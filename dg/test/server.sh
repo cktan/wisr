@@ -3155,8 +3155,8 @@ done
 # 2. In two sessions, begin SERIALIZABLE, read a > 10 (nothing), and insert
 #    a row of a > 10; commit the first, then the second.
 # 3. Confirm the first commits, and the second fails with SQLSTATE 40001.
-# 4. Confirm max_pred_locks_per_transaction and shared_buffers are not
-#    settings, and the data directory has no pg_serial.
+# 4. Confirm max_pred_locks_per_transaction is not a setting, and the data
+#    directory has no pg_serial.
 local_psql -c 'create table t10 (a int4)' -c 'insert into t10 values (1), (2)' \
   > "$work/skew.out" 2>&1
 for n in 1 2; do
@@ -3184,7 +3184,7 @@ wait $skew2
 grep -q '^COMMIT$' "$work/skew1.out" || fail "serializable first commit"
 grep -q 'ERROR:  40001: could not commit: not serializable' \
   "$work/skew2.out" || fail "serializable write skew"
-for guc in max_pred_locks_per_transaction shared_buffers; do
+for guc in max_pred_locks_per_transaction; do
   local_psql -c "show $guc" 2>&1 |
     grep -q 'unrecognized configuration parameter' || fail "setting $guc"
 done

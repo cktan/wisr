@@ -74,7 +74,7 @@ db_t *find_or_open(sm1::env_t *env, const char *dbname,
   }
   // Open the database: its first session in this process.
   uint64_t dbid = sm0::get_be64(val.data());
-  db_t *db = db_open(env_db_path(env, dbid), dbname, opt);
+  db_t *db = db_open(env_db_path(env, dbid), dbname, opt, env->block_cache);
   // Register the newly opened database.
   if (db) {
     // Its temporary stores go in the environment's instance.

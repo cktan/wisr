@@ -164,6 +164,16 @@ struct options_t : ::sm_options_t {
 };
 
 /*
+ * Environment options, taken by sm1::attach. NULL means all
+ * defaults, and a default-constructed env_options_t holds them.
+ * The fields and their defaults are the root's
+ * include/sm_options.h.
+ */
+struct env_options_t : ::sm_env_options_t {
+    env_options_t() { sm_env_options_init(this); }
+};
+
+/*
  * Make homedir -- which must already exist -- a wisr home
  * directory: create global/ and base/, the root db inside
  * global/, and the format version inside that.
@@ -193,8 +203,14 @@ int init(std::string_view homedir);
  * RocksDB leaves it unreliable, and only a fresh open's WAL
  * replay recovers safely. A handler the process already has is
  * kept, but one that throws is unsupported.
+ *
+ * opt's block_cache_bytes sizes the one block cache every
+ * database, every column family and the root and temporary
+ * instances read through; NULL means the defaults. A size less
+ * than 1 fails with SM_ERR_INVALID.
  */
-int attach(std::string_view homedir, env_t*& out);
+int attach(std::string_view homedir, env_t*& out,
+           const env_options_t* opt = nullptr);
 
 /*
  * Release an environment, leaving the home directory intact.
