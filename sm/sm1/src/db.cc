@@ -345,6 +345,8 @@ rocksdb::ColumnFamilyOptions store_cf_options(db_t *db, uint64_t storeid) {
   if (db) {
     bbto.block_cache = db->block_cache;
   }
+  // Blocks larger than RocksDB's 4 KB (store_block_size).
+  bbto.block_size = store_block_size;
   // Ten bits per key.
   bbto.filter_policy.reset(rocksdb::NewBloomFilterPolicy(10));
   // Whole version keys are never looked up.

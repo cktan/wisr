@@ -87,6 +87,21 @@ public:
     return out;
   }
 
+  /*
+   * The mean size of a data block in each sorted file of the
+   * store, as RocksDB recorded the file's data and block count.
+   */
+  std::vector<uint64_t> mean_block_sizes() {
+    rocksdb::TablePropertiesCollection props;
+    REQUIRE(m_s->db->rdb->GetPropertiesOfAllTables(cf(), &props).ok());
+    std::vector<uint64_t> out;
+    for (const auto &[file, p] : props) {
+      REQUIRE(p->num_data_blocks > 0);
+      out.push_back(p->data_size / p->num_data_blocks);
+    }
+    return out;
+  }
+
   /* The store's sm1::probes. */
   uint64_t probes() {
     uint64_t n = 0;
@@ -306,5 +321,25 @@ TEST_CASE("no sorted file is compressed") {
     for (const std::string &c : f.compressions(cf)) {
       CHECK(c == "NoCompression");
     }
+  }
+}
+
+TEST_CASE("a store's blocks are store_block_size") {
+  // Verify a store CF writes blocks of store_block_size, not
+  // RocksDB's 4 KB.
+  // 1. Load about 450 KB of rows and flush the store.
+  // 2. Every file's mean block is over three quarters of
+  //    store_block_size, which 4 KB blocks are not.
+  // 3. So is every file's after compacting into the bottom level.
+  stats_fixture_t f;
+  f.load('a', 2000, 200);
+  f.flush();
+  REQUIRE(!f.mean_block_sizes().empty());
+  for (uint64_t n : f.mean_block_sizes()) {
+    CHECK(n > wisr::store_block_size * 3 / 4);
+  }
+  f.compact();
+  for (uint64_t n : f.mean_block_sizes()) {
+    CHECK(n > wisr::store_block_size * 3 / 4);
   }
 }

@@ -2654,6 +2654,12 @@ size, compaction style). No column family is compressed, at
 any level: a block is read as it is stored, so a scan pays no
 decompression and no copy out of a compressed block, for the
 price of the disk the bytes take (`fixed_cf_options()`).
+A store CF's data blocks are 16 KB (`store_block_size`), as
+MyRocks sets them, not RocksDB's 4 KB: a scan looks up a
+quarter as many blocks in the block cache, about 19% off a scan
+of 566-byte rows, and a point read by key ran no slower in the
+benchmark (`bench/`), faster while the cache warms. Fixed CFs
+keep 4 KB; they are small and read by key.
 Bloom filters are worth enabling on store CFs, and `CF:txn`
 benefits from a
 large block cache since it is small and hot. For store CFs the

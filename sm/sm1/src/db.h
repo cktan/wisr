@@ -491,6 +491,13 @@ std::string store_cf_name(uint64_t storeid);
 constexpr uint32_t store_max_range_deletions = 1000;
 
 /*
+ * The size of a store CF's data blocks, as MyRocks sets it: four
+ * times RocksDB's 4 KB, so a scan looks up a quarter as many
+ * blocks in the block cache, and a point read is no slower (§12.2).
+ */
+constexpr size_t store_block_size = 16 << 10;
+
+/*
  * Options for a fixed CF: RocksDB's defaults, uncompressed, its
  * blocks read through cache when one is given.
  */
