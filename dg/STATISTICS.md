@@ -115,9 +115,17 @@ four live calls. All of §3 is built (`WORKNOTE.md` steps 74 to
 - **The row is the caller's**, freed with `heap_freetuple`, not
   `ReleaseSysCache`: each call site that sets
   `vardata->freefunc` for it is changed to match.
-- **Made on each call.** sm keeps the statistics in memory and
-  hands them over without a lock; building the arrays each time
-  is cheap next to planning. A cache waits for a profile.
+- **Made once from each version of the statistics.** A plan
+  asks for a column's row several times, and building its
+  arrays was 9% of a point query's time, measured (Q7 of
+  `../bench`, `WORKNOTE.md` step 279). A session keeps each row
+  it makes, as its bytes, with the `sm_stats_t` it was made
+  from and the column's type and collation, and hands out a
+  copy while sm still hands out those statistics: an ANALYZE
+  publishes new ones, and the row is made again. Keeping the
+  statistics keeps their address from being reused, so
+  comparing it is enough. A session keeps 1,024 rows at most,
+  and starts over past them.
 
 ### 2.4 What the planner must not do with them
 

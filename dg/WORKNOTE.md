@@ -8062,3 +8062,28 @@ sm3's object (`../sm/OBJECTIVE.md`, `../sm/DESIGN.md`).
   `index` and `correlation` are `std::optional`, as sm3's
   were; `smstore_statistic_tuple()` and `put_stats_rows()`
   test them as such.
+
+## Step 279: a session keeps the statistics rows it makes
+
+After step 278, Q7 of `../bench` still spent 9% of the server's
+time making `pg_statistic` rows: three a plan, for the key's
+condition, its index column and `c1`'s width, each converting
+every common value and histogram bound to a datum and building
+its arrays again (`STATISTICS.md` §2.3).
+
+- **`smstore_statistic_tuple()` keeps each row** in
+  `smstore_state_t`, by relation and column, as its bytes, with
+  the `sm_stats_t` it was made from and the column's type and
+  collation. A later call with the same statistics, type and
+  collation returns a copy (`heap_copytuple`); callers free it
+  as before.
+- **An ANALYZE is seen by its new statistics**: sm3 publishes a
+  new object, so the kept row no longer matches. The entry
+  holds the old object, so its address cannot be reused while
+  the entry is there.
+- **A row is kept only once made**: an error midway leaves no
+  entry, which would read as no statistics. A column with none
+  is kept as empty bytes. 1,024 rows at most, then start over.
+- `test/server.sh`: in one session, an estimate follows a second
+  ANALYZE (1,000, then 5,000); it fails if the kept row is used
+  whatever the statistics.

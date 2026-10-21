@@ -119,8 +119,27 @@ struct held_view_t {
   int level;
 };
 
+/*
+ * A pg_statistic row this session made from sm's statistics, kept as its
+ * bytes: good while sm hands out the statistics it was made from -- an
+ * ANALYZE publishes new ones -- and the column's type and collation are
+ * still these.  Holding the statistics keeps their address from being
+ * reused while the entry is here.  Empty bytes: there was no row.
+ */
+struct statistic_entry_t {
+  std::shared_ptr<const sm_stats_t> stats;
+  Oid typid;
+  Oid coll;
+  std::string bytes;
+};
+
+/* At most this many rows are kept; past it, they are forgotten. */
+static constexpr size_t statistic_cache_max = 1024;
+
 struct smstore_state_t {
   open_tables_t open_tables;
+  /* The pg_statistic rows it made, by relation oid << 16 | column. */
+  std::unordered_map<uint64_t, statistic_entry_t> statistics;
   /* The views it locked, as a table's lock is its handle's (open_tables). */
   std::vector<held_view_t> held_views;
   /* sm's namespaces' epoch when this session last flushed them. */
@@ -4473,13 +4492,42 @@ static Datum stat_datum(const sm_type_t *smtype, const std::string &bytes) {
 }
 
 /*
+ * Keep entry as the row of key, made in full: one left half made by an
+ * error would read as no statistics.  Past the most kept, start over.
+ */
+static void keep_statistic(uint64_t key, statistic_entry_t entry) {
+  auto &kept = tcb->smstore->statistics;
+
+  if (kept.size() >= statistic_cache_max)
+    kept.clear();
+  kept[key] = std::move(entry);
+}
+
+/*
+ * A copy of the pg_statistic row in bytes, palloc'd, for the caller to free
+ * with heap_freetuple(); NULL for empty bytes.
+ */
+static HeapTuple statistic_copy(const std::string &bytes) {
+  HeapTupleData kept;
+
+  if (bytes.empty())
+    return NULL;
+  kept.t_len = (uint32)bytes.size();
+  ItemPointerSetInvalid(&kept.t_self);
+  kept.t_tableOid = InvalidOid;
+  kept.t_data = (HeapTupleHeader)bytes.data();
+  return heap_copytuple(&kept);
+}
+
+/*
  * The pg_statistic row of relid's column attnum, made from sm's statistics
  * (STATISTICS.md section 2.3): a table's column, or an expression of one of
  * its indexes, by its index's oid.  Its slots are what PostgreSQL's ANALYZE
  * fills -- the common values with the type's =, the histogram and the
  * correlation with its < -- with the column's collation.  NULL if there is
  * none: a table never analyzed, a column without statistics, or an
- * inheritance tree.  The caller frees it with heap_freetuple().
+ * inheritance tree.  The caller frees it with heap_freetuple().  A row is
+ * made once from each version of the statistics, and copied out after.
  */
 HeapTuple smstore_statistic_tuple(Oid relid, AttrNumber attnum, bool inh) {
   if (inh || attnum <= 0 || relid < FirstNormalObjectId)
@@ -4491,17 +4539,8 @@ HeapTuple smstore_statistic_tuple(Oid relid, AttrNumber attnum, bool inh) {
   if (!is_index)
     table = relid;
   std::shared_ptr<const sm_stats_t> st = table_stats(table);
-  const sm_stat_t *found = NULL;
 
   if (st == nullptr)
-    return NULL;
-  for (const sm_stat_t &x : st->stats)
-    if (x.index.has_value() == is_index && (!is_index || x.index == relid) &&
-        x.position == attnum - 1) {
-      found = &x;
-      break;
-    }
-  if (found == NULL)
     return NULL;
 
   /* The column's type and collation, from its descriptor. */
@@ -4513,6 +4552,28 @@ HeapTuple smstore_statistic_tuple(Oid relid, AttrNumber attnum, bool inh) {
   char typalign = att->attalign;
 
   relation_close(rel, NoLock);
+
+  /* The row made before, if from these statistics and this type. */
+  auto &kept = tcb->smstore->statistics;
+  uint64_t key = (uint64_t)relid << 16 | (uint16)attnum;
+  auto it = kept.find(key);
+
+  if (it != kept.end() && it->second.stats == st &&
+      it->second.typid == typid && it->second.coll == coll)
+    return statistic_copy(it->second.bytes);
+
+  const sm_stat_t *found = NULL;
+
+  for (const sm_stat_t &x : st->stats)
+    if (x.index.has_value() == is_index && (!is_index || x.index == relid) &&
+        x.position == attnum - 1) {
+      found = &x;
+      break;
+    }
+  if (found == NULL) {
+    keep_statistic(key, statistic_entry_t{st, typid, coll, std::string()});
+    return NULL;
+  }
   TypeCacheEntry *tc =
       lookup_type_cache(typid, TYPECACHE_EQ_OPR | TYPECACHE_LT_OPR);
   const sm_type_t *smtype = sm_type(type_code(typid));
@@ -4568,11 +4629,15 @@ HeapTuple smstore_statistic_tuple(Oid relid, AttrNumber attnum, bool inh) {
     slot(STATISTIC_KIND_CORRELATION, tc->lt_opr,
          float4_array(&*found->correlation, 1), true, 0, false);
 
-  /* Formed in pg_statistic's shape, which it has no rows of. */
+  /* Formed in pg_statistic's shape, which it has no rows of, and kept. */
   TupleDesc desc = statistic_tupdesc();
   HeapTuple tup = heap_form_tuple(desc, values, nulls);
 
   FreeTupleDesc(desc);
+  keep_statistic(key,
+                 statistic_entry_t{st, typid, coll,
+                                   std::string((const char *)tup->t_data,
+                                               tup->t_len)});
   return tup;
 }
 

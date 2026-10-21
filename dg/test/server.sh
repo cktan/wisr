@@ -1927,6 +1927,23 @@ n=$(local_psql -c 'explain select distinct b from t14' 2>&1 |
   grep -o 'rows=[0-9]*' | head -1 | cut -d= -f2)
 [ "$n" = 10 ] || fail "distinct b by its distinct values: $n"
 
+# Verify that a session's estimates follow a new ANALYZE, though it keeps
+# the statistics rows it made.
+# 1. Make t31, 10,000 rows with b = 0 in a tenth, and analyze it.
+# 2. In one session, estimate b = 0: 1,000 within 10%.
+# 3. In the same session, make b = 0 in half the rows, analyze again, and
+#    estimate b = 0 again: 5,000 within 10%.
+local_psql -c 'create table t31 (a int4, b int8)' \
+  -c 'insert into t31 select g, g % 10 from generate_series(1, 10000) g' \
+  -c 'analyze t31' >> "$work/stats.out" 2>&1
+local_psql -c 'explain select * from t31 where b = 0' \
+  -c 'update t31 set b = 0 where a % 2 = 0' -c 'analyze t31' \
+  -c 'explain select * from t31 where b = 0' > "$work/stats2.out" 2>&1
+n=$(grep -o 'rows=[0-9]*' "$work/stats2.out" | sed -n 1p | cut -d= -f2)
+within "$n" 1000 10 || fail "b = 0 before the second analyze: $n"
+n=$(grep -o 'rows=[0-9]*' "$work/stats2.out" | sed -n 2p | cut -d= -f2)
+within "$n" 5000 10 || fail "b = 0 after the second analyze: $n"
+
 # Verify that a GROUP BY and a join of tables in sm plan and run, and that
 # a join is estimated by the distinct values on each side.
 # 1. GROUP BY b on t14 gives each of b's values, 0 with 5,000 rows.
