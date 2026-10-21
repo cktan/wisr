@@ -2650,8 +2650,12 @@ Two consequences for the implementation:
 `ssi_max_entries`, `commit_cache_entries`,
 `savepoint_undo_bytes`, `ts_lease`, plus
 pass-through RocksDB options (block cache size, write buffer
-size, compaction style). Bloom filters
-are worth enabling on store CFs, and `CF:txn` benefits from a
+size, compaction style). No column family is compressed, at
+any level: a block is read as it is stored, so a scan pays no
+decompression and no copy out of a compressed block, for the
+price of the disk the bytes take (`fixed_cf_options()`).
+Bloom filters are worth enabling on store CFs, and `CF:txn`
+benefits from a
 large block cache since it is small and hot. For store CFs the
 prefix extractor strips the 12-byte tail, so the bloom key is the
 userkey; the comparator keeps each userkey's versions contiguous,

@@ -485,10 +485,14 @@ std::string store_cf_name(uint64_t storeid);
  */
 constexpr uint32_t store_max_range_deletions = 1000;
 
+/* Options for a fixed CF: RocksDB's defaults, uncompressed. */
+rocksdb::ColumnFamilyOptions fixed_cf_options();
+
 /*
- * Options for a store CF: comparator, prefix extractor,
- * bloom filter, range-tombstone flush limit, and -- when db is
- * given -- the GC compaction filter for storeid.
+ * Options for a store CF: a fixed CF's, with the comparator,
+ * prefix extractor, bloom filter, range-tombstone flush limit,
+ * and -- when db is given -- the GC compaction filter for
+ * storeid.
  */
 rocksdb::ColumnFamilyOptions store_cf_options(db_t *db = nullptr,
                                               uint64_t storeid = 0);

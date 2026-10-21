@@ -1337,8 +1337,8 @@ Errors: `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`,
 
 Estimate the bytes of the userkeys from `lo` up to but
 excluding `hi`, every version and tombstone counted, in two
-parts: `disk`, those in sorted files, compressed, and `mem`,
-those in memtables, uncompressed. A NULL `lo` or `hi` leaves
+parts: `disk`, those in sorted files, as stored, and `mem`,
+those in memtables, as a memtable holds them. A NULL `lo` or `hi` leaves
 that end open. Neither part is corrected, and they are not to
 be added as they stand: rows not yet flushed are counted at
 full size, several times what they take once flushed
