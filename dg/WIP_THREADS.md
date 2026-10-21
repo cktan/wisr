@@ -1,7 +1,13 @@
 # Work in progress: step 3, connections as threads
 
-Where step 3 of `PLAN.md` (§5) stands on `wip-dg`. `PLAN.md`
-§5.1 is the summary; this is the detail, and what is left.
+Where step 3 of `PLAN.md` (§5) stood on `wip-dg` when it
+ended. `PLAN.md` §5.1 is the summary; this is the detail, and
+what was left.
+
+**A record, kept as it was written.** Much of it has changed
+since, each change a step of `WORKNOTE.md`: the `/*SHARED*/`
+variables and the copy table of item 5 are gone (step 229),
+and sm and RocksDB are built for TSan (`CODE.md` §1).
 
 ## Done
 

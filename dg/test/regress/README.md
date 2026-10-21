@@ -4,8 +4,8 @@
 PostgreSQL 18's `src/test/regress/parallel_schedule` on digres
 and reports which missing features cost the most files. It
 only measures: it exits 0 whatever it finds, and is in no
-`make test`. Most files fail, by design (`PLAN.md`,
-`../sm/NEXT.md`); the point is to know why.
+`make test`. Most files fail, by design (`../../PLAN.md`,
+`../../../sm/NEXT.md`); the point is to know why.
 
 ## Running
 
@@ -159,7 +159,7 @@ Every file starts with these failures, so 8 of
 | 7 | `unrecognized configuration parameter "?"` | parallel query settings 5, `max_prepared_transactions`, `track_counts` |
 | 6 | `column "?" does not exist` | `ctid` 5, `xmin` 1: gone since `a7cd3ab`, by design (a row is named by its rowno) |
 | 6 | `function ?(...) does not exist` | `normalize`, `gisthandler`, `pg_notify`, `pg_stat_force_next_flush`, `jsonb_path_query`, `pg_numa_available` |
-| 6 | `invalid input syntax for type ?` | numeric `nan`, `Infinity`, `-Infinity` 5: no NaN or infinity, by design (`DECIMAL.md`); a float with `_` 1 |
+| 6 | `invalid input syntax for type ?` | numeric `nan`, `Infinity`, `-Infinity` 5: no NaN or infinity, by design (`../../DECIMAL.md`); a float with `_` 1 |
 | 5 | `test_setup could not make a table: type ? ...` | `person` 3, `point_tbl` 1 (`point`), `road` 1 (`path`) |
 | 4 | `ALTER TABLE supports only ADD COLUMN, ...` | `strings`, `insert`, `vacuum`, `identity` |
 
@@ -186,7 +186,8 @@ Bigger, and each needs a decision of record first:
 
 Not worth doing for the suite: the parallel query settings
 (7 files) were removed with their module, and the plans those
-files print would differ anyway; `INHERITS` and partitions are
-refused by design, and so are the geometric types
-(`../../PLAN.md` §7): 10 files directly, and 5 more through
-`POINT_TBL`, `person` and `road`.
+files print would differ anyway; `INHERITS` is outside the
+subset wisr targets (`../../../sm/FEATURELIST.md` §4), and the
+geometric types are refused by design (`../../PLAN.md` §7):
+10 files directly, and 5 more through `POINT_TBL`, `person`
+and `road`. Partitions are in that subset, but not built.

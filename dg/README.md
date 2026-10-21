@@ -10,8 +10,15 @@ DIR` serves it, and PostgreSQL's own `psql` runs statements on
 it. What runs so far, each a step of `WORKNOTE.md`:
 
 - databases and schemas, created and dropped;
-- tables of `int2`, `int4` and `int8` columns, with NOT NULL,
-  PRIMARY KEY and UNIQUE, and indexes on them;
+- tables of the types sm stores (`../sm/sm2/TYPE.md` §3):
+  `bool`, the integers and floats, `numeric` as sm's
+  decimals, `text`, `varchar`, `char(n)`, `name`, `bytea`,
+  `date`, `time`, `timestamp`, `timestamptz`, `interval` and
+  `uuid`; with NOT NULL, DEFAULT, PRIMARY KEY, UNIQUE and
+  FOREIGN KEY, SERIAL and identity columns, and indexes on
+  them;
+- ALTER TABLE's ADD, DROP and RENAME, and CREATE TABLE AS;
+- views, temporary ones too;
 - temporary tables, with ON COMMIT;
 - sequences;
 - SELECT ... FOR UPDATE and FOR SHARE, with NOWAIT and SKIP
@@ -24,7 +31,9 @@ it. What runs so far, each a step of `WORKNOTE.md`:
   GROUP BY and ORDER BY;
 - transactions and savepoints at READ COMMITTED, REPEATABLE
   READ and SERIALIZABLE, which are sm's;
-- ANALYZE, and the planner reading its statistics.
+- ANALYZE, and the planner reading its statistics;
+- psql's `\d` commands, on catalog relations made from sm's
+  catalog and the rows compiled in (`SYSCATALOG.md`).
 
 A statement over constants also runs with no server: `echo
 'select 1 + 1;' | build/digres --parse --run`.
@@ -33,12 +42,27 @@ A statement over constants also runs with no server: `echo
 strict C++ with no `-fpermissive`, and links `build/digres`
 with `../sq` and `../sm`. The server has no catalog tables:
 its catalog is being replaced, not created (`../sm/PART4.md`
-§10). `DGWORK.md` is the plan, `WORKNOTE.md` the decisions
-taken along the way, `CODE.md` the rules for changing the
-code, and `ISSUE.md` the problems known and left unfixed.
-`SYSCATALOG.md` is a proposal, not built, for making
-the catalog tables readable again, so that psql's `\dt` and
-`\d` run.
+§10).
+
+- `WORKNOTE.md`: the decisions taken along the way, a step
+  at a time.
+- `CODE.md`: the rules for changing the code.
+- `ISSUE.md`: the problems known and left unfixed.
+- `PLAN.md`: the handover that took digres to one process
+  with a thread a session; its §7 holds the decisions of
+  record.
+- `DGWORK.md`: the first recommendation, written before
+  anything linked.
+- `SYSCATALOG.md`: the catalog relations psql's `\d`
+  commands read; being built.
+- `DECIMAL.md` and `DG_DECIMAL_PLAN.md`: `numeric` as sm's
+  two decimals; built.
+- `STATISTICS.md`: how ANALYZE and the planner use sm's
+  statistics.
+- `SHMEM.md`: what is left of PostgreSQL's shared memory,
+  locks and signals, and what replaces it.
+- `WIP_THREADS.md`: the record of the step that made a
+  session a thread, as it was when that step ended.
 
 ## Building
 

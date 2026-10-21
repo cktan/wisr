@@ -819,7 +819,16 @@ Panics if the length/count of `list` is not `n`.
 (assert-count 5 (scan users))
 ```
 
-To expect an error, catch it with `try`:
+### `(assert-err code expr)`
+Panics unless `expr` fails with the error `code`, a keyword
+whose name, upper-cased with `-` as `_`, is found in the error:
+`:err-dupkey` matches `ERR_DUPKEY`.
+
+```janet
+(assert-err :err-dupkey (insert users [1 "Bob"]))
+```
+
+To expect any error, catch it with `try`:
 
 ```janet
 (assert-eq (try (do (insert users [1 "Bob"]) false) ([err] true)) true)

@@ -10,6 +10,8 @@ four live calls. All of §3 is built (`WORKNOTE.md` steps 74 to
 
 ## 1. Where digres stands
 
+Where it stood before §3 was built.
+
 - **Every table in sm is planned as never analyzed.**
   `estimate_rel_size()` (`plancat.c`) gives an sm relation 10
   pages, and as many rows as fit, always, not only before an
@@ -50,8 +52,8 @@ four live calls. All of §3 is built (`WORKNOTE.md` steps 74 to
 ### 2.2 A table's size: live bytes, scaled rows
 
 `estimate_rel_size()`'s sm branch calls
-`smstore_estimate_size()`, which follows `STATISTICS.md`
-§3.7:
+`smstore_estimate_size()`, which follows
+`../sm/STATISTICS.md` §3.7:
 
 - **Never analyzed, or a heap of 0 bytes** (new or truncated):
   as now, ten pages, planned as PostgreSQL plans `reltuples`
@@ -140,7 +142,8 @@ four live calls. All of §3 is built (`WORKNOTE.md` steps 74 to
 - **What SQL reads the statistics through.** PostgreSQL's
   `pg_stats` is a view over `pg_statistic` and `pg_class`;
   digres has neither, nor views on catalogs: `system_views.sql`
-  is not loaded, and there is no `pg_rewrite`.
+  is not loaded. A view in sm has a `pg_rewrite` row since
+  `WORKNOTE.md` step 239; a system view has none.
 - **So `pg_stats` is a set-returning function**, compiled in
   from `pg_proc.dat` as every built-in is: `pg_stats(regclass)`
   gives the view's rows for one table, and `pg_stats()` for
@@ -190,9 +193,9 @@ four live calls. All of §3 is built (`WORKNOTE.md` steps 74 to
 ## 4. Left out
 
 - **Automatic analyze.** Nothing launches one; when to analyze
-  again is the host's (`STATISTICS.md` §3.8), and a count of
-  rows written since, kept in the write path, is the natural
-  trigger. Not designed here.
+  again is the host's (`../sm/STATISTICS.md` §3.8), and a
+  count of rows written since, kept in the write path, is the
+  natural trigger. Not designed here.
 - **The other statistics views** (`pg_stats_ext`,
   `pg_statistic_ext`), and `pg_stats` as a view (§2.5).
 - **Index costing by the LSM's shape** (§2.2).

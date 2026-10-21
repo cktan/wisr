@@ -16,7 +16,7 @@ format, sm3's catalog — are argued in that level's own
         ┌────────────────────┴─────────────────────────┐
         │  top level  the C wrapper                    │
         │  sessions · transactions · 2PC → sm1 ·       │
-        │  rows and index entries → sm2, sm3 later     │
+        │  everything else → sm3                       │
         └────────────────────┬─────────────────────────┘
                              │  sm3::
         ┌────────────────────┴─────────────────────────┐
@@ -72,14 +72,12 @@ session is an sm3 session over an sm1 one, and each database's
 sm3 catalog is loaded by its first session: sessions,
 transactions, savepoints and prepare go through sm3, which keeps
 its overlay of DDL in step with them, and the rest of 2PC,
-stores and sequences go to sm1 directly. A caller finds and
-locks a table through sm3's catalog (`sm_cat_*`), then opens it
-with sm2's calls from the definition it is handed: those take a
-store and schema, and are scaffolding, marked so in
-`include/sm.h`, until sm3 opens tables and maintains their
-indexes itself; the row and entry calls keep their C signatures
-whichever level serves them. sm2 calls only sm1, and nothing
-calls upward.
+stores and sequences go to sm1 directly. A caller finds a
+table through sm3's catalog (`sm_cat_*`), then opens it by its
+oid and the lock it asks for (`sm_tbl_open`), and reads and
+writes its rows through the open table (`sm_tbl_*`), which sm3
+serves, maintaining its indexes with each write (§3). sm2
+calls only sm1, and nothing calls upward.
 
 Under every level sits sm0, level 0, outside the diagram's
 chain of calls because every level uses it: the calling
@@ -118,13 +116,13 @@ drives the C wrapper and verifies the relational engine
 against `libsm.a` via automated Janet test scripts.
 
 ```
-make            build every level
-make test       build and test every level
-make -C sm1     build level 1 alone
+make -j4            build every level
+make -j4 test       build and test every level
+make -C sm1 -j4     build level 1 alone
 ```
 
 `LEVELS` in the top-level `Makefile` lists which levels have
-a Makefile to delegate to; `sm3` joins it when it has one.
+a Makefile to delegate to, in build order: `sm0 sm1 sm2 sm3`.
 Adding a level to the stack means adding its name there,
 nowhere else.
 
@@ -283,9 +281,9 @@ design:
   never throw. The two callbacks, the log hook and the index
   evaluator, run where an error has nowhere to go, and are
   `noexcept` in their types: one that throws ends the
-  process. Three C++ types may cross
-  it and no others.
-  `std::string` and `std::vector`, of plain C types, of
+  process. Four C++ types may cross it and no others
+  (`CODE.md` §2). `std::string` and `std::vector`, of plain C
+  types, of
   `sm_datum_t` or of strings, carry owned data only: a
   result the caller keeps, or a list passed in, as an
   out-parameter or a const reference, filled inside the
@@ -296,9 +294,12 @@ design:
   thread (`sm0/INTERRUPT.md`), not by a flag or a
   callback into the host. No call takes a
   `std::string_view` yet: a row or an index entry on a scan
-  is still a pointer and a length into session memory. No
-  `optional`, `function` or `shared_ptr`, and no class of the
-  stack's own: that line
+  is still a pointer and a length into session memory.
+  `std::shared_ptr` is for an object whose life the stack and
+  the host share, and points to a `const` one: a table's
+  statistics, as sm3 keeps them (`sm_tbl_stats`). No
+  `optional` or `function`, and no class of the stack's own:
+  that line
   is what keeps the header from growing abstractions. A plain
   struct may hold the first two types, and a vector may hold
   such structs: a table's definition is one, of its columns and
@@ -476,9 +477,11 @@ design:
   `SMSTORE_ROWS_PER_BLOCK`). A block of 256 rownos is what
   `TABLESAMPLE` picks, as PostgreSQL's picks a page
   (`../dg/WORKNOTE.md` step 244), and a tid holds a rowno up
-  to about 2^40. The mapping is a bridge: the aim, in the long
-  term, is to remove the concept of ctid from digres, so that
-  a row is named by its `rowno` alone. This matches the heap
+  to about 2^40. The mapping is a bridge: SQL sees no `ctid`,
+  only a `rowno` system column (`../dg/WORKNOTE.md` step
+  200), and the executor still carries the tid inside, which
+  the aim is to remove too, so that a row is named by its
+  `rowno` alone. This matches the heap
   PostgreSQL's planner and executor assume, serves tables
   without a primary key, and keeps a primary key change from
   rewriting every index; a primary key lookup costs two reads.
@@ -489,8 +492,9 @@ design:
   it and never interprets it (`sm2/SM2_DESIGN.md` §5), so sm2
   never learns what a table is. `DROP TABLE` is one
   `sm1::rmstore`, sm1's O(1) column family drop; `DROP INDEX`
-  is a range delete over the index's relid, and index relids
-  are never reused. The cost is
+  erases the entries under the index's relid one by one, as
+  sm1 has no range delete (`sm3/CATALOG.md` §5.2), and index
+  relids are never reused. The cost is
   that tables, partitions included, are bounded by the
   hundreds to low thousands of stores sm1 handles
   (`sm1/SM1_DESIGN.md` §13); accepted for v1 (`sm3/SM3_DESIGN.md`
@@ -552,15 +556,16 @@ design:
   has it on a heap row, `rel_lock`; sm3 hands it out on an
   open table, `tbl_lock`, and the C API as `sm_tbl_lock`. It
   is what `SELECT … FOR SHARE` and `FOR UPDATE` take too. It
-  waits as a write does; `NOWAIT` and `SKIP LOCKED` are not
-  on it yet. The lock is coarser than PostgreSQL's:
+  waits as a write does; `NOWAIT` and `SKIP LOCKED` take it
+  without waiting (`sm_tbl_trylock`, `NEXT.md` §2). The lock
+  is coarser than PostgreSQL's:
   sm1 has no mode that admits an update of the parent's other
   columns while a child holds its key, as `FOR KEY SHARE`
   does against `FOR NO KEY UPDATE`, so such an update waits
   for the child's transaction.
 - **The API is tuple at a time, at every level.** Sets of
   rows in and out was forced by an IPC boundary between a
-  PostgreSQL backend process and sm1; the fork now moves
+  PostgreSQL backend process and sm1; the fork has moved
   PostgreSQL to threads (`PART4.md` §2), so the boundary is
   a function call and the shape is no longer forced. Its other
   reason was filter pushdown, and sm3 filters nothing (above).

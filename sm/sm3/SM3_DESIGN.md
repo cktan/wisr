@@ -147,8 +147,8 @@ Making memory authoritative moves the hard part; it does not
 remove it. A definition that outlives the transaction that
 changed it is the usual place such a design goes wrong.
 `CATALOG.md` documents the catalog as built, which settles
-bootstrap, row size and privacy until commit; its §7 settles
-the others, not built yet:
+privacy until commit, bootstrap, row size and temporary
+tables; its §7 leaves size and startup open, unmeasured:
 
 - **Privacy until commit.** A DDL change must be invisible to
   other transactions until it commits, and undone on abort and
@@ -779,12 +779,12 @@ version, whatever has committed since. digres's fetch by ctid
 reads the row as the statement sees it, which at READ
 COMMITTED is the version the scan joined
 (`smtable_fetch_row_version()`), so it agrees, and
-`../dg/test/server.sh` checks it with a customer row moved
+`../../dg/test/server.sh` checks it with a customer row moved
 meanwhile. One case differs: a table joined to itself, whose
 copy has the target's rowno. A digres ctid names a row, not a
 version, so the copy's re-check reads the newest version the
 write kept, where PostgreSQL reads the one it joined
-(`../dg/README.md`, known incompatibilities).
+(`../../dg/README.md`, known incompatibilities).
 
 ### 3.2 How it is tested
 
@@ -951,7 +951,7 @@ where a datum was. Built in `src/table/table.cc`, with
   table's heap is opened with no sequence for TOAST ids, so
   sm2 moves nothing: a host that reads a datum straight out of
   a tuple is given no pointer. digres turns it on, and reads a
-  pointer as PostgreSQL reads its own (`../dg/WORKNOTE.md`
+  pointer as PostgreSQL reads its own (`../../dg/WORKNOTE.md`
   step 125).
 - **A table has a sequence for its ids**, `sm3.toast.<oid>`,
   made with it and dropped with it, temporary when the table

@@ -21,7 +21,8 @@ The stack, as a whole:
 
 | Level | What it is | Owns |
 | --- | --- | --- |
-| 0 | RocksDB | bytes, ordering, durability, crash atomicity |
+| — | RocksDB, under the stack | bytes, ordering, durability, crash atomicity |
+| 0 | `sm0/` — the error state, helpers and system services | nothing of storage |
 | 1 | `sm1/` — the MVCC storage manager | row version, transaction, isolation, visibility |
 | 2 | `sm2/` — types and tuples | column, type, row, index entry |
 | 3 | `sm3/` — schema and index maintenance | table, index definition, predicate, statistic |
@@ -62,11 +63,11 @@ decoding and the libpq wire protocol are in; the extensible
 type and index machinery — JSON, arrays, GiST, GIN, and the
 C extension ABI — is out.
 
-The target is a fork of PostgreSQL, not an extension, and the
-fork will be changed substantially: besides swapping the
-storage and transaction layers, it moves from a process per
-connection to a thread per connection so that sm1 is linked
-into it (`PART4.md` §2).
+The target is a fork of PostgreSQL, not an extension,
+digres (`../dg/`), and the fork is changed substantially:
+besides swapping the storage and transaction layers, it has
+moved from a process per connection to a thread per
+connection so that sm1 is linked into it (`PART4.md` §2).
 
 ## Goals
 
@@ -147,9 +148,10 @@ These are settled; they bind every level below.
   A client keeps only what is its own: its SQL, its planner,
   its executor.
 - **Each level ships its own `SMn_OBJECTIVE.md` and
-  `SMn_DESIGN.md`.** This document and `DESIGN.md` at the top
-  level cover only what spans levels: the stack's shape, its
-  build, and its cross-level decisions. Anything specific to
+  `SMn_DESIGN.md`** (sm0's is its `README.md`). This document
+  and `DESIGN.md` at the top level cover only what spans
+  levels: the stack's shape, its build, and its cross-level
+  decisions. Anything specific to
   one level's internals belongs in that level's own
   documents, not here.
 
@@ -158,7 +160,7 @@ These are settled; they bind every level below.
 - `sm1/SM1_OBJECTIVE.md`, `sm2/SM2_OBJECTIVE.md`,
   `sm3/SM3_OBJECTIVE.md` — what each level is for, and the
   decisions that settled its own design.
-- `FEATURELIST.md` — which PostgreSQL features wisr supports.
+- `FEATURELIST.md` — which PostgreSQL features wisr targets.
 - `PART4.md` — the PostgreSQL target in full, including the
   parts of it that are not yet verified.
 - `DESIGN.md` (this directory) — how the stack fits

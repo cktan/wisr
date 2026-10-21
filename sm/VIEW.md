@@ -4,18 +4,18 @@
 `sm3/test/test_view.cc`), as proposed in §11, and digres's
 CREATE, query and DROP (§8, `../dg/WORKNOTE.md` step 238),
 the catalog relations (step 239), and ALTER VIEW's RENAME and
-a view's options (step 240). Not yet: a temporary view, whose
-design is §12, its first step built, and the rest of §9.
+a view's options (step 240), and temporary views (§12, step
+245). Not yet: the rest of §9 (`NEXT.md` §2).
 
-`CREATE VIEW` fails in digres: `DefineView()` still makes a
-PostgreSQL relation, which digres has no catalog for
-(`NEXT.md` §2). It is what digres alone fails of SQLite's
-corpus: 48,608 records in the whole of it, 24,408 in the
-sample `make slt-corpus` runs (`../dg/WORKNOTE.md` step 164),
-every one a `CREATE VIEW` refused or a query of the view it did
-not make. `information_schema` and the system views
-(`pg_stats`, `pg_views`, `pg_tables`) wait for the same
-(`../dg/SYSCATALOG.md`, `../dg/STATISTICS.md` §2.5).
+Before this, `CREATE VIEW` failed in digres: `DefineView()`
+made a PostgreSQL relation, which digres has no catalog for.
+It was what digres alone failed of SQLite's corpus: 48,608
+records in the whole of it, 24,408 in the sample `make
+slt-corpus` runs (`../dg/WORKNOTE.md` step 164), every one a
+`CREATE VIEW` refused or a query of the view it did not make.
+`information_schema` and the views of `system_views.sql`,
+`pg_stats` among them, still wait (`../dg/SYSCATALOG.md` §7,
+`../dg/STATISTICS.md` §2.5).
 
 This file is the design: a new kind of entry in sm3's catalog,
 what DDL does to it and to the relations a view reads, the

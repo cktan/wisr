@@ -292,8 +292,8 @@ instead of being told.
 - **The blocking is the lock's, not this design's.** DDL on a
   table waits for every transaction that holds it, and a
   waiting X may hold back later readers; PostgreSQL's
-  AccessExclusiveLock does the same, with sinval. `lock_timeout`
-  is not built (`../sm/NEXT.md` §2).
+  AccessExclusiveLock does the same, with sinval.
+  `lock_timeout` ends such a wait (`WORKNOTE.md` step 168).
 - **Why PostgreSQL sends messages.** Its catalogs are rows any
   SQL can change, most looked up with no lock (functions,
   types, operators), so a version would be checked at every

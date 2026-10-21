@@ -23,9 +23,9 @@ level 3.
 ## Building
 
 ```
-make            build every level
-make test       build and test every level
-make -C sm1     build level 1 alone, and level 0 under it
+make -j4            build every level
+make -j4 test       build and test every level
+make -C sm1 -j4     build level 1 alone, and level 0 under it
 ```
 
 Each level has a Makefile of its own with the real targets; the
@@ -71,7 +71,8 @@ the wrapper through the `rel/` test suite.
   restart
 - `sm1/SAVEPOINT.md` — a rollback to a savepoint that
   deletes nothing: rolled-back writes marked dead by their
-  `seq`; designed, not built
+  `seq`; designed, not built, and leaning towards not
+  building it
 - `sm1/SIREAD.md` — SSI's SIREAD locks and rw-edges, explained
 - `sm1/RCOMPACT.md` — whether compaction can run on another
   machine; research, not built
@@ -79,6 +80,10 @@ the wrapper through the `rel/` test suite.
   scenarios that are executed on every build
 - `sm1/mvcc/POSTGRES.md` — PostgreSQL's isolation test suite,
   listed, and set against the scenarios here
+- `sm1/mvcc/DRIVER.md` — the scenario driver: its command
+  and the language of the scripts
+- `sm1/mvcc/AUDIT.md` and `sm1/mvcc/REPORT.md` — the
+  scenarios' expected transcripts, and their driver, audited
 - `sm2/SM2_OBJECTIVE.md` — what level 2 is for
 - `sm2/SM2_DESIGN.md` — the type system, the two on-disk
   encodings, and the tuple relation
@@ -91,18 +96,33 @@ the wrapper through the `rel/` test suite.
 - `sm3/SM3_OBJECTIVE.md` — what level 3 is for
 - `sm3/SM3_DESIGN.md` — the catalog, index maintenance and
   builds, scans and statistics
+- `sm3/CATALOG.md` — the catalog as built: its store, keys
+  and values, and how it comes into memory
+- `sm3/CATALOG3.md` — the catalog's layout, proposed, and
+  built only in part
+- `rel/REL_DESIGN.md` and `rel/REL.md` — `rel`, the test
+  driver over `include/sm.h`: its design and its verbs
+- `sm0/VFD.md` — virtual file descriptors, under one ceiling
+  for the process
 - `STATISTICS.md` — the strategy for statistics: the stack
   analyzes a table and records what is true of an LSM, and
   the host fits that to PostgreSQL's planner
 - `BULKLOAD.md` — the design of a bulk load: one
   transaction in one of three modes, mini-batch, batch and
   file, the last writing sorted files that RocksDB ingests
-- `VIEW.md` — the design of views, proposed: sm3 keeps a
-  view's query and what it reads, and the host expands it
+- `VIEW.md` — the design of views, which is built: sm3 keeps
+  a view's query and what it reads, and the host expands it
+- `FOREIGNKEY.md` — the design of foreign keys, which is
+  built: sm3 keeps them, and the host checks them
+- `PIN.md` and `ROW.md` — a row read without a copy, as a pin,
+  and deformed only as far as it is read; built
+- `SM_DECIMAL_PLAN.md` — the decimals carry their scale in
+  the datum; built
 - `TEMPTABLE.md` — the design of temporary tables, which is
   built: their rows in one unlogged RocksDB instance of their
   own, under the database's transactions, with no locks
-- `FEATURELIST.md` — which PostgreSQL features wisr supports
+- `FEATURELIST.md` — the PostgreSQL subset wisr targets,
+  decided feature by feature; not all of it is built
 - `PART4.md` — what it would take to put PostgreSQL on this
   stack, and what that target forces on level 2's design
 

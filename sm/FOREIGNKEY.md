@@ -8,9 +8,9 @@ step 177), and `rel`'s verbs (`rel/REL.md`,
 `DESIGN.md` §5 settles whose a foreign key is: the host's.
 PostgreSQL checks one with triggers that run queries, and the
 stack runs none; its share is the lock on the parent row,
-`sm_tbl_lock`. What it does not have yet is somewhere to keep
-the constraint. digres refuses `REFERENCES` and `ALTER TABLE
-... ADD FOREIGN KEY` for that reason alone (`NEXT.md` §2).
+`sm_tbl_lock`. What it did not have was somewhere to keep the
+constraint, and digres refused `REFERENCES` and `ALTER TABLE
+... ADD FOREIGN KEY` for that reason alone.
 
 This file is that place: a new kind of entry in sm3's catalog,
 what DDL does to it and to the tables it joins, and the calls in

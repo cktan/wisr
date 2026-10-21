@@ -16,6 +16,9 @@ and after).
 
 ## 1. Where digres stands
 
+Where it stood when this was written, on 2026-10-14; §6 is
+what runs now.
+
 - **psql connects and runs SQL.** `server.sh` drives the
   server through it.
 - **A command that describes objects fails.** Tried with

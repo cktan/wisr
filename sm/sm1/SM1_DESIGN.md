@@ -3017,8 +3017,9 @@ bullets below cover the rest of the engine.
   `savepoint_undo_bytes` caps it, and past the cap the
   savepoint is lost: a rollback to it becomes an abort.
   `SAVEPOINT.md` designs the fix, rolled-back writes
-  marked dead by their `seq`, and it is not built. Bulk loads want a path of
-  their own (`BULKLOAD.md`).
+  marked dead by their `seq`, and it is not built. A bulk
+  load into an empty store has a path of its own, which lists
+  one entry for the whole load (§6.5, `BULKLOAD.md`).
 - **Every write takes a timestamp.** A version is keyed by a `wts`
   taken under its key's latch (§4.1), so the counter is used
   once per

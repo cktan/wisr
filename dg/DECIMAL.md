@@ -10,6 +10,8 @@ Reviewed; §4 records the answers. All of §3 is built
 
 ## 1. Where digres stands
 
+Where it stood before §3 was built.
+
 - **`numeric` is PostgreSQL's**: a varlena of base-10000
   digits, up to 131,072 digits before the point and 16,383
   after, with NaN and ±Infinity (`utils/adt/numeric.c`, some

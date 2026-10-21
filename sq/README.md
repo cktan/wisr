@@ -75,6 +75,8 @@ nodes like any other statement.
 | `src/parser.cc` | the two parsing calls, and the filter between scanner and grammar |
 | `src/tree.cc`, `error.cc`, `list.cc`, `utf8.cc` | what a tree owns, the thread's error, lists while the grammar builds them, UTF-8 |
 | `src/makefuncs.cc`, `scansup.cc`, `keywords.cc` | PostgreSQL's helpers for the grammar and the scanner |
+| `src/print.cc` | `sq_to_string`: PostgreSQL's `outfuncs.c` as far as a parse tree needs it; the rest is generated |
+| `test/tool/` | `sq_parse` and `sq_tokens`, which the tests run |
 
 ## Tests
 

@@ -106,7 +106,7 @@ What this changes above:
 - **The fork is compiled as C++.** `include/sm.h` passes
   `std::string` and `std::vector` across the boundary for
   owned data, and may pass `std::string_view` and
-  `std::atomic` (`DESIGN.md` §5); the fork calls it as it
+  `std::shared_ptr` (`DESIGN.md` §5); the fork calls it as it
   is, and there is no plain C header to keep beside it.
 - **A row handed out is good until the next call.** A row or
   an index entry the stack returns points into its own
@@ -671,13 +671,15 @@ What replaces it:
   `CREATE TYPE`, `CREATE FUNCTION` or `CREATE OPERATOR`, so
   nothing about them is stored, locked or invalidated.
 - **What a user creates is in sm3**: namespaces, tables,
-  columns, indexes and collations today; sequences,
-  constraints and defaults when they are built
-  (`sm3/CATALOG3.md` §10).
+  columns and their defaults, indexes, collations,
+  sequences, foreign keys and views (`sm3/CATALOG.md` §2);
+  what is left is in `sm3/CATALOG3.md` §10.
 
-**An oid is 64 bits**, in digres as in sm3, and the numbers
-are PostgreSQL's where it has them: sm3 hands out oids from
-16384, PostgreSQL's `FirstNormalObjectId`, and its two
+**An oid is 64 bits**, in digres as in sm3. For now digres
+keeps PostgreSQL's 32-bit `Oid`, so sm3 hands out none past
+2^32 - 1 (`sm3/CATALOG.md` §1); widening it is to come. The
+numbers are PostgreSQL's where it has them: sm3 hands out
+oids from 16384, PostgreSQL's `FirstNormalObjectId`, and its two
 built-in namespaces are `pg_catalog` at 11 and `public` at
 2200. Below 16384 are the built-ins, compiled in with the
 oids PostgreSQL gave them.

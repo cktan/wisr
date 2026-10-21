@@ -28,10 +28,14 @@ the two differ, `CLAUDE.md` wins.
 ## 2. The interface to sm's users
 
 - **Only `std::string`, `std::string_view`, `std::vector` and
-  `std::shared_ptr` cross to sm's users.** No other standard
-  library type appears in what they call (`include/sm.h`,
-  `sm_sys.h`): no `std::optional`, `std::span` or
-  `std::function`. A `std::shared_ptr` is for an object whose
+  `std::shared_ptr` cross to sm's users**, and in `sm_sys.h`
+  what a wait is made with: the `std::mutex`, its
+  `std::unique_lock` and the `std::condition_variable` passed
+  to `sm_wait()`, and the `std::atomic` word
+  `sm_pending_word()` gives. No other standard library type
+  appears in what they call (`include/sm.h`, `sm_sys.h`): no
+  `std::optional`, `std::span` or `std::function`. A
+  `std::shared_ptr` is for an object whose
   life sm and its user share, such as a thread's control block
   or a statistics snapshot, and points to a `const` or opaque
   type.
@@ -52,7 +56,7 @@ the two differ, `CLAUDE.md` wins.
 - **`make -j4 test` in `sm/`** runs every level's tests in
   order, then the `rel` suite. It passes when every doctest
   line reads `0 failed`, sm1's line reads
-  `scenarios: 109 scripts match` (or however many there are),
+  `scenarios: 111 scripts match` (or however many there are),
   and the last line is `All rel tests passed.`
 - **Run the full suite before every commit** that touches
   source, and dg's (`make -C ../dg -j4 test`) when the change

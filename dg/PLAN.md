@@ -11,7 +11,13 @@ the spike after them: digres is one process with a thread a
 session, and its tables are sm's. §1 is where it stood then;
 `README.md` says what runs now, `CODE.md` how the code is
 kept, and `WORKNOTE.md` each step since. §7's decisions
-stand, and are added to.
+stand, and are added to. §3.5, §8 and §9 are as they were
+then too: the hazards and gaps they list are mostly closed
+(the default collation, `WORKNOTE.md` step 89; names through
+the search path, steps 70 and 90; the loaded libraries,
+steps 223 and 251), and `CODE.md` and `../CLAUDE.md` hold
+the practices, branches and merges among them, that apply
+now.
 
 Written on 2026-10-09, with `main` and `wip-dg` both at
 `edf7fad`. Step 1 is done since, in `43137f7` on `wip-dg`; §3
@@ -297,7 +303,7 @@ process; and the three items above are gone.
 
 Done. A connection is a thread of the postmaster's process,
 and sm is attached once; no auxiliary process is left (step
-4). `WIP_THREADS.md` on `wip-dg` has the detail.
+4). `WIP_THREADS.md` has the detail.
 
 - **Signals to a backend are flags**, chosen as "option B"
   with the owner: `SignalProc()` sets a bit in its PGPROC and
@@ -390,7 +396,8 @@ Do not reopen these without the owner:
 - **`ereport(ERROR)` throws `pg_error_t`**; `PG_TRY` is a `try`.
 - **sm's callbacks are `noexcept`**, and four C++ types cross
   `sm.h`: `std::string`, `std::vector`, `std::string_view` and
-  `std::atomic`.
+  `std::shared_ptr`; `sm_sys.h` adds what a wait is made with
+  (`../sm/CODE.md` §2).
 - **SPI stays.** SQL-language functions are cut.
 - **One encoding, UTF8; default collation C;** ICU for a column
   or a query that asks.

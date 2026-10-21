@@ -22,7 +22,7 @@ are corrected where they were said: how its sampler works
 
 **Who does what**
 
-- The stack analyzes. `sm_analyze(table)` draws a sample,
+- The stack analyzes. `sm_tbl_analyze(tbl)` draws a sample,
   computes the statistics, and writes them to sm3's catalog.
 - What it writes describes an LSM keyed by `rowno`: bytes,
   rows, rownos handed out, levels. It has no pages, no tree
@@ -31,9 +31,9 @@ are corrected where they were said: how its sampler works
   wants: pages, `reltuples`, `pg_statistic`'s slots. That
   conversion is the fork's code.
 - The fork has no `pg_class` and no `pg_statistic`. Its
-  `ANALYZE` is a call to `sm_analyze`.
+  `ANALYZE` is a call to `sm_tbl_analyze`.
 
-**What `sm_analyze` records**
+**What `sm_tbl_analyze` records**
 
 - **A table:** bytes on disk, live rows, the rowno limit, and
   the average bytes of a row.
@@ -73,7 +73,7 @@ are corrected where they were said: how its sampler works
   rowno limit of a table.
 - sm3: the sampler, the estimators, statistics in the catalog,
   and `analyze` over them.
-- `include/sm.h`: `sm_analyze` and the calls that read.
+- `include/sm.h`: `sm_tbl_analyze` and the calls that read.
 - `rel`: an `analyze` verb, so that all of it is tested here.
 
 **What is now known, and what is not**
@@ -142,8 +142,8 @@ Three properties of how they are used shape everything below.
    needs an order and an equality on a type, and sm2 has
    them. Evaluating an expression is still the host's, by the
    evaluator callback (`DESIGN.md` §5).
-2. **The stack speaks LSM.** What `sm_analyze` records is what
-   is true of this storage: bytes, rows, rownos, levels. It
+2. **The stack speaks LSM.** What `sm_tbl_analyze` records is
+   what is true of this storage: bytes, rows, rownos, levels. It
    does not pretend to have pages or a B-tree. Fitting those
    numbers to a planner written for a paged heap is the
    host's, so that a planner written for an LSM later loses
@@ -214,9 +214,9 @@ answers from it until a flush, a compaction or an ingest moves
 the version (`sm1/API.md`, `sm1::approxsize`). The answer is
 the one RocksDB would give.
 
-`sm_analyze` records the size it saw, beside the row count it
-estimated at the same moment. The size is also answered live,
-so a caller can tell how far a table has moved since.
+`sm_tbl_analyze` records the size it saw, beside the row count
+it estimated at the same moment. The size is also answered
+live, so a caller can tell how far a table has moved since.
 
 ### 3.2 Row count
 
@@ -359,7 +359,7 @@ order follows `rowno` is clustered on disk, and a range scan
 of an index on it fetches neighbouring rows.
 
 **Expressions and predicates.** For an expression index,
-`sm_analyze` calls the host's evaluator on each sampled row
+`sm_tbl_analyze` calls the host's evaluator on each sampled row
 (`sm3/SM3_DESIGN.md` §3). The evaluator returns the
 expression's value and whether the row belongs to the index,
 so the same statistics are computed for each expression, and
@@ -392,7 +392,7 @@ that.
 
 ### 3.6 What is recorded, and where
 
-`sm_analyze(table)` runs in the caller's transaction, reads
+`sm_tbl_analyze(tbl)` runs in the caller's transaction, reads
 at its snapshot, and writes these to sm3's catalog.
 
 | Of | Recorded |
@@ -430,12 +430,12 @@ crash with it, and sm3 writes no undo of its own.
 
 - **A kind of their own**, not the `TABLE` blob. A table is
   one catalog entry and every DDL rewrites it, so writing
-  statistics into it would make `sm_analyze` contend with DDL
+  statistics into it would make `sm_tbl_analyze` contend with DDL
   for the same key under first-committer-wins, and mutate the
   definition its readers hold. `CATALOG.md` §2's kinds run to
   9 and are frozen because they are on disk; statistics are
   kind 10, and that document has to say so.
-- **One entry a table** was the first plan, as `sm_analyze`
+- **One entry a table** was the first plan, as `sm_tbl_analyze`
   writes every column at once and a plan reads them at once.
   It became one a statistic, with one for the table: an sm1
   value holds 64 MB, and a wide table's statistics, or a few
@@ -449,7 +449,7 @@ crash with it, and sm3 writes no undo of its own.
 oid to an immutable `stats_t`, held by
 `std::shared_ptr<const stats_t>`, loaded **lazily** on the
 first plan that wants a table and never edited after it is
-built. A new `sm_analyze` publishes by swapping the pointer.
+built. A new `sm_tbl_analyze` publishes by swapping the pointer.
 
 This is PostgreSQL's own shape, and for its reasons. Relation-
 level numbers ride in the relcache with the `pg_class` row;
@@ -499,7 +499,7 @@ catalog behaves. Two reasons not to.
   one. A SERIALIZABLE transaction's read leaves a SIREAD on
   the row (§1), and `catkv_get` is `sm1::read`. Every planner
   reading a table's statistics would take one, and
-  `sm_analyze` writing them would make an rw-edge to every
+  `sm_tbl_analyze` writing them would make an rw-edge to every
   planner concurrent with it: metadata reads manufacturing
   dangerous structures, and `ANALYZE` a serialization failure
   waiting to happen. `catkv_get_latest` is worse, being
@@ -608,7 +608,7 @@ without the stack changing.
 
 ### 3.8 When to analyze again
 
-`sm_analyze` is a call, and when to make it is the host's
+`sm_tbl_analyze` is a call, and when to make it is the host's
 decision. In PostgreSQL the decision is autovacuum's, from
 counts of rows changed, and autovacuum goes with vacuum
 (`PART4.md` §4).
@@ -617,7 +617,7 @@ The fork's glue calls the table writes one row at a time, and
 can count them where PostgreSQL's heap code did. The stack
 also offers, without a counter, the two live numbers of §3.2.
 
-Whether the stack should one day launch `sm_analyze` itself,
+Whether the stack should one day launch `sm_tbl_analyze` itself,
 on the worker threads that build indexes, is left open. It
 would need the stack to decide when, and nothing here does.
 
@@ -637,9 +637,9 @@ would need the stack to decide when, and nothing here does.
 | sm3 | catalog kind 10 for statistics, one entry a table, outside the `TABLE` blob and the table-oid lock | §3.6 |
 | sm3 | the in-memory statistics map, beside the catalog: immutable, lazily loaded, published after commit | §3.6 |
 | sm3 | `analyze`, over those four | §3.6 |
-| top | `sm_analyze`, and the calls that read, in `include/sm.h` | all |
+| top | `sm_tbl_analyze`, and the calls that read, in `include/sm.h` | all |
 | `rel` | an `analyze` verb and one that prints statistics | testing |
-| fork | `ANALYZE` as a call to `sm_analyze`; the planner's numbers derived from sm3's; an index cost estimate; something to launch `ANALYZE` | §3.7, §3.8 |
+| fork | `ANALYZE` as a call to `sm_tbl_analyze`; the planner's numbers derived from sm3's; an index cost estimate; something to launch `ANALYZE` | §3.7, §3.8 |
 
 ---
 
@@ -650,7 +650,7 @@ would need the stack to decide when, and nothing here does.
 | bytes, at rest | RocksDB's estimate over a relid | none to 8%: exact over a whole store, 1.000 and 1.002 for a heap and a large index, 0.923 for a thousand-row index beside them (§6) |
 | bytes, unflushed | a memtable is uncompressed, and the estimate adds it at that size | 7x over, until the rows are flushed (§6). The worst number here, and the one §3.1 now warns about |
 | bytes, mid-update | new versions in the memtable, old ones not yet collected | 6.6x over at the peak of a burst that changed no row count, back to exact after a compaction (§6) |
-| row count at `sm_analyze` | sampling | exact on a dense table; 0.26% low on one with nine rownos in ten dead, at every run length (§6) |
+| row count at `sm_tbl_analyze` | sampling | exact on a dense table; 0.26% low on one with nine rownos in ten dead, at every run length (§6) |
 | row count between runs | whatever the host scales it by: bytes inherit their error and count a burst of updates as growth; rownos see no delete | not measured. PostgreSQL's own version of this was 3.9% low over a tenfold growth (§7) |
 | distinct count | sampling, and the likeness of neighbouring rows in a run | the run length decides it, over a 30x range for a column whose neighbours are alike (§6) |
 | other column statistics | sampling | as PostgreSQL's on a heap, whose sampler clusters the same way (§3.3) |
@@ -867,7 +867,7 @@ make it on purpose.
    → verify: they survive a restart; writing them blocks no
    reader or writer of the table; a table's are loaded on the
    first plan that wants them and not at startup; an
-   `sm_analyze` that aborts leaves the old ones in place; and
+   `sm_tbl_analyze` that aborts leaves the old ones in place; and
    a planner holding one is unaffected by another publishing
    the next.
 5. The sampler, and the row count from it.
@@ -875,7 +875,7 @@ make it on purpose.
 6. The estimators, one statistic at a time, tests first.
    → verify: each against a full scan of generated data:
    uniform, skewed, clustered, and mostly NULL.
-7. `sm_analyze` in `include/sm.h`, and the `rel` verbs.
+7. `sm_tbl_analyze` in `include/sm.h`, and the `rel` verbs.
    → verify: a `rel` script analyzes a table with a partial
    and an expression index and prints what it expects.
 

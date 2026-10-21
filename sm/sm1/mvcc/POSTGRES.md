@@ -155,7 +155,8 @@ PostgreSQL.
 **Not for sm1 yet:**
 
 - `nowait*`, `skip-locked*`, `lock-nowait`, `timeouts`: the wait
-  policies are not built (`NEXT.md` §2).
+  policies are digres's, on sm1's `trylock` and a timer's
+  cancel (`NEXT.md` §2); no scenario here drives them.
 - `fk-*`, `ri-trigger`, `referential-integrity`,
   `insert-conflict-*`, `merge-*`: the host's, above the
   stack.

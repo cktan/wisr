@@ -863,8 +863,8 @@ int tbl_load_add(loader_t* loader, std::span<const sm2::datum_t> values,
 int tbl_load_close(loader_t* loader);
 ```
 
-`include/sm.h` has the same three as `sm_tbl_load_open`,
-`sm_tbl_load_add` and `sm_tbl_load_close`, in its C style. They
+`include/sm.h` has the same three as `sm_tbl_load_begin`,
+`sm_tbl_load_add` and `sm_tbl_load_end`, in its C style. They
 take the table handle and no session: the handle carries its
 session, as `sm_tbl_insert`'s does. The chunk size, the sort
 budget, the file size and the small-load threshold are options

@@ -910,6 +910,18 @@ writes nor the inner one's.
 
 Errors: `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`.
 
+### int sm1::stmt_advance(sm1::session_t* session)
+
+Advance the running statement's mark to now, as PostgreSQL's
+`CommandCounterIncrement` does: its later reads see the
+transaction's writes so far, the statement's own included, at
+the statement's snapshot, which stays. A store or a sequence
+the statement made is usable after it, as by a statement that
+makes a table and fills it. With no statement begun every own
+write is seen already, and it does nothing.
+
+Errors: `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`.
+
 ### int sm1::set_qa_nowait(sm1::session_t* session, bool on)
 
 **For QA only.** It lets one thread play several sessions in a
@@ -1558,20 +1570,26 @@ as one batch instead. Either way the keys are the
 transaction's own versions: no other transaction sees them
 until it commits, and an abort leaves none.
 
-- **The store is one the transaction made, and empty.** No
-  one else can reach it, so a load takes no lock and no latch
+- **The store is empty, and the caller keeps every other
+  transaction out of it**, readers too, from before the load
+  opens until the transaction ends: sm3 holds the table's
+  lock exclusive. sm1 checks only that the store holds no
+  key (`sm1::store_empty`). A load takes no lock and no latch
   and reads nothing from the store. A key is new if no other
-  key of the load equals it.
+  key of the load equals it. While a load is open, the
+  transaction's other writes to that store are refused with
+  `SM_ERR_INVALID`.
 - **Keys go in by stream.** A stream's keys are a range of the
   store that no other stream's fall in. One declared ascending
   is given its keys in order and written straight to a file;
   any other is sorted, in memory up to
   `options_t::load_sort_bytes`, then in runs on disk that the
   close merges.
-- **While a load is open its transaction cannot commit**, and
-  after one it cannot prepare. The savepoints set when it
-  opens can no longer be rolled back to
-  (`SM_ERR_UNDOLIMIT`).
+- **While a load is open its transaction cannot commit**, set
+  a savepoint or roll back to one, and after one it cannot
+  prepare: a load is whole. A rollback after the close to a
+  savepoint set before the load empties the store, which held
+  nothing else.
 - **An abort of any kind ends an open load**, deletes its
   files and frees it.
 - **A load's files are temporary files**: the sorted files and
@@ -1586,9 +1604,19 @@ until it commits, and an abort leaves none.
 ### int sm1::load_open(sm1::session_t* session, uint64_t storeid, sm1::loader_t*& out)
 
 Open a load into `storeid`. Fails with `SM_ERR_INVALID` if the
-store was not made by this transaction, holds a key already,
-or the transaction has a load open; `SM_ERR_READONLY` in a
-read-only transaction, unless the store is temporary.
+store holds a key already, or the transaction has a load open;
+`SM_ERR_READONLY` in a read-only transaction, unless the store
+is temporary.
+
+### int sm1::store_empty(sm1::session_t* session, uint64_t storeid, bool& empty)
+
+Whether `storeid` holds no key at all: no version of any kind,
+live, dead or deleted, of any transaction. It is what
+`load_open` requires, asked without opening anything; without
+a lock on the store the answer may change at once.
+
+Errors: `SM_ERR_NOTFOUND`, `SM_ERR_NOTRANS`,
+`SM_ERR_PREPARED`, `SM_ERR_IO`.
 
 ### int sm1::load_stream(sm1::loader_t* loader, bool ascending, size_t& stream)
 
@@ -1607,9 +1635,10 @@ the transaction is to be aborted.
 
 Sort and merge what is left, check that no two keys are equal
 and no two streams overlap (`SM_ERR_INVALID`), and put every
-key into the store at once. The loader is freed unless the
-call fails, when the abort frees it. The transaction then
-reads what it loaded, and is still to commit.
+key into the store at once. The loader is freed whatever the
+call returns. The transaction then reads what it loaded, and
+is still to commit; after a failure the store holds nothing of
+the load, and the transaction may go on.
 
 ## Read API
 
@@ -1832,6 +1861,14 @@ Whether a rollback to a savepoint set before the cursor
 opened has closed it: its last row is then gone, and it reads
 no more. sm3 asks it after a rollback, to make the refs to
 such a cursor's row stale (`../ROW.md` §4.5).
+
+## Build
+
+### const char* sm1::build_flags()
+
+The compiler flags this level was built with, its Makefile's
+`OPTFLAGS`: `"-O3"`, or `"-O3 -DNDEBUG"` for digres's release
+build.
 
 ---
 

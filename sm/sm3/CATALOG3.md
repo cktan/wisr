@@ -1,6 +1,6 @@
 # CATALOG3 — the catalog's layout
 
-`CATALOG.md` is the catalog **as built**: eight key kinds, and
+`CATALOG.md` is the catalog **as built**: its key kinds, and
 values that are hand-framed sm2 tuples. A table's columns and
 indexes have keys of their own there since format 2, as §3
 below proposed; an index's own columns are still nested in its
@@ -8,7 +8,9 @@ value, and the keys are still sm2-encoded, not the words of §3.
 §10 is the inventory this layout was drawn from: what a
 catalog has yet to hold.
 
-**Status: proposed.** None of it is built. The format sm3
+**Status: proposed.** None of it is built but the keys of
+their own for a table's columns and indexes (above). The
+format sm3
 writes is "the one format sm3 writes that lasts"
 (`SM3_DESIGN.md` §2), and there are no users yet, so there is
 no migration to pay for.
@@ -808,8 +810,8 @@ it should be, for the reason §10.2 gives.
    serves rows written before a column was added, and a
    DEFAULT serves inserts that omit it.
 7. the per-column statistics target, which
-   `STATISTICS.md` §3.3 passes to `sm_analyze` and nothing can
-   record.
+   `STATISTICS.md` §3.3 passes to `sm_tbl_analyze` and nothing
+   can record.
 8. dependencies, enough to refuse a `DROP` that would break
    one — `CATALOG.md` §7's own open item.
 

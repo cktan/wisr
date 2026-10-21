@@ -1,17 +1,20 @@
 # CATALOG — sm3, the catalog
 
-sm3's catalog: where table, column, index, namespace and
-collation definitions are kept, how they are laid out, and how
-they come into memory. It fills in `SM3_DESIGN.md` §2, whose
-decisions it follows: the catalog is held in memory, written
-through to storage in the DDL's own transaction, and changed
-under lock-based DDL, as in PostgreSQL.
+sm3's catalog: where the definitions of namespaces, tables,
+columns, indexes, collations, sequences, foreign keys and views
+are kept, with indexes' states and tables' statistics, how they
+are laid out, and how they come into memory. It fills in
+`SM3_DESIGN.md` §2, whose decisions it follows: the catalog is
+held in memory, written through to storage in the DDL's own
+transaction, and changed under lock-based DDL, as in
+PostgreSQL.
 
 **Status: built** — the store, its keys and values, `cat_init`,
 `cat_open`, the DDL of §5, a session's overlay, which keeps its
 transaction's DDL to itself until commit, the table-oid locks,
-under which commit publishes it, and the C API over them, which
-`rel` runs on. §7 is what is settled but not built yet.
+under which commit publishes it, a session's temporary catalog,
+and the C API over them, which digres and `rel` run on. §7 is
+what is open.
 
 ---
 
@@ -41,11 +44,13 @@ own catalog store, store 0, under the key prefix `"U"`.
   numbers, since digres compiles its built-ins in with them
   (`PART4.md` §10): `pg_catalog` is 11, `public` is 2200. `nextseq` is not
   transactional, so an aborted DDL leaves a gap, as PostgreSQL's
-  oid counter does. They stop at `last_oid`, 2^32 - 1: digres
-  takes an oid as PostgreSQL's 32-bit `Oid`, so a larger one
-  would wrap onto a built-in one. Past it, `cat_new_oid` fails
-  with `SM_ERR_INVALID`; PostgreSQL wraps its counter instead,
-  and checks each oid it hands out is free, which sm does not.
+  oid counter does. They stop at `last_oid`, 2^32 - 1: digres's
+  oid is 64 bits (`PART4.md` §10), but for now it keeps
+  PostgreSQL's 32-bit `Oid`, so a larger one would wrap onto a
+  built-in one; the cap goes when that is fixed. Past it,
+  `cat_new_oid` fails with `SM_ERR_INVALID`; PostgreSQL wraps
+  its counter instead, and checks each oid it hands out is
+  free, which sm does not.
 
 sm3 reaches the catalog through sm2's catalog key-value store,
 `catkv_*` in `sm2/include/sm2.h`: each call is one sm1 call on
@@ -60,6 +65,7 @@ key going in and stripped coming out.
 | `catkv_insert` | a new key; `SM_ERR_DUPKEY` if taken | `sm1::insert` |
 | `catkv_update`, `catkv_erase` | replace or remove a key; `SM_ERR_NOTFOUND` if missing | `sm1::update`, `sm1::erase` |
 | `catkv_lock` | a row lock in any of sm1's modes (IS, IX, S, SIX, X) | `sm1::lock` |
+| `catkv_trylock` | as `catkv_lock`, never waiting: 1 if another holds it | `sm1::trylock` |
 | `catkv_scan`, `catkv_scannxt`, `catkv_scanend` | the keys under a prefix, in order | `sm1::scan` |
 
 ---
@@ -170,7 +176,13 @@ INDEX_STATE value = index state
 SEQUENCE value    = sequence
 CONSTRAINT value  = constraint | fkey | fkey pair × npairs
 VIEW value        = view | view read × nread | view query × npiece
+STATS value       = table stats | index stats × nindex
+                  | statistic | mcv × nmcv | bound × nbound
 ```
+
+A `STATS` entry is the table's own, the first line, or one
+statistic's, the second; their parts are in
+`SM3_DESIGN.md` §6.6, and are not repeated below.
 
 | Part | Fields |
 | --- | --- |
@@ -178,11 +190,11 @@ VIEW value        = view | view read × nread | view query × npiece
 | name | kind `int2`, oid `int8`, table oid `int8` or null |
 | table | namespace `int8`, name `text`, storeid `int8`, rowno sequence `text`, next index relid `int2` |
 | column | name `text`, type code `int2`, typmod `int4`, not null `bool`, dropped `bool`, missing value `bytea` or null, collation oid `int8` or null, default `bytea` or null: the host's expression, opaque, kept and never run; identity kind `int2` (`a` or `d`) or null, identity sequence `int8` or null |
-| index | oid `int8`, name `text`, relid `int2`, unique `bool`, nkey `int4`, ninclude `int4`, three retired and null, eval `bytea` or null, nread `int4` or null |
+| index | oid `int8`, name `text`, relid `int2`, unique `bool`, nkey `int4`, ninclude `int4`, three retired and null, eval `bytea` or null, nread `int4` or null, primary `bool` or null, constraint `bool` or null: true, or null for false |
 | index state | state `int2`, error `int2` or null, reason `text` or null, the rownos of a duplicated key's two rows, `int8` or null each |
 | key | attnum `int4`, desc `bool`, nulls first `bool`, collation oid `int8` or null, type code `int2` or null, typmod `int4` or null |
 | include | attnum `int4` |
-| read | attnum `int4` |
+| read | attnum `int4`, laid out as an include part is |
 | namespace | name `text` |
 | collation | name `text`, locale `text`, deterministic `bool`, ICU version `text` |
 | sequence | namespace `int8`, name `text`, start `int8`, increment `int8`, owner table `int8` or null, owner column `int4` or null |
@@ -252,14 +264,22 @@ VIEW value        = view | view read × nread | view query × npiece
   committed table by oid and by namespace and name, as
   `std::shared_ptr<const table_def_t>`; every namespace; every
   collation, opened by `cat_open` at its recorded ICU version
-  and closed by `cat_close`. A reader-writer mutex guards it.
+  and closed by `cat_close`, and the namespace of each; each
+  sequence's namespace and name, by its oid and its oid by
+  them, its record and counter being read from the store in
+  the transaction (§2); every view, by oid and by namespace and
+  name; the register of every session's temporary views
+  (`../VIEW.md` §12.3); and each table's statistics, loaded on
+  first use and kept (`SM3_DESIGN.md` §6). A reader-writer
+  mutex guards it.
 - **`session_t`**: an sm1 session, the catalog it reads, and its
-  open transaction's **overlay** — the table definitions, table
-  names and collations its DDL has changed, each tagged with the
-  savepoint depth it was made at (0 before any). A lookup through
-  the session finds its newest change first, then the shared
-  catalog, so the transaction sees its own DDL and no other
-  session sees it.
+  open transaction's **overlay** — the tables, names,
+  collations, namespaces, index states, sequences, statistics
+  and views its DDL has changed, each tagged with the
+  savepoint depth it was made at (0 before any). A lookup
+  through the session finds its newest change first, then the
+  shared catalog, so the transaction sees its own DDL and no
+  other session sees it.
 - **The count of publishes.** The catalog counts the commits
   that published DDL, and remembers for an index the count at
   which it became valid. A session notes the count before it
@@ -270,12 +290,13 @@ VIEW value        = view | view read × nread | view query × npiece
   remembers for each table the count at which its definition,
   and its statistics, were last published, and
   `cat_table_version` gives the greatest of those and its
-  indexes' counts of becoming valid; `table_version_own` while
-  the session's own transaction has changed the definition or
-  the statistics. A host that caches what it learns of a table
-  under the table-oid lock (`sm.h`'s `sm_table_def_t::version`)
-  knows from it whether the cache is still good, with no word
-  from the session that changed it (`../dg/SHMEM.md` §5.1).
+  indexes' counts of becoming valid, as `cat_view_version`
+  gives a view's; `table_version_own` while the session's own
+  transaction has changed the definition or the statistics. A
+  host that caches what it learns of a table under the
+  table-oid lock (`sm.h`'s `sm_table_def_t::version`) knows
+  from it whether the cache is still good, with no word from
+  the session that changed it (`../../dg/SHMEM.md` §5.1).
   **The namespaces' epoch**, `cat_namespace_epoch`, is the count
   at which a namespace was last made or dropped. A table not
   changed since the catalog was loaded is at 0, as is the epoch:
@@ -292,9 +313,10 @@ VIEW value        = view | view read × nread | view query × npiece
   process's, not a catalog's (`SM3_DESIGN.md` §3).
 - **A session's temporary catalog** (`TEMPTABLE.md` at the top
   level, §4): the definitions of its temporary tables, their
-  names, which are in no namespace, and their indexes'
-  states. A change to a temporary table is made in the
-  overlay like any other, marked as one; `commit` moves it
+  names, which are in no namespace, their indexes' states, and
+  its temporary views (`../VIEW.md` §12.2). A change to a
+  temporary table is made in the overlay like any other,
+  marked as one; `commit` moves it
   here and not into the shared catalog, and takes the
   catalog's mutex only if something else is to be published.
   A lookup through the session finds the overlay first, then
@@ -322,18 +344,26 @@ transaction. Each reports failure as sm1 does (`DESIGN.md`
   with a catalog fails with `SM_ERR_EXISTS`.
 - **`cat_open(env, dbname, cat)`** reads `META` first — none is
   `SM_ERR_NOTFOUND`, another format `SM_ERR_VERSION` — then
-  scans namespaces, collations, tables, columns and indexes,
-  one kind each, puts each table's record together from its
-  entries, and builds every definition. A definition that
-  contradicts itself — an unknown type or collation, an index
-  on a column that is not there — is `SM_ERR_CORRUPT`.
+  scans the names, for each collation's and sequence's
+  namespace, and then namespaces, collations, tables,
+  columns, indexes, constraints, index states and views, one
+  kind each; puts each table's record together from its
+  entries, with its foreign keys and those that reference it;
+  and builds every definition. Statistics are not read: each
+  table's are loaded when first asked for (`cat_get_stats`).
+  A definition that contradicts itself — an unknown type or
+  collation, an index on a column that is not there, a
+  foreign key to no table — is `SM_ERR_CORRUPT`.
 - **`cat_close(cat)`** frees the catalog and its collations. A
   catalog attached to the builder is detached first, by its
   caller.
 - **`cat_get_table(cat, oid)`** and **`cat_get_table(cat, nspoid,
   name)`** find a committed table, or nullptr, and
   **`cat_list_tables(cat, nspoid)`** lists the names of a
-  namespace's committed tables, sorted.
+  namespace's committed tables, sorted;
+  **`cat_get_table_by_store(cat, storeid)`** finds the
+  committed table whose rows are in a store, for a lock's
+  table (`sm1::lock_status`).
   **`cat_get_namespace(cat, name, oid)`** and
   **`cat_list_namespaces(cat)`** are the same for committed
   namespaces. These need no session, and see nothing a
@@ -357,6 +387,9 @@ transaction. Each reports failure as sm1 does (`DESIGN.md`
   of the transaction, then sets `def` to its definition as the
   session sees it, which cannot change until then. A table
   dropped while the caller waited is `SM_ERR_NOTFOUND`.
+  **`cat_trylock_table`** is the same, never waiting: 1, with
+  nothing taken, if another transaction holds the lock in a
+  mode that conflicts.
 - **`cat_get_table(ss, oid)`** and **`cat_get_table(ss, nspoid,
   name)`** find a table as the session's transaction sees it,
   and **`cat_list_tables(ss, nspoid)`** lists the names of its
@@ -370,6 +403,31 @@ transaction. Each reports failure as sm1 does (`DESIGN.md`
   **`cat_get_namespace_name(ss, oid, name)`** finds one's name
   by its oid; and **`cat_list_namespaces(ss)`** lists their
   names, sorted.
+- **`cat_get_sequence(ss, nspoid, name, oid)`** and
+  **`cat_get_sequence_name(ss, oid, nspoid, name)`** find a
+  sequence as a table is found by its name: the transaction's
+  own creates and drops, then every committed one, from
+  memory, not as of the snapshot.
+  **`cat_get_sequence_def(ss, oid, def)`** reads its record,
+  and **`cat_list_sequences(ss, nspoid, names)`** lists a
+  namespace's as the transaction sees them, from the store,
+  so both need one open.
+- **`cat_lock_view(ss, oid, mode, def)`** takes a view's oid
+  lock and gives its definition, as `cat_lock_table` does a
+  table's; a temporary view takes none.
+  **`cat_get_view(ss, oid)`** and **`cat_get_view(ss, nspoid,
+  name, oid)`** find one with no lock,
+  **`cat_list_views(ss, nspoid)`** lists a namespace's, and
+  **`cat_view_readers(ss, oid)`** gives the views that read a
+  relation, other sessions' temporary ones among them
+  (`../VIEW.md` §12.3).
+- **`cat_get_fkey(ss, oid, table, def)`** finds a foreign key
+  and its table, the child, with no lock.
+- **`cat_get_stats(ss, oid, out)`** gives a table's statistics
+  as the session sees them: its transaction's own, else the
+  committed ones, loaded in a transaction of their own on
+  first use and then kept, so a plan takes no lock and reads
+  nothing (`SM3_DESIGN.md` §6).
 - **`prepare(ss, gid)`** prepares as sm1 does, but refuses a
   transaction that made DDL: its overlay would have to outlive
   the session.
@@ -377,8 +435,9 @@ transaction. Each reports failure as sm1 does (`DESIGN.md`
 ### 5.1 The catalog's writes: put and del
 
 The catalog is a repository. It stores the record it is given,
-finds it again, and forgets it; it makes no store and no
-sequence and fills no index. What it checks is only that its
+finds it again, and forgets it; it makes no store, no
+sequence but a sequence object's own counter, and fills no
+index. What it checks is only that its
 own records agree: a name is taken once, a table's namespace
 is there, a namespace that goes is empty. So its writes are
 few, and named for what a repository does.
@@ -447,8 +506,9 @@ few, and named for what a repository does.
   namespace's name is unique in the database and a taken one
   is `SM_ERR_DUPKEY` — and its blob.
 - **`cat_del_namespace(ss, namespace_oid)`** erases an empty
-  namespace's name and blob. One that holds a table or a
-  collation is `SM_ERR_INUSE`, and the two built in are
+  namespace's name and blob. One that holds a table, a
+  sequence, a view or a collation is `SM_ERR_INUSE`, and the
+  two built in are
   `SM_ERR_INVALID`. A namespace has a lock, its oid's, as a
   table's oid lock is its table's: a put in it takes the
   lock shared and the del takes it exclusive, both to the end
@@ -458,15 +518,27 @@ few, and named for what a repository does.
   from the catalog in memory, which has every commit by the
   time the lock is granted; the transaction's own snapshot
   may be older than a table just made or a del just
-  committed. For that the catalog keeps each collation's
-  namespace in memory, found at `cat_open` by one scan of the
-  names. There is no del of a collation, so a namespace that
-  has held one stays.
+  committed. For that the catalog keeps each collation's and
+  each sequence's namespace in memory, found at `cat_open` by
+  one scan of the names. There is no del of a collation, so a
+  namespace that has held one stays.
 - **`cat_put_collation(ss, collation_oid, namespace_oid, name,
   locale, deterministic)`** stores a new collation. The
   catalog opens it, to check the locale and record the ICU
   version it opens at, and keeps it open for definitions to
   point at.
+- **`cat_put_sequence(ss, sequence_oid, namespace_oid, name,
+  start, increment)`** stores a new sequence and makes its
+  counter, the sm1 sequence `sm3.seq.<oid>`; its name is taken
+  from the namespace's relations, so a taken one is
+  `SM_ERR_DUPKEY`. **`cat_del_sequence(ss, sequence_oid)`**
+  erases it, its name and its counter.
+- **`cat_put_stats(ss, table_oid, stats)`** records a table's
+  statistics, replacing any it had, under an X lock on its
+  `STATS` entry, so two analyzes of one table queue. Each
+  statistic must name a column or an index expression of the
+  table, and its values be of that one's type
+  (`SM_ERR_INVALID`).
 
 A missing table, namespace or collation is `SM_ERR_NOTFOUND`.
 Each call writes the catalog in the session's transaction and
@@ -491,9 +563,15 @@ begins with `cat_get_table_rec` and ends with `cat_put_table`.
   the put fails — a taken name, no such namespace — it drops
   the store and the sequence again, so a transaction that
   goes on leaves neither behind.
+- **`create_temp_table(session, name, columns, oid)`** is
+  `create_table` in no namespace: a temporary store and rowno
+  sequence, and a definition in the session's temporary
+  catalog alone (`../TEMPTABLE.md` §4). An identity column is
+  `SM_ERR_INVALID`, as no sequence is temporary.
 - **`drop_table(session, oid)`** dels the table's record and
   drops its store, which takes its rows and index entries
-  with it, and its rowno sequence.
+  with it, its rowno sequence, and the sequences its columns
+  own. One a view reads is `SM_ERR_INUSE`.
 - **`rename_table(session, oid, name)`** puts the record back
   under the new name.
 - **`truncate_table(session, oid)`** empties the table: it
@@ -509,6 +587,15 @@ begins with `cat_get_table_rec` and ends with `cat_put_table`.
   an empty table: the table-oid lock X is taken only if it is
   free now, and kept only if the store holds no version at
   all; a savepoint set before it lets the lock go otherwise.
+- **`set_not_null(session, oid, name)`** makes a live column
+  `NOT NULL`, opening the table exclusive and reading every
+  row the transaction sees, `SM_ERR_NOTNULL` if one holds
+  none. **`set_identity(session, oid, name, identity, seq)`**
+  makes one an identity column whose values come from `seq`,
+  which it then owns for good, as `create_table` makes one.
+  `ADD COLUMN` with a volatile default or of an identity
+  column is `add_column`, the rows given their values, then
+  these.
 - **`rename_column(session, oid, name, new_name)`** puts the
   record back with the live column renamed. An index names
   its columns by place, so it is untouched.
@@ -536,6 +623,9 @@ begins with `cat_get_table_rec` and ends with `cat_put_table`.
   a partial or an expression index: `eval` its blob, `reads`
   the columns it reads. It needs the catalog to have an
   evaluator, **`cat_set_evaluator(cat, eval)`**, given once.
+  **`cat_set_toast(cat, on)`**, given once too, says whether
+  the host reads TOAST pointers, and so whether a table's long
+  datums are stored out of line (`../sm2/SM2_DESIGN.md` §4.2).
 - **`set_index_state(session, table, oid, state, error,
   reason, dup)`** puts an index's state, as the build does when
   it ends, with the error and its message for a failed one,
@@ -557,6 +647,22 @@ begins with `cat_get_table_rec` and ends with `cat_put_table`.
   parent another table references, `drop_index` of the parent
   index a foreign key uses and `drop_column` of a child's column
   in one are `SM_ERR_INUSE`.
+- **`create_sequence(session, nspoid, name, start, increment,
+  oid)`** takes an oid and puts the sequence;
+  **`drop_sequence(session, oid)`** dels it, `SM_ERR_INUSE` if
+  a column owns it; **`own_sequence(session, oid, table,
+  attnum)`** makes a column own it, SQL's `OWNED BY`, or none
+  with table 0; and **`nextval(session, oid, out)`** is sm1's
+  `nextseq` on its counter, not transactional.
+- **`create_view(session, nspoid, name, def, oid)`**,
+  **`replace_view`**, **`rename_view`**, **`drop_view`**: a
+  view is its record alone, with nothing outside the catalog
+  to make or drop (`../VIEW.md` §5). Each relation it reads is
+  locked IS to the end of the transaction; `nspoid`
+  `nsp_temp` makes a temporary view, which alone may read a
+  temporary relation. A view another view reads is
+  `SM_ERR_INUSE` to drop, and a replace whose reads reach the
+  view itself is `SM_ERR_INVALID`.
 
 `create_index` holds the table's oid lock X to the end of
 its transaction, as every DDL does; it is the build that is
@@ -606,6 +712,10 @@ sm3/test/test_catalog.cc   init, load and create
 sm3/test/test_ddl.cc       the rest of the DDL
 sm3/test/test_overlay.cc   the overlay: visibility, rollback, abort
 sm3/test/test_lock.cc      table-oid locks, and publishing under them
+sm3/test/test_temp.cc      the temporary catalog
+sm3/test/test_fkey.cc      foreign keys
+sm3/test/test_view.cc      views, temporary ones among them
+sm3/test/test_stats.cc     statistics, recorded and read
 src/sm.cc                  the C API: sm_cat_*, a catalog per database
 rel/test/test_catalog.rel  DDL through the C API, end to end
 ```
@@ -614,18 +724,24 @@ The C API (`include/sm.h`) keeps each database's catalog in its
 `sm_env_t`, made by `sm_mkdb` and loaded by the first
 `sm_opendb`, and an sm3 session in each `sm_session_t`, so its
 transaction calls keep the overlay in step. `sm_cat_*` are the
-calls above that `rel` needs: list the tables, look up a table
-or index, lock a table and read its definition as plain C
-structs, and create and drop tables and indexes. `rel` keeps no
-catalog of its own.
+calls above as the host needs them: namespaces, tables and
+their columns, indexes, sequences, foreign keys and views,
+looked up, listed, locked, created, altered and dropped, with
+definitions as plain C structs; a table's statistics are
+`sm_tbl_stats`, on an open table. digres and `rel` keep no
+catalog of their own.
 
 ---
 
 ## 7. Not built yet
 
 Open: `DROP SCHEMA … CASCADE`, which waits for the
-dependencies (search paths are the SQL layer's);
-dependencies, such as refusing `DROP COLLATION` in use, by a
-scan of the tables' records until it earns a key kind; and
-startup cost for thousands of tables, unmeasured, to which
-`cat_open`'s scan of every name now adds.
+dependencies (search paths are the SQL layer's); dependencies
+in general, such as refusing `DROP COLLATION` in use, by a
+scan of the tables' records until it earns a key kind: what
+is built is each kind's own, a view's reads and a foreign
+key's parent, both derived in memory and stored nowhere;
+`DROP COLLATION` itself, which there is none of; and startup
+cost for thousands of tables, unmeasured, to which
+`cat_open`'s scan of every name now adds. What the catalog has
+yet to hold is `CATALOG3.md` §10.
