@@ -422,33 +422,15 @@ namespace sm3 {
 
 namespace {
 
-/*
- * The sequence table's heap draws its TOAST ids from, in out: ""
- * unless the host reads TOAST pointers and the table has one. A
- * table made before TOAST has none, and stores every datum in its
- * tuple as it always did.
- */
-int toast_seq_of(const table_t *table, std::string &out) {
-  out.clear();
-  if (!table->session->cat->toast) {
-    return 0;
-  }
-  std::string name = toast_seq_name(table->def->oid);
-  uint64_t last;
-  if (sm1::lastseq(table->session->sm1, name, last) < 0) {
-    return sm1::errnum() == sm1::SM_ERR_NOTFOUND ? 0 : -1;
-  }
-  out = name;
-  return 0;
-}
-
 /* Open table's heap and indexes on the store its definition names. */
 int open_rels(table_t *table) {
   const table_def_t &def = *table->def;
   sm1::session_t *s = table->session->sm1;
-  std::string toast_seq;
-  if (toast_seq_of(table, toast_seq) != 0 ||
-      sm2::rel_open(s, def.storeid, heap_relid, def.schema, def.rowno_seq,
+  // The sequence its TOAST ids come from, made with every table, or
+  // none unless the host reads TOAST pointers; named, never read.
+  std::string toast_seq =
+      table->session->cat->toast ? toast_seq_name(def.oid) : "";
+  if (sm2::rel_open(s, def.storeid, heap_relid, def.schema, def.rowno_seq,
                     toast_seq, table->rel) != 0) {
     return -1;
   }

@@ -390,12 +390,8 @@ int drop_table(session_t *session, uint64_t oid) {
   }
   // Its store takes its rows and index entries with it (DESIGN.md §5).
   if (sm1::rmstore(session->sm1, rec.storeid) != 0 ||
-      sm1::rmseq(session->sm1, rec.rowno_seq) != 0) {
-    return -1;
-  }
-  // A table made before TOAST has no sequence for its ids.
-  if (sm1::rmseq(session->sm1, toast_seq_name(oid)) != 0 &&
-      sm1::errnum() != sm1::SM_ERR_NOTFOUND) {
+      sm1::rmseq(session->sm1, rec.rowno_seq) != 0 ||
+      sm1::rmseq(session->sm1, toast_seq_name(oid)) != 0) {
     return -1;
   }
   return 0;

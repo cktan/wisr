@@ -956,9 +956,8 @@ where a datum was. Built in `src/table/table.cc`, with
 - **A table has a sequence for its ids**, `sm3.toast.<oid>`,
   made with it and dropped with it, temporary when the table
   is. It is named by the oid and not kept in the table's
-  record. A table made before TOAST has none; that is seen
-  when the table is opened, and it goes on with every datum in
-  its tuple.
+  record. Every table has one, so opening a table names it and
+  reads nothing: sm2 draws from it only when it moves a datum.
 - **An index is made of values, never of a pointer.** What an
   index needs of a row -- its key columns, its INCLUDE columns,
   and the columns its evaluator reads -- is fetched before the
