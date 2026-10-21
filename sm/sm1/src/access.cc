@@ -126,6 +126,22 @@ void keep_value(const version_t &v, std::unique_ptr<rocksdb::Iterator> &it,
 }
 
 /*
+ * Whether the iterator pin holds may serve a read of storeid at
+ * view, entered in read epoch epoch (§10.1): a point read of this
+ * session opened it on the store, in the epoch still current,
+ * after every commit the view sees and after the session's last
+ * write. Not under SERIALIZABLE, whose SIREAD must come before the
+ * iterator.
+ */
+bool reusable(const sm1::session_t *s, const sm1::rawpin_t &pin,
+              uint64_t storeid, const view_t &view, uint64_t epoch) {
+  const sm1::rawpin_t::reuse_t &r = pin.reuse;
+  return pin.it && r.session == s && r.storeid == storeid &&
+         r.write_gen == s->write_gen && view.snapshot_ts <= r.visible_ts &&
+         r.epoch == epoch && !s->ssi && pin.it->status().ok();
+}
+
+/*
  * The version a write checks against (§5 step 3): the newest
  * own version still visible to the transaction, else the newest
  * committed version, whatever its commit_ts. Sets *live to
@@ -437,8 +453,16 @@ int read_row(sm1::session_t *s, uint64_t storeid, const char *key, size_t klen,
   // Report no row until one is found.
   *data = nullptr;
   *datalen = 0;
-  // A read into pin replaces the row it held.
-  sm1::unpin(pin);
+  // A read into pin replaces the row it held. The pin keeps its
+  // iterator for access_read to seek again (§10.1), and is emptied
+  // unless a row is found.
+  pin->row = rocksdb::Slice();
+  bool found = false;
+  defer {
+    if (!found) {
+      sm1::unpin(pin);
+    }
+  };
   // Require an active, non-prepared transaction.
   if (xct_check_active(s) != 0) {
     return -1;
@@ -457,6 +481,7 @@ int read_row(sm1::session_t *s, uint64_t storeid, const char *key, size_t klen,
     return r;
   }
   // Found: hand out its bytes.
+  found = true;
   *data = pin->row.data();
   *datalen = pin->row.size();
   return 0;
@@ -836,8 +861,19 @@ int access_read(sm1::session_t *s, uint64_t storeid, const view_t &view,
   // Stay within this userkey's versions.
   rocksdb::ReadOptions ro;
   ro.prefix_same_as_start = true;
-  // Open an iterator on the store.
-  std::unique_ptr<rocksdb::Iterator> it(st.rdb->NewIterator(ro, st.cf));
+  // Seek again the iterator pin holds when it can serve this
+  // read, else open one on the store (§10.1).
+  std::unique_ptr<rocksdb::Iterator> it;
+  sm1::rawpin_t::reuse_t reuse;
+  if (pin && reusable(s, *pin, storeid, view, epoch)) {
+    it = std::move(pin->it);
+    reuse = pin->reuse;
+  } else {
+    sm1::unpin(pin);
+    // Every commit published by now is in an iterator opened next.
+    reuse = {s, storeid, s->write_gen, s->db->visible_ts.load(), epoch};
+    it.reset(st.rdb->NewIterator(ro, st.cf));
+  }
   // Seek to the newest version the reader could see; ~seq of 0
   // lands before every own version of the key. Under SSI, start
   // before every version instead: the newer ones are exactly
@@ -874,6 +910,7 @@ int access_read(sm1::session_t *s, uint64_t storeid, const view_t &view,
       if (pin) {
         pin->row = v.payload;
         pin->it = std::move(it);
+        pin->reuse = reuse;
       } else {
         out->assign(v.payload.data(), v.payload.size());
       }
@@ -995,6 +1032,8 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
   }
   // This write's seq, one past the last.
   uint32_t seq = s->seq + 1;
+  // No iterator opened before now serves the session's reads.
+  s->write_gen++;
   // A delete writes a tombstone version.
   uint8_t flags = op == WRITE_DELETE ? version_tombstone : 0;
   // Allocate the write timestamp now that no other writer of the

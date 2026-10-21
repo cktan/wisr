@@ -5,6 +5,7 @@
  * a ref, as far as its caller reads.
  */
 
+#include "../src/table/pin.h"
 #include "db.h"
 #include "doctest.h"
 #include "sm3.h"
@@ -88,6 +89,20 @@ std::string show(sm3::pin_ref_t ref) {
   return std::to_string(sm2::datum_to_int32(d[0])) + "|" +
          (n[1] ? "-" : std::string(sm2::varlena_payload(b))) + "|" +
          (n[2] ? "-" : std::to_string(sm2::datum_to_int32(d[2])));
+}
+
+/*
+ * The pins on the list head, following next and checking prev; -1
+ * if it is not a well-formed list of at most limit pins.
+ */
+int list_len(const sm3::pin_t *head, int limit = 100) {
+  int n = 0;
+  for (const sm3::pin_t *p = head, *prev = nullptr; p; prev = p, p = p->next) {
+    if (p->prev != prev || ++n > limit) {
+      return -1;
+    }
+  }
+  return n;
 }
 
 /* Whether ref is stale: pin_tuple refuses it as SM_ERR_INVALID. */
@@ -175,6 +190,54 @@ TEST_CASE("a stale ref names nothing, though its pin is reused") {
   CHECK(sm3::tbl_read(t, f.rows[2] + 100, r2, v) == 1);
   CHECK(r2.pin == nullptr);
   CHECK(v.empty());
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.s) == 0);
+}
+
+TEST_CASE("a read into a ref rereads into its pin; its copies go stale") {
+  // Verify a read into a live ref keeps the ref's pin, whose
+  // iterator sm1 may seek again, and still makes old refs stale.
+  // 1. Read row 1 into r and keep a copy of r.
+  // 2. Read row 2 into r: the same pin, at a new generation; the
+  //    copy is refused, and r deforms row 2.
+  // 3. Read row 3 into r3, then row 1 into r again: r3 is untouched.
+  // 4. Commit: no pin is held, and every pin of the pool is on
+  //    its free list once; the next transaction's two reads take
+  //    two pins.
+  pins_t f;
+  REQUIRE(sm3::begin(f.s, sm1::xctlevel_t::read_committed) == 0);
+  sm3::table_t *t = f.open_t();
+  sm3::pin_ref_t r, r3;
+  std::string_view v;
+  REQUIRE(sm3::tbl_read(t, f.rows[0], r, v) == 0);
+  sm3::pin_ref_t copy = r;
+
+  REQUIRE(sm3::tbl_read(t, f.rows[1], r, v) == 0);
+  CHECK(r.pin == copy.pin);
+  CHECK(r.gen != copy.gen);
+  CHECK(stale(copy));
+  CHECK(show(r) == "2|two|-");
+
+  REQUIRE(sm3::tbl_read(t, f.rows[2], r3, v) == 0);
+  REQUIRE(sm3::tbl_read(t, f.rows[0], r, v) == 0);
+  CHECK(r.pin != r3.pin);
+  CHECK(show(r) == "1|one|10");
+  CHECK(show(r3) == "3|three|30");
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.s) == 0);
+  CHECK(stale(r));
+  CHECK(stale(r3));
+  CHECK(list_len(f.s->pins_held) == 0);
+  CHECK(list_len(f.s->pins_free) == (int)f.s->pins.size());
+
+  REQUIRE(sm3::begin(f.s, sm1::xctlevel_t::read_committed) == 0);
+  t = f.open_t();
+  sm3::pin_ref_t a, b;
+  REQUIRE(sm3::tbl_read(t, f.rows[0], a, v) == 0);
+  REQUIRE(sm3::tbl_read(t, f.rows[1], b, v) == 0);
+  CHECK(a.pin != b.pin);
+  CHECK(show(a) == "1|one|10");
+  CHECK(show(b) == "2|two|-");
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.s) == 0);
 }

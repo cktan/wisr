@@ -111,6 +111,15 @@ void unpin(rawpin_t* pin);          /* lets go of its row */
   own, by timestamp, so a raw pin outliving its transaction
   holds memory, never a view. `PIN.md` §4.4 still holds: a
   dropped store keeps the pinned row readable.
+- **A read into a pin seeks its iterator again.** A point
+  read's row stays in the iterator that found it, and the next
+  `read` into the same pin seeks that iterator rather than
+  opening another, when it holds everything the read may see:
+  the same session and store, the read epoch it was opened in,
+  every commit the view sees, and no write by the session
+  since; never under SERIALIZABLE (`sm1/SM1_DESIGN.md` §10.1).
+  Opening an iterator was half of a point read's cost. A read
+  that finds no row empties the pin, as before.
 - **One rule for its callers**: every raw pin is emptied
   before the database closes, since RocksDB must not close a
   DB with an iterator open.
@@ -233,9 +242,13 @@ take a `sm3::pin_ref_t&` where they took a `sm1::pin_ref_t&`,
 with the same contract: a pin the ref still names is released
 first, or for a write once all of it has succeeded, its
 indexes fixed. The pin is taken from the session's pool and
-its `raw` handed down. A write with no ref keeps the old row
-in a pin of the pool while its indexes are fixed, then puts it
-back.
+its `raw` handed down. A read into a ref that still names a
+held pin reads into that pin instead (`pin_reread`): its refs
+go stale as on a release, but its raw pin keeps the iterator,
+for sm1 to seek again (§2). An index scan reading row after row
+into one ref opens one iterator, not one a row. A write with
+no ref keeps the old row in a pin of the pool while its
+indexes are fixed, then puts it back.
 
 ### 4.3 A scan's row
 

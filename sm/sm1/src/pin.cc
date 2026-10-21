@@ -34,4 +34,5 @@ void sm1::unpin(sm1::rawpin_t *pin) {
   // SuperVersion it holds.
   pin->it.reset();
   pin->row = rocksdb::Slice();
+  pin->reuse = {};
 }

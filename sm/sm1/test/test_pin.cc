@@ -287,3 +287,43 @@ TEST_CASE("a pinned row outlives the drop of its store") {
   REQUIRE(sm1::commit(s) == 0);
   REQUIRE(sm1::closedb(s) == 0);
 }
+
+TEST_CASE("a read into a pin never misses what its iterator predates") {
+  // Verify a pin's iterator is sought again only when it holds
+  // everything the read may see (SM1_DESIGN.md §10.1).
+  // 1. Make a second store holding "x" -> "other".
+  // 2. Under read committed, read "x" into a pin, then the second
+  //    store's "x" into the same pin: "other".
+  // 3. Read "x" back, update it in the transaction, and read it
+  //    into the pin again: the update.
+  // 4. Another session updates "y" and commits; reading "y" into
+  //    the pin sees it.
+  pin_fixture_t f;
+  sm1::session_t *s = f.open();
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  uint64_t other = mkstore(s);
+  put(s, other, "x", "other");
+  REQUIRE(sm1::commit(s) == 0);
+
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  pin_ptr_t p;
+  CHECK(pin(s, "x", p.get()) == "1");
+  std::string_view data;
+  REQUIRE(sm1::read(s, other, "x", p.get(), data) == 0);
+  CHECK(data == "other");
+
+  CHECK(pin(s, "x", p.get()) == "1");
+  REQUIRE(sm1::update(s, g_store, "x", "11") == 0);
+  CHECK(pin(s, "x", p.get()) == "11");
+
+  CHECK(pin(s, "y", p.get()) == "2");
+  sm1::session_t *t = f.open();
+  REQUIRE(sm1::begin(t, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::update(t, g_store, "y", "22") == 0);
+  REQUIRE(sm1::commit(t) == 0);
+  REQUIRE(sm1::closedb(t) == 0);
+  CHECK(pin(s, "y", p.get()) == "22");
+  REQUIRE(sm1::commit(s) == 0);
+  p.reset();
+  REQUIRE(sm1::closedb(s) == 0);
+}

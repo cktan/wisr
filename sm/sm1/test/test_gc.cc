@@ -579,6 +579,42 @@ TEST_CASE(
   sm1::closedb(r);
 }
 
+TEST_CASE("a pin's iterator from before the sweep's pass is not sought "
+          "again") {
+  // Verify a read into a pin opens a new iterator once the read
+  // epoch has moved on (§8.3 step 3, §10.1).
+  // 1. Commit "k", then "j", so the one-entry commit cache no
+  //    longer holds "k"'s writer.
+  // 2. R reads "k" into a pin, whose iterator holds "k"'s
+  //    unstamped, pre-pass version; between reads R is no reader.
+  // 3. The sweep runs its pass, flips the epoch and deletes the
+  //    records, "k"'s writer's among them.
+  // 4. R reads "k" into the pin again: "v", from a new iterator.
+  //    The old one would find the writer's record gone and take
+  //    the version for aborted.
+  sm1::options_t opt = tiny_cache();
+  gc_fixture_t f(&opt);
+  sm1::session_t *s = f.s();
+  sm1::session_t *r = f.open();
+  commit_put(s, "k", "v");
+  commit_put(s, "j", "x");
+  REQUIRE(sm1::begin(r, sm1::xctlevel_t::repeatable_read) == 0);
+  sm1::rawpin_t *p = sm1::rawpin_new();
+  REQUIRE(p);
+  std::string_view d;
+  REQUIRE(sm1::read(r, g_store, "k", p, d) == 0);
+  CHECK(d == "v");
+
+  CHECK(gc_sweep_txn(f.db(), true) > 0);
+  CHECK(f.txn_records() == 0);
+
+  REQUIRE(sm1::read(r, g_store, "k", p, d) == 0);
+  CHECK(d == "v");
+  sm1::rawpin_free(p);
+  REQUIRE(sm1::commit(r) == 0);
+  sm1::closedb(r);
+}
+
 TEST_CASE("the sweep keeps records a live snapshot may still need") {
   // Verify only records at or below the watermark are deleted.
   // 1. Commit "a"; reader R begins; commit "b" and "c".

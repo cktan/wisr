@@ -81,6 +81,21 @@ pin_t *pin_take(session_t *s) {
   return p;
 }
 
+/* Take back the pin ref holds, to read another row into; see pin.h. */
+pin_t *pin_reread(pin_ref_t &ref) {
+  pin_t *p = live(ref) && !ref.pin->scan ? ref.pin : nullptr;
+  ref = pin_ref_t{};
+  if (!p) {
+    return nullptr;
+  }
+  unlink(p->session->pins_held, p);
+  // The raw pin keeps the row's iterator; sm1's read replaces the row.
+  p->row = {};
+  p->reader = {};
+  p->gen++;
+  return p;
+}
+
 /* Hold row in a taken pin, and point ref at it; see pin.h. */
 void pin_hold(pin_t *p, const std::shared_ptr<const table_def_t> &def,
               std::string_view row, pin_ref_t &ref) {

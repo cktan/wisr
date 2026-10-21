@@ -43,6 +43,15 @@ namespace sm3 {
  */
 pin_t *pin_take(session_t *s);
 
+/*
+ * The pin ref holds a read's row in, taken back to read another
+ * row into: off its list, refs to it stale, its row let go, but
+ * its raw pin's iterator kept for sm1 to seek again (sm1's
+ * SM1_DESIGN.md §10.1). nullptr if ref names no held pin; ref is
+ * left naming none.
+ */
+pin_t *pin_reread(pin_ref_t &ref);
+
 /* Hold row, read under def, in a taken pin, and point ref at it. */
 void pin_hold(pin_t *pin, const std::shared_ptr<const table_def_t> &def,
               std::string_view row, pin_ref_t &ref);

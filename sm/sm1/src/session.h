@@ -29,6 +29,19 @@
 struct sm1::rawpin_t {
   std::unique_ptr<rocksdb::Iterator> it; /* found the row; null when empty */
   rocksdb::Slice row; /* the row's bytes, in a block it holds */
+  /*
+   * For an iterator a point read opened (access_read), what
+   * decides whether the next read into the pin may seek it again
+   * instead of opening another (SM1_DESIGN.md §10.1). No session
+   * for any other.
+   */
+  struct reuse_t {
+    const sm1::session_t *session = nullptr; /* whose read; compared only */
+    uint64_t storeid = 0;
+    uint64_t write_gen = 0;  /* the session's write_gen when opened */
+    uint64_t visible_ts = 0; /* every commit at or below it is in it */
+    uint64_t epoch = 0;      /* the read epoch it was opened in */
+  } reuse;
 };
 
 struct sm1::session_t {
@@ -42,12 +55,19 @@ struct sm1::session_t {
   sm1::xctlevel_t level = sm1::xctlevel_t::read_committed;
   bool read_only = false; /* declared at sm1::begin (§7.4) */
   uint64_t snapshot_ts = 0;
-  uint64_t xid = 0;              /* 0 until the first write (§4.1) */
-  uint32_t seq = 0;              /* last write's seq; the next is seq + 1 */
-  uint32_t seq_hwm = 0;          /* own versions above this are invisible */
-  uint64_t wts_hi = 0;           /* largest wts written; bounds own seeks */
-  std::vector<uint64_t> created; /* storeids made by sm1::mkstore */
-  std::vector<uint64_t> dropped; /* storeids removed by sm1::rmstore */
+  uint64_t xid = 0;     /* 0 until the first write (§4.1) */
+  uint32_t seq = 0;     /* last write's seq; the next is seq + 1 */
+  uint32_t seq_hwm = 0; /* own versions above this are invisible */
+  uint64_t wts_hi = 0;  /* largest wts written; bounds own seeks */
+  /*
+   * Raised by every write the session makes, and by each bulk
+   * load as it closes, in any transaction, and never lowered as
+   * seq is by a rollback: an iterator opened before it last rose
+   * may lack the session's own versions.
+   */
+  uint64_t write_gen = 0;
+  std::vector<uint64_t> created;      /* storeids made by sm1::mkstore */
+  std::vector<uint64_t> dropped;      /* storeids removed by sm1::rmstore */
   std::vector<uint64_t> dropped_seqs; /* seqids removed by sm1::rmseq */
   /*
    * The temporary stores the session holds, from sm1::mkstore to the

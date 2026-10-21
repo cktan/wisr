@@ -2083,7 +2083,8 @@ sm1::read(session, storeid, key, &val):
     hi    = max(T.xid, snap)                             # own writes, §4.4
     if SERIALIZABLE:
         ssi.on_read(T, storeid, key)                     # SIREAD, §7.1
-    it = db.NewIterator(cf(storeid))
+    it = pin.reusable ? pin.it                           # below
+                      : db.NewIterator(cf(storeid))
     if SERIALIZABLE:
         it.Seek(key | 00×12)                             # every version
     else:
@@ -2133,15 +2134,50 @@ Versions from other transactions with `snap < wts <= T.wts_hi`
 are stepped past as in-flight or committed too late, which the
 loop already handles.
 
+**A pin's iterator is sought again.** A read into a raw pin
+leaves the row in the iterator that found it (`../ROW.md` §2),
+and opening that iterator -- a merging iterator over the
+memtables and every level -- was over half of a point read: on
+the bench's `wide_mixed`, 1.3 µs of a 2.3 µs read in key order.
+So the next read into the same pin seeks the
+iterator it holds instead (`reusable()` in `src/access.cc`)
+when that iterator holds everything the read may see:
+
+- **Its session and store.** The pin records which read opened
+  it.
+- **Every commit the view sees.** An iterator holds the store
+  as it was when opened. The pin records `visible_ts` read just
+  before it was opened, so every commit at or below is in it;
+  it serves a view whose snapshot is no later. Under read
+  committed the next statement's snapshot may pass it.
+- **The session's own writes.** `session_t::write_gen` rises
+  with every write, and as a bulk load closes, and never falls,
+  as `seq` does on a rollback (§6.5); an iterator serves only
+  reads made at the generation it was opened at.
+- **The read epoch it was opened in** (§8.3 step 3). Between
+  reads the pin is no reader, so the sweep may delete the
+  records of versions the iterator holds unstamped; once the
+  epoch has moved on, a new iterator, opened after the pass,
+  holds them stamped. Within the epoch, the read entered it
+  before seeking, so no deletion passes it.
+- **Not SERIALIZABLE.** The SIREAD must exist before the
+  iterator (above): an older iterator misses a concurrent write
+  made between the two, and with it the rw-edge (scenario c36).
+
+The same reuse with no pin of the caller's: `sm1::read`'s
+lending form reads into the session's own pin. A write's
+existence check (§5) and `sm1::read_latest` still open their
+own. With it a read into one pin costs what RocksDB's `Get` of
+the exact version key does: 3.6 against 3.3 µs at random, 0.9
+against 1.1 µs in key order.
+
 **No batched read.** An index lookup followed by N base reads
 costs N reads, and a call taking N keys was considered. RocksDB's
 `MultiGet` does not apply: a read here is an iterator seek
-across a key's version run, not a point `Get`. What a batched
-call would save is per-key iterator construction and read-epoch
-bookkeeping, plus seeking in sorted order, and it would need an
-ownership model for N values, since the session has one read
-buffer (§5.3). It is left unbuilt until a benchmark shows that
-setup dominating a probe loop.
+across a key's version run, not a point `Get`. With the pin's
+iterator sought again, what a batched call would add is seeking
+in sorted order, which an index range already does, so it is
+not built.
 
 ### 10.2 Scan
 

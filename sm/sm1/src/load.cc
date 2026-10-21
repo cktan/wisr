@@ -610,6 +610,8 @@ int sm1::load_close(sm1::loader_t *l) {
   // The transaction now reads what it loaded, as its own writes.
   s->seq_hwm = std::max(s->seq_hwm, l->seq);
   s->wts_hi = std::max(s->wts_hi, l->wts);
+  // No iterator opened before now holds the loaded rows.
+  s->write_gen++;
   // A temporary store bars a prepare, as any write to one.
   if (l->st.owner) {
     s->temp_touched = true;

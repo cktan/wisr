@@ -1062,9 +1062,12 @@ template <typename F>
 static int read_into(table_t *table, pin_ref_t &ref, std::string_view &tuple,
                      F read) {
   tuple = {};
-  // A read into ref replaces the row it held.
-  unpin(ref);
-  pin_t *p = pin_take(table->session);
+  // A read into ref replaces the row it held, in the same pin when
+  // there is one, whose iterator sm1 may seek again.
+  pin_t *p = pin_reread(ref);
+  if (!p) {
+    p = pin_take(table->session);
+  }
   if (!p) {
     return -1;
   }
