@@ -204,6 +204,16 @@ one until RocksDB flushes it, and answers a relid's range from
 that (`sm1/API.md`, `sm1::approxsize`). The bytes in files are
 still RocksDB's estimate.
 
+**A range's file bytes are estimated once a version of the
+tree.** RocksDB's estimate seeks the index of every file the
+range touches, and the planner asks for a table's and each
+index's at every plan: 11% of a point query's time, measured.
+The files change only when the store's LSM tree does, so sm1
+keeps each range's estimate under the tree's version and
+answers from it until a flush, a compaction or an ingest moves
+the version (`sm1/API.md`, `sm1::approxsize`). The answer is
+the one RocksDB would give.
+
 `sm_analyze` records the size it saw, beside the row count it
 estimated at the same moment. The size is also answered live,
 so a caller can tell how far a table has moved since.

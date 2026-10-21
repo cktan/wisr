@@ -73,6 +73,28 @@ uint64_t memcount_t::bytes(uint32_t lo, uint32_t hi, uint64_t unflushed) const {
   return total;
 }
 
+/* The bytes of [start, limit) estimated at version, if known. */
+bool filesize_t::find(const std::string &start, const std::string &limit,
+                      uint64_t version, uint64_t &bytes) const {
+  std::lock_guard lock(m_mu);
+  auto it = m_sizes.find({start, limit});
+  if (it == m_sizes.end() || it->second.version != version) {
+    return false;
+  }
+  bytes = it->second.bytes;
+  return true;
+}
+
+/* Keep bytes as [start, limit)'s at version, starting over when full. */
+void filesize_t::put(const std::string &start, const std::string &limit,
+                     uint64_t version, uint64_t bytes) {
+  std::lock_guard lock(m_mu);
+  if (m_sizes.size() >= m_max) {
+    m_sizes.clear();
+  }
+  m_sizes[{start, limit}] = {version, bytes};
+}
+
 /* Count cf_name's memtables in counts. */
 void memcount_listener_t::add(const std::string &cf_name,
                               std::shared_ptr<memcount_t> counts) {

@@ -75,6 +75,8 @@ struct store_t {
    * into it though the store is dropped meanwhile.
    */
   std::shared_ptr<memcount_t> mem;
+  /* Its sorted files' bytes as last estimated (memcount.h): shared. */
+  std::shared_ptr<filesize_t> files;
 };
 
 /*
