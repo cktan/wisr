@@ -1510,7 +1510,7 @@ sm1::commit(T):
   3. batch = { CF:txn[T.xid] = {COMMITTED, T.snapshot_ts, commit_ts} }
   4. db.Write(batch, sync = durability_sync)   ← group-committed
   5. commit_cache.insert(T.xid → commit_ts);  active_table.remove(T.xid)
-     if T wrote CF:store.0: last_ddl_ts = max(last_ddl_ts, commit_ts)  (§11)
+     if T made or dropped a store: last_ddl_ts = max(last_ddl_ts, commit_ts)  (§11)
      sequencer.done(commit_ts);  advancer moves visible_ts      (§4.3)
   6. lockmgr.release(T);  ssi.on_commit(T)
      queue (T.dropped, commit_ts) for CF removal     (§8.3)
@@ -2366,9 +2366,8 @@ and versions like any row but never reads: `sm1::lsstore` scans
 `["R", "S")`, and the startup sweep keeps a store only for an
 `"R"` row. Callers reach store 0 under `"U"` and nowhere else
 (`sm1::upper_prefix`), so they cannot touch a store's or a
-sequence's row. A commit that writes a `"U"` row still counts as
-a write to `CF:store.0`, so it raises `last_ddl_ts`, which costs
-nothing until the store cache below exists.
+sequence's row. A commit that writes only `"U"` or `"S"` rows
+leaves `last_ddl_ts` alone: no store lookup reads them.
 
 A store's row carries nothing: that the row exists at a
 snapshot is what makes the store exist there. The design's
@@ -2412,25 +2411,35 @@ so under SERIALIZABLE it registers the whole range as read: a
 concurrent `sm1::mkstore` or `sm1::rmstore` of any storeid is an
 rw-conflict with it.
 
-A session may cache which storeids are live (not yet implemented:
-every lookup reads `CF:store.0`), but the answer depends on the
-snapshot. After a committed `sm1::rmstore`, a transaction with an
-older snapshot must still find the store, since it may still
+Every data call looks its storeid up first, and a lookup that
+read `CF:store.0` each time would build a second iterator for
+every point read, about a third of its cost. So a session
+caches which storeids are live (`session_t::store_cache`,
+`catalog_lookup()`). The answer depends on the snapshot: after
+a committed `sm1::rmstore`, a transaction with an older
+snapshot must still find the store, since it may still
 legitimately read it. A cache invalidated at DDL commit would
 hide it, so the cache is checked by timestamp instead:
 
-- The process keeps `last_ddl_ts`, the largest `commit_ts` of
-  any committed transaction that wrote the catalog. Commit raises
-  it before publishing that `commit_ts` (§8.2 step 5), so a
-  snapshot that includes a DDL commit always sees it.
-- Each cache entry records the snapshot it was read at. A hit is
-  used only if `last_ddl_ts` is at or below both that snapshot
-  and the lookup's; then no DDL committed between the two, and
-  the answer is the same at both. Otherwise the lookup reads
+- The database keeps `last_ddl_ts` (`db_t`), the largest
+  `commit_ts` of any committed transaction that made or dropped
+  a store, its `T.created` or `T.dropped` not empty. Commit
+  raises it before publishing that `commit_ts` (§8.2 step 5), so
+  a snapshot that includes a DDL commit always sees it. A
+  prepared transaction restored at open has both lists from its
+  record (§3.2).
+- Each cache entry records the snapshot it was read at and
+  whether the store was live then. A hit is used only if
+  `last_ddl_ts` is at or below both that snapshot and the
+  lookup's; then no DDL committed between the two, and the
+  answer is the same at both. Otherwise the lookup reads
   `CF:store.0` and replaces the entry.
-- `sm1::mkstore` and `sm1::rmstore` evict their storeid's entry,
-  and a lookup that resolves to the transaction's own uncommitted
-  catalog version does not populate the cache.
+- A transaction that has made or dropped a store neither uses
+  nor fills the cache: its lookups see its own uncommitted
+  catalog versions, which no entry stands for. That covers what
+  evicting at `sm1::mkstore` and `sm1::rmstore` would, and a
+  rollback to a savepoint besides.
+- The cache starts over at 4096 entries (`store_cache_max`).
 
 The comparison is against both snapshots because a session's
 snapshots do not only move forward: under read committed, a
@@ -2461,9 +2470,10 @@ SERIALIZABLE:
   by the rule above, yet it steps past nothing, and the dropper's
   `on_write` ran before any SIREAD existed: the edge is missed.
   Each cache entry therefore also records the transaction that
-  read it from `store.0`, and a serializable lookup uses a hit
+  read it from `store.0` (its `begin_seq`, since a read-only
+  transaction has no xid), and a serializable lookup uses a hit
   only if that is the current transaction. Its SIREAD already
-  catches every later writer of the storeid.
+  catches every later writer of the storeid (scenario c35).
 
 ### 11.1 Sequences
 

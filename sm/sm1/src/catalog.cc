@@ -13,7 +13,8 @@
  * (§4.2), so a storeid is never reused and never names two
  * stores.
  *
- * No storeid cache yet; every lookup reads CF:store.0. A
+ * A session caches what each lookup found, trusted only while no
+ * store was made or dropped since (last_ddl_ts, §11). A
  * committed sm1::rmstore leaves its column family in place until
  * the watermark passes the drop and GC removes it (§8.3).
  */
@@ -30,6 +31,9 @@
 using namespace wisr;
 
 namespace {
+
+/* The entries a session's store cache holds before it starts over. */
+constexpr size_t store_cache_max = 4096;
 
 /* The catalog key of storeid: "R" | be64(storeid). */
 std::string catalog_key(uint64_t storeid) {
@@ -169,9 +173,11 @@ int lsstore(sm1::session_t *s, std::vector<uint64_t> &out) {
 namespace wisr {
 
 /*
- * A point read of the catalog row at view. A temporary store has
- * none: it is live to the session that holds it, until that session
- * drops it.
+ * A point read of the catalog row at view, or the session's store
+ * cache when no store was made or dropped since the entry's
+ * snapshot nor the view's (§11). A temporary store has none: it
+ * is live to the session that holds it, until that session drops
+ * it.
  */
 int catalog_lookup(sm1::session_t *s, const view_t &view, uint64_t storeid) {
   if (db_store(s->db, storeid).owner) {
@@ -180,9 +186,33 @@ int catalog_lookup(sm1::session_t *s, const view_t &view, uint64_t storeid) {
                     s->dropped.end();
     return live ? 0 : 1;
   }
+  // A transaction that made or dropped a store reads its own
+  // catalog versions, which no entry may stand for.
+  bool own_ddl = !s->created.empty() || !s->dropped.empty();
+  if (!own_ddl) {
+    auto it = s->store_cache.find(storeid);
+    if (it != s->store_cache.end()) {
+      const sm1::session_t::store_seen_t &e = it->second;
+      uint64_t ddl_ts = s->db->last_ddl_ts.load();
+      // Same answer at both snapshots, and under SERIALIZABLE
+      // only if this transaction's own read took the SIREAD.
+      if (ddl_ts <= e.snapshot_ts && ddl_ts <= view.snapshot_ts &&
+          (!s->ssi || e.begin_seq == s->begin_seq)) {
+        return e.live ? 0 : 1;
+      }
+    }
+  }
   std::string val;
   // Read the catalog row at view: 0 if the store is live.
-  return access_read(s, 0, view, catalog_key(storeid), &val);
+  int r = access_read(s, 0, view, catalog_key(storeid), &val);
+  if (r >= 0 && !own_ddl) {
+    // Start over rather than grow without bound.
+    if (s->store_cache.size() >= store_cache_max) {
+      s->store_cache.clear();
+    }
+    s->store_cache[storeid] = {view.snapshot_ts, s->begin_seq, r == 0};
+  }
+  return r;
 }
 
 } // namespace wisr

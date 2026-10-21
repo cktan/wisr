@@ -785,6 +785,17 @@ int finish_commit(sm1::session_t *s, uint64_t commit_ts) {
 void publish_commit(sm1::session_t *s, uint64_t xid,
                     uint64_t commit_ts) noexcept {
   db_t *db = s->db;
+  // A commit that made or dropped a store raises last_ddl_ts
+  // before its commit_ts is published, so no store cache trusts
+  // an entry across it (§11). A prepared one restored from the
+  // log has both lists from its record (§3.2).
+  if (!s->created.empty() || !s->dropped.empty()) {
+    // Only ever raise it: commits reach here out of order.
+    uint64_t ddl_ts = db->last_ddl_ts.load();
+    while (ddl_ts < commit_ts &&
+           !db->last_ddl_ts.compare_exchange_weak(ddl_ts, commit_ts)) {
+    }
+  }
   // Resolve before publishing: a reader that misses the xid in
   // the active table finds it in the cache or CF:txn (§3.4).
   enter_cache(db, xid, commit_ts);

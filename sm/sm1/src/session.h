@@ -16,6 +16,7 @@
 #include <list>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -191,6 +192,18 @@ struct sm1::session_t {
   long long prepared_at = 0; /* wall-clock seconds of sm1::prepare */
   bool restored = false;     /* rebuilt from its record at open (§9.1) */
   bool limbo = false;        /* its prepare write failed (§8.4) */
+
+  /*
+   * The session's store cache (§11): whether each storeid it
+   * looked up was live, at the snapshot it was read at, by the
+   * transaction (its begin_seq) that read it.
+   */
+  struct store_seen_t {
+    uint64_t snapshot_ts = 0;
+    uint64_t begin_seq = 0;
+    bool live = false;
+  };
+  std::unordered_map<uint64_t, store_seen_t> store_cache;
 
   std::unordered_set<sm1::scan_t *> scans; /* open cursors */
   uint64_t next_scan_id = 0;               /* hands out sm1::scan_t::id */

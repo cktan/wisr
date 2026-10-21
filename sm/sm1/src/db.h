@@ -225,6 +225,13 @@ struct db_t {
   std::atomic<uint64_t> visible_ts{0};
 
   /*
+   * The largest commit_ts of a transaction that made or dropped a
+   * store, raised before that commit_ts is published: a session's
+   * store cache trusts an entry only from below it (§11).
+   */
+  std::atomic<uint64_t> last_ddl_ts{0};
+
+  /*
    * The active transaction table and the commit cache (§3.4),
    * under one mutex so a committing xid moves from one to the
    * other atomically. The cache holds commits as they happen

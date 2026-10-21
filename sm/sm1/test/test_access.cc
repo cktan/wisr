@@ -819,6 +819,67 @@ TEST_CASE("a dropped store stays readable at an older snapshot") {
   sm1::closedb(r);
 }
 
+TEST_CASE("a transaction's own drop hides the store it looked up") {
+  // Verify the session's store cache never answers for a
+  // transaction's own drop (§11).
+  // 1. Create a store with "k" -> "v" and commit.
+  // 2. A transaction reads "k", which caches the store as live.
+  // 3. It drops the store: reading "k" now fails NOTFOUND.
+  // 4. It aborts, and the next transaction reads "v" again.
+  db_fixture_t f;
+  sm1::session_t *s = f.session();
+  uint64_t store = mkstore_committed(s);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  put(s, store, "k", "v");
+  REQUIRE(sm1::commit(s) == 0);
+
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(get(s, store, "k") == "v");
+  REQUIRE(sm1::rmstore(s, store) == 0);
+  std::string_view d;
+  CHECK(sm1::read(s, store, "k", d) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  REQUIRE(sm1::abort(s) == 0);
+
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  CHECK(get(s, store, "k") == "v");
+  REQUIRE(sm1::commit(s) == 0);
+}
+
+TEST_CASE("read committed's next statement misses a store dropped since") {
+  // Verify a store cache entry from one statement does not
+  // outlive a drop committed before the next (§11).
+  // 1. Create a store with "k" -> "v" and commit.
+  // 2. A read committed statement reads "k", which caches the
+  //    store as live at its snapshot.
+  // 3. Another session drops the store and commits.
+  // 4. The statement still reads "v"; the next one fails
+  //    NOTFOUND.
+  db_fixture_t f;
+  sm1::session_t *s = f.session();
+  uint64_t store = mkstore_committed(s);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  put(s, store, "k", "v");
+  REQUIRE(sm1::commit(s) == 0);
+
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::stmt_begin(s) == 0);
+  CHECK(get(s, store, "k") == "v");
+
+  sm1::session_t *other = f.open_other();
+  REQUIRE(sm1::begin(other, sm1::xctlevel_t::repeatable_read) == 0);
+  REQUIRE(sm1::rmstore(other, store) == 0);
+  REQUIRE(sm1::commit(other) == 0);
+
+  CHECK(get(s, store, "k") == "v");
+  REQUIRE(sm1::stmt_begin(s) == 0);
+  std::string_view d;
+  CHECK(sm1::read(s, store, "k", d) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  REQUIRE(sm1::commit(s) == 0);
+  sm1::closedb(other);
+}
+
 TEST_CASE("object ids start at 1000, below which none is handed out") {
   // Verify the reserved range of object ids (SM1_DESIGN.md §4.2).
   // 1. The first store a new database makes is 1000.
