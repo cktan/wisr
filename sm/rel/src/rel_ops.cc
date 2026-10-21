@@ -1714,8 +1714,8 @@ static Janet stat_form(const sm_stat_t &st, uint8_t code, int32_t typmod) {
   janet_struct_put(kv, janet_ckeywordv("distinct"),
                    janet_wrap_number(st.distinct));
   janet_struct_put(kv, janet_ckeywordv("correlation"),
-                   st.has_correlation ? janet_wrap_number(st.correlation)
-                                      : janet_wrap_nil());
+                   st.correlation ? janet_wrap_number(*st.correlation)
+                                  : janet_wrap_nil());
   janet_struct_put(kv, janet_ckeywordv("mcv"), values(st.mcv));
   janet_struct_put(kv, janet_ckeywordv("freqs"), tuple_of(freqs));
   janet_struct_put(kv, janet_ckeywordv("bounds"), values(st.bounds));
@@ -1753,7 +1753,7 @@ static Janet cfun_stats(int32_t argc, Janet *argv) {
       JanetTable *exprs = janet_table(0);
       const index_def_t &ri = p_tdef->indexes.at(d.name);
       for (const sm_stat_t &e : st.stats) {
-        if (e.has_index && e.index == x.oid) {
+        if (e.index == x.oid) {
           const key_col_def_t &k = ri.keys.at(e.position);
           janet_table_put(exprs, janet_wrap_integer(e.position),
                           stat_form(e, k.type_code, k.typmod));
@@ -1774,7 +1774,7 @@ static Janet cfun_stats(int32_t argc, Janet *argv) {
     }
   }
   for (const sm_stat_t &c : st.stats) {
-    if (!c.has_index) {
+    if (!c.index) {
       const sm_column_def_t &col = def.columns.at(c.position);
       janet_table_put(columns, janet_cstringv(col.name.c_str()),
                       stat_form(c, col.type_code, col.typmod));

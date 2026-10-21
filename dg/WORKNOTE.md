@@ -8012,3 +8012,20 @@ instance and column family reads through, sized at attach
   shows its default.
 - `../bench/run.sh` sets it to 2 GB on digres as on
   PostgreSQL.
+
+## Step 277: the planner reads sm3's statistics, not a copy
+
+Q7 of `../bench`, one row by its key, spent about half the
+backend's time rebuilding a table's statistics: the wrapper
+copied sm3's into a form of its own on every `sm_tbl_stats()`,
+and kept the copy only while a caller held it, so each of the
+planner's several asks a query copied every column's values
+again. sm3 keeps them in memory already; `sm_stat_t`,
+`sm_stats_index_t` and `sm_stats_t` are now sm3's own types, in
+`../sm/include/sm_stats.h`, and `sm_tbl_stats()` hands out
+sm3's object (`../sm/OBJECTIVE.md`, `../sm/DESIGN.md`).
+
+- **`has_index` and `has_correlation` go**: a statistic's
+  `index` and `correlation` are `std::optional`, as sm3's
+  were; `smstore_statistic_tuple()` and `put_stats_rows()`
+  test them as such.

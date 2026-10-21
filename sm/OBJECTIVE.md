@@ -133,6 +133,19 @@ These are settled; they bind every level below.
   point. The catalog is loaded into memory at startup and
   written through to sm2 for persistence
   (`sm3/SM3_DESIGN.md` §2).
+- **sm serves any database system, not only digres.** The
+  stack is a library of its own: digres is the first client,
+  and another, MySQL say, may come later. Every client reaches
+  it through `include/sm.h` and nothing else. So what any
+  client would need from its storage is built into sm, once,
+  not into the client: holding a row read without copying it
+  and deforming it only as far as it is read (`ROW.md`), or
+  keeping each table's statistics in memory, handed out
+  without a copy (`sm3/SM3_DESIGN.md` §6). It goes in the
+  level it belongs to, or in the wrapper when it belongs to
+  no level, as the map of each database's open catalog does.
+  A client keeps only what is its own: its SQL, its planner,
+  its executor.
 - **Each level ships its own `SMn_OBJECTIVE.md` and
   `SMn_DESIGN.md`.** This document and `DESIGN.md` at the top
   level cover only what spans levels: the stack's shape, its

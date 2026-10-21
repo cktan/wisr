@@ -2001,66 +2001,6 @@ int sm_tbl_tryanalyze(sm_tbl_t *tbl, int32_t target) {
   });
 }
 
-namespace {
-
-/*
- * The statistics in sm.h's form, each built once from sm3's and shared:
- * by the address of sm3's, which a view keeps alive, so the address is
- * never another's while its view is held.  An expired view is built again.
- */
-std::mutex g_stats_mu;
-std::unordered_map<const sm3::stats_t *, std::weak_ptr<const sm_stats_t>>
-    g_stats_views;
-
-/* sm3's statistics in sm.h's form, with what they were built from. */
-struct stats_view_t {
-  std::shared_ptr<const sm3::stats_t> from;
-  sm_stats_t view;
-};
-
-/* The view of st, built now if no holder has one. */
-std::shared_ptr<const sm_stats_t>
-stats_view(std::shared_ptr<const sm3::stats_t> st) {
-  // One build at a time, so two callers share the first's.
-  std::lock_guard<std::mutex> lock(g_stats_mu);
-  auto it = g_stats_views.find(st.get());
-  if (it != g_stats_views.end()) {
-    if (auto held = it->second.lock()) {
-      return held;
-    }
-  }
-  auto v = std::make_shared<stats_view_t>();
-  v->view = {st->target,
-             st->run_length,
-             st->rows_sampled,
-             st->rowno_limit,
-             st->live_rows,
-             st->heap_disk,
-             st->heap_mem,
-             st->avg_row_bytes,
-             {},
-             {}};
-  for (const sm3::stats_index_t &x : st->indexes) {
-    v->view.indexes.push_back({x.oid, x.disk, x.mem, x.entries, x.belongs});
-  }
-  for (const sm3::stat_t &c : st->stats) {
-    v->view.stats.push_back(
-        {c.index.has_value(), c.index.value_or(0), c.position, c.null_frac,
-         c.width, c.distinct, c.correlation.has_value(),
-         c.correlation.value_or(0), c.mcv, c.mcv_freq, c.bounds});
-  }
-  v->from = std::move(st);
-  std::shared_ptr<const sm_stats_t> out(v, &v->view);
-  // Views no one holds any more go, so the map stays small.
-  for (auto e = g_stats_views.begin(); e != g_stats_views.end();) {
-    e = e->second.expired() ? g_stats_views.erase(e) : std::next(e);
-  }
-  g_stats_views[v->from.get()] = out;
-  return out;
-}
-
-} // namespace
-
 /* A table's statistics: 0, or 1 if never analyzed. */
 int sm_tbl_stats(sm_session_t *session, uint64_t oid,
                  std::shared_ptr<const sm_stats_t> &out) {
@@ -2073,7 +2013,8 @@ int sm_tbl_stats(sm_session_t *session, uint64_t oid,
       out = nullptr;
       return 1;
     }
-    out = stats_view(std::move(st));
+    // sm3's own, as it keeps them: sm.h's form is sm3's.
+    out = std::move(st);
     return 0;
   });
 }

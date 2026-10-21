@@ -72,6 +72,7 @@
 #include "sm_error.h"
 #include "sm_lock.h"
 #include "sm_options.h"
+#include "sm_stats.h"
 
 /*
  * An attached home directory: sm1::env_t, and the sm3 catalog of
@@ -1432,49 +1433,10 @@ int sm_tbl_rowno_limit(sm_tbl_t* tbl, uint64_t* n);
 int sm_tbl_probes(sm_tbl_t* tbl, uint64_t* n);
 
 /*
- * The statistics of one column, or of one expression of an index:
- * PostgreSQL's six. A value is its bytes as a datum of the column's
- * or expression's type, a varlena for a variable-width one.
+ * A table's statistics, sm_stats_t, and its parts, sm_stat_t and
+ * sm_stats_index_t, are in sm_stats.h: sm3's own, handed out as
+ * sm3 keeps them.
  */
-struct sm_stat_t {
-    bool                     has_index;   /* an expression's, not a column's */
-    uint64_t                 index;
-    int32_t                  position;    /* the column's 0-based place, or
-                                             the expression's among the
-                                             index's keys */
-    float                    null_frac;
-    int32_t                  width;
-    float                    distinct;    /* a count, or minus a fraction
-                                             of the rows */
-    bool                     has_correlation;
-    float                    correlation;
-    std::vector<std::string> mcv;         /* most common values */
-    std::vector<float>       mcv_freq;
-    std::vector<std::string> bounds;      /* histogram bounds */
-};
-
-/* An index's sizes and entries as the analyze found them. */
-struct sm_stats_index_t {
-    uint64_t oid;
-    uint64_t disk;
-    uint64_t mem;
-    double   entries;
-    float    belongs;   /* the fraction of rows in a partial index */
-};
-
-/* A table's statistics, as its last analyze recorded them. */
-struct sm_stats_t {
-    int32_t                       target;
-    int32_t                       run_length;
-    uint64_t                      rows_sampled;
-    uint64_t                      rowno_limit;
-    double                        live_rows;
-    uint64_t                      heap_disk;
-    uint64_t                      heap_mem;
-    int32_t                       avg_row_bytes;
-    std::vector<sm_stats_index_t> indexes;
-    std::vector<sm_stat_t>        stats;
-};
 
 /*
  * Analyze the table, in its transaction: sample up to 300 x target
@@ -1497,10 +1459,10 @@ int sm_tbl_tryanalyze(sm_tbl_t* tbl, int32_t target);
 
 /*
  * The table oid's statistics, as the session sees them: 0 with them
- * in out, or 1 if it was never analyzed. They are shared, read-only,
- * by every caller in the process: held from memory, loaded once on
- * first use, built into this form once, and taking no lock. A
- * holder keeps the ones it was given, whatever is analyzed since.
+ * in out, or 1 if it was never analyzed. They are sm3's, shared,
+ * read-only, by every caller in the process: held in memory, loaded
+ * once on first use, never copied, and taking no lock. A holder
+ * keeps the ones it was given, whatever is analyzed since.
  */
 int sm_tbl_stats(sm_session_t* session, uint64_t oid,
                  std::shared_ptr<const sm_stats_t>& out);

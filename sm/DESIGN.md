@@ -92,13 +92,16 @@ log calls into namespace sm1, so the stack and its callers
 name them `sm1::errnum()`, `sm1::set_log()` and the rest
 (`sm0/README.md`).
 
-The root's `include/` also holds two C headers that belong to
-no level and that sm1 includes: `sm_error.h`, the stack's error
-codes, `sm_lock.h`, its lock modes, and `sm_options.h`, sm1's
-database options. They are
-shared definitions, not an upward call: sm1 and the wrapper
-must agree on them bytewise, and one C header is how. sm0
-includes `sm_error.h` too.
+The root's `include/` also holds headers that belong to no
+level and that a level includes: `sm_error.h`, the stack's
+error codes, `sm_lock.h`, its lock modes, and `sm_options.h`,
+sm1's database options, all three C; and `sm_stats.h`, a
+table's statistics, C++, which sm3 includes. They are shared
+definitions, not an upward call: a level and the wrapper must
+agree on them bytewise, and one header is how. sm0 includes
+`sm_error.h` too. For the statistics it also means the wrapper
+hands out sm3's own, as sm3 keeps them in memory, with no copy
+in a form of its own (`OBJECTIVE.md`).
 
 ---
 

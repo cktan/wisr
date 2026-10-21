@@ -202,6 +202,45 @@ TEST_CASE("statistics are recorded, published at commit, and loaded back") {
   CHECK(loaded(db.cat) == 1);
 }
 
+TEST_CASE("every session reads one copy of a table's statistics") {
+  // Verify cat_get_stats hands out the copy it keeps, never another,
+  // as sm.h passes it on to every client (OBJECTIVE.md).
+  // 1. Record statistics and commit.
+  // 2. Two sessions each ask twice: all four are one object, loaded
+  //    once after a restart.
+  // 3. Statistics recorded and committed since are a new object.
+  cat_db_t db;
+  uint64_t t = 0, ix = 0;
+  db.begin();
+  make_t(db, t, ix);
+  REQUIRE(sm3::cat_put_stats(db.ss, t, sample_stats(ix, 9000.0)) == 0);
+  db.commit();
+  db.reload();
+
+  sm3::session_t *other = nullptr;
+  REQUIRE(sm3::session_open(db.cat, db.open(), other) == 0);
+  std::shared_ptr<const sm3::stats_t> a, b, c, d;
+  db.begin();
+  REQUIRE(sm3::cat_get_stats(db.ss, t, a) == 0);
+  REQUIRE(sm3::cat_get_stats(db.ss, t, b) == 0);
+  REQUIRE(sm3::cat_get_stats(other, t, c) == 0);
+  REQUIRE(sm3::cat_get_stats(other, t, d) == 0);
+  REQUIRE(a != nullptr);
+  CHECK(a == b);
+  CHECK(a == c);
+  CHECK(a == d);
+  CHECK(loaded(db.cat) == 1);
+  db.commit();
+
+  db.begin();
+  REQUIRE(sm3::cat_put_stats(db.ss, t, sample_stats(ix, 7000.0)) == 0);
+  db.commit();
+  REQUIRE(sm3::cat_get_stats(other, t, c) == 0);
+  CHECK(c != a);
+  CHECK(c->live_rows == 7000.0);
+  sm3::session_close(other);
+}
+
 TEST_CASE("an aborted analyze leaves the old, and a held one is kept") {
   // Verify rollback and publish leave readers what they had.
   // 1. Record statistics with 9000 rows and commit.

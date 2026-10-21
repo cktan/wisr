@@ -13,6 +13,7 @@
 
 #include "sm1.h"
 #include "sm2.h"
+#include "sm_stats.h"
 
 #include <cstdint>
 #include <atomic>
@@ -1521,48 +1522,15 @@ int tbl_probes(table_t* table, uint64_t& n);
  */
 sm2::datum_t datum_of_bytes(const sm2::type_t* type, std::string_view bytes);
 
-/* The version of the parts below; 1 for now. */
-constexpr int32_t stats_format = 1;
-
-/* The statistics of one column, or of one expression of an index. */
-struct stat_t {
-    std::optional<uint64_t>  index;       /* nullopt: a column's */
-    int32_t                  position;    /* the column's attnum, 0-based,
-                                             or the expression's place
-                                             among the index's keys */
-    float                    null_frac;
-    int32_t                  width;       /* average bytes of a value */
-    float                    distinct;    /* a count, or, below 0, minus
-                                             a fraction of the rows */
-    std::optional<float>     correlation;
-    std::vector<std::string> mcv;         /* most common values */
-    std::vector<float>       mcv_freq;    /* each one's frequency */
-    std::vector<std::string> bounds;      /* histogram bounds */
-};
-
-/* An index's sizes and entries as the analyze found them. */
-struct stats_index_t {
-    uint64_t oid;
-    uint64_t disk;
-    uint64_t mem;
-    double   entries;
-    float    belongs;  /* the fraction of rows in it; 1 if not partial */
-};
-
-/* A table's statistics. */
-struct stats_t {
-    int32_t                    format = stats_format;
-    int32_t                    target;        /* the statistics target */
-    int32_t                    run_length;    /* B, rownos a run */
-    uint64_t                   rows_sampled;
-    uint64_t                   rowno_limit;   /* N when analyzed */
-    double                     live_rows;
-    uint64_t                   heap_disk;
-    uint64_t                   heap_mem;
-    int32_t                    avg_row_bytes;
-    std::vector<stats_index_t> indexes;
-    std::vector<stat_t>        stats;
-};
+/*
+ * A table's statistics, their parts, and the version of the parts,
+ * as the root's include/sm_stats.h lays them out: sm.h hands out
+ * the ones cat_get_stats keeps as they are.
+ */
+constexpr int32_t stats_format = ::sm_stats_format;
+using stat_t = ::sm_stat_t;
+using stats_index_t = ::sm_stats_index_t;
+using stats_t = ::sm_stats_t;
 
 /*
  * Record stats as the table oid's in session's transaction,
