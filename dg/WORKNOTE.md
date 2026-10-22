@@ -8153,3 +8153,17 @@ the analyze from `growth()` again.
   bytes are.
 - No test of the index's scaling, before or now: it shows only
   in an index scan's cost.
+
+## Step 283: a catalog relation is found by name by a binary search
+
+An unqualified name is looked for in `pg_catalog` first, so
+`get_relname_relid()` asked `cat_relation_named()` about every
+user table a query names, twice, and each time it compared the
+name with all 28 catalog relations: 0.4% of Q7 of `../bench`.
+
+- **`gen_cat.py` writes `relations_by_name`**, the relations in
+  name order, and `cat_relation_named()` searches it, as the
+  generator's other lookups by name do.
+- **`get_relname_relid()` asks once.**
+- With the order reversed, `test/server.sh` fails 20 checks,
+  from the lock status views on: they are not found.

@@ -1870,8 +1870,12 @@ RegProcedure get_func_support(Oid funcid) {
  */
 Oid get_relname_relid(const char *relname, Oid relnamespace) {
   /* A catalog a query can read (catalog/catrel.c), in pg_catalog. */
-  if (relnamespace == PG_CATALOG_NAMESPACE && cat_relation_named(relname))
-    return cat_relation_named(relname)->oid;
+  if (relnamespace == PG_CATALOG_NAMESPACE) {
+    const cat_relation_t *r = cat_relation_named(relname);
+
+    if (r != NULL)
+      return r->oid;
+  }
   /* Any other relation is sm's: a table, or an index on one. */
   return smstore_relation_oid(relname, relnamespace);
 }
