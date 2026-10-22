@@ -383,7 +383,7 @@ int encode_table(const table_rec_t &rec, std::string &blob) {
   t.i8(0, rec.nspoid);
   t.bytes(1, rec.name);
   t.i8(2, rec.storeid);
-  t.bytes(3, rec.rowno_seq);
+  t.bytes(3, rec.id_seq);
   t.i2(4, static_cast<int16_t>(rec.next_relid));
   return t.append(part_desc(part_t::table), blob);
 }
@@ -398,7 +398,7 @@ int decode_table(std::string_view blob, table_rec_t &rec) {
   rec.nspoid = t.i8(0);
   rec.name = t.bytes(1);
   rec.storeid = t.i8(2);
-  rec.rowno_seq = t.bytes(3);
+  rec.id_seq = t.bytes(3);
   rec.next_relid = static_cast<uint16_t>(t.i2(4));
   if (!t.ok) {
     return corrupt("a table part cut short");

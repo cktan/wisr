@@ -83,7 +83,8 @@ too. "Row lock" never means what a write does to the row it
 writes: that is the uncommitted version.
 
 **index.** Two things: an sm3 **index**, an object that maps
-an encoded key to a `rowno`; and "index" used loosely of a
+an encoded key to a row's key and `_id`; and "index" used
+loosely of a
 lookup structure in the catalog — the **name index** and the
 **dependency index** of `sm3/CATALOG3.md`, which are key
 shapes and not objects.
@@ -115,7 +116,7 @@ Six numbers name things, and none of the six is ever reused.
 | `seqid` | uint64 | database | the same objid lease | a sequence |
 | `oid` | uint64 | database | the sequence `sm3.oid` | a catalog object |
 | relid | uint16 | one store | a constant, or that table's counter | a rel in that store |
-| `rowno` | uint64 | one table | the sequence `sm3.rowno.<oid>` | a row in the heap |
+| `_id` | uint64 | one table | the sequence `sm3.id.<oid>` | a row, whatever its key (`CLUSTER.md`) |
 | `attnum` | int32 | one table | the column's position | a column |
 
 - **Never reused** means the same thing in every row: a
@@ -131,16 +132,19 @@ Six numbers name things, and none of the six is ever reused.
   per entry. It is the counterpart of PostgreSQL's
   `relfilenode`, scoped to one store rather than the
   database.
-- **A table's heap is always relid 1**, a constant and not a
-  number drawn from the counter, and **0 is unused**, so a
-  zeroed relid is never a live rel. Which relid means what is
-  written down once, in `sm3/SM3_DESIGN.md` §4.
+- **A table's rows are always relid 1**, and its `_id` index
+  0xFFFE, constants and not numbers drawn from the counter, and
+  **0 is unused**, so a zeroed relid is never a live rel.
+  Which relid means what is written down once, in
+  `sm3/SM3_DESIGN.md` §4.
 - **An index therefore has two identities**: its **oid** in
   the catalog, and its **relid** in its table's store, with
   the catalog holding the mapping between them.
-- `rowno` starts at 1, so `rowno = 0` names no row. It is the
-  key of an entry in the heap rel, in the same place an
-  index's encoded key sits in its own.
+- `_id` starts at 1, so `_id = 0` names no row. It is the key
+  of a row in a table without a primary key, and of the row's
+  entry in the `_id` index in one with: a row's key there is
+  its primary key's encoding (`CLUSTER.md` §2). Before the
+  pivot it was `rowno`, and digres's system column still is.
 - Ids 1 to 999 are reserved in both database-wide spaces:
   sm1's objid lease starts at 1000, and so does `sm3.oid`,
   which leaves `pg_catalog` = 1 and `public` = 2 as fixed
@@ -322,7 +326,7 @@ the escaped original, follows it, because two distinct
 strings can share a sort key.
 
 **cut** — a secondary index key truncated to fit
-`max_keylen`. A cut key keeps its `rowno` so cut keys that
+`max_keylen`. A cut key keeps its row's key so cut keys that
 meet stay apart; a unique index's key is never cut and fails
 with `SM_ERR_KEYTOOLONG` instead.
 
@@ -340,15 +344,16 @@ layout built over it.
 **deform** — take a tuple apart into one datum per column.
 
 **rel** — sm2's name for a relation: one member of one sm1
-store, named by its relid. A **heap** rel is keyed by
-`rowno`; an **index** rel is keyed by its encoded key
-columns. Both are entries in
+store, named by its relid. A table's rel is keyed by its
+primary key, or by `_id` without one; an **index** rel is keyed
+by its encoded key columns. Both are entries in
 a rel, differing only in what their keys hold.
 
 **index entry** — one key-value pair of an index: the key is
 the relid, the encoded key columns and, when the entry is not
-uniquely keyed, the `rowno`; the value holds the `rowno`, the
-cut flag and the **INCLUDE** columns.
+uniquely keyed, the row's key; the value holds the row's
+`_id`, the cut flag, the **INCLUDE** columns and, in a table
+with a primary key, the row's key.
 
 **INCLUDE column** — a column carried in an index entry's
 value, not in its key, so a scan can answer from the index.

@@ -218,7 +218,7 @@ static int make_table(session_t *session, uint64_t nspoid,
   table_rec_t rec{nspoid,
                   std::string(name),
                   0,
-                  "sm3.rowno." + std::to_string(t),
+                  "sm3.id." + std::to_string(t),
                   first_index_relid,
                   {},
                   {}};
@@ -236,7 +236,7 @@ static int make_table(session_t *session, uint64_t nspoid,
   }
   // And the sequence its TOAST ids come from, used once the host
   // reads TOAST pointers (cat_set_toast).
-  if (sm1::mkseq(session->sm1, rec.rowno_seq, 1, 1, temp) == 0 &&
+  if (sm1::mkseq(session->sm1, rec.id_seq, 1, 1, temp) == 0 &&
       sm1::mkseq(session->sm1, toast_seq_name(t), 1, 1, temp) == 0 &&
       cat_put_table(session, t, rec) == 0) {
     // The identity columns own their sequences, as own_sequence
@@ -260,7 +260,7 @@ static int make_table(session_t *session, uint64_t nspoid,
     sm1::errnum_t error = sm1::errnum();
     std::string reason = sm1::errmsg();
     sm1::rmseq(session->sm1, toast_seq_name(t));
-    sm1::rmseq(session->sm1, rec.rowno_seq);
+    sm1::rmseq(session->sm1, rec.id_seq);
     sm1::rmstore(session->sm1, rec.storeid);
     sm1::seterr(error, reason);
   }
@@ -390,7 +390,7 @@ int drop_table(session_t *session, uint64_t oid) {
   }
   // Its store takes its rows and index entries with it (DESIGN.md §5).
   if (sm1::rmstore(session->sm1, rec.storeid) != 0 ||
-      sm1::rmseq(session->sm1, rec.rowno_seq) != 0 ||
+      sm1::rmseq(session->sm1, rec.id_seq) != 0 ||
       sm1::rmseq(session->sm1, toast_seq_name(oid)) != 0) {
     return -1;
   }
@@ -641,6 +641,24 @@ int drop_column(session_t *session, uint64_t oid, std::string_view name) {
   return cat_put_table(session, oid, rec);
 }
 
+/*
+ * Put rec, the table oid's record with its primary key added or
+ * dropped, keying its rows anew (../CLUSTER.md §8): an empty store
+ * takes the new key as it is, under the table-oid lock exclusive,
+ * and one with rows is rewritten into a new store.
+ */
+static int rekey(session_t *session, uint64_t oid, table_rec_t rec) {
+  std::shared_ptr<const table_def_t> def;
+  bool empty;
+  // No other transaction writes a row meanwhile, nor reads one.
+  if (cat_lock_table(session, oid, sm1::SM_LOCKMODE_EX, def) != 0 ||
+      sm1::store_empty(session->sm1, rec.storeid, empty) != 0) {
+    return -1;
+  }
+  return empty ? cat_put_table(session, oid, rec)
+               : rewrite_table(session, oid, std::move(rec));
+}
+
 /* Create a plain index; see sm3.h. */
 int create_index(session_t *session, uint64_t table, std::string_view name,
                  std::span<const index_key_spec_t> keys,
@@ -735,8 +753,9 @@ int create_index(session_t *session, uint64_t table, std::string_view name,
     }
     x.includes.push_back(a);
   }
-  // 0xFFFF is TOAST's (SM2_DESIGN.md §5); relids are never reused.
-  if (rec.next_relid == 0xFFFF) {
+  // 0xFFFF is TOAST's and 0xFFFE the _id index's (SM2_DESIGN.md
+  // §5); relids are never reused.
+  if (rec.next_relid >= sm2::id_relid) {
     return invalid("create index: the table has no index relid left");
   }
   uint64_t i;
@@ -746,6 +765,17 @@ int create_index(session_t *session, uint64_t table, std::string_view name,
   x.oid = i;
   rec.next_relid++;
   rec.indexes.push_back(std::move(x));
+  // The rows are keyed by a primary key, which has no entries to
+  // build: they are its entries (../CLUSTER.md §2).
+  if (primary) {
+    if (rekey(session, table, std::move(rec)) != 0 ||
+        cat_put_index_state(session, table, i,
+                            {index_state_t::valid, sm1::SM_OK, {}}) != 0) {
+      return -1;
+    }
+    oid = i;
+    return 0;
+  }
   // The put takes the index's name: one taken fails here.
   if (cat_put_table(session, table, rec) != 0) {
     return -1;
@@ -805,6 +835,11 @@ int drop_index(session_t *session, uint64_t table, uint64_t oid) {
           [&](const fkey_rec_t &fk) { return fk.ref_index == oid; }, by)) {
     return sm1::seterr(sm1::SM_ERR_INUSE,
                        "drop index: foreign key " + by + " uses " + it->name);
+  }
+  // A primary key's entries are the rows, which are keyed anew.
+  if (it->primary) {
+    rec.indexes.erase(it);
+    return rekey(session, table, std::move(rec));
   }
   // Its entries are the keys under its relid in the table's store;
   // sm1 has no range delete, so each is erased.

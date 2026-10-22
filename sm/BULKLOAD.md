@@ -175,7 +175,7 @@ the end of its transaction. Three things follow.
 - **A reader's row lock does not meet the loader.** A reader
   may lock an existing row shared (`tbl_lock`), as a host
   does to check a foreign key. The loader touches no existing
-  row: it adds rows under new rownos and adds index entries.
+  row: it adds rows under new `_id`s and adds index entries.
 
 A table made in the same transaction is held X by its
 creator, which covers SIX. It needs no case of its own.
@@ -192,11 +192,11 @@ A row handed to the loader gets what `tbl_insert` gives it,
 by the same routines (requirement 3):
 
 1. `NOT NULL` is checked.
-2. A `rowno` is taken. The loader takes rownos from the
+2. An `_id` is taken. The loader takes `_id`s from the
    table's sequence a hundred at a time, ahead of need, and
    hands them out as rows arrive. It needs nothing else: a
    sequence hands out each value once and in rising order,
-   so the load's rownos are its own and ascend, whoever else
+   so the load's `_id`s are its own and ascend, whoever else
    draws. With other writers kept out, in batch and file
    mode, they are also above every row the table holds.
 3. The tuple is encoded.
@@ -223,7 +223,7 @@ for the whole load in file mode.
 - **One `seq` is enough** because a load writes each key
   once. `seq` exists so that a transaction writing one key
   twice makes two versions. The heap keys are distinct
-  rownos, and a repeated unique key is refused.
+  `_id`s, and a repeated unique key is refused.
 
 One `seq` for many keys is also what makes a large load
 possible. `seq` is four bytes and counts a transaction's
@@ -393,9 +393,10 @@ when it is written.
 
 ### 4.2 Unique keys
 
-A non-unique entry ends in its row's `rowno`, so it is new by
-construction, and the heap key is the `rowno` itself. Only a
-unique index's key can collide.
+A non-unique entry ends in its row's key, so it is new by
+construction, and a table without a primary key is keyed by
+`_id` itself. Only a unique index's key, or a row's primary key,
+can collide.
 
 | Collides with | Found by |
 | --- | --- |
@@ -448,10 +449,10 @@ Mini-batch is batch mode with the table held IX, so other
 writers go on, as PostgreSQL's `COPY` and `INSERT` let them.
 
 - **A batch is 100 rows**, buffered and written as one
-  RocksDB batch, with one `wts` and one `seq`. Its rownos are
+  RocksDB batch, with one `wts` and one `seq`. Its `_id`s are
   reserved together, 100 drawn ahead (§3.2).
 - **Heap keys and non-unique entries take no lock.** Each ends
-  in a rowno from the reserved block, which no one else can
+  in an `_id` from the reserved block, which no one else can
   draw, so no other transaction can write the same key.
 - **Each unique key is checked as any write checks it**
   (`sm1/WRITELOCK.md` §3.2): under its latch, waiting for
@@ -472,7 +473,7 @@ locks (§6.1).
 
 One small difference from the ordinary path: a transaction may
 lock a row that does not exist yet (`tbl_lock`), and such a
-lock on a reserved rowno is not met when the row is written.
+lock on a reserved `_id` is not met when the row is written.
 PostgreSQL cannot lock a row that does not exist, so nothing
 in the fork does this.
 
@@ -507,7 +508,7 @@ under SIX. The heap goes to files and the index entries go in
 batches, as in batch mode (§4). This is a `COPY` that appends.
 
 The split follows where each part can collide. A heap key is
-a `rowno` the load drew (§3.2), so it is new and above every
+an `_id` the load drew (§3.2), so it is new and above every
 existing row, and a heap file meets nothing. An index key is
 a column value, which may sit anywhere among the entries the
 index has: a unique one must be checked against them, and a
@@ -554,14 +555,20 @@ ascending or not, and unique or not.
 
 | Stream | Declared | So sm1 |
 | --- | --- | --- |
-| the heap | ascending | writes each key straight into a file |
+| the rows, keyed by `_id` | ascending | writes each key straight into a file |
+| the rows, keyed by a primary key | unsorted, unique | sorts them and checks them (§5.4) |
+| the `_id` index | ascending | writes each key straight into a file |
 | a non-unique index | unsorted | sorts it (§5.3) |
 | a unique index | unsorted, unique | sorts it and checks it (§5.4) |
 
-**The heap is ascending for free.** A row's key is its
-`rowno`, and a load's rownos ascend (§3.2). A heap file is
-started, filled as rows arrive, and closed at a size limit,
-256 MB by default, and the next one started.
+**`_id` is ascending for free.** A load's `_id`s ascend
+(§3.2), so the rows of a table without a primary key, keyed by
+`_id`, and the `_id` index of a table with one arrive in order.
+Such a file is started, filled as rows arrive, and closed at a
+size limit, 256 MB by default, and the next one started. A
+table with a primary key gets its rows in no order, and sorts
+them as a unique index's entries are sorted; a repeated
+primary key is found at the close (`CLUSTER.md` §5).
 
 ### 5.3 Sorting an index
 
@@ -618,7 +625,7 @@ atomically.
   bottom of the tree, where no compaction has reason to
   rewrite it, and flushes no memtable first.
 - **In a table with rows only heap files are ingested.**
-  Their rownos are above every row the table holds, so they
+  Their `_id`s are above every row the table holds, so they
   overlap no row. A file at the bottom of the tree may still
   span the end of the heap and the start of the first index,
   whose keys sort next in the store; a heap file inside that
@@ -729,7 +736,7 @@ crash: its data is not durable at all.
 For an empty table file mode follows PostgreSQL's rule. It
 goes further in two ways. A load that appends to a table with
 rows still keeps its heap out of the log, which PostgreSQL
-never does, because new rownos meet no existing row. And, the
+never does, because new `_id`s meet no existing row. And, the
 last row, PostgreSQL gives the saving up on any server with
 standbys, where wisr does not have to.
 
@@ -850,12 +857,12 @@ struct loader_t;
 // Begin a load into table in mode.
 int tbl_load_open(table_t* table, load_mode_t mode, loader_t*& loader);
 
-// Hand over one row. Its rowno is known at once. Checks NOT
+// Hand over one row. Its _id is known at once. Checks NOT
 // NULL and makes every index's entry, as tbl_insert does; a
 // full buffer is written here, and a duplicate it finds is
 // reported here.
 int tbl_load_add(loader_t* loader, std::span<const sm2::datum_t> values,
-                 std::span<const bool> isnull, uint64_t& rowno);
+                 std::span<const bool> isnull, uint64_t& id);
 
 // Finish: write the last batch, or sort, check and ingest, and
 // free the loader, which is freed even on error. The
@@ -875,7 +882,7 @@ in the row: a NULL in a `NOT NULL` column, a key too long for
 a unique index, an evaluator that fails. A duplicate key fails
 the call that writes it: a later `add` or the `close`; in file
 mode in an empty table, the `close`. The message names the
-index and the rownos. After any failure the transaction is to
+index and the `_id`s. After any failure the transaction is to
 be aborted.
 
 ### 7.2 sm1 and sm2, underneath
@@ -901,15 +908,15 @@ int load_put(loader_t* loader, std::string_view key,
 // Write the last batch and free the loader.
 int load_close(loader_t* loader);
 
-// sm2: a row under a fresh rowno, and an index entry, put into
+// sm2: a row under a fresh _id, and an index entry, put into
 // a loader as rel_insert and idx_insert would write them; an
 // entry of a unique index is put with check set.
 int rel_load(rel_t* rel, sm1::loader_t* loader,
              std::span<const datum_t> datums,
-             std::span<const bool> isnull, uint64_t& rowno);
+             std::span<const bool> isnull, uint64_t& id);
 int idx_load(index_t* index, sm1::loader_t* loader,
              std::span<const datum_t> key, std::span<const bool> key_isnull,
-             uint64_t rowno, std::span<const datum_t> include,
+             uint64_t id, std::span<const datum_t> include,
              std::span<const bool> include_isnull);
 ```
 
@@ -1037,7 +1044,7 @@ chunk as §5.7's threshold.
 | sm1 | file mode: streams, files, the sort and the merge, ingestion; the load directory, emptied when the database opens; a loader's files deleted by abort | §5 |
 | sm1 | commit, prepare, a savepoint and a rollback refused with a loader open; a rollback past a load into an empty store empties it | §3.5, §4.3, §5.6 |
 | sm1 | options: the chunk size, the sort budget, the file size, the small-load threshold | §4.1, §5 |
-| sm2 | `rel_load` and `idx_load`, and a cache of drawn rownos in `rel_t` | §3.2, §7.2 |
+| sm2 | `rel_load` and `idx_load`, and a cache of drawn `_id`s in `rel_t` | §3.2, §7.2 |
 | sm3 | `tbl_load_*`, over `tbl_insert`'s own routines; file mode's two cases, told apart when the loader opens; the table's own reads and writes refused while a file loader is open | §5.1, §5.5, §7 |
 | top | `sm_tbl_load_*` in `include/sm.h` | §7 |
 | `rel` | a `load` verb, in each mode | testing |

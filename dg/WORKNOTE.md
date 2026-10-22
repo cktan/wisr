@@ -8196,3 +8196,31 @@ runs where it needs two, 8 to 17% of its time.
   rows exactly; with every row deleted, VACUUM takes it under
   a third of its size; a view is passed over with a warning.
   It fails with the compaction left out, and with the ANALYZE.
+
+## Step 285: a table with a primary key is keyed by it in sm
+
+sm keys a table's rows by its primary key now, and every row
+keeps an `_id`, the number digres still calls `rowno` and packs
+into the tid (`../sm/CLUSTER.md`, its §11 step 1). digres reads
+and writes every row by that number, as before, and sm finds
+the row's key through the table's `_id` index. Two things in
+digres had to change with it:
+
+- **A primary key's row lock names no tid.** sm locks such a
+  row by its key, not its `_id`, and does not read the row to
+  learn the one from the other (`../sm/CLUSTER.md` §10,
+  question 5): `sm_lock_status()` gives the row `rowno` 0, and
+  `pg_lock_status()` shows it as a tuple of its table with page
+  and tuple NULL. `test/server.sh`'s lock status checks lock a
+  row of such a table, and expect that now.
+- **Adding or dropping a primary key forgets the table's
+  handles** (`forget_table()`), as an ALTER TABLE that changes
+  the table does. sm keys the rows anew, in a new store when
+  the table has rows (`../sm/CLUSTER.md` §8), and a handle the
+  transaction opened before reads the rows as they were laid
+  out: pgregress's `join` made temporary tables with primary
+  keys and scanned them through such a handle.
+
+Reading by key, the primary key's index scan as a range of the
+rows, and the system column's new name are the next step
+(`../sm/CLUSTER.md` §11).

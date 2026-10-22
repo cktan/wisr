@@ -553,12 +553,12 @@ TEST_CASE("a key over its budget is refused or cut, as asked") {
   // 3. Under truncate the same key is cut to the budget, a prefix
   //    of the whole key, with cut set; a key that fits is whole,
   //    with cut clear.
-  CHECK(sm2::max_key_len(false) == 4094);
-  CHECK(sm2::max_key_len(true) == 4086);
+  CHECK(sm2::key_budget(0) == 4094);
+  CHECK(sm2::key_budget(sm2::id_len) == 4086);
   std::vector<sm2::key_column_t> cols = {
       {&sm2::type_text, -1, nullptr, false, false}};
   // A text key is its marker, its bytes and a 2-byte terminator.
-  size_t budget = sm2::max_key_len(false);
+  size_t budget = sm2::key_budget(0);
   std::string fits(budget - 3, 'x'), over(budget - 2, 'x');
   std::vector<std::optional<std::string>> fits_row = {fits}, over_row = {over};
   values_t vf = values_of(types_of(cols), fits_row, true);

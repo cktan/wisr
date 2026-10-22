@@ -465,13 +465,18 @@ design:
   which sm3's DDL and index-build protocols rest on
   (`sm3/SM3_DESIGN.md` §2). sm2 still calls only sm1, and
   nothing calls upward.
-- **A table is a heap keyed by `rowno`, and the primary key
-  is an index.** A row's key is an unsigned 64-bit `rowno`
-  from a per-table sm1 sequence, never reused and unchanged by
-  `UPDATE` (`sm2/SM2_DESIGN.md` §5). Every index, the primary
-  key's included, is sm3's and points at `rowno`
-  (`sm3/SM3_DESIGN.md` §3). digres keeps PostgreSQL's 6-byte
-  `ItemPointerData` and maps `rowno` into it: block
+- **A table is keyed by its primary key, and every row has an
+  `_id`** (`CLUSTER.md`). A row's key is its primary key's
+  encoding, or for a table without one its `_id`, an unsigned
+  64-bit number from a per-table sm1 sequence, never reused
+  and unchanged by `UPDATE`; a keyed table keeps an index from
+  `_id` to key (`sm2/SM2_DESIGN.md` §5). Every other index is
+  sm3's and names its row by its key and `_id`
+  (`sm3/SM3_DESIGN.md` §3). Before the pivot the table was a
+  heap keyed by `rowno`, which `_id` is, and the passage below
+  says `rowno` where digres still does. digres keeps
+  PostgreSQL's 6-byte `ItemPointerData` and maps `rowno` into
+  it: block
   `rowno / 256`, offset `rowno % 256 + 1`, as an offset of 0
   is no tid (`../dg/src/backend/access/sm/smstore.c`,
   `SMSTORE_ROWS_PER_BLOCK`). A block of 256 rownos is what
@@ -481,10 +486,10 @@ design:
   only a `rowno` system column (`../dg/WORKNOTE.md` step
   200), and the executor still carries the tid inside, which
   the aim is to remove too, so that a row is named by its
-  `rowno` alone. This matches the heap
-  PostgreSQL's planner and executor assume, serves tables
-  without a primary key, and keeps a primary key change from
-  rewriting every index; a primary key lookup costs two reads.
+  `rowno` alone. A read by the primary key is one read, and a
+  read by `rowno` two in a table with a primary key; a primary
+  key change moves the row and rewrites its index entries
+  (`CLUSTER.md` §7).
 - **One sm1 store per table.** A table's heap, all its
   indexes and its TOAST data are rels in one sm1 store, told
   apart by a 2-byte relid whose values `sm3/SM3_DESIGN.md` §4
@@ -509,7 +514,8 @@ design:
   store when it creates a temporary table; sm2 neither knows
   nor cares (`sm1/SM1_DESIGN.md` §11.3).
 - **The key budget is shared.** `sm1::max_keylen` (4096) bounds
-  relid, index columns and `rowno` together. sm2's encoder
+  relid, index columns and the row's key together, a primary
+  key's held to 1024 bytes. sm2's encoder
   enforces it: an over-long key in a unique index, the primary
   key's among them, refuses the row, and an over-long key in a
   non-unique index is truncated, flagged and rechecked against
@@ -519,7 +525,7 @@ design:
 - **Uniqueness is sm1's `SM_ERR_DUPKEY`, and NULLs are
   distinct.** Two NULLs encode to the same bytes, so the
   encoding cannot say they differ; an entry with a NULL key
-  column carries the `rowno` suffix and is never a duplicate,
+  column carries its row's key and is never a duplicate,
   as SQL requires by default. No level makes a uniqueness
   check of its own. `NULLS NOT DISTINCT` is refused at
   `CREATE INDEX` in v1; adding it

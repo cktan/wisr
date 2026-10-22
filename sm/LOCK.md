@@ -102,16 +102,20 @@ something the caller is not writing.
 | # | Subject | Name | Guards | Today |
 | --- | --- | --- | --- | --- |
 | 1 | a table's definition | `OID`, `be64(oid)` | DDL against readers and writers of the in-memory catalog | built: `cat_lock_table` → `lock_table` → `sm1::lock` |
-| 2 | a heap row, read intent | `ROW`, `(storeid, relid ‖ rowno)` | `FOR SHARE`, `FOR UPDATE`, an index build against a writer | built: `tbl_lock` → `rel_lock` → `sm1::lock` |
+| 2 | a row, read intent | `ROW`, `(storeid, relid ‖ row key)` | `FOR SHARE`, `FOR UPDATE`, an index build against a writer | built: `tbl_lock` → `rel_lock` → `sm1::lock` |
+| 2a | a row's `_id` entry | `ROW`, `(storeid, 0xFFFE ‖ _id)` | a writer at READ COMMITTED that followed a moved row, against moving it again (`CLUSTER.md` §4) | built: `rel_lock_id` → `sm1::lock` |
 | 3 | a catalog key, lock-then-write | `ROW`, `(store 0, "U" ‖ key)` | DDL takes X on each key it is about to write, reads it current, rewrites it | built: `catkv_lock` → `sm1::lock` |
 | 4 | a namespace | `OID`, `be64(oid)` | `DROP SCHEMA` against `CREATE` in it | built: `cat_put_table`, `cat_put_collation` take S, `cat_del_namespace` X → `lock_table` → `sm1::lock` |
 | 5 | a collation or type in use | `(oid)` | `DROP COLLATION` with a column using it | not built |
 | 6 | an index as an object | `(oid)` | `DROP INDEX` against a scan on it | subsumed by 1 |
 | 7 | a sequence as an object | `(oid)` | `CREATE` / `DROP SEQUENCE` | no sm3 sequence object yet |
 
-Every name in use today is **fixed-width**: 9 bytes for a
-table-oid lock, 11 for a heap row, and the width of its kind
-for each catalog key DDL locks. Nothing in sm1 requires that;
+A name is **fixed-width** but for a row's: 9 bytes for a
+table-oid lock, the width of its kind for each catalog key DDL
+locks, 11 for a row of a table without a primary key or a
+row's `_id` entry, and for a row of a table with one, the
+relid and its primary key's encoding, up to 1024 bytes
+(`CLUSTER.md` §4). Nothing in sm1 requires a width;
 `max_keylen` 4096 bounds a name.
 
 ---
@@ -125,9 +129,12 @@ involved.
   *same* sm1 key, which the inserter writes. §4.1.
 - **A name in a namespace.** `CREATE TABLE` inserts the
   `name:` key; a taken one is `SM_ERR_DUPKEY`.
-- **A non-unique index entry.** `entry_key` appends the
-  `rowno` whenever the entry is not uniquely keyed, so two
-  rows never share one. Nothing to contend on.
+- **A non-unique index entry.** `entry_key` appends the row's
+  key whenever the entry is not uniquely keyed, so two rows
+  never share one. Nothing to contend on.
+- **A primary key.** The rows are keyed by it, so two rows
+  with one key are one sm1 key, ordered as a unique entry is
+  (§4.1).
 - **A row write, update or delete.** The uncommitted version
   is the lock.
 - **Gaps and ranges.** Phantoms are SSI's SIREAD range
@@ -143,7 +150,7 @@ involved.
 
 ### 4.1 Two transactions insert the same unique key
 
-A unique index's `entry_key` omits the `rowno` when no key
+A unique index's `entry_key` omits the row's key when no key
 column is null, so both rows produce one key.
 
 ```
@@ -167,7 +174,7 @@ T2  retry -> the key is there committed -> SM_ERR_DUPKEY
   COMMITTED too, where there is no SSI to catch it, which is
   why `sm1::insert` is judged there against the newest
   committed version and not against the snapshot.
-- **A key with a null** gets the `rowno` appended
+- **A key with a null** gets the row's key appended
   (`has_null`), so several NULLs coexist, as in PostgreSQL —
   and such an entry behaves like a non-unique one.
 
@@ -253,22 +260,25 @@ the one that drops it (`sm3/CATALOG.md` §5.1).
 ### 4.3 `FOR UPDATE` against a writer
 
 ```
-T1  sm2::rel_lock(rel, 7, X)
-      // Hold row 7 of the table's heap exclusively without
-      // writing it: SELECT ... FOR UPDATE.
+T1  sm2::rel_lock(rel, id_key(7), X)
+      // Hold the row with _id 7 of a table without a primary
+      // key exclusively without writing it: SELECT ... FOR
+      // UPDATE.
       -> sm1::lock(s, LOCKTYPE_ROW, 1001, be16(1)|be64(7),
                    SM_LOCKMODE_EX)
-         // Take the row lock on the heap's key for rowno 7 in
-         // store 1001 -- the same name a write of that row
-         // would wait on.
-T2  sm2::rel_update(rel, 7, ...)
+         // Take the row lock on the row's key in store 1001 --
+         // the same name a write of that row would wait on.
+T2  sm2::rel_update(rel, id_key(7), 7, ...)
       -> sm1::update(s, 1001, be16(1)|be64(7), ...)
          // Blocks: a write waits for a conflicting lock on the
          // very key it writes.
 ```
 
-This works only because both name `(storeid, relid ‖ rowno)` —
-the lock and the write meet on the data key.
+This works only because both name `(storeid, relid ‖ row key)`
+— the lock and the write meet on the data key. In a table with
+a primary key the row key is its encoding, and a move of the
+row erases that key, so it too waits for the lock
+(`CLUSTER.md` §4).
 
 **So row locks cannot be moved to a namespace of their own.**
 Give them a synthetic name and a writer, which takes no entry,

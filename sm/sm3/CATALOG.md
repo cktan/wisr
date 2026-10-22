@@ -118,7 +118,7 @@ kinds' values are on disk, so frozen.
   and two sessions taking it at once meet in sm1's write-write
   conflict. A namespace's own name is in namespace 0, which is
   no namespace.
-- **A table's rowno sequence is `sm3.rowno.<oid>`**, made with
+- **A table's `_id` sequence is `sm3.id.<oid>`**, made with
   its store.
 - **A sequence's counter is `sm3.seq.<oid>`**, the sm1 sequence
   made and dropped with its `SEQUENCE` entry, in the same
@@ -188,10 +188,10 @@ statistic's, the second; their parts are in
 | --- | --- |
 | meta | format version `int4` |
 | name | kind `int2`, oid `int8`, table oid `int8` or null |
-| table | namespace `int8`, name `text`, storeid `int8`, rowno sequence `text`, next index relid `int2` |
+| table | namespace `int8`, name `text`, storeid `int8`, `_id` sequence `text`, next index relid `int2` |
 | column | name `text`, type code `int2`, typmod `int4`, not null `bool`, dropped `bool`, missing value `bytea` or null, collation oid `int8` or null, default `bytea` or null: the host's expression, opaque, kept and never run; identity kind `int2` (`a` or `d`) or null, identity sequence `int8` or null |
 | index | oid `int8`, name `text`, relid `int2`, unique `bool`, nkey `int4`, ninclude `int4`, three retired and null, eval `bytea` or null, nread `int4` or null, primary `bool` or null, constraint `bool` or null: true, or null for false |
-| index state | state `int2`, error `int2` or null, reason `text` or null, the rownos of a duplicated key's two rows, `int8` or null each |
+| index state | state `int2`, error `int2` or null, reason `text` or null, the `_id`s of a duplicated key's two rows, `int8` or null each |
 | key | attnum `int4`, desc `bool`, nulls first `bool`, collation oid `int8` or null, type code `int2` or null, typmod `int4` or null |
 | include | attnum `int4` |
 | read | attnum `int4`, laid out as an include part is |
@@ -253,7 +253,7 @@ statistic's, the second; their parts are in
 `sm3/include/sm3.h` declares what `cat_open` builds:
 
 - **`table_def_t`**: the table's oid, namespace, name, storeid
-  and rowno sequence; its `column_def_t`s, each with its sm2
+  and `_id` sequence; its `column_def_t`s, each with its sm2
   type, typmod, flags, missing value and collation; its
   `index_def_t`s, each with its `key_column_t`s and INCLUDE
   attributes built for sm2; and the table's sm2 `schema` with
@@ -563,26 +563,26 @@ begins with `cat_get_table_rec` and ends with `cat_put_table`.
 - **`create_table(session, nspoid, name, columns, oid)`**
   checks the name, the column names and each column's type
   code and typmod (`SM_ERR_INVALID`); takes an oid; makes the
-  table's store and rowno sequence; and puts its record. If
+  table's store and `_id` sequence; and puts its record. If
   the put fails — a taken name, no such namespace — it drops
   the store and the sequence again, so a transaction that
   goes on leaves neither behind.
 - **`create_temp_table(session, name, columns, oid)`** is
-  `create_table` in no namespace: a temporary store and rowno
+  `create_table` in no namespace: a temporary store and `_id`
   sequence, and a definition in the session's temporary
   catalog alone (`../TEMPTABLE.md` §4). An identity column is
   `SM_ERR_INVALID`, as no sequence is temporary.
 - **`drop_table(session, oid)`** dels the table's record and
   drops its store, which takes its rows and index entries
-  with it, its rowno sequence, and the sequences its columns
+  with it, its `_id` sequence, and the sequences its columns
   own. One a view reads is `SM_ERR_INUSE`.
 - **`rename_table(session, oid, name)`** puts the record back
   under the new name.
 - **`truncate_table(session, oid)`** empties the table: it
   gets a new, empty store, and the old one is dropped, rows and
   index entries with it. The columns, the indexes and their
-  states, and the rowno sequence are kept, so new rows go on
-  from the last rowno handed out, and the cost is the same
+  states, and the `_id` sequence are kept, so new rows go on
+  from the last `_id` handed out, and the cost is the same
   whatever the table holds.
 - **`add_column(session, oid, col, missing)`** appends a
   column. A row written before it reads it as `missing` — its

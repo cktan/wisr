@@ -1064,9 +1064,11 @@ held_end adv_d
 # and its database.
 # 1. A, in a transaction, locks lkst's row 1 for update and takes advisory
 #    lock 77; B waits to lock row 1 for share; C waits for advisory lock 77.
-# 2. pg_lock_status() lists A's IX on lkst, its X on the row, at the first
-#    row's tid, (0,2) (smstore_rowno_to_tid()), and its X on 77, granted; B's IS on lkst, granted, and its S on
-#    the row, waited for; C's X on 77, waited for; each in this database.
+# 2. pg_lock_status() lists A's IX on lkst, its X on the row, at no tid,
+#    as a row of a table with a primary key is locked by its key
+#    (../sm/CLUSTER.md section 10), and its X on 77, granted; B's IS on lkst,
+#    granted, and its S on the row, waited for; C's X on 77, waited for; each
+#    in this database.
 # 3. A commits: B's S on the row is held, and A's advisory lock, a
 #    session's, still is.
 # 4. A unlocks 77: C holds it.
@@ -1108,9 +1110,9 @@ lock_rows > "$work/lock_status1.out" 2>&1
 cat > "$work/lock_status1.want" <<'ROWS'
 a|advisory|||0|77|1|X|t|t
 a|relation|lkst|||||IX|t|t
-a|tuple|lkst|(0,2)||||X|t|t
+a|tuple|lkst|||||X|t|t
 b|relation|lkst|||||IS|t|t
-b|tuple|lkst|(0,2)||||S|f|t
+b|tuple|lkst|||||S|f|t
 c|advisory|||0|77|1|X|f|t
 ROWS
 cmp -s "$work/lock_status1.out" "$work/lock_status1.want" ||
@@ -1121,7 +1123,7 @@ lock_rows > "$work/lock_status2.out" 2>&1
 cat > "$work/lock_status2.want" <<'ROWS'
 a|advisory|||0|77|1|X|t|t
 b|relation|lkst|||||IS|t|t
-b|tuple|lkst|(0,2)||||S|t|t
+b|tuple|lkst|||||S|t|t
 c|advisory|||0|77|1|X|f|t
 ROWS
 cmp -s "$work/lock_status2.out" "$work/lock_status2.want" ||

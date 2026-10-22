@@ -162,7 +162,7 @@ TEST_CASE("the catalog stores a table's record and makes nothing else") {
   REQUIRE(sm3::cat_get_table_rec(db.ss, oid, back) == 0);
   CHECK(back.name == "raw");
   CHECK(back.storeid == 424242);
-  CHECK(back.rowno_seq == "no.such.sequence");
+  CHECK(back.id_seq == "no.such.sequence");
   CHECK(back.columns.size() == 1);
 
   CHECK(sm3::cat_put_table(db.ss, other, rec) == -1);
@@ -508,7 +508,7 @@ TEST_CASE("columns, indexes and tables are dropped and renamed") {
   CHECK(d->indexes[0].oid == ix2);
   CHECK(d->indexes[0].relid == 3);
   uint64_t storeid = d->storeid;
-  std::string seq = d->rowno_seq;
+  std::string seq = d->id_seq;
 
   db.begin();
   REQUIRE(sm3::drop_table(db.ss, t) == 0);

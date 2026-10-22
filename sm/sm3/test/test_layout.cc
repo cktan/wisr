@@ -25,7 +25,7 @@ sm3::table_rec_t sample_table() {
   t.nspoid = 2;
   t.name = "orders";
   t.storeid = 1001;
-  t.rowno_seq = "orders_rowno";
+  t.id_seq = "orders_rowno";
   t.next_relid = 3;
   t.columns = {
       {"id", 36, -1, true, false, std::nullopt, std::nullopt},
@@ -161,7 +161,7 @@ TEST_CASE("every catalog entity round trips through its value") {
   CHECK(back.nspoid == t.nspoid);
   CHECK(back.name == t.name);
   CHECK(back.storeid == t.storeid);
-  CHECK(back.rowno_seq == t.rowno_seq);
+  CHECK(back.id_seq == t.id_seq);
   CHECK(back.next_relid == t.next_relid);
   CHECK(back.columns.empty());
   CHECK(back.indexes.empty());

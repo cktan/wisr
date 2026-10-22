@@ -1,7 +1,7 @@
 /*
  * sample.cc -- the sample an analyze estimates from
- * (SM3_DESIGN.md §6.4): a pilot of single rownos, then runs of
- * rownos whose slots Floyd's algorithm draws, read through forward
+ * (SM3_DESIGN.md §6.4): a pilot of single _ids, then runs of
+ * _ids whose slots Floyd's algorithm draws, read through forward
  * cursors, with a reservoir keeping a uniform share of the rows
  * found. Nothing walks the table: what is read is bounded by the
  * rows wanted, whatever the table's size.
@@ -20,7 +20,7 @@ namespace {
 /* The bytes of a PostgreSQL page, whose rows a run is as many as. */
 constexpr uint64_t page_bytes = 8192;
 
-/* A run of rownos, first to last, both included. */
+/* A run of _ids, first to last, both included. */
 struct run_t {
   uint64_t first;
   uint64_t last;
@@ -28,7 +28,7 @@ struct run_t {
 
 /*
  * Read the rows of runs, sorted and disjoint, through one forward
- * cursor over 1..n, calling emit(rowno, tuple) for each row found.
+ * cursor over 1..n, calling emit(id, tuple) for each row found.
  * A row the cursor returns past one run is held for the next, so no
  * seek ever goes back.
  */
@@ -42,11 +42,11 @@ int read_runs(sm3::table_t *table, uint64_t n, const std::vector<run_t> &runs,
   std::unique_ptr<sm3::scan_t, decltype(&sm3::tbl_scanend)> guard(
       c, &sm3::tbl_scanend);
   bool have = false, done = false;
-  uint64_t rowno = 0;
+  uint64_t id = 0;
   std::string_view tuple;
-  // The next row, into rowno and tuple: have it, or be done.
+  // The next row, into id and tuple: have it, or be done.
   auto next = [&]() {
-    int rc = sm3::tbl_scannxt(c, rowno, tuple);
+    int rc = sm3::tbl_scannxt(c, id, tuple);
     have = rc == 0;
     done = rc == 1;
     return rc < 0 ? -1 : 0;
@@ -56,13 +56,13 @@ int read_runs(sm3::table_t *table, uint64_t n, const std::vector<run_t> &runs,
       break;
     }
     // Move to the run, unless the row in hand is in it or past it.
-    if (!have || rowno < r.first) {
+    if (!have || id < r.first) {
       if (sm3::tbl_scan_seek(c, r.first) != 0 || next() != 0) {
         return -1;
       }
     }
-    while (have && rowno <= r.last) {
-      emit(rowno, tuple);
+    while (have && id <= r.last) {
+      emit(id, tuple);
       if (next() != 0) {
         return -1;
       }
@@ -137,7 +137,7 @@ int sample_table(table_t *table, int32_t target, std::mt19937_64 &rng,
                        "analyze: a statistics target below 1");
   }
   uint64_t n = 0;
-  if (tbl_rowno_limit(table, n) != 0) {
+  if (tbl_id_limit(table, n) != 0) {
     return -1;
   }
   out.rowno_limit = n;
@@ -147,7 +147,7 @@ int sample_table(table_t *table, int32_t target, std::mt19937_64 &rng,
   }
   const uint64_t want = rows_per_target * static_cast<uint64_t>(target);
 
-  // 1. The pilot: single rownos, for the live fraction and width.
+  // 1. The pilot: single _ids, for the live fraction and width.
   uint64_t m = std::min(rows_per_target, n);
   std::vector<run_t> pilot;
   for (uint64_t r : floyd(n, m, rng)) {
@@ -162,7 +162,7 @@ int sample_table(table_t *table, int32_t target, std::mt19937_64 &rng,
   }
 
   // 2. The run length: an 8 KB page's rows at the pilot's width; a
-  // pilot that found nothing live gives single rownos.
+  // pilot that found nothing live gives single _ids.
   uint64_t w0 = live0 > 0 ? std::max<uint64_t>(1, bytes0 / live0) : page_bytes;
   uint64_t b = std::min(n, std::max<uint64_t>(1, page_bytes / w0));
   out.run_length = static_cast<int32_t>(b);
@@ -179,7 +179,7 @@ int sample_table(table_t *table, int32_t target, std::mt19937_64 &rng,
   k = std::clamp<uint64_t>(k, 1, max_slots);
   // A table the budget covers is read whole: every row is then in
   // the reservoir's draw, not only those of k runs, so a column
-  // that follows the rownos is not estimated from a few clusters.
+  // that follows the _ids is not estimated from a few clusters.
   if (max_slots == slots) {
     k = slots;
   }
@@ -188,17 +188,17 @@ int sample_table(table_t *table, int32_t target, std::mt19937_64 &rng,
   // short and the budget lasts. A reservoir (Algorithm R) keeps a
   // uniform want of every row read.
   uint64_t bytes = 0;
-  auto keep = [&](uint64_t rowno, std::string_view t) {
+  auto keep = [&](uint64_t id, std::string_view t) {
     out.rows_read++;
     bytes += t.size();
     if (out.rows.size() < want) {
-      out.rows.push_back({rowno, std::string(t)});
+      out.rows.push_back({id, std::string(t)});
       return;
     }
     std::uniform_int_distribution<uint64_t> d(0, out.rows_read - 1);
     uint64_t j = d(rng);
     if (j < want) {
-      out.rows[j] = {rowno, std::string(t)};
+      out.rows[j] = {id, std::string(t)};
     }
   };
   std::unordered_set<uint64_t> chosen;
@@ -210,7 +210,7 @@ int sample_table(table_t *table, int32_t target, std::mt19937_64 &rng,
       uint64_t first = s * b + 1;
       uint64_t last = std::min(n, first + b - 1);
       runs.push_back({first, last});
-      out.rownos_covered += last - first + 1;
+      out.ids_covered += last - first + 1;
     }
     out.runs += runs.size();
     // A cursor a round, since this round's slots fall among the last.
@@ -223,27 +223,26 @@ int sample_table(table_t *table, int32_t target, std::mt19937_64 &rng,
     }
     // Short: as many more slots as the live fraction found says.
     double f = out.rows_read > 0 ? static_cast<double>(out.rows_read) /
-                                       static_cast<double>(out.rownos_covered)
-                                 : 1.0 / (out.rownos_covered + 1);
+                                       static_cast<double>(out.ids_covered)
+                                 : 1.0 / (out.ids_covered + 1);
     uint64_t more = static_cast<uint64_t>(
         std::ceil(1.2 * static_cast<double>(want - out.rows_read) / (b * f)));
     next = more_slots(slots, chosen, std::clamp<uint64_t>(more, 1, left), rng);
   }
 
-  // 5. The row count: exact if every rowno was covered, else the
+  // 5. The row count: exact if every _id was covered, else the
   // live fraction of what was, times N.
-  out.whole = out.rownos_covered == n;
+  out.whole = out.ids_covered == n;
   out.live_rows = out.whole ? static_cast<double>(out.rows_read)
                             : static_cast<double>(out.rows_read) *
                                   static_cast<double>(n) /
-                                  static_cast<double>(out.rownos_covered);
+                                  static_cast<double>(out.ids_covered);
   out.avg_row_bytes =
       out.rows_read > 0 ? static_cast<int32_t>(bytes / out.rows_read) : 0;
   // Rowno order, for the correlation of each column's order with it.
-  std::sort(out.rows.begin(), out.rows.end(),
-            [](const sample_row_t &x, const sample_row_t &y) {
-              return x.rowno < y.rowno;
-            });
+  std::sort(
+      out.rows.begin(), out.rows.end(),
+      [](const sample_row_t &x, const sample_row_t &y) { return x.id < y.id; });
   return 0;
 }
 

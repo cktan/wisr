@@ -97,10 +97,10 @@ public:
     // Each kept row is the table's row at its rowno.
     for (size_t i = 0; i < s.rows.size(); i++) {
       std::string_view tuple;
-      REQUIRE(sm3::tbl_read(t, s.rows[i].rowno, tuple) == 0);
+      REQUIRE(sm3::tbl_read(t, s.rows[i].id, tuple) == 0);
       CHECK(tuple == s.rows[i].tuple);
       if (i > 0) {
-        CHECK(s.rows[i - 1].rowno < s.rows[i].rowno);
+        CHECK(s.rows[i - 1].id < s.rows[i].id);
       }
     }
     sm3::tbl_close(t);
@@ -158,7 +158,7 @@ TEST_CASE("a dense table is counted exactly, from runs within the budget") {
   CHECK(s.rowno_limit == 60000);
   CHECK_FALSE(s.whole);
   CHECK(s.run_length > 1);
-  CHECK(s.rownos_covered <= budget(10) + s.run_length);
+  CHECK(s.ids_covered <= budget(10) + s.run_length);
   CHECK(s.rows.size() == 3000);
   CHECK(s.live_rows == 60000.0);
   CHECK(s.avg_row_bytes > 0);
@@ -177,12 +177,12 @@ TEST_CASE("a table the budget covers is read whole, its sample uniform") {
   db.fill(60000);
   sm3::sample_t s = db.sample(100);
   CHECK(s.whole);
-  CHECK(s.rownos_covered == 60000);
+  CHECK(s.ids_covered == 60000);
   CHECK(s.live_rows == 60000.0);
   REQUIRE(s.rows.size() == 30000);
   std::vector<int> tenth(10, 0);
   for (const sm3::sample_row_t &r : s.rows) {
-    tenth[(r.rowno - 1) / 6000]++;
+    tenth[(r.id - 1) / 6000]++;
   }
   for (int c : tenth) {
     CHECK(std::abs(c - 3000) < 300);
@@ -201,7 +201,7 @@ TEST_CASE("a sparse table is counted within a few percent, in the budget") {
   db.thin(60000, [](uint64_t r) { return r % 10 == 0; });
   sm3::sample_t s = db.sample(10);
   CHECK_FALSE(s.whole);
-  CHECK(s.rownos_covered <= budget(10) + s.run_length);
+  CHECK(s.ids_covered <= budget(10) + s.run_length);
   CHECK(std::abs(s.live_rows - 6000.0) < 300.0);
   CHECK(s.rows.size() <= 3000);
   CHECK(s.rows.size() > 1500);
@@ -219,7 +219,7 @@ TEST_CASE("an emptied table is sampled within the budget, never scanned") {
   CHECK_FALSE(s.whole);
   CHECK(s.rows.empty());
   CHECK(s.live_rows == 0.0);
-  CHECK(s.rownos_covered <= budget(10) + s.run_length);
+  CHECK(s.ids_covered <= budget(10) + s.run_length);
 }
 
 TEST_CASE("a small table is read whole and counted exactly") {
@@ -235,7 +235,7 @@ TEST_CASE("a small table is read whole and counted exactly") {
   db.fill(1000);
   s = db.sample(10);
   CHECK(s.whole);
-  CHECK(s.rownos_covered == 1000);
+  CHECK(s.ids_covered == 1000);
   CHECK(s.rows.size() == 1000);
   CHECK(s.live_rows == 1000.0);
   db.begin();

@@ -120,8 +120,8 @@ int sm_seterr(sm_errnum_t code, const char* msg);
 /*
  * Where the calling thread's last error, SM_ERR_DUPKEY, met its
  * key, as far as the stack knows: the unique index's oid in
- * *index, 0 if not known, and the rownos of the rows that hold
- * the key in rownos, up to two. Returns how many rownos; 0, with
+ * *index, 0 if not known, and the _ids of the rows that hold
+ * the key in rownos, up to two. Returns how many _ids; 0, with
  * *index 0, after any other error.
  */
 int sm_errdup(uint64_t* index, uint64_t rownos[2]);
@@ -342,7 +342,9 @@ typedef struct sm_lock_status_t {
     uint64_t      oid;     /* OBJECT: the object's; ROW: its table's,
                               0 if no committed table has the row's
                               store */
-    uint64_t      rowno;   /* ROW: the row's */
+    uint64_t      rowno;   /* ROW: the row's _id; 0 for a row of a
+                              table with a primary key, whose lock
+                              names its key (../CLUSTER.md §10) */
     sm_lockmode_t mode;    /* held, or asked */
     uint64_t      tag;     /* the session's number (sm_session_tag),
                               0 for none or a prepared transaction */
@@ -396,10 +398,10 @@ int sm_abort_prepared(sm_session_t* session, const char* gid);
  *
  * A counter of the caller's own, with a name and no namespace. SQL's
  * CREATE SEQUENCE is sm_cat_create_sequence, a sequence in a
- * namespace with one of these behind it. A table's store and its rowno sequence are made and dropped with
+ * namespace with one of these behind it. A table's store and its _id sequence are made and dropped with
  * the table, by sm_cat_create_table and sm_cat_drop_table, and are
  * not reachable here. Names beginning "sm3." are sm3's own, a
- * table's rowno sequence among them, and each call below refuses
+ * table's _id sequence among them, and each call below refuses
  * one with SM_ERR_INVALID.
  */
 
@@ -555,14 +557,14 @@ struct sm_bound_t {
  * entries behind (sm3/SM3_DESIGN.md section 3).
  */
 
-/* A cursor over a table's rows, in rowno order; sm_tbl_scan opens one. */
+/* A cursor over a table's rows, in _id order; sm_tbl_scan opens one. */
 typedef struct sm_rel_scan_t sm_rel_scan_t;
 
 /*
  * The next row: 0 with it, 1 at the end, or -1. The tuple is valid
  * until the next call on this cursor.
  */
-int sm_rel_scannxt(sm_rel_scan_t* scan, uint64_t* rowno, const void** tuple,
+int sm_rel_scannxt(sm_rel_scan_t* scan, uint64_t* id, const void** tuple,
                    size_t* len);
 
 /*
@@ -571,10 +573,10 @@ int sm_rel_scannxt(sm_rel_scan_t* scan, uint64_t* rowno, const void** tuple,
  * next call, its close, and the end of its transaction make the ref
  * stale; sm_unpin leaves the cursor's pin alone.
  */
-int sm_rel_scannxt(sm_rel_scan_t* scan, uint64_t* rowno, sm_pin_ref_t* ref);
+int sm_rel_scannxt(sm_rel_scan_t* scan, uint64_t* id, sm_pin_ref_t* ref);
 
-/* Move the cursor forward to rowno. */
-int sm_rel_scan_seek(sm_rel_scan_t* scan, uint64_t rowno);
+/* Move the cursor forward to _id id. */
+int sm_rel_scan_seek(sm_rel_scan_t* scan, uint64_t id);
 
 /* Close a cursor; NULL is a no-op. */
 void sm_rel_scanend(sm_rel_scan_t* scan);
@@ -594,7 +596,7 @@ typedef struct sm_idx_scan_t sm_idx_scan_t;
  * The next entry: 0 with it, 1 at the end, or -1. The value is
  * valid until the next call on this cursor.
  */
-int sm_idx_scannxt(sm_idx_scan_t* scan, uint64_t* rowno, bool* cut,
+int sm_idx_scannxt(sm_idx_scan_t* scan, uint64_t* id, bool* cut,
                    const void** value, size_t* len);
 
 /* Move the cursor forward to the first entry at or after lo. */
@@ -1190,15 +1192,15 @@ uint64_t sm_tbl_version(const sm_tbl_t* tbl);
  * sm_errdup().
  */
 
-/* Insert a row of n values and null flags; *rowno is its id. */
+/* Insert a row of n values and null flags; *id is its _id. */
 int sm_tbl_insert(sm_tbl_t* tbl, const sm_datum_t* values,
-                  const bool* isnull, size_t n, uint64_t* rowno);
+                  const bool* isnull, size_t n, uint64_t* id);
 
 /*
  * Insert a row unless a row already has its key in one of the
  * narbiters unique indexes arbiters names by oid, or in any unique
  * index of the table if narbiters is 0: INSERT ... ON CONFLICT.
- * Returns 0 with the new row's id in *rowno; 1, with nothing
+ * Returns 0 with the new row's _id in *id; 1, with nothing
  * written, with the id of the row that has the key; or -1.
  *
  * It finds a conflict before the row is written, and leaves
@@ -1215,7 +1217,7 @@ int sm_tbl_insert(sm_tbl_t* tbl, const sm_datum_t* values,
 int sm_tbl_insert_arbiter(sm_tbl_t* tbl, const sm_datum_t* values,
                           const bool* isnull, size_t n,
                           const uint64_t* arbiters, size_t narbiters,
-                          uint64_t* rowno);
+                          uint64_t* id);
 
 /*
  * A BULK LOAD (BULKLOAD.md section 5, section 13): many rows into
@@ -1252,42 +1254,42 @@ int sm_tbl_insert_arbiter(sm_tbl_t* tbl, const sm_datum_t* values,
  */
 int sm_tbl_load_begin(sm_tbl_t* tbl);
 
-/* Hand over one row of n values and null flags; *rowno is its id. */
+/* Hand over one row of n values and null flags; *id is its _id. */
 int sm_tbl_load_add(sm_tbl_t* tbl, const sm_datum_t* values,
-                    const bool* isnull, size_t n, uint64_t* rowno);
+                    const bool* isnull, size_t n, uint64_t* id);
 
 /* End the load: every row handed over is in the table. */
 int sm_tbl_load_end(sm_tbl_t* tbl);
 
 /*
- * Replace the row at rowno. With ref, the tuple replaced -- at
+ * Replace the row with _id id. With ref, the tuple replaced -- at
  * read committed the newest, not the one the caller read -- is
  * pinned into *ref, and *old and *len view it until the pin is
  * released. The row *ref held before is released only when the
  * write succeeds, so values may point into it. On failure *old is
  * NULL, and *ref keeps what it held.
  */
-int sm_tbl_update(sm_tbl_t* tbl, uint64_t rowno, const sm_datum_t* values,
+int sm_tbl_update(sm_tbl_t* tbl, uint64_t id, const sm_datum_t* values,
                   const bool* isnull, size_t n, sm_pin_ref_t* ref = nullptr,
                   const void** old = nullptr, size_t* len = nullptr);
 
-/* Delete the row at rowno; ref, old and len as sm_tbl_update's. */
-int sm_tbl_delete(sm_tbl_t* tbl, uint64_t rowno, sm_pin_ref_t* ref = nullptr,
+/* Delete the row with _id id; ref, old and len as sm_tbl_update's. */
+int sm_tbl_delete(sm_tbl_t* tbl, uint64_t id, sm_pin_ref_t* ref = nullptr,
                   const void** old = nullptr, size_t* len = nullptr);
 
 /*
- * Read the row at rowno: 0 with its tuple, 1 if none, or -1. The
+ * Read the row with _id id: 0 with its tuple, 1 if none, or -1. The
  * tuple is valid only until the next call on this session.
  */
-int sm_tbl_read(sm_tbl_t* tbl, uint64_t rowno, const void** tuple,
+int sm_tbl_read(sm_tbl_t* tbl, uint64_t id, const void** tuple,
                 size_t* len);
 
 /*
- * Read the newest committed version of the row at rowno, which a
+ * Read the newest committed version of the row with _id id, which a
  * read committed writer does after SM_ERR_UPDATED, before it
  * writes again.
  */
-int sm_tbl_read_latest(sm_tbl_t* tbl, uint64_t rowno, const void** tuple,
+int sm_tbl_read_latest(sm_tbl_t* tbl, uint64_t id, const void** tuple,
                        size_t* len);
 
 /*
@@ -1295,15 +1297,15 @@ int sm_tbl_read_latest(sm_tbl_t* tbl, uint64_t rowno, const void** tuple,
  * the pin *ref then names is released. A pin *ref names already
  * is released first; on 1 or -1 *ref is zero.
  */
-int sm_tbl_read(sm_tbl_t* tbl, uint64_t rowno, sm_pin_ref_t* ref,
+int sm_tbl_read(sm_tbl_t* tbl, uint64_t id, sm_pin_ref_t* ref,
                 const void** tuple, size_t* len);
 
 /* sm_tbl_read_latest into a pin, as sm_tbl_read into one. */
-int sm_tbl_read_latest(sm_tbl_t* tbl, uint64_t rowno, sm_pin_ref_t* ref,
+int sm_tbl_read_latest(sm_tbl_t* tbl, uint64_t id, sm_pin_ref_t* ref,
                        const void** tuple, size_t* len);
 
 /*
- * Lock the row at rowno in mode without writing it, to the end of
+ * Lock the row with _id id in mode without writing it, to the end of
  * the transaction: SM_LOCKMODE_SH, as a foreign key check locks the
  * parent row and SELECT ... FOR SHARE a row it read, which other
  * readers of the key may share and a writer waits for; or
@@ -1311,7 +1313,7 @@ int sm_tbl_read_latest(sm_tbl_t* tbl, uint64_t rowno, sm_pin_ref_t* ref,
  * table opened to write. The row need not exist. It waits as a
  * write does.
  */
-int sm_tbl_lock(sm_tbl_t* tbl, uint64_t rowno, sm_lockmode_t mode);
+int sm_tbl_lock(sm_tbl_t* tbl, uint64_t id, sm_lockmode_t mode);
 
 /*
  * As sm_tbl_lock, but never waiting: 0 with the row locked; 1,
@@ -1320,14 +1322,14 @@ int sm_tbl_lock(sm_tbl_t* tbl, uint64_t rowno, sm_lockmode_t mode);
  * SELECT ... FOR UPDATE NOWAIT fails on 1, and SKIP LOCKED passes
  * over the row.
  */
-int sm_tbl_trylock(sm_tbl_t* tbl, uint64_t rowno, sm_lockmode_t mode);
+int sm_tbl_trylock(sm_tbl_t* tbl, uint64_t id, sm_lockmode_t mode);
 
 /*
  * Empty the table, as SQL's TRUNCATE: its rows and every index's
  * entries go, in the table's transaction, at the same cost however
  * many there are. The table must be opened SM_LOCKMODE_EX,
  * SM_ERR_INVALID if not. Columns, indexes and the row numbering
- * are kept, so new rows go on from the last rowno handed out. The
+ * are kept, so new rows go on from the last _id handed out. The
  * handle stays open on the emptied table, and sm_tbl_def gives its
  * new definition. A transaction that began before the truncate
  * committed and first reads the table after finds it empty, as in
@@ -1417,7 +1419,8 @@ bool sm_tbl_index_usable(const sm_tbl_t* tbl, uint64_t index);
 
 /*
  * The number of attributes in an entry's value in that index: the
- * rowno, the cut flag, then the INCLUDE columns; 0 if there is no
+ * _id, the cut flag, the INCLUDE columns, then in a table with a
+ * primary key the row's key; 0 if there is no
  * such index.
  */
 size_t sm_tbl_idx_ncols(const sm_tbl_t* tbl, uint64_t index);
@@ -1436,7 +1439,7 @@ int sm_tbl_idx_deform(sm_tbl_t* tbl, uint64_t index, const void* value,
  * What the table's LSM looks like now, read live and stored
  * nowhere: the heap's bytes and the index's, in sorted files
  * (disk) and in memtables (mem), apart, never summed; N, the last
- * rowno handed out, 0 if none; and the sorted runs a lookup in the
+ * _id handed out, 0 if none; and the sorted runs a lookup in the
  * table's store may visit.
  */
 int sm_tbl_size(sm_tbl_t* tbl, uint64_t* disk, uint64_t* mem);
@@ -1463,7 +1466,7 @@ int sm_tbl_compact(sm_tbl_t* tbl);
 
 /*
  * Analyze the table, in its transaction: sample up to 300 x target
- * of its rows, reading no more than ten times that in rownos
+ * of its rows, reading no more than ten times that in _ids
  * whatever its size, and record each column's statistics, each
  * partial or expression index's from the evaluator, and the sizes.
  * They commit and roll back with the transaction. A table whose
@@ -1492,7 +1495,7 @@ int sm_tbl_stats(sm_session_t* session, uint64_t oid,
 
 /*
  * Create the table name in nspoid with these columns: its store,
- * its rowno sequence and its definition, seen by the session's
+ * its _id sequence and its definition, seen by the session's
  * transaction at once and by others at commit. An identity column
  * owns its sequence from then on (sm3::create_table).
  */

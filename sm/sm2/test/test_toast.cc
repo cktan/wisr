@@ -34,7 +34,7 @@ const std::vector<sm2::attribute_t> &schema() {
 /* Open a rel over db's store; with toast, one that moves datums out. */
 sm2::rel_t *open_rel(db_t &db, sm1::session_t *s, bool toast = true) {
   sm2::rel_t *rel = nullptr;
-  REQUIRE(sm2::rel_open(s, db.store(), 0, schema(), "rowno",
+  REQUIRE(sm2::rel_open(s, db.store(), 0, schema(), {}, "rowno",
                         toast ? "toast" : "", rel) == 0);
   return rel;
 }
@@ -98,7 +98,8 @@ std::optional<std::string> held(std::string_view tuple, size_t ordinal) {
 /* The tuple of the row at rowno, copied. */
 std::string read(sm2::rel_t *rel, uint64_t rowno) {
   std::string_view tuple;
-  REQUIRE_MESSAGE(sm2::rel_read(rel, rowno, tuple) == 0, sm1::errmsg());
+  REQUIRE_MESSAGE(sm2::rel_read(rel, sm2::id_key(rowno), tuple) == 0,
+                  sm1::errmsg());
   return std::string(tuple);
 }
 
@@ -275,7 +276,8 @@ TEST_CASE("a datum shorter than toast_min is never moved out") {
   std::vector<sm2::attribute_t> wide(
       40, {&sm2::type_text, -1, false, std::nullopt});
   sm2::rel_t *rel = nullptr;
-  REQUIRE(sm2::rel_open(s, db.store(), 0, wide, "rowno", "toast", rel) == 0);
+  REQUIRE(sm2::rel_open(s, db.store(), 0, wide, {}, "rowno", "toast", rel) ==
+          0);
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
   for (size_t n : {sm2::toast_min - 1, sm2::toast_min}) {
     std::vector<std::string> v(40, sm2::make_varlena(text_of(n)));
@@ -371,8 +373,9 @@ TEST_CASE("an update keeps a datum it is given back, and erases one it "
   CHECK(chunks(db, s) == 3);
 
   datums_t keep({1, ptr, "b2"}, true);
-  REQUIRE_MESSAGE(sm2::rel_update(rel, rowno, keep.d, keep.null) == 0,
-                  sm1::errmsg());
+  REQUIRE_MESSAGE(
+      sm2::rel_update(rel, sm2::id_key(rowno), rowno, keep.d, keep.null) == 0,
+      sm1::errmsg());
   std::string tuple = read(rel, rowno);
   CHECK(*held(tuple, 1) == ptr);
   CHECK(value(rel, tuple, 2) == "b2");
@@ -381,9 +384,9 @@ TEST_CASE("an update keeps a datum it is given back, and erases one it "
   datums_t change({1, text_of(10000, 'y'), "b2"});
   std::string_view old;
   rawpin_ptr_t pin;
-  REQUIRE_MESSAGE(
-      0 == sm2::rel_update(rel, rowno, change.d, change.null, pin.get(), old),
-      sm1::errmsg());
+  REQUIRE_MESSAGE(0 == sm2::rel_update(rel, sm2::id_key(rowno), rowno, change.d,
+                                       change.null, pin.get(), old),
+                  sm1::errmsg());
   CHECK(*held(old, 1) == ptr);
   tuple = read(rel, rowno);
   CHECK(*held(tuple, 1) != ptr);
@@ -391,7 +394,8 @@ TEST_CASE("an update keeps a datum it is given back, and erases one it "
   CHECK(chunks(db, s) == 2);
 
   datums_t shrink({1, "small", "b2"});
-  REQUIRE(sm2::rel_update(rel, rowno, shrink.d, shrink.null) == 0);
+  REQUIRE(sm2::rel_update(rel, sm2::id_key(rowno), rowno, shrink.d,
+                          shrink.null) == 0);
   CHECK(value(rel, read(rel, rowno), 1) == "small");
   CHECK(chunks(db, s) == 0);
   REQUIRE(sm1::commit(s) == 0);
@@ -411,12 +415,12 @@ TEST_CASE("a delete erases the row's datums, and hands back its tuple") {
   CHECK(chunks(db, s) == 5);
   std::string_view old;
   rawpin_ptr_t pin;
-  REQUIRE_MESSAGE(0 == sm2::rel_delete(rel, rowno, pin.get(), old),
+  REQUIRE_MESSAGE(0 == sm2::rel_delete(rel, sm2::id_key(rowno), pin.get(), old),
                   sm1::errmsg());
   CHECK(sm2::varlena_is_toast(*held(old, 1)));
   CHECK(sm2::varlena_is_toast(*held(old, 2)));
   std::string_view tuple;
-  CHECK(sm2::rel_read(rel, rowno, tuple) == 1);
+  CHECK(sm2::rel_read(rel, sm2::id_key(rowno), tuple) == 1);
   CHECK(chunks(db, s) == 0);
   REQUIRE(sm1::commit(s) == 0);
   sm2::rel_close(rel);
@@ -441,8 +445,8 @@ TEST_CASE("a write with hold keeps the old datums until rel_release") {
   datums_t change({1, second, std::nullopt});
   std::string_view old;
   rawpin_ptr_t pin;
-  REQUIRE(0 == sm2::rel_update(rel, rowno, change.d, change.null, pin.get(),
-                               old, true));
+  REQUIRE(0 == sm2::rel_update(rel, sm2::id_key(rowno), rowno, change.d,
+                               change.null, pin.get(), old, true));
   std::string ptr = *held(old, 1), out;
   REQUIRE_MESSAGE(sm2::toast_fetch(rel, ptr, out) == 0, sm1::errmsg());
   CHECK(out == first);
@@ -451,7 +455,7 @@ TEST_CASE("a write with hold keeps the old datums until rel_release") {
   CHECK(chunks(db, s) == 2);
   CHECK(sm2::toast_fetch(rel, ptr, out) == -1);
 
-  REQUIRE(0 == sm2::rel_delete(rel, rowno, pin.get(), old, true));
+  REQUIRE(0 == sm2::rel_delete(rel, sm2::id_key(rowno), pin.get(), old, true));
   ptr = *held(old, 1);
   REQUIRE(sm2::toast_fetch(rel, ptr, out) == 0);
   CHECK(out == second);
@@ -488,7 +492,7 @@ TEST_CASE("two rows never share a datum") {
   CHECK(ptr2 != ptr);
   CHECK(chunks(db, s) == 6);
 
-  REQUIRE(sm2::rel_delete(rel, one) == 0);
+  REQUIRE(sm2::rel_delete(rel, sm2::id_key(one)) == 0);
   CHECK(chunks(db, s) == 3);
   CHECK(value(rel, read(rel, two), 1) == big);
   REQUIRE(sm1::commit(s) == 0);
@@ -497,7 +501,7 @@ TEST_CASE("two rows never share a datum") {
   datums_t stale(
       {2, sm2::make_toast_ptr({20000, db.store(), 999999}), std::nullopt},
       true);
-  CHECK(sm2::rel_update(rel, two, stale.d, stale.null) == -1);
+  CHECK(sm2::rel_update(rel, sm2::id_key(two), two, stale.d, stale.null) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   REQUIRE(sm1::abort(s) == 0);
 
@@ -532,7 +536,8 @@ TEST_CASE("a datum out of line follows its transaction") {
   int sp = sm1::savepoint(s);
   REQUIRE(sp >= 0);
   datums_t change({1, text_of(50000, 'z'), std::nullopt});
-  REQUIRE(sm2::rel_update(rel, rowno, change.d, change.null) == 0);
+  REQUIRE(sm2::rel_update(rel, sm2::id_key(rowno), rowno, change.d,
+                          change.null) == 0);
   CHECK(chunks(db, s) == 7);
   REQUIRE(sm1::rollback(s, sp) == 0);
   CHECK(chunks(db, s) == 3);
@@ -565,7 +570,8 @@ TEST_CASE("a snapshot reads the datum it saw, and a later one finds it gone") {
   std::string ptr = *held(read(ra, rowno), 1);
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
   datums_t change({1, second, std::nullopt});
-  REQUIRE(sm2::rel_update(rb, rowno, change.d, change.null) == 0);
+  REQUIRE(sm2::rel_update(rb, sm2::id_key(rowno), rowno, change.d,
+                          change.null) == 0);
   REQUIRE(sm1::commit(b) == 0);
 
   std::string out;
@@ -602,17 +608,18 @@ TEST_CASE("an update sm1 refuses writes no chunk") {
   read(ra, rowno);
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
   datums_t v2({1, "v2", std::nullopt});
-  REQUIRE(sm2::rel_update(rb, rowno, v2.d, v2.null) == 0);
+  REQUIRE(sm2::rel_update(rb, sm2::id_key(rowno), rowno, v2.d, v2.null) == 0);
   REQUIRE(sm1::commit(b) == 0);
 
   datums_t big({1, text_of(20000), std::nullopt});
-  CHECK(sm2::rel_update(ra, rowno, big.d, big.null) == -1);
+  CHECK(sm2::rel_update(ra, sm2::id_key(rowno), rowno, big.d, big.null) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_UPDATED);
   CHECK(chunks(db, a) == 0);
   std::string_view tuple;
-  REQUIRE(sm2::rel_read_latest(ra, rowno, tuple) == 0);
-  REQUIRE_MESSAGE(sm2::rel_update(ra, rowno, big.d, big.null) == 0,
-                  sm1::errmsg());
+  REQUIRE(sm2::rel_read_latest(ra, sm2::id_key(rowno), tuple) == 0);
+  REQUIRE_MESSAGE(
+      sm2::rel_update(ra, sm2::id_key(rowno), rowno, big.d, big.null) == 0,
+      sm1::errmsg());
   CHECK(chunks(db, a) == 3);
   REQUIRE(sm1::commit(a) == 0);
   sm2::rel_close(ra);

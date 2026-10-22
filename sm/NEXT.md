@@ -12,7 +12,8 @@ has sm3's own order of work.
 1. **A table clustered on its primary key** (`CLUSTER.md`).
    The heap keyed by `rowno` goes; a row is keyed by its
    primary key, or by `_id` when it has none, and `_id` keeps
-   the executor's TID. In the steps of `CLUSTER.md` §11.
+   the executor's TID. In the steps of `CLUSTER.md` §11: the
+   first, sm's, is built; next, digres reads by key.
 
 The spike `PART4.md` §7 aimed the stack at is long past:
 digres runs on it (`PART4.md` §10). Statistics for a planner

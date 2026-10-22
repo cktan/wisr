@@ -366,6 +366,26 @@ int tbl_fetch_cols(table_t *table, const std::vector<int32_t> &atts,
                    std::span<sm2::datum_t> row, std::span<const bool> isnull,
                    std::vector<std::string> &own);
 
+/* The table's primary key, or nullptr if it has none. */
+inline const index_def_t *primary_of(const table_def_t &def) {
+  for (const index_def_t &x : def.indexes) {
+    if (x.primary) {
+      return &x;
+    }
+  }
+  return nullptr;
+}
+
+/*
+ * Rewrite the table oid into a new store, its rows keyed as rec
+ * says, rec being its record after (../CLUSTER.md §8): every row is
+ * copied with its _id, and every index's entries made, under the
+ * table-oid lock exclusive. The record is put, and the old store
+ * goes at commit. Two rows with one primary key fail with
+ * SM_ERR_DUPKEY, their _ids in sm1::errdup().
+ */
+int rewrite_table(session_t *session, uint64_t oid, table_rec_t rec);
+
 /* The sm1 sequence the table oid draws its TOAST ids from. */
 inline std::string toast_seq_name(uint64_t oid) {
   return "sm3.toast." + std::to_string(oid);

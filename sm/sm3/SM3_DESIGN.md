@@ -1,20 +1,22 @@
 # DESIGN — sm3, schema and index maintenance
 
 The level that turns sm2's tuples into a schema. sm2 gives it
-typed rows in a heap keyed by `rowno`, and indexes whose
-entries are keyed by encoded columns and point at a `rowno`.
-sm3 gives those relations names and definitions, decides which
-indexes a table has — the primary key's among them — and keeps
-them in step with its heap, and adds statistics.
+typed rows keyed by their primary key, or by their `_id`
+without one (`../CLUSTER.md`), and indexes whose entries are
+keyed by encoded columns and name their row by its key. sm3
+gives those relations names and definitions, decides which
+indexes a table has — the primary key, which keys its rows,
+among them — and keeps them in step with its rows, and adds
+statistics.
 This document is the design of record; it follows the
 decisions in `SM3_OBJECTIVE.md`:
 
 | Decision | Choice |
 | --- | --- |
 | Catalog | in memory, written through to sm2, lock-based DDL |
-| Index entry | `encode(index columns) ‖ rowno` → a tuple of the `rowno`, a cut flag and the INCLUDE columns; a unique index's key drops the `rowno` suffix unless a key column is NULL, and is never cut |
+| Index entry | `encode(index columns) ‖ row key` → a tuple of the row's `_id`, a cut flag, the INCLUDE columns and in a keyed table the row's key; a unique index's key drops the suffix unless a key column is NULL, and is never cut; the primary key has no entries, the rows being keyed by it |
 | Encoder | sm2's, called with the same per-column arguments |
-| Relation mapping | one sm1 store per table; a store is a collection of rels -- its heap, one per index, one for TOAST -- told apart by sm2's 2-byte relid |
+| Relation mapping | one sm1 store per table; a store is a collection of rels -- its rows, one per index, its `_id` index, one for TOAST -- told apart by sm2's 2-byte relid |
 | API shape | tuple at a time; a scan takes key bounds and filters nothing, and whatever needs evaluating is the host's, by callback (§3, §5) |
 | PostgreSQL | a target that shapes decisions, never a build dependency |
 
@@ -59,21 +61,21 @@ answer.
 
 | the stack gives sm3 | and the constraint it brings |
 | --- | --- |
-| sm2's tuples in a heap keyed by `rowno` | a row's identity is its `rowno`, which never changes; every index, the primary key's included, points at it |
-| sm2's index `rel`: entries keyed by encoded columns, each pointing at a `rowno` | sm2 lays out an entry's bytes and scan bounds; which indexes exist, and writing their entries on every heap write, are sm3's (§3) |
+| sm2's rows keyed by their primary key, or by `_id` | a row's identity is its `_id`, which never changes; every index names the row by its key, and the `_id` index finds the key by `_id` |
+| sm2's index `rel`: entries keyed by encoded columns, each naming its row | sm2 lays out an entry's bytes and scan bounds; which indexes exist, and writing their entries on every row write, are sm3's (§3) |
 | sm2's key encoder | every index key, the primary key's included, sorts by the same rules, because it is the same code (`sm2/SM2_DESIGN.md` §3) |
 | sm2's 2-byte relid | a table's heap, indexes and TOAST data are rels in its one sm1 store (§4) |
 | `rel_update` / `rel_delete` returning the old image as a tuple | the old index entries can be computed without a read of their own; the image is pinned into a ref, the caller's or one of the write's own, so the index calls leave it where it is and sm3 copies nothing (§3, `../PIN.md`) |
 | sm2's codec over `datum_t` values and null flags, as PostgreSQL's `Datum` (`sm2/TUPLE.md` §9) | sm3 never handles a value's bytes: rows, index keys and bounds are `datum_t`s, and `encode_key` strips a varlena's header itself |
 | `tup_desc_t`: a schema's widths and entry offsets, built once (`sm2/TUPLE.md` §6) | sm3 builds one per table and per index value when a definition loads or changes, so a one-column read costs a step per earlier null, not a pass over the row |
 | a tuple of at most 64 KB, its long datums out of line with TOAST (`sm2/SM2_DESIGN.md` §4.2) | a row is as long as its datums once the host reads TOAST pointers (§3.4); without, or in an index entry, a longer one fails with `SM_ERR_ROWTOOLONG`, which sm3 passes up, as PostgreSQL's `program_limit_exceeded` |
-| `SM_ERR_DUPKEY` from sm1's insert | a unique index keyed without `rowno` — the primary key's among them — needs no separate existence check (§3) |
+| `SM_ERR_DUPKEY` from sm1's insert | a unique index keyed without its row's key, and the primary key, the rows' own, need no separate existence check (§3) |
 | `SM_ERR_UPDATED` and `rel_read_latest` at READ COMMITTED | a filtered update or delete must re-check its predicate, and recompute its index entries, from the newest version (§3); the error does not abort and is not retryable |
 | transactions at RC / RR / SERIALIZABLE | index maintenance is atomic with the base write for free, because both are in one transaction |
 | `sm1::lock` in Gray's modes (IS, IX, S, SIX, X) | the DDL and online index build protocol (§2, §3): readers and writers of a table coexist on its table-oid lock, DDL waits them out, and an index build stops neither once its index is recorded |
 | nested savepoints | a statement can be undone without losing the transaction |
 | forward scans | probe loops cost one cursor, not one per probe |
-| `sm1::max_keylen` 4096 | an index entry's key must fit 4094 bytes after the relid, `rowno` included where it carries one; an over-long one is truncated and flagged, and sm3 rechecks it (`sm2/SM2_DESIGN.md` §3.2) |
+| `sm1::max_keylen` 4096 | an index entry's key must fit 4094 bytes after the relid, its row's key included where it carries one; an over-long one is truncated and flagged, and sm3 rechecks it (`sm2/SM2_DESIGN.md` §3.2) |
 | no backward scan, ever | a descending column is stored with inverted bytes and scanned forward, in the same index; there are no mirror relations, and the fork's planner never asks for a backward scan (§5, §7) |
 | one column family per store, hundreds to low thousands | tables, partitions included, are bounded by it (§4) |
 
@@ -228,34 +230,38 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
 - **A statement's partial writes undo** to its savepoint, and
   a failed write leaves the transaction active and unchanged.
 
-- **The primary key is an index.** The table is a heap keyed
-  by `rowno` (`sm2/SM2_DESIGN.md` §5), and the primary key is a
-  unique index over it, built and maintained like any other.
-  A table may have none.
-- **Entry:** `encode(sk) ‖ rowno` → a tuple of the `rowno`, a
-  flag saying the key was cut, and the INCLUDE columns — sm2's
-  index `rel` (`sm2/SM2_DESIGN.md` §5), built with sm2's encoder
-  (`sm2/SM2_DESIGN.md` §3). The
-  `rowno` suffix makes every entry unique, so a non-unique
-  index needs no further disambiguation, and it is 8 bytes
-  whatever the primary key is.
-- **Unique indexes are keyed without `rowno`:**
+- **The primary key keys the rows** (`../CLUSTER.md` §2,
+  `sm2/SM2_DESIGN.md` §5). It is an index in the catalog, so the
+  host proves uniqueness with it and plans scans of it, but it
+  has no entries: a scan of it is a scan of the rows
+  (`idx_open_primary`), and its uniqueness is sm1's
+  `SM_ERR_DUPKEY` on a row's key. A table may have none; its
+  rows are then keyed by `_id`. Adding or dropping one rewrites
+  the table into a new store (§2, `../CLUSTER.md` §8).
+- **Entry:** `encode(sk) ‖ row key` → a tuple of the row's
+  `_id`, a flag saying the key was cut, the INCLUDE columns and
+  in a keyed table the row's key — sm2's index `rel`
+  (`sm2/SM2_DESIGN.md` §5), built with sm2's encoder
+  (`sm2/SM2_DESIGN.md` §3). The row key suffix makes every
+  entry unique, so a non-unique index needs no further
+  disambiguation; it is 8 bytes of `_id` in a table without a
+  primary key, the primary key's encoding in one with.
+- **Unique indexes are keyed without the row's key:**
   `encode(sk)` → the same tuple. The KV key
   is then the uniqueness unit, so sm1's insert refuses a
   duplicate with `SM_ERR_DUPKEY` and its write-write conflict
   handles two sessions inserting the same key at once; no
-  separate existence check is needed. The primary key index
-  is keyed this way. One kind of entry in a unique index still
-  carries the suffix: one with a NULL key column (next). It
-  needs no check either, so sm3 makes no uniqueness check of
-  its own in any case.
+  separate existence check is needed. The rows are keyed this
+  way by the primary key. One kind of entry in a unique index
+  still carries the suffix: one with a NULL key column (next).
+  It needs no check either, so sm3 makes no uniqueness check
+  of its own in any case.
 - **NULLs are distinct in a unique index.** Two NULLs encode to
   the same bytes, so an entry with a NULL key column carries the
-  `rowno` suffix and skips the uniqueness check, as SQL requires
-  by default. A primary key column is never NULL, so the primary
-  key index never has such an entry. `NULLS NOT DISTINCT` is
-  refused at `CREATE INDEX` in v1; adding it later is a catalog
-  flag and changes no bytes on disk.
+  row's key and skips the uniqueness check, as SQL requires by
+  default. A primary key column is never NULL. `NULLS NOT
+  DISTINCT` is refused at `CREATE INDEX` in v1; adding it later
+  is a catalog flag and changes no bytes on disk.
 - **A truncated key is rechecked, and a unique index has
   none.** In a non-unique index sm2 cuts an over-long key to
   fit and flags the entry (`sm2/SM2_DESIGN.md` §3.2), and a
@@ -275,9 +281,14 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   compares itself must follow it too: a recheck, and hashing
   and grouping, which hash the sort key as PostgreSQL's
   `hashtext` does, not the string's bytes.
-- **Maintenance:** an update keeps the row's `rowno`, so only
-  the indexes whose columns changed are touched — a primary key
-  change included. An index is left alone when the row's key
+- **Maintenance:** an update keeps the row's `_id` and its key,
+  so only the indexes whose columns changed are touched. One
+  that changes the primary key **moves** the row
+  (`../CLUSTER.md` §4): every index entry of it names its key,
+  so each is removed and added again. A writer at READ
+  COMMITTED that finds the row moved since its snapshot
+  follows it through its `_id` (`tbl_read_latest`). Otherwise,
+  an index is left alone when the row's key
   columns compare equal before and after, by their types'
   `cmp`, and its INCLUDE columns hold the same bytes. The two
   tests differ on purpose. The key folds values the type calls
@@ -378,12 +389,12 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
      index is pending, an entry to remove that is not there
      is no error, since the backfill may not have reached the
      row. A row a writer touches is covered from then on.
-  3. **Backfill.** A background task walks the heap in `rowno`
+  3. **Backfill.** A background task walks the rows in `_id`
      order, in batches, each a short READ COMMITTED
      transaction that holds the table-oid lock IX. For each row
      it takes the row's lock shared, reads the row's newest
      committed version, and adds its entry if it is not there.
-  4. **Validate.** When the walk reaches the end of the heap,
+  4. **Validate.** When the walk reaches the end of the rows,
      the index is whole: there is nothing to catch up, since
      writers have maintained it all along. The task marks it
      valid in a transaction of its own, under the table-oid
@@ -391,7 +402,7 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
      using the table.
 
   Step 3 is safe because of the order a writer works in. It
-  changes the heap row before any index, and its uncommitted
+  changes the row before any index, and its uncommitted
   version of the row stands until it commits, which the
   task's row lock waits for; a writer in turn waits for the
   task's row lock. So the task and a writer never work on one
@@ -400,10 +411,15 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   task and then finds the entry to remove. No second scan is
   needed, and no lock stronger than a row's.
 
-  The walk is in `rowno` order, not key order. A B-tree gains
+  The walk is in `_id` order, not key order. A B-tree gains
   from sorted input; RocksDB sorts what it is given when it
-  flushes, the heap is read sequentially by `rowno`, and each
-  row is read again under its lock whatever the order.
+  flushes, and each row is read again under its lock whatever
+  the order. In a table keyed by a primary key the walk is of
+  the `_id` index, and each row is read by its key; one moved
+  since the walk read its `_id` entry is gone from that key,
+  and its mover, a writer, made its entry. Walking the rows in
+  key order instead, which reads them in one run, waits for a
+  scan that resumes from a key (`../CLUSTER.md` §5).
 
   What follows from it:
   - **A unique index finds some duplicates late.** A duplicate
@@ -416,7 +432,7 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
     batch that is not retryable fails the build: a duplicate,
     a key too long for a unique index, or anything else. The
     index's state keeps the error's code and its message, and
-    for a duplicate the rownos of the two rows that hold the
+    for a duplicate the `_id`s of the two rows that hold the
     key, across restarts, and `builder_wait` returns them to
     whoever waits, the rows in `sm1::errdup()`, so the host
     can show the key.
@@ -993,32 +1009,37 @@ where a datum was. Built in `src/table/table.cc`, with
 ## 4. Object mapping
 
 **Decision: one sm1 store per table.** A store is a
-collection of **rels**, and a table's heap, each of its
-secondary indexes and its TOAST data is one of them. They are
-told apart by sm2's 2-byte **relid**
+collection of **rels**, and a table's rows, each of its
+secondary indexes, its `_id` index and its TOAST data is one of
+them. They are told apart by sm2's 2-byte **relid**
 (`sm2/SM2_DESIGN.md` §5):
 
 | relid | Relation |
 | --- | --- |
 | `0x0000` | unused |
-| `0x0001` | the table's heap, always |
-| `0x0002`–`0xFFFE` | its indexes, one relid each |
+| `0x0001` | the table's rows, always |
+| `0x0002`–`0xFFFD` | its indexes, one relid each; a primary key's is recorded and holds nothing |
+| `0xFFFE` | its `_id` index, from `_id` to row key, with a primary key (`../CLUSTER.md` §3) |
 | `0xFFFF` | its TOAST data |
 
 This table is the only place these values are written down;
 every other document points here for them.
 
-- **The heap is always `0x0001`.** It is the constant
+- **The rows are always `0x0001`.** It is the constant
   `sm3::heap_relid` and is never drawn from the counter that
-  hands out index relids, so a table's heap sits at the same
+  hands out index relids, so a table's rows sit at the same
   relid in every database and nothing about it is recorded.
+  So is the `_id` index's, `sm2::id_relid`: a table has one
+  exactly when it has a primary key, and adding or dropping
+  one makes a new store.
 - **`0x0000` is left unused**, so a zeroed or unset relid is
   never a live rel.
 
 A relid names a rel within its store and nowhere else; a rel
 is reached as its store and its relid, and there is no wider
 identity for one. sm3 chooses an index's relid and records it
-in the catalog; the heap's and TOAST's are fixed. An sm3 table
+in the catalog; the rows', the `_id` index's and TOAST's are
+fixed. An sm3 table
 or index is one `rel` over the
 table's sm1 store with its relid; sm2 prepends and strips it
 and otherwise ignores it. sm2 never learns what a table is,
@@ -1032,21 +1053,29 @@ and sm3 never encodes a key itself.
   All three are transactional, so an abort, or a rollback to
   a savepoint before it, brings the rows back, and it costs
   the same whatever the table holds. The columns, the index
-  definitions and their relids and states, and the rowno
-  sequence carry over, so new rows go on from the last rowno.
+  definitions and their relids and states, and the `_id`
+  sequence carry over, so new rows go on from the last `_id`.
   A transaction that began before it committed and first
   reads the table after finds it empty, as in PostgreSQL:
   the catalog is not versioned (§2). On an open table it is
   `tbl_truncate`, which needs the table opened exclusive and
   reopens the handle on the new store.
 - **`DROP INDEX` erases the index's keys** one by one, as sm1
-  has no range delete (`CATALOG.md` §5.2).
+  has no range delete (`CATALOG.md` §5.2); dropping a primary
+  key rewrites the table into a new store, keyed by `_id`
+  (`../CLUSTER.md` §8).
 - **Index relids are allocated in increasing order and never
   reused.** A dropped index's versions linger until sm1's
   garbage collection passes them; never reusing a relid means
   no later index can read them as its own, with no rule tied
   to the GC horizon. 65,533 index creations per table,
   rebuilds included, is the ceiling.
+- **Adding a primary key** to a table with rows rewrites it
+  into a new store, under the table-oid lock X: every row
+  copied with its `_id` under its new key, every index filled
+  again, and the old store dropped at commit, as `TRUNCATE`
+  drops it (`../CLUSTER.md` §8). A table made in the same
+  transaction with no row yet only records it.
 - **The cost: tables are bounded by sm1's store count.**
   sm1 targets hundreds to low thousands of stores, and
   every table, each partition included, takes one. Accepted
@@ -1061,10 +1090,13 @@ becomes a range delete instead of sm1's O(1) drop.
 
 ## 5. Scans
 
-A scan takes key bounds and filters nothing. The heap is
-scanned by a range of `rowno`, and an index between two bounds
+A scan takes key bounds and filters nothing. The rows are
+scanned by a range of `_id`, and an index between two bounds
 on its leading columns (`sm2/SM2_DESIGN.md` §5); `tbl_scan` and
-`tbl_idx_scan` are those, on an open table. sm3 has no
+`tbl_idx_scan` are those, on an open table. In a table keyed by
+a primary key a scan by `_id` walks the `_id` index and reads
+each row by its key, and a scan of the primary key is a range
+scan of the rows themselves (`../CLUSTER.md` §5). sm3 has no
 predicate, and so no predicate scan.
 
 - **Deriving the bounds from a `WHERE` clause is the
@@ -1103,11 +1135,11 @@ order of work is §6.9, and every step is done. The host's
 part, the planner's use of these statistics, is built in
 digres (`../../dg/STATISTICS.md`).
 
-In brief: `tbl_analyze` samples a table by runs of rownos,
+In brief: `tbl_analyze` samples a table by runs of `_id`s,
 computes PostgreSQL's statistics from the sample with
 PostgreSQL's estimators, and writes them to one catalog entry
 of a new kind. A map beside the catalog holds them in memory
-for the planner. Sizes, the rowno limit and the LSM's shape
+for the planner. Sizes, the `_id` limit and the LSM's shape
 are answered live and are not stored.
 
 ### 6.1 The stack analyzes
@@ -1179,14 +1211,14 @@ add them.
   It would make the number exact, and costs a flush per plan,
   or per analyze for a number that is stale by the next plan.
 
-### 6.3 The rowno limit and the LSM's shape
+### 6.3 The `_id` limit and the LSM's shape
 
-- **`N`, the rowno limit**, is the last value the table's
-  rowno sequence `sm3.rowno.<oid>` handed out, read without
+- **`N`, the `_id` limit**, is the last value the table's
+  `_id` sequence `sm3.id.<oid>` handed out, read without
   drawing one: a new sm1 call beside `nextseq`, 0 for a table
-  that never had a row. Rownos start at 1.
+  that never had a row. `_id`s start at 1.
   A value reserved in a block and lost to a crash, or drawn by
-  a transaction that aborted, is a rowno with no row. That
+  a transaction that aborted, is an `_id` with no row. That
   costs the row count nothing: §6.4 measures the live fraction
   over the same `1..N` it multiplies, gaps included.
 - **Probes**, the LSM's shape, is the number of sorted runs a
@@ -1205,13 +1237,16 @@ table and never stored, so they need no analyze.
 
 `tbl_analyze(table, target)` wants `300 × target` rows,
 30,000 at PostgreSQL's default of 100. It reads them through
-one forward cursor on the heap, in the caller's transaction,
-at its snapshot.
+one forward cursor on the rows, in the caller's transaction,
+at its snapshot. In a table keyed by a primary key the cursor
+walks the `_id` index and reads each row by its key, a point
+read a row, some 30,000 at the default target
+(`../CLUSTER.md` §5).
 
-1. **A pilot** of 300 single rownos drawn uniformly from
+1. **A pilot** of 300 single `_id`s drawn uniformly from
    `1..N`, through a cursor of its own. It gives a live
    fraction `f0` and an average row bytes `w0`. It costs some
-   4 ms on ten million rownos (`STATISTICS.md` §6,
+   4 ms on ten million `_id`s (`STATISTICS.md` §6,
    experiment 4), and is not part of the sample.
 2. **The run length** is `B = max(1, 8192 / w0)`: the rows of
    an 8 KB page at that width. That matches the clustering of
@@ -1221,13 +1256,13 @@ at its snapshot.
    sm2 encodes it, uncompressed, as a heap page holds it.
 3. **The run count** is `k = ⌈1.2 × 300 × target / (B ×
    f0)⌉`. Dividing by `f0` is the sparse-table rule
-   `STATISTICS.md` §6 asked for: a table with nine rownos in
+   `STATISTICS.md` §6 asked for: a table with nine `_id`s in
    ten dead gets ten times the runs, where a fixed count
    returned a tenth of the rows wanted. The 1.2 is margin for
    the pilot's error. A pilot that found nothing live counts
    as `f0 = 1 / 301`, with `B = 1`.
 4. **The budget.** The runs cover at most `10 × 300 × target`
-   rownos, 300,000 at the default target, whatever the
+   `_id`s, 300,000 at the default target, whatever the
    table's size: `k` is capped at that over `B`. **Nothing
    reads the table whole**: a table emptied by deletes, or one
    so sparse that the rule above asks for more, gives fewer
@@ -1235,28 +1270,28 @@ at its snapshot.
    Only a table no larger than the budget is read whole, by
    the runs taking every slot, even when fewer runs would
    give the rows wanted: the reservoir then draws from every
-   row, so a column that follows the rownos is not estimated
+   row, so a column that follows the `_id`s is not estimated
    from a few runs, as PostgreSQL reads a table under its
    sample whole. Its row count is then exact.
 5. **The runs.** `1..N` is cut into `⌈N / B⌉` aligned slots of
-   `B` rownos, and `k` of them are drawn without replacement
+   `B` `_id`s, and `k` of them are drawn without replacement
    by **Floyd's algorithm**, which draws `k` numbers and looks
    at no other slot, so the work is `O(k log k)` whatever `N`
    is. They are read in ascending order through one forward
-   cursor, moved to each slot's first rowno with `scan_seek`;
+   cursor, moved to each slot's first `_id` with `scan_seek`;
    a row the cursor returns past a slot is held for the next,
-   so every seek is forward (principle 6). The pilot's rownos
+   so every seek is forward (principle 6). The pilot's `_id`s
    are drawn the same way. If the runs come up short of the
    rows wanted, more slots are drawn among those not read, as
    many as the live fraction found so far says, while the
    budget lasts, each round through a cursor of its own.
-6. **The row count** is the live rows found over the rownos
+6. **The row count** is the live rows found over the `_id`s
    the runs covered, times `N`.
 7. **A reservoir** keeps a uniform `300 × target` of the rows
-   found, each with its rowno, by Algorithm R: every row in a
+   found, each with its `_id`, by Algorithm R: every row in a
    run is read anyway, so Vitter's algorithm Z, which saves
    random draws by skipping rows, would save nothing. The
-   kept rows are sorted back into rowno order for the
+   kept rows are sorted back into `_id` order for the
    correlation of §6.5.
 
 **The rows read are the caller's snapshot.** The cursor sees
@@ -1311,7 +1346,7 @@ count as a negated multiplier of total rows above 10% of
 them; which values are common enough to list; histogram
 bounds over the rest, target + 1 of them; correlation of each
 column's order with the sample's order, which §6.4 made
-rowno order; and `WIDTH_THRESHOLD`, a value over 1 KB counted
+`_id` order; and `WIDTH_THRESHOLD`, a value over 1 KB counted
 as distinct and kept out of the lists. A column's own
 statistics target is not here: one target per call.
 
@@ -1354,7 +1389,7 @@ a statistic's entry   = statistic | mcv × nmcv | bound × nbound
 
 | Part | Fields |
 | --- | --- |
-| table | format `int4`, target `int4`, run length `int4`, rows sampled `int8`, rowno limit `int8`, live rows `float8`, heap disk `int8`, heap mem `int8`, average row bytes `int4`, nindex `int4`, nstat `int4`, the statistics recorded |
+| table | format `int4`, target `int4`, run length `int4`, rows sampled `int8`, `_id` limit `int8`, live rows `float8`, heap disk `int8`, heap mem `int8`, average row bytes `int4`, nindex `int4`, nstat `int4`, the statistics recorded |
 | index | index oid `int8`, disk `int8`, mem `int8`, entries `float8`, fraction that belongs `float4` |
 | statistic | index oid `int8` or null, position `int4`, null fraction `float4`, width `int4`, distinct `float4`, correlation `float4` or null, nmcv `int4`, nbound `int4` |
 | mcv | value, frequency `float4` |
@@ -1451,7 +1486,7 @@ size, and nothing of the truncate.
 | sm1 | `lastseq(name, out)` | a sequence's last value, drawing none |
 | sm1 | `probes(store, out)` | §6.3's probe count |
 | sm2 | `relid_size(session, store, relid, disk, mem)`, the same by a rel's relid | §6.2 |
-| sm3 | `tbl_size`, `tbl_idx_size`, `tbl_rowno_limit`, `tbl_probes` | live, on an open table |
+| sm3 | `tbl_size`, `tbl_idx_size`, `tbl_id_limit`, `tbl_probes` | live, on an open table |
 | sm3 | `tbl_analyze(table, target)` | §6.4 to §6.7 |
 | sm3 | `cat_put_stats(session, table oid, stats)` | records a `stats_t` in the session's transaction, published at its commit |
 | sm3 | `cat_get_stats(session, table oid, out)` | the session's own, else the published `shared_ptr<const stats_t>`, loading it on first use in a READ COMMITTED transaction of the catalog's own; null if never analyzed |

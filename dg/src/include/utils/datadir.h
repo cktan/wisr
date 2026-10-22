@@ -44,7 +44,7 @@ typedef struct datadir_lock_t {
   Oid database;            /* its database */
   datadir_lockname_t name; /* what it names */
   Oid oid;                 /* OBJECT: the object; ROW: its table, or 0 */
-  uint64 rowno;            /* ROW: the row */
+  uint64 rowno;            /* ROW: the row, 0 for one keyed by a primary key */
   const char *mode;        /* sm's name of the mode: IS, IX, S, SIX or X */
   int pid;                 /* the session's, or 0 for none */
   bool granted;            /* held; false if waited for */

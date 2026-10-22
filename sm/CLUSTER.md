@@ -6,9 +6,10 @@ makes every read through an index two seeks, the primary
 key's included, where PostgreSQL's heap fetch is a buffer
 lookup. This file is the pivot away from it: a table is kept
 in its primary key's order, and a hidden `_id` keeps the
-6-byte TID PostgreSQL's executor runs on. Decided, not built.
-The state before the pivot is on the branch
-`prepivot-heap-with-recno`.
+6-byte TID PostgreSQL's executor runs on. Step 1 of §11 is
+built: sm keys a table's rows by its primary key, and digres
+still reaches every row by its `_id`. The state before the
+pivot is on the branch `prepivot-heap-with-recno`.
 
 Paths are relative to `sm/`; digres's are under `../dg/`.
 
@@ -25,7 +26,8 @@ Paths are relative to `sm/`; digres's are under `../dg/`.
   executor's TID holds, so `ctid`'s machinery stays: UPDATE,
   DELETE, row locks, EvalPlanQual, bitmap and TID scans.
 - **`_id` has a unique index, `_id → pk`**, when the table has
-  a primary key. It is sm3's, and no planner sees it.
+  a primary key. It is sm2's rel's own, and no planner sees
+  it.
 - **A secondary index maps to the primary key**, not to `_id`:
   `encode(sk) ‖ encode(pk)`. A lookup through it is two seeks,
   as now.
@@ -110,28 +112,36 @@ The reasons `sm2/SM2_DESIGN.md` §5 gave for a heap, answered:
 
 | Index | Key | Value |
 | --- | --- | --- |
-| `_id`, with a primary key | `relid ‖ be64(_id)` | the row key's tail, `encode(pk)` |
-| secondary, non-unique | `relid ‖ encode(sk) ‖ encode(pk)` | a cut flag, the INCLUDE columns |
-| secondary, unique | `relid ‖ encode(sk)` | `encode(pk)`, a cut flag, the INCLUDE columns |
+| `_id`, with a primary key | `0xFFFE ‖ be64(_id)` | the row key's tail, `encode(pk)` |
+| secondary, non-unique | `relid ‖ encode(sk) ‖ encode(pk)` | `_id`, a cut flag, the INCLUDE columns, `encode(pk)` |
+| secondary, unique | `relid ‖ encode(sk)` | `_id`, a cut flag, the INCLUDE columns, `encode(pk)` |
 | primary key | none: the rows are its entries | |
 
-- **The `_id` index is sm3's own.** It is created with the
-  primary key, maintained as any index is, has a relid of its
-  own, and is not in PostgreSQL's catalog. It is unique by
-  construction, and its key is sm1's uniqueness unit as a
-  unique index's is.
+- **The `_id` index is the rel's own** (`sm2/SM2_DESIGN.md`
+  §5). sm2 writes it with the row, under the fixed relid
+  `0xFFFE`, in every table that has a primary key, so the
+  catalog records nothing of it: a table has one exactly when
+  it has a primary key, and adding or dropping one makes a new
+  store (§8). It is unique by construction.
+- **An entry's value keeps the row's `_id`**, 8 bytes, as it
+  kept `rowno`, so a bitmap of `_id`s and the executor's TID
+  cost no read of the row, and digres reads an entry's
+  INCLUDE columns where it did. `encode(pk)` ends the value,
+  for the unique entry whose key does not carry it.
 - **A secondary entry names its row by `encode(pk)`**, the row
   key less its relid, so the fetch is one seek to
   `relid ‖ encode(pk)`. A unique index's entry with a NULL key
   column carries `encode(pk)` as its suffix, as it carries
-  `rowno` now, so that NULLs stay distinct. A table without a
-  primary key has `be64(_id)` there: today's entry.
+  `rowno` did, so that NULLs stay distinct. A table without a
+  primary key has `be64(_id)` there: the entry as it was.
 - **The key budget**: `encode(sk)` and `encode(pk)` together
   are within `sm1::max_keylen` less the relid. A non-unique
   entry cuts `encode(sk)` to fit and keeps `encode(pk)` whole;
-  a unique one refuses the row, as now. A primary key's
+  a unique one refuses the row, as before. A primary key's
   encoding is capped, so every secondary keeps room for its
-  own columns (§10, question 3).
+  own columns (§10, question 3), and a key is cut at the one
+  length every cut key shares: 3070 bytes in a table with a
+  primary key, 4086 in one without.
 - **The primary key index stays in PostgreSQL's catalog**, so
   the planner proves uniqueness with it and plans scans of it.
   digres turns a scan of it into a range scan of the rows
@@ -156,12 +166,18 @@ The reasons `sm2/SM2_DESIGN.md` §5 gave for a heap, answered:
   statement's savepoint undoes the half-done move, as any
   failed multi-key write is undone now.
 - **A concurrent writer that finds a row moved** follows it.
-  It reaches the row by `_id`, through the `_id` index; if the
-  key it read is gone and the newest committed `_id` entry
-  names another, the row moved, which is an update, not a
-  delete: at READ COMMITTED sm3 reports `SM_ERR_UPDATED` and
-  the executor's re-check reads the row at its new key through
-  the same `_id`. Above READ COMMITTED it is a serialization
+  It reaches the row by `_id`, through the `_id` index as its
+  snapshot shows it; the write at that key meets
+  `SM_ERR_UPDATED`, as the move erased it. The executor's
+  re-check reads the newest version (`tbl_read_latest`): the
+  key is gone, so sm3 reads the newest version of the `_id`
+  entry, under a shared lock on it held to the end of the
+  transaction, finds the new key, locks the row there
+  exclusive and reads it. The write taken again finds the old
+  key gone (`SM_ERR_NOTFOUND`) and goes to the new one the same
+  way. A move is an update, not a delete. Only this path locks
+  the `_id` entry: an ordinary write takes no lock beyond its
+  own. Above READ COMMITTED a moved row is a serialization
   failure, as any concurrent update is. PostgreSQL's
   cross-partition move is the precedent, and is harsher: it
   refuses to follow.
@@ -190,23 +206,28 @@ The reasons `sm2/SM2_DESIGN.md` §5 gave for a heap, answered:
   the row a second seek. Its `_id` comes with it, so the TID
   costs nothing more.
 - **A sequential scan** walks the rows in primary key order.
-- **ANALYZE samples `_id`s as it samples `rownos` now**
+- **ANALYZE samples `_id`s as it sampled `rownos`**, for now
+  (§10, question 6)
   (`sm3/SM3_DESIGN.md` §6.3, §6.4): runs of consecutive
   `_id`s below the sequence's limit, so the estimator of the
   row count, live fraction times the limit, stands. With a
   primary key a run is a range scan of the `_id` index and a
   point read a row, not one forward cursor: about 30,000
   random reads a table, tens of milliseconds. Correlation is
-  measured in the rows' own order, the primary key's, so the
-  key's leading column comes out at 1 and the planner costs a
-  range over it as the sequential read it is.
-- **TABLESAMPLE** picks blocks of 256 `_id`s, as it picks
-  `rowno`s now, read the same way.
-- **The index build's backfill** walks the rows in primary key
-  order, locks each by its key, and resumes from the last key
-  it read. A duplicate it finds is reported as the two rows'
-  `_id`s, so `sm0::dupkey_t` and the persisted index state
-  keep their fixed width.
+  to be measured in the rows' own order, the primary key's, so
+  the key's leading column comes out at 1 and the planner costs
+  a range over it as the sequential read it is; until step 2
+  it is measured in `_id` order, as before.
+- **TABLESAMPLE** picks blocks of 256 `_id`s, as it picked
+  `rowno`s, read the same way.
+- **The index build's backfill** walks the rows in `_id`
+  order, through the `_id` index, reads each by its key and
+  locks it there, and resumes from the next `_id`. A row moved
+  since its `_id` entry was read is gone from that key, and its
+  mover made its entry. Walking in key order, one sorted run,
+  waits for a resume by key. A duplicate it finds is reported
+  as the two rows' `_id`s, so `sm0::dupkey_t` and the persisted
+  index state keep their fixed width.
 - **Bulk load in file mode** sorts the row stream by key and
   checks it for duplicates, as it does a unique index's stream
   now (`BULKLOAD.md` §5.3, §5.4); the `_id` index's stream is
@@ -232,10 +253,15 @@ The reasons `sm2/SM2_DESIGN.md` §5 gave for a heap, answered:
 - **Fetch by TID** goes through `_id`, with a small cache of
   `_id → encode(pk)` filled by the statement's scans, so an
   UPDATE or DELETE of a row just scanned is one read.
-- **Bitmap scans are unchanged**: a bitmap of `_id`s, dense, in
-  `_id` order, each row fetched by `_id`. Two seeks a row
-  where a table has a primary key; the `_id` index is read in
-  order, which a later step over it can exploit.
+- **A bitmap scan collects primary keys**, not `_id`s, in a
+  table that has one (§10, question 6): each entry carries
+  `encode(pk)`, so the scan sorts the keys, combines sets of
+  them as it combines bitmaps, and fetches the rows in key
+  order through one forward cursor, as MySQL's multi-range
+  read does. That is PostgreSQL's sorted-TID heap fetch, which
+  reads pages in order: sorted `_id`s would be a random read a
+  row. A table without a primary key keeps its bitmap of
+  `_id`s, which are its keys.
 - **TID scans are unchanged**: `_id = …` reads by `_id`.
 - **ADD PRIMARY KEY, DROP PRIMARY KEY**, and a change of a key
   column's type or collation, rewrite the table (§8).
@@ -262,7 +288,8 @@ The reasons `sm2/SM2_DESIGN.md` §5 gave for a heap, answered:
   its indexes, under the table-oid lock X. PostgreSQL builds
   only an index.
 - **ANALYZE and TABLESAMPLE read at random** in a table with a
-  primary key, through the `_id` index.
+  primary key, through the `_id` index, until they sample by
+  key ranges (§10, question 6).
 - **Row locks are variable-width** names in the lock table.
 
 ---
@@ -293,21 +320,25 @@ birth and is never rewritten.
 
 - **sm1**: nothing. The isolation scenarios are untouched.
 - **sm2**: the rel is keyed by its clustering key, the primary
-  key's columns or `_id`, named in its schema; its value is
-  `_id ‖ tuple`; `rel_insert` returns `_id` and the key;
-  reads, updates, deletes and locks take the key; the index
-  rel's entries carry `encode(pk)` (§3).
-- **sm3**: the catalog records the clustering key; the `_id`
-  index; `tbl_*` by `_id` and by key; the move (§4); the
+  key's columns or `_id`, given at its open; its value is
+  `_id ‖ tuple`; it keeps the `_id` index; `rel_insert`
+  returns `_id` and the key; reads, updates, deletes and locks
+  take the key, and `rel_find` gives it for an `_id`; an
+  update moves a row whose key changed; the index rel's
+  entries carry `encode(pk)` (§3); the primary key opens as an
+  index over the rows. Built.
+- **sm3**: the catalog's primary key is the clustering key;
+  `tbl_*` by `_id`; the move and the follow (§4); the
   backfill, ANALYZE, TABLESAMPLE and bulk load (§5); the
-  rewrite (§8).
+  rewrite (§8). Built.
 - **The C API** (`include/sm.h`): calls that take a `rowno`
   take an `_id` and keep their shape, which is what lets
   digres move in steps (§11); new calls read and scan by key;
   `sm_idx_scannxt` hands out the row's key, once digres reads
   by it (§11, step 2), and its `_id` until then, read from the
-  row; `sm_errdup` hands out `_id`s; `sm_lock_status_t` names
-  a row by its key.
+  entry; `sm_errdup` hands out `_id`s; `sm_lock_status_t`
+  names a row of a table with a primary key with no `_id`, 0
+  (§10, question 5).
 - **rel**: the verbs that take or return a `rowno` take or
   return an `_id`, and new ones read by key.
 - **digres**: §6.
@@ -340,7 +371,21 @@ nothing migrates.
    refused already.
 5. **`pg_locks` shows a row lock's relation alone**, its page
    and tuple NULL. sm3 does not read the row to resolve the
-   key to its `_id`.
+   key to its `_id`. Built in step 1, as a test of digres's
+   (`../dg/test/server.sh`, lock status) locks a row of a
+   table with a primary key.
+6. **`_id` stays in a table with a primary key, and nothing
+   reads many rows in `_id` order.** Sorted `_id`s are not a
+   sequential read, as sorted TIDs are in PostgreSQL: each is a
+   seek of its own. So a bitmap scan collects and sorts primary
+   keys (§6), and ANALYZE and TABLESAMPLE are to sample by
+   ranges of the key, sized from the store's estimates, not by
+   runs of `_id`. `_id` keeps the 6-byte TID: a row fetched by
+   it is two seeks, which digres's cache of the keys its scans
+   hand out spares the usual UPDATE and DELETE. The `_id`
+   entry's cost to an insert is to be measured; dropping `_id`
+   where a primary key is, the TID then a slot in a statement's
+   table of keys, is the way on if it is too dear.
 
 ---
 
@@ -354,11 +399,23 @@ Each step leaves every suite passing.
    `rowno` renamed `_id` through sm, its calls unchanged in
    shape, so digres runs as it is, every TID resolved through
    `_id`. The `rel` suite proves it, and digres's suites pass
-   unchanged.
+   unchanged but for `pg_locks` (§10, question 5). Built.
+   Until step 2 a table with a primary key is slower: a scan
+   of it walks the `_id` index and reads each row by its key,
+   which keeps the rows in the order digres's tests expect,
+   and a read through an index is three seeks, the entry, the
+   `_id` entry and the row.
 2. **digres reads by key.** A primary key index scan becomes a
    range scan of the rows; a secondary index scan fetches by
-   `encode(pk)`; the `_id → pk` cache; the system column
-   renamed `_id` (§10, question 1). Q6 and Q7 measured.
+   `encode(pk)`; the `_id → pk` cache; a sequential scan walks
+   the rows in key order, which changes the order of a query
+   without ORDER BY on a table with a primary key, and the
+   expected output of the tests that have one; the backfill and
+   ANALYZE's correlation in key order; a bitmap scan by sorted
+   primary keys, and ANALYZE and TABLESAMPLE by key ranges
+   (§10, question 6); the system column renamed `_id` (§10,
+   question 1). Q6 and Q7 measured, and what the `_id` entry
+   costs an insert.
 3. **digres's DDL.** ADD and DROP PRIMARY KEY, and the
    key-column ALTERs, through the rewrite.
 4. **The documents of §9**, each as its step lands, and this

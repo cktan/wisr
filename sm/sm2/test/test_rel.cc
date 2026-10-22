@@ -66,7 +66,8 @@ sm2::rel_t *open_rel(db_t &db, sm1::session_t *s,
                      std::span<const sm2::attribute_t> schema,
                      uint16_t relid = 0) {
   sm2::rel_t *rel = nullptr;
-  REQUIRE(sm2::rel_open(s, db.store(), relid, schema, "rowno", "", rel) == 0);
+  REQUIRE(sm2::rel_open(s, db.store(), relid, schema, {}, "rowno", "", rel) ==
+          0);
   return rel;
 }
 
@@ -111,7 +112,7 @@ TEST_CASE("rows round trip through a heap rel at every isolation level") {
     REQUIRE(sm1::begin(s, level) == 0);
     for (size_t i = 0; i < rows.size(); i++) {
       std::string_view tuple;
-      REQUIRE(sm2::rel_read(rel, rownos[i], tuple) == 0);
+      REQUIRE(sm2::rel_read(rel, sm2::id_key(rownos[i]), tuple) == 0);
       CHECK(decode(schema, tuple) == rows[i]);
     }
     sm2::rel_scan_t *scan = nullptr;
@@ -157,17 +158,18 @@ TEST_CASE("an update keeps its rowno, and update and delete hand back the "
   d = datums_of(schema, after);
   std::string_view old;
   rawpin_ptr_t pin;
-  REQUIRE(0 == sm2::rel_update(rel, rowno, d.d(), d.null(), pin.get(), old));
+  REQUIRE(0 == sm2::rel_update(rel, sm2::id_key(rowno), rowno, d.d(), d.null(),
+                               pin.get(), old));
   CHECK(decode(schema, old) == before);
   std::string_view tuple;
-  REQUIRE(sm2::rel_read(rel, rowno, tuple) == 0);
+  REQUIRE(sm2::rel_read(rel, sm2::id_key(rowno), tuple) == 0);
   CHECK(decode(schema, tuple) == after);
-  REQUIRE(0 == sm2::rel_delete(rel, rowno, pin.get(), old));
+  REQUIRE(0 == sm2::rel_delete(rel, sm2::id_key(rowno), pin.get(), old));
   CHECK(decode(schema, old) == after);
-  CHECK(sm2::rel_read(rel, rowno, tuple) == 1);
-  CHECK(sm2::rel_update(rel, rowno, d.d(), d.null()) == -1);
+  CHECK(sm2::rel_read(rel, sm2::id_key(rowno), tuple) == 1);
+  CHECK(sm2::rel_update(rel, sm2::id_key(rowno), rowno, d.d(), d.null()) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
-  CHECK(sm2::rel_delete(rel, rowno + 100) == -1);
+  CHECK(sm2::rel_delete(rel, sm2::id_key(rowno + 100)) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   REQUIRE(sm1::commit(s) == 0);
   sm2::rel_close(rel);
@@ -195,18 +197,18 @@ TEST_CASE("a savepoint rollback leaves no sm2 state behind") {
   d = datums_of(schema, b);
   REQUIRE(sm2::rel_insert(rel, d.d(), d.null(), rb) == 0);
   d = datums_of(schema, a2);
-  REQUIRE(sm2::rel_update(rel, ra, d.d(), d.null()) == 0);
+  REQUIRE(sm2::rel_update(rel, sm2::id_key(ra), ra, d.d(), d.null()) == 0);
   REQUIRE(sm1::rollback(s, depth) == 0);
   std::string_view tuple;
-  CHECK(sm2::rel_read(rel, rb, tuple) == 1);
-  REQUIRE(sm2::rel_read(rel, ra, tuple) == 0);
+  CHECK(sm2::rel_read(rel, sm2::id_key(rb), tuple) == 1);
+  REQUIRE(sm2::rel_read(rel, sm2::id_key(ra), tuple) == 0);
   CHECK(decode(schema, tuple) == a);
   d = datums_of(schema, b);
   REQUIRE(sm2::rel_insert(rel, d.d(), d.null(), rc) == 0);
   REQUIRE(sm1::commit(s) == 0);
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
-  CHECK(sm2::rel_read(rel, ra, tuple) == 0);
-  CHECK(sm2::rel_read(rel, rc, tuple) == 0);
+  CHECK(sm2::rel_read(rel, sm2::id_key(ra), tuple) == 0);
+  CHECK(sm2::rel_read(rel, sm2::id_key(rc), tuple) == 0);
   REQUIRE(sm1::commit(s) == 0);
   sm2::rel_close(rel);
 }
@@ -244,7 +246,7 @@ TEST_CASE("two rels over one store, under two relids, never meet") {
     }
     sm2::rel_scanend(scan);
     CHECK(seen == *mine);
-    CHECK(sm2::rel_read(rel, theirs->front(), tuple) == 1);
+    CHECK(sm2::rel_read(rel, sm2::id_key(theirs->front()), tuple) == 1);
   }
   REQUIRE(sm1::commit(s) == 0);
   sm2::rel_close(r0);
@@ -314,18 +316,18 @@ TEST_CASE("sm1's SM_ERR_UPDATED passes through, and rel_read_latest "
 
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
   std::string_view tuple;
-  REQUIRE(sm2::rel_read(ra, rowno, tuple) == 0);
+  REQUIRE(sm2::rel_read(ra, sm2::id_key(rowno), tuple) == 0);
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
   d = datums_of(schema, v2);
-  REQUIRE(sm2::rel_update(rb, rowno, d.d(), d.null()) == 0);
+  REQUIRE(sm2::rel_update(rb, sm2::id_key(rowno), rowno, d.d(), d.null()) == 0);
   REQUIRE(sm1::commit(b) == 0);
 
   d = datums_of(schema, v3);
-  CHECK(sm2::rel_update(ra, rowno, d.d(), d.null()) == -1);
+  CHECK(sm2::rel_update(ra, sm2::id_key(rowno), rowno, d.d(), d.null()) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_UPDATED);
-  REQUIRE(sm2::rel_read_latest(ra, rowno, tuple) == 0);
+  REQUIRE(sm2::rel_read_latest(ra, sm2::id_key(rowno), tuple) == 0);
   CHECK(decode(schema, tuple) == v2);
-  REQUIRE(sm2::rel_update(ra, rowno, d.d(), d.null()) == 0);
+  REQUIRE(sm2::rel_update(ra, sm2::id_key(rowno), rowno, d.d(), d.null()) == 0);
   REQUIRE(sm1::commit(a) == 0);
   sm2::rel_close(ra);
   sm2::rel_close(rb);
@@ -403,9 +405,10 @@ TEST_CASE("a row that cannot be encoded draws no rowno") {
   std::vector<sm2::attribute_t> bad = {
       {&sm2::type_decimal64, 3, false, std::nullopt}};
   sm2::rel_t *out = nullptr;
-  CHECK(sm2::rel_open(s, db.store(), 0, bad, "rowno", "", out) == -1);
+  CHECK(sm2::rel_open(s, db.store(), 0, bad, {}, "rowno", "", out) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm2::rel_open(nullptr, db.store(), 0, schema, "rowno", "", out) == -1);
+  CHECK(sm2::rel_open(nullptr, db.store(), 0, schema, {}, "rowno", "", out) ==
+        -1);
 }
 
 TEST_CASE("rel supports raw tuple bytes and datum_t/isnull writes") {
@@ -437,7 +440,7 @@ TEST_CASE("rel supports raw tuple bytes and datum_t/isnull writes") {
   REQUIRE(sm2::rel_insert(rel, tuple1, r1) == 0);
 
   std::string_view read_t1;
-  REQUIRE(sm2::rel_read(rel, r1, read_t1) == 0);
+  REQUIRE(sm2::rel_read(rel, sm2::id_key(r1), read_t1) == 0);
   CHECK(read_t1 == tuple1);
 
   // 2. Raw tuple byte update.
@@ -450,24 +453,26 @@ TEST_CASE("rel supports raw tuple bytes and datum_t/isnull writes") {
 
   std::string_view old_t;
   rawpin_ptr_t pin;
-  REQUIRE(0 == sm2::rel_update(rel, r1, tuple2, pin.get(), old_t));
+  REQUIRE(0 ==
+          sm2::rel_update(rel, sm2::id_key(r1), r1, tuple2, pin.get(), old_t));
   CHECK(old_t == tuple1);
 
   std::string_view read_t2;
-  REQUIRE(sm2::rel_read(rel, r1, read_t2) == 0);
+  REQUIRE(sm2::rel_read(rel, sm2::id_key(r1), read_t2) == 0);
   CHECK(read_t2 == tuple2);
 
   // 3. rel_insert taking (datum_t, isnull) directly.
   uint64_t r2;
   REQUIRE(sm2::rel_insert(rel, d1, nulls1, r2) == 0);
   CHECK(r2 > r1);
-  REQUIRE(sm2::rel_read(rel, r2, read_t1) == 0);
+  REQUIRE(sm2::rel_read(rel, sm2::id_key(r2), read_t1) == 0);
   CHECK(read_t1 == tuple1);
 
   // 4. rel_update taking (datum_t, isnull) directly.
-  REQUIRE(0 == sm2::rel_update(rel, r2, d2, nulls2, pin.get(), old_t));
+  REQUIRE(0 == sm2::rel_update(rel, sm2::id_key(r2), r2, d2, nulls2, pin.get(),
+                               old_t));
   CHECK(old_t == tuple1);
-  REQUIRE(sm2::rel_read(rel, r2, read_t2) == 0);
+  REQUIRE(sm2::rel_read(rel, sm2::id_key(r2), read_t2) == 0);
   CHECK(read_t2 == tuple2);
 
   REQUIRE(sm1::commit(s) == 0);
@@ -500,10 +505,11 @@ TEST_CASE("a raw tuple is checked before it is written") {
   REQUIRE(sm2::rel_insert(rel, good, second) == 0);
   CHECK(second == first + 1);
 
-  CHECK(sm2::rel_update(rel, first, std::string_view("garbage")) == -1);
+  CHECK(sm2::rel_update(rel, sm2::id_key(first), first,
+                        std::string_view("garbage")) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   std::string_view now;
-  REQUIRE(sm2::rel_read(rel, first, now) == 0);
+  REQUIRE(sm2::rel_read(rel, sm2::id_key(first), now) == 0);
   CHECK(now == good);
 
   REQUIRE(sm1::commit(s) == 0);
@@ -532,14 +538,15 @@ TEST_CASE("rel_lock locks a row without writing it") {
 
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm2::rel_lock(ra, rowno, sm1::SM_LOCKMODE_SH) == 0);
-  CHECK(sm2::rel_lock(rb, rowno, sm1::SM_LOCKMODE_SH) == 0);
+  REQUIRE(sm2::rel_lock(ra, sm2::id_key(rowno), sm1::SM_LOCKMODE_SH) == 0);
+  CHECK(sm2::rel_lock(rb, sm2::id_key(rowno), sm1::SM_LOCKMODE_SH) == 0);
   d = datums_of(schema, v2);
-  CHECK(sm2::rel_update(rb, rowno, d.d(), d.null()) == -1);
+  CHECK(sm2::rel_update(rb, sm2::id_key(rowno), rowno, d.d(), d.null()) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
   REQUIRE(sm1::commit(a) == 0);
-  REQUIRE_MESSAGE(sm2::rel_update(rb, rowno, d.d(), d.null()) == 0,
-                  sm1::errmsg());
+  REQUIRE_MESSAGE(
+      sm2::rel_update(rb, sm2::id_key(rowno), rowno, d.d(), d.null()) == 0,
+      sm1::errmsg());
   REQUIRE(sm1::commit(b) == 0);
   sm2::rel_close(ra);
   sm2::rel_close(rb);

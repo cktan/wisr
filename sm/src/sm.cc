@@ -843,13 +843,28 @@ int sm_lock_status(sm_env_t *env, std::vector<sm_lock_status_t> &out) {
         st.name = SM_LOCKNAME_OBJECT;
         st.oid = sm0::get_be64(r.key.data());
       } else if (r.type == sm1::LOCKTYPE_ROW && r.storeid != 0 &&
-                 r.key.size() == 10) {
-        // A row's: be16(relid) then be64(rowno), in its table's store.
-        st.name = SM_LOCKNAME_ROW;
-        st.rowno = sm0::get_be64(r.key.data() + 2);
+                 r.key.size() >= 2) {
+        // A row's, in its table's store: be16(relid) then its key,
+        // be64(_id) in a table keyed by _id; or its _id entry's,
+        // be16 of the _id index's relid then be64(_id). A row keyed
+        // by its primary key names no _id (../CLUSTER.md §10).
         auto it = env->catalogs.find(r.dbname);
-        if (it != env->catalogs.end()) {
-          auto def = sm3::cat_get_table_by_store(it->second, r.storeid);
+        auto def = it == env->catalogs.end()
+                       ? nullptr
+                       : sm3::cat_get_table_by_store(it->second, r.storeid);
+        bool keyed = false;
+        for (size_t i = 0; def && i < def->indexes.size(); i++) {
+          keyed |= def->indexes[i].primary;
+        }
+        uint16_t relid =
+            static_cast<uint16_t>(static_cast<uint8_t>(r.key[0]) << 8 |
+                                  static_cast<uint8_t>(r.key[1]));
+        bool by_id =
+            r.key.size() == 10 &&
+            (relid == sm2::id_relid || (relid == sm3::heap_relid && !keyed));
+        if (by_id || (relid == sm3::heap_relid && keyed)) {
+          st.name = SM_LOCKNAME_ROW;
+          st.rowno = by_id ? sm0::get_be64(r.key.data() + 2) : 0;
           st.oid = def ? def->oid : 0;
         }
       }
@@ -1052,11 +1067,11 @@ const char *sm_collation_version(const sm_collation_t *collation) {
  * The next row. A cursor call writes nothing, so it passes no
  * session: there is no half-done change for an abort to undo.
  */
-int sm_rel_scannxt(sm_rel_scan_t *scan, uint64_t *rowno, const void **tuple,
+int sm_rel_scannxt(sm_rel_scan_t *scan, uint64_t *id, const void **tuple,
                    size_t *len) {
   return guard(nullptr, [&] {
     std::string_view v;
-    int rc = sm3::tbl_scannxt(rel_scan_of(scan), *rowno, v);
+    int rc = sm3::tbl_scannxt(rel_scan_of(scan), *id, v);
     if (rc == 0) {
       view_out(v, tuple, len);
     }
@@ -1065,20 +1080,20 @@ int sm_rel_scannxt(sm_rel_scan_t *scan, uint64_t *rowno, const void **tuple,
 }
 
 /* The next row, in the cursor's pin, which *ref then names. */
-int sm_rel_scannxt(sm_rel_scan_t *scan, uint64_t *rowno, sm_pin_ref_t *ref) {
+int sm_rel_scannxt(sm_rel_scan_t *scan, uint64_t *id, sm_pin_ref_t *ref) {
   return guard(nullptr, [&] {
     sm3::pin_ref_t r;
     std::string_view v;
-    int rc = sm3::tbl_scannxt(rel_scan_of(scan), *rowno, r, v);
+    int rc = sm3::tbl_scannxt(rel_scan_of(scan), *id, r, v);
     *ref = sm_pin_ref_t{r.pin, r.gen};
     return rc;
   });
 }
 
-/* Move a heap cursor forward to rowno. */
-int sm_rel_scan_seek(sm_rel_scan_t *scan, uint64_t rowno) {
+/* Move a table's cursor forward to _id id. */
+int sm_rel_scan_seek(sm_rel_scan_t *scan, uint64_t id) {
   return guard(nullptr,
-               [&] { return sm3::tbl_scan_seek(rel_scan_of(scan), rowno); });
+               [&] { return sm3::tbl_scan_seek(rel_scan_of(scan), id); });
 }
 
 /* Close a heap cursor, and release its pin. */
@@ -1102,11 +1117,11 @@ int sm_tup_encode(const std::vector<sm_attribute_t> &schema,
 }
 
 /* The next entry; no session, as sm_rel_scannxt. */
-int sm_idx_scannxt(sm_idx_scan_t *scan, uint64_t *rowno, bool *cut,
+int sm_idx_scannxt(sm_idx_scan_t *scan, uint64_t *id, bool *cut,
                    const void **value, size_t *len) {
   return guard(nullptr, [&] {
     std::string_view v;
-    int rc = sm2::idx_scannxt(idx_scan_of(scan), *rowno, *cut, v);
+    int rc = sm2::idx_scannxt(idx_scan_of(scan), *id, *cut, v);
     if (rc == 0) {
       view_out(v, value, len);
     }
@@ -1607,15 +1622,15 @@ uint64_t sm_tbl_version(const sm_tbl_t *tbl) {
 
 /* Insert a row and its index entries. */
 int sm_tbl_insert(sm_tbl_t *tbl, const sm_datum_t *values, const bool *isnull,
-                  size_t n, uint64_t *rowno) {
+                  size_t n, uint64_t *id) {
   return guard(tbl ? tbl->session : nullptr, [&] {
     if (check_row("sm_tbl_insert", tbl, values, isnull, n) != 0) {
       return -1;
     }
-    if (!rowno) {
-      return null_arg("sm_tbl_insert", "rowno");
+    if (!id) {
+      return null_arg("sm_tbl_insert", "id");
     }
-    return sm3::tbl_insert(tbl->table, {values, n}, {isnull, n}, *rowno);
+    return sm3::tbl_insert(tbl->table, {values, n}, {isnull, n}, *id);
   });
 }
 
@@ -1623,16 +1638,16 @@ int sm_tbl_insert(sm_tbl_t *tbl, const sm_datum_t *values, const bool *isnull,
 int sm_tbl_insert_arbiter(sm_tbl_t *tbl, const sm_datum_t *values,
                           const bool *isnull, size_t n,
                           const uint64_t *arbiters, size_t narbiters,
-                          uint64_t *rowno) {
+                          uint64_t *id) {
   return guard(tbl ? tbl->session : nullptr, [&] {
     if (check_row("sm_tbl_insert_arbiter", tbl, values, isnull, n) != 0) {
       return -1;
     }
-    if (!rowno || (narbiters && !arbiters)) {
-      return null_arg("sm_tbl_insert_arbiter", !rowno ? "rowno" : "arbiters");
+    if (!id || (narbiters && !arbiters)) {
+      return null_arg("sm_tbl_insert_arbiter", !id ? "id" : "arbiters");
     }
     return sm3::tbl_insert_arbiter(tbl->table, {values, n}, {isnull, n},
-                                   {arbiters, narbiters}, *rowno);
+                                   {arbiters, narbiters}, *id);
   });
 }
 
@@ -1652,17 +1667,17 @@ int sm_tbl_load_begin(sm_tbl_t *tbl) {
 
 /* Hand a row to the table's bulk load. */
 int sm_tbl_load_add(sm_tbl_t *tbl, const sm_datum_t *values, const bool *isnull,
-                    size_t n, uint64_t *rowno) {
+                    size_t n, uint64_t *id) {
   return guard(tbl ? tbl->session : nullptr, [&] {
     if (check_row("sm_tbl_load_add", tbl, values, isnull, n) != 0) {
       return -1;
     }
-    if (!rowno || !tbl->loader) {
-      return !rowno ? null_arg("sm_tbl_load_add", "rowno")
-                    : sm1::seterr(sm1::SM_ERR_INVALID,
-                                  "sm_tbl_load_add: no load is begun");
+    if (!id || !tbl->loader) {
+      return !id ? null_arg("sm_tbl_load_add", "id")
+                 : sm1::seterr(sm1::SM_ERR_INVALID,
+                               "sm_tbl_load_add: no load is begun");
     }
-    return sm3::tbl_load_add(tbl->loader, {values, n}, {isnull, n}, *rowno);
+    return sm3::tbl_load_add(tbl->loader, {values, n}, {isnull, n}, *id);
   });
 }
 
@@ -1681,7 +1696,7 @@ int sm_tbl_load_end(sm_tbl_t *tbl) {
 }
 
 /* Replace a row and fix its index entries. */
-int sm_tbl_update(sm_tbl_t *tbl, uint64_t rowno, const sm_datum_t *values,
+int sm_tbl_update(sm_tbl_t *tbl, uint64_t id, const sm_datum_t *values,
                   const bool *isnull, size_t n, sm_pin_ref_t *ref,
                   const void **old, size_t *len) {
   return guard(tbl ? tbl->session : nullptr, [&] {
@@ -1689,14 +1704,14 @@ int sm_tbl_update(sm_tbl_t *tbl, uint64_t rowno, const sm_datum_t *values,
       return -1;
     }
     if (!ref) {
-      return sm3::tbl_update(tbl->table, rowno, {values, n}, {isnull, n});
+      return sm3::tbl_update(tbl->table, id, {values, n}, {isnull, n});
     }
     if (!old || !len) {
       return null_arg("sm_tbl_update", "old or len");
     }
     sm3::pin_ref_t r = pin_ref_of(*ref);
     std::string_view v;
-    int rc = sm3::tbl_update(tbl->table, rowno, {values, n}, {isnull, n}, r, v);
+    int rc = sm3::tbl_update(tbl->table, id, {values, n}, {isnull, n}, r, v);
     // The ref is set either way: the old row, or what it held.
     *ref = sm_pin_ref_t{r.pin, r.gen};
     *old = nullptr;
@@ -1709,21 +1724,21 @@ int sm_tbl_update(sm_tbl_t *tbl, uint64_t rowno, const sm_datum_t *values,
 }
 
 /* Delete a row and its index entries. */
-int sm_tbl_delete(sm_tbl_t *tbl, uint64_t rowno, sm_pin_ref_t *ref,
+int sm_tbl_delete(sm_tbl_t *tbl, uint64_t id, sm_pin_ref_t *ref,
                   const void **old, size_t *len) {
   return guard(tbl ? tbl->session : nullptr, [&] {
     if (!tbl) {
       return null_arg("sm_tbl_delete", "tbl");
     }
     if (!ref) {
-      return sm3::tbl_delete(tbl->table, rowno);
+      return sm3::tbl_delete(tbl->table, id);
     }
     if (!old || !len) {
       return null_arg("sm_tbl_delete", "old or len");
     }
     sm3::pin_ref_t r = pin_ref_of(*ref);
     std::string_view v;
-    int rc = sm3::tbl_delete(tbl->table, rowno, r, v);
+    int rc = sm3::tbl_delete(tbl->table, id, r, v);
     // The ref is set either way: the old row, or what it held.
     *ref = sm_pin_ref_t{r.pin, r.gen};
     *old = nullptr;
@@ -1736,11 +1751,10 @@ int sm_tbl_delete(sm_tbl_t *tbl, uint64_t rowno, sm_pin_ref_t *ref,
 }
 
 /* Read a row. */
-int sm_tbl_read(sm_tbl_t *tbl, uint64_t rowno, const void **tuple,
-                size_t *len) {
+int sm_tbl_read(sm_tbl_t *tbl, uint64_t id, const void **tuple, size_t *len) {
   return guard(tbl->session, [&] {
     std::string_view v;
-    int rc = sm3::tbl_read(tbl->table, rowno, v);
+    int rc = sm3::tbl_read(tbl->table, id, v);
     if (rc == 0) {
       view_out(v, tuple, len);
     }
@@ -1749,7 +1763,7 @@ int sm_tbl_read(sm_tbl_t *tbl, uint64_t rowno, const void **tuple,
 }
 
 /* Read a row into the pin *ref then names. */
-int sm_tbl_read(sm_tbl_t *tbl, uint64_t rowno, sm_pin_ref_t *ref,
+int sm_tbl_read(sm_tbl_t *tbl, uint64_t id, sm_pin_ref_t *ref,
                 const void **tuple, size_t *len) {
   return guard(tbl->session, [&] {
     if (!ref) {
@@ -1757,7 +1771,7 @@ int sm_tbl_read(sm_tbl_t *tbl, uint64_t rowno, sm_pin_ref_t *ref,
     }
     sm3::pin_ref_t r = pin_ref_of(*ref);
     std::string_view v;
-    int rc = sm3::tbl_read(tbl->table, rowno, r, v);
+    int rc = sm3::tbl_read(tbl->table, id, r, v);
     // The ref is set either way: a pin, or none.
     *ref = sm_pin_ref_t{r.pin, r.gen};
     if (rc == 0) {
@@ -1768,7 +1782,7 @@ int sm_tbl_read(sm_tbl_t *tbl, uint64_t rowno, sm_pin_ref_t *ref,
 }
 
 /* Read the newest committed version of a row into a pin. */
-int sm_tbl_read_latest(sm_tbl_t *tbl, uint64_t rowno, sm_pin_ref_t *ref,
+int sm_tbl_read_latest(sm_tbl_t *tbl, uint64_t id, sm_pin_ref_t *ref,
                        const void **tuple, size_t *len) {
   return guard(tbl->session, [&] {
     if (!ref) {
@@ -1776,7 +1790,7 @@ int sm_tbl_read_latest(sm_tbl_t *tbl, uint64_t rowno, sm_pin_ref_t *ref,
     }
     sm3::pin_ref_t r = pin_ref_of(*ref);
     std::string_view v;
-    int rc = sm3::tbl_read_latest(tbl->table, rowno, r, v);
+    int rc = sm3::tbl_read_latest(tbl->table, id, r, v);
     // The ref is set either way: a pin, or none.
     *ref = sm_pin_ref_t{r.pin, r.gen};
     if (rc == 0) {
@@ -1787,11 +1801,11 @@ int sm_tbl_read_latest(sm_tbl_t *tbl, uint64_t rowno, sm_pin_ref_t *ref,
 }
 
 /* Read the newest committed version of a row. */
-int sm_tbl_read_latest(sm_tbl_t *tbl, uint64_t rowno, const void **tuple,
+int sm_tbl_read_latest(sm_tbl_t *tbl, uint64_t id, const void **tuple,
                        size_t *len) {
   return guard(tbl->session, [&] {
     std::string_view v;
-    int rc = sm3::tbl_read_latest(tbl->table, rowno, v);
+    int rc = sm3::tbl_read_latest(tbl->table, id, v);
     if (rc == 0) {
       view_out(v, tuple, len);
     }
@@ -1800,22 +1814,22 @@ int sm_tbl_read_latest(sm_tbl_t *tbl, uint64_t rowno, const void **tuple,
 }
 
 /* Lock a row without writing it. */
-int sm_tbl_lock(sm_tbl_t *tbl, uint64_t rowno, sm_lockmode_t mode) {
+int sm_tbl_lock(sm_tbl_t *tbl, uint64_t id, sm_lockmode_t mode) {
   return guard(tbl ? tbl->session : nullptr, [&] {
     if (!tbl) {
       return null_arg("sm_tbl_lock", "tbl");
     }
-    return sm3::tbl_lock(tbl->table, rowno, mode);
+    return sm3::tbl_lock(tbl->table, id, mode);
   });
 }
 
 /* Lock a row if it is free now. */
-int sm_tbl_trylock(sm_tbl_t *tbl, uint64_t rowno, sm_lockmode_t mode) {
+int sm_tbl_trylock(sm_tbl_t *tbl, uint64_t id, sm_lockmode_t mode) {
   return guard(tbl ? tbl->session : nullptr, [&] {
     if (!tbl) {
       return null_arg("sm_tbl_trylock", "tbl");
     }
-    return sm3::tbl_trylock(tbl->table, rowno, mode);
+    return sm3::tbl_trylock(tbl->table, id, mode);
   });
 }
 
@@ -1977,13 +1991,13 @@ int sm_tbl_idx_size(sm_tbl_t *tbl, uint64_t index, uint64_t *disk,
   });
 }
 
-/* The last rowno handed out, live. */
+/* The last id handed out, live. */
 int sm_tbl_rowno_limit(sm_tbl_t *tbl, uint64_t *n) {
   return guard(tbl ? tbl->session : nullptr, [&] {
     if (!tbl || !n) {
       return null_arg("sm_tbl_rowno_limit", !tbl ? "tbl" : "n");
     }
-    return sm3::tbl_rowno_limit(tbl->table, *n);
+    return sm3::tbl_id_limit(tbl->table, *n);
   });
 }
 

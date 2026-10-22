@@ -164,7 +164,7 @@ int analyze_table(table_t *table, int32_t target, std::mt19937_64 &rng,
     }
     st.indexes.push_back(ix);
   }
-  // Each live column's values over the sample, in rowno order; the
+  // Each live column's values over the sample, in _id order; the
   // datums point into the sample's tuples.
   size_t n = s.rows.size();
   std::vector<sm2::datum_t> values(n);

@@ -93,14 +93,20 @@ Datum pg_lock_status(PG_FUNCTION_ARGS) {
     } else if (l.name == DATADIR_LOCK_ROW) {
       ItemPointerData tid;
 
-      /* The row's tid, as a scan gives it (smstore_rowno_to_tid()). */
+      /*
+       * The row's tid, as a scan gives it (smstore_rowno_to_tid()); none for
+       * a row of a table with a primary key, whose lock names its key
+       * (../sm/CLUSTER.md section 10).
+       */
       locktype = "tuple";
-      smstore_rowno_to_tid(l.rowno, &tid);
-      values[LOCKFUNCS_PAGE] =
-          Int32GetDatum((int32)ItemPointerGetBlockNumber(&tid));
-      values[LOCKFUNCS_TUPLE] =
-          Int16GetDatum((int16)ItemPointerGetOffsetNumber(&tid));
-      nulls[LOCKFUNCS_PAGE] = nulls[LOCKFUNCS_TUPLE] = false;
+      if (0 != l.rowno) {
+        smstore_rowno_to_tid(l.rowno, &tid);
+        values[LOCKFUNCS_PAGE] =
+            Int32GetDatum((int32)ItemPointerGetBlockNumber(&tid));
+        values[LOCKFUNCS_TUPLE] =
+            Int16GetDatum((int16)ItemPointerGetOffsetNumber(&tid));
+        nulls[LOCKFUNCS_PAGE] = nulls[LOCKFUNCS_TUPLE] = false;
+      }
       if (l.oid != 0) {
         values[LOCKFUNCS_RELATION] = ObjectIdGetDatum(l.oid);
         nulls[LOCKFUNCS_RELATION] = false;

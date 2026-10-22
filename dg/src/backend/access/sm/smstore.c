@@ -5454,6 +5454,13 @@ ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt) {
     }
     sm_error("create an index");
   }
+  /*
+   * A primary key keys the table's rows, which sm has keyed anew, maybe in a
+   * new store (../sm/CLUSTER.md section 8): the handles this transaction
+   * holds were opened on the rows as they were.
+   */
+  if (stmt->primary)
+    forget_table(relid);
   made_index_t made = {relid, oid, name, stmt->unique, {}};
 
   for (const sm_index_key_spec_t &k : keys)
@@ -5580,6 +5587,13 @@ void smstore_drop_indexes(DropStmt *stmt) {
 
     if (waiting([&] { return sm_cat_drop_index(s, table, index); }) != 0)
       sm_error("drop an index");
+    /*
+     * A primary key's drop keys the rows anew, in a new store
+     * (../sm/CLUSTER.md section 8), which the handles this transaction holds
+     * do not know; another index's leaves them be, and they reopen at no
+     * more cost than this.
+     */
+    forget_table((Oid)table);
   }
 }
 

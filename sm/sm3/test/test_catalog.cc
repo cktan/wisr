@@ -141,7 +141,7 @@ TEST_CASE("a created table loads back, across a restart, as it was made") {
   CHECK(sm1::scannxt(c, k, v) == 1);
   sm1::scanend(c);
   uint64_t rowno = 0;
-  REQUIRE(sm1::nextseq(s, t->rowno_seq, rowno) == 0);
+  REQUIRE(sm1::nextseq(s, t->id_seq, rowno) == 0);
   CHECK(rowno == 1);
   REQUIRE(sm1::commit(s) == 0);
   sm3::cat_close(cat);

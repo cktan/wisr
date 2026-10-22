@@ -79,12 +79,12 @@
 (assert-eq r4 4)
 (commit)
 
-# 8. Names starting "sm3." are sm3's own, a table's rowno sequence
+# 8. Names starting "sm3." are sm3's own, a table's _id sequence
 #    among them: each sequence call refuses one. The steps below
 #    show the table still draws its rownos, none taken here.
 (begin :rc)
 (assert-err :err-invalid (seq-create sm3.mine 1 1))
-(assert-err :err-invalid (seq-drop sm3.rowno.1))
+(assert-err :err-invalid (seq-drop sm3.id.1))
 (commit)
 (assert-err :err-invalid (nextseq sm3.oid))
 

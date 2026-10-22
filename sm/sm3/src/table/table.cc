@@ -1,10 +1,12 @@
 /*
  * table.cc -- an open table and its writes (SM3_DESIGN.md §3): the
- * heap write, then each index the write changes, with the old
- * entries computed from the image the heap write hands back. A
- * datum the heap holds out of line (sm2's TOAST) is fetched where
- * an index needs its value, and an old row's are erased only once
- * the indexes are fixed.
+ * row's write, then each index the write changes, with the old
+ * entries computed from the image the row's write hands back. A
+ * row is named by its _id, and found at its key, its primary key
+ * in a table that has one, through sm2's _id index (../CLUSTER.md
+ * §2). A datum the row holds out of line (sm2's TOAST) is fetched
+ * where an index needs its value, and an old row's are erased only
+ * once the indexes are fixed.
  */
 
 #include "../catalog/internal.h"
@@ -25,7 +27,8 @@
 struct sm3::loader_t {
   table_t *table = nullptr;
   sm1::loader_t *load = nullptr;
-  size_t heap = 0;             /* the stream of the table's rows */
+  size_t heap = 0; /* the stream of the table's rows */
+  size_t ids = 0;  /* of their _id entries, keyed by a primary key */
   std::vector<size_t> streams; /* the stream of each index, in order */
 };
 
@@ -229,9 +232,25 @@ void load_states(sm3::table_t *t) {
   }
 }
 
-/* Whether writes maintain index i of t: all but one whose build failed. */
+/*
+ * Whether writes maintain index i of t: all but one whose build
+ * failed, and the primary key, whose entries are the rows.
+ */
 bool maintained(const sm3::table_t *t, size_t i) {
-  return t->states[i] != sm3::index_state_t::failed;
+  return t->states[i] != sm3::index_state_t::failed &&
+         !t->def->indexes[i].primary;
+}
+
+/*
+ * A write of a row that failed: -1, and for a key the primary key
+ * holds already, the index in sm1::errdup(), as add_entry says it.
+ */
+int row_failed(const sm3::table_t *t) {
+  const sm3::index_def_t *pk = sm3::primary_of(*t->def);
+  if (pk && sm1::errnum() == sm1::SM_ERR_DUPKEY) {
+    sm1::setdup({pk->oid, {0, 0}, 0});
+  }
+  return -1;
 }
 
 /*
@@ -349,13 +368,14 @@ int keys_equal(const sm3::index_def_t &x, const entry_t &a, const entry_t &b) {
 }
 
 /*
- * Add index i's entry e for the row r at rowno. A key the index holds
- * already is SM_ERR_DUPKEY, with the index in sm1::errdup().
+ * Add index i's entry e for the row r with _id id and key row. A
+ * key the index holds already is SM_ERR_DUPKEY, with the index in
+ * sm1::errdup().
  */
 int add_entry(sm3::table_t *t, size_t i, const entry_t &e, const vals_t &r,
-              uint64_t rowno) {
+              uint64_t id, std::string_view row) {
   picked_t inc(r, t->def->indexes[i].include_attnums);
-  if (sm2::idx_insert(t->indexes[i], e.d(), e.null(), rowno, inc.d(),
+  if (sm2::idx_insert(t->indexes[i], e.d(), e.null(), id, row, inc.d(),
                       inc.null()) == 0) {
     return 0;
   }
@@ -367,12 +387,13 @@ int add_entry(sm3::table_t *t, size_t i, const entry_t &e, const vals_t &r,
 }
 
 /*
- * Remove index i's entry e for the row at rowno. While the index
- * is pending, an entry that is not there is no error: the build
- * has not reached the row (SM3_DESIGN.md §3).
+ * Remove index i's entry e for the row with _id id and key row.
+ * While the index is pending, an entry that is not there is no
+ * error: the build has not reached the row (SM3_DESIGN.md §3).
  */
-int remove_entry(sm3::table_t *t, size_t i, const entry_t &e, uint64_t rowno) {
-  if (sm2::idx_delete(t->indexes[i], e.d(), e.null(), rowno) == 0) {
+int remove_entry(sm3::table_t *t, size_t i, const entry_t &e, uint64_t id,
+                 std::string_view row) {
+  if (sm2::idx_delete(t->indexes[i], e.d(), e.null(), id, row) == 0) {
     return 0;
   }
   return t->states[i] == sm3::index_state_t::pending &&
@@ -422,7 +443,11 @@ namespace sm3 {
 
 namespace {
 
-/* Open table's heap and indexes on the store its definition names. */
+/*
+ * Open table's rel and indexes on the store its definition names:
+ * the rows keyed by the primary key, if it has one, which is read
+ * as an index of the rows.
+ */
 int open_rels(table_t *table) {
   const table_def_t &def = *table->def;
   sm1::session_t *s = table->session->sm1;
@@ -430,14 +455,21 @@ int open_rels(table_t *table) {
   // none unless the host reads TOAST pointers; named, never read.
   std::string toast_seq =
       table->session->cat->toast ? toast_seq_name(def.oid) : "";
-  if (sm2::rel_open(s, def.storeid, heap_relid, def.schema, def.rowno_seq,
+  const index_def_t *pk = primary_of(def);
+  sm2::rel_key_t key;
+  if (pk) {
+    key = {pk->key, pk->key_attnums};
+  }
+  if (sm2::rel_open(s, def.storeid, heap_relid, def.schema, key, def.id_seq,
                     toast_seq, table->rel) != 0) {
     return -1;
   }
   for (const index_def_t &x : def.indexes) {
     sm2::index_t *ix = nullptr;
-    if (sm2::idx_open(s, def.storeid, x.relid, x.key, x.unique, x.include,
-                      ix) != 0) {
+    if ((x.primary ? sm2::idx_open_primary(table->rel, x.include,
+                                           x.include_attnums, ix)
+                   : sm2::idx_open(s, def.storeid, x.relid, x.key, x.unique,
+                                   x.include, pk != nullptr, ix)) != 0) {
       return -1;
     }
     table->indexes.push_back(ix);
@@ -445,7 +477,7 @@ int open_rels(table_t *table) {
   return 0;
 }
 
-/* Close table's heap and indexes, leaving it with neither. */
+/* Close table's rel and indexes, leaving it with neither. */
 void close_rels(table_t *table) {
   for (sm2::index_t *ix : table->indexes) {
     sm2::idx_close(ix);
@@ -527,18 +559,24 @@ bool tbl_index_usable(const table_t *table, uint64_t index) {
   return index_usable(table->session, *table->def, index);
 }
 
-/* Insert the row, then its entry in every index; see sm3.h. */
-int tbl_insert(table_t *table, std::span<const sm2::datum_t> values,
-               std::span<const bool> isnull, uint64_t &rowno) {
-  if (need_writable(table) != 0 || need_not_null(table, isnull) != 0) {
-    return -1;
-  }
-  uint64_t r = 0;
-  if (sm2::rel_insert(table->rel, values, isnull, r) != 0) {
-    return -1;
+namespace {
+
+/*
+ * Insert the row of values and isnull, then its entry in every
+ * index: under a new _id, or under reserved if it is not 0, as a
+ * rewrite keeps a row's. id is set on success.
+ */
+int insert_row(table_t *table, std::span<const sm2::datum_t> values,
+               std::span<const bool> isnull, uint64_t reserved, uint64_t &id) {
+  uint64_t r = reserved;
+  std::string key;
+  if ((reserved == 0 ? sm2::rel_insert(table->rel, values, isnull, r, &key)
+                     : sm2::rel_insert_at(table->rel, reserved, values, isnull,
+                                          &key)) != 0) {
+    return row_failed(table);
   }
   // A pointer the caller gave is fetched for the indexes that need
-  // its value; the heap has stored a copy of its own.
+  // its value; the row has stored a copy of its own.
   image_t row(vals_t{values, isnull});
   for (size_t i = 0; i < table->indexes.size(); i++) {
     if (!maintained(table, i)) {
@@ -547,21 +585,111 @@ int tbl_insert(table_t *table, std::span<const sm2::datum_t> values,
     entry_t e;
     if (fetch_for(table, table->def->indexes[i], row) != 0 ||
         make_entry(table, i, row.row(), e) != 0 ||
-        (e.belongs && add_entry(table, i, e, row.row(), r) != 0)) {
+        (e.belongs && add_entry(table, i, e, row.row(), r, key) != 0)) {
       return -1;
     }
   }
-  rowno = r;
+  id = r;
   return 0;
 }
 
 /*
+ * The key of the row with _id id, into key (../CLUSTER.md §5): 0,
+ * 1 if there is none, 2 if nowait and the row's _id entry is
+ * another's, or -1. A table without a primary key has it at once;
+ * a table with one, from its _id entry as the snapshot shows it. At
+ * READ COMMITTED a row the snapshot does not show -- one newer than
+ * it, which an insert's conflict found -- is looked for now, under
+ * a shared lock on its _id entry, which sm1's newest read needs.
+ */
+int key_of(table_t *t, uint64_t id, bool nowait, std::string &key) {
+  int rc = sm2::rel_find(t->rel, id, key);
+  if (rc != 1 || t->session->level != sm1::xctlevel_t::read_committed) {
+    return rc;
+  }
+  // Held to the end of the transaction, as a row's lock is.
+  rc = sm2::rel_lock_id(t->rel, id, sm1::SM_LOCKMODE_SH, nowait);
+  if (rc != 0) {
+    return rc < 0 ? -1 : 2;
+  }
+  return sm2::rel_find_latest(t->rel, id, key);
+}
+
+/* The key of the row with _id id to write, or SM_ERR_NOTFOUND. */
+int key_to_write(table_t *t, uint64_t id, std::string &key) {
+  int rc = key_of(t, id, false, key);
+  if (rc == 1) {
+    return sm1::seterr(sm1::SM_ERR_NOTFOUND, "table: no row " +
+                                                 std::to_string(id) + " in " +
+                                                 t->def->name);
+  }
+  return rc;
+}
+
+/*
+ * Where the row with _id id went, at READ COMMITTED, once a write
+ * or a newest read found it gone from key (../CLUSTER.md §4): its
+ * key now, from the newest version of its _id entry, read under a
+ * shared lock on it held to the end of the transaction, so that
+ * none moves it again. 0 with to set if it moved; 1 if it did not,
+ * being gone or still at key, or if the table has no primary key
+ * or the level is another; or -1.
+ */
+int moved_to(table_t *t, uint64_t id, std::string_view key, std::string &to) {
+  if (!sm2::rel_keyed(t->rel) ||
+      t->session->level != sm1::xctlevel_t::read_committed) {
+    return 1;
+  }
+  if (sm2::rel_lock_id(t->rel, id, sm1::SM_LOCKMODE_SH) != 0) {
+    return -1;
+  }
+  int rc = sm2::rel_find_latest(t->rel, id, to);
+  return rc != 0 ? rc : to == key ? 1 : 0;
+}
+
+/*
+ * A write of the row with _id id at key, by write, followed to
+ * where the row moved if it found the row gone (moved_to): sm1
+ * says SM_ERR_NOTFOUND once the newest version at key, read after
+ * SM_ERR_UPDATED, is the move's erase. key is left the key the row
+ * was written at.
+ */
+template <typename F>
+int write_followed(table_t *t, uint64_t id, std::string &key, F write) {
+  int rc = write(key);
+  if (rc == 0 || sm1::errnum() != sm1::SM_ERR_NOTFOUND) {
+    return rc;
+  }
+  std::string reason = sm1::errmsg(), to;
+  int m = moved_to(t, id, key, to);
+  if (m < 0) {
+    return -1;
+  }
+  if (m == 1) {
+    return sm1::seterr(sm1::SM_ERR_NOTFOUND, reason);
+  }
+  key = std::move(to);
+  return write(key);
+}
+
+} // namespace
+
+/* Insert the row, then its entry in every index; see sm3.h. */
+int tbl_insert(table_t *table, std::span<const sm2::datum_t> values,
+               std::span<const bool> isnull, uint64_t &id) {
+  if (need_writable(table) != 0 || need_not_null(table, isnull) != 0) {
+    return -1;
+  }
+  return insert_row(table, values, isnull, 0, id);
+}
+
+/*
  * The row that has entry e's key in unique index i of t now, past
- * the snapshot, in found: 0, 1 if none has, or -1. sm1 reads a
- * newest version only under a lock on the key, and the lock is
- * given back at once, by a savepoint: the caller is left holding
- * nothing of the key, or it would stand between the row's owner
- * and the row. READ COMMITTED alone has such a read.
+ * the snapshot, its _id in found: 0, 1 if none has, or -1. sm1
+ * reads a newest version only under a lock on the key, and the
+ * lock is given back at once, by a savepoint: the caller is left
+ * holding nothing of the key, or it would stand between the row's
+ * owner and the row. READ COMMITTED alone has such a read.
  */
 int find_now(sm3::table_t *t, size_t i, const entry_t &e, uint64_t &found) {
   int mark = sm3::savepoint(t->session);
@@ -579,7 +707,7 @@ int find_now(sm3::table_t *t, size_t i, const entry_t &e, uint64_t &found) {
 /* Insert the row unless an arbiter index has its key; see sm3.h. */
 int tbl_insert_arbiter(table_t *table, std::span<const sm2::datum_t> values,
                        std::span<const bool> isnull,
-                       std::span<const uint64_t> arbiters, uint64_t &rowno) {
+                       std::span<const uint64_t> arbiters, uint64_t &id) {
   if (need_writable(table) != 0 || need_not_null(table, isnull) != 0) {
     return -1;
   }
@@ -597,25 +725,33 @@ int tbl_insert_arbiter(table_t *table, std::span<const sm2::datum_t> values,
     }
   }
   image_t row(vals_t{values, isnull});
-  // The arbiters, each with the row's entry in it, if it has one.
+  // The arbiters, each with the row's entry in it, if it has one;
+  // the primary key among them is the row itself, written last.
   std::vector<size_t> arb;
   std::vector<entry_t> entry(table->indexes.size());
+  size_t primary = SIZE_MAX;
   for (size_t i = 0; i < table->indexes.size(); i++) {
     const index_def_t &x = def.indexes[i];
     bool arbiter = x.unique && (arbiters.empty() ||
                                 std::find(arbiters.begin(), arbiters.end(),
                                           x.oid) != arbiters.end());
-    if (!arbiter || !maintained(table, i)) {
+    if (!arbiter || (!x.primary && table->states[i] == index_state_t::failed)) {
       continue;
     }
     if (fetch_for(table, x, row) != 0 ||
         make_entry(table, i, row.row(), entry[i]) != 0) {
       return -1;
     }
-    // A row a partial index does not take has no key in it.
-    if (entry[i].belongs) {
+    if (x.primary) {
+      primary = i;
+    } else if (entry[i].belongs) {
+      // A row a partial index does not take has no key in it.
       arb.push_back(i);
     }
+  }
+  std::vector<size_t> looked = arb;
+  if (primary != SIZE_MAX) {
+    looked.push_back(primary);
   }
   const bool rc_level =
       table->session->level == sm1::xctlevel_t::read_committed;
@@ -625,7 +761,7 @@ look:
   // may be behind, and show a row deleted since, which a caller
   // that came back for it would be shown for ever: there the row
   // is confirmed against the newest version.
-  for (size_t i : arb) {
+  for (size_t i : looked) {
     uint64_t found = 0;
     int rc =
         sm2::idx_find(table->indexes[i], entry[i].d(), entry[i].null(), found);
@@ -636,7 +772,7 @@ look:
       return -1;
     }
     if (rc == 0) {
-      rowno = found;
+      id = found;
       return 1;
     }
   }
@@ -644,28 +780,33 @@ look:
   // snapshot, or be on its way. So the arbiters' entries go in
   // before the row: sm1's insert waits for a transaction that has
   // not ended, and says at once if a row is there, when nothing
-  // but these entries has been written.
+  // but these entries has been written. The row, under its key,
+  // is the primary key's entry, and comes last of them.
   uint64_t r = 0;
-  if (sm2::rel_reserve(table->rel, r) != 0) {
+  std::string key;
+  if (sm2::rel_reserve(table->rel, r) != 0 ||
+      sm2::rel_row_key(table->rel, r, values, isnull, key) != 0) {
     return -1;
   }
-  for (size_t n = 0; n < arb.size(); n++) {
-    size_t i = arb[n];
-    if (add_entry(table, i, entry[i], row.row(), r) == 0) {
+  for (size_t n = 0; n <= arb.size(); n++) {
+    size_t i = n < arb.size() ? arb[n] : primary;
+    int rc = n < arb.size() ? add_entry(table, i, entry[i], row.row(), r, key)
+                            : sm2::rel_insert_at(table->rel, r, values, isnull);
+    if (rc == 0) {
       continue;
     }
-    if (sm1::errnum() != sm1::SM_ERR_DUPKEY) {
-      return -1;
+    if (sm1::errnum() != sm1::SM_ERR_DUPKEY || i == SIZE_MAX) {
+      return n < arb.size() ? -1 : row_failed(table);
     }
     // The key is a row's that the snapshot did not show: take
     // back the entries put in so far, and say which row has it.
     for (size_t m = 0; m < n; m++) {
-      if (remove_entry(table, arb[m], entry[arb[m]], r) != 0) {
+      if (remove_entry(table, arb[m], entry[arb[m]], r, key) != 0) {
         return -1;
       }
     }
     uint64_t found = 0;
-    int rc = find_now(table, i, entry[i], found);
+    rc = find_now(table, i, entry[i], found);
     if (rc < 0) {
       return -1;
     }
@@ -673,14 +814,11 @@ look:
       // Gone again already, deleted and committed: look once more.
       goto look;
     }
-    rowno = found;
+    id = found;
     return 1;
   }
-  // The row, then its entries in the indexes that are no arbiter:
-  // a duplicate in one of those is an error, as in tbl_insert.
-  if (sm2::rel_insert_at(table->rel, r, values, isnull) != 0) {
-    return -1;
-  }
+  // Its entries in the indexes that are no arbiter: a duplicate in
+  // one of those is an error, as in tbl_insert.
   for (size_t i = 0; i < table->indexes.size(); i++) {
     if (!maintained(table, i) ||
         std::find(arb.begin(), arb.end(), i) != arb.end()) {
@@ -689,11 +827,11 @@ look:
     entry_t e;
     if (fetch_for(table, def.indexes[i], row) != 0 ||
         make_entry(table, i, row.row(), e) != 0 ||
-        (e.belongs && add_entry(table, i, e, row.row(), r) != 0)) {
+        (e.belongs && add_entry(table, i, e, row.row(), r, key) != 0)) {
       return -1;
     }
   }
-  rowno = r;
+  id = r;
   return 0;
 }
 
@@ -701,7 +839,7 @@ look:
  * tbl_update, with ref and old both given or both null: with them,
  * the old row is pinned into ref, and old views it.
  */
-static int update_row(table_t *table, uint64_t rowno,
+static int update_row(table_t *table, uint64_t id,
                       std::span<const sm2::datum_t> values,
                       std::span<const bool> isnull, pin_ref_t *ref,
                       std::string_view *old) {
@@ -709,7 +847,9 @@ static int update_row(table_t *table, uint64_t rowno,
   if (old) {
     *old = {};
   }
-  if (need_writable(table) != 0 || need_not_null(table, isnull) != 0) {
+  std::string key;
+  if (need_writable(table) != 0 || need_not_null(table, isnull) != 0 ||
+      key_to_write(table, id, key) != 0) {
     return -1;
   }
   // The old row is pinned, in a pin of this call's, so the index
@@ -727,11 +867,17 @@ static int update_row(table_t *table, uint64_t rowno,
       pin_put(p);
     }
   };
+  // A row whose primary key changes moves, and every entry of it,
+  // naming it by its key, moves with it (../CLUSTER.md §4).
   std::string_view image;
-  if (0 !=
-      sm2::rel_update(table->rel, rowno, values, isnull, p->raw, image, true)) {
-    return -1;
+  std::string at;
+  if (0 != write_followed(table, id, key, [&](const std::string &k) {
+        return sm2::rel_update(table->rel, k, id, values, isnull, p->raw, image,
+                               true, &at);
+      })) {
+    return row_failed(table);
   }
+  const bool moved = at != key;
   const table_def_t &def = *table->def;
   deformed_t before(def.schema.size());
   if (!table->indexes.empty() &&
@@ -749,7 +895,7 @@ static int update_row(table_t *table, uint64_t rowno,
     const index_def_t &x = def.indexes[i];
     // No column the index depends on changed: leave it alone,
     // and the evaluator unasked.
-    int same = unchanged(def, x, before.row(), after);
+    int same = moved ? 0 : unchanged(def, x, before.row(), after);
     if (same < 0) {
       return -1;
     }
@@ -765,7 +911,7 @@ static int update_row(table_t *table, uint64_t rowno,
     // A column it reads changed, yet the entry may not have: the
     // row is in the index both times, under an equal key, with
     // the same INCLUDE columns.
-    if (!x.eval.empty() && was.belongs && is.belongs) {
+    if (!moved && !x.eval.empty() && was.belongs && is.belongs) {
       int kept = keys_equal(x, was, is);
       if (kept == 1) {
         kept = cols_same(def, x.include_attnums, was_row.row(), is_row.row(),
@@ -778,8 +924,8 @@ static int update_row(table_t *table, uint64_t rowno,
         continue;
       }
     }
-    if ((was.belongs && remove_entry(table, i, was, rowno) != 0) ||
-        (is.belongs && add_entry(table, i, is, is_row.row(), rowno) != 0)) {
+    if ((was.belongs && remove_entry(table, i, was, id, key) != 0) ||
+        (is.belongs && add_entry(table, i, is, is_row.row(), id, at) != 0)) {
       return -1;
     }
   }
@@ -797,31 +943,32 @@ static int update_row(table_t *table, uint64_t rowno,
 }
 
 /* Replace the row, then fix each index it changed; see sm3.h. */
-int tbl_update(table_t *table, uint64_t rowno,
+int tbl_update(table_t *table, uint64_t id,
                std::span<const sm2::datum_t> values,
                std::span<const bool> isnull) {
-  return update_row(table, rowno, values, isnull, nullptr, nullptr);
+  return update_row(table, id, values, isnull, nullptr, nullptr);
 }
 
 /* As above, pinning the row replaced into ref; see sm3.h. */
-int tbl_update(table_t *table, uint64_t rowno,
+int tbl_update(table_t *table, uint64_t id,
                std::span<const sm2::datum_t> values,
                std::span<const bool> isnull, pin_ref_t &ref,
                std::string_view &old) {
-  return update_row(table, rowno, values, isnull, &ref, &old);
+  return update_row(table, id, values, isnull, &ref, &old);
 }
 
 /*
  * tbl_delete, with ref and old both given or both null: with them,
  * the row deleted is pinned into ref, and old views it.
  */
-static int delete_row(table_t *table, uint64_t rowno, pin_ref_t *ref,
+static int delete_row(table_t *table, uint64_t id, pin_ref_t *ref,
                       std::string_view *old) {
   // No old row until the write succeeds.
   if (old) {
     *old = {};
   }
-  if (need_writable(table) != 0) {
+  std::string key;
+  if (need_writable(table) != 0 || key_to_write(table, id, key) != 0) {
     return -1;
   }
   // The row is pinned, in a pin of this call's, so the index calls
@@ -839,7 +986,9 @@ static int delete_row(table_t *table, uint64_t rowno, pin_ref_t *ref,
     }
   };
   std::string_view image;
-  if (0 != sm2::rel_delete(table->rel, rowno, p->raw, image, true)) {
+  if (0 != write_followed(table, id, key, [&](const std::string &k) {
+        return sm2::rel_delete(table->rel, k, p->raw, image, true);
+      })) {
     return -1;
   }
   const table_def_t &def = *table->def;
@@ -857,7 +1006,7 @@ static int delete_row(table_t *table, uint64_t rowno, pin_ref_t *ref,
     entry_t was;
     if (fetch_for(table, def.indexes[i], was_row) != 0 ||
         make_entry(table, i, was_row.row(), was) != 0 ||
-        (was.belongs && remove_entry(table, i, was, rowno) != 0)) {
+        (was.belongs && remove_entry(table, i, was, id, key) != 0)) {
       return -1;
     }
   }
@@ -875,14 +1024,14 @@ static int delete_row(table_t *table, uint64_t rowno, pin_ref_t *ref,
 }
 
 /* Delete the row, then its entry in every index; see sm3.h. */
-int tbl_delete(table_t *table, uint64_t rowno) {
-  return delete_row(table, rowno, nullptr, nullptr);
+int tbl_delete(table_t *table, uint64_t id) {
+  return delete_row(table, id, nullptr, nullptr);
 }
 
 /* As above, pinning the row deleted into ref; see sm3.h. */
-int tbl_delete(table_t *table, uint64_t rowno, pin_ref_t &ref,
+int tbl_delete(table_t *table, uint64_t id, pin_ref_t &ref,
                std::string_view &old) {
-  return delete_row(table, rowno, &ref, &old);
+  return delete_row(table, id, &ref, &old);
 }
 
 /* Begin a bulk load into the table; see sm3.h. */
@@ -924,8 +1073,12 @@ int tbl_load_open(table_t *table, loader_t *&out) {
     }
   }
   if (empty) {
+    // A table keyed by a primary key gets its rows in no order,
+    // and their _id entries in order (../CLUSTER.md §5).
+    bool keyed = sm2::rel_keyed(table->rel);
     if (sm1::load_open(s, storeid, l->load) != 0 ||
-        sm1::load_stream(l->load, true, l->heap) != 0) {
+        sm1::load_stream(l->load, !keyed, l->heap) != 0 ||
+        (keyed && sm1::load_stream(l->load, true, l->ids) != 0)) {
       return -1;
     }
     // An index's entries arrive in the heap's order, not its own.
@@ -942,16 +1095,18 @@ int tbl_load_open(table_t *table, loader_t *&out) {
 
 /* Hand a row to a bulk load; see sm3.h. */
 int tbl_load_add(loader_t *l, std::span<const sm2::datum_t> values,
-                 std::span<const bool> isnull, uint64_t &rowno) {
+                 std::span<const bool> isnull, uint64_t &id) {
   table_t *table = l->table;
   if (l->load == nullptr) {
-    return tbl_insert(table, values, isnull, rowno);
+    return tbl_insert(table, values, isnull, id);
   }
   if (need_not_null(table, isnull) != 0) {
     return -1;
   }
   uint64_t r = 0;
-  int rc = sm2::rel_load(table->rel, l->load, l->heap, values, isnull, r);
+  std::string key;
+  int rc = sm2::rel_load(table->rel, l->load, l->heap, l->ids, values, isnull,
+                         r, &key);
   if (rc < 0) {
     return -1;
   }
@@ -961,9 +1116,8 @@ int tbl_load_add(loader_t *l, std::span<const sm2::datum_t> values,
     // row and those after it are inserted.
     sm1::loader_t *load = l->load;
     l->load = nullptr;
-    return sm1::load_close(load) != 0
-               ? -1
-               : tbl_insert(table, values, isnull, rowno);
+    return sm1::load_close(load) != 0 ? -1
+                                      : tbl_insert(table, values, isnull, id);
   }
   // Its entry in every index, as tbl_insert makes it. No value is
   // out of line: rel_load took the row.
@@ -981,7 +1135,7 @@ int tbl_load_add(loader_t *l, std::span<const sm2::datum_t> values,
     }
     picked_t inc(row, table->def->indexes[i].include_attnums);
     if (sm2::idx_load(table->indexes[i], l->load, l->streams[i], e.d(),
-                      e.null(), r, inc.d(), inc.null()) != 0) {
+                      e.null(), r, key, inc.d(), inc.null()) != 0) {
       // Which index has the key, when it is found now, not at the
       // close.
       if (sm1::errnum() == sm1::SM_ERR_DUPKEY) {
@@ -990,7 +1144,7 @@ int tbl_load_add(loader_t *l, std::span<const sm2::datum_t> values,
       return -1;
     }
   }
-  rowno = r;
+  id = r;
   return 0;
 }
 
@@ -1025,20 +1179,46 @@ int tbl_fetch_cols(table_t *table, const std::vector<int32_t> &atts,
   return 0;
 }
 
-/* Read the row at rowno. */
-int tbl_read(table_t *table, uint64_t rowno, std::string_view &tuple) {
-  return sm2::rel_read(table->rel, rowno, tuple);
-}
-
-/* Read the newest committed version of the row at rowno. */
-int tbl_read_latest(table_t *table, uint64_t rowno, std::string_view &tuple) {
-  return sm2::rel_read_latest(table->rel, rowno, tuple);
+/* Read the row with _id id; see sm3.h. */
+int tbl_read(table_t *table, uint64_t id, std::string_view &tuple) {
+  std::string key;
+  int rc = key_of(table, id, false, key);
+  return rc != 0 ? rc : sm2::rel_read(table->rel, key, tuple);
 }
 
 /*
- * Read the row at rowno into a pin, by read, sm2::rel_read or
- * sm2::rel_read_latest, pointing ref at it; ref's pin is released
- * first, and on 1 or -1 ref names none.
+ * Read the newest committed version of the row with _id id, by
+ * read, sm2::rel_read_latest at a key: where the snapshot has the
+ * row, or where it moved since, taking the row's lock there
+ * exclusive, as the write that met SM_ERR_UPDATED took it where it
+ * was (../CLUSTER.md §4).
+ */
+template <typename F>
+static int read_latest(table_t *table, uint64_t id, F read) {
+  std::string key, to;
+  int rc = key_of(table, id, false, key);
+  if (rc != 0 || (rc = read(key)) != 1) {
+    return rc;
+  }
+  int m = moved_to(table, id, key, to);
+  if (m != 0) {
+    return m < 0 ? -1 : 1;
+  }
+  return sm2::rel_lock(table->rel, to, sm1::SM_LOCKMODE_EX) != 0 ? -1
+                                                                 : read(to);
+}
+
+/* Read the newest committed version of the row with _id id. */
+int tbl_read_latest(table_t *table, uint64_t id, std::string_view &tuple) {
+  return read_latest(table, id, [&](const std::string &key) {
+    return sm2::rel_read_latest(table->rel, key, tuple);
+  });
+}
+
+/*
+ * Read the row with _id id into a pin, by read, sm2::rel_read or
+ * sm2::rel_read_latest at a key, pointing ref at it; ref's pin is
+ * released first, and on 1 or -1 ref names none.
  */
 template <typename F>
 static int read_into(table_t *table, pin_ref_t &ref, std::string_view &tuple,
@@ -1063,43 +1243,58 @@ static int read_into(table_t *table, pin_ref_t &ref, std::string_view &tuple,
   return 0;
 }
 
-/* Read the row at rowno into a pin; see sm3.h. */
-int tbl_read(table_t *table, uint64_t rowno, pin_ref_t &ref,
+/* Read the row with _id id into a pin; see sm3.h. */
+int tbl_read(table_t *table, uint64_t id, pin_ref_t &ref,
              std::string_view &tuple) {
   return read_into(table, ref, tuple, [&](sm1::rawpin_t *raw) {
-    return sm2::rel_read(table->rel, rowno, raw, tuple);
+    std::string key;
+    int rc = key_of(table, id, false, key);
+    return rc != 0 ? rc : sm2::rel_read(table->rel, key, raw, tuple);
   });
 }
 
-/* Read the newest committed version of the row at rowno into a pin. */
-int tbl_read_latest(table_t *table, uint64_t rowno, pin_ref_t &ref,
+/* Read the newest committed version of the row into a pin. */
+int tbl_read_latest(table_t *table, uint64_t id, pin_ref_t &ref,
                     std::string_view &tuple) {
   return read_into(table, ref, tuple, [&](sm1::rawpin_t *raw) {
-    return sm2::rel_read_latest(table->rel, rowno, raw, tuple);
+    return read_latest(table, id, [&](const std::string &key) {
+      return sm2::rel_read_latest(table->rel, key, raw, tuple);
+    });
   });
 }
 
-/* Lock the row at rowno without writing it; see sm3.h. */
-int tbl_lock(table_t *table, uint64_t rowno, sm1::lockmode_t mode) {
+/*
+ * Lock the row with _id id, waiting or not; see sm3.h. A row there
+ * is none of has nothing to lock, and a read of it then finds it
+ * gone.
+ */
+static int lock_row(table_t *table, uint64_t id, sm1::lockmode_t mode,
+                    bool nowait) {
   // Only a shared lock sits under a table opened to read.
   if (mode != sm1::SM_LOCKMODE_SH && need_writable(table) != 0) {
     return -1;
+  }
+  std::string key;
+  int rc = key_of(table, id, nowait, key);
+  if (rc != 0) {
+    return rc < 0 ? -1 : rc == 2 ? 1 : 0;
   }
   // Held to the end of the transaction, as a write's lock is.
-  return sm2::rel_lock(table->rel, rowno, mode);
+  return nowait ? sm2::rel_trylock(table->rel, key, mode)
+                : sm2::rel_lock(table->rel, key, mode);
 }
 
-/* Lock the row at rowno if it is free now; see sm3.h. */
-int tbl_trylock(table_t *table, uint64_t rowno, sm1::lockmode_t mode) {
-  // Only a shared lock sits under a table opened to read.
-  if (mode != sm1::SM_LOCKMODE_SH && need_writable(table) != 0) {
-    return -1;
-  }
-  // The same lock, asked for without waiting.
-  return sm2::rel_trylock(table->rel, rowno, mode);
+/* Lock the row with _id id without writing it; see sm3.h. */
+int tbl_lock(table_t *table, uint64_t id, sm1::lockmode_t mode) {
+  return lock_row(table, id, mode, false);
 }
 
-/* Empty the table, then reopen its heap and indexes; see sm3.h. */
+/* Lock the row with _id id if it is free now; see sm3.h. */
+int tbl_trylock(table_t *table, uint64_t id, sm1::lockmode_t mode) {
+  return lock_row(table, id, mode, true);
+}
+
+/* Empty the table, then reopen its rel and indexes; see sm3.h. */
 int tbl_truncate(table_t *table) {
   if (!table->exclusive) {
     return sm1::seterr(sm1::SM_ERR_INVALID,
@@ -1136,10 +1331,10 @@ int tbl_scan(table_t *table, uint64_t first, uint64_t last, scan_t *&out) {
 }
 
 /* The next row, in the cursor's pin; see sm3.h. */
-int tbl_scannxt(scan_t *scan, uint64_t &rowno, pin_ref_t &ref,
+int tbl_scannxt(scan_t *scan, uint64_t &id, pin_ref_t &ref,
                 std::string_view &tuple) {
   ref = pin_ref_t{};
-  int rc = sm2::rel_scannxt(scan->rel, rowno, tuple);
+  int rc = sm2::rel_scannxt(scan->rel, id, tuple);
   // Every ref to the row before goes stale, whatever comes next.
   pin_scan_move(scan->pin, rc == 0 ? tuple : std::string_view());
   if (rc == 0) {
@@ -1149,14 +1344,14 @@ int tbl_scannxt(scan_t *scan, uint64_t &rowno, pin_ref_t &ref,
 }
 
 /* The next row's bytes; see sm3.h. */
-int tbl_scannxt(scan_t *scan, uint64_t &rowno, std::string_view &tuple) {
+int tbl_scannxt(scan_t *scan, uint64_t &id, std::string_view &tuple) {
   pin_ref_t ref;
-  return tbl_scannxt(scan, rowno, ref, tuple);
+  return tbl_scannxt(scan, id, ref, tuple);
 }
 
-/* Move the cursor forward to rowno; see sm3.h. */
-int tbl_scan_seek(scan_t *scan, uint64_t rowno) {
-  return sm2::rel_scan_seek(scan->rel, rowno);
+/* Move the cursor forward to _id id; see sm3.h. */
+int tbl_scan_seek(scan_t *scan, uint64_t id) {
+  return sm2::rel_scan_seek(scan->rel, id);
 }
 
 /* Close a cursor, releasing its pin; see sm3.h. */
@@ -1188,7 +1383,7 @@ int tbl_idx_scan(table_t *table, uint64_t index, const sm2::bound_t *lo,
                      "table: no index " + std::to_string(index));
 }
 
-/* The heap's bytes, in files and in memtables. */
+/* The rows' bytes, in files and in memtables. */
 int tbl_size(table_t *table, uint64_t &disk, uint64_t &mem) {
   return sm2::relid_size(table->session->sm1, table->def->storeid, heap_relid,
                          disk, mem);
@@ -1199,18 +1394,19 @@ int tbl_idx_size(table_t *table, uint64_t index, uint64_t &disk,
                  uint64_t &mem) {
   for (const index_def_t &x : table->def->indexes) {
     if (x.oid == index) {
-      return sm2::relid_size(table->session->sm1, table->def->storeid, x.relid,
-                             disk, mem);
+      // A primary key's entries are the rows.
+      return sm2::relid_size(table->session->sm1, table->def->storeid,
+                             x.primary ? heap_relid : x.relid, disk, mem);
     }
   }
   return sm1::seterr(sm1::SM_ERR_NOTFOUND,
                      "table: no index " + std::to_string(index));
 }
 
-/* N, the last rowno the table's sequence handed out, 0 if none. */
-int tbl_rowno_limit(table_t *table, uint64_t &n) {
-  int rc = sm1::lastseq(table->session->sm1, table->def->rowno_seq, n);
-  // A sequence that never handed out a rowno: no row ever was.
+/* N, the last _id the table's sequence handed out, 0 if none. */
+int tbl_id_limit(table_t *table, uint64_t &n) {
+  int rc = sm1::lastseq(table->session->sm1, table->def->id_seq, n);
+  // A sequence that never handed out an _id: no row ever was.
   if (rc == 1) {
     n = 0;
     return 0;
@@ -1244,9 +1440,10 @@ int tbl_index_backfill(table_t *table, uint64_t index, uint64_t from,
                        "table: no index " + std::to_string(index));
   }
   const index_def_t &x = def.indexes[i];
-  if (table->states[i] != index_state_t::pending) {
+  if (table->states[i] != index_state_t::pending || x.primary) {
     return sm1::seterr(sm1::SM_ERR_INVALID,
-                       "index build: index " + x.name + " is not pending");
+                       "index build: index " + x.name +
+                           " is not pending, or is the rows' own key");
   }
   // Rows another transaction may write are read at their newest
   // version, which only READ COMMITTED can do.
@@ -1255,36 +1452,38 @@ int tbl_index_backfill(table_t *table, uint64_t index, uint64_t from,
     return sm1::seterr(sm1::SM_ERR_INVALID,
                        "index build: not at READ COMMITTED");
   }
-  // The batch's rows, by rowno; their tuples are read again below.
-  std::vector<uint64_t> rownos;
+  // The batch's rows, by _id, each with its key; their tuples are
+  // read again below.
+  std::vector<std::pair<uint64_t, std::string>> rows;
   sm2::rel_scan_t *scan = nullptr;
   if (sm2::rel_scan(table->rel, from, UINT64_MAX, scan) != 0) {
     return -1;
   }
-  uint64_t rowno;
+  uint64_t id;
   std::string_view tuple;
   int more = 0;
-  while (rownos.size() < max_rows &&
-         (more = sm2::rel_scannxt(scan, rowno, tuple)) == 0) {
-    rownos.push_back(rowno);
+  while (rows.size() < max_rows &&
+         (more = sm2::rel_scannxt(scan, id, tuple)) == 0) {
+    rows.push_back({id, std::string(sm2::rel_scan_key(scan))});
   }
   sm2::rel_scanend(scan);
   if (more < 0) {
     return -1;
   }
   deformed_t row(def.schema.size());
-  for (uint64_t r : rownos) {
+  for (const auto &[r, row_key] : rows) {
     int found;
     if (table->fresh) {
-      found = sm2::rel_read(table->rel, r, tuple);
+      found = sm2::rel_read(table->rel, row_key, tuple);
     } else {
       // Hold the row shared to the end of the batch: a writer
-      // changes the heap row first, so it and the build never
-      // work on one row at once (SM3_DESIGN.md §3).
-      if (sm2::rel_lock(table->rel, r, sm1::SM_LOCKMODE_SH) != 0) {
+      // changes the row first, so it and the build never work on
+      // one row at once (SM3_DESIGN.md §3). A row moved since the
+      // scan is gone from its key; its mover made its entry.
+      if (sm2::rel_lock(table->rel, row_key, sm1::SM_LOCKMODE_SH) != 0) {
         return -1;
       }
-      found = sm2::rel_read_latest(table->rel, r, tuple);
+      found = sm2::rel_read_latest(table->rel, row_key, tuple);
     }
     if (found < 0) {
       return -1;
@@ -1305,14 +1504,15 @@ int tbl_index_backfill(table_t *table, uint64_t index, uint64_t from,
         make_entry(table, i, values.row(), key) != 0) {
       return -1;
     }
-    if (!key.belongs || add_entry(table, i, key, values.row(), r) == 0) {
+    if (!key.belongs ||
+        add_entry(table, i, key, values.row(), r, row_key) == 0) {
       continue;
     }
     if (sm1::errnum() != sm1::SM_ERR_DUPKEY) {
       return -1;
     }
-    // An entry is there already. With the rowno in its key it is
-    // this row's, made by a writer; without, it may be another's.
+    // An entry is there already. With the row's key in its key it
+    // is this row's, made by a writer; without, it may be another's.
     bool has_null = false;
     for (bool n : key.null()) {
       has_null |= n;
@@ -1348,9 +1548,102 @@ int tbl_index_backfill(table_t *table, uint64_t index, uint64_t from,
       return -1;
     }
   }
-  done = rownos.size() < max_rows;
-  next = rownos.empty() ? from : rownos.back() + 1;
+  done = rows.size() < max_rows;
+  next = rows.empty() ? from : rows.back().first + 1;
   return 0;
+}
+
+/*
+ * Copy the rows of from into to, which is the same table on a new
+ * store keyed anew, each with its _id, its values out of line
+ * fetched from from's store, and its entries in every index to
+ * maintains (../CLUSTER.md §8).
+ */
+static int copy_rows(table_t *from, table_t *to) {
+  const table_def_t &def = *from->def;
+  std::vector<int32_t> all(def.schema.size());
+  for (size_t i = 0; i < all.size(); i++) {
+    all[i] = static_cast<int32_t>(i);
+  }
+  sm2::rel_scan_t *scan = nullptr;
+  if (sm2::rel_scan(from->rel, 0, UINT64_MAX, scan) != 0) {
+    return -1;
+  }
+  std::unique_ptr<sm2::rel_scan_t, void (*)(sm2::rel_scan_t *)> guard(
+      scan, sm2::rel_scanend);
+  deformed_t row(def.schema.size());
+  uint64_t id;
+  std::string_view tuple;
+  int rc;
+  while ((rc = sm2::rel_scannxt(scan, id, tuple)) == 0) {
+    std::vector<std::string> own;
+    uint64_t got;
+    if (sm2::tup_deform(def.desc, tuple, row.d, {row.null.get(), row.n}) != 0 ||
+        tbl_fetch_cols(from, all, row.d, {row.null.get(), row.n}, own) != 0) {
+      return -1;
+    }
+    if (insert_row(to, row.d, {row.null.get(), row.n}, id, got) == 0) {
+      continue;
+    }
+    if (sm1::errnum() != sm1::SM_ERR_DUPKEY) {
+      return -1;
+    }
+    // Which row has the key, for the host to show the key the two
+    // hold, as an index build says it.
+    const index_def_t *pk = primary_of(*to->def);
+    std::string key;
+    uint64_t other = 0;
+    if (pk &&
+        sm2::rel_row_key(to->rel, id, row.d, {row.null.get(), row.n}, key) ==
+            0 &&
+        sm2::rel_read(to->rel, key, tuple, &other) == 0) {
+      sm1::seterr(sm1::SM_ERR_DUPKEY, "rewrite: rows " + std::to_string(id) +
+                                          " and " + std::to_string(other) +
+                                          " of " + def.name +
+                                          " have one key in " + pk->name);
+      sm1::setdup({pk->oid, {id, other}, 2});
+    }
+    return -1;
+  }
+  return rc == 1 ? 0 : -1;
+}
+
+/* Rewrite the table into a new store, keyed as rec says; see internal.h. */
+int rewrite_table(session_t *session, uint64_t oid, table_rec_t rec) {
+  // Every other transaction out, to the end of this one: the rows
+  // are read from one store and written to another.
+  table_t *from = nullptr;
+  if (tbl_open(session, oid, sm1::SM_LOCKMODE_EX, from) != 0) {
+    return -1;
+  }
+  std::unique_ptr<table_t, void (*)(table_t *)> own_from(from, tbl_close);
+  const uint64_t old_store = from->def->storeid;
+  // A new store, temporary if the table is, and the definition
+  // after over it, not yet the catalog's: a copy that fails leaves
+  // the table as it was.
+  std::shared_ptr<const table_def_t> def;
+  collation_lookup_t lookup = [session](uint64_t c,
+                                        const sm2::collation_t *&out) {
+    return session_collation(session, c, out);
+  };
+  if (sm1::mkstore(session->sm1, rec.storeid, rec.nspoid == nsp_temp) != 0 ||
+      build_table(lookup, oid, rec, def) != 0) {
+    return -1;
+  }
+  std::unique_ptr<table_t, void (*)(table_t *)> to(new table_t, tbl_close);
+  to->session = session;
+  to->def = def;
+  to->writable = true;
+  to->exclusive = true;
+  to->fresh = from->fresh;
+  load_states(to.get());
+  if (open_rels(to.get()) != 0 || copy_rows(from, to.get()) != 0 ||
+      cat_put_table(session, oid, rec) != 0) {
+    return -1;
+  }
+  // The old store goes at commit, with the rows and entries in it,
+  // as a truncate's does (CATALOG.md §5.2).
+  return sm1::rmstore(session->sm1, old_store);
 }
 
 /* The value schema of one of the table's indexes; see sm3.h. */

@@ -249,11 +249,16 @@ public:
   peek_t(sm3::table_t *t, uint64_t oid, const sm2::bound_t *lo,
          const sm2::bound_t *hi) {
     const sm3::table_def_t &def = sm3::tbl_def(t);
+    bool keyed = false;
+    for (const sm3::index_def_t &x : def.indexes) {
+      keyed |= x.primary;
+    }
     for (const sm3::index_def_t &x : def.indexes) {
       if (x.oid == oid) {
+        REQUIRE_FALSE(x.primary);
         REQUIRE(sm2::idx_open(sm3::session_sm1(sm3::tbl_session(t)),
                               def.storeid, x.relid, x.key, x.unique, x.include,
-                              m_ix) == 0);
+                              keyed, m_ix) == 0);
       }
     }
     REQUIRE(m_ix);
@@ -3104,7 +3109,7 @@ TEST_CASE("a table's sizes, rowno limit and probes are read live") {
   start(f.a);
   sm3::table_t *t = f.write(f.a);
   uint64_t n = 1, disk = 1, mem = 1, probes = 1;
-  REQUIRE(sm3::tbl_rowno_limit(t, n) == 0);
+  REQUIRE(sm3::tbl_id_limit(t, n) == 0);
   CHECK(n == 0);
   REQUIRE(sm3::tbl_size(t, disk, mem) == 0);
   CHECK(disk == 0);
@@ -3125,7 +3130,7 @@ TEST_CASE("a table's sizes, rowno limit and probes are read live") {
   t = f.write(f.a);
   sm1::session_t *s1 = sm3::session_sm1(f.a);
   const uint64_t old_store = sm3::tbl_def(t).storeid;
-  REQUIRE(sm3::tbl_rowno_limit(t, n) == 0);
+  REQUIRE(sm3::tbl_id_limit(t, n) == 0);
   CHECK(n == last);
   uint64_t d2 = 1, m2 = 1;
   REQUIRE(sm3::tbl_size(t, disk, mem) == 0);
@@ -3161,7 +3166,7 @@ TEST_CASE("a table's sizes, rowno limit and probes are read live") {
   CHECK(mem == 0);
   REQUIRE(sm3::tbl_probes(t, probes) == 0);
   CHECK(probes == 0);
-  REQUIRE(sm3::tbl_rowno_limit(t, n) == 0);
+  REQUIRE(sm3::tbl_id_limit(t, n) == 0);
   CHECK(n == last);
   sm3::tbl_close(t);
   REQUIRE(sm3::abort(f.a) == 0);

@@ -216,7 +216,7 @@ struct table_rec_t {
   uint64_t nspoid;
   std::string name;
   uint64_t storeid;
-  std::string rowno_seq;
+  std::string id_seq;
   uint16_t next_relid;
   std::vector<column_rec_t> columns;
   std::vector<index_rec_t> indexes;
@@ -274,7 +274,7 @@ struct table_def_t {
     uint64_t                      nspoid;
     std::string                   name;
     uint64_t                      storeid;
-    std::string                   rowno_seq;
+    std::string                   id_seq;
     uint16_t                      next_relid;
     std::vector<column_def_t>     columns;
     std::vector<sm2::attribute_t> schema;
@@ -693,7 +693,7 @@ int cat_list_sequences(session_t* s, uint64_t nspoid,
 
 /*
  * Create a table named name in namespace nspoid, with columns,
- * in session's transaction: its store, its rowno sequence, its
+ * in session's transaction: its store, its _id sequence, its
  * name and its definition. Its oid is set in oid. A name already
  * taken fails with SM_ERR_DUPKEY; an unknown namespace with
  * SM_ERR_NOTFOUND; a type code sm2 does not have, or a typmod
@@ -713,7 +713,7 @@ int create_table(session_t* session, uint64_t nspoid, std::string_view name,
 /*
  * Create a temporary table named name (TEMPTABLE.md §4), as
  * create_table does but in no namespace: its store is a temporary
- * store, its rowno sequence a temporary sequence, and its
+ * store, its _id sequence a temporary sequence, and its
  * definition is kept in the session's memory alone. No other
  * session sees it, and it ends with its session. A name another
  * of the session's temporary tables or their indexes has fails
@@ -735,7 +735,7 @@ int create_temp_table(session_t* session, std::string_view name,
 /*
  * Drop the table oid: its name, its indexes' names, its
  * definition, its store with its rows and index entries, its
- * rowno sequence, and the sequences its columns own. One a view
+ * _id sequence, and the sequences its columns own. One a view
  * reads is refused with SM_ERR_INUSE.
  */
 int drop_table(session_t* session, uint64_t oid);
@@ -743,8 +743,8 @@ int drop_table(session_t* session, uint64_t oid);
 /*
  * Empty the table oid: it gets a new, empty store, and the old one
  * is dropped, rows and index entries with it. The columns, the
- * indexes and their states, and the rowno sequence are kept, so
- * new rows go on from the last rowno handed out. Transactional,
+ * indexes and their states, and the _id sequence are kept, so
+ * new rows go on from the last _id handed out. Transactional,
  * and the same cost whatever the table holds. It takes the schema
  * lock exclusive, as other DDL does. A transaction that began
  * before it committed and first reads the table after finds it
@@ -844,9 +844,15 @@ int drop_namespace(session_t* session, uint64_t oid);
  * transaction has written, and records it valid; two of those
  * rows with one key fail a unique index with SM_ERR_DUPKEY.
  *
- * A primary one is the table's primary key, a mark the host reads:
- * it must be unique, on columns alone, every one NOT NULL, and the
- * table's only one, or it is SM_ERR_INVALID. A constraint one is a
+ * A primary one is the table's primary key: it must be unique, on
+ * columns alone, every one NOT NULL, refused past
+ * sm2::max_pk_len, and the table's only one, or it is
+ * SM_ERR_INVALID. The table's rows are keyed by it, and are its
+ * entries (../CLUSTER.md §2): it is made valid at once, on a table
+ * this transaction made with no row yet; on any other the table is
+ * rewritten into a new store under its table-oid lock, exclusive,
+ * which drop_index of it does too (../CLUSTER.md §8). Two rows
+ * with one key fail it with SM_ERR_DUPKEY. A constraint one is a
  * UNIQUE or PRIMARY KEY constraint's, another mark the host reads:
  * it must be unique and on columns alone.
  */
@@ -1249,21 +1255,32 @@ index_state_t tbl_index_state(const table_t* table, uint64_t index);
  * column with SM_ERR_NOTNULL; both before anything is written. A
  * key a unique index holds already is SM_ERR_DUPKEY, the index in
  * sm1::errdup(): the host has the row, to say the key.
+ *
+ * A row is named by its _id (../CLUSTER.md §2), which a table with
+ * a primary key resolves to the row's key through its _id index, as
+ * the snapshot shows it. At READ COMMITTED a row another
+ * transaction moved since is followed (../CLUSTER.md §4): the
+ * write meets SM_ERR_UPDATED at the old key, tbl_read_latest finds
+ * the row at its new key from the newest version of its _id entry,
+ * locking it exclusive there, and the write taken again goes there.
+ * The _id entry is then held shared to the end of the transaction,
+ * so that none moves the row again; above READ COMMITTED a moved
+ * row is SM_ERR_CONFLICT, as any row changed since the snapshot.
  */
 
 /*
  * Insert a row of values and null flags, one per attribute of the
- * table's schema; rowno is its id. Every index gets its entry.
+ * table's schema; id is its _id. Every index gets its entry.
  */
 int tbl_insert(table_t* table, std::span<const sm2::datum_t> values,
-               std::span<const bool> isnull, uint64_t& rowno);
+               std::span<const bool> isnull, uint64_t& id);
 
 /*
  * Insert a row as tbl_insert does, unless a row already has its
  * key in one of the unique indexes arbiters names by oid, or in
  * any unique index of the table if arbiters is empty: SQL's
- * INSERT ... ON CONFLICT. Returns 0 with the new row's rowno; 1,
- * with nothing written, with the rowno of the row that has the
+ * INSERT ... ON CONFLICT. Returns 0 with the new row's _id; 1,
+ * with nothing written, with the _id of the row that has the
  * key; or -1.
  *
  * It finds out before the row is written. It looks each
@@ -1291,10 +1308,10 @@ int tbl_insert(table_t* table, std::span<const sm2::datum_t> values,
  */
 int tbl_insert_arbiter(table_t* table, std::span<const sm2::datum_t> values,
                        std::span<const bool> isnull,
-                       std::span<const uint64_t> arbiters, uint64_t& rowno);
+                       std::span<const uint64_t> arbiters, uint64_t& id);
 
 /*
- * Replace the row at rowno. An index is left alone if the row's
+ * Replace the row with _id id. An index is left alone if the row's
  * key columns compare equal before and after, by their types' cmp,
  * and its INCLUDE columns hold the same bytes; otherwise its old
  * entry is removed and a new one added. While an index is pending
@@ -1307,21 +1324,21 @@ int tbl_insert_arbiter(table_t* table, std::span<const sm2::datum_t> values,
  * write succeeds, so values may point into its row; on failure old
  * is empty, and ref keeps what it held.
  */
-int tbl_update(table_t* table, uint64_t rowno,
+int tbl_update(table_t* table, uint64_t id,
                std::span<const sm2::datum_t> values,
                std::span<const bool> isnull);
-int tbl_update(table_t* table, uint64_t rowno,
+int tbl_update(table_t* table, uint64_t id,
                std::span<const sm2::datum_t> values,
                std::span<const bool> isnull, pin_ref_t& ref,
                std::string_view& old);
 
 /*
- * Delete the row at rowno, and its entry in every index. The form
+ * Delete the row with _id id, and its entry in every index. The form
  * with ref hands back the image deleted, pinned into ref, as
  * tbl_update's does.
  */
-int tbl_delete(table_t* table, uint64_t rowno);
-int tbl_delete(table_t* table, uint64_t rowno, pin_ref_t& ref,
+int tbl_delete(table_t* table, uint64_t id);
+int tbl_delete(table_t* table, uint64_t id, pin_ref_t& ref,
                std::string_view& old);
 
 /*
@@ -1359,13 +1376,13 @@ struct loader_t;
 int tbl_load_open(table_t* table, loader_t*& out);
 
 /*
- * Hand over one row; its rowno is known at once. It fails as
+ * Hand over one row; its _id is known at once. It fails as
  * tbl_insert does for what it sees in the row; a duplicate key
  * fails here once rows are being inserted, and at the close
  * otherwise. After a failure the transaction is to be aborted.
  */
 int tbl_load_add(loader_t* loader, std::span<const sm2::datum_t> values,
-                 std::span<const bool> isnull, uint64_t& rowno);
+                 std::span<const bool> isnull, uint64_t& id);
 
 /*
  * Finish the load: sort, check and put into the table whatever is
@@ -1392,33 +1409,33 @@ void tbl_load_free(loader_t* loader);
  */
 int tbl_fetch(table_t* table, std::string_view ptr, std::string& out);
 
-/* Read the row at rowno, as sm2::rel_read does. */
-int tbl_read(table_t* table, uint64_t rowno, std::string_view& tuple);
+/* Read the row with _id id, as sm2::rel_read does. */
+int tbl_read(table_t* table, uint64_t id, std::string_view& tuple);
 
 /*
- * Read the row at rowno into a pin, with no copy: 0 with ref naming
+ * Read the row with _id id into a pin, with no copy: 0 with ref naming
  * it and tuple viewing its row, valid until the pin is released, 1
  * if there is none, or -1. A pin ref names still is released
  * first; on 1 or -1 ref is zero. A rollback to a savepoint releases
  * no pin, nor does the drop of the row's store.
  */
-int tbl_read(table_t* table, uint64_t rowno, pin_ref_t& ref,
+int tbl_read(table_t* table, uint64_t id, pin_ref_t& ref,
              std::string_view& tuple);
 
 /*
- * Read the newest committed version of the row at rowno, as
+ * Read the newest committed version of the row with _id id, as
  * sm2::rel_read_latest does: what a read committed writer that met
  * SM_ERR_UPDATED checks its filter against, and what lets sm1 take
  * its write again.
  */
-int tbl_read_latest(table_t* table, uint64_t rowno, std::string_view& tuple);
+int tbl_read_latest(table_t* table, uint64_t id, std::string_view& tuple);
 
 /* tbl_read_latest into a pin, as tbl_read into one. */
-int tbl_read_latest(table_t* table, uint64_t rowno, pin_ref_t& ref,
+int tbl_read_latest(table_t* table, uint64_t id, pin_ref_t& ref,
                     std::string_view& tuple);
 
 /*
- * Lock the row at rowno in mode without writing it, as
+ * Lock the row with _id id in mode without writing it, as
  * sm2::rel_lock does, to the end of the transaction: shared, as a
  * foreign key check locks the parent row and SELECT ... FOR SHARE
  * a row it read, which other readers of the key may share and a
@@ -1428,7 +1445,7 @@ int tbl_read_latest(table_t* table, uint64_t rowno, pin_ref_t& ref,
  * Above read committed, a row committed since the snapshot fails
  * with SM_ERR_CONFLICT, as sm1::lock says.
  */
-int tbl_lock(table_t* table, uint64_t rowno, sm1::lockmode_t mode);
+int tbl_lock(table_t* table, uint64_t id, sm1::lockmode_t mode);
 
 /*
  * As tbl_lock, but never waiting (sm1::trylock): 0 with the row
@@ -1436,7 +1453,7 @@ int tbl_lock(table_t* table, uint64_t rowno, sm1::lockmode_t mode);
  * has written it and not ended, or -1. SQL's NOWAIT and SKIP
  * LOCKED.
  */
-int tbl_trylock(table_t* table, uint64_t rowno, sm1::lockmode_t mode);
+int tbl_trylock(table_t* table, uint64_t id, sm1::lockmode_t mode);
 
 /*
  * Empty the table: its rows and every index's entries, in the
@@ -1447,7 +1464,7 @@ int tbl_trylock(table_t* table, uint64_t rowno, sm1::lockmode_t mode);
 int tbl_truncate(table_t* table);
 
 /*
- * A cursor over a table's rows, in rowno order (../ROW.md §4.3):
+ * A cursor over a table's rows, in _id order (../ROW.md §4.3):
  * an sm2 rel scan, and one pin, which holds the cursor's current
  * row.
  */
@@ -1460,19 +1477,19 @@ struct scan_t;
 int tbl_scan(table_t* table, uint64_t first, uint64_t last, scan_t*& out);
 
 /*
- * The next row: 0 with rowno, and the row in the cursor's pin, which
+ * The next row: 0 with its _id, and the row in the cursor's pin, which
  * ref then names and tuple views; 1 at the end; -1 on error. Each
  * call makes every ref to the row before stale; so do the end of the
  * transaction, a rollback that closes the cursor, and tbl_scanend.
  */
-int tbl_scannxt(scan_t* scan, uint64_t& rowno, pin_ref_t& ref,
+int tbl_scannxt(scan_t* scan, uint64_t& id, pin_ref_t& ref,
                 std::string_view& tuple);
 
 /* tbl_scannxt for a caller that wants the bytes only. */
-int tbl_scannxt(scan_t* scan, uint64_t& rowno, std::string_view& tuple);
+int tbl_scannxt(scan_t* scan, uint64_t& id, std::string_view& tuple);
 
-/* Move the cursor forward to rowno, as sm2::rel_scan_seek does. */
-int tbl_scan_seek(scan_t* scan, uint64_t rowno);
+/* Move the cursor forward to _id id, as sm2::rel_scan_seek does. */
+int tbl_scan_seek(scan_t* scan, uint64_t id);
 
 /* Close a cursor, releasing its pin; nullptr is a no-op. */
 void tbl_scanend(scan_t* scan);
@@ -1496,14 +1513,14 @@ int tbl_idx_scan(table_t* table, uint64_t index, const sm2::bound_t* lo,
  * tbl_size sets the heap's bytes, and tbl_idx_size the index
  * oid's, as sm2::relid_size gives them: in sorted files and in
  * memtables, apart (SM_ERR_NOTFOUND if the table has no such
- * index). tbl_rowno_limit sets N, the last rowno handed out, 0
+ * index). tbl_id_limit sets N, the last _id handed out, 0
  * if none, as sm1::lastseq gives it. tbl_probes sets the sorted
  * runs a lookup in the table's store may visit, as sm1::probes.
  */
 int tbl_size(table_t* table, uint64_t& disk, uint64_t& mem);
 int tbl_idx_size(table_t* table, uint64_t index, uint64_t& disk,
                  uint64_t& mem);
-int tbl_rowno_limit(table_t* table, uint64_t& n);
+int tbl_id_limit(table_t* table, uint64_t& n);
 int tbl_probes(table_t* table, uint64_t& n);
 
 /*
@@ -1567,7 +1584,7 @@ int cat_get_stats(session_t* session, uint64_t oid,
 /*
  * Analyze the table, opened in a transaction (SM3_DESIGN.md §6.4 to
  * §6.7): sample up to 300 x target of its rows, reading no more
- * than ten times that in rownos whatever its size, estimate each
+ * than ten times that in _ids whatever its size, estimate each
  * live column's statistics, and record them with the table's sizes
  * and its indexes' by cat_put_stats. A table whose heap holds no
  * bytes and whose sample reads no row, as a new or truncated one,
@@ -1588,9 +1605,9 @@ int tbl_tryanalyze(table_t* table, int32_t target);
 /*
  * One batch of the build of the table's index oid, which must be
  * pending (SM3_DESIGN.md §3): cover up to max_rows rows from
- * rowno from on. For each it takes the row's lock shared, reads
+ * _id from on. For each it takes the row's lock shared, reads
  * the row's newest committed version, and adds the row's entry if
- * it is not there. next is set to the rowno to go on from, and
+ * it is not there. next is set to the _id to go on from, and
  * done once the end of the heap was reached. The caller commits
  * the batch, and marks the index valid after the last.
  *

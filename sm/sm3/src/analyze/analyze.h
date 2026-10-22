@@ -20,36 +20,36 @@ namespace sm3 {
 constexpr uint64_t rows_per_target = 300;
 
 /*
- * The most rownos a sample covers, as a multiple of the rows it is
+ * The most _ids a sample covers, as a multiple of the rows it is
  * after: what bounds its reads, whatever the table's size.
  */
 constexpr uint64_t budget_factor = 10;
 
-/* One sampled row: its rowno and its tuple, as sm2 encodes it. */
+/* One sampled row: its _id and its tuple, as sm2 encodes it. */
 struct sample_row_t {
-  uint64_t rowno;
+  uint64_t id;
   std::string tuple;
 };
 
 /* A table's sample, and what reading it found. */
 struct sample_t {
-  std::vector<sample_row_t> rows; /* kept, uniform, in rowno order */
-  uint64_t rowno_limit = 0;       /* N, the last rowno handed out */
-  int32_t run_length = 0;         /* B, rownos a run */
+  std::vector<sample_row_t> rows; /* kept, uniform, in _id order */
+  uint64_t rowno_limit = 0;       /* N, the last _id handed out */
+  int32_t run_length = 0;         /* B, _ids a run */
   uint64_t runs = 0;              /* runs read */
-  uint64_t rownos_covered = 0;    /* rownos the runs spanned */
+  uint64_t ids_covered = 0;       /* _ids the runs spanned */
   uint64_t rows_read = 0;         /* live rows found in them */
   double live_rows = 0;           /* the estimate of the table's */
   int32_t avg_row_bytes = 0;      /* over the rows read */
-  bool whole = false;             /* every rowno 1..N was covered */
+  bool whole = false;             /* every _id 1..N was covered */
 };
 
 /*
  * Sample the table, open in a transaction, for target: up to
  * rows_per_target x target rows, read through forward cursors at
- * the transaction's snapshot, in runs of B rownos whose slots are
+ * the transaction's snapshot, in runs of B _ids whose slots are
  * chosen by Floyd's algorithm, never by walking the table. It
- * reads at most budget_factor x the rows it is after, in rownos;
+ * reads at most budget_factor x the rows it is after, in _ids;
  * a sparse table may then give fewer rows. rng makes the draws.
  */
 int sample_table(table_t *table, int32_t target, std::mt19937_64 &rng,
@@ -63,7 +63,7 @@ std::vector<uint64_t> floyd(uint64_t n, uint64_t k, std::mt19937_64 &rng);
 
 /*
  * The statistics of one column or expression, from its values over a
- * sample, in the sample's order -- rowno order -- with their null
+ * sample, in the sample's order -- _id order -- with their null
  * flags (SM3_DESIGN.md §6.5): PostgreSQL's compute_scalar_stats,
  * comparing values by their key under col. totalrows is the table's
  * estimated live rows. valid is false if the sample had no rows, and
