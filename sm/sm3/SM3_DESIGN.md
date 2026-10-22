@@ -1039,7 +1039,8 @@ and sm3 never encodes a key itself.
   the catalog is not versioned (§2). On an open table it is
   `tbl_truncate`, which needs the table opened exclusive and
   reopens the handle on the new store.
-- **`DROP INDEX` is a range delete** over the index's keys.
+- **`DROP INDEX` erases the index's keys** one by one, as sm1
+  has no range delete (`CATALOG.md` §5.2).
 - **Index relids are allocated in increasing order and never
   reused.** A dropped index's versions linger until sm1's
   garbage collection passes them; never reusing a relid means

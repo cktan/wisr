@@ -118,6 +118,9 @@ the wrapper through the `rel/` test suite.
   and deformed only as far as it is read; built
 - `SM_DECIMAL_PLAN.md` — the decimals carry their scale in
   the datum; built
+- `LOGICALDECODE.md` — a change feed for replication: a
+  change log committed with the data, drained in commit order
+  into files of `pgoutput` messages; proposed, not built
 - `TEMPTABLE.md` — the design of temporary tables, which is
   built: their rows in one unlogged RocksDB instance of their
   own, under the database's transactions, with no locks
