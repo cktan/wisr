@@ -1,0 +1,679 @@
+--
+-- VACUUM
+--
+CREATE TABLE vactst (i INT);
+INSERT INTO vactst VALUES (1);
+INSERT INTO vactst SELECT * FROM vactst;
+INSERT INTO vactst SELECT * FROM vactst;
+INSERT INTO vactst SELECT * FROM vactst;
+INSERT INTO vactst SELECT * FROM vactst;
+INSERT INTO vactst SELECT * FROM vactst;
+INSERT INTO vactst SELECT * FROM vactst;
+INSERT INTO vactst SELECT * FROM vactst;
+INSERT INTO vactst SELECT * FROM vactst;
+INSERT INTO vactst SELECT * FROM vactst;
+INSERT INTO vactst SELECT * FROM vactst;
+INSERT INTO vactst SELECT * FROM vactst;
+INSERT INTO vactst VALUES (0);
+SELECT count(*) FROM vactst;
+ count 
+-------
+  2049
+(1 row)
+
+DELETE FROM vactst WHERE i != 0;
+SELECT * FROM vactst;
+ i 
+---
+ 0
+(1 row)
+
+VACUUM FULL vactst;
+UPDATE vactst SET i = i + 1;
+INSERT INTO vactst SELECT * FROM vactst;
+INSERT INTO vactst SELECT * FROM vactst;
+INSERT INTO vactst SELECT * FROM vactst;
+INSERT INTO vactst SELECT * FROM vactst;
+INSERT INTO vactst SELECT * FROM vactst;
+INSERT INTO vactst SELECT * FROM vactst;
+INSERT INTO vactst SELECT * FROM vactst;
+INSERT INTO vactst SELECT * FROM vactst;
+INSERT INTO vactst SELECT * FROM vactst;
+INSERT INTO vactst SELECT * FROM vactst;
+INSERT INTO vactst SELECT * FROM vactst;
+INSERT INTO vactst VALUES (0);
+SELECT count(*) FROM vactst;
+ count 
+-------
+  2049
+(1 row)
+
+DELETE FROM vactst WHERE i != 0;
+VACUUM (FULL) vactst;
+DELETE FROM vactst;
+SELECT * FROM vactst;
+ i 
+---
+(0 rows)
+
+VACUUM (FULL, FREEZE) vactst;
+VACUUM (ANALYZE, FULL) vactst;
+CREATE TABLE vaccluster (i INT PRIMARY KEY);
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg ALTER TABLE vaccluster CLUSTER ON vaccluster_pkey;
+--dg-cascade
+--dg CLUSTER vaccluster;
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION do_analyze() RETURNS VOID VOLATILE LANGUAGE SQL
+--dg 	AS 'ANALYZE pg_am';
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION wrap_do_analyze(c INT) RETURNS INT IMMUTABLE LANGUAGE SQL
+--dg 	AS 'SELECT $1 FROM public.do_analyze()';
+--dg-cascade
+--dg CREATE INDEX ON vaccluster(wrap_do_analyze(i));
+INSERT INTO vaccluster VALUES (1), (2);
+--dg-cascade
+--dg ANALYZE vaccluster;
+-- Test ANALYZE in transaction, where the transaction surrounding
+-- analyze performed modifications. This tests for the bug at
+-- https://postgr.es/m/c7988239-d42c-ddc4-41db-171b23b35e4f%40ssinger.info
+-- (which hopefully is unlikely to be reintroduced), but also seems
+-- independently worthwhile to cover.
+INSERT INTO vactst SELECT generate_series(1, 300);
+DELETE FROM vactst WHERE i % 7 = 0; -- delete a few rows outside
+BEGIN;
+INSERT INTO vactst SELECT generate_series(301, 400);
+DELETE FROM vactst WHERE i % 5 <> 0; -- delete a few rows inside
+ANALYZE vactst;
+COMMIT;
+-- Test ANALYZE setting relhassubclass=f for non-partitioning inheritance
+BEGIN;
+CREATE TABLE past_inh_parent ();
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE past_inh_child () INHERITS (past_inh_parent);
+--dg-cascade
+--dg INSERT INTO past_inh_child DEFAULT VALUES;
+--dg-cascade
+--dg INSERT INTO past_inh_child DEFAULT VALUES;
+--dg-cascade
+--dg ANALYZE past_inh_parent;
+--dg-cascade
+--dg SELECT reltuples, relhassubclass
+--dg   FROM pg_class WHERE oid = 'past_inh_parent'::regclass;
+--dg-cascade
+--dg DROP TABLE past_inh_child;
+--dg-cascade
+--dg ANALYZE past_inh_parent;
+--dg-cascade
+--dg SELECT reltuples, relhassubclass
+--dg   FROM pg_class WHERE oid = 'past_inh_parent'::regclass;
+COMMIT;
+-- Test ANALYZE setting relhassubclass=f for partitioning
+BEGIN;
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE past_parted (i int) PARTITION BY LIST(i);
+--dg-cascade
+--dg CREATE TABLE past_part PARTITION OF past_parted FOR VALUES IN (1);
+--dg-cascade
+--dg INSERT INTO past_parted VALUES (1),(1);
+--dg-cascade
+--dg ANALYZE past_parted;
+--dg-cascade
+--dg DROP TABLE past_part;
+--dg-cascade
+--dg SELECT reltuples, relhassubclass
+--dg   FROM pg_class WHERE oid = 'past_parted'::regclass;
+--dg-cascade
+--dg ANALYZE past_parted;
+--dg-cascade
+--dg SELECT reltuples, relhassubclass
+--dg   FROM pg_class WHERE oid = 'past_parted'::regclass;
+COMMIT;
+VACUUM FULL pg_am;
+VACUUM FULL pg_class;
+VACUUM FULL pg_database;
+--dg-cascade
+--dg VACUUM FULL vaccluster;
+VACUUM FULL vactst;
+VACUUM (DISABLE_PAGE_SKIPPING) vaccluster;
+-- PARALLEL option
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE pvactst (i INT, a INT[], p POINT) with (autovacuum_enabled = off);
+--dg-cascade
+--dg INSERT INTO pvactst SELECT i, array[1,2,3], point(i, i+1) FROM generate_series(1,1000) i;
+--dg-cascade
+--dg CREATE INDEX btree_pvactst ON pvactst USING btree (i);
+--dg-cascade
+--dg CREATE INDEX hash_pvactst ON pvactst USING hash (i);
+--dg-cascade
+--dg CREATE INDEX brin_pvactst ON pvactst USING brin (i);
+--dg-cascade
+--dg CREATE INDEX gin_pvactst ON pvactst USING gin (a);
+--dg-cascade
+--dg CREATE INDEX gist_pvactst ON pvactst USING gist (p);
+--dg-cascade
+--dg CREATE INDEX spgist_pvactst ON pvactst USING spgist (p);
+CREATE TABLE pvactst2 (i INT) WITH (autovacuum_enabled = off);
+INSERT INTO pvactst2 SELECT generate_series(1, 1000);
+CREATE INDEX ON pvactst2 (i);
+CREATE INDEX ON pvactst2 (i);
+-- VACUUM invokes parallel index cleanup
+--dg-skip: unrecognized configuration parameter "?"
+--dg SET min_parallel_index_scan_size to 0;
+--dg-cascade
+--dg VACUUM (PARALLEL 2) pvactst;
+-- VACUUM invokes parallel bulk-deletion
+--dg-cascade
+--dg UPDATE pvactst SET i = i WHERE i < 1000;
+--dg-cascade
+--dg VACUUM (PARALLEL 2) pvactst;
+--dg-cascade
+--dg UPDATE pvactst SET i = i WHERE i < 1000;
+--dg-cascade
+--dg VACUUM (PARALLEL 0) pvactst; -- disable parallel vacuum
+--dg-differs: no error where PostgreSQL has: parallel workers for vacuum must be between N and N
+--dg VACUUM (PARALLEL -1) pvactst; -- error
+--dg-cascade
+--dg VACUUM (PARALLEL 2, INDEX_CLEANUP FALSE) pvactst;
+--dg-differs: no error where PostgreSQL has: VACUUM FULL cannot be performed in parallel
+--dg VACUUM (PARALLEL 2, FULL TRUE) pvactst; -- error, cannot use both PARALLEL and FULL
+--dg-differs: no error where PostgreSQL has: parallel option requires a value between N and N
+--dg VACUUM (PARALLEL) pvactst; -- error, cannot use PARALLEL option without parallel degree
+-- Test parallel vacuum using the minimum maintenance_work_mem with and without
+-- dead tuples.
+SET maintenance_work_mem TO 64;
+VACUUM (PARALLEL 2) pvactst2;
+DELETE FROM pvactst2 WHERE i < 1000;
+VACUUM (PARALLEL 2) pvactst2;
+RESET maintenance_work_mem;
+-- Test different combinations of parallel and full options for temporary tables
+CREATE TEMPORARY TABLE tmp (a int PRIMARY KEY);
+CREATE INDEX tmp_idx1 ON tmp (a);
+--dg-differs: the result
+--dg VACUUM (PARALLEL 1, FULL FALSE) tmp; -- parallel vacuum disabled for temp tables
+VACUUM (PARALLEL 0, FULL TRUE) tmp; -- can specify parallel disabled (even though that's implied by FULL)
+--dg-skip: unrecognized configuration parameter "?"
+--dg RESET min_parallel_index_scan_size;
+--dg-cascade
+--dg DROP TABLE pvactst;
+DROP TABLE pvactst2;
+-- INDEX_CLEANUP option
+CREATE TABLE no_index_cleanup (i INT PRIMARY KEY, t TEXT);
+-- Use uncompressed data stored in toast.
+CREATE INDEX no_index_cleanup_idx ON no_index_cleanup(t);
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg ALTER TABLE no_index_cleanup ALTER COLUMN t SET STORAGE EXTERNAL;
+INSERT INTO no_index_cleanup(i, t) VALUES (generate_series(1,30),
+    repeat('1234567890',269));
+-- index cleanup option is ignored if VACUUM FULL
+VACUUM (INDEX_CLEANUP TRUE, FULL TRUE) no_index_cleanup;
+VACUUM (FULL TRUE) no_index_cleanup;
+-- Toast inherits the value from its parent table.
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg ALTER TABLE no_index_cleanup SET (vacuum_index_cleanup = false);
+DELETE FROM no_index_cleanup WHERE i < 15;
+-- Nothing is cleaned up.
+VACUUM no_index_cleanup;
+-- Both parent relation and toast are cleaned up.
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg ALTER TABLE no_index_cleanup SET (vacuum_index_cleanup = true);
+VACUUM no_index_cleanup;
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg ALTER TABLE no_index_cleanup SET (vacuum_index_cleanup = auto);
+VACUUM no_index_cleanup;
+-- Parameter is set for both the parent table and its toast relation.
+INSERT INTO no_index_cleanup(i, t) VALUES (generate_series(31,60),
+    repeat('1234567890',269));
+DELETE FROM no_index_cleanup WHERE i < 45;
+-- Only toast index is cleaned up.
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg ALTER TABLE no_index_cleanup SET (vacuum_index_cleanup = off,
+--dg     toast.vacuum_index_cleanup = yes);
+VACUUM no_index_cleanup;
+-- Only parent is cleaned up.
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg ALTER TABLE no_index_cleanup SET (vacuum_index_cleanup = true,
+--dg     toast.vacuum_index_cleanup = false);
+VACUUM no_index_cleanup;
+-- Test some extra relations.
+VACUUM (INDEX_CLEANUP FALSE) vaccluster;
+VACUUM (INDEX_CLEANUP AUTO) vactst; -- index cleanup option is ignored if no indexes
+VACUUM (INDEX_CLEANUP FALSE, FREEZE TRUE) vaccluster;
+-- TRUNCATE option
+--dg-skip: storage parameter "?" is not supported
+--dg CREATE TEMP TABLE vac_truncate_test(i INT NOT NULL, j text)
+--dg 	WITH (vacuum_truncate=true, autovacuum_enabled=false);
+--dg-cascade
+--dg INSERT INTO vac_truncate_test VALUES (1, NULL), (NULL, NULL);
+--dg-cascade
+--dg VACUUM (TRUNCATE FALSE, DISABLE_PAGE_SKIPPING) vac_truncate_test;
+--dg-cascade
+--dg SELECT pg_relation_size('vac_truncate_test') > 0;
+--dg-skip: unrecognized configuration parameter "?"
+--dg SET vacuum_truncate = false;
+--dg-cascade
+--dg VACUUM (DISABLE_PAGE_SKIPPING) vac_truncate_test;
+--dg-cascade
+--dg SELECT pg_relation_size('vac_truncate_test') = 0;
+--dg-cascade
+--dg VACUUM (TRUNCATE FALSE, FULL TRUE) vac_truncate_test;
+--dg-cascade
+--dg ALTER TABLE vac_truncate_test RESET (vacuum_truncate);
+--dg-cascade
+--dg INSERT INTO vac_truncate_test VALUES (1, NULL), (NULL, NULL);
+--dg-cascade
+--dg VACUUM (DISABLE_PAGE_SKIPPING) vac_truncate_test;
+--dg-cascade
+--dg SELECT pg_relation_size('vac_truncate_test') > 0;
+--dg-skip: unrecognized configuration parameter "?"
+--dg RESET vacuum_truncate;
+--dg-cascade
+--dg VACUUM (TRUNCATE FALSE, DISABLE_PAGE_SKIPPING) vac_truncate_test;
+--dg-cascade
+--dg SELECT pg_relation_size('vac_truncate_test') > 0;
+--dg-cascade
+--dg VACUUM (DISABLE_PAGE_SKIPPING) vac_truncate_test;
+--dg-cascade
+--dg SELECT pg_relation_size('vac_truncate_test') = 0;
+--dg-cascade
+--dg DROP TABLE vac_truncate_test;
+-- partitioned table
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE vacparted (a int, b char) PARTITION BY LIST (a);
+--dg-cascade
+--dg CREATE TABLE vacparted1 PARTITION OF vacparted FOR VALUES IN (1);
+--dg-cascade
+--dg INSERT INTO vacparted VALUES (1, 'a');
+--dg-cascade
+--dg UPDATE vacparted SET b = 'b';
+--dg-cascade
+--dg VACUUM (ANALYZE) vacparted;
+--dg-cascade
+--dg VACUUM (FULL) vacparted;
+--dg-cascade
+--dg VACUUM (FREEZE) vacparted;
+-- check behavior with duplicate column mentions
+--dg-cascade
+--dg VACUUM ANALYZE vacparted(a,b,a);
+--dg-cascade
+--dg ANALYZE vacparted(a,b,b);
+-- partitioned table with index
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE vacparted_i (a int primary key, b varchar(100))
+--dg   PARTITION BY HASH (a);
+--dg-cascade
+--dg CREATE TABLE vacparted_i1 PARTITION OF vacparted_i
+--dg   FOR VALUES WITH (MODULUS 2, REMAINDER 0);
+--dg-cascade
+--dg CREATE TABLE vacparted_i2 PARTITION OF vacparted_i
+--dg   FOR VALUES WITH (MODULUS 2, REMAINDER 1);
+--dg-cascade
+--dg INSERT INTO vacparted_i SELECT i, 'test_'|| i from generate_series(1,10) i;
+--dg-cascade
+--dg VACUUM (ANALYZE) vacparted_i;
+--dg-cascade
+--dg VACUUM (FULL) vacparted_i;
+--dg-cascade
+--dg VACUUM (FREEZE) vacparted_i;
+--dg-cascade
+--dg SELECT relname, relhasindex FROM pg_class
+--dg   WHERE relname LIKE 'vacparted_i%' AND relkind IN ('p','r')
+--dg   ORDER BY relname;
+--dg-cascade
+--dg DROP TABLE vacparted_i;
+-- multiple tables specified
+VACUUM vaccluster, vactst;
+--dg-cascade
+--dg VACUUM vacparted, does_not_exist;
+--dg-cascade
+--dg VACUUM (FREEZE) vacparted, vaccluster, vactst;
+--dg-differs: no error where PostgreSQL has: relation "?" does not exist
+--dg VACUUM (FREEZE) does_not_exist, vaccluster;
+--dg-cascade
+--dg VACUUM ANALYZE vactst, vacparted (a);
+--dg-cascade
+--dg VACUUM ANALYZE vactst (does_not_exist), vacparted (b);
+--dg-cascade
+--dg VACUUM FULL vacparted, vactst;
+--dg-differs: no error where PostgreSQL has: ANALYZE option must be specified when a column list is provided
+--dg VACUUM FULL vactst, vacparted (a, b), vaccluster (i);
+--dg-cascade
+--dg ANALYZE vactst, vacparted;
+--dg-skip: ANALYZE of chosen columns is not supported yet
+--dg ANALYZE vacparted (b), vactst;
+ANALYZE vactst, does_not_exist, vacparted;
+ERROR:  relation "does_not_exist" does not exist
+--dg-cascade
+--dg ANALYZE vactst (i), vacparted (does_not_exist);
+--dg-skip: could not analyze a table: the row was already changed by this statement
+--dg ANALYZE vactst, vactst;
+BEGIN;  -- ANALYZE behaves differently inside a transaction block
+--dg-skip: could not analyze a table: the row was already changed by this statement
+--dg ANALYZE vactst, vactst;
+COMMIT;
+--
+-- Tests for ANALYZE ONLY / VACUUM ONLY on partitioned tables
+--
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE only_parted (a int, b text) PARTITION BY LIST (a);
+--dg-cascade
+--dg CREATE TABLE only_parted1 PARTITION OF only_parted FOR VALUES IN (1);
+--dg-cascade
+--dg INSERT INTO only_parted VALUES (1, 'a');
+-- Ensure only the partitioned table is analyzed
+--dg-cascade
+--dg ANALYZE ONLY only_parted;
+--dg-cascade
+--dg SELECT relname, last_analyze IS NOT NULL AS analyzed, last_vacuum IS NOT NULL AS vacuumed
+--dg   FROM pg_stat_user_tables
+--dg   WHERE relid IN ('only_parted'::regclass, 'only_parted1'::regclass)
+--dg   ORDER BY relname;
+-- Ensure partitioned table and the partitions are analyzed
+--dg-cascade
+--dg ANALYZE only_parted;
+--dg-cascade
+--dg SELECT relname, last_analyze IS NOT NULL AS analyzed, last_vacuum IS NOT NULL AS vacuumed
+--dg   FROM pg_stat_user_tables
+--dg   WHERE relid IN ('only_parted'::regclass, 'only_parted1'::regclass)
+--dg   ORDER BY relname;
+--dg-cascade
+--dg DROP TABLE only_parted;
+-- VACUUM ONLY on a partitioned table does nothing, ensure we get a warning.
+--dg-cascade
+--dg VACUUM ONLY vacparted;
+-- Try ANALYZE ONLY with a column list
+--dg-skip: ANALYZE of chosen columns is not supported yet
+--dg ANALYZE ONLY vacparted(a,b);
+--
+-- Tests for VACUUM ONLY / ANALYZE ONLY on inheritance tables
+--
+CREATE TABLE only_inh_parent (a int primary key, b TEXT);
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE only_inh_child () INHERITS (only_inh_parent);
+--dg-cascade
+--dg INSERT INTO only_inh_child(a,b) VALUES (1, 'aaa'), (2, 'bbb'), (3, 'ccc');
+-- Ensure only parent is analyzed
+ANALYZE ONLY only_inh_parent;
+--dg-cascade
+--dg SELECT relname, last_analyze IS NOT NULL AS analyzed, last_vacuum IS NOT NULL AS vacuumed
+--dg   FROM pg_stat_user_tables
+--dg   WHERE relid IN ('only_inh_parent'::regclass, 'only_inh_child'::regclass)
+--dg   ORDER BY relname;
+-- Ensure the parent and child are analyzed
+ANALYZE only_inh_parent;
+--dg-cascade
+--dg SELECT relname, last_analyze IS NOT NULL AS analyzed, last_vacuum IS NOT NULL AS vacuumed
+--dg   FROM pg_stat_user_tables
+--dg   WHERE relid IN ('only_inh_parent'::regclass, 'only_inh_child'::regclass)
+--dg   ORDER BY relname;
+-- Ensure only the parent is vacuumed
+VACUUM ONLY only_inh_parent;
+--dg-cascade
+--dg SELECT relname, last_analyze IS NOT NULL AS analyzed, last_vacuum IS NOT NULL AS vacuumed
+--dg   FROM pg_stat_user_tables
+--dg   WHERE relid IN ('only_inh_parent'::regclass, 'only_inh_child'::regclass)
+--dg   ORDER BY relname;
+-- Ensure parent and child are vacuumed
+VACUUM only_inh_parent;
+--dg-cascade
+--dg SELECT relname, last_analyze IS NOT NULL AS analyzed, last_vacuum IS NOT NULL AS vacuumed
+--dg   FROM pg_stat_user_tables
+--dg   WHERE relid IN ('only_inh_parent'::regclass, 'only_inh_child'::regclass)
+--dg   ORDER BY relname;
+--dg-cascade
+--dg DROP TABLE only_inh_parent CASCADE;
+-- parenthesized syntax for ANALYZE
+ANALYZE (VERBOSE) does_not_exist;
+ERROR:  relation "does_not_exist" does not exist
+ANALYZE (nonexistent-arg) does_not_exist;
+ERROR:  syntax error at or near "arg"
+LINE 1: ANALYZE (nonexistent-arg) does_not_exist;
+                             ^
+ANALYZE (nonexistentarg) does_not_exit;
+ERROR:  unrecognized ANALYZE option "nonexistentarg"
+LINE 1: ANALYZE (nonexistentarg) does_not_exit;
+                 ^
+-- ensure argument order independence, and that SKIP_LOCKED on non-existing
+-- relation still errors out.  Suppress WARNING messages caused by concurrent
+-- autovacuums.
+SET client_min_messages TO 'ERROR';
+ANALYZE (SKIP_LOCKED, VERBOSE) does_not_exist;
+ERROR:  relation "does_not_exist" does not exist
+ANALYZE (VERBOSE, SKIP_LOCKED) does_not_exist;
+ERROR:  relation "does_not_exist" does not exist
+-- SKIP_LOCKED option
+VACUUM (SKIP_LOCKED) vactst;
+VACUUM (SKIP_LOCKED, FULL) vactst;
+ANALYZE (SKIP_LOCKED) vactst;
+RESET client_min_messages;
+-- ensure VACUUM and ANALYZE don't have a problem with serializable
+SET default_transaction_isolation = serializable;
+VACUUM vactst;
+ANALYZE vactst;
+RESET default_transaction_isolation;
+BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+ANALYZE vactst;
+COMMIT;
+-- PROCESS_TOAST option
+CREATE TABLE vac_option_tab (a INT, t TEXT);
+INSERT INTO vac_option_tab SELECT a, 't' || a FROM generate_series(1, 10) AS a;
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg ALTER TABLE vac_option_tab ALTER COLUMN t SET STORAGE EXTERNAL;
+-- Check the number of vacuums done on table vac_option_tab and on its
+-- toast relation, to check that PROCESS_TOAST and PROCESS_MAIN work on
+-- what they should.
+--dg-skip: relation "?" does not exist
+--dg CREATE VIEW vac_option_tab_counts AS
+--dg   SELECT CASE WHEN c.relname IS NULL
+--dg     THEN 'main' ELSE 'toast' END as rel,
+--dg   s.vacuum_count
+--dg   FROM pg_stat_all_tables s
+--dg   LEFT JOIN pg_class c ON s.relid = c.reltoastrelid
+--dg   WHERE c.relname = 'vac_option_tab' OR s.relname = 'vac_option_tab'
+--dg   ORDER BY rel;
+VACUUM (PROCESS_TOAST TRUE) vac_option_tab;
+--dg-cascade
+--dg SELECT * FROM vac_option_tab_counts;
+VACUUM (PROCESS_TOAST FALSE) vac_option_tab;
+--dg-cascade
+--dg SELECT * FROM vac_option_tab_counts;
+--dg-differs: no error where PostgreSQL has: PROCESS_TOAST required with VACUUM FULL
+--dg VACUUM (PROCESS_TOAST FALSE, FULL) vac_option_tab; -- error
+-- PROCESS_MAIN option
+-- Only the toast table is processed.
+VACUUM (PROCESS_MAIN FALSE) vac_option_tab;
+--dg-cascade
+--dg SELECT * FROM vac_option_tab_counts;
+-- Nothing is processed.
+VACUUM (PROCESS_MAIN FALSE, PROCESS_TOAST FALSE) vac_option_tab;
+--dg-cascade
+--dg SELECT * FROM vac_option_tab_counts;
+-- Check if the filenodes nodes have been updated as wanted after FULL.
+SELECT relfilenode AS main_filenode FROM pg_class
+  WHERE relname = 'vac_option_tab' \gset
+--dg-differs: the result
+--dg SELECT t.relfilenode AS toast_filenode FROM pg_class c, pg_class t
+--dg   WHERE c.reltoastrelid = t.oid AND c.relname = 'vac_option_tab' \gset
+-- Only the toast relation is processed.
+VACUUM (PROCESS_MAIN FALSE, FULL) vac_option_tab;
+SELECT relfilenode = :main_filenode AS is_same_main_filenode
+  FROM pg_class WHERE relname = 'vac_option_tab';
+ is_same_main_filenode 
+-----------------------
+ t
+(1 row)
+
+--dg-cascade
+--dg SELECT t.relfilenode = :toast_filenode AS is_same_toast_filenode
+--dg   FROM pg_class c, pg_class t
+--dg   WHERE c.reltoastrelid = t.oid AND c.relname = 'vac_option_tab';
+-- BUFFER_USAGE_LIMIT option
+VACUUM (BUFFER_USAGE_LIMIT '512 kB') vac_option_tab;
+--dg-skip: unrecognized ANALYZE option "?"
+--dg ANALYZE (BUFFER_USAGE_LIMIT '512 kB') vac_option_tab;
+-- try disabling the buffer usage limit
+VACUUM (BUFFER_USAGE_LIMIT 0) vac_option_tab;
+--dg-skip: unrecognized ANALYZE option "?"
+--dg ANALYZE (BUFFER_USAGE_LIMIT 0) vac_option_tab;
+-- value exceeds max size error
+--dg-differs: no error where PostgreSQL has: BUFFER_USAGE_LIMIT option must be N or between N kB and N kB
+--dg VACUUM (BUFFER_USAGE_LIMIT 16777220) vac_option_tab;
+-- value is less than min size error
+--dg-differs: no error where PostgreSQL has: BUFFER_USAGE_LIMIT option must be N or between N kB and N kB
+--dg VACUUM (BUFFER_USAGE_LIMIT 120) vac_option_tab;
+-- integer overflow error
+--dg-differs: no error where PostgreSQL has: BUFFER_USAGE_LIMIT option must be N or between N kB and N kB
+--dg VACUUM (BUFFER_USAGE_LIMIT 10000000000) vac_option_tab;
+-- incompatible with VACUUM FULL error
+--dg-differs: no error where PostgreSQL has: BUFFER_USAGE_LIMIT cannot be specified for VACUUM FULL
+--dg VACUUM (BUFFER_USAGE_LIMIT '512 kB', FULL) vac_option_tab;
+-- SKIP_DATABASE_STATS option
+VACUUM (SKIP_DATABASE_STATS) vactst;
+-- ONLY_DATABASE_STATS option
+VACUUM (ONLY_DATABASE_STATS);
+--dg-differs: no error where PostgreSQL has: ONLY_DATABASE_STATS cannot be specified with a list of tables
+--dg VACUUM (ONLY_DATABASE_STATS) vactst;  -- error
+--dg-cascade
+--dg DROP VIEW vac_option_tab_counts;
+DROP TABLE vac_option_tab;
+DROP TABLE vaccluster;
+DROP TABLE vactst;
+--dg-cascade
+--dg DROP TABLE vacparted;
+DROP TABLE no_index_cleanup;
+-- relation ownership, WARNING logs generated as all are skipped.
+CREATE TABLE vacowned (a int);
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE vacowned_parted (a int) PARTITION BY LIST (a);
+--dg-cascade
+--dg CREATE TABLE vacowned_part1 PARTITION OF vacowned_parted FOR VALUES IN (1);
+--dg-cascade
+--dg CREATE TABLE vacowned_part2 PARTITION OF vacowned_parted FOR VALUES IN (2);
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE regress_vacuum;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET ROLE regress_vacuum;
+-- Simple table
+--dg-cascade
+--dg VACUUM vacowned;
+--dg-cascade
+--dg ANALYZE vacowned;
+--dg-cascade
+--dg VACUUM (ANALYZE) vacowned;
+-- Catalog
+--dg-cascade
+--dg VACUUM pg_catalog.pg_class;
+--dg-cascade
+--dg ANALYZE pg_catalog.pg_class;
+--dg-cascade
+--dg VACUUM (ANALYZE) pg_catalog.pg_class;
+-- Shared catalog
+--dg-cascade
+--dg VACUUM pg_catalog.pg_authid;
+--dg-cascade
+--dg ANALYZE pg_catalog.pg_authid;
+--dg-cascade
+--dg VACUUM (ANALYZE) pg_catalog.pg_authid;
+-- Partitioned table and its partitions, nothing owned by other user.
+-- Relations are not listed in a single command to test ownership
+-- independently.
+--dg-cascade
+--dg VACUUM vacowned_parted;
+--dg-cascade
+--dg VACUUM vacowned_part1;
+--dg-cascade
+--dg VACUUM vacowned_part2;
+--dg-cascade
+--dg ANALYZE vacowned_parted;
+--dg-cascade
+--dg ANALYZE vacowned_part1;
+--dg-cascade
+--dg ANALYZE vacowned_part2;
+--dg-cascade
+--dg VACUUM (ANALYZE) vacowned_parted;
+--dg-cascade
+--dg VACUUM (ANALYZE) vacowned_part1;
+--dg-cascade
+--dg VACUUM (ANALYZE) vacowned_part2;
+RESET ROLE;
+-- Partitioned table and one partition owned by other user.
+--dg-cascade
+--dg ALTER TABLE vacowned_parted OWNER TO regress_vacuum;
+--dg-cascade
+--dg ALTER TABLE vacowned_part1 OWNER TO regress_vacuum;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET ROLE regress_vacuum;
+--dg-cascade
+--dg VACUUM vacowned_parted;
+--dg-cascade
+--dg VACUUM vacowned_part1;
+--dg-cascade
+--dg VACUUM vacowned_part2;
+--dg-cascade
+--dg ANALYZE vacowned_parted;
+--dg-cascade
+--dg ANALYZE vacowned_part1;
+--dg-cascade
+--dg ANALYZE vacowned_part2;
+--dg-cascade
+--dg VACUUM (ANALYZE) vacowned_parted;
+--dg-cascade
+--dg VACUUM (ANALYZE) vacowned_part1;
+--dg-cascade
+--dg VACUUM (ANALYZE) vacowned_part2;
+RESET ROLE;
+-- Only one partition owned by other user.
+--dg-cascade
+--dg ALTER TABLE vacowned_parted OWNER TO CURRENT_USER;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET ROLE regress_vacuum;
+--dg-cascade
+--dg VACUUM vacowned_parted;
+--dg-cascade
+--dg VACUUM vacowned_part1;
+--dg-cascade
+--dg VACUUM vacowned_part2;
+--dg-cascade
+--dg ANALYZE vacowned_parted;
+--dg-cascade
+--dg ANALYZE vacowned_part1;
+--dg-cascade
+--dg ANALYZE vacowned_part2;
+--dg-cascade
+--dg VACUUM (ANALYZE) vacowned_parted;
+--dg-cascade
+--dg VACUUM (ANALYZE) vacowned_part1;
+--dg-cascade
+--dg VACUUM (ANALYZE) vacowned_part2;
+RESET ROLE;
+-- Only partitioned table owned by other user.
+--dg-cascade
+--dg ALTER TABLE vacowned_parted OWNER TO regress_vacuum;
+--dg-cascade
+--dg ALTER TABLE vacowned_part1 OWNER TO CURRENT_USER;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET ROLE regress_vacuum;
+--dg-cascade
+--dg VACUUM vacowned_parted;
+--dg-cascade
+--dg VACUUM vacowned_part1;
+--dg-cascade
+--dg VACUUM vacowned_part2;
+--dg-cascade
+--dg ANALYZE vacowned_parted;
+--dg-cascade
+--dg ANALYZE vacowned_part1;
+--dg-cascade
+--dg ANALYZE vacowned_part2;
+--dg-cascade
+--dg VACUUM (ANALYZE) vacowned_parted;
+--dg-cascade
+--dg VACUUM (ANALYZE) vacowned_part1;
+--dg-cascade
+--dg VACUUM (ANALYZE) vacowned_part2;
+RESET ROLE;
+DROP TABLE vacowned;
+--dg-cascade
+--dg DROP TABLE vacowned_parted;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE regress_vacuum;

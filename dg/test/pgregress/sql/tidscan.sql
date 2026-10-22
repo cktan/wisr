@@ -1,0 +1,140 @@
+-- tests for tidscans
+
+CREATE TABLE tidscan(id integer);
+
+-- only insert a few rows, we don't want to spill onto a second table page
+INSERT INTO tidscan VALUES (1), (2), (3);
+
+-- show ctids
+--dg-skip: column "?" does not exist
+--dg SELECT ctid, * FROM tidscan;
+
+-- ctid equality - implemented as tidscan
+--dg-skip: column "?" does not exist
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT ctid, * FROM tidscan WHERE ctid = '(0,1)';
+--dg-skip: column "?" does not exist
+--dg SELECT ctid, * FROM tidscan WHERE ctid = '(0,1)';
+
+--dg-skip: column "?" does not exist
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT ctid, * FROM tidscan WHERE '(0,1)' = ctid;
+--dg-skip: column "?" does not exist
+--dg SELECT ctid, * FROM tidscan WHERE '(0,1)' = ctid;
+
+-- OR'd clauses
+--dg-skip: column "?" does not exist
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT ctid, * FROM tidscan WHERE ctid = '(0,2)' OR '(0,1)' = ctid;
+--dg-skip: column "?" does not exist
+--dg SELECT ctid, * FROM tidscan WHERE ctid = '(0,2)' OR '(0,1)' = ctid;
+
+-- ctid = ScalarArrayOp - implemented as tidscan
+--dg-skip: column "?" does not exist
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT ctid, * FROM tidscan WHERE ctid = ANY(ARRAY['(0,1)', '(0,2)']::tid[]);
+--dg-skip: column "?" does not exist
+--dg SELECT ctid, * FROM tidscan WHERE ctid = ANY(ARRAY['(0,1)', '(0,2)']::tid[]);
+
+-- ctid != ScalarArrayOp - can't be implemented as tidscan
+--dg-skip: column "?" does not exist
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT ctid, * FROM tidscan WHERE ctid != ANY(ARRAY['(0,1)', '(0,2)']::tid[]);
+--dg-skip: column "?" does not exist
+--dg SELECT ctid, * FROM tidscan WHERE ctid != ANY(ARRAY['(0,1)', '(0,2)']::tid[]);
+
+-- tid equality extracted from sub-AND clauses
+--dg-skip: column "?" does not exist
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT ctid, * FROM tidscan
+--dg WHERE (id = 3 AND ctid IN ('(0,2)', '(0,3)')) OR (ctid = '(0,1)' AND id = 1);
+--dg-skip: column "?" does not exist
+--dg SELECT ctid, * FROM tidscan
+--dg WHERE (id = 3 AND ctid IN ('(0,2)', '(0,3)')) OR (ctid = '(0,1)' AND id = 1);
+
+-- nestloop-with-inner-tidscan joins on tid
+SET enable_hashjoin TO off;  -- otherwise hash join might win
+--dg-skip: column t1.ctid does not exist
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT t1.ctid, t1.*, t2.ctid, t2.*
+--dg FROM tidscan t1 JOIN tidscan t2 ON t1.ctid = t2.ctid WHERE t1.id = 1;
+--dg-skip: column t1.ctid does not exist
+--dg SELECT t1.ctid, t1.*, t2.ctid, t2.*
+--dg FROM tidscan t1 JOIN tidscan t2 ON t1.ctid = t2.ctid WHERE t1.id = 1;
+--dg-skip: column t1.ctid does not exist
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT t1.ctid, t1.*, t2.ctid, t2.*
+--dg FROM tidscan t1 LEFT JOIN tidscan t2 ON t1.ctid = t2.ctid WHERE t1.id = 1;
+--dg-skip: column t1.ctid does not exist
+--dg SELECT t1.ctid, t1.*, t2.ctid, t2.*
+--dg FROM tidscan t1 LEFT JOIN tidscan t2 ON t1.ctid = t2.ctid WHERE t1.id = 1;
+RESET enable_hashjoin;
+
+-- exercise backward scan and rewind
+BEGIN;
+--dg-skip: column "?" does not exist
+--dg DECLARE c CURSOR FOR
+--dg SELECT ctid, * FROM tidscan WHERE ctid = ANY(ARRAY['(0,1)', '(0,2)']::tid[]);
+--dg-cascade
+--dg FETCH ALL FROM c;
+--dg-cascade
+--dg FETCH BACKWARD 1 FROM c;
+--dg-cascade
+--dg FETCH FIRST FROM c;
+ROLLBACK;
+
+-- tidscan via CURRENT OF
+BEGIN;
+--dg-skip: column "?" does not exist
+--dg DECLARE c CURSOR FOR SELECT ctid, * FROM tidscan;
+--dg-cascade
+--dg FETCH NEXT FROM c; -- skip one row
+--dg-cascade
+--dg FETCH NEXT FROM c;
+-- perform update
+--dg-cascade
+--dg EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+--dg UPDATE tidscan SET id = -id WHERE CURRENT OF c RETURNING *;
+--dg-cascade
+--dg FETCH NEXT FROM c;
+-- perform update
+--dg-cascade
+--dg EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+--dg UPDATE tidscan SET id = -id WHERE CURRENT OF c RETURNING *;
+--dg-cascade
+--dg SELECT * FROM tidscan;
+-- position cursor past any rows
+--dg-cascade
+--dg FETCH NEXT FROM c;
+-- should error out
+--dg-cascade
+--dg EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+--dg UPDATE tidscan SET id = -id WHERE CURRENT OF c RETURNING *;
+ROLLBACK;
+
+-- bulk joins on CTID
+-- (these plans don't use TID scans, but this still seems like an
+-- appropriate place for these tests)
+--dg-skip: column t1.ctid does not exist
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT count(*) FROM tenk1 t1 JOIN tenk1 t2 ON t1.ctid = t2.ctid;
+--dg-skip: column t1.ctid does not exist
+--dg SELECT count(*) FROM tenk1 t1 JOIN tenk1 t2 ON t1.ctid = t2.ctid;
+SET enable_hashjoin TO off;
+--dg-skip: column t1.ctid does not exist
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT count(*) FROM tenk1 t1 JOIN tenk1 t2 ON t1.ctid = t2.ctid;
+--dg-skip: column t1.ctid does not exist
+--dg SELECT count(*) FROM tenk1 t1 JOIN tenk1 t2 ON t1.ctid = t2.ctid;
+RESET enable_hashjoin;
+
+-- check predicate lock on CTID
+BEGIN ISOLATION LEVEL SERIALIZABLE;
+--dg-skip: column "?" does not exist
+--dg SELECT * FROM tidscan WHERE ctid = '(0,1)';
+-- locktype should be 'tuple'
+--dg-cascade
+--dg SELECT locktype, mode FROM pg_locks WHERE pid = pg_backend_pid() AND mode = 'SIReadLock';
+ROLLBACK;
+
+DROP TABLE tidscan;

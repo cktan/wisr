@@ -1,0 +1,195 @@
+--
+-- POLYGON
+--
+-- polygon logic
+--
+
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE POLYGON_TBL(f1 polygon);
+
+
+--dg-cascade
+--dg INSERT INTO POLYGON_TBL(f1) VALUES ('(2.0,0.0),(2.0,4.0),(0.0,0.0)');
+
+--dg-cascade
+--dg INSERT INTO POLYGON_TBL(f1) VALUES ('(3.0,1.0),(3.0,3.0),(1.0,0.0)');
+
+--dg-cascade
+--dg INSERT INTO POLYGON_TBL(f1) VALUES ('(1,2),(3,4),(5,6),(7,8)');
+--dg-cascade
+--dg INSERT INTO POLYGON_TBL(f1) VALUES ('(7,8),(5,6),(3,4),(1,2)'); -- Reverse
+--dg-cascade
+--dg INSERT INTO POLYGON_TBL(f1) VALUES ('(1,2),(7,8),(5,6),(3,-4)');
+
+-- degenerate polygons
+--dg-cascade
+--dg INSERT INTO POLYGON_TBL(f1) VALUES ('(0.0,0.0)');
+
+--dg-cascade
+--dg INSERT INTO POLYGON_TBL(f1) VALUES ('(0.0,1.0),(0.0,1.0)');
+
+-- bad polygon input strings
+--dg-cascade
+--dg INSERT INTO POLYGON_TBL(f1) VALUES ('0.0');
+
+--dg-cascade
+--dg INSERT INTO POLYGON_TBL(f1) VALUES ('(0.0 0.0');
+
+--dg-cascade
+--dg INSERT INTO POLYGON_TBL(f1) VALUES ('(0,1,2)');
+
+--dg-cascade
+--dg INSERT INTO POLYGON_TBL(f1) VALUES ('(0,1,2,3');
+
+--dg-cascade
+--dg INSERT INTO POLYGON_TBL(f1) VALUES ('asdf');
+
+
+--dg-cascade
+--dg SELECT * FROM POLYGON_TBL;
+
+--
+-- Test the SP-GiST index
+--
+
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE quad_poly_tbl (id int, p polygon);
+
+--dg-cascade
+--dg INSERT INTO quad_poly_tbl
+--dg 	SELECT (x - 1) * 100 + y, polygon(circle(point(x * 10, y * 10), 1 + (x + y) % 10))
+--dg 	FROM generate_series(1, 100) x,
+--dg 		 generate_series(1, 100) y;
+
+--dg-cascade
+--dg INSERT INTO quad_poly_tbl
+--dg 	SELECT i, polygon '((200, 300),(210, 310),(230, 290))'
+--dg 	FROM generate_series(10001, 11000) AS i;
+
+--dg-cascade
+--dg INSERT INTO quad_poly_tbl
+--dg 	VALUES
+--dg 		(11001, NULL),
+--dg 		(11002, NULL),
+--dg 		(11003, NULL);
+
+--dg-cascade
+--dg CREATE INDEX quad_poly_tbl_idx ON quad_poly_tbl USING spgist(p);
+
+-- get reference results for ORDER BY distance from seq scan
+SET enable_seqscan = ON;
+SET enable_indexscan = OFF;
+SET enable_bitmapscan = OFF;
+
+--dg-cascade
+--dg CREATE TEMP TABLE quad_poly_tbl_ord_seq2 AS
+--dg SELECT rank() OVER (ORDER BY p <-> point '123,456') n, p <-> point '123,456' dist, id
+--dg FROM quad_poly_tbl WHERE p <@ polygon '((300,300),(400,600),(600,500),(700,200))';
+
+-- check results from index scan
+SET enable_seqscan = OFF;
+SET enable_indexscan = OFF;
+SET enable_bitmapscan = ON;
+
+--dg-cascade
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT count(*) FROM quad_poly_tbl WHERE p << polygon '((300,300),(400,600),(600,500),(700,200))';
+--dg-cascade
+--dg SELECT count(*) FROM quad_poly_tbl WHERE p << polygon '((300,300),(400,600),(600,500),(700,200))';
+
+--dg-cascade
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT count(*) FROM quad_poly_tbl WHERE p &< polygon '((300,300),(400,600),(600,500),(700,200))';
+--dg-cascade
+--dg SELECT count(*) FROM quad_poly_tbl WHERE p &< polygon '((300,300),(400,600),(600,500),(700,200))';
+
+--dg-cascade
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT count(*) FROM quad_poly_tbl WHERE p && polygon '((300,300),(400,600),(600,500),(700,200))';
+--dg-cascade
+--dg SELECT count(*) FROM quad_poly_tbl WHERE p && polygon '((300,300),(400,600),(600,500),(700,200))';
+
+--dg-cascade
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT count(*) FROM quad_poly_tbl WHERE p &> polygon '((300,300),(400,600),(600,500),(700,200))';
+--dg-cascade
+--dg SELECT count(*) FROM quad_poly_tbl WHERE p &> polygon '((300,300),(400,600),(600,500),(700,200))';
+
+--dg-cascade
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT count(*) FROM quad_poly_tbl WHERE p >> polygon '((300,300),(400,600),(600,500),(700,200))';
+--dg-cascade
+--dg SELECT count(*) FROM quad_poly_tbl WHERE p >> polygon '((300,300),(400,600),(600,500),(700,200))';
+
+--dg-cascade
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT count(*) FROM quad_poly_tbl WHERE p <<| polygon '((300,300),(400,600),(600,500),(700,200))';
+--dg-cascade
+--dg SELECT count(*) FROM quad_poly_tbl WHERE p <<| polygon '((300,300),(400,600),(600,500),(700,200))';
+
+--dg-cascade
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT count(*) FROM quad_poly_tbl WHERE p &<| polygon '((300,300),(400,600),(600,500),(700,200))';
+--dg-cascade
+--dg SELECT count(*) FROM quad_poly_tbl WHERE p &<| polygon '((300,300),(400,600),(600,500),(700,200))';
+
+--dg-cascade
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT count(*) FROM quad_poly_tbl WHERE p |&> polygon '((300,300),(400,600),(600,500),(700,200))';
+--dg-cascade
+--dg SELECT count(*) FROM quad_poly_tbl WHERE p |&> polygon '((300,300),(400,600),(600,500),(700,200))';
+
+--dg-cascade
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT count(*) FROM quad_poly_tbl WHERE p |>> polygon '((300,300),(400,600),(600,500),(700,200))';
+--dg-cascade
+--dg SELECT count(*) FROM quad_poly_tbl WHERE p |>> polygon '((300,300),(400,600),(600,500),(700,200))';
+
+--dg-cascade
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT count(*) FROM quad_poly_tbl WHERE p <@ polygon '((300,300),(400,600),(600,500),(700,200))';
+--dg-cascade
+--dg SELECT count(*) FROM quad_poly_tbl WHERE p <@ polygon '((300,300),(400,600),(600,500),(700,200))';
+
+--dg-cascade
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT count(*) FROM quad_poly_tbl WHERE p @> polygon '((340,550),(343,552),(341,553))';
+--dg-cascade
+--dg SELECT count(*) FROM quad_poly_tbl WHERE p @> polygon '((340,550),(343,552),(341,553))';
+
+--dg-cascade
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT count(*) FROM quad_poly_tbl WHERE p ~= polygon '((200, 300),(210, 310),(230, 290))';
+--dg-cascade
+--dg SELECT count(*) FROM quad_poly_tbl WHERE p ~= polygon '((200, 300),(210, 310),(230, 290))';
+
+-- test ORDER BY distance
+SET enable_indexscan = ON;
+SET enable_bitmapscan = OFF;
+
+--dg-cascade
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT rank() OVER (ORDER BY p <-> point '123,456') n, p <-> point '123,456' dist, id
+--dg FROM quad_poly_tbl WHERE p <@ polygon '((300,300),(400,600),(600,500),(700,200))';
+
+--dg-cascade
+--dg CREATE TEMP TABLE quad_poly_tbl_ord_idx2 AS
+--dg SELECT rank() OVER (ORDER BY p <-> point '123,456') n, p <-> point '123,456' dist, id
+--dg FROM quad_poly_tbl WHERE p <@ polygon '((300,300),(400,600),(600,500),(700,200))';
+
+--dg-cascade
+--dg SELECT *
+--dg FROM quad_poly_tbl_ord_seq2 seq FULL JOIN quad_poly_tbl_ord_idx2 idx
+--dg 	ON seq.n = idx.n AND seq.id = idx.id AND
+--dg 		(seq.dist = idx.dist OR seq.dist IS NULL AND idx.dist IS NULL)
+--dg WHERE seq.id IS NULL OR idx.id IS NULL;
+
+RESET enable_seqscan;
+RESET enable_indexscan;
+RESET enable_bitmapscan;
+
+-- test non-error-throwing API for some core types
+SELECT pg_input_is_valid('(2.0,0.8,0.1)', 'polygon');
+SELECT * FROM pg_input_error_info('(2.0,0.8,0.1)', 'polygon');
+SELECT pg_input_is_valid('(2.0,xyz)', 'polygon');
+SELECT * FROM pg_input_error_info('(2.0,xyz)', 'polygon');

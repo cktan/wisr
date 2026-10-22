@@ -1,0 +1,188 @@
+--dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
+--dg CREATE TABLE test_replica_identity (
+--dg        id serial primary key,
+--dg        keya text not null,
+--dg        keyb text not null,
+--dg        nonkey text,
+--dg        CONSTRAINT test_replica_identity_unique_defer UNIQUE (keya, keyb) DEFERRABLE,
+--dg        CONSTRAINT test_replica_identity_unique_nondefer UNIQUE (keya, keyb)
+--dg ) ;
+CREATE TABLE test_replica_identity_othertable (id serial primary key);
+--dg-skip: column "?" asks for what CREATE TABLE does not support yet
+--dg CREATE TABLE test_replica_identity_t3 (id serial constraint pk primary key deferrable);
+--dg-cascade
+--dg CREATE INDEX test_replica_identity_keyab ON test_replica_identity (keya, keyb);
+--dg-cascade
+--dg CREATE UNIQUE INDEX test_replica_identity_keyab_key ON test_replica_identity (keya, keyb);
+--dg-cascade
+--dg CREATE UNIQUE INDEX test_replica_identity_nonkey ON test_replica_identity (keya, nonkey);
+--dg-cascade
+--dg CREATE INDEX test_replica_identity_hash ON test_replica_identity USING hash (nonkey);
+--dg-cascade
+--dg CREATE UNIQUE INDEX test_replica_identity_expr ON test_replica_identity (keya, keyb, (3));
+--dg-cascade
+--dg CREATE UNIQUE INDEX test_replica_identity_partial ON test_replica_identity (keya, keyb) WHERE keyb != '3';
+-- default is 'd'/DEFAULT for user created tables
+--dg-cascade
+--dg SELECT relreplident FROM pg_class WHERE oid = 'test_replica_identity'::regclass;
+-- but 'none' for system tables
+--dg-differs: the result
+--dg SELECT relreplident FROM pg_class WHERE oid = 'pg_class'::regclass;
+--dg-differs: the result
+--dg SELECT relreplident FROM pg_class WHERE oid = 'pg_constraint'::regclass;
+----
+-- Make sure we detect ineligible indexes
+----
+-- fail, not unique
+--dg-cascade
+--dg ALTER TABLE test_replica_identity REPLICA IDENTITY USING INDEX test_replica_identity_keyab;
+-- fail, not a candidate key, nullable column
+--dg-cascade
+--dg ALTER TABLE test_replica_identity REPLICA IDENTITY USING INDEX test_replica_identity_nonkey;
+-- fail, hash indexes cannot do uniqueness
+--dg-cascade
+--dg ALTER TABLE test_replica_identity REPLICA IDENTITY USING INDEX test_replica_identity_hash;
+-- fail, expression index
+--dg-cascade
+--dg ALTER TABLE test_replica_identity REPLICA IDENTITY USING INDEX test_replica_identity_expr;
+-- fail, partial index
+--dg-cascade
+--dg ALTER TABLE test_replica_identity REPLICA IDENTITY USING INDEX test_replica_identity_partial;
+-- fail, not our index
+--dg-cascade
+--dg ALTER TABLE test_replica_identity REPLICA IDENTITY USING INDEX test_replica_identity_othertable_pkey;
+-- fail, deferrable
+--dg-cascade
+--dg ALTER TABLE test_replica_identity REPLICA IDENTITY USING INDEX test_replica_identity_unique_defer;
+-- fail, deferrable
+--dg-cascade
+--dg ALTER TABLE test_replica_identity_t3 REPLICA IDENTITY USING INDEX pk;
+--dg-cascade
+--dg SELECT relreplident FROM pg_class WHERE oid = 'test_replica_identity'::regclass;
+----
+-- Make sure index cases succeed
+----
+-- succeed, primary key
+--dg-cascade
+--dg ALTER TABLE test_replica_identity REPLICA IDENTITY USING INDEX test_replica_identity_pkey;
+--dg-cascade
+--dg SELECT relreplident FROM pg_class WHERE oid = 'test_replica_identity'::regclass;
+--dg-cascade
+--dg \d test_replica_identity
+-- succeed, nondeferrable unique constraint over nonnullable cols
+--dg-cascade
+--dg ALTER TABLE test_replica_identity REPLICA IDENTITY USING INDEX test_replica_identity_unique_nondefer;
+-- succeed unique index over nonnullable cols
+--dg-cascade
+--dg ALTER TABLE test_replica_identity REPLICA IDENTITY USING INDEX test_replica_identity_keyab_key;
+--dg-cascade
+--dg ALTER TABLE test_replica_identity REPLICA IDENTITY USING INDEX test_replica_identity_keyab_key;
+--dg-cascade
+--dg SELECT relreplident FROM pg_class WHERE oid = 'test_replica_identity'::regclass;
+--dg-cascade
+--dg \d test_replica_identity
+--dg-cascade
+--dg SELECT count(*) FROM pg_index WHERE indrelid = 'test_replica_identity'::regclass AND indisreplident;
+----
+-- Make sure non index cases work
+----
+--dg-cascade
+--dg ALTER TABLE test_replica_identity REPLICA IDENTITY DEFAULT;
+--dg-cascade
+--dg SELECT relreplident FROM pg_class WHERE oid = 'test_replica_identity'::regclass;
+--dg-cascade
+--dg SELECT count(*) FROM pg_index WHERE indrelid = 'test_replica_identity'::regclass AND indisreplident;
+--dg-cascade
+--dg ALTER TABLE test_replica_identity REPLICA IDENTITY FULL;
+--dg-cascade
+--dg SELECT relreplident FROM pg_class WHERE oid = 'test_replica_identity'::regclass;
+--dg-cascade
+--dg \d+ test_replica_identity
+--dg-cascade
+--dg ALTER TABLE test_replica_identity REPLICA IDENTITY NOTHING;
+--dg-cascade
+--dg SELECT relreplident FROM pg_class WHERE oid = 'test_replica_identity'::regclass;
+---
+-- Test that ALTER TABLE rewrite preserves nondefault replica identity
+---
+-- constraint variant
+CREATE TABLE test_replica_identity2 (id int UNIQUE NOT NULL);
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg ALTER TABLE test_replica_identity2 REPLICA IDENTITY USING INDEX test_replica_identity2_id_key;
+--dg-cascade
+--dg \d test_replica_identity2
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg ALTER TABLE test_replica_identity2 ALTER COLUMN id TYPE bigint;
+--dg-cascade
+--dg \d test_replica_identity2
+-- straight index variant
+CREATE TABLE test_replica_identity3 (id int NOT NULL);
+CREATE UNIQUE INDEX test_replica_identity3_id_key ON test_replica_identity3 (id);
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg ALTER TABLE test_replica_identity3 REPLICA IDENTITY USING INDEX test_replica_identity3_id_key;
+--dg-cascade
+--dg \d test_replica_identity3
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg ALTER TABLE test_replica_identity3 ALTER COLUMN id TYPE bigint;
+--dg-cascade
+--dg \d test_replica_identity3
+-- ALTER TABLE DROP NOT NULL is not allowed for columns part of an index
+-- used as replica identity.
+--dg-cascade
+--dg ALTER TABLE test_replica_identity3 ALTER COLUMN id DROP NOT NULL;
+-- but it's OK when the identity is FULL
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg ALTER TABLE test_replica_identity3 REPLICA IDENTITY FULL;
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg ALTER TABLE test_replica_identity3 ALTER COLUMN id DROP NOT NULL;
+--
+-- Test that replica identity can be set on an index that's not yet valid.
+-- (This matches the way pg_dump will try to dump a partitioned table.)
+--
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE test_replica_identity4(id integer NOT NULL) PARTITION BY LIST (id);
+CREATE TABLE test_replica_identity4_1(id integer NOT NULL);
+--dg-cascade
+--dg ALTER TABLE ONLY test_replica_identity4
+--dg   ATTACH PARTITION test_replica_identity4_1 FOR VALUES IN (1);
+--dg-cascade
+--dg ALTER TABLE ONLY test_replica_identity4
+--dg   ADD CONSTRAINT test_replica_identity4_pkey PRIMARY KEY (id);
+--dg-cascade
+--dg ALTER TABLE ONLY test_replica_identity4
+--dg   REPLICA IDENTITY USING INDEX test_replica_identity4_pkey;
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg ALTER TABLE ONLY test_replica_identity4_1
+--dg   ADD CONSTRAINT test_replica_identity4_1_pkey PRIMARY KEY (id);
+--dg-cascade
+--dg \d+ test_replica_identity4
+--dg-skip: ALTER INDEX is not supported yet
+--dg ALTER INDEX test_replica_identity4_pkey
+--dg   ATTACH PARTITION test_replica_identity4_1_pkey;
+--dg-cascade
+--dg \d+ test_replica_identity4
+-- Dropping the primary key is not allowed if that would leave the replica
+-- identity as nullable
+CREATE TABLE test_replica_identity5 (a int not null, b int, c int,
+	PRIMARY KEY (b, c));
+CREATE UNIQUE INDEX test_replica_identity5_a_b_key ON test_replica_identity5 (a, b);
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg ALTER TABLE test_replica_identity5 REPLICA IDENTITY USING INDEX test_replica_identity5_a_b_key;
+--dg-skip: constraint "?" of relation "?" does not exist
+--dg ALTER TABLE test_replica_identity5 DROP CONSTRAINT test_replica_identity5_pkey;
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg ALTER TABLE test_replica_identity5 ALTER b SET NOT NULL;
+--dg-cascade
+--dg ALTER TABLE test_replica_identity5 DROP CONSTRAINT test_replica_identity5_pkey;
+--dg-cascade
+--dg ALTER TABLE test_replica_identity5 ALTER b DROP NOT NULL;
+--dg-cascade
+--dg DROP TABLE test_replica_identity;
+DROP TABLE test_replica_identity2;
+DROP TABLE test_replica_identity3;
+--dg-cascade
+--dg DROP TABLE test_replica_identity4;
+DROP TABLE test_replica_identity5;
+DROP TABLE test_replica_identity_othertable;
+--dg-cascade
+--dg DROP TABLE test_replica_identity_t3;

@@ -1,0 +1,427 @@
+--
+--  CLUSTER
+--
+
+CREATE TABLE clstr_tst_s (rf_a SERIAL PRIMARY KEY,
+	b INT);
+
+CREATE TABLE clstr_tst (a SERIAL PRIMARY KEY,
+	b INT,
+	c TEXT,
+	d TEXT,
+	CONSTRAINT clstr_tst_con FOREIGN KEY (b) REFERENCES clstr_tst_s);
+
+CREATE INDEX clstr_tst_b ON clstr_tst (b);
+CREATE INDEX clstr_tst_c ON clstr_tst (c);
+CREATE INDEX clstr_tst_c_b ON clstr_tst (c,b);
+CREATE INDEX clstr_tst_b_c ON clstr_tst (b,c);
+
+INSERT INTO clstr_tst_s (b) VALUES (0);
+INSERT INTO clstr_tst_s (b) SELECT b FROM clstr_tst_s;
+INSERT INTO clstr_tst_s (b) SELECT b FROM clstr_tst_s;
+INSERT INTO clstr_tst_s (b) SELECT b FROM clstr_tst_s;
+INSERT INTO clstr_tst_s (b) SELECT b FROM clstr_tst_s;
+INSERT INTO clstr_tst_s (b) SELECT b FROM clstr_tst_s;
+
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE clstr_tst_inh () INHERITS (clstr_tst);
+
+INSERT INTO clstr_tst (b, c) VALUES (11, 'once');
+INSERT INTO clstr_tst (b, c) VALUES (10, 'diez');
+INSERT INTO clstr_tst (b, c) VALUES (31, 'treinta y uno');
+INSERT INTO clstr_tst (b, c) VALUES (22, 'veintidos');
+INSERT INTO clstr_tst (b, c) VALUES (3, 'tres');
+INSERT INTO clstr_tst (b, c) VALUES (20, 'veinte');
+INSERT INTO clstr_tst (b, c) VALUES (23, 'veintitres');
+INSERT INTO clstr_tst (b, c) VALUES (21, 'veintiuno');
+INSERT INTO clstr_tst (b, c) VALUES (4, 'cuatro');
+INSERT INTO clstr_tst (b, c) VALUES (14, 'catorce');
+INSERT INTO clstr_tst (b, c) VALUES (2, 'dos');
+INSERT INTO clstr_tst (b, c) VALUES (18, 'dieciocho');
+INSERT INTO clstr_tst (b, c) VALUES (27, 'veintisiete');
+INSERT INTO clstr_tst (b, c) VALUES (25, 'veinticinco');
+INSERT INTO clstr_tst (b, c) VALUES (13, 'trece');
+INSERT INTO clstr_tst (b, c) VALUES (28, 'veintiocho');
+INSERT INTO clstr_tst (b, c) VALUES (32, 'treinta y dos');
+INSERT INTO clstr_tst (b, c) VALUES (5, 'cinco');
+INSERT INTO clstr_tst (b, c) VALUES (29, 'veintinueve');
+INSERT INTO clstr_tst (b, c) VALUES (1, 'uno');
+INSERT INTO clstr_tst (b, c) VALUES (24, 'veinticuatro');
+INSERT INTO clstr_tst (b, c) VALUES (30, 'treinta');
+INSERT INTO clstr_tst (b, c) VALUES (12, 'doce');
+INSERT INTO clstr_tst (b, c) VALUES (17, 'diecisiete');
+INSERT INTO clstr_tst (b, c) VALUES (9, 'nueve');
+INSERT INTO clstr_tst (b, c) VALUES (19, 'diecinueve');
+INSERT INTO clstr_tst (b, c) VALUES (26, 'veintiseis');
+INSERT INTO clstr_tst (b, c) VALUES (15, 'quince');
+INSERT INTO clstr_tst (b, c) VALUES (7, 'siete');
+INSERT INTO clstr_tst (b, c) VALUES (16, 'dieciseis');
+INSERT INTO clstr_tst (b, c) VALUES (8, 'ocho');
+-- This entry is needed to test that TOASTED values are copied correctly.
+INSERT INTO clstr_tst (b, c, d) VALUES (6, 'seis', repeat('xyzzy', 100000));
+
+--dg-differs: the result
+--dg CLUSTER clstr_tst_c ON clstr_tst;
+
+--dg-cascade
+--dg SELECT a,b,c,substring(d for 30), length(d) from clstr_tst;
+SELECT a,b,c,substring(d for 30), length(d) from clstr_tst ORDER BY a;
+SELECT a,b,c,substring(d for 30), length(d) from clstr_tst ORDER BY b;
+SELECT a,b,c,substring(d for 30), length(d) from clstr_tst ORDER BY c;
+
+-- Verify that inheritance link still works
+--dg-cascade
+--dg INSERT INTO clstr_tst_inh VALUES (0, 100, 'in child table');
+--dg-cascade
+--dg SELECT a,b,c,substring(d for 30), length(d) from clstr_tst;
+
+-- Verify that foreign key link still works
+INSERT INTO clstr_tst (b, c) VALUES (1111, 'this should fail');
+
+--dg-differs: the result
+--dg SELECT conname FROM pg_constraint WHERE conrelid = 'clstr_tst'::regclass
+--dg ORDER BY 1;
+
+
+--dg-cascade
+--dg SELECT relname, relkind,
+--dg     EXISTS(SELECT 1 FROM pg_class WHERE oid = c.reltoastrelid) AS hastoast
+--dg FROM pg_class c WHERE relname LIKE 'clstr_tst%' ORDER BY relname;
+
+-- Verify that indisclustered is correctly set
+--dg-cascade
+--dg SELECT pg_class.relname FROM pg_index, pg_class, pg_class AS pg_class_2
+--dg WHERE pg_class.oid=indexrelid
+--dg 	AND indrelid=pg_class_2.oid
+--dg 	AND pg_class_2.relname = 'clstr_tst'
+--dg 	AND indisclustered;
+
+-- Try changing indisclustered
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg ALTER TABLE clstr_tst CLUSTER ON clstr_tst_b_c;
+--dg-cascade
+--dg SELECT pg_class.relname FROM pg_index, pg_class, pg_class AS pg_class_2
+--dg WHERE pg_class.oid=indexrelid
+--dg 	AND indrelid=pg_class_2.oid
+--dg 	AND pg_class_2.relname = 'clstr_tst'
+--dg 	AND indisclustered;
+
+-- Try turning off all clustering
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg ALTER TABLE clstr_tst SET WITHOUT CLUSTER;
+SELECT pg_class.relname FROM pg_index, pg_class, pg_class AS pg_class_2
+WHERE pg_class.oid=indexrelid
+	AND indrelid=pg_class_2.oid
+	AND pg_class_2.relname = 'clstr_tst'
+	AND indisclustered;
+
+-- Verify that toast tables are clusterable
+--dg-differs: the result
+--dg CLUSTER pg_toast.pg_toast_826 USING pg_toast_826_index;
+
+-- Verify that clustering all tables does in fact cluster the right ones
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE USER regress_clstr_user;
+CREATE TABLE clstr_1 (a INT PRIMARY KEY);
+CREATE TABLE clstr_2 (a INT PRIMARY KEY);
+CREATE TABLE clstr_3 (a INT PRIMARY KEY);
+--dg-cascade
+--dg ALTER TABLE clstr_1 OWNER TO regress_clstr_user;
+--dg-cascade
+--dg ALTER TABLE clstr_3 OWNER TO regress_clstr_user;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT SELECT ON clstr_2 TO regress_clstr_user;
+INSERT INTO clstr_1 VALUES (2);
+INSERT INTO clstr_1 VALUES (1);
+INSERT INTO clstr_2 VALUES (2);
+INSERT INTO clstr_2 VALUES (1);
+INSERT INTO clstr_3 VALUES (2);
+INSERT INTO clstr_3 VALUES (1);
+
+-- "CLUSTER <tablename>" on a table that hasn't been clustered
+--dg-differs: no error where PostgreSQL has: there is no previously clustered index for table "?"
+--dg CLUSTER clstr_2;
+
+--dg-differs: the result
+--dg CLUSTER clstr_1_pkey ON clstr_1;
+--dg-differs: the result
+--dg CLUSTER clstr_2 USING clstr_2_pkey;
+--dg-cascade
+--dg SELECT * FROM clstr_1 UNION ALL
+--dg   SELECT * FROM clstr_2 UNION ALL
+--dg   SELECT * FROM clstr_3;
+
+-- revert to the original state
+DELETE FROM clstr_1;
+DELETE FROM clstr_2;
+DELETE FROM clstr_3;
+INSERT INTO clstr_1 VALUES (2);
+INSERT INTO clstr_1 VALUES (1);
+INSERT INTO clstr_2 VALUES (2);
+INSERT INTO clstr_2 VALUES (1);
+INSERT INTO clstr_3 VALUES (2);
+INSERT INTO clstr_3 VALUES (1);
+
+-- this user can only cluster clstr_1 and clstr_3, but the latter
+-- has not been clustered
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_clstr_user;
+SET client_min_messages = ERROR;  -- order of "skipping" warnings may vary
+CLUSTER;
+RESET client_min_messages;
+--dg-cascade
+--dg SELECT * FROM clstr_1 UNION ALL
+--dg   SELECT * FROM clstr_2 UNION ALL
+--dg   SELECT * FROM clstr_3;
+
+-- cluster a single table using the indisclustered bit previously set
+DELETE FROM clstr_1;
+INSERT INTO clstr_1 VALUES (2);
+INSERT INTO clstr_1 VALUES (1);
+--dg-cascade
+--dg CLUSTER clstr_1;
+--dg-cascade
+--dg SELECT * FROM clstr_1;
+
+-- Test MVCC-safety of cluster. There isn't much we can do to verify the
+-- results with a single backend...
+
+--dg-cascade
+--dg CREATE TABLE clustertest (key int PRIMARY KEY);
+
+--dg-cascade
+--dg INSERT INTO clustertest VALUES (10);
+--dg-cascade
+--dg INSERT INTO clustertest VALUES (20);
+--dg-cascade
+--dg INSERT INTO clustertest VALUES (30);
+--dg-cascade
+--dg INSERT INTO clustertest VALUES (40);
+--dg-cascade
+--dg INSERT INTO clustertest VALUES (50);
+
+-- Use a transaction so that updates are not committed when CLUSTER sees 'em
+BEGIN;
+
+-- Test update where the old row version is found first in the scan
+--dg-cascade
+--dg UPDATE clustertest SET key = 100 WHERE key = 10;
+
+-- Test update where the new row version is found first in the scan
+--dg-cascade
+--dg UPDATE clustertest SET key = 35 WHERE key = 40;
+
+-- Test longer update chain
+--dg-cascade
+--dg UPDATE clustertest SET key = 60 WHERE key = 50;
+--dg-cascade
+--dg UPDATE clustertest SET key = 70 WHERE key = 60;
+--dg-cascade
+--dg UPDATE clustertest SET key = 80 WHERE key = 70;
+
+--dg-cascade
+--dg SELECT * FROM clustertest;
+--dg-cascade
+--dg CLUSTER clustertest_pkey ON clustertest;
+--dg-cascade
+--dg SELECT * FROM clustertest;
+
+COMMIT;
+
+--dg-cascade
+--dg SELECT * FROM clustertest;
+
+-- check that temp tables can be clustered
+create temp table clstr_temp (col1 int primary key, col2 text);
+insert into clstr_temp values (2, 'two'), (1, 'one');
+--dg-differs: the result
+--dg cluster clstr_temp using clstr_temp_pkey;
+--dg-cascade
+--dg select * from clstr_temp;
+drop table clstr_temp;
+
+RESET SESSION AUTHORIZATION;
+
+-- check clustering an empty table
+--dg-cascade
+--dg DROP TABLE clustertest;
+CREATE TABLE clustertest (f1 int PRIMARY KEY);
+--dg-differs: the result
+--dg CLUSTER clustertest USING clustertest_pkey;
+--dg-cascade
+--dg CLUSTER clustertest;
+
+-- Check that partitioned tables can be clustered
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE clstrpart (a int) PARTITION BY RANGE (a);
+--dg-cascade
+--dg CREATE TABLE clstrpart1 PARTITION OF clstrpart FOR VALUES FROM (1) TO (10) PARTITION BY RANGE (a);
+--dg-cascade
+--dg CREATE TABLE clstrpart11 PARTITION OF clstrpart1 FOR VALUES FROM (1) TO (5);
+--dg-cascade
+--dg CREATE TABLE clstrpart12 PARTITION OF clstrpart1 FOR VALUES FROM (5) TO (10) PARTITION BY RANGE (a);
+--dg-cascade
+--dg CREATE TABLE clstrpart2 PARTITION OF clstrpart FOR VALUES FROM (10) TO (20);
+--dg-cascade
+--dg CREATE TABLE clstrpart3 PARTITION OF clstrpart DEFAULT PARTITION BY RANGE (a);
+--dg-cascade
+--dg CREATE TABLE clstrpart33 PARTITION OF clstrpart3 DEFAULT;
+--dg-cascade
+--dg CREATE INDEX clstrpart_only_idx ON ONLY clstrpart (a);
+--dg-cascade
+--dg CLUSTER clstrpart USING clstrpart_only_idx; -- fails
+--dg-cascade
+--dg DROP INDEX clstrpart_only_idx;
+--dg-cascade
+--dg CREATE INDEX clstrpart_idx ON clstrpart (a);
+-- Check that clustering sets new relfilenodes:
+--dg-cascade
+--dg CREATE TEMP TABLE old_cluster_info AS SELECT relname, level, relfilenode, relkind FROM pg_partition_tree('clstrpart'::regclass) AS tree JOIN pg_class c ON c.oid=tree.relid ;
+--dg-cascade
+--dg CLUSTER clstrpart USING clstrpart_idx;
+--dg-cascade
+--dg CREATE TEMP TABLE new_cluster_info AS SELECT relname, level, relfilenode, relkind FROM pg_partition_tree('clstrpart'::regclass) AS tree JOIN pg_class c ON c.oid=tree.relid ;
+--dg-cascade
+--dg SELECT relname, old.level, old.relkind, old.relfilenode = new.relfilenode FROM old_cluster_info AS old JOIN new_cluster_info AS new USING (relname) ORDER BY relname COLLATE "C";
+-- Partitioned indexes aren't and can't be marked un/clustered:
+--dg-cascade
+--dg \d clstrpart
+--dg-cascade
+--dg CLUSTER clstrpart;
+--dg-cascade
+--dg ALTER TABLE clstrpart SET WITHOUT CLUSTER;
+--dg-cascade
+--dg ALTER TABLE clstrpart CLUSTER ON clstrpart_idx;
+--dg-cascade
+--dg DROP TABLE clstrpart;
+
+-- Ownership of partitions is checked
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE ptnowner(i int unique) PARTITION BY LIST (i);
+--dg-cascade
+--dg CREATE INDEX ptnowner_i_idx ON ptnowner(i);
+--dg-cascade
+--dg CREATE TABLE ptnowner1 PARTITION OF ptnowner FOR VALUES IN (1);
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE regress_ptnowner;
+--dg-cascade
+--dg CREATE TABLE ptnowner2 PARTITION OF ptnowner FOR VALUES IN (2);
+--dg-cascade
+--dg ALTER TABLE ptnowner1 OWNER TO regress_ptnowner;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_ptnowner;
+--dg-cascade
+--dg CLUSTER ptnowner USING ptnowner_i_idx;
+RESET SESSION AUTHORIZATION;
+--dg-cascade
+--dg ALTER TABLE ptnowner OWNER TO regress_ptnowner;
+--dg-cascade
+--dg CREATE TEMP TABLE ptnowner_oldnodes AS
+--dg   SELECT oid, relname, relfilenode FROM pg_partition_tree('ptnowner') AS tree
+--dg   JOIN pg_class AS c ON c.oid=tree.relid;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_ptnowner;
+--dg-cascade
+--dg CLUSTER ptnowner USING ptnowner_i_idx;
+RESET SESSION AUTHORIZATION;
+--dg-cascade
+--dg SELECT a.relname, a.relfilenode=b.relfilenode FROM pg_class a
+--dg   JOIN ptnowner_oldnodes b USING (oid) ORDER BY a.relname COLLATE "C";
+--dg-cascade
+--dg DROP TABLE ptnowner;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE regress_ptnowner;
+
+-- Test CLUSTER with external tuplesorting
+
+create table clstr_4 as select * from tenk1;
+create index cluster_sort on clstr_4 (hundred, thousand, tenthous);
+-- ensure we don't use the index in CLUSTER nor the checking SELECTs
+set enable_indexscan = off;
+
+-- Use external sort:
+set maintenance_work_mem = '1MB';
+--dg-differs: the result
+--dg cluster clstr_4 using cluster_sort;
+--dg-cascade
+--dg select * from
+--dg (select hundred, lag(hundred) over () as lhundred,
+--dg         thousand, lag(thousand) over () as lthousand,
+--dg         tenthous, lag(tenthous) over () as ltenthous from clstr_4) ss
+--dg where row(hundred, thousand, tenthous) <= row(lhundred, lthousand, ltenthous);
+
+reset enable_indexscan;
+reset maintenance_work_mem;
+
+-- test CLUSTER on expression index
+--dg-skip: column "?" asks for what CREATE TABLE does not support yet
+--dg CREATE TABLE clstr_expression(id serial primary key, a int, b text COLLATE "C");
+--dg-cascade
+--dg INSERT INTO clstr_expression(a, b) SELECT g.i % 42, 'prefix'||g.i FROM generate_series(1, 133) g(i);
+--dg-cascade
+--dg CREATE INDEX clstr_expression_minus_a ON clstr_expression ((-a), b);
+--dg-cascade
+--dg CREATE INDEX clstr_expression_upper_b ON clstr_expression ((upper(b)));
+
+-- verify indexes work before cluster
+BEGIN;
+SET LOCAL enable_seqscan = false;
+--dg-cascade
+--dg EXPLAIN (COSTS OFF) SELECT * FROM clstr_expression WHERE upper(b) = 'PREFIX3';
+--dg-cascade
+--dg SELECT * FROM clstr_expression WHERE upper(b) = 'PREFIX3';
+--dg-cascade
+--dg EXPLAIN (COSTS OFF) SELECT * FROM clstr_expression WHERE -a = -3 ORDER BY -a, b;
+--dg-cascade
+--dg SELECT * FROM clstr_expression WHERE -a = -3 ORDER BY -a, b;
+COMMIT;
+
+-- and after clustering on clstr_expression_minus_a
+--dg-cascade
+--dg CLUSTER clstr_expression USING clstr_expression_minus_a;
+--dg-cascade
+--dg WITH rows AS
+--dg   (SELECT ctid, lag(a) OVER (ORDER BY ctid) AS la, a FROM clstr_expression)
+--dg SELECT * FROM rows WHERE la < a;
+BEGIN;
+SET LOCAL enable_seqscan = false;
+--dg-cascade
+--dg EXPLAIN (COSTS OFF) SELECT * FROM clstr_expression WHERE upper(b) = 'PREFIX3';
+--dg-cascade
+--dg SELECT * FROM clstr_expression WHERE upper(b) = 'PREFIX3';
+--dg-cascade
+--dg EXPLAIN (COSTS OFF) SELECT * FROM clstr_expression WHERE -a = -3 ORDER BY -a, b;
+--dg-cascade
+--dg SELECT * FROM clstr_expression WHERE -a = -3 ORDER BY -a, b;
+COMMIT;
+
+-- and after clustering on clstr_expression_upper_b
+--dg-cascade
+--dg CLUSTER clstr_expression USING clstr_expression_upper_b;
+--dg-cascade
+--dg WITH rows AS
+--dg   (SELECT ctid, lag(b) OVER (ORDER BY ctid) AS lb, b FROM clstr_expression)
+--dg SELECT * FROM rows WHERE upper(lb) > upper(b);
+BEGIN;
+SET LOCAL enable_seqscan = false;
+--dg-cascade
+--dg EXPLAIN (COSTS OFF) SELECT * FROM clstr_expression WHERE upper(b) = 'PREFIX3';
+--dg-cascade
+--dg SELECT * FROM clstr_expression WHERE upper(b) = 'PREFIX3';
+--dg-cascade
+--dg EXPLAIN (COSTS OFF) SELECT * FROM clstr_expression WHERE -a = -3 ORDER BY -a, b;
+--dg-cascade
+--dg SELECT * FROM clstr_expression WHERE -a = -3 ORDER BY -a, b;
+COMMIT;
+
+-- clean up
+DROP TABLE clustertest;
+DROP TABLE clstr_1;
+DROP TABLE clstr_2;
+DROP TABLE clstr_3;
+DROP TABLE clstr_4;
+--dg-cascade
+--dg DROP TABLE clstr_expression;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP USER regress_clstr_user;

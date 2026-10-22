@@ -1,0 +1,3325 @@
+--
+-- FOREIGN KEY
+--
+
+-- NOT ENFORCED
+--
+-- First test, check and cascade
+--
+CREATE TABLE PKTABLE ( ptest1 int PRIMARY KEY, ptest2 text );
+--dg-skip: column "?" asks for what CREATE TABLE does not support yet
+--dg CREATE TABLE FKTABLE ( ftest1 int CONSTRAINT fktable_ftest1_fkey REFERENCES PKTABLE MATCH FULL ON DELETE CASCADE ON UPDATE CASCADE NOT ENFORCED,
+--dg 					   ftest2 int );
+
+-- Inserting into the foreign key table will not result in an error, even if
+-- there is no matching key in the referenced table.
+--dg-cascade
+--dg INSERT INTO FKTABLE VALUES (1, 2);
+--dg-cascade
+--dg INSERT INTO FKTABLE VALUES (2, 3);
+
+-- Check FKTABLE
+--dg-cascade
+--dg SELECT * FROM FKTABLE;
+
+-- Reverting it back to ENFORCED will result in failure because constraint validation will be triggered,
+-- as it was previously in a valid state.
+--dg-cascade
+--dg ALTER TABLE FKTABLE ALTER CONSTRAINT fktable_ftest1_fkey ENFORCED;
+
+-- Insert referenced data that satisfies the constraint, then attempt to
+-- change it.
+INSERT INTO PKTABLE VALUES (1, 'Test1');
+INSERT INTO PKTABLE VALUES (2, 'Test2');
+--dg-cascade
+--dg ALTER TABLE FKTABLE ALTER CONSTRAINT fktable_ftest1_fkey ENFORCED;
+
+-- Any further inserts will fail due to the enforcement.
+--dg-cascade
+--dg INSERT INTO FKTABLE VALUES (3, 4);
+
+--
+-- MATCH FULL
+--
+-- First test, check and cascade
+--
+-- Insert test data into PKTABLE
+INSERT INTO PKTABLE VALUES (3, 'Test3');
+INSERT INTO PKTABLE VALUES (4, 'Test4');
+INSERT INTO PKTABLE VALUES (5, 'Test5');
+
+-- Insert successful rows into FK TABLE
+--dg-cascade
+--dg INSERT INTO FKTABLE VALUES (3, 4);
+--dg-cascade
+--dg INSERT INTO FKTABLE VALUES (NULL, 1);
+
+-- Insert a failed row into FK TABLE
+--dg-cascade
+--dg INSERT INTO FKTABLE VALUES (100, 2);
+
+-- Check FKTABLE
+--dg-cascade
+--dg SELECT * FROM FKTABLE;
+
+-- Delete a row from PK TABLE
+DELETE FROM PKTABLE WHERE ptest1=1;
+
+-- Check FKTABLE for removal of matched row
+--dg-cascade
+--dg SELECT * FROM FKTABLE;
+
+-- Update a row from PK TABLE
+UPDATE PKTABLE SET ptest1=1 WHERE ptest1=2;
+
+-- Check FKTABLE for update of matched row
+--dg-cascade
+--dg SELECT * FROM FKTABLE;
+
+--dg-cascade
+--dg DROP TABLE FKTABLE;
+DROP TABLE PKTABLE;
+
+--
+-- check set NULL and table constraint on multiple columns
+--
+CREATE TABLE PKTABLE ( ptest1 int, ptest2 int, ptest3 text, PRIMARY KEY(ptest1, ptest2) );
+CREATE TABLE FKTABLE ( ftest1 int, ftest2 int, ftest3 int, CONSTRAINT constrname FOREIGN KEY(ftest1, ftest2)
+                       REFERENCES PKTABLE MATCH FULL ON DELETE SET NULL ON UPDATE SET NULL);
+
+-- Test comments
+--dg-differs: another error: relation pg_constraint cannot be opened: digres has no catalog tables
+--dg COMMENT ON CONSTRAINT constrname_wrong ON FKTABLE IS 'fk constraint comment';
+--dg-skip: relation pg_constraint cannot be opened: digres has no catalog tables
+--dg COMMENT ON CONSTRAINT constrname ON FKTABLE IS 'fk constraint comment';
+--dg-skip: relation pg_constraint cannot be opened: digres has no catalog tables
+--dg COMMENT ON CONSTRAINT constrname ON FKTABLE IS NULL;
+
+-- Insert test data into PKTABLE
+INSERT INTO PKTABLE VALUES (1, 2, 'Test1');
+INSERT INTO PKTABLE VALUES (1, 3, 'Test1-2');
+INSERT INTO PKTABLE VALUES (2, 4, 'Test2');
+INSERT INTO PKTABLE VALUES (3, 6, 'Test3');
+INSERT INTO PKTABLE VALUES (4, 8, 'Test4');
+INSERT INTO PKTABLE VALUES (5, 10, 'Test5');
+
+-- Insert successful rows into FK TABLE
+INSERT INTO FKTABLE VALUES (1, 2, 4);
+INSERT INTO FKTABLE VALUES (1, 3, 5);
+INSERT INTO FKTABLE VALUES (2, 4, 8);
+INSERT INTO FKTABLE VALUES (3, 6, 12);
+INSERT INTO FKTABLE VALUES (NULL, NULL, 0);
+
+-- Insert failed rows into FK TABLE
+INSERT INTO FKTABLE VALUES (100, 2, 4);
+INSERT INTO FKTABLE VALUES (2, 2, 4);
+INSERT INTO FKTABLE VALUES (NULL, 2, 4);
+INSERT INTO FKTABLE VALUES (1, NULL, 4);
+
+-- Check FKTABLE
+SELECT * FROM FKTABLE;
+
+-- Delete a row from PK TABLE
+DELETE FROM PKTABLE WHERE ptest1=1 and ptest2=2;
+
+-- Check FKTABLE for removal of matched row
+--dg-differs: the result
+--dg SELECT * FROM FKTABLE;
+
+-- Delete another row from PK TABLE
+DELETE FROM PKTABLE WHERE ptest1=5 and ptest2=10;
+
+-- Check FKTABLE (should be no change)
+--dg-differs: the result
+--dg SELECT * FROM FKTABLE;
+
+-- Update a row from PK TABLE
+UPDATE PKTABLE SET ptest1=1 WHERE ptest1=2;
+
+-- Check FKTABLE for update of matched row
+--dg-differs: the result
+--dg SELECT * FROM FKTABLE;
+
+-- Check update with part of key null
+UPDATE FKTABLE SET ftest1 = NULL WHERE ftest1 = 1;
+
+-- Check update with old and new key values equal
+UPDATE FKTABLE SET ftest1 = 1 WHERE ftest1 = 1;
+
+-- Try altering the column type where foreign keys are involved
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg ALTER TABLE PKTABLE ALTER COLUMN ptest1 TYPE bigint;
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg ALTER TABLE FKTABLE ALTER COLUMN ftest1 TYPE bigint;
+--dg-differs: the result
+--dg SELECT * FROM PKTABLE;
+--dg-differs: the result
+--dg SELECT * FROM FKTABLE;
+
+DROP TABLE PKTABLE CASCADE;
+DROP TABLE FKTABLE;
+
+--
+-- check set default and table constraint on multiple columns
+--
+CREATE TABLE PKTABLE ( ptest1 int, ptest2 int, ptest3 text, PRIMARY KEY(ptest1, ptest2) );
+CREATE TABLE FKTABLE ( ftest1 int DEFAULT -1, ftest2 int DEFAULT -2, ftest3 int, CONSTRAINT constrname2 FOREIGN KEY(ftest1, ftest2)
+                       REFERENCES PKTABLE MATCH FULL ON DELETE SET DEFAULT ON UPDATE SET DEFAULT);
+
+-- Insert a value in PKTABLE for default
+INSERT INTO PKTABLE VALUES (-1, -2, 'The Default!');
+
+-- Insert test data into PKTABLE
+INSERT INTO PKTABLE VALUES (1, 2, 'Test1');
+INSERT INTO PKTABLE VALUES (1, 3, 'Test1-2');
+INSERT INTO PKTABLE VALUES (2, 4, 'Test2');
+INSERT INTO PKTABLE VALUES (3, 6, 'Test3');
+INSERT INTO PKTABLE VALUES (4, 8, 'Test4');
+INSERT INTO PKTABLE VALUES (5, 10, 'Test5');
+
+-- Insert successful rows into FK TABLE
+INSERT INTO FKTABLE VALUES (1, 2, 4);
+INSERT INTO FKTABLE VALUES (1, 3, 5);
+INSERT INTO FKTABLE VALUES (2, 4, 8);
+INSERT INTO FKTABLE VALUES (3, 6, 12);
+INSERT INTO FKTABLE VALUES (NULL, NULL, 0);
+
+-- Insert failed rows into FK TABLE
+INSERT INTO FKTABLE VALUES (100, 2, 4);
+INSERT INTO FKTABLE VALUES (2, 2, 4);
+INSERT INTO FKTABLE VALUES (NULL, 2, 4);
+INSERT INTO FKTABLE VALUES (1, NULL, 4);
+
+-- Check FKTABLE
+SELECT * FROM FKTABLE;
+
+-- Delete a row from PK TABLE
+DELETE FROM PKTABLE WHERE ptest1=1 and ptest2=2;
+
+-- Check FKTABLE to check for removal
+--dg-differs: the result
+--dg SELECT * FROM FKTABLE;
+
+-- Delete another row from PK TABLE
+DELETE FROM PKTABLE WHERE ptest1=5 and ptest2=10;
+
+-- Check FKTABLE (should be no change)
+--dg-differs: the result
+--dg SELECT * FROM FKTABLE;
+
+-- Update a row from PK TABLE
+UPDATE PKTABLE SET ptest1=1 WHERE ptest1=2;
+
+-- Check FKTABLE for update of matched row
+--dg-differs: the result
+--dg SELECT * FROM FKTABLE;
+
+-- this should fail for lack of CASCADE
+DROP TABLE PKTABLE;
+DROP TABLE PKTABLE CASCADE;
+DROP TABLE FKTABLE;
+
+
+--
+-- First test, check with no on delete or on update
+--
+CREATE TABLE PKTABLE ( ptest1 int PRIMARY KEY, ptest2 text );
+CREATE TABLE FKTABLE ( ftest1 int REFERENCES PKTABLE MATCH FULL, ftest2 int );
+
+-- Insert test data into PKTABLE
+INSERT INTO PKTABLE VALUES (1, 'Test1');
+INSERT INTO PKTABLE VALUES (2, 'Test2');
+INSERT INTO PKTABLE VALUES (3, 'Test3');
+INSERT INTO PKTABLE VALUES (4, 'Test4');
+INSERT INTO PKTABLE VALUES (5, 'Test5');
+
+-- Insert successful rows into FK TABLE
+INSERT INTO FKTABLE VALUES (1, 2);
+INSERT INTO FKTABLE VALUES (2, 3);
+INSERT INTO FKTABLE VALUES (3, 4);
+INSERT INTO FKTABLE VALUES (NULL, 1);
+
+-- Insert a failed row into FK TABLE
+INSERT INTO FKTABLE VALUES (100, 2);
+
+-- Check FKTABLE
+SELECT * FROM FKTABLE;
+
+-- Check PKTABLE
+SELECT * FROM PKTABLE;
+
+-- Delete a row from PK TABLE (should fail)
+DELETE FROM PKTABLE WHERE ptest1=1;
+
+-- Delete a row from PK TABLE (should succeed)
+DELETE FROM PKTABLE WHERE ptest1=5;
+
+-- Check PKTABLE for deletes
+SELECT * FROM PKTABLE;
+
+-- Update a row from PK TABLE (should fail)
+UPDATE PKTABLE SET ptest1=0 WHERE ptest1=2;
+
+-- Update a row from PK TABLE (should succeed)
+UPDATE PKTABLE SET ptest1=0 WHERE ptest1=4;
+
+-- Check PKTABLE for updates
+SELECT * FROM PKTABLE;
+
+DROP TABLE FKTABLE;
+DROP TABLE PKTABLE;
+
+--
+-- Check initial check upon ALTER TABLE
+--
+CREATE TABLE PKTABLE ( ptest1 int, ptest2 int, PRIMARY KEY(ptest1, ptest2) );
+CREATE TABLE FKTABLE ( ftest1 int, ftest2 int );
+
+INSERT INTO PKTABLE VALUES (1, 2);
+INSERT INTO FKTABLE VALUES (1, NULL);
+
+ALTER TABLE FKTABLE ADD FOREIGN KEY(ftest1, ftest2) REFERENCES PKTABLE MATCH FULL;
+
+-- Modifying other attributes of a constraint should not affect its enforceability, and vice versa
+--dg-skip: a NOT ENFORCED foreign key is not supported yet
+--dg ALTER TABLE FKTABLE ADD CONSTRAINT fk_con FOREIGN KEY(ftest1, ftest2) REFERENCES PKTABLE NOT VALID NOT ENFORCED;
+--dg-cascade
+--dg ALTER TABLE FKTABLE ALTER CONSTRAINT fk_con DEFERRABLE INITIALLY DEFERRED;
+--dg-cascade
+--dg SELECT condeferrable, condeferred, conenforced, convalidated
+--dg FROM pg_constraint WHERE conname = 'fk_con';
+
+--dg-cascade
+--dg ALTER TABLE FKTABLE ALTER CONSTRAINT fk_con NOT ENFORCED;
+--dg-cascade
+--dg SELECT condeferrable, condeferred, conenforced, convalidated
+--dg FROM pg_constraint WHERE conname = 'fk_con';
+
+-- Enforceability also changes the validate state, as data validation will be
+-- performed during this transformation.
+--dg-cascade
+--dg ALTER TABLE FKTABLE ALTER CONSTRAINT fk_con ENFORCED;
+--dg-cascade
+--dg SELECT condeferrable, condeferred, conenforced, convalidated
+--dg FROM pg_constraint WHERE conname = 'fk_con';
+
+-- Can change enforceability and deferrability together
+--dg-cascade
+--dg ALTER TABLE FKTABLE ALTER CONSTRAINT fk_con NOT ENFORCED NOT DEFERRABLE;
+--dg-cascade
+--dg SELECT condeferrable, condeferred, conenforced, convalidated
+--dg FROM pg_constraint WHERE conname = 'fk_con';
+
+DROP TABLE FKTABLE;
+DROP TABLE PKTABLE;
+
+
+-- MATCH SIMPLE
+
+-- Base test restricting update/delete
+CREATE TABLE PKTABLE ( ptest1 int, ptest2 int, ptest3 int, ptest4 text, PRIMARY KEY(ptest1, ptest2, ptest3) );
+CREATE TABLE FKTABLE ( ftest1 int, ftest2 int, ftest3 int, ftest4 int,  CONSTRAINT constrname3
+			FOREIGN KEY(ftest1, ftest2, ftest3) REFERENCES PKTABLE);
+
+-- Insert Primary Key values
+INSERT INTO PKTABLE VALUES (1, 2, 3, 'test1');
+INSERT INTO PKTABLE VALUES (1, 3, 3, 'test2');
+INSERT INTO PKTABLE VALUES (2, 3, 4, 'test3');
+INSERT INTO PKTABLE VALUES (2, 4, 5, 'test4');
+
+-- Insert Foreign Key values
+INSERT INTO FKTABLE VALUES (1, 2, 3, 1);
+INSERT INTO FKTABLE VALUES (NULL, 2, 3, 2);
+INSERT INTO FKTABLE VALUES (2, NULL, 3, 3);
+INSERT INTO FKTABLE VALUES (NULL, 2, 7, 4);
+INSERT INTO FKTABLE VALUES (NULL, 3, 4, 5);
+
+-- Insert a failed values
+INSERT INTO FKTABLE VALUES (1, 2, 7, 6);
+
+-- Show FKTABLE
+SELECT * from FKTABLE;
+
+-- Try to update something that should fail
+UPDATE PKTABLE set ptest2=5 where ptest2=2;
+
+-- Try to update something that should succeed
+UPDATE PKTABLE set ptest1=1 WHERE ptest2=3;
+
+-- Try to delete something that should fail
+DELETE FROM PKTABLE where ptest1=1 and ptest2=2 and ptest3=3;
+
+-- Try to delete something that should work
+DELETE FROM PKTABLE where ptest1=2;
+
+-- Show PKTABLE and FKTABLE
+SELECT * from PKTABLE;
+
+SELECT * from FKTABLE;
+
+DROP TABLE FKTABLE;
+DROP TABLE PKTABLE;
+
+-- restrict with null values
+CREATE TABLE PKTABLE ( ptest1 int, ptest2 int, ptest3 int, ptest4 text, UNIQUE(ptest1, ptest2, ptest3) );
+CREATE TABLE FKTABLE ( ftest1 int, ftest2 int, ftest3 int, ftest4 int,  CONSTRAINT constrname3
+			FOREIGN KEY(ftest1, ftest2, ftest3) REFERENCES PKTABLE (ptest1, ptest2, ptest3));
+
+INSERT INTO PKTABLE VALUES (1, 2, 3, 'test1');
+INSERT INTO PKTABLE VALUES (1, 3, NULL, 'test2');
+INSERT INTO PKTABLE VALUES (2, NULL, 4, 'test3');
+
+INSERT INTO FKTABLE VALUES (1, 2, 3, 1);
+
+DELETE FROM PKTABLE WHERE ptest1 = 2;
+
+SELECT * FROM PKTABLE;
+SELECT * FROM FKTABLE;
+
+DROP TABLE FKTABLE;
+DROP TABLE PKTABLE;
+
+-- cascade update/delete
+CREATE TABLE PKTABLE ( ptest1 int, ptest2 int, ptest3 int, ptest4 text, PRIMARY KEY(ptest1, ptest2, ptest3) );
+CREATE TABLE FKTABLE ( ftest1 int, ftest2 int, ftest3 int, ftest4 int,  CONSTRAINT constrname3
+			FOREIGN KEY(ftest1, ftest2, ftest3) REFERENCES PKTABLE
+			ON DELETE CASCADE ON UPDATE CASCADE);
+
+-- Insert Primary Key values
+INSERT INTO PKTABLE VALUES (1, 2, 3, 'test1');
+INSERT INTO PKTABLE VALUES (1, 3, 3, 'test2');
+INSERT INTO PKTABLE VALUES (2, 3, 4, 'test3');
+INSERT INTO PKTABLE VALUES (2, 4, 5, 'test4');
+
+-- Insert Foreign Key values
+INSERT INTO FKTABLE VALUES (1, 2, 3, 1);
+INSERT INTO FKTABLE VALUES (NULL, 2, 3, 2);
+INSERT INTO FKTABLE VALUES (2, NULL, 3, 3);
+INSERT INTO FKTABLE VALUES (NULL, 2, 7, 4);
+INSERT INTO FKTABLE VALUES (NULL, 3, 4, 5);
+
+-- Insert a failed values
+INSERT INTO FKTABLE VALUES (1, 2, 7, 6);
+
+-- Show FKTABLE
+SELECT * from FKTABLE;
+
+-- Try to update something that will cascade
+UPDATE PKTABLE set ptest2=5 where ptest2=2;
+
+-- Try to update something that should not cascade
+UPDATE PKTABLE set ptest1=1 WHERE ptest2=3;
+
+-- Show PKTABLE and FKTABLE
+--dg-differs: the result
+--dg SELECT * from PKTABLE;
+--dg-differs: the result
+--dg SELECT * from FKTABLE;
+
+-- Try to delete something that should cascade
+DELETE FROM PKTABLE where ptest1=1 and ptest2=5 and ptest3=3;
+
+-- Show PKTABLE and FKTABLE
+--dg-differs: the result
+--dg SELECT * from PKTABLE;
+SELECT * from FKTABLE;
+
+-- Try to delete something that should not have a cascade
+DELETE FROM PKTABLE where ptest1=2;
+
+-- Show PKTABLE and FKTABLE
+SELECT * from PKTABLE;
+SELECT * from FKTABLE;
+
+DROP TABLE FKTABLE;
+DROP TABLE PKTABLE;
+
+-- set null update / set default delete
+CREATE TABLE PKTABLE ( ptest1 int, ptest2 int, ptest3 int, ptest4 text, PRIMARY KEY(ptest1, ptest2, ptest3) );
+CREATE TABLE FKTABLE ( ftest1 int DEFAULT 0, ftest2 int, ftest3 int, ftest4 int,  CONSTRAINT constrname3
+			FOREIGN KEY(ftest1, ftest2, ftest3) REFERENCES PKTABLE
+			ON DELETE SET DEFAULT ON UPDATE SET NULL);
+
+-- Insert Primary Key values
+INSERT INTO PKTABLE VALUES (1, 2, 3, 'test1');
+INSERT INTO PKTABLE VALUES (1, 3, 3, 'test2');
+INSERT INTO PKTABLE VALUES (2, 3, 4, 'test3');
+INSERT INTO PKTABLE VALUES (2, 4, 5, 'test4');
+
+-- Insert Foreign Key values
+INSERT INTO FKTABLE VALUES (1, 2, 3, 1);
+INSERT INTO FKTABLE VALUES (2, 3, 4, 1);
+INSERT INTO FKTABLE VALUES (NULL, 2, 3, 2);
+INSERT INTO FKTABLE VALUES (2, NULL, 3, 3);
+INSERT INTO FKTABLE VALUES (NULL, 2, 7, 4);
+INSERT INTO FKTABLE VALUES (NULL, 3, 4, 5);
+
+-- Insert a failed values
+INSERT INTO FKTABLE VALUES (1, 2, 7, 6);
+
+-- Show FKTABLE
+SELECT * from FKTABLE;
+
+-- Try to update something that will set null
+UPDATE PKTABLE set ptest2=5 where ptest2=2;
+
+-- Try to update something that should not set null
+UPDATE PKTABLE set ptest2=2 WHERE ptest2=3 and ptest1=1;
+
+-- Show PKTABLE and FKTABLE
+--dg-differs: the result
+--dg SELECT * from PKTABLE;
+--dg-differs: the result
+--dg SELECT * from FKTABLE;
+
+-- Try to delete something that should set default
+DELETE FROM PKTABLE where ptest1=2 and ptest2=3 and ptest3=4;
+
+-- Show PKTABLE and FKTABLE
+--dg-differs: the result
+--dg SELECT * from PKTABLE;
+--dg-differs: the result
+--dg SELECT * from FKTABLE;
+
+-- Try to delete something that should not set default
+DELETE FROM PKTABLE where ptest2=5;
+
+-- Show PKTABLE and FKTABLE
+--dg-differs: the result
+--dg SELECT * from PKTABLE;
+--dg-differs: the result
+--dg SELECT * from FKTABLE;
+
+DROP TABLE FKTABLE;
+DROP TABLE PKTABLE;
+
+-- set default update / set null delete
+CREATE TABLE PKTABLE ( ptest1 int, ptest2 int, ptest3 int, ptest4 text, PRIMARY KEY(ptest1, ptest2, ptest3) );
+CREATE TABLE FKTABLE ( ftest1 int DEFAULT 0, ftest2 int DEFAULT -1, ftest3 int DEFAULT -2, ftest4 int, CONSTRAINT constrname3
+			FOREIGN KEY(ftest1, ftest2, ftest3) REFERENCES PKTABLE
+			ON DELETE SET NULL ON UPDATE SET DEFAULT);
+
+-- Insert Primary Key values
+INSERT INTO PKTABLE VALUES (1, 2, 3, 'test1');
+INSERT INTO PKTABLE VALUES (1, 3, 3, 'test2');
+INSERT INTO PKTABLE VALUES (2, 3, 4, 'test3');
+INSERT INTO PKTABLE VALUES (2, 4, 5, 'test4');
+INSERT INTO PKTABLE VALUES (2, -1, 5, 'test5');
+
+-- Insert Foreign Key values
+INSERT INTO FKTABLE VALUES (1, 2, 3, 1);
+INSERT INTO FKTABLE VALUES (2, 3, 4, 1);
+INSERT INTO FKTABLE VALUES (2, 4, 5, 1);
+INSERT INTO FKTABLE VALUES (NULL, 2, 3, 2);
+INSERT INTO FKTABLE VALUES (2, NULL, 3, 3);
+INSERT INTO FKTABLE VALUES (NULL, 2, 7, 4);
+INSERT INTO FKTABLE VALUES (NULL, 3, 4, 5);
+
+-- Insert a failed values
+INSERT INTO FKTABLE VALUES (1, 2, 7, 6);
+
+-- Show FKTABLE
+SELECT * from FKTABLE;
+
+-- Try to update something that will fail
+UPDATE PKTABLE set ptest2=5 where ptest2=2;
+
+-- Try to update something that will set default
+UPDATE PKTABLE set ptest1=0, ptest2=-1, ptest3=-2 where ptest2=2;
+UPDATE PKTABLE set ptest2=10 where ptest2=4;
+
+-- Try to update something that should not set default
+UPDATE PKTABLE set ptest2=2 WHERE ptest2=3 and ptest1=1;
+
+-- Show PKTABLE and FKTABLE
+--dg-differs: the result
+--dg SELECT * from PKTABLE;
+--dg-differs: the result
+--dg SELECT * from FKTABLE;
+
+-- Try to delete something that should set null
+DELETE FROM PKTABLE where ptest1=2 and ptest2=3 and ptest3=4;
+
+-- Show PKTABLE and FKTABLE
+--dg-differs: the result
+--dg SELECT * from PKTABLE;
+--dg-differs: the result
+--dg SELECT * from FKTABLE;
+
+-- Try to delete something that should not set null
+DELETE FROM PKTABLE where ptest2=-1 and ptest3=5;
+
+-- Show PKTABLE and FKTABLE
+--dg-differs: the result
+--dg SELECT * from PKTABLE;
+--dg-differs: the result
+--dg SELECT * from FKTABLE;
+
+DROP TABLE FKTABLE;
+DROP TABLE PKTABLE;
+
+-- Test for ON DELETE SET NULL/DEFAULT (column_list);
+CREATE TABLE PKTABLE (tid int, id int, PRIMARY KEY (tid, id));
+CREATE TABLE FKTABLE (tid int, id int, foo int, FOREIGN KEY (tid, id) REFERENCES PKTABLE ON DELETE SET NULL (bar));
+CREATE TABLE FKTABLE (tid int, id int, foo int, FOREIGN KEY (tid, id) REFERENCES PKTABLE ON DELETE SET NULL (foo));
+CREATE TABLE FKTABLE (tid int, id int, foo int, FOREIGN KEY (tid, foo) REFERENCES PKTABLE ON UPDATE SET NULL (foo));
+CREATE TABLE FKTABLE (
+  tid int, id int,
+  fk_id_del_set_null int,
+  fk_id_del_set_default int DEFAULT 0,
+  FOREIGN KEY (tid, fk_id_del_set_null) REFERENCES PKTABLE ON DELETE SET NULL (fk_id_del_set_null),
+  -- this tests handling of duplicate entries in SET DEFAULT column list
+  FOREIGN KEY (tid, fk_id_del_set_default) REFERENCES PKTABLE ON DELETE SET DEFAULT (fk_id_del_set_default, fk_id_del_set_default)
+);
+
+--dg-differs: the result
+--dg SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = 'fktable'::regclass::oid ORDER BY oid;
+
+INSERT INTO PKTABLE VALUES (1, 0), (1, 1), (1, 2);
+INSERT INTO FKTABLE VALUES
+  (1, 1, 1, NULL),
+  (1, 2, NULL, 2);
+
+--dg-skip: multiple assignments to same column "?"
+--dg DELETE FROM PKTABLE WHERE id = 1 OR id = 2;
+
+--dg-cascade
+--dg SELECT * FROM FKTABLE ORDER BY id;
+
+DROP TABLE FKTABLE;
+DROP TABLE PKTABLE;
+
+-- Test some invalid FK definitions
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE PKTABLE (ptest1 int PRIMARY KEY, someoid oid);
+--dg-cascade
+--dg CREATE TABLE FKTABLE_FAIL1 ( ftest1 int, CONSTRAINT fkfail1 FOREIGN KEY (ftest2) REFERENCES PKTABLE);
+--dg-cascade
+--dg CREATE TABLE FKTABLE_FAIL2 ( ftest1 int, CONSTRAINT fkfail1 FOREIGN KEY (ftest1) REFERENCES PKTABLE(ptest2));
+--dg-cascade
+--dg CREATE TABLE FKTABLE_FAIL3 ( ftest1 int, CONSTRAINT fkfail1 FOREIGN KEY (tableoid) REFERENCES PKTABLE(someoid));
+--dg-cascade
+--dg CREATE TABLE FKTABLE_FAIL4 ( ftest1 oid, CONSTRAINT fkfail1 FOREIGN KEY (ftest1) REFERENCES PKTABLE(tableoid));
+
+--dg-cascade
+--dg DROP TABLE PKTABLE;
+
+-- Test for referencing column number smaller than referenced constraint
+CREATE TABLE PKTABLE (ptest1 int, ptest2 int, UNIQUE(ptest1, ptest2));
+CREATE TABLE FKTABLE_FAIL1 (ftest1 int REFERENCES pktable(ptest1));
+
+DROP TABLE FKTABLE_FAIL1;
+DROP TABLE PKTABLE;
+
+--
+-- Tests for mismatched types
+--
+-- Basic one column, two table setup
+CREATE TABLE PKTABLE (ptest1 int PRIMARY KEY);
+INSERT INTO PKTABLE VALUES(42);
+-- This next should fail, because int=inet does not exist
+--dg-differs: another error: type ? is not supported yet
+--dg CREATE TABLE FKTABLE (ftest1 inet REFERENCES pktable);
+-- This should also fail for the same reason, but here we
+-- give the column name
+--dg-differs: another error: type ? is not supported yet
+--dg CREATE TABLE FKTABLE (ftest1 inet REFERENCES pktable(ptest1));
+-- This should succeed, even though they are different types,
+-- because int=int8 exists and is a member of the integer opfamily
+CREATE TABLE FKTABLE (ftest1 int8 REFERENCES pktable);
+-- Check it actually works
+INSERT INTO FKTABLE VALUES(42);		-- should succeed
+INSERT INTO FKTABLE VALUES(43);		-- should fail
+UPDATE FKTABLE SET ftest1 = ftest1;	-- should succeed
+UPDATE FKTABLE SET ftest1 = ftest1 + 1;	-- should fail
+DROP TABLE FKTABLE;
+-- This should fail, because we'd have to cast numeric to int which is
+-- not an implicit coercion (or use numeric=numeric, but that's not part
+-- of the integer opfamily)
+CREATE TABLE FKTABLE (ftest1 numeric REFERENCES pktable);
+DROP TABLE PKTABLE;
+-- On the other hand, this should work because int implicitly promotes to
+-- numeric, and we allow promotion on the FK side
+CREATE TABLE PKTABLE (ptest1 numeric PRIMARY KEY);
+INSERT INTO PKTABLE VALUES(42);
+CREATE TABLE FKTABLE (ftest1 int REFERENCES pktable);
+-- Check it actually works
+INSERT INTO FKTABLE VALUES(42);		-- should succeed
+INSERT INTO FKTABLE VALUES(43);		-- should fail
+UPDATE FKTABLE SET ftest1 = ftest1;	-- should succeed
+UPDATE FKTABLE SET ftest1 = ftest1 + 1;	-- should fail
+DROP TABLE FKTABLE;
+DROP TABLE PKTABLE;
+
+-- Two columns, two tables
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE PKTABLE (ptest1 int, ptest2 inet, PRIMARY KEY(ptest1, ptest2));
+-- This should fail, because we just chose really odd types
+--dg-cascade
+--dg CREATE TABLE FKTABLE (ftest1 cidr, ftest2 timestamp, FOREIGN KEY(ftest1, ftest2) REFERENCES pktable);
+-- Again, so should this...
+--dg-cascade
+--dg CREATE TABLE FKTABLE (ftest1 cidr, ftest2 timestamp, FOREIGN KEY(ftest1, ftest2) REFERENCES pktable(ptest1, ptest2));
+-- This fails because we mixed up the column ordering
+--dg-cascade
+--dg CREATE TABLE FKTABLE (ftest1 int, ftest2 inet, FOREIGN KEY(ftest2, ftest1) REFERENCES pktable);
+-- As does this...
+--dg-cascade
+--dg CREATE TABLE FKTABLE (ftest1 int, ftest2 inet, FOREIGN KEY(ftest2, ftest1) REFERENCES pktable(ptest1, ptest2));
+-- And again..
+--dg-cascade
+--dg CREATE TABLE FKTABLE (ftest1 int, ftest2 inet, FOREIGN KEY(ftest1, ftest2) REFERENCES pktable(ptest2, ptest1));
+-- This works...
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE FKTABLE (ftest1 int, ftest2 inet, FOREIGN KEY(ftest2, ftest1) REFERENCES pktable(ptest2, ptest1));
+--dg-cascade
+--dg DROP TABLE FKTABLE;
+-- As does this
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE FKTABLE (ftest1 int, ftest2 inet, FOREIGN KEY(ftest1, ftest2) REFERENCES pktable(ptest1, ptest2));
+--dg-cascade
+--dg DROP TABLE FKTABLE;
+--dg-cascade
+--dg DROP TABLE PKTABLE;
+
+-- Two columns, same table
+-- Make sure this still works...
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE PKTABLE (ptest1 int, ptest2 inet, ptest3 int, ptest4 inet, PRIMARY KEY(ptest1, ptest2), FOREIGN KEY(ptest3,
+--dg ptest4) REFERENCES pktable(ptest1, ptest2));
+--dg-cascade
+--dg DROP TABLE PKTABLE;
+-- And this,
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE PKTABLE (ptest1 int, ptest2 inet, ptest3 int, ptest4 inet, PRIMARY KEY(ptest1, ptest2), FOREIGN KEY(ptest3,
+--dg ptest4) REFERENCES pktable);
+--dg-cascade
+--dg DROP TABLE PKTABLE;
+-- This shouldn't (mixed up columns)
+--dg-differs: another error: type ? is not supported yet
+--dg CREATE TABLE PKTABLE (ptest1 int, ptest2 inet, ptest3 int, ptest4 inet, PRIMARY KEY(ptest1, ptest2), FOREIGN KEY(ptest3,
+--dg ptest4) REFERENCES pktable(ptest2, ptest1));
+-- Nor should this... (same reason, we have 4,3 referencing 1,2 which mismatches types
+--dg-differs: another error: type ? is not supported yet
+--dg CREATE TABLE PKTABLE (ptest1 int, ptest2 inet, ptest3 int, ptest4 inet, PRIMARY KEY(ptest1, ptest2), FOREIGN KEY(ptest4,
+--dg ptest3) REFERENCES pktable(ptest1, ptest2));
+-- Not this one either... Same as the last one except we didn't defined the columns being referenced.
+--dg-differs: another error: type ? is not supported yet
+--dg CREATE TABLE PKTABLE (ptest1 int, ptest2 inet, ptest3 int, ptest4 inet, PRIMARY KEY(ptest1, ptest2), FOREIGN KEY(ptest4,
+--dg ptest3) REFERENCES pktable);
+
+--
+-- Now some cases with inheritance
+-- Basic 2 table case: 1 column of matching types.
+create table pktable_base (base1 int not null);
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg create table pktable (ptest1 int, primary key(base1), unique(base1, ptest1)) inherits (pktable_base);
+--dg-cascade
+--dg create table fktable (ftest1 int references pktable(base1));
+-- now some ins, upd, del
+--dg-cascade
+--dg insert into pktable(base1) values (1);
+--dg-cascade
+--dg insert into pktable(base1) values (2);
+--  let's insert a non-existent fktable value
+--dg-cascade
+--dg insert into fktable(ftest1) values (3);
+--  let's make a valid row for that
+--dg-cascade
+--dg insert into pktable(base1) values (3);
+--dg-cascade
+--dg insert into fktable(ftest1) values (3);
+-- let's try removing a row that should fail from pktable
+--dg-cascade
+--dg delete from pktable where base1>2;
+-- okay, let's try updating all of the base1 values to *4
+-- which should fail.
+--dg-cascade
+--dg update pktable set base1=base1*4;
+-- okay, let's try an update that should work.
+--dg-cascade
+--dg update pktable set base1=base1*4 where base1<3;
+-- and a delete that should work
+--dg-cascade
+--dg delete from pktable where base1>3;
+-- cleanup
+--dg-cascade
+--dg drop table fktable;
+--dg-cascade
+--dg delete from pktable;
+
+-- Now 2 columns 2 tables, matching types
+--dg-cascade
+--dg create table fktable (ftest1 int, ftest2 int, foreign key(ftest1, ftest2) references pktable(base1, ptest1));
+-- now some ins, upd, del
+--dg-cascade
+--dg insert into pktable(base1, ptest1) values (1, 1);
+--dg-cascade
+--dg insert into pktable(base1, ptest1) values (2, 2);
+--  let's insert a non-existent fktable value
+--dg-cascade
+--dg insert into fktable(ftest1, ftest2) values (3, 1);
+--  let's make a valid row for that
+--dg-cascade
+--dg insert into pktable(base1,ptest1) values (3, 1);
+--dg-cascade
+--dg insert into fktable(ftest1, ftest2) values (3, 1);
+-- let's try removing a row that should fail from pktable
+--dg-cascade
+--dg delete from pktable where base1>2;
+-- okay, let's try updating all of the base1 values to *4
+-- which should fail.
+--dg-cascade
+--dg update pktable set base1=base1*4;
+-- okay, let's try an update that should work.
+--dg-cascade
+--dg update pktable set base1=base1*4 where base1<3;
+-- and a delete that should work
+--dg-cascade
+--dg delete from pktable where base1>3;
+-- cleanup
+--dg-cascade
+--dg drop table fktable;
+--dg-cascade
+--dg drop table pktable;
+drop table pktable_base;
+
+-- Now we'll do one all in 1 table with 2 columns of matching types
+create table pktable_base(base1 int not null, base2 int);
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg create table pktable(ptest1 int, ptest2 int, primary key(base1, ptest1), foreign key(base2, ptest2) references
+--dg                                              pktable(base1, ptest1)) inherits (pktable_base);
+--dg-cascade
+--dg insert into pktable (base1, ptest1, base2, ptest2) values (1, 1, 1, 1);
+--dg-cascade
+--dg insert into pktable (base1, ptest1, base2, ptest2) values (2, 1, 1, 1);
+--dg-cascade
+--dg insert into pktable (base1, ptest1, base2, ptest2) values (2, 2, 2, 1);
+--dg-cascade
+--dg insert into pktable (base1, ptest1, base2, ptest2) values (1, 3, 2, 2);
+-- fails (3,2) isn't in base1, ptest1
+--dg-cascade
+--dg insert into pktable (base1, ptest1, base2, ptest2) values (2, 3, 3, 2);
+-- fails (2,2) is being referenced
+--dg-cascade
+--dg delete from pktable where base1=2;
+-- fails (1,1) is being referenced (twice)
+--dg-cascade
+--dg update pktable set base1=3 where base1=1;
+-- this sequence of two deletes will work, since after the first there will be no (2,*) references
+--dg-cascade
+--dg delete from pktable where base2=2;
+--dg-cascade
+--dg delete from pktable where base1=2;
+--dg-cascade
+--dg drop table pktable;
+drop table pktable_base;
+
+-- 2 columns (2 tables), mismatched types
+create table pktable_base(base1 int not null);
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg create table pktable(ptest1 inet, primary key(base1, ptest1)) inherits (pktable_base);
+-- just generally bad types (with and without column references on the referenced table)
+--dg-cascade
+--dg create table fktable(ftest1 cidr, ftest2 int[], foreign key (ftest1, ftest2) references pktable);
+--dg-cascade
+--dg create table fktable(ftest1 cidr, ftest2 int[], foreign key (ftest1, ftest2) references pktable(base1, ptest1));
+-- let's mix up which columns reference which
+--dg-cascade
+--dg create table fktable(ftest1 int, ftest2 inet, foreign key(ftest2, ftest1) references pktable);
+--dg-cascade
+--dg create table fktable(ftest1 int, ftest2 inet, foreign key(ftest2, ftest1) references pktable(base1, ptest1));
+--dg-cascade
+--dg create table fktable(ftest1 int, ftest2 inet, foreign key(ftest1, ftest2) references pktable(ptest1, base1));
+--dg-cascade
+--dg drop table pktable;
+drop table pktable_base;
+
+-- 2 columns (1 table), mismatched types
+create table pktable_base(base1 int not null, base2 int);
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg create table pktable(ptest1 inet, ptest2 inet[], primary key(base1, ptest1), foreign key(base2, ptest2) references
+--dg                                              pktable(base1, ptest1)) inherits (pktable_base);
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg create table pktable(ptest1 inet, ptest2 inet, primary key(base1, ptest1), foreign key(base2, ptest2) references
+--dg                                              pktable(ptest1, base1)) inherits (pktable_base);
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg create table pktable(ptest1 inet, ptest2 inet, primary key(base1, ptest1), foreign key(ptest2, base2) references
+--dg                                              pktable(base1, ptest1)) inherits (pktable_base);
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg create table pktable(ptest1 inet, ptest2 inet, primary key(base1, ptest1), foreign key(ptest2, base2) references
+--dg                                              pktable(base1, ptest1)) inherits (pktable_base);
+drop table pktable;
+drop table pktable_base;
+
+--
+-- Deferrable constraints
+--
+
+-- deferrable, explicitly deferred
+CREATE TABLE pktable (
+	id		INT4 PRIMARY KEY,
+	other	INT4
+);
+
+--dg-skip: column "?" asks for what CREATE TABLE does not support yet
+--dg CREATE TABLE fktable (
+--dg 	id		INT4 PRIMARY KEY,
+--dg 	fk		INT4 REFERENCES pktable DEFERRABLE
+--dg );
+
+-- default to immediate: should fail
+--dg-cascade
+--dg INSERT INTO fktable VALUES (5, 10);
+
+-- explicitly defer the constraint
+BEGIN;
+
+SET CONSTRAINTS ALL DEFERRED;
+
+--dg-cascade
+--dg INSERT INTO fktable VALUES (10, 15);
+--dg-cascade
+--dg INSERT INTO pktable VALUES (15, 0); -- make the FK insert valid
+
+COMMIT;
+
+--dg-cascade
+--dg DROP TABLE fktable, pktable;
+
+-- deferrable, initially deferred
+--dg-cascade
+--dg CREATE TABLE pktable (
+--dg 	id		INT4 PRIMARY KEY,
+--dg 	other	INT4
+--dg );
+
+--dg-skip: column "?" asks for what CREATE TABLE does not support yet
+--dg CREATE TABLE fktable (
+--dg 	id		INT4 PRIMARY KEY,
+--dg 	fk		INT4 REFERENCES pktable DEFERRABLE INITIALLY DEFERRED
+--dg );
+
+-- default to deferred, should succeed
+BEGIN;
+
+--dg-cascade
+--dg INSERT INTO fktable VALUES (100, 200);
+--dg-cascade
+--dg INSERT INTO pktable VALUES (200, 500); -- make the FK insert valid
+
+COMMIT;
+
+-- default to deferred, explicitly make immediate
+BEGIN;
+
+SET CONSTRAINTS ALL IMMEDIATE;
+
+-- should fail
+--dg-cascade
+--dg INSERT INTO fktable VALUES (500, 1000);
+
+COMMIT;
+
+-- Check that the existing FK trigger is both deferrable and initially deferred
+--dg-cascade
+--dg SELECT conname, tgrelid::regclass as tgrel,
+--dg        regexp_replace(tgname, '[0-9]+', 'N') as tgname, tgtype,
+--dg        tgdeferrable, tginitdeferred
+--dg FROM pg_trigger t JOIN pg_constraint c ON (t.tgconstraint = c.oid)
+--dg WHERE conrelid = 'fktable'::regclass AND conname = 'fktable_fk_fkey'
+--dg ORDER BY tgrelid, tgtype;
+
+-- Changing the constraint to NOT ENFORCED drops the associated FK triggers
+--dg-cascade
+--dg ALTER TABLE FKTABLE ALTER CONSTRAINT fktable_fk_fkey NOT ENFORCED;
+--dg-cascade
+--dg SELECT conname, tgrelid::regclass as tgrel,
+--dg        regexp_replace(tgname, '[0-9]+', 'N') as tgname, tgtype,
+--dg        tgdeferrable, tginitdeferred
+--dg FROM pg_trigger t JOIN pg_constraint c ON (t.tgconstraint = c.oid)
+--dg WHERE conrelid = 'fktable'::regclass AND conname = 'fktable_fk_fkey'
+--dg ORDER BY tgrelid, tgtype;
+
+-- Changing it back to ENFORCED will recreate the necessary FK triggers
+-- that are deferrable and initially deferred
+--dg-cascade
+--dg ALTER TABLE FKTABLE ALTER CONSTRAINT fktable_fk_fkey ENFORCED;
+--dg-cascade
+--dg SELECT conname, tgrelid::regclass as tgrel,
+--dg        regexp_replace(tgname, '[0-9]+', 'N') as tgname, tgtype,
+--dg        tgdeferrable, tginitdeferred
+--dg FROM pg_trigger t JOIN pg_constraint c ON (t.tgconstraint = c.oid)
+--dg WHERE conrelid = 'fktable'::regclass AND conname = 'fktable_fk_fkey'
+--dg ORDER BY tgrelid, tgtype;
+
+-- Verify that a deferrable, initially deferred foreign key still works
+-- as expected after being set to NOT ENFORCED and then re-enabled
+BEGIN;
+
+-- doesn't match PK, but no error yet
+--dg-cascade
+--dg INSERT INTO fktable VALUES (2, 20);
+
+-- should catch error from INSERT at commit
+--dg-cascade
+--dg COMMIT;
+
+--dg-cascade
+--dg DROP TABLE fktable, pktable;
+
+-- tricky behavior: according to SQL99, if a deferred constraint is set
+-- to 'immediate' mode, it should be checked for validity *immediately*,
+-- not when the current transaction commits (i.e. the mode change applies
+-- retroactively)
+--dg-cascade
+--dg CREATE TABLE pktable (
+--dg 	id		INT4 PRIMARY KEY,
+--dg 	other	INT4
+--dg );
+
+--dg-skip: column "?" asks for what CREATE TABLE does not support yet
+--dg CREATE TABLE fktable (
+--dg 	id		INT4 PRIMARY KEY,
+--dg 	fk		INT4 REFERENCES pktable DEFERRABLE
+--dg );
+
+--dg-cascade
+--dg BEGIN;
+
+SET CONSTRAINTS ALL DEFERRED;
+
+-- should succeed, for now
+--dg-cascade
+--dg INSERT INTO fktable VALUES (1000, 2000);
+
+-- should cause transaction abort, due to preceding error
+--dg-cascade
+--dg SET CONSTRAINTS ALL IMMEDIATE;
+
+--dg-cascade
+--dg INSERT INTO pktable VALUES (2000, 3); -- too late
+
+COMMIT;
+
+--dg-cascade
+--dg DROP TABLE fktable, pktable;
+
+-- deferrable, initially deferred
+--dg-cascade
+--dg CREATE TABLE pktable (
+--dg 	id		INT4 PRIMARY KEY,
+--dg 	other	INT4
+--dg );
+
+--dg-skip: column "?" asks for what CREATE TABLE does not support yet
+--dg CREATE TABLE fktable (
+--dg 	id		INT4 PRIMARY KEY,
+--dg 	fk		INT4 REFERENCES pktable DEFERRABLE INITIALLY DEFERRED
+--dg );
+
+BEGIN;
+
+-- no error here
+--dg-cascade
+--dg INSERT INTO fktable VALUES (100, 200);
+
+-- error here on commit
+--dg-cascade
+--dg COMMIT;
+
+--dg-cascade
+--dg DROP TABLE pktable, fktable;
+
+-- test notice about expensive referential integrity checks,
+-- where the index cannot be used because of type incompatibilities.
+
+CREATE TEMP TABLE pktable (
+        id1     INT4 PRIMARY KEY,
+        id2     VARCHAR(4) UNIQUE,
+        id3     REAL UNIQUE,
+        UNIQUE(id1, id2, id3)
+);
+
+CREATE TEMP TABLE fktable (
+        x1      INT4 REFERENCES pktable(id1),
+        x2      VARCHAR(4) REFERENCES pktable(id2),
+        x3      REAL REFERENCES pktable(id3),
+        x4      TEXT,
+        x5      INT2
+);
+
+-- check individual constraints with alter table.
+
+-- should fail
+
+-- varchar does not promote to real
+ALTER TABLE fktable ADD CONSTRAINT fk_2_3
+FOREIGN KEY (x2) REFERENCES pktable(id3);
+
+-- nor to int4
+--dg-cascade
+--dg ALTER TABLE fktable ADD CONSTRAINT fk_2_1
+--dg FOREIGN KEY (x2) REFERENCES pktable(id1);
+
+-- real does not promote to int4
+--dg-cascade
+--dg ALTER TABLE fktable ADD CONSTRAINT fk_3_1
+--dg FOREIGN KEY (x3) REFERENCES pktable(id1);
+
+-- int4 does not promote to text
+--dg-cascade
+--dg ALTER TABLE fktable ADD CONSTRAINT fk_1_2
+--dg FOREIGN KEY (x1) REFERENCES pktable(id2);
+
+-- should succeed
+
+-- int4 promotes to real
+--dg-cascade
+--dg ALTER TABLE fktable ADD CONSTRAINT fk_1_3
+--dg FOREIGN KEY (x1) REFERENCES pktable(id3);
+
+-- text is compatible with varchar
+--dg-cascade
+--dg ALTER TABLE fktable ADD CONSTRAINT fk_4_2
+--dg FOREIGN KEY (x4) REFERENCES pktable(id2);
+
+-- int2 is part of integer opfamily as of 8.0
+--dg-cascade
+--dg ALTER TABLE fktable ADD CONSTRAINT fk_5_1
+--dg FOREIGN KEY (x5) REFERENCES pktable(id1);
+
+-- check multikey cases, especially out-of-order column lists
+
+-- these should work
+
+--dg-cascade
+--dg ALTER TABLE fktable ADD CONSTRAINT fk_123_123
+--dg FOREIGN KEY (x1,x2,x3) REFERENCES pktable(id1,id2,id3);
+
+--dg-cascade
+--dg ALTER TABLE fktable ADD CONSTRAINT fk_213_213
+--dg FOREIGN KEY (x2,x1,x3) REFERENCES pktable(id2,id1,id3);
+
+--dg-cascade
+--dg ALTER TABLE fktable ADD CONSTRAINT fk_253_213
+--dg FOREIGN KEY (x2,x5,x3) REFERENCES pktable(id2,id1,id3);
+
+-- these should fail
+
+--dg-cascade
+--dg ALTER TABLE fktable ADD CONSTRAINT fk_123_231
+--dg FOREIGN KEY (x1,x2,x3) REFERENCES pktable(id2,id3,id1);
+
+--dg-cascade
+--dg ALTER TABLE fktable ADD CONSTRAINT fk_241_132
+--dg FOREIGN KEY (x2,x4,x1) REFERENCES pktable(id1,id3,id2);
+
+--dg-cascade
+--dg DROP TABLE pktable, fktable;
+
+-- test a tricky case: we can elide firing the FK check trigger during
+-- an UPDATE if the UPDATE did not change the foreign key
+-- field. However, we can't do this if our transaction was the one that
+-- created the updated row and the trigger is deferred, since our UPDATE
+-- will have invalidated the original newly-inserted tuple, and therefore
+-- cause the on-INSERT RI trigger not to be fired.
+
+--dg-cascade
+--dg CREATE TEMP TABLE pktable (
+--dg     id int primary key,
+--dg     other int
+--dg );
+
+--dg-skip: column "?" asks for what CREATE TABLE does not support yet
+--dg CREATE TEMP TABLE fktable (
+--dg     id int primary key,
+--dg     fk int references pktable deferrable initially deferred
+--dg );
+
+--dg-cascade
+--dg INSERT INTO pktable VALUES (5, 10);
+
+--dg-cascade
+--dg BEGIN;
+
+-- doesn't match PK, but no error yet
+--dg-cascade
+--dg INSERT INTO fktable VALUES (0, 20);
+
+-- don't change FK
+--dg-cascade
+--dg UPDATE fktable SET id = id + 1;
+
+-- should catch error from initial INSERT
+--dg-cascade
+--dg COMMIT;
+
+-- check same case when insert is in a different subtransaction than update
+
+--dg-cascade
+--dg BEGIN;
+
+-- doesn't match PK, but no error yet
+--dg-cascade
+--dg INSERT INTO fktable VALUES (0, 20);
+
+-- UPDATE will be in a subxact
+--dg-cascade
+--dg SAVEPOINT savept1;
+
+-- don't change FK
+--dg-cascade
+--dg UPDATE fktable SET id = id + 1;
+
+-- should catch error from initial INSERT
+--dg-cascade
+--dg COMMIT;
+
+--dg-cascade
+--dg BEGIN;
+
+-- INSERT will be in a subxact
+--dg-cascade
+--dg SAVEPOINT savept1;
+
+-- doesn't match PK, but no error yet
+--dg-cascade
+--dg INSERT INTO fktable VALUES (0, 20);
+
+--dg-cascade
+--dg RELEASE SAVEPOINT savept1;
+
+-- don't change FK
+--dg-cascade
+--dg UPDATE fktable SET id = id + 1;
+
+-- should catch error from initial INSERT
+--dg-cascade
+--dg COMMIT;
+
+--dg-cascade
+--dg BEGIN;
+
+-- doesn't match PK, but no error yet
+--dg-cascade
+--dg INSERT INTO fktable VALUES (0, 20);
+
+-- UPDATE will be in a subxact
+--dg-cascade
+--dg SAVEPOINT savept1;
+
+-- don't change FK
+--dg-cascade
+--dg UPDATE fktable SET id = id + 1;
+
+-- Roll back the UPDATE
+--dg-cascade
+--dg ROLLBACK TO savept1;
+
+-- should catch error from initial INSERT
+--dg-cascade
+--dg COMMIT;
+
+--
+-- check ALTER CONSTRAINT
+--
+
+--dg-cascade
+--dg INSERT INTO fktable VALUES (1, 5);
+
+--dg-cascade
+--dg ALTER TABLE fktable ALTER CONSTRAINT fktable_fk_fkey DEFERRABLE INITIALLY IMMEDIATE;
+
+--dg-cascade
+--dg BEGIN;
+
+-- doesn't match FK, should throw error now
+--dg-cascade
+--dg UPDATE pktable SET id = 10 WHERE id = 5;
+
+COMMIT;
+
+BEGIN;
+
+-- doesn't match PK, should throw error now
+--dg-cascade
+--dg INSERT INTO fktable VALUES (0, 20);
+
+COMMIT;
+
+--dg-cascade
+--dg ALTER TABLE fktable ALTER CONSTRAINT fktable_fk_fkey NOT ENFORCED;
+
+BEGIN;
+
+-- doesn't match FK, but no error.
+UPDATE pktable SET id = 10 WHERE id = 5;
+-- doesn't match PK, but no error.
+--dg-cascade
+--dg INSERT INTO fktable VALUES (0, 20);
+
+ROLLBACK;
+
+-- try additional syntax
+--dg-cascade
+--dg ALTER TABLE fktable ALTER CONSTRAINT fktable_fk_fkey NOT DEFERRABLE;
+-- illegal options
+ALTER TABLE fktable ALTER CONSTRAINT fktable_fk_fkey NOT DEFERRABLE INITIALLY DEFERRED;
+--dg-cascade
+--dg ALTER TABLE fktable ALTER CONSTRAINT fktable_fk_fkey NO INHERIT;
+ALTER TABLE fktable ALTER CONSTRAINT fktable_fk_fkey NOT VALID;
+ALTER TABLE fktable ALTER CONSTRAINT fktable_fk_fkey ENFORCED NOT ENFORCED;
+CREATE TEMP TABLE fktable2 (fk int references pktable ENFORCED NOT ENFORCED);
+
+-- test order of firing of FK triggers when several RI-induced changes need to
+-- be made to the same row.  This was broken by subtransaction-related
+-- changes in 8.0.
+
+CREATE TEMP TABLE users (
+  id INT PRIMARY KEY,
+  name VARCHAR NOT NULL
+);
+
+INSERT INTO users VALUES (1, 'Jozko');
+INSERT INTO users VALUES (2, 'Ferko');
+INSERT INTO users VALUES (3, 'Samko');
+
+CREATE TEMP TABLE tasks (
+  id INT PRIMARY KEY,
+  owner INT REFERENCES users ON UPDATE CASCADE ON DELETE SET NULL,
+  worker INT REFERENCES users ON UPDATE CASCADE ON DELETE SET NULL,
+  checked_by INT REFERENCES users ON UPDATE CASCADE ON DELETE SET NULL
+);
+
+INSERT INTO tasks VALUES (1,1,NULL,NULL);
+INSERT INTO tasks VALUES (2,2,2,NULL);
+INSERT INTO tasks VALUES (3,3,3,3);
+
+SELECT * FROM tasks;
+
+UPDATE users SET id = 4 WHERE id = 3;
+
+SELECT * FROM tasks;
+
+DELETE FROM users WHERE id = 4;
+
+SELECT * FROM tasks;
+
+-- could fail with only 2 changes to make, if row was already updated
+BEGIN;
+UPDATE tasks set id=id WHERE id=2;
+--dg-differs: the result
+--dg SELECT * FROM tasks;
+DELETE FROM users WHERE id = 2;
+--dg-differs: the result
+--dg SELECT * FROM tasks;
+COMMIT;
+
+--
+-- Test self-referential FK with CASCADE (bug #6268)
+--
+create temp table selfref (
+    a int primary key,
+    b int,
+    foreign key (b) references selfref (a)
+        on update cascade on delete cascade
+);
+
+insert into selfref (a, b)
+values
+    (0, 0),
+    (1, 1);
+
+begin;
+    update selfref set a = 123 where a = 0;
+--dg-differs: the result
+--dg     select a, b from selfref;
+    update selfref set a = 456 where a = 123;
+--dg-differs: the result
+--dg     select a, b from selfref;
+commit;
+
+--
+-- Test that SET DEFAULT actions recognize updates to default values
+--
+create temp table defp (f1 int primary key);
+create temp table defc (f1 int default 0
+                        references defp on delete set default);
+insert into defp values (0), (1), (2);
+insert into defc values (2);
+select * from defc;
+delete from defp where f1 = 2;
+select * from defc;
+delete from defp where f1 = 0; -- fail
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg alter table defc alter column f1 set default 1;
+--dg-cascade
+--dg delete from defp where f1 = 0;
+--dg-cascade
+--dg select * from defc;
+--dg-cascade
+--dg delete from defp where f1 = 1; -- fail
+
+--
+-- Test the difference between NO ACTION and RESTRICT
+--
+create temp table pp (f1 int primary key);
+create temp table cc (f1 int references pp on update no action on delete no action);
+insert into pp values(12);
+insert into pp values(11);
+update pp set f1=f1+1;
+insert into cc values(13);
+update pp set f1=f1+1;
+update pp set f1=f1+1; -- fail
+delete from pp where f1 = 13; -- fail
+drop table pp, cc;
+
+create temp table pp (f1 int primary key);
+create temp table cc (f1 int references pp on update restrict on delete restrict);
+insert into pp values(12);
+insert into pp values(11);
+update pp set f1=f1+1;
+insert into cc values(13);
+update pp set f1=f1+1; -- fail
+delete from pp where f1 = 13; -- fail
+drop table pp, cc;
+
+--
+-- Test interaction of foreign-key optimization with rules (bug #14219)
+--
+create temp table t1 (a integer primary key, b text);
+create temp table t2 (a integer primary key, b integer references t1);
+--dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg create rule r1 as on delete to t1 do delete from t2 where t2.b = old.a;
+
+--dg-cascade
+--dg explain (costs off) delete from t1 where a = 1;
+delete from t1 where a = 1;
+
+-- Test a primary key with attributes located in later attnum positions
+-- compared to the fk attributes.
+create table pktable2 (a int, b int, c int, d int, e int, primary key (d, e));
+create table fktable2 (d int, e int, foreign key (d, e) references pktable2);
+insert into pktable2 values (1, 2, 3, 4, 5);
+insert into fktable2 values (4, 5);
+delete from pktable2;
+update pktable2 set d = 5;
+drop table pktable2, fktable2;
+
+-- Test truncation of long foreign key names
+create table pktable1 (a int primary key);
+create table pktable2 (a int, b int, primary key (a, b));
+create table fktable2 (
+  a int,
+  b int,
+  very_very_long_column_name_to_exceed_63_characters int,
+  foreign key (very_very_long_column_name_to_exceed_63_characters) references pktable1,
+  foreign key (a, very_very_long_column_name_to_exceed_63_characters) references pktable2,
+  foreign key (a, very_very_long_column_name_to_exceed_63_characters) references pktable2
+);
+select conname from pg_constraint where conrelid = 'fktable2'::regclass order by conname;
+drop table pktable1, pktable2, fktable2;
+
+--
+-- Test deferred FK check on a tuple deleted by a rolled-back subtransaction
+--
+create table pktable2(f1 int primary key);
+--dg-skip: column "?" asks for what CREATE TABLE does not support yet
+--dg create table fktable2(f1 int references pktable2 deferrable initially deferred);
+insert into pktable2 values(1);
+
+begin;
+--dg-cascade
+--dg insert into fktable2 values(1);
+--dg-cascade
+--dg savepoint x;
+--dg-cascade
+--dg delete from fktable2;
+--dg-cascade
+--dg rollback to x;
+commit;
+
+begin;
+--dg-cascade
+--dg insert into fktable2 values(2);
+--dg-cascade
+--dg savepoint x;
+--dg-cascade
+--dg delete from fktable2;
+--dg-cascade
+--dg rollback to x;
+--dg-cascade
+--dg commit; -- fail
+
+--
+-- Test that we prevent dropping FK constraint with pending trigger events
+--
+--dg-cascade
+--dg begin;
+--dg-cascade
+--dg insert into fktable2 values(2);
+--dg-cascade
+--dg alter table fktable2 drop constraint fktable2_f1_fkey;
+commit;
+
+begin;
+delete from pktable2 where f1 = 1;
+--dg-cascade
+--dg alter table fktable2 drop constraint fktable2_f1_fkey;
+commit;
+
+--dg-cascade
+--dg drop table pktable2, fktable2;
+
+--
+-- Test keys that "look" different but compare as equal
+--
+--dg-cascade
+--dg create table pktable2 (a float8, b float8, primary key (a, b));
+--dg-cascade
+--dg create table fktable2 (x float8, y float8, foreign key (x, y) references pktable2 (a, b) on update cascade);
+
+--dg-cascade
+--dg insert into pktable2 values ('-0', '-0');
+--dg-cascade
+--dg insert into fktable2 values ('-0', '-0');
+
+--dg-cascade
+--dg select * from pktable2;
+--dg-cascade
+--dg select * from fktable2;
+
+--dg-cascade
+--dg update pktable2 set a = '0' where a = '-0';
+
+--dg-cascade
+--dg select * from pktable2;
+-- should have updated fktable2.x
+--dg-cascade
+--dg select * from fktable2;
+
+--dg-cascade
+--dg drop table pktable2, fktable2;
+
+
+--
+-- Foreign keys and partitioned tables
+--
+
+-- Creation of a partitioned hierarchy with irregular definitions
+CREATE TABLE fk_notpartitioned_pk (fdrop1 int, a int, fdrop2 int, b int,
+  PRIMARY KEY (a, b));
+ALTER TABLE fk_notpartitioned_pk DROP COLUMN fdrop1, DROP COLUMN fdrop2;
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE fk_partitioned_fk (b int, fdrop1 int, a int) PARTITION BY RANGE (a, b);
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk DROP COLUMN fdrop1;
+CREATE TABLE fk_partitioned_fk_1 (fdrop1 int, fdrop2 int, a int, fdrop3 int, b int);
+ALTER TABLE fk_partitioned_fk_1 DROP COLUMN fdrop1, DROP COLUMN fdrop2, DROP COLUMN fdrop3;
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk ATTACH PARTITION fk_partitioned_fk_1 FOR VALUES FROM (0,0) TO (1000,1000);
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk ADD CONSTRAINT fk_partitioned_fk_a_b_fkey FOREIGN KEY (a, b)
+--dg 	REFERENCES fk_notpartitioned_pk NOT ENFORCED;
+CREATE TABLE fk_partitioned_fk_2 (b int, fdrop1 int, fdrop2 int, a int);
+ALTER TABLE fk_partitioned_fk_2 DROP COLUMN fdrop1, DROP COLUMN fdrop2;
+--dg-skip: a NOT ENFORCED foreign key is not supported yet
+--dg ALTER TABLE fk_partitioned_fk_2 ADD CONSTRAINT fk_partitioned_fk_a_b_fkey FOREIGN KEY (a, b)
+--dg 	REFERENCES fk_notpartitioned_pk NOT ENFORCED;
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk ATTACH PARTITION fk_partitioned_fk_2 FOR VALUES FROM (1000,1000) TO (2000,2000);
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk ALTER CONSTRAINT fk_partitioned_fk_a_b_fkey ENFORCED;
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE fk_partitioned_fk_3 (fdrop1 int, fdrop2 int, fdrop3 int, fdrop4 int, b int, a int)
+--dg   PARTITION BY HASH (a);
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk_3 DROP COLUMN fdrop1, DROP COLUMN fdrop2,
+--dg 	DROP COLUMN fdrop3, DROP COLUMN fdrop4;
+--dg-cascade
+--dg CREATE TABLE fk_partitioned_fk_3_0 PARTITION OF fk_partitioned_fk_3 FOR VALUES WITH (MODULUS 5, REMAINDER 0);
+--dg-cascade
+--dg CREATE TABLE fk_partitioned_fk_3_1 PARTITION OF fk_partitioned_fk_3 FOR VALUES WITH (MODULUS 5, REMAINDER 1);
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk ATTACH PARTITION fk_partitioned_fk_3
+--dg   FOR VALUES FROM (2000,2000) TO (3000,3000);
+
+-- Creating a foreign key with ONLY on a partitioned table referencing
+-- a non-partitioned table fails.
+--dg-cascade
+--dg ALTER TABLE ONLY fk_partitioned_fk ADD FOREIGN KEY (a, b)
+--dg   REFERENCES fk_notpartitioned_pk;
+
+-- these inserts, targeting both the partition directly as well as the
+-- partitioned table, should all fail
+--dg-cascade
+--dg INSERT INTO fk_partitioned_fk (a,b) VALUES (500, 501);
+--dg-cascade
+--dg INSERT INTO fk_partitioned_fk_1 (a,b) VALUES (500, 501);
+--dg-cascade
+--dg INSERT INTO fk_partitioned_fk (a,b) VALUES (1500, 1501);
+--dg-cascade
+--dg INSERT INTO fk_partitioned_fk_2 (a,b) VALUES (1500, 1501);
+--dg-cascade
+--dg INSERT INTO fk_partitioned_fk (a,b) VALUES (2500, 2502);
+--dg-cascade
+--dg INSERT INTO fk_partitioned_fk_3 (a,b) VALUES (2500, 2502);
+--dg-cascade
+--dg INSERT INTO fk_partitioned_fk (a,b) VALUES (2501, 2503);
+--dg-cascade
+--dg INSERT INTO fk_partitioned_fk_3 (a,b) VALUES (2501, 2503);
+
+-- but if we insert the values that make them valid, then they work
+INSERT INTO fk_notpartitioned_pk VALUES (500, 501), (1500, 1501),
+  (2500, 2502), (2501, 2503);
+--dg-cascade
+--dg INSERT INTO fk_partitioned_fk (a,b) VALUES (500, 501);
+--dg-cascade
+--dg INSERT INTO fk_partitioned_fk (a,b) VALUES (1500, 1501);
+--dg-cascade
+--dg INSERT INTO fk_partitioned_fk (a,b) VALUES (2500, 2502);
+--dg-cascade
+--dg INSERT INTO fk_partitioned_fk (a,b) VALUES (2501, 2503);
+
+-- this update fails because there is no referenced row
+--dg-cascade
+--dg UPDATE fk_partitioned_fk SET a = a + 1 WHERE a = 2501;
+-- but we can fix it thusly:
+INSERT INTO fk_notpartitioned_pk (a,b) VALUES (2502, 2503);
+--dg-cascade
+--dg UPDATE fk_partitioned_fk SET a = a + 1 WHERE a = 2501;
+
+-- these updates would leave lingering rows in the referencing table; disallow
+--dg-cascade
+--dg UPDATE fk_notpartitioned_pk SET b = 502 WHERE a = 500;
+--dg-cascade
+--dg UPDATE fk_notpartitioned_pk SET b = 1502 WHERE a = 1500;
+--dg-cascade
+--dg UPDATE fk_notpartitioned_pk SET b = 2504 WHERE a = 2500;
+-- check psql behavior
+--dg-cascade
+--dg \d fk_notpartitioned_pk
+
+-- Check the existing FK trigger
+--dg-cascade
+--dg SELECT conname, tgrelid::regclass as tgrel, regexp_replace(tgname, '[0-9]+', 'N') as tgname, tgtype
+--dg FROM pg_trigger t JOIN pg_constraint c ON (t.tgconstraint = c.oid)
+--dg WHERE tgrelid IN (SELECT relid FROM pg_partition_tree('fk_partitioned_fk'::regclass)
+--dg 				  UNION ALL SELECT 'fk_notpartitioned_pk'::regclass)
+--dg ORDER BY tgrelid, tgtype;
+
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk ALTER CONSTRAINT fk_partitioned_fk_a_b_fkey NOT ENFORCED;
+-- No triggers
+--dg-cascade
+--dg SELECT conname, tgrelid::regclass as tgrel, regexp_replace(tgname, '[0-9]+', 'N') as tgname, tgtype
+--dg FROM pg_trigger t JOIN pg_constraint c ON (t.tgconstraint = c.oid)
+--dg WHERE tgrelid IN (SELECT relid FROM pg_partition_tree('fk_partitioned_fk'::regclass)
+--dg 				  UNION ALL SELECT 'fk_notpartitioned_pk'::regclass)
+--dg ORDER BY tgrelid, tgtype;
+
+-- Changing it back to ENFORCED will recreate the necessary triggers.
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk ALTER CONSTRAINT fk_partitioned_fk_a_b_fkey ENFORCED;
+
+-- Should be exactly the same number of triggers found as before
+--dg-cascade
+--dg SELECT conname, tgrelid::regclass as tgrel, regexp_replace(tgname, '[0-9]+', 'N') as tgname, tgtype
+--dg FROM pg_trigger t JOIN pg_constraint c ON (t.tgconstraint = c.oid)
+--dg WHERE tgrelid IN (SELECT relid FROM pg_partition_tree('fk_partitioned_fk'::regclass)
+--dg 				  UNION ALL SELECT 'fk_notpartitioned_pk'::regclass)
+--dg ORDER BY tgrelid, tgtype;
+
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk DROP CONSTRAINT fk_partitioned_fk_a_b_fkey;
+-- done.
+--dg-cascade
+--dg DROP TABLE fk_notpartitioned_pk, fk_partitioned_fk;
+
+-- Altering a type referenced by a foreign key needs to drop/recreate the FK.
+-- Ensure that works.
+--dg-cascade
+--dg CREATE TABLE fk_notpartitioned_pk (a INT, PRIMARY KEY(a), CHECK (a > 0));
+--dg-cascade
+--dg CREATE TABLE fk_partitioned_fk (a INT REFERENCES fk_notpartitioned_pk(a) PRIMARY KEY) PARTITION BY RANGE(a);
+--dg-cascade
+--dg CREATE TABLE fk_partitioned_fk_1 PARTITION OF fk_partitioned_fk FOR VALUES FROM (MINVALUE) TO (MAXVALUE);
+--dg-cascade
+--dg INSERT INTO fk_notpartitioned_pk VALUES (1);
+--dg-cascade
+--dg INSERT INTO fk_partitioned_fk VALUES (1);
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg ALTER TABLE fk_notpartitioned_pk ALTER COLUMN a TYPE bigint;
+--dg-cascade
+--dg DELETE FROM fk_notpartitioned_pk WHERE a = 1;
+--dg-cascade
+--dg DROP TABLE fk_notpartitioned_pk, fk_partitioned_fk;
+
+-- NOT VALID foreign keys on partitioned table
+--dg-cascade
+--dg CREATE TABLE fk_notpartitioned_pk (a int, b int, PRIMARY KEY (a, b));
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE fk_partitioned_fk (b int, a int) PARTITION BY RANGE (a, b);
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk ADD FOREIGN KEY (a, b) REFERENCES fk_notpartitioned_pk NOT VALID;
+
+-- Attaching a child table with the same valid foreign key constraint.
+--dg-cascade
+--dg CREATE TABLE fk_partitioned_fk_1 (a int, b int);
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk_1 ADD FOREIGN KEY (a, b) REFERENCES fk_notpartitioned_pk;
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk ATTACH PARTITION fk_partitioned_fk_1 FOR VALUES FROM (0,0) TO (1000,1000);
+
+-- Child constraint will remain valid.
+--dg-cascade
+--dg SELECT conname, convalidated, conrelid::regclass FROM pg_constraint
+--dg WHERE conrelid::regclass::text like 'fk_partitioned_fk%' ORDER BY oid::regclass::text;
+
+-- Validate the constraint
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk VALIDATE CONSTRAINT fk_partitioned_fk_a_b_fkey;
+
+-- All constraints are now valid.
+--dg-cascade
+--dg SELECT conname, convalidated, conrelid::regclass FROM pg_constraint
+--dg WHERE conrelid::regclass::text like 'fk_partitioned_fk%' ORDER BY oid::regclass::text;
+
+-- Attaching a child with a NOT VALID constraint.
+--dg-cascade
+--dg CREATE TABLE fk_partitioned_fk_2 (a int, b int);
+INSERT INTO fk_partitioned_fk_2 VALUES(1000, 1000); -- doesn't exist in referenced table
+ALTER TABLE fk_partitioned_fk_2 ADD FOREIGN KEY (a, b) REFERENCES fk_notpartitioned_pk NOT VALID;
+
+-- It will fail because the attach operation implicitly validates the data.
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk ATTACH PARTITION fk_partitioned_fk_2 FOR VALUES FROM (1000,1000) TO (2000,2000);
+
+-- Remove the invalid data and try again.
+TRUNCATE fk_partitioned_fk_2;
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk ATTACH PARTITION fk_partitioned_fk_2 FOR VALUES FROM (1000,1000) TO (2000,2000);
+
+-- The child constraint will also be valid.
+--dg-cascade
+--dg SELECT conname, convalidated FROM pg_constraint
+--dg WHERE conrelid = 'fk_partitioned_fk_2'::regclass ORDER BY oid::regclass::text;
+
+-- Test case where the child constraint is invalid, the grandchild constraint
+-- is valid, and the validation for the grandchild should be skipped when a
+-- valid constraint is applied to the top parent.
+--dg-cascade
+--dg CREATE TABLE fk_partitioned_fk_3 (a int, b int) PARTITION BY RANGE (a, b);
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk_3 ADD FOREIGN KEY (a, b) REFERENCES fk_notpartitioned_pk NOT VALID;
+--dg-cascade
+--dg CREATE TABLE fk_partitioned_fk_3_1 (a int, b int);
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk_3_1 ADD FOREIGN KEY (a, b) REFERENCES fk_notpartitioned_pk;
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk_3 ATTACH PARTITION fk_partitioned_fk_3_1 FOR VALUES FROM (2000,2000) TO (3000,3000);
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk ATTACH PARTITION fk_partitioned_fk_3 FOR VALUES FROM (2000,2000) TO (3000,3000);
+
+-- All constraints are now valid.
+--dg-cascade
+--dg SELECT conname, convalidated, conrelid::regclass FROM pg_constraint
+--dg WHERE conrelid::regclass::text like 'fk_partitioned_fk%' ORDER BY oid::regclass::text;
+
+--dg-cascade
+--dg DROP TABLE fk_partitioned_fk, fk_notpartitioned_pk;
+
+-- NOT VALID and NOT ENFORCED foreign key on a non-partitioned table
+-- referencing a partitioned table
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE fk_partitioned_pk (a int, b int, PRIMARY KEY (a, b)) PARTITION BY RANGE (a, b);
+--dg-cascade
+--dg CREATE TABLE fk_partitioned_pk_1 PARTITION OF fk_partitioned_pk FOR VALUES FROM (0,0) TO (1000,1000);
+--dg-cascade
+--dg CREATE TABLE fk_partitioned_pk_2 PARTITION OF fk_partitioned_pk FOR VALUES FROM (1000,1000) TO (2000,2000);
+CREATE TABLE fk_notpartitioned_fk (b int, a int);
+--dg-cascade
+--dg INSERT INTO fk_partitioned_pk VALUES(100,100), (1000,1000);
+INSERT INTO fk_notpartitioned_fk VALUES(100,100), (1000,1000);
+--dg-cascade
+--dg ALTER TABLE fk_notpartitioned_fk ADD CONSTRAINT fk_notpartitioned_fk_a_b_fkey
+--dg 	FOREIGN KEY (a, b) REFERENCES fk_partitioned_pk NOT VALID;
+--dg-skip: a NOT ENFORCED foreign key is not supported yet
+--dg ALTER TABLE fk_notpartitioned_fk ADD CONSTRAINT fk_notpartitioned_fk_a_b_fkey2
+--dg 	FOREIGN KEY (a, b) REFERENCES fk_partitioned_pk NOT ENFORCED;
+
+-- All constraints will be invalid, and _fkey2 constraints will not be enforced.
+--dg-cascade
+--dg SELECT conname, conenforced, convalidated FROM pg_constraint
+--dg WHERE conrelid = 'fk_notpartitioned_fk'::regclass ORDER BY oid::regclass::text;
+
+--dg-cascade
+--dg ALTER TABLE fk_notpartitioned_fk VALIDATE CONSTRAINT fk_notpartitioned_fk_a_b_fkey;
+--dg-cascade
+--dg ALTER TABLE fk_notpartitioned_fk ALTER CONSTRAINT fk_notpartitioned_fk_a_b_fkey2 ENFORCED;
+
+-- All constraints are now valid and enforced.
+--dg-cascade
+--dg SELECT conname, conenforced, convalidated FROM pg_constraint
+--dg WHERE conrelid = 'fk_notpartitioned_fk'::regclass ORDER BY oid::regclass::text;
+
+-- test a self-referential FK
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_pk ADD CONSTRAINT selffk FOREIGN KEY (a, b) REFERENCES fk_partitioned_pk NOT VALID;
+--dg-cascade
+--dg CREATE TABLE fk_partitioned_pk_3 PARTITION OF fk_partitioned_pk FOR VALUES FROM (2000,2000) TO (3000,3000)
+--dg   PARTITION BY RANGE (a);
+--dg-cascade
+--dg CREATE TABLE fk_partitioned_pk_3_1 PARTITION OF fk_partitioned_pk_3 FOR VALUES FROM (2000) TO (2100);
+--dg-cascade
+--dg SELECT conname, conenforced, convalidated FROM pg_constraint
+--dg WHERE conrelid = 'fk_partitioned_pk'::regclass AND contype = 'f'
+--dg ORDER BY oid::regclass::text;
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_pk_2 VALIDATE CONSTRAINT selffk;
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_pk VALIDATE CONSTRAINT selffk;
+--dg-cascade
+--dg SELECT conname, conenforced, convalidated FROM pg_constraint
+--dg WHERE conrelid = 'fk_partitioned_pk'::regclass AND contype = 'f'
+--dg ORDER BY oid::regclass::text;
+
+--dg-cascade
+--dg DROP TABLE fk_notpartitioned_fk, fk_partitioned_pk;
+
+-- Test some other exotic foreign key features: MATCH SIMPLE, ON UPDATE/DELETE
+-- actions
+--dg-cascade
+--dg CREATE TABLE fk_notpartitioned_pk (a int, b int, primary key (a, b));
+--dg-cascade
+--dg CREATE TABLE fk_partitioned_fk (a int default 2501, b int default 142857) PARTITION BY LIST (a);
+--dg-cascade
+--dg CREATE TABLE fk_partitioned_fk_1 PARTITION OF fk_partitioned_fk FOR VALUES IN (NULL,500,501,502);
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk ADD FOREIGN KEY (a, b)
+--dg   REFERENCES fk_notpartitioned_pk MATCH SIMPLE
+--dg   ON DELETE SET NULL ON UPDATE SET NULL;
+--dg-cascade
+--dg CREATE TABLE fk_partitioned_fk_2 PARTITION OF fk_partitioned_fk FOR VALUES IN (1500,1502);
+--dg-cascade
+--dg CREATE TABLE fk_partitioned_fk_3 (a int, b int);
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk ATTACH PARTITION fk_partitioned_fk_3 FOR VALUES IN (2500,2501,2502,2503);
+
+-- this insert fails
+--dg-cascade
+--dg INSERT INTO fk_partitioned_fk (a, b) VALUES (2502, 2503);
+--dg-cascade
+--dg INSERT INTO fk_partitioned_fk_3 (a, b) VALUES (2502, 2503);
+-- but since the FK is MATCH SIMPLE, this one doesn't
+--dg-cascade
+--dg INSERT INTO fk_partitioned_fk_3 (a, b) VALUES (2502, NULL);
+-- now create the referenced row ...
+--dg-cascade
+--dg INSERT INTO fk_notpartitioned_pk VALUES (2502, 2503);
+--- and now the same insert work
+--dg-cascade
+--dg INSERT INTO fk_partitioned_fk_3 (a, b) VALUES (2502, 2503);
+-- this always works
+--dg-cascade
+--dg INSERT INTO fk_partitioned_fk (a,b) VALUES (NULL, NULL);
+
+-- MATCH FULL
+INSERT INTO fk_notpartitioned_pk VALUES (1, 2);
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE fk_partitioned_fk_full (x int, y int) PARTITION BY RANGE (x);
+--dg-cascade
+--dg CREATE TABLE fk_partitioned_fk_full_1 PARTITION OF fk_partitioned_fk_full DEFAULT;
+--dg-cascade
+--dg INSERT INTO fk_partitioned_fk_full VALUES (1, NULL);
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk_full ADD FOREIGN KEY (x, y) REFERENCES fk_notpartitioned_pk MATCH FULL;  -- fails
+--dg-cascade
+--dg TRUNCATE fk_partitioned_fk_full;
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk_full ADD FOREIGN KEY (x, y) REFERENCES fk_notpartitioned_pk MATCH FULL;
+--dg-cascade
+--dg INSERT INTO fk_partitioned_fk_full VALUES (1, NULL);  -- fails
+--dg-cascade
+--dg DROP TABLE fk_partitioned_fk_full;
+
+-- ON UPDATE SET NULL
+--dg-cascade
+--dg SELECT tableoid::regclass, a, b FROM fk_partitioned_fk WHERE b IS NULL ORDER BY a;
+--dg-cascade
+--dg UPDATE fk_notpartitioned_pk SET a = a + 1 WHERE a = 2502;
+--dg-cascade
+--dg SELECT tableoid::regclass, a, b FROM fk_partitioned_fk WHERE b IS NULL ORDER BY a;
+
+-- ON DELETE SET NULL
+--dg-cascade
+--dg INSERT INTO fk_partitioned_fk VALUES (2503, 2503);
+--dg-cascade
+--dg SELECT count(*) FROM fk_partitioned_fk WHERE a IS NULL;
+--dg-cascade
+--dg DELETE FROM fk_notpartitioned_pk;
+--dg-cascade
+--dg SELECT count(*) FROM fk_partitioned_fk WHERE a IS NULL;
+
+-- ON UPDATE/DELETE SET DEFAULT
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk DROP CONSTRAINT fk_partitioned_fk_a_b_fkey;
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk ADD FOREIGN KEY (a, b)
+--dg   REFERENCES fk_notpartitioned_pk
+--dg   ON DELETE SET DEFAULT ON UPDATE SET DEFAULT;
+--dg-cascade
+--dg INSERT INTO fk_notpartitioned_pk VALUES (2502, 2503);
+--dg-cascade
+--dg INSERT INTO fk_partitioned_fk_3 (a, b) VALUES (2502, 2503);
+-- this fails, because the defaults for the referencing table are not present
+-- in the referenced table:
+--dg-cascade
+--dg UPDATE fk_notpartitioned_pk SET a = 1500 WHERE a = 2502;
+-- but inserting the row we can make it work:
+INSERT INTO fk_notpartitioned_pk VALUES (2501, 142857);
+--dg-cascade
+--dg UPDATE fk_notpartitioned_pk SET a = 1500 WHERE a = 2502;
+--dg-cascade
+--dg SELECT * FROM fk_partitioned_fk WHERE b = 142857;
+
+-- ON DELETE SET NULL column_list
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk DROP CONSTRAINT fk_partitioned_fk_a_b_fkey;
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk ADD FOREIGN KEY (a, b)
+--dg   REFERENCES fk_notpartitioned_pk
+--dg   ON DELETE SET NULL (a);
+BEGIN;
+DELETE FROM fk_notpartitioned_pk WHERE b = 142857;
+--dg-cascade
+--dg SELECT * FROM fk_partitioned_fk WHERE a IS NOT NULL OR b IS NOT NULL ORDER BY a NULLS LAST;
+ROLLBACK;
+
+-- ON DELETE SET DEFAULT column_list
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk DROP CONSTRAINT fk_partitioned_fk_a_b_fkey;
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk ADD FOREIGN KEY (a, b)
+--dg   REFERENCES fk_notpartitioned_pk
+--dg   ON DELETE SET DEFAULT (a);
+BEGIN;
+--dg-cascade
+--dg DELETE FROM fk_partitioned_fk;
+--dg-cascade
+--dg DELETE FROM fk_notpartitioned_pk;
+--dg-cascade
+--dg INSERT INTO fk_notpartitioned_pk VALUES (500, 100000), (2501, 100000);
+--dg-cascade
+--dg INSERT INTO fk_partitioned_fk VALUES (500, 100000);
+--dg-cascade
+--dg DELETE FROM fk_notpartitioned_pk WHERE a = 500;
+--dg-cascade
+--dg SELECT * FROM fk_partitioned_fk ORDER BY a;
+ROLLBACK;
+
+-- ON UPDATE/DELETE CASCADE
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk DROP CONSTRAINT fk_partitioned_fk_a_b_fkey;
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk ADD FOREIGN KEY (a, b)
+--dg   REFERENCES fk_notpartitioned_pk
+--dg   ON DELETE CASCADE ON UPDATE CASCADE;
+--dg-cascade
+--dg UPDATE fk_notpartitioned_pk SET a = 2502 WHERE a = 2501;
+--dg-cascade
+--dg SELECT * FROM fk_partitioned_fk WHERE b = 142857;
+
+-- Now you see it ...
+--dg-cascade
+--dg SELECT * FROM fk_partitioned_fk WHERE b = 142857;
+DELETE FROM fk_notpartitioned_pk WHERE b = 142857;
+-- now you don't.
+--dg-cascade
+--dg SELECT * FROM fk_partitioned_fk WHERE a = 142857;
+
+-- verify that DROP works
+DROP TABLE fk_partitioned_fk_2;
+
+-- Test behavior of the constraint together with attaching and detaching
+-- partitions.
+--dg-cascade
+--dg CREATE TABLE fk_partitioned_fk_2 PARTITION OF fk_partitioned_fk FOR VALUES IN (1500,1502);
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk DETACH PARTITION fk_partitioned_fk_2;
+BEGIN;
+--dg-cascade
+--dg DROP TABLE fk_partitioned_fk;
+-- constraint should still be there
+--dg-cascade
+--dg \d fk_partitioned_fk_2;
+ROLLBACK;
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk ATTACH PARTITION fk_partitioned_fk_2 FOR VALUES IN (1500,1502);
+--dg-cascade
+--dg DROP TABLE fk_partitioned_fk_2;
+CREATE TABLE fk_partitioned_fk_2 (b int, c text, a int,
+	FOREIGN KEY (a, b) REFERENCES fk_notpartitioned_pk ON UPDATE CASCADE ON DELETE CASCADE);
+ALTER TABLE fk_partitioned_fk_2 DROP COLUMN c;
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk ATTACH PARTITION fk_partitioned_fk_2 FOR VALUES IN (1500,1502);
+-- should have only one constraint
+--dg-cascade
+--dg \d fk_partitioned_fk_2
+DROP TABLE fk_partitioned_fk_2;
+
+--dg-skip: a NOT ENFORCED foreign key is not supported yet
+--dg CREATE TABLE fk_partitioned_fk_2 (b int, a int,
+--dg 	CONSTRAINT fk_part_con FOREIGN KEY (a, b) REFERENCES fk_notpartitioned_pk ON UPDATE CASCADE ON DELETE CASCADE NOT ENFORCED);
+-- fail -- cannot merge constraints with different enforceability.
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk ATTACH PARTITION fk_partitioned_fk_2 FOR VALUES IN (1500,1502);
+-- If the constraint is modified to match the enforceability of the parent, it will work.
+BEGIN;
+-- change child constraint
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk_2 ALTER CONSTRAINT fk_part_con ENFORCED;
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk ATTACH PARTITION fk_partitioned_fk_2 FOR VALUES IN (1500,1502);
+--dg-cascade
+--dg \d fk_partitioned_fk_2
+ROLLBACK;
+BEGIN;
+-- or change parent constraint
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk ALTER CONSTRAINT fk_partitioned_fk_a_b_fkey NOT ENFORCED;
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk ATTACH PARTITION fk_partitioned_fk_2 FOR VALUES IN (1500,1502);
+--dg-cascade
+--dg \d fk_partitioned_fk_2
+ROLLBACK;
+--dg-cascade
+--dg DROP TABLE fk_partitioned_fk_2;
+
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE fk_partitioned_fk_4 (a int, b int, FOREIGN KEY (a, b) REFERENCES fk_notpartitioned_pk(a, b) ON UPDATE CASCADE ON DELETE CASCADE) PARTITION BY RANGE (b, a);
+--dg-cascade
+--dg CREATE TABLE fk_partitioned_fk_4_1 PARTITION OF fk_partitioned_fk_4 FOR VALUES FROM (1,1) TO (100,100);
+CREATE TABLE fk_partitioned_fk_4_2 (a int, b int, FOREIGN KEY (a, b) REFERENCES fk_notpartitioned_pk(a, b) ON UPDATE SET NULL);
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk_4 ATTACH PARTITION fk_partitioned_fk_4_2 FOR VALUES FROM (100,100) TO (1000,1000);
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk ATTACH PARTITION fk_partitioned_fk_4 FOR VALUES IN (3500,3502);
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk DETACH PARTITION fk_partitioned_fk_4;
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk ATTACH PARTITION fk_partitioned_fk_4 FOR VALUES IN (3500,3502);
+-- should only have one constraint
+--dg-cascade
+--dg \d fk_partitioned_fk_4
+--dg-cascade
+--dg \d fk_partitioned_fk_4_1
+-- this one has an FK with mismatched properties
+--dg-cascade
+--dg \d fk_partitioned_fk_4_2
+
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE fk_partitioned_fk_5 (a int, b int,
+--dg 	FOREIGN KEY (a, b) REFERENCES fk_notpartitioned_pk(a, b) ON UPDATE CASCADE ON DELETE CASCADE DEFERRABLE,
+--dg 	FOREIGN KEY (a, b) REFERENCES fk_notpartitioned_pk(a, b) MATCH FULL ON UPDATE CASCADE ON DELETE CASCADE)
+--dg   PARTITION BY RANGE (a);
+CREATE TABLE fk_partitioned_fk_5_1 (a int, b int, FOREIGN KEY (a, b) REFERENCES fk_notpartitioned_pk);
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk ATTACH PARTITION fk_partitioned_fk_5 FOR VALUES IN (4500);
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk_5 ATTACH PARTITION fk_partitioned_fk_5_1 FOR VALUES FROM (0) TO (10);
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk DETACH PARTITION fk_partitioned_fk_5;
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk ATTACH PARTITION fk_partitioned_fk_5 FOR VALUES IN (4500);
+-- this one has two constraints, similar but not quite the one in the parent,
+-- so it gets a new one
+--dg-cascade
+--dg \d fk_partitioned_fk_5
+-- verify that it works to reattaching a child with multiple candidate
+-- constraints
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk_5 DETACH PARTITION fk_partitioned_fk_5_1;
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk_5 ATTACH PARTITION fk_partitioned_fk_5_1 FOR VALUES FROM (0) TO (10);
+--dg-cascade
+--dg \d fk_partitioned_fk_5_1
+
+-- verify that attaching a table checks that the existing data satisfies the
+-- constraint
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE fk_partitioned_fk_2 (a int, b int) PARTITION BY RANGE (b);
+--dg-cascade
+--dg CREATE TABLE fk_partitioned_fk_2_1 PARTITION OF fk_partitioned_fk_2 FOR VALUES FROM (0) TO (1000);
+--dg-cascade
+--dg CREATE TABLE fk_partitioned_fk_2_2 PARTITION OF fk_partitioned_fk_2 FOR VALUES FROM (1000) TO (2000);
+--dg-cascade
+--dg INSERT INTO fk_partitioned_fk_2 VALUES (1600, 601), (1600, 1601);
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk ATTACH PARTITION fk_partitioned_fk_2
+--dg   FOR VALUES IN (1600);
+INSERT INTO fk_notpartitioned_pk VALUES (1600, 601), (1600, 1601);
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk ATTACH PARTITION fk_partitioned_fk_2
+--dg   FOR VALUES IN (1600);
+
+-- leave these tables around intentionally
+
+-- Verify that attaching a table that's referenced by an existing FK
+-- in the parent throws an error
+CREATE TABLE fk_partitioned_pk_6 (a int PRIMARY KEY);
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE fk_partitioned_fk_6 (a int REFERENCES fk_partitioned_pk_6) PARTITION BY LIST (a);
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk_6 ATTACH PARTITION fk_partitioned_pk_6 FOR VALUES IN (1);
+--dg-cascade
+--dg DROP TABLE fk_partitioned_pk_6, fk_partitioned_fk_6;
+
+-- Verify that attaching to a parent with two identical constraints work
+--dg-cascade
+--dg CREATE TABLE fk_partitioned_pk_6 (a int PRIMARY KEY);
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE fk_partitioned_fk_6 (a int,
+--dg 	FOREIGN KEY (a) REFERENCES fk_partitioned_pk_6,
+--dg 	FOREIGN KEY (a) REFERENCES fk_partitioned_pk_6
+--dg ) PARTITION BY LIST (a);
+--dg-cascade
+--dg CREATE TABLE fk_partitioned_fk_6_1 PARTITION OF fk_partitioned_fk_6 FOR VALUES IN (1);
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk_6 DETACH PARTITION fk_partitioned_fk_6_1;
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk_6 ATTACH PARTITION fk_partitioned_fk_6_1 FOR VALUES IN (1);
+--dg-cascade
+--dg DROP TABLE fk_partitioned_pk_6, fk_partitioned_fk_6;
+
+-- This case is similar to above, but the referenced relation is one level
+-- lower in the hierarchy.  This one fails in a different way as the above,
+-- because we don't bother to protect against this case explicitly.  If the
+-- current error stops happening, we'll need to add a better protection.
+--dg-cascade
+--dg CREATE TABLE fk_partitioned_pk_6 (a int PRIMARY KEY) PARTITION BY list (a);
+--dg-cascade
+--dg CREATE TABLE fk_partitioned_pk_61 PARTITION OF fk_partitioned_pk_6 FOR VALUES IN (1);
+--dg-cascade
+--dg CREATE TABLE fk_partitioned_fk_6 (a int REFERENCES fk_partitioned_pk_61) PARTITION BY LIST (a);
+--dg-cascade
+--dg ALTER TABLE fk_partitioned_fk_6 ATTACH PARTITION fk_partitioned_pk_6 FOR VALUES IN (1);
+--dg-cascade
+--dg DROP TABLE fk_partitioned_pk_6, fk_partitioned_fk_6;
+
+-- test the case when the referenced table is owned by a different user
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg create role regress_other_partitioned_fk_owner;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg grant references on fk_notpartitioned_pk to regress_other_partitioned_fk_owner;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg set role regress_other_partitioned_fk_owner;
+--dg-cascade
+--dg create table other_partitioned_fk(a int, b int) partition by list (a);
+--dg-cascade
+--dg create table other_partitioned_fk_1 partition of other_partitioned_fk
+--dg   for values in (2048);
+--dg-cascade
+--dg insert into other_partitioned_fk
+--dg   select 2048, x from generate_series(1,10) x;
+-- this should fail
+--dg-cascade
+--dg alter table other_partitioned_fk add foreign key (a, b)
+--dg   references fk_notpartitioned_pk(a, b);
+-- add the missing keys and retry
+reset role;
+insert into fk_notpartitioned_pk (a, b)
+  select 2048, x from generate_series(1,10) x;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg set role regress_other_partitioned_fk_owner;
+--dg-cascade
+--dg alter table other_partitioned_fk add foreign key (a, b)
+--dg   references fk_notpartitioned_pk(a, b);
+-- clean up
+--dg-cascade
+--dg drop table other_partitioned_fk;
+reset role;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg revoke all on fk_notpartitioned_pk from regress_other_partitioned_fk_owner;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg drop role regress_other_partitioned_fk_owner;
+
+--
+-- Test self-referencing foreign key with partition.
+-- This should create only one fk constraint per partition
+--
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE parted_self_fk (
+--dg     id bigint NOT NULL PRIMARY KEY,
+--dg     id_abc bigint,
+--dg     FOREIGN KEY (id_abc) REFERENCES parted_self_fk(id)
+--dg )
+--dg PARTITION BY RANGE (id);
+CREATE TABLE part1_self_fk (
+    id bigint NOT NULL PRIMARY KEY,
+    id_abc bigint
+);
+--dg-cascade
+--dg ALTER TABLE parted_self_fk ATTACH PARTITION part1_self_fk FOR VALUES FROM (0) TO (10);
+--dg-cascade
+--dg CREATE TABLE part2_self_fk PARTITION OF parted_self_fk FOR VALUES FROM (10) TO (20);
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE part3_self_fk (	-- a partitioned partition
+--dg 	id bigint NOT NULL PRIMARY KEY,
+--dg 	id_abc bigint
+--dg ) PARTITION BY RANGE (id);
+--dg-cascade
+--dg CREATE TABLE part32_self_fk PARTITION OF part3_self_fk FOR VALUES FROM (20) TO (30);
+--dg-cascade
+--dg ALTER TABLE parted_self_fk ATTACH PARTITION part3_self_fk FOR VALUES FROM (20) TO (40);
+CREATE TABLE part33_self_fk (
+	id bigint NOT NULL PRIMARY KEY,
+	id_abc bigint
+);
+--dg-cascade
+--dg ALTER TABLE part3_self_fk ATTACH PARTITION part33_self_fk FOR VALUES FROM (30) TO (40);
+
+-- verify that this constraint works
+--dg-cascade
+--dg INSERT INTO parted_self_fk VALUES (1, NULL), (2, NULL), (3, NULL);
+--dg-cascade
+--dg INSERT INTO parted_self_fk VALUES (10, 1), (11, 2), (12, 3) RETURNING tableoid::regclass;
+
+--dg-cascade
+--dg INSERT INTO parted_self_fk VALUES (4, 5);	-- error: referenced doesn't exist
+--dg-cascade
+--dg DELETE FROM parted_self_fk WHERE id = 1 RETURNING *;	-- error: reference remains
+
+--dg-cascade
+--dg SELECT cr.relname, co.conname, co.convalidated,
+--dg        p.conname AS conparent, p.convalidated, cf.relname AS foreignrel
+--dg FROM pg_constraint co
+--dg JOIN pg_class cr ON cr.oid = co.conrelid
+--dg LEFT JOIN pg_class cf ON cf.oid = co.confrelid
+--dg LEFT JOIN pg_constraint p ON p.oid = co.conparentid
+--dg WHERE co.contype = 'f' AND
+--dg       cr.oid IN (SELECT relid FROM pg_partition_tree('parted_self_fk'))
+--dg ORDER BY cr.relname, co.conname, p.conname;
+
+-- detach and re-attach multiple times just to ensure everything is kosher
+--dg-cascade
+--dg ALTER TABLE parted_self_fk DETACH PARTITION part2_self_fk;
+
+--dg-cascade
+--dg INSERT INTO part2_self_fk VALUES (16, 9);	-- error: referenced doesn't exist
+--dg-cascade
+--dg DELETE FROM parted_self_fk WHERE id = 2 RETURNING *;	-- error: reference remains
+
+--dg-cascade
+--dg ALTER TABLE parted_self_fk ATTACH PARTITION part2_self_fk FOR VALUES FROM (10) TO (20);
+
+--dg-cascade
+--dg INSERT INTO parted_self_fk VALUES (16, 9);	-- error: referenced doesn't exist
+--dg-cascade
+--dg DELETE FROM parted_self_fk WHERE id = 3 RETURNING *;	-- error: reference remains
+
+--dg-cascade
+--dg ALTER TABLE parted_self_fk DETACH PARTITION part2_self_fk;
+--dg-cascade
+--dg ALTER TABLE parted_self_fk ATTACH PARTITION part2_self_fk FOR VALUES FROM (10) TO (20);
+
+--dg-cascade
+--dg ALTER TABLE parted_self_fk DETACH PARTITION part3_self_fk;
+--dg-cascade
+--dg ALTER TABLE parted_self_fk ATTACH PARTITION part3_self_fk FOR VALUES FROM (30) TO (40);
+
+--dg-cascade
+--dg ALTER TABLE part3_self_fk DETACH PARTITION part33_self_fk;
+--dg-cascade
+--dg ALTER TABLE part3_self_fk ATTACH PARTITION part33_self_fk FOR VALUES FROM (30) TO (40);
+
+--dg-cascade
+--dg SELECT cr.relname, co.conname, co.convalidated,
+--dg        p.conname AS conparent, p.convalidated, cf.relname AS foreignrel
+--dg FROM pg_constraint co
+--dg JOIN pg_class cr ON cr.oid = co.conrelid
+--dg LEFT JOIN pg_class cf ON cf.oid = co.confrelid
+--dg LEFT JOIN pg_constraint p ON p.oid = co.conparentid
+--dg WHERE co.contype = 'f' AND
+--dg       cr.oid IN (SELECT relid FROM pg_partition_tree('parted_self_fk'))
+--dg ORDER BY cr.relname, co.conname, p.conname;
+
+-- Leave this table around, for pg_upgrade/pg_dump tests
+
+
+-- Test creating a constraint at the parent that already exists in partitions.
+-- There should be no duplicated constraints, and attempts to drop the
+-- constraint in partitions should raise appropriate errors.
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg create schema fkpart0
+--dg   create table pkey (a int primary key)
+--dg   create table fk_part (a int) partition by list (a)
+--dg   create table fk_part_1 partition of fk_part
+--dg       (foreign key (a) references fkpart0.pkey) for values in (1)
+--dg   create table fk_part_23 partition of fk_part
+--dg       (foreign key (a) references fkpart0.pkey) for values in (2, 3)
+--dg       partition by list (a)
+--dg   create table fk_part_23_2 partition of fk_part_23 for values in (2);
+
+--dg-cascade
+--dg alter table fkpart0.fk_part add foreign key (a) references fkpart0.pkey;
+--dg-cascade
+--dg \d fkpart0.fk_part_1	\\ -- should have only one FK
+--dg-cascade
+--dg alter table fkpart0.fk_part_1 drop constraint fk_part_1_a_fkey;
+
+--dg-cascade
+--dg \d fkpart0.fk_part_23	\\ -- should have only one FK
+--dg-cascade
+--dg \d fkpart0.fk_part_23_2	\\ -- should have only one FK
+--dg-cascade
+--dg alter table fkpart0.fk_part_23 drop constraint fk_part_23_a_fkey;
+--dg-cascade
+--dg alter table fkpart0.fk_part_23_2 drop constraint fk_part_23_a_fkey;
+
+--dg-cascade
+--dg create table fkpart0.fk_part_4 partition of fkpart0.fk_part for values in (4);
+--dg-cascade
+--dg \d fkpart0.fk_part_4
+--dg-cascade
+--dg alter table fkpart0.fk_part_4 drop constraint fk_part_a_fkey;
+
+--dg-cascade
+--dg create table fkpart0.fk_part_56 partition of fkpart0.fk_part
+--dg     for values in (5,6) partition by list (a);
+--dg-cascade
+--dg create table fkpart0.fk_part_56_5 partition of fkpart0.fk_part_56
+--dg     for values in (5);
+--dg-cascade
+--dg \d fkpart0.fk_part_56
+--dg-cascade
+--dg alter table fkpart0.fk_part_56 drop constraint fk_part_a_fkey;
+--dg-cascade
+--dg alter table fkpart0.fk_part_56_5 drop constraint fk_part_a_fkey;
+
+-- verify that attaching and detaching partitions maintains the right set of
+-- triggers
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg create schema fkpart1
+--dg   create table pkey (a int primary key)
+--dg   create table fk_part (a int) partition by list (a)
+--dg   create table fk_part_1 partition of fk_part for values in (1) partition by list (a)
+--dg   create table fk_part_1_1 partition of fk_part_1 for values in (1);
+--dg-cascade
+--dg alter table fkpart1.fk_part add foreign key (a) references fkpart1.pkey;
+--dg-cascade
+--dg insert into fkpart1.fk_part values (1);		-- should fail
+--dg-cascade
+--dg insert into fkpart1.pkey values (1);
+--dg-cascade
+--dg insert into fkpart1.fk_part values (1);
+--dg-cascade
+--dg delete from fkpart1.pkey where a = 1;		-- should fail
+--dg-cascade
+--dg alter table fkpart1.fk_part detach partition fkpart1.fk_part_1;
+--dg-cascade
+--dg create table fkpart1.fk_part_1_2 partition of fkpart1.fk_part_1 for values in (2);
+--dg-cascade
+--dg insert into fkpart1.fk_part_1 values (2);	-- should fail
+--dg-cascade
+--dg delete from fkpart1.pkey where a = 1;
+
+-- verify that attaching and detaching partitions manipulates the inheritance
+-- properties of their FK constraints correctly
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg create schema fkpart2
+--dg   create table pkey (a int primary key)
+--dg   create table fk_part (a int, constraint fkey foreign key (a) references fkpart2.pkey) partition by list (a)
+--dg   create table fk_part_1 partition of fkpart2.fk_part for values in (1) partition by list (a)
+--dg   create table fk_part_1_1 (a int, constraint my_fkey foreign key (a) references fkpart2.pkey);
+--dg-cascade
+--dg alter table fkpart2.fk_part_1 attach partition fkpart2.fk_part_1_1 for values in (1);
+--dg-cascade
+--dg alter table fkpart2.fk_part_1 drop constraint fkey;	-- should fail
+--dg-cascade
+--dg alter table fkpart2.fk_part_1_1 drop constraint my_fkey;	-- should fail
+--dg-cascade
+--dg alter table fkpart2.fk_part detach partition fkpart2.fk_part_1;
+--dg-cascade
+--dg alter table fkpart2.fk_part_1 drop constraint fkey;	-- ok
+--dg-cascade
+--dg alter table fkpart2.fk_part_1_1 drop constraint my_fkey;	-- doesn't exist
+
+-- verify constraint deferrability
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg create schema fkpart3
+--dg   create table pkey (a int primary key)
+--dg   create table fk_part (a int, constraint fkey foreign key (a) references fkpart3.pkey deferrable initially immediate) partition by list (a)
+--dg   create table fk_part_1 partition of fkpart3.fk_part for values in (1) partition by list (a)
+--dg   create table fk_part_1_1 partition of fkpart3.fk_part_1 for values in (1)
+--dg   create table fk_part_2 partition of fkpart3.fk_part for values in (2);
+begin;
+--dg-cascade
+--dg set constraints fkpart3.fkey deferred;
+--dg-cascade
+--dg insert into fkpart3.fk_part values (1);
+--dg-cascade
+--dg insert into fkpart3.pkey values (1);
+commit;
+begin;
+--dg-cascade
+--dg set constraints fkpart3.fkey deferred;
+--dg-cascade
+--dg delete from fkpart3.pkey;
+--dg-cascade
+--dg delete from fkpart3.fk_part;
+commit;
+
+--dg-cascade
+--dg drop schema fkpart0, fkpart1, fkpart2, fkpart3 cascade;
+
+-- Test a partitioned table as referenced table.
+
+-- Verify basic functionality with a regular partition creation and a partition
+-- with a different column layout, as well as partitions added (created and
+-- attached) after creating the foreign key.
+--dg-cascade
+--dg CREATE SCHEMA fkpart3;
+SET search_path TO fkpart3;
+
+--dg-cascade
+--dg CREATE TABLE pk (a int PRIMARY KEY) PARTITION BY RANGE (a);
+--dg-cascade
+--dg CREATE TABLE pk1 PARTITION OF pk FOR VALUES FROM (0) TO (1000);
+--dg-cascade
+--dg CREATE TABLE pk2 (b int, a int);
+--dg-cascade
+--dg ALTER TABLE pk2 DROP COLUMN b;
+--dg-cascade
+--dg ALTER TABLE pk2 ALTER a SET NOT NULL;
+--dg-cascade
+--dg ALTER TABLE pk ATTACH PARTITION pk2 FOR VALUES FROM (1000) TO (2000);
+
+--dg-cascade
+--dg CREATE TABLE fk (a int) PARTITION BY RANGE (a);
+--dg-cascade
+--dg CREATE TABLE fk1 PARTITION OF fk FOR VALUES FROM (0) TO (750);
+--dg-cascade
+--dg ALTER TABLE fk ADD FOREIGN KEY (a) REFERENCES pk;
+--dg-cascade
+--dg CREATE TABLE fk2 (b int, a int) ;
+--dg-cascade
+--dg ALTER TABLE fk2 DROP COLUMN b;
+--dg-cascade
+--dg ALTER TABLE fk ATTACH PARTITION fk2 FOR VALUES FROM (750) TO (3500);
+
+--dg-cascade
+--dg CREATE TABLE pk3 PARTITION OF pk FOR VALUES FROM (2000) TO (3000);
+--dg-cascade
+--dg CREATE TABLE pk4 (LIKE pk);
+--dg-cascade
+--dg ALTER TABLE pk ATTACH PARTITION pk4 FOR VALUES FROM (3000) TO (4000);
+
+--dg-cascade
+--dg CREATE TABLE pk5 (c int, b int, a int NOT NULL) PARTITION BY RANGE (a);
+--dg-cascade
+--dg ALTER TABLE pk5 DROP COLUMN b, DROP COLUMN c;
+--dg-cascade
+--dg CREATE TABLE pk51 PARTITION OF pk5 FOR VALUES FROM (4000) TO (4500);
+--dg-cascade
+--dg CREATE TABLE pk52 PARTITION OF pk5 FOR VALUES FROM (4500) TO (5000);
+--dg-cascade
+--dg ALTER TABLE pk ATTACH PARTITION pk5 FOR VALUES FROM (4000) TO (5000);
+
+--dg-cascade
+--dg CREATE TABLE fk3 PARTITION OF fk FOR VALUES FROM (3500) TO (5000);
+
+-- these should fail: referenced value not present
+--dg-cascade
+--dg INSERT into fk VALUES (1);
+--dg-cascade
+--dg INSERT into fk VALUES (1000);
+--dg-cascade
+--dg INSERT into fk VALUES (2000);
+--dg-cascade
+--dg INSERT into fk VALUES (3000);
+--dg-cascade
+--dg INSERT into fk VALUES (4000);
+--dg-cascade
+--dg INSERT into fk VALUES (4500);
+-- insert into the referenced table, now they should work
+--dg-cascade
+--dg INSERT into pk VALUES (1), (1000), (2000), (3000), (4000), (4500);
+--dg-cascade
+--dg INSERT into fk VALUES (1), (1000), (2000), (3000), (4000), (4500);
+
+-- should fail: referencing value present
+--dg-cascade
+--dg DELETE FROM pk WHERE a = 1;
+--dg-cascade
+--dg DELETE FROM pk WHERE a = 1000;
+--dg-cascade
+--dg DELETE FROM pk WHERE a = 2000;
+--dg-cascade
+--dg DELETE FROM pk WHERE a = 3000;
+--dg-cascade
+--dg DELETE FROM pk WHERE a = 4000;
+--dg-cascade
+--dg DELETE FROM pk WHERE a = 4500;
+--dg-cascade
+--dg UPDATE pk SET a = 2 WHERE a = 1;
+--dg-cascade
+--dg UPDATE pk SET a = 1002 WHERE a = 1000;
+--dg-cascade
+--dg UPDATE pk SET a = 2002 WHERE a = 2000;
+--dg-cascade
+--dg UPDATE pk SET a = 3002 WHERE a = 3000;
+--dg-cascade
+--dg UPDATE pk SET a = 4002 WHERE a = 4000;
+--dg-cascade
+--dg UPDATE pk SET a = 4502 WHERE a = 4500;
+-- now they should work
+--dg-cascade
+--dg DELETE FROM fk;
+--dg-cascade
+--dg UPDATE pk SET a = 2 WHERE a = 1;
+--dg-cascade
+--dg DELETE FROM pk WHERE a = 2;
+--dg-cascade
+--dg UPDATE pk SET a = 1002 WHERE a = 1000;
+--dg-cascade
+--dg DELETE FROM pk WHERE a = 1002;
+--dg-cascade
+--dg UPDATE pk SET a = 2002 WHERE a = 2000;
+--dg-cascade
+--dg DELETE FROM pk WHERE a = 2002;
+--dg-cascade
+--dg UPDATE pk SET a = 3002 WHERE a = 3000;
+--dg-cascade
+--dg DELETE FROM pk WHERE a = 3002;
+--dg-cascade
+--dg UPDATE pk SET a = 4002 WHERE a = 4000;
+--dg-cascade
+--dg DELETE FROM pk WHERE a = 4002;
+--dg-cascade
+--dg UPDATE pk SET a = 4502 WHERE a = 4500;
+--dg-cascade
+--dg DELETE FROM pk WHERE a = 4502;
+
+-- Also, detaching a partition that has the FK itself should work
+-- https://postgr.es/m/CAAJ_b97GuPh6wQPbxQS-Zpy16Oh+0aMv-w64QcGrLhCOZZ6p+g@mail.gmail.com
+--dg-cascade
+--dg CREATE TABLE ffk (a int, b int REFERENCES pk) PARTITION BY list (a);
+--dg-cascade
+--dg CREATE TABLE ffk1 PARTITION OF ffk FOR VALUES IN (1);
+--dg-cascade
+--dg ALTER TABLE ffk1 ADD FOREIGN KEY (a) REFERENCES pk;
+--dg-cascade
+--dg ALTER TABLE ffk DETACH PARTITION ffk1;
+--dg-cascade
+--dg DROP TABLE ffk, ffk1;
+
+CREATE SCHEMA fkpart4;
+SET search_path TO fkpart4;
+-- dropping/detaching PARTITIONs is prevented if that would break
+-- a foreign key's existing data
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE droppk (a int PRIMARY KEY) PARTITION BY RANGE (a);
+--dg-cascade
+--dg CREATE TABLE droppk1 PARTITION OF droppk FOR VALUES FROM (0) TO (1000);
+--dg-cascade
+--dg CREATE TABLE droppk_d PARTITION OF droppk DEFAULT;
+--dg-cascade
+--dg CREATE TABLE droppk2 PARTITION OF droppk FOR VALUES FROM (1000) TO (2000)
+--dg   PARTITION BY RANGE (a);
+--dg-cascade
+--dg CREATE TABLE droppk21 PARTITION OF droppk2 FOR VALUES FROM (1000) TO (1400);
+--dg-cascade
+--dg CREATE TABLE droppk2_d PARTITION OF droppk2 DEFAULT;
+--dg-cascade
+--dg INSERT into droppk VALUES (1), (1000), (1500), (2000);
+--dg-cascade
+--dg CREATE TABLE dropfk (a int REFERENCES droppk);
+--dg-cascade
+--dg INSERT into dropfk VALUES (1), (1000), (1500), (2000);
+-- these should all fail
+--dg-cascade
+--dg ALTER TABLE droppk DETACH PARTITION droppk_d;
+--dg-cascade
+--dg ALTER TABLE droppk2 DETACH PARTITION droppk2_d;
+--dg-cascade
+--dg ALTER TABLE droppk DETACH PARTITION droppk1;
+--dg-cascade
+--dg ALTER TABLE droppk DETACH PARTITION droppk2;
+--dg-cascade
+--dg ALTER TABLE droppk2 DETACH PARTITION droppk21;
+-- dropping partitions is disallowed
+--dg-cascade
+--dg DROP TABLE droppk_d;
+--dg-cascade
+--dg DROP TABLE droppk2_d;
+--dg-cascade
+--dg DROP TABLE droppk1;
+--dg-cascade
+--dg DROP TABLE droppk2;
+--dg-cascade
+--dg DROP TABLE droppk21;
+--dg-cascade
+--dg DELETE FROM dropfk;
+-- dropping partitions is disallowed, even when no referencing values
+--dg-cascade
+--dg DROP TABLE droppk_d;
+--dg-cascade
+--dg DROP TABLE droppk2_d;
+--dg-cascade
+--dg DROP TABLE droppk1;
+-- but DETACH is allowed, and DROP afterwards works
+--dg-cascade
+--dg ALTER TABLE droppk2 DETACH PARTITION droppk21;
+--dg-cascade
+--dg DROP TABLE droppk2;
+
+-- Verify that initial constraint creation and cloning behave correctly
+CREATE SCHEMA fkpart5;
+SET search_path TO fkpart5;
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE pk (a int PRIMARY KEY) PARTITION BY LIST (a);
+--dg-cascade
+--dg CREATE TABLE pk1 PARTITION OF pk FOR VALUES IN (1) PARTITION BY LIST (a);
+--dg-cascade
+--dg CREATE TABLE pk11 PARTITION OF pk1 FOR VALUES IN (1);
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE fk (a int) PARTITION BY LIST (a);
+--dg-cascade
+--dg CREATE TABLE fk1 PARTITION OF fk FOR VALUES IN (1) PARTITION BY LIST (a);
+--dg-cascade
+--dg CREATE TABLE fk11 PARTITION OF fk1 FOR VALUES IN (1);
+--dg-cascade
+--dg ALTER TABLE fk ADD FOREIGN KEY (a) REFERENCES pk;
+--dg-cascade
+--dg CREATE TABLE pk2 PARTITION OF pk FOR VALUES IN (2);
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE pk3 (a int NOT NULL) PARTITION BY LIST (a);
+--dg-cascade
+--dg CREATE TABLE pk31 PARTITION OF pk3 FOR VALUES IN (31);
+CREATE TABLE pk32 (b int, a int NOT NULL);
+ALTER TABLE pk32 DROP COLUMN b;
+--dg-cascade
+--dg ALTER TABLE pk3 ATTACH PARTITION pk32 FOR VALUES IN (32);
+--dg-cascade
+--dg ALTER TABLE pk ATTACH PARTITION pk3 FOR VALUES IN (31, 32);
+--dg-cascade
+--dg CREATE TABLE fk2 PARTITION OF fk FOR VALUES IN (2);
+CREATE TABLE fk3 (b int, a int);
+ALTER TABLE fk3 DROP COLUMN b;
+--dg-cascade
+--dg ALTER TABLE fk ATTACH PARTITION fk3 FOR VALUES IN (3);
+--dg-cascade
+--dg SELECT pg_describe_object('pg_constraint'::regclass, oid, 0), confrelid::regclass,
+--dg        CASE WHEN conparentid <> 0 THEN pg_describe_object('pg_constraint'::regclass, conparentid, 0) ELSE 'TOP' END
+--dg FROM pg_catalog.pg_constraint
+--dg WHERE conrelid IN (SELECT relid FROM pg_partition_tree('fk'))
+--dg ORDER BY conrelid::regclass::text, conname;
+--dg-cascade
+--dg CREATE TABLE fk4 (LIKE fk);
+--dg-cascade
+--dg INSERT INTO fk4 VALUES (50);
+--dg-cascade
+--dg ALTER TABLE fk ATTACH PARTITION fk4 FOR VALUES IN (50);
+
+-- Verify constraint deferrability
+CREATE SCHEMA fkpart9;
+SET search_path TO fkpart9;
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE pk (a int PRIMARY KEY) PARTITION BY LIST (a);
+--dg-cascade
+--dg CREATE TABLE pk1 PARTITION OF pk FOR VALUES IN (1, 2) PARTITION BY LIST (a);
+--dg-cascade
+--dg CREATE TABLE pk11 PARTITION OF pk1 FOR VALUES IN (1);
+--dg-cascade
+--dg CREATE TABLE pk3 PARTITION OF pk FOR VALUES IN (3);
+--dg-cascade
+--dg CREATE TABLE fk (a int REFERENCES pk DEFERRABLE INITIALLY IMMEDIATE);
+--dg-cascade
+--dg INSERT INTO fk VALUES (1);		-- should fail
+BEGIN;
+--dg-skip: relation pg_constraint cannot be opened: digres has no catalog tables
+--dg SET CONSTRAINTS fk_a_fkey DEFERRED;
+--dg-cascade
+--dg INSERT INTO fk VALUES (1);
+--dg-cascade
+--dg COMMIT;							-- should fail
+--dg-cascade
+--dg BEGIN;
+--dg-skip: relation pg_constraint cannot be opened: digres has no catalog tables
+--dg SET CONSTRAINTS fk_a_fkey DEFERRED;
+--dg-cascade
+--dg INSERT INTO fk VALUES (1);
+--dg-cascade
+--dg INSERT INTO pk VALUES (1);
+COMMIT;							-- OK
+BEGIN;
+--dg-skip: relation pg_constraint cannot be opened: digres has no catalog tables
+--dg SET CONSTRAINTS fk_a_fkey DEFERRED;
+--dg-cascade
+--dg DELETE FROM pk WHERE a = 1;
+--dg-cascade
+--dg DELETE FROM fk WHERE a = 1;
+COMMIT;							-- OK
+
+-- Verify constraint deferrability when changed by ALTER
+-- Partitioned table at referencing end
+CREATE TABLE pt(f1 int, f2 int, f3 int, PRIMARY KEY(f1,f2));
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE ref(f1 int, f2 int, f3 int)
+--dg   PARTITION BY list(f1);
+--dg-cascade
+--dg CREATE TABLE ref1 PARTITION OF ref FOR VALUES IN (1);
+--dg-cascade
+--dg CREATE TABLE ref2 PARTITION OF ref FOR VALUES in (2);
+--dg-cascade
+--dg ALTER TABLE ref ADD FOREIGN KEY(f1,f2) REFERENCES pt;
+--dg-cascade
+--dg ALTER TABLE ref ALTER CONSTRAINT ref_f1_f2_fkey
+--dg   DEFERRABLE INITIALLY DEFERRED;
+INSERT INTO pt VALUES(1,2,3);
+--dg-cascade
+--dg INSERT INTO ref VALUES(1,2,3);
+BEGIN;
+DELETE FROM pt;
+--dg-cascade
+--dg DELETE FROM ref;
+ABORT;
+--dg-cascade
+--dg DROP TABLE pt, ref;
+-- Multi-level partitioning at referencing end
+--dg-cascade
+--dg CREATE TABLE pt(f1 int, f2 int, f3 int, PRIMARY KEY(f1,f2));
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE ref(f1 int, f2 int, f3 int)
+--dg   PARTITION BY list(f1);
+--dg-cascade
+--dg CREATE TABLE ref1_2 PARTITION OF ref FOR VALUES IN (1, 2) PARTITION BY list (f2);
+--dg-cascade
+--dg CREATE TABLE ref1 PARTITION OF ref1_2 FOR VALUES IN (1);
+--dg-cascade
+--dg CREATE TABLE ref2 PARTITION OF ref1_2 FOR VALUES IN (2) PARTITION BY list (f2);
+--dg-cascade
+--dg CREATE TABLE ref22 PARTITION OF ref2 FOR VALUES IN (2);
+--dg-cascade
+--dg ALTER TABLE ref ADD FOREIGN KEY(f1,f2) REFERENCES pt;
+--dg-cascade
+--dg INSERT INTO pt VALUES(1,2,3);
+--dg-cascade
+--dg INSERT INTO ref VALUES(1,2,3);
+--dg-cascade
+--dg ALTER TABLE ref22 ALTER CONSTRAINT ref_f1_f2_fkey
+--dg   DEFERRABLE INITIALLY IMMEDIATE;	-- fails
+--dg-cascade
+--dg ALTER TABLE ref ALTER CONSTRAINT ref_f1_f2_fkey
+--dg   DEFERRABLE INITIALLY DEFERRED;
+BEGIN;
+DELETE FROM pt;
+--dg-cascade
+--dg DELETE FROM ref;
+ABORT;
+--dg-cascade
+--dg DROP TABLE pt, ref;
+
+-- Partitioned table at referenced end
+--dg-cascade
+--dg CREATE TABLE pt(f1 int, f2 int, f3 int, PRIMARY KEY(f1,f2))
+--dg   PARTITION BY LIST(f1);
+--dg-cascade
+--dg CREATE TABLE pt1 PARTITION OF pt FOR VALUES IN (1);
+--dg-cascade
+--dg CREATE TABLE pt2 PARTITION OF pt FOR VALUES IN (2);
+CREATE TABLE ref(f1 int, f2 int, f3 int);
+ALTER TABLE ref ADD FOREIGN KEY(f1,f2) REFERENCES pt;
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg ALTER TABLE ref ALTER CONSTRAINT ref_f1_f2_fkey
+--dg   DEFERRABLE INITIALLY DEFERRED;
+--dg-cascade
+--dg INSERT INTO pt VALUES(1,2,3);
+INSERT INTO ref VALUES(1,2,3);
+BEGIN;
+--dg-cascade
+--dg DELETE FROM pt;
+--dg-cascade
+--dg DELETE FROM ref;
+ABORT;
+DROP TABLE pt, ref;
+-- Multi-level partitioning at referenced end
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE pt(f1 int, f2 int, f3 int, PRIMARY KEY(f1,f2))
+--dg   PARTITION BY LIST(f1);
+--dg-cascade
+--dg CREATE TABLE pt1_2 PARTITION OF pt FOR VALUES IN (1, 2) PARTITION BY LIST (f1);
+--dg-cascade
+--dg CREATE TABLE pt1 PARTITION OF pt1_2 FOR VALUES IN (1);
+--dg-cascade
+--dg CREATE TABLE pt2 PARTITION OF pt1_2 FOR VALUES IN (2);
+CREATE TABLE ref(f1 int, f2 int, f3 int);
+--dg-cascade
+--dg ALTER TABLE ref ADD FOREIGN KEY(f1,f2) REFERENCES pt;
+--dg-cascade
+--dg ALTER TABLE ref ALTER CONSTRAINT ref_f1_f2_fkey_1
+--dg   DEFERRABLE INITIALLY DEFERRED;	-- fails
+--dg-cascade
+--dg ALTER TABLE ref ALTER CONSTRAINT ref_f1_f2_fkey
+--dg   DEFERRABLE INITIALLY DEFERRED;
+--dg-cascade
+--dg INSERT INTO pt VALUES(1,2,3);
+INSERT INTO ref VALUES(1,2,3);
+BEGIN;
+--dg-cascade
+--dg DELETE FROM pt;
+--dg-cascade
+--dg DELETE FROM ref;
+ABORT;
+--dg-cascade
+--dg DROP TABLE pt, ref;
+
+--dg-cascade
+--dg DROP SCHEMA fkpart9 CASCADE;
+
+-- Verify ON UPDATE/DELETE behavior
+CREATE SCHEMA fkpart6;
+SET search_path TO fkpart6;
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE pk (a int PRIMARY KEY) PARTITION BY RANGE (a);
+--dg-cascade
+--dg CREATE TABLE pk1 PARTITION OF pk FOR VALUES FROM (1) TO (100) PARTITION BY RANGE (a);
+--dg-cascade
+--dg CREATE TABLE pk11 PARTITION OF pk1 FOR VALUES FROM (1) TO (50);
+--dg-cascade
+--dg CREATE TABLE pk12 PARTITION OF pk1 FOR VALUES FROM (50) TO (100);
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE fk (a int) PARTITION BY RANGE (a);
+--dg-cascade
+--dg CREATE TABLE fk1 PARTITION OF fk FOR VALUES FROM (1) TO (100) PARTITION BY RANGE (a);
+--dg-cascade
+--dg CREATE TABLE fk11 PARTITION OF fk1 FOR VALUES FROM (1) TO (10);
+--dg-cascade
+--dg CREATE TABLE fk12 PARTITION OF fk1 FOR VALUES FROM (10) TO (100);
+--dg-cascade
+--dg ALTER TABLE fk ADD FOREIGN KEY (a) REFERENCES pk ON UPDATE CASCADE ON DELETE CASCADE;
+--dg-cascade
+--dg CREATE TABLE fk_d PARTITION OF fk DEFAULT;
+--dg-cascade
+--dg INSERT INTO pk VALUES (1);
+--dg-cascade
+--dg INSERT INTO fk VALUES (1);
+--dg-cascade
+--dg UPDATE pk SET a = 20;
+--dg-cascade
+--dg SELECT tableoid::regclass, * FROM fk;
+--dg-cascade
+--dg DELETE FROM pk WHERE a = 20;
+--dg-cascade
+--dg SELECT tableoid::regclass, * FROM fk;
+--dg-cascade
+--dg DROP TABLE fk;
+
+--dg-cascade
+--dg TRUNCATE TABLE pk;
+--dg-cascade
+--dg INSERT INTO pk VALUES (20), (50);
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE fk (a int) PARTITION BY RANGE (a);
+--dg-cascade
+--dg CREATE TABLE fk1 PARTITION OF fk FOR VALUES FROM (1) TO (100) PARTITION BY RANGE (a);
+--dg-cascade
+--dg CREATE TABLE fk11 PARTITION OF fk1 FOR VALUES FROM (1) TO (10);
+--dg-cascade
+--dg CREATE TABLE fk12 PARTITION OF fk1 FOR VALUES FROM (10) TO (100);
+--dg-cascade
+--dg ALTER TABLE fk ADD FOREIGN KEY (a) REFERENCES pk ON UPDATE SET NULL ON DELETE SET NULL;
+--dg-cascade
+--dg CREATE TABLE fk_d PARTITION OF fk DEFAULT;
+--dg-cascade
+--dg INSERT INTO fk VALUES (20), (50);
+--dg-cascade
+--dg UPDATE pk SET a = 21 WHERE a = 20;
+--dg-cascade
+--dg DELETE FROM pk WHERE a = 50;
+--dg-cascade
+--dg SELECT tableoid::regclass, * FROM fk;
+--dg-cascade
+--dg DROP TABLE fk;
+
+--dg-cascade
+--dg TRUNCATE TABLE pk;
+--dg-cascade
+--dg INSERT INTO pk VALUES (20), (30), (50);
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE fk (id int, a int DEFAULT 50) PARTITION BY RANGE (a);
+--dg-cascade
+--dg CREATE TABLE fk1 PARTITION OF fk FOR VALUES FROM (1) TO (100) PARTITION BY RANGE (a);
+--dg-cascade
+--dg CREATE TABLE fk11 PARTITION OF fk1 FOR VALUES FROM (1) TO (10);
+--dg-cascade
+--dg CREATE TABLE fk12 PARTITION OF fk1 FOR VALUES FROM (10) TO (100);
+--dg-cascade
+--dg ALTER TABLE fk ADD FOREIGN KEY (a) REFERENCES pk ON UPDATE SET DEFAULT ON DELETE SET DEFAULT;
+--dg-cascade
+--dg CREATE TABLE fk_d PARTITION OF fk DEFAULT;
+--dg-cascade
+--dg INSERT INTO fk VALUES (1, 20), (2, 30);
+--dg-cascade
+--dg DELETE FROM pk WHERE a = 20 RETURNING *;
+--dg-cascade
+--dg UPDATE pk SET a = 90 WHERE a = 30 RETURNING *;
+--dg-cascade
+--dg SELECT tableoid::regclass, * FROM fk;
+--dg-cascade
+--dg DROP TABLE fk;
+
+--dg-cascade
+--dg TRUNCATE TABLE pk;
+--dg-cascade
+--dg INSERT INTO pk VALUES (20), (30);
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE fk (a int DEFAULT 50) PARTITION BY RANGE (a);
+--dg-cascade
+--dg CREATE TABLE fk1 PARTITION OF fk FOR VALUES FROM (1) TO (100) PARTITION BY RANGE (a);
+--dg-cascade
+--dg CREATE TABLE fk11 PARTITION OF fk1 FOR VALUES FROM (1) TO (10);
+--dg-cascade
+--dg CREATE TABLE fk12 PARTITION OF fk1 FOR VALUES FROM (10) TO (100);
+--dg-cascade
+--dg ALTER TABLE fk ADD FOREIGN KEY (a) REFERENCES pk ON UPDATE RESTRICT ON DELETE RESTRICT;
+--dg-cascade
+--dg CREATE TABLE fk_d PARTITION OF fk DEFAULT;
+--dg-cascade
+--dg INSERT INTO fk VALUES (20), (30);
+--dg-cascade
+--dg DELETE FROM pk WHERE a = 20;
+--dg-cascade
+--dg UPDATE pk SET a = 90 WHERE a = 30;
+--dg-cascade
+--dg SELECT tableoid::regclass, * FROM fk;
+--dg-cascade
+--dg DROP TABLE fk;
+
+-- test for reported bug: relispartition not set
+-- https://postgr.es/m/CA+HiwqHMsRtRYRWYTWavKJ8x14AFsv7bmAV46mYwnfD3vy8goQ@mail.gmail.com
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE SCHEMA fkpart7
+--dg   CREATE TABLE pkpart (a int) PARTITION BY LIST (a)
+--dg   CREATE TABLE pkpart1 PARTITION OF pkpart FOR VALUES IN (1);
+--dg-cascade
+--dg ALTER TABLE fkpart7.pkpart1 ADD PRIMARY KEY (a);
+--dg-cascade
+--dg ALTER TABLE fkpart7.pkpart ADD PRIMARY KEY (a);
+--dg-cascade
+--dg CREATE TABLE fkpart7.fk (a int REFERENCES fkpart7.pkpart);
+--dg-cascade
+--dg DROP SCHEMA fkpart7 CASCADE;
+
+-- ensure we check partitions are "not used" when dropping constraints
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE SCHEMA fkpart8
+--dg   CREATE TABLE tbl1(f1 int PRIMARY KEY)
+--dg   CREATE TABLE tbl2(f1 int REFERENCES tbl1 DEFERRABLE INITIALLY DEFERRED) PARTITION BY RANGE(f1)
+--dg   CREATE TABLE tbl2_p1 PARTITION OF tbl2 FOR VALUES FROM (minvalue) TO (maxvalue);
+--dg-cascade
+--dg INSERT INTO fkpart8.tbl1 VALUES(1);
+BEGIN;
+--dg-cascade
+--dg INSERT INTO fkpart8.tbl2 VALUES(1);
+--dg-cascade
+--dg ALTER TABLE fkpart8.tbl2 DROP CONSTRAINT tbl2_f1_fkey;
+COMMIT;
+--dg-cascade
+--dg DROP SCHEMA fkpart8 CASCADE;
+
+-- ensure FK referencing a multi-level partitioned table are
+-- enforce reference to sub-children.
+--dg-cascade
+--dg CREATE SCHEMA fkpart9
+--dg   CREATE TABLE pk (a INT PRIMARY KEY) PARTITION BY RANGE (a)
+--dg   CREATE TABLE fk (
+--dg     fk_a INT REFERENCES pk(a) ON DELETE CASCADE
+--dg   )
+--dg   CREATE TABLE pk1 PARTITION OF pk FOR VALUES FROM (30) TO (50) PARTITION BY RANGE (a)
+--dg   CREATE TABLE pk11 PARTITION OF pk1 FOR VALUES FROM (30) TO (40);
+--dg-cascade
+--dg INSERT INTO fkpart9.pk VALUES (35);
+--dg-cascade
+--dg INSERT INTO fkpart9.fk VALUES (35);
+--dg-cascade
+--dg DELETE FROM fkpart9.pk WHERE a=35;
+--dg-cascade
+--dg SELECT * FROM fkpart9.pk;
+--dg-cascade
+--dg SELECT * FROM fkpart9.fk;
+--dg-cascade
+--dg DROP SCHEMA fkpart9 CASCADE;
+
+-- test that ri_Check_Pk_Match() scans the correct partition for a deferred
+-- ON DELETE/UPDATE NO ACTION constraint
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE SCHEMA fkpart10
+--dg   CREATE TABLE tbl1(f1 int PRIMARY KEY) PARTITION BY RANGE(f1)
+--dg   CREATE TABLE tbl1_p1 PARTITION OF tbl1 FOR VALUES FROM (minvalue) TO (1)
+--dg   CREATE TABLE tbl1_p2 PARTITION OF tbl1 FOR VALUES FROM (1) TO (maxvalue)
+--dg   CREATE TABLE tbl2(f1 int REFERENCES tbl1 DEFERRABLE INITIALLY DEFERRED)
+--dg   CREATE TABLE tbl3(f1 int PRIMARY KEY) PARTITION BY RANGE(f1)
+--dg   CREATE TABLE tbl3_p1 PARTITION OF tbl3 FOR VALUES FROM (minvalue) TO (1)
+--dg   CREATE TABLE tbl3_p2 PARTITION OF tbl3 FOR VALUES FROM (1) TO (maxvalue)
+--dg   CREATE TABLE tbl4(f1 int REFERENCES tbl3 DEFERRABLE INITIALLY DEFERRED);
+--dg-cascade
+--dg INSERT INTO fkpart10.tbl1 VALUES (0), (1);
+--dg-cascade
+--dg INSERT INTO fkpart10.tbl2 VALUES (0), (1);
+--dg-cascade
+--dg INSERT INTO fkpart10.tbl3 VALUES (-2), (-1), (0);
+--dg-cascade
+--dg INSERT INTO fkpart10.tbl4 VALUES (-2), (-1);
+BEGIN;
+--dg-cascade
+--dg DELETE FROM fkpart10.tbl1 WHERE f1 = 0;
+--dg-cascade
+--dg UPDATE fkpart10.tbl1 SET f1 = 2 WHERE f1 = 1;
+--dg-cascade
+--dg INSERT INTO fkpart10.tbl1 VALUES (0), (1);
+COMMIT;
+
+-- test that cross-partition updates correctly enforces the foreign key
+-- restriction (specifically testing INITIALLY DEFERRED)
+BEGIN;
+--dg-cascade
+--dg UPDATE fkpart10.tbl1 SET f1 = 3 WHERE f1 = 0;
+--dg-cascade
+--dg UPDATE fkpart10.tbl3 SET f1 = f1 * -1;
+--dg-cascade
+--dg INSERT INTO fkpart10.tbl1 VALUES (4);
+--dg-cascade
+--dg COMMIT;
+
+--dg-cascade
+--dg BEGIN;
+--dg-cascade
+--dg UPDATE fkpart10.tbl3 SET f1 = f1 * -1;
+--dg-cascade
+--dg UPDATE fkpart10.tbl3 SET f1 = f1 + 3;
+--dg-cascade
+--dg UPDATE fkpart10.tbl1 SET f1 = 3 WHERE f1 = 0;
+--dg-cascade
+--dg INSERT INTO fkpart10.tbl1 VALUES (0);
+--dg-cascade
+--dg COMMIT;
+
+--dg-cascade
+--dg BEGIN;
+--dg-cascade
+--dg UPDATE fkpart10.tbl3 SET f1 = f1 * -1;
+--dg-cascade
+--dg UPDATE fkpart10.tbl1 SET f1 = 3 WHERE f1 = 0;
+--dg-cascade
+--dg INSERT INTO fkpart10.tbl1 VALUES (0);
+--dg-cascade
+--dg INSERT INTO fkpart10.tbl3 VALUES (-2), (-1);
+COMMIT;
+
+-- test where the updated table now has both an IMMEDIATE and a DEFERRED
+-- constraint pointing into it
+--dg-cascade
+--dg CREATE TABLE fkpart10.tbl5(f1 int REFERENCES fkpart10.tbl3);
+--dg-cascade
+--dg INSERT INTO fkpart10.tbl5 VALUES (-2), (-1);
+BEGIN;
+--dg-cascade
+--dg UPDATE fkpart10.tbl3 SET f1 = f1 * -3;
+COMMIT;
+
+-- Now test where the row referenced from the table with an IMMEDIATE
+-- constraint stays in place, while those referenced from the table with a
+-- DEFERRED constraint don't.
+--dg-cascade
+--dg DELETE FROM fkpart10.tbl5;
+--dg-cascade
+--dg INSERT INTO fkpart10.tbl5 VALUES (0);
+BEGIN;
+--dg-cascade
+--dg UPDATE fkpart10.tbl3 SET f1 = f1 * -3;
+--dg-cascade
+--dg COMMIT;
+
+--dg-cascade
+--dg DROP SCHEMA fkpart10 CASCADE;
+
+-- verify foreign keys are enforced during cross-partition updates,
+-- especially on the PK side
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE SCHEMA fkpart11
+--dg   CREATE TABLE pk (a INT PRIMARY KEY, b text) PARTITION BY LIST (a)
+--dg   CREATE TABLE fk (
+--dg     a INT,
+--dg     CONSTRAINT fkey FOREIGN KEY (a) REFERENCES pk(a) ON UPDATE CASCADE ON DELETE CASCADE
+--dg   )
+--dg   CREATE TABLE fk_parted (
+--dg     a INT PRIMARY KEY,
+--dg     CONSTRAINT fkey FOREIGN KEY (a) REFERENCES pk(a) ON UPDATE CASCADE ON DELETE CASCADE
+--dg   ) PARTITION BY LIST (a)
+--dg   CREATE TABLE fk_another (
+--dg     a INT,
+--dg     CONSTRAINT fkey FOREIGN KEY (a) REFERENCES fk_parted (a) ON UPDATE CASCADE ON DELETE CASCADE
+--dg   )
+--dg   CREATE TABLE pk1 PARTITION OF pk FOR VALUES IN (1, 2) PARTITION BY LIST (a)
+--dg   CREATE TABLE pk2 PARTITION OF pk FOR VALUES IN (3)
+--dg   CREATE TABLE pk3 PARTITION OF pk FOR VALUES IN (4)
+--dg   CREATE TABLE fk1 PARTITION OF fk_parted FOR VALUES IN (1, 2)
+--dg   CREATE TABLE fk2 PARTITION OF fk_parted FOR VALUES IN (3)
+--dg   CREATE TABLE fk3 PARTITION OF fk_parted FOR VALUES IN (4);
+--dg-cascade
+--dg CREATE TABLE fkpart11.pk11 (b text, a int NOT NULL);
+--dg-cascade
+--dg ALTER TABLE fkpart11.pk1 ATTACH PARTITION fkpart11.pk11 FOR VALUES IN (1);
+--dg-cascade
+--dg CREATE TABLE fkpart11.pk12 (b text, c int, a int NOT NULL);
+--dg-cascade
+--dg ALTER TABLE fkpart11.pk12 DROP c;
+--dg-cascade
+--dg ALTER TABLE fkpart11.pk1 ATTACH PARTITION fkpart11.pk12 FOR VALUES IN (2);
+--dg-cascade
+--dg INSERT INTO fkpart11.pk VALUES (1, 'xxx'), (3, 'yyy');
+--dg-cascade
+--dg INSERT INTO fkpart11.fk VALUES (1), (3);
+--dg-cascade
+--dg INSERT INTO fkpart11.fk_parted VALUES (1), (3);
+--dg-cascade
+--dg INSERT INTO fkpart11.fk_another VALUES (1), (3);
+-- moves 2 rows from one leaf partition to another, with both updates being
+-- cascaded to fk and fk_parted.  Updates of fk_parted, of which one is
+-- cross-partition (3 -> 4), are further cascaded to fk_another.
+--dg-cascade
+--dg UPDATE fkpart11.pk SET a = a + 1 RETURNING tableoid::pg_catalog.regclass, *;
+--dg-cascade
+--dg SELECT tableoid::pg_catalog.regclass, * FROM fkpart11.fk;
+--dg-cascade
+--dg SELECT tableoid::pg_catalog.regclass, * FROM fkpart11.fk_parted;
+--dg-cascade
+--dg SELECT tableoid::pg_catalog.regclass, * FROM fkpart11.fk_another;
+
+-- let's try with the foreign key pointing at tables in the partition tree
+-- that are not the same as the query's target table
+
+-- 1. foreign key pointing into a non-root ancestor
+--
+-- A cross-partition update on the root table will fail, because we currently
+-- can't enforce the foreign keys pointing into a non-leaf partition
+--dg-cascade
+--dg ALTER TABLE fkpart11.fk DROP CONSTRAINT fkey;
+--dg-cascade
+--dg DELETE FROM fkpart11.fk WHERE a = 4;
+--dg-cascade
+--dg ALTER TABLE fkpart11.fk ADD CONSTRAINT fkey FOREIGN KEY (a) REFERENCES fkpart11.pk1 (a) ON UPDATE CASCADE ON DELETE CASCADE;
+--dg-cascade
+--dg UPDATE fkpart11.pk SET a = a - 1;
+-- it's okay though if the non-leaf partition is updated directly
+--dg-cascade
+--dg UPDATE fkpart11.pk1 SET a = a - 1;
+--dg-cascade
+--dg SELECT tableoid::pg_catalog.regclass, * FROM fkpart11.pk;
+--dg-cascade
+--dg SELECT tableoid::pg_catalog.regclass, * FROM fkpart11.fk;
+--dg-cascade
+--dg SELECT tableoid::pg_catalog.regclass, * FROM fkpart11.fk_parted;
+--dg-cascade
+--dg SELECT tableoid::pg_catalog.regclass, * FROM fkpart11.fk_another;
+
+-- 2. foreign key pointing into a single leaf partition
+--
+-- A cross-partition update that deletes from the pointed-to leaf partition
+-- is allowed to succeed
+--dg-cascade
+--dg ALTER TABLE fkpart11.fk DROP CONSTRAINT fkey;
+--dg-cascade
+--dg ALTER TABLE fkpart11.fk ADD CONSTRAINT fkey FOREIGN KEY (a) REFERENCES fkpart11.pk11 (a) ON UPDATE CASCADE ON DELETE CASCADE;
+-- will delete (1) from p11 which is cascaded to fk
+--dg-cascade
+--dg UPDATE fkpart11.pk SET a = a + 1 WHERE a = 1;
+--dg-cascade
+--dg SELECT tableoid::pg_catalog.regclass, * FROM fkpart11.fk;
+--dg-cascade
+--dg DROP TABLE fkpart11.fk;
+
+-- check that regular and deferrable AR triggers on the PK tables
+-- still work as expected
+--dg-cascade
+--dg CREATE FUNCTION fkpart11.print_row () RETURNS TRIGGER LANGUAGE plpgsql AS $$
+--dg   BEGIN
+--dg     RAISE NOTICE 'TABLE: %, OP: %, OLD: %, NEW: %', TG_RELNAME, TG_OP, OLD, NEW;
+--dg     RETURN NULL;
+--dg   END;
+--dg $$;
+--dg-cascade
+--dg CREATE TRIGGER trig_upd_pk AFTER UPDATE ON fkpart11.pk FOR EACH ROW EXECUTE FUNCTION fkpart11.print_row();
+--dg-cascade
+--dg CREATE TRIGGER trig_del_pk AFTER DELETE ON fkpart11.pk FOR EACH ROW EXECUTE FUNCTION fkpart11.print_row();
+--dg-cascade
+--dg CREATE TRIGGER trig_ins_pk AFTER INSERT ON fkpart11.pk FOR EACH ROW EXECUTE FUNCTION fkpart11.print_row();
+--dg-cascade
+--dg CREATE CONSTRAINT TRIGGER trig_upd_fk_parted AFTER UPDATE ON fkpart11.fk_parted INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION fkpart11.print_row();
+--dg-cascade
+--dg CREATE CONSTRAINT TRIGGER trig_del_fk_parted AFTER DELETE ON fkpart11.fk_parted INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION fkpart11.print_row();
+--dg-cascade
+--dg CREATE CONSTRAINT TRIGGER trig_ins_fk_parted AFTER INSERT ON fkpart11.fk_parted INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION fkpart11.print_row();
+--dg-cascade
+--dg UPDATE fkpart11.pk SET a = 3 WHERE a = 4;
+--dg-cascade
+--dg UPDATE fkpart11.pk SET a = 1 WHERE a = 2;
+
+--dg-cascade
+--dg DROP SCHEMA fkpart11 CASCADE;
+
+-- When a table is attached as partition to a partitioned table that has
+-- a foreign key to another partitioned table, it acquires a clone of the
+-- FK.  Upon detach, this clone is not removed, but instead becomes an
+-- independent FK.  If it then attaches to the partitioned table again,
+-- the FK from the parent "takes over" ownership of the independent FK rather
+-- than creating a separate one.
+--dg-cascade
+--dg CREATE SCHEMA fkpart12
+--dg   CREATE TABLE fk_p ( id int, jd int, PRIMARY KEY(id, jd)) PARTITION BY list (id)
+--dg   CREATE TABLE fk_p_1 PARTITION OF fk_p FOR VALUES IN (1) PARTITION BY list (jd)
+--dg   CREATE TABLE fk_p_1_1 PARTITION OF fk_p_1 FOR VALUES IN (1)
+--dg   CREATE TABLE fk_p_1_2 (x int, y int, jd int NOT NULL, id int NOT NULL)
+--dg   CREATE TABLE fk_p_2 PARTITION OF fk_p FOR VALUES IN (2) PARTITION BY list (jd)
+--dg   CREATE TABLE fk_p_2_1 PARTITION OF fk_p_2 FOR VALUES IN (1)
+--dg   CREATE TABLE fk_p_2_2 PARTITION OF fk_p_2 FOR VALUES IN (2)
+--dg   CREATE TABLE fk_r_1 ( p_jd int NOT NULL, x int, id int PRIMARY KEY, p_id int NOT NULL)
+--dg   CREATE TABLE fk_r_2 ( id int PRIMARY KEY, p_id int NOT NULL, p_jd int NOT NULL) PARTITION BY list (id)
+--dg   CREATE TABLE fk_r_2_1 PARTITION OF fk_r_2 FOR VALUES IN (2, 1)
+--dg   CREATE TABLE fk_r   ( id int PRIMARY KEY, p_id int NOT NULL, p_jd int NOT NULL,
+--dg        FOREIGN KEY (p_id, p_jd) REFERENCES fk_p (id, jd)
+--dg   ) PARTITION BY list (id);
+--dg-cascade
+--dg SET search_path TO fkpart12;
+
+--dg-cascade
+--dg ALTER TABLE fk_p_1_2 DROP COLUMN x, DROP COLUMN y;
+--dg-cascade
+--dg ALTER TABLE fk_p_1 ATTACH PARTITION fk_p_1_2 FOR VALUES IN (2);
+--dg-cascade
+--dg ALTER TABLE fk_r_1 DROP COLUMN x;
+
+--dg-cascade
+--dg INSERT INTO fk_p VALUES (1, 1);
+
+--dg-cascade
+--dg ALTER TABLE fk_r ATTACH PARTITION fk_r_1 FOR VALUES IN (1);
+--dg-cascade
+--dg ALTER TABLE fk_r ATTACH PARTITION fk_r_2 FOR VALUES IN (2);
+
+--dg-cascade
+--dg \d fk_r_2
+
+--dg-cascade
+--dg INSERT INTO fk_r VALUES (1, 1, 1);
+--dg-cascade
+--dg INSERT INTO fk_r VALUES (2, 2, 1);
+
+--dg-cascade
+--dg ALTER TABLE fk_r DETACH PARTITION fk_r_1;
+--dg-cascade
+--dg ALTER TABLE fk_r DETACH PARTITION fk_r_2;
+
+--dg-cascade
+--dg \d fk_r_2
+
+--dg-cascade
+--dg INSERT INTO fk_r_1 (id, p_id, p_jd) VALUES (2, 1, 2); -- should fail
+--dg-cascade
+--dg DELETE FROM fk_p; -- should fail
+
+--dg-cascade
+--dg ALTER TABLE fk_r ATTACH PARTITION fk_r_1 FOR VALUES IN (1);
+--dg-cascade
+--dg ALTER TABLE fk_r ATTACH PARTITION fk_r_2 FOR VALUES IN (2);
+
+--dg-cascade
+--dg \d fk_r_2
+
+--dg-cascade
+--dg DELETE FROM fk_p; -- should fail
+
+-- these should all fail
+--dg-cascade
+--dg ALTER TABLE fk_r_1 DROP CONSTRAINT fk_r_p_id_p_jd_fkey;
+--dg-cascade
+--dg ALTER TABLE fk_r DROP CONSTRAINT fk_r_p_id_p_jd_fkey_1;
+--dg-cascade
+--dg ALTER TABLE fk_r_2 DROP CONSTRAINT fk_r_p_id_p_jd_fkey;
+
+--dg-cascade
+--dg SET client_min_messages TO warning;
+--dg-cascade
+--dg DROP SCHEMA fkpart12 CASCADE;
+--dg-cascade
+--dg RESET client_min_messages;
+--dg-cascade
+--dg RESET search_path;
+
+-- Exercise the column mapping code with foreign keys.  In this test we'll
+-- create a partitioned table which has a partition with a dropped column and
+-- check to ensure that an UPDATE cascades the changes correctly to the
+-- partitioned table.
+--dg-cascade
+--dg CREATE SCHEMA fkpart13;
+--dg-cascade
+--dg SET search_path TO fkpart13;
+
+--dg-cascade
+--dg CREATE TABLE fkpart13_t1 (a int PRIMARY KEY);
+
+--dg-cascade
+--dg CREATE TABLE fkpart13_t2 (
+--dg   part_id int PRIMARY KEY,
+--dg   column_to_drop int,
+--dg   FOREIGN KEY (part_id) REFERENCES fkpart13_t1 ON UPDATE CASCADE ON DELETE CASCADE
+--dg ) PARTITION BY LIST (part_id);
+
+--dg-cascade
+--dg CREATE TABLE fkpart13_t2_p1 PARTITION OF fkpart13_t2 FOR VALUES IN (1);
+
+-- drop the column
+--dg-cascade
+--dg ALTER TABLE fkpart13_t2 DROP COLUMN column_to_drop;
+
+-- create a new partition without the dropped column
+--dg-cascade
+--dg CREATE TABLE fkpart13_t2_p2 PARTITION OF fkpart13_t2 FOR VALUES IN (2);
+
+--dg-cascade
+--dg CREATE TABLE fkpart13_t3 (
+--dg   a int NOT NULL,
+--dg   FOREIGN KEY (a)
+--dg     REFERENCES fkpart13_t2
+--dg     ON UPDATE CASCADE ON DELETE CASCADE
+--dg );
+
+--dg-cascade
+--dg INSERT INTO fkpart13_t1 (a) VALUES (1);
+--dg-cascade
+--dg INSERT INTO fkpart13_t2 (part_id) VALUES (1);
+--dg-cascade
+--dg INSERT INTO fkpart13_t3 (a) VALUES (1);
+
+-- Test a cascading update works correctly with with the dropped column
+--dg-cascade
+--dg UPDATE fkpart13_t1 SET a = 2 WHERE a = 1;
+--dg-cascade
+--dg SELECT tableoid::regclass,* FROM fkpart13_t2;
+--dg-cascade
+--dg SELECT tableoid::regclass,* FROM fkpart13_t3;
+
+-- Exercise code in ExecGetTriggerResultRel() as there's been previous issues
+-- with ResultRelInfos being returned with the incorrect ri_RootResultRelInfo
+--dg-cascade
+--dg WITH cte AS (
+--dg   UPDATE fkpart13_t2_p1 SET part_id = part_id
+--dg ) UPDATE fkpart13_t1 SET a = 2 WHERE a = 1;
+
+--dg-cascade
+--dg DROP SCHEMA fkpart13 CASCADE;
+--dg-cascade
+--dg RESET search_path;

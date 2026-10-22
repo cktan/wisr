@@ -1,0 +1,633 @@
+-- directory paths and dlsuffix are passed to us in environment variables
+\getenv libdir PG_LIBDIR
+\getenv dlsuffix PG_DLSUFFIX
+\set regresslib :libdir '/regress' :dlsuffix
+-- Function to assist with verifying EXPLAIN which includes costs.  A series
+-- of bool flags allows control over which portions are masked out
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION explain_mask_costs(query text, do_analyze bool,
+--dg     hide_costs bool, hide_row_est bool, hide_width bool) RETURNS setof text
+--dg LANGUAGE plpgsql AS
+--dg $$
+--dg DECLARE
+--dg     ln text;
+--dg     analyze_str text;
+--dg BEGIN
+--dg     IF do_analyze = true THEN
+--dg         analyze_str := 'on';
+--dg     ELSE
+--dg         analyze_str := 'off';
+--dg     END IF;
+--dg
+--dg     -- avoid jit related output by disabling it
+--dg     SET LOCAL jit = 0;
+--dg
+--dg     FOR ln IN
+--dg         EXECUTE format('explain (analyze %s, costs on, summary off, timing off, buffers off) %s',
+--dg             analyze_str, query)
+--dg     LOOP
+--dg         IF hide_costs = true THEN
+--dg             ln := regexp_replace(ln, 'cost=\d+\.\d\d\.\.\d+\.\d\d', 'cost=N..N');
+--dg         END IF;
+--dg
+--dg         IF hide_row_est = true THEN
+--dg             -- don't use 'g' so that we leave the actual rows intact
+--dg             ln := regexp_replace(ln, 'rows=\d+', 'rows=N');
+--dg         END IF;
+--dg
+--dg         IF hide_width = true THEN
+--dg             ln := regexp_replace(ln, 'width=\d+', 'width=N');
+--dg         END IF;
+--dg
+--dg         RETURN NEXT ln;
+--dg     END LOOP;
+--dg END;
+--dg $$;
+--
+-- num_nulls()
+--
+SELECT num_nonnulls(NULL);
+ num_nonnulls 
+--------------
+            0
+(1 row)
+
+SELECT num_nonnulls('1');
+ num_nonnulls 
+--------------
+            1
+(1 row)
+
+SELECT num_nonnulls(NULL::text);
+ num_nonnulls 
+--------------
+            0
+(1 row)
+
+SELECT num_nonnulls(NULL::text, NULL::int);
+ num_nonnulls 
+--------------
+            0
+(1 row)
+
+SELECT num_nonnulls(1, 2, NULL::text, NULL::point, '', int8 '9', 1.0 / NULL);
+ num_nonnulls 
+--------------
+            4
+(1 row)
+
+SELECT num_nonnulls(VARIADIC '{1,2,NULL,3}'::int[]);
+ num_nonnulls 
+--------------
+            3
+(1 row)
+
+SELECT num_nonnulls(VARIADIC '{"1","2","3","4"}'::text[]);
+ num_nonnulls 
+--------------
+            4
+(1 row)
+
+SELECT num_nonnulls(VARIADIC ARRAY(SELECT CASE WHEN i <> 40 THEN i END FROM generate_series(1, 100) i));
+ num_nonnulls 
+--------------
+           99
+(1 row)
+
+SELECT num_nulls(NULL);
+ num_nulls 
+-----------
+         1
+(1 row)
+
+SELECT num_nulls('1');
+ num_nulls 
+-----------
+         0
+(1 row)
+
+SELECT num_nulls(NULL::text);
+ num_nulls 
+-----------
+         1
+(1 row)
+
+SELECT num_nulls(NULL::text, NULL::int);
+ num_nulls 
+-----------
+         2
+(1 row)
+
+SELECT num_nulls(1, 2, NULL::text, NULL::point, '', int8 '9', 1.0 / NULL);
+ num_nulls 
+-----------
+         3
+(1 row)
+
+SELECT num_nulls(VARIADIC '{1,2,NULL,3}'::int[]);
+ num_nulls 
+-----------
+         1
+(1 row)
+
+SELECT num_nulls(VARIADIC '{"1","2","3","4"}'::text[]);
+ num_nulls 
+-----------
+         0
+(1 row)
+
+SELECT num_nulls(VARIADIC ARRAY(SELECT CASE WHEN i <> 40 THEN i END FROM generate_series(1, 100) i));
+ num_nulls 
+-----------
+         1
+(1 row)
+
+-- special cases
+SELECT num_nonnulls(VARIADIC NULL::text[]);
+ num_nonnulls 
+--------------
+             
+(1 row)
+
+SELECT num_nonnulls(VARIADIC '{}'::int[]);
+ num_nonnulls 
+--------------
+            0
+(1 row)
+
+SELECT num_nulls(VARIADIC NULL::text[]);
+ num_nulls 
+-----------
+          
+(1 row)
+
+SELECT num_nulls(VARIADIC '{}'::int[]);
+ num_nulls 
+-----------
+         0
+(1 row)
+
+-- should fail, one or more arguments is required
+SELECT num_nonnulls();
+ERROR:  function num_nonnulls() does not exist
+LINE 1: SELECT num_nonnulls();
+               ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+SELECT num_nulls();
+ERROR:  function num_nulls() does not exist
+LINE 1: SELECT num_nulls();
+               ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+--
+-- canonicalize_path()
+--
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
+--dg CREATE FUNCTION test_canonicalize_path(text)
+--dg    RETURNS text
+--dg    AS :'regresslib'
+--dg    LANGUAGE C STRICT IMMUTABLE;
+--dg-cascade
+--dg SELECT test_canonicalize_path('/');
+--dg-cascade
+--dg SELECT test_canonicalize_path('/./abc/def/');
+--dg-cascade
+--dg SELECT test_canonicalize_path('/./../abc/def');
+--dg-cascade
+--dg SELECT test_canonicalize_path('/./../../abc/def/');
+--dg-cascade
+--dg SELECT test_canonicalize_path('/abc/.././def/ghi');
+--dg-cascade
+--dg SELECT test_canonicalize_path('/abc/./../def/ghi//');
+--dg-cascade
+--dg SELECT test_canonicalize_path('/abc/def/../..');
+--dg-cascade
+--dg SELECT test_canonicalize_path('/abc/def/../../..');
+--dg-cascade
+--dg SELECT test_canonicalize_path('/abc/def/../../../../ghi/jkl');
+--dg-cascade
+--dg SELECT test_canonicalize_path('.');
+--dg-cascade
+--dg SELECT test_canonicalize_path('./');
+--dg-cascade
+--dg SELECT test_canonicalize_path('./abc/..');
+--dg-cascade
+--dg SELECT test_canonicalize_path('abc/../');
+--dg-cascade
+--dg SELECT test_canonicalize_path('abc/../def');
+--dg-cascade
+--dg SELECT test_canonicalize_path('..');
+--dg-cascade
+--dg SELECT test_canonicalize_path('../abc/def');
+--dg-cascade
+--dg SELECT test_canonicalize_path('../abc/..');
+--dg-cascade
+--dg SELECT test_canonicalize_path('../abc/../def');
+--dg-cascade
+--dg SELECT test_canonicalize_path('../abc/../../def/ghi');
+--dg-cascade
+--dg SELECT test_canonicalize_path('./abc/./def/.');
+--dg-cascade
+--dg SELECT test_canonicalize_path('./abc/././def/.');
+--dg-cascade
+--dg SELECT test_canonicalize_path('./abc/./def/.././ghi/../../../jkl/mno');
+--
+-- pg_log_backend_memory_contexts()
+--
+-- Memory contexts are logged and they are not returned to the function.
+-- Furthermore, their contents can vary depending on the timing. However,
+-- we can at least verify that the code doesn't fail, and that the
+-- permissions are set properly.
+--
+SELECT pg_log_backend_memory_contexts(pg_backend_pid());
+ pg_log_backend_memory_contexts 
+--------------------------------
+ t
+(1 row)
+
+--dg-skip: relation "?" does not exist
+--dg SELECT pg_log_backend_memory_contexts(pid) FROM pg_stat_activity
+--dg   WHERE backend_type = 'checkpointer';
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE regress_log_memory;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_function_privilege('regress_log_memory',
+--dg   'pg_log_backend_memory_contexts(integer)', 'EXECUTE'); -- no
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT EXECUTE ON FUNCTION pg_log_backend_memory_contexts(integer)
+--dg   TO regress_log_memory;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_function_privilege('regress_log_memory',
+--dg   'pg_log_backend_memory_contexts(integer)', 'EXECUTE'); -- yes
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET ROLE regress_log_memory;
+SELECT pg_log_backend_memory_contexts(pg_backend_pid());
+ pg_log_backend_memory_contexts 
+--------------------------------
+ t
+(1 row)
+
+RESET ROLE;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg REVOKE EXECUTE ON FUNCTION pg_log_backend_memory_contexts(integer)
+--dg   FROM regress_log_memory;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE regress_log_memory;
+--
+-- Test some built-in SRFs
+--
+-- The outputs of these are variable, so we can't just print their results
+-- directly, but we can at least verify that the code doesn't fail.
+--
+--dg-skip: relation "?" does not exist
+--dg select setting as segsize
+--dg from pg_settings where name = 'wal_segment_size'
+--dg \gset
+--dg-skip: function ?(...) does not exist
+--dg select count(*) > 0 as ok from pg_ls_waldir();
+-- Test ProjectSet as well as FunctionScan
+--dg-skip: function ?(...) does not exist
+--dg select count(*) > 0 as ok from (select pg_ls_waldir()) ss;
+-- Test not-run-to-completion cases.
+--dg-skip: function ?(...) does not exist
+--dg select * from pg_ls_waldir() limit 0;
+--dg-skip: function ?(...) does not exist
+--dg select count(*) > 0 as ok from (select * from pg_ls_waldir() limit 1) ss;
+--dg-cascade
+--dg select (w).size = :segsize as ok
+--dg from (select pg_ls_waldir() w) ss where length((w).name) = 24 limit 1;
+--dg-skip: function ?(...) does not exist
+--dg select count(*) >= 0 as ok from pg_ls_archive_statusdir();
+--dg-skip: function ?(...) does not exist
+--dg select count(*) >= 0 as ok from pg_ls_summariesdir();
+-- pg_read_file()
+select length(pg_read_file('postmaster.pid')) > 20;
+ ?column? 
+----------
+ t
+(1 row)
+
+select length(pg_read_file('postmaster.pid', 1, 20));
+ length 
+--------
+     20
+(1 row)
+
+-- Test missing_ok
+select pg_read_file('does not exist'); -- error
+ERROR:  could not open file "does not exist" for reading: No such file or directory
+select pg_read_file('does not exist', true) IS NULL; -- ok
+ ?column? 
+----------
+ t
+(1 row)
+
+-- Test invalid argument
+select pg_read_file('does not exist', 0, -1); -- error
+ERROR:  requested length cannot be negative
+select pg_read_file('does not exist', 0, -1, true); -- error
+ERROR:  requested length cannot be negative
+-- pg_read_binary_file()
+select length(pg_read_binary_file('postmaster.pid')) > 20;
+ ?column? 
+----------
+ t
+(1 row)
+
+select length(pg_read_binary_file('postmaster.pid', 1, 20));
+ length 
+--------
+     20
+(1 row)
+
+-- Test missing_ok
+select pg_read_binary_file('does not exist'); -- error
+ERROR:  could not open file "does not exist" for reading: No such file or directory
+select pg_read_binary_file('does not exist', true) IS NULL; -- ok
+ ?column? 
+----------
+ t
+(1 row)
+
+-- Test invalid argument
+select pg_read_binary_file('does not exist', 0, -1); -- error
+ERROR:  requested length cannot be negative
+select pg_read_binary_file('does not exist', 0, -1, true); -- error
+ERROR:  requested length cannot be negative
+-- pg_stat_file()
+select size > 20, isdir from pg_stat_file('postmaster.pid');
+ ?column? | isdir 
+----------+-------
+ t        | f
+(1 row)
+
+-- pg_ls_dir()
+select * from (select pg_ls_dir('.') a) a where a = 'base' limit 1;
+  a   
+------
+ base
+(1 row)
+
+-- Test missing_ok (second argument)
+select pg_ls_dir('does not exist', false, false); -- error
+ERROR:  could not open directory "does not exist": No such file or directory
+select pg_ls_dir('does not exist', true, false); -- ok
+ pg_ls_dir 
+-----------
+(0 rows)
+
+-- Test include_dot_dirs (third argument)
+select count(*) = 1 as dot_found
+  from pg_ls_dir('.', false, true) as ls where ls = '.';
+ dot_found 
+-----------
+ t
+(1 row)
+
+select count(*) = 1 as dot_found
+  from pg_ls_dir('.', false, false) as ls where ls = '.';
+ dot_found 
+-----------
+ f
+(1 row)
+
+-- pg_timezone_names()
+select * from (select (pg_timezone_names()).name) ptn where name='UTC' limit 1;
+ name 
+------
+ UTC
+(1 row)
+
+-- pg_tablespace_databases()
+--dg-skip: relation "?" does not exist
+--dg select count(*) > 0 from
+--dg   (select pg_tablespace_databases(oid) as pts from pg_tablespace
+--dg    where spcname = 'pg_default') pts
+--dg   join pg_database db on pts.pts = db.oid;
+--
+-- Test replication slot directory functions
+--
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE regress_slot_dir_funcs;
+-- Not available by default.
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_function_privilege('regress_slot_dir_funcs',
+--dg   'pg_ls_logicalsnapdir()', 'EXECUTE');
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_function_privilege('regress_slot_dir_funcs',
+--dg   'pg_ls_logicalmapdir()', 'EXECUTE');
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_function_privilege('regress_slot_dir_funcs',
+--dg   'pg_ls_replslotdir(text)', 'EXECUTE');
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT pg_monitor TO regress_slot_dir_funcs;
+-- Role is now part of pg_monitor, so these are available.
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_function_privilege('regress_slot_dir_funcs',
+--dg   'pg_ls_logicalsnapdir()', 'EXECUTE');
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_function_privilege('regress_slot_dir_funcs',
+--dg   'pg_ls_logicalmapdir()', 'EXECUTE');
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_function_privilege('regress_slot_dir_funcs',
+--dg   'pg_ls_replslotdir(text)', 'EXECUTE');
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE regress_slot_dir_funcs;
+--
+-- Test adding a support function to a subject function
+--
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
+--dg CREATE FUNCTION my_int_eq(int, int) RETURNS bool
+--dg   LANGUAGE internal STRICT IMMUTABLE PARALLEL SAFE
+--dg   AS $$int4eq$$;
+-- By default, planner does not think that's selective
+--dg-cascade
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT * FROM tenk1 a JOIN tenk1 b ON a.unique1 = b.unique1
+--dg WHERE my_int_eq(a.unique2, 42);
+-- With support function that knows it's int4eq, we get a different plan
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
+--dg CREATE FUNCTION test_support_func(internal)
+--dg     RETURNS internal
+--dg     AS :'regresslib', 'test_support_func'
+--dg     LANGUAGE C STRICT;
+--dg-cascade
+--dg ALTER FUNCTION my_int_eq(int, int) SUPPORT test_support_func;
+--dg-cascade
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT * FROM tenk1 a JOIN tenk1 b ON a.unique1 = b.unique1
+--dg WHERE my_int_eq(a.unique2, 42);
+-- Also test non-default rowcount estimate
+--dg-cascade
+--dg CREATE FUNCTION my_gen_series(int, int) RETURNS SETOF integer
+--dg   LANGUAGE internal STRICT IMMUTABLE PARALLEL SAFE
+--dg   AS $$generate_series_int4$$
+--dg   SUPPORT test_support_func;
+--dg-cascade
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT * FROM tenk1 a JOIN my_gen_series(1,1000) g ON a.unique1 = g;
+--dg-cascade
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT * FROM tenk1 a JOIN my_gen_series(1,10) g ON a.unique1 = g;
+--
+-- Test the SupportRequestRows support function for generate_series_timestamp()
+--
+-- Ensure the row estimate matches the actual rows
+--dg-cascade
+--dg SELECT explain_mask_costs($$
+--dg SELECT * FROM generate_series(TIMESTAMPTZ '2024-02-01', TIMESTAMPTZ '2024-03-01', INTERVAL '1 day') g(s);$$,
+--dg true, true, false, true);
+-- As above but with generate_series_timestamp
+--dg-cascade
+--dg SELECT explain_mask_costs($$
+--dg SELECT * FROM generate_series(TIMESTAMP '2024-02-01', TIMESTAMP '2024-03-01', INTERVAL '1 day') g(s);$$,
+--dg true, true, false, true);
+-- As above but with generate_series_timestamptz_at_zone()
+--dg-cascade
+--dg SELECT explain_mask_costs($$
+--dg SELECT * FROM generate_series(TIMESTAMPTZ '2024-02-01', TIMESTAMPTZ '2024-03-01', INTERVAL '1 day', 'UTC') g(s);$$,
+--dg true, true, false, true);
+-- Ensure the estimated and actual row counts match when the range isn't
+-- evenly divisible by the step
+--dg-cascade
+--dg SELECT explain_mask_costs($$
+--dg SELECT * FROM generate_series(TIMESTAMPTZ '2024-02-01', TIMESTAMPTZ '2024-03-01', INTERVAL '7 day') g(s);$$,
+--dg true, true, false, true);
+-- Ensure the estimates match when step is decreasing
+--dg-cascade
+--dg SELECT explain_mask_costs($$
+--dg SELECT * FROM generate_series(TIMESTAMPTZ '2024-03-01', TIMESTAMPTZ '2024-02-01', INTERVAL '-1 day') g(s);$$,
+--dg true, true, false, true);
+-- Ensure an empty range estimates 1 row
+--dg-cascade
+--dg SELECT explain_mask_costs($$
+--dg SELECT * FROM generate_series(TIMESTAMPTZ '2024-03-01', TIMESTAMPTZ '2024-02-01', INTERVAL '1 day') g(s);$$,
+--dg true, true, false, true);
+-- Ensure we get the default row estimate for infinity values
+--dg-cascade
+--dg SELECT explain_mask_costs($$
+--dg SELECT * FROM generate_series(TIMESTAMPTZ '-infinity', TIMESTAMPTZ 'infinity', INTERVAL '1 day') g(s);$$,
+--dg false, true, false, true);
+-- Ensure the row estimate behaves correctly when step size is zero.
+-- We expect generate_series_timestamp() to throw the error rather than in
+-- the support function.
+SELECT * FROM generate_series(TIMESTAMPTZ '2024-02-01', TIMESTAMPTZ '2024-03-01', INTERVAL '0 day') g(s);
+ERROR:  step size cannot equal zero
+--
+-- Test the SupportRequestRows support function for generate_series_numeric()
+--
+-- Ensure the row estimate matches the actual rows
+--dg-cascade
+--dg SELECT explain_mask_costs($$
+--dg SELECT * FROM generate_series(1.0, 25.0) g(s);$$,
+--dg true, true, false, true);
+-- As above but with non-default step
+--dg-cascade
+--dg SELECT explain_mask_costs($$
+--dg SELECT * FROM generate_series(1.0, 25.0, 2.0) g(s);$$,
+--dg true, true, false, true);
+-- Ensure the estimates match when step is decreasing
+--dg-cascade
+--dg SELECT explain_mask_costs($$
+--dg SELECT * FROM generate_series(25.0, 1.0, -1.0) g(s);$$,
+--dg true, true, false, true);
+-- Ensure an empty range estimates 1 row
+--dg-cascade
+--dg SELECT explain_mask_costs($$
+--dg SELECT * FROM generate_series(25.0, 1.0, 1.0) g(s);$$,
+--dg true, true, false, true);
+-- Ensure we get the default row estimate for error cases (infinity/NaN values
+-- and zero step size)
+--dg-cascade
+--dg SELECT explain_mask_costs($$
+--dg SELECT * FROM generate_series('-infinity'::NUMERIC, 'infinity'::NUMERIC, 1.0) g(s);$$,
+--dg false, true, false, true);
+--dg-cascade
+--dg SELECT explain_mask_costs($$
+--dg SELECT * FROM generate_series(1.0, 25.0, 'NaN'::NUMERIC) g(s);$$,
+--dg false, true, false, true);
+--dg-cascade
+--dg SELECT explain_mask_costs($$
+--dg SELECT * FROM generate_series(25.0, 2.0, 0.0) g(s);$$,
+--dg false, true, false, true);
+-- Test functions for control data
+--dg-skip: function ?(...) does not exist
+--dg SELECT count(*) > 0 AS ok FROM pg_control_checkpoint();
+--dg-skip: function ?(...) does not exist
+--dg SELECT count(*) > 0 AS ok FROM pg_control_init();
+--dg-skip: function ?(...) does not exist
+--dg SELECT count(*) > 0 AS ok FROM pg_control_recovery();
+--dg-skip: function ?(...) does not exist
+--dg SELECT count(*) > 0 AS ok FROM pg_control_system();
+-- pg_split_walfile_name, pg_walfile_name & pg_walfile_name_offset
+--dg-skip: function ?(...) does not exist
+--dg SELECT * FROM pg_split_walfile_name(NULL);
+--dg-differs: another error: function ?(...) does not exist
+--dg SELECT * FROM pg_split_walfile_name('invalid');
+--dg-skip: function ?(...) does not exist
+--dg SELECT segment_number > 0 AS ok_segment_number, timeline_id
+--dg   FROM pg_split_walfile_name('000000010000000100000000');
+--dg-skip: function ?(...) does not exist
+--dg SELECT segment_number > 0 AS ok_segment_number, timeline_id
+--dg   FROM pg_split_walfile_name('ffffffFF00000001000000af');
+--dg-skip: relation "?" does not exist
+--dg SELECT setting::int8 AS segment_size
+--dg FROM pg_settings
+--dg WHERE name = 'wal_segment_size'
+--dg \gset
+--dg-cascade
+--dg SELECT segment_number, file_offset
+--dg FROM pg_walfile_name_offset('0/0'::pg_lsn + :segment_size),
+--dg      pg_split_walfile_name(file_name);
+--dg-cascade
+--dg SELECT segment_number, file_offset
+--dg FROM pg_walfile_name_offset('0/0'::pg_lsn + :segment_size + 1),
+--dg      pg_split_walfile_name(file_name);
+--dg-cascade
+--dg SELECT segment_number, file_offset = :segment_size - 1
+--dg FROM pg_walfile_name_offset('0/0'::pg_lsn + :segment_size - 1),
+--dg      pg_split_walfile_name(file_name);
+-- pg_current_logfile
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE regress_current_logfile;
+-- not available by default
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_function_privilege('regress_current_logfile',
+--dg   'pg_current_logfile()', 'EXECUTE');
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT pg_monitor TO regress_current_logfile;
+-- role has privileges of pg_monitor and can execute the function
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_function_privilege('regress_current_logfile',
+--dg   'pg_current_logfile()', 'EXECUTE');
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE regress_current_logfile;
+-- pg_column_toast_chunk_id
+CREATE TABLE test_chunk_id (a TEXT, b TEXT STORAGE EXTERNAL);
+INSERT INTO test_chunk_id VALUES ('x', repeat('x', 8192));
+SELECT t.relname AS toastrel FROM pg_class c
+  LEFT JOIN pg_class t ON c.reltoastrelid = t.oid
+  WHERE c.relname = 'test_chunk_id'
+\gset
+--dg-skip: syntax error at or near "?"
+--dg SELECT pg_column_toast_chunk_id(a) IS NULL,
+--dg   pg_column_toast_chunk_id(b) IN (SELECT chunk_id FROM pg_toast.:toastrel)
+--dg   FROM test_chunk_id;
+DROP TABLE test_chunk_id;
+--dg-cascade
+--dg DROP FUNCTION explain_mask_costs(text, bool, bool, bool, bool);
+-- test stratnum translation support functions
+--dg-skip: function ?(...) does not exist
+--dg SELECT gist_translate_cmptype_common(7);
+--dg-skip: function ?(...) does not exist
+--dg SELECT gist_translate_cmptype_common(3);
+-- relpath tests
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
+--dg CREATE FUNCTION test_relpath()
+--dg     RETURNS void
+--dg     AS :'regresslib'
+--dg     LANGUAGE C;
+--dg-cascade
+--dg SELECT test_relpath();
+-- pg_replication_origin.roname limit
+--dg-differs: another error: function ?(...) does not exist
+--dg SELECT pg_replication_origin_create('regress_' || repeat('a', 505));

@@ -78,6 +78,14 @@ The import itself is not built yet (`PLAN.md` §7).
   the most files (`test/regress/README.md`). It only
   measures, and is in no `make test`; it takes four minutes.
 
+- **`make -j4 pgregress`** runs the same files as ported to
+  digres (`test/pgregress/README.md`): each with what digres
+  does not run as PostgreSQL does commented out, against
+  PostgreSQL 18's output for what is left. A difference fails
+  it; `make test` runs it, in two minutes. A change that makes
+  digres run a statement it could not is followed by trimming
+  that file again.
+
 - **`make -j4 tsan`** builds `build/digres-tsan` under the
   thread sanitizer and runs the threaded tests and
   `server.sh` on it; a report fails it. Run it for any change

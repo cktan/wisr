@@ -1,0 +1,50 @@
+--
+-- Verify system catalog foreign key relationships
+--
+--dg-skip: language "?" does not exist
+--dg DO $doblock$
+--dg declare
+--dg   fk record;
+--dg   nkeys integer;
+--dg   cmd text;
+--dg   err record;
+--dg begin
+--dg   for fk in select * from pg_get_catalog_foreign_keys()
+--dg   loop
+--dg     raise notice 'checking % % => % %',
+--dg       fk.fktable, fk.fkcols, fk.pktable, fk.pkcols;
+--dg     nkeys := array_length(fk.fkcols, 1);
+--dg     cmd := 'SELECT ctid';
+--dg     for i in 1 .. nkeys loop
+--dg       cmd := cmd || ', ' || quote_ident(fk.fkcols[i]);
+--dg     end loop;
+--dg     if fk.is_array then
+--dg       cmd := cmd || ' FROM (SELECT ctid';
+--dg       for i in 1 .. nkeys-1 loop
+--dg         cmd := cmd || ', ' || quote_ident(fk.fkcols[i]);
+--dg       end loop;
+--dg       cmd := cmd || ', unnest(' || quote_ident(fk.fkcols[nkeys]);
+--dg       cmd := cmd || ') as ' || quote_ident(fk.fkcols[nkeys]);
+--dg       cmd := cmd || ' FROM ' || fk.fktable::text || ') fk WHERE ';
+--dg     else
+--dg       cmd := cmd || ' FROM ' || fk.fktable::text || ' fk WHERE ';
+--dg     end if;
+--dg     if fk.is_opt then
+--dg       for i in 1 .. nkeys loop
+--dg         cmd := cmd || quote_ident(fk.fkcols[i]) || ' != 0 AND ';
+--dg       end loop;
+--dg     end if;
+--dg     cmd := cmd || 'NOT EXISTS(SELECT 1 FROM ' || fk.pktable::text || ' pk WHERE ';
+--dg     for i in 1 .. nkeys loop
+--dg       if i > 1 then cmd := cmd || ' AND '; end if;
+--dg       cmd := cmd || 'pk.' || quote_ident(fk.pkcols[i]);
+--dg       cmd := cmd || ' = fk.' || quote_ident(fk.fkcols[i]);
+--dg     end loop;
+--dg     cmd := cmd || ')';
+--dg     -- raise notice 'cmd = %', cmd;
+--dg     for err in execute cmd loop
+--dg       raise warning 'FK VIOLATION IN %(%): %', fk.fktable, fk.fkcols, err;
+--dg     end loop;
+--dg   end loop;
+--dg end
+--dg $doblock$;

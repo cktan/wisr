@@ -1,0 +1,3535 @@
+--
+-- Test access privileges
+--
+
+-- Clean up in case a prior regression run failed
+
+-- Suppress NOTICE messages when users/groups don't exist
+SET client_min_messages TO 'warning';
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE IF EXISTS regress_priv_group1;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE IF EXISTS regress_priv_group2;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE IF EXISTS regress_priv_user1;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE IF EXISTS regress_priv_user2;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE IF EXISTS regress_priv_user3;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE IF EXISTS regress_priv_user4;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE IF EXISTS regress_priv_user5;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE IF EXISTS regress_priv_user6;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE IF EXISTS regress_priv_user7;
+
+--dg-skip: relation "?" does not exist
+--dg SELECT lo_unlink(oid) FROM pg_largeobject_metadata WHERE oid >= 1000 AND oid < 3000 ORDER BY oid;
+
+RESET client_min_messages;
+
+-- test proper begins here
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE USER regress_priv_user1;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE USER regress_priv_user2;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE USER regress_priv_user3;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE USER regress_priv_user4;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE USER regress_priv_user5;
+--dg-cascade
+--dg CREATE USER regress_priv_user5;	-- duplicate
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE USER regress_priv_user6;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE USER regress_priv_user7;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE USER regress_priv_user8;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE USER regress_priv_user9;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE USER regress_priv_user10;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE regress_priv_role;
+
+-- circular ADMIN OPTION grants should be disallowed
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT regress_priv_user1 TO regress_priv_user2 WITH ADMIN OPTION;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT regress_priv_user1 TO regress_priv_user3 WITH ADMIN OPTION GRANTED BY regress_priv_user2;
+--dg-cascade
+--dg GRANT regress_priv_user1 TO regress_priv_user2 WITH ADMIN OPTION GRANTED BY regress_priv_user3;
+
+-- need CASCADE to revoke grant or admin option if dependent grants exist
+--dg-cascade
+--dg REVOKE ADMIN OPTION FOR regress_priv_user1 FROM regress_priv_user2; -- fail
+--dg-cascade
+--dg REVOKE regress_priv_user1 FROM regress_priv_user2; -- fail
+--dg-cascade
+--dg SELECT member::regrole, admin_option FROM pg_auth_members WHERE roleid = 'regress_priv_user1'::regrole;
+BEGIN;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg REVOKE ADMIN OPTION FOR regress_priv_user1 FROM regress_priv_user2 CASCADE;
+--dg-cascade
+--dg SELECT member::regrole, admin_option FROM pg_auth_members WHERE roleid = 'regress_priv_user1'::regrole;
+ROLLBACK;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg REVOKE regress_priv_user1 FROM regress_priv_user2 CASCADE;
+--dg-cascade
+--dg SELECT member::regrole, admin_option FROM pg_auth_members WHERE roleid = 'regress_priv_user1'::regrole;
+
+-- inferred grantor must be a role with ADMIN OPTION
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT regress_priv_user1 TO regress_priv_user2 WITH ADMIN OPTION;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT regress_priv_user2 TO regress_priv_user3;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET ROLE regress_priv_user3;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT regress_priv_user1 TO regress_priv_user4;
+--dg-cascade
+--dg SELECT grantor::regrole FROM pg_auth_members WHERE roleid = 'regress_priv_user1'::regrole and member = 'regress_priv_user4'::regrole;
+RESET ROLE;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg REVOKE regress_priv_user2 FROM regress_priv_user3;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg REVOKE regress_priv_user1 FROM regress_priv_user2 CASCADE;
+
+-- test GRANTED BY with DROP OWNED and REASSIGN OWNED
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT regress_priv_user1 TO regress_priv_user2 WITH ADMIN OPTION;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT regress_priv_user1 TO regress_priv_user3 GRANTED BY regress_priv_user2;
+--dg-cascade
+--dg DROP ROLE regress_priv_user2; -- fail, dependency
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg REASSIGN OWNED BY regress_priv_user2 TO regress_priv_user4;
+--dg-cascade
+--dg DROP ROLE regress_priv_user2; -- still fail, REASSIGN OWNED doesn't help
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP OWNED BY regress_priv_user2;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE regress_priv_user2; -- ok now, DROP OWNED does the job
+
+-- test that removing granted role or grantee role removes dependency
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT regress_priv_user1 TO regress_priv_user3 WITH ADMIN OPTION;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT regress_priv_user1 TO regress_priv_user4 GRANTED BY regress_priv_user3;
+--dg-cascade
+--dg DROP ROLE regress_priv_user3; -- should fail, dependency
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE regress_priv_user4; -- ok
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE regress_priv_user3; -- ok now
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT regress_priv_user1 TO regress_priv_user5 WITH ADMIN OPTION;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT regress_priv_user1 TO regress_priv_user6 GRANTED BY regress_priv_user5;
+--dg-cascade
+--dg DROP ROLE regress_priv_user5; -- should fail, dependency
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE regress_priv_user1, regress_priv_user5; -- ok, despite order
+
+-- recreate the roles we just dropped
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE USER regress_priv_user1;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE USER regress_priv_user2;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE USER regress_priv_user3;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE USER regress_priv_user4;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE USER regress_priv_user5;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT pg_read_all_data TO regress_priv_user6;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT pg_write_all_data TO regress_priv_user7;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT pg_read_all_settings TO regress_priv_user8 WITH ADMIN OPTION;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT regress_priv_user9 TO regress_priv_user8;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user8;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT pg_read_all_settings TO regress_priv_user9 WITH ADMIN OPTION;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user9;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT pg_read_all_settings TO regress_priv_user10;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user8;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg REVOKE pg_read_all_settings FROM regress_priv_user10 GRANTED BY regress_priv_user9;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg REVOKE ADMIN OPTION FOR pg_read_all_settings FROM regress_priv_user9;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg REVOKE pg_read_all_settings FROM regress_priv_user9;
+
+RESET SESSION AUTHORIZATION;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg REVOKE regress_priv_user9 FROM regress_priv_user8;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg REVOKE ADMIN OPTION FOR pg_read_all_settings FROM regress_priv_user8;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user8;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET ROLE pg_read_all_settings;
+RESET ROLE;
+
+RESET SESSION AUTHORIZATION;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg REVOKE SET OPTION FOR pg_read_all_settings FROM regress_priv_user8;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT pg_read_all_stats TO regress_priv_user8 WITH SET FALSE;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user8;
+--dg-cascade
+--dg SET ROLE pg_read_all_settings;  -- fail, no SET option any more
+--dg-cascade
+--dg SET ROLE pg_read_all_stats;     -- fail, granted without SET option
+RESET ROLE;
+
+RESET SESSION AUTHORIZATION;
+
+-- test interaction of SET SESSION AUTHORIZATION and SET ROLE,
+-- as well as propagation of these settings to parallel workers
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT regress_priv_user9 TO regress_priv_user8;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user8;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET ROLE regress_priv_user9;
+--dg-skip: unrecognized configuration parameter "?"
+--dg SET debug_parallel_query = 0;
+--dg-cascade
+--dg SELECT session_user, current_role, current_user, current_setting('role') as role;
+--dg-skip: unrecognized configuration parameter "?"
+--dg SET debug_parallel_query = 1;
+--dg-cascade
+--dg SELECT session_user, current_role, current_user, current_setting('role') as role;
+
+BEGIN;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user10;
+--dg-skip: unrecognized configuration parameter "?"
+--dg SET debug_parallel_query = 0;
+--dg-cascade
+--dg SELECT session_user, current_role, current_user, current_setting('role') as role;
+--dg-skip: unrecognized configuration parameter "?"
+--dg SET debug_parallel_query = 1;
+--dg-cascade
+--dg SELECT session_user, current_role, current_user, current_setting('role') as role;
+ROLLBACK;
+--dg-skip: unrecognized configuration parameter "?"
+--dg SET debug_parallel_query = 0;
+--dg-cascade
+--dg SELECT session_user, current_role, current_user, current_setting('role') as role;
+--dg-skip: unrecognized configuration parameter "?"
+--dg SET debug_parallel_query = 1;
+--dg-cascade
+--dg SELECT session_user, current_role, current_user, current_setting('role') as role;
+
+RESET SESSION AUTHORIZATION;
+-- session_user at this point is installation-dependent
+--dg-skip: unrecognized configuration parameter "?"
+--dg SET debug_parallel_query = 0;
+SELECT session_user = current_role as c_r_ok, session_user = current_user as c_u_ok, current_setting('role') as role;
+--dg-skip: unrecognized configuration parameter "?"
+--dg SET debug_parallel_query = 1;
+SELECT session_user = current_role as c_r_ok, session_user = current_user as c_u_ok, current_setting('role') as role;
+
+--dg-skip: unrecognized configuration parameter "?"
+--dg RESET debug_parallel_query;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg REVOKE pg_read_all_settings FROM regress_priv_user8;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP USER regress_priv_user10;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP USER regress_priv_user9;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP USER regress_priv_user8;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE GROUP regress_priv_group1;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE GROUP regress_priv_group2 WITH ADMIN regress_priv_user1 USER regress_priv_user2;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg ALTER GROUP regress_priv_group1 ADD USER regress_priv_user4;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT regress_priv_group2 TO regress_priv_user2 GRANTED BY regress_priv_user1;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user3;
+--dg-cascade
+--dg ALTER GROUP regress_priv_group2 ADD USER regress_priv_user2;	-- fail
+--dg-cascade
+--dg ALTER GROUP regress_priv_group2 DROP USER regress_priv_user2;	-- fail
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg ALTER GROUP regress_priv_group2 ADD USER regress_priv_user2;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg ALTER GROUP regress_priv_group2 ADD USER regress_priv_user2;	-- duplicate
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg ALTER GROUP regress_priv_group2 DROP USER regress_priv_user2;
+--dg-cascade
+--dg ALTER USER regress_priv_user2 PASSWORD 'verysecret'; -- not permitted
+RESET SESSION AUTHORIZATION;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg ALTER GROUP regress_priv_group2 DROP USER regress_priv_user2;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg REVOKE ADMIN OPTION FOR regress_priv_group2 FROM regress_priv_user1;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT regress_priv_group2 TO regress_priv_user4 WITH ADMIN OPTION;
+
+-- prepare non-leakproof function for later
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
+--dg CREATE FUNCTION leak(integer,integer) RETURNS boolean
+--dg   AS 'int4lt'
+--dg   LANGUAGE internal IMMUTABLE STRICT;  -- but deliberately not LEAKPROOF
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg ALTER FUNCTION leak(integer,integer) OWNER TO regress_priv_user1;
+
+-- test owner privileges
+
+--dg-cascade
+--dg GRANT regress_priv_role TO regress_priv_user1 WITH ADMIN OPTION GRANTED BY regress_priv_role; -- error, doesn't have ADMIN OPTION
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT regress_priv_role TO regress_priv_user1 WITH ADMIN OPTION GRANTED BY CURRENT_ROLE;
+--dg-differs: another error: relation pg_authid cannot be opened: digres has no catalog tables
+--dg REVOKE ADMIN OPTION FOR regress_priv_role FROM regress_priv_user1 GRANTED BY foo; -- error
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg REVOKE ADMIN OPTION FOR regress_priv_role FROM regress_priv_user1 GRANTED BY regress_priv_user2; -- warning, noop
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg REVOKE ADMIN OPTION FOR regress_priv_role FROM regress_priv_user1 GRANTED BY CURRENT_USER;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg REVOKE regress_priv_role FROM regress_priv_user1 GRANTED BY CURRENT_ROLE;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE regress_priv_role;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+--dg-cascade
+--dg SELECT session_user, current_user;
+
+--dg-cascade
+--dg CREATE TABLE atest1 ( a int, b text );
+--dg-cascade
+--dg SELECT * FROM atest1;
+--dg-cascade
+--dg INSERT INTO atest1 VALUES (1, 'one');
+--dg-cascade
+--dg DELETE FROM atest1;
+--dg-cascade
+--dg UPDATE atest1 SET a = 1 WHERE b = 'blech';
+--dg-cascade
+--dg TRUNCATE atest1;
+BEGIN;
+--dg-cascade
+--dg LOCK atest1 IN ACCESS EXCLUSIVE MODE;
+COMMIT;
+
+--dg-cascade
+--dg REVOKE ALL ON atest1 FROM PUBLIC;
+--dg-cascade
+--dg SELECT * FROM atest1;
+
+--dg-cascade
+--dg GRANT ALL ON atest1 TO regress_priv_user2;
+--dg-cascade
+--dg GRANT SELECT ON atest1 TO regress_priv_user3, regress_priv_user4;
+--dg-cascade
+--dg SELECT * FROM atest1;
+
+--dg-cascade
+--dg CREATE TABLE atest2 (col1 varchar(10), col2 boolean);
+--dg-cascade
+--dg SELECT pg_get_acl('pg_class'::regclass, 'atest2'::regclass::oid, 0);
+--dg-cascade
+--dg GRANT SELECT ON atest2 TO regress_priv_user2;
+--dg-cascade
+--dg GRANT UPDATE ON atest2 TO regress_priv_user3;
+--dg-cascade
+--dg GRANT INSERT ON atest2 TO regress_priv_user4 GRANTED BY CURRENT_USER;
+--dg-cascade
+--dg GRANT TRUNCATE ON atest2 TO regress_priv_user5 GRANTED BY CURRENT_ROLE;
+--dg-cascade
+--dg SELECT unnest(pg_get_acl('pg_class'::regclass, 'atest2'::regclass::oid, 0));
+
+-- Invalid inputs
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg SELECT pg_get_acl('pg_class'::regclass, 0, 0); -- null
+SELECT pg_get_acl(0, 0, 0); -- null
+
+--dg-cascade
+--dg GRANT TRUNCATE ON atest2 TO regress_priv_user4 GRANTED BY regress_priv_user5;  -- error
+
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user2;
+--dg-cascade
+--dg SELECT session_user, current_user;
+
+-- try various combinations of queries on atest1 and atest2
+
+--dg-cascade
+--dg SELECT * FROM atest1; -- ok
+--dg-cascade
+--dg SELECT * FROM atest2; -- ok
+--dg-cascade
+--dg INSERT INTO atest1 VALUES (2, 'two'); -- ok
+--dg-cascade
+--dg INSERT INTO atest2 VALUES ('foo', true); -- fail
+--dg-cascade
+--dg INSERT INTO atest1 SELECT 1, b FROM atest1; -- ok
+--dg-cascade
+--dg UPDATE atest1 SET a = 1 WHERE a = 2; -- ok
+--dg-cascade
+--dg UPDATE atest2 SET col2 = NOT col2; -- fail
+--dg-cascade
+--dg SELECT * FROM atest1 FOR UPDATE; -- ok
+--dg-cascade
+--dg SELECT * FROM atest2 FOR UPDATE; -- fail
+--dg-cascade
+--dg DELETE FROM atest2; -- fail
+--dg-cascade
+--dg TRUNCATE atest2; -- fail
+BEGIN;
+--dg-cascade
+--dg LOCK atest2 IN ACCESS EXCLUSIVE MODE; -- fail
+COMMIT;
+--dg-cascade
+--dg COPY atest2 FROM stdin; -- fail
+--dg \.
+--dg-cascade
+--dg GRANT ALL ON atest1 TO PUBLIC; -- fail
+
+-- checks in subquery, both ok
+--dg-cascade
+--dg SELECT * FROM atest1 WHERE ( b IN ( SELECT col1 FROM atest2 ) );
+--dg-cascade
+--dg SELECT * FROM atest2 WHERE ( col1 IN ( SELECT b FROM atest1 ) );
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user6;
+--dg-cascade
+--dg SELECT * FROM atest1; -- ok
+--dg-cascade
+--dg SELECT * FROM atest2; -- ok
+--dg-cascade
+--dg INSERT INTO atest2 VALUES ('foo', true); -- fail
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user7;
+--dg-cascade
+--dg SELECT * FROM atest1; -- fail
+--dg-cascade
+--dg SELECT * FROM atest2; -- fail
+--dg-cascade
+--dg INSERT INTO atest2 VALUES ('foo', true); -- ok
+--dg-cascade
+--dg UPDATE atest2 SET col2 = true; -- ok
+--dg-cascade
+--dg DELETE FROM atest2; -- ok
+
+-- Make sure we are not able to modify system catalogs
+--dg-cascade
+--dg UPDATE pg_catalog.pg_class SET relname = '123'; -- fail
+--dg-cascade
+--dg DELETE FROM pg_catalog.pg_class; -- fail
+--dg-cascade
+--dg UPDATE pg_toast.pg_toast_1213 SET chunk_id = 1; -- fail
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user3;
+--dg-cascade
+--dg SELECT session_user, current_user;
+
+--dg-cascade
+--dg SELECT * FROM atest1; -- ok
+--dg-cascade
+--dg SELECT * FROM atest2; -- fail
+--dg-cascade
+--dg INSERT INTO atest1 VALUES (2, 'two'); -- fail
+--dg-cascade
+--dg INSERT INTO atest2 VALUES ('foo', true); -- fail
+--dg-cascade
+--dg INSERT INTO atest1 SELECT 1, b FROM atest1; -- fail
+--dg-cascade
+--dg UPDATE atest1 SET a = 1 WHERE a = 2; -- fail
+--dg-cascade
+--dg UPDATE atest2 SET col2 = NULL; -- ok
+--dg-cascade
+--dg UPDATE atest2 SET col2 = NOT col2; -- fails; requires SELECT on atest2
+--dg-cascade
+--dg UPDATE atest2 SET col2 = true FROM atest1 WHERE atest1.a = 5; -- ok
+--dg-cascade
+--dg SELECT * FROM atest1 FOR UPDATE; -- fail
+--dg-cascade
+--dg SELECT * FROM atest2 FOR UPDATE; -- fail
+--dg-cascade
+--dg DELETE FROM atest2; -- fail
+--dg-cascade
+--dg TRUNCATE atest2; -- fail
+BEGIN;
+--dg-cascade
+--dg LOCK atest2 IN ACCESS EXCLUSIVE MODE; -- ok
+COMMIT;
+--dg-cascade
+--dg COPY atest2 FROM stdin; -- fail
+--dg \.
+
+-- checks in subquery, both fail
+--dg-cascade
+--dg SELECT * FROM atest1 WHERE ( b IN ( SELECT col1 FROM atest2 ) );
+--dg-cascade
+--dg SELECT * FROM atest2 WHERE ( col1 IN ( SELECT b FROM atest1 ) );
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user4;
+--dg-cascade
+--dg COPY atest2 FROM stdin; -- ok
+--dg bar	true
+--dg \.
+--dg-cascade
+--dg SELECT * FROM atest1; -- ok
+
+
+-- test leaky-function protections in selfuncs
+
+-- regress_priv_user1 will own a table and provide views for it.
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+
+--dg-cascade
+--dg CREATE TABLE atest12 as
+--dg   SELECT x AS a, 10001 - x AS b FROM generate_series(1,10000) x;
+--dg-cascade
+--dg CREATE INDEX ON atest12 (a);
+--dg-cascade
+--dg CREATE INDEX ON atest12 (abs(a));
+-- results below depend on having quite accurate stats for atest12, so...
+--dg-cascade
+--dg ALTER TABLE atest12 SET (autovacuum_enabled = off);
+SET default_statistics_target = 10000;
+--dg-cascade
+--dg VACUUM ANALYZE atest12;
+RESET default_statistics_target;
+
+--dg-cascade
+--dg CREATE OPERATOR <<< (procedure = leak, leftarg = integer, rightarg = integer,
+--dg                      restrict = scalarltsel);
+
+-- views with leaky operator
+--dg-cascade
+--dg CREATE VIEW atest12v AS
+--dg   SELECT * FROM atest12 WHERE b <<< 5;
+--dg-cascade
+--dg CREATE VIEW atest12sbv WITH (security_barrier=true) AS
+--dg   SELECT * FROM atest12 WHERE b <<< 5;
+
+-- This plan should use nestloop, knowing that few rows will be selected.
+--dg-cascade
+--dg EXPLAIN (COSTS OFF) SELECT * FROM atest12v x, atest12v y WHERE x.a = y.b;
+
+-- And this one.
+--dg-cascade
+--dg EXPLAIN (COSTS OFF) SELECT * FROM atest12 x, atest12 y
+--dg   WHERE x.a = y.b and abs(y.a) <<< 5;
+
+-- This should also be a nestloop, but the security barrier forces the inner
+-- scan to be materialized
+--dg-cascade
+--dg EXPLAIN (COSTS OFF) SELECT * FROM atest12sbv x, atest12sbv y WHERE x.a = y.b;
+
+-- Check if regress_priv_user2 can break security.
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user2;
+
+--dg-cascade
+--dg CREATE FUNCTION leak2(integer,integer) RETURNS boolean
+--dg   AS $$begin raise notice 'leak % %', $1, $2; return $1 > $2; end$$
+--dg   LANGUAGE plpgsql immutable;
+--dg-cascade
+--dg CREATE OPERATOR >>> (procedure = leak2, leftarg = integer, rightarg = integer,
+--dg                      restrict = scalargtsel);
+
+-- These should not show any "leak" notices before failing.
+--dg-cascade
+--dg EXPLAIN (COSTS OFF) SELECT * FROM atest12 WHERE a >>> 0;
+--dg-cascade
+--dg EXPLAIN (COSTS OFF) SELECT * FROM atest12v WHERE a >>> 0;
+--dg-cascade
+--dg EXPLAIN (COSTS OFF) SELECT * FROM atest12sbv WHERE a >>> 0;
+
+-- Now regress_priv_user1 grants access to regress_priv_user2 via the views.
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+--dg-cascade
+--dg GRANT SELECT ON atest12v TO PUBLIC;
+--dg-cascade
+--dg GRANT SELECT ON atest12sbv TO PUBLIC;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user2;
+
+-- These plans should continue to use a nestloop, since they execute with the
+-- privileges of the view owner.
+--dg-cascade
+--dg EXPLAIN (COSTS OFF) SELECT * FROM atest12v x, atest12v y WHERE x.a = y.b;
+--dg-cascade
+--dg EXPLAIN (COSTS OFF) SELECT * FROM atest12sbv x, atest12sbv y WHERE x.a = y.b;
+
+-- A non-security barrier view does not guard against information leakage.
+--dg-cascade
+--dg EXPLAIN (COSTS OFF) SELECT * FROM atest12v x, atest12v y
+--dg   WHERE x.a = y.b and abs(y.a) <<< 5;
+
+-- But a security barrier view isolates the leaky operator.
+--dg-cascade
+--dg EXPLAIN (COSTS OFF) SELECT * FROM atest12sbv x, atest12sbv y
+--dg   WHERE x.a = y.b and abs(y.a) <<< 5;
+
+-- Now regress_priv_user1 grants sufficient access to regress_priv_user2.
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+--dg-cascade
+--dg GRANT SELECT (a, b) ON atest12 TO PUBLIC;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user2;
+
+-- regress_priv_user2 should continue to get a good row estimate.
+--dg-cascade
+--dg EXPLAIN (COSTS OFF) SELECT * FROM atest12v x, atest12v y WHERE x.a = y.b;
+
+-- But not for this, due to lack of table-wide permissions needed
+-- to make use of the expression index's statistics.
+--dg-cascade
+--dg EXPLAIN (COSTS OFF) SELECT * FROM atest12 x, atest12 y
+--dg   WHERE x.a = y.b and abs(y.a) <<< 5;
+
+-- clean up (regress_priv_user1's objects are all dropped later)
+--dg-cascade
+--dg DROP FUNCTION leak2(integer, integer) CASCADE;
+
+
+-- groups
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user3;
+--dg-cascade
+--dg CREATE TABLE atest3 (one int, two int, three int);
+--dg-cascade
+--dg GRANT DELETE ON atest3 TO GROUP regress_priv_group2;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+
+--dg-cascade
+--dg SELECT * FROM atest3; -- fail
+--dg-cascade
+--dg DELETE FROM atest3; -- ok
+
+BEGIN;
+RESET SESSION AUTHORIZATION;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg ALTER ROLE regress_priv_user1 NOINHERIT;
+--dg-cascade
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+--dg-cascade
+--dg SAVEPOINT s1;
+--dg-cascade
+--dg DELETE FROM atest3; -- ok because grant-level option is unchanged
+--dg-cascade
+--dg ROLLBACK TO s1;
+--dg-cascade
+--dg RESET SESSION AUTHORIZATION;
+--dg-cascade
+--dg GRANT regress_priv_group2 TO regress_priv_user1 WITH INHERIT FALSE;
+--dg-cascade
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+--dg-cascade
+--dg DELETE FROM atest3; -- fail
+--dg-cascade
+--dg ROLLBACK TO s1;
+--dg-cascade
+--dg RESET SESSION AUTHORIZATION;
+--dg-cascade
+--dg REVOKE INHERIT OPTION FOR regress_priv_group2 FROM regress_priv_user1;
+--dg-cascade
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+--dg-cascade
+--dg DELETE FROM atest3; -- also fail
+ROLLBACK;
+
+-- views
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user3;
+
+--dg-cascade
+--dg CREATE VIEW atestv1 AS SELECT * FROM atest1; -- ok
+/* The next *should* fail, but it's not implemented that way yet. */
+--dg-cascade
+--dg CREATE VIEW atestv2 AS SELECT * FROM atest2;
+--dg-cascade
+--dg CREATE VIEW atestv3 AS SELECT * FROM atest3; -- ok
+/* Empty view is a corner case that failed in 9.2. */
+--dg-cascade
+--dg CREATE VIEW atestv0 AS SELECT 0 as x WHERE false; -- ok
+
+--dg-cascade
+--dg SELECT * FROM atestv1; -- ok
+--dg-cascade
+--dg SELECT * FROM atestv2; -- fail
+--dg-cascade
+--dg GRANT SELECT ON atestv1, atestv3 TO regress_priv_user4;
+--dg-cascade
+--dg GRANT SELECT ON atestv2 TO regress_priv_user2;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user4;
+
+--dg-cascade
+--dg SELECT * FROM atestv1; -- ok
+--dg-cascade
+--dg SELECT * FROM atestv2; -- fail
+--dg-cascade
+--dg SELECT * FROM atestv3; -- ok
+--dg-cascade
+--dg SELECT * FROM atestv0; -- fail
+
+-- Appendrels excluded by constraints failed to check permissions in 8.4-9.2.
+--dg-cascade
+--dg select * from
+--dg   ((select a.q1 as x from int8_tbl a offset 0)
+--dg    union all
+--dg    (select b.q2 as x from int8_tbl b offset 0)) ss
+--dg where false;
+
+set constraint_exclusion = on;
+--dg-cascade
+--dg select * from
+--dg   ((select a.q1 as x, random() from int8_tbl a where q1 > 0)
+--dg    union all
+--dg    (select b.q2 as x, random() from int8_tbl b where q2 > 0)) ss
+--dg where x < 0;
+reset constraint_exclusion;
+
+--dg-cascade
+--dg CREATE VIEW atestv4 AS SELECT * FROM atestv3; -- nested view
+--dg-cascade
+--dg SELECT * FROM atestv4; -- ok
+--dg-cascade
+--dg GRANT SELECT ON atestv4 TO regress_priv_user2;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user2;
+
+-- Two complex cases:
+
+--dg-cascade
+--dg SELECT * FROM atestv3; -- fail
+--dg-cascade
+--dg SELECT * FROM atestv4; -- ok (even though regress_priv_user2 cannot access underlying atestv3)
+
+--dg-cascade
+--dg SELECT * FROM atest2; -- ok
+--dg-cascade
+--dg SELECT * FROM atestv2; -- fail (even though regress_priv_user2 can access underlying atest2)
+
+-- Test column level permissions
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+--dg-cascade
+--dg CREATE TABLE atest5 (one int, two int unique, three int, four int unique);
+--dg-cascade
+--dg CREATE TABLE atest6 (one int, two int, blue int);
+--dg-cascade
+--dg GRANT SELECT (one), INSERT (two), UPDATE (three) ON atest5 TO regress_priv_user4;
+--dg-cascade
+--dg GRANT ALL (one) ON atest5 TO regress_priv_user3;
+--dg-cascade
+--dg SELECT unnest(pg_get_acl('pg_class'::regclass, 'atest5'::regclass::oid, 1));
+--dg-cascade
+--dg SELECT unnest(pg_get_acl('pg_class'::regclass, 'atest5'::regclass::oid, 2));
+--dg-cascade
+--dg SELECT unnest(pg_get_acl('pg_class'::regclass, 'atest5'::regclass::oid, 3));
+--dg-cascade
+--dg SELECT unnest(pg_get_acl('pg_class'::regclass, 'atest5'::regclass::oid, 4));
+
+--dg-cascade
+--dg INSERT INTO atest5 VALUES (1,2,3);
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user4;
+--dg-cascade
+--dg SELECT * FROM atest5; -- fail
+--dg-cascade
+--dg SELECT one FROM atest5; -- ok
+--dg-cascade
+--dg COPY atest5 (one) TO stdout; -- ok
+--dg-cascade
+--dg SELECT two FROM atest5; -- fail
+--dg-cascade
+--dg COPY atest5 (two) TO stdout; -- fail
+--dg-cascade
+--dg SELECT atest5 FROM atest5; -- fail
+--dg-cascade
+--dg COPY atest5 (one,two) TO stdout; -- fail
+--dg-cascade
+--dg SELECT 1 FROM atest5; -- ok
+--dg-cascade
+--dg SELECT 1 FROM atest5 a JOIN atest5 b USING (one); -- ok
+--dg-cascade
+--dg SELECT 1 FROM atest5 a JOIN atest5 b USING (two); -- fail
+--dg-cascade
+--dg SELECT 1 FROM atest5 a NATURAL JOIN atest5 b; -- fail
+--dg-cascade
+--dg SELECT * FROM (atest5 a JOIN atest5 b USING (one)) j; -- fail
+--dg-cascade
+--dg SELECT j.* FROM (atest5 a JOIN atest5 b USING (one)) j; -- fail
+--dg-cascade
+--dg SELECT (j.*) IS NULL FROM (atest5 a JOIN atest5 b USING (one)) j; -- fail
+--dg-cascade
+--dg SELECT one FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)) j; -- ok
+--dg-cascade
+--dg SELECT j.one FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)) j; -- ok
+--dg-cascade
+--dg SELECT two FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)) j; -- fail
+--dg-cascade
+--dg SELECT j.two FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)) j; -- fail
+--dg-cascade
+--dg SELECT y FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)) j; -- fail
+--dg-cascade
+--dg SELECT j.y FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)) j; -- fail
+--dg-cascade
+--dg SELECT * FROM (atest5 a JOIN atest5 b USING (one)); -- fail
+--dg-cascade
+--dg SELECT a.* FROM (atest5 a JOIN atest5 b USING (one)); -- fail
+--dg-cascade
+--dg SELECT (a.*) IS NULL FROM (atest5 a JOIN atest5 b USING (one)); -- fail
+--dg-cascade
+--dg SELECT two FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)); -- fail
+--dg-cascade
+--dg SELECT a.two FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)); -- fail
+--dg-cascade
+--dg SELECT y FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)); -- fail
+--dg-cascade
+--dg SELECT b.y FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)); -- fail
+--dg-cascade
+--dg SELECT y FROM (atest5 a LEFT JOIN atest5 b(one,x,y,z) USING (one)); -- fail
+--dg-cascade
+--dg SELECT b.y FROM (atest5 a LEFT JOIN atest5 b(one,x,y,z) USING (one)); -- fail
+--dg-cascade
+--dg SELECT y FROM (atest5 a FULL JOIN atest5 b(one,x,y,z) USING (one)); -- fail
+--dg-cascade
+--dg SELECT b.y FROM (atest5 a FULL JOIN atest5 b(one,x,y,z) USING (one)); -- fail
+--dg-cascade
+--dg SELECT 1 FROM atest5 WHERE two = 2; -- fail
+--dg-cascade
+--dg SELECT * FROM atest1, atest5; -- fail
+--dg-cascade
+--dg SELECT atest1.* FROM atest1, atest5; -- ok
+--dg-cascade
+--dg SELECT atest1.*,atest5.one FROM atest1, atest5; -- ok
+--dg-cascade
+--dg SELECT atest1.*,atest5.one FROM atest1 JOIN atest5 ON (atest1.a = atest5.two); -- fail
+--dg-cascade
+--dg SELECT atest1.*,atest5.one FROM atest1 JOIN atest5 ON (atest1.a = atest5.one); -- ok
+--dg-cascade
+--dg SELECT one, two FROM atest5; -- fail
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+--dg-cascade
+--dg GRANT SELECT (one,two) ON atest6 TO regress_priv_user4;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user4;
+--dg-cascade
+--dg SELECT one, two FROM atest5 NATURAL JOIN atest6; -- fail still
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+--dg-cascade
+--dg GRANT SELECT (two) ON atest5 TO regress_priv_user4;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user4;
+--dg-cascade
+--dg SELECT one, two FROM atest5 NATURAL JOIN atest6; -- ok now
+
+-- test column-level privileges for INSERT and UPDATE
+--dg-cascade
+--dg INSERT INTO atest5 (two) VALUES (3); -- ok
+--dg-cascade
+--dg COPY atest5 FROM stdin; -- fail
+--dg \.
+--dg-cascade
+--dg COPY atest5 (two) FROM stdin; -- ok
+--dg 1
+--dg \.
+--dg-cascade
+--dg INSERT INTO atest5 (three) VALUES (4); -- fail
+--dg-cascade
+--dg INSERT INTO atest5 VALUES (5,5,5); -- fail
+--dg-cascade
+--dg UPDATE atest5 SET three = 10; -- ok
+--dg-cascade
+--dg UPDATE atest5 SET one = 8; -- fail
+--dg-cascade
+--dg UPDATE atest5 SET three = 5, one = 2; -- fail
+-- Check that column level privs are enforced in RETURNING
+-- Ok.
+--dg-cascade
+--dg INSERT INTO atest5(two) VALUES (6) ON CONFLICT (two) DO UPDATE set three = 10;
+-- Error. No SELECT on column three.
+--dg-cascade
+--dg INSERT INTO atest5(two) VALUES (6) ON CONFLICT (two) DO UPDATE set three = 10 RETURNING atest5.three;
+-- Ok.  May SELECT on column "one":
+--dg-cascade
+--dg INSERT INTO atest5(two) VALUES (6) ON CONFLICT (two) DO UPDATE set three = 10 RETURNING atest5.one;
+-- Check that column level privileges are enforced for EXCLUDED
+-- Ok. we may select one
+--dg-cascade
+--dg INSERT INTO atest5(two) VALUES (6) ON CONFLICT (two) DO UPDATE set three = EXCLUDED.one;
+-- Error. No select rights on three
+--dg-cascade
+--dg INSERT INTO atest5(two) VALUES (6) ON CONFLICT (two) DO UPDATE set three = EXCLUDED.three;
+--dg-cascade
+--dg INSERT INTO atest5(two) VALUES (6) ON CONFLICT (two) DO UPDATE set one = 8; -- fails (due to UPDATE)
+--dg-cascade
+--dg INSERT INTO atest5(three) VALUES (4) ON CONFLICT (two) DO UPDATE set three = 10; -- fails (due to INSERT)
+
+-- Check that the columns in the inference require select privileges
+--dg-cascade
+--dg INSERT INTO atest5(four) VALUES (4); -- fail
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+--dg-cascade
+--dg GRANT INSERT (four) ON atest5 TO regress_priv_user4;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user4;
+
+--dg-cascade
+--dg INSERT INTO atest5(four) VALUES (4) ON CONFLICT (four) DO UPDATE set three = 3; -- fails (due to SELECT)
+--dg-cascade
+--dg INSERT INTO atest5(four) VALUES (4) ON CONFLICT ON CONSTRAINT atest5_four_key DO UPDATE set three = 3; -- fails (due to SELECT)
+--dg-cascade
+--dg INSERT INTO atest5(four) VALUES (4); -- ok
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+--dg-cascade
+--dg GRANT SELECT (four) ON atest5 TO regress_priv_user4;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user4;
+
+--dg-cascade
+--dg INSERT INTO atest5(four) VALUES (4) ON CONFLICT (four) DO UPDATE set three = 3; -- ok
+--dg-cascade
+--dg INSERT INTO atest5(four) VALUES (4) ON CONFLICT ON CONSTRAINT atest5_four_key DO UPDATE set three = 3; -- ok
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+--dg-cascade
+--dg REVOKE ALL (one) ON atest5 FROM regress_priv_user4;
+--dg-cascade
+--dg GRANT SELECT (one,two,blue) ON atest6 TO regress_priv_user4;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user4;
+--dg-cascade
+--dg SELECT one FROM atest5; -- fail
+--dg-cascade
+--dg UPDATE atest5 SET one = 1; -- fail
+--dg-cascade
+--dg SELECT atest6 FROM atest6; -- ok
+--dg-cascade
+--dg COPY atest6 TO stdout; -- ok
+
+-- test column privileges with MERGE
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+--dg-cascade
+--dg CREATE TABLE mtarget (a int, b text);
+--dg-cascade
+--dg CREATE TABLE msource (a int, b text);
+--dg-cascade
+--dg INSERT INTO mtarget VALUES (1, 'init1'), (2, 'init2');
+--dg-cascade
+--dg INSERT INTO msource VALUES (1, 'source1'), (2, 'source2'), (3, 'source3');
+
+--dg-cascade
+--dg GRANT SELECT (a) ON msource TO regress_priv_user4;
+--dg-cascade
+--dg GRANT SELECT (a) ON mtarget TO regress_priv_user4;
+--dg-cascade
+--dg GRANT INSERT (a,b) ON mtarget TO regress_priv_user4;
+--dg-cascade
+--dg GRANT UPDATE (b) ON mtarget TO regress_priv_user4;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user4;
+
+--
+-- test source privileges
+--
+
+-- fail (no SELECT priv on s.b)
+--dg-cascade
+--dg MERGE INTO mtarget t USING msource s ON t.a = s.a
+--dg WHEN MATCHED THEN
+--dg 	UPDATE SET b = s.b
+--dg WHEN NOT MATCHED THEN
+--dg 	INSERT VALUES (a, NULL);
+
+-- fail (s.b used in the INSERTed values)
+--dg-cascade
+--dg MERGE INTO mtarget t USING msource s ON t.a = s.a
+--dg WHEN MATCHED THEN
+--dg 	UPDATE SET b = 'x'
+--dg WHEN NOT MATCHED THEN
+--dg 	INSERT VALUES (a, b);
+
+-- fail (s.b used in the WHEN quals)
+--dg-cascade
+--dg MERGE INTO mtarget t USING msource s ON t.a = s.a
+--dg WHEN MATCHED AND s.b = 'x' THEN
+--dg 	UPDATE SET b = 'x'
+--dg WHEN NOT MATCHED THEN
+--dg 	INSERT VALUES (a, NULL);
+
+-- this should be ok since only s.a is accessed
+BEGIN;
+--dg-cascade
+--dg MERGE INTO mtarget t USING msource s ON t.a = s.a
+--dg WHEN MATCHED THEN
+--dg 	UPDATE SET b = 'ok'
+--dg WHEN NOT MATCHED THEN
+--dg 	INSERT VALUES (a, NULL);
+ROLLBACK;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+--dg-cascade
+--dg GRANT SELECT (b) ON msource TO regress_priv_user4;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user4;
+
+-- should now be ok
+BEGIN;
+--dg-cascade
+--dg MERGE INTO mtarget t USING msource s ON t.a = s.a
+--dg WHEN MATCHED THEN
+--dg 	UPDATE SET b = s.b
+--dg WHEN NOT MATCHED THEN
+--dg 	INSERT VALUES (a, b);
+ROLLBACK;
+
+--
+-- test target privileges
+--
+
+-- fail (no SELECT priv on t.b)
+--dg-cascade
+--dg MERGE INTO mtarget t USING msource s ON t.a = s.a
+--dg WHEN MATCHED THEN
+--dg 	UPDATE SET b = t.b
+--dg WHEN NOT MATCHED THEN
+--dg 	INSERT VALUES (a, NULL);
+
+-- fail (no UPDATE on t.a)
+--dg-cascade
+--dg MERGE INTO mtarget t USING msource s ON t.a = s.a
+--dg WHEN MATCHED THEN
+--dg 	UPDATE SET b = s.b, a = t.a + 1
+--dg WHEN NOT MATCHED THEN
+--dg 	INSERT VALUES (a, b);
+
+-- fail (no SELECT on t.b)
+--dg-cascade
+--dg MERGE INTO mtarget t USING msource s ON t.a = s.a
+--dg WHEN MATCHED AND t.b IS NOT NULL THEN
+--dg 	UPDATE SET b = s.b
+--dg WHEN NOT MATCHED THEN
+--dg 	INSERT VALUES (a, b);
+
+-- ok
+BEGIN;
+--dg-cascade
+--dg MERGE INTO mtarget t USING msource s ON t.a = s.a
+--dg WHEN MATCHED THEN
+--dg 	UPDATE SET b = s.b;
+ROLLBACK;
+
+-- fail (no DELETE)
+--dg-cascade
+--dg MERGE INTO mtarget t USING msource s ON t.a = s.a
+--dg WHEN MATCHED AND t.b IS NOT NULL THEN
+--dg 	DELETE;
+
+-- grant delete privileges
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+--dg-cascade
+--dg GRANT DELETE ON mtarget TO regress_priv_user4;
+-- should be ok now
+BEGIN;
+--dg-cascade
+--dg MERGE INTO mtarget t USING msource s ON t.a = s.a
+--dg WHEN MATCHED AND t.b IS NOT NULL THEN
+--dg 	DELETE;
+ROLLBACK;
+
+-- check error reporting with column privs
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+--dg-cascade
+--dg CREATE TABLE t1 (c1 int, c2 int, c3 int check (c3 < 5), primary key (c1, c2));
+--dg-cascade
+--dg GRANT SELECT (c1) ON t1 TO regress_priv_user2;
+--dg-cascade
+--dg GRANT INSERT (c1, c2, c3) ON t1 TO regress_priv_user2;
+--dg-cascade
+--dg GRANT UPDATE (c1, c2, c3) ON t1 TO regress_priv_user2;
+
+-- seed data
+--dg-cascade
+--dg INSERT INTO t1 VALUES (1, 1, 1);
+--dg-cascade
+--dg INSERT INTO t1 VALUES (1, 2, 1);
+--dg-cascade
+--dg INSERT INTO t1 VALUES (2, 1, 2);
+--dg-cascade
+--dg INSERT INTO t1 VALUES (2, 2, 2);
+--dg-cascade
+--dg INSERT INTO t1 VALUES (3, 1, 3);
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user2;
+--dg-cascade
+--dg INSERT INTO t1 (c1, c2) VALUES (1, 1); -- fail, but row not shown
+--dg-cascade
+--dg UPDATE t1 SET c2 = 1; -- fail, but row not shown
+--dg-cascade
+--dg INSERT INTO t1 (c1, c2) VALUES (null, null); -- fail, but see columns being inserted
+--dg-cascade
+--dg INSERT INTO t1 (c3) VALUES (null); -- fail, but see columns being inserted or have SELECT
+--dg-cascade
+--dg INSERT INTO t1 (c1) VALUES (5); -- fail, but see columns being inserted or have SELECT
+--dg-cascade
+--dg UPDATE t1 SET c3 = 10; -- fail, but see columns with SELECT rights, or being modified
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+--dg-cascade
+--dg DROP TABLE t1;
+
+-- check error reporting with column privs on a partitioned table
+--dg-cascade
+--dg CREATE TABLE errtst(a text, b text NOT NULL, c text, secret1 text, secret2 text) PARTITION BY LIST (a);
+--dg-cascade
+--dg CREATE TABLE errtst_part_1(secret2 text, c text, a text, b text NOT NULL, secret1 text);
+--dg-cascade
+--dg CREATE TABLE errtst_part_2(secret1 text, secret2 text, a text, c text, b text NOT NULL);
+
+--dg-cascade
+--dg ALTER TABLE errtst ATTACH PARTITION errtst_part_1 FOR VALUES IN ('aaa');
+--dg-cascade
+--dg ALTER TABLE errtst ATTACH PARTITION errtst_part_2 FOR VALUES IN ('aaaa');
+
+--dg-cascade
+--dg GRANT SELECT (a, b, c) ON TABLE errtst TO regress_priv_user2;
+--dg-cascade
+--dg GRANT UPDATE (a, b, c) ON TABLE errtst TO regress_priv_user2;
+--dg-cascade
+--dg GRANT INSERT (a, b, c) ON TABLE errtst TO regress_priv_user2;
+
+--dg-cascade
+--dg INSERT INTO errtst_part_1 (a, b, c, secret1, secret2)
+--dg VALUES ('aaa', 'bbb', 'ccc', 'the body', 'is in the attic');
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user2;
+
+-- Perform a few updates that violate the NOT NULL constraint. Make sure
+-- the error messages don't leak the secret fields.
+
+-- simple insert.
+--dg-cascade
+--dg INSERT INTO errtst (a, b) VALUES ('aaa', NULL);
+-- simple update.
+--dg-cascade
+--dg UPDATE errtst SET b = NULL;
+-- partitioning key is updated, doesn't move the row.
+--dg-cascade
+--dg UPDATE errtst SET a = 'aaa', b = NULL;
+-- row is moved to another partition.
+--dg-cascade
+--dg UPDATE errtst SET a = 'aaaa', b = NULL;
+
+-- row is moved to another partition. This differs from the previous case in
+-- that the new partition is excluded by constraint exclusion, so its
+-- ResultRelInfo is not created at ExecInitModifyTable, but needs to be
+-- constructed on the fly when the updated tuple is routed to it.
+--dg-cascade
+--dg UPDATE errtst SET a = 'aaaa', b = NULL WHERE a = 'aaa';
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+--dg-cascade
+--dg DROP TABLE errtst;
+
+-- test column-level privileges when involved with DELETE
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+--dg-cascade
+--dg ALTER TABLE atest6 ADD COLUMN three integer;
+--dg-cascade
+--dg GRANT DELETE ON atest5 TO regress_priv_user3;
+--dg-cascade
+--dg GRANT SELECT (two) ON atest5 TO regress_priv_user3;
+--dg-cascade
+--dg REVOKE ALL (one) ON atest5 FROM regress_priv_user3;
+--dg-cascade
+--dg GRANT SELECT (one) ON atest5 TO regress_priv_user4;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user4;
+--dg-cascade
+--dg SELECT atest6 FROM atest6; -- fail
+--dg-cascade
+--dg SELECT one FROM atest5 NATURAL JOIN atest6; -- fail
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+--dg-cascade
+--dg ALTER TABLE atest6 DROP COLUMN three;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user4;
+--dg-cascade
+--dg SELECT atest6 FROM atest6; -- ok
+--dg-cascade
+--dg SELECT one FROM atest5 NATURAL JOIN atest6; -- ok
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+--dg-cascade
+--dg ALTER TABLE atest6 DROP COLUMN two;
+--dg-cascade
+--dg REVOKE SELECT (one,blue) ON atest6 FROM regress_priv_user4;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user4;
+--dg-cascade
+--dg SELECT * FROM atest6; -- fail
+--dg-cascade
+--dg SELECT 1 FROM atest6; -- fail
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user3;
+--dg-cascade
+--dg DELETE FROM atest5 WHERE one = 1; -- fail
+--dg-cascade
+--dg DELETE FROM atest5 WHERE two = 2; -- ok
+
+-- check inheritance cases
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+--dg-cascade
+--dg CREATE TABLE atestp1 (f1 int, f2 int);
+--dg-cascade
+--dg CREATE TABLE atestp2 (fx int, fy int);
+--dg-cascade
+--dg CREATE TABLE atestc (fz int) INHERITS (atestp1, atestp2);
+--dg-cascade
+--dg GRANT SELECT(fx,fy,tableoid) ON atestp2 TO regress_priv_user2;
+--dg-cascade
+--dg GRANT SELECT(fx) ON atestc TO regress_priv_user2;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user2;
+--dg-cascade
+--dg SELECT fx FROM atestp2; -- ok
+--dg-cascade
+--dg SELECT fy FROM atestp2; -- ok
+--dg-cascade
+--dg SELECT atestp2 FROM atestp2; -- ok
+--dg-cascade
+--dg SELECT tableoid FROM atestp2; -- ok
+--dg-cascade
+--dg SELECT fy FROM atestc; -- fail
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+--dg-cascade
+--dg GRANT SELECT(fy,tableoid) ON atestc TO regress_priv_user2;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user2;
+--dg-cascade
+--dg SELECT fx FROM atestp2; -- still ok
+--dg-cascade
+--dg SELECT fy FROM atestp2; -- ok
+--dg-cascade
+--dg SELECT atestp2 FROM atestp2; -- ok
+--dg-cascade
+--dg SELECT tableoid FROM atestp2; -- ok
+
+-- child's permissions do not apply when operating on parent
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+--dg-cascade
+--dg REVOKE ALL ON atestc FROM regress_priv_user2;
+--dg-cascade
+--dg GRANT ALL ON atestp1 TO regress_priv_user2;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user2;
+--dg-cascade
+--dg SELECT f2 FROM atestp1; -- ok
+--dg-cascade
+--dg SELECT f2 FROM atestc; -- fail
+--dg-cascade
+--dg DELETE FROM atestp1; -- ok
+--dg-cascade
+--dg DELETE FROM atestc; -- fail
+--dg-cascade
+--dg UPDATE atestp1 SET f1 = 1; -- ok
+--dg-cascade
+--dg UPDATE atestc SET f1 = 1; -- fail
+--dg-cascade
+--dg TRUNCATE atestp1; -- ok
+--dg-cascade
+--dg TRUNCATE atestc; -- fail
+BEGIN;
+--dg-cascade
+--dg LOCK atestp1;
+END;
+BEGIN;
+--dg-cascade
+--dg LOCK atestc;
+END;
+
+-- privileges on functions, languages
+
+-- switch to superuser
+--dg-cascade
+--dg \c -
+
+--dg-skip: language "?" does not exist
+--dg REVOKE ALL PRIVILEGES ON LANGUAGE sql FROM PUBLIC;
+--dg-skip: language "?" does not exist
+--dg GRANT USAGE ON LANGUAGE sql TO regress_priv_user1; -- ok
+--dg-cascade
+--dg GRANT USAGE ON LANGUAGE c TO PUBLIC; -- fail
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+--dg-skip: language "?" does not exist
+--dg GRANT USAGE ON LANGUAGE sql TO regress_priv_user2; -- fail
+--dg-cascade
+--dg CREATE FUNCTION priv_testfunc1(int) RETURNS int AS 'select 2 * $1;' LANGUAGE sql;
+--dg-cascade
+--dg CREATE FUNCTION priv_testfunc2(int) RETURNS int AS 'select 3 * $1;' LANGUAGE sql;
+--dg-cascade
+--dg CREATE AGGREGATE priv_testagg1(int) (sfunc = int4pl, stype = int4);
+--dg-cascade
+--dg CREATE PROCEDURE priv_testproc1(int) AS 'select $1;' LANGUAGE sql;
+
+--dg-cascade
+--dg REVOKE ALL ON FUNCTION priv_testfunc1(int), priv_testfunc2(int), priv_testagg1(int) FROM PUBLIC;
+--dg-cascade
+--dg GRANT EXECUTE ON FUNCTION priv_testfunc1(int), priv_testfunc2(int), priv_testagg1(int) TO regress_priv_user2;
+--dg-cascade
+--dg REVOKE ALL ON FUNCTION priv_testproc1(int) FROM PUBLIC; -- fail, not a function
+--dg-cascade
+--dg REVOKE ALL ON PROCEDURE priv_testproc1(int) FROM PUBLIC;
+--dg-cascade
+--dg GRANT EXECUTE ON PROCEDURE priv_testproc1(int) TO regress_priv_user2;
+--dg-cascade
+--dg GRANT USAGE ON FUNCTION priv_testfunc1(int) TO regress_priv_user3; -- semantic error
+--dg-cascade
+--dg GRANT USAGE ON FUNCTION priv_testagg1(int) TO regress_priv_user3; -- semantic error
+--dg-cascade
+--dg GRANT USAGE ON PROCEDURE priv_testproc1(int) TO regress_priv_user3; -- semantic error
+--dg-cascade
+--dg GRANT ALL PRIVILEGES ON FUNCTION priv_testfunc1(int) TO regress_priv_user4;
+--dg-cascade
+--dg GRANT ALL PRIVILEGES ON FUNCTION priv_testfunc_nosuch(int) TO regress_priv_user4;
+--dg-cascade
+--dg GRANT ALL PRIVILEGES ON FUNCTION priv_testagg1(int) TO regress_priv_user4;
+--dg-cascade
+--dg GRANT ALL PRIVILEGES ON PROCEDURE priv_testproc1(int) TO regress_priv_user4;
+
+--dg-cascade
+--dg CREATE FUNCTION priv_testfunc4(boolean) RETURNS text
+--dg   AS 'select col1 from atest2 where col2 = $1;'
+--dg   LANGUAGE sql SECURITY DEFINER;
+--dg-cascade
+--dg GRANT EXECUTE ON FUNCTION priv_testfunc4(boolean) TO regress_priv_user3;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user2;
+--dg-cascade
+--dg SELECT priv_testfunc1(5), priv_testfunc2(5); -- ok
+--dg-cascade
+--dg CREATE FUNCTION priv_testfunc3(int) RETURNS int AS 'select 2 * $1;' LANGUAGE sql; -- fail
+--dg-cascade
+--dg SELECT priv_testagg1(x) FROM (VALUES (1), (2), (3)) _(x); -- ok
+--dg-cascade
+--dg CALL priv_testproc1(6); -- ok
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user3;
+--dg-cascade
+--dg SELECT priv_testfunc1(5); -- fail
+--dg-cascade
+--dg SELECT priv_testagg1(x) FROM (VALUES (1), (2), (3)) _(x); -- fail
+--dg-cascade
+--dg CALL priv_testproc1(6); -- fail
+--dg-cascade
+--dg SELECT col1 FROM atest2 WHERE col2 = true; -- fail
+--dg-cascade
+--dg SELECT priv_testfunc4(true); -- ok
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user4;
+--dg-cascade
+--dg SELECT priv_testfunc1(5); -- ok
+--dg-cascade
+--dg SELECT priv_testagg1(x) FROM (VALUES (1), (2), (3)) _(x); -- ok
+--dg-cascade
+--dg CALL priv_testproc1(6); -- ok
+
+--dg-cascade
+--dg DROP FUNCTION priv_testfunc1(int); -- fail
+--dg-cascade
+--dg DROP AGGREGATE priv_testagg1(int); -- fail
+--dg-cascade
+--dg DROP PROCEDURE priv_testproc1(int); -- fail
+
+--dg-cascade
+--dg \c -
+
+--dg-cascade
+--dg DROP FUNCTION priv_testfunc1(int); -- ok
+-- restore to sanity
+--dg-skip: language "?" does not exist
+--dg GRANT ALL PRIVILEGES ON LANGUAGE sql TO PUBLIC;
+
+-- verify privilege checks on array-element coercions
+--dg-cascade
+--dg BEGIN;
+--dg-cascade
+--dg SELECT '{1}'::int4[]::int8[];
+--dg-skip: relation pg_proc cannot be written: digres has no catalog tables
+--dg REVOKE ALL ON FUNCTION int8(integer) FROM PUBLIC;
+--dg-cascade
+--dg SELECT '{1}'::int4[]::int8[]; --superuser, succeed
+--dg-cascade
+--dg SET SESSION AUTHORIZATION regress_priv_user4;
+--dg-cascade
+--dg SELECT '{1}'::int4[]::int8[]; --other user, fail
+--dg-cascade
+--dg ROLLBACK;
+
+-- privileges on types
+
+-- switch to superuser
+--dg-cascade
+--dg \c -
+
+--dg-skip: a relation's storage cannot be made: digres has no catalog tables
+--dg CREATE TYPE priv_testtype1 AS (a int, b text);
+--dg-cascade
+--dg REVOKE USAGE ON TYPE priv_testtype1 FROM PUBLIC;
+--dg-cascade
+--dg GRANT USAGE ON TYPE priv_testtype1 TO regress_priv_user2;
+--dg-cascade
+--dg GRANT USAGE ON TYPE _priv_testtype1 TO regress_priv_user2; -- fail
+--dg-cascade
+--dg GRANT USAGE ON DOMAIN priv_testtype1 TO regress_priv_user2; -- fail
+
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg CREATE DOMAIN priv_testdomain1 AS int;
+--dg-cascade
+--dg REVOKE USAGE on DOMAIN priv_testdomain1 FROM PUBLIC;
+--dg-cascade
+--dg GRANT USAGE ON DOMAIN priv_testdomain1 TO regress_priv_user2;
+--dg-cascade
+--dg GRANT USAGE ON TYPE priv_testdomain1 TO regress_priv_user2; -- ok
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+
+-- commands that should fail
+
+--dg-cascade
+--dg CREATE AGGREGATE priv_testagg1a(priv_testdomain1) (sfunc = int4_sum, stype = bigint);
+
+--dg-cascade
+--dg CREATE DOMAIN priv_testdomain2a AS priv_testdomain1;
+
+--dg-cascade
+--dg CREATE DOMAIN priv_testdomain3a AS int;
+--dg-cascade
+--dg CREATE FUNCTION castfunc(int) RETURNS priv_testdomain3a AS $$ SELECT $1::priv_testdomain3a $$ LANGUAGE SQL;
+--dg-cascade
+--dg CREATE CAST (priv_testdomain1 AS priv_testdomain3a) WITH FUNCTION castfunc(int);
+--dg-cascade
+--dg DROP FUNCTION castfunc(int) CASCADE;
+--dg-cascade
+--dg DROP DOMAIN priv_testdomain3a;
+
+--dg-cascade
+--dg CREATE DOMAIN priv_testdomain4a AS int CHECK (VALUE > ('(0,1)'::priv_testtype1).a);
+
+--dg-cascade
+--dg CREATE FUNCTION priv_testfunc5a(a priv_testdomain1) RETURNS int LANGUAGE SQL AS $$ SELECT $1 $$;
+--dg-cascade
+--dg CREATE FUNCTION priv_testfunc6a(b int) RETURNS priv_testdomain1 LANGUAGE SQL AS $$ SELECT $1::priv_testdomain1 $$;
+--dg-cascade
+--dg CREATE FUNCTION priv_testfunc7a(a int DEFAULT ('(0,1)'::priv_testtype1).a) RETURNS int LANGUAGE SQL AS $$ SELECT $1 $$;
+
+--dg-cascade
+--dg CREATE OPERATOR !+! (PROCEDURE = int4pl, LEFTARG = priv_testdomain1, RIGHTARG = priv_testdomain1);
+
+--dg-cascade
+--dg CREATE TABLE test5a (a int, b priv_testdomain1);
+--dg-cascade
+--dg CREATE TABLE test6a OF priv_testtype1;
+--dg-cascade
+--dg CREATE TABLE test6a2 (a int, b text);
+--dg-cascade
+--dg ALTER TABLE test6a2 OF priv_testtype1;
+--dg-cascade
+--dg CREATE TABLE test10a (a int[], b priv_testtype1[]);
+
+--dg-cascade
+--dg CREATE TABLE test9a (a int, b int);
+--dg-cascade
+--dg ALTER TABLE test9a ADD COLUMN c priv_testdomain1;
+--dg-cascade
+--dg ALTER TABLE test9a ALTER COLUMN b TYPE priv_testdomain1;
+--dg-cascade
+--dg CREATE INDEX ON test9a ((a::priv_testdomain1));
+
+--dg-cascade
+--dg CREATE TYPE test7a AS (a int, b priv_testdomain1);
+
+--dg-cascade
+--dg CREATE TYPE test8a AS (a int, b int);
+--dg-cascade
+--dg ALTER TYPE test8a ADD ATTRIBUTE c priv_testdomain1;
+--dg-cascade
+--dg ALTER TYPE test8a ALTER ATTRIBUTE b TYPE priv_testdomain1;
+
+--dg-cascade
+--dg CREATE DOMAIN priv_testdomain5a AS test8a CHECK ((VALUE).a > 0 AND ('(0,1)'::priv_testtype1).a >= 0);
+
+--dg-cascade
+--dg CREATE TABLE test11a AS (SELECT 1::priv_testdomain1 AS a);
+
+--dg-cascade
+--dg CREATE VIEW test16a AS SELECT ('(0,1)'::priv_testtype1).a;
+--dg-cascade
+--dg CREATE TABLE test17a (a int) PARTITION BY RANGE ((a + ('(0,1)'::priv_testtype1).a));
+--dg-cascade
+--dg CREATE POLICY priv_testpolicy1a ON test9a USING (('(0,1)'::priv_testtype1).a > 0);
+
+--dg-cascade
+--dg REVOKE ALL ON TYPE priv_testtype1 FROM PUBLIC;
+
+--dg-cascade
+--dg CREATE TABLE test12 (c int DEFAULT 0 CHECK (c > 0 AND '(0,1)'::priv_testtype1 IS NOT NULL));
+--dg-cascade
+--dg CREATE TABLE test13 (c int DEFAULT ('(0,1)'::priv_testtype1).a);
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user2;
+
+-- commands that should succeed
+
+--dg-cascade
+--dg CREATE AGGREGATE priv_testagg1b(priv_testdomain1) (sfunc = int4_sum, stype = bigint);
+
+--dg-cascade
+--dg CREATE DOMAIN priv_testdomain2b AS priv_testdomain1;
+
+--dg-cascade
+--dg CREATE DOMAIN priv_testdomain3b AS int;
+--dg-cascade
+--dg CREATE FUNCTION castfunc(int) RETURNS priv_testdomain3b AS $$ SELECT $1::priv_testdomain3b $$ LANGUAGE SQL;
+--dg-cascade
+--dg CREATE CAST (priv_testdomain1 AS priv_testdomain3b) WITH FUNCTION castfunc(int);
+
+--dg-cascade
+--dg CREATE DOMAIN priv_testdomain4b AS int CHECK (VALUE > ('(0,1)'::priv_testtype1).a);
+
+--dg-cascade
+--dg CREATE FUNCTION priv_testfunc5b(a priv_testdomain1) RETURNS int LANGUAGE SQL AS $$ SELECT $1 $$;
+--dg-cascade
+--dg CREATE FUNCTION priv_testfunc6b(b int) RETURNS priv_testdomain1 LANGUAGE SQL AS $$ SELECT $1::priv_testdomain1 $$;
+--dg-cascade
+--dg CREATE FUNCTION priv_testfunc7b(a int DEFAULT ('(0,1)'::priv_testtype1).a) RETURNS int LANGUAGE SQL AS $$ SELECT $1 $$;
+
+--dg-cascade
+--dg CREATE OPERATOR !! (PROCEDURE = priv_testfunc5b, RIGHTARG = priv_testdomain1);
+
+--dg-cascade
+--dg CREATE TABLE test5b (a int, b priv_testdomain1);
+--dg-cascade
+--dg CREATE TABLE test6b OF priv_testtype1;
+--dg-cascade
+--dg CREATE TABLE test6b2 (a int, b text);
+--dg-cascade
+--dg ALTER TABLE test6b2 OF priv_testtype1;
+--dg-cascade
+--dg CREATE TABLE test10b (a int[], b priv_testtype1[]);
+
+--dg-cascade
+--dg CREATE TABLE test9b (a int, b int);
+--dg-cascade
+--dg ALTER TABLE test9b ADD COLUMN c priv_testdomain1;
+--dg-cascade
+--dg ALTER TABLE test9b ALTER COLUMN b TYPE priv_testdomain1;
+--dg-cascade
+--dg CREATE INDEX ON test9b ((a::priv_testdomain1));
+
+--dg-cascade
+--dg CREATE TYPE test7b AS (a int, b priv_testdomain1);
+
+--dg-cascade
+--dg CREATE TYPE test8b AS (a int, b int);
+--dg-cascade
+--dg ALTER TYPE test8b ADD ATTRIBUTE c priv_testdomain1;
+--dg-cascade
+--dg ALTER TYPE test8b ALTER ATTRIBUTE b TYPE priv_testdomain1;
+
+--dg-cascade
+--dg CREATE DOMAIN priv_testdomain5b AS test8b CHECK ((VALUE).a > 0 AND ('(0,1)'::priv_testtype1).a >= 0);
+
+--dg-cascade
+--dg CREATE TABLE test11b AS (SELECT 1::priv_testdomain1 AS a);
+
+--dg-cascade
+--dg CREATE VIEW test16b AS SELECT ('(0,1)'::priv_testtype1).a;
+--dg-cascade
+--dg CREATE TABLE test17b (a int) PARTITION BY RANGE ((a + ('(0,1)'::priv_testtype1).a));
+--dg-cascade
+--dg CREATE POLICY priv_testpolicy1b ON test9b USING (('(0,1)'::priv_testtype1).a > 0);
+
+--dg-cascade
+--dg REVOKE ALL ON TYPE priv_testtype1 FROM PUBLIC;
+
+--dg-cascade
+--dg CREATE TABLE test12 (c int DEFAULT 0 CHECK (c > 0 AND '(0,1)'::priv_testtype1 IS NOT NULL));
+--dg-cascade
+--dg CREATE TABLE test13 (c int DEFAULT ('(0,1)'::priv_testtype1).a);
+
+-- new stored expressions require USAGE on types, rebuilds do not
+--dg-cascade
+--dg \c -
+--dg-cascade
+--dg REVOKE USAGE ON TYPE priv_testtype1 FROM regress_priv_user2;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user2;
+--dg-cascade
+--dg ALTER TABLE test12 ALTER COLUMN c TYPE bigint;
+--dg-cascade
+--dg ALTER TYPE test8b ALTER ATTRIBUTE a TYPE bigint CASCADE;
+--dg-cascade
+--dg ALTER TABLE test12 ALTER COLUMN c SET DEFAULT ('(0,1)'::priv_testtype1).a;
+--dg-cascade
+--dg CREATE TABLE test14 (LIKE test12 INCLUDING CONSTRAINTS);
+--dg-cascade
+--dg CREATE TABLE test15 (LIKE test13 INCLUDING DEFAULTS);
+
+--dg-cascade
+--dg \c -
+--dg-cascade
+--dg DROP AGGREGATE priv_testagg1b(priv_testdomain1);
+--dg-cascade
+--dg DROP DOMAIN priv_testdomain2b;
+--dg-cascade
+--dg DROP DOMAIN priv_testdomain4b;
+--dg-cascade
+--dg DROP DOMAIN priv_testdomain5b;
+--dg-cascade
+--dg DROP OPERATOR !! (NONE, priv_testdomain1);
+--dg-cascade
+--dg DROP FUNCTION priv_testfunc5b(a priv_testdomain1);
+--dg-cascade
+--dg DROP FUNCTION priv_testfunc6b(b int);
+--dg-cascade
+--dg DROP FUNCTION priv_testfunc7b(a int);
+--dg-cascade
+--dg DROP TABLE test5b;
+--dg-cascade
+--dg DROP TABLE test6b;
+--dg-cascade
+--dg DROP TABLE test6b2;
+--dg-cascade
+--dg DROP TABLE test9b;
+--dg-cascade
+--dg DROP TABLE test10b;
+--dg-cascade
+--dg DROP TYPE test7b;
+--dg-cascade
+--dg DROP TYPE test8b;
+--dg-cascade
+--dg DROP CAST (priv_testdomain1 AS priv_testdomain3b);
+--dg-cascade
+--dg DROP FUNCTION castfunc(int) CASCADE;
+--dg-cascade
+--dg DROP DOMAIN priv_testdomain3b;
+--dg-cascade
+--dg DROP VIEW test16b;
+--dg-cascade
+--dg DROP TABLE test11b;
+--dg-cascade
+--dg DROP TABLE test17b;
+--dg-cascade
+--dg DROP TABLE test12;
+--dg-cascade
+--dg DROP TABLE test13;
+
+--dg-cascade
+--dg DROP TYPE priv_testtype1; -- ok
+--dg-cascade
+--dg DROP DOMAIN priv_testdomain1; -- ok
+
+
+-- truncate
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user5;
+--dg-cascade
+--dg TRUNCATE atest2; -- ok
+--dg-cascade
+--dg TRUNCATE atest3; -- fail
+
+-- has_table_privilege function
+
+-- bad-input checks
+--dg-cascade
+--dg select has_table_privilege(NULL,'pg_authid','select');
+--dg-cascade
+--dg select has_table_privilege('pg_shad','select');
+--dg-cascade
+--dg select has_table_privilege('nosuchuser','pg_authid','select');
+--dg-cascade
+--dg select has_table_privilege('pg_authid','sel');
+--dg-cascade
+--dg select has_table_privilege(-999999,'pg_authid','update');
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg select has_table_privilege(1,'select');
+
+-- superuser
+--dg-cascade
+--dg \c -
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg select has_table_privilege(current_user,'pg_authid','select');
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg select has_table_privilege(current_user,'pg_authid','insert');
+
+--dg-cascade
+--dg select has_table_privilege(t2.oid,'pg_authid','update')
+--dg from (select oid from pg_roles where rolname = current_user) as t2;
+--dg-cascade
+--dg select has_table_privilege(t2.oid,'pg_authid','delete')
+--dg from (select oid from pg_roles where rolname = current_user) as t2;
+
+--dg-cascade
+--dg select has_table_privilege(current_user,t1.oid,'references')
+--dg from (select oid from pg_class where relname = 'pg_authid') as t1;
+
+--dg-cascade
+--dg select has_table_privilege(t2.oid,t1.oid,'select')
+--dg from (select oid from pg_class where relname = 'pg_authid') as t1,
+--dg   (select oid from pg_roles where rolname = current_user) as t2;
+--dg-cascade
+--dg select has_table_privilege(t2.oid,t1.oid,'insert')
+--dg from (select oid from pg_class where relname = 'pg_authid') as t1,
+--dg   (select oid from pg_roles where rolname = current_user) as t2;
+
+--dg-cascade
+--dg select has_table_privilege('pg_authid','update');
+--dg-cascade
+--dg select has_table_privilege('pg_authid','delete');
+--dg-cascade
+--dg select has_table_privilege('pg_authid','truncate');
+
+--dg-cascade
+--dg select has_table_privilege(t1.oid,'select')
+--dg from (select oid from pg_class where relname = 'pg_authid') as t1;
+--dg-cascade
+--dg select has_table_privilege(t1.oid,'trigger')
+--dg from (select oid from pg_class where relname = 'pg_authid') as t1;
+
+-- non-superuser
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user3;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg select has_table_privilege(current_user,'pg_class','select');
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg select has_table_privilege(current_user,'pg_class','insert');
+
+--dg-cascade
+--dg select has_table_privilege(t2.oid,'pg_class','update')
+--dg from (select oid from pg_roles where rolname = current_user) as t2;
+--dg-cascade
+--dg select has_table_privilege(t2.oid,'pg_class','delete')
+--dg from (select oid from pg_roles where rolname = current_user) as t2;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg select has_table_privilege(current_user,t1.oid,'references')
+--dg from (select oid from pg_class where relname = 'pg_class') as t1;
+
+--dg-cascade
+--dg select has_table_privilege(t2.oid,t1.oid,'select')
+--dg from (select oid from pg_class where relname = 'pg_class') as t1,
+--dg   (select oid from pg_roles where rolname = current_user) as t2;
+--dg-cascade
+--dg select has_table_privilege(t2.oid,t1.oid,'insert')
+--dg from (select oid from pg_class where relname = 'pg_class') as t1,
+--dg   (select oid from pg_roles where rolname = current_user) as t2;
+
+--dg-cascade
+--dg select has_table_privilege('pg_class','update');
+--dg-cascade
+--dg select has_table_privilege('pg_class','delete');
+--dg-cascade
+--dg select has_table_privilege('pg_class','truncate');
+
+--dg-cascade
+--dg select has_table_privilege(t1.oid,'select')
+--dg from (select oid from pg_class where relname = 'pg_class') as t1;
+--dg-cascade
+--dg select has_table_privilege(t1.oid,'trigger')
+--dg from (select oid from pg_class where relname = 'pg_class') as t1;
+
+--dg-cascade
+--dg select has_table_privilege(current_user,'atest1','select');
+--dg-cascade
+--dg select has_table_privilege(current_user,'atest1','insert');
+
+--dg-cascade
+--dg select has_table_privilege(t2.oid,'atest1','update')
+--dg from (select oid from pg_roles where rolname = current_user) as t2;
+--dg-cascade
+--dg select has_table_privilege(t2.oid,'atest1','delete')
+--dg from (select oid from pg_roles where rolname = current_user) as t2;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg select has_table_privilege(current_user,t1.oid,'references')
+--dg from (select oid from pg_class where relname = 'atest1') as t1;
+
+--dg-cascade
+--dg select has_table_privilege(t2.oid,t1.oid,'select')
+--dg from (select oid from pg_class where relname = 'atest1') as t1,
+--dg   (select oid from pg_roles where rolname = current_user) as t2;
+--dg-cascade
+--dg select has_table_privilege(t2.oid,t1.oid,'insert')
+--dg from (select oid from pg_class where relname = 'atest1') as t1,
+--dg   (select oid from pg_roles where rolname = current_user) as t2;
+
+--dg-cascade
+--dg select has_table_privilege('atest1','update');
+--dg-cascade
+--dg select has_table_privilege('atest1','delete');
+--dg-cascade
+--dg select has_table_privilege('atest1','truncate');
+
+--dg-cascade
+--dg select has_table_privilege(t1.oid,'select')
+--dg from (select oid from pg_class where relname = 'atest1') as t1;
+--dg-cascade
+--dg select has_table_privilege(t1.oid,'trigger')
+--dg from (select oid from pg_class where relname = 'atest1') as t1;
+
+-- has_column_privilege function
+
+-- bad-input checks (as non-super-user)
+--dg-cascade
+--dg select has_column_privilege('pg_authid',NULL,'select');
+--dg-cascade
+--dg select has_column_privilege('pg_authid','nosuchcol','select');
+--dg-skip: relation pg_attribute cannot be opened: digres has no catalog tables
+--dg select has_column_privilege(9999,'nosuchcol','select');
+--dg-skip: relation pg_attribute cannot be opened: digres has no catalog tables
+--dg select has_column_privilege(9999,99::int2,'select');
+--dg-cascade
+--dg select has_column_privilege('pg_authid',99::int2,'select');
+--dg-skip: relation pg_attribute cannot be opened: digres has no catalog tables
+--dg select has_column_privilege(9999,99::int2,'select');
+
+--dg-cascade
+--dg create temp table mytable(f1 int, f2 int, f3 int);
+--dg-cascade
+--dg alter table mytable drop column f2;
+--dg-cascade
+--dg select has_column_privilege('mytable','f2','select');
+--dg-skip: relation pg_attribute cannot be opened: digres has no catalog tables
+--dg select has_column_privilege('mytable','........pg.dropped.2........','select');
+--dg-skip: relation pg_attribute cannot be opened: digres has no catalog tables
+--dg select has_column_privilege('mytable',2::int2,'select');
+--dg-skip: relation pg_attribute cannot be opened: digres has no catalog tables
+--dg select has_column_privilege('mytable',99::int2,'select');
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg revoke select on table mytable from regress_priv_user3;
+--dg-skip: relation pg_attribute cannot be opened: digres has no catalog tables
+--dg select has_column_privilege('mytable',2::int2,'select');
+--dg-skip: relation pg_attribute cannot be opened: digres has no catalog tables
+--dg select has_column_privilege('mytable',99::int2,'select');
+--dg-cascade
+--dg drop table mytable;
+
+-- Grant options
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+
+--dg-cascade
+--dg CREATE TABLE atest4 (a int);
+
+--dg-cascade
+--dg GRANT SELECT ON atest4 TO regress_priv_user2 WITH GRANT OPTION;
+--dg-cascade
+--dg GRANT UPDATE ON atest4 TO regress_priv_user2;
+--dg-cascade
+--dg GRANT SELECT ON atest4 TO GROUP regress_priv_group1 WITH GRANT OPTION;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user2;
+
+--dg-cascade
+--dg GRANT SELECT ON atest4 TO regress_priv_user3;
+--dg-cascade
+--dg GRANT UPDATE ON atest4 TO regress_priv_user3; -- fail
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+
+--dg-cascade
+--dg REVOKE SELECT ON atest4 FROM regress_priv_user3; -- does nothing
+--dg-cascade
+--dg SELECT has_table_privilege('regress_priv_user3', 'atest4', 'SELECT'); -- true
+--dg-cascade
+--dg REVOKE SELECT ON atest4 FROM regress_priv_user2; -- fail
+--dg-cascade
+--dg REVOKE GRANT OPTION FOR SELECT ON atest4 FROM regress_priv_user2 CASCADE; -- ok
+--dg-cascade
+--dg SELECT has_table_privilege('regress_priv_user2', 'atest4', 'SELECT'); -- true
+--dg-cascade
+--dg SELECT has_table_privilege('regress_priv_user3', 'atest4', 'SELECT'); -- false
+
+--dg-cascade
+--dg SELECT has_table_privilege('regress_priv_user1', 'atest4', 'SELECT WITH GRANT OPTION'); -- true
+
+
+-- security-restricted operations
+--dg-cascade
+--dg \c -
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE regress_sro_user;
+
+-- Check that index expressions and predicates are run as the table's owner
+
+-- A dummy index function checking current_user
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION sro_ifun(int) RETURNS int AS $$
+--dg BEGIN
+--dg 	-- Below we set the table's owner to regress_sro_user
+--dg 	ASSERT current_user = 'regress_sro_user',
+--dg 		format('sro_ifun(%s) called by %s', $1, current_user);
+--dg 	RETURN $1;
+--dg END;
+--dg $$ LANGUAGE plpgsql IMMUTABLE;
+-- Create a table owned by regress_sro_user
+--dg-cascade
+--dg CREATE TABLE sro_tab (a int);
+--dg-cascade
+--dg ALTER TABLE sro_tab OWNER TO regress_sro_user;
+--dg-cascade
+--dg INSERT INTO sro_tab VALUES (1), (2), (3);
+-- Create an expression index with a predicate
+--dg-cascade
+--dg CREATE INDEX sro_idx ON sro_tab ((sro_ifun(a) + sro_ifun(0)))
+--dg 	WHERE sro_ifun(a + 10) > sro_ifun(10);
+--dg-cascade
+--dg DROP INDEX sro_idx;
+-- Do the same concurrently
+--dg-cascade
+--dg CREATE INDEX CONCURRENTLY sro_idx ON sro_tab ((sro_ifun(a) + sro_ifun(0)))
+--dg 	WHERE sro_ifun(a + 10) > sro_ifun(10);
+-- REINDEX
+--dg-cascade
+--dg REINDEX TABLE sro_tab;
+--dg-cascade
+--dg REINDEX INDEX sro_idx;
+--dg-cascade
+--dg REINDEX TABLE CONCURRENTLY sro_tab;
+--dg-cascade
+--dg DROP INDEX sro_idx;
+-- CLUSTER
+--dg-cascade
+--dg CREATE INDEX sro_cluster_idx ON sro_tab ((sro_ifun(a) + sro_ifun(0)));
+--dg-cascade
+--dg CLUSTER sro_tab USING sro_cluster_idx;
+--dg-cascade
+--dg DROP INDEX sro_cluster_idx;
+-- BRIN index
+--dg-cascade
+--dg CREATE INDEX sro_brin ON sro_tab USING brin ((sro_ifun(a) + sro_ifun(0)));
+--dg-cascade
+--dg SELECT brin_desummarize_range('sro_brin', 0);
+--dg-cascade
+--dg SELECT brin_summarize_range('sro_brin', 0);
+--dg-cascade
+--dg DROP TABLE sro_tab;
+-- Check with a partitioned table
+--dg-cascade
+--dg CREATE TABLE sro_ptab (a int) PARTITION BY RANGE (a);
+--dg-cascade
+--dg ALTER TABLE sro_ptab OWNER TO regress_sro_user;
+--dg-cascade
+--dg CREATE TABLE sro_part PARTITION OF sro_ptab FOR VALUES FROM (1) TO (10);
+--dg-cascade
+--dg ALTER TABLE sro_part OWNER TO regress_sro_user;
+--dg-cascade
+--dg INSERT INTO sro_ptab VALUES (1), (2), (3);
+--dg-cascade
+--dg CREATE INDEX sro_pidx ON sro_ptab ((sro_ifun(a) + sro_ifun(0)))
+--dg 	WHERE sro_ifun(a + 10) > sro_ifun(10);
+--dg-cascade
+--dg REINDEX TABLE sro_ptab;
+--dg-cascade
+--dg REINDEX INDEX CONCURRENTLY sro_pidx;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_sro_user;
+--dg-cascade
+--dg CREATE FUNCTION unwanted_grant() RETURNS void LANGUAGE sql AS
+--dg 	'GRANT regress_priv_group2 TO regress_sro_user';
+--dg-cascade
+--dg CREATE FUNCTION mv_action() RETURNS bool LANGUAGE sql AS
+--dg 	'DECLARE c CURSOR WITH HOLD FOR SELECT public.unwanted_grant(); SELECT true';
+-- REFRESH of this MV will queue a GRANT at end of transaction
+--dg-cascade
+--dg CREATE MATERIALIZED VIEW sro_mv AS SELECT mv_action() WITH NO DATA;
+--dg-cascade
+--dg REFRESH MATERIALIZED VIEW sro_mv;
+--dg-cascade
+--dg \c -
+--dg-cascade
+--dg REFRESH MATERIALIZED VIEW sro_mv;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_sro_user;
+-- INSERT to this table will queue a GRANT at end of transaction
+--dg-cascade
+--dg CREATE TABLE sro_trojan_table ();
+--dg-cascade
+--dg CREATE FUNCTION sro_trojan() RETURNS trigger LANGUAGE plpgsql AS
+--dg 	'BEGIN PERFORM public.unwanted_grant(); RETURN NULL; END';
+--dg-cascade
+--dg CREATE CONSTRAINT TRIGGER t AFTER INSERT ON sro_trojan_table
+--dg     INITIALLY DEFERRED FOR EACH ROW EXECUTE PROCEDURE sro_trojan();
+-- Now, REFRESH will issue such an INSERT, queueing the GRANT
+--dg-cascade
+--dg CREATE OR REPLACE FUNCTION mv_action() RETURNS bool LANGUAGE sql AS
+--dg 	'INSERT INTO public.sro_trojan_table DEFAULT VALUES; SELECT true';
+--dg-cascade
+--dg REFRESH MATERIALIZED VIEW sro_mv;
+--dg-cascade
+--dg \c -
+--dg-cascade
+--dg REFRESH MATERIALIZED VIEW sro_mv;
+--dg-cascade
+--dg BEGIN;
+ 
+--dg-cascade
+--dg SET CONSTRAINTS ALL IMMEDIATE;
+ 
+--dg-cascade
+--dg REFRESH MATERIALIZED VIEW sro_mv;
+ 
+--dg-cascade
+--dg COMMIT;
+
+-- REFRESH MATERIALIZED VIEW CONCURRENTLY use of eval_const_expressions()
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_sro_user;
+--dg-cascade
+--dg CREATE FUNCTION unwanted_grant_nofail(int) RETURNS int
+--dg 	IMMUTABLE LANGUAGE plpgsql AS $$
+--dg BEGIN
+--dg 	PERFORM public.unwanted_grant();
+--dg 	RAISE WARNING 'owned';
+--dg 	RETURN 1;
+--dg EXCEPTION WHEN OTHERS THEN
+--dg 	RETURN 2;
+--dg END$$;
+--dg-cascade
+--dg CREATE MATERIALIZED VIEW sro_index_mv AS SELECT 1 AS c;
+--dg-cascade
+--dg CREATE UNIQUE INDEX ON sro_index_mv (c) WHERE unwanted_grant_nofail(1) > 0;
+--dg-cascade
+--dg \c -
+--dg-cascade
+--dg REFRESH MATERIALIZED VIEW CONCURRENTLY sro_index_mv;
+--dg-cascade
+--dg REFRESH MATERIALIZED VIEW sro_index_mv;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP OWNED BY regress_sro_user;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE regress_sro_user;
+
+
+-- Admin options
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user4;
+--dg-cascade
+--dg CREATE FUNCTION dogrant_ok() RETURNS void LANGUAGE sql SECURITY DEFINER AS
+--dg 	'GRANT regress_priv_group2 TO regress_priv_user5';
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT regress_priv_group2 TO regress_priv_user5; -- ok: had ADMIN OPTION
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET ROLE regress_priv_group2;
+--dg-cascade
+--dg GRANT regress_priv_group2 TO regress_priv_user5; -- fails: SET ROLE suspended privilege
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+--dg-cascade
+--dg GRANT regress_priv_group2 TO regress_priv_user5; -- fails: no ADMIN OPTION
+--dg-cascade
+--dg SELECT dogrant_ok();			-- ok: SECURITY DEFINER conveys ADMIN
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET ROLE regress_priv_group2;
+--dg-cascade
+--dg GRANT regress_priv_group2 TO regress_priv_user5; -- fails: SET ROLE did not help
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_group2;
+--dg-cascade
+--dg GRANT regress_priv_group2 TO regress_priv_user5; -- fails: no self-admin
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user4;
+--dg-cascade
+--dg DROP FUNCTION dogrant_ok();
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg REVOKE regress_priv_group2 FROM regress_priv_user5;
+
+
+-- has_sequence_privilege tests
+--dg-cascade
+--dg \c -
+
+--dg-cascade
+--dg CREATE SEQUENCE x_seq;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT USAGE on x_seq to regress_priv_user2;
+
+--dg-cascade
+--dg SELECT has_sequence_privilege('regress_priv_user1', 'atest1', 'SELECT');
+--dg-cascade
+--dg SELECT has_sequence_privilege('regress_priv_user1', 'x_seq', 'INSERT');
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_sequence_privilege('regress_priv_user1', 'x_seq', 'SELECT');
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user2;
+
+--dg-cascade
+--dg SELECT has_sequence_privilege('x_seq', 'USAGE');
+
+-- largeobject privilege tests
+--dg-cascade
+--dg \c -
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+
+--dg-cascade
+--dg SELECT lo_create(1001);
+--dg-cascade
+--dg SELECT lo_create(1002);
+--dg-cascade
+--dg SELECT lo_create(1003);
+--dg-cascade
+--dg SELECT lo_create(1004);
+--dg-cascade
+--dg SELECT lo_create(1005);
+
+--dg-skip: large objects are not supported
+--dg GRANT ALL ON LARGE OBJECT 1001 TO PUBLIC;
+--dg-skip: large objects are not supported
+--dg GRANT SELECT ON LARGE OBJECT 1003 TO regress_priv_user2;
+--dg-skip: large objects are not supported
+--dg GRANT SELECT,UPDATE ON LARGE OBJECT 1004 TO regress_priv_user2;
+--dg-skip: large objects are not supported
+--dg GRANT ALL ON LARGE OBJECT 1005 TO regress_priv_user2;
+--dg-skip: large objects are not supported
+--dg GRANT SELECT ON LARGE OBJECT 1005 TO regress_priv_user2 WITH GRANT OPTION;
+
+--dg-cascade
+--dg GRANT SELECT, INSERT ON LARGE OBJECT 1001 TO PUBLIC;	-- to be failed
+--dg-cascade
+--dg GRANT SELECT, UPDATE ON LARGE OBJECT 1001 TO nosuchuser;	-- to be failed
+--dg-cascade
+--dg GRANT SELECT, UPDATE ON LARGE OBJECT  999 TO PUBLIC;	-- to be failed
+
+--dg-cascade
+--dg \c -
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user2;
+
+--dg-cascade
+--dg SELECT lo_create(2001);
+--dg-cascade
+--dg SELECT lo_create(2002);
+
+--dg-cascade
+--dg SELECT loread(lo_open(1001, x'20000'::int), 32);	-- allowed, for now
+--dg-cascade
+--dg SELECT lowrite(lo_open(1001, x'40000'::int), 'abcd');	-- fail, wrong mode
+
+--dg-cascade
+--dg SELECT loread(lo_open(1001, x'40000'::int), 32);
+--dg-cascade
+--dg SELECT loread(lo_open(1002, x'40000'::int), 32);	-- to be denied
+--dg-cascade
+--dg SELECT loread(lo_open(1003, x'40000'::int), 32);
+--dg-cascade
+--dg SELECT loread(lo_open(1004, x'40000'::int), 32);
+
+--dg-cascade
+--dg SELECT lowrite(lo_open(1001, x'20000'::int), 'abcd');
+--dg-cascade
+--dg SELECT lowrite(lo_open(1002, x'20000'::int), 'abcd');	-- to be denied
+--dg-cascade
+--dg SELECT lowrite(lo_open(1003, x'20000'::int), 'abcd');	-- to be denied
+--dg-cascade
+--dg SELECT lowrite(lo_open(1004, x'20000'::int), 'abcd');
+
+--dg-skip: large objects are not supported
+--dg GRANT SELECT ON LARGE OBJECT 1005 TO regress_priv_user3;
+--dg-cascade
+--dg GRANT UPDATE ON LARGE OBJECT 1006 TO regress_priv_user3;	-- to be denied
+--dg-skip: large objects are not supported
+--dg REVOKE ALL ON LARGE OBJECT 2001, 2002 FROM PUBLIC;
+--dg-skip: large objects are not supported
+--dg GRANT ALL ON LARGE OBJECT 2001 TO regress_priv_user3;
+
+--dg-cascade
+--dg SELECT lo_unlink(1001);		-- to be denied
+--dg-cascade
+--dg SELECT lo_unlink(2002);
+
+--dg-cascade
+--dg \c -
+-- confirm ACL setting
+--dg-cascade
+--dg SELECT oid, pg_get_userbyid(lomowner) ownername, lomacl FROM pg_largeobject_metadata WHERE oid >= 1000 AND oid < 3000 ORDER BY oid;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user3;
+
+--dg-cascade
+--dg SELECT loread(lo_open(1001, x'40000'::int), 32);
+--dg-cascade
+--dg SELECT loread(lo_open(1003, x'40000'::int), 32);	-- to be denied
+--dg-cascade
+--dg SELECT loread(lo_open(1005, x'40000'::int), 32);
+
+--dg-cascade
+--dg SELECT lo_truncate(lo_open(1005, x'20000'::int), 10);	-- to be denied
+--dg-cascade
+--dg SELECT lo_truncate(lo_open(2001, x'20000'::int), 10);
+
+-- has_largeobject_privilege function
+
+-- superuser
+--dg-cascade
+--dg \c -
+--dg-cascade
+--dg SELECT has_largeobject_privilege(1001, 'SELECT');
+--dg-cascade
+--dg SELECT has_largeobject_privilege(1002, 'SELECT');
+--dg-cascade
+--dg SELECT has_largeobject_privilege(1003, 'SELECT');
+--dg-cascade
+--dg SELECT has_largeobject_privilege(1004, 'SELECT');
+
+--dg-cascade
+--dg SELECT has_largeobject_privilege(1001, 'UPDATE');
+--dg-cascade
+--dg SELECT has_largeobject_privilege(1002, 'UPDATE');
+--dg-cascade
+--dg SELECT has_largeobject_privilege(1003, 'UPDATE');
+--dg-cascade
+--dg SELECT has_largeobject_privilege(1004, 'UPDATE');
+
+-- not-existing large object
+--dg-cascade
+--dg SELECT has_largeobject_privilege(9999, 'SELECT');	-- NULL
+
+-- non-superuser
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user2;
+--dg-cascade
+--dg SELECT has_largeobject_privilege(1001, 'SELECT');
+--dg-cascade
+--dg SELECT has_largeobject_privilege(1002, 'SELECT');	-- false
+--dg-cascade
+--dg SELECT has_largeobject_privilege(1003, 'SELECT');
+--dg-cascade
+--dg SELECT has_largeobject_privilege(1004, 'SELECT');
+
+--dg-cascade
+--dg SELECT has_largeobject_privilege(1001, 'UPDATE');
+--dg-cascade
+--dg SELECT has_largeobject_privilege(1002, 'UPDATE');	-- false
+--dg-cascade
+--dg SELECT has_largeobject_privilege(1003, 'UPDATE');	-- false
+--dg-cascade
+--dg SELECT has_largeobject_privilege(1004, 'UPDATE');
+
+--dg-cascade
+--dg SELECT has_largeobject_privilege('regress_priv_user3', 1001, 'SELECT');
+--dg-cascade
+--dg SELECT has_largeobject_privilege('regress_priv_user3', 1003, 'SELECT');	-- false
+--dg-cascade
+--dg SELECT has_largeobject_privilege('regress_priv_user3', 1005, 'SELECT');
+
+--dg-cascade
+--dg SELECT has_largeobject_privilege('regress_priv_user3', 1005, 'UPDATE');	-- false
+--dg-cascade
+--dg SELECT has_largeobject_privilege('regress_priv_user3', 2001, 'UPDATE');
+
+-- compatibility mode in largeobject permission
+--dg-cascade
+--dg \c -
+--dg-skip: unrecognized configuration parameter "?"
+--dg SET lo_compat_privileges = false;	-- default setting
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user4;
+
+--dg-cascade
+--dg SELECT has_largeobject_privilege(1002, 'SELECT'); -- false
+--dg-cascade
+--dg SELECT has_largeobject_privilege(1002, 'UPDATE'); -- false
+
+--dg-cascade
+--dg SELECT loread(lo_open(1002, x'40000'::int), 32);	-- to be denied
+--dg-cascade
+--dg SELECT lowrite(lo_open(1002, x'20000'::int), 'abcd');	-- to be denied
+--dg-cascade
+--dg SELECT lo_truncate(lo_open(1002, x'20000'::int), 10);	-- to be denied
+--dg-cascade
+--dg SELECT lo_put(1002, 1, 'abcd');				-- to be denied
+--dg-cascade
+--dg SELECT lo_unlink(1002);					-- to be denied
+--dg-cascade
+--dg SELECT lo_export(1001, '/dev/null');			-- to be denied
+--dg-cascade
+--dg SELECT lo_import('/dev/null');				-- to be denied
+--dg-cascade
+--dg SELECT lo_import('/dev/null', 2003);			-- to be denied
+
+--dg-cascade
+--dg \c -
+--dg-skip: unrecognized configuration parameter "?"
+--dg SET lo_compat_privileges = true;	-- compatibility mode
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user4;
+
+--dg-cascade
+--dg SELECT has_largeobject_privilege(1002, 'SELECT'); -- true
+--dg-cascade
+--dg SELECT has_largeobject_privilege(1002, 'UPDATE'); -- true
+
+--dg-cascade
+--dg SELECT loread(lo_open(1002, x'40000'::int), 32);
+--dg-cascade
+--dg SELECT lowrite(lo_open(1002, x'20000'::int), 'abcd');
+--dg-cascade
+--dg SELECT lo_truncate(lo_open(1002, x'20000'::int), 10);
+--dg-cascade
+--dg SELECT lo_unlink(1002);
+--dg-cascade
+--dg SELECT lo_export(1001, '/dev/null');			-- to be denied
+
+-- don't allow unpriv users to access pg_largeobject contents
+--dg-cascade
+--dg \c -
+--dg-cascade
+--dg SELECT * FROM pg_largeobject LIMIT 0;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+--dg-cascade
+--dg SELECT * FROM pg_largeobject LIMIT 0;			-- to be denied
+
+-- pg_signal_backend can't signal superusers
+--dg-cascade
+--dg RESET SESSION AUTHORIZATION;
+--dg-cascade
+--dg BEGIN;
+--dg-skip: language "?" does not exist
+--dg CREATE OR REPLACE FUNCTION terminate_nothrow(pid int) RETURNS bool
+--dg 	LANGUAGE plpgsql SECURITY DEFINER SET client_min_messages = error AS $$
+--dg BEGIN
+--dg 	RETURN pg_terminate_backend($1);
+--dg EXCEPTION WHEN OTHERS THEN
+--dg 	RETURN false;
+--dg END$$;
+--dg-cascade
+--dg ALTER FUNCTION terminate_nothrow OWNER TO pg_signal_backend;
+--dg-cascade
+--dg SELECT backend_type FROM pg_stat_activity
+--dg WHERE CASE WHEN COALESCE(usesysid, 10) = 10 THEN terminate_nothrow(pid) END;
+--dg-cascade
+--dg ROLLBACK;
+
+-- test pg_database_owner
+--dg-cascade
+--dg RESET SESSION AUTHORIZATION;
+--dg-cascade
+--dg GRANT pg_database_owner TO regress_priv_user1;
+--dg-cascade
+--dg GRANT regress_priv_user1 TO pg_database_owner;
+--dg-cascade
+--dg CREATE TABLE datdba_only ();
+--dg-cascade
+--dg ALTER TABLE datdba_only OWNER TO pg_database_owner;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg REVOKE DELETE ON datdba_only FROM pg_database_owner;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT
+--dg 	pg_has_role('regress_priv_user1', 'pg_database_owner', 'USAGE') as priv,
+--dg 	pg_has_role('regress_priv_user1', 'pg_database_owner', 'MEMBER') as mem,
+--dg 	pg_has_role('regress_priv_user1', 'pg_database_owner',
+--dg 				'MEMBER WITH ADMIN OPTION') as admin;
+
+--dg-cascade
+--dg BEGIN;
+--dg-skip: language "?" does not exist
+--dg DO $$BEGIN EXECUTE format(
+--dg 	'ALTER DATABASE %I OWNER TO regress_priv_group2', current_catalog); END$$;
+--dg-cascade
+--dg SELECT
+--dg 	pg_has_role('regress_priv_user1', 'pg_database_owner', 'USAGE') as priv,
+--dg 	pg_has_role('regress_priv_user1', 'pg_database_owner', 'MEMBER') as mem,
+--dg 	pg_has_role('regress_priv_user1', 'pg_database_owner',
+--dg 				'MEMBER WITH ADMIN OPTION') as admin;
+--dg-cascade
+--dg SET SESSION AUTHORIZATION regress_priv_user1;
+--dg-cascade
+--dg TABLE information_schema.enabled_roles ORDER BY role_name COLLATE "C";
+--dg-cascade
+--dg TABLE information_schema.applicable_roles ORDER BY role_name COLLATE "C";
+--dg-cascade
+--dg INSERT INTO datdba_only DEFAULT VALUES;
+--dg-cascade
+--dg SAVEPOINT q;
+ 
+--dg-cascade
+--dg DELETE FROM datdba_only;
+ 
+--dg-cascade
+--dg ROLLBACK TO q;
+--dg-cascade
+--dg SET SESSION AUTHORIZATION regress_priv_user2;
+--dg-cascade
+--dg TABLE information_schema.enabled_roles;
+--dg-cascade
+--dg INSERT INTO datdba_only DEFAULT VALUES;
+--dg-cascade
+--dg ROLLBACK;
+
+-- test default ACLs
+--dg-cascade
+--dg \c -
+
+--dg-cascade
+--dg CREATE SCHEMA testns;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT ALL ON SCHEMA testns TO regress_priv_user1;
+
+--dg-cascade
+--dg CREATE TABLE testns.acltest1 (x int);
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_table_privilege('regress_priv_user1', 'testns.acltest1', 'SELECT'); -- no
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_table_privilege('regress_priv_user1', 'testns.acltest1', 'INSERT'); -- no
+
+-- placeholder for test with duplicated schema and role names
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
+--dg ALTER DEFAULT PRIVILEGES IN SCHEMA testns,testns GRANT SELECT ON TABLES TO public,public;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_table_privilege('regress_priv_user1', 'testns.acltest1', 'SELECT'); -- no
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_table_privilege('regress_priv_user1', 'testns.acltest1', 'INSERT'); -- no
+
+--dg-cascade
+--dg DROP TABLE testns.acltest1;
+--dg-cascade
+--dg CREATE TABLE testns.acltest1 (x int);
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_table_privilege('regress_priv_user1', 'testns.acltest1', 'SELECT'); -- yes
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_table_privilege('regress_priv_user1', 'testns.acltest1', 'INSERT'); -- no
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg ALTER DEFAULT PRIVILEGES IN SCHEMA testns GRANT INSERT ON TABLES TO regress_priv_user1;
+
+--dg-cascade
+--dg DROP TABLE testns.acltest1;
+--dg-cascade
+--dg CREATE TABLE testns.acltest1 (x int);
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_table_privilege('regress_priv_user1', 'testns.acltest1', 'SELECT'); -- yes
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_table_privilege('regress_priv_user1', 'testns.acltest1', 'INSERT'); -- yes
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg ALTER DEFAULT PRIVILEGES IN SCHEMA testns REVOKE INSERT ON TABLES FROM regress_priv_user1;
+
+--dg-cascade
+--dg DROP TABLE testns.acltest1;
+--dg-cascade
+--dg CREATE TABLE testns.acltest1 (x int);
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_table_privilege('regress_priv_user1', 'testns.acltest1', 'SELECT'); -- yes
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_table_privilege('regress_priv_user1', 'testns.acltest1', 'INSERT'); -- no
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg ALTER DEFAULT PRIVILEGES FOR ROLE regress_priv_user1 REVOKE EXECUTE ON FUNCTIONS FROM public;
+
+--dg-cascade
+--dg ALTER DEFAULT PRIVILEGES IN SCHEMA testns GRANT USAGE ON SCHEMAS TO regress_priv_user2; -- error
+
+-- Test makeaclitem()
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT makeaclitem('regress_priv_user1'::regrole, 'regress_priv_user2'::regrole,
+--dg 	'SELECT', TRUE);  -- single privilege
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT makeaclitem('regress_priv_user1'::regrole, 'regress_priv_user2'::regrole,
+--dg 	'SELECT, INSERT,  UPDATE , DELETE  ', FALSE);  -- multiple privileges
+--dg-cascade
+--dg SELECT makeaclitem('regress_priv_user1'::regrole, 'regress_priv_user2'::regrole,
+--dg 	'SELECT, fake_privilege', FALSE);  -- error
+
+-- Test quoting and dequoting of user names in ACLs
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE "regress_""quoted";
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT makeaclitem('regress_"quoted'::regrole, 'regress_"quoted'::regrole,
+--dg                    'SELECT', TRUE);
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT '"regress_""quoted"=r*/"regress_""quoted"'::aclitem;
+--dg-cascade
+--dg SELECT '""=r*/""'::aclitem;  -- used to be misparsed as """"
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE "regress_""quoted";
+
+-- Test non-throwing aclitem I/O
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT pg_input_is_valid('regress_priv_user1=r/regress_priv_user2', 'aclitem');
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT pg_input_is_valid('regress_priv_user1=r/', 'aclitem');
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT * FROM pg_input_error_info('regress_priv_user1=r/', 'aclitem');
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT pg_input_is_valid('regress_priv_user1=r/regress_no_such_user', 'aclitem');
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT * FROM pg_input_error_info('regress_priv_user1=r/regress_no_such_user', 'aclitem');
+--dg-cascade
+--dg SELECT pg_input_is_valid('regress_priv_user1=rY', 'aclitem');
+--dg-cascade
+--dg SELECT * FROM pg_input_error_info('regress_priv_user1=rY', 'aclitem');
+
+--
+-- Testing blanket default grants is very hazardous since it might change
+-- the privileges attached to objects created by concurrent regression tests.
+-- To avoid that, be sure to revoke the privileges again before committing.
+--
+--dg-cascade
+--dg BEGIN;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg ALTER DEFAULT PRIVILEGES GRANT USAGE ON SCHEMAS TO regress_priv_user2;
+
+--dg-cascade
+--dg CREATE SCHEMA testns2;
+
+--dg-cascade
+--dg SELECT has_schema_privilege('regress_priv_user2', 'testns2', 'USAGE'); -- yes
+--dg-cascade
+--dg SELECT has_schema_privilege('regress_priv_user6', 'testns2', 'USAGE'); -- yes
+--dg-cascade
+--dg SELECT has_schema_privilege('regress_priv_user2', 'testns2', 'CREATE'); -- no
+
+--dg-cascade
+--dg ALTER DEFAULT PRIVILEGES REVOKE USAGE ON SCHEMAS FROM regress_priv_user2;
+
+--dg-cascade
+--dg CREATE SCHEMA testns3;
+
+--dg-cascade
+--dg SELECT has_schema_privilege('regress_priv_user2', 'testns3', 'USAGE'); -- no
+--dg-cascade
+--dg SELECT has_schema_privilege('regress_priv_user2', 'testns3', 'CREATE'); -- no
+
+--dg-cascade
+--dg ALTER DEFAULT PRIVILEGES GRANT ALL ON SCHEMAS TO regress_priv_user2;
+
+--dg-cascade
+--dg CREATE SCHEMA testns4;
+
+--dg-cascade
+--dg SELECT has_schema_privilege('regress_priv_user2', 'testns4', 'USAGE'); -- yes
+--dg-cascade
+--dg SELECT has_schema_privilege('regress_priv_user2', 'testns4', 'CREATE'); -- yes
+
+--dg-cascade
+--dg ALTER DEFAULT PRIVILEGES REVOKE ALL ON SCHEMAS FROM regress_priv_user2;
+
+--dg-cascade
+--dg COMMIT;
+
+--
+-- Test for default privileges on large objects. This is done in a
+-- separate, rollbacked, transaction to avoid any trouble with other
+-- regression sessions.
+--
+
+--dg-cascade
+--dg BEGIN;
+
+--dg-cascade
+--dg SELECT lo_create(1007);
+--dg-cascade
+--dg SELECT has_largeobject_privilege('regress_priv_user2', 1007, 'SELECT'); -- no
+--dg-cascade
+--dg SELECT has_largeobject_privilege('regress_priv_user2', 1007, 'UPDATE'); -- no
+
+--dg-cascade
+--dg ALTER DEFAULT PRIVILEGES GRANT SELECT ON LARGE OBJECTS TO regress_priv_user2;
+
+--dg-cascade
+--dg SELECT lo_create(1008);
+--dg-cascade
+--dg SELECT has_largeobject_privilege('regress_priv_user2', 1008, 'SELECT'); -- yes
+--dg-cascade
+--dg SELECT has_largeobject_privilege('regress_priv_user6', 1008, 'SELECT'); -- no
+--dg-cascade
+--dg SELECT has_largeobject_privilege('regress_priv_user2', 1008, 'UPDATE'); -- no
+
+--dg-cascade
+--dg ALTER DEFAULT PRIVILEGES GRANT ALL ON LARGE OBJECTS TO regress_priv_user2;
+--dg-cascade
+--dg SELECT lo_create(1009);
+--dg-cascade
+--dg SELECT has_largeobject_privilege('regress_priv_user2', 1009, 'SELECT'); -- true
+--dg-cascade
+--dg SELECT has_largeobject_privilege('regress_priv_user2', 1009, 'UPDATE'); -- true
+
+--dg-cascade
+--dg ALTER DEFAULT PRIVILEGES REVOKE UPDATE ON LARGE OBJECTS FROM regress_priv_user2;
+--dg-cascade
+--dg SELECT lo_create(1010);
+--dg-cascade
+--dg SELECT has_largeobject_privilege('regress_priv_user2', 1010, 'SELECT'); -- true
+--dg-cascade
+--dg SELECT has_largeobject_privilege('regress_priv_user2', 1010, 'UPDATE'); -- false
+
+--dg-cascade
+--dg ROLLBACK;
+
+--dg-cascade
+--dg ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON LARGE OBJECTS TO public; -- error
+
+--dg-cascade
+--dg \c -
+
+-- Test for DROP OWNED BY with shared dependencies.  This is done in a
+-- separate, rollbacked, transaction to avoid any trouble with other
+-- regression sessions.
+--dg-cascade
+--dg BEGIN;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg ALTER DEFAULT PRIVILEGES GRANT ALL ON FUNCTIONS TO regress_priv_user2;
+--dg-cascade
+--dg ALTER DEFAULT PRIVILEGES GRANT ALL ON LARGE OBJECTS TO regress_priv_user2;
+--dg-cascade
+--dg ALTER DEFAULT PRIVILEGES GRANT ALL ON SCHEMAS TO regress_priv_user2;
+--dg-cascade
+--dg ALTER DEFAULT PRIVILEGES GRANT ALL ON SEQUENCES TO regress_priv_user2;
+--dg-cascade
+--dg ALTER DEFAULT PRIVILEGES GRANT ALL ON TABLES TO regress_priv_user2;
+--dg-cascade
+--dg ALTER DEFAULT PRIVILEGES GRANT ALL ON TYPES TO regress_priv_user2;
+--dg-cascade
+--dg SELECT count(*) FROM pg_shdepend
+--dg   WHERE deptype = 'a' AND
+--dg         refobjid = 'regress_priv_user2'::regrole AND
+--dg 	classid = 'pg_default_acl'::regclass;
+--dg-cascade
+--dg DROP OWNED BY regress_priv_user2, regress_priv_user2;
+--dg-cascade
+--dg SELECT count(*) FROM pg_shdepend
+--dg   WHERE deptype = 'a' AND
+--dg         refobjid = 'regress_priv_user2'::regrole AND
+--dg 	classid = 'pg_default_acl'::regclass;
+--dg-cascade
+--dg ROLLBACK;
+
+--dg-cascade
+--dg CREATE SCHEMA testns5;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_schema_privilege('regress_priv_user2', 'testns5', 'USAGE'); -- no
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_schema_privilege('regress_priv_user2', 'testns5', 'CREATE'); -- no
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET ROLE regress_priv_user1;
+
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION testns.foo() RETURNS int AS 'select 1' LANGUAGE sql;
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
+--dg CREATE AGGREGATE testns.agg1(int) (sfunc = int4pl, stype = int4);
+--dg-skip: language "?" does not exist
+--dg CREATE PROCEDURE testns.bar() AS 'select 1' LANGUAGE sql;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_function_privilege('regress_priv_user2', 'testns.foo()', 'EXECUTE'); -- no
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_function_privilege('regress_priv_user2', 'testns.agg1(int)', 'EXECUTE'); -- no
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_function_privilege('regress_priv_user2', 'testns.bar()', 'EXECUTE'); -- no
+
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
+--dg ALTER DEFAULT PRIVILEGES IN SCHEMA testns GRANT EXECUTE ON ROUTINES to public;
+
+--dg-cascade
+--dg DROP FUNCTION testns.foo();
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION testns.foo() RETURNS int AS 'select 1' LANGUAGE sql;
+--dg-cascade
+--dg DROP AGGREGATE testns.agg1(int);
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
+--dg CREATE AGGREGATE testns.agg1(int) (sfunc = int4pl, stype = int4);
+--dg-cascade
+--dg DROP PROCEDURE testns.bar();
+--dg-skip: language "?" does not exist
+--dg CREATE PROCEDURE testns.bar() AS 'select 1' LANGUAGE sql;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_function_privilege('regress_priv_user2', 'testns.foo()', 'EXECUTE'); -- yes
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_function_privilege('regress_priv_user2', 'testns.agg1(int)', 'EXECUTE'); -- yes
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_function_privilege('regress_priv_user2', 'testns.bar()', 'EXECUTE'); -- yes (counts as function here)
+
+--dg-cascade
+--dg DROP FUNCTION testns.foo();
+--dg-cascade
+--dg DROP AGGREGATE testns.agg1(int);
+--dg-cascade
+--dg DROP PROCEDURE testns.bar();
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg ALTER DEFAULT PRIVILEGES FOR ROLE regress_priv_user1 REVOKE USAGE ON TYPES FROM public;
+
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg CREATE DOMAIN testns.priv_testdomain1 AS int;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_type_privilege('regress_priv_user2', 'testns.priv_testdomain1', 'USAGE'); -- no
+
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
+--dg ALTER DEFAULT PRIVILEGES IN SCHEMA testns GRANT USAGE ON TYPES to public;
+
+--dg-cascade
+--dg DROP DOMAIN testns.priv_testdomain1;
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg CREATE DOMAIN testns.priv_testdomain1 AS int;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_type_privilege('regress_priv_user2', 'testns.priv_testdomain1', 'USAGE'); -- yes
+
+--dg-cascade
+--dg DROP DOMAIN testns.priv_testdomain1;
+
+--dg-cascade
+--dg RESET ROLE;
+
+--dg-cascade
+--dg SELECT count(*)
+--dg   FROM pg_default_acl d LEFT JOIN pg_namespace n ON defaclnamespace = n.oid
+--dg   WHERE nspname = 'testns';
+
+--dg-cascade
+--dg DROP SCHEMA testns CASCADE;
+--dg-cascade
+--dg DROP SCHEMA testns2 CASCADE;
+--dg-cascade
+--dg DROP SCHEMA testns3 CASCADE;
+--dg-cascade
+--dg DROP SCHEMA testns4 CASCADE;
+--dg-cascade
+--dg DROP SCHEMA testns5 CASCADE;
+
+--dg-cascade
+--dg SELECT d.*     -- check that entries went away
+--dg   FROM pg_default_acl d LEFT JOIN pg_namespace n ON defaclnamespace = n.oid
+--dg   WHERE nspname IS NULL AND defaclnamespace != 0;
+
+
+-- Grant on all objects of given type in a schema
+--dg-cascade
+--dg \c -
+
+--dg-cascade
+--dg CREATE SCHEMA testns;
+--dg-cascade
+--dg CREATE TABLE testns.t1 (f1 int);
+--dg-cascade
+--dg CREATE TABLE testns.t2 (f1 int);
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_table_privilege('regress_priv_user1', 'testns.t1', 'SELECT'); -- false
+
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
+--dg GRANT ALL ON ALL TABLES IN SCHEMA testns TO regress_priv_user1;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_table_privilege('regress_priv_user1', 'testns.t1', 'SELECT'); -- true
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_table_privilege('regress_priv_user1', 'testns.t2', 'SELECT'); -- true
+
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
+--dg REVOKE ALL ON ALL TABLES IN SCHEMA testns FROM regress_priv_user1;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_table_privilege('regress_priv_user1', 'testns.t1', 'SELECT'); -- false
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_table_privilege('regress_priv_user1', 'testns.t2', 'SELECT'); -- false
+
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION testns.priv_testfunc(int) RETURNS int AS 'select 3 * $1;' LANGUAGE sql;
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
+--dg CREATE AGGREGATE testns.priv_testagg(int) (sfunc = int4pl, stype = int4);
+--dg-skip: language "?" does not exist
+--dg CREATE PROCEDURE testns.priv_testproc(int) AS 'select 3' LANGUAGE sql;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_function_privilege('regress_priv_user1', 'testns.priv_testfunc(int)', 'EXECUTE'); -- true by default
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_function_privilege('regress_priv_user1', 'testns.priv_testagg(int)', 'EXECUTE'); -- true by default
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_function_privilege('regress_priv_user1', 'testns.priv_testproc(int)', 'EXECUTE'); -- true by default
+
+--dg-skip: relation pg_proc cannot be written: digres has no catalog tables
+--dg REVOKE ALL ON ALL FUNCTIONS IN SCHEMA testns FROM PUBLIC;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_function_privilege('regress_priv_user1', 'testns.priv_testfunc(int)', 'EXECUTE'); -- false
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_function_privilege('regress_priv_user1', 'testns.priv_testagg(int)', 'EXECUTE'); -- false
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_function_privilege('regress_priv_user1', 'testns.priv_testproc(int)', 'EXECUTE'); -- still true, not a function
+
+--dg-skip: relation pg_proc cannot be written: digres has no catalog tables
+--dg REVOKE ALL ON ALL PROCEDURES IN SCHEMA testns FROM PUBLIC;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_function_privilege('regress_priv_user1', 'testns.priv_testproc(int)', 'EXECUTE'); -- now false
+
+--dg-skip: relation pg_proc cannot be written: digres has no catalog tables
+--dg GRANT ALL ON ALL ROUTINES IN SCHEMA testns TO PUBLIC;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_function_privilege('regress_priv_user1', 'testns.priv_testfunc(int)', 'EXECUTE'); -- true
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_function_privilege('regress_priv_user1', 'testns.priv_testagg(int)', 'EXECUTE'); -- true
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_function_privilege('regress_priv_user1', 'testns.priv_testproc(int)', 'EXECUTE'); -- true
+
+--dg-cascade
+--dg DROP SCHEMA testns CASCADE;
+
+
+-- Change owner of the schema & and rename of new schema owner
+--dg-cascade
+--dg \c -
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE regress_schemauser1 superuser login;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE regress_schemauser2 superuser login;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION ROLE regress_schemauser1;
+--dg-cascade
+--dg CREATE SCHEMA testns;
+
+--dg-cascade
+--dg SELECT nspname, rolname FROM pg_namespace, pg_roles WHERE pg_namespace.nspname = 'testns' AND pg_namespace.nspowner = pg_roles.oid;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg ALTER SCHEMA testns OWNER TO regress_schemauser2;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg ALTER ROLE regress_schemauser2 RENAME TO regress_schemauser_renamed;
+--dg-cascade
+--dg SELECT nspname, rolname FROM pg_namespace, pg_roles WHERE pg_namespace.nspname = 'testns' AND pg_namespace.nspowner = pg_roles.oid;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg set session role regress_schemauser_renamed;
+--dg-cascade
+--dg DROP SCHEMA testns CASCADE;
+
+-- clean up
+--dg-cascade
+--dg \c -
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE regress_schemauser1;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE regress_schemauser_renamed;
+
+
+-- test that dependent privileges are revoked (or not) properly
+--dg-cascade
+--dg \c -
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg set session role regress_priv_user1;
+--dg-cascade
+--dg create table dep_priv_test (a int);
+--dg-cascade
+--dg grant select on dep_priv_test to regress_priv_user2 with grant option;
+--dg-cascade
+--dg grant select on dep_priv_test to regress_priv_user3 with grant option;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg set session role regress_priv_user2;
+--dg-cascade
+--dg grant select on dep_priv_test to regress_priv_user4 with grant option;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg set session role regress_priv_user3;
+--dg-cascade
+--dg grant select on dep_priv_test to regress_priv_user4 with grant option;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg set session role regress_priv_user4;
+--dg-cascade
+--dg grant select on dep_priv_test to regress_priv_user5;
+--dg-cascade
+--dg \dp dep_priv_test
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg set session role regress_priv_user2;
+--dg-cascade
+--dg revoke select on dep_priv_test from regress_priv_user4 cascade;
+--dg-cascade
+--dg \dp dep_priv_test
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg set session role regress_priv_user3;
+--dg-cascade
+--dg revoke select on dep_priv_test from regress_priv_user4 cascade;
+--dg-cascade
+--dg \dp dep_priv_test
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg set session role regress_priv_user1;
+--dg-cascade
+--dg drop table dep_priv_test;
+
+
+-- clean up
+
+--dg-cascade
+--dg \c
+
+--dg-cascade
+--dg drop sequence x_seq;
+
+--dg-cascade
+--dg DROP AGGREGATE priv_testagg1(int);
+--dg-cascade
+--dg DROP FUNCTION priv_testfunc2(int);
+--dg-cascade
+--dg DROP FUNCTION priv_testfunc4(boolean);
+--dg-cascade
+--dg DROP PROCEDURE priv_testproc1(int);
+
+--dg-cascade
+--dg DROP VIEW atestv0;
+--dg-cascade
+--dg DROP VIEW atestv1;
+--dg-cascade
+--dg DROP VIEW atestv2;
+-- this should cascade to drop atestv4
+--dg-cascade
+--dg DROP VIEW atestv3 CASCADE;
+-- this should complain "does not exist"
+--dg-cascade
+--dg DROP VIEW atestv4;
+
+--dg-cascade
+--dg DROP TABLE atest1;
+--dg-cascade
+--dg DROP TABLE atest2;
+--dg-cascade
+--dg DROP TABLE atest3;
+--dg-cascade
+--dg DROP TABLE atest4;
+--dg-cascade
+--dg DROP TABLE atest5;
+--dg-cascade
+--dg DROP TABLE atest6;
+--dg-cascade
+--dg DROP TABLE atestc;
+--dg-cascade
+--dg DROP TABLE atestp1;
+--dg-cascade
+--dg DROP TABLE atestp2;
+
+--dg-cascade
+--dg SELECT lo_unlink(oid) FROM pg_largeobject_metadata WHERE oid >= 1000 AND oid < 3000 ORDER BY oid;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP GROUP regress_priv_group1;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP GROUP regress_priv_group2;
+
+-- these are needed to clean up permissions
+--dg-skip: language "?" does not exist
+--dg REVOKE USAGE ON LANGUAGE sql FROM regress_priv_user1;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP OWNED BY regress_priv_user1;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP USER regress_priv_user1;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP USER regress_priv_user2;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP USER regress_priv_user3;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP USER regress_priv_user4;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP USER regress_priv_user5;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP USER regress_priv_user6;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP USER regress_priv_user7;
+--dg-cascade
+--dg DROP USER regress_priv_user8; -- does not exist
+
+
+-- leave some default ACLs for pg_upgrade's dump-restore test input.
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg ALTER DEFAULT PRIVILEGES FOR ROLE pg_signal_backend
+--dg 	REVOKE USAGE ON TYPES FROM pg_signal_backend;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg ALTER DEFAULT PRIVILEGES FOR ROLE pg_read_all_settings
+--dg 	REVOKE USAGE ON TYPES FROM pg_read_all_settings;
+
+
+-- permissions with LOCK TABLE
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE USER regress_locktable_user;
+--dg-cascade
+--dg CREATE TABLE lock_table (a int);
+
+-- LOCK TABLE and SELECT permission
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT SELECT ON lock_table TO regress_locktable_user;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_locktable_user;
+--dg-cascade
+--dg BEGIN;
+--dg-cascade
+--dg LOCK TABLE lock_table IN ACCESS SHARE MODE; -- should pass
+--dg-cascade
+--dg COMMIT;
+--dg-cascade
+--dg BEGIN;
+--dg-cascade
+--dg LOCK TABLE lock_table IN ROW EXCLUSIVE MODE; -- should fail
+--dg-cascade
+--dg ROLLBACK;
+--dg-cascade
+--dg BEGIN;
+--dg-cascade
+--dg LOCK TABLE lock_table IN ACCESS EXCLUSIVE MODE; -- should fail
+--dg-cascade
+--dg ROLLBACK;
+--dg-cascade
+--dg \c
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg REVOKE SELECT ON lock_table FROM regress_locktable_user;
+
+-- LOCK TABLE and INSERT permission
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT INSERT ON lock_table TO regress_locktable_user;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_locktable_user;
+--dg-cascade
+--dg BEGIN;
+--dg-cascade
+--dg LOCK TABLE lock_table IN ACCESS SHARE MODE; -- should pass
+--dg-cascade
+--dg ROLLBACK;
+--dg-cascade
+--dg BEGIN;
+--dg-cascade
+--dg LOCK TABLE lock_table IN ROW EXCLUSIVE MODE; -- should pass
+--dg-cascade
+--dg COMMIT;
+--dg-cascade
+--dg BEGIN;
+--dg-cascade
+--dg LOCK TABLE lock_table IN ACCESS EXCLUSIVE MODE; -- should fail
+--dg-cascade
+--dg ROLLBACK;
+--dg-cascade
+--dg \c
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg REVOKE INSERT ON lock_table FROM regress_locktable_user;
+
+-- LOCK TABLE and UPDATE permission
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT UPDATE ON lock_table TO regress_locktable_user;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_locktable_user;
+--dg-cascade
+--dg BEGIN;
+--dg-cascade
+--dg LOCK TABLE lock_table IN ACCESS SHARE MODE; -- should pass
+--dg-cascade
+--dg ROLLBACK;
+--dg-cascade
+--dg BEGIN;
+--dg-cascade
+--dg LOCK TABLE lock_table IN ROW EXCLUSIVE MODE; -- should pass
+--dg-cascade
+--dg COMMIT;
+--dg-cascade
+--dg BEGIN;
+--dg-cascade
+--dg LOCK TABLE lock_table IN ACCESS EXCLUSIVE MODE; -- should pass
+--dg-cascade
+--dg COMMIT;
+--dg-cascade
+--dg \c
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg REVOKE UPDATE ON lock_table FROM regress_locktable_user;
+
+-- LOCK TABLE and DELETE permission
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT DELETE ON lock_table TO regress_locktable_user;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_locktable_user;
+--dg-cascade
+--dg BEGIN;
+--dg-cascade
+--dg LOCK TABLE lock_table IN ACCESS SHARE MODE; -- should pass
+--dg-cascade
+--dg ROLLBACK;
+--dg-cascade
+--dg BEGIN;
+--dg-cascade
+--dg LOCK TABLE lock_table IN ROW EXCLUSIVE MODE; -- should pass
+--dg-cascade
+--dg COMMIT;
+--dg-cascade
+--dg BEGIN;
+--dg-cascade
+--dg LOCK TABLE lock_table IN ACCESS EXCLUSIVE MODE; -- should pass
+--dg-cascade
+--dg COMMIT;
+--dg-cascade
+--dg \c
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg REVOKE DELETE ON lock_table FROM regress_locktable_user;
+
+-- LOCK TABLE and TRUNCATE permission
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT TRUNCATE ON lock_table TO regress_locktable_user;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_locktable_user;
+--dg-cascade
+--dg BEGIN;
+--dg-cascade
+--dg LOCK TABLE lock_table IN ACCESS SHARE MODE; -- should pass
+--dg-cascade
+--dg ROLLBACK;
+--dg-cascade
+--dg BEGIN;
+--dg-cascade
+--dg LOCK TABLE lock_table IN ROW EXCLUSIVE MODE; -- should pass
+--dg-cascade
+--dg COMMIT;
+--dg-cascade
+--dg BEGIN;
+--dg-cascade
+--dg LOCK TABLE lock_table IN ACCESS EXCLUSIVE MODE; -- should pass
+--dg-cascade
+--dg COMMIT;
+--dg-cascade
+--dg \c
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg REVOKE TRUNCATE ON lock_table FROM regress_locktable_user;
+
+-- LOCK TABLE and MAINTAIN permission
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT MAINTAIN ON lock_table TO regress_locktable_user;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_locktable_user;
+--dg-cascade
+--dg BEGIN;
+--dg-cascade
+--dg LOCK TABLE lock_table IN ACCESS SHARE MODE; -- should pass
+--dg-cascade
+--dg ROLLBACK;
+--dg-cascade
+--dg BEGIN;
+--dg-cascade
+--dg LOCK TABLE lock_table IN ROW EXCLUSIVE MODE; -- should pass
+--dg-cascade
+--dg COMMIT;
+--dg-cascade
+--dg BEGIN;
+--dg-cascade
+--dg LOCK TABLE lock_table IN ACCESS EXCLUSIVE MODE; -- should pass
+--dg-cascade
+--dg COMMIT;
+--dg-cascade
+--dg \c
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg REVOKE MAINTAIN ON lock_table FROM regress_locktable_user;
+
+-- clean up
+--dg-cascade
+--dg DROP TABLE lock_table;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP USER regress_locktable_user;
+
+-- test to check privileges of system views pg_shmem_allocations,
+-- pg_shmem_allocations_numa and pg_backend_memory_contexts.
+
+-- switch to superuser
+--dg-cascade
+--dg \c -
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE regress_readallstats;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_table_privilege('regress_readallstats','pg_aios','SELECT'); -- no
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_table_privilege('regress_readallstats','pg_backend_memory_contexts','SELECT'); -- no
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_table_privilege('regress_readallstats','pg_shmem_allocations','SELECT'); -- no
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_table_privilege('regress_readallstats','pg_shmem_allocations_numa','SELECT'); -- no
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT pg_read_all_stats TO regress_readallstats;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_table_privilege('regress_readallstats','pg_aios','SELECT'); -- yes
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_table_privilege('regress_readallstats','pg_backend_memory_contexts','SELECT'); -- yes
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_table_privilege('regress_readallstats','pg_shmem_allocations','SELECT'); -- yes
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SELECT has_table_privilege('regress_readallstats','pg_shmem_allocations_numa','SELECT'); -- yes
+
+-- run query to ensure that functions within views can be executed
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET ROLE regress_readallstats;
+--dg-cascade
+--dg SELECT COUNT(*) >= 0 AS ok FROM pg_aios;
+--dg-cascade
+--dg SELECT COUNT(*) >= 0 AS ok FROM pg_backend_memory_contexts;
+--dg-cascade
+--dg SELECT COUNT(*) >= 0 AS ok FROM pg_shmem_allocations;
+--dg-cascade
+--dg RESET ROLE;
+
+-- clean up
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE regress_readallstats;
+
+-- test role grantor machinery
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE regress_group;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE regress_group_direct_manager;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE regress_group_indirect_manager;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE regress_group_member;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT regress_group TO regress_group_direct_manager WITH INHERIT FALSE, ADMIN TRUE;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT regress_group_direct_manager TO regress_group_indirect_manager;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_group_direct_manager;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT regress_group TO regress_group_member;
+--dg-cascade
+--dg SELECT member::regrole::text, CASE WHEN grantor = 10 THEN 'BOOTSTRAP SUPERUSER' ELSE grantor::regrole::text END FROM pg_auth_members WHERE roleid = 'regress_group'::regrole ORDER BY 1, 2;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg REVOKE regress_group FROM regress_group_member;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_group_indirect_manager;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT regress_group TO regress_group_member;
+--dg-cascade
+--dg SELECT member::regrole::text, CASE WHEN grantor = 10 THEN 'BOOTSTRAP SUPERUSER' ELSE grantor::regrole::text END FROM pg_auth_members WHERE roleid = 'regress_group'::regrole ORDER BY 1, 2;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg REVOKE regress_group FROM regress_group_member;
+
+--dg-cascade
+--dg RESET SESSION AUTHORIZATION;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE regress_group;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE regress_group_direct_manager;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE regress_group_indirect_manager;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE regress_group_member;
+
+-- test SET and INHERIT options with object ownership changes
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE regress_roleoption_protagonist;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE regress_roleoption_donor;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE regress_roleoption_recipient;
+--dg-cascade
+--dg CREATE SCHEMA regress_roleoption;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg GRANT CREATE, USAGE ON SCHEMA regress_roleoption TO PUBLIC;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT regress_roleoption_donor TO regress_roleoption_protagonist WITH INHERIT TRUE, SET FALSE;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT regress_roleoption_recipient TO regress_roleoption_protagonist WITH INHERIT FALSE, SET TRUE;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_roleoption_protagonist;
+--dg-cascade
+--dg CREATE TABLE regress_roleoption.t1 (a int);
+--dg-cascade
+--dg CREATE TABLE regress_roleoption.t2 (a int);
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_roleoption_donor;
+--dg-cascade
+--dg CREATE TABLE regress_roleoption.t3 (a int);
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_roleoption_recipient;
+--dg-cascade
+--dg CREATE TABLE regress_roleoption.t4 (a int);
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_roleoption_protagonist;
+--dg-cascade
+--dg ALTER TABLE regress_roleoption.t1 OWNER TO regress_roleoption_donor; -- fails, can't be come donor
+--dg-cascade
+--dg ALTER TABLE regress_roleoption.t2 OWNER TO regress_roleoption_recipient; -- works
+--dg-cascade
+--dg ALTER TABLE regress_roleoption.t3 OWNER TO regress_roleoption_protagonist; -- works
+--dg-cascade
+--dg ALTER TABLE regress_roleoption.t4 OWNER TO regress_roleoption_protagonist; -- fails, we don't inherit from recipient
+--dg-cascade
+--dg RESET SESSION AUTHORIZATION;
+--dg-cascade
+--dg DROP TABLE regress_roleoption.t1;
+--dg-cascade
+--dg DROP TABLE regress_roleoption.t2;
+--dg-cascade
+--dg DROP TABLE regress_roleoption.t3;
+--dg-cascade
+--dg DROP TABLE regress_roleoption.t4;
+--dg-cascade
+--dg DROP SCHEMA regress_roleoption;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE regress_roleoption_protagonist;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE regress_roleoption_donor;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE regress_roleoption_recipient;
+
+-- MAINTAIN
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE regress_no_maintain;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE regress_maintain;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE regress_maintain_all IN ROLE pg_maintain;
+--dg-cascade
+--dg CREATE TABLE maintain_test (a INT);
+--dg-cascade
+--dg CREATE INDEX ON maintain_test (a);
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT MAINTAIN ON maintain_test TO regress_maintain;
+--dg-skip: a relation's storage cannot be made: digres has no catalog tables
+--dg CREATE MATERIALIZED VIEW refresh_test AS SELECT 1;
+--dg-cascade
+--dg GRANT MAINTAIN ON refresh_test TO regress_maintain;
+--dg-cascade
+--dg CREATE SCHEMA reindex_test;
+
+-- negative tests; should fail
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET ROLE regress_no_maintain;
+--dg-cascade
+--dg VACUUM maintain_test;
+--dg-cascade
+--dg ANALYZE maintain_test;
+--dg-cascade
+--dg VACUUM (ANALYZE) maintain_test;
+--dg-cascade
+--dg CLUSTER maintain_test USING maintain_test_a_idx;
+--dg-cascade
+--dg REFRESH MATERIALIZED VIEW refresh_test;
+--dg-cascade
+--dg REINDEX TABLE maintain_test;
+--dg-cascade
+--dg REINDEX INDEX maintain_test_a_idx;
+--dg-cascade
+--dg REINDEX SCHEMA reindex_test;
+--dg-cascade
+--dg RESET ROLE;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET ROLE regress_maintain;
+--dg-cascade
+--dg VACUUM maintain_test;
+--dg-cascade
+--dg ANALYZE maintain_test;
+--dg-cascade
+--dg VACUUM (ANALYZE) maintain_test;
+--dg-cascade
+--dg CLUSTER maintain_test USING maintain_test_a_idx;
+--dg-cascade
+--dg REFRESH MATERIALIZED VIEW refresh_test;
+--dg-cascade
+--dg REINDEX TABLE maintain_test;
+--dg-cascade
+--dg REINDEX INDEX maintain_test_a_idx;
+--dg-cascade
+--dg REINDEX SCHEMA reindex_test;
+--dg-cascade
+--dg RESET ROLE;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET ROLE regress_maintain_all;
+--dg-cascade
+--dg VACUUM maintain_test;
+--dg-cascade
+--dg ANALYZE maintain_test;
+--dg-cascade
+--dg VACUUM (ANALYZE) maintain_test;
+--dg-cascade
+--dg CLUSTER maintain_test USING maintain_test_a_idx;
+--dg-cascade
+--dg REFRESH MATERIALIZED VIEW refresh_test;
+--dg-cascade
+--dg REINDEX TABLE maintain_test;
+--dg-cascade
+--dg REINDEX INDEX maintain_test_a_idx;
+--dg-cascade
+--dg REINDEX SCHEMA reindex_test;
+--dg-cascade
+--dg RESET ROLE;
+
+--dg-cascade
+--dg DROP TABLE maintain_test;
+--dg-cascade
+--dg DROP MATERIALIZED VIEW refresh_test;
+--dg-cascade
+--dg DROP SCHEMA reindex_test;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE regress_no_maintain;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE regress_maintain;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE regress_maintain_all;
+
+-- grantor selection
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE regress_grantor1;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE regress_grantor2 ROLE regress_grantor1;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE regress_grantor3;
+--dg-cascade
+--dg CREATE TABLE grantor_test1 ();
+--dg-cascade
+--dg CREATE TABLE grantor_test2 ();
+--dg-cascade
+--dg CREATE TABLE grantor_test3 ();
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT SELECT ON grantor_test2 TO regress_grantor1 WITH GRANT OPTION;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT SELECT, UPDATE ON grantor_test3 TO regress_grantor2 WITH GRANT OPTION;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET ROLE regress_grantor1;
+--dg-cascade
+--dg GRANT SELECT, UPDATE ON grantor_test1 TO regress_grantor3;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT SELECT, UPDATE ON grantor_test2 TO regress_grantor3;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT SELECT, UPDATE ON grantor_test3 TO regress_grantor3;
+--dg-cascade
+--dg RESET ROLE;
+
+--dg-cascade
+--dg SELECT * FROM information_schema.table_privileges t
+--dg 	WHERE grantor LIKE 'regress_grantor%' ORDER BY ROW(t.*);
+
+--dg-cascade
+--dg DROP TABLE grantor_test1, grantor_test2, grantor_test3;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE regress_grantor1, regress_grantor2, regress_grantor3;

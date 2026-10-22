@@ -1,0 +1,15 @@
+--dg-skip: function ?(...) does not exist
+--dg SELECT NOT(pg_numa_available()) AS skip_test \gset
+\if :skip_test
+--dg-cascade
+--dg SELECT COUNT(*) = 0 AS ok FROM pg_shmem_allocations_numa;
+--dg-cascade
+--dg \quit
+\endif
+
+-- switch to superuser
+--dg-cascade
+--dg \c -
+
+--dg-cascade
+--dg SELECT COUNT(*) >= 0 AS ok FROM pg_shmem_allocations_numa;

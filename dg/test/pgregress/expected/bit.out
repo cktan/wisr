@@ -1,0 +1,610 @@
+--
+-- BIT types
+--
+--
+-- Build tables for testing
+--
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE BIT_TABLE(b BIT(11));
+--dg-cascade
+--dg INSERT INTO BIT_TABLE VALUES (B'10'); -- too short
+--dg-cascade
+--dg INSERT INTO BIT_TABLE VALUES (B'00000000000');
+--dg-cascade
+--dg INSERT INTO BIT_TABLE VALUES (B'11011000000');
+--dg-cascade
+--dg INSERT INTO BIT_TABLE VALUES (B'01010101010');
+--dg-cascade
+--dg INSERT INTO BIT_TABLE VALUES (B'101011111010'); -- too long
+--INSERT INTO BIT_TABLE VALUES ('X554');
+--INSERT INTO BIT_TABLE VALUES ('X555');
+--dg-cascade
+--dg SELECT * FROM BIT_TABLE;
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE VARBIT_TABLE(v BIT VARYING(11));
+--dg-cascade
+--dg INSERT INTO VARBIT_TABLE VALUES (B'');
+--dg-cascade
+--dg INSERT INTO VARBIT_TABLE VALUES (B'0');
+--dg-cascade
+--dg INSERT INTO VARBIT_TABLE VALUES (B'010101');
+--dg-cascade
+--dg INSERT INTO VARBIT_TABLE VALUES (B'01010101010');
+--dg-cascade
+--dg INSERT INTO VARBIT_TABLE VALUES (B'101011111010'); -- too long
+--INSERT INTO VARBIT_TABLE VALUES ('X554');
+--INSERT INTO VARBIT_TABLE VALUES ('X555');
+--dg-cascade
+--dg SELECT * FROM VARBIT_TABLE;
+-- Literals with syntax errors
+SELECT b' 0';
+ERROR:  " " is not a valid binary digit
+LINE 1: SELECT b' 0';
+               ^
+SELECT b'0 ';
+ERROR:  " " is not a valid binary digit
+LINE 1: SELECT b'0 ';
+               ^
+SELECT x' 0';
+ERROR:  " " is not a valid hexadecimal digit
+LINE 1: SELECT x' 0';
+               ^
+SELECT x'0 ';
+ERROR:  " " is not a valid hexadecimal digit
+LINE 1: SELECT x'0 ';
+               ^
+-- Concatenation
+--dg-cascade
+--dg SELECT v, b, (v || b) AS concat
+--dg        FROM BIT_TABLE, VARBIT_TABLE
+--dg        ORDER BY 3;
+-- Length
+--dg-cascade
+--dg SELECT b, length(b) AS lb
+--dg        FROM BIT_TABLE;
+--dg-cascade
+--dg SELECT v, length(v) AS lv
+--dg        FROM VARBIT_TABLE;
+-- Substring
+--dg-cascade
+--dg SELECT b,
+--dg        SUBSTRING(b FROM 2 FOR 4) AS sub_2_4,
+--dg        SUBSTRING(b FROM 7 FOR 13) AS sub_7_13,
+--dg        SUBSTRING(b FROM 6) AS sub_6
+--dg        FROM BIT_TABLE;
+--dg-cascade
+--dg SELECT v,
+--dg        SUBSTRING(v FROM 2 FOR 4) AS sub_2_4,
+--dg        SUBSTRING(v FROM 7 FOR 13) AS sub_7_13,
+--dg        SUBSTRING(v FROM 6) AS sub_6
+--dg        FROM VARBIT_TABLE;
+-- test overflow cases
+SELECT SUBSTRING('01010101'::bit(8) FROM 2 FOR 2147483646) AS "1010101";
+ 1010101 
+---------
+ 1010101
+(1 row)
+
+SELECT SUBSTRING('01010101'::bit(8) FROM -10 FOR 2147483646) AS "01010101";
+ 01010101 
+----------
+ 01010101
+(1 row)
+
+SELECT SUBSTRING('01010101'::bit(8) FROM -10 FOR -2147483646) AS "error";
+ERROR:  negative substring length not allowed
+SELECT SUBSTRING('01010101'::varbit FROM 2 FOR 2147483646) AS "1010101";
+ 1010101 
+---------
+ 1010101
+(1 row)
+
+SELECT SUBSTRING('01010101'::varbit FROM -10 FOR 2147483646) AS "01010101";
+ 01010101 
+----------
+ 01010101
+(1 row)
+
+SELECT SUBSTRING('01010101'::varbit FROM -10 FOR -2147483646) AS "error";
+ERROR:  negative substring length not allowed
+--- Bit operations
+--dg-cascade
+--dg DROP TABLE varbit_table;
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE varbit_table (a BIT VARYING(16), b BIT VARYING(16));
+--dg-cascade
+--dg COPY varbit_table FROM stdin;
+--dg X0F	X10
+--dg X1F	X11
+--dg X2F	X12
+--dg X3F	X13
+--dg X8F	X04
+--dg X000F	X0010
+--dg X0123	XFFFF
+--dg X2468	X2468
+--dg XFA50	X05AF
+--dg X1234	XFFF5
+--dg \.
+--dg-cascade
+--dg SELECT a, b, ~a AS "~ a", a & b AS "a & b",
+--dg        a | b AS "a | b", a # b AS "a # b" FROM varbit_table;
+--dg-cascade
+--dg SELECT a,b,a<b AS "a<b",a<=b AS "a<=b",a=b AS "a=b",
+--dg         a>=b AS "a>=b",a>b AS "a>b",a<>b AS "a<>b" FROM varbit_table;
+--dg-cascade
+--dg SELECT a,a<<4 AS "a<<4",b,b>>2 AS "b>>2" FROM varbit_table;
+--dg-cascade
+--dg DROP TABLE varbit_table;
+--- Bit operations
+--dg-cascade
+--dg DROP TABLE bit_table;
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE bit_table (a BIT(16), b BIT(16));
+--dg-cascade
+--dg COPY bit_table FROM stdin;
+--dg X0F00	X1000
+--dg X1F00	X1100
+--dg X2F00	X1200
+--dg X3F00	X1300
+--dg X8F00	X0400
+--dg X000F	X0010
+--dg X0123	XFFFF
+--dg X2468	X2468
+--dg XFA50	X05AF
+--dg X1234	XFFF5
+--dg \.
+--dg-cascade
+--dg SELECT a,b,~a AS "~ a",a & b AS "a & b",
+--dg 	a|b AS "a | b", a # b AS "a # b" FROM bit_table;
+--dg-cascade
+--dg SELECT a,b,a<b AS "a<b",a<=b AS "a<=b",a=b AS "a=b",
+--dg         a>=b AS "a>=b",a>b AS "a>b",a<>b AS "a<>b" FROM bit_table;
+--dg-cascade
+--dg SELECT a,a<<4 AS "a<<4",b,b>>2 AS "b>>2" FROM bit_table;
+--dg-cascade
+--dg DROP TABLE bit_table;
+-- The following should fail
+select B'001' & B'10';
+ERROR:  cannot AND bit strings of different sizes
+select B'0111' | B'011';
+ERROR:  cannot OR bit strings of different sizes
+select B'0010' # B'011101';
+ERROR:  cannot XOR bit strings of different sizes
+-- More position tests, checking all the boundary cases
+SELECT POSITION(B'1010' IN B'0000101');   -- 0
+ position 
+----------
+        0
+(1 row)
+
+SELECT POSITION(B'1010' IN B'00001010');  -- 5
+ position 
+----------
+        5
+(1 row)
+
+SELECT POSITION(B'1010' IN B'00000101');  -- 0
+ position 
+----------
+        0
+(1 row)
+
+SELECT POSITION(B'1010' IN B'000001010');  -- 6
+ position 
+----------
+        6
+(1 row)
+
+SELECT POSITION(B'' IN B'00001010');  -- 1
+ position 
+----------
+        1
+(1 row)
+
+SELECT POSITION(B'0' IN B'');  -- 0
+ position 
+----------
+        0
+(1 row)
+
+SELECT POSITION(B'' IN B'');  -- 0
+ position 
+----------
+        0
+(1 row)
+
+SELECT POSITION(B'101101' IN B'001011011011011000');  -- 3
+ position 
+----------
+        3
+(1 row)
+
+SELECT POSITION(B'10110110' IN B'001011011011010');  -- 3
+ position 
+----------
+        3
+(1 row)
+
+SELECT POSITION(B'1011011011011' IN B'001011011011011');  -- 3
+ position 
+----------
+        3
+(1 row)
+
+SELECT POSITION(B'1011011011011' IN B'00001011011011011');  -- 5
+ position 
+----------
+        5
+(1 row)
+
+SELECT POSITION(B'11101011' IN B'11101011'); -- 1
+ position 
+----------
+        1
+(1 row)
+
+SELECT POSITION(B'11101011' IN B'011101011'); -- 2
+ position 
+----------
+        2
+(1 row)
+
+SELECT POSITION(B'11101011' IN B'00011101011'); -- 4
+ position 
+----------
+        4
+(1 row)
+
+SELECT POSITION(B'11101011' IN B'0000011101011'); -- 6
+ position 
+----------
+        6
+(1 row)
+
+SELECT POSITION(B'111010110' IN B'111010110'); -- 1
+ position 
+----------
+        1
+(1 row)
+
+SELECT POSITION(B'111010110' IN B'0111010110'); -- 2
+ position 
+----------
+        2
+(1 row)
+
+SELECT POSITION(B'111010110' IN B'000111010110'); -- 4
+ position 
+----------
+        4
+(1 row)
+
+SELECT POSITION(B'111010110' IN B'00000111010110'); -- 6
+ position 
+----------
+        6
+(1 row)
+
+SELECT POSITION(B'111010110' IN B'11101011'); -- 0
+ position 
+----------
+        0
+(1 row)
+
+SELECT POSITION(B'111010110' IN B'011101011'); -- 0
+ position 
+----------
+        0
+(1 row)
+
+SELECT POSITION(B'111010110' IN B'00011101011'); -- 0
+ position 
+----------
+        0
+(1 row)
+
+SELECT POSITION(B'111010110' IN B'0000011101011'); -- 0
+ position 
+----------
+        0
+(1 row)
+
+SELECT POSITION(B'111010110' IN B'111010110'); -- 1
+ position 
+----------
+        1
+(1 row)
+
+SELECT POSITION(B'111010110' IN B'0111010110'); -- 2
+ position 
+----------
+        2
+(1 row)
+
+SELECT POSITION(B'111010110' IN B'000111010110'); -- 4
+ position 
+----------
+        4
+(1 row)
+
+SELECT POSITION(B'111010110' IN B'00000111010110'); -- 6
+ position 
+----------
+        6
+(1 row)
+
+SELECT POSITION(B'111010110' IN B'000001110101111101011'); -- 0
+ position 
+----------
+        0
+(1 row)
+
+SELECT POSITION(B'111010110' IN B'0000001110101111101011'); -- 0
+ position 
+----------
+        0
+(1 row)
+
+SELECT POSITION(B'111010110' IN B'000000001110101111101011'); -- 0
+ position 
+----------
+        0
+(1 row)
+
+SELECT POSITION(B'111010110' IN B'00000000001110101111101011'); -- 0
+ position 
+----------
+        0
+(1 row)
+
+SELECT POSITION(B'111010110' IN B'0000011101011111010110'); -- 14
+ position 
+----------
+       14
+(1 row)
+
+SELECT POSITION(B'111010110' IN B'00000011101011111010110'); -- 15
+ position 
+----------
+       15
+(1 row)
+
+SELECT POSITION(B'111010110' IN B'0000000011101011111010110'); -- 17
+ position 
+----------
+       17
+(1 row)
+
+SELECT POSITION(B'111010110' IN B'000000000011101011111010110'); -- 19
+ position 
+----------
+       19
+(1 row)
+
+SELECT POSITION(B'000000000011101011111010110' IN B'000000000011101011111010110'); -- 1
+ position 
+----------
+        1
+(1 row)
+
+SELECT POSITION(B'00000000011101011111010110' IN B'000000000011101011111010110'); -- 2
+ position 
+----------
+        2
+(1 row)
+
+SELECT POSITION(B'0000000000011101011111010110' IN B'000000000011101011111010110'); -- 0
+ position 
+----------
+        0
+(1 row)
+
+-- Shifting
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE BIT_SHIFT_TABLE(b BIT(16));
+--dg-cascade
+--dg INSERT INTO BIT_SHIFT_TABLE VALUES (B'1101100000000000');
+--dg-cascade
+--dg INSERT INTO BIT_SHIFT_TABLE SELECT b>>1 FROM BIT_SHIFT_TABLE;
+--dg-cascade
+--dg INSERT INTO BIT_SHIFT_TABLE SELECT b>>2 FROM BIT_SHIFT_TABLE;
+--dg-cascade
+--dg INSERT INTO BIT_SHIFT_TABLE SELECT b>>4 FROM BIT_SHIFT_TABLE;
+--dg-cascade
+--dg INSERT INTO BIT_SHIFT_TABLE SELECT b>>8 FROM BIT_SHIFT_TABLE;
+--dg-cascade
+--dg SELECT POSITION(B'1101' IN b),
+--dg        POSITION(B'11011' IN b),
+--dg        b
+--dg        FROM BIT_SHIFT_TABLE ;
+--dg-cascade
+--dg SELECT b, b >> 1 AS bsr, b << 1 AS bsl
+--dg        FROM BIT_SHIFT_TABLE ;
+--dg-cascade
+--dg SELECT b, b >> 8 AS bsr8, b << 8 AS bsl8
+--dg        FROM BIT_SHIFT_TABLE ;
+--dg-cascade
+--dg SELECT b::bit(15), b::bit(15) >> 1 AS bsr, b::bit(15) << 1 AS bsl
+--dg        FROM BIT_SHIFT_TABLE ;
+--dg-cascade
+--dg SELECT b::bit(15), b::bit(15) >> 8 AS bsr8, b::bit(15) << 8 AS bsl8
+--dg        FROM BIT_SHIFT_TABLE ;
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE VARBIT_SHIFT_TABLE(v BIT VARYING(20));
+--dg-cascade
+--dg INSERT INTO VARBIT_SHIFT_TABLE VALUES (B'11011');
+--dg-cascade
+--dg INSERT INTO VARBIT_SHIFT_TABLE SELECT CAST(v || B'0' AS BIT VARYING(6)) >>1 FROM VARBIT_SHIFT_TABLE;
+--dg-cascade
+--dg INSERT INTO VARBIT_SHIFT_TABLE SELECT CAST(v || B'00' AS BIT VARYING(8)) >>2 FROM VARBIT_SHIFT_TABLE;
+--dg-cascade
+--dg INSERT INTO VARBIT_SHIFT_TABLE SELECT CAST(v || B'0000' AS BIT VARYING(12)) >>4 FROM VARBIT_SHIFT_TABLE;
+--dg-cascade
+--dg INSERT INTO VARBIT_SHIFT_TABLE SELECT CAST(v || B'00000000' AS BIT VARYING(20)) >>8 FROM VARBIT_SHIFT_TABLE;
+--dg-cascade
+--dg SELECT POSITION(B'1101' IN v),
+--dg        POSITION(B'11011' IN v),
+--dg        v
+--dg        FROM VARBIT_SHIFT_TABLE ;
+--dg-cascade
+--dg SELECT v, v >> 1 AS vsr, v << 1 AS vsl
+--dg        FROM VARBIT_SHIFT_TABLE ;
+--dg-cascade
+--dg SELECT v, v >> 8 AS vsr8, v << 8 AS vsl8
+--dg        FROM VARBIT_SHIFT_TABLE ;
+--dg-cascade
+--dg DROP TABLE BIT_SHIFT_TABLE;
+--dg-cascade
+--dg DROP TABLE VARBIT_SHIFT_TABLE;
+-- Get/Set bit
+SELECT get_bit(B'0101011000100', 10);
+ get_bit 
+---------
+       1
+(1 row)
+
+SELECT set_bit(B'0101011000100100', 15, 1);
+     set_bit      
+------------------
+ 0101011000100101
+(1 row)
+
+SELECT set_bit(B'0101011000100100', 16, 1);	-- fail
+ERROR:  bit index 16 out of valid range (0..15)
+-- Overlay
+SELECT overlay(B'0101011100' placing '001' from 2 for 3);
+  overlay   
+------------
+ 0001011100
+(1 row)
+
+SELECT overlay(B'0101011100' placing '101' from 6);
+  overlay   
+------------
+ 0101010100
+(1 row)
+
+SELECT overlay(B'0101011100' placing '001' from 11);
+    overlay    
+---------------
+ 0101011100001
+(1 row)
+
+SELECT overlay(B'0101011100' placing '001' from 20);
+    overlay    
+---------------
+ 0101011100001
+(1 row)
+
+-- bit_count
+SELECT bit_count(B'0101011100'::bit(10));
+ bit_count 
+-----------
+         5
+(1 row)
+
+SELECT bit_count(B'1111111111'::bit(10));
+ bit_count 
+-----------
+        10
+(1 row)
+
+SELECT bit_count(repeat('0', 100)::bit(100));
+ bit_count 
+-----------
+         0
+(1 row)
+
+SELECT bit_count(repeat('1', 100)::bit(100));
+ bit_count 
+-----------
+       100
+(1 row)
+
+SELECT bit_count(repeat('01', 500)::bit(1000));
+ bit_count 
+-----------
+       500
+(1 row)
+
+SELECT bit_count(repeat('10101', 200)::bit(1000));
+ bit_count 
+-----------
+       600
+(1 row)
+
+-- This table is intentionally left around to exercise pg_dump/pg_upgrade
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE bit_defaults(
+--dg   b1 bit(4) DEFAULT '1001',
+--dg   b2 bit(4) DEFAULT B'0101',
+--dg   b3 bit varying(5) DEFAULT '1001',
+--dg   b4 bit varying(5) DEFAULT B'0101'
+--dg );
+--dg-cascade
+--dg \d bit_defaults
+--dg-cascade
+--dg INSERT INTO bit_defaults DEFAULT VALUES;
+--dg-cascade
+--dg TABLE bit_defaults;
+-- test non-error-throwing API for some core types
+SELECT pg_input_is_valid('01010001', 'bit(10)');
+ pg_input_is_valid 
+-------------------
+ f
+(1 row)
+
+SELECT * FROM pg_input_error_info('01010001', 'bit(10)');
+                     message                     | detail | hint | sql_error_code 
+-------------------------------------------------+--------+------+----------------
+ bit string length 8 does not match type bit(10) |        |      | 22026
+(1 row)
+
+SELECT pg_input_is_valid('01010Z01', 'bit(8)');
+ pg_input_is_valid 
+-------------------
+ f
+(1 row)
+
+SELECT * FROM pg_input_error_info('01010Z01', 'bit(8)');
+             message             | detail | hint | sql_error_code 
+---------------------------------+--------+------+----------------
+ "Z" is not a valid binary digit |        |      | 22P02
+(1 row)
+
+SELECT pg_input_is_valid('x01010Z01', 'bit(32)');
+ pg_input_is_valid 
+-------------------
+ f
+(1 row)
+
+SELECT * FROM pg_input_error_info('x01010Z01', 'bit(32)');
+               message                | detail | hint | sql_error_code 
+--------------------------------------+--------+------+----------------
+ "Z" is not a valid hexadecimal digit |        |      | 22P02
+(1 row)
+
+SELECT pg_input_is_valid('01010Z01', 'varbit');
+ pg_input_is_valid 
+-------------------
+ f
+(1 row)
+
+SELECT * FROM pg_input_error_info('01010Z01', 'varbit');
+             message             | detail | hint | sql_error_code 
+---------------------------------+--------+------+----------------
+ "Z" is not a valid binary digit |        |      | 22P02
+(1 row)
+
+SELECT pg_input_is_valid('x01010Z01', 'varbit');
+ pg_input_is_valid 
+-------------------
+ f
+(1 row)
+
+SELECT * FROM pg_input_error_info('x01010Z01', 'varbit');
+               message                | detail | hint | sql_error_code 
+--------------------------------------+--------+------+----------------
+ "Z" is not a valid hexadecimal digit |        |      | 22P02
+(1 row)
+

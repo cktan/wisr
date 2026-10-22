@@ -1,0 +1,397 @@
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE brintest_bloom (byteacol bytea,
+--dg 	charcol "char",
+--dg 	namecol name,
+--dg 	int8col bigint,
+--dg 	int2col smallint,
+--dg 	int4col integer,
+--dg 	textcol text,
+--dg 	oidcol oid,
+--dg 	float4col real,
+--dg 	float8col double precision,
+--dg 	macaddrcol macaddr,
+--dg 	inetcol inet,
+--dg 	cidrcol cidr,
+--dg 	bpcharcol character,
+--dg 	datecol date,
+--dg 	timecol time without time zone,
+--dg 	timestampcol timestamp without time zone,
+--dg 	timestamptzcol timestamp with time zone,
+--dg 	intervalcol interval,
+--dg 	timetzcol time with time zone,
+--dg 	numericcol numeric,
+--dg 	uuidcol uuid,
+--dg 	lsncol pg_lsn
+--dg ) WITH (fillfactor=10);
+--dg-cascade
+--dg INSERT INTO brintest_bloom SELECT
+--dg 	repeat(stringu1, 8)::bytea,
+--dg 	substr(stringu1, 1, 1)::"char",
+--dg 	stringu1::name, 142857 * tenthous,
+--dg 	thousand,
+--dg 	twothousand,
+--dg 	repeat(stringu1, 8),
+--dg 	unique1::oid,
+--dg 	(four + 1.0)/(hundred+1),
+--dg 	odd::float8 / (tenthous + 1),
+--dg 	format('%s:00:%s:00:%s:00', to_hex(odd), to_hex(even), to_hex(hundred))::macaddr,
+--dg 	inet '10.2.3.4/24' + tenthous,
+--dg 	cidr '10.2.3/24' + tenthous,
+--dg 	substr(stringu1, 1, 1)::bpchar,
+--dg 	date '1995-08-15' + tenthous,
+--dg 	time '01:20:30' + thousand * interval '18.5 second',
+--dg 	timestamp '1942-07-23 03:05:09' + tenthous * interval '36.38 hours',
+--dg 	timestamptz '1972-10-10 03:00' + thousand * interval '1 hour',
+--dg 	justify_days(justify_hours(tenthous * interval '12 minutes')),
+--dg 	timetz '01:30:20+02' + hundred * interval '15 seconds',
+--dg 	tenthous::numeric(36,30) * fivethous * even / (hundred + 1),
+--dg 	format('%s%s-%s-%s-%s-%s%s%s', to_char(tenthous, 'FM0000'), to_char(tenthous, 'FM0000'), to_char(tenthous, 'FM0000'), to_char(tenthous, 'FM0000'), to_char(tenthous, 'FM0000'), to_char(tenthous, 'FM0000'), to_char(tenthous, 'FM0000'), to_char(tenthous, 'FM0000'))::uuid,
+--dg 	format('%s/%s%s', odd, even, tenthous)::pg_lsn
+--dg FROM tenk1 ORDER BY unique2 LIMIT 100;
+-- throw in some NULL's and different values
+--dg-cascade
+--dg INSERT INTO brintest_bloom (inetcol, cidrcol) SELECT
+--dg 	inet 'fe80::6e40:8ff:fea9:8c46' + tenthous,
+--dg 	cidr 'fe80::6e40:8ff:fea9:8c46' + tenthous
+--dg FROM tenk1 ORDER BY thousand, tenthous LIMIT 25;
+-- test bloom specific index options
+-- ndistinct must be >= -1.0
+--dg-cascade
+--dg CREATE INDEX brinidx_bloom ON brintest_bloom USING brin (
+--dg 	byteacol bytea_bloom_ops(n_distinct_per_range = -1.1)
+--dg );
+-- false_positive_rate must be between 0.0001 and 0.25
+--dg-cascade
+--dg CREATE INDEX brinidx_bloom ON brintest_bloom USING brin (
+--dg 	byteacol bytea_bloom_ops(false_positive_rate = 0.00009)
+--dg );
+--dg-cascade
+--dg CREATE INDEX brinidx_bloom ON brintest_bloom USING brin (
+--dg 	byteacol bytea_bloom_ops(false_positive_rate = 0.26)
+--dg );
+--dg-cascade
+--dg CREATE INDEX brinidx_bloom ON brintest_bloom USING brin (
+--dg 	byteacol bytea_bloom_ops,
+--dg 	charcol char_bloom_ops,
+--dg 	namecol name_bloom_ops,
+--dg 	int8col int8_bloom_ops,
+--dg 	int2col int2_bloom_ops,
+--dg 	int4col int4_bloom_ops,
+--dg 	textcol text_bloom_ops,
+--dg 	oidcol oid_bloom_ops,
+--dg 	float4col float4_bloom_ops,
+--dg 	float8col float8_bloom_ops,
+--dg 	macaddrcol macaddr_bloom_ops,
+--dg 	inetcol inet_bloom_ops,
+--dg 	cidrcol inet_bloom_ops,
+--dg 	bpcharcol bpchar_bloom_ops,
+--dg 	datecol date_bloom_ops,
+--dg 	timecol time_bloom_ops,
+--dg 	timestampcol timestamp_bloom_ops,
+--dg 	timestamptzcol timestamptz_bloom_ops,
+--dg 	intervalcol interval_bloom_ops,
+--dg 	timetzcol timetz_bloom_ops,
+--dg 	numericcol numeric_bloom_ops,
+--dg 	uuidcol uuid_bloom_ops,
+--dg 	lsncol pg_lsn_bloom_ops
+--dg ) with (pages_per_range = 1);
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE brinopers_bloom (colname name, typ text,
+--dg 	op text[], value text[], matches int[],
+--dg 	check (cardinality(op) = cardinality(value)),
+--dg 	check (cardinality(op) = cardinality(matches)));
+--dg-cascade
+--dg INSERT INTO brinopers_bloom VALUES
+--dg 	('byteacol', 'bytea',
+--dg 	 '{=}',
+--dg 	 '{BNAAAABNAAAABNAAAABNAAAABNAAAABNAAAABNAAAABNAAAA}',
+--dg 	 '{1}'),
+--dg 	('charcol', '"char"',
+--dg 	 '{=}',
+--dg 	 '{M}',
+--dg 	 '{6}'),
+--dg 	('namecol', 'name',
+--dg 	 '{=}',
+--dg 	 '{MAAAAA}',
+--dg 	 '{2}'),
+--dg 	('int2col', 'int2',
+--dg 	 '{=}',
+--dg 	 '{800}',
+--dg 	 '{1}'),
+--dg 	('int4col', 'int4',
+--dg 	 '{=}',
+--dg 	 '{800}',
+--dg 	 '{1}'),
+--dg 	('int8col', 'int8',
+--dg 	 '{=}',
+--dg 	 '{1257141600}',
+--dg 	 '{1}'),
+--dg 	('textcol', 'text',
+--dg 	 '{=}',
+--dg 	 '{BNAAAABNAAAABNAAAABNAAAABNAAAABNAAAABNAAAABNAAAA}',
+--dg 	 '{1}'),
+--dg 	('oidcol', 'oid',
+--dg 	 '{=}',
+--dg 	 '{8800}',
+--dg 	 '{1}'),
+--dg 	('float4col', 'float4',
+--dg 	 '{=}',
+--dg 	 '{1}',
+--dg 	 '{4}'),
+--dg 	('float8col', 'float8',
+--dg 	 '{=}',
+--dg 	 '{0}',
+--dg 	 '{1}'),
+--dg 	('macaddrcol', 'macaddr',
+--dg 	 '{=}',
+--dg 	 '{2c:00:2d:00:16:00}',
+--dg 	 '{2}'),
+--dg 	('inetcol', 'inet',
+--dg 	 '{=}',
+--dg 	 '{10.2.14.231/24}',
+--dg 	 '{1}'),
+--dg 	('inetcol', 'cidr',
+--dg 	 '{=}',
+--dg 	 '{fe80::6e40:8ff:fea9:8c46}',
+--dg 	 '{1}'),
+--dg 	('cidrcol', 'inet',
+--dg 	 '{=}',
+--dg 	 '{10.2.14/24}',
+--dg 	 '{2}'),
+--dg 	('cidrcol', 'inet',
+--dg 	 '{=}',
+--dg 	 '{fe80::6e40:8ff:fea9:8c46}',
+--dg 	 '{1}'),
+--dg 	('cidrcol', 'cidr',
+--dg 	 '{=}',
+--dg 	 '{10.2.14/24}',
+--dg 	 '{2}'),
+--dg 	('cidrcol', 'cidr',
+--dg 	 '{=}',
+--dg 	 '{fe80::6e40:8ff:fea9:8c46}',
+--dg 	 '{1}'),
+--dg 	('bpcharcol', 'bpchar',
+--dg 	 '{=}',
+--dg 	 '{W}',
+--dg 	 '{6}'),
+--dg 	('datecol', 'date',
+--dg 	 '{=}',
+--dg 	 '{2009-12-01}',
+--dg 	 '{1}'),
+--dg 	('timecol', 'time',
+--dg 	 '{=}',
+--dg 	 '{02:28:57}',
+--dg 	 '{1}'),
+--dg 	('timestampcol', 'timestamp',
+--dg 	 '{=}',
+--dg 	 '{1964-03-24 19:26:45}',
+--dg 	 '{1}'),
+--dg 	('timestamptzcol', 'timestamptz',
+--dg 	 '{=}',
+--dg 	 '{1972-10-19 09:00:00-07}',
+--dg 	 '{1}'),
+--dg 	('intervalcol', 'interval',
+--dg 	 '{=}',
+--dg 	 '{1 mons 13 days 12:24}',
+--dg 	 '{1}'),
+--dg 	('timetzcol', 'timetz',
+--dg 	 '{=}',
+--dg 	 '{01:35:50+02}',
+--dg 	 '{2}'),
+--dg 	('numericcol', 'numeric',
+--dg 	 '{=}',
+--dg 	 '{2268164.347826086956521739130434782609}',
+--dg 	 '{1}'),
+--dg 	('uuidcol', 'uuid',
+--dg 	 '{=}',
+--dg 	 '{52225222-5222-5222-5222-522252225222}',
+--dg 	 '{1}'),
+--dg 	('lsncol', 'pg_lsn',
+--dg 	 '{=, IS, IS NOT}',
+--dg 	 '{44/455222, NULL, NULL}',
+--dg 	 '{1, 25, 100}');
+--dg-skip: language "?" does not exist
+--dg DO $x$
+--dg DECLARE
+--dg 	r record;
+--dg 	r2 record;
+--dg 	cond text;
+--dg 	idx_ctids tid[];
+--dg 	ss_ctids tid[];
+--dg 	count int;
+--dg 	plan_ok bool;
+--dg 	plan_line text;
+--dg BEGIN
+--dg 	FOR r IN SELECT colname, oper, typ, value[ordinality], matches[ordinality] FROM brinopers_bloom, unnest(op) WITH ORDINALITY AS oper LOOP
+--dg
+--dg 		-- prepare the condition
+--dg 		IF r.value IS NULL THEN
+--dg 			cond := format('%I %s %L', r.colname, r.oper, r.value);
+--dg 		ELSE
+--dg 			cond := format('%I %s %L::%s', r.colname, r.oper, r.value, r.typ);
+--dg 		END IF;
+--dg
+--dg 		-- run the query using the brin index
+--dg 		SET enable_seqscan = 0;
+--dg 		SET enable_bitmapscan = 1;
+--dg
+--dg 		plan_ok := false;
+--dg 		FOR plan_line IN EXECUTE format($y$EXPLAIN SELECT array_agg(ctid) FROM brintest_bloom WHERE %s $y$, cond) LOOP
+--dg 			IF plan_line LIKE '%Bitmap Heap Scan on brintest_bloom%' THEN
+--dg 				plan_ok := true;
+--dg 			END IF;
+--dg 		END LOOP;
+--dg 		IF NOT plan_ok THEN
+--dg 			RAISE WARNING 'did not get bitmap indexscan plan for %', r;
+--dg 		END IF;
+--dg
+--dg 		EXECUTE format($y$SELECT array_agg(ctid) FROM brintest_bloom WHERE %s $y$, cond)
+--dg 			INTO idx_ctids;
+--dg
+--dg 		-- run the query using a seqscan
+--dg 		SET enable_seqscan = 1;
+--dg 		SET enable_bitmapscan = 0;
+--dg
+--dg 		plan_ok := false;
+--dg 		FOR plan_line IN EXECUTE format($y$EXPLAIN SELECT array_agg(ctid) FROM brintest_bloom WHERE %s $y$, cond) LOOP
+--dg 			IF plan_line LIKE '%Seq Scan on brintest_bloom%' THEN
+--dg 				plan_ok := true;
+--dg 			END IF;
+--dg 		END LOOP;
+--dg 		IF NOT plan_ok THEN
+--dg 			RAISE WARNING 'did not get seqscan plan for %', r;
+--dg 		END IF;
+--dg
+--dg 		EXECUTE format($y$SELECT array_agg(ctid) FROM brintest_bloom WHERE %s $y$, cond)
+--dg 			INTO ss_ctids;
+--dg
+--dg 		-- make sure both return the same results
+--dg 		count := array_length(idx_ctids, 1);
+--dg
+--dg 		IF NOT (count = array_length(ss_ctids, 1) AND
+--dg 				idx_ctids @> ss_ctids AND
+--dg 				idx_ctids <@ ss_ctids) THEN
+--dg 			-- report the results of each scan to make the differences obvious
+--dg 			RAISE WARNING 'something not right in %: count %', r, count;
+--dg 			SET enable_seqscan = 1;
+--dg 			SET enable_bitmapscan = 0;
+--dg 			FOR r2 IN EXECUTE 'SELECT ' || r.colname || ' FROM brintest_bloom WHERE ' || cond LOOP
+--dg 				RAISE NOTICE 'seqscan: %', r2;
+--dg 			END LOOP;
+--dg
+--dg 			SET enable_seqscan = 0;
+--dg 			SET enable_bitmapscan = 1;
+--dg 			FOR r2 IN EXECUTE 'SELECT ' || r.colname || ' FROM brintest_bloom WHERE ' || cond LOOP
+--dg 				RAISE NOTICE 'bitmapscan: %', r2;
+--dg 			END LOOP;
+--dg 		END IF;
+--dg
+--dg 		-- make sure we found expected number of matches
+--dg 		IF count != r.matches THEN RAISE WARNING 'unexpected number of results % for %', count, r; END IF;
+--dg 	END LOOP;
+--dg END;
+--dg $x$;
+RESET enable_seqscan;
+RESET enable_bitmapscan;
+--dg-cascade
+--dg INSERT INTO brintest_bloom SELECT
+--dg 	repeat(stringu1, 42)::bytea,
+--dg 	substr(stringu1, 1, 1)::"char",
+--dg 	stringu1::name, 142857 * tenthous,
+--dg 	thousand,
+--dg 	twothousand,
+--dg 	repeat(stringu1, 42),
+--dg 	unique1::oid,
+--dg 	(four + 1.0)/(hundred+1),
+--dg 	odd::float8 / (tenthous + 1),
+--dg 	format('%s:00:%s:00:%s:00', to_hex(odd), to_hex(even), to_hex(hundred))::macaddr,
+--dg 	inet '10.2.3.4' + tenthous,
+--dg 	cidr '10.2.3/24' + tenthous,
+--dg 	substr(stringu1, 1, 1)::bpchar,
+--dg 	date '1995-08-15' + tenthous,
+--dg 	time '01:20:30' + thousand * interval '18.5 second',
+--dg 	timestamp '1942-07-23 03:05:09' + tenthous * interval '36.38 hours',
+--dg 	timestamptz '1972-10-10 03:00' + thousand * interval '1 hour',
+--dg 	justify_days(justify_hours(tenthous * interval '12 minutes')),
+--dg 	timetz '01:30:20' + hundred * interval '15 seconds',
+--dg 	tenthous::numeric(36,30) * fivethous * even / (hundred + 1),
+--dg 	format('%s%s-%s-%s-%s-%s%s%s', to_char(tenthous, 'FM0000'), to_char(tenthous, 'FM0000'), to_char(tenthous, 'FM0000'), to_char(tenthous, 'FM0000'), to_char(tenthous, 'FM0000'), to_char(tenthous, 'FM0000'), to_char(tenthous, 'FM0000'), to_char(tenthous, 'FM0000'))::uuid,
+--dg 	format('%s/%s%s', odd, even, tenthous)::pg_lsn
+--dg FROM tenk1 ORDER BY unique2 LIMIT 5 OFFSET 5;
+--dg-cascade
+--dg SELECT brin_desummarize_range('brinidx_bloom', 0);
+--dg-cascade
+--dg VACUUM brintest_bloom;  -- force a summarization cycle in brinidx
+--dg-cascade
+--dg UPDATE brintest_bloom SET int8col = int8col * int4col;
+--dg-cascade
+--dg UPDATE brintest_bloom SET textcol = '' WHERE textcol IS NOT NULL;
+-- Tests for brin_summarize_new_values
+--dg-cascade
+--dg SELECT brin_summarize_new_values('brintest_bloom'); -- error, not an index
+--dg-differs: another error: function ?(...) does not exist
+--dg SELECT brin_summarize_new_values('tenk1_unique1'); -- error, not a BRIN index
+--dg-cascade
+--dg SELECT brin_summarize_new_values('brinidx_bloom'); -- ok, no change expected
+-- Tests for brin_desummarize_range
+--dg-cascade
+--dg SELECT brin_desummarize_range('brinidx_bloom', -1); -- error, invalid range
+--dg-cascade
+--dg SELECT brin_desummarize_range('brinidx_bloom', 0);
+--dg-cascade
+--dg SELECT brin_desummarize_range('brinidx_bloom', 0);
+--dg-cascade
+--dg SELECT brin_desummarize_range('brinidx_bloom', 100000000);
+-- Test brin_summarize_range
+CREATE TABLE brin_summarize_bloom (
+    value int
+) WITH (fillfactor=10, autovacuum_enabled=false);
+--dg-skip: access method "?" is not supported
+--dg CREATE INDEX brin_summarize_bloom_idx ON brin_summarize_bloom USING brin (value) WITH (pages_per_range=2);
+-- Fill a few pages
+--dg-skip: language "?" does not exist
+--dg DO $$
+--dg DECLARE curtid tid;
+--dg BEGIN
+--dg   LOOP
+--dg     INSERT INTO brin_summarize_bloom VALUES (1) RETURNING ctid INTO curtid;
+--dg     EXIT WHEN curtid > tid '(2, 0)';
+--dg   END LOOP;
+--dg END;
+--dg $$;
+-- summarize one range
+--dg-cascade
+--dg SELECT brin_summarize_range('brin_summarize_bloom_idx', 0);
+-- nothing: already summarized
+--dg-cascade
+--dg SELECT brin_summarize_range('brin_summarize_bloom_idx', 1);
+-- summarize one range
+--dg-cascade
+--dg SELECT brin_summarize_range('brin_summarize_bloom_idx', 2);
+-- nothing: page doesn't exist in table
+--dg-cascade
+--dg SELECT brin_summarize_range('brin_summarize_bloom_idx', 4294967295);
+-- invalid block number values
+--dg-cascade
+--dg SELECT brin_summarize_range('brin_summarize_bloom_idx', -1);
+--dg-cascade
+--dg SELECT brin_summarize_range('brin_summarize_bloom_idx', 4294967296);
+-- test brin cost estimates behave sanely based on correlation of values
+CREATE TABLE brin_test_bloom (a INT, b INT);
+INSERT INTO brin_test_bloom SELECT x/100,x%100 FROM generate_series(1,10000) x(x);
+--dg-skip: access method "?" is not supported
+--dg CREATE INDEX brin_test_bloom_a_idx ON brin_test_bloom USING brin (a) WITH (pages_per_range = 2);
+--dg-skip: access method "?" is not supported
+--dg CREATE INDEX brin_test_bloom_b_idx ON brin_test_bloom USING brin (b) WITH (pages_per_range = 2);
+VACUUM ANALYZE brin_test_bloom;
+-- Ensure brin index is used when columns are perfectly correlated
+--dg-cascade
+--dg EXPLAIN (COSTS OFF) SELECT * FROM brin_test_bloom WHERE a = 1;
+-- Ensure brin index is not used when values are not correlated
+EXPLAIN (COSTS OFF) SELECT * FROM brin_test_bloom WHERE b = 1;
+         QUERY PLAN          
+-----------------------------
+ Seq Scan on brin_test_bloom
+   Filter: (b = 1)
+(2 rows)
+

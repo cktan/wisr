@@ -1,0 +1,369 @@
+--Test text search dictionaries and configurations
+-- Test ISpell dictionary with ispell affix file
+--dg-skip: text search is not supported
+--dg CREATE TEXT SEARCH DICTIONARY ispell (
+--dg                         Template=ispell,
+--dg                         DictFile=ispell_sample,
+--dg                         AffFile=ispell_sample
+--dg );
+--dg-cascade
+--dg SELECT ts_lexize('ispell', 'skies');
+--dg-cascade
+--dg SELECT ts_lexize('ispell', 'bookings');
+--dg-cascade
+--dg SELECT ts_lexize('ispell', 'booking');
+--dg-cascade
+--dg SELECT ts_lexize('ispell', 'foot');
+--dg-cascade
+--dg SELECT ts_lexize('ispell', 'foots');
+--dg-cascade
+--dg SELECT ts_lexize('ispell', 'rebookings');
+--dg-cascade
+--dg SELECT ts_lexize('ispell', 'rebooking');
+--dg-cascade
+--dg SELECT ts_lexize('ispell', 'rebook');
+--dg-cascade
+--dg SELECT ts_lexize('ispell', 'unbookings');
+--dg-cascade
+--dg SELECT ts_lexize('ispell', 'unbooking');
+--dg-cascade
+--dg SELECT ts_lexize('ispell', 'unbook');
+--dg-cascade
+--dg SELECT ts_lexize('ispell', 'footklubber');
+--dg-cascade
+--dg SELECT ts_lexize('ispell', 'footballklubber');
+--dg-cascade
+--dg SELECT ts_lexize('ispell', 'ballyklubber');
+--dg-cascade
+--dg SELECT ts_lexize('ispell', 'footballyklubber');
+-- Test ISpell dictionary with hunspell affix file
+--dg-skip: text search is not supported
+--dg CREATE TEXT SEARCH DICTIONARY hunspell (
+--dg                         Template=ispell,
+--dg                         DictFile=ispell_sample,
+--dg                         AffFile=hunspell_sample
+--dg );
+--dg-cascade
+--dg SELECT ts_lexize('hunspell', 'skies');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell', 'bookings');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell', 'booking');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell', 'foot');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell', 'foots');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell', 'rebookings');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell', 'rebooking');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell', 'rebook');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell', 'unbookings');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell', 'unbooking');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell', 'unbook');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell', 'footklubber');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell', 'footballklubber');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell', 'ballyklubber');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell', 'footballyklubber');
+-- Test ISpell dictionary with hunspell affix file with FLAG long parameter
+--dg-skip: text search is not supported
+--dg CREATE TEXT SEARCH DICTIONARY hunspell_long (
+--dg                         Template=ispell,
+--dg                         DictFile=hunspell_sample_long,
+--dg                         AffFile=hunspell_sample_long
+--dg );
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_long', 'skies');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_long', 'bookings');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_long', 'booking');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_long', 'foot');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_long', 'foots');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_long', 'rebookings');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_long', 'rebooking');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_long', 'rebook');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_long', 'unbookings');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_long', 'unbooking');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_long', 'unbook');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_long', 'booked');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_long', 'footklubber');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_long', 'footballklubber');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_long', 'ballyklubber');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_long', 'ballsklubber');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_long', 'footballyklubber');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_long', 'ex-machina');
+-- Test ISpell dictionary with hunspell affix file with FLAG num parameter
+--dg-skip: text search is not supported
+--dg CREATE TEXT SEARCH DICTIONARY hunspell_num (
+--dg                         Template=ispell,
+--dg                         DictFile=hunspell_sample_num,
+--dg                         AffFile=hunspell_sample_num
+--dg );
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_num', 'skies');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_num', 'sk');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_num', 'bookings');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_num', 'booking');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_num', 'foot');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_num', 'foots');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_num', 'rebookings');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_num', 'rebooking');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_num', 'rebook');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_num', 'unbookings');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_num', 'unbooking');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_num', 'unbook');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_num', 'booked');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_num', 'footklubber');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_num', 'footballklubber');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_num', 'ballyklubber');
+--dg-cascade
+--dg SELECT ts_lexize('hunspell_num', 'footballyklubber');
+-- Test suitability of affix and dict files
+--dg-differs: another error: text search is not supported
+--dg CREATE TEXT SEARCH DICTIONARY hunspell_err (
+--dg 						Template=ispell,
+--dg 						DictFile=ispell_sample,
+--dg 						AffFile=hunspell_sample_long
+--dg );
+--dg-differs: another error: text search is not supported
+--dg CREATE TEXT SEARCH DICTIONARY hunspell_err (
+--dg 						Template=ispell,
+--dg 						DictFile=ispell_sample,
+--dg 						AffFile=hunspell_sample_num
+--dg );
+--dg-skip: text search is not supported
+--dg CREATE TEXT SEARCH DICTIONARY hunspell_invalid_1 (
+--dg 						Template=ispell,
+--dg 						DictFile=hunspell_sample_long,
+--dg 						AffFile=ispell_sample
+--dg );
+--dg-skip: text search is not supported
+--dg CREATE TEXT SEARCH DICTIONARY hunspell_invalid_2 (
+--dg 						Template=ispell,
+--dg 						DictFile=hunspell_sample_long,
+--dg 						AffFile=hunspell_sample_num
+--dg );
+--dg-skip: text search is not supported
+--dg CREATE TEXT SEARCH DICTIONARY hunspell_invalid_3 (
+--dg 						Template=ispell,
+--dg 						DictFile=hunspell_sample_num,
+--dg 						AffFile=ispell_sample
+--dg );
+--dg-differs: another error: text search is not supported
+--dg CREATE TEXT SEARCH DICTIONARY hunspell_err (
+--dg 						Template=ispell,
+--dg 						DictFile=hunspell_sample_num,
+--dg 						AffFile=hunspell_sample_long
+--dg );
+-- Synonym dictionary
+--dg-skip: text search is not supported
+--dg CREATE TEXT SEARCH DICTIONARY synonym (
+--dg 						Template=synonym,
+--dg 						Synonyms=synonym_sample
+--dg );
+--dg-cascade
+--dg SELECT ts_lexize('synonym', 'PoStGrEs');
+--dg-cascade
+--dg SELECT ts_lexize('synonym', 'Gogle');
+--dg-cascade
+--dg SELECT ts_lexize('synonym', 'indices');
+-- test altering boolean parameters
+--dg-cascade
+--dg SELECT dictinitoption FROM pg_ts_dict WHERE dictname = 'synonym';
+--dg-skip: text search is not supported
+--dg ALTER TEXT SEARCH DICTIONARY synonym (CaseSensitive = 1);
+--dg-cascade
+--dg SELECT ts_lexize('synonym', 'PoStGrEs');
+--dg-cascade
+--dg SELECT dictinitoption FROM pg_ts_dict WHERE dictname = 'synonym';
+--dg-cascade
+--dg ALTER TEXT SEARCH DICTIONARY synonym (CaseSensitive = 2);  -- fail
+--dg-skip: text search is not supported
+--dg ALTER TEXT SEARCH DICTIONARY synonym (CaseSensitive = off);
+--dg-cascade
+--dg SELECT ts_lexize('synonym', 'PoStGrEs');
+--dg-cascade
+--dg SELECT dictinitoption FROM pg_ts_dict WHERE dictname = 'synonym';
+-- Create and simple test thesaurus dictionary
+-- More tests in configuration checks because ts_lexize()
+-- cannot pass more than one word to thesaurus.
+--dg-skip: text search is not supported
+--dg CREATE TEXT SEARCH DICTIONARY thesaurus (
+--dg                         Template=thesaurus,
+--dg 						DictFile=thesaurus_sample,
+--dg 						Dictionary=english_stem
+--dg );
+--dg-cascade
+--dg SELECT ts_lexize('thesaurus', 'one');
+-- Test ispell dictionary in configuration
+--dg-skip: text search is not supported
+--dg CREATE TEXT SEARCH CONFIGURATION ispell_tst (
+--dg 						COPY=english
+--dg );
+--dg-skip: text search is not supported
+--dg ALTER TEXT SEARCH CONFIGURATION ispell_tst ALTER MAPPING FOR
+--dg 	word, numword, asciiword, hword, numhword, asciihword, hword_part, hword_numpart, hword_asciipart
+--dg 	WITH ispell, english_stem;
+--dg-cascade
+--dg SELECT to_tsvector('ispell_tst', 'Booking the skies after rebookings for footballklubber from a foot');
+--dg-cascade
+--dg SELECT to_tsquery('ispell_tst', 'footballklubber');
+--dg-cascade
+--dg SELECT to_tsquery('ispell_tst', 'footballyklubber:b & rebookings:A & sky');
+-- Test ispell dictionary with hunspell affix in configuration
+--dg-skip: text search is not supported
+--dg CREATE TEXT SEARCH CONFIGURATION hunspell_tst (
+--dg 						COPY=ispell_tst
+--dg );
+--dg-skip: text search is not supported
+--dg ALTER TEXT SEARCH CONFIGURATION hunspell_tst ALTER MAPPING
+--dg 	REPLACE ispell WITH hunspell;
+--dg-cascade
+--dg SELECT to_tsvector('hunspell_tst', 'Booking the skies after rebookings for footballklubber from a foot');
+--dg-cascade
+--dg SELECT to_tsquery('hunspell_tst', 'footballklubber');
+--dg-cascade
+--dg SELECT to_tsquery('hunspell_tst', 'footballyklubber:b & rebookings:A & sky');
+--dg-cascade
+--dg SELECT to_tsquery('hunspell_tst', 'footballyklubber:b <-> sky');
+--dg-cascade
+--dg SELECT phraseto_tsquery('hunspell_tst', 'footballyklubber sky');
+-- Test ispell dictionary with hunspell affix with FLAG long in configuration
+--dg-skip: text search is not supported
+--dg ALTER TEXT SEARCH CONFIGURATION hunspell_tst ALTER MAPPING
+--dg 	REPLACE hunspell WITH hunspell_long;
+--dg-cascade
+--dg SELECT to_tsvector('hunspell_tst', 'Booking the skies after rebookings for footballklubber from a foot');
+--dg-cascade
+--dg SELECT to_tsquery('hunspell_tst', 'footballklubber');
+--dg-cascade
+--dg SELECT to_tsquery('hunspell_tst', 'footballyklubber:b & rebookings:A & sky');
+-- Test ispell dictionary with hunspell affix with FLAG num in configuration
+--dg-skip: text search is not supported
+--dg ALTER TEXT SEARCH CONFIGURATION hunspell_tst ALTER MAPPING
+--dg 	REPLACE hunspell_long WITH hunspell_num;
+--dg-cascade
+--dg SELECT to_tsvector('hunspell_tst', 'Booking the skies after rebookings for footballklubber from a foot');
+--dg-cascade
+--dg SELECT to_tsquery('hunspell_tst', 'footballklubber');
+--dg-cascade
+--dg SELECT to_tsquery('hunspell_tst', 'footballyklubber:b & rebookings:A & sky');
+-- Test synonym dictionary in configuration
+--dg-skip: text search is not supported
+--dg CREATE TEXT SEARCH CONFIGURATION synonym_tst (
+--dg 						COPY=english
+--dg );
+--dg-skip: text search is not supported
+--dg ALTER TEXT SEARCH CONFIGURATION synonym_tst ALTER MAPPING FOR
+--dg 	asciiword, hword_asciipart, asciihword
+--dg 	WITH synonym, english_stem;
+--dg-cascade
+--dg SELECT to_tsvector('synonym_tst', 'Postgresql is often called as postgres or pgsql and pronounced as postgre');
+--dg-cascade
+--dg SELECT to_tsvector('synonym_tst', 'Most common mistake is to write Gogle instead of Google');
+--dg-cascade
+--dg SELECT to_tsvector('synonym_tst', 'Indexes or indices - Which is right plural form of index?');
+--dg-cascade
+--dg SELECT to_tsquery('synonym_tst', 'Index & indices');
+-- test thesaurus in configuration
+-- see thesaurus_sample.ths to understand 'odd' resulting tsvector
+--dg-skip: text search is not supported
+--dg CREATE TEXT SEARCH CONFIGURATION thesaurus_tst (
+--dg 						COPY=synonym_tst
+--dg );
+--dg-skip: text search is not supported
+--dg ALTER TEXT SEARCH CONFIGURATION thesaurus_tst ALTER MAPPING FOR
+--dg 	asciiword, hword_asciipart, asciihword
+--dg 	WITH synonym, thesaurus, english_stem;
+--dg-cascade
+--dg SELECT to_tsvector('thesaurus_tst', 'one postgres one two one two three one');
+--dg-cascade
+--dg SELECT to_tsvector('thesaurus_tst', 'Supernovae star is very new star and usually called supernovae (abbreviation SN)');
+--dg-cascade
+--dg SELECT to_tsvector('thesaurus_tst', 'Booking tickets is looking like a booking a tickets');
+-- invalid: non-lowercase quoted identifiers
+--dg-differs: another error: text search is not supported
+--dg CREATE TEXT SEARCH DICTIONARY tsdict_case
+--dg (
+--dg 	Template = ispell,
+--dg 	"DictFile" = ispell_sample,
+--dg 	"AffFile" = ispell_sample
+--dg );
+-- Test grammar for configurations
+--dg-skip: text search is not supported
+--dg CREATE TEXT SEARCH CONFIGURATION dummy_tst (COPY=english);
+-- Overridden mapping change with duplicated tokens.
+--dg-skip: text search is not supported
+--dg ALTER TEXT SEARCH CONFIGURATION dummy_tst
+--dg   ALTER MAPPING FOR word, word WITH ispell;
+-- Not a token supported by the configuration's parser, fails.
+--dg-cascade
+--dg ALTER TEXT SEARCH CONFIGURATION dummy_tst
+--dg   DROP MAPPING FOR not_a_token, not_a_token;
+-- Not a token supported by the configuration's parser, fails even
+-- with IF EXISTS.
+--dg-cascade
+--dg ALTER TEXT SEARCH CONFIGURATION dummy_tst
+--dg   DROP MAPPING IF EXISTS FOR not_a_token, not_a_token;
+-- Token supported by the configuration's parser, succeeds.
+--dg-skip: text search is not supported
+--dg ALTER TEXT SEARCH CONFIGURATION dummy_tst
+--dg   DROP MAPPING FOR word, word;
+-- No mapping for token supported by the configuration's parser, fails.
+--dg-cascade
+--dg ALTER TEXT SEARCH CONFIGURATION dummy_tst
+--dg   DROP MAPPING FOR word;
+-- Token supported by the configuration's parser, cannot be found,
+-- succeeds with IF EXISTS.
+--dg-skip: text search is not supported
+--dg ALTER TEXT SEARCH CONFIGURATION dummy_tst
+--dg   DROP MAPPING IF EXISTS FOR word, word;
+-- Re-add mapping, with duplicated tokens supported by the parser.
+--dg-skip: text search is not supported
+--dg ALTER TEXT SEARCH CONFIGURATION dummy_tst
+--dg   ADD MAPPING FOR word, word WITH ispell;
+-- Not a token supported by the configuration's parser, fails.
+--dg-cascade
+--dg ALTER TEXT SEARCH CONFIGURATION dummy_tst
+--dg   ADD MAPPING FOR not_a_token WITH ispell;
+--dg-skip: relation pg_ts_config cannot be opened: digres has no catalog tables
+--dg DROP TEXT SEARCH CONFIGURATION dummy_tst;

@@ -1,0 +1,81 @@
+--
+-- Tests for PGLZ compression
+--
+
+-- directory paths and dlsuffix are passed to us in environment variables
+\getenv libdir PG_LIBDIR
+\getenv dlsuffix PG_DLSUFFIX
+
+\set regresslib :libdir '/regress' :dlsuffix
+
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
+--dg CREATE FUNCTION test_pglz_compress(bytea)
+--dg   RETURNS bytea
+--dg   AS :'regresslib' LANGUAGE C STRICT;
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
+--dg CREATE FUNCTION test_pglz_decompress(bytea, int4, bool)
+--dg   RETURNS bytea
+--dg   AS :'regresslib' LANGUAGE C STRICT;
+
+-- Round-trip with pglz: compress then decompress.
+--dg-cascade
+--dg SELECT test_pglz_decompress(test_pglz_compress(
+--dg     decode(repeat('abcd', 100), 'escape')), 400, false) =
+--dg     decode(repeat('abcd', 100), 'escape') AS roundtrip_ok;
+--dg-cascade
+--dg SELECT test_pglz_decompress(test_pglz_compress(
+--dg     decode(repeat('abcd', 100), 'escape')), 400, true) =
+--dg     decode(repeat('abcd', 100), 'escape') AS roundtrip_ok;
+
+-- Decompression with rawsize too large, fails to fill the destination
+-- buffer.
+--dg-cascade
+--dg SELECT test_pglz_decompress(test_pglz_compress(
+--dg     decode(repeat('abcd', 100), 'escape')), 500, true);
+
+-- Decompression with rawsize too small, fails with source not fully
+-- consumed.
+--dg-cascade
+--dg SELECT test_pglz_decompress(test_pglz_compress(
+--dg     decode(repeat('abcd', 100), 'escape')), 100, true);
+
+-- Corrupted compressed data.  Set control bit with read of a match tag,
+-- no data follows.
+--dg-cascade
+--dg SELECT length(test_pglz_decompress('\x01'::bytea, 1024, false)) AS ctrl_only_len;
+--dg-cascade
+--dg SELECT test_pglz_decompress('\x01'::bytea, 1024, true);
+
+-- Corrupted compressed data.  Set control bit with read of a match tag,
+-- 1 byte follows.
+--dg-cascade
+--dg SELECT test_pglz_decompress('\x01ff'::bytea, 1024, false);
+--dg-cascade
+--dg SELECT test_pglz_decompress('\x01ff'::bytea, 1024, true);
+
+-- Corrupted compressed data.  Set control bit with match tag where length
+-- nibble is 3 bytes (extended length), no data follows.
+--dg-cascade
+--dg SELECT test_pglz_decompress('\x010f01'::bytea, 1024, false);
+--dg-cascade
+--dg SELECT test_pglz_decompress('\x010f01'::bytea, 1024, true);
+
+-- Corrupted compressed data.  Set control bit with a valid 2-byte match
+-- tag where offset exceeds output written.
+--dg-cascade
+--dg SELECT test_pglz_decompress('\x011001'::bytea, 1024, false);
+--dg-cascade
+--dg SELECT test_pglz_decompress('\x011001'::bytea, 1024, true);
+
+-- Corrupted compressed data.  Set control bit with a valid 2-byte match
+-- tag where offset is 0.
+--dg-cascade
+--dg SELECT test_pglz_decompress('\x010300'::bytea, 1024, false);
+--dg-cascade
+--dg SELECT test_pglz_decompress('\x010300'::bytea, 1024, true);
+
+-- Clean up
+--dg-cascade
+--dg DROP FUNCTION test_pglz_compress;
+--dg-cascade
+--dg DROP FUNCTION test_pglz_decompress;

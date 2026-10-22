@@ -1,0 +1,4737 @@
+--
+-- PLPGSQL
+--
+-- Scenario:
+--
+--     A building with a modern TP cable installation where any
+--     of the wall connectors can be used to plug in phones,
+--     ethernet interfaces or local office hubs. The backside
+--     of the wall connectors is wired to one of several patch-
+--     fields in the building.
+--
+--     In the patchfields, there are hubs and all the slots
+--     representing the wall connectors. In addition there are
+--     slots that can represent a phone line from the central
+--     phone system.
+--
+--     Triggers ensure consistency of the patching information.
+--
+--     Functions are used to build up powerful views that let
+--     you look behind the wall when looking at a patchfield
+--     or into a room.
+--
+create table Room (
+    roomno	char(8),
+    comment	text
+);
+create unique index Room_rno on Room using btree (roomno bpchar_ops);
+create table WSlot (
+    slotname	char(20),
+    roomno	char(8),
+    slotlink	char(20),
+    backlink	char(20)
+);
+create unique index WSlot_name on WSlot using btree (slotname bpchar_ops);
+create table PField (
+    name	text,
+    comment	text
+);
+create unique index PField_name on PField using btree (name text_ops);
+create table PSlot (
+    slotname	char(20),
+    pfname	text,
+    slotlink	char(20),
+    backlink	char(20)
+);
+create unique index PSlot_name on PSlot using btree (slotname bpchar_ops);
+create table PLine (
+    slotname	char(20),
+    phonenumber	char(20),
+    comment	text,
+    backlink	char(20)
+);
+create unique index PLine_name on PLine using btree (slotname bpchar_ops);
+create table Hub (
+    name	char(14),
+    comment	text,
+    nslots	integer
+);
+create unique index Hub_name on Hub using btree (name bpchar_ops);
+create table HSlot (
+    slotname	char(20),
+    hubname	char(14),
+    slotno	integer,
+    slotlink	char(20)
+);
+create unique index HSlot_name on HSlot using btree (slotname bpchar_ops);
+create index HSlot_hubname on HSlot using btree (hubname bpchar_ops);
+create table System (
+    name	text,
+    comment	text
+);
+create unique index System_name on System using btree (name text_ops);
+create table IFace (
+    slotname	char(20),
+    sysname	text,
+    ifname	text,
+    slotlink	char(20)
+);
+create unique index IFace_name on IFace using btree (slotname bpchar_ops);
+create table PHone (
+    slotname	char(20),
+    comment	text,
+    slotlink	char(20)
+);
+create unique index PHone_name on PHone using btree (slotname bpchar_ops);
+-- ************************************************************
+-- *
+-- * Trigger procedures and functions for the patchfield
+-- * test of PL/pgSQL
+-- *
+-- ************************************************************
+-- ************************************************************
+-- * AFTER UPDATE on Room
+-- *	- If room no changes let wall slots follow
+-- ************************************************************
+--dg-skip: language "?" does not exist
+--dg create function tg_room_au() returns trigger as '
+--dg begin
+--dg     if new.roomno != old.roomno then
+--dg         update WSlot set roomno = new.roomno where roomno = old.roomno;
+--dg     end if;
+--dg     return new;
+--dg end;
+--dg ' language plpgsql;
+--dg-cascade
+--dg create trigger tg_room_au after update
+--dg     on Room for each row execute procedure tg_room_au();
+-- ************************************************************
+-- * AFTER DELETE on Room
+-- *	- delete wall slots in this room
+-- ************************************************************
+--dg-skip: language "?" does not exist
+--dg create function tg_room_ad() returns trigger as '
+--dg begin
+--dg     delete from WSlot where roomno = old.roomno;
+--dg     return old;
+--dg end;
+--dg ' language plpgsql;
+--dg-cascade
+--dg create trigger tg_room_ad after delete
+--dg     on Room for each row execute procedure tg_room_ad();
+-- ************************************************************
+-- * BEFORE INSERT or UPDATE on WSlot
+-- *	- Check that room exists
+-- ************************************************************
+--dg-skip: language "?" does not exist
+--dg create function tg_wslot_biu() returns trigger as $$
+--dg begin
+--dg     if count(*) = 0 from Room where roomno = new.roomno then
+--dg         raise exception 'Room % does not exist', new.roomno;
+--dg     end if;
+--dg     return new;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg create trigger tg_wslot_biu before insert or update
+--dg     on WSlot for each row execute procedure tg_wslot_biu();
+-- ************************************************************
+-- * AFTER UPDATE on PField
+-- *	- Let PSlots of this field follow
+-- ************************************************************
+--dg-skip: language "?" does not exist
+--dg create function tg_pfield_au() returns trigger as '
+--dg begin
+--dg     if new.name != old.name then
+--dg         update PSlot set pfname = new.name where pfname = old.name;
+--dg     end if;
+--dg     return new;
+--dg end;
+--dg ' language plpgsql;
+--dg-cascade
+--dg create trigger tg_pfield_au after update
+--dg     on PField for each row execute procedure tg_pfield_au();
+-- ************************************************************
+-- * AFTER DELETE on PField
+-- *	- Remove all slots of this patchfield
+-- ************************************************************
+--dg-skip: language "?" does not exist
+--dg create function tg_pfield_ad() returns trigger as '
+--dg begin
+--dg     delete from PSlot where pfname = old.name;
+--dg     return old;
+--dg end;
+--dg ' language plpgsql;
+--dg-cascade
+--dg create trigger tg_pfield_ad after delete
+--dg     on PField for each row execute procedure tg_pfield_ad();
+-- ************************************************************
+-- * BEFORE INSERT or UPDATE on PSlot
+-- *	- Ensure that our patchfield does exist
+-- ************************************************************
+--dg-skip: language "?" does not exist
+--dg create function tg_pslot_biu() returns trigger as $proc$
+--dg declare
+--dg     pfrec	record;
+--dg     ps          alias for new;
+--dg begin
+--dg     select into pfrec * from PField where name = ps.pfname;
+--dg     if not found then
+--dg         raise exception $$Patchfield "%" does not exist$$, ps.pfname;
+--dg     end if;
+--dg     return ps;
+--dg end;
+--dg $proc$ language plpgsql;
+--dg-cascade
+--dg create trigger tg_pslot_biu before insert or update
+--dg     on PSlot for each row execute procedure tg_pslot_biu();
+-- ************************************************************
+-- * AFTER UPDATE on System
+-- *	- If system name changes let interfaces follow
+-- ************************************************************
+--dg-skip: language "?" does not exist
+--dg create function tg_system_au() returns trigger as '
+--dg begin
+--dg     if new.name != old.name then
+--dg         update IFace set sysname = new.name where sysname = old.name;
+--dg     end if;
+--dg     return new;
+--dg end;
+--dg ' language plpgsql;
+--dg-cascade
+--dg create trigger tg_system_au after update
+--dg     on System for each row execute procedure tg_system_au();
+-- ************************************************************
+-- * BEFORE INSERT or UPDATE on IFace
+-- *	- set the slotname to IF.sysname.ifname
+-- ************************************************************
+--dg-skip: language "?" does not exist
+--dg create function tg_iface_biu() returns trigger as $$
+--dg declare
+--dg     sname	text;
+--dg     sysrec	record;
+--dg begin
+--dg     select into sysrec * from system where name = new.sysname;
+--dg     if not found then
+--dg         raise exception $q$system "%" does not exist$q$, new.sysname;
+--dg     end if;
+--dg     sname := 'IF.' || new.sysname;
+--dg     sname := sname || '.';
+--dg     sname := sname || new.ifname;
+--dg     if length(sname) > 20 then
+--dg         raise exception 'IFace slotname "%" too long (20 char max)', sname;
+--dg     end if;
+--dg     new.slotname := sname;
+--dg     return new;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg create trigger tg_iface_biu before insert or update
+--dg     on IFace for each row execute procedure tg_iface_biu();
+-- ************************************************************
+-- * AFTER INSERT or UPDATE or DELETE on Hub
+-- *	- insert/delete/rename slots as required
+-- ************************************************************
+--dg-skip: language "?" does not exist
+--dg create function tg_hub_a() returns trigger as '
+--dg declare
+--dg     hname	text;
+--dg     dummy	integer;
+--dg begin
+--dg     if tg_op = ''INSERT'' then
+--dg 	dummy := tg_hub_adjustslots(new.name, 0, new.nslots);
+--dg 	return new;
+--dg     end if;
+--dg     if tg_op = ''UPDATE'' then
+--dg 	if new.name != old.name then
+--dg 	    update HSlot set hubname = new.name where hubname = old.name;
+--dg 	end if;
+--dg 	dummy := tg_hub_adjustslots(new.name, old.nslots, new.nslots);
+--dg 	return new;
+--dg     end if;
+--dg     if tg_op = ''DELETE'' then
+--dg 	dummy := tg_hub_adjustslots(old.name, old.nslots, 0);
+--dg 	return old;
+--dg     end if;
+--dg end;
+--dg ' language plpgsql;
+--dg-cascade
+--dg create trigger tg_hub_a after insert or update or delete
+--dg     on Hub for each row execute procedure tg_hub_a();
+-- ************************************************************
+-- * Support function to add/remove slots of Hub
+-- ************************************************************
+--dg-skip: language "?" does not exist
+--dg create function tg_hub_adjustslots(hname bpchar,
+--dg                                    oldnslots integer,
+--dg                                    newnslots integer)
+--dg returns integer as '
+--dg begin
+--dg     if newnslots = oldnslots then
+--dg         return 0;
+--dg     end if;
+--dg     if newnslots < oldnslots then
+--dg         delete from HSlot where hubname = hname and slotno > newnslots;
+--dg 	return 0;
+--dg     end if;
+--dg     for i in oldnslots + 1 .. newnslots loop
+--dg         insert into HSlot (slotname, hubname, slotno, slotlink)
+--dg 		values (''HS.dummy'', hname, i, '''');
+--dg     end loop;
+--dg     return 0;
+--dg end
+--dg ' language plpgsql;
+-- Test comments
+COMMENT ON FUNCTION tg_hub_adjustslots_wrong(bpchar, integer, integer) IS 'function with args';
+ERROR:  function tg_hub_adjustslots_wrong(character, integer, integer) does not exist
+--dg-cascade
+--dg COMMENT ON FUNCTION tg_hub_adjustslots(bpchar, integer, integer) IS 'function with args';
+--dg-cascade
+--dg COMMENT ON FUNCTION tg_hub_adjustslots(bpchar, integer, integer) IS NULL;
+-- ************************************************************
+-- * BEFORE INSERT or UPDATE on HSlot
+-- *	- prevent from manual manipulation
+-- *	- set the slotname to HS.hubname.slotno
+-- ************************************************************
+--dg-skip: language "?" does not exist
+--dg create function tg_hslot_biu() returns trigger as '
+--dg declare
+--dg     sname	text;
+--dg     xname	HSlot.slotname%TYPE;
+--dg     hubrec	record;
+--dg begin
+--dg     select into hubrec * from Hub where name = new.hubname;
+--dg     if not found then
+--dg         raise exception ''no manual manipulation of HSlot'';
+--dg     end if;
+--dg     if new.slotno < 1 or new.slotno > hubrec.nslots then
+--dg         raise exception ''no manual manipulation of HSlot'';
+--dg     end if;
+--dg     if tg_op = ''UPDATE'' and new.hubname != old.hubname then
+--dg 	if count(*) > 0 from Hub where name = old.hubname then
+--dg 	    raise exception ''no manual manipulation of HSlot'';
+--dg 	end if;
+--dg     end if;
+--dg     sname := ''HS.'' || trim(new.hubname);
+--dg     sname := sname || ''.'';
+--dg     sname := sname || new.slotno::text;
+--dg     if length(sname) > 20 then
+--dg         raise exception ''HSlot slotname "%" too long (20 char max)'', sname;
+--dg     end if;
+--dg     new.slotname := sname;
+--dg     return new;
+--dg end;
+--dg ' language plpgsql;
+--dg-cascade
+--dg create trigger tg_hslot_biu before insert or update
+--dg     on HSlot for each row execute procedure tg_hslot_biu();
+-- ************************************************************
+-- * BEFORE DELETE on HSlot
+-- *	- prevent from manual manipulation
+-- ************************************************************
+--dg-skip: language "?" does not exist
+--dg create function tg_hslot_bd() returns trigger as '
+--dg declare
+--dg     hubrec	record;
+--dg begin
+--dg     select into hubrec * from Hub where name = old.hubname;
+--dg     if not found then
+--dg         return old;
+--dg     end if;
+--dg     if old.slotno > hubrec.nslots then
+--dg         return old;
+--dg     end if;
+--dg     raise exception ''no manual manipulation of HSlot'';
+--dg end;
+--dg ' language plpgsql;
+--dg-cascade
+--dg create trigger tg_hslot_bd before delete
+--dg     on HSlot for each row execute procedure tg_hslot_bd();
+-- ************************************************************
+-- * BEFORE INSERT on all slots
+-- *	- Check name prefix
+-- ************************************************************
+--dg-skip: language "?" does not exist
+--dg create function tg_chkslotname() returns trigger as '
+--dg begin
+--dg     if substr(new.slotname, 1, 2) != tg_argv[0] then
+--dg         raise exception ''slotname must begin with %'', tg_argv[0];
+--dg     end if;
+--dg     return new;
+--dg end;
+--dg ' language plpgsql;
+--dg-cascade
+--dg create trigger tg_chkslotname before insert
+--dg     on PSlot for each row execute procedure tg_chkslotname('PS');
+--dg-cascade
+--dg create trigger tg_chkslotname before insert
+--dg     on WSlot for each row execute procedure tg_chkslotname('WS');
+--dg-cascade
+--dg create trigger tg_chkslotname before insert
+--dg     on PLine for each row execute procedure tg_chkslotname('PL');
+--dg-cascade
+--dg create trigger tg_chkslotname before insert
+--dg     on IFace for each row execute procedure tg_chkslotname('IF');
+--dg-cascade
+--dg create trigger tg_chkslotname before insert
+--dg     on PHone for each row execute procedure tg_chkslotname('PH');
+-- ************************************************************
+-- * BEFORE INSERT or UPDATE on all slots with slotlink
+-- *	- Set slotlink to empty string if NULL value given
+-- ************************************************************
+--dg-skip: language "?" does not exist
+--dg create function tg_chkslotlink() returns trigger as '
+--dg begin
+--dg     if new.slotlink isnull then
+--dg         new.slotlink := '''';
+--dg     end if;
+--dg     return new;
+--dg end;
+--dg ' language plpgsql;
+--dg-cascade
+--dg create trigger tg_chkslotlink before insert or update
+--dg     on PSlot for each row execute procedure tg_chkslotlink();
+--dg-cascade
+--dg create trigger tg_chkslotlink before insert or update
+--dg     on WSlot for each row execute procedure tg_chkslotlink();
+--dg-cascade
+--dg create trigger tg_chkslotlink before insert or update
+--dg     on IFace for each row execute procedure tg_chkslotlink();
+--dg-cascade
+--dg create trigger tg_chkslotlink before insert or update
+--dg     on HSlot for each row execute procedure tg_chkslotlink();
+--dg-cascade
+--dg create trigger tg_chkslotlink before insert or update
+--dg     on PHone for each row execute procedure tg_chkslotlink();
+-- ************************************************************
+-- * BEFORE INSERT or UPDATE on all slots with backlink
+-- *	- Set backlink to empty string if NULL value given
+-- ************************************************************
+--dg-skip: language "?" does not exist
+--dg create function tg_chkbacklink() returns trigger as '
+--dg begin
+--dg     if new.backlink isnull then
+--dg         new.backlink := '''';
+--dg     end if;
+--dg     return new;
+--dg end;
+--dg ' language plpgsql;
+--dg-cascade
+--dg create trigger tg_chkbacklink before insert or update
+--dg     on PSlot for each row execute procedure tg_chkbacklink();
+--dg-cascade
+--dg create trigger tg_chkbacklink before insert or update
+--dg     on WSlot for each row execute procedure tg_chkbacklink();
+--dg-cascade
+--dg create trigger tg_chkbacklink before insert or update
+--dg     on PLine for each row execute procedure tg_chkbacklink();
+-- ************************************************************
+-- * BEFORE UPDATE on PSlot
+-- *	- do delete/insert instead of update if name changes
+-- ************************************************************
+--dg-skip: language "?" does not exist
+--dg create function tg_pslot_bu() returns trigger as '
+--dg begin
+--dg     if new.slotname != old.slotname then
+--dg         delete from PSlot where slotname = old.slotname;
+--dg 	insert into PSlot (
+--dg 		    slotname,
+--dg 		    pfname,
+--dg 		    slotlink,
+--dg 		    backlink
+--dg 		) values (
+--dg 		    new.slotname,
+--dg 		    new.pfname,
+--dg 		    new.slotlink,
+--dg 		    new.backlink
+--dg 		);
+--dg         return null;
+--dg     end if;
+--dg     return new;
+--dg end;
+--dg ' language plpgsql;
+--dg-cascade
+--dg create trigger tg_pslot_bu before update
+--dg     on PSlot for each row execute procedure tg_pslot_bu();
+-- ************************************************************
+-- * BEFORE UPDATE on WSlot
+-- *	- do delete/insert instead of update if name changes
+-- ************************************************************
+--dg-skip: language "?" does not exist
+--dg create function tg_wslot_bu() returns trigger as '
+--dg begin
+--dg     if new.slotname != old.slotname then
+--dg         delete from WSlot where slotname = old.slotname;
+--dg 	insert into WSlot (
+--dg 		    slotname,
+--dg 		    roomno,
+--dg 		    slotlink,
+--dg 		    backlink
+--dg 		) values (
+--dg 		    new.slotname,
+--dg 		    new.roomno,
+--dg 		    new.slotlink,
+--dg 		    new.backlink
+--dg 		);
+--dg         return null;
+--dg     end if;
+--dg     return new;
+--dg end;
+--dg ' language plpgsql;
+--dg-cascade
+--dg create trigger tg_wslot_bu before update
+--dg     on WSlot for each row execute procedure tg_Wslot_bu();
+-- ************************************************************
+-- * BEFORE UPDATE on PLine
+-- *	- do delete/insert instead of update if name changes
+-- ************************************************************
+--dg-skip: language "?" does not exist
+--dg create function tg_pline_bu() returns trigger as '
+--dg begin
+--dg     if new.slotname != old.slotname then
+--dg         delete from PLine where slotname = old.slotname;
+--dg 	insert into PLine (
+--dg 		    slotname,
+--dg 		    phonenumber,
+--dg 		    comment,
+--dg 		    backlink
+--dg 		) values (
+--dg 		    new.slotname,
+--dg 		    new.phonenumber,
+--dg 		    new.comment,
+--dg 		    new.backlink
+--dg 		);
+--dg         return null;
+--dg     end if;
+--dg     return new;
+--dg end;
+--dg ' language plpgsql;
+--dg-cascade
+--dg create trigger tg_pline_bu before update
+--dg     on PLine for each row execute procedure tg_pline_bu();
+-- ************************************************************
+-- * BEFORE UPDATE on IFace
+-- *	- do delete/insert instead of update if name changes
+-- ************************************************************
+--dg-skip: language "?" does not exist
+--dg create function tg_iface_bu() returns trigger as '
+--dg begin
+--dg     if new.slotname != old.slotname then
+--dg         delete from IFace where slotname = old.slotname;
+--dg 	insert into IFace (
+--dg 		    slotname,
+--dg 		    sysname,
+--dg 		    ifname,
+--dg 		    slotlink
+--dg 		) values (
+--dg 		    new.slotname,
+--dg 		    new.sysname,
+--dg 		    new.ifname,
+--dg 		    new.slotlink
+--dg 		);
+--dg         return null;
+--dg     end if;
+--dg     return new;
+--dg end;
+--dg ' language plpgsql;
+--dg-cascade
+--dg create trigger tg_iface_bu before update
+--dg     on IFace for each row execute procedure tg_iface_bu();
+-- ************************************************************
+-- * BEFORE UPDATE on HSlot
+-- *	- do delete/insert instead of update if name changes
+-- ************************************************************
+--dg-skip: language "?" does not exist
+--dg create function tg_hslot_bu() returns trigger as '
+--dg begin
+--dg     if new.slotname != old.slotname or new.hubname != old.hubname then
+--dg         delete from HSlot where slotname = old.slotname;
+--dg 	insert into HSlot (
+--dg 		    slotname,
+--dg 		    hubname,
+--dg 		    slotno,
+--dg 		    slotlink
+--dg 		) values (
+--dg 		    new.slotname,
+--dg 		    new.hubname,
+--dg 		    new.slotno,
+--dg 		    new.slotlink
+--dg 		);
+--dg         return null;
+--dg     end if;
+--dg     return new;
+--dg end;
+--dg ' language plpgsql;
+--dg-cascade
+--dg create trigger tg_hslot_bu before update
+--dg     on HSlot for each row execute procedure tg_hslot_bu();
+-- ************************************************************
+-- * BEFORE UPDATE on PHone
+-- *	- do delete/insert instead of update if name changes
+-- ************************************************************
+--dg-skip: language "?" does not exist
+--dg create function tg_phone_bu() returns trigger as '
+--dg begin
+--dg     if new.slotname != old.slotname then
+--dg         delete from PHone where slotname = old.slotname;
+--dg 	insert into PHone (
+--dg 		    slotname,
+--dg 		    comment,
+--dg 		    slotlink
+--dg 		) values (
+--dg 		    new.slotname,
+--dg 		    new.comment,
+--dg 		    new.slotlink
+--dg 		);
+--dg         return null;
+--dg     end if;
+--dg     return new;
+--dg end;
+--dg ' language plpgsql;
+--dg-cascade
+--dg create trigger tg_phone_bu before update
+--dg     on PHone for each row execute procedure tg_phone_bu();
+-- ************************************************************
+-- * AFTER INSERT or UPDATE or DELETE on slot with backlink
+-- *	- Ensure that the opponent correctly points back to us
+-- ************************************************************
+--dg-skip: language "?" does not exist
+--dg create function tg_backlink_a() returns trigger as '
+--dg declare
+--dg     dummy	integer;
+--dg begin
+--dg     if tg_op = ''INSERT'' then
+--dg         if new.backlink != '''' then
+--dg 	    dummy := tg_backlink_set(new.backlink, new.slotname);
+--dg 	end if;
+--dg 	return new;
+--dg     end if;
+--dg     if tg_op = ''UPDATE'' then
+--dg         if new.backlink != old.backlink then
+--dg 	    if old.backlink != '''' then
+--dg 	        dummy := tg_backlink_unset(old.backlink, old.slotname);
+--dg 	    end if;
+--dg 	    if new.backlink != '''' then
+--dg 	        dummy := tg_backlink_set(new.backlink, new.slotname);
+--dg 	    end if;
+--dg 	else
+--dg 	    if new.slotname != old.slotname and new.backlink != '''' then
+--dg 	        dummy := tg_slotlink_set(new.backlink, new.slotname);
+--dg 	    end if;
+--dg 	end if;
+--dg 	return new;
+--dg     end if;
+--dg     if tg_op = ''DELETE'' then
+--dg         if old.backlink != '''' then
+--dg 	    dummy := tg_backlink_unset(old.backlink, old.slotname);
+--dg 	end if;
+--dg 	return old;
+--dg     end if;
+--dg end;
+--dg ' language plpgsql;
+--dg-cascade
+--dg create trigger tg_backlink_a after insert or update or delete
+--dg     on PSlot for each row execute procedure tg_backlink_a('PS');
+--dg-cascade
+--dg create trigger tg_backlink_a after insert or update or delete
+--dg     on WSlot for each row execute procedure tg_backlink_a('WS');
+--dg-cascade
+--dg create trigger tg_backlink_a after insert or update or delete
+--dg     on PLine for each row execute procedure tg_backlink_a('PL');
+-- ************************************************************
+-- * Support function to set the opponents backlink field
+-- * if it does not already point to the requested slot
+-- ************************************************************
+--dg-skip: language "?" does not exist
+--dg create function tg_backlink_set(myname bpchar, blname bpchar)
+--dg returns integer as '
+--dg declare
+--dg     mytype	char(2);
+--dg     link	char(4);
+--dg     rec		record;
+--dg begin
+--dg     mytype := substr(myname, 1, 2);
+--dg     link := mytype || substr(blname, 1, 2);
+--dg     if link = ''PLPL'' then
+--dg         raise exception
+--dg 		''backlink between two phone lines does not make sense'';
+--dg     end if;
+--dg     if link in (''PLWS'', ''WSPL'') then
+--dg         raise exception
+--dg 		''direct link of phone line to wall slot not permitted'';
+--dg     end if;
+--dg     if mytype = ''PS'' then
+--dg         select into rec * from PSlot where slotname = myname;
+--dg 	if not found then
+--dg 	    raise exception ''% does not exist'', myname;
+--dg 	end if;
+--dg 	if rec.backlink != blname then
+--dg 	    update PSlot set backlink = blname where slotname = myname;
+--dg 	end if;
+--dg 	return 0;
+--dg     end if;
+--dg     if mytype = ''WS'' then
+--dg         select into rec * from WSlot where slotname = myname;
+--dg 	if not found then
+--dg 	    raise exception ''% does not exist'', myname;
+--dg 	end if;
+--dg 	if rec.backlink != blname then
+--dg 	    update WSlot set backlink = blname where slotname = myname;
+--dg 	end if;
+--dg 	return 0;
+--dg     end if;
+--dg     if mytype = ''PL'' then
+--dg         select into rec * from PLine where slotname = myname;
+--dg 	if not found then
+--dg 	    raise exception ''% does not exist'', myname;
+--dg 	end if;
+--dg 	if rec.backlink != blname then
+--dg 	    update PLine set backlink = blname where slotname = myname;
+--dg 	end if;
+--dg 	return 0;
+--dg     end if;
+--dg     raise exception ''illegal backlink beginning with %'', mytype;
+--dg end;
+--dg ' language plpgsql;
+-- ************************************************************
+-- * Support function to clear out the backlink field if
+-- * it still points to specific slot
+-- ************************************************************
+--dg-skip: language "?" does not exist
+--dg create function tg_backlink_unset(bpchar, bpchar)
+--dg returns integer as '
+--dg declare
+--dg     myname	alias for $1;
+--dg     blname	alias for $2;
+--dg     mytype	char(2);
+--dg     rec		record;
+--dg begin
+--dg     mytype := substr(myname, 1, 2);
+--dg     if mytype = ''PS'' then
+--dg         select into rec * from PSlot where slotname = myname;
+--dg 	if not found then
+--dg 	    return 0;
+--dg 	end if;
+--dg 	if rec.backlink = blname then
+--dg 	    update PSlot set backlink = '''' where slotname = myname;
+--dg 	end if;
+--dg 	return 0;
+--dg     end if;
+--dg     if mytype = ''WS'' then
+--dg         select into rec * from WSlot where slotname = myname;
+--dg 	if not found then
+--dg 	    return 0;
+--dg 	end if;
+--dg 	if rec.backlink = blname then
+--dg 	    update WSlot set backlink = '''' where slotname = myname;
+--dg 	end if;
+--dg 	return 0;
+--dg     end if;
+--dg     if mytype = ''PL'' then
+--dg         select into rec * from PLine where slotname = myname;
+--dg 	if not found then
+--dg 	    return 0;
+--dg 	end if;
+--dg 	if rec.backlink = blname then
+--dg 	    update PLine set backlink = '''' where slotname = myname;
+--dg 	end if;
+--dg 	return 0;
+--dg     end if;
+--dg end
+--dg ' language plpgsql;
+-- ************************************************************
+-- * AFTER INSERT or UPDATE or DELETE on slot with slotlink
+-- *	- Ensure that the opponent correctly points back to us
+-- ************************************************************
+--dg-skip: language "?" does not exist
+--dg create function tg_slotlink_a() returns trigger as '
+--dg declare
+--dg     dummy	integer;
+--dg begin
+--dg     if tg_op = ''INSERT'' then
+--dg         if new.slotlink != '''' then
+--dg 	    dummy := tg_slotlink_set(new.slotlink, new.slotname);
+--dg 	end if;
+--dg 	return new;
+--dg     end if;
+--dg     if tg_op = ''UPDATE'' then
+--dg         if new.slotlink != old.slotlink then
+--dg 	    if old.slotlink != '''' then
+--dg 	        dummy := tg_slotlink_unset(old.slotlink, old.slotname);
+--dg 	    end if;
+--dg 	    if new.slotlink != '''' then
+--dg 	        dummy := tg_slotlink_set(new.slotlink, new.slotname);
+--dg 	    end if;
+--dg 	else
+--dg 	    if new.slotname != old.slotname and new.slotlink != '''' then
+--dg 	        dummy := tg_slotlink_set(new.slotlink, new.slotname);
+--dg 	    end if;
+--dg 	end if;
+--dg 	return new;
+--dg     end if;
+--dg     if tg_op = ''DELETE'' then
+--dg         if old.slotlink != '''' then
+--dg 	    dummy := tg_slotlink_unset(old.slotlink, old.slotname);
+--dg 	end if;
+--dg 	return old;
+--dg     end if;
+--dg end;
+--dg ' language plpgsql;
+--dg-cascade
+--dg create trigger tg_slotlink_a after insert or update or delete
+--dg     on PSlot for each row execute procedure tg_slotlink_a('PS');
+--dg-cascade
+--dg create trigger tg_slotlink_a after insert or update or delete
+--dg     on WSlot for each row execute procedure tg_slotlink_a('WS');
+--dg-cascade
+--dg create trigger tg_slotlink_a after insert or update or delete
+--dg     on IFace for each row execute procedure tg_slotlink_a('IF');
+--dg-cascade
+--dg create trigger tg_slotlink_a after insert or update or delete
+--dg     on HSlot for each row execute procedure tg_slotlink_a('HS');
+--dg-cascade
+--dg create trigger tg_slotlink_a after insert or update or delete
+--dg     on PHone for each row execute procedure tg_slotlink_a('PH');
+-- ************************************************************
+-- * Support function to set the opponents slotlink field
+-- * if it does not already point to the requested slot
+-- ************************************************************
+--dg-skip: language "?" does not exist
+--dg create function tg_slotlink_set(bpchar, bpchar)
+--dg returns integer as '
+--dg declare
+--dg     myname	alias for $1;
+--dg     blname	alias for $2;
+--dg     mytype	char(2);
+--dg     link	char(4);
+--dg     rec		record;
+--dg begin
+--dg     mytype := substr(myname, 1, 2);
+--dg     link := mytype || substr(blname, 1, 2);
+--dg     if link = ''PHPH'' then
+--dg         raise exception
+--dg 		''slotlink between two phones does not make sense'';
+--dg     end if;
+--dg     if link in (''PHHS'', ''HSPH'') then
+--dg         raise exception
+--dg 		''link of phone to hub does not make sense'';
+--dg     end if;
+--dg     if link in (''PHIF'', ''IFPH'') then
+--dg         raise exception
+--dg 		''link of phone to hub does not make sense'';
+--dg     end if;
+--dg     if link in (''PSWS'', ''WSPS'') then
+--dg         raise exception
+--dg 		''slotlink from patchslot to wallslot not permitted'';
+--dg     end if;
+--dg     if mytype = ''PS'' then
+--dg         select into rec * from PSlot where slotname = myname;
+--dg 	if not found then
+--dg 	    raise exception ''% does not exist'', myname;
+--dg 	end if;
+--dg 	if rec.slotlink != blname then
+--dg 	    update PSlot set slotlink = blname where slotname = myname;
+--dg 	end if;
+--dg 	return 0;
+--dg     end if;
+--dg     if mytype = ''WS'' then
+--dg         select into rec * from WSlot where slotname = myname;
+--dg 	if not found then
+--dg 	    raise exception ''% does not exist'', myname;
+--dg 	end if;
+--dg 	if rec.slotlink != blname then
+--dg 	    update WSlot set slotlink = blname where slotname = myname;
+--dg 	end if;
+--dg 	return 0;
+--dg     end if;
+--dg     if mytype = ''IF'' then
+--dg         select into rec * from IFace where slotname = myname;
+--dg 	if not found then
+--dg 	    raise exception ''% does not exist'', myname;
+--dg 	end if;
+--dg 	if rec.slotlink != blname then
+--dg 	    update IFace set slotlink = blname where slotname = myname;
+--dg 	end if;
+--dg 	return 0;
+--dg     end if;
+--dg     if mytype = ''HS'' then
+--dg         select into rec * from HSlot where slotname = myname;
+--dg 	if not found then
+--dg 	    raise exception ''% does not exist'', myname;
+--dg 	end if;
+--dg 	if rec.slotlink != blname then
+--dg 	    update HSlot set slotlink = blname where slotname = myname;
+--dg 	end if;
+--dg 	return 0;
+--dg     end if;
+--dg     if mytype = ''PH'' then
+--dg         select into rec * from PHone where slotname = myname;
+--dg 	if not found then
+--dg 	    raise exception ''% does not exist'', myname;
+--dg 	end if;
+--dg 	if rec.slotlink != blname then
+--dg 	    update PHone set slotlink = blname where slotname = myname;
+--dg 	end if;
+--dg 	return 0;
+--dg     end if;
+--dg     raise exception ''illegal slotlink beginning with %'', mytype;
+--dg end;
+--dg ' language plpgsql;
+-- ************************************************************
+-- * Support function to clear out the slotlink field if
+-- * it still points to specific slot
+-- ************************************************************
+--dg-skip: language "?" does not exist
+--dg create function tg_slotlink_unset(bpchar, bpchar)
+--dg returns integer as '
+--dg declare
+--dg     myname	alias for $1;
+--dg     blname	alias for $2;
+--dg     mytype	char(2);
+--dg     rec		record;
+--dg begin
+--dg     mytype := substr(myname, 1, 2);
+--dg     if mytype = ''PS'' then
+--dg         select into rec * from PSlot where slotname = myname;
+--dg 	if not found then
+--dg 	    return 0;
+--dg 	end if;
+--dg 	if rec.slotlink = blname then
+--dg 	    update PSlot set slotlink = '''' where slotname = myname;
+--dg 	end if;
+--dg 	return 0;
+--dg     end if;
+--dg     if mytype = ''WS'' then
+--dg         select into rec * from WSlot where slotname = myname;
+--dg 	if not found then
+--dg 	    return 0;
+--dg 	end if;
+--dg 	if rec.slotlink = blname then
+--dg 	    update WSlot set slotlink = '''' where slotname = myname;
+--dg 	end if;
+--dg 	return 0;
+--dg     end if;
+--dg     if mytype = ''IF'' then
+--dg         select into rec * from IFace where slotname = myname;
+--dg 	if not found then
+--dg 	    return 0;
+--dg 	end if;
+--dg 	if rec.slotlink = blname then
+--dg 	    update IFace set slotlink = '''' where slotname = myname;
+--dg 	end if;
+--dg 	return 0;
+--dg     end if;
+--dg     if mytype = ''HS'' then
+--dg         select into rec * from HSlot where slotname = myname;
+--dg 	if not found then
+--dg 	    return 0;
+--dg 	end if;
+--dg 	if rec.slotlink = blname then
+--dg 	    update HSlot set slotlink = '''' where slotname = myname;
+--dg 	end if;
+--dg 	return 0;
+--dg     end if;
+--dg     if mytype = ''PH'' then
+--dg         select into rec * from PHone where slotname = myname;
+--dg 	if not found then
+--dg 	    return 0;
+--dg 	end if;
+--dg 	if rec.slotlink = blname then
+--dg 	    update PHone set slotlink = '''' where slotname = myname;
+--dg 	end if;
+--dg 	return 0;
+--dg     end if;
+--dg end;
+--dg ' language plpgsql;
+-- ************************************************************
+-- * Describe the backside of a patchfield slot
+-- ************************************************************
+--dg-skip: language "?" does not exist
+--dg create function pslot_backlink_view(bpchar)
+--dg returns text as '
+--dg <<outer>>
+--dg declare
+--dg     rec		record;
+--dg     bltype	char(2);
+--dg     retval	text;
+--dg begin
+--dg     select into rec * from PSlot where slotname = $1;
+--dg     if not found then
+--dg         return '''';
+--dg     end if;
+--dg     if rec.backlink = '''' then
+--dg         return ''-'';
+--dg     end if;
+--dg     bltype := substr(rec.backlink, 1, 2);
+--dg     if bltype = ''PL'' then
+--dg         declare
+--dg 	    rec		record;
+--dg 	begin
+--dg 	    select into rec * from PLine where slotname = "outer".rec.backlink;
+--dg 	    retval := ''Phone line '' || trim(rec.phonenumber);
+--dg 	    if rec.comment != '''' then
+--dg 	        retval := retval || '' ('';
+--dg 		retval := retval || rec.comment;
+--dg 		retval := retval || '')'';
+--dg 	    end if;
+--dg 	    return retval;
+--dg 	end;
+--dg     end if;
+--dg     if bltype = ''WS'' then
+--dg         select into rec * from WSlot where slotname = rec.backlink;
+--dg 	retval := trim(rec.slotname) || '' in room '';
+--dg 	retval := retval || trim(rec.roomno);
+--dg 	retval := retval || '' -> '';
+--dg 	return retval || wslot_slotlink_view(rec.slotname);
+--dg     end if;
+--dg     return rec.backlink;
+--dg end;
+--dg ' language plpgsql;
+-- ************************************************************
+-- * Describe the front of a patchfield slot
+-- ************************************************************
+--dg-skip: language "?" does not exist
+--dg create function pslot_slotlink_view(bpchar)
+--dg returns text as '
+--dg declare
+--dg     psrec	record;
+--dg     sltype	char(2);
+--dg     retval	text;
+--dg begin
+--dg     select into psrec * from PSlot where slotname = $1;
+--dg     if not found then
+--dg         return '''';
+--dg     end if;
+--dg     if psrec.slotlink = '''' then
+--dg         return ''-'';
+--dg     end if;
+--dg     sltype := substr(psrec.slotlink, 1, 2);
+--dg     if sltype = ''PS'' then
+--dg 	retval := trim(psrec.slotlink) || '' -> '';
+--dg 	return retval || pslot_backlink_view(psrec.slotlink);
+--dg     end if;
+--dg     if sltype = ''HS'' then
+--dg         retval := comment from Hub H, HSlot HS
+--dg 			where HS.slotname = psrec.slotlink
+--dg 			  and H.name = HS.hubname;
+--dg         retval := retval || '' slot '';
+--dg 	retval := retval || slotno::text from HSlot
+--dg 			where slotname = psrec.slotlink;
+--dg 	return retval;
+--dg     end if;
+--dg     return psrec.slotlink;
+--dg end;
+--dg ' language plpgsql;
+-- ************************************************************
+-- * Describe the front of a wall connector slot
+-- ************************************************************
+--dg-skip: language "?" does not exist
+--dg create function wslot_slotlink_view(bpchar)
+--dg returns text as '
+--dg declare
+--dg     rec		record;
+--dg     sltype	char(2);
+--dg     retval	text;
+--dg begin
+--dg     select into rec * from WSlot where slotname = $1;
+--dg     if not found then
+--dg         return '''';
+--dg     end if;
+--dg     if rec.slotlink = '''' then
+--dg         return ''-'';
+--dg     end if;
+--dg     sltype := substr(rec.slotlink, 1, 2);
+--dg     if sltype = ''PH'' then
+--dg         select into rec * from PHone where slotname = rec.slotlink;
+--dg 	retval := ''Phone '' || trim(rec.slotname);
+--dg 	if rec.comment != '''' then
+--dg 	    retval := retval || '' ('';
+--dg 	    retval := retval || rec.comment;
+--dg 	    retval := retval || '')'';
+--dg 	end if;
+--dg 	return retval;
+--dg     end if;
+--dg     if sltype = ''IF'' then
+--dg 	declare
+--dg 	    syrow	System%RowType;
+--dg 	    ifrow	IFace%ROWTYPE;
+--dg         begin
+--dg 	    select into ifrow * from IFace where slotname = rec.slotlink;
+--dg 	    select into syrow * from System where name = ifrow.sysname;
+--dg 	    retval := syrow.name || '' IF '';
+--dg 	    retval := retval || ifrow.ifname;
+--dg 	    if syrow.comment != '''' then
+--dg 	        retval := retval || '' ('';
+--dg 		retval := retval || syrow.comment;
+--dg 		retval := retval || '')'';
+--dg 	    end if;
+--dg 	    return retval;
+--dg 	end;
+--dg     end if;
+--dg     return rec.slotlink;
+--dg end;
+--dg ' language plpgsql;
+-- ************************************************************
+-- * View of a patchfield describing backside and patches
+-- ************************************************************
+--dg-cascade
+--dg create view Pfield_v1 as select PF.pfname, PF.slotname,
+--dg 	pslot_backlink_view(PF.slotname) as backside,
+--dg 	pslot_slotlink_view(PF.slotname) as patch
+--dg     from PSlot PF;
+--
+-- First we build the house - so we create the rooms
+--
+insert into Room values ('001', 'Entrance');
+insert into Room values ('002', 'Office');
+insert into Room values ('003', 'Office');
+insert into Room values ('004', 'Technical');
+insert into Room values ('101', 'Office');
+insert into Room values ('102', 'Conference');
+insert into Room values ('103', 'Restroom');
+insert into Room values ('104', 'Technical');
+insert into Room values ('105', 'Office');
+insert into Room values ('106', 'Office');
+--
+-- Second we install the wall connectors
+--
+insert into WSlot values ('WS.001.1a', '001', '', '');
+insert into WSlot values ('WS.001.1b', '001', '', '');
+insert into WSlot values ('WS.001.2a', '001', '', '');
+insert into WSlot values ('WS.001.2b', '001', '', '');
+insert into WSlot values ('WS.001.3a', '001', '', '');
+insert into WSlot values ('WS.001.3b', '001', '', '');
+insert into WSlot values ('WS.002.1a', '002', '', '');
+insert into WSlot values ('WS.002.1b', '002', '', '');
+insert into WSlot values ('WS.002.2a', '002', '', '');
+insert into WSlot values ('WS.002.2b', '002', '', '');
+insert into WSlot values ('WS.002.3a', '002', '', '');
+insert into WSlot values ('WS.002.3b', '002', '', '');
+insert into WSlot values ('WS.003.1a', '003', '', '');
+insert into WSlot values ('WS.003.1b', '003', '', '');
+insert into WSlot values ('WS.003.2a', '003', '', '');
+insert into WSlot values ('WS.003.2b', '003', '', '');
+insert into WSlot values ('WS.003.3a', '003', '', '');
+insert into WSlot values ('WS.003.3b', '003', '', '');
+insert into WSlot values ('WS.101.1a', '101', '', '');
+insert into WSlot values ('WS.101.1b', '101', '', '');
+insert into WSlot values ('WS.101.2a', '101', '', '');
+insert into WSlot values ('WS.101.2b', '101', '', '');
+insert into WSlot values ('WS.101.3a', '101', '', '');
+insert into WSlot values ('WS.101.3b', '101', '', '');
+insert into WSlot values ('WS.102.1a', '102', '', '');
+insert into WSlot values ('WS.102.1b', '102', '', '');
+insert into WSlot values ('WS.102.2a', '102', '', '');
+insert into WSlot values ('WS.102.2b', '102', '', '');
+insert into WSlot values ('WS.102.3a', '102', '', '');
+insert into WSlot values ('WS.102.3b', '102', '', '');
+insert into WSlot values ('WS.105.1a', '105', '', '');
+insert into WSlot values ('WS.105.1b', '105', '', '');
+insert into WSlot values ('WS.105.2a', '105', '', '');
+insert into WSlot values ('WS.105.2b', '105', '', '');
+insert into WSlot values ('WS.105.3a', '105', '', '');
+insert into WSlot values ('WS.105.3b', '105', '', '');
+insert into WSlot values ('WS.106.1a', '106', '', '');
+insert into WSlot values ('WS.106.1b', '106', '', '');
+insert into WSlot values ('WS.106.2a', '106', '', '');
+insert into WSlot values ('WS.106.2b', '106', '', '');
+insert into WSlot values ('WS.106.3a', '106', '', '');
+insert into WSlot values ('WS.106.3b', '106', '', '');
+--
+-- Now create the patch fields and their slots
+--
+insert into PField values ('PF0_1', 'Wallslots basement');
+--
+-- The cables for these will be made later, so they are unconnected for now
+--
+insert into PSlot values ('PS.base.a1', 'PF0_1', '', '');
+insert into PSlot values ('PS.base.a2', 'PF0_1', '', '');
+insert into PSlot values ('PS.base.a3', 'PF0_1', '', '');
+insert into PSlot values ('PS.base.a4', 'PF0_1', '', '');
+insert into PSlot values ('PS.base.a5', 'PF0_1', '', '');
+insert into PSlot values ('PS.base.a6', 'PF0_1', '', '');
+--
+-- These are already wired to the wall connectors
+--
+insert into PSlot values ('PS.base.b1', 'PF0_1', '', 'WS.002.1a');
+insert into PSlot values ('PS.base.b2', 'PF0_1', '', 'WS.002.1b');
+insert into PSlot values ('PS.base.b3', 'PF0_1', '', 'WS.002.2a');
+insert into PSlot values ('PS.base.b4', 'PF0_1', '', 'WS.002.2b');
+insert into PSlot values ('PS.base.b5', 'PF0_1', '', 'WS.002.3a');
+insert into PSlot values ('PS.base.b6', 'PF0_1', '', 'WS.002.3b');
+insert into PSlot values ('PS.base.c1', 'PF0_1', '', 'WS.003.1a');
+insert into PSlot values ('PS.base.c2', 'PF0_1', '', 'WS.003.1b');
+insert into PSlot values ('PS.base.c3', 'PF0_1', '', 'WS.003.2a');
+insert into PSlot values ('PS.base.c4', 'PF0_1', '', 'WS.003.2b');
+insert into PSlot values ('PS.base.c5', 'PF0_1', '', 'WS.003.3a');
+insert into PSlot values ('PS.base.c6', 'PF0_1', '', 'WS.003.3b');
+--
+-- This patchfield will be renamed later into PF0_2 - so its
+-- slots references in pfname should follow
+--
+insert into PField values ('PF0_X', 'Phonelines basement');
+insert into PSlot values ('PS.base.ta1', 'PF0_X', '', '');
+insert into PSlot values ('PS.base.ta2', 'PF0_X', '', '');
+insert into PSlot values ('PS.base.ta3', 'PF0_X', '', '');
+insert into PSlot values ('PS.base.ta4', 'PF0_X', '', '');
+insert into PSlot values ('PS.base.ta5', 'PF0_X', '', '');
+insert into PSlot values ('PS.base.ta6', 'PF0_X', '', '');
+insert into PSlot values ('PS.base.tb1', 'PF0_X', '', '');
+insert into PSlot values ('PS.base.tb2', 'PF0_X', '', '');
+insert into PSlot values ('PS.base.tb3', 'PF0_X', '', '');
+insert into PSlot values ('PS.base.tb4', 'PF0_X', '', '');
+insert into PSlot values ('PS.base.tb5', 'PF0_X', '', '');
+insert into PSlot values ('PS.base.tb6', 'PF0_X', '', '');
+insert into PField values ('PF1_1', 'Wallslots first floor');
+insert into PSlot values ('PS.first.a1', 'PF1_1', '', 'WS.101.1a');
+insert into PSlot values ('PS.first.a2', 'PF1_1', '', 'WS.101.1b');
+insert into PSlot values ('PS.first.a3', 'PF1_1', '', 'WS.101.2a');
+insert into PSlot values ('PS.first.a4', 'PF1_1', '', 'WS.101.2b');
+insert into PSlot values ('PS.first.a5', 'PF1_1', '', 'WS.101.3a');
+insert into PSlot values ('PS.first.a6', 'PF1_1', '', 'WS.101.3b');
+insert into PSlot values ('PS.first.b1', 'PF1_1', '', 'WS.102.1a');
+insert into PSlot values ('PS.first.b2', 'PF1_1', '', 'WS.102.1b');
+insert into PSlot values ('PS.first.b3', 'PF1_1', '', 'WS.102.2a');
+insert into PSlot values ('PS.first.b4', 'PF1_1', '', 'WS.102.2b');
+insert into PSlot values ('PS.first.b5', 'PF1_1', '', 'WS.102.3a');
+insert into PSlot values ('PS.first.b6', 'PF1_1', '', 'WS.102.3b');
+insert into PSlot values ('PS.first.c1', 'PF1_1', '', 'WS.105.1a');
+insert into PSlot values ('PS.first.c2', 'PF1_1', '', 'WS.105.1b');
+insert into PSlot values ('PS.first.c3', 'PF1_1', '', 'WS.105.2a');
+insert into PSlot values ('PS.first.c4', 'PF1_1', '', 'WS.105.2b');
+insert into PSlot values ('PS.first.c5', 'PF1_1', '', 'WS.105.3a');
+insert into PSlot values ('PS.first.c6', 'PF1_1', '', 'WS.105.3b');
+insert into PSlot values ('PS.first.d1', 'PF1_1', '', 'WS.106.1a');
+insert into PSlot values ('PS.first.d2', 'PF1_1', '', 'WS.106.1b');
+insert into PSlot values ('PS.first.d3', 'PF1_1', '', 'WS.106.2a');
+insert into PSlot values ('PS.first.d4', 'PF1_1', '', 'WS.106.2b');
+insert into PSlot values ('PS.first.d5', 'PF1_1', '', 'WS.106.3a');
+insert into PSlot values ('PS.first.d6', 'PF1_1', '', 'WS.106.3b');
+--
+-- Now we wire the wall connectors 1a-2a in room 001 to the
+-- patchfield. In the second update we make an error, and
+-- correct it after
+--
+update PSlot set backlink = 'WS.001.1a' where slotname = 'PS.base.a1';
+update PSlot set backlink = 'WS.001.1b' where slotname = 'PS.base.a3';
+--dg-cascade
+--dg select * from WSlot where roomno = '001' order by slotname;
+select * from PSlot where slotname ~ 'PS.base.a' order by slotname;
+       slotname       | pfname |       slotlink       |       backlink       
+----------------------+--------+----------------------+----------------------
+ PS.base.a1           | PF0_1  |                      | WS.001.1a           
+ PS.base.a2           | PF0_1  |                      |                     
+ PS.base.a3           | PF0_1  |                      | WS.001.1b           
+ PS.base.a4           | PF0_1  |                      |                     
+ PS.base.a5           | PF0_1  |                      |                     
+ PS.base.a6           | PF0_1  |                      |                     
+(6 rows)
+
+update PSlot set backlink = 'WS.001.2a' where slotname = 'PS.base.a3';
+--dg-cascade
+--dg select * from WSlot where roomno = '001' order by slotname;
+select * from PSlot where slotname ~ 'PS.base.a' order by slotname;
+       slotname       | pfname |       slotlink       |       backlink       
+----------------------+--------+----------------------+----------------------
+ PS.base.a1           | PF0_1  |                      | WS.001.1a           
+ PS.base.a2           | PF0_1  |                      |                     
+ PS.base.a3           | PF0_1  |                      | WS.001.2a           
+ PS.base.a4           | PF0_1  |                      |                     
+ PS.base.a5           | PF0_1  |                      |                     
+ PS.base.a6           | PF0_1  |                      |                     
+(6 rows)
+
+update PSlot set backlink = 'WS.001.1b' where slotname = 'PS.base.a2';
+--dg-cascade
+--dg select * from WSlot where roomno = '001' order by slotname;
+select * from PSlot where slotname ~ 'PS.base.a' order by slotname;
+       slotname       | pfname |       slotlink       |       backlink       
+----------------------+--------+----------------------+----------------------
+ PS.base.a1           | PF0_1  |                      | WS.001.1a           
+ PS.base.a2           | PF0_1  |                      | WS.001.1b           
+ PS.base.a3           | PF0_1  |                      | WS.001.2a           
+ PS.base.a4           | PF0_1  |                      |                     
+ PS.base.a5           | PF0_1  |                      |                     
+ PS.base.a6           | PF0_1  |                      |                     
+(6 rows)
+
+--
+-- Same procedure for 2b-3b but this time updating the WSlot instead
+-- of the PSlot. Due to the triggers the result is the same:
+-- WSlot and corresponding PSlot point to each other.
+--
+update WSlot set backlink = 'PS.base.a4' where slotname = 'WS.001.2b';
+update WSlot set backlink = 'PS.base.a6' where slotname = 'WS.001.3a';
+--dg-cascade
+--dg select * from WSlot where roomno = '001' order by slotname;
+--dg-cascade
+--dg select * from PSlot where slotname ~ 'PS.base.a' order by slotname;
+update WSlot set backlink = 'PS.base.a6' where slotname = 'WS.001.3b';
+--dg-cascade
+--dg select * from WSlot where roomno = '001' order by slotname;
+--dg-cascade
+--dg select * from PSlot where slotname ~ 'PS.base.a' order by slotname;
+update WSlot set backlink = 'PS.base.a5' where slotname = 'WS.001.3a';
+--dg-cascade
+--dg select * from WSlot where roomno = '001' order by slotname;
+--dg-cascade
+--dg select * from PSlot where slotname ~ 'PS.base.a' order by slotname;
+insert into PField values ('PF1_2', 'Phonelines first floor');
+insert into PSlot values ('PS.first.ta1', 'PF1_2', '', '');
+insert into PSlot values ('PS.first.ta2', 'PF1_2', '', '');
+insert into PSlot values ('PS.first.ta3', 'PF1_2', '', '');
+insert into PSlot values ('PS.first.ta4', 'PF1_2', '', '');
+insert into PSlot values ('PS.first.ta5', 'PF1_2', '', '');
+insert into PSlot values ('PS.first.ta6', 'PF1_2', '', '');
+insert into PSlot values ('PS.first.tb1', 'PF1_2', '', '');
+insert into PSlot values ('PS.first.tb2', 'PF1_2', '', '');
+insert into PSlot values ('PS.first.tb3', 'PF1_2', '', '');
+insert into PSlot values ('PS.first.tb4', 'PF1_2', '', '');
+insert into PSlot values ('PS.first.tb5', 'PF1_2', '', '');
+insert into PSlot values ('PS.first.tb6', 'PF1_2', '', '');
+--
+-- Fix the wrong name for patchfield PF0_2
+--
+update PField set name = 'PF0_2' where name = 'PF0_X';
+--dg-cascade
+--dg select * from PSlot order by slotname;
+--dg-cascade
+--dg select * from WSlot order by slotname;
+--
+-- Install the central phone system and create the phone numbers.
+-- They are wired on insert to the patchfields. Again the
+-- triggers automatically tell the PSlots to update their
+-- backlink field.
+--
+insert into PLine values ('PL.001', '-0', 'Central call', 'PS.base.ta1');
+insert into PLine values ('PL.002', '-101', '', 'PS.base.ta2');
+insert into PLine values ('PL.003', '-102', '', 'PS.base.ta3');
+insert into PLine values ('PL.004', '-103', '', 'PS.base.ta5');
+insert into PLine values ('PL.005', '-104', '', 'PS.base.ta6');
+insert into PLine values ('PL.006', '-106', '', 'PS.base.tb2');
+insert into PLine values ('PL.007', '-108', '', 'PS.base.tb3');
+insert into PLine values ('PL.008', '-109', '', 'PS.base.tb4');
+insert into PLine values ('PL.009', '-121', '', 'PS.base.tb5');
+insert into PLine values ('PL.010', '-122', '', 'PS.base.tb6');
+insert into PLine values ('PL.015', '-134', '', 'PS.first.ta1');
+insert into PLine values ('PL.016', '-137', '', 'PS.first.ta3');
+insert into PLine values ('PL.017', '-139', '', 'PS.first.ta4');
+insert into PLine values ('PL.018', '-362', '', 'PS.first.tb1');
+insert into PLine values ('PL.019', '-363', '', 'PS.first.tb2');
+insert into PLine values ('PL.020', '-364', '', 'PS.first.tb3');
+insert into PLine values ('PL.021', '-365', '', 'PS.first.tb5');
+insert into PLine values ('PL.022', '-367', '', 'PS.first.tb6');
+insert into PLine values ('PL.028', '-501', 'Fax entrance', 'PS.base.ta2');
+insert into PLine values ('PL.029', '-502', 'Fax first floor', 'PS.first.ta1');
+--
+-- Buy some phones, plug them into the wall and patch the
+-- phone lines to the corresponding patchfield slots.
+--
+insert into PHone values ('PH.hc001', 'Hicom standard', 'WS.001.1a');
+update PSlot set slotlink = 'PS.base.ta1' where slotname = 'PS.base.a1';
+insert into PHone values ('PH.hc002', 'Hicom standard', 'WS.002.1a');
+update PSlot set slotlink = 'PS.base.ta5' where slotname = 'PS.base.b1';
+insert into PHone values ('PH.hc003', 'Hicom standard', 'WS.002.2a');
+update PSlot set slotlink = 'PS.base.tb2' where slotname = 'PS.base.b3';
+insert into PHone values ('PH.fax001', 'Canon fax', 'WS.001.2a');
+update PSlot set slotlink = 'PS.base.ta2' where slotname = 'PS.base.a3';
+--
+-- Install a hub at one of the patchfields, plug a computers
+-- ethernet interface into the wall and patch it to the hub.
+--
+insert into Hub values ('base.hub1', 'Patchfield PF0_1 hub', 16);
+insert into System values ('orion', 'PC');
+insert into IFace values ('IF', 'orion', 'eth0', 'WS.002.1b');
+update PSlot set slotlink = 'HS.base.hub1.1' where slotname = 'PS.base.b2';
+--
+-- Now we take a look at the patchfield
+--
+--dg-cascade
+--dg select * from PField_v1 where pfname = 'PF0_1' order by slotname;
+--dg-cascade
+--dg select * from PField_v1 where pfname = 'PF0_2' order by slotname;
+--
+-- Finally we want errors
+--
+insert into PField values ('PF1_1', 'should fail due to unique index');
+ERROR:  duplicate key value violates unique constraint "pfield_name"
+DETAIL:  Key (name)=(PF1_1) already exists.
+--dg-cascade
+--dg update PSlot set backlink = 'WS.not.there' where slotname = 'PS.base.a1';
+--dg-cascade
+--dg update PSlot set backlink = 'XX.illegal' where slotname = 'PS.base.a1';
+--dg-cascade
+--dg update PSlot set slotlink = 'PS.not.there' where slotname = 'PS.base.a1';
+--dg-cascade
+--dg update PSlot set slotlink = 'XX.illegal' where slotname = 'PS.base.a1';
+--dg-cascade
+--dg insert into HSlot values ('HS', 'base.hub1', 1, '');
+--dg-cascade
+--dg insert into HSlot values ('HS', 'base.hub1', 20, '');
+--dg-cascade
+--dg delete from HSlot;
+--dg-cascade
+--dg insert into IFace values ('IF', 'notthere', 'eth0', '');
+--dg-cascade
+--dg insert into IFace values ('IF', 'orion', 'ethernet_interface_name_too_long', '');
+--
+-- The following tests are unrelated to the scenario outlined above;
+-- they merely exercise specific parts of PL/pgSQL
+--
+--
+-- Test recursion, per bug report 7-Sep-01
+--
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION recursion_test(int,int) RETURNS text AS '
+--dg DECLARE rslt text;
+--dg BEGIN
+--dg     IF $1 <= 0 THEN
+--dg         rslt = CAST($2 AS TEXT);
+--dg     ELSE
+--dg         rslt = CAST($1 AS TEXT) || '','' || recursion_test($1 - 1, $2);
+--dg     END IF;
+--dg     RETURN rslt;
+--dg END;' LANGUAGE plpgsql;
+--dg-cascade
+--dg SELECT recursion_test(4,3);
+--
+-- Test the FOUND magic variable
+--
+CREATE TABLE found_test_tbl (a int);
+--dg-skip: language "?" does not exist
+--dg create function test_found()
+--dg   returns boolean as '
+--dg   declare
+--dg   begin
+--dg   insert into found_test_tbl values (1);
+--dg   if FOUND then
+--dg      insert into found_test_tbl values (2);
+--dg   end if;
+--dg
+--dg   update found_test_tbl set a = 100 where a = 1;
+--dg   if FOUND then
+--dg     insert into found_test_tbl values (3);
+--dg   end if;
+--dg
+--dg   delete from found_test_tbl where a = 9999; -- matches no rows
+--dg   if not FOUND then
+--dg     insert into found_test_tbl values (4);
+--dg   end if;
+--dg
+--dg   for i in 1 .. 10 loop
+--dg     -- no need to do anything
+--dg   end loop;
+--dg   if FOUND then
+--dg     insert into found_test_tbl values (5);
+--dg   end if;
+--dg
+--dg   -- never executes the loop
+--dg   for i in 2 .. 1 loop
+--dg     -- no need to do anything
+--dg   end loop;
+--dg   if not FOUND then
+--dg     insert into found_test_tbl values (6);
+--dg   end if;
+--dg   return true;
+--dg   end;' language plpgsql;
+--dg-cascade
+--dg select test_found();
+--dg-cascade
+--dg select * from found_test_tbl;
+--
+-- Test set-returning functions for PL/pgSQL
+--
+--dg-skip: language "?" does not exist
+--dg create function test_table_func_rec() returns setof found_test_tbl as '
+--dg DECLARE
+--dg 	rec RECORD;
+--dg BEGIN
+--dg 	FOR rec IN select * from found_test_tbl LOOP
+--dg 		RETURN NEXT rec;
+--dg 	END LOOP;
+--dg 	RETURN;
+--dg END;' language plpgsql;
+--dg-cascade
+--dg select * from test_table_func_rec();
+--dg-skip: language "?" does not exist
+--dg create function test_table_func_row() returns setof found_test_tbl as '
+--dg DECLARE
+--dg 	row found_test_tbl%ROWTYPE;
+--dg BEGIN
+--dg 	FOR row IN select * from found_test_tbl LOOP
+--dg 		RETURN NEXT row;
+--dg 	END LOOP;
+--dg 	RETURN;
+--dg END;' language plpgsql;
+--dg-cascade
+--dg select * from test_table_func_row();
+--dg-skip: language "?" does not exist
+--dg create function test_ret_set_scalar(int,int) returns setof int as '
+--dg DECLARE
+--dg 	i int;
+--dg BEGIN
+--dg 	FOR i IN $1 .. $2 LOOP
+--dg 		RETURN NEXT i + 1;
+--dg 	END LOOP;
+--dg 	RETURN;
+--dg END;' language plpgsql;
+--dg-cascade
+--dg select * from test_ret_set_scalar(1,10);
+--dg-skip: language "?" does not exist
+--dg create function test_ret_set_rec_dyn(int) returns setof record as '
+--dg DECLARE
+--dg 	retval RECORD;
+--dg BEGIN
+--dg 	IF $1 > 10 THEN
+--dg 		SELECT INTO retval 5, 10, 15;
+--dg 		RETURN NEXT retval;
+--dg 		RETURN NEXT retval;
+--dg 	ELSE
+--dg 		SELECT INTO retval 50, 5::numeric, ''xxx''::text;
+--dg 		RETURN NEXT retval;
+--dg 		RETURN NEXT retval;
+--dg 	END IF;
+--dg 	RETURN;
+--dg END;' language plpgsql;
+--dg-cascade
+--dg SELECT * FROM test_ret_set_rec_dyn(1500) AS (a int, b int, c int);
+--dg-cascade
+--dg SELECT * FROM test_ret_set_rec_dyn(5) AS (a int, b numeric, c text);
+--dg-skip: language "?" does not exist
+--dg create function test_ret_rec_dyn(int) returns record as '
+--dg DECLARE
+--dg 	retval RECORD;
+--dg BEGIN
+--dg 	IF $1 > 10 THEN
+--dg 		SELECT INTO retval 5, 10, 15;
+--dg 		RETURN retval;
+--dg 	ELSE
+--dg 		SELECT INTO retval 50, 5::numeric, ''xxx''::text;
+--dg 		RETURN retval;
+--dg 	END IF;
+--dg END;' language plpgsql;
+--dg-cascade
+--dg SELECT * FROM test_ret_rec_dyn(1500) AS (a int, b int, c int);
+--dg-cascade
+--dg SELECT * FROM test_ret_rec_dyn(5) AS (a int, b numeric, c text);
+--
+-- Test some simple polymorphism cases.
+--
+--dg-skip: language "?" does not exist
+--dg create function f1(x anyelement) returns anyelement as $$
+--dg begin
+--dg   return x + 1;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select f1(42) as int, f1(4.5) as num;
+--dg-cascade
+--dg select f1(point(3,4));  -- fail for lack of + operator
+--dg-cascade
+--dg drop function f1(x anyelement);
+--dg-skip: language "?" does not exist
+--dg create function f1(x anyelement) returns anyarray as $$
+--dg begin
+--dg   return array[x + 1, x + 2];
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select f1(42) as int, f1(4.5) as num;
+--dg-cascade
+--dg drop function f1(x anyelement);
+--dg-skip: language "?" does not exist
+--dg create function f1(x anyarray) returns anyelement as $$
+--dg begin
+--dg   return x[1];
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select f1(array[2,4]) as int, f1(array[4.5, 7.7]) as num;
+--dg-cascade
+--dg select f1(stavalues1) from pg_statistic;  -- fail, can't infer element type
+--dg-cascade
+--dg drop function f1(x anyarray);
+--dg-skip: language "?" does not exist
+--dg create function f1(x anyarray) returns anyarray as $$
+--dg begin
+--dg   return x;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select f1(array[2,4]) as int, f1(array[4.5, 7.7]) as num;
+--dg-cascade
+--dg select f1(stavalues1) from pg_statistic;  -- fail, can't infer element type
+--dg-cascade
+--dg drop function f1(x anyarray);
+-- fail, can't infer type:
+--dg-differs: another error: language "?" does not exist
+--dg create function f1(x anyelement) returns anyrange as $$
+--dg begin
+--dg   return array[x + 1, x + 2];
+--dg end$$ language plpgsql;
+--dg-skip: language "?" does not exist
+--dg create function f1(x anyrange) returns anyarray as $$
+--dg begin
+--dg   return array[lower(x), upper(x)];
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select f1(int4range(42, 49)) as int, f1(float8range(4.5, 7.8)) as num;
+--dg-cascade
+--dg drop function f1(x anyrange);
+--dg-skip: language "?" does not exist
+--dg create function f1(x anycompatible, y anycompatible) returns anycompatiblearray as $$
+--dg begin
+--dg   return array[x, y];
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select f1(2, 4) as int, f1(2, 4.5) as num;
+--dg-cascade
+--dg drop function f1(x anycompatible, y anycompatible);
+--dg-skip: language "?" does not exist
+--dg create function f1(x anycompatiblerange, y anycompatible, z anycompatible) returns anycompatiblearray as $$
+--dg begin
+--dg   return array[lower(x), upper(x), y, z];
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select f1(int4range(42, 49), 11, 2::smallint) as int, f1(float8range(4.5, 7.8), 7.8, 11::real) as num;
+select f1(int4range(42, 49), 11, 4.5) as fail;  -- range type doesn't fit
+ERROR:  function f1(int4range, integer, numeric) does not exist
+LINE 1: select f1(int4range(42, 49), 11, 4.5) as fail;
+               ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+--dg-cascade
+--dg drop function f1(x anycompatiblerange, y anycompatible, z anycompatible);
+-- fail, can't infer type:
+--dg-differs: another error: language "?" does not exist
+--dg create function f1(x anycompatible) returns anycompatiblerange as $$
+--dg begin
+--dg   return array[x + 1, x + 2];
+--dg end$$ language plpgsql;
+--dg-skip: language "?" does not exist
+--dg create function f1(x anycompatiblerange, y anycompatiblearray) returns anycompatiblerange as $$
+--dg begin
+--dg   return x;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select f1(int4range(42, 49), array[11]) as int, f1(float8range(4.5, 7.8), array[7]) as num;
+--dg-cascade
+--dg drop function f1(x anycompatiblerange, y anycompatiblearray);
+--dg-skip: language "?" does not exist
+--dg create function f1(a anyelement, b anyarray,
+--dg                    c anycompatible, d anycompatible,
+--dg                    OUT x anyarray, OUT y anycompatiblearray)
+--dg as $$
+--dg begin
+--dg   x := a || b;
+--dg   y := array[c, d];
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select x, pg_typeof(x), y, pg_typeof(y)
+--dg   from f1(11, array[1, 2], 42, 34.5);
+--dg-cascade
+--dg select x, pg_typeof(x), y, pg_typeof(y)
+--dg   from f1(11, array[1, 2], point(1,2), point(3,4));
+--dg-cascade
+--dg select x, pg_typeof(x), y, pg_typeof(y)
+--dg   from f1(11, '{1,2}', point(1,2), '(3,4)');
+select x, pg_typeof(x), y, pg_typeof(y)
+  from f1(11, array[1, 2.2], 42, 34.5);  -- fail
+ERROR:  function f1(integer, numeric[], integer, numeric) does not exist
+LINE 2:   from f1(11, array[1, 2.2], 42, 34.5);
+               ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+--dg-cascade
+--dg drop function f1(a anyelement, b anyarray,
+--dg                  c anycompatible, d anycompatible);
+--
+-- Test handling of OUT parameters, including polymorphic cases.
+-- Note that RETURN is optional with OUT params; we try both ways.
+--
+-- wrong way to do it:
+--dg-differs: another error: language "?" does not exist
+--dg create function f1(in i int, out j int) returns int as $$
+--dg begin
+--dg   return i+1;
+--dg end$$ language plpgsql;
+--dg-skip: language "?" does not exist
+--dg create function f1(in i int, out j int) as $$
+--dg begin
+--dg   j := i+1;
+--dg   return;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select f1(42);
+--dg-cascade
+--dg select * from f1(42);
+--dg-skip: language "?" does not exist
+--dg create or replace function f1(inout i int) as $$
+--dg begin
+--dg   i := i+1;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select f1(42);
+--dg-cascade
+--dg select * from f1(42);
+--dg-cascade
+--dg drop function f1(int);
+--dg-skip: language "?" does not exist
+--dg create function f1(in i int, out j int) returns setof int as $$
+--dg begin
+--dg   j := i+1;
+--dg   return next;
+--dg   j := i+2;
+--dg   return next;
+--dg   return;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select * from f1(42);
+--dg-cascade
+--dg drop function f1(int);
+--dg-skip: language "?" does not exist
+--dg create function f1(in i int, out j int, out k text) as $$
+--dg begin
+--dg   j := i;
+--dg   j := j+1;
+--dg   k := 'foo';
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select f1(42);
+--dg-cascade
+--dg select * from f1(42);
+--dg-cascade
+--dg drop function f1(int);
+--dg-skip: language "?" does not exist
+--dg create function f1(in i int, out j int, out k text) returns setof record as $$
+--dg begin
+--dg   j := i+1;
+--dg   k := 'foo';
+--dg   return next;
+--dg   j := j+1;
+--dg   k := 'foot';
+--dg   return next;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select * from f1(42);
+--dg-cascade
+--dg drop function f1(int);
+--dg-skip: language "?" does not exist
+--dg create function duplic(in i anyelement, out j anyelement, out k anyarray) as $$
+--dg begin
+--dg   j := i;
+--dg   k := array[j,j];
+--dg   return;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select * from duplic(42);
+--dg-cascade
+--dg select * from duplic('foo'::text);
+--dg-cascade
+--dg drop function duplic(anyelement);
+--dg-skip: language "?" does not exist
+--dg create function duplic(in i anycompatiblerange, out j anycompatible, out k anycompatiblearray) as $$
+--dg begin
+--dg   j := lower(i);
+--dg   k := array[lower(i),upper(i)];
+--dg   return;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select * from duplic(int4range(42,49));
+select * from duplic(textrange('aaa', 'bbb'));
+ERROR:  function textrange(unknown, unknown) does not exist
+LINE 1: select * from duplic(textrange('aaa', 'bbb'));
+                             ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+--dg-cascade
+--dg drop function duplic(anycompatiblerange);
+--
+-- test PERFORM
+--
+create table perform_test (
+	a	INT,
+	b	INT
+);
+--dg-skip: language "?" does not exist
+--dg create function perform_simple_func(int) returns boolean as '
+--dg BEGIN
+--dg 	IF $1 < 20 THEN
+--dg 		INSERT INTO perform_test VALUES ($1, $1 + 10);
+--dg 		RETURN TRUE;
+--dg 	ELSE
+--dg 		RETURN FALSE;
+--dg 	END IF;
+--dg END;' language plpgsql;
+--dg-skip: language "?" does not exist
+--dg create function perform_test_func() returns void as '
+--dg BEGIN
+--dg 	IF FOUND then
+--dg 		INSERT INTO perform_test VALUES (100, 100);
+--dg 	END IF;
+--dg
+--dg 	PERFORM perform_simple_func(5);
+--dg
+--dg 	IF FOUND then
+--dg 		INSERT INTO perform_test VALUES (100, 100);
+--dg 	END IF;
+--dg
+--dg 	PERFORM perform_simple_func(50);
+--dg
+--dg 	IF FOUND then
+--dg 		INSERT INTO perform_test VALUES (100, 100);
+--dg 	END IF;
+--dg
+--dg 	RETURN;
+--dg END;' language plpgsql;
+--dg-cascade
+--dg SELECT perform_test_func();
+--dg-cascade
+--dg SELECT * FROM perform_test;
+drop table perform_test;
+--
+-- Test proper snapshot handling in simple expressions
+--
+--dg-skip: CREATE SEQUENCE supports only START and INCREMENT yet, not TEMPORARY or UNLOGGED
+--dg create temp table users(login text, id serial);
+--dg-skip: language "?" does not exist
+--dg create function sp_id_user(a_login text) returns int as $$
+--dg declare x int;
+--dg begin
+--dg   select into x id from users where login = a_login;
+--dg   if found then return x; end if;
+--dg   return 0;
+--dg end$$ language plpgsql stable;
+--dg-cascade
+--dg insert into users values('user1');
+--dg-cascade
+--dg select sp_id_user('user1');
+--dg-cascade
+--dg select sp_id_user('userx');
+--dg-skip: language "?" does not exist
+--dg create function sp_add_user(a_login text) returns int as $$
+--dg declare my_id_user int;
+--dg begin
+--dg   my_id_user = sp_id_user( a_login );
+--dg   IF  my_id_user > 0 THEN
+--dg     RETURN -1;  -- error code for existing user
+--dg   END IF;
+--dg   INSERT INTO users ( login ) VALUES ( a_login );
+--dg   my_id_user = sp_id_user( a_login );
+--dg   IF  my_id_user = 0 THEN
+--dg     RETURN -2;  -- error code for insertion failure
+--dg   END IF;
+--dg   RETURN my_id_user;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select sp_add_user('user1');
+--dg-cascade
+--dg select sp_add_user('user2');
+--dg-cascade
+--dg select sp_add_user('user2');
+--dg-cascade
+--dg select sp_add_user('user3');
+--dg-cascade
+--dg select sp_add_user('user3');
+--dg-cascade
+--dg drop function sp_add_user(text);
+--dg-cascade
+--dg drop function sp_id_user(text);
+--
+-- tests for refcursors
+--
+create table rc_test (a int, b int);
+copy rc_test from stdin;
+--dg-skip: language "?" does not exist
+--dg create function return_unnamed_refcursor() returns refcursor as $$
+--dg declare
+--dg     rc refcursor;
+--dg begin
+--dg     open rc for select a from rc_test;
+--dg     return rc;
+--dg end
+--dg $$ language plpgsql;
+--dg-skip: language "?" does not exist
+--dg create function use_refcursor(rc refcursor) returns int as $$
+--dg declare
+--dg     rc refcursor;
+--dg     x record;
+--dg begin
+--dg     rc := return_unnamed_refcursor();
+--dg     fetch next from rc into x;
+--dg     return x.a;
+--dg end
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select use_refcursor(return_unnamed_refcursor());
+--dg-skip: language "?" does not exist
+--dg create function return_refcursor(rc refcursor) returns refcursor as $$
+--dg begin
+--dg     open rc for select a from rc_test;
+--dg     return rc;
+--dg end
+--dg $$ language plpgsql;
+--dg-skip: language "?" does not exist
+--dg create function refcursor_test1(refcursor) returns refcursor as $$
+--dg begin
+--dg     perform return_refcursor($1);
+--dg     return $1;
+--dg end
+--dg $$ language plpgsql;
+begin;
+--dg-cascade
+--dg select refcursor_test1('test1');
+--dg-cascade
+--dg fetch next in test1;
+--dg-cascade
+--dg select refcursor_test1('test2');
+--dg-cascade
+--dg fetch all from test2;
+commit;
+-- should fail
+fetch next from test1;
+ERROR:  cursor "test1" does not exist
+--dg-skip: language "?" does not exist
+--dg create function refcursor_test2(int, int) returns boolean as $$
+--dg declare
+--dg     c1 cursor (param1 int, param2 int) for select * from rc_test where a > param1 and b > param2;
+--dg     nonsense record;
+--dg begin
+--dg     open c1($1, $2);
+--dg     fetch c1 into nonsense;
+--dg     close c1;
+--dg     if found then
+--dg         return true;
+--dg     else
+--dg         return false;
+--dg     end if;
+--dg end
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select refcursor_test2(20000, 20000) as "Should be false",
+--dg        refcursor_test2(20, 20) as "Should be true";
+-- should fail
+--dg-skip: language "?" does not exist
+--dg create function constant_refcursor() returns refcursor as $$
+--dg declare
+--dg     rc constant refcursor;
+--dg begin
+--dg     open rc for select a from rc_test;
+--dg     return rc;
+--dg end
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select constant_refcursor();
+-- but it's okay like this
+--dg-skip: language "?" does not exist
+--dg create or replace function constant_refcursor() returns refcursor as $$
+--dg declare
+--dg     rc constant refcursor := 'my_cursor_name';
+--dg begin
+--dg     open rc for select a from rc_test;
+--dg     return rc;
+--dg end
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select constant_refcursor();
+--
+-- tests for cursors with named parameter arguments
+--
+--dg-skip: language "?" does not exist
+--dg create function namedparmcursor_test1(int, int) returns boolean as $$
+--dg declare
+--dg     c1 cursor (param1 int, param12 int) for select * from rc_test where a > param1 and b > param12;
+--dg     nonsense record;
+--dg begin
+--dg     open c1(param12 := $2, param1 := $1);
+--dg     fetch c1 into nonsense;
+--dg     close c1;
+--dg     if found then
+--dg         return true;
+--dg     else
+--dg         return false;
+--dg     end if;
+--dg end
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select namedparmcursor_test1(20000, 20000) as "Should be false",
+--dg        namedparmcursor_test1(20, 20) as "Should be true";
+-- mixing named and positional argument notations
+--dg-skip: language "?" does not exist
+--dg create function namedparmcursor_test2(int, int) returns boolean as $$
+--dg declare
+--dg     c1 cursor (param1 int, param2 int) for select * from rc_test where a > param1 and b > param2;
+--dg     nonsense record;
+--dg begin
+--dg     open c1(param1 := $1, $2);
+--dg     fetch c1 into nonsense;
+--dg     close c1;
+--dg     if found then
+--dg         return true;
+--dg     else
+--dg         return false;
+--dg     end if;
+--dg end
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select namedparmcursor_test2(20, 20);
+-- mixing named and positional: param2 is given twice, once in named notation
+-- and second time in positional notation. Should throw an error at parse time
+--dg-differs: another error: language "?" does not exist
+--dg create function namedparmcursor_test3() returns void as $$
+--dg declare
+--dg     c1 cursor (param1 int, param2 int) for select * from rc_test where a > param1 and b > param2;
+--dg begin
+--dg     open c1(param2 := 20, 21);
+--dg end
+--dg $$ language plpgsql;
+-- mixing named and positional: same as previous test, but param1 is duplicated
+--dg-differs: another error: language "?" does not exist
+--dg create function namedparmcursor_test4() returns void as $$
+--dg declare
+--dg     c1 cursor (param1 int, param2 int) for select * from rc_test where a > param1 and b > param2;
+--dg begin
+--dg     open c1(20, param1 := 21);
+--dg end
+--dg $$ language plpgsql;
+-- duplicate named parameter, should throw an error at parse time
+--dg-differs: another error: language "?" does not exist
+--dg create function namedparmcursor_test5() returns void as $$
+--dg declare
+--dg   c1 cursor (p1 int, p2 int) for
+--dg     select * from tenk1 where thousand = p1 and tenthous = p2;
+--dg begin
+--dg   open c1 (p2 := 77, p2 := 42);
+--dg end
+--dg $$ language plpgsql;
+-- not enough parameters, should throw an error at parse time
+--dg-differs: another error: language "?" does not exist
+--dg create function namedparmcursor_test6() returns void as $$
+--dg declare
+--dg   c1 cursor (p1 int, p2 int) for
+--dg     select * from tenk1 where thousand = p1 and tenthous = p2;
+--dg begin
+--dg   open c1 (p2 := 77);
+--dg end
+--dg $$ language plpgsql;
+-- division by zero runtime error, the context given in the error message
+-- should be sensible
+--dg-skip: language "?" does not exist
+--dg create function namedparmcursor_test7() returns void as $$
+--dg declare
+--dg   c1 cursor (p1 int, p2 int) for
+--dg     select * from tenk1 where thousand = p1 and tenthous = p2;
+--dg begin
+--dg   open c1 (p2 := 77, p1 := 42/0);
+--dg end $$ language plpgsql;
+--dg-cascade
+--dg select namedparmcursor_test7();
+-- check that line comments work correctly within the argument list
+-- (this used to require a special hack in the code; it no longer does,
+-- but let's keep the test anyway)
+--dg-skip: language "?" does not exist
+--dg create function namedparmcursor_test8() returns int4 as $$
+--dg declare
+--dg   c1 cursor (p1 int, p2 int) for
+--dg     select count(*) from tenk1 where thousand = p1 and tenthous = p2;
+--dg   n int4;
+--dg begin
+--dg   open c1 (77 -- test
+--dg   , 42);
+--dg   fetch c1 into n;
+--dg   return n;
+--dg end $$ language plpgsql;
+--dg-cascade
+--dg select namedparmcursor_test8();
+-- cursor parameter name can match plpgsql variable or unreserved keyword
+--dg-skip: language "?" does not exist
+--dg create function namedparmcursor_test9(p1 int) returns int4 as $$
+--dg declare
+--dg   c1 cursor (p1 int, p2 int, debug int) for
+--dg     select count(*) from tenk1 where thousand = p1 and tenthous = p2
+--dg       and four = debug;
+--dg   p2 int4 := 1006;
+--dg   n int4;
+--dg begin
+--dg   -- use both supported syntaxes for named arguments
+--dg   open c1 (p1 := p1, p2 => p2, debug => 2);
+--dg   fetch c1 into n;
+--dg   return n;
+--dg end $$ language plpgsql;
+--dg-cascade
+--dg select namedparmcursor_test9(6);
+--
+-- tests for "raise" processing
+--
+--dg-differs: another error: language "?" does not exist
+--dg create function raise_test1(int) returns int as $$
+--dg begin
+--dg     raise notice 'This message has too many parameters!', $1;
+--dg     return $1;
+--dg end;
+--dg $$ language plpgsql;
+--dg-differs: another error: language "?" does not exist
+--dg create function raise_test2(int) returns int as $$
+--dg begin
+--dg     raise notice 'This message has too few parameters: %, %, %', $1, $1;
+--dg     return $1;
+--dg end;
+--dg $$ language plpgsql;
+--dg-skip: language "?" does not exist
+--dg create function raise_test3(int) returns int as $$
+--dg begin
+--dg     raise notice 'This message has no parameters (despite having %% signs in it)!';
+--dg     return $1;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select raise_test3(1);
+-- Test re-RAISE inside a nested exception block.  This case is allowed
+-- by Oracle's PL/SQL but was handled differently by PG before 9.1.
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION reraise_test() RETURNS void AS $$
+--dg BEGIN
+--dg    BEGIN
+--dg        RAISE syntax_error;
+--dg    EXCEPTION
+--dg        WHEN syntax_error THEN
+--dg            BEGIN
+--dg                raise notice 'exception % thrown in inner block, reraising', sqlerrm;
+--dg                RAISE;
+--dg            EXCEPTION
+--dg                WHEN OTHERS THEN
+--dg                    raise notice 'RIGHT - exception % caught in inner block', sqlerrm;
+--dg            END;
+--dg    END;
+--dg EXCEPTION
+--dg    WHEN OTHERS THEN
+--dg        raise notice 'WRONG - exception % caught in outer block', sqlerrm;
+--dg END;
+--dg $$ LANGUAGE plpgsql;
+--dg-cascade
+--dg SELECT reraise_test();
+--
+-- reject function definitions that contain malformed SQL queries at
+-- compile-time, where possible
+--
+--dg-differs: another error: language "?" does not exist
+--dg create function bad_sql1() returns int as $$
+--dg declare a int;
+--dg begin
+--dg     a := 5;
+--dg     Johnny Yuma;
+--dg     a := 10;
+--dg     return a;
+--dg end$$ language plpgsql;
+--dg-differs: another error: language "?" does not exist
+--dg create function bad_sql2() returns int as $$
+--dg declare r record;
+--dg begin
+--dg     for r in select I fought the law, the law won LOOP
+--dg         raise notice 'in loop';
+--dg     end loop;
+--dg     return 5;
+--dg end;$$ language plpgsql;
+-- a RETURN expression is mandatory, except for void-returning
+-- functions, where it is not allowed
+--dg-differs: another error: language "?" does not exist
+--dg create function missing_return_expr() returns int as $$
+--dg begin
+--dg     return ;
+--dg end;$$ language plpgsql;
+--dg-differs: another error: language "?" does not exist
+--dg create function void_return_expr() returns void as $$
+--dg begin
+--dg     return 5;
+--dg end;$$ language plpgsql;
+-- VOID functions are allowed to omit RETURN
+--dg-skip: language "?" does not exist
+--dg create function void_return_expr() returns void as $$
+--dg begin
+--dg     perform 2+2;
+--dg end;$$ language plpgsql;
+--dg-cascade
+--dg select void_return_expr();
+-- but ordinary functions are not
+--dg-skip: language "?" does not exist
+--dg create function missing_return_expr() returns int as $$
+--dg begin
+--dg     perform 2+2;
+--dg end;$$ language plpgsql;
+--dg-cascade
+--dg select missing_return_expr();
+--dg-cascade
+--dg drop function void_return_expr();
+--dg-cascade
+--dg drop function missing_return_expr();
+--
+-- EXECUTE ... INTO test
+--
+create table eifoo (i integer, y integer);
+--dg-skip: a relation's storage cannot be made: digres has no catalog tables
+--dg create type eitype as (i integer, y integer);
+--dg-skip: language "?" does not exist
+--dg create or replace function execute_into_test(varchar) returns record as $$
+--dg declare
+--dg     _r record;
+--dg     _rt eifoo%rowtype;
+--dg     _v eitype;
+--dg     i int;
+--dg     j int;
+--dg     k int;
+--dg begin
+--dg     execute 'insert into '||$1||' values(10,15)';
+--dg     execute 'select (row).* from (select row(10,1)::eifoo) s' into _r;
+--dg     raise notice '% %', _r.i, _r.y;
+--dg     execute 'select * from '||$1||' limit 1' into _rt;
+--dg     raise notice '% %', _rt.i, _rt.y;
+--dg     execute 'select *, 20 from '||$1||' limit 1' into i, j, k;
+--dg     raise notice '% % %', i, j, k;
+--dg     execute 'select 1,2' into _v;
+--dg     return _v;
+--dg end; $$ language plpgsql;
+--dg-cascade
+--dg select execute_into_test('eifoo');
+drop table eifoo cascade;
+--dg-cascade
+--dg drop type eitype cascade;
+--
+-- SQLSTATE and SQLERRM test
+--
+--dg-skip: language "?" does not exist
+--dg create function excpt_test1() returns void as $$
+--dg begin
+--dg     raise notice '% %', sqlstate, sqlerrm;
+--dg end; $$ language plpgsql;
+-- should fail: SQLSTATE and SQLERRM are only in defined EXCEPTION
+-- blocks
+--dg-cascade
+--dg select excpt_test1();
+--dg-skip: language "?" does not exist
+--dg create function excpt_test2() returns void as $$
+--dg begin
+--dg     begin
+--dg         begin
+--dg             raise notice '% %', sqlstate, sqlerrm;
+--dg         end;
+--dg     end;
+--dg end; $$ language plpgsql;
+-- should fail
+--dg-cascade
+--dg select excpt_test2();
+--dg-skip: language "?" does not exist
+--dg create function excpt_test3() returns void as $$
+--dg begin
+--dg     begin
+--dg         raise exception 'user exception';
+--dg     exception when others then
+--dg 	    raise notice 'caught exception % %', sqlstate, sqlerrm;
+--dg 	    begin
+--dg 	        raise notice '% %', sqlstate, sqlerrm;
+--dg 	        perform 10/0;
+--dg         exception
+--dg             when substring_error then
+--dg                 -- this exception handler shouldn't be invoked
+--dg                 raise notice 'unexpected exception: % %', sqlstate, sqlerrm;
+--dg 	        when division_by_zero then
+--dg 	            raise notice 'caught exception % %', sqlstate, sqlerrm;
+--dg 	    end;
+--dg 	    raise notice '% %', sqlstate, sqlerrm;
+--dg     end;
+--dg end; $$ language plpgsql;
+--dg-cascade
+--dg select excpt_test3();
+--dg-skip: language "?" does not exist
+--dg create function excpt_test4() returns text as $$
+--dg begin
+--dg 	begin perform 1/0;
+--dg 	exception when others then return sqlerrm; end;
+--dg end; $$ language plpgsql;
+--dg-cascade
+--dg select excpt_test4();
+--dg-cascade
+--dg drop function excpt_test1();
+--dg-cascade
+--dg drop function excpt_test2();
+--dg-cascade
+--dg drop function excpt_test3();
+--dg-cascade
+--dg drop function excpt_test4();
+-- parameters of raise stmt can be expressions
+--dg-skip: language "?" does not exist
+--dg create function raise_exprs() returns void as $$
+--dg declare
+--dg     a integer[] = '{10,20,30}';
+--dg     c varchar = 'xyz';
+--dg     i integer;
+--dg begin
+--dg     i := 2;
+--dg     raise notice '%; %; %; %; %; %', a, a[i], c, (select c || 'abc'), row(10,'aaa',NULL,30), NULL;
+--dg end;$$ language plpgsql;
+--dg-cascade
+--dg select raise_exprs();
+--dg-cascade
+--dg drop function raise_exprs();
+-- regression test: verify that multiple uses of same plpgsql datum within
+-- a SQL command all get mapped to the same $n parameter.  The return value
+-- of the SELECT is not important, we only care that it doesn't fail with
+-- a complaint about an ungrouped column reference.
+--dg-skip: language "?" does not exist
+--dg create function multi_datum_use(p1 int) returns bool as $$
+--dg declare
+--dg   x int;
+--dg   y int;
+--dg begin
+--dg   select into x,y unique1/p1, unique1/$1 from tenk1 group by unique1/p1;
+--dg   return x = y;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select multi_datum_use(42);
+--
+-- Test STRICT limiter in both planned and EXECUTE invocations.
+-- Note that a data-modifying query is quasi strict (disallow multi rows)
+-- by default in the planned case, but not in EXECUTE.
+--
+create temp table foo (f1 int, f2 int);
+insert into foo values (1,2), (3,4);
+--dg-skip: language "?" does not exist
+--dg create or replace function stricttest() returns void as $$
+--dg declare x record;
+--dg begin
+--dg   -- should work
+--dg   insert into foo values(5,6) returning * into x;
+--dg   raise notice 'x.f1 = %, x.f2 = %', x.f1, x.f2;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select stricttest();
+--dg-skip: language "?" does not exist
+--dg create or replace function stricttest() returns void as $$
+--dg declare x record;
+--dg begin
+--dg   -- should fail due to implicit strict
+--dg   insert into foo values(7,8),(9,10) returning * into x;
+--dg   raise notice 'x.f1 = %, x.f2 = %', x.f1, x.f2;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select stricttest();
+--dg-skip: language "?" does not exist
+--dg create or replace function stricttest() returns void as $$
+--dg declare x record;
+--dg begin
+--dg   -- should work
+--dg   execute 'insert into foo values(5,6) returning *' into x;
+--dg   raise notice 'x.f1 = %, x.f2 = %', x.f1, x.f2;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select stricttest();
+--dg-skip: language "?" does not exist
+--dg create or replace function stricttest() returns void as $$
+--dg declare x record;
+--dg begin
+--dg   -- this should work since EXECUTE isn't as picky
+--dg   execute 'insert into foo values(7,8),(9,10) returning *' into x;
+--dg   raise notice 'x.f1 = %, x.f2 = %', x.f1, x.f2;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select stricttest();
+--dg-cascade
+--dg select * from foo;
+--dg-skip: language "?" does not exist
+--dg create or replace function stricttest() returns void as $$
+--dg declare x record;
+--dg begin
+--dg   -- should work
+--dg   select * from foo where f1 = 3 into strict x;
+--dg   raise notice 'x.f1 = %, x.f2 = %', x.f1, x.f2;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select stricttest();
+--dg-skip: language "?" does not exist
+--dg create or replace function stricttest() returns void as $$
+--dg declare x record;
+--dg begin
+--dg   -- should fail, no rows
+--dg   select * from foo where f1 = 0 into strict x;
+--dg   raise notice 'x.f1 = %, x.f2 = %', x.f1, x.f2;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select stricttest();
+--dg-skip: language "?" does not exist
+--dg create or replace function stricttest() returns void as $$
+--dg declare x record;
+--dg begin
+--dg   -- should fail, too many rows
+--dg   select * from foo where f1 > 3 into strict x;
+--dg   raise notice 'x.f1 = %, x.f2 = %', x.f1, x.f2;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select stricttest();
+--dg-skip: language "?" does not exist
+--dg create or replace function stricttest() returns void as $$
+--dg declare x record;
+--dg begin
+--dg   -- should work
+--dg   execute 'select * from foo where f1 = 3' into strict x;
+--dg   raise notice 'x.f1 = %, x.f2 = %', x.f1, x.f2;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select stricttest();
+--dg-skip: language "?" does not exist
+--dg create or replace function stricttest() returns void as $$
+--dg declare x record;
+--dg begin
+--dg   -- should fail, no rows
+--dg   execute 'select * from foo where f1 = 0' into strict x;
+--dg   raise notice 'x.f1 = %, x.f2 = %', x.f1, x.f2;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select stricttest();
+--dg-skip: language "?" does not exist
+--dg create or replace function stricttest() returns void as $$
+--dg declare x record;
+--dg begin
+--dg   -- should fail, too many rows
+--dg   execute 'select * from foo where f1 > 3' into strict x;
+--dg   raise notice 'x.f1 = %, x.f2 = %', x.f1, x.f2;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select stricttest();
+--dg-cascade
+--dg drop function stricttest();
+-- test printing parameters after failure due to STRICT
+set plpgsql.print_strict_params to true;
+--dg-skip: language "?" does not exist
+--dg create or replace function stricttest() returns void as $$
+--dg declare
+--dg x record;
+--dg p1 int := 2;
+--dg p3 text := 'foo';
+--dg begin
+--dg   -- no rows
+--dg   select * from foo where f1 = p1 and f1::text = p3 into strict x;
+--dg   raise notice 'x.f1 = %, x.f2 = %', x.f1, x.f2;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select stricttest();
+--dg-skip: language "?" does not exist
+--dg create or replace function stricttest() returns void as $$
+--dg declare
+--dg x record;
+--dg p1 int := 2;
+--dg p3 text := $a$'Valame Dios!' dijo Sancho; 'no le dije yo a vuestra merced que mirase bien lo que hacia?'$a$;
+--dg begin
+--dg   -- no rows
+--dg   select * from foo where f1 = p1 and f1::text = p3 into strict x;
+--dg   raise notice 'x.f1 = %, x.f2 = %', x.f1, x.f2;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select stricttest();
+--dg-skip: language "?" does not exist
+--dg create or replace function stricttest() returns void as $$
+--dg declare
+--dg x record;
+--dg p1 int := 2;
+--dg p3 text := 'foo';
+--dg begin
+--dg   -- too many rows
+--dg   select * from foo where f1 > p1 or f1::text = p3  into strict x;
+--dg   raise notice 'x.f1 = %, x.f2 = %', x.f1, x.f2;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select stricttest();
+--dg-skip: language "?" does not exist
+--dg create or replace function stricttest() returns void as $$
+--dg declare x record;
+--dg begin
+--dg   -- too many rows, no params
+--dg   select * from foo where f1 > 3 into strict x;
+--dg   raise notice 'x.f1 = %, x.f2 = %', x.f1, x.f2;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select stricttest();
+--dg-skip: language "?" does not exist
+--dg create or replace function stricttest() returns void as $$
+--dg declare x record;
+--dg begin
+--dg   -- no rows
+--dg   execute 'select * from foo where f1 = $1 or f1::text = $2' using 0, 'foo' into strict x;
+--dg   raise notice 'x.f1 = %, x.f2 = %', x.f1, x.f2;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select stricttest();
+--dg-skip: language "?" does not exist
+--dg create or replace function stricttest() returns void as $$
+--dg declare x record;
+--dg begin
+--dg   -- too many rows
+--dg   execute 'select * from foo where f1 > $1' using 1 into strict x;
+--dg   raise notice 'x.f1 = %, x.f2 = %', x.f1, x.f2;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select stricttest();
+--dg-skip: language "?" does not exist
+--dg create or replace function stricttest() returns void as $$
+--dg declare x record;
+--dg begin
+--dg   -- too many rows, no parameters
+--dg   execute 'select * from foo where f1 > 3' into strict x;
+--dg   raise notice 'x.f1 = %, x.f2 = %', x.f1, x.f2;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select stricttest();
+--dg-skip: language "?" does not exist
+--dg create or replace function stricttest() returns void as $$
+--dg -- override the global
+--dg #print_strict_params off
+--dg declare
+--dg x record;
+--dg p1 int := 2;
+--dg p3 text := 'foo';
+--dg begin
+--dg   -- too many rows
+--dg   select * from foo where f1 > p1 or f1::text = p3  into strict x;
+--dg   raise notice 'x.f1 = %, x.f2 = %', x.f1, x.f2;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select stricttest();
+reset plpgsql.print_strict_params;
+--dg-skip: language "?" does not exist
+--dg create or replace function stricttest() returns void as $$
+--dg -- override the global
+--dg #print_strict_params on
+--dg declare
+--dg x record;
+--dg p1 int := 2;
+--dg p3 text := 'foo';
+--dg begin
+--dg   -- too many rows
+--dg   select * from foo where f1 > p1 or f1::text = p3  into strict x;
+--dg   raise notice 'x.f1 = %, x.f2 = %', x.f1, x.f2;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select stricttest();
+-- test warnings and errors
+set plpgsql.extra_warnings to 'all';
+set plpgsql.extra_warnings to 'none';
+set plpgsql.extra_errors to 'all';
+set plpgsql.extra_errors to 'none';
+-- test warnings when shadowing a variable
+set plpgsql.extra_warnings to 'shadowed_variables';
+-- simple shadowing of input and output parameters
+--dg-skip: language "?" does not exist
+--dg create or replace function shadowtest(in1 int)
+--dg 	returns table (out1 int) as $$
+--dg declare
+--dg in1 int;
+--dg out1 int;
+--dg begin
+--dg end
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select shadowtest(1);
+set plpgsql.extra_warnings to 'shadowed_variables';
+--dg-cascade
+--dg select shadowtest(1);
+--dg-skip: language "?" does not exist
+--dg create or replace function shadowtest(in1 int)
+--dg 	returns table (out1 int) as $$
+--dg declare
+--dg in1 int;
+--dg out1 int;
+--dg begin
+--dg end
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select shadowtest(1);
+--dg-cascade
+--dg drop function shadowtest(int);
+-- shadowing in a second DECLARE block
+--dg-skip: language "?" does not exist
+--dg create or replace function shadowtest()
+--dg 	returns void as $$
+--dg declare
+--dg f1 int;
+--dg begin
+--dg 	declare
+--dg 	f1 int;
+--dg 	begin
+--dg 	end;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg drop function shadowtest();
+-- several levels of shadowing
+--dg-skip: language "?" does not exist
+--dg create or replace function shadowtest(in1 int)
+--dg 	returns void as $$
+--dg declare
+--dg in1 int;
+--dg begin
+--dg 	declare
+--dg 	in1 int;
+--dg 	begin
+--dg 	end;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg drop function shadowtest(int);
+-- shadowing in cursor definitions
+--dg-skip: language "?" does not exist
+--dg create or replace function shadowtest()
+--dg 	returns void as $$
+--dg declare
+--dg f1 int;
+--dg c1 cursor (f1 int) for select 1;
+--dg begin
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg drop function shadowtest();
+-- test errors when shadowing a variable
+set plpgsql.extra_errors to 'shadowed_variables';
+--dg-differs: another error: language "?" does not exist
+--dg create or replace function shadowtest(f1 int)
+--dg 	returns boolean as $$
+--dg declare f1 int; begin return 1; end $$ language plpgsql;
+select shadowtest(1);
+ERROR:  function shadowtest(integer) does not exist
+LINE 1: select shadowtest(1);
+               ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+reset plpgsql.extra_errors;
+reset plpgsql.extra_warnings;
+--dg-skip: language "?" does not exist
+--dg create or replace function shadowtest(f1 int)
+--dg 	returns boolean as $$
+--dg declare f1 int; begin return 1; end $$ language plpgsql;
+--dg-cascade
+--dg select shadowtest(1);
+-- runtime extra checks
+set plpgsql.extra_warnings to 'too_many_rows';
+--dg-skip: language "?" does not exist
+--dg do $$
+--dg declare x int;
+--dg begin
+--dg   select v from generate_series(1,2) g(v) into x;
+--dg end;
+--dg $$;
+set plpgsql.extra_errors to 'too_many_rows';
+--dg-differs: another error: language "?" does not exist
+--dg do $$
+--dg declare x int;
+--dg begin
+--dg   select v from generate_series(1,2) g(v) into x;
+--dg end;
+--dg $$;
+reset plpgsql.extra_errors;
+reset plpgsql.extra_warnings;
+set plpgsql.extra_warnings to 'strict_multi_assignment';
+--dg-skip: language "?" does not exist
+--dg do $$
+--dg declare
+--dg   x int;
+--dg   y int;
+--dg begin
+--dg   select 1 into x, y;
+--dg   select 1,2 into x, y;
+--dg   select 1,2,3 into x, y;
+--dg end
+--dg $$;
+set plpgsql.extra_errors to 'strict_multi_assignment';
+--dg-differs: another error: language "?" does not exist
+--dg do $$
+--dg declare
+--dg   x int;
+--dg   y int;
+--dg begin
+--dg   select 1 into x, y;
+--dg   select 1,2 into x, y;
+--dg   select 1,2,3 into x, y;
+--dg end
+--dg $$;
+create table test_01(a int, b int, c int);
+alter table test_01 drop column a;
+-- the check is active only when source table is not empty
+insert into test_01 values(10,20);
+--dg-differs: another error: language "?" does not exist
+--dg do $$
+--dg declare
+--dg   x int;
+--dg   y int;
+--dg begin
+--dg   select * from test_01 into x, y; -- should be ok
+--dg   raise notice 'ok';
+--dg   select * from test_01 into x;    -- should to fail
+--dg end;
+--dg $$;
+--dg-differs: another error: language "?" does not exist
+--dg do $$
+--dg declare
+--dg   t test_01;
+--dg begin
+--dg   select 1, 2 into t;  -- should be ok
+--dg   raise notice 'ok';
+--dg   select 1, 2, 3 into t; -- should fail;
+--dg end;
+--dg $$;
+--dg-differs: another error: language "?" does not exist
+--dg do $$
+--dg declare
+--dg   t test_01;
+--dg begin
+--dg   select 1 into t; -- should fail;
+--dg end;
+--dg $$;
+drop table test_01;
+reset plpgsql.extra_errors;
+reset plpgsql.extra_warnings;
+-- test scrollable cursor support
+--dg-skip: language "?" does not exist
+--dg create function sc_test() returns setof integer as $$
+--dg declare
+--dg   c scroll cursor for select f1 from int4_tbl;
+--dg   x integer;
+--dg begin
+--dg   open c;
+--dg   fetch last from c into x;
+--dg   while found loop
+--dg     return next x;
+--dg     fetch prior from c into x;
+--dg   end loop;
+--dg   close c;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select * from sc_test();
+--dg-skip: language "?" does not exist
+--dg create or replace function sc_test() returns setof integer as $$
+--dg declare
+--dg   c no scroll cursor for select f1 from int4_tbl;
+--dg   x integer;
+--dg begin
+--dg   open c;
+--dg   fetch last from c into x;
+--dg   while found loop
+--dg     return next x;
+--dg     fetch prior from c into x;
+--dg   end loop;
+--dg   close c;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select * from sc_test();  -- fails because of NO SCROLL specification
+--dg-skip: language "?" does not exist
+--dg create or replace function sc_test() returns setof integer as $$
+--dg declare
+--dg   c refcursor;
+--dg   x integer;
+--dg begin
+--dg   open c scroll for select f1 from int4_tbl;
+--dg   fetch last from c into x;
+--dg   while found loop
+--dg     return next x;
+--dg     fetch prior from c into x;
+--dg   end loop;
+--dg   close c;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select * from sc_test();
+--dg-skip: language "?" does not exist
+--dg create or replace function sc_test() returns setof integer as $$
+--dg declare
+--dg   c refcursor;
+--dg   x integer;
+--dg begin
+--dg   open c scroll for execute 'select f1 from int4_tbl';
+--dg   fetch last from c into x;
+--dg   while found loop
+--dg     return next x;
+--dg     fetch relative -2 from c into x;
+--dg   end loop;
+--dg   close c;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select * from sc_test();
+--dg-skip: language "?" does not exist
+--dg create or replace function sc_test() returns setof integer as $$
+--dg declare
+--dg   c refcursor;
+--dg   x integer;
+--dg begin
+--dg   open c scroll for execute 'select f1 from int4_tbl';
+--dg   fetch last from c into x;
+--dg   while found loop
+--dg     return next x;
+--dg     move backward 2 from c;
+--dg     fetch relative -1 from c into x;
+--dg   end loop;
+--dg   close c;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select * from sc_test();
+--dg-skip: language "?" does not exist
+--dg create or replace function sc_test() returns setof integer as $$
+--dg declare
+--dg   c cursor for select * from generate_series(1, 10);
+--dg   x integer;
+--dg begin
+--dg   open c;
+--dg   loop
+--dg       move relative 2 in c;
+--dg       if not found then
+--dg           exit;
+--dg       end if;
+--dg       fetch next from c into x;
+--dg       if found then
+--dg           return next x;
+--dg       end if;
+--dg   end loop;
+--dg   close c;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select * from sc_test();
+--dg-skip: language "?" does not exist
+--dg create or replace function sc_test() returns setof integer as $$
+--dg declare
+--dg   c cursor for select * from generate_series(1, 10);
+--dg   x integer;
+--dg begin
+--dg   open c;
+--dg   move forward all in c;
+--dg   fetch backward from c into x;
+--dg   if found then
+--dg     return next x;
+--dg   end if;
+--dg   close c;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select * from sc_test();
+--dg-cascade
+--dg drop function sc_test();
+-- test qualified variable names
+--dg-skip: language "?" does not exist
+--dg create function pl_qual_names (param1 int) returns void as $$
+--dg <<outerblock>>
+--dg declare
+--dg   param1 int := 1;
+--dg begin
+--dg   <<innerblock>>
+--dg   declare
+--dg     param1 int := 2;
+--dg   begin
+--dg     raise notice 'param1 = %', param1;
+--dg     raise notice 'pl_qual_names.param1 = %', pl_qual_names.param1;
+--dg     raise notice 'outerblock.param1 = %', outerblock.param1;
+--dg     raise notice 'innerblock.param1 = %', innerblock.param1;
+--dg   end;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select pl_qual_names(42);
+--dg-cascade
+--dg drop function pl_qual_names(int);
+-- tests for RETURN QUERY
+--dg-skip: language "?" does not exist
+--dg create function ret_query1(out int, out int) returns setof record as $$
+--dg begin
+--dg     $1 := -1;
+--dg     $2 := -2;
+--dg     return next;
+--dg     return query select x + 1, x * 10 from generate_series(0, 10) s (x);
+--dg     return next;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select * from ret_query1();
+--dg-skip: a relation's storage cannot be made: digres has no catalog tables
+--dg create type record_type as (x text, y int, z boolean);
+--dg-skip: language "?" does not exist
+--dg create or replace function ret_query2(lim int) returns setof record_type as $$
+--dg begin
+--dg     return query select fipshash(s.x::text), s.x, s.x > 0
+--dg                  from generate_series(-8, lim) s (x) where s.x % 2 = 0;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select * from ret_query2(8);
+-- test EXECUTE USING
+--dg-skip: language "?" does not exist
+--dg create function exc_using(int, text) returns int as $$
+--dg declare i int;
+--dg begin
+--dg   for i in execute 'select * from generate_series(1,$1)' using $1+1 loop
+--dg     raise notice '%', i;
+--dg   end loop;
+--dg   execute 'select $2 + $2*3 + length($1)' into i using $2,$1;
+--dg   return i;
+--dg end
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select exc_using(5, 'foobar');
+--dg-cascade
+--dg drop function exc_using(int, text);
+--dg-skip: language "?" does not exist
+--dg create or replace function exc_using(int) returns void as $$
+--dg declare
+--dg   c refcursor;
+--dg   i int;
+--dg begin
+--dg   open c for execute 'select * from generate_series(1,$1)' using $1+1;
+--dg   loop
+--dg     fetch c into i;
+--dg     exit when not found;
+--dg     raise notice '%', i;
+--dg   end loop;
+--dg   close c;
+--dg   return;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select exc_using(5);
+--dg-cascade
+--dg drop function exc_using(int);
+-- test FOR-over-cursor
+--dg-skip: language "?" does not exist
+--dg create or replace function forc01() returns void as $$
+--dg declare
+--dg   c cursor(r1 integer, r2 integer)
+--dg        for select * from generate_series(r1,r2) i;
+--dg   c2 cursor
+--dg        for select * from generate_series(41,43) i;
+--dg begin
+--dg   -- assign portal names to cursors to get stable output
+--dg   c := 'c';
+--dg   c2 := 'c2';
+--dg   for r in c(5,7) loop
+--dg     raise notice '% from %', r.i, c;
+--dg   end loop;
+--dg   -- again, to test if cursor was closed properly
+--dg   -- (and while we're at it, test named-parameter notation)
+--dg   for r in c(r2 := 10, r1 => 9) loop
+--dg     raise notice '% from %', r.i, c;
+--dg   end loop;
+--dg   -- and test a parameterless cursor
+--dg   for r in c2 loop
+--dg     raise notice '% from %', r.i, c2;
+--dg   end loop;
+--dg   -- and try it with a hand-assigned name
+--dg   raise notice 'after loop, c2 = %', c2;
+--dg   c2 := 'special_name';
+--dg   for r in c2 loop
+--dg     raise notice '% from %', r.i, c2;
+--dg   end loop;
+--dg   raise notice 'after loop, c2 = %', c2;
+--dg   -- and try it with a generated name
+--dg   -- (which we can't show in the output because it's variable)
+--dg   c2 := null;
+--dg   for r in c2 loop
+--dg     raise notice '%', r.i;
+--dg   end loop;
+--dg   raise notice 'after loop, c2 = %', c2;
+--dg   return;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select forc01();
+-- try updating the cursor's current row
+create temp table forc_test as
+  select n as i, n as j from generate_series(1,10) n;
+--dg-skip: language "?" does not exist
+--dg create or replace function forc01() returns void as $$
+--dg declare
+--dg   c cursor for select * from forc_test;
+--dg begin
+--dg   for r in c loop
+--dg     raise notice '%, %', r.i, r.j;
+--dg     update forc_test set i = i * 100, j = r.j * 2 where current of c;
+--dg   end loop;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select forc01();
+--dg-cascade
+--dg select * from forc_test;
+-- same, with a cursor whose portal name doesn't match variable name
+--dg-skip: language "?" does not exist
+--dg create or replace function forc01() returns void as $$
+--dg declare
+--dg   c refcursor := 'fooled_ya';
+--dg   r record;
+--dg begin
+--dg   open c for select * from forc_test;
+--dg   loop
+--dg     fetch c into r;
+--dg     exit when not found;
+--dg     raise notice '%, %', r.i, r.j;
+--dg     update forc_test set i = i * 100, j = r.j * 2 where current of c;
+--dg   end loop;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select forc01();
+--dg-cascade
+--dg select * from forc_test;
+--dg-cascade
+--dg drop function forc01();
+-- it's okay to re-use a cursor variable name, even when bound
+--dg-skip: language "?" does not exist
+--dg do $$
+--dg declare cnt int := 0;
+--dg   c1 cursor for select * from forc_test;
+--dg begin
+--dg   for r1 in c1 loop
+--dg     declare c1 cursor for select * from forc_test;
+--dg     begin
+--dg       for r2 in c1 loop
+--dg         cnt := cnt + 1;
+--dg       end loop;
+--dg     end;
+--dg   end loop;
+--dg   raise notice 'cnt = %', cnt;
+--dg end $$;
+-- fail because cursor has no query bound to it
+--dg-differs: another error: language "?" does not exist
+--dg create or replace function forc_bad() returns void as $$
+--dg declare
+--dg   c refcursor;
+--dg begin
+--dg   for r in c loop
+--dg     raise notice '%', r.i;
+--dg   end loop;
+--dg end;
+--dg $$ language plpgsql;
+-- test RETURN QUERY EXECUTE
+--dg-skip: language "?" does not exist
+--dg create or replace function return_dquery()
+--dg returns setof int as $$
+--dg begin
+--dg   return query execute 'select * from (values(10),(20)) f';
+--dg   return query execute 'select * from (values($1),($2)) f' using 40,50;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select * from return_dquery();
+--dg-cascade
+--dg drop function return_dquery();
+-- test RETURN QUERY with dropped columns
+create table tabwithcols(a int, b int, c int, d int);
+insert into tabwithcols values(10,20,30,40),(50,60,70,80);
+--dg-skip: language "?" does not exist
+--dg create or replace function returnqueryf()
+--dg returns setof tabwithcols as $$
+--dg begin
+--dg   return query select * from tabwithcols;
+--dg   return query execute 'select * from tabwithcols';
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select * from returnqueryf();
+alter table tabwithcols drop column b;
+--dg-cascade
+--dg select * from returnqueryf();
+alter table tabwithcols drop column d;
+--dg-cascade
+--dg select * from returnqueryf();
+alter table tabwithcols add column d int;
+--dg-cascade
+--dg select * from returnqueryf();
+--dg-cascade
+--dg drop function returnqueryf();
+drop table tabwithcols;
+--
+-- Tests for composite-type results
+--
+--dg-skip: a relation's storage cannot be made: digres has no catalog tables
+--dg create type compostype as (x int, y varchar);
+-- test: use of variable of composite type in return statement
+--dg-skip: language "?" does not exist
+--dg create or replace function compos() returns compostype as $$
+--dg declare
+--dg   v compostype;
+--dg begin
+--dg   v := (1, 'hello');
+--dg   return v;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select compos();
+-- test: use of variable of record type in return statement
+--dg-skip: language "?" does not exist
+--dg create or replace function compos() returns compostype as $$
+--dg declare
+--dg   v record;
+--dg begin
+--dg   v := (1, 'hello'::varchar);
+--dg   return v;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select compos();
+-- test: use of row expr in return statement
+--dg-skip: language "?" does not exist
+--dg create or replace function compos() returns compostype as $$
+--dg begin
+--dg   return (1, 'hello'::varchar);
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select compos();
+-- this does not work currently (no implicit casting)
+--dg-skip: language "?" does not exist
+--dg create or replace function compos() returns compostype as $$
+--dg begin
+--dg   return (1, 'hello');
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select compos();
+-- ... but this does
+--dg-skip: language "?" does not exist
+--dg create or replace function compos() returns compostype as $$
+--dg begin
+--dg   return (1, 'hello')::compostype;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select compos();
+--dg-cascade
+--dg drop function compos();
+-- test: return a row expr as record.
+--dg-skip: language "?" does not exist
+--dg create or replace function composrec() returns record as $$
+--dg declare
+--dg   v record;
+--dg begin
+--dg   v := (1, 'hello');
+--dg   return v;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select composrec();
+-- test: return row expr in return statement.
+--dg-skip: language "?" does not exist
+--dg create or replace function composrec() returns record as $$
+--dg begin
+--dg   return (1, 'hello');
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select composrec();
+--dg-cascade
+--dg drop function composrec();
+-- test: row expr in RETURN NEXT statement.
+--dg-skip: language "?" does not exist
+--dg create or replace function compos() returns setof compostype as $$
+--dg begin
+--dg   for i in 1..3
+--dg   loop
+--dg     return next (1, 'hello'::varchar);
+--dg   end loop;
+--dg   return next null::compostype;
+--dg   return next (2, 'goodbye')::compostype;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select * from compos();
+--dg-cascade
+--dg drop function compos();
+-- test: use invalid expr in return statement.
+--dg-skip: language "?" does not exist
+--dg create or replace function compos() returns compostype as $$
+--dg begin
+--dg   return 1 + 1;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select compos();
+-- RETURN variable is a different code path ...
+--dg-skip: language "?" does not exist
+--dg create or replace function compos() returns compostype as $$
+--dg declare x int := 42;
+--dg begin
+--dg   return x;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select * from compos();
+--dg-cascade
+--dg drop function compos();
+-- test: invalid use of composite variable in scalar-returning function
+--dg-skip: language "?" does not exist
+--dg create or replace function compos() returns int as $$
+--dg declare
+--dg   v compostype;
+--dg begin
+--dg   v := (1, 'hello');
+--dg   return v;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select compos();
+-- test: invalid use of composite expression in scalar-returning function
+--dg-skip: language "?" does not exist
+--dg create or replace function compos() returns int as $$
+--dg begin
+--dg   return (1, 'hello')::compostype;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select compos();
+--dg-cascade
+--dg drop function compos();
+--dg-cascade
+--dg drop type compostype;
+--
+-- Tests for 8.4's new RAISE features
+--
+--dg-skip: language "?" does not exist
+--dg create or replace function raise_test() returns void as $$
+--dg begin
+--dg   raise notice '% % %', 1, 2, 3
+--dg      using errcode = '55001', detail = 'some detail info', hint = 'some hint';
+--dg   raise '% % %', 1, 2, 3
+--dg      using errcode = 'division_by_zero', detail = 'some detail info';
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select raise_test();
+-- Since we can't actually see the thrown SQLSTATE in default psql output,
+-- test it like this; this also tests re-RAISE
+--dg-skip: language "?" does not exist
+--dg create or replace function raise_test() returns void as $$
+--dg begin
+--dg   raise 'check me'
+--dg      using errcode = 'division_by_zero', detail = 'some detail info';
+--dg   exception
+--dg     when others then
+--dg       raise notice 'SQLSTATE: % SQLERRM: %', sqlstate, sqlerrm;
+--dg       raise;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select raise_test();
+--dg-skip: language "?" does not exist
+--dg create or replace function raise_test() returns void as $$
+--dg begin
+--dg   raise 'check me'
+--dg      using errcode = '1234F', detail = 'some detail info';
+--dg   exception
+--dg     when others then
+--dg       raise notice 'SQLSTATE: % SQLERRM: %', sqlstate, sqlerrm;
+--dg       raise;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select raise_test();
+-- SQLSTATE specification in WHEN
+--dg-skip: language "?" does not exist
+--dg create or replace function raise_test() returns void as $$
+--dg begin
+--dg   raise 'check me'
+--dg      using errcode = '1234F', detail = 'some detail info';
+--dg   exception
+--dg     when sqlstate '1234F' then
+--dg       raise notice 'SQLSTATE: % SQLERRM: %', sqlstate, sqlerrm;
+--dg       raise;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select raise_test();
+--dg-skip: language "?" does not exist
+--dg create or replace function raise_test() returns void as $$
+--dg begin
+--dg   raise division_by_zero using detail = 'some detail info';
+--dg   exception
+--dg     when others then
+--dg       raise notice 'SQLSTATE: % SQLERRM: %', sqlstate, sqlerrm;
+--dg       raise;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select raise_test();
+--dg-skip: language "?" does not exist
+--dg create or replace function raise_test() returns void as $$
+--dg begin
+--dg   raise division_by_zero;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select raise_test();
+--dg-skip: language "?" does not exist
+--dg create or replace function raise_test() returns void as $$
+--dg begin
+--dg   raise sqlstate '1234F';
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select raise_test();
+--dg-skip: language "?" does not exist
+--dg create or replace function raise_test() returns void as $$
+--dg begin
+--dg   raise division_by_zero using message = 'custom' || ' message';
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select raise_test();
+--dg-skip: language "?" does not exist
+--dg create or replace function raise_test() returns void as $$
+--dg begin
+--dg   raise using message = 'custom' || ' message', errcode = '22012';
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select raise_test();
+-- conflict on message
+--dg-skip: language "?" does not exist
+--dg create or replace function raise_test() returns void as $$
+--dg begin
+--dg   raise notice 'some message' using message = 'custom' || ' message', errcode = '22012';
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select raise_test();
+-- conflict on errcode
+--dg-skip: language "?" does not exist
+--dg create or replace function raise_test() returns void as $$
+--dg begin
+--dg   raise division_by_zero using message = 'custom' || ' message', errcode = '22012';
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select raise_test();
+-- nothing to re-RAISE
+--dg-skip: language "?" does not exist
+--dg create or replace function raise_test() returns void as $$
+--dg begin
+--dg   raise;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select raise_test();
+-- test access to exception data
+--dg-skip: language "?" does not exist
+--dg create function zero_divide() returns int as $$
+--dg declare v int := 0;
+--dg begin
+--dg   return 10 / v;
+--dg end;
+--dg $$ language plpgsql parallel safe;
+--dg-skip: language "?" does not exist
+--dg create or replace function raise_test() returns void as $$
+--dg begin
+--dg   raise exception 'custom exception'
+--dg      using detail = 'some detail of custom exception',
+--dg            hint = 'some hint related to custom exception';
+--dg end;
+--dg $$ language plpgsql;
+--dg-skip: language "?" does not exist
+--dg create function stacked_diagnostics_test() returns void as $$
+--dg declare _sqlstate text;
+--dg         _message text;
+--dg         _context text;
+--dg begin
+--dg   perform zero_divide();
+--dg exception when others then
+--dg   get stacked diagnostics
+--dg         _sqlstate = returned_sqlstate,
+--dg         _message = message_text,
+--dg         _context = pg_exception_context;
+--dg   raise notice 'sqlstate: %, message: %, context: [%]',
+--dg     _sqlstate, _message, replace(_context, E'\n', ' <- ');
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select stacked_diagnostics_test();
+--dg-skip: language "?" does not exist
+--dg create or replace function stacked_diagnostics_test() returns void as $$
+--dg declare _detail text;
+--dg         _hint text;
+--dg         _message text;
+--dg begin
+--dg   perform raise_test();
+--dg exception when others then
+--dg   get stacked diagnostics
+--dg         _message = message_text,
+--dg         _detail = pg_exception_detail,
+--dg         _hint = pg_exception_hint;
+--dg   raise notice 'message: %, detail: %, hint: %', _message, _detail, _hint;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select stacked_diagnostics_test();
+-- fail, cannot use stacked diagnostics statement outside handler
+--dg-skip: language "?" does not exist
+--dg create or replace function stacked_diagnostics_test() returns void as $$
+--dg declare _detail text;
+--dg         _hint text;
+--dg         _message text;
+--dg begin
+--dg   get stacked diagnostics
+--dg         _message = message_text,
+--dg         _detail = pg_exception_detail,
+--dg         _hint = pg_exception_hint;
+--dg   raise notice 'message: %, detail: %, hint: %', _message, _detail, _hint;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select stacked_diagnostics_test();
+--dg-cascade
+--dg drop function stacked_diagnostics_test();
+-- Test that an error recovery subtransaction is parallel safe
+--dg-skip: language "?" does not exist
+--dg create function error_trap_test() returns text as $$
+--dg begin
+--dg   perform zero_divide();
+--dg   return 'no error detected!';
+--dg exception when division_by_zero then
+--dg   return 'division_by_zero detected';
+--dg end;
+--dg $$ language plpgsql parallel safe;
+--dg-skip: unrecognized configuration parameter "?"
+--dg set debug_parallel_query to on;
+--dg-cascade
+--dg explain (verbose, costs off) select error_trap_test();
+--dg-cascade
+--dg select error_trap_test();
+--dg-skip: unrecognized configuration parameter "?"
+--dg reset debug_parallel_query;
+--dg-cascade
+--dg drop function error_trap_test();
+--dg-cascade
+--dg drop function zero_divide();
+-- check cases where implicit SQLSTATE variable could be confused with
+-- SQLSTATE as a keyword, cf bug #5524
+--dg-skip: language "?" does not exist
+--dg create or replace function raise_test() returns void as $$
+--dg begin
+--dg   perform 1/0;
+--dg exception
+--dg   when sqlstate '22012' then
+--dg     raise notice using message = sqlstate;
+--dg     raise sqlstate '22012' using message = 'substitute message';
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select raise_test();
+--dg-cascade
+--dg drop function raise_test();
+-- test passing column_name, constraint_name, datatype_name, table_name
+-- and schema_name error fields
+--dg-skip: language "?" does not exist
+--dg create or replace function stacked_diagnostics_test() returns void as $$
+--dg declare _column_name text;
+--dg         _constraint_name text;
+--dg         _datatype_name text;
+--dg         _table_name text;
+--dg         _schema_name text;
+--dg begin
+--dg   raise exception using
+--dg     column = '>>some column name<<',
+--dg     constraint = '>>some constraint name<<',
+--dg     datatype = '>>some datatype name<<',
+--dg     table = '>>some table name<<',
+--dg     schema = '>>some schema name<<';
+--dg exception when others then
+--dg   get stacked diagnostics
+--dg         _column_name = column_name,
+--dg         _constraint_name = constraint_name,
+--dg         _datatype_name = pg_datatype_name,
+--dg         _table_name = table_name,
+--dg         _schema_name = schema_name;
+--dg   raise notice 'column %, constraint %, type %, table %, schema %',
+--dg     _column_name, _constraint_name, _datatype_name, _table_name, _schema_name;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select stacked_diagnostics_test();
+--dg-cascade
+--dg drop function stacked_diagnostics_test();
+-- test variadic functions
+--dg-skip: language "?" does not exist
+--dg create or replace function vari(variadic int[])
+--dg returns void as $$
+--dg begin
+--dg   for i in array_lower($1,1)..array_upper($1,1) loop
+--dg     raise notice '%', $1[i];
+--dg   end loop; end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select vari(1,2,3,4,5);
+--dg-cascade
+--dg select vari(3,4,5);
+--dg-cascade
+--dg select vari(variadic array[5,6,7]);
+--dg-cascade
+--dg drop function vari(int[]);
+-- coercion test
+--dg-skip: language "?" does not exist
+--dg create or replace function pleast(variadic numeric[])
+--dg returns numeric as $$
+--dg declare aux numeric = $1[array_lower($1,1)];
+--dg begin
+--dg   for i in array_lower($1,1)+1..array_upper($1,1) loop
+--dg     if $1[i] < aux then aux := $1[i]; end if;
+--dg   end loop;
+--dg   return aux;
+--dg end;
+--dg $$ language plpgsql immutable strict;
+--dg-cascade
+--dg select pleast(10,1,2,3,-16);
+--dg-cascade
+--dg select pleast(10.2,2.2,-1.1);
+--dg-cascade
+--dg select pleast(10.2,10, -20);
+--dg-cascade
+--dg select pleast(10,20, -1.0);
+-- in case of conflict, non-variadic version is preferred
+--dg-skip: language "?" does not exist
+--dg create or replace function pleast(numeric)
+--dg returns numeric as $$
+--dg begin
+--dg   raise notice 'non-variadic function called';
+--dg   return $1;
+--dg end;
+--dg $$ language plpgsql immutable strict;
+--dg-cascade
+--dg select pleast(10);
+--dg-cascade
+--dg drop function pleast(numeric[]);
+--dg-cascade
+--dg drop function pleast(numeric);
+-- test table functions
+--dg-skip: language "?" does not exist
+--dg create function tftest(int) returns table(a int, b int) as $$
+--dg begin
+--dg   return query select $1, $1+i from generate_series(1,5) g(i);
+--dg end;
+--dg $$ language plpgsql immutable strict;
+--dg-cascade
+--dg select * from tftest(10);
+--dg-skip: language "?" does not exist
+--dg create or replace function tftest(a1 int) returns table(a int, b int) as $$
+--dg begin
+--dg   a := a1; b := a1 + 1;
+--dg   return next;
+--dg   a := a1 * 10; b := a1 * 10 + 1;
+--dg   return next;
+--dg end;
+--dg $$ language plpgsql immutable strict;
+--dg-cascade
+--dg select * from tftest(10);
+--dg-cascade
+--dg drop function tftest(int);
+--dg-skip: language "?" does not exist
+--dg create function rttest()
+--dg returns setof int as $$
+--dg declare rc int;
+--dg begin
+--dg   return query values(10),(20);
+--dg   get diagnostics rc = row_count;
+--dg   raise notice '% %', found, rc;
+--dg   return query select * from (values(10),(20)) f(a) where false;
+--dg   get diagnostics rc = row_count;
+--dg   raise notice '% %', found, rc;
+--dg   return query execute 'values(10),(20)';
+--dg   get diagnostics rc = row_count;
+--dg   raise notice '% %', found, rc;
+--dg   return query execute 'select * from (values(10),(20)) f(a) where false';
+--dg   get diagnostics rc = row_count;
+--dg   raise notice '% %', found, rc;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select * from rttest();
+-- check some error cases, too
+--dg-skip: language "?" does not exist
+--dg create or replace function rttest()
+--dg returns setof int as $$
+--dg begin
+--dg   return query select 10 into no_such_table;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select * from rttest();
+--dg-skip: language "?" does not exist
+--dg create or replace function rttest()
+--dg returns setof int as $$
+--dg begin
+--dg   return query execute 'select 10 into no_such_table';
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select * from rttest();
+select * from no_such_table;
+ERROR:  relation "no_such_table" does not exist
+LINE 1: select * from no_such_table;
+                      ^
+--dg-cascade
+--dg drop function rttest();
+-- Test for proper cleanup at subtransaction exit.  This example
+-- exposed a bug in PG 8.2.
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION leaker_1(fail BOOL) RETURNS INTEGER AS $$
+--dg DECLARE
+--dg   v_var INTEGER;
+--dg BEGIN
+--dg   BEGIN
+--dg     v_var := (leaker_2(fail)).error_code;
+--dg   EXCEPTION
+--dg     WHEN others THEN RETURN 0;
+--dg   END;
+--dg   RETURN 1;
+--dg END;
+--dg $$ LANGUAGE plpgsql;
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION leaker_2(fail BOOL, OUT error_code INTEGER, OUT new_id INTEGER)
+--dg   RETURNS RECORD AS $$
+--dg BEGIN
+--dg   IF fail THEN
+--dg     RAISE EXCEPTION 'fail ...';
+--dg   END IF;
+--dg   error_code := 1;
+--dg   new_id := 1;
+--dg   RETURN;
+--dg END;
+--dg $$ LANGUAGE plpgsql;
+--dg-cascade
+--dg SELECT * FROM leaker_1(false);
+--dg-cascade
+--dg SELECT * FROM leaker_1(true);
+--dg-cascade
+--dg DROP FUNCTION leaker_1(bool);
+--dg-cascade
+--dg DROP FUNCTION leaker_2(bool);
+-- Test for appropriate cleanup of non-simple expression evaluations
+-- (bug in all versions prior to August 2010)
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION nonsimple_expr_test() RETURNS text[] AS $$
+--dg DECLARE
+--dg   arr text[];
+--dg   lr text;
+--dg   i integer;
+--dg BEGIN
+--dg   arr := array[array['foo','bar'], array['baz', 'quux']];
+--dg   lr := 'fool';
+--dg   i := 1;
+--dg   -- use sub-SELECTs to make expressions non-simple
+--dg   arr[(SELECT i)][(SELECT i+1)] := (SELECT lr);
+--dg   RETURN arr;
+--dg END;
+--dg $$ LANGUAGE plpgsql;
+--dg-cascade
+--dg SELECT nonsimple_expr_test();
+--dg-cascade
+--dg DROP FUNCTION nonsimple_expr_test();
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION nonsimple_expr_test() RETURNS integer AS $$
+--dg declare
+--dg    i integer NOT NULL := 0;
+--dg begin
+--dg   begin
+--dg     i := (SELECT NULL::integer);  -- should throw error
+--dg   exception
+--dg     WHEN OTHERS THEN
+--dg       i := (SELECT 1::integer);
+--dg   end;
+--dg   return i;
+--dg end;
+--dg $$ LANGUAGE plpgsql;
+--dg-cascade
+--dg SELECT nonsimple_expr_test();
+--dg-cascade
+--dg DROP FUNCTION nonsimple_expr_test();
+--
+-- Test cases involving recursion and error recovery in simple expressions
+-- (bugs in all versions before October 2010).  The problems are most
+-- easily exposed by mutual recursion between plpgsql and sql functions.
+--
+--dg-skip: language "?" does not exist
+--dg create function recurse(float8) returns float8 as
+--dg $$
+--dg begin
+--dg   if ($1 > 0) then
+--dg     return sql_recurse($1 - 1);
+--dg   else
+--dg     return $1;
+--dg   end if;
+--dg end;
+--dg $$ language plpgsql;
+-- "limit" is to prevent this from being inlined
+--dg-skip: language "?" does not exist
+--dg create function sql_recurse(float8) returns float8 as
+--dg $$ select recurse($1) limit 1; $$ language sql;
+--dg-cascade
+--dg select recurse(10);
+--dg-skip: language "?" does not exist
+--dg create function error1(text) returns text language sql as
+--dg $$ SELECT relname::text FROM pg_class c WHERE c.oid = $1::regclass $$;
+--dg-skip: language "?" does not exist
+--dg create function error2(p_name_table text) returns text language plpgsql as $$
+--dg begin
+--dg   return error1(p_name_table);
+--dg end$$;
+BEGIN;
+create table public.stuffs (stuff text);
+SAVEPOINT a;
+--dg-cascade
+--dg select error2('nonexistent.stuffs');
+ROLLBACK TO a;
+--dg-cascade
+--dg select error2('public.stuffs');
+rollback;
+--dg-cascade
+--dg drop function error2(p_name_table text);
+--dg-cascade
+--dg drop function error1(text);
+-- Test for proper handling of cast-expression caching
+--dg-skip: language "?" does not exist
+--dg create function sql_to_date(integer) returns date as $$
+--dg select $1::text::date
+--dg $$ language sql immutable strict;
+--dg-cascade
+--dg create cast (integer as date) with function sql_to_date(integer) as assignment;
+--dg-skip: language "?" does not exist
+--dg create function cast_invoker(integer) returns date as $$
+--dg begin
+--dg   return $1;
+--dg end$$ language plpgsql;
+--dg-cascade
+--dg select cast_invoker(20150717);
+--dg-cascade
+--dg select cast_invoker(20150718);  -- second call crashed in pre-release 9.5
+begin;
+--dg-cascade
+--dg select cast_invoker(20150717);
+--dg-cascade
+--dg select cast_invoker(20150718);
+--dg-cascade
+--dg savepoint s1;
+--dg-cascade
+--dg select cast_invoker(20150718);
+--dg-cascade
+--dg select cast_invoker(-1); -- fails
+--dg-cascade
+--dg rollback to savepoint s1;
+--dg-cascade
+--dg select cast_invoker(20150719);
+--dg-cascade
+--dg select cast_invoker(20150720);
+commit;
+--dg-cascade
+--dg drop function cast_invoker(integer);
+--dg-cascade
+--dg drop function sql_to_date(integer) cascade;
+-- Test handling of cast cache inside DO blocks
+-- (to check the original crash case, this must be a cast not previously
+-- used in this session)
+begin;
+--dg-skip: language "?" does not exist
+--dg do $$ declare x text[]; begin x := '{1.23, 4.56}'::numeric[]; end $$;
+--dg-skip: language "?" does not exist
+--dg do $$ declare x text[]; begin x := '{1.23, 4.56}'::numeric[]; end $$;
+end;
+-- Test for consistent reporting of error context
+--dg-skip: language "?" does not exist
+--dg create function fail() returns int language plpgsql as $$
+--dg begin
+--dg   return 1/0;
+--dg end
+--dg $$;
+--dg-cascade
+--dg select fail();
+--dg-cascade
+--dg select fail();
+--dg-cascade
+--dg drop function fail();
+-- Test handling of string literals.
+set standard_conforming_strings = off;
+--dg-skip: language "?" does not exist
+--dg create or replace function strtest() returns text as $$
+--dg begin
+--dg   raise notice 'foo\\bar\041baz';
+--dg   return 'foo\\bar\041baz';
+--dg end
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select strtest();
+--dg-skip: language "?" does not exist
+--dg create or replace function strtest() returns text as $$
+--dg begin
+--dg   raise notice E'foo\\bar\041baz';
+--dg   return E'foo\\bar\041baz';
+--dg end
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select strtest();
+set standard_conforming_strings = on;
+--dg-skip: language "?" does not exist
+--dg create or replace function strtest() returns text as $$
+--dg begin
+--dg   raise notice 'foo\\bar\041baz\';
+--dg   return 'foo\\bar\041baz\';
+--dg end
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select strtest();
+--dg-skip: language "?" does not exist
+--dg create or replace function strtest() returns text as $$
+--dg begin
+--dg   raise notice E'foo\\bar\041baz';
+--dg   return E'foo\\bar\041baz';
+--dg end
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select strtest();
+--dg-cascade
+--dg drop function strtest();
+-- Test anonymous code blocks.
+--dg-skip: language "?" does not exist
+--dg DO $$
+--dg DECLARE r record;
+--dg BEGIN
+--dg     FOR r IN SELECT rtrim(roomno) AS roomno, comment FROM Room ORDER BY roomno
+--dg     LOOP
+--dg         RAISE NOTICE '%, %', r.roomno, r.comment;
+--dg     END LOOP;
+--dg END$$;
+-- these are to check syntax error reporting
+--dg-differs: another error: language "?" does not exist
+--dg DO LANGUAGE plpgsql $$begin return 1; end$$;
+--dg-differs: another error: language "?" does not exist
+--dg DO $$
+--dg DECLARE r record;
+--dg BEGIN
+--dg     FOR r IN SELECT rtrim(roomno) AS roomno, foo FROM Room ORDER BY roomno
+--dg     LOOP
+--dg         RAISE NOTICE '%, %', r.roomno, r.comment;
+--dg     END LOOP;
+--dg END$$;
+-- Check handling of errors thrown from/into anonymous code blocks.
+--dg-skip: language "?" does not exist
+--dg do $outer$
+--dg begin
+--dg   for i in 1..10 loop
+--dg    begin
+--dg     execute $ex$
+--dg       do $$
+--dg       declare x int = 0;
+--dg       begin
+--dg         x := 1 / x;
+--dg       end;
+--dg       $$;
+--dg     $ex$;
+--dg   exception when division_by_zero then
+--dg     raise notice 'caught division by zero';
+--dg   end;
+--dg   end loop;
+--dg end;
+--dg $outer$;
+-- Check variable scoping -- a var is not available in its own or prior
+-- default expressions, but it is available in later ones.
+--dg-differs: another error: language "?" does not exist
+--dg do $$
+--dg declare x int := x + 1;  -- error
+--dg begin
+--dg   raise notice 'x = %', x;
+--dg end;
+--dg $$;
+--dg-differs: another error: language "?" does not exist
+--dg do $$
+--dg declare y int := x + 1;  -- error
+--dg         x int := 42;
+--dg begin
+--dg   raise notice 'x = %, y = %', x, y;
+--dg end;
+--dg $$;
+--dg-skip: language "?" does not exist
+--dg do $$
+--dg declare x int := 42;
+--dg         y int := x + 1;
+--dg begin
+--dg   raise notice 'x = %, y = %', x, y;
+--dg end;
+--dg $$;
+--dg-skip: language "?" does not exist
+--dg do $$
+--dg declare x int := 42;
+--dg begin
+--dg   declare y int := x + 1;
+--dg           x int := x + 2;
+--dg           z int := x * 10;
+--dg   begin
+--dg     raise notice 'x = %, y = %, z = %', x, y, z;
+--dg   end;
+--dg end;
+--dg $$;
+-- Check handling of conflicts between plpgsql vars and table columns.
+set plpgsql.variable_conflict = error;
+--dg-skip: language "?" does not exist
+--dg create function conflict_test() returns setof int8_tbl as $$
+--dg declare r record;
+--dg   q1 bigint := 42;
+--dg begin
+--dg   for r in select q1,q2 from int8_tbl loop
+--dg     return next r;
+--dg   end loop;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select * from conflict_test();
+--dg-skip: language "?" does not exist
+--dg create or replace function conflict_test() returns setof int8_tbl as $$
+--dg #variable_conflict use_variable
+--dg declare r record;
+--dg   q1 bigint := 42;
+--dg begin
+--dg   for r in select q1,q2 from int8_tbl loop
+--dg     return next r;
+--dg   end loop;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select * from conflict_test();
+--dg-skip: language "?" does not exist
+--dg create or replace function conflict_test() returns setof int8_tbl as $$
+--dg #variable_conflict use_column
+--dg declare r record;
+--dg   q1 bigint := 42;
+--dg begin
+--dg   for r in select q1,q2 from int8_tbl loop
+--dg     return next r;
+--dg   end loop;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select * from conflict_test();
+--dg-cascade
+--dg drop function conflict_test();
+-- Check that an unreserved keyword can be used as a variable name
+--dg-skip: language "?" does not exist
+--dg create function unreserved_test() returns int as $$
+--dg declare
+--dg   forward int := 21;
+--dg begin
+--dg   forward := forward * 2;
+--dg   return forward;
+--dg end
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select unreserved_test();
+--dg-skip: language "?" does not exist
+--dg create or replace function unreserved_test() returns int as $$
+--dg declare
+--dg   return int := 42;
+--dg begin
+--dg   return := return + 1;
+--dg   return return;
+--dg end
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select unreserved_test();
+--dg-skip: language "?" does not exist
+--dg create or replace function unreserved_test() returns int as $$
+--dg declare
+--dg   comment int := 21;
+--dg begin
+--dg   comment := comment * 2;
+--dg   comment on function unreserved_test() is 'this is a test';
+--dg   return comment;
+--dg end
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select unreserved_test();
+--dg-cascade
+--dg select obj_description('unreserved_test()'::regprocedure, 'pg_proc');
+--dg-cascade
+--dg drop function unreserved_test();
+--
+-- Test FOREACH over arrays
+--
+--dg-skip: language "?" does not exist
+--dg create function foreach_test(anyarray)
+--dg returns void as $$
+--dg declare x int;
+--dg begin
+--dg   foreach x in array $1
+--dg   loop
+--dg     raise notice '%', x;
+--dg   end loop;
+--dg   end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select foreach_test(ARRAY[1,2,3,4]);
+--dg-cascade
+--dg select foreach_test(ARRAY[[1,2],[3,4]]);
+--dg-skip: language "?" does not exist
+--dg create or replace function foreach_test(anyarray)
+--dg returns void as $$
+--dg declare x int;
+--dg begin
+--dg   foreach x slice 1 in array $1
+--dg   loop
+--dg     raise notice '%', x;
+--dg   end loop;
+--dg   end;
+--dg $$ language plpgsql;
+-- should fail
+--dg-cascade
+--dg select foreach_test(ARRAY[1,2,3,4]);
+--dg-cascade
+--dg select foreach_test(ARRAY[[1,2],[3,4]]);
+--dg-skip: language "?" does not exist
+--dg create or replace function foreach_test(anyarray)
+--dg returns void as $$
+--dg declare x int[];
+--dg begin
+--dg   foreach x slice 1 in array $1
+--dg   loop
+--dg     raise notice '%', x;
+--dg   end loop;
+--dg   end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select foreach_test(ARRAY[1,2,3,4]);
+--dg-cascade
+--dg select foreach_test(ARRAY[[1,2],[3,4]]);
+-- higher level of slicing
+--dg-skip: language "?" does not exist
+--dg create or replace function foreach_test(anyarray)
+--dg returns void as $$
+--dg declare x int[];
+--dg begin
+--dg   foreach x slice 2 in array $1
+--dg   loop
+--dg     raise notice '%', x;
+--dg   end loop;
+--dg   end;
+--dg $$ language plpgsql;
+-- should fail
+--dg-cascade
+--dg select foreach_test(ARRAY[1,2,3,4]);
+-- ok
+--dg-cascade
+--dg select foreach_test(ARRAY[[1,2],[3,4]]);
+--dg-cascade
+--dg select foreach_test(ARRAY[[[1,2]],[[3,4]]]);
+--dg-skip: a relation's storage cannot be made: digres has no catalog tables
+--dg create type xy_tuple AS (x int, y int);
+-- iteration over array of records
+--dg-skip: language "?" does not exist
+--dg create or replace function foreach_test(anyarray)
+--dg returns void as $$
+--dg declare r record;
+--dg begin
+--dg   foreach r in array $1
+--dg   loop
+--dg     raise notice '%', r;
+--dg   end loop;
+--dg   end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select foreach_test(ARRAY[(10,20),(40,69),(35,78)]::xy_tuple[]);
+--dg-cascade
+--dg select foreach_test(ARRAY[[(10,20),(40,69)],[(35,78),(88,76)]]::xy_tuple[]);
+--dg-skip: language "?" does not exist
+--dg create or replace function foreach_test(anyarray)
+--dg returns void as $$
+--dg declare x int; y int;
+--dg begin
+--dg   foreach x, y in array $1
+--dg   loop
+--dg     raise notice 'x = %, y = %', x, y;
+--dg   end loop;
+--dg   end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select foreach_test(ARRAY[(10,20),(40,69),(35,78)]::xy_tuple[]);
+--dg-cascade
+--dg select foreach_test(ARRAY[[(10,20),(40,69)],[(35,78),(88,76)]]::xy_tuple[]);
+-- slicing over array of composite types
+--dg-skip: language "?" does not exist
+--dg create or replace function foreach_test(anyarray)
+--dg returns void as $$
+--dg declare x xy_tuple[];
+--dg begin
+--dg   foreach x slice 1 in array $1
+--dg   loop
+--dg     raise notice '%', x;
+--dg   end loop;
+--dg   end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select foreach_test(ARRAY[(10,20),(40,69),(35,78)]::xy_tuple[]);
+--dg-cascade
+--dg select foreach_test(ARRAY[[(10,20),(40,69)],[(35,78),(88,76)]]::xy_tuple[]);
+--dg-cascade
+--dg drop function foreach_test(anyarray);
+--dg-cascade
+--dg drop type xy_tuple;
+--
+-- Assorted tests for array subscript assignment
+--
+--dg-skip: type ? is not supported yet
+--dg create temp table rtype (id int, ar text[]);
+--dg-skip: language "?" does not exist
+--dg create function arrayassign1() returns text[] language plpgsql as $$
+--dg declare
+--dg  r record;
+--dg begin
+--dg   r := row(12, '{foo,bar,baz}')::rtype;
+--dg   r.ar[2] := 'replace';
+--dg   return r.ar;
+--dg end$$;
+--dg-cascade
+--dg select arrayassign1();
+--dg-cascade
+--dg select arrayassign1(); -- try again to exercise internal caching
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg create domain orderedarray as int[2]
+--dg   constraint sorted check (value[1] < value[2]);
+--dg-cascade
+--dg select '{1,2}'::orderedarray;
+--dg-cascade
+--dg select '{2,1}'::orderedarray;  -- fail
+--dg-skip: language "?" does not exist
+--dg create function testoa(x1 int, x2 int, x3 int) returns orderedarray
+--dg language plpgsql as $$
+--dg declare res orderedarray;
+--dg begin
+--dg   res := array[x1, x2];
+--dg   res[2] := x3;
+--dg   return res;
+--dg end$$;
+--dg-cascade
+--dg select testoa(1,2,3);
+--dg-cascade
+--dg select testoa(1,2,3); -- try again to exercise internal caching
+--dg-cascade
+--dg select testoa(2,1,3); -- fail at initial assign
+--dg-cascade
+--dg select testoa(1,2,1); -- fail at update
+--dg-cascade
+--dg drop function arrayassign1();
+--dg-cascade
+--dg drop function testoa(x1 int, x2 int, x3 int);
+--
+-- Test handling of expanded arrays
+--
+--dg-skip: language "?" does not exist
+--dg create function returns_rw_array(int) returns int[]
+--dg language plpgsql as $$
+--dg   declare r int[];
+--dg   begin r := array[$1, $1]; return r; end;
+--dg $$ stable;
+--dg-skip: language "?" does not exist
+--dg create function consumes_rw_array(int[]) returns int
+--dg language plpgsql as $$
+--dg   begin return $1[1]; end;
+--dg $$ stable;
+--dg-cascade
+--dg select consumes_rw_array(returns_rw_array(42));
+-- bug #14174
+--dg-cascade
+--dg explain (verbose, costs off)
+--dg select i, a from
+--dg   (select returns_rw_array(1) as a offset 0) ss,
+--dg   lateral consumes_rw_array(a) i;
+--dg-cascade
+--dg select i, a from
+--dg   (select returns_rw_array(1) as a offset 0) ss,
+--dg   lateral consumes_rw_array(a) i;
+--dg-cascade
+--dg explain (verbose, costs off)
+--dg select consumes_rw_array(a), a from returns_rw_array(1) a;
+--dg-cascade
+--dg select consumes_rw_array(a), a from returns_rw_array(1) a;
+--dg-cascade
+--dg explain (verbose, costs off)
+--dg select consumes_rw_array(a), a from
+--dg   (values (returns_rw_array(1)), (returns_rw_array(2))) v(a);
+--dg-cascade
+--dg select consumes_rw_array(a), a from
+--dg   (values (returns_rw_array(1)), (returns_rw_array(2))) v(a);
+--dg-skip: language "?" does not exist
+--dg do $$
+--dg declare a int[] := array[1,2];
+--dg begin
+--dg   a := a || 3;
+--dg   raise notice 'a = %', a;
+--dg end$$;
+--
+-- Test access to call stack
+--
+--dg-skip: language "?" does not exist
+--dg create function inner_func(int)
+--dg returns int as $$
+--dg declare _context text;
+--dg begin
+--dg   get diagnostics _context = pg_context;
+--dg   raise notice '***%***', _context;
+--dg   -- lets do it again, just for fun..
+--dg   get diagnostics _context = pg_context;
+--dg   raise notice '***%***', _context;
+--dg   raise notice 'lets make sure we didnt break anything';
+--dg   return 2 * $1;
+--dg end;
+--dg $$ language plpgsql;
+--dg-skip: language "?" does not exist
+--dg create or replace function outer_func(int)
+--dg returns int as $$
+--dg declare
+--dg   myresult int;
+--dg begin
+--dg   raise notice 'calling down into inner_func()';
+--dg   myresult := inner_func($1);
+--dg   raise notice 'inner_func() done';
+--dg   return myresult;
+--dg end;
+--dg $$ language plpgsql;
+--dg-skip: language "?" does not exist
+--dg create or replace function outer_outer_func(int)
+--dg returns int as $$
+--dg declare
+--dg   myresult int;
+--dg begin
+--dg   raise notice 'calling down into outer_func()';
+--dg   myresult := outer_func($1);
+--dg   raise notice 'outer_func() done';
+--dg   return myresult;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select outer_outer_func(10);
+-- repeated call should work
+--dg-cascade
+--dg select outer_outer_func(20);
+--dg-cascade
+--dg drop function outer_outer_func(int);
+--dg-cascade
+--dg drop function outer_func(int);
+--dg-cascade
+--dg drop function inner_func(int);
+-- access to call stack from exception
+--dg-skip: language "?" does not exist
+--dg create function inner_func(int)
+--dg returns int as $$
+--dg declare
+--dg   _context text;
+--dg   sx int := 5;
+--dg begin
+--dg   begin
+--dg     perform sx / 0;
+--dg   exception
+--dg     when division_by_zero then
+--dg       get diagnostics _context = pg_context;
+--dg       raise notice '***%***', _context;
+--dg   end;
+--dg
+--dg   -- lets do it again, just for fun..
+--dg   get diagnostics _context = pg_context;
+--dg   raise notice '***%***', _context;
+--dg   raise notice 'lets make sure we didnt break anything';
+--dg   return 2 * $1;
+--dg end;
+--dg $$ language plpgsql;
+--dg-skip: language "?" does not exist
+--dg create or replace function outer_func(int)
+--dg returns int as $$
+--dg declare
+--dg   myresult int;
+--dg begin
+--dg   raise notice 'calling down into inner_func()';
+--dg   myresult := inner_func($1);
+--dg   raise notice 'inner_func() done';
+--dg   return myresult;
+--dg end;
+--dg $$ language plpgsql;
+--dg-skip: language "?" does not exist
+--dg create or replace function outer_outer_func(int)
+--dg returns int as $$
+--dg declare
+--dg   myresult int;
+--dg begin
+--dg   raise notice 'calling down into outer_func()';
+--dg   myresult := outer_func($1);
+--dg   raise notice 'outer_func() done';
+--dg   return myresult;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select outer_outer_func(10);
+-- repeated call should work
+--dg-cascade
+--dg select outer_outer_func(20);
+--dg-cascade
+--dg drop function outer_outer_func(int);
+--dg-cascade
+--dg drop function outer_func(int);
+--dg-cascade
+--dg drop function inner_func(int);
+-- Test pg_routine_oid
+--dg-skip: language "?" does not exist
+--dg create function current_function(text)
+--dg returns regprocedure as $$
+--dg declare
+--dg   fn_oid regprocedure;
+--dg begin
+--dg   get diagnostics fn_oid = pg_routine_oid;
+--dg   return fn_oid;
+--dg end;
+--dg $$ language plpgsql;
+--dg-cascade
+--dg select current_function('foo');
+--dg-cascade
+--dg drop function current_function(text);
+-- shouldn't fail in DO, even though there's no useful data
+--dg-skip: language "?" does not exist
+--dg do $$
+--dg declare
+--dg   fn_oid oid;
+--dg begin
+--dg   get diagnostics fn_oid = pg_routine_oid;
+--dg   raise notice 'pg_routine_oid = %', fn_oid;
+--dg end;
+--dg $$;
+--
+-- Test ASSERT
+--
+--dg-skip: language "?" does not exist
+--dg do $$
+--dg begin
+--dg   assert 1=1;  -- should succeed
+--dg end;
+--dg $$;
+--dg-differs: another error: language "?" does not exist
+--dg do $$
+--dg begin
+--dg   assert 1=0;  -- should fail
+--dg end;
+--dg $$;
+--dg-differs: another error: language "?" does not exist
+--dg do $$
+--dg begin
+--dg   assert NULL;  -- should fail
+--dg end;
+--dg $$;
+-- check controlling GUC
+set plpgsql.check_asserts = off;
+--dg-skip: language "?" does not exist
+--dg do $$
+--dg begin
+--dg   assert 1=0;  -- won't be tested
+--dg end;
+--dg $$;
+reset plpgsql.check_asserts;
+-- test custom message
+--dg-differs: another error: language "?" does not exist
+--dg do $$
+--dg declare var text := 'some value';
+--dg begin
+--dg   assert 1=0, format('assertion failed, var = "%s"', var);
+--dg end;
+--dg $$;
+-- ensure assertions are not trapped by 'others'
+--dg-differs: another error: language "?" does not exist
+--dg do $$
+--dg begin
+--dg   assert 1=0, 'unhandled assertion';
+--dg exception when others then
+--dg   null; -- do nothing
+--dg end;
+--dg $$;
+-- Test use of plpgsql in a domain check constraint (cf. bug #14414)
+--dg-skip: language "?" does not exist
+--dg create function plpgsql_domain_check(val int) returns boolean as $$
+--dg begin return val > 0; end
+--dg $$ language plpgsql immutable;
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg create domain plpgsql_domain as integer check(plpgsql_domain_check(value));
+--dg-skip: language "?" does not exist
+--dg do $$
+--dg declare v_test plpgsql_domain;
+--dg begin
+--dg   v_test := 1;
+--dg end;
+--dg $$;
+--dg-cascade
+--dg do $$
+--dg declare v_test plpgsql_domain := 1;
+--dg begin
+--dg   v_test := 0;  -- fail
+--dg end;
+--dg $$;
+-- Test handling of expanded array passed to a domain constraint (bug #14472)
+--dg-skip: language "?" does not exist
+--dg create function plpgsql_arr_domain_check(val int[]) returns boolean as $$
+--dg begin return val[1] > 0; end
+--dg $$ language plpgsql immutable;
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg create domain plpgsql_arr_domain as int[] check(plpgsql_arr_domain_check(value));
+--dg-skip: language "?" does not exist
+--dg do $$
+--dg declare v_test plpgsql_arr_domain;
+--dg begin
+--dg   v_test := array[1];
+--dg   v_test := v_test || 2;
+--dg end;
+--dg $$;
+--dg-cascade
+--dg do $$
+--dg declare v_test plpgsql_arr_domain := array[1];
+--dg begin
+--dg   v_test := 0 || v_test;  -- fail
+--dg end;
+--dg $$;
+--
+-- test usage of transition tables in AFTER triggers
+--
+CREATE TABLE transition_table_base (id int PRIMARY KEY, val text);
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION transition_table_base_ins_func()
+--dg   RETURNS trigger
+--dg   LANGUAGE plpgsql
+--dg AS $$
+--dg DECLARE
+--dg   t text;
+--dg   l text;
+--dg BEGIN
+--dg   t = '';
+--dg   FOR l IN EXECUTE
+--dg            $q$
+--dg              EXPLAIN (TIMING off, COSTS off, VERBOSE on)
+--dg              SELECT * FROM newtable
+--dg            $q$ LOOP
+--dg     t = t || l || E'\n';
+--dg   END LOOP;
+--dg
+--dg   RAISE INFO '%', t;
+--dg   RETURN new;
+--dg END;
+--dg $$;
+CREATE TRIGGER transition_table_base_ins_trig
+  AFTER INSERT ON transition_table_base
+  REFERENCING OLD TABLE AS oldtable NEW TABLE AS newtable
+  FOR EACH STATEMENT
+  EXECUTE PROCEDURE transition_table_base_ins_func();
+ERROR:  OLD TABLE can only be specified for a DELETE or UPDATE trigger
+--dg-cascade
+--dg CREATE TRIGGER transition_table_base_ins_trig
+--dg   AFTER INSERT ON transition_table_base
+--dg   REFERENCING NEW TABLE AS newtable
+--dg   FOR EACH STATEMENT
+--dg   EXECUTE PROCEDURE transition_table_base_ins_func();
+--dg-cascade
+--dg INSERT INTO transition_table_base VALUES (1, 'One'), (2, 'Two');
+--dg-cascade
+--dg INSERT INTO transition_table_base VALUES (3, 'Three'), (4, 'Four');
+--dg-skip: language "?" does not exist
+--dg CREATE OR REPLACE FUNCTION transition_table_base_upd_func()
+--dg   RETURNS trigger
+--dg   LANGUAGE plpgsql
+--dg AS $$
+--dg DECLARE
+--dg   t text;
+--dg   l text;
+--dg BEGIN
+--dg   t = '';
+--dg   FOR l IN EXECUTE
+--dg            $q$
+--dg              EXPLAIN (TIMING off, COSTS off, VERBOSE on)
+--dg              SELECT * FROM oldtable ot FULL JOIN newtable nt USING (id)
+--dg            $q$ LOOP
+--dg     t = t || l || E'\n';
+--dg   END LOOP;
+--dg
+--dg   RAISE INFO '%', t;
+--dg   RETURN new;
+--dg END;
+--dg $$;
+--dg-cascade
+--dg CREATE TRIGGER transition_table_base_upd_trig
+--dg   AFTER UPDATE ON transition_table_base
+--dg   REFERENCING OLD TABLE AS oldtable NEW TABLE AS newtable
+--dg   FOR EACH STATEMENT
+--dg   EXECUTE PROCEDURE transition_table_base_upd_func();
+--dg-cascade
+--dg UPDATE transition_table_base
+--dg   SET val = '*' || val || '*'
+--dg   WHERE id BETWEEN 2 AND 3;
+CREATE TABLE transition_table_level1
+(
+      level1_no serial NOT NULL ,
+      level1_node_name varchar(255),
+       PRIMARY KEY (level1_no)
+) WITHOUT OIDS;
+CREATE TABLE transition_table_level2
+(
+      level2_no serial NOT NULL ,
+      parent_no int NOT NULL,
+      level1_node_name varchar(255),
+       PRIMARY KEY (level2_no)
+) WITHOUT OIDS;
+CREATE TABLE transition_table_status
+(
+      level int NOT NULL,
+      node_no int NOT NULL,
+      status int,
+       PRIMARY KEY (level, node_no)
+) WITHOUT OIDS;
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION transition_table_level1_ri_parent_del_func()
+--dg   RETURNS TRIGGER
+--dg   LANGUAGE plpgsql
+--dg AS $$
+--dg   DECLARE n bigint;
+--dg   BEGIN
+--dg     PERFORM FROM p JOIN transition_table_level2 c ON c.parent_no = p.level1_no;
+--dg     IF FOUND THEN
+--dg       RAISE EXCEPTION 'RI error';
+--dg     END IF;
+--dg     RETURN NULL;
+--dg   END;
+--dg $$;
+--dg-cascade
+--dg CREATE TRIGGER transition_table_level1_ri_parent_del_trigger
+--dg   AFTER DELETE ON transition_table_level1
+--dg   REFERENCING OLD TABLE AS p
+--dg   FOR EACH STATEMENT EXECUTE PROCEDURE
+--dg     transition_table_level1_ri_parent_del_func();
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION transition_table_level1_ri_parent_upd_func()
+--dg   RETURNS TRIGGER
+--dg   LANGUAGE plpgsql
+--dg AS $$
+--dg   DECLARE
+--dg     x int;
+--dg   BEGIN
+--dg     WITH p AS (SELECT level1_no, sum(delta) cnt
+--dg                  FROM (SELECT level1_no, 1 AS delta FROM i
+--dg                        UNION ALL
+--dg                        SELECT level1_no, -1 AS delta FROM d) w
+--dg                  GROUP BY level1_no
+--dg                  HAVING sum(delta) < 0)
+--dg     SELECT level1_no
+--dg       FROM p JOIN transition_table_level2 c ON c.parent_no = p.level1_no
+--dg       INTO x;
+--dg     IF FOUND THEN
+--dg       RAISE EXCEPTION 'RI error';
+--dg     END IF;
+--dg     RETURN NULL;
+--dg   END;
+--dg $$;
+--dg-cascade
+--dg CREATE TRIGGER transition_table_level1_ri_parent_upd_trigger
+--dg   AFTER UPDATE ON transition_table_level1
+--dg   REFERENCING OLD TABLE AS d NEW TABLE AS i
+--dg   FOR EACH STATEMENT EXECUTE PROCEDURE
+--dg     transition_table_level1_ri_parent_upd_func();
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION transition_table_level2_ri_child_insupd_func()
+--dg   RETURNS TRIGGER
+--dg   LANGUAGE plpgsql
+--dg AS $$
+--dg   BEGIN
+--dg     PERFORM FROM i
+--dg       LEFT JOIN transition_table_level1 p
+--dg         ON p.level1_no IS NOT NULL AND p.level1_no = i.parent_no
+--dg       WHERE p.level1_no IS NULL;
+--dg     IF FOUND THEN
+--dg       RAISE EXCEPTION 'RI error';
+--dg     END IF;
+--dg     RETURN NULL;
+--dg   END;
+--dg $$;
+--dg-cascade
+--dg CREATE TRIGGER transition_table_level2_ri_child_ins_trigger
+--dg   AFTER INSERT ON transition_table_level2
+--dg   REFERENCING NEW TABLE AS i
+--dg   FOR EACH STATEMENT EXECUTE PROCEDURE
+--dg     transition_table_level2_ri_child_insupd_func();
+--dg-cascade
+--dg CREATE TRIGGER transition_table_level2_ri_child_upd_trigger
+--dg   AFTER UPDATE ON transition_table_level2
+--dg   REFERENCING NEW TABLE AS i
+--dg   FOR EACH STATEMENT EXECUTE PROCEDURE
+--dg     transition_table_level2_ri_child_insupd_func();
+-- create initial test data
+INSERT INTO transition_table_level1 (level1_no)
+  SELECT generate_series(1,200);
+ANALYZE transition_table_level1;
+INSERT INTO transition_table_level2 (level2_no, parent_no)
+  SELECT level2_no, level2_no / 50 + 1 AS parent_no
+    FROM generate_series(1,9999) level2_no;
+ANALYZE transition_table_level2;
+INSERT INTO transition_table_status (level, node_no, status)
+  SELECT 1, level1_no, 0 FROM transition_table_level1;
+INSERT INTO transition_table_status (level, node_no, status)
+  SELECT 2, level2_no, 0 FROM transition_table_level2;
+ANALYZE transition_table_status;
+INSERT INTO transition_table_level1(level1_no)
+  SELECT generate_series(201,1000);
+ANALYZE transition_table_level1;
+-- behave reasonably if someone tries to modify a transition table
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION transition_table_level2_bad_usage_func()
+--dg   RETURNS TRIGGER
+--dg   LANGUAGE plpgsql
+--dg AS $$
+--dg   BEGIN
+--dg     INSERT INTO dx VALUES (1000000, 1000000, 'x');
+--dg     RETURN NULL;
+--dg   END;
+--dg $$;
+--dg-cascade
+--dg CREATE TRIGGER transition_table_level2_bad_usage_trigger
+--dg   AFTER DELETE ON transition_table_level2
+--dg   REFERENCING OLD TABLE AS dx
+--dg   FOR EACH STATEMENT EXECUTE PROCEDURE
+--dg     transition_table_level2_bad_usage_func();
+--dg-cascade
+--dg DELETE FROM transition_table_level2
+--dg   WHERE level2_no BETWEEN 301 AND 305;
+--dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg DROP TRIGGER transition_table_level2_bad_usage_trigger
+--dg   ON transition_table_level2;
+-- attempt modifications which would break RI (should all fail)
+--dg-cascade
+--dg DELETE FROM transition_table_level1
+--dg   WHERE level1_no = 25;
+--dg-cascade
+--dg UPDATE transition_table_level1 SET level1_no = -1
+--dg   WHERE level1_no = 30;
+--dg-cascade
+--dg INSERT INTO transition_table_level2 (level2_no, parent_no)
+--dg   VALUES (10000, 10000);
+--dg-cascade
+--dg UPDATE transition_table_level2 SET parent_no = 2000
+--dg   WHERE level2_no = 40;
+-- attempt modifications which would not break RI (should all succeed)
+DELETE FROM transition_table_level1
+  WHERE level1_no BETWEEN 201 AND 1000;
+DELETE FROM transition_table_level1
+  WHERE level1_no BETWEEN 100000000 AND 100000010;
+--dg-cascade
+--dg SELECT count(*) FROM transition_table_level1;
+DELETE FROM transition_table_level2
+  WHERE level2_no BETWEEN 211 AND 220;
+--dg-cascade
+--dg SELECT count(*) FROM transition_table_level2;
+CREATE TABLE alter_table_under_transition_tables
+(
+  id int PRIMARY KEY,
+  name text
+);
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION alter_table_under_transition_tables_upd_func()
+--dg   RETURNS TRIGGER
+--dg   LANGUAGE plpgsql
+--dg AS $$
+--dg BEGIN
+--dg   RAISE WARNING 'old table = %, new table = %',
+--dg                   (SELECT string_agg(id || '=' || name, ',') FROM d),
+--dg                   (SELECT string_agg(id || '=' || name, ',') FROM i);
+--dg   RAISE NOTICE 'one = %', (SELECT 1 FROM alter_table_under_transition_tables LIMIT 1);
+--dg   RETURN NULL;
+--dg END;
+--dg $$;
+-- should fail, TRUNCATE is not compatible with transition tables
+CREATE TRIGGER alter_table_under_transition_tables_upd_trigger
+  AFTER TRUNCATE OR UPDATE ON alter_table_under_transition_tables
+  REFERENCING OLD TABLE AS d NEW TABLE AS i
+  FOR EACH STATEMENT EXECUTE PROCEDURE
+    alter_table_under_transition_tables_upd_func();
+ERROR:  TRUNCATE triggers with transition tables are not supported
+-- should work
+--dg-cascade
+--dg CREATE TRIGGER alter_table_under_transition_tables_upd_trigger
+--dg   AFTER UPDATE ON alter_table_under_transition_tables
+--dg   REFERENCING OLD TABLE AS d NEW TABLE AS i
+--dg   FOR EACH STATEMENT EXECUTE PROCEDURE
+--dg     alter_table_under_transition_tables_upd_func();
+INSERT INTO alter_table_under_transition_tables
+  VALUES (1, '1'), (2, '2'), (3, '3');
+--dg-cascade
+--dg UPDATE alter_table_under_transition_tables
+--dg   SET name = name || name;
+-- now change 'name' to an integer to see what happens...
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg ALTER TABLE alter_table_under_transition_tables
+--dg   ALTER COLUMN name TYPE int USING name::integer;
+--dg-cascade
+--dg UPDATE alter_table_under_transition_tables
+--dg   SET name = (name::text || name::text)::integer;
+-- now drop column 'name'
+ALTER TABLE alter_table_under_transition_tables
+  DROP column name;
+--dg-cascade
+--dg UPDATE alter_table_under_transition_tables
+--dg   SET id = id;
+--
+-- Test multiple reference to a transition table
+--
+CREATE TABLE multi_test (i int);
+INSERT INTO multi_test VALUES (1);
+--dg-skip: language "?" does not exist
+--dg CREATE OR REPLACE FUNCTION multi_test_trig() RETURNS trigger
+--dg LANGUAGE plpgsql AS $$
+--dg BEGIN
+--dg     RAISE NOTICE 'count = %', (SELECT COUNT(*) FROM new_test);
+--dg     RAISE NOTICE 'count union = %',
+--dg       (SELECT COUNT(*)
+--dg        FROM (SELECT * FROM new_test UNION ALL SELECT * FROM new_test) ss);
+--dg     RETURN NULL;
+--dg END$$;
+--dg-cascade
+--dg CREATE TRIGGER my_trigger AFTER UPDATE ON multi_test
+--dg   REFERENCING NEW TABLE AS new_test OLD TABLE as old_test
+--dg   FOR EACH STATEMENT EXECUTE PROCEDURE multi_test_trig();
+--dg-cascade
+--dg UPDATE multi_test SET i = i;
+DROP TABLE multi_test;
+--dg-cascade
+--dg DROP FUNCTION multi_test_trig();
+--
+-- Check type parsing and record fetching from partitioned tables
+--
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE partitioned_table (a int, b text) PARTITION BY LIST (a);
+--dg-cascade
+--dg CREATE TABLE pt_part1 PARTITION OF partitioned_table FOR VALUES IN (1);
+--dg-cascade
+--dg CREATE TABLE pt_part2 PARTITION OF partitioned_table FOR VALUES IN (2);
+--dg-cascade
+--dg INSERT INTO partitioned_table VALUES (1, 'Row 1');
+--dg-cascade
+--dg INSERT INTO partitioned_table VALUES (2, 'Row 2');
+--dg-skip: language "?" does not exist
+--dg CREATE OR REPLACE FUNCTION get_from_partitioned_table(partitioned_table.a%type)
+--dg RETURNS partitioned_table AS $$
+--dg DECLARE
+--dg     a_val partitioned_table.a%TYPE;
+--dg     result partitioned_table%ROWTYPE;
+--dg BEGIN
+--dg     a_val := $1;
+--dg     SELECT * INTO result FROM partitioned_table WHERE a = a_val;
+--dg     RETURN result;
+--dg END; $$ LANGUAGE plpgsql;
+--dg-cascade
+--dg SELECT * FROM get_from_partitioned_table(1) AS t;
+--dg-skip: language "?" does not exist
+--dg CREATE OR REPLACE FUNCTION list_partitioned_table()
+--dg RETURNS SETOF public.partitioned_table.a%TYPE AS $$
+--dg DECLARE
+--dg     row public.partitioned_table%ROWTYPE;
+--dg     a_val public.partitioned_table.a%TYPE;
+--dg BEGIN
+--dg     FOR row IN SELECT * FROM public.partitioned_table ORDER BY a LOOP
+--dg         a_val := row.a;
+--dg         RETURN NEXT a_val;
+--dg     END LOOP;
+--dg     RETURN;
+--dg END; $$ LANGUAGE plpgsql;
+--dg-cascade
+--dg SELECT * FROM list_partitioned_table() AS t;
+--
+-- Check argument name is used instead of $n in error message
+--
+--dg-differs: another error: language "?" does not exist
+--dg CREATE FUNCTION fx(x WSlot) RETURNS void AS $$
+--dg BEGIN
+--dg   GET DIAGNOSTICS x = ROW_COUNT;
+--dg   RETURN;
+--dg END; $$ LANGUAGE plpgsql;

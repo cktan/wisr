@@ -1,0 +1,90 @@
+--
+-- macaddr
+--
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE macaddr_data (a int, b macaddr);
+--dg-cascade
+--dg INSERT INTO macaddr_data VALUES (1, '08:00:2b:01:02:03');
+--dg-cascade
+--dg INSERT INTO macaddr_data VALUES (2, '08-00-2b-01-02-03');
+--dg-cascade
+--dg INSERT INTO macaddr_data VALUES (3, '08002b:010203');
+--dg-cascade
+--dg INSERT INTO macaddr_data VALUES (4, '08002b-010203');
+--dg-cascade
+--dg INSERT INTO macaddr_data VALUES (5, '0800.2b01.0203');
+--dg-cascade
+--dg INSERT INTO macaddr_data VALUES (6, '0800-2b01-0203');
+--dg-cascade
+--dg INSERT INTO macaddr_data VALUES (7, '08002b010203');
+--dg-cascade
+--dg INSERT INTO macaddr_data VALUES (8, '0800:2b01:0203'); -- invalid
+--dg-cascade
+--dg INSERT INTO macaddr_data VALUES (9, 'not even close'); -- invalid
+--dg-cascade
+--dg INSERT INTO macaddr_data VALUES (10, '08:00:2b:01:02:04');
+--dg-cascade
+--dg INSERT INTO macaddr_data VALUES (11, '08:00:2b:01:02:02');
+--dg-cascade
+--dg INSERT INTO macaddr_data VALUES (12, '08:00:2a:01:02:03');
+--dg-cascade
+--dg INSERT INTO macaddr_data VALUES (13, '08:00:2c:01:02:03');
+--dg-cascade
+--dg INSERT INTO macaddr_data VALUES (14, '08:00:2a:01:02:04');
+--dg-cascade
+--dg SELECT * FROM macaddr_data;
+--dg-cascade
+--dg CREATE INDEX macaddr_data_btree ON macaddr_data USING btree (b);
+--dg-cascade
+--dg CREATE INDEX macaddr_data_hash ON macaddr_data USING hash (b);
+--dg-cascade
+--dg SELECT a, b, trunc(b) FROM macaddr_data ORDER BY 2, 1;
+--dg-cascade
+--dg SELECT b <  '08:00:2b:01:02:04' FROM macaddr_data WHERE a = 1; -- true
+--dg-cascade
+--dg SELECT b >  '08:00:2b:01:02:04' FROM macaddr_data WHERE a = 1; -- false
+--dg-cascade
+--dg SELECT b >  '08:00:2b:01:02:03' FROM macaddr_data WHERE a = 1; -- false
+--dg-cascade
+--dg SELECT b <= '08:00:2b:01:02:04' FROM macaddr_data WHERE a = 1; -- true
+--dg-cascade
+--dg SELECT b >= '08:00:2b:01:02:04' FROM macaddr_data WHERE a = 1; -- false
+--dg-cascade
+--dg SELECT b =  '08:00:2b:01:02:03' FROM macaddr_data WHERE a = 1; -- true
+--dg-cascade
+--dg SELECT b <> '08:00:2b:01:02:04' FROM macaddr_data WHERE a = 1; -- true
+--dg-cascade
+--dg SELECT b <> '08:00:2b:01:02:03' FROM macaddr_data WHERE a = 1; -- false
+--dg-cascade
+--dg SELECT ~b                       FROM macaddr_data;
+--dg-cascade
+--dg SELECT  b & '00:00:00:ff:ff:ff' FROM macaddr_data;
+--dg-cascade
+--dg SELECT  b | '01:02:03:04:05:06' FROM macaddr_data;
+--dg-cascade
+--dg DROP TABLE macaddr_data;
+-- test non-error-throwing API for some core types
+SELECT pg_input_is_valid('08:00:2b:01:02:ZZ', 'macaddr');
+ pg_input_is_valid 
+-------------------
+ f
+(1 row)
+
+SELECT * FROM pg_input_error_info('08:00:2b:01:02:ZZ', 'macaddr');
+                          message                           | detail | hint | sql_error_code 
+------------------------------------------------------------+--------+------+----------------
+ invalid input syntax for type macaddr: "08:00:2b:01:02:ZZ" |        |      | 22P02
+(1 row)
+
+SELECT pg_input_is_valid('08:00:2b:01:02:', 'macaddr');
+ pg_input_is_valid 
+-------------------
+ f
+(1 row)
+
+SELECT * FROM pg_input_error_info('08:00:2b:01:02:', 'macaddr');
+                         message                          | detail | hint | sql_error_code 
+----------------------------------------------------------+--------+------+----------------
+ invalid input syntax for type macaddr: "08:00:2b:01:02:" |        |      | 22P02
+(1 row)
+

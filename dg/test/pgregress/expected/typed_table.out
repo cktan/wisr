@@ -1,0 +1,93 @@
+CREATE TABLE ttable1 OF nothing;
+ERROR:  type "nothing" does not exist
+LINE 1: CREATE TABLE ttable1 OF nothing;
+                                ^
+--dg-skip: a relation's storage cannot be made: digres has no catalog tables
+--dg CREATE TYPE person_type AS (id int, name text);
+--dg-cascade
+--dg CREATE TABLE persons OF person_type;
+--dg-cascade
+--dg CREATE TABLE IF NOT EXISTS persons OF person_type;
+--dg-cascade
+--dg SELECT * FROM persons;
+--dg-cascade
+--dg \d persons
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION get_all_persons() RETURNS SETOF person_type
+--dg LANGUAGE SQL
+--dg AS $$
+--dg     SELECT * FROM persons;
+--dg $$;
+--dg-cascade
+--dg SELECT * FROM get_all_persons();
+-- certain ALTER TABLE operations on typed tables are not allowed
+--dg-cascade
+--dg ALTER TABLE persons ADD COLUMN comment text;
+--dg-cascade
+--dg ALTER TABLE persons DROP COLUMN name;
+--dg-cascade
+--dg ALTER TABLE persons RENAME COLUMN id TO num;
+--dg-cascade
+--dg ALTER TABLE persons ALTER COLUMN name TYPE varchar;
+CREATE TABLE stuff (id int);
+--dg-cascade
+--dg ALTER TABLE persons INHERIT stuff;
+--dg-cascade
+--dg CREATE TABLE personsx OF person_type (myname WITH OPTIONS NOT NULL); -- error
+--dg-cascade
+--dg CREATE TABLE persons2 OF person_type (
+--dg     id WITH OPTIONS PRIMARY KEY,
+--dg     UNIQUE (name)
+--dg );
+--dg-cascade
+--dg \d persons2
+--dg-cascade
+--dg CREATE TABLE persons3 OF person_type (
+--dg     PRIMARY KEY (id),
+--dg     name WITH OPTIONS DEFAULT ''
+--dg );
+--dg-cascade
+--dg \d persons3
+--dg-cascade
+--dg CREATE TABLE persons4 OF person_type (
+--dg     name WITH OPTIONS NOT NULL,
+--dg     name WITH OPTIONS DEFAULT ''  -- error, specified more than once
+--dg );
+--dg-cascade
+--dg DROP TYPE person_type RESTRICT;
+--dg-cascade
+--dg DROP TYPE person_type CASCADE;
+--dg-differs: another error: type "?" does not exist
+--dg CREATE TABLE persons5 OF stuff; -- only CREATE TYPE AS types may be used
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg CREATE TYPE tt_enum_type AS ENUM ('a');
+--dg-cascade
+--dg CREATE TABLE of_tt_enum_type OF tt_enum_type; -- not a composite type at all
+--dg-cascade
+--dg DROP TYPE tt_enum_type;
+DROP TABLE stuff;
+-- implicit casting
+--dg-skip: a relation's storage cannot be made: digres has no catalog tables
+--dg CREATE TYPE person_type AS (id int, name text);
+--dg-cascade
+--dg CREATE TABLE persons OF person_type;
+--dg-cascade
+--dg INSERT INTO persons VALUES (1, 'test');
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION namelen(person_type) RETURNS int LANGUAGE SQL AS $$ SELECT length($1.name) $$;
+--dg-cascade
+--dg SELECT id, namelen(persons) FROM persons;
+--dg-cascade
+--dg CREATE TABLE persons2 OF person_type (
+--dg     id WITH OPTIONS PRIMARY KEY,
+--dg     UNIQUE (name)
+--dg );
+--dg-cascade
+--dg \d persons2
+--dg-cascade
+--dg CREATE TABLE persons3 OF person_type (
+--dg     PRIMARY KEY (id),
+--dg     name NOT NULL DEFAULT ''
+--dg );
+--dg-cascade
+--dg \d persons3

@@ -1,0 +1,313 @@
+--
+-- CREATE_OPERATOR
+--
+
+--dg-skip: relation pg_operator cannot be written: digres has no catalog tables
+--dg CREATE OPERATOR ## (
+--dg    leftarg = path,
+--dg    rightarg = path,
+--dg    function = path_inter,
+--dg    commutator = ##
+--dg );
+
+--dg-skip: relation pg_operator cannot be written: digres has no catalog tables
+--dg CREATE OPERATOR @#@ (
+--dg    rightarg = int8,		-- prefix
+--dg    procedure = factorial
+--dg );
+
+CREATE OPERATOR #%# (
+   leftarg = int8,		-- fail, postfix is no longer supported
+   procedure = factorial
+);
+
+-- Test operator created above
+--dg-cascade
+--dg SELECT @#@ 24;
+
+-- Test comments
+COMMENT ON OPERATOR ###### (NONE, int4) IS 'bad prefix';
+COMMENT ON OPERATOR ###### (int4, NONE) IS 'bad postfix';
+COMMENT ON OPERATOR ###### (int4, int8) IS 'bad infix';
+
+-- Check that DROP on a nonexistent op behaves sanely, too
+DROP OPERATOR ###### (NONE, int4);
+DROP OPERATOR ###### (int4, NONE);
+DROP OPERATOR ###### (int4, int8);
+
+-- => is disallowed as an operator name now
+CREATE OPERATOR => (
+   rightarg = int8,
+   procedure = factorial
+);
+
+-- lexing of <=, >=, <>, != has a number of edge cases
+-- (=> is tested elsewhere)
+
+-- this is legal because ! is not allowed in sql ops
+--dg-skip: relation pg_operator cannot be written: digres has no catalog tables
+--dg CREATE OPERATOR !=- (
+--dg    rightarg = int8,
+--dg    procedure = factorial
+--dg );
+--dg-cascade
+--dg SELECT !=- 10;
+-- postfix operators don't work anymore
+SELECT 10 !=-;
+-- make sure lexer returns != as <> even in edge cases
+SELECT 2 !=/**/ 1, 2 !=/**/ 2;
+SELECT 2 !=-- comment to be removed by psql
+  1;
+--dg-skip: language "?" does not exist
+--dg DO $$ -- use DO to protect -- from psql
+--dg   declare r boolean;
+--dg   begin
+--dg     execute $e$ select 2 !=-- comment
+--dg       1 $e$ into r;
+--dg     raise info 'r = %', r;
+--dg   end;
+--dg $$;
+
+-- check that <= etc. followed by more operator characters are returned
+-- as the correct token with correct precedence
+SELECT true<>-1 BETWEEN 1 AND 1;  -- BETWEEN has prec. above <> but below Op
+SELECT false<>/**/1 BETWEEN 1 AND 1;
+SELECT false<=-1 BETWEEN 1 AND 1;
+SELECT false>=-1 BETWEEN 1 AND 1;
+SELECT 2<=/**/3, 3>=/**/2, 2<>/**/3;
+SELECT 3<=/**/2, 2>=/**/3, 2<>/**/2;
+
+-- Should fail. CREATE OPERATOR requires USAGE on SCHEMA
+BEGIN TRANSACTION;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE regress_rol_op1;
+CREATE SCHEMA schema_op1;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg GRANT USAGE ON SCHEMA schema_op1 TO PUBLIC;
+--dg-cascade
+--dg REVOKE USAGE ON SCHEMA schema_op1 FROM regress_rol_op1;
+--dg-cascade
+--dg SET ROLE regress_rol_op1;
+--dg-cascade
+--dg CREATE OPERATOR schema_op1.#*# (
+--dg    rightarg = int8,
+--dg    procedure = factorial
+--dg );
+ROLLBACK;
+
+
+-- Should fail. SETOF type functions not allowed as argument (testing leftarg)
+BEGIN TRANSACTION;
+CREATE OPERATOR #*# (
+   leftarg = SETOF int8,
+   procedure = factorial
+);
+ROLLBACK;
+
+
+-- Should fail. SETOF type functions not allowed as argument (testing rightarg)
+BEGIN TRANSACTION;
+CREATE OPERATOR #*# (
+   rightarg = SETOF int8,
+   procedure = factorial
+);
+ROLLBACK;
+
+
+-- Should work. Sample text-book case
+BEGIN TRANSACTION;
+--dg-skip: language "?" does not exist
+--dg CREATE OR REPLACE FUNCTION fn_op2(boolean, boolean)
+--dg RETURNS boolean AS $$
+--dg     SELECT NULL::BOOLEAN;
+--dg $$ LANGUAGE sql IMMUTABLE;
+--dg-cascade
+--dg CREATE OPERATOR === (
+--dg     LEFTARG = boolean,
+--dg     RIGHTARG = boolean,
+--dg     PROCEDURE = fn_op2,
+--dg     COMMUTATOR = ===,
+--dg     NEGATOR = !==,
+--dg     RESTRICT = contsel,
+--dg     JOIN = contjoinsel,
+--dg     SORT1, SORT2, LTCMP, GTCMP, HASHES, MERGES
+--dg );
+ROLLBACK;
+
+-- Should fail. Invalid attribute
+--dg-skip: relation pg_operator cannot be written: digres has no catalog tables
+--dg CREATE OPERATOR #@%# (
+--dg    rightarg = int8,
+--dg    procedure = factorial,
+--dg    invalid_att = int8
+--dg );
+
+-- Should fail. At least rightarg should be mandatorily specified
+CREATE OPERATOR #@%# (
+   procedure = factorial
+);
+
+-- Should fail. Procedure should be mandatorily specified
+CREATE OPERATOR #@%# (
+   rightarg = int8
+);
+
+-- Should fail. CREATE OPERATOR requires USAGE on TYPE
+BEGIN TRANSACTION;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE regress_rol_op3;
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg CREATE TYPE type_op3 AS ENUM ('new', 'open', 'closed');
+--dg-cascade
+--dg CREATE FUNCTION fn_op3(type_op3, int8)
+--dg RETURNS int8 AS $$
+--dg     SELECT NULL::int8;
+--dg $$ LANGUAGE sql IMMUTABLE;
+--dg-cascade
+--dg REVOKE USAGE ON TYPE type_op3 FROM regress_rol_op3;
+--dg-cascade
+--dg REVOKE USAGE ON TYPE type_op3 FROM PUBLIC;  -- Need to do this so that regress_rol_op3 is not allowed USAGE via PUBLIC
+--dg-cascade
+--dg SET ROLE regress_rol_op3;
+--dg-cascade
+--dg CREATE OPERATOR #*# (
+--dg    leftarg = type_op3,
+--dg    rightarg = int8,
+--dg    procedure = fn_op3
+--dg );
+ROLLBACK;
+
+-- Should fail. CREATE OPERATOR requires USAGE on TYPE (need to check separately for rightarg)
+BEGIN TRANSACTION;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE regress_rol_op4;
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg CREATE TYPE type_op4 AS ENUM ('new', 'open', 'closed');
+--dg-cascade
+--dg CREATE FUNCTION fn_op4(int8, type_op4)
+--dg RETURNS int8 AS $$
+--dg     SELECT NULL::int8;
+--dg $$ LANGUAGE sql IMMUTABLE;
+--dg-cascade
+--dg REVOKE USAGE ON TYPE type_op4 FROM regress_rol_op4;
+--dg-cascade
+--dg REVOKE USAGE ON TYPE type_op4 FROM PUBLIC;  -- Need to do this so that regress_rol_op3 is not allowed USAGE via PUBLIC
+--dg-cascade
+--dg SET ROLE regress_rol_op4;
+--dg-cascade
+--dg CREATE OPERATOR #*# (
+--dg    leftarg = int8,
+--dg    rightarg = type_op4,
+--dg    procedure = fn_op4
+--dg );
+ROLLBACK;
+
+-- Should fail. CREATE OPERATOR requires EXECUTE on function
+BEGIN TRANSACTION;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE regress_rol_op5;
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg CREATE TYPE type_op5 AS ENUM ('new', 'open', 'closed');
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION fn_op5(int8, int8)
+--dg RETURNS int8 AS $$
+--dg     SELECT NULL::int8;
+--dg $$ LANGUAGE sql IMMUTABLE;
+--dg-cascade
+--dg REVOKE EXECUTE ON FUNCTION fn_op5(int8, int8) FROM regress_rol_op5;
+--dg-cascade
+--dg REVOKE EXECUTE ON FUNCTION fn_op5(int8, int8) FROM PUBLIC;-- Need to do this so that regress_rol_op3 is not allowed EXECUTE via PUBLIC
+--dg-cascade
+--dg SET ROLE regress_rol_op5;
+--dg-cascade
+--dg CREATE OPERATOR #*# (
+--dg    leftarg = int8,
+--dg    rightarg = int8,
+--dg    procedure = fn_op5
+--dg );
+ROLLBACK;
+
+-- Should fail. CREATE OPERATOR requires USAGE on return TYPE
+BEGIN TRANSACTION;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE regress_rol_op6;
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg CREATE TYPE type_op6 AS ENUM ('new', 'open', 'closed');
+--dg-cascade
+--dg CREATE FUNCTION fn_op6(int8, int8)
+--dg RETURNS type_op6 AS $$
+--dg     SELECT NULL::type_op6;
+--dg $$ LANGUAGE sql IMMUTABLE;
+--dg-cascade
+--dg REVOKE USAGE ON TYPE type_op6 FROM regress_rol_op6;
+--dg-cascade
+--dg REVOKE USAGE ON TYPE type_op6 FROM PUBLIC;  -- Need to do this so that regress_rol_op3 is not allowed USAGE via PUBLIC
+--dg-cascade
+--dg SET ROLE regress_rol_op6;
+--dg-cascade
+--dg CREATE OPERATOR #*# (
+--dg    leftarg = int8,
+--dg    rightarg = int8,
+--dg    procedure = fn_op6
+--dg );
+ROLLBACK;
+
+-- Should fail. An operator cannot be its own negator.
+BEGIN TRANSACTION;
+CREATE OPERATOR === (
+    leftarg = integer,
+    rightarg = integer,
+    procedure = int4eq,
+    negator = ===
+);
+ROLLBACK;
+
+-- Should fail. An operator cannot be its own negator. Here we check that
+-- this error is detected when replacing a shell operator.
+BEGIN TRANSACTION;
+-- create a shell operator for ===!!! by referencing it as a commutator
+--dg-skip: relation pg_operator cannot be written: digres has no catalog tables
+--dg CREATE OPERATOR === (
+--dg     leftarg = integer,
+--dg     rightarg = integer,
+--dg     procedure = int4eq,
+--dg     commutator = ===!!!
+--dg );
+CREATE OPERATOR ===!!! (
+    leftarg = integer,
+    rightarg = integer,
+    procedure = int4ne,
+    negator = ===!!!
+);
+ROLLBACK;
+
+-- test that we can't use part of an existing commutator or negator pair
+-- as a commutator or negator
+--dg-differs: another error: relation pg_operator cannot be written: digres has no catalog tables
+--dg CREATE OPERATOR === (
+--dg     leftarg = integer,
+--dg     rightarg = integer,
+--dg     procedure = int4eq,
+--dg     commutator = =
+--dg );
+--dg-differs: another error: relation pg_operator cannot be written: digres has no catalog tables
+--dg CREATE OPERATOR === (
+--dg     leftarg = integer,
+--dg     rightarg = integer,
+--dg     procedure = int4eq,
+--dg     negator = <>
+--dg );
+
+-- invalid: non-lowercase quoted identifiers
+CREATE OPERATOR ===
+(
+	"Leftarg" = box,
+	"Rightarg" = box,
+	"Procedure" = area_equal_function,
+	"Commutator" = ===,
+	"Negator" = !==,
+	"Restrict" = area_restriction_function,
+	"Join" = area_join_function,
+	"Hashes",
+	"Merges"
+);

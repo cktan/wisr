@@ -1,0 +1,2782 @@
+--
+-- UPDATABLE VIEWS
+--
+-- avoid bit-exact output here because operations may not be bit-exact.
+SET extra_float_digits = 0;
+-- check that non-updatable views and columns are rejected with useful error
+-- messages
+CREATE TABLE base_tbl (a int PRIMARY KEY, b text DEFAULT 'Unspecified');
+INSERT INTO base_tbl SELECT i, 'Row ' || i FROM generate_series(-2, 2) g(i);
+CREATE VIEW ro_view1 AS SELECT DISTINCT a, b FROM base_tbl; -- DISTINCT not supported
+CREATE VIEW ro_view2 AS SELECT a, b FROM base_tbl GROUP BY a, b; -- GROUP BY not supported
+CREATE VIEW ro_view3 AS SELECT 1 FROM base_tbl HAVING max(a) > 0; -- HAVING not supported
+CREATE VIEW ro_view4 AS SELECT count(*) FROM base_tbl; -- Aggregate functions not supported
+CREATE VIEW ro_view5 AS SELECT a, rank() OVER() FROM base_tbl; -- Window functions not supported
+CREATE VIEW ro_view6 AS SELECT a, b FROM base_tbl UNION SELECT -a, b FROM base_tbl; -- Set ops not supported
+CREATE VIEW ro_view7 AS WITH t AS (SELECT a, b FROM base_tbl) SELECT * FROM t; -- WITH not supported
+CREATE VIEW ro_view8 AS SELECT a, b FROM base_tbl ORDER BY a OFFSET 1; -- OFFSET not supported
+CREATE VIEW ro_view9 AS SELECT a, b FROM base_tbl ORDER BY a LIMIT 1; -- LIMIT not supported
+CREATE VIEW ro_view10 AS SELECT 1 AS a; -- No base relations
+CREATE VIEW ro_view11 AS SELECT b1.a, b2.b FROM base_tbl b1, base_tbl b2; -- Multiple base relations
+CREATE VIEW ro_view12 AS SELECT * FROM generate_series(1, 10) AS g(a); -- SRF in rangetable
+CREATE VIEW ro_view13 AS SELECT a, b FROM (SELECT * FROM base_tbl) AS t; -- Subselect in rangetable
+--dg-skip: column "?" does not exist
+--dg CREATE VIEW rw_view14 AS SELECT ctid, a, b FROM base_tbl; -- System columns may be part of an updatable view
+CREATE VIEW rw_view15 AS SELECT a, upper(b) FROM base_tbl; -- Expression/function may be part of an updatable view
+CREATE VIEW rw_view16 AS SELECT a, b, a AS aa FROM base_tbl; -- Repeated column may be part of an updatable view
+CREATE VIEW ro_view17 AS SELECT * FROM ro_view1; -- Base relation not updatable
+CREATE VIEW ro_view18 AS SELECT * FROM (VALUES(1)) AS tmp(a); -- VALUES in rangetable
+CREATE SEQUENCE uv_seq;
+--dg-skip: "?" is a sequence, which cannot be used as a relation yet
+--dg CREATE VIEW ro_view19 AS SELECT * FROM uv_seq; -- View based on a sequence
+CREATE VIEW ro_view20 AS SELECT a, b, generate_series(1, a) g FROM base_tbl; -- SRF in targetlist not supported
+--dg-cascade
+--dg SELECT table_name, is_insertable_into
+--dg   FROM information_schema.tables
+--dg  WHERE table_name LIKE E'r_\\_view%'
+--dg  ORDER BY table_name;
+--dg-cascade
+--dg SELECT table_name, is_updatable, is_insertable_into
+--dg   FROM information_schema.views
+--dg  WHERE table_name LIKE E'r_\\_view%'
+--dg  ORDER BY table_name;
+--dg-cascade
+--dg SELECT table_name, column_name, is_updatable
+--dg   FROM information_schema.columns
+--dg  WHERE table_name LIKE E'r_\\_view%'
+--dg  ORDER BY table_name, ordinal_position;
+-- Read-only views
+DELETE FROM ro_view1;
+ERROR:  cannot delete from view "ro_view1"
+DETAIL:  Views containing DISTINCT are not automatically updatable.
+HINT:  To enable deleting from the view, provide an INSTEAD OF DELETE trigger or an unconditional ON DELETE DO INSTEAD rule.
+DELETE FROM ro_view2;
+ERROR:  cannot delete from view "ro_view2"
+DETAIL:  Views containing GROUP BY are not automatically updatable.
+HINT:  To enable deleting from the view, provide an INSTEAD OF DELETE trigger or an unconditional ON DELETE DO INSTEAD rule.
+DELETE FROM ro_view3;
+ERROR:  cannot delete from view "ro_view3"
+DETAIL:  Views containing HAVING are not automatically updatable.
+HINT:  To enable deleting from the view, provide an INSTEAD OF DELETE trigger or an unconditional ON DELETE DO INSTEAD rule.
+DELETE FROM ro_view4;
+ERROR:  cannot delete from view "ro_view4"
+DETAIL:  Views that return aggregate functions are not automatically updatable.
+HINT:  To enable deleting from the view, provide an INSTEAD OF DELETE trigger or an unconditional ON DELETE DO INSTEAD rule.
+DELETE FROM ro_view5;
+ERROR:  cannot delete from view "ro_view5"
+DETAIL:  Views that return window functions are not automatically updatable.
+HINT:  To enable deleting from the view, provide an INSTEAD OF DELETE trigger or an unconditional ON DELETE DO INSTEAD rule.
+DELETE FROM ro_view6;
+ERROR:  cannot delete from view "ro_view6"
+DETAIL:  Views containing UNION, INTERSECT, or EXCEPT are not automatically updatable.
+HINT:  To enable deleting from the view, provide an INSTEAD OF DELETE trigger or an unconditional ON DELETE DO INSTEAD rule.
+UPDATE ro_view7 SET a=a+1;
+ERROR:  cannot update view "ro_view7"
+DETAIL:  Views containing WITH are not automatically updatable.
+HINT:  To enable updating the view, provide an INSTEAD OF UPDATE trigger or an unconditional ON UPDATE DO INSTEAD rule.
+UPDATE ro_view8 SET a=a+1;
+ERROR:  cannot update view "ro_view8"
+DETAIL:  Views containing LIMIT or OFFSET are not automatically updatable.
+HINT:  To enable updating the view, provide an INSTEAD OF UPDATE trigger or an unconditional ON UPDATE DO INSTEAD rule.
+UPDATE ro_view9 SET a=a+1;
+ERROR:  cannot update view "ro_view9"
+DETAIL:  Views containing LIMIT or OFFSET are not automatically updatable.
+HINT:  To enable updating the view, provide an INSTEAD OF UPDATE trigger or an unconditional ON UPDATE DO INSTEAD rule.
+UPDATE ro_view10 SET a=a+1;
+ERROR:  cannot update view "ro_view10"
+DETAIL:  Views that do not select from a single table or view are not automatically updatable.
+HINT:  To enable updating the view, provide an INSTEAD OF UPDATE trigger or an unconditional ON UPDATE DO INSTEAD rule.
+UPDATE ro_view11 SET a=a+1;
+ERROR:  cannot update view "ro_view11"
+DETAIL:  Views that do not select from a single table or view are not automatically updatable.
+HINT:  To enable updating the view, provide an INSTEAD OF UPDATE trigger or an unconditional ON UPDATE DO INSTEAD rule.
+UPDATE ro_view12 SET a=a+1;
+ERROR:  cannot update view "ro_view12"
+DETAIL:  Views that do not select from a single table or view are not automatically updatable.
+HINT:  To enable updating the view, provide an INSTEAD OF UPDATE trigger or an unconditional ON UPDATE DO INSTEAD rule.
+INSERT INTO ro_view13 VALUES (3, 'Row 3');
+ERROR:  cannot insert into view "ro_view13"
+DETAIL:  Views that do not select from a single table or view are not automatically updatable.
+HINT:  To enable inserting into the view, provide an INSTEAD OF INSERT trigger or an unconditional ON INSERT DO INSTEAD rule.
+MERGE INTO ro_view13 AS t USING (VALUES (1, 'Row 1')) AS v(a,b) ON t.a = v.a
+  WHEN MATCHED THEN DELETE;
+ERROR:  cannot delete from view "ro_view13"
+DETAIL:  Views that do not select from a single table or view are not automatically updatable.
+HINT:  To enable deleting from the view using MERGE, provide an INSTEAD OF DELETE trigger.
+MERGE INTO ro_view13 AS t USING (VALUES (2, 'Row 2')) AS v(a,b) ON t.a = v.a
+  WHEN MATCHED THEN UPDATE SET b = v.b;
+ERROR:  cannot update view "ro_view13"
+DETAIL:  Views that do not select from a single table or view are not automatically updatable.
+HINT:  To enable updating the view using MERGE, provide an INSTEAD OF UPDATE trigger.
+MERGE INTO ro_view13 AS t USING (VALUES (3, 'Row 3')) AS v(a,b) ON t.a = v.a
+  WHEN NOT MATCHED THEN INSERT VALUES (v.a, v.b);
+ERROR:  cannot insert into view "ro_view13"
+DETAIL:  Views that do not select from a single table or view are not automatically updatable.
+HINT:  To enable inserting into the view using MERGE, provide an INSTEAD OF INSERT trigger.
+--dg-skip: relation "?" does not have a composite type
+--dg MERGE INTO ro_view13 AS t USING (VALUES (2, 'Row 2')) AS v(a,b) ON t.a = v.a
+--dg   WHEN MATCHED THEN DO NOTHING
+--dg   WHEN NOT MATCHED THEN DO NOTHING; -- should be OK to do nothing
+--dg-skip: relation "?" does not have a composite type
+--dg MERGE INTO ro_view13 AS t USING (VALUES (3, 'Row 3')) AS v(a,b) ON t.a = v.a
+--dg   WHEN MATCHED THEN DO NOTHING
+--dg   WHEN NOT MATCHED THEN DO NOTHING; -- should be OK to do nothing
+-- Partially updatable view
+--dg-cascade
+--dg INSERT INTO rw_view14 VALUES (null, 3, 'Row 3'); -- should fail
+--dg-cascade
+--dg INSERT INTO rw_view14 (a, b) VALUES (3, 'Row 3'); -- should be OK
+--dg-cascade
+--dg UPDATE rw_view14 SET ctid=null WHERE a=3; -- should fail
+--dg-cascade
+--dg UPDATE rw_view14 SET b='ROW 3' WHERE a=3; -- should be OK
+--dg-cascade
+--dg SELECT * FROM base_tbl;
+--dg-cascade
+--dg DELETE FROM rw_view14 WHERE a=3; -- should be OK
+--dg-cascade
+--dg MERGE INTO rw_view14  AS t
+--dg   USING (VALUES (2, 'Merged row 2'), (3, 'Merged row 3')) AS v(a,b) ON t.a = v.a
+--dg   WHEN MATCHED THEN UPDATE SET b = v.b  -- should be OK, except...
+--dg   WHEN NOT MATCHED THEN INSERT VALUES (null, v.a, v.b); -- should fail
+--dg-cascade
+--dg MERGE INTO rw_view14  AS t
+--dg   USING (VALUES (2, 'Merged row 2'), (3, 'Merged row 3')) AS v(a,b) ON t.a = v.a
+--dg   WHEN MATCHED THEN UPDATE SET b = v.b  -- should be OK
+--dg   WHEN NOT MATCHED THEN INSERT (a,b) VALUES (v.a, v.b); -- should be OK
+--dg-cascade
+--dg SELECT * FROM base_tbl ORDER BY a;
+--dg-cascade
+--dg MERGE INTO rw_view14  AS t
+--dg   USING (VALUES (2, 'Row 2'), (3, 'Row 3')) AS v(a,b) ON t.a = v.a
+--dg   WHEN MATCHED AND t.a = 2 THEN UPDATE SET b = v.b  -- should be OK
+--dg   WHEN MATCHED AND t.a = 3 THEN DELETE; -- should be OK
+SELECT * FROM base_tbl ORDER BY a;
+ a  |   b    
+----+--------
+ -2 | Row -2
+ -1 | Row -1
+  0 | Row 0
+  1 | Row 1
+  2 | Row 2
+(5 rows)
+
+-- Partially updatable view
+INSERT INTO rw_view15 VALUES (3, 'ROW 3'); -- should fail
+ERROR:  cannot insert into column "upper" of view "rw_view15"
+DETAIL:  View columns that are not columns of their base relation are not updatable.
+INSERT INTO rw_view15 (a) VALUES (3); -- should be OK
+INSERT INTO rw_view15 (a) VALUES (3) ON CONFLICT DO NOTHING; -- succeeds
+SELECT * FROM rw_view15;
+ a  |    upper    
+----+-------------
+ -2 | ROW -2
+ -1 | ROW -1
+  0 | ROW 0
+  1 | ROW 1
+  2 | ROW 2
+  3 | UNSPECIFIED
+(6 rows)
+
+INSERT INTO rw_view15 (a) VALUES (3) ON CONFLICT (a) DO NOTHING; -- succeeds
+SELECT * FROM rw_view15;
+ a  |    upper    
+----+-------------
+ -2 | ROW -2
+ -1 | ROW -1
+  0 | ROW 0
+  1 | ROW 1
+  2 | ROW 2
+  3 | UNSPECIFIED
+(6 rows)
+
+INSERT INTO rw_view15 (a) VALUES (3) ON CONFLICT (a) DO UPDATE set a = excluded.a; -- succeeds
+SELECT * FROM rw_view15;
+ a  |    upper    
+----+-------------
+ -2 | ROW -2
+ -1 | ROW -1
+  0 | ROW 0
+  1 | ROW 1
+  2 | ROW 2
+  3 | UNSPECIFIED
+(6 rows)
+
+INSERT INTO rw_view15 (a) VALUES (3) ON CONFLICT (a) DO UPDATE set upper = 'blarg'; -- fails
+ERROR:  cannot insert into column "upper" of view "rw_view15"
+DETAIL:  View columns that are not columns of their base relation are not updatable.
+SELECT * FROM rw_view15;
+ a  |    upper    
+----+-------------
+ -2 | ROW -2
+ -1 | ROW -1
+  0 | ROW 0
+  1 | ROW 1
+  2 | ROW 2
+  3 | UNSPECIFIED
+(6 rows)
+
+SELECT * FROM rw_view15;
+ a  |    upper    
+----+-------------
+ -2 | ROW -2
+ -1 | ROW -1
+  0 | ROW 0
+  1 | ROW 1
+  2 | ROW 2
+  3 | UNSPECIFIED
+(6 rows)
+
+--dg-skip: ALTER VIEW supports only SET and RESET of options, and RENAME yet
+--dg ALTER VIEW rw_view15 ALTER COLUMN upper SET DEFAULT 'NOT SET';
+--dg-cascade
+--dg INSERT INTO rw_view15 (a) VALUES (4); -- should fail
+UPDATE rw_view15 SET upper='ROW 3' WHERE a=3; -- should fail
+ERROR:  cannot update column "upper" of view "rw_view15"
+DETAIL:  View columns that are not columns of their base relation are not updatable.
+UPDATE rw_view15 SET upper=DEFAULT WHERE a=3; -- should fail
+ERROR:  cannot update column "upper" of view "rw_view15"
+DETAIL:  View columns that are not columns of their base relation are not updatable.
+--dg-cascade
+--dg UPDATE rw_view15 SET a=4 WHERE a=3; -- should be OK
+--dg-cascade
+--dg SELECT * FROM base_tbl;
+DELETE FROM rw_view15 WHERE a=4; -- should be OK
+-- Partially updatable view
+INSERT INTO rw_view16 VALUES (3, 'Row 3', 3); -- should fail
+ERROR:  multiple assignments to same column "a"
+--dg-cascade
+--dg INSERT INTO rw_view16 (a, b) VALUES (3, 'Row 3'); -- should be OK
+UPDATE rw_view16 SET a=3, aa=-3 WHERE a=3; -- should fail
+ERROR:  multiple assignments to same column "a"
+UPDATE rw_view16 SET aa=-3 WHERE a=3; -- should be OK
+--dg-cascade
+--dg SELECT * FROM base_tbl;
+DELETE FROM rw_view16 WHERE a=-3; -- should be OK
+-- Read-only views
+INSERT INTO ro_view17 VALUES (3, 'ROW 3');
+ERROR:  cannot insert into view "ro_view1"
+DETAIL:  Views containing DISTINCT are not automatically updatable.
+HINT:  To enable inserting into the view, provide an INSTEAD OF INSERT trigger or an unconditional ON INSERT DO INSTEAD rule.
+DELETE FROM ro_view18;
+ERROR:  cannot delete from view "ro_view18"
+DETAIL:  Views that do not select from a single table or view are not automatically updatable.
+HINT:  To enable deleting from the view, provide an INSTEAD OF DELETE trigger or an unconditional ON DELETE DO INSTEAD rule.
+--dg-skip: relation "?" does not have a composite type
+--dg MERGE INTO ro_view18 AS t USING (VALUES (1, 'Row 1')) AS v(a,b) ON t.a = v.a
+--dg   WHEN MATCHED THEN DO NOTHING; -- should be OK to do nothing
+--dg-cascade
+--dg UPDATE ro_view19 SET last_value=1000;
+UPDATE ro_view20 SET b=upper(b);
+ERROR:  cannot update view "ro_view20"
+DETAIL:  Views that return set-returning functions are not automatically updatable.
+HINT:  To enable updating the view, provide an INSTEAD OF UPDATE trigger or an unconditional ON UPDATE DO INSTEAD rule.
+-- A view with a conditional INSTEAD rule but no unconditional INSTEAD rules
+-- or INSTEAD OF triggers should be non-updatable and generate useful error
+-- messages with appropriate detail
+--dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg CREATE RULE rw_view16_ins_rule AS ON INSERT TO rw_view16
+--dg   WHERE NEW.a > 0 DO INSTEAD INSERT INTO base_tbl VALUES (NEW.a, NEW.b);
+--dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg CREATE RULE rw_view16_upd_rule AS ON UPDATE TO rw_view16
+--dg   WHERE OLD.a > 0 DO INSTEAD UPDATE base_tbl SET b=NEW.b WHERE a=OLD.a;
+--dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg CREATE RULE rw_view16_del_rule AS ON DELETE TO rw_view16
+--dg   WHERE OLD.a > 0 DO INSTEAD DELETE FROM base_tbl WHERE a=OLD.a;
+--dg-cascade
+--dg INSERT INTO rw_view16 (a, b) VALUES (3, 'Row 3'); -- should fail
+--dg-cascade
+--dg UPDATE rw_view16 SET b='ROW 2' WHERE a=2; -- should fail
+--dg-cascade
+--dg DELETE FROM rw_view16 WHERE a=2; -- should fail
+--dg-cascade
+--dg MERGE INTO rw_view16 AS t USING (VALUES (3, 'Row 3')) AS v(a,b) ON t.a = v.a
+--dg   WHEN NOT MATCHED THEN INSERT VALUES (v.a, v.b); -- should fail
+--dg-cascade
+--dg DROP TABLE base_tbl CASCADE;
+DROP VIEW ro_view10, ro_view12, ro_view18;
+--dg-cascade
+--dg DROP SEQUENCE uv_seq CASCADE;
+-- simple updatable view
+--dg-cascade
+--dg CREATE TABLE base_tbl (a int PRIMARY KEY, b text DEFAULT 'Unspecified');
+--dg-cascade
+--dg INSERT INTO base_tbl SELECT i, 'Row ' || i FROM generate_series(-2, 2) g(i);
+CREATE VIEW rw_view1 AS
+  SELECT *, 'Const' AS c, (SELECT concat('b: ', b)) AS d FROM base_tbl WHERE a>0;
+--dg-skip: relation "?" does not exist
+--dg SELECT table_name, is_insertable_into
+--dg   FROM information_schema.tables
+--dg  WHERE table_name = 'rw_view1';
+--dg-skip: relation "?" does not exist
+--dg SELECT table_name, is_updatable, is_insertable_into
+--dg   FROM information_schema.views
+--dg  WHERE table_name = 'rw_view1';
+--dg-skip: relation "?" does not exist
+--dg SELECT table_name, column_name, is_updatable
+--dg   FROM information_schema.columns
+--dg  WHERE table_name = 'rw_view1'
+--dg  ORDER BY ordinal_position;
+INSERT INTO rw_view1 VALUES (3, 'Row 3');
+INSERT INTO rw_view1 (a) VALUES (4);
+UPDATE rw_view1 SET a=5 WHERE a=4;
+DELETE FROM rw_view1 WHERE b='Row 2';
+SELECT * FROM base_tbl;
+ a  |      b      
+----+-------------
+ -2 | Row -2
+ -1 | Row -1
+  0 | Row 0
+  1 | Row 1
+  3 | Row 3
+  5 | Unspecified
+(6 rows)
+
+--dg-skip: unrecognized configuration parameter "?"
+--dg SET jit_above_cost = 0;
+--dg-skip: relation "?" does not have a composite type
+--dg MERGE INTO rw_view1 t
+--dg   USING (VALUES (0, 'ROW 0'), (1, 'ROW 1'),
+--dg                 (2, 'ROW 2'), (3, 'ROW 3')) AS v(a,b) ON t.a = v.a
+--dg   WHEN MATCHED AND t.a <= 1 THEN UPDATE SET b = v.b
+--dg   WHEN MATCHED THEN DELETE
+--dg   WHEN NOT MATCHED AND a > 0 THEN INSERT (a) VALUES (v.a)
+--dg   RETURNING merge_action(), v.*, old, new, old.*, new.*, t.*;
+--dg-skip: unrecognized configuration parameter "?"
+--dg SET jit_above_cost TO DEFAULT;
+--dg-cascade
+--dg SELECT * FROM base_tbl ORDER BY a;
+--dg-cascade
+--dg MERGE INTO rw_view1 t
+--dg   USING (VALUES (0, 'R0'), (1, 'R1'),
+--dg                 (2, 'R2'), (3, 'R3')) AS v(a,b) ON t.a = v.a
+--dg   WHEN MATCHED AND t.a <= 1 THEN UPDATE SET b = v.b
+--dg   WHEN MATCHED THEN DELETE
+--dg   WHEN NOT MATCHED BY SOURCE THEN DELETE
+--dg   WHEN NOT MATCHED AND a > 0 THEN INSERT (a) VALUES (v.a)
+--dg   RETURNING merge_action(), v.*, old, new, old.*, new.*, t.*;
+--dg-cascade
+--dg SELECT * FROM base_tbl ORDER BY a;
+EXPLAIN (costs off) UPDATE rw_view1 SET a=6 WHERE a=5;
+                    QUERY PLAN                    
+--------------------------------------------------
+ Update on base_tbl
+   ->  Index Scan using base_tbl_pkey on base_tbl
+         Index Cond: ((a > 0) AND (a = 5))
+(3 rows)
+
+EXPLAIN (costs off) DELETE FROM rw_view1 WHERE a=5;
+                    QUERY PLAN                    
+--------------------------------------------------
+ Delete on base_tbl
+   ->  Index Scan using base_tbl_pkey on base_tbl
+         Index Cond: ((a > 0) AND (a = 5))
+(3 rows)
+
+--dg-skip: MERGE does not write to table "?" yet
+--dg EXPLAIN (costs off)
+--dg MERGE INTO rw_view1 t USING (VALUES (5, 'X')) AS v(a,b) ON t.a = v.a
+--dg   WHEN MATCHED THEN DELETE;
+--dg-skip: MERGE does not write to table "?" yet
+--dg EXPLAIN (costs off)
+--dg MERGE INTO rw_view1 t
+--dg   USING (SELECT * FROM generate_series(1,5)) AS s(a) ON t.a = s.a
+--dg   WHEN MATCHED THEN UPDATE SET b = 'Updated';
+--dg-skip: MERGE does not write to table "?" yet
+--dg EXPLAIN (costs off)
+--dg MERGE INTO rw_view1 t
+--dg   USING (SELECT * FROM generate_series(1,5)) AS s(a) ON t.a = s.a
+--dg   WHEN NOT MATCHED BY SOURCE THEN DELETE;
+--dg-skip: MERGE does not write to table "?" yet
+--dg EXPLAIN (costs off)
+--dg MERGE INTO rw_view1 t
+--dg   USING (SELECT * FROM generate_series(1,5)) AS s(a) ON t.a = s.a
+--dg   WHEN NOT MATCHED THEN INSERT (a) VALUES (s.a);
+-- it's still updatable if we add a DO ALSO rule
+CREATE TABLE base_tbl_hist(ts timestamptz default now(), a int, b text);
+--dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg CREATE RULE base_tbl_log AS ON INSERT TO rw_view1 DO ALSO
+--dg   INSERT INTO base_tbl_hist(a,b) VALUES(new.a, new.b);
+--dg-skip: relation "?" does not exist
+--dg SELECT table_name, is_updatable, is_insertable_into
+--dg   FROM information_schema.views
+--dg  WHERE table_name = 'rw_view1';
+-- Check behavior with DEFAULTs (bug #17633)
+INSERT INTO rw_view1 VALUES (9, DEFAULT), (10, DEFAULT);
+--dg-cascade
+--dg SELECT a, b FROM base_tbl_hist;
+--dg-cascade
+--dg DROP TABLE base_tbl CASCADE;
+DROP TABLE base_tbl_hist;
+-- view on top of view
+--dg-cascade
+--dg CREATE TABLE base_tbl (a int PRIMARY KEY, b text DEFAULT 'Unspecified');
+--dg-cascade
+--dg INSERT INTO base_tbl SELECT i, 'Row ' || i FROM generate_series(-2, 2) g(i);
+--dg-cascade
+--dg CREATE VIEW rw_view1 AS
+--dg   SELECT b AS bb, a AS aa, 'Const1' AS c FROM base_tbl WHERE a>0;
+--dg-cascade
+--dg CREATE VIEW rw_view2 AS
+--dg   SELECT aa AS aaa, bb AS bbb, c AS c1, 'Const2' AS c2 FROM rw_view1 WHERE aa<10;
+--dg-cascade
+--dg SELECT table_name, is_insertable_into
+--dg   FROM information_schema.tables
+--dg  WHERE table_name = 'rw_view2';
+--dg-cascade
+--dg SELECT table_name, is_updatable, is_insertable_into
+--dg   FROM information_schema.views
+--dg  WHERE table_name = 'rw_view2';
+--dg-cascade
+--dg SELECT table_name, column_name, is_updatable
+--dg   FROM information_schema.columns
+--dg  WHERE table_name = 'rw_view2'
+--dg  ORDER BY ordinal_position;
+--dg-cascade
+--dg INSERT INTO rw_view2 VALUES (3, 'Row 3');
+--dg-cascade
+--dg INSERT INTO rw_view2 (aaa) VALUES (4);
+--dg-cascade
+--dg SELECT * FROM rw_view2;
+--dg-cascade
+--dg UPDATE rw_view2 SET bbb='Row 4' WHERE aaa=4;
+--dg-cascade
+--dg DELETE FROM rw_view2 WHERE aaa=2;
+--dg-cascade
+--dg SELECT * FROM rw_view2;
+--dg-cascade
+--dg MERGE INTO rw_view2 t
+--dg   USING (VALUES (3, 'R3'), (4, 'R4'), (5, 'R5')) AS v(a,b) ON aaa = v.a
+--dg   WHEN MATCHED AND aaa = 3 THEN DELETE
+--dg   WHEN MATCHED THEN UPDATE SET bbb = v.b
+--dg   WHEN NOT MATCHED THEN INSERT (aaa) VALUES (v.a)
+--dg   RETURNING merge_action(), v.*, (SELECT old), (SELECT (SELECT new)), t.*;
+--dg-cascade
+--dg SELECT * FROM rw_view2 ORDER BY aaa;
+--dg-cascade
+--dg MERGE INTO rw_view2 t
+--dg   USING (VALUES (4, 'r4'), (5, 'r5'), (6, 'r6')) AS v(a,b) ON aaa = v.a
+--dg   WHEN MATCHED AND aaa = 4 THEN DELETE
+--dg   WHEN MATCHED THEN UPDATE SET bbb = v.b
+--dg   WHEN NOT MATCHED THEN INSERT (aaa) VALUES (v.a)
+--dg   WHEN NOT MATCHED BY SOURCE THEN UPDATE SET bbb = 'Not matched by source'
+--dg   RETURNING merge_action(), v.*, old, (SELECT new FROM (VALUES ((SELECT new)))), t.*;
+--dg-cascade
+--dg SELECT * FROM rw_view2 ORDER BY aaa;
+--dg-cascade
+--dg EXPLAIN (costs off) UPDATE rw_view2 SET aaa=5 WHERE aaa=4;
+--dg-cascade
+--dg EXPLAIN (costs off) DELETE FROM rw_view2 WHERE aaa=4;
+--dg-cascade
+--dg DROP TABLE base_tbl CASCADE;
+-- view on top of view with rules
+--dg-cascade
+--dg CREATE TABLE base_tbl (a int PRIMARY KEY, b text DEFAULT 'Unspecified');
+--dg-cascade
+--dg INSERT INTO base_tbl SELECT i, 'Row ' || i FROM generate_series(-2, 2) g(i);
+--dg-cascade
+--dg CREATE VIEW rw_view1 AS SELECT * FROM base_tbl WHERE a>0 OFFSET 0; -- not updatable without rules/triggers
+CREATE VIEW rw_view2 AS SELECT * FROM rw_view1 WHERE a<10;
+--dg-cascade
+--dg SELECT table_name, is_insertable_into
+--dg   FROM information_schema.tables
+--dg  WHERE table_name LIKE 'rw_view%'
+--dg  ORDER BY table_name;
+--dg-cascade
+--dg SELECT table_name, is_updatable, is_insertable_into
+--dg   FROM information_schema.views
+--dg  WHERE table_name LIKE 'rw_view%'
+--dg  ORDER BY table_name;
+--dg-cascade
+--dg SELECT table_name, column_name, is_updatable
+--dg   FROM information_schema.columns
+--dg  WHERE table_name LIKE 'rw_view%'
+--dg  ORDER BY table_name, ordinal_position;
+--dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg CREATE RULE rw_view1_ins_rule AS ON INSERT TO rw_view1
+--dg   DO INSTEAD INSERT INTO base_tbl VALUES (NEW.a, NEW.b) RETURNING *;
+--dg-cascade
+--dg SELECT table_name, is_insertable_into
+--dg   FROM information_schema.tables
+--dg  WHERE table_name LIKE 'rw_view%'
+--dg  ORDER BY table_name;
+--dg-cascade
+--dg SELECT table_name, is_updatable, is_insertable_into
+--dg   FROM information_schema.views
+--dg  WHERE table_name LIKE 'rw_view%'
+--dg  ORDER BY table_name;
+--dg-cascade
+--dg SELECT table_name, column_name, is_updatable
+--dg   FROM information_schema.columns
+--dg  WHERE table_name LIKE 'rw_view%'
+--dg  ORDER BY table_name, ordinal_position;
+--dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg CREATE RULE rw_view1_upd_rule AS ON UPDATE TO rw_view1
+--dg   DO INSTEAD UPDATE base_tbl SET b=NEW.b WHERE a=OLD.a RETURNING NEW.*;
+--dg-cascade
+--dg SELECT table_name, is_insertable_into
+--dg   FROM information_schema.tables
+--dg  WHERE table_name LIKE 'rw_view%'
+--dg  ORDER BY table_name;
+--dg-cascade
+--dg SELECT table_name, is_updatable, is_insertable_into
+--dg   FROM information_schema.views
+--dg  WHERE table_name LIKE 'rw_view%'
+--dg  ORDER BY table_name;
+--dg-cascade
+--dg SELECT table_name, column_name, is_updatable
+--dg   FROM information_schema.columns
+--dg  WHERE table_name LIKE 'rw_view%'
+--dg  ORDER BY table_name, ordinal_position;
+--dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg CREATE RULE rw_view1_del_rule AS ON DELETE TO rw_view1
+--dg   DO INSTEAD DELETE FROM base_tbl WHERE a=OLD.a RETURNING OLD.*;
+--dg-cascade
+--dg SELECT table_name, is_insertable_into
+--dg   FROM information_schema.tables
+--dg  WHERE table_name LIKE 'rw_view%'
+--dg  ORDER BY table_name;
+--dg-cascade
+--dg SELECT table_name, is_updatable, is_insertable_into
+--dg   FROM information_schema.views
+--dg  WHERE table_name LIKE 'rw_view%'
+--dg  ORDER BY table_name;
+--dg-cascade
+--dg SELECT table_name, column_name, is_updatable
+--dg   FROM information_schema.columns
+--dg  WHERE table_name LIKE 'rw_view%'
+--dg  ORDER BY table_name, ordinal_position;
+--dg-cascade
+--dg INSERT INTO rw_view2 VALUES (3, 'Row 3') RETURNING old.*, new.*;
+--dg-cascade
+--dg UPDATE rw_view2 SET b='R3' WHERE a=3 RETURNING old.*, new.*; -- rule returns NEW
+--dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg DROP RULE rw_view1_upd_rule ON rw_view1;
+--dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg CREATE RULE rw_view1_upd_rule AS ON UPDATE TO rw_view1
+--dg   DO INSTEAD UPDATE base_tbl SET b=NEW.b WHERE a=OLD.a RETURNING *;
+--dg-cascade
+--dg UPDATE rw_view2 SET b='Row three' WHERE a=3 RETURNING old.*, new.*;
+--dg-cascade
+--dg SELECT * FROM rw_view2;
+--dg-cascade
+--dg DELETE FROM rw_view2 WHERE a=3 RETURNING old.*, new.*;
+--dg-cascade
+--dg SELECT * FROM rw_view2;
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (3, 'Row 3')) AS v(a,b) ON t.a = v.a
+--dg   WHEN NOT MATCHED THEN INSERT VALUES (v.a, v.b); -- should fail
+--dg-cascade
+--dg EXPLAIN (costs off) UPDATE rw_view2 SET a=3 WHERE a=2;
+--dg-cascade
+--dg EXPLAIN (costs off) DELETE FROM rw_view2 WHERE a=2;
+--dg-cascade
+--dg DROP TABLE base_tbl CASCADE;
+-- view on top of view with triggers
+--dg-cascade
+--dg CREATE TABLE base_tbl (a int PRIMARY KEY, b text DEFAULT 'Unspecified');
+--dg-cascade
+--dg INSERT INTO base_tbl SELECT i, 'Row ' || i FROM generate_series(-2, 2) g(i);
+--dg-cascade
+--dg CREATE VIEW rw_view1 AS
+--dg   SELECT *, 'Const1' AS c1 FROM base_tbl WHERE a>0 OFFSET 0; -- not updatable without rules/triggers
+--dg-cascade
+--dg CREATE VIEW rw_view2 AS
+--dg   SELECT *, 'Const2' AS c2 FROM rw_view1 WHERE a<10;
+--dg-cascade
+--dg SELECT table_name, is_insertable_into
+--dg   FROM information_schema.tables
+--dg  WHERE table_name LIKE 'rw_view%'
+--dg  ORDER BY table_name;
+--dg-cascade
+--dg SELECT table_name, is_updatable, is_insertable_into,
+--dg        is_trigger_updatable, is_trigger_deletable,
+--dg        is_trigger_insertable_into
+--dg   FROM information_schema.views
+--dg  WHERE table_name LIKE 'rw_view%'
+--dg  ORDER BY table_name;
+--dg-cascade
+--dg SELECT table_name, column_name, is_updatable
+--dg   FROM information_schema.columns
+--dg  WHERE table_name LIKE 'rw_view%'
+--dg  ORDER BY table_name, ordinal_position;
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION rw_view1_trig_fn()
+--dg RETURNS trigger AS
+--dg $$
+--dg BEGIN
+--dg   IF TG_OP = 'INSERT' THEN
+--dg     INSERT INTO base_tbl VALUES (NEW.a, NEW.b);
+--dg     NEW.c1 = 'Trigger Const1';
+--dg     RETURN NEW;
+--dg   ELSIF TG_OP = 'UPDATE' THEN
+--dg     UPDATE base_tbl SET b=NEW.b WHERE a=OLD.a;
+--dg     NEW.c1 = 'Trigger Const1';
+--dg     RETURN NEW;
+--dg   ELSIF TG_OP = 'DELETE' THEN
+--dg     DELETE FROM base_tbl WHERE a=OLD.a;
+--dg     RETURN OLD;
+--dg   END IF;
+--dg END;
+--dg $$
+--dg LANGUAGE plpgsql;
+--dg-cascade
+--dg CREATE TRIGGER rw_view1_ins_trig INSTEAD OF INSERT ON rw_view1
+--dg   FOR EACH ROW EXECUTE PROCEDURE rw_view1_trig_fn();
+--dg-cascade
+--dg SELECT table_name, is_insertable_into
+--dg   FROM information_schema.tables
+--dg  WHERE table_name LIKE 'rw_view%'
+--dg  ORDER BY table_name;
+--dg-cascade
+--dg SELECT table_name, is_updatable, is_insertable_into,
+--dg        is_trigger_updatable, is_trigger_deletable,
+--dg        is_trigger_insertable_into
+--dg   FROM information_schema.views
+--dg  WHERE table_name LIKE 'rw_view%'
+--dg  ORDER BY table_name;
+--dg-cascade
+--dg SELECT table_name, column_name, is_updatable
+--dg   FROM information_schema.columns
+--dg  WHERE table_name LIKE 'rw_view%'
+--dg  ORDER BY table_name, ordinal_position;
+--dg-cascade
+--dg CREATE TRIGGER rw_view1_upd_trig INSTEAD OF UPDATE ON rw_view1
+--dg   FOR EACH ROW EXECUTE PROCEDURE rw_view1_trig_fn();
+--dg-cascade
+--dg SELECT table_name, is_insertable_into
+--dg   FROM information_schema.tables
+--dg  WHERE table_name LIKE 'rw_view%'
+--dg  ORDER BY table_name;
+--dg-cascade
+--dg SELECT table_name, is_updatable, is_insertable_into,
+--dg        is_trigger_updatable, is_trigger_deletable,
+--dg        is_trigger_insertable_into
+--dg   FROM information_schema.views
+--dg  WHERE table_name LIKE 'rw_view%'
+--dg  ORDER BY table_name;
+--dg-cascade
+--dg SELECT table_name, column_name, is_updatable
+--dg   FROM information_schema.columns
+--dg  WHERE table_name LIKE 'rw_view%'
+--dg  ORDER BY table_name, ordinal_position;
+--dg-cascade
+--dg CREATE TRIGGER rw_view1_del_trig INSTEAD OF DELETE ON rw_view1
+--dg   FOR EACH ROW EXECUTE PROCEDURE rw_view1_trig_fn();
+--dg-cascade
+--dg SELECT table_name, is_insertable_into
+--dg   FROM information_schema.tables
+--dg  WHERE table_name LIKE 'rw_view%'
+--dg  ORDER BY table_name;
+--dg-cascade
+--dg SELECT table_name, is_updatable, is_insertable_into,
+--dg        is_trigger_updatable, is_trigger_deletable,
+--dg        is_trigger_insertable_into
+--dg   FROM information_schema.views
+--dg  WHERE table_name LIKE 'rw_view%'
+--dg  ORDER BY table_name;
+--dg-cascade
+--dg SELECT table_name, column_name, is_updatable
+--dg   FROM information_schema.columns
+--dg  WHERE table_name LIKE 'rw_view%'
+--dg  ORDER BY table_name, ordinal_position;
+--dg-cascade
+--dg INSERT INTO rw_view2 VALUES (3, 'Row 3') RETURNING old.*, new.*;
+--dg-cascade
+--dg UPDATE rw_view2 SET b='Row three' WHERE a=3 RETURNING old.*, new.*;
+--dg-cascade
+--dg SELECT * FROM rw_view2;
+--dg-cascade
+--dg DELETE FROM rw_view2 WHERE a=3 RETURNING old.*, new.*;
+--dg-cascade
+--dg SELECT * FROM rw_view2;
+--dg-cascade
+--dg MERGE INTO rw_view2 t
+--dg   USING (SELECT x, 'R'||x FROM generate_series(0,3) x) AS s(a,b) ON t.a = s.a
+--dg   WHEN MATCHED AND t.a <= 1 THEN DELETE
+--dg   WHEN MATCHED THEN UPDATE SET b = s.b
+--dg   WHEN NOT MATCHED AND s.a > 0 THEN INSERT VALUES (s.a, s.b)
+--dg   RETURNING merge_action(), s.*, old, new, t.*;
+--dg-cascade
+--dg SELECT * FROM base_tbl ORDER BY a;
+--dg-cascade
+--dg MERGE INTO rw_view2 t
+--dg   USING (SELECT x, 'r'||x FROM generate_series(0,2) x) AS s(a,b) ON t.a = s.a
+--dg   WHEN MATCHED THEN UPDATE SET b = s.b
+--dg   WHEN NOT MATCHED AND s.a > 0 THEN INSERT VALUES (s.a, s.b)
+--dg   WHEN NOT MATCHED BY SOURCE THEN UPDATE SET b = 'Not matched by source'
+--dg   RETURNING merge_action(), s.*, old, new, t.*;
+--dg-cascade
+--dg SELECT * FROM base_tbl ORDER BY a;
+--dg-cascade
+--dg EXPLAIN (costs off) UPDATE rw_view2 SET a=3 WHERE a=2;
+--dg-cascade
+--dg EXPLAIN (costs off) DELETE FROM rw_view2 WHERE a=2;
+--dg-cascade
+--dg EXPLAIN (costs off)
+--dg MERGE INTO rw_view2 t
+--dg   USING (SELECT x, 'R'||x FROM generate_series(0,3) x) AS s(a,b) ON t.a = s.a
+--dg   WHEN MATCHED AND t.a <= 1 THEN DELETE
+--dg   WHEN MATCHED THEN UPDATE SET b = s.b
+--dg   WHEN NOT MATCHED AND s.a > 0 THEN INSERT VALUES (s.a, s.b);
+-- MERGE with incomplete set of INSTEAD OF triggers
+--dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg DROP TRIGGER rw_view1_del_trig ON rw_view1;
+--dg-cascade
+--dg MERGE INTO rw_view2 t
+--dg   USING (SELECT x, 'R'||x FROM generate_series(0,3) x) AS s(a,b) ON t.a = s.a
+--dg   WHEN MATCHED AND t.a <= 1 THEN DELETE
+--dg   WHEN MATCHED THEN UPDATE SET b = s.b
+--dg   WHEN NOT MATCHED AND s.a > 0 THEN INSERT VALUES (s.a, s.b); -- should fail
+--dg-cascade
+--dg MERGE INTO rw_view2 t
+--dg   USING (SELECT x, 'R'||x FROM generate_series(0,3) x) AS s(a,b) ON t.a = s.a
+--dg   WHEN MATCHED THEN UPDATE SET b = s.b
+--dg   WHEN NOT MATCHED AND s.a > 0 THEN INSERT VALUES (s.a, s.b); -- ok
+--dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg DROP TRIGGER rw_view1_ins_trig ON rw_view1;
+--dg-cascade
+--dg MERGE INTO rw_view2 t
+--dg   USING (SELECT x, 'R'||x FROM generate_series(0,3) x) AS s(a,b) ON t.a = s.a
+--dg   WHEN MATCHED THEN UPDATE SET b = s.b
+--dg   WHEN NOT MATCHED AND s.a > 0 THEN INSERT VALUES (s.a, s.b); -- should fail
+--dg-cascade
+--dg MERGE INTO rw_view2 t
+--dg   USING (SELECT x, 'R'||x FROM generate_series(0,3) x) AS s(a,b) ON t.a = s.a
+--dg   WHEN MATCHED THEN UPDATE SET b = s.b; -- ok
+-- MERGE with INSTEAD OF triggers on auto-updatable view
+--dg-cascade
+--dg CREATE TRIGGER rw_view2_upd_trig INSTEAD OF UPDATE ON rw_view2
+--dg   FOR EACH ROW EXECUTE PROCEDURE rw_view1_trig_fn();
+--dg-cascade
+--dg MERGE INTO rw_view2 t
+--dg   USING (SELECT x, 'R'||x FROM generate_series(0,3) x) AS s(a,b) ON t.a = s.a
+--dg   WHEN MATCHED THEN UPDATE SET b = s.b
+--dg   WHEN NOT MATCHED AND s.a > 0 THEN INSERT VALUES (s.a, s.b); -- should fail
+--dg-cascade
+--dg MERGE INTO rw_view2 t
+--dg   USING (SELECT x, 'R'||x FROM generate_series(0,3) x) AS s(a,b) ON t.a = s.a
+--dg   WHEN MATCHED THEN UPDATE SET b = s.b; -- ok
+--dg-cascade
+--dg SELECT * FROM base_tbl ORDER BY a;
+--dg-cascade
+--dg DROP TABLE base_tbl CASCADE;
+--dg-cascade
+--dg DROP FUNCTION rw_view1_trig_fn();
+-- update using whole row from view
+--dg-cascade
+--dg CREATE TABLE base_tbl (a int PRIMARY KEY, b text DEFAULT 'Unspecified');
+--dg-cascade
+--dg INSERT INTO base_tbl SELECT i, 'Row ' || i FROM generate_series(-2, 2) g(i);
+--dg-cascade
+--dg CREATE VIEW rw_view1 AS SELECT b AS bb, a AS aa FROM base_tbl;
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION rw_view1_aa(x rw_view1)
+--dg   RETURNS int AS $$ SELECT x.aa $$ LANGUAGE sql;
+--dg-cascade
+--dg UPDATE rw_view1 v SET bb='Updated row 2' WHERE rw_view1_aa(v)=2
+--dg   RETURNING rw_view1_aa(v), v.bb;
+--dg-cascade
+--dg SELECT * FROM base_tbl;
+--dg-cascade
+--dg EXPLAIN (costs off)
+--dg UPDATE rw_view1 v SET bb='Updated row 2' WHERE rw_view1_aa(v)=2
+--dg   RETURNING rw_view1_aa(v), v.bb;
+--dg-cascade
+--dg DROP TABLE base_tbl CASCADE;
+-- permissions checks
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE USER regress_view_user1;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE USER regress_view_user2;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE USER regress_view_user3;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user1;
+--dg-cascade
+--dg CREATE TABLE base_tbl(a int, b text, c float);
+--dg-cascade
+--dg INSERT INTO base_tbl VALUES (1, 'Row 1', 1.0);
+--dg-cascade
+--dg CREATE VIEW rw_view1 AS SELECT b AS bb, c AS cc, a AS aa FROM base_tbl;
+--dg-cascade
+--dg INSERT INTO rw_view1 VALUES ('Row 2', 2.0, 2);
+--dg-cascade
+--dg GRANT SELECT ON base_tbl TO regress_view_user2;
+--dg-cascade
+--dg GRANT SELECT ON rw_view1 TO regress_view_user2;
+--dg-cascade
+--dg GRANT UPDATE (a,c) ON base_tbl TO regress_view_user2;
+--dg-cascade
+--dg GRANT UPDATE (bb,cc) ON rw_view1 TO regress_view_user2;
+RESET SESSION AUTHORIZATION;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user2;
+--dg-cascade
+--dg CREATE VIEW rw_view2 AS SELECT b AS bb, c AS cc, a AS aa FROM base_tbl;
+--dg-cascade
+--dg SELECT * FROM base_tbl; -- ok
+--dg-cascade
+--dg SELECT * FROM rw_view1; -- ok
+--dg-cascade
+--dg SELECT * FROM rw_view2; -- ok
+--dg-cascade
+--dg INSERT INTO base_tbl VALUES (3, 'Row 3', 3.0); -- not allowed
+--dg-cascade
+--dg INSERT INTO rw_view1 VALUES ('Row 3', 3.0, 3); -- not allowed
+--dg-cascade
+--dg INSERT INTO rw_view2 VALUES ('Row 3', 3.0, 3); -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view1 t
+--dg   USING (VALUES ('Row 3', 3.0, 3)) AS v(b,c,a) ON t.aa = v.a
+--dg   WHEN NOT MATCHED THEN INSERT VALUES (v.b, v.c, v.a); -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view2 t
+--dg   USING (VALUES ('Row 3', 3.0, 3)) AS v(b,c,a) ON t.aa = v.a
+--dg   WHEN NOT MATCHED THEN INSERT VALUES (v.b, v.c, v.a); -- not allowed
+--dg-cascade
+--dg UPDATE base_tbl SET a=a, c=c; -- ok
+--dg-cascade
+--dg UPDATE base_tbl SET b=b; -- not allowed
+--dg-cascade
+--dg UPDATE rw_view1 SET bb=bb, cc=cc; -- ok
+--dg-cascade
+--dg UPDATE rw_view1 SET aa=aa; -- not allowed
+--dg-cascade
+--dg UPDATE rw_view2 SET aa=aa, cc=cc; -- ok
+--dg-cascade
+--dg UPDATE rw_view2 SET bb=bb; -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view1 t USING (VALUES (1)) AS v(a) ON t.aa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET bb = bb, cc = cc; -- ok
+--dg-cascade
+--dg MERGE INTO rw_view1 t USING (VALUES (1)) AS v(a) ON t.aa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET aa = aa; -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET aa = aa, cc = cc; -- ok
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET bb = bb; -- not allowed
+--dg-cascade
+--dg DELETE FROM base_tbl; -- not allowed
+--dg-cascade
+--dg DELETE FROM rw_view1; -- not allowed
+--dg-cascade
+--dg DELETE FROM rw_view2; -- not allowed
+RESET SESSION AUTHORIZATION;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user1;
+--dg-cascade
+--dg GRANT INSERT, DELETE ON base_tbl TO regress_view_user2;
+RESET SESSION AUTHORIZATION;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user2;
+--dg-cascade
+--dg INSERT INTO base_tbl VALUES (3, 'Row 3', 3.0); -- ok
+--dg-cascade
+--dg INSERT INTO rw_view1 VALUES ('Row 4', 4.0, 4); -- not allowed
+--dg-cascade
+--dg INSERT INTO rw_view2 VALUES ('Row 4', 4.0, 4); -- ok
+--dg-cascade
+--dg DELETE FROM base_tbl WHERE a=1; -- ok
+--dg-cascade
+--dg DELETE FROM rw_view1 WHERE aa=2; -- not allowed
+--dg-cascade
+--dg DELETE FROM rw_view2 WHERE aa=2; -- ok
+--dg-cascade
+--dg MERGE INTO rw_view1 t USING (VALUES (1)) AS v(a) ON t.aa = v.a
+--dg   WHEN MATCHED AND bb = 'xxx' THEN DELETE; -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aa = v.a
+--dg   WHEN MATCHED AND bb = 'xxx' THEN DELETE; -- ok
+--dg-cascade
+--dg SELECT * FROM base_tbl;
+RESET SESSION AUTHORIZATION;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user1;
+--dg-cascade
+--dg REVOKE INSERT, DELETE ON base_tbl FROM regress_view_user2;
+--dg-cascade
+--dg GRANT INSERT, DELETE ON rw_view1 TO regress_view_user2;
+RESET SESSION AUTHORIZATION;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user2;
+--dg-cascade
+--dg INSERT INTO base_tbl VALUES (5, 'Row 5', 5.0); -- not allowed
+--dg-cascade
+--dg INSERT INTO rw_view1 VALUES ('Row 5', 5.0, 5); -- ok
+--dg-cascade
+--dg INSERT INTO rw_view2 VALUES ('Row 6', 6.0, 6); -- not allowed
+--dg-cascade
+--dg DELETE FROM base_tbl WHERE a=3; -- not allowed
+--dg-cascade
+--dg DELETE FROM rw_view1 WHERE aa=3; -- ok
+--dg-cascade
+--dg DELETE FROM rw_view2 WHERE aa=4; -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view1 t USING (VALUES (1)) AS v(a) ON t.aa = v.a
+--dg   WHEN MATCHED AND bb = 'xxx' THEN DELETE; -- ok
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aa = v.a
+--dg   WHEN MATCHED AND bb = 'xxx' THEN DELETE; -- not allowed
+--dg-cascade
+--dg SELECT * FROM base_tbl;
+RESET SESSION AUTHORIZATION;
+--dg-cascade
+--dg DROP TABLE base_tbl CASCADE;
+-- nested-view permissions
+--dg-cascade
+--dg CREATE TABLE base_tbl(a int, b text, c float);
+--dg-cascade
+--dg INSERT INTO base_tbl VALUES (1, 'Row 1', 1.0);
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user1;
+--dg-cascade
+--dg CREATE VIEW rw_view1 AS SELECT * FROM base_tbl;
+--dg-cascade
+--dg SELECT * FROM rw_view1;  -- not allowed
+--dg-cascade
+--dg SELECT * FROM rw_view1 FOR UPDATE;  -- not allowed
+--dg-cascade
+--dg UPDATE rw_view1 SET b = 'foo' WHERE a = 1;  -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view1 t USING (VALUES (1)) AS v(a) ON t.a = v.a
+--dg   WHEN MATCHED THEN UPDATE SET b = 'foo'; -- not allowed
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user2;
+--dg-cascade
+--dg CREATE VIEW rw_view2 AS SELECT * FROM rw_view1;
+--dg-cascade
+--dg SELECT * FROM rw_view2;  -- not allowed
+--dg-cascade
+--dg SELECT * FROM rw_view2 FOR UPDATE;  -- not allowed
+--dg-cascade
+--dg UPDATE rw_view2 SET b = 'bar' WHERE a = 1;  -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.a = v.a
+--dg   WHEN MATCHED THEN UPDATE SET b = 'foo'; -- not allowed
+RESET SESSION AUTHORIZATION;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT SELECT ON base_tbl TO regress_view_user1;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user1;
+--dg-cascade
+--dg SELECT * FROM rw_view1;
+--dg-cascade
+--dg SELECT * FROM rw_view1 FOR UPDATE;  -- not allowed
+--dg-cascade
+--dg UPDATE rw_view1 SET b = 'foo' WHERE a = 1;  -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view1 t USING (VALUES (1)) AS v(a) ON t.a = v.a
+--dg   WHEN MATCHED THEN UPDATE SET b = 'foo'; -- not allowed
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user2;
+--dg-cascade
+--dg SELECT * FROM rw_view2;  -- not allowed
+--dg-cascade
+--dg SELECT * FROM rw_view2 FOR UPDATE;  -- not allowed
+--dg-cascade
+--dg UPDATE rw_view2 SET b = 'bar' WHERE a = 1;  -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.a = v.a
+--dg   WHEN MATCHED THEN UPDATE SET b = 'foo'; -- not allowed
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user1;
+--dg-cascade
+--dg GRANT SELECT ON rw_view1 TO regress_view_user2;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user2;
+--dg-cascade
+--dg SELECT * FROM rw_view2;
+--dg-cascade
+--dg SELECT * FROM rw_view2 FOR UPDATE;  -- not allowed
+--dg-cascade
+--dg UPDATE rw_view2 SET b = 'bar' WHERE a = 1;  -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.a = v.a
+--dg   WHEN MATCHED THEN UPDATE SET b = 'foo'; -- not allowed
+RESET SESSION AUTHORIZATION;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT UPDATE ON base_tbl TO regress_view_user1;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user1;
+--dg-cascade
+--dg SELECT * FROM rw_view1;
+--dg-cascade
+--dg SELECT * FROM rw_view1 FOR UPDATE;
+--dg-cascade
+--dg UPDATE rw_view1 SET b = 'foo' WHERE a = 1;
+--dg-cascade
+--dg MERGE INTO rw_view1 t USING (VALUES (1)) AS v(a) ON t.a = v.a
+--dg   WHEN MATCHED THEN UPDATE SET b = 'foo';
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user2;
+--dg-cascade
+--dg SELECT * FROM rw_view2;
+--dg-cascade
+--dg SELECT * FROM rw_view2 FOR UPDATE;  -- not allowed
+--dg-cascade
+--dg UPDATE rw_view2 SET b = 'bar' WHERE a = 1;  -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.a = v.a
+--dg   WHEN MATCHED THEN UPDATE SET b = 'bar'; -- not allowed
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user1;
+--dg-cascade
+--dg GRANT UPDATE ON rw_view1 TO regress_view_user2;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user2;
+--dg-cascade
+--dg SELECT * FROM rw_view2;
+--dg-cascade
+--dg SELECT * FROM rw_view2 FOR UPDATE;
+--dg-cascade
+--dg UPDATE rw_view2 SET b = 'bar' WHERE a = 1;
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.a = v.a
+--dg   WHEN MATCHED THEN UPDATE SET b = 'fud';
+RESET SESSION AUTHORIZATION;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg REVOKE UPDATE ON base_tbl FROM regress_view_user1;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user1;
+--dg-cascade
+--dg SELECT * FROM rw_view1;
+--dg-cascade
+--dg SELECT * FROM rw_view1 FOR UPDATE;  -- not allowed
+--dg-cascade
+--dg UPDATE rw_view1 SET b = 'foo' WHERE a = 1;  -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view1 t USING (VALUES (1)) AS v(a) ON t.a = v.a
+--dg   WHEN MATCHED THEN UPDATE SET b = 'foo'; -- not allowed
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user2;
+--dg-cascade
+--dg SELECT * FROM rw_view2;
+--dg-cascade
+--dg SELECT * FROM rw_view2 FOR UPDATE;  -- not allowed
+--dg-cascade
+--dg UPDATE rw_view2 SET b = 'bar' WHERE a = 1;  -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.a = v.a
+--dg   WHEN MATCHED THEN UPDATE SET b = 'foo'; -- not allowed
+RESET SESSION AUTHORIZATION;
+--dg-cascade
+--dg DROP TABLE base_tbl CASCADE;
+-- security invoker view permissions
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user1;
+--dg-cascade
+--dg CREATE TABLE base_tbl(a int, b text, c float);
+--dg-cascade
+--dg INSERT INTO base_tbl VALUES (1, 'Row 1', 1.0);
+--dg-cascade
+--dg CREATE VIEW rw_view1 AS SELECT b AS bb, c AS cc, a AS aa FROM base_tbl;
+--dg-cascade
+--dg ALTER VIEW rw_view1 SET (security_invoker = true);
+--dg-cascade
+--dg INSERT INTO rw_view1 VALUES ('Row 2', 2.0, 2);
+--dg-cascade
+--dg GRANT SELECT ON rw_view1 TO regress_view_user2;
+--dg-cascade
+--dg GRANT UPDATE (bb,cc) ON rw_view1 TO regress_view_user2;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user2;
+--dg-cascade
+--dg SELECT * FROM base_tbl; -- not allowed
+--dg-cascade
+--dg SELECT * FROM rw_view1; -- not allowed
+--dg-cascade
+--dg INSERT INTO base_tbl VALUES (3, 'Row 3', 3.0); -- not allowed
+--dg-cascade
+--dg INSERT INTO rw_view1 VALUES ('Row 3', 3.0, 3); -- not allowed
+--dg-cascade
+--dg UPDATE base_tbl SET a=a; -- not allowed
+--dg-cascade
+--dg UPDATE rw_view1 SET bb=bb, cc=cc; -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view1 t USING (VALUES (1)) AS v(a) ON t.aa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET bb = bb; -- not allowed
+--dg-cascade
+--dg DELETE FROM base_tbl; -- not allowed
+--dg-cascade
+--dg DELETE FROM rw_view1; -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view1 t USING (VALUES (1)) AS v(a) ON t.aa = v.a
+--dg   WHEN MATCHED THEN DELETE; -- not allowed
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user1;
+--dg-cascade
+--dg GRANT SELECT ON base_tbl TO regress_view_user2;
+--dg-cascade
+--dg GRANT UPDATE (a,c) ON base_tbl TO regress_view_user2;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user2;
+--dg-cascade
+--dg SELECT * FROM base_tbl; -- ok
+--dg-cascade
+--dg SELECT * FROM rw_view1; -- ok
+--dg-cascade
+--dg UPDATE base_tbl SET a=a, c=c; -- ok
+--dg-cascade
+--dg UPDATE base_tbl SET b=b; -- not allowed
+--dg-cascade
+--dg UPDATE rw_view1 SET cc=cc; -- ok
+--dg-cascade
+--dg MERGE INTO rw_view1 t USING (VALUES (1)) AS v(a) ON t.aa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET cc = cc; -- ok
+--dg-cascade
+--dg UPDATE rw_view1 SET aa=aa; -- not allowed
+--dg-cascade
+--dg UPDATE rw_view1 SET bb=bb; -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view1 t USING (VALUES (1)) AS v(a) ON t.aa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET aa = aa; -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view1 t USING (VALUES (1)) AS v(a) ON t.aa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET bb = bb; -- not allowed
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user1;
+--dg-cascade
+--dg GRANT INSERT, DELETE ON base_tbl TO regress_view_user2;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user2;
+--dg-cascade
+--dg INSERT INTO base_tbl VALUES (3, 'Row 3', 3.0); -- ok
+--dg-cascade
+--dg INSERT INTO rw_view1 VALUES ('Row 4', 4.0, 4); -- not allowed
+--dg-cascade
+--dg DELETE FROM base_tbl WHERE a=1; -- ok
+--dg-cascade
+--dg DELETE FROM rw_view1 WHERE aa=2; -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view1 t USING (VALUES (1)) AS v(a) ON t.aa = v.a
+--dg   WHEN MATCHED THEN DELETE; -- not allowed
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user1;
+--dg-cascade
+--dg REVOKE INSERT, DELETE ON base_tbl FROM regress_view_user2;
+--dg-cascade
+--dg GRANT INSERT, DELETE ON rw_view1 TO regress_view_user2;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user2;
+--dg-cascade
+--dg INSERT INTO rw_view1 VALUES ('Row 4', 4.0, 4); -- not allowed
+--dg-cascade
+--dg DELETE FROM rw_view1 WHERE aa=2; -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view1 t USING (VALUES (1)) AS v(a) ON t.aa = v.a
+--dg   WHEN MATCHED THEN DELETE; -- not allowed
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user1;
+--dg-cascade
+--dg GRANT INSERT, DELETE ON base_tbl TO regress_view_user2;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user2;
+--dg-cascade
+--dg INSERT INTO rw_view1 VALUES ('Row 4', 4.0, 4); -- ok
+--dg-cascade
+--dg DELETE FROM rw_view1 WHERE aa=2; -- ok
+--dg-cascade
+--dg MERGE INTO rw_view1 t USING (VALUES (3)) AS v(a) ON t.aa = v.a
+--dg   WHEN MATCHED THEN DELETE; -- ok
+--dg-cascade
+--dg SELECT * FROM base_tbl; -- ok
+RESET SESSION AUTHORIZATION;
+--dg-cascade
+--dg DROP TABLE base_tbl CASCADE;
+-- ordinary view on top of security invoker view permissions
+--dg-cascade
+--dg CREATE TABLE base_tbl(a int, b text, c float);
+--dg-cascade
+--dg INSERT INTO base_tbl VALUES (1, 'Row 1', 1.0);
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user1;
+--dg-cascade
+--dg CREATE VIEW rw_view1 AS SELECT b AS bb, c AS cc, a AS aa FROM base_tbl;
+--dg-cascade
+--dg ALTER VIEW rw_view1 SET (security_invoker = true);
+--dg-cascade
+--dg SELECT * FROM rw_view1;  -- not allowed
+--dg-cascade
+--dg UPDATE rw_view1 SET aa=aa;  -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view1 t USING (VALUES (2, 'Row 2', 2.0)) AS v(a,b,c) ON t.aa = v.a
+--dg   WHEN NOT MATCHED THEN INSERT VALUES (v.b, v.c, v.a); -- not allowed
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user2;
+--dg-cascade
+--dg CREATE VIEW rw_view2 AS SELECT cc AS ccc, aa AS aaa, bb AS bbb FROM rw_view1;
+--dg-cascade
+--dg GRANT SELECT, UPDATE ON rw_view2 TO regress_view_user3;
+--dg-cascade
+--dg SELECT * FROM rw_view2;  -- not allowed
+--dg-cascade
+--dg UPDATE rw_view2 SET aaa=aaa;  -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (2, 'Row 2', 2.0)) AS v(a,b,c) ON t.aaa = v.a
+--dg   WHEN NOT MATCHED THEN INSERT VALUES (v.c, v.a, v.b); -- not allowed
+RESET SESSION AUTHORIZATION;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT SELECT ON base_tbl TO regress_view_user1;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT UPDATE (a, b) ON base_tbl TO regress_view_user1;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user1;
+--dg-cascade
+--dg SELECT * FROM rw_view1; -- ok
+--dg-cascade
+--dg UPDATE rw_view1 SET aa=aa, bb=bb;  -- ok
+--dg-cascade
+--dg UPDATE rw_view1 SET cc=cc;  -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view1 t USING (VALUES (1)) AS v(a) ON t.aa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET aa = aa, bb = bb; -- ok
+--dg-cascade
+--dg MERGE INTO rw_view1 t USING (VALUES (1)) AS v(a) ON t.aa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET cc = cc; -- not allowed
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user2;
+--dg-cascade
+--dg SELECT * FROM rw_view2;  -- not allowed
+--dg-cascade
+--dg UPDATE rw_view2 SET aaa=aaa;  -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET aaa = aaa; -- not allowed
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user3;
+--dg-cascade
+--dg SELECT * FROM rw_view2;  -- not allowed
+--dg-cascade
+--dg UPDATE rw_view2 SET aaa=aaa;  -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET aaa = aaa; -- not allowed
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user1;
+--dg-cascade
+--dg GRANT SELECT ON rw_view1 TO regress_view_user2;
+--dg-cascade
+--dg GRANT UPDATE (bb, cc) ON rw_view1 TO regress_view_user2;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user2;
+--dg-cascade
+--dg SELECT * FROM rw_view2;  -- not allowed
+--dg-cascade
+--dg UPDATE rw_view2 SET bbb=bbb;  -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET bbb = bbb; -- not allowed
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user3;
+--dg-cascade
+--dg SELECT * FROM rw_view2;  -- not allowed
+--dg-cascade
+--dg UPDATE rw_view2 SET bbb=bbb;  -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET bbb = bbb; -- not allowed
+RESET SESSION AUTHORIZATION;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT SELECT ON base_tbl TO regress_view_user2;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT UPDATE (a, c) ON base_tbl TO regress_view_user2;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user2;
+--dg-cascade
+--dg SELECT * FROM rw_view2;  -- ok
+--dg-cascade
+--dg UPDATE rw_view2 SET aaa=aaa;  -- not allowed
+--dg-cascade
+--dg UPDATE rw_view2 SET bbb=bbb;  -- not allowed
+--dg-cascade
+--dg UPDATE rw_view2 SET ccc=ccc;  -- ok
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET aaa = aaa; -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET bbb = bbb; -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET ccc = ccc; -- ok
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user3;
+--dg-cascade
+--dg SELECT * FROM rw_view2;  -- not allowed
+--dg-cascade
+--dg UPDATE rw_view2 SET aaa=aaa;  -- not allowed
+--dg-cascade
+--dg UPDATE rw_view2 SET bbb=bbb;  -- not allowed
+--dg-cascade
+--dg UPDATE rw_view2 SET ccc=ccc;  -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET aaa = aaa; -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET bbb = bbb; -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET ccc = ccc; -- not allowed
+RESET SESSION AUTHORIZATION;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT SELECT ON base_tbl TO regress_view_user3;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT UPDATE (a, c) ON base_tbl TO regress_view_user3;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user3;
+--dg-cascade
+--dg SELECT * FROM rw_view2;  -- ok
+--dg-cascade
+--dg UPDATE rw_view2 SET aaa=aaa;  -- not allowed
+--dg-cascade
+--dg UPDATE rw_view2 SET bbb=bbb;  -- not allowed
+--dg-cascade
+--dg UPDATE rw_view2 SET ccc=ccc;  -- ok
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET aaa = aaa; -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET bbb = bbb; -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET ccc = ccc; -- ok
+RESET SESSION AUTHORIZATION;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg REVOKE SELECT, UPDATE ON base_tbl FROM regress_view_user1;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user1;
+--dg-cascade
+--dg SELECT * FROM rw_view1;  -- not allowed
+--dg-cascade
+--dg UPDATE rw_view1 SET aa=aa;  -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view1 t USING (VALUES (1)) AS v(a) ON t.aa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET aa = aa; -- not allowed
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user2;
+--dg-cascade
+--dg SELECT * FROM rw_view2;  -- ok
+--dg-cascade
+--dg UPDATE rw_view2 SET aaa=aaa;  -- not allowed
+--dg-cascade
+--dg UPDATE rw_view2 SET bbb=bbb;  -- not allowed
+--dg-cascade
+--dg UPDATE rw_view2 SET ccc=ccc;  -- ok
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET aaa = aaa; -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET bbb = bbb; -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET ccc = ccc; -- ok
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user3;
+--dg-cascade
+--dg SELECT * FROM rw_view2;  -- ok
+--dg-cascade
+--dg UPDATE rw_view2 SET aaa=aaa;  -- not allowed
+--dg-cascade
+--dg UPDATE rw_view2 SET bbb=bbb;  -- not allowed
+--dg-cascade
+--dg UPDATE rw_view2 SET ccc=ccc;  -- ok
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET aaa = aaa; -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET bbb = bbb; -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET ccc = ccc; -- ok
+RESET SESSION AUTHORIZATION;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg REVOKE SELECT, UPDATE ON base_tbl FROM regress_view_user2;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user2;
+--dg-cascade
+--dg SELECT * FROM rw_view2;  -- not allowed
+--dg-cascade
+--dg UPDATE rw_view2 SET aaa=aaa;  -- not allowed
+--dg-cascade
+--dg UPDATE rw_view2 SET bbb=bbb;  -- not allowed
+--dg-cascade
+--dg UPDATE rw_view2 SET ccc=ccc;  -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET aaa = aaa; -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET bbb = bbb; -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET ccc = ccc; -- not allowed
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_view_user3;
+--dg-cascade
+--dg SELECT * FROM rw_view2;  -- ok
+--dg-cascade
+--dg UPDATE rw_view2 SET aaa=aaa;  -- not allowed
+--dg-cascade
+--dg UPDATE rw_view2 SET bbb=bbb;  -- not allowed
+--dg-cascade
+--dg UPDATE rw_view2 SET ccc=ccc;  -- ok
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET aaa = aaa; -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET bbb = bbb; -- not allowed
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
+--dg   WHEN MATCHED THEN UPDATE SET ccc = ccc; -- ok
+RESET SESSION AUTHORIZATION;
+--dg-cascade
+--dg DROP TABLE base_tbl CASCADE;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP USER regress_view_user1;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP USER regress_view_user2;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP USER regress_view_user3;
+-- column defaults
+--dg-cascade
+--dg CREATE TABLE base_tbl (a int PRIMARY KEY, b text DEFAULT 'Unspecified', c serial);
+--dg-cascade
+--dg INSERT INTO base_tbl VALUES (1, 'Row 1');
+--dg-cascade
+--dg INSERT INTO base_tbl VALUES (2, 'Row 2');
+--dg-cascade
+--dg INSERT INTO base_tbl VALUES (3);
+--dg-cascade
+--dg CREATE VIEW rw_view1 AS SELECT a AS aa, b AS bb FROM base_tbl;
+--dg-cascade
+--dg ALTER VIEW rw_view1 ALTER COLUMN bb SET DEFAULT 'View default';
+--dg-cascade
+--dg INSERT INTO rw_view1 VALUES (4, 'Row 4');
+--dg-cascade
+--dg INSERT INTO rw_view1 (aa) VALUES (5);
+--dg-cascade
+--dg MERGE INTO rw_view1 t USING (VALUES (6)) AS v(a) ON t.aa = v.a
+--dg   WHEN NOT MATCHED THEN INSERT (aa) VALUES (v.a);
+--dg-cascade
+--dg SELECT * FROM base_tbl;
+--dg-cascade
+--dg DROP TABLE base_tbl CASCADE;
+-- Table having triggers
+--dg-cascade
+--dg CREATE TABLE base_tbl (a int PRIMARY KEY, b text DEFAULT 'Unspecified');
+--dg-cascade
+--dg INSERT INTO base_tbl VALUES (1, 'Row 1');
+--dg-cascade
+--dg INSERT INTO base_tbl VALUES (2, 'Row 2');
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION rw_view1_trig_fn()
+--dg RETURNS trigger AS
+--dg $$
+--dg BEGIN
+--dg   IF TG_OP = 'INSERT' THEN
+--dg     UPDATE base_tbl SET b=NEW.b WHERE a=1;
+--dg     RETURN NULL;
+--dg   END IF;
+--dg   RETURN NULL;
+--dg END;
+--dg $$
+--dg LANGUAGE plpgsql;
+--dg-cascade
+--dg CREATE TRIGGER rw_view1_ins_trig AFTER INSERT ON base_tbl
+--dg   FOR EACH ROW EXECUTE PROCEDURE rw_view1_trig_fn();
+--dg-cascade
+--dg CREATE VIEW rw_view1 AS SELECT a AS aa, b AS bb FROM base_tbl;
+--dg-cascade
+--dg INSERT INTO rw_view1 VALUES (3, 'Row 3');
+--dg-cascade
+--dg select * from base_tbl;
+--dg-cascade
+--dg DROP VIEW rw_view1;
+--dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg DROP TRIGGER rw_view1_ins_trig on base_tbl;
+--dg-cascade
+--dg DROP FUNCTION rw_view1_trig_fn();
+--dg-cascade
+--dg DROP TABLE base_tbl;
+-- view with ORDER BY
+--dg-cascade
+--dg CREATE TABLE base_tbl (a int, b int);
+--dg-cascade
+--dg INSERT INTO base_tbl VALUES (1,2), (4,5), (3,-3);
+--dg-cascade
+--dg CREATE VIEW rw_view1 AS SELECT * FROM base_tbl ORDER BY a+b;
+--dg-cascade
+--dg SELECT * FROM rw_view1;
+INSERT INTO rw_view1 VALUES (7,-8);
+--dg-cascade
+--dg SELECT * FROM rw_view1;
+--dg-cascade
+--dg EXPLAIN (verbose, costs off) UPDATE rw_view1 SET b = b + 1 RETURNING *;
+--dg-cascade
+--dg UPDATE rw_view1 SET b = b + 1 RETURNING *;
+--dg-cascade
+--dg SELECT * FROM rw_view1;
+--dg-cascade
+--dg DROP TABLE base_tbl CASCADE;
+-- multiple array-column updates
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE base_tbl (a int, arr int[]);
+--dg-cascade
+--dg INSERT INTO base_tbl VALUES (1,ARRAY[2]), (3,ARRAY[4]);
+--dg-cascade
+--dg CREATE VIEW rw_view1 AS SELECT * FROM base_tbl;
+--dg-cascade
+--dg UPDATE rw_view1 SET arr[1] = 42, arr[2] = 77 WHERE a = 3;
+--dg-cascade
+--dg SELECT * FROM rw_view1;
+--dg-cascade
+--dg DROP TABLE base_tbl CASCADE;
+-- views with updatable and non-updatable columns
+--dg-cascade
+--dg CREATE TABLE base_tbl(a float);
+--dg-cascade
+--dg INSERT INTO base_tbl SELECT i/10.0 FROM generate_series(1,10) g(i);
+--dg-cascade
+--dg CREATE VIEW rw_view1 AS
+--dg   SELECT ctid, sin(a) s, a, cos(a) c
+--dg   FROM base_tbl
+--dg   WHERE a != 0
+--dg   ORDER BY abs(a);
+--dg-cascade
+--dg INSERT INTO rw_view1 VALUES (null, null, 1.1, null); -- should fail
+--dg-cascade
+--dg INSERT INTO rw_view1 (s, c, a) VALUES (null, null, 1.1); -- should fail
+--dg-cascade
+--dg INSERT INTO rw_view1 (s, c, a) VALUES (default, default, 1.1); -- should fail
+--dg-cascade
+--dg INSERT INTO rw_view1 (a) VALUES (1.1) RETURNING a, s, c; -- OK
+--dg-cascade
+--dg UPDATE rw_view1 SET s = s WHERE a = 1.1; -- should fail
+--dg-cascade
+--dg UPDATE rw_view1 SET a = 1.05 WHERE a = 1.1 RETURNING s; -- OK
+DELETE FROM rw_view1 WHERE a = 1.05; -- OK
+--dg-cascade
+--dg CREATE VIEW rw_view2 AS
+--dg   SELECT s, c, s/c t, a base_a, ctid
+--dg   FROM rw_view1;
+--dg-cascade
+--dg INSERT INTO rw_view2 VALUES (null, null, null, 1.1, null); -- should fail
+--dg-cascade
+--dg INSERT INTO rw_view2(s, c, base_a) VALUES (null, null, 1.1); -- should fail
+--dg-cascade
+--dg INSERT INTO rw_view2(base_a) VALUES (1.1) RETURNING t; -- OK
+--dg-cascade
+--dg UPDATE rw_view2 SET s = s WHERE base_a = 1.1; -- should fail
+--dg-cascade
+--dg UPDATE rw_view2 SET t = t WHERE base_a = 1.1; -- should fail
+--dg-cascade
+--dg UPDATE rw_view2 SET base_a = 1.05 WHERE base_a = 1.1; -- OK
+--dg-cascade
+--dg DELETE FROM rw_view2 WHERE base_a = 1.05 RETURNING base_a, s, c, t; -- OK
+--dg-cascade
+--dg CREATE VIEW rw_view3 AS
+--dg   SELECT s, c, s/c t, ctid
+--dg   FROM rw_view1;
+--dg-cascade
+--dg INSERT INTO rw_view3 VALUES (null, null, null, null); -- should fail
+--dg-cascade
+--dg INSERT INTO rw_view3(s) VALUES (null); -- should fail
+--dg-cascade
+--dg UPDATE rw_view3 SET s = s; -- should fail
+--dg-cascade
+--dg DELETE FROM rw_view3 WHERE s = sin(0.1); -- should be OK
+--dg-cascade
+--dg SELECT * FROM base_tbl ORDER BY a;
+--dg-cascade
+--dg SELECT table_name, is_insertable_into
+--dg   FROM information_schema.tables
+--dg  WHERE table_name LIKE E'r_\\_view%'
+--dg  ORDER BY table_name;
+--dg-cascade
+--dg SELECT table_name, is_updatable, is_insertable_into
+--dg   FROM information_schema.views
+--dg  WHERE table_name LIKE E'r_\\_view%'
+--dg  ORDER BY table_name;
+--dg-cascade
+--dg SELECT table_name, column_name, is_updatable
+--dg   FROM information_schema.columns
+--dg  WHERE table_name LIKE E'r_\\_view%'
+--dg  ORDER BY table_name, ordinal_position;
+--dg-cascade
+--dg SELECT events & 4 != 0 AS upd,
+--dg        events & 8 != 0 AS ins,
+--dg        events & 16 != 0 AS del
+--dg   FROM pg_catalog.pg_relation_is_updatable('rw_view3'::regclass, false) t(events);
+--dg-cascade
+--dg DROP TABLE base_tbl CASCADE;
+-- view on table with GENERATED columns
+--dg-cascade
+--dg CREATE TABLE base_tbl (id int, idplus1 int GENERATED ALWAYS AS (id + 1) STORED);
+--dg-cascade
+--dg CREATE VIEW rw_view1 AS SELECT * FROM base_tbl;
+--dg-cascade
+--dg INSERT INTO base_tbl (id) VALUES (1);
+--dg-cascade
+--dg INSERT INTO rw_view1 (id) VALUES (2);
+--dg-cascade
+--dg INSERT INTO base_tbl (id, idplus1) VALUES (3, DEFAULT);
+--dg-cascade
+--dg INSERT INTO rw_view1 (id, idplus1) VALUES (4, DEFAULT);
+--dg-cascade
+--dg INSERT INTO base_tbl (id, idplus1) VALUES (5, 6);  -- error
+--dg-cascade
+--dg INSERT INTO rw_view1 (id, idplus1) VALUES (6, 7);  -- error
+--dg-cascade
+--dg SELECT * FROM base_tbl;
+--dg-cascade
+--dg UPDATE base_tbl SET id = 2000 WHERE id = 2;
+--dg-cascade
+--dg UPDATE rw_view1 SET id = 3000 WHERE id = 3;
+--dg-cascade
+--dg SELECT * FROM base_tbl;
+--dg-cascade
+--dg DROP TABLE base_tbl CASCADE;
+-- inheritance tests
+CREATE TABLE base_tbl_parent (a int);
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE base_tbl_child (CHECK (a > 0)) INHERITS (base_tbl_parent);
+INSERT INTO base_tbl_parent SELECT * FROM generate_series(-8, -1);
+--dg-cascade
+--dg INSERT INTO base_tbl_child SELECT * FROM generate_series(1, 8);
+--dg-cascade
+--dg CREATE VIEW rw_view1 AS SELECT * FROM base_tbl_parent;
+--dg-cascade
+--dg CREATE VIEW rw_view2 AS SELECT * FROM ONLY base_tbl_parent;
+--dg-cascade
+--dg SELECT * FROM rw_view1 ORDER BY a;
+--dg-cascade
+--dg SELECT * FROM ONLY rw_view1 ORDER BY a;
+--dg-cascade
+--dg SELECT * FROM rw_view2 ORDER BY a;
+INSERT INTO rw_view1 VALUES (-100), (100);
+INSERT INTO rw_view2 VALUES (-200), (200);
+--dg-cascade
+--dg UPDATE rw_view1 SET a = a*10 WHERE a IN (-1, 1); -- Should produce -10 and 10
+UPDATE ONLY rw_view1 SET a = a*10 WHERE a IN (-2, 2); -- Should produce -20 and 20
+UPDATE rw_view2 SET a = a*10 WHERE a IN (-3, 3); -- Should produce -30 only
+UPDATE ONLY rw_view2 SET a = a*10 WHERE a IN (-4, 4); -- Should produce -40 only
+DELETE FROM rw_view1 WHERE a IN (-5, 5); -- Should delete -5 and 5
+DELETE FROM ONLY rw_view1 WHERE a IN (-6, 6); -- Should delete -6 and 6
+DELETE FROM rw_view2 WHERE a IN (-7, 7); -- Should delete -7 only
+DELETE FROM ONLY rw_view2 WHERE a IN (-8, 8); -- Should delete -8 only
+--dg-cascade
+--dg SELECT * FROM ONLY base_tbl_parent ORDER BY a;
+--dg-cascade
+--dg SELECT * FROM base_tbl_child ORDER BY a;
+--dg-skip: MERGE does not write to table "?" yet
+--dg MERGE INTO rw_view1 t USING (VALUES (-200), (10)) AS v(a) ON t.a = v.a
+--dg   WHEN MATCHED THEN UPDATE SET a = t.a+1; -- Should produce -199 and 11
+--dg-skip: MERGE does not write to table "?" yet
+--dg MERGE INTO ONLY rw_view1 t USING (VALUES (-100), (20)) AS v(a) ON t.a = v.a
+--dg   WHEN MATCHED THEN UPDATE SET a = t.a+1; -- Should produce -99 and 21
+--dg-skip: MERGE does not write to table "?" yet
+--dg MERGE INTO rw_view2 t USING (VALUES (-40), (3)) AS v(a) ON t.a = v.a
+--dg   WHEN MATCHED THEN UPDATE SET a = t.a+1; -- Should produce -39 only
+--dg-skip: MERGE does not write to table "?" yet
+--dg MERGE INTO ONLY rw_view2 t USING (VALUES (-30), (4)) AS v(a) ON t.a = v.a
+--dg   WHEN MATCHED THEN UPDATE SET a = t.a+1; -- Should produce -29 only
+--dg-cascade
+--dg SELECT * FROM ONLY base_tbl_parent ORDER BY a;
+--dg-cascade
+--dg SELECT * FROM base_tbl_child ORDER BY a;
+CREATE TABLE other_tbl_parent (id int);
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE other_tbl_child () INHERITS (other_tbl_parent);
+INSERT INTO other_tbl_parent VALUES (7),(200);
+--dg-cascade
+--dg INSERT INTO other_tbl_child VALUES (8),(100);
+--dg-cascade
+--dg EXPLAIN (costs off)
+--dg UPDATE rw_view1 SET a = a + 1000 FROM other_tbl_parent WHERE a = id;
+UPDATE rw_view1 SET a = a + 1000 FROM other_tbl_parent WHERE a = id;
+--dg-cascade
+--dg SELECT * FROM ONLY base_tbl_parent ORDER BY a;
+--dg-cascade
+--dg SELECT * FROM base_tbl_child ORDER BY a;
+--dg-cascade
+--dg DROP TABLE base_tbl_parent, base_tbl_child CASCADE;
+--dg-cascade
+--dg DROP TABLE other_tbl_parent CASCADE;
+-- simple WITH CHECK OPTION
+--dg-cascade
+--dg CREATE TABLE base_tbl (a int, b int DEFAULT 10);
+--dg-cascade
+--dg INSERT INTO base_tbl VALUES (1,2), (2,3), (1,-1);
+--dg-cascade
+--dg CREATE VIEW rw_view1 AS SELECT * FROM base_tbl WHERE a < b
+--dg   WITH LOCAL CHECK OPTION;
+--dg-cascade
+--dg \d+ rw_view1
+--dg-cascade
+--dg SELECT * FROM information_schema.views WHERE table_name = 'rw_view1';
+INSERT INTO rw_view1 VALUES(3,4); -- ok
+--dg-cascade
+--dg INSERT INTO rw_view1 VALUES(4,3); -- should fail
+--dg-cascade
+--dg INSERT INTO rw_view1 VALUES(5,null); -- should fail
+UPDATE rw_view1 SET b = 5 WHERE a = 3; -- ok
+--dg-cascade
+--dg UPDATE rw_view1 SET b = -5 WHERE a = 3; -- should fail
+--dg-cascade
+--dg INSERT INTO rw_view1(a) VALUES (9); -- ok
+--dg-cascade
+--dg INSERT INTO rw_view1(a) VALUES (10); -- should fail
+--dg-cascade
+--dg SELECT * FROM base_tbl ORDER BY a, b;
+--dg-skip: MERGE does not write to table "?" yet
+--dg MERGE INTO rw_view1 t USING (VALUES (10)) AS v(a) ON t.a = v.a
+--dg   WHEN NOT MATCHED THEN INSERT VALUES (v.a, v.a + 1); -- ok
+--dg-cascade
+--dg MERGE INTO rw_view1 t USING (VALUES (11)) AS v(a) ON t.a = v.a
+--dg   WHEN NOT MATCHED THEN INSERT VALUES (v.a, v.a - 1); -- should fail
+--dg-cascade
+--dg MERGE INTO rw_view1 t USING (VALUES (1)) AS v(a) ON t.a = v.a
+--dg   WHEN MATCHED THEN UPDATE SET a = t.a - 1; -- ok
+--dg-cascade
+--dg MERGE INTO rw_view1 t USING (VALUES (2)) AS v(a) ON t.a = v.a
+--dg   WHEN MATCHED THEN UPDATE SET a = t.a + 1; -- should fail
+--dg-cascade
+--dg SELECT * FROM base_tbl ORDER BY a, b;
+--dg-cascade
+--dg DROP TABLE base_tbl CASCADE;
+-- WITH LOCAL/CASCADED CHECK OPTION
+--dg-cascade
+--dg CREATE TABLE base_tbl (a int);
+--dg-cascade
+--dg CREATE VIEW rw_view1 AS SELECT * FROM base_tbl WHERE a > 0;
+--dg-cascade
+--dg CREATE VIEW rw_view2 AS SELECT * FROM rw_view1 WHERE a < 10
+--dg   WITH CHECK OPTION; -- implicitly cascaded
+--dg-cascade
+--dg \d+ rw_view2
+--dg-cascade
+--dg SELECT * FROM information_schema.views WHERE table_name = 'rw_view2';
+--dg-cascade
+--dg INSERT INTO rw_view2 VALUES (-5); -- should fail
+INSERT INTO rw_view2 VALUES (5); -- ok
+--dg-cascade
+--dg INSERT INTO rw_view2 VALUES (15); -- should fail
+--dg-cascade
+--dg SELECT * FROM base_tbl;
+--dg-cascade
+--dg UPDATE rw_view2 SET a = a - 10; -- should fail
+--dg-cascade
+--dg UPDATE rw_view2 SET a = a + 10; -- should fail
+CREATE OR REPLACE VIEW rw_view2 AS SELECT * FROM rw_view1 WHERE a < 10
+  WITH LOCAL CHECK OPTION;
+--dg-cascade
+--dg \d+ rw_view2
+--dg-cascade
+--dg SELECT * FROM information_schema.views WHERE table_name = 'rw_view2';
+INSERT INTO rw_view2 VALUES (-10); -- ok, but not in view
+--dg-cascade
+--dg INSERT INTO rw_view2 VALUES (20); -- should fail
+--dg-cascade
+--dg SELECT * FROM base_tbl;
+ALTER VIEW rw_view1 SET (check_option=here); -- invalid
+ERROR:  invalid value for enum option "check_option": here
+DETAIL:  Valid values are "local" and "cascaded".
+ALTER VIEW rw_view1 SET (check_option=local);
+--dg-cascade
+--dg INSERT INTO rw_view2 VALUES (-20); -- should fail
+--dg-cascade
+--dg INSERT INTO rw_view2 VALUES (30); -- should fail
+ALTER VIEW rw_view2 RESET (check_option);
+--dg-cascade
+--dg \d+ rw_view2
+--dg-cascade
+--dg SELECT * FROM information_schema.views WHERE table_name = 'rw_view2';
+--dg-cascade
+--dg INSERT INTO rw_view2 VALUES (30); -- ok, but not in view
+--dg-cascade
+--dg SELECT * FROM base_tbl;
+--dg-cascade
+--dg DROP TABLE base_tbl CASCADE;
+-- WITH CHECK OPTION with no local view qual
+--dg-cascade
+--dg CREATE TABLE base_tbl (a int);
+--dg-cascade
+--dg CREATE VIEW rw_view1 AS SELECT * FROM base_tbl WITH CHECK OPTION;
+--dg-cascade
+--dg CREATE VIEW rw_view2 AS SELECT * FROM rw_view1 WHERE a > 0;
+CREATE VIEW rw_view3 AS SELECT * FROM rw_view2 WITH CHECK OPTION;
+--dg-cascade
+--dg SELECT * FROM information_schema.views WHERE table_name LIKE E'rw\\_view_' ORDER BY table_name;
+--dg-cascade
+--dg INSERT INTO rw_view1 VALUES (-1); -- ok
+--dg-cascade
+--dg INSERT INTO rw_view1 VALUES (1); -- ok
+--dg-cascade
+--dg INSERT INTO rw_view2 VALUES (-2); -- ok, but not in view
+INSERT INTO rw_view2 VALUES (2); -- ok
+--dg-cascade
+--dg INSERT INTO rw_view3 VALUES (-3); -- should fail
+--dg-cascade
+--dg INSERT INTO rw_view3 VALUES (3); -- ok
+--dg-cascade
+--dg DROP TABLE base_tbl CASCADE;
+-- WITH CHECK OPTION with scalar array ops
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE base_tbl (a int, b int[]);
+--dg-cascade
+--dg CREATE VIEW rw_view1 AS SELECT * FROM base_tbl WHERE a = ANY (b)
+--dg   WITH CHECK OPTION;
+--dg-cascade
+--dg INSERT INTO rw_view1 VALUES (1, ARRAY[1,2,3]); -- ok
+--dg-cascade
+--dg INSERT INTO rw_view1 VALUES (10, ARRAY[4,5]); -- should fail
+--dg-cascade
+--dg UPDATE rw_view1 SET b[2] = -b[2] WHERE a = 1; -- ok
+--dg-cascade
+--dg UPDATE rw_view1 SET b[1] = -b[1] WHERE a = 1; -- should fail
+--dg-cascade
+--dg PREPARE ins(int, int[]) AS INSERT INTO rw_view1 VALUES($1, $2);
+--dg-cascade
+--dg EXECUTE ins(2, ARRAY[1,2,3]); -- ok
+--dg-cascade
+--dg EXECUTE ins(10, ARRAY[4,5]); -- should fail
+--dg-cascade
+--dg DEALLOCATE PREPARE ins;
+--dg-cascade
+--dg DROP TABLE base_tbl CASCADE;
+-- WITH CHECK OPTION with subquery
+--dg-cascade
+--dg CREATE TABLE base_tbl (a int);
+CREATE TABLE ref_tbl (a int PRIMARY KEY);
+INSERT INTO ref_tbl SELECT * FROM generate_series(1,10);
+--dg-cascade
+--dg CREATE VIEW rw_view1 AS
+--dg   SELECT * FROM base_tbl b
+--dg   WHERE EXISTS(SELECT 1 FROM ref_tbl r WHERE r.a = b.a)
+--dg   WITH CHECK OPTION;
+--dg-cascade
+--dg INSERT INTO rw_view1 VALUES (5); -- ok
+--dg-cascade
+--dg INSERT INTO rw_view1 VALUES (15); -- should fail
+--dg-cascade
+--dg UPDATE rw_view1 SET a = a + 5; -- ok
+--dg-cascade
+--dg UPDATE rw_view1 SET a = a + 5; -- should fail
+--dg-cascade
+--dg EXPLAIN (costs off) INSERT INTO rw_view1 VALUES (5);
+--dg-cascade
+--dg EXPLAIN (costs off) UPDATE rw_view1 SET a = a + 5;
+--dg-cascade
+--dg DROP TABLE base_tbl, ref_tbl CASCADE;
+-- WITH CHECK OPTION with BEFORE trigger on base table
+--dg-cascade
+--dg CREATE TABLE base_tbl (a int, b int);
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION base_tbl_trig_fn()
+--dg RETURNS trigger AS
+--dg $$
+--dg BEGIN
+--dg   NEW.b := 10;
+--dg   RETURN NEW;
+--dg END;
+--dg $$
+--dg LANGUAGE plpgsql;
+--dg-cascade
+--dg CREATE TRIGGER base_tbl_trig BEFORE INSERT OR UPDATE ON base_tbl
+--dg   FOR EACH ROW EXECUTE PROCEDURE base_tbl_trig_fn();
+--dg-cascade
+--dg CREATE VIEW rw_view1 AS SELECT * FROM base_tbl WHERE a < b WITH CHECK OPTION;
+--dg-cascade
+--dg INSERT INTO rw_view1 VALUES (5,0); -- ok
+--dg-cascade
+--dg INSERT INTO rw_view1 VALUES (15, 20); -- should fail
+--dg-cascade
+--dg UPDATE rw_view1 SET a = 20, b = 30; -- should fail
+--dg-cascade
+--dg DROP TABLE base_tbl CASCADE;
+--dg-cascade
+--dg DROP FUNCTION base_tbl_trig_fn();
+-- WITH LOCAL CHECK OPTION with INSTEAD OF trigger on base view
+--dg-cascade
+--dg CREATE TABLE base_tbl (a int, b int);
+--dg-cascade
+--dg CREATE VIEW rw_view1 AS SELECT a FROM base_tbl WHERE a < b;
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION rw_view1_trig_fn()
+--dg RETURNS trigger AS
+--dg $$
+--dg BEGIN
+--dg   IF TG_OP = 'INSERT' THEN
+--dg     INSERT INTO base_tbl VALUES (NEW.a, 10);
+--dg     RETURN NEW;
+--dg   ELSIF TG_OP = 'UPDATE' THEN
+--dg     UPDATE base_tbl SET a=NEW.a WHERE a=OLD.a;
+--dg     RETURN NEW;
+--dg   ELSIF TG_OP = 'DELETE' THEN
+--dg     DELETE FROM base_tbl WHERE a=OLD.a;
+--dg     RETURN OLD;
+--dg   END IF;
+--dg END;
+--dg $$
+--dg LANGUAGE plpgsql;
+--dg-cascade
+--dg CREATE TRIGGER rw_view1_trig
+--dg   INSTEAD OF INSERT OR UPDATE OR DELETE ON rw_view1
+--dg   FOR EACH ROW EXECUTE PROCEDURE rw_view1_trig_fn();
+--dg-cascade
+--dg CREATE VIEW rw_view2 AS
+--dg   SELECT * FROM rw_view1 WHERE a > 0 WITH LOCAL CHECK OPTION;
+--dg-cascade
+--dg INSERT INTO rw_view2 VALUES (-5); -- should fail
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (-5)) AS v(a) ON t.a = v.a
+--dg   WHEN NOT MATCHED THEN INSERT VALUES (v.a); -- should fail
+--dg-cascade
+--dg INSERT INTO rw_view2 VALUES (5); -- ok
+--dg-skip: MERGE does not write to table "?" yet
+--dg MERGE INTO rw_view2 t USING (VALUES (6)) AS v(a) ON t.a = v.a
+--dg   WHEN NOT MATCHED THEN INSERT VALUES (v.a); -- ok
+INSERT INTO rw_view2 VALUES (50); -- ok, but not in view
+--dg-skip: MERGE does not write to table "?" yet
+--dg MERGE INTO rw_view2 t USING (VALUES (60)) AS v(a) ON t.a = v.a
+--dg   WHEN NOT MATCHED THEN INSERT VALUES (v.a); -- ok, but not in view
+--dg-cascade
+--dg UPDATE rw_view2 SET a = a - 10; -- should fail
+--dg-cascade
+--dg MERGE INTO rw_view2 t USING (VALUES (6)) AS v(a) ON t.a = v.a
+--dg   WHEN MATCHED THEN UPDATE SET a = t.a - 10; -- should fail
+--dg-cascade
+--dg SELECT * FROM base_tbl;
+-- Check option won't cascade down to base view with INSTEAD OF triggers
+ALTER VIEW rw_view2 SET (check_option=cascaded);
+--dg-cascade
+--dg INSERT INTO rw_view2 VALUES (100); -- ok, but not in view (doesn't fail rw_view1's check)
+--dg-cascade
+--dg UPDATE rw_view2 SET a = 200 WHERE a = 5; -- ok, but not in view (doesn't fail rw_view1's check)
+--dg-cascade
+--dg SELECT * FROM base_tbl;
+-- Neither local nor cascaded check options work with INSTEAD rules
+--dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg DROP TRIGGER rw_view1_trig ON rw_view1;
+--dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg CREATE RULE rw_view1_ins_rule AS ON INSERT TO rw_view1
+--dg   DO INSTEAD INSERT INTO base_tbl VALUES (NEW.a, 10);
+--dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg CREATE RULE rw_view1_upd_rule AS ON UPDATE TO rw_view1
+--dg   DO INSTEAD UPDATE base_tbl SET a=NEW.a WHERE a=OLD.a;
+--dg-cascade
+--dg INSERT INTO rw_view2 VALUES (-10); -- ok, but not in view (doesn't fail rw_view2's check)
+--dg-cascade
+--dg INSERT INTO rw_view2 VALUES (5); -- ok
+--dg-cascade
+--dg INSERT INTO rw_view2 VALUES (20); -- ok, but not in view (doesn't fail rw_view1's check)
+--dg-cascade
+--dg UPDATE rw_view2 SET a = 30 WHERE a = 5; -- ok, but not in view (doesn't fail rw_view1's check)
+--dg-cascade
+--dg INSERT INTO rw_view2 VALUES (5); -- ok
+--dg-cascade
+--dg UPDATE rw_view2 SET a = -5 WHERE a = 5; -- ok, but not in view (doesn't fail rw_view2's check)
+--dg-cascade
+--dg SELECT * FROM base_tbl;
+--dg-cascade
+--dg DROP TABLE base_tbl CASCADE;
+--dg-cascade
+--dg DROP FUNCTION rw_view1_trig_fn();
+--dg-cascade
+--dg CREATE TABLE base_tbl (a int);
+--dg-cascade
+--dg CREATE VIEW rw_view1 AS SELECT a,10 AS b FROM base_tbl;
+--dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg CREATE RULE rw_view1_ins_rule AS ON INSERT TO rw_view1
+--dg   DO INSTEAD INSERT INTO base_tbl VALUES (NEW.a);
+--dg-cascade
+--dg CREATE VIEW rw_view2 AS
+--dg   SELECT * FROM rw_view1 WHERE a > b WITH LOCAL CHECK OPTION;
+--dg-cascade
+--dg INSERT INTO rw_view2 VALUES (2,3); -- ok, but not in view (doesn't fail rw_view2's check)
+--dg-cascade
+--dg DROP TABLE base_tbl CASCADE;
+-- security barrier view
+--dg-cascade
+--dg CREATE TABLE base_tbl (person text, visibility text);
+--dg-cascade
+--dg INSERT INTO base_tbl VALUES ('Tom', 'public'),
+--dg                             ('Dick', 'private'),
+--dg                             ('Harry', 'public');
+--dg-cascade
+--dg CREATE VIEW rw_view1 AS
+--dg   SELECT person FROM base_tbl WHERE visibility = 'public';
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION snoop(anyelement)
+--dg RETURNS boolean AS
+--dg $$
+--dg BEGIN
+--dg   RAISE NOTICE 'snooped value: %', $1;
+--dg   RETURN true;
+--dg END;
+--dg $$
+--dg LANGUAGE plpgsql COST 0.000001;
+--dg-skip: language "?" does not exist
+--dg CREATE OR REPLACE FUNCTION leakproof(anyelement)
+--dg RETURNS boolean AS
+--dg $$
+--dg BEGIN
+--dg   RETURN true;
+--dg END;
+--dg $$
+--dg LANGUAGE plpgsql STRICT IMMUTABLE LEAKPROOF;
+--dg-cascade
+--dg SELECT * FROM rw_view1 WHERE snoop(person);
+--dg-cascade
+--dg UPDATE rw_view1 SET person=person WHERE snoop(person);
+--dg-cascade
+--dg DELETE FROM rw_view1 WHERE NOT snoop(person);
+ALTER VIEW rw_view1 SET (security_barrier = true);
+--dg-skip: relation "?" does not exist
+--dg SELECT table_name, is_insertable_into
+--dg   FROM information_schema.tables
+--dg  WHERE table_name = 'rw_view1';
+--dg-skip: relation "?" does not exist
+--dg SELECT table_name, is_updatable, is_insertable_into
+--dg   FROM information_schema.views
+--dg  WHERE table_name = 'rw_view1';
+--dg-cascade
+--dg SELECT table_name, column_name, is_updatable
+--dg   FROM information_schema.columns
+--dg  WHERE table_name = 'rw_view1'
+--dg  ORDER BY ordinal_position;
+--dg-cascade
+--dg SELECT * FROM rw_view1 WHERE snoop(person);
+--dg-cascade
+--dg UPDATE rw_view1 SET person=person WHERE snoop(person);
+--dg-cascade
+--dg DELETE FROM rw_view1 WHERE NOT snoop(person);
+--dg-cascade
+--dg MERGE INTO rw_view1 t
+--dg   USING (VALUES ('Tom'), ('Dick'), ('Harry')) AS v(person) ON t.person = v.person
+--dg   WHEN MATCHED AND snoop(t.person) THEN UPDATE SET person = v.person;
+--dg-cascade
+--dg EXPLAIN (costs off) SELECT * FROM rw_view1 WHERE snoop(person);
+--dg-cascade
+--dg EXPLAIN (costs off) UPDATE rw_view1 SET person=person WHERE snoop(person);
+--dg-cascade
+--dg EXPLAIN (costs off) DELETE FROM rw_view1 WHERE NOT snoop(person);
+--dg-cascade
+--dg EXPLAIN (costs off)
+--dg MERGE INTO rw_view1 t
+--dg   USING (VALUES ('Tom'), ('Dick'), ('Harry')) AS v(person) ON t.person = v.person
+--dg   WHEN MATCHED AND snoop(t.person) THEN UPDATE SET person = v.person;
+-- security barrier view on top of security barrier view
+--dg-cascade
+--dg CREATE VIEW rw_view2 WITH (security_barrier = true) AS
+--dg   SELECT * FROM rw_view1 WHERE snoop(person);
+--dg-cascade
+--dg SELECT table_name, is_insertable_into
+--dg   FROM information_schema.tables
+--dg  WHERE table_name = 'rw_view2';
+--dg-cascade
+--dg SELECT table_name, is_updatable, is_insertable_into
+--dg   FROM information_schema.views
+--dg  WHERE table_name = 'rw_view2';
+--dg-cascade
+--dg SELECT table_name, column_name, is_updatable
+--dg   FROM information_schema.columns
+--dg  WHERE table_name = 'rw_view2'
+--dg  ORDER BY ordinal_position;
+--dg-cascade
+--dg SELECT * FROM rw_view2 WHERE snoop(person);
+--dg-cascade
+--dg UPDATE rw_view2 SET person=person WHERE snoop(person);
+--dg-cascade
+--dg DELETE FROM rw_view2 WHERE NOT snoop(person);
+--dg-cascade
+--dg MERGE INTO rw_view2 t
+--dg   USING (VALUES ('Tom'), ('Dick'), ('Harry')) AS v(person) ON t.person = v.person
+--dg   WHEN MATCHED AND snoop(t.person) THEN UPDATE SET person = v.person;
+--dg-cascade
+--dg EXPLAIN (costs off) SELECT * FROM rw_view2 WHERE snoop(person);
+--dg-cascade
+--dg EXPLAIN (costs off) UPDATE rw_view2 SET person=person WHERE snoop(person);
+--dg-cascade
+--dg EXPLAIN (costs off) DELETE FROM rw_view2 WHERE NOT snoop(person);
+--dg-cascade
+--dg EXPLAIN (costs off)
+--dg MERGE INTO rw_view2 t
+--dg   USING (VALUES ('Tom'), ('Dick'), ('Harry')) AS v(person) ON t.person = v.person
+--dg   WHEN MATCHED AND snoop(t.person) THEN UPDATE SET person = v.person;
+--dg-cascade
+--dg DROP TABLE base_tbl CASCADE;
+-- security barrier view on top of table with rules
+--dg-cascade
+--dg CREATE TABLE base_tbl(id int PRIMARY KEY, data text, deleted boolean);
+--dg-cascade
+--dg INSERT INTO base_tbl VALUES (1, 'Row 1', false), (2, 'Row 2', true);
+--dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg CREATE RULE base_tbl_ins_rule AS ON INSERT TO base_tbl
+--dg   WHERE EXISTS (SELECT 1 FROM base_tbl t WHERE t.id = new.id)
+--dg   DO INSTEAD
+--dg     UPDATE base_tbl SET data = new.data, deleted = false WHERE id = new.id;
+--dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg CREATE RULE base_tbl_del_rule AS ON DELETE TO base_tbl
+--dg   DO INSTEAD
+--dg     UPDATE base_tbl SET deleted = true WHERE id = old.id;
+--dg-cascade
+--dg CREATE VIEW rw_view1 WITH (security_barrier=true) AS
+--dg   SELECT id, data FROM base_tbl WHERE NOT deleted;
+--dg-cascade
+--dg SELECT * FROM rw_view1;
+--dg-cascade
+--dg EXPLAIN (costs off) DELETE FROM rw_view1 WHERE id = 1 AND snoop(data);
+--dg-cascade
+--dg DELETE FROM rw_view1 WHERE id = 1 AND snoop(data);
+--dg-cascade
+--dg EXPLAIN (costs off) INSERT INTO rw_view1 VALUES (2, 'New row 2');
+--dg-cascade
+--dg INSERT INTO rw_view1 VALUES (2, 'New row 2');
+--dg-cascade
+--dg SELECT * FROM base_tbl;
+--dg-cascade
+--dg DROP TABLE base_tbl CASCADE;
+-- security barrier view based on inheritance set
+CREATE TABLE t1 (a int, b float, c text);
+CREATE INDEX t1_a_idx ON t1(a);
+INSERT INTO t1
+SELECT i,i,'t1' FROM generate_series(1,10) g(i);
+ANALYZE t1;
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE t11 (d text) INHERITS (t1);
+--dg-cascade
+--dg CREATE INDEX t11_a_idx ON t11(a);
+--dg-cascade
+--dg INSERT INTO t11
+--dg SELECT i,i,'t11','t11d' FROM generate_series(1,10) g(i);
+--dg-cascade
+--dg ANALYZE t11;
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE t12 (e int[]) INHERITS (t1);
+--dg-cascade
+--dg CREATE INDEX t12_a_idx ON t12(a);
+--dg-cascade
+--dg INSERT INTO t12
+--dg SELECT i,i,'t12','{1,2}'::int[] FROM generate_series(1,10) g(i);
+--dg-cascade
+--dg ANALYZE t12;
+--dg-cascade
+--dg CREATE TABLE t111 () INHERITS (t11, t12);
+--dg-cascade
+--dg CREATE INDEX t111_a_idx ON t111(a);
+--dg-cascade
+--dg INSERT INTO t111
+--dg SELECT i,i,'t111','t111d','{1,1,1}'::int[] FROM generate_series(1,10) g(i);
+--dg-cascade
+--dg ANALYZE t111;
+--dg-cascade
+--dg CREATE VIEW v1 WITH (security_barrier=true) AS
+--dg SELECT *, (SELECT d FROM t11 WHERE t11.a = t1.a LIMIT 1) AS d
+--dg FROM t1
+--dg WHERE a > 5 AND EXISTS(SELECT 1 FROM t12 WHERE t12.a = t1.a);
+--dg-cascade
+--dg SELECT * FROM v1 WHERE a=3; -- should not see anything
+--dg-cascade
+--dg SELECT * FROM v1 WHERE a=8;
+--dg-cascade
+--dg EXPLAIN (VERBOSE, COSTS OFF)
+--dg UPDATE v1 SET a=100 WHERE snoop(a) AND leakproof(a) AND a < 7 AND a != 6;
+--dg-cascade
+--dg UPDATE v1 SET a=100 WHERE snoop(a) AND leakproof(a) AND a < 7 AND a != 6;
+--dg-cascade
+--dg SELECT * FROM v1 WHERE a=100; -- Nothing should have been changed to 100
+SELECT * FROM t1 WHERE a=100; -- Nothing should have been changed to 100
+ a | b | c 
+---+---+---
+(0 rows)
+
+--dg-cascade
+--dg EXPLAIN (VERBOSE, COSTS OFF)
+--dg UPDATE v1 SET a=a+1 WHERE snoop(a) AND leakproof(a) AND a = 8;
+--dg-cascade
+--dg UPDATE v1 SET a=a+1 WHERE snoop(a) AND leakproof(a) AND a = 8;
+--dg-cascade
+--dg SELECT * FROM v1 WHERE b=8;
+--dg-cascade
+--dg DELETE FROM v1 WHERE snoop(a) AND leakproof(a); -- should not delete everything, just where a>5
+--dg-cascade
+--dg TABLE t1; -- verify all a<=5 are intact
+--dg-cascade
+--dg DROP TABLE t1, t11, t12, t111 CASCADE;
+--dg-cascade
+--dg DROP FUNCTION snoop(anyelement);
+--dg-cascade
+--dg DROP FUNCTION leakproof(anyelement);
+CREATE TABLE tx1 (a integer);
+CREATE TABLE tx2 (b integer);
+CREATE TABLE tx3 (c integer);
+CREATE VIEW vx1 AS SELECT a FROM tx1 WHERE EXISTS(SELECT 1 FROM tx2 JOIN tx3 ON b=c);
+INSERT INTO vx1 values (1);
+SELECT * FROM tx1;
+ a 
+---
+ 1
+(1 row)
+
+SELECT * FROM vx1;
+ a 
+---
+(0 rows)
+
+DROP VIEW vx1;
+DROP TABLE tx1;
+DROP TABLE tx2;
+DROP TABLE tx3;
+CREATE TABLE tx1 (a integer);
+CREATE TABLE tx2 (b integer);
+CREATE TABLE tx3 (c integer);
+CREATE VIEW vx1 AS SELECT a FROM tx1 WHERE EXISTS(SELECT 1 FROM tx2 JOIN tx3 ON b=c);
+INSERT INTO vx1 VALUES (1);
+INSERT INTO vx1 VALUES (1);
+SELECT * FROM tx1;
+ a 
+---
+ 1
+ 1
+(2 rows)
+
+SELECT * FROM vx1;
+ a 
+---
+(0 rows)
+
+DROP VIEW vx1;
+DROP TABLE tx1;
+DROP TABLE tx2;
+DROP TABLE tx3;
+CREATE TABLE tx1 (a integer, b integer);
+CREATE TABLE tx2 (b integer, c integer);
+CREATE TABLE tx3 (c integer, d integer);
+ALTER TABLE tx1 DROP COLUMN b;
+ALTER TABLE tx2 DROP COLUMN c;
+ALTER TABLE tx3 DROP COLUMN d;
+CREATE VIEW vx1 AS SELECT a FROM tx1 WHERE EXISTS(SELECT 1 FROM tx2 JOIN tx3 ON b=c);
+INSERT INTO vx1 VALUES (1);
+INSERT INTO vx1 VALUES (1);
+SELECT * FROM tx1;
+ a 
+---
+ 1
+ 1
+(2 rows)
+
+SELECT * FROM vx1;
+ a 
+---
+(0 rows)
+
+DROP VIEW vx1;
+DROP TABLE tx1;
+DROP TABLE tx2;
+DROP TABLE tx3;
+--
+-- Test handling of vars from correlated subqueries in quals from outer
+-- security barrier views, per bug #13988
+--
+--dg-cascade
+--dg CREATE TABLE t1 (a int, b text, c int);
+--dg-cascade
+--dg INSERT INTO t1 VALUES (1, 'one', 10);
+CREATE TABLE t2 (cc int);
+INSERT INTO t2 VALUES (10), (20);
+CREATE VIEW v1 WITH (security_barrier = true) AS
+  SELECT * FROM t1 WHERE (a > 0)
+  WITH CHECK OPTION;
+--dg-cascade
+--dg CREATE VIEW v2 WITH (security_barrier = true) AS
+--dg   SELECT * FROM v1 WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.cc = v1.c)
+--dg   WITH CHECK OPTION;
+--dg-cascade
+--dg INSERT INTO v2 VALUES (2, 'two', 20); -- ok
+--dg-cascade
+--dg INSERT INTO v2 VALUES (-2, 'minus two', 20); -- not allowed
+--dg-cascade
+--dg INSERT INTO v2 VALUES (3, 'three', 30); -- not allowed
+--dg-cascade
+--dg UPDATE v2 SET b = 'ONE' WHERE a = 1; -- ok
+--dg-cascade
+--dg UPDATE v2 SET a = -1 WHERE a = 1; -- not allowed
+--dg-cascade
+--dg UPDATE v2 SET c = 30 WHERE a = 1; -- not allowed
+--dg-cascade
+--dg DELETE FROM v2 WHERE a = 2; -- ok
+--dg-cascade
+--dg SELECT * FROM v2;
+--dg-cascade
+--dg DROP VIEW v2;
+DROP VIEW v1;
+DROP TABLE t2;
+--dg-cascade
+--dg DROP TABLE t1;
+--
+-- Test sub-select in nested security barrier views, per bug #17972
+--
+--dg-cascade
+--dg CREATE TABLE t1 (a int);
+CREATE VIEW v1 WITH (security_barrier = true) AS
+  SELECT * FROM t1;
+--dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg CREATE RULE v1_upd_rule AS ON UPDATE TO v1 DO INSTEAD
+--dg   UPDATE t1 SET a = NEW.a WHERE a = OLD.a;
+CREATE VIEW v2 WITH (security_barrier = true) AS
+  SELECT * FROM v1 WHERE EXISTS (SELECT 1);
+--dg-cascade
+--dg EXPLAIN (COSTS OFF) UPDATE v2 SET a = 1;
+DROP VIEW v2;
+DROP VIEW v1;
+--dg-cascade
+--dg DROP TABLE t1;
+--
+-- Test CREATE OR REPLACE VIEW turning a non-updatable view into an
+-- auto-updatable view and adding check options in a single step
+--
+--dg-cascade
+--dg CREATE TABLE t1 (a int, b text);
+CREATE VIEW v1 AS SELECT null::int AS a;
+CREATE OR REPLACE VIEW v1 AS SELECT * FROM t1 WHERE a > 0 WITH CHECK OPTION;
+--dg-cascade
+--dg INSERT INTO v1 VALUES (1, 'ok'); -- ok
+--dg-cascade
+--dg INSERT INTO v1 VALUES (-1, 'invalid'); -- should fail
+DROP VIEW v1;
+--dg-cascade
+--dg DROP TABLE t1;
+-- check that an auto-updatable view on a partitioned table works correctly
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg create table uv_pt (a int, b int, v varchar) partition by range (a, b);
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg create table uv_pt1 (b int not null, v varchar, a int not null) partition by range (b);
+--dg-cascade
+--dg create table uv_pt11 (like uv_pt1);
+--dg-cascade
+--dg alter table uv_pt11 drop a;
+--dg-cascade
+--dg alter table uv_pt11 add a int;
+--dg-cascade
+--dg alter table uv_pt11 drop a;
+--dg-cascade
+--dg alter table uv_pt11 add a int not null;
+--dg-cascade
+--dg alter table uv_pt1 attach partition uv_pt11 for values from (2) to (5);
+--dg-cascade
+--dg alter table uv_pt attach partition uv_pt1 for values from (1, 2) to (1, 10);
+--dg-cascade
+--dg create view uv_ptv as select * from uv_pt;
+--dg-cascade
+--dg select events & 4 != 0 AS upd,
+--dg        events & 8 != 0 AS ins,
+--dg        events & 16 != 0 AS del
+--dg   from pg_catalog.pg_relation_is_updatable('uv_pt'::regclass, false) t(events);
+--dg-cascade
+--dg select pg_catalog.pg_column_is_updatable('uv_pt'::regclass, 1::smallint, false);
+--dg-cascade
+--dg select pg_catalog.pg_column_is_updatable('uv_pt'::regclass, 2::smallint, false);
+--dg-cascade
+--dg select table_name, is_updatable, is_insertable_into
+--dg   from information_schema.views where table_name = 'uv_ptv';
+--dg-cascade
+--dg select table_name, column_name, is_updatable
+--dg   from information_schema.columns where table_name = 'uv_ptv' order by column_name;
+--dg-cascade
+--dg insert into uv_ptv values (1, 2);
+--dg-cascade
+--dg select tableoid::regclass, * from uv_pt;
+--dg-cascade
+--dg create view uv_ptv_wco as select * from uv_pt where a = 0 with check option;
+--dg-cascade
+--dg insert into uv_ptv_wco values (1, 2);
+--dg-cascade
+--dg merge into uv_ptv t
+--dg   using (values (1,2), (1,4)) as v(a,b) on t.a = v.a -- fail: matches 2 src rows
+--dg   when matched then update set b = t.b + 1
+--dg   when not matched then insert values (v.a, v.b + 1);
+--dg-cascade
+--dg merge into uv_ptv t
+--dg   using (values (1,2), (1,4)) as v(a,b) on t.a = v.a and t.b = v.b
+--dg   when matched then update set b = t.b + 1
+--dg   when not matched then insert values (v.a, v.b + 1); -- fail: no partition for b=5
+--dg-cascade
+--dg merge into uv_ptv t
+--dg   using (values (1,2), (1,3)) as v(a,b) on t.a = v.a and t.b = v.b
+--dg   when matched then update set b = t.b + 1
+--dg   when not matched then insert values (v.a, v.b + 1); -- ok
+--dg-cascade
+--dg select tableoid::regclass, * from uv_pt order by a, b;
+--dg-cascade
+--dg drop view uv_ptv, uv_ptv_wco;
+--dg-cascade
+--dg drop table uv_pt, uv_pt1, uv_pt11;
+-- check that wholerow vars appearing in WITH CHECK OPTION constraint expressions
+-- work fine with partitioned tables
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg create table wcowrtest (a int) partition by list (a);
+--dg-cascade
+--dg create table wcowrtest1 partition of wcowrtest for values in (1);
+--dg-cascade
+--dg create view wcowrtest_v as select * from wcowrtest where wcowrtest = '(2)'::wcowrtest with check option;
+--dg-cascade
+--dg insert into wcowrtest_v values (1);
+--dg-cascade
+--dg alter table wcowrtest add b text;
+create table wcowrtest2 (b text, c int, a int);
+alter table wcowrtest2 drop c;
+--dg-cascade
+--dg alter table wcowrtest attach partition wcowrtest2 for values in (2);
+create table sometable (a int, b text);
+insert into sometable values (1, 'a'), (2, 'b');
+--dg-cascade
+--dg create view wcowrtest_v2 as
+--dg     select *
+--dg       from wcowrtest r
+--dg       where r in (select s from sometable s where r.a = s.a)
+--dg with check option;
+-- WITH CHECK qual will be processed with wcowrtest2's
+-- rowtype after tuple-routing
+--dg-cascade
+--dg insert into wcowrtest_v2 values (2, 'no such row in sometable');
+--dg-cascade
+--dg drop view wcowrtest_v, wcowrtest_v2;
+--dg-cascade
+--dg drop table wcowrtest, sometable;
+-- Check INSERT .. ON CONFLICT DO UPDATE works correctly when the view's
+-- columns are named and ordered differently than the underlying table's.
+create table uv_iocu_tab (a text unique, b float);
+insert into uv_iocu_tab values ('xyxyxy', 0);
+create view uv_iocu_view as
+   select b, b+1 as c, a, '2.0'::text as two from uv_iocu_tab;
+insert into uv_iocu_view (a, b) values ('xyxyxy', 1)
+   on conflict (a) do update set b = uv_iocu_view.b;
+select * from uv_iocu_tab;
+   a    | b 
+--------+---
+ xyxyxy | 0
+(1 row)
+
+insert into uv_iocu_view (a, b) values ('xyxyxy', 1)
+   on conflict (a) do update set b = excluded.b;
+select * from uv_iocu_tab;
+   a    | b 
+--------+---
+ xyxyxy | 1
+(1 row)
+
+-- OK to access view columns that are not present in underlying base
+-- relation in the ON CONFLICT portion of the query
+insert into uv_iocu_view (a, b) values ('xyxyxy', 3)
+   on conflict (a) do update set b = cast(excluded.two as float);
+select * from uv_iocu_tab;
+   a    | b 
+--------+---
+ xyxyxy | 2
+(1 row)
+
+explain (costs off)
+insert into uv_iocu_view (a, b) values ('xyxyxy', 3)
+   on conflict (a) do update set b = excluded.b where excluded.c > 0;
+                                    QUERY PLAN                                     
+-----------------------------------------------------------------------------------
+ Insert on uv_iocu_tab
+   Conflict Resolution: UPDATE
+   Conflict Arbiter Indexes: uv_iocu_tab_a_key
+   Conflict Filter: ((excluded.b + '1'::double precision) > '0'::double precision)
+   ->  Result
+(5 rows)
+
+insert into uv_iocu_view (a, b) values ('xyxyxy', 3)
+   on conflict (a) do update set b = excluded.b where excluded.c > 0;
+select * from uv_iocu_tab;
+   a    | b 
+--------+---
+ xyxyxy | 3
+(1 row)
+
+drop view uv_iocu_view;
+drop table uv_iocu_tab;
+-- Test whole-row references to the view
+create table uv_iocu_tab (a int unique, b text);
+--dg-skip: relation "?" does not have a composite type
+--dg create view uv_iocu_view as
+--dg     select b as bb, a as aa, uv_iocu_tab::text as cc from uv_iocu_tab;
+--dg-cascade
+--dg insert into uv_iocu_view (aa,bb) values (1,'x');
+--dg-cascade
+--dg explain (costs off)
+--dg insert into uv_iocu_view (aa,bb) values (1,'y')
+--dg    on conflict (aa) do update set bb = 'Rejected: '||excluded.*
+--dg    where excluded.aa > 0
+--dg    and excluded.bb != ''
+--dg    and excluded.cc is not null;
+--dg-cascade
+--dg insert into uv_iocu_view (aa,bb) values (1,'y')
+--dg    on conflict (aa) do update set bb = 'Rejected: '||excluded.*
+--dg    where excluded.aa > 0
+--dg    and excluded.bb != ''
+--dg    and excluded.cc is not null;
+--dg-cascade
+--dg select * from uv_iocu_view;
+-- Test omitting a column of the base relation
+--dg-cascade
+--dg delete from uv_iocu_view;
+--dg-cascade
+--dg insert into uv_iocu_view (aa,bb) values (1,'x');
+--dg-cascade
+--dg insert into uv_iocu_view (aa) values (1)
+--dg    on conflict (aa) do update set bb = 'Rejected: '||excluded.*;
+--dg-cascade
+--dg select * from uv_iocu_view;
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg alter table uv_iocu_tab alter column b set default 'table default';
+--dg-cascade
+--dg insert into uv_iocu_view (aa) values (1)
+--dg    on conflict (aa) do update set bb = 'Rejected: '||excluded.*;
+--dg-cascade
+--dg select * from uv_iocu_view;
+--dg-cascade
+--dg alter view uv_iocu_view alter column bb set default 'view default';
+--dg-cascade
+--dg insert into uv_iocu_view (aa) values (1)
+--dg    on conflict (aa) do update set bb = 'Rejected: '||excluded.*;
+--dg-cascade
+--dg select * from uv_iocu_view;
+-- Should fail to update non-updatable columns
+--dg-cascade
+--dg insert into uv_iocu_view (aa) values (1)
+--dg    on conflict (aa) do update set cc = 'XXX';
+--dg-cascade
+--dg drop view uv_iocu_view;
+drop table uv_iocu_tab;
+-- ON CONFLICT DO UPDATE permissions checks
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg create user regress_view_user1;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg create user regress_view_user2;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg set session authorization regress_view_user1;
+--dg-cascade
+--dg create table base_tbl(a int unique, b text, c float);
+--dg-cascade
+--dg insert into base_tbl values (1,'xxx',1.0);
+--dg-cascade
+--dg create view rw_view1 as select b as bb, c as cc, a as aa from base_tbl;
+--dg-cascade
+--dg grant select (aa,bb) on rw_view1 to regress_view_user2;
+--dg-cascade
+--dg grant insert on rw_view1 to regress_view_user2;
+--dg-cascade
+--dg grant update (bb) on rw_view1 to regress_view_user2;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg set session authorization regress_view_user2;
+--dg-cascade
+--dg insert into rw_view1 values ('yyy',2.0,1)
+--dg   on conflict (aa) do update set bb = excluded.cc; -- Not allowed
+--dg-cascade
+--dg insert into rw_view1 values ('yyy',2.0,1)
+--dg   on conflict (aa) do update set bb = rw_view1.cc; -- Not allowed
+--dg-cascade
+--dg insert into rw_view1 values ('yyy',2.0,1)
+--dg   on conflict (aa) do update set bb = excluded.bb; -- OK
+--dg-cascade
+--dg insert into rw_view1 values ('zzz',2.0,1)
+--dg   on conflict (aa) do update set bb = rw_view1.bb||'xxx'; -- OK
+--dg-cascade
+--dg insert into rw_view1 values ('zzz',2.0,1)
+--dg   on conflict (aa) do update set cc = 3.0; -- Not allowed
+reset session authorization;
+--dg-cascade
+--dg select * from base_tbl;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg set session authorization regress_view_user1;
+--dg-cascade
+--dg grant select (a,b) on base_tbl to regress_view_user2;
+--dg-cascade
+--dg grant insert (a,b) on base_tbl to regress_view_user2;
+--dg-cascade
+--dg grant update (a,b) on base_tbl to regress_view_user2;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg set session authorization regress_view_user2;
+--dg-cascade
+--dg create view rw_view2 as select b as bb, c as cc, a as aa from base_tbl;
+--dg-cascade
+--dg insert into rw_view2 (aa,bb) values (1,'xxx')
+--dg   on conflict (aa) do update set bb = excluded.bb; -- Not allowed
+--dg-cascade
+--dg create view rw_view3 as select b as bb, a as aa from base_tbl;
+--dg-cascade
+--dg insert into rw_view3 (aa,bb) values (1,'xxx')
+--dg   on conflict (aa) do update set bb = excluded.bb; -- OK
+reset session authorization;
+--dg-cascade
+--dg select * from base_tbl;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg set session authorization regress_view_user2;
+--dg-cascade
+--dg create view rw_view4 as select aa, bb, cc FROM rw_view1;
+--dg-cascade
+--dg insert into rw_view4 (aa,bb) values (1,'yyy')
+--dg   on conflict (aa) do update set bb = excluded.bb; -- Not allowed
+--dg-cascade
+--dg create view rw_view5 as select aa, bb FROM rw_view1;
+--dg-cascade
+--dg insert into rw_view5 (aa,bb) values (1,'yyy')
+--dg   on conflict (aa) do update set bb = excluded.bb; -- OK
+reset session authorization;
+--dg-cascade
+--dg select * from base_tbl;
+--dg-cascade
+--dg drop view rw_view5;
+--dg-cascade
+--dg drop view rw_view4;
+--dg-cascade
+--dg drop view rw_view3;
+--dg-cascade
+--dg drop view rw_view2;
+--dg-cascade
+--dg drop view rw_view1;
+--dg-cascade
+--dg drop table base_tbl;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg drop user regress_view_user1;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg drop user regress_view_user2;
+-- Test single- and multi-row inserts with table and view defaults.
+-- Table defaults should be used, unless overridden by view defaults.
+create table base_tab_def (a int, b text default 'Table default',
+                           c text default 'Table default', d text, e text);
+create view base_tab_def_view as select * from base_tab_def;
+--dg-skip: ALTER VIEW supports only SET and RESET of options, and RENAME yet
+--dg alter view base_tab_def_view alter b set default 'View default';
+--dg-skip: ALTER VIEW supports only SET and RESET of options, and RENAME yet
+--dg alter view base_tab_def_view alter d set default 'View default';
+insert into base_tab_def values (1);
+insert into base_tab_def values (2), (3);
+insert into base_tab_def values (4, default, default, default, default);
+insert into base_tab_def values (5, default, default, default, default),
+                                (6, default, default, default, default);
+insert into base_tab_def_view values (11);
+insert into base_tab_def_view values (12), (13);
+insert into base_tab_def_view values (14, default, default, default, default);
+insert into base_tab_def_view values (15, default, default, default, default),
+                                     (16, default, default, default, default);
+insert into base_tab_def_view values (17), (default);
+--dg-cascade
+--dg select * from base_tab_def order by a;
+-- Adding an INSTEAD OF trigger should cause NULLs to be inserted instead of
+-- table defaults, where there are no view defaults.
+--dg-skip: language "?" does not exist
+--dg create function base_tab_def_view_instrig_func() returns trigger
+--dg as
+--dg $$
+--dg begin
+--dg   insert into base_tab_def values (new.a, new.b, new.c, new.d, new.e);
+--dg   return new;
+--dg end;
+--dg $$
+--dg language plpgsql;
+--dg-cascade
+--dg create trigger base_tab_def_view_instrig instead of insert on base_tab_def_view
+--dg   for each row execute function base_tab_def_view_instrig_func();
+truncate base_tab_def;
+insert into base_tab_def values (1);
+insert into base_tab_def values (2), (3);
+insert into base_tab_def values (4, default, default, default, default);
+insert into base_tab_def values (5, default, default, default, default),
+                                (6, default, default, default, default);
+insert into base_tab_def_view values (11);
+insert into base_tab_def_view values (12), (13);
+insert into base_tab_def_view values (14, default, default, default, default);
+insert into base_tab_def_view values (15, default, default, default, default),
+                                     (16, default, default, default, default);
+insert into base_tab_def_view values (17), (default);
+--dg-cascade
+--dg select * from base_tab_def order by a;
+-- Using an unconditional DO INSTEAD rule should also cause NULLs to be
+-- inserted where there are no view defaults.
+--dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg drop trigger base_tab_def_view_instrig on base_tab_def_view;
+--dg-cascade
+--dg drop function base_tab_def_view_instrig_func;
+--dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg create rule base_tab_def_view_ins_rule as on insert to base_tab_def_view
+--dg   do instead insert into base_tab_def values (new.a, new.b, new.c, new.d, new.e);
+truncate base_tab_def;
+insert into base_tab_def values (1);
+insert into base_tab_def values (2), (3);
+insert into base_tab_def values (4, default, default, default, default);
+insert into base_tab_def values (5, default, default, default, default),
+                                (6, default, default, default, default);
+insert into base_tab_def_view values (11);
+insert into base_tab_def_view values (12), (13);
+insert into base_tab_def_view values (14, default, default, default, default);
+insert into base_tab_def_view values (15, default, default, default, default),
+                                     (16, default, default, default, default);
+insert into base_tab_def_view values (17), (default);
+--dg-cascade
+--dg select * from base_tab_def order by a;
+-- A DO ALSO rule should cause each row to be inserted twice. The first
+-- insert should behave the same as an auto-updatable view (using table
+-- defaults, unless overridden by view defaults). The second insert should
+-- behave the same as a rule-updatable view (inserting NULLs where there are
+-- no view defaults).
+--dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg drop rule base_tab_def_view_ins_rule on base_tab_def_view;
+--dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg create rule base_tab_def_view_ins_rule as on insert to base_tab_def_view
+--dg   do also insert into base_tab_def values (new.a, new.b, new.c, new.d, new.e);
+truncate base_tab_def;
+insert into base_tab_def values (1);
+insert into base_tab_def values (2), (3);
+insert into base_tab_def values (4, default, default, default, default);
+insert into base_tab_def values (5, default, default, default, default),
+                                (6, default, default, default, default);
+insert into base_tab_def_view values (11);
+insert into base_tab_def_view values (12), (13);
+insert into base_tab_def_view values (14, default, default, default, default);
+insert into base_tab_def_view values (15, default, default, default, default),
+                                     (16, default, default, default, default);
+insert into base_tab_def_view values (17), (default);
+--dg-cascade
+--dg select * from base_tab_def order by a, c NULLS LAST;
+-- Test a DO ALSO INSERT ... SELECT rule
+--dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg drop rule base_tab_def_view_ins_rule on base_tab_def_view;
+--dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg create rule base_tab_def_view_ins_rule as on insert to base_tab_def_view
+--dg   do also insert into base_tab_def (a, b, e) select new.a, new.b, 'xxx';
+truncate base_tab_def;
+insert into base_tab_def_view values (1, default, default, default, default);
+insert into base_tab_def_view values (2, default, default, default, default),
+                                     (3, default, default, default, default);
+--dg-cascade
+--dg select * from base_tab_def order by a, e nulls first;
+drop view base_tab_def_view;
+drop table base_tab_def;
+-- Test defaults with array assignments
+--dg-skip: type ? is not supported yet
+--dg create table base_tab (a serial, b int[], c text, d text default 'Table default');
+--dg-cascade
+--dg create view base_tab_view as select c, a, b from base_tab;
+--dg-cascade
+--dg alter view base_tab_view alter column c set default 'View default';
+--dg-cascade
+--dg insert into base_tab_view (b[1], b[2], c, b[5], b[4], a, b[3])
+--dg values (1, 2, default, 5, 4, default, 3), (10, 11, 'C value', 14, 13, 100, 12);
+--dg-cascade
+--dg select * from base_tab order by a;
+--dg-cascade
+--dg drop view base_tab_view;
+--dg-cascade
+--dg drop table base_tab;

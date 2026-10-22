@@ -1,0 +1,1063 @@
+--
+-- CREATE_TABLE
+--
+
+-- Error cases
+--dg-differs: another error: type ? is not supported yet
+--dg CREATE TABLE unknowntab (
+--dg 	u unknown    -- fail
+--dg );
+
+CREATE TYPE unknown_comptype AS (
+	u unknown    -- fail
+);
+
+-- invalid: non-lowercase quoted reloptions identifiers
+--dg-differs: another error: storage parameter "?" is not supported
+--dg CREATE TABLE tas_case WITH ("Fillfactor" = 10) AS SELECT 1 a;
+
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE UNLOGGED TABLE unlogged1 (a int primary key);			-- OK
+CREATE TEMPORARY TABLE unlogged2 (a int primary key);			-- OK
+--dg-cascade
+--dg SELECT relname, relkind, relpersistence FROM pg_class WHERE relname ~ '^unlogged\d' ORDER BY relname;
+--dg-cascade
+--dg REINDEX INDEX unlogged1_pkey;
+--dg-differs: the result
+--dg REINDEX INDEX unlogged2_pkey;
+--dg-cascade
+--dg SELECT relname, relkind, relpersistence FROM pg_class WHERE relname ~ '^unlogged\d' ORDER BY relname;
+DROP TABLE unlogged2;
+--dg-cascade
+--dg INSERT INTO unlogged1 VALUES (42);
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE UNLOGGED TABLE public.unlogged2 (a int primary key);		-- also OK
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE UNLOGGED TABLE pg_temp.unlogged3 (a int primary key);	-- not OK
+CREATE TABLE pg_temp.implicitly_temp (a int primary key);		-- OK
+CREATE TEMP TABLE explicitly_temp (a int primary key);			-- also OK
+CREATE TEMP TABLE pg_temp.doubly_temp (a int primary key);		-- also OK
+CREATE TEMP TABLE public.temp_to_perm (a int primary key);		-- not OK
+--dg-cascade
+--dg DROP TABLE unlogged1, public.unlogged2;
+
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE UNLOGGED TABLE unlogged1 (a int) PARTITION BY RANGE (a); -- fail
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE unlogged1 (a int) PARTITION BY RANGE (a); -- ok
+--dg-cascade
+--dg ALTER TABLE unlogged1 SET LOGGED; -- fails
+--dg-cascade
+--dg ALTER TABLE unlogged1 SET UNLOGGED; -- fails
+--dg-cascade
+--dg DROP TABLE unlogged1;
+
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE as_select1 AS SELECT * FROM pg_class WHERE relkind = 'r';
+--dg-cascade
+--dg CREATE TABLE as_select1 AS SELECT * FROM pg_class WHERE relkind = 'r';
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE IF NOT EXISTS as_select1 AS SELECT * FROM pg_class WHERE relkind = 'r';
+--dg-cascade
+--dg DROP TABLE as_select1;
+
+PREPARE select1 AS SELECT 1 as a;
+CREATE TABLE as_select1 AS EXECUTE select1;
+CREATE TABLE as_select1 AS EXECUTE select1;
+SELECT * FROM as_select1;
+CREATE TABLE IF NOT EXISTS as_select1 AS EXECUTE select1;
+DROP TABLE as_select1;
+DEALLOCATE select1;
+
+-- create an extra wide table to test for issues related to that
+-- (temporarily hide query, to avoid the long CREATE TABLE stmt)
+\set ECHO none
+SELECT 'CREATE TABLE extra_wide_table(firstc text, '|| array_to_string(array_agg('c'||i||' bool'),',')||', lastc text);'
+FROM generate_series(1, 1100) g(i)
+\gexec
+\set ECHO all
+INSERT INTO extra_wide_table(firstc, lastc) VALUES('first col', 'last col');
+SELECT firstc, lastc FROM extra_wide_table;
+
+-- check that tables with oids cannot be created anymore
+CREATE TABLE withoid() WITH OIDS;
+--dg-differs: another error: storage parameter "?" is not supported
+--dg CREATE TABLE withoid() WITH (oids);
+--dg-differs: another error: storage parameter "?" is not supported
+--dg CREATE TABLE withoid() WITH (oids = true);
+
+-- but explicitly not adding oids is still supported
+CREATE TEMP TABLE withoutoid() WITHOUT OIDS; DROP TABLE withoutoid;
+--dg-skip: storage parameter "?" is not supported
+--dg CREATE TEMP TABLE withoutoid() WITH (oids = false);
+ 
+--dg-cascade
+--dg DROP TABLE withoutoid;
+
+-- temporary tables are ignored by pg_filenode_relation().
+CREATE TEMP TABLE relation_filenode_check(c1 int);
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg SELECT relpersistence,
+--dg   pg_filenode_relation (reltablespace, pg_relation_filenode(oid))
+--dg   FROM pg_class
+--dg   WHERE relname = 'relation_filenode_check';
+DROP TABLE relation_filenode_check;
+
+-- check restriction with default expressions
+-- invalid use of column reference in default expressions
+--dg-differs: another error: cannot use column reference in DEFAULT expression
+--dg CREATE TABLE default_expr_column (id int DEFAULT (id));
+--dg-differs: another error: cannot use column reference in DEFAULT expression
+--dg CREATE TABLE default_expr_column (id int DEFAULT (bar.id));
+--dg-differs: another error: cannot use column reference in DEFAULT expression
+--dg CREATE TABLE default_expr_agg_column (id int DEFAULT (avg(id)));
+-- invalid column definition
+--dg-differs: another error: cannot use column reference in DEFAULT expression
+--dg CREATE TABLE default_expr_non_column (a int DEFAULT (avg(non_existent)));
+-- invalid use of aggregate
+--dg-differs: another error: aggregate functions are not allowed in DEFAULT expressions
+--dg CREATE TABLE default_expr_agg (a int DEFAULT (avg(1)));
+-- invalid use of subquery
+--dg-differs: another error: cannot use subquery in DEFAULT expression
+--dg CREATE TABLE default_expr_agg (a int DEFAULT (select 1));
+-- invalid use of set-returning function
+--dg-differs: another error: set-returning functions are not allowed in DEFAULT expressions
+--dg CREATE TABLE default_expr_agg (a int DEFAULT (generate_series(1,3)));
+
+-- Verify that subtransaction rollback restores rd_createSubid.
+BEGIN;
+CREATE TABLE remember_create_subid (c int);
+SAVEPOINT q; DROP TABLE remember_create_subid; ROLLBACK TO q;
+COMMIT;
+DROP TABLE remember_create_subid;
+
+-- Verify that subtransaction rollback restores rd_firstRelfilenodeSubid.
+CREATE TABLE remember_node_subid (c int);
+BEGIN;
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg ALTER TABLE remember_node_subid ALTER c TYPE bigint;
+SAVEPOINT q; DROP TABLE remember_node_subid; ROLLBACK TO q;
+COMMIT;
+DROP TABLE remember_node_subid;
+
+-- generated NOT NULL constraint names must not collide with explicitly named constraints
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE two_not_null_constraints (
+--dg    col integer NOT NULL,
+--dg    CONSTRAINT two_not_null_constraints_col_not_null CHECK (col IS NOT NULL)
+--dg );
+--dg-cascade
+--dg DROP TABLE two_not_null_constraints;
+
+--
+-- Partitioned tables
+--
+
+-- cannot combine INHERITS and PARTITION BY (although grammar allows)
+CREATE TABLE partitioned (
+	a int
+) INHERITS (some_table) PARTITION BY LIST (a);
+
+-- cannot use more than 1 column as partition key for list partitioned table
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE partitioned (
+--dg 	a1 int,
+--dg 	a2 int
+--dg ) PARTITION BY LIST (a1, a2);	-- fail
+
+-- prevent using prohibited expressions in the key
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION retset (a int) RETURNS SETOF int AS $$ SELECT 1; $$ LANGUAGE SQL IMMUTABLE;
+--dg-cascade
+--dg CREATE TABLE partitioned (
+--dg 	a int
+--dg ) PARTITION BY RANGE (retset(a));
+--dg-cascade
+--dg DROP FUNCTION retset(int);
+
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE partitioned (
+--dg 	a int
+--dg ) PARTITION BY RANGE ((avg(a)));
+
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE partitioned (
+--dg 	a int,
+--dg 	b int
+--dg ) PARTITION BY RANGE ((avg(a) OVER (PARTITION BY b)));
+
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE partitioned (
+--dg 	a int
+--dg ) PARTITION BY LIST ((a LIKE (SELECT 1)));
+
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE partitioned (
+--dg 	a int
+--dg ) PARTITION BY RANGE ((42));
+
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION const_func () RETURNS int AS $$ SELECT 1; $$ LANGUAGE SQL IMMUTABLE;
+--dg-cascade
+--dg CREATE TABLE partitioned (
+--dg 	a int
+--dg ) PARTITION BY RANGE (const_func());
+--dg-cascade
+--dg DROP FUNCTION const_func();
+
+-- only accept valid partitioning strategy
+CREATE TABLE partitioned (
+    a int
+) PARTITION BY MAGIC (a);
+
+-- specified column must be present in the table
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE partitioned (
+--dg 	a int
+--dg ) PARTITION BY RANGE (b);
+
+-- cannot use system columns in partition key
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE partitioned (
+--dg 	a int
+--dg ) PARTITION BY RANGE (xmin);
+
+-- cannot use pseudotypes
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE partitioned (
+--dg 	a int,
+--dg 	b int
+--dg ) PARTITION BY RANGE (((a, b)));
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE partitioned (
+--dg 	a int,
+--dg 	b int
+--dg ) PARTITION BY RANGE (a, ('unknown'));
+
+-- functions in key must be immutable
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION immut_func (a int) RETURNS int AS $$ SELECT a + random()::int; $$ LANGUAGE SQL;
+--dg-cascade
+--dg CREATE TABLE partitioned (
+--dg 	a int
+--dg ) PARTITION BY RANGE (immut_func(a));
+--dg-cascade
+--dg DROP FUNCTION immut_func(int);
+
+-- prevent using columns of unsupported types in key (type must have a btree operator class)
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE partitioned (
+--dg 	a point
+--dg ) PARTITION BY LIST (a);
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE partitioned (
+--dg 	a point
+--dg ) PARTITION BY LIST (a point_ops);
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE partitioned (
+--dg 	a point
+--dg ) PARTITION BY RANGE (a);
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE partitioned (
+--dg 	a point
+--dg ) PARTITION BY RANGE (a point_ops);
+
+-- cannot add NO INHERIT constraints to partitioned tables
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE partitioned (
+--dg 	a int,
+--dg 	CONSTRAINT check_a CHECK (a > 0) NO INHERIT
+--dg ) PARTITION BY RANGE (a);
+
+-- some checks after successful creation of a partitioned table
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION plusone(a int) RETURNS INT AS $$ SELECT a+1; $$ LANGUAGE SQL;
+
+--dg-cascade
+--dg CREATE TABLE partitioned (
+--dg 	a int,
+--dg 	b int,
+--dg 	c text,
+--dg 	d text
+--dg ) PARTITION BY RANGE (a oid_ops, plusone(b), c collate "default", d collate "C");
+
+-- check relkind
+--dg-cascade
+--dg SELECT relkind FROM pg_class WHERE relname = 'partitioned';
+
+-- prevent a function referenced in partition key from being dropped
+--dg-cascade
+--dg DROP FUNCTION plusone(int);
+
+-- partitioned table cannot participate in regular inheritance
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE partitioned2 (
+--dg 	a int,
+--dg 	b text
+--dg ) PARTITION BY RANGE ((a+1), substr(b, 1, 5));
+--dg-cascade
+--dg CREATE TABLE fail () INHERITS (partitioned2);
+
+-- Partition key in describe output
+--dg-cascade
+--dg \d partitioned
+--dg-cascade
+--dg \d+ partitioned2
+
+--dg-cascade
+--dg INSERT INTO partitioned2 VALUES (1, 'hello');
+--dg-cascade
+--dg CREATE TABLE part2_1 PARTITION OF partitioned2 FOR VALUES FROM (-1, 'aaaaa') TO (100, 'ccccc');
+--dg-cascade
+--dg \d+ part2_1
+
+--dg-cascade
+--dg DROP TABLE partitioned, partitioned2;
+
+-- check reference to partitioned table's rowtype in partition descriptor
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg create table partitioned (a int, b int)
+--dg   partition by list ((row(a, b)::partitioned));
+--dg-cascade
+--dg create table partitioned1
+--dg   partition of partitioned for values in ('(1,2)'::partitioned);
+--dg-cascade
+--dg create table partitioned2
+--dg   partition of partitioned for values in ('(2,4)'::partitioned);
+--dg-cascade
+--dg explain (costs off)
+--dg select * from partitioned where row(a,b)::partitioned = '(1,2)'::partitioned;
+--dg-cascade
+--dg drop table partitioned;
+
+-- whole-row Var in partition key works too
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg create table partitioned (a int, b int)
+--dg   partition by list ((partitioned));
+--dg-cascade
+--dg create table partitioned1
+--dg   partition of partitioned for values in ('(1,2)');
+--dg-cascade
+--dg create table partitioned2
+--dg   partition of partitioned for values in ('(2,4)');
+--dg-cascade
+--dg explain (costs off)
+--dg select * from partitioned where partitioned = '(1,2)'::partitioned;
+--dg-cascade
+--dg \d+ partitioned1
+--dg-cascade
+--dg drop table partitioned;
+
+-- check that dependencies of partition columns are handled correctly
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg create domain intdom1 as int;
+
+--dg-cascade
+--dg create table partitioned (
+--dg 	a intdom1,
+--dg 	b text
+--dg ) partition by range (a);
+
+--dg-cascade
+--dg alter table partitioned drop column a;  -- fail
+
+--dg-cascade
+--dg drop domain intdom1;  -- fail, requires cascade
+
+--dg-cascade
+--dg drop domain intdom1 cascade;
+
+table partitioned;  -- gone
+
+-- likewise for columns used in partition expressions
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg create domain intdom1 as int;
+
+--dg-cascade
+--dg create table partitioned (
+--dg 	a intdom1,
+--dg 	b text
+--dg ) partition by range (plusone(a));
+
+--dg-cascade
+--dg alter table partitioned drop column a;  -- fail
+
+--dg-cascade
+--dg drop domain intdom1;  -- fail, requires cascade
+
+--dg-cascade
+--dg drop domain intdom1 cascade;
+
+table partitioned;  -- gone
+
+
+--
+-- Partitions
+--
+
+-- check partition bound syntax
+
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE list_parted (
+--dg 	a int
+--dg ) PARTITION BY LIST (a);
+--dg-cascade
+--dg CREATE TABLE part_p1 PARTITION OF list_parted FOR VALUES IN ('1');
+--dg-cascade
+--dg CREATE TABLE part_p2 PARTITION OF list_parted FOR VALUES IN (2);
+--dg-cascade
+--dg CREATE TABLE part_p3 PARTITION OF list_parted FOR VALUES IN ((2+1));
+--dg-cascade
+--dg CREATE TABLE part_null PARTITION OF list_parted FOR VALUES IN (null);
+--dg-cascade
+--dg \d+ list_parted
+
+-- forbidden expressions for partition bound with list partitioned table
+--dg-cascade
+--dg CREATE TABLE part_bogus_expr_fail PARTITION OF list_parted FOR VALUES IN (somename);
+--dg-cascade
+--dg CREATE TABLE part_bogus_expr_fail PARTITION OF list_parted FOR VALUES IN (somename.somename);
+--dg-cascade
+--dg CREATE TABLE part_bogus_expr_fail PARTITION OF list_parted FOR VALUES IN (a);
+--dg-cascade
+--dg CREATE TABLE part_bogus_expr_fail PARTITION OF list_parted FOR VALUES IN (sum(a));
+--dg-cascade
+--dg CREATE TABLE part_bogus_expr_fail PARTITION OF list_parted FOR VALUES IN (sum(somename));
+--dg-cascade
+--dg CREATE TABLE part_bogus_expr_fail PARTITION OF list_parted FOR VALUES IN (sum(1));
+--dg-cascade
+--dg CREATE TABLE part_bogus_expr_fail PARTITION OF list_parted FOR VALUES IN ((select 1));
+--dg-cascade
+--dg CREATE TABLE part_bogus_expr_fail PARTITION OF list_parted FOR VALUES IN (generate_series(4, 6));
+--dg-cascade
+--dg CREATE TABLE part_bogus_expr_fail PARTITION OF list_parted FOR VALUES IN ((1+1) collate "POSIX");
+
+-- syntax does not allow empty list of values for list partitions
+CREATE TABLE fail_part PARTITION OF list_parted FOR VALUES IN ();
+-- trying to specify range for list partitioned table
+--dg-cascade
+--dg CREATE TABLE fail_part PARTITION OF list_parted FOR VALUES FROM (1) TO (2);
+-- trying to specify modulus and remainder for list partitioned table
+--dg-cascade
+--dg CREATE TABLE fail_part PARTITION OF list_parted FOR VALUES WITH (MODULUS 10, REMAINDER 1);
+
+-- check default partition cannot be created more than once
+--dg-cascade
+--dg CREATE TABLE part_default PARTITION OF list_parted DEFAULT;
+--dg-cascade
+--dg CREATE TABLE fail_default_part PARTITION OF list_parted DEFAULT;
+
+-- specified literal can't be cast to the partition column data type
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE bools (
+--dg 	a bool
+--dg ) PARTITION BY LIST (a);
+--dg-cascade
+--dg CREATE TABLE bools_true PARTITION OF bools FOR VALUES IN (1);
+--dg-cascade
+--dg DROP TABLE bools;
+
+-- specified literal can be cast, and the cast might not be immutable
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE moneyp (
+--dg 	a money
+--dg ) PARTITION BY LIST (a);
+--dg-cascade
+--dg CREATE TABLE moneyp_10 PARTITION OF moneyp FOR VALUES IN (10);
+--dg-cascade
+--dg CREATE TABLE moneyp_11 PARTITION OF moneyp FOR VALUES IN ('11');
+--dg-cascade
+--dg CREATE TABLE moneyp_12 PARTITION OF moneyp FOR VALUES IN (to_char(12, '99')::int);
+--dg-cascade
+--dg DROP TABLE moneyp;
+
+-- cast is immutable
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE bigintp (
+--dg 	a bigint
+--dg ) PARTITION BY LIST (a);
+--dg-cascade
+--dg CREATE TABLE bigintp_10 PARTITION OF bigintp FOR VALUES IN (10);
+-- fails due to overlap:
+--dg-cascade
+--dg CREATE TABLE bigintp_10_2 PARTITION OF bigintp FOR VALUES IN ('10');
+--dg-cascade
+--dg DROP TABLE bigintp;
+
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE range_parted (
+--dg 	a date
+--dg ) PARTITION BY RANGE (a);
+
+-- forbidden expressions for partition bounds with range partitioned table
+--dg-cascade
+--dg CREATE TABLE part_bogus_expr_fail PARTITION OF range_parted
+--dg   FOR VALUES FROM (somename) TO ('2019-01-01');
+--dg-cascade
+--dg CREATE TABLE part_bogus_expr_fail PARTITION OF range_parted
+--dg   FOR VALUES FROM (somename.somename) TO ('2019-01-01');
+--dg-cascade
+--dg CREATE TABLE part_bogus_expr_fail PARTITION OF range_parted
+--dg   FOR VALUES FROM (a) TO ('2019-01-01');
+--dg-cascade
+--dg CREATE TABLE part_bogus_expr_fail PARTITION OF range_parted
+--dg   FOR VALUES FROM (max(a)) TO ('2019-01-01');
+--dg-cascade
+--dg CREATE TABLE part_bogus_expr_fail PARTITION OF range_parted
+--dg   FOR VALUES FROM (max(somename)) TO ('2019-01-01');
+--dg-cascade
+--dg CREATE TABLE part_bogus_expr_fail PARTITION OF range_parted
+--dg   FOR VALUES FROM (max('2019-02-01'::date)) TO ('2019-01-01');
+--dg-cascade
+--dg CREATE TABLE part_bogus_expr_fail PARTITION OF range_parted
+--dg   FOR VALUES FROM ((select 1)) TO ('2019-01-01');
+--dg-cascade
+--dg CREATE TABLE part_bogus_expr_fail PARTITION OF range_parted
+--dg   FOR VALUES FROM (generate_series(1, 3)) TO ('2019-01-01');
+
+-- trying to specify list for range partitioned table
+--dg-cascade
+--dg CREATE TABLE fail_part PARTITION OF range_parted FOR VALUES IN ('a');
+-- trying to specify modulus and remainder for range partitioned table
+--dg-cascade
+--dg CREATE TABLE fail_part PARTITION OF range_parted FOR VALUES WITH (MODULUS 10, REMAINDER 1);
+-- each of start and end bounds must have same number of values as the
+-- length of the partition key
+--dg-cascade
+--dg CREATE TABLE fail_part PARTITION OF range_parted FOR VALUES FROM ('a', 1) TO ('z');
+--dg-cascade
+--dg CREATE TABLE fail_part PARTITION OF range_parted FOR VALUES FROM ('a') TO ('z', 1);
+
+-- cannot specify null values in range bounds
+--dg-cascade
+--dg CREATE TABLE fail_part PARTITION OF range_parted FOR VALUES FROM (null) TO (maxvalue);
+
+-- trying to specify modulus and remainder for range partitioned table
+--dg-cascade
+--dg CREATE TABLE fail_part PARTITION OF range_parted FOR VALUES WITH (MODULUS 10, REMAINDER 1);
+
+-- check partition bound syntax for the hash partition
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE hash_parted (
+--dg 	a int
+--dg ) PARTITION BY HASH (a);
+--dg-cascade
+--dg CREATE TABLE hpart_1 PARTITION OF hash_parted FOR VALUES WITH (MODULUS 10, REMAINDER 0);
+--dg-cascade
+--dg CREATE TABLE hpart_2 PARTITION OF hash_parted FOR VALUES WITH (MODULUS 50, REMAINDER 1);
+--dg-cascade
+--dg CREATE TABLE hpart_3 PARTITION OF hash_parted FOR VALUES WITH (MODULUS 200, REMAINDER 2);
+--dg-cascade
+--dg CREATE TABLE hpart_4 PARTITION OF hash_parted FOR VALUES WITH (MODULUS 10, REMAINDER 3);
+-- modulus 25 is factor of modulus of 50 but 10 is not a factor of 25.
+--dg-cascade
+--dg CREATE TABLE fail_part PARTITION OF hash_parted FOR VALUES WITH (MODULUS 25, REMAINDER 3);
+-- previous modulus 50 is factor of 150 but this modulus is not a factor of next modulus 200.
+--dg-cascade
+--dg CREATE TABLE fail_part PARTITION OF hash_parted FOR VALUES WITH (MODULUS 150, REMAINDER 3);
+-- overlapping remainders
+--dg-cascade
+--dg CREATE TABLE fail_part PARTITION OF hash_parted FOR VALUES WITH (MODULUS 100, REMAINDER 3);
+-- trying to specify range for the hash partitioned table
+--dg-cascade
+--dg CREATE TABLE fail_part PARTITION OF hash_parted FOR VALUES FROM ('a', 1) TO ('z');
+-- trying to specify list value for the hash partitioned table
+--dg-cascade
+--dg CREATE TABLE fail_part PARTITION OF hash_parted FOR VALUES IN (1000);
+
+-- trying to create default partition for the hash partitioned table
+--dg-cascade
+--dg CREATE TABLE fail_default_part PARTITION OF hash_parted DEFAULT;
+
+-- check if compatible with the specified parent
+
+-- cannot create as partition of a non-partitioned table
+CREATE TABLE unparted (
+	a int
+);
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE fail_part PARTITION OF unparted FOR VALUES IN ('a');
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE fail_part PARTITION OF unparted FOR VALUES WITH (MODULUS 2, REMAINDER 1);
+DROP TABLE unparted;
+
+-- cannot create a permanent rel as partition of a temp rel
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TEMP TABLE temp_parted (
+--dg 	a int
+--dg ) PARTITION BY LIST (a);
+--dg-cascade
+--dg CREATE TABLE fail_part PARTITION OF temp_parted FOR VALUES IN ('a');
+--dg-cascade
+--dg DROP TABLE temp_parted;
+
+-- check for partition bound overlap and other invalid specifications
+
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE list_parted2 (
+--dg 	a varchar
+--dg ) PARTITION BY LIST (a);
+--dg-cascade
+--dg CREATE TABLE part_null_z PARTITION OF list_parted2 FOR VALUES IN (null, 'z');
+--dg-cascade
+--dg CREATE TABLE part_ab PARTITION OF list_parted2 FOR VALUES IN ('a', 'b');
+--dg-cascade
+--dg CREATE TABLE list_parted2_def PARTITION OF list_parted2 DEFAULT;
+
+--dg-cascade
+--dg CREATE TABLE fail_part PARTITION OF list_parted2 FOR VALUES IN (null);
+--dg-cascade
+--dg CREATE TABLE fail_part PARTITION OF list_parted2 FOR VALUES IN ('b', 'c');
+-- check default partition overlap
+--dg-cascade
+--dg INSERT INTO list_parted2 VALUES('X');
+--dg-cascade
+--dg CREATE TABLE fail_part PARTITION OF list_parted2 FOR VALUES IN ('W', 'X', 'Y');
+
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE range_parted2 (
+--dg 	a int
+--dg ) PARTITION BY RANGE (a);
+
+-- trying to create range partition with empty range
+--dg-cascade
+--dg CREATE TABLE fail_part PARTITION OF range_parted2 FOR VALUES FROM (1) TO (0);
+-- note that the range '[1, 1)' has no elements
+--dg-cascade
+--dg CREATE TABLE fail_part PARTITION OF range_parted2 FOR VALUES FROM (1) TO (1);
+
+--dg-cascade
+--dg CREATE TABLE part0 PARTITION OF range_parted2 FOR VALUES FROM (minvalue) TO (1);
+--dg-cascade
+--dg CREATE TABLE fail_part PARTITION OF range_parted2 FOR VALUES FROM (minvalue) TO (2);
+--dg-cascade
+--dg CREATE TABLE part1 PARTITION OF range_parted2 FOR VALUES FROM (1) TO (10);
+--dg-cascade
+--dg CREATE TABLE fail_part PARTITION OF range_parted2 FOR VALUES FROM (-1) TO (1);
+--dg-cascade
+--dg CREATE TABLE fail_part PARTITION OF range_parted2 FOR VALUES FROM (9) TO (maxvalue);
+--dg-cascade
+--dg CREATE TABLE part2 PARTITION OF range_parted2 FOR VALUES FROM (20) TO (30);
+--dg-cascade
+--dg CREATE TABLE part3 PARTITION OF range_parted2 FOR VALUES FROM (30) TO (40);
+--dg-cascade
+--dg CREATE TABLE fail_part PARTITION OF range_parted2 FOR VALUES FROM (10) TO (30);
+--dg-cascade
+--dg CREATE TABLE fail_part PARTITION OF range_parted2 FOR VALUES FROM (10) TO (50);
+
+-- Create a default partition for range partitioned table
+--dg-cascade
+--dg CREATE TABLE range2_default PARTITION OF range_parted2 DEFAULT;
+
+-- More than one default partition is not allowed, so this should give error
+--dg-cascade
+--dg CREATE TABLE fail_default_part PARTITION OF range_parted2 DEFAULT;
+
+-- Check if the range for default partitions overlap
+--dg-cascade
+--dg INSERT INTO range_parted2 VALUES (85);
+--dg-cascade
+--dg CREATE TABLE fail_part PARTITION OF range_parted2 FOR VALUES FROM (80) TO (90);
+--dg-cascade
+--dg CREATE TABLE part4 PARTITION OF range_parted2 FOR VALUES FROM (90) TO (100);
+
+-- now check for multi-column range partition key
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE range_parted3 (
+--dg 	a int,
+--dg 	b int
+--dg ) PARTITION BY RANGE (a, (b+1));
+
+--dg-cascade
+--dg CREATE TABLE part00 PARTITION OF range_parted3 FOR VALUES FROM (0, minvalue) TO (0, maxvalue);
+--dg-cascade
+--dg CREATE TABLE fail_part PARTITION OF range_parted3 FOR VALUES FROM (0, minvalue) TO (0, 1);
+
+--dg-cascade
+--dg CREATE TABLE part10 PARTITION OF range_parted3 FOR VALUES FROM (1, minvalue) TO (1, 1);
+--dg-cascade
+--dg CREATE TABLE part11 PARTITION OF range_parted3 FOR VALUES FROM (1, 1) TO (1, 10);
+--dg-cascade
+--dg CREATE TABLE part12 PARTITION OF range_parted3 FOR VALUES FROM (1, 10) TO (1, maxvalue);
+--dg-cascade
+--dg CREATE TABLE fail_part PARTITION OF range_parted3 FOR VALUES FROM (1, 10) TO (1, 20);
+--dg-cascade
+--dg CREATE TABLE range3_default PARTITION OF range_parted3 DEFAULT;
+
+-- cannot create a partition that says column b is allowed to range
+-- from -infinity to +infinity, while there exist partitions that have
+-- more specific ranges
+--dg-cascade
+--dg CREATE TABLE fail_part PARTITION OF range_parted3 FOR VALUES FROM (1, minvalue) TO (1, maxvalue);
+
+-- check for partition bound overlap and other invalid specifications for the hash partition
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE hash_parted2 (
+--dg 	a varchar
+--dg ) PARTITION BY HASH (a);
+--dg-cascade
+--dg CREATE TABLE h2part_1 PARTITION OF hash_parted2 FOR VALUES WITH (MODULUS 4, REMAINDER 2);
+--dg-cascade
+--dg CREATE TABLE h2part_2 PARTITION OF hash_parted2 FOR VALUES WITH (MODULUS 8, REMAINDER 0);
+--dg-cascade
+--dg CREATE TABLE h2part_3 PARTITION OF hash_parted2 FOR VALUES WITH (MODULUS 8, REMAINDER 4);
+--dg-cascade
+--dg CREATE TABLE h2part_4 PARTITION OF hash_parted2 FOR VALUES WITH (MODULUS 8, REMAINDER 5);
+-- overlap with part_4
+--dg-cascade
+--dg CREATE TABLE fail_part PARTITION OF hash_parted2 FOR VALUES WITH (MODULUS 2, REMAINDER 1);
+-- modulus must be greater than zero
+--dg-cascade
+--dg CREATE TABLE fail_part PARTITION OF hash_parted2 FOR VALUES WITH (MODULUS 0, REMAINDER 1);
+-- remainder must be greater than or equal to zero and less than modulus
+--dg-cascade
+--dg CREATE TABLE fail_part PARTITION OF hash_parted2 FOR VALUES WITH (MODULUS 8, REMAINDER 8);
+
+-- check schema propagation from parent
+
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE parted (
+--dg 	a text,
+--dg 	b int NOT NULL DEFAULT 0,
+--dg 	CONSTRAINT check_a CHECK (length(a) > 0)
+--dg ) PARTITION BY LIST (a);
+
+--dg-cascade
+--dg CREATE TABLE part_a PARTITION OF parted FOR VALUES IN ('a');
+
+-- only inherited attributes (never local ones)
+--dg-cascade
+--dg SELECT attname, attislocal, attinhcount FROM pg_attribute
+--dg   WHERE attrelid = 'part_a'::regclass and attnum > 0
+--dg   ORDER BY attnum;
+
+-- able to specify column default, column constraint, and table constraint
+
+-- first check the "column specified more than once" error
+--dg-cascade
+--dg CREATE TABLE part_b PARTITION OF parted (
+--dg 	b NOT NULL,
+--dg 	b DEFAULT 1,
+--dg 	b CHECK (b >= 0),
+--dg 	CONSTRAINT check_a CHECK (length(a) > 0)
+--dg ) FOR VALUES IN ('b');
+
+--dg-cascade
+--dg CREATE TABLE part_b PARTITION OF parted (
+--dg 	b NOT NULL DEFAULT 1,
+--dg 	CONSTRAINT check_a CHECK (length(a) > 0),
+--dg 	CONSTRAINT check_b CHECK (b >= 0)
+--dg ) FOR VALUES IN ('b');
+-- conislocal should be false for any merged constraints, true otherwise
+--dg-cascade
+--dg SELECT conname, conislocal, coninhcount FROM pg_constraint WHERE conrelid = 'part_b'::regclass ORDER BY coninhcount DESC, conname;
+
+-- Once check_b is added to the parent, it should be made non-local for part_b
+--dg-cascade
+--dg ALTER TABLE parted ADD CONSTRAINT check_b CHECK (b >= 0);
+--dg-cascade
+--dg SELECT conname, conislocal, coninhcount FROM pg_constraint WHERE conrelid = 'part_b'::regclass ORDER BY coninhcount DESC, conname;
+
+-- Neither check_a nor check_b are droppable from part_b
+--dg-cascade
+--dg ALTER TABLE part_b DROP CONSTRAINT check_a;
+--dg-cascade
+--dg ALTER TABLE part_b DROP CONSTRAINT check_b;
+
+-- And dropping it from parted should leave no trace of them on part_b, unlike
+-- traditional inheritance where they will be left behind, because they would
+-- be local constraints.
+--dg-cascade
+--dg ALTER TABLE parted DROP CONSTRAINT check_a, DROP CONSTRAINT check_b;
+--dg-cascade
+--dg SELECT conname, conislocal, coninhcount FROM pg_constraint WHERE conrelid = 'part_b'::regclass ORDER BY coninhcount DESC, conname;
+
+-- specify PARTITION BY for a partition
+--dg-cascade
+--dg CREATE TABLE fail_part_col_not_found PARTITION OF parted FOR VALUES IN ('c') PARTITION BY RANGE (c);
+--dg-cascade
+--dg CREATE TABLE part_c PARTITION OF parted (b WITH OPTIONS NOT NULL DEFAULT 0) FOR VALUES IN ('c') PARTITION BY RANGE ((b));
+
+-- create a level-2 partition
+--dg-cascade
+--dg CREATE TABLE part_c_1_10 PARTITION OF part_c FOR VALUES FROM (1) TO (10);
+
+-- check that NOT NULL and default value are inherited correctly
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg create table parted_notnull_inh_test (a int default 1, b int not null default 0) partition by list (a);
+--dg-cascade
+--dg create table parted_notnull_inh_test1 partition of parted_notnull_inh_test (a not null, b default 1) for values in (1);
+--dg-cascade
+--dg insert into parted_notnull_inh_test (b) values (null);
+-- note that while b's default is overridden, a's default is preserved
+--dg-cascade
+--dg \d parted_notnull_inh_test1
+--dg-cascade
+--dg drop table parted_notnull_inh_test;
+
+-- check that collations are assigned in partition bound expressions
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg create table parted_boolean_col (a bool, b text) partition by list(a);
+--dg-cascade
+--dg create table parted_boolean_less partition of parted_boolean_col
+--dg   for values in ('foo' < 'bar');
+--dg-cascade
+--dg create table parted_boolean_greater partition of parted_boolean_col
+--dg   for values in ('foo' > 'bar');
+--dg-cascade
+--dg drop table parted_boolean_col;
+
+-- check for a conflicting COLLATE clause
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg create table parted_collate_must_match (a text collate "C", b text collate "C")
+--dg   partition by range (a);
+-- on the partition key
+--dg-cascade
+--dg create table parted_collate_must_match1 partition of parted_collate_must_match
+--dg   (a collate "POSIX") for values from ('a') to ('m');
+-- on another column
+--dg-cascade
+--dg create table parted_collate_must_match2 partition of parted_collate_must_match
+--dg   (b collate "POSIX") for values from ('m') to ('z');
+--dg-cascade
+--dg drop table parted_collate_must_match;
+
+-- check that non-matching collations for partition bound
+-- expressions are coerced to the right collation
+
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg create table test_part_coll_posix (a text) partition by range (a collate "POSIX");
+-- ok, collation is implicitly coerced
+--dg-cascade
+--dg create table test_part_coll partition of test_part_coll_posix for values from ('a' collate "C") to ('g');
+-- ok
+--dg-cascade
+--dg create table test_part_coll2 partition of test_part_coll_posix for values from ('g') to ('m');
+-- ok, collation is implicitly coerced
+--dg-cascade
+--dg create table test_part_coll_cast partition of test_part_coll_posix for values from (name 'm' collate "C") to ('s');
+-- ok; partition collation silently overrides the default collation of type 'name'
+--dg-cascade
+--dg create table test_part_coll_cast2 partition of test_part_coll_posix for values from (name 's') to ('z');
+
+--dg-cascade
+--dg drop table test_part_coll_posix;
+
+-- Partition bound in describe output
+--dg-cascade
+--dg \d+ part_b
+
+-- Both partition bound and partition key in describe output
+--dg-cascade
+--dg \d+ part_c
+
+-- a level-2 partition's constraint will include the parent's expressions
+--dg-cascade
+--dg \d+ part_c_1_10
+
+-- Show partition count in the parent's describe output
+-- Tempted to include \d+ output listing partitions with bound info but
+-- output could vary depending on the order in which partition oids are
+-- returned.
+--dg-cascade
+--dg \d parted
+--dg-cascade
+--dg \d hash_parted
+
+-- check that we get the expected partition constraints
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE range_parted4 (a int, b int, c int) PARTITION BY RANGE (abs(a), abs(b), c);
+--dg-cascade
+--dg CREATE TABLE unbounded_range_part PARTITION OF range_parted4 FOR VALUES FROM (MINVALUE, MINVALUE, MINVALUE) TO (MAXVALUE, MAXVALUE, MAXVALUE);
+--dg-cascade
+--dg \d+ unbounded_range_part
+--dg-cascade
+--dg DROP TABLE unbounded_range_part;
+--dg-cascade
+--dg CREATE TABLE range_parted4_1 PARTITION OF range_parted4 FOR VALUES FROM (MINVALUE, MINVALUE, MINVALUE) TO (1, MAXVALUE, MAXVALUE);
+--dg-cascade
+--dg \d+ range_parted4_1
+--dg-cascade
+--dg CREATE TABLE range_parted4_2 PARTITION OF range_parted4 FOR VALUES FROM (3, 4, 5) TO (6, 7, MAXVALUE);
+--dg-cascade
+--dg \d+ range_parted4_2
+--dg-cascade
+--dg CREATE TABLE range_parted4_3 PARTITION OF range_parted4 FOR VALUES FROM (6, 8, MINVALUE) TO (9, MAXVALUE, MAXVALUE);
+--dg-cascade
+--dg \d+ range_parted4_3
+--dg-cascade
+--dg DROP TABLE range_parted4;
+
+-- user-defined operator class in partition key
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION my_int4_sort(int4,int4) RETURNS int LANGUAGE sql
+--dg   AS $$ SELECT CASE WHEN $1 = $2 THEN 0 WHEN $1 > $2 THEN 1 ELSE -1 END; $$;
+--dg-skip: relation pg_opfamily cannot be opened: digres has no catalog tables
+--dg CREATE OPERATOR CLASS test_int4_ops FOR TYPE int4 USING btree AS
+--dg   OPERATOR 1 < (int4,int4), OPERATOR 2 <= (int4,int4),
+--dg   OPERATOR 3 = (int4,int4), OPERATOR 4 >= (int4,int4),
+--dg   OPERATOR 5 > (int4,int4), FUNCTION 1 my_int4_sort(int4,int4);
+--dg-cascade
+--dg CREATE TABLE partkey_t (a int4) PARTITION BY RANGE (a test_int4_ops);
+--dg-cascade
+--dg CREATE TABLE partkey_t_1 PARTITION OF partkey_t FOR VALUES FROM (0) TO (1000);
+--dg-cascade
+--dg INSERT INTO partkey_t VALUES (100);
+--dg-cascade
+--dg INSERT INTO partkey_t VALUES (200);
+
+-- cleanup
+--dg-cascade
+--dg DROP TABLE parted, list_parted, range_parted, list_parted2, range_parted2, range_parted3;
+--dg-cascade
+--dg DROP TABLE partkey_t, hash_parted, hash_parted2;
+--dg-cascade
+--dg DROP OPERATOR CLASS test_int4_ops USING btree;
+--dg-cascade
+--dg DROP FUNCTION my_int4_sort(int4,int4);
+
+-- comments on partitioned tables columns
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE parted_col_comment (a int, b text) PARTITION BY LIST (a);
+--dg-cascade
+--dg COMMENT ON TABLE parted_col_comment IS 'Am partitioned table';
+--dg-skip: COMMENT is not supported yet
+--dg COMMENT ON COLUMN parted_col_comment.a IS 'Partition key';
+--dg-cascade
+--dg SELECT obj_description('parted_col_comment'::regclass);
+--dg-cascade
+--dg \d+ parted_col_comment
+--dg-cascade
+--dg DROP TABLE parted_col_comment;
+
+-- specifying storage parameters for partitioned tables is not supported
+--dg-differs: another error: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE parted_col_comment (a int, b text) PARTITION BY LIST (a) WITH (fillfactor=100);
+
+-- list partitioning on array type column
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE arrlp (a int[]) PARTITION BY LIST (a);
+--dg-cascade
+--dg CREATE TABLE arrlp12 PARTITION OF arrlp FOR VALUES IN ('{1}', '{2}');
+--dg-cascade
+--dg \d+ arrlp12
+--dg-cascade
+--dg DROP TABLE arrlp;
+
+-- partition on boolean column
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg create table boolspart (a bool) partition by list (a);
+--dg-cascade
+--dg create table boolspart_t partition of boolspart for values in (true);
+--dg-cascade
+--dg create table boolspart_f partition of boolspart for values in (false);
+--dg-cascade
+--dg \d+ boolspart
+--dg-cascade
+--dg drop table boolspart;
+
+-- partitions mixing temporary and permanent relations
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg create table perm_parted (a int) partition by list (a);
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg create temporary table temp_parted (a int) partition by list (a);
+--dg-cascade
+--dg create table perm_part partition of temp_parted default; -- error
+--dg-cascade
+--dg create temp table temp_part partition of perm_parted default; -- error
+--dg-cascade
+--dg create temp table temp_part partition of temp_parted default; -- ok
+--dg-cascade
+--dg drop table perm_parted cascade;
+--dg-cascade
+--dg drop table temp_parted cascade;
+
+-- check that adding partitions to a table while it is being used is prevented
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg create table tab_part_create (a int) partition by list (a);
+--dg-skip: language "?" does not exist
+--dg create or replace function func_part_create() returns trigger
+--dg   language plpgsql as $$
+--dg   begin
+--dg     execute 'create table tab_part_create_1 partition of tab_part_create for values in (1)';
+--dg     return null;
+--dg   end $$;
+--dg-cascade
+--dg create trigger trig_part_create before insert on tab_part_create
+--dg   for each statement execute procedure func_part_create();
+--dg-cascade
+--dg insert into tab_part_create values (1);
+--dg-cascade
+--dg drop table tab_part_create;
+--dg-cascade
+--dg drop function func_part_create();
+
+-- test using a volatile expression as partition bound
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg create table volatile_partbound_test (partkey timestamp) partition by range (partkey);
+--dg-cascade
+--dg create table volatile_partbound_test1 partition of volatile_partbound_test for values from (minvalue) to (current_timestamp);
+--dg-cascade
+--dg create table volatile_partbound_test2 partition of volatile_partbound_test for values from (current_timestamp) to (maxvalue);
+-- this should go into the partition volatile_partbound_test2
+--dg-cascade
+--dg insert into volatile_partbound_test values (current_timestamp);
+--dg-cascade
+--dg select tableoid::regclass from volatile_partbound_test;
+--dg-cascade
+--dg drop table volatile_partbound_test;
+
+-- test the case where a check constraint on default partition allows
+-- to avoid scanning it when adding a new partition
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg create table defcheck (a int, b int) partition by list (b);
+create table defcheck_def (a int, c int, b int);
+alter table defcheck_def drop c;
+--dg-cascade
+--dg alter table defcheck attach partition defcheck_def default;
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg alter table defcheck_def add check (b <= 0 and b is not null);
+--dg-cascade
+--dg create table defcheck_1 partition of defcheck for values in (1, null);
+
+-- test that complex default partition constraints are enforced correctly
+insert into defcheck_def values (0, 0);
+--dg-cascade
+--dg create table defcheck_0 partition of defcheck for values in (0);
+--dg-cascade
+--dg drop table defcheck;
+
+-- tests of column drop with partition tables and indexes using
+-- predicates and expressions.
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg create table part_column_drop (
+--dg   useless_1 int,
+--dg   id int,
+--dg   useless_2 int,
+--dg   d int,
+--dg   b int,
+--dg   useless_3 int
+--dg ) partition by range (id);
+--dg-cascade
+--dg alter table part_column_drop drop column useless_1;
+--dg-cascade
+--dg alter table part_column_drop drop column useless_2;
+--dg-cascade
+--dg alter table part_column_drop drop column useless_3;
+--dg-cascade
+--dg create index part_column_drop_b_pred on part_column_drop(b) where b = 1;
+--dg-cascade
+--dg create index part_column_drop_b_expr on part_column_drop((b = 1));
+--dg-cascade
+--dg create index part_column_drop_d_pred on part_column_drop(d) where d = 2;
+--dg-cascade
+--dg create index part_column_drop_d_expr on part_column_drop((d = 2));
+--dg-cascade
+--dg create table part_column_drop_1_10 partition of
+--dg   part_column_drop for values from (1) to (10);
+--dg-cascade
+--dg \d part_column_drop
+--dg-cascade
+--dg \d part_column_drop_1_10
+--dg-cascade
+--dg drop table part_column_drop;
