@@ -354,6 +354,47 @@ TEST_CASE("sm1_probes counts the sorted runs a lookup may visit") {
   CHECK(f.probes() == 1);
 }
 
+TEST_CASE("sm1_compact merges a store into one sorted run") {
+  // Verify sm1::compact leaves a store one run, its rows all there.
+  // 1. Two loads, each flushed, and a third in the memtable: three
+  //    probes.
+  // 2. After sm1::compact, one probe, and no bytes in memtables.
+  // 3. A row of each load reads as written.
+  // 4. A store not there is SM_ERR_NOTFOUND.
+  stats_fixture_t f;
+  f.load('a', 1000, 100);
+  f.flush();
+  f.load('b', 1000, 100);
+  f.flush();
+  f.load('c', 1000, 100);
+  CHECK(f.probes() == 3);
+
+  // 2. Compact.
+  REQUIRE_MESSAGE(sm1::compact(f.s(), f.store()) == 0, sm1::errmsg());
+  CHECK(f.probes() == 1);
+  uint64_t disk = 0, mem = 1;
+  REQUIRE(sm1::approxsize(f.s(), f.store(), nullptr, 0, nullptr, 0, disk,
+                          mem) == 0);
+  CHECK(mem == 0);
+  CHECK(disk > 0);
+
+  // 3. Read a row of each load.
+  REQUIRE(sm1::begin(f.s(), sm1::xctlevel_t::repeatable_read) == 0);
+  for (char prefix : {'a', 'b', 'c'}) {
+    std::string key(1, prefix);
+    sm0::put_be32(key, 500);
+    std::string_view d;
+    REQUIRE(sm1::read(f.s(), f.store(), key, d) == 0);
+    CHECK(d.size() == 100);
+    CHECK(d.substr(0, key.size()) == key);
+  }
+  REQUIRE(sm1::commit(f.s()) == 0);
+
+  // 4. No such store.
+  CHECK(sm1::compact(f.s(), f.store() + 1000) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+}
+
 TEST_CASE("sm1_approxsize counts a 2-byte prefix's memtable bytes exactly") {
   // Verify the memtable bytes of a range of whole 2-byte prefixes, a
   // heap's or an index's in sm2, are what was written there, not a

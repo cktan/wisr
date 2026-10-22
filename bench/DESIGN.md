@@ -49,10 +49,12 @@ Chosen so neither side does work the other cannot:
   every database's RocksDB reads through
   (`../sm/sm1/SM1_DESIGN.md` §12.2), whose blocks sm stores
   uncompressed.
-- **PostgreSQL's heap settled**: `VACUUM (FREEZE, ANALYZE)`
-  after the load, so no scan pays for setting hint bits or
-  pruning, and autovacuum off, so none starts during a run.
-  digres: `ANALYZE` after the load.
+- **Each side settled after the load**: `VACUUM (FREEZE,
+  ANALYZE)` on both. On PostgreSQL no scan then pays for
+  setting hint bits or pruning, and autovacuum is off, so none
+  starts during a run. On digres it compacts each table's
+  store into one sorted run, so a lookup visits one, and FREEZE
+  has nothing to do (`../dg/WORKNOTE.md` step 284).
 - Everything else as each ships.
 
 ## 4. The data

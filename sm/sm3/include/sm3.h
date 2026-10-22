@@ -1507,6 +1507,13 @@ int tbl_rowno_limit(table_t* table, uint64_t& n);
 int tbl_probes(table_t* table, uint64_t& n);
 
 /*
+ * Compact the table's store, its heap and indexes, into one sorted
+ * run, as sm1::compact: SQL's VACUUM. The handle's table-oid lock
+ * keeps the store from being dropped meanwhile.
+ */
+int tbl_compact(table_t* table);
+
+/*
  * ---- statistics (SM3_DESIGN.md §6.6, §6.7) ----
  *
  * What an analyze of a table records, in one catalog entry of kind

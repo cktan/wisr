@@ -4825,6 +4825,77 @@ static void analyze_table(Oid oid, const char *name, bool verbose,
   }
 }
 
+/* Every table in sm, as this transaction sees them, and its name. */
+static std::vector<std::pair<Oid, std::string>> every_table() {
+  std::vector<std::pair<Oid, std::string>> out;
+  std::vector<std::string> nspnames;
+
+  if (sm_cat_list_namespaces(xact_session(), nspnames) != 0)
+    sm_error("list the schemas");
+  for (const std::string &nsp : nspnames) {
+    Oid nspoid = smstore_namespace_oid(nsp.c_str());
+    std::vector<std::string> tables;
+
+    if (sm_cat_list_tables(xact_session(), nspoid, tables) != 0)
+      sm_error("list a schema's tables");
+    for (const std::string &t : tables)
+      out.push_back({smstore_relation_oid(t.c_str(), nspoid), t});
+  }
+  return out;
+}
+
+/*
+ * Compact the table oid's store in sm, named name for a message, its heap
+ * and its indexes into one sorted run: opened as a reader, so writers go on
+ * meanwhile, and DDL waits.  What is not a table is passed over with a
+ * warning, as PostgreSQL passes over what it cannot vacuum; with
+ * skip_locked a table held X is passed over too, with a warning if named.
+ */
+static void vacuum_table(Oid oid, const char *name, bool skip_locked,
+                         bool named) {
+  bool blocked = false;
+  sm_tbl_t *tbl = skip_locked ? try_open_table(oid, SM_LOCKMODE_IS, &blocked)
+                              : open_table(oid, SM_LOCKMODE_IS);
+
+  if (blocked) {
+    if (named)
+      ereport(WARNING,
+              (errcode(ERRCODE_LOCK_NOT_AVAILABLE),
+               errmsg("skipping vacuum of \"%s\" --- lock not available",
+                      name)));
+    return;
+  }
+  if (NULL == tbl) {
+    ereport(WARNING, (errmsg("skipping \"%s\" --- cannot vacuum non-tables",
+                             name)));
+    return;
+  }
+  /* The store's files are written again: seconds, for a large table. */
+  if (0 != sm_tbl_compact(tbl))
+    sm_error("vacuum a table");
+}
+
+/*
+ * VACUUM: each table rels names, or with none every table in sm, its store
+ * compacted (sm_tbl_compact()), so a lookup visits one sorted run and the
+ * versions no reader needs are dropped.  skip_locked is SKIP_LOCKED.
+ */
+void smstore_vacuum(List *rels, bool skip_locked) {
+  ListCell *l;
+
+  if (rels == NIL) {
+    for (const auto &[oid, name] : every_table())
+      vacuum_table(oid, name.c_str(), skip_locked, false);
+    return;
+  }
+  foreach (l, rels) {
+    VacuumRelation *vrel = lfirst_node(VacuumRelation, l);
+
+    vacuum_table(RangeVarGetRelid(vrel->relation, NoLock, false),
+                 vrel->relation->relname, skip_locked, true);
+  }
+}
+
 /*
  * ANALYZE: each table rels names, or with none every table in sm, analyzed
  * by sm in this transaction, so the statistics commit and roll back with
@@ -4836,20 +4907,8 @@ void smstore_analyze(List *rels, bool verbose, bool skip_locked) {
   ListCell *l;
 
   if (rels == NIL) {
-    std::vector<std::string> nspnames;
-
-    if (sm_cat_list_namespaces(xact_session(), nspnames) != 0)
-      sm_error("list the schemas");
-    for (const std::string &nsp : nspnames) {
-      Oid nspoid = smstore_namespace_oid(nsp.c_str());
-      std::vector<std::string> tables;
-
-      if (sm_cat_list_tables(xact_session(), nspoid, tables) != 0)
-        sm_error("list a schema's tables");
-      for (const std::string &t : tables)
-        analyze_table(smstore_relation_oid(t.c_str(), nspoid), t.c_str(),
-                      verbose, skip_locked, false);
-    }
+    for (const auto &[oid, name] : every_table())
+      analyze_table(oid, name.c_str(), verbose, skip_locked, false);
     return;
   }
   foreach (l, rels) {

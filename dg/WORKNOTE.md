@@ -8167,3 +8167,32 @@ name with all 28 catalog relations: 0.4% of Q7 of `../bench`.
 - **`get_relname_relid()` asks once.**
 - With the order reversed, `test/server.sh` fails 20 checks,
   from the lock status views on: they are not found.
+
+## Step 284: VACUUM compacts a table's store
+
+VACUUM did nothing, and VACUUM ANALYZE not even the ANALYZE. A
+store loaded through its memtable kept the last level-0 files
+of the load for good: RocksDB compacts level 0 at four files.
+A point read of `../bench`'s `wide_mixed` probed four sorted
+runs where it needs two, 8 to 17% of its time.
+
+- **`smstore_vacuum()` compacts each table's store**
+  (`sm_tbl_compact()`, `../sm/sm1/API.md` `sm1::compact`): its
+  memtables flushed and every level merged into the bottom
+  one. Each table is opened as a reader, so writers go on and
+  DDL waits; a bare VACUUM takes every table, as a bare
+  ANALYZE does (`every_table()`, which both share now).
+- **VACUUM ANALYZE analyzes after**, so the sizes it records
+  are the compacted store's. FULL, FREEZE and the rest have
+  nothing more to do in sm and are accepted.
+- **A table that is not there is an error**, as in
+  PostgreSQL; `test/server.sh` checked that VACUUM did nothing,
+  and now checks this.
+- **The versions no reader needs go with the compaction**;
+  the tombstones among them go after, by sm1's purge.
+- `../bench/run.sh` runs `VACUUM (FREEZE, ANALYZE)` on both
+  systems after the load (`../bench/DESIGN.md` §3).
+- `test/server.sh`: VACUUM ANALYZE estimates a table's 20,000
+  rows exactly; with every row deleted, VACUUM takes it under
+  a third of its size; a view is passed over with a warning.
+  It fails with the compaction left out, and with the ANALYZE.

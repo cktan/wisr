@@ -1,11 +1,11 @@
 /*
  * stats.cc -- what a store's LSM looks like now: sm1::approxsize
  * and sm1::probes (sm3/SM3_DESIGN.md §6.2, §6.3 at the stack's
- * root).
+ * root); and sm1::compact, which merges it into one level.
  *
- * Both read RocksDB's own estimates and properties of a store's
- * column family. Neither reads a version, so neither needs a
- * transaction, takes a lock, or sees a snapshot.
+ * Each works on RocksDB's column family of a store, and none
+ * reads a version, so none needs a transaction, takes a lock, or
+ * sees a snapshot.
  */
 
 #include "error.h"
@@ -169,6 +169,31 @@ int probes(sm1::session_t *s, uint64_t storeid, uint64_t *out) {
   return 0;
 }
 
+/* sm1::compact, minus the out-of-memory guard. */
+int compact(sm1::session_t *s, uint64_t storeid) {
+  // Require a usable session and a store.
+  if (check_session(s, "sm1_compact") != 0) {
+    return -1;
+  }
+  store_t store = find_store(s, storeid);
+  if (!store.cf) {
+    return -1;
+  }
+  rocksdb::CompactRangeOptions opt;
+  // Into the bottom level, without compacting again the files this
+  // compaction writes there.
+  opt.bottommost_level_compaction =
+      rocksdb::BottommostLevelCompaction::kForceOptimized;
+  // Other stores' compactions go on meanwhile.
+  opt.exclusive_manual_compaction = false;
+  // The whole store, its memtables flushed first.
+  rocksdb::Status st = store.rdb->CompactRange(opt, store.cf, nullptr, nullptr);
+  if (!st.ok()) {
+    return set_status_error(st, "compact store");
+  }
+  return 0;
+}
+
 } // namespace
 
 /* Estimate the bytes of a key range, in files and in memtables. */
@@ -181,4 +206,9 @@ int sm1::approxsize(sm1::session_t *session, uint64_t storeid, const char *lo,
 /* Count the sorted runs a point lookup of a store may visit. */
 int sm1::probes(sm1::session_t *session, uint64_t storeid, uint64_t &out) {
   return ::probes(session, storeid, &out);
+}
+
+/* Merge a store's memtables and levels into its bottom level. */
+int sm1::compact(sm1::session_t *session, uint64_t storeid) {
+  return ::compact(session, storeid);
 }

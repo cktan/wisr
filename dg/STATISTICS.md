@@ -32,7 +32,9 @@ Where it stood before §3 was built.
 ### 2.1 ANALYZE is `sm_tbl_analyze`
 
 - **ANALYZE goes to smstore, not vacuum.c.** `ExecVacuum()`
-  passes an ANALYZE to `smstore_analyze()`. A named table is
+  passes an ANALYZE to `smstore_analyze()`, and a VACUUM
+  ANALYZE too, once `smstore_vacuum()` has compacted the
+  tables, so the sizes it records are the compacted stores'. A named table is
   looked up as any name is; a bare ANALYZE takes every table
   in every schema, from sm's catalog
   (`sm_cat_list_namespaces`, `sm_cat_list_tables`). Each table

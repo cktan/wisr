@@ -1997,6 +1997,16 @@ int sm_tbl_probes(sm_tbl_t *tbl, uint64_t *n) {
   });
 }
 
+/* Compact the table's store into one sorted run. */
+int sm_tbl_compact(sm_tbl_t *tbl) {
+  return guard(tbl ? tbl->session : nullptr, [&] {
+    if (!tbl) {
+      return null_arg("sm_tbl_compact", "tbl");
+    }
+    return sm3::tbl_compact(tbl->table);
+  });
+}
+
 /* Analyze a table. */
 int sm_tbl_analyze(sm_tbl_t *tbl, int32_t target) {
   return guard(tbl ? tbl->session : nullptr, [&] {
