@@ -1,0 +1,378 @@
+--
+-- CREATE_TYPE
+--
+
+-- directory path and dlsuffix are passed to us in environment variables
+\getenv libdir PG_LIBDIR
+\getenv dlsuffix PG_DLSUFFIX
+
+\set regresslib :libdir '/regress' :dlsuffix
+
+--
+-- Test the "old style" approach of making the I/O functions first,
+-- with no explicit shell type creation.
+--
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg CREATE FUNCTION widget_in(cstring)
+--dg    RETURNS widget
+--dg    AS :'regresslib'
+--dg    LANGUAGE C STRICT IMMUTABLE;
+
+--dg-cascade
+--dg CREATE FUNCTION widget_out(widget)
+--dg    RETURNS cstring
+--dg    AS :'regresslib'
+--dg    LANGUAGE C STRICT IMMUTABLE;
+
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg CREATE FUNCTION int44in(cstring)
+--dg    RETURNS city_budget
+--dg    AS :'regresslib'
+--dg    LANGUAGE C STRICT IMMUTABLE;
+
+--dg-cascade
+--dg CREATE FUNCTION int44out(city_budget)
+--dg    RETURNS cstring
+--dg    AS :'regresslib'
+--dg    LANGUAGE C STRICT IMMUTABLE;
+
+--dg-cascade
+--dg CREATE TYPE widget (
+--dg    internallength = 24,
+--dg    input = widget_in,
+--dg    output = widget_out,
+--dg    typmod_in = numerictypmodin,
+--dg    typmod_out = numerictypmodout,
+--dg    alignment = double
+--dg );
+
+--dg-cascade
+--dg CREATE TYPE city_budget (
+--dg    internallength = 16,
+--dg    input = int44in,
+--dg    output = int44out,
+--dg    element = int4,
+--dg    category = 'x',   -- just to verify the system will take it
+--dg    preferred = true  -- ditto
+--dg );
+
+-- Test creation and destruction of shell types
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg CREATE TYPE shell;
+--dg-cascade
+--dg CREATE TYPE shell;   -- fail, type already present
+--dg-skip: type "?" does not exist
+--dg DROP TYPE shell;
+DROP TYPE shell;     -- fail, type not exist
+
+-- also, let's leave one around for purposes of pg_dump testing
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg CREATE TYPE myshell;
+
+--
+-- Test type-related default values (broken in releases before PG 7.2)
+--
+-- This part of the test also exercises the "new style" approach of making
+-- a shell type and then filling it in.
+--
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg CREATE TYPE int42;
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg CREATE TYPE text_w_default;
+
+-- Make dummy I/O routines using the existing internal support for int4, text
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg CREATE FUNCTION int42_in(cstring)
+--dg    RETURNS int42
+--dg    AS 'int4in'
+--dg    LANGUAGE internal STRICT IMMUTABLE;
+--dg-cascade
+--dg CREATE FUNCTION int42_out(int42)
+--dg    RETURNS cstring
+--dg    AS 'int4out'
+--dg    LANGUAGE internal STRICT IMMUTABLE;
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg CREATE FUNCTION text_w_default_in(cstring)
+--dg    RETURNS text_w_default
+--dg    AS 'textin'
+--dg    LANGUAGE internal STRICT IMMUTABLE;
+--dg-cascade
+--dg CREATE FUNCTION text_w_default_out(text_w_default)
+--dg    RETURNS cstring
+--dg    AS 'textout'
+--dg    LANGUAGE internal STRICT IMMUTABLE;
+
+--dg-cascade
+--dg CREATE TYPE int42 (
+--dg    internallength = 4,
+--dg    input = int42_in,
+--dg    output = int42_out,
+--dg    alignment = int4,
+--dg    default = 42,
+--dg    passedbyvalue
+--dg );
+
+--dg-cascade
+--dg CREATE TYPE text_w_default (
+--dg    internallength = variable,
+--dg    input = text_w_default_in,
+--dg    output = text_w_default_out,
+--dg    alignment = int4,
+--dg    default = 'zippo'
+--dg );
+
+--dg-cascade
+--dg CREATE TABLE default_test (f1 text_w_default, f2 int42);
+
+--dg-cascade
+--dg INSERT INTO default_test DEFAULT VALUES;
+
+--dg-cascade
+--dg SELECT * FROM default_test;
+
+-- We need a shell type to test some CREATE TYPE failure cases with
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg CREATE TYPE bogus_type;
+
+-- invalid: non-lowercase quoted identifiers
+--dg-cascade
+--dg CREATE TYPE bogus_type (
+--dg 	"Internallength" = 4,
+--dg 	"Input" = int42_in,
+--dg 	"Output" = int42_out,
+--dg 	"Alignment" = int4,
+--dg 	"Default" = 42,
+--dg 	"Passedbyvalue"
+--dg );
+
+-- invalid: input/output function incompatibility
+--dg-cascade
+--dg CREATE TYPE bogus_type (INPUT = array_in,
+--dg     OUTPUT = array_out,
+--dg     ELEMENT = int,
+--dg     INTERNALLENGTH = 32);
+
+--dg-cascade
+--dg DROP TYPE bogus_type;
+
+-- It no longer is possible to issue CREATE TYPE without making a shell first
+CREATE TYPE bogus_type (INPUT = array_in,
+    OUTPUT = array_out,
+    ELEMENT = int,
+    INTERNALLENGTH = 32);
+
+-- Test stand-alone composite type
+
+--dg-cascade
+--dg CREATE TYPE default_test_row AS (f1 text_w_default, f2 int42);
+
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION get_default_test() RETURNS SETOF default_test_row AS '
+--dg   SELECT * FROM default_test;
+--dg ' LANGUAGE SQL;
+
+--dg-cascade
+--dg SELECT * FROM get_default_test();
+
+-- Test comments
+COMMENT ON TYPE bad IS 'bad comment';
+--dg-cascade
+--dg COMMENT ON TYPE default_test_row IS 'good comment';
+--dg-cascade
+--dg COMMENT ON TYPE default_test_row IS NULL;
+--dg-cascade
+--dg COMMENT ON COLUMN default_test_row.nope IS 'bad comment';
+--dg-skip: COMMENT is not supported yet
+--dg COMMENT ON COLUMN default_test_row.f1 IS 'good comment';
+--dg-skip: COMMENT is not supported yet
+--dg COMMENT ON COLUMN default_test_row.f1 IS NULL;
+
+-- Check shell type create for existing types
+--dg-cascade
+--dg CREATE TYPE text_w_default;		-- should fail
+
+--dg-cascade
+--dg DROP TYPE default_test_row CASCADE;
+
+--dg-cascade
+--dg DROP TABLE default_test;
+
+-- Check dependencies are established when creating a new type
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg CREATE TYPE base_type;
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg CREATE FUNCTION base_fn_in(cstring) RETURNS base_type AS 'boolin'
+--dg     LANGUAGE internal IMMUTABLE STRICT;
+--dg-cascade
+--dg CREATE FUNCTION base_fn_out(base_type) RETURNS cstring AS 'boolout'
+--dg     LANGUAGE internal IMMUTABLE STRICT;
+--dg-cascade
+--dg CREATE TYPE base_type(INPUT = base_fn_in, OUTPUT = base_fn_out);
+--dg-cascade
+--dg DROP FUNCTION base_fn_in(cstring); -- error
+--dg-cascade
+--dg DROP FUNCTION base_fn_out(base_type); -- error
+--dg-cascade
+--dg DROP TYPE base_type; -- error
+--dg-cascade
+--dg DROP TYPE base_type CASCADE;
+
+-- Check usage of typmod with a user-defined type
+-- (we have borrowed numeric's typmod functions)
+
+--dg-cascade
+--dg CREATE TEMP TABLE mytab (foo widget(42,13,7));     -- should fail
+--dg-cascade
+--dg CREATE TEMP TABLE mytab (foo widget(42,13));
+
+--dg-cascade
+--dg SELECT format_type(atttypid,atttypmod) FROM pg_attribute
+--dg WHERE attrelid = 'mytab'::regclass AND attnum > 0;
+
+-- might as well exercise the widget type while we're here
+--dg-cascade
+--dg INSERT INTO mytab VALUES ('(1,2,3)'), ('(-44,5.5,12)');
+--dg-cascade
+--dg TABLE mytab;
+
+-- and test format_type() a bit more, too
+select format_type('varchar'::regtype, 42);
+select format_type('bpchar'::regtype, null);
+-- this behavior difference is intentional
+select format_type('bpchar'::regtype, -1);
+
+-- Test non-error-throwing APIs using widget, which still throws errors
+--dg-cascade
+--dg SELECT pg_input_is_valid('(1,2,3)', 'widget');
+--dg-cascade
+--dg SELECT pg_input_is_valid('(1,2)', 'widget');  -- hard error expected
+--dg-cascade
+--dg SELECT pg_input_is_valid('{"(1,2,3)"}', 'widget[]');
+--dg-cascade
+--dg SELECT pg_input_is_valid('{"(1,2)"}', 'widget[]');  -- hard error expected
+--dg-cascade
+--dg SELECT pg_input_is_valid('("(1,2,3)")', 'mytab');
+--dg-cascade
+--dg SELECT pg_input_is_valid('("(1,2)")', 'mytab');  -- hard error expected
+
+-- Test creation of an operator over a user-defined type
+
+--dg-cascade
+--dg CREATE FUNCTION pt_in_widget(point, widget)
+--dg    RETURNS bool
+--dg    AS :'regresslib'
+--dg    LANGUAGE C STRICT;
+
+--dg-cascade
+--dg CREATE OPERATOR <% (
+--dg    leftarg = point,
+--dg    rightarg = widget,
+--dg    procedure = pt_in_widget,
+--dg    commutator = >% ,
+--dg    negator = >=%
+--dg );
+
+--dg-cascade
+--dg SELECT point '(1,2)' <% widget '(0,0,3)' AS t,
+--dg        point '(1,2)' <% widget '(0,0,1)' AS f;
+
+-- exercise city_budget type
+--dg-cascade
+--dg CREATE TABLE city (
+--dg 	name		name,
+--dg 	location 	box,
+--dg 	budget 		city_budget
+--dg );
+
+--dg-cascade
+--dg INSERT INTO city VALUES
+--dg ('Podunk', '(1,2),(3,4)', '100,127,1000'),
+--dg ('Gotham', '(1000,34),(1100,334)', '123456,127,-1000,6789');
+
+--dg-cascade
+--dg TABLE city;
+
+--
+-- Test CREATE/ALTER TYPE using a type that's compatible with varchar,
+-- so we can re-use those support functions
+--
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg CREATE TYPE myvarchar;
+
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg CREATE FUNCTION myvarcharin(cstring, oid, integer) RETURNS myvarchar
+--dg LANGUAGE internal IMMUTABLE PARALLEL SAFE STRICT AS 'varcharin';
+
+--dg-cascade
+--dg CREATE FUNCTION myvarcharout(myvarchar) RETURNS cstring
+--dg LANGUAGE internal IMMUTABLE PARALLEL SAFE STRICT AS 'varcharout';
+
+--dg-cascade
+--dg CREATE FUNCTION myvarcharsend(myvarchar) RETURNS bytea
+--dg LANGUAGE internal STABLE PARALLEL SAFE STRICT AS 'varcharsend';
+
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg CREATE FUNCTION myvarcharrecv(internal, oid, integer) RETURNS myvarchar
+--dg LANGUAGE internal STABLE PARALLEL SAFE STRICT AS 'varcharrecv';
+
+-- fail, it's still a shell:
+--dg-cascade
+--dg ALTER TYPE myvarchar SET (storage = extended);
+
+--dg-cascade
+--dg CREATE TYPE myvarchar (
+--dg     input = myvarcharin,
+--dg     output = myvarcharout,
+--dg     alignment = integer,
+--dg     storage = main
+--dg );
+
+-- want to check updating of a domain over the target type, too
+--dg-cascade
+--dg CREATE DOMAIN myvarchardom AS myvarchar;
+
+--dg-cascade
+--dg ALTER TYPE myvarchar SET (storage = plain);  -- not allowed
+
+--dg-cascade
+--dg ALTER TYPE myvarchar SET (storage = extended);
+
+--dg-cascade
+--dg ALTER TYPE myvarchar SET (
+--dg     send = myvarcharsend,
+--dg     receive = myvarcharrecv,
+--dg     typmod_in = varchartypmodin,
+--dg     typmod_out = varchartypmodout,
+--dg     -- these are bogus, but it's safe as long as we don't use the type:
+--dg     analyze = ts_typanalyze,
+--dg     subscript = raw_array_subscript_handler
+--dg );
+
+--dg-cascade
+--dg SELECT typinput, typoutput, typreceive, typsend, typmodin, typmodout,
+--dg        typanalyze, typsubscript, typstorage
+--dg FROM pg_type WHERE typname = 'myvarchar';
+
+--dg-cascade
+--dg SELECT typinput, typoutput, typreceive, typsend, typmodin, typmodout,
+--dg        typanalyze, typsubscript, typstorage
+--dg FROM pg_type WHERE typname = '_myvarchar';
+
+--dg-cascade
+--dg SELECT typinput, typoutput, typreceive, typsend, typmodin, typmodout,
+--dg        typanalyze, typsubscript, typstorage
+--dg FROM pg_type WHERE typname = 'myvarchardom';
+
+--dg-cascade
+--dg SELECT typinput, typoutput, typreceive, typsend, typmodin, typmodout,
+--dg        typanalyze, typsubscript, typstorage
+--dg FROM pg_type WHERE typname = '_myvarchardom';
+
+-- ensure dependencies are straight
+--dg-cascade
+--dg DROP FUNCTION myvarcharsend(myvarchar);  -- fail
+--dg-cascade
+--dg DROP TYPE myvarchar;  -- fail
+
+--dg-cascade
+--dg DROP TYPE myvarchar CASCADE;

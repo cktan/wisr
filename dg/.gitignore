@@ -1,5 +1,6 @@
 # Built
 build/
+__pycache__/
 *.o
 *.d
 .stamp

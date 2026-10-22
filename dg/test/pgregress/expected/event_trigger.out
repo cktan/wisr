@@ -1,0 +1,755 @@
+-- should fail, return type mismatch
+--dg-differs: another error: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg create event trigger regress_event_trigger
+--dg    on ddl_command_start
+--dg    execute procedure pg_backend_pid();
+-- OK
+--dg-skip: language "?" does not exist
+--dg create function test_event_trigger() returns event_trigger as $$
+--dg BEGIN
+--dg     RAISE NOTICE 'test_event_trigger: % %', tg_event, tg_tag;
+--dg END
+--dg $$ language plpgsql;
+-- should fail, can't call it as a plain function
+--dg-cascade
+--dg SELECT test_event_trigger();
+-- should fail, event triggers cannot have declared arguments
+--dg-differs: another error: language "?" does not exist
+--dg create function test_event_trigger_arg(name text)
+--dg returns event_trigger as $$ BEGIN RETURN 1; END $$ language plpgsql;
+-- should fail, SQL functions cannot be event triggers
+--dg-differs: another error: language "?" does not exist
+--dg create function test_event_trigger_sql() returns event_trigger as $$
+--dg SELECT 1 $$ language sql;
+-- should fail, no elephant_bootstrap entry point
+create event trigger regress_event_trigger on elephant_bootstrap
+   execute procedure test_event_trigger();
+ERROR:  unrecognized event name "elephant_bootstrap"
+-- OK
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg create event trigger regress_event_trigger on ddl_command_start
+--dg    execute procedure test_event_trigger();
+-- OK
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg create event trigger regress_event_trigger_end on ddl_command_end
+--dg    execute function test_event_trigger();
+-- should fail, food is not a valid filter variable
+create event trigger regress_event_trigger2 on ddl_command_start
+   when food in ('sandwich')
+   execute procedure test_event_trigger();
+ERROR:  unrecognized filter variable "food"
+-- should fail, sandwich is not a valid command tag
+create event trigger regress_event_trigger2 on ddl_command_start
+   when tag in ('sandwich')
+   execute procedure test_event_trigger();
+ERROR:  filter value "sandwich" not recognized for filter variable "tag"
+-- should fail, create skunkcabbage is not a valid command tag
+create event trigger regress_event_trigger2 on ddl_command_start
+   when tag in ('create table', 'create skunkcabbage')
+   execute procedure test_event_trigger();
+ERROR:  filter value "create skunkcabbage" not recognized for filter variable "tag"
+-- should fail, can't have event triggers on event triggers
+create event trigger regress_event_trigger2 on ddl_command_start
+   when tag in ('DROP EVENT TRIGGER')
+   execute procedure test_event_trigger();
+ERROR:  event triggers are not supported for DROP EVENT TRIGGER
+-- should fail, can't have event triggers on global objects
+create event trigger regress_event_trigger2 on ddl_command_start
+   when tag in ('CREATE ROLE')
+   execute procedure test_event_trigger();
+ERROR:  event triggers are not supported for CREATE ROLE
+-- should fail, can't have event triggers on global objects
+create event trigger regress_event_trigger2 on ddl_command_start
+   when tag in ('CREATE DATABASE')
+   execute procedure test_event_trigger();
+ERROR:  event triggers are not supported for CREATE DATABASE
+-- should fail, can't have event triggers on global objects
+create event trigger regress_event_trigger2 on ddl_command_start
+   when tag in ('CREATE TABLESPACE')
+   execute procedure test_event_trigger();
+ERROR:  event triggers are not supported for CREATE TABLESPACE
+-- should fail, can't have same filter variable twice
+create event trigger regress_event_trigger2 on ddl_command_start
+   when tag in ('create table') and tag in ('CREATE FUNCTION')
+   execute procedure test_event_trigger();
+ERROR:  filter variable "tag" specified more than once
+-- should fail, can't have arguments
+create event trigger regress_event_trigger2 on ddl_command_start
+   execute procedure test_event_trigger('argument not allowed');
+ERROR:  syntax error at or near "'argument not allowed'"
+LINE 2:    execute procedure test_event_trigger('argument not allowe...
+                                                ^
+-- OK
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg create event trigger regress_event_trigger2 on ddl_command_start
+--dg    when tag in ('create table', 'CREATE FUNCTION')
+--dg    execute procedure test_event_trigger();
+-- OK
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg comment on event trigger regress_event_trigger is 'test comment';
+-- drop as non-superuser should fail
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg create role regress_evt_user;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg set role regress_evt_user;
+--dg-cascade
+--dg create event trigger regress_event_trigger_noperms on ddl_command_start
+--dg    execute procedure test_event_trigger();
+reset role;
+-- test enabling and disabling
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg alter event trigger regress_event_trigger disable;
+-- fires _trigger2 and _trigger_end should fire, but not _trigger
+--dg-cascade
+--dg create table event_trigger_fire1 (a int);
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg alter event trigger regress_event_trigger enable;
+set session_replication_role = replica;
+-- fires nothing
+create table event_trigger_fire2 (a int);
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg alter event trigger regress_event_trigger enable replica;
+-- fires only _trigger
+--dg-cascade
+--dg create table event_trigger_fire3 (a int);
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg alter event trigger regress_event_trigger enable always;
+-- fires only _trigger
+--dg-cascade
+--dg create table event_trigger_fire4 (a int);
+reset session_replication_role;
+-- fires all three
+--dg-cascade
+--dg create table event_trigger_fire5 (a int);
+-- non-top-level command
+--dg-skip: language "?" does not exist
+--dg create function f1() returns int
+--dg language plpgsql
+--dg as $$
+--dg begin
+--dg   create table event_trigger_fire6 (a int);
+--dg   return 0;
+--dg end $$;
+--dg-cascade
+--dg select f1();
+-- non-top-level command
+--dg-skip: language "?" does not exist
+--dg create procedure p1()
+--dg language plpgsql
+--dg as $$
+--dg begin
+--dg   create table event_trigger_fire7 (a int);
+--dg end $$;
+--dg-cascade
+--dg call p1();
+-- clean up
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg alter event trigger regress_event_trigger disable;
+--dg-cascade
+--dg drop table event_trigger_fire2, event_trigger_fire3, event_trigger_fire4, event_trigger_fire5, event_trigger_fire6, event_trigger_fire7;
+--dg-cascade
+--dg drop routine f1(), p1();
+-- regress_event_trigger_end should fire on these commands
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg grant all on table event_trigger_fire1 to public;
+--dg-skip: COMMENT is not supported yet
+--dg comment on table event_trigger_fire1 is 'here is a comment';
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg revoke all on table event_trigger_fire1 from public;
+--dg-cascade
+--dg drop table event_trigger_fire1;
+--dg-skip: relation pg_foreign_data_wrapper cannot be opened: digres has no catalog tables
+--dg create foreign data wrapper useless;
+--dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
+--dg create server useless_server foreign data wrapper useless;
+--dg-skip: relation pg_user_mapping cannot be opened: digres has no catalog tables
+--dg create user mapping for regress_evt_user server useless_server;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg alter default privileges for role regress_evt_user
+--dg  revoke delete on tables from regress_evt_user;
+-- alter owner to non-superuser should fail
+--dg-cascade
+--dg alter event trigger regress_event_trigger owner to regress_evt_user;
+-- alter owner to superuser should work
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg alter role regress_evt_user superuser;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg alter event trigger regress_event_trigger owner to regress_evt_user;
+-- should fail, name collision
+--dg-cascade
+--dg alter event trigger regress_event_trigger rename to regress_event_trigger2;
+-- OK
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg alter event trigger regress_event_trigger rename to regress_event_trigger3;
+-- should fail, doesn't exist any more
+--dg-differs: another error: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg drop event trigger regress_event_trigger;
+-- should fail, regress_evt_user owns some objects
+--dg-cascade
+--dg drop role regress_evt_user;
+-- cleanup before next test
+-- these are all OK; the second one should emit a NOTICE
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg drop event trigger if exists regress_event_trigger2;
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg drop event trigger if exists regress_event_trigger2;
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg drop event trigger regress_event_trigger3;
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg drop event trigger regress_event_trigger_end;
+-- test support for dropped objects
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE SCHEMA schema_one authorization regress_evt_user;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE SCHEMA schema_two authorization regress_evt_user;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE SCHEMA audit_tbls authorization regress_evt_user;
+CREATE TEMP TABLE a_temp_tbl ();
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_evt_user;
+--dg-cascade
+--dg CREATE TABLE schema_one.table_one(a int);
+--dg-cascade
+--dg CREATE TABLE schema_one."table two"(a int);
+--dg-cascade
+--dg CREATE TABLE schema_one.table_three(a int);
+--dg-cascade
+--dg CREATE TABLE audit_tbls.schema_one_table_two(the_value text);
+--dg-cascade
+--dg CREATE TABLE schema_two.table_two(a int);
+--dg-cascade
+--dg CREATE TABLE schema_two.table_three(a int, b text);
+--dg-cascade
+--dg CREATE TABLE audit_tbls.schema_two_table_three(the_value text);
+--dg-cascade
+--dg CREATE OR REPLACE FUNCTION schema_two.add(int, int) RETURNS int LANGUAGE plpgsql
+--dg   CALLED ON NULL INPUT
+--dg   AS $$ BEGIN RETURN coalesce($1,0) + coalesce($2,0); END; $$;
+--dg-cascade
+--dg CREATE AGGREGATE schema_two.newton
+--dg   (BASETYPE = int, SFUNC = schema_two.add, STYPE = int);
+RESET SESSION AUTHORIZATION;
+CREATE TABLE undroppable_objs (
+	object_type text,
+	object_identity text
+);
+INSERT INTO undroppable_objs VALUES
+('table', 'schema_one.table_three'),
+('table', 'audit_tbls.schema_two_table_three');
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE dropped_objects (
+--dg 	object_type text,
+--dg 	schema_name text,
+--dg 	object_name text,
+--dg 	object_identity text,
+--dg 	address_names text[],
+--dg 	address_args text[],
+--dg 	is_temporary bool,
+--dg 	original bool,
+--dg 	normal bool
+--dg );
+-- This tests errors raised within event triggers; the one in audit_tbls
+-- uses 2nd-level recursive invocation via test_evtrig_dropped_objects().
+--dg-skip: language "?" does not exist
+--dg CREATE OR REPLACE FUNCTION undroppable() RETURNS event_trigger
+--dg LANGUAGE plpgsql AS $$
+--dg DECLARE
+--dg 	obj record;
+--dg BEGIN
+--dg 	PERFORM 1 FROM pg_tables WHERE tablename = 'undroppable_objs';
+--dg 	IF NOT FOUND THEN
+--dg 		RAISE NOTICE 'table undroppable_objs not found, skipping';
+--dg 		RETURN;
+--dg 	END IF;
+--dg 	FOR obj IN
+--dg 		SELECT * FROM pg_event_trigger_dropped_objects() JOIN
+--dg 			undroppable_objs USING (object_type, object_identity)
+--dg 	LOOP
+--dg 		RAISE EXCEPTION 'object % of type % cannot be dropped',
+--dg 			obj.object_identity, obj.object_type;
+--dg 	END LOOP;
+--dg END;
+--dg $$;
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg CREATE EVENT TRIGGER undroppable ON sql_drop
+--dg 	EXECUTE PROCEDURE undroppable();
+--dg-skip: language "?" does not exist
+--dg CREATE OR REPLACE FUNCTION test_evtrig_dropped_objects() RETURNS event_trigger
+--dg LANGUAGE plpgsql AS $$
+--dg DECLARE
+--dg     obj record;
+--dg BEGIN
+--dg     FOR obj IN SELECT * FROM pg_event_trigger_dropped_objects()
+--dg     LOOP
+--dg         IF obj.object_type = 'table' THEN
+--dg                 EXECUTE format('DROP TABLE IF EXISTS audit_tbls.%I',
+--dg 					format('%s_%s', obj.schema_name, obj.object_name));
+--dg         END IF;
+--dg
+--dg 	INSERT INTO dropped_objects
+--dg 		(object_type, schema_name, object_name,
+--dg 		 object_identity, address_names, address_args,
+--dg 		 is_temporary, original, normal) VALUES
+--dg 		(obj.object_type, obj.schema_name, obj.object_name,
+--dg 		 obj.object_identity, obj.address_names, obj.address_args,
+--dg 		 obj.is_temporary, obj.original, obj.normal);
+--dg     END LOOP;
+--dg END
+--dg $$;
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg CREATE EVENT TRIGGER regress_event_trigger_drop_objects ON sql_drop
+--dg 	WHEN TAG IN ('drop table', 'drop function', 'drop view',
+--dg 		'drop owned', 'drop schema', 'alter table')
+--dg 	EXECUTE PROCEDURE test_evtrig_dropped_objects();
+--dg-cascade
+--dg ALTER TABLE schema_one.table_one DROP COLUMN a;
+--dg-cascade
+--dg DROP SCHEMA schema_one, schema_two CASCADE;
+DELETE FROM undroppable_objs WHERE object_identity = 'audit_tbls.schema_two_table_three';
+--dg-cascade
+--dg DROP SCHEMA schema_one, schema_two CASCADE;
+DELETE FROM undroppable_objs WHERE object_identity = 'schema_one.table_three';
+--dg-cascade
+--dg DROP SCHEMA schema_one, schema_two CASCADE;
+-- exclude TOAST objects because they have unstable names
+--dg-cascade
+--dg SELECT * FROM dropped_objects
+--dg   WHERE schema_name IS NULL OR schema_name <> 'pg_toast';
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP OWNED BY regress_evt_user;
+--dg-cascade
+--dg SELECT * FROM dropped_objects WHERE object_type = 'schema';
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE regress_evt_user;
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg DROP EVENT TRIGGER regress_event_trigger_drop_objects;
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg DROP EVENT TRIGGER undroppable;
+-- Event triggers on relations.
+--dg-skip: language "?" does not exist
+--dg CREATE OR REPLACE FUNCTION event_trigger_report_dropped()
+--dg  RETURNS event_trigger
+--dg  LANGUAGE plpgsql
+--dg AS $$
+--dg DECLARE r record;
+--dg BEGIN
+--dg     FOR r IN SELECT * from pg_event_trigger_dropped_objects()
+--dg     LOOP
+--dg     IF NOT r.normal AND NOT r.original THEN
+--dg         CONTINUE;
+--dg     END IF;
+--dg     RAISE NOTICE 'NORMAL: orig=% normal=% istemp=% type=% identity=% schema=% name=% addr=% args=%',
+--dg         r.original, r.normal, r.is_temporary, r.object_type,
+--dg         r.object_identity, r.schema_name, r.object_name,
+--dg         r.address_names, r.address_args;
+--dg     END LOOP;
+--dg END; $$;
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg CREATE EVENT TRIGGER regress_event_trigger_report_dropped ON sql_drop
+--dg     EXECUTE PROCEDURE event_trigger_report_dropped();
+--dg-skip: language "?" does not exist
+--dg CREATE OR REPLACE FUNCTION event_trigger_report_end()
+--dg  RETURNS event_trigger
+--dg  LANGUAGE plpgsql
+--dg AS $$
+--dg DECLARE r RECORD;
+--dg BEGIN
+--dg     FOR r IN SELECT * FROM pg_event_trigger_ddl_commands()
+--dg     LOOP
+--dg         RAISE NOTICE 'END: command_tag=% type=% identity=%',
+--dg             r.command_tag, r.object_type, r.object_identity;
+--dg     END LOOP;
+--dg END; $$;
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg CREATE EVENT TRIGGER regress_event_trigger_report_end ON ddl_command_end
+--dg   EXECUTE PROCEDURE event_trigger_report_end();
+--dg-cascade
+--dg CREATE SCHEMA evttrig
+--dg 	CREATE TABLE one (col_a SERIAL PRIMARY KEY, col_b text DEFAULT 'forty two', col_c SERIAL)
+--dg 	CREATE INDEX one_idx ON one (col_b)
+--dg 	CREATE TABLE two (col_c INTEGER CHECK (col_c > 0) REFERENCES one DEFAULT 42)
+--dg 	CREATE TABLE id (col_d int NOT NULL GENERATED ALWAYS AS IDENTITY);
+-- Partitioned tables with a partitioned index
+--dg-cascade
+--dg CREATE TABLE evttrig.parted (
+--dg     id int PRIMARY KEY)
+--dg     PARTITION BY RANGE (id);
+--dg-cascade
+--dg CREATE TABLE evttrig.part_1_10 PARTITION OF evttrig.parted (id)
+--dg   FOR VALUES FROM (1) TO (10);
+--dg-cascade
+--dg CREATE TABLE evttrig.part_10_20 PARTITION OF evttrig.parted (id)
+--dg   FOR VALUES FROM (10) TO (20) PARTITION BY RANGE (id);
+--dg-cascade
+--dg CREATE TABLE evttrig.part_10_15 PARTITION OF evttrig.part_10_20 (id)
+--dg   FOR VALUES FROM (10) TO (15);
+--dg-cascade
+--dg CREATE TABLE evttrig.part_15_20 PARTITION OF evttrig.part_10_20 (id)
+--dg   FOR VALUES FROM (15) TO (20);
+--dg-cascade
+--dg ALTER TABLE evttrig.two DROP COLUMN col_c;
+--dg-cascade
+--dg ALTER TABLE evttrig.one ALTER COLUMN col_b DROP DEFAULT;
+--dg-cascade
+--dg ALTER TABLE evttrig.one DROP CONSTRAINT one_pkey;
+--dg-cascade
+--dg ALTER TABLE evttrig.one DROP COLUMN col_c;
+--dg-cascade
+--dg ALTER TABLE evttrig.id ALTER COLUMN col_d SET DATA TYPE bigint;
+--dg-cascade
+--dg ALTER TABLE evttrig.id ALTER COLUMN col_d DROP IDENTITY,
+--dg   ALTER COLUMN col_d SET DATA TYPE int;
+--dg-cascade
+--dg DROP INDEX evttrig.one_idx;
+--dg-cascade
+--dg DROP SCHEMA evttrig CASCADE;
+--dg-cascade
+--dg DROP TABLE a_temp_tbl;
+-- check unfiltered results, too
+--dg-skip: language "?" does not exist
+--dg CREATE OR REPLACE FUNCTION event_trigger_report_dropped()
+--dg  RETURNS event_trigger
+--dg  LANGUAGE plpgsql
+--dg AS $$
+--dg DECLARE r record;
+--dg BEGIN
+--dg     FOR r IN SELECT * from pg_event_trigger_dropped_objects()
+--dg     LOOP
+--dg     RAISE NOTICE 'DROP: orig=% normal=% istemp=% type=% identity=% schema=% name=% addr=% args=%',
+--dg         r.original, r.normal, r.is_temporary, r.object_type,
+--dg         r.object_identity, r.schema_name, r.object_name,
+--dg         r.address_names, r.address_args;
+--dg     END LOOP;
+--dg END; $$;
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION event_trigger_dummy_trigger()
+--dg  RETURNS trigger
+--dg  LANGUAGE plpgsql
+--dg AS $$
+--dg BEGIN
+--dg     RETURN new;
+--dg END; $$;
+--dg-cascade
+--dg CREATE TABLE evtrg_nontemp_table (f1 int primary key, f2 int default 42);
+--dg-cascade
+--dg CREATE TRIGGER evtrg_nontemp_trig
+--dg   BEFORE INSERT ON evtrg_nontemp_table
+--dg   EXECUTE FUNCTION event_trigger_dummy_trigger();
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg CREATE POLICY evtrg_nontemp_pol ON evtrg_nontemp_table USING (f2 > 0);
+--dg-cascade
+--dg DROP TABLE evtrg_nontemp_table;
+--dg-cascade
+--dg CREATE TEMP TABLE a_temp_tbl (f1 int primary key, f2 int default 42);
+--dg-cascade
+--dg CREATE TRIGGER a_temp_trig
+--dg   BEFORE INSERT ON a_temp_tbl
+--dg   EXECUTE FUNCTION event_trigger_dummy_trigger();
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg CREATE POLICY a_temp_pol ON a_temp_tbl USING (f2 > 0);
+--dg-cascade
+--dg DROP TABLE a_temp_tbl;
+--dg-cascade
+--dg DROP FUNCTION event_trigger_dummy_trigger();
+-- CREATE OPERATOR CLASS without FAMILY clause should report
+-- both CREATE OPERATOR FAMILY and CREATE OPERATOR CLASS
+--dg-skip: relation pg_opfamily cannot be opened: digres has no catalog tables
+--dg CREATE OPERATOR CLASS evttrigopclass FOR TYPE int USING btree AS STORAGE int;
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg DROP EVENT TRIGGER regress_event_trigger_report_dropped;
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg DROP EVENT TRIGGER regress_event_trigger_report_end;
+-- only allowed from within an event trigger function, should fail
+select pg_event_trigger_table_rewrite_oid();
+ERROR:  pg_event_trigger_table_rewrite_oid() can only be called in a table_rewrite event trigger function
+-- test Table Rewrite Event Trigger
+--dg-skip: language "?" does not exist
+--dg CREATE OR REPLACE FUNCTION test_evtrig_no_rewrite() RETURNS event_trigger
+--dg LANGUAGE plpgsql AS $$
+--dg BEGIN
+--dg   RAISE EXCEPTION 'rewrites not allowed';
+--dg END;
+--dg $$;
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg create event trigger no_rewrite_allowed on table_rewrite
+--dg   execute procedure test_evtrig_no_rewrite();
+create table rewriteme (id serial primary key, foo float, bar timestamptz);
+insert into rewriteme
+     select x * 1.001 from generate_series(1, 500) as t(x);
+--dg-cascade
+--dg alter table rewriteme alter column foo type numeric;
+alter table rewriteme add column baz int default 0;
+-- test with more than one reason to rewrite a single table
+--dg-skip: language "?" does not exist
+--dg CREATE OR REPLACE FUNCTION test_evtrig_no_rewrite() RETURNS event_trigger
+--dg LANGUAGE plpgsql AS $$
+--dg BEGIN
+--dg   RAISE NOTICE 'Table ''%'' is being rewritten (reason = %)',
+--dg                pg_event_trigger_table_rewrite_oid()::regclass,
+--dg                pg_event_trigger_table_rewrite_reason();
+--dg END;
+--dg $$;
+--dg-cascade
+--dg alter table rewriteme
+--dg  add column onemore int default 0,
+--dg  add column another int default -1,
+--dg  alter column foo type numeric(10,4);
+-- matview rewrite when changing access method
+--dg-skip: a relation's storage cannot be made: digres has no catalog tables
+--dg CREATE MATERIALIZED VIEW heapmv USING heap AS SELECT 1 AS a;
+--dg-cascade
+--dg ALTER MATERIALIZED VIEW heapmv SET ACCESS METHOD heap2;
+--dg-cascade
+--dg DROP MATERIALIZED VIEW heapmv;
+-- shouldn't trigger a table_rewrite event
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg alter table rewriteme alter column foo type numeric(12,4);
+begin;
+set timezone to 'UTC';
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg alter table rewriteme alter column bar type timestamp;
+set timezone to '0';
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg alter table rewriteme alter column bar type timestamptz;
+set timezone to 'Europe/London';
+--dg-cascade
+--dg alter table rewriteme alter column bar type timestamp; -- does rewrite
+rollback;
+-- typed tables are rewritten when their type changes.  Don't emit table
+-- name, because firing order is not stable.
+--dg-skip: language "?" does not exist
+--dg CREATE OR REPLACE FUNCTION test_evtrig_no_rewrite() RETURNS event_trigger
+--dg LANGUAGE plpgsql AS $$
+--dg BEGIN
+--dg   RAISE NOTICE 'Table is being rewritten (reason = %)',
+--dg                pg_event_trigger_table_rewrite_reason();
+--dg END;
+--dg $$;
+--dg-skip: a relation's storage cannot be made: digres has no catalog tables
+--dg create type rewritetype as (a int);
+--dg-cascade
+--dg create table rewritemetoo1 of rewritetype;
+--dg-cascade
+--dg create table rewritemetoo2 of rewritetype;
+--dg-skip: ALTER TYPE is not supported yet
+--dg alter type rewritetype alter attribute a type text cascade;
+-- but this doesn't work
+--dg-cascade
+--dg create table rewritemetoo3 (a rewritetype);
+--dg-cascade
+--dg alter type rewritetype alter attribute a type varchar cascade;
+drop table rewriteme;
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg drop event trigger no_rewrite_allowed;
+--dg-cascade
+--dg drop function test_evtrig_no_rewrite();
+-- Tests for REINDEX
+--dg-skip: language "?" does not exist
+--dg CREATE OR REPLACE FUNCTION reindex_start_command()
+--dg RETURNS event_trigger AS $$
+--dg BEGIN
+--dg     RAISE NOTICE 'REINDEX START: % %', tg_event, tg_tag;
+--dg END;
+--dg $$ LANGUAGE plpgsql;
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg CREATE EVENT TRIGGER regress_reindex_start ON ddl_command_start
+--dg     WHEN TAG IN ('REINDEX')
+--dg     EXECUTE PROCEDURE reindex_start_command();
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION reindex_end_command()
+--dg RETURNS event_trigger AS $$
+--dg DECLARE
+--dg     obj record;
+--dg BEGIN
+--dg     FOR obj IN SELECT * FROM pg_event_trigger_ddl_commands()
+--dg     LOOP
+--dg         RAISE NOTICE 'REINDEX END: command_tag=% type=% identity=%',
+--dg 	    obj.command_tag, obj.object_type, obj.object_identity;
+--dg     END LOOP;
+--dg END;
+--dg $$ LANGUAGE plpgsql;
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg CREATE EVENT TRIGGER regress_reindex_end ON ddl_command_end
+--dg     WHEN TAG IN ('REINDEX')
+--dg     EXECUTE PROCEDURE reindex_end_command();
+-- Extra event to force the use of a snapshot.
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION reindex_end_command_snap() RETURNS EVENT_TRIGGER
+--dg     AS $$ BEGIN PERFORM 1; END $$ LANGUAGE plpgsql;
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg CREATE EVENT TRIGGER regress_reindex_end_snap ON ddl_command_end
+--dg     EXECUTE FUNCTION reindex_end_command_snap();
+-- With simple relation
+CREATE TABLE concur_reindex_tab (c1 int);
+CREATE INDEX concur_reindex_ind ON concur_reindex_tab (c1);
+-- Both start and end triggers enabled.
+--dg-cascade
+--dg REINDEX INDEX concur_reindex_ind;
+--dg-cascade
+--dg REINDEX TABLE concur_reindex_tab;
+--dg-cascade
+--dg REINDEX INDEX CONCURRENTLY concur_reindex_ind;
+--dg-cascade
+--dg REINDEX TABLE CONCURRENTLY concur_reindex_tab;
+-- with start trigger disabled.
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg ALTER EVENT TRIGGER regress_reindex_start DISABLE;
+--dg-cascade
+--dg REINDEX INDEX concur_reindex_ind;
+--dg-cascade
+--dg REINDEX INDEX CONCURRENTLY concur_reindex_ind;
+-- without an index
+DROP INDEX concur_reindex_ind;
+--dg-differs: the result
+--dg REINDEX TABLE concur_reindex_tab;
+--dg-differs: the result
+--dg REINDEX TABLE CONCURRENTLY concur_reindex_tab;
+-- With a Schema
+CREATE SCHEMA concur_reindex_schema;
+-- No indexes
+--dg-differs: the result
+--dg REINDEX SCHEMA concur_reindex_schema;
+--dg-differs: the result
+--dg REINDEX SCHEMA CONCURRENTLY concur_reindex_schema;
+CREATE TABLE concur_reindex_schema.tab (a int);
+CREATE INDEX ind ON concur_reindex_schema.tab (a);
+-- One index reported
+--dg-cascade
+--dg REINDEX SCHEMA concur_reindex_schema;
+--dg-cascade
+--dg REINDEX SCHEMA CONCURRENTLY concur_reindex_schema;
+-- One table on schema but no indexes
+DROP INDEX concur_reindex_schema.ind;
+--dg-differs: the result
+--dg REINDEX SCHEMA concur_reindex_schema;
+--dg-differs: the result
+--dg REINDEX SCHEMA CONCURRENTLY concur_reindex_schema;
+DROP SCHEMA concur_reindex_schema CASCADE;
+NOTICE:  drop cascades to table concur_reindex_schema.tab
+-- With a partitioned table, and nothing else.
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE concur_reindex_part (id int) PARTITION BY RANGE (id);
+--dg-cascade
+--dg REINDEX TABLE concur_reindex_part;
+--dg-cascade
+--dg REINDEX TABLE CONCURRENTLY concur_reindex_part;
+-- Partition that would be reindexed, still nothing.
+--dg-cascade
+--dg CREATE TABLE concur_reindex_child PARTITION OF concur_reindex_part
+--dg   FOR VALUES FROM (0) TO (10);
+--dg-cascade
+--dg REINDEX TABLE concur_reindex_part;
+--dg-cascade
+--dg REINDEX TABLE CONCURRENTLY concur_reindex_part;
+-- Now add some indexes.
+--dg-cascade
+--dg CREATE INDEX concur_reindex_partidx ON concur_reindex_part (id);
+--dg-cascade
+--dg REINDEX INDEX concur_reindex_partidx;
+--dg-cascade
+--dg REINDEX INDEX CONCURRENTLY concur_reindex_partidx;
+--dg-cascade
+--dg REINDEX TABLE concur_reindex_part;
+--dg-cascade
+--dg REINDEX TABLE CONCURRENTLY concur_reindex_part;
+--dg-cascade
+--dg DROP TABLE concur_reindex_part;
+-- Clean up
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg DROP EVENT TRIGGER regress_reindex_start;
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg DROP EVENT TRIGGER regress_reindex_end;
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg DROP EVENT TRIGGER regress_reindex_end_snap;
+--dg-cascade
+--dg DROP FUNCTION reindex_end_command();
+--dg-cascade
+--dg DROP FUNCTION reindex_end_command_snap();
+--dg-cascade
+--dg DROP FUNCTION reindex_start_command();
+DROP TABLE concur_reindex_tab;
+-- test Row Security Event Trigger
+RESET SESSION AUTHORIZATION;
+CREATE TABLE event_trigger_test (a integer, b text);
+--dg-skip: language "?" does not exist
+--dg CREATE OR REPLACE FUNCTION start_command()
+--dg RETURNS event_trigger AS $$
+--dg BEGIN
+--dg RAISE NOTICE '% - ddl_command_start', tg_tag;
+--dg END;
+--dg $$ LANGUAGE plpgsql;
+--dg-skip: language "?" does not exist
+--dg CREATE OR REPLACE FUNCTION end_command()
+--dg RETURNS event_trigger AS $$
+--dg BEGIN
+--dg RAISE NOTICE '% - ddl_command_end', tg_tag;
+--dg END;
+--dg $$ LANGUAGE plpgsql;
+--dg-skip: language "?" does not exist
+--dg CREATE OR REPLACE FUNCTION drop_sql_command()
+--dg RETURNS event_trigger AS $$
+--dg BEGIN
+--dg RAISE NOTICE '% - sql_drop', tg_tag;
+--dg END;
+--dg $$ LANGUAGE plpgsql;
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg CREATE EVENT TRIGGER start_rls_command ON ddl_command_start
+--dg     WHEN TAG IN ('CREATE POLICY', 'ALTER POLICY', 'DROP POLICY') EXECUTE PROCEDURE start_command();
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg CREATE EVENT TRIGGER end_rls_command ON ddl_command_end
+--dg     WHEN TAG IN ('CREATE POLICY', 'ALTER POLICY', 'DROP POLICY') EXECUTE PROCEDURE end_command();
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg CREATE EVENT TRIGGER sql_drop_command ON sql_drop
+--dg     WHEN TAG IN ('DROP POLICY') EXECUTE PROCEDURE drop_sql_command();
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg CREATE POLICY p1 ON event_trigger_test USING (FALSE);
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg ALTER POLICY p1 ON event_trigger_test USING (TRUE);
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg ALTER POLICY p1 ON event_trigger_test RENAME TO p2;
+--dg-skip: relation pg_policy cannot be opened: digres has no catalog tables
+--dg DROP POLICY p2 ON event_trigger_test;
+-- Check the object addresses of all the event triggers.
+--dg-cascade
+--dg SELECT
+--dg     e.evtname,
+--dg     pg_describe_object('pg_event_trigger'::regclass, e.oid, 0) as descr,
+--dg     b.type, b.object_names, b.object_args,
+--dg     pg_identify_object(a.classid, a.objid, a.objsubid) as ident
+--dg   FROM pg_event_trigger as e,
+--dg     LATERAL pg_identify_object_as_address('pg_event_trigger'::regclass, e.oid, 0) as b,
+--dg     LATERAL pg_get_object_address(b.type, b.object_names, b.object_args) as a
+--dg   ORDER BY e.evtname;
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg DROP EVENT TRIGGER start_rls_command;
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg DROP EVENT TRIGGER end_rls_command;
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg DROP EVENT TRIGGER sql_drop_command;
+-- Check the GUC for disabling event triggers
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION test_event_trigger_guc() RETURNS event_trigger
+--dg LANGUAGE plpgsql AS $$
+--dg DECLARE
+--dg 	obj record;
+--dg BEGIN
+--dg 	FOR obj IN SELECT * FROM pg_event_trigger_dropped_objects()
+--dg 	LOOP
+--dg 		RAISE NOTICE '% dropped %', tg_tag, obj.object_type;
+--dg 	END LOOP;
+--dg END;
+--dg $$;
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg CREATE EVENT TRIGGER test_event_trigger_guc
+--dg 	ON sql_drop
+--dg 	WHEN TAG IN ('DROP POLICY') EXECUTE FUNCTION test_event_trigger_guc();
+SET event_triggers = 'on';
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg CREATE POLICY pguc ON event_trigger_test USING (FALSE);
+--dg-skip: relation pg_policy cannot be opened: digres has no catalog tables
+--dg DROP POLICY pguc ON event_trigger_test;
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg CREATE POLICY pguc ON event_trigger_test USING (FALSE);
+SET event_triggers = 'off';
+--dg-skip: relation pg_policy cannot be opened: digres has no catalog tables
+--dg DROP POLICY pguc ON event_trigger_test;

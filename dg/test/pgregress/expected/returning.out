@@ -1,0 +1,481 @@
+--
+-- Test INSERT/UPDATE/DELETE RETURNING
+--
+-- Simple cases
+--dg-skip: CREATE SEQUENCE supports only START and INCREMENT yet, not TEMPORARY or UNLOGGED
+--dg CREATE TEMP TABLE foo (f1 serial, f2 text, f3 int default 42);
+--dg-cascade
+--dg INSERT INTO foo (f2,f3)
+--dg   VALUES ('test', DEFAULT), ('More', 11), (upper('more'), 7+9)
+--dg   RETURNING *, f1+f3 AS sum;
+--dg-cascade
+--dg SELECT * FROM foo;
+--dg-cascade
+--dg UPDATE foo SET f2 = lower(f2), f3 = DEFAULT RETURNING foo.*, f1+f3 AS sum13;
+--dg-cascade
+--dg SELECT * FROM foo;
+--dg-cascade
+--dg DELETE FROM foo WHERE f1 > 2 RETURNING f3, f2, f1, least(f1,f3);
+--dg-cascade
+--dg SELECT * FROM foo;
+-- Subplans and initplans in the RETURNING list
+--dg-cascade
+--dg INSERT INTO foo SELECT f1+10, f2, f3+99 FROM foo
+--dg   RETURNING *, f1+112 IN (SELECT q1 FROM int8_tbl) AS subplan,
+--dg     EXISTS(SELECT * FROM int4_tbl) AS initplan;
+--dg-cascade
+--dg UPDATE foo SET f3 = f3 * 2
+--dg   WHERE f1 > 10
+--dg   RETURNING *, f1+112 IN (SELECT q1 FROM int8_tbl) AS subplan,
+--dg     EXISTS(SELECT * FROM int4_tbl) AS initplan;
+--dg-cascade
+--dg DELETE FROM foo
+--dg   WHERE f1 > 10
+--dg   RETURNING *, f1+112 IN (SELECT q1 FROM int8_tbl) AS subplan,
+--dg     EXISTS(SELECT * FROM int4_tbl) AS initplan;
+-- Joins
+--dg-cascade
+--dg UPDATE foo SET f3 = f3*2
+--dg   FROM int4_tbl i
+--dg   WHERE foo.f1 + 123455 = i.f1
+--dg   RETURNING foo.*, i.f1 as "i.f1";
+--dg-cascade
+--dg SELECT * FROM foo;
+--dg-cascade
+--dg DELETE FROM foo
+--dg   USING int4_tbl i
+--dg   WHERE foo.f1 + 123455 = i.f1
+--dg   RETURNING foo.*, i.f1 as "i.f1";
+--dg-cascade
+--dg SELECT * FROM foo;
+-- Check inheritance cases
+--dg-cascade
+--dg CREATE TEMP TABLE foochild (fc int) INHERITS (foo);
+--dg-cascade
+--dg INSERT INTO foochild VALUES(123,'child',999,-123);
+--dg-cascade
+--dg ALTER TABLE foo ADD COLUMN f4 int8 DEFAULT 99;
+--dg-cascade
+--dg SELECT * FROM foo;
+--dg-cascade
+--dg SELECT * FROM foochild;
+--dg-cascade
+--dg UPDATE foo SET f4 = f4 + f3 WHERE f4 = 99 RETURNING *;
+--dg-cascade
+--dg SELECT * FROM foo;
+--dg-cascade
+--dg SELECT * FROM foochild;
+--dg-cascade
+--dg UPDATE foo SET f3 = f3*2
+--dg   FROM int8_tbl i
+--dg   WHERE foo.f1 = i.q2
+--dg   RETURNING *;
+--dg-cascade
+--dg SELECT * FROM foo;
+--dg-cascade
+--dg SELECT * FROM foochild;
+--dg-cascade
+--dg DELETE FROM foo
+--dg   USING int8_tbl i
+--dg   WHERE foo.f1 = i.q2
+--dg   RETURNING *;
+--dg-cascade
+--dg SELECT * FROM foo;
+--dg-cascade
+--dg SELECT * FROM foochild;
+--dg-cascade
+--dg DROP TABLE foochild;
+-- Rules and views
+--dg-cascade
+--dg CREATE TEMP VIEW voo AS SELECT f1, f2 FROM foo;
+--dg-cascade
+--dg CREATE RULE voo_i AS ON INSERT TO voo DO INSTEAD
+--dg   INSERT INTO foo VALUES(new.*, 57);
+--dg-cascade
+--dg INSERT INTO voo VALUES(11,'zit');
+-- fails:
+--dg-cascade
+--dg INSERT INTO voo VALUES(12,'zoo') RETURNING *, f1*2;
+-- fails, incompatible list:
+--dg-cascade
+--dg CREATE OR REPLACE RULE voo_i AS ON INSERT TO voo DO INSTEAD
+--dg   INSERT INTO foo VALUES(new.*, 57) RETURNING *;
+--dg-cascade
+--dg CREATE OR REPLACE RULE voo_i AS ON INSERT TO voo DO INSTEAD
+--dg   INSERT INTO foo VALUES(new.*, 57) RETURNING f1, f2;
+-- should still work
+--dg-cascade
+--dg INSERT INTO voo VALUES(13,'zit2');
+-- works now
+--dg-cascade
+--dg INSERT INTO voo VALUES(14,'zoo2') RETURNING *;
+--dg-cascade
+--dg SELECT * FROM foo;
+--dg-cascade
+--dg SELECT * FROM voo;
+--dg-cascade
+--dg CREATE OR REPLACE RULE voo_u AS ON UPDATE TO voo DO INSTEAD
+--dg   UPDATE foo SET f1 = new.f1, f2 = new.f2 WHERE f1 = old.f1
+--dg   RETURNING f1, f2;
+--dg-cascade
+--dg update voo set f1 = f1 + 1 where f2 = 'zoo2';
+--dg-cascade
+--dg update voo set f1 = f1 + 1 where f2 = 'zoo2' RETURNING *, f1*2;
+--dg-cascade
+--dg SELECT * FROM foo;
+--dg-cascade
+--dg SELECT * FROM voo;
+--dg-cascade
+--dg CREATE OR REPLACE RULE voo_d AS ON DELETE TO voo DO INSTEAD
+--dg   DELETE FROM foo WHERE f1 = old.f1
+--dg   RETURNING f1, f2;
+--dg-cascade
+--dg DELETE FROM foo WHERE f1 = 13;
+--dg-cascade
+--dg DELETE FROM foo WHERE f2 = 'zit' RETURNING *;
+--dg-cascade
+--dg SELECT * FROM foo;
+--dg-cascade
+--dg SELECT * FROM voo;
+-- Check use of a whole-row variable for an un-flattenable view
+--dg-cascade
+--dg CREATE TEMP VIEW foo_v AS SELECT * FROM foo OFFSET 0;
+--dg-cascade
+--dg UPDATE foo SET f2 = foo_v.f2 FROM foo_v WHERE foo_v.f1 = foo.f1
+--dg   RETURNING foo_v;
+--dg-cascade
+--dg SELECT * FROM foo;
+-- Check use of a whole-row variable for an inlined set-returning function
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION foo_f() RETURNS SETOF foo AS
+--dg   $$ SELECT * FROM foo OFFSET 0 $$ LANGUAGE sql STABLE;
+--dg-cascade
+--dg UPDATE foo SET f2 = foo_f.f2 FROM foo_f() WHERE foo_f.f1 = foo.f1
+--dg   RETURNING foo_f;
+--dg-cascade
+--dg SELECT * FROM foo;
+--dg-cascade
+--dg DROP FUNCTION foo_f();
+-- As above, but SRF is defined to return a composite type
+--dg-skip: a relation's storage cannot be made: digres has no catalog tables
+--dg CREATE TYPE foo_t AS (f1 int, f2 text, f3 int, f4 int8);
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION foo_f() RETURNS SETOF foo_t AS
+--dg   $$ SELECT * FROM foo OFFSET 0 $$ LANGUAGE sql STABLE;
+--dg-cascade
+--dg UPDATE foo SET f2 = foo_f.f2 FROM foo_f() WHERE foo_f.f1 = foo.f1
+--dg   RETURNING foo_f;
+--dg-cascade
+--dg SELECT * FROM foo;
+--dg-cascade
+--dg DROP FUNCTION foo_f();
+--dg-cascade
+--dg DROP TYPE foo_t;
+-- Try a join case
+CREATE TEMP TABLE joinme (f2j text, other int);
+INSERT INTO joinme VALUES('more', 12345);
+INSERT INTO joinme VALUES('zoo2', 54321);
+INSERT INTO joinme VALUES('other', 0);
+--dg-cascade
+--dg CREATE TEMP VIEW joinview AS
+--dg   SELECT foo.*, other FROM foo JOIN joinme ON (f2 = f2j);
+--dg-cascade
+--dg SELECT * FROM joinview;
+--dg-cascade
+--dg CREATE RULE joinview_u AS ON UPDATE TO joinview DO INSTEAD
+--dg   UPDATE foo SET f1 = new.f1, f3 = new.f3
+--dg     FROM joinme WHERE f2 = f2j AND f2 = old.f2
+--dg     RETURNING foo.*, other;
+--dg-cascade
+--dg UPDATE joinview SET f1 = f1 + 1 WHERE f3 = 57 RETURNING *, other + 1;
+--dg-cascade
+--dg SELECT * FROM joinview;
+--dg-cascade
+--dg SELECT * FROM foo;
+--dg-cascade
+--dg SELECT * FROM voo;
+-- Check aliased target relation
+--dg-cascade
+--dg INSERT INTO foo AS bar DEFAULT VALUES RETURNING *; -- ok
+--dg-cascade
+--dg INSERT INTO foo AS bar DEFAULT VALUES RETURNING foo.*; -- fails, wrong name
+--dg-cascade
+--dg INSERT INTO foo AS bar DEFAULT VALUES RETURNING bar.*; -- ok
+--dg-cascade
+--dg INSERT INTO foo AS bar DEFAULT VALUES RETURNING bar.f3; -- ok
+--
+-- Test RETURNING OLD/NEW.
+--
+-- Start with new data, to ensure predictable TIDs.
+--
+--dg-cascade
+--dg TRUNCATE foo;
+--dg-cascade
+--dg INSERT INTO foo VALUES (1, 'xxx', 10, 20), (2, 'more', 42, 141), (3, 'zoo2', 57, 99);
+-- Error cases
+INSERT INTO foo DEFAULT VALUES RETURNING WITH (nonsuch AS something) *;
+ERROR:  syntax error at or near "nonsuch"
+LINE 1: INSERT INTO foo DEFAULT VALUES RETURNING WITH (nonsuch AS so...
+                                                       ^
+--dg-cascade
+--dg INSERT INTO foo DEFAULT VALUES RETURNING WITH (new AS foo) *;
+--dg-cascade
+--dg INSERT INTO foo DEFAULT VALUES RETURNING WITH (old AS o, new AS n, old AS o) *;
+--dg-cascade
+--dg INSERT INTO foo DEFAULT VALUES RETURNING WITH (old AS o, new AS n, new AS n) *;
+--dg-cascade
+--dg INSERT INTO foo DEFAULT VALUES RETURNING WITH (old AS x, new AS x) *;
+-- INSERT has NEW, but not OLD
+--dg-cascade
+--dg EXPLAIN (verbose, costs off)
+--dg INSERT INTO foo VALUES (4)
+--dg   RETURNING old.tableoid::regclass, old.ctid, old.*,
+--dg             new.tableoid::regclass, new.ctid, new.*, *;
+--dg-cascade
+--dg INSERT INTO foo VALUES (4)
+--dg   RETURNING old.tableoid::regclass, old.ctid, old.*,
+--dg             new.tableoid::regclass, new.ctid, new.*, *;
+-- INSERT ... ON CONFLICT ... UPDATE has OLD and NEW
+--dg-cascade
+--dg CREATE UNIQUE INDEX foo_f1_idx ON foo (f1);
+--dg-cascade
+--dg EXPLAIN (verbose, costs off)
+--dg INSERT INTO foo VALUES (4, 'conflict'), (5, 'ok')
+--dg   ON CONFLICT (f1) DO UPDATE SET f2 = excluded.f2||'ed', f3 = -1
+--dg   RETURNING WITH (OLD AS o, NEW AS n)
+--dg             o.tableoid::regclass, o.ctid, o.*,
+--dg             n.tableoid::regclass, n.ctid, n.*, *;
+--dg-cascade
+--dg INSERT INTO foo VALUES (4, 'conflict'), (5, 'ok')
+--dg   ON CONFLICT (f1) DO UPDATE SET f2 = excluded.f2||'ed', f3 = -1
+--dg   RETURNING WITH (OLD AS o, NEW AS n)
+--dg             o.tableoid::regclass, o.ctid, o.*,
+--dg             n.tableoid::regclass, n.ctid, n.*, *;
+-- UPDATE has OLD and NEW
+--dg-cascade
+--dg EXPLAIN (verbose, costs off)
+--dg UPDATE foo SET f4 = 100 WHERE f1 = 5
+--dg   RETURNING old.tableoid::regclass, old.ctid, old.*, old,
+--dg             new.tableoid::regclass, new.ctid, new.*, new,
+--dg             old.f4::text||'->'||new.f4::text AS change;
+--dg-cascade
+--dg UPDATE foo SET f4 = 100 WHERE f1 = 5
+--dg   RETURNING old.tableoid::regclass, old.ctid, old.*, old,
+--dg             new.tableoid::regclass, new.ctid, new.*, new,
+--dg             old.f4::text||'->'||new.f4::text AS change;
+-- DELETE has OLD, but not NEW
+--dg-cascade
+--dg EXPLAIN (verbose, costs off)
+--dg DELETE FROM foo WHERE f1 = 5
+--dg   RETURNING old.tableoid::regclass, old.ctid, old.*,
+--dg             new.tableoid::regclass, new.ctid, new.*, *;
+--dg-cascade
+--dg DELETE FROM foo WHERE f1 = 5
+--dg   RETURNING old.tableoid::regclass, old.ctid, old.*,
+--dg             new.tableoid::regclass, new.ctid, new.*, *;
+-- Parenthesized OLD and NEW
+--dg-cascade
+--dg INSERT INTO foo VALUES (6, 'paren-test', 60, 600)
+--dg   RETURNING old, (old).f4, (old).*,
+--dg             new, (new).f4, (new).*;
+--dg-cascade
+--dg UPDATE foo SET f4 = 700 WHERE f1 = 6
+--dg   RETURNING old, (old).f4, (old).*,
+--dg             new, (new).f4, (new).*;
+--dg-cascade
+--dg DELETE FROM foo WHERE f1 = 6
+--dg   RETURNING old, (old).f4, (old).*,
+--dg             new, (new).f4, (new).*;
+-- RETURNING OLD and NEW from subquery
+--dg-cascade
+--dg EXPLAIN (verbose, costs off)
+--dg INSERT INTO foo VALUES (5, 'subquery test')
+--dg   RETURNING (SELECT max(old.f4 + x) FROM generate_series(1, 10) x) old_max,
+--dg             (SELECT max(new.f4 + x) FROM generate_series(1, 10) x) new_max;
+--dg-cascade
+--dg INSERT INTO foo VALUES (5, 'subquery test')
+--dg   RETURNING (SELECT max(old.f4 + x) FROM generate_series(1, 10) x) old_max,
+--dg             (SELECT max(new.f4 + x) FROM generate_series(1, 10) x) new_max;
+--dg-cascade
+--dg EXPLAIN (verbose, costs off)
+--dg UPDATE foo SET f4 = 100 WHERE f1 = 5
+--dg   RETURNING (SELECT old.f4 = new.f4),
+--dg             (SELECT max(old.f4 + x) FROM generate_series(1, 10) x) old_max,
+--dg             (SELECT max(new.f4 + x) FROM generate_series(1, 10) x) new_max;
+--dg-cascade
+--dg UPDATE foo SET f4 = 100 WHERE f1 = 5
+--dg   RETURNING (SELECT old.f4 = new.f4),
+--dg             (SELECT max(old.f4 + x) FROM generate_series(1, 10) x) old_max,
+--dg             (SELECT max(new.f4 + x) FROM generate_series(1, 10) x) new_max;
+--dg-cascade
+--dg EXPLAIN (verbose, costs off)
+--dg DELETE FROM foo WHERE f1 = 5
+--dg   RETURNING (SELECT max(old.f4 + x) FROM generate_series(1, 10) x) old_max,
+--dg             (SELECT max(new.f4 + x) FROM generate_series(1, 10) x) new_max;
+--dg-cascade
+--dg DELETE FROM foo WHERE f1 = 5
+--dg   RETURNING (SELECT max(old.f4 + x) FROM generate_series(1, 10) x) old_max,
+--dg             (SELECT max(new.f4 + x) FROM generate_series(1, 10) x) new_max;
+-- DELETE turned into UPDATE by a rule has OLD and NEW
+--dg-cascade
+--dg CREATE RULE foo_del_rule AS ON DELETE TO foo DO INSTEAD
+--dg   UPDATE foo SET f2 = f2||' (deleted)', f3 = -1, f4 = -1 WHERE f1 = OLD.f1
+--dg   RETURNING *;
+--dg-cascade
+--dg EXPLAIN (verbose, costs off)
+--dg DELETE FROM foo WHERE f1 = 4 RETURNING old.*,new.*, *;
+--dg-cascade
+--dg DELETE FROM foo WHERE f1 = 4 RETURNING old.*,new.*, *;
+-- UPDATE on view with rule
+--dg-cascade
+--dg EXPLAIN (verbose, costs off)
+--dg UPDATE joinview SET f3 = f3 + 1 WHERE f3 = 57
+--dg   RETURNING old.*, new.*, *, new.f3 - old.f3 AS delta_f3;
+--dg-cascade
+--dg UPDATE joinview SET f3 = f3 + 1 WHERE f3 = 57
+--dg   RETURNING old.*, new.*, *, new.f3 - old.f3 AS delta_f3;
+-- UPDATE on view with INSTEAD OF trigger
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION joinview_upd_trig_fn() RETURNS trigger
+--dg LANGUAGE plpgsql AS
+--dg $$
+--dg BEGIN
+--dg   RAISE NOTICE 'UPDATE: % -> %', old, new;
+--dg   UPDATE foo SET f1 = new.f1, f3 = new.f3, f4 = new.f4 * 10
+--dg     FROM joinme WHERE f2 = f2j AND f2 = old.f2
+--dg     RETURNING new.f1, new.f4 INTO new.f1, new.f4;  -- should fail
+--dg   RETURN NEW;
+--dg END;
+--dg $$;
+--dg-cascade
+--dg CREATE TRIGGER joinview_upd_trig INSTEAD OF UPDATE ON joinview
+--dg   FOR EACH ROW EXECUTE FUNCTION joinview_upd_trig_fn();
+--dg-cascade
+--dg DROP RULE joinview_u ON joinview;
+--dg-cascade
+--dg UPDATE joinview SET f3 = f3 + 1, f4 = 7 WHERE f3 = 58
+--dg   RETURNING old.*, new.*, *, new.f3 - old.f3 AS delta_f3;  -- should fail
+--dg-skip: language "?" does not exist
+--dg CREATE OR REPLACE FUNCTION joinview_upd_trig_fn() RETURNS trigger
+--dg LANGUAGE plpgsql AS
+--dg $$
+--dg BEGIN
+--dg   RAISE NOTICE 'UPDATE: % -> %', old, new;
+--dg   UPDATE foo SET f1 = new.f1, f3 = new.f3, f4 = new.f4 * 10
+--dg     FROM joinme WHERE f2 = f2j AND f2 = old.f2
+--dg     RETURNING WITH (new AS n) new.f1, n.f4 INTO new.f1, new.f4;  -- now ok
+--dg   RETURN NEW;
+--dg END;
+--dg $$;
+--dg-cascade
+--dg EXPLAIN (verbose, costs off)
+--dg UPDATE joinview SET f3 = f3 + 1, f4 = 7 WHERE f3 = 58
+--dg   RETURNING old.*, new.*, *, new.f3 - old.f3 AS delta_f3;
+--dg-cascade
+--dg UPDATE joinview SET f3 = f3 + 1, f4 = 7 WHERE f3 = 58
+--dg   RETURNING old.*, new.*, *, new.f3 - old.f3 AS delta_f3;  -- should succeed
+-- Test wholerow & dropped column handling
+--dg-cascade
+--dg ALTER TABLE foo DROP COLUMN f3 CASCADE;
+--dg-cascade
+--dg UPDATE foo SET f4 = f4 + 1 RETURNING old.f3;  -- should fail
+--dg-cascade
+--dg UPDATE foo SET f4 = f4 + 1 RETURNING old, new;
+-- INSERT/DELETE on zero column table
+CREATE TABLE zerocol();
+INSERT INTO zerocol SELECT RETURNING old.*, new.*, *;
+ERROR:  RETURNING must have at least one column
+LINE 1: INSERT INTO zerocol SELECT RETURNING old.*, new.*, *;
+                                             ^
+--dg-skip: column old.ctid does not exist
+--dg INSERT INTO zerocol SELECT
+--dg   RETURNING old.tableoid::regclass, old.ctid,
+--dg             new.tableoid::regclass, new.ctid, ctid, *;
+--dg-cascade
+--dg DELETE FROM zerocol
+--dg   RETURNING old.tableoid::regclass, old.ctid,
+--dg             new.tableoid::regclass, new.ctid, ctid, *;
+DROP TABLE zerocol;
+-- Test schema-qualified table name in RETURNING list
+CREATE TABLE public.tt(a int, b int);
+INSERT INTO public.tt VALUES (1, 10);
+UPDATE public.tt SET b = b * 2 RETURNING a, b, old.b, new.b, tt.b, public.tt.b;
+ a | b  | b  | b  | b  | b  
+---+----+----+----+----+----
+ 1 | 20 | 10 | 20 | 20 | 20
+(1 row)
+
+DROP TABLE public.tt;
+-- Test cross-partition updates and attribute mapping
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE foo_parted (a int, b float8, c text) PARTITION BY LIST (a);
+--dg-cascade
+--dg CREATE TABLE foo_part_s1 PARTITION OF foo_parted FOR VALUES IN (1);
+--dg-cascade
+--dg CREATE TABLE foo_part_s2 PARTITION OF foo_parted FOR VALUES IN (2);
+CREATE TABLE foo_part_d1 (c text, a int, b float8);
+--dg-cascade
+--dg ALTER TABLE foo_parted ATTACH PARTITION foo_part_d1 FOR VALUES IN (3);
+CREATE TABLE foo_part_d2 (b float8, c text, a int);
+--dg-cascade
+--dg ALTER TABLE foo_parted ATTACH PARTITION foo_part_d2 FOR VALUES IN (4);
+--dg-cascade
+--dg INSERT INTO foo_parted
+--dg   VALUES (1, 17.1, 'P1'), (2, 17.2, 'P2'), (3, 17.3, 'P3'), (4, 17.4, 'P4')
+--dg   RETURNING old.tableoid::regclass, old.ctid, old.*,
+--dg             new.tableoid::regclass, new.ctid, new.*, *;
+--dg-cascade
+--dg UPDATE foo_parted SET a = 2, b = b + 1, c = c || '->P2' WHERE a = 1
+--dg   RETURNING old.tableoid::regclass, old.ctid, old.*,
+--dg             new.tableoid::regclass, new.ctid, new.*, *;
+--dg-cascade
+--dg UPDATE foo_parted SET a = 1, b = b + 1, c = c || '->P1' WHERE a = 3
+--dg   RETURNING old.tableoid::regclass, old.ctid, old.*,
+--dg             new.tableoid::regclass, new.ctid, new.*, *;
+--dg-cascade
+--dg UPDATE foo_parted SET a = 3, b = b + 1, c = c || '->P3' WHERE a = 1
+--dg   RETURNING old.tableoid::regclass, old.ctid, old.*,
+--dg             new.tableoid::regclass, new.ctid, new.*, *;
+--dg-cascade
+--dg UPDATE foo_parted SET a = 4, b = b + 1, c = c || '->P4' WHERE a = 3
+--dg   RETURNING old.tableoid::regclass, old.ctid, old.*,
+--dg             new.tableoid::regclass, new.ctid, new.*, *;
+-- cross-partition update that uses ReturningExpr nodes, without returning
+-- old/new table values
+--dg-cascade
+--dg CREATE VIEW foo_parted_v AS SELECT *, 'xxx' AS dummy FROM foo_parted;
+--dg-cascade
+--dg UPDATE foo_parted_v SET a = 1, c = c || '->P1' WHERE a = 2 AND c = 'P2'
+--dg   RETURNING 'P2:'||old.dummy, 'P1:'||new.dummy;
+--dg-cascade
+--dg DELETE FROM foo_parted
+--dg   RETURNING old.tableoid::regclass, old.ctid, old.*,
+--dg             new.tableoid::regclass, new.ctid, new.*, *;
+--dg-cascade
+--dg DROP TABLE foo_parted CASCADE;
+-- Test deparsing
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION foo_update()
+--dg   RETURNS void
+--dg   LANGUAGE sql
+--dg BEGIN ATOMIC
+--dg   WITH u1 AS (
+--dg     UPDATE foo SET f1 = f1 + 1 RETURNING old.*, new.*
+--dg   ), u2 AS (
+--dg     UPDATE foo SET f1 = f1 + 1 RETURNING WITH (OLD AS "old foo") "old foo".*, new.*
+--dg   ), u3 AS (
+--dg     UPDATE foo SET f1 = f1 + 1 RETURNING WITH (NEW AS "new foo") old.*, "new foo".*
+--dg   )
+--dg   UPDATE foo SET f1 = f1 + 1
+--dg     RETURNING WITH (OLD AS o, NEW AS n)
+--dg               o.*, n.*, o, n, o.f1 = n.f1, o = n,
+--dg               (SELECT o.f2 = n.f2),
+--dg               (SELECT count(*) FROM foo WHERE foo.f1 = o.f4),
+--dg               (SELECT count(*) FROM foo WHERE foo.f4 = n.f4),
+--dg               (SELECT count(*) FROM foo WHERE foo = o),
+--dg               (SELECT count(*) FROM foo WHERE foo = n);
+--dg END;
+--dg-cascade
+--dg \sf foo_update
+--dg-cascade
+--dg DROP FUNCTION foo_update;

@@ -1,0 +1,872 @@
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE xmltest (
+--dg     id int,
+--dg     data xml
+--dg );
+--dg-cascade
+--dg INSERT INTO xmltest VALUES (1, '<value>one</value>');
+--dg-cascade
+--dg INSERT INTO xmltest VALUES (2, '<value>two</value>');
+--dg-cascade
+--dg INSERT INTO xmltest VALUES (3, '<value>three</wrong>  ');
+-- If no XML data could be inserted, skip the tests as the server has been
+-- compiled without libxml support.
+--dg-cascade
+--dg SELECT count(*) = 0 AS skip_test FROM xmltest \gset
+\if :skip_test
+unrecognized value ":skip_test" for "\if expression": Boolean expected
+--dg-cascade
+--dg \quit
+\endif
+--dg-cascade
+--dg SELECT * FROM xmltest;
+-- test non-throwing API, too
+--dg-cascade
+--dg SELECT pg_input_is_valid('<value>one</value>', 'xml');
+--dg-cascade
+--dg SELECT pg_input_is_valid('<value>one</', 'xml');
+--dg-cascade
+--dg SELECT message FROM pg_input_error_info('<value>one</', 'xml');
+--dg-cascade
+--dg SELECT pg_input_is_valid('<?xml version="1.0" standalone="y"?><foo/>', 'xml');
+--dg-cascade
+--dg SELECT message FROM pg_input_error_info('<?xml version="1.0" standalone="y"?><foo/>', 'xml');
+--dg-cascade
+--dg SELECT xmlcomment('test');
+--dg-cascade
+--dg SELECT xmlcomment('-test');
+--dg-cascade
+--dg SELECT xmlcomment('test-');
+--dg-cascade
+--dg SELECT xmlcomment('--test');
+--dg-cascade
+--dg SELECT xmlcomment('te st');
+--dg-cascade
+--dg SELECT xmlconcat(xmlcomment('hello'),
+--dg                  xmlelement(NAME qux, 'foo'),
+--dg                  xmlcomment('world'));
+--dg-cascade
+--dg SELECT xmlconcat('hello', 'you');
+--dg-cascade
+--dg SELECT xmlconcat(1, 2);
+--dg-cascade
+--dg SELECT xmlconcat('bad', '<wrong></syntax>  ');
+--dg-cascade
+--dg SELECT xmlconcat('<foo/>', NULL, '<?xml version="1.1" standalone="no"?><bar/>');
+--dg-cascade
+--dg SELECT xmlconcat('<?xml version="1.1"?><foo/>', NULL, '<?xml version="1.1" standalone="no"?><bar/>');
+--dg-cascade
+--dg SELECT xmlconcat(NULL);
+--dg-cascade
+--dg SELECT xmlconcat(NULL, NULL);
+--dg-cascade
+--dg SELECT xmlelement(name element,
+--dg                   xmlattributes (1 as one, 'deuce' as two),
+--dg                   'content');
+--dg-cascade
+--dg SELECT xmlelement(name element,
+--dg                   xmlattributes ('unnamed and wrong'));
+--dg-cascade
+--dg SELECT xmlelement(name element, xmlelement(name nested, 'stuff'));
+--dg-cascade
+--dg SELECT xmlelement(name employee, xmlforest(name, age, salary as pay)) FROM emp;
+--dg-cascade
+--dg SELECT xmlelement(name duplicate, xmlattributes(1 as a, 2 as b, 3 as a));
+--dg-cascade
+--dg SELECT xmlelement(name num, 37);
+--dg-cascade
+--dg SELECT xmlelement(name foo, text 'bar');
+--dg-cascade
+--dg SELECT xmlelement(name foo, xml 'bar');
+--dg-cascade
+--dg SELECT xmlelement(name foo, text 'b<a/>r');
+--dg-cascade
+--dg SELECT xmlelement(name foo, xml 'b<a/>r');
+--dg-cascade
+--dg SELECT xmlelement(name foo, array[1, 2, 3]);
+--dg-cascade
+--dg SET xmlbinary TO base64;
+--dg-cascade
+--dg SELECT xmlelement(name foo, bytea 'bar');
+--dg-cascade
+--dg SET xmlbinary TO hex;
+--dg-cascade
+--dg SELECT xmlelement(name foo, bytea 'bar');
+--dg-cascade
+--dg SELECT xmlelement(name foo, xmlattributes(true as bar));
+--dg-cascade
+--dg SELECT xmlelement(name foo, xmlattributes('2009-04-09 00:24:37'::timestamp as bar));
+--dg-cascade
+--dg SELECT xmlelement(name foo, xmlattributes('infinity'::timestamp as bar));
+--dg-cascade
+--dg SELECT xmlelement(name foo, xmlattributes('<>&"''' as funny, xml 'b<a/>r' as funnier));
+--dg-cascade
+--dg SELECT xmlparse(content '');
+--dg-cascade
+--dg SELECT xmlparse(content '  ');
+--dg-cascade
+--dg SELECT xmlparse(content 'abc');
+--dg-cascade
+--dg SELECT xmlparse(content '<abc>x</abc>');
+--dg-cascade
+--dg SELECT xmlparse(content '<invalidentity>&</invalidentity>');
+--dg-cascade
+--dg SELECT xmlparse(content '<undefinedentity>&idontexist;</undefinedentity>');
+--dg-cascade
+--dg SELECT xmlparse(content '<invalidns xmlns=''&lt;''/>');
+--dg-cascade
+--dg SELECT xmlparse(content '<relativens xmlns=''relative''/>');
+--dg-cascade
+--dg SELECT xmlparse(content '<twoerrors>&idontexist;</unbalanced>  ');
+--dg-cascade
+--dg SELECT xmlparse(content '<nosuchprefix:tag/>');
+--dg-cascade
+--dg SELECT xmlparse(document '!');
+--dg-cascade
+--dg SELECT xmlparse(document 'abc');
+--dg-cascade
+--dg SELECT xmlparse(document '<abc>x</abc>');
+--dg-cascade
+--dg SELECT xmlparse(document '<invalidentity>&</abc>  ');
+--dg-cascade
+--dg SELECT xmlparse(document '<undefinedentity>&idontexist;</abc>  ');
+--dg-cascade
+--dg SELECT xmlparse(document '<invalidns xmlns=''&lt;''/>');
+--dg-cascade
+--dg SELECT xmlparse(document '<relativens xmlns=''relative''/>');
+--dg-cascade
+--dg SELECT xmlparse(document '<twoerrors>&idontexist;</unbalanced>  ');
+--dg-cascade
+--dg SELECT xmlparse(document '<nosuchprefix:tag/>');
+--dg-cascade
+--dg SELECT xmlpi(name foo);
+--dg-cascade
+--dg SELECT xmlpi(name xml);
+--dg-cascade
+--dg SELECT xmlpi(name xmlstuff);
+--dg-cascade
+--dg SELECT xmlpi(name foo, 'bar');
+--dg-cascade
+--dg SELECT xmlpi(name foo, 'in?>valid');
+--dg-cascade
+--dg SELECT xmlpi(name foo, null);
+--dg-cascade
+--dg SELECT xmlpi(name xml, null);
+--dg-cascade
+--dg SELECT xmlpi(name xmlstuff, null);
+--dg-cascade
+--dg SELECT xmlpi(name "xml-stylesheet", 'href="mystyle.css" type="text/css"');
+--dg-cascade
+--dg SELECT xmlpi(name foo, '   bar');
+--dg-cascade
+--dg SELECT xmlroot(xml '<foo/>', version no value, standalone no value);
+--dg-cascade
+--dg SELECT xmlroot(xml '<foo/>', version '2.0');
+--dg-cascade
+--dg SELECT xmlroot(xml '<foo/>', version no value, standalone yes);
+--dg-cascade
+--dg SELECT xmlroot(xml '<?xml version="1.1"?><foo/>', version no value, standalone yes);
+--dg-cascade
+--dg SELECT xmlroot(xmlroot(xml '<foo/>', version '1.0'), version '1.1', standalone no);
+--dg-cascade
+--dg SELECT xmlroot('<?xml version="1.1" standalone="yes"?><foo/>', version no value, standalone no);
+--dg-cascade
+--dg SELECT xmlroot('<?xml version="1.1" standalone="yes"?><foo/>', version no value, standalone no value);
+--dg-cascade
+--dg SELECT xmlroot('<?xml version="1.1" standalone="yes"?><foo/>', version no value);
+--dg-cascade
+--dg SELECT xmlroot (
+--dg   xmlelement (
+--dg     name gazonk,
+--dg     xmlattributes (
+--dg       'val' AS name,
+--dg       1 + 1 AS num
+--dg     ),
+--dg     xmlelement (
+--dg       NAME qux,
+--dg       'foo'
+--dg     )
+--dg   ),
+--dg   version '1.0',
+--dg   standalone yes
+--dg );
+--dg-cascade
+--dg SELECT xmlserialize(content data as character varying(20)) FROM xmltest;
+--dg-cascade
+--dg SELECT xmlserialize(content 'good' as char(10));
+--dg-cascade
+--dg SELECT xmlserialize(document 'bad' as text);
+-- indent
+--dg-cascade
+--dg SELECT xmlserialize(DOCUMENT '<foo><bar><val x="y">42</val></bar></foo>' AS text INDENT);
+--dg-cascade
+--dg SELECT xmlserialize(CONTENT  '<foo><bar><val x="y">42</val></bar></foo>' AS text INDENT);
+-- no indent
+--dg-cascade
+--dg SELECT xmlserialize(DOCUMENT '<foo><bar><val x="y">42</val></bar></foo>' AS text NO INDENT);
+--dg-cascade
+--dg SELECT xmlserialize(CONTENT  '<foo><bar><val x="y">42</val></bar></foo>' AS text NO INDENT);
+-- indent non singly-rooted xml
+--dg-cascade
+--dg SELECT xmlserialize(DOCUMENT '<foo>73</foo><bar><val x="y">42</val></bar>' AS text INDENT);
+--dg-cascade
+--dg SELECT xmlserialize(CONTENT  '<foo>73</foo><bar><val x="y">42</val></bar>' AS text INDENT);
+-- indent non singly-rooted xml with mixed contents
+--dg-cascade
+--dg SELECT xmlserialize(DOCUMENT 'text node<foo>73</foo>text node<bar><val x="y">42</val></bar>' AS text INDENT);
+--dg-cascade
+--dg SELECT xmlserialize(CONTENT  'text node<foo>73</foo>text node<bar><val x="y">42</val></bar>' AS text INDENT);
+-- indent singly-rooted xml with mixed contents
+--dg-cascade
+--dg SELECT xmlserialize(DOCUMENT '<foo><bar><val x="y">42</val><val x="y">text node<val>73</val></val></bar></foo>' AS text INDENT);
+--dg-cascade
+--dg SELECT xmlserialize(CONTENT  '<foo><bar><val x="y">42</val><val x="y">text node<val>73</val></val></bar></foo>' AS text INDENT);
+-- indent empty string
+--dg-cascade
+--dg SELECT xmlserialize(DOCUMENT '' AS text INDENT);
+--dg-cascade
+--dg SELECT xmlserialize(CONTENT  '' AS text INDENT);
+-- whitespaces
+--dg-cascade
+--dg SELECT xmlserialize(DOCUMENT '  ' AS text INDENT);
+--dg-cascade
+--dg SELECT xmlserialize(CONTENT  '  ' AS text INDENT);
+-- indent null
+--dg-cascade
+--dg SELECT xmlserialize(DOCUMENT NULL AS text INDENT);
+--dg-cascade
+--dg SELECT xmlserialize(CONTENT  NULL AS text INDENT);
+-- indent with XML declaration
+--dg-cascade
+--dg SELECT xmlserialize(DOCUMENT '<?xml version="1.0" encoding="UTF-8"?><foo><bar><val>73</val></bar></foo>' AS text INDENT);
+--dg-cascade
+--dg SELECT xmlserialize(CONTENT  '<?xml version="1.0" encoding="UTF-8"?><foo><bar><val>73</val></bar></foo>' AS text INDENT);
+-- indent containing DOCTYPE declaration
+--dg-cascade
+--dg SELECT xmlserialize(DOCUMENT '<!DOCTYPE a><a/>' AS text INDENT);
+--dg-cascade
+--dg SELECT xmlserialize(CONTENT  '<!DOCTYPE a><a/>' AS text INDENT);
+-- indent xml with empty element
+--dg-cascade
+--dg SELECT xmlserialize(DOCUMENT '<foo><bar></bar></foo>' AS text INDENT);
+--dg-cascade
+--dg SELECT xmlserialize(CONTENT  '<foo><bar></bar></foo>' AS text INDENT);
+-- 'no indent' = not using 'no indent'
+--dg-cascade
+--dg SELECT xmlserialize(DOCUMENT '<foo><bar><val x="y">42</val></bar></foo>' AS text) = xmlserialize(DOCUMENT '<foo><bar><val x="y">42</val></bar></foo>' AS text NO INDENT);
+--dg-cascade
+--dg SELECT xmlserialize(CONTENT  '<foo><bar><val x="y">42</val></bar></foo>' AS text) = xmlserialize(CONTENT '<foo><bar><val x="y">42</val></bar></foo>' AS text NO INDENT);
+-- indent xml strings containing blank nodes
+--dg-cascade
+--dg SELECT xmlserialize(DOCUMENT '<foo>   <bar></bar>    </foo>' AS text INDENT);
+--dg-cascade
+--dg SELECT xmlserialize(CONTENT  'text node<foo>    <bar></bar>   </foo>' AS text INDENT);
+--dg-cascade
+--dg SELECT xml '<foo>bar</foo>' IS DOCUMENT;
+--dg-cascade
+--dg SELECT xml '<foo>bar</foo><bar>foo</bar>' IS DOCUMENT;
+--dg-cascade
+--dg SELECT xml '<abc/>' IS NOT DOCUMENT;
+--dg-cascade
+--dg SELECT xml 'abc' IS NOT DOCUMENT;
+--dg-cascade
+--dg SELECT '<>' IS NOT DOCUMENT;
+--dg-cascade
+--dg SELECT xmlagg(data) FROM xmltest;
+--dg-cascade
+--dg SELECT xmlagg(data) FROM xmltest WHERE id > 10;
+--dg-cascade
+--dg SELECT xmlelement(name employees, xmlagg(xmlelement(name name, name))) FROM emp;
+-- Check mapping SQL identifier to XML name
+--dg-cascade
+--dg SELECT xmlpi(name ":::_xml_abc135.%-&_");
+--dg-cascade
+--dg SELECT xmlpi(name "123");
+--dg-cascade
+--dg PREPARE foo (xml) AS SELECT xmlconcat('<foo/>', $1);
+--dg-cascade
+--dg SET XML OPTION DOCUMENT;
+--dg-cascade
+--dg EXECUTE foo ('<bar/>');
+--dg-cascade
+--dg EXECUTE foo ('bad');
+--dg-cascade
+--dg SELECT xml '<!DOCTYPE a><a/><b/>';
+--dg-cascade
+--dg SET XML OPTION CONTENT;
+--dg-cascade
+--dg EXECUTE foo ('<bar/>');
+--dg-cascade
+--dg EXECUTE foo ('good');
+--dg-cascade
+--dg SELECT xml '<!-- in SQL:2006+ a doc is content too--> <?y z?> <!DOCTYPE a><a/>';
+--dg-cascade
+--dg SELECT xml '<?xml version="1.0"?> <!-- hi--> <!DOCTYPE a><a/>';
+--dg-cascade
+--dg SELECT xml '<!DOCTYPE a><a/>';
+--dg-cascade
+--dg SELECT xml '<!-- hi--> oops <!DOCTYPE a><a/>';
+--dg-cascade
+--dg SELECT xml '<!-- hi--> <oops/> <!DOCTYPE a><a/>';
+--dg-cascade
+--dg SELECT xml '<!DOCTYPE a><a/><b/>';
+-- Test backwards parsing
+--dg-cascade
+--dg CREATE VIEW xmlview1 AS SELECT xmlcomment('test');
+--dg-cascade
+--dg CREATE VIEW xmlview2 AS SELECT xmlconcat('hello', 'you');
+--dg-cascade
+--dg CREATE VIEW xmlview3 AS SELECT xmlelement(name element, xmlattributes (1 as ":one:", 'deuce' as two), 'content&');
+--dg-cascade
+--dg CREATE VIEW xmlview4 AS SELECT xmlelement(name employee, xmlforest(name, age, salary as pay)) FROM emp;
+--dg-cascade
+--dg CREATE VIEW xmlview5 AS SELECT xmlparse(content '<abc>x</abc>');
+--dg-cascade
+--dg CREATE VIEW xmlview6 AS SELECT xmlpi(name foo, 'bar');
+--dg-cascade
+--dg CREATE VIEW xmlview7 AS SELECT xmlroot(xml '<foo/>', version no value, standalone yes);
+--dg-cascade
+--dg CREATE VIEW xmlview8 AS SELECT xmlserialize(content 'good' as char(10));
+--dg-cascade
+--dg CREATE VIEW xmlview9 AS SELECT xmlserialize(content 'good' as text);
+--dg-cascade
+--dg CREATE VIEW xmlview10 AS SELECT xmlserialize(document '<foo><bar>42</bar></foo>' AS text indent);
+--dg-cascade
+--dg CREATE VIEW xmlview11 AS SELECT xmlserialize(document '<foo><bar>42</bar></foo>' AS character varying no indent);
+--dg-cascade
+--dg SELECT table_name, view_definition FROM information_schema.views
+--dg   WHERE table_name LIKE 'xmlview%' ORDER BY 1;
+-- Text XPath expressions evaluation
+--dg-cascade
+--dg SELECT xpath('/value', data) FROM xmltest;
+--dg-cascade
+--dg SELECT xpath(NULL, NULL) IS NULL FROM xmltest;
+--dg-cascade
+--dg SELECT xpath('', '<!-- error -->');
+--dg-cascade
+--dg SELECT xpath('//text()', '<local:data xmlns:local="http://127.0.0.1"><local:piece id="1">number one</local:piece><local:piece id="2" /></local:data>');
+--dg-cascade
+--dg SELECT xpath('//loc:piece/@id', '<local:data xmlns:local="http://127.0.0.1"><local:piece id="1">number one</local:piece><local:piece id="2" /></local:data>', ARRAY[ARRAY['loc', 'http://127.0.0.1']]);
+--dg-cascade
+--dg SELECT xpath('//loc:piece', '<local:data xmlns:local="http://127.0.0.1"><local:piece id="1">number one</local:piece><local:piece id="2" /></local:data>', ARRAY[ARRAY['loc', 'http://127.0.0.1']]);
+--dg-cascade
+--dg SELECT xpath('//loc:piece', '<local:data xmlns:local="http://127.0.0.1" xmlns="http://127.0.0.2"><local:piece id="1"><internal>number one</internal><internal2/></local:piece><local:piece id="2" /></local:data>', ARRAY[ARRAY['loc', 'http://127.0.0.1']]);
+--dg-cascade
+--dg SELECT xpath('//b', '<a>one <b>two</b> three <b>etc</b></a>');
+--dg-cascade
+--dg SELECT xpath('//text()', '<root>&lt;</root>');
+--dg-cascade
+--dg SELECT xpath('//@value', '<root value="&lt;"/>');
+--dg-cascade
+--dg SELECT xpath('''<<invalid>>''', '<root/>');
+--dg-cascade
+--dg SELECT xpath('count(//*)', '<root><sub/><sub/></root>');
+--dg-cascade
+--dg SELECT xpath('count(//*)=0', '<root><sub/><sub/></root>');
+--dg-cascade
+--dg SELECT xpath('count(//*)=3', '<root><sub/><sub/></root>');
+--dg-cascade
+--dg SELECT xpath('name(/*)', '<root><sub/><sub/></root>');
+--dg-cascade
+--dg SELECT xpath('/nosuchtag', '<root/>');
+--dg-cascade
+--dg SELECT xpath('root', '<root/>');
+--dg-cascade
+--dg SELECT xpath('//namespace::foo', '<root xmlns:foo="http://127.0.0.1"/>');
+-- Round-trip non-ASCII data through xpath().
+--dg-skip: language "?" does not exist
+--dg DO $$
+--dg DECLARE
+--dg   xml_declaration text := '<?xml version="1.0" encoding="ISO-8859-1"?>';
+--dg   degree_symbol text;
+--dg   res xml[];
+--dg BEGIN
+--dg   -- Per the documentation, except when the server encoding is UTF8, xpath()
+--dg   -- may not work on non-ASCII data.  The untranslatable_character and
+--dg   -- undefined_function traps below, currently dead code, will become relevant
+--dg   -- if we remove this limitation.
+--dg   IF current_setting('server_encoding') <> 'UTF8' THEN
+--dg     RAISE LOG 'skip: encoding % unsupported for xpath',
+--dg       current_setting('server_encoding');
+--dg     RETURN;
+--dg   END IF;
+--dg
+--dg   degree_symbol := convert_from('\xc2b0', 'UTF8');
+--dg   res := xpath('text()', (xml_declaration ||
+--dg     '<x>' || degree_symbol || '</x>')::xml);
+--dg   IF degree_symbol <> res[1]::text THEN
+--dg     RAISE 'expected % (%), got % (%)',
+--dg       degree_symbol, convert_to(degree_symbol, 'UTF8'),
+--dg       res[1], convert_to(res[1]::text, 'UTF8');
+--dg   END IF;
+--dg EXCEPTION
+--dg   -- character with byte sequence 0xc2 0xb0 in encoding "UTF8" has no equivalent in encoding "LATIN8"
+--dg   WHEN untranslatable_character
+--dg   -- default conversion function for encoding "UTF8" to "MULE_INTERNAL" does not exist
+--dg   OR undefined_function
+--dg   -- unsupported XML feature
+--dg   OR feature_not_supported THEN
+--dg     RAISE LOG 'skip: %', SQLERRM;
+--dg END
+--dg $$;
+-- Test xmlexists and xpath_exists
+--dg-cascade
+--dg SELECT xmlexists('//town[text() = ''Toronto'']' PASSING BY REF '<towns><town>Bidford-on-Avon</town><town>Cwmbran</town><town>Bristol</town></towns>');
+--dg-cascade
+--dg SELECT xmlexists('//town[text() = ''Cwmbran'']' PASSING BY REF '<towns><town>Bidford-on-Avon</town><town>Cwmbran</town><town>Bristol</town></towns>');
+--dg-cascade
+--dg SELECT xmlexists('count(/nosuchtag)' PASSING BY REF '<root/>');
+--dg-cascade
+--dg SELECT xpath_exists('//town[text() = ''Toronto'']','<towns><town>Bidford-on-Avon</town><town>Cwmbran</town><town>Bristol</town></towns>'::xml);
+--dg-cascade
+--dg SELECT xpath_exists('//town[text() = ''Cwmbran'']','<towns><town>Bidford-on-Avon</town><town>Cwmbran</town><town>Bristol</town></towns>'::xml);
+--dg-cascade
+--dg SELECT xpath_exists('count(/nosuchtag)', '<root/>'::xml);
+--dg-cascade
+--dg INSERT INTO xmltest VALUES (4, '<menu><beers><name>Budvar</name><cost>free</cost><name>Carling</name><cost>lots</cost></beers></menu>'::xml);
+--dg-cascade
+--dg INSERT INTO xmltest VALUES (5, '<menu><beers><name>Molson</name><cost>free</cost><name>Carling</name><cost>lots</cost></beers></menu>'::xml);
+--dg-cascade
+--dg INSERT INTO xmltest VALUES (6, '<myns:menu xmlns:myns="http://myns.com"><myns:beers><myns:name>Budvar</myns:name><myns:cost>free</myns:cost><myns:name>Carling</myns:name><myns:cost>lots</myns:cost></myns:beers></myns:menu>'::xml);
+--dg-cascade
+--dg INSERT INTO xmltest VALUES (7, '<myns:menu xmlns:myns="http://myns.com"><myns:beers><myns:name>Molson</myns:name><myns:cost>free</myns:cost><myns:name>Carling</myns:name><myns:cost>lots</myns:cost></myns:beers></myns:menu>'::xml);
+--dg-cascade
+--dg SELECT COUNT(id) FROM xmltest WHERE xmlexists('/menu/beer' PASSING data);
+--dg-cascade
+--dg SELECT COUNT(id) FROM xmltest WHERE xmlexists('/menu/beer' PASSING BY REF data BY REF);
+--dg-cascade
+--dg SELECT COUNT(id) FROM xmltest WHERE xmlexists('/menu/beers' PASSING BY REF data);
+--dg-cascade
+--dg SELECT COUNT(id) FROM xmltest WHERE xmlexists('/menu/beers/name[text() = ''Molson'']' PASSING BY REF data);
+--dg-cascade
+--dg SELECT COUNT(id) FROM xmltest WHERE xpath_exists('/menu/beer',data);
+--dg-cascade
+--dg SELECT COUNT(id) FROM xmltest WHERE xpath_exists('/menu/beers',data);
+--dg-cascade
+--dg SELECT COUNT(id) FROM xmltest WHERE xpath_exists('/menu/beers/name[text() = ''Molson'']',data);
+--dg-cascade
+--dg SELECT COUNT(id) FROM xmltest WHERE xpath_exists('/myns:menu/myns:beer',data,ARRAY[ARRAY['myns','http://myns.com']]);
+--dg-cascade
+--dg SELECT COUNT(id) FROM xmltest WHERE xpath_exists('/myns:menu/myns:beers',data,ARRAY[ARRAY['myns','http://myns.com']]);
+--dg-cascade
+--dg SELECT COUNT(id) FROM xmltest WHERE xpath_exists('/myns:menu/myns:beers/myns:name[text() = ''Molson'']',data,ARRAY[ARRAY['myns','http://myns.com']]);
+--dg-cascade
+--dg CREATE TABLE query ( expr TEXT );
+--dg-cascade
+--dg INSERT INTO query VALUES ('/menu/beers/cost[text() = ''lots'']');
+--dg-cascade
+--dg SELECT COUNT(id) FROM xmltest, query WHERE xmlexists(expr PASSING BY REF data);
+-- Test xml_is_well_formed and variants
+--dg-cascade
+--dg SELECT xml_is_well_formed_document('<foo>bar</foo>');
+--dg-cascade
+--dg SELECT xml_is_well_formed_document('abc');
+--dg-cascade
+--dg SELECT xml_is_well_formed_content('<foo>bar</foo>');
+--dg-cascade
+--dg SELECT xml_is_well_formed_content('abc');
+--dg-cascade
+--dg SET xmloption TO DOCUMENT;
+--dg-cascade
+--dg SELECT xml_is_well_formed('abc');
+--dg-cascade
+--dg SELECT xml_is_well_formed('<>');
+--dg-cascade
+--dg SELECT xml_is_well_formed('<abc/>');
+--dg-cascade
+--dg SELECT xml_is_well_formed('<foo>bar</foo>');
+--dg-cascade
+--dg SELECT xml_is_well_formed('<foo>bar</foo');
+--dg-cascade
+--dg SELECT xml_is_well_formed('<foo><bar>baz</foo>');
+--dg-cascade
+--dg SELECT xml_is_well_formed('<local:data xmlns:local="http://127.0.0.1"><local:piece id="1">number one</local:piece><local:piece id="2" /></local:data>');
+--dg-cascade
+--dg SELECT xml_is_well_formed('<pg:foo xmlns:pg="http://postgresql.org/stuff">bar</my:foo>');
+--dg-cascade
+--dg SELECT xml_is_well_formed('<pg:foo xmlns:pg="http://postgresql.org/stuff">bar</pg:foo>');
+--dg-cascade
+--dg SELECT xml_is_well_formed('<invalidentity>&</abc>');
+--dg-cascade
+--dg SELECT xml_is_well_formed('<undefinedentity>&idontexist;</abc>');
+--dg-cascade
+--dg SELECT xml_is_well_formed('<invalidns xmlns=''&lt;''/>');
+--dg-cascade
+--dg SELECT xml_is_well_formed('<relativens xmlns=''relative''/>');
+--dg-cascade
+--dg SELECT xml_is_well_formed('<twoerrors>&idontexist;</unbalanced>');
+--dg-cascade
+--dg SET xmloption TO CONTENT;
+--dg-cascade
+--dg SELECT xml_is_well_formed('abc');
+-- Since xpath() deals with namespaces, it's a bit stricter about
+-- what's well-formed and what's not. If we don't obey these rules
+-- (i.e. ignore namespace-related errors from libxml), xpath()
+-- fails in subtle ways. The following would for example produce
+-- the xml value
+--   <invalidns xmlns='<'/>
+-- which is invalid because '<' may not appear un-escaped in
+-- attribute values.
+-- Since different libxml versions emit slightly different
+-- error messages, we suppress the DETAIL in this test.
+--dg-cascade
+--dg \set VERBOSITY terse
+--dg-cascade
+--dg SELECT xpath('/*', '<invalidns xmlns=''&lt;''/>');
+--dg-cascade
+--dg \set VERBOSITY default
+-- Again, the XML isn't well-formed for namespace purposes
+--dg-cascade
+--dg SELECT xpath('/*', '<nosuchprefix:tag/>');
+-- XPath deprecates relative namespaces, but they're not supposed to
+-- throw an error, only a warning.
+--dg-cascade
+--dg SELECT xpath('/*', '<relativens xmlns=''relative''/>');
+-- External entity references should not leak filesystem information.
+--dg-cascade
+--dg SELECT XMLPARSE(DOCUMENT '<!DOCTYPE foo [<!ENTITY c SYSTEM "/etc/passwd">]><foo>&c;</foo>');
+--dg-cascade
+--dg SELECT XMLPARSE(DOCUMENT '<!DOCTYPE foo [<!ENTITY c SYSTEM "/etc/no.such.file">]><foo>&c;</foo>');
+-- This might or might not load the requested DTD, but it mustn't throw error.
+--dg-cascade
+--dg SELECT XMLPARSE(DOCUMENT '<!DOCTYPE chapter PUBLIC "-//OASIS//DTD DocBook XML V4.1.2//EN" "http://www.oasis-open.org/docbook/xml/4.1.2/docbookx.dtd"><chapter>&nbsp;</chapter>');
+-- XMLPATH tests
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE xmldata(data xml);
+--dg-cascade
+--dg INSERT INTO xmldata VALUES('<ROWS>
+--dg <ROW id="1">
+--dg   <COUNTRY_ID>AU</COUNTRY_ID>
+--dg   <COUNTRY_NAME>Australia</COUNTRY_NAME>
+--dg   <REGION_ID>3</REGION_ID>
+--dg </ROW>
+--dg <ROW id="2">
+--dg   <COUNTRY_ID>CN</COUNTRY_ID>
+--dg   <COUNTRY_NAME>China</COUNTRY_NAME>
+--dg   <REGION_ID>3</REGION_ID>
+--dg </ROW>
+--dg <ROW id="3">
+--dg   <COUNTRY_ID>HK</COUNTRY_ID>
+--dg   <COUNTRY_NAME>HongKong</COUNTRY_NAME>
+--dg   <REGION_ID>3</REGION_ID>
+--dg </ROW>
+--dg <ROW id="4">
+--dg   <COUNTRY_ID>IN</COUNTRY_ID>
+--dg   <COUNTRY_NAME>India</COUNTRY_NAME>
+--dg   <REGION_ID>3</REGION_ID>
+--dg </ROW>
+--dg <ROW id="5">
+--dg   <COUNTRY_ID>JP</COUNTRY_ID>
+--dg   <COUNTRY_NAME>Japan</COUNTRY_NAME>
+--dg   <REGION_ID>3</REGION_ID><PREMIER_NAME>Sinzo Abe</PREMIER_NAME>
+--dg </ROW>
+--dg <ROW id="6">
+--dg   <COUNTRY_ID>SG</COUNTRY_ID>
+--dg   <COUNTRY_NAME>Singapore</COUNTRY_NAME>
+--dg   <REGION_ID>3</REGION_ID><SIZE unit="km">791</SIZE>
+--dg </ROW>
+--dg </ROWS>');
+-- XMLTABLE with columns
+--dg-cascade
+--dg SELECT  xmltable.*
+--dg    FROM (SELECT data FROM xmldata) x,
+--dg         LATERAL XMLTABLE('/ROWS/ROW'
+--dg                          PASSING data
+--dg                          COLUMNS id int PATH '@id',
+--dg                                   _id FOR ORDINALITY,
+--dg                                   country_name text PATH 'COUNTRY_NAME/text()' NOT NULL,
+--dg                                   country_id text PATH 'COUNTRY_ID',
+--dg                                   region_id int PATH 'REGION_ID',
+--dg                                   size float PATH 'SIZE',
+--dg                                   unit text PATH 'SIZE/@unit',
+--dg                                   premier_name text PATH 'PREMIER_NAME' DEFAULT 'not specified');
+--dg-cascade
+--dg CREATE VIEW xmltableview1 AS SELECT  xmltable.*
+--dg    FROM (SELECT data FROM xmldata) x,
+--dg         LATERAL XMLTABLE('/ROWS/ROW'
+--dg                          PASSING data
+--dg                          COLUMNS id int PATH '@id',
+--dg                                   _id FOR ORDINALITY,
+--dg                                   country_name text PATH 'COUNTRY_NAME/text()' NOT NULL,
+--dg                                   country_id text PATH 'COUNTRY_ID',
+--dg                                   region_id int PATH 'REGION_ID',
+--dg                                   size float PATH 'SIZE',
+--dg                                   unit text PATH 'SIZE/@unit',
+--dg                                   premier_name text PATH 'PREMIER_NAME' DEFAULT 'not specified');
+--dg-cascade
+--dg SELECT * FROM xmltableview1;
+--dg-cascade
+--dg \sv xmltableview1
+--dg-cascade
+--dg EXPLAIN (COSTS OFF) SELECT * FROM xmltableview1;
+--dg-cascade
+--dg EXPLAIN (COSTS OFF, VERBOSE) SELECT * FROM xmltableview1;
+-- errors
+--dg-cascade
+--dg SELECT * FROM XMLTABLE (ROW () PASSING null COLUMNS v1 timestamp) AS f (v1, v2);
+--dg-cascade
+--dg SELECT * FROM XMLTABLE (ROW () PASSING null COLUMNS v1 timestamp __pg__is_not_null 1) AS f (v1);
+-- XMLNAMESPACES tests
+--dg-cascade
+--dg SELECT * FROM XMLTABLE(XMLNAMESPACES('http://x.y' AS zz),
+--dg                       '/zz:rows/zz:row'
+--dg                       PASSING '<rows xmlns="http://x.y"><row><a>10</a></row></rows>'
+--dg                       COLUMNS a int PATH 'zz:a');
+--dg-cascade
+--dg CREATE VIEW xmltableview2 AS SELECT * FROM XMLTABLE(XMLNAMESPACES('http://x.y' AS "Zz"),
+--dg                       '/Zz:rows/Zz:row'
+--dg                       PASSING '<rows xmlns="http://x.y"><row><a>10</a></row></rows>'
+--dg                       COLUMNS a int PATH 'Zz:a');
+--dg-cascade
+--dg SELECT * FROM xmltableview2;
+--dg-cascade
+--dg \sv xmltableview2
+--dg-cascade
+--dg SELECT * FROM XMLTABLE(XMLNAMESPACES(DEFAULT 'http://x.y'),
+--dg                       '/rows/row'
+--dg                       PASSING '<rows xmlns="http://x.y"><row><a>10</a></row></rows>'
+--dg                       COLUMNS a int PATH 'a');
+--dg-cascade
+--dg SELECT * FROM XMLTABLE('.'
+--dg                        PASSING '<foo/>'
+--dg                        COLUMNS a text PATH 'foo/namespace::node()');
+-- used in prepare statements
+--dg-cascade
+--dg PREPARE pp AS
+--dg SELECT  xmltable.*
+--dg    FROM (SELECT data FROM xmldata) x,
+--dg         LATERAL XMLTABLE('/ROWS/ROW'
+--dg                          PASSING data
+--dg                          COLUMNS id int PATH '@id',
+--dg                                   _id FOR ORDINALITY,
+--dg                                   country_name text PATH 'COUNTRY_NAME' NOT NULL,
+--dg                                   country_id text PATH 'COUNTRY_ID',
+--dg                                   region_id int PATH 'REGION_ID',
+--dg                                   size float PATH 'SIZE',
+--dg                                   unit text PATH 'SIZE/@unit',
+--dg                                   premier_name text PATH 'PREMIER_NAME' DEFAULT 'not specified');
+--dg-cascade
+--dg EXECUTE pp;
+--dg-cascade
+--dg SELECT xmltable.* FROM xmldata, LATERAL xmltable('/ROWS/ROW[COUNTRY_NAME="Japan" or COUNTRY_NAME="India"]' PASSING data COLUMNS "COUNTRY_NAME" text, "REGION_ID" int);
+--dg-cascade
+--dg SELECT xmltable.* FROM xmldata, LATERAL xmltable('/ROWS/ROW[COUNTRY_NAME="Japan" or COUNTRY_NAME="India"]' PASSING data COLUMNS id FOR ORDINALITY, "COUNTRY_NAME" text, "REGION_ID" int);
+--dg-cascade
+--dg SELECT xmltable.* FROM xmldata, LATERAL xmltable('/ROWS/ROW[COUNTRY_NAME="Japan" or COUNTRY_NAME="India"]' PASSING data COLUMNS id int PATH '@id', "COUNTRY_NAME" text, "REGION_ID" int);
+--dg-cascade
+--dg SELECT xmltable.* FROM xmldata, LATERAL xmltable('/ROWS/ROW[COUNTRY_NAME="Japan" or COUNTRY_NAME="India"]' PASSING data COLUMNS id int PATH '@id');
+--dg-cascade
+--dg SELECT xmltable.* FROM xmldata, LATERAL xmltable('/ROWS/ROW[COUNTRY_NAME="Japan" or COUNTRY_NAME="India"]' PASSING data COLUMNS id FOR ORDINALITY);
+--dg-cascade
+--dg SELECT xmltable.* FROM xmldata, LATERAL xmltable('/ROWS/ROW[COUNTRY_NAME="Japan" or COUNTRY_NAME="India"]' PASSING data COLUMNS id int PATH '@id', "COUNTRY_NAME" text, "REGION_ID" int, rawdata xml PATH '.');
+--dg-cascade
+--dg SELECT xmltable.* FROM xmldata, LATERAL xmltable('/ROWS/ROW[COUNTRY_NAME="Japan" or COUNTRY_NAME="India"]' PASSING data COLUMNS id int PATH '@id', "COUNTRY_NAME" text, "REGION_ID" int, rawdata xml PATH './*');
+--dg-cascade
+--dg SELECT * FROM xmltable('/root' passing '<root><element>a1a<!-- aaaa -->a2a<?aaaaa?> <!--z-->  bbbb<x>xxx</x>cccc</element></root>' COLUMNS element text);
+--dg-cascade
+--dg SELECT * FROM xmltable('/root' passing '<root><element>a1a<!-- aaaa -->a2a<?aaaaa?> <!--z-->  bbbb<x>xxx</x>cccc</element></root>' COLUMNS element text PATH 'element/text()'); -- should fail
+-- CDATA test
+--dg-cascade
+--dg select * from xmltable('d/r' passing '<d><r><c><![CDATA[<hello> &"<>!<a>foo</a>]]></c></r><r><c>2</c></r></d>' columns c text);
+-- XML builtin entities
+--dg-cascade
+--dg SELECT * FROM xmltable('/x/a' PASSING '<x><a><ent>&apos;</ent></a><a><ent>&quot;</ent></a><a><ent>&amp;</ent></a><a><ent>&lt;</ent></a><a><ent>&gt;</ent></a></x>' COLUMNS ent text);
+--dg-cascade
+--dg SELECT * FROM xmltable('/x/a' PASSING '<x><a><ent>&apos;</ent></a><a><ent>&quot;</ent></a><a><ent>&amp;</ent></a><a><ent>&lt;</ent></a><a><ent>&gt;</ent></a></x>' COLUMNS ent xml);
+--dg-cascade
+--dg EXPLAIN (VERBOSE, COSTS OFF)
+--dg SELECT  xmltable.*
+--dg    FROM (SELECT data FROM xmldata) x,
+--dg         LATERAL XMLTABLE('/ROWS/ROW'
+--dg                          PASSING data
+--dg                          COLUMNS id int PATH '@id',
+--dg                                   _id FOR ORDINALITY,
+--dg                                   country_name text PATH 'COUNTRY_NAME' NOT NULL,
+--dg                                   country_id text PATH 'COUNTRY_ID',
+--dg                                   region_id int PATH 'REGION_ID',
+--dg                                   size float PATH 'SIZE',
+--dg                                   unit text PATH 'SIZE/@unit',
+--dg                                   premier_name text PATH 'PREMIER_NAME' DEFAULT 'not specified');
+-- test qual
+--dg-cascade
+--dg SELECT xmltable.* FROM xmldata, LATERAL xmltable('/ROWS/ROW[COUNTRY_NAME="Japan" or COUNTRY_NAME="India"]' PASSING data COLUMNS "COUNTRY_NAME" text, "REGION_ID" int) WHERE "COUNTRY_NAME" = 'Japan';
+--dg-cascade
+--dg EXPLAIN (VERBOSE, COSTS OFF)
+--dg SELECT f.* FROM xmldata, LATERAL xmltable('/ROWS/ROW[COUNTRY_NAME="Japan" or COUNTRY_NAME="India"]' PASSING data COLUMNS "COUNTRY_NAME" text, "REGION_ID" int) AS f WHERE "COUNTRY_NAME" = 'Japan';
+--dg-cascade
+--dg EXPLAIN (VERBOSE, FORMAT JSON, COSTS OFF)
+--dg SELECT f.* FROM xmldata, LATERAL xmltable('/ROWS/ROW[COUNTRY_NAME="Japan" or COUNTRY_NAME="India"]' PASSING data COLUMNS "COUNTRY_NAME" text, "REGION_ID" int) AS f WHERE "COUNTRY_NAME" = 'Japan';
+-- should to work with more data
+--dg-cascade
+--dg INSERT INTO xmldata VALUES('<ROWS>
+--dg <ROW id="10">
+--dg   <COUNTRY_ID>CZ</COUNTRY_ID>
+--dg   <COUNTRY_NAME>Czech Republic</COUNTRY_NAME>
+--dg   <REGION_ID>2</REGION_ID><PREMIER_NAME>Milos Zeman</PREMIER_NAME>
+--dg </ROW>
+--dg <ROW id="11">
+--dg   <COUNTRY_ID>DE</COUNTRY_ID>
+--dg   <COUNTRY_NAME>Germany</COUNTRY_NAME>
+--dg   <REGION_ID>2</REGION_ID>
+--dg </ROW>
+--dg <ROW id="12">
+--dg   <COUNTRY_ID>FR</COUNTRY_ID>
+--dg   <COUNTRY_NAME>France</COUNTRY_NAME>
+--dg   <REGION_ID>2</REGION_ID>
+--dg </ROW>
+--dg </ROWS>');
+--dg-cascade
+--dg INSERT INTO xmldata VALUES('<ROWS>
+--dg <ROW id="20">
+--dg   <COUNTRY_ID>EG</COUNTRY_ID>
+--dg   <COUNTRY_NAME>Egypt</COUNTRY_NAME>
+--dg   <REGION_ID>1</REGION_ID>
+--dg </ROW>
+--dg <ROW id="21">
+--dg   <COUNTRY_ID>SD</COUNTRY_ID>
+--dg   <COUNTRY_NAME>Sudan</COUNTRY_NAME>
+--dg   <REGION_ID>1</REGION_ID>
+--dg </ROW>
+--dg </ROWS>');
+--dg-cascade
+--dg SELECT  xmltable.*
+--dg    FROM (SELECT data FROM xmldata) x,
+--dg         LATERAL XMLTABLE('/ROWS/ROW'
+--dg                          PASSING data
+--dg                          COLUMNS id int PATH '@id',
+--dg                                   _id FOR ORDINALITY,
+--dg                                   country_name text PATH 'COUNTRY_NAME' NOT NULL,
+--dg                                   country_id text PATH 'COUNTRY_ID',
+--dg                                   region_id int PATH 'REGION_ID',
+--dg                                   size float PATH 'SIZE',
+--dg                                   unit text PATH 'SIZE/@unit',
+--dg                                   premier_name text PATH 'PREMIER_NAME' DEFAULT 'not specified');
+--dg-cascade
+--dg SELECT  xmltable.*
+--dg    FROM (SELECT data FROM xmldata) x,
+--dg         LATERAL XMLTABLE('/ROWS/ROW'
+--dg                          PASSING data
+--dg                          COLUMNS id int PATH '@id',
+--dg                                   _id FOR ORDINALITY,
+--dg                                   country_name text PATH 'COUNTRY_NAME' NOT NULL,
+--dg                                   country_id text PATH 'COUNTRY_ID',
+--dg                                   region_id int PATH 'REGION_ID',
+--dg                                   size float PATH 'SIZE',
+--dg                                   unit text PATH 'SIZE/@unit',
+--dg                                   premier_name text PATH 'PREMIER_NAME' DEFAULT 'not specified')
+--dg   WHERE region_id = 2;
+--dg-cascade
+--dg EXPLAIN (VERBOSE, COSTS OFF)
+--dg SELECT  xmltable.*
+--dg    FROM (SELECT data FROM xmldata) x,
+--dg         LATERAL XMLTABLE('/ROWS/ROW'
+--dg                          PASSING data
+--dg                          COLUMNS id int PATH '@id',
+--dg                                   _id FOR ORDINALITY,
+--dg                                   country_name text PATH 'COUNTRY_NAME' NOT NULL,
+--dg                                   country_id text PATH 'COUNTRY_ID',
+--dg                                   region_id int PATH 'REGION_ID',
+--dg                                   size float PATH 'SIZE',
+--dg                                   unit text PATH 'SIZE/@unit',
+--dg                                   premier_name text PATH 'PREMIER_NAME' DEFAULT 'not specified')
+--dg   WHERE region_id = 2;
+-- should fail, NULL value
+--dg-cascade
+--dg SELECT  xmltable.*
+--dg    FROM (SELECT data FROM xmldata) x,
+--dg         LATERAL XMLTABLE('/ROWS/ROW'
+--dg                          PASSING data
+--dg                          COLUMNS id int PATH '@id',
+--dg                                   _id FOR ORDINALITY,
+--dg                                   country_name text PATH 'COUNTRY_NAME' NOT NULL,
+--dg                                   country_id text PATH 'COUNTRY_ID',
+--dg                                   region_id int PATH 'REGION_ID',
+--dg                                   size float PATH 'SIZE' NOT NULL,
+--dg                                   unit text PATH 'SIZE/@unit',
+--dg                                   premier_name text PATH 'PREMIER_NAME' DEFAULT 'not specified');
+-- if all is ok, then result is empty
+-- one line xml test
+--dg-cascade
+--dg WITH
+--dg    x AS (SELECT proname, proowner, procost::numeric, pronargs,
+--dg                 array_to_string(proargnames,',') as proargnames,
+--dg                 case when proargtypes <> '' then array_to_string(proargtypes::oid[],',') end as proargtypes
+--dg            FROM pg_proc WHERE proname = 'f_leak'),
+--dg    y AS (SELECT xmlelement(name proc,
+--dg                            xmlforest(proname, proowner,
+--dg                                      procost, pronargs,
+--dg                                      proargnames, proargtypes)) as proc
+--dg            FROM x),
+--dg    z AS (SELECT xmltable.*
+--dg            FROM y,
+--dg                 LATERAL xmltable('/proc' PASSING proc
+--dg                                  COLUMNS proname name,
+--dg                                          proowner oid,
+--dg                                          procost float,
+--dg                                          pronargs int,
+--dg                                          proargnames text,
+--dg                                          proargtypes text))
+--dg    SELECT * FROM z
+--dg    EXCEPT SELECT * FROM x;
+-- multi line xml test, result should be empty too
+--dg-cascade
+--dg WITH
+--dg    x AS (SELECT proname, proowner, procost::numeric, pronargs,
+--dg                 array_to_string(proargnames,',') as proargnames,
+--dg                 case when proargtypes <> '' then array_to_string(proargtypes::oid[],',') end as proargtypes
+--dg            FROM pg_proc),
+--dg    y AS (SELECT xmlelement(name data,
+--dg                            xmlagg(xmlelement(name proc,
+--dg                                              xmlforest(proname, proowner, procost,
+--dg                                                        pronargs, proargnames, proargtypes)))) as doc
+--dg            FROM x),
+--dg    z AS (SELECT xmltable.*
+--dg            FROM y,
+--dg                 LATERAL xmltable('/data/proc' PASSING doc
+--dg                                  COLUMNS proname name,
+--dg                                          proowner oid,
+--dg                                          procost float,
+--dg                                          pronargs int,
+--dg                                          proargnames text,
+--dg                                          proargtypes text))
+--dg    SELECT * FROM z
+--dg    EXCEPT SELECT * FROM x;
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE xmltest2(x xml, _path text);
+--dg-cascade
+--dg INSERT INTO xmltest2 VALUES('<d><r><ac>1</ac></r></d>', 'A');
+--dg-cascade
+--dg INSERT INTO xmltest2 VALUES('<d><r><bc>2</bc></r></d>', 'B');
+--dg-cascade
+--dg INSERT INTO xmltest2 VALUES('<d><r><cc>3</cc></r></d>', 'C');
+--dg-cascade
+--dg INSERT INTO xmltest2 VALUES('<d><r><dc>2</dc></r></d>', 'D');
+--dg-cascade
+--dg SELECT xmltable.* FROM xmltest2, LATERAL xmltable('/d/r' PASSING x COLUMNS a int PATH '' || lower(_path) || 'c');
+--dg-cascade
+--dg SELECT xmltable.* FROM xmltest2, LATERAL xmltable(('/d/r/' || lower(_path) || 'c') PASSING x COLUMNS a int PATH '.');
+--dg-cascade
+--dg SELECT xmltable.* FROM xmltest2, LATERAL xmltable(('/d/r/' || lower(_path) || 'c') PASSING x COLUMNS a int PATH 'x' DEFAULT ascii(_path) - 54);
+-- XPath result can be boolean or number too
+--dg-cascade
+--dg SELECT * FROM XMLTABLE('*' PASSING '<a>a</a>' COLUMNS a xml PATH '.', b text PATH '.', c text PATH '"hi"', d boolean PATH '. = "a"', e integer PATH 'string-length(.)');
+--dg-cascade
+--dg \x
+--dg-cascade
+--dg SELECT * FROM XMLTABLE('*' PASSING '<e>pre<!--c1--><?pi arg?><![CDATA[&ent1]]><n2>&amp;deep</n2>post</e>' COLUMNS x xml PATH '/e/n2', y xml PATH '/');
+--dg-cascade
+--dg \x
+--dg-cascade
+--dg SELECT * FROM XMLTABLE('.' PASSING XMLELEMENT(NAME a) columns a varchar(20) PATH '"<foo/>"', b xml PATH '"<foo/>"');
+--dg-cascade
+--dg SELECT xmltext(NULL);
+--dg-cascade
+--dg SELECT xmltext('');
+--dg-cascade
+--dg SELECT xmltext('  ');
+--dg-cascade
+--dg SELECT xmltext('foo `$_-+?=*^%!|/\()[]{}');
+--dg-cascade
+--dg SELECT xmltext('foo & <"bar">');
+--dg-cascade
+--dg SELECT xmltext('x'|| '<P>73</P>'::xml || .42 || true || 'j'::char);

@@ -1,0 +1,35 @@
+-- Login event triggers
+CREATE TABLE user_logins(id serial, who text);
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg GRANT SELECT ON user_logins TO public;
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION on_login_proc() RETURNS event_trigger AS $$
+--dg BEGIN
+--dg   INSERT INTO user_logins (who) VALUES (SESSION_USER);
+--dg   RAISE NOTICE 'You are welcome!';
+--dg END;
+--dg $$ LANGUAGE plpgsql;
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg CREATE EVENT TRIGGER on_login_trigger ON login EXECUTE PROCEDURE on_login_proc();
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg ALTER EVENT TRIGGER on_login_trigger ENABLE ALWAYS;
+--dg-cascade
+--dg \c
+--dg-cascade
+--dg SELECT COUNT(*) FROM user_logins;
+--dg-cascade
+--dg \c
+--dg-cascade
+--dg SELECT COUNT(*) FROM user_logins;
+
+-- Check dathasloginevt in system catalog
+--dg-cascade
+--dg SELECT dathasloginevt FROM pg_database WHERE datname= :'DBNAME';
+
+-- Cleanup
+DROP TABLE user_logins;
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
+--dg DROP EVENT TRIGGER on_login_trigger;
+--dg-cascade
+--dg DROP FUNCTION on_login_proc();
+\c

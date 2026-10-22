@@ -6,13 +6,16 @@
 #   make gen           only generate
 #   make test          check the parser, with sq's tests given this
 #                      server, run the statements in test/, and check
-#                      initdb and a server that psql connects to, and run
-#                      the sqllogictest files in test/slt but select5
+#                      initdb and a server that psql connects to, run
+#                      the sqllogictest files in test/slt but select5,
+#                      and PostgreSQL 18's regression files as ported
 #   make slt           run every sqllogictest file in test/slt
 #   make slt-corpus    run a sample of SQLite's whole corpus, fetched once
 #   make isolation     run PostgreSQL 18's isolation specs on digres
 #   make regress       run PostgreSQL 18's regression suite on digres, and
 #                      report what stops each file (test/regress/README.md)
+#   make pgregress     run PostgreSQL 18's regression files as ported to
+#                      digres, against expected output (test/pgregress)
 #   make tsan          build build/digres-tsan, under the thread
 #                      sanitizer, and run the statements in test/ with it
 #   make clean         remove objects and generated files
@@ -142,6 +145,7 @@ test:
 	test/server.sh
 	$(MAKE) build/slt
 	test/slt.sh $(SLT_QUICK)
+	test/pgregress/pgregress.py -j 4 test
 
 # The sqllogictest files make test runs: all but select5.test, whose
 # joins of up to 64 tables take three minutes in this build to plan.
@@ -182,6 +186,14 @@ isolation:
 regress:
 	$(MAKE) all
 	test/regress.sh
+
+# PostgreSQL 18's regression files, ported: what digres does not run as
+# PostgreSQL does commented out, and the rest must give PostgreSQL's output
+# (test/pgregress/README.md).
+.PHONY: pgregress
+pgregress:
+	$(MAKE) all
+	test/pgregress/pgregress.py -j 4 test
 
 # A sample of SQLite's whole corpus, fetched into build/slt-corpus, on
 # PostgreSQL 18 and on digres: what digres alone fails.

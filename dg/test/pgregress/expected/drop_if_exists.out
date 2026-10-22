@@ -1,0 +1,364 @@
+--
+-- IF EXISTS tests
+--
+-- table (will be really dropped at the end)
+DROP TABLE test_exists;
+ERROR:  table "test_exists" does not exist
+DROP TABLE IF EXISTS test_exists;
+NOTICE:  table "test_exists" does not exist, skipping
+CREATE TABLE test_exists (a int, b text);
+-- view
+DROP VIEW test_view_exists;
+ERROR:  view "test_view_exists" does not exist
+DROP VIEW IF EXISTS test_view_exists;
+NOTICE:  view "test_view_exists" does not exist, skipping
+CREATE VIEW test_view_exists AS select * from test_exists;
+DROP VIEW IF EXISTS test_view_exists;
+DROP VIEW test_view_exists;
+ERROR:  view "test_view_exists" does not exist
+-- index
+DROP INDEX test_index_exists;
+ERROR:  index "test_index_exists" does not exist
+DROP INDEX IF EXISTS test_index_exists;
+NOTICE:  index "test_index_exists" does not exist, skipping
+CREATE INDEX test_index_exists on test_exists(a);
+DROP INDEX IF EXISTS test_index_exists;
+DROP INDEX test_index_exists;
+ERROR:  index "test_index_exists" does not exist
+-- sequence
+DROP SEQUENCE test_sequence_exists;
+ERROR:  sequence "test_sequence_exists" does not exist
+DROP SEQUENCE IF EXISTS test_sequence_exists;
+NOTICE:  sequence "test_sequence_exists" does not exist, skipping
+CREATE SEQUENCE test_sequence_exists;
+DROP SEQUENCE IF EXISTS test_sequence_exists;
+DROP SEQUENCE test_sequence_exists;
+ERROR:  sequence "test_sequence_exists" does not exist
+-- schema
+DROP SCHEMA test_schema_exists;
+ERROR:  schema "test_schema_exists" does not exist
+DROP SCHEMA IF EXISTS test_schema_exists;
+NOTICE:  schema "test_schema_exists" does not exist, skipping
+CREATE SCHEMA test_schema_exists;
+DROP SCHEMA IF EXISTS test_schema_exists;
+DROP SCHEMA test_schema_exists;
+ERROR:  schema "test_schema_exists" does not exist
+-- type
+DROP TYPE test_type_exists;
+ERROR:  type "test_type_exists" does not exist
+DROP TYPE IF EXISTS test_type_exists;
+NOTICE:  type "test_type_exists" does not exist, skipping
+--dg-skip: a relation's storage cannot be made: digres has no catalog tables
+--dg CREATE type test_type_exists as (a int, b text);
+--dg-cascade
+--dg DROP TYPE IF EXISTS test_type_exists;
+DROP TYPE test_type_exists;
+ERROR:  type "test_type_exists" does not exist
+-- domain
+DROP DOMAIN test_domain_exists;
+ERROR:  type "test_domain_exists" does not exist
+DROP DOMAIN IF EXISTS test_domain_exists;
+NOTICE:  type "test_domain_exists" does not exist, skipping
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg CREATE domain test_domain_exists as int not null check (value > 0);
+--dg-cascade
+--dg DROP DOMAIN IF EXISTS test_domain_exists;
+DROP DOMAIN test_domain_exists;
+ERROR:  type "test_domain_exists" does not exist
+---
+--- role/user/group
+---
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE USER regress_test_u1;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE regress_test_r1;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE GROUP regress_test_g1;
+--dg-differs: another error: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP USER regress_test_u2;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP USER IF EXISTS regress_test_u1, regress_test_u2;
+--dg-differs: another error: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP USER regress_test_u1;
+--dg-differs: another error: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE regress_test_r2;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE IF EXISTS regress_test_r1, regress_test_r2;
+--dg-differs: another error: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE regress_test_r1;
+--dg-differs: another error: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP GROUP regress_test_g2;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP GROUP IF EXISTS regress_test_g1, regress_test_g2;
+--dg-differs: another error: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP GROUP regress_test_g1;
+-- collation
+DROP COLLATION IF EXISTS test_collation_exists;
+NOTICE:  collation "test_collation_exists" does not exist, skipping
+-- conversion
+--dg-differs: another error: relation pg_conversion cannot be opened: digres has no catalog tables
+--dg DROP CONVERSION test_conversion_exists;
+--dg-skip: relation pg_conversion cannot be opened: digres has no catalog tables
+--dg DROP CONVERSION IF EXISTS test_conversion_exists;
+--dg-skip: loading library "?" is not supported yet
+--dg CREATE CONVERSION test_conversion_exists
+--dg     FOR 'LATIN1' TO 'UTF8' FROM iso8859_1_to_utf8;
+--dg-skip: relation pg_conversion cannot be opened: digres has no catalog tables
+--dg DROP CONVERSION test_conversion_exists;
+-- text search parser
+--dg-differs: another error: relation pg_ts_parser cannot be opened: digres has no catalog tables
+--dg DROP TEXT SEARCH PARSER test_tsparser_exists;
+--dg-skip: relation pg_ts_parser cannot be opened: digres has no catalog tables
+--dg DROP TEXT SEARCH PARSER IF EXISTS test_tsparser_exists;
+-- text search dictionary
+--dg-differs: another error: relation pg_ts_dict cannot be opened: digres has no catalog tables
+--dg DROP TEXT SEARCH DICTIONARY test_tsdict_exists;
+--dg-skip: relation pg_ts_dict cannot be opened: digres has no catalog tables
+--dg DROP TEXT SEARCH DICTIONARY IF EXISTS test_tsdict_exists;
+--dg-skip: text search is not supported
+--dg CREATE TEXT SEARCH DICTIONARY test_tsdict_exists (
+--dg         Template=ispell,
+--dg         DictFile=ispell_sample,
+--dg         AffFile=ispell_sample
+--dg );
+--dg-skip: relation pg_ts_dict cannot be opened: digres has no catalog tables
+--dg DROP TEXT SEARCH DICTIONARY test_tsdict_exists;
+-- test search template
+--dg-differs: another error: relation pg_ts_template cannot be opened: digres has no catalog tables
+--dg DROP TEXT SEARCH TEMPLATE test_tstemplate_exists;
+--dg-skip: relation pg_ts_template cannot be opened: digres has no catalog tables
+--dg DROP TEXT SEARCH TEMPLATE IF EXISTS test_tstemplate_exists;
+-- text search configuration
+--dg-differs: another error: relation pg_ts_config cannot be opened: digres has no catalog tables
+--dg DROP TEXT SEARCH CONFIGURATION test_tsconfig_exists;
+--dg-skip: relation pg_ts_config cannot be opened: digres has no catalog tables
+--dg DROP TEXT SEARCH CONFIGURATION IF EXISTS test_tsconfig_exists;
+--dg-skip: text search is not supported
+--dg CREATE TEXT SEARCH CONFIGURATION test_tsconfig_exists (COPY=english);
+--dg-skip: relation pg_ts_config cannot be opened: digres has no catalog tables
+--dg DROP TEXT SEARCH CONFIGURATION test_tsconfig_exists;
+-- extension
+--dg-differs: another error: relation pg_extension cannot be opened: digres has no catalog tables
+--dg DROP EXTENSION test_extension_exists;
+--dg-skip: relation pg_extension cannot be opened: digres has no catalog tables
+--dg DROP EXTENSION IF EXISTS test_extension_exists;
+-- functions
+DROP FUNCTION test_function_exists();
+ERROR:  function test_function_exists() does not exist
+DROP FUNCTION IF EXISTS test_function_exists();
+NOTICE:  function test_function_exists() does not exist, skipping
+DROP FUNCTION test_function_exists(int, text, int[]);
+ERROR:  function test_function_exists(integer, text, integer[]) does not exist
+DROP FUNCTION IF EXISTS test_function_exists(int, text, int[]);
+NOTICE:  function test_function_exists(pg_catalog.int4,text,pg_catalog.int4[]) does not exist, skipping
+-- aggregate
+DROP AGGREGATE test_aggregate_exists(*);
+ERROR:  aggregate test_aggregate_exists(*) does not exist
+DROP AGGREGATE IF EXISTS test_aggregate_exists(*);
+NOTICE:  aggregate test_aggregate_exists() does not exist, skipping
+DROP AGGREGATE test_aggregate_exists(int);
+ERROR:  aggregate test_aggregate_exists(integer) does not exist
+DROP AGGREGATE IF EXISTS test_aggregate_exists(int);
+NOTICE:  aggregate test_aggregate_exists(pg_catalog.int4) does not exist, skipping
+-- operator
+DROP OPERATOR @#@ (int, int);
+ERROR:  operator does not exist: integer @#@ integer
+DROP OPERATOR IF EXISTS @#@ (int, int);
+NOTICE:  operator @#@ does not exist, skipping
+--dg-skip: relation pg_operator cannot be written: digres has no catalog tables
+--dg CREATE OPERATOR @#@
+--dg         (leftarg = int8, rightarg = int8, procedure = int8xor);
+--dg-cascade
+--dg DROP OPERATOR @#@ (int8, int8);
+-- language
+DROP LANGUAGE test_language_exists;
+ERROR:  language "test_language_exists" does not exist
+DROP LANGUAGE IF EXISTS test_language_exists;
+NOTICE:  language "test_language_exists" does not exist, skipping
+-- cast
+DROP CAST (text AS text);
+ERROR:  cast from type text to type text does not exist
+DROP CAST IF EXISTS (text AS text);
+NOTICE:  cast from type text to type text does not exist, skipping
+-- trigger
+--dg-differs: another error: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg DROP TRIGGER test_trigger_exists ON test_exists;
+--dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg DROP TRIGGER IF EXISTS test_trigger_exists ON test_exists;
+DROP TRIGGER test_trigger_exists ON no_such_table;
+ERROR:  relation "no_such_table" does not exist
+DROP TRIGGER IF EXISTS test_trigger_exists ON no_such_table;
+NOTICE:  relation "no_such_table" does not exist, skipping
+DROP TRIGGER test_trigger_exists ON no_such_schema.no_such_table;
+ERROR:  schema "no_such_schema" does not exist
+DROP TRIGGER IF EXISTS test_trigger_exists ON no_such_schema.no_such_table;
+NOTICE:  schema "no_such_schema" does not exist, skipping
+--dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg CREATE TRIGGER test_trigger_exists
+--dg     BEFORE UPDATE ON test_exists
+--dg     FOR EACH ROW EXECUTE PROCEDURE suppress_redundant_updates_trigger();
+--dg-skip: relation pg_trigger cannot be opened: digres has no catalog tables
+--dg DROP TRIGGER test_trigger_exists ON test_exists;
+-- rule
+--dg-differs: another error: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg DROP RULE test_rule_exists ON test_exists;
+--dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg DROP RULE IF EXISTS test_rule_exists ON test_exists;
+DROP RULE test_rule_exists ON no_such_table;
+ERROR:  relation "no_such_table" does not exist
+DROP RULE IF EXISTS test_rule_exists ON no_such_table;
+NOTICE:  relation "no_such_table" does not exist, skipping
+DROP RULE test_rule_exists ON no_such_schema.no_such_table;
+ERROR:  schema "no_such_schema" does not exist
+DROP RULE IF EXISTS test_rule_exists ON no_such_schema.no_such_table;
+NOTICE:  schema "no_such_schema" does not exist, skipping
+--dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg CREATE RULE test_rule_exists AS ON INSERT TO test_exists
+--dg     DO INSTEAD
+--dg     INSERT INTO test_exists VALUES (NEW.a, NEW.b || NEW.a::text);
+--dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg DROP RULE test_rule_exists ON test_exists;
+-- foreign data wrapper
+--dg-differs: another error: relation pg_foreign_data_wrapper cannot be opened: digres has no catalog tables
+--dg DROP FOREIGN DATA WRAPPER test_fdw_exists;
+--dg-skip: relation pg_foreign_data_wrapper cannot be opened: digres has no catalog tables
+--dg DROP FOREIGN DATA WRAPPER IF EXISTS test_fdw_exists;
+-- foreign server
+--dg-differs: another error: relation pg_foreign_server cannot be opened: digres has no catalog tables
+--dg DROP SERVER test_server_exists;
+--dg-skip: relation pg_foreign_server cannot be opened: digres has no catalog tables
+--dg DROP SERVER IF EXISTS test_server_exists;
+-- operator class
+DROP OPERATOR CLASS test_operator_class USING btree;
+ERROR:  operator class "test_operator_class" does not exist for access method "btree"
+DROP OPERATOR CLASS IF EXISTS test_operator_class USING btree;
+NOTICE:  operator class "test_operator_class" does not exist for access method "btree", skipping
+DROP OPERATOR CLASS test_operator_class USING no_such_am;
+ERROR:  access method "no_such_am" does not exist
+DROP OPERATOR CLASS IF EXISTS test_operator_class USING no_such_am;
+ERROR:  access method "no_such_am" does not exist
+-- operator family
+--dg-differs: another error: relation pg_opfamily cannot be opened: digres has no catalog tables
+--dg DROP OPERATOR FAMILY test_operator_family USING btree;
+--dg-skip: relation pg_opfamily cannot be opened: digres has no catalog tables
+--dg DROP OPERATOR FAMILY IF EXISTS test_operator_family USING btree;
+DROP OPERATOR FAMILY test_operator_family USING no_such_am;
+ERROR:  access method "no_such_am" does not exist
+DROP OPERATOR FAMILY IF EXISTS test_operator_family USING no_such_am;
+ERROR:  access method "no_such_am" does not exist
+-- access method
+DROP ACCESS METHOD no_such_am;
+ERROR:  access method "no_such_am" does not exist
+DROP ACCESS METHOD IF EXISTS no_such_am;
+NOTICE:  access method "no_such_am" does not exist, skipping
+-- drop the table
+DROP TABLE IF EXISTS test_exists;
+DROP TABLE test_exists;
+ERROR:  table "test_exists" does not exist
+-- be tolerant with missing schemas, types, etc
+DROP AGGREGATE IF EXISTS no_such_schema.foo(int);
+NOTICE:  schema "no_such_schema" does not exist, skipping
+DROP AGGREGATE IF EXISTS foo(no_such_type);
+NOTICE:  type "no_such_type" does not exist, skipping
+DROP AGGREGATE IF EXISTS foo(no_such_schema.no_such_type);
+NOTICE:  schema "no_such_schema" does not exist, skipping
+DROP CAST IF EXISTS (INTEGER AS no_such_type2);
+NOTICE:  type "no_such_type2" does not exist, skipping
+DROP CAST IF EXISTS (no_such_type1 AS INTEGER);
+NOTICE:  type "no_such_type1" does not exist, skipping
+DROP CAST IF EXISTS (INTEGER AS no_such_schema.bar);
+NOTICE:  schema "no_such_schema" does not exist, skipping
+DROP CAST IF EXISTS (no_such_schema.foo AS INTEGER);
+NOTICE:  schema "no_such_schema" does not exist, skipping
+DROP COLLATION IF EXISTS no_such_schema.foo;
+NOTICE:  schema "no_such_schema" does not exist, skipping
+DROP CONVERSION IF EXISTS no_such_schema.foo;
+NOTICE:  schema "no_such_schema" does not exist, skipping
+DROP DOMAIN IF EXISTS no_such_schema.foo;
+NOTICE:  schema "no_such_schema" does not exist, skipping
+DROP FOREIGN TABLE IF EXISTS no_such_schema.foo;
+NOTICE:  schema "no_such_schema" does not exist, skipping
+DROP FUNCTION IF EXISTS no_such_schema.foo();
+NOTICE:  schema "no_such_schema" does not exist, skipping
+DROP FUNCTION IF EXISTS foo(no_such_type);
+NOTICE:  type "no_such_type" does not exist, skipping
+DROP FUNCTION IF EXISTS foo(no_such_schema.no_such_type);
+NOTICE:  schema "no_such_schema" does not exist, skipping
+--dg-skip: schema "?" does not exist
+--dg DROP INDEX IF EXISTS no_such_schema.foo;
+DROP MATERIALIZED VIEW IF EXISTS no_such_schema.foo;
+NOTICE:  schema "no_such_schema" does not exist, skipping
+DROP OPERATOR IF EXISTS no_such_schema.+ (int, int);
+NOTICE:  schema "no_such_schema" does not exist, skipping
+DROP OPERATOR IF EXISTS + (no_such_type, no_such_type);
+NOTICE:  type "no_such_type" does not exist, skipping
+DROP OPERATOR IF EXISTS + (no_such_schema.no_such_type, no_such_schema.no_such_type);
+NOTICE:  schema "no_such_schema" does not exist, skipping
+DROP OPERATOR IF EXISTS # (NONE, no_such_schema.no_such_type);
+NOTICE:  schema "no_such_schema" does not exist, skipping
+DROP OPERATOR CLASS IF EXISTS no_such_schema.widget_ops USING btree;
+NOTICE:  schema "no_such_schema" does not exist, skipping
+DROP OPERATOR FAMILY IF EXISTS no_such_schema.float_ops USING btree;
+NOTICE:  schema "no_such_schema" does not exist, skipping
+DROP RULE IF EXISTS foo ON no_such_schema.bar;
+NOTICE:  schema "no_such_schema" does not exist, skipping
+--dg-differs: the result
+--dg DROP SEQUENCE IF EXISTS no_such_schema.foo;
+--dg-differs: the result
+--dg DROP TABLE IF EXISTS no_such_schema.foo;
+DROP TEXT SEARCH CONFIGURATION IF EXISTS no_such_schema.foo;
+NOTICE:  schema "no_such_schema" does not exist, skipping
+DROP TEXT SEARCH DICTIONARY IF EXISTS no_such_schema.foo;
+NOTICE:  schema "no_such_schema" does not exist, skipping
+DROP TEXT SEARCH PARSER IF EXISTS no_such_schema.foo;
+NOTICE:  schema "no_such_schema" does not exist, skipping
+DROP TEXT SEARCH TEMPLATE IF EXISTS no_such_schema.foo;
+NOTICE:  schema "no_such_schema" does not exist, skipping
+DROP TRIGGER IF EXISTS foo ON no_such_schema.bar;
+NOTICE:  schema "no_such_schema" does not exist, skipping
+DROP TYPE IF EXISTS no_such_schema.foo;
+NOTICE:  schema "no_such_schema" does not exist, skipping
+--dg-differs: the result
+--dg DROP VIEW IF EXISTS no_such_schema.foo;
+-- Check we receive an ambiguous function error when there are
+-- multiple matching functions.
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION test_ambiguous_funcname(int) returns int as $$ select $1; $$ language sql;
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION test_ambiguous_funcname(text) returns text as $$ select $1; $$ language sql;
+--dg-cascade
+--dg DROP FUNCTION test_ambiguous_funcname;
+--dg-cascade
+--dg DROP FUNCTION IF EXISTS test_ambiguous_funcname;
+-- cleanup
+--dg-cascade
+--dg DROP FUNCTION test_ambiguous_funcname(int);
+--dg-cascade
+--dg DROP FUNCTION test_ambiguous_funcname(text);
+-- Likewise for procedures.
+--dg-skip: language "?" does not exist
+--dg CREATE PROCEDURE test_ambiguous_procname(int) as $$ begin end; $$ language plpgsql;
+--dg-skip: language "?" does not exist
+--dg CREATE PROCEDURE test_ambiguous_procname(text) as $$ begin end; $$ language plpgsql;
+--dg-cascade
+--dg DROP PROCEDURE test_ambiguous_procname;
+--dg-cascade
+--dg DROP PROCEDURE IF EXISTS test_ambiguous_procname;
+-- Check we get a similar error if we use ROUTINE instead of PROCEDURE.
+--dg-cascade
+--dg DROP ROUTINE IF EXISTS test_ambiguous_procname;
+-- cleanup
+--dg-cascade
+--dg DROP PROCEDURE test_ambiguous_procname(int);
+--dg-cascade
+--dg DROP PROCEDURE test_ambiguous_procname(text);
+-- This test checks both the functionality of 'if exists' and the syntax
+-- of the drop database command.
+drop database test_database_exists (force);
+ERROR:  database "test_database_exists" does not exist
+drop database test_database_exists with (force);
+ERROR:  database "test_database_exists" does not exist
+drop database if exists test_database_exists (force);
+NOTICE:  database "test_database_exists" does not exist, skipping
+drop database if exists test_database_exists with (force);
+NOTICE:  database "test_database_exists" does not exist, skipping

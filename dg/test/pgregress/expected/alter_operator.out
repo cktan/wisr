@@ -1,0 +1,243 @@
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION alter_op_test_fn(boolean, boolean)
+--dg RETURNS boolean AS $$ SELECT NULL::BOOLEAN; $$ LANGUAGE sql IMMUTABLE;
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
+--dg CREATE FUNCTION customcontsel(internal, oid, internal, integer)
+--dg RETURNS float8 AS 'contsel' LANGUAGE internal STABLE STRICT;
+--dg-cascade
+--dg CREATE OPERATOR === (
+--dg     LEFTARG = boolean,
+--dg     RIGHTARG = boolean,
+--dg     PROCEDURE = alter_op_test_fn,
+--dg     COMMUTATOR = ===,
+--dg     NEGATOR = !==,
+--dg     RESTRICT = customcontsel,
+--dg     JOIN = contjoinsel,
+--dg     HASHES, MERGES
+--dg );
+--dg-cascade
+--dg SELECT pg_describe_object(refclassid,refobjid,refobjsubid) as ref, deptype
+--dg FROM pg_depend
+--dg WHERE classid = 'pg_operator'::regclass AND
+--dg       objid = '===(bool,bool)'::regoperator
+--dg ORDER BY 1;
+--
+-- Test resetting and setting restrict and join attributes.
+--
+--dg-cascade
+--dg ALTER OPERATOR === (boolean, boolean) SET (RESTRICT = NONE);
+--dg-cascade
+--dg ALTER OPERATOR === (boolean, boolean) SET (JOIN = NONE);
+--dg-cascade
+--dg SELECT oprrest, oprjoin FROM pg_operator WHERE oprname = '==='
+--dg   AND oprleft = 'boolean'::regtype AND oprright = 'boolean'::regtype;
+--dg-cascade
+--dg SELECT pg_describe_object(refclassid,refobjid,refobjsubid) as ref, deptype
+--dg FROM pg_depend
+--dg WHERE classid = 'pg_operator'::regclass AND
+--dg       objid = '===(bool,bool)'::regoperator
+--dg ORDER BY 1;
+--dg-cascade
+--dg ALTER OPERATOR === (boolean, boolean) SET (RESTRICT = contsel);
+--dg-cascade
+--dg ALTER OPERATOR === (boolean, boolean) SET (JOIN = contjoinsel);
+--dg-cascade
+--dg SELECT oprrest, oprjoin FROM pg_operator WHERE oprname = '==='
+--dg   AND oprleft = 'boolean'::regtype AND oprright = 'boolean'::regtype;
+--dg-cascade
+--dg SELECT pg_describe_object(refclassid,refobjid,refobjsubid) as ref, deptype
+--dg FROM pg_depend
+--dg WHERE classid = 'pg_operator'::regclass AND
+--dg       objid = '===(bool,bool)'::regoperator
+--dg ORDER BY 1;
+--dg-cascade
+--dg ALTER OPERATOR === (boolean, boolean) SET (RESTRICT = NONE, JOIN = NONE);
+--dg-cascade
+--dg SELECT oprrest, oprjoin FROM pg_operator WHERE oprname = '==='
+--dg   AND oprleft = 'boolean'::regtype AND oprright = 'boolean'::regtype;
+--dg-cascade
+--dg SELECT pg_describe_object(refclassid,refobjid,refobjsubid) as ref, deptype
+--dg FROM pg_depend
+--dg WHERE classid = 'pg_operator'::regclass AND
+--dg       objid = '===(bool,bool)'::regoperator
+--dg ORDER BY 1;
+--dg-cascade
+--dg ALTER OPERATOR === (boolean, boolean) SET (RESTRICT = customcontsel, JOIN = contjoinsel);
+--dg-cascade
+--dg SELECT oprrest, oprjoin FROM pg_operator WHERE oprname = '==='
+--dg   AND oprleft = 'boolean'::regtype AND oprright = 'boolean'::regtype;
+--dg-cascade
+--dg SELECT pg_describe_object(refclassid,refobjid,refobjsubid) as ref, deptype
+--dg FROM pg_depend
+--dg WHERE classid = 'pg_operator'::regclass AND
+--dg       objid = '===(bool,bool)'::regoperator
+--dg ORDER BY 1;
+--
+-- Test invalid options.
+--
+--dg-cascade
+--dg ALTER OPERATOR === (boolean, boolean) SET (RESTRICT = non_existent_func);
+--dg-cascade
+--dg ALTER OPERATOR === (boolean, boolean) SET (JOIN = non_existent_func);
+-- invalid: non-lowercase quoted identifiers
+ALTER OPERATOR & (bit, bit) SET ("Restrict" = _int_contsel, "Join" = _int_contjoinsel);
+ERROR:  operator attribute "Restrict" not recognized
+--
+-- Test permission check. Must be owner to ALTER OPERATOR.
+--
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE USER regress_alter_op_user;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_alter_op_user;
+--dg-cascade
+--dg ALTER OPERATOR === (boolean, boolean) SET (RESTRICT = NONE);
+RESET SESSION AUTHORIZATION;
+--
+-- Test setting commutator, negator, merges, and hashes attributes,
+-- which can only be set if not already set
+--
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION alter_op_test_fn_bool_real(boolean, real)
+--dg RETURNS boolean AS $$ SELECT NULL::BOOLEAN; $$ LANGUAGE sql IMMUTABLE;
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION alter_op_test_fn_real_bool(real, boolean)
+--dg RETURNS boolean AS $$ SELECT NULL::BOOLEAN; $$ LANGUAGE sql IMMUTABLE;
+-- operator
+--dg-cascade
+--dg CREATE OPERATOR === (
+--dg     LEFTARG = boolean,
+--dg     RIGHTARG = real,
+--dg     PROCEDURE = alter_op_test_fn_bool_real
+--dg );
+-- commutator
+--dg-cascade
+--dg CREATE OPERATOR ==== (
+--dg     LEFTARG = real,
+--dg     RIGHTARG = boolean,
+--dg     PROCEDURE = alter_op_test_fn_real_bool
+--dg );
+-- negator
+--dg-cascade
+--dg CREATE OPERATOR !==== (
+--dg     LEFTARG = boolean,
+--dg     RIGHTARG = real,
+--dg     PROCEDURE = alter_op_test_fn_bool_real
+--dg );
+-- No-op setting already false hashes and merges to false works
+--dg-cascade
+--dg ALTER OPERATOR === (boolean, real) SET (MERGES = false);
+--dg-cascade
+--dg ALTER OPERATOR === (boolean, real) SET (HASHES = false);
+-- Test setting merges and hashes
+--dg-cascade
+--dg ALTER OPERATOR === (boolean, real) SET (MERGES);
+--dg-cascade
+--dg ALTER OPERATOR === (boolean, real) SET (HASHES);
+--dg-cascade
+--dg SELECT oprcanmerge, oprcanhash
+--dg FROM pg_operator WHERE oprname = '==='
+--dg   AND oprleft = 'boolean'::regtype AND oprright = 'real'::regtype;
+-- Test setting commutator
+--dg-cascade
+--dg ALTER OPERATOR === (boolean, real) SET (COMMUTATOR = ====);
+-- Check that oprcom has been set on both the operator and commutator,
+-- that they reference each other, and that the operator used is the existing
+-- one we created and not a new shell operator.
+--dg-cascade
+--dg SELECT op.oprname AS operator_name, com.oprname AS commutator_name,
+--dg   com.oprcode AS commutator_func
+--dg   FROM pg_operator op
+--dg   INNER JOIN pg_operator com ON (op.oid = com.oprcom AND op.oprcom = com.oid)
+--dg   WHERE op.oprname = '==='
+--dg   AND op.oprleft = 'boolean'::regtype AND op.oprright = 'real'::regtype;
+-- Cannot set self as negator
+--dg-cascade
+--dg ALTER OPERATOR === (boolean, real) SET (NEGATOR = ===);
+-- Test setting negator
+--dg-cascade
+--dg ALTER OPERATOR === (boolean, real) SET (NEGATOR = !====);
+-- Check that oprnegate has been set on both the operator and negator,
+-- that they reference each other, and that the operator used is the existing
+-- one we created and not a new shell operator.
+--dg-cascade
+--dg SELECT op.oprname AS operator_name, neg.oprname AS negator_name,
+--dg   neg.oprcode AS negator_func
+--dg   FROM pg_operator op
+--dg   INNER JOIN pg_operator neg ON (op.oid = neg.oprnegate AND op.oprnegate = neg.oid)
+--dg   WHERE op.oprname = '==='
+--dg   AND op.oprleft = 'boolean'::regtype AND op.oprright = 'real'::regtype;
+-- Test that no-op set succeeds
+--dg-cascade
+--dg ALTER OPERATOR === (boolean, real) SET (NEGATOR = !====);
+--dg-cascade
+--dg ALTER OPERATOR === (boolean, real) SET (COMMUTATOR = ====);
+--dg-cascade
+--dg ALTER OPERATOR === (boolean, real) SET (MERGES);
+--dg-cascade
+--dg ALTER OPERATOR === (boolean, real) SET (HASHES);
+-- Check that the final state of the operator is as we expect
+--dg-cascade
+--dg SELECT oprcanmerge, oprcanhash,
+--dg        pg_describe_object('pg_operator'::regclass, oprcom, 0) AS commutator,
+--dg        pg_describe_object('pg_operator'::regclass, oprnegate, 0) AS negator
+--dg   FROM pg_operator WHERE oprname = '==='
+--dg   AND oprleft = 'boolean'::regtype AND oprright = 'real'::regtype;
+-- Cannot change commutator, negator, merges, and hashes when already set
+--dg-cascade
+--dg CREATE OPERATOR @= (
+--dg     LEFTARG = real,
+--dg     RIGHTARG = boolean,
+--dg     PROCEDURE = alter_op_test_fn_real_bool
+--dg );
+--dg-cascade
+--dg CREATE OPERATOR @!= (
+--dg     LEFTARG = boolean,
+--dg     RIGHTARG = real,
+--dg     PROCEDURE = alter_op_test_fn_bool_real
+--dg );
+--dg-cascade
+--dg ALTER OPERATOR === (boolean, real) SET (COMMUTATOR = @=);
+--dg-cascade
+--dg ALTER OPERATOR === (boolean, real) SET (NEGATOR = @!=);
+--dg-cascade
+--dg ALTER OPERATOR === (boolean, real) SET (MERGES = false);
+--dg-cascade
+--dg ALTER OPERATOR === (boolean, real) SET (HASHES = false);
+-- Cannot set an operator that already has a commutator as the commutator
+--dg-cascade
+--dg ALTER OPERATOR @=(real, boolean) SET (COMMUTATOR = ===);
+-- Cannot set an operator that already has a negator as the negator
+--dg-cascade
+--dg ALTER OPERATOR @!=(boolean, real) SET (NEGATOR = ===);
+-- Check no changes made
+--dg-cascade
+--dg SELECT oprcanmerge, oprcanhash,
+--dg        pg_describe_object('pg_operator'::regclass, oprcom, 0) AS commutator,
+--dg        pg_describe_object('pg_operator'::regclass, oprnegate, 0) AS negator
+--dg   FROM pg_operator WHERE oprname = '==='
+--dg   AND oprleft = 'boolean'::regtype AND oprright = 'real'::regtype;
+--
+-- Clean up
+--
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP USER regress_alter_op_user;
+--dg-cascade
+--dg DROP OPERATOR === (boolean, boolean);
+--dg-cascade
+--dg DROP OPERATOR === (boolean, real);
+--dg-cascade
+--dg DROP OPERATOR ==== (real, boolean);
+--dg-cascade
+--dg DROP OPERATOR !==== (boolean, real);
+--dg-cascade
+--dg DROP OPERATOR @= (real, boolean);
+--dg-cascade
+--dg DROP OPERATOR @!= (boolean, real);
+--dg-cascade
+--dg DROP FUNCTION customcontsel(internal, oid, internal, integer);
+--dg-cascade
+--dg DROP FUNCTION alter_op_test_fn(boolean, boolean);
+--dg-cascade
+--dg DROP FUNCTION alter_op_test_fn_bool_real(boolean, real);
+--dg-cascade
+--dg DROP FUNCTION alter_op_test_fn_real_bool(real, boolean);

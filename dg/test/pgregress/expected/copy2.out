@@ -1,0 +1,878 @@
+--dg-skip: CREATE SEQUENCE supports only START and INCREMENT yet, not TEMPORARY or UNLOGGED
+--dg CREATE TEMP TABLE x (
+--dg 	a serial,
+--dg 	b int,
+--dg 	c text not null default 'stuff',
+--dg 	d text,
+--dg 	e text
+--dg ) ;
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION fn_x_before () RETURNS TRIGGER AS '
+--dg   BEGIN
+--dg 		NEW.e := ''before trigger fired''::text;
+--dg 		return NEW;
+--dg 	END;
+--dg ' LANGUAGE plpgsql;
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION fn_x_after () RETURNS TRIGGER AS '
+--dg   BEGIN
+--dg 		UPDATE x set e=''after trigger fired'' where c=''stuff'';
+--dg 		return NULL;
+--dg 	END;
+--dg ' LANGUAGE plpgsql;
+--dg-cascade
+--dg CREATE TRIGGER trg_x_after AFTER INSERT ON x
+--dg FOR EACH ROW EXECUTE PROCEDURE fn_x_after();
+--dg-cascade
+--dg CREATE TRIGGER trg_x_before BEFORE INSERT ON x
+--dg FOR EACH ROW EXECUTE PROCEDURE fn_x_before();
+--dg-cascade
+--dg COPY x (a, b, c, d, e) from stdin;
+--dg 9999	\N	\\N	\NN	\N
+--dg 10000	21	31	41	51
+--dg \.
+--dg-cascade
+--dg COPY x (b, d) from stdin;
+--dg 1	test_1
+--dg \.
+--dg-cascade
+--dg COPY x (b, d) from stdin;
+--dg 2	test_2
+--dg 3	test_3
+--dg 4	test_4
+--dg 5	test_5
+--dg \.
+--dg-cascade
+--dg COPY x (a, b, c, d, e) from stdin;
+--dg 10001	22	32	42	52
+--dg 10002	23	33	43	53
+--dg 10003	24	34	44	54
+--dg 10004	25	35	45	55
+--dg 10005	26	36	46	56
+--dg \.
+-- non-existent column in column list: should fail
+--dg-cascade
+--dg COPY x (xyz) from stdin;
+--dg \.
+-- redundant options
+--dg-cascade
+--dg COPY x from stdin (format CSV, FORMAT CSV);
+--dg \.
+--dg-cascade
+--dg COPY x from stdin (freeze off, freeze on);
+--dg \.
+--dg-cascade
+--dg COPY x from stdin (delimiter ',', delimiter ',');
+--dg \.
+--dg-cascade
+--dg COPY x from stdin (null ' ', null ' ');
+--dg \.
+--dg-cascade
+--dg COPY x from stdin (header off, header on);
+--dg \.
+--dg-cascade
+--dg COPY x from stdin (quote ':', quote ':');
+--dg \.
+--dg-cascade
+--dg COPY x from stdin (escape ':', escape ':');
+--dg \.
+--dg-cascade
+--dg COPY x from stdin (force_quote (a), force_quote *);
+--dg \.
+--dg-cascade
+--dg COPY x from stdin (force_not_null (a), force_not_null (b));
+--dg \.
+--dg-cascade
+--dg COPY x from stdin (force_null (a), force_null (b));
+--dg \.
+--dg-cascade
+--dg COPY x from stdin (convert_selectively (a), convert_selectively (b));
+--dg \.
+--dg-cascade
+--dg COPY x from stdin (encoding 'sql_ascii', encoding 'sql_ascii');
+--dg \.
+--dg-cascade
+--dg COPY x from stdin (on_error ignore, on_error ignore);
+--dg \.
+--dg-cascade
+--dg COPY x from stdin (log_verbosity default, log_verbosity verbose);
+--dg \.
+-- incorrect options
+--dg-cascade
+--dg COPY x from stdin (format BINARY, delimiter ',');
+--dg \.
+--dg-cascade
+--dg COPY x from stdin (format BINARY, null 'x');
+--dg \.
+--dg-cascade
+--dg COPY x from stdin (format BINARY, on_error ignore);
+--dg \.
+--dg-cascade
+--dg COPY x from stdin (on_error unsupported);
+--dg \.
+--dg-cascade
+--dg COPY x from stdin (format TEXT, force_quote(a));
+--dg \.
+--dg-cascade
+--dg COPY x from stdin (format TEXT, force_quote *);
+--dg \.
+--dg-cascade
+--dg COPY x from stdin (format CSV, force_quote(a));
+--dg \.
+--dg-cascade
+--dg COPY x from stdin (format CSV, force_quote *);
+--dg \.
+--dg-cascade
+--dg COPY x from stdin (format TEXT, force_not_null(a));
+--dg \.
+--dg-cascade
+--dg COPY x from stdin (format TEXT, force_not_null *);
+--dg \.
+--dg-cascade
+--dg COPY x to stdout (format CSV, force_not_null(a));
+--dg-cascade
+--dg COPY x to stdout (format CSV, force_not_null *);
+--dg-cascade
+--dg COPY x from stdin (format TEXT, force_null(a));
+--dg \.
+--dg-cascade
+--dg COPY x from stdin (format TEXT, force_null *);
+--dg \.
+--dg-cascade
+--dg COPY x to stdout (format CSV, force_null(a));
+--dg-cascade
+--dg COPY x to stdout (format CSV, force_null *);
+--dg-cascade
+--dg COPY x to stdout (format BINARY, on_error unsupported);
+--dg-cascade
+--dg COPY x from stdin (log_verbosity unsupported);
+--dg \.
+--dg-cascade
+--dg COPY x from stdin with (reject_limit 1);
+--dg \.
+--dg-cascade
+--dg COPY x from stdin with (on_error ignore, reject_limit 0);
+--dg \.
+-- too many columns in column list: should fail
+--dg-cascade
+--dg COPY x (a, b, c, d, e, d, c) from stdin;
+--dg \.
+-- missing data: should fail
+--dg-cascade
+--dg COPY x from stdin;
+--dg
+--dg \.
+--dg-cascade
+--dg COPY x from stdin;
+--dg 2000	230	23	23
+--dg \.
+--dg-cascade
+--dg COPY x from stdin;
+--dg 2001	231	\N	\N
+--dg \.
+-- extra data: should fail
+--dg-cascade
+--dg COPY x from stdin;
+--dg 2002	232	40	50	60	70	80
+--dg \.
+-- various COPY options: delimiters, oids, NULL string, encoding
+--dg-cascade
+--dg COPY x (b, c, d, e) from stdin delimiter ',' null 'x';
+--dg x,45,80,90
+--dg x,\x,\\x,\\\x
+--dg x,\,,\\\,,\\
+--dg \.
+--dg-cascade
+--dg COPY x from stdin WITH DELIMITER AS ';' NULL AS '';
+--dg 3000;;c;;
+--dg \.
+--dg-cascade
+--dg COPY x from stdin WITH DELIMITER AS ':' NULL AS E'\\X' ENCODING 'sql_ascii';
+--dg 4000:\X:C:\X:\X
+--dg 4001:1:empty::
+--dg 4002:2:null:\X:\X
+--dg 4003:3:Backslash:\\:\\
+--dg 4004:4:BackslashX:\\X:\\X
+--dg 4005:5:N:\N:\N
+--dg 4006:6:BackslashN:\\N:\\N
+--dg 4007:7:XX:\XX:\XX
+--dg 4008:8:Delimiter:\::\:
+--dg \.
+COPY x TO stdout WHERE a = 1;
+ERROR:  WHERE clause not allowed with COPY TO
+LINE 1: COPY x TO stdout WHERE a = 1;
+                         ^
+--dg-cascade
+--dg COPY x from stdin WHERE a = 50004;
+--dg 50003	24	34	44	54
+--dg 50004	25	35	45	55
+--dg 50005	26	36	46	56
+--dg \.
+--dg-cascade
+--dg COPY x from stdin WHERE a > 60003;
+--dg 60001	22	32	42	52
+--dg 60002	23	33	43	53
+--dg 60003	24	34	44	54
+--dg 60004	25	35	45	55
+--dg 60005	26	36	46	56
+--dg \.
+--dg-cascade
+--dg COPY x from stdin WHERE f > 60003;
+--dg \.
+--dg-cascade
+--dg COPY x from stdin WHERE a = max(x.b);
+--dg \.
+--dg-cascade
+--dg COPY x from stdin WHERE a IN (SELECT 1 FROM x);
+--dg \.
+--dg-cascade
+--dg COPY x from stdin WHERE a IN (generate_series(1,5));
+--dg \.
+--dg-cascade
+--dg COPY x from stdin WHERE a = row_number() over(b);
+--dg \.
+-- check results of copy in
+--dg-cascade
+--dg SELECT * FROM x;
+-- check copy out
+--dg-cascade
+--dg COPY x TO stdout;
+--dg-cascade
+--dg COPY x (c, e) TO stdout;
+--dg-cascade
+--dg COPY x (b, e) TO stdout WITH NULL 'I''m null';
+CREATE TEMP TABLE y (
+	col1 text,
+	col2 text
+);
+INSERT INTO y VALUES ('Jackson, Sam', E'\\h');
+INSERT INTO y VALUES ('It is "perfect".',E'\t');
+INSERT INTO y VALUES ('', NULL);
+COPY y TO stdout WITH CSV;
+"Jackson, Sam",\h
+"It is ""perfect"".",	
+"",
+COPY y TO stdout WITH CSV QUOTE '''' DELIMITER '|';
+Jackson, Sam|\h
+It is "perfect".|	
+''|
+COPY y TO stdout WITH CSV FORCE QUOTE col2 ESCAPE E'\\' ENCODING 'sql_ascii';
+"Jackson, Sam","\\h"
+"It is \"perfect\".","	"
+"",
+COPY y TO stdout WITH CSV FORCE QUOTE *;
+"Jackson, Sam","\h"
+"It is ""perfect"".","	"
+"",
+-- Repeat above tests with new 9.0 option syntax
+COPY y TO stdout (FORMAT CSV);
+"Jackson, Sam",\h
+"It is ""perfect"".",	
+"",
+COPY y TO stdout (FORMAT CSV, QUOTE '''', DELIMITER '|');
+Jackson, Sam|\h
+It is "perfect".|	
+''|
+COPY y TO stdout (FORMAT CSV, FORCE_QUOTE (col2), ESCAPE E'\\');
+"Jackson, Sam","\\h"
+"It is \"perfect\".","	"
+"",
+COPY y TO stdout (FORMAT CSV, FORCE_QUOTE *);
+"Jackson, Sam","\h"
+"It is ""perfect"".","	"
+"",
+\copy y TO stdout (FORMAT CSV)
+"Jackson, Sam",\h
+"It is ""perfect"".",	
+"",
+\copy y TO stdout (FORMAT CSV, QUOTE '''', DELIMITER '|')
+Jackson, Sam|\h
+It is "perfect".|	
+''|
+\copy y TO stdout (FORMAT CSV, FORCE_QUOTE (col2), ESCAPE E'\\')
+"Jackson, Sam","\\h"
+"It is \"perfect\".","	"
+"",
+\copy y TO stdout (FORMAT CSV, FORCE_QUOTE *)
+"Jackson, Sam","\h"
+"It is ""perfect"".","	"
+"",
+--test that we read consecutive LFs properly
+CREATE TEMP TABLE testnl (a int, b text, c int);
+COPY testnl FROM stdin CSV;
+-- test end of copy marker
+CREATE TEMP TABLE testeoc (a text);
+COPY testeoc FROM stdin CSV;
+COPY testeoc TO stdout CSV;
+a\.
+\.b
+c\.d
+"\."
+-- test handling of nonstandard null marker that violates escaping rules
+CREATE TEMP TABLE testnull(a int, b text);
+INSERT INTO testnull VALUES (1, E'\\0'), (NULL, NULL);
+COPY testnull TO stdout WITH NULL AS E'\\0';
+1	\\0
+\0	\0
+COPY testnull FROM stdin WITH NULL AS E'\\0';
+SELECT * FROM testnull;
+ a  | b  
+----+----
+  1 | \0
+    | 
+ 42 | \0
+    | 
+(4 rows)
+
+BEGIN;
+CREATE TABLE vistest (LIKE testeoc);
+COPY vistest FROM stdin CSV;
+COMMIT;
+SELECT * FROM vistest;
+ a  
+----
+ a0
+ b
+(2 rows)
+
+BEGIN;
+TRUNCATE vistest;
+COPY vistest FROM stdin CSV;
+SELECT * FROM vistest;
+ a  
+----
+ a1
+ b
+(2 rows)
+
+SAVEPOINT s1;
+TRUNCATE vistest;
+COPY vistest FROM stdin CSV;
+SELECT * FROM vistest;
+ a  
+----
+ d1
+ e
+(2 rows)
+
+COMMIT;
+SELECT * FROM vistest;
+ a  
+----
+ d1
+ e
+(2 rows)
+
+BEGIN;
+TRUNCATE vistest;
+--dg-skip: cannot perform COPY FREEZE because the table was not created or truncated in the current subtransaction
+--dg COPY vistest FROM stdin CSV FREEZE;
+--dg a2
+--dg b
+--dg \.
+--dg-cascade
+--dg SELECT * FROM vistest;
+SAVEPOINT s1;
+TRUNCATE vistest;
+--dg-skip: cannot perform COPY FREEZE because the table was not created or truncated in the current subtransaction
+--dg COPY vistest FROM stdin CSV FREEZE;
+--dg d2
+--dg e
+--dg \.
+--dg-cascade
+--dg SELECT * FROM vistest;
+COMMIT;
+--dg-cascade
+--dg SELECT * FROM vistest;
+BEGIN;
+TRUNCATE vistest;
+--dg-skip: cannot perform COPY FREEZE because the table was not created or truncated in the current subtransaction
+--dg COPY vistest FROM stdin CSV FREEZE;
+--dg x
+--dg y
+--dg \.
+--dg-cascade
+--dg SELECT * FROM vistest;
+COMMIT;
+TRUNCATE vistest;
+COPY vistest FROM stdin CSV FREEZE;
+ERROR:  cannot perform COPY FREEZE because the table was not created or truncated in the current subtransaction
+BEGIN;
+TRUNCATE vistest;
+SAVEPOINT s1;
+COPY vistest FROM stdin CSV FREEZE;
+ERROR:  cannot perform COPY FREEZE because the table was not created or truncated in the current subtransaction
+COMMIT;
+BEGIN;
+INSERT INTO vistest VALUES ('z');
+SAVEPOINT s1;
+TRUNCATE vistest;
+ROLLBACK TO SAVEPOINT s1;
+COPY vistest FROM stdin CSV FREEZE;
+ERROR:  cannot perform COPY FREEZE because the table was not created or truncated in the current subtransaction
+COMMIT;
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION truncate_in_subxact() RETURNS VOID AS
+--dg $$
+--dg BEGIN
+--dg 	TRUNCATE vistest;
+--dg EXCEPTION
+--dg   WHEN OTHERS THEN
+--dg 	INSERT INTO vistest VALUES ('subxact failure');
+--dg END;
+--dg $$ language plpgsql;
+BEGIN;
+INSERT INTO vistest VALUES ('z');
+--dg-cascade
+--dg SELECT truncate_in_subxact();
+--dg-cascade
+--dg COPY vistest FROM stdin CSV FREEZE;
+--dg d4
+--dg e
+--dg \.
+--dg-cascade
+--dg SELECT * FROM vistest;
+COMMIT;
+--dg-cascade
+--dg SELECT * FROM vistest;
+-- Test FORCE_NOT_NULL and FORCE_NULL options
+CREATE TEMP TABLE forcetest (
+    a INT NOT NULL,
+    b TEXT NOT NULL,
+    c TEXT,
+    d TEXT,
+    e TEXT
+);
+\pset null NULL
+-- should succeed with no effect ("b" remains an empty string, "c" remains NULL)
+BEGIN;
+COPY forcetest (a, b, c) FROM STDIN WITH (FORMAT csv, FORCE_NOT_NULL(b), FORCE_NULL(c));
+COMMIT;
+SELECT b, c FROM forcetest WHERE a = 1;
+ b |  c   
+---+------
+   | NULL
+(1 row)
+
+-- should succeed, FORCE_NULL and FORCE_NOT_NULL can be both specified
+BEGIN;
+COPY forcetest (a, b, c, d) FROM STDIN WITH (FORMAT csv, FORCE_NOT_NULL(c,d), FORCE_NULL(c,d));
+COMMIT;
+SELECT c, d FROM forcetest WHERE a = 2;
+ c |  d   
+---+------
+   | NULL
+(1 row)
+
+-- should fail with not-null constraint violation
+BEGIN;
+COPY forcetest (a, b, c) FROM STDIN WITH (FORMAT csv, FORCE_NULL(b), FORCE_NOT_NULL(c));
+ERROR:  null value in column "b" of relation "forcetest" violates not-null constraint
+DETAIL:  Failing row contains (3, null, , null, null).
+CONTEXT:  COPY forcetest, line 1: "3,,"""
+ROLLBACK;
+-- should fail with "not referenced by COPY" error
+BEGIN;
+COPY forcetest (d, e) FROM STDIN WITH (FORMAT csv, FORCE_NOT_NULL(b));
+ERROR:  FORCE_NOT_NULL column "b" not referenced by COPY
+ROLLBACK;
+-- should fail with "not referenced by COPY" error
+BEGIN;
+COPY forcetest (d, e) FROM STDIN WITH (FORMAT csv, FORCE_NULL(b));
+ERROR:  FORCE_NULL column "b" not referenced by COPY
+ROLLBACK;
+-- should succeed with no effect ("b" remains an empty string, "c" remains NULL)
+BEGIN;
+COPY forcetest (a, b, c) FROM STDIN WITH (FORMAT csv, FORCE_NOT_NULL *, FORCE_NULL *);
+COMMIT;
+SELECT b, c FROM forcetest WHERE a = 4;
+ b |  c   
+---+------
+   | NULL
+(1 row)
+
+-- should succeed with effect ("b" remains an empty string)
+BEGIN;
+COPY forcetest (a, b, c) FROM STDIN WITH (FORMAT csv, FORCE_NOT_NULL *);
+COMMIT;
+SELECT b, c FROM forcetest WHERE a = 5;
+ b | c 
+---+---
+   | 
+(1 row)
+
+-- should succeed with effect ("c" remains NULL)
+BEGIN;
+COPY forcetest (a, b, c) FROM STDIN WITH (FORMAT csv, FORCE_NULL *);
+COMMIT;
+SELECT b, c FROM forcetest WHERE a = 6;
+ b |  c   
+---+------
+ b | NULL
+(1 row)
+
+-- should fail with "conflicting or redundant options" error
+BEGIN;
+COPY forcetest (a, b, c) FROM STDIN WITH (FORMAT csv, FORCE_NOT_NULL *, FORCE_NOT_NULL(b));
+ERROR:  conflicting or redundant options
+LINE 1: ...c) FROM STDIN WITH (FORMAT csv, FORCE_NOT_NULL *, FORCE_NOT_...
+                                                             ^
+ROLLBACK;
+-- should fail with "conflicting or redundant options" error
+BEGIN;
+COPY forcetest (a, b, c) FROM STDIN WITH (FORMAT csv, FORCE_NULL *, FORCE_NULL(b));
+ERROR:  conflicting or redundant options
+LINE 1: ... b, c) FROM STDIN WITH (FORMAT csv, FORCE_NULL *, FORCE_NULL...
+                                                             ^
+ROLLBACK;
+\pset null ''
+-- test case with whole-row Var in a check constraint
+create table check_con_tbl (f1 int);
+--dg-skip: language "?" does not exist
+--dg create function check_con_function(check_con_tbl) returns bool as $$
+--dg begin
+--dg   raise notice 'input = %', row_to_json($1);
+--dg   return $1.f1 > 0;
+--dg end $$ language plpgsql immutable;
+--dg-cascade
+--dg alter table check_con_tbl add check (check_con_function(check_con_tbl.*));
+--dg-cascade
+--dg \d+ check_con_tbl
+--dg-cascade
+--dg copy check_con_tbl from stdin;
+--dg 1
+--dg \N
+--dg \.
+--dg-cascade
+--dg copy check_con_tbl from stdin;
+--dg 0
+--dg \.
+--dg-cascade
+--dg select * from check_con_tbl;
+-- test with RLS enabled.
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE regress_rls_copy_user;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE ROLE regress_rls_copy_user_colperms;
+CREATE TABLE rls_t1 (a int, b int, c int);
+COPY rls_t1 (a, b, c) from stdin;
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg CREATE POLICY p1 ON rls_t1 FOR SELECT USING (a % 2 = 0);
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg ALTER TABLE rls_t1 ENABLE ROW LEVEL SECURITY;
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg ALTER TABLE rls_t1 FORCE ROW LEVEL SECURITY;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT SELECT ON TABLE rls_t1 TO regress_rls_copy_user;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg GRANT SELECT (a, b) ON TABLE rls_t1 TO regress_rls_copy_user_colperms;
+-- all columns
+COPY rls_t1 TO stdout;
+1	4	1
+2	3	2
+3	2	3
+4	1	4
+COPY rls_t1 (a, b, c) TO stdout;
+1	4	1
+2	3	2
+3	2	3
+4	1	4
+-- subset of columns
+COPY rls_t1 (a) TO stdout;
+1
+2
+3
+4
+COPY rls_t1 (a, b) TO stdout;
+1	4
+2	3
+3	2
+4	1
+-- column reordering
+COPY rls_t1 (b, a) TO stdout;
+4	1
+3	2
+2	3
+1	4
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_rls_copy_user;
+-- all columns
+--dg-cascade
+--dg COPY rls_t1 TO stdout;
+--dg-cascade
+--dg COPY rls_t1 (a, b, c) TO stdout;
+-- subset of columns
+--dg-cascade
+--dg COPY rls_t1 (a) TO stdout;
+--dg-cascade
+--dg COPY rls_t1 (a, b) TO stdout;
+-- column reordering
+--dg-cascade
+--dg COPY rls_t1 (b, a) TO stdout;
+RESET SESSION AUTHORIZATION;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_rls_copy_user_colperms;
+-- attempt all columns (should fail)
+--dg-cascade
+--dg COPY rls_t1 TO stdout;
+--dg-cascade
+--dg COPY rls_t1 (a, b, c) TO stdout;
+-- try to copy column with no privileges (should fail)
+--dg-cascade
+--dg COPY rls_t1 (c) TO stdout;
+-- subset of columns (should succeed)
+--dg-cascade
+--dg COPY rls_t1 (a) TO stdout;
+--dg-cascade
+--dg COPY rls_t1 (a, b) TO stdout;
+RESET SESSION AUTHORIZATION;
+-- test with INSTEAD OF INSERT trigger on a view
+CREATE TABLE instead_of_insert_tbl(id serial, name text);
+CREATE VIEW instead_of_insert_tbl_view AS SELECT ''::text AS str;
+COPY instead_of_insert_tbl_view FROM stdin; -- fail
+ERROR:  cannot copy to view "instead_of_insert_tbl_view"
+HINT:  To enable copying to a view, provide an INSTEAD OF INSERT trigger.
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION fun_instead_of_insert_tbl() RETURNS trigger AS $$
+--dg BEGIN
+--dg   INSERT INTO instead_of_insert_tbl (name) VALUES (NEW.str);
+--dg   RETURN NULL;
+--dg END;
+--dg $$ LANGUAGE plpgsql;
+--dg-cascade
+--dg CREATE TRIGGER trig_instead_of_insert_tbl_view
+--dg   INSTEAD OF INSERT ON instead_of_insert_tbl_view
+--dg   FOR EACH ROW EXECUTE PROCEDURE fun_instead_of_insert_tbl();
+--dg-cascade
+--dg COPY instead_of_insert_tbl_view FROM stdin;
+--dg test1
+--dg \.
+--dg-cascade
+--dg SELECT * FROM instead_of_insert_tbl;
+-- Test of COPY optimization with view using INSTEAD OF INSERT
+-- trigger when relation is created in the same transaction as
+-- when COPY is executed.
+BEGIN;
+CREATE VIEW instead_of_insert_tbl_view_2 as select ''::text as str;
+--dg-cascade
+--dg CREATE TRIGGER trig_instead_of_insert_tbl_view_2
+--dg   INSTEAD OF INSERT ON instead_of_insert_tbl_view_2
+--dg   FOR EACH ROW EXECUTE PROCEDURE fun_instead_of_insert_tbl();
+--dg-cascade
+--dg COPY instead_of_insert_tbl_view_2 FROM stdin;
+--dg test1
+--dg \.
+--dg-cascade
+--dg SELECT * FROM instead_of_insert_tbl;
+COMMIT;
+-- tests for on_error option
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE check_ign_err (n int, m int[], k int);
+--dg-cascade
+--dg COPY check_ign_err FROM STDIN WITH (on_error stop);
+--dg 1	{1}	1
+--dg a	{2}	2
+--dg 3	{3}	3333333333
+--dg 4	{a, 4}	4
+--dg
+--dg 5	{5}	5
+--dg \.
+-- want context for notices
+\set SHOW_CONTEXT always
+--dg-cascade
+--dg COPY check_ign_err FROM STDIN WITH (on_error ignore, log_verbosity verbose);
+--dg 1	{1}	1
+--dg a	{2}	2
+--dg 3	{3}	3333333333
+--dg 4	{a, 4}	4
+--dg
+--dg 5	{5}	5
+--dg 6	a
+--dg 7	{7}	a
+--dg 8	{8}	8
+--dg \.
+-- tests for on_error option with log_verbosity and null constraint via domain
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg CREATE DOMAIN dcheck_ign_err2 varchar(15) NOT NULL;
+--dg-cascade
+--dg CREATE TABLE check_ign_err2 (n int, m int[], k int, l dcheck_ign_err2);
+--dg-cascade
+--dg COPY check_ign_err2 FROM STDIN WITH (on_error ignore, log_verbosity verbose);
+--dg 1	{1}	1	'foo'
+--dg 2	{2}	2	\N
+--dg \.
+--dg-cascade
+--dg COPY check_ign_err2 FROM STDIN WITH (on_error ignore, log_verbosity silent);
+--dg 3	{3}	3	'bar'
+--dg 4	{4}	4	\N
+--dg \.
+-- reset context choice
+\set SHOW_CONTEXT errors
+--dg-cascade
+--dg SELECT * FROM check_ign_err;
+--dg-cascade
+--dg SELECT * FROM check_ign_err2;
+-- test datatype error that can't be handled as soft: should fail
+CREATE TABLE hard_err(foo widget);
+ERROR:  type "widget" does not exist
+LINE 1: CREATE TABLE hard_err(foo widget);
+                                  ^
+COPY hard_err FROM STDIN WITH (on_error ignore);
+ERROR:  relation "hard_err" does not exist
+-- test missing data: should fail
+--dg-cascade
+--dg COPY check_ign_err FROM STDIN WITH (on_error ignore);
+--dg 1	{1}
+--dg \.
+-- test extra data: should fail
+--dg-cascade
+--dg COPY check_ign_err FROM STDIN WITH (on_error ignore);
+--dg 1	{1}	3	abc
+--dg \.
+-- tests for reject_limit option
+--dg-cascade
+--dg COPY check_ign_err FROM STDIN WITH (on_error ignore, reject_limit 3);
+--dg 6	{6}	6
+--dg a	{7}	7
+--dg 8	{8}	8888888888
+--dg 9	{a, 9}	9
+--dg
+--dg 10	{10}	10
+--dg \.
+--dg-cascade
+--dg COPY check_ign_err FROM STDIN WITH (on_error ignore, reject_limit 4);
+--dg 6	{6}	6
+--dg a	{7}	7
+--dg 8	{8}	8888888888
+--dg 9	{a, 9}	9
+--dg
+--dg 10	{10}	10
+--dg \.
+-- clean up
+DROP TABLE forcetest;
+DROP TABLE vistest;
+--dg-cascade
+--dg DROP FUNCTION truncate_in_subxact();
+--dg-cascade
+--dg DROP TABLE x, y;
+DROP TABLE rls_t1 CASCADE;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE regress_rls_copy_user;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP ROLE regress_rls_copy_user_colperms;
+--dg-cascade
+--dg DROP FUNCTION fn_x_before();
+--dg-cascade
+--dg DROP FUNCTION fn_x_after();
+DROP TABLE instead_of_insert_tbl;
+DROP VIEW instead_of_insert_tbl_view;
+--dg-cascade
+--dg DROP VIEW instead_of_insert_tbl_view_2;
+--dg-cascade
+--dg DROP FUNCTION fun_instead_of_insert_tbl();
+--dg-cascade
+--dg DROP TABLE check_ign_err;
+--dg-cascade
+--dg DROP TABLE check_ign_err2;
+--dg-cascade
+--dg DROP DOMAIN dcheck_ign_err2;
+DROP TABLE hard_err;
+ERROR:  table "hard_err" does not exist
+--
+-- COPY FROM ... DEFAULT
+--
+create temp table copy_default (
+	id integer primary key,
+	text_value text not null default 'test',
+	ts_value timestamp without time zone not null default '2022-07-05'
+);
+-- if DEFAULT is not specified, then the marker will be regular data
+copy copy_default from stdin;
+select id, text_value, ts_value from copy_default;
+ id | text_value |         ts_value         
+----+------------+--------------------------
+  1 | value      | Mon Jul 04 00:00:00 2022
+  2 | D          | Tue Jul 05 00:00:00 2022
+(2 rows)
+
+truncate copy_default;
+copy copy_default from stdin with (format csv);
+select id, text_value, ts_value from copy_default;
+ id | text_value |         ts_value         
+----+------------+--------------------------
+  1 | value      | Mon Jul 04 00:00:00 2022
+  2 | \D         | Tue Jul 05 00:00:00 2022
+(2 rows)
+
+truncate copy_default;
+-- DEFAULT cannot be used in binary mode
+copy copy_default from stdin with (format binary, default '\D');
+ERROR:  cannot specify DEFAULT in BINARY mode
+-- DEFAULT cannot be new line nor carriage return
+copy copy_default from stdin with (default E'\n');
+ERROR:  COPY default representation cannot use newline or carriage return
+copy copy_default from stdin with (default E'\r');
+ERROR:  COPY default representation cannot use newline or carriage return
+-- DELIMITER cannot appear in DEFAULT spec
+copy copy_default from stdin with (delimiter ';', default 'test;test');
+ERROR:  COPY delimiter character must not appear in the DEFAULT specification
+-- CSV quote cannot appear in DEFAULT spec
+copy copy_default from stdin with (format csv, quote '"', default 'test"test');
+ERROR:  CSV quote character must not appear in the DEFAULT specification
+-- NULL and DEFAULT spec must be different
+copy copy_default from stdin with (default '\N');
+ERROR:  NULL specification and DEFAULT specification cannot be the same
+-- cannot use DEFAULT marker in column that has no DEFAULT value
+copy copy_default from stdin with (default '\D');
+ERROR:  unexpected default marker in COPY data
+DETAIL:  Column "id" has no default value.
+CONTEXT:  COPY copy_default, line 1: "\D	value	'2022-07-04'"
+copy copy_default from stdin with (format csv, default '\D');
+ERROR:  unexpected default marker in COPY data
+DETAIL:  Column "id" has no default value.
+CONTEXT:  COPY copy_default, line 1: "\D,value,2022-07-04"
+-- The DEFAULT marker must be unquoted and unescaped or it's not recognized
+copy copy_default from stdin with (default '\D');
+select id, text_value, ts_value from copy_default;
+ id | text_value |         ts_value         
+----+------------+--------------------------
+  1 | test       | Mon Jul 04 00:00:00 2022
+  2 | \D         | Mon Jul 04 00:00:00 2022
+  3 | "D"        | Mon Jul 04 00:00:00 2022
+(3 rows)
+
+truncate copy_default;
+copy copy_default from stdin with (format csv, default '\D');
+select id, text_value, ts_value from copy_default;
+ id | text_value |         ts_value         
+----+------------+--------------------------
+  1 | test       | Mon Jul 04 00:00:00 2022
+  2 | \\D        | Mon Jul 04 00:00:00 2022
+  3 | \D         | Mon Jul 04 00:00:00 2022
+(3 rows)
+
+truncate copy_default;
+-- successful usage of DEFAULT option in COPY
+copy copy_default from stdin with (default '\D');
+select id, text_value, ts_value from copy_default;
+ id | text_value |         ts_value         
+----+------------+--------------------------
+  1 | value      | Mon Jul 04 00:00:00 2022
+  2 | test       | Sun Jul 03 00:00:00 2022
+  3 | test       | Tue Jul 05 00:00:00 2022
+(3 rows)
+
+truncate copy_default;
+copy copy_default from stdin with (format csv, default '\D');
+select id, text_value, ts_value from copy_default;
+ id | text_value |         ts_value         
+----+------------+--------------------------
+  1 | value      | Mon Jul 04 00:00:00 2022
+  2 | test       | Sun Jul 03 00:00:00 2022
+  3 | test       | Tue Jul 05 00:00:00 2022
+(3 rows)
+
+truncate copy_default;
+-- DEFAULT cannot be used in COPY TO
+copy (select 1 as test) TO stdout with (default '\D');
+ERROR:  COPY DEFAULT cannot be used with COPY TO

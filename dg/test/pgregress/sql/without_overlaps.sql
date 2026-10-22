@@ -1,0 +1,2705 @@
+-- Tests for WITHOUT OVERLAPS.
+--
+-- We leave behind several tables to test pg_dump etc:
+-- temporal_rng, temporal_rng2,
+-- temporal_fk_rng2rng.
+
+SET datestyle TO ISO, YMD;
+
+--
+-- test input parser
+--
+
+-- PK with no columns just WITHOUT OVERLAPS:
+
+CREATE TABLE temporal_rng (
+  valid_at daterange,
+  CONSTRAINT temporal_rng_pk PRIMARY KEY (valid_at WITHOUT OVERLAPS)
+);
+
+-- PK with a range column/PERIOD that isn't there:
+
+CREATE TABLE temporal_rng (
+  id INTEGER,
+  CONSTRAINT temporal_rng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS)
+);
+
+-- PK with a non-range column:
+
+CREATE TABLE temporal_rng (
+  id int4range,
+  valid_at TEXT,
+  CONSTRAINT temporal_rng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS)
+);
+
+-- PK with one column plus a range:
+
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal_rng (
+--dg   -- Since we can't depend on having btree_gist here,
+--dg   -- use an int4range instead of an int.
+--dg   -- (The rangetypes regression test uses the same trick.)
+--dg   id int4range,
+--dg   valid_at daterange,
+--dg   CONSTRAINT temporal_rng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS)
+--dg );
+--dg-cascade
+--dg \d temporal_rng
+--dg-cascade
+--dg SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'temporal_rng_pk';
+--dg-cascade
+--dg SELECT pg_get_indexdef(conindid, 0, true) FROM pg_constraint WHERE conname = 'temporal_rng_pk';
+
+-- PK from LIKE:
+--dg-cascade
+--dg CREATE TABLE temporal_rng2 (LIKE temporal_rng INCLUDING ALL);
+--dg-cascade
+--dg \d temporal_rng2
+--dg-cascade
+--dg DROP TABLE temporal_rng2;
+
+-- no PK from INHERITS:
+--dg-cascade
+--dg CREATE TABLE temporal_rng2 () INHERITS (temporal_rng);
+--dg-cascade
+--dg \d temporal_rng2
+--dg-cascade
+--dg DROP TABLE temporal_rng2;
+--dg-cascade
+--dg DROP TABLE temporal_rng;
+
+-- PK in inheriting table:
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal_rng (
+--dg   id int4range,
+--dg   valid_at daterange
+--dg );
+--dg-cascade
+--dg CREATE TABLE temporal_rng2 (
+--dg   CONSTRAINT temporal_rng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS)
+--dg ) INHERITS (temporal_rng);
+--dg-cascade
+--dg \d temporal_rng2
+--dg-cascade
+--dg DROP TABLE temporal_rng CASCADE;
+
+-- Add PK to already inheriting table:
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal_rng (
+--dg   id int4range,
+--dg   valid_at daterange
+--dg );
+--dg-cascade
+--dg CREATE TABLE temporal_rng2 () INHERITS (temporal_rng);
+--dg-cascade
+--dg ALTER TABLE temporal_rng2
+--dg   ADD CONSTRAINT temporal_rng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS);
+--dg-cascade
+--dg \d temporal_rng2
+--dg-cascade
+--dg DROP TABLE temporal_rng2;
+--dg-cascade
+--dg DROP TABLE temporal_rng;
+
+-- PK with two columns plus a range:
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal_rng2 (
+--dg   id1 int4range,
+--dg   id2 int4range,
+--dg   valid_at daterange,
+--dg   CONSTRAINT temporal_rng2_pk PRIMARY KEY (id1, id2, valid_at WITHOUT OVERLAPS)
+--dg );
+--dg-cascade
+--dg \d temporal_rng2
+--dg-cascade
+--dg SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'temporal_rng2_pk';
+--dg-cascade
+--dg SELECT pg_get_indexdef(conindid, 0, true) FROM pg_constraint WHERE conname = 'temporal_rng2_pk';
+
+-- PK with a custom range type:
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg CREATE TYPE textrange2 AS range (subtype=text, collation="C");
+--dg-cascade
+--dg CREATE TABLE temporal_rng3 (
+--dg   id int4range,
+--dg   valid_at textrange2,
+--dg   CONSTRAINT temporal_rng3_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS)
+--dg );
+--dg-cascade
+--dg ALTER TABLE temporal_rng3 DROP CONSTRAINT temporal_rng3_pk;
+--dg-cascade
+--dg DROP TABLE temporal_rng3;
+--dg-cascade
+--dg DROP TYPE textrange2;
+
+-- PK with one column plus a multirange:
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal_mltrng (
+--dg   id int4range,
+--dg   valid_at datemultirange,
+--dg   CONSTRAINT temporal_mltrng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS)
+--dg );
+--dg-cascade
+--dg \d temporal_mltrng
+--dg-cascade
+--dg SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'temporal_mltrng_pk';
+--dg-cascade
+--dg SELECT pg_get_indexdef(conindid, 0, true) FROM pg_constraint WHERE conname = 'temporal_mltrng_pk';
+
+-- PK with two columns plus a multirange:
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal_mltrng2 (
+--dg   id1 int4range,
+--dg   id2 int4range,
+--dg   valid_at datemultirange,
+--dg   CONSTRAINT temporal_mltrng2_pk PRIMARY KEY (id1, id2, valid_at WITHOUT OVERLAPS)
+--dg );
+--dg-cascade
+--dg \d temporal_mltrng2
+--dg-cascade
+--dg SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'temporal_mltrng2_pk';
+--dg-cascade
+--dg SELECT pg_get_indexdef(conindid, 0, true) FROM pg_constraint WHERE conname = 'temporal_mltrng2_pk';
+
+-- UNIQUE with no columns just WITHOUT OVERLAPS:
+
+CREATE TABLE temporal_rng3 (
+  valid_at daterange,
+  CONSTRAINT temporal_rng3_uq UNIQUE (valid_at WITHOUT OVERLAPS)
+);
+
+-- UNIQUE with a range column/PERIOD that isn't there:
+
+CREATE TABLE temporal_rng3 (
+  id INTEGER,
+  CONSTRAINT temporal_rng3_uq UNIQUE (id, valid_at WITHOUT OVERLAPS)
+);
+
+-- UNIQUE with a non-range column:
+
+CREATE TABLE temporal_rng3 (
+  id int4range,
+  valid_at TEXT,
+  CONSTRAINT temporal_rng3_uq UNIQUE (id, valid_at WITHOUT OVERLAPS)
+);
+
+-- UNIQUE with one column plus a range:
+
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal_rng3 (
+--dg   id int4range,
+--dg   valid_at daterange,
+--dg   CONSTRAINT temporal_rng3_uq UNIQUE (id, valid_at WITHOUT OVERLAPS)
+--dg );
+--dg-cascade
+--dg \d temporal_rng3
+--dg-cascade
+--dg SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'temporal_rng3_uq';
+--dg-cascade
+--dg SELECT pg_get_indexdef(conindid, 0, true) FROM pg_constraint WHERE conname = 'temporal_rng3_uq';
+--dg-cascade
+--dg DROP TABLE temporal_rng3;
+
+-- UNIQUE with two columns plus a range:
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal_rng3 (
+--dg   id1 int4range,
+--dg   id2 int4range,
+--dg   valid_at daterange,
+--dg   CONSTRAINT temporal_rng3_uq UNIQUE (id1, id2, valid_at WITHOUT OVERLAPS)
+--dg );
+--dg-cascade
+--dg \d temporal_rng3
+--dg-cascade
+--dg SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'temporal_rng3_uq';
+--dg-cascade
+--dg SELECT pg_get_indexdef(conindid, 0, true) FROM pg_constraint WHERE conname = 'temporal_rng3_uq';
+--dg-cascade
+--dg DROP TABLE temporal_rng3;
+
+-- UNIQUE with a custom range type:
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg CREATE TYPE textrange2 AS range (subtype=text, collation="C");
+--dg-cascade
+--dg CREATE TABLE temporal_rng3 (
+--dg   id int4range,
+--dg   valid_at textrange2,
+--dg   CONSTRAINT temporal_rng3_uq UNIQUE (id, valid_at WITHOUT OVERLAPS)
+--dg );
+--dg-cascade
+--dg ALTER TABLE temporal_rng3 DROP CONSTRAINT temporal_rng3_uq;
+--dg-cascade
+--dg DROP TABLE temporal_rng3;
+--dg-cascade
+--dg DROP TYPE textrange2;
+
+--
+-- test PRIMARY KEY and UNIQUE constraints' interaction with domains
+--
+
+-- range over domain:
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg CREATE DOMAIN int4_d as integer check (value <> 10);
+--dg-cascade
+--dg CREATE TYPE int4_d_range as range (subtype = int4_d);
+--dg-cascade
+--dg CREATE TABLE temporal_rng4 (
+--dg   id int4range,
+--dg   valid_at int4_d_range,
+--dg   CONSTRAINT temporal_rng4_pk PRIMARY KEY(id, valid_at WITHOUT OVERLAPS)
+--dg );
+--dg-cascade
+--dg INSERT INTO temporal_rng4 VALUES ('[1,11)', '[9,10)'); -- start bound violates domain
+--dg-cascade
+--dg INSERT INTO temporal_rng4 VALUES ('[1,2)', '[10,11)'); -- end bound violates domain
+--dg-cascade
+--dg INSERT INTO temporal_rng4 VALUES ('[1,2)', '[1,13)'), ('[1,2)', '[2,5)'); -- overlaps
+--dg-cascade
+--dg INSERT INTO temporal_rng4 VALUES ('[1,2)', '[1,13)'), ('[1,2)', '[20,23)'); -- okay
+--dg-cascade
+--dg INSERT INTO temporal_rng4 VALUES ('[1,2)', '[30,)'); -- null bound is okay
+--dg-cascade
+--dg DROP TABLE temporal_rng4;
+
+-- domain over range:
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
+--dg CREATE DOMAIN int4range_d AS int4range CHECK (VALUE <> '[10,11)');
+--dg-cascade
+--dg CREATE TABLE temporal_rng4 (
+--dg   id int4range,
+--dg   valid_at int4range_d,
+--dg   CONSTRAINT temporal_rng4_pk UNIQUE (id, valid_at WITHOUT OVERLAPS)
+--dg );
+--dg-cascade
+--dg INSERT INTO temporal_rng4 VALUES ('[1,2)', '[10,11)'); -- violates domain
+--dg-cascade
+--dg INSERT INTO temporal_rng4 VALUES ('[1,2)', '[1,13)'), ('[1,2)', '[2,13)'); -- overlaps
+--dg-cascade
+--dg INSERT INTO temporal_rng4 VALUES ('[1,2)', '[1,13)'), ('[1,2)', '[20,23)'); -- okay
+--dg-cascade
+--dg DROP TABLE temporal_rng4;
+
+--
+-- test ALTER TABLE ADD CONSTRAINT
+--
+
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal_rng (
+--dg   id int4range,
+--dg   valid_at daterange
+--dg );
+--dg-cascade
+--dg ALTER TABLE temporal_rng
+--dg   ADD CONSTRAINT temporal_rng_pk
+--dg   PRIMARY KEY (id, valid_at WITHOUT OVERLAPS);
+
+-- PK with USING INDEX (not possible):
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal3 (
+--dg   id int4range,
+--dg   valid_at daterange
+--dg );
+--dg-cascade
+--dg CREATE INDEX idx_temporal3_uq ON temporal3 USING gist (id, valid_at);
+--dg-cascade
+--dg ALTER TABLE temporal3
+--dg   ADD CONSTRAINT temporal3_pk
+--dg   PRIMARY KEY USING INDEX idx_temporal3_uq;
+--dg-cascade
+--dg DROP TABLE temporal3;
+
+-- UNIQUE with USING INDEX (not possible):
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal3 (
+--dg   id int4range,
+--dg   valid_at daterange
+--dg );
+--dg-cascade
+--dg CREATE INDEX idx_temporal3_uq ON temporal3 USING gist (id, valid_at);
+--dg-cascade
+--dg ALTER TABLE temporal3
+--dg   ADD CONSTRAINT temporal3_uq
+--dg   UNIQUE USING INDEX idx_temporal3_uq;
+--dg-cascade
+--dg DROP TABLE temporal3;
+
+-- UNIQUE with USING [UNIQUE] INDEX (possible but not a temporal constraint):
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal3 (
+--dg   id int4range,
+--dg   valid_at daterange
+--dg );
+--dg-cascade
+--dg CREATE UNIQUE INDEX idx_temporal3_uq ON temporal3 (id, valid_at);
+--dg-cascade
+--dg ALTER TABLE temporal3
+--dg   ADD CONSTRAINT temporal3_uq
+--dg   UNIQUE USING INDEX idx_temporal3_uq;
+--dg-cascade
+--dg DROP TABLE temporal3;
+
+-- Add range column and the PK at the same time
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal3 (
+--dg   id int4range
+--dg );
+--dg-cascade
+--dg ALTER TABLE temporal3
+--dg   ADD COLUMN valid_at daterange,
+--dg   ADD CONSTRAINT temporal3_pk
+--dg   PRIMARY KEY (id, valid_at WITHOUT OVERLAPS);
+--dg-cascade
+--dg DROP TABLE temporal3;
+
+-- Add range column and UNIQUE constraint at the same time
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal3 (
+--dg   id int4range
+--dg );
+--dg-cascade
+--dg ALTER TABLE temporal3
+--dg   ADD COLUMN valid_at daterange,
+--dg   ADD CONSTRAINT temporal3_uq
+--dg   UNIQUE (id, valid_at WITHOUT OVERLAPS);
+--dg-cascade
+--dg DROP TABLE temporal3;
+
+--
+-- range PK: test with existing rows
+--
+
+--dg-cascade
+--dg ALTER TABLE temporal_rng DROP CONSTRAINT temporal_rng_pk;
+
+-- okay:
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[1,2)', daterange('2018-01-02', '2018-02-03'));
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[1,2)', daterange('2018-03-03', '2018-04-04'));
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[2,3)', daterange('2018-01-01', '2018-01-05'));
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[3,4)', daterange('2018-01-01', NULL));
+--dg-cascade
+--dg ALTER TABLE temporal_rng ADD CONSTRAINT temporal_rng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS);
+--dg-cascade
+--dg ALTER TABLE temporal_rng DROP CONSTRAINT temporal_rng_pk;
+
+-- should fail:
+BEGIN;
+--dg-cascade
+--dg   INSERT INTO temporal_rng (id, valid_at) VALUES ('[1,2)', daterange('2018-01-01', '2018-01-05'));
+--dg-cascade
+--dg   ALTER TABLE temporal_rng ADD CONSTRAINT temporal_rng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS);
+ROLLBACK;
+-- rejects empty:
+BEGIN;
+--dg-cascade
+--dg   INSERT INTO temporal_rng (id, valid_at) VALUES ('[3,4)', 'empty');
+--dg-cascade
+--dg   ALTER TABLE temporal_rng ADD CONSTRAINT temporal_rng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS);
+ROLLBACK;
+--dg-cascade
+--dg ALTER TABLE temporal_rng ADD CONSTRAINT temporal_rng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS);
+--dg-cascade
+--dg DELETE FROM temporal_rng;
+
+--
+-- range PK: test inserts
+--
+
+-- okay:
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[1,2)', daterange('2018-01-02', '2018-02-03'));
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[1,2)', daterange('2018-03-03', '2018-04-04'));
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[2,3)', daterange('2018-01-01', '2018-01-05'));
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[3,4)', daterange('2018-01-01', NULL));
+
+-- should fail:
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[1,2)', daterange('2018-01-01', '2018-01-05'));
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES (NULL, daterange('2018-01-01', '2018-01-05'));
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[3,4)', NULL);
+-- rejects empty:
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[3,4)', 'empty');
+--dg-cascade
+--dg SELECT * FROM temporal_rng ORDER BY id, valid_at;
+
+--
+-- range PK: test updates
+--
+
+-- update the scalar part
+--dg-cascade
+--dg UPDATE  temporal_rng
+--dg SET     id = '[11,12)'
+--dg WHERE   id = '[1,2)'
+--dg AND     valid_at @> '2018-01-15'::date;
+-- update the range part
+--dg-cascade
+--dg UPDATE  temporal_rng
+--dg SET     valid_at = '[2020-01-01,2021-01-01)'
+--dg WHERE   id = '[11,12)'
+--dg AND     valid_at @> '2018-01-15'::date;
+-- update both at once
+--dg-cascade
+--dg UPDATE  temporal_rng
+--dg SET     id = '[21,22)',
+--dg         valid_at = '[2018-01-02,2018-02-03)'
+--dg WHERE   id = '[11,12)'
+--dg AND     valid_at @> '2020-01-15'::date;
+--dg-cascade
+--dg SELECT * FROM temporal_rng ORDER BY id, valid_at;
+-- should fail:
+--dg-cascade
+--dg UPDATE  temporal_rng
+--dg SET     id = '[1,2)',
+--dg         valid_at = daterange('2018-03-05', '2018-05-05')
+--dg WHERE   id = '[21,22)';
+-- set the scalar part to NULL
+--dg-cascade
+--dg UPDATE  temporal_rng
+--dg SET     id = NULL,
+--dg         valid_at = daterange('2018-03-05', '2018-05-05')
+--dg WHERE   id = '[21,22)';
+-- set the range part to NULL
+--dg-cascade
+--dg UPDATE  temporal_rng
+--dg SET     id = '[1,2)',
+--dg         valid_at = NULL
+--dg WHERE   id = '[21,22)';
+-- rejects empty:
+--dg-cascade
+--dg UPDATE  temporal_rng
+--dg SET     id = '[1,2)',
+--dg         valid_at = 'empty'
+--dg WHERE   id = '[21,22)';
+--dg-cascade
+--dg SELECT * FROM temporal_rng ORDER BY id, valid_at;
+
+--
+-- range UQ: test with existing rows
+--
+
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal_rng3 (
+--dg   id int4range,
+--dg   valid_at daterange
+--dg );
+
+-- okay:
+--dg-cascade
+--dg INSERT INTO temporal_rng3 (id, valid_at) VALUES ('[1,2)', daterange('2018-01-02', '2018-02-03'));
+--dg-cascade
+--dg INSERT INTO temporal_rng3 (id, valid_at) VALUES ('[1,2)', daterange('2018-03-03', '2018-04-04'));
+--dg-cascade
+--dg INSERT INTO temporal_rng3 (id, valid_at) VALUES ('[2,3)', daterange('2018-01-01', '2018-01-05'));
+--dg-cascade
+--dg INSERT INTO temporal_rng3 (id, valid_at) VALUES ('[3,4)', daterange('2018-01-01', NULL));
+--dg-cascade
+--dg INSERT INTO temporal_rng3 (id, valid_at) VALUES (NULL, daterange('2018-01-01', '2018-01-05'));
+--dg-cascade
+--dg INSERT INTO temporal_rng3 (id, valid_at) VALUES ('[3,4)', NULL);
+--dg-cascade
+--dg ALTER TABLE temporal_rng3 ADD CONSTRAINT temporal_rng3_uq UNIQUE (id, valid_at WITHOUT OVERLAPS);
+--dg-cascade
+--dg ALTER TABLE temporal_rng3 DROP CONSTRAINT temporal_rng3_uq;
+
+-- should fail:
+BEGIN;
+--dg-cascade
+--dg   INSERT INTO temporal_rng3 (id, valid_at) VALUES ('[1,2)', daterange('2018-01-01', '2018-01-05'));
+--dg-cascade
+--dg   ALTER TABLE temporal_rng3 ADD CONSTRAINT temporal_rng3_uq UNIQUE (id, valid_at WITHOUT OVERLAPS);
+ROLLBACK;
+-- rejects empty:
+BEGIN;
+--dg-cascade
+--dg   INSERT INTO temporal_rng3 (id, valid_at) VALUES ('[3,4)', 'empty');
+--dg-cascade
+--dg   ALTER TABLE temporal_rng3 ADD CONSTRAINT temporal_rng3_uq UNIQUE (id, valid_at WITHOUT OVERLAPS);
+ROLLBACK;
+--dg-cascade
+--dg ALTER TABLE temporal_rng3 ADD CONSTRAINT temporal_rng3_uq UNIQUE (id, valid_at WITHOUT OVERLAPS);
+--dg-cascade
+--dg DELETE FROM temporal_rng3;
+
+--
+-- range UQ: test inserts
+--
+
+-- okay:
+--dg-cascade
+--dg INSERT INTO temporal_rng3 (id, valid_at) VALUES ('[1,2)', daterange('2018-01-02', '2018-02-03'));
+--dg-cascade
+--dg INSERT INTO temporal_rng3 (id, valid_at) VALUES ('[1,2)', daterange('2018-03-03', '2018-04-04'));
+--dg-cascade
+--dg INSERT INTO temporal_rng3 (id, valid_at) VALUES ('[2,3)', daterange('2018-01-01', '2018-01-05'));
+--dg-cascade
+--dg INSERT INTO temporal_rng3 (id, valid_at) VALUES ('[3,4)', daterange('2018-01-01', NULL));
+--dg-cascade
+--dg INSERT INTO temporal_rng3 (id, valid_at) VALUES (NULL, daterange('2018-01-01', '2018-01-05'));
+--dg-cascade
+--dg INSERT INTO temporal_rng3 (id, valid_at) VALUES ('[3,4)', NULL);
+
+-- should fail:
+--dg-cascade
+--dg INSERT INTO temporal_rng3 (id, valid_at) VALUES ('[1,2)', daterange('2018-01-01', '2018-01-05'));
+-- rejects empty:
+--dg-cascade
+--dg INSERT INTO temporal_rng3 (id, valid_at) VALUES ('[3,4)', 'empty');
+--dg-cascade
+--dg SELECT * FROM temporal_rng3 ORDER BY id, valid_at;
+
+--
+-- range UQ: test updates
+--
+
+-- update the scalar part
+--dg-cascade
+--dg UPDATE  temporal_rng3
+--dg SET     id = '[11,12)'
+--dg WHERE   id = '[1,2)'
+--dg AND     valid_at @> '2018-01-15'::date;
+-- update the range part
+--dg-cascade
+--dg UPDATE  temporal_rng3
+--dg SET     valid_at = '[2020-01-01,2021-01-01)'
+--dg WHERE   id = '[11,12)'
+--dg AND     valid_at @> '2018-01-15'::date;
+-- update both at once
+--dg-cascade
+--dg UPDATE  temporal_rng3
+--dg SET     id = '[21,22)',
+--dg         valid_at = '[2018-01-02,2018-02-03)'
+--dg WHERE   id = '[11,12)'
+--dg AND     valid_at @> '2020-01-15'::date;
+-- set the scalar part to NULL
+--dg-cascade
+--dg UPDATE  temporal_rng3
+--dg SET     id = NULL,
+--dg         valid_at = daterange('2020-01-01', '2021-01-01')
+--dg WHERE   id = '[21,22)';
+-- set the range part to NULL
+--dg-cascade
+--dg UPDATE  temporal_rng3
+--dg SET     id = '[1,2)',
+--dg         valid_at = NULL
+--dg WHERE   id IS NULL AND valid_at @> '2020-06-01'::date;
+--dg-cascade
+--dg SELECT * FROM temporal_rng3 ORDER BY id, valid_at;
+-- should fail:
+--dg-cascade
+--dg UPDATE  temporal_rng3
+--dg SET     valid_at = daterange('2018-03-01', '2018-05-05')
+--dg WHERE   id = '[1,2)' AND valid_at IS NULL;
+-- rejects empty:
+--dg-cascade
+--dg UPDATE  temporal_rng3
+--dg SET     valid_at = 'empty'
+--dg WHERE   id = '[1,2)' AND valid_at IS NULL;
+-- still rejects empty when scalar part is NULL:
+--dg-cascade
+--dg UPDATE  temporal_rng3
+--dg SET     id = NULL,
+--dg         valid_at = 'empty'
+--dg WHERE   id = '[1,2)' AND valid_at IS NULL;
+--dg-cascade
+--dg SELECT * FROM temporal_rng3 ORDER BY id, valid_at;
+--dg-cascade
+--dg DROP TABLE temporal_rng3;
+
+--
+-- multirange PK: test with existing rows
+--
+
+--dg-cascade
+--dg ALTER TABLE temporal_mltrng DROP CONSTRAINT temporal_mltrng_pk;
+
+-- okay:
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2018-01-02', '2018-02-03')));
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2018-03-03', '2018-04-04')));
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[2,3)', datemultirange(daterange('2018-01-01', '2018-01-05')));
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[3,4)', datemultirange(daterange('2018-01-01', NULL)));
+--dg-cascade
+--dg ALTER TABLE temporal_mltrng ADD CONSTRAINT temporal_mltrng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS);
+--dg-cascade
+--dg ALTER TABLE temporal_mltrng DROP CONSTRAINT temporal_mltrng_pk;
+
+-- should fail:
+BEGIN;
+--dg-cascade
+--dg   INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2018-01-01', '2018-01-05')));
+--dg-cascade
+--dg   ALTER TABLE temporal_mltrng ADD CONSTRAINT temporal_mltrng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS);
+ROLLBACK;
+-- rejects empty:
+BEGIN;
+--dg-cascade
+--dg   INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[3,4)', '{}');
+--dg-cascade
+--dg   ALTER TABLE temporal_mltrng ADD CONSTRAINT temporal_mltrng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS);
+ROLLBACK;
+--dg-cascade
+--dg ALTER TABLE temporal_mltrng ADD CONSTRAINT temporal_mltrng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS);
+--dg-cascade
+--dg DELETE FROM temporal_mltrng;
+
+--
+-- multirange PK: test inserts
+--
+
+-- okay:
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2018-01-02', '2018-02-03')));
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2018-03-03', '2018-04-04')));
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[2,3)', datemultirange(daterange('2018-01-01', '2018-01-05')));
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[3,4)', datemultirange(daterange('2018-01-01', NULL)));
+
+-- should fail:
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2018-01-01', '2018-01-05')));
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES (NULL, datemultirange(daterange('2018-01-01', '2018-01-05')));
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[3,4)', NULL);
+-- rejects empty:
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[3,4)', '{}');
+--dg-cascade
+--dg SELECT * FROM temporal_mltrng ORDER BY id, valid_at;
+
+--
+-- multirange PK: test updates
+--
+
+-- update the scalar part
+--dg-cascade
+--dg UPDATE  temporal_mltrng
+--dg SET     id = '[11,12)'
+--dg WHERE   id = '[1,2)'
+--dg AND     valid_at @> '2018-01-15'::date;
+-- update the multirange part
+--dg-cascade
+--dg UPDATE  temporal_mltrng
+--dg SET     valid_at = '{[2020-01-01,2021-01-01)}'
+--dg WHERE   id = '[11,12)'
+--dg AND     valid_at @> '2018-01-15'::date;
+-- update both at once
+--dg-cascade
+--dg UPDATE  temporal_mltrng
+--dg SET     id = '[21,22)',
+--dg         valid_at = '{[2018-01-02,2018-02-03)}'
+--dg WHERE   id = '[11,12)'
+--dg AND     valid_at @> '2020-01-15'::date;
+--dg-cascade
+--dg SELECT * FROM temporal_mltrng ORDER BY id, valid_at;
+-- should fail:
+--dg-cascade
+--dg UPDATE  temporal_mltrng
+--dg SET     id = '[1,2)',
+--dg         valid_at = datemultirange(daterange('2018-03-05', '2018-05-05'))
+--dg WHERE   id = '[21,22)';
+-- set the scalar part to NULL
+--dg-cascade
+--dg UPDATE  temporal_mltrng
+--dg SET     id = NULL,
+--dg         valid_at = datemultirange(daterange('2018-03-05', '2018-05-05'))
+--dg WHERE   id = '[21,22)';
+-- set the multirange part to NULL
+--dg-cascade
+--dg UPDATE  temporal_mltrng
+--dg SET     id = '[1,2)',
+--dg         valid_at = NULL
+--dg WHERE   id = '[21,22)';
+-- rejects empty:
+--dg-cascade
+--dg UPDATE  temporal_mltrng
+--dg SET     id = '[1,2)',
+--dg         valid_at = '{}'
+--dg WHERE   id = '[21,22)';
+--dg-cascade
+--dg SELECT * FROM temporal_mltrng ORDER BY id, valid_at;
+
+--
+-- multirange UQ: test with existing rows
+--
+
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal_mltrng3 (
+--dg   id int4range,
+--dg   valid_at datemultirange
+--dg );
+
+-- okay:
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2018-01-02', '2018-02-03')));
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2018-03-03', '2018-04-04')));
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[2,3)', datemultirange(daterange('2018-01-01', '2018-01-05')));
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[3,4)', datemultirange(daterange('2018-01-01', NULL)));
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES (NULL, datemultirange(daterange('2018-01-01', '2018-01-05')));
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[3,4)', NULL);
+--dg-cascade
+--dg ALTER TABLE temporal_mltrng3 ADD CONSTRAINT temporal_mltrng3_uq UNIQUE (id, valid_at WITHOUT OVERLAPS);
+--dg-cascade
+--dg ALTER TABLE temporal_mltrng3 DROP CONSTRAINT temporal_mltrng3_uq;
+
+-- should fail:
+BEGIN;
+--dg-cascade
+--dg   INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2018-01-01', '2018-01-05')));
+--dg-cascade
+--dg   ALTER TABLE temporal_mltrng3 ADD CONSTRAINT temporal_mltrng3_uq UNIQUE (id, valid_at WITHOUT OVERLAPS);
+ROLLBACK;
+-- rejects empty:
+BEGIN;
+--dg-cascade
+--dg   INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[3,4)', '{}');
+--dg-cascade
+--dg   ALTER TABLE temporal_mltrng3 ADD CONSTRAINT temporal_mltrng3_uq UNIQUE (id, valid_at WITHOUT OVERLAPS);
+ROLLBACK;
+--dg-cascade
+--dg ALTER TABLE temporal_mltrng3 ADD CONSTRAINT temporal_mltrng3_uq UNIQUE (id, valid_at WITHOUT OVERLAPS);
+--dg-cascade
+--dg DELETE FROM temporal_mltrng3;
+
+--
+-- multirange UQ: test inserts
+--
+
+-- okay:
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2018-01-02', '2018-02-03')));
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2018-03-03', '2018-04-04')));
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[2,3)', datemultirange(daterange('2018-01-01', '2018-01-05')));
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[3,4)', datemultirange(daterange('2018-01-01', NULL)));
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES (NULL, datemultirange(daterange('2018-01-01', '2018-01-05')));
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[3,4)', NULL);
+
+-- should fail:
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2018-01-01', '2018-01-05')));
+-- rejects empty:
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[3,4)', '{}');
+--dg-cascade
+--dg SELECT * FROM temporal_mltrng3 ORDER BY id, valid_at;
+
+--
+-- multirange UQ: test updates
+--
+
+-- update the scalar part
+--dg-cascade
+--dg UPDATE  temporal_mltrng3
+--dg SET     id = '[11,12)'
+--dg WHERE   id = '[1,2)'
+--dg AND     valid_at @> '2018-01-15'::date;
+-- update the multirange part
+--dg-cascade
+--dg UPDATE  temporal_mltrng3
+--dg SET     valid_at = '{[2020-01-01,2021-01-01)}'
+--dg WHERE   id = '[11,12)'
+--dg AND     valid_at @> '2018-01-15'::date;
+-- update both at once
+--dg-cascade
+--dg UPDATE  temporal_mltrng3
+--dg SET     id = '[21,22)',
+--dg         valid_at = '{[2018-01-02,2018-02-03)}'
+--dg WHERE   id = '[11,12)'
+--dg AND     valid_at @> '2020-01-15'::date;
+-- set the scalar part to NULL
+--dg-cascade
+--dg UPDATE  temporal_mltrng3
+--dg SET     id = NULL,
+--dg         valid_at = datemultirange(daterange('2020-01-01', '2021-01-01'))
+--dg WHERE   id = '[21,22)';
+-- set the multirange part to NULL
+--dg-cascade
+--dg UPDATE  temporal_mltrng3
+--dg SET     id = '[1,2)',
+--dg         valid_at = NULL
+--dg WHERE   id IS NULL AND valid_at @> '2020-06-01'::date;
+--dg-cascade
+--dg SELECT * FROM temporal_mltrng3 ORDER BY id, valid_at;
+-- should fail:
+--dg-cascade
+--dg UPDATE  temporal_mltrng3
+--dg SET     valid_at = datemultirange(daterange('2018-03-01', '2018-05-05'))
+--dg WHERE   id = '[1,2)' AND valid_at IS NULL;
+-- rejects empty:
+--dg-cascade
+--dg UPDATE  temporal_mltrng3
+--dg SET     valid_at = '{}'
+--dg WHERE   id = '[1,2)' AND valid_at IS NULL;
+-- still rejects empty when scalar part is NULL:
+--dg-cascade
+--dg UPDATE  temporal_mltrng3
+--dg SET     id = NULL,
+--dg         valid_at = '{}'
+--dg WHERE   id = '[1,2)' AND valid_at IS NULL;
+--dg-cascade
+--dg SELECT * FROM temporal_mltrng3 ORDER BY id, valid_at;
+--dg-cascade
+--dg DROP TABLE temporal_mltrng3;
+
+--
+-- test a range with both a PK and a UNIQUE constraint
+--
+
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal3 (
+--dg   id int4range,
+--dg   valid_at daterange,
+--dg   id2 int8range,
+--dg   name TEXT,
+--dg   CONSTRAINT temporal3_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS),
+--dg   CONSTRAINT temporal3_uniq UNIQUE (id2, valid_at WITHOUT OVERLAPS)
+--dg );
+--dg-cascade
+--dg INSERT INTO temporal3 (id, valid_at, id2, name)
+--dg   VALUES
+--dg   ('[1,2)', daterange('2000-01-01', '2010-01-01'), '[7,8)', 'foo'),
+--dg   ('[2,3)', daterange('2000-01-01', '2010-01-01'), '[9,10)', 'bar')
+--dg ;
+--dg-cascade
+--dg DROP TABLE temporal3;
+
+--
+-- test changing the PK's dependencies
+--
+
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal3 (
+--dg   id int4range,
+--dg   valid_at daterange,
+--dg   CONSTRAINT temporal3_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS)
+--dg );
+
+--dg-cascade
+--dg ALTER TABLE temporal3 ALTER COLUMN valid_at DROP NOT NULL;
+--dg-cascade
+--dg ALTER TABLE temporal3 ALTER COLUMN valid_at TYPE tstzrange USING tstzrange(lower(valid_at), upper(valid_at));
+--dg-cascade
+--dg ALTER TABLE temporal3 RENAME COLUMN valid_at TO valid_thru;
+--dg-cascade
+--dg ALTER TABLE temporal3 DROP COLUMN valid_thru;
+--dg-cascade
+--dg DROP TABLE temporal3;
+
+--
+-- test PARTITION BY for ranges
+--
+
+-- temporal PRIMARY KEY:
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE temporal_partitioned (
+--dg   id int4range,
+--dg   valid_at daterange,
+--dg   name text,
+--dg   CONSTRAINT temporal_paritioned_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS)
+--dg ) PARTITION BY LIST (id);
+--dg-cascade
+--dg CREATE TABLE tp1 PARTITION OF temporal_partitioned FOR VALUES IN ('[1,2)', '[2,3)');
+--dg-cascade
+--dg CREATE TABLE tp2 PARTITION OF temporal_partitioned FOR VALUES IN ('[3,4)', '[4,5)');
+--dg-cascade
+--dg INSERT INTO temporal_partitioned (id, valid_at, name) VALUES
+--dg   ('[1,2)', daterange('2000-01-01', '2000-02-01'), 'one'),
+--dg   ('[1,2)', daterange('2000-02-01', '2000-03-01'), 'one'),
+--dg   ('[3,4)', daterange('2000-01-01', '2010-01-01'), 'three');
+--dg-cascade
+--dg SELECT * FROM temporal_partitioned ORDER BY id, valid_at;
+--dg-cascade
+--dg SELECT * FROM tp1 ORDER BY id, valid_at;
+--dg-cascade
+--dg SELECT * FROM tp2 ORDER BY id, valid_at;
+--dg-cascade
+--dg DROP TABLE temporal_partitioned;
+
+-- temporal UNIQUE:
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE temporal_partitioned (
+--dg   id int4range,
+--dg   valid_at daterange,
+--dg   name text,
+--dg   CONSTRAINT temporal_paritioned_uq UNIQUE (id, valid_at WITHOUT OVERLAPS)
+--dg ) PARTITION BY LIST (id);
+--dg-cascade
+--dg CREATE TABLE tp1 PARTITION OF temporal_partitioned FOR VALUES IN ('[1,2)', '[2,3)');
+--dg-cascade
+--dg CREATE TABLE tp2 PARTITION OF temporal_partitioned FOR VALUES IN ('[3,4)', '[4,5)');
+--dg-cascade
+--dg INSERT INTO temporal_partitioned (id, valid_at, name) VALUES
+--dg   ('[1,2)', daterange('2000-01-01', '2000-02-01'), 'one'),
+--dg   ('[1,2)', daterange('2000-02-01', '2000-03-01'), 'one'),
+--dg   ('[3,4)', daterange('2000-01-01', '2010-01-01'), 'three');
+--dg-cascade
+--dg SELECT * FROM temporal_partitioned ORDER BY id, valid_at;
+--dg-cascade
+--dg SELECT * FROM tp1 ORDER BY id, valid_at;
+--dg-cascade
+--dg SELECT * FROM tp2 ORDER BY id, valid_at;
+--dg-cascade
+--dg DROP TABLE temporal_partitioned;
+
+-- ALTER TABLE REPLICA IDENTITY
+--dg-cascade
+--dg \d temporal_rng
+--dg-cascade
+--dg ALTER TABLE temporal_rng REPLICA IDENTITY USING INDEX temporal_rng_pk;
+--dg-cascade
+--dg \d temporal_rng
+
+--
+-- ON CONFLICT: ranges
+--
+
+--dg-cascade
+--dg TRUNCATE temporal_rng;
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[1,2)', daterange('2000-01-01', '2010-01-01'));
+-- with a conflict
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[1,2)', daterange('2005-01-01', '2006-01-01')) ON CONFLICT DO NOTHING;
+-- id matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[1,2)', daterange('2010-01-01', '2020-01-01')) ON CONFLICT DO NOTHING;
+-- date matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[2,3)', daterange('2005-01-01', '2006-01-01')) ON CONFLICT DO NOTHING;
+--dg-cascade
+--dg SELECT * FROM temporal_rng ORDER BY id, valid_at;
+
+--dg-cascade
+--dg TRUNCATE temporal_rng;
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[1,2)', daterange('2000-01-01', '2010-01-01'));
+-- with a conflict
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[1,2)', daterange('2005-01-01', '2006-01-01')) ON CONFLICT (id, valid_at) DO NOTHING;
+-- id matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[1,2)', daterange('2010-01-01', '2020-01-01')) ON CONFLICT (id, valid_at) DO NOTHING;
+-- date matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[2,3)', daterange('2005-01-01', '2006-01-01')) ON CONFLICT (id, valid_at) DO NOTHING;
+--dg-cascade
+--dg SELECT * FROM temporal_rng ORDER BY id, valid_at;
+
+--dg-cascade
+--dg TRUNCATE temporal_rng;
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[1,2)', daterange('2000-01-01', '2010-01-01'));
+-- with a conflict
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[1,2)', daterange('2005-01-01', '2006-01-01')) ON CONFLICT ON CONSTRAINT temporal_rng_pk DO NOTHING;
+-- id matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[1,2)', daterange('2010-01-01', '2020-01-01')) ON CONFLICT ON CONSTRAINT temporal_rng_pk DO NOTHING;
+-- date matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[2,3)', daterange('2005-01-01', '2006-01-01')) ON CONFLICT ON CONSTRAINT temporal_rng_pk DO NOTHING;
+--dg-cascade
+--dg SELECT * FROM temporal_rng ORDER BY id, valid_at;
+
+--dg-cascade
+--dg TRUNCATE temporal_rng;
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[1,2)', daterange('2000-01-01', '2010-01-01'));
+-- with a conflict
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[1,2)', daterange('2005-01-01', '2006-01-01')) ON CONFLICT (id, valid_at) DO UPDATE SET id = EXCLUDED.id + '[2,3)';
+-- id matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[1,2)', daterange('2010-01-01', '2020-01-01')) ON CONFLICT (id, valid_at) DO UPDATE SET id = EXCLUDED.id + '[3,4)';
+-- date matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[2,3)', daterange('2005-01-01', '2006-01-01')) ON CONFLICT (id, valid_at) DO UPDATE SET id = EXCLUDED.id + '[4,5)';
+--dg-cascade
+--dg SELECT * FROM temporal_rng ORDER BY id, valid_at;
+
+--dg-cascade
+--dg TRUNCATE temporal_rng;
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[1,2)', daterange('2000-01-01', '2010-01-01'));
+-- with a conflict
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[1,2)', daterange('2005-01-01', '2006-01-01')) ON CONFLICT ON CONSTRAINT temporal_rng_pk DO UPDATE SET id = EXCLUDED.id + '[2,3)';
+-- id matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[1,2)', daterange('2010-01-01', '2020-01-01')) ON CONFLICT ON CONSTRAINT temporal_rng_pk DO UPDATE SET id = EXCLUDED.id + '[3,4)';
+-- date matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[2,3)', daterange('2005-01-01', '2006-01-01')) ON CONFLICT ON CONSTRAINT temporal_rng_pk DO UPDATE SET id = EXCLUDED.id + '[4,5)';
+--dg-cascade
+--dg SELECT * FROM temporal_rng ORDER BY id, valid_at;
+
+-- with a UNIQUE constraint:
+
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal3 (
+--dg   id int4range,
+--dg   valid_at daterange,
+--dg   CONSTRAINT temporal3_uq UNIQUE (id, valid_at WITHOUT OVERLAPS)
+--dg );
+--dg-cascade
+--dg TRUNCATE temporal3;
+--dg-cascade
+--dg INSERT INTO temporal3 (id, valid_at) VALUES ('[1,2)', daterange('2000-01-01', '2010-01-01'));
+-- with a conflict
+--dg-cascade
+--dg INSERT INTO temporal3 (id, valid_at) VALUES ('[1,2)', daterange('2005-01-01', '2006-01-01')) ON CONFLICT DO NOTHING;
+-- id matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal3 (id, valid_at) VALUES ('[1,2)', daterange('2010-01-01', '2020-01-01')) ON CONFLICT DO NOTHING;
+-- date matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal3 (id, valid_at) VALUES ('[2,3)', daterange('2005-01-01', '2006-01-01')) ON CONFLICT DO NOTHING;
+--dg-cascade
+--dg SELECT * FROM temporal3 ORDER BY id, valid_at;
+
+--dg-cascade
+--dg TRUNCATE temporal3;
+--dg-cascade
+--dg INSERT INTO temporal3 (id, valid_at) VALUES ('[1,2)', daterange('2000-01-01', '2010-01-01'));
+-- with a conflict
+--dg-cascade
+--dg INSERT INTO temporal3 (id, valid_at) VALUES ('[1,2)', daterange('2005-01-01', '2006-01-01')) ON CONFLICT (id, valid_at) DO NOTHING;
+-- id matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal3 (id, valid_at) VALUES ('[1,2)', daterange('2010-01-01', '2020-01-01')) ON CONFLICT (id, valid_at) DO NOTHING;
+-- date matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal3 (id, valid_at) VALUES ('[2,3)', daterange('2005-01-01', '2006-01-01')) ON CONFLICT (id, valid_at) DO NOTHING;
+--dg-cascade
+--dg SELECT * FROM temporal3 ORDER BY id, valid_at;
+
+--dg-cascade
+--dg TRUNCATE temporal3;
+--dg-cascade
+--dg INSERT INTO temporal3 (id, valid_at) VALUES ('[1,2)', daterange('2000-01-01', '2010-01-01'));
+-- with a conflict
+--dg-cascade
+--dg INSERT INTO temporal3 (id, valid_at) VALUES ('[1,2)', daterange('2005-01-01', '2006-01-01')) ON CONFLICT ON CONSTRAINT temporal3_uq DO NOTHING;
+-- id matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal3 (id, valid_at) VALUES ('[1,2)', daterange('2010-01-01', '2020-01-01')) ON CONFLICT ON CONSTRAINT temporal3_uq DO NOTHING;
+-- date matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal3 (id, valid_at) VALUES ('[2,3)', daterange('2005-01-01', '2006-01-01')) ON CONFLICT ON CONSTRAINT temporal3_uq DO NOTHING;
+--dg-cascade
+--dg SELECT * FROM temporal3 ORDER BY id, valid_at;
+
+--dg-cascade
+--dg TRUNCATE temporal3;
+--dg-cascade
+--dg INSERT INTO temporal3 (id, valid_at) VALUES ('[1,2)', daterange('2000-01-01', '2010-01-01'));
+-- with a conflict
+--dg-cascade
+--dg INSERT INTO temporal3 (id, valid_at) VALUES ('[1,2)', daterange('2005-01-01', '2006-01-01')) ON CONFLICT (id, valid_at) DO UPDATE SET id = EXCLUDED.id + '[2,3)';
+-- id matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal3 (id, valid_at) VALUES ('[1,2)', daterange('2010-01-01', '2020-01-01')) ON CONFLICT (id, valid_at) DO UPDATE SET id = EXCLUDED.id + '[3,4)';
+-- date matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal3 (id, valid_at) VALUES ('[2,3)', daterange('2005-01-01', '2006-01-01')) ON CONFLICT (id, valid_at) DO UPDATE SET id = EXCLUDED.id + '[4,5)';
+--dg-cascade
+--dg SELECT * FROM temporal3 ORDER BY id, valid_at;
+
+--dg-cascade
+--dg TRUNCATE temporal3;
+--dg-cascade
+--dg INSERT INTO temporal3 (id, valid_at) VALUES ('[1,2)', daterange('2000-01-01', '2010-01-01'));
+-- with a conflict
+--dg-cascade
+--dg INSERT INTO temporal3 (id, valid_at) VALUES ('[1,2)', daterange('2005-01-01', '2006-01-01')) ON CONFLICT ON CONSTRAINT temporal3_uq DO UPDATE SET id = EXCLUDED.id + '[2,3)';
+-- id matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal3 (id, valid_at) VALUES ('[1,2)', daterange('2010-01-01', '2020-01-01')) ON CONFLICT ON CONSTRAINT temporal3_uq DO UPDATE SET id = EXCLUDED.id + '[3,4)';
+-- date matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal3 (id, valid_at) VALUES ('[2,3)', daterange('2005-01-01', '2006-01-01')) ON CONFLICT ON CONSTRAINT temporal3_uq DO UPDATE SET id = EXCLUDED.id + '[4,5)';
+--dg-cascade
+--dg SELECT * FROM temporal3 ORDER BY id, valid_at;
+
+--dg-cascade
+--dg DROP TABLE temporal3;
+
+--
+-- ON CONFLICT: multiranges
+--
+
+--dg-cascade
+--dg TRUNCATE temporal_mltrng;
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2000-01-01', '2010-01-01')));
+-- with a conflict
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2005-01-01', '2006-01-01'))) ON CONFLICT DO NOTHING;
+-- id matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2010-01-01', '2020-01-01'))) ON CONFLICT DO NOTHING;
+-- date matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[2,3)', datemultirange(daterange('2005-01-01', '2006-01-01'))) ON CONFLICT DO NOTHING;
+--dg-cascade
+--dg SELECT * FROM temporal_mltrng ORDER BY id, valid_at;
+
+--dg-cascade
+--dg TRUNCATE temporal_mltrng;
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2000-01-01', '2010-01-01')));
+-- with a conflict
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2005-01-01', '2006-01-01'))) ON CONFLICT (id, valid_at) DO NOTHING;
+-- id matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2010-01-01', '2020-01-01'))) ON CONFLICT (id, valid_at) DO NOTHING;
+-- date matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[2,3)', datemultirange(daterange('2005-01-01', '2006-01-01'))) ON CONFLICT (id, valid_at) DO NOTHING;
+--dg-cascade
+--dg SELECT * FROM temporal_mltrng ORDER BY id, valid_at;
+
+--dg-cascade
+--dg TRUNCATE temporal_mltrng;
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2000-01-01', '2010-01-01')));
+-- with a conflict
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2005-01-01', '2006-01-01'))) ON CONFLICT ON CONSTRAINT temporal_mltrng_pk DO NOTHING;
+-- id matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2010-01-01', '2020-01-01'))) ON CONFLICT ON CONSTRAINT temporal_mltrng_pk DO NOTHING;
+-- date matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[2,3)', datemultirange(daterange('2005-01-01', '2006-01-01'))) ON CONFLICT ON CONSTRAINT temporal_mltrng_pk DO NOTHING;
+--dg-cascade
+--dg SELECT * FROM temporal_mltrng ORDER BY id, valid_at;
+
+--dg-cascade
+--dg TRUNCATE temporal_mltrng;
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2000-01-01', '2010-01-01')));
+-- with a conflict
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2005-01-01', '2006-01-01'))) ON CONFLICT (id, valid_at) DO UPDATE SET id = EXCLUDED.id + '[2,3)';
+-- id matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2010-01-01', '2020-01-01'))) ON CONFLICT (id, valid_at) DO UPDATE SET id = EXCLUDED.id + '[3,4)';
+-- date matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[2,3)', datemultirange(daterange('2005-01-01', '2006-01-01'))) ON CONFLICT (id, valid_at) DO UPDATE SET id = EXCLUDED.id + '[4,5)';
+--dg-cascade
+--dg SELECT * FROM temporal_mltrng ORDER BY id, valid_at;
+
+--dg-cascade
+--dg TRUNCATE temporal_mltrng;
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2000-01-01', '2010-01-01')));
+-- with a conflict
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2005-01-01', '2006-01-01'))) ON CONFLICT ON CONSTRAINT temporal_mltrng_pk DO UPDATE SET id = EXCLUDED.id + '[2,3)';
+-- id matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2010-01-01', '2020-01-01'))) ON CONFLICT ON CONSTRAINT temporal_mltrng_pk DO UPDATE SET id = EXCLUDED.id + '[3,4)';
+-- date matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[2,3)', datemultirange(daterange('2005-01-01', '2006-01-01'))) ON CONFLICT ON CONSTRAINT temporal_mltrng_pk DO UPDATE SET id = EXCLUDED.id + '[4,5)';
+--dg-cascade
+--dg SELECT * FROM temporal_mltrng ORDER BY id, valid_at;
+
+-- with a UNIQUE constraint:
+
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal_mltrng3 (
+--dg   id int4range,
+--dg   valid_at datemultirange,
+--dg   CONSTRAINT temporal_mltrng3_uq UNIQUE (id, valid_at WITHOUT OVERLAPS)
+--dg );
+--dg-cascade
+--dg TRUNCATE temporal_mltrng3;
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2000-01-01', '2010-01-01')));
+-- with a conflict
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2005-01-01', '2006-01-01'))) ON CONFLICT DO NOTHING;
+-- id matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2010-01-01', '2020-01-01'))) ON CONFLICT DO NOTHING;
+-- date matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[2,3)', datemultirange(daterange('2005-01-01', '2006-01-01'))) ON CONFLICT DO NOTHING;
+--dg-cascade
+--dg SELECT * FROM temporal_mltrng3 ORDER BY id, valid_at;
+
+--dg-cascade
+--dg TRUNCATE temporal_mltrng3;
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2000-01-01', '2010-01-01')));
+-- with a conflict
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2005-01-01', '2006-01-01'))) ON CONFLICT (id, valid_at) DO NOTHING;
+-- id matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2010-01-01', '2020-01-01'))) ON CONFLICT (id, valid_at) DO NOTHING;
+-- date matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[2,3)', datemultirange(daterange('2005-01-01', '2006-01-01'))) ON CONFLICT (id, valid_at) DO NOTHING;
+--dg-cascade
+--dg SELECT * FROM temporal_mltrng3 ORDER BY id, valid_at;
+
+--dg-cascade
+--dg TRUNCATE temporal_mltrng3;
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2000-01-01', '2010-01-01')));
+-- with a conflict
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2005-01-01', '2006-01-01'))) ON CONFLICT ON CONSTRAINT temporal_mltrng3_uq DO NOTHING;
+-- id matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2010-01-01', '2020-01-01'))) ON CONFLICT ON CONSTRAINT temporal_mltrng3_uq DO NOTHING;
+-- date matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[2,3)', datemultirange(daterange('2005-01-01', '2006-01-01'))) ON CONFLICT ON CONSTRAINT temporal_mltrng3_uq DO NOTHING;
+--dg-cascade
+--dg SELECT * FROM temporal_mltrng3 ORDER BY id, valid_at;
+
+--dg-cascade
+--dg TRUNCATE temporal_mltrng3;
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2000-01-01', '2010-01-01')));
+-- with a conflict
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2005-01-01', '2006-01-01'))) ON CONFLICT (id, valid_at) DO UPDATE SET id = EXCLUDED.id + '[2,3)';
+-- id matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2010-01-01', '2020-01-01'))) ON CONFLICT (id, valid_at) DO UPDATE SET id = EXCLUDED.id + '[3,4)';
+-- date matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[2,3)', datemultirange(daterange('2005-01-01', '2006-01-01'))) ON CONFLICT (id, valid_at) DO UPDATE SET id = EXCLUDED.id + '[4,5)';
+--dg-cascade
+--dg SELECT * FROM temporal_mltrng3 ORDER BY id, valid_at;
+
+--dg-cascade
+--dg TRUNCATE temporal_mltrng3;
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2000-01-01', '2010-01-01')));
+-- with a conflict
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2005-01-01', '2006-01-01'))) ON CONFLICT ON CONSTRAINT temporal_mltrng3_uq DO UPDATE SET id = EXCLUDED.id + '[2,3)';
+-- id matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2010-01-01', '2020-01-01'))) ON CONFLICT ON CONSTRAINT temporal_mltrng3_uq DO UPDATE SET id = EXCLUDED.id + '[3,4)';
+-- date matches but no conflict
+--dg-cascade
+--dg INSERT INTO temporal_mltrng3 (id, valid_at) VALUES ('[2,3)', datemultirange(daterange('2005-01-01', '2006-01-01'))) ON CONFLICT ON CONSTRAINT temporal_mltrng3_uq DO UPDATE SET id = EXCLUDED.id + '[4,5)';
+--dg-cascade
+--dg SELECT * FROM temporal_mltrng3 ORDER BY id, valid_at;
+
+--dg-cascade
+--dg DROP TABLE temporal_mltrng3;
+
+--
+-- test FK dependencies
+--
+
+-- can't drop a range referenced by an FK, unless with CASCADE
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal3 (
+--dg   id int4range,
+--dg   valid_at daterange,
+--dg   CONSTRAINT temporal3_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS)
+--dg );
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal_fk_rng2rng (
+--dg   id int4range,
+--dg   valid_at daterange,
+--dg   parent_id int4range,
+--dg   CONSTRAINT temporal_fk_rng2rng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS),
+--dg   CONSTRAINT temporal_fk_rng2rng_fk FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg     REFERENCES temporal3 (id, PERIOD valid_at)
+--dg );
+--dg-cascade
+--dg ALTER TABLE temporal3 DROP COLUMN valid_at;
+--dg-cascade
+--dg ALTER TABLE temporal3 DROP COLUMN valid_at CASCADE;
+--dg-cascade
+--dg DROP TABLE temporal_fk_rng2rng;
+--dg-cascade
+--dg DROP TABLE temporal3;
+
+--
+-- test FOREIGN KEY, range references range
+--
+
+-- test table setup
+--dg-cascade
+--dg DROP TABLE temporal_rng;
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal_rng (id int4range, valid_at daterange);
+--dg-cascade
+--dg ALTER TABLE temporal_rng
+--dg   ADD CONSTRAINT temporal_rng_pk
+--dg   PRIMARY KEY (id, valid_at WITHOUT OVERLAPS);
+
+-- Can't create a FK with a mismatched range type
+--dg-cascade
+--dg CREATE TABLE temporal_fk_rng2rng (
+--dg   id int4range,
+--dg   valid_at int4range,
+--dg   parent_id int4range,
+--dg   CONSTRAINT temporal_fk_rng2rng_pk2 PRIMARY KEY (id, valid_at WITHOUT OVERLAPS),
+--dg   CONSTRAINT temporal_fk_rng2rng_fk2 FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg     REFERENCES temporal_rng (id, PERIOD valid_at)
+--dg );
+
+-- works: PERIOD for both referenced and referencing
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal_fk_rng2rng (
+--dg   id int4range,
+--dg   valid_at daterange,
+--dg   parent_id int4range,
+--dg   CONSTRAINT temporal_fk_rng2rng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS),
+--dg   CONSTRAINT temporal_fk_rng2rng_fk FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg     REFERENCES temporal_rng (id, PERIOD valid_at)
+--dg );
+--dg-cascade
+--dg DROP TABLE temporal_fk_rng2rng;
+
+-- with mismatched PERIOD columns:
+
+-- (parent_id, PERIOD valid_at) REFERENCES (id, valid_at)
+-- REFERENCES part should specify PERIOD
+--dg-cascade
+--dg CREATE TABLE temporal_fk_rng2rng (
+--dg   id int4range,
+--dg   valid_at daterange,
+--dg   parent_id int4range,
+--dg   CONSTRAINT temporal_fk_rng2rng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS),
+--dg   CONSTRAINT temporal_fk_rng2rng_fk FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg     REFERENCES temporal_rng (id, valid_at)
+--dg );
+-- (parent_id, valid_at) REFERENCES (id, valid_at)
+-- both should specify PERIOD:
+--dg-cascade
+--dg CREATE TABLE temporal_fk_rng2rng (
+--dg   id int4range,
+--dg   valid_at daterange,
+--dg   parent_id int4range,
+--dg   CONSTRAINT temporal_fk_rng2rng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS),
+--dg   CONSTRAINT temporal_fk_rng2rng_fk FOREIGN KEY (parent_id, valid_at)
+--dg     REFERENCES temporal_rng (id, valid_at)
+--dg );
+-- (parent_id, valid_at) REFERENCES (id, PERIOD valid_at)
+-- FOREIGN KEY part should specify PERIOD
+--dg-cascade
+--dg CREATE TABLE temporal_fk_rng2rng (
+--dg   id int4range,
+--dg   valid_at daterange,
+--dg   parent_id int4range,
+--dg   CONSTRAINT temporal_fk_rng2rng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS),
+--dg   CONSTRAINT temporal_fk_rng2rng_fk FOREIGN KEY (parent_id, valid_at)
+--dg     REFERENCES temporal_rng (id, PERIOD valid_at)
+--dg );
+-- (parent_id, valid_at) REFERENCES [implicit]
+-- FOREIGN KEY part should specify PERIOD
+--dg-cascade
+--dg CREATE TABLE temporal_fk_rng2rng (
+--dg   id int4range,
+--dg   valid_at daterange,
+--dg   parent_id int4range,
+--dg   CONSTRAINT temporal_fk_rng2rng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS),
+--dg   CONSTRAINT temporal_fk_rng2rng_fk FOREIGN KEY (parent_id, valid_at)
+--dg     REFERENCES temporal_rng
+--dg );
+-- (parent_id, PERIOD valid_at) REFERENCES (id)
+--dg-cascade
+--dg CREATE TABLE temporal_fk_rng2rng (
+--dg   id int4range,
+--dg   valid_at daterange,
+--dg   parent_id int4range,
+--dg   CONSTRAINT temporal_fk_rng2rng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS),
+--dg   CONSTRAINT temporal_fk_rng2rng_fk FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg     REFERENCES temporal_rng (id)
+--dg );
+-- (parent_id) REFERENCES (id, PERIOD valid_at)
+--dg-cascade
+--dg CREATE TABLE temporal_fk_rng2rng (
+--dg   id int4range,
+--dg   valid_at daterange,
+--dg   parent_id int4range,
+--dg   CONSTRAINT temporal_fk_rng2rng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS),
+--dg   CONSTRAINT temporal_fk_rng2rng_fk FOREIGN KEY (parent_id)
+--dg     REFERENCES temporal_rng (id, PERIOD valid_at)
+--dg );
+-- with inferred PK on the referenced table:
+-- (parent_id, PERIOD valid_at) REFERENCES [implicit]
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal_fk_rng2rng (
+--dg   id int4range,
+--dg   valid_at daterange,
+--dg   parent_id int4range,
+--dg   CONSTRAINT temporal_fk_rng2rng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS),
+--dg   CONSTRAINT temporal_fk_rng2rng_fk FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg     REFERENCES temporal_rng
+--dg );
+--dg-cascade
+--dg DROP TABLE temporal_fk_rng2rng;
+-- (parent_id) REFERENCES [implicit]
+--dg-cascade
+--dg CREATE TABLE temporal_fk_rng2rng (
+--dg   id int4range,
+--dg   valid_at daterange,
+--dg   parent_id int4range,
+--dg   CONSTRAINT temporal_fk_rng2rng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS),
+--dg   CONSTRAINT temporal_fk_rng2rng_fk FOREIGN KEY (parent_id)
+--dg     REFERENCES temporal_rng
+--dg );
+
+-- should fail because of duplicate referenced columns:
+--dg-cascade
+--dg CREATE TABLE temporal_fk_rng2rng (
+--dg   id int4range,
+--dg   valid_at daterange,
+--dg   parent_id int4range,
+--dg   CONSTRAINT temporal_fk_rng2rng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS),
+--dg   CONSTRAINT temporal_fk_rng2rng_fk FOREIGN KEY (parent_id, PERIOD parent_id)
+--dg     REFERENCES temporal_rng (id, PERIOD id)
+--dg );
+
+-- Two scalar columns
+--dg-cascade
+--dg DROP TABLE temporal_rng2;
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal_rng2 (
+--dg   id1 int4range,
+--dg   id2 int4range,
+--dg   valid_at daterange,
+--dg   CONSTRAINT temporal_rng2_pk PRIMARY KEY (id1, id2, valid_at WITHOUT OVERLAPS)
+--dg );
+
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal_fk2_rng2rng (
+--dg   id int4range,
+--dg   valid_at daterange,
+--dg   parent_id1 int4range,
+--dg   parent_id2 int4range,
+--dg   CONSTRAINT temporal_fk2_rng2rng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS),
+--dg   CONSTRAINT temporal_fk2_rng2rng_fk FOREIGN KEY (parent_id1, parent_id2, PERIOD valid_at)
+--dg     REFERENCES temporal_rng2 (id1, id2, PERIOD valid_at)
+--dg );
+--dg-cascade
+--dg \d temporal_fk2_rng2rng
+--dg-cascade
+--dg DROP TABLE temporal_fk2_rng2rng;
+
+--
+-- test ALTER TABLE ADD CONSTRAINT
+--
+
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal_fk_rng2rng (
+--dg   id int4range,
+--dg   valid_at daterange,
+--dg   parent_id int4range,
+--dg   CONSTRAINT temporal_fk_rng2rng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS)
+--dg );
+--dg-cascade
+--dg ALTER TABLE temporal_fk_rng2rng
+--dg   ADD CONSTRAINT temporal_fk_rng2rng_fk
+--dg   FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg   REFERENCES temporal_rng (id, PERIOD valid_at);
+-- Two scalar columns:
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal_fk2_rng2rng (
+--dg   id int4range,
+--dg   valid_at daterange,
+--dg   parent_id1 int4range,
+--dg   parent_id2 int4range,
+--dg   CONSTRAINT temporal_fk2_rng2rng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS)
+--dg );
+--dg-cascade
+--dg ALTER TABLE temporal_fk2_rng2rng
+--dg   ADD CONSTRAINT temporal_fk2_rng2rng_fk
+--dg   FOREIGN KEY (parent_id1, parent_id2, PERIOD valid_at)
+--dg   REFERENCES temporal_rng2 (id1, id2, PERIOD valid_at);
+--dg-cascade
+--dg \d temporal_fk2_rng2rng
+
+-- with inferred PK on the referenced table, and wrong column type:
+--dg-cascade
+--dg ALTER TABLE temporal_fk_rng2rng
+--dg   DROP CONSTRAINT temporal_fk_rng2rng_fk,
+--dg   ALTER COLUMN valid_at TYPE tsrange USING tsrange(lower(valid_at), upper(valid_at));
+--dg-cascade
+--dg ALTER TABLE temporal_fk_rng2rng
+--dg   ADD CONSTRAINT temporal_fk_rng2rng_fk
+--dg   FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg   REFERENCES temporal_rng;
+--dg-cascade
+--dg ALTER TABLE temporal_fk_rng2rng
+--dg   ALTER COLUMN valid_at TYPE daterange USING daterange(lower(valid_at)::date, upper(valid_at)::date);
+
+-- with inferred PK on the referenced table:
+--dg-cascade
+--dg ALTER TABLE temporal_fk_rng2rng
+--dg   ADD CONSTRAINT temporal_fk_rng2rng_fk
+--dg   FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg   REFERENCES temporal_rng;
+
+-- should fail because of duplicate referenced columns:
+--dg-cascade
+--dg ALTER TABLE temporal_fk_rng2rng
+--dg   ADD CONSTRAINT temporal_fk_rng2rng_fk2
+--dg   FOREIGN KEY (parent_id, PERIOD parent_id)
+--dg   REFERENCES temporal_rng (id, PERIOD id);
+
+--
+-- test with rows already
+--
+
+--dg-cascade
+--dg DELETE FROM temporal_fk_rng2rng;
+--dg-cascade
+--dg DELETE FROM temporal_rng;
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES
+--dg   ('[1,2)', daterange('2018-01-02', '2018-02-03')),
+--dg   ('[1,2)', daterange('2018-03-03', '2018-04-04')),
+--dg   ('[2,3)', daterange('2018-01-01', '2018-01-05')),
+--dg   ('[3,4)', daterange('2018-01-01', NULL));
+
+--dg-cascade
+--dg ALTER TABLE temporal_fk_rng2rng
+--dg   DROP CONSTRAINT temporal_fk_rng2rng_fk;
+--dg-cascade
+--dg INSERT INTO temporal_fk_rng2rng (id, valid_at, parent_id) VALUES ('[1,2)', daterange('2018-01-02', '2018-02-01'), '[1,2)');
+--dg-cascade
+--dg ALTER TABLE temporal_fk_rng2rng
+--dg   ADD CONSTRAINT temporal_fk_rng2rng_fk
+--dg   FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg   REFERENCES temporal_rng;
+--dg-cascade
+--dg ALTER TABLE temporal_fk_rng2rng
+--dg   DROP CONSTRAINT temporal_fk_rng2rng_fk;
+--dg-cascade
+--dg INSERT INTO temporal_fk_rng2rng (id, valid_at, parent_id) VALUES ('[2,3)', daterange('2018-01-02', '2018-04-01'), '[1,2)');
+-- should fail:
+--dg-cascade
+--dg ALTER TABLE temporal_fk_rng2rng
+--dg   ADD CONSTRAINT temporal_fk_rng2rng_fk
+--dg   FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg   REFERENCES temporal_rng;
+-- okay again:
+--dg-cascade
+--dg DELETE FROM temporal_fk_rng2rng;
+--dg-cascade
+--dg ALTER TABLE temporal_fk_rng2rng
+--dg   ADD CONSTRAINT temporal_fk_rng2rng_fk
+--dg   FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg   REFERENCES temporal_rng;
+
+--
+-- test pg_get_constraintdef
+--
+
+--dg-cascade
+--dg SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'temporal_fk_rng2rng_fk';
+
+--
+-- test FK referencing inserts
+--
+
+--dg-cascade
+--dg INSERT INTO temporal_fk_rng2rng (id, valid_at, parent_id) VALUES ('[1,2)', daterange('2018-01-02', '2018-02-01'), '[1,2)');
+-- should fail:
+--dg-cascade
+--dg INSERT INTO temporal_fk_rng2rng (id, valid_at, parent_id) VALUES ('[2,3)', daterange('2018-01-02', '2018-04-01'), '[1,2)');
+-- now it should work:
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[1,2)', daterange('2018-02-03', '2018-03-03'));
+--dg-cascade
+--dg INSERT INTO temporal_fk_rng2rng (id, valid_at, parent_id) VALUES ('[2,3)', daterange('2018-01-02', '2018-04-01'), '[1,2)');
+
+--
+-- test FK referencing updates
+--
+
+-- slide the edge across a referenced transition:
+--dg-cascade
+--dg UPDATE temporal_fk_rng2rng SET valid_at = daterange('2018-01-02', '2018-02-20') WHERE id = '[1,2)';
+-- should fail:
+--dg-cascade
+--dg UPDATE temporal_fk_rng2rng SET valid_at = daterange('2018-01-02', '2018-05-01') WHERE id = '[1,2)';
+--dg-cascade
+--dg UPDATE temporal_fk_rng2rng SET parent_id = '[8,9)' WHERE id = '[1,2)';
+
+-- ALTER FK DEFERRABLE
+
+BEGIN;
+--dg-cascade
+--dg   INSERT INTO temporal_rng (id, valid_at) VALUES
+--dg     ('[5,6)', daterange('2018-01-01', '2018-02-01')),
+--dg     ('[5,6)', daterange('2018-02-01', '2018-03-01'));
+--dg-cascade
+--dg   INSERT INTO temporal_fk_rng2rng (id, valid_at, parent_id) VALUES
+--dg     ('[3,4)', daterange('2018-01-05', '2018-01-10'), '[5,6)');
+--dg-cascade
+--dg   ALTER TABLE temporal_fk_rng2rng
+--dg     ALTER CONSTRAINT temporal_fk_rng2rng_fk
+--dg     DEFERRABLE INITIALLY DEFERRED;
+
+--dg-cascade
+--dg   DELETE FROM temporal_rng WHERE id = '[5,6)'; --should not fail yet.
+--dg-cascade
+--dg COMMIT; -- should fail here.
+
+--
+-- test FK referenced updates NO ACTION
+--
+
+--dg-cascade
+--dg TRUNCATE temporal_rng, temporal_fk_rng2rng;
+--dg-cascade
+--dg ALTER TABLE temporal_fk_rng2rng
+--dg   DROP CONSTRAINT temporal_fk_rng2rng_fk;
+--dg-cascade
+--dg ALTER TABLE temporal_fk_rng2rng
+--dg   ADD CONSTRAINT temporal_fk_rng2rng_fk
+--dg   FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg   REFERENCES temporal_rng
+--dg   ON UPDATE NO ACTION;
+-- a PK update that succeeds because the numeric id isn't referenced:
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[5,6)', daterange('2018-01-01', '2018-02-01'));
+--dg-cascade
+--dg UPDATE temporal_rng SET valid_at = daterange('2016-01-01', '2016-02-01') WHERE id = '[5,6)';
+-- a PK update that succeeds even though the numeric id is referenced because the range isn't:
+--dg-cascade
+--dg DELETE FROM temporal_rng WHERE id = '[5,6)';
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES
+--dg   ('[5,6)', daterange('2018-01-01', '2018-02-01')),
+--dg   ('[5,6)', daterange('2018-02-01', '2018-03-01'));
+--dg-cascade
+--dg INSERT INTO temporal_fk_rng2rng (id, valid_at, parent_id)
+--dg   VALUES ('[3,4)', daterange('2018-01-05', '2018-01-10'), '[5,6)');
+--dg-cascade
+--dg UPDATE temporal_rng SET valid_at = daterange('2016-02-01', '2016-03-01')
+--dg   WHERE id = '[5,6)' AND valid_at = daterange('2018-02-01', '2018-03-01');
+-- A PK update sliding the edge between two referenced rows:
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES
+--dg   ('[6,7)', daterange('2018-01-01', '2018-02-01')),
+--dg   ('[6,7)', daterange('2018-02-01', '2018-03-01'));
+--dg-cascade
+--dg INSERT INTO temporal_fk_rng2rng (id, valid_at, parent_id) VALUES
+--dg   ('[4,5)', daterange('2018-01-15', '2018-02-15'), '[6,7)');
+--dg-cascade
+--dg UPDATE temporal_rng
+--dg   SET valid_at = CASE WHEN lower(valid_at) = '2018-01-01' THEN daterange('2018-01-01', '2018-01-05')
+--dg                       WHEN lower(valid_at) = '2018-02-01' THEN daterange('2018-01-05', '2018-03-01') END
+--dg   WHERE id = '[6,7)';
+-- a PK update shrinking the referenced range but still valid:
+-- There are two references: one fulfilled by the first pk row,
+-- the other fulfilled by both pk rows combined.
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES
+--dg   ('[1,2)', daterange('2018-01-01', '2018-03-01')),
+--dg   ('[1,2)', daterange('2018-03-01', '2018-06-01'));
+--dg-cascade
+--dg INSERT INTO temporal_fk_rng2rng (id, valid_at, parent_id) VALUES
+--dg   ('[1,2)', daterange('2018-01-15', '2018-02-01'), '[1,2)'),
+--dg   ('[2,3)', daterange('2018-01-15', '2018-05-01'), '[1,2)');
+--dg-cascade
+--dg UPDATE temporal_rng SET valid_at = daterange('2018-01-15', '2018-03-01')
+--dg   WHERE id = '[1,2)' AND valid_at @> '2018-01-15'::date;
+-- a PK update growing the referenced range is fine:
+--dg-cascade
+--dg UPDATE temporal_rng SET valid_at = daterange('2018-01-01', '2018-03-01')
+--dg   WHERE id = '[1,2)' AND valid_at @> '2018-01-25'::date;
+-- a PK update shrinking the referenced range and changing the id invalidates the whole range (error):
+--dg-cascade
+--dg UPDATE temporal_rng SET id = '[2,3)', valid_at = daterange('2018-01-15', '2018-03-01')
+--dg   WHERE id = '[1,2)' AND valid_at @> '2018-01-15'::date;
+-- a PK update changing only the id invalidates the whole range (error):
+--dg-cascade
+--dg UPDATE temporal_rng SET id = '[2,3)'
+--dg   WHERE id = '[1,2)' AND valid_at @> '2018-01-15'::date;
+-- a PK update that loses time from both ends, but is still valid:
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES
+--dg   ('[2,3)', daterange('2018-01-01', '2018-03-01'));
+--dg-cascade
+--dg INSERT INTO temporal_fk_rng2rng (id, valid_at, parent_id) VALUES
+--dg   ('[5,6)', daterange('2018-01-15', '2018-02-01'), '[2,3)');
+--dg-cascade
+--dg UPDATE temporal_rng SET valid_at = daterange('2018-01-15', '2018-02-15')
+--dg   WHERE id = '[2,3)';
+-- a PK update that fails because both are referenced:
+--dg-cascade
+--dg UPDATE temporal_rng SET valid_at = daterange('2016-01-01', '2016-02-01')
+--dg   WHERE id = '[5,6)' AND valid_at = daterange('2018-01-01', '2018-02-01');
+-- a PK update that fails because both are referenced, but not 'til commit:
+--dg-cascade
+--dg BEGIN;
+--dg-cascade
+--dg   ALTER TABLE temporal_fk_rng2rng
+--dg     ALTER CONSTRAINT temporal_fk_rng2rng_fk
+--dg     DEFERRABLE INITIALLY DEFERRED;
+
+--dg-cascade
+--dg   UPDATE temporal_rng SET valid_at = daterange('2016-01-01', '2016-02-01')
+--dg     WHERE id = '[5,6)' AND valid_at = daterange('2018-01-01', '2018-02-01');
+--dg-cascade
+--dg COMMIT;
+-- changing the scalar part fails:
+--dg-cascade
+--dg UPDATE temporal_rng SET id = '[7,8)'
+--dg   WHERE id = '[5,6)' AND valid_at = daterange('2018-01-01', '2018-02-01');
+-- then delete the objecting FK record and the same PK update succeeds:
+--dg-cascade
+--dg DELETE FROM temporal_fk_rng2rng WHERE id = '[3,4)';
+--dg-cascade
+--dg UPDATE temporal_rng SET valid_at = daterange('2016-01-01', '2016-02-01')
+--dg   WHERE id = '[5,6)' AND valid_at = daterange('2018-01-01', '2018-02-01');
+
+--
+-- test FK referenced updates RESTRICT
+--
+
+--dg-cascade
+--dg TRUNCATE temporal_rng, temporal_fk_rng2rng;
+--dg-cascade
+--dg ALTER TABLE temporal_fk_rng2rng
+--dg   DROP CONSTRAINT temporal_fk_rng2rng_fk;
+--dg-cascade
+--dg ALTER TABLE temporal_fk_rng2rng
+--dg   ADD CONSTRAINT temporal_fk_rng2rng_fk
+--dg   FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg   REFERENCES temporal_rng
+--dg   ON UPDATE RESTRICT;
+
+--
+-- test FK referenced deletes NO ACTION
+--
+
+--dg-cascade
+--dg TRUNCATE temporal_rng, temporal_fk_rng2rng;
+--dg-cascade
+--dg ALTER TABLE temporal_fk_rng2rng
+--dg   ADD CONSTRAINT temporal_fk_rng2rng_fk
+--dg   FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg   REFERENCES temporal_rng;
+-- a PK delete that succeeds because the numeric id isn't referenced:
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[5,6)', daterange('2018-01-01', '2018-02-01'));
+--dg-cascade
+--dg DELETE FROM temporal_rng WHERE id = '[5,6)';
+-- a PK delete that succeeds even though the numeric id is referenced because the range isn't:
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES
+--dg   ('[5,6)', daterange('2018-01-01', '2018-02-01')),
+--dg   ('[5,6)', daterange('2018-02-01', '2018-03-01'));
+--dg-cascade
+--dg INSERT INTO temporal_fk_rng2rng (id, valid_at, parent_id) VALUES
+--dg   ('[3,4)', daterange('2018-01-05', '2018-01-10'), '[5,6)');
+--dg-cascade
+--dg DELETE FROM temporal_rng WHERE id = '[5,6)' AND valid_at = daterange('2018-02-01', '2018-03-01');
+-- a PK delete that fails because both are referenced:
+--dg-cascade
+--dg DELETE FROM temporal_rng WHERE id = '[5,6)' AND valid_at = daterange('2018-01-01', '2018-02-01');
+-- a PK delete that fails because both are referenced, but not 'til commit:
+--dg-cascade
+--dg BEGIN;
+--dg-cascade
+--dg   ALTER TABLE temporal_fk_rng2rng
+--dg     ALTER CONSTRAINT temporal_fk_rng2rng_fk
+--dg     DEFERRABLE INITIALLY DEFERRED;
+
+--dg-cascade
+--dg   DELETE FROM temporal_rng WHERE id = '[5,6)' AND valid_at = daterange('2018-01-01', '2018-02-01');
+--dg-cascade
+--dg COMMIT;
+-- then delete the objecting FK record and the same PK delete succeeds:
+--dg-cascade
+--dg DELETE FROM temporal_fk_rng2rng WHERE id = '[3,4)';
+--dg-cascade
+--dg DELETE FROM temporal_rng WHERE id = '[5,6)' AND valid_at = daterange('2018-01-01', '2018-02-01');
+
+--
+-- test FK referenced deletes RESTRICT
+--
+
+--dg-cascade
+--dg TRUNCATE temporal_rng, temporal_fk_rng2rng;
+--dg-cascade
+--dg ALTER TABLE temporal_fk_rng2rng
+--dg   DROP CONSTRAINT temporal_fk_rng2rng_fk;
+--dg-cascade
+--dg ALTER TABLE temporal_fk_rng2rng
+--dg   ADD CONSTRAINT temporal_fk_rng2rng_fk
+--dg   FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg   REFERENCES temporal_rng
+--dg   ON DELETE RESTRICT;
+
+--
+-- test ON UPDATE/DELETE options
+--
+
+-- test FK referenced updates CASCADE
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[6,7)', daterange('2018-01-01', '2021-01-01'));
+--dg-cascade
+--dg INSERT INTO temporal_fk_rng2rng (id, valid_at, parent_id) VALUES ('[4,5)', daterange('2018-01-01', '2021-01-01'), '[6,7)');
+--dg-cascade
+--dg ALTER TABLE temporal_fk_rng2rng
+--dg   ADD CONSTRAINT temporal_fk_rng2rng_fk
+--dg     FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg     REFERENCES temporal_rng
+--dg     ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- test FK referenced updates SET NULL
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[9,10)', daterange('2018-01-01', '2021-01-01'));
+--dg-cascade
+--dg INSERT INTO temporal_fk_rng2rng (id, valid_at, parent_id) VALUES ('[6,7)', daterange('2018-01-01', '2021-01-01'), '[9,10)');
+--dg-cascade
+--dg ALTER TABLE temporal_fk_rng2rng
+--dg   ADD CONSTRAINT temporal_fk_rng2rng_fk
+--dg     FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg     REFERENCES temporal_rng
+--dg     ON DELETE SET NULL ON UPDATE SET NULL;
+
+-- test FK referenced updates SET DEFAULT
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[-1,-1]', daterange(null, null));
+--dg-cascade
+--dg INSERT INTO temporal_rng (id, valid_at) VALUES ('[12,13)', daterange('2018-01-01', '2021-01-01'));
+--dg-cascade
+--dg INSERT INTO temporal_fk_rng2rng (id, valid_at, parent_id) VALUES ('[8,9)', daterange('2018-01-01', '2021-01-01'), '[12,13)');
+--dg-cascade
+--dg ALTER TABLE temporal_fk_rng2rng
+--dg   ALTER COLUMN parent_id SET DEFAULT '[-1,-1]',
+--dg   ADD CONSTRAINT temporal_fk_rng2rng_fk
+--dg     FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg     REFERENCES temporal_rng
+--dg     ON DELETE SET DEFAULT ON UPDATE SET DEFAULT;
+
+--
+-- test FOREIGN KEY, multirange references multirange
+--
+
+-- test table setup
+--dg-cascade
+--dg DROP TABLE temporal_mltrng;
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal_mltrng ( id int4range, valid_at datemultirange);
+--dg-cascade
+--dg ALTER TABLE temporal_mltrng
+--dg   ADD CONSTRAINT temporal_mltrng_pk
+--dg   PRIMARY KEY (id, valid_at WITHOUT OVERLAPS);
+
+-- Can't create a FK with a mismatched multirange type
+--dg-cascade
+--dg CREATE TABLE temporal_fk_mltrng2mltrng (
+--dg   id int4range,
+--dg   valid_at int4multirange,
+--dg   parent_id int4range,
+--dg   CONSTRAINT temporal_fk_mltrng2mltrng_pk2 PRIMARY KEY (id, valid_at WITHOUT OVERLAPS),
+--dg   CONSTRAINT temporal_fk_mltrng2mltrng_fk2 FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg     REFERENCES temporal_mltrng (id, PERIOD valid_at)
+--dg );
+
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal_fk_mltrng2mltrng (
+--dg   id int4range,
+--dg   valid_at datemultirange,
+--dg   parent_id int4range,
+--dg   CONSTRAINT temporal_fk_mltrng2mltrng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS),
+--dg   CONSTRAINT temporal_fk_mltrng2mltrng_fk FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg     REFERENCES temporal_mltrng (id, PERIOD valid_at)
+--dg );
+--dg-cascade
+--dg DROP TABLE temporal_fk_mltrng2mltrng;
+
+-- with mismatched PERIOD columns:
+
+-- (parent_id, PERIOD valid_at) REFERENCES (id, valid_at)
+-- REFERENCES part should specify PERIOD
+--dg-cascade
+--dg CREATE TABLE temporal_fk_mltrng2mltrng (
+--dg   id int4range,
+--dg   valid_at datemultirange,
+--dg   parent_id int4range,
+--dg   CONSTRAINT temporal_fk_mltrng2mltrng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS),
+--dg   CONSTRAINT temporal_fk_mltrng2mltrng_fk FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg     REFERENCES temporal_mltrng (id, valid_at)
+--dg );
+-- (parent_id, valid_at) REFERENCES (id, valid_at)
+-- both should specify PERIOD:
+--dg-cascade
+--dg CREATE TABLE temporal_fk_mltrng2mltrng (
+--dg   id int4range,
+--dg   valid_at datemultirange,
+--dg   parent_id int4range,
+--dg   CONSTRAINT temporal_fk_mltrng2mltrng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS),
+--dg   CONSTRAINT temporal_fk_mltrng2mltrng_fk FOREIGN KEY (parent_id, valid_at)
+--dg     REFERENCES temporal_mltrng (id, valid_at)
+--dg );
+-- (parent_id, valid_at) REFERENCES (id, PERIOD valid_at)
+-- FOREIGN KEY part should specify PERIOD
+--dg-cascade
+--dg CREATE TABLE temporal_fk_mltrng2mltrng (
+--dg   id int4range,
+--dg   valid_at datemultirange,
+--dg   parent_id int4range,
+--dg   CONSTRAINT temporal_fk_mltrng2mltrng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS),
+--dg   CONSTRAINT temporal_fk_mltrng2mltrng_fk FOREIGN KEY (parent_id, valid_at)
+--dg     REFERENCES temporal_mltrng (id, PERIOD valid_at)
+--dg );
+-- (parent_id, valid_at) REFERENCES [implicit]
+-- FOREIGN KEY part should specify PERIOD
+--dg-cascade
+--dg CREATE TABLE temporal_fk_mltrng2mltrng (
+--dg   id int4range,
+--dg   valid_at datemultirange,
+--dg   parent_id int4range,
+--dg   CONSTRAINT temporal_fk_mltrng2mltrng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS),
+--dg   CONSTRAINT temporal_fk_mltrng2mltrng_fk FOREIGN KEY (parent_id, valid_at)
+--dg     REFERENCES temporal_mltrng
+--dg );
+-- (parent_id, PERIOD valid_at) REFERENCES (id)
+--dg-cascade
+--dg CREATE TABLE temporal_fk_mltrng2mltrng (
+--dg   id int4range,
+--dg   valid_at datemultirange,
+--dg   parent_id int4range,
+--dg   CONSTRAINT temporal_fk_mltrng2mltrng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS),
+--dg   CONSTRAINT temporal_fk_mltrng2mltrng_fk FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg     REFERENCES temporal_mltrng (id)
+--dg );
+-- (parent_id) REFERENCES (id, PERIOD valid_at)
+--dg-cascade
+--dg CREATE TABLE temporal_fk_mltrng2mltrng (
+--dg   id int4range,
+--dg   valid_at datemultirange,
+--dg   parent_id int4range,
+--dg   CONSTRAINT temporal_fk_mltrng2mltrng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS),
+--dg   CONSTRAINT temporal_fk_mltrng2mltrng_fk FOREIGN KEY (parent_id)
+--dg     REFERENCES temporal_mltrng (id, PERIOD valid_at)
+--dg );
+-- with inferred PK on the referenced table:
+-- (parent_id, PERIOD valid_at) REFERENCES [implicit]
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal_fk_mltrng2mltrng (
+--dg   id int4range,
+--dg   valid_at datemultirange,
+--dg   parent_id int4range,
+--dg   CONSTRAINT temporal_fk_mltrng2mltrng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS),
+--dg   CONSTRAINT temporal_fk_mltrng2mltrng_fk FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg     REFERENCES temporal_mltrng
+--dg );
+--dg-cascade
+--dg DROP TABLE temporal_fk_mltrng2mltrng;
+-- (parent_id) REFERENCES [implicit]
+--dg-cascade
+--dg CREATE TABLE temporal_fk_mltrng2mltrng (
+--dg   id int4range,
+--dg   valid_at datemultirange,
+--dg   parent_id int4range,
+--dg   CONSTRAINT temporal_fk_mltrng2mltrng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS),
+--dg   CONSTRAINT temporal_fk_mltrng2mltrng_fk FOREIGN KEY (parent_id)
+--dg     REFERENCES temporal_mltrng
+--dg );
+
+-- should fail because of duplicate referenced columns:
+--dg-cascade
+--dg CREATE TABLE temporal_fk_mltrng2mltrng (
+--dg   id int4range,
+--dg   valid_at datemultirange,
+--dg   parent_id int4range,
+--dg   CONSTRAINT temporal_fk_mltrng2mltrng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS),
+--dg   CONSTRAINT temporal_fk_mltrng2mltrng_fk FOREIGN KEY (parent_id, PERIOD parent_id)
+--dg     REFERENCES temporal_mltrng (id, PERIOD id)
+--dg );
+
+-- Two scalar columns
+--dg-cascade
+--dg DROP TABLE temporal_mltrng2;
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal_mltrng2 (
+--dg   id1 int4range,
+--dg   id2 int4range,
+--dg   valid_at datemultirange,
+--dg   CONSTRAINT temporal_mltrng2_pk PRIMARY KEY (id1, id2, valid_at WITHOUT OVERLAPS)
+--dg );
+
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal_fk2_mltrng2mltrng (
+--dg   id int4range,
+--dg   valid_at datemultirange,
+--dg   parent_id1 int4range,
+--dg   parent_id2 int4range,
+--dg   CONSTRAINT temporal_fk2_mltrng2mltrng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS),
+--dg   CONSTRAINT temporal_fk2_mltrng2mltrng_fk FOREIGN KEY (parent_id1, parent_id2, PERIOD valid_at)
+--dg     REFERENCES temporal_mltrng2 (id1, id2, PERIOD valid_at)
+--dg );
+--dg-cascade
+--dg \d temporal_fk2_mltrng2mltrng
+--dg-cascade
+--dg DROP TABLE temporal_fk2_mltrng2mltrng;
+
+--
+-- test ALTER TABLE ADD CONSTRAINT
+--
+
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal_fk_mltrng2mltrng (
+--dg   id int4range,
+--dg   valid_at datemultirange,
+--dg   parent_id int4range,
+--dg   CONSTRAINT temporal_fk_mltrng2mltrng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS)
+--dg );
+--dg-cascade
+--dg ALTER TABLE temporal_fk_mltrng2mltrng
+--dg   ADD CONSTRAINT temporal_fk_mltrng2mltrng_fk
+--dg   FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg   REFERENCES temporal_mltrng (id, PERIOD valid_at);
+
+-- Two scalar columns:
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE temporal_fk2_mltrng2mltrng (
+--dg   id int4range,
+--dg   valid_at datemultirange,
+--dg   parent_id1 int4range,
+--dg   parent_id2 int4range,
+--dg   CONSTRAINT temporal_fk2_mltrng2mltrng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS)
+--dg );
+
+--dg-cascade
+--dg ALTER TABLE temporal_fk2_mltrng2mltrng
+--dg   ADD CONSTRAINT temporal_fk2_mltrng2mltrng_fk
+--dg   FOREIGN KEY (parent_id1, parent_id2, PERIOD valid_at)
+--dg   REFERENCES temporal_mltrng2 (id1, id2, PERIOD valid_at);
+--dg-cascade
+--dg \d temporal_fk2_mltrng2mltrng
+
+-- should fail because of duplicate referenced columns:
+--dg-cascade
+--dg ALTER TABLE temporal_fk_mltrng2mltrng
+--dg   ADD CONSTRAINT temporal_fk_mltrng2mltrng_fk2
+--dg   FOREIGN KEY (parent_id, PERIOD parent_id)
+--dg   REFERENCES temporal_mltrng (id, PERIOD id);
+
+--
+-- test with rows already
+--
+
+--dg-cascade
+--dg DELETE FROM temporal_fk_mltrng2mltrng;
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES
+--dg   ('[1,2)', datemultirange(daterange('2018-01-02', '2018-02-03'))),
+--dg   ('[1,2)', datemultirange(daterange('2018-03-03', '2018-04-04'))),
+--dg   ('[2,3)', datemultirange(daterange('2018-01-01', '2018-01-05'))),
+--dg   ('[3,4)', datemultirange(daterange('2018-01-01', NULL)));
+
+--dg-cascade
+--dg ALTER TABLE temporal_fk_mltrng2mltrng
+--dg   DROP CONSTRAINT temporal_fk_mltrng2mltrng_fk;
+--dg-cascade
+--dg INSERT INTO temporal_fk_mltrng2mltrng (id, valid_at, parent_id) VALUES ('[1,2)', datemultirange(daterange('2018-01-02', '2018-02-01')), '[1,2)');
+--dg-cascade
+--dg ALTER TABLE temporal_fk_mltrng2mltrng
+--dg   ADD CONSTRAINT temporal_fk_mltrng2mltrng_fk
+--dg   FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg   REFERENCES temporal_mltrng (id, PERIOD valid_at);
+--dg-cascade
+--dg ALTER TABLE temporal_fk_mltrng2mltrng
+--dg   DROP CONSTRAINT temporal_fk_mltrng2mltrng_fk;
+--dg-cascade
+--dg INSERT INTO temporal_fk_mltrng2mltrng (id, valid_at, parent_id) VALUES ('[2,3)', datemultirange(daterange('2018-01-02', '2018-04-01')), '[1,2)');
+-- should fail:
+--dg-cascade
+--dg ALTER TABLE temporal_fk_mltrng2mltrng
+--dg   ADD CONSTRAINT temporal_fk_mltrng2mltrng_fk
+--dg   FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg   REFERENCES temporal_mltrng (id, PERIOD valid_at);
+-- okay again:
+--dg-cascade
+--dg DELETE FROM temporal_fk_mltrng2mltrng;
+--dg-cascade
+--dg ALTER TABLE temporal_fk_mltrng2mltrng
+--dg   ADD CONSTRAINT temporal_fk_mltrng2mltrng_fk
+--dg   FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg   REFERENCES temporal_mltrng (id, PERIOD valid_at);
+
+--
+-- test pg_get_constraintdef
+--
+
+--dg-cascade
+--dg SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'temporal_fk_mltrng2mltrng_fk';
+
+--
+-- test FK referencing inserts
+--
+
+--dg-cascade
+--dg INSERT INTO temporal_fk_mltrng2mltrng (id, valid_at, parent_id) VALUES ('[1,2)', datemultirange(daterange('2018-01-02', '2018-02-01')), '[1,2)');
+-- should fail:
+--dg-cascade
+--dg INSERT INTO temporal_fk_mltrng2mltrng (id, valid_at, parent_id) VALUES ('[2,3)', datemultirange(daterange('2018-01-02', '2018-04-01')), '[1,2)');
+-- now it should work:
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[1,2)', datemultirange(daterange('2018-02-03', '2018-03-03')));
+--dg-cascade
+--dg INSERT INTO temporal_fk_mltrng2mltrng (id, valid_at, parent_id) VALUES ('[2,3)', datemultirange(daterange('2018-01-02', '2018-04-01')), '[1,2)');
+
+--
+-- test FK referencing updates
+--
+
+-- slide the edge across a referenced transition:
+--dg-cascade
+--dg UPDATE temporal_fk_mltrng2mltrng SET valid_at = datemultirange(daterange('2018-01-02', '2018-02-20')) WHERE id = '[1,2)';
+-- should fail:
+--dg-cascade
+--dg UPDATE temporal_fk_mltrng2mltrng SET valid_at = datemultirange(daterange('2018-01-02', '2018-05-01')) WHERE id = '[1,2)';
+--dg-cascade
+--dg UPDATE temporal_fk_mltrng2mltrng SET parent_id = '[8,9)' WHERE id = '[1,2)';
+
+-- ALTER FK DEFERRABLE
+
+--dg-cascade
+--dg BEGIN;
+--dg-cascade
+--dg   INSERT INTO temporal_mltrng (id, valid_at) VALUES
+--dg     ('[5,6)', datemultirange(daterange('2018-01-01', '2018-02-01'))),
+--dg     ('[5,6)', datemultirange(daterange('2018-02-01', '2018-03-01')));
+--dg-cascade
+--dg   INSERT INTO temporal_fk_mltrng2mltrng (id, valid_at, parent_id) VALUES
+--dg     ('[3,4)', datemultirange(daterange('2018-01-05', '2018-01-10')), '[5,6)');
+--dg-cascade
+--dg   ALTER TABLE temporal_fk_mltrng2mltrng
+--dg     ALTER CONSTRAINT temporal_fk_mltrng2mltrng_fk
+--dg     DEFERRABLE INITIALLY DEFERRED;
+
+--dg-cascade
+--dg   DELETE FROM temporal_mltrng WHERE id = '[5,6)'; --should not fail yet.
+--dg-cascade
+--dg COMMIT; -- should fail here.
+
+--
+-- test FK referenced updates NO ACTION
+--
+
+--dg-cascade
+--dg TRUNCATE temporal_mltrng, temporal_fk_mltrng2mltrng;
+--dg-cascade
+--dg ALTER TABLE temporal_fk_mltrng2mltrng
+--dg   DROP CONSTRAINT temporal_fk_mltrng2mltrng_fk;
+--dg-cascade
+--dg ALTER TABLE temporal_fk_mltrng2mltrng
+--dg   ADD CONSTRAINT temporal_fk_mltrng2mltrng_fk
+--dg   FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg   REFERENCES temporal_mltrng (id, PERIOD valid_at)
+--dg   ON UPDATE NO ACTION;
+-- a PK update that succeeds because the numeric id isn't referenced:
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[5,6)', datemultirange(daterange('2018-01-01', '2018-02-01')));
+--dg-cascade
+--dg UPDATE temporal_mltrng SET valid_at = datemultirange(daterange('2016-01-01', '2016-02-01')) WHERE id = '[5,6)';
+-- a PK update that succeeds even though the numeric id is referenced because the range isn't:
+--dg-cascade
+--dg DELETE FROM temporal_mltrng WHERE id = '[5,6)';
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES
+--dg   ('[5,6)', datemultirange(daterange('2018-01-01', '2018-02-01'))),
+--dg   ('[5,6)', datemultirange(daterange('2018-02-01', '2018-03-01')));
+--dg-cascade
+--dg INSERT INTO temporal_fk_mltrng2mltrng (id, valid_at, parent_id) VALUES
+--dg   ('[3,4)', datemultirange(daterange('2018-01-05', '2018-01-10')), '[5,6)');
+--dg-cascade
+--dg UPDATE temporal_mltrng SET valid_at = datemultirange(daterange('2016-02-01', '2016-03-01'))
+--dg   WHERE id = '[5,6)' AND valid_at = datemultirange(daterange('2018-02-01', '2018-03-01'));
+-- A PK update sliding the edge between two referenced rows:
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES
+--dg   ('[6,7)', datemultirange(daterange('2018-01-01', '2018-02-01'))),
+--dg   ('[6,7)', datemultirange(daterange('2018-02-01', '2018-03-01')));
+--dg-cascade
+--dg INSERT INTO temporal_fk_mltrng2mltrng (id, valid_at, parent_id) VALUES
+--dg   ('[4,5)', datemultirange(daterange('2018-01-15', '2018-02-15')), '[6,7)');
+--dg-cascade
+--dg UPDATE temporal_mltrng
+--dg   SET valid_at = CASE WHEN lower(valid_at) = '2018-01-01' THEN datemultirange(daterange('2018-01-01', '2018-01-05'))
+--dg                       WHEN lower(valid_at) = '2018-02-01' THEN datemultirange(daterange('2018-01-05', '2018-03-01')) END
+--dg   WHERE id = '[6,7)';
+-- a PK update shrinking the referenced multirange but still valid:
+-- There are two references: one fulfilled by the first pk row,
+-- the other fulfilled by both pk rows combined.
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES
+--dg   ('[1,2)', datemultirange(daterange('2018-01-01', '2018-03-01'))),
+--dg   ('[1,2)', datemultirange(daterange('2018-03-01', '2018-06-01')));
+--dg-cascade
+--dg INSERT INTO temporal_fk_mltrng2mltrng (id, valid_at, parent_id) VALUES
+--dg   ('[1,2)', datemultirange(daterange('2018-01-15', '2018-02-01')), '[1,2)'),
+--dg   ('[2,3)', datemultirange(daterange('2018-01-15', '2018-05-01')), '[1,2)');
+--dg-cascade
+--dg UPDATE temporal_mltrng SET valid_at = datemultirange(daterange('2018-01-15', '2018-03-01'))
+--dg   WHERE id = '[1,2)' AND valid_at @> '2018-01-15'::date;
+-- a PK update growing the referenced multirange is fine:
+--dg-cascade
+--dg UPDATE temporal_mltrng SET valid_at = datemultirange(daterange('2018-01-01', '2018-03-01'))
+--dg   WHERE id = '[1,2)' AND valid_at @> '2018-01-25'::date;
+-- a PK update shrinking the referenced multirange and changing the id invalidates the whole multirange (error):
+--dg-cascade
+--dg UPDATE temporal_mltrng SET id = '[2,3)', valid_at = datemultirange(daterange('2018-01-15', '2018-03-01'))
+--dg   WHERE id = '[1,2)' AND valid_at @> '2018-01-15'::date;
+-- a PK update changing only the id invalidates the whole multirange (error):
+--dg-cascade
+--dg UPDATE temporal_mltrng SET id = '[2,3)'
+--dg   WHERE id = '[1,2)' AND valid_at @> '2018-01-15'::date;
+-- a PK update that loses time from both ends, but is still valid:
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES
+--dg   ('[2,3)', datemultirange(daterange('2018-01-01', '2018-03-01')));
+--dg-cascade
+--dg INSERT INTO temporal_fk_mltrng2mltrng (id, valid_at, parent_id) VALUES
+--dg   ('[5,6)', datemultirange(daterange('2018-01-15', '2018-02-01')), '[2,3)');
+--dg-cascade
+--dg UPDATE temporal_mltrng SET valid_at = datemultirange(daterange('2018-01-15', '2018-02-15'))
+--dg   WHERE id = '[2,3)';
+-- a PK update that fails because both are referenced:
+--dg-cascade
+--dg UPDATE temporal_mltrng SET valid_at = datemultirange(daterange('2016-01-01', '2016-02-01'))
+--dg   WHERE id = '[5,6)' AND valid_at = datemultirange(daterange('2018-01-01', '2018-02-01'));
+-- a PK update that fails because both are referenced, but not 'til commit:
+--dg-cascade
+--dg BEGIN;
+--dg-cascade
+--dg   ALTER TABLE temporal_fk_mltrng2mltrng
+--dg     ALTER CONSTRAINT temporal_fk_mltrng2mltrng_fk
+--dg     DEFERRABLE INITIALLY DEFERRED;
+
+--dg-cascade
+--dg   UPDATE temporal_mltrng SET valid_at = datemultirange(daterange('2016-01-01', '2016-02-01'))
+--dg   WHERE id = '[5,6)' AND valid_at = datemultirange(daterange('2018-01-01', '2018-02-01'));
+--dg-cascade
+--dg COMMIT;
+-- changing the scalar part fails:
+--dg-cascade
+--dg UPDATE temporal_mltrng SET id = '[7,8)'
+--dg   WHERE id = '[5,6)' AND valid_at = datemultirange(daterange('2018-01-01', '2018-02-01'));
+
+--
+-- test FK referenced updates RESTRICT
+--
+
+--dg-cascade
+--dg TRUNCATE temporal_mltrng, temporal_fk_mltrng2mltrng;
+--dg-cascade
+--dg ALTER TABLE temporal_fk_mltrng2mltrng
+--dg   DROP CONSTRAINT temporal_fk_mltrng2mltrng_fk;
+--dg-cascade
+--dg ALTER TABLE temporal_fk_mltrng2mltrng
+--dg   ADD CONSTRAINT temporal_fk_mltrng2mltrng_fk
+--dg   FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg   REFERENCES temporal_mltrng (id, PERIOD valid_at)
+--dg   ON UPDATE RESTRICT;
+
+--
+-- test FK referenced deletes NO ACTION
+--
+
+--dg-cascade
+--dg TRUNCATE temporal_mltrng, temporal_fk_mltrng2mltrng;
+--dg-cascade
+--dg ALTER TABLE temporal_fk_mltrng2mltrng
+--dg   ADD CONSTRAINT temporal_fk_mltrng2mltrng_fk
+--dg   FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg   REFERENCES temporal_mltrng (id, PERIOD valid_at);
+-- a PK delete that succeeds because the numeric id isn't referenced:
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES ('[5,6)', datemultirange(daterange('2018-01-01', '2018-02-01')));
+--dg-cascade
+--dg DELETE FROM temporal_mltrng WHERE id = '[5,6)';
+-- a PK delete that succeeds even though the numeric id is referenced because the range isn't:
+--dg-cascade
+--dg INSERT INTO temporal_mltrng (id, valid_at) VALUES
+--dg   ('[5,6)', datemultirange(daterange('2018-01-01', '2018-02-01'))),
+--dg   ('[5,6)', datemultirange(daterange('2018-02-01', '2018-03-01')));
+--dg-cascade
+--dg INSERT INTO temporal_fk_mltrng2mltrng (id, valid_at, parent_id) VALUES ('[3,4)', datemultirange(daterange('2018-01-05', '2018-01-10')), '[5,6)');
+--dg-cascade
+--dg DELETE FROM temporal_mltrng WHERE id = '[5,6)' AND valid_at = datemultirange(daterange('2018-02-01', '2018-03-01'));
+-- a PK delete that fails because both are referenced:
+--dg-cascade
+--dg DELETE FROM temporal_mltrng WHERE id = '[5,6)' AND valid_at = datemultirange(daterange('2018-01-01', '2018-02-01'));
+-- a PK delete that fails because both are referenced, but not 'til commit:
+--dg-cascade
+--dg BEGIN;
+--dg-cascade
+--dg   ALTER TABLE temporal_fk_mltrng2mltrng
+--dg     ALTER CONSTRAINT temporal_fk_mltrng2mltrng_fk
+--dg     DEFERRABLE INITIALLY DEFERRED;
+
+--dg-cascade
+--dg   DELETE FROM temporal_mltrng WHERE id = '[5,6)' AND valid_at = datemultirange(daterange('2018-01-01', '2018-02-01'));
+--dg-cascade
+--dg COMMIT;
+
+--
+-- FK between partitioned tables: ranges
+--
+
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE temporal_partitioned_rng (
+--dg   id int4range,
+--dg   valid_at daterange,
+--dg   name text,
+--dg   CONSTRAINT temporal_paritioned_rng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS)
+--dg ) PARTITION BY LIST (id);
+--dg-cascade
+--dg CREATE TABLE tp1 partition OF temporal_partitioned_rng FOR VALUES IN ('[1,2)', '[3,4)', '[5,6)', '[7,8)', '[9,10)', '[11,12)');
+--dg-cascade
+--dg CREATE TABLE tp2 partition OF temporal_partitioned_rng FOR VALUES IN ('[2,3)', '[4,5)', '[6,7)', '[8,9)', '[10,11)', '[12,13)');
+--dg-cascade
+--dg INSERT INTO temporal_partitioned_rng (id, valid_at, name) VALUES
+--dg   ('[1,2)', daterange('2000-01-01', '2000-02-01'), 'one'),
+--dg   ('[1,2)', daterange('2000-02-01', '2000-03-01'), 'one'),
+--dg   ('[2,3)', daterange('2000-01-01', '2010-01-01'), 'two');
+
+--dg-cascade
+--dg CREATE TABLE temporal_partitioned_fk_rng2rng (
+--dg   id int4range,
+--dg   valid_at daterange,
+--dg   parent_id int4range,
+--dg   CONSTRAINT temporal_partitioned_fk_rng2rng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS),
+--dg   CONSTRAINT temporal_partitioned_fk_rng2rng_fk FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg     REFERENCES temporal_partitioned_rng (id, PERIOD valid_at)
+--dg ) PARTITION BY LIST (id);
+--dg-cascade
+--dg CREATE TABLE tfkp1 partition OF temporal_partitioned_fk_rng2rng FOR VALUES IN ('[1,2)', '[3,4)', '[5,6)', '[7,8)', '[9,10)', '[11,12)');
+--dg-cascade
+--dg CREATE TABLE tfkp2 partition OF temporal_partitioned_fk_rng2rng FOR VALUES IN ('[2,3)', '[4,5)', '[6,7)', '[8,9)', '[10,11)', '[12,13)');
+
+--
+-- partitioned FK referencing inserts
+--
+
+--dg-cascade
+--dg INSERT INTO temporal_partitioned_fk_rng2rng (id, valid_at, parent_id) VALUES
+--dg   ('[1,2)', daterange('2000-01-01', '2000-02-15'), '[1,2)'),
+--dg   ('[1,2)', daterange('2001-01-01', '2002-01-01'), '[2,3)'),
+--dg   ('[2,3)', daterange('2000-01-01', '2000-02-15'), '[1,2)');
+-- should fail:
+--dg-cascade
+--dg INSERT INTO temporal_partitioned_fk_rng2rng (id, valid_at, parent_id) VALUES
+--dg   ('[3,4)', daterange('2010-01-01', '2010-02-15'), '[1,2)');
+--dg-cascade
+--dg INSERT INTO temporal_partitioned_fk_rng2rng (id, valid_at, parent_id) VALUES
+--dg   ('[3,4)', daterange('2000-01-01', '2000-02-15'), '[3,4)');
+
+--
+-- partitioned FK referencing updates
+--
+
+--dg-cascade
+--dg UPDATE temporal_partitioned_fk_rng2rng SET valid_at = daterange('2000-01-01', '2000-02-13') WHERE id = '[2,3)';
+-- move a row from the first partition to the second
+--dg-cascade
+--dg UPDATE temporal_partitioned_fk_rng2rng SET id = '[4,5)' WHERE id = '[1,2)';
+-- move a row from the second partition to the first
+--dg-cascade
+--dg UPDATE temporal_partitioned_fk_rng2rng SET id = '[1,2)' WHERE id = '[4,5)';
+-- should fail:
+--dg-cascade
+--dg UPDATE temporal_partitioned_fk_rng2rng SET valid_at = daterange('2000-01-01', '2000-04-01') WHERE id = '[1,2)';
+
+--
+-- partitioned FK referenced updates NO ACTION
+--
+
+--dg-cascade
+--dg TRUNCATE temporal_partitioned_rng, temporal_partitioned_fk_rng2rng;
+--dg-cascade
+--dg INSERT INTO temporal_partitioned_rng (id, valid_at) VALUES ('[5,6)', daterange('2016-01-01', '2016-02-01'));
+--dg-cascade
+--dg UPDATE temporal_partitioned_rng SET valid_at = daterange('2018-01-01', '2018-02-01') WHERE id = '[5,6)';
+--dg-cascade
+--dg INSERT INTO temporal_partitioned_rng (id, valid_at) VALUES ('[5,6)', daterange('2018-02-01', '2018-03-01'));
+--dg-cascade
+--dg INSERT INTO temporal_partitioned_fk_rng2rng (id, valid_at, parent_id) VALUES ('[3,4)', daterange('2018-01-05', '2018-01-10'), '[5,6)');
+--dg-cascade
+--dg UPDATE temporal_partitioned_rng SET valid_at = daterange('2016-02-01', '2016-03-01')
+--dg   WHERE id = '[5,6)' AND valid_at = daterange('2018-02-01', '2018-03-01');
+-- should fail:
+--dg-cascade
+--dg UPDATE temporal_partitioned_rng SET valid_at = daterange('2016-01-01', '2016-02-01')
+--dg   WHERE id = '[5,6)' AND valid_at = daterange('2018-01-01', '2018-02-01');
+
+--
+-- partitioned FK referenced deletes NO ACTION
+--
+
+--dg-cascade
+--dg TRUNCATE temporal_partitioned_rng, temporal_partitioned_fk_rng2rng;
+--dg-cascade
+--dg INSERT INTO temporal_partitioned_rng (id, valid_at) VALUES ('[5,6)', daterange('2018-01-01', '2018-02-01'));
+--dg-cascade
+--dg INSERT INTO temporal_partitioned_rng (id, valid_at) VALUES ('[5,6)', daterange('2018-02-01', '2018-03-01'));
+--dg-cascade
+--dg INSERT INTO temporal_partitioned_fk_rng2rng (id, valid_at, parent_id) VALUES ('[3,4)', daterange('2018-01-05', '2018-01-10'), '[5,6)');
+--dg-cascade
+--dg DELETE FROM temporal_partitioned_rng WHERE id = '[5,6)' AND valid_at = daterange('2018-02-01', '2018-03-01');
+-- should fail:
+--dg-cascade
+--dg DELETE FROM temporal_partitioned_rng WHERE id = '[5,6)' AND valid_at = daterange('2018-01-01', '2018-02-01');
+
+--
+-- partitioned FK referenced updates CASCADE
+--
+
+--dg-cascade
+--dg ALTER TABLE temporal_partitioned_fk_rng2rng
+--dg   DROP CONSTRAINT temporal_partitioned_fk_rng2rng_fk,
+--dg   ADD CONSTRAINT temporal_partitioned_fk_rng2rng_fk
+--dg     FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg     REFERENCES temporal_partitioned_rng
+--dg     ON DELETE CASCADE ON UPDATE CASCADE;
+
+--
+-- partitioned FK referenced deletes CASCADE
+--
+
+--
+-- partitioned FK referenced updates SET NULL
+--
+
+--dg-cascade
+--dg ALTER TABLE temporal_partitioned_fk_rng2rng
+--dg   DROP CONSTRAINT temporal_partitioned_fk_rng2rng_fk,
+--dg   ADD CONSTRAINT temporal_partitioned_fk_rng2rng_fk
+--dg     FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg     REFERENCES temporal_partitioned_rng
+--dg     ON DELETE SET NULL ON UPDATE SET NULL;
+
+--
+-- partitioned FK referenced deletes SET NULL
+--
+
+--
+-- partitioned FK referenced updates SET DEFAULT
+--
+
+--dg-cascade
+--dg ALTER TABLE temporal_partitioned_fk_rng2rng
+--dg   ALTER COLUMN parent_id SET DEFAULT '[-1,-1]',
+--dg   DROP CONSTRAINT temporal_partitioned_fk_rng2rng_fk,
+--dg   ADD CONSTRAINT temporal_partitioned_fk_rng2rng_fk
+--dg     FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg     REFERENCES temporal_partitioned_rng
+--dg     ON DELETE SET DEFAULT ON UPDATE SET DEFAULT;
+
+--
+-- partitioned FK referenced deletes SET DEFAULT
+--
+
+--dg-cascade
+--dg DROP TABLE temporal_partitioned_fk_rng2rng;
+--dg-cascade
+--dg DROP TABLE temporal_partitioned_rng;
+
+--
+-- FK between partitioned tables: multiranges
+--
+
+--dg-cascade
+--dg CREATE TABLE temporal_partitioned_mltrng (
+--dg   id int4range,
+--dg   valid_at datemultirange,
+--dg   name text,
+--dg   CONSTRAINT temporal_paritioned_mltrng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS)
+--dg ) PARTITION BY LIST (id);
+--dg-cascade
+--dg CREATE TABLE tp1 PARTITION OF temporal_partitioned_mltrng FOR VALUES IN ('[1,2)', '[3,4)', '[5,6)', '[7,8)', '[9,10)', '[11,12)', '[13,14)', '[15,16)', '[17,18)', '[19,20)', '[21,22)', '[23,24)');
+--dg-cascade
+--dg CREATE TABLE tp2 PARTITION OF temporal_partitioned_mltrng FOR VALUES IN ('[0,1)', '[2,3)', '[4,5)', '[6,7)', '[8,9)', '[10,11)', '[12,13)', '[14,15)', '[16,17)', '[18,19)', '[20,21)', '[22,23)', '[24,25)');
+--dg-cascade
+--dg INSERT INTO temporal_partitioned_mltrng (id, valid_at, name) VALUES
+--dg   ('[1,2)', datemultirange(daterange('2000-01-01', '2000-02-01')), 'one'),
+--dg   ('[1,2)', datemultirange(daterange('2000-02-01', '2000-03-01')), 'one'),
+--dg   ('[2,3)', datemultirange(daterange('2000-01-01', '2010-01-01')), 'two');
+
+--dg-cascade
+--dg CREATE TABLE temporal_partitioned_fk_mltrng2mltrng (
+--dg   id int4range,
+--dg   valid_at datemultirange,
+--dg   parent_id int4range,
+--dg   CONSTRAINT temporal_partitioned_fk_mltrng2mltrng_pk PRIMARY KEY (id, valid_at WITHOUT OVERLAPS),
+--dg   CONSTRAINT temporal_partitioned_fk_mltrng2mltrng_fk FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg     REFERENCES temporal_partitioned_mltrng (id, PERIOD valid_at)
+--dg ) PARTITION BY LIST (id);
+--dg-cascade
+--dg CREATE TABLE tfkp1 PARTITION OF temporal_partitioned_fk_mltrng2mltrng FOR VALUES IN ('[1,2)', '[3,4)', '[5,6)', '[7,8)', '[9,10)', '[11,12)', '[13,14)', '[15,16)', '[17,18)', '[19,20)', '[21,22)', '[23,24)');
+--dg-cascade
+--dg CREATE TABLE tfkp2 PARTITION OF temporal_partitioned_fk_mltrng2mltrng FOR VALUES IN ('[0,1)', '[2,3)', '[4,5)', '[6,7)', '[8,9)', '[10,11)', '[12,13)', '[14,15)', '[16,17)', '[18,19)', '[20,21)', '[22,23)', '[24,25)');
+
+--
+-- partitioned FK referencing inserts
+--
+
+--dg-cascade
+--dg INSERT INTO temporal_partitioned_fk_mltrng2mltrng (id, valid_at, parent_id) VALUES
+--dg   ('[1,2)', datemultirange(daterange('2000-01-01', '2000-02-15')), '[1,2)'),
+--dg   ('[1,2)', datemultirange(daterange('2001-01-01', '2002-01-01')), '[2,3)'),
+--dg   ('[2,3)', datemultirange(daterange('2000-01-01', '2000-02-15')), '[1,2)');
+-- should fail:
+--dg-cascade
+--dg INSERT INTO temporal_partitioned_fk_mltrng2mltrng (id, valid_at, parent_id) VALUES
+--dg   ('[3,4)', datemultirange(daterange('2010-01-01', '2010-02-15')), '[1,2)');
+--dg-cascade
+--dg INSERT INTO temporal_partitioned_fk_mltrng2mltrng (id, valid_at, parent_id) VALUES
+--dg   ('[3,4)', datemultirange(daterange('2000-01-01', '2000-02-15')), '[3,4)');
+
+--
+-- partitioned FK referencing updates
+--
+
+--dg-cascade
+--dg UPDATE temporal_partitioned_fk_mltrng2mltrng SET valid_at = datemultirange(daterange('2000-01-01', '2000-02-13')) WHERE id = '[2,3)';
+-- move a row from the first partition to the second
+--dg-cascade
+--dg UPDATE temporal_partitioned_fk_mltrng2mltrng SET id = '[4,5)' WHERE id = '[1,2)';
+-- move a row from the second partition to the first
+--dg-cascade
+--dg UPDATE temporal_partitioned_fk_mltrng2mltrng SET id = '[1,2)' WHERE id = '[4,5)';
+-- should fail:
+--dg-cascade
+--dg UPDATE temporal_partitioned_fk_mltrng2mltrng SET valid_at = datemultirange(daterange('2000-01-01', '2000-04-01')) WHERE id = '[1,2)';
+
+--
+-- partitioned FK referenced updates NO ACTION
+--
+
+--dg-cascade
+--dg TRUNCATE temporal_partitioned_mltrng, temporal_partitioned_fk_mltrng2mltrng;
+--dg-cascade
+--dg INSERT INTO temporal_partitioned_mltrng (id, valid_at) VALUES ('[5,6)', datemultirange(daterange('2016-01-01', '2016-02-01')));
+--dg-cascade
+--dg UPDATE temporal_partitioned_mltrng SET valid_at = datemultirange(daterange('2018-01-01', '2018-02-01')) WHERE id = '[5,6)';
+--dg-cascade
+--dg INSERT INTO temporal_partitioned_mltrng (id, valid_at) VALUES ('[5,6)', datemultirange(daterange('2018-02-01', '2018-03-01')));
+--dg-cascade
+--dg INSERT INTO temporal_partitioned_fk_mltrng2mltrng (id, valid_at, parent_id) VALUES ('[3,4)', datemultirange(daterange('2018-01-05', '2018-01-10')), '[5,6)');
+--dg-cascade
+--dg UPDATE temporal_partitioned_mltrng SET valid_at = datemultirange(daterange('2016-02-01', '2016-03-01'))
+--dg   WHERE id = '[5,6)' AND valid_at = datemultirange(daterange('2018-02-01', '2018-03-01'));
+-- should fail:
+--dg-cascade
+--dg UPDATE temporal_partitioned_mltrng SET valid_at = datemultirange(daterange('2016-01-01', '2016-02-01'))
+--dg   WHERE id = '[5,6)' AND valid_at = datemultirange(daterange('2018-01-01', '2018-02-01'));
+
+--
+-- partitioned FK referenced deletes NO ACTION
+--
+
+--dg-cascade
+--dg TRUNCATE temporal_partitioned_mltrng, temporal_partitioned_fk_mltrng2mltrng;
+--dg-cascade
+--dg INSERT INTO temporal_partitioned_mltrng (id, valid_at) VALUES ('[5,6)', datemultirange(daterange('2018-01-01', '2018-02-01')));
+--dg-cascade
+--dg INSERT INTO temporal_partitioned_mltrng (id, valid_at) VALUES ('[5,6)', datemultirange(daterange('2018-02-01', '2018-03-01')));
+--dg-cascade
+--dg INSERT INTO temporal_partitioned_fk_mltrng2mltrng (id, valid_at, parent_id) VALUES ('[3,4)', datemultirange(daterange('2018-01-05', '2018-01-10')), '[5,6)');
+--dg-cascade
+--dg DELETE FROM temporal_partitioned_mltrng WHERE id = '[5,6)' AND valid_at = datemultirange(daterange('2018-02-01', '2018-03-01'));
+-- should fail:
+--dg-cascade
+--dg DELETE FROM temporal_partitioned_mltrng WHERE id = '[5,6)' AND valid_at = datemultirange(daterange('2018-01-01', '2018-02-01'));
+
+--
+-- partitioned FK referenced updates CASCADE
+--
+
+--dg-cascade
+--dg ALTER TABLE temporal_partitioned_fk_mltrng2mltrng
+--dg   DROP CONSTRAINT temporal_partitioned_fk_mltrng2mltrng_fk,
+--dg   ADD CONSTRAINT temporal_partitioned_fk_mltrng2mltrng_fk
+--dg     FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg     REFERENCES temporal_partitioned_mltrng
+--dg     ON DELETE CASCADE ON UPDATE CASCADE;
+
+--
+-- partitioned FK referenced deletes CASCADE
+--
+
+--
+-- partitioned FK referenced updates SET NULL
+--
+
+--dg-cascade
+--dg ALTER TABLE temporal_partitioned_fk_mltrng2mltrng
+--dg   DROP CONSTRAINT temporal_partitioned_fk_mltrng2mltrng_fk,
+--dg   ADD CONSTRAINT temporal_partitioned_fk_mltrng2mltrng_fk
+--dg     FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg     REFERENCES temporal_partitioned_mltrng
+--dg     ON DELETE SET NULL ON UPDATE SET NULL;
+
+--
+-- partitioned FK referenced deletes SET NULL
+--
+
+--
+-- partitioned FK referenced updates SET DEFAULT
+--
+
+--dg-cascade
+--dg ALTER TABLE temporal_partitioned_fk_mltrng2mltrng
+--dg   ALTER COLUMN parent_id SET DEFAULT '[0,1)',
+--dg   DROP CONSTRAINT temporal_partitioned_fk_mltrng2mltrng_fk,
+--dg   ADD CONSTRAINT temporal_partitioned_fk_mltrng2mltrng_fk
+--dg     FOREIGN KEY (parent_id, PERIOD valid_at)
+--dg     REFERENCES temporal_partitioned_mltrng
+--dg     ON DELETE SET DEFAULT ON UPDATE SET DEFAULT;
+
+--
+-- partitioned FK referenced deletes SET DEFAULT
+--
+
+--dg-cascade
+--dg DROP TABLE temporal_partitioned_fk_mltrng2mltrng;
+--dg-cascade
+--dg DROP TABLE temporal_partitioned_mltrng;
+
+--dg-cascade
+--dg RESET datestyle;

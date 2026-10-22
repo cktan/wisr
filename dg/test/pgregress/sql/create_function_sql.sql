@@ -1,0 +1,633 @@
+--
+-- CREATE_FUNCTION_SQL
+--
+-- Assorted tests using SQL-language functions
+--
+
+-- All objects made in this test are in temp_func_test schema
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg CREATE USER regress_unpriv_user;
+
+CREATE SCHEMA temp_func_test;
+--dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg GRANT ALL ON SCHEMA temp_func_test TO public;
+
+SET search_path TO temp_func_test, public;
+
+--
+-- Make sanity checks on the pg_proc entries created by CREATE FUNCTION
+--
+
+--
+-- ARGUMENT and RETURN TYPES
+--
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_A_1(text, date) RETURNS bool LANGUAGE 'sql'
+--dg        AS 'SELECT $1 = ''abcd'' AND $2 > ''2001-01-01''';
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_A_2(text[]) RETURNS int LANGUAGE 'sql'
+--dg        AS 'SELECT $1[1]::int';
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_A_3() RETURNS bool LANGUAGE 'sql'
+--dg        AS 'SELECT false';
+--dg-cascade
+--dg SELECT proname, prorettype::regtype, proargtypes::regtype[] FROM pg_proc
+--dg        WHERE oid in ('functest_A_1'::regproc,
+--dg                      'functest_A_2'::regproc,
+--dg                      'functest_A_3'::regproc) ORDER BY proname;
+
+--dg-cascade
+--dg SELECT functest_A_1('abcd', '2020-01-01');
+--dg-cascade
+--dg SELECT functest_A_2(ARRAY['1', '2', '3']);
+--dg-cascade
+--dg SELECT functest_A_3();
+
+--
+-- IMMUTABLE | STABLE | VOLATILE
+--
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_B_1(int) RETURNS bool LANGUAGE 'sql'
+--dg        AS 'SELECT $1 > 0';
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_B_2(int) RETURNS bool LANGUAGE 'sql'
+--dg        IMMUTABLE AS 'SELECT $1 > 0';
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_B_3(int) RETURNS bool LANGUAGE 'sql'
+--dg        STABLE AS 'SELECT $1 = 0';
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_B_4(int) RETURNS bool LANGUAGE 'sql'
+--dg        VOLATILE AS 'SELECT $1 < 0';
+--dg-cascade
+--dg SELECT proname, provolatile FROM pg_proc
+--dg        WHERE oid in ('functest_B_1'::regproc,
+--dg                      'functest_B_2'::regproc,
+--dg                      'functest_B_3'::regproc,
+--dg 		     'functest_B_4'::regproc) ORDER BY proname;
+
+--dg-cascade
+--dg ALTER FUNCTION functest_B_2(int) VOLATILE;
+--dg-cascade
+--dg ALTER FUNCTION functest_B_3(int) COST 100;	-- unrelated change, no effect
+--dg-cascade
+--dg SELECT proname, provolatile FROM pg_proc
+--dg        WHERE oid in ('functest_B_1'::regproc,
+--dg                      'functest_B_2'::regproc,
+--dg                      'functest_B_3'::regproc,
+--dg 		     'functest_B_4'::regproc) ORDER BY proname;
+
+--
+-- SECURITY DEFINER | INVOKER
+--
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_C_1(int) RETURNS bool LANGUAGE 'sql'
+--dg        AS 'SELECT $1 > 0';
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_C_2(int) RETURNS bool LANGUAGE 'sql'
+--dg        SECURITY DEFINER AS 'SELECT $1 = 0';
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_C_3(int) RETURNS bool LANGUAGE 'sql'
+--dg        SECURITY INVOKER AS 'SELECT $1 < 0';
+--dg-cascade
+--dg SELECT proname, prosecdef FROM pg_proc
+--dg        WHERE oid in ('functest_C_1'::regproc,
+--dg                      'functest_C_2'::regproc,
+--dg                      'functest_C_3'::regproc) ORDER BY proname;
+
+--dg-cascade
+--dg ALTER FUNCTION functest_C_1(int) IMMUTABLE;	-- unrelated change, no effect
+--dg-cascade
+--dg ALTER FUNCTION functest_C_2(int) SECURITY INVOKER;
+--dg-cascade
+--dg ALTER FUNCTION functest_C_3(int) SECURITY DEFINER;
+--dg-cascade
+--dg SELECT proname, prosecdef FROM pg_proc
+--dg        WHERE oid in ('functest_C_1'::regproc,
+--dg                      'functest_C_2'::regproc,
+--dg                      'functest_C_3'::regproc) ORDER BY proname;
+
+--
+-- LEAKPROOF
+--
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_E_1(int) RETURNS bool LANGUAGE 'sql'
+--dg        AS 'SELECT $1 > 100';
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_E_2(int) RETURNS bool LANGUAGE 'sql'
+--dg        LEAKPROOF AS 'SELECT $1 > 100';
+--dg-cascade
+--dg SELECT proname, proleakproof FROM pg_proc
+--dg        WHERE oid in ('functest_E_1'::regproc,
+--dg                      'functest_E_2'::regproc) ORDER BY proname;
+
+--dg-cascade
+--dg ALTER FUNCTION functest_E_1(int) LEAKPROOF;
+--dg-cascade
+--dg ALTER FUNCTION functest_E_2(int) STABLE;	-- unrelated change, no effect
+--dg-cascade
+--dg SELECT proname, proleakproof FROM pg_proc
+--dg        WHERE oid in ('functest_E_1'::regproc,
+--dg                      'functest_E_2'::regproc) ORDER BY proname;
+
+--dg-cascade
+--dg ALTER FUNCTION functest_E_2(int) NOT LEAKPROOF;	-- remove leakproof attribute
+--dg-cascade
+--dg SELECT proname, proleakproof FROM pg_proc
+--dg        WHERE oid in ('functest_E_1'::regproc,
+--dg                      'functest_E_2'::regproc) ORDER BY proname;
+
+-- it takes superuser privilege to turn on leakproof, but not to turn off
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg ALTER FUNCTION functest_E_1(int) OWNER TO regress_unpriv_user;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg ALTER FUNCTION functest_E_2(int) OWNER TO regress_unpriv_user;
+
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg SET SESSION AUTHORIZATION regress_unpriv_user;
+SET search_path TO temp_func_test, public;
+--dg-cascade
+--dg ALTER FUNCTION functest_E_1(int) NOT LEAKPROOF;
+--dg-cascade
+--dg ALTER FUNCTION functest_E_2(int) LEAKPROOF;
+
+--dg-cascade
+--dg CREATE FUNCTION functest_E_3(int) RETURNS bool LANGUAGE 'sql'
+--dg        LEAKPROOF AS 'SELECT $1 < 200';	-- fail
+
+RESET SESSION AUTHORIZATION;
+
+--
+-- CALLED ON NULL INPUT | RETURNS NULL ON NULL INPUT | STRICT
+--
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_F_1(int) RETURNS bool LANGUAGE 'sql'
+--dg        AS 'SELECT $1 > 50';
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_F_2(int) RETURNS bool LANGUAGE 'sql'
+--dg        CALLED ON NULL INPUT AS 'SELECT $1 = 50';
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_F_3(int) RETURNS bool LANGUAGE 'sql'
+--dg        RETURNS NULL ON NULL INPUT AS 'SELECT $1 < 50';
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_F_4(int) RETURNS bool LANGUAGE 'sql'
+--dg        STRICT AS 'SELECT $1 = 50';
+--dg-cascade
+--dg SELECT proname, proisstrict FROM pg_proc
+--dg        WHERE oid in ('functest_F_1'::regproc,
+--dg                      'functest_F_2'::regproc,
+--dg                      'functest_F_3'::regproc,
+--dg                      'functest_F_4'::regproc) ORDER BY proname;
+
+--dg-cascade
+--dg ALTER FUNCTION functest_F_1(int) IMMUTABLE;	-- unrelated change, no effect
+--dg-cascade
+--dg ALTER FUNCTION functest_F_2(int) STRICT;
+--dg-cascade
+--dg ALTER FUNCTION functest_F_3(int) CALLED ON NULL INPUT;
+--dg-cascade
+--dg SELECT proname, proisstrict FROM pg_proc
+--dg        WHERE oid in ('functest_F_1'::regproc,
+--dg                      'functest_F_2'::regproc,
+--dg                      'functest_F_3'::regproc,
+--dg                      'functest_F_4'::regproc) ORDER BY proname;
+
+
+-- pg_get_functiondef tests
+
+--dg-cascade
+--dg SELECT pg_get_functiondef('functest_A_1'::regproc);
+--dg-cascade
+--dg SELECT pg_get_functiondef('functest_B_3'::regproc);
+--dg-cascade
+--dg SELECT pg_get_functiondef('functest_C_3'::regproc);
+--dg-cascade
+--dg SELECT pg_get_functiondef('functest_F_2'::regproc);
+
+
+--
+-- SQL-standard body
+--
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_S_1(a text, b date) RETURNS boolean
+--dg     LANGUAGE SQL
+--dg     RETURN a = 'abcd' AND b > '2001-01-01';
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_S_2(a text[]) RETURNS int
+--dg     RETURN a[1]::int;
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_S_3() RETURNS boolean
+--dg     RETURN false;
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_S_3a() RETURNS boolean
+--dg     BEGIN ATOMIC
+--dg         ;;RETURN false;;
+--dg     END;
+
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_S_10(a text, b date) RETURNS boolean
+--dg     LANGUAGE SQL
+--dg     BEGIN ATOMIC
+--dg         SELECT a = 'abcd' AND b > '2001-01-01';
+--dg     END;
+
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_S_13() RETURNS boolean
+--dg     BEGIN ATOMIC
+--dg         SELECT 1;
+--dg         SELECT false;
+--dg     END;
+
+-- check display of function arguments in sub-SELECT
+CREATE TABLE functest1 (i int);
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_S_16(a int, b int) RETURNS void
+--dg     LANGUAGE SQL
+--dg     BEGIN ATOMIC
+--dg         INSERT INTO functest1 SELECT a + $2;
+--dg     END;
+
+-- error: duplicate function body
+--dg-differs: another error: language "?" does not exist
+--dg CREATE FUNCTION functest_S_xxx(x int) RETURNS int
+--dg     LANGUAGE SQL
+--dg     AS $$ SELECT x * 2 $$
+--dg     RETURN x * 3;
+
+-- polymorphic arguments not allowed in this form
+--dg-differs: another error: language "?" does not exist
+--dg CREATE FUNCTION functest_S_xx(x anyarray) RETURNS anyelement
+--dg     LANGUAGE SQL
+--dg     RETURN x[1];
+
+-- check reporting of parse-analysis errors
+--dg-differs: another error: language "?" does not exist
+--dg CREATE FUNCTION functest_S_xx(x date) RETURNS boolean
+--dg     LANGUAGE SQL
+--dg     RETURN x > 1;
+
+-- tricky parsing
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_S_15(x int) RETURNS boolean
+--dg LANGUAGE SQL
+--dg BEGIN ATOMIC
+--dg     select case when x % 2 = 0 then true else false end;
+--dg END;
+
+--dg-cascade
+--dg SELECT functest_S_1('abcd', '2020-01-01');
+--dg-cascade
+--dg SELECT functest_S_2(ARRAY['1', '2', '3']);
+--dg-cascade
+--dg SELECT functest_S_3();
+
+--dg-cascade
+--dg SELECT functest_S_10('abcd', '2020-01-01');
+--dg-cascade
+--dg SELECT functest_S_13();
+
+--dg-cascade
+--dg SELECT pg_get_functiondef('functest_S_1'::regproc);
+--dg-cascade
+--dg SELECT pg_get_functiondef('functest_S_2'::regproc);
+--dg-cascade
+--dg SELECT pg_get_functiondef('functest_S_3'::regproc);
+--dg-cascade
+--dg SELECT pg_get_functiondef('functest_S_3a'::regproc);
+--dg-cascade
+--dg SELECT pg_get_functiondef('functest_S_10'::regproc);
+--dg-cascade
+--dg SELECT pg_get_functiondef('functest_S_13'::regproc);
+--dg-cascade
+--dg SELECT pg_get_functiondef('functest_S_15'::regproc);
+--dg-cascade
+--dg SELECT pg_get_functiondef('functest_S_16'::regproc);
+
+--dg-cascade
+--dg DROP TABLE functest1 CASCADE;
+
+-- test with views
+CREATE TABLE functest3 (a int);
+INSERT INTO functest3 VALUES (1), (2);
+CREATE VIEW functestv3 AS SELECT * FROM functest3;
+
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_S_14() RETURNS bigint
+--dg     RETURN (SELECT count(*) FROM functestv3);
+
+--dg-cascade
+--dg SELECT functest_S_14();
+
+--dg-cascade
+--dg DROP TABLE functest3 CASCADE;
+
+
+-- information_schema tests
+
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_IS_1(a int, b int default 1, c text default 'foo')
+--dg     RETURNS int
+--dg     LANGUAGE SQL
+--dg     AS 'SELECT $1 + $2';
+
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_IS_2(out a int, b int default 1)
+--dg     RETURNS int
+--dg     LANGUAGE SQL
+--dg     AS 'SELECT $1';
+
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_IS_3(a int default 1, out b int)
+--dg     RETURNS int
+--dg     LANGUAGE SQL
+--dg     AS 'SELECT $1';
+
+--dg-cascade
+--dg SELECT routine_name, ordinal_position, parameter_name, parameter_default
+--dg     FROM information_schema.parameters JOIN information_schema.routines USING (specific_schema, specific_name)
+--dg     WHERE routine_schema = 'temp_func_test' AND routine_name ~ '^functest_is_'
+--dg     ORDER BY 1, 2;
+
+--dg-cascade
+--dg DROP FUNCTION functest_IS_1(int, int, text), functest_IS_2(int), functest_IS_3(int);
+
+-- routine usage views
+
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_IS_4a() RETURNS int LANGUAGE SQL AS 'SELECT 1';
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_IS_4b(x int DEFAULT functest_IS_4a()) RETURNS int LANGUAGE SQL AS 'SELECT x';
+
+--dg-cascade
+--dg CREATE SEQUENCE functest1;
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_IS_5(x int DEFAULT nextval('functest1'))
+--dg     RETURNS int
+--dg     LANGUAGE SQL
+--dg     AS 'SELECT x';
+
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_IS_6()
+--dg     RETURNS int
+--dg     LANGUAGE SQL
+--dg     RETURN nextval('functest1');
+
+CREATE TABLE functest2 (a int, b int);
+
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_IS_7()
+--dg     RETURNS int
+--dg     LANGUAGE SQL
+--dg     RETURN (SELECT count(a) FROM functest2);
+
+--dg-cascade
+--dg SELECT r0.routine_name, r1.routine_name
+--dg   FROM information_schema.routine_routine_usage rru
+--dg        JOIN information_schema.routines r0 ON r0.specific_name = rru.specific_name
+--dg        JOIN information_schema.routines r1 ON r1.specific_name = rru.routine_name
+--dg   WHERE r0.routine_schema = 'temp_func_test' AND
+--dg         r1.routine_schema = 'temp_func_test'
+--dg   ORDER BY 1, 2;
+--dg-cascade
+--dg SELECT routine_name, sequence_name FROM information_schema.routine_sequence_usage
+--dg   WHERE routine_schema = 'temp_func_test'
+--dg   ORDER BY 1, 2;
+--dg-cascade
+--dg SELECT routine_name, table_name, column_name FROM information_schema.routine_column_usage
+--dg   WHERE routine_schema = 'temp_func_test'
+--dg   ORDER BY 1, 2;
+--dg-cascade
+--dg SELECT routine_name, table_name FROM information_schema.routine_table_usage
+--dg   WHERE routine_schema = 'temp_func_test'
+--dg   ORDER BY 1, 2;
+
+--dg-cascade
+--dg DROP FUNCTION functest_IS_4a CASCADE;
+--dg-cascade
+--dg DROP SEQUENCE functest1 CASCADE;
+--dg-cascade
+--dg DROP TABLE functest2 CASCADE;
+
+
+-- overload
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_B_2(bigint) RETURNS bool LANGUAGE 'sql'
+--dg        IMMUTABLE AS 'SELECT $1 > 0';
+
+--dg-cascade
+--dg DROP FUNCTION functest_b_1;
+DROP FUNCTION functest_b_1;  -- error, not found
+--dg-cascade
+--dg DROP FUNCTION functest_b_2;  -- error, ambiguous
+
+
+-- CREATE OR REPLACE tests
+
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest1(a int) RETURNS int LANGUAGE SQL AS 'SELECT $1';
+--dg-cascade
+--dg CREATE OR REPLACE FUNCTION functest1(a int) RETURNS int LANGUAGE SQL WINDOW AS 'SELECT $1';
+--dg-cascade
+--dg CREATE OR REPLACE PROCEDURE functest1(a int) LANGUAGE SQL AS 'SELECT $1';
+--dg-cascade
+--dg DROP FUNCTION functest1(a int);
+
+
+-- early shutdown of set-returning functions
+
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_srf0() RETURNS SETOF int
+--dg LANGUAGE SQL
+--dg AS $$ SELECT i FROM generate_series(1, 100) i $$;
+
+--dg-cascade
+--dg SELECT functest_srf0() LIMIT 5;
+
+
+-- inlining of set-returning functions
+
+--dg-cascade
+--dg CREATE TABLE functest3 (a int);
+INSERT INTO functest3 VALUES (1), (2), (3);
+
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_sri1() RETURNS SETOF int
+--dg LANGUAGE SQL
+--dg STABLE
+--dg AS '
+--dg     SELECT * FROM functest3;
+--dg ';
+
+--dg-cascade
+--dg SELECT * FROM functest_sri1();
+--dg-cascade
+--dg EXPLAIN (verbose, costs off) SELECT * FROM functest_sri1();
+
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION functest_sri2() RETURNS SETOF int
+--dg LANGUAGE SQL
+--dg STABLE
+--dg BEGIN ATOMIC
+--dg     SELECT * FROM functest3;
+--dg END;
+
+--dg-cascade
+--dg SELECT * FROM functest_sri2();
+--dg-cascade
+--dg EXPLAIN (verbose, costs off) SELECT * FROM functest_sri2();
+
+--dg-cascade
+--dg DROP TABLE functest3 CASCADE;
+
+
+-- Check behavior of VOID-returning SQL functions
+
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION voidtest1(a int) RETURNS VOID LANGUAGE SQL AS
+--dg $$ SELECT a + 1 $$;
+--dg-cascade
+--dg SELECT voidtest1(42);
+
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION voidtest2(a int, b int) RETURNS VOID LANGUAGE SQL AS
+--dg $$ SELECT voidtest1(a + b) $$;
+--dg-cascade
+--dg SELECT voidtest2(11,22);
+
+-- currently, we can inline voidtest2 but not voidtest1
+--dg-cascade
+--dg EXPLAIN (verbose, costs off) SELECT voidtest2(11,22);
+
+CREATE TEMP TABLE sometable(f1 int);
+
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION voidtest3(a int) RETURNS VOID LANGUAGE SQL AS
+--dg $$ INSERT INTO sometable VALUES(a + 1) $$;
+--dg-cascade
+--dg SELECT voidtest3(17);
+
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION voidtest4(a int) RETURNS VOID LANGUAGE SQL AS
+--dg $$ INSERT INTO sometable VALUES(a - 1) RETURNING f1 $$;
+--dg-cascade
+--dg SELECT voidtest4(39);
+
+--dg-cascade
+--dg TABLE sometable;
+
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION voidtest5(a int) RETURNS SETOF VOID LANGUAGE SQL AS
+--dg $$ SELECT generate_series(1, a) $$ STABLE;
+--dg-cascade
+--dg SELECT * FROM voidtest5(3);
+
+-- DDL within a SQL function can now affect later statements in the function;
+-- though that doesn't work if check_function_bodies is on.
+
+SET check_function_bodies TO off;
+
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION create_and_insert() RETURNS VOID LANGUAGE sql AS $$
+--dg   create table ddl_test (f1 int);
+--dg   insert into ddl_test values (1.2);
+--dg $$;
+
+--dg-cascade
+--dg SELECT create_and_insert();
+
+--dg-cascade
+--dg TABLE ddl_test;
+
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION alter_and_insert() RETURNS VOID LANGUAGE sql AS $$
+--dg   alter table ddl_test alter column f1 type numeric;
+--dg   insert into ddl_test values (1.2);
+--dg $$;
+
+--dg-cascade
+--dg SELECT alter_and_insert();
+
+--dg-cascade
+--dg TABLE ddl_test;
+
+RESET check_function_bodies;
+
+-- Regression tests for bugs:
+
+-- Check that arguments that are R/W expanded datums aren't corrupted by
+-- multiple uses.  This test knows that array_append() returns a R/W datum
+-- and will modify a R/W array input in-place.  We use SETOF to prevent
+-- inlining of the SQL function.
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION double_append(anyarray, anyelement) RETURNS SETOF anyarray
+--dg LANGUAGE SQL IMMUTABLE AS
+--dg $$ SELECT array_append($1, $2) || array_append($1, $2) $$;
+
+--dg-cascade
+--dg SELECT double_append(array_append(ARRAY[q1], q2), q3)
+--dg   FROM (VALUES(1,2,3), (4,5,6)) v(q1,q2,q3);
+
+-- Check that we can re-use a SQLFunctionCache after a run-time error.
+
+-- This function will fail with zero-divide at run time (not plan time).
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION part_hashint4_error(value int4, seed int8) RETURNS int8
+--dg LANGUAGE SQL STRICT IMMUTABLE PARALLEL SAFE AS
+--dg $$ SELECT value + seed + random()::int/0 $$;
+
+-- Put it into an operator class so that FmgrInfo will be cached in relcache.
+--dg-skip: relation pg_opfamily cannot be opened: digres has no catalog tables
+--dg CREATE OPERATOR CLASS part_test_int4_ops_bad FOR TYPE int4 USING hash AS
+--dg   FUNCTION 2 part_hashint4_error(int4, int8);
+
+--dg-cascade
+--dg CREATE TABLE pt(i int) PARTITION BY hash (i part_test_int4_ops_bad);
+--dg-cascade
+--dg CREATE TABLE p1 PARTITION OF pt FOR VALUES WITH (modulus 4, remainder 0);
+
+--dg-cascade
+--dg INSERT INTO pt VALUES (1);
+--dg-cascade
+--dg INSERT INTO pt VALUES (1);
+
+-- Things that shouldn't work:
+
+--dg-differs: another error: language "?" does not exist
+--dg CREATE FUNCTION test1 (int) RETURNS int LANGUAGE SQL
+--dg     AS 'SELECT ''not an integer'';';
+
+--dg-differs: another error: language "?" does not exist
+--dg CREATE FUNCTION test1 (int) RETURNS int LANGUAGE SQL
+--dg     AS 'not even SQL';
+
+--dg-differs: another error: language "?" does not exist
+--dg CREATE FUNCTION test1 (int) RETURNS int LANGUAGE SQL
+--dg     AS 'SELECT 1, 2, 3;';
+
+--dg-differs: another error: language "?" does not exist
+--dg CREATE FUNCTION test1 (int) RETURNS int LANGUAGE SQL
+--dg     AS 'SELECT $2;';
+
+--dg-differs: another error: language "?" does not exist
+--dg CREATE FUNCTION test1 (int) RETURNS int LANGUAGE SQL
+--dg     AS 'a', 'b';
+
+--dg-differs: another error: language "?" does not exist
+--dg CREATE FUNCTION test1 (int) RETURNS int LANGUAGE SQL
+--dg     AS '';
+
+-- make sure empty-body case is handled at execution time, too
+SET check_function_bodies = off;
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION test1 (anyelement) RETURNS anyarray LANGUAGE SQL
+--dg     AS '';
+--dg-cascade
+--dg SELECT test1(0);
+RESET check_function_bodies;
+
+-- Cleanup
+--dg-cascade
+--dg DROP SCHEMA temp_func_test CASCADE;
+--dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg DROP USER regress_unpriv_user;
+RESET search_path;

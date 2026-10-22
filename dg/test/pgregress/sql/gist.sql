@@ -1,0 +1,280 @@
+--
+-- Test GiST indexes.
+--
+-- There are other tests to test different GiST opclasses. This is for
+-- testing GiST code itself. Vacuuming in particular.
+
+--dg-skip: type ? is not supported yet
+--dg create table gist_point_tbl(id int4, p point);
+--dg-cascade
+--dg create index gist_pointidx on gist_point_tbl using gist(p);
+
+-- Verify the fillfactor and buffering options
+--dg-cascade
+--dg create index gist_pointidx2 on gist_point_tbl using gist(p) with (buffering = on, fillfactor=50);
+--dg-cascade
+--dg create index gist_pointidx3 on gist_point_tbl using gist(p) with (buffering = off);
+--dg-cascade
+--dg create index gist_pointidx4 on gist_point_tbl using gist(p) with (buffering = auto);
+--dg-cascade
+--dg drop index gist_pointidx2, gist_pointidx3, gist_pointidx4;
+
+-- Make sure bad values are refused
+--dg-cascade
+--dg create index gist_pointidx5 on gist_point_tbl using gist(p) with (buffering = invalid_value);
+--dg-cascade
+--dg create index gist_pointidx5 on gist_point_tbl using gist(p) with (fillfactor=9);
+--dg-cascade
+--dg create index gist_pointidx5 on gist_point_tbl using gist(p) with (fillfactor=101);
+
+-- Insert enough data to create a tree that's a couple of levels deep.
+--dg-cascade
+--dg insert into gist_point_tbl (id, p)
+--dg select g,        point(g*10, g*10) from generate_series(1, 10000) g;
+
+--dg-cascade
+--dg insert into gist_point_tbl (id, p)
+--dg select g+100000, point(g*10+1, g*10+1) from generate_series(1, 10000) g;
+
+-- To test vacuum, delete some entries from all over the index.
+--dg-cascade
+--dg delete from gist_point_tbl where id % 2 = 1;
+
+-- And also delete some concentration of values.
+--dg-cascade
+--dg delete from gist_point_tbl where id > 5000;
+
+--dg-cascade
+--dg vacuum analyze gist_point_tbl;
+
+-- rebuild the index with a different fillfactor
+--dg-skip: ALTER INDEX is not supported yet
+--dg alter index gist_pointidx SET (fillfactor = 40);
+--dg-cascade
+--dg reindex index gist_pointidx;
+
+--
+-- Test Index-only plans on GiST indexes
+--
+
+--dg-skip: type ? is not supported yet
+--dg create table gist_tbl (b box, p point, c circle);
+
+--dg-cascade
+--dg insert into gist_tbl
+--dg select box(point(0.05*i, 0.05*i), point(0.05*i, 0.05*i)),
+--dg        point(0.05*i, 0.05*i),
+--dg        circle(point(0.05*i, 0.05*i), 1.0)
+--dg from generate_series(0,10000) as i;
+
+--dg-cascade
+--dg vacuum analyze gist_tbl;
+
+set enable_seqscan=off;
+set enable_bitmapscan=off;
+set enable_indexonlyscan=on;
+
+-- Test index-only scan with point opclass
+--dg-cascade
+--dg create index gist_tbl_point_index on gist_tbl using gist (p);
+
+-- check that the planner chooses an index-only scan
+--dg-cascade
+--dg explain (costs off)
+--dg select p from gist_tbl where p <@ box(point(0,0), point(0.5, 0.5));
+
+-- execute the same
+--dg-cascade
+--dg select p from gist_tbl where p <@ box(point(0,0), point(0.5, 0.5));
+
+-- Also test an index-only knn-search
+--dg-cascade
+--dg explain (costs off)
+--dg select p from gist_tbl where p <@ box(point(0,0), point(0.5, 0.5))
+--dg order by p <-> point(0.201, 0.201);
+
+--dg-cascade
+--dg select p from gist_tbl where p <@ box(point(0,0), point(0.5, 0.5))
+--dg order by p <-> point(0.201, 0.201);
+
+-- Check commuted case as well
+--dg-cascade
+--dg explain (costs off)
+--dg select p from gist_tbl where p <@ box(point(0,0), point(0.5, 0.5))
+--dg order by point(0.101, 0.101) <-> p;
+
+--dg-cascade
+--dg select p from gist_tbl where p <@ box(point(0,0), point(0.5, 0.5))
+--dg order by point(0.101, 0.101) <-> p;
+
+-- Check case with multiple rescans (bug #14641)
+--dg-cascade
+--dg explain (costs off)
+--dg select p from
+--dg   (values (box(point(0,0), point(0.5,0.5))),
+--dg           (box(point(0.5,0.5), point(0.75,0.75))),
+--dg           (box(point(0.8,0.8), point(1.0,1.0)))) as v(bb)
+--dg cross join lateral
+--dg   (select p from gist_tbl where p <@ bb order by p <-> bb[0] limit 2) ss;
+
+--dg-cascade
+--dg select p from
+--dg   (values (box(point(0,0), point(0.5,0.5))),
+--dg           (box(point(0.5,0.5), point(0.75,0.75))),
+--dg           (box(point(0.8,0.8), point(1.0,1.0)))) as v(bb)
+--dg cross join lateral
+--dg   (select p from gist_tbl where p <@ bb order by p <-> bb[0] limit 2) ss;
+
+--dg-cascade
+--dg drop index gist_tbl_point_index;
+
+-- Test index-only scan with box opclass
+--dg-cascade
+--dg create index gist_tbl_box_index on gist_tbl using gist (b);
+
+-- check that the planner chooses an index-only scan
+--dg-cascade
+--dg explain (costs off)
+--dg select b from gist_tbl where b <@ box(point(5,5), point(6,6));
+
+-- execute the same
+--dg-cascade
+--dg select b from gist_tbl where b <@ box(point(5,5), point(6,6));
+
+-- Also test an index-only knn-search
+--dg-cascade
+--dg explain (costs off)
+--dg select b from gist_tbl where b <@ box(point(5,5), point(6,6))
+--dg order by b <-> point(5.2, 5.91);
+
+--dg-cascade
+--dg select b from gist_tbl where b <@ box(point(5,5), point(6,6))
+--dg order by b <-> point(5.2, 5.91);
+
+-- Check commuted case as well
+--dg-cascade
+--dg explain (costs off)
+--dg select b from gist_tbl where b <@ box(point(5,5), point(6,6))
+--dg order by point(5.2, 5.91) <-> b;
+
+--dg-cascade
+--dg select b from gist_tbl where b <@ box(point(5,5), point(6,6))
+--dg order by point(5.2, 5.91) <-> b;
+
+--dg-cascade
+--dg drop index gist_tbl_box_index;
+
+-- Test that an index-only scan is not chosen, when the query involves the
+-- circle column (the circle opclass does not support index-only scans).
+--dg-cascade
+--dg create index gist_tbl_multi_index on gist_tbl using gist (p, c);
+
+--dg-cascade
+--dg explain (costs off)
+--dg select p, c from gist_tbl
+--dg where p <@ box(point(5,5), point(6, 6));
+
+-- execute the same
+--dg-cascade
+--dg select b, p from gist_tbl
+--dg where b <@ box(point(4.5, 4.5), point(5.5, 5.5))
+--dg and p <@ box(point(5,5), point(6, 6));
+
+--dg-cascade
+--dg drop index gist_tbl_multi_index;
+
+-- Test that we don't try to return the value of a non-returnable
+-- column in an index-only scan.  (This isn't GIST-specific, but
+-- it only applies to index AMs that can return some columns and not
+-- others, so GIST with appropriate opclasses is a convenient test case.)
+--dg-cascade
+--dg create index gist_tbl_multi_index on gist_tbl using gist (circle(p,1), p);
+--dg-cascade
+--dg explain (verbose, costs off)
+--dg select circle(p,1) from gist_tbl
+--dg where p <@ box(point(5, 5), point(5.3, 5.3));
+--dg-cascade
+--dg select circle(p,1) from gist_tbl
+--dg where p <@ box(point(5, 5), point(5.3, 5.3));
+
+-- Similarly, test that index rechecks involving a non-returnable column
+-- are done correctly.
+--dg-cascade
+--dg explain (verbose, costs off)
+--dg select p from gist_tbl where circle(p,1) @> circle(point(0,0),0.95);
+--dg-cascade
+--dg select p from gist_tbl where circle(p,1) @> circle(point(0,0),0.95);
+
+-- Also check that use_physical_tlist doesn't trigger in such cases.
+--dg-cascade
+--dg explain (verbose, costs off)
+--dg select count(*) from gist_tbl;
+--dg-cascade
+--dg select count(*) from gist_tbl;
+
+-- This case isn't supported, but it should at least EXPLAIN correctly.
+--dg-cascade
+--dg explain (verbose, costs off)
+--dg select p from gist_tbl order by circle(p,1) <-> point(0,0) limit 1;
+--dg-cascade
+--dg select p from gist_tbl order by circle(p,1) <-> point(0,0) limit 1;
+
+-- Test that an index-only scan deforms the tuple it reconstructs with the
+-- descriptor the AM formed it with, not the scan slot's descriptor.
+--dg-skip: type ? is not supported yet
+--dg create temp table gist_ios_tupdesc (a inet, r numrange);
+
+-- range_ops forms its tuples using the opclass input type, the polymorphic
+-- anyrange (alignment 'd'), while the scan slot uses the actual range type
+-- numrange (alignment 'i').  A buggy implementation will incorrectly access
+-- the r/numrange column at the wrong offset.
+--
+-- The range bounds are made long so the value needs a four-byte varlena
+-- header; shorter values get a one-byte header and are stored without
+-- alignment padding, which would mask the problem.
+--dg-cascade
+--dg insert into gist_ios_tupdesc
+--dg values (
+--dg         '::1', -- shifts "r" datum value to differing offset
+--dg         numrange(repeat('7', 200)::numeric, repeat('8', 200)::numeric));
+--dg-cascade
+--dg create index on gist_ios_tupdesc using gist (a inet_ops, r);
+--dg-cascade
+--dg vacuum analyze gist_ios_tupdesc;
+
+--dg-cascade
+--dg explain (costs off)
+--dg select lower(r) = repeat('7', 200)::numeric as lower_ok,
+--dg        upper(r) = repeat('8', 200)::numeric as upper_ok
+--dg   from gist_ios_tupdesc where r && numrange(null, null);
+--dg-cascade
+--dg select lower(r) = repeat('7', 200)::numeric as lower_ok,
+--dg        upper(r) = repeat('8', 200)::numeric as upper_ok
+--dg   from gist_ios_tupdesc where r && numrange(null, null);
+
+--dg-cascade
+--dg drop table gist_ios_tupdesc;
+
+-- Force an index build using buffering.
+--dg-cascade
+--dg create index gist_tbl_box_index_forcing_buffering on gist_tbl using gist (p)
+--dg   with (buffering=on, fillfactor=50);
+
+-- Clean up
+reset enable_seqscan;
+reset enable_bitmapscan;
+reset enable_indexonlyscan;
+
+--dg-cascade
+--dg drop table gist_tbl;
+
+-- test an unlogged table, mostly to get coverage of gistbuildempty
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg create unlogged table gist_tbl (b box);
+--dg-cascade
+--dg create index gist_tbl_box_index on gist_tbl using gist (b);
+--dg-cascade
+--dg insert into gist_tbl
+--dg   select box(point(0.05*i, 0.05*i)) from generate_series(0,10) as i;
+--dg-cascade
+--dg drop table gist_tbl;

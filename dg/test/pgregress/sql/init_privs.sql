@@ -1,0 +1,14 @@
+-- Test initial privileges
+
+-- There should always be some initial privileges, set up by initdb
+--dg-skip: relation "?" does not exist
+--dg SELECT count(*) > 0 FROM pg_init_privs;
+
+-- Intentionally include some non-initial privs for pg_dump to dump out
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg GRANT SELECT ON pg_proc TO CURRENT_USER;
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg GRANT SELECT (prosrc) ON pg_proc TO CURRENT_USER;
+
+--dg-skip: relation "?" does not exist
+--dg GRANT SELECT (rolname, rolsuper) ON pg_authid TO CURRENT_USER;

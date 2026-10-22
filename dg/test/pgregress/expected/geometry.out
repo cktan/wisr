@@ -1,0 +1,852 @@
+--
+-- GEOMETRY
+--
+-- Back off displayed precision a little bit to reduce platform-to-platform
+-- variation in results.
+SET extra_float_digits TO -3;
+--
+-- Points
+--
+SELECT center(f1) AS center
+   FROM BOX_TBL;
+ERROR:  relation "box_tbl" does not exist
+LINE 2:    FROM BOX_TBL;
+                ^
+SELECT (@@ f1) AS center
+   FROM BOX_TBL;
+ERROR:  relation "box_tbl" does not exist
+LINE 2:    FROM BOX_TBL;
+                ^
+SELECT point(f1) AS center
+   FROM CIRCLE_TBL;
+ERROR:  relation "circle_tbl" does not exist
+LINE 2:    FROM CIRCLE_TBL;
+                ^
+SELECT (@@ f1) AS center
+   FROM CIRCLE_TBL;
+ERROR:  relation "circle_tbl" does not exist
+LINE 2:    FROM CIRCLE_TBL;
+                ^
+SELECT (@@ f1) AS center
+   FROM POLYGON_TBL
+   WHERE (# f1) > 2;
+ERROR:  relation "polygon_tbl" does not exist
+LINE 2:    FROM POLYGON_TBL
+                ^
+-- "is horizontal" function
+SELECT p1.f1
+   FROM POINT_TBL p1
+   WHERE ishorizontal(p1.f1, point '(0,0)');
+ERROR:  relation "point_tbl" does not exist
+LINE 2:    FROM POINT_TBL p1
+                ^
+-- "is horizontal" operator
+SELECT p1.f1
+   FROM POINT_TBL p1
+   WHERE p1.f1 ?- point '(0,0)';
+ERROR:  relation "point_tbl" does not exist
+LINE 2:    FROM POINT_TBL p1
+                ^
+-- "is vertical" function
+SELECT p1.f1
+   FROM POINT_TBL p1
+   WHERE isvertical(p1.f1, point '(5.1,34.5)');
+ERROR:  relation "point_tbl" does not exist
+LINE 2:    FROM POINT_TBL p1
+                ^
+-- "is vertical" operator
+SELECT p1.f1
+   FROM POINT_TBL p1
+   WHERE p1.f1 ?| point '(5.1,34.5)';
+ERROR:  relation "point_tbl" does not exist
+LINE 2:    FROM POINT_TBL p1
+                ^
+-- Slope
+SELECT p1.f1, p2.f1, slope(p1.f1, p2.f1) FROM POINT_TBL p1, POINT_TBL p2;
+ERROR:  relation "point_tbl" does not exist
+LINE 1: SELECT p1.f1, p2.f1, slope(p1.f1, p2.f1) FROM POINT_TBL p1, ...
+                                                      ^
+-- Add point
+SELECT p1.f1, p2.f1, p1.f1 + p2.f1 FROM POINT_TBL p1, POINT_TBL p2;
+ERROR:  relation "point_tbl" does not exist
+LINE 1: SELECT p1.f1, p2.f1, p1.f1 + p2.f1 FROM POINT_TBL p1, POINT_...
+                                                ^
+-- Subtract point
+SELECT p1.f1, p2.f1, p1.f1 - p2.f1 FROM POINT_TBL p1, POINT_TBL p2;
+ERROR:  relation "point_tbl" does not exist
+LINE 1: SELECT p1.f1, p2.f1, p1.f1 - p2.f1 FROM POINT_TBL p1, POINT_...
+                                                ^
+-- Multiply with point
+SELECT p1.f1, p2.f1, p1.f1 * p2.f1 FROM POINT_TBL p1, POINT_TBL p2 WHERE p1.f1[0] BETWEEN 1 AND 1000;
+ERROR:  relation "point_tbl" does not exist
+LINE 1: SELECT p1.f1, p2.f1, p1.f1 * p2.f1 FROM POINT_TBL p1, POINT_...
+                                                ^
+-- Underflow error
+SELECT p1.f1, p2.f1, p1.f1 * p2.f1 FROM POINT_TBL p1, POINT_TBL p2 WHERE p1.f1[0] < 1;
+ERROR:  relation "point_tbl" does not exist
+LINE 1: SELECT p1.f1, p2.f1, p1.f1 * p2.f1 FROM POINT_TBL p1, POINT_...
+                                                ^
+-- Divide by point
+SELECT p1.f1, p2.f1, p1.f1 / p2.f1 FROM POINT_TBL p1, POINT_TBL p2 WHERE p2.f1[0] BETWEEN 1 AND 1000;
+ERROR:  relation "point_tbl" does not exist
+LINE 1: SELECT p1.f1, p2.f1, p1.f1 / p2.f1 FROM POINT_TBL p1, POINT_...
+                                                ^
+-- Overflow error
+SELECT p1.f1, p2.f1, p1.f1 / p2.f1 FROM POINT_TBL p1, POINT_TBL p2 WHERE p2.f1[0] > 1000;
+ERROR:  relation "point_tbl" does not exist
+LINE 1: SELECT p1.f1, p2.f1, p1.f1 / p2.f1 FROM POINT_TBL p1, POINT_...
+                                                ^
+-- Division by 0 error
+SELECT p1.f1, p2.f1, p1.f1 / p2.f1 FROM POINT_TBL p1, POINT_TBL p2 WHERE p2.f1 ~= '(0,0)'::point;
+ERROR:  relation "point_tbl" does not exist
+LINE 1: SELECT p1.f1, p2.f1, p1.f1 / p2.f1 FROM POINT_TBL p1, POINT_...
+                                                ^
+-- Distance to line
+SELECT p.f1, l.s, p.f1 <-> l.s AS dist_pl, l.s <-> p.f1 AS dist_lp FROM POINT_TBL p, LINE_TBL l;
+ERROR:  relation "point_tbl" does not exist
+LINE 1: ... <-> l.s AS dist_pl, l.s <-> p.f1 AS dist_lp FROM POINT_TBL ...
+                                                             ^
+-- Distance to line segment
+SELECT p.f1, l.s, p.f1 <-> l.s AS dist_ps, l.s <-> p.f1 AS dist_sp FROM POINT_TBL p, LSEG_TBL l;
+ERROR:  relation "point_tbl" does not exist
+LINE 1: ... <-> l.s AS dist_ps, l.s <-> p.f1 AS dist_sp FROM POINT_TBL ...
+                                                             ^
+-- Distance to box
+SELECT p.f1, b.f1, p.f1 <-> b.f1 AS dist_pb, b.f1 <-> p.f1 AS dist_bp FROM POINT_TBL p, BOX_TBL b;
+ERROR:  relation "point_tbl" does not exist
+LINE 1: ...-> b.f1 AS dist_pb, b.f1 <-> p.f1 AS dist_bp FROM POINT_TBL ...
+                                                             ^
+-- Distance to path
+SELECT p.f1, p1.f1, p.f1 <-> p1.f1 AS dist_ppath, p1.f1 <-> p.f1 AS dist_pathp FROM POINT_TBL p, PATH_TBL p1;
+ERROR:  relation "point_tbl" does not exist
+LINE 1: ... AS dist_ppath, p1.f1 <-> p.f1 AS dist_pathp FROM POINT_TBL ...
+                                                             ^
+-- Distance to polygon
+SELECT p.f1, p1.f1, p.f1 <-> p1.f1 AS dist_ppoly, p1.f1 <-> p.f1 AS dist_polyp FROM POINT_TBL p, POLYGON_TBL p1;
+ERROR:  relation "point_tbl" does not exist
+LINE 1: ... AS dist_ppoly, p1.f1 <-> p.f1 AS dist_polyp FROM POINT_TBL ...
+                                                             ^
+-- Construct line through two points
+SELECT p1.f1, p2.f1, line(p1.f1, p2.f1)
+  FROM POINT_TBL p1, POINT_TBL p2 WHERE p1.f1 <> p2.f1;
+ERROR:  relation "point_tbl" does not exist
+LINE 2:   FROM POINT_TBL p1, POINT_TBL p2 WHERE p1.f1 <> p2.f1;
+               ^
+-- Closest point to line
+SELECT p.f1, l.s, p.f1 ## l.s FROM POINT_TBL p, LINE_TBL l;
+ERROR:  relation "point_tbl" does not exist
+LINE 1: SELECT p.f1, l.s, p.f1 ## l.s FROM POINT_TBL p, LINE_TBL l;
+                                           ^
+-- Closest point to line segment
+SELECT p.f1, l.s, p.f1 ## l.s FROM POINT_TBL p, LSEG_TBL l;
+ERROR:  relation "point_tbl" does not exist
+LINE 1: SELECT p.f1, l.s, p.f1 ## l.s FROM POINT_TBL p, LSEG_TBL l;
+                                           ^
+-- Closest point to box
+SELECT p.f1, b.f1, p.f1 ## b.f1 FROM POINT_TBL p, BOX_TBL b;
+ERROR:  relation "point_tbl" does not exist
+LINE 1: SELECT p.f1, b.f1, p.f1 ## b.f1 FROM POINT_TBL p, BOX_TBL b;
+                                             ^
+-- On line
+SELECT p.f1, l.s FROM POINT_TBL p, LINE_TBL l WHERE p.f1 <@ l.s;
+ERROR:  relation "point_tbl" does not exist
+LINE 1: SELECT p.f1, l.s FROM POINT_TBL p, LINE_TBL l WHERE p.f1 <@ ...
+                              ^
+-- On line segment
+SELECT p.f1, l.s FROM POINT_TBL p, LSEG_TBL l WHERE p.f1 <@ l.s;
+ERROR:  relation "point_tbl" does not exist
+LINE 1: SELECT p.f1, l.s FROM POINT_TBL p, LSEG_TBL l WHERE p.f1 <@ ...
+                              ^
+-- On path
+SELECT p.f1, p1.f1 FROM POINT_TBL p, PATH_TBL p1 WHERE p.f1 <@ p1.f1;
+ERROR:  relation "point_tbl" does not exist
+LINE 1: SELECT p.f1, p1.f1 FROM POINT_TBL p, PATH_TBL p1 WHERE p.f1 ...
+                                ^
+--
+-- Lines
+--
+-- Vertical
+SELECT s FROM LINE_TBL WHERE ?| s;
+ERROR:  relation "line_tbl" does not exist
+LINE 1: SELECT s FROM LINE_TBL WHERE ?| s;
+                      ^
+-- Horizontal
+SELECT s FROM LINE_TBL WHERE ?- s;
+ERROR:  relation "line_tbl" does not exist
+LINE 1: SELECT s FROM LINE_TBL WHERE ?- s;
+                      ^
+-- Same as line
+SELECT l1.s, l2.s FROM LINE_TBL l1, LINE_TBL l2 WHERE l1.s = l2.s;
+ERROR:  relation "line_tbl" does not exist
+LINE 1: SELECT l1.s, l2.s FROM LINE_TBL l1, LINE_TBL l2 WHERE l1.s =...
+                               ^
+-- Parallel to line
+SELECT l1.s, l2.s FROM LINE_TBL l1, LINE_TBL l2 WHERE l1.s ?|| l2.s;
+ERROR:  relation "line_tbl" does not exist
+LINE 1: SELECT l1.s, l2.s FROM LINE_TBL l1, LINE_TBL l2 WHERE l1.s ?...
+                               ^
+-- Perpendicular to line
+SELECT l1.s, l2.s FROM LINE_TBL l1, LINE_TBL l2 WHERE l1.s ?-| l2.s;
+ERROR:  relation "line_tbl" does not exist
+LINE 1: SELECT l1.s, l2.s FROM LINE_TBL l1, LINE_TBL l2 WHERE l1.s ?...
+                               ^
+-- Distance to line
+SELECT l1.s, l2.s, l1.s <-> l2.s FROM LINE_TBL l1, LINE_TBL l2;
+ERROR:  relation "line_tbl" does not exist
+LINE 1: SELECT l1.s, l2.s, l1.s <-> l2.s FROM LINE_TBL l1, LINE_TBL ...
+                                              ^
+-- Intersect with line
+SELECT l1.s, l2.s FROM LINE_TBL l1, LINE_TBL l2 WHERE l1.s ?# l2.s;
+ERROR:  relation "line_tbl" does not exist
+LINE 1: SELECT l1.s, l2.s FROM LINE_TBL l1, LINE_TBL l2 WHERE l1.s ?...
+                               ^
+-- Intersect with box
+SELECT l.s, b.f1 FROM LINE_TBL l, BOX_TBL b WHERE l.s ?# b.f1;
+ERROR:  relation "line_tbl" does not exist
+LINE 1: SELECT l.s, b.f1 FROM LINE_TBL l, BOX_TBL b WHERE l.s ?# b.f...
+                              ^
+-- Intersection point with line
+SELECT l1.s, l2.s, l1.s # l2.s FROM LINE_TBL l1, LINE_TBL l2;
+ERROR:  relation "line_tbl" does not exist
+LINE 1: SELECT l1.s, l2.s, l1.s # l2.s FROM LINE_TBL l1, LINE_TBL l2...
+                                            ^
+-- Closest point to line segment
+SELECT l.s, l1.s, l.s ## l1.s FROM LINE_TBL l, LSEG_TBL l1;
+ERROR:  relation "line_tbl" does not exist
+LINE 1: SELECT l.s, l1.s, l.s ## l1.s FROM LINE_TBL l, LSEG_TBL l1;
+                                           ^
+--
+-- Line segments
+--
+-- intersection
+SELECT p.f1, l.s, l.s # p.f1 AS intersection
+   FROM LSEG_TBL l, POINT_TBL p;
+ERROR:  relation "lseg_tbl" does not exist
+LINE 2:    FROM LSEG_TBL l, POINT_TBL p;
+                ^
+-- Length
+SELECT s, @-@ s FROM LSEG_TBL;
+ERROR:  relation "lseg_tbl" does not exist
+LINE 1: SELECT s, @-@ s FROM LSEG_TBL;
+                             ^
+-- Vertical
+SELECT s FROM LSEG_TBL WHERE ?| s;
+ERROR:  relation "lseg_tbl" does not exist
+LINE 1: SELECT s FROM LSEG_TBL WHERE ?| s;
+                      ^
+-- Horizontal
+SELECT s FROM LSEG_TBL WHERE ?- s;
+ERROR:  relation "lseg_tbl" does not exist
+LINE 1: SELECT s FROM LSEG_TBL WHERE ?- s;
+                      ^
+-- Center
+SELECT s, @@ s FROM LSEG_TBL;
+ERROR:  relation "lseg_tbl" does not exist
+LINE 1: SELECT s, @@ s FROM LSEG_TBL;
+                            ^
+-- To point
+SELECT s, s::point FROM LSEG_TBL;
+ERROR:  relation "lseg_tbl" does not exist
+LINE 1: SELECT s, s::point FROM LSEG_TBL;
+                                ^
+-- Has points less than line segment
+SELECT l1.s, l2.s FROM LSEG_TBL l1, LSEG_TBL l2 WHERE l1.s < l2.s;
+ERROR:  relation "lseg_tbl" does not exist
+LINE 1: SELECT l1.s, l2.s FROM LSEG_TBL l1, LSEG_TBL l2 WHERE l1.s <...
+                               ^
+-- Has points less than or equal to line segment
+SELECT l1.s, l2.s FROM LSEG_TBL l1, LSEG_TBL l2 WHERE l1.s <= l2.s;
+ERROR:  relation "lseg_tbl" does not exist
+LINE 1: SELECT l1.s, l2.s FROM LSEG_TBL l1, LSEG_TBL l2 WHERE l1.s <...
+                               ^
+-- Has points equal to line segment
+SELECT l1.s, l2.s FROM LSEG_TBL l1, LSEG_TBL l2 WHERE l1.s = l2.s;
+ERROR:  relation "lseg_tbl" does not exist
+LINE 1: SELECT l1.s, l2.s FROM LSEG_TBL l1, LSEG_TBL l2 WHERE l1.s =...
+                               ^
+-- Has points greater than or equal to line segment
+SELECT l1.s, l2.s FROM LSEG_TBL l1, LSEG_TBL l2 WHERE l1.s >= l2.s;
+ERROR:  relation "lseg_tbl" does not exist
+LINE 1: SELECT l1.s, l2.s FROM LSEG_TBL l1, LSEG_TBL l2 WHERE l1.s >...
+                               ^
+-- Has points greater than line segment
+SELECT l1.s, l2.s FROM LSEG_TBL l1, LSEG_TBL l2 WHERE l1.s > l2.s;
+ERROR:  relation "lseg_tbl" does not exist
+LINE 1: SELECT l1.s, l2.s FROM LSEG_TBL l1, LSEG_TBL l2 WHERE l1.s >...
+                               ^
+-- Has points not equal to line segment
+SELECT l1.s, l2.s FROM LSEG_TBL l1, LSEG_TBL l2 WHERE l1.s != l2.s;
+ERROR:  relation "lseg_tbl" does not exist
+LINE 1: SELECT l1.s, l2.s FROM LSEG_TBL l1, LSEG_TBL l2 WHERE l1.s !...
+                               ^
+-- Parallel with line segment
+SELECT l1.s, l2.s FROM LSEG_TBL l1, LSEG_TBL l2 WHERE l1.s ?|| l2.s;
+ERROR:  relation "lseg_tbl" does not exist
+LINE 1: SELECT l1.s, l2.s FROM LSEG_TBL l1, LSEG_TBL l2 WHERE l1.s ?...
+                               ^
+-- Perpendicular with line segment
+SELECT l1.s, l2.s FROM LSEG_TBL l1, LSEG_TBL l2 WHERE l1.s ?-| l2.s;
+ERROR:  relation "lseg_tbl" does not exist
+LINE 1: SELECT l1.s, l2.s FROM LSEG_TBL l1, LSEG_TBL l2 WHERE l1.s ?...
+                               ^
+-- Distance to line
+SELECT l.s, l1.s, l.s <-> l1.s AS dist_sl, l1.s <-> l.s AS dist_ls FROM LSEG_TBL l, LINE_TBL l1;
+ERROR:  relation "lseg_tbl" does not exist
+LINE 1: ...<-> l1.s AS dist_sl, l1.s <-> l.s AS dist_ls FROM LSEG_TBL l...
+                                                             ^
+-- Distance to line segment
+SELECT l1.s, l2.s, l1.s <-> l2.s FROM LSEG_TBL l1, LSEG_TBL l2;
+ERROR:  relation "lseg_tbl" does not exist
+LINE 1: SELECT l1.s, l2.s, l1.s <-> l2.s FROM LSEG_TBL l1, LSEG_TBL ...
+                                              ^
+-- Distance to box
+SELECT l.s, b.f1, l.s <-> b.f1 AS dist_sb, b.f1 <-> l.s AS dist_bs FROM LSEG_TBL l, BOX_TBL b;
+ERROR:  relation "lseg_tbl" does not exist
+LINE 1: ...<-> b.f1 AS dist_sb, b.f1 <-> l.s AS dist_bs FROM LSEG_TBL l...
+                                                             ^
+-- Intersect with line segment
+SELECT l.s, l1.s FROM LSEG_TBL l, LINE_TBL l1 WHERE l.s ?# l1.s;
+ERROR:  relation "lseg_tbl" does not exist
+LINE 1: SELECT l.s, l1.s FROM LSEG_TBL l, LINE_TBL l1 WHERE l.s ?# l...
+                              ^
+-- Intersect with box
+SELECT l.s, b.f1 FROM LSEG_TBL l, BOX_TBL b WHERE l.s ?# b.f1;
+ERROR:  relation "lseg_tbl" does not exist
+LINE 1: SELECT l.s, b.f1 FROM LSEG_TBL l, BOX_TBL b WHERE l.s ?# b.f...
+                              ^
+-- Intersection point with line segment
+SELECT l1.s, l2.s, l1.s # l2.s FROM LSEG_TBL l1, LSEG_TBL l2;
+ERROR:  relation "lseg_tbl" does not exist
+LINE 1: SELECT l1.s, l2.s, l1.s # l2.s FROM LSEG_TBL l1, LSEG_TBL l2...
+                                            ^
+-- Closest point to line segment
+SELECT l1.s, l2.s, l1.s ## l2.s FROM LSEG_TBL l1, LSEG_TBL l2;
+ERROR:  relation "lseg_tbl" does not exist
+LINE 1: SELECT l1.s, l2.s, l1.s ## l2.s FROM LSEG_TBL l1, LSEG_TBL l...
+                                             ^
+-- Closest point to box
+SELECT l.s, b.f1, l.s ## b.f1 FROM LSEG_TBL l, BOX_TBL b;
+ERROR:  relation "lseg_tbl" does not exist
+LINE 1: SELECT l.s, b.f1, l.s ## b.f1 FROM LSEG_TBL l, BOX_TBL b;
+                                           ^
+-- On line
+SELECT l.s, l1.s FROM LSEG_TBL l, LINE_TBL l1 WHERE l.s <@ l1.s;
+ERROR:  relation "lseg_tbl" does not exist
+LINE 1: SELECT l.s, l1.s FROM LSEG_TBL l, LINE_TBL l1 WHERE l.s <@ l...
+                              ^
+-- On box
+SELECT l.s, b.f1 FROM LSEG_TBL l, BOX_TBL b WHERE l.s <@ b.f1;
+ERROR:  relation "lseg_tbl" does not exist
+LINE 1: SELECT l.s, b.f1 FROM LSEG_TBL l, BOX_TBL b WHERE l.s <@ b.f...
+                              ^
+--
+-- Boxes
+--
+SELECT box(f1) AS box FROM CIRCLE_TBL;
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT box(f1) AS box FROM CIRCLE_TBL;
+                                   ^
+-- translation
+SELECT b.f1 + p.f1 AS translation
+   FROM BOX_TBL b, POINT_TBL p;
+ERROR:  relation "box_tbl" does not exist
+LINE 2:    FROM BOX_TBL b, POINT_TBL p;
+                ^
+SELECT b.f1 - p.f1 AS translation
+   FROM BOX_TBL b, POINT_TBL p;
+ERROR:  relation "box_tbl" does not exist
+LINE 2:    FROM BOX_TBL b, POINT_TBL p;
+                ^
+-- Multiply with point
+SELECT b.f1, p.f1, b.f1 * p.f1 FROM BOX_TBL b, POINT_TBL p WHERE p.f1[0] BETWEEN 1 AND 1000;
+ERROR:  relation "box_tbl" does not exist
+LINE 1: SELECT b.f1, p.f1, b.f1 * p.f1 FROM BOX_TBL b, POINT_TBL p W...
+                                            ^
+-- Overflow error
+SELECT b.f1, p.f1, b.f1 * p.f1 FROM BOX_TBL b, POINT_TBL p WHERE p.f1[0] > 1000;
+ERROR:  relation "box_tbl" does not exist
+LINE 1: SELECT b.f1, p.f1, b.f1 * p.f1 FROM BOX_TBL b, POINT_TBL p W...
+                                            ^
+-- Divide by point
+SELECT b.f1, p.f1, b.f1 / p.f1 FROM BOX_TBL b, POINT_TBL p WHERE p.f1[0] BETWEEN 1 AND 1000;
+ERROR:  relation "box_tbl" does not exist
+LINE 1: SELECT b.f1, p.f1, b.f1 / p.f1 FROM BOX_TBL b, POINT_TBL p W...
+                                            ^
+-- To box
+SELECT f1::box
+	FROM POINT_TBL;
+ERROR:  relation "point_tbl" does not exist
+LINE 2:  FROM POINT_TBL;
+              ^
+SELECT bound_box(a.f1, b.f1)
+	FROM BOX_TBL a, BOX_TBL b;
+ERROR:  relation "box_tbl" does not exist
+LINE 2:  FROM BOX_TBL a, BOX_TBL b;
+              ^
+-- Below box
+SELECT b1.f1, b2.f1, b1.f1 <^ b2.f1 FROM BOX_TBL b1, BOX_TBL b2;
+ERROR:  relation "box_tbl" does not exist
+LINE 1: SELECT b1.f1, b2.f1, b1.f1 <^ b2.f1 FROM BOX_TBL b1, BOX_TBL...
+                                                 ^
+-- Above box
+SELECT b1.f1, b2.f1, b1.f1 >^ b2.f1 FROM BOX_TBL b1, BOX_TBL b2;
+ERROR:  relation "box_tbl" does not exist
+LINE 1: SELECT b1.f1, b2.f1, b1.f1 >^ b2.f1 FROM BOX_TBL b1, BOX_TBL...
+                                                 ^
+-- Intersection point with box
+SELECT b1.f1, b2.f1, b1.f1 # b2.f1 FROM BOX_TBL b1, BOX_TBL b2;
+ERROR:  relation "box_tbl" does not exist
+LINE 1: SELECT b1.f1, b2.f1, b1.f1 # b2.f1 FROM BOX_TBL b1, BOX_TBL ...
+                                                ^
+-- Diagonal
+SELECT f1, diagonal(f1) FROM BOX_TBL;
+ERROR:  relation "box_tbl" does not exist
+LINE 1: SELECT f1, diagonal(f1) FROM BOX_TBL;
+                                     ^
+-- Distance to box
+SELECT b1.f1, b2.f1, b1.f1 <-> b2.f1 FROM BOX_TBL b1, BOX_TBL b2;
+ERROR:  relation "box_tbl" does not exist
+LINE 1: SELECT b1.f1, b2.f1, b1.f1 <-> b2.f1 FROM BOX_TBL b1, BOX_TB...
+                                                  ^
+--
+-- Paths
+--
+-- Points
+SELECT f1, npoints(f1) FROM PATH_TBL;
+ERROR:  relation "path_tbl" does not exist
+LINE 1: SELECT f1, npoints(f1) FROM PATH_TBL;
+                                    ^
+-- Area
+SELECT f1, area(f1) FROM PATH_TBL;
+ERROR:  relation "path_tbl" does not exist
+LINE 1: SELECT f1, area(f1) FROM PATH_TBL;
+                                 ^
+-- Length
+SELECT f1, @-@ f1 FROM PATH_TBL;
+ERROR:  relation "path_tbl" does not exist
+LINE 1: SELECT f1, @-@ f1 FROM PATH_TBL;
+                               ^
+-- To polygon
+SELECT f1, f1::polygon FROM PATH_TBL WHERE isclosed(f1);
+ERROR:  relation "path_tbl" does not exist
+LINE 1: SELECT f1, f1::polygon FROM PATH_TBL WHERE isclosed(f1);
+                                    ^
+-- Open path cannot be converted to polygon error
+SELECT f1, f1::polygon FROM PATH_TBL WHERE isopen(f1);
+ERROR:  relation "path_tbl" does not exist
+LINE 1: SELECT f1, f1::polygon FROM PATH_TBL WHERE isopen(f1);
+                                    ^
+-- Has points less than path
+SELECT p1.f1, p2.f1 FROM PATH_TBL p1, PATH_TBL p2 WHERE p1.f1 < p2.f1;
+ERROR:  relation "path_tbl" does not exist
+LINE 1: SELECT p1.f1, p2.f1 FROM PATH_TBL p1, PATH_TBL p2 WHERE p1.f...
+                                 ^
+-- Has points less than or equal to path
+SELECT p1.f1, p2.f1 FROM PATH_TBL p1, PATH_TBL p2 WHERE p1.f1 <= p2.f1;
+ERROR:  relation "path_tbl" does not exist
+LINE 1: SELECT p1.f1, p2.f1 FROM PATH_TBL p1, PATH_TBL p2 WHERE p1.f...
+                                 ^
+-- Has points equal to path
+SELECT p1.f1, p2.f1 FROM PATH_TBL p1, PATH_TBL p2 WHERE p1.f1 = p2.f1;
+ERROR:  relation "path_tbl" does not exist
+LINE 1: SELECT p1.f1, p2.f1 FROM PATH_TBL p1, PATH_TBL p2 WHERE p1.f...
+                                 ^
+-- Has points greater than or equal to path
+SELECT p1.f1, p2.f1 FROM PATH_TBL p1, PATH_TBL p2 WHERE p1.f1 >= p2.f1;
+ERROR:  relation "path_tbl" does not exist
+LINE 1: SELECT p1.f1, p2.f1 FROM PATH_TBL p1, PATH_TBL p2 WHERE p1.f...
+                                 ^
+-- Has points greater than path
+SELECT p1.f1, p2.f1 FROM PATH_TBL p1, PATH_TBL p2 WHERE p1.f1 > p2.f1;
+ERROR:  relation "path_tbl" does not exist
+LINE 1: SELECT p1.f1, p2.f1 FROM PATH_TBL p1, PATH_TBL p2 WHERE p1.f...
+                                 ^
+-- Add path
+SELECT p1.f1, p2.f1, p1.f1 + p2.f1 FROM PATH_TBL p1, PATH_TBL p2;
+ERROR:  relation "path_tbl" does not exist
+LINE 1: SELECT p1.f1, p2.f1, p1.f1 + p2.f1 FROM PATH_TBL p1, PATH_TB...
+                                                ^
+-- Add point
+SELECT p.f1, p1.f1, p.f1 + p1.f1 FROM PATH_TBL p, POINT_TBL p1;
+ERROR:  relation "path_tbl" does not exist
+LINE 1: SELECT p.f1, p1.f1, p.f1 + p1.f1 FROM PATH_TBL p, POINT_TBL ...
+                                              ^
+-- Subtract point
+SELECT p.f1, p1.f1, p.f1 - p1.f1 FROM PATH_TBL p, POINT_TBL p1;
+ERROR:  relation "path_tbl" does not exist
+LINE 1: SELECT p.f1, p1.f1, p.f1 - p1.f1 FROM PATH_TBL p, POINT_TBL ...
+                                              ^
+-- Multiply with point
+SELECT p.f1, p1.f1, p.f1 * p1.f1 FROM PATH_TBL p, POINT_TBL p1;
+ERROR:  relation "path_tbl" does not exist
+LINE 1: SELECT p.f1, p1.f1, p.f1 * p1.f1 FROM PATH_TBL p, POINT_TBL ...
+                                              ^
+-- Divide by point
+SELECT p.f1, p1.f1, p.f1 / p1.f1 FROM PATH_TBL p, POINT_TBL p1 WHERE p1.f1[0] BETWEEN 1 AND 1000;
+ERROR:  relation "path_tbl" does not exist
+LINE 1: SELECT p.f1, p1.f1, p.f1 / p1.f1 FROM PATH_TBL p, POINT_TBL ...
+                                              ^
+-- Division by 0 error
+SELECT p.f1, p1.f1, p.f1 / p1.f1 FROM PATH_TBL p, POINT_TBL p1 WHERE p1.f1 ~= '(0,0)'::point;
+ERROR:  relation "path_tbl" does not exist
+LINE 1: SELECT p.f1, p1.f1, p.f1 / p1.f1 FROM PATH_TBL p, POINT_TBL ...
+                                              ^
+-- Distance to path
+SELECT p1.f1, p2.f1, p1.f1 <-> p2.f1 FROM PATH_TBL p1, PATH_TBL p2;
+ERROR:  relation "path_tbl" does not exist
+LINE 1: SELECT p1.f1, p2.f1, p1.f1 <-> p2.f1 FROM PATH_TBL p1, PATH_...
+                                                  ^
+--
+-- Polygons
+--
+-- containment
+SELECT p.f1, poly.f1, poly.f1 @> p.f1 AS contains
+   FROM POLYGON_TBL poly, POINT_TBL p;
+ERROR:  relation "polygon_tbl" does not exist
+LINE 2:    FROM POLYGON_TBL poly, POINT_TBL p;
+                ^
+SELECT p.f1, poly.f1, p.f1 <@ poly.f1 AS contained
+   FROM POLYGON_TBL poly, POINT_TBL p;
+ERROR:  relation "polygon_tbl" does not exist
+LINE 2:    FROM POLYGON_TBL poly, POINT_TBL p;
+                ^
+SELECT npoints(f1) AS npoints, f1 AS polygon
+   FROM POLYGON_TBL;
+ERROR:  relation "polygon_tbl" does not exist
+LINE 2:    FROM POLYGON_TBL;
+                ^
+SELECT polygon(f1)
+   FROM BOX_TBL;
+ERROR:  relation "box_tbl" does not exist
+LINE 2:    FROM BOX_TBL;
+                ^
+SELECT polygon(f1)
+   FROM PATH_TBL WHERE isclosed(f1);
+ERROR:  relation "path_tbl" does not exist
+LINE 2:    FROM PATH_TBL WHERE isclosed(f1);
+                ^
+SELECT f1 AS open_path, polygon( pclose(f1)) AS polygon
+   FROM PATH_TBL
+   WHERE isopen(f1);
+ERROR:  relation "path_tbl" does not exist
+LINE 2:    FROM PATH_TBL
+                ^
+-- To box
+SELECT f1, f1::box FROM POLYGON_TBL;
+ERROR:  relation "polygon_tbl" does not exist
+LINE 1: SELECT f1, f1::box FROM POLYGON_TBL;
+                                ^
+-- To path
+SELECT f1, f1::path FROM POLYGON_TBL;
+ERROR:  relation "polygon_tbl" does not exist
+LINE 1: SELECT f1, f1::path FROM POLYGON_TBL;
+                                 ^
+-- Same as polygon
+SELECT p1.f1, p2.f1 FROM POLYGON_TBL p1, POLYGON_TBL p2 WHERE p1.f1 ~= p2.f1;
+ERROR:  relation "polygon_tbl" does not exist
+LINE 1: SELECT p1.f1, p2.f1 FROM POLYGON_TBL p1, POLYGON_TBL p2 WHER...
+                                 ^
+-- Contained by polygon
+SELECT p1.f1, p2.f1 FROM POLYGON_TBL p1, POLYGON_TBL p2 WHERE p1.f1 <@ p2.f1;
+ERROR:  relation "polygon_tbl" does not exist
+LINE 1: SELECT p1.f1, p2.f1 FROM POLYGON_TBL p1, POLYGON_TBL p2 WHER...
+                                 ^
+-- Contains polygon
+SELECT p1.f1, p2.f1 FROM POLYGON_TBL p1, POLYGON_TBL p2 WHERE p1.f1 @> p2.f1;
+ERROR:  relation "polygon_tbl" does not exist
+LINE 1: SELECT p1.f1, p2.f1 FROM POLYGON_TBL p1, POLYGON_TBL p2 WHER...
+                                 ^
+-- Overlap with polygon
+SELECT p1.f1, p2.f1 FROM POLYGON_TBL p1, POLYGON_TBL p2 WHERE p1.f1 && p2.f1;
+ERROR:  relation "polygon_tbl" does not exist
+LINE 1: SELECT p1.f1, p2.f1 FROM POLYGON_TBL p1, POLYGON_TBL p2 WHER...
+                                 ^
+-- Left of polygon
+SELECT p1.f1, p2.f1 FROM POLYGON_TBL p1, POLYGON_TBL p2 WHERE p1.f1 << p2.f1;
+ERROR:  relation "polygon_tbl" does not exist
+LINE 1: SELECT p1.f1, p2.f1 FROM POLYGON_TBL p1, POLYGON_TBL p2 WHER...
+                                 ^
+-- Overlap of left of polygon
+SELECT p1.f1, p2.f1 FROM POLYGON_TBL p1, POLYGON_TBL p2 WHERE p1.f1 &< p2.f1;
+ERROR:  relation "polygon_tbl" does not exist
+LINE 1: SELECT p1.f1, p2.f1 FROM POLYGON_TBL p1, POLYGON_TBL p2 WHER...
+                                 ^
+-- Right of polygon
+SELECT p1.f1, p2.f1 FROM POLYGON_TBL p1, POLYGON_TBL p2 WHERE p1.f1 >> p2.f1;
+ERROR:  relation "polygon_tbl" does not exist
+LINE 1: SELECT p1.f1, p2.f1 FROM POLYGON_TBL p1, POLYGON_TBL p2 WHER...
+                                 ^
+-- Overlap of right of polygon
+SELECT p1.f1, p2.f1 FROM POLYGON_TBL p1, POLYGON_TBL p2 WHERE p1.f1 &> p2.f1;
+ERROR:  relation "polygon_tbl" does not exist
+LINE 1: SELECT p1.f1, p2.f1 FROM POLYGON_TBL p1, POLYGON_TBL p2 WHER...
+                                 ^
+-- Below polygon
+SELECT p1.f1, p2.f1 FROM POLYGON_TBL p1, POLYGON_TBL p2 WHERE p1.f1 <<| p2.f1;
+ERROR:  relation "polygon_tbl" does not exist
+LINE 1: SELECT p1.f1, p2.f1 FROM POLYGON_TBL p1, POLYGON_TBL p2 WHER...
+                                 ^
+-- Overlap or below polygon
+SELECT p1.f1, p2.f1 FROM POLYGON_TBL p1, POLYGON_TBL p2 WHERE p1.f1 &<| p2.f1;
+ERROR:  relation "polygon_tbl" does not exist
+LINE 1: SELECT p1.f1, p2.f1 FROM POLYGON_TBL p1, POLYGON_TBL p2 WHER...
+                                 ^
+-- Above polygon
+SELECT p1.f1, p2.f1 FROM POLYGON_TBL p1, POLYGON_TBL p2 WHERE p1.f1 |>> p2.f1;
+ERROR:  relation "polygon_tbl" does not exist
+LINE 1: SELECT p1.f1, p2.f1 FROM POLYGON_TBL p1, POLYGON_TBL p2 WHER...
+                                 ^
+-- Overlap or above polygon
+SELECT p1.f1, p2.f1 FROM POLYGON_TBL p1, POLYGON_TBL p2 WHERE p1.f1 |&> p2.f1;
+ERROR:  relation "polygon_tbl" does not exist
+LINE 1: SELECT p1.f1, p2.f1 FROM POLYGON_TBL p1, POLYGON_TBL p2 WHER...
+                                 ^
+-- Distance to polygon
+SELECT p1.f1, p2.f1, p1.f1 <-> p2.f1 FROM POLYGON_TBL p1, POLYGON_TBL p2;
+ERROR:  relation "polygon_tbl" does not exist
+LINE 1: SELECT p1.f1, p2.f1, p1.f1 <-> p2.f1 FROM POLYGON_TBL p1, PO...
+                                                  ^
+--
+-- Circles
+--
+SELECT circle(f1, 50.0)
+   FROM POINT_TBL;
+ERROR:  relation "point_tbl" does not exist
+LINE 2:    FROM POINT_TBL;
+                ^
+SELECT circle(f1)
+   FROM BOX_TBL;
+ERROR:  relation "box_tbl" does not exist
+LINE 2:    FROM BOX_TBL;
+                ^
+SELECT circle(f1)
+   FROM POLYGON_TBL
+   WHERE (# f1) >= 3;
+ERROR:  relation "polygon_tbl" does not exist
+LINE 2:    FROM POLYGON_TBL
+                ^
+SELECT c1.f1 AS circle, p1.f1 AS point, (p1.f1 <-> c1.f1) AS distance
+   FROM CIRCLE_TBL c1, POINT_TBL p1
+   WHERE (p1.f1 <-> c1.f1) > 0
+   ORDER BY distance, area(c1.f1), p1.f1[0];
+ERROR:  relation "circle_tbl" does not exist
+LINE 2:    FROM CIRCLE_TBL c1, POINT_TBL p1
+                ^
+-- To polygon
+SELECT f1, f1::polygon FROM CIRCLE_TBL WHERE f1 >= '<(0,0),1>';
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT f1, f1::polygon FROM CIRCLE_TBL WHERE f1 >= '<(0,0),1...
+                                    ^
+-- To polygon with less points
+SELECT f1, polygon(8, f1) FROM CIRCLE_TBL WHERE f1 >= '<(0,0),1>';
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT f1, polygon(8, f1) FROM CIRCLE_TBL WHERE f1 >= '<(0,0...
+                                       ^
+-- Error for insufficient number of points
+SELECT f1, polygon(1, f1) FROM CIRCLE_TBL WHERE f1 >= '<(0,0),1>';
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT f1, polygon(1, f1) FROM CIRCLE_TBL WHERE f1 >= '<(0,0...
+                                       ^
+-- Zero radius error
+SELECT f1, polygon(10, f1) FROM CIRCLE_TBL WHERE f1 < '<(0,0),1>';
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT f1, polygon(10, f1) FROM CIRCLE_TBL WHERE f1 < '<(0,0...
+                                        ^
+-- Same as circle
+SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE c1.f1 ~= c2.f1;
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE ...
+                                 ^
+-- Overlap with circle
+SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE c1.f1 && c2.f1;
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE ...
+                                 ^
+-- Overlap or left of circle
+SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE c1.f1 &< c2.f1;
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE ...
+                                 ^
+-- Left of circle
+SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE c1.f1 << c2.f1;
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE ...
+                                 ^
+-- Right of circle
+SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE c1.f1 >> c2.f1;
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE ...
+                                 ^
+-- Overlap or right of circle
+SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE c1.f1 &> c2.f1;
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE ...
+                                 ^
+-- Contained by circle
+SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE c1.f1 <@ c2.f1;
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE ...
+                                 ^
+-- Contain by circle
+SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE c1.f1 @> c2.f1;
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE ...
+                                 ^
+-- Below circle
+SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE c1.f1 <<| c2.f1;
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE ...
+                                 ^
+-- Above circle
+SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE c1.f1 |>> c2.f1;
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE ...
+                                 ^
+-- Overlap or below circle
+SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE c1.f1 &<| c2.f1;
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE ...
+                                 ^
+-- Overlap or above circle
+SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE c1.f1 |&> c2.f1;
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE ...
+                                 ^
+-- Area equal with circle
+SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE c1.f1 = c2.f1;
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE ...
+                                 ^
+-- Area not equal with circle
+SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE c1.f1 != c2.f1;
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE ...
+                                 ^
+-- Area less than circle
+SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE c1.f1 < c2.f1;
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE ...
+                                 ^
+-- Area greater than circle
+SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE c1.f1 > c2.f1;
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE ...
+                                 ^
+-- Area less than or equal circle
+SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE c1.f1 <= c2.f1;
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE ...
+                                 ^
+-- Area greater than or equal circle
+SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE c1.f1 >= c2.f1;
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE ...
+                                 ^
+-- Area less than circle
+SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE c1.f1 < c2.f1;
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE ...
+                                 ^
+-- Area greater than circle
+SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE c1.f1 < c2.f1;
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT c1.f1, c2.f1 FROM CIRCLE_TBL c1, CIRCLE_TBL c2 WHERE ...
+                                 ^
+-- Add point
+SELECT c.f1, p.f1, c.f1 + p.f1 FROM CIRCLE_TBL c, POINT_TBL p;
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT c.f1, p.f1, c.f1 + p.f1 FROM CIRCLE_TBL c, POINT_TBL ...
+                                            ^
+-- Subtract point
+SELECT c.f1, p.f1, c.f1 - p.f1 FROM CIRCLE_TBL c, POINT_TBL p;
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT c.f1, p.f1, c.f1 - p.f1 FROM CIRCLE_TBL c, POINT_TBL ...
+                                            ^
+-- Multiply with point
+SELECT c.f1, p.f1, c.f1 * p.f1 FROM CIRCLE_TBL c, POINT_TBL p;
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT c.f1, p.f1, c.f1 * p.f1 FROM CIRCLE_TBL c, POINT_TBL ...
+                                            ^
+-- Divide by point
+SELECT c.f1, p.f1, c.f1 / p.f1 FROM CIRCLE_TBL c, POINT_TBL p WHERE p.f1[0] BETWEEN 1 AND 1000;
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT c.f1, p.f1, c.f1 / p.f1 FROM CIRCLE_TBL c, POINT_TBL ...
+                                            ^
+-- Overflow error
+SELECT c.f1, p.f1, c.f1 / p.f1 FROM CIRCLE_TBL c, POINT_TBL p WHERE p.f1[0] > 1000;
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT c.f1, p.f1, c.f1 / p.f1 FROM CIRCLE_TBL c, POINT_TBL ...
+                                            ^
+-- Division by 0 error
+SELECT c.f1, p.f1, c.f1 / p.f1 FROM CIRCLE_TBL c, POINT_TBL p WHERE p.f1 ~= '(0,0)'::point;
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT c.f1, p.f1, c.f1 / p.f1 FROM CIRCLE_TBL c, POINT_TBL ...
+                                            ^
+-- Distance to polygon
+SELECT c.f1, p.f1, c.f1 <-> p.f1 FROM CIRCLE_TBL c, POLYGON_TBL p;
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT c.f1, p.f1, c.f1 <-> p.f1 FROM CIRCLE_TBL c, POLYGON_...
+                                              ^
+-- Check index behavior for circles
+CREATE INDEX gcircleind ON circle_tbl USING gist (f1);
+ERROR:  relation "circle_tbl" does not exist
+SELECT * FROM circle_tbl WHERE f1 && circle(point(1,-2), 1)
+    ORDER BY area(f1);
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT * FROM circle_tbl WHERE f1 && circle(point(1,-2), 1)
+                      ^
+EXPLAIN (COSTS OFF)
+SELECT * FROM circle_tbl WHERE f1 && circle(point(1,-2), 1)
+    ORDER BY area(f1);
+ERROR:  relation "circle_tbl" does not exist
+LINE 2: SELECT * FROM circle_tbl WHERE f1 && circle(point(1,-2), 1)
+                      ^
+SELECT * FROM circle_tbl WHERE f1 && circle(point(1,-2), 1)
+    ORDER BY area(f1);
+ERROR:  relation "circle_tbl" does not exist
+LINE 1: SELECT * FROM circle_tbl WHERE f1 && circle(point(1,-2), 1)
+                      ^
+-- Check index behavior for polygons
+CREATE INDEX gpolygonind ON polygon_tbl USING gist (f1);
+ERROR:  relation "polygon_tbl" does not exist
+SELECT * FROM polygon_tbl WHERE f1 @> '((1,1),(2,2),(2,1))'::polygon
+    ORDER BY (poly_center(f1))[0];
+ERROR:  relation "polygon_tbl" does not exist
+LINE 1: SELECT * FROM polygon_tbl WHERE f1 @> '((1,1),(2,2),(2,1))':...
+                      ^
+EXPLAIN (COSTS OFF)
+SELECT * FROM polygon_tbl WHERE f1 @> '((1,1),(2,2),(2,1))'::polygon
+    ORDER BY (poly_center(f1))[0];
+ERROR:  relation "polygon_tbl" does not exist
+LINE 2: SELECT * FROM polygon_tbl WHERE f1 @> '((1,1),(2,2),(2,1))':...
+                      ^
+SELECT * FROM polygon_tbl WHERE f1 @> '((1,1),(2,2),(2,1))'::polygon
+    ORDER BY (poly_center(f1))[0];
+ERROR:  relation "polygon_tbl" does not exist
+LINE 1: SELECT * FROM polygon_tbl WHERE f1 @> '((1,1),(2,2),(2,1))':...
+                      ^
+-- test non-error-throwing API for some core types
+SELECT pg_input_is_valid('(1', 'circle');
+ pg_input_is_valid 
+-------------------
+ f
+(1 row)
+
+SELECT * FROM pg_input_error_info('1,', 'circle');
+                  message                   | detail | hint | sql_error_code 
+--------------------------------------------+--------+------+----------------
+ invalid input syntax for type circle: "1," |        |      | 22P02
+(1 row)
+
+SELECT pg_input_is_valid('(1,2),-1', 'circle');
+ pg_input_is_valid 
+-------------------
+ f
+(1 row)
+
+SELECT * FROM pg_input_error_info('(1,2),-1', 'circle');
+                     message                      | detail | hint | sql_error_code 
+--------------------------------------------------+--------+------+----------------
+ invalid input syntax for type circle: "(1,2),-1" |        |      | 22P02
+(1 row)
+

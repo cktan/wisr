@@ -1,0 +1,129 @@
+/*
+ * 1.1. test CREATE INDEX with buffered build
+ */
+-- Regular index with included columns
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE tbl_gist (c1 int, c2 int, c3 int, c4 box);
+-- size is chosen to exceed page size and trigger actual truncation
+--dg-cascade
+--dg INSERT INTO tbl_gist SELECT x, 2*x, 3*x, box(point(x,x+1),point(2*x,2*x+1)) FROM generate_series(1,8000) AS x;
+--dg-cascade
+--dg CREATE INDEX tbl_gist_idx ON tbl_gist using gist (c4) INCLUDE (c1,c2,c3);
+--dg-cascade
+--dg SELECT pg_get_indexdef(i.indexrelid)
+--dg FROM pg_index i JOIN pg_class c ON i.indexrelid = c.oid
+--dg WHERE i.indrelid = 'tbl_gist'::regclass ORDER BY c.relname;
+--dg-cascade
+--dg SELECT * FROM tbl_gist where c4 <@ box(point(1,1),point(10,10));
+SET enable_bitmapscan TO off;
+--dg-cascade
+--dg EXPLAIN  (costs off) SELECT * FROM tbl_gist where c4 <@ box(point(1,1),point(10,10));
+SET enable_bitmapscan TO default;
+--dg-cascade
+--dg DROP TABLE tbl_gist;
+/*
+ * 1.2. test CREATE INDEX with inserts
+ */
+-- Regular index with included columns
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE tbl_gist (c1 int, c2 int, c3 int, c4 box);
+-- size is chosen to exceed page size and trigger actual truncation
+--dg-cascade
+--dg CREATE INDEX tbl_gist_idx ON tbl_gist using gist (c4) INCLUDE (c1,c2,c3);
+--dg-cascade
+--dg INSERT INTO tbl_gist SELECT x, 2*x, 3*x, box(point(x,x+1),point(2*x,2*x+1)) FROM generate_series(1,8000) AS x;
+--dg-cascade
+--dg SELECT pg_get_indexdef(i.indexrelid)
+--dg FROM pg_index i JOIN pg_class c ON i.indexrelid = c.oid
+--dg WHERE i.indrelid = 'tbl_gist'::regclass ORDER BY c.relname;
+--dg-cascade
+--dg SELECT * FROM tbl_gist where c4 <@ box(point(1,1),point(10,10));
+SET enable_bitmapscan TO off;
+--dg-cascade
+--dg EXPLAIN  (costs off) SELECT * FROM tbl_gist where c4 <@ box(point(1,1),point(10,10));
+SET enable_bitmapscan TO default;
+--dg-cascade
+--dg DROP TABLE tbl_gist;
+/*
+ * 2. CREATE INDEX CONCURRENTLY
+ */
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE tbl_gist (c1 int, c2 int, c3 int, c4 box);
+--dg-cascade
+--dg INSERT INTO tbl_gist SELECT x, 2*x, 3*x, box(point(x,x+1),point(2*x,2*x+1)) FROM generate_series(1,10) AS x;
+--dg-cascade
+--dg CREATE INDEX CONCURRENTLY tbl_gist_idx ON tbl_gist using gist (c4) INCLUDE (c1,c2,c3);
+--dg-cascade
+--dg SELECT indexdef FROM pg_indexes WHERE tablename = 'tbl_gist' ORDER BY indexname;
+--dg-cascade
+--dg DROP TABLE tbl_gist;
+/*
+ * 3. REINDEX
+ */
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE tbl_gist (c1 int, c2 int, c3 int, c4 box);
+--dg-cascade
+--dg INSERT INTO tbl_gist SELECT x, 2*x, 3*x, box(point(x,x+1),point(2*x,2*x+1)) FROM generate_series(1,10) AS x;
+--dg-cascade
+--dg CREATE INDEX tbl_gist_idx ON tbl_gist using gist (c4) INCLUDE (c1,c3);
+--dg-cascade
+--dg SELECT indexdef FROM pg_indexes WHERE tablename = 'tbl_gist' ORDER BY indexname;
+--dg-cascade
+--dg REINDEX INDEX tbl_gist_idx;
+--dg-cascade
+--dg SELECT indexdef FROM pg_indexes WHERE tablename = 'tbl_gist' ORDER BY indexname;
+--dg-cascade
+--dg ALTER TABLE tbl_gist DROP COLUMN c1;
+--dg-skip: relation "?" does not exist
+--dg SELECT indexdef FROM pg_indexes WHERE tablename = 'tbl_gist' ORDER BY indexname;
+--dg-cascade
+--dg DROP TABLE tbl_gist;
+/*
+ * 4. Update, delete values in indexed table.
+ */
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE tbl_gist (c1 int, c2 int, c3 int, c4 box);
+--dg-cascade
+--dg INSERT INTO tbl_gist SELECT x, 2*x, 3*x, box(point(x,x+1),point(2*x,2*x+1)) FROM generate_series(1,10) AS x;
+--dg-cascade
+--dg CREATE INDEX tbl_gist_idx ON tbl_gist using gist (c4) INCLUDE (c1,c3);
+--dg-cascade
+--dg UPDATE tbl_gist SET c1 = 100 WHERE c1 = 2;
+--dg-cascade
+--dg UPDATE tbl_gist SET c1 = 1 WHERE c1 = 3;
+--dg-cascade
+--dg DELETE FROM tbl_gist WHERE c1 = 5 OR c3 = 12;
+--dg-cascade
+--dg DROP TABLE tbl_gist;
+/*
+ * 5. Alter column type.
+ */
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE tbl_gist (c1 int, c2 int, c3 int, c4 box);
+--dg-cascade
+--dg INSERT INTO tbl_gist SELECT x, 2*x, 3*x, box(point(x,x+1),point(2*x,2*x+1)) FROM generate_series(1,10) AS x;
+--dg-cascade
+--dg CREATE INDEX tbl_gist_idx ON tbl_gist using gist (c4) INCLUDE (c1,c3);
+--dg-cascade
+--dg ALTER TABLE tbl_gist ALTER c1 TYPE bigint;
+--dg-cascade
+--dg ALTER TABLE tbl_gist ALTER c3 TYPE bigint;
+--dg-cascade
+--dg \d tbl_gist
+--dg-cascade
+--dg DROP TABLE tbl_gist;
+/*
+ * 6. EXCLUDE constraint.
+ */
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE tbl_gist (c1 int, c2 int, c3 int, c4 box, EXCLUDE USING gist (c4 WITH &&) INCLUDE (c1, c2, c3));
+--dg-cascade
+--dg INSERT INTO tbl_gist SELECT x, 2*x, 3*x, box(point(x,x+1),point(2*x,2*x+1)) FROM generate_series(1,10) AS x;
+--dg-cascade
+--dg INSERT INTO tbl_gist SELECT x, 2*x, 3*x, box(point(3*x,2*x),point(3*x+1,2*x+1)) FROM generate_series(1,10) AS x;
+--dg-cascade
+--dg EXPLAIN  (costs off) SELECT * FROM tbl_gist where c4 <@ box(point(1,1),point(10,10));
+--dg-cascade
+--dg \d tbl_gist
+--dg-cascade
+--dg DROP TABLE tbl_gist;

@@ -1,0 +1,587 @@
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE brintest (byteacol bytea,
+--dg 	charcol "char",
+--dg 	namecol name,
+--dg 	int8col bigint,
+--dg 	int2col smallint,
+--dg 	int4col integer,
+--dg 	textcol text,
+--dg 	oidcol oid,
+--dg 	tidcol tid,
+--dg 	float4col real,
+--dg 	float8col double precision,
+--dg 	macaddrcol macaddr,
+--dg 	inetcol inet,
+--dg 	cidrcol cidr,
+--dg 	bpcharcol character,
+--dg 	datecol date,
+--dg 	timecol time without time zone,
+--dg 	timestampcol timestamp without time zone,
+--dg 	timestamptzcol timestamp with time zone,
+--dg 	intervalcol interval,
+--dg 	timetzcol time with time zone,
+--dg 	bitcol bit(10),
+--dg 	varbitcol bit varying(16),
+--dg 	numericcol numeric,
+--dg 	uuidcol uuid,
+--dg 	int4rangecol int4range,
+--dg 	lsncol pg_lsn,
+--dg 	boxcol box
+--dg ) WITH (fillfactor=10, autovacuum_enabled=off);
+
+--dg-cascade
+--dg INSERT INTO brintest SELECT
+--dg 	repeat(stringu1, 8)::bytea,
+--dg 	substr(stringu1, 1, 1)::"char",
+--dg 	stringu1::name, 142857 * tenthous,
+--dg 	thousand,
+--dg 	twothousand,
+--dg 	repeat(stringu1, 8),
+--dg 	unique1::oid,
+--dg 	format('(%s,%s)', tenthous, twenty)::tid,
+--dg 	(four + 1.0)/(hundred+1),
+--dg 	odd::float8 / (tenthous + 1),
+--dg 	format('%s:00:%s:00:%s:00', to_hex(odd), to_hex(even), to_hex(hundred))::macaddr,
+--dg 	inet '10.2.3.4/24' + tenthous,
+--dg 	cidr '10.2.3/24' + tenthous,
+--dg 	substr(stringu1, 1, 1)::bpchar,
+--dg 	date '1995-08-15' + tenthous,
+--dg 	time '01:20:30' + thousand * interval '18.5 second',
+--dg 	timestamp '1942-07-23 03:05:09' + tenthous * interval '36.38 hours',
+--dg 	timestamptz '1972-10-10 03:00' + thousand * interval '1 hour',
+--dg 	justify_days(justify_hours(tenthous * interval '12 minutes')),
+--dg 	timetz '01:30:20+02' + hundred * interval '15 seconds',
+--dg 	thousand::bit(10),
+--dg 	tenthous::bit(16)::varbit,
+--dg 	tenthous::numeric(36,30) * fivethous * even / (hundred + 1),
+--dg 	format('%s%s-%s-%s-%s-%s%s%s', to_char(tenthous, 'FM0000'), to_char(tenthous, 'FM0000'), to_char(tenthous, 'FM0000'), to_char(tenthous, 'FM0000'), to_char(tenthous, 'FM0000'), to_char(tenthous, 'FM0000'), to_char(tenthous, 'FM0000'), to_char(tenthous, 'FM0000'))::uuid,
+--dg 	int4range(thousand, twothousand),
+--dg 	format('%s/%s%s', odd, even, tenthous)::pg_lsn,
+--dg 	box(point(odd, even), point(thousand, twothousand))
+--dg FROM tenk1 ORDER BY unique2 LIMIT 100;
+
+-- throw in some NULL's and different values
+--dg-cascade
+--dg INSERT INTO brintest (inetcol, cidrcol, int4rangecol) SELECT
+--dg 	inet 'fe80::6e40:8ff:fea9:8c46' + tenthous,
+--dg 	cidr 'fe80::6e40:8ff:fea9:8c46' + tenthous,
+--dg 	'empty'::int4range
+--dg FROM tenk1 ORDER BY thousand, tenthous LIMIT 25;
+
+--dg-cascade
+--dg CREATE INDEX brinidx ON brintest USING brin (
+--dg 	byteacol,
+--dg 	charcol,
+--dg 	namecol,
+--dg 	int8col,
+--dg 	int2col,
+--dg 	int4col,
+--dg 	textcol,
+--dg 	oidcol,
+--dg 	tidcol,
+--dg 	float4col,
+--dg 	float8col,
+--dg 	macaddrcol,
+--dg 	inetcol inet_inclusion_ops,
+--dg 	inetcol inet_minmax_ops,
+--dg 	cidrcol inet_inclusion_ops,
+--dg 	cidrcol inet_minmax_ops,
+--dg 	bpcharcol,
+--dg 	datecol,
+--dg 	timecol,
+--dg 	timestampcol,
+--dg 	timestamptzcol,
+--dg 	intervalcol,
+--dg 	timetzcol,
+--dg 	bitcol,
+--dg 	varbitcol,
+--dg 	numericcol,
+--dg 	uuidcol,
+--dg 	int4rangecol,
+--dg 	lsncol,
+--dg 	boxcol
+--dg ) with (pages_per_range = 1);
+
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE TABLE brinopers (colname name, typ text,
+--dg 	op text[], value text[], matches int[],
+--dg 	check (cardinality(op) = cardinality(value)),
+--dg 	check (cardinality(op) = cardinality(matches)));
+
+--dg-cascade
+--dg INSERT INTO brinopers VALUES
+--dg 	('byteacol', 'bytea',
+--dg 	 '{>, >=, =, <=, <}',
+--dg 	 '{AAAAAA, AAAAAA, BNAAAABNAAAABNAAAABNAAAABNAAAABNAAAABNAAAABNAAAA, ZZZZZZ, ZZZZZZ}',
+--dg 	 '{100, 100, 1, 100, 100}'),
+--dg 	('charcol', '"char"',
+--dg 	 '{>, >=, =, <=, <}',
+--dg 	 '{A, A, M, Z, Z}',
+--dg 	 '{97, 100, 6, 100, 98}'),
+--dg 	('namecol', 'name',
+--dg 	 '{>, >=, =, <=, <}',
+--dg 	 '{AAAAAA, AAAAAA, MAAAAA, ZZAAAA, ZZAAAA}',
+--dg 	 '{100, 100, 2, 100, 100}'),
+--dg 	('int2col', 'int2',
+--dg 	 '{>, >=, =, <=, <}',
+--dg 	 '{0, 0, 800, 999, 999}',
+--dg 	 '{100, 100, 1, 100, 100}'),
+--dg 	('int2col', 'int4',
+--dg 	 '{>, >=, =, <=, <}',
+--dg 	 '{0, 0, 800, 999, 1999}',
+--dg 	 '{100, 100, 1, 100, 100}'),
+--dg 	('int2col', 'int8',
+--dg 	 '{>, >=, =, <=, <}',
+--dg 	 '{0, 0, 800, 999, 1428427143}',
+--dg 	 '{100, 100, 1, 100, 100}'),
+--dg 	('int4col', 'int2',
+--dg 	 '{>, >=, =, <=, <}',
+--dg 	 '{0, 0, 800, 1999, 1999}',
+--dg 	 '{100, 100, 1, 100, 100}'),
+--dg 	('int4col', 'int4',
+--dg 	 '{>, >=, =, <=, <}',
+--dg 	 '{0, 0, 800, 1999, 1999}',
+--dg 	 '{100, 100, 1, 100, 100}'),
+--dg 	('int4col', 'int8',
+--dg 	 '{>, >=, =, <=, <}',
+--dg 	 '{0, 0, 800, 1999, 1428427143}',
+--dg 	 '{100, 100, 1, 100, 100}'),
+--dg 	('int8col', 'int2',
+--dg 	 '{>, >=}',
+--dg 	 '{0, 0}',
+--dg 	 '{100, 100}'),
+--dg 	('int8col', 'int4',
+--dg 	 '{>, >=}',
+--dg 	 '{0, 0}',
+--dg 	 '{100, 100}'),
+--dg 	('int8col', 'int8',
+--dg 	 '{>, >=, =, <=, <}',
+--dg 	 '{0, 0, 1257141600, 1428427143, 1428427143}',
+--dg 	 '{100, 100, 1, 100, 100}'),
+--dg 	('textcol', 'text',
+--dg 	 '{>, >=, =, <=, <}',
+--dg 	 '{ABABAB, ABABAB, BNAAAABNAAAABNAAAABNAAAABNAAAABNAAAABNAAAABNAAAA, ZZAAAA, ZZAAAA}',
+--dg 	 '{100, 100, 1, 100, 100}'),
+--dg 	('oidcol', 'oid',
+--dg 	 '{>, >=, =, <=, <}',
+--dg 	 '{0, 0, 8800, 9999, 9999}',
+--dg 	 '{100, 100, 1, 100, 100}'),
+--dg 	('tidcol', 'tid',
+--dg 	 '{>, >=, =, <=, <}',
+--dg 	 '{"(0,0)", "(0,0)", "(8800,0)", "(9999,19)", "(9999,19)"}',
+--dg 	 '{100, 100, 1, 100, 100}'),
+--dg 	('float4col', 'float4',
+--dg 	 '{>, >=, =, <=, <}',
+--dg 	 '{0.0103093, 0.0103093, 1, 1, 1}',
+--dg 	 '{100, 100, 4, 100, 96}'),
+--dg 	('float4col', 'float8',
+--dg 	 '{>, >=, =, <=, <}',
+--dg 	 '{0.0103093, 0.0103093, 1, 1, 1}',
+--dg 	 '{100, 100, 4, 100, 96}'),
+--dg 	('float8col', 'float4',
+--dg 	 '{>, >=, =, <=, <}',
+--dg 	 '{0, 0, 0, 1.98, 1.98}',
+--dg 	 '{99, 100, 1, 100, 100}'),
+--dg 	('float8col', 'float8',
+--dg 	 '{>, >=, =, <=, <}',
+--dg 	 '{0, 0, 0, 1.98, 1.98}',
+--dg 	 '{99, 100, 1, 100, 100}'),
+--dg 	('macaddrcol', 'macaddr',
+--dg 	 '{>, >=, =, <=, <}',
+--dg 	 '{00:00:01:00:00:00, 00:00:01:00:00:00, 2c:00:2d:00:16:00, ff:fe:00:00:00:00, ff:fe:00:00:00:00}',
+--dg 	 '{99, 100, 2, 100, 100}'),
+--dg 	('inetcol', 'inet',
+--dg 	 '{&&, =, <, <=, >, >=, >>=, >>, <<=, <<}',
+--dg 	 '{10/8, 10.2.14.231/24, 255.255.255.255, 255.255.255.255, 0.0.0.0, 0.0.0.0, 10.2.14.231/24, 10.2.14.231/25, 10.2.14.231/8, 0/0}',
+--dg 	 '{100, 1, 100, 100, 125, 125, 2, 2, 100, 100}'),
+--dg 	('inetcol', 'inet',
+--dg 	 '{&&, >>=, <<=, =}',
+--dg 	 '{fe80::6e40:8ff:fea9:a673/32, fe80::6e40:8ff:fea9:8c46, fe80::6e40:8ff:fea9:a673/32, fe80::6e40:8ff:fea9:8c46}',
+--dg 	 '{25, 1, 25, 1}'),
+--dg 	('inetcol', 'cidr',
+--dg 	 '{&&, <, <=, >, >=, >>=, >>, <<=, <<}',
+--dg 	 '{10/8, 255.255.255.255, 255.255.255.255, 0.0.0.0, 0.0.0.0, 10.2.14/24, 10.2.14/25, 10/8, 0/0}',
+--dg 	 '{100, 100, 100, 125, 125, 2, 2, 100, 100}'),
+--dg 	('inetcol', 'cidr',
+--dg 	 '{&&, >>=, <<=, =}',
+--dg 	 '{fe80::/32, fe80::6e40:8ff:fea9:8c46, fe80::/32, fe80::6e40:8ff:fea9:8c46}',
+--dg 	 '{25, 1, 25, 1}'),
+--dg 	('cidrcol', 'inet',
+--dg 	 '{&&, =, <, <=, >, >=, >>=, >>, <<=, <<}',
+--dg 	 '{10/8, 10.2.14/24, 255.255.255.255, 255.255.255.255, 0.0.0.0, 0.0.0.0, 10.2.14.231/24, 10.2.14.231/25, 10.2.14.231/8, 0/0}',
+--dg 	 '{100, 2, 100, 100, 125, 125, 2, 2, 100, 100}'),
+--dg 	('cidrcol', 'inet',
+--dg 	 '{&&, >>=, <<=, =}',
+--dg 	 '{fe80::6e40:8ff:fea9:a673/32, fe80::6e40:8ff:fea9:8c46, fe80::6e40:8ff:fea9:a673/32, fe80::6e40:8ff:fea9:8c46}',
+--dg 	 '{25, 1, 25, 1}'),
+--dg 	('cidrcol', 'cidr',
+--dg 	 '{&&, =, <, <=, >, >=, >>=, >>, <<=, <<}',
+--dg 	 '{10/8, 10.2.14/24, 255.255.255.255, 255.255.255.255, 0.0.0.0, 0.0.0.0, 10.2.14/24, 10.2.14/25, 10/8, 0/0}',
+--dg 	 '{100, 2, 100, 100, 125, 125, 2, 2, 100, 100}'),
+--dg 	('cidrcol', 'cidr',
+--dg 	 '{&&, >>=, <<=, =}',
+--dg 	 '{fe80::/32, fe80::6e40:8ff:fea9:8c46, fe80::/32, fe80::6e40:8ff:fea9:8c46}',
+--dg 	 '{25, 1, 25, 1}'),
+--dg 	('bpcharcol', 'bpchar',
+--dg 	 '{>, >=, =, <=, <}',
+--dg 	 '{A, A, W, Z, Z}',
+--dg 	 '{97, 100, 6, 100, 98}'),
+--dg 	('datecol', 'date',
+--dg 	 '{>, >=, =, <=, <}',
+--dg 	 '{1995-08-15, 1995-08-15, 2009-12-01, 2022-12-30, 2022-12-30}',
+--dg 	 '{100, 100, 1, 100, 100}'),
+--dg 	('timecol', 'time',
+--dg 	 '{>, >=, =, <=, <}',
+--dg 	 '{01:20:30, 01:20:30, 02:28:57, 06:28:31.5, 06:28:31.5}',
+--dg 	 '{100, 100, 1, 100, 100}'),
+--dg 	('timestampcol', 'timestamp',
+--dg 	 '{>, >=, =, <=, <}',
+--dg 	 '{1942-07-23 03:05:09, 1942-07-23 03:05:09, 1964-03-24 19:26:45, 1984-01-20 22:42:21, 1984-01-20 22:42:21}',
+--dg 	 '{100, 100, 1, 100, 100}'),
+--dg 	('timestampcol', 'timestamptz',
+--dg 	 '{>, >=, =, <=, <}',
+--dg 	 '{1942-07-23 03:05:09, 1942-07-23 03:05:09, 1964-03-24 19:26:45, 1984-01-20 22:42:21, 1984-01-20 22:42:21}',
+--dg 	 '{100, 100, 1, 100, 100}'),
+--dg 	('timestamptzcol', 'timestamptz',
+--dg 	 '{>, >=, =, <=, <}',
+--dg 	 '{1972-10-10 03:00:00-04, 1972-10-10 03:00:00-04, 1972-10-19 09:00:00-07, 1972-11-20 19:00:00-03, 1972-11-20 19:00:00-03}',
+--dg 	 '{100, 100, 1, 100, 100}'),
+--dg 	('intervalcol', 'interval',
+--dg 	 '{>, >=, =, <=, <}',
+--dg 	 '{00:00:00, 00:00:00, 1 mons 13 days 12:24, 2 mons 23 days 07:48:00, 1 year}',
+--dg 	 '{100, 100, 1, 100, 100}'),
+--dg 	('timetzcol', 'timetz',
+--dg 	 '{>, >=, =, <=, <}',
+--dg 	 '{01:30:20+02, 01:30:20+02, 01:35:50+02, 23:55:05+02, 23:55:05+02}',
+--dg 	 '{99, 100, 2, 100, 100}'),
+--dg 	('bitcol', 'bit(10)',
+--dg 	 '{>, >=, =, <=, <}',
+--dg 	 '{0000000010, 0000000010, 0011011110, 1111111000, 1111111000}',
+--dg 	 '{100, 100, 1, 100, 100}'),
+--dg 	('varbitcol', 'varbit(16)',
+--dg 	 '{>, >=, =, <=, <}',
+--dg 	 '{0000000000000100, 0000000000000100, 0001010001100110, 1111111111111000, 1111111111111000}',
+--dg 	 '{100, 100, 1, 100, 100}'),
+--dg 	('numericcol', 'numeric',
+--dg 	 '{>, >=, =, <=, <}',
+--dg 	 '{0.00, 0.01, 2268164.347826086956521739130434782609, 99470151.9, 99470151.9}',
+--dg 	 '{100, 100, 1, 100, 100}'),
+--dg 	('uuidcol', 'uuid',
+--dg 	 '{>, >=, =, <=, <}',
+--dg 	 '{00040004-0004-0004-0004-000400040004, 00040004-0004-0004-0004-000400040004, 52225222-5222-5222-5222-522252225222, 99989998-9998-9998-9998-999899989998, 99989998-9998-9998-9998-999899989998}',
+--dg 	 '{100, 100, 1, 100, 100}'),
+--dg 	('int4rangecol', 'int4range',
+--dg 	 '{<<, &<, &&, &>, >>, @>, <@, =, <, <=, >, >=}',
+--dg 	 '{"[10000,)","[10000,)","(,]","[3,4)","[36,44)","(1500,1501]","[3,4)","[222,1222)","[36,44)","[43,1043)","[367,4466)","[519,)"}',
+--dg 	 '{53, 53, 53, 53, 50, 22, 72, 1, 74, 75, 34, 21}'),
+--dg 	('int4rangecol', 'int4range',
+--dg 	 '{@>, <@, =, <=, >, >=}',
+--dg 	 '{empty, empty, empty, empty, empty, empty}',
+--dg 	 '{125, 72, 72, 72, 53, 125}'),
+--dg 	('int4rangecol', 'int4',
+--dg 	 '{@>}',
+--dg 	 '{1500}',
+--dg 	 '{22}'),
+--dg 	('lsncol', 'pg_lsn',
+--dg 	 '{>, >=, =, <=, <, IS, IS NOT}',
+--dg 	 '{0/1200, 0/1200, 44/455222, 198/1999799, 198/1999799, NULL, NULL}',
+--dg 	 '{100, 100, 1, 100, 100, 25, 100}'),
+--dg 	('boxcol', 'point',
+--dg 	 '{@>}',
+--dg 	 '{"(500,43)"}',
+--dg 	 '{11}'),
+--dg 	('boxcol', 'box',
+--dg 	 '{<<, &<, &&, &>, >>, <<|, &<|, |&>, |>>, @>, <@, ~=}',
+--dg 	 '{"((1000,2000),(3000,4000))","((1,2),(3000,4000))","((1,2),(3000,4000))","((1,2),(3000,4000))","((1,2),(3,4))","((1000,2000),(3000,4000))","((1,2000),(3,4000))","((1000,2),(3000,4))","((1,2),(3,4))","((1,2),(300,400))","((1,2),(3000,4000))","((222,1222),(44,45))"}',
+--dg 	 '{100, 100, 100, 99, 96, 100, 100, 99, 96, 1, 99, 1}');
+
+--dg-skip: language "?" does not exist
+--dg DO $x$
+--dg DECLARE
+--dg 	r record;
+--dg 	r2 record;
+--dg 	cond text;
+--dg 	idx_ctids tid[];
+--dg 	ss_ctids tid[];
+--dg 	count int;
+--dg 	plan_ok bool;
+--dg 	plan_line text;
+--dg BEGIN
+--dg 	FOR r IN SELECT colname, oper, typ, value[ordinality], matches[ordinality] FROM brinopers, unnest(op) WITH ORDINALITY AS oper LOOP
+--dg
+--dg 		-- prepare the condition
+--dg 		IF r.value IS NULL THEN
+--dg 			cond := format('%I %s %L', r.colname, r.oper, r.value);
+--dg 		ELSE
+--dg 			cond := format('%I %s %L::%s', r.colname, r.oper, r.value, r.typ);
+--dg 		END IF;
+--dg
+--dg 		-- run the query using the brin index
+--dg 		SET enable_seqscan = 0;
+--dg 		SET enable_bitmapscan = 1;
+--dg
+--dg 		plan_ok := false;
+--dg 		FOR plan_line IN EXECUTE format($y$EXPLAIN SELECT array_agg(ctid) FROM brintest WHERE %s $y$, cond) LOOP
+--dg 			IF plan_line LIKE '%Bitmap Heap Scan on brintest%' THEN
+--dg 				plan_ok := true;
+--dg 			END IF;
+--dg 		END LOOP;
+--dg 		IF NOT plan_ok THEN
+--dg 			RAISE WARNING 'did not get bitmap indexscan plan for %', r;
+--dg 		END IF;
+--dg
+--dg 		EXECUTE format($y$SELECT array_agg(ctid) FROM brintest WHERE %s $y$, cond)
+--dg 			INTO idx_ctids;
+--dg
+--dg 		-- run the query using a seqscan
+--dg 		SET enable_seqscan = 1;
+--dg 		SET enable_bitmapscan = 0;
+--dg
+--dg 		plan_ok := false;
+--dg 		FOR plan_line IN EXECUTE format($y$EXPLAIN SELECT array_agg(ctid) FROM brintest WHERE %s $y$, cond) LOOP
+--dg 			IF plan_line LIKE '%Seq Scan on brintest%' THEN
+--dg 				plan_ok := true;
+--dg 			END IF;
+--dg 		END LOOP;
+--dg 		IF NOT plan_ok THEN
+--dg 			RAISE WARNING 'did not get seqscan plan for %', r;
+--dg 		END IF;
+--dg
+--dg 		EXECUTE format($y$SELECT array_agg(ctid) FROM brintest WHERE %s $y$, cond)
+--dg 			INTO ss_ctids;
+--dg
+--dg 		-- make sure both return the same results
+--dg 		count := array_length(idx_ctids, 1);
+--dg
+--dg 		IF NOT (count = array_length(ss_ctids, 1) AND
+--dg 				idx_ctids @> ss_ctids AND
+--dg 				idx_ctids <@ ss_ctids) THEN
+--dg 			-- report the results of each scan to make the differences obvious
+--dg 			RAISE WARNING 'something not right in %: count %', r, count;
+--dg 			SET enable_seqscan = 1;
+--dg 			SET enable_bitmapscan = 0;
+--dg 			FOR r2 IN EXECUTE 'SELECT ' || r.colname || ' FROM brintest WHERE ' || cond LOOP
+--dg 				RAISE NOTICE 'seqscan: %', r2;
+--dg 			END LOOP;
+--dg
+--dg 			SET enable_seqscan = 0;
+--dg 			SET enable_bitmapscan = 1;
+--dg 			FOR r2 IN EXECUTE 'SELECT ' || r.colname || ' FROM brintest WHERE ' || cond LOOP
+--dg 				RAISE NOTICE 'bitmapscan: %', r2;
+--dg 			END LOOP;
+--dg 		END IF;
+--dg
+--dg 		-- make sure we found expected number of matches
+--dg 		IF count != r.matches THEN RAISE WARNING 'unexpected number of results % for %', count, r; END IF;
+--dg 	END LOOP;
+--dg END;
+--dg $x$;
+
+RESET enable_seqscan;
+RESET enable_bitmapscan;
+
+--dg-cascade
+--dg INSERT INTO brintest SELECT
+--dg 	repeat(stringu1, 42)::bytea,
+--dg 	substr(stringu1, 1, 1)::"char",
+--dg 	stringu1::name, 142857 * tenthous,
+--dg 	thousand,
+--dg 	twothousand,
+--dg 	repeat(stringu1, 42),
+--dg 	unique1::oid,
+--dg 	format('(%s,%s)', tenthous, twenty)::tid,
+--dg 	(four + 1.0)/(hundred+1),
+--dg 	odd::float8 / (tenthous + 1),
+--dg 	format('%s:00:%s:00:%s:00', to_hex(odd), to_hex(even), to_hex(hundred))::macaddr,
+--dg 	inet '10.2.3.4' + tenthous,
+--dg 	cidr '10.2.3/24' + tenthous,
+--dg 	substr(stringu1, 1, 1)::bpchar,
+--dg 	date '1995-08-15' + tenthous,
+--dg 	time '01:20:30' + thousand * interval '18.5 second',
+--dg 	timestamp '1942-07-23 03:05:09' + tenthous * interval '36.38 hours',
+--dg 	timestamptz '1972-10-10 03:00' + thousand * interval '1 hour',
+--dg 	justify_days(justify_hours(tenthous * interval '12 minutes')),
+--dg 	timetz '01:30:20' + hundred * interval '15 seconds',
+--dg 	thousand::bit(10),
+--dg 	tenthous::bit(16)::varbit,
+--dg 	tenthous::numeric(36,30) * fivethous * even / (hundred + 1),
+--dg 	format('%s%s-%s-%s-%s-%s%s%s', to_char(tenthous, 'FM0000'), to_char(tenthous, 'FM0000'), to_char(tenthous, 'FM0000'), to_char(tenthous, 'FM0000'), to_char(tenthous, 'FM0000'), to_char(tenthous, 'FM0000'), to_char(tenthous, 'FM0000'), to_char(tenthous, 'FM0000'))::uuid,
+--dg 	int4range(thousand, twothousand),
+--dg 	format('%s/%s%s', odd, even, tenthous)::pg_lsn,
+--dg 	box(point(odd, even), point(thousand, twothousand))
+--dg FROM tenk1 ORDER BY unique2 LIMIT 5 OFFSET 5;
+
+--dg-cascade
+--dg SELECT brin_desummarize_range('brinidx', 0);
+--dg-cascade
+--dg VACUUM brintest;  -- force a summarization cycle in brinidx
+
+--dg-cascade
+--dg UPDATE brintest SET int8col = int8col * int4col;
+--dg-cascade
+--dg UPDATE brintest SET textcol = '' WHERE textcol IS NOT NULL;
+
+-- Tests for brin_summarize_new_values
+--dg-cascade
+--dg SELECT brin_summarize_new_values('brintest'); -- error, not an index
+--dg-differs: another error: function ?(...) does not exist
+--dg SELECT brin_summarize_new_values('tenk1_unique1'); -- error, not a BRIN index
+--dg-cascade
+--dg SELECT brin_summarize_new_values('brinidx'); -- ok, no change expected
+
+-- Tests for brin_desummarize_range
+--dg-cascade
+--dg SELECT brin_desummarize_range('brinidx', -1); -- error, invalid range
+--dg-cascade
+--dg SELECT brin_desummarize_range('brinidx', 0);
+--dg-cascade
+--dg SELECT brin_desummarize_range('brinidx', 0);
+--dg-cascade
+--dg SELECT brin_desummarize_range('brinidx', 100000000);
+
+-- Test brin_summarize_range
+CREATE TABLE brin_summarize (
+    value int
+) WITH (fillfactor=10, autovacuum_enabled=false);
+--dg-skip: access method "?" is not supported
+--dg CREATE INDEX brin_summarize_idx ON brin_summarize USING brin (value) WITH (pages_per_range=2);
+-- Fill a few pages
+--dg-skip: language "?" does not exist
+--dg DO $$
+--dg DECLARE curtid tid;
+--dg BEGIN
+--dg   LOOP
+--dg     INSERT INTO brin_summarize VALUES (1) RETURNING ctid INTO curtid;
+--dg     EXIT WHEN curtid > tid '(2, 0)';
+--dg   END LOOP;
+--dg END;
+--dg $$;
+
+-- summarize one range
+--dg-cascade
+--dg SELECT brin_summarize_range('brin_summarize_idx', 0);
+-- nothing: already summarized
+--dg-cascade
+--dg SELECT brin_summarize_range('brin_summarize_idx', 1);
+-- summarize one range
+--dg-cascade
+--dg SELECT brin_summarize_range('brin_summarize_idx', 2);
+-- nothing: page doesn't exist in table
+--dg-cascade
+--dg SELECT brin_summarize_range('brin_summarize_idx', 4294967295);
+-- invalid block number values
+--dg-cascade
+--dg SELECT brin_summarize_range('brin_summarize_idx', -1);
+--dg-cascade
+--dg SELECT brin_summarize_range('brin_summarize_idx', 4294967296);
+
+-- test value merging in add_value
+--dg-skip: type ? is not supported yet
+--dg CREATE TABLE brintest_2 (n numrange);
+--dg-cascade
+--dg CREATE INDEX brinidx_2 ON brintest_2 USING brin (n);
+--dg-cascade
+--dg INSERT INTO brintest_2 VALUES ('empty');
+--dg-cascade
+--dg INSERT INTO brintest_2 VALUES (numrange(0, 2^1000::numeric));
+--dg-cascade
+--dg INSERT INTO brintest_2 VALUES ('(-1, 0)');
+
+--dg-cascade
+--dg SELECT brin_desummarize_range('brinidx', 0);
+--dg-cascade
+--dg SELECT brin_summarize_range('brinidx', 0);
+--dg-cascade
+--dg DROP TABLE brintest_2;
+
+-- test brin cost estimates behave sanely based on correlation of values
+CREATE TABLE brin_test (a INT, b INT);
+INSERT INTO brin_test SELECT x/100,x%100 FROM generate_series(1,10000) x(x);
+--dg-skip: access method "?" is not supported
+--dg CREATE INDEX brin_test_a_idx ON brin_test USING brin (a) WITH (pages_per_range = 2);
+--dg-skip: access method "?" is not supported
+--dg CREATE INDEX brin_test_b_idx ON brin_test USING brin (b) WITH (pages_per_range = 2);
+VACUUM ANALYZE brin_test;
+
+-- Ensure brin index is used when columns are perfectly correlated
+--dg-cascade
+--dg EXPLAIN (COSTS OFF) SELECT * FROM brin_test WHERE a = 1;
+-- Ensure brin index is not used when values are not correlated
+EXPLAIN (COSTS OFF) SELECT * FROM brin_test WHERE b = 1;
+
+-- make sure data are properly de-toasted in BRIN index
+CREATE TABLE brintest_3 (a text, b text, c text, d text);
+
+-- long random strings (~2000 chars each, so ~6kB for min/max on two
+-- columns) to trigger toasting
+WITH rand_value AS (SELECT string_agg(fipshash(i::text),'') AS val FROM generate_series(1,60) s(i))
+INSERT INTO brintest_3
+SELECT val, val, val, val FROM rand_value;
+
+--dg-skip: access method "?" is not supported
+--dg CREATE INDEX brin_test_toast_idx ON brintest_3 USING brin (b, c);
+DELETE FROM brintest_3;
+
+-- We need to wait a bit for all transactions to complete, so that the
+-- vacuum actually removes the TOAST rows. Creating an index concurrently
+-- is a one way to achieve that, because it does exactly such wait.
+CREATE INDEX CONCURRENTLY brin_test_temp_idx ON brintest_3(a);
+DROP INDEX brin_test_temp_idx;
+
+-- vacuum the table, to discard TOAST data
+VACUUM brintest_3;
+
+-- retry insert with a different random-looking (but deterministic) value
+-- the value is different, and so should replace either min or max in the
+-- brin summary
+WITH rand_value AS (SELECT string_agg(fipshash((-i)::text),'') AS val FROM generate_series(1,60) s(i))
+INSERT INTO brintest_3
+SELECT val, val, val, val FROM rand_value;
+
+-- now try some queries, accessing the brin index
+SET enable_seqscan = off;
+
+--dg-cascade
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT * FROM brintest_3 WHERE b < '0';
+
+SELECT * FROM brintest_3 WHERE b < '0';
+
+DROP TABLE brintest_3;
+RESET enable_seqscan;
+
+-- test parallel build with immutable function.
+CREATE TABLE brintest_expr (n int);
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION brintest_func() RETURNS int LANGUAGE sql IMMUTABLE RETURN 0;
+BEGIN;
+--dg-skip: unrecognized configuration parameter "?"
+--dg SET LOCAL min_parallel_table_scan_size = 0;
+--dg-skip: unrecognized configuration parameter "?"
+--dg SET LOCAL max_parallel_maintenance_workers = 4;
+--dg-cascade
+--dg CREATE INDEX brintest_expr_idx ON brintest_expr USING brin (brintest_func());
+COMMIT;
+DROP TABLE brintest_expr;
+--dg-cascade
+--dg DROP FUNCTION brintest_func();
+
+-- test an unlogged table, mostly to get coverage of brinbuildempty
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg CREATE UNLOGGED TABLE brintest_unlogged (n numrange);
+--dg-cascade
+--dg CREATE INDEX brinidx_unlogged ON brintest_unlogged USING brin (n);
+--dg-cascade
+--dg INSERT INTO brintest_unlogged VALUES (numrange(0, 2^1000::numeric));
+--dg-cascade
+--dg DROP TABLE brintest_unlogged;
+
+-- test that the insert optimization works if no rows end up inserted
+CREATE TABLE brin_insert_optimization (a int);
+INSERT INTO brin_insert_optimization VALUES (1);
+--dg-skip: access method "?" is not supported
+--dg CREATE INDEX brin_insert_optimization_idx ON brin_insert_optimization USING brin (a);
+UPDATE brin_insert_optimization SET a = a;
+--dg-cascade
+--dg REINDEX INDEX CONCURRENTLY brin_insert_optimization_idx;
+DROP TABLE brin_insert_optimization;

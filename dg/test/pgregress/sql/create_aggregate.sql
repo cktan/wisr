@@ -1,0 +1,384 @@
+--
+-- CREATE_AGGREGATE
+--
+
+-- all functions CREATEd
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
+--dg CREATE AGGREGATE newavg (
+--dg    sfunc = int4_avg_accum, basetype = int4, stype = _int8,
+--dg    finalfunc = int8_avg,
+--dg    initcond1 = '{0,0}'
+--dg );
+
+-- test comments
+COMMENT ON AGGREGATE newavg_wrong (int4) IS 'an agg comment';
+--dg-cascade
+--dg COMMENT ON AGGREGATE newavg (int4) IS 'an agg comment';
+--dg-cascade
+--dg COMMENT ON AGGREGATE newavg (int4) IS NULL;
+
+-- without finalfunc; test obsolete spellings 'sfunc1' etc
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
+--dg CREATE AGGREGATE newsum (
+--dg    sfunc1 = int4pl, basetype = int4, stype1 = int4,
+--dg    initcond1 = '0'
+--dg );
+
+-- zero-argument aggregate
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
+--dg CREATE AGGREGATE newcnt (*) (
+--dg    sfunc = int8inc, stype = int8,
+--dg    initcond = '0', parallel = safe
+--dg );
+
+-- old-style spelling of same (except without parallel-safe; that's too new)
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
+--dg CREATE AGGREGATE oldcnt (
+--dg    sfunc = int8inc, basetype = 'ANY', stype = int8,
+--dg    initcond = '0'
+--dg );
+
+-- aggregate that only cares about null/nonnull input
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
+--dg CREATE AGGREGATE newcnt ("any") (
+--dg    sfunc = int8inc_any, stype = int8,
+--dg    initcond = '0'
+--dg );
+
+COMMENT ON AGGREGATE nosuchagg (*) IS 'should fail';
+--dg-cascade
+--dg COMMENT ON AGGREGATE newcnt (*) IS 'an agg(*) comment';
+--dg-cascade
+--dg COMMENT ON AGGREGATE newcnt ("any") IS 'an agg(any) comment';
+
+-- multi-argument aggregate
+--dg-skip: language "?" does not exist
+--dg create function sum3(int8,int8,int8) returns int8 as
+--dg 'select $1 + $2 + $3' language sql strict immutable;
+
+--dg-cascade
+--dg create aggregate sum2(int8,int8) (
+--dg    sfunc = sum3, stype = int8,
+--dg    initcond = '0'
+--dg );
+
+-- multi-argument aggregates sensitive to distinct/order, strict/nonstrict
+--dg-skip: a relation's storage cannot be made: digres has no catalog tables
+--dg create type aggtype as (a integer, b integer, c text);
+
+--dg-skip: language "?" does not exist
+--dg create function aggf_trans(aggtype[],integer,integer,text) returns aggtype[]
+--dg as 'select array_append($1,ROW($2,$3,$4)::aggtype)'
+--dg language sql strict immutable;
+
+--dg-skip: language "?" does not exist
+--dg create function aggfns_trans(aggtype[],integer,integer,text) returns aggtype[]
+--dg as 'select array_append($1,ROW($2,$3,$4)::aggtype)'
+--dg language sql immutable;
+
+--dg-cascade
+--dg create aggregate aggfstr(integer,integer,text) (
+--dg    sfunc = aggf_trans, stype = aggtype[],
+--dg    initcond = '{}'
+--dg );
+
+--dg-cascade
+--dg create aggregate aggfns(integer,integer,text) (
+--dg    sfunc = aggfns_trans, stype = aggtype[], sspace = 10000,
+--dg    initcond = '{}'
+--dg );
+
+-- check error cases that would require run-time type coercion
+--dg-skip: language "?" does not exist
+--dg create function least_accum(int8, int8) returns int8 language sql as
+--dg   'select least($1, $2)';
+
+--dg-cascade
+--dg create aggregate least_agg(int4) (
+--dg   stype = int8, sfunc = least_accum
+--dg );  -- fails
+
+--dg-cascade
+--dg drop function least_accum(int8, int8);
+
+--dg-skip: language "?" does not exist
+--dg create function least_accum(anycompatible, anycompatible)
+--dg returns anycompatible language sql as
+--dg   'select least($1, $2)';
+
+--dg-cascade
+--dg create aggregate least_agg(int4) (
+--dg   stype = int8, sfunc = least_accum
+--dg );  -- fails
+
+--dg-cascade
+--dg create aggregate least_agg(int8) (
+--dg   stype = int8, sfunc = least_accum
+--dg );
+
+--dg-cascade
+--dg drop function least_accum(anycompatible, anycompatible) cascade;
+
+-- variadic aggregates
+--dg-skip: language "?" does not exist
+--dg create function least_accum(anyelement, variadic anyarray)
+--dg returns anyelement language sql as
+--dg   'select least($1, min($2[i])) from generate_subscripts($2,1) g(i)';
+
+--dg-cascade
+--dg create aggregate least_agg(variadic items anyarray) (
+--dg   stype = anyelement, sfunc = least_accum
+--dg );
+
+--dg-skip: language "?" does not exist
+--dg create function cleast_accum(anycompatible, variadic anycompatiblearray)
+--dg returns anycompatible language sql as
+--dg   'select least($1, min($2[i])) from generate_subscripts($2,1) g(i)';
+
+--dg-cascade
+--dg create aggregate cleast_agg(variadic items anycompatiblearray) (
+--dg   stype = anycompatible, sfunc = cleast_accum
+--dg );
+
+-- test ordered-set aggs using built-in support functions
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
+--dg create aggregate my_percentile_disc(float8 ORDER BY anyelement) (
+--dg   stype = internal,
+--dg   sfunc = ordered_set_transition,
+--dg   finalfunc = percentile_disc_final,
+--dg   finalfunc_extra = true,
+--dg   finalfunc_modify = read_write
+--dg );
+
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
+--dg create aggregate my_rank(VARIADIC "any" ORDER BY VARIADIC "any") (
+--dg   stype = internal,
+--dg   sfunc = ordered_set_transition_multi,
+--dg   finalfunc = rank_final,
+--dg   finalfunc_extra = true,
+--dg   hypothetical
+--dg );
+
+--dg-cascade
+--dg alter aggregate my_percentile_disc(float8 ORDER BY anyelement)
+--dg   rename to test_percentile_disc;
+--dg-cascade
+--dg alter aggregate my_rank(VARIADIC "any" ORDER BY VARIADIC "any")
+--dg   rename to test_rank;
+
+--dg-cascade
+--dg \da test_*
+
+-- moving-aggregate options
+
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
+--dg CREATE AGGREGATE sumdouble (float8)
+--dg (
+--dg     stype = float8,
+--dg     sfunc = float8pl,
+--dg     mstype = float8,
+--dg     msfunc = float8pl,
+--dg     minvfunc = float8mi
+--dg );
+
+-- aggregate combine and serialization functions
+
+-- can't specify just one of serialfunc and deserialfunc
+CREATE AGGREGATE myavg (numeric)
+(
+	stype = internal,
+	sfunc = numeric_avg_accum,
+	serialfunc = numeric_avg_serialize
+);
+
+-- serialfunc must have correct parameters
+--dg-differs: another error: function numeric_avg_accum(internal, numeric) requires run-time type coercion
+--dg CREATE AGGREGATE myavg (numeric)
+--dg (
+--dg 	stype = internal,
+--dg 	sfunc = numeric_avg_accum,
+--dg 	serialfunc = numeric_avg_deserialize,
+--dg 	deserialfunc = numeric_avg_deserialize
+--dg );
+
+-- deserialfunc must have correct parameters
+--dg-differs: another error: function numeric_avg_accum(internal, numeric) requires run-time type coercion
+--dg CREATE AGGREGATE myavg (numeric)
+--dg (
+--dg 	stype = internal,
+--dg 	sfunc = numeric_avg_accum,
+--dg 	serialfunc = numeric_avg_serialize,
+--dg 	deserialfunc = numeric_avg_serialize
+--dg );
+
+-- ensure combine function parameters are checked
+--dg-differs: another error: function numeric_avg_accum(internal, numeric) requires run-time type coercion
+--dg CREATE AGGREGATE myavg (numeric)
+--dg (
+--dg 	stype = internal,
+--dg 	sfunc = numeric_avg_accum,
+--dg 	serialfunc = numeric_avg_serialize,
+--dg 	deserialfunc = numeric_avg_deserialize,
+--dg 	combinefunc = int4larger
+--dg );
+
+-- ensure create aggregate works.
+--dg-skip: function numeric_avg_accum(internal, numeric) requires run-time type coercion
+--dg CREATE AGGREGATE myavg (numeric)
+--dg (
+--dg 	stype = internal,
+--dg 	sfunc = numeric_avg_accum,
+--dg 	finalfunc = numeric_avg,
+--dg 	serialfunc = numeric_avg_serialize,
+--dg 	deserialfunc = numeric_avg_deserialize,
+--dg 	combinefunc = numeric_avg_combine,
+--dg 	finalfunc_modify = shareable  -- just to test a non-default setting
+--dg );
+
+-- Ensure all these functions made it into the catalog
+--dg-cascade
+--dg SELECT aggfnoid, aggtransfn, aggcombinefn, aggtranstype::regtype,
+--dg        aggserialfn, aggdeserialfn, aggfinalmodify
+--dg FROM pg_aggregate
+--dg WHERE aggfnoid = 'myavg'::REGPROC;
+
+--dg-cascade
+--dg DROP AGGREGATE myavg (numeric);
+
+-- create or replace aggregate
+--dg-skip: function numeric_avg_accum(internal, numeric) requires run-time type coercion
+--dg CREATE AGGREGATE myavg (numeric)
+--dg (
+--dg 	stype = internal,
+--dg 	sfunc = numeric_avg_accum,
+--dg 	finalfunc = numeric_avg
+--dg );
+
+--dg-skip: function numeric_avg_accum(internal, numeric) requires run-time type coercion
+--dg CREATE OR REPLACE AGGREGATE myavg (numeric)
+--dg (
+--dg 	stype = internal,
+--dg 	sfunc = numeric_avg_accum,
+--dg 	finalfunc = numeric_avg,
+--dg 	serialfunc = numeric_avg_serialize,
+--dg 	deserialfunc = numeric_avg_deserialize,
+--dg 	combinefunc = numeric_avg_combine,
+--dg 	finalfunc_modify = shareable  -- just to test a non-default setting
+--dg );
+
+-- Ensure all these functions made it into the catalog again
+--dg-cascade
+--dg SELECT aggfnoid, aggtransfn, aggcombinefn, aggtranstype::regtype,
+--dg        aggserialfn, aggdeserialfn, aggfinalmodify
+--dg FROM pg_aggregate
+--dg WHERE aggfnoid = 'myavg'::REGPROC;
+
+-- can change stype:
+--dg-skip: function numeric_add(numeric, numeric) requires run-time type coercion
+--dg CREATE OR REPLACE AGGREGATE myavg (numeric)
+--dg (
+--dg 	stype = numeric,
+--dg 	sfunc = numeric_add
+--dg );
+--dg-cascade
+--dg SELECT aggfnoid, aggtransfn, aggcombinefn, aggtranstype::regtype,
+--dg        aggserialfn, aggdeserialfn, aggfinalmodify
+--dg FROM pg_aggregate
+--dg WHERE aggfnoid = 'myavg'::REGPROC;
+
+-- can't change return type:
+--dg-cascade
+--dg CREATE OR REPLACE AGGREGATE myavg (numeric)
+--dg (
+--dg 	stype = numeric,
+--dg 	sfunc = numeric_add,
+--dg 	finalfunc = numeric_out
+--dg );
+
+-- can't change to a different kind:
+--dg-cascade
+--dg CREATE OR REPLACE AGGREGATE myavg (order by numeric)
+--dg (
+--dg 	stype = numeric,
+--dg 	sfunc = numeric_add
+--dg );
+
+-- can't change plain function to aggregate:
+--dg-skip: language "?" does not exist
+--dg create function sum4(int8,int8,int8,int8) returns int8 as
+--dg 'select $1 + $2 + $3 + $4' language sql strict immutable;
+
+--dg-cascade
+--dg CREATE OR REPLACE AGGREGATE sum3 (int8,int8,int8)
+--dg (
+--dg 	stype = int8,
+--dg 	sfunc = sum4
+--dg );
+
+--dg-cascade
+--dg drop function sum4(int8,int8,int8,int8);
+
+--dg-skip: aggregate ?(...) does not exist
+--dg DROP AGGREGATE myavg (numeric);
+
+-- invalid: bad parallel-safety marking
+CREATE AGGREGATE mysum (int)
+(
+	stype = int,
+	sfunc = int4pl,
+	parallel = pear
+);
+
+-- invalid: nonstrict inverse with strict forward function
+
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION float8mi_n(float8, float8) RETURNS float8 AS
+--dg $$ SELECT $1 - $2; $$
+--dg LANGUAGE SQL;
+
+--dg-cascade
+--dg CREATE AGGREGATE invalidsumdouble (float8)
+--dg (
+--dg     stype = float8,
+--dg     sfunc = float8pl,
+--dg     mstype = float8,
+--dg     msfunc = float8pl,
+--dg     minvfunc = float8mi_n
+--dg );
+
+-- invalid: non-matching result types
+
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION float8mi_int(float8, float8) RETURNS int AS
+--dg $$ SELECT CAST($1 - $2 AS INT); $$
+--dg LANGUAGE SQL;
+
+--dg-cascade
+--dg CREATE AGGREGATE wrongreturntype (float8)
+--dg (
+--dg     stype = float8,
+--dg     sfunc = float8pl,
+--dg     mstype = float8,
+--dg     msfunc = float8pl,
+--dg     minvfunc = float8mi_int
+--dg );
+
+-- invalid: non-lowercase quoted identifiers
+
+CREATE AGGREGATE case_agg ( -- old syntax
+	"Sfunc1" = int4pl,
+	"Basetype" = int4,
+	"Stype1" = int4,
+	"Initcond1" = '0',
+	"Parallel" = safe
+);
+
+CREATE AGGREGATE case_agg(float8)
+(
+	"Stype" = internal,
+	"Sfunc" = ordered_set_transition,
+	"Finalfunc" = percentile_disc_final,
+	"Finalfunc_extra" = true,
+	"Finalfunc_modify" = read_write,
+	"Parallel" = safe
+);

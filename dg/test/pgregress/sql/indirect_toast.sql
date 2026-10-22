@@ -1,0 +1,99 @@
+--
+-- Tests for external toast datums
+--
+
+-- directory paths and dlsuffix are passed to us in environment variables
+\getenv libdir PG_LIBDIR
+\getenv dlsuffix PG_DLSUFFIX
+
+\set regresslib :libdir '/regress' :dlsuffix
+
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
+--dg CREATE FUNCTION make_tuple_indirect (record)
+--dg         RETURNS record
+--dg         AS :'regresslib'
+--dg         LANGUAGE C STRICT;
+
+-- Other compression algorithms may cause the compressed data to be stored
+-- inline.  pglz guarantees that the data is externalized, so stick to it.
+SET default_toast_compression = 'pglz';
+
+CREATE TABLE indtoasttest(descr text, cnt int DEFAULT 0, f1 text, f2 text);
+
+INSERT INTO indtoasttest(descr, f1, f2) VALUES('two-compressed', repeat('1234567890',1000), repeat('1234567890',1000));
+INSERT INTO indtoasttest(descr, f1, f2) VALUES('two-toasted', repeat('1234567890',30000), repeat('1234567890',50000));
+INSERT INTO indtoasttest(descr, f1, f2) VALUES('one-compressed,one-null', NULL, repeat('1234567890',1000));
+INSERT INTO indtoasttest(descr, f1, f2) VALUES('one-toasted,one-null', NULL, repeat('1234567890',50000));
+
+-- check whether indirect tuples works on the most basic level
+--dg-cascade
+--dg SELECT descr, substring(make_tuple_indirect(indtoasttest)::text, 1, 200) FROM indtoasttest;
+
+-- modification without changing varlenas
+--dg-skip: relation "?" does not have a composite type
+--dg UPDATE indtoasttest SET cnt = cnt +1 RETURNING substring(indtoasttest::text, 1, 200);
+
+-- modification without modifying assigned value
+--dg-cascade
+--dg UPDATE indtoasttest SET cnt = cnt +1, f1 = f1 RETURNING substring(indtoasttest::text, 1, 200);
+
+-- modification modifying, but effectively not changing
+--dg-cascade
+--dg UPDATE indtoasttest SET cnt = cnt +1, f1 = f1||'' RETURNING substring(indtoasttest::text, 1, 200);
+
+--dg-cascade
+--dg UPDATE indtoasttest SET cnt = cnt +1, f1 = '-'||f1||'-' RETURNING substring(indtoasttest::text, 1, 200);
+
+--dg-cascade
+--dg SELECT substring(indtoasttest::text, 1, 200) FROM indtoasttest;
+-- check we didn't screw with main/toast tuple visibility
+VACUUM FREEZE indtoasttest;
+--dg-cascade
+--dg SELECT substring(indtoasttest::text, 1, 200) FROM indtoasttest;
+
+-- now create a trigger that forces all Datums to be indirect ones
+--dg-skip: language "?" does not exist
+--dg CREATE FUNCTION update_using_indirect()
+--dg         RETURNS trigger
+--dg         LANGUAGE plpgsql AS $$
+--dg BEGIN
+--dg     NEW := make_tuple_indirect(NEW);
+--dg     RETURN NEW;
+--dg END$$;
+
+--dg-cascade
+--dg CREATE TRIGGER indtoasttest_update_indirect
+--dg         BEFORE INSERT OR UPDATE
+--dg         ON indtoasttest
+--dg         FOR EACH ROW
+--dg         EXECUTE PROCEDURE update_using_indirect();
+
+-- modification without changing varlenas
+--dg-cascade
+--dg UPDATE indtoasttest SET cnt = cnt +1 RETURNING substring(indtoasttest::text, 1, 200);
+
+-- modification without modifying assigned value
+--dg-cascade
+--dg UPDATE indtoasttest SET cnt = cnt +1, f1 = f1 RETURNING substring(indtoasttest::text, 1, 200);
+
+-- modification modifying, but effectively not changing
+--dg-cascade
+--dg UPDATE indtoasttest SET cnt = cnt +1, f1 = f1||'' RETURNING substring(indtoasttest::text, 1, 200);
+
+--dg-cascade
+--dg UPDATE indtoasttest SET cnt = cnt +1, f1 = '-'||f1||'-' RETURNING substring(indtoasttest::text, 1, 200);
+
+INSERT INTO indtoasttest(descr, f1, f2) VALUES('one-toasted,one-null, via indirect', repeat('1234567890',30000), NULL);
+
+--dg-cascade
+--dg SELECT substring(indtoasttest::text, 1, 200) FROM indtoasttest;
+-- check we didn't screw with main/toast tuple visibility
+VACUUM FREEZE indtoasttest;
+--dg-cascade
+--dg SELECT substring(indtoasttest::text, 1, 200) FROM indtoasttest;
+
+DROP TABLE indtoasttest;
+--dg-cascade
+--dg DROP FUNCTION update_using_indirect();
+
+RESET default_toast_compression;
