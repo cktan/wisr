@@ -751,79 +751,64 @@ int scan_next(sm1::scan_t *c, const char **key, size_t *klen, const char **data,
   view_t view = {c->snapshot_ts, c->xid, c->seq_hwm};
   rocksdb::Iterator *it = c->it.get();
 
-  // Step past the older versions of the row handed out last: the
-  // visible one decided its key, so they are only stepped over,
-  // as they would have been before it was handed out.
+  // The row handed out last decided its key: step off it, and its
+  // older versions are only stepped over, as they would have been
+  // before it was handed out.
+  bool decided = c->on_row;
   if (c->on_row) {
     c->on_row = false;
-    rocksdb::Slice uk(c->last_examined);
-    for (it->Next(); it->Valid(); it->Next()) {
-      version_t v;
-      version_decode_key(it->key(), &v);
-      if (v.userkey != uk) {
-        break;
-      }
-    }
+    it->Next();
   }
 
-  // Advance one userkey's run of versions at a time.
-  while (it->Valid()) {
+  // Walk the versions, newest first within a userkey's run: the
+  // first visible one decides the key, the rest are stepped past.
+  // Each version's key is decoded once.
+  for (; it->Valid(); it->Next()) {
     version_t v;
-    // Decode the next run's userkey.
+    // Decode this version's userkey, wts, and seq.
     version_decode_key(it->key(), &v);
-    // Record how far the scan has read, for SIREAD narrowing; the
-    // key's one copy, which is also what is handed out.
-    c->examined = true;
-    c->last_examined.assign(v.userkey.data(), v.userkey.size());
-    rocksdb::Slice uk(c->last_examined);
-    // Nothing decided about this key yet.
-    bool found = false;
-    bool live = false;
-    // Walk the run of uk's versions, newest first: the first
-    // visible one decides, the rest are stepped past.
-    for (; it->Valid(); it->Next()) {
-      // Decode this version's userkey, wts, and seq.
-      version_decode_key(it->key(), &v);
-      // Past the last version of this key.
-      if (v.userkey != uk) {
-        break;
+    // The first version of the next run: record how far the scan
+    // has read, for SIREAD narrowing; the key's one copy, which is
+    // also what is handed out. Nothing is decided about it yet.
+    if (!c->examined || v.userkey != rocksdb::Slice(c->last_examined)) {
+      c->examined = true;
+      c->last_examined.assign(v.userkey.data(), v.userkey.size());
+      decided = false;
+    }
+    // Once decided, only step past the older versions.
+    if (decided) {
+      continue;
+    }
+    // Reject a malformed value.
+    if (!version_decode_value(it->value(), &v)) {
+      c->state = -1;
+      return set_error(sm1::SM_ERR_CORRUPT, "malformed version value");
+    }
+    // Is this version visible at the cursor's view?
+    int r = visible(db, v, view);
+    // Fail the cursor on a status lookup error.
+    if (r < 0) {
+      c->state = -1;
+      return -1;
+    }
+    // Visible: this version decides the key.
+    if (1 == r) {
+      // Stop judging this key's older versions.
+      decided = true;
+      // A live row, not a tombstone, which hides the key: hand it
+      // out where the iterator has it, which stays on it until the
+      // next call (on_row).
+      if (!(v.flags & version_tombstone)) {
+        c->on_row = true;
+        *key = c->last_examined.data();
+        *klen = c->last_examined.size();
+        *data = v.payload.data();
+        *datalen = v.payload.size();
+        return 0;
       }
-      // Once decided, only step past the older versions.
-      if (found) {
-        continue;
-      }
-      // Reject a malformed value.
-      if (!version_decode_value(it->value(), &v)) {
-        c->state = -1;
-        return set_error(sm1::SM_ERR_CORRUPT, "malformed version value");
-      }
-      // Is this version visible at the cursor's view?
-      int r = visible(db, v, view);
-      // Fail the cursor on a status lookup error.
-      if (r < 0) {
-        c->state = -1;
-        return -1;
-      }
-      // Visible: this version decides the key.
-      if (1 == r) {
-        // Stop judging this key's older versions.
-        found = true;
-        // A tombstone hides the key.
-        live = !(v.flags & version_tombstone);
-        // A live row: hand it out where the iterator has it, which
-        // stays on it until the next call (on_row).
-        if (live) {
-          c->on_row = true;
-          *key = c->last_examined.data();
-          *klen = c->last_examined.size();
-          *data = v.payload.data();
-          *datalen = v.payload.size();
-          return 0;
-        }
-      } else if (0 != skip_version(c->session, v, view)) {
-        c->state = -1;
-        return -1;
-      }
+    } else if (0 != skip_version(c->session, v, view)) {
+      c->state = -1;
+      return -1;
     }
   }
   // Fail the cursor if the iterator failed.
