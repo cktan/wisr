@@ -244,7 +244,17 @@ void publish(sm3::session_t *s) {
   }
   s->states.clear();
   for (sm3::table_change_t &t : s->tables) {
+    // The definition it replaces frees its indexes' names.
+    auto old = cat->tables.find(t.oid);
+    if (old != cat->tables.end()) {
+      for (const sm3::index_def_t &x : old->second->indexes) {
+        cat->index_names.erase({old->second->nspoid, x.name});
+      }
+    }
     if (t.def) {
+      for (const sm3::index_def_t &x : t.def->indexes) {
+        cat->index_names[{t.def->nspoid, x.name}] = {t.oid, x.oid};
+      }
       cat->tables[t.oid] = std::move(t.def);
       cat->table_seq[t.oid] = seq;
     } else {
@@ -946,24 +956,10 @@ std::vector<std::string> cat_list_tables(const session_t *s, uint64_t nspoid) {
 /* An index by name as s sees it: its tables, overlay first. */
 bool cat_get_index(const session_t *s, uint64_t nspoid, std::string_view name,
                    uint64_t &table, uint64_t &index) {
-  // The session's own definitions, newest last, over the shared ones.
-  std::map<uint64_t, std::shared_ptr<const table_def_t>> seen;
-  for (const table_change_t &c : s->tables) {
-    seen[c.oid] = c.def;
-  }
-  // Its own temporary tables, then the shared ones.
-  for (const auto &[oid, def] : s->temp_tables) {
-    seen.emplace(oid, def);
-  }
-  {
-    std::shared_lock lock(s->cat->mu);
-    for (const auto &[oid, def] : s->cat->tables) {
-      seen.emplace(oid, def);
-    }
-  }
-  for (const auto &[oid, def] : seen) {
+  // An index of def named name, into table and index.
+  auto in = [&](uint64_t oid, const table_def_t *def) {
     if (!def || def->nspoid != nspoid) {
-      continue;
+      return false;
     }
     for (const index_def_t &x : def->indexes) {
       if (x.name == name) {
@@ -972,8 +968,40 @@ bool cat_get_index(const session_t *s, uint64_t nspoid, std::string_view name,
         return true;
       }
     }
+    return false;
+  };
+  // The tables the session changed, each as its newest change has it:
+  // that definition is the table's to s, whatever is committed.
+  std::vector<uint64_t> changed;
+  for (auto it = s->tables.rbegin(); it != s->tables.rend(); ++it) {
+    if (std::find(changed.begin(), changed.end(), it->oid) != changed.end()) {
+      continue;
+    }
+    changed.push_back(it->oid);
+    if (in(it->oid, it->def.get())) {
+      return true;
+    }
   }
-  return false;
+  auto other = [&](uint64_t oid) {
+    return std::find(changed.begin(), changed.end(), oid) == changed.end();
+  };
+  // Its own temporary tables: the catalog has none.
+  if (nspoid == nsp_temp) {
+    for (const auto &[oid, def] : s->temp_tables) {
+      if (other(oid) && in(oid, def.get())) {
+        return true;
+      }
+    }
+    return false;
+  }
+  std::shared_lock lock(s->cat->mu);
+  auto it = s->cat->index_names.find({nspoid, std::string(name)});
+  if (it == s->cat->index_names.end() || !other(it->second.first)) {
+    return false;
+  }
+  table = it->second.first;
+  index = it->second.second;
+  return true;
 }
 
 /* A table by name as s sees it: its newest name change first. */

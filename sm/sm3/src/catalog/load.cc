@@ -337,6 +337,9 @@ int load(sm2::catkv_t *kv, sm3::catalog_t &cat) {
       return -1;
     }
     cat.table_names[{rec.nspoid, rec.name}] = oid;
+    for (const sm3::index_def_t &x : def->indexes) {
+      cat.index_names[{def->nspoid, x.name}] = {oid, x.oid};
+    }
     cat.tables[oid] = std::move(def);
   }
   // Each view, its record whole under its one key.

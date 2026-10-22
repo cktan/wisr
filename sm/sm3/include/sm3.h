@@ -471,8 +471,9 @@ bool cat_get_namespace_name(const session_t* s, uint64_t oid,
 
 /*
  * The index named name in nspoid, as s's transaction sees it:
- * true with its table's oid and its own set. A scan of every
- * table's indexes, since the catalog keeps no map of their names.
+ * true with its table's oid and its own set. The catalog keeps
+ * the committed indexes' names, so it reads no definition but
+ * those of the tables s's transaction changed.
  */
 bool cat_get_index(const session_t* s, uint64_t nspoid,
                    std::string_view name, uint64_t& table, uint64_t& index);
