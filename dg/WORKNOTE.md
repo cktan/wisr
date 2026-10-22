@@ -8130,3 +8130,26 @@ the transaction's end, while the lock read only its version.
   `test/server.sh` reads the version through the lock
   throughout: with `sm_tbl_version()` made to return 0, it
   fails from its first index on.
+
+## Step 282: an index's estimate does not size its table again
+
+After step 281, Q7 of `../bench` spent 3.8% of the server's time
+sizing its table and index for the plan: three
+`sm2::relid_size()` calls, the heap twice, as
+`smstore_estimate_index_size()` took the table's growth since
+the analyze from `growth()` again.
+
+- **`smstore_estimate_index_size()` takes the table's rows**,
+  `rel->tuples`, which `get_relation_info()` estimated just
+  before (`plancat.c`), and scales the index's entries by them
+  over the analyze's live rows (`STATISTICS.md` §2.2).
+- **A table analyzed whose heap now holds no bytes** is planned
+  at ten pages, as before; its indexes now scale by that guess,
+  where they read as empty.
+- **sm1 asks RocksDB less** (`../sm/sm1/API.md`,
+  `sm1::approxsize`): its bound above every key is made only
+  when there is no bound, and the count of sealed memtables not
+  yet flushed is kept under the tree's version, as the files'
+  bytes are.
+- No test of the index's scaling, before or now: it shows only
+  in an index scan's cost.

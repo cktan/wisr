@@ -171,7 +171,8 @@ extern void smstore_drop_namespaces(DropStmt *stmt);
 extern void smstore_analyze(List *rels, bool verbose, bool skip_locked);
 extern bool smstore_estimate_size(Oid oid, double *pages, double *tuples);
 extern int64 smstore_relation_bytes(Relation rel);
-extern bool smstore_estimate_index_size(Oid table, Oid index, double *pages,
+extern bool smstore_estimate_index_size(Oid table, Oid index,
+                                        double table_tuples, double *pages,
                                         double *tuples);
 extern HeapTuple smstore_statistic_tuple(Oid relid, AttrNumber attnum,
                                          bool inh);

@@ -55,6 +55,24 @@ public:
     REQUIRE(m_s->db->rdb->Flush(rocksdb::FlushOptions(), cf()).ok());
   }
 
+  /*
+   * Seal the store's memtable with background work paused, so it
+   * stays unflushed until flush_sealed().
+   */
+  void seal() {
+    REQUIRE(m_s->db->rdb->PauseBackgroundWork().ok());
+    rocksdb::FlushOptions opt;
+    opt.wait = false;
+    opt.allow_write_stall = true;
+    REQUIRE(m_s->db->rdb->Flush(opt, cf()).ok());
+  }
+
+  /* Resume background work, and flush what seal() left sealed. */
+  void flush_sealed() {
+    REQUIRE(m_s->db->rdb->ContinueBackgroundWork().ok());
+    flush();
+  }
+
   /* Compact the whole store into its bottom level. */
   void compact() {
     rocksdb::CompactRangeOptions opt;
@@ -365,6 +383,28 @@ TEST_CASE("sm1_approxsize counts a 2-byte prefix's memtable bytes exactly") {
   uint64_t c = load_prefix(f.s(), f.store(), 1, 500, 200, 2000);
   CHECK(mem_of(f.s(), f.store(), 1, 2, disk) == c);
   CHECK(mem_of(f.s(), f.store(), 2, 3, disk) == 0);
+}
+
+TEST_CASE("sm1_approxsize counts a sealed memtable until it is flushed") {
+  // Verify the count of sealed memtables not yet flushed, kept by
+  // the tree's version, is read again once a seal moves it.
+  // 1. 1,000 rows under prefix 1, in the active memtable: its mem is
+  //    theirs, and none sealed is kept at the tree's version.
+  // 2. The memtable sealed and, background work paused, not flushed:
+  //    its mem is still theirs, not 0 by the count kept before.
+  // 3. Once flushed, its mem is 0.
+  stats_fixture_t f;
+  uint64_t a = load_prefix(f.s(), f.store(), 1, 1000, 200);
+  uint64_t disk = 0;
+  CHECK(mem_of(f.s(), f.store(), 1, 2, disk) == a);
+
+  // 2. Seal, unflushed.
+  f.seal();
+  CHECK(mem_of(f.s(), f.store(), 1, 2, disk) == a);
+
+  // 3. Flush.
+  f.flush_sealed();
+  CHECK(mem_of(f.s(), f.store(), 1, 2, disk) == 0);
 }
 
 TEST_CASE("no sorted file is compressed") {

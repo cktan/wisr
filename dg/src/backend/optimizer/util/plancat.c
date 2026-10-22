@@ -418,12 +418,13 @@ void get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 
         /*
          * An index is sm's: its bytes and its entries as its table's last
-         * analyze found them, a partial one's its share of the rows; never
-         * analyzed, as large as its table.
+         * analyze found them, a partial one's its share of the rows, grown
+         * as rel->tuples, estimated above, has; never analyzed, as large as
+         * its table.
          */
         if (smstore_estimate_index_size(RelationGetRelid(relation),
                                         RelationGetRelid(indexRelation),
-                                        &sm_pages, &sm_tuples)) {
+                                        rel->tuples, &sm_pages, &sm_tuples)) {
           info->pages = (BlockNumber)sm_pages;
           info->tuples = std::min(rint(sm_tuples), rel->tuples);
         } else {

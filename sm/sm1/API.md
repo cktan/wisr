@@ -1370,7 +1370,10 @@ value as sm1 writes them, without RocksDB's own overhead. sm1
 counts them as it writes, by prefix, and drops a memtable's count
 once RocksDB has flushed it. A write that races a memtable's
 sealing may be counted in the next memtable's count, until that
-one is flushed too. Of any other range, `mem` is RocksDB's
+one is flushed too. RocksDB's count of the sealed memtables not
+yet flushed, which says how many of sm1's are still in memory, is
+kept under the tree's version, as `disk` is below: a seal and a
+flush each move it. Of any other range, `mem` is RocksDB's
 estimate from sampling its memtables, an order of magnitude and
 no better: for a range among others it was measured from 0 to 4
 times, and 0 in one trial of thirty.

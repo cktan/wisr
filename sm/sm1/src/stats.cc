@@ -65,11 +65,15 @@ int approxsize(sm1::session_t *s, uint64_t storeid, const char *lo,
   // version of its userkey, so [lo, hi) holds every version of
   // every userkey in it. No bound is the store's first or last
   // possible key.
-  std::string top(sm1::max_keylen + 1, '\xff'); // above every userkey
   std::string start =
       version_bound(lo ? rocksdb::Slice(lo, lolen) : rocksdb::Slice(), '\x00');
-  std::string limit = version_bound(
-      hi ? rocksdb::Slice(hi, hilen) : rocksdb::Slice(top), '\x00');
+  std::string limit;
+  if (hi) {
+    limit = version_bound(rocksdb::Slice(hi, hilen), '\x00');
+  } else {
+    std::string top(sm1::max_keylen + 1, '\xff'); // above every userkey
+    limit = version_bound(rocksdb::Slice(top), '\x00');
+  }
   rocksdb::Range range(start, limit);
 
   // Sorted files only: the memtables are reported apart, since
@@ -103,10 +107,17 @@ int approxsize(sm1::session_t *s, uint64_t storeid, const char *lo,
   if ((!lo || lolen == 2) && (!hi || hilen == 2) && store.mem) {
     uint32_t from = lo ? key_prefix(std::string_view(lo, lolen)) : 0;
     uint32_t to = hi ? key_prefix(std::string_view(hi, hilen)) : 0x10000;
-    // The sealed memtables RocksDB has not flushed yet.
+    // The sealed memtables RocksDB has not flushed yet: a seal and a
+    // flush each raise the tree's version, so a count kept under it
+    // is one RocksDB gave at that version or later.
     uint64_t unflushed = 0;
-    store.rdb->GetIntProperty(
-        store.cf, rocksdb::DB::Properties::kNumImmutableMemTable, &unflushed);
+    if (!versioned || !store.files->find_unflushed(version, unflushed)) {
+      store.rdb->GetIntProperty(
+          store.cf, rocksdb::DB::Properties::kNumImmutableMemTable, &unflushed);
+      if (versioned) {
+        store.files->put_unflushed(version, unflushed);
+      }
+    }
     *mem = store.mem->bytes(from, to, unflushed);
     return 0;
   }

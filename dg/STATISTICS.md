@@ -79,6 +79,10 @@ Where it stood before §3 was built.
   (`sm_tbl_idx_size`, `stats_index_t`): its pages from its
   bytes, its tuples its entries scaled as the table's rows are,
   so a partial index is the share of rows that belong to it.
+  The scale is the plan's estimate of the table's rows over
+  `rec.live_rows`: `get_relation_info()` estimates the table
+  first, and passes its rows in, so the table is not sized a
+  second time.
   `tree_height` stays -1: costing a lookup by the LSM's probes
   needs calibration, and is left for later.
 

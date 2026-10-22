@@ -95,6 +95,22 @@ void filesize_t::put(const std::string &start, const std::string &limit,
   m_sizes[{start, limit}] = {version, bytes};
 }
 
+/* The sealed memtables not yet flushed at version, if known. */
+bool filesize_t::find_unflushed(uint64_t version, uint64_t &count) const {
+  std::lock_guard lock(m_mu);
+  if (!m_unflushed || m_unflushed->first != version) {
+    return false;
+  }
+  count = m_unflushed->second;
+  return true;
+}
+
+/* Keep count as the sealed memtables not yet flushed at version. */
+void filesize_t::put_unflushed(uint64_t version, uint64_t count) {
+  std::lock_guard lock(m_mu);
+  m_unflushed = {version, count};
+}
+
 /* Count cf_name's memtables in counts. */
 void memcount_listener_t::add(const std::string &cf_name,
                               std::shared_ptr<memcount_t> counts) {

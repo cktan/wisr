@@ -4436,14 +4436,14 @@ bool smstore_estimate_size(Oid oid, double *pages, double *tuples) {
 /*
  * An index's pages and entries for the planner: its bytes now, in pages,
  * and the entries the last analyze counted -- a partial index's share of
- * the rows -- grown as its table has.  False if its table was never
- * analyzed, or the index was made since.
+ * the rows -- grown as its table has, from the last analyze's rows to
+ * table_tuples, the plan's estimate of the table's.  False if its table
+ * was never analyzed, or the index was made since.
  */
-bool smstore_estimate_index_size(Oid table, Oid index, double *pages,
-                                 double *tuples) {
+bool smstore_estimate_index_size(Oid table, Oid index, double table_tuples,
+                                 double *pages, double *tuples) {
   sm_tbl_t *tbl = open_table(table, SM_LOCKMODE_IS);
   uint64_t disk, mem;
-  double now;
 
   if (tbl == NULL)
     return false;
@@ -4453,7 +4453,8 @@ bool smstore_estimate_index_size(Oid table, Oid index, double *pages,
   for (const sm_stats_index_t &x : st->indexes) {
     if (x.oid != index)
       continue;
-    double g = growth(tbl, *st, &now);
+    /* The table's growth as the plan has it: no second look at its size. */
+    double g = st->live_rows > 0 ? table_tuples / st->live_rows : 1.0;
     if (sm_tbl_idx_size(tbl, index, &disk, &mem) != 0)
       sm_error("size an index");
     *tuples = x.entries * g;
