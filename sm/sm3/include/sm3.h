@@ -471,8 +471,9 @@ bool cat_get_namespace_name(const session_t* s, uint64_t oid,
 
 /*
  * The index named name in nspoid, as s's transaction sees it:
- * true with its table's oid and its own set. A scan of every
- * table's indexes, since the catalog keeps no map of their names.
+ * true with its table's oid and its own set. The catalog keeps
+ * the committed indexes' names, so it reads no definition but
+ * those of the tables s's transaction changed.
  */
 bool cat_get_index(const session_t* s, uint64_t nspoid,
                    std::string_view name, uint64_t& table, uint64_t& index);
@@ -1504,6 +1505,13 @@ int tbl_idx_size(table_t* table, uint64_t index, uint64_t& disk,
                  uint64_t& mem);
 int tbl_rowno_limit(table_t* table, uint64_t& n);
 int tbl_probes(table_t* table, uint64_t& n);
+
+/*
+ * Compact the table's store, its heap and indexes, into one sorted
+ * run, as sm1::compact: SQL's VACUUM. The handle's table-oid lock
+ * keeps the store from being dropped meanwhile.
+ */
+int tbl_compact(table_t* table);
 
 /*
  * ---- statistics (SM3_DESIGN.md §6.6, §6.7) ----

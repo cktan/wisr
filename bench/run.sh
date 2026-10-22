@@ -104,12 +104,9 @@ measure() {
     sql -f sql/pg_only.sql || exit 1
   fi
   sql -f sql/load.sql || exit 1
-  # PostgreSQL's heap settled, so no scan sets hint bits (section 3).
-  if [ "$sys" = pg ]; then
-    sql -c 'vacuum (freeze, analyze)' || exit 1
-  else
-    sql -c 'analyze' || exit 1
-  fi
+  # Each side settled: PostgreSQL's heap, so no scan sets hint bits, and
+  # digres's stores, compacted (section 3).
+  sql -c 'vacuum (freeze, analyze)' || exit 1
   : > "$out"
   grep -v '^#' sql/queries.txt | while IFS='|' read -r name table scan query; do
     local set a=1 times=()

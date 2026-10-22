@@ -29,6 +29,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <shared_mutex>
 #include <string>
 #include <string_view>
@@ -80,10 +81,11 @@ private:
 };
 
 /*
- * One store's sorted files' bytes by key range, as RocksDB estimated
- * them at a version of its LSM tree: RocksDB's super version number,
- * which a flush, a compaction or an ingest raises before it returns.
- * An estimate made at another version is not used.
+ * One store's sorted files' bytes by key range, and its count of
+ * sealed memtables not yet flushed, as RocksDB gave them at a
+ * version of its LSM tree: RocksDB's super version number, which a
+ * memtable sealed, a flush, a compaction or an ingest raises before
+ * it returns. What was read at another version is not used.
  */
 class filesize_t {
 public:
@@ -95,6 +97,12 @@ public:
   void put(const std::string &start, const std::string &limit, uint64_t version,
            uint64_t bytes);
 
+  /* The sealed memtables not yet flushed at version, if known. */
+  bool find_unflushed(uint64_t version, uint64_t &count) const;
+
+  /* Keep count as the sealed memtables not yet flushed at version. */
+  void put_unflushed(uint64_t version, uint64_t count);
+
 private:
   /* At most this many ranges are kept; past it, they are forgotten. */
   static constexpr size_t m_max = 4096;
@@ -105,8 +113,10 @@ private:
     uint64_t bytes;
   };
 
-  mutable std::mutex m_mu; /* guards m_sizes */
+  mutable std::mutex m_mu; /* guards m_sizes and m_unflushed */
   std::map<std::pair<std::string, std::string>, estimate_t> m_sizes;
+  /* A version, and the sealed memtables not yet flushed at it. */
+  std::optional<std::pair<uint64_t, uint64_t>> m_unflushed;
 };
 
 /*

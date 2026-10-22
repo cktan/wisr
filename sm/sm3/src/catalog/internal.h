@@ -47,6 +47,13 @@ struct sm3::catalog_t {
   std::unordered_map<uint64_t, std::shared_ptr<const table_def_t>> tables;
   std::unordered_map<std::pair<uint64_t, std::string>, uint64_t, tblname_hash_t>
       table_names;
+  /*
+   * Each index's table and its own oid, by its table's namespace and
+   * its name, so a lookup by name reads no definition.
+   */
+  std::unordered_map<std::pair<uint64_t, std::string>,
+                     std::pair<uint64_t, uint64_t>, tblname_hash_t>
+      index_names;
   std::unordered_map<uint64_t, std::string> nspaces;
   std::unordered_map<uint64_t, sm2::collation_t *> collations; /* owned */
   /*

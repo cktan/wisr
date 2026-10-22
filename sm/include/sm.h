@@ -1446,6 +1446,16 @@ int sm_tbl_rowno_limit(sm_tbl_t* tbl, uint64_t* n);
 int sm_tbl_probes(sm_tbl_t* tbl, uint64_t* n);
 
 /*
+ * Compact the table's store, its heap and indexes: flush its
+ * memtables and merge every level into the bottom one, so a lookup
+ * visits one sorted run and old versions no reader needs are
+ * dropped. SQL's VACUUM. It waits for the compaction, seconds for
+ * a table of hundreds of megabytes, and cannot be cut short; the
+ * handle's lock keeps DDL out meanwhile.
+ */
+int sm_tbl_compact(sm_tbl_t* tbl);
+
+/*
  * A table's statistics, sm_stats_t, and its parts, sm_stat_t and
  * sm_stats_index_t, are in sm_stats.h: sm3's own, handed out as
  * sm3 keeps them.

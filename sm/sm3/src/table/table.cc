@@ -1223,6 +1223,11 @@ int tbl_probes(table_t *table, uint64_t &n) {
   return sm1::probes(table->session->sm1, table->def->storeid, n);
 }
 
+/* Compact the table's store into one sorted run. */
+int tbl_compact(table_t *table) {
+  return sm1::compact(table->session->sm1, table->def->storeid);
+}
+
 /* One batch of an index's build; see sm3.h. */
 int tbl_index_backfill(table_t *table, uint64_t index, uint64_t from,
                        size_t max_rows, uint64_t &next, bool &done) {

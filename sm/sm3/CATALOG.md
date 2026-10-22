@@ -395,8 +395,10 @@ transaction. Each reports failure as sm1 does (`DESIGN.md`
   and **`cat_list_tables(ss, nspoid)`** lists the names of its
   tables, sorted;
   **`cat_get_index(ss, nspoid, name, table, index)`** finds an
-  index and its table, by a scan of the tables' indexes, since
-  no map of index names is kept.
+  index and its table: in the definitions of the tables the
+  transaction changed, then in a map of the committed indexes'
+  names, by namespace and name, built at load and kept at
+  each publish.
 - **`cat_get_namespace(ss, name, oid)`** finds a namespace by
   name as the session's transaction sees it, by a look at
   each, since they are few and no map by name is kept;

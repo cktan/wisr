@@ -8130,3 +8130,69 @@ the transaction's end, while the lock read only its version.
   `test/server.sh` reads the version through the lock
   throughout: with `sm_tbl_version()` made to return 0, it
   fails from its first index on.
+
+## Step 282: an index's estimate does not size its table again
+
+After step 281, Q7 of `../bench` spent 3.8% of the server's time
+sizing its table and index for the plan: three
+`sm2::relid_size()` calls, the heap twice, as
+`smstore_estimate_index_size()` took the table's growth since
+the analyze from `growth()` again.
+
+- **`smstore_estimate_index_size()` takes the table's rows**,
+  `rel->tuples`, which `get_relation_info()` estimated just
+  before (`plancat.c`), and scales the index's entries by them
+  over the analyze's live rows (`STATISTICS.md` §2.2).
+- **A table analyzed whose heap now holds no bytes** is planned
+  at ten pages, as before; its indexes now scale by that guess,
+  where they read as empty.
+- **sm1 asks RocksDB less** (`../sm/sm1/API.md`,
+  `sm1::approxsize`): its bound above every key is made only
+  when there is no bound, and the count of sealed memtables not
+  yet flushed is kept under the tree's version, as the files'
+  bytes are.
+- No test of the index's scaling, before or now: it shows only
+  in an index scan's cost.
+
+## Step 283: a catalog relation is found by name by a binary search
+
+An unqualified name is looked for in `pg_catalog` first, so
+`get_relname_relid()` asked `cat_relation_named()` about every
+user table a query names, twice, and each time it compared the
+name with all 28 catalog relations: 0.4% of Q7 of `../bench`.
+
+- **`gen_cat.py` writes `relations_by_name`**, the relations in
+  name order, and `cat_relation_named()` searches it, as the
+  generator's other lookups by name do.
+- **`get_relname_relid()` asks once.**
+- With the order reversed, `test/server.sh` fails 20 checks,
+  from the lock status views on: they are not found.
+
+## Step 284: VACUUM compacts a table's store
+
+VACUUM did nothing, and VACUUM ANALYZE not even the ANALYZE. A
+store loaded through its memtable kept the last level-0 files
+of the load for good: RocksDB compacts level 0 at four files.
+A point read of `../bench`'s `wide_mixed` probed four sorted
+runs where it needs two, 8 to 17% of its time.
+
+- **`smstore_vacuum()` compacts each table's store**
+  (`sm_tbl_compact()`, `../sm/sm1/API.md` `sm1::compact`): its
+  memtables flushed and every level merged into the bottom
+  one. Each table is opened as a reader, so writers go on and
+  DDL waits; a bare VACUUM takes every table, as a bare
+  ANALYZE does (`every_table()`, which both share now).
+- **VACUUM ANALYZE analyzes after**, so the sizes it records
+  are the compacted store's. FULL, FREEZE and the rest have
+  nothing more to do in sm and are accepted.
+- **A table that is not there is an error**, as in
+  PostgreSQL; `test/server.sh` checked that VACUUM did nothing,
+  and now checks this.
+- **The versions no reader needs go with the compaction**;
+  the tombstones among them go after, by sm1's purge.
+- `../bench/run.sh` runs `VACUUM (FREEZE, ANALYZE)` on both
+  systems after the load (`../bench/DESIGN.md` §3).
+- `test/server.sh`: VACUUM ANALYZE estimates a table's 20,000
+  rows exactly; with every row deleted, VACUUM takes it under
+  a third of its size; a view is passed over with a warning.
+  It fails with the compaction left out, and with the ANALYZE.

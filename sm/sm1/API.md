@@ -1370,7 +1370,10 @@ value as sm1 writes them, without RocksDB's own overhead. sm1
 counts them as it writes, by prefix, and drops a memtable's count
 once RocksDB has flushed it. A write that races a memtable's
 sealing may be counted in the next memtable's count, until that
-one is flushed too. Of any other range, `mem` is RocksDB's
+one is flushed too. RocksDB's count of the sealed memtables not
+yet flushed, which says how many of sm1's are still in memory, is
+kept under the tree's version, as `disk` is below: a seal and a
+flush each move it. Of any other range, `mem` is RocksDB's
 estimate from sampling its memtables, an order of magnitude and
 no better: for a range among others it was measured from 0 to 4
 times, and 0 in one trial of thirty.
@@ -1403,6 +1406,24 @@ transaction, as `sm1::approxsize`.
 
 Errors: `SM_ERR_NOTFOUND` (no such store), `SM_ERR_INVALID`,
 `SM_ERR_PREPARED`.
+
+### int sm1::compact(sm1::session_t* session, uint64_t storeid)
+
+Compact the store: flush its memtables, then merge every level
+into the bottom one (RocksDB's `CompactRange` over the whole
+store, its bottom level compacted once), so a point lookup
+visits one sorted run, as `sm1::probes` counts it. The
+compaction filter meets every version on the way, so the
+versions no snapshot needs go, and the tombstones among them
+are queued for the purge (§8.3 of `SM1_DESIGN.md`). It waits
+for the compaction, seconds for a store of hundreds of
+megabytes, and cannot be cut short; other stores' compactions
+go on meanwhile. Needs no transaction, as `sm1::approxsize`;
+the caller keeps the store from being dropped until it
+returns. It is SQL's VACUUM.
+
+Errors: `SM_ERR_NOTFOUND` (no such store), `SM_ERR_INVALID`,
+`SM_ERR_PREPARED`, `SM_ERR_IO`.
 
 ---
 

@@ -1170,6 +1170,60 @@ TEST_CASE("a sequence's name is found as committed, not as of a snapshot") {
   sm3::session_close(other);
 }
 
+TEST_CASE("an index's name follows its commits, and loads back") {
+  // Verify the catalog's map of index names, which cat_get_index
+  // reads for a table the transaction has not changed.
+  // 1. t and u are made, with t's index i, and committed: i is
+  //    found on t.
+  // 2. One transaction drops i from t and makes i on u: once
+  //    committed, i is found on u.
+  // 3. After a restart, i is still found on u, by the map the load
+  //    built.
+  // 4. u is dropped and committed: i is found nowhere.
+  cat_db_t db;
+  uint64_t t = 0, u = 0, ti = 0, ui = 0, table = 0, index = 0;
+  std::vector<sm3::column_spec_t> cols = {{"a", sm2::type_int4.code, -1, true}};
+  std::vector<sm3::index_key_spec_t> keys = {{0, false, false, std::nullopt}};
+  db.begin();
+  t = make_t(db);
+  REQUIRE(sm3::create_table(db.ss, sm3::nsp_public, "u", cols, u) == 0);
+  REQUIRE(sm3::create_index(db.ss, t, "i", keys, {}, false, ti) == 0);
+  db.commit();
+  db.begin();
+  CHECK(sm3::cat_get_index(db.ss, sm3::nsp_public, "i", table, index));
+  CHECK(table == t);
+  CHECK(index == ti);
+  db.commit();
+
+  // 2. Move the name from t to u.
+  db.begin();
+  REQUIRE_MESSAGE(sm3::drop_index(db.ss, t, ti) == 0, sm1::errmsg());
+  REQUIRE(sm3::create_index(db.ss, u, "i", keys, {}, false, ui) == 0);
+  db.commit();
+  db.begin();
+  CHECK(sm3::cat_get_index(db.ss, sm3::nsp_public, "i", table, index));
+  CHECK(table == u);
+  CHECK(index == ui);
+  db.commit();
+
+  // 3. Restart.
+  db.reload();
+  db.begin();
+  table = index = 0;
+  CHECK(sm3::cat_get_index(db.ss, sm3::nsp_public, "i", table, index));
+  CHECK(table == u);
+  CHECK(index == ui);
+  db.commit();
+
+  // 4. Drop u.
+  db.begin();
+  REQUIRE(sm3::drop_table(db.ss, u) == 0);
+  db.commit();
+  db.begin();
+  CHECK_FALSE(sm3::cat_get_index(db.ss, sm3::nsp_public, "i", table, index));
+  db.commit();
+}
+
 TEST_CASE("a column owns a sequence, which goes with its table or column") {
   // Verify own_sequence, and the drops it makes a sequence follow.
   // 1. A sequence owned by t's column a is SM_ERR_INUSE to drop, also

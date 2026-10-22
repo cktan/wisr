@@ -1042,6 +1042,20 @@ int approxsize(session_t* session, uint64_t storeid,
 int probes(session_t* session, uint64_t storeid, uint64_t& out);
 
 /*
+ * Compact the store: flush its memtables, then merge every level
+ * into its bottom one, so a point lookup visits one sorted run,
+ * and the GC filter meets every version. It waits for the
+ * compaction, seconds for a store of hundreds of megabytes, and
+ * cannot be cut short; other stores' compactions go on meanwhile.
+ * Needs no transaction, as sm1::approxsize(); the caller keeps the
+ * store from being dropped until it returns.
+ *
+ * Errors: SM_ERR_NOTFOUND (no such store), SM_ERR_INVALID,
+ * SM_ERR_PREPARED, SM_ERR_IO.
+ */
+int compact(session_t* session, uint64_t storeid);
+
+/*
  * Write one row. All three calls require an active,
  * non-prepared transaction. When another transaction committed
  * a change to the same key after this transaction's snapshot,

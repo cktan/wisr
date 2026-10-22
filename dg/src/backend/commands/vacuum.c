@@ -3,7 +3,7 @@
  * vacuum.c
  *	  Control and dispatch code for the ANALYZE command.
  *
- * VACUUM is accepted and does nothing: sm collects its own garbage.
+ * VACUUM compacts each table's store in sm, and ANALYZE has sm analyze it;
  * ANALYZE itself is in analyze.c.
  *
  *
@@ -59,17 +59,17 @@ thread_local /*LOCAL*/ double vacuum_cost_delay = 0;
 thread_local /*LOCAL*/ int vacuum_cost_limit = 200;
 
 /*
- * The entry point for VACUUM and ANALYZE.  VACUUM, whatever its options,
- * returns at once with success: sm collects its own garbage, so there is
- * nothing for it to do.  ANALYZE is sm's (STATISTICS.md section 2.1).
+ * The entry point for VACUUM and ANALYZE.  VACUUM compacts each table's
+ * store in sm (smstore_vacuum()), whatever else its options ask: FULL,
+ * FREEZE and the rest have nothing more to do in sm.  With ANALYZE it
+ * analyzes after, so the sizes recorded are the compacted store's.
+ * ANALYZE is sm's (STATISTICS.md section 2.1).
  */
 void ExecVacuum(ParseState *pstate, VacuumStmt *vacstmt, bool isTopLevel) {
   bool verbose = false;
   bool skip_locked = false;
+  bool analyze = false;
   ListCell *lc;
-
-  if (vacstmt->is_vacuumcmd)
-    return;
 
   /* Parse options list */
   foreach (lc, vacstmt->options) {
@@ -79,14 +79,21 @@ void ExecVacuum(ParseState *pstate, VacuumStmt *vacstmt, bool isTopLevel) {
       verbose = defGetBoolean(opt);
     else if (strcmp(opt->defname, "skip_locked") == 0)
       skip_locked = defGetBoolean(opt);
-    else
+    else if (vacstmt->is_vacuumcmd && strcmp(opt->defname, "analyze") == 0)
+      analyze = defGetBoolean(opt);
+    else if (!vacstmt->is_vacuumcmd)
       ereport(ERROR,
               (errcode(ERRCODE_SYNTAX_ERROR),
                errmsg("unrecognized %s option \"%s\"", "ANALYZE", opt->defname),
                parser_errposition(pstate, opt->location)));
   }
 
-  /* Every table is sm's, and sm analyzes it. */
+  /* Every table is sm's: sm compacts it, then analyzes it if asked. */
+  if (vacstmt->is_vacuumcmd) {
+    smstore_vacuum(vacstmt->rels, skip_locked);
+    if (!analyze)
+      return;
+  }
   smstore_analyze(vacstmt->rels, verbose, skip_locked);
 }
 

@@ -32,7 +32,9 @@ Where it stood before §3 was built.
 ### 2.1 ANALYZE is `sm_tbl_analyze`
 
 - **ANALYZE goes to smstore, not vacuum.c.** `ExecVacuum()`
-  passes an ANALYZE to `smstore_analyze()`. A named table is
+  passes an ANALYZE to `smstore_analyze()`, and a VACUUM
+  ANALYZE too, once `smstore_vacuum()` has compacted the
+  tables, so the sizes it records are the compacted stores'. A named table is
   looked up as any name is; a bare ANALYZE takes every table
   in every schema, from sm's catalog
   (`sm_cat_list_namespaces`, `sm_cat_list_tables`). Each table
@@ -79,6 +81,10 @@ Where it stood before §3 was built.
   (`sm_tbl_idx_size`, `stats_index_t`): its pages from its
   bytes, its tuples its entries scaled as the table's rows are,
   so a partial index is the share of rows that belong to it.
+  The scale is the plan's estimate of the table's rows over
+  `rec.live_rows`: `get_relation_info()` estimates the table
+  first, and passes its rows in, so the table is not sized a
+  second time.
   `tree_height` stays -1: costing a lookup by the LSM's probes
   needs calibration, and is left for later.
 

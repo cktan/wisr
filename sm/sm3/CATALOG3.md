@@ -550,11 +550,10 @@ stored.
   `SM3_DESIGN.md` §2), so the outcome is unchanged, but the
   belt is gone and only the braces are left. It belongs in a
   test.
-- **`cat_get_index` can stay a scan.** It looks an index up by
-  name through its table's indexes today, since no map of
-  index names is kept; `name:` entries already carry the
-  index's table oid, so the lookup is a `catkv_get`, and the
-  scan goes away if that is wanted.
+- **`cat_get_index` is no scan now.** The catalog keeps a map
+  of the committed indexes' names in memory, as it does
+  tables' (`CATALOG.md`), so `name:` entries are not needed
+  for it.
 - **`drop_table` erases more keys.** Its columns, its
   constraints, its indexes and their columns, by one scan of
   `tbl:<oid>:` and an erase per key, the way `drop_index`
@@ -1035,8 +1034,8 @@ What it is **not** used for is finding things. Looking a table
 up by name does not read `NAME`: `cat_get_table(…, nspoid,
 name)` uses a map in memory, built when the catalog is loaded
 from each table's own entry, which holds its namespace and
-name. Finding an index by name walks the tables' indexes in
-memory. The one thing read back out of `NAME` at load is each
+name. Finding an index by name uses another, built from the
+same tables' indexes. The one thing read back out of `NAME` at load is each
 collation's namespace, which a collation's own entry does not
 record.
 

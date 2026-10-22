@@ -55,6 +55,24 @@ public:
     REQUIRE(m_s->db->rdb->Flush(rocksdb::FlushOptions(), cf()).ok());
   }
 
+  /*
+   * Seal the store's memtable with background work paused, so it
+   * stays unflushed until flush_sealed().
+   */
+  void seal() {
+    REQUIRE(m_s->db->rdb->PauseBackgroundWork().ok());
+    rocksdb::FlushOptions opt;
+    opt.wait = false;
+    opt.allow_write_stall = true;
+    REQUIRE(m_s->db->rdb->Flush(opt, cf()).ok());
+  }
+
+  /* Resume background work, and flush what seal() left sealed. */
+  void flush_sealed() {
+    REQUIRE(m_s->db->rdb->ContinueBackgroundWork().ok());
+    flush();
+  }
+
   /* Compact the whole store into its bottom level. */
   void compact() {
     rocksdb::CompactRangeOptions opt;
@@ -336,6 +354,47 @@ TEST_CASE("sm1_probes counts the sorted runs a lookup may visit") {
   CHECK(f.probes() == 1);
 }
 
+TEST_CASE("sm1_compact merges a store into one sorted run") {
+  // Verify sm1::compact leaves a store one run, its rows all there.
+  // 1. Two loads, each flushed, and a third in the memtable: three
+  //    probes.
+  // 2. After sm1::compact, one probe, and no bytes in memtables.
+  // 3. A row of each load reads as written.
+  // 4. A store not there is SM_ERR_NOTFOUND.
+  stats_fixture_t f;
+  f.load('a', 1000, 100);
+  f.flush();
+  f.load('b', 1000, 100);
+  f.flush();
+  f.load('c', 1000, 100);
+  CHECK(f.probes() == 3);
+
+  // 2. Compact.
+  REQUIRE_MESSAGE(sm1::compact(f.s(), f.store()) == 0, sm1::errmsg());
+  CHECK(f.probes() == 1);
+  uint64_t disk = 0, mem = 1;
+  REQUIRE(sm1::approxsize(f.s(), f.store(), nullptr, 0, nullptr, 0, disk,
+                          mem) == 0);
+  CHECK(mem == 0);
+  CHECK(disk > 0);
+
+  // 3. Read a row of each load.
+  REQUIRE(sm1::begin(f.s(), sm1::xctlevel_t::repeatable_read) == 0);
+  for (char prefix : {'a', 'b', 'c'}) {
+    std::string key(1, prefix);
+    sm0::put_be32(key, 500);
+    std::string_view d;
+    REQUIRE(sm1::read(f.s(), f.store(), key, d) == 0);
+    CHECK(d.size() == 100);
+    CHECK(d.substr(0, key.size()) == key);
+  }
+  REQUIRE(sm1::commit(f.s()) == 0);
+
+  // 4. No such store.
+  CHECK(sm1::compact(f.s(), f.store() + 1000) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+}
+
 TEST_CASE("sm1_approxsize counts a 2-byte prefix's memtable bytes exactly") {
   // Verify the memtable bytes of a range of whole 2-byte prefixes, a
   // heap's or an index's in sm2, are what was written there, not a
@@ -365,6 +424,28 @@ TEST_CASE("sm1_approxsize counts a 2-byte prefix's memtable bytes exactly") {
   uint64_t c = load_prefix(f.s(), f.store(), 1, 500, 200, 2000);
   CHECK(mem_of(f.s(), f.store(), 1, 2, disk) == c);
   CHECK(mem_of(f.s(), f.store(), 2, 3, disk) == 0);
+}
+
+TEST_CASE("sm1_approxsize counts a sealed memtable until it is flushed") {
+  // Verify the count of sealed memtables not yet flushed, kept by
+  // the tree's version, is read again once a seal moves it.
+  // 1. 1,000 rows under prefix 1, in the active memtable: its mem is
+  //    theirs, and none sealed is kept at the tree's version.
+  // 2. The memtable sealed and, background work paused, not flushed:
+  //    its mem is still theirs, not 0 by the count kept before.
+  // 3. Once flushed, its mem is 0.
+  stats_fixture_t f;
+  uint64_t a = load_prefix(f.s(), f.store(), 1, 1000, 200);
+  uint64_t disk = 0;
+  CHECK(mem_of(f.s(), f.store(), 1, 2, disk) == a);
+
+  // 2. Seal, unflushed.
+  f.seal();
+  CHECK(mem_of(f.s(), f.store(), 1, 2, disk) == a);
+
+  // 3. Flush.
+  f.flush_sealed();
+  CHECK(mem_of(f.s(), f.store(), 1, 2, disk) == 0);
 }
 
 TEST_CASE("no sorted file is compressed") {

@@ -232,14 +232,18 @@ local_psql -c 'select * from pg_class' > "$work/catalog.out" 2>&1
 [ "$(local_psql -c 'select 3 - 1' 2> "$work/after.err")" = 2 ] ||
   fail "server after a failed lookup"
 
-# Verify that VACUUM succeeds and does nothing, since sm collects its own
-# garbage.
+# Verify that VACUUM succeeds, with options sm has nothing more to do for,
+# and that it refuses a table that is not there, as PostgreSQL does.
 # 1. Run VACUUM, with and without options, then a statement after them.
 # 2. Confirm psql exited with success and reported no error.
 # 3. Confirm the statement after them answered.
-local_psql -c 'vacuum' -c 'vacuum (full, analyze) no_such_table' \
+# 4. VACUUM of a table that is not there is an error.
+local_psql -c 'vacuum' -c 'vacuum (full, freeze, analyze)' \
   -c 'select 4 + 4' > "$work/vacuum.out" 2>&1 || fail "vacuum succeeds"
 grep -q "ERROR" "$work/vacuum.out" && fail "vacuum reported an error"
+local_psql -c 'vacuum no_such_table' 2>&1 |
+  grep -q 'ERROR:  relation "no_such_table" does not exist' ||
+  fail "vacuum of no such table"
 grep -qx 8 "$work/vacuum.out" || fail "statement after vacuum"
 
 # Verify that CHECKPOINT succeeds and does nothing, since sm keeps what is
@@ -1943,6 +1947,33 @@ n=$(grep -o 'rows=[0-9]*' "$work/stats2.out" | sed -n 1p | cut -d= -f2)
 within "$n" 1000 10 || fail "b = 0 before the second analyze: $n"
 n=$(grep -o 'rows=[0-9]*' "$work/stats2.out" | sed -n 2p | cut -d= -f2)
 within "$n" 5000 10 || fail "b = 0 after the second analyze: $n"
+
+# Verify that VACUUM compacts a table's store in sm, and that VACUUM
+# ANALYZE also analyzes it.
+# 1. Make t32 with 20,000 rows of 200 bytes, and VACUUM ANALYZE it: a
+#    scan is estimated at 20,000 rows exactly, and it takes over 2 MB.
+# 2. Delete every row: it still takes over 2 MB.
+# 3. VACUUM it: the versions no reader needs are gone, and it takes
+#    under a third of what it did -- the rows' tombstones, which sm's
+#    purge takes after (../sm/sm1/SM1_DESIGN.md section 8.3).
+# 4. VACUUM of a view is passed over with a warning; a bare VACUUM
+#    succeeds.
+local_psql -c 'create table t32 (a int4, b text)' \
+  -c "insert into t32 select g, repeat('x', 200) from generate_series(1, 20000) g" \
+  -c 'vacuum analyze t32' > "$work/vacuum2.out" 2>&1
+[ "$(rows_of 'select * from t32')" = 20000 ] || fail "vacuum analyze"
+full=$(local_psql -c "select pg_relation_size('t32')" 2>&1)
+[ "$full" -gt 2000000 ] || fail "a table's size before its rows go: $full"
+local_psql -c 'delete from t32' >> "$work/vacuum2.out" 2>&1
+n=$(local_psql -c "select pg_relation_size('t32')" 2>&1)
+[ "$n" -gt 2000000 ] || fail "a table's size once deleted: $n"
+local_psql -c 'vacuum t32' >> "$work/vacuum2.out" 2>&1
+n=$(local_psql -c "select pg_relation_size('t32')" 2>&1)
+[ "$n" -lt $((full / 3)) ] || fail "vacuum drops dead versions: $n of $full"
+local_psql -c 'create view v32 as select a from t32' -c 'vacuum v32' 2>&1 |
+  grep -q 'WARNING:  skipping "v32" --- cannot vacuum non-tables' ||
+  fail "vacuum a view"
+[ "$(local_psql -c 'vacuum' 2>&1)" = "VACUUM" ] || fail "vacuum every table"
 
 # Verify that a GROUP BY and a join of tables in sm plan and run, and that
 # a join is estimated by the distinct values on each side.
