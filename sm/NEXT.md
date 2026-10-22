@@ -9,12 +9,17 @@ has sm3's own order of work.
 
 ## 1. Next
 
-Nothing is queued above low priority. The spike `PART4.md` §7
-aimed the stack at is long past: digres runs on it
-(`PART4.md` §10). Statistics for a planner are built, the
-stack's part and digres's (`../dg/STATISTICS.md`,
-`../dg/WORKNOTE.md` steps 74 to 78), and so are the catalog
-tables psql reads (`../dg/SYSCATALOG.md` §6).
+1. **A table clustered on its primary key** (`CLUSTER.md`).
+   The heap keyed by `rowno` goes; a row is keyed by its
+   primary key, or by `_id` when it has none, and `_id` keeps
+   the executor's TID. In the steps of `CLUSTER.md` §11.
+
+The spike `PART4.md` §7 aimed the stack at is long past:
+digres runs on it (`PART4.md` §10). Statistics for a planner
+are built, the stack's part and digres's
+(`../dg/STATISTICS.md`, `../dg/WORKNOTE.md` steps 74 to 78),
+and so are the catalog tables psql reads
+(`../dg/SYSCATALOG.md` §6).
 
 Low priority:
 

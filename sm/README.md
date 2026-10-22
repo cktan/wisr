@@ -114,6 +114,8 @@ the wrapper through the `rel/` test suite.
   a view's query and what it reads, and the host expands it
 - `FOREIGNKEY.md` — the design of foreign keys, which is
   built: sm3 keeps them, and the host checks them
+- `CLUSTER.md` — a table clustered on its primary key, with a
+  hidden `_id` for the executor's TID; decided, not built
 - `PIN.md` and `ROW.md` — a row read without a copy, as a pin,
   and deformed only as far as it is read; built
 - `SM_DECIMAL_PLAN.md` — the decimals carry their scale in
