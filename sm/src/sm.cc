@@ -1503,7 +1503,8 @@ int sm_cat_index_wait(sm_session_t *session, uint64_t table, uint64_t index) {
 struct sm_tbl_t {
   sm_session_t *session;
   sm3::table_t *table = nullptr;
-  sm_table_def_t def;
+  // Built at the first sm_tbl_def: most opens only lock and read.
+  mutable std::optional<sm_table_def_t> def;
   std::unordered_map<uint64_t, sm2::tup_desc_t> value_descs;
   sm3::loader_t *loader = nullptr; /* the bulk load begun on the table */
 };
@@ -1516,7 +1517,7 @@ int check_row(const char *fn, const sm_tbl_t *tbl, const sm_datum_t *values,
   if (!tbl || (n && !values) || (n && !isnull)) {
     return null_arg(fn, !tbl ? "tbl" : n && !values ? "values" : "isnull");
   }
-  if (n != tbl->def.columns.size()) {
+  if (n != sm3::tbl_def(tbl->table).columns.size()) {
     return sm1::seterr(sm1::SM_ERR_INVALID,
                        std::string(fn) + ": n is not the attribute count");
   }
@@ -1554,7 +1555,6 @@ int sm_tbl_open(sm_session_t *session, uint64_t oid, sm_lockmode_t mode,
     if (sm3::tbl_open(session->sm3, oid, mode, t->table) != 0) {
       return -1;
     }
-    t->def = api_def(session->sm3, sm3::tbl_def(t->table));
     *out = t.release();
     return 0;
   });
@@ -1573,7 +1573,6 @@ int sm_tbl_tryopen(sm_session_t *session, uint64_t oid, sm_lockmode_t mode,
     if (rc != 0) {
       return rc;
     }
-    t->def = api_def(session->sm3, sm3::tbl_def(t->table));
     *out = t.release();
     return 0;
   });
@@ -1589,8 +1588,22 @@ void sm_tbl_close(sm_tbl_t *tbl) {
   }
 }
 
-/* The table's definition. */
-const sm_table_def_t *sm_tbl_def(const sm_tbl_t *tbl) { return &tbl->def; }
+/* The table's definition, built at the first call; NULL on error. */
+const sm_table_def_t *sm_tbl_def(const sm_tbl_t *tbl) {
+  int rc = guard(tbl->session, [&] {
+    if (!tbl->def) {
+      tbl->def = api_def(tbl->session->sm3, sm3::tbl_def(tbl->table));
+    }
+    return 0;
+  });
+  return 0 == rc ? &*tbl->def : nullptr;
+}
+
+/* The table's version, sm_table_def_t's, as its session sees it now. */
+uint64_t sm_tbl_version(const sm_tbl_t *tbl) {
+  return sm3::cat_table_version(tbl->session->sm3,
+                                sm3::tbl_def(tbl->table).oid);
+}
 
 /* Insert a row and its index entries. */
 int sm_tbl_insert(sm_tbl_t *tbl, const sm_datum_t *values, const bool *isnull,
@@ -1815,8 +1828,11 @@ int sm_tbl_truncate(sm_tbl_t *tbl) {
     if (sm3::tbl_truncate(tbl->table) != 0) {
       return -1;
     }
-    // The table now lives in another store.
-    tbl->def = api_def(tbl->session->sm3, sm3::tbl_def(tbl->table));
+    // The table now lives in another store; a definition given out
+    // stays where it is, as its holders point into it.
+    if (tbl->def) {
+      tbl->def = api_def(tbl->session->sm3, sm3::tbl_def(tbl->table));
+    }
     return 0;
   });
 }

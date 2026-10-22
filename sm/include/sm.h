@@ -1162,8 +1162,20 @@ int sm_tbl_tryopen(sm_session_t* session, uint64_t oid, sm_lockmode_t mode,
 /* Close a table; NULL is a no-op. */
 void sm_tbl_close(sm_tbl_t* tbl);
 
-/* The table's definition, valid until sm_tbl_close. */
+/*
+ * The table's definition, valid until sm_tbl_close; NULL, with the
+ * error set, if it cannot be built. The first call builds it, so
+ * its index states and version are as of that call; the columns
+ * and indexes are the open's.
+ */
 const sm_table_def_t* sm_tbl_def(const sm_tbl_t* tbl);
+
+/*
+ * The table's version, sm_table_def_t's, as its session sees it
+ * now. It copies nothing: a host that only checks what it caches
+ * of the table asks this, not sm_tbl_def.
+ */
+uint64_t sm_tbl_version(const sm_tbl_t* tbl);
 
 /*
  * The writes. Each is the heap write, then a write or two to every

@@ -8110,3 +8110,23 @@ its arrays again (`STATISTICS.md` §2.3).
 - `test/server.sh`: in one session, an estimate follows a second
   ANALYZE (1,000, then 5,000); it fails if the kept row is used
   whatever the statistics.
+
+## Step 281: locking a table copies no definition
+
+After step 280, Q7 of `../bench` spent 6% of the server's time
+copying a table's definition: every `sm_tbl_open()`, from the
+parser's lock, built `sm_table_def_t` -- 50 columns with their
+names and defaults, the schema, the indexes -- and freed it at
+the transaction's end, while the lock read only its version.
+
+- **sm builds the definition at the first `sm_tbl_def()`**,
+  and `sm_tbl_version()` gives the version alone
+  (`../sm/include/sm.h`). `smstore_lock_relation()` and
+  `smstore_trylock_relation()` check the relcache with it.
+- **`sm_tbl_def()` can now fail**, out of memory: its callers,
+  `smstore_table_desc()`, `smstore_identity_sequence()` and
+  `fill_column()`, raise sm's error.
+- No test of its own: what changed is when the copy is made.
+  `test/server.sh` reads the version through the lock
+  throughout: with `sm_tbl_version()` made to return 0, it
+  fails from its first index on.

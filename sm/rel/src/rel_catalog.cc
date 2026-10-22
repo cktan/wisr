@@ -234,6 +234,10 @@ static table_def_t *lock_into(session_ctx_t *s, const std::string &name,
   if (sm_tbl_open(s->session, oid, mode, &tbl) != 0) {
     return nullptr;
   }
+  if (nullptr == sm_tbl_def(tbl)) {
+    sm_tbl_close(tbl);
+    return nullptr;
+  }
   s->stmt_tables.push_back(view_of(name, tbl));
   return s->stmt_tables.back().get();
 }

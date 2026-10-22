@@ -1865,6 +1865,8 @@ smstore_table_t *smstore_table_desc(Oid oid) {
   if (tbl == NULL)
     return NULL;
   def = sm_tbl_def(tbl);
+  if (NULL == def)
+    sm_error("define a table");
   desc = (smstore_table_t *)palloc(sizeof(smstore_table_t));
   desc->oid = oid;
   desc->version = def->version;
@@ -1936,10 +1938,15 @@ smstore_table_t *smstore_table_desc(Oid oid) {
 Oid smstore_identity_sequence(Oid relid, AttrNumber attnum) {
   sm_tbl_t *tbl = open_table(relid, SM_LOCKMODE_IS);
 
-  if (tbl == NULL || attnum < 1 ||
-      attnum > (AttrNumber)sm_tbl_def(tbl)->columns.size())
+  if (tbl == NULL)
     return InvalidOid;
-  const sm_column_def_t &c = sm_tbl_def(tbl)->columns[attnum - 1];
+  const sm_table_def_t *def = sm_tbl_def(tbl);
+
+  if (NULL == def)
+    sm_error("define a table");
+  if (attnum < 1 || attnum > (AttrNumber)def->columns.size())
+    return InvalidOid;
+  const sm_column_def_t &c = def->columns[attnum - 1];
   return c.identity != 0 && !c.dropped ? (Oid)c.identity_seq : InvalidOid;
 }
 
@@ -3211,7 +3218,11 @@ static void fill_column(Oid relid, Expr *expr, Oid typid, int32 typmod) {
   if (NULL == tbl)
     ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
                     errmsg("relation with OID %u does not exist", relid)));
-  size_t n = sm_tbl_def(tbl)->columns.size();
+  const sm_table_def_t *def = sm_tbl_def(tbl);
+
+  if (NULL == def)
+    sm_error("define a table");
+  size_t n = def->columns.size();
   std::vector<sm_datum_t> values(n);
   std::unique_ptr<bool[]> isnull(new bool[n]);
   EState *estate = CreateExecutorState();
@@ -4947,7 +4958,7 @@ void smstore_lock_relation(Oid relid, LOCKMODE lockmode) {
 
   /* What this session caches of it is from the version now held, or goes. */
   if (tbl != NULL)
-    RelationCheckSmVersion(relid, lock_target(relid), sm_tbl_def(tbl)->version);
+    RelationCheckSmVersion(relid, lock_target(relid), sm_tbl_version(tbl));
   else if (lock_view(relid, mode, &version))
     RelationCheckSmVersion(relid, relid, version);
 }
@@ -4969,7 +4980,7 @@ bool smstore_trylock_relation(Oid relid, LOCKMODE lockmode) {
 
   /* What this session caches of it is from the version now held, or goes. */
   if (tbl != NULL)
-    RelationCheckSmVersion(relid, lock_target(relid), sm_tbl_def(tbl)->version);
+    RelationCheckSmVersion(relid, lock_target(relid), sm_tbl_version(tbl));
   /*
    * A view's lock, which sm's open of no table took as it would a table's,
    * if it was free: so this does not wait.
