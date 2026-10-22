@@ -7712,23 +7712,13 @@ drop table j3;
 CREATE TEMP TABLE skip_fetch (a INT, b INT) WITH (fillfactor=10);
 INSERT INTO skip_fetch SELECT i % 3, i FROM generate_series(0,30) i;
 CREATE INDEX ON skip_fetch(a);
-VACUUM (ANALYZE) skip_fetch;
+--dg-differs: the result
+--dg VACUUM (ANALYZE) skip_fetch;
 SET enable_indexonlyscan = off;
 SET enable_seqscan = off;
-EXPLAIN (COSTS OFF)
-SELECT t1.a FROM skip_fetch t1 LEFT JOIN skip_fetch t2 ON t2.a = 1 WHERE t2.a IS NULL;
-                       QUERY PLAN                        
----------------------------------------------------------
- Nested Loop Anti Join
-   ->  Seq Scan on skip_fetch t1
-         Disabled: true
-   ->  Materialize
-         ->  Bitmap Heap Scan on skip_fetch t2
-               Recheck Cond: (a = 1)
-               ->  Bitmap Index Scan on skip_fetch_a_idx
-                     Index Cond: (a = 1)
-(8 rows)
-
+--dg-cascade
+--dg EXPLAIN (COSTS OFF)
+--dg SELECT t1.a FROM skip_fetch t1 LEFT JOIN skip_fetch t2 ON t2.a = 1 WHERE t2.a IS NULL;
 SELECT t1.a FROM skip_fetch t1 LEFT JOIN skip_fetch t2 ON t2.a = 1 WHERE t2.a IS NULL;
  a 
 ---

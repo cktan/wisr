@@ -1302,6 +1302,41 @@ TEST_CASE("a column owns a sequence, which goes with its table or column") {
   db.commit();
 }
 
+TEST_CASE("two tables that own sequences are dropped in one transaction") {
+  // Verify that a drop finds the sequences a later drop must skip:
+  // DROP TABLE a, b of two serial columns, digres's sequence test.
+  // 1. Tables t and u each own a sequence, committed.
+  // 2. In one statement drop t, then u: both succeed, though the
+  //    catalog's scan in it does not see the first drop's erase.
+  // 3. Neither sequence is found, then or after a restart.
+  cat_db_t db;
+  std::vector<sm3::column_spec_t> cols = {{"a", sm2::type_int4.code, -1, true}};
+  uint64_t t = 0, u = 0, st = 0, su = 0, oid = 0;
+  db.begin();
+  REQUIRE(sm3::create_table(db.ss, sm3::nsp_public, "t", cols, t) == 0);
+  REQUIRE(sm3::create_table(db.ss, sm3::nsp_public, "u", cols, u) == 0);
+  REQUIRE(sm3::create_sequence(db.ss, sm3::nsp_public, "t_a_seq", 1, 1, st) ==
+          0);
+  REQUIRE(sm3::create_sequence(db.ss, sm3::nsp_public, "u_a_seq", 1, 1, su) ==
+          0);
+  REQUIRE(sm3::own_sequence(db.ss, st, t, 0) == 0);
+  REQUIRE(sm3::own_sequence(db.ss, su, u, 0) == 0);
+  db.commit();
+
+  db.begin();
+  REQUIRE(sm3::stmt_begin(db.ss) == 0);
+  REQUIRE_MESSAGE(sm3::drop_table(db.ss, t) == 0, sm1::errmsg());
+  REQUIRE_MESSAGE(sm3::drop_table(db.ss, u) == 0, sm1::errmsg());
+  CHECK(sm3::cat_get_sequence(db.ss, sm3::nsp_public, "t_a_seq", oid) == 1);
+  CHECK(sm3::cat_get_sequence(db.ss, sm3::nsp_public, "u_a_seq", oid) == 1);
+  db.commit();
+  db.reload();
+  db.begin();
+  CHECK(sm3::cat_get_sequence(db.ss, sm3::nsp_public, "t_a_seq", oid) == 1);
+  CHECK(sm3::cat_get_sequence(db.ss, sm3::nsp_public, "u_a_seq", oid) == 1);
+  db.commit();
+}
+
 TEST_CASE("an identity column owns its sequence from its CREATE TABLE") {
   // Verify create_table's identity columns, and that their sequence
   // stays theirs.

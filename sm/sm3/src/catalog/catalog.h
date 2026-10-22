@@ -85,12 +85,6 @@ int stats_key(uint64_t table_oid, uint64_t index_oid, uint64_t n,
 /* The prefix of every statistics entry of the table table_oid. */
 int stats_prefix(uint64_t table_oid, std::string &prefix);
 
-/* The prefix of every NAME key in the namespace nspoid. */
-int name_prefix(uint64_t nspoid, std::string &prefix);
-
-/* The name a NAME key holds. */
-int name_of_key(std::string_view key, std::string &name);
-
 /* The prefix every key of kind begins with, for a scan of them all. */
 int kind_prefix(kind_t kind, std::string &prefix);
 

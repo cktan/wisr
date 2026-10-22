@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <map>
+#include <set>
 #include <string>
 
 namespace {
@@ -1149,36 +1150,33 @@ int cat_get_sequence_def(session_t *session, uint64_t oid,
   return 0;
 }
 
-/* The sequences in a namespace, read in the transaction; see sm3.h. */
+/* The sequences in a namespace, as they are found by name; see sm3.h. */
 int cat_list_sequences(session_t *session, uint64_t nspoid,
                        std::vector<std::string> &names) {
-  kv_ptr kv(nullptr, &sm2::catkv_close);
-  std::string prefix;
-  sm2::catkv_scan_t *c = nullptr;
-  if (open_kv(session->sm1, kv) != 0 || name_prefix(nspoid, prefix) != 0 ||
-      sm2::catkv_scan(kv.get(), prefix, c) != 0) {
-    return -1;
-  }
-  std::unique_ptr<sm2::catkv_scan_t, decltype(&sm2::catkv_scanend)> guard(
-      c, &sm2::catkv_scanend);
-  names.clear();
-  std::string_view k, v;
-  int rc;
-  // The keys come in name order, every kind's names together.
-  while ((rc = sm2::catkv_scannxt(c, k, v)) == 0) {
-    name_rec_t rec;
-    if (decode_name(v, rec) != 0) {
-      return -1;
-    }
-    if (rec.kind == kind_t::sequence) {
-      std::string name;
-      if (name_of_key(k, name) != 0) {
-        return -1;
+  // The committed names, then the transaction's own creates and drops in
+  // order, as cat_get_sequence finds one: not the catalog store, whose
+  // scan in a statement misses the statement's own drops.
+  std::set<std::string> found;
+  {
+    std::shared_lock lock(session->cat->mu);
+    for (const auto &[name, oid] : session->cat->sequence_names) {
+      if (name.first == nspoid) {
+        found.insert(name.second);
       }
-      names.push_back(std::move(name));
     }
   }
-  return rc == 1 ? 0 : -1;
+  for (const sequence_change_t &q : session->sequences) {
+    if (q.name.first != nspoid) {
+      continue;
+    }
+    if (q.nspoid) {
+      found.insert(q.name.second);
+    } else {
+      found.erase(q.name.second);
+    }
+  }
+  names.assign(found.begin(), found.end());
+  return 0;
 }
 
 /* Store a view's record, new or changed; see internal.h. */

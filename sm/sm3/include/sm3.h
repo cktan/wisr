@@ -674,9 +674,9 @@ struct sequence_def_t {
 int cat_get_sequence_def(session_t* s, uint64_t oid, sequence_def_t& def);
 
 /*
- * The names of the sequences in nspoid, sorted, as s's transaction
- * sees them, into names, which it replaces; s needs a transaction
- * open.
+ * The names of the sequences in nspoid, sorted, into names, which it
+ * replaces: those cat_get_sequence finds, the committed ones with the
+ * transaction's own creates and drops. s needs a transaction open.
  */
 int cat_list_sequences(session_t* s, uint64_t nspoid,
                        std::vector<std::string>& names);

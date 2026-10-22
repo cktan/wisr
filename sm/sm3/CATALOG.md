@@ -409,11 +409,13 @@ transaction. Each reports failure as sm1 does (`DESIGN.md`
   **`cat_get_sequence_name(ss, oid, nspoid, name)`** find a
   sequence as a table is found by its name: the transaction's
   own creates and drops, then every committed one, from
-  memory, not as of the snapshot.
-  **`cat_get_sequence_def(ss, oid, def)`** reads its record,
-  and **`cat_list_sequences(ss, nspoid, names)`** lists a
-  namespace's as the transaction sees them, from the store,
-  so both need one open.
+  memory, not as of the snapshot;
+  **`cat_list_sequences(ss, nspoid, names)`** lists a
+  namespace's the same way, so it never names one they do
+  not find, as a scan of the store in a statement would once
+  the statement dropped it.
+  **`cat_get_sequence_def(ss, oid, def)`** reads its record
+  from the store, so it needs a transaction open.
 - **`cat_lock_view(ss, oid, mode, def)`** takes a view's oid
   lock and gives its definition, as `cat_lock_table` does a
   table's; a temporary view takes none.

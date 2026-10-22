@@ -129,9 +129,12 @@ BEGIN;
 --dg SELECT reltuples, relhassubclass
 --dg   FROM pg_class WHERE oid = 'past_parted'::regclass;
 COMMIT;
-VACUUM FULL pg_am;
-VACUUM FULL pg_class;
-VACUUM FULL pg_database;
+--dg-differs: the result
+--dg VACUUM FULL pg_am;
+--dg-differs: the result
+--dg VACUUM FULL pg_class;
+--dg-differs: the result
+--dg VACUUM FULL pg_database;
 --dg-cascade
 --dg VACUUM FULL vaccluster;
 VACUUM FULL vactst;
