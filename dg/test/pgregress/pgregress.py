@@ -113,14 +113,20 @@ class server_t:
         self.proc = subprocess.Popen(
             cmd + ['-k', self.sock, '-p', str(self.port)], stdout=log,
             stderr=subprocess.STDOUT, start_new_session=True)
-        for _ in range(300):
-            if self.ready():
-                return
-            if self.proc.poll() is not None:
-                break
-            time.sleep(0.1)
-        raise RuntimeError('%s server did not start; see %s/log' %
-                           (self.kind, self.dir))
+        # A server that does not come up is stopped, not left holding its
+        # data directory.
+        try:
+            for _ in range(300):
+                if self.ready():
+                    return
+                if self.proc.poll() is not None:
+                    break
+                time.sleep(0.1)
+            raise RuntimeError('%s server did not start; see %s/log' %
+                               (self.kind, self.dir))
+        except BaseException:
+            self.stop()
+            raise
 
     def psql(self, sql, db='postgres', check=True):
         """Run sql in db; its output."""
@@ -369,10 +375,14 @@ class worker_t:
     def __init__(self, n, kinds=('pg', 'dg'), sub=''):
         dir = os.path.join(WORK, sub, 'w%d' % n)
         self.pg = self.dg = None
-        for kind in kinds:
-            s = server_t(kind, os.path.join(dir, kind))
-            s.start()
-            setattr(self, kind, s)
+        try:
+            for kind in kinds:
+                s = server_t(kind, os.path.join(dir, kind))
+                s.start()
+                setattr(self, kind, s)
+        except BaseException:
+            self.stop()
+            raise
 
     def stop(self):
         for s in (self.pg, self.dg):
@@ -531,7 +541,9 @@ def main():
     ap.add_argument('what', choices=['trim', 'expected', 'check', 'test'])
     ap.add_argument('files', nargs='*')
     a = ap.parse_args()
-    if not os.access(PG_REGRESS, os.X_OK):
+    # A tree built but not installed into install/ has no client to run.
+    if not all(os.access(p, os.X_OK) for p in
+               (PG_REGRESS, os.path.join(PG_BIN, 'pg_isready'))):
         log('pgregress: SKIPPED (no PostgreSQL 18 build in %s; set '
             'PG18_SRC)' % PG18)
         return 0
@@ -555,8 +567,8 @@ def main():
             w.stop()
     if not files:
         return 0
-    workers = [worker_t(i, kinds, sub) for i in range(min(a.j, len(files)))]
-    free = list(workers)
+    workers = []
+    free = []
     lock = threading.Lock()
 
     def one(name):
@@ -572,7 +584,11 @@ def main():
             with lock:
                 free.append(w)
 
+    # Workers started before one that fails to start are stopped too.
     try:
+        for i in range(min(a.j, len(files))):
+            workers.append(worker_t(i, kinds, sub))
+        free.extend(workers)
         with ThreadPoolExecutor(len(workers)) as ex:
             list(ex.map(one, files))
     finally:
