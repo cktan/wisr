@@ -34,7 +34,11 @@ Each file runs alone, in a fresh database `regression`, after
 `$PG18_SRC` (`~/p/postgres18`, built and installed into its
 `install/`); with no such tree the run says SKIPPED. Output
 is compared with `expected/`, blind to white space as
-`pg_regress` is; a file's output and diff go in
+`pg_regress` is, and to the order of the rows of a result whose
+statement has no ORDER BY, which are compared as a multiset
+(`../rowset.py`): digres reads a table with a primary key in the
+key's order, PostgreSQL in the order its rows went in
+(`../../../sm/CLUSTER.md`). A file's output and diff go in
 `build/test/pgregress/test/`. Four servers run at once, `-j`.
 
 ## The markers
@@ -70,7 +74,8 @@ right because it is marked.
 `pgregress.py trim FILE` runs the file on PostgreSQL 18 and on
 digres, with a `\echo` marker before each statement so each
 statement's output can be cut out of psql's, and compares the
-two a statement at a time:
+two a statement at a time, as the test does, an unordered
+result's rows as a multiset:
 
 1. PostgreSQL runs the untrimmed file twice; a statement whose
    output differs between the two is `unstable`.

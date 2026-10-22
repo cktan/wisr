@@ -1154,6 +1154,17 @@ int sm_idx_scan_key(sm_idx_scan_t *scan, sm_datum_t *values, bool *isnull,
   });
 }
 
+/* The key of the row of an index cursor's last entry; no session. */
+int sm_idx_scan_row(sm_idx_scan_t *scan, const void **key, size_t *len) {
+  return guard(nullptr, [&] {
+    if (!scan || !key || !len) {
+      return null_arg("sm_idx_scan_row", !scan ? "scan" : !key ? "key" : "len");
+    }
+    view_out(sm2::idx_scan_row(idx_scan_of(scan)), key, len);
+    return 0;
+  });
+}
+
 /* Close an index cursor. */
 void sm_idx_scanend(sm_idx_scan_t *scan) {
   sm2::idx_scanend(idx_scan_of(scan));
@@ -1781,6 +1792,27 @@ int sm_tbl_read(sm_tbl_t *tbl, uint64_t id, sm_pin_ref_t *ref,
   });
 }
 
+/* Read the row at a key into the pin *ref then names. */
+int sm_tbl_read_key(sm_tbl_t *tbl, const void *key, size_t len,
+                    sm_pin_ref_t *ref, const void **tuple, size_t *tlen) {
+  return guard(tbl->session, [&] {
+    if (!ref || (len && !key)) {
+      return null_arg("sm_tbl_read_key", !ref ? "ref" : "key");
+    }
+    sm3::pin_ref_t r = pin_ref_of(*ref);
+    std::string_view v;
+    int rc = sm3::tbl_read_key(
+        tbl->table, std::string_view(static_cast<const char *>(key), len), r,
+        v);
+    // The ref is set either way: a pin, or none.
+    *ref = sm_pin_ref_t{r.pin, r.gen};
+    if (rc == 0) {
+      view_out(v, tuple, tlen);
+    }
+    return rc;
+  });
+}
+
 /* Read the newest committed version of a row into a pin. */
 int sm_tbl_read_latest(sm_tbl_t *tbl, uint64_t id, sm_pin_ref_t *ref,
                        const void **tuple, size_t *len) {
@@ -1941,6 +1973,44 @@ int sm_tbl_idx_scan(sm_tbl_t *tbl, uint64_t index, const sm_bound_t *lo,
       return -1;
     }
     *out = reinterpret_cast<sm_idx_scan_t *>(scan);
+    return 0;
+  });
+}
+
+/* Open a cursor over every row of the table, in its key's order. */
+int sm_tbl_scan_rows(sm_tbl_t *tbl, sm_rel_scan_t **out) {
+  return guard(tbl->session, [&] {
+    sm3::scan_t *scan = nullptr;
+    if (sm3::tbl_scan_rows(tbl->table, scan) != 0) {
+      return -1;
+    }
+    *out = reinterpret_cast<sm_rel_scan_t *>(scan);
+    return 0;
+  });
+}
+
+/* Open a cursor over the rows of the table's primary key. */
+int sm_tbl_idx_scan_rows(sm_tbl_t *tbl, uint64_t index, const sm_bound_t *lo,
+                         const sm_bound_t *hi, bool *widened,
+                         sm_rel_scan_t **out) {
+  return guard(tbl->session, [&] {
+    if (bad_bound(lo) || bad_bound(hi)) {
+      return null_arg("sm_tbl_idx_scan_rows", "a bound's prefix or isnull");
+    }
+    sm2::bound_t lo_b, hi_b;
+    if (lo != nullptr) {
+      lo_b = bound_of(*lo);
+    }
+    if (hi != nullptr) {
+      hi_b = bound_of(*hi);
+    }
+    sm3::scan_t *scan = nullptr;
+    if (sm3::tbl_idx_scan_rows(
+            tbl->table, index, lo != nullptr ? &lo_b : nullptr,
+            hi != nullptr ? &hi_b : nullptr, scan, widened) != 0) {
+      return -1;
+    }
+    *out = reinterpret_cast<sm_rel_scan_t *>(scan);
     return 0;
   });
 }

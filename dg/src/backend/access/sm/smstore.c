@@ -2245,6 +2245,8 @@ void smstore_load_end(Relation rel) {
  * A scan of a table in sm: the table, and sm's cursor over its rows; or,
  * over one of its indexes, sm's cursor over the index's entries and the scan
  * keys every row it reads must meet, with each key's column in the table.
+ * A scan of the table's primary key is a cursor over its rows, in the key's
+ * order (../sm/CLUSTER.md section 6).
  */
 struct smstore_scan_t {
   sm_tbl_t *tbl;
@@ -2252,6 +2254,8 @@ struct smstore_scan_t {
   Oid relid;
   sm_rel_scan_t *cursor;
   sm_idx_scan_t *icursor;
+  /* A primary key scan's cursor's last row, in the cursor's pin. */
+  sm_pin_ref_t row_ref;
   ScanKey keys;
   int nkeys;
   AttrNumber *keycols;
@@ -2489,10 +2493,12 @@ int smstore_expr_natts(Node *expr, Index varno, Relation rel) {
 }
 
 /*
- * Begin a scan of every row of rel, a table in sm, in rowno order, each row
- * deformed as it is read.
+ * Begin a scan of every row of rel, a table in sm, each row deformed as it
+ * is read: in rowno order, for a scan that moves to a rowno
+ * (smstore_scan_seek()); else in its key's order, its primary key's, one
+ * sorted run (../sm/CLUSTER.md section 6).
  */
-smstore_scan_t *smstore_beginscan(Relation rel) {
+smstore_scan_t *smstore_beginscan(Relation rel, bool by_rowno) {
   sm_tbl_t *tbl = open_table(RelationGetRelid(rel), SM_LOCKMODE_IS);
   smstore_scan_t *scan;
 
@@ -2503,7 +2509,8 @@ smstore_scan_t *smstore_beginscan(Relation rel) {
   scan = (smstore_scan_t *)palloc0(sizeof(smstore_scan_t));
   scan->tbl = tbl;
   scan->relid = RelationGetRelid(rel);
-  if (sm_tbl_scan(tbl, 0, UINT64_MAX, &scan->cursor) != 0)
+  if ((by_rowno ? sm_tbl_scan(tbl, 0, UINT64_MAX, &scan->cursor)
+                : sm_tbl_scan_rows(tbl, &scan->cursor)) != 0)
     sm_error("scan a table");
   return scan;
 }
@@ -3234,7 +3241,7 @@ static void fill_column(Oid relid, Expr *expr, Oid typid, int32 typmod) {
    * The cursor does not see the rows this loop writes, so each row is
    * filled once.  An error leaves it to the transaction's end to close.
    */
-  if (0 != sm_tbl_scan(tbl, 0, UINT64_MAX, &scan))
+  if (0 != sm_tbl_scan_rows(tbl, &scan))
     sm_error("scan a table");
   for (;;) {
     uint64_t rowno;
@@ -5806,8 +5813,13 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
   /* Each row is checked against every key (keys_met()). */
   for (int i = 0; i < nkeys; i++)
     scan->keycols[i] = form->indkey.values[keys[i].sk_attno - 1];
-  if (sm_tbl_idx_scan(tbl, RelationGetRelid(index), lo.n > 0 ? &lo : NULL,
-                      hi.n > 0 ? &hi : NULL, NULL, &scan->icursor) != 0)
+  /* The primary key's entries are the rows, keyed by it: read in place. */
+  if (form->indisprimary
+          ? sm_tbl_idx_scan_rows(tbl, RelationGetRelid(index),
+                                 lo.n > 0 ? &lo : NULL, hi.n > 0 ? &hi : NULL,
+                                 NULL, &scan->cursor) != 0
+          : sm_tbl_idx_scan(tbl, RelationGetRelid(index), lo.n > 0 ? &lo : NULL,
+                            hi.n > 0 ? &hi : NULL, NULL, &scan->icursor) != 0)
     sm_error("scan an index");
   return scan;
 }
@@ -5833,6 +5845,33 @@ static bool pin_row(sm_tbl_t *tbl, uint64_t rowno, TupleTableSlot *slot,
     sm_error("read a row");
   }
   ref_into_slot(*ref, rowno, slot);
+  return true;
+}
+
+/*
+ * The row of the index scan's last entry, at the key the entry names it by
+ * (sm_idx_scan_row()), as this transaction sees it, read into the pin ref
+ * names, and into slot by the ref, its tid its rowno; false, the slot empty,
+ * if it sees none.  One read where the row by rowno is two in a table with a
+ * primary key (../sm/CLUSTER.md section 5).
+ */
+static bool pin_entry_row(smstore_scan_t *scan, uint64_t rowno,
+                          TupleTableSlot *slot) {
+  const void *key, *tuple;
+  size_t klen, len;
+
+  ExecClearTuple(slot);
+  if (sm_idx_scan_row(scan->icursor, &key, &klen) != 0)
+    sm_error("read an index entry");
+  switch (sm_tbl_read_key(scan->tbl, key, klen, &scan->ref, &tuple, &len)) {
+  case 0:
+    break;
+  case 1:
+    return false;
+  default:
+    sm_error("read a row");
+  }
+  ref_into_slot(scan->ref, rowno, slot);
   return true;
 }
 
@@ -5870,11 +5909,19 @@ bool smstore_index_getnext(smstore_scan_t *scan, TupleTableSlot *slot) {
   uint64 rowno;
 
   slot->tts_tableOid = scan->relid;
-  while (smstore_index_getrowno(scan, &rowno))
+  while (smstore_index_getrowno(scan, &rowno)) {
+    /* A primary key's entry is its row, in the cursor's pin. */
+    if (scan->cursor != NULL) {
+      ExecClearTuple(slot);
+      ref_into_slot(scan->row_ref, rowno, slot);
+      if (keys_met(scan, slot, false))
+        return true;
+      continue;
+    }
     /* A row the transaction does not see is passed. */
-    if (pin_row(scan->tbl, rowno, slot, &scan->ref) &&
-        keys_met(scan, slot, false))
+    if (pin_entry_row(scan, rowno, slot) && keys_met(scan, slot, false))
       return true;
+  }
   ExecClearTuple(slot);
   return false;
 }
@@ -5892,6 +5939,18 @@ bool smstore_index_getrowno(smstore_scan_t *scan, uint64 *rowno) {
   size_t len;
 
   CHECK_FOR_INTERRUPTS();
+  /* A primary key's: its next row, into the cursor's pin. */
+  if (scan->cursor != NULL) {
+    switch (sm_rel_scannxt(scan->cursor, &r, &scan->row_ref)) {
+    case 0:
+      *rowno = r;
+      return true;
+    case 1:
+      return false;
+    default:
+      sm_error("scan an index");
+    }
+  }
   switch (sm_idx_scannxt(scan->icursor, &r, &cut, &value, &len)) {
   case 0:
     *rowno = r;
@@ -5930,24 +5989,32 @@ static void entry_includes(smstore_scan_t *scan, TupleTableSlot *slot) {
 }
 
 /*
- * The row at rowno's columns the index holds into slot, in the index's
- * order: false if the transaction does not see the row.  For an entry
- * whose key does not give its columns back.  Each is decoded alone, so the
- * row's other columns cost nothing (../sm/sm2/TUPLE.md section 6).
+ * The columns the index holds of the row of the scan's last entry into
+ * slot, in the index's order: false if the transaction does not see the
+ * row.  For an entry whose key does not give its columns back, and for a
+ * primary key's, which is its row.  Each is decoded alone, so the row's
+ * other columns cost nothing (../sm/sm2/TUPLE.md section 6).
  */
-static bool entry_from_row(smstore_scan_t *scan, uint64_t rowno,
-                           TupleTableSlot *slot) {
-  const void *tuple;
-  size_t len;
+static bool entry_from_row(smstore_scan_t *scan, TupleTableSlot *slot) {
+  const void *key, *tuple;
+  size_t klen, len;
 
-  /* Into the scan's pin, which the slot's values then point into. */
-  switch (sm_tbl_read(scan->tbl, rowno, &scan->ref, &tuple, &len)) {
-  case 0:
-    break;
-  case 1:
-    return false;
-  default:
-    sm_error("read a row");
+  if (scan->cursor != NULL) {
+    /* The cursor's row, in its pin, which the slot's values point into. */
+    if (sm_pin_tuple(scan->row_ref, &tuple, &len) != 0)
+      sm_error("read a row");
+  } else {
+    /* Into the scan's pin, which the slot's values then point into. */
+    if (sm_idx_scan_row(scan->icursor, &key, &klen) != 0)
+      sm_error("read an index entry");
+    switch (sm_tbl_read_key(scan->tbl, key, klen, &scan->ref, &tuple, &len)) {
+    case 0:
+      break;
+    case 1:
+      return false;
+    default:
+      sm_error("read a row");
+    }
   }
   for (int i = 0; i < scan->form->indnatts; i++)
     if (sm_tbl_decode(scan->tbl, tuple, len, scan->form->indkey.values[i] - 1,
@@ -5970,14 +6037,16 @@ bool smstore_index_getentry(smstore_scan_t *scan, TupleTableSlot *slot) {
   slot->tts_tableOid = scan->relid;
   while (smstore_index_getrowno(scan, &rowno)) {
     ExecClearTuple(slot);
-    switch (sm_idx_scan_key(scan->icursor, (sm_datum_t *)slot->tts_values,
-                            slot->tts_isnull, scan->form->indnkeyatts)) {
+    switch (scan->cursor != NULL
+                ? 1
+                : sm_idx_scan_key(scan->icursor, (sm_datum_t *)slot->tts_values,
+                                  slot->tts_isnull, scan->form->indnkeyatts)) {
     case 0:
       entry_includes(scan, slot);
       break;
     case 1:
       /* Its row, pinned until the scan reads the next. */
-      if (!entry_from_row(scan, rowno, slot))
+      if (!entry_from_row(scan, slot))
         continue;
       break;
     default:

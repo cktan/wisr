@@ -449,12 +449,15 @@ int idx_delete(index_t *index, std::span<const datum_t> key,
   return rc;
 }
 
-/* Open a cursor between lo and hi; see sm2.h. */
-int idx_scan(index_t *index, const bound_t *lo, const bound_t *hi,
-             index_scan_t *&out, bool *widened) {
-  bool wide = false;
+/*
+ * The sm1 keys a scan of index between lo and hi starts at, always
+ * inclusive, and ends at, exclusive, none for no end; wide is set if
+ * a bound was cut.
+ */
+static int scan_range(const index_t *index, const bound_t *lo,
+                      const bound_t *hi, std::string &start,
+                      std::optional<std::string> &end, bool &wide) {
   // The start: the bound, or the first of the index's keys.
-  std::string start;
   if (lo) {
     if (lower_key(index, *lo, start, wide) != 0) {
       return -1;
@@ -463,8 +466,6 @@ int idx_scan(index_t *index, const bound_t *lo, const bound_t *hi,
     start = relid_of(index);
   }
   // The end: the bound or its successor, or past the index.
-  std::optional<std::string> end;
-  bool end_inclusive = false;
   if (hi) {
     std::string p;
     bool cut;
@@ -477,15 +478,55 @@ int idx_scan(index_t *index, const bound_t *lo, const bound_t *hi,
   } else {
     end = successor(relid_of(index));
   }
+  return 0;
+}
+
+/* Open a cursor between lo and hi; see sm2.h. */
+int idx_scan(index_t *index, const bound_t *lo, const bound_t *hi,
+             index_scan_t *&out, bool *widened) {
+  bool wide = false;
+  std::string start;
+  std::optional<std::string> end;
+  if (scan_range(index, lo, hi, start, end, wide) != 0) {
+    return -1;
+  }
   sm1::scan_t *c;
   if (sm1::scan(index->session, index->storeid, start.data(), start.size(), 1,
-                end ? end->data() : nullptr, end ? end->size() : 0,
-                end_inclusive, c) != 0) {
+                end ? end->data() : nullptr, end ? end->size() : 0, 0,
+                c) != 0) {
     return -1;
   }
   out = new index_scan_t;
   out->scan = c;
   out->index = index;
+  if (widened) {
+    *widened = wide;
+  }
+  return 0;
+}
+
+/* Open a cursor over a primary key's rows between lo and hi; see sm2.h. */
+int idx_scan_rows(index_t *index, const bound_t *lo, const bound_t *hi,
+                  rel_scan_t *&out, bool *widened) {
+  if (index->rel == nullptr) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       "index: only a primary key's entries are rows");
+  }
+  bool wide = false;
+  std::string start;
+  std::optional<std::string> end;
+  if (scan_range(index, lo, hi, start, end, wide) != 0) {
+    return -1;
+  }
+  sm1::scan_t *c;
+  if (sm1::scan(index->session, index->storeid, start.data(), start.size(), 1,
+                end ? end->data() : nullptr, end ? end->size() : 0, 0,
+                c) != 0) {
+    return -1;
+  }
+  out = new rel_scan_t{c,     index->session, index->storeid, index->relid,
+                       false, true,           nullptr,        {},
+                       {}};
   if (widened) {
     *widened = wide;
   }

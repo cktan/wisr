@@ -246,7 +246,7 @@ typedef struct smstore_scan_t smstore_scan_t;
 /* The slot type of a table in sm: a row deformed as it is read. */
 extern PGDLLIMPORT const TupleTableSlotOps TTSOpsSmRow;
 
-extern smstore_scan_t *smstore_beginscan(Relation rel);
+extern smstore_scan_t *smstore_beginscan(Relation rel, bool by_rowno);
 extern bool smstore_getnext(smstore_scan_t *scan, TupleTableSlot *slot);
 extern void smstore_endscan(smstore_scan_t *scan);
 extern void smstore_scan_seek(smstore_scan_t *scan, uint64 rowno);

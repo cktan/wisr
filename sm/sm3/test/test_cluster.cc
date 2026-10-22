@@ -459,3 +459,48 @@ TEST_CASE("a load and an index build on a keyed table name rows by key") {
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
 }
+
+TEST_CASE("a table's rows are read by key, and scanned by the primary key") {
+  // Verify tbl_read_key and tbl_idx_scan_rows.
+  // 1. Rows with ids 30, 10 and 20 go in, _ids 1 to 3.
+  // 2. The owner index's entry for "b" names its row's key, and
+  //    the row read by that key is (20, b).
+  // 3. The primary key's rows from 15 on are 20 and 30, in key
+  //    order, each with its _id.
+  // 4. The owner index is no primary key: its rows are refused.
+  acct_t f;
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  put(t, 30, "c");
+  put(t, 10, "a");
+  put(t, 20, "b");
+  std::string key;
+  for (const auto &[id, row] : entries(t, f.owner)) {
+    if (id == 3) {
+      key = row;
+    }
+  }
+  REQUIRE(key == key_of(20));
+  sm3::pin_ref_t ref;
+  std::string_view tuple;
+  REQUIRE(sm3::tbl_read_key(t, key, ref, tuple) == 0);
+  CHECK(show(t, tuple) == "20|b|0");
+  sm3::unpin(ref);
+  CHECK(sm3::tbl_read_key(t, key_of(99), ref, tuple) == 1);
+  sm2::datum_t d15[1] = {sm2::datum_from_int32(15)};
+  bool n[1] = {false};
+  sm2::bound_t lo{d15, n, true};
+  sm3::scan_t *scan = nullptr;
+  REQUIRE(sm3::tbl_idx_scan_rows(t, f.pkey, &lo, nullptr, scan) == 0);
+  std::vector<std::string> got;
+  uint64_t id;
+  while (sm3::tbl_scannxt(scan, id, ref, tuple) == 0) {
+    got.push_back(std::to_string(id) + ":" + show(t, tuple));
+  }
+  sm3::tbl_scanend(scan);
+  CHECK(got == std::vector<std::string>{"3:20|b|0", "1:30|c|0"});
+  CHECK(sm3::tbl_idx_scan_rows(t, f.owner, nullptr, nullptr, scan) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+}

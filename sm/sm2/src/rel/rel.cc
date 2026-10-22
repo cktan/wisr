@@ -21,16 +21,6 @@
 #include <string>
 #include <vector>
 
-struct sm2::rel_scan_t {
-  sm1::scan_t *scan; /* over the rows, or a keyed rel's _id index */
-  sm1::session_t *session;
-  uint64_t storeid;
-  uint16_t relid;
-  bool keyed;
-  sm1::rawpin_t *pin = nullptr; /* a keyed rel's row, read by its key */
-  std::string key;              /* the last row's key */
-};
-
 namespace {
 
 /* The sm1 key of the row at key: relid then key. */
@@ -976,10 +966,15 @@ int rel_scan(rel_t *rel, uint64_t first, uint64_t last, rel_scan_t *&out) {
                 hi.size(), 1, c) != 0) {
     return -1;
   }
-  out = new rel_scan_t{
-      c,          rel->session, rel->storeid,
-      rel->relid, keyed,        keyed ? sm1::rawpin_new() : nullptr,
-      {}};
+  out = new rel_scan_t{c,
+                       rel->session,
+                       rel->storeid,
+                       rel->relid,
+                       keyed,
+                       false,
+                       keyed ? sm1::rawpin_new() : nullptr,
+                       {},
+                       {}};
   return 0;
 }
 
@@ -990,6 +985,11 @@ int rel_scannxt(rel_scan_t *scan, uint64_t &id, std::string_view &tuple) {
     int rc = sm1::scannxt(scan->scan, key, value);
     if (rc != 0) {
       return rc;
+    }
+    // A row in key order: its key is sm1's, past the relid.
+    if (scan->by_key) {
+      scan->key = key.substr(relid_len);
+      return split_value(value, &id, tuple);
     }
     // The range holds only this relid's or the _id index's 10-byte
     // keys.
@@ -1002,16 +1002,18 @@ int rel_scannxt(rel_scan_t *scan, uint64_t &id, std::string_view &tuple) {
     key.remove_prefix(relid_len);
     get_be(key, r);
     if (!scan->keyed) {
-      scan->key = id_key(r);
+      scan->own = id_key(r);
+      scan->key = scan->own;
       id = r;
       return split_value(value, nullptr, tuple);
     }
     // An entry of the _id index: its value is the row's key, and
     // the row is read by it, into the cursor's pin.
-    scan->key.assign(value);
+    scan->own.assign(value);
+    scan->key = scan->own;
     std::string_view v;
     rc = sm1::read(scan->session, scan->storeid,
-                   row_key(scan->relid, scan->key), scan->pin, v);
+                   row_key(scan->relid, scan->own), scan->pin, v);
     if (rc < 0) {
       return -1;
     }
@@ -1030,6 +1032,10 @@ std::string_view rel_scan_key(const rel_scan_t *scan) { return scan->key; }
 
 /* Move a cursor forward to _id id. */
 int rel_scan_seek(rel_scan_t *scan, uint64_t id) {
+  if (scan->by_key) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       "rel: a cursor in key order seeks no _id");
+  }
   return sm1::scan_seek(
       scan->scan, scan->keyed ? id_entry(id) : row_key(scan->relid, id_key(id)),
       1);

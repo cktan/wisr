@@ -281,6 +281,16 @@ The reasons `sm2/SM2_DESIGN.md` §5 gave for a heap, answered:
 - **A primary key change moves the row** and rewrites all its
   index entries; PostgreSQL rewrites only the changed indexes,
   unless HOT applies.
+- **A statement that shifts primary keys can collide with
+  itself.** `UPDATE t SET k = k + 1` reads the rows in key order
+  and checks each new key at its write, as every unique index is
+  checked, so the first row's new key is the second row's old
+  one, which is still there: a duplicate. PostgreSQL checks at
+  the write too, and passes only when its heap holds the rows in
+  the other order; the SQL standard checks at the statement's
+  end, which nothing in the stack does. Accepted, as InnoDB and
+  MyRocks accept it; nine statements of pgregress's
+  `foreign_key` are taken out for it.
 - **Secondary entries carry `encode(pk)`**, wider than 8 bytes
   for most keys, so secondary indexes grow, and a wide primary
   key leaves less of `max_keylen` to a secondary's columns.
@@ -405,13 +415,15 @@ Each step leaves every suite passing.
    which keeps the rows in the order digres's tests expect,
    and a read through an index is three seeks, the entry, the
    `_id` entry and the row.
-2. **digres reads by key.** A primary key index scan becomes a
-   range scan of the rows; a secondary index scan fetches by
-   `encode(pk)`; the `_id → pk` cache; a sequential scan walks
-   the rows in key order, which changes the order of a query
-   without ORDER BY on a table with a primary key, and the
-   expected output of the tests that have one; the backfill and
-   ANALYZE's correlation in key order; a bitmap scan by sorted
+2. **digres reads by key.** Built so far: a primary key index
+   scan is a range scan of the rows (`sm_tbl_idx_scan_rows`), a
+   secondary index fetches its row by the key in its entry
+   (`sm_tbl_read_key`), and a sequential scan reads the rows in
+   key order (`sm_tbl_scan_rows`), its unordered results
+   compared as multisets by digres's tests
+   (`../dg/test/rowset.py`). Q6 went from 9.0 to 4.2 ms. To do:
+   the `_id → pk` cache; the backfill and ANALYZE's correlation
+   in key order; a bitmap scan by sorted
    primary keys, and ANALYZE and TABLESAMPLE by key ranges
    (§10, question 6); the system column renamed `_id` (§10,
    question 1). Q6 and Q7 measured, and what the `_id` entry

@@ -394,3 +394,47 @@ TEST_CASE("a primary key past max_pk_len is refused") {
   REQUIRE(sm1::commit(s) == 0);
   sm2::rel_close(rel);
 }
+
+TEST_CASE("a primary key's scan hands out its rows, in key order") {
+  // Verify idx_scan_rows: the rows between two bounds, by key.
+  // 1. Rows with keys 30, 10, 40 and 20 go in, _ids 1 to 4.
+  // 2. A scan from 15 to 30, both included, gives keys 20 and 30,
+  //    each with its _id, its tuple and its key.
+  // 3. An unbounded one gives all four, in key order.
+  // 4. Seeking such a cursor to an _id fails.
+  db_t db;
+  table_t t;
+  sm1::session_t *s = db.open();
+  sm2::rel_t *rel = t.open(db, s);
+  sm2::index_t *px = nullptr;
+  REQUIRE(sm2::idx_open_primary(rel, {}, {}, px) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  for (int32_t a : {30, 10, 40, 20}) {
+    insert(rel, a, "row");
+  }
+  auto scan = [&](const sm2::bound_t *lo, const sm2::bound_t *hi) {
+    sm2::rel_scan_t *c = nullptr;
+    REQUIRE(sm2::idx_scan_rows(px, lo, hi, c) == 0);
+    std::vector<std::pair<uint64_t, int32_t>> out;
+    uint64_t id;
+    std::string_view tuple;
+    while (sm2::rel_scannxt(c, id, tuple) == 0) {
+      out.push_back({id, a_of(t, tuple)});
+      CHECK(sm2::rel_scan_key(c) == key_of(out.back().second));
+    }
+    CHECK(sm2::rel_scan_seek(c, 1) == -1);
+    sm2::rel_scanend(c);
+    return out;
+  };
+  sm2::datum_t d15[1] = {sm2::datum_from_int32(15)};
+  sm2::datum_t d30[1] = {sm2::datum_from_int32(30)};
+  bool n[1] = {false};
+  sm2::bound_t lo{d15, n, true}, hi{d30, n, true};
+  CHECK(scan(&lo, &hi) ==
+        std::vector<std::pair<uint64_t, int32_t>>{{4, 20}, {1, 30}});
+  CHECK(scan(nullptr, nullptr) == std::vector<std::pair<uint64_t, int32_t>>{
+                                      {2, 10}, {4, 20}, {1, 30}, {3, 40}});
+  REQUIRE(sm1::commit(s) == 0);
+  sm2::idx_close(px);
+  sm2::rel_close(rel);
+}

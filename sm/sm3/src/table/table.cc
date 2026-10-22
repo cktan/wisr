@@ -1253,6 +1253,14 @@ int tbl_read(table_t *table, uint64_t id, pin_ref_t &ref,
   });
 }
 
+/* Read the row at key into a pin; see sm3.h. */
+int tbl_read_key(table_t *table, std::string_view key, pin_ref_t &ref,
+                 std::string_view &tuple) {
+  return read_into(table, ref, tuple, [&](sm1::rawpin_t *raw) {
+    return sm2::rel_read(table->rel, key, raw, tuple);
+  });
+}
+
 /* Read the newest committed version of the row into a pin. */
 int tbl_read_latest(table_t *table, uint64_t id, pin_ref_t &ref,
                     std::string_view &tuple) {
@@ -1313,21 +1321,70 @@ int tbl_truncate(table_t *table) {
   return open_rels(table);
 }
 
-/* Open a cursor over the rows first..last, with its pin. */
-int tbl_scan(table_t *table, uint64_t first, uint64_t last, scan_t *&out) {
+/*
+ * Open a cursor with its pin over the rows sm2's cursor, which open
+ * makes, walks.
+ */
+template <typename F>
+static int open_scan(table_t *table, scan_t *&out, F open) {
   out = nullptr;
   pin_t *p = pin_take(table->session);
   if (!p) {
     return -1;
   }
   sm2::rel_scan_t *rel = nullptr;
-  if (sm2::rel_scan(table->rel, first, last, rel) != 0) {
+  if (open(rel) != 0) {
     pin_put(p);
     return -1;
   }
   out = new scan_t{rel, p};
   pin_scan_hold(p, out, table->def);
   return 0;
+}
+
+/* Open a cursor over the rows first..last, with its pin. */
+int tbl_scan(table_t *table, uint64_t first, uint64_t last, scan_t *&out) {
+  return open_scan(table, out, [&](sm2::rel_scan_t *&rel) {
+    return sm2::rel_scan(table->rel, first, last, rel);
+  });
+}
+
+/* Open a cursor over every row in its key's order; see sm3.h. */
+int tbl_scan_rows(table_t *table, scan_t *&out) {
+  const index_def_t *pk = primary_of(*table->def);
+  if (!pk) {
+    return tbl_scan(table, 0, UINT64_MAX, out);
+  }
+  for (size_t i = 0; i < table->def->indexes.size(); i++) {
+    if (&table->def->indexes[i] == pk) {
+      return open_scan(table, out, [&](sm2::rel_scan_t *&rel) {
+        return sm2::idx_scan_rows(table->indexes[i], nullptr, nullptr, rel);
+      });
+    }
+  }
+  return -1; /* not reached: pk is one of the table's indexes */
+}
+
+/* Open a cursor over the primary key's rows, with its pin; see sm3.h. */
+int tbl_idx_scan_rows(table_t *table, uint64_t index, const sm2::bound_t *lo,
+                      const sm2::bound_t *hi, scan_t *&out, bool *widened) {
+  const table_def_t &def = *table->def;
+  for (size_t i = 0; i < def.indexes.size(); i++) {
+    const index_def_t &x = def.indexes[i];
+    if (x.oid != index) {
+      continue;
+    }
+    if (!x.primary || !index_usable(table->session, def, index)) {
+      return sm1::seterr(sm1::SM_ERR_INVALID,
+                         "table: index " + x.name +
+                             " is not the primary key, or not usable");
+    }
+    return open_scan(table, out, [&](sm2::rel_scan_t *&rel) {
+      return sm2::idx_scan_rows(table->indexes[i], lo, hi, rel, widened);
+    });
+  }
+  return sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                     "table: no index " + std::to_string(index));
 }
 
 /* The next row, in the cursor's pin; see sm3.h. */
@@ -1394,9 +1451,10 @@ int tbl_idx_size(table_t *table, uint64_t index, uint64_t &disk,
                  uint64_t &mem) {
   for (const index_def_t &x : table->def->indexes) {
     if (x.oid == index) {
-      // A primary key's entries are the rows.
+      // A primary key's entries are the rows, which tbl_size counts:
+      // what it adds to them is the _id index.
       return sm2::relid_size(table->session->sm1, table->def->storeid,
-                             x.primary ? heap_relid : x.relid, disk, mem);
+                             x.primary ? sm2::id_relid : x.relid, disk, mem);
     }
   }
   return sm1::seterr(sm1::SM_ERR_NOTFOUND,

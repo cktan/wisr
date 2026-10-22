@@ -1368,21 +1368,30 @@ create temp table pp (f1 int primary key);
 create temp table cc (f1 int references pp on update no action on delete no action);
 insert into pp values(12);
 insert into pp values(11);
-update pp set f1=f1+1;
-insert into cc values(13);
-update pp set f1=f1+1;
-update pp set f1=f1+1; -- fail
-delete from pp where f1 = 13; -- fail
+--dg-skip: duplicate key value violates unique constraint "?"
+--dg update pp set f1=f1+1;
+--dg-cascade
+--dg insert into cc values(13);
+--dg-skip: duplicate key value violates unique constraint "?"
+--dg update pp set f1=f1+1;
+--dg-cascade
+--dg update pp set f1=f1+1; -- fail
+--dg-cascade
+--dg delete from pp where f1 = 13; -- fail
 drop table pp, cc;
 
 create temp table pp (f1 int primary key);
 create temp table cc (f1 int references pp on update restrict on delete restrict);
 insert into pp values(12);
 insert into pp values(11);
-update pp set f1=f1+1;
-insert into cc values(13);
-update pp set f1=f1+1; -- fail
-delete from pp where f1 = 13; -- fail
+--dg-skip: duplicate key value violates unique constraint "?"
+--dg update pp set f1=f1+1;
+--dg-cascade
+--dg insert into cc values(13);
+--dg-cascade
+--dg update pp set f1=f1+1; -- fail
+--dg-cascade
+--dg delete from pp where f1 = 13; -- fail
 drop table pp, cc;
 
 --

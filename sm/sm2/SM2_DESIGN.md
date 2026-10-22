@@ -988,7 +988,8 @@ columns, and sm3 never encodes a key itself, so sm2 gives it a
   table, the row's key. It is how sm3 writes, deletes and
   scans index entries. A table's primary key is an index
   `rel` too (`idx_open_primary`), with no entries of its own:
-  its entries are the rows, and only read.
+  its entries are the rows, and only read, and
+  `idx_scan_rows` hands them out in key order as rows.
 
 `rel_lock` takes a row's lock without writing it, as
 `sm1::lock` does: `SELECT … FOR SHARE` and `FOR UPDATE`, and

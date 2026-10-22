@@ -8224,3 +8224,29 @@ digres had to change with it:
 Reading by key, the primary key's index scan as a range of the
 rows, and the system column's new name are the next step
 (`../sm/CLUSTER.md` §11).
+
+## Step 286: digres reads a table with a primary key by its key
+
+The second step of `../sm/CLUSTER.md` §11, its first part. A
+table keyed by its primary key in sm was read through its `_id`,
+two seeks a row, as digres asked for every row by its tid:
+
+- **A scan of the primary key's index reads the rows**, in key
+  order, from one cursor (`sm_tbl_idx_scan_rows()`): the rows
+  are the index's entries. `smstore_index_beginscan()` opens
+  one for an index with `indisprimary`; an index-only scan of it
+  decodes its columns from the row. `../bench`'s Q6, 10,000 rows
+  by a range of the key, went from 9.0 ms to 4.2.
+- **A secondary index's row is read by its key**
+  (`sm_idx_scan_row()`, `sm_tbl_read_key()`), which its entry
+  carries: one seek, as before the pivot.
+- **A sequential scan reads the rows in key order**
+  (`sm_tbl_scan_rows()`), one sorted run. A sample or TID scan
+  still reads by `_id` (`smstore_beginscan()`'s `by_rowno`).
+- **Unordered results compare as multisets** in pgregress, its
+  test and its trim (`test/rowset.py`): PostgreSQL returns a
+  table's rows in the order they went in, digres in the key's.
+  `foreign_key` is trimmed again for nine statements: `UPDATE pp
+  SET f1 = f1 + 1` over keys 12 and 11 meets its own duplicate
+  in key order (`../sm/CLUSTER.md` §7), and the foreign key
+  checks after it go with it.

@@ -1423,6 +1423,15 @@ int tbl_read(table_t* table, uint64_t id, pin_ref_t& ref,
              std::string_view& tuple);
 
 /*
+ * Read the row at key, its key in the table's rel, as an index
+ * entry names it (sm2::idx_scan_row), into a pin as tbl_read does:
+ * one read, where tbl_read by _id is two in a table with a primary
+ * key (../CLUSTER.md §5).
+ */
+int tbl_read_key(table_t* table, std::string_view key, pin_ref_t& ref,
+                 std::string_view& tuple);
+
+/*
  * Read the newest committed version of the row with _id id, as
  * sm2::rel_read_latest does: what a read committed writer that met
  * SM_ERR_UPDATED checks its filter against, and what lets sm1 take
@@ -1487,6 +1496,26 @@ int tbl_scannxt(scan_t* scan, uint64_t& id, pin_ref_t& ref,
 
 /* tbl_scannxt for a caller that wants the bytes only. */
 int tbl_scannxt(scan_t* scan, uint64_t& id, std::string_view& tuple);
+
+/*
+ * Open a cursor over every row of the table, in the order of its
+ * key: its primary key's, one sorted run, or with none its _id's
+ * (../CLUSTER.md §5). What a sequential scan reads. It seeks no _id
+ * in a table with a primary key.
+ */
+int tbl_scan_rows(table_t* table, scan_t*& out);
+
+/*
+ * Open a cursor over the rows of the table's primary key, index,
+ * between lo and hi as tbl_idx_scan takes them, in key order: the
+ * rows themselves, each in the cursor's pin as tbl_scannxt gives
+ * it, one sorted run (../CLUSTER.md §5). SM_ERR_INVALID if index
+ * is not the primary key, or not usable; SM_ERR_NOTFOUND if the
+ * table has no such index. It seeks no _id.
+ */
+int tbl_idx_scan_rows(table_t* table, uint64_t index, const sm2::bound_t* lo,
+                      const sm2::bound_t* hi, scan_t*& out,
+                      bool* widened = nullptr);
 
 /* Move the cursor forward to _id id, as sm2::rel_scan_seek does. */
 int tbl_scan_seek(scan_t* scan, uint64_t id);

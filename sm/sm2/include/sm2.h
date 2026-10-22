@@ -557,7 +557,7 @@ int tup_check(const tup_desc_t& desc, std::string_view tuple);
  */
 struct rel_t;
 
-/* A cursor over a rel's rows, in _id order. */
+/* A cursor over a rel's rows, in _id order, or a primary key's order. */
 struct rel_scan_t;
 
 /* The relid of a rel's _id index, in every store (../CLUSTER.md §3). */
@@ -1026,6 +1026,15 @@ int idx_delete(index_t* index, std::span<const datum_t> key,
  */
 int idx_scan(index_t* index, const bound_t* lo, const bound_t* hi,
                index_scan_t*& out, bool* widened = nullptr);
+
+/*
+ * Open a cursor over the rows of a primary key index (idx_open_primary)
+ * between lo and hi, as idx_scan takes them, in key order: the rows
+ * themselves, which rel_scannxt hands out with their _id, and
+ * rel_scan_key their key. It seeks no _id (rel_scan_seek fails).
+ */
+int idx_scan_rows(index_t* index, const bound_t* lo, const bound_t* hi,
+                  rel_scan_t*& out, bool* widened = nullptr);
 
 /*
  * The next entry: 0 with its row's _id, whether its key was cut,

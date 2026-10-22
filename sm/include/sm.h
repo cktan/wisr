@@ -614,6 +614,13 @@ int sm_idx_scan_seek(sm_idx_scan_t* scan, const sm_bound_t* lo);
 int sm_idx_scan_key(sm_idx_scan_t* scan, sm_datum_t* values, bool* isnull,
                     size_t n);
 
+/*
+ * The key, in its table, of the row of the entry sm_idx_scannxt last
+ * returned, for sm_tbl_read_key: valid until the next call on the
+ * cursor. 0, or -1.
+ */
+int sm_idx_scan_row(sm_idx_scan_t* scan, const void** key, size_t* len);
+
 /* Close a cursor; NULL is a no-op. */
 void sm_idx_scanend(sm_idx_scan_t* scan);
 
@@ -1293,6 +1300,14 @@ int sm_tbl_read_latest(sm_tbl_t* tbl, uint64_t id, const void** tuple,
                        size_t* len);
 
 /*
+ * Read the row at key, as an index entry names it (sm_idx_scan_row),
+ * into a pin as sm_tbl_read does: one read, where a read by _id is
+ * two in a table with a primary key. 0, 1 if none, or -1.
+ */
+int sm_tbl_read_key(sm_tbl_t* tbl, const void* key, size_t len,
+                    sm_pin_ref_t* ref, const void** tuple, size_t* tlen);
+
+/*
  * sm_tbl_read into a pin, with no copy: the tuple is valid until
  * the pin *ref then names is released. A pin *ref names already
  * is released first; on 1 or -1 *ref is zero.
@@ -1408,6 +1423,24 @@ int sm_toast_fetch(sm_session_t* session, sm_datum_t val, std::string* out);
 int sm_tbl_idx_scan(sm_tbl_t* tbl, uint64_t index, const sm_bound_t* lo,
                     const sm_bound_t* hi, bool* widened,
                     sm_idx_scan_t** out);
+
+/*
+ * Open a cursor over every row of the table, in its key's order: its
+ * primary key's, or with none its _id's (../CLUSTER.md section 5),
+ * as sm_rel_scannxt hands them out. What a sequential scan reads.
+ */
+int sm_tbl_scan_rows(sm_tbl_t* tbl, sm_rel_scan_t** out);
+
+/*
+ * Open a cursor over the rows of the table's primary key, index,
+ * between lo and hi as sm_tbl_idx_scan takes them, in key order:
+ * the rows themselves, as sm_rel_scannxt hands them out, with their
+ * _id, one sorted run (../CLUSTER.md section 5). SM_ERR_INVALID if
+ * index is not the table's primary key; it seeks no _id.
+ */
+int sm_tbl_idx_scan_rows(sm_tbl_t* tbl, uint64_t index, const sm_bound_t* lo,
+                         const sm_bound_t* hi, bool* widened,
+                         sm_rel_scan_t** out);
 
 /*
  * Whether the session may scan the table's index now. Not while it

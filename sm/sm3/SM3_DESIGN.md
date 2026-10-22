@@ -1096,7 +1096,10 @@ on its leading columns (`sm2/SM2_DESIGN.md` §5); `tbl_scan` and
 `tbl_idx_scan` are those, on an open table. In a table keyed by
 a primary key a scan by `_id` walks the `_id` index and reads
 each row by its key, and a scan of the primary key is a range
-scan of the rows themselves (`../CLUSTER.md` §5). sm3 has no
+scan of the rows themselves (`../CLUSTER.md` §5):
+`tbl_idx_scan_rows` between bounds, `tbl_scan_rows` over them
+all, the order a sequential scan reads in. `tbl_read_key` reads
+a row by the key an index entry names it by. sm3 has no
 predicate, and so no predicate scan.
 
 - **Deriving the bounds from a `WHERE` clause is the

@@ -40,8 +40,10 @@ from concurrent.futures import ThreadPoolExecutor
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, '..', 'regress'))
+sys.path.insert(0, os.path.join(HERE, '..'))
 from split import split, CONDITIONALS  # noqa: E402
 from report import normalize  # noqa: E402
+from rowset import rowset  # noqa: E402
 
 DG = os.path.abspath(os.path.join(HERE, '..', '..'))
 PG18 = os.environ.get('PG18_SRC', os.path.expanduser('~/p/postgres18'))
@@ -342,6 +344,15 @@ def blocks(out, n):
     return [None if b is None else '\n'.join(b) for b in got]
 
 
+def same(a, b):
+    """Whether two units' outputs agree, an unordered result's rows as a
+    multiset (rowset.py): a table with a primary key is read in the key's
+    order in digres, and in insertion order in PostgreSQL."""
+    if a is None or b is None:
+        return a is b
+    return rowset(a) == rowset(b)
+
+
 def first_error(block):
     """The first error in a unit's output, or None."""
     for line in (block or '').split('\n'):
@@ -420,7 +431,7 @@ def trim(w, name):
     ref = blocks(w.pg.run(name, inst, setup)[0], n)
     again = blocks(w.pg.run(name, inst, setup)[0], n)
     for k in range(n):
-        if ref[k] != again[k] and k not in off and k not in keep:
+        if not same(ref[k], again[k]) and k not in off and k not in keep:
             off[k] = ('unstable', '')
     passes = 0
     while True:
@@ -434,11 +445,11 @@ def trim(w, name):
         for k in range(n):
             if k in off or k in keep:
                 continue
-            if pg[k] != ref[k]:
+            if not same(pg[k], ref[k]):
                 took[k] = ('cascade', '')
         first = True
         for k in range(n):
-            if k in off or k in keep or k in took or pg[k] == dg[k]:
+            if k in off or k in keep or k in took or same(pg[k], dg[k]):
                 continue
             if dg[k] is None and crashed:
                 # The unit before the first with no marker is the one the
@@ -482,7 +493,8 @@ def expected(w, name):
 
 def test(w, name):
     """Run name on digres and compare its output with expected/name.out,
-    blind to white space as pg_regress is; whether they agree. The output
+    blind to white space as pg_regress is, and to the order of an
+    unordered result's rows (same()); whether they agree. The output
     and a diff go in WORK/test."""
     with open(os.path.join(HERE, 'sql', name + '.sql'), encoding=ENC) as f:
         text = f.read()
@@ -495,7 +507,7 @@ def test(w, name):
         f.write(out)
 
     def norm(t):
-        return [re.sub(r'\s+', '', line) for line in t.split('\n')]
+        return [re.sub(r'\s+', '', line) for line in rowset(t).split('\n')]
 
     ok = not timed_out and norm(out) == norm(want)
     diff = os.path.join(dir, name + '.diff')
