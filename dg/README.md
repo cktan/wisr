@@ -48,6 +48,8 @@ its catalog is being replaced, not created (`../sm/PART4.md`
   at a time.
 - `CODE.md`: the rules for changing the code.
 - `ISSUE.md`: the problems known and left unfixed.
+- `UNSUPPORTED.md`: what of PostgreSQL digres refuses, has
+  removed, or does otherwise.
 - `PLAN.md`: the handover that took digres to one process
   with a thread a session; its §7 holds the decisions of
   record.
