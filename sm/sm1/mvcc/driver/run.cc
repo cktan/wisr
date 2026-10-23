@@ -165,7 +165,7 @@ std::string execute(worker_t *w, const item_t &it) {
     std::string_view old;
     int rc = sm1::erase_moved(w->sess, w->store, a[0], pin, old);
     sm1::rawpin_free(pin);
-    return rc == 0 ? "ok" : error_name();
+    return 0 == rc ? "ok" : error_name();
   }
   if (it.verb == "update-where") {
     // update-where <lo> <hi> <old> <new>: SQL's UPDATE ... SET

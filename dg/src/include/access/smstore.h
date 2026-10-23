@@ -253,6 +253,12 @@ extern void smstore_scan_seek(smstore_scan_t *scan, uint64 rowno);
 extern bool smstore_scan_row(smstore_scan_t *scan, uint64 rowno,
                              TupleTableSlot *slot);
 extern uint64 smstore_rowno_limit(Relation rel);
+extern uint64 smstore_sample_slots(Relation rel);
+extern void smstore_sample_slot(smstore_scan_t *scan, uint64 slot,
+                                uint64 nslots);
+extern bool smstore_sample_row(smstore_scan_t *scan, TupleTableSlot *slot);
+extern bool smstore_scan_nth(smstore_scan_t *scan, uint64 n,
+                             TupleTableSlot *slot);
 extern int smstore_scan_natts(const struct Scan *plan, Relation rel);
 extern int smstore_expr_natts(Node *expr, Index varno, Relation rel);
 extern smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,

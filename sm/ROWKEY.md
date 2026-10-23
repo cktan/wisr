@@ -145,8 +145,11 @@ Nothing reads many rows of a table with a primary key in
   measured in key order. A keyless table is sampled as now.
   Built (`sm3/SM3_DESIGN.md` §6.4); `rowno_limit` stays in the
   statistics until a keyed table has no `_id` (step 4).
-- **TABLESAMPLE** picks its blocks the same way: a block is a
-  key range, not 256 `_id`s.
+- **TABLESAMPLE** picks its blocks the same way: SYSTEM's are
+  slots of 8 KB of the bytes, each read by a seek to its first
+  key, the rest skipped; BERNOULLI's, which reads every row,
+  256 rows of a scan in key order. Built
+  (`../dg/WORKNOTE.md` step 290).
 - **The index backfill** walks the rows in key order
   (`tbl_scan_rows`), and its persisted resume point is a key,
   not the next `_id`.

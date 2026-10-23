@@ -1112,6 +1112,18 @@ int sm_rel_scan_key(sm_rel_scan_t *scan, const void **key, size_t *len) {
   });
 }
 
+/* Move a cursor in key order forward to a key. */
+int sm_rel_scan_seek_key(sm_rel_scan_t *scan, const void *key, size_t len) {
+  return guard(nullptr, [&] {
+    if (!scan || (len && !key)) {
+      return null_arg("sm_rel_scan_seek_key", !scan ? "scan" : "key");
+    }
+    return sm3::tbl_scan_seek_key(
+        rel_scan_of(scan),
+        std::string_view(static_cast<const char *>(key), len));
+  });
+}
+
 /* Close a heap cursor, and release its pin. */
 void sm_rel_scanend(sm_rel_scan_t *scan) {
   sm3::tbl_scanend(rel_scan_of(scan));
@@ -1938,7 +1950,7 @@ int read_by_key(sm_pin_ref_t *ref, const void **tuple, size_t *len, F read) {
     rc = read(&r, v);
     *ref = sm_pin_ref_t{r.pin, r.gen};
   }
-  if (rc == 0) {
+  if (0 == rc) {
     view_out(v, tuple, len);
   }
   return rc;
@@ -1952,8 +1964,8 @@ int sm_tbl_update(sm_tbl_t *tbl, const sm_row_key_t &key,
                   sm_pin_ref_t *ref, const void **old, size_t *len) {
   return guard(tbl ? tbl->session : nullptr, [&] {
     sm3::row_key_t k;
-    if (row_key_in("sm_tbl_update", tbl, key, k) != 0 ||
-        check_row("sm_tbl_update", tbl, values, isnull, n) != 0) {
+    if (0 != row_key_in("sm_tbl_update", tbl, key, k) ||
+        0 != check_row("sm_tbl_update", tbl, values, isnull, n)) {
       return -1;
     }
     return write_by_key("sm_tbl_update", ref, old, len,
@@ -1971,7 +1983,7 @@ int sm_tbl_delete(sm_tbl_t *tbl, const sm_row_key_t &key, sm_pin_ref_t *ref,
                   const void **old, size_t *len) {
   return guard(tbl ? tbl->session : nullptr, [&] {
     sm3::row_key_t k;
-    if (row_key_in("sm_tbl_delete", tbl, key, k) != 0) {
+    if (0 != row_key_in("sm_tbl_delete", tbl, key, k)) {
       return -1;
     }
     return write_by_key("sm_tbl_delete", ref, old, len,
@@ -1993,7 +2005,7 @@ int sm_tbl_read(sm_tbl_t *tbl, const sm_row_key_t &key, sm_pin_ref_t *ref,
                 const void **tuple, size_t *len) {
   return guard(tbl ? tbl->session : nullptr, [&] {
     sm3::row_key_t k;
-    if (row_key_in("sm_tbl_read", tbl, key, k) != 0) {
+    if (0 != row_key_in("sm_tbl_read", tbl, key, k)) {
       return -1;
     }
     return read_by_key(ref, tuple, len,
@@ -2015,7 +2027,7 @@ int sm_tbl_read_latest(sm_tbl_t *tbl, const sm_row_key_t &key,
                        sm_pin_ref_t *ref, const void **tuple, size_t *len) {
   return guard(tbl ? tbl->session : nullptr, [&] {
     sm3::row_key_t k;
-    if (row_key_in("sm_tbl_read_latest", tbl, key, k) != 0) {
+    if (0 != row_key_in("sm_tbl_read_latest", tbl, key, k)) {
       return -1;
     }
     return read_by_key(ref, tuple, len,
@@ -2030,7 +2042,7 @@ int sm_tbl_read_latest(sm_tbl_t *tbl, const sm_row_key_t &key,
 int sm_tbl_lock(sm_tbl_t *tbl, const sm_row_key_t &key, sm_lockmode_t mode) {
   return guard(tbl ? tbl->session : nullptr, [&] {
     sm3::row_key_t k;
-    return row_key_in("sm_tbl_lock", tbl, key, k) != 0
+    return 0 != row_key_in("sm_tbl_lock", tbl, key, k)
                ? -1
                : sm3::tbl_lock(tbl->table, k, mode);
   });
@@ -2040,7 +2052,7 @@ int sm_tbl_lock(sm_tbl_t *tbl, const sm_row_key_t &key, sm_lockmode_t mode) {
 int sm_tbl_trylock(sm_tbl_t *tbl, const sm_row_key_t &key, sm_lockmode_t mode) {
   return guard(tbl ? tbl->session : nullptr, [&] {
     sm3::row_key_t k;
-    return row_key_in("sm_tbl_trylock", tbl, key, k) != 0
+    return 0 != row_key_in("sm_tbl_trylock", tbl, key, k)
                ? -1
                : sm3::tbl_trylock(tbl->table, k, mode);
   });
@@ -2228,6 +2240,17 @@ int sm_tbl_size(sm_tbl_t *tbl, uint64_t *disk, uint64_t *mem) {
       return null_arg("sm_tbl_size", !tbl ? "tbl" : !disk ? "disk" : "mem");
     }
     return sm3::tbl_size(tbl->table, *disk, *mem);
+  });
+}
+
+/* The keys at fractions of a table's bytes. */
+int sm_tbl_keys_at(sm_tbl_t *tbl, const double *fs, size_t n,
+                   std::vector<std::string> &keys) {
+  return guard(tbl ? tbl->session : nullptr, [&] {
+    if (!tbl || (n && !fs)) {
+      return null_arg("sm_tbl_keys_at", !tbl ? "tbl" : "fs");
+    }
+    return sm3::tbl_keys_at(tbl->table, {fs, n}, keys);
   });
 }
 

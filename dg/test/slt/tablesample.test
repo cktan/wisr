@@ -1,14 +1,18 @@
-# Verify that TABLESAMPLE reads a sample of a table in sm, its blocks a
-# tid's, 256 rownos each (dg/WORKNOTE.md step 244), as PostgreSQL's reads one
-# of a heap's pages.
-# 1. A table of 10000 rows: BERNOULLI and SYSTEM at 100 take every row, at 0
-#    none.
+# Verify that TABLESAMPLE reads a sample of a table in sm, as PostgreSQL's
+# reads one of a heap's pages: a table with a primary key's blocks slots of
+# its bytes in key order, of which SYSTEM reads only those it picks
+# (../../../sm/ROWKEY.md section 2.4), and BERNOULLI every row in blocks of
+# 256; a keyless table's a tid's, 256 rownos each (dg/WORKNOTE.md step 244).
+# 1. A table with a primary key of 10000 rows: BERNOULLI and SYSTEM at 100
+#    take every row, at 0 none.
 # 2. BERNOULLI (10) takes about a tenth; SYSTEM (10) fewer than all.
 # 3. REPEATABLE with one seed takes the same rows twice, by each method.
 # 4. Rows deleted are not sampled: half deleted, 100 takes the other half.
 # 5. A sample scan rescanned, under LATERAL, starts again for each outer
 #    row.
 # 6. A method not built in, as tsm_system_rows' SYSTEM_ROWS, does not exist.
+# 7. A keyless table of 10000 rows: at 100 every row, at 0 none, by each
+#    method, and REPEATABLE the same rows twice.
 
 statement ok
 create table ts (a int4 primary key, b text)
@@ -68,3 +72,25 @@ select g, x.n
 
 statement error tablesample method system_rows does not exist
 select * from ts tablesample system_rows (10)
+
+statement ok
+create table tn (a int4, b text)
+
+statement ok
+insert into tn select g, 'r' || g from generate_series(1, 10000) g
+
+query IIII nosort
+select (select count(*) from tn tablesample bernoulli (100)),
+       (select count(*) from tn tablesample system (100)),
+       (select count(*) from tn tablesample bernoulli (0)),
+       (select count(*) from tn tablesample system (0))
+----
+10000	10000	0	0
+
+query T nosort
+select (select array_agg(a order by a)
+          from tn tablesample system (20) repeatable (7)) =
+       (select array_agg(a order by a)
+          from tn tablesample system (20) repeatable (7))
+----
+t

@@ -8330,3 +8330,31 @@ in its cursor and the row in its pin (`../sm/CLUSTER.md` §6):
 - Fifty UPDATEs by the primary key a transaction, of a table of
   100,000 rows, one client: PostgreSQL 112 transactions a
   second, digres 92 to 110.
+
+## Step 290: TABLESAMPLE of a table with a primary key, by key
+
+A table with a primary key is to lose its `_id`
+(`../sm/ROWKEY.md`), and with it the rownos a sample scan's
+blocks were made of. Its blocks are now in key order:
+
+- **SYSTEM picks slots of the table's bytes**, as many as its
+  bytes in sorted files and memtables fill 8 KB blocks
+  (`smstore_sample_slots()`), and reads only those: each
+  slot's rows lie between the keys at its two ends, which sm
+  finds from its size estimates with no row read
+  (`sm_tbl_keys_at()`), and the scan, in key order, seeks
+  forward to each (`smstore_sample_slot()`,
+  `sm_rel_scan_seek_key()`), a row read past a slot kept for
+  the next (`smstore_sample_row()`). A slot holds as many rows
+  as it holds; the method's offsets left over are drained. The
+  slot after the last one read starts where that one ended,
+  its start not estimated again: a memtable's estimate is
+  sampled anew each call, and two of one boundary disagreed,
+  losing the rows between (SYSTEM (100) read 9,552 rows of
+  10,000).
+- **BERNOULLI reads every row**, as it does in PostgreSQL: its
+  blocks are 256 rows each of the scan in key order, a row
+  taken by its place in it (`smstore_scan_nth()`).
+- **A keyless table samples as before**, by rowno.
+- **`slt/tablesample.test`** runs on a table with a primary key
+  and on a keyless one.

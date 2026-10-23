@@ -161,11 +161,11 @@ int read_slots(sm3::table_t *table, uint64_t s,
     }
   }
   std::vector<std::string> keys;
-  if (sm3::tbl_keys_at(table, fs, keys) != 0) {
+  if (0 != sm3::tbl_keys_at(table, fs, keys)) {
     return -1;
   }
   sm3::scan_t *c = nullptr;
-  if (sm3::tbl_scan_rows(table, c) != 0) {
+  if (0 != sm3::tbl_scan_rows(table, c)) {
     return -1;
   }
   std::unique_ptr<sm3::scan_t, decltype(&sm3::tbl_scanend)> guard(
@@ -176,8 +176,8 @@ int read_slots(sm3::table_t *table, uint64_t s,
   // The next row, into tuple: have it, or be done.
   auto next = [&]() {
     int rc = sm3::tbl_scannxt(c, id, tuple);
-    have = rc == 0;
-    done = rc == 1;
+    have = 0 == rc;
+    done = 1 == rc;
     return rc < 0 ? -1 : 0;
   };
   size_t j = 0;
@@ -188,19 +188,19 @@ int read_slots(sm3::table_t *table, uint64_t s,
     const std::string &start = keys[j++];
     const std::string *end = x + 1 < s ? &keys[j++] : nullptr;
     uint64_t span;
-    if (sm3::tbl_range_size(table, start, end, span) != 0) {
+    if (0 != sm3::tbl_range_size(table, start, end, span)) {
       return -1;
     }
     bytes += span;
     // Move to the slot, unless the row in hand is in it or past it.
     if (!have || sm3::tbl_scan_key(c) < start) {
-      if (sm3::tbl_scan_seek_key(c, start) != 0 || next() != 0) {
+      if (0 != sm3::tbl_scan_seek_key(c, start) || 0 != next()) {
         return -1;
       }
     }
     while (have && (!end || sm3::tbl_scan_key(c) < *end)) {
       emit(sm3::tbl_scan_key(c), tuple);
-      if (next() != 0) {
+      if (0 != next()) {
         return -1;
       }
     }
@@ -215,7 +215,7 @@ int read_slots(sm3::table_t *table, uint64_t s,
 int sample_by_key(sm3::table_t *table, uint64_t want, std::mt19937_64 &rng,
                   sm3::sample_t &out) {
   uint64_t disk, mem;
-  if (sm3::tbl_size(table, disk, mem) != 0) {
+  if (0 != sm3::tbl_size(table, disk, mem)) {
     return -1;
   }
   // 1. The slots, a page of the bytes each, and a pilot of a few,
@@ -228,7 +228,7 @@ int sample_by_key(sm3::table_t *table, uint64_t want, std::mt19937_64 &rng,
   };
   std::vector<uint64_t> next = sm3::floyd(s, std::min(s, pilot_slots), rng);
   std::unordered_set<uint64_t> chosen(next.begin(), next.end());
-  if (read_slots(table, s, next, out.bytes_covered, keep) != 0) {
+  if (0 != read_slots(table, s, next, out.bytes_covered, keep)) {
     return -1;
   }
   // None found is taken as fewer than one in the pilot.
@@ -249,7 +249,7 @@ int sample_by_key(sm3::table_t *table, uint64_t want, std::mt19937_64 &rng,
     out.rows_read = 0;
     res.bytes = 0;
     sm3::scan_t *c = nullptr;
-    if (sm3::tbl_scan_rows(table, c) != 0) {
+    if (0 != sm3::tbl_scan_rows(table, c)) {
       return -1;
     }
     std::unique_ptr<sm3::scan_t, decltype(&sm3::tbl_scanend)> guard(
@@ -257,7 +257,7 @@ int sample_by_key(sm3::table_t *table, uint64_t want, std::mt19937_64 &rng,
     uint64_t id;
     std::string_view t;
     int rc;
-    while ((rc = sm3::tbl_scannxt(c, id, t)) == 0) {
+    while (0 == (rc = sm3::tbl_scannxt(c, id, t))) {
       keep(sm3::tbl_scan_key(c), t);
     }
     if (rc < 0) {
@@ -276,7 +276,7 @@ int sample_by_key(sm3::table_t *table, uint64_t want, std::mt19937_64 &rng,
           s, chosen, std::clamp<uint64_t>(more, 1, max_slots - chosen.size()),
           rng);
       chosen.insert(next.begin(), next.end());
-      if (read_slots(table, s, next, out.bytes_covered, keep) != 0) {
+      if (0 != read_slots(table, s, next, out.bytes_covered, keep)) {
         return -1;
       }
     }

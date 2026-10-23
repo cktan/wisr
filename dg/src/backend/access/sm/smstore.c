@@ -2302,6 +2302,18 @@ struct smstore_scan_t {
   uint64_t ahead_rowno;
   sm_pin_ref_t ahead_ref;
   /*
+   * smstore_sample_slot()'s slot, has_slot once there is one, and its end, a
+   * key of the table's past its relid, palloc'd; none for the table's last
+   * slot.  smstore_scan_nth()'s count of the rows the cursor read, and the
+   * one read ahead's place.
+   */
+  bool has_slot;
+  uint64_t slot;
+  char *slot_end;
+  size_t slot_end_len;
+  uint64_t nread;
+  uint64_t ahead_nth;
+  /*
    * The row the scan handed out last, while its cursor is on it
    * (scan_at()): its rowno, and whether it is pinned, in row_ref for a
    * cursor over rows, else in ref.  Its key is the cursor's.
@@ -2628,6 +2640,150 @@ uint64 smstore_rowno_limit(Relation rel) {
   return n;
 }
 
+/*
+ * The slots a sample scan of rel, a table with a primary key, cuts it
+ * into: a block's bytes each, by sm's estimate of its bytes in sorted files
+ * and memtables together (../sm/ROWKEY.md section 2.4); 0 if it has none.
+ */
+uint64 smstore_sample_slots(Relation rel) {
+  sm_tbl_t *tbl = open_table(RelationGetRelid(rel), SM_LOCKMODE_IS);
+  uint64_t disk, mem;
+
+  if (NULL == tbl)
+    ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
+                    errmsg("relation \"%s\" does not exist",
+                           RelationGetRelationName(rel))));
+  if (0 != sm_tbl_size(tbl, &disk, &mem))
+    sm_error("size a table");
+  return Min((disk + mem + BLCKSZ - 1) / BLCKSZ, (uint64)MaxBlockNumber);
+}
+
+/*
+ * Move a scan in key order (smstore_beginscan(), not by rowno) forward to
+ * slot of nslots, as a sample scan does to a block it picked: the rows from
+ * the key at its start to the key at its end, sm_tbl_keys_at()'s.  Slots
+ * are taken in increasing order: a row read ahead at or past the slot's
+ * start is kept, as the cursor is past it already.  The slot after the last
+ * one starts where that one ended, its start never estimated again: sm's
+ * estimate of a memtable is sampled anew each time, and could leave a gap.
+ */
+void smstore_sample_slot(smstore_scan_t *scan, uint64 slot, uint64 nslots) {
+  bool next = scan->has_slot && slot == scan->slot + 1;
+  double fs[2] = {(double)slot / nslots, (double)(slot + 1) / nslots};
+  size_t from = next ? 1 : 0, to = slot + 1 < nslots ? 2 : 1;
+  std::vector<std::string> keys;
+  const void *key;
+  size_t len;
+
+  keys.resize(from);
+  if (from < to) {
+    std::vector<std::string> found;
+
+    if (0 != sm_tbl_keys_at(scan->tbl, fs + from, to - from, found))
+      sm_error("find a table's sample block");
+    keys.insert(keys.end(), found.begin(), found.end());
+  }
+  scan->has_slot = true;
+  scan->slot = slot;
+  if (scan->slot_end)
+    pfree(scan->slot_end);
+  scan->slot_end = NULL;
+  if (2 == keys.size()) {
+    scan->slot_end = (char *)palloc(Max(keys[1].size(), 1));
+    memcpy(scan->slot_end, keys[1].data(), keys[1].size());
+    scan->slot_end_len = keys[1].size();
+  }
+  if (scan->at_end || next)
+    return;
+  if (scan->ahead) {
+    if (0 != sm_rel_scan_key(scan->cursor, &key, &len))
+      sm_error("read a table's key");
+    if (std::string_view((const char *)key, len) >= keys[0])
+      return;
+  }
+  scan->ahead = false;
+  if (0 != sm_rel_scan_seek_key(scan->cursor, keys[0].data(), keys[0].size()))
+    sm_error("move a table's scan");
+}
+
+/*
+ * The next row of the scan's slot (smstore_sample_slot()) into slot; false
+ * when the slot has no more.  A row read past the slot's end is kept for
+ * the next slot.
+ */
+bool smstore_sample_row(smstore_scan_t *scan, TupleTableSlot *slot) {
+  const void *key;
+  size_t len;
+
+  ExecClearTuple(slot);
+  slot->tts_tableOid = scan->relid;
+  /* Its cursor reads ahead, so is on no row it handed out. */
+  scan->cur = false;
+  if (!scan->ahead && !scan->at_end) {
+    switch (
+        sm_rel_scannxt(scan->cursor, &scan->ahead_rowno, &scan->ahead_ref)) {
+    case 0:
+      scan->ahead = true;
+      break;
+    case 1:
+      scan->at_end = true;
+      break;
+    default:
+      sm_error("scan a table");
+    }
+  }
+  if (!scan->ahead)
+    return false;
+  if (scan->slot_end) {
+    if (0 != sm_rel_scan_key(scan->cursor, &key, &len))
+      sm_error("read a table's key");
+    if (std::string_view((const char *)key, len) >=
+        std::string_view(scan->slot_end, scan->slot_end_len))
+      return false;
+  }
+  scan->ahead = false;
+  ref_into_slot(scan->ahead_ref, scan->ahead_rowno, slot);
+  return true;
+}
+
+/*
+ * The n-th row, from 1, of a scan in key order into slot, as
+ * smstore_scan_row() the row at a rowno: a row read past it is kept, so
+ * places asked for in increasing order read each row once at most; false if
+ * the scan has fewer rows.  With no slot, only whether it has the n-th, which
+ * is then kept.
+ */
+bool smstore_scan_nth(smstore_scan_t *scan, uint64 n, TupleTableSlot *slot) {
+  if (slot) {
+    ExecClearTuple(slot);
+    slot->tts_tableOid = scan->relid;
+  }
+  /* Its cursor reads ahead, so is on no row it handed out. */
+  scan->cur = false;
+  while (!scan->at_end && (!scan->ahead || scan->ahead_nth < n)) {
+    switch (
+        sm_rel_scannxt(scan->cursor, &scan->ahead_rowno, &scan->ahead_ref)) {
+    case 0:
+      scan->ahead = true;
+      scan->ahead_nth = ++scan->nread;
+      break;
+    case 1:
+      scan->ahead = false;
+      scan->at_end = true;
+      break;
+    default:
+      sm_error("scan a table");
+    }
+  }
+  if (!scan->ahead || scan->ahead_nth != n)
+    return false;
+  if (slot) {
+    scan->ahead = false;
+    ref_into_slot(scan->ahead_ref, scan->ahead_rowno, slot);
+  }
+  return true;
+}
+
 /* End a scan; the table stays open until the transaction ends. */
 void smstore_endscan(smstore_scan_t *scan) {
   std::erase(open_scans, scan);
@@ -2635,6 +2791,8 @@ void smstore_endscan(smstore_scan_t *scan) {
   sm_idx_scanend(scan->icursor);
   /* The row it read last by rowno is no one's now. */
   sm_unpin(&scan->ref);
+  if (scan->slot_end)
+    pfree(scan->slot_end);
   pfree(scan);
 }
 

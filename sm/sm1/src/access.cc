@@ -535,8 +535,8 @@ int read_latest_row(sm1::session_t *s, uint64_t storeid, const char *key,
   // Read the newest version into the pin, ignoring the snapshot;
   // it is emptied again unless a row is handed out.
   sm0::scope_guard_t put([&] { sm1::unpin(pin); });
-  if (latest_version(s, st, k, &live, &commit_ts, nullptr, &own_seq, nullptr,
-                     pin, &moved) != 0) {
+  if (0 != latest_version(s, st, k, &live, &commit_ts, nullptr, &own_seq,
+                          nullptr, pin, &moved)) {
     return -1;
   }
   // Something must keep the newest version from changing: a lock

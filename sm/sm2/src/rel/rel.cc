@@ -395,7 +395,7 @@ int encode_cols(sm2::rel_t *rel, std::span<const sm2::datum_t> cols,
       continue;
     }
     std::string_view v;
-    if (sm2::datum_bytes(schema[att].type, schema[att].typmod, c[j], v) != 0) {
+    if (0 != sm2::datum_bytes(schema[att].type, schema[att].typmod, c[j], v)) {
       return -1;
     }
     sm2::toast_ptr_t p;
@@ -1183,9 +1183,9 @@ struct bisect_t {
     std::string lo = prefix + std::string(a);
     std::string hi = end ? limit : prefix + std::string(b);
     uint64_t disk, mem;
-    if (sm1::approxsize(rel->session, rel->storeid, lo.data(), lo.size(),
-                        hi.empty() ? nullptr : hi.data(), hi.size(), disk,
-                        mem) != 0) {
+    if (0 != sm1::approxsize(rel->session, rel->storeid, lo.data(), lo.size(),
+                             hi.empty() ? nullptr : hi.data(), hi.size(), disk,
+                             mem)) {
       return -1;
     }
     out = disk + mem;
@@ -1205,7 +1205,7 @@ struct bisect_t {
     std::string m = midpoint(a, b, end);
     uint64_t left = 0, right = 0;
     if (depth < max_depth &&
-        (size(a, m, false, left) != 0 || size(m, b, end, right) != 0)) {
+        (0 != size(a, m, false, left) || 0 != size(m, b, end, right))) {
       return -1;
     }
     // Too few bytes to tell apart: every fraction is at its start.
@@ -1224,8 +1224,8 @@ struct bisect_t {
     for (size_t i = k; i < fs.size(); i++) {
       hi[i - k] = (fs[i] - p) / (1 - p);
     }
-    return find(a, m, false, lo, at, keys, depth + 1) != 0 ||
-                   find(m, b, end, hi, at + k, keys, depth + 1) != 0
+    return 0 != find(a, m, false, lo, at, keys, depth + 1) ||
+                   0 != find(m, b, end, hi, at + k, keys, depth + 1)
                ? -1
                : 0;
   }
@@ -1250,12 +1250,12 @@ int rel_keys_at(rel_t *rel, std::span<const double> fs,
     put_be(static_cast<uint16_t>(rel->relid + 1), b.limit);
   }
   keys.assign(fs.size(), std::string());
-  if (b.find({}, {}, true, fs, 0, keys, 0) != 0) {
+  if (0 != b.find({}, {}, true, fs, 0, keys, 0)) {
     return -1;
   }
   // A start estimated empty sends 0 past a block it cannot see:
   // the key at 0 is the rel's first, whatever the estimate.
-  for (size_t i = 0; i < fs.size() && fs[i] == 0; i++) {
+  for (size_t i = 0; i < fs.size() && 0 == fs[i]; i++) {
     keys[i].clear();
   }
   return 0;

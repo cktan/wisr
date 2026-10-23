@@ -586,6 +586,13 @@ int sm_rel_scan_seek(sm_rel_scan_t* scan, uint64_t id);
  */
 int sm_rel_scan_key(sm_rel_scan_t* scan, const void** key, size_t* len);
 
+/*
+ * Move a cursor in key order (sm_tbl_scan_rows) forward to key, past
+ * its relid, as sm_tbl_keys_at gives one: the next row is the first
+ * at or after it. Moving back fails.
+ */
+int sm_rel_scan_seek_key(sm_rel_scan_t* scan, const void* key, size_t len);
+
 /* Close a cursor; NULL is a no-op. */
 void sm_rel_scanend(sm_rel_scan_t* scan);
 
@@ -1529,6 +1536,17 @@ int sm_tbl_idx_deform(sm_tbl_t* tbl, uint64_t index, const void* value,
  * table's store may visit.
  */
 int sm_tbl_size(sm_tbl_t* tbl, uint64_t* disk, uint64_t* mem);
+
+/*
+ * The keys at fractions fs[0..n) of the bytes of the table's rows,
+ * each in [0, 1), ascending, into keys, one each: positions in key
+ * order, past the relid, below which about that share of the bytes
+ * lie, by sm's estimates, to a data block or so; no row is read,
+ * and none need have the key (../ROWKEY.md §2.4). What a sample
+ * scan of a table with a primary key cuts it into blocks by.
+ */
+int sm_tbl_keys_at(sm_tbl_t* tbl, const double* fs, size_t n,
+                   std::vector<std::string>& keys);
 int sm_tbl_idx_size(sm_tbl_t* tbl, uint64_t index, uint64_t* disk,
                     uint64_t* mem);
 int sm_tbl_rowno_limit(sm_tbl_t* tbl, uint64_t* n);

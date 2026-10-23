@@ -13,8 +13,8 @@
  * it first, in many places, and each is a callback here over smstore.c.  So
  * does COPY, which scans a table and inserts into one through the access
  * method, and TABLESAMPLE, whose blocks are a tid's, SMSTORE_ROWS_PER_BLOCK
- * rownos each.  Every other callback raises an error: nothing should reach
- * it.
+ * rownos each, or in a table with a primary key slots of its bytes in key
+ * order.  Every other callback raises an error: nothing should reach it.
  *
  * IDENTIFICATION
  *	  src/backend/access/sm/smtable.c
@@ -31,8 +31,10 @@
 #include "fmgr.h"
 #include "miscadmin.h"
 #include "nodes/execnodes.h"
-#include "utils/snapmgr.h"
 #include "utils/fmgrprotos.h"
+#include "utils/rel.h"
+#include "utils/relcache.h"
+#include "utils/snapmgr.h"
 
 /* A callback of the access method that a table in sm never takes. */
 template <typename R, typename... A> static R refuse(A...) {
@@ -51,6 +53,11 @@ static const TupleTableSlotOps *smtable_slot_callbacks(Relation rel) {
  * A scan of a table in sm by the access method: sm's cursor behind it.  A
  * sample scan's blocks are a tid's, SMSTORE_ROWS_PER_BLOCK rownos each: the
  * table's count of them, as its highest rowno makes it, and the one read.
+ * In a table with a primary key, keyed, a sampling method that picks its
+ * blocks, as SYSTEM does, has them as slots of the table's bytes in key
+ * order, and reads only those (../sm/ROWKEY.md section 2.4); one that
+ * reads every block, as BERNOULLI does, has them as SMSTORE_ROWS_PER_BLOCK
+ * rows each of a scan in key order, the rows taken by their place in it.
  */
 typedef struct smtable_scan_t {
   TableScanDescData base; /* what tableam.h reads */
@@ -58,6 +65,7 @@ typedef struct smtable_scan_t {
   BlockNumber nblocks;
   BlockNumber block;
   bool started;
+  bool keyed;
 } smtable_scan_t;
 
 /* A sample scan's blocks: as many as hold the table's rownos. */
@@ -70,9 +78,15 @@ static BlockNumber sample_blocks(Relation rel) {
                           (uint64)MaxBlockNumber);
 }
 
+/* Whether rel, a table in sm, has a primary key, and its rows are by it. */
+static bool keyed(Relation rel) {
+  return OidIsValid(RelationGetPrimaryKeyIndex(rel, true));
+}
+
 /*
- * Begin a scan of every row of rel, in rowno order.  sm reads at its own
- * transaction's snapshot, and takes no scan keys.
+ * Begin a scan of every row of rel, in rowno order, or a sample scan of a
+ * table with a primary key in key order.  sm reads at its own transaction's
+ * snapshot, and takes no scan keys.
  */
 static TableScanDesc smtable_scan_begin(Relation rel, Snapshot snapshot,
                                         int nkeys, struct ScanKeyData *key,
@@ -87,9 +101,11 @@ static TableScanDesc smtable_scan_begin(Relation rel, Snapshot snapshot,
   scan->base.rs_rd = rel;
   scan->base.rs_snapshot = snapshot;
   scan->base.rs_flags = flags;
-  scan->scan = smstore_beginscan(rel, true);
+  scan->keyed = (flags & SO_TYPE_SAMPLESCAN) && keyed(rel);
+  scan->scan = smstore_beginscan(rel, !scan->keyed);
   if (flags & SO_TYPE_SAMPLESCAN)
-    scan->nblocks = sample_blocks(rel);
+    scan->nblocks = scan->keyed ? (BlockNumber)smstore_sample_slots(rel)
+                                : sample_blocks(rel);
   return &scan->base;
 }
 
@@ -110,8 +126,9 @@ static void smtable_scan_rescan(TableScanDesc sscan, struct ScanKeyData *key,
   if (!(sscan->rs_flags & SO_TYPE_SAMPLESCAN))
     refuse<void>();
   smstore_endscan(scan->scan);
-  scan->scan = smstore_beginscan(sscan->rs_rd, true);
-  scan->nblocks = sample_blocks(sscan->rs_rd);
+  scan->scan = smstore_beginscan(sscan->rs_rd, !scan->keyed);
+  scan->nblocks = scan->keyed ? (BlockNumber)smstore_sample_slots(sscan->rs_rd)
+                              : sample_blocks(sscan->rs_rd);
   scan->started = false;
 }
 
@@ -126,6 +143,16 @@ static bool smtable_scan_sample_next_block(TableScanDesc sscan,
   TsmRoutine *tsm = scanstate->tsmroutine;
   BlockNumber block;
 
+  /* Every row in key order, in blocks of rows, while a block has one. */
+  if (scan->keyed && !tsm->NextSampleBlock) {
+    block = scan->started ? scan->block + 1 : 0;
+    if (!smstore_scan_nth(scan->scan,
+                          (uint64)block * SMSTORE_ROWS_PER_BLOCK + 1, NULL))
+      return false;
+    scan->block = block;
+    scan->started = true;
+    return true;
+  }
   if (scan->nblocks == 0)
     return false;
   if (tsm->NextSampleBlock)
@@ -140,8 +167,55 @@ static bool smtable_scan_sample_next_block(TableScanDesc sscan,
     return false;
   scan->block = block;
   scan->started = true;
-  smstore_scan_seek(scan->scan, (uint64)block * SMSTORE_ROWS_PER_BLOCK);
+  if (scan->keyed)
+    smstore_sample_slot(scan->scan, block, scan->nblocks);
+  else
+    smstore_scan_seek(scan->scan, (uint64)block * SMSTORE_ROWS_PER_BLOCK);
   return true;
+}
+
+/*
+ * The rest of a block's offsets, which the sampling method keeps count
+ * of: a block of a keyed table can run out of rows before they do.
+ */
+static void drain(SampleScanState *scanstate, BlockNumber block,
+                  OffsetNumber maxoffset) {
+  while (OffsetNumberIsValid(
+      scanstate->tsmroutine->NextSampleTuple(scanstate, block, maxoffset)))
+    ;
+}
+
+/*
+ * A sample scan's next row of a keyed table's block into slot (see
+ * smtable_scan_t): the row of a slot at each offset the method gives, in
+ * order, or of a block of rows, the one at the offset; false when the block
+ * has no more.
+ */
+static bool keyed_sample_tuple(smtable_scan_t *scan, SampleScanState *scanstate,
+                               TupleTableSlot *slot) {
+  TsmRoutine *tsm = scanstate->tsmroutine;
+  OffsetNumber maxoffset =
+      tsm->NextSampleBlock ? MaxOffsetNumber : SMSTORE_ROWS_PER_BLOCK;
+  OffsetNumber offset;
+
+  CHECK_FOR_INTERRUPTS();
+  offset = tsm->NextSampleTuple(scanstate, scan->block, maxoffset);
+  if (!OffsetNumberIsValid(offset)) {
+    ExecClearTuple(slot);
+    return false;
+  }
+  if (tsm->NextSampleBlock) {
+    if (smstore_sample_row(scan->scan, slot))
+      return true;
+    drain(scanstate, scan->block, maxoffset);
+    return false;
+  }
+  if (smstore_scan_nth(scan->scan,
+                       (uint64)scan->block * SMSTORE_ROWS_PER_BLOCK + offset,
+                       slot))
+    return true;
+  drain(scanstate, scan->block, maxoffset);
+  return false;
 }
 
 /*
@@ -155,6 +229,8 @@ static bool smtable_scan_sample_next_tuple(TableScanDesc sscan,
   smtable_scan_t *scan = (smtable_scan_t *)sscan;
   TsmRoutine *tsm = scanstate->tsmroutine;
 
+  if (scan->keyed)
+    return keyed_sample_tuple(scan, scanstate, slot);
   for (;;) {
     OffsetNumber offset;
 

@@ -1335,7 +1335,7 @@ int tbl_trylock(table_t *table, uint64_t id, sm1::lockmode_t mode,
 static int named(table_t *table, const row_key_t &key, bool want_id,
                  std::string &k, uint64_t &id) {
   id = 0;
-  if (sm2::rel_key(table->rel, key.values, key.isnull, k) != 0) {
+  if (0 != sm2::rel_key(table->rel, key.values, key.isnull, k)) {
     return -1;
   }
   if (!sm2::rel_keyed(table->rel)) {
@@ -1347,10 +1347,10 @@ static int named(table_t *table, const row_key_t &key, bool want_id,
   }
   std::string_view tuple;
   int rc = sm2::rel_read(table->rel, k, tuple, &id);
-  if (rc == 1 && table->session->level == sm1::xctlevel_t::read_committed) {
+  if (1 == rc && sm1::xctlevel_t::read_committed == table->session->level) {
     rc = sm2::rel_read_latest(table->rel, k, tuple, &id);
   }
-  if (rc == 1) {
+  if (1 == rc) {
     return sm1::seterr(sm1::SM_ERR_NOTFOUND,
                        "table: no row at that key in " + table->def->name);
   }
@@ -1363,7 +1363,7 @@ int tbl_update(table_t *table, const row_key_t &key,
                std::span<const bool> isnull) {
   std::string k;
   uint64_t id;
-  return named(table, key, true, k, id) != 0
+  return 0 != named(table, key, true, k, id)
              ? -1
              : update_row(table, id, k, values, isnull, nullptr, nullptr);
 }
@@ -1376,7 +1376,7 @@ int tbl_update(table_t *table, const row_key_t &key,
   old = {};
   std::string k;
   uint64_t id;
-  return named(table, key, true, k, id) != 0
+  return 0 != named(table, key, true, k, id)
              ? -1
              : update_row(table, id, k, values, isnull, &ref, &old);
 }
@@ -1385,7 +1385,7 @@ int tbl_update(table_t *table, const row_key_t &key,
 int tbl_delete(table_t *table, const row_key_t &key) {
   std::string k;
   uint64_t id;
-  return named(table, key, true, k, id) != 0
+  return 0 != named(table, key, true, k, id)
              ? -1
              : delete_row(table, id, k, nullptr, nullptr);
 }
@@ -1396,7 +1396,7 @@ int tbl_delete(table_t *table, const row_key_t &key, pin_ref_t &ref,
   old = {};
   std::string k;
   uint64_t id;
-  return named(table, key, true, k, id) != 0
+  return 0 != named(table, key, true, k, id)
              ? -1
              : delete_row(table, id, k, &ref, &old);
 }
@@ -1406,7 +1406,7 @@ int tbl_read(table_t *table, const row_key_t &key, std::string_view &tuple) {
   std::string k;
   uint64_t id;
   tuple = {};
-  return named(table, key, false, k, id) != 0
+  return 0 != named(table, key, false, k, id)
              ? -1
              : sm2::rel_read(table->rel, k, tuple);
 }
@@ -1417,7 +1417,7 @@ int tbl_read(table_t *table, const row_key_t &key, pin_ref_t &ref,
   return read_into(table, ref, tuple, [&](sm1::rawpin_t *raw) {
     std::string k;
     uint64_t id;
-    return named(table, key, false, k, id) != 0
+    return 0 != named(table, key, false, k, id)
                ? -1
                : sm2::rel_read(table->rel, k, raw, tuple);
   });
@@ -1429,7 +1429,7 @@ int tbl_read_latest(table_t *table, const row_key_t &key,
   std::string k;
   uint64_t id;
   tuple = {};
-  return named(table, key, false, k, id) != 0
+  return 0 != named(table, key, false, k, id)
              ? -1
              : sm2::rel_read_latest(table->rel, k, tuple);
 }
@@ -1440,7 +1440,7 @@ int tbl_read_latest(table_t *table, const row_key_t &key, pin_ref_t &ref,
   return read_into(table, ref, tuple, [&](sm1::rawpin_t *raw) {
     std::string k;
     uint64_t id;
-    return named(table, key, false, k, id) != 0
+    return 0 != named(table, key, false, k, id)
                ? -1
                : sm2::rel_read_latest(table->rel, k, raw, tuple);
   });
@@ -1453,12 +1453,12 @@ int tbl_read_latest(table_t *table, const row_key_t &key, pin_ref_t &ref,
 static int lock_key(table_t *table, const row_key_t &key, sm1::lockmode_t mode,
                     bool nowait) {
   // Only a shared lock sits under a table opened to read.
-  if (mode != sm1::SM_LOCKMODE_SH && need_writable(table) != 0) {
+  if (sm1::SM_LOCKMODE_SH != mode && 0 != need_writable(table)) {
     return -1;
   }
   std::string k;
   uint64_t id;
-  if (named(table, key, false, k, id) != 0) {
+  if (0 != named(table, key, false, k, id)) {
     return -1;
   }
   // Held to the end of the transaction, as a write's lock is.
