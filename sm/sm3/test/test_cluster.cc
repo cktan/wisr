@@ -315,33 +315,42 @@ TEST_CASE("a writer at READ COMMITTED follows a row moved since") {
 }
 
 TEST_CASE("an insert that conflicts on the primary key says whose row") {
-  // Verify tbl_insert_arbiter with the primary key as an arbiter.
+  // Verify tbl_insert_arbiter with the primary key as an arbiter,
+  // at READ COMMITTED, which confirms against the newest version,
+  // and REPEATABLE READ, which reads at its snapshot.
   // 1. With id 10 in the table, an insert of id 10 arbitrated by
-  //    the primary key returns 1 and that row's _id, writing
-  //    nothing.
+  //    the primary key returns 1, that row's _id and its tuple,
+  //    from which a caller takes its key, writing nothing.
   // 2. So does one arbitrated by every unique index.
   // 3. An insert of id 11 goes in.
-  acct_t f;
-  start(f.a);
-  sm3::table_t *t = f.write(f.a);
-  uint64_t ten = put(t, 10, "a");
-  sm3::tbl_close(t);
-  REQUIRE(sm3::commit(f.a) == 0);
-  start(f.b);
-  t = f.write(f.b);
-  row_t again(10, "b", 0);
-  uint64_t id = 0;
-  uint64_t arbiters[1] = {f.pkey};
-  CHECK(sm3::tbl_insert_arbiter(t, again.d(), again.null(), arbiters, id) == 1);
-  CHECK(id == ten);
-  CHECK(sm3::tbl_insert_arbiter(t, again.d(), again.null(), {}, id) == 1);
-  CHECK(id == ten);
-  row_t eleven(11, "c", 0);
-  REQUIRE(sm3::tbl_insert_arbiter(t, eleven.d(), eleven.null(), {}, id) == 0);
-  CHECK(get(t, id) == "11|c|0");
-  CHECK(rows(t).size() == 2);
-  sm3::tbl_close(t);
-  REQUIRE(sm3::commit(f.b) == 0);
+  for (sm1::xctlevel_t level :
+       {sm1::xctlevel_t::read_committed, sm1::xctlevel_t::repeatable_read}) {
+    CAPTURE(static_cast<int>(level));
+    acct_t f;
+    start(f.a);
+    sm3::table_t *t = f.write(f.a);
+    uint64_t ten = put(t, 10, "a");
+    sm3::tbl_close(t);
+    REQUIRE(sm3::commit(f.a) == 0);
+    start(f.b, level);
+    t = f.write(f.b);
+    row_t again(10, "b", 0);
+    uint64_t id = 0;
+    std::string tuple;
+    uint64_t arbiters[1] = {f.pkey};
+    CHECK(sm3::tbl_insert_arbiter(t, again.d(), again.null(), arbiters, id,
+                                  &tuple) == 1);
+    CHECK(id == ten);
+    CHECK(show(t, tuple) == "10|a|0");
+    CHECK(sm3::tbl_insert_arbiter(t, again.d(), again.null(), {}, id) == 1);
+    CHECK(id == ten);
+    row_t eleven(11, "c", 0);
+    REQUIRE(sm3::tbl_insert_arbiter(t, eleven.d(), eleven.null(), {}, id) == 0);
+    CHECK(get(t, id) == "11|c|0");
+    CHECK(rows(t).size() == 2);
+    sm3::tbl_close(t);
+    REQUIRE(sm3::commit(f.b) == 0);
+  }
 }
 
 TEST_CASE("adding or dropping a primary key rewrites the table") {

@@ -705,19 +705,33 @@ int tbl_insert(table_t *table, std::span<const sm2::datum_t> values,
 
 /*
  * The row that has entry e's key in unique index i of t now, past
- * the snapshot, its _id in found: 0, 1 if none has, or -1. sm1
- * reads a newest version only under a lock on the key, and the
- * lock is given back at once, by a savepoint: the caller is left
- * holding nothing of the key, or it would stand between the row's
- * owner and the row. READ COMMITTED alone has such a read.
+ * the snapshot, its _id in found, and with tuple its newest
+ * version's tuple there: 0, 1 if none has, or -1. sm1 reads a
+ * newest version only under a lock on the key, and the locks are
+ * given back at once, by a savepoint: the caller is left holding
+ * nothing of the key, or it would stand between the row's owner
+ * and the row. READ COMMITTED alone has such a read.
  */
-int find_now(sm3::table_t *t, size_t i, const entry_t &e, uint64_t &found) {
+int find_now(sm3::table_t *t, size_t i, const entry_t &e, uint64_t &found,
+             std::string *tuple) {
   int mark = sm3::savepoint(t->session);
   if (mark < 0) {
     return -1;
   }
-  int rc = sm2::idx_find_latest(t->indexes[i], e.d(), e.null(), found);
-  // Releases the lock; nothing was written since the mark.
+  std::string row;
+  int rc = sm2::idx_find_latest(t->indexes[i], e.d(), e.null(), found, &row);
+  // The row's newest version too, under a lock on it, which the
+  // rollback gives back with the entry's; gone since, it is none.
+  std::string_view v;
+  if (0 == rc && nullptr != tuple &&
+      (0 != sm2::rel_lock(t->rel, row, sm1::SM_LOCKMODE_SH) ||
+       (rc = sm2::rel_read_latest(t->rel, row, v)) < 0)) {
+    rc = -1;
+  }
+  if (0 == rc && nullptr != tuple) {
+    tuple->assign(v);
+  }
+  // Releases the locks; nothing was written since the mark.
   if (rc < 0 || sm3::rollback(t->session, mark) != 0) {
     return -1;
   }
@@ -727,7 +741,8 @@ int find_now(sm3::table_t *t, size_t i, const entry_t &e, uint64_t &found) {
 /* Insert the row unless an arbiter index has its key; see sm3.h. */
 int tbl_insert_arbiter(table_t *table, std::span<const sm2::datum_t> values,
                        std::span<const bool> isnull,
-                       std::span<const uint64_t> arbiters, uint64_t &id) {
+                       std::span<const uint64_t> arbiters, uint64_t &id,
+                       std::string *tuple) {
   if (need_writable(table) != 0 || need_not_null(table, isnull) != 0) {
     return -1;
   }
@@ -783,10 +798,16 @@ look:
   // is confirmed against the newest version.
   for (size_t i : looked) {
     uint64_t found = 0;
-    int rc =
-        sm2::idx_find(table->indexes[i], entry[i].d(), entry[i].null(), found);
-    if (rc == 0 && rc_level) {
-      rc = find_now(table, i, entry[i], found);
+    std::string row;
+    int rc = sm2::idx_find(table->indexes[i], entry[i].d(), entry[i].null(),
+                           found, &row);
+    if (0 == rc && rc_level) {
+      rc = find_now(table, i, entry[i], found, tuple);
+    } else if (0 == rc && nullptr != tuple) {
+      // The row as the snapshot that showed its entry shows it.
+      std::string_view v;
+      rc = sm2::rel_read(table->rel, row, v);
+      tuple->assign(v);
     }
     if (rc < 0) {
       return -1;
@@ -826,7 +847,7 @@ look:
       }
     }
     uint64_t found = 0;
-    rc = find_now(table, i, entry[i], found);
+    rc = find_now(table, i, entry[i], found, tuple);
     if (rc < 0) {
       return -1;
     }

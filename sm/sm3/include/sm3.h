@@ -1281,7 +1281,8 @@ int tbl_insert(table_t* table, std::span<const sm2::datum_t> values,
  * any unique index of the table if arbiters is empty: SQL's
  * INSERT ... ON CONFLICT. Returns 0 with the new row's _id; 1,
  * with nothing written, with the _id of the row that has the
- * key; or -1.
+ * key, and its tuple in tuple if wanted, as the call found it,
+ * from which the caller takes its key (../ROWKEY.md §3.3); or -1.
  *
  * It finds out before the row is written. It looks each
  * arbiter's key up first (sm2::idx_find), and a row the snapshot
@@ -1308,7 +1309,8 @@ int tbl_insert(table_t* table, std::span<const sm2::datum_t> values,
  */
 int tbl_insert_arbiter(table_t* table, std::span<const sm2::datum_t> values,
                        std::span<const bool> isnull,
-                       std::span<const uint64_t> arbiters, uint64_t& id);
+                       std::span<const uint64_t> arbiters, uint64_t& id,
+                       std::string* tuple = nullptr);
 
 /*
  * Replace the row with _id id. An index is left alone if the row's

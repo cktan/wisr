@@ -1678,7 +1678,7 @@ int sm_tbl_insert(sm_tbl_t *tbl, const sm_datum_t *values, const bool *isnull,
 int sm_tbl_insert_arbiter(sm_tbl_t *tbl, const sm_datum_t *values,
                           const bool *isnull, size_t n,
                           const uint64_t *arbiters, size_t narbiters,
-                          uint64_t *id) {
+                          uint64_t *id, std::string *row) {
   return guard(tbl ? tbl->session : nullptr, [&] {
     if (check_row("sm_tbl_insert_arbiter", tbl, values, isnull, n) != 0) {
       return -1;
@@ -1687,7 +1687,7 @@ int sm_tbl_insert_arbiter(sm_tbl_t *tbl, const sm_datum_t *values,
       return null_arg("sm_tbl_insert_arbiter", !id ? "id" : "arbiters");
     }
     return sm3::tbl_insert_arbiter(tbl->table, {values, n}, {isnull, n},
-                                   {arbiters, narbiters}, *id);
+                                   {arbiters, narbiters}, *id, row);
   });
 }
 

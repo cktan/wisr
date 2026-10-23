@@ -1224,7 +1224,8 @@ int sm_tbl_insert(sm_tbl_t* tbl, const sm_datum_t* values,
  * narbiters unique indexes arbiters names by oid, or in any unique
  * index of the table if narbiters is 0: INSERT ... ON CONFLICT.
  * Returns 0 with the new row's _id in *id; 1, with nothing
- * written, with the id of the row that has the key; or -1.
+ * written, with the id of the row that has the key, and its tuple
+ * in *row if wanted, from which the caller takes its key; or -1.
  *
  * It finds a conflict before the row is written, and leaves
  * nothing locked by it: it waits for a transaction that has
@@ -1240,7 +1241,7 @@ int sm_tbl_insert(sm_tbl_t* tbl, const sm_datum_t* values,
 int sm_tbl_insert_arbiter(sm_tbl_t* tbl, const sm_datum_t* values,
                           const bool* isnull, size_t n,
                           const uint64_t* arbiters, size_t narbiters,
-                          uint64_t* id);
+                          uint64_t* id, std::string* row = nullptr);
 
 /*
  * A BULK LOAD (BULKLOAD.md section 5, section 13): many rows into
