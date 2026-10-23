@@ -487,7 +487,7 @@ int set_not_null(session_t *session, uint64_t oid, std::string_view name) {
     return -1;
   }
   scan_t *scan = nullptr;
-  int rc = tbl_scan(t, 0, UINT64_MAX, scan);
+  int rc = tbl_scan_rows(t, scan);
   uint64_t rowno = 0;
   std::string_view tuple;
   while (0 == rc && 0 == (rc = tbl_scannxt(scan, rowno, tuple))) {
@@ -789,7 +789,7 @@ int create_index(session_t *session, uint64_t table, std::string_view name,
     if (tbl_open(session, table, sm1::SM_LOCKMODE_EX, t) != 0) {
       return -1;
     }
-    uint64_t from = 0;
+    std::string from;
     bool done = false;
     int rc = 0;
     while (rc == 0 && !done) {

@@ -439,7 +439,7 @@ TEST_CASE("a load and an index build on a keyed table name rows by key") {
   REQUIRE(sm3::commit(f.a) == 0);
   start(f.b);
   t = f.write(f.b);
-  uint64_t next = 0;
+  std::string next;
   bool done = false;
   while (!done) {
     REQUIRE_MESSAGE(sm3::tbl_index_backfill(t, acct_n, next, 2, next, done) ==

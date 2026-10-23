@@ -1679,8 +1679,8 @@ int tbl_compact(table_t *table) {
 }
 
 /* One batch of an index's build; see sm3.h. */
-int tbl_index_backfill(table_t *table, uint64_t index, uint64_t from,
-                       size_t max_rows, uint64_t &next, bool &done) {
+int tbl_index_backfill(table_t *table, uint64_t index, std::string_view from,
+                       size_t max_rows, std::string &next, bool &done) {
   if (need_writable(table) != 0) {
     return -1;
   }
@@ -1706,21 +1706,21 @@ int tbl_index_backfill(table_t *table, uint64_t index, uint64_t from,
     return sm1::seterr(sm1::SM_ERR_INVALID,
                        "index build: not at READ COMMITTED");
   }
-  // The batch's rows, by _id, each with its key; their tuples are
-  // read again below.
+  // The batch's rows, in key order from from on, each with its
+  // _id; their tuples are read again below.
   std::vector<std::pair<uint64_t, std::string>> rows;
-  sm2::rel_scan_t *scan = nullptr;
-  if (sm2::rel_scan(table->rel, from, UINT64_MAX, scan) != 0) {
+  scan_t *scan = nullptr;
+  if (0 != tbl_scan_rows(table, scan)) {
     return -1;
   }
   uint64_t id;
   std::string_view tuple;
-  int more = 0;
-  while (rows.size() < max_rows &&
-         (more = sm2::rel_scannxt(scan, id, tuple)) == 0) {
-    rows.push_back({id, std::string(sm2::rel_scan_key(scan))});
+  int more = !from.empty() && 0 != tbl_scan_seek_key(scan, from) ? -1 : 0;
+  while (0 == more && rows.size() < max_rows &&
+         0 == (more = tbl_scannxt(scan, id, tuple))) {
+    rows.push_back({id, std::string(tbl_scan_key(scan))});
   }
-  sm2::rel_scanend(scan);
+  tbl_scanend(scan);
   if (more < 0) {
     return -1;
   }
@@ -1803,7 +1803,8 @@ int tbl_index_backfill(table_t *table, uint64_t index, uint64_t from,
     }
   }
   done = rows.size() < max_rows;
-  next = rows.empty() ? from : rows.back().first + 1;
+  // The least key past the last row's.
+  next = rows.empty() ? std::string(from) : rows.back().second + '\0';
   return 0;
 }
 
@@ -1819,17 +1820,17 @@ static int copy_rows(table_t *from, table_t *to) {
   for (size_t i = 0; i < all.size(); i++) {
     all[i] = static_cast<int32_t>(i);
   }
-  sm2::rel_scan_t *scan = nullptr;
-  if (sm2::rel_scan(from->rel, 0, UINT64_MAX, scan) != 0) {
+  // In key order, one sorted run of the old store.
+  scan_t *scan = nullptr;
+  if (0 != tbl_scan_rows(from, scan)) {
     return -1;
   }
-  std::unique_ptr<sm2::rel_scan_t, void (*)(sm2::rel_scan_t *)> guard(
-      scan, sm2::rel_scanend);
+  std::unique_ptr<scan_t, void (*)(scan_t *)> guard(scan, tbl_scanend);
   deformed_t row(def.schema.size());
   uint64_t id;
   std::string_view tuple;
   int rc;
-  while ((rc = sm2::rel_scannxt(scan, id, tuple)) == 0) {
+  while ((rc = tbl_scannxt(scan, id, tuple)) == 0) {
     std::vector<std::string> own;
     uint64_t got;
     if (sm2::tup_deform(def.desc, tuple, row.d, {row.null.get(), row.n}) != 0 ||

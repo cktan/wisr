@@ -151,12 +151,13 @@ Nothing reads many rows of a table with a primary key in
   256 rows of a scan in key order. Built
   (`../dg/WORKNOTE.md` step 290).
 - **The index backfill** walks the rows in key order
-  (`tbl_scan_rows`), and its persisted resume point is a key,
-  not the next `_id`.
+  (`tbl_scan_rows`), and resumes from a key, not the next
+  `_id`; the resume point is the builder's, in memory. Built.
 - **The rewrite** (`CLUSTER.md` §8) copies the rows in key
-  order. ADD PRIMARY KEY drops the `_id`s and their sequence;
-  DROP PRIMARY KEY makes a sequence and draws an `_id` a row.
-- **SET NOT NULL's check** walks the rows in key order.
+  order, built. ADD PRIMARY KEY drops the `_id`s and their
+  sequence; DROP PRIMARY KEY makes a sequence and draws an
+  `_id` a row (step 4).
+- **SET NOT NULL's check** walks the rows in key order. Built.
 
 ### 2.5 Duplicates and lock status
 

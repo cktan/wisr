@@ -1705,12 +1705,13 @@ int tbl_tryanalyze(table_t* table, int32_t target);
 
 /*
  * One batch of the build of the table's index oid, which must be
- * pending (SM3_DESIGN.md §3): cover up to max_rows rows from
- * _id from on. For each it takes the row's lock shared, reads
- * the row's newest committed version, and adds the row's entry if
- * it is not there. next is set to the _id to go on from, and
- * done once the end of the heap was reached. The caller commits
- * the batch, and marks the index valid after the last.
+ * pending (SM3_DESIGN.md §3): cover up to max_rows rows in key
+ * order from the key from on, the table's first for "". For each
+ * it takes the row's lock shared, reads the row's newest committed
+ * version, and adds the row's entry if it is not there. next is
+ * set to the key to go on from, past the last row's, and done once
+ * the end of the rows was reached. The caller commits the batch,
+ * and marks the index valid after the last.
  *
  * The table is opened to write, in a READ COMMITTED transaction.
  * At another level only a table this transaction made, which no
@@ -1722,8 +1723,8 @@ int tbl_tryanalyze(table_t* table, int32_t target);
  * the table has no such index. Like a write, a batch that fails
  * partway is the caller's to roll back.
  */
-int tbl_index_backfill(table_t* table, uint64_t index, uint64_t from,
-                       size_t max_rows, uint64_t& next, bool& done);
+int tbl_index_backfill(table_t* table, uint64_t index, std::string_view from,
+                       size_t max_rows, std::string& next, bool& done);
 
 /*
  * The schema of an entry's value in the table's index oid, as

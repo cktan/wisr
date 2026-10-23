@@ -387,11 +387,11 @@ TEST_CASE("an index built after its rows reads their values out of line") {
                             late) == 0);
   REQUIRE(sm3::commit(f.a) == 0);
 
-  uint64_t next = 0;
+  std::string next;
   bool done = false;
   start(f.b);
   t = f.write(f.b);
-  REQUIRE_MESSAGE(sm3::tbl_index_backfill(t, late, 0, 100, next, done) == 0,
+  REQUIRE_MESSAGE(sm3::tbl_index_backfill(t, late, "", 100, next, done) == 0,
                   sm1::errmsg());
   CHECK(done);
   sm3::tbl_close(t);

@@ -119,7 +119,7 @@ void set_state(catalog_t *cat, session_t *ws, uint64_t table, uint64_t index,
  */
 void build_one(catalog_t *cat, session_t *ws, uint64_t table, uint64_t index,
                size_t batch_rows) {
-  uint64_t from = 0;
+  std::string from;
   for (;;) {
     if (stopping(cat) || sm3::begin(ws, sm1::xctlevel_t::read_committed) != 0) {
       return;
@@ -127,7 +127,7 @@ void build_one(catalog_t *cat, session_t *ws, uint64_t table, uint64_t index,
     // The table-oid lock IX, as any writer takes: DDL waits for the
     // batch, and the batch sees the table as DDL left it.
     sm3::table_t *t = nullptr;
-    uint64_t next = from;
+    std::string next = from;
     bool done = false, pending = false;
     int rc = sm3::tbl_open(ws, table, sm1::SM_LOCKMODE_IX, t);
     bool opened = rc == 0;

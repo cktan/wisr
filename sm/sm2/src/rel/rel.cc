@@ -1099,9 +1099,9 @@ int rel_scan_seek(rel_scan_t *scan, uint64_t id) {
 
 /* Move a cursor in key order forward to a key; see sm2.h. */
 int rel_scan_seek_key(rel_scan_t *scan, std::string_view key) {
-  if (!scan->by_key) {
+  if (scan->keyed && !scan->by_key) {
     return sm1::seterr(sm1::SM_ERR_INVALID,
-                       "rel: a cursor in _id order seeks no key");
+                       "rel: a cursor over the _id index seeks no key");
   }
   return sm1::scan_seek(scan->scan, row_key(scan->relid, key), 1);
 }

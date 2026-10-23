@@ -874,10 +874,10 @@ std::string_view rel_scan_key(const rel_scan_t* scan);
 int rel_scan_seek(rel_scan_t* scan, uint64_t id);
 
 /*
- * Move a cursor in key order (rel_scan_rows, idx_scan_rows) forward
- * to key, a key in the rel past its relid, so the next rel_scannxt
- * returns the first row from it on; moving back fails, as
- * sm1::scan_seek.
+ * Move a cursor in key order -- idx_scan_rows', or rel_scan's of a
+ * rel keyed by _id -- forward to key, a key in the rel past its
+ * relid, so the next rel_scannxt returns the first row from it on;
+ * moving back fails, as sm1::scan_seek.
  */
 int rel_scan_seek_key(rel_scan_t* scan, std::string_view key);
 

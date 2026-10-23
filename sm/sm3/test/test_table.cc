@@ -1236,24 +1236,25 @@ TEST_CASE("a build fills an index in batches, and it then agrees") {
   REQUIRE(sm3::commit(f.a) == 0);
   uint64_t jobs_owner = late_index(f);
 
-  uint64_t next = 0;
+  std::string next;
   bool done = true;
   start(f.b);
   t = f.write(f.b);
-  REQUIRE_MESSAGE(sm3::tbl_index_backfill(t, jobs_owner, 0, 2, next, done) == 0,
+  REQUIRE_MESSAGE(sm3::tbl_index_backfill(t, jobs_owner, "", 2, next, done) ==
+                      0,
                   sm1::errmsg());
-  CHECK(next == 3);
+  CHECK(next == sm2::id_key(2) + '\0');
   CHECK_FALSE(done);
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.b) == 0);
   start(f.b);
   t = f.write(f.b);
   REQUIRE(sm3::tbl_index_backfill(t, jobs_owner, next, 2, next, done) == 0);
-  CHECK(next == 5);
+  CHECK(next == sm2::id_key(4) + '\0');
   CHECK_FALSE(done);
   REQUIRE(sm3::tbl_index_backfill(t, jobs_owner, next, 2, next, done) == 0);
   CHECK(done);
-  REQUIRE(sm3::tbl_index_backfill(t, jobs_owner, 0, 100, next, done) == 0);
+  REQUIRE(sm3::tbl_index_backfill(t, jobs_owner, "", 100, next, done) == 0);
   CHECK(done);
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.b) == 0);
@@ -1263,9 +1264,9 @@ TEST_CASE("a build fills an index in batches, and it then agrees") {
   t = f.write(f.a);
   CHECK(under(t, jobs_owner, "w3") == std::vector<uint64_t>{3});
   check_agree(t);
-  CHECK(sm3::tbl_index_backfill(t, jobs_owner, 0, 2, next, done) == -1);
+  CHECK(sm3::tbl_index_backfill(t, jobs_owner, "", 2, next, done) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
-  CHECK(sm3::tbl_index_backfill(t, jobs_owner + 999, 0, 2, next, done) == -1);
+  CHECK(sm3::tbl_index_backfill(t, jobs_owner + 999, "", 2, next, done) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
@@ -1294,11 +1295,11 @@ TEST_CASE("a build waits for a writer, and finds the row covered") {
   start(f.a);
   ta = f.write(f.a);
   REQUIRE(set(ta, r1, 1, "free", "new") == 0);
-  uint64_t next = 0;
+  std::string next;
   bool done = false;
   start(f.b);
   sm3::table_t *tb = f.write(f.b);
-  CHECK(sm3::tbl_index_backfill(tb, jobs_owner, 0, 10, next, done) == -1);
+  CHECK(sm3::tbl_index_backfill(tb, jobs_owner, "", 10, next, done) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
   sm3::tbl_close(tb);
   REQUIRE(sm3::abort(f.b) == 0);
@@ -1307,7 +1308,7 @@ TEST_CASE("a build waits for a writer, and finds the row covered") {
 
   start(f.b);
   tb = f.write(f.b);
-  REQUIRE_MESSAGE(sm3::tbl_index_backfill(tb, jobs_owner, 0, 10, next, done) ==
+  REQUIRE_MESSAGE(sm3::tbl_index_backfill(tb, jobs_owner, "", 10, next, done) ==
                       0,
                   sm1::errmsg());
   CHECK(done);
@@ -1346,11 +1347,11 @@ TEST_CASE("a writer waits for a build, and removes the entry it added") {
   start(f.a);
   ta = f.write(f.a);
   CHECK(get(ta, r1) == "1|free|old");
-  uint64_t next = 0;
+  std::string next;
   bool done = false;
   start(f.b);
   sm3::table_t *tb = f.write(f.b);
-  REQUIRE(sm3::tbl_index_backfill(tb, jobs_owner, 0, 10, next, done) == 0);
+  REQUIRE(sm3::tbl_index_backfill(tb, jobs_owner, "", 10, next, done) == 0);
   CHECK(set(ta, r1, 1, "free", "new") == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
   sm3::tbl_close(tb);
@@ -1395,11 +1396,11 @@ TEST_CASE("a unique build fails on a duplicate it reaches late") {
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
 
-  uint64_t next = 0;
+  std::string next;
   bool done = false;
   start(f.b);
   t = f.write(f.b);
-  CHECK(sm3::tbl_index_backfill(t, jobs_owner, 0, 10, next, done) == -1);
+  CHECK(sm3::tbl_index_backfill(t, jobs_owner, "", 10, next, done) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
   sm3::tbl_close(t);
   REQUIRE(sm3::abort(f.b) == 0);
@@ -1419,7 +1420,7 @@ TEST_CASE("a unique build fails on a duplicate it reaches late") {
   REQUIRE(sm3::commit(g.a) == 0);
   start(g.b);
   t = g.write(g.b);
-  REQUIRE_MESSAGE(sm3::tbl_index_backfill(t, jobs_owner, 0, 10, next, done) ==
+  REQUIRE_MESSAGE(sm3::tbl_index_backfill(t, jobs_owner, "", 10, next, done) ==
                       0,
                   sm1::errmsg());
   CHECK(done);
@@ -1508,11 +1509,11 @@ TEST_CASE("an index made in its table's transaction is filled at once") {
     CAPTURE(static_cast<int>(level));
     jobs_t f;
     uint64_t jobs_owner = late_index(f);
-    uint64_t next = 0;
+    std::string next;
     bool done = false;
     start(f.b, level);
     sm3::table_t *t = f.write(f.b);
-    CHECK(sm3::tbl_index_backfill(t, jobs_owner, 0, 10, next, done) == -1);
+    CHECK(sm3::tbl_index_backfill(t, jobs_owner, "", 10, next, done) == -1);
     CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
     sm3::tbl_close(t);
     REQUIRE(sm3::abort(f.b) == 0);
@@ -1545,13 +1546,13 @@ TEST_CASE("a build skips a row deleted under it, and adds back nothing") {
   REQUIRE(sm3::commit(f.a) == 0);
   uint64_t jobs_owner = late_index(f);
   REQUIRE(sm1::set_qa_nowait(sm3::session_sm1(f.b), true) == 0);
-  uint64_t next = 0, unused = 0;
+  std::string next, unused;
   bool done = false;
 
   start(f.b);
   sm3::table_t *tb = f.write(f.b);
-  REQUIRE(sm3::tbl_index_backfill(tb, jobs_owner, 0, 1, next, done) == 0);
-  CHECK(next == r1 + 1);
+  REQUIRE(sm3::tbl_index_backfill(tb, jobs_owner, "", 1, next, done) == 0);
+  CHECK(next == sm2::id_key(r1) + '\0');
   sm3::tbl_close(tb);
   REQUIRE(sm3::commit(f.b) == 0);
   start(f.a);
@@ -1644,11 +1645,11 @@ TEST_CASE("a deleter waits for a build, then removes the entry it added") {
     start(f.a, level);
     ta = f.write(f.a);
     CHECK(get(ta, r1) == "1|free|old");
-    uint64_t next = 0;
+    std::string next;
     bool done = false;
     start(f.b);
     sm3::table_t *tb = f.write(f.b);
-    REQUIRE(sm3::tbl_index_backfill(tb, jobs_owner, 0, 10, next, done) == 0);
+    REQUIRE(sm3::tbl_index_backfill(tb, jobs_owner, "", 10, next, done) == 0);
     CHECK(sm3::tbl_delete(ta, r1) == -1);
     CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
     sm3::tbl_close(tb);
@@ -1701,11 +1702,11 @@ int scanned(sm3::table_t *t, uint64_t oid) {
 
 /* Build index oid of jobs to its end in b, and mark it valid. */
 void build(jobs_t &f, uint64_t oid) {
-  uint64_t next = 0;
+  std::string next;
   bool done = false;
   start(f.b);
   sm3::table_t *t = f.write(f.b);
-  REQUIRE(sm3::tbl_index_backfill(t, oid, 0, 1000, next, done) == 0);
+  REQUIRE(sm3::tbl_index_backfill(t, oid, "", 1000, next, done) == 0);
   REQUIRE(done);
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.b) == 0);
@@ -1846,11 +1847,11 @@ TEST_CASE("an index is usable by its state, and by who made it valid") {
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
 
-  uint64_t next = 0;
+  std::string next;
   bool done = false;
   start(f.b);
   t = f.write(f.b);
-  REQUIRE(sm3::tbl_index_backfill(t, jobs_owner, 0, 10, next, done) == 0);
+  REQUIRE(sm3::tbl_index_backfill(t, jobs_owner, "", 10, next, done) == 0);
   sm3::tbl_close(t);
   REQUIRE(sm3::set_index_state(f.b, f.jobs, jobs_owner,
                                sm3::index_state_t::valid) == 0);
@@ -2657,7 +2658,7 @@ TEST_CASE("an evaluated build and a writer settle on the row's lock") {
   REQUIRE(sm3::commit(f.a) == 0);
   uint64_t jobs_free = late_eval(f, "jobs_free", "free", by_owner_key, {1});
   REQUIRE(sm1::set_qa_nowait(sm3::session_sm1(f.b), true) == 0);
-  uint64_t next = 0, unused = 0;
+  std::string next, unused;
   bool done = false;
 
   start(f.a);
@@ -2665,7 +2666,7 @@ TEST_CASE("an evaluated build and a writer settle on the row's lock") {
   REQUIRE(set(ta, r1, 1, "taken", "a") == 0);
   start(f.b);
   sm3::table_t *tb = f.write(f.b);
-  CHECK(sm3::tbl_index_backfill(tb, jobs_free, 0, 2, next, done) == -1);
+  CHECK(sm3::tbl_index_backfill(tb, jobs_free, "", 2, next, done) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_BLOCKED);
   sm3::tbl_close(tb);
   REQUIRE(sm3::abort(f.b) == 0);
@@ -2674,9 +2675,10 @@ TEST_CASE("an evaluated build and a writer settle on the row's lock") {
 
   start(f.b);
   tb = f.write(f.b);
-  REQUIRE_MESSAGE(sm3::tbl_index_backfill(tb, jobs_free, 0, 2, next, done) == 0,
+  REQUIRE_MESSAGE(sm3::tbl_index_backfill(tb, jobs_free, "", 2, next, done) ==
+                      0,
                   sm1::errmsg());
-  CHECK(next == r2 + 1);
+  CHECK(next == sm2::id_key(r2) + '\0');
   CHECK(under(tb, jobs_free, "a").empty());
   CHECK(under(tb, jobs_free, "b") == std::vector<uint64_t>{r2});
   sm3::tbl_close(tb);

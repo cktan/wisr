@@ -389,7 +389,7 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
      index is pending, an entry to remove that is not there
      is no error, since the backfill may not have reached the
      row. A row a writer touches is covered from then on.
-  3. **Backfill.** A background task walks the rows in `_id`
+  3. **Backfill.** A background task walks the rows in key
      order, in batches, each a short READ COMMITTED
      transaction that holds the table-oid lock IX. For each row
      it takes the row's lock shared, reads the row's newest
@@ -411,15 +411,15 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   task and then finds the entry to remove. No second scan is
   needed, and no lock stronger than a row's.
 
-  The walk is in `_id` order, not key order. A B-tree gains
-  from sorted input; RocksDB sorts what it is given when it
-  flushes, and each row is read again under its lock whatever
-  the order. In a table keyed by a primary key the walk is of
-  the `_id` index, and each row is read by its key; one moved
-  since the walk read its `_id` entry is gone from that key,
-  and its mover, a writer, made its entry. Walking the rows in
-  key order instead, which reads them in one run, waits for a
-  scan that resumes from a key (`../CLUSTER.md` §5).
+  The walk is in the rows' key order (`tbl_scan_rows`), the
+  primary key's or the `_id`'s, one sorted run, and a batch
+  resumes from the least key past the last row it covered
+  (`../ROWKEY.md` §2.4), which only the builder's memory keeps.
+  A B-tree gains from sorted input; RocksDB sorts what it is
+  given when it flushes, and each row is read again under its
+  lock whatever the order. A row moved since the walk read it
+  is gone from that key, and its mover, a writer, made its
+  entry.
 
   What follows from it:
   - **A unique index finds some duplicates late.** A duplicate
