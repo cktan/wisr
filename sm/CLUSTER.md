@@ -250,9 +250,15 @@ The reasons `sm2/SM2_DESIGN.md` §5 gave for a heap, answered:
   rows. An index-only scan of it reads the rows too.
 - **A secondary index scan reads the row by `encode(pk)`**,
   from the entry, in place of `rowno`.
-- **Fetch by TID** goes through `_id`, with a small cache of
-  `_id → encode(pk)` filled by the statement's scans, so an
-  UPDATE or DELETE of a row just scanned is one read.
+- **Fetch by TID** goes through `_id`, but for a row a scan
+  of the statement is on: an UPDATE, DELETE or row lock of the
+  row a scan just handed out takes its key from the scan's
+  cursor (`sm_rel_scan_key`, `sm_idx_scan_row`), and the
+  executor's fetch of it the row from the scan's pin, with no
+  read of the `_id` entry or the row (`smstore.c`'s
+  `scan_at()`). sm's writes and locks take that key
+  (`sm_tbl_update`'s `key`), trusted. A sort or a hash between
+  the scan and the write loses it, and the `_id` is read.
 - **No bitmap scan is planned** of a table in sm (§10,
   question 6): an index in sm has no `amgetbitmap`. A bitmap
   of `_id`s is no sorted read, as one of TIDs is in
@@ -397,8 +403,8 @@ nothing migrates.
    review), and ANALYZE and TABLESAMPLE are to sample by
    ranges of the key, sized from the store's estimates, not by
    runs of `_id`. `_id` keeps the 6-byte TID: a row fetched by
-   it is two seeks, which digres's cache of the keys its scans
-   hand out spares the usual UPDATE and DELETE. The `_id`
+   it is two seeks, which taking the key from the scan on the
+   row spares the usual UPDATE and DELETE (§6). The `_id`
    entry's cost to an insert is to be measured; dropping `_id`
    where a primary key is, the TID then a slot in a statement's
    table of keys, is the way on if it is too dear.
@@ -428,8 +434,10 @@ Each step leaves every suite passing.
    key order (`sm_tbl_scan_rows`), its unordered results
    compared as multisets by digres's tests
    (`../dg/test/rowset.py`). Q6 went from 9.0 to 4.2 ms. No
-   bitmap scan is planned (§6). To do: the `_id → pk` cache;
-   the backfill and ANALYZE's correlation in key order;
+   bitmap scan is planned (§6), and no TID scan of a table
+   with a primary key; a write of a row a scan is on takes its
+   key from the scan. To do: the backfill and ANALYZE's
+   correlation in key order;
    ANALYZE and TABLESAMPLE by key ranges (§10, question 6);
    the system column renamed `_id` (§10, question 1). Q6 and
    Q7 measured, and what the `_id` entry costs an insert.

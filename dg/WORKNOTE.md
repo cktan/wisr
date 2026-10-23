@@ -8303,3 +8303,30 @@ fetch through it:
   plans no TID scan for `rowno = n` and a join on `rowno`, and
   `slt/current_of.test` updates and deletes through a cursor
   on one.
+
+## Step 289: a write takes its row's key from the scan on it
+
+In a table with a primary key, a row's tid reaches the row
+through the `_id` index: an UPDATE by the key read the `_id`
+entry and the row to fetch it, then the `_id` entry again to
+write it. The scan that handed the row out has both, the key
+in its cursor and the row in its pin (`../sm/CLUSTER.md` §6):
+
+- **Each open scan records the row it handed out last**
+  (`smstore_scan_t`'s `cur`), and `open_scans` lists the
+  scans, forgotten at a statement's start, a subtransaction's
+  end and the transaction's, so one an error freed is never
+  looked at. `scan_at()` finds the scan on a rowno.
+- **`smstore_fetch_row()` copies the row from that scan's
+  pin**; `smstore_update()`, `smstore_delete()` and
+  `smstore_lock_row()` pass sm its key, from the cursor
+  (`sm_rel_scan_key()`, new, or `sm_idx_scan_row()`).
+- **sm's `sm_tbl_update()`, `sm_tbl_delete()`, `sm_tbl_lock()`
+  and `sm_tbl_trylock()` take the key**, `NULL` to find it by
+  `_id` as before. sm3 trusts it; a debug build checks it is
+  what the snapshot's `_id` entry says (`key_given()`).
+- **A sort or a hash between the scan and the write** loses the
+  scan's row, and the `_id` is read as before.
+- Fifty UPDATEs by the primary key a transaction, of a table of
+  100,000 rows, one client: PostgreSQL 112 transactions a
+  second, digres 92 to 110.

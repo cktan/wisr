@@ -13,6 +13,7 @@
 #include "pin.h"
 #include "sm0_defer.h"
 
+#include <cassert>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -627,6 +628,25 @@ int key_to_write(table_t *t, uint64_t id, std::string &key) {
 }
 
 /*
+ * The key of the row with _id id to write into key: given, the
+ * caller's, from a row it read in the statement, or else
+ * key_to_write's. A given key is trusted; a debug build checks it is
+ * what the snapshot's _id entry says, where that has one.
+ */
+static int key_given(table_t *t, uint64_t id, std::string_view given,
+                     std::string &key) {
+  if (given.empty()) {
+    return key_to_write(t, id, key);
+  }
+  key.assign(given);
+#ifndef NDEBUG
+  std::string k;
+  assert(sm2::rel_find(t->rel, id, k) != 0 || k == key);
+#endif
+  return 0;
+}
+
+/*
  * Where the row with _id id went, at READ COMMITTED, once a write
  * or a newest read found it gone from key (../CLUSTER.md §4): its
  * key now, from the newest version of its _id entry, read under a
@@ -839,7 +859,7 @@ look:
  * tbl_update, with ref and old both given or both null: with them,
  * the old row is pinned into ref, and old views it.
  */
-static int update_row(table_t *table, uint64_t id,
+static int update_row(table_t *table, uint64_t id, std::string_view given,
                       std::span<const sm2::datum_t> values,
                       std::span<const bool> isnull, pin_ref_t *ref,
                       std::string_view *old) {
@@ -849,7 +869,7 @@ static int update_row(table_t *table, uint64_t id,
   }
   std::string key;
   if (need_writable(table) != 0 || need_not_null(table, isnull) != 0 ||
-      key_to_write(table, id, key) != 0) {
+      key_given(table, id, given, key) != 0) {
     return -1;
   }
   // The old row is pinned, in a pin of this call's, so the index
@@ -945,30 +965,30 @@ static int update_row(table_t *table, uint64_t id,
 /* Replace the row, then fix each index it changed; see sm3.h. */
 int tbl_update(table_t *table, uint64_t id,
                std::span<const sm2::datum_t> values,
-               std::span<const bool> isnull) {
-  return update_row(table, id, values, isnull, nullptr, nullptr);
+               std::span<const bool> isnull, std::string_view key) {
+  return update_row(table, id, key, values, isnull, nullptr, nullptr);
 }
 
 /* As above, pinning the row replaced into ref; see sm3.h. */
 int tbl_update(table_t *table, uint64_t id,
                std::span<const sm2::datum_t> values,
                std::span<const bool> isnull, pin_ref_t &ref,
-               std::string_view &old) {
-  return update_row(table, id, values, isnull, &ref, &old);
+               std::string_view &old, std::string_view key) {
+  return update_row(table, id, key, values, isnull, &ref, &old);
 }
 
 /*
  * tbl_delete, with ref and old both given or both null: with them,
  * the row deleted is pinned into ref, and old views it.
  */
-static int delete_row(table_t *table, uint64_t id, pin_ref_t *ref,
-                      std::string_view *old) {
+static int delete_row(table_t *table, uint64_t id, std::string_view given,
+                      pin_ref_t *ref, std::string_view *old) {
   // No old row until the write succeeds.
   if (old) {
     *old = {};
   }
   std::string key;
-  if (need_writable(table) != 0 || key_to_write(table, id, key) != 0) {
+  if (need_writable(table) != 0 || key_given(table, id, given, key) != 0) {
     return -1;
   }
   // The row is pinned, in a pin of this call's, so the index calls
@@ -1024,14 +1044,14 @@ static int delete_row(table_t *table, uint64_t id, pin_ref_t *ref,
 }
 
 /* Delete the row, then its entry in every index; see sm3.h. */
-int tbl_delete(table_t *table, uint64_t id) {
-  return delete_row(table, id, nullptr, nullptr);
+int tbl_delete(table_t *table, uint64_t id, std::string_view key) {
+  return delete_row(table, id, key, nullptr, nullptr);
 }
 
 /* As above, pinning the row deleted into ref; see sm3.h. */
 int tbl_delete(table_t *table, uint64_t id, pin_ref_t &ref,
-               std::string_view &old) {
-  return delete_row(table, id, &ref, &old);
+               std::string_view &old, std::string_view key) {
+  return delete_row(table, id, key, &ref, &old);
 }
 
 /* Begin a bulk load into the table; see sm3.h. */
@@ -1276,14 +1296,15 @@ int tbl_read_latest(table_t *table, uint64_t id, pin_ref_t &ref,
  * is none of has nothing to lock, and a read of it then finds it
  * gone.
  */
-static int lock_row(table_t *table, uint64_t id, sm1::lockmode_t mode,
-                    bool nowait) {
+static int lock_row(table_t *table, uint64_t id, std::string_view given,
+                    sm1::lockmode_t mode, bool nowait) {
   // Only a shared lock sits under a table opened to read.
   if (mode != sm1::SM_LOCKMODE_SH && need_writable(table) != 0) {
     return -1;
   }
   std::string key;
-  int rc = key_of(table, id, nowait, key);
+  int rc = given.empty() ? key_of(table, id, nowait, key)
+                         : key_given(table, id, given, key);
   if (rc != 0) {
     return rc < 0 ? -1 : rc == 2 ? 1 : 0;
   }
@@ -1293,13 +1314,15 @@ static int lock_row(table_t *table, uint64_t id, sm1::lockmode_t mode,
 }
 
 /* Lock the row with _id id without writing it; see sm3.h. */
-int tbl_lock(table_t *table, uint64_t id, sm1::lockmode_t mode) {
-  return lock_row(table, id, mode, false);
+int tbl_lock(table_t *table, uint64_t id, sm1::lockmode_t mode,
+             std::string_view key) {
+  return lock_row(table, id, key, mode, false);
 }
 
 /* Lock the row with _id id if it is free now; see sm3.h. */
-int tbl_trylock(table_t *table, uint64_t id, sm1::lockmode_t mode) {
-  return lock_row(table, id, mode, true);
+int tbl_trylock(table_t *table, uint64_t id, sm1::lockmode_t mode,
+                std::string_view key) {
+  return lock_row(table, id, key, mode, true);
 }
 
 /* Empty the table, then reopen its rel and indexes; see sm3.h. */
@@ -1409,6 +1432,11 @@ int tbl_scannxt(scan_t *scan, uint64_t &id, std::string_view &tuple) {
 /* Move the cursor forward to _id id; see sm3.h. */
 int tbl_scan_seek(scan_t *scan, uint64_t id) {
   return sm2::rel_scan_seek(scan->rel, id);
+}
+
+/* The key of the cursor's last row; see sm3.h. */
+std::string_view tbl_scan_key(const scan_t *scan) {
+  return sm2::rel_scan_key(scan->rel);
 }
 
 /* Close a cursor, releasing its pin; see sm3.h. */

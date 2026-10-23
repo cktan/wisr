@@ -578,6 +578,14 @@ int sm_rel_scannxt(sm_rel_scan_t* scan, uint64_t* id, sm_pin_ref_t* ref);
 /* Move the cursor forward to _id id. */
 int sm_rel_scan_seek(sm_rel_scan_t* scan, uint64_t id);
 
+/*
+ * The key of the row sm_rel_scannxt last gave, past its relid, as
+ * sm_idx_scan_row gives an entry's: valid as the row is. What
+ * sm_tbl_update, sm_tbl_delete and sm_tbl_lock take to reach the
+ * row with no read of its _id. 0, or -1.
+ */
+int sm_rel_scan_key(sm_rel_scan_t* scan, const void** key, size_t* len);
+
 /* Close a cursor; NULL is a no-op. */
 void sm_rel_scanend(sm_rel_scan_t* scan);
 
@@ -1275,14 +1283,24 @@ int sm_tbl_load_end(sm_tbl_t* tbl);
  * released. The row *ref held before is released only when the
  * write succeeds, so values may point into it. On failure *old is
  * NULL, and *ref keeps what it held.
+ *
+ * key, klen: NULL, or the row's key as a cursor of the statement gave
+ * it with id (sm_rel_scan_key, sm_idx_scan_row), which spares the
+ * read of the _id entry in a table with a primary key
+ * (../CLUSTER.md §6). It is trusted.
  */
-int sm_tbl_update(sm_tbl_t* tbl, uint64_t id, const sm_datum_t* values,
-                  const bool* isnull, size_t n, sm_pin_ref_t* ref = nullptr,
-                  const void** old = nullptr, size_t* len = nullptr);
+int sm_tbl_update(sm_tbl_t* tbl, uint64_t id, const void* key, size_t klen,
+                  const sm_datum_t* values, const bool* isnull, size_t n,
+                  sm_pin_ref_t* ref = nullptr, const void** old = nullptr,
+                  size_t* len = nullptr);
 
-/* Delete the row with _id id; ref, old and len as sm_tbl_update's. */
-int sm_tbl_delete(sm_tbl_t* tbl, uint64_t id, sm_pin_ref_t* ref = nullptr,
-                  const void** old = nullptr, size_t* len = nullptr);
+/*
+ * Delete the row with _id id; key, klen, ref, old and len as
+ * sm_tbl_update's.
+ */
+int sm_tbl_delete(sm_tbl_t* tbl, uint64_t id, const void* key, size_t klen,
+                  sm_pin_ref_t* ref = nullptr, const void** old = nullptr,
+                  size_t* len = nullptr);
 
 /*
  * Read the row with _id id: 0 with its tuple, 1 if none, or -1. The
@@ -1326,9 +1344,10 @@ int sm_tbl_read_latest(sm_tbl_t* tbl, uint64_t id, sm_pin_ref_t* ref,
  * readers of the key may share and a writer waits for; or
  * SM_LOCKMODE_EX, as SELECT ... FOR UPDATE, which needs the
  * table opened to write. The row need not exist. It waits as a
- * write does.
+ * write does. key and klen as sm_tbl_update's.
  */
-int sm_tbl_lock(sm_tbl_t* tbl, uint64_t id, sm_lockmode_t mode);
+int sm_tbl_lock(sm_tbl_t* tbl, uint64_t id, const void* key, size_t klen,
+                sm_lockmode_t mode);
 
 /*
  * As sm_tbl_lock, but never waiting: 0 with the row locked; 1,
@@ -1337,7 +1356,8 @@ int sm_tbl_lock(sm_tbl_t* tbl, uint64_t id, sm_lockmode_t mode);
  * SELECT ... FOR UPDATE NOWAIT fails on 1, and SKIP LOCKED passes
  * over the row.
  */
-int sm_tbl_trylock(sm_tbl_t* tbl, uint64_t id, sm_lockmode_t mode);
+int sm_tbl_trylock(sm_tbl_t* tbl, uint64_t id, const void* key, size_t klen,
+                   sm_lockmode_t mode);
 
 /*
  * Empty the table, as SQL's TRUNCATE: its rows and every index's

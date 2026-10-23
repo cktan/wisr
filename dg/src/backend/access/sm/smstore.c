@@ -191,6 +191,17 @@ static thread_local /*LOCAL*/ Size kept_len = 0;
 static thread_local /*LOCAL*/ sm_pin_ref_t kept_ref = {};
 
 /*
+ * The scans open in the statement, for a fetch, write or lock of a row by
+ * its tid to find the one whose cursor is on it (scan_at()), and take the
+ * row's key, and the row, from there: no read of the _id entry, in a table
+ * with a primary key (../sm/CLUSTER.md section 6).  An ended scan leaves;
+ * the list is forgotten at a statement's start, a subtransaction's end and
+ * the transaction's, so a scan an error freed is never looked at, and one
+ * forgotten while still open is only not found.
+ */
+static thread_local /*LOCAL*/ std::vector<smstore_scan_t *> open_scans;
+
+/*
  * Whether sm's namespaces' epoch has moved since this session last asked
  * (sm_cat_namespace_epoch()): a schema made or dropped, which no lock
  * guards the lookup of, so what it caches of them is to go (SHMEM.md
@@ -320,6 +331,8 @@ static void close_subxact_tables(void) {
   /* A view's lock goes with the subtransaction's, as a table's does. */
   std::erase_if(tcb->smstore->held_views,
                 [level](const held_view_t &h) { return h.level >= level; });
+  /* A scan of the subtransaction's may be freed without its end. */
+  open_scans.clear();
 }
 
 /* Close the tables this transaction opened: a handle is good for it only. */
@@ -330,6 +343,7 @@ static void close_tables(void) {
   open_tables().clear();
   tcb->smstore->held_views.clear();
   savepoints = NIL;
+  open_scans.clear();
   /* The kept row's pin goes with the transaction, which releases it. */
   kept_oid = InvalidOid;
   kept_tuple = NULL;
@@ -523,6 +537,7 @@ static sm_session_t *xact_session(void) {
  */
 void smstore_statement_start(void) {
   statement_pending = true;
+  open_scans.clear();
   /* A row is kept for the statement that wrote it, and no longer. */
   sm_unpin(&kept_ref);
   kept_oid = InvalidOid;
@@ -2254,7 +2269,10 @@ struct smstore_scan_t {
   Oid relid;
   sm_rel_scan_t *cursor;
   sm_idx_scan_t *icursor;
-  /* A primary key scan's cursor's last row, in the cursor's pin. */
+  /*
+   * A cursor over rows' last row, in the cursor's pin: a sequential or a
+   * primary key scan's.
+   */
   sm_pin_ref_t row_ref;
   ScanKey keys;
   int nkeys;
@@ -2283,6 +2301,14 @@ struct smstore_scan_t {
   bool at_end;
   uint64_t ahead_rowno;
   sm_pin_ref_t ahead_ref;
+  /*
+   * The row the scan handed out last, while its cursor is on it
+   * (scan_at()): its rowno, and whether it is pinned, in row_ref for a
+   * cursor over rows, else in ref.  Its key is the cursor's.
+   */
+  bool cur;
+  bool cur_pinned;
+  uint64_t cur_rowno;
 };
 
 /*
@@ -2512,6 +2538,7 @@ smstore_scan_t *smstore_beginscan(Relation rel, bool by_rowno) {
   if ((by_rowno ? sm_tbl_scan(tbl, 0, UINT64_MAX, &scan->cursor)
                 : sm_tbl_scan_rows(tbl, &scan->cursor)) != 0)
     sm_error("scan a table");
+  open_scans.push_back(scan);
   return scan;
 }
 
@@ -2522,12 +2549,12 @@ smstore_scan_t *smstore_beginscan(Relation rel, bool by_rowno) {
  */
 bool smstore_getnext(smstore_scan_t *scan, TupleTableSlot *slot) {
   uint64_t rowno;
-  sm_pin_ref_t ref;
 
   ExecClearTuple(slot);
   slot->tts_tableOid = scan->relid;
+  scan->cur = false;
   /* Into the cursor's pin, which its next row makes stale. */
-  switch (sm_rel_scannxt(scan->cursor, &rowno, &ref)) {
+  switch (sm_rel_scannxt(scan->cursor, &rowno, &scan->row_ref)) {
   case 0:
     break;
   case 1:
@@ -2535,7 +2562,10 @@ bool smstore_getnext(smstore_scan_t *scan, TupleTableSlot *slot) {
   default:
     sm_error("scan a table");
   }
-  ref_into_slot(ref, rowno, slot);
+  scan->cur = true;
+  scan->cur_pinned = true;
+  scan->cur_rowno = rowno;
+  ref_into_slot(scan->row_ref, rowno, slot);
   return true;
 }
 
@@ -2562,6 +2592,8 @@ bool smstore_scan_row(smstore_scan_t *scan, uint64 rowno,
                       TupleTableSlot *slot) {
   ExecClearTuple(slot);
   slot->tts_tableOid = scan->relid;
+  /* Its cursor reads ahead, so is on no row it handed out. */
+  scan->cur = false;
   while (!scan->at_end && (!scan->ahead || scan->ahead_rowno < rowno)) {
     switch (sm_rel_scannxt(scan->cursor, &scan->ahead_rowno, &scan->ahead_ref)) {
     case 0:
@@ -2598,6 +2630,7 @@ uint64 smstore_rowno_limit(Relation rel) {
 
 /* End a scan; the table stays open until the transaction ends. */
 void smstore_endscan(smstore_scan_t *scan) {
+  std::erase(open_scans, scan);
   sm_rel_scanend(scan->cursor);
   sm_idx_scanend(scan->icursor);
   /* The row it read last by rowno is no one's now. */
@@ -3269,7 +3302,7 @@ static void fill_column(Oid relid, Expr *expr, Oid typid, int32 typmod) {
       values[n - 1] = value_to_sm(v, typid, typmod);
     MemoryContextSwitchTo(old);
     if (0 != waiting([&] {
-          return sm_tbl_update(tbl, rowno, values.data(), isnull.get(), n);
+          return sm_tbl_update(tbl, rowno, NULL, 0, values.data(), isnull.get(), n);
         }))
       sm_error("give a row its column's default");
   }
@@ -5821,6 +5854,7 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
           : sm_tbl_idx_scan(tbl, RelationGetRelid(index), lo.n > 0 ? &lo : NULL,
                             hi.n > 0 ? &hi : NULL, NULL, &scan->icursor) != 0)
     sm_error("scan an index");
+  open_scans.push_back(scan);
   return scan;
 }
 
@@ -5847,6 +5881,7 @@ static bool pin_entry_row(smstore_scan_t *scan, uint64_t rowno,
   default:
     sm_error("read a row");
   }
+  scan->cur_pinned = true;
   ref_into_slot(scan->ref, rowno, slot);
   return true;
 }
@@ -5915,11 +5950,15 @@ bool smstore_index_getrowno(smstore_scan_t *scan, uint64 *rowno) {
   size_t len;
 
   CHECK_FOR_INTERRUPTS();
+  scan->cur = false;
   /* A primary key's: its next row, into the cursor's pin. */
   if (scan->cursor != NULL) {
     switch (sm_rel_scannxt(scan->cursor, &r, &scan->row_ref)) {
     case 0:
       *rowno = r;
+      scan->cur = true;
+      scan->cur_pinned = true;
+      scan->cur_rowno = r;
       return true;
     case 1:
       return false;
@@ -5932,6 +5971,10 @@ bool smstore_index_getrowno(smstore_scan_t *scan, uint64 *rowno) {
     *rowno = r;
     scan->value = value;
     scan->len = len;
+    /* Its row is pinned once read (pin_entry_row(), entry_from_row()). */
+    scan->cur = true;
+    scan->cur_pinned = false;
+    scan->cur_rowno = r;
     return true;
   case 1:
     return false;
@@ -5991,6 +6034,7 @@ static bool entry_from_row(smstore_scan_t *scan, TupleTableSlot *slot) {
     default:
       sm_error("read a row");
     }
+    scan->cur_pinned = true;
   }
   for (int i = 0; i < scan->form->indnatts; i++)
     if (sm_tbl_decode(scan->tbl, tuple, len, scan->form->indkey.values[i] - 1,
@@ -6093,9 +6137,45 @@ Size smstore_toast_size(struct varlena *attr) {
 }
 
 /*
+ * The open scan of the table oid whose cursor is on the row at rowno, the
+ * row it handed out last; NULL if none is.
+ */
+static smstore_scan_t *scan_at(Oid oid, uint64 rowno) {
+  for (smstore_scan_t *scan : open_scans)
+    if (scan->cur && scan->relid == oid && scan->cur_rowno == rowno)
+      return scan;
+  return NULL;
+}
+
+/*
+ * The key of the row the scan's cursor is on, as sm_tbl_update() takes it,
+ * into *key and *len: NULL with no scan.  Valid until the cursor moves.
+ */
+static void scan_key(smstore_scan_t *scan, const void **key, size_t *len) {
+  *key = NULL;
+  *len = 0;
+  if (scan != NULL &&
+      (scan->cursor != NULL ? sm_rel_scan_key(scan->cursor, key, len)
+                            : sm_idx_scan_row(scan->icursor, key, len)) != 0)
+    sm_error("read a row's key");
+}
+
+/*
+ * The row the scan's cursor is on, as its pin holds it, into *tuple and
+ * *len; false with no scan, if the scan has not read the row, or if the
+ * pin has let it go.
+ */
+static bool scan_tuple(smstore_scan_t *scan, const void **tuple, size_t *len) {
+  return scan != NULL && scan->cur_pinned &&
+         sm_pin_tuple(scan->cursor != NULL ? scan->row_ref : scan->ref, tuple,
+                      len) == 0;
+}
+
+/*
  * The row of rel at tid into slot, as a virtual tuple of its first natts
- * columns: the kept one if it is that row, else as the statement sees it;
- * false if it sees none.  The executor fetches the row it is to update, the
+ * columns: the kept one if it is that row, else as the statement sees it,
+ * from the scan that read it if one is on it (scan_at()); false if it sees
+ * none.  The executor fetches the row it is to update, the
  * newest version of one it locked, the row it deleted, for RETURNING, and a
  * TID scan's rows.
  */
@@ -6111,6 +6191,16 @@ bool smstore_fetch_row(Relation rel, ItemPointer tid, int natts,
       kept_tuple != NULL) {
     ExecClearTuple(slot);
     tuple_into_slot(tbl, rowno, kept_tuple, kept_len, natts, slot);
+    return true;
+  }
+  const void *tuple;
+  size_t len;
+
+  if (scan_tuple(scan_at(RelationGetRelid(rel), rowno), &tuple, &len)) {
+    ExecClearTuple(slot);
+    tuple_into_slot(tbl, rowno, tuple, len, natts, slot);
+    /* The scan's pin lasts until its cursor moves. */
+    ExecMaterializeSlot(slot);
     return true;
   }
   return read_row(tbl, rowno, natts, slot);
@@ -6160,6 +6250,10 @@ TM_Result smstore_update(Relation rel, ItemPointer tid, TupleTableSlot *slot,
   std::string_view old;
   sm_pin_ref_t ref = {};
   bool have_old = false;
+  /* The scan that read the row gives its key, and the row, if it is on it. */
+  smstore_scan_t *scan = scan_at(RelationGetRelid(rel), rowno);
+  const void *key;
+  size_t klen;
 
   slot_getallattrs(slot);
   /*
@@ -6175,6 +6269,9 @@ TM_Result smstore_update(Relation rel, ItemPointer tid, TupleTableSlot *slot,
     if (kept_oid == RelationGetRelid(rel) && kept_rowno == rowno &&
         kept_tuple != NULL) {
       old = std::string_view(kept_tuple, kept_len);
+      have_old = true;
+    } else if (scan_tuple(scan, &tuple, &len)) {
+      old = std::string_view((const char *)tuple, len);
       have_old = true;
     } else {
       switch (sm_tbl_read(tbl, rowno, &ref, &tuple, &len)) {
@@ -6193,8 +6290,10 @@ TM_Result smstore_update(Relation rel, ItemPointer tid, TupleTableSlot *slot,
   const sm_datum_t *row =
       row_to_sm(tbl, slot->tts_tupleDescriptor, slot->tts_values,
                 slot->tts_isnull, slot->tts_nvalid, have_old ? &old : NULL);
+  scan_key(scan, &key, &klen);
   int rc = waiting([&] {
-    return sm_tbl_update(tbl, rowno, row, slot->tts_isnull, slot->tts_nvalid);
+    return sm_tbl_update(tbl, rowno, key, klen, row, slot->tts_isnull,
+                         slot->tts_nvalid);
   });
 
   sm_unpin(&ref);
@@ -6210,11 +6309,15 @@ TM_Result smstore_update(Relation rel, ItemPointer tid, TupleTableSlot *slot,
 TM_Result smstore_delete(Relation rel, ItemPointer tid, TM_FailureData *tmfd) {
   sm_tbl_t *tbl = table_to_write(rel);
   uint64 rowno = smstore_tid_to_rowno(tid);
-  const void *old;
-  size_t len;
+  const void *old, *key;
+  size_t len, klen;
+
+  /* The scan that read the row gives its key, if it is on it. */
+  scan_key(scan_at(RelationGetRelid(rel), rowno), &key, &klen);
   /* The row deleted, pinned in kept_ref, which lets go of the last. */
-  int rc = waiting(
-      [&] { return sm_tbl_delete(tbl, rowno, &kept_ref, &old, &len); });
+  int rc = waiting([&] {
+    return sm_tbl_delete(tbl, rowno, key, klen, &kept_ref, &old, &len);
+  });
 
   if (rc == 0)
     keep_row(RelationGetRelid(rel), rowno, old, len);
@@ -6259,16 +6362,21 @@ TM_Result smstore_lock_row(Relation rel, ItemPointer tid, TupleTableSlot *slot,
   slot->tts_tableOid = oid;
   if (!after_write) {
     sm_lockmode_t smmode = share ? SM_LOCKMODE_SH : SM_LOCKMODE_EX;
+    const void *key;
+    size_t klen;
     int rc;
 
+    /* The scan that read the row gives its key, if it is on it. */
+    scan_key(scan_at(oid, rowno), &key, &klen);
     /*
      * Held to the end of the transaction, as a write's is.  NOWAIT and SKIP
      * LOCKED ask for it without waiting, and are told when it is another's.
      */
     if (wait_policy == LockWaitBlock)
-      rc = waiting([&] { return sm_tbl_lock(tbl, rowno, smmode); });
+      rc = waiting(
+          [&] { return sm_tbl_lock(tbl, rowno, key, klen, smmode); });
     else
-      rc = sm_tbl_trylock(tbl, rowno, smmode);
+      rc = sm_tbl_trylock(tbl, rowno, key, klen, smmode);
     if (rc < 0)
       sm_error("lock a row");
     if (rc == 1) {

@@ -9,6 +9,7 @@
 #include "doctest.h"
 #include "sm3.h"
 
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -501,6 +502,62 @@ TEST_CASE("a table's rows are read by key, and scanned by the primary key") {
   CHECK(got == std::vector<std::string>{"3:20|b|0", "1:30|c|0"});
   CHECK(sm3::tbl_idx_scan_rows(t, f.owner, nullptr, nullptr, scan) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+}
+
+TEST_CASE("a write given its row's key from a scan reaches the row") {
+  // Verify tbl_update, tbl_delete and tbl_lock with the key a scan
+  // gave, as dg passes it to spare the read of the _id entry.
+  // 1. Rows with ids 10, 20 and 30 go in, _ids 1 to 3, committed.
+  // 2. A scan by key gives each row's key with its _id.
+  // 3. An update of _id 2 given its key changes the row in place;
+  //    one of _id 1 to id 15 moves it, and its owner entry.
+  // 4. A lock of _id 3 given its key holds the row: b cannot take
+  //    it.
+  // 5. A delete of _id 2 given its key removes it, and its entry.
+  acct_t f;
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  put(t, 10, "a");
+  put(t, 20, "b");
+  put(t, 30, "c");
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  start(f.a);
+  t = f.write(f.a);
+  std::map<uint64_t, std::string> keys;
+  sm3::scan_t *scan = nullptr;
+  REQUIRE(sm3::tbl_scan_rows(t, scan) == 0);
+  uint64_t id;
+  std::string_view tuple;
+  while (sm3::tbl_scannxt(scan, id, tuple) == 0) {
+    keys[id] = std::string(sm3::tbl_scan_key(scan));
+  }
+  sm3::tbl_scanend(scan);
+  CHECK(keys == std::map<uint64_t, std::string>{
+                    {1, key_of(10)}, {2, key_of(20)}, {3, key_of(30)}});
+  row_t same(20, "b2", 7);
+  REQUIRE_MESSAGE(sm3::tbl_update(t, 2, same.d(), same.null(), keys[2]) == 0,
+                  sm1::errmsg());
+  CHECK(get(t, 2) == "20|b2|7");
+  row_t moved(15, "a", 1);
+  REQUIRE_MESSAGE(sm3::tbl_update(t, 1, moved.d(), moved.null(), keys[1]) == 0,
+                  sm1::errmsg());
+  CHECK(get(t, 1) == "15|a|1");
+  CHECK(entries(t, f.owner) ==
+        std::vector<std::pair<uint64_t, std::string>>{
+            {1, key_of(15)}, {2, key_of(20)}, {3, key_of(30)}});
+  REQUIRE(sm3::tbl_lock(t, 3, sm1::SM_LOCKMODE_EX, keys[3]) == 0);
+  start(f.b);
+  sm3::table_t *tb = f.write(f.b);
+  CHECK(sm3::tbl_trylock(tb, 3, sm1::SM_LOCKMODE_EX) == 1);
+  sm3::tbl_close(tb);
+  REQUIRE(sm3::abort(f.b) == 0);
+  REQUIRE(sm3::tbl_delete(t, 2, keys[2]) == 0);
+  CHECK(get(t, 2) == "<none>");
+  CHECK(entries(t, f.owner) == std::vector<std::pair<uint64_t, std::string>>{
+                                   {1, key_of(15)}, {3, key_of(30)}});
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
 }
