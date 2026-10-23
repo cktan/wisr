@@ -8452,3 +8452,30 @@ for a scan by a range of TIDs or a function that follows one:
   each an error on PostgreSQL, are taken out.
 - The `tid` type stays, as a built-in type; no column may be
   one.
+
+## Step 294: no index check by TID
+
+PostgreSQL checks an exclusion constraint, and a deferred
+unique constraint at commit, by the TIDs of the rows an index
+holds. digres has neither, `check_create_table()` and CREATE
+INDEX refusing both, and no row has a TID
+(`../sm/ROWKEY.md`), so the code that did is deleted:
+
+- **`ExecInsertIndexTuples()` inserts nothing**: sm writes a
+  table's indexes with its row, and only a table in sm is
+  written. The rest of `execIndexing.c` but opening and
+  closing a result relation's indexes is gone:
+  `check_exclusion_constraint()`,
+  `check_exclusion_or_unique_constraint()`,
+  `index_unchanged_by_update()` and the WITHOUT OVERLAPS
+  check.
+- **`unique_key_recheck()` is deleted** (`constraint.c`), the
+  trigger function of a deferred unique constraint, with its
+  `pg_proc` row; `index_constraint_create()` makes no trigger,
+  and `AfterTriggerSaveEvent()` no longer looks for one.
+- **`IndexCheckExclusion()` is deleted** (`index.c`), the scan
+  that checked a new exclusion constraint's rows.
+- **Left on purpose**: the index access method's TID calls
+  (`index_insert()`, `xs_heaptid`, `table_index_fetch_tuple()`),
+  which an index in sm refuses, and the trigger calls'
+  `recheckIndexes`, NIL now.

@@ -689,11 +689,6 @@ extern List *ExecInsertIndexTuples(ResultRelInfo *resultRelInfo,
                                    bool update, bool noDupErr,
                                    bool *specConflict, List *arbiterIndexes,
                                    bool onlySummarizing);
-extern void check_exclusion_constraint(Relation heap, Relation index,
-                                       IndexInfo *indexInfo,
-                                       ItemPointer tupleid, const Datum *values,
-                                       const bool *isnull, EState *estate,
-                                       bool newIndex);
 
 /*
  * prototypes from functions in nodeModifyTable.c

@@ -5672,16 +5672,6 @@ static void AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
     }
 
     /*
-     * If the trigger is a deferred unique constraint check trigger, only
-     * queue it if the unique constraint was potentially violated, which
-     * we know from index insertion time.
-     */
-    if (trigger->tgfoid == F_UNIQUE_KEY_RECHECK) {
-      if (!list_member_oid(recheckIndexes, trigger->tgconstrindid))
-        continue; /* Uniqueness definitely not violated */
-    }
-
-    /*
      * Fill in event structure and add it to the current query's queue.
      * Note we set ats_table to NULL whenever this trigger doesn't use
      * transition tables, to improve sharability of the shared event data.

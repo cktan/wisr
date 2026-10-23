@@ -96,8 +96,6 @@ static void UpdateIndexRelation(Oid indexoid, Oid heapoid, Oid parentIndexId,
                                 bool primary, bool isexclusion, bool immediate,
                                 bool isvalid, bool isready);
 static void index_update_stats(Relation rel, bool hasindex, double reltuples);
-static void IndexCheckExclusion(Relation heapRelation, Relation indexRelation,
-                                IndexInfo *indexInfo);
 static bool validate_index_callback(ItemPointer itemptr, void *opaque);
 
 /*
@@ -1360,35 +1358,11 @@ ObjectAddress index_constraint_create(
   }
 
   /*
-   * If the constraint is deferrable, create the deferred uniqueness
-   * checking trigger.  (The trigger will be given an internal dependency on
-   * the constraint by CreateTrigger.)
+   * digres has no deferrable unique constraint (access/sm's
+   * check_create_table() refuses one), so no trigger to check one at
+   * commit.
    */
-  if (deferrable) {
-    CreateTrigStmt *trigger = makeNode(CreateTrigStmt);
-
-    trigger->replace = false;
-    trigger->isconstraint = true;
-    trigger->trigname = (char *)((constraintType == CONSTRAINT_PRIMARY)
-                                     ? "PK_ConstraintTrigger"
-                                     : "Unique_ConstraintTrigger");
-    trigger->relation = NULL;
-    trigger->funcname = SystemFuncName("unique_key_recheck");
-    trigger->args = NIL;
-    trigger->row = true;
-    trigger->timing = TRIGGER_TYPE_AFTER;
-    trigger->events = TRIGGER_TYPE_INSERT | TRIGGER_TYPE_UPDATE;
-    trigger->columns = NIL;
-    trigger->whenClause = NULL;
-    trigger->transitionRels = NIL;
-    trigger->deferrable = true;
-    trigger->initdeferred = initdeferred;
-    trigger->constrrel = NULL;
-
-    (void)CreateTrigger(trigger, NULL, RelationGetRelid(heapRelation),
-                        InvalidOid, conOid, indexRelationId, InvalidOid,
-                        InvalidOid, NULL, true, false);
-  }
+  Assert(!deferrable);
 
   /*
    * If needed, mark the index as primary and/or deferred in pg_index.
@@ -2268,104 +2242,14 @@ void index_build(Relation heapRelation, Relation indexRelation,
   /* Make the updated catalog row versions visible */
   CommandCounterIncrement();
 
-  /*
-   * If it's for an exclusion constraint, make a second pass over the heap
-   * to verify that the constraint is satisfied.  We must not do this until
-   * the index is fully valid.  (Broken HOT chains shouldn't matter, though;
-   * see comments for IndexCheckExclusion.)
-   */
-  if (indexInfo->ii_ExclusionOps != NULL)
-    IndexCheckExclusion(heapRelation, indexRelation, indexInfo);
+  /* digres has no exclusion constraint, to check the rows against. */
+  Assert(indexInfo->ii_ExclusionOps == NULL);
 
   /* Roll back any GUC changes executed by index functions */
   AtEOXact_GUC(false, save_nestlevel);
 
   /* Restore userid and security context */
   SetUserIdAndSecContext(save_userid, save_sec_context);
-}
-
-/*
- * IndexCheckExclusion - verify that a new exclusion constraint is satisfied
- *
- * When creating an exclusion constraint, we first build the index normally
- * and then rescan the heap to check for conflicts.  We assume that we only
- * need to validate tuples that are live according to an up-to-date snapshot,
- * and that these were correctly indexed even in the presence of broken HOT
- * chains.  This should be OK since we are holding at least ShareLock on the
- * table, meaning there can be no uncommitted updates from other transactions.
- * (Note: that wouldn't necessarily work for system catalogs, since many
- * operations release write lock early on the system catalogs.)
- */
-static void IndexCheckExclusion(Relation heapRelation, Relation indexRelation,
-                                IndexInfo *indexInfo) {
-  TableScanDesc scan;
-  Datum values[INDEX_MAX_KEYS];
-  bool isnull[INDEX_MAX_KEYS];
-  ExprState *predicate;
-  TupleTableSlot *slot;
-  EState *estate;
-  ExprContext *econtext;
-  Snapshot snapshot;
-
-  /*
-   * Need an EState for evaluation of index expressions and partial-index
-   * predicates.  Also a slot to hold the current tuple.
-   */
-  estate = CreateExecutorState();
-  econtext = GetPerTupleExprContext(estate);
-  slot = table_slot_create(heapRelation, NULL);
-
-  /* Arrange for econtext's scan tuple to be the tuple under test */
-  econtext->ecxt_scantuple = slot;
-
-  /* Set up execution state for predicate, if any. */
-  predicate = ExecPrepareQual(indexInfo->ii_Predicate, estate);
-
-  /*
-   * Scan all live tuples in the base relation.
-   */
-  snapshot = RegisterSnapshot(GetLatestSnapshot());
-  scan = table_beginscan_strat(heapRelation, /* relation */
-                               snapshot,     /* snapshot */
-                               0,            /* number of keys */
-                               NULL,         /* scan key */
-                               true);        /* buffer access strategy OK */
-
-  while (table_scan_getnextslot(scan, ForwardScanDirection, slot)) {
-    CHECK_FOR_INTERRUPTS();
-
-    /*
-     * In a partial index, ignore tuples that don't satisfy the predicate.
-     */
-    if (predicate != NULL) {
-      if (!ExecQual(predicate, econtext))
-        continue;
-    }
-
-    /*
-     * Extract index column values, including computing expressions.
-     */
-    FormIndexDatum(indexInfo, slot, estate, values, isnull);
-
-    /*
-     * Check that this tuple has no conflicts.
-     */
-    check_exclusion_constraint(heapRelation, indexRelation, indexInfo,
-                               &(slot->tts_tid), values, isnull, estate, true);
-
-    MemoryContextReset(econtext->ecxt_per_tuple_memory);
-  }
-
-  table_endscan(scan);
-  UnregisterSnapshot(snapshot);
-
-  ExecDropSingleTupleTableSlot(slot);
-
-  FreeExecutorState(estate);
-
-  /* These may have been pointing to the now-gone estate */
-  indexInfo->ii_ExpressionsState = NIL;
-  indexInfo->ii_PredicateState = NULL;
 }
 
 /*

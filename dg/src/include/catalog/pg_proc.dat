@@ -3962,11 +3962,6 @@
   provolatile => 's', prorettype => 'regclass', proargtypes => 'regclass',
   prosrc => 'pg_get_replica_identity_index' },
 
-# Deferrable unique constraint trigger
-{ oid => '1250', descr => 'deferred UNIQUE constraint check',
-  proname => 'unique_key_recheck', provolatile => 'v', prorettype => 'trigger',
-  proargtypes => '', prosrc => 'unique_key_recheck' },
-
 # Generic referential integrity constraint triggers
 { oid => '1644', descr => 'referential integrity FOREIGN KEY ... REFERENCES',
   proname => 'RI_FKey_check_ins', provolatile => 'v', prorettype => 'trigger',

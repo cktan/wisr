@@ -105,9 +105,10 @@ regression files are taken out for it (`test/pgregress`,
 - **ALTER INDEX, ALTER TYPE, ALTER MATERIALIZED VIEW** —
   refused; ALTER VIEW takes only options and RENAME.
 - **DEFERRABLE constraints** — never for a primary key
-  (`../sm/CLUSTER.md` §10.4); refused for a foreign key, with
-  `NOT ENFORCED`, `MATCH PARTIAL` and `PERIOD` (step 177).
-  Nothing is checked at commit.
+  (`../sm/CLUSTER.md` §10.4); refused for a unique constraint
+  (step 294), and for a foreign key, with `NOT ENFORCED`,
+  `MATCH PARTIAL` and `PERIOD` (step 177). Nothing is checked
+  at commit.
 - **Sequence options** — refused: `MINVALUE`, `MAXVALUE`,
   `CACHE`, `CYCLE`, `OWNED BY`, `ALTER SEQUENCE`, `setval()`,
   `SELECT` from a sequence, `TRUNCATE ... RESTART IDENTITY`.
