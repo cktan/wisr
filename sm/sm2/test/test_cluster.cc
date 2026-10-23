@@ -438,3 +438,70 @@ TEST_CASE("a primary key's scan hands out its rows, in key order") {
   sm2::idx_close(px);
   sm2::rel_close(rel);
 }
+
+TEST_CASE("a rel's keys at fractions of its bytes split its rows so") {
+  // Verify rel_keys_at and rel_scan_seek_key (../ROWKEY.md §2.4).
+  // 1. 20,000 rows of equal width go in, keys 0 to 19,999, and are
+  //    committed; in memtables, the keys found ascend.
+  // 2. Compacted into sorted files, the keys at 0, 1/4, 1/2 and 3/4
+  //    have that share of the rows below them, to 1% of the rows.
+  // 3. A cursor in key order seeks to the key at 1/2, and its next
+  //    row is the first at or past it; seeking back fails.
+  // 4. Fractions out of [0, 1) or descending are refused.
+  db_t db;
+  table_t t;
+  sm1::session_t *s = db.open();
+  sm2::rel_t *rel = t.open(db, s);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  const int32_t n = 20000;
+  for (int32_t a = 0; a < n; a++) {
+    insert(rel, a, std::string(100, 'x'));
+  }
+  REQUIRE(sm1::commit(s) == 0);
+  const double fs[] = {0, 0.25, 0.5, 0.75};
+  std::vector<std::string> keys;
+  REQUIRE_MESSAGE(sm2::rel_keys_at(rel, fs, keys) == 0, sm1::errmsg());
+  REQUIRE(keys.size() == 4);
+  for (size_t i = 1; i < keys.size(); i++) {
+    CHECK(keys[i - 1] <= keys[i]);
+  }
+  REQUIRE(sm1::compact(s, db.store()) == 0);
+  REQUIRE_MESSAGE(sm2::rel_keys_at(rel, fs, keys) == 0, sm1::errmsg());
+  // The rows whose key is below k: key_of ascends with a.
+  auto below = [&](const std::string &k) {
+    int32_t lo = 0, hi = n;
+    while (lo < hi) {
+      int32_t mid = lo + (hi - lo) / 2;
+      if (key_of(mid) < k) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    return lo;
+  };
+  for (size_t i = 0; i < keys.size(); i++) {
+    CAPTURE(fs[i]);
+    CHECK(std::abs(below(keys[i]) - fs[i] * n) <= 0.01 * n);
+  }
+  sm2::index_t *px = nullptr;
+  REQUIRE(sm2::idx_open_primary(rel, {}, {}, px) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  sm2::rel_scan_t *c = nullptr;
+  REQUIRE(sm2::idx_scan_rows(px, nullptr, nullptr, c) == 0);
+  REQUIRE(sm2::rel_scan_seek_key(c, keys[2]) == 0);
+  uint64_t id;
+  std::string_view tuple;
+  REQUIRE(sm2::rel_scannxt(c, id, tuple) == 0);
+  CHECK(a_of(t, tuple) == below(keys[2]));
+  CHECK(sm2::rel_scan_seek_key(c, keys[1]) == -1);
+  sm2::rel_scanend(c);
+  REQUIRE(sm1::commit(s) == 0);
+  const double bad[] = {0.5, 0.25};
+  CHECK(sm2::rel_keys_at(rel, bad, keys) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  const double one[] = {1.0};
+  CHECK(sm2::rel_keys_at(rel, one, keys) == -1);
+  sm2::idx_close(px);
+  sm2::rel_close(rel);
+}

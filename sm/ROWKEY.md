@@ -135,13 +135,16 @@ at hand, and their encoding costs no read.
 Nothing reads many rows of a table with a primary key in
 `_id` order, since there is none:
 
-- **ANALYZE** samples by key ranges: start keys drawn from the
-  store's own estimates (RocksDB's approximate sizes of key
-  ranges, bisected), a run of rows read from each, and the row
-  count estimated as rows read per byte covered, times the
-  store's size. Correlation is measured in key order. A
-  keyless table is sampled as now. `rowno_limit` leaves the
-  statistics of a table with a primary key.
+- **ANALYZE** samples by key ranges: slots of 8 KB of the
+  table's bytes, each the rows between the keys at its ends,
+  found by bisecting the key range with sm1's size estimates
+  (`sm2::rel_keys_at`), disk and memtables together, no flush.
+  The row count is the rows read per byte the slots span,
+  times the table's bytes: an estimate, close in sorted files,
+  to an order of magnitude in memtables. Correlation is
+  measured in key order. A keyless table is sampled as now.
+  Built (`sm3/SM3_DESIGN.md` §6.4); `rowno_limit` stays in the
+  statistics until a keyed table has no `_id` (step 4).
 - **TABLESAMPLE** picks its blocks the same way: a block is a
   key range, not 256 `_id`s.
 - **The index backfill** walks the rows in key order

@@ -1241,10 +1241,10 @@ table and never stored, so they need no analyze.
 `tbl_analyze(table, target)` wants `300 × target` rows,
 30,000 at PostgreSQL's default of 100. It reads them through
 one forward cursor on the rows, in the caller's transaction,
-at its snapshot. In a table keyed by a primary key the cursor
-walks the `_id` index and reads each row by its key, a point
-read a row, some 30,000 at the default target
-(`../CLUSTER.md` §5).
+at its snapshot. A table without a primary key is sampled by
+runs of `_id`s, as below; a table with one by slots of its
+bytes in key order, as the end of this section says
+(`../ROWKEY.md` §2.4).
 
 1. **A pilot** of 300 single `_id`s drawn uniformly from
    `1..N`, through a cursor of its own. It gives a live
@@ -1296,6 +1296,23 @@ read a row, some 30,000 at the default target
    random draws by skipping rows, would save nothing. The
    kept rows are sorted back into `_id` order for the
    correlation of §6.5.
+
+**A table with a primary key** is cut into slots of 8 KB of
+its bytes, `tbl_size`'s disk and memtables together, and a
+slot's rows are those between the keys at its two ends,
+`tbl_keys_at`: positions found by bisecting the key range
+with sm1's size estimates, to a data block or so, with no row
+read. A pilot of 30 slots drawn by Floyd's algorithm gives
+the rows a slot; the budget is the same 10 × 300 × target
+rows, in slots; a table it covers is read whole, and counted
+exactly. Otherwise more slots are drawn while the rows fall
+short, as for runs, all read through one forward cursor in
+key order, seeking each slot's start. The row count is the
+rows read per byte the slots span, by the same estimate,
+times the table's bytes: an estimate, good to a few percent
+in sorted files and to an order of magnitude in memtables,
+which RocksDB only samples. The kept rows are sorted into key
+order, the rows' own, for the correlation of §6.5.
 
 **The rows read are the caller's snapshot.** The cursor sees
 what the caller's transaction sees, its own writes before

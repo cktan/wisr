@@ -617,7 +617,10 @@ int rel_open(sm1::session_t *session, uint64_t storeid, uint16_t relid,
                   std::string(id_seq),
                   std::string(toast_seq),
                   false,
-                  {}};
+                  {},
+                  nullptr,
+                  {},
+                  false};
   // Only a variable-width datum is ever moved out of line.
   for (int32_t w : out->desc.width) {
     out->toasts = out->toasts || (w < 0 && !toast_seq.empty());
@@ -1094,6 +1097,15 @@ int rel_scan_seek(rel_scan_t *scan, uint64_t id) {
       1);
 }
 
+/* Move a cursor in key order forward to a key; see sm2.h. */
+int rel_scan_seek_key(rel_scan_t *scan, std::string_view key) {
+  if (!scan->by_key) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       "rel: a cursor in _id order seeks no key");
+  }
+  return sm1::scan_seek(scan->scan, row_key(scan->relid, key), 1);
+}
+
 /* Close a cursor; nullptr is a no-op. */
 void rel_scanend(rel_scan_t *scan) {
   if (scan == nullptr) {
@@ -1108,6 +1120,156 @@ void rel_scanend(rel_scan_t *scan) {
 /* Whether a rollback closed the cursor; see sm2.h. */
 bool rel_scan_rolled_back(const rel_scan_t *scan) {
   return sm1::scan_rolled_back(scan->scan);
+}
+
+} // namespace sm2
+
+namespace {
+
+/*
+ * The fewest bytes sm1's estimate of a range is trusted to split:
+ * a sorted file resolves a range to its data blocks, 4 KB, and a
+ * memtable's sampled estimate no better.
+ */
+constexpr uint64_t leaf_bytes = 4096;
+
+/* The most halvings of a key range, past which a range is a leaf. */
+constexpr int max_depth = 256;
+
+/*
+ * A key strictly between a and b, keys under one relid past it,
+ * or with end above every such key: their mean, read as base-256
+ * fractions, to one byte past the longer, trailing zeros dropped,
+ * so that byte order and the fractions' order agree.
+ */
+std::string midpoint(std::string_view a, std::string_view b, bool end) {
+  size_t n = std::max(a.size(), end ? 0 : b.size()) + 1;
+  // Digit 0 holds what carries past the point.
+  std::vector<unsigned> s(n + 1, 0);
+  s[0] = end ? 1 : 0;
+  for (size_t i = 0; i < n; i++) {
+    unsigned x = i < a.size() ? static_cast<unsigned char>(a[i]) : 0;
+    unsigned y = !end && i < b.size() ? static_cast<unsigned char>(b[i]) : 0;
+    s[i + 1] = x + y;
+  }
+  for (size_t i = n; i > 0; i--) {
+    s[i - 1] += s[i] / 256;
+    s[i] %= 256;
+  }
+  unsigned rem = 0;
+  for (size_t i = 0; i <= n; i++) {
+    unsigned v = rem * 256 + s[i];
+    s[i] = v / 2;
+    rem = v % 2;
+  }
+  std::string m;
+  for (size_t i = 1; i <= n; i++) {
+    m.push_back(static_cast<char>(s[i]));
+  }
+  while (!m.empty() && m.back() == '\0') {
+    m.pop_back();
+  }
+  return m;
+}
+
+/* A rel's key range to bisect, and its estimate's reader. */
+struct bisect_t {
+  sm2::rel_t *rel;
+  std::string prefix; /* the relid, every row key's first bytes */
+  std::string limit;  /* the next relid, or empty for none */
+
+  /* The bytes of the rel's keys from a up to b, or to its end. */
+  int size(std::string_view a, std::string_view b, bool end, uint64_t &out) {
+    std::string lo = prefix + std::string(a);
+    std::string hi = end ? limit : prefix + std::string(b);
+    uint64_t disk, mem;
+    if (sm1::approxsize(rel->session, rel->storeid, lo.data(), lo.size(),
+                        hi.empty() ? nullptr : hi.data(), hi.size(), disk,
+                        mem) != 0) {
+      return -1;
+    }
+    out = disk + mem;
+    return 0;
+  }
+
+  /*
+   * Put into keys[at..] the keys at fractions fs of the range a to
+   * b (or its end), each in [0, 1) of it.
+   */
+  int find(std::string_view a, std::string_view b, bool end,
+           std::span<const double> fs, size_t at,
+           std::vector<std::string> &keys, int depth) {
+    if (fs.empty()) {
+      return 0;
+    }
+    std::string m = midpoint(a, b, end);
+    uint64_t left = 0, right = 0;
+    if (depth < max_depth &&
+        (size(a, m, false, left) != 0 || size(m, b, end, right) != 0)) {
+      return -1;
+    }
+    // Too few bytes to tell apart: every fraction is at its start.
+    if (depth >= max_depth || left + right <= leaf_bytes) {
+      for (size_t i = 0; i < fs.size(); i++) {
+        keys[at + i].assign(a);
+      }
+      return 0;
+    }
+    double p = static_cast<double>(left) / static_cast<double>(left + right);
+    size_t k = std::lower_bound(fs.begin(), fs.end(), p) - fs.begin();
+    std::vector<double> lo(k), hi(fs.size() - k);
+    for (size_t i = 0; i < k; i++) {
+      lo[i] = fs[i] / p;
+    }
+    for (size_t i = k; i < fs.size(); i++) {
+      hi[i - k] = (fs[i] - p) / (1 - p);
+    }
+    return find(a, m, false, lo, at, keys, depth + 1) != 0 ||
+                   find(m, b, end, hi, at + k, keys, depth + 1) != 0
+               ? -1
+               : 0;
+  }
+};
+
+} // namespace
+
+namespace sm2 {
+
+/* The keys at fractions of the rel's bytes; see sm2.h. */
+int rel_keys_at(rel_t *rel, std::span<const double> fs,
+                std::vector<std::string> &keys) {
+  for (size_t i = 0; i < fs.size(); i++) {
+    if (fs[i] < 0 || fs[i] >= 1 || (i > 0 && fs[i] < fs[i - 1])) {
+      return sm1::seterr(sm1::SM_ERR_INVALID,
+                         "rel: fractions in [0, 1), ascending");
+    }
+  }
+  bisect_t b{rel, {}, {}};
+  put_be(rel->relid, b.prefix);
+  if (rel->relid != UINT16_MAX) {
+    put_be(static_cast<uint16_t>(rel->relid + 1), b.limit);
+  }
+  keys.assign(fs.size(), std::string());
+  if (b.find({}, {}, true, fs, 0, keys, 0) != 0) {
+    return -1;
+  }
+  // A start estimated empty sends 0 past a block it cannot see:
+  // the key at 0 is the rel's first, whatever the estimate.
+  for (size_t i = 0; i < fs.size() && fs[i] == 0; i++) {
+    keys[i].clear();
+  }
+  return 0;
+}
+
+/* The bytes of the rel's keys in a range; see sm2.h. */
+int rel_range_size(rel_t *rel, std::string_view lo, const std::string *hi,
+                   uint64_t &out) {
+  bisect_t b{rel, {}, {}};
+  put_be(rel->relid, b.prefix);
+  if (rel->relid != UINT16_MAX) {
+    put_be(static_cast<uint16_t>(rel->relid + 1), b.limit);
+  }
+  return b.size(lo, hi ? *hi : std::string_view(), !hi, out);
 }
 
 /* The bytes under relid, from sm1's estimate of its key range. */

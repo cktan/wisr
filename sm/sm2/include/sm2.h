@@ -873,6 +873,14 @@ std::string_view rel_scan_key(const rel_scan_t* scan);
  */
 int rel_scan_seek(rel_scan_t* scan, uint64_t id);
 
+/*
+ * Move a cursor in key order (rel_scan_rows, idx_scan_rows) forward
+ * to key, a key in the rel past its relid, so the next rel_scannxt
+ * returns the first row from it on; moving back fails, as
+ * sm1::scan_seek.
+ */
+int rel_scan_seek_key(rel_scan_t* scan, std::string_view key);
+
 /* Close a cursor from rel_scan; nullptr is a no-op. */
 void rel_scanend(rel_scan_t* scan);
 
@@ -887,6 +895,28 @@ bool rel_scan_rolled_back(const rel_scan_t* scan);
  */
 int relid_size(sm1::session_t* session, uint64_t storeid, uint16_t relid,
                uint64_t& disk, uint64_t& mem);
+
+/*
+ * The keys at fractions fs of the rel's bytes, each in [0, 1), in
+ * ascending order, into keys, one for each (../ROWKEY.md §2.4): a
+ * key k past the relid, in the rel's key order, below which about f
+ * of the rel's bytes lie, as sm1::approxsize() estimates them, disk
+ * and memtables together, with its caveats. A key is a position, the
+ * bound of a range to read, and no row need have it; nondecreasing
+ * as fs is. Found by bisecting the rel's key range, each half
+ * weighed by its own estimate, until a range holds no more than
+ * sm1's estimates resolve, a data block or so; no row is read.
+ */
+int rel_keys_at(rel_t* rel, std::span<const double> fs,
+                std::vector<std::string>& keys);
+
+/*
+ * The bytes of the rel's keys from lo up to hi, or with no hi to the
+ * rel's end, keys past the relid, into out: sm1::approxsize()'s
+ * estimate, disk and memtables together, as rel_keys_at weighs them.
+ */
+int rel_range_size(rel_t* rel, std::string_view lo, const std::string* hi,
+                   uint64_t& out);
 
 /*
  * An index rel (SM2_DESIGN.md §5, ../CLUSTER.md §3): a table's

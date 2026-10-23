@@ -24,12 +24,12 @@ uint64_t budget(int32_t target) {
 
 /*
  * A catalog on a fresh database with t (a int4, b text) in public,
- * and an sm3 session ss on it.
+ * with keyed its primary key on (a), and an sm3 session ss on it.
  */
 class sample_db_t : public db_t {
 public:
   /* Initialize the catalog, open a session, and make t. */
-  sample_db_t() {
+  explicit sample_db_t(bool keyed = false) : keyed(keyed) {
     REQUIRE(sm3::cat_init(env(), "db") == 0);
     REQUIRE(sm3::cat_open(env(), "db", cat) == 0);
     REQUIRE(sm3::session_open(cat, open(), ss) == 0);
@@ -38,6 +38,13 @@ public:
         {"b", sm2::type_text.code, -1, false}};
     begin();
     REQUIRE(sm3::create_table(ss, sm3::nsp_public, "t", cols, oid) == 0);
+    if (keyed) {
+      std::vector<sm3::index_key_spec_t> by_a = {
+          {0, false, false, std::nullopt}};
+      uint64_t pkey;
+      REQUIRE(sm3::create_index(ss, oid, "t_pkey", by_a, {}, true, pkey, true,
+                                true) == 0);
+    }
     commit();
   }
 
@@ -94,13 +101,24 @@ public:
     sm3::table_t *t = nullptr;
     REQUIRE(sm3::tbl_open(ss, oid, sm1::SM_LOCKMODE_IS, t) == 0);
     REQUIRE_MESSAGE(sm3::sample_table(t, target, rng, s) == 0, sm1::errmsg());
-    // Each kept row is the table's row at its rowno.
+    // Each kept row is the table's row at its rowno, or at its key,
+    // in that order.
     for (size_t i = 0; i < s.rows.size(); i++) {
       std::string_view tuple;
-      REQUIRE(sm3::tbl_read(t, s.rows[i].id, tuple) == 0);
+      if (keyed) {
+        sm2::datum_t a;
+        bool null = false;
+        REQUIRE(sm2::tup_decode(sm3::tbl_def(t).desc, s.rows[i].tuple, 0, a,
+                                null) == 0);
+        REQUIRE(sm3::tbl_read(t, sm3::row_key_t{{&a, 1}, {&null, 1}}, tuple) ==
+                0);
+      } else {
+        REQUIRE(sm3::tbl_read(t, s.rows[i].id, tuple) == 0);
+      }
       CHECK(tuple == s.rows[i].tuple);
       if (i > 0) {
-        CHECK(s.rows[i - 1].id < s.rows[i].id);
+        CHECK((keyed ? s.rows[i - 1].key < s.rows[i].key
+                     : s.rows[i - 1].id < s.rows[i].id));
       }
     }
     sm3::tbl_close(t);
@@ -108,6 +126,17 @@ public:
     return s;
   }
 
+  /* Compact t's store into sorted files, as VACUUM does. */
+  void compact() {
+    begin();
+    sm3::table_t *t = nullptr;
+    REQUIRE(sm3::tbl_open(ss, oid, sm1::SM_LOCKMODE_IS, t) == 0);
+    REQUIRE_MESSAGE(sm3::tbl_compact(t) == 0, sm1::errmsg());
+    sm3::tbl_close(t);
+    commit();
+  }
+
+  bool keyed;
   sm3::catalog_t *cat = nullptr;
   sm3::session_t *ss = nullptr;
   uint64_t oid = 0;
@@ -246,4 +275,32 @@ TEST_CASE("a small table is read whole and counted exactly") {
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   sm3::tbl_close(t);
   db.commit();
+}
+
+TEST_CASE("a table with a primary key is sampled by slots of its bytes") {
+  // Verify the keyed sample (../../ROWKEY.md §2.4), an estimate.
+  // 1. A small table the budget covers is read whole: every row,
+  //    counted exactly, kept in key order.
+  // 2. Fill 100,000 rows, in memtables: a sample for target 10 is
+  //    not whole, keeps 3,000 rows in key order, and counts some.
+  // 3. Compacted into sorted files, it counts the rows within a
+  //    quarter, reading no more slots than the budget allows.
+  sample_db_t db(true);
+  db.fill(1000);
+  sm3::sample_t s = db.sample(10);
+  CHECK(s.whole);
+  CHECK(s.rows.size() == 1000);
+  CHECK(s.live_rows == 1000.0);
+  sample_db_t big(true);
+  big.fill(100000);
+  s = big.sample(10);
+  CHECK_FALSE(s.whole);
+  CHECK(s.rows.size() == 3000);
+  CHECK(s.live_rows > 0);
+  big.compact();
+  s = big.sample(10);
+  CHECK_FALSE(s.whole);
+  CHECK(s.rows.size() == 3000);
+  CHECK(std::abs(s.live_rows - 100000.0) < 25000.0);
+  CHECK(s.runs * s.run_length <= budget(10) + s.run_length);
 }

@@ -1585,6 +1585,11 @@ int tbl_scan_seek(scan_t *scan, uint64_t id) {
   return sm2::rel_scan_seek(scan->rel, id);
 }
 
+/* Move a cursor in key order forward to a key; see sm3.h. */
+int tbl_scan_seek_key(scan_t *scan, std::string_view key) {
+  return sm2::rel_scan_seek_key(scan->rel, key);
+}
+
 /* The key of the cursor's last row; see sm3.h. */
 std::string_view tbl_scan_key(const scan_t *scan) {
   return sm2::rel_scan_key(scan->rel);
@@ -1649,6 +1654,18 @@ int tbl_id_limit(table_t *table, uint64_t &n) {
     return 0;
   }
   return rc;
+}
+
+/* The keys at fractions of the table's rows' bytes; see sm3.h. */
+int tbl_keys_at(table_t *table, std::span<const double> fs,
+                std::vector<std::string> &keys) {
+  return sm2::rel_keys_at(table->rel, fs, keys);
+}
+
+/* The bytes of the table's rows in a key range; see sm3.h. */
+int tbl_range_size(table_t *table, std::string_view lo, const std::string *hi,
+                   uint64_t &out) {
+  return sm2::rel_range_size(table->rel, lo, hi, out);
 }
 
 /* The sorted runs a lookup in the table's store may visit. */

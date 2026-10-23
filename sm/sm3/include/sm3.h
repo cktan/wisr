@@ -1566,6 +1566,12 @@ int tbl_idx_scan_rows(table_t* table, uint64_t index, const sm2::bound_t* lo,
 int tbl_scan_seek(scan_t* scan, uint64_t id);
 
 /*
+ * Move a cursor in key order (tbl_scan_rows) forward to key, as
+ * sm2::rel_scan_seek_key does.
+ */
+int tbl_scan_seek_key(scan_t* scan, std::string_view key);
+
+/*
  * The key of the row tbl_scannxt last gave, as sm2::rel_scan_key
  * gives it: valid as the row is.
  */
@@ -1601,6 +1607,21 @@ int tbl_size(table_t* table, uint64_t& disk, uint64_t& mem);
 int tbl_idx_size(table_t* table, uint64_t index, uint64_t& disk,
                  uint64_t& mem);
 int tbl_id_limit(table_t* table, uint64_t& n);
+
+/*
+ * The keys at fractions fs of the bytes of the table's rows, as
+ * sm2::rel_keys_at gives them: positions in key order, to read the
+ * rows between, which no row need have (../ROWKEY.md §2.4).
+ */
+int tbl_keys_at(table_t* table, std::span<const double> fs,
+                std::vector<std::string>& keys);
+
+/*
+ * The bytes of the table's rows from key lo up to hi, or with no hi
+ * to the end, as sm2::rel_range_size estimates them.
+ */
+int tbl_range_size(table_t* table, std::string_view lo, const std::string* hi,
+                   uint64_t& out);
 int tbl_probes(table_t* table, uint64_t& n);
 
 /*

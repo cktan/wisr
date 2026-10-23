@@ -3,8 +3,10 @@
  * (SM3_DESIGN.md §6.4): a pilot of single _ids, then runs of
  * _ids whose slots Floyd's algorithm draws, read through forward
  * cursors, with a reservoir keeping a uniform share of the rows
- * found. Nothing walks the table: what is read is bounded by the
- * rows wanted, whatever the table's size.
+ * found; in a table with a primary key, slots of its bytes in key
+ * order instead (../../ROWKEY.md §2.4). Nothing walks the table:
+ * what is read is bounded by the rows wanted, whatever the table's
+ * size.
  */
 
 #include "analyze.h"
@@ -19,6 +21,35 @@ namespace {
 
 /* The bytes of a PostgreSQL page, whose rows a run is as many as. */
 constexpr uint64_t page_bytes = 8192;
+
+/* The slots of a keyed table's bytes a pilot reads first. */
+constexpr uint64_t pilot_slots = 30;
+
+/*
+ * A uniform want of the rows offered (Algorithm R), into out.rows,
+ * with the count and the bytes of every row offered.
+ */
+struct reservoir_t {
+  sm3::sample_t &out;
+  uint64_t want;
+  std::mt19937_64 &rng;
+  uint64_t bytes = 0;
+
+  /* Offer the row with _id id, key and tuple t. */
+  void offer(uint64_t id, std::string_view key, std::string_view t) {
+    out.rows_read++;
+    bytes += t.size();
+    if (out.rows.size() < want) {
+      out.rows.push_back({id, std::string(t), std::string(key)});
+      return;
+    }
+    std::uniform_int_distribution<uint64_t> d(0, out.rows_read - 1);
+    uint64_t j = d(rng);
+    if (j < want) {
+      out.rows[j] = {id, std::string(t), std::string(key)};
+    }
+  }
+};
 
 /* A run of _ids, first to last, both included. */
 struct run_t {
@@ -107,6 +138,176 @@ std::vector<uint64_t> more_slots(uint64_t slots,
   return out;
 }
 
+/*
+ * Read the rows of slots, sorted and distinct, of a table with a
+ * primary key whose bytes are cut into s slots, through one cursor
+ * in key order, calling emit(key, tuple) for each row found. A
+ * slot's rows are those from the key at its start up to the key at
+ * its end, the next slot's start, or the table's end for the last
+ * (tbl_keys_at). A row the cursor returns past one slot is held for
+ * the next, so no seek ever goes back. The bytes the slots span, by
+ * sm1's estimate, are added to bytes.
+ */
+template <typename F>
+int read_slots(sm3::table_t *table, uint64_t s,
+               const std::vector<uint64_t> &slots, uint64_t &bytes, F emit) {
+  // Each slot's two ends as fractions of the bytes, ascending; the
+  // last slot's end is the table's.
+  std::vector<double> fs;
+  for (uint64_t x : slots) {
+    fs.push_back(static_cast<double>(x) / s);
+    if (x + 1 < s) {
+      fs.push_back(static_cast<double>(x + 1) / s);
+    }
+  }
+  std::vector<std::string> keys;
+  if (sm3::tbl_keys_at(table, fs, keys) != 0) {
+    return -1;
+  }
+  sm3::scan_t *c = nullptr;
+  if (sm3::tbl_scan_rows(table, c) != 0) {
+    return -1;
+  }
+  std::unique_ptr<sm3::scan_t, decltype(&sm3::tbl_scanend)> guard(
+      c, &sm3::tbl_scanend);
+  bool have = false, done = false;
+  uint64_t id = 0;
+  std::string_view tuple;
+  // The next row, into tuple: have it, or be done.
+  auto next = [&]() {
+    int rc = sm3::tbl_scannxt(c, id, tuple);
+    have = rc == 0;
+    done = rc == 1;
+    return rc < 0 ? -1 : 0;
+  };
+  size_t j = 0;
+  for (uint64_t x : slots) {
+    if (done) {
+      break;
+    }
+    const std::string &start = keys[j++];
+    const std::string *end = x + 1 < s ? &keys[j++] : nullptr;
+    uint64_t span;
+    if (sm3::tbl_range_size(table, start, end, span) != 0) {
+      return -1;
+    }
+    bytes += span;
+    // Move to the slot, unless the row in hand is in it or past it.
+    if (!have || sm3::tbl_scan_key(c) < start) {
+      if (sm3::tbl_scan_seek_key(c, start) != 0 || next() != 0) {
+        return -1;
+      }
+    }
+    while (have && (!end || sm3::tbl_scan_key(c) < *end)) {
+      emit(sm3::tbl_scan_key(c), tuple);
+      if (next() != 0) {
+        return -1;
+      }
+    }
+  }
+  return 0;
+}
+
+/*
+ * Sample a table with a primary key for want rows into out, by
+ * slots of its bytes in key order (sample_table, analyze.h).
+ */
+int sample_by_key(sm3::table_t *table, uint64_t want, std::mt19937_64 &rng,
+                  sm3::sample_t &out) {
+  uint64_t disk, mem;
+  if (sm3::tbl_size(table, disk, mem) != 0) {
+    return -1;
+  }
+  // 1. The slots, a page of the bytes each, and a pilot of a few,
+  // for the rows a slot.
+  const uint64_t s =
+      std::max<uint64_t>(1, (disk + mem + page_bytes - 1) / page_bytes);
+  reservoir_t res{out, want, rng};
+  auto keep = [&](std::string_view key, std::string_view t) {
+    res.offer(0, key, t);
+  };
+  std::vector<uint64_t> next = sm3::floyd(s, std::min(s, pilot_slots), rng);
+  std::unordered_set<uint64_t> chosen(next.begin(), next.end());
+  if (read_slots(table, s, next, out.bytes_covered, keep) != 0) {
+    return -1;
+  }
+  // None found is taken as fewer than one in the pilot.
+  auto per_slot = [&]() {
+    return out.rows_read > 0 ? static_cast<double>(out.rows_read) /
+                                   static_cast<double>(chosen.size())
+                             : 1.0 / static_cast<double>(chosen.size() + 1);
+  };
+
+  // 2. The budget, in slots: a table it covers is read whole, every
+  // row then in the reservoir's draw and counted.
+  uint64_t max_slots = std::min<uint64_t>(
+      s, std::max<uint64_t>(chosen.size(),
+                            static_cast<uint64_t>(std::ceil(
+                                sm3::budget_factor * want / per_slot()))));
+  if (max_slots == s) {
+    out.rows.clear();
+    out.rows_read = 0;
+    res.bytes = 0;
+    sm3::scan_t *c = nullptr;
+    if (sm3::tbl_scan_rows(table, c) != 0) {
+      return -1;
+    }
+    std::unique_ptr<sm3::scan_t, decltype(&sm3::tbl_scanend)> guard(
+        c, &sm3::tbl_scanend);
+    uint64_t id;
+    std::string_view t;
+    int rc;
+    while ((rc = sm3::tbl_scannxt(c, id, t)) == 0) {
+      keep(sm3::tbl_scan_key(c), t);
+    }
+    if (rc < 0) {
+      return -1;
+    }
+    out.whole = true;
+    out.live_rows = static_cast<double>(out.rows_read);
+    out.runs = s;
+  } else {
+    // 3. More slots by Floyd while the rows fall short and the
+    // budget lasts, as many as the rows a slot says.
+    while (out.rows_read < want && chosen.size() < max_slots) {
+      uint64_t more = static_cast<uint64_t>(std::ceil(
+          1.2 * static_cast<double>(want - out.rows_read) / per_slot()));
+      next = more_slots(
+          s, chosen, std::clamp<uint64_t>(more, 1, max_slots - chosen.size()),
+          rng);
+      chosen.insert(next.begin(), next.end());
+      if (read_slots(table, s, next, out.bytes_covered, keep) != 0) {
+        return -1;
+      }
+    }
+    // 4. The row count: the rows a byte the slots spanned, times
+    // the bytes; with no byte spanned, the rows a slot, times the
+    // slots.
+    out.live_rows = out.bytes_covered > 0
+                        ? static_cast<double>(out.rows_read) *
+                              static_cast<double>(disk + mem) /
+                              static_cast<double>(out.bytes_covered)
+                        : static_cast<double>(out.rows_read) *
+                              static_cast<double>(s) /
+                              static_cast<double>(chosen.size());
+    out.runs = chosen.size();
+  }
+  out.run_length = static_cast<int32_t>(std::lround(per_slot()));
+  if (out.whole) {
+    out.run_length = static_cast<int32_t>(
+        std::lround(static_cast<double>(out.rows_read) / s));
+  }
+  out.avg_row_bytes =
+      out.rows_read > 0 ? static_cast<int32_t>(res.bytes / out.rows_read) : 0;
+  // Key order, the rows' own, for the correlation of each column's
+  // order with it.
+  std::sort(out.rows.begin(), out.rows.end(),
+            [](const sm3::sample_row_t &x, const sm3::sample_row_t &y) {
+              return x.key < y.key;
+            });
+  return 0;
+}
+
 } // namespace
 
 namespace sm3 {
@@ -146,6 +347,11 @@ int sample_table(table_t *table, int32_t target, std::mt19937_64 &rng,
     return 0;
   }
   const uint64_t want = rows_per_target * static_cast<uint64_t>(target);
+  const table_def_t &def = tbl_def(table);
+  if (std::any_of(def.indexes.begin(), def.indexes.end(),
+                  [](const index_def_t &x) { return x.primary; })) {
+    return sample_by_key(table, want, rng, out);
+  }
 
   // 1. The pilot: single _ids, for the live fraction and width.
   uint64_t m = std::min(rows_per_target, n);
@@ -187,20 +393,8 @@ int sample_table(table_t *table, int32_t target, std::mt19937_64 &rng,
   // 4. The runs, k slots by Floyd, and more while the rows fall
   // short and the budget lasts. A reservoir (Algorithm R) keeps a
   // uniform want of every row read.
-  uint64_t bytes = 0;
-  auto keep = [&](uint64_t id, std::string_view t) {
-    out.rows_read++;
-    bytes += t.size();
-    if (out.rows.size() < want) {
-      out.rows.push_back({id, std::string(t)});
-      return;
-    }
-    std::uniform_int_distribution<uint64_t> d(0, out.rows_read - 1);
-    uint64_t j = d(rng);
-    if (j < want) {
-      out.rows[j] = {id, std::string(t)};
-    }
-  };
+  reservoir_t res{out, want, rng};
+  auto keep = [&](uint64_t id, std::string_view t) { res.offer(id, {}, t); };
   std::unordered_set<uint64_t> chosen;
   std::vector<uint64_t> next = floyd(slots, k, rng);
   while (!next.empty()) {
@@ -238,7 +432,7 @@ int sample_table(table_t *table, int32_t target, std::mt19937_64 &rng,
                                   static_cast<double>(n) /
                                   static_cast<double>(out.ids_covered);
   out.avg_row_bytes =
-      out.rows_read > 0 ? static_cast<int32_t>(bytes / out.rows_read) : 0;
+      out.rows_read > 0 ? static_cast<int32_t>(res.bytes / out.rows_read) : 0;
   // Rowno order, for the correlation of each column's order with it.
   std::sort(
       out.rows.begin(), out.rows.end(),
