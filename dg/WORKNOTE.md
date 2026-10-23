@@ -8250,3 +8250,34 @@ two seeks a row, as digres asked for every row by its tid:
   SET f1 = f1 + 1` over keys 12 and 11 meets its own duplicate
   in key order (`../sm/CLUSTER.md` §7), and the foreign key
   checks after it go with it.
+
+## Step 287: no bitmap scan of a table in sm
+
+A bitmap scan read its rows by `_id`, in `_id` order: a seek a
+row, two in a table with a primary key, where PostgreSQL's
+sorted TIDs read pages in order. A bitmap of sorted primary
+keys, fetched through one cursor, was planned
+(`../sm/CLUSTER.md` §10, question 6); it was dropped at review
+for planning no bitmap scan at all, as InnoDB and CockroachDB
+do without one:
+
+- **An index in sm has no `amgetbitmap`** (`smindex.c`), nor a
+  table in sm `scan_bitmap_next_tuple` (`smtable.c`), so the
+  planner builds no bitmap path. A secondary index scan reads
+  its rows by key already; BitmapAnd and BitmapOr are what is
+  lost: an OR over two indexes is a sequential scan.
+- **`RowBitmap` is gone** (`nodes/rowbitmap.c`, step 56's), and
+  the sm branches of the bitmap nodes with it, which are
+  PostgreSQL's again; `smstore_beginfetch()` and
+  `smstore_fetch()` went with their one caller.
+- **`server.sh` checks the planner plans no bitmap** for an OR
+  over two indexes, in place of its bitmap scan checks;
+  `slt/scan_columns.test` loses its bitmap heap scan step.
+- **pgregress does not compare a plan where PostgreSQL's has a
+  bitmap scan** (`pgregress.py`'s `bitmap_plans()`): the
+  statement still runs, and the results after it are compared.
+  Twelve plans in five files differ so, `create_index`'s six
+  among them; two are dearer than PostgreSQL's. `join`'s `id IN
+  (2, 3)` is a sequential scan, as an index in sm takes no
+  array of values yet (`amsearcharray`), and `groupingsets`'s
+  subplan by its primary key scans its table for each outer row.

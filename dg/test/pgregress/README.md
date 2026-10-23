@@ -38,7 +38,10 @@ is compared with `expected/`, blind to white space as
 statement has no ORDER BY, which are compared as a multiset
 (`../rowset.py`): digres reads a table with a primary key in the
 key's order, PostgreSQL in the order its rows went in
-(`../../../sm/CLUSTER.md`). A file's output and diff go in
+(`../../../sm/CLUSTER.md`). A plan where PostgreSQL's has a
+bitmap scan is not compared, the statement still run: digres
+plans none (`../../../sm/CLUSTER.md` §6), and the results that
+follow are compared. A file's output and diff go in
 `build/test/pgregress/test/`. Four servers run at once, `-j`.
 
 ## The markers

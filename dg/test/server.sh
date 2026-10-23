@@ -1301,18 +1301,13 @@ local_psql -c 'set enable_sort = off' -c 'begin' \
 [ "$(grep -v '^[A-Z]' "$work/scroll.out" | tr '\n' ' ')" = "10 20 10 " ] ||
   fail "scroll cursor"
 
-# Verify that bitmap scans of indexes in sm find the rows their quals pick:
-# bitmaps of rownos ORed and ANDed, an IN list, and no row the scan's
-# transaction does not see.
+# Verify that the planner plans no bitmap scan of a table in sm, which is
+# read by its key, not in the order of a bitmap (sm/CLUSTER.md section 6).
 # 1. Fill t7 with a = 1..1000 and b = a % 10, indexed on a and on b.
-# 2. With sequential and index scans off, an OR of both columns plans a
-#    BitmapOr, and an AND of a range and an equality a BitmapAnd.
-# 3. Confirm the OR, the AND, an OR of two ANDs, which unions bitmaps
-#    rather than adding to one, and an IN list each find just their rows, and
-#    a key on t4's second index column, which bounds no scan, its one row.
-# 4. In a session of its own, insert a row with b = 3 and hold it
-#    uncommitted; confirm a bitmap scan for b = 3 does not see it.
-bitmap_psql() {
+# 2. With sequential and index scans off, plan an OR of both columns, which
+#    PostgreSQL plans as a BitmapOr: confirm no bitmap node.
+# 3. Confirm the OR still finds its 121 rows.
+nobitmap_psql() {
   local_psql -c 'set enable_seqscan = off' -c 'set enable_indexscan = off' \
     -c "$1" 2>&1 | grep -v '^SET$'
 }
@@ -1320,36 +1315,10 @@ local_psql -c 'create table t7 (a int4, b int4)' -c 'create index t7_a on t7 (a)
   -c 'create index t7_b on t7 (b)' \
   -c "insert into t7 values $(seq 1000 | awk '{printf "%s(%d,%d)",
     (NR > 1 ? "," : ""), $1, $1 % 10}')" > "$work/bitmap.out" 2>&1
-bitmap_psql 'explain (costs off) select a from t7 where a < 25 or b = 3' |
-  grep -q 'BitmapOr' || fail "bitmap or plan"
-bitmap_psql 'explain (costs off) select a from t7
-  where a between 100 and 140 and b = 3' | grep -q 'BitmapAnd' ||
-  fail "bitmap and plan"
-[ "$(bitmap_psql 'select a from t7 where a < 25 or b = 3' | wc -l)" = 121 ] ||
-  fail "bitmap or"
-[ "$(bitmap_psql 'select a from t7 where a between 100 and 140 and b = 3' |
-  tr '\n' ' ')" = "103 113 123 133 " ] || fail "bitmap and"
-[ "$(bitmap_psql 'select a from t7 where (a between 100 and 140 and b = 3)
-  or (a between 500 and 530 and b = 4)' | tr '\n' ' ')" = \
-  "103 113 123 133 504 514 524 " ] || fail "bitmap or of ands"
-[ "$(bitmap_psql 'select a from t7 where a in (900, 5, 77)' |
-  tr '\n' ' ')" = "5 77 900 " ] || fail "bitmap in list"
-[ "$(bitmap_psql 'select b from t4 where c = 2')" = 20 ] ||
-  fail "bitmap recheck"
-mkfifo "$work/held.in"
-local_psql < "$work/held.in" > "$work/held.out" 2>&1 &
-held=$!
-exec 4> "$work/held.in"
-echo "begin; insert into t7 values (5000, 3); select 'held';" >&4
-for _ in $(seq 50); do
-  grep -q '^held$' "$work/held.out" && break
-  sleep 0.1
-done
-[ "$(bitmap_psql 'select a from t7 where b = 3' | wc -l)" = 100 ] ||
-  fail "bitmap scan sees an uncommitted row"
-echo "rollback;" >&4
-exec 4>&-
-wait $held
+nobitmap_psql 'explain (costs off) select a from t7 where a < 25 or b = 3' |
+  grep -q 'Bitmap' && fail "bitmap plan"
+[ "$(nobitmap_psql 'select a from t7 where a < 25 or b = 3' | wc -l)" = 121 ] ||
+  fail "or without a bitmap"
 
 # Verify that an index-only scan of an index in sm gives the index's
 # columns from its entries, reading no row: key columns decoded from the

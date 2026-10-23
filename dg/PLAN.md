@@ -488,11 +488,11 @@ Do not reopen these without the owner:
   PostgreSQL's transaction ids, command ids, combo cids and
   two-phase commit are gone, and every snapshot is the same
   one (`utils/time/snapmgr.c`).
-- **A bitmap of rows in sm holds rownos.** A row in sm is a
-  64-bit rowno, with no page or block: a bitmap scan maps each
-  rowno to its bit in that space (`nodes/rowbitmap.h`), and
-  reads the rows in rowno order. It is exact; there is no lossy
-  form, as there is no page to fall back to.
+- **A table in sm has no bitmap scans.** A row in sm has no
+  page or block, and a table with a primary key is read by its
+  key: a bitmap of rownos would read a row a seek, in no order
+  the store keeps (`../sm/CLUSTER.md` §6). An index in sm has
+  no `amgetbitmap`, so the planner plans none.
 - **Storage and replication features go.** Tablespaces,
   publications, subscriptions and large objects are tied to
   PostgreSQL's files, WAL and catalog tables, and are deleted,

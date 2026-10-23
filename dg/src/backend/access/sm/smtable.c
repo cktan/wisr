@@ -321,8 +321,6 @@ static const TableAmRoutine smtable_methods = [] {
   r.relation_needs_toast_table = refuse;
   r.relation_toast_am = refuse;
   r.relation_estimate_size = refuse;
-  /* Set, so the planner plans bitmap scans; nodeBitmapHeapscan.c runs them. */
-  r.scan_bitmap_next_tuple = refuse;
   r.scan_sample_next_block = smtable_scan_sample_next_block;
   r.scan_sample_next_tuple = smtable_scan_sample_next_tuple;
   return r;

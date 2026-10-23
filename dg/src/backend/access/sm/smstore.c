@@ -5825,30 +5825,6 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
 }
 
 /*
- * The row at rowno, as this transaction sees it, read into the pin ref
- * names, and into slot by the ref (ref_into_slot()), its tid its rowno;
- * false, the slot empty, if it sees none.  A pinned row lasts until the
- * scan reads its next, as a cursor's row does.
- */
-static bool pin_row(sm_tbl_t *tbl, uint64_t rowno, TupleTableSlot *slot,
-                    sm_pin_ref_t *ref) {
-  const void *tuple;
-  size_t len;
-
-  ExecClearTuple(slot);
-  switch (sm_tbl_read(tbl, rowno, ref, &tuple, &len)) {
-  case 0:
-    break;
-  case 1:
-    return false;
-  default:
-    sm_error("read a row");
-  }
-  ref_into_slot(*ref, rowno, slot);
-  return true;
-}
-
-/*
  * The row of the index scan's last entry, at the key the entry names it by
  * (sm_idx_scan_row()), as this transaction sees it, read into the pin ref
  * names, and into slot by the ref, its tid its rowno; false, the slot empty,
@@ -5903,7 +5879,7 @@ static bool read_row(sm_tbl_t *tbl, uint64_t rowno, int natts,
 
 /*
  * The index scan's next row that meets its keys into slot, by its pin
- * (pin_row()), its tid its rowno; false at the end.
+ * (pin_entry_row()), its tid its rowno; false at the end.
  */
 bool smstore_index_getnext(smstore_scan_t *scan, TupleTableSlot *slot) {
   uint64 rowno;
@@ -6059,33 +6035,6 @@ bool smstore_index_getentry(smstore_scan_t *scan, TupleTableSlot *slot) {
   }
   ExecClearTuple(slot);
   return false;
-}
-
-/*
- * Begin reading rows of rel, a table in sm, by rowno (smstore_fetch()),
- * each row deformed as it is read.
- */
-smstore_scan_t *smstore_beginfetch(Relation rel) {
-  sm_tbl_t *tbl = open_table(RelationGetRelid(rel), SM_LOCKMODE_IS);
-  smstore_scan_t *scan;
-
-  if (tbl == NULL)
-    ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
-                    errmsg("relation \"%s\" does not exist",
-                           RelationGetRelationName(rel))));
-  scan = (smstore_scan_t *)palloc0(sizeof(smstore_scan_t));
-  scan->tbl = tbl;
-  scan->relid = RelationGetRelid(rel);
-  return scan;
-}
-
-/*
- * The row at rowno into slot, by the scan's pin (pin_row()), its tid its
- * rowno; false if the transaction sees none there.
- */
-bool smstore_fetch(smstore_scan_t *scan, uint64 rowno, TupleTableSlot *slot) {
-  slot->tts_tableOid = scan->relid;
-  return pin_row(scan->tbl, rowno, slot, &scan->ref);
 }
 
 /* rel, a table in sm, opened to write in this transaction. */

@@ -1010,8 +1010,8 @@ the same shape, keyed by its columns (`idx_open`,
 - **An entry's value** is a tuple: the row's `_id`, a flag
   saying the key was cut, the INCLUDE columns, then in a keyed
   table the row's key, which a unique entry's key does not
-  carry. The `_id` costs 8 bytes an entry and makes a bitmap of
-  `_id`s, and the executor's TID, cost no read of the row.
+  carry. The `_id` costs 8 bytes an entry and makes the
+  executor's TID cost no read of the row.
 - **An entry gives its key columns back** (`idx_scan_key`),
   for index-only scans: the key decodes past the relid, its
   columns' datums as a tuple gives them, and the row's key is

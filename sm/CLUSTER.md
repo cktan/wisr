@@ -24,7 +24,7 @@ Paths are relative to `sm/`; digres's are under `../dg/`.
   sequence, stored in the row, never reused and never
   changed, not even when the primary key is. It is what the
   executor's TID holds, so `ctid`'s machinery stays: UPDATE,
-  DELETE, row locks, EvalPlanQual, bitmap and TID scans.
+  DELETE, row locks, EvalPlanQual and TID scans.
 - **`_id` has a unique index, `_id → pk`**, when the table has
   a primary key. It is sm2's rel's own, and no planner sees
   it.
@@ -124,8 +124,8 @@ The reasons `sm2/SM2_DESIGN.md` §5 gave for a heap, answered:
   it has a primary key, and adding or dropping one makes a new
   store (§8). It is unique by construction.
 - **An entry's value keeps the row's `_id`**, 8 bytes, as it
-  kept `rowno`, so a bitmap of `_id`s and the executor's TID
-  cost no read of the row, and digres reads an entry's
+  kept `rowno`, so the executor's TID costs no read of the
+  row, and digres reads an entry's
   INCLUDE columns where it did. `encode(pk)` ends the value,
   for the unique entry whose key does not carry it.
 - **A secondary entry names its row by `encode(pk)`**, the row
@@ -253,15 +253,14 @@ The reasons `sm2/SM2_DESIGN.md` §5 gave for a heap, answered:
 - **Fetch by TID** goes through `_id`, with a small cache of
   `_id → encode(pk)` filled by the statement's scans, so an
   UPDATE or DELETE of a row just scanned is one read.
-- **A bitmap scan collects primary keys**, not `_id`s, in a
-  table that has one (§10, question 6): each entry carries
-  `encode(pk)`, so the scan sorts the keys, combines sets of
-  them as it combines bitmaps, and fetches the rows in key
-  order through one forward cursor, as MySQL's multi-range
-  read does. That is PostgreSQL's sorted-TID heap fetch, which
-  reads pages in order: sorted `_id`s would be a random read a
-  row. A table without a primary key keeps its bitmap of
-  `_id`s, which are its keys.
+- **No bitmap scan is planned** of a table in sm (§10,
+  question 6): an index in sm has no `amgetbitmap`. A bitmap
+  of `_id`s is no sorted read, as one of TIDs is in
+  PostgreSQL: each `_id` is a seek of its own, and two in a
+  table with a primary key. A secondary index scan already
+  reads its rows by key; what is lost is combining indexes,
+  BitmapAnd and BitmapOr, as InnoDB and CockroachDB do
+  without.
 - **TID scans are unchanged**: `_id = …` reads by `_id`.
 - **ADD PRIMARY KEY, DROP PRIMARY KEY**, and a change of a key
   column's type or collation, rewrite the table (§8).
@@ -275,7 +274,7 @@ The reasons `sm2/SM2_DESIGN.md` §5 gave for a heap, answered:
 - **Reaching a row by its TID is two seeks** in a table with a
   primary key: an UPDATE, DELETE or lock whose TID did not
   come from the statement's own scan, EvalPlanQual's fetch,
-  bitmap and TID scans.
+  and TID scans.
 - **Every insert into such a table writes the `_id` entry**,
   where a table clustered without `_id` would not.
 - **A primary key change moves the row** and rewrites all its
@@ -387,8 +386,9 @@ nothing migrates.
 6. **`_id` stays in a table with a primary key, and nothing
    reads many rows in `_id` order.** Sorted `_id`s are not a
    sequential read, as sorted TIDs are in PostgreSQL: each is a
-   seek of its own. So a bitmap scan collects and sorts primary
-   keys (§6), and ANALYZE and TABLESAMPLE are to sample by
+   seek of its own. So no bitmap scan is planned (§6; first
+   decided as a bitmap of sorted primary keys, then dropped at
+   review), and ANALYZE and TABLESAMPLE are to sample by
    ranges of the key, sized from the store's estimates, not by
    runs of `_id`. `_id` keeps the 6-byte TID: a row fetched by
    it is two seeks, which digres's cache of the keys its scans
@@ -421,13 +421,12 @@ Each step leaves every suite passing.
    (`sm_tbl_read_key`), and a sequential scan reads the rows in
    key order (`sm_tbl_scan_rows`), its unordered results
    compared as multisets by digres's tests
-   (`../dg/test/rowset.py`). Q6 went from 9.0 to 4.2 ms. To do:
-   the `_id → pk` cache; the backfill and ANALYZE's correlation
-   in key order; a bitmap scan by sorted
-   primary keys, and ANALYZE and TABLESAMPLE by key ranges
-   (§10, question 6); the system column renamed `_id` (§10,
-   question 1). Q6 and Q7 measured, and what the `_id` entry
-   costs an insert.
+   (`../dg/test/rowset.py`). Q6 went from 9.0 to 4.2 ms. No
+   bitmap scan is planned (§6). To do: the `_id → pk` cache;
+   the backfill and ANALYZE's correlation in key order;
+   ANALYZE and TABLESAMPLE by key ranges (§10, question 6);
+   the system column renamed `_id` (§10, question 1). Q6 and
+   Q7 measured, and what the `_id` entry costs an insert.
 3. **digres's DDL.** ADD and DROP PRIMARY KEY, and the
    key-column ALTERs, through the rewrite.
 4. **The documents of §9**, each as its step lands, and this

@@ -27,7 +27,7 @@ it. What runs so far, each a step of `WORKNOTE.md`:
 - INSERT, UPDATE and DELETE, with RETURNING; TRUNCATE; COPY
   to and from a table, into an empty one as a bulk load from
   sorted files;
-- sequential, index, index-only and bitmap scans, joins,
+- sequential, index and index-only scans, joins,
   GROUP BY and ORDER BY;
 - transactions and savepoints at READ COMMITTED, REPEATABLE
   READ and SERIALIZABLE, which are sm's;

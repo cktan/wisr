@@ -43,7 +43,7 @@ sys.path.insert(0, os.path.join(HERE, '..', 'regress'))
 sys.path.insert(0, os.path.join(HERE, '..'))
 from split import split, CONDITIONALS  # noqa: E402
 from report import normalize  # noqa: E402
-from rowset import rowset  # noqa: E402
+from rowset import rowset, RULE, COUNT  # noqa: E402
 
 DG = os.path.abspath(os.path.join(HERE, '..', '..'))
 PG18 = os.environ.get('PG18_SRC', os.path.expanduser('~/p/postgres18'))
@@ -59,6 +59,8 @@ LOST = re.compile(r'server closed the connection unexpectedly|'
                   r'connection to server was lost|no connection to the server')
 # Errors a statement meets on its own, not for what came before it: every
 # statement that meets one is taken out at once.
+# A plan node of a bitmap scan, which digres never plans.
+BITMAP = re.compile(r'\bBitmap (?:Heap|Index) Scan\b|\bBitmap(?:And|Or)\b')
 INTRINSIC = re.compile(r'not supported|digres has no catalog tables|'
                        r'cannot be made: digres|unrecognized configuration '
                        r'parameter|^language "\?" does not exist')
@@ -344,12 +346,47 @@ def blocks(out, n):
     return [None if b is None else '\n'.join(b) for b in got]
 
 
+def plans(text):
+    """The spans of the lines of each plan psql printed in text, its
+    header to its row count, as (first, past) line numbers."""
+    lines = text.split('\n')
+    spans = []
+    i = 0
+    while i + 1 < len(lines):
+        if lines[i].strip() == 'QUERY PLAN' and RULE.match(
+                lines[i + 1].strip()):
+            end = i + 2
+            while end < len(lines) and not COUNT.match(lines[end].strip()):
+                end += 1
+            spans.append((i, min(end + 1, len(lines))))
+            i = end
+        i += 1
+    return spans
+
+
+def bitmap_plans(want, got):
+    """want, PostgreSQL's output, and got, digres's, with each plan of
+    want's that has a bitmap scan, and the plan at its place in got, put
+    as one line: digres plans no bitmap scan (../../../sm/CLUSTER.md
+    section 6), so its plan differs there, though its results do not."""
+    w, g = want.split('\n'), got.split('\n')
+    wspans, gspans = plans(want), plans(got)
+    for i in reversed(range(min(len(wspans), len(gspans)))):
+        (wa, wb), (ga, gb) = wspans[i], gspans[i]
+        if any(BITMAP.search(line) for line in w[wa:wb]):
+            w[wa:wb] = ['(a bitmap scan\'s plan)']
+            g[ga:gb] = ['(a bitmap scan\'s plan)']
+    return '\n'.join(w), '\n'.join(g)
+
+
 def same(a, b):
-    """Whether two units' outputs agree, an unordered result's rows as a
-    multiset (rowset.py): a table with a primary key is read in the key's
-    order in digres, and in insertion order in PostgreSQL."""
+    """Whether two units' outputs agree, a's PostgreSQL's: an unordered
+    result's rows as a multiset (rowset.py), as a table with a primary
+    key is read in the key's order in digres, and in insertion order in
+    PostgreSQL; and any plan where a's is a bitmap scan (bitmap_plans())."""
     if a is None or b is None:
         return a is b
+    a, b = bitmap_plans(a, b)
     return rowset(a) == rowset(b)
 
 
@@ -493,8 +530,9 @@ def expected(w, name):
 
 def test(w, name):
     """Run name on digres and compare its output with expected/name.out,
-    blind to white space as pg_regress is, and to the order of an
-    unordered result's rows (same()); whether they agree. The output
+    blind to white space as pg_regress is, to the order of an unordered
+    result's rows, and to a plan where PostgreSQL's is a bitmap scan
+    (same()); whether they agree. The output
     and a diff go in WORK/test."""
     with open(os.path.join(HERE, 'sql', name + '.sql'), encoding=ENC) as f:
         text = f.read()
@@ -509,7 +547,8 @@ def test(w, name):
     def norm(t):
         return [re.sub(r'\s+', '', line) for line in rowset(t).split('\n')]
 
-    ok = not timed_out and norm(out) == norm(want)
+    w, g = bitmap_plans(want, out)
+    ok = not timed_out and norm(g) == norm(w)
     diff = os.path.join(dir, name + '.diff')
     if ok:
         if os.path.exists(diff):

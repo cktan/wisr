@@ -22,13 +22,10 @@
 #include "postgres.h"
 
 #include "access/genam.h"
-#include "access/smstore.h"
 #include "executor/executor.h"
 #include "executor/nodeBitmapIndexscan.h"
 #include "executor/nodeIndexscan.h"
 #include "miscadmin.h"
-#include "nodes/rowbitmap.h"
-#include "utils/rel.h"
 
 /* ----------------------------------------------------------------
  *		ExecBitmapIndexScan
@@ -42,36 +39,12 @@ static TupleTableSlot *ExecBitmapIndexScan(PlanState *pstate) {
   return NULL;
 }
 
-/*
- * The rownos of the entries of an index in sm that its scan keys bound, into
- * rbm; returns how many.  sm reads the index, not its rows: the bitmap heap
- * scan reads them, and rechecks every row against the original quals.
- */
-static double sm_index_bitmap(BitmapIndexScanState *node, RowBitmap *rbm) {
-  BitmapIndexScan *plan = (BitmapIndexScan *)node->ss.ps.plan;
-  Relation heap =
-      ExecGetRangeTableRelation(node->ss.ps.state, plan->scan.scanrelid, false);
-  smstore_scan_t *scan =
-      smstore_index_beginscan(heap, node->biss_RelationDesc,
-                              node->biss_ScanKeys, node->biss_NumScanKeys);
-  uint64 rowno;
-  double n = 0;
-
-  while (smstore_index_getrowno(scan, &rowno)) {
-    rbm_add(rbm, rowno);
-    n++;
-  }
-  smstore_endscan(scan);
-  return n;
-}
-
 /* ----------------------------------------------------------------
  *		MultiExecBitmapIndexScan(node)
  * ----------------------------------------------------------------
  */
 Node *MultiExecBitmapIndexScan(BitmapIndexScanState *node) {
-  bool sm = RelationIsSm(node->biss_RelationDesc);
-  Node *result;
+  TIDBitmap *tbm;
   IndexScanDesc scandesc;
   double nTuples = 0;
   bool doscan;
@@ -105,30 +78,24 @@ Node *MultiExecBitmapIndexScan(BitmapIndexScanState *node) {
    * existing bitmap.  (This saves needing explicit UNION steps.)
    */
   if (node->biss_result) {
-    result = node->biss_result;
+    tbm = node->biss_result;
     node->biss_result = NULL; /* reset for next time */
-  } else if (sm) {
-    /* An index in sm gives rownos, not tids. */
-    result = (Node *)rbm_create();
   } else {
     /* XXX should we use less than work_mem for this? */
-    result = (Node *)tbm_create(work_mem * (Size)1024);
+    tbm = tbm_create(work_mem * (Size)1024);
   }
 
   /*
    * Get TIDs from index and insert into bitmap
    */
   while (doscan) {
-    if (sm)
-      nTuples += sm_index_bitmap(node, castNode(RowBitmap, result));
-    else
-      nTuples += (double)index_getbitmap(scandesc, (TIDBitmap *)result);
+    nTuples += (double)index_getbitmap(scandesc, tbm);
 
     CHECK_FOR_INTERRUPTS();
 
     doscan = ExecIndexAdvanceArrayKeys(node->biss_ArrayKeys,
                                        node->biss_NumArrayKeys);
-    if (doscan && !sm) /* reset index scan */
+    if (doscan) /* reset index scan */
       index_rescan(node->biss_ScanDesc, node->biss_ScanKeys,
                    node->biss_NumScanKeys, NULL, 0);
   }
@@ -137,7 +104,7 @@ Node *MultiExecBitmapIndexScan(BitmapIndexScanState *node) {
   if (node->ss.ps.instrument)
     InstrStopNode(node->ss.ps.instrument, nTuples);
 
-  return result;
+  return (Node *)tbm;
 }
 
 /* ----------------------------------------------------------------
@@ -175,8 +142,8 @@ void ExecReScanBitmapIndexScan(BitmapIndexScanState *node) {
   else
     node->biss_RuntimeKeysReady = true;
 
-  /* reset index scan; sm's begins anew in each MultiExecBitmapIndexScan */
-  if (node->biss_RuntimeKeysReady && node->biss_ScanDesc != NULL)
+  /* reset index scan */
+  if (node->biss_RuntimeKeysReady)
     index_rescan(node->biss_ScanDesc, node->biss_ScanKeys,
                  node->biss_NumScanKeys, NULL, 0);
 }
@@ -298,10 +265,6 @@ BitmapIndexScanState *ExecInitBitmapIndexScan(BitmapIndexScan *node,
   } else {
     indexstate->biss_RuntimeContext = NULL;
   }
-
-  /* An index in sm is scanned through sm (sm_index_bitmap()). */
-  if (RelationIsSm(indexstate->biss_RelationDesc))
-    return indexstate;
 
   /*
    * Initialize scan descriptor.

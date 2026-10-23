@@ -38,17 +38,14 @@
 #include <math.h>
 
 #include "access/relscan.h"
-#include "access/smstore.h"
 #include "access/tableam.h"
 #include "executor/executor.h"
 #include "executor/nodeBitmapHeapscan.h"
 #include "miscadmin.h"
-#include "nodes/rowbitmap.h"
 #include "utils/rel.h"
 
 static void BitmapTableScanSetup(BitmapHeapScanState *node);
 static TupleTableSlot *BitmapHeapNext(BitmapHeapScanState *node);
-static TupleTableSlot *SmBitmapNext(BitmapHeapScanState *node);
 
 /*
  * Do the underlying index scan, build the bitmap, and set up the underlying
@@ -88,9 +85,6 @@ static TupleTableSlot *BitmapHeapNext(BitmapHeapScanState *node) {
   ExprContext *econtext = node->ss.ps.ps_ExprContext;
   TupleTableSlot *slot = node->ss.ss_ScanTupleSlot;
 
-  if (RelationIsSm(node->ss.ss_currentRelation))
-    return SmBitmapNext(node);
-
   /*
    * If we haven't yet performed the underlying index scan, do it, and begin
    * the iteration over the bitmap.
@@ -128,55 +122,6 @@ static TupleTableSlot *BitmapHeapNext(BitmapHeapScanState *node) {
    * if we get here it means we are at the end of the scan..
    */
   return ExecClearTuple(slot);
-}
-
-/*
- * The next row of a table in sm that the bitmap holds and the original
- * quals pass, read by rowno, in rowno order.  Every row is rechecked: its
- * index entry was only within the scan's bounds, and may be an old
- * version's.
- */
-static TupleTableSlot *SmBitmapNext(BitmapHeapScanState *node) {
-  ExprContext *econtext = node->ss.ps.ps_ExprContext;
-  TupleTableSlot *slot = node->ss.ss_ScanTupleSlot;
-  uint64 rowno;
-
-  if (!node->initialized) {
-    Node *bitmap = MultiExecProcNode(outerPlanState(node));
-
-    if (!bitmap || !IsA(bitmap, RowBitmap))
-      elog(ERROR, "unrecognized result from subplan");
-    node->rbm = castNode(RowBitmap, bitmap);
-    node->rbm_iter = rbm_begin_iterate(node->rbm);
-    if (node->sm_fetch == NULL)
-      node->sm_fetch = smstore_beginfetch(node->ss.ss_currentRelation);
-    node->initialized = true;
-  }
-
-  while (rbm_iterate(node->rbm_iter, &rowno)) {
-    CHECK_FOR_INTERRUPTS();
-
-    /* A row the transaction does not see is passed. */
-    if (!smstore_fetch(node->sm_fetch, rowno, slot))
-      continue;
-    econtext->ecxt_scantuple = slot;
-    if (!ExecQualAndReset(node->bitmapqualorig, econtext)) {
-      InstrCountFiltered2(node, 1);
-      continue;
-    }
-    return slot;
-  }
-  return ExecClearTuple(slot);
-}
-
-/* Drop the RowBitmap of a table in sm, and the iteration over it. */
-static void SmBitmapFree(BitmapHeapScanState *node) {
-  if (node->rbm_iter != NULL)
-    rbm_end_iterate(node->rbm_iter);
-  if (node->rbm != NULL)
-    rbm_free(node->rbm);
-  node->rbm_iter = NULL;
-  node->rbm = NULL;
 }
 
 /*
@@ -231,7 +176,6 @@ void ExecReScanBitmapHeapScan(BitmapHeapScanState *node) {
   if (node->tbm)
     tbm_free(node->tbm);
   node->tbm = NULL;
-  SmBitmapFree(node);
   node->initialized = false;
   node->recheck = true;
 
@@ -281,9 +225,6 @@ void ExecEndBitmapHeapScan(BitmapHeapScanState *node) {
    */
   if (node->tbm)
     tbm_free(node->tbm);
-  SmBitmapFree(node);
-  if (node->sm_fetch != NULL)
-    smstore_endscan(node->sm_fetch);
 }
 
 /* ----------------------------------------------------------------
