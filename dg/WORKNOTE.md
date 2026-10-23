@@ -8398,11 +8398,10 @@ columns, or a keyless table's rowno alone (`access/rowkey.h`'s
 - **The plan carries the key's columns** where it carried
   `ctid`: as row identity columns of an UPDATE or DELETE
   (`add_row_identity_columns()`), "rowno" in a keyless table and
-  `rowkey<relid>_<n>` in one with a key, as the tables of an
-  inheritance tree have keys of their own; and as a locking row
-  mark's junk, `key<rowmark>_<n>` (`add_row_key_junk()`). A
-  table locked through its parent must have the parent's key
-  columns, or the lock is refused.
+  `rowkey<relid>_<n>` in one with a key; and as a locking row
+  mark's junk, `key<rowmark>_<n>` (`add_row_key_junk()`).
+  digres has no table inheritance (`PLAN.md` §7), so no row
+  mark reaches a child through its parent.
 - **A row mark that locks nothing copies the row**
   (`select_rowmark_type()`): PostgreSQL's re-fetch by reference
   fetched the very version again, which a copy is. A table in sm

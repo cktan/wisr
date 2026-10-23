@@ -14,7 +14,6 @@
  */
 #include "postgres.h"
 
-#include "access/rowkey.h"
 #include "access/sysattr.h"
 #include "access/table.h"
 #include "catalog/partition.h"
@@ -542,21 +541,6 @@ static void expand_single_inheritance_child(
      * the child tables will be locked using the appropriate mode).
      */
     childrc->isParent = (childrte->relkind == RELKIND_PARTITIONED_TABLE);
-
-    /*
-     * A child locked through its parent is named by the parent's row key
-     * junk, translated by column name (add_row_key_junk()): its key must
-     * be on those columns.
-     */
-    if (childrc->markType != ROW_MARK_COPY &&
-        childrte->relkind != RELKIND_FOREIGN_TABLE &&
-        !RowKeySameColumns(parentrel, childrel))
-      ereport(ERROR,
-              (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-               errmsg("cannot lock rows of table \"%s\" through table \"%s\"",
-                      RelationGetRelationName(childrel),
-                      RelationGetRelationName(parentrel)),
-               errdetail("Its rows are named by other columns.")));
 
     /* Include child's rowmark type in top parent's allMarkTypes */
     top_parentrc->allMarkTypes |= childrc->allMarkTypes;

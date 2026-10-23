@@ -33,6 +33,5 @@ extern int	RowKeyAttnums(Relation rel, AttrNumber *attnums);
 extern const char *RowKeyColumnName(Relation rel, int i, AttrNumber attnum);
 extern void RowKeyFromSlot(Relation rel, TupleTableSlot *slot, RowKey *key);
 extern void RowKeyCopy(Relation rel, const RowKey *src, RowKey *dst);
-extern bool RowKeySameColumns(Relation a, Relation b);
 
 #endif							/* ROWKEY_H */

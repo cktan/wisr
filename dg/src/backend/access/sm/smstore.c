@@ -6331,9 +6331,8 @@ int RowKeyAttnums(Relation rel, AttrNumber *attnums) {
 
 /*
  * The name of the junk column that carries rel's row key's column i, of
- * attribute attnum, in a plan that updates or deletes its rows: "rowno",
- * every keyless table's, else one of rel's own, as tables of one
- * inheritance tree have keys of their own.
+ * attribute attnum, in a plan that updates or deletes its rows: "rowno"
+ * in a keyless table, else one named for rel and the column.
  */
 const char *RowKeyColumnName(Relation rel, int i, AttrNumber attnum) {
   if (RownoAttributeNumber == attnum)
@@ -6367,30 +6366,6 @@ void RowKeyCopy(Relation rel, const RowKey *src, RowKey *dst) {
 
     dst->values[i] = datumCopy(src->values[i], att->attbyval, att->attlen);
   }
-}
-
-/*
- * Whether a and b name their rows by the same columns, by name: both by
- * their rowno, or both by keys of such columns in one order.
- */
-bool RowKeySameColumns(Relation a, Relation b) {
-  AttrNumber aa[INDEX_MAX_KEYS], ba[INDEX_MAX_KEYS];
-  int n = RowKeyAttnums(a, aa);
-
-  if (n != RowKeyAttnums(b, ba))
-    return false;
-  for (int i = 0; i < n; i++) {
-    if (RownoAttributeNumber == aa[i] || RownoAttributeNumber == ba[i]) {
-      if (aa[i] != ba[i])
-        return false;
-      continue;
-    }
-    if (0 !=
-        strcmp(NameStr(TupleDescAttr(RelationGetDescr(a), aa[i] - 1)->attname),
-               NameStr(TupleDescAttr(RelationGetDescr(b), ba[i] - 1)->attname)))
-      return false;
-  }
-  return true;
 }
 
 /*

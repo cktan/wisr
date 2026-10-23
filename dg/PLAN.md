@@ -529,12 +529,11 @@ Do not reopen these without the owner:
   (`../sm/ROWKEY.md`), and PostgreSQL gives a child no primary
   key of its parent's, so the tables of a tree name their rows
   by different columns: a row mark, an UPDATE or a DELETE
-  through the parent would need a key for each child. The
-  refusal is still to be built; until it is, a child locked
-  through its parent must have its parent's key columns
-  (`optimizer/util/inherit.c`). Nothing is to be built for
-  inheritance trees, and what serves only them is to be
-  stripped once the refusal is in.
+  through the parent would need a key for each child.
+  `CREATE TABLE` refuses `INHERITS` and `ALTER TABLE` refuses
+  `INHERIT` already, so no table in sm has a parent; nothing is
+  to be built for inheritance trees, and the planner's and
+  executor's code for them is dead for tables in sm.
 
 ## 8. Working in this tree
 
