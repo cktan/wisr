@@ -178,6 +178,7 @@ const char *errname() {
       "ERR_NOFDS",
       "ERR_DOOMED",
       "ERR_SCANCLOSED",
+      "ERR_MOVED",
   };
   static_assert(sizeof(names) / sizeof(names[0]) == SM_ERR_LAST + 1,
                 "every error code needs its name");

@@ -117,8 +117,16 @@ typedef enum sm_errnum_t {
      */
     SM_ERR_SCANCLOSED    = 31,  /* a rollback closed the cursor */
 
+    /*
+     * sm1's, and not an abort: an update, a delete or a newest
+     * read of a key whose newest version is a move's tombstone
+     * (sm1::erase_moved), the row living on under another key
+     * (../ROWKEY.md §2.3).
+     */
+    SM_ERR_MOVED         = 32,  /* the row moved to another key */
+
     /* The highest code, for code that walks them all. */
-    SM_ERR_LAST          = SM_ERR_SCANCLOSED
+    SM_ERR_LAST          = SM_ERR_MOVED
 } sm_errnum_t;
 
 #endif /* SM_ERROR_H */

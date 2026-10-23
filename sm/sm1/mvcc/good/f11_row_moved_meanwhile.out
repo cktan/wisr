@@ -1,0 +1,32 @@
+# f11 -- READ COMMITTED: the row moved to another key while T2
+# waited.
+#
+# T1 erases R1 as a move does, its primary key changed, and
+# commits. T2's write is refused with `updated`, as over any
+# newer commit; readlatest then says `moved`, not absent, and so
+# does the write taken again: the row lives on elsewhere, and T2
+# must not take it for deleted (ROWKEY.md §2.3). A reader sees
+# the move's tombstone as any other.
+
+
+== pairing RR/RR == T1=RC T2=RC T3=RC
+@1 T1 begin -> ok
+@1 T2 begin -> ok
+@2 T1 move R1 -> ok
+@3 T2 write R1 2 blocks -> blocked
+@4 T1 commit -> ok
+@3 T2 write R1 2 blocks -> updated (resumed)
+@5 check last T2 updated -> satisfied
+@6 T2 readlatest R1 -> moved
+@6 check last T2 moved -> satisfied
+@7 T2 write R1 2 -> moved
+@7 check last T2 moved -> satisfied
+@8 T2 abort -> ok
+@9 T3 begin -> ok
+@10 T3 read R1 -> -
+@10 check last T3 - -> satisfied
+@11 T3 delete R1 -> moved
+@11 check last T3 moved -> satisfied
+@12 T3 commit -> ok
+@13 check committed T1 T3 -> satisfied
+@13 check row R1 - -> satisfied

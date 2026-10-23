@@ -210,6 +210,44 @@ TEST_CASE("an insert of a key never written is a write like any other") {
   }
 }
 
+TEST_CASE("a move's tombstone is a delete to a reader, a move to a writer") {
+  // Verify sm1::erase_moved: its version reads as a tombstone, and a
+  // write that meets it fails with SM_ERR_MOVED, not NOTFOUND.
+  // 1. k1 and k2 are committed; k1 is erased as moved, k2 erased.
+  // 2. A read of either finds none.
+  // 3. An update or erase of k1 fails with SM_ERR_MOVED, of k2 with
+  //    SM_ERR_NOTFOUND.
+  // 4. An insert of k1 goes in, as over any tombstone.
+  // 5. Committed, another transaction reads k1's new value.
+  db_fixture_t f;
+  sm1::session_t *s = f.session();
+  uint64_t store = mkstore_committed(s);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::insert(s, store, "k1", "v1") == 0);
+  REQUIRE(sm1::insert(s, store, "k2", "v2") == 0);
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  sm1::rawpin_t *pin = sm1::rawpin_new();
+  std::string_view old;
+  REQUIRE(sm1::erase_moved(s, store, "k1", pin, old) == 0);
+  CHECK(old == "v1");
+  sm1::rawpin_free(pin);
+  REQUIRE(sm1::erase(s, store, "k2") == 0);
+  CHECK(get(s, store, "k1") == "<none>");
+  CHECK(get(s, store, "k2") == "<none>");
+  CHECK(sm1::update(s, store, "k1", "x") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_MOVED);
+  CHECK(sm1::erase(s, store, "k1") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_MOVED);
+  CHECK(sm1::update(s, store, "k2", "x") == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  REQUIRE(sm1::insert(s, store, "k1", "back") == 0);
+  REQUIRE(sm1::commit(s) == 0);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  CHECK(get(s, store, "k1") == "back");
+  REQUIRE(sm1::commit(s) == 0);
+}
+
 TEST_CASE("commit persists writes across reattach; abort discards them") {
   // Verify durability of commits and the absence of aborted writes.
   // 1. Commit a key "a"; write "b" and update "a", then abort.

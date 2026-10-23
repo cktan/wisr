@@ -158,10 +158,13 @@ bool reusable(const sm1::session_t *s, const sm1::rawpin_t &pin,
 int latest_version(sm1::session_t *s, store_t st, rocksdb::Slice key,
                    bool *live, uint64_t *commit_ts, std::string *value,
                    uint32_t *own_seq = nullptr, uint64_t *inflight = nullptr,
-                   sm1::rawpin_t *pin = nullptr) {
+                   sm1::rawpin_t *pin = nullptr, bool *moved = nullptr) {
   // Assume no version until one is found.
   *live = false;
   *commit_ts = 0;
+  if (moved) {
+    *moved = false;
+  }
   if (own_seq) {
     *own_seq = 0;
   }
@@ -199,6 +202,9 @@ int latest_version(sm1::session_t *s, store_t st, rocksdb::Slice key,
       // Still in effect: it is the latest.
       if (v.seq <= s->seq_hwm) {
         *live = !(v.flags & version_tombstone);
+        if (moved) {
+          *moved = v.flags & version_moved;
+        }
         if (own_seq) {
           *own_seq = v.seq;
         }
@@ -229,6 +235,9 @@ int latest_version(sm1::session_t *s, store_t st, rocksdb::Slice key,
     // The newest committed version decides.
     if (committed) {
       *live = !(v.flags & version_tombstone);
+      if (moved) {
+        *moved = v.flags & version_moved;
+      }
       *commit_ts = ts;
       // Hand back what it holds, for the old image.
       keep_value(v, it, value, pin, *live);
@@ -520,14 +529,14 @@ int read_latest_row(sm1::session_t *s, uint64_t storeid, const char *key,
   if (!st.cf) {
     return -1;
   }
-  bool live;
+  bool live, moved;
   uint64_t commit_ts;
   uint32_t own_seq;
   // Read the newest version into the pin, ignoring the snapshot;
   // it is emptied again unless a row is handed out.
   sm0::scope_guard_t put([&] { sm1::unpin(pin); });
   if (latest_version(s, st, k, &live, &commit_ts, nullptr, &own_seq, nullptr,
-                     pin) != 0) {
+                     pin, &moved) != 0) {
     return -1;
   }
   // Something must keep the newest version from changing: a lock
@@ -544,6 +553,10 @@ int read_latest_row(sm1::session_t *s, uint64_t storeid, const char *key,
   // An exclusive holder may now write.
   if (held && mode == sm1::SM_LOCKMODE_EX) {
     lock_set_latest(s, storeid, k);
+  }
+  // Moved to another key: the caller's row lives on there.
+  if (moved) {
+    return set_error(sm1::SM_ERR_MOVED, "the row moved to another key");
   }
   // Absent, or deleted.
   if (!live) {
@@ -935,10 +948,11 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
   // Check the key and put the version under its latch, so no
   // other write of it comes between (WRITELOCK.md §3.2).
   std::unique_lock<std::mutex> latch(lock_latch(s->db, storeid, key));
-  bool live;
+  bool live, moved = false;
   uint64_t commit_ts;
   uint32_t own_seq;
   const bool inserting = op == WRITE_INSERT || op == WRITE_INSERT_NEW;
+  const bool erasing = op == WRITE_DELETE || op == WRITE_MOVE;
   for (;;) {
     int waited = 0;
     // Another transaction's explicit lock that a write conflicts
@@ -969,7 +983,7 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
       // Find the version this write checks against, keeping it in
       // pin when the caller asked for the old image.
       if (0 != latest_version(s, st, key, &live, &commit_ts, nullptr, &own_seq,
-                              &inflight, pin)) {
+                              &inflight, pin, &moved)) {
         return -1;
       }
       // Done looking: this write goes on with the latch held.
@@ -1020,9 +1034,11 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
   if (inserting && live) {
     return set_error(sm1::SM_ERR_DUPKEY, "key already exists");
   }
-  // An update or delete needs it present.
+  // An update or delete needs it present: a row that moved lives
+  // on under another key (ROWKEY.md §2.3).
   if (!inserting && !live) {
-    return set_error(sm1::SM_ERR_NOTFOUND, "key does not exist");
+    return moved ? set_error(sm1::SM_ERR_MOVED, "the row moved to another key")
+                 : set_error(sm1::SM_ERR_NOTFOUND, "key does not exist");
   }
   // Refuse a transaction's 2^32nd write.
   if (s->seq == UINT32_MAX) {
@@ -1036,8 +1052,10 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
   uint32_t seq = s->seq + 1;
   // No iterator opened before now serves the session's reads.
   s->write_gen++;
-  // A delete writes a tombstone version.
-  uint8_t flags = op == WRITE_DELETE ? version_tombstone : 0;
+  // A delete writes a tombstone version, a move's marked so.
+  uint8_t flags = !erasing           ? 0
+                  : op == WRITE_MOVE ? version_tombstone | version_moved
+                                     : version_tombstone;
   // Allocate the write timestamp now that no other writer of the
   // key is in flight, so it sorts after every committed version
   // of the key (§4.1, WRITELOCK.md §3.6).
@@ -1049,8 +1067,8 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
   assert(commit_ts < wts);
   // Put the version eagerly; it is not synced (§5 step 5).
   std::string vkey = version_key(key, wts, seq);
-  std::string vval = version_value(
-      flags, s->xid, op == WRITE_DELETE ? rocksdb::Slice() : data);
+  std::string vval =
+      version_value(flags, s->xid, erasing ? rocksdb::Slice() : data);
   rocksdb::Status status =
       st.rdb->Put(store_write_options(st), st.cf, vkey, vval);
   // Fail if the put failed.
@@ -1200,6 +1218,19 @@ int sm1::erase(sm1::session_t *session, uint64_t storeid, std::string_view key,
   const char *o = nullptr;
   size_t olen = 0;
   int rc = write_row(session, WRITE_DELETE, storeid, key.data(), key.size(),
+                     nullptr, 0, pin, &o, &olen);
+  // Hand it back: the old row, or empty on failure.
+  old = std::string_view(o, olen);
+  return rc;
+}
+
+/* Delete a row that moved, pinning it into pin; see sm1.h. */
+int sm1::erase_moved(sm1::session_t *session, uint64_t storeid,
+                     std::string_view key, sm1::rawpin_t *pin,
+                     std::string_view &old) {
+  const char *o = nullptr;
+  size_t olen = 0;
+  int rc = write_row(session, WRITE_MOVE, storeid, key.data(), key.size(),
                      nullptr, 0, pin, &o, &olen);
   // Hand it back: the old row, or empty on failure.
   old = std::string_view(o, olen);

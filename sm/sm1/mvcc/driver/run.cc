@@ -55,6 +55,7 @@ const errinfo_t errtab[] = {
     {sm1::SM_ERR_INVALID, "invalid", "abort"},
     {sm1::SM_ERR_UPDATED, "updated", "abort"},
     {sm1::SM_ERR_READONLY, "readonly", "abort"},
+    {sm1::SM_ERR_MOVED, "moved", "serialize"},
 };
 
 /* The symbolic name of the current error (DRIVER.md §4). */
@@ -156,6 +157,15 @@ std::string execute(worker_t *w, const item_t &it) {
   }
   if (it.verb == "delete") {
     return sm1::erase(w->sess, w->store, a[0]) == 0 ? "ok" : error_name();
+  }
+  if (it.verb == "move") {
+    // move <row>: the erase of a row whose key changed, its
+    // tombstone a move's (sm1::erase_moved).
+    sm1::rawpin_t *pin = sm1::rawpin_new();
+    std::string_view old;
+    int rc = sm1::erase_moved(w->sess, w->store, a[0], pin, old);
+    sm1::rawpin_free(pin);
+    return rc == 0 ? "ok" : error_name();
   }
   if (it.verb == "update-where") {
     // update-where <lo> <hi> <old> <new>: SQL's UPDATE ... SET

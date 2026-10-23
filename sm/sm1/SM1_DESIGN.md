@@ -142,6 +142,7 @@ key   = userkey (variable)
 
 value = flags   (1B)   bit0 = tombstone (this version is a delete)
                        bit1 = commit_ts is stamped in this header
+                       bit2 = a move's tombstone (sm1::erase_moved)
       | xid      (8B) the writer, while unstamped (flags bit1 clear)
         commit_ts (8B) in its place once stamped; a hint, see §8.3
       | payload  (variable, absent for a tombstone)
@@ -593,6 +594,7 @@ sm1::update(storeid, k, v):
              RC: SM_ERR_UPDATED, keeping k locked X,
                  unless T.lock(k).latest
                  (an insert: no check)                  # §5.4
+     if latest is a move's tombstone: SM_ERR_MOVED      # (insert: goes in)
      if latest is absent or tombstone: SM_ERR_NOTFOUND  # (insert: DUPKEY)
      if old wanted: copy latest's payload into the session buffer  # §5.3
   4. if T.xid == 0: T.xid = global_ts++
@@ -623,6 +625,17 @@ ever written, which its caller knows, as sm2 knows a key made of
 a row's `_id`: step 3 has nothing to find, and is left out, a
 read and a seek; steps 2 and 7 stay. A debug build makes the
 read, and asserts it finds no version.
+
+`sm1::erase_moved` is `sm1::erase` of a row whose key changed,
+which lives on under another (`../ROWKEY.md` §2.3): its
+tombstone has bit2 set. A reader sees it as any tombstone. An
+update or erase that meets it in step 3 fails with
+`SM_ERR_MOVED`, and `sm1::read_latest` does where it returns 1
+for a plain tombstone, so a READ COMMITTED writer past
+`SM_ERR_UPDATED` learns the row moved, not that it is gone, and
+fails rather than skip it. An insert goes in over it, as over
+any tombstone. GC keeps the flag when it stamps the version, and
+purges it as a tombstone.
 
 Step 5 is an ordinary RocksDB `Put` into the memtable, WAL-logged but
 **not synced** — an uncommitted write does not need durability, only

@@ -257,8 +257,9 @@ Each step leaves every suite passing.
 
 1. **sm by key.** `tbl_read`, `tbl_read_latest`, `tbl_update`,
    `tbl_delete`, `tbl_lock`, `tbl_trylock` by key, through the
-   C API (`sm_row_key_t`), built; the moved tombstone and
-   `SM_ERR_MOVED`. The `_id` calls stay for digres. Until step
+   C API (`sm_row_key_t`); sm1's moved tombstone
+   (`sm1::erase_moved`) and `SM_ERR_MOVED`. Built. The `_id`
+   calls stay for digres. Until step
    4 an update or delete by key of a keyed row reads the row
    for its `_id`.
 2. **ANALYZE and TABLESAMPLE by key ranges** for a table with

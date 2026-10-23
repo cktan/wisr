@@ -640,7 +640,8 @@ int trylock(session_t* session, locktype_t type, uint64_t storeid,
  *
  * Errors: SM_ERR_INVALID (not read committed, or neither a lock
  * held nor a write of the key), SM_ERR_NOTRANS, SM_ERR_PREPARED,
- * SM_ERR_NOTFOUND (store).
+ * SM_ERR_NOTFOUND (store), SM_ERR_MOVED (the newest version is a
+ * move's tombstone, sm1::erase_moved).
  */
 int read_latest(session_t* session, uint64_t storeid,
                 std::string_view key, std::string_view& data);
@@ -1127,7 +1128,8 @@ int compact(session_t* session, uint64_t storeid);
  *
  * Errors for all three: SM_ERR_CONFLICT / SM_ERR_DEADLOCK
  * (retryable), SM_ERR_NOTFOUND (store, or key for
- * update/delete), SM_ERR_DUPKEY (insert), SM_ERR_NOTRANS,
+ * update/delete), SM_ERR_MOVED (update/delete of a key a move
+ * erased, sm1::erase_moved), SM_ERR_DUPKEY (insert), SM_ERR_NOTRANS,
  * SM_ERR_PREPARED, SM_ERR_INVALID, SM_ERR_DISKFULL, SM_ERR_IO.
  */
 int insert(session_t* session, uint64_t storeid,
@@ -1156,6 +1158,19 @@ int erase(session_t* session, uint64_t storeid,
           std::string_view key, std::string_view* old = nullptr);
 int erase(session_t* session, uint64_t storeid,
           std::string_view key, rawpin_t* pin, std::string_view& old);
+
+/*
+ * sm1::erase of a row that moved to another key (../ROWKEY.md
+ * §2.3): its tombstone is marked a move's. A reader sees it as any
+ * tombstone. A writer that meets it as the key's newest version,
+ * an sm1::update or sm1::erase, fails with SM_ERR_MOVED where a
+ * plain tombstone is SM_ERR_NOTFOUND, and so does sm1::read_latest
+ * where a plain one returns 1: at READ COMMITTED, after
+ * SM_ERR_UPDATED, the writer learns the row lives on elsewhere.
+ * The row erased is pinned into pin, as sm1::erase's.
+ */
+int erase_moved(session_t* session, uint64_t storeid,
+                std::string_view key, rawpin_t* pin, std::string_view& old);
 
 /*
  * Read one key.

@@ -27,6 +27,8 @@ constexpr size_t version_tail_size = 12;
 constexpr uint8_t version_tombstone = 0x01; /* this version is a delete */
 constexpr uint8_t version_stamped =
     0x02; /* commit_ts, not xid, follows flags */
+constexpr uint8_t version_moved =
+    0x04; /* a tombstone of a row that moved to another key */
 
 /* A version key or value, decoded. Slices borrow the input. */
 struct version_t {
