@@ -52,8 +52,6 @@ const TableAmRoutine *GetTableAmRoutine(Oid amhandler) {
   Assert(routine->index_fetch_tuple != NULL);
 
   Assert(routine->tuple_fetch_row_version != NULL);
-  Assert(routine->tuple_tid_valid != NULL);
-  Assert(routine->tuple_get_latest_tid != NULL);
   Assert(routine->tuple_satisfies_snapshot != NULL);
   Assert(routine->index_delete_tuples != NULL);
 

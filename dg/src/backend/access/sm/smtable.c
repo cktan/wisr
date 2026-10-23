@@ -311,17 +311,6 @@ static bool smtable_fetch_row_version(Relation rel, const RowKey *key,
   return smstore_fetch_row(rel, key, slot->tts_tupleDescriptor->natts, slot);
 }
 
-/*
- * Whether tid may be a row's: any may, and fetching it says whether the
- * statement sees one.  A TID scan asks, for WHERE CURRENT OF.
- */
-static bool smtable_tuple_tid_valid(TableScanDesc, ItemPointer) {
-  return true;
-}
-
-/* A row's newest version has its tid: sm updates a row at its rowno. */
-static void smtable_tuple_get_latest_tid(TableScanDesc, ItemPointer) {}
-
 /* Delete the row key names: sm's snapshot and its waits are its own. */
 static TM_Result smtable_tuple_delete(Relation rel, const RowKey *key,
                                       Snapshot snapshot, Snapshot crosscheck,
@@ -368,15 +357,11 @@ static const TableAmRoutine smtable_methods = [] {
   r.scan_end = smtable_scan_end;
   r.scan_rescan = smtable_scan_rescan;
   r.scan_getnextslot = smtable_scan_getnextslot;
-  r.scan_set_tidrange = refuse;
-  r.scan_getnextslot_tidrange = refuse;
   r.index_fetch_begin = refuse;
   r.index_fetch_reset = refuse;
   r.index_fetch_end = refuse;
   r.index_fetch_tuple = refuse;
   r.tuple_fetch_row_version = smtable_fetch_row_version;
-  r.tuple_tid_valid = smtable_tuple_tid_valid;
-  r.tuple_get_latest_tid = smtable_tuple_get_latest_tid;
   r.tuple_satisfies_snapshot = smtable_tuple_satisfies_snapshot;
   r.index_delete_tuples = refuse;
   r.tuple_insert = smtable_tuple_insert;

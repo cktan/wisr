@@ -52,7 +52,8 @@ DROP SEQUENCE tid_seq;
 
 -- Index, fails with incorrect relation type
 CREATE INDEX tid_ind ON tid_tab(a);
-SELECT currtid2('tid_ind'::text, '(0,1)'::tid); -- fails
+--dg-differs: another error: function ?(...) does not exist
+--dg SELECT currtid2('tid_ind'::text, '(0,1)'::tid); -- fails
 DROP INDEX tid_ind;
 
 -- Partitioned table, no storage
@@ -66,7 +67,8 @@ DROP INDEX tid_ind;
 -- Views
 -- ctid not defined in the view
 CREATE VIEW tid_view_no_ctid AS SELECT a FROM tid_tab;
-SELECT currtid2('tid_view_no_ctid'::text, '(0,1)'::tid); -- fails
+--dg-differs: another error: function ?(...) does not exist
+--dg SELECT currtid2('tid_view_no_ctid'::text, '(0,1)'::tid); -- fails
 DROP VIEW tid_view_no_ctid;
 -- ctid fetched directly from the source table.
 --dg-skip: column "?" does not exist
@@ -81,7 +83,8 @@ INSERT INTO tid_tab VALUES (1);
 TRUNCATE tid_tab;
 -- ctid attribute with incorrect data type
 CREATE VIEW tid_view_fake_ctid AS SELECT 1 AS ctid, 2 AS a;
-SELECT currtid2('tid_view_fake_ctid'::text, '(0,1)'::tid); -- fails
+--dg-differs: another error: function ?(...) does not exist
+--dg SELECT currtid2('tid_view_fake_ctid'::text, '(0,1)'::tid); -- fails
 DROP VIEW tid_view_fake_ctid;
 
 DROP TABLE tid_tab CASCADE;

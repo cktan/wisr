@@ -831,9 +831,6 @@ typedef struct PartitionSchemeData *PartitionScheme;
  *----------
  */
 
-/* Bitmask of flags supported by table AMs */
-#define AMFLAG_HAS_TID_RANGE (1 << 0)
-
 typedef enum RelOptKind
 {
 	RELOPT_BASEREL,
@@ -961,8 +958,6 @@ typedef struct RelOptInfo
 	Bitmapset  *eclass_indexes;
 	PlannerInfo *subroot;		/* if subquery */
 	List	   *subplan_params; /* if subquery */
-	/* Bitmask of optional features supported by the table AM */
-	uint32		amflags;
 
 	/*
 	 * Information about foreign tables and foreign joins
@@ -1936,18 +1931,6 @@ typedef struct TidPath
 	Path		path;
 	List	   *tidquals;		/* qual(s) involving CTID = something */
 } TidPath;
-
-/*
- * TidRangePath represents a scan by a contiguous range of TIDs
- *
- * tidrangequals is an implicitly AND'ed list of qual expressions of the form
- * "CTID relop pseudoconstant", where relop is one of >,>=,<,<=.
- */
-typedef struct TidRangePath
-{
-	Path		path;
-	List	   *tidrangequals;
-} TidRangePath;
 
 /*
  * SubqueryScanPath represents a scan of an unflattened subquery-in-FROM

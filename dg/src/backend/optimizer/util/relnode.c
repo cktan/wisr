@@ -215,7 +215,6 @@ RelOptInfo *build_simple_rel(PlannerInfo *root, int relid, RelOptInfo *parent) {
   rel->eclass_indexes = NULL;
   rel->subroot = NULL;
   rel->subplan_params = NIL; /* set up in get_relation_info */
-  rel->amflags = 0;
   rel->serverid = InvalidOid;
   if (rte->rtekind == RTE_RELATION) {
     Assert(parent == NULL || parent->rtekind == RTE_RELATION ||
@@ -664,7 +663,6 @@ RelOptInfo *build_join_rel(PlannerInfo *root, Relids joinrelids,
   joinrel->eclass_indexes = NULL;
   joinrel->subroot = NULL;
   joinrel->subplan_params = NIL;
-  joinrel->amflags = 0;
   joinrel->serverid = InvalidOid;
   joinrel->userid = InvalidOid;
   joinrel->useridiscurrent = false;
@@ -827,7 +825,6 @@ RelOptInfo *build_child_join_rel(PlannerInfo *root, RelOptInfo *outer_rel,
   joinrel->eclass_indexes = NULL;
   joinrel->subroot = NULL;
   joinrel->subplan_params = NIL;
-  joinrel->amflags = 0;
   joinrel->serverid = InvalidOid;
   joinrel->userid = InvalidOid;
   joinrel->useridiscurrent = false;

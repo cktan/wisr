@@ -36,9 +36,10 @@ regression files are taken out for it (`test/pgregress`,
   a keyless table's rowno (`../sm/ROWKEY.md`, step 292).
   `ctid`, `xmin`, `xmax`, `cmin` and `cmax` are "column does
   not exist" (step 200); the `tid` type cannot be stored.
-- **TID scans** — differs. No TID range scan (step 213); a TID
-  scan only for `WHERE CURRENT OF`, and for `rowno = n` in a
-  table without a primary key (step 288).
+- **TID scans** — differs. A TID scan only for `WHERE CURRENT
+  OF`, and for `rowno = n` in a table without a primary key
+  (step 288); the TID range scan and `currtid2()` are removed
+  (step 293).
 - **CREATE TABLE beyond columns, NOT NULL, PRIMARY KEY, UNIQUE
   and TEMPORARY** — refused (pgregress: 604): table CHECK and
   EXCLUDE constraints, `OF type`, `UNLOGGED`, `TABLESPACE`,

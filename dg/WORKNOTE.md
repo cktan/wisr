@@ -8430,3 +8430,25 @@ columns, or a keyless table's rowno alone (`access/rowkey.h`'s
 - **What is left of the TID** is in slots' `tts_tid`, AFTER
   trigger events, foreign tables' row identity, and the `ctid`
   system column; they go next.
+
+## Step 293: no TID range scan, no currtid2()
+
+No row has a TID (`../sm/ROWKEY.md` §3.1), so nothing is left
+for a scan by a range of TIDs or a function that follows one:
+
+- **The TID range scan is deleted**: `nodeTidrangescan.c` and
+  its header, `TidRangePath`, `TidRangeScan` and
+  `TidRangeScanState`, `create_tidrangescan_path()`,
+  `cost_tidrangescan()`, the planner's range quals in
+  `tidpath.c`, EXPLAIN's "Tid Range Scan", and the table access
+  method's `scan_set_tidrange` and `scan_getnextslot_tidrange`.
+  `RelOptInfo`'s `amflags` went with its one flag,
+  `AMFLAG_HAS_TID_RANGE`. Nothing planned one since step 213:
+  its quals name `ctid`, which no query can.
+- **`currtid2()` is deleted** (`tid.c`), with the table access
+  method's `tuple_tid_valid` and `tuple_get_latest_tid` and
+  `table_tuple_get_latest_tid()`, which only it called.
+- **pgregress `tid`**: its three `currtid2()` calls that ran,
+  each an error on PostgreSQL, are taken out.
+- The `tid` type stays, as a built-in type; no column may be
+  one.
