@@ -962,7 +962,7 @@ its key, as `rel_insert` gives it and `rel_find` finds it:
 
 | sm2 | what it adds | over |
 | --- | --- | --- |
-| `rel_insert` | writes a tuple under its key with a new `_id`, and the `_id` entry, and returns both; the tuple is encoded from datums, or handed in pre-encoded and checked by `tup_check` before an `_id` is drawn | `sm1::nextseq`, `sm1::insert` |
+| `rel_insert` | writes a tuple under its key with a new `_id`, and the `_id` entry, and returns both; the tuple is encoded from datums, or handed in pre-encoded and checked by `tup_check` before an `_id` is drawn; the `_id` from a `seqref_t` looked up at the rel's first draw, and a key made of an `_id`, a keyless row's or the `_id` entry's, written unchecked, as none was before | `sm1::seqref`, `sm1::nextseq`, `sm1::insert`, `sm1::insert_new` |
 | `rel_find`, `rel_find_latest` | the key of the row with an `_id`, as the snapshot shows it, or its newest committed version under `rel_lock_id`'s lock | `sm1::read`, `sm1::read_latest` |
 | `rel_read` | reads a row by its key, and its `_id` | `sm1::read` |
 | `rel_update`, `rel_delete` | by key; hands back the old image as a **tuple**, not bytes; `rel_update` takes datums or a pre-encoded tuple, checked as `rel_insert`'s is, and moves a row whose primary key changed | `sm1::update`, `sm1::erase`, `sm1::insert` |

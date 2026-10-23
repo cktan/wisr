@@ -289,8 +289,11 @@ struct view_t {
   uint32_t seq_hwm;
 };
 
-/* Write operations, for access_write(). */
-enum write_op_t { WRITE_INSERT, WRITE_UPDATE, WRITE_DELETE };
+/*
+ * Write operations, for access_write(). WRITE_INSERT_NEW is an insert
+ * of a key no version of was ever written (sm1::insert_new).
+ */
+enum write_op_t { WRITE_INSERT, WRITE_INSERT_NEW, WRITE_UPDATE, WRITE_DELETE };
 
 /* Fail with NOTRANS unless session has an active transaction. */
 int xct_check_active(sm1::session_t *session);

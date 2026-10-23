@@ -144,6 +144,44 @@ TEST_CASE("a sequence starts at its start and steps by its increment") {
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
 }
 
+TEST_CASE("a sequence drawn by its ref goes on as by its name") {
+  // Verify sm1::seqref and sm1::nextseq by ref, a look-up once.
+  // 1. A ref of a sequence by 7 from 5 draws 5, then by name 12,
+  //    then by the ref 19: the one sequence.
+  // 2. A ref of a temporary sequence draws its values, and fails
+  //    with SM_ERR_NOTFOUND once the sequence is dropped.
+  // 3. A ref of no sequence fails with SM_ERR_NOTFOUND.
+  seq_fixture_t f;
+  sm1::session_t *s = f.s();
+  commit_mkseq(s, "by7", 5, 7);
+  sm1::seqref_t ref;
+  REQUIRE(sm1::seqref(s, "by7", ref) == 0);
+  uint64_t v = 0;
+  REQUIRE(sm1::nextseq(s, ref, v) == 0);
+  CHECK(v == 5);
+  CHECK(next(s, "by7") == 12);
+  REQUIRE(sm1::nextseq(s, ref, v) == 0);
+  CHECK(v == 19);
+
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::mkseq(s, "tq", 1, 1, true) == 0);
+  REQUIRE(sm1::commit(s) == 0);
+  sm1::seqref_t tref;
+  REQUIRE(sm1::seqref(s, "tq", tref) == 0);
+  REQUIRE(sm1::nextseq(s, tref, v) == 0);
+  CHECK(v == 1);
+  REQUIRE(sm1::nextseq(s, tref, v) == 0);
+  CHECK(v == 2);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  REQUIRE(sm1::rmseq(s, "tq") == 0);
+  REQUIRE(sm1::commit(s) == 0);
+  CHECK(sm1::nextseq(s, tref, v) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+
+  CHECK(sm1::seqref(s, "none", ref) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+}
+
 TEST_CASE("sm1_mkseq and sm1_rmseq are transactional; the values are not") {
   // Verify the split: the definition follows the transaction,
   // the position does not.

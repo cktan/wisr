@@ -371,6 +371,31 @@ int nextseq(session_t* session, std::string_view name,
             uint64_t& out);
 
 /*
+ * A sequence as sm1::seqref looked it up, which sm1::nextseq takes
+ * in place of its name, to draw with no look-up of the name, a read
+ * of the catalog, each time: a session's temporary sequence by its
+ * name, which is the session's own, and any other by its seqid. It
+ * stays good while the sequence is not dropped, which the caller
+ * sees to, as sm2 does by the table it has open.
+ */
+struct seqref_t {
+  std::string name;   /* a temporary sequence's; else "" */
+  uint64_t seqid = 0; /* 0 for a temporary sequence */
+  uint64_t start = 0;
+  uint64_t increment = 0;
+};
+
+/*
+ * Look the sequence name up into ref, as sm1::nextseq does: at the
+ * transaction's view if there is one, else at the newest committed
+ * state. Errors as sm1::nextseq's.
+ */
+int seqref(session_t* session, std::string_view name, seqref_t& ref);
+
+/* sm1::nextseq of the sequence ref holds. */
+int nextseq(session_t* session, const seqref_t& ref, uint64_t& out);
+
+/*
  * Report the last value the sequence handed out in out, drawing
  * none: no lease is extended and nothing is written.
  *
@@ -1107,6 +1132,18 @@ int compact(session_t* session, uint64_t storeid);
  */
 int insert(session_t* session, uint64_t storeid,
            std::string_view key, std::string_view data);
+
+/*
+ * sm1::insert of a key no version of has ever been written, which
+ * the caller knows: one made from a sequence of its own, as sm2
+ * makes a row's _id. With no version to check against, the write
+ * reads nothing, where sm1::insert reads the key's newest version;
+ * a lock taken on the key is still waited for, and under
+ * SERIALIZABLE the write still finds the readers it invalidates. A
+ * debug build reads the key, and asserts it has no version.
+ */
+int insert_new(session_t* session, uint64_t storeid,
+               std::string_view key, std::string_view data);
 
 int update(session_t* session, uint64_t storeid,
            std::string_view key, std::string_view data,

@@ -28,6 +28,12 @@ struct sm2::rel_t {
    * use, emptied after each, freed at rel_close.
    */
   sm1::rawpin_t *scratch = nullptr;
+  /*
+   * id_seq, looked up at the rel's first draw (next_id), which the
+   * table open keeps from being dropped.
+   */
+  sm1::seqref_t id_ref;
+  bool has_id_ref = false;
 };
 
 /*

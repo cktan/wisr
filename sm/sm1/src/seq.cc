@@ -184,14 +184,11 @@ int rmseq(sm1::session_t *s, const char *name) {
 }
 
 /* sm1::nextseq, minus the out-of-memory guard. */
-int nextseq(sm1::session_t *s, const char *name, uint64_t *out) {
-  // Require somewhere to put the value and a valid name.
-  if (!out) {
-    return set_error(sm1::SM_ERR_INVALID, "sm1_nextseq: out is NULL");
-  }
-  if (check_name(name, sm1::max_seqname, "sequence") != 0) {
-    return -1;
-  }
+/*
+ * Whether the session may draw from a sequence: 0, or -1 if it holds
+ * a prepared transaction or one a rollback doomed.
+ */
+int may_draw(sm1::session_t *s) {
   // A session holding a prepared transaction does nothing else.
   if (!s->active && !s->prepared_gid.empty()) {
     return set_error(sm1::SM_ERR_PREPARED, "the transaction is prepared as {}",
@@ -201,21 +198,18 @@ int nextseq(sm1::session_t *s, const char *name, uint64_t *out) {
   if (s->active && s->doomed == sm1::SM_ERR_DOOMED) {
     return xct_check_active(s);
   }
-  // The session's temporary sequence, if the name is one's.
-  if (sm1::session_t::temp_seq_t *q = temp_seq(s, name)) {
-    return temp_seq_next(q, out);
-  }
-  // A stopped database persists nothing, leases included.
-  if (xct_check_writable(s->db) != 0) {
-    return -1;
-  }
-  // Read the definition at the transaction's view if there is
-  // one, so a sequence this transaction created is usable at
-  // once; otherwise at the newest committed state.
+  return 0;
+}
+
+/*
+ * The live sequence name, at the transaction's view if there is one,
+ * so a sequence this transaction created is found at once; otherwise
+ * at the newest committed state. 0 and *def; SM_ERR_NOTFOUND or -1.
+ */
+int seq_find(sm1::session_t *s, const char *name, seqdef_t *def) {
   view_t view =
       s->active ? xct_view(s) : view_t{s->db->visible_ts.load(), 0, 0};
-  seqdef_t def;
-  int r = seq_lookup(s, view, name, &def);
+  int r = seq_lookup(s, view, name, def);
   // Fail on a lookup error.
   if (r < 0) {
     return -1;
@@ -224,8 +218,72 @@ int nextseq(sm1::session_t *s, const char *name, uint64_t *out) {
   if (r == 1) {
     return set_error(sm1::SM_ERR_NOTFOUND, "sequence {} does not exist", name);
   }
+  return 0;
+}
+
+int nextseq(sm1::session_t *s, const char *name, uint64_t *out) {
+  // Require somewhere to put the value and a valid name.
+  if (!out) {
+    return set_error(sm1::SM_ERR_INVALID, "sm1_nextseq: out is NULL");
+  }
+  if (check_name(name, sm1::max_seqname, "sequence") != 0) {
+    return -1;
+  }
+  if (may_draw(s) != 0) {
+    return -1;
+  }
+  // The session's temporary sequence, if the name is one's.
+  if (sm1::session_t::temp_seq_t *q = temp_seq(s, name)) {
+    return temp_seq_next(q, out);
+  }
+  // A stopped database persists nothing, leases included.
+  if (xct_check_writable(s->db) != 0) {
+    return -1;
+  }
+  seqdef_t def;
+  if (seq_find(s, name, &def) != 0) {
+    return -1;
+  }
   // Take the next value; a used-up lease is persisted first.
   return db_next_seq(s->db, def.seqid, def.start, def.increment, out);
+}
+
+/* sm1::seqref, minus the out-of-memory guard. */
+int seqref(sm1::session_t *s, const char *name, sm1::seqref_t *ref) {
+  if (check_name(name, sm1::max_seqname, "sequence") != 0 || may_draw(s) != 0) {
+    return -1;
+  }
+  // The session's temporary sequence goes by its name.
+  if (temp_seq(s, name) != nullptr) {
+    *ref = sm1::seqref_t{name, 0, 0, 0};
+    return 0;
+  }
+  seqdef_t def;
+  if (seq_find(s, name, &def) != 0) {
+    return -1;
+  }
+  *ref = sm1::seqref_t{"", def.seqid, def.start, def.increment};
+  return 0;
+}
+
+/* sm1::nextseq of a seqref_t, minus the out-of-memory guard. */
+int nextseq_ref(sm1::session_t *s, const sm1::seqref_t &ref, uint64_t *out) {
+  if (may_draw(s) != 0) {
+    return -1;
+  }
+  if (ref.seqid == 0) {
+    sm1::session_t::temp_seq_t *q = temp_seq(s, ref.name.c_str());
+    if (q == nullptr) {
+      return set_error(sm1::SM_ERR_NOTFOUND, "sequence {} does not exist",
+                       ref.name.c_str());
+    }
+    return temp_seq_next(q, out);
+  }
+  // A stopped database persists nothing, leases included.
+  if (xct_check_writable(s->db) != 0) {
+    return -1;
+  }
+  return db_next_seq(s->db, ref.seqid, ref.start, ref.increment, out);
 }
 
 /* sm1::lastseq, minus the out-of-memory guard. */
@@ -316,6 +374,29 @@ int sm1::nextseq(sm1::session_t *session, std::string_view name_arg,
     return set_error(sm1::SM_ERR_INVALID, "sm1_nextseq: session is NULL");
   }
   return ::nextseq(session, name, &out);
+}
+
+/* Look a sequence up once, to draw from it by the ref; see sm1.h. */
+int sm1::seqref(sm1::session_t *session, std::string_view name_arg,
+                sm1::seqref_t &ref) {
+  // Take the name as a C string, as the engine uses it.
+  std::string name_str;
+  if (copy_name(name_arg, "sequence", name_str) != 0) {
+    return -1;
+  }
+  if (!session) {
+    return set_error(sm1::SM_ERR_INVALID, "sm1_seqref: session is NULL");
+  }
+  return ::seqref(session, name_str.c_str(), &ref);
+}
+
+/* Hand out the next value of the sequence a ref holds; see sm1.h. */
+int sm1::nextseq(sm1::session_t *session, const sm1::seqref_t &ref,
+                 uint64_t &out) {
+  if (!session) {
+    return set_error(sm1::SM_ERR_INVALID, "sm1_nextseq: session is NULL");
+  }
+  return nextseq_ref(session, ref, &out);
 }
 
 /* Report a sequence's last value without drawing one. */

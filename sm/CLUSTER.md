@@ -405,9 +405,17 @@ nothing migrates.
    runs of `_id`. `_id` keeps the 6-byte TID: a row fetched by
    it is two seeks, which taking the key from the scan on the
    row spares the usual UPDATE and DELETE (§6). The `_id`
-   entry's cost to an insert is to be measured; dropping `_id`
-   where a primary key is, the TID then a slot in a statement's
-   table of keys, is the way on if it is too dear.
+   entry's cost to an insert, measured: one `INSERT ... SELECT`
+   of 1M rows took 9.8 s with it and 5.4 s with none, against
+   PostgreSQL's 1.5 s; its write and a check of its key, which
+   no row had, a seek, were 35% of the insert. sm1's
+   `insert_new` leaves the check out, for the `_id` entry and a
+   keyless row, and the `_id` is drawn by a `seqref_t`, with no
+   read of the sequence's name a row: 6.8 s keyed, 3.0 s
+   keyless (5.8 s before), PostgreSQL 1.5 s and 1.1 s. `_id`
+   stays; dropping it where a primary key is, the TID then a
+   slot in a statement's table of keys, is the way on if what
+   is left of its cost is too dear.
 
 ---
 
@@ -439,8 +447,9 @@ Each step leaves every suite passing.
    key from the scan. To do: the backfill and ANALYZE's
    correlation in key order;
    ANALYZE and TABLESAMPLE by key ranges (§10, question 6);
-   the system column renamed `_id` (§10, question 1). Q6 and
-   Q7 measured, and what the `_id` entry costs an insert.
+   the system column renamed `_id` (§10, question 1). What the
+   `_id` entry costs an insert is measured, and cut (§10,
+   question 6).
 3. **digres's DDL.** ADD and DROP PRIMARY KEY, and the
    key-column ALTERs, through the rewrite.
 4. **The documents of §9**, each as its step lands, and this

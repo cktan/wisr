@@ -172,6 +172,44 @@ TEST_CASE("a transaction reads its own inserts, updates, and deletes") {
   }
 }
 
+TEST_CASE("an insert of a key never written is a write like any other") {
+  // Verify sm1::insert_new, which reads nothing, writes as sm1::insert.
+  // 1. A key inserted with insert_new is read back, and inserting
+  //    it again with sm1::insert fails with SM_ERR_DUPKEY.
+  // 2. A key inserted with insert_new after a savepoint is gone
+  //    once the transaction rolls back to it.
+  // 3. Another session does not see the key until the commit,
+  //    then does.
+  for (sm1::xctlevel_t level :
+       {sm1::xctlevel_t::read_committed, sm1::xctlevel_t::repeatable_read,
+        sm1::xctlevel_t::serializable}) {
+    CAPTURE(level);
+    db_fixture_t f;
+    sm1::session_t *s = f.session();
+    uint64_t store = mkstore_committed(s);
+    sm1::session_t *b = f.open_other();
+    REQUIRE(sm1::begin(s, level) == 0);
+
+    REQUIRE(sm1::insert_new(s, store, "k1", "v1") == 0);
+    CHECK(get(s, store, "k1") == "v1");
+    CHECK(sm1::insert(s, store, "k1", "x") == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
+
+    REQUIRE(sm1::savepoint(s) == 1);
+    REQUIRE(sm1::insert_new(s, store, "k2", "v2") == 0);
+    CHECK(get(s, store, "k2") == "v2");
+    REQUIRE(sm1::rollback(s, 1) == 0);
+    CHECK(get(s, store, "k2") == "<none>");
+
+    REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
+    CHECK(get(b, store, "k1") == "<none>");
+    REQUIRE(sm1::commit(s) == 0);
+    CHECK(get(b, store, "k1") == "v1");
+    REQUIRE(sm1::commit(b) == 0);
+    sm1::closedb(b);
+  }
+}
+
 TEST_CASE("commit persists writes across reattach; abort discards them") {
   // Verify durability of commits and the absence of aborted writes.
   // 1. Commit a key "a"; write "b" and update "a", then abort.

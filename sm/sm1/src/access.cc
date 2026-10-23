@@ -938,6 +938,7 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
   bool live;
   uint64_t commit_ts;
   uint32_t own_seq;
+  const bool inserting = op == WRITE_INSERT || op == WRITE_INSERT_NEW;
   for (;;) {
     int waited = 0;
     // Another transaction's explicit lock that a write conflicts
@@ -947,6 +948,22 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
       latch.unlock();
       waited =
           lock_wait(s, sm1::LOCKTYPE_ROW, storeid, key, sm1::SM_LOCKMODE_EX);
+    } else if (op == WRITE_INSERT_NEW) {
+      // A key no version of was ever written has none to check
+      // against, committed or in flight: no read. A debug build
+      // reads, to catch a caller wrong about it.
+#ifndef NDEBUG
+      uint64_t inflight;
+      if (0 != latest_version(s, st, key, &live, &commit_ts, nullptr, &own_seq,
+                              &inflight, nullptr)) {
+        return -1;
+      }
+      assert(!live && commit_ts == 0 && inflight == 0);
+#endif
+      live = false;
+      commit_ts = 0;
+      own_seq = 0;
+      break;
     } else {
       uint64_t inflight;
       // Find the version this write checks against, keeping it in
@@ -972,7 +989,7 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
   }
   // The running statement changed this row already: it cannot
   // see that change, so it must not change the row again (§6.2).
-  if (op != WRITE_INSERT && s->stmt_marked && own_seq > s->stmt_seq) {
+  if (!inserting && s->stmt_marked && own_seq > s->stmt_seq) {
     return set_error(sm1::SM_ERR_SELFMODIFIED,
                      "the row was already changed by this statement");
   }
@@ -981,7 +998,7 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
     // Read committed: an insert goes ahead against the newest
     // version; an update or delete must have read it first.
     if (s->level == sm1::xctlevel_t::read_committed) {
-      if (op != WRITE_INSERT && !lock_has_latest(s, storeid, key)) {
+      if (!inserting && !lock_has_latest(s, storeid, key)) {
         // Keep the key locked until the re-read and the repeated
         // write, so its newest version cannot change in between
         // (§5.4, WRITELOCK.md §3.5). No other holder conflicts:
@@ -1000,11 +1017,11 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
     }
   }
   // An insert needs the key absent.
-  if (op == WRITE_INSERT && live) {
+  if (inserting && live) {
     return set_error(sm1::SM_ERR_DUPKEY, "key already exists");
   }
   // An update or delete needs it present.
-  if (op != WRITE_INSERT && !live) {
+  if (!inserting && !live) {
     return set_error(sm1::SM_ERR_NOTFOUND, "key does not exist");
   }
   // Refuse a transaction's 2^32nd write.
@@ -1122,6 +1139,13 @@ int sm1::trylock(sm1::session_t *session, sm1::locktype_t type,
 int sm1::insert(sm1::session_t *session, uint64_t storeid, std::string_view key,
                 std::string_view data) {
   return write_row(session, WRITE_INSERT, storeid, key.data(), key.size(),
+                   data.data(), data.size());
+}
+
+/* Insert a row under a key never written before; see sm1.h. */
+int sm1::insert_new(sm1::session_t *session, uint64_t storeid,
+                    std::string_view key, std::string_view data) {
+  return write_row(session, WRITE_INSERT_NEW, storeid, key.data(), key.size(),
                    data.data(), data.size());
 }
 

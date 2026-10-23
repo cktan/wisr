@@ -111,18 +111,38 @@ int erase_id_entry(sm2::rel_t *rel, uint64_t id) {
 }
 
 /*
+ * A new _id for a row of rel, from its sequence, looked up once by
+ * its name, a read of sm1's catalog, at the rel's first draw.
+ */
+int next_id(sm2::rel_t *rel, uint64_t &id) {
+  if (!rel->has_id_ref) {
+    if (sm1::seqref(rel->session, rel->id_seq, rel->id_ref) != 0) {
+      return -1;
+    }
+    rel->has_id_ref = true;
+  }
+  return sm1::nextseq(rel->session, rel->id_ref, id);
+}
+
+/*
  * Write tuple, already checked, under key with _id id: the row,
- * then in a keyed rel its _id entry.
+ * then in a keyed rel its _id entry. An _id is drawn from the rel's
+ * sequence, so a key made of one was never written before: a keyless
+ * rel's row and an _id entry go in with no check that the key is
+ * absent (sm1::insert_new); a keyed row is checked, as its key is
+ * its primary key's.
  */
 int write_new(sm2::rel_t *rel, std::string_view key, uint64_t id,
               std::string_view tuple) {
+  if (rel->key.empty()) {
+    return sm1::insert_new(rel->session, rel->storeid, row_key(rel->relid, key),
+                           row_value(id, tuple));
+  }
   if (sm1::insert(rel->session, rel->storeid, row_key(rel->relid, key),
                   row_value(id, tuple)) != 0) {
     return -1;
   }
-  return rel->key.empty()
-             ? 0
-             : sm1::insert(rel->session, rel->storeid, id_entry(id), key);
+  return sm1::insert_new(rel->session, rel->storeid, id_entry(id), key);
 }
 
 /*
@@ -424,7 +444,7 @@ int insert_row(sm2::rel_t *rel, std::span<const sm2::datum_t> datums,
   }
   // Draw the _id from the table's sequence, unless it was.
   uint64_t r = reserved;
-  if (r == 0 && sm1::nextseq(rel->session, rel->id_seq, r) != 0) {
+  if (r == 0 && next_id(rel, r) != 0) {
     return -1;
   }
   if (rel->key.empty()) {
@@ -621,8 +641,7 @@ int rel_insert(rel_t *rel, std::string_view tuple, uint64_t &id,
   std::string k;
   if (!rel->toasts && rel->key.empty()) {
     uint64_t r;
-    if (sm1::nextseq(rel->session, rel->id_seq, r) != 0 ||
-        write_new(rel, id_key(r), r, tuple) != 0) {
+    if (next_id(rel, r) != 0 || write_new(rel, id_key(r), r, tuple) != 0) {
       return -1;
     }
     id = r;
@@ -662,7 +681,7 @@ int rel_insert(rel_t *rel, std::span<const datum_t> datums,
 /* Draw an _id for a row to be inserted later; see sm2.h. */
 int rel_reserve(rel_t *rel, uint64_t &id) {
   // From the table's sequence, as rel_insert draws one.
-  return sm1::nextseq(rel->session, rel->id_seq, id);
+  return next_id(rel, id);
 }
 
 /* Insert a row under an _id it is given; see sm2.h. */
@@ -912,7 +931,7 @@ int rel_load(rel_t *rel, sm1::loader_t *loader, size_t stream, size_t id_stream,
   }
   // Draw the _id from the table's sequence: a load's ascend.
   uint64_t r;
-  if (sm1::nextseq(rel->session, rel->id_seq, r) != 0) {
+  if (next_id(rel, r) != 0) {
     return -1;
   }
   if (rel->key.empty()) {

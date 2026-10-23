@@ -618,6 +618,12 @@ versions undone by `sm1::rollback` are invisible (§6.5), and the
 check falls through to the committed version as if they had
 never been written.
 
+`sm1::insert_new` is `sm1::insert` of a key no version of was
+ever written, which its caller knows, as sm2 knows a key made of
+a row's `_id`: step 3 has nothing to find, and is left out, a
+read and a seek; steps 2 and 7 stay. A debug build makes the
+read, and asserts it finds no version.
+
 Step 5 is an ordinary RocksDB `Put` into the memtable, WAL-logged but
 **not synced** — an uncommitted write does not need durability, only
 the commit record does (§8.2).
@@ -2536,7 +2542,10 @@ lease.
 `sm1::nextseq` reads the definition at the transaction's view
 when there is one, so a sequence a transaction has just created
 is usable before it commits, and at `visible_ts` when there is
-none. The last value is the largest one at or below
+none. That read is a catalog read each call; `sm1::seqref`
+makes it once, into a `seqref_t` that `sm1::nextseq` then draws
+from, good while the sequence is not dropped, which its holder
+sees to: sm2 draws a table's `_id`s so. The last value is the largest one at or below
 `UINT64_MAX`; a further call fails with `SM_ERR_INVALID` rather
 than wrapping onto values already handed out.
 
