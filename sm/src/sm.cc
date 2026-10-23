@@ -2049,6 +2049,16 @@ int sm_tbl_lock(sm_tbl_t *tbl, const sm_row_key_t &key, sm_lockmode_t mode) {
   });
 }
 
+/* The encoding of a row's name. */
+int sm_tbl_row_key(sm_tbl_t *tbl, const sm_row_key_t &key, std::string &out) {
+  return guard(tbl ? tbl->session : nullptr, [&] {
+    sm3::row_key_t k;
+    return 0 != row_key_in("sm_tbl_row_key", tbl, key, k)
+               ? -1
+               : sm3::tbl_row_key(tbl->table, k, out);
+  });
+}
+
 /* Lock the row a key names if it is free now. */
 int sm_tbl_trylock(sm_tbl_t *tbl, const sm_row_key_t &key, sm_lockmode_t mode) {
   return guard(tbl ? tbl->session : nullptr, [&] {

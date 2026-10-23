@@ -14,6 +14,7 @@
  */
 #include "postgres.h"
 
+#include "access/rowkey.h"
 #include "access/sysattr.h"
 #include "access/table.h"
 #include "catalog/partition.h"
@@ -229,24 +230,20 @@ void expand_inherited_rtentry(PlannerInfo *root, RelOptInfo *rel,
     char resname[32];
     List *newvars = NIL;
 
-    /* Add TID junk Var if needed, unless we had it already */
+    /* Add row key junk Vars if needed, unless we had them already */
     if (new_allMarkTypes & ~(1 << ROW_MARK_COPY) &&
         !(old_allMarkTypes & ~(1 << ROW_MARK_COPY))) {
-      /* Need to fetch TID */
-      var = makeVar(oldrc->rti, SelfItemPointerAttributeNumber, TIDOID, -1,
-                    InvalidOid, 0);
-      snprintf(resname, sizeof(resname), "ctid%u", oldrc->rowmarkId);
-      tle = makeTargetEntry((Expr *)var, list_length(root->processed_tlist) + 1,
-                            pstrdup(resname), true);
-      root->processed_tlist = lappend(root->processed_tlist, tle);
-      newvars = lappend(newvars, var);
+      /* Need to fetch the row key */
+      root->processed_tlist = add_row_key_junk(
+          root->processed_tlist, planner_rt_fetch(oldrc->rti, root), oldrc->rti,
+          oldrc->rowmarkId, &newvars);
     }
 
     /* Add whole-row junk Var if needed, unless we had it already */
     if ((new_allMarkTypes & (1 << ROW_MARK_COPY)) &&
         !(old_allMarkTypes & (1 << ROW_MARK_COPY))) {
-      var = makeWholeRowVar(planner_rt_fetch(oldrc->rti, root), oldrc->rti, 0,
-                            false);
+      var =
+          make_rowmark_wholerow(planner_rt_fetch(oldrc->rti, root), oldrc->rti);
       snprintf(resname, sizeof(resname), "wholerow%u", oldrc->rowmarkId);
       tle = makeTargetEntry((Expr *)var, list_length(root->processed_tlist) + 1,
                             pstrdup(resname), true);
@@ -545,6 +542,21 @@ static void expand_single_inheritance_child(
      * the child tables will be locked using the appropriate mode).
      */
     childrc->isParent = (childrte->relkind == RELKIND_PARTITIONED_TABLE);
+
+    /*
+     * A child locked through its parent is named by the parent's row key
+     * junk, translated by column name (add_row_key_junk()): its key must
+     * be on those columns.
+     */
+    if (childrc->markType != ROW_MARK_COPY &&
+        childrte->relkind != RELKIND_FOREIGN_TABLE &&
+        !RowKeySameColumns(parentrel, childrel))
+      ereport(ERROR,
+              (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+               errmsg("cannot lock rows of table \"%s\" through table \"%s\"",
+                      RelationGetRelationName(childrel),
+                      RelationGetRelationName(parentrel)),
+               errdetail("Its rows are named by other columns.")));
 
     /* Include child's rowmark type in top parent's allMarkTypes */
     top_parentrc->allMarkTypes |= childrc->allMarkTypes;

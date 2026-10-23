@@ -165,12 +165,12 @@ void simple_table_tuple_insert(Relation rel, TupleTableSlot *slot) {
  * on the relation associated with the tuple).  Any failure is reported
  * via ereport().
  */
-void simple_table_tuple_delete(Relation rel, ItemPointer tid,
+void simple_table_tuple_delete(Relation rel, const struct RowKey *key,
                                Snapshot snapshot) {
   TM_Result result;
   TM_FailureData tmfd;
 
-  result = table_tuple_delete(rel, tid, snapshot, InvalidSnapshot,
+  result = table_tuple_delete(rel, key, snapshot, InvalidSnapshot,
                               true /* wait for commit */, &tmfd,
                               false /* changingPart */);
 
@@ -206,14 +206,14 @@ void simple_table_tuple_delete(Relation rel, ItemPointer tid,
  * on the relation associated with the tuple).  Any failure is reported
  * via ereport().
  */
-void simple_table_tuple_update(Relation rel, ItemPointer otid,
+void simple_table_tuple_update(Relation rel, const struct RowKey *key,
                                TupleTableSlot *slot, Snapshot snapshot,
                                TU_UpdateIndexes *update_indexes) {
   TM_Result result;
   TM_FailureData tmfd;
   LockTupleMode lockmode;
 
-  result = table_tuple_update(rel, otid, slot, snapshot, InvalidSnapshot,
+  result = table_tuple_update(rel, key, slot, snapshot, InvalidSnapshot,
                               true /* wait for commit */, &tmfd, &lockmode,
                               update_indexes);
 

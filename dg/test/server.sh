@@ -3344,14 +3344,13 @@ grep -q 'does not exist, skipping' "$work/drop2.out" || fail "drop if exists"
 #    updates none.  And a DELETE ... RETURNING gives the first's row.
 # 7. The same at REPEATABLE READ: the second fails, and can be retried.
 # 8. The second's UPDATE joins tj: the re-check uses the tj row it joined,
-#    not a newer one, as PostgreSQL's EvalPlanQual fetches it
-#    (ROW_MARK_REFERENCE).  Joined on b, which the first changed, it no
+#    not a newer one, as PostgreSQL's EvalPlanQual fetches it again
+#    (ROW_MARK_REFERENCE), and digres keeps a copy of (ROW_MARK_COPY).  Joined on b, which the first changed, it no
 #    longer matches, and updates none; joined on a, it still does, and
 #    updates the first's row, though the first also moved the tj row it
 #    joined out of 'EU'.
-# 9. Joined to tw1 itself, the copy's re-check reads the first's row too,
-#    where PostgreSQL reads the version it joined, by its ctid: a known
-#    incompatibility (README.md), so the second updates none.
+# 9. Joined to tw1 itself, the copy's re-check reads the version it joined,
+#    as PostgreSQL's does, so the second updates the row.
 local_psql -c 'create table tw1 (a int4 primary key, b int4 not null)' \
   -c 'insert into tw1 values (1, 10), (2, 20), (3, 30), (4, 40)' \
   > "$work/write.out" 2>&1
@@ -3438,8 +3437,8 @@ local_psql -c 'insert into tw1 values (3, 30)' \
   and tj.region = 'EU' returning tw1.b")" = "2031 UPDATE 1 " ] ||
   fail "a join's re-check that still holds, on the row it joined"
 [ "$(after_update -c 'update tw1 set b = 0 from tw1 t2 where t2.a = tw1.a
-  and tw1.a = 3 and t2.b < 3000')" = "UPDATE 0 " ] ||
-  fail "a self-join's re-check reads the newest row"
+  and tw1.a = 3 and t2.b < 3000')" = "UPDATE 1 " ] ||
+  fail "a self-join's re-check reads the row it joined"
 local_psql -c 'drop table tj' > /dev/null 2>&1
 local_psql -c 'drop table tw1' > /dev/null 2>&1
 

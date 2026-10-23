@@ -34,6 +34,7 @@ extern thread_local /*LOCAL*/ PGDLLIMPORT char *default_table_access_method;
 
 struct BulkInsertStateData;
 struct IndexInfo;
+struct RowKey;
 struct SampleScanState;
 struct VacuumParams;
 struct ValidateIndexState;
@@ -428,7 +429,7 @@ typedef struct TableAmRoutine
 	 * test, returns true, false otherwise.
 	 */
 	bool		(*tuple_fetch_row_version) (Relation rel,
-											ItemPointer tid,
+											const struct RowKey *key,
 											Snapshot snapshot,
 											TupleTableSlot *slot);
 
@@ -487,7 +488,7 @@ typedef struct TableAmRoutine
 
 	/* see table_tuple_delete() for reference about parameters */
 	TM_Result	(*tuple_delete) (Relation rel,
-								 ItemPointer tid,
+								 const struct RowKey *key,
 								 Snapshot snapshot,
 								 Snapshot crosscheck,
 								 bool wait,
@@ -496,7 +497,7 @@ typedef struct TableAmRoutine
 
 	/* see table_tuple_update() for reference about parameters */
 	TM_Result	(*tuple_update) (Relation rel,
-								 ItemPointer otid,
+								 const struct RowKey *key,
 								 TupleTableSlot *slot,
 								 Snapshot snapshot,
 								 Snapshot crosscheck,
@@ -507,7 +508,7 @@ typedef struct TableAmRoutine
 
 	/* see table_tuple_lock() for reference about parameters */
 	TM_Result	(*tuple_lock) (Relation rel,
-							   ItemPointer tid,
+							   const struct RowKey *key,
 							   Snapshot snapshot,
 							   TupleTableSlot *slot,
 							   LockTupleMode mode,
@@ -1059,11 +1060,11 @@ table_index_fetch_tuple(struct IndexFetchTableData *scan,
  */
 static inline bool
 table_tuple_fetch_row_version(Relation rel,
-							  ItemPointer tid,
+							  const struct RowKey *key,
 							  Snapshot snapshot,
 							  TupleTableSlot *slot)
 {
-	return rel->rd_tableam->tuple_fetch_row_version(rel, tid, snapshot, slot);
+	return rel->rd_tableam->tuple_fetch_row_version(rel, key, snapshot, slot);
 }
 
 /*
@@ -1217,10 +1218,10 @@ table_multi_insert(Relation rel, TupleTableSlot **slots, int nslots,
  * TM_FailureData for additional info.
  */
 static inline TM_Result
-table_tuple_delete(Relation rel, ItemPointer tid, Snapshot snapshot, Snapshot crosscheck, bool wait,
+table_tuple_delete(Relation rel, const struct RowKey *key, Snapshot snapshot, Snapshot crosscheck, bool wait,
 				   TM_FailureData *tmfd, bool changingPart)
 {
-	return rel->rd_tableam->tuple_delete(rel, tid, snapshot, crosscheck,
+	return rel->rd_tableam->tuple_delete(rel, key, snapshot, crosscheck,
 										 wait, tmfd, changingPart);
 }
 
@@ -1257,12 +1258,12 @@ table_tuple_delete(Relation rel, ItemPointer tid, Snapshot snapshot, Snapshot cr
  * for additional info.
  */
 static inline TM_Result
-table_tuple_update(Relation rel, ItemPointer otid, TupleTableSlot *slot,
+table_tuple_update(Relation rel, const struct RowKey *key, TupleTableSlot *slot,
 				   Snapshot snapshot, Snapshot crosscheck,
 				   bool wait, TM_FailureData *tmfd, LockTupleMode *lockmode,
 				   TU_UpdateIndexes *update_indexes)
 {
-	return rel->rd_tableam->tuple_update(rel, otid, slot,
+	return rel->rd_tableam->tuple_update(rel, key, slot,
 										 snapshot, crosscheck,
 										 wait, tmfd,
 										 lockmode, update_indexes);
@@ -1302,12 +1303,12 @@ table_tuple_update(Relation rel, ItemPointer otid, TupleTableSlot *slot,
  * additional info.
  */
 static inline TM_Result
-table_tuple_lock(Relation rel, ItemPointer tid, Snapshot snapshot,
+table_tuple_lock(Relation rel, const struct RowKey *key, Snapshot snapshot,
 				 TupleTableSlot *slot, LockTupleMode mode,
 				 LockWaitPolicy wait_policy, uint8 flags,
 				 TM_FailureData *tmfd)
 {
-	return rel->rd_tableam->tuple_lock(rel, tid, snapshot, slot,
+	return rel->rd_tableam->tuple_lock(rel, key, snapshot, slot,
 									   mode, wait_policy,
 									   flags, tmfd);
 }
@@ -1645,9 +1646,9 @@ table_scan_sample_next_tuple(TableScanDesc scan,
  */
 
 extern void simple_table_tuple_insert(Relation rel, TupleTableSlot *slot);
-extern void simple_table_tuple_delete(Relation rel, ItemPointer tid,
+extern void simple_table_tuple_delete(Relation rel, const struct RowKey *key,
 									  Snapshot snapshot);
-extern void simple_table_tuple_update(Relation rel, ItemPointer otid,
+extern void simple_table_tuple_update(Relation rel, const struct RowKey *key,
 									  TupleTableSlot *slot, Snapshot snapshot,
 									  TU_UpdateIndexes *update_indexes);
 

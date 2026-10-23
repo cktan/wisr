@@ -14,6 +14,7 @@
 
 #include "access/genam.h"
 #include "access/relscan.h"
+#include "access/rowkey.h"
 #include "access/smstore.h"
 #include "access/sysattr.h"
 #include "catalog/pg_type.h"
@@ -32,7 +33,8 @@ static ScanState *search_plan_tree(PlanState *node, Oid table_oid,
  *
  * Given a CURRENT OF expression and the OID of a table, determine which row
  * of the table is currently being scanned by the cursor named by CURRENT OF,
- * and return the row's TID into *current_tid.
+ * and return the row's key into *current_key (access/rowkey.h), its values
+ * the cursor's, good while it is on the row.
  *
  * Returns true if a row was identified.  Returns false if the cursor is valid
  * for the table but is not currently scanning a row of the table (this is a
@@ -40,7 +42,7 @@ static ScanState *search_plan_tree(PlanState *node, Oid table_oid,
  * valid updatable scan of the specified table.
  */
 bool execCurrentOf(CurrentOfExpr *cexpr, ExprContext *econtext, Oid table_oid,
-                   ItemPointer current_tid) {
+                   RowKey *current_key) {
   char *cursor_name;
   char *table_name;
   Portal portal;
@@ -90,7 +92,7 @@ bool execCurrentOf(CurrentOfExpr *cexpr, ExprContext *econtext, Oid table_oid,
 
     /*
      * Here, the query must have exactly one FOR UPDATE/SHARE reference to
-     * the target table, and we dig the ctid info out of that.
+     * the target table, and we dig the row's key out of that.
      */
     erm = NULL;
     for (i = 0; i < queryDesc->estate->es_range_table_size; i++) {
@@ -124,9 +126,9 @@ bool execCurrentOf(CurrentOfExpr *cexpr, ExprContext *econtext, Oid table_oid,
                       errmsg("cursor \"%s\" is not positioned on a row",
                              cursor_name)));
 
-    /* Return the currently scanned TID, if there is one */
-    if (ItemPointerIsValid(&(erm->curCtid))) {
-      *current_tid = erm->curCtid;
+    /* Return the currently scanned row's key, if there is one */
+    if (erm->curKey != NULL) {
+      *current_key = *erm->curKey;
       return true;
     }
 
@@ -176,63 +178,50 @@ bool execCurrentOf(CurrentOfExpr *cexpr, ExprContext *econtext, Oid table_oid,
       return false;
 
     /*
-     * Extract TID of the scan's current row.  The mechanism for this is
-     * in principle scan-type-dependent, but for most scan types, we can
-     * just dig the TID out of the physical scan tuple.
+     * The key of the scan's current row, from its columns: a table's row in
+     * a scan of the table or one of its indexes; in an index-only scan, its
+     * index's columns, which are the key's when the index is the table's
+     * primary key, or its rowno in a table without one.  As an extra
+     * cross-check, verify tableoid in the current tuple.
      */
-    /*
-     * An index-only scan of a table in sm has no scan descriptor: sm gives
-     * its slot the row's tid and table, as a scan of the table does.
-     */
-    if (IsA(scanstate, IndexOnlyScanState) &&
-        !RelationIsSm(scanstate->ss_currentRelation)) {
-      /*
-       * For IndexOnlyScan, the tuple stored in ss_ScanTupleSlot may be
-       * a virtual tuple that does not have the ctid column, so we have
-       * to get the TID from xs_heaptid.
-       */
-      IndexScanDesc scan = ((IndexOnlyScanState *)scanstate)->ioss_ScanDesc;
-
-      *current_tid = scan->xs_heaptid;
-    } else {
-      /*
-       * Default case: try to fetch TID from the scan node's current
-       * tuple.  As an extra cross-check, verify tableoid in the current
-       * tuple.  If the scan hasn't provided a physical tuple, we have
-       * to fail.
-       */
-      Datum ldatum;
-      bool lisnull;
-      ItemPointer tuple_tid;
-
+    Relation rel = scanstate->ss_currentRelation;
+    TupleTableSlot *slot = scanstate->ss_ScanTupleSlot;
 #ifdef USE_ASSERT_CHECKING
-      ldatum = slot_getsysattr(scanstate->ss_ScanTupleSlot,
-                               TableOidAttributeNumber, &lisnull);
-      if (lisnull)
-        ereport(
-            ERROR,
-            (errcode(ERRCODE_INVALID_CURSOR_STATE),
-             errmsg(
-                 "cursor \"%s\" is not a simply updatable scan of table \"%s\"",
-                 cursor_name, table_name)));
-      Assert(DatumGetObjectId(ldatum) == table_oid);
+    Datum ldatum;
+    bool lisnull;
+
+    ldatum = slot_getsysattr(slot, TableOidAttributeNumber, &lisnull);
+    if (lisnull)
+      ereport(
+          ERROR,
+          (errcode(ERRCODE_INVALID_CURSOR_STATE),
+           errmsg(
+               "cursor \"%s\" is not a simply updatable scan of table \"%s\"",
+               cursor_name, table_name)));
+    Assert(DatumGetObjectId(ldatum) == table_oid);
 #endif
+    if (IsA(scanstate, IndexOnlyScanState)) {
+      AttrNumber atts[INDEX_MAX_KEYS];
+      Relation index = ((IndexOnlyScanState *)scanstate)->ioss_RelationDesc;
+      int n = RowKeyAttnums(rel, atts);
 
-      ldatum = slot_getsysattr(scanstate->ss_ScanTupleSlot,
-                               SelfItemPointerAttributeNumber, &lisnull);
-      if (lisnull)
+      if (RownoAttributeNumber == atts[0])
+        RowKeyFromSlot(rel, slot, current_key);
+      else if (RelationGetRelid(index) ==
+               RelationGetPrimaryKeyIndex(rel, true)) {
+        current_key->nkeys = n;
+        for (int k = 0; k < n; k++)
+          current_key->values[k] =
+              slot_getattr(slot, k + 1, &current_key->isnull[k]);
+      } else
         ereport(
             ERROR,
             (errcode(ERRCODE_INVALID_CURSOR_STATE),
              errmsg(
                  "cursor \"%s\" is not a simply updatable scan of table \"%s\"",
                  cursor_name, table_name)));
-      tuple_tid = (ItemPointer)DatumGetPointer(ldatum);
-
-      *current_tid = *tuple_tid;
-    }
-
-    Assert(ItemPointerIsValid(current_tid));
+    } else
+      RowKeyFromSlot(rel, slot, current_key);
 
     return true;
   }

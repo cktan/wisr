@@ -15,7 +15,10 @@
 #include "postgres.h"
 
 #include "access/htup_details.h"
+#include "access/rowkey.h"
+#include "access/sysattr.h"
 #include "access/table.h"
+#include "catalog/pg_type_d.h"
 #include "foreign/fdwapi.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
@@ -816,15 +819,30 @@ void add_row_identity_columns(PlannerInfo *root, Index rtindex,
   Assert(commandType == CMD_UPDATE || commandType == CMD_DELETE ||
          commandType == CMD_MERGE);
 
-  if (relkind == RELKIND_RELATION || relkind == RELKIND_MATVIEW ||
-      relkind == RELKIND_PARTITIONED_TABLE) {
+  if (relkind == RELKIND_PARTITIONED_TABLE) {
+    /* A table in sm is never partitioned: no row of it is reached. */
+  } else if (relkind == RELKIND_RELATION || relkind == RELKIND_MATVIEW) {
     /*
-     * Emit CTID so that executor can find the row to merge, update or
-     * delete.
+     * Emit the row key's columns so that executor can find the row to
+     * merge, update or delete (access/rowkey.h).
      */
-    var = makeVar(rtindex, SelfItemPointerAttributeNumber, TIDOID, -1,
-                  InvalidOid, 0);
-    add_row_identity_var(root, var, rtindex, "ctid");
+    AttrNumber atts[INDEX_MAX_KEYS];
+    int n = RowKeyAttnums(target_relation, atts);
+
+    for (int i = 0; i < n; i++) {
+      if (RownoAttributeNumber == atts[i])
+        var =
+            makeVar(rtindex, RownoAttributeNumber, INT8OID, -1, InvalidOid, 0);
+      else {
+        Form_pg_attribute att =
+            TupleDescAttr(RelationGetDescr(target_relation), atts[i] - 1);
+
+        var = makeVar(rtindex, atts[i], att->atttypid, att->atttypmod,
+                      att->attcollation, 0);
+      }
+      add_row_identity_var(root, var, rtindex,
+                           RowKeyColumnName(target_relation, i, atts[i]));
+    }
   } else if (relkind == RELKIND_FOREIGN_TABLE) {
     /*
      * Let the foreign table's FDW add whatever junk TLEs it wants.

@@ -83,7 +83,7 @@ static bool trigger_tuples_stored(Relation rel) {
   return rel->rd_rel->relkind == RELKIND_FOREIGN_TABLE || RelationIsSm(rel);
 }
 static bool GetTupleForTrigger(EState *estate, EPQState *epqstate,
-                               ResultRelInfo *relinfo, ItemPointer tid,
+                               ResultRelInfo *relinfo, struct RowKey *key,
                                LockTupleMode lockmode, TupleTableSlot *oldslot,
                                bool do_epq_recheck, TupleTableSlot **epqslot,
                                TM_Result *tmresultp, TM_FailureData *tmfdp);
@@ -2311,7 +2311,7 @@ void ExecASDeleteTriggers(EState *estate, ResultRelInfo *relinfo,
  * back the concurrently updated tuple if any.
  */
 bool ExecBRDeleteTriggers(EState *estate, EPQState *epqstate,
-                          ResultRelInfo *relinfo, ItemPointer tupleid,
+                          ResultRelInfo *relinfo, struct RowKey *rowkey,
                           HeapTuple fdw_trigtuple, TupleTableSlot **epqslot,
                           TM_Result *tmresult, TM_FailureData *tmfd,
                           bool is_merge_delete) {
@@ -2323,7 +2323,7 @@ bool ExecBRDeleteTriggers(EState *estate, EPQState *epqstate,
   bool should_free = false;
   int i;
 
-  Assert(HeapTupleIsValid(fdw_trigtuple) ^ ItemPointerIsValid(tupleid));
+  Assert(HeapTupleIsValid(fdw_trigtuple) ^ (rowkey != NULL));
   if (fdw_trigtuple == NULL) {
     TupleTableSlot *epqslot_candidate = NULL;
 
@@ -2335,7 +2335,7 @@ bool ExecBRDeleteTriggers(EState *estate, EPQState *epqstate,
      * additional rechecking, and might end up executing a different
      * action entirely).
      */
-    if (!GetTupleForTrigger(estate, epqstate, relinfo, tupleid,
+    if (!GetTupleForTrigger(estate, epqstate, relinfo, rowkey,
                             LockTupleExclusive, slot, !is_merge_delete,
                             &epqslot_candidate, tmresult, tmfd))
       return false;
@@ -2395,7 +2395,7 @@ bool ExecBRDeleteTriggers(EState *estate, EPQState *epqstate,
  * as part of a cross-partition update.
  */
 void ExecARDeleteTriggers(EState *estate, ResultRelInfo *relinfo,
-                          ItemPointer tupleid, HeapTuple fdw_trigtuple,
+                          struct RowKey *rowkey, HeapTuple fdw_trigtuple,
                           TransitionCaptureState *transition_capture,
                           bool is_crosspart_update) {
   TriggerDesc *trigdesc = relinfo->ri_TrigDesc;
@@ -2413,9 +2413,9 @@ void ExecARDeleteTriggers(EState *estate, ResultRelInfo *relinfo,
       (transition_capture && transition_capture->tcs_delete_old_table)) {
     TupleTableSlot *slot = ExecGetTriggerOldSlot(estate, relinfo);
 
-    Assert(HeapTupleIsValid(fdw_trigtuple) ^ ItemPointerIsValid(tupleid));
+    Assert(HeapTupleIsValid(fdw_trigtuple) ^ (rowkey != NULL));
     if (fdw_trigtuple == NULL)
-      GetTupleForTrigger(estate, NULL, relinfo, tupleid, LockTupleExclusive,
+      GetTupleForTrigger(estate, NULL, relinfo, rowkey, LockTupleExclusive,
                          slot, false, NULL, NULL, NULL);
     else
       ExecForceStoreHeapTuple(fdw_trigtuple, slot, false);
@@ -2529,7 +2529,7 @@ void ExecASUpdateTriggers(EState *estate, ResultRelInfo *relinfo,
 }
 
 bool ExecBRUpdateTriggers(EState *estate, EPQState *epqstate,
-                          ResultRelInfo *relinfo, ItemPointer tupleid,
+                          ResultRelInfo *relinfo, struct RowKey *rowkey,
                           HeapTuple fdw_trigtuple, TupleTableSlot *newslot,
                           TM_Result *tmresult, TM_FailureData *tmfd,
                           bool is_merge_update) {
@@ -2547,7 +2547,7 @@ bool ExecBRUpdateTriggers(EState *estate, EPQState *epqstate,
   /* Determine lock mode to use */
   lockmode = ExecUpdateLockMode(estate, relinfo);
 
-  Assert(HeapTupleIsValid(fdw_trigtuple) ^ ItemPointerIsValid(tupleid));
+  Assert(HeapTupleIsValid(fdw_trigtuple) ^ (rowkey != NULL));
   if (fdw_trigtuple == NULL) {
     TupleTableSlot *epqslot_candidate = NULL;
 
@@ -2559,7 +2559,7 @@ bool ExecBRUpdateTriggers(EState *estate, EPQState *epqstate,
      * additional rechecking, and might end up executing a different
      * action entirely).
      */
-    if (!GetTupleForTrigger(estate, epqstate, relinfo, tupleid, lockmode,
+    if (!GetTupleForTrigger(estate, epqstate, relinfo, rowkey, lockmode,
                             oldslot, !is_merge_update, &epqslot_candidate,
                             tmresult, tmfd))
       return false; /* cancel the update action */
@@ -2678,7 +2678,7 @@ bool ExecBRUpdateTriggers(EState *estate, EPQState *epqstate,
  * Note: 'src_partinfo' and 'dst_partinfo', when non-NULL, refer to the source
  * and destination partitions, respectively, of a cross-partition update of
  * the root partitioned table mentioned in the query, given by 'relinfo'.
- * 'tupleid' in that case refers to the ctid of the "old" tuple in the source
+ * 'rowkey' in that case names the "old" tuple in the source
  * partition, and 'newslot' contains the "new" tuple in the destination
  * partition.  This interface allows to support the requirements of
  * ExecCrossPartitionUpdateForeignKey(); is_crosspart_update must be true in
@@ -2686,7 +2686,7 @@ bool ExecBRUpdateTriggers(EState *estate, EPQState *epqstate,
  */
 void ExecARUpdateTriggers(EState *estate, ResultRelInfo *relinfo,
                           ResultRelInfo *src_partinfo,
-                          ResultRelInfo *dst_partinfo, ItemPointer tupleid,
+                          ResultRelInfo *dst_partinfo, struct RowKey *rowkey,
                           HeapTuple fdw_trigtuple, TupleTableSlot *newslot,
                           List *recheckIndexes,
                           TransitionCaptureState *transition_capture,
@@ -2721,8 +2721,8 @@ void ExecARUpdateTriggers(EState *estate, ResultRelInfo *relinfo,
     tupsrc = src_partinfo ? src_partinfo : relinfo;
     oldslot = ExecGetTriggerOldSlot(estate, tupsrc);
 
-    if (fdw_trigtuple == NULL && ItemPointerIsValid(tupleid))
-      GetTupleForTrigger(estate, NULL, tupsrc, tupleid, LockTupleExclusive,
+    if (fdw_trigtuple == NULL && (rowkey != NULL))
+      GetTupleForTrigger(estate, NULL, tupsrc, rowkey, LockTupleExclusive,
                          oldslot, false, NULL, NULL, NULL);
     else if (fdw_trigtuple != NULL)
       ExecForceStoreHeapTuple(fdw_trigtuple, oldslot, false);
@@ -2843,7 +2843,7 @@ void ExecASTruncateTriggers(EState *estate, ResultRelInfo *relinfo) {
  * Fetch tuple into "oldslot", dealing with locking and EPQ if necessary
  */
 static bool GetTupleForTrigger(EState *estate, EPQState *epqstate,
-                               ResultRelInfo *relinfo, ItemPointer tid,
+                               ResultRelInfo *relinfo, struct RowKey *key,
                                LockTupleMode lockmode, TupleTableSlot *oldslot,
                                bool do_epq_recheck, TupleTableSlot **epqslot,
                                TM_Result *tmresultp, TM_FailureData *tmfdp) {
@@ -2864,7 +2864,7 @@ static bool GetTupleForTrigger(EState *estate, EPQState *epqstate,
      */
     if (!IsolationUsesXactSnapshot())
       lockflags |= TUPLE_LOCK_FLAG_FIND_LAST_VERSION;
-    test = table_tuple_lock(relation, tid, estate->es_snapshot, oldslot,
+    test = table_tuple_lock(relation, key, estate->es_snapshot, oldslot,
                             lockmode, LockWaitBlock, lockflags, &tmfd);
 
     /* Let the caller know about the status of this operation */
@@ -2946,7 +2946,7 @@ static bool GetTupleForTrigger(EState *estate, EPQState *epqstate,
      * We expect the tuple to be present, thus very simple error handling
      * suffices.
      */
-    if (!table_tuple_fetch_row_version(relation, tid, SnapshotAny, oldslot))
+    if (!table_tuple_fetch_row_version(relation, key, SnapshotAny, oldslot))
       elog(ERROR, "failed to fetch tuple for trigger");
   }
 
@@ -3824,9 +3824,11 @@ static void AfterTriggerExecute(
     if (ItemPointerIsValid(&(event->ate_ctid1))) {
       TupleTableSlot *src_slot = ExecGetTriggerOldSlot(estate, src_relInfo);
 
-      if (!table_tuple_fetch_row_version(src_rel, &(event->ate_ctid1),
-                                         SnapshotAny, src_slot))
-        elog(ERROR, "failed to fetch tuple1 for AFTER trigger");
+      /*
+       * No row is named by ctid: a table in sm's rows reach its triggers
+       * from a tuple store (trigger_tuples_stored()).
+       */
+      elog(ERROR, "failed to fetch tuple1 for AFTER trigger");
 
       /*
        * Store the tuple fetched from the source partition into the
@@ -3855,9 +3857,8 @@ static void AfterTriggerExecute(
         ItemPointerIsValid(&(event->ate_ctid2))) {
       TupleTableSlot *dst_slot = ExecGetTriggerNewSlot(estate, dst_relInfo);
 
-      if (!table_tuple_fetch_row_version(dst_rel, &(event->ate_ctid2),
-                                         SnapshotAny, dst_slot))
-        elog(ERROR, "failed to fetch tuple2 for AFTER trigger");
+      /* As tuple1 above. */
+      elog(ERROR, "failed to fetch tuple2 for AFTER trigger");
 
       /*
        * Store the tuple fetched from the destination partition into

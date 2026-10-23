@@ -22,6 +22,7 @@
  */
 #include "postgres.h"
 
+#include "access/rowkey.h"
 #include "access/smstore.h"
 #include "access/sysattr.h"
 #include "access/tableam.h"
@@ -62,9 +63,9 @@ typedef struct TidExpr {
 
 static void TidExprListCreate(TidScanState *tidstate);
 static void TidListEval(TidScanState *tidstate);
-static int itemptr_comparator(const void *a, const void *b);
+static int rowno_comparator(const void *a, const void *b);
 static TupleTableSlot *TidNext(TidScanState *node);
-static bool RownoTid(Datum value, Oid typid, ItemPointer tid);
+static bool RownoKey(Datum value, Oid typid, RowKey *key);
 
 /*
  * Extract the qual subexpressions that yield TIDs to search for,
@@ -129,17 +130,18 @@ static void TidExprListCreate(TidScanState *tidstate) {
 }
 
 /*
- * Compute the list of TIDs to be visited, by evaluating the expressions
- * for them.
+ * Compute the list of rows to be visited, by evaluating the expressions for
+ * them: each a row's key (access/rowkey.h), a keyless table's rowno, or the
+ * row a cursor is on, copied.
  *
  * (The result is actually an array, not a list.)
  */
 static void TidListEval(TidScanState *tidstate) {
   ExprContext *econtext = tidstate->ss.ps.ps_ExprContext;
-  TableScanDesc scan;
-  ItemPointerData *tidList;
-  int numAllocTids;
-  int numTids;
+  Relation rel = tidstate->ss.ss_currentRelation;
+  RowKey *keyList;
+  int numAllocKeys;
+  int numKeys;
   ListCell *l;
 
   /*
@@ -148,54 +150,34 @@ static void TidListEval(TidScanState *tidstate) {
    * the node might never get executed.
    */
   if (tidstate->ss.ss_currentScanDesc == NULL)
-    tidstate->ss.ss_currentScanDesc = table_beginscan_tid(
-        tidstate->ss.ss_currentRelation, tidstate->ss.ps.state->es_snapshot);
-  scan = tidstate->ss.ss_currentScanDesc;
+    tidstate->ss.ss_currentScanDesc =
+        table_beginscan_tid(rel, tidstate->ss.ps.state->es_snapshot);
 
   /*
    * We initialize the array with enough slots for the case that all quals
    * are simple OpExprs or CurrentOfExprs.  If there are any
    * ScalarArrayOpExprs, we may have to enlarge the array.
    */
-  numAllocTids = list_length(tidstate->tss_tidexprs);
-  tidList = (ItemPointerData *)palloc(numAllocTids * sizeof(ItemPointerData));
-  numTids = 0;
+  numAllocKeys = list_length(tidstate->tss_tidexprs);
+  keyList = (RowKey *)palloc(numAllocKeys * sizeof(RowKey));
+  numKeys = 0;
 
   foreach (l, tidstate->tss_tidexprs) {
     TidExpr *tidexpr = (TidExpr *)lfirst(l);
-    ItemPointer itemptr;
-    ItemPointerData rownotid;
     bool isNull;
 
+    if (tidexpr->exprstate && !OidIsValid(tidexpr->rownotype))
+      elog(ERROR, "a TID names no row of a table in sm");
     if (tidexpr->exprstate && !tidexpr->isarray) {
       Datum value =
           ExecEvalExprSwitchContext(tidexpr->exprstate, econtext, &isNull);
 
-      if (isNull)
+      if (isNull || !RownoKey(value, tidexpr->rownotype, &keyList[numKeys]))
         continue;
-      if (!OidIsValid(tidexpr->rownotype))
-        itemptr = (ItemPointer)DatumGetPointer(value);
-      else if (RownoTid(value, tidexpr->rownotype, &rownotid))
-        itemptr = &rownotid;
-      else
-        continue;
-
-      /*
-       * We silently discard any TIDs that the AM considers invalid
-       * (E.g. for heap, they could be out of range at the time of scan
-       * start.  Since we hold at least AccessShareLock on the table, it
-       * won't be possible for someone to truncate away the blocks we
-       * intend to visit.).
-       */
-      if (!table_tuple_tid_valid(scan, itemptr))
-        continue;
-
-      if (numTids >= numAllocTids) {
-        numAllocTids *= 2;
-        tidList = (ItemPointerData *)repalloc(
-            tidList, numAllocTids * sizeof(ItemPointerData));
+      if (++numKeys >= numAllocKeys) {
+        numAllocKeys *= 2;
+        keyList = (RowKey *)repalloc(keyList, numAllocKeys * sizeof(RowKey));
       }
-      tidList[numTids++] = *itemptr;
     } else if (tidexpr->exprstate && tidexpr->isarray) {
       Datum arraydatum;
       ArrayType *itemarray;
@@ -203,89 +185,69 @@ static void TidListEval(TidScanState *tidstate) {
       bool *ipnulls;
       int ndatums;
       int i;
+      int16 typlen;
+      bool typbyval;
+      char typalign;
 
       arraydatum =
           ExecEvalExprSwitchContext(tidexpr->exprstate, econtext, &isNull);
       if (isNull)
         continue;
       itemarray = DatumGetArrayTypeP(arraydatum);
-      if (OidIsValid(tidexpr->rownotype)) {
-        int16 typlen;
-        bool typbyval;
-        char typalign;
-
-        get_typlenbyvalalign(tidexpr->rownotype, &typlen, &typbyval,
-                             &typalign);
-        deconstruct_array(itemarray, tidexpr->rownotype, typlen, typbyval,
-                          typalign, &ipdatums, &ipnulls, &ndatums);
-      } else
-        deconstruct_array_builtin(itemarray, TIDOID, &ipdatums, &ipnulls,
-                                  &ndatums);
-      if (numTids + ndatums > numAllocTids) {
-        numAllocTids = numTids + ndatums;
-        tidList = (ItemPointerData *)repalloc(
-            tidList, numAllocTids * sizeof(ItemPointerData));
+      get_typlenbyvalalign(tidexpr->rownotype, &typlen, &typbyval, &typalign);
+      deconstruct_array(itemarray, tidexpr->rownotype, typlen, typbyval,
+                        typalign, &ipdatums, &ipnulls, &ndatums);
+      if (numKeys + ndatums >= numAllocKeys) {
+        numAllocKeys = numKeys + ndatums + 1;
+        keyList = (RowKey *)repalloc(keyList, numAllocKeys * sizeof(RowKey));
       }
       for (i = 0; i < ndatums; i++) {
-        if (ipnulls[i])
-          continue;
-
-        if (!OidIsValid(tidexpr->rownotype))
-          itemptr = (ItemPointer)DatumGetPointer(ipdatums[i]);
-        else if (RownoTid(ipdatums[i], tidexpr->rownotype, &rownotid))
-          itemptr = &rownotid;
-        else
-          continue;
-
-        if (!table_tuple_tid_valid(scan, itemptr))
-          continue;
-
-        tidList[numTids++] = *itemptr;
+        if (!ipnulls[i] &&
+            RownoKey(ipdatums[i], tidexpr->rownotype, &keyList[numKeys]))
+          numKeys++;
       }
       pfree(ipdatums);
       pfree(ipnulls);
     } else {
-      ItemPointerData cursor_tid;
+      RowKey cursor_key;
 
       Assert(tidexpr->cexpr);
-      if (execCurrentOf(tidexpr->cexpr, econtext,
-                        RelationGetRelid(tidstate->ss.ss_currentRelation),
-                        &cursor_tid)) {
-        if (numTids >= numAllocTids) {
-          numAllocTids *= 2;
-          tidList = (ItemPointerData *)repalloc(
-              tidList, numAllocTids * sizeof(ItemPointerData));
+      if (execCurrentOf(tidexpr->cexpr, econtext, RelationGetRelid(rel),
+                        &cursor_key)) {
+        /* The cursor's row's values last only while it is on it. */
+        RowKeyCopy(rel, &cursor_key, &keyList[numKeys]);
+        if (++numKeys >= numAllocKeys) {
+          numAllocKeys *= 2;
+          keyList = (RowKey *)repalloc(keyList, numAllocKeys * sizeof(RowKey));
         }
-        tidList[numTids++] = cursor_tid;
       }
     }
   }
 
   /*
-   * Sort the array of TIDs into order, and eliminate duplicates.
+   * Sort the array of rownos into order, and eliminate duplicates.
    * Eliminating duplicates is necessary since we want OR semantics across
    * the list.  Sorting makes it easier to detect duplicates, and as a bonus
-   * ensures that we will visit the heap in the most efficient way.
+   * ensures that we will visit the table in key order.
    */
-  if (numTids > 1) {
+  if (numKeys > 1) {
     /* CurrentOfExpr could never appear OR'd with something else */
     Assert(!tidstate->tss_isCurrentOf);
 
-    qsort(tidList, numTids, sizeof(ItemPointerData), itemptr_comparator);
-    numTids =
-        qunique(tidList, numTids, sizeof(ItemPointerData), itemptr_comparator);
+    qsort(keyList, numKeys, sizeof(RowKey), rowno_comparator);
+    numKeys = qunique(keyList, numKeys, sizeof(RowKey), rowno_comparator);
   }
 
-  tidstate->tss_TidList = tidList;
-  tidstate->tss_NumTids = numTids;
+  tidstate->tss_TidList = keyList;
+  tidstate->tss_NumTids = numKeys;
   tidstate->tss_TidPtr = -1;
 }
 
 /*
- * The tid of the row whose rowno is value, of the integer type typid; false
- * if no row has it, as for a negative one.
+ * The key of the row of a keyless table whose rowno is value, of the integer
+ * type typid, into *key; false if no row has it, as for one not positive.
  */
-static bool RownoTid(Datum value, Oid typid, ItemPointer tid) {
+static bool RownoKey(Datum value, Oid typid, RowKey *key) {
   int64 rowno;
 
   switch (typid) {
@@ -299,29 +261,22 @@ static bool RownoTid(Datum value, Oid typid, ItemPointer tid) {
     rowno = DatumGetInt64(value);
     break;
   }
-  return rowno >= 0 && smstore_rowno_fits_tid((uint64)rowno, tid);
+  if (rowno <= 0)
+    return false;
+  key->nkeys = 1;
+  key->values[0] = Int64GetDatum(rowno);
+  key->isnull[0] = false;
+  return true;
 }
 
 /*
- * qsort comparator for ItemPointerData items
+ * qsort comparator for the keys of rows of a keyless table, by rowno
  */
-static int itemptr_comparator(const void *a, const void *b) {
-  const ItemPointerData *ipa = (const ItemPointerData *)a;
-  const ItemPointerData *ipb = (const ItemPointerData *)b;
-  BlockNumber ba = ItemPointerGetBlockNumber(ipa);
-  BlockNumber bb = ItemPointerGetBlockNumber(ipb);
-  OffsetNumber oa = ItemPointerGetOffsetNumber(ipa);
-  OffsetNumber ob = ItemPointerGetOffsetNumber(ipb);
+static int rowno_comparator(const void *a, const void *b) {
+  int64 ra = DatumGetInt64(((const RowKey *)a)->values[0]);
+  int64 rb = DatumGetInt64(((const RowKey *)b)->values[0]);
 
-  if (ba < bb)
-    return -1;
-  if (ba > bb)
-    return 1;
-  if (oa < ob)
-    return -1;
-  if (oa > ob)
-    return 1;
-  return 0;
+  return ra < rb ? -1 : ra > rb ? 1 : 0;
 }
 
 /* ----------------------------------------------------------------
@@ -336,11 +291,10 @@ static TupleTableSlot *TidNext(TidScanState *node) {
   EState *estate;
   ScanDirection direction;
   Snapshot snapshot;
-  TableScanDesc scan;
   Relation heapRelation;
   TupleTableSlot *slot;
-  ItemPointerData *tidList;
-  int numTids;
+  RowKey *keyList;
+  int numKeys;
   bool bBackward;
 
   /*
@@ -353,14 +307,13 @@ static TupleTableSlot *TidNext(TidScanState *node) {
   slot = node->ss.ss_ScanTupleSlot;
 
   /*
-   * First time through, compute the list of TIDs to be visited
+   * First time through, compute the list of rows to be visited
    */
   if (node->tss_TidList == NULL)
     TidListEval(node);
 
-  scan = node->ss.ss_currentScanDesc;
-  tidList = node->tss_TidList;
-  numTids = node->tss_NumTids;
+  keyList = node->tss_TidList;
+  numKeys = node->tss_NumTids;
 
   /*
    * Initialize or advance scan position, depending on direction.
@@ -369,7 +322,7 @@ static TupleTableSlot *TidNext(TidScanState *node) {
   if (bBackward) {
     if (node->tss_TidPtr < 0) {
       /* initialize for backward scan */
-      node->tss_TidPtr = numTids - 1;
+      node->tss_TidPtr = numKeys - 1;
     } else
       node->tss_TidPtr--;
   } else {
@@ -380,25 +333,19 @@ static TupleTableSlot *TidNext(TidScanState *node) {
       node->tss_TidPtr++;
   }
 
-  while (node->tss_TidPtr >= 0 && node->tss_TidPtr < numTids) {
-    ItemPointerData tid = tidList[node->tss_TidPtr];
+  while (node->tss_TidPtr >= 0 && node->tss_TidPtr < numKeys) {
+    RowKey *key = &keyList[node->tss_TidPtr];
 
     /*
-     * For WHERE CURRENT OF, the tuple retrieved from the cursor might
-     * since have been updated; if so, we should fetch the version that is
-     * current according to our snapshot.
+     * A table in sm's row is read up to the last column the plan names,
+     * as the statement sees it, a row WHERE CURRENT OF names too.
      */
-    if (node->tss_isCurrentOf)
-      table_tuple_get_latest_tid(scan, &tid);
-
-    /* A table in sm's row is read up to the last column the plan names. */
     if (RelationIsSm(heapRelation)
-            ? smstore_fetch_row(heapRelation, &tid, node->tss_SmNatts, slot)
-            : table_tuple_fetch_row_version(heapRelation, &tid, snapshot,
-                                            slot))
+            ? smstore_fetch_row(heapRelation, key, node->tss_SmNatts, slot)
+            : table_tuple_fetch_row_version(heapRelation, key, snapshot, slot))
       return slot;
 
-    /* Bad TID or failed snapshot qual; try next */
+    /* No such row, or failed snapshot qual; try next */
     if (bBackward)
       node->tss_TidPtr--;
     else
@@ -418,7 +365,7 @@ static TupleTableSlot *TidNext(TidScanState *node) {
  * TidRecheck -- access method routine to recheck a tuple in EvalPlanQual
  */
 static bool TidRecheck(TidScanState *node, TupleTableSlot *slot) {
-  ItemPointer match;
+  RowKey key;
 
   /* WHERE CURRENT OF always intends to resolve to the latest tuple */
   if (node->tss_isCurrentOf)
@@ -428,13 +375,12 @@ static bool TidRecheck(TidScanState *node, TupleTableSlot *slot) {
     TidListEval(node);
 
   /*
-   * Binary search the TidList to see if this ctid is mentioned and return
-   * true if it is.
+   * Binary search the list to see if this row's rowno is mentioned and
+   * return true if it is.
    */
-  match =
-      (ItemPointer)bsearch(&slot->tts_tid, node->tss_TidList, node->tss_NumTids,
-                           sizeof(ItemPointerData), itemptr_comparator);
-  return match != NULL;
+  RowKeyFromSlot(node->ss.ss_currentRelation, slot, &key);
+  return bsearch(&key, node->tss_TidList, node->tss_NumTids, sizeof(RowKey),
+                 rowno_comparator) != NULL;
 }
 
 /* ----------------------------------------------------------------

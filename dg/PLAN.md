@@ -522,6 +522,19 @@ Do not reopen these without the owner:
   regression files that test the built-in types, and those
   that read `test_setup`'s `POINT_TBL`, `person` and `road`,
   fail by design.
+- **No table inheritance** (decided 2026-10-23). `CREATE TABLE
+  ... INHERITS` and `ALTER TABLE ... INHERIT` are not
+  supported, as partitioning is not. A row is named by its key,
+  the values of its table's primary key's columns
+  (`../sm/ROWKEY.md`), and PostgreSQL gives a child no primary
+  key of its parent's, so the tables of a tree name their rows
+  by different columns: a row mark, an UPDATE or a DELETE
+  through the parent would need a key for each child. The
+  refusal is still to be built; until it is, a child locked
+  through its parent must have its parent's key columns
+  (`optimizer/util/inherit.c`). Nothing is to be built for
+  inheritance trees, and what serves only them is to be
+  stripped once the refusal is in.
 
 ## 8. Working in this tree
 

@@ -8346,7 +8346,9 @@ blocks were made of. Its blocks are now in key order:
   forward to each (`smstore_sample_slot()`,
   `sm_rel_scan_seek_key()`), a row read past a slot kept for
   the next (`smstore_sample_row()`). A slot holds as many rows
-  as it holds; the method's offsets left over are drained. The
+  as it holds, every row of it, as SYSTEM takes whole pages:
+  the method is asked for no offsets, as a slot may hold more
+  rows than a page has. The
   slot after the last one read starts where that one ended,
   its start not estimated again: a memtable's estimate is
   sampled anew each call, and two of one boundary disagreed,
@@ -8376,3 +8378,56 @@ primary key is to have no `_id` (`../sm/ROWKEY.md` §2.5):
   also said "Rows 0 and 2" of a table made in the
   transaction.
 - **`test/server.sh`'s duplicated-key case** expects no hint.
+
+## Step 292: a row is named by its key, not its TID
+
+A table with a primary key is to have no `_id`, so no rowno to
+pack into a TID (`../sm/ROWKEY.md` §3). The executor now names a
+row of a table in sm by its key: the values of its primary key's
+columns, or a keyless table's rowno alone (`access/rowkey.h`'s
+`RowKey`, built in `smstore.c` from sm's table definition).
+
+- **The table AM takes a key**: `tuple_fetch_row_version`,
+  `tuple_delete`, `tuple_update` and `tuple_lock` take a
+  `const RowKey *` where they took an `ItemPointer`, and
+  `smstore_fetch_row()`, `smstore_update()`, `smstore_delete()`
+  and `smstore_lock_row()` pass it to sm (`sm_row_key_t`). The
+  row sm keeps for EvalPlanQual's re-read, and the scan on the
+  row (`scan_at()`), are matched by the key's encoding
+  (`sm_tbl_row_key()`), not by rowno.
+- **The plan carries the key's columns** where it carried
+  `ctid`: as row identity columns of an UPDATE or DELETE
+  (`add_row_identity_columns()`), "rowno" in a keyless table and
+  `rowkey<relid>_<n>` in one with a key, as the tables of an
+  inheritance tree have keys of their own; and as a locking row
+  mark's junk, `key<rowmark>_<n>` (`add_row_key_junk()`). A
+  table locked through its parent must have the parent's key
+  columns, or the lock is refused.
+- **A row mark that locks nothing copies the row**
+  (`select_rowmark_type()`): PostgreSQL's re-fetch by reference
+  fetched the very version again, which a copy is. A table in sm
+  has no composite type, so the copy is a RECORD whole-row Var
+  (`make_rowmark_wholerow()`). A table joined to itself is now
+  re-checked as PostgreSQL re-checks it, on the version it
+  joined: the known incompatibility of step 270 is gone from
+  `README.md`, and `test/server.sh` expects PostgreSQL's row.
+- **A table whose rows the plan names**, an UPDATE's or a
+  DELETE's target or a locking row mark's, gets no index-only
+  scan (`indxpath.c`'s `rows_named()`): EvalPlanQual cannot
+  re-check one. Its `ctid`, which no index has, kept it off one;
+  its key's columns, a primary key index's, do not.
+- **A catalog relation** (`SYSCATALOG.md`) is named by its rowno
+  in a plan that would write it: the permission check refuses it
+  before it runs, as it did.
+- **ModifyTable, LockRows, triggers, EvalPlanQual,
+  `WHERE CURRENT OF` and the TID scan** take the key:
+  `ExecUpdate()` and the rest take a `RowKey *`, LockRows keeps
+  the locked row's key for CURRENT OF (`ExecRowMark`'s
+  `curKey`), `execCurrentOf()` reads the cursor's row's key from
+  its scan's slot, and the TID scan visits keys: a keyless
+  table's `rowno = n`, or CURRENT OF's row.
+- **`ON CONFLICT DO UPDATE`** takes the key from the row the
+  arbiter found, which sm now hands back.
+- **What is left of the TID** is in slots' `tts_tid`, AFTER
+  trigger events, foreign tables' row identity, and the `ctid`
+  system column; they go next.

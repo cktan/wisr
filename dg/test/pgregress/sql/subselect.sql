@@ -1366,9 +1366,10 @@ with x as (select * from (select f1, random() from subselect_tbl) ss)
 select * from x where f1 = 1;
 
 -- SELECT FOR UPDATE cannot be inlined
-explain (verbose, costs off)
-with x as (select * from (select f1 from subselect_tbl for update) ss)
-select * from x where f1 = 1;
+--dg-differs: the plan
+--dg explain (verbose, costs off)
+--dg with x as (select * from (select f1 from subselect_tbl for update) ss)
+--dg select * from x where f1 = 1;
 
 -- Multiply-referenced CTEs are inlined only when requested
 explain (verbose, costs off)

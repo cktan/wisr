@@ -36,7 +36,10 @@
 
 #include "postgres.h"
 
+#include "access/rowkey.h"
+#include "access/sysattr.h"
 #include "access/table.h"
+#include "catalog/pg_type_d.h"
 #include "nodes/makefuncs.h"
 #include "optimizer/appendinfo.h"
 #include "optimizer/optimizer.h"
@@ -49,6 +52,62 @@
 
 static List *expand_insert_targetlist(PlannerInfo *root, List *tlist,
                                       Relation rel);
+
+/*
+ * The whole-row Var of rte, at rti, that a ROW_MARK_COPY row mark copies
+ * its row by: of the table's composite type, or RECORD for a table in sm,
+ * which has none, as a foreign table's row identity is
+ * (add_row_identity_columns()).
+ */
+Var *make_rowmark_wholerow(RangeTblEntry *rte, Index rti) {
+  if (rte->rtekind == RTE_RELATION && !OidIsValid(get_rel_type_id(rte->relid)))
+    return makeVar(rti, InvalidAttrNumber, RECORDOID, -1, InvalidOid, 0);
+  return makeWholeRowVar(rte, rti, 0, false);
+}
+
+/*
+ * Add to tlist the junk columns that name a row of rte, at rti, which a
+ * locking row mark rowmarkId locks: its row key's columns
+ * (access/rowkey.h), "key<rowmarkId>_<n>", or a foreign table's ctid,
+ * "ctid<rowmarkId>"; each Var added is also appended to *vars, if given.
+ */
+List *add_row_key_junk(List *tlist, RangeTblEntry *rte, Index rti,
+                       Index rowmarkId, List **vars) {
+  char resname[32];
+  Var *var;
+
+  if (rte->relkind == RELKIND_FOREIGN_TABLE) {
+    var =
+        makeVar(rti, SelfItemPointerAttributeNumber, TIDOID, -1, InvalidOid, 0);
+    snprintf(resname, sizeof(resname), "ctid%u", rowmarkId);
+    tlist = lappend(tlist, makeTargetEntry((Expr *)var, list_length(tlist) + 1,
+                                           pstrdup(resname), true));
+    if (vars)
+      *vars = lappend(*vars, var);
+    return tlist;
+  }
+  Relation rel = table_open(rte->relid, NoLock);
+  AttrNumber atts[INDEX_MAX_KEYS];
+  int n = RowKeyAttnums(rel, atts);
+
+  for (int i = 0; i < n; i++) {
+    if (RownoAttributeNumber == atts[i])
+      var = makeVar(rti, RownoAttributeNumber, INT8OID, -1, InvalidOid, 0);
+    else {
+      Form_pg_attribute att = TupleDescAttr(RelationGetDescr(rel), atts[i] - 1);
+
+      var = makeVar(rti, atts[i], att->atttypid, att->atttypmod,
+                    att->attcollation, 0);
+    }
+    snprintf(resname, sizeof(resname), "key%u_%d", rowmarkId, i);
+    tlist = lappend(tlist, makeTargetEntry((Expr *)var, list_length(tlist) + 1,
+                                           pstrdup(resname), true));
+    if (vars)
+      *vars = lappend(*vars, var);
+  }
+  table_close(rel, NoLock);
+  return tlist;
+}
 
 /*
  * preprocess_targetlist
@@ -220,17 +279,13 @@ void preprocess_targetlist(PlannerInfo *root) {
       continue;
 
     if (rc->allMarkTypes & ~(1 << ROW_MARK_COPY)) {
-      /* Need to fetch TID */
-      var = makeVar(rc->rti, SelfItemPointerAttributeNumber, TIDOID, -1,
-                    InvalidOid, 0);
-      snprintf(resname, sizeof(resname), "ctid%u", rc->rowmarkId);
-      tle = makeTargetEntry((Expr *)var, list_length(tlist) + 1,
-                            pstrdup(resname), true);
-      tlist = lappend(tlist, tle);
+      /* Need to fetch the row key, or a foreign table's TID */
+      tlist = add_row_key_junk(tlist, rt_fetch(rc->rti, range_table), rc->rti,
+                               rc->rowmarkId, NULL);
     }
     if (rc->allMarkTypes & (1 << ROW_MARK_COPY)) {
       /* Need the whole row as a junk var */
-      var = makeWholeRowVar(rt_fetch(rc->rti, range_table), rc->rti, 0, false);
+      var = make_rowmark_wholerow(rt_fetch(rc->rti, range_table), rc->rti);
       snprintf(resname, sizeof(resname), "wholerow%u", rc->rowmarkId);
       tle = makeTargetEntry((Expr *)var, list_length(tlist) + 1,
                             pstrdup(resname), true);

@@ -218,18 +218,18 @@ extern bool smstore_relation_name(Oid relid, uint64 version, char **name,
 extern bool smstore_index_usable(Relation rel, Oid indexoid);
 extern void smstore_insert(Relation rel, TupleTableSlot *slot);
 extern bool smstore_insert_arbiter(Relation rel, TupleTableSlot *slot,
-                                   List *arbiters, ItemPointer conflict);
+                                   List *arbiters, struct RowKey *conflict);
 extern void smstore_load(Relation rel, TupleTableSlot **slots, int n);
 extern void smstore_load_end(Relation rel);
 extern struct varlena *smstore_fetch_toast(struct varlena *attr);
 extern Size smstore_toast_size(struct varlena *attr);
-extern bool smstore_fetch_row(Relation rel, ItemPointer tid, int natts,
-                              TupleTableSlot *slot);
-extern TM_Result smstore_update(Relation rel, ItemPointer tid,
+extern bool smstore_fetch_row(Relation rel, const struct RowKey *key,
+                              int natts, TupleTableSlot *slot);
+extern TM_Result smstore_update(Relation rel, const struct RowKey *key,
                                 TupleTableSlot *slot, TM_FailureData *tmfd);
-extern TM_Result smstore_delete(Relation rel, ItemPointer tid,
+extern TM_Result smstore_delete(Relation rel, const struct RowKey *key,
                                 TM_FailureData *tmfd);
-extern TM_Result smstore_lock_row(Relation rel, ItemPointer tid,
+extern TM_Result smstore_lock_row(Relation rel, const struct RowKey *key,
                                   TupleTableSlot *slot, LockTupleMode mode,
                                   LockWaitPolicy wait_policy,
                                   TM_FailureData *tmfd);

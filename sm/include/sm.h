@@ -1398,6 +1398,13 @@ int sm_tbl_read_latest(sm_tbl_t* tbl, const sm_row_key_t& key,
 int sm_tbl_read_latest(sm_tbl_t* tbl, const sm_row_key_t& key,
                        sm_pin_ref_t* ref, const void** tuple, size_t* len);
 int sm_tbl_lock(sm_tbl_t* tbl, const sm_row_key_t& key, sm_lockmode_t mode);
+
+/*
+ * The key's encoding, past the table's relid, into out: what
+ * sm_rel_scan_key() gives of a row a cursor is on, to tell two rows
+ * apart.
+ */
+int sm_tbl_row_key(sm_tbl_t* tbl, const sm_row_key_t& key, std::string& out);
 int sm_tbl_trylock(sm_tbl_t* tbl, const sm_row_key_t& key,
                    sm_lockmode_t mode);
 

@@ -52,6 +52,7 @@ typedef struct TriggerData
  * private data may be shared across multiple callers.
  */
 struct AfterTriggersTableData;	/* private in trigger.c */
+struct RowKey;					/* access/rowkey.h */
 
 typedef struct TransitionCaptureState
 {
@@ -212,7 +213,7 @@ extern void ExecASDeleteTriggers(EState *estate,
 extern bool ExecBRDeleteTriggers(EState *estate,
 								 EPQState *epqstate,
 								 ResultRelInfo *relinfo,
-								 ItemPointer tupleid,
+								 struct RowKey *rowkey,
 								 HeapTuple fdw_trigtuple,
 								 TupleTableSlot **epqslot,
 								 TM_Result *tmresult,
@@ -220,7 +221,7 @@ extern bool ExecBRDeleteTriggers(EState *estate,
 								 bool is_merge_delete);
 extern void ExecARDeleteTriggers(EState *estate,
 								 ResultRelInfo *relinfo,
-								 ItemPointer tupleid,
+								 struct RowKey *rowkey,
 								 HeapTuple fdw_trigtuple,
 								 TransitionCaptureState *transition_capture,
 								 bool is_crosspart_update);
@@ -235,7 +236,7 @@ extern void ExecASUpdateTriggers(EState *estate,
 extern bool ExecBRUpdateTriggers(EState *estate,
 								 EPQState *epqstate,
 								 ResultRelInfo *relinfo,
-								 ItemPointer tupleid,
+								 struct RowKey *rowkey,
 								 HeapTuple fdw_trigtuple,
 								 TupleTableSlot *newslot,
 								 TM_Result *tmresult,
@@ -245,7 +246,7 @@ extern void ExecARUpdateTriggers(EState *estate,
 								 ResultRelInfo *relinfo,
 								 ResultRelInfo *src_partinfo,
 								 ResultRelInfo *dst_partinfo,
-								 ItemPointer tupleid,
+								 struct RowKey *rowkey,
 								 HeapTuple fdw_trigtuple,
 								 TupleTableSlot *newslot,
 								 List *recheckIndexes,

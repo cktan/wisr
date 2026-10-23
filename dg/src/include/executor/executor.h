@@ -90,7 +90,8 @@ typedef bool (*ExecutorCheckPerms_hook_type)(List *rangeTable,
 /*
  * prototypes from functions in execAmi.c
  */
-struct Path; /* avoid including pathnodes.h here */
+struct Path;   /* avoid including pathnodes.h here */
+struct RowKey; /* access/rowkey.h */
 
 extern void ExecReScan(PlanState *node);
 extern void ExecMarkPos(PlanState *node);
@@ -103,7 +104,7 @@ extern bool ExecMaterializesOutput(NodeTag plantype);
  * prototypes from functions in execCurrent.c
  */
 extern bool execCurrentOf(CurrentOfExpr *cexpr, ExprContext *econtext,
-                          Oid table_oid, ItemPointer current_tid);
+                          Oid table_oid, struct RowKey *current_key);
 
 /*
  * prototypes from functions in execGrouping.c

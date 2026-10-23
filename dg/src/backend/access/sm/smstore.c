@@ -23,7 +23,10 @@
 #include <vector>
 
 #include "access/detoast.h"
+#include "access/rowkey.h"
 #include "access/smstore.h"
+#include "access/sysattr.h"
+#include "utils/datum.h"
 #include "access/xact.h"
 #include "access/relation.h"
 #include "access/reloptions.h"
@@ -171,12 +174,13 @@ void smstore_state_free_t::operator()(smstore_state_t *state) const {
 static thread_local /*LOCAL*/ List *savepoints = NIL;
 
 /*
- * The row the statement keeps, to be fetched by its rowno again: one a
- * write found changed by a commit since the statement's snapshot, then its
- * newest version, which smstore_lock_latest() read; or one just deleted, as
- * it was.  The statement's own read of the rowno would give neither.
- * kept_tuple views the row pinned in kept_ref, and is NULL when the row is
- * yet to be read; kept_oid is InvalidOid when none is kept.
+ * The row the statement keeps, to be fetched by its key again: one a write
+ * found changed by a commit since the statement's snapshot, then its newest
+ * version, which smstore_lock_row() read; or one just deleted, as it was.
+ * The statement's own read of the key would give neither.  kept_key is the
+ * key encoded (sm_tbl_row_key()), kept_tuple views the row pinned in
+ * kept_ref, and is NULL when the row is yet to be read; kept_oid is
+ * InvalidOid when none is kept.
  */
 static thread_local /*LOCAL*/ Oid kept_oid = InvalidOid;
 
@@ -185,7 +189,7 @@ static thread_local /*LOCAL*/ Oid kept_oid = InvalidOid;
  * is.  sm ends a load with its transaction, so this is forgotten then.
  */
 static thread_local /*LOCAL*/ Oid load_oid = InvalidOid;
-static thread_local /*LOCAL*/ uint64 kept_rowno = 0;
+static thread_local /*LOCAL*/ std::string kept_key;
 static thread_local /*LOCAL*/ const char *kept_tuple = NULL;
 static thread_local /*LOCAL*/ Size kept_len = 0;
 static thread_local /*LOCAL*/ sm_pin_ref_t kept_ref = {};
@@ -2146,18 +2150,21 @@ void smstore_insert(Relation rel, TupleTableSlot *slot) {
   smstore_rowno_to_tid(rowno, &slot->tts_tid);
 }
 
+static void tuple_into_slot(sm_tbl_t *tbl, uint64_t rowno, const void *tuple,
+                            size_t len, int natts, TupleTableSlot *slot);
+
 /*
  * Insert the slot's row into rel, a table in sm, unless a row already has
  * its key in one of the unique indexes arbiters lists by oid, or in any
  * unique index of rel if the list is empty: INSERT ... ON CONFLICT.  True if
- * one has, with that row's tid in *conflict and nothing written; false with
- * the row inserted, its tid in the slot.  This waits for another session's
- * insert of the key that is not yet committed, and above READ COMMITTED
- * fails on a key taken since the snapshot.  The row found is not locked,
- * nor its key.
+ * one has, with that row's key in *conflict, its values palloc'd, and
+ * nothing written; false with the row inserted, its tid in the slot.  This
+ * waits for another session's insert of the key that is not yet committed, and
+ * above READ COMMITTED fails on a key taken since the snapshot.  The row found
+ * is not locked, nor its key.
  */
 bool smstore_insert_arbiter(Relation rel, TupleTableSlot *slot, List *arbiters,
-                            ItemPointer conflict) {
+                            RowKey *conflict) {
   sm_tbl_t *tbl = open_table(RelationGetRelid(rel), SM_LOCKMODE_IX);
   std::vector<uint64_t> oids;
   uint64_t rowno;
@@ -2174,9 +2181,10 @@ bool smstore_insert_arbiter(Relation rel, TupleTableSlot *slot, List *arbiters,
   const sm_datum_t *row =
       row_to_sm(tbl, slot->tts_tupleDescriptor, slot->tts_values,
                 slot->tts_isnull, slot->tts_nvalid, NULL);
+  std::string found;
   rc = waiting([&] {
     return sm_tbl_insert_arbiter(tbl, row, slot->tts_isnull, slot->tts_nvalid,
-                                 oids.data(), oids.size(), &rowno);
+                                 oids.data(), oids.size(), &rowno, &found);
   });
   if (rc < 0) {
     if (sm_errnum() == SM_ERR_DUPKEY)
@@ -2184,7 +2192,16 @@ bool smstore_insert_arbiter(Relation rel, TupleTableSlot *slot, List *arbiters,
     sm_error("insert a row");
   }
   if (rc == 1) {
-    smstore_rowno_to_tid(rowno, conflict);
+    /* Its key, from the row found, copied: the row goes with found. */
+    TupleTableSlot *other =
+        MakeSingleTupleTableSlot(RelationGetDescr(rel), &TTSOpsVirtual);
+    RowKey key;
+
+    tuple_into_slot(tbl, rowno, found.data(), found.size(),
+                    RelationGetDescr(rel)->natts, other);
+    RowKeyFromSlot(rel, other, &key);
+    RowKeyCopy(rel, &key, conflict);
+    ExecDropSingleTupleTableSlot(other);
     return true;
   }
   smstore_rowno_to_tid(rowno, &slot->tts_tid);
@@ -6264,17 +6281,159 @@ static sm_tbl_t *table_to_write(Relation rel) {
 }
 
 /*
- * Keep the row at rowno of the table oid for the statement: its tuple, the
- * row the caller pinned in kept_ref, or none yet if tuple is NULL.
+ * Keep the row at key, encoded, of the table oid for the statement: its
+ * tuple, the row the caller pinned in kept_ref, or none yet if tuple is
+ * NULL.
  */
-static void keep_row(Oid oid, uint64 rowno, const void *tuple, size_t len) {
+static void keep_row(Oid oid, const std::string &key, const void *tuple,
+                     size_t len) {
   /* Until the statement ends, or the transaction. */
   if (NULL == tuple)
     sm_unpin(&kept_ref);
   kept_oid = oid;
-  kept_rowno = rowno;
+  kept_key = key;
   kept_tuple = (const char *)tuple;
   kept_len = len;
+}
+
+/* Whether the row at key, encoded, of the table oid is kept, read. */
+static bool kept_at(Oid oid, const std::string &key) {
+  return kept_oid == oid && kept_key == key && kept_tuple != NULL;
+}
+
+/*
+ * The columns of rel's row key, as RowKey holds them (access/rowkey.h): its
+ * primary key's, attribute numbers from 1, or its rowno alone; their count.
+ * A relation that is no table in sm, a catalog relation, has none of its
+ * own: its rowno, which a plan that writes it, never run, names.
+ */
+int RowKeyAttnums(Relation rel, AttrNumber *attnums) {
+  if (!RelationIsSm(rel)) {
+    attnums[0] = RownoAttributeNumber;
+    return 1;
+  }
+  sm_tbl_t *tbl = open_table(RelationGetRelid(rel), SM_LOCKMODE_IS);
+
+  if (tbl == NULL)
+    ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
+                    errmsg("relation \"%s\" does not exist",
+                           RelationGetRelationName(rel))));
+  for (const sm_index_def_t &x : sm_tbl_def(tbl)->indexes) {
+    if (!x.primary)
+      continue;
+    for (size_t i = 0; i < x.key_attnums.size(); i++)
+      attnums[i] = (AttrNumber)(x.key_attnums[i] + 1);
+    return (int)x.key_attnums.size();
+  }
+  attnums[0] = RownoAttributeNumber;
+  return 1;
+}
+
+/*
+ * The name of the junk column that carries rel's row key's column i, of
+ * attribute attnum, in a plan that updates or deletes its rows: "rowno",
+ * every keyless table's, else one of rel's own, as tables of one
+ * inheritance tree have keys of their own.
+ */
+const char *RowKeyColumnName(Relation rel, int i, AttrNumber attnum) {
+  if (RownoAttributeNumber == attnum)
+    return "rowno";
+  return psprintf("rowkey%u_%d", RelationGetRelid(rel), i);
+}
+
+/* The key of the row of rel in slot into *key, its values the slot's. */
+void RowKeyFromSlot(Relation rel, TupleTableSlot *slot, RowKey *key) {
+  AttrNumber atts[INDEX_MAX_KEYS];
+
+  key->nkeys = RowKeyAttnums(rel, atts);
+  for (int i = 0; i < key->nkeys; i++)
+    key->values[i] =
+        RownoAttributeNumber == atts[i]
+            ? slot_getsysattr(slot, RownoAttributeNumber, &key->isnull[i])
+            : slot_getattr(slot, atts[i], &key->isnull[i]);
+}
+
+/* *src of rel into *dst, its values by reference copied, palloc'd. */
+void RowKeyCopy(Relation rel, const RowKey *src, RowKey *dst) {
+  AttrNumber atts[INDEX_MAX_KEYS];
+  TupleDesc desc = RelationGetDescr(rel);
+
+  RowKeyAttnums(rel, atts);
+  *dst = *src;
+  for (int i = 0; i < src->nkeys; i++) {
+    if (src->isnull[i] || RownoAttributeNumber == atts[i])
+      continue;
+    Form_pg_attribute att = TupleDescAttr(desc, atts[i] - 1);
+
+    dst->values[i] = datumCopy(src->values[i], att->attbyval, att->attlen);
+  }
+}
+
+/*
+ * Whether a and b name their rows by the same columns, by name: both by
+ * their rowno, or both by keys of such columns in one order.
+ */
+bool RowKeySameColumns(Relation a, Relation b) {
+  AttrNumber aa[INDEX_MAX_KEYS], ba[INDEX_MAX_KEYS];
+  int n = RowKeyAttnums(a, aa);
+
+  if (n != RowKeyAttnums(b, ba))
+    return false;
+  for (int i = 0; i < n; i++) {
+    if (RownoAttributeNumber == aa[i] || RownoAttributeNumber == ba[i]) {
+      if (aa[i] != ba[i])
+        return false;
+      continue;
+    }
+    if (0 !=
+        strcmp(NameStr(TupleDescAttr(RelationGetDescr(a), aa[i] - 1)->attname),
+               NameStr(TupleDescAttr(RelationGetDescr(b), ba[i] - 1)->attname)))
+      return false;
+  }
+  return true;
+}
+
+/*
+ * key, a row's of rel, as sm takes it, its values in vals: each decimal its
+ * integer at its column's scale, as row_to_sm() makes a row's.
+ */
+static sm_row_key_t key_to_sm(Relation rel, const RowKey *key,
+                              sm_datum_t *vals) {
+  AttrNumber atts[INDEX_MAX_KEYS];
+  TupleDesc desc = RelationGetDescr(rel);
+
+  RowKeyAttnums(rel, atts);
+  for (int i = 0; i < key->nkeys; i++) {
+    vals[i] = (sm_datum_t)key->values[i];
+    if (key->isnull[i] || RownoAttributeNumber == atts[i])
+      continue;
+    Form_pg_attribute att = TupleDescAttr(desc, atts[i] - 1);
+
+    if (is_decimal(att->atttypid))
+      vals[i] = numeric_to_sm(key->values[i], att->atttypid, att->atttypmod);
+  }
+  return sm_row_key_t{vals, key->isnull, (size_t)key->nkeys};
+}
+
+/* key, a row's of tbl, encoded, as a cursor on the row gives it. */
+static std::string key_bytes(sm_tbl_t *tbl, const sm_row_key_t &key) {
+  std::string out;
+
+  if (0 != sm_tbl_row_key(tbl, key, out))
+    sm_error("name a row by its key");
+  return out;
+}
+
+/*
+ * The rowno of the row key names in a table without a primary key, its
+ * tid's; 0, no tid, in one with.
+ */
+static uint64 key_rowno(Relation rel, const RowKey *key) {
+  AttrNumber atts[INDEX_MAX_KEYS];
+
+  RowKeyAttnums(rel, atts);
+  return RownoAttributeNumber == atts[0] ? (uint64)DatumGetInt64(key->values[0])
+                                         : 0;
 }
 
 /*
@@ -6308,19 +6467,14 @@ Size smstore_toast_size(struct varlena *attr) {
 }
 
 /*
- * The open scan of the table oid whose cursor is on the row at rowno, the
- * row it handed out last; NULL if none is.
+ * The open scan of the table oid whose cursor is on the row at key,
+ * encoded, the row it handed out last; NULL if none is.
  */
-static smstore_scan_t *scan_at(Oid oid, uint64 rowno) {
-  for (smstore_scan_t *scan : open_scans)
-    if (scan->cur && scan->relid == oid && scan->cur_rowno == rowno)
-      return scan;
-  return NULL;
-}
+static smstore_scan_t *scan_at(Oid oid, const std::string &key);
 
 /*
- * The key of the row the scan's cursor is on, as sm_tbl_update() takes it,
- * into *key and *len: NULL with no scan.  Valid until the cursor moves.
+ * The key of the row the scan's cursor is on, encoded, into *key and *len:
+ * NULL with no scan.  Valid until the cursor moves.
  */
 static void scan_key(smstore_scan_t *scan, const void **key, size_t *len) {
   *key = NULL;
@@ -6329,6 +6483,21 @@ static void scan_key(smstore_scan_t *scan, const void **key, size_t *len) {
       (scan->cursor != NULL ? sm_rel_scan_key(scan->cursor, key, len)
                             : sm_idx_scan_row(scan->icursor, key, len)) != 0)
     sm_error("read a row's key");
+}
+
+/* The open scan of the table oid on the row at key; see above. */
+static smstore_scan_t *scan_at(Oid oid, const std::string &key) {
+  for (smstore_scan_t *scan : open_scans) {
+    const void *k;
+    size_t len;
+
+    if (!scan->cur || scan->relid != oid)
+      continue;
+    scan_key(scan, &k, &len);
+    if (len == key.size() && 0 == memcmp(k, key.data(), len))
+      return scan;
+  }
+  return NULL;
 }
 
 /*
@@ -6343,60 +6512,75 @@ static bool scan_tuple(smstore_scan_t *scan, const void **tuple, size_t *len) {
 }
 
 /*
- * The row of rel at tid into slot, as a virtual tuple of its first natts
+ * The row of rel key names into slot, as a virtual tuple of its first natts
  * columns: the kept one if it is that row, else as the statement sees it,
  * from the scan that read it if one is on it (scan_at()); false if it sees
- * none.  The executor fetches the row it is to update, the
- * newest version of one it locked, the row it deleted, for RETURNING, and a
- * TID scan's rows.
+ * none.  The executor fetches the row it is to update, the newest version
+ * of one it locked, the row it deleted, for RETURNING, and a TID scan's
+ * rows.
  */
-bool smstore_fetch_row(Relation rel, ItemPointer tid, int natts,
+bool smstore_fetch_row(Relation rel, const RowKey *key, int natts,
                        TupleTableSlot *slot) {
   sm_tbl_t *tbl = open_table(RelationGetRelid(rel), SM_LOCKMODE_IS);
-  uint64 rowno = smstore_tid_to_rowno(tid);
+  sm_datum_t vals[INDEX_MAX_KEYS];
 
   if (tbl == NULL)
     return false;
+  sm_row_key_t sk = key_to_sm(rel, key, vals);
+  std::string bytes = key_bytes(tbl, sk);
+  uint64 rowno = key_rowno(rel, key);
+
   slot->tts_tableOid = RelationGetRelid(rel);
-  if (kept_oid == RelationGetRelid(rel) && kept_rowno == rowno &&
-      kept_tuple != NULL) {
+  if (kept_at(RelationGetRelid(rel), bytes)) {
     ExecClearTuple(slot);
     tuple_into_slot(tbl, rowno, kept_tuple, kept_len, natts, slot);
     return true;
   }
   const void *tuple;
   size_t len;
+  smstore_scan_t *scan = scan_at(RelationGetRelid(rel), bytes);
 
-  if (scan_tuple(scan_at(RelationGetRelid(rel), rowno), &tuple, &len)) {
+  if (scan_tuple(scan, &tuple, &len)) {
     ExecClearTuple(slot);
-    tuple_into_slot(tbl, rowno, tuple, len, natts, slot);
+    tuple_into_slot(tbl, scan->cur_rowno, tuple, len, natts, slot);
     /* The scan's pin lasts until its cursor moves. */
     ExecMaterializeSlot(slot);
     return true;
   }
-  return read_row(tbl, rowno, natts, slot);
+  ExecClearTuple(slot);
+  switch (sm_tbl_read(tbl, sk, &tuple, &len)) {
+  case 0:
+    break;
+  case 1:
+    return false;
+  default:
+    sm_error("read a row");
+  }
+  tuple_into_slot(tbl, rowno, tuple, len, natts, slot);
+  /* sm lends the row only until its next call. */
+  ExecMaterializeSlot(slot);
+  return true;
 }
 
 /*
- * What an update or a delete of the row at rowno of rel came to, rc from
- * sm, as the executor is told it.  A commit since the statement's snapshot
- * changed the row, under READ COMMITTED: TM_Updated, and the row is kept
- * for smstore_lock_latest() to read; sm holds its lock.  The statement has
- * already changed the row: TM_SelfModified, by this command, so the
+ * What an update or a delete of the row at key, encoded, of rel came to,
+ * rc from sm, as the executor is told it.  A commit since the statement's
+ * snapshot changed the row, under READ COMMITTED: TM_Updated, and the row
+ * is kept for smstore_lock_row() to read; sm holds its lock.  The statement
+ * has already changed the row: TM_SelfModified, by this command, so the
  * executor passes over it.  At the other levels sm has aborted the
  * transaction instead, which is an error here, as any other failure is; a
  * duplicate key is the new row's, in slot.
  */
-static TM_Result write_result(Relation rel, uint64 rowno, int rc,
+static TM_Result write_result(Relation rel, const std::string &key, int rc,
                               TupleTableSlot *slot, TM_FailureData *tmfd,
                               const char *what) {
   if (rc == 0)
     return TM_Ok;
   tmfd->xmax = InvalidTransactionId;
-  smstore_rowno_to_tid(rowno, &tmfd->ctid);
   switch (sm_errnum()) {
   case SM_ERR_UPDATED:
-    keep_row(RelationGetRelid(rel), rowno, NULL, 0);
+    keep_row(RelationGetRelid(rel), key, NULL, 0);
     return TM_Updated;
   case SM_ERR_SELFMODIFIED:
     return TM_SelfModified;
@@ -6411,41 +6595,39 @@ static TM_Result write_result(Relation rel, uint64 rowno, int rc,
 }
 
 /*
- * Replace the row of rel at tid with the slot's: sm writes every index of
- * the table with it, and the row keeps its rowno, so its tid.
+ * Replace the row of rel key names with the slot's: sm writes every index
+ * of the table with it.
  */
-TM_Result smstore_update(Relation rel, ItemPointer tid, TupleTableSlot *slot,
+TM_Result smstore_update(Relation rel, const RowKey *key, TupleTableSlot *slot,
                          TM_FailureData *tmfd) {
   sm_tbl_t *tbl = table_to_write(rel);
-  uint64 rowno = smstore_tid_to_rowno(tid);
+  sm_datum_t vals[INDEX_MAX_KEYS];
+  sm_row_key_t sk = key_to_sm(rel, key, vals);
+  std::string bytes = key_bytes(tbl, sk);
   std::string_view old;
   sm_pin_ref_t ref = {};
   bool have_old = false;
-  /* The scan that read the row gives its key, and the row, if it is on it. */
-  smstore_scan_t *scan = scan_at(RelationGetRelid(rel), rowno);
-  const void *key;
-  size_t klen;
 
   slot_getallattrs(slot);
   /*
    * The row replaced, to tell its own pointers from others: the kept one if
-   * it is that row, the newest version after a write found it changed, else
-   * as the statement sees it.
+   * it is that row, the newest version after a write found it changed, the
+   * one the scan that read it is on, else as the statement sees it.
    */
   if (has_toast(slot->tts_tupleDescriptor, slot->tts_values, slot->tts_isnull,
                 slot->tts_nvalid)) {
     const void *tuple;
     size_t len;
 
-    if (kept_oid == RelationGetRelid(rel) && kept_rowno == rowno &&
-        kept_tuple != NULL) {
+    if (kept_at(RelationGetRelid(rel), bytes)) {
       old = std::string_view(kept_tuple, kept_len);
       have_old = true;
-    } else if (scan_tuple(scan, &tuple, &len)) {
+    } else if (scan_tuple(scan_at(RelationGetRelid(rel), bytes), &tuple,
+                          &len)) {
       old = std::string_view((const char *)tuple, len);
       have_old = true;
     } else {
-      switch (sm_tbl_read(tbl, rowno, &ref, &tuple, &len)) {
+      switch (sm_tbl_read(tbl, sk, &ref, &tuple, &len)) {
       case 0:
         /* Pinned, as the fetches of the values out of line are calls. */
         old = std::string_view((const char *)tuple, len);
@@ -6461,42 +6643,38 @@ TM_Result smstore_update(Relation rel, ItemPointer tid, TupleTableSlot *slot,
   const sm_datum_t *row =
       row_to_sm(tbl, slot->tts_tupleDescriptor, slot->tts_values,
                 slot->tts_isnull, slot->tts_nvalid, have_old ? &old : NULL);
-  scan_key(scan, &key, &klen);
   int rc = waiting([&] {
-    return sm_tbl_update(tbl, rowno, key, klen, row, slot->tts_isnull,
-                         slot->tts_nvalid);
+    return sm_tbl_update(tbl, sk, row, slot->tts_isnull, slot->tts_nvalid);
   });
 
   sm_unpin(&ref);
-  if (rc == 0)
-    slot->tts_tid = *tid;
-  return write_result(rel, rowno, rc, slot, tmfd, "update a row");
+  return write_result(rel, bytes, rc, slot, tmfd, "update a row");
 }
 
 /*
- * Delete the row of rel at tid, with its entry in every index.  The row is
- * kept as it was, for RETURNING to fetch.
+ * Delete the row of rel key names, with its entry in every index.  The row
+ * is kept as it was, for RETURNING to fetch.
  */
-TM_Result smstore_delete(Relation rel, ItemPointer tid, TM_FailureData *tmfd) {
+TM_Result smstore_delete(Relation rel, const RowKey *key,
+                         TM_FailureData *tmfd) {
   sm_tbl_t *tbl = table_to_write(rel);
-  uint64 rowno = smstore_tid_to_rowno(tid);
-  const void *old, *key;
-  size_t len, klen;
+  sm_datum_t vals[INDEX_MAX_KEYS];
+  sm_row_key_t sk = key_to_sm(rel, key, vals);
+  std::string bytes = key_bytes(tbl, sk);
+  const void *old;
+  size_t len;
 
-  /* The scan that read the row gives its key, if it is on it. */
-  scan_key(scan_at(RelationGetRelid(rel), rowno), &key, &klen);
   /* The row deleted, pinned in kept_ref, which lets go of the last. */
-  int rc = waiting([&] {
-    return sm_tbl_delete(tbl, rowno, key, klen, &kept_ref, &old, &len);
-  });
+  int rc =
+      waiting([&] { return sm_tbl_delete(tbl, sk, &kept_ref, &old, &len); });
 
   if (rc == 0)
-    keep_row(RelationGetRelid(rel), rowno, old, len);
-  return write_result(rel, rowno, rc, NULL, tmfd, "delete a row");
+    keep_row(RelationGetRelid(rel), bytes, old, len);
+  return write_result(rel, bytes, rc, NULL, tmfd, "delete a row");
 }
 
 /*
- * Lock the row of rel at tid, and put its newest version into slot.
+ * Lock the row of rel key names, and put its newest version into slot.
  *
  * After an update or a delete of the row gave TM_Updated, sm holds its lock
  * already, and this reads the version to check again (sm_tbl_read_latest);
@@ -6513,14 +6691,11 @@ TM_Result smstore_delete(Relation rel, ItemPointer tid, TM_FailureData *tmfd) {
  * again.  The slot owns what it holds, since the
  * executor keeps it past sm's next call.  TM_Deleted if the row is gone.
  */
-TM_Result smstore_lock_row(Relation rel, ItemPointer tid, TupleTableSlot *slot,
-                           LockTupleMode mode, LockWaitPolicy wait_policy,
-                           TM_FailureData *tmfd) {
+TM_Result smstore_lock_row(Relation rel, const RowKey *key,
+                           TupleTableSlot *slot, LockTupleMode mode,
+                           LockWaitPolicy wait_policy, TM_FailureData *tmfd) {
   Oid oid = RelationGetRelid(rel);
-  uint64 rowno = smstore_tid_to_rowno(tid);
   bool share = mode == LockTupleShare || mode == LockTupleKeyShare;
-  bool after_write =
-      kept_oid == oid && kept_rowno == rowno && kept_tuple == NULL;
   sm_tbl_t *tbl =
       share ? open_table(oid, SM_LOCKMODE_IS) : table_to_write(rel);
   const void *tuple;
@@ -6530,24 +6705,25 @@ TM_Result smstore_lock_row(Relation rel, ItemPointer tid, TupleTableSlot *slot,
     ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE),
                     errmsg("relation \"%s\" does not exist",
                            RelationGetRelationName(rel))));
+  sm_datum_t vals[INDEX_MAX_KEYS];
+  sm_row_key_t sk = key_to_sm(rel, key, vals);
+  std::string bytes = key_bytes(tbl, sk);
+  uint64 rowno = key_rowno(rel, key);
+  bool after_write = kept_oid == oid && kept_key == bytes && kept_tuple == NULL;
+
   slot->tts_tableOid = oid;
   if (!after_write) {
     sm_lockmode_t smmode = share ? SM_LOCKMODE_SH : SM_LOCKMODE_EX;
-    const void *key;
-    size_t klen;
     int rc;
 
-    /* The scan that read the row gives its key, if it is on it. */
-    scan_key(scan_at(oid, rowno), &key, &klen);
     /*
      * Held to the end of the transaction, as a write's is.  NOWAIT and SKIP
      * LOCKED ask for it without waiting, and are told when it is another's.
      */
     if (wait_policy == LockWaitBlock)
-      rc = waiting(
-          [&] { return sm_tbl_lock(tbl, rowno, key, klen, smmode); });
+      rc = waiting([&] { return sm_tbl_lock(tbl, sk, smmode); });
     else
-      rc = sm_tbl_trylock(tbl, rowno, key, klen, smmode);
+      rc = sm_tbl_trylock(tbl, sk, smmode);
     if (rc < 0)
       sm_error("lock a row");
     if (rc == 1) {
@@ -6566,7 +6742,7 @@ TM_Result smstore_lock_row(Relation rel, ItemPointer tid, TupleTableSlot *slot,
    * version, as such, only at READ COMMITTED.
    */
   if (IsolationUsesXactSnapshot()) {
-    switch (sm_tbl_read(tbl, rowno, &tuple, &len)) {
+    switch (sm_tbl_read(tbl, sk, &tuple, &len)) {
     case 0:
       break;
     case 1:
@@ -6582,8 +6758,8 @@ TM_Result smstore_lock_row(Relation rel, ItemPointer tid, TupleTableSlot *slot,
     return TM_Ok;
   }
   /* After a write, the version is kept, pinned in kept_ref. */
-  switch (after_write ? sm_tbl_read_latest(tbl, rowno, &kept_ref, &tuple, &len)
-                      : sm_tbl_read_latest(tbl, rowno, &tuple, &len)) {
+  switch (after_write ? sm_tbl_read_latest(tbl, sk, &kept_ref, &tuple, &len)
+                      : sm_tbl_read_latest(tbl, sk, &tuple, &len)) {
   case 0:
     break;
   case 1:
@@ -6594,7 +6770,7 @@ TM_Result smstore_lock_row(Relation rel, ItemPointer tid, TupleTableSlot *slot,
     sm_error("read a row's newest version");
   }
   if (after_write) {
-    keep_row(oid, rowno, tuple, len);
+    keep_row(oid, bytes, tuple, len);
     tuple_into_slot(tbl, rowno, kept_tuple, kept_len,
                     slot->tts_tupleDescriptor->natts, slot);
     tmfd->traversed = true;
@@ -6603,7 +6779,7 @@ TM_Result smstore_lock_row(Relation rel, ItemPointer tid, TupleTableSlot *slot,
   /* sm's bytes last until its next call: the read below is one. */
   std::string latest((const char *)tuple, len);
 
-  switch (sm_tbl_read(tbl, rowno, &tuple, &len)) {
+  switch (sm_tbl_read(tbl, sk, &tuple, &len)) {
   case 0:
     tmfd->traversed = len != latest.size() ||
                       memcmp(tuple, latest.data(), len) != 0;

@@ -2260,10 +2260,12 @@ RowMarkType select_rowmark_type(RangeTblEntry *rte,
     case LCS_NONE:
 
       /*
-       * We don't need a tuple lock, only the ability to re-fetch
-       * the row.
+       * We don't need a tuple lock, only the row as it was read: a
+       * table in sm's is copied, as it is named by its key, not a TID
+       * that would fetch the very version again
+       * (../../../../../sm/ROWKEY.md section 3.2).
        */
-      return ROW_MARK_REFERENCE;
+      return ROW_MARK_COPY;
       break;
     case LCS_FORKEYSHARE:
       return ROW_MARK_KEYSHARE;

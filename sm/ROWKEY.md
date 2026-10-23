@@ -189,13 +189,15 @@ Nothing reads many rows of a table with a primary key in
 - **The row identity columns are the key's columns.** Where
   the planner adds the junk column `ctid`
   (`add_row_identity_columns`, `appendinfo.c`) it adds a Var
-  for each key column, named for the result relation, so a
-  tree of inherited tables with different keys has one set of
-  columns for each, NULL in the rows of the others, as an FDW's
-  row identity columns are. A keyless table adds `_id`.
+  for each key column, named for the result relation. A keyless
+  table adds `_id`. digres supports no table inheritance
+  (`../dg/PLAN.md` §7), so a plan's rows are of one table's.
 - **Row marks** (`preptlist.c`) do the same in place of
-  `ctidN`, and `ExecAuxRowMark` keeps the attribute numbers of
-  the key's columns where it kept `ctidAttNo`.
+  `ctidN` when they lock, and `ExecAuxRowMark` keeps the
+  attribute numbers of the key's columns where it kept
+  `ctidAttNo`. One that locks nothing copies the row, a RECORD
+  whole-row Var: PostgreSQL's re-fetch by reference fetched the
+  same version again, which the copy is.
 - **The scan reads the key's columns** because the plan asks
   for them, as any column; the scan's pruning
   (`scan_columns.test`) is untouched.
@@ -276,8 +278,8 @@ Each step leaves every suite passing.
 3. **digres by key.** The arbiter returns its row; the row
    identity columns, the table AM, ModifyTable, LockRows,
    EvalPlanQual, triggers, `ON CONFLICT`, CURRENT OF and the
-   key scan; `ctid` gone, `rowno` renamed `_id` on a keyless
-   table.
+   key scan, built (`../dg/WORKNOTE.md` step 292); `ctid`
+   gone, `rowno` renamed `_id` on a keyless table.
 4. **No `_id` with a primary key.** The `_id` index, the
    follow, and the `_id` calls of a keyed table go; the value
    is the tuple alone; a key change writes the moved

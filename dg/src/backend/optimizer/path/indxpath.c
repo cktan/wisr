@@ -110,6 +110,7 @@ static PathClauseUsage *classify_index_clause_usage(Path *path,
 static void find_indexpath_quals(Path *bitmapqual, List **quals, List **preds);
 static int find_list_position(Node *node, List **nodelist);
 static bool check_index_only(RelOptInfo *rel, IndexOptInfo *index);
+static bool rows_named(PlannerInfo *root, RelOptInfo *rel);
 static double get_loop_count(PlannerInfo *root, Index cur_relid,
                              Relids outer_relids);
 static double adjust_rowcount_for_semijoins(PlannerInfo *root, Index cur_relid,
@@ -854,7 +855,8 @@ static List *build_index_paths(PlannerInfo *root, RelOptInfo *rel,
    * plain indexscans, this isn't relevant since bitmap scans don't support
    * index data retrieval anyway.
    */
-  index_only_scan = (scantype != ST_BITMAPSCAN && check_index_only(rel, index));
+  index_only_scan = (scantype != ST_BITMAPSCAN && !rows_named(root, rel) &&
+                     check_index_only(rel, index));
 
   /*
    * 4. Generate an indexscan path if there are relevant restriction clauses
@@ -1921,6 +1923,22 @@ static int find_list_position(Node *node, List **nodelist) {
   *nodelist = lappend(*nodelist, node);
 
   return i;
+}
+
+/*
+ * Whether the plan names rel's rows, as an UPDATE's or a DELETE's target's
+ * are, or a locking row mark's: an index-only scan of it could not be
+ * rechecked (EvalPlanQual).  A TID, which no index has, kept such a rel off
+ * one; its row key, the columns of its primary key, would not
+ * (access/rowkey.h).
+ */
+static bool rows_named(PlannerInfo *root, RelOptInfo *rel) {
+  PlanRowMark *rc;
+
+  if (bms_is_member(rel->relid, root->all_result_relids))
+    return true;
+  rc = get_plan_rowmark(root->rowMarks, rel->relid);
+  return rc != NULL && rc->markType != ROW_MARK_COPY;
 }
 
 /*

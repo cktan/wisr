@@ -485,6 +485,14 @@ typedef struct ResultRelInfo
 	 */
 	AttrNumber	ri_RowIdAttNo;
 
+	/*
+	 * A table in sm's: the junk attributes carrying the row key's columns
+	 * (access/rowkey.h), ri_RowKeyCount of them; ri_RowIdAttNo is the
+	 * first.
+	 */
+	int			ri_RowKeyCount;
+	AttrNumber	ri_RowKeyAttNos[INDEX_MAX_KEYS];
+
 	/* For UPDATE, attnums of generated columns to be computed */
 	Bitmapset  *ri_extraUpdatedCols;
 	/* true if the above has been computed */
@@ -754,7 +762,7 @@ typedef struct EState
  * subqueries-in-FROM will have an ExecRowMark with relation == NULL.  See
  * PlanRowMark for details about most of the fields.  In addition to fields
  * directly derived from PlanRowMark, we store an activity flag (to denote
- * inactive children of inheritance trees), curCtid, which is used by the
+ * inactive children of inheritance trees), curKey, which is used by the
  * WHERE CURRENT OF code, and ermExtra, which is available for use by the plan
  * node that sources the relation (e.g., for a foreign table the FDW can use
  * ermExtra to hold information).
@@ -774,7 +782,8 @@ typedef struct ExecRowMark
 	LockClauseStrength strength;	/* LockingClause's strength, or LCS_NONE */
 	LockWaitPolicy waitPolicy;	/* NOWAIT and SKIP LOCKED */
 	bool		ermActive;		/* is this mark relevant for current tuple? */
-	ItemPointerData curCtid;	/* ctid of currently locked tuple, if any */
+	struct RowKey *curKey;		/* key of currently locked row, if any */
+	MemoryContext curKeyCxt;	/* what curKey's copy is in */
 	void	   *ermExtra;		/* available for use by relation source node */
 } ExecRowMark;
 
@@ -790,7 +799,9 @@ typedef struct ExecRowMark
 typedef struct ExecAuxRowMark
 {
 	ExecRowMark *rowmark;		/* related entry in es_rowmarks */
-	AttrNumber	ctidAttNo;		/* resno of ctid junk attribute, if any */
+	AttrNumber	ctidAttNo;		/* resno of a foreign table's ctid junk */
+	int			nkeys;			/* row key junk attributes, if any */
+	AttrNumber	keyAttNos[INDEX_MAX_KEYS];	/* their resnos */
 	AttrNumber	toidAttNo;		/* resno of tableoid junk attribute, if any */
 	AttrNumber	wholeAttNo;		/* resno of whole-row junk attribute, if any */
 } ExecAuxRowMark;
@@ -1816,7 +1827,7 @@ typedef struct TidScanState
 	bool		tss_isCurrentOf;
 	int			tss_NumTids;
 	int			tss_TidPtr;
-	ItemPointerData *tss_TidList;
+	struct RowKey *tss_TidList;	/* the rows' keys (access/rowkey.h) */
 	int			tss_SmNatts;
 } TidScanState;
 

@@ -37,6 +37,7 @@
  */
 #include "postgres.h"
 
+#include "access/rowkey.h"
 #include "access/smstore.h"
 #include "access/sysattr.h"
 #include "access/table.h"
@@ -829,7 +830,8 @@ static void InitPlan(QueryDesc *queryDesc, int eflags) {
       erm->strength = rc->strength;
       erm->waitPolicy = rc->waitPolicy;
       erm->ermActive = false;
-      ItemPointerSetInvalid(&(erm->curCtid));
+      erm->curKey = NULL;
+      erm->curKeyCxt = NULL;
       erm->ermExtra = NULL;
 
       Assert(erm->rti > 0 && erm->rti <= estate->es_range_table_size &&
@@ -2312,12 +2314,24 @@ ExecAuxRowMark *ExecBuildAuxRowMark(ExecRowMark *erm, List *targetlist) {
   aerm->rowmark = erm;
 
   /* Look up the resjunk columns associated with this rowmark */
-  if (erm->markType != ROW_MARK_COPY) {
-    /* need ctid for all methods other than COPY */
+  if (erm->markType != ROW_MARK_COPY &&
+      erm->relation->rd_rel->relkind == RELKIND_FOREIGN_TABLE) {
+    /* a foreign table's FDW finds its row by ctid */
     snprintf(resname, sizeof(resname), "ctid%u", erm->rowmarkId);
     aerm->ctidAttNo = ExecFindJunkAttributeInTlist(targetlist, resname);
     if (!AttributeNumberIsValid(aerm->ctidAttNo))
       elog(ERROR, "could not find junk %s column", resname);
+  } else if (erm->markType != ROW_MARK_COPY) {
+    /* need the row key's columns for all methods other than COPY */
+    AttrNumber atts[INDEX_MAX_KEYS];
+
+    aerm->nkeys = RowKeyAttnums(erm->relation, atts);
+    for (int i = 0; i < aerm->nkeys; i++) {
+      snprintf(resname, sizeof(resname), "key%u_%d", erm->rowmarkId, i);
+      aerm->keyAttNos[i] = ExecFindJunkAttributeInTlist(targetlist, resname);
+      if (!AttributeNumberIsValid(aerm->keyAttNos[i]))
+        elog(ERROR, "could not find junk %s column", resname);
+    }
   } else {
     /* need wholerow if COPY */
     snprintf(resname, sizeof(resname), "wholerow%u", erm->rowmarkId);
@@ -2546,6 +2560,13 @@ bool EvalPlanQualFetchRowMark(EPQState *epqstate, Index rti,
   if (erm->markType == ROW_MARK_REFERENCE) {
     Assert(erm->relation != NULL);
 
+    /*
+     * A table in sm is marked by copy, not by reference
+     * (select_rowmark_type()): its row is not fetched again.
+     */
+    if (erm->relation->rd_rel->relkind != RELKIND_FOREIGN_TABLE)
+      elog(ERROR, "a table is marked by reference");
+
     /* fetch the tuple's ctid */
     datum = ExecGetJunkAttribute(epqstate->origslot, earm->ctidAttNo, &isNull);
     /* non-locked rels could be on the inside of outer joins */
@@ -2553,7 +2574,7 @@ bool EvalPlanQualFetchRowMark(EPQState *epqstate, Index rti,
       return false;
 
     /* fetch requests on foreign tables must be passed to their FDW */
-    if (erm->relation->rd_rel->relkind == RELKIND_FOREIGN_TABLE) {
+    {
       FdwRoutine *fdwroutine;
       bool updated = false;
 
@@ -2574,13 +2595,6 @@ bool EvalPlanQualFetchRowMark(EPQState *epqstate, Index rti,
        * that FDWs can track that exactly, which they might not be able
        * to.  So just ignore the flag.
        */
-      return true;
-    } else {
-      /* ordinary table, fetch the tuple */
-      if (!table_tuple_fetch_row_version(erm->relation,
-                                         (ItemPointer)DatumGetPointer(datum),
-                                         SnapshotAny, slot))
-        elog(ERROR, "failed to fetch tuple for EvalPlanQual recheck");
       return true;
     }
   } else {

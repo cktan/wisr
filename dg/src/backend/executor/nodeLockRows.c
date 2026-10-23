@@ -21,6 +21,7 @@
 
 #include "postgres.h"
 
+#include "access/rowkey.h"
 #include "access/tableam.h"
 #include "access/xact.h"
 #include "executor/executor.h"
@@ -28,6 +29,24 @@
 #include "foreign/fdwapi.h"
 #include "miscadmin.h"
 #include "utils/rel.h"
+
+/*
+ * Keep key, the row of erm's relation just locked, as erm's current row's,
+ * for WHERE CURRENT OF: copied, as its values are the plan slot's, which
+ * the next row replaces.
+ */
+static void remember_key(EState *estate, ExecRowMark *erm, const RowKey *key) {
+  if (erm->curKeyCxt == NULL)
+    erm->curKeyCxt = AllocSetContextCreate(estate->es_query_cxt, "row mark key",
+                                           ALLOCSET_SMALL_SIZES);
+  /* The last row's key goes with it. */
+  MemoryContextReset(erm->curKeyCxt);
+  MemoryContext old = MemoryContextSwitchTo(erm->curKeyCxt);
+
+  erm->curKey = (RowKey *)palloc(sizeof(RowKey));
+  RowKeyCopy(erm->relation, key, erm->curKey);
+  MemoryContextSwitchTo(old);
+}
 
 /* ----------------------------------------------------------------
  *		ExecLockRows
@@ -74,7 +93,7 @@ lnext:
     ExecRowMark *erm = aerm->rowmark;
     Datum datum;
     bool isNull;
-    ItemPointerData tid;
+    RowKey key;
     TM_FailureData tmfd;
     LockTupleMode lockmode;
     int lockflags = 0;
@@ -99,22 +118,22 @@ lnext:
       if (tableoid != erm->relid) {
         /* this child is inactive right now */
         erm->ermActive = false;
-        ItemPointerSetInvalid(&(erm->curCtid));
+        erm->curKey = NULL;
         continue;
       }
     }
     erm->ermActive = true;
 
-    /* fetch the tuple's ctid */
-    datum = ExecGetJunkAttribute(slot, aerm->ctidAttNo, &isNull);
-    /* shouldn't ever get a null result... */
-    if (isNull)
-      elog(ERROR, "ctid is NULL");
-
     /* requests for foreign tables must be passed to their FDW */
     if (erm->relation->rd_rel->relkind == RELKIND_FOREIGN_TABLE) {
       FdwRoutine *fdwroutine;
       bool updated = false;
+
+      /* fetch the tuple's ctid */
+      datum = ExecGetJunkAttribute(slot, aerm->ctidAttNo, &isNull);
+      /* shouldn't ever get a null result... */
+      if (isNull)
+        elog(ERROR, "ctid is NULL");
 
       fdwroutine = GetFdwRoutineForRelation(erm->relation, false);
       /* this should have been checked already, but let's be safe */
@@ -139,8 +158,17 @@ lnext:
       continue;
     }
 
+    /* fetch the row's key, its values the slot's */
+    key.nkeys = aerm->nkeys;
+    for (int i = 0; i < key.nkeys; i++) {
+      key.values[i] =
+          ExecGetJunkAttribute(slot, aerm->keyAttNos[i], &key.isnull[i]);
+      /* shouldn't ever get a null result... */
+      if (key.isnull[i])
+        elog(ERROR, "row key is NULL");
+    }
+
     /* okay, try to lock (and fetch) the tuple */
-    tid = *((ItemPointer)DatumGetPointer(datum));
     switch (erm->markType) {
     case ROW_MARK_EXCLUSIVE:
       lockmode = LockTupleExclusive;
@@ -164,7 +192,7 @@ lnext:
     if (!IsolationUsesXactSnapshot())
       lockflags |= TUPLE_LOCK_FLAG_FIND_LAST_VERSION;
 
-    test = table_tuple_lock(erm->relation, &tid, estate->es_snapshot, markSlot,
+    test = table_tuple_lock(erm->relation, &key, estate->es_snapshot, markSlot,
                             lockmode, erm->waitPolicy, lockflags, &tmfd);
 
     switch (test) {
@@ -225,8 +253,8 @@ lnext:
       elog(ERROR, "unrecognized table_tuple_lock status: %u", test);
     }
 
-    /* Remember locked tuple's TID for EPQ testing and WHERE CURRENT OF */
-    erm->curCtid = tid;
+    /* Remember locked row's key for WHERE CURRENT OF */
+    remember_key(estate, erm, &key);
   }
 
   /*

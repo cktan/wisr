@@ -24,6 +24,7 @@
 #include "postgres.h"
 
 #include "access/relscan.h"
+#include "access/rowkey.h"
 #include "access/smstore.h"
 #include "access/tableam.h"
 #include "access/tsmapi.h"
@@ -55,9 +56,11 @@ static const TupleTableSlotOps *smtable_slot_callbacks(Relation rel) {
  * table's count of them, as its highest rowno makes it, and the one read.
  * In a table with a primary key, keyed, a sampling method that picks its
  * blocks, as SYSTEM does, has them as slots of the table's bytes in key
- * order, and reads only those (../sm/ROWKEY.md section 2.4); one that
- * reads every block, as BERNOULLI does, has them as SMSTORE_ROWS_PER_BLOCK
- * rows each of a scan in key order, the rows taken by their place in it.
+ * order, and reads only those, every row of each, as SYSTEM takes them
+ * (../sm/ROWKEY.md section 2.4): a slot may hold more rows than a page
+ * has offsets.  One that reads every block, as BERNOULLI does, has them as
+ * SMSTORE_ROWS_PER_BLOCK rows each of a scan in key order, the rows taken
+ * by their place in it.
  */
 typedef struct smtable_scan_t {
   TableScanDescData base; /* what tableam.h reads */
@@ -187,27 +190,21 @@ static void drain(SampleScanState *scanstate, BlockNumber block,
 
 /*
  * A sample scan's next row of a keyed table's block into slot (see
- * smtable_scan_t): the row of a slot at each offset the method gives, in
- * order, or of a block of rows, the one at the offset; false when the block
- * has no more.
+ * smtable_scan_t): a slot's next row, or of a block of rows the one at the
+ * next offset the method gives; false when the block has no more.
  */
 static bool keyed_sample_tuple(smtable_scan_t *scan, SampleScanState *scanstate,
                                TupleTableSlot *slot) {
   TsmRoutine *tsm = scanstate->tsmroutine;
-  OffsetNumber maxoffset =
-      tsm->NextSampleBlock ? MaxOffsetNumber : SMSTORE_ROWS_PER_BLOCK;
+  OffsetNumber maxoffset = SMSTORE_ROWS_PER_BLOCK;
   OffsetNumber offset;
 
   CHECK_FOR_INTERRUPTS();
+  if (tsm->NextSampleBlock)
+    return smstore_sample_row(scan->scan, slot);
   offset = tsm->NextSampleTuple(scanstate, scan->block, maxoffset);
   if (!OffsetNumberIsValid(offset)) {
     ExecClearTuple(slot);
-    return false;
-  }
-  if (tsm->NextSampleBlock) {
-    if (smstore_sample_row(scan->scan, slot))
-      return true;
-    drain(scanstate, scan->block, maxoffset);
     return false;
   }
   if (smstore_scan_nth(scan->scan,
@@ -305,10 +302,13 @@ static bool smtable_tuple_satisfies_snapshot(Relation, TupleTableSlot *,
   return true;
 }
 
-/* The row at tid, as the statement sees it, or as it kept it (smstore.c). */
-static bool smtable_fetch_row_version(Relation rel, ItemPointer tid,
+/*
+ * The row key names, as the statement sees it, or as it kept it
+ * (smstore.c).
+ */
+static bool smtable_fetch_row_version(Relation rel, const RowKey *key,
                                       Snapshot snapshot, TupleTableSlot *slot) {
-  return smstore_fetch_row(rel, tid, slot->tts_tupleDescriptor->natts, slot);
+  return smstore_fetch_row(rel, key, slot->tts_tupleDescriptor->natts, slot);
 }
 
 /*
@@ -322,19 +322,19 @@ static bool smtable_tuple_tid_valid(TableScanDesc, ItemPointer) {
 /* A row's newest version has its tid: sm updates a row at its rowno. */
 static void smtable_tuple_get_latest_tid(TableScanDesc, ItemPointer) {}
 
-/* Delete the row at tid: sm's snapshot and its waits are its own. */
-static TM_Result smtable_tuple_delete(Relation rel, ItemPointer tid,
+/* Delete the row key names: sm's snapshot and its waits are its own. */
+static TM_Result smtable_tuple_delete(Relation rel, const RowKey *key,
                                       Snapshot snapshot, Snapshot crosscheck,
                                       bool wait, TM_FailureData *tmfd,
                                       bool changingPart) {
-  return smstore_delete(rel, tid, tmfd);
+  return smstore_delete(rel, key, tmfd);
 }
 
 /*
- * Replace the row at otid with the slot's.  sm writes the table's indexes
+ * Replace the row key names with the slot's.  sm writes the table's indexes
  * itself, so the executor is told to write none.
  */
-static TM_Result smtable_tuple_update(Relation rel, ItemPointer otid,
+static TM_Result smtable_tuple_update(Relation rel, const RowKey *key,
                                       TupleTableSlot *slot, Snapshot snapshot,
                                       Snapshot crosscheck, bool wait,
                                       TM_FailureData *tmfd,
@@ -342,20 +342,20 @@ static TM_Result smtable_tuple_update(Relation rel, ItemPointer otid,
                                       TU_UpdateIndexes *update_indexes) {
   *lockmode = LockTupleExclusive;
   *update_indexes = TU_None;
-  return smstore_update(rel, otid, slot, tmfd);
+  return smstore_update(rel, key, slot, tmfd);
 }
 
 /*
- * Lock the row at tid and read its newest version: SELECT ... FOR UPDATE's
- * and FOR SHARE's, and an UPDATE's or DELETE's when a write found the row
- * changed.
+ * Lock the row key names and read its newest version: SELECT ... FOR
+ * UPDATE's and FOR SHARE's, and an UPDATE's or DELETE's when a write found
+ * the row changed.
  */
-static TM_Result smtable_tuple_lock(Relation rel, ItemPointer tid,
+static TM_Result smtable_tuple_lock(Relation rel, const RowKey *key,
                                     Snapshot snapshot, TupleTableSlot *slot,
                                     LockTupleMode mode,
                                     LockWaitPolicy wait_policy, uint8 flags,
                                     TM_FailureData *tmfd) {
-  return smstore_lock_row(rel, tid, slot, mode, wait_policy, tmfd);
+  return smstore_lock_row(rel, key, slot, mode, wait_policy, tmfd);
 }
 
 /* Every callback set, as GetTableAmRoutine() requires. */

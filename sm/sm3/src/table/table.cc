@@ -1487,6 +1487,11 @@ static int lock_key(table_t *table, const row_key_t &key, sm1::lockmode_t mode,
                 : sm2::rel_lock(table->rel, k, mode);
 }
 
+/* The encoding of a row's name; see sm3.h. */
+int tbl_row_key(table_t *table, const row_key_t &key, std::string &out) {
+  return sm2::rel_key(table->rel, key.values, key.isnull, out);
+}
+
 /* Lock the row key names without writing it; see sm3.h. */
 int tbl_lock(table_t *table, const row_key_t &key, sm1::lockmode_t mode) {
   return lock_key(table, key, mode, false);

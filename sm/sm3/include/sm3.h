@@ -1509,6 +1509,12 @@ int tbl_read_latest(table_t* table, const row_key_t& key,
 int tbl_read_latest(table_t* table, const row_key_t& key, pin_ref_t& ref,
                     std::string_view& tuple);
 int tbl_lock(table_t* table, const row_key_t& key, sm1::lockmode_t mode);
+
+/*
+ * The key's encoding in the table's rel, past the relid, into out, as
+ * a cursor gives a row's (tbl_scan_key): to tell two names apart.
+ */
+int tbl_row_key(table_t* table, const row_key_t& key, std::string& out);
 int tbl_trylock(table_t* table, const row_key_t& key, sm1::lockmode_t mode);
 
 /*

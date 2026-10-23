@@ -99,10 +99,11 @@ UPDATE update_test SET c = repeat('x', 10000) WHERE c = 'car';
 --dg SELECT a, b, char_length(c) FROM update_test;
 
 -- Check multi-assignment with a Result node to handle a one-time filter.
-EXPLAIN (VERBOSE, COSTS OFF)
-UPDATE update_test t
-  SET (a, b) = (SELECT b, a FROM update_test s WHERE s.a = t.a)
-  WHERE CURRENT_USER = SESSION_USER;
+--dg-differs: the plan
+--dg EXPLAIN (VERBOSE, COSTS OFF)
+--dg UPDATE update_test t
+--dg   SET (a, b) = (SELECT b, a FROM update_test s WHERE s.a = t.a)
+--dg   WHERE CURRENT_USER = SESSION_USER;
 UPDATE update_test t
   SET (a, b) = (SELECT b, a FROM update_test s WHERE s.a = t.a)
   WHERE CURRENT_USER = SESSION_USER;
