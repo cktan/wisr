@@ -539,80 +539,6 @@ static double scalarineqsel(PlannerInfo *root, Oid operator_, bool isgt,
   double selec;
 
   if (!HeapTupleIsValid(vardata->statsTuple)) {
-    /*
-     * No stats are available.  Typically this means we have to fall back
-     * on the default estimate; but if the variable is CTID then we can
-     * make an estimate based on comparing the constant to the table size.
-     */
-    if (vardata->var && IsA(vardata->var, Var) &&
-        ((Var *)vardata->var)->varattno == SelfItemPointerAttributeNumber &&
-        consttype == TIDOID) {
-      ItemPointer itemptr;
-      double block;
-      double density;
-
-      /*
-       * If the relation's empty, we're going to include all of it.
-       * (This is mostly to avoid divide-by-zero below.)
-       */
-      if (vardata->rel->pages == 0)
-        return 1.0;
-
-      itemptr = (ItemPointer)DatumGetPointer(constval);
-      block = ItemPointerGetBlockNumberNoCheck(itemptr);
-
-      /*
-       * Determine the average number of tuples per page (density).
-       *
-       * Since the last page will, on average, be only half full, we can
-       * estimate it to have half as many tuples as earlier pages.  So
-       * give it half the weight of a regular page.
-       */
-      density = vardata->rel->tuples / (vardata->rel->pages - 0.5);
-
-      /* If target is the last page, use half the density. */
-      if (block >= vardata->rel->pages - 1)
-        density *= 0.5;
-
-      /*
-       * Using the average tuples per page, calculate how far into the
-       * page the itemptr is likely to be and adjust block accordingly,
-       * by adding that fraction of a whole block (but never more than a
-       * whole block, no matter how high the itemptr's offset is).  Here
-       * we are ignoring the possibility of dead-tuple line pointers,
-       * which is fairly bogus, but we lack the info to do better.
-       */
-      if (density > 0.0) {
-        OffsetNumber offset = ItemPointerGetOffsetNumberNoCheck(itemptr);
-
-        block += Min(offset / density, 1.0);
-      }
-
-      /*
-       * Convert relative block number to selectivity.  Again, the last
-       * page has only half weight.
-       */
-      selec = block / (vardata->rel->pages - 0.5);
-
-      /*
-       * The calculation so far gave us a selectivity for the "<=" case.
-       * We'll have one fewer tuple for "<" and one additional tuple for
-       * ">=", the latter of which we'll reverse the selectivity for
-       * below, so we can simply subtract one tuple for both cases.  The
-       * cases that need this adjustment can be identified by iseq being
-       * equal to isgt.
-       */
-      if (iseq == isgt && vardata->rel->tuples >= 1.0)
-        selec -= (1.0 / vardata->rel->tuples);
-
-      /* Finally, reverse the selectivity for the ">", ">=" cases. */
-      if (isgt)
-        selec = 1.0 - selec;
-
-      CLAMP_PROBABILITY(selec);
-      return selec;
-    }
-
     /* no stats available, so default result */
     return DEFAULT_INEQ_SEL;
   }
@@ -5637,9 +5563,6 @@ double get_variable_numdistinct(VariableStatData *vardata, bool *isdefault) {
      */
     if (vardata->var && IsA(vardata->var, Var)) {
       switch (((Var *)vardata->var)->varattno) {
-      case SelfItemPointerAttributeNumber:
-        stadistinct = -1.0; /* unique (and all non null) */
-        break;
       case TableOidAttributeNumber:
         stadistinct = 1.0; /* only 1 value */
         break;

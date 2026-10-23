@@ -8479,3 +8479,41 @@ INDEX refusing both, and no row has a TID
   (`index_insert()`, `xs_heaptid`, `table_index_fetch_tuple()`),
   which an index in sm refuses, and the trigger calls'
   `recheckIndexes`, NIL now.
+
+## Step 295: no ctid
+
+The last of the TID (`../sm/ROWKEY.md` §3.1): a row of a table
+in sm is named by its key (step 292), and nothing in digres
+carries a TID now.
+
+- **`ctid` is no system column**: `SelfItemPointerAttributeNumber`
+  is gone, and `heap.c`'s `SysAtt` starts at `xmin`'s -2, -1
+  being no attribute's. A table may have a column named `ctid`,
+  and naming one it lacks is "column does not exist", with no
+  hint.
+- **A slot has no `tts_tid`**: `tts_rowno` holds its row's
+  rowno in sm, 0 if none, for the system column `rowno`
+  (`slot_getsysattr()`). `smstore_rowno_to_tid()`,
+  `smstore_rowno_fits_tid()`, `smstore_tid_to_rowno()` and
+  `ExecSlotRowno()` went with it.
+- **An AFTER trigger event has no ctid**: a row-level trigger's
+  tuples are always kept in a tuple store (step 177's
+  `trigger_tuples_stored()`), so `ate_ctid1` and `ate_ctid2` are
+  gone, and with them a cross-partition update's partition
+  OIDs, which only said where to fetch them by ctid. A
+  statement's event is `AFTER_TRIGGER_NO_TUPLE`.
+- **A TID scan is of rownos alone**: the planner's and the
+  executor's `ctid = tid` cases are gone (`tidpath.c`,
+  `nodeTidscan.c`), as are the selectivity of a `ctid`
+  comparison and its distinctness (`selfuncs.c`) and
+  `heap_getsysattr()`'s `ctid`.
+- **A foreign table's row marks are copies**: its `ctid` junk
+  column (`ctidAttNo`), the FDW's `RefetchForeignRow()` calls
+  in LockRows and EvalPlanQual, and `GetForeignRowMarkType()`
+  are no longer used. digres makes no foreign table.
+- **pg_locks** reckons a keyless row's page and tuple from its
+  rowno, as the TID did (`lockfuncs.c`).
+- **`TM_FailureData` has no `ctid`**: nothing set or read it.
+- **Left on purpose**: `HeapTupleData`'s `t_self`, which
+  catalog code and the heap tuple format still use, the `tid`
+  type, and the index access method's TID calls (step 294).

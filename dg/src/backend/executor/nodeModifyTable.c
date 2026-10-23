@@ -1101,7 +1101,7 @@ static TupleTableSlot *ExecInsert(ModifyTableContext *context,
                                   ExecGetReturningSlot(estate, resultRelInfo));
 
         oldSlot->tts_tableOid = context->cpDeletedSlot->tts_tableOid;
-        ItemPointerCopy(&context->cpDeletedSlot->tts_tid, &oldSlot->tts_tid);
+        oldSlot->tts_rowno = context->cpDeletedSlot->tts_rowno;
       }
     }
 
@@ -1601,7 +1601,7 @@ static TupleTableSlot *ExecDelete(ModifyTableContext *context,
                                      ExecGetReturningSlot(estate, rootRelInfo));
 
         slot->tts_tableOid = oldSlot->tts_tableOid;
-        ItemPointerCopy(&oldSlot->tts_tid, &slot->tts_tid);
+        slot->tts_rowno = oldSlot->tts_rowno;
       }
 
       context->cpDeletedSlot = slot;

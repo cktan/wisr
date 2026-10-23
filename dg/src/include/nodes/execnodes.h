@@ -799,7 +799,6 @@ typedef struct ExecRowMark
 typedef struct ExecAuxRowMark
 {
 	ExecRowMark *rowmark;		/* related entry in es_rowmarks */
-	AttrNumber	ctidAttNo;		/* resno of a foreign table's ctid junk */
 	int			nkeys;			/* row key junk attributes, if any */
 	AttrNumber	keyAttNos[INDEX_MAX_KEYS];	/* their resnos */
 	AttrNumber	toidAttNo;		/* resno of tableoid junk attribute, if any */

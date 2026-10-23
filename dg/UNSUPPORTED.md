@@ -34,8 +34,10 @@ regression files are taken out for it (`test/pgregress`,
 - **TIDs and `ctid`** — never. No row has a TID: a row is
   named by its key, the values of its primary key's columns, or
   a keyless table's rowno (`../sm/ROWKEY.md`, step 292).
-  `ctid`, `xmin`, `xmax`, `cmin` and `cmax` are "column does
-  not exist" (step 200); the `tid` type cannot be stored.
+  `ctid` is no system column, so a table may have a column of
+  that name (step 295); `xmin`, `xmax`, `cmin` and `cmax` are
+  "column does not exist" (step 200); the `tid` type cannot be
+  stored.
 - **TID scans** — differs. A TID scan only for `WHERE CURRENT
   OF`, and for `rowno = n` in a table without a primary key
   (step 288); the TID range scan and `currtid2()` are removed

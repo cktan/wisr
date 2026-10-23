@@ -124,40 +124,6 @@ lnext:
     }
     erm->ermActive = true;
 
-    /* requests for foreign tables must be passed to their FDW */
-    if (erm->relation->rd_rel->relkind == RELKIND_FOREIGN_TABLE) {
-      FdwRoutine *fdwroutine;
-      bool updated = false;
-
-      /* fetch the tuple's ctid */
-      datum = ExecGetJunkAttribute(slot, aerm->ctidAttNo, &isNull);
-      /* shouldn't ever get a null result... */
-      if (isNull)
-        elog(ERROR, "ctid is NULL");
-
-      fdwroutine = GetFdwRoutineForRelation(erm->relation, false);
-      /* this should have been checked already, but let's be safe */
-      if (fdwroutine->RefetchForeignRow == NULL)
-        ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                        errmsg("cannot lock rows in foreign table \"%s\"",
-                               RelationGetRelationName(erm->relation))));
-
-      fdwroutine->RefetchForeignRow(estate, erm, datum, markSlot, &updated);
-      if (TupIsNull(markSlot)) {
-        /* couldn't get the lock, so skip this row */
-        goto lnext;
-      }
-
-      /*
-       * if FDW says tuple was updated before getting locked, we need to
-       * perform EPQ testing to see if quals are still satisfied
-       */
-      if (updated)
-        epq_needed = true;
-
-      continue;
-    }
-
     /* fetch the row's key, its values the slot's */
     key.nkeys = aerm->nkeys;
     for (int i = 0; i < key.nkeys; i++) {

@@ -2059,37 +2059,6 @@ bool smstore_relation_name(Oid relid, uint64 version, char **name,
 }
 
 /*
- * A row's rowno as a tid, for the slot that carries it: block rowno / 256,
- * SMSTORE_ROWS_PER_BLOCK, and offset one above the remainder, as an offset
- * of 0 is no tid.  A sample scan reads a block of rownos as PostgreSQL's
- * reads a page (access/sm/smtable.c).
- */
-void smstore_rowno_to_tid(uint64 rowno, ItemPointer tid) {
-  if (!smstore_rowno_fits_tid(rowno, tid))
-    ereport(ERROR, (errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-                    errmsg("row number %llu does not fit a tid",
-                           (unsigned long long)rowno)));
-}
-
-/*
- * rowno as a tid, as smstore_rowno_to_tid() makes it; false if it does not
- * fit one, so that no row has it. A TID scan of WHERE rowno = n asks.
- */
-bool smstore_rowno_fits_tid(uint64 rowno, ItemPointer tid) {
-  if (rowno / SMSTORE_ROWS_PER_BLOCK > MaxBlockNumber)
-    return false;
-  ItemPointerSet(tid, (BlockNumber)(rowno / SMSTORE_ROWS_PER_BLOCK),
-                 (OffsetNumber)(rowno % SMSTORE_ROWS_PER_BLOCK + 1));
-  return true;
-}
-
-/* The rowno a tid carries (smstore_rowno_to_tid()). */
-uint64 smstore_tid_to_rowno(ItemPointer tid) {
-  return (uint64)ItemPointerGetBlockNumber(tid) * SMSTORE_ROWS_PER_BLOCK +
-         ItemPointerGetOffsetNumber(tid) - 1;
-}
-
-/*
  * Raise the error of a write to rel that sm refused, a unique index holding
  * the key already: PostgreSQL's, naming the index sm names, with the key of
  * the row in slot, all of whose columns are read; sm's words if it names no
@@ -2147,7 +2116,7 @@ void smstore_insert(Relation rel, TupleTableSlot *slot) {
       duplicate_write(rel, slot);
     sm_error("insert a row");
   }
-  smstore_rowno_to_tid(rowno, &slot->tts_tid);
+  slot->tts_rowno = rowno;
 }
 
 static void tuple_into_slot(sm_tbl_t *tbl, uint64_t rowno, const void *tuple,
@@ -2204,7 +2173,7 @@ bool smstore_insert_arbiter(Relation rel, TupleTableSlot *slot, List *arbiters,
     ExecDropSingleTupleTableSlot(other);
     return true;
   }
-  smstore_rowno_to_tid(rowno, &slot->tts_tid);
+  slot->tts_rowno = rowno;
   return false;
 }
 
@@ -2254,7 +2223,7 @@ void smstore_load(Relation rel, TupleTableSlot **slots, int n) {
                                  &rowno);
         }) != 0)
       load_error(rel, slot, "load a row");
-    smstore_rowno_to_tid(rowno, &slot->tts_tid);
+    slot->tts_rowno = rowno;
     slot->tts_tableOid = oid;
   }
 }
@@ -2475,7 +2444,7 @@ static void ref_into_slot(sm_pin_ref_t ref, uint64_t rowno,
       sm_error("read a row");
     ExecStoreVirtualTuple(slot);
   }
-  smstore_rowno_to_tid(rowno, &slot->tts_tid);
+  slot->tts_rowno = rowno;
 }
 
 /*
@@ -2499,7 +2468,7 @@ static void tuple_into_slot(sm_tbl_t *tbl, uint64_t rowno, const void *tuple,
    * or reads null.
    */
   slot->tts_nvalid = natts;
-  smstore_rowno_to_tid(rowno, &slot->tts_tid);
+  slot->tts_rowno = rowno;
 }
 
 /*
@@ -6261,7 +6230,7 @@ bool smstore_index_getentry(smstore_scan_t *scan, TupleTableSlot *slot) {
       sm_error("read an index entry");
     }
     ExecStoreVirtualTuple(slot);
-    smstore_rowno_to_tid(rowno, &slot->tts_tid);
+    slot->tts_rowno = rowno;
     if (keys_met(scan, slot, true))
       return true;
   }

@@ -2247,12 +2247,11 @@ RowMarkType select_rowmark_type(RangeTblEntry *rte,
     /* If it's not a table at all, use ROW_MARK_COPY */
     return ROW_MARK_COPY;
   } else if (rte->relkind == RELKIND_FOREIGN_TABLE) {
-    /* Let the FDW select the rowmark type, if it wants to */
-    FdwRoutine *fdwroutine = GetFdwRoutineByRelId(rte->relid);
-
-    if (fdwroutine->GetForeignRowMarkType != NULL)
-      return fdwroutine->GetForeignRowMarkType(rte, strength);
-    /* Otherwise, use ROW_MARK_COPY by default */
+    /*
+     * A foreign table's row has no ctid to be locked or fetched again by:
+     * copy it.  (digres makes no foreign table: "a relation's storage cannot
+     * be made".)
+     */
     return ROW_MARK_COPY;
   } else {
     /* Regular table, apply the appropriate lock type */

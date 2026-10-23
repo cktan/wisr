@@ -37,17 +37,10 @@
 #include "utils/rel.h"
 
 /*
- * It's sufficient to check varattno to identify the CTID variable, as any
- * Var in the relation scan qual must be for our table.  (Even if it's a
- * parameterized scan referencing some other table's CTID, the other table's
- * Var would have become a Param by the time it gets here.)
+ * It's sufficient to check varattno to identify the rowno variable, which
+ * names a row of a table in sm without a primary key, as any Var in the
+ * relation scan qual must be for our table.  digres has no CTID.
  */
-#define IsCTIDVar(node)  \
-	((node) != NULL && \
-	 IsA((node), Var) && \
-	 ((Var *) (node))->varattno == SelfItemPointerAttributeNumber)
-
-/* The same for the rowno variable, which names a row of a table in sm. */
 #define IsRownoVar(node)  \
 	((node) != NULL && \
 	 IsA((node), Var) && \
@@ -55,9 +48,9 @@
 
 /* one element in tss_tidexprs */
 typedef struct TidExpr {
-  ExprState *exprstate; /* ExprState for a TID-yielding subexpr */
-  bool isarray;         /* if true, it yields tid[] not just tid */
-  Oid rownotype;        /* or rownos of this integer type, if valid */
+  ExprState *exprstate; /* ExprState for a rowno-yielding subexpr */
+  bool isarray;         /* if true, it yields an array of rownos */
+  Oid rownotype;        /* the rownos' integer type */
   CurrentOfExpr *cexpr; /* alternatively, we can have CURRENT OF */
 } TidExpr;
 
@@ -91,35 +84,31 @@ static void TidExprListCreate(TidScanState *tidstate) {
 
       arg1 = get_leftop(expr);
       arg2 = get_rightop(expr);
-      if (IsCTIDVar(arg1) || IsRownoVar(arg1))
+      if (IsRownoVar(arg1)) {
         tidexpr->exprstate = ExecInitExpr((Expr *)arg2, &tidstate->ss.ps);
-      else if (IsCTIDVar(arg2) || IsRownoVar(arg2))
-        tidexpr->exprstate = ExecInitExpr((Expr *)arg1, &tidstate->ss.ps);
-      else
-        elog(ERROR, "could not identify CTID variable");
-      if (IsRownoVar(arg1))
         tidexpr->rownotype = exprType(arg2);
-      else if (IsRownoVar(arg2))
+      } else if (IsRownoVar(arg2)) {
+        tidexpr->exprstate = ExecInitExpr((Expr *)arg1, &tidstate->ss.ps);
         tidexpr->rownotype = exprType(arg1);
+      } else
+        elog(ERROR, "could not identify rowno variable");
       tidexpr->isarray = false;
     } else if (expr && IsA(expr, ScalarArrayOpExpr)) {
       ScalarArrayOpExpr *saex = (ScalarArrayOpExpr *)expr;
 
-      Assert(IsCTIDVar(linitial(saex->args)) ||
-             IsRownoVar(linitial(saex->args)));
+      Assert(IsRownoVar(linitial(saex->args)));
       tidexpr->exprstate =
           ExecInitExpr((Expr *)lsecond(saex->args), &tidstate->ss.ps);
       tidexpr->isarray = true;
-      if (IsRownoVar(linitial(saex->args)))
-        tidexpr->rownotype =
-            get_element_type(exprType((Node *)lsecond(saex->args)));
+      tidexpr->rownotype =
+          get_element_type(exprType((Node *)lsecond(saex->args)));
     } else if (expr && IsA(expr, CurrentOfExpr)) {
       CurrentOfExpr *cexpr = (CurrentOfExpr *)expr;
 
       tidexpr->cexpr = cexpr;
       tidstate->tss_isCurrentOf = true;
     } else
-      elog(ERROR, "could not identify CTID expression");
+      elog(ERROR, "could not identify rowno expression");
 
     tidstate->tss_tidexprs = lappend(tidstate->tss_tidexprs, tidexpr);
   }
@@ -166,8 +155,6 @@ static void TidListEval(TidScanState *tidstate) {
     TidExpr *tidexpr = (TidExpr *)lfirst(l);
     bool isNull;
 
-    if (tidexpr->exprstate && !OidIsValid(tidexpr->rownotype))
-      elog(ERROR, "a TID names no row of a table in sm");
     if (tidexpr->exprstate && !tidexpr->isarray) {
       Datum value =
           ExecEvalExprSwitchContext(tidexpr->exprstate, econtext, &isNull);

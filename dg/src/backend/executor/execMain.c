@@ -2314,14 +2314,7 @@ ExecAuxRowMark *ExecBuildAuxRowMark(ExecRowMark *erm, List *targetlist) {
   aerm->rowmark = erm;
 
   /* Look up the resjunk columns associated with this rowmark */
-  if (erm->markType != ROW_MARK_COPY &&
-      erm->relation->rd_rel->relkind == RELKIND_FOREIGN_TABLE) {
-    /* a foreign table's FDW finds its row by ctid */
-    snprintf(resname, sizeof(resname), "ctid%u", erm->rowmarkId);
-    aerm->ctidAttNo = ExecFindJunkAttributeInTlist(targetlist, resname);
-    if (!AttributeNumberIsValid(aerm->ctidAttNo))
-      elog(ERROR, "could not find junk %s column", resname);
-  } else if (erm->markType != ROW_MARK_COPY) {
+  if (erm->markType != ROW_MARK_COPY) {
     /* need the row key's columns for all methods other than COPY */
     AttrNumber atts[INDEX_MAX_KEYS];
 
@@ -2557,58 +2550,20 @@ bool EvalPlanQualFetchRowMark(EPQState *epqstate, Index rti,
     }
   }
 
-  if (erm->markType == ROW_MARK_REFERENCE) {
-    Assert(erm->relation != NULL);
+  /*
+   * No row is marked by reference (select_rowmark_type()): none has a ctid
+   * to be fetched again by.  The row as it was read was copied.
+   */
+  Assert(erm->markType == ROW_MARK_COPY);
 
-    /*
-     * A table in sm is marked by copy, not by reference
-     * (select_rowmark_type()): its row is not fetched again.
-     */
-    if (erm->relation->rd_rel->relkind != RELKIND_FOREIGN_TABLE)
-      elog(ERROR, "a table is marked by reference");
+  /* fetch the whole-row Var for the relation */
+  datum = ExecGetJunkAttribute(epqstate->origslot, earm->wholeAttNo, &isNull);
+  /* non-locked rels could be on the inside of outer joins */
+  if (isNull)
+    return false;
 
-    /* fetch the tuple's ctid */
-    datum = ExecGetJunkAttribute(epqstate->origslot, earm->ctidAttNo, &isNull);
-    /* non-locked rels could be on the inside of outer joins */
-    if (isNull)
-      return false;
-
-    /* fetch requests on foreign tables must be passed to their FDW */
-    {
-      FdwRoutine *fdwroutine;
-      bool updated = false;
-
-      fdwroutine = GetFdwRoutineForRelation(erm->relation, false);
-      /* this should have been checked already, but let's be safe */
-      if (fdwroutine->RefetchForeignRow == NULL)
-        ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                        errmsg("cannot lock rows in foreign table \"%s\"",
-                               RelationGetRelationName(erm->relation))));
-
-      fdwroutine->RefetchForeignRow(epqstate->recheckestate, erm, datum, slot,
-                                    &updated);
-      if (TupIsNull(slot))
-        elog(ERROR, "failed to fetch tuple for EvalPlanQual recheck");
-
-      /*
-       * Ideally we'd insist on updated == false here, but that assumes
-       * that FDWs can track that exactly, which they might not be able
-       * to.  So just ignore the flag.
-       */
-      return true;
-    }
-  } else {
-    Assert(erm->markType == ROW_MARK_COPY);
-
-    /* fetch the whole-row Var for the relation */
-    datum = ExecGetJunkAttribute(epqstate->origslot, earm->wholeAttNo, &isNull);
-    /* non-locked rels could be on the inside of outer joins */
-    if (isNull)
-      return false;
-
-    ExecStoreHeapTupleDatum(datum, slot);
-    return true;
-  }
+  ExecStoreHeapTupleDatum(datum, slot);
+  return true;
 }
 
 /*

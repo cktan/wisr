@@ -15,9 +15,9 @@
 #define SYSATTR_H
 
 /*
- * Attribute numbers for the system-defined attributes
+ * Attribute numbers for the system-defined attributes.  digres: -1 was ctid,
+ * a row's TID, which no row has (../../../sm/ROWKEY.md section 3.1).
  */
-#define SelfItemPointerAttributeNumber			(-1)
 #define MinTransactionIdAttributeNumber			(-2)
 #define MinCommandIdAttributeNumber				(-3)
 #define MaxTransactionIdAttributeNumber			(-4)

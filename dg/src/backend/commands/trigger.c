@@ -3104,24 +3104,19 @@ typedef SetConstraintStateData *SetConstraintState;
 /*
  * Per-trigger-event data
  *
- * The actual per-event data, AfterTriggerEventData, includes DONE/IN_PROGRESS
- * status bits, up to two tuple CTIDs, and optionally two OIDs of partitions.
- * Each event record also has an associated AfterTriggerSharedData that is
- * shared across all instances of similar events within a "chunk".
+ * The actual per-event data, AfterTriggerEventData, is DONE/IN_PROGRESS
+ * status bits and where its tuples are.  Each event record also has an
+ * associated AfterTriggerSharedData that is shared across all instances of
+ * similar events within a "chunk".
  *
- * For row-level triggers, we arrange not to waste storage on unneeded ctid
- * fields.  Updates of regular tables use two; inserts and deletes of regular
- * tables use one; foreign tables always use zero and save the tuple(s) to a
- * tuplestore.  AFTER_TRIGGER_FDW_FETCH directs AfterTriggerExecute() to
- * retrieve a fresh tuple or pair of tuples from that tuplestore, while
- * AFTER_TRIGGER_FDW_REUSE directs it to use the most-recently-retrieved
- * tuple(s).  This permits storing tuples once regardless of the number of
- * row-level triggers on a foreign table.
- *
- * When updates on partitioned tables cause rows to move between partitions,
- * the OIDs of both partitions are stored too, so that the tuples can be
- * fetched; such entries are marked AFTER_TRIGGER_CP_UPDATE (for "cross-
- * partition update").
+ * digres: no row has a ctid to fetch it again by (../sm/ROWKEY.md), so a
+ * row-level trigger's tuples are saved to a tuplestore, as PostgreSQL saves
+ * a foreign table's (trigger_tuples_stored()).  AFTER_TRIGGER_FDW_FETCH
+ * directs AfterTriggerExecute() to retrieve a fresh tuple or pair of tuples
+ * from that tuplestore, while AFTER_TRIGGER_FDW_REUSE directs it to use the
+ * most-recently-retrieved tuple(s).  This permits storing tuples once
+ * regardless of the number of row-level triggers on a table.
+ * AFTER_TRIGGER_NO_TUPLE marks a statement-level event, which has none.
  *
  * Note that we need triggers on foreign tables to be fired in exactly the
  * order they were queued, so that the tuples come out of the tuplestore in
@@ -3129,10 +3124,6 @@ typedef SetConstraintStateData *SetConstraintState;
  * triggers on foreign tables.  This also ensures that such triggers do not
  * get deferred into outer trigger query levels, meaning that it's okay to
  * destroy the tuplestore at the end of the query level.
- *
- * Statement-level triggers always bear AFTER_TRIGGER_1CTID, though they
- * require no ctid field.  We lack the flag bit space to neatly represent that
- * distinct case, and it seems unlikely to be worth much trouble.
  *
  * Note: ats_firing_id is initially zero and is set to something else when
  * AFTER_TRIGGER_IN_PROGRESS is set.  It indicates which trigger firing
@@ -3151,10 +3142,8 @@ typedef uint32 TriggerFlags;
 /* bits describing the size and tuple sources of this event */
 #define AFTER_TRIGGER_FDW_REUSE			0x00000000
 #define AFTER_TRIGGER_FDW_FETCH			0x20000000
-#define AFTER_TRIGGER_1CTID				0x10000000
-#define AFTER_TRIGGER_2CTID				0x30000000
-#define AFTER_TRIGGER_CP_UPDATE			0x08000000
-#define AFTER_TRIGGER_TUP_BITS			0x38000000
+#define AFTER_TRIGGER_NO_TUPLE			0x10000000
+#define AFTER_TRIGGER_TUP_BITS			0x30000000
 typedef struct AfterTriggerSharedData *AfterTriggerShared;
 
 typedef struct AfterTriggerSharedData {
@@ -3170,45 +3159,10 @@ typedef struct AfterTriggerSharedData {
 typedef struct AfterTriggerEventData *AfterTriggerEvent;
 
 typedef struct AfterTriggerEventData {
-  TriggerFlags ate_flags;    /* status bits and offset to shared data */
-  ItemPointerData ate_ctid1; /* inserted, deleted, or old updated tuple */
-  ItemPointerData ate_ctid2; /* new updated tuple */
-
-  /*
-   * During a cross-partition update of a partitioned table, we also store
-   * the OIDs of source and destination partitions that are needed to fetch
-   * the old (ctid1) and the new tuple (ctid2) from, respectively.
-   */
-  Oid ate_src_part;
-  Oid ate_dst_part;
+  TriggerFlags ate_flags; /* status bits and offset to shared data */
 } AfterTriggerEventData;
 
-/* AfterTriggerEventData, minus ate_src_part, ate_dst_part */
-typedef struct AfterTriggerEventDataNoOids {
-  TriggerFlags ate_flags;
-  ItemPointerData ate_ctid1;
-  ItemPointerData ate_ctid2;
-} AfterTriggerEventDataNoOids;
-
-/* AfterTriggerEventData, minus ate_*_part and ate_ctid2 */
-typedef struct AfterTriggerEventDataOneCtid {
-  TriggerFlags ate_flags;    /* status bits and offset to shared data */
-  ItemPointerData ate_ctid1; /* inserted, deleted, or old updated tuple */
-} AfterTriggerEventDataOneCtid;
-
-/* AfterTriggerEventData, minus ate_*_part, ate_ctid1 and ate_ctid2 */
-typedef struct AfterTriggerEventDataZeroCtids {
-  TriggerFlags ate_flags; /* status bits and offset to shared data */
-} AfterTriggerEventDataZeroCtids;
-
-#define SizeofTriggerEvent(evt) \
-	(((evt)->ate_flags & AFTER_TRIGGER_TUP_BITS) == AFTER_TRIGGER_CP_UPDATE ? \
-	 sizeof(AfterTriggerEventData) : \
-	 (((evt)->ate_flags & AFTER_TRIGGER_TUP_BITS) == AFTER_TRIGGER_2CTID ? \
-	  sizeof(AfterTriggerEventDataNoOids) : \
-	  (((evt)->ate_flags & AFTER_TRIGGER_TUP_BITS) == AFTER_TRIGGER_1CTID ? \
-	   sizeof(AfterTriggerEventDataOneCtid) : \
-	   sizeof(AfterTriggerEventDataZeroCtids))))
+#define SizeofTriggerEvent(evt) sizeof(AfterTriggerEventData)
 
 #define GetTriggerSharedData(evt) \
 	((AfterTriggerShared) ((char *) (evt) + ((evt)->ate_flags & AFTER_TRIGGER_OFFSET)))
@@ -3821,66 +3775,11 @@ static void AfterTriggerExecute(
     break;
 
   default:
-    if (ItemPointerIsValid(&(event->ate_ctid1))) {
-      TupleTableSlot *src_slot = ExecGetTriggerOldSlot(estate, src_relInfo);
-
-      /*
-       * No row is named by ctid: a table in sm's rows reach its triggers
-       * from a tuple store (trigger_tuples_stored()).
-       */
-      elog(ERROR, "failed to fetch tuple1 for AFTER trigger");
-
-      /*
-       * Store the tuple fetched from the source partition into the
-       * target (root partitioned) table slot, converting if needed.
-       */
-      if (src_relInfo != relInfo) {
-        TupleConversionMap *map = ExecGetChildToRootMap(src_relInfo);
-
-        LocTriggerData.tg_trigslot = ExecGetTriggerOldSlot(estate, relInfo);
-        if (map) {
-          execute_attr_map_slot(map->attrMap, src_slot,
-                                LocTriggerData.tg_trigslot);
-        } else
-          ExecCopySlot(LocTriggerData.tg_trigslot, src_slot);
-      } else
-        LocTriggerData.tg_trigslot = src_slot;
-      LocTriggerData.tg_trigtuple = ExecFetchSlotHeapTuple(
-          LocTriggerData.tg_trigslot, false, &should_free_trig);
-    } else {
-      LocTriggerData.tg_trigtuple = NULL;
-    }
-
-    /* don't touch ctid2 if not there */
-    if (((event->ate_flags & AFTER_TRIGGER_TUP_BITS) == AFTER_TRIGGER_2CTID ||
-         (event->ate_flags & AFTER_TRIGGER_CP_UPDATE)) &&
-        ItemPointerIsValid(&(event->ate_ctid2))) {
-      TupleTableSlot *dst_slot = ExecGetTriggerNewSlot(estate, dst_relInfo);
-
-      /* As tuple1 above. */
-      elog(ERROR, "failed to fetch tuple2 for AFTER trigger");
-
-      /*
-       * Store the tuple fetched from the destination partition into
-       * the target (root partitioned) table slot, converting if
-       * needed.
-       */
-      if (dst_relInfo != relInfo) {
-        TupleConversionMap *map = ExecGetChildToRootMap(dst_relInfo);
-
-        LocTriggerData.tg_newslot = ExecGetTriggerNewSlot(estate, relInfo);
-        if (map) {
-          execute_attr_map_slot(map->attrMap, dst_slot,
-                                LocTriggerData.tg_newslot);
-        } else
-          ExecCopySlot(LocTriggerData.tg_newslot, dst_slot);
-      } else
-        LocTriggerData.tg_newslot = dst_slot;
-      LocTriggerData.tg_newtuple = ExecFetchSlotHeapTuple(
-          LocTriggerData.tg_newslot, false, &should_free_new);
-    } else {
-      LocTriggerData.tg_newtuple = NULL;
-    }
+    /* A statement's event: no row. */
+    Assert((event->ate_flags & AFTER_TRIGGER_TUP_BITS) ==
+           AFTER_TRIGGER_NO_TUPLE);
+    LocTriggerData.tg_trigtuple = NULL;
+    LocTriggerData.tg_newtuple = NULL;
   }
 
   /*
@@ -4116,20 +4015,8 @@ static bool afterTriggerInvokeEvents(AfterTriggerEventList *events,
           }
         }
 
-        /*
-         * Look up source and destination partition result rels of a
-         * cross-partition update event.
-         */
-        if ((event->ate_flags & AFTER_TRIGGER_TUP_BITS) ==
-            AFTER_TRIGGER_CP_UPDATE) {
-          Assert(OidIsValid(event->ate_src_part) &&
-                 OidIsValid(event->ate_dst_part));
-          src_rInfo =
-              ExecGetTriggerResultRel(estate, event->ate_src_part, rInfo);
-          dst_rInfo =
-              ExecGetTriggerResultRel(estate, event->ate_dst_part, rInfo);
-        } else
-          src_rInfo = dst_rInfo = rInfo;
+        /* No table is partitioned: no event moved a row between two. */
+        src_rInfo = dst_rInfo = rInfo;
 
         /*
          * Fire it.  Note that the AFTER_TRIGGER_IN_PROGRESS flag is
@@ -5473,7 +5360,7 @@ static void AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
           src_partinfo != NULL && dst_partinfo != NULL));
 
   /*
-   * Validate the event code and collect the associated tuple CTIDs.
+   * Validate the event code.
    *
    * The event code will be used both as a bitmask and an array offset, so
    * validation is important to make sure we don't walk off the edge of our
@@ -5490,13 +5377,9 @@ static void AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
     if (row_trigger) {
       Assert(oldslot == NULL);
       Assert(newslot != NULL);
-      ItemPointerCopy(&(newslot->tts_tid), &(new_event.ate_ctid1));
-      ItemPointerSetInvalid(&(new_event.ate_ctid2));
     } else {
       Assert(oldslot == NULL);
       Assert(newslot == NULL);
-      ItemPointerSetInvalid(&(new_event.ate_ctid1));
-      ItemPointerSetInvalid(&(new_event.ate_ctid2));
       cancel_prior_stmt_triggers(RelationGetRelid(rel), CMD_INSERT, event);
     }
     break;
@@ -5505,13 +5388,9 @@ static void AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
     if (row_trigger) {
       Assert(oldslot != NULL);
       Assert(newslot == NULL);
-      ItemPointerCopy(&(oldslot->tts_tid), &(new_event.ate_ctid1));
-      ItemPointerSetInvalid(&(new_event.ate_ctid2));
     } else {
       Assert(oldslot == NULL);
       Assert(newslot == NULL);
-      ItemPointerSetInvalid(&(new_event.ate_ctid1));
-      ItemPointerSetInvalid(&(new_event.ate_ctid2));
       cancel_prior_stmt_triggers(RelationGetRelid(rel), CMD_DELETE, event);
     }
     break;
@@ -5520,25 +5399,9 @@ static void AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
     if (row_trigger) {
       Assert(oldslot != NULL);
       Assert(newslot != NULL);
-      ItemPointerCopy(&(oldslot->tts_tid), &(new_event.ate_ctid1));
-      ItemPointerCopy(&(newslot->tts_tid), &(new_event.ate_ctid2));
-
-      /*
-       * Also remember the OIDs of partitions to fetch these tuples
-       * out of later in AfterTriggerExecute().
-       */
-      if (rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE) {
-        Assert(src_partinfo != NULL && dst_partinfo != NULL);
-        new_event.ate_src_part =
-            RelationGetRelid(src_partinfo->ri_RelationDesc);
-        new_event.ate_dst_part =
-            RelationGetRelid(dst_partinfo->ri_RelationDesc);
-      }
     } else {
       Assert(oldslot == NULL);
       Assert(newslot == NULL);
-      ItemPointerSetInvalid(&(new_event.ate_ctid1));
-      ItemPointerSetInvalid(&(new_event.ate_ctid2));
       cancel_prior_stmt_triggers(RelationGetRelid(rel), CMD_UPDATE, event);
     }
     break;
@@ -5546,8 +5409,6 @@ static void AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
     tgtype_event = TRIGGER_TYPE_TRUNCATE;
     Assert(oldslot == NULL);
     Assert(newslot == NULL);
-    ItemPointerSetInvalid(&(new_event.ate_ctid1));
-    ItemPointerSetInvalid(&(new_event.ate_ctid2));
     break;
   default:
     elog(ERROR, "invalid after-trigger event code: %d", event);
@@ -5555,15 +5416,10 @@ static void AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
     break;
   }
 
-  /* Determine flags */
+  /* Determine flags: a row's tuples are stored, a statement has none */
   if (!(trigger_tuples_stored(rel) && row_trigger)) {
-    if (row_trigger && event == TRIGGER_EVENT_UPDATE) {
-      if (relkind == RELKIND_PARTITIONED_TABLE)
-        new_event.ate_flags = AFTER_TRIGGER_CP_UPDATE;
-      else
-        new_event.ate_flags = AFTER_TRIGGER_2CTID;
-    } else
-      new_event.ate_flags = AFTER_TRIGGER_1CTID;
+    Assert(!row_trigger);
+    new_event.ate_flags = AFTER_TRIGGER_NO_TUPLE;
   }
 
   /* else, we'll initialize ate_flags for each trigger */

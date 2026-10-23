@@ -235,8 +235,8 @@ extern TM_Result smstore_lock_row(Relation rel, const struct RowKey *key,
                                   TM_FailureData *tmfd);
 
 /*
- * The rownos a tid's block holds (smstore_rowno_to_tid()): a block of rownos
- * is what a sample scan picks, as PostgreSQL's picks a page.
+ * The rownos a sample scan's block holds: a block of rownos is what a sample
+ * scan of a table without a primary key picks, as PostgreSQL's picks a page.
  */
 #define SMSTORE_ROWS_PER_BLOCK 256
 
@@ -266,8 +266,5 @@ extern smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
 extern bool smstore_index_getnext(smstore_scan_t *scan, TupleTableSlot *slot);
 extern bool smstore_index_getrowno(smstore_scan_t *scan, uint64 *rowno);
 extern bool smstore_index_getentry(smstore_scan_t *scan, TupleTableSlot *slot);
-extern void smstore_rowno_to_tid(uint64 rowno, ItemPointer tid);
-extern bool smstore_rowno_fits_tid(uint64 rowno, ItemPointer tid);
-extern uint64 smstore_tid_to_rowno(ItemPointer tid);
 
 #endif /* SMSTORE_H */

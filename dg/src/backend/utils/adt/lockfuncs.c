@@ -91,20 +91,18 @@ Datum pg_lock_status(PG_FUNCTION_ARGS) {
         nulls[LOCKFUNCS_RELATION] = false;
       }
     } else if (l.name == DATADIR_LOCK_ROW) {
-      ItemPointerData tid;
-
       /*
-       * The row's tid, as a scan gives it (smstore_rowno_to_tid()); none for
-       * a row of a table with a primary key, whose lock names its key
-       * (../sm/CLUSTER.md section 10).
+       * A keyless table's row's page and tuple, from its rowno, as a sample
+       * scan's blocks are (SMSTORE_ROWS_PER_BLOCK); none for a row of a
+       * table with a primary key, whose lock names its key
+       * (../sm/ROWKEY.md section 2.5).
        */
       locktype = "tuple";
       if (0 != l.rowno) {
-        smstore_rowno_to_tid(l.rowno, &tid);
         values[LOCKFUNCS_PAGE] =
-            Int32GetDatum((int32)ItemPointerGetBlockNumber(&tid));
+            Int32GetDatum((int32)(l.rowno / SMSTORE_ROWS_PER_BLOCK));
         values[LOCKFUNCS_TUPLE] =
-            Int16GetDatum((int16)ItemPointerGetOffsetNumber(&tid));
+            Int16GetDatum((int16)(l.rowno % SMSTORE_ROWS_PER_BLOCK + 1));
         nulls[LOCKFUNCS_PAGE] = nulls[LOCKFUNCS_TUPLE] = false;
       }
       if (l.oid != 0) {

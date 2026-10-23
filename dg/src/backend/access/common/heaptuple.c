@@ -409,7 +409,6 @@ bool heap_attisnull(HeapTuple tup, int attnum, TupleDesc tupleDesc) {
 
   switch (attnum) {
   case TableOidAttributeNumber:
-  case SelfItemPointerAttributeNumber:
   case MinTransactionIdAttributeNumber:
   case MinCommandIdAttributeNumber:
   case MaxTransactionIdAttributeNumber:
@@ -638,10 +637,6 @@ Datum heap_getsysattr(HeapTuple tup, int attnum, TupleDesc tupleDesc,
   *isnull = false;
 
   switch (attnum) {
-  case SelfItemPointerAttributeNumber:
-    /* pass-by-reference datatype */
-    result = PointerGetDatum(&(tup->t_self));
-    break;
   case MinTransactionIdAttributeNumber:
     result = TransactionIdGetDatum(HeapTupleHeaderGetRawXmin(tup->t_data));
     break;

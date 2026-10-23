@@ -128,19 +128,6 @@ static Node *cookConstraint(ParseState *pstate, Node *raw_constraint,
  * to zeroes are also not mentioned.
  */
 
-static const FormData_pg_attribute a1 = {
-    .attname = {"ctid"},
-    .atttypid = TIDOID,
-    .attlen = sizeof(ItemPointerData),
-    .attnum = SelfItemPointerAttributeNumber,
-    .atttypmod = -1,
-    .attbyval = false,
-    .attalign = TYPALIGN_SHORT,
-    .attstorage = TYPSTORAGE_PLAIN,
-    .attnotnull = true,
-    .attislocal = true,
-};
-
 static const FormData_pg_attribute a2 = {
     .attname = {"xmin"},
     .atttypid = XIDOID,
@@ -214,7 +201,7 @@ static const FormData_pg_attribute a6 = {
 
 /*
  * digres: a row's rowno in sm, its identity in its table (sm2/SM2_DESIGN.md
- * section 5), which its tid carries (smstore_rowno_to_tid()).
+ * section 5).
  */
 static const FormData_pg_attribute a7 = {
     .attname = {"rowno"},
@@ -229,7 +216,8 @@ static const FormData_pg_attribute a7 = {
     .attislocal = true,
 };
 
-static const FormData_pg_attribute *const SysAtt[] = {&a1, &a2, &a3, &a4,
+/* digres: in attnum order from -2, ctid's -1 having none */
+static const FormData_pg_attribute *const SysAtt[] = {&a2, &a3, &a4,
                                                       &a5, &a6, &a7};
 
 /*
@@ -238,9 +226,10 @@ static const FormData_pg_attribute *const SysAtt[] = {&a1, &a2, &a3, &a4,
  * happen if there's a problem upstream.
  */
 const FormData_pg_attribute *SystemAttributeDefinition(AttrNumber attno) {
-  if (attno >= 0 || attno < -(int)lengthof(SysAtt))
+  if (attno > MinTransactionIdAttributeNumber ||
+      attno <= FirstLowInvalidHeapAttributeNumber)
     elog(ERROR, "invalid system attribute number %d", attno);
-  return SysAtt[-attno - 1];
+  return SysAtt[MinTransactionIdAttributeNumber - attno];
 }
 
 /*

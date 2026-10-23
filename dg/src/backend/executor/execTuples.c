@@ -100,7 +100,7 @@ static void tts_virtual_clear(TupleTableSlot *slot) {
 
   slot->tts_nvalid = 0;
   slot->tts_flags |= TTS_FLAG_EMPTY;
-  ItemPointerSetInvalid(&slot->tts_tid);
+  slot->tts_rowno = 0;
 }
 
 /*
@@ -285,7 +285,7 @@ static void tts_heap_clear(TupleTableSlot *slot) {
 
   slot->tts_nvalid = 0;
   slot->tts_flags |= TTS_FLAG_EMPTY;
-  ItemPointerSetInvalid(&slot->tts_tid);
+  slot->tts_rowno = 0;
   hslot->off = 0;
   hslot->tuple = NULL;
 }
@@ -422,7 +422,6 @@ static void tts_heap_store_tuple(TupleTableSlot *slot, HeapTuple tuple,
   hslot->tuple = tuple;
   hslot->off = 0;
   slot->tts_flags &= ~(TTS_FLAG_EMPTY | TTS_FLAG_SHOULDFREE);
-  slot->tts_tid = tuple->t_self;
 
   if (shouldFree)
     slot->tts_flags |= TTS_FLAG_SHOULDFREE;
@@ -454,7 +453,7 @@ static void tts_minimal_clear(TupleTableSlot *slot) {
 
   slot->tts_nvalid = 0;
   slot->tts_flags |= TTS_FLAG_EMPTY;
-  ItemPointerSetInvalid(&slot->tts_tid);
+  slot->tts_rowno = 0;
   mslot->off = 0;
   mslot->mintuple = NULL;
 }
@@ -1212,15 +1211,6 @@ TupleTableSlot *ExecStoreAllNullTuple(TupleTableSlot *slot) {
          slot->tts_tupleDescriptor->natts * sizeof(bool));
 
   return ExecStoreVirtualTuple(slot);
-}
-
-/*
- * The rowno of the slot's row, a row of a table in sm: the number its tid
- * carries (smstore_rowno_to_tid()), for the system column rowno.
- */
-int64 ExecSlotRowno(TupleTableSlot *slot) {
-  Assert(ItemPointerIsValid(&slot->tts_tid));
-  return (int64)smstore_tid_to_rowno(&slot->tts_tid);
 }
 
 /*

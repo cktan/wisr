@@ -122,9 +122,7 @@ typedef enum TU_UpdateIndexes
  * succeed, the contents of this struct should not be relied upon, except for
  * `traversed`, which may be set in both success and failure cases.
  *
- * ctid is the target's ctid link: it is the same as the target's TID if the
- * target was deleted, or the location of the replacement tuple if the target
- * was updated.
+ * digres: no row has a ctid to link to its replacement (../sm/ROWKEY.md).
  *
  * xmax is the outdating transaction's XID.  If the caller wants to visit the
  * replacement tuple, it must check that this matches before believing the
@@ -136,7 +134,6 @@ typedef enum TU_UpdateIndexes
  */
 typedef struct TM_FailureData
 {
-	ItemPointerData ctid;
 	TransactionId xmax;
 	bool		traversed;
 } TM_FailureData;
@@ -1033,7 +1030,7 @@ table_index_delete_tuples(Relation rel, TM_IndexDeleteOp *delstate)
  * behavior) is also just passed through to RelationGetBufferForTuple. If
  * `bistate` is provided, table_finish_bulk_insert() needs to be called.
  *
- * On return the slot's tts_tid and tts_tableOid are updated to reflect the
+ * On return the slot's tts_rowno and tts_tableOid are updated to reflect the
  * insertion. But note that any toasting of fields within the slot is NOT
  * reflected in the slots contents.
  */
@@ -1086,9 +1083,9 @@ table_multi_insert(Relation rel, TupleTableSlot **slots, int nslots,
  * delete it.  Failure return codes are TM_SelfModified, TM_Updated, and
  * TM_BeingModified (the last only possible if wait == false).
  *
- * In the failure cases, the routine fills *tmfd with the tuple's t_ctid,
- * t_xmax, and, if possible, t_cmax.  See comments for struct
- * TM_FailureData for additional info.
+ * In the failure cases, the routine fills *tmfd with the tuple's t_xmax,
+ * and, if possible, t_cmax.  See comments for struct TM_FailureData for
+ * additional info.
  */
 static inline TM_Result
 table_tuple_delete(Relation rel, const struct RowKey *key, Snapshot snapshot, Snapshot crosscheck, bool wait,
@@ -1120,15 +1117,13 @@ table_tuple_delete(Relation rel, const struct RowKey *key, Snapshot snapshot, Sn
  * update it.  Failure return codes are TM_SelfModified, TM_Updated, and
  * TM_BeingModified (the last only possible if wait == false).
  *
- * On success, the slot's tts_tid and tts_tableOid are updated to match the new
- * stored tuple; in particular, slot->tts_tid is set to the TID where the
- * new tuple was inserted, and its HEAP_ONLY_TUPLE flag is set iff a HOT
- * update was done.  However, any TOAST changes in the new tuple's
- * data are not reflected into *newtup.
+ * On success, the slot's tts_tableOid is updated to match the new stored
+ * tuple.  However, any TOAST changes in the new tuple's data are not
+ * reflected into *newtup.
  *
- * In the failure cases, the routine fills *tmfd with the tuple's t_ctid,
- * t_xmax, and, if possible, t_cmax.  See comments for struct TM_FailureData
- * for additional info.
+ * In the failure cases, the routine fills *tmfd with the tuple's t_xmax,
+ * and, if possible, t_cmax.  See comments for struct TM_FailureData for
+ * additional info.
  */
 static inline TM_Result
 table_tuple_update(Relation rel, const struct RowKey *key, TupleTableSlot *slot,
@@ -1170,7 +1165,7 @@ table_tuple_update(Relation rel, const struct RowKey *key, TupleTableSlot *slot,
  *	TM_WouldBlock: lock couldn't be acquired and wait_policy is skip
  *
  * In the failure cases other than TM_Invisible and TM_Deleted, the routine
- * fills *tmfd with the tuple's t_ctid, t_xmax, and, if possible, t_cmax.
+ * fills *tmfd with the tuple's t_xmax, and, if possible, t_cmax.
  * Additionally, in both success and failure cases, tmfd->traversed is set if
  * an update chain was followed.  See comments for struct TM_FailureData for
  * additional info.

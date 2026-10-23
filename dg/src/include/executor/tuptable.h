@@ -121,7 +121,7 @@ typedef struct TupleTableSlot
 #define FIELDNO_TUPLETABLESLOT_ISNULL 6
 	bool	   *tts_isnull;		/* current per-attribute isnull flags */
 	MemoryContext tts_mcxt;		/* slot itself is in this context */
-	ItemPointerData tts_tid;	/* stored tuple's tid */
+	uint64		tts_rowno;		/* digres: its row's rowno in sm, 0 if none */
 	Oid			tts_tableOid;	/* table oid of tuple */
 } TupleTableSlot;
 
@@ -310,7 +310,6 @@ extern void ExecForceStoreMinimalTuple(MinimalTuple mtup, TupleTableSlot *slot,
 									   bool shouldFree);
 extern TupleTableSlot *ExecStoreVirtualTuple(TupleTableSlot *slot);
 extern TupleTableSlot *ExecStoreAllNullTuple(TupleTableSlot *slot);
-extern int64 ExecSlotRowno(TupleTableSlot *slot);
 extern void ExecStoreHeapTupleDatum(Datum data, TupleTableSlot *slot);
 extern HeapTuple ExecFetchSlotHeapTuple(TupleTableSlot *slot, bool materialize, bool *shouldFree);
 extern MinimalTuple ExecFetchSlotMinimalTuple(TupleTableSlot *slot,
@@ -398,16 +397,11 @@ slot_getsysattr(TupleTableSlot *slot, int attnum, bool *isnull)
 		*isnull = false;
 		return ObjectIdGetDatum(slot->tts_tableOid);
 	}
-	else if (attnum == SelfItemPointerAttributeNumber)
-	{
-		*isnull = false;
-		return PointerGetDatum(&slot->tts_tid);
-	}
 	else if (attnum == RownoAttributeNumber)
 	{
-		/* digres: the rowno the slot's tid carries */
+		/* digres: the slot's row's rowno in sm */
 		*isnull = false;
-		return Int64GetDatum(ExecSlotRowno(slot));
+		return Int64GetDatum((int64) slot->tts_rowno);
 	}
 
 	/* Fetch the system attribute from the underlying tuple. */

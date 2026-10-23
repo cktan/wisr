@@ -1400,7 +1400,7 @@ typedef enum RowMarkType
  * information sufficient to identify the locked or fetched rows.  When
  * markType != ROW_MARK_COPY, these columns are named
  *		tableoid%u			OID of table
- *		ctid%u				TID of row
+ *		key%u_%d			each column of the row's key (access/rowkey.h)
  * The tableoid column is only present for an inheritance hierarchy.
  * When markType == ROW_MARK_COPY, there is instead a single column named
  *		wholerow%u			whole-row value of relation

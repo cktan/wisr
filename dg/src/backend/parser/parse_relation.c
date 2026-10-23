@@ -3254,10 +3254,9 @@ static int specialAttNum(const char *attname) {
 /*
  * Whether a query may name the system column attnum of rte's relation:
  * tableoid, and a row's rowno in a table of sm's.  sm keeps no transaction
- * ids in a row, and names a row by its rowno, not by a tid
- * (../sm/PART4.md section 3), so xmin, xmax, cmin, cmax and ctid are no
- * relation's column in digres.  The executor still keeps a row's ctid, as
- * the junk column UPDATE and DELETE carry.
+ * ids in a row (../sm/PART4.md section 3), so xmin, xmax, cmin and cmax are
+ * no relation's column in digres; nor is ctid a system column, as no row
+ * has a TID (../sm/ROWKEY.md section 3.1).
  */
 static bool system_column_is_kept(RangeTblEntry *rte, AttrNumber attnum) {
   if (attnum == TableOidAttributeNumber)
@@ -3454,9 +3453,7 @@ void errorMissingColumn(ParseState *pstate, const char *relname,
             (errcode(ERRCODE_UNDEFINED_COLUMN),
              relname ? errmsg("column %s.%s does not exist", relname, colname)
                      : errmsg("column \"%s\" does not exist", colname),
-             attnum == SelfItemPointerAttributeNumber
-                 ? errhint("digres names a row by its rowno.")
-                 : errhint("digres keeps no transaction ids in a row."),
+             errhint("digres keeps no transaction ids in a row."),
              parser_errposition(pstate, location)));
 
   if (!state->rsecond) {

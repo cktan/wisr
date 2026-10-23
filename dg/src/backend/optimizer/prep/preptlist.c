@@ -68,24 +68,14 @@ Var *make_rowmark_wholerow(RangeTblEntry *rte, Index rti) {
 /*
  * Add to tlist the junk columns that name a row of rte, at rti, which a
  * locking row mark rowmarkId locks: its row key's columns
- * (access/rowkey.h), "key<rowmarkId>_<n>", or a foreign table's ctid,
- * "ctid<rowmarkId>"; each Var added is also appended to *vars, if given.
+ * (access/rowkey.h), "key<rowmarkId>_<n>"; each Var added is also appended
+ * to *vars, if given.
  */
 List *add_row_key_junk(List *tlist, RangeTblEntry *rte, Index rti,
                        Index rowmarkId, List **vars) {
   char resname[32];
   Var *var;
 
-  if (rte->relkind == RELKIND_FOREIGN_TABLE) {
-    var =
-        makeVar(rti, SelfItemPointerAttributeNumber, TIDOID, -1, InvalidOid, 0);
-    snprintf(resname, sizeof(resname), "ctid%u", rowmarkId);
-    tlist = lappend(tlist, makeTargetEntry((Expr *)var, list_length(tlist) + 1,
-                                           pstrdup(resname), true));
-    if (vars)
-      *vars = lappend(*vars, var);
-    return tlist;
-  }
   Relation rel = table_open(rte->relid, NoLock);
   AttrNumber atts[INDEX_MAX_KEYS];
   int n = RowKeyAttnums(rel, atts);
