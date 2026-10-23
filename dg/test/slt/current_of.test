@@ -103,7 +103,7 @@ rollback
 
 # Verify WHERE CURRENT OF on a cursor reading an index.
 # 1. Index the table, and turn sequential scans off.
-# 2. Through a cursor reading whole rows, a bitmap scan, update the
+# 2. Through a cursor reading whole rows, an index scan, update the
 #    current row.
 # 3. Through a cursor reading only the indexed column, an index-only
 #    scan, delete it.
@@ -166,3 +166,50 @@ select * from uc
 
 statement ok
 commit
+
+# Verify WHERE CURRENT OF on a table with a primary key, where the TID
+# scan it plans is the only one the planner makes: the cursor's row is
+# reached through its _id.
+# 1. Make a table with a primary key, of three rows.
+# 2. Through a cursor, update the current row, then delete it.
+# 3. Confirm the rows left.
+
+statement ok
+set enable_seqscan = on
+
+statement ok
+create table ucp (f1 int4 primary key, f2 text)
+
+statement ok
+insert into ucp values (1, 'one'), (2, 'two'), (3, 'three')
+
+statement ok
+begin
+
+statement ok
+declare c5 cursor for select * from ucp where f1 >= 2 for update
+
+query IT nosort
+fetch c5
+----
+2	two
+
+statement ok
+update ucp set f2 = 'deux' where current of c5
+
+query IT nosort
+fetch c5
+----
+3	three
+
+statement ok
+delete from ucp where current of c5
+
+statement ok
+commit
+
+query IT nosort
+select * from ucp order by f1
+----
+1	one
+2	deux

@@ -261,7 +261,13 @@ The reasons `sm2/SM2_DESIGN.md` §5 gave for a heap, answered:
   reads its rows by key; what is lost is combining indexes,
   BitmapAnd and BitmapOr, as InnoDB and CockroachDB do
   without.
-- **TID scans are unchanged**: `_id = …` reads by `_id`.
+- **No TID scan of a table with a primary key** but `WHERE
+  CURRENT OF`'s, which is the only correct plan for it
+  (`../dg/src/backend/optimizer/path/tidpath.c`): `_id = …`
+  and `ctid = …` are filters there, so no plan reaches a row
+  through the `_id` index, the first step to a table with a
+  primary key and no `_id` (§10, question 6). A keyless
+  table's TID scan reads by `_id`, its key: one seek.
 - **ADD PRIMARY KEY, DROP PRIMARY KEY**, and a change of a key
   column's type or collation, rewrite the table (§8).
 - **Foreign keys** that reference the primary key look the
@@ -274,7 +280,7 @@ The reasons `sm2/SM2_DESIGN.md` §5 gave for a heap, answered:
 - **Reaching a row by its TID is two seeks** in a table with a
   primary key: an UPDATE, DELETE or lock whose TID did not
   come from the statement's own scan, EvalPlanQual's fetch,
-  and TID scans.
+  and `WHERE CURRENT OF`.
 - **Every insert into such a table writes the `_id` entry**,
   where a table clustered without `_id` would not.
 - **A primary key change moves the row** and rewrites all its

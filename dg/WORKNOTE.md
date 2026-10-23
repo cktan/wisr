@@ -8281,3 +8281,25 @@ do without one:
   (2, 3)` is a sequential scan, as an index in sm takes no
   array of values yet (`amsearcharray`), and `groupingsets`'s
   subplan by its primary key scans its table for each outer row.
+
+## Step 288: no TID scan of a table with a primary key
+
+A tid carries a row's `_id`, and a table with a primary key
+reaches its row by `_id` only through the `_id` index, two
+seeks. `_id` is to go from such a table (`../sm/CLUSTER.md`
+§10, question 6), so the planner no longer plans a row's
+fetch through it:
+
+- **`create_tidscan_paths()` makes no TID scan of a table with
+  a primary key** (`optimizer/path/tidpath.c`'s
+  `has_primary_key()`), but `WHERE CURRENT OF`'s, the only
+  correct plan for it: `rowno = n`, `ctid = tid` and a join on
+  `rowno` are filters there. A keyless table's TID scans are
+  as they were: its `_id` is its key, one seek.
+- **The executor still fetches by tid** in a table with a
+  primary key: the target of an UPDATE or a DELETE, a lock,
+  EvalPlanQual and `WHERE CURRENT OF`, through `_id`.
+- **`slt/rowno_scan.test` checks a table with a primary key**
+  plans no TID scan for `rowno = n` and a join on `rowno`, and
+  `slt/current_of.test` updates and deletes through a cursor
+  on one.

@@ -40,6 +40,7 @@
 
 #include "access/stratnum.h"
 #include "access/sysattr.h"
+#include "access/table.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_opfamily.h"
 #include "catalog/pg_type.h"
@@ -49,7 +50,10 @@
 #include "optimizer/pathnode.h"
 #include "optimizer/paths.h"
 #include "optimizer/restrictinfo.h"
+#include "parser/parsetree.h"
 #include "utils/lsyscache.h"
+#include "utils/rel.h"
+#include "utils/relcache.h"
 
 /*
  * Does this Var represent the CTID column of the specified baserel?
@@ -473,27 +477,47 @@ static bool ec_member_matches_ctid(PlannerInfo *root, RelOptInfo *rel,
 }
 
 /*
+ * Whether rel, a table, has a primary key: its rows are keyed by it in sm,
+ * and a tid, which carries a row's _id, reaches one only through the _id
+ * index, two seeks (../sm/CLUSTER.md section 6).
+ */
+static bool has_primary_key(PlannerInfo *root, RelOptInfo *rel) {
+  /* The planner holds the table's lock already. */
+  Relation r = table_open(planner_rt_fetch(rel->relid, root)->relid, NoLock);
+  bool keyed = OidIsValid(RelationGetPrimaryKeyIndex(r, true));
+
+  table_close(r, NoLock);
+  return keyed;
+}
+
+/*
  * create_tidscan_paths
  *	  Create paths corresponding to direct TID scans of the given rel.
  *
  *	  Candidate paths are added to the rel's pathlist (using add_path).
+ *
+ * A table with a primary key gets no TID scan but CURRENT OF's, which is
+ * the only correct one: "rowno = n" and "ctid = tid" are filters there, as
+ * the TID's _id is not the key the rows are found by.
  */
 bool create_tidscan_paths(PlannerInfo *root, RelOptInfo *rel) {
   List *tidquals;
   List *tidrangequals;
   bool isCurrentOf;
+  bool tidscans = enable_tidscan && !has_primary_key(root, rel);
 
   /*
    * If any suitable quals exist in the rel's baserestrict list, generate a
    * plain (unparameterized) TidPath with them.
    *
-   * We skip this when enable_tidscan = false, except when the qual is
-   * CurrentOfExpr. In that case, a TID scan is the only correct path.
+   * We skip this when enable_tidscan = false, or the table has a primary
+   * key, except when the qual is CurrentOfExpr. In that case, a TID scan is
+   * the only correct path.
    */
   tidquals = TidQualFromRestrictInfoList(root, rel->baserestrictinfo, rel,
                                          &isCurrentOf);
 
-  if (tidquals != NIL && (enable_tidscan || isCurrentOf)) {
+  if (tidquals != NIL && (tidscans || isCurrentOf)) {
     /*
      * This path uses no join clauses, but it could still have required
      * parameterization due to LATERAL refs in its tlist.
@@ -513,8 +537,8 @@ bool create_tidscan_paths(PlannerInfo *root, RelOptInfo *rel) {
       return true;
   }
 
-  /* Skip the rest if TID scans are disabled. */
-  if (!enable_tidscan)
+  /* Skip the rest if TID scans are disabled, or the table has a key. */
+  if (!tidscans)
     return false;
 
   /*

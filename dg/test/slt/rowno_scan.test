@@ -14,6 +14,9 @@
 # 7. Join on rowno in a nested loop, the inner side a TID scan rescanned
 #    for each outer row, plain and left, with rownos missing and NULL.
 # 8. Name a range of rownos: still a sequential scan, and right.
+# 9. In a table with a primary key, whose rows a rowno reaches only
+#    through the _id index, rowno = n and a join on rowno plan no TID
+#    scan, and fetch the same rows.
 
 onlyif digres
 statement ok
@@ -182,3 +185,45 @@ select b from r where rowno > 998 order by b
 ----
 r1000
 r999
+
+onlyif digres
+statement ok
+create table k (a int4 primary key, b text)
+
+onlyif digres
+statement ok
+insert into k select g, 'k' || g from generate_series(1, 1000) g
+
+onlyif digres
+statement ok
+analyze k
+
+onlyif digres
+query T nosort
+explain (costs off) select b from k where rowno = 5
+----
+Seq Scan on k
+  Filter: (rowno = 5)
+
+onlyif digres
+query T nosort
+select b from k where rowno = 5
+----
+k5
+
+onlyif digres
+query T nosort
+explain (costs off) select k.b from j join k on k.rowno = j.n
+----
+Nested Loop
+  Join Filter: (j.n = k.rowno)
+  ->  Seq Scan on k
+  ->  Materialize
+        ->  Seq Scan on j
+
+onlyif digres
+query IT nosort
+select j.n, k.b from j join k on k.rowno = j.n order by j.n
+----
+2	k2
+5	k5
