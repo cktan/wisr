@@ -257,15 +257,18 @@ Each step leaves every suite passing.
 
 1. **sm by key.** `tbl_read`, `tbl_read_latest`, `tbl_update`,
    `tbl_delete`, `tbl_lock`, `tbl_trylock` by key, through the
-   C API; the arbiter returns its row; the moved tombstone and
-   `SM_ERR_MOVED`. The `_id` calls stay for digres.
+   C API (`sm_row_key_t`), built; the moved tombstone and
+   `SM_ERR_MOVED`. The `_id` calls stay for digres. Until step
+   4 an update or delete by key of a keyed row reads the row
+   for its `_id`.
 2. **ANALYZE and TABLESAMPLE by key ranges** for a table with
    a primary key; the backfill, the rewrite and SET NOT NULL
    in key order; a duplicate reported by key.
-3. **digres by key.** The row identity columns, the table AM,
-   ModifyTable, LockRows, EvalPlanQual, triggers,
-   `ON CONFLICT`, CURRENT OF and the key scan; `ctid` gone,
-   `rowno` renamed `_id` on a keyless table.
+3. **digres by key.** The arbiter returns its row; the row
+   identity columns, the table AM, ModifyTable, LockRows,
+   EvalPlanQual, triggers, `ON CONFLICT`, CURRENT OF and the
+   key scan; `ctid` gone, `rowno` renamed `_id` on a keyless
+   table.
 4. **No `_id` with a primary key.** The `_id` index, the
    follow, and the `_id` calls of a keyed table go; the value
    is the tuple alone; a key change writes the moved

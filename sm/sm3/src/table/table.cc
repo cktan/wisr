@@ -1325,6 +1325,157 @@ int tbl_trylock(table_t *table, uint64_t id, sm1::lockmode_t mode,
   return lock_row(table, id, key, mode, true);
 }
 
+/*
+ * The row key names: its key, encoded, into k, and with want_id its
+ * _id into id, a keyless table's from the key, a keyed table's read
+ * from the row, as the snapshot shows it or else the newest
+ * version, past SM_ERR_UPDATED or an arbiter's conflict
+ * (../ROWKEY.md §5, step 4); SM_ERR_NOTFOUND if it has none.
+ */
+static int named(table_t *table, const row_key_t &key, bool want_id,
+                 std::string &k, uint64_t &id) {
+  id = 0;
+  if (sm2::rel_key(table->rel, key.values, key.isnull, k) != 0) {
+    return -1;
+  }
+  if (!sm2::rel_keyed(table->rel)) {
+    id = static_cast<uint64_t>(sm2::datum_to_int64(key.values[0]));
+    return 0;
+  }
+  if (!want_id) {
+    return 0;
+  }
+  std::string_view tuple;
+  int rc = sm2::rel_read(table->rel, k, tuple, &id);
+  if (rc == 1 && table->session->level == sm1::xctlevel_t::read_committed) {
+    rc = sm2::rel_read_latest(table->rel, k, tuple, &id);
+  }
+  if (rc == 1) {
+    return sm1::seterr(sm1::SM_ERR_NOTFOUND,
+                       "table: no row at that key in " + table->def->name);
+  }
+  return rc;
+}
+
+/* Replace the row key names; see sm3.h. */
+int tbl_update(table_t *table, const row_key_t &key,
+               std::span<const sm2::datum_t> values,
+               std::span<const bool> isnull) {
+  std::string k;
+  uint64_t id;
+  return named(table, key, true, k, id) != 0
+             ? -1
+             : update_row(table, id, k, values, isnull, nullptr, nullptr);
+}
+
+/* As above, pinning the row replaced into ref; see sm3.h. */
+int tbl_update(table_t *table, const row_key_t &key,
+               std::span<const sm2::datum_t> values,
+               std::span<const bool> isnull, pin_ref_t &ref,
+               std::string_view &old) {
+  old = {};
+  std::string k;
+  uint64_t id;
+  return named(table, key, true, k, id) != 0
+             ? -1
+             : update_row(table, id, k, values, isnull, &ref, &old);
+}
+
+/* Delete the row key names; see sm3.h. */
+int tbl_delete(table_t *table, const row_key_t &key) {
+  std::string k;
+  uint64_t id;
+  return named(table, key, true, k, id) != 0
+             ? -1
+             : delete_row(table, id, k, nullptr, nullptr);
+}
+
+/* As above, pinning the row deleted into ref; see sm3.h. */
+int tbl_delete(table_t *table, const row_key_t &key, pin_ref_t &ref,
+               std::string_view &old) {
+  old = {};
+  std::string k;
+  uint64_t id;
+  return named(table, key, true, k, id) != 0
+             ? -1
+             : delete_row(table, id, k, &ref, &old);
+}
+
+/* Read the row key names; see sm3.h. */
+int tbl_read(table_t *table, const row_key_t &key, std::string_view &tuple) {
+  std::string k;
+  uint64_t id;
+  tuple = {};
+  return named(table, key, false, k, id) != 0
+             ? -1
+             : sm2::rel_read(table->rel, k, tuple);
+}
+
+/* Read the row key names into a pin; see sm3.h. */
+int tbl_read(table_t *table, const row_key_t &key, pin_ref_t &ref,
+             std::string_view &tuple) {
+  return read_into(table, ref, tuple, [&](sm1::rawpin_t *raw) {
+    std::string k;
+    uint64_t id;
+    return named(table, key, false, k, id) != 0
+               ? -1
+               : sm2::rel_read(table->rel, k, raw, tuple);
+  });
+}
+
+/* Read the newest committed version of the row key names. */
+int tbl_read_latest(table_t *table, const row_key_t &key,
+                    std::string_view &tuple) {
+  std::string k;
+  uint64_t id;
+  tuple = {};
+  return named(table, key, false, k, id) != 0
+             ? -1
+             : sm2::rel_read_latest(table->rel, k, tuple);
+}
+
+/* As above, into a pin; see sm3.h. */
+int tbl_read_latest(table_t *table, const row_key_t &key, pin_ref_t &ref,
+                    std::string_view &tuple) {
+  return read_into(table, ref, tuple, [&](sm1::rawpin_t *raw) {
+    std::string k;
+    uint64_t id;
+    return named(table, key, false, k, id) != 0
+               ? -1
+               : sm2::rel_read_latest(table->rel, k, raw, tuple);
+  });
+}
+
+/*
+ * Lock the row key names, waiting or not, as lock_row does a row
+ * named by its _id.
+ */
+static int lock_key(table_t *table, const row_key_t &key, sm1::lockmode_t mode,
+                    bool nowait) {
+  // Only a shared lock sits under a table opened to read.
+  if (mode != sm1::SM_LOCKMODE_SH && need_writable(table) != 0) {
+    return -1;
+  }
+  std::string k;
+  uint64_t id;
+  if (named(table, key, false, k, id) != 0) {
+    return -1;
+  }
+  // Held to the end of the transaction, as a write's lock is.
+  return nowait ? sm2::rel_trylock(table->rel, k, mode)
+                : sm2::rel_lock(table->rel, k, mode);
+}
+
+/* Lock the row key names without writing it; see sm3.h. */
+int tbl_lock(table_t *table, const row_key_t &key, sm1::lockmode_t mode) {
+  return lock_key(table, key, mode, false);
+}
+
+/* Lock the row key names if it is free now; see sm3.h. */
+int tbl_trylock(table_t *table, const row_key_t &key, sm1::lockmode_t mode) {
+  return lock_key(table, key, mode, true);
+}
+
 /* Empty the table, then reopen its rel and indexes; see sm3.h. */
 int tbl_truncate(table_t *table) {
   if (!table->exclusive) {

@@ -561,3 +561,122 @@ TEST_CASE("a write given its row's key from a scan reaches the row") {
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
 }
+
+TEST_CASE("a row named by its key is read, written and locked") {
+  // Verify the calls by key (../ROWKEY.md §2.2), in a table with a
+  // primary key, named by id, and in one without, named by _id.
+  // 1. Rows with ids 10, 20 and 30 go in, committed.
+  // 2. A read by key gives the row; a key no row has gives 1.
+  // 3. An update by key changes a row in place, and one that
+  //    changes its key moves it, with its owner entry.
+  // 4. A lock by key holds the row: b cannot take it.
+  // 5. A delete by key removes the row and its entry; again, it is
+  //    SM_ERR_NOTFOUND.
+  // 6. A null in a key, or a key of the wrong count, is
+  //    SM_ERR_INVALID.
+  for (bool keyed : {true, false}) {
+    CAPTURE(keyed);
+    acct_t f(keyed);
+    start(f.a);
+    sm3::table_t *t = f.write(f.a);
+    uint64_t ids[3] = {put(t, 10, "a"), put(t, 20, "b"), put(t, 30, "c")};
+    sm3::tbl_close(t);
+    REQUIRE(sm3::commit(f.a) == 0);
+    // The name of the row with id i, at _id ids[j].
+    sm2::datum_t d;
+    bool null = false;
+    auto name = [&](int32_t i, size_t j) {
+      d = keyed ? sm2::datum_from_int32(i)
+                : sm2::datum_from_int64(static_cast<int64_t>(ids[j]));
+      return sm3::row_key_t{{&d, 1}, {&null, 1}};
+    };
+    start(f.a);
+    t = f.write(f.a);
+    std::string_view tuple;
+    REQUIRE_MESSAGE(sm3::tbl_read(t, name(20, 1), tuple) == 0, sm1::errmsg());
+    CHECK(show(t, tuple) == "20|b|0");
+    sm2::datum_t none =
+        keyed ? sm2::datum_from_int32(99) : sm2::datum_from_int64(99);
+    CHECK(sm3::tbl_read(t, {{&none, 1}, {&null, 1}}, tuple) == 1);
+    row_t same(20, "b2", 7);
+    REQUIRE_MESSAGE(sm3::tbl_update(t, name(20, 1), same.d(), same.null()) == 0,
+                    sm1::errmsg());
+    CHECK(get(t, ids[1]) == "20|b2|7");
+    if (keyed) {
+      row_t moved(15, "a", 1);
+      REQUIRE_MESSAGE(
+          sm3::tbl_update(t, name(10, 0), moved.d(), moved.null()) == 0,
+          sm1::errmsg());
+      CHECK(get(t, ids[0]) == "15|a|1");
+      CHECK(
+          entries(t, f.owner) ==
+          std::vector<std::pair<uint64_t, std::string>>{{ids[0], key_of(15)},
+                                                        {ids[1], key_of(20)},
+                                                        {ids[2], key_of(30)}});
+    }
+    REQUIRE(sm3::tbl_lock(t, name(30, 2), sm1::SM_LOCKMODE_EX) == 0);
+    start(f.b);
+    sm3::table_t *tb = f.write(f.b);
+    CHECK(sm3::tbl_trylock(tb, name(30, 2), sm1::SM_LOCKMODE_EX) == 1);
+    sm3::tbl_close(tb);
+    REQUIRE(sm3::abort(f.b) == 0);
+    REQUIRE_MESSAGE(sm3::tbl_delete(t, name(20, 1)) == 0, sm1::errmsg());
+    CHECK(get(t, ids[1]) == "<none>");
+    CHECK(entries(t, f.owner).size() == 2);
+    CHECK(sm3::tbl_delete(t, name(20, 1)) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+    null = true;
+    CHECK(sm3::tbl_read(t, name(30, 2), tuple) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+    null = false;
+    sm2::datum_t two[2] = {d, d};
+    bool nulls[2] = {false, false};
+    CHECK(sm3::tbl_lock(t, {two, nulls}, sm1::SM_LOCKMODE_EX) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+    sm3::tbl_close(t);
+    REQUIRE(sm3::commit(f.a) == 0);
+  }
+}
+
+TEST_CASE("a writer at READ COMMITTED writes by key after a re-read") {
+  // Verify a write by key that meets a newer version goes through
+  // once the newest is read by key, as dg's re-check does.
+  // 1. a inserts id 1 and commits; b's statement reads it.
+  // 2. a updates its owner and commits.
+  // 3. b's update by key meets SM_ERR_UPDATED; its newest version,
+  //    read by key, is a's, and the update then goes through.
+  acct_t f;
+  start(f.a);
+  sm3::table_t *t = f.write(f.a);
+  uint64_t id = put(t, 1, "one");
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  start(f.b);
+  REQUIRE(sm3::stmt_begin(f.b) == 0);
+  sm3::table_t *tb = f.write(f.b);
+  CHECK(get(tb, id) == "1|one|0");
+  start(f.a);
+  t = f.write(f.a);
+  row_t theirs(1, "theirs", 0);
+  REQUIRE(sm3::tbl_update(t, id, theirs.d(), theirs.null()) == 0);
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+  sm2::datum_t d = sm2::datum_from_int32(1);
+  bool null = false;
+  sm3::row_key_t key{{&d, 1}, {&null, 1}};
+  row_t mine(1, "mine", 7);
+  CHECK(sm3::tbl_update(tb, key, mine.d(), mine.null()) == -1);
+  REQUIRE(sm1::errnum() == sm1::SM_ERR_UPDATED);
+  std::string_view tuple;
+  REQUIRE_MESSAGE(sm3::tbl_read_latest(tb, key, tuple) == 0, sm1::errmsg());
+  CHECK(show(tb, tuple) == "1|theirs|0");
+  REQUIRE_MESSAGE(sm3::tbl_update(tb, key, mine.d(), mine.null()) == 0,
+                  sm1::errmsg());
+  sm3::tbl_close(tb);
+  REQUIRE(sm3::commit(f.b) == 0);
+  start(f.a);
+  t = f.write(f.a);
+  CHECK(rows(t) == std::vector<std::string>{"1:1|mine|7"});
+  sm3::tbl_close(t);
+  REQUIRE(sm3::commit(f.a) == 0);
+}

@@ -620,6 +620,17 @@ int rel_row_key(rel_t* rel, uint64_t id, std::span<const datum_t> datums,
                 std::span<const bool> isnull, std::string& key);
 
 /*
+ * The key of the row named by datums and isnull, the values of its
+ * primary key's columns in the key's order, or in a rel keyed by
+ * _id its _id alone, an int8 (../ROWKEY.md §1), into key. A null,
+ * a count that is not the key's, or an encoding past max_pk_len
+ * fails with SM_ERR_INVALID or SM_ERR_KEYTOOLONG. A column out of
+ * line is fetched to be encoded.
+ */
+int rel_key(rel_t* rel, std::span<const datum_t> datums,
+            std::span<const bool> isnull, std::string& key);
+
+/*
  * Insert a row: write tuple under its key, with a new _id drawn
  * from the rel's sequence, and its entry in the _id index. id, and
  * key if wanted, are set only on success. A tuple tup_check refuses

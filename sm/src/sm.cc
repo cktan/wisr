@@ -1885,6 +1885,167 @@ int sm_tbl_trylock(sm_tbl_t *tbl, uint64_t id, const void *key, size_t klen,
   });
 }
 
+namespace {
+
+/* A caller's row key, for fn, as sm3 takes it. */
+int row_key_in(const char *fn, const sm_tbl_t *tbl, const sm_row_key_t &key,
+               sm3::row_key_t &out) {
+  if (!tbl || (key.n && (!key.values || !key.isnull))) {
+    return null_arg(fn, !tbl ? "tbl" : "key");
+  }
+  out = {{key.values, key.n}, {key.isnull, key.n}};
+  return 0;
+}
+
+/*
+ * A write by write, of a row named by its key, for fn: with ref,
+ * the row it replaced pinned there, and viewed by *old and *len.
+ */
+template <typename F>
+int write_by_key(const char *fn, sm_pin_ref_t *ref, const void **old,
+                 size_t *len, F write) {
+  if (!ref) {
+    return write(nullptr, nullptr);
+  }
+  if (!old || !len) {
+    return null_arg(fn, "old or len");
+  }
+  sm3::pin_ref_t r = pin_ref_of(*ref);
+  std::string_view v;
+  int rc = write(&r, &v);
+  // The ref is set either way: the old row, or what it held.
+  *ref = sm_pin_ref_t{r.pin, r.gen};
+  *old = nullptr;
+  *len = 0;
+  if (0 == rc) {
+    view_out(v, old, len);
+  }
+  return rc;
+}
+
+/*
+ * A read by read, of a row named by its key: with ref, into the pin
+ * it then names, which is set either way.
+ */
+template <typename F>
+int read_by_key(sm_pin_ref_t *ref, const void **tuple, size_t *len, F read) {
+  std::string_view v;
+  int rc;
+  if (!ref) {
+    rc = read(nullptr, v);
+  } else {
+    sm3::pin_ref_t r = pin_ref_of(*ref);
+    rc = read(&r, v);
+    *ref = sm_pin_ref_t{r.pin, r.gen};
+  }
+  if (rc == 0) {
+    view_out(v, tuple, len);
+  }
+  return rc;
+}
+
+} // namespace
+
+/* Replace the row a key names, and fix its index entries. */
+int sm_tbl_update(sm_tbl_t *tbl, const sm_row_key_t &key,
+                  const sm_datum_t *values, const bool *isnull, size_t n,
+                  sm_pin_ref_t *ref, const void **old, size_t *len) {
+  return guard(tbl ? tbl->session : nullptr, [&] {
+    sm3::row_key_t k;
+    if (row_key_in("sm_tbl_update", tbl, key, k) != 0 ||
+        check_row("sm_tbl_update", tbl, values, isnull, n) != 0) {
+      return -1;
+    }
+    return write_by_key("sm_tbl_update", ref, old, len,
+                        [&](sm3::pin_ref_t *r, std::string_view *v) {
+                          return r ? sm3::tbl_update(tbl->table, k, {values, n},
+                                                     {isnull, n}, *r, *v)
+                                   : sm3::tbl_update(tbl->table, k, {values, n},
+                                                     {isnull, n});
+                        });
+  });
+}
+
+/* Delete the row a key names, and its index entries. */
+int sm_tbl_delete(sm_tbl_t *tbl, const sm_row_key_t &key, sm_pin_ref_t *ref,
+                  const void **old, size_t *len) {
+  return guard(tbl ? tbl->session : nullptr, [&] {
+    sm3::row_key_t k;
+    if (row_key_in("sm_tbl_delete", tbl, key, k) != 0) {
+      return -1;
+    }
+    return write_by_key("sm_tbl_delete", ref, old, len,
+                        [&](sm3::pin_ref_t *r, std::string_view *v) {
+                          return r ? sm3::tbl_delete(tbl->table, k, *r, *v)
+                                   : sm3::tbl_delete(tbl->table, k);
+                        });
+  });
+}
+
+/* Read the row a key names. */
+int sm_tbl_read(sm_tbl_t *tbl, const sm_row_key_t &key, const void **tuple,
+                size_t *len) {
+  return sm_tbl_read(tbl, key, nullptr, tuple, len);
+}
+
+/* Read the row a key names, into the pin *ref then names if given. */
+int sm_tbl_read(sm_tbl_t *tbl, const sm_row_key_t &key, sm_pin_ref_t *ref,
+                const void **tuple, size_t *len) {
+  return guard(tbl ? tbl->session : nullptr, [&] {
+    sm3::row_key_t k;
+    if (row_key_in("sm_tbl_read", tbl, key, k) != 0) {
+      return -1;
+    }
+    return read_by_key(ref, tuple, len,
+                       [&](sm3::pin_ref_t *r, std::string_view &v) {
+                         return r ? sm3::tbl_read(tbl->table, k, *r, v)
+                                  : sm3::tbl_read(tbl->table, k, v);
+                       });
+  });
+}
+
+/* Read the newest committed version of the row a key names. */
+int sm_tbl_read_latest(sm_tbl_t *tbl, const sm_row_key_t &key,
+                       const void **tuple, size_t *len) {
+  return sm_tbl_read_latest(tbl, key, nullptr, tuple, len);
+}
+
+/* As above, into the pin *ref then names if given. */
+int sm_tbl_read_latest(sm_tbl_t *tbl, const sm_row_key_t &key,
+                       sm_pin_ref_t *ref, const void **tuple, size_t *len) {
+  return guard(tbl ? tbl->session : nullptr, [&] {
+    sm3::row_key_t k;
+    if (row_key_in("sm_tbl_read_latest", tbl, key, k) != 0) {
+      return -1;
+    }
+    return read_by_key(ref, tuple, len,
+                       [&](sm3::pin_ref_t *r, std::string_view &v) {
+                         return r ? sm3::tbl_read_latest(tbl->table, k, *r, v)
+                                  : sm3::tbl_read_latest(tbl->table, k, v);
+                       });
+  });
+}
+
+/* Lock the row a key names without writing it. */
+int sm_tbl_lock(sm_tbl_t *tbl, const sm_row_key_t &key, sm_lockmode_t mode) {
+  return guard(tbl ? tbl->session : nullptr, [&] {
+    sm3::row_key_t k;
+    return row_key_in("sm_tbl_lock", tbl, key, k) != 0
+               ? -1
+               : sm3::tbl_lock(tbl->table, k, mode);
+  });
+}
+
+/* Lock the row a key names if it is free now. */
+int sm_tbl_trylock(sm_tbl_t *tbl, const sm_row_key_t &key, sm_lockmode_t mode) {
+  return guard(tbl ? tbl->session : nullptr, [&] {
+    sm3::row_key_t k;
+    return row_key_in("sm_tbl_trylock", tbl, key, k) != 0
+               ? -1
+               : sm3::tbl_trylock(tbl->table, k, mode);
+  });
+}
+
 /* Empty a table, and refresh the handle's definition. */
 int sm_tbl_truncate(sm_tbl_t *tbl) {
   return guard(tbl ? tbl->session : nullptr, [&] {

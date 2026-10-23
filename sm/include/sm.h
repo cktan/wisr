@@ -1360,6 +1360,39 @@ int sm_tbl_trylock(sm_tbl_t* tbl, uint64_t id, const void* key, size_t klen,
                    sm_lockmode_t mode);
 
 /*
+ * A row's name (../ROWKEY.md §1): values and isnull, n of each, the
+ * values of its table's primary key's columns in the key's order; in
+ * a table without one, its _id alone, an int8. Each call below that
+ * takes one is the call of its name by _id, the row named by its
+ * key: a null, or an n that is not the key's, fails with
+ * SM_ERR_INVALID. A write follows no row that moved.
+ */
+typedef struct sm_row_key_t {
+    const sm_datum_t* values;
+    const bool*       isnull;
+    size_t            n;
+} sm_row_key_t;
+
+int sm_tbl_update(sm_tbl_t* tbl, const sm_row_key_t& key,
+                  const sm_datum_t* values, const bool* isnull, size_t n,
+                  sm_pin_ref_t* ref = nullptr, const void** old = nullptr,
+                  size_t* len = nullptr);
+int sm_tbl_delete(sm_tbl_t* tbl, const sm_row_key_t& key,
+                  sm_pin_ref_t* ref = nullptr, const void** old = nullptr,
+                  size_t* len = nullptr);
+int sm_tbl_read(sm_tbl_t* tbl, const sm_row_key_t& key, const void** tuple,
+                size_t* len);
+int sm_tbl_read(sm_tbl_t* tbl, const sm_row_key_t& key, sm_pin_ref_t* ref,
+                const void** tuple, size_t* len);
+int sm_tbl_read_latest(sm_tbl_t* tbl, const sm_row_key_t& key,
+                       const void** tuple, size_t* len);
+int sm_tbl_read_latest(sm_tbl_t* tbl, const sm_row_key_t& key,
+                       sm_pin_ref_t* ref, const void** tuple, size_t* len);
+int sm_tbl_lock(sm_tbl_t* tbl, const sm_row_key_t& key, sm_lockmode_t mode);
+int sm_tbl_trylock(sm_tbl_t* tbl, const sm_row_key_t& key,
+                   sm_lockmode_t mode);
+
+/*
  * Empty the table, as SQL's TRUNCATE: its rows and every index's
  * entries go, in the table's transaction, at the same cost however
  * many there are. The table must be opened SM_LOCKMODE_EX,

@@ -371,9 +371,53 @@ int settle_old(sm2::rel_t *rel, std::string_view old,
 }
 
 /*
+ * The primary key of rel encoded into key from cols, the values of
+ * its columns in the key's order, a column out of line fetched
+ * first. A null among them fails with SM_ERR_INVALID.
+ */
+int encode_cols(sm2::rel_t *rel, std::span<const sm2::datum_t> cols,
+                std::span<const bool> isnull, std::string &key) {
+  const auto &schema = rel->desc.schema;
+  size_t n = rel->key.size();
+  std::vector<sm2::datum_t> c(cols.begin(), cols.end());
+  std::unique_ptr<bool[]> nulls(new bool[n]());
+  // A fetched value must not move once a datum points at it.
+  std::vector<std::string> own;
+  own.reserve(n);
+  for (size_t j = 0; j < n; j++) {
+    int32_t att = rel->key_atts[j];
+    if (isnull[j]) {
+      return sm1::seterr(sm1::SM_ERR_INVALID,
+                         "rel: attribute " + std::to_string(att) +
+                             " of the primary key is null");
+    }
+    if (rel->desc.width[att] > 0) {
+      continue;
+    }
+    std::string_view v;
+    if (sm2::datum_bytes(schema[att].type, schema[att].typmod, c[j], v) != 0) {
+      return -1;
+    }
+    sm2::toast_ptr_t p;
+    if (!sm2::parse_toast_ptr(v, p)) {
+      continue;
+    }
+    std::string value;
+    if (sm2::toast_read(rel->session, p, value) != 0) {
+      return -1;
+    }
+    own.push_back(sm2::make_varlena(value));
+    c[j] = sm2::datum_from_ptr(own.back().data());
+  }
+  key.clear();
+  bool cut;
+  return sm2::encode_key(rel->key, c, std::span<const bool>(nulls.get(), n),
+                         sm2::max_pk_len, sm2::overflow_t::refuse, key, cut);
+}
+
+/*
  * The key of the row with _id id and values d and isnull, into key:
- * id_key(id), or the primary key's columns encoded, a column out
- * of line fetched first.
+ * id_key(id), or the primary key's columns encoded.
  */
 int key_of(sm2::rel_t *rel, uint64_t id, std::span<const sm2::datum_t> d,
            std::span<const bool> isnull, std::string &key) {
@@ -390,39 +434,11 @@ int key_of(sm2::rel_t *rel, uint64_t id, std::span<const sm2::datum_t> d,
   size_t n = rel->key.size();
   std::vector<sm2::datum_t> cols(n);
   std::unique_ptr<bool[]> nulls(new bool[n]());
-  // A fetched value must not move once a datum points at it.
-  std::vector<std::string> own;
-  own.reserve(n);
   for (size_t j = 0; j < n; j++) {
-    int32_t att = rel->key_atts[j];
-    if (isnull[att]) {
-      return sm1::seterr(sm1::SM_ERR_INVALID,
-                         "rel: attribute " + std::to_string(att) +
-                             " of the primary key is null");
-    }
-    cols[j] = d[att];
-    if (rel->desc.width[att] > 0) {
-      continue;
-    }
-    std::string_view v;
-    if (sm2::datum_bytes(schema[att].type, schema[att].typmod, d[att], v) !=
-        0) {
-      return -1;
-    }
-    sm2::toast_ptr_t p;
-    if (!sm2::parse_toast_ptr(v, p)) {
-      continue;
-    }
-    std::string value;
-    if (sm2::toast_read(rel->session, p, value) != 0) {
-      return -1;
-    }
-    own.push_back(sm2::make_varlena(value));
-    cols[j] = sm2::datum_from_ptr(own.back().data());
+    cols[j] = d[rel->key_atts[j]];
+    nulls[j] = isnull[rel->key_atts[j]];
   }
-  bool cut;
-  return sm2::encode_key(rel->key, cols, std::span<const bool>(nulls.get(), n),
-                         sm2::max_pk_len, sm2::overflow_t::refuse, key, cut);
+  return encode_cols(rel, cols, std::span<const bool>(nulls.get(), n), key);
 }
 
 /*
@@ -629,6 +645,24 @@ bool rel_keyed(const rel_t *rel) { return !rel->key.empty(); }
 int rel_row_key(rel_t *rel, uint64_t id, std::span<const datum_t> datums,
                 std::span<const bool> isnull, std::string &key) {
   return key_of(rel, id, datums, isnull, key);
+}
+
+/* The key of a row named by its key's values; see sm2.h. */
+int rel_key(rel_t *rel, std::span<const datum_t> datums,
+            std::span<const bool> isnull, std::string &key) {
+  size_t n = rel->key.empty() ? 1 : rel->key.size();
+  if (datums.size() != n || isnull.size() != n) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       "rel: a key of " + std::to_string(n) + " columns");
+  }
+  if (!rel->key.empty()) {
+    return encode_cols(rel, datums, isnull, key);
+  }
+  if (isnull[0]) {
+    return sm1::seterr(sm1::SM_ERR_INVALID, "rel: a null _id");
+  }
+  key = id_key(static_cast<uint64_t>(datum_to_int64(datums[0])));
+  return 0;
 }
 
 /* Insert a row under a new _id; see sm2.h. */

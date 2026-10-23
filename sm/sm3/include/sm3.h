@@ -1472,6 +1472,44 @@ int tbl_trylock(table_t* table, uint64_t id, sm1::lockmode_t mode,
                 std::string_view key = {});
 
 /*
+ * A row's name (../ROWKEY.md §1): the values of its table's primary
+ * key's columns, in the key's order, with their null flags; in a
+ * table without one, its _id alone, an int8. Both borrowed for the
+ * call. Each call below that takes one is the call of its name by
+ * _id, the row named by its key, which sm2::rel_key encodes: a null,
+ * or a count that is not the key's, fails with SM_ERR_INVALID. A
+ * write follows no row that moved. Until a row of a table with a
+ * primary key leaves its _id (../ROWKEY.md §5, step 4), an update or
+ * delete of one reads the row first for it, as the snapshot shows
+ * it, or at READ COMMITTED the newest version when the snapshot
+ * shows none.
+ */
+struct row_key_t {
+    std::span<const sm2::datum_t> values;
+    std::span<const bool>         isnull;
+};
+
+int tbl_update(table_t* table, const row_key_t& key,
+               std::span<const sm2::datum_t> values,
+               std::span<const bool> isnull);
+int tbl_update(table_t* table, const row_key_t& key,
+               std::span<const sm2::datum_t> values,
+               std::span<const bool> isnull, pin_ref_t& ref,
+               std::string_view& old);
+int tbl_delete(table_t* table, const row_key_t& key);
+int tbl_delete(table_t* table, const row_key_t& key, pin_ref_t& ref,
+               std::string_view& old);
+int tbl_read(table_t* table, const row_key_t& key, std::string_view& tuple);
+int tbl_read(table_t* table, const row_key_t& key, pin_ref_t& ref,
+             std::string_view& tuple);
+int tbl_read_latest(table_t* table, const row_key_t& key,
+                    std::string_view& tuple);
+int tbl_read_latest(table_t* table, const row_key_t& key, pin_ref_t& ref,
+                    std::string_view& tuple);
+int tbl_lock(table_t* table, const row_key_t& key, sm1::lockmode_t mode);
+int tbl_trylock(table_t* table, const row_key_t& key, sm1::lockmode_t mode);
+
+/*
  * Empty the table: its rows and every index's entries, in the
  * table's transaction (truncate_table). The table must be
  * opened exclusive, SM_ERR_INVALID if not. The handle stays open
