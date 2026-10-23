@@ -432,10 +432,10 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
     batch that is not retryable fails the build: a duplicate,
     a key too long for a unique index, or anything else. The
     index's state keeps the error's code and its message, and
-    for a duplicate the `_id`s of the two rows that hold the
-    key, across restarts, and `builder_wait` returns them to
-    whoever waits, the rows in `sm1::errdup()`, so the host
-    can show the key.
+    for a duplicate the key of a row that holds it, across
+    restarts, and `builder_wait` returns them to whoever
+    waits, the row's key in `sm1::errdup()`, so the host can
+    read the row and show the key (`../ROWKEY.md` §2.5).
   - **A reader with an older snapshot is kept off the index.**
     Entries are versioned as rows are, so a snapshot older
     than the last batch sees the index partly filled.

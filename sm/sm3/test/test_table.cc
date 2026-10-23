@@ -537,7 +537,7 @@ TEST_CASE("a write that fails partway is the caller's to roll back") {
   CHECK(sm3::tbl_insert(t, dup.d(), dup.null(), rowno) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
   CHECK(sm1::errdup().index == f.jobs_id);
-  CHECK(sm1::errdup().nrows == 0);
+  CHECK(sm1::errdup().row.empty());
   CHECK(rows(t).size() == 2);
   REQUIRE(sm3::rollback(f.a, sp) == 0);
   uint64_t r8 = put(t, 8, "free", std::nullopt);
@@ -1984,10 +1984,10 @@ TEST_CASE("a failed build keeps its reason, for whoever waits for it") {
   // 1. Two rows with one owner are committed; the builder is started.
   // 2. A unique index on owner is created: its build fails.
   // 3. builder_wait returns the build's own error, SM_ERR_DUPKEY,
-  //    with its message, which names the table, the index and the
-  //    two rows, and with the index and the rows in errdup().
+  //    with its message, which names the table and the index, and
+  //    with the index and one of the two rows' keys in errdup().
   // 4. The index is failed, and its definition holds the code, the
-  //    message and the rows.
+  //    message and the row.
   // 5. All survive a restart, and the wait gives them again.
   jobs_t f;
   f.builder();
@@ -2004,16 +2004,12 @@ TEST_CASE("a failed build keeps its reason, for whoever waits for it") {
   std::string why = sm1::errmsg();
   CHECK(why.find("jobs_owner") != std::string::npos);
   CHECK(why.find("of jobs") != std::string::npos);
-  // The two rows, either first: the build meets one, finding the
-  // other's entry.
+  // Either row: the build meets one, finding the other's entry.
   auto both = [&](const sm1::dupkey_t &d) {
-    return d.nrows == 2 && ((d.rownos[0] == r1 && d.rownos[1] == r2) ||
-                            (d.rownos[0] == r2 && d.rownos[1] == r1));
+    return d.row == sm2::id_key(r1) || d.row == sm2::id_key(r2);
   };
   CHECK(sm1::errdup().index == jobs_owner);
   CHECK(both(sm1::errdup()));
-  CHECK(why.find("rows " + std::to_string(sm1::errdup().rownos[0]) + " and " +
-                 std::to_string(sm1::errdup().rownos[1])) != std::string::npos);
   CHECK(state_of(f, jobs_owner) == sm3::index_state_t::failed);
   auto d = sm3::cat_get_table(f.cat, f.jobs);
   CHECK(sm3::cat_get_index_state(f.cat, d->indexes[2].oid).error ==

@@ -105,7 +105,7 @@ enum class index_state_t : uint8_t { pending = 0, valid = 1, failed = 2 };
 /*
  * An index's state, with why its build failed: the error's code
  * and message, SM_OK and empty unless failed, and for a duplicate
- * key the two rows that hold it (sm1::errdup()). It is no part of the
+ * key a row that holds it (sm1::errdup()). It is no part of the
  * table's record or of its definition: it is kept by index, and
  * changes without the table being changed (cat_put_index_state).
  */

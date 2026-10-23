@@ -249,7 +249,7 @@ bool maintained(const sm3::table_t *t, size_t i) {
 int row_failed(const sm3::table_t *t) {
   const sm3::index_def_t *pk = sm3::primary_of(*t->def);
   if (pk && sm1::errnum() == sm1::SM_ERR_DUPKEY) {
-    sm1::setdup({pk->oid, {0, 0}, 0});
+    sm1::setdup({pk->oid, {}});
   }
   return -1;
 }
@@ -382,7 +382,7 @@ int add_entry(sm3::table_t *t, size_t i, const entry_t &e, const vals_t &r,
   }
   // Which index has the key, for the host to say it.
   if (sm1::errnum() == sm1::SM_ERR_DUPKEY) {
-    sm1::setdup({t->def->indexes[i].oid, {0, 0}, 0});
+    sm1::setdup({t->def->indexes[i].oid, {}});
   }
   return -1;
 }
@@ -1159,7 +1159,7 @@ int tbl_load_add(loader_t *l, std::span<const sm2::datum_t> values,
       // Which index has the key, when it is found now, not at the
       // close.
       if (sm1::errnum() == sm1::SM_ERR_DUPKEY) {
-        sm1::setdup({table->def->indexes[i].oid, {0, 0}, 0});
+        sm1::setdup({table->def->indexes[i].oid, {}});
       }
       return -1;
     }
@@ -1779,26 +1779,21 @@ int tbl_index_backfill(table_t *table, uint64_t index, std::string_view from,
     if (sm2::idx_scan(table->indexes[i], &eq, &eq, is) != 0) {
       return -1;
     }
-    uint64_t owner, other = 0;
+    uint64_t owner;
     bool cut, mine = false;
     std::string_view value;
-    while ((more = sm2::idx_scannxt(is, owner, cut, value)) == 0) {
-      mine |= owner == r;
-      if (owner != r) {
-        other = owner;
-      }
+    while (0 == (more = sm2::idx_scannxt(is, owner, cut, value))) {
+      mine |= sm2::idx_scan_row(is) == row_key;
     }
     sm2::idx_scanend(is);
     if (more < 0) {
       return -1;
     }
     if (!mine) {
-      sm1::seterr(sm1::SM_ERR_DUPKEY, "index build: rows " + std::to_string(r) +
-                                          " and " + std::to_string(other) +
-                                          " of " + def.name +
+      sm1::seterr(sm1::SM_ERR_DUPKEY, "index build: two rows of " + def.name +
                                           " have one key in " + x.name);
-      // The rows, for the host to show the key they hold.
-      sm1::setdup({x.oid, {r, other}, 2});
+      // A row, for the host to show the key it holds.
+      sm1::setdup({x.oid, row_key});
       return -1;
     }
   }
@@ -1843,20 +1838,12 @@ static int copy_rows(table_t *from, table_t *to) {
     if (sm1::errnum() != sm1::SM_ERR_DUPKEY) {
       return -1;
     }
-    // Which row has the key, for the host to show the key the two
-    // hold, as an index build says it.
-    const index_def_t *pk = primary_of(*to->def);
-    std::string key;
-    uint64_t other = 0;
-    if (pk &&
-        sm2::rel_row_key(to->rel, id, row.d, {row.null.get(), row.n}, key) ==
-            0 &&
-        sm2::rel_read(to->rel, key, tuple, &other) == 0) {
-      sm1::seterr(sm1::SM_ERR_DUPKEY, "rewrite: rows " + std::to_string(id) +
-                                          " and " + std::to_string(other) +
-                                          " of " + def.name +
+    // The row, by its key in the old store, which still holds the
+    // table, for the host to show the key it holds.
+    if (const index_def_t *pk = primary_of(*to->def)) {
+      sm1::seterr(sm1::SM_ERR_DUPKEY, "rewrite: two rows of " + def.name +
                                           " have one key in " + pk->name);
-      sm1::setdup({pk->oid, {id, other}, 2});
+      sm1::setdup({pk->oid, std::string(tbl_scan_key(scan))});
     }
     return -1;
   }

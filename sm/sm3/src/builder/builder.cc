@@ -400,7 +400,7 @@ int builder_wait(session_t *session, uint64_t table, uint64_t oid) {
       if (st.error != sm1::SM_OK) {
         sm1::seterr(st.error, st.reason);
         // With the rows of a duplicate key, the index this one.
-        if (st.dup.nrows > 0) {
+        if (!st.dup.row.empty()) {
           sm1::dupkey_t dup = st.dup;
           dup.index = oid;
           sm1::setdup(dup);

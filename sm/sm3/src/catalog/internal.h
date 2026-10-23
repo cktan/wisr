@@ -382,7 +382,7 @@ inline const index_def_t *primary_of(const table_def_t &def) {
  * copied with its _id, and every index's entries made, under the
  * table-oid lock exclusive. The record is put, and the old store
  * goes at commit. Two rows with one primary key fail with
- * SM_ERR_DUPKEY, their _ids in sm1::errdup().
+ * SM_ERR_DUPKEY, one's key in the old store in sm1::errdup().
  */
 int rewrite_table(session_t *session, uint64_t oid, table_rec_t rec);
 

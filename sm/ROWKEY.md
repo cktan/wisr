@@ -161,10 +161,11 @@ Nothing reads many rows of a table with a primary key in
 
 ### 2.5 Duplicates and lock status
 
-- **A duplicate key** is reported as the index and the key's
-  encoding, which digres turns into its "Key (…)=(…) already
-  exists" from the row it reads by that key; `sm0::dupkey_t`
-  and the persisted index status carry a key, not two `_id`s.
+- **A duplicate key** is reported as the index and the key of
+  a row that holds it, which digres reads by that key to say
+  its "Key (…)=(…) is duplicated"; `sm0::dupkey_t` and the
+  persisted index status carry the one key, not two `_id`s,
+  and digres's hint that named the two rows goes. Built.
 - **`pg_locks`** shows a row lock of a keyed table as now, its
   relation alone (`CLUSTER.md` §10, question 5); a keyless
   table's row lock keeps its page and tuple, from its `_id`.

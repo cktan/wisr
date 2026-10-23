@@ -2092,11 +2092,11 @@ uint64 smstore_tid_to_rowno(ItemPointer tid) {
  * index, or there is no row, as at a bulk load's end.
  */
 [[noreturn]] static void duplicate_write(Relation rel, TupleTableSlot *slot) {
-  uint64_t indexoid, rownos[2];
+  uint64_t indexoid;
   Datum values[INDEX_MAX_KEYS];
   bool isnull[INDEX_MAX_KEYS];
 
-  sm_errdup(&indexoid, rownos);
+  sm_errdup(&indexoid);
   if (indexoid == 0 || slot == NULL)
     ereport(ERROR,
             (errcode(ERRCODE_UNIQUE_VIOLATION),
@@ -2804,6 +2804,8 @@ void smstore_endscan(smstore_scan_t *scan) {
 static bool table_def_now(Oid oid, sm_table_def_t &out);
 static bool read_row(sm_tbl_t *tbl, uint64_t rowno, int natts,
                      TupleTableSlot *slot);
+static bool read_row_at(sm_tbl_t *tbl, const std::string &key, int natts,
+                        TupleTableSlot *slot);
 static void forget_table(Oid relid);
 
 /*
@@ -5471,30 +5473,24 @@ ObjectAddress smstore_own_sequence(AlterSeqStmt *stmt, List *owned_by) {
 }
 
 /*
- * The rows of the duplicate key sm's last error met, as sm_errdup() gives
- * them: nrows of them, up to two.
+ * The key of a row of the duplicate key sm's last error met, in its table,
+ * as sm_errdup() gives it; empty if sm names none.
  */
-struct dup_rows_t {
-  uint64_t rownos[2];
-  int nrows;
-};
-
-/* The rows of the duplicate key sm's last error met. */
-static dup_rows_t error_dup_rows(void) {
-  dup_rows_t d;
+static std::string error_dup_row(void) {
+  std::string row;
   uint64_t index;
 
-  d.nrows = sm_errdup(&index, d.rownos);
-  return d;
+  sm_errdup(&index, &row);
+  return row;
 }
 
 /*
- * PostgreSQL's words for the key a row of dup holds in the columns keys of
- * the table relid, "(k)=(1)", the first of them the transaction sees; empty
- * if it sees neither, or the table is gone.
+ * PostgreSQL's words for the key the row at row, a key of the table relid,
+ * holds in the columns keys, "(k)=(1)"; empty if the transaction does not
+ * see the row, or the table is gone.
  */
 static std::string dup_key(Oid relid, const std::vector<int32_t> &keys,
-                           const dup_rows_t &dup) {
+                           const std::string &row) {
   Relation rel = try_relation_open(relid, AccessShareLock);
   sm_tbl_t *tbl;
   std::string out;
@@ -5507,9 +5503,7 @@ static std::string dup_key(Oid relid, const std::vector<int32_t> &keys,
     natts = Max(natts, k + 1);
   TupleTableSlot *slot =
       MakeSingleTupleTableSlot(RelationGetDescr(rel), &TTSOpsVirtual);
-  for (int i = 0; tbl != NULL && i < dup.nrows && out.empty(); i++) {
-    if (!read_row(tbl, dup.rownos[i], natts, slot))
-      continue;
+  if (NULL != tbl && !row.empty() && read_row_at(tbl, row, natts, slot)) {
     std::string names, values;
 
     for (int32_t k : keys) {
@@ -5538,24 +5532,16 @@ static std::string dup_key(Oid relid, const std::vector<int32_t> &keys,
 
 /*
  * Raise the error of the unique index name whose build met a duplicate key:
- * the key, as PostgreSQL says it, and the two rows of dup in a hint, the
- * lower first; why, sm's message, in place of the key if it could not be
- * read.
+ * the key, as PostgreSQL says it; why, sm's message, in its place if it
+ * could not be read.
  */
-[[noreturn]] static void duplicate_build(const char *name,
-                                         const std::string &key,
-                                         const dup_rows_t &dup,
-                                         const char *why) {
+[[noreturn]] static void
+duplicate_build(const char *name, const std::string &key, const char *why) {
   ereport(ERROR,
           (errcode(ERRCODE_UNIQUE_VIOLATION),
            errmsg("could not create unique index \"%s\"", name),
            key.empty() ? errdetail("%s", why)
-                       : errdetail("Key %s is duplicated.", key.c_str()),
-           dup.nrows == 2
-               ? errhint("Rows %llu and %llu have it.",
-                         (unsigned long long)Min(dup.rownos[0], dup.rownos[1]),
-                         (unsigned long long)Max(dup.rownos[0], dup.rownos[1]))
-               : 0));
+                       : errdetail("Key %s is duplicated.", key.c_str())));
   pg_unreachable();
 }
 
@@ -5643,12 +5629,12 @@ ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt) {
                       errmsg("relation \"%s\" already exists", name)));
     if (sm_errnum() == SM_ERR_DUPKEY) {
       std::string why = sm_errmsg();
-      dup_rows_t dup = error_dup_rows();
+      std::string row = error_dup_row();
       std::vector<int32_t> places;
 
       for (const sm_index_key_spec_t &k : keys)
         places.push_back(k.attnum);
-      duplicate_build(name, dup_key(relid, places, dup), dup, why.c_str());
+      duplicate_build(name, dup_key(relid, places, row), why.c_str());
     }
     sm_error("create an index");
   }
@@ -5694,7 +5680,7 @@ void smstore_wait_indexes(void) {
     int errnum = sm_errnum();
     int code = sm_sqlstate();
     std::string why = sm_errmsg();
-    dup_rows_t dup = error_dup_rows();
+    std::string row = error_dup_row();
     std::string key;
 
     /*
@@ -5703,7 +5689,7 @@ void smstore_wait_indexes(void) {
      */
     StartTransactionCommand();
     if (errnum == SM_ERR_DUPKEY && m.unique)
-      key = dup_key(m.table, m.keys, dup);
+      key = dup_key(m.table, m.keys, row);
     if (waiting([&] {
           return sm_cat_drop_index(xact_session(), m.table, m.index);
         }) != 0 &&
@@ -5711,7 +5697,7 @@ void smstore_wait_indexes(void) {
       sm_error("drop an index whose build failed");
     CommitTransactionCommand();
     if (errnum == SM_ERR_DUPKEY && m.unique)
-      duplicate_build(m.name.c_str(), key, dup, why.c_str());
+      duplicate_build(m.name.c_str(), key, why.c_str());
     ereport(ERROR, (errcode(code), errmsg("could not create index \"%s\": %s",
                                           m.name.c_str(), why.c_str())));
   }
@@ -6067,6 +6053,33 @@ static bool read_row(sm_tbl_t *tbl, uint64_t rowno, int natts,
   }
   tuple_into_slot(tbl, rowno, tuple, len, natts, slot);
   ExecMaterializeSlot(slot);
+  return true;
+}
+
+/*
+ * The row at key, a key of the table past its relid, as this transaction
+ * sees it, into slot, as read_row() puts one, with no tid; false, the slot
+ * empty, if it sees none.
+ */
+static bool read_row_at(sm_tbl_t *tbl, const std::string &key, int natts,
+                        TupleTableSlot *slot) {
+  sm_pin_ref_t ref = {};
+  const void *tuple;
+  size_t len;
+
+  ExecClearTuple(slot);
+  switch (sm_tbl_read_key(tbl, key.data(), key.size(), &ref, &tuple, &len)) {
+  case 0:
+    break;
+  case 1:
+    return false;
+  default:
+    sm_error("read a row");
+  }
+  tuple_into_slot(tbl, 0, tuple, len, natts, slot);
+  ExecMaterializeSlot(slot);
+  /* The slot has its copy: the row's pin is no one's now. */
+  sm_unpin(&ref);
   return true;
 }
 

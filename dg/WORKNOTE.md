@@ -8358,3 +8358,21 @@ blocks were made of. Its blocks are now in key order:
 - **A keyless table samples as before**, by rowno.
 - **`slt/tablesample.test`** runs on a table with a primary key
   and on a keyless one.
+
+## Step 291: a duplicate key's row named by its key
+
+A unique index whose build met a duplicated key was reported
+with the two rows' `_id`s: digres read one to say the key, and
+named both in a hint, "Rows 1 and 3 have it". A table with a
+primary key is to have no `_id` (`../sm/ROWKEY.md` §2.5):
+
+- **sm names one row by its key** (`sm_errdup()`'s `row`, a
+  key past the relid), as the index's failed state keeps it;
+  digres reads the row by it (`read_row_at()`,
+  `sm_tbl_read_key()`) to say "Key (a)=(1) is duplicated.",
+  as before. One row is enough: both hold the key.
+- **The hint goes.** PostgreSQL has none, and it named rows by
+  rowno, which a table with a primary key will not have; it
+  also said "Rows 0 and 2" of a table made in the
+  transaction.
+- **`test/server.sh`'s duplicated-key case** expects no hint.

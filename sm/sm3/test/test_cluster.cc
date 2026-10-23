@@ -354,7 +354,8 @@ TEST_CASE("adding or dropping a primary key rewrites the table") {
   // 3. Dropping it moves the table again, and the owner index names
   //    them by _id once more.
   // 4. A primary key added over two rows with one id fails with
-  //    SM_ERR_DUPKEY, naming both _ids.
+  //    SM_ERR_DUPKEY, naming the later row, _id 4, by its key in the
+  //    old store, the rows' key order.
   acct_t f(false);
   start(f.a);
   sm3::table_t *t = f.write(f.a);
@@ -397,8 +398,8 @@ TEST_CASE("adding or dropping a primary key rewrites the table") {
   CHECK(sm3::create_index(f.a, f.acct, "acct_pkey", by_id, {}, true, oid, true,
                           true) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
-  CHECK(sm1::errdup().nrows == 2);
-  CHECK(sm1::errdup().rownos[0] + sm1::errdup().rownos[1] == 3 + 4);
+  CHECK(sm1::errdup().index != 0);
+  CHECK(sm1::errdup().row == sm2::id_key(4));
   sm3::abort(f.a);
 }
 

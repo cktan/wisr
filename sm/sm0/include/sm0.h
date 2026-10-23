@@ -13,6 +13,7 @@
 #include "sm_error.h"
 
 #include <cstdint>
+#include <string>
 #include <string_view>
 
 namespace sm0 {
@@ -80,13 +81,14 @@ void reseterr();
 
 /*
  * Where an SM_ERR_DUPKEY met its key, as far as the level that
- * raised it knows: the unique index's oid, 0 if not known, and
- * the rownos of up to two rows that hold the key, nrows of them.
+ * raised it knows: the unique index's oid, 0 if not known, and the
+ * key of a row that holds it in its table, past the relid, empty
+ * if not known (../../ROWKEY.md §2.5): a host reads the row by it
+ * to say the key.
  */
 struct dupkey_t {
   uint64_t index = 0;
-  uint64_t rownos[2] = {0, 0};
-  int nrows = 0;
+  std::string row;
 };
 
 /*

@@ -2193,11 +2193,11 @@ OUT
 cmp -s "$work/alter.out" "$work/alter.expected" || fail "ALTER TABLE"
 
 # A unique index over a duplicated key fails with the key in PostgreSQL's
-# words, and the two rows that hold it in a hint.
+# words, read from a row sm names by its key (../../sm/ROWKEY.md section
+# 2.5).
 # 1. On a table with rows, the build after the commit meets it.
 # 2. A key of two columns, one quoted, says both.
 # 3. On a table made in the transaction, the build at once meets it.
-# 4. The rows the hints name are those of the key.
 local_psql -c 'create table dk (a int4, "B c" text, v text)' \
   -c "insert into dk values (1, 'x', 'p'), (2, 'y', 'q'), (1, 'x', 'r')" \
   -c 'create unique index dka on dk (a)' \
@@ -2205,26 +2205,20 @@ local_psql -c 'create table dk (a int4, "B c" text, v text)' \
   -c 'begin' -c 'create table dk2 (k text)' \
   -c "insert into dk2 values ('o''k'), ('o''k')" \
   -c 'create unique index dk2k on dk2 (k)' -c 'rollback' \
-  -c 'select rowno, a from dk where a = 1 order by rowno' \
   > "$work/dupkey.out" 2>&1
 cat > "$work/dupkey.expected" << 'OUT'
 CREATE TABLE
 INSERT 0 3
 ERROR:  could not create unique index "dka"
 DETAIL:  Key (a)=(1) is duplicated.
-HINT:  Rows 1 and 3 have it.
 ERROR:  could not create unique index "dkab"
 DETAIL:  Key (a, "B c")=(1, x) is duplicated.
-HINT:  Rows 1 and 3 have it.
 BEGIN
 CREATE TABLE
 INSERT 0 2
 ERROR:  could not create unique index "dk2k"
 DETAIL:  Key (k)=(o'k) is duplicated.
-HINT:  Rows 0 and 2 have it.
 ROLLBACK
-1|1
-3|1
 OUT
 cmp -s "$work/dupkey.out" "$work/dupkey.expected" ||
   fail "a duplicated key's build"

@@ -120,11 +120,12 @@ int sm_seterr(sm_errnum_t code, const char* msg);
 /*
  * Where the calling thread's last error, SM_ERR_DUPKEY, met its
  * key, as far as the stack knows: the unique index's oid in
- * *index, 0 if not known, and the _ids of the rows that hold
- * the key in rownos, up to two. Returns how many _ids; 0, with
- * *index 0, after any other error.
+ * *index, 0 if not known, and in *row, if wanted, the key of a row
+ * that holds it in its table, past the relid, as
+ * sm_tbl_read_key() takes one (../ROWKEY.md §2.5). Returns 1 with
+ * a row's key, else 0; *index is 0 after any other error.
  */
-int sm_errdup(uint64_t* index, uint64_t rownos[2]);
+int sm_errdup(uint64_t* index, std::string* row = nullptr);
 
 /* ---- the log hook ---- */
 

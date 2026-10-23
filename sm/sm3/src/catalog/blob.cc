@@ -253,8 +253,7 @@ const std::vector<attribute_t> &schema_of(sm3::part_t part) {
       /* collation */
       {att(type_text), att(type_text), att(type_bool), att(type_text)},
       /* index_state */
-      {att(type_int2), att(type_int2), att(type_text), att(type_int8),
-       att(type_int8)},
+      {att(type_int2), att(type_int2), att(type_text), att(type_bytea)},
       /* sequence */
       {att(type_int8), att(type_text), att(type_int8), att(type_int8),
        att(type_int8), att(type_int4)},
@@ -579,17 +578,17 @@ int decode_index(std::string_view blob, index_rec_t &x) {
 
 /*
  * An index's state: the state, and why its build failed, with the
- * rows that hold a duplicated key.
+ * key of a row that holds a duplicated key.
  */
 int encode_index_state(const index_status_t &rec, std::string &blob) {
-  writer_t w(5);
+  writer_t w(4);
   w.i2(0, static_cast<int16_t>(rec.state));
   // Only a failed index has a reason to keep.
   if (rec.state == index_state_t::failed) {
     w.i2(1, static_cast<int16_t>(rec.error));
     w.bytes(2, rec.reason);
-    for (int i = 0; i < rec.dup.nrows && i < 2; i++) {
-      w.i8(3 + i, rec.dup.rownos[i]);
+    if (!rec.dup.row.empty()) {
+      w.bytes(3, rec.dup.row);
     }
   }
   blob.clear();
@@ -611,13 +610,9 @@ int decode_index_state(std::string_view blob, index_status_t &rec) {
   rec.state = static_cast<index_state_t>(state);
   rec.error = static_cast<sm1::errnum_t>(r.opt_i2(1).value_or(sm1::SM_OK));
   rec.reason = r.opt_bytes(2).value_or("");
-  // The rows that hold a duplicated key, those kept; the index is
-  // the state's own, which its caller knows.
-  for (int i = 0; i < 2; i++) {
-    if (std::optional<uint64_t> row = r.opt_i8(3 + i)) {
-      rec.dup.rownos[rec.dup.nrows++] = *row;
-    }
-  }
+  // The row that holds a duplicated key, if kept; the index is the
+  // state's own, which its caller knows.
+  rec.dup.row = r.opt_bytes(3).value_or("");
   return at_end(blob, pos);
 }
 
