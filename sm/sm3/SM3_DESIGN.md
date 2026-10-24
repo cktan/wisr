@@ -14,9 +14,9 @@ decisions in `SM3_OBJECTIVE.md`:
 | Decision | Choice |
 | --- | --- |
 | Catalog | in memory, written through to sm2, lock-based DDL |
-| Index entry | `encode(index columns) ‖ row key` → a tuple of the row's `_id`, a cut flag, the INCLUDE columns and in a keyed table the row's key; a unique index's key drops the suffix unless a key column is NULL, and is never cut; the primary key has no entries, the rows being keyed by it |
+| Index entry | `encode(index columns) ‖ row key` → a tuple of a cut flag, the INCLUDE columns and the row's key; a unique index's key drops the suffix unless a key column is NULL, and is never cut; the primary key has no entries, the rows being keyed by it |
 | Encoder | sm2's, called with the same per-column arguments |
-| Relation mapping | one sm1 store per table; a store is a collection of rels -- its rows, one per index, its `_id` index, one for TOAST -- told apart by sm2's 2-byte relid |
+| Relation mapping | one sm1 store per table; a store is a collection of rels -- its rows, one per index, one for TOAST -- told apart by sm2's 2-byte relid |
 | API shape | tuple at a time; a scan takes key bounds and filters nothing, and whatever needs evaluating is the host's, by callback (§3, §5) |
 | PostgreSQL | a target that shapes decisions, never a build dependency |
 
@@ -61,7 +61,7 @@ answer.
 
 | the stack gives sm3 | and the constraint it brings |
 | --- | --- |
-| sm2's rows keyed by their primary key, or by `_id` | a row's identity is its `_id`, which never changes; every index names the row by its key, and the `_id` index finds the key by `_id` |
+| sm2's rows keyed by their primary key, or by `_id` | a row's identity is its key, the primary key's or its `_id`, which never changes; every index names the row by its key, and a keyed row has no `_id` (`../ROWKEY.md` §2.1) |
 | sm2's index `rel`: entries keyed by encoded columns, each naming its row | sm2 lays out an entry's bytes and scan bounds; which indexes exist, and writing their entries on every row write, are sm3's (§3) |
 | sm2's key encoder | every index key, the primary key's included, sorts by the same rules, because it is the same code (`sm2/SM2_DESIGN.md` §3) |
 | sm2's 2-byte relid | a table's heap, indexes and TOAST data are rels in its one sm1 store (§4) |
@@ -238,9 +238,9 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   `SM_ERR_DUPKEY` on a row's key. A table may have none; its
   rows are then keyed by `_id`. Adding or dropping one rewrites
   the table into a new store (§2, `../CLUSTER.md` §8).
-- **Entry:** `encode(sk) ‖ row key` → a tuple of the row's
-  `_id`, a flag saying the key was cut, the INCLUDE columns and
-  in a keyed table the row's key — sm2's index `rel`
+- **Entry:** `encode(sk) ‖ row key` → a tuple of a flag saying
+  the key was cut, the INCLUDE columns and the row's key, with
+  no `_id` — sm2's index `rel`
   (`sm2/SM2_DESIGN.md` §5), built with sm2's encoder
   (`sm2/SM2_DESIGN.md` §3). The row key suffix makes every
   entry unique, so a non-unique index needs no further
@@ -322,13 +322,13 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
 - **A row is named by its key** (`../ROWKEY.md` §2.2):
   `tbl_update`, `tbl_delete`, `tbl_read`, `tbl_read_latest`,
   `tbl_lock` and `tbl_trylock` take a `row_key_t`, the values
-  of the primary key's columns, or a keyless row's `_id`, as
-  well as an `_id`; `tbl_row_key` encodes one, to tell two
-  names apart. Until a keyed table loses its `_id`
-  (`ROWKEY.md`'s step 4), an update or delete by key reads the
-  row first for its `_id`. `tbl_insert_arbiter` hands back the
-  conflicting row's tuple, from which the caller takes its
-  key.
+  of the primary key's columns, or a keyless row's `_id`; the
+  calls by `_id` are a keyless table's, and refuse a keyed one.
+  `tbl_row_key` encodes a key, to tell two names apart; a call
+  by key encodes it and reads nothing more (`named()`). A keyed
+  row has no `_id`: `tbl_insert` and `tbl_insert_arbiter` give
+  0 for it, and the arbiter hands back the conflicting row's
+  tuple, from which the caller takes its key.
 - **A write sets no savepoint.** It is the heap write and then
   a write or two per index, and one that fails after its first
   step — a duplicate in a unique index, an over-long key —
@@ -1070,7 +1070,8 @@ and sm3 never encodes a key itself.
   reopens the handle on the new store.
 - **`DROP INDEX` erases the index's keys** one by one, as sm1
   has no range delete (`CATALOG.md` §5.2); dropping a primary
-  key rewrites the table into a new store, keyed by `_id`
+  key rewrites the table into a new store, keyed by `_id`, the
+  rows drawing theirs from the table's sequence in key order
   (`../CLUSTER.md` §8).
 - **Index relids are allocated in increasing order and never
   reused.** A dropped index's versions linger until sm1's
@@ -1080,7 +1081,7 @@ and sm3 never encodes a key itself.
   rebuilds included, is the ceiling.
 - **Adding a primary key** to a table with rows rewrites it
   into a new store, under the table-oid lock X: every row
-  copied with its `_id` under its new key, every index filled
+  copied under its new key, losing its `_id`, every index filled
   again, and the old store dropped at commit, as `TRUNCATE`
   drops it (`../CLUSTER.md` §8). A table made in the same
   transaction with no row yet only records it.
@@ -1101,10 +1102,10 @@ becomes a range delete instead of sm1's O(1) drop.
 A scan takes key bounds and filters nothing. The rows are
 scanned by a range of `_id`, and an index between two bounds
 on its leading columns (`sm2/SM2_DESIGN.md` §5); `tbl_scan` and
-`tbl_idx_scan` are those, on an open table. In a table keyed by
-a primary key a scan by `_id` walks the `_id` index and reads
-each row by its key, and a scan of the primary key is a range
-scan of the rows themselves (`../CLUSTER.md` §5):
+`tbl_idx_scan` are those, on an open table. A table keyed by a
+primary key has no `_id` to scan by, and `tbl_scan` refuses it;
+a scan of the primary key is a range scan of the rows
+themselves (`../CLUSTER.md` §5):
 `tbl_idx_scan_rows` between bounds, `tbl_scan_rows` over them
 all, the order a sequential scan reads in. `tbl_read_key` reads
 a row by the key an index entry names it by. sm3 has no
@@ -1232,7 +1233,10 @@ add them.
   A value reserved in a block and lost to a crash, or drawn by
   a transaction that aborted, is an `_id` with no row. That
   costs the row count nothing: §6.4 measures the live fraction
-  over the same `1..N` it multiplies, gaps included.
+  over the same `1..N` it multiplies, gaps included. A table
+  with a primary key draws no `_id` (`../ROWKEY.md` §2.1): its
+  `N` is 0, its sample is by its bytes, and digres grows its
+  row count with its bytes.
 - **Probes**, the LSM's shape, is the number of sorted runs a
   point lookup of the store may visit: its memtables, each
   level-0 file, and each non-empty level below. It is the

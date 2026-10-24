@@ -83,7 +83,7 @@ too. "Row lock" never means what a write does to the row it
 writes: that is the uncommitted version.
 
 **index.** Two things: an sm3 **index**, an object that maps
-an encoded key to a row's key and `_id`; and "index" used
+an encoded key to a row's key; and "index" used
 loosely of a
 lookup structure in the catalog — the **name index** and the
 **dependency index** of `sm3/CATALOG3.md`, which are key
@@ -116,7 +116,7 @@ Six numbers name things, and none of the six is ever reused.
 | `seqid` | uint64 | database | the same objid lease | a sequence |
 | `oid` | uint64 | database | the sequence `sm3.oid` | a catalog object |
 | relid | uint16 | one store | a constant, or that table's counter | a rel in that store |
-| `_id` | uint64 | one table | the sequence `sm3.id.<oid>` | a row, whatever its key (`CLUSTER.md`) |
+| `_id` | uint64 | one table | the sequence `sm3.id.<oid>` | a row of a table without a primary key, its key (`ROWKEY.md` §2.1) |
 | `attnum` | int32 | one table | the column's position | a column |
 
 - **Never reused** means the same thing in every row: a
@@ -132,19 +132,21 @@ Six numbers name things, and none of the six is ever reused.
   per entry. It is the counterpart of PostgreSQL's
   `relfilenode`, scoped to one store rather than the
   database.
-- **A table's rows are always relid 1**, and its `_id` index
-  0xFFFE, constants and not numbers drawn from the counter, and
-  **0 is unused**, so a zeroed relid is never a live rel.
+- **A table's rows are always relid 1**, a constant and not a
+  number drawn from the counter; 0xFFFE, once the `_id`
+  index's, is taken by none; and **0 is unused**, so a zeroed
+  relid is never a live rel.
   Which relid means what is written down once, in
   `sm3/SM3_DESIGN.md` §4.
 - **An index therefore has two identities**: its **oid** in
   the catalog, and its **relid** in its table's store, with
   the catalog holding the mapping between them.
 - `_id` starts at 1, so `_id = 0` names no row. It is the key
-  of a row in a table without a primary key, and of the row's
-  entry in the `_id` index in one with: a row's key there is
-  its primary key's encoding (`CLUSTER.md` §2). Before the
-  pivot it was `rowno`, and digres's system column still is.
+  of a row in a table without a primary key; a row of a table
+  with one has none, its key its primary key's encoding, and
+  the calls that hand out an `_id` give 0 for it (`ROWKEY.md`
+  §2.1). Before the pivot it was `rowno`, and digres's system
+  column still is.
 - Ids 1 to 999 are reserved in both database-wide spaces:
   sm1's objid lease starts at 1000, and so does `sm3.oid`,
   which leaves `pg_catalog` = 1 and `public` = 2 as fixed
@@ -355,9 +357,8 @@ a rel, differing only in what their keys hold.
 
 **index entry** — one key-value pair of an index: the key is
 the relid, the encoded key columns and, when the entry is not
-uniquely keyed, the row's key; the value holds the row's
-`_id`, the cut flag, the **INCLUDE** columns and, in a table
-with a primary key, the row's key.
+uniquely keyed, the row's key; the value holds the cut flag,
+the **INCLUDE** columns and the row's key.
 
 **INCLUDE column** — a column carried in an index entry's
 value, not in its key, so a scan can answer from the index.

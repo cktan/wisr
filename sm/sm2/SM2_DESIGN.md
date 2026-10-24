@@ -926,53 +926,53 @@ things:
   bytes, which sm2 checks the whole key against (§3.2);
 - an **sm1 session**, which is where the transaction lives.
 
-**Decision: a table is keyed by its primary key, and every row
-has an `_id`** (`../CLUSTER.md`). A row's sm1 key is
-`relid ‖ encode(pk)`, or `relid ‖ _id` for a table without a
-primary key, and its value is `_id ‖ tuple`:
+**Decision: a table is keyed by its primary key, and a row of
+a table without one by its `_id`** (`../CLUSTER.md`,
+`../ROWKEY.md` §2.1). A row's sm1 key is `relid ‖ encode(pk)`,
+or `relid ‖ _id` for a table without a primary key, and its
+value is its tuple alone:
 
 - **`_id` is an unsigned 64-bit number**, written as 8 bytes
   big-endian, drawn from an sm1 sequence that belongs to the
-  table (`sm1/API.md`, the sequence API). It is never reused,
-  survives a crash, and may have gaps. It never changes, not
-  even when the primary key does.
+  table (`sm1/API.md`, the sequence API), by a row of a table
+  without a primary key alone. It is never reused, survives a
+  crash, and may have gaps. It never changes. A keyless row's
+  `_id` is read from its key; a keyed row has none, and the
+  calls that give one give 0.
 - **`encode(pk)` is §3's encoding** of the primary key's
   columns, never cut: past `max_pk_len`, 1024 bytes, the row
   is refused with `SM_ERR_KEYTOOLONG`, so that every index
   entry, which ends with it, keeps room for its own columns.
   A duplicate is sm1's `SM_ERR_DUPKEY` on the row's key.
-- **A keyed rel keeps an `_id` index of its own**, under relid
-  `id_relid` (0xFFFE), from `_id` to the row's key, so that a
-  row is found by its `_id` in two reads (`rel_find`).
-- **An update keeps its `_id`**, and its key unless the
-  primary key changed: then the row **moves**, its old key
-  erased and the row inserted under the new one, and its `_id`
-  entry changed to name it there.
+- **There is no `_id` index.** One, under relid `id_relid`
+  (0xFFFE), went with a keyed row's `_id`, and `rel_find`,
+  `rel_find_latest` and `rel_lock_id` with it; the relid stays
+  one no index takes.
+- **An update keeps its key** unless the primary key changed:
+  then the row **moves**, its old key erased with a move's
+  tombstone and the row inserted under the new one.
 - **`_id` is no TID.** A query reads it as the system column
   `rowno`, an `int8`, and names no `ctid` (`PART4.md` §3). It
   names the row, not the row version, so it does not change on
   `UPDATE`. digres names a row by its key, not by `_id`
   (`../ROWKEY.md`): every call that names a row takes its key,
-  `rel_key` encodes one from the key's values, and a keyed
-  table's `_id`, its index and `rel_find` go in `ROWKEY.md`'s
-  step 4.
+  and `rel_key` encodes one from the key's values.
 
 Why clustered: on an LSM a heap's key is a key like any other,
 so a heap pays an index's price on every read through an index
 (`../CLUSTER.md` §1). The costs are in §7.
 
 The operations, and what each one is over; a row is named by
-its key, as `rel_insert` gives it and `rel_find` finds it:
+its key, as `rel_insert` gives it:
 
 | sm2 | what it adds | over |
 | --- | --- | --- |
-| `rel_insert` | writes a tuple under its key with a new `_id`, and the `_id` entry, and returns both; the tuple is encoded from datums, or handed in pre-encoded and checked by `tup_check` before an `_id` is drawn; the `_id` from a `seqref_t` looked up at the rel's first draw, and a key made of an `_id`, a keyless row's or the `_id` entry's, written unchecked, as none was before | `sm1::seqref`, `sm1::nextseq`, `sm1::insert`, `sm1::insert_new` |
-| `rel_find`, `rel_find_latest` | the key of the row with an `_id`, as the snapshot shows it, or its newest committed version under `rel_lock_id`'s lock | `sm1::read`, `sm1::read_latest` |
+| `rel_insert` | writes a tuple under its key, and returns the key, and a keyless row's new `_id`, 0 for a keyed row; the tuple is encoded from datums, or handed in pre-encoded and checked by `tup_check` before an `_id` is drawn; the `_id` from a `seqref_t` looked up at the rel's first draw, and a keyless row's key, made of it, written unchecked, as none was before | `sm1::seqref`, `sm1::nextseq`, `sm1::insert`, `sm1::insert_new` |
 | `rel_key` | the key of a row from its primary key's values, or a keyless row's from its `_id`, encoded; no read (`../ROWKEY.md` §1) | — |
-| `rel_read` | reads a row by its key, and its `_id` | `sm1::read` |
+| `rel_read` | reads a row by its key, and its `_id`, from the key, 0 for a keyed row | `sm1::read` |
 | `rel_update`, `rel_delete` | by key; hands back the old image as a **tuple**, not bytes; `rel_update` takes datums or a pre-encoded tuple, checked as `rel_insert`'s is, and moves a row whose primary key changed, its old key erased with a move's tombstone (`../ROWKEY.md` §2.3) | `sm1::update`, `sm1::erase`, `sm1::erase_moved`, `sm1::insert` |
 | `rel_read_latest` | the newest committed image, decoded | `sm1::read_latest` |
-| `rel_scan`, `rel_scan_seek` | tuples in `_id` order, forward only; in a keyed rel, through the `_id` index | `sm1::scan`, `sm1::scan_seek`, `sm1::read` |
+| `rel_scan`, `rel_scan_seek` | tuples in `_id` order, forward only, of a keyless rel; a keyed one's are scanned by key (`idx_scan_rows`) | `sm1::scan`, `sm1::scan_seek` |
 | `rel_scan_seek_key` | moves a scan in key order, `idx_scan_rows`' or a keyless rel's, forward to a key | `sm1::scan_seek` |
 | `rel_keys_at`, `rel_range_size` | the keys at fractions of the rel's bytes, by bisecting its key range on the store's size estimates, and the bytes of a key range; no row read (`../ROWKEY.md` §2.4) | `sm1::approxsize` |
 | `relid_size` | the bytes under a relid, a rel's or an index's, in files and in memtables apart; no open rel and no transaction (`sm3/SM3_DESIGN.md` §6.2) | `sm1::approxsize` |
@@ -983,16 +983,16 @@ columns, and sm3 never encodes a key itself, so sm2 gives it a
 `rel` for them too:
 
 - A **`rel`** is keyed by its primary key or `_id`, under the
-  rows' relid, and its value is the row's `_id` and tuple. Its
-  `rel_insert` draws the `_id` from the table's sequence,
-  named when the `rel` is opened, and returns it, so the
-  sequence is drawn in one place.
+  rows' relid, and its value is the row's tuple. Its
+  `rel_insert` draws a keyless row's `_id` from the table's
+  sequence, named when the `rel` is opened, and returns it, so
+  the sequence is drawn in one place.
 - An **index `rel`** is keyed by the encoded columns it is
   opened with — `encode(sk) ‖ row key`, or `encode(sk)` alone
   for a unique index (`sm3/SM3_DESIGN.md` §3) — under the
-  index's relid, and its value is a tuple holding the row's
-  `_id`, the cut flag, the INCLUDE columns and, in a keyed
-  table, the row's key. It is how sm3 writes, deletes and
+  index's relid, and its value is a tuple holding the cut
+  flag, the INCLUDE columns and the row's key. It is how sm3
+  writes, deletes and
   scans index entries. A table's primary key is an index
   `rel` too (`idx_open_primary`), with no entries of its own:
   its entries are the rows, and only read, and
@@ -1014,11 +1014,11 @@ the same shape, keyed by its columns (`idx_open`,
   distinct. A unique key without one is sm1's uniqueness unit,
   and a duplicate is sm1's `SM_ERR_DUPKEY`. A unique index's
   key is never cut (§3.2).
-- **An entry's value** is a tuple: the row's `_id`, a flag
-  saying the key was cut, the INCLUDE columns, then in a keyed
-  table the row's key, which a unique entry's key does not
-  carry. The `_id` costs 8 bytes an entry; a keyed table's
-  entries lose it in `../ROWKEY.md`'s step 4.
+- **An entry's value** is a tuple: a flag saying the key was
+  cut, the INCLUDE columns, then the row's key, which a unique
+  entry's key does not carry, in either kind of table, with no
+  `_id` (`../ROWKEY.md` §2.1). A keyless row's `_id`, which a
+  scan hands out, is read from that key.
 - **An entry gives its key columns back** (`idx_scan_key`),
   for index-only scans: the key decodes past the relid, its
   columns' datums as a tuple gives them, and the row's key is
@@ -1050,7 +1050,8 @@ the same shape, keyed by its columns (`idx_open`,
   8 bytes in a table keyed by `_id`, `max_pk_len` in a keyed
   one. So a cut bound orders against cut keys as the whole one
   would against theirs.
-- **Index relids are below the `_id` index's and TOAST's**
+- **Index relids are below 0xFFFE, once the `_id` index's, and
+  TOAST's**
   (`sm3/SM3_DESIGN.md` §4), which is also what guarantees every
   bound a successor.
 
@@ -1188,12 +1189,12 @@ will find them:
   sort key and the tie-break original in the index key (§3),
   and the datum in the tuple. The tie-break is not optional —
   without it two distinct strings can share one key.
-- **A read by `_id` is two reads** in a keyed table: its `_id`
-  entry gives the key, and the row is a second read (§5). A
-  read by the primary key is one, and a range over it one
-  sorted run.
-- **Every insert into a keyed table writes the row and its
-  `_id` entry**, two sm1 keys, plus one per index as before.
+- **A keyed row has no `_id` to be read by**: it is read by
+  its key, one read, and a range over the primary key is one
+  sorted run (`../ROWKEY.md` §2.1).
+- **Every insert writes the row**, one sm1 key, plus one per
+  index; a keyed table's wrote an `_id` entry too, before its
+  rows lost their `_id`.
 - **A primary key change moves the row**, and rewrites every
   index entry of it, whose suffix and value name the row by
   its key (`../CLUSTER.md` §7).
@@ -1371,7 +1372,8 @@ The three above, joined to sm1.
 - Rows keyed by `rowno`, an unsigned 64-bit number from the
   table's sm1 sequence, kept across updates (§5); since keyed by
   the primary key, with that number their `_id`
-  (`../CLUSTER.md`).
+  (`../CLUSTER.md`), and a keyed row with none
+  (`../ROWKEY.md`).
 - Errors from sm1 passed through, not translated —
   `SM_ERR_UPDATED` in particular.
 - Per-column decoding, so a reader that wants one column does

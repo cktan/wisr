@@ -42,6 +42,9 @@ regression files are taken out for it (`test/pgregress`,
   OF`, and for `rowno = n` in a table without a primary key
   (step 288); the TID range scan and `currtid2()` are removed
   (step 293).
+- **`rowno` of a table with a primary key** — differs: it reads
+  0, as such a row has no `_id` (step 298), until it is refused
+  there (`../sm/ROWKEY.md` §3.1).
 - **CREATE TABLE beyond columns, NOT NULL, PRIMARY KEY, UNIQUE
   and TEMPORARY** — refused (pgregress: 604): table CHECK and
   EXCLUDE constraints, `OF type`, `UNLOGGED`, `TABLESPACE`,
@@ -66,7 +69,9 @@ regression files are taken out for it (`test/pgregress`,
 - **Tables are clustered on their primary key** — differs. A
   SELECT with no ORDER BY reads in key order; a primary key is
   capped at 1024 encoded bytes; `CLUSTER` does nothing, every
-  table being clustered (`../sm/CLUSTER.md`).
+  table being clustered (`../sm/CLUSTER.md`). A primary key
+  index takes no bytes of its own, its entries being the rows:
+  its size is 0 (step 298).
 - **VACUUM, CLUSTER, REINDEX, CHECKPOINT** — differs. VACUUM
   compacts each table's store (step 284); CLUSTER and REINDEX
   warn and do nothing (step 64); CHECKPOINT does nothing

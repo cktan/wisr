@@ -192,7 +192,9 @@ A row handed to the loader gets what `tbl_insert` gives it,
 by the same routines (requirement 3):
 
 1. `NOT NULL` is checked.
-2. An `_id` is taken. The loader takes `_id`s from the
+2. An `_id` is taken, by a row of a table without a primary
+   key; a keyed row has none (`ROWKEY.md` §2.1). The loader
+   takes `_id`s from the
    table's sequence a hundred at a time, ahead of need, and
    hands them out as rows arrive. It needs nothing else: a
    sequence hands out each value once and in rising order,
@@ -557,13 +559,13 @@ ascending or not, and unique or not.
 | --- | --- | --- |
 | the rows, keyed by `_id` | ascending | writes each key straight into a file |
 | the rows, keyed by a primary key | unsorted, unique | sorts them and checks them (§5.4) |
-| the `_id` index | ascending | writes each key straight into a file |
 | a non-unique index | unsorted | sorts it (§5.3) |
 | a unique index | unsorted, unique | sorts it and checks it (§5.4) |
 
 **`_id` is ascending for free.** A load's `_id`s ascend
 (§3.2), so the rows of a table without a primary key, keyed by
-`_id`, and the `_id` index of a table with one arrive in order.
+`_id`, arrive in order. A table with one has no `_id` index,
+and its load no stream for one (`ROWKEY.md` §2.1).
 Such a file is started, filled as rows arrive, and closed at a
 size limit, 256 MB by default, and the next one started. A
 table with a primary key gets its rows in no order, and sorts

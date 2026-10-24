@@ -6,9 +6,9 @@ go on naming a row by a 6-byte TID. This file takes the next
 step (`CLUSTER.md` §10, question 6): a table with a primary
 key has no `_id` and no `_id` index, and nothing in the system
 is a TID. A row is named by its key, a tuple of the key
-columns' values. Steps 1 to 3 of §5 are built but for the
-system column's rename, and step 4's moved tombstone; a keyed
-table still has its `_id`. The work is on the branch
+columns' values. Steps 1 to 4 of §5 are built but for the
+system column's rename (§3.1): SQL still reads `rowno`, 0 for
+a row of a table with a primary key. The work is on the branch
 `wip-noctid`.
 
 Paths are relative to `sm/`; digres's are under `../dg/`.
@@ -78,15 +78,19 @@ Paths are relative to `sm/`; digres's are under `../dg/`.
 
 - **The value is the tuple alone** in both kinds of table: a
   keyless row's `_id` is read from its key, so `CLUSTER.md`
-  §10, question 2's copy in the value goes, and there is one
-  value format.
-- **The `_id` index is gone**, and with it relid `0xFFFE`'s
-  rule, `rel_find`, `rel_find_latest` and `rel_lock_id`.
-- **A secondary entry names its row by `encode(pk)`**, as now,
-  less the `_id` it carried for the TID. `encode(pk)` is
-  `be64(_id)` in a keyless table.
-- **The `_id` sequence** is made only for a keyless table, and
-  ADD and DROP PRIMARY KEY drop or make it (§2.4).
+  §10, question 2's copy in the value is gone, and there is one
+  value format. Built (`../dg/WORKNOTE.md` step 298).
+- **The `_id` index is gone**, and with it `rel_find`,
+  `rel_find_latest` and `rel_lock_id`. Built. Relid `0xFFFE`
+  stays one no index takes, and nothing is written under it.
+- **A secondary entry names its row by `encode(pk)`**, its
+  value the cut flag, the INCLUDE columns and `encode(pk)`, with
+  no `_id`. `encode(pk)` is `be64(_id)` in a keyless table.
+  Built.
+- **The `_id` sequence** was to be made only for a keyless
+  table. It is made for every table still; a keyed table draws
+  nothing from it, and a rewrite that drops the primary key
+  draws the rows' `_id`s from it anew (§2.4).
 
 ### 2.2 Calls by key
 
@@ -97,11 +101,14 @@ Every call that names a row takes its key (`values`,
 the row, from which the caller takes the key's columns:
 
 - **`tbl_insert`** returns nothing new: the caller holds the
-  row it inserted. In a keyless table it returns the `_id`.
-- **`tbl_insert_arbiter`** returns the conflicting row, read
-  as it reads it now to find its `_id`.
+  row it inserted. In a keyless table it returns the `_id`; in
+  a keyed one, 0.
+- **`tbl_insert_arbiter`** returns the conflicting row, and its
+  `_id`, 0 in a keyed table.
 - **A scan** hands out the row; `rel_scan(first, last)` by
-  `_id` stays for a keyless table alone.
+  `_id` stays for a keyless table alone, and refuses a keyed
+  one. The calls by `_id` are a keyless table's too
+  (`../dg/WORKNOTE.md` step 297).
 - **`sm_errdup`** reports the duplicate's key as the index
   entry holds it, not two `_id`s (§2.5).
 
@@ -131,11 +138,10 @@ at hand, and their encoding costs no read.
   become tests of `SM_ERR_MOVED`.
 - **The isolation scenarios** are untouched; scenarios of the
   moved tombstone are added.
-- **Built**, ahead of step 4: a move writes the moved
-  tombstone, sm3's follow is gone, and digres raises
-  `SM_ERR_MOVED` as a serialization failure
-  (`../dg/WORKNOTE.md` step 296). `set_id_entry` and the `_id`
-  entry's lock stay with a keyed table's `_id`.
+- **Built**: a move writes the moved tombstone, sm3's follow
+  is gone, and digres raises `SM_ERR_MOVED` as a serialization
+  failure (`../dg/WORKNOTE.md` step 296); `set_id_entry` and
+  the `_id` entry's lock went with the `_id` index (step 298).
 
 ### 2.4 Reading many rows
 
@@ -150,8 +156,9 @@ Nothing reads many rows of a table with a primary key in
   times the table's bytes: an estimate, close in sorted files,
   to an order of magnitude in memtables. Correlation is
   measured in key order. A keyless table is sampled as now.
-  Built (`sm3/SM3_DESIGN.md` §6.4); `rowno_limit` stays in the
-  statistics until a keyed table has no `_id` (step 4).
+  Built (`sm3/SM3_DESIGN.md` §6.4). A keyed table has no `_id`
+  limit, 0 in its statistics, and its growth since ANALYZE is
+  its bytes' (step 298).
 - **TABLESAMPLE** picks its blocks the same way: SYSTEM's are
   slots of 8 KB of the bytes, each read by a seek to its first
   key, the rest skipped; BERNOULLI's, which reads every row,
@@ -161,9 +168,9 @@ Nothing reads many rows of a table with a primary key in
   (`tbl_scan_rows`), and resumes from a key, not the next
   `_id`; the resume point is the builder's, in memory. Built.
 - **The rewrite** (`CLUSTER.md` §8) copies the rows in key
-  order, built. ADD PRIMARY KEY drops the `_id`s and their
-  sequence; DROP PRIMARY KEY makes a sequence and draws an
-  `_id` a row (step 4).
+  order, built. ADD PRIMARY KEY drops the `_id`s; DROP PRIMARY
+  KEY draws an `_id` a row, in key order, from the table's
+  sequence, which stays. Built.
 - **SET NOT NULL's check** walks the rows in key order. Built.
 
 ### 2.5 Duplicates and lock status
@@ -275,9 +282,8 @@ Each step leaves every suite passing.
 1. **sm by key.** `tbl_read`, `tbl_read_latest`, `tbl_update`,
    `tbl_delete`, `tbl_lock`, `tbl_trylock` by key, through the
    C API (`sm_row_key_t`); sm1's moved tombstone
-   (`sm1::erase_moved`) and `SM_ERR_MOVED`. Built. The `_id`
-   calls stay for digres. Until step
-   4 an update or delete by key of a keyed row reads the row
+   (`sm1::erase_moved`) and `SM_ERR_MOVED`. Built. Until step
+   4 an update or delete by key of a keyed row read the row
    for its `_id`.
 2. **ANALYZE and TABLESAMPLE by key ranges** for a table with
    a primary key; the backfill, the rewrite and SET NOT NULL
@@ -292,10 +298,12 @@ Each step leaves every suite passing.
 4. **No `_id` with a primary key.** The `_id` index, the
    follow, and the `_id` calls of a keyed table go; the value
    is the tuple alone; a key change writes the moved
-   tombstone. The moved tombstone, and the follow's going,
-   built (step 296); the rest to do.
+   tombstone. Built (steps 296 to 298). Not as planned: the
+   `_id` sequence is still made for a keyed table, which draws
+   nothing from it; relid 0xFFFE stays reserved, unused; SQL's
+   `rowno` reads 0 on a keyed row until §3.1 refuses it there.
 5. **The documents**: `CLUSTER.md` §0 and §2 to §11,
    `sm2/SM2_DESIGN.md` §5, `sm3/SM3_DESIGN.md` §3 and §6,
    `STATISTICS.md`, `LOCK.md`, `BULKLOAD.md`, `GLOSSARY.md`,
    `rel/REL.md`, each as its step lands, and this file marked
-   built. Brought up to step 3.
+   built. Brought up to step 4.

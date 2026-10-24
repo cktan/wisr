@@ -43,8 +43,9 @@ table without a primary key, which is sampled as then.
 
 **What `sm_tbl_analyze` records**
 
-- **A table:** bytes on disk, live rows, the `_id` limit, and
-  the average bytes of a row.
+- **A table:** bytes on disk, live rows, the `_id` limit, 0
+  for a table with a primary key, whose rows have no `_id`
+  (`ROWKEY.md` §2.1), and the average bytes of a row.
 - **An index:** bytes on disk and entries.
 - **A column, and an expression of an index:** null fraction,
   average bytes, distinct count, most common values, histogram
@@ -264,7 +265,8 @@ say how the table has moved.
 
 - `N` now, less `N` as recorded, is the `_id`s handed out
   since: an upper bound on the rows inserted, exact but for
-  the `_id`s of transactions that rolled back.
+  the `_id`s of transactions that rolled back. A table with a
+  primary key draws none, and has only its bytes to say.
 - Bytes now over bytes as recorded is growth of every kind,
   old versions not yet collected among it.
 
@@ -641,7 +643,7 @@ from sm3's statistics; it does not hand over loose numbers.
 | The planner wants | The host makes it from |
 | --- | --- |
 | `pages` | bytes now, over 8 KB, and never less than 1 for an object with a row, so that the page cost constants keep their meaning. Returned from the AM callback, not stored |
-| `tuples` | recorded live rows, scaled by bytes now over bytes recorded, or moved by the `_id`s handed out since. Also from the callback |
+| `tuples` | recorded live rows, scaled by bytes now over bytes recorded, or, for a table without a primary key that had nothing on disk, moved by the `_id`s handed out since. Also from the callback |
 | `allvisfrac` | 1. An index entry carries versions of its own (`sm3/SM3_DESIGN.md` §3), so an index-only scan never visits the heap, and §7 measured that this is exactly what removes the heap-fetch charge |
 | null fraction, most common values, histogram | the same, values decoded to PostgreSQL's datums |
 | average width | average bytes as stored |
@@ -937,7 +939,8 @@ Steps 3 to 7 are built, as `sm3/SM3_DESIGN.md` §6.9 records.
 8. ~~A table with a primary key sampled by key ranges~~
    **Built** (`ROWKEY.md` §2.4): slots of its bytes, the row
    count per byte, correlation in key order; TABLESAMPLE the
-   same. The `_id` limit stays in the statistics until a table
-   with a primary key has no `_id` (`ROWKEY.md` §5, step 4).
+   same. A table with a primary key has no `_id` limit, 0 in
+   its statistics, and grows by its bytes (`ROWKEY.md` §5,
+   step 4).
 
 The fork's own work in §4 is outside this repository.

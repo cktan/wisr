@@ -103,7 +103,7 @@ something the caller is not writing.
 | --- | --- | --- | --- | --- |
 | 1 | a table's definition | `OID`, `be64(oid)` | DDL against readers and writers of the in-memory catalog | built: `cat_lock_table` → `lock_table` → `sm1::lock` |
 | 2 | a row, read intent | `ROW`, `(storeid, relid ‖ row key)` | `FOR SHARE`, `FOR UPDATE`, an index build against a writer | built: `tbl_lock` → `rel_lock` → `sm1::lock` |
-| 2a | a row's `_id` entry | `ROW`, `(storeid, 0xFFFE ‖ _id)` | a read by `_id` at READ COMMITTED of a row newer than the snapshot, which sm1's newest read needs (`sm3`'s `key_of`). No moved row is followed now (`ROWKEY.md` §2.3) | built: `rel_lock_id` → `sm1::lock`; goes with a keyed table's `_id` in `ROWKEY.md`'s step 4 |
+| 2a | a row's `_id` entry | `ROW`, `(storeid, 0xFFFE ‖ _id)` | a writer that followed a moved row, against moving it again | gone, with the `_id` index (`ROWKEY.md` §2.1, §2.3) |
 | 3 | a catalog key, lock-then-write | `ROW`, `(store 0, "U" ‖ key)` | DDL takes X on each key it is about to write, reads it current, rewrites it | built: `catkv_lock` → `sm1::lock` |
 | 4 | a namespace | `OID`, `be64(oid)` | `DROP SCHEMA` against `CREATE` in it | built: `cat_put_table`, `cat_put_collation` take S, `cat_del_namespace` X → `lock_table` → `sm1::lock` |
 | 5 | a collation or type in use | `(oid)` | `DROP COLLATION` with a column using it | not built |
@@ -112,8 +112,8 @@ something the caller is not writing.
 
 A name is **fixed-width** but for a row's: 9 bytes for a
 table-oid lock, the width of its kind for each catalog key DDL
-locks, 11 for a row of a table without a primary key or a
-row's `_id` entry, and for a row of a table with one, the
+locks, 11 for a row of a table without a primary key, and for
+a row of a table with one, the
 relid and its primary key's encoding, up to 1024 bytes
 (`CLUSTER.md` §4). Nothing in sm1 requires a width;
 `max_keylen` 4096 bounds a name.
