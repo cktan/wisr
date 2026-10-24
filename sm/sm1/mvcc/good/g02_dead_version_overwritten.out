@@ -1,0 +1,101 @@
+# g02 -- an aborted writer's versions, passed, then written over.
+#
+# T2 writes R1 twice and aborts: its versions stay newest, dead.
+# T1, begun before, and T3, begun after, read past both to 0. T3
+# writes R1 over them and commits; T1 still reads 0, and a later
+# reader reads T3's value. T3's insert of R2, which exists, fails;
+# its write of R9, which does not, fails too.
+
+
+== pairing RR/RR == T1=RR T2=RR T3=RR
+@1 T1 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 begin -> ok
+@4 T2 write R1 1 -> ok
+@5 T2 write R1 2 -> ok
+@6 T2 abort -> ok
+@7 T3 begin -> ok
+@8 T3 read R1 -> 0
+@9 T1 read R1 -> 0
+@10 T3 insert R2 x -> dupkey
+@11 T3 abort -> ok
+@12 T3 begin -> ok
+@13 T3 write R9 x -> notfound
+@14 T3 abort -> ok
+@15 T3 begin -> ok
+@16 T3 write R1 3 -> ok
+@17 T3 commit -> ok
+@18 T1 read R1 -> 0
+@19 T1 scan R1 R2 -> {R1, R2}
+@20 T1 commit -> ok
+@21 check row R1 3 -> satisfied
+@21 check rows -> {R1=3, R2=0}
+== pairing RR/S == T1=RR T2=SER T3=RR
+@1 T1 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 begin -> ok
+@4 T2 write R1 1 -> ok
+@5 T2 write R1 2 -> ok
+@6 T2 abort -> ok
+@7 T3 begin -> ok
+@8 T3 read R1 -> 0
+@9 T1 read R1 -> 0
+@10 T3 insert R2 x -> dupkey
+@11 T3 abort -> ok
+@12 T3 begin -> ok
+@13 T3 write R9 x -> notfound
+@14 T3 abort -> ok
+@15 T3 begin -> ok
+@16 T3 write R1 3 -> ok
+@17 T3 commit -> ok
+@18 T1 read R1 -> 0
+@19 T1 scan R1 R2 -> {R1, R2}
+@20 T1 commit -> ok
+@21 check row R1 3 -> satisfied
+@21 check rows -> {R1=3, R2=0}
+== pairing S/RR == T1=SER T2=RR T3=RR
+@1 T1 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 begin -> ok
+@4 T2 write R1 1 -> ok
+@5 T2 write R1 2 -> ok
+@6 T2 abort -> ok
+@7 T3 begin -> ok
+@8 T3 read R1 -> 0
+@9 T1 read R1 -> 0
+@10 T3 insert R2 x -> dupkey
+@11 T3 abort -> ok
+@12 T3 begin -> ok
+@13 T3 write R9 x -> notfound
+@14 T3 abort -> ok
+@15 T3 begin -> ok
+@16 T3 write R1 3 -> ok
+@17 T3 commit -> ok
+@18 T1 read R1 -> 0
+@19 T1 scan R1 R2 -> {R1, R2}
+@20 T1 commit -> ok
+@21 check row R1 3 -> satisfied
+@21 check rows -> {R1=3, R2=0}
+== pairing S/S == T1=SER T2=SER T3=RR
+@1 T1 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 begin -> ok
+@4 T2 write R1 1 -> ok
+@5 T2 write R1 2 -> ok
+@6 T2 abort -> ok
+@7 T3 begin -> ok
+@8 T3 read R1 -> 0
+@9 T1 read R1 -> 0
+@10 T3 insert R2 x -> dupkey
+@11 T3 abort -> ok
+@12 T3 begin -> ok
+@13 T3 write R9 x -> notfound
+@14 T3 abort -> ok
+@15 T3 begin -> ok
+@16 T3 write R1 3 -> ok
+@17 T3 commit -> ok
+@18 T1 read R1 -> 0
+@19 T1 scan R1 R2 -> {R1, R2}
+@20 T1 commit -> ok
+@21 check row R1 3 -> satisfied
+@21 check rows -> {R1=3, R2=0}

@@ -1,0 +1,29 @@
+# g01 -- a row set to a value, another, then the first again.
+#
+# T2 sets R1 from 0 to 1, commits, then back to 0, commits. T1's
+# snapshot, taken first, reads the first 0; T3's, taken between,
+# reads 1 even after R1 holds 0 again: each reader finds the
+# version of its own snapshot, not the newest one with the value
+# it saw. A scan agrees with the point reads. T3's write of R1
+# then fails: R1 changed after its snapshot.
+
+
+== pairing RR/RR == T1=RR T2=RR T3=RR
+@1 T1 begin -> ok
+@2 T1 read R1 -> 0
+@3 T2 begin -> ok
+@4 T2 write R1 1 -> ok
+@5 T2 commit -> ok
+@6 T3 begin -> ok
+@7 T3 read R1 -> 1
+@8 T2 begin -> ok
+@9 T2 write R1 0 -> ok
+@10 T2 commit -> ok
+@11 T1 read R1 -> 0
+@12 T1 scan R1 R2 -> {R1, R2}
+@13 T3 read R1 -> 1
+@14 T3 write R1 3 -> conflict
+@15 T3 abort -> notrans
+@16 T1 commit -> ok
+@17 check row R1 0 -> satisfied
+@17 check rows -> {R1=0, R2=0}
