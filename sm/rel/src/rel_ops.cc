@@ -1658,7 +1658,7 @@ static Janet cfun_lock_row(int32_t argc, Janet *argv) {
   // The table lock under the row's: IS for shared, IX for exclusive.
   table_def_t *p_tdef = need_table(
       s, tbl_name, exclusive ? SM_LOCKMODE_IX : SM_LOCKMODE_IS, "lock-row");
-  if (sm_tbl_lock(p_tdef->tbl, rowno, nullptr, 0,
+  if (sm_tbl_lock(p_tdef->tbl, rowno,
                   exclusive ? SM_LOCKMODE_EX : SM_LOCKMODE_SH) != 0) {
     panic_sm_error("lock-row sm_tbl_lock");
   }
@@ -1843,9 +1843,8 @@ static Janet cfun_update(int32_t argc, Janet *argv) {
   sm_pin_ref_t ref = {};
   const void *old_tuple = nullptr;
   size_t old_len = 0;
-  if (0 != sm_tbl_update(tbl, rowno, nullptr, 0, row.values.data(),
-                         row.isnull.get(), row.values.size(), &ref, &old_tuple,
-                         &old_len)) {
+  if (0 != sm_tbl_update(tbl, rowno, row.values.data(), row.isnull.get(),
+                         row.values.size(), &ref, &old_tuple, &old_len)) {
     abort_failed_write(s);
     panic_sm_error("update sm_tbl_update");
   }
@@ -1880,7 +1879,7 @@ static Janet cfun_delete(int32_t argc, Janet *argv) {
   sm_pin_ref_t ref = {};
   const void *old_tuple = nullptr;
   size_t old_len = 0;
-  if (0 != sm_tbl_delete(tbl, rowno, nullptr, 0, &ref, &old_tuple, &old_len)) {
+  if (0 != sm_tbl_delete(tbl, rowno, &ref, &old_tuple, &old_len)) {
     abort_failed_write(s);
     panic_sm_error("delete sm_tbl_delete");
   }

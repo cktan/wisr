@@ -8545,3 +8545,29 @@ tombstone, from its step 4, is built now:
   write itself, as before.
 - **`test/server.sh`**: an UPDATE and a FOR UPDATE of a row
   whose key changed meanwhile fail with 40001.
+
+## Step 297: a row of a table with a primary key is named by its key alone
+
+`../sm/ROWKEY.md`'s step 4 begins: a table with a primary key
+is to have no `_id`, so nothing may name its row by one.
+
+- **sm3's and the C API's calls by `_id`** — `tbl_update`,
+  `tbl_delete`, `tbl_read`, `tbl_read_latest`, `tbl_lock`,
+  `tbl_trylock` and their `sm_tbl_*` — **are a keyless
+  table's**, whose key the `_id` is (`id_key()`); on a table
+  with a primary key they fail with `SM_ERR_INVALID`. Their
+  optional key, the encoding a scan gave, is gone with
+  `key_given()`, `key_to_write()`, `key_of()` and the C API's
+  `key_in()`: a write by key needs none.
+- **digres's last write by rowno** names the row by its key:
+  ADD COLUMN's volatile default (`fill_column()`), from the
+  primary key's columns of the row the scan gave, or its
+  rowno. `read_row()`, which nothing called since step 292,
+  is deleted.
+- **The `rel` tool** keeps its verbs by rowno: it makes no
+  primary key, so its rows are keyless.
+- **Tests**: sm3's keyed tests name rows by key (`at_t`,
+  `get_at()`), and check a read by `_id` is refused; the test
+  of the scan's key is deleted. `slt/add_column_volatile.test`
+  adds a column drawn from a sequence to a table with a
+  primary key.

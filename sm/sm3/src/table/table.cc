@@ -595,54 +595,17 @@ int insert_row(table_t *table, std::span<const sm2::datum_t> values,
 }
 
 /*
- * The key of the row with _id id, into key (../CLUSTER.md §5): 0,
- * 1 if there is none, 2 if nowait and the row's _id entry is
- * another's, or -1. A table without a primary key has it at once;
- * a table with one, from its _id entry as the snapshot shows it. At
- * READ COMMITTED a row the snapshot does not show -- one newer than
- * it, which an insert's conflict found -- is looked for now, under
- * a shared lock on its _id entry, which sm1's newest read needs.
+ * The key of a keyless table's row with _id id, its _id encoded
+ * (../ROWKEY.md §1), into key; a table with a primary key names its
+ * row by the key's values, not by _id: SM_ERR_INVALID.
  */
-int key_of(table_t *t, uint64_t id, bool nowait, std::string &key) {
-  int rc = sm2::rel_find(t->rel, id, key);
-  if (rc != 1 || t->session->level != sm1::xctlevel_t::read_committed) {
-    return rc;
+int id_key(table_t *t, uint64_t id, std::string &key) {
+  if (sm2::rel_keyed(t->rel)) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       "table: " + t->def->name +
+                           " has a primary key; name its row by its key");
   }
-  // Held to the end of the transaction, as a row's lock is.
-  rc = sm2::rel_lock_id(t->rel, id, sm1::SM_LOCKMODE_SH, nowait);
-  if (rc != 0) {
-    return rc < 0 ? -1 : 2;
-  }
-  return sm2::rel_find_latest(t->rel, id, key);
-}
-
-/* The key of the row with _id id to write, or SM_ERR_NOTFOUND. */
-int key_to_write(table_t *t, uint64_t id, std::string &key) {
-  int rc = key_of(t, id, false, key);
-  if (rc == 1) {
-    return sm1::seterr(sm1::SM_ERR_NOTFOUND, "table: no row " +
-                                                 std::to_string(id) + " in " +
-                                                 t->def->name);
-  }
-  return rc;
-}
-
-/*
- * The key of the row with _id id to write into key: given, the
- * caller's, from a row it read in the statement, or else
- * key_to_write's. A given key is trusted; a debug build checks it is
- * what the snapshot's _id entry says, where that has one.
- */
-static int key_given(table_t *t, uint64_t id, std::string_view given,
-                     std::string &key) {
-  if (given.empty()) {
-    return key_to_write(t, id, key);
-  }
-  key.assign(given);
-#ifndef NDEBUG
-  std::string k;
-  assert(sm2::rel_find(t->rel, id, k) != 0 || k == key);
-#endif
+  key = sm2::id_key(id);
   return 0;
 }
 
@@ -834,7 +797,7 @@ look:
  * tbl_update, with ref and old both given or both null: with them,
  * the old row is pinned into ref, and old views it.
  */
-static int update_row(table_t *table, uint64_t id, std::string_view given,
+static int update_row(table_t *table, uint64_t id, std::string_view key,
                       std::span<const sm2::datum_t> values,
                       std::span<const bool> isnull, pin_ref_t *ref,
                       std::string_view *old) {
@@ -842,9 +805,7 @@ static int update_row(table_t *table, uint64_t id, std::string_view given,
   if (old) {
     *old = {};
   }
-  std::string key;
-  if (need_writable(table) != 0 || need_not_null(table, isnull) != 0 ||
-      key_given(table, id, given, key) != 0) {
+  if (need_writable(table) != 0 || need_not_null(table, isnull) != 0) {
     return -1;
   }
   // The old row is pinned, in a pin of this call's, so the index
@@ -940,30 +901,35 @@ static int update_row(table_t *table, uint64_t id, std::string_view given,
 /* Replace the row, then fix each index it changed; see sm3.h. */
 int tbl_update(table_t *table, uint64_t id,
                std::span<const sm2::datum_t> values,
-               std::span<const bool> isnull, std::string_view key) {
-  return update_row(table, id, key, values, isnull, nullptr, nullptr);
+               std::span<const bool> isnull) {
+  std::string key;
+  return 0 != id_key(table, id, key)
+             ? -1
+             : update_row(table, id, key, values, isnull, nullptr, nullptr);
 }
 
 /* As above, pinning the row replaced into ref; see sm3.h. */
 int tbl_update(table_t *table, uint64_t id,
                std::span<const sm2::datum_t> values,
                std::span<const bool> isnull, pin_ref_t &ref,
-               std::string_view &old, std::string_view key) {
-  return update_row(table, id, key, values, isnull, &ref, &old);
+               std::string_view &old) {
+  std::string key;
+  return 0 != id_key(table, id, key)
+             ? -1
+             : update_row(table, id, key, values, isnull, &ref, &old);
 }
 
 /*
  * tbl_delete, with ref and old both given or both null: with them,
  * the row deleted is pinned into ref, and old views it.
  */
-static int delete_row(table_t *table, uint64_t id, std::string_view given,
+static int delete_row(table_t *table, uint64_t id, std::string_view key,
                       pin_ref_t *ref, std::string_view *old) {
   // No old row until the write succeeds.
   if (old) {
     *old = {};
   }
-  std::string key;
-  if (need_writable(table) != 0 || key_given(table, id, given, key) != 0) {
+  if (need_writable(table) != 0) {
     return -1;
   }
   // The row is pinned, in a pin of this call's, so the index calls
@@ -1017,14 +983,19 @@ static int delete_row(table_t *table, uint64_t id, std::string_view given,
 }
 
 /* Delete the row, then its entry in every index; see sm3.h. */
-int tbl_delete(table_t *table, uint64_t id, std::string_view key) {
-  return delete_row(table, id, key, nullptr, nullptr);
+int tbl_delete(table_t *table, uint64_t id) {
+  std::string key;
+  return 0 != id_key(table, id, key)
+             ? -1
+             : delete_row(table, id, key, nullptr, nullptr);
 }
 
 /* As above, pinning the row deleted into ref; see sm3.h. */
 int tbl_delete(table_t *table, uint64_t id, pin_ref_t &ref,
-               std::string_view &old, std::string_view key) {
-  return delete_row(table, id, key, &ref, &old);
+               std::string_view &old) {
+  std::string key;
+  return 0 != id_key(table, id, key) ? -1
+                                     : delete_row(table, id, key, &ref, &old);
 }
 
 /* Begin a bulk load into the table; see sm3.h. */
@@ -1175,28 +1146,18 @@ int tbl_fetch_cols(table_t *table, const std::vector<int32_t> &atts,
 /* Read the row with _id id; see sm3.h. */
 int tbl_read(table_t *table, uint64_t id, std::string_view &tuple) {
   std::string key;
-  int rc = key_of(table, id, false, key);
-  return rc != 0 ? rc : sm2::rel_read(table->rel, key, tuple);
-}
-
-/*
- * Read the newest committed version of the row with _id id, by
- * read, sm2::rel_read_latest at the key the snapshot has the row
- * at. A row moved since is SM_ERR_MOVED, not followed
- * (../ROWKEY.md §2.3).
- */
-template <typename F>
-static int read_latest(table_t *table, uint64_t id, F read) {
-  std::string key;
-  int rc = key_of(table, id, false, key);
-  return rc != 0 ? rc : read(key);
+  tuple = {};
+  return 0 != id_key(table, id, key) ? -1
+                                     : sm2::rel_read(table->rel, key, tuple);
 }
 
 /* Read the newest committed version of the row with _id id. */
 int tbl_read_latest(table_t *table, uint64_t id, std::string_view &tuple) {
-  return read_latest(table, id, [&](const std::string &key) {
-    return sm2::rel_read_latest(table->rel, key, tuple);
-  });
+  std::string key;
+  tuple = {};
+  return 0 != id_key(table, id, key)
+             ? -1
+             : sm2::rel_read_latest(table->rel, key, tuple);
 }
 
 /*
@@ -1232,8 +1193,9 @@ int tbl_read(table_t *table, uint64_t id, pin_ref_t &ref,
              std::string_view &tuple) {
   return read_into(table, ref, tuple, [&](sm1::rawpin_t *raw) {
     std::string key;
-    int rc = key_of(table, id, false, key);
-    return rc != 0 ? rc : sm2::rel_read(table->rel, key, raw, tuple);
+    return 0 != id_key(table, id, key)
+               ? -1
+               : sm2::rel_read(table->rel, key, raw, tuple);
   });
 }
 
@@ -1249,28 +1211,27 @@ int tbl_read_key(table_t *table, std::string_view key, pin_ref_t &ref,
 int tbl_read_latest(table_t *table, uint64_t id, pin_ref_t &ref,
                     std::string_view &tuple) {
   return read_into(table, ref, tuple, [&](sm1::rawpin_t *raw) {
-    return read_latest(table, id, [&](const std::string &key) {
-      return sm2::rel_read_latest(table->rel, key, raw, tuple);
-    });
+    std::string key;
+    return 0 != id_key(table, id, key)
+               ? -1
+               : sm2::rel_read_latest(table->rel, key, raw, tuple);
   });
 }
 
 /*
- * Lock the row with _id id, waiting or not; see sm3.h. A row there
- * is none of has nothing to lock, and a read of it then finds it
- * gone.
+ * Lock a keyless table's row with _id id, waiting or not; see sm3.h.
+ * A row there is none of has nothing to lock, and a read of it then
+ * finds it gone.
  */
-static int lock_row(table_t *table, uint64_t id, std::string_view given,
-                    sm1::lockmode_t mode, bool nowait) {
+static int lock_row(table_t *table, uint64_t id, sm1::lockmode_t mode,
+                    bool nowait) {
   // Only a shared lock sits under a table opened to read.
   if (mode != sm1::SM_LOCKMODE_SH && need_writable(table) != 0) {
     return -1;
   }
   std::string key;
-  int rc = given.empty() ? key_of(table, id, nowait, key)
-                         : key_given(table, id, given, key);
-  if (rc != 0) {
-    return rc < 0 ? -1 : rc == 2 ? 1 : 0;
+  if (0 != id_key(table, id, key)) {
+    return -1;
   }
   // Held to the end of the transaction, as a write's lock is.
   return nowait ? sm2::rel_trylock(table->rel, key, mode)
@@ -1278,15 +1239,13 @@ static int lock_row(table_t *table, uint64_t id, std::string_view given,
 }
 
 /* Lock the row with _id id without writing it; see sm3.h. */
-int tbl_lock(table_t *table, uint64_t id, sm1::lockmode_t mode,
-             std::string_view key) {
-  return lock_row(table, id, key, mode, false);
+int tbl_lock(table_t *table, uint64_t id, sm1::lockmode_t mode) {
+  return lock_row(table, id, mode, false);
 }
 
 /* Lock the row with _id id if it is free now; see sm3.h. */
-int tbl_trylock(table_t *table, uint64_t id, sm1::lockmode_t mode,
-                std::string_view key) {
-  return lock_row(table, id, key, mode, true);
+int tbl_trylock(table_t *table, uint64_t id, sm1::lockmode_t mode) {
+  return lock_row(table, id, mode, true);
 }
 
 /*

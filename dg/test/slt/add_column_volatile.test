@@ -12,6 +12,8 @@
 #    table is as it was.
 # 5. A volatile default added in a transaction rolled back leaves no
 #    column, and one added to an empty table makes it.
+# 6. A table with a primary key, whose rows are written by their key, takes
+#    a column drawn from a sequence: in key order, each row its own.
 
 statement ok
 create table t (k int4, x text)
@@ -110,3 +112,22 @@ query I nosort
 select count(*) from e where r is not null
 ----
 1
+
+statement ok
+create table pk (k int4 primary key, x text)
+
+statement ok
+insert into pk values (30, 'c'), (10, 'a'), (20, 'b')
+
+statement ok
+create sequence pks
+
+statement ok
+alter table pk add column n int8 default nextval('pks')
+
+query ITI nosort
+select k, x, n from pk order by k
+----
+10	a	1
+20	b	2
+30	c	3

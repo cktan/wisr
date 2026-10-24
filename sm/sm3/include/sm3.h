@@ -1313,7 +1313,10 @@ int tbl_insert_arbiter(table_t* table, std::span<const sm2::datum_t> values,
                        std::string* tuple = nullptr);
 
 /*
- * Replace the row with _id id. An index is left alone if the row's
+ * Replace the row with _id id, in a table without a primary key,
+ * whose key the _id is: a table with one names its row by its key
+ * (row_key_t, below), and SM_ERR_INVALID here. The calls below by
+ * _id are so. An index is left alone if the row's
  * key columns compare equal before and after, by their types' cmp,
  * and its INCLUDE columns hold the same bytes; otherwise its old
  * entry is removed and a new one added. While an index is pending
@@ -1325,28 +1328,23 @@ int tbl_insert_arbiter(table_t* table, std::span<const sm2::datum_t> values,
  * released. The pin ref held before is released only when the
  * write succeeds, so values may point into its row; on failure old
  * is empty, and ref keeps what it held.
- *
- * key, if not empty, is the row's key, as a read of the statement
- * gave it with id (rel_scan_key, idx_scan_row): the write goes
- * there, with no read of the _id entry to find it (../CLUSTER.md
- * §6). It is trusted.
  */
 int tbl_update(table_t* table, uint64_t id,
                std::span<const sm2::datum_t> values,
-               std::span<const bool> isnull, std::string_view key = {});
+               std::span<const bool> isnull);
 int tbl_update(table_t* table, uint64_t id,
                std::span<const sm2::datum_t> values,
                std::span<const bool> isnull, pin_ref_t& ref,
-               std::string_view& old, std::string_view key = {});
+               std::string_view& old);
 
 /*
  * Delete the row with _id id, and its entry in every index. The form
  * with ref hands back the image deleted, pinned into ref, as
- * tbl_update's does; key as tbl_update's.
+ * tbl_update's does.
  */
-int tbl_delete(table_t* table, uint64_t id, std::string_view key = {});
+int tbl_delete(table_t* table, uint64_t id);
 int tbl_delete(table_t* table, uint64_t id, pin_ref_t& ref,
-               std::string_view& old, std::string_view key = {});
+               std::string_view& old);
 
 /*
  * A BULK LOAD into an open table (BULKLOAD.md §5, §13): many rows
@@ -1431,9 +1429,7 @@ int tbl_read(table_t* table, uint64_t id, pin_ref_t& ref,
 
 /*
  * Read the row at key, its key in the table's rel, as an index
- * entry names it (sm2::idx_scan_row), into a pin as tbl_read does:
- * one read, where tbl_read by _id is two in a table with a primary
- * key (../CLUSTER.md §5).
+ * entry names it (sm2::idx_scan_row), into a pin as tbl_read does.
  */
 int tbl_read_key(table_t* table, std::string_view key, pin_ref_t& ref,
                  std::string_view& tuple);
@@ -1459,10 +1455,9 @@ int tbl_read_latest(table_t* table, uint64_t id, pin_ref_t& ref,
  * row need not exist. It waits as a write does. A mode other than
  * shared needs the table opened to write, SM_ERR_INVALID if not.
  * Above read committed, a row committed since the snapshot fails
- * with SM_ERR_CONFLICT, as sm1::lock says. key as tbl_update's.
+ * with SM_ERR_CONFLICT, as sm1::lock says.
  */
-int tbl_lock(table_t* table, uint64_t id, sm1::lockmode_t mode,
-             std::string_view key = {});
+int tbl_lock(table_t* table, uint64_t id, sm1::lockmode_t mode);
 
 /*
  * As tbl_lock, but never waiting (sm1::trylock): 0 with the row
@@ -1470,8 +1465,7 @@ int tbl_lock(table_t* table, uint64_t id, sm1::lockmode_t mode,
  * has written it and not ended, or -1. SQL's NOWAIT and SKIP
  * LOCKED.
  */
-int tbl_trylock(table_t* table, uint64_t id, sm1::lockmode_t mode,
-                std::string_view key = {});
+int tbl_trylock(table_t* table, uint64_t id, sm1::lockmode_t mode);
 
 /*
  * A row's name (../ROWKEY.md §1): the values of its table's primary

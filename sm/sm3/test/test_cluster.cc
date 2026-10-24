@@ -137,6 +137,25 @@ std::string get(sm3::table_t *t, uint64_t id) {
   return rc == 1 ? "<none>" : show(t, tuple);
 }
 
+/* The name of the row with id k of a table keyed by id (ROWKEY.md §1). */
+struct at_t {
+  sm2::datum_t d;
+  bool null = false;
+  explicit at_t(int32_t k) : d(sm2::datum_from_int32(k)) {}
+  operator sm3::row_key_t() const { return {{&d, 1}, {&null, 1}}; }
+};
+
+/* The row key names, as get gives one. */
+std::string get_named(sm3::table_t *t, const sm3::row_key_t &key) {
+  std::string_view tuple;
+  int rc = sm3::tbl_read(t, key, tuple);
+  REQUIRE_MESSAGE(rc >= 0, sm1::errmsg());
+  return rc == 1 ? "<none>" : show(t, tuple);
+}
+
+/* The row with id k of a table keyed by id, as get gives one. */
+std::string get_at(sm3::table_t *t, int32_t k) { return get_named(t, at_t(k)); }
+
 /* Every row of t, as "_id:id|owner|n", in _id order. */
 std::vector<std::string> rows(sm3::table_t *t) {
   std::vector<std::string> out;
@@ -188,22 +207,23 @@ std::string key_of(int32_t id) {
 } // namespace
 
 TEST_CASE("a table with a primary key keeps its rows by key") {
-  // Verify the rows of a keyed table are found by _id and by key.
+  // Verify the rows of a keyed table are found by key.
   // 1. Rows with ids 30, 10 and 20 get _ids 1 to 3, and each is
-  //    read by its _id.
+  //    read by its key.
   // 2. A scan of the table gives them in _id order; a scan of the
   //    primary key, in key order.
   // 3. The index on owner names each row by its key.
   // 4. A second row with id 10 fails with SM_ERR_DUPKEY, the
   //    primary key in errdup().
+  // 5. A read by _id is refused: a keyed row is named by its key.
   acct_t f;
   start(f.a);
   sm3::table_t *t = f.write(f.a);
   CHECK(put(t, 30, "c") == 1);
   CHECK(put(t, 10, "a") == 2);
   CHECK(put(t, 20, "b") == 3);
-  CHECK(get(t, 2) == "10|a|0");
-  CHECK(get(t, 4) == "<none>");
+  CHECK(get_at(t, 10) == "10|a|0");
+  CHECK(get_at(t, 40) == "<none>");
   CHECK(rows(t) ==
         std::vector<std::string>{"1:30|c|0", "2:10|a|0", "3:20|b|0"});
   CHECK(entries(t, f.pkey) ==
@@ -217,14 +237,17 @@ TEST_CASE("a table with a primary key keeps its rows by key") {
   CHECK(sm3::tbl_insert(t, dup.d(), dup.null(), id) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
   CHECK(sm1::errdup().index == f.pkey);
+  std::string_view tuple;
+  CHECK(sm3::tbl_read(t, 2, tuple) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   sm3::tbl_close(t);
   REQUIRE(sm3::abort(f.a) == 0);
 }
 
 TEST_CASE("an update of a primary key moves the row, and its entries") {
   // Verify a move: the row, its _id, and its index entries.
-  // 1. The row with id 10 is changed to id 15: its _id finds it,
-  //    the primary key's scan has it at 15, and its owner entry
+  // 1. The row with id 10 is changed to id 15: its new key finds
+  //    it, the primary key's scan has it at 15, and its owner entry
   //    names its new key.
   // 2. Changing it to 20, another row's, fails with SM_ERR_DUPKEY.
   // 3. Deleting it removes it, and its owner entry.
@@ -238,9 +261,9 @@ TEST_CASE("an update of a primary key moves the row, and its entries") {
   start(f.a);
   t = f.write(f.a);
   row_t moved(15, "a2", 5);
-  REQUIRE_MESSAGE(sm3::tbl_update(t, 1, moved.d(), moved.null()) == 0,
+  REQUIRE_MESSAGE(sm3::tbl_update(t, at_t(10), moved.d(), moved.null()) == 0,
                   sm1::errmsg());
-  CHECK(get(t, 1) == "15|a2|5");
+  CHECK(get_at(t, 15) == "15|a2|5");
   CHECK(entries(t, f.pkey) == std::vector<std::pair<uint64_t, std::string>>{
                                   {1, key_of(15)}, {2, key_of(20)}});
   CHECK(entries(t, f.owner) == std::vector<std::pair<uint64_t, std::string>>{
@@ -248,12 +271,12 @@ TEST_CASE("an update of a primary key moves the row, and its entries") {
   int mark = sm3::savepoint(f.a);
   REQUIRE(mark >= 0);
   row_t clash(20, "a3", 0);
-  CHECK(sm3::tbl_update(t, 1, clash.d(), clash.null()) == -1);
+  CHECK(sm3::tbl_update(t, at_t(15), clash.d(), clash.null()) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
   CHECK(sm1::errdup().index == f.pkey);
   REQUIRE(sm3::rollback(f.a, mark) == 0);
-  REQUIRE(sm3::tbl_delete(t, 1) == 0);
-  CHECK(get(t, 1) == "<none>");
+  REQUIRE(sm3::tbl_delete(t, at_t(15)) == 0);
+  CHECK(get_at(t, 15) == "<none>");
   CHECK(entries(t, f.owner) ==
         std::vector<std::pair<uint64_t, std::string>>{{2, key_of(20)}});
   sm3::tbl_close(t);
@@ -350,7 +373,7 @@ TEST_CASE("an insert that conflicts on the primary key says whose row") {
     CHECK(id == ten);
     row_t eleven(11, "c", 0);
     REQUIRE(sm3::tbl_insert_arbiter(t, eleven.d(), eleven.null(), {}, id) == 0);
-    CHECK(get(t, id) == "11|c|0");
+    CHECK(get_at(t, 11) == "11|c|0");
     CHECK(rows(t).size() == 2);
     sm3::tbl_close(t);
     REQUIRE(sm3::commit(f.b) == 0);
@@ -520,62 +543,6 @@ TEST_CASE("a table's rows are read by key, and scanned by the primary key") {
   REQUIRE(sm3::commit(f.a) == 0);
 }
 
-TEST_CASE("a write given its row's key from a scan reaches the row") {
-  // Verify tbl_update, tbl_delete and tbl_lock with the key a scan
-  // gave, as dg passes it to spare the read of the _id entry.
-  // 1. Rows with ids 10, 20 and 30 go in, _ids 1 to 3, committed.
-  // 2. A scan by key gives each row's key with its _id.
-  // 3. An update of _id 2 given its key changes the row in place;
-  //    one of _id 1 to id 15 moves it, and its owner entry.
-  // 4. A lock of _id 3 given its key holds the row: b cannot take
-  //    it.
-  // 5. A delete of _id 2 given its key removes it, and its entry.
-  acct_t f;
-  start(f.a);
-  sm3::table_t *t = f.write(f.a);
-  put(t, 10, "a");
-  put(t, 20, "b");
-  put(t, 30, "c");
-  sm3::tbl_close(t);
-  REQUIRE(sm3::commit(f.a) == 0);
-  start(f.a);
-  t = f.write(f.a);
-  std::map<uint64_t, std::string> keys;
-  sm3::scan_t *scan = nullptr;
-  REQUIRE(sm3::tbl_scan_rows(t, scan) == 0);
-  uint64_t id;
-  std::string_view tuple;
-  while (sm3::tbl_scannxt(scan, id, tuple) == 0) {
-    keys[id] = std::string(sm3::tbl_scan_key(scan));
-  }
-  sm3::tbl_scanend(scan);
-  CHECK(keys == std::map<uint64_t, std::string>{
-                    {1, key_of(10)}, {2, key_of(20)}, {3, key_of(30)}});
-  row_t same(20, "b2", 7);
-  REQUIRE_MESSAGE(sm3::tbl_update(t, 2, same.d(), same.null(), keys[2]) == 0,
-                  sm1::errmsg());
-  CHECK(get(t, 2) == "20|b2|7");
-  row_t moved(15, "a", 1);
-  REQUIRE_MESSAGE(sm3::tbl_update(t, 1, moved.d(), moved.null(), keys[1]) == 0,
-                  sm1::errmsg());
-  CHECK(get(t, 1) == "15|a|1");
-  CHECK(entries(t, f.owner) ==
-        std::vector<std::pair<uint64_t, std::string>>{
-            {1, key_of(15)}, {2, key_of(20)}, {3, key_of(30)}});
-  REQUIRE(sm3::tbl_lock(t, 3, sm1::SM_LOCKMODE_EX, keys[3]) == 0);
-  start(f.b);
-  sm3::table_t *tb = f.write(f.b);
-  CHECK(sm3::tbl_trylock(tb, 3, sm1::SM_LOCKMODE_EX) == 1);
-  sm3::tbl_close(tb);
-  REQUIRE(sm3::abort(f.b) == 0);
-  REQUIRE(sm3::tbl_delete(t, 2, keys[2]) == 0);
-  CHECK(get(t, 2) == "<none>");
-  CHECK(entries(t, f.owner) == std::vector<std::pair<uint64_t, std::string>>{
-                                   {1, key_of(15)}, {3, key_of(30)}});
-  sm3::tbl_close(t);
-  REQUIRE(sm3::commit(f.a) == 0);
-}
-
 TEST_CASE("a row named by its key is read, written and locked") {
   // Verify the calls by key (../ROWKEY.md §2.2), in a table with a
   // primary key, named by id, and in one without, named by _id.
@@ -615,13 +582,13 @@ TEST_CASE("a row named by its key is read, written and locked") {
     row_t same(20, "b2", 7);
     REQUIRE_MESSAGE(sm3::tbl_update(t, name(20, 1), same.d(), same.null()) == 0,
                     sm1::errmsg());
-    CHECK(get(t, ids[1]) == "20|b2|7");
+    CHECK(get_named(t, name(20, 1)) == "20|b2|7");
     if (keyed) {
       row_t moved(15, "a", 1);
       REQUIRE_MESSAGE(
           sm3::tbl_update(t, name(10, 0), moved.d(), moved.null()) == 0,
           sm1::errmsg());
-      CHECK(get(t, ids[0]) == "15|a|1");
+      CHECK(get_named(t, name(15, 0)) == "15|a|1");
       CHECK(
           entries(t, f.owner) ==
           std::vector<std::pair<uint64_t, std::string>>{{ids[0], key_of(15)},
@@ -635,7 +602,7 @@ TEST_CASE("a row named by its key is read, written and locked") {
     sm3::tbl_close(tb);
     REQUIRE(sm3::abort(f.b) == 0);
     REQUIRE_MESSAGE(sm3::tbl_delete(t, name(20, 1)) == 0, sm1::errmsg());
-    CHECK(get(t, ids[1]) == "<none>");
+    CHECK(get_named(t, name(20, 1)) == "<none>");
     CHECK(entries(t, f.owner).size() == 2);
     CHECK(sm3::tbl_delete(t, name(20, 1)) == -1);
     CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
@@ -668,11 +635,11 @@ TEST_CASE("a writer at READ COMMITTED writes by key after a re-read") {
   start(f.b);
   REQUIRE(sm3::stmt_begin(f.b) == 0);
   sm3::table_t *tb = f.write(f.b);
-  CHECK(get(tb, id) == "1|one|0");
+  CHECK(get_at(tb, 1) == "1|one|0");
   start(f.a);
   t = f.write(f.a);
   row_t theirs(1, "theirs", 0);
-  REQUIRE(sm3::tbl_update(t, id, theirs.d(), theirs.null()) == 0);
+  REQUIRE(sm3::tbl_update(t, at_t(1), theirs.d(), theirs.null()) == 0);
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
   sm2::datum_t d = sm2::datum_from_int32(1);

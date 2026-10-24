@@ -2802,8 +2802,6 @@ void smstore_endscan(smstore_scan_t *scan) {
  * a notice.
  */
 static bool table_def_now(Oid oid, sm_table_def_t &out);
-static bool read_row(sm_tbl_t *tbl, uint64_t rowno, int natts,
-                     TupleTableSlot *slot);
 static bool read_row_at(sm_tbl_t *tbl, const std::string &key, int natts,
                         TupleTableSlot *slot);
 static void forget_table(Oid relid);
@@ -3425,6 +3423,11 @@ static void fill_column(Oid relid, Expr *expr, Oid typid, int32 typmod) {
   size_t n = def->columns.size();
   std::vector<sm_datum_t> values(n);
   std::unique_ptr<bool[]> isnull(new bool[n]);
+  const sm_index_def_t *pk = NULL;
+
+  for (const sm_index_def_t &x : def->indexes)
+    if (x.primary)
+      pk = &x;
   EState *estate = CreateExecutorState();
   ExprContext *econtext = GetPerTupleExprContext(estate);
   ExprState *state = ExecPrepareExpr(expression_planner(expr), estate);
@@ -3461,8 +3464,22 @@ static void fill_column(Oid relid, Expr *expr, Oid typid, int32 typmod) {
     if (!null)
       values[n - 1] = value_to_sm(v, typid, typmod);
     MemoryContextSwitchTo(old);
+    /* The row's name: its primary key's columns, or its rowno. */
+    sm_datum_t kv[INDEX_MAX_KEYS];
+    bool kn[INDEX_MAX_KEYS] = {false};
+    size_t nk = 1;
+
+    kv[0] = (sm_datum_t)Int64GetDatum((int64)rowno);
+    if (NULL != pk) {
+      nk = pk->key_attnums.size();
+      for (size_t k = 0; k < nk; k++) {
+        kv[k] = values[pk->key_attnums[k]];
+        kn[k] = isnull[pk->key_attnums[k]];
+      }
+    }
     if (0 != waiting([&] {
-          return sm_tbl_update(tbl, rowno, NULL, 0, values.data(), isnull.get(), n);
+          return sm_tbl_update(tbl, sm_row_key_t{kv, kn, nk}, values.data(),
+                               isnull.get(), n);
         }))
       sm_error("give a row its column's default");
   }
@@ -6031,35 +6048,9 @@ static bool pin_entry_row(smstore_scan_t *scan, uint64_t rowno,
 }
 
 /*
- * The row at rowno, as this transaction sees it, into slot, as a virtual
- * tuple of its first natts columns, its tid its rowno; false, the slot
- * empty, if it sees none.  The row is lent only until the session's next
- * call to sm, which another scan in the statement makes, as a join's inner
- * side does: the slot keeps a copy.
- */
-static bool read_row(sm_tbl_t *tbl, uint64_t rowno, int natts,
-                     TupleTableSlot *slot) {
-  const void *tuple;
-  size_t len;
-
-  ExecClearTuple(slot);
-  switch (sm_tbl_read(tbl, rowno, &tuple, &len)) {
-  case 0:
-    break;
-  case 1:
-    return false;
-  default:
-    sm_error("read a row");
-  }
-  tuple_into_slot(tbl, rowno, tuple, len, natts, slot);
-  ExecMaterializeSlot(slot);
-  return true;
-}
-
-/*
  * The row at key, a key of the table past its relid, as this transaction
- * sees it, into slot, as read_row() puts one, with no tid; false, the slot
- * empty, if it sees none.
+ * sees it, into slot, a materialized virtual tuple of its first natts
+ * columns, with no rowno; false, the slot empty, if it sees none.
  */
 static bool read_row_at(sm_tbl_t *tbl, const std::string &key, int natts,
                         TupleTableSlot *slot) {

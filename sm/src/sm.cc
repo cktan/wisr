@@ -249,11 +249,6 @@ void view_out(std::string_view v, const void **data, size_t *len) {
 
 namespace {
 
-/* A caller's key, key and klen, as a view: empty for NULL. */
-std::string_view key_in(const void *key, size_t klen) {
-  return key ? std::string_view((const char *)key, klen) : std::string_view();
-}
-
 /* The sm3 cursor behind a C heap cursor. */
 sm3::scan_t *rel_scan_of(sm_rel_scan_t *scan) {
   return reinterpret_cast<sm3::scan_t *>(scan);
@@ -1736,23 +1731,22 @@ int sm_tbl_load_end(sm_tbl_t *tbl) {
 }
 
 /* Replace a row and fix its index entries. */
-int sm_tbl_update(sm_tbl_t *tbl, uint64_t id, const void *key, size_t klen,
-                  const sm_datum_t *values, const bool *isnull, size_t n,
-                  sm_pin_ref_t *ref, const void **old, size_t *len) {
+int sm_tbl_update(sm_tbl_t *tbl, uint64_t id, const sm_datum_t *values,
+                  const bool *isnull, size_t n, sm_pin_ref_t *ref,
+                  const void **old, size_t *len) {
   return guard(tbl ? tbl->session : nullptr, [&] {
     if (check_row("sm_tbl_update", tbl, values, isnull, n) != 0) {
       return -1;
     }
-    std::string_view k = key_in(key, klen);
     if (!ref) {
-      return sm3::tbl_update(tbl->table, id, {values, n}, {isnull, n}, k);
+      return sm3::tbl_update(tbl->table, id, {values, n}, {isnull, n});
     }
     if (!old || !len) {
       return null_arg("sm_tbl_update", "old or len");
     }
     sm3::pin_ref_t r = pin_ref_of(*ref);
     std::string_view v;
-    int rc = sm3::tbl_update(tbl->table, id, {values, n}, {isnull, n}, r, v, k);
+    int rc = sm3::tbl_update(tbl->table, id, {values, n}, {isnull, n}, r, v);
     // The ref is set either way: the old row, or what it held.
     *ref = sm_pin_ref_t{r.pin, r.gen};
     *old = nullptr;
@@ -1765,22 +1759,21 @@ int sm_tbl_update(sm_tbl_t *tbl, uint64_t id, const void *key, size_t klen,
 }
 
 /* Delete a row and its index entries. */
-int sm_tbl_delete(sm_tbl_t *tbl, uint64_t id, const void *key, size_t klen,
-                  sm_pin_ref_t *ref, const void **old, size_t *len) {
+int sm_tbl_delete(sm_tbl_t *tbl, uint64_t id, sm_pin_ref_t *ref,
+                  const void **old, size_t *len) {
   return guard(tbl ? tbl->session : nullptr, [&] {
     if (!tbl) {
       return null_arg("sm_tbl_delete", "tbl");
     }
-    std::string_view k = key_in(key, klen);
     if (!ref) {
-      return sm3::tbl_delete(tbl->table, id, k);
+      return sm3::tbl_delete(tbl->table, id);
     }
     if (!old || !len) {
       return null_arg("sm_tbl_delete", "old or len");
     }
     sm3::pin_ref_t r = pin_ref_of(*ref);
     std::string_view v;
-    int rc = sm3::tbl_delete(tbl->table, id, r, v, k);
+    int rc = sm3::tbl_delete(tbl->table, id, r, v);
     // The ref is set either way: the old row, or what it held.
     *ref = sm_pin_ref_t{r.pin, r.gen};
     *old = nullptr;
@@ -1877,24 +1870,22 @@ int sm_tbl_read_latest(sm_tbl_t *tbl, uint64_t id, const void **tuple,
 }
 
 /* Lock a row without writing it. */
-int sm_tbl_lock(sm_tbl_t *tbl, uint64_t id, const void *key, size_t klen,
-                sm_lockmode_t mode) {
+int sm_tbl_lock(sm_tbl_t *tbl, uint64_t id, sm_lockmode_t mode) {
   return guard(tbl ? tbl->session : nullptr, [&] {
     if (!tbl) {
       return null_arg("sm_tbl_lock", "tbl");
     }
-    return sm3::tbl_lock(tbl->table, id, mode, key_in(key, klen));
+    return sm3::tbl_lock(tbl->table, id, mode);
   });
 }
 
 /* Lock a row if it is free now. */
-int sm_tbl_trylock(sm_tbl_t *tbl, uint64_t id, const void *key, size_t klen,
-                   sm_lockmode_t mode) {
+int sm_tbl_trylock(sm_tbl_t *tbl, uint64_t id, sm_lockmode_t mode) {
   return guard(tbl ? tbl->session : nullptr, [&] {
     if (!tbl) {
       return null_arg("sm_tbl_trylock", "tbl");
     }
-    return sm3::tbl_trylock(tbl->table, id, mode, key_in(key, klen));
+    return sm3::tbl_trylock(tbl->table, id, mode);
   });
 }
 
