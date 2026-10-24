@@ -55,18 +55,50 @@ user space alone:
 | the transaction | 50k | 73k |
 | finding and fetching the row | 15k | 17k |
 
-The row is read with `sm1::read`, which seeks an iterator:
-building it is about 4% of digres's cycles with its teardown,
-and searching the 16 KB data block key by key, as RocksDB does
-between restart points, 7.5%. A `Get` builds no iterator, and
-with whole-key filtering and a data block hash index it finds
-the key in the block without that search. An estimate, not a
-measurement: 8k to 10k cycles of the 73k. A `Get` needs the
-plain key, which today's layout does not have.
+The row is read with `sm1::read`, which seeks an iterator. A
+`Get` builds no iterator, and needs the plain key, which
+today's layout does not have.
 
-A row with no version fields in its key also makes a scan read
-one entry a row, with no versions to step over and a shorter
-key to compare.
+`../bench/getseek` measures both on RocksDB alone, with sm1's
+options and its own `version.cc`: a million rows of 500 bytes,
+one committed version each, compacted, every block in the
+block cache. "Cold" touches 1 MB between reads, as a query's
+parse and plan evict the CPU caches; digres's Q7 profile has
+the seek at about the cold figure.
+
+| a read by key | hot | cold (1 MB between) |
+| --- | --- | --- |
+| today: a new iterator, a seek | 3.2 µs, 7.4k cycles | 5.7 µs |
+| one iterator kept for every read | 2.7 µs, 5.5k cycles | 5.0 µs |
+| block restart interval 4 | 3.0 µs, 7.0k cycles | — |
+| `Get` of the plain key | 2.1 µs, 4.7k cycles | 4.5 µs |
+| `Get`, data block hash index | 2.1 µs, 4.8k cycles | 4.6 µs |
+
+| a scan, every row in key order | ns a row |
+| --- | --- |
+| today: versioned keys, sm1's comparator | 145–150 |
+| versioned keys, RocksDB's bytewise comparator | 150–155 |
+| versioned keys, no prefix extractor | 146–155 |
+| plain keys padded with a 12-byte version tail | 125–128 |
+| plain keys | 83–86 |
+
+What it says:
+
+- **A point read gains little.** A `Get` saves about 1.2 µs a
+  read, cold: some 3k cycles of Q7's 73k, 4%. Keeping one
+  iterator for a session's reads, which today's layout allows,
+  recovers more than half of it. The hash index adds nothing.
+- **A scan gains a third or more.** Plain keys read in 85 ns a
+  row where versioned ones take 145. The version tail is most
+  of it, 42 ns: twelve bytes more in every key, copied and
+  compared at every step. The value's header and its decode
+  are the rest. Neither the comparator nor the prefix
+  extractor is the cost, so nothing short of taking the
+  version out of the key recovers it. Q1 to Q3, sequential
+  scans, are where digres is furthest behind PostgreSQL, at
+  2.3 to 3.1 times.
+- **Rows of 500 bytes**, about `wide_mixed`'s. The tail weighs
+  more against a narrower row; `narrow` is still to measure.
 
 The rest of the gap is elsewhere: the parser, opening and
 locking the table, planning. This file does not touch it.
@@ -313,8 +345,8 @@ chain and InnoDB's its undo.
 3. **The bulk load** (`BULKLOAD.md`) builds SST files of
    versioned keys; it would build CURR's instead, with no
    chain.
-4. **Measure first.** Time a `Get` against today's seek on a
-   compacted `wide_mixed`, with sm1's options, before building
-   any of it; §1's 8k to 10k cycles is an estimate.
+4. **Measured** (§1): a `Get` saves little; a scan of plain keys
+   saves a third or more. Measure `narrow`'s rows too, and the
+   scan through sm1, before and after.
 5. **The specification stands.** The isolation scenarios in
    `sm1/mvcc` must pass unchanged.
