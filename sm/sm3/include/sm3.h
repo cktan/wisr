@@ -1598,7 +1598,8 @@ int tbl_idx_scan(table_t* table, uint64_t index, const sm2::bound_t* lo,
  * names, so a transaction that truncated the table sizes the new
  * one. None reads a row.
  *
- * tbl_size sets the heap's bytes, and tbl_idx_size the index
+ * tbl_size sets the heap's bytes, a chained heap's older versions
+ * included, and tbl_idx_size the index
  * oid's, as sm2::relid_size gives them: in sorted files and in
  * memtables, apart (SM_ERR_NOTFOUND if the table has no such
  * index). tbl_id_limit sets N, the last _id handed out, 0

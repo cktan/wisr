@@ -1,6 +1,11 @@
 # VCHAIN — the newest version in place, the older ones chained
 
-A design; nothing here is built. sm1 keeps every version of a
+**Built** (branch `wip-vchain-1`): steps 1 to 3 of §11, the
+class byte, chained rows in sm1, and every table's rows chained
+by sm2 and sm3; each case of §10 is tested as its last column
+says. **Not built**: step 4, the benchmark.
+
+sm1 keeps every version of a
 key as a key of its own, `userkey ‖ wts ‖ seq`, so a read seeks
 an iterator to the newest version it may see, and a scan reads
 12 bytes of version in every key. This file keeps a table row's
@@ -203,43 +208,44 @@ one CF, as today.
 
 ## 10. The cases
 
-Each case of the checklist, against this design. "As today"
-means the case touches only versioned keys, whose handling does
-not change.
+Each case of the checklist, against this design, and what tests
+it: the isolation scenarios run on versioned and chained stores
+both (`sm1/mvcc/DRIVER.md` §7), the rel tests on chained tables.
+"As today" means the case touches only versioned keys, whose
+handling does not change.
 
-| case | what happens |
-| --- | --- |
-| TOAST | as today. An update or delete erases the old chunks as versioned keys; a snapshot reading an older row version in OLD sees them, as their erase committed after it. The chunks' tombstones and the OLD version become no one's at the same watermark. |
-| non-unique index | as today: versioned entries, naming the row by key. A hit visible to a snapshot reads the row at that snapshot, and the chain gives the version that holds the entry. |
-| unique index | as today: the uniqueness check is on the entry's versions; `idx_find_latest` reads the row with `chain_read_latest` under a lock. |
-| primary key | the rows themselves: an equality is a `Get`. An insert over a live head is `SM_ERR_DUPKEY`; over another's uncommitted head it waits; over a committed tombstone it chains through it. |
-| expression, partial, INCLUDE, cut keys | as today: index entries unchanged. |
-| index-only scan | as today: the entry's versions say what the reader sees. |
-| update A→B→A | rows: CURR A, then OLD B, then OLD A, each snapshot stopping at the one it sees. Index: `A‖1` erased at B and put again at A, as versions, as today. |
-| INCLUDE-only update | as today: the entry is erased and put again, versioned. |
-| primary key change | the old key gets a moved tombstone, the new key a new chain; a writer meeting the tombstone gets `SM_ERR_MOVED`; an old snapshot reads the old key's chain. |
-| delete, then insert again | the tombstone moves to OLD behind the new version; an older snapshot passes the new version and the tombstone to the row. GC drops a committed tombstone left in CURR; the next insert then has `prev` `0`. |
-| abort | nothing repaired. Readers pass the dead head by the chain; the next writer overwrites it; GC repairs the rest. The cost: until then, each read of the row hops and looks up a dead xid. |
-| two writes by one transaction, then abort | both dead; readers pass both; GC's repair walks to the first version not the transaction's. |
-| rollback to a savepoint | the undo list's chained keys are put back under their latches; the entries passed are unlinked. A cursor of the transaction, opened before, still reads them at its RocksDB snapshot. |
-| undo list past its cap | with a savepoint set, the savepoints are lost, as today; with none, nothing is recorded, and nothing needs to be. |
-| crash | an abort of every transaction in flight; the WriteBatch keeps CURR and OLD together. OLD ids drawn for writes the log lost are never seen. |
-| prepared transaction across a restart | its versions are in flight: readers pass them, writers wait. Its rollback is an abort. |
-| two writers on one row | the second waits for the first's version, under the latch, as today; first committer wins above READ COMMITTED. |
-| old REPEATABLE READ snapshot | follows the chain, a `Get` a version newer than it: a long snapshot over hot rows pays the most. |
-| READ COMMITTED re-read | `chain_read_latest` under a lock, as `read_latest` today. |
-| SERIALIZABLE | SIREAD on the row's key and the scan's range; a version passed over owes its writer an edge, as today. |
-| open cursor | reads CURR and OLD at one RocksDB snapshot, and its sm1 view keeps the watermark back, so nothing it can reach is dropped. Its own transaction's later versions are passed by their seq. |
-| GC and the watermark | OLD goes when its displacer committed at or below it; an unlinked entry when its ts is; a reader that reaches a dropped id would have seen its displacer first. |
-| CF:txn sweep | the filter stamps a kept OLD version's writer and displacer, and CURR's committed versions, before the sweep deletes their records; a dead version whose record is gone still reads dead. |
-| CREATE INDEX, pending | the backfill reads each row with `chain_read_latest` under a shared lock, and puts versioned entries, as today. |
-| DROP INDEX | as today. |
-| TRUNCATE, ALTER rewrite | a new store, chained; the old one dropped whole, as today. |
-| temporary table | chained too; its flag lives in its `store_t`. |
-| keyless table (`_id`) | rows keyed by `_id`, put with `chain_insert_new`, which reads nothing. |
-| bulk load | a chained stream puts CURR versions of the load's xid, `prev` `0`. An abort leaves them dead, for GC to delete; a rollback to a savepoint deletes the store's keys, every class, as today. |
-| the isolation scenarios | they call sm1's versioned calls alone (`mvcc/driver/run.cc`), so today they never touch a chained row. The driver gains a mode that makes its store chained and its verbs the `chain_` calls; every scenario must give its expected output unchanged in both modes. |
-
+| case | what happens | tested by |
+| --- | --- | --- |
+| TOAST | as today. An update or delete erases the old chunks as versioned keys; a snapshot reading an older row version in OLD sees them, as their erase committed after it. The chunks' tombstones and the OLD version become no one's at the same watermark. | rel test_vchain §2, test_toast |
+| non-unique index | as today: versioned entries, naming the row by key. A hit visible to a snapshot reads the row at that snapshot, and the chain gives the version that holds the entry. | rel test_vchain §1, test_index |
+| unique index | as today: the uniqueness check is on the entry's versions; `idx_find_latest` reads the row with `chain_read_latest` under a lock. | rel test_index, test_build |
+| primary key | the rows themselves: an equality is a `Get`. An insert over a live head is `SM_ERR_DUPKEY`; over another's uncommitted head it waits; over a committed tombstone it chains through it. | scenarios b06, b12 (chained); sm3 test_cluster |
+| expression, partial, INCLUDE, cut keys | as today: index entries unchanged. | rel test_partial, test_recheck, test_index |
+| index-only scan | as today: the entry's versions say what the reader sees. | rel test_vchain §1 (INCLUDE), test_index |
+| update A→B→A | rows: CURR A, then OLD B, then OLD A, each snapshot stopping at the one it sees. Index: `A‖1` erased at B and put again at A, as versions, as today. | scenario g01 (both modes); rel test_vchain §1 |
+| INCLUDE-only update | as today: the entry is erased and put again, versioned. | rel test_vchain §1 (n changes) |
+| primary key change | the old key gets a moved tombstone, the new key a new chain; a writer meeting the tombstone gets `SM_ERR_MOVED`; an old snapshot reads the old key's chain. | scenario f11 (both modes) |
+| delete, then insert again | the tombstone moves to OLD behind the new version; an older snapshot passes the new version and the tombstone to the row. GC drops a committed tombstone left in CURR; the next insert then has `prev` `0`. | scenarios a10, b07 (both modes) |
+| abort | nothing repaired. Readers pass the dead head by the chain; the next writer overwrites it; GC repairs the rest. The cost: until then, each read of the row hops and looks up a dead xid. | scenarios a03, g02 (both modes); rel test_vchain §3 |
+| two writes by one transaction, then abort | both dead; readers pass both; GC's repair walks to the first version not the transaction's. | scenario g02; rel test_vchain §3 |
+| rollback to a savepoint | the undo list's chained keys are put back under their latches; the entries passed are unlinked. A cursor of the transaction, opened before, still reads them at its RocksDB snapshot. | scenarios b25, b31, c29, f10 (both modes); rel test_vchain §5 |
+| undo list past its cap | with a savepoint set, the savepoints are lost, as today; with none, nothing is recorded, and nothing needs to be. | rel test_vchain §0, test_doomed |
+| crash | an abort of every transaction in flight; the WriteBatch keeps CURR and OLD together. OLD ids drawn for writes the log lost are never seen. | rel test_vchain §6 |
+| prepared transaction across a restart | its versions are in flight: readers pass them, writers wait. Its rollback is an abort. | rel test_2pc |
+| two writers on one row | the second waits for the first's version, under the latch, as today; first committer wins above READ COMMITTED. | scenarios b01–b36 (both modes) |
+| old REPEATABLE READ snapshot | follows the chain, a `Get` a version newer than it: a long snapshot over hot rows pays the most. | scenarios a13, g01 (both modes); rel test_vchain §1, §2, §4 |
+| READ COMMITTED re-read | `chain_read_latest` under a lock, as `read_latest` today. | scenarios f01–f11 (both modes) |
+| SERIALIZABLE | SIREAD on the row's key and the scan's range; a version passed over owes its writer an edge, as today. | scenarios c01–c36, p01–p10 (both modes) |
+| open cursor | reads CURR and OLD at one RocksDB snapshot, and its sm1 view keeps the watermark back, so nothing it can reach is dropped. Its own transaction's later versions are passed by their seq. | scenarios a09, a14, c18 (both modes); rel test_cursor |
+| GC and the watermark | OLD goes when its displacer committed at or below it; an unlinked entry when its ts is; a reader that reaches a dropped id would have seen its displacer first. | rel test_vchain §2, §4; sm1 test_chain |
+| CF:txn sweep | the filter stamps a kept OLD version's writer and displacer, and CURR's committed versions, before the sweep deletes their records; a dead version whose record is gone still reads dead. | sm1 test_chain |
+| CREATE INDEX, pending | the backfill reads each row with `chain_read_latest` under a shared lock, and puts versioned entries, as today. | rel test_build |
+| DROP INDEX | as today. | rel test_index |
+| TRUNCATE, ALTER rewrite | a new store, chained; the old one dropped whole, as today. | rel test_truncate; sm3 test_table |
+| temporary table | chained too; its flag lives in its `store_t`. | rel test_vchain §7, test_temp |
+| keyless table (`_id`) | rows keyed by `_id`, put with `chain_insert_new`, which reads nothing. | every rel test |
+| bulk load | a chained stream puts CURR versions of the load's xid, `prev` `0`. An abort leaves them dead, for GC to delete; a rollback to a savepoint deletes the store's keys, every class, as today. | sm3 test_load |
+| the isolation scenarios | they call sm1's versioned calls alone (`mvcc/driver/run.cc`), so today they never touch a chained row. The driver gains a mode that makes its store chained and its verbs the `chain_` calls; every scenario must give its expected output unchanged in both modes. | `make scenarios`, both modes |
 ---
 
 ## 11. How it is built

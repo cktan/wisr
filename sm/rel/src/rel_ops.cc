@@ -1678,6 +1678,39 @@ static Janet cfun_truncate(int32_t argc, Janet *argv) {
   return janet_wrap_nil();
 }
 
+/*
+ * (compact table): compact the table's store through GC, as VACUUM
+ * (sm_tbl_compact): what no reader needs is dropped, and a version
+ * an aborted writer left is queued for GC to put back.
+ */
+static Janet cfun_compact(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 1);
+  session_ctx_t *s = require_session();
+  std::string tbl_name = identifier_of(argv[0]);
+  // A reader's lock, as VACUUM takes it: writers go on meanwhile.
+  table_def_t *p_tdef = need_table(s, tbl_name, SM_LOCKMODE_IS, "compact");
+  if (sm_tbl_compact(p_tdef->tbl) != 0) {
+    panic_sm_error("compact sm_tbl_compact");
+  }
+  return janet_wrap_nil();
+}
+
+/*
+ * (table-size table): the bytes of the table's rows, older versions
+ * included, in sorted files and in memtables, summed (sm_tbl_size).
+ */
+static Janet cfun_table_size(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 1);
+  session_ctx_t *s = require_session();
+  std::string tbl_name = identifier_of(argv[0]);
+  table_def_t *p_tdef = need_table(s, tbl_name, SM_LOCKMODE_IS, "table-size");
+  uint64_t disk = 0, mem = 0;
+  if (sm_tbl_size(p_tdef->tbl, &disk, &mem) != 0) {
+    panic_sm_error("table-size sm_tbl_size");
+  }
+  return janet_wrap_number(static_cast<double>(disk + mem));
+}
+
 /* (analyze table [target]): analyze the table, target 100 if none. */
 static Janet cfun_analyze(int32_t argc, Janet *argv) {
   janet_arity(argc, 1, 2);
@@ -2382,6 +2415,8 @@ static const JanetReg s_rel_cfuns[] = {
     {"_read-latest", cfun_read_latest, "internal"},
     {"_lock-row", cfun_lock_row, "internal"},
     {"_truncate", cfun_truncate, "internal"},
+    {"_compact", cfun_compact, "internal"},
+    {"_table-size", cfun_table_size, "internal"},
     {"_analyze", cfun_analyze, "internal"},
     {"_stats", cfun_stats, "internal"},
     {"_update", cfun_update, "internal"},
@@ -2480,6 +2515,12 @@ static const char *s_prelude = R"janet(
 
 (defmacro truncate [tbl]
   ~(_truncate (string ',tbl)))
+
+(defmacro compact [tbl]
+  ~(_compact (string ',tbl)))
+
+(defmacro table-size [tbl]
+  ~(_table-size (string ',tbl)))
 
 (defmacro analyze [tbl & rest]
   ~(_analyze (string ',tbl) ,;rest))

@@ -612,6 +612,13 @@ std::span<const attribute_t> rel_schema(const rel_t* rel);
 bool rel_keyed(const rel_t* rel);
 
 /*
+ * Whether a rel's rows are a chained store's keys (sm1::mkstore,
+ * ../../VCHAIN.md): read and written with sm1's chain_ calls, and
+ * loaded into a stream declared chained (sm1::load_stream).
+ */
+bool rel_chained(const rel_t* rel);
+
+/*
  * The key of the row with _id id and the values datums and isnull,
  * into key: id_key(id), or its primary key's columns encoded. A
  * null among them, or an encoding past max_pk_len, fails with
@@ -865,10 +872,12 @@ bool rel_scan_rolled_back(const rel_scan_t* scan);
  * Estimate the bytes of the rel under relid in storeid, a heap's
  * or an index's alike: in disk, those in sorted files, and in
  * mem, those in memtables, as sm1::approxsize() reports them and
- * with its caveats. Needs no open rel and no transaction.
+ * with its caveats. With old, a chained store's older versions too,
+ * which belong to its row rel alone (sm1::chain_approxsize). Needs
+ * no open rel and no transaction.
  */
 int relid_size(sm1::session_t* session, uint64_t storeid, uint16_t relid,
-               uint64_t& disk, uint64_t& mem);
+               uint64_t& disk, uint64_t& mem, bool old = false);
 
 /*
  * The keys at fractions fs of the rel's bytes, each in [0, 1), in

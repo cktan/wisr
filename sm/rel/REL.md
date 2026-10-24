@@ -607,6 +607,26 @@ rollback to a savepoint taken before it, brings the rows back.
 (truncate jobs)
 ```
 
+### `(compact table)`
+Compacts the table's store through GC (`sm_tbl_compact`), as
+`VACUUM`: versions no reader needs are dropped, and a newest
+version an aborted writer left is queued for GC's worker, which
+puts the version before it back within a second or so
+(`../VCHAIN.md` §7). It takes the table's lock as a reader.
+
+```janet
+(compact jobs)
+```
+
+### `(table-size table)`
+The bytes of the table's rows, in sorted files and in memtables,
+summed (`sm_tbl_size`): a chained table's older versions are
+counted too.
+
+```janet
+(table-size jobs)
+```
+
 ### `(analyze table [target])`
 Analyzes the table in the current transaction
 (`sm3/SM3_DESIGN.md` §6): samples up to 300 × `target` rows,

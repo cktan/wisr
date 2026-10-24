@@ -356,6 +356,11 @@ static int entry_row(const index_t *index, std::string_view k,
   return 0;
 }
 
+/* Whether index is a primary key whose rows are a chained store's. */
+static bool chained_rows(const index_t *index) {
+  return index->rel != nullptr && index->rel->chained;
+}
+
 /* The row that has a unique key, as the snapshot shows; see sm2.h. */
 int idx_find(index_t *index, std::span<const datum_t> key,
              std::span<const bool> key_isnull, uint64_t &id, std::string *row) {
@@ -365,7 +370,10 @@ int idx_find(index_t *index, std::span<const datum_t> key,
     return rc;
   }
   std::string_view value;
-  rc = sm1::read(index->session, index->storeid, k, value);
+  // A primary key's entries are its rows: a chained store's keys.
+  rc = chained_rows(index)
+           ? sm1::chain_read(index->session, index->storeid, k, value)
+           : sm1::read(index->session, index->storeid, k, value);
   if (rc != 0) {
     return rc;
   }
@@ -390,12 +398,17 @@ int idx_find_latest(index_t *index, std::span<const datum_t> key,
   }
   // sm1 reads a newest version only under a lock that keeps it
   // the newest. Shared is enough: nothing is to be written.
-  if (sm1::lock(index->session, sm1::LOCKTYPE_ROW, index->storeid, k,
-                sm1::SM_LOCKMODE_SH) != 0) {
+  const bool chained = chained_rows(index);
+  if ((chained ? sm1::chain_lock(index->session, index->storeid, k,
+                                 sm1::SM_LOCKMODE_SH)
+               : sm1::lock(index->session, sm1::LOCKTYPE_ROW, index->storeid, k,
+                           sm1::SM_LOCKMODE_SH)) != 0) {
     return -1;
   }
   std::string_view value;
-  rc = sm1::read_latest(index->session, index->storeid, k, value);
+  rc = chained
+           ? sm1::chain_read_latest(index->session, index->storeid, k, value)
+           : sm1::read_latest(index->session, index->storeid, k, value);
   if (rc != 0) {
     return rc;
   }
@@ -488,9 +501,14 @@ int idx_scan(index_t *index, const bound_t *lo, const bound_t *hi,
     return -1;
   }
   sm1::scan_t *c;
-  if (sm1::scan(index->session, index->storeid, start.data(), start.size(), 1,
-                end ? end->data() : nullptr, end ? end->size() : 0, 0,
-                c) != 0) {
+  const char *e = end ? end->data() : nullptr;
+  size_t elen = end ? end->size() : 0;
+  // A primary key's entries are its rows: a chained store's keys.
+  if ((chained_rows(index)
+           ? sm1::chain_scan(index->session, index->storeid, start.data(),
+                             start.size(), 1, e, elen, 0, c)
+           : sm1::scan(index->session, index->storeid, start.data(),
+                       start.size(), 1, e, elen, 0, c)) != 0) {
     return -1;
   }
   out = new index_scan_t;
@@ -516,9 +534,14 @@ int idx_scan_rows(index_t *index, const bound_t *lo, const bound_t *hi,
     return -1;
   }
   sm1::scan_t *c;
-  if (sm1::scan(index->session, index->storeid, start.data(), start.size(), 1,
-                end ? end->data() : nullptr, end ? end->size() : 0, 0,
-                c) != 0) {
+  const char *e = end ? end->data() : nullptr;
+  size_t elen = end ? end->size() : 0;
+  // A chained store's rows are its chained keys.
+  if ((chained_rows(index)
+           ? sm1::chain_scan(index->session, index->storeid, start.data(),
+                             start.size(), 1, e, elen, 0, c)
+           : sm1::scan(index->session, index->storeid, start.data(),
+                       start.size(), 1, e, elen, 0, c)) != 0) {
     return -1;
   }
   out =

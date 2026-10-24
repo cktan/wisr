@@ -1,0 +1,316 @@
+# test_vchain.rel -- chained rows (../../VCHAIN.md) through the C
+# API: every table's rows are chained keys, and each case of
+# VCHAIN.md §10 the scenarios do not reach is checked here, as it
+# should go and as it should fail.
+#
+# 0. Past the undo cap a savepoint is lost: on a database whose cap
+#    is 64 bytes, the rollback to a savepoint set before updates
+#    past it fails with ERR_UNDOLIMIT, and after the abort the row
+#    is as it was. First, as the cap takes effect only for the
+#    environment's first database session.
+# 1. A row set A, B, A again, indexed: each snapshot finds the row
+#    through the index by the value it sees, and not by another; a
+#    write by a snapshot older than the last commit conflicts.
+# 2. TOAST under an older snapshot: an update's old long value is
+#    read by the snapshot, through a compaction, and goes after.
+# 3. An abort: readers pass its versions; a compaction and GC's
+#    repair leave the rows as they were; an aborted insert is no
+#    row; a write over the dead version goes through.
+# 4. Harvest: older versions are kept while a snapshot needs them,
+#    and dropped once none does.
+# 5. A rollback to a savepoint puts a chained row back, its index
+#    entry with it.
+# 6. A crash: an uncommitted update is gone after a restart, and
+#    the row is written again.
+# 7. A temporary table's rows are chained too: written in a
+#    read-only transaction, rolled back to a savepoint.
+
+(def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_vchain"))
+(rm-rf test-dir)
+(env-init test-dir)
+(env-attach test-dir :toast true)
+(db-create "vdb")
+
+# 0. Past the undo cap.
+(db-create "capdb")
+(db-open "capdb" {:savepoint-undo-bytes 64})
+(begin :rc)
+(table-create t (columns (id :int4 :not-null) (v :text)))
+(def t1 (insert t [1 "one"]))
+(commit)
+(begin :rc)
+(def cap-sp (savepoint))
+(each i [1 2 3 4 5 6 7 8]
+  (update t t1 [1 (string "v" i)]))
+(assert-err :err-undolimit (rollback cap-sp))
+(abort)
+(begin :rc)
+(assert-eq (read t t1) [1 "one"])
+(commit)
+(db-close)
+
+
+# True if running thunk fails.
+(defn fails? [thunk]
+  (try (do (thunk) false) ([err] true)))
+
+(session-open s1 "vdb")
+(session-open s2 "vdb")
+(session-open s3 "vdb")
+
+# 1. A, B, A again.
+# 1.1 Create acct with a non-unique index on owner, insert a row of
+#     owner "alice", and commit.
+# 1.2 s1 begins at REPEATABLE READ and finds it under "alice".
+# 1.3 s2 sets the owner to "bob" and commits; s3 begins and finds
+#     the row under "bob", not "alice".
+# 1.4 s2 sets it back to "alice" and commits.
+# 1.5 s1 finds it under "alice" and not "bob"; s3 under "bob" and
+#     not "alice"; a new reader under "alice".
+# 1.6 s3's write of the row conflicts: it changed after s3 began.
+(session-use s1)
+(begin :rc)
+(table-create acct
+  (columns
+    (id :int4 :not-null)
+    (owner :text)
+    (n :int4)))
+(index-create acct_owner (table acct) (key (owner :asc)) :include [n])
+(def a1 (insert acct [1 "alice" 10]))
+(commit)
+
+(defn owner-rows [owner]
+  (map (fn [hit] (hit 0)) (idx-scan acct_owner :ge [owner] :le [owner])))
+
+(begin :rr)
+(assert-eq (owner-rows "alice") @[a1])
+
+(session-use s2)
+(begin :rc)
+(update acct a1 [1 "bob" 10])
+(commit)
+
+(session-use s3)
+(begin :rr)
+(assert-eq (owner-rows "bob") @[a1])
+(assert-eq (owner-rows "alice") @[])
+
+(session-use s2)
+(begin :rc)
+(update acct a1 [1 "alice" 20])
+(commit)
+
+(session-use s1)
+(assert-eq (owner-rows "alice") @[a1])
+(assert-eq (owner-rows "bob") @[])
+(assert-eq (read acct a1) [1 "alice" 10])
+(commit)
+
+(session-use s3)
+(assert-eq (owner-rows "bob") @[a1])
+(assert-eq (owner-rows "alice") @[])
+(assert-eq (read acct a1) [1 "bob" 10])
+(assert-err :err-conflict (update acct a1 [1 "carol" 30]))
+(abort)
+
+(session-use s1)
+(begin :rc)
+(assert-eq (owner-rows "alice") @[a1])
+(assert-eq (read acct a1) [1 "alice" 20])
+(commit)
+
+# 2. TOAST under an older snapshot.
+# 2.1 Insert a row with a long body and commit; s1 begins at
+#     REPEATABLE READ and reads it.
+# 2.2 s2 replaces the body with another long one and commits.
+# 2.3 Compact: s1 still reads the old body, whose chunks GC keeps.
+# 2.4 s1 ends; compact; a new reader reads the new body.
+(def body1 (string "body-one" (string/repeat "b" 20000)))
+(def body2 (string "body-two" (string/repeat "c" 20000)))
+(session-use s1)
+(begin :rc)
+(table-create docs
+  (columns
+    (id :int4 :not-null)
+    (body :text)))
+(def d1 (insert docs [1 body1]))
+(commit)
+(begin :rr)
+(assert-eq (read docs d1) [1 body1])
+
+(session-use s2)
+(begin :rc)
+(update docs d1 [1 body2])
+(commit)
+(begin :rc)
+(compact docs)
+(commit)
+
+(session-use s1)
+(assert-eq (read docs d1) [1 body1])
+(commit)
+
+(session-use s2)
+(begin :rc)
+(compact docs)
+(assert-eq (read docs d1) [1 body2])
+(commit)
+
+# 3. An abort.
+# 3.1 s2 updates a1 twice, deletes nothing else, inserts a row, and
+#     aborts: s1 reads a1 as it was, finds it under its owner, and
+#     reads no row at the inserted number.
+# 3.2 Compact, and give GC's worker time to put the versions back:
+#     the same answers.
+# 3.3 s2's update of a1 goes through and commits.
+(session-use s2)
+(begin :rc)
+(update acct a1 [1 "dave" 40])
+(update acct a1 [1 "erin" 50])
+(def a2 (insert acct [2 "frank" 60]))
+(abort)
+
+(session-use s1)
+(begin :rc)
+(assert-eq (read acct a1) [1 "alice" 20])
+(assert-eq (owner-rows "alice") @[a1])
+(assert-eq (owner-rows "erin") @[])
+(assert-nil (read acct a2))
+(compact acct)
+(commit)
+(os/sleep 1.5)
+(begin :rc)
+(assert-eq (read acct a1) [1 "alice" 20])
+(assert-eq (owner-rows "alice") @[a1])
+(assert-nil (read acct a2))
+(assert-count 1 (scan acct))
+(commit)
+
+(session-use s2)
+(begin :rc)
+(update acct a1 [1 "alice" 21])
+(commit)
+(begin :rc)
+(assert-eq (read acct a1) [1 "alice" 21])
+(commit)
+
+# 4. Harvest.
+# 4.1 Fill wide with 300 rows of 1000 bytes and compact: its size is
+#     s0.
+# 4.2 s1 begins at REPEATABLE READ; s2 updates every row three times,
+#     committing each pass; compact: the size is past 3 s0, as s1
+#     needs the first versions and the chain to them.
+# 4.3 s1 reads its first versions; it ends; s2 commits once more, so
+#     the watermark passes the updates; compact: the size is back
+#     under 2 s0.
+(def pad (string/repeat "p" 1000))
+(session-use s2)
+(begin :rc)
+(table-create wide
+  (columns
+    (id :int4 :not-null)
+    (v :text)))
+(def wide-rows (seq [i :range [0 300]] (insert wide [i (string i pad)])))
+(commit)
+(begin :rc)
+(compact wide)
+(def s0 (table-size wide))
+(commit)
+
+(session-use s1)
+(begin :rr)
+(assert-eq (read wide (wide-rows 7)) [7 (string 7 pad)])
+
+(session-use s2)
+(each pass [1 2 3]
+  (begin :rc)
+  (each r wide-rows
+    (def i (- r (wide-rows 0)))
+    (update wide r [i (string i "." pass pad)]))
+  (commit))
+(begin :rc)
+(compact wide)
+(def s1-size (table-size wide))
+(commit)
+(assert-eq (> s1-size (* 3 s0)) true)
+
+(session-use s1)
+(assert-eq (read wide (wide-rows 7)) [7 (string 7 pad)])
+(commit)
+
+(session-use s2)
+(begin :rc)
+(update acct a1 [1 "alice" 22])
+(commit)
+(begin :rc)
+(compact wide)
+(def s2-size (table-size wide))
+(assert-eq (read wide (wide-rows 7)) [7 (string 7 ".3" pad)])
+(commit)
+(assert-eq (< s2-size (* 2 s0)) true)
+
+# 5. A rollback to a savepoint.
+# 5.1 Update a1 to owner "gail", set a savepoint, update it to
+#     "hank": rolled back to the savepoint, it reads "gail" and is
+#     found under "gail", not "hank"; commit.
+# 5.2 Past the undo cap: see 0.
+(session-use s1)
+(begin :rc)
+(update acct a1 [1 "gail" 23])
+(def sp (savepoint))
+(update acct a1 [1 "hank" 24])
+(rollback sp)
+(assert-eq (read acct a1) [1 "gail" 23])
+(assert-eq (owner-rows "gail") @[a1])
+(assert-eq (owner-rows "hank") @[])
+(commit)
+(begin :rc)
+(assert-eq (read acct a1) [1 "gail" 23])
+(commit)
+
+
+# 6. A crash.
+# 6.1 s2 updates a1 and does not commit; detach with force, as a
+#     crash, and attach again.
+# 6.2 The row reads as committed before; it is updated again, and
+#     the new value reads back.
+(session-use s2)
+(begin :rc)
+(update acct a1 [1 "ivan" 25])
+(env-detach :force true)
+(env-attach test-dir :toast true)
+(session-open c1 "vdb")
+(session-use c1)
+(begin :rc)
+(assert-eq (read acct a1) [1 "gail" 23])
+(update acct a1 [1 "judy" 26])
+(commit)
+(begin :rc)
+(assert-eq (read acct a1) [1 "judy" 26])
+(assert-eq (owner-rows "judy") @[a1])
+(assert-eq (owner-rows "ivan") @[])
+(commit)
+
+# 7. A temporary table.
+# 7.1 Make a temporary table and insert a row; in a read-only
+#     transaction, update it.
+# 7.2 Set a savepoint, update it again, roll back: the earlier value.
+# 7.3 A write to acct in a read-only transaction fails.
+(begin :rc)
+(temp-table-create scratch (columns (id :int4 :not-null) (v :text)))
+(def x1 (insert scratch [1 "one"]))
+(commit)
+(begin :rc :read-only)
+(update scratch x1 [1 "two"])
+(def tsp (savepoint))
+(update scratch x1 [1 "three"])
+(rollback tsp)
+(assert-eq (read scratch x1) [1 "two"])
+(assert-err :err-readonly (update acct a1 [1 "kim" 27]))
+(abort)
+(begin :rc)
+(assert-eq (read scratch x1) [1 "one"])
+(commit)
+
+(env-detach)
+(rm-rf test-dir)

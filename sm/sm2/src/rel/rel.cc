@@ -99,6 +99,11 @@ int next_id(sm2::rel_t *rel, uint64_t &id) {
  */
 int write_new(sm2::rel_t *rel, std::string_view key, std::string_view tuple) {
   std::string k = row_key(rel->relid, key);
+  if (rel->chained) {
+    return rel->key.empty()
+               ? sm1::chain_insert_new(rel->session, rel->storeid, k, tuple)
+               : sm1::chain_insert(rel->session, rel->storeid, k, tuple);
+  }
   return rel->key.empty()
              ? sm1::insert_new(rel->session, rel->storeid, k, tuple)
              : sm1::insert(rel->session, rel->storeid, k, tuple);
@@ -111,6 +116,11 @@ int write_new(sm2::rel_t *rel, std::string_view key, std::string_view tuple) {
 int write_update(sm2::rel_t *rel, std::string_view key, std::string_view tuple,
                  sm1::rawpin_t *pin, std::string_view *old) {
   std::string k = row_key(rel->relid, key);
+  if (rel->chained) {
+    return pin ? sm1::chain_update(rel->session, rel->storeid, k, tuple, pin,
+                                   *old)
+               : sm1::chain_update(rel->session, rel->storeid, k, tuple);
+  }
   return pin ? sm1::update(rel->session, rel->storeid, k, tuple, pin, *old)
              : sm1::update(rel->session, rel->storeid, k, tuple);
 }
@@ -122,6 +132,10 @@ int write_update(sm2::rel_t *rel, std::string_view key, std::string_view tuple,
 int write_delete(sm2::rel_t *rel, std::string_view key, sm1::rawpin_t *pin,
                  std::string_view *old) {
   std::string k = row_key(rel->relid, key);
+  if (rel->chained) {
+    return pin ? sm1::chain_erase(rel->session, rel->storeid, k, pin, *old)
+               : sm1::chain_erase(rel->session, rel->storeid, k);
+  }
   return pin ? sm1::erase(rel->session, rel->storeid, k, pin, *old)
              : sm1::erase(rel->session, rel->storeid, k);
 }
@@ -431,12 +445,17 @@ int insert_row(sm2::rel_t *rel, std::span<const sm2::datum_t> datums,
  */
 int move_row(sm2::rel_t *rel, std::string_view key, std::string_view new_key,
              std::string_view tuple, sm1::rawpin_t *p, std::string_view &was) {
-  if (sm1::erase_moved(rel->session, rel->storeid, row_key(rel->relid, key), p,
-                       was) != 0) {
+  std::string from = row_key(rel->relid, key);
+  std::string to = row_key(rel->relid, new_key);
+  if (rel->chained) {
+    return 0 != sm1::chain_erase_moved(rel->session, rel->storeid, from, p, was)
+               ? -1
+               : sm1::chain_insert(rel->session, rel->storeid, to, tuple);
+  }
+  if (sm1::erase_moved(rel->session, rel->storeid, from, p, was) != 0) {
     return -1;
   }
-  return sm1::insert(rel->session, rel->storeid, row_key(rel->relid, new_key),
-                     tuple);
+  return sm1::insert(rel->session, rel->storeid, to, tuple);
 }
 
 /*
@@ -570,6 +589,12 @@ int rel_open(sm1::session_t *session, uint64_t storeid, uint16_t relid,
   for (int32_t w : out->desc.width) {
     out->toasts = out->toasts || (w < 0 && !toast_seq.empty());
   }
+  // Its rows are chained keys if its store was made so.
+  if (sm1::store_chained(session, storeid, out->chained) != 0) {
+    rel_close(out);
+    out = nullptr;
+    return -1;
+  }
   return 0;
 }
 
@@ -588,6 +613,9 @@ std::span<const attribute_t> rel_schema(const rel_t *rel) {
 
 /* Whether a rel is keyed by a primary key; see sm2.h. */
 bool rel_keyed(const rel_t *rel) { return !rel->key.empty(); }
+
+/* Whether a rel's rows are a chained store's; see sm2.h. */
+bool rel_chained(const rel_t *rel) { return rel->chained; }
 
 /* The key of a row of these values; see sm2.h. */
 int rel_row_key(rel_t *rel, uint64_t id, std::span<const datum_t> datums,
@@ -690,51 +718,65 @@ int rel_insert_at(rel_t *rel, uint64_t id, std::span<const datum_t> datums,
 /* Read the row at key: 0, 1 if absent, or -1. */
 int rel_read(rel_t *rel, std::string_view key, std::string_view &tuple,
              uint64_t *id) {
-  return read_out(
-      rel, key,
-      sm1::read(rel->session, rel->storeid, row_key(rel->relid, key), tuple),
-      tuple, id);
+  std::string k = row_key(rel->relid, key);
+  return read_out(rel, key,
+                  rel->chained
+                      ? sm1::chain_read(rel->session, rel->storeid, k, tuple)
+                      : sm1::read(rel->session, rel->storeid, k, tuple),
+                  tuple, id);
 }
 
 /* Read the row at key into pin. */
 int rel_read(rel_t *rel, std::string_view key, sm1::rawpin_t *pin,
              std::string_view &tuple, uint64_t *id) {
-  return read_out(rel, key,
-                  sm1::read(rel->session, rel->storeid,
-                            row_key(rel->relid, key), pin, tuple),
-                  tuple, id);
+  std::string k = row_key(rel->relid, key);
+  return read_out(
+      rel, key,
+      rel->chained ? sm1::chain_read(rel->session, rel->storeid, k, pin, tuple)
+                   : sm1::read(rel->session, rel->storeid, k, pin, tuple),
+      tuple, id);
 }
 
 /* Lock the row at key in mode, without writing it. */
 int rel_lock(rel_t *rel, std::string_view key, sm1::lockmode_t mode) {
   // Held to the end of the transaction, as a write's lock is.
-  return sm1::lock(rel->session, sm1::LOCKTYPE_ROW, rel->storeid,
-                   row_key(rel->relid, key), mode);
+  std::string k = row_key(rel->relid, key);
+  return rel->chained ? sm1::chain_lock(rel->session, rel->storeid, k, mode)
+                      : sm1::lock(rel->session, sm1::LOCKTYPE_ROW, rel->storeid,
+                                  k, mode);
 }
 
 /* Lock the row at key in mode if it is free now; see sm2.h. */
 int rel_trylock(rel_t *rel, std::string_view key, sm1::lockmode_t mode) {
   // The same lock, asked for without waiting.
-  return sm1::trylock(rel->session, sm1::LOCKTYPE_ROW, rel->storeid,
-                      row_key(rel->relid, key), mode);
+  std::string k = row_key(rel->relid, key);
+  return rel->chained ? sm1::chain_trylock(rel->session, rel->storeid, k, mode)
+                      : sm1::trylock(rel->session, sm1::LOCKTYPE_ROW,
+                                     rel->storeid, k, mode);
 }
 
 /* Read the newest committed version of the row at key. */
 int rel_read_latest(rel_t *rel, std::string_view key, std::string_view &tuple,
                     uint64_t *id) {
-  return read_out(rel, key,
-                  sm1::read_latest(rel->session, rel->storeid,
-                                   row_key(rel->relid, key), tuple),
-                  tuple, id);
+  std::string k = row_key(rel->relid, key);
+  return read_out(
+      rel, key,
+      rel->chained
+          ? sm1::chain_read_latest(rel->session, rel->storeid, k, tuple)
+          : sm1::read_latest(rel->session, rel->storeid, k, tuple),
+      tuple, id);
 }
 
 /* Read the newest committed version of the row at key into a pin. */
 int rel_read_latest(rel_t *rel, std::string_view key, sm1::rawpin_t *pin,
                     std::string_view &tuple, uint64_t *id) {
-  return read_out(rel, key,
-                  sm1::read_latest(rel->session, rel->storeid,
-                                   row_key(rel->relid, key), pin, tuple),
-                  tuple, id);
+  std::string k = row_key(rel->relid, key);
+  return read_out(
+      rel, key,
+      rel->chained
+          ? sm1::chain_read_latest(rel->session, rel->storeid, k, pin, tuple)
+          : sm1::read_latest(rel->session, rel->storeid, k, pin, tuple),
+      tuple, id);
 }
 
 /*
@@ -933,8 +975,11 @@ int rel_scan(rel_t *rel, uint64_t first, uint64_t last, rel_scan_t *&out) {
   std::string hi = row_key(rel->relid, id_key(last));
   // sm1 copies the bounds into the cursor.
   sm1::scan_t *c;
-  if (sm1::scan(rel->session, rel->storeid, lo.data(), lo.size(), 1, hi.data(),
-                hi.size(), 1, c) != 0) {
+  if ((rel->chained
+           ? sm1::chain_scan(rel->session, rel->storeid, lo.data(), lo.size(),
+                             1, hi.data(), hi.size(), 1, c)
+           : sm1::scan(rel->session, rel->storeid, lo.data(), lo.size(), 1,
+                       hi.data(), hi.size(), 1, c)) != 0) {
     return -1;
   }
   out = new rel_scan_t{c, rel->session, rel->storeid, rel->relid, false, {}};
@@ -1061,9 +1106,12 @@ struct bisect_t {
     std::string lo = prefix + std::string(a);
     std::string hi = end ? limit : prefix + std::string(b);
     uint64_t disk, mem;
-    if (0 != sm1::approxsize(rel->session, rel->storeid, lo.data(), lo.size(),
-                             hi.empty() ? nullptr : hi.data(), hi.size(), disk,
-                             mem)) {
+    const char *h = hi.empty() ? nullptr : hi.data();
+    if (0 != (rel->chained
+                  ? sm1::chain_approxsize(rel->session, rel->storeid, lo.data(),
+                                          lo.size(), h, hi.size(), disk, mem)
+                  : sm1::approxsize(rel->session, rel->storeid, lo.data(),
+                                    lo.size(), h, hi.size(), disk, mem))) {
       return -1;
     }
     out = disk + mem;
@@ -1152,18 +1200,35 @@ int rel_range_size(rel_t *rel, std::string_view lo, const std::string *hi,
 
 /* The bytes under relid, from sm1's estimate of its key range. */
 int relid_size(sm1::session_t *session, uint64_t storeid, uint16_t relid,
-               uint64_t &disk, uint64_t &mem) {
+               uint64_t &disk, uint64_t &mem, bool old) {
   // Every key of the rel starts with its relid, so the range is
   // [relid, relid + 1); the last relid's is open above.
   std::string lo, hi;
   put_be(relid, lo);
-  if (relid == UINT16_MAX) {
-    return sm1::approxsize(session, storeid, lo.data(), lo.size(), nullptr, 0,
-                           disk, mem);
+  if (relid != UINT16_MAX) {
+    put_be(static_cast<uint16_t>(relid + 1), hi);
   }
-  put_be(static_cast<uint16_t>(relid + 1), hi);
-  return sm1::approxsize(session, storeid, lo.data(), lo.size(), hi.data(),
-                         hi.size(), disk, mem);
+  const char *h = hi.empty() ? nullptr : hi.data();
+  if (sm1::approxsize(session, storeid, lo.data(), lo.size(), h, hi.size(),
+                      disk, mem) != 0) {
+    return -1;
+  }
+  // A chained store's rows are its chained keys: a rel lives in the
+  // one or the other, so the two estimates add.
+  bool chained;
+  if (sm1::store_chained(session, storeid, chained) != 0) {
+    return -1;
+  }
+  if (chained) {
+    uint64_t cdisk, cmem;
+    if (sm1::chain_approxsize(session, storeid, lo.data(), lo.size(), h,
+                              hi.size(), cdisk, cmem, old) != 0) {
+      return -1;
+    }
+    disk += cdisk;
+    mem += cmem;
+  }
+  return 0;
 }
 
 } // namespace sm2

@@ -1040,8 +1040,10 @@ int tbl_load_open(table_t *table, loader_t *&out) {
     // A table keyed by a primary key gets its rows in no order; a
     // keyless one in its _ids' (../CLUSTER.md §5).
     bool keyed = sm2::rel_keyed(table->rel);
+    // A chained table's rows are its store's chained keys.
     if (sm1::load_open(s, storeid, l->load) != 0 ||
-        sm1::load_stream(l->load, !keyed, l->heap) != 0) {
+        sm1::load_stream(l->load, !keyed, l->heap,
+                         sm2::rel_chained(table->rel)) != 0) {
       return -1;
     }
     // An index's entries arrive in the heap's order, not its own.
@@ -1531,10 +1533,10 @@ int tbl_idx_scan(table_t *table, uint64_t index, const sm2::bound_t *lo,
                      "table: no index " + std::to_string(index));
 }
 
-/* The rows' bytes, in files and in memtables. */
+/* The rows' bytes, their older versions too, in files and in memtables. */
 int tbl_size(table_t *table, uint64_t &disk, uint64_t &mem) {
   return sm2::relid_size(table->session->sm1, table->def->storeid, heap_relid,
-                         disk, mem);
+                         disk, mem, true);
 }
 
 /* One index's bytes, in files and in memtables. */
@@ -1780,7 +1782,9 @@ int rewrite_table(session_t *session, uint64_t oid, table_rec_t rec) {
                                         const sm2::collation_t *&out) {
     return session_collation(session, c, out);
   };
-  if (sm1::mkstore(session->sm1, rec.storeid, rec.nspoid == nsp_temp) != 0 ||
+  // Its rows chained, a temporary table's too (../VCHAIN.md §3).
+  const bool temp = rec.nspoid == nsp_temp;
+  if (sm1::mkstore(session->sm1, rec.storeid, temp, true) != 0 ||
       build_table(lookup, oid, rec, def) != 0) {
     return -1;
   }

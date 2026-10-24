@@ -231,7 +231,8 @@ static int make_table(session_t *session, uint64_t nspoid,
   // temporary table, both temporary, and so the session's alone
   // (TEMPTABLE.md §4).
   const bool temp = nspoid == nsp_temp;
-  if (sm1::mkstore(session->sm1, rec.storeid, temp) != 0) {
+  // Its rows chained, a temporary table's too (../VCHAIN.md §3).
+  if (sm1::mkstore(session->sm1, rec.storeid, temp, true) != 0) {
     return -1;
   }
   // And the sequence its TOAST ids come from, used once the host
@@ -407,7 +408,8 @@ int truncate_table(session_t *session, uint64_t oid) {
   // A new, empty store for the rows and index entries, temporary
   // if the table is; the index relids and the rowno sequence carry
   // over.
-  if (sm1::mkstore(session->sm1, rec.storeid, rec.nspoid == nsp_temp) != 0 ||
+  const bool temp = rec.nspoid == nsp_temp;
+  if (sm1::mkstore(session->sm1, rec.storeid, temp, true) != 0 ||
       cat_put_table(session, oid, rec) != 0) {
     return -1;
   }

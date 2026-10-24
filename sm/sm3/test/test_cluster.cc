@@ -200,7 +200,8 @@ std::vector<std::pair<uint64_t, std::string>> entries(sm3::table_t *t,
 
 /*
  * The keys under relid in store, as s's transaction sees them: sm1's
- * own keys, whatever rel holds them.
+ * own keys, versioned and, in a chained store, chained, whatever rel
+ * holds them.
  */
 size_t under_relid(sm3::session_t *s, uint64_t store, uint16_t relid) {
   // Big-endian, as a store's keys begin.
@@ -208,17 +209,26 @@ size_t under_relid(sm3::session_t *s, uint64_t store, uint16_t relid) {
     return std::string{static_cast<char>(r >> 8), static_cast<char>(r & 0xFF)};
   };
   std::string lo = be16(relid), hi = be16(relid + 1u);
-  sm1::scan_t *c = nullptr;
-  REQUIRE(sm1::scan(sm3::session_sm1(s), store, lo.data(), lo.size(), 1,
-                    hi.data(), hi.size(), 0, c) == 0);
+  bool chained = false;
+  REQUIRE(sm1::store_chained(sm3::session_sm1(s), store, chained) == 0);
   size_t n = 0;
-  std::string_view k, v;
-  int rc;
-  while ((rc = sm1::scannxt(c, k, v)) == 0) {
-    n++;
+  for (bool chain : {false, true}) {
+    if (chain && !chained) {
+      continue;
+    }
+    sm1::scan_t *c = nullptr;
+    REQUIRE((chain ? sm1::chain_scan(sm3::session_sm1(s), store, lo.data(),
+                                     lo.size(), 1, hi.data(), hi.size(), 0, c)
+                   : sm1::scan(sm3::session_sm1(s), store, lo.data(), lo.size(),
+                               1, hi.data(), hi.size(), 0, c)) == 0);
+    std::string_view k, v;
+    int rc;
+    while ((rc = sm1::scannxt(c, k, v)) == 0) {
+      n++;
+    }
+    sm1::scanend(c);
+    REQUIRE(rc == 1);
   }
-  sm1::scanend(c);
-  REQUIRE(rc == 1);
   return n;
 }
 
