@@ -1,0 +1,147 @@
+# Verify that a scan of a primary key with an equality on each of its
+# columns, which digres reads as one row by its key, finds what a range
+# of the key would.
+# 1. Make tables keyed by an int8, by two columns, by text and by a
+#    numeric, and turn off every scan but an index scan.
+# 2. Look up a row by an int4 constant on the int8 key, one that is
+#    there and one that is not, and one past int4 in an int8 constant.
+# 3. Add a second key on the same column, met and not met.
+# 4. Read the key's columns alone, from an index only scan.
+# 5. Look up rows by both key columns, and by the first alone.
+# 6. Look up rows by a text key and by a numeric key, one at the
+#    column's scale and one finer than it.
+# 7. Look up each outer row's key in the inner side of a nested loop.
+# 8. Update and delete a row by its key, returning it, and read its
+#    change back in the same transaction.
+
+statement ok
+create table k1 (id int8 primary key, v text)
+
+statement ok
+insert into k1 select i, 'row ' || i from generate_series(1, 100) i
+
+statement ok
+create table k2 (a int4, b int4, v text, primary key (a, b))
+
+statement ok
+insert into k2 select i / 10, i % 10, 'pair ' || i from generate_series(0, 99) i
+
+statement ok
+create table kt (name text primary key, n int4)
+
+statement ok
+insert into kt values ('apple', 1), ('banana', 2), ('cherry', 3)
+
+statement ok
+create table kn (price numeric(6, 1) primary key, item text)
+
+statement ok
+insert into kn values (1.2, 'one point two'), (3.0, 'three')
+
+statement ok
+set enable_seqscan = off
+
+statement ok
+set enable_bitmapscan = off
+
+query T nosort
+select v from k1 where id = 42
+----
+row 42
+
+query T nosort
+select v from k1 where id = 1000
+----
+
+query T nosort
+select v from k1 where id = 5000000000
+----
+
+query T nosort
+select v from k1 where id = 42 and id > 40
+----
+row 42
+
+query T nosort
+select v from k1 where id = 42 and id > 50
+----
+
+query I nosort
+select id from k1 where id = 7
+----
+7
+
+query T nosort
+select v from k2 where a = 3 and b = 4
+----
+pair 34
+
+query T nosort
+select v from k2 where a = 3 and b = 40
+----
+
+query T nosort
+select v from k2 where a = 3 and b < 2 order by b
+----
+pair 30
+pair 31
+
+query I nosort
+select n from kt where name = 'banana'
+----
+2
+
+query I nosort
+select n from kt where name = 'bananas'
+----
+
+query T nosort
+select item from kn where price = 1.2
+----
+one point two
+
+query T nosort
+select item from kn where price = 1.25
+----
+
+query T nosort
+select item from kn where price = 3
+----
+three
+
+query IT nosort
+select o.id, i.v from k1 o join k1 i on i.id = o.id * 2 where o.id < 4 order by o.id
+----
+1	row 2
+2	row 4
+3	row 6
+
+statement ok
+begin
+
+query IT nosort
+update k1 set v = 'changed' where id = 10 returning id, v
+----
+10	changed
+
+query T nosort
+select v from k1 where id = 10
+----
+changed
+
+query IT nosort
+delete from k1 where id = 11 returning id, v
+----
+11	row 11
+
+query T nosort
+select v from k1 where id = 11
+----
+
+statement ok
+commit
+
+query T nosort
+select v from k1 where id = 10
+----
+changed

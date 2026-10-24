@@ -2324,6 +2324,16 @@ struct smstore_scan_t {
   bool cur;
   bool cur_pinned;
   uint64_t cur_rowno;
+  /*
+   * A primary key scan with an equality on each of the key's columns: the
+   * one row they name, read at the scan's start into ref, with no cursor;
+   * point_row while it is there and not yet handed out.  Its key, encoded,
+   * palloc'd, is the one the cursor would be on.
+   */
+  bool point;
+  bool point_row;
+  char *point_key;
+  size_t point_len;
 };
 
 /*
@@ -2796,6 +2806,8 @@ void smstore_endscan(smstore_scan_t *scan) {
   sm_unpin(&scan->ref);
   if (scan->slot_end)
     pfree(scan->slot_end);
+  if (scan->point_key)
+    pfree(scan->point_key);
   pfree(scan);
 }
 
@@ -5915,6 +5927,7 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
   bool *nulls = (bool *)palloc0(ncols * sizeof(bool));
   sm_bound_t lo = {lo_vals, nulls, 0, true};
   sm_bound_t hi = {hi_vals, nulls, 0, true};
+  int neq = 0; /* the leading columns an equality gives one value */
   smstore_scan_t *scan;
 
   if (tbl == NULL)
@@ -5979,6 +5992,7 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
         lo.inclusive = hi.inclusive = true;
         break;
       }
+      neq++;
       continue;
     }
     /* In the index's order a DESC column's high values come first. */
@@ -6012,13 +6026,41 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
   /* Each row is checked against every key (keys_met()). */
   for (int i = 0; i < nkeys; i++)
     scan->keycols[i] = form->indkey.values[keys[i].sk_attno - 1];
+  /*
+   * An equality on each of the primary key's columns names one row: read it
+   * by its key, as a cursor would see it now, with none opened.
+   */
+  if (form->indisprimary && ncols == neq) {
+    sm_row_key_t key = {lo_vals, nulls, (size_t)ncols};
+    std::string bytes;
+    const void *tuple;
+    size_t len;
+
+    if (0 != sm_tbl_row_key(tbl, key, bytes))
+      sm_error("name a row by its key");
+    scan->point = true;
+    scan->point_key = (char *)palloc(Max(bytes.size(), 1));
+    memcpy(scan->point_key, bytes.data(), bytes.size());
+    scan->point_len = bytes.size();
+    switch (sm_tbl_read_key(tbl, bytes.data(), bytes.size(), &scan->ref,
+                            &tuple, &len)) {
+    case 0:
+      scan->point_row = true;
+      break;
+    case 1:
+      break;
+    default:
+      sm_error("read a row");
+    }
+  }
   /* The primary key's entries are the rows, keyed by it: read in place. */
-  if (form->indisprimary
-          ? sm_tbl_idx_scan_rows(tbl, RelationGetRelid(index),
+  else if (form->indisprimary
+               ? sm_tbl_idx_scan_rows(
+                     tbl, RelationGetRelid(index), lo.n > 0 ? &lo : NULL,
+                     hi.n > 0 ? &hi : NULL, NULL, &scan->cursor) != 0
+               : sm_tbl_idx_scan(tbl, RelationGetRelid(index),
                                  lo.n > 0 ? &lo : NULL, hi.n > 0 ? &hi : NULL,
-                                 NULL, &scan->cursor) != 0
-          : sm_tbl_idx_scan(tbl, RelationGetRelid(index), lo.n > 0 ? &lo : NULL,
-                            hi.n > 0 ? &hi : NULL, NULL, &scan->icursor) != 0)
+                                 NULL, &scan->icursor) != 0)
     sm_error("scan an index");
   open_scans.push_back(scan);
   return scan;
@@ -6088,10 +6130,10 @@ bool smstore_index_getnext(smstore_scan_t *scan, TupleTableSlot *slot) {
 
   slot->tts_tableOid = scan->relid;
   while (smstore_index_getrowno(scan, &rowno)) {
-    /* A primary key's entry is its row, in the cursor's pin. */
-    if (scan->cursor != NULL) {
+    /* A primary key's entry is its row, in the cursor's pin or the scan's. */
+    if (scan->cursor != NULL || scan->point) {
       ExecClearTuple(slot);
-      ref_into_slot(scan->row_ref, rowno, slot);
+      ref_into_slot(scan->point ? scan->ref : scan->row_ref, rowno, slot);
       if (keys_met(scan, slot, false))
         return true;
       continue;
@@ -6118,6 +6160,17 @@ bool smstore_index_getrowno(smstore_scan_t *scan, uint64 *rowno) {
 
   CHECK_FOR_INTERRUPTS();
   scan->cur = false;
+  /* The one row a primary key's equalities name, once; a keyed row's is 0. */
+  if (scan->point) {
+    if (!scan->point_row)
+      return false;
+    scan->point_row = false;
+    *rowno = 0;
+    scan->cur = true;
+    scan->cur_pinned = true;
+    scan->cur_rowno = 0;
+    return true;
+  }
   /* A primary key's: its next row, into the cursor's pin. */
   if (scan->cursor != NULL) {
     switch (sm_rel_scannxt(scan->cursor, &r, &scan->row_ref)) {
@@ -6186,9 +6239,10 @@ static bool entry_from_row(smstore_scan_t *scan, TupleTableSlot *slot) {
   const void *key, *tuple;
   size_t klen, len;
 
-  if (scan->cursor != NULL) {
-    /* The cursor's row, in its pin, which the slot's values point into. */
-    if (sm_pin_tuple(scan->row_ref, &tuple, &len) != 0)
+  if (scan->cursor != NULL || scan->point) {
+    /* The row, in its pin, which the slot's values point into. */
+    if (sm_pin_tuple(scan->point ? scan->ref : scan->row_ref, &tuple, &len) !=
+        0)
       sm_error("read a row");
   } else {
     /* Into the scan's pin, which the slot's values then point into. */
@@ -6225,7 +6279,7 @@ bool smstore_index_getentry(smstore_scan_t *scan, TupleTableSlot *slot) {
   slot->tts_tableOid = scan->relid;
   while (smstore_index_getrowno(scan, &rowno)) {
     ExecClearTuple(slot);
-    switch (scan->cursor != NULL
+    switch (scan->cursor != NULL || scan->point
                 ? 1
                 : sm_idx_scan_key(scan->icursor, (sm_datum_t *)slot->tts_values,
                                   slot->tts_isnull, scan->form->indnkeyatts)) {
@@ -6434,9 +6488,13 @@ static smstore_scan_t *scan_at(Oid oid, const std::string &key);
 static void scan_key(smstore_scan_t *scan, const void **key, size_t *len) {
   *key = NULL;
   *len = 0;
-  if (scan != NULL &&
-      (scan->cursor != NULL ? sm_rel_scan_key(scan->cursor, key, len)
-                            : sm_idx_scan_row(scan->icursor, key, len)) != 0)
+  if (scan != NULL && scan->point) {
+    *key = scan->point_key;
+    *len = scan->point_len;
+  } else if (scan != NULL &&
+             (scan->cursor != NULL
+                  ? sm_rel_scan_key(scan->cursor, key, len)
+                  : sm_idx_scan_row(scan->icursor, key, len)) != 0)
     sm_error("read a row's key");
 }
 
