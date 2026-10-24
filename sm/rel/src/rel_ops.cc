@@ -2067,11 +2067,11 @@ static Janet idx_entry_to_janet(table_def_t *p_tdef, index_def_t *p_idef,
   if (p_idef->includes.size() > 0 && val != nullptr) {
     if (sm_tbl_idx_deform(tbl, index, val, val_len, entry.values.data(),
                           entry.isnull.get(), entry.values.size()) == 0) {
-      // In idx value: rowno (0), cut (1), then includes (2...)
+      // In idx value: cut (0), then includes (1...), then the row key
       size_t n_inc = p_idef->includes.size();
       Janet *ivals = janet_tuple_begin(n_inc);
       for (size_t m = 0; m < n_inc; m++) {
-        ivals[m] = value_to_janet(entry.values[2 + m], entry.isnull[2 + m],
+        ivals[m] = value_to_janet(entry.values[1 + m], entry.isnull[1 + m],
                                   p_idef->includes[m].type_code,
                                   p_idef->includes[m].typmod);
       }

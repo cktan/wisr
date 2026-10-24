@@ -558,12 +558,17 @@ struct sm_bound_t {
  * entries behind (sm3/SM3_DESIGN.md section 3).
  */
 
-/* A cursor over a table's rows, in _id order; sm_tbl_scan opens one. */
+/*
+ * A cursor over a table's rows, in their key's order: _id order in
+ * a table without a primary key (sm_tbl_scan, sm_tbl_scan_rows), the
+ * primary key's in one with (sm_tbl_scan_rows, sm_tbl_idx_scan_rows).
+ */
 typedef struct sm_rel_scan_t sm_rel_scan_t;
 
 /*
- * The next row: 0 with it, 1 at the end, or -1. The tuple is valid
- * until the next call on this cursor.
+ * The next row: 0 with it, and *id its _id, 0 for a row of a table
+ * with a primary key, which has none; 1 at the end, or -1. The
+ * tuple is valid until the next call on this cursor.
  */
 int sm_rel_scannxt(sm_rel_scan_t* scan, uint64_t* id, const void** tuple,
                    size_t* len);
@@ -576,7 +581,7 @@ int sm_rel_scannxt(sm_rel_scan_t* scan, uint64_t* id, const void** tuple,
  */
 int sm_rel_scannxt(sm_rel_scan_t* scan, uint64_t* id, sm_pin_ref_t* ref);
 
-/* Move the cursor forward to _id id. */
+/* Move a cursor by _id, of a keyless table, forward to _id id. */
 int sm_rel_scan_seek(sm_rel_scan_t* scan, uint64_t id);
 
 /*
@@ -608,8 +613,9 @@ int sm_tup_encode(const std::vector<sm_attribute_t>& schema,
 typedef struct sm_idx_scan_t sm_idx_scan_t;
 
 /*
- * The next entry: 0 with it, 1 at the end, or -1. The value is
- * valid until the next call on this cursor.
+ * The next entry: 0 with it, and *id its row's _id, 0 for a row of a
+ * table with a primary key; 1 at the end, or -1. The value is valid
+ * until the next call on this cursor.
  */
 int sm_idx_scannxt(sm_idx_scan_t* scan, uint64_t* id, bool* cut,
                    const void** value, size_t* len);
@@ -1214,7 +1220,10 @@ uint64_t sm_tbl_version(const sm_tbl_t* tbl);
  * sm_errdup().
  */
 
-/* Insert a row of n values and null flags; *id is its _id. */
+/*
+ * Insert a row of n values and null flags; *id is its _id, 0 in a
+ * table with a primary key, whose rows have none (../ROWKEY.md §2.1).
+ */
 int sm_tbl_insert(sm_tbl_t* tbl, const sm_datum_t* values,
                   const bool* isnull, size_t n, uint64_t* id);
 
@@ -1222,9 +1231,10 @@ int sm_tbl_insert(sm_tbl_t* tbl, const sm_datum_t* values,
  * Insert a row unless a row already has its key in one of the
  * narbiters unique indexes arbiters names by oid, or in any unique
  * index of the table if narbiters is 0: INSERT ... ON CONFLICT.
- * Returns 0 with the new row's _id in *id; 1, with nothing
- * written, with the id of the row that has the key, and its tuple
- * in *row if wanted, from which the caller takes its key; or -1.
+ * Returns 0 with the new row's _id in *id, as sm_tbl_insert's; 1,
+ * with nothing written, with the _id of the row that has the key, 0
+ * in a table with a primary key, and its tuple in *row if wanted,
+ * from which the caller takes its key; or -1.
  *
  * It finds a conflict before the row is written, and leaves
  * nothing locked by it: it waits for a transaction that has
@@ -1277,7 +1287,7 @@ int sm_tbl_insert_arbiter(sm_tbl_t* tbl, const sm_datum_t* values,
  */
 int sm_tbl_load_begin(sm_tbl_t* tbl);
 
-/* Hand over one row of n values and null flags; *id is its _id. */
+/* Hand over one row of n values and null flags; *id as sm_tbl_insert's. */
 int sm_tbl_load_add(sm_tbl_t* tbl, const sm_datum_t* values,
                     const bool* isnull, size_t n, uint64_t* id);
 
@@ -1410,7 +1420,10 @@ int sm_tbl_trylock(sm_tbl_t* tbl, const sm_row_key_t& key,
  */
 int sm_tbl_truncate(sm_tbl_t* tbl);
 
-/* Open a cursor over the rows first..last, both included. */
+/*
+ * Open a cursor over the rows with _id first..last, both included, of
+ * a table without a primary key; SM_ERR_INVALID in one with.
+ */
 int sm_tbl_scan(sm_tbl_t* tbl, uint64_t first, uint64_t last,
                 sm_rel_scan_t** out);
 
@@ -1510,9 +1523,8 @@ bool sm_tbl_index_usable(const sm_tbl_t* tbl, uint64_t index);
 
 /*
  * The number of attributes in an entry's value in that index: the
- * _id, the cut flag, the INCLUDE columns, then in a table with a
- * primary key the row's key; 0 if there is no
- * such index.
+ * cut flag, the INCLUDE columns, then the row's key (../ROWKEY.md
+ * §2.1); 0 if there is no such index.
  */
 size_t sm_tbl_idx_ncols(const sm_tbl_t* tbl, uint64_t index);
 
@@ -1530,8 +1542,9 @@ int sm_tbl_idx_deform(sm_tbl_t* tbl, uint64_t index, const void* value,
  * What the table's LSM looks like now, read live and stored
  * nowhere: the heap's bytes and the index's, in sorted files
  * (disk) and in memtables (mem), apart, never summed; N, the last
- * _id handed out, 0 if none; and the sorted runs a lookup in the
- * table's store may visit.
+ * _id handed out, 0 if none, as in a table with a primary key,
+ * whose rows draw none; and the sorted runs a lookup in the table's
+ * store may visit.
  */
 int sm_tbl_size(sm_tbl_t* tbl, uint64_t* disk, uint64_t* mem);
 

@@ -2657,21 +2657,26 @@ dp1|t|table|$me|permanent|heap|0 bytes|
 dp1|q|sequence|$me|permanent||
 OUT
 cmp -s "$work/dp.out" "$work/dp.expected" || fail "\\d+, \\dt+ and \\ds+"
-# Verify that the size functions give a table's and its index's bytes in
+# Verify that the size functions give a table's and its indexes' bytes in
 # sm, which are 0 while empty (above) and grow with their rows. sm counts
-# its bytes in memtables, so the index's are never 0 here; what is in
-# files is an estimate, so no more than that is checked.
-# 1. Put a thousand rows in dp1.t.
-# 2. The table and its index have bytes; the total is the two; a fork
-#    other than main has none.
+# its bytes in memtables, so a secondary index's are never 0 here; what is
+# in files is an estimate, so no more than that is checked.
+# 1. Put a thousand rows in dp1.t, and index b.
+# 2. The table and its index on b have bytes; its primary key has none of
+#    its own, its entries being the rows (../sm/ROWKEY.md section 2.1);
+#    the total is the table and its indexes; a fork other than main has
+#    none.
 [ "$(local_psql -c "insert into dp1.t select g, repeat('x', 100)
                       from generate_series(1, 1000) g" \
+      -c 'create index t_b on dp1.t (b)' \
       -c "select pg_relation_size('dp1.t') > 0,
-                 pg_relation_size('dp1.t_pkey') > 0,
+                 pg_relation_size('dp1.t_pkey') = 0,
+                 pg_relation_size('dp1.t_b') > 0,
                  pg_total_relation_size('dp1.t') =
                    pg_table_size('dp1.t') + pg_indexes_size('dp1.t'),
                  pg_relation_size('dp1.t', 'fsm')")" = "INSERT 0 1000
-t|t|t|0" ] || fail "sizes of a table in sm"
+CREATE INDEX
+t|t|t|t|0" ] || fail "sizes of a table in sm"
 # Verify that COMMENT is refused plainly, as digres keeps no comments,
 # rather than failing on pg_description.
 local_psql -c "comment on table dp1.t is 'x'" 2>&1 |

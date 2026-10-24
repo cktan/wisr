@@ -337,6 +337,13 @@ int sample_table(table_t *table, int32_t target, std::mt19937_64 &rng,
     return sm1::seterr(sm1::SM_ERR_INVALID,
                        "analyze: a statistics target below 1");
   }
+  const uint64_t want = rows_per_target * static_cast<uint64_t>(target);
+  const table_def_t &def = tbl_def(table);
+  // A table with a primary key has no _ids (../../ROWKEY.md §2.1).
+  if (std::any_of(def.indexes.begin(), def.indexes.end(),
+                  [](const index_def_t &x) { return x.primary; })) {
+    return sample_by_key(table, want, rng, out);
+  }
   uint64_t n = 0;
   if (tbl_id_limit(table, n) != 0) {
     return -1;
@@ -345,12 +352,6 @@ int sample_table(table_t *table, int32_t target, std::mt19937_64 &rng,
   if (n == 0) {
     out.whole = true;
     return 0;
-  }
-  const uint64_t want = rows_per_target * static_cast<uint64_t>(target);
-  const table_def_t &def = tbl_def(table);
-  if (std::any_of(def.indexes.begin(), def.indexes.end(),
-                  [](const index_def_t &x) { return x.primary; })) {
-    return sample_by_key(table, want, rng, out);
   }
 
   // 1. The pilot: single _ids, for the live fraction and width.

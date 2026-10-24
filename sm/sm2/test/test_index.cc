@@ -125,7 +125,7 @@ TEST_CASE("an index scan yields exactly the entries between its bounds") {
       }
       values_t d = datums_of(cols, e.key);
       REQUIRE_MESSAGE(
-          sm2::idx_insert(ix, d.d(), d.null(), r, sm2::id_key(r), {}, {}) == 0,
+          sm2::idx_insert(ix, d.d(), d.null(), sm2::id_key(r), {}, {}) == 0,
           sm1::errmsg());
       entries.push_back(e);
     }
@@ -232,7 +232,7 @@ TEST_CASE("an index entry gives back its key columns") {
   std::vector<values_t> vals;
   for (size_t i = 0; i < rows.size(); i++) {
     vals.push_back(datums_of(cols, rows[i]));
-    REQUIRE_MESSAGE(sm2::idx_insert(ix, vals[i].d(), vals[i].null(), i + 1,
+    REQUIRE_MESSAGE(sm2::idx_insert(ix, vals[i].d(), vals[i].null(),
                                     sm2::id_key(i + 1), {}, {}) == 0,
                     sm1::errmsg());
   }
@@ -240,8 +240,8 @@ TEST_CASE("an index entry gives back its key columns") {
       {le(int32_t{7})}, {std::nullopt}};
   for (size_t i = 0; i < urows.size(); i++) {
     values_t u = datums_of(ucols, urows[i]);
-    REQUIRE(sm2::idx_insert(uix, u.d(), u.null(), i + 1, sm2::id_key(i + 1), {},
-                            {}) == 0);
+    REQUIRE(sm2::idx_insert(uix, u.d(), u.null(), sm2::id_key(i + 1), {}, {}) ==
+            0);
   }
   struct case_t {
     sm2::index_t *index;
@@ -317,18 +317,16 @@ TEST_CASE("a unique index refuses a duplicate key, but not nulls") {
   std::vector<std::optional<std::string>> key = {le(int32_t{1}),
                                                  std::string("a")};
   values_t d = datums_of(cols, key);
-  REQUIRE(sm2::idx_insert(ix, d.d(), d.null(), 10, sm2::id_key(10), {}, {}) ==
-          0);
-  CHECK(sm2::idx_insert(ix, d.d(), d.null(), 11, sm2::id_key(11), {}, {}) ==
-        -1);
+  REQUIRE(sm2::idx_insert(ix, d.d(), d.null(), sm2::id_key(10), {}, {}) == 0);
+  CHECK(sm2::idx_insert(ix, d.d(), d.null(), sm2::id_key(11), {}, {}) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
   std::vector<std::optional<std::string>> with_null = {le(int32_t{1}),
                                                        std::nullopt};
   values_t n = datums_of(cols, with_null);
-  CHECK(sm2::idx_insert(ix, n.d(), n.null(), 12, sm2::id_key(12), {}, {}) == 0);
-  CHECK(sm2::idx_insert(ix, n.d(), n.null(), 13, sm2::id_key(13), {}, {}) == 0);
-  REQUIRE(sm2::idx_delete(ix, d.d(), d.null(), 10, sm2::id_key(10)) == 0);
-  CHECK(sm2::idx_insert(ix, d.d(), d.null(), 14, sm2::id_key(14), {}, {}) == 0);
+  CHECK(sm2::idx_insert(ix, n.d(), n.null(), sm2::id_key(12), {}, {}) == 0);
+  CHECK(sm2::idx_insert(ix, n.d(), n.null(), sm2::id_key(13), {}, {}) == 0);
+  REQUIRE(sm2::idx_delete(ix, d.d(), d.null(), sm2::id_key(10)) == 0);
+  CHECK(sm2::idx_insert(ix, d.d(), d.null(), sm2::id_key(14), {}, {}) == 0);
   CHECK(scan_all(ix, nullptr, nullptr) == std::vector<uint64_t>{14, 12, 13});
   REQUIRE(sm1::commit(s) == 0);
   sm2::idx_close(ix);
@@ -359,18 +357,18 @@ TEST_CASE("under a non-deterministic collation, equal is ICU's equal") {
   auto mixed = row("aBc");
   values_t d_abc = datums_of(cols, abc), d_upper = datums_of(cols, upper),
            d_abd = datums_of(cols, abd), d_mixed = datums_of(cols, mixed);
-  REQUIRE(sm2::idx_insert(uix, d_abc.d(), d_abc.null(), 10, sm2::id_key(10), {},
+  REQUIRE(sm2::idx_insert(uix, d_abc.d(), d_abc.null(), sm2::id_key(10), {},
                           {}) == 0);
-  CHECK(sm2::idx_insert(uix, d_upper.d(), d_upper.null(), 11, sm2::id_key(11),
-                        {}, {}) == -1);
+  CHECK(sm2::idx_insert(uix, d_upper.d(), d_upper.null(), sm2::id_key(11), {},
+                        {}) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_DUPKEY);
-  CHECK(sm2::idx_insert(uix, d_abd.d(), d_abd.null(), 12, sm2::id_key(12), {},
+  CHECK(sm2::idx_insert(uix, d_abd.d(), d_abd.null(), sm2::id_key(12), {},
                         {}) == 0);
-  REQUIRE(sm2::idx_insert(ix, d_abc.d(), d_abc.null(), 10, sm2::id_key(10), {},
+  REQUIRE(sm2::idx_insert(ix, d_abc.d(), d_abc.null(), sm2::id_key(10), {},
                           {}) == 0);
-  REQUIRE(sm2::idx_insert(ix, d_upper.d(), d_upper.null(), 11, sm2::id_key(11),
-                          {}, {}) == 0);
-  REQUIRE(sm2::idx_insert(ix, d_abd.d(), d_abd.null(), 12, sm2::id_key(12), {},
+  REQUIRE(sm2::idx_insert(ix, d_upper.d(), d_upper.null(), sm2::id_key(11), {},
+                          {}) == 0);
+  REQUIRE(sm2::idx_insert(ix, d_abd.d(), d_abd.null(), sm2::id_key(12), {},
                           {}) == 0);
   sm2::bound_t eq{d_mixed.d(), d_mixed.null(), true};
   CHECK(scan_all(ix, &eq, &eq) == std::vector<uint64_t>{10, 11});
@@ -419,9 +417,9 @@ TEST_CASE("a key too long for sm1 is cut, flagged, and kept apart") {
     values_t d = datums_of(cols, key);
     sm2::datum_t id[1] = {sm2::datum_from_int32(static_cast<int32_t>(i + 100))};
     bool idn[1] = {false};
-    REQUIRE_MESSAGE(sm2::idx_insert(ix, d.d(), d.null(), i + 1,
-                                    sm2::id_key(i + 1), id, idn) == 0,
-                    sm1::errmsg());
+    REQUIRE_MESSAGE(
+        sm2::idx_insert(ix, d.d(), d.null(), sm2::id_key(i + 1), id, idn) == 0,
+        sm1::errmsg());
   }
   sm2::index_scan_t *scan = nullptr;
   REQUIRE(sm2::idx_scan(ix, nullptr, nullptr, scan) == 0);
@@ -437,7 +435,7 @@ TEST_CASE("a key too long for sm1 is cut, flagged, and kept apart") {
     CHECK(sm2::idx_scan_key(scan, got, null) == 1);
     sm2::datum_t inc;
     bool inc_null;
-    REQUIRE(sm2::tup_decode(sm2::idx_value_schema(ix), value, 2, inc,
+    REQUIRE(sm2::tup_decode(sm2::idx_value_schema(ix), value, 1, inc,
                             inc_null) == 0);
     REQUIRE_FALSE(inc_null);
     CHECK(sm2::datum_to_int32(inc) == static_cast<int32_t>(want + 99));
@@ -470,19 +468,19 @@ TEST_CASE("a key too long for sm1 is refused in a unique index") {
   REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
   std::string big(5000, 'k');
   values_t whole = datums_of(cols, {"a", big});
-  CHECK(sm2::idx_insert(ix, whole.d(), whole.null(), 1, sm2::id_key(1), {},
-                        {}) == -1);
+  CHECK(sm2::idx_insert(ix, whole.d(), whole.null(), sm2::id_key(1), {}, {}) ==
+        -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_KEYTOOLONG);
   values_t nulled = datums_of(cols, {std::nullopt, big});
-  CHECK(sm2::idx_insert(ix, nulled.d(), nulled.null(), 2, sm2::id_key(2), {},
+  CHECK(sm2::idx_insert(ix, nulled.d(), nulled.null(), sm2::id_key(2), {},
                         {}) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_KEYTOOLONG);
-  CHECK(sm2::idx_delete(ix, whole.d(), whole.null(), 1, sm2::id_key(1)) == -1);
+  CHECK(sm2::idx_delete(ix, whole.d(), whole.null(), sm2::id_key(1)) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_KEYTOOLONG);
   values_t small = datums_of(cols, {"a", "b"});
-  REQUIRE_MESSAGE(sm2::idx_insert(ix, small.d(), small.null(), 3,
-                                  sm2::id_key(3), {}, {}) == 0,
-                  sm1::errmsg());
+  REQUIRE_MESSAGE(
+      sm2::idx_insert(ix, small.d(), small.null(), sm2::id_key(3), {}, {}) == 0,
+      sm1::errmsg());
   sm2::index_scan_t *scan = nullptr;
   REQUIRE(sm2::idx_scan(ix, nullptr, nullptr, scan) == 0);
   uint64_t rowno;
@@ -516,11 +514,11 @@ TEST_CASE("at read committed an entry committed since begin is still deleted") {
   values_t d = datums_of(cols, {"taken"});
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
   REQUIRE(sm1::begin(b, sm1::xctlevel_t::read_committed) == 0);
-  REQUIRE(sm2::idx_insert(ib, d.d(), d.null(), 1, sm2::id_key(1), {}, {}) == 0);
+  REQUIRE(sm2::idx_insert(ib, d.d(), d.null(), sm2::id_key(1), {}, {}) == 0);
   REQUIRE(sm1::commit(b) == 0);
-  REQUIRE_MESSAGE(sm2::idx_delete(ia, d.d(), d.null(), 1, sm2::id_key(1)) == 0,
+  REQUIRE_MESSAGE(sm2::idx_delete(ia, d.d(), d.null(), sm2::id_key(1)) == 0,
                   sm1::errmsg());
-  CHECK(sm2::idx_delete(ia, d.d(), d.null(), 1, sm2::id_key(1)) == -1);
+  CHECK(sm2::idx_delete(ia, d.d(), d.null(), sm2::id_key(1)) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   REQUIRE(sm1::commit(a) == 0);
   REQUIRE(sm1::begin(a, sm1::xctlevel_t::read_committed) == 0);
@@ -555,8 +553,8 @@ TEST_CASE("index and heap entries share a store without meeting") {
     uint64_t rowno;
     REQUIRE(sm2::rel_insert(rel, d, dn, rowno) == 0);
     rows.push_back(rowno);
-    REQUIRE(sm2::idx_insert(v % 2 ? b : a, d, dn, rowno, sm2::id_key(rowno), {},
-                            {}) == 0);
+    REQUIRE(sm2::idx_insert(v % 2 ? b : a, d, dn, sm2::id_key(rowno), {}, {}) ==
+            0);
   }
   CHECK(scan_all(a, nullptr, nullptr) ==
         std::vector<uint64_t>{rows[0], rows[2], rows[4]});
@@ -597,7 +595,7 @@ TEST_CASE("an index scan seeks forward, and index calls refuse misuse") {
   for (int32_t v = 0; v < 10; v++) {
     sm2::datum_t d[1] = {sm2::datum_from_int32(v)};
     bool dn[1] = {false};
-    REQUIRE(sm2::idx_insert(ix, d, dn, static_cast<uint64_t>(v + 1),
+    REQUIRE(sm2::idx_insert(ix, d, dn,
                             sm2::id_key(static_cast<uint64_t>(v + 1)), {},
                             {}) == 0);
   }
@@ -621,14 +619,14 @@ TEST_CASE("an index scan seeks forward, and index calls refuse misuse") {
   CHECK(sm2::idx_open(s, db.store(), 3, {}, false, {}, false, out) == -1);
   sm2::datum_t two[2] = {sd[0], sd[0]};
   bool twon[2] = {false, false};
-  CHECK(sm2::idx_insert(ix, two, twon, 1, sm2::id_key(1), {}, {}) == -1);
+  CHECK(sm2::idx_insert(ix, two, twon, sm2::id_key(1), {}, {}) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   sm2::bound_t none{{}, {}, true}, many{two, twon, true};
   CHECK(sm2::idx_scan(ix, &none, nullptr, scan) == -1);
   CHECK(sm2::idx_scan(ix, &many, nullptr, scan) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   sm2::datum_t ad[1] = {sm2::datum_from_int32(99)};
-  CHECK(sm2::idx_delete(ix, ad, sn, 1, sm2::id_key(1)) == -1);
+  CHECK(sm2::idx_delete(ix, ad, sn, sm2::id_key(1)) == -1);
   CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
   REQUIRE(sm1::commit(s) == 0);
   sm2::idx_close(ix);

@@ -105,7 +105,8 @@ static TableScanDesc smtable_scan_begin(Relation rel, Snapshot snapshot,
   scan->base.rs_snapshot = snapshot;
   scan->base.rs_flags = flags;
   scan->keyed = (flags & SO_TYPE_SAMPLESCAN) && keyed(rel);
-  scan->scan = smstore_beginscan(rel, !scan->keyed);
+  /* A table with a primary key has no rownos: its rows are in key order. */
+  scan->scan = smstore_beginscan(rel, !keyed(rel));
   if (flags & SO_TYPE_SAMPLESCAN)
     scan->nblocks = scan->keyed ? (BlockNumber)smstore_sample_slots(rel)
                                 : sample_blocks(rel);
@@ -129,7 +130,7 @@ static void smtable_scan_rescan(TableScanDesc sscan, struct ScanKeyData *key,
   if (!(sscan->rs_flags & SO_TYPE_SAMPLESCAN))
     refuse<void>();
   smstore_endscan(scan->scan);
-  scan->scan = smstore_beginscan(sscan->rs_rd, !scan->keyed);
+  scan->scan = smstore_beginscan(sscan->rs_rd, !keyed(sscan->rs_rd));
   scan->nblocks = scan->keyed ? (BlockNumber)smstore_sample_slots(sscan->rs_rd)
                               : sample_blocks(sscan->rs_rd);
   scan->started = false;

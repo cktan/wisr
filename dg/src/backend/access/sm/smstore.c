@@ -4608,7 +4608,8 @@ static double compression(const sm_stats_t &st) {
  * but when the analyze found nothing on disk, its compression is unknown,
  * and a flush since would read as a shrink, so the growth is then its row
  * numbers now over then, which counts inserts and not deletes
- * (STATISTICS.md section 2.2).
+ * (STATISTICS.md section 2.2).  A table with a primary key draws no row
+ * numbers (../sm/ROWKEY.md section 2.1), and its bytes say all the same.
  */
 static double growth(sm_tbl_t *tbl, const sm_stats_t &st, double *now) {
   uint64_t disk, mem, n;
@@ -4617,10 +4618,11 @@ static double growth(sm_tbl_t *tbl, const sm_stats_t &st, double *now) {
   if (sm_tbl_size(tbl, &disk, &mem) != 0)
     sm_error("size a table");
   *now = disk + mem * c;
-  if (st.heap_disk == 0) {
+  /* A table with a primary key has no row numbers: its bytes say. */
+  if (st.heap_disk == 0 && st.rowno_limit > 0) {
     if (sm_tbl_rowno_limit(tbl, &n) != 0)
       sm_error("read a table's row numbers");
-    return st.rowno_limit > 0 ? (double)n / st.rowno_limit : 1.0;
+    return (double)n / st.rowno_limit;
   }
   then = st.heap_disk + st.heap_mem * c;
   return then > 0 ? *now / then : 1.0;
@@ -6148,7 +6150,8 @@ bool smstore_index_getrowno(smstore_scan_t *scan, uint64 *rowno) {
 
 /*
  * The entry's INCLUDE columns, from its value, into the slot's columns
- * after the key's.  The value holds the rowno and the cut flag first.
+ * after the key's.  The value holds the cut flag first, and the row's key
+ * last.
  */
 static void entry_includes(smstore_scan_t *scan, TupleTableSlot *slot) {
   int nkeys = scan->form->indnkeyatts;
@@ -6164,8 +6167,8 @@ static void entry_includes(smstore_scan_t *scan, TupleTableSlot *slot) {
                         scan->entry_ncols) != 0)
     sm_error("read an index entry");
   for (int i = nkeys; i < scan->form->indnatts; i++) {
-    slot->tts_values[i] = (Datum)scan->entry_values[2 + i - nkeys];
-    slot->tts_isnull[i] = scan->entry_isnull[2 + i - nkeys];
+    slot->tts_values[i] = (Datum)scan->entry_values[1 + i - nkeys];
+    slot->tts_isnull[i] = scan->entry_isnull[1 + i - nkeys];
   }
 }
 

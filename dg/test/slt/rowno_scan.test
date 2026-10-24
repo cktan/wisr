@@ -14,9 +14,9 @@
 # 7. Join on rowno in a nested loop, the inner side a TID scan rescanned
 #    for each outer row, plain and left, with rownos missing and NULL.
 # 8. Name a range of rownos: still a sequential scan, and right.
-# 9. In a table with a primary key, whose rows a rowno reaches only
-#    through the _id index, rowno = n and a join on rowno plan no TID
-#    scan, and fetch the same rows.
+# 9. In a table with a primary key, whose rows have no _id, so a rowno
+#    of 0 (../sm/ROWKEY.md section 2.1), rowno = n and a join on rowno
+#    plan no TID scan, and fetch no row.
 
 onlyif digres
 statement ok
@@ -209,7 +209,7 @@ onlyif digres
 query T nosort
 select b from k where rowno = 5
 ----
-k5
+
 
 onlyif digres
 query T nosort
@@ -225,5 +225,4 @@ onlyif digres
 query IT nosort
 select j.n, k.b from j join k on k.rowno = j.n order by j.n
 ----
-2	k2
-5	k5
+

@@ -300,11 +300,11 @@ void check_agree(sm3::table_t *t) {
     if (sm3::tbl_index_state(t, x.oid) == sm3::index_state_t::failed) {
       continue;
     }
-    // The entry's value: rowno, cut, then the INCLUDE columns.
+    // The entry's value: cut, the INCLUDE columns, then the row key.
     std::vector<sm2::attribute_t> vschema = {
-        {&sm2::type_int8, -1, false, std::nullopt},
         {&sm2::type_bool, -1, false, std::nullopt}};
     vschema.insert(vschema.end(), x.include.begin(), x.include.end());
+    vschema.push_back({&sm2::type_bytea, -1, false, std::nullopt});
     sm2::tup_desc_t vdesc(vschema);
     size_t entries = 0, belonging = 0;
     uint64_t rowno;
@@ -362,7 +362,7 @@ void check_agree(sm3::table_t *t) {
         for (size_t i = 0; i < x.include_attnums.size(); i++) {
           sm2::datum_t inc;
           bool inc_null;
-          REQUIRE(sm2::tup_decode(vdesc, value, 2 + i, inc, inc_null) == 0);
+          REQUIRE(sm2::tup_decode(vdesc, value, 1 + i, inc, inc_null) == 0);
           int32_t att = x.include_attnums[i];
           CHECK(text_of(inc, inc_null) == text_of(d[att], n[att]));
         }

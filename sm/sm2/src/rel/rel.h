@@ -38,19 +38,15 @@ struct sm2::rel_t {
 
 /*
  * A cursor over a rel's rows: by _id, over the rows of a rel keyed
- * by _id or over a keyed rel's _id index; or by key, over a keyed
- * rel's rows (idx_scan_rows).
+ * by _id; or by key, over a keyed rel's rows (idx_scan_rows).
  */
 struct sm2::rel_scan_t {
   sm1::scan_t *scan;
   sm1::session_t *session;
   uint64_t storeid;
   uint16_t relid;
-  bool keyed;                   /* walks a keyed rel's _id index */
-  bool by_key;                  /* walks the rows, in key order */
-  sm1::rawpin_t *pin = nullptr; /* a keyed rel's row, read by its key */
-  std::string own;              /* the last row's key, where made here */
-  std::string_view key;         /* the last row's key: own, or sm1's */
+  bool by_key;          /* walks a keyed rel's rows, in key order */
+  std::string_view key; /* the last row's key, sm1's */
 };
 
 #endif

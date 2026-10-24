@@ -531,12 +531,10 @@ int tup_check(const tup_desc_t& desc, std::string_view tuple);
  * A rel (../CLUSTER.md §2): one table's rows in one sm1 store,
  * under a 2-byte relid the caller chooses, each keyed by its
  * clustering key: the encoded columns of the table's primary key,
- * or, for a table without one, its _id, big-endian. Every row has
- * an _id, a number from the table's sequence that never changes,
- * and a row's value is its _id, big-endian, then its tuple. A rel
- * keyed by a primary key keeps an index of its own, under id_relid,
- * from each row's _id to its key, so that a row is found by its
- * _id as by its key.
+ * or, for a table without one, its _id, big-endian, a number from
+ * the table's sequence that never changes. A row of a table with a
+ * primary key has no _id (../ROWKEY.md §2.1). A row's value is its
+ * tuple alone.
  *
  * A row's key, as the calls below take and give it, is its sm1 key
  * less the relid: encode_key of its primary key's columns, or
@@ -547,7 +545,7 @@ int tup_check(const tup_desc_t& desc, std::string_view tuple);
  * would have to undo.
  *
  * A tuple a rel hands out -- a row read, scanned, or replaced --
- * is the encoded tuple, without its _id, for the caller to decode
+ * is the encoded tuple, for the caller to decode
  * with tup_decode or tup_deform under rel_schema, only the columns
  * it needs. It views sm1's memory and, as sm1's reads do, stays
  * valid until the next call on the rel's session.
@@ -560,7 +558,11 @@ struct rel_t;
 /* A cursor over a rel's rows, in _id order, or a primary key's order. */
 struct rel_scan_t;
 
-/* The relid of a rel's _id index, in every store (../CLUSTER.md §3). */
+/*
+ * A relid no index takes, in every store: once a rel's _id index's
+ * (../CLUSTER.md §3), which went with a keyed row's _id
+ * (../ROWKEY.md §2.1).
+ */
 constexpr uint16_t id_relid = 0xFFFE;
 
 /*
@@ -647,11 +649,12 @@ int rel_insert(rel_t* rel, std::span<const datum_t> datums,
                std::string* key = nullptr);
 
 /*
- * Draw an _id from the rel's sequence, for a row rel_insert_at
+ * Draw an _id from a keyless rel's sequence, for a row rel_insert_at
  * is to insert: a caller that must write something of the row
  * before the row itself -- the entry of a unique index, to learn
  * of a duplicate first -- needs its _id early. An _id drawn and
- * never used is a gap, as a sequence leaves.
+ * never used is a gap, as a sequence leaves. A keyed rel's rows
+ * have none: SM_ERR_INVALID.
  */
 int rel_reserve(rel_t* rel, uint64_t& id);
 
@@ -660,35 +663,9 @@ int rel_insert_at(rel_t* rel, uint64_t id, std::span<const datum_t> datums,
                   std::span<const bool> isnull, std::string* key = nullptr);
 
 /*
- * The key of the row with _id id, as the transaction's snapshot
- * shows it: 0 with key set, 1 if there is none, or -1. In a rel
- * keyed by _id it is id_key(id), found with no read, whether or
- * not the row is there.
- */
-int rel_find(rel_t* rel, uint64_t id, std::string& key);
-
-/*
- * The key of the row with _id id now, past the snapshot: from the
- * newest committed version of its entry in the _id index, or this
- * transaction's own, at READ COMMITTED, under a lock rel_lock_id
- * took. Returns as rel_find. A row another transaction moved since
- * the snapshot is found at its new key.
- */
-int rel_find_latest(rel_t* rel, uint64_t id, std::string& key);
-
-/*
- * Lock the entry of _id id in the _id index in mode, as sm1::lock
- * does, so that no other transaction moves the row or deletes it
- * until this one ends; with nowait, as sm1::trylock, 1 with nothing
- * taken if it would have waited. A rel keyed by _id has no such
- * entry, and nothing is locked.
- */
-int rel_lock_id(rel_t* rel, uint64_t id, sm1::lockmode_t mode,
-                bool nowait = false);
-
-/*
  * Read the row at key as the transaction sees it: 0 with tuple set,
- * and id if wanted, 1 if there is none, -1 on error, as sm1::read.
+ * and id if wanted, a keyless row's _id from its key or 0 for a
+ * keyed row, 1 if there is none, -1 on error, as sm1::read.
  * The tuple views sm1 memory and is valid only until the next call
  * on this rel's session; any by-reference datum_t decoded from it
  * shares this lifetime.
@@ -732,12 +709,13 @@ int rel_lock(rel_t* rel, std::string_view key, sm1::lockmode_t mode);
 int rel_trylock(rel_t* rel, std::string_view key, sm1::lockmode_t mode);
 
 /*
- * Replace the row at key, whose _id is id, with tuple, which must
- * pass tup_check. A row whose primary key the new values change
- * moves (../CLUSTER.md §4): its old key is erased, and it is
- * inserted under the new one, keeping its _id, whose entry is
- * changed to name it there; a key another row has fails with
- * SM_ERR_DUPKEY. moved_to, if wanted, is set to the row's key after.
+ * Replace the row at key, whose _id is id in a keyless rel, 0 in a
+ * keyed one, with tuple, which must pass tup_check. A row whose
+ * primary key the new values change moves (../CLUSTER.md §4): its
+ * old key is erased, with a move's tombstone (../ROWKEY.md §2.3),
+ * and it is inserted under the new one; a key another row has fails
+ * with SM_ERR_DUPKEY. moved_to, if wanted, is set to the row's key
+ * after.
  *
  * The forms with pin hand back the tuple replaced, which the
  * caller maintaining indexes needs, pinned into pin, as sm1::update
@@ -760,22 +738,17 @@ int rel_update(rel_t* rel, std::string_view key, uint64_t id,
                sm1::rawpin_t* pin, std::string_view& old, bool hold = false,
                std::string* moved_to = nullptr);
 
-/*
- * Delete the row at key, and its entry in the _id index; with pin,
- * its tuple pinned into it.
- */
+/* Delete the row at key; with pin, its tuple pinned into it. */
 int rel_delete(rel_t* rel, std::string_view key);
 int rel_delete(rel_t* rel, std::string_view key, sm1::rawpin_t* pin,
                std::string_view& old, bool hold = false);
 
 /*
  * Put a row into a bulk load (sm1::load_open) of the rel's store,
- * as rel_insert would write it: encoded, with a new _id from the
- * rel's sequence, into stream, which the caller gives the rel's
- * rows alone, and its entry in the _id index into id_stream, the
- * _id index's alone. A rel keyed by _id puts nothing in id_stream,
- * and its rows arrive in ascending order of their keys; a keyed
- * rel's _id entries do. Nothing is in the store until the load is
+ * as rel_insert would write it: encoded, a keyless one with a new
+ * _id from the rel's sequence, into stream, which the caller gives
+ * the rel's rows alone. A keyless rel's rows arrive in ascending
+ * order of their keys. Nothing is in the store until the load is
  * closed, where a duplicate key fails with SM_ERR_DUPKEY.
  *
  * Returns 0; -1 on error; or 1, having drawn no _id and put
@@ -785,9 +758,8 @@ int rel_delete(rel_t* rel, std::string_view key, sm1::rawpin_t* pin,
  * that row, and those after it, with rel_insert.
  */
 int rel_load(rel_t* rel, sm1::loader_t* loader, size_t stream,
-             size_t id_stream, std::span<const datum_t> datums,
-             std::span<const bool> isnull, uint64_t& id,
-             std::string* key = nullptr);
+             std::span<const datum_t> datums, std::span<const bool> isnull,
+             uint64_t& id, std::string* key = nullptr);
 
 /*
  * Erase the datums out of line that the rel's writes with hold
@@ -852,15 +824,17 @@ int toast_fetch(sm1::session_t* session, std::string_view ptr,
 
 /*
  * Open a cursor over the rows with _id from first to last, both
- * included, in _id order, forward only; its view is fixed now, as
- * sm1::scan's is. In a keyed rel it walks the _id index, and reads
- * each row by its key, at the transaction's view.
+ * included, in _id order, forward only, of a rel without a primary
+ * key; its view is fixed now, as sm1::scan's is. A keyed rel's rows
+ * have no _id, and are scanned in key order (idx_scan_rows):
+ * SM_ERR_INVALID.
  */
 int rel_scan(rel_t* rel, uint64_t first, uint64_t last, rel_scan_t*& out);
 
 /*
- * The next row: 0 with id and tuple set, valid until the next call
- * on this cursor; 1 at the end; -1 on error.
+ * The next row: 0 with id, a keyless row's _id or 0 for a keyed
+ * row, and tuple set, valid until the next call on this cursor; 1
+ * at the end; -1 on error.
  */
 int rel_scannxt(rel_scan_t* scan, uint64_t& id, std::string_view& tuple);
 
@@ -988,27 +962,28 @@ int idx_open_primary(rel_t* rel, std::span<const attribute_t> include,
 void idx_close(index_t* index);
 
 /*
- * The schema of an entry's value: _id, cut, the INCLUDE columns,
- * then in a keyed table's secondary index the row's key.
+ * The schema of an entry's value: cut, the INCLUDE columns, then the
+ * row's key, as a bytea (../ROWKEY.md §2.1).
  */
 std::span<const attribute_t> idx_value_schema(const index_t* index);
 
 /*
- * Add the entry for the row with _id id and key row: its key
- * columns' datums key and its INCLUDE columns' include. A key too
+ * Add the entry for the row with key row: its key columns' datums
+ * key and its INCLUDE columns' include. A key too
  * long for sm1 is cut to fit and marked cut, for the caller to
  * recheck against the row. In a unique index it fails with
  * SM_ERR_KEYTOOLONG instead, and a key already present fails with
  * sm1's SM_ERR_DUPKEY.
  */
 int idx_insert(index_t* index, std::span<const datum_t> key,
-               std::span<const bool> key_isnull, uint64_t id,
-               std::string_view row, std::span<const datum_t> include,
+               std::span<const bool> key_isnull, std::string_view row,
+               std::span<const datum_t> include,
                std::span<const bool> include_isnull);
 
 /*
  * The row that has key in a unique index, as the transaction's
- * snapshot shows: 0 with its _id, and its key if wanted, 1 if none
+ * snapshot shows: 0 with its _id, a keyless row's or 0 for a keyed
+ * row's, and its key if wanted, 1 if none
  * has, or -1. It locks nothing and waits for no one. So a row put
  * under the key since the snapshot, committed or not, is not
  * found: a caller that must know inserts the entry (idx_insert),
@@ -1035,29 +1010,27 @@ int idx_find_latest(index_t* index, std::span<const datum_t> key,
                     std::string* row = nullptr);
 
 /*
- * Put the entry for the row with _id id and key row into a bulk
- * load of the index's store, as idx_insert would write it, into
+ * Put the entry for the row with key row into a bulk load of the
+ * index's store, as idx_insert would write it, into
  * stream, which the caller gives this index's entries alone and
  * did not declare ascending. A key already in the load fails with
  * SM_ERR_DUPKEY, when the load is closed.
  */
 int idx_load(index_t* index, sm1::loader_t* loader, size_t stream,
              std::span<const datum_t> key, std::span<const bool> key_isnull,
-             uint64_t id, std::string_view row,
-             std::span<const datum_t> include,
+             std::string_view row, std::span<const datum_t> include,
              std::span<const bool> include_isnull);
 
 /*
- * Remove the entry idx_insert added for key and the row with _id
- * id and key row. At read committed an entry committed after the
+ * Remove the entry idx_insert added for key and the row with key
+ * row. At read committed an entry committed after the
  * transaction began is removed all the same: where sm1 answers
  * SM_ERR_UPDATED, this reads the entry's newest version and
  * repeats the erase, an entry having no filter to re-check
  * (SM2_DESIGN.md §5).
  */
 int idx_delete(index_t* index, std::span<const datum_t> key,
-               std::span<const bool> key_isnull, uint64_t id,
-               std::string_view row);
+               std::span<const bool> key_isnull, std::string_view row);
 
 /*
  * Open a cursor over the entries between lo and hi, either of
@@ -1071,14 +1044,15 @@ int idx_scan(index_t* index, const bound_t* lo, const bound_t* hi,
 /*
  * Open a cursor over the rows of a primary key index (idx_open_primary)
  * between lo and hi, as idx_scan takes them, in key order: the rows
- * themselves, which rel_scannxt hands out with their _id, and
+ * themselves, which rel_scannxt hands out with no _id, 0, and
  * rel_scan_key their key. It seeks no _id (rel_scan_seek fails).
  */
 int idx_scan_rows(index_t* index, const bound_t* lo, const bound_t* hi,
                   rel_scan_t*& out, bool* widened = nullptr);
 
 /*
- * The next entry: 0 with its row's _id, whether its key was cut,
+ * The next entry: 0 with its row's _id, a keyless row's or 0 for a
+ * keyed row's, whether its key was cut,
  * and its value tuple, to decode under idx_value_schema, set; 1 at
  * the end; -1 on error.
  */

@@ -8571,3 +8571,47 @@ is to have no `_id`, so nothing may name its row by one.
   of the scan's key is deleted. `slt/add_column_volatile.test`
   adds a column drawn from a sequence to a table with a
   primary key.
+
+## Step 298: a table with a primary key has no _id
+
+`../sm/ROWKEY.md`'s step 4: a row of a table with a primary key
+has no `_id`, and nothing keeps one for it.
+
+- **A row's value is its tuple alone** (sm2 `rel.cc`), in
+  either kind of table: a keyless row's `_id` is read from its
+  key, `be64(_id)`. A keyed row draws no `_id` from the table's
+  sequence, and `rel_insert`, `rel_load` and the scans give 0.
+- **The `_id` index is gone**: `id_entry()`, `set_id_entry()`,
+  `erase_id_entry()`, `rel_find()`, `rel_find_latest()` and
+  `rel_lock_id()`; nothing is written under relid 0xFFFE, which
+  no index takes still. A move erases and inserts the row, and
+  a delete erases it, with no entry beside. A keyed rel's rows
+  are scanned in key order only: `rel_scan` by `_id` refuses
+  one, as `rel_reserve` does.
+- **An index entry's value is the cut flag, the INCLUDE
+  columns and the row's key**, for both kinds of table, with no
+  `_id`; `idx_insert`, `idx_load` and `idx_delete` take none.
+- **sm3 reads no row to write it by key** (`named()`): the
+  interim read of step 1 is gone. The arbiter reserves no `_id`
+  for a keyed row, a load opens no `_id` stream, and a rewrite
+  that drops a primary key draws the rows' `_id`s anew, in key
+  order. A primary key adds no bytes of its own
+  (`tbl_idx_size`), its entries being the rows, so
+  `pg_relation_size()` of one is 0. The table's sequence is
+  still made with it, and a keyed table draws nothing from it.
+- **digres**: a sample of a keyed table is by its bytes from
+  the start (`sample_table()`), as it has no `_id` limit; its
+  growth since ANALYZE is its bytes' (`growth()`); the table
+  AM scans a keyed table in key order always
+  (`smtable_scan_begin()`), a TID scan's too; an index-only
+  scan reads INCLUDE columns from the value's second
+  attribute.
+- **SQL's `rowno` of a keyed row is 0** until it is refused
+  there (`ROWKEY.md` §3.1): `slt/rowno_scan.test`'s keyed
+  table finds no row by it.
+- **Tests**: sm2's keyed rel tests have no `_id`, and its
+  follow test is one of `SM_ERR_MOVED`; sm3's keyed tests
+  expect 0 for every `_id`, and a new one adds a primary key to
+  a keyless table and finds its rows' `_id`s gone, with nothing
+  under 0xFFFE; `server.sh` sizes a secondary index, the
+  primary key's being 0.

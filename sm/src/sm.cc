@@ -846,9 +846,8 @@ int sm_lock_status(sm_env_t *env, std::vector<sm_lock_status_t> &out) {
       } else if (r.type == sm1::LOCKTYPE_ROW && r.storeid != 0 &&
                  r.key.size() >= 2) {
         // A row's, in its table's store: be16(relid) then its key,
-        // be64(_id) in a table keyed by _id; or its _id entry's,
-        // be16 of the _id index's relid then be64(_id). A row keyed
-        // by its primary key names no _id (../CLUSTER.md §10).
+        // be64(_id) in a table keyed by _id. A row keyed by its
+        // primary key has no _id (../ROWKEY.md §2.5).
         auto it = env->catalogs.find(r.dbname);
         auto def = it == env->catalogs.end()
                        ? nullptr
@@ -860,9 +859,7 @@ int sm_lock_status(sm_env_t *env, std::vector<sm_lock_status_t> &out) {
         uint16_t relid =
             static_cast<uint16_t>(static_cast<uint8_t>(r.key[0]) << 8 |
                                   static_cast<uint8_t>(r.key[1]));
-        bool by_id =
-            r.key.size() == 10 &&
-            (relid == sm2::id_relid || (relid == sm3::heap_relid && !keyed));
+        bool by_id = r.key.size() == 10 && relid == sm3::heap_relid && !keyed;
         if (by_id || (relid == sm3::heap_relid && keyed)) {
           st.name = SM_LOCKNAME_ROW;
           st.rowno = by_id ? sm0::get_be64(r.key.data() + 2) : 0;

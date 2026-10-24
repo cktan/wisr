@@ -2,9 +2,9 @@
  * index.cc -- the index rel (SM2_DESIGN.md §5, ../CLUSTER.md §3):
  * a table's index entries in its sm1 store, under the index's
  * relid, keyed by their encoded key columns and naming their row by
- * its key, holding the row's _id, the cut flag, the INCLUDE columns
- * and in a keyed table the row's key, as a tuple. A primary key is
- * an index whose entries are the rel's rows.
+ * its key, holding the cut flag, the INCLUDE columns and the row's
+ * key, as a tuple (../ROWKEY.md §2.1). A primary key is an index
+ * whose entries are the rel's rows.
  *
  * A scan's bounds rest on the key encoding being prefix-free
  * column by column (TYPE.md §2): the encoding P of an entry's
@@ -31,7 +31,7 @@ struct sm2::index_t {
   std::span<const key_column_t> key; /* borrowed */
   bool unique;
   bool keyed; /* its table's rows are keyed by a primary key */
-  std::vector<attribute_t> value; /* _id, cut, INCLUDE, then a row key */
+  std::vector<attribute_t> value; /* cut, INCLUDE, then a row key */
   tup_desc_t value_desc;          /* over value */
   /*
    * A primary key's: the rel whose rows are its entries, and the
@@ -46,7 +46,7 @@ struct sm2::index_scan_t {
   const index_t *index = nullptr;
   std::string_view key; /* the last entry's sm1 key, sm1's to keep */
   bool cut = false;     /* the last entry's cut flag */
-  uint64_t id = 0;      /* the last entry's row's _id */
+  uint64_t id = 0;      /* the last entry's row's _id, 0 if keyed */
   std::string row;      /* its row's key, where made here */
   std::string value;    /* a primary key's entry value, made here */
   /* idx_scan_key's, a variable-width one made a varlena in place */
@@ -177,15 +177,12 @@ int lower_key(const sm2::index_t *ix, const sm2::bound_t &lo, std::string &out,
 
 namespace sm2 {
 
-/* The index's value schema: _id, cut, include, then a row key if keyed. */
+/* The index's value schema: cut, include, then the row's key. */
 static std::vector<attribute_t>
-value_schema(std::span<const attribute_t> include, bool keyed) {
-  std::vector<attribute_t> value = {{&type_int8, -1, false, std::nullopt},
-                                    {&type_bool, -1, false, std::nullopt}};
+value_schema(std::span<const attribute_t> include) {
+  std::vector<attribute_t> value = {{&type_bool, -1, false, std::nullopt}};
   value.insert(value.end(), include.begin(), include.end());
-  if (keyed) {
-    value.push_back({&type_bytea, -1, false, std::nullopt});
-  }
+  value.push_back({&type_bytea, -1, false, std::nullopt});
   return value;
 }
 
@@ -210,12 +207,12 @@ int idx_open(sm1::session_t *session, uint64_t storeid, uint16_t relid,
                          "index: a key column without a type");
     }
   }
-  std::vector<attribute_t> value = value_schema(include, keyed);
-  for (size_t i = 2; i < value.size(); i++) {
+  std::vector<attribute_t> value = value_schema(include);
+  for (size_t i = 1; i + 1 < value.size(); i++) {
     if (value[i].type == nullptr ||
         datum_width(value[i].type, value[i].typmod) == 0) {
       return sm1::seterr(sm1::SM_ERR_INVALID,
-                         "index: INCLUDE column " + std::to_string(i - 2) +
+                         "index: INCLUDE column " + std::to_string(i - 1) +
                              " has no type, or a typmod its type refuses");
     }
   }
@@ -248,7 +245,7 @@ int idx_open_primary(rel_t *rel, std::span<const attribute_t> include,
 /* Close an index; nullptr is a no-op. */
 void idx_close(index_t *index) { delete index; }
 
-/* The schema of an entry's value: _id, cut, INCLUDE, a row key. */
+/* The schema of an entry's value: cut, INCLUDE, a row key. */
 std::span<const attribute_t> idx_value_schema(const index_t *index) {
   return index->value;
 }
@@ -262,14 +259,13 @@ static int need_entries(const index_t *index) {
 }
 
 /*
- * The entry of the row with _id id and key row, as sm1 holds it:
- * its key in k and its value in value, which is the _id, whether
- * the key was cut, the INCLUDE columns, and in a keyed table the
- * row's key.
+ * The entry of the row with key row, as sm1 holds it: its key in k
+ * and its value in value, which is whether the key was cut, the
+ * INCLUDE columns, and the row's key.
  */
 static int entry_of(index_t *index, std::span<const datum_t> key,
-                    std::span<const bool> key_isnull, uint64_t id,
-                    std::string_view row, std::span<const datum_t> include,
+                    std::span<const bool> key_isnull, std::string_view row,
+                    std::span<const datum_t> include,
                     std::span<const bool> include_isnull, std::string &k,
                     std::string &value) {
   bool cut;
@@ -277,37 +273,32 @@ static int entry_of(index_t *index, std::span<const datum_t> key,
       entry_key(index, key, key_isnull, row, k, cut) != 0) {
     return -1;
   }
-  size_t extra = index->keyed ? 3 : 2;
-  if (include.size() + extra != index->value.size() ||
+  if (include.size() + 2 != index->value.size() ||
       include_isnull.size() != include.size()) {
     return sm1::seterr(
         sm1::SM_ERR_INVALID,
         "index: a datum and null flag for every INCLUDE column, no more");
   }
-  // The value: _id, cut, the INCLUDE columns, then the row's key.
-  std::vector<datum_t> datums = {datum_from_int64(static_cast<int64_t>(id)),
-                                 datum_from_bool(cut)};
+  // The value: cut, the INCLUDE columns, then the row's key.
+  std::vector<datum_t> datums = {datum_from_bool(cut)};
   datums.insert(datums.end(), include.begin(), include.end());
-  std::string row_varlena;
-  if (index->keyed) {
-    row_varlena = make_varlena(row);
-    datums.push_back(datum_from_ptr(row_varlena.data()));
-  }
+  std::string row_varlena = make_varlena(row);
+  datums.push_back(datum_from_ptr(row_varlena.data()));
   auto nulls = std::make_unique<bool[]>(datums.size());
   for (size_t i = 0; i < include.size(); i++) {
-    nulls[i + 2] = include_isnull[i];
+    nulls[i + 1] = include_isnull[i];
   }
   return tup_encode(index->value_desc, datums,
                     std::span<const bool>(nulls.get(), datums.size()), value);
 }
 
-/* Add the entry for the row with _id id and key row; see sm2.h. */
+/* Add the entry for the row with key row; see sm2.h. */
 int idx_insert(index_t *index, std::span<const datum_t> key,
-               std::span<const bool> key_isnull, uint64_t id,
-               std::string_view row, std::span<const datum_t> include,
+               std::span<const bool> key_isnull, std::string_view row,
+               std::span<const datum_t> include,
                std::span<const bool> include_isnull) {
   std::string k, value;
-  if (entry_of(index, key, key_isnull, id, row, include, include_isnull, k,
+  if (entry_of(index, key, key_isnull, row, include, include_isnull, k,
                value) != 0) {
     return -1;
   }
@@ -336,34 +327,19 @@ static int unique_key(index_t *index, std::span<const datum_t> key,
 }
 
 /*
- * The _id of the row an entry of a unique index names, and its key
- * if wanted, from the entry's sm1 key k and its value: a primary
- * key's value is the row's.
+ * The key of the row an entry names, and its _id, a keyless row's
+ * from its key or 0 for a keyed row, from the entry's sm1 key k and
+ * its value: a primary key's entry is the row, at its key.
  */
 static int entry_row(const index_t *index, std::string_view k,
-                     std::string_view value, uint64_t &id, std::string *row) {
+                     std::string_view value, uint64_t &id, std::string &row) {
+  id = 0;
   if (index->rel != nullptr) {
-    if (!get_be(value, id)) {
-      return sm1::seterr(sm1::SM_ERR_CORRUPT, "rel: a row without its _id");
-    }
-    if (row) {
-      row->assign(k.substr(relid_len));
-    }
+    row.assign(k.substr(relid_len));
     return 0;
   }
   datum_t d;
   bool isnull;
-  if (tup_decode(index->value_desc, value, 0, d, isnull) != 0) {
-    return -1;
-  }
-  id = static_cast<uint64_t>(datum_to_int64(d));
-  if (!row) {
-    return 0;
-  }
-  if (!index->keyed) {
-    *row = id_key(id);
-    return 0;
-  }
   if (tup_decode(index->value_desc, value, index->value.size() - 1, d,
                  isnull) != 0) {
     return -1;
@@ -372,7 +348,11 @@ static int entry_row(const index_t *index, std::string_view k,
   if (datum_bytes(&type_bytea, -1, d, v) != 0) {
     return -1;
   }
-  row->assign(varlena_payload(v));
+  row.assign(varlena_payload(v));
+  std::string_view r = row;
+  if (!index->keyed && !get_be(r, id)) {
+    return sm1::seterr(sm1::SM_ERR_CORRUPT, "index: a row key without its _id");
+  }
   return 0;
 }
 
@@ -386,7 +366,17 @@ int idx_find(index_t *index, std::span<const datum_t> key,
   }
   std::string_view value;
   rc = sm1::read(index->session, index->storeid, k, value);
-  return rc != 0 ? rc : entry_row(index, k, value, id, row);
+  if (rc != 0) {
+    return rc;
+  }
+  std::string r;
+  if (entry_row(index, k, value, id, r) != 0) {
+    return -1;
+  }
+  if (row) {
+    *row = std::move(r);
+  }
+  return 0;
 }
 
 /* The row that has a unique key now, under a lock; see sm2.h. */
@@ -406,28 +396,35 @@ int idx_find_latest(index_t *index, std::span<const datum_t> key,
   }
   std::string_view value;
   rc = sm1::read_latest(index->session, index->storeid, k, value);
-  return rc != 0 ? rc : entry_row(index, k, value, id, row);
+  if (rc != 0) {
+    return rc;
+  }
+  std::string r;
+  if (entry_row(index, k, value, id, r) != 0) {
+    return -1;
+  }
+  if (row) {
+    *row = std::move(r);
+  }
+  return 0;
 }
 
-/* Put the entry for the row with _id id into a load; see sm2.h. */
+/* Put the entry for the row with key row into a load; see sm2.h. */
 int idx_load(index_t *index, sm1::loader_t *loader, size_t stream,
              std::span<const datum_t> key, std::span<const bool> key_isnull,
-             uint64_t id, std::string_view row,
-             std::span<const datum_t> include,
+             std::string_view row, std::span<const datum_t> include,
              std::span<const bool> include_isnull) {
   std::string k, value;
-  if (entry_of(index, key, key_isnull, id, row, include, include_isnull, k,
+  if (entry_of(index, key, key_isnull, row, include, include_isnull, k,
                value) != 0) {
     return -1;
   }
   return sm1::load_put(loader, stream, k, value);
 }
 
-/* Remove the entry for key and the row with _id id and key row. */
+/* Remove the entry for key and the row with key row. */
 int idx_delete(index_t *index, std::span<const datum_t> key,
-               std::span<const bool> key_isnull, uint64_t id,
-               std::string_view row) {
-  (void)id;
+               std::span<const bool> key_isnull, std::string_view row) {
   std::string k;
   bool cut;
   if (need_entries(index) != 0 ||
@@ -524,9 +521,8 @@ int idx_scan_rows(index_t *index, const bound_t *lo, const bound_t *hi,
                 c) != 0) {
     return -1;
   }
-  out = new rel_scan_t{c,     index->session, index->storeid, index->relid,
-                       false, true,           nullptr,        {},
-                       {}};
+  out =
+      new rel_scan_t{c, index->session, index->storeid, index->relid, true, {}};
   if (widened) {
     *widened = wide;
   }
@@ -534,27 +530,26 @@ int idx_scan_rows(index_t *index, const bound_t *lo, const bound_t *hi,
 }
 
 /*
- * The entry value of a primary key's entry, the row whose value is
- * row: its _id, not cut, and the row's INCLUDE columns, into the
+ * The entry value of a primary key's entry, the row whose tuple is
+ * row: not cut, the row's INCLUDE columns, and its key, into the
  * cursor's own value.
  */
 static int primary_value(index_scan_t *scan, std::string_view row) {
   const index_t *ix = scan->index;
-  if (!get_be(row, scan->id)) {
-    return sm1::seterr(sm1::SM_ERR_CORRUPT, "rel: a row without its _id");
-  }
+  scan->id = 0;
   size_t n = ix->include_atts.size();
-  std::vector<datum_t> datums = {
-      datum_from_int64(static_cast<int64_t>(scan->id)), datum_from_bool(false)};
+  std::vector<datum_t> datums = {datum_from_bool(false)};
   auto nulls = std::make_unique<bool[]>(n + 2);
   for (size_t i = 0; i < n; i++) {
     datum_t d;
-    if (tup_decode(ix->rel->desc, row, ix->include_atts[i], d, nulls[i + 2]) !=
+    if (tup_decode(ix->rel->desc, row, ix->include_atts[i], d, nulls[i + 1]) !=
         0) {
       return -1;
     }
     datums.push_back(d);
   }
+  std::string row_varlena = make_varlena(scan->key.substr(relid_len));
+  datums.push_back(datum_from_ptr(row_varlena.data()));
   return tup_encode(ix->value_desc, datums,
                     std::span<const bool>(nulls.get(), n + 2), scan->value);
 }
@@ -579,19 +574,20 @@ int idx_scannxt(index_scan_t *scan, uint64_t &id, bool &cut,
     value = scan->value;
     return 0;
   }
-  // The value opens with the _id and the cut flag.
-  datum_t r, c;
-  bool r_null, c_null;
-  if (tup_decode(scan->index->value_desc, value, 0, r, r_null) != 0 ||
-      tup_decode(scan->index->value_desc, value, 1, c, c_null) != 0) {
+  // The value opens with the cut flag, and ends with the row's key.
+  datum_t c;
+  bool c_null;
+  if (tup_decode(scan->index->value_desc, value, 0, c, c_null) != 0) {
     return -1;
   }
-  if (r_null || c_null) {
+  if (c_null) {
     return sm1::seterr(sm1::SM_ERR_CORRUPT,
-                       "index: an entry without its _id or cut flag");
+                       "index: an entry without its cut flag");
   }
-  scan->id = static_cast<uint64_t>(datum_to_int64(r));
   scan->value.assign(value);
+  if (entry_row(scan->index, key, scan->value, scan->id, scan->row) != 0) {
+    return -1;
+  }
   id = scan->id;
   cut = datum_to_bool(c);
   scan->cut = cut;
@@ -604,11 +600,7 @@ std::string_view idx_scan_row(const index_scan_t *scan) {
   if (ix->rel != nullptr) {
     return scan->key.substr(relid_len);
   }
-  index_scan_t *s = const_cast<index_scan_t *>(scan);
-  if (entry_row(ix, scan->key, scan->value, s->id, &s->row) != 0) {
-    return {};
-  }
-  return s->row;
+  return scan->row;
 }
 
 /*

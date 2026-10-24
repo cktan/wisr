@@ -28,8 +28,7 @@
 struct sm3::loader_t {
   table_t *table = nullptr;
   sm1::loader_t *load = nullptr;
-  size_t heap = 0; /* the stream of the table's rows */
-  size_t ids = 0;  /* of their _id entries, keyed by a primary key */
+  size_t heap = 0;             /* the stream of the table's rows */
   std::vector<size_t> streams; /* the stream of each index, in order */
 };
 
@@ -369,14 +368,14 @@ int keys_equal(const sm3::index_def_t &x, const entry_t &a, const entry_t &b) {
 }
 
 /*
- * Add index i's entry e for the row r with _id id and key row. A
+ * Add index i's entry e for the row r with key row. A
  * key the index holds already is SM_ERR_DUPKEY, with the index in
  * sm1::errdup().
  */
 int add_entry(sm3::table_t *t, size_t i, const entry_t &e, const vals_t &r,
-              uint64_t id, std::string_view row) {
+              std::string_view row) {
   picked_t inc(r, t->def->indexes[i].include_attnums);
-  if (sm2::idx_insert(t->indexes[i], e.d(), e.null(), id, row, inc.d(),
+  if (sm2::idx_insert(t->indexes[i], e.d(), e.null(), row, inc.d(),
                       inc.null()) == 0) {
     return 0;
   }
@@ -388,13 +387,13 @@ int add_entry(sm3::table_t *t, size_t i, const entry_t &e, const vals_t &r,
 }
 
 /*
- * Remove index i's entry e for the row with _id id and key row.
+ * Remove index i's entry e for the row with key row.
  * While the index is pending, an entry that is not there is no
  * error: the build has not reached the row (SM3_DESIGN.md §3).
  */
-int remove_entry(sm3::table_t *t, size_t i, const entry_t &e, uint64_t id,
+int remove_entry(sm3::table_t *t, size_t i, const entry_t &e,
                  std::string_view row) {
-  if (sm2::idx_delete(t->indexes[i], e.d(), e.null(), id, row) == 0) {
+  if (sm2::idx_delete(t->indexes[i], e.d(), e.null(), row) == 0) {
     return 0;
   }
   return t->states[i] == sm3::index_state_t::pending &&
@@ -564,8 +563,9 @@ namespace {
 
 /*
  * Insert the row of values and isnull, then its entry in every
- * index: under a new _id, or under reserved if it is not 0, as a
- * rewrite keeps a row's. id is set on success.
+ * index: a keyless row under a new _id, or under reserved if it is
+ * not 0, as a rewrite keeps a row's; a keyed row with none, 0. id
+ * is set on success.
  */
 int insert_row(table_t *table, std::span<const sm2::datum_t> values,
                std::span<const bool> isnull, uint64_t reserved, uint64_t &id) {
@@ -586,7 +586,7 @@ int insert_row(table_t *table, std::span<const sm2::datum_t> values,
     entry_t e;
     if (fetch_for(table, table->def->indexes[i], row) != 0 ||
         make_entry(table, i, row.row(), e) != 0 ||
-        (e.belongs && add_entry(table, i, e, row.row(), r, key) != 0)) {
+        (e.belongs && add_entry(table, i, e, row.row(), key) != 0)) {
       return -1;
     }
   }
@@ -740,16 +740,18 @@ look:
   // not ended, and says at once if a row is there, when nothing
   // but these entries has been written. The row, under its key,
   // is the primary key's entry, and comes last of them.
+  // A keyless row's key is its _id, drawn now; a keyed row has none.
   uint64_t r = 0;
   std::string key;
-  if (sm2::rel_reserve(table->rel, r) != 0 ||
+  if ((!sm2::rel_keyed(table->rel) && sm2::rel_reserve(table->rel, r) != 0) ||
       sm2::rel_row_key(table->rel, r, values, isnull, key) != 0) {
     return -1;
   }
   for (size_t n = 0; n <= arb.size(); n++) {
     size_t i = n < arb.size() ? arb[n] : primary;
-    int rc = n < arb.size() ? add_entry(table, i, entry[i], row.row(), r, key)
-                            : sm2::rel_insert_at(table->rel, r, values, isnull);
+    int rc = n < arb.size() ? add_entry(table, i, entry[i], row.row(), key)
+             : r != 0       ? sm2::rel_insert_at(table->rel, r, values, isnull)
+                            : sm2::rel_insert(table->rel, values, isnull, r);
     if (rc == 0) {
       continue;
     }
@@ -759,7 +761,7 @@ look:
     // The key is a row's that the snapshot did not show: take
     // back the entries put in so far, and say which row has it.
     for (size_t m = 0; m < n; m++) {
-      if (remove_entry(table, arb[m], entry[arb[m]], r, key) != 0) {
+      if (remove_entry(table, arb[m], entry[arb[m]], key) != 0) {
         return -1;
       }
     }
@@ -785,7 +787,7 @@ look:
     entry_t e;
     if (fetch_for(table, def.indexes[i], row) != 0 ||
         make_entry(table, i, row.row(), e) != 0 ||
-        (e.belongs && add_entry(table, i, e, row.row(), r, key) != 0)) {
+        (e.belongs && add_entry(table, i, e, row.row(), key) != 0)) {
       return -1;
     }
   }
@@ -880,8 +882,8 @@ static int update_row(table_t *table, uint64_t id, std::string_view key,
         continue;
       }
     }
-    if ((was.belongs && remove_entry(table, i, was, id, key) != 0) ||
-        (is.belongs && add_entry(table, i, is, is_row.row(), id, at) != 0)) {
+    if ((was.belongs && remove_entry(table, i, was, key) != 0) ||
+        (is.belongs && add_entry(table, i, is, is_row.row(), at) != 0)) {
       return -1;
     }
   }
@@ -923,8 +925,8 @@ int tbl_update(table_t *table, uint64_t id,
  * tbl_delete, with ref and old both given or both null: with them,
  * the row deleted is pinned into ref, and old views it.
  */
-static int delete_row(table_t *table, uint64_t id, std::string_view key,
-                      pin_ref_t *ref, std::string_view *old) {
+static int delete_row(table_t *table, std::string_view key, pin_ref_t *ref,
+                      std::string_view *old) {
   // No old row until the write succeeds.
   if (old) {
     *old = {};
@@ -965,7 +967,7 @@ static int delete_row(table_t *table, uint64_t id, std::string_view key,
     entry_t was;
     if (fetch_for(table, def.indexes[i], was_row) != 0 ||
         make_entry(table, i, was_row.row(), was) != 0 ||
-        (was.belongs && remove_entry(table, i, was, id, key) != 0)) {
+        (was.belongs && remove_entry(table, i, was, key) != 0)) {
       return -1;
     }
   }
@@ -985,17 +987,15 @@ static int delete_row(table_t *table, uint64_t id, std::string_view key,
 /* Delete the row, then its entry in every index; see sm3.h. */
 int tbl_delete(table_t *table, uint64_t id) {
   std::string key;
-  return 0 != id_key(table, id, key)
-             ? -1
-             : delete_row(table, id, key, nullptr, nullptr);
+  return 0 != id_key(table, id, key) ? -1
+                                     : delete_row(table, key, nullptr, nullptr);
 }
 
 /* As above, pinning the row deleted into ref; see sm3.h. */
 int tbl_delete(table_t *table, uint64_t id, pin_ref_t &ref,
                std::string_view &old) {
   std::string key;
-  return 0 != id_key(table, id, key) ? -1
-                                     : delete_row(table, id, key, &ref, &old);
+  return 0 != id_key(table, id, key) ? -1 : delete_row(table, key, &ref, &old);
 }
 
 /* Begin a bulk load into the table; see sm3.h. */
@@ -1037,12 +1037,11 @@ int tbl_load_open(table_t *table, loader_t *&out) {
     }
   }
   if (empty) {
-    // A table keyed by a primary key gets its rows in no order,
-    // and their _id entries in order (../CLUSTER.md §5).
+    // A table keyed by a primary key gets its rows in no order; a
+    // keyless one in its _ids' (../CLUSTER.md §5).
     bool keyed = sm2::rel_keyed(table->rel);
     if (sm1::load_open(s, storeid, l->load) != 0 ||
-        sm1::load_stream(l->load, !keyed, l->heap) != 0 ||
-        (keyed && sm1::load_stream(l->load, true, l->ids) != 0)) {
+        sm1::load_stream(l->load, !keyed, l->heap) != 0) {
       return -1;
     }
     // An index's entries arrive in the heap's order, not its own.
@@ -1069,8 +1068,7 @@ int tbl_load_add(loader_t *l, std::span<const sm2::datum_t> values,
   }
   uint64_t r = 0;
   std::string key;
-  int rc = sm2::rel_load(table->rel, l->load, l->heap, l->ids, values, isnull,
-                         r, &key);
+  int rc = sm2::rel_load(table->rel, l->load, l->heap, values, isnull, r, &key);
   if (rc < 0) {
     return -1;
   }
@@ -1099,7 +1097,7 @@ int tbl_load_add(loader_t *l, std::span<const sm2::datum_t> values,
     }
     picked_t inc(row, table->def->indexes[i].include_attnums);
     if (sm2::idx_load(table->indexes[i], l->load, l->streams[i], e.d(),
-                      e.null(), r, key, inc.d(), inc.null()) != 0) {
+                      e.null(), key, inc.d(), inc.null()) != 0) {
       // Which index has the key, when it is found now, not at the
       // close.
       if (sm1::errnum() == sm1::SM_ERR_DUPKEY) {
@@ -1249,35 +1247,20 @@ int tbl_trylock(table_t *table, uint64_t id, sm1::lockmode_t mode) {
 }
 
 /*
- * The row key names: its key, encoded, into k, and with want_id its
- * _id into id, a keyless table's from the key, a keyed table's read
- * from the row, as the snapshot shows it or else the newest
- * version, past SM_ERR_UPDATED or an arbiter's conflict
- * (../ROWKEY.md §5, step 4); SM_ERR_NOTFOUND if it has none.
+ * The row key names: its key, encoded, into k, and its _id into id,
+ * a keyless table's from the key, 0 for a keyed row, which has none
+ * (../ROWKEY.md §2.1). Nothing is read.
  */
-static int named(table_t *table, const row_key_t &key, bool want_id,
-                 std::string &k, uint64_t &id) {
+static int named(table_t *table, const row_key_t &key, std::string &k,
+                 uint64_t &id) {
   id = 0;
   if (0 != sm2::rel_key(table->rel, key.values, key.isnull, k)) {
     return -1;
   }
   if (!sm2::rel_keyed(table->rel)) {
     id = static_cast<uint64_t>(sm2::datum_to_int64(key.values[0]));
-    return 0;
   }
-  if (!want_id) {
-    return 0;
-  }
-  std::string_view tuple;
-  int rc = sm2::rel_read(table->rel, k, tuple, &id);
-  if (1 == rc && sm1::xctlevel_t::read_committed == table->session->level) {
-    rc = sm2::rel_read_latest(table->rel, k, tuple, &id);
-  }
-  if (1 == rc) {
-    return sm1::seterr(sm1::SM_ERR_NOTFOUND,
-                       "table: no row at that key in " + table->def->name);
-  }
-  return rc;
+  return 0;
 }
 
 /* Replace the row key names; see sm3.h. */
@@ -1286,7 +1269,7 @@ int tbl_update(table_t *table, const row_key_t &key,
                std::span<const bool> isnull) {
   std::string k;
   uint64_t id;
-  return 0 != named(table, key, true, k, id)
+  return 0 != named(table, key, k, id)
              ? -1
              : update_row(table, id, k, values, isnull, nullptr, nullptr);
 }
@@ -1299,7 +1282,7 @@ int tbl_update(table_t *table, const row_key_t &key,
   old = {};
   std::string k;
   uint64_t id;
-  return 0 != named(table, key, true, k, id)
+  return 0 != named(table, key, k, id)
              ? -1
              : update_row(table, id, k, values, isnull, &ref, &old);
 }
@@ -1308,9 +1291,8 @@ int tbl_update(table_t *table, const row_key_t &key,
 int tbl_delete(table_t *table, const row_key_t &key) {
   std::string k;
   uint64_t id;
-  return 0 != named(table, key, true, k, id)
-             ? -1
-             : delete_row(table, id, k, nullptr, nullptr);
+  return 0 != named(table, key, k, id) ? -1
+                                       : delete_row(table, k, nullptr, nullptr);
 }
 
 /* As above, pinning the row deleted into ref; see sm3.h. */
@@ -1319,9 +1301,7 @@ int tbl_delete(table_t *table, const row_key_t &key, pin_ref_t &ref,
   old = {};
   std::string k;
   uint64_t id;
-  return 0 != named(table, key, true, k, id)
-             ? -1
-             : delete_row(table, id, k, &ref, &old);
+  return 0 != named(table, key, k, id) ? -1 : delete_row(table, k, &ref, &old);
 }
 
 /* Read the row key names; see sm3.h. */
@@ -1329,9 +1309,8 @@ int tbl_read(table_t *table, const row_key_t &key, std::string_view &tuple) {
   std::string k;
   uint64_t id;
   tuple = {};
-  return 0 != named(table, key, false, k, id)
-             ? -1
-             : sm2::rel_read(table->rel, k, tuple);
+  return 0 != named(table, key, k, id) ? -1
+                                       : sm2::rel_read(table->rel, k, tuple);
 }
 
 /* Read the row key names into a pin; see sm3.h. */
@@ -1340,7 +1319,7 @@ int tbl_read(table_t *table, const row_key_t &key, pin_ref_t &ref,
   return read_into(table, ref, tuple, [&](sm1::rawpin_t *raw) {
     std::string k;
     uint64_t id;
-    return 0 != named(table, key, false, k, id)
+    return 0 != named(table, key, k, id)
                ? -1
                : sm2::rel_read(table->rel, k, raw, tuple);
   });
@@ -1352,7 +1331,7 @@ int tbl_read_latest(table_t *table, const row_key_t &key,
   std::string k;
   uint64_t id;
   tuple = {};
-  return 0 != named(table, key, false, k, id)
+  return 0 != named(table, key, k, id)
              ? -1
              : sm2::rel_read_latest(table->rel, k, tuple);
 }
@@ -1363,7 +1342,7 @@ int tbl_read_latest(table_t *table, const row_key_t &key, pin_ref_t &ref,
   return read_into(table, ref, tuple, [&](sm1::rawpin_t *raw) {
     std::string k;
     uint64_t id;
-    return 0 != named(table, key, false, k, id)
+    return 0 != named(table, key, k, id)
                ? -1
                : sm2::rel_read_latest(table->rel, k, raw, tuple);
   });
@@ -1381,7 +1360,7 @@ static int lock_key(table_t *table, const row_key_t &key, sm1::lockmode_t mode,
   }
   std::string k;
   uint64_t id;
-  if (0 != named(table, key, false, k, id)) {
+  if (0 != named(table, key, k, id)) {
     return -1;
   }
   // Held to the end of the transaction, as a write's lock is.
@@ -1564,9 +1543,13 @@ int tbl_idx_size(table_t *table, uint64_t index, uint64_t &disk,
   for (const index_def_t &x : table->def->indexes) {
     if (x.oid == index) {
       // A primary key's entries are the rows, which tbl_size counts:
-      // what it adds to them is the _id index.
-      return sm2::relid_size(table->session->sm1, table->def->storeid,
-                             x.primary ? sm2::id_relid : x.relid, disk, mem);
+      // it adds nothing to them.
+      if (x.primary) {
+        disk = mem = 0;
+        return 0;
+      }
+      return sm2::relid_size(table->session->sm1, table->def->storeid, x.relid,
+                             disk, mem);
     }
   }
   return sm1::seterr(sm1::SM_ERR_NOTFOUND,
@@ -1686,8 +1669,7 @@ int tbl_index_backfill(table_t *table, uint64_t index, std::string_view from,
         make_entry(table, i, values.row(), key) != 0) {
       return -1;
     }
-    if (!key.belongs ||
-        add_entry(table, i, key, values.row(), r, row_key) == 0) {
+    if (!key.belongs || add_entry(table, i, key, values.row(), row_key) == 0) {
       continue;
     }
     if (sm1::errnum() != sm1::SM_ERR_DUPKEY) {
@@ -1733,9 +1715,11 @@ int tbl_index_backfill(table_t *table, uint64_t index, std::string_view from,
 
 /*
  * Copy the rows of from into to, which is the same table on a new
- * store keyed anew, each with its _id, its values out of line
- * fetched from from's store, and its entries in every index to
- * maintains (../CLUSTER.md §8).
+ * store keyed anew, its values out of line fetched from from's
+ * store, and its entries in every index to maintains
+ * (../CLUSTER.md §8): a keyless row keeps its _id, a keyed row has
+ * none, and the rows of a table that lost its primary key draw
+ * theirs in key order (../ROWKEY.md §2.4).
  */
 static int copy_rows(table_t *from, table_t *to) {
   const table_def_t &def = *from->def;
