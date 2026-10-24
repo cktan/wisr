@@ -825,7 +825,7 @@ pointer for each. Built in `src/rel/toast.cc` and
   order, so reading one back is one scan.
 - **The id is from a sequence of the table's own**, handed to
   `rel_open` as `toast_seq`. Not the `_id` sequence: `ANALYZE`
-  samples `_id`s between 1 and its limit
+  samples a keyless table's `_id`s between 1 and its limit
   (`sm3/SM3_DESIGN.md` §6), and each id drawn from it would be
   a hole a sample falls into. A `rel` opened with no
   `toast_seq` moves nothing out, as before.
@@ -948,10 +948,14 @@ primary key, and its value is `_id ‖ tuple`:
   primary key changed: then the row **moves**, its old key
   erased and the row inserted under the new one, and its `_id`
   entry changed to name it there.
-- **`_id` is in place of PostgreSQL's `ctid`.** A query reads
-  it as a system column, an `int8`, and names no `ctid`
-  (`PART4.md` §3). It names the row, not the row version, so
-  it does not change on `UPDATE`.
+- **`_id` is no TID.** A query reads it as the system column
+  `rowno`, an `int8`, and names no `ctid` (`PART4.md` §3). It
+  names the row, not the row version, so it does not change on
+  `UPDATE`. digres names a row by its key, not by `_id`
+  (`../ROWKEY.md`): every call that names a row takes its key,
+  `rel_key` encodes one from the key's values, and a keyed
+  table's `_id`, its index and `rel_find` go in `ROWKEY.md`'s
+  step 4.
 
 Why clustered: on an LSM a heap's key is a key like any other,
 so a heap pays an index's price on every read through an index
@@ -964,10 +968,13 @@ its key, as `rel_insert` gives it and `rel_find` finds it:
 | --- | --- | --- |
 | `rel_insert` | writes a tuple under its key with a new `_id`, and the `_id` entry, and returns both; the tuple is encoded from datums, or handed in pre-encoded and checked by `tup_check` before an `_id` is drawn; the `_id` from a `seqref_t` looked up at the rel's first draw, and a key made of an `_id`, a keyless row's or the `_id` entry's, written unchecked, as none was before | `sm1::seqref`, `sm1::nextseq`, `sm1::insert`, `sm1::insert_new` |
 | `rel_find`, `rel_find_latest` | the key of the row with an `_id`, as the snapshot shows it, or its newest committed version under `rel_lock_id`'s lock | `sm1::read`, `sm1::read_latest` |
+| `rel_key` | the key of a row from its primary key's values, or a keyless row's from its `_id`, encoded; no read (`../ROWKEY.md` §1) | — |
 | `rel_read` | reads a row by its key, and its `_id` | `sm1::read` |
-| `rel_update`, `rel_delete` | by key; hands back the old image as a **tuple**, not bytes; `rel_update` takes datums or a pre-encoded tuple, checked as `rel_insert`'s is, and moves a row whose primary key changed | `sm1::update`, `sm1::erase`, `sm1::insert` |
+| `rel_update`, `rel_delete` | by key; hands back the old image as a **tuple**, not bytes; `rel_update` takes datums or a pre-encoded tuple, checked as `rel_insert`'s is, and moves a row whose primary key changed, its old key erased with a move's tombstone (`../ROWKEY.md` §2.3) | `sm1::update`, `sm1::erase`, `sm1::erase_moved`, `sm1::insert` |
 | `rel_read_latest` | the newest committed image, decoded | `sm1::read_latest` |
 | `rel_scan`, `rel_scan_seek` | tuples in `_id` order, forward only; in a keyed rel, through the `_id` index | `sm1::scan`, `sm1::scan_seek`, `sm1::read` |
+| `rel_scan_seek_key` | moves a scan in key order, `idx_scan_rows`' or a keyless rel's, forward to a key | `sm1::scan_seek` |
+| `rel_keys_at`, `rel_range_size` | the keys at fractions of the rel's bytes, by bisecting its key range on the store's size estimates, and the bytes of a key range; no row read (`../ROWKEY.md` §2.4) | `sm1::approxsize` |
 | `relid_size` | the bytes under a relid, a rel's or an index's, in files and in memtables apart; no open rel and no transaction (`sm3/SM3_DESIGN.md` §6.2) | `sm1::approxsize` |
 
 **Decision: two kinds of `rel`, over the same sm1 store, told
@@ -1010,8 +1017,8 @@ the same shape, keyed by its columns (`idx_open`,
 - **An entry's value** is a tuple: the row's `_id`, a flag
   saying the key was cut, the INCLUDE columns, then in a keyed
   table the row's key, which a unique entry's key does not
-  carry. The `_id` costs 8 bytes an entry and makes the
-  executor's TID cost no read of the row.
+  carry. The `_id` costs 8 bytes an entry; a keyed table's
+  entries lose it in `../ROWKEY.md`'s step 4.
 - **An entry gives its key columns back** (`idx_scan_key`),
   for index-only scans: the key decodes past the relid, its
   columns' datums as a tuple gives them, and the row's key is
@@ -1194,10 +1201,10 @@ will find them:
   bytes for most primary keys, and a key's columns are cut at
   `key_budget(max_pk_len)`, 3070 bytes, in a keyed table.
 - **`ctid` is gone.** A query that reads `ctid` fails, and
-  reads `_id` instead (`PART4.md` §3); inside, the fork still
-  carries a small `_id` in the 6-byte TID. And since `_id`
-  names a row, not a version, code that expects it to change
-  on `UPDATE` sees it stay put.
+  reads `rowno` instead (`PART4.md` §3); inside, the fork names
+  a row by its key, with no TID at all (`../ROWKEY.md`). And
+  since `_id` names a row, not a version, code that expects it
+  to change on `UPDATE` sees it stay put.
 - **Descending order costs an encoding, not a structure.**
   Inverted bytes scanned forward means no mirror relation and
   no second copy, but it also means a column's direction is

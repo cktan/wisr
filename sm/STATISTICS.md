@@ -16,6 +16,13 @@ Two things the strategy said of PostgreSQL were wrong, and both
 are corrected where they were said: how its sampler works
 (§3.3) and where the planner's size conversion lives (§3.7).
 
+**Since then a table is clustered on its primary key**
+(`CLUSTER.md`), `rowno` is `_id` in sm, and a table with a
+primary key is sampled by ranges of its key, not by runs of
+`_id`s (`ROWKEY.md` §2.4, `sm3/SM3_DESIGN.md` §6.4). §6
+measured the heap keyed by `rowno`; what it found holds for a
+table without a primary key, which is sampled as then.
+
 ---
 
 ## 0. The proposal in brief
@@ -24,9 +31,10 @@ are corrected where they were said: how its sampler works
 
 - The stack analyzes. `sm_tbl_analyze(tbl)` draws a sample,
   computes the statistics, and writes them to sm3's catalog.
-- What it writes describes an LSM keyed by `rowno`: bytes,
-  rows, rownos handed out, levels. It has no pages, no tree
-  height and no all-visible fraction in it.
+- What it writes describes an LSM keyed by a table's primary
+  key, or by `_id` in a table without one: bytes, rows, `_id`s
+  handed out, levels. It has no pages, no tree height and no
+  all-visible fraction in it.
 - The host reads them and derives what PostgreSQL's planner
   wants: pages, `reltuples`, `pg_statistic`'s slots. That
   conversion is the fork's code.
@@ -35,16 +43,16 @@ are corrected where they were said: how its sampler works
 
 **What `sm_tbl_analyze` records**
 
-- **A table:** bytes on disk, live rows, the rowno limit, and
+- **A table:** bytes on disk, live rows, the `_id` limit, and
   the average bytes of a row.
 - **An index:** bytes on disk and entries.
 - **A column, and an expression of an index:** null fraction,
   average bytes, distinct count, most common values, histogram
-  bounds, and correlation with `rowno`.
+  bounds, and correlation with the rows' order, the key's.
 
 **What the stack answers live, at plan time**
 
-- The bytes of a heap or an index now, the rowno limit now,
+- The bytes of a table or an index now, the `_id` limit now,
   and the LSM's level count now. None is stored, and none
   needs an `ANALYZE`.
 
@@ -69,8 +77,9 @@ are corrected where they were said: how its sampler works
 
 - sm1: the bytes of a key range, a sequence's last value
   without drawing one, and the LSM's level count.
-- sm2 and sm3: the same for a heap and for an index, and the
-  rowno limit of a table.
+- sm2 and sm3: the same for a table and for an index, the
+  `_id` limit of a table, and the keys at fractions of a
+  table's bytes.
 - sm3: the sampler, the estimators, statistics in the catalog,
   and `analyze` over them.
 - `include/sm.h`: `sm_tbl_analyze` and the calls that read.
@@ -89,6 +98,13 @@ are corrected where they were said: how its sampler works
   dense table and one within 0.26% on a sparse one, at every
   run length tried, and costs a fraction of a scan. The run
   length decides the distinct count, over a 30x range (§6).
+  A table without a primary key is sampled so, by runs of
+  `_id`s.
+- A table with a primary key is sampled by slots of its bytes
+  in key order (§3.3). Its row count is only as good as the
+  store's size estimates: a few percent in sorted files, an
+  order of magnitude in memtables. Approximate is enough
+  (principle 4).
 - What is said here of PostgreSQL is now checked against
   17.11 (§7).
 - Still unknown: the weights in the index lookup cost, to be
@@ -143,7 +159,7 @@ Three properties of how they are used shape everything below.
    them. Evaluating an expression is still the host's, by the
    evaluator callback (`DESIGN.md` §5).
 2. **The stack speaks LSM.** What `sm_tbl_analyze` records is
-   what is true of this storage: bytes, rows, rownos, levels. It
+   what is true of this storage: bytes, rows, `_id`s, levels. It
    does not pretend to have pages or a B-tree. Fitting those
    numbers to a planner written for a paged heap is the
    host's, so that a planner written for an LSM later loses
@@ -222,24 +238,33 @@ live, so a caller can tell how far a table has moved since.
 
 **Give:** an estimate of a table's live rows.
 
-**How:** by sampling, from two facts the stack has exactly.
+**How:** by sampling. A table without a primary key, from two
+facts the stack has exactly.
 
-- A row's key is its `rowno`, drawn from a per-table sequence
+- A row's key is its `_id`, drawn from a per-table sequence
   and never reused (`sm2/SM2_DESIGN.md` §5). So the sequence's
-  last value, `N`, is how many rownos were ever handed out,
+  last value, `N`, is how many `_id`s were ever handed out,
   and the live rows are some fraction of them.
-- A sample of rownos, each looked for, says what fraction.
+- A sample of `_id`s, each looked for, says what fraction.
 
 The row count is that fraction times `N`. With the sample of
 §3.3, the error is a fraction of a percent for a table that
 is not nearly empty.
 
+**A table with a primary key** is keyed by it, and nothing
+reads its rows in `_id` order (`CLUSTER.md` §10, question 6).
+Its row count is the rows the sample read per byte its slots
+span, times the table's bytes (§3.3), both bytes sm1's
+estimates (§3.1, `sm2::rel_range_size`): good to a few percent
+in sorted files, to an order of magnitude in memtables, which
+RocksDB only samples.
+
 **Between two runs** nothing is updated, and two live numbers
 say how the table has moved.
 
-- `N` now, less `N` as recorded, is the rownos handed out
+- `N` now, less `N` as recorded, is the `_id`s handed out
   since: an upper bound on the rows inserted, exact but for
-  the rownos of transactions that rolled back.
+  the `_id`s of transactions that rolled back.
 - Bytes now over bytes as recorded is growth of every kind,
   old versions not yet collected among it.
 
@@ -254,19 +279,39 @@ moment, of about 300 rows for each unit of a statistics
 target that the caller passes. PostgreSQL's default target of
 100 makes that 30,000 rows.
 
-**How:** the sampling unit is a run of consecutive rownos, of
-a fixed length `B`.
+**How, without a primary key:** the sampling unit is a run of
+consecutive `_id`s, of a fixed length `B`.
 
 - Runs are chosen at random over `0` to `N`, and visited in
-  ascending order: one forward cursor over the heap, moved
-  with `scan_seek` to each run's first rowno, reads the live
+  ascending order: one forward cursor over the rows, moved
+  with `scan_seek` to each run's first `_id`, reads the live
   rows of the run and moves on.
 - The cursor's snapshot is fixed when it is opened, so the
   whole sample is of one moment.
-- The live rows found, over the rownos covered, is the live
+- The live rows found, over the `_id`s covered, is the live
   fraction of §3.2.
 - If the runs yield more rows than wanted, a reservoir keeps
   a uniform subset.
+
+**How, with a primary key:** the sampling unit is a slot of
+8 KB of the table's bytes, disk and memtables together, a
+page's worth, as PostgreSQL's block is.
+
+- A slot's rows are those between the keys at its two ends,
+  found by bisecting the key range with sm1's size estimates,
+  to a data block or so, with no row read and no flush
+  (`sm2::rel_keys_at`).
+- A pilot of 30 slots gives the rows a slot; slots are then
+  drawn at random within the same budget as runs, and read in
+  key order through one forward cursor that seeks each slot's
+  start. A table the budget covers is read whole.
+- The rows read over the bytes the slots span gives the row
+  count of §3.2. A reservoir keeps a uniform subset, as above.
+- TABLESAMPLE picks its blocks the same way: SYSTEM's are
+  slots, BERNOULLI's 256 rows of a scan in key order
+  (`../dg/WORKNOTE.md` step 290).
+
+The design is `sm3/SM3_DESIGN.md` §6.4.
 
 **The length of a run is a trade.** A short run is nearly a
 uniform sample of rows and costs a seek for each row or two.
@@ -316,7 +361,7 @@ crosses the API.
 | distinct count, and whether it grows with the table | equality |
 | most common values and their frequencies | equality |
 | histogram bounds over the rest | order |
-| correlation of the column's order with `rowno` order | order |
+| correlation of the column's order with the rows' order | order |
 
 Equality and order are sm2's `cmp` for the column's type,
 under the column's collation: the same one index keys are
@@ -354,9 +399,11 @@ strategy, and the cost of leaving them out should be stated
 rather than discovered.
 
 **Correlation is a fact about this storage**, not a borrowed
-one. The heap is stored in `rowno` order, so a column whose
-order follows `rowno` is clustered on disk, and a range scan
-of an index on it fetches neighbouring rows.
+one. A table's rows are stored in its key's order, the
+primary key's or `_id`'s (`CLUSTER.md`), so a column whose
+order follows the key is clustered on disk, and a range scan
+of an index on it fetches neighbouring rows. The sample is
+sorted into that order before correlation is measured.
 
 **Expressions and predicates.** For an expression index,
 `sm_tbl_analyze` calls the host's evaluator on each sampled row
@@ -397,7 +444,7 @@ at its snapshot, and writes these to sm3's catalog.
 
 | Of | Recorded |
 | --- | --- |
-| the table | rowno limit `N`; live rows; heap bytes; average bytes of a row; rows sampled |
+| the table | `_id` limit `N`; live rows; table bytes; average bytes of a row; rows sampled |
 | each index | bytes; entries |
 | each column | the six statistics of §3.4 |
 | each expression of an index | the same six |
@@ -594,12 +641,12 @@ from sm3's statistics; it does not hand over loose numbers.
 | The planner wants | The host makes it from |
 | --- | --- |
 | `pages` | bytes now, over 8 KB, and never less than 1 for an object with a row, so that the page cost constants keep their meaning. Returned from the AM callback, not stored |
-| `tuples` | recorded live rows, scaled by bytes now over bytes recorded, or moved by the rownos handed out since. Also from the callback |
+| `tuples` | recorded live rows, scaled by bytes now over bytes recorded, or moved by the `_id`s handed out since. Also from the callback |
 | `allvisfrac` | 1. An index entry carries versions of its own (`sm3/SM3_DESIGN.md` §3), so an index-only scan never visits the heap, and §7 measured that this is exactly what removes the heap-fetch charge |
 | null fraction, most common values, histogram | the same, values decoded to PostgreSQL's datums |
 | average width | average bytes as stored |
 | distinct count | the count, negated as a multiplier of **total** rows, nulls included, when it grows with the table. That is PostgreSQL's convention, and §7 found the reason it exists: the row count is refreshed more often than the statistics, so a multiplier stays right as the count drifts — which is exactly what §3.2 does between runs |
-| correlation | correlation with `rowno`, which is the fork's `ctid`. PostgreSQL computes its own from the sample in physical order, and relies on the sample being returned that way |
+| correlation | correlation with the rows' stored order, the key's, which a sequential scan reads in. The fork has no `ctid` (`ROWKEY.md` §3). PostgreSQL computes its own from the sample in physical order, and relies on the sample being returned that way; sm3 sorts its sample so |
 | a B-tree's height | nothing. The fork's index access method costs a lookup from the level count, the index's bytes and its entries, with weights to be calibrated (§6). What the height buys in PostgreSQL is a CPU charge, `(height + 1)` times 50 `cpu_operator_cost`, not page I/O, so the level count should buy the same kind of thing. An AM that leaves the height unknown has it guessed as `log(pages)/log(100)` |
 | dead rows | none. Vacuum is gone (`PART4.md` §4) |
 
@@ -631,8 +678,9 @@ would need the stack to decide when, and nothing here does.
 | sm1 | a sequence's last value, read without drawing one | §3.2, §3.3 |
 | sm1 | the number of LSM levels a store has now | §3.5 |
 | sm2 | the same sizes for a heap or an index, by its relid | §3.1 |
-| sm3 | on an open table: the heap's size, an index's size, and the rowno limit `N` | §3.1, §3.2 |
-| sm3 | the sampler over runs of rownos | §3.3 |
+| sm2 | the keys at fractions of a rel's bytes, and the bytes of a key range (`rel_keys_at`, `rel_range_size`) | §3.2, §3.3 |
+| sm3 | on an open table: the table's size, an index's size, and the `_id` limit `N` | §3.1, §3.2 |
+| sm3 | the sampler, over runs of `_id`s or slots of a key range | §3.3 |
 | sm3 | the estimators, ported from PostgreSQL | §3.4 |
 | sm3 | catalog kind 10 for statistics, one entry a table, outside the `TABLE` blob and the table-oid lock | §3.6 |
 | sm3 | the in-memory statistics map, beside the catalog: immutable, lazily loaded, published after commit | §3.6 |
@@ -650,8 +698,9 @@ would need the stack to decide when, and nothing here does.
 | bytes, at rest | RocksDB's estimate over a relid | none to 8%: exact over a whole store, 1.000 and 1.002 for a heap and a large index, 0.923 for a thousand-row index beside them (§6) |
 | bytes, unflushed | a memtable is uncompressed, and the estimate adds it at that size | 7x over, until the rows are flushed (§6). The worst number here, and the one §3.1 now warns about |
 | bytes, mid-update | new versions in the memtable, old ones not yet collected | 6.6x over at the peak of a burst that changed no row count, back to exact after a compaction (§6) |
-| row count at `sm_tbl_analyze` | sampling | exact on a dense table; 0.26% low on one with nine rownos in ten dead, at every run length (§6) |
-| row count between runs | whatever the host scales it by: bytes inherit their error and count a burst of updates as growth; rownos see no delete | not measured. PostgreSQL's own version of this was 3.9% low over a tenfold growth (§7) |
+| row count at `sm_tbl_analyze`, no primary key | sampling | exact on a dense table; 0.26% low on one with nine rownos in ten dead, at every run length (§6) |
+| row count at `sm_tbl_analyze`, a primary key | sampling, scaled by the store's size estimates | as good as the bytes: a few percent in sorted files, an order of magnitude in memtables (`sm3/SM3_DESIGN.md` §6.4) |
+| row count between runs | whatever the host scales it by: bytes inherit their error and count a burst of updates as growth; `_id`s see no delete | not measured. PostgreSQL's own version of this was 3.9% low over a tenfold growth (§7) |
 | distinct count | sampling, and the likeness of neighbouring rows in a run | the run length decides it, over a 30x range for a column whose neighbours are alike (§6) |
 | other column statistics | sampling | as PostgreSQL's on a heap, whose sampler clusters the same way (§3.3) |
 | index lookup cost | weights not yet calibrated | still unknown |
@@ -676,6 +725,11 @@ Four experiments were run against RocksDB 9.11.2 through sm1,
 with no PostgreSQL in them, as one program over sm1's own
 store options: the same comparator, the same userkey bloom
 filter, keys of a 2-byte relid and an 8-byte rowno.
+
+They measured the heap keyed by `rowno`, before tables were
+clustered (`CLUSTER.md`). Experiment 4 holds for a keyless
+table's runs of `_id`s; the key-range sampling of a table with
+a primary key (§3.3) is not measured here.
 
 **1. Size, at rest. Accepted.** Tables of 1,000 to 1,000,000
 rows at 100 and at 1,000 bytes a row, flushed and compacted,
@@ -860,6 +914,8 @@ make it on purpose.
    §7.1's choice made on purpose.~~ **Done**: the stack
    analyzes (§6.1 there), and §6.9 there has steps 3 to 7
    with what it settled.
+Steps 3 to 7 are built, as `sm3/SM3_DESIGN.md` §6.9 records.
+
 3. The sm1 primitives of §4, with sm2 and sm3 over them.
    → verify: a table's and an index's size follow the rows
    loaded; `N` is the sequence's last value.
@@ -878,5 +934,10 @@ make it on purpose.
 7. `sm_tbl_analyze` in `include/sm.h`, and the `rel` verbs.
    → verify: a `rel` script analyzes a table with a partial
    and an expression index and prints what it expects.
+8. ~~A table with a primary key sampled by key ranges~~
+   **Built** (`ROWKEY.md` §2.4): slots of its bytes, the row
+   count per byte, correlation in key order; TABLESAMPLE the
+   same. The `_id` limit stays in the statistics until a table
+   with a primary key has no `_id` (`ROWKEY.md` §5, step 4).
 
 The fork's own work in §4 is outside this repository.

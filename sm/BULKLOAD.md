@@ -881,9 +881,9 @@ of the database, not arguments; mini-batch's 100 rows is fixed.
 in the row: a NULL in a `NOT NULL` column, a key too long for
 a unique index, an evaluator that fails. A duplicate key fails
 the call that writes it: a later `add` or the `close`; in file
-mode in an empty table, the `close`. The message names the
-index and the `_id`s. After any failure the transaction is to
-be aborted.
+mode in an empty table, the `close`. `sm1::errdup()` names the
+index (`ROWKEY.md` §2.5). After any failure the transaction is
+to be aborted.
 
 ### 7.2 sm1 and sm2, underneath
 

@@ -215,7 +215,11 @@ which replaces the `xid` in the header once a version is
 **stamped** by compaction. An **unstamped** version's fate is
 looked up instead.
 
-**tombstone** — a version that records a delete.
+**tombstone** — a version that records a delete. A **moved
+tombstone** (`sm1::erase_moved`) records a primary key change:
+a reader sees it as any tombstone, and a writer that meets it
+fails with `SM_ERR_MOVED` (`sm1/SM1_DESIGN.md` §3.1, §5;
+`ROWKEY.md` §2.3).
 
 **snapshot** — one number, `snapshot_ts`, taken as
 `visible_ts`. A reader sees every version whose commit is at

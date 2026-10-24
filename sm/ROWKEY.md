@@ -6,8 +6,10 @@ go on naming a row by a 6-byte TID. This file takes the next
 step (`CLUSTER.md` §10, question 6): a table with a primary
 key has no `_id` and no `_id` index, and nothing in the system
 is a TID. A row is named by its key, a tuple of the key
-columns' values. Nothing of it is built yet; the work is on
-the branch `wip-noctid`.
+columns' values. Steps 1 to 3 of §5 are built but for the
+system column's rename, and step 4's moved tombstone; a keyed
+table still has its `_id`. The work is on the branch
+`wip-noctid`.
 
 Paths are relative to `sm/`; digres's are under `../dg/`.
 
@@ -129,6 +131,11 @@ at hand, and their encoding costs no read.
   become tests of `SM_ERR_MOVED`.
 - **The isolation scenarios** are untouched; scenarios of the
   moved tombstone are added.
+- **Built**, ahead of step 4: a move writes the moved
+  tombstone, sm3's follow is gone, and digres raises
+  `SM_ERR_MOVED` as a serialization failure
+  (`../dg/WORKNOTE.md` step 296). `set_id_entry` and the `_id`
+  entry's lock stay with a keyed table's `_id`.
 
 ### 2.4 Reading many rows
 
@@ -274,18 +281,21 @@ Each step leaves every suite passing.
    for its `_id`.
 2. **ANALYZE and TABLESAMPLE by key ranges** for a table with
    a primary key; the backfill, the rewrite and SET NOT NULL
-   in key order; a duplicate reported by key.
+   in key order; a duplicate reported by key. Built
+   (`../dg/WORKNOTE.md` steps 290, 291).
 3. **digres by key.** The arbiter returns its row; the row
    identity columns, the table AM, ModifyTable, LockRows,
    EvalPlanQual, triggers, `ON CONFLICT`, CURRENT OF and the
    key scan, built (`../dg/WORKNOTE.md` step 292); `ctid`
-   gone, `rowno` renamed `_id` on a keyless table.
+   gone, built (steps 293 to 295); `rowno` renamed `_id` on a
+   keyless table, not built.
 4. **No `_id` with a primary key.** The `_id` index, the
    follow, and the `_id` calls of a keyed table go; the value
    is the tuple alone; a key change writes the moved
-   tombstone.
+   tombstone. The moved tombstone, and the follow's going,
+   built (step 296); the rest to do.
 5. **The documents**: `CLUSTER.md` §0 and §2 to §11,
    `sm2/SM2_DESIGN.md` §5, `sm3/SM3_DESIGN.md` §3 and §6,
    `STATISTICS.md`, `LOCK.md`, `BULKLOAD.md`, `GLOSSARY.md`,
    `rel/REL.md`, each as its step lands, and this file marked
-   built.
+   built. Brought up to step 3.

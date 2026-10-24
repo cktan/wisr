@@ -285,9 +285,11 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   so only the indexes whose columns changed are touched. One
   that changes the primary key **moves** the row
   (`../CLUSTER.md` §4): every index entry of it names its key,
-  so each is removed and added again. A writer at READ
-  COMMITTED that finds the row moved since its snapshot
-  follows it through its `_id` (`tbl_read_latest`). Otherwise,
+  so each is removed and added again. The old key's erase is
+  sm1's moved tombstone (`sm1::erase_moved`), so a writer at
+  READ COMMITTED that finds the row moved since its snapshot
+  is not led after it: its newest read at the old key fails
+  with `SM_ERR_MOVED` (`../ROWKEY.md` §2.3). Otherwise,
   an index is left alone when the row's key
   columns compare equal before and after, by their types'
   `cmp`, and its INCLUDE columns hold the same bytes. The two
@@ -317,6 +319,16 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   `tbl_read`, `tbl_read_latest` and the two scans beside them
   (`include/sm3.h`). A handle is good for one transaction, the
   table-oid lock ending with it.
+- **A row is named by its key** (`../ROWKEY.md` §2.2):
+  `tbl_update`, `tbl_delete`, `tbl_read`, `tbl_read_latest`,
+  `tbl_lock` and `tbl_trylock` take a `row_key_t`, the values
+  of the primary key's columns, or a keyless row's `_id`, as
+  well as an `_id`; `tbl_row_key` encodes one, to tell two
+  names apart. Until a keyed table loses its `_id`
+  (`ROWKEY.md`'s step 4), an update or delete by key reads the
+  row first for its `_id`. `tbl_insert_arbiter` hands back the
+  conflicting row's tuple, from which the caller takes its
+  key.
 - **A write sets no savepoint.** It is the heap write and then
   a write or two per index, and one that fails after its first
   step — a duplicate in a unique index, an over-long key —
@@ -791,16 +803,12 @@ lock `ROW_MARK_REFERENCE` (`select_rowmark_type()`,
 `optimizer/plan/planner.c`), and the re-check fetches its row
 by the ctid the scan joined, with `SnapshotAny`
 (`EvalPlanQualFetchRowMark()`, `executor/execMain.c`): that
-version, whatever has committed since. digres's fetch by ctid
-reads the row as the statement sees it, which at READ
-COMMITTED is the version the scan joined
-(`smtable_fetch_row_version()`), so it agrees, and
-`../../dg/test/server.sh` checks it with a customer row moved
-meanwhile. One case differs: a table joined to itself, whose
-copy has the target's rowno. A digres ctid names a row, not a
-version, so the copy's re-check reads the newest version the
-write kept, where PostgreSQL reads the one it joined
-(`../../dg/README.md`, known incompatibilities).
+version, whatever has committed since. digres has no ctid
+(`../ROWKEY.md` §3.2): it marks such a table `ROW_MARK_COPY`,
+and the re-check reads the copy of the row the scan joined,
+the very version, so it agrees, and `../../dg/test/server.sh`
+checks it with a customer row moved meanwhile, and with a
+table joined to itself.
 
 ### 3.2 How it is tested
 
@@ -1139,6 +1147,7 @@ part, the planner's use of these statistics, is built in
 digres (`../../dg/STATISTICS.md`).
 
 In brief: `tbl_analyze` samples a table by runs of `_id`s,
+or one with a primary key by slots of its bytes in key order,
 computes PostgreSQL's statistics from the sample with
 PostgreSQL's estimators, and writes them to one catalog entry
 of a new kind. A map beside the catalog holds them in memory
@@ -1366,8 +1375,9 @@ count as a negated multiplier of total rows above 10% of
 them; which values are common enough to list; histogram
 bounds over the rest, target + 1 of them; correlation of each
 column's order with the sample's order, which §6.4 made
-`_id` order; and `WIDTH_THRESHOLD`, a value over 1 KB counted
-as distinct and kept out of the lists. A column's own
+`_id` order, or key order with a primary key; and
+`WIDTH_THRESHOLD`, a value over 1 KB counted as distinct and
+kept out of the lists. A column's own
 statistics target is not here: one target per call.
 
 **Expressions and predicates.** For an index with an eval,
@@ -1508,9 +1518,10 @@ size, and nothing of the truncate.
 | sm2 | `relid_size(session, store, relid, disk, mem)`, the same by a rel's relid | §6.2 |
 | sm3 | `tbl_size`, `tbl_idx_size`, `tbl_id_limit`, `tbl_probes` | live, on an open table |
 | sm3 | `tbl_analyze(table, target)` | §6.4 to §6.7 |
+| sm2, sm3 | `rel_keys_at`, `rel_range_size`, `rel_scan_seek_key`; `tbl_keys_at`, `tbl_range_size`, `tbl_scan_seek_key` | §6.4's slots of a table with a primary key: the keys at fractions of its bytes, a range's bytes, a seek forward by key |
 | sm3 | `cat_put_stats(session, table oid, stats)` | records a `stats_t` in the session's transaction, published at its commit |
 | sm3 | `cat_get_stats(session, table oid, out)` | the session's own, else the published `shared_ptr<const stats_t>`, loading it on first use in a READ COMMITTED transaction of the catalog's own; null if never analyzed |
-| top | `sm_tbl_analyze`, `sm_tbl_stats`, and the four live calls | the same, in `include/sm.h`; `sm_tbl_stats` hands out `cat_get_stats`'s object itself, `stats_t` being the root's `sm_stats_t` (`include/sm_stats.h`) |
+| top | `sm_tbl_analyze`, `sm_tbl_stats`, and the four live calls; `sm_tbl_keys_at` and `sm_rel_scan_seek_key`, for digres's TABLESAMPLE | the same, in `include/sm.h`; `sm_tbl_stats` hands out `cat_get_stats`'s object itself, `stats_t` being the root's `sm_stats_t` (`include/sm_stats.h`) |
 | `rel` | `analyze`, and a verb that prints a table's statistics | testing |
 
 The calls of sm1, sm2 and the live four of sm3 are built
