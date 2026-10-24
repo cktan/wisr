@@ -335,7 +335,7 @@ rocksdb::ColumnFamilyOptions store_cf_options(db_t *db, uint64_t storeid) {
   if (db) {
     cfo.compaction_filter_factory = gc_filter_factory(db, storeid);
   }
-  // Order versions by the wisr.version.v1 comparator.
+  // Order keys by the wisr.store.v2 comparator: by class, then within it.
   cfo.comparator = version_comparator();
   // Key bloom filters on the userkey.
   cfo.prefix_extractor = version_prefix_extractor();

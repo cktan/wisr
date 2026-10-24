@@ -2,9 +2,14 @@
  * version.h -- the row-version codec and the store column
  * families' comparator and prefix extractor (SM1_DESIGN.md §3.1).
  *
- *   key   = userkey | ~wts (8B BE) | ~seq (4B BE)
+ *   key   = class (1B, key_class_versioned) | userkey |
+ *           ~wts (8B BE) | ~seq (4B BE)
  *   value = flags (1B) | xid (8B, unstamped) or commit_ts (8B,
  *           stamped) | payload
+ *
+ * Every key of a store opens with a class byte (../VCHAIN.md §2):
+ * versioned keys are ordered by userkey, then newest version
+ * first; current and old keys bytewise. No caller of sm1 sees it.
  */
 #ifndef WISR_VERSION_H
 #define WISR_VERSION_H
@@ -22,6 +27,11 @@ namespace wisr {
 
 /* Bytes after the userkey in every version key. */
 constexpr size_t version_tail_size = 12;
+
+/* The class byte that opens every key of a store (../VCHAIN.md §2). */
+constexpr char key_class_versioned = 0x00; /* userkey | ~wts | ~seq */
+constexpr char key_class_current = 0x01;   /* a chained key's newest */
+constexpr char key_class_old = 0x02;       /* be64(id): an older one */
 
 /* Value flags. */
 constexpr uint8_t version_tombstone = 0x01; /* this version is a delete */
@@ -41,13 +51,13 @@ struct version_t {
   rocksdb::Slice payload;
 };
 
-/* Build userkey | ~wts | ~seq. */
+/* Build class | userkey | ~wts | ~seq. */
 std::string version_key(rocksdb::Slice userkey, uint64_t wts, uint32_t seq);
 
-/* Build userkey followed by a tail of twelve copies of fill. */
+/* Build class | userkey, then a tail of twelve copies of fill. */
 std::string version_bound(rocksdb::Slice userkey, char fill);
 
-/* The userkey part of a version key. */
+/* The userkey part of a version key: past the class, before the tail. */
 rocksdb::Slice version_userkey(rocksdb::Slice key);
 
 /* Decode a version key into v's userkey, wts, and seq. */
@@ -59,10 +69,13 @@ std::string version_value(uint8_t flags, uint64_t xid, rocksdb::Slice payload);
 /* Decode a version value into v; false if it is malformed. */
 bool version_decode_value(rocksdb::Slice value, version_t *v);
 
-/* The wisr.version.v1 comparator, a process-wide singleton. */
+/* The wisr.store.v2 comparator, a process-wide singleton. */
 const rocksdb::Comparator *version_comparator();
 
-/* The prefix extractor mapping a version key to its userkey. */
+/*
+ * The prefix extractor: a version key's class and userkey; any other
+ * key whole.
+ */
 std::shared_ptr<const rocksdb::SliceTransform> version_prefix_extractor();
 
 } // namespace wisr

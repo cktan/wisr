@@ -1,6 +1,7 @@
 /*
- * test_version.cc -- the version codec and the wisr.version.v1
- * comparator (SM1_DESIGN.md §3.1).
+ * test_version.cc -- the version codec, the wisr.store.v2
+ * comparator and its prefix extractor (SM1_DESIGN.md §3.1,
+ * ../VCHAIN.md §2).
  */
 
 #include "doctest.h"
@@ -20,7 +21,8 @@ TEST_CASE("version keys round-trip through encode and decode") {
   // 2. Decode it and compare every field.
   std::string uk("a\0\xff", 3);
   std::string k = version_key(uk, 0x0102030405060708ull, 42);
-  CHECK(k.size() == uk.size() + version_tail_size);
+  CHECK(k.size() == 1 + uk.size() + version_tail_size);
+  CHECK(k[0] == key_class_versioned);
   version_t v;
   version_decode_key(k, &v);
   CHECK(v.userkey == rocksdb::Slice(uk));
@@ -67,9 +69,9 @@ TEST_CASE("version values round-trip, stamped or not") {
   CHECK(version_value(0, 0x0102030405060708ull, "p") ==
         std::string("\x00\x01\x02\x03\x04\x05\x06\x07\x08p", 10));
   CHECK(stamped == std::string("\x02\x00\x00\x00\x00\x00\x00\x30\x39hi", 11));
-  // Golden bytes of a key: userkey, ~wts, ~seq.
+  // Golden bytes of a key: class, userkey, ~wts, ~seq.
   CHECK(version_key("a", 1, 2) ==
-        std::string("a\xff\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff\xfd", 13));
+        std::string("\0a\xff\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff\xfd", 14));
 
   CHECK_FALSE(version_decode_value("", &v));
   std::string bad(1, static_cast<char>(version_stamped));
@@ -130,4 +132,64 @@ TEST_CASE("scan bounds bracket every version of their userkey") {
     CHECK(cmp->Compare(k, hi) < 0);
   }
   CHECK(cmp->Compare(hi, version_key(std::string("a\0", 2), 1, 1)) < 0);
+}
+
+TEST_CASE("the comparator orders keys by class, then within each class") {
+  // Verify wisr.store.v2's class order and its two orders within.
+  // 1. Every versioned key sorts before every current key, and every
+  //    current key before every old key, whatever their bytes.
+  // 2. Current keys sort bytewise, a key before the longer keys it
+  //    starts.
+  // 3. Old keys, be64 ids, sort as numbers.
+  const rocksdb::Comparator *cmp = version_comparator();
+  auto current = [](const std::string &k) {
+    return std::string(1, key_class_current) + k;
+  };
+  auto old = [](uint64_t id) {
+    std::string k(1, key_class_old);
+    sm0::put_be64(k, id);
+    return k;
+  };
+  std::string top = version_key(std::string(20, '\xff'), 1, 1);
+  CHECK(cmp->Compare(top, current("")) < 0);
+  CHECK(cmp->Compare(current(std::string(20, '\xff')), old(0)) < 0);
+  CHECK(cmp->Compare(version_key("", 1, 1), current("a")) < 0);
+
+  CHECK(cmp->Compare(current("a"), current(std::string("a\0", 2))) < 0);
+  CHECK(cmp->Compare(current(std::string("a\0", 2)), current("ab")) < 0);
+  CHECK(cmp->Compare(current("ab"), current("b")) < 0);
+  CHECK(cmp->Compare(current("ab"), current("ab")) == 0);
+  // Long enough to have a version tail, were it versioned: bytewise,
+  // "a" and twelve FF bytes sorts after "ab" and twelve zeros.
+  CHECK(cmp->Compare(current("a" + std::string(12, '\xff')),
+                     current("ab" + std::string(12, '\0'))) > 0);
+
+  CHECK(cmp->Compare(old(2), old(10)) < 0);
+  CHECK(cmp->Compare(old(255), old(256)) < 0);
+}
+
+TEST_CASE("the prefix extractor keys a versioned key on its userkey, any "
+          "other whole") {
+  // Verify wisr.prefix.v2's domain and its prefixes.
+  // 1. A versioned key's prefix is its class and userkey: every
+  //    version of a userkey shares it.
+  // 2. A current or an old key is its own prefix.
+  // 3. An empty key, and a versioned key with no full tail, are out
+  //    of its domain.
+  auto px = version_prefix_extractor();
+  std::string k1 = version_key("ab", 7, 1), k2 = version_key("ab", 9, 3);
+  REQUIRE(px->InDomain(k1));
+  CHECK(px->Transform(k1) == rocksdb::Slice(std::string("\0ab", 3)));
+  CHECK(px->Transform(k1) == px->Transform(k2));
+
+  std::string c = std::string(1, key_class_current) + "ab";
+  std::string o(1, key_class_old);
+  sm0::put_be64(o, 42);
+  REQUIRE(px->InDomain(c));
+  REQUIRE(px->InDomain(o));
+  CHECK(px->Transform(c) == rocksdb::Slice(c));
+  CHECK(px->Transform(o) == rocksdb::Slice(o));
+
+  CHECK_FALSE(px->InDomain(""));
+  CHECK_FALSE(px->InDomain(std::string("\0ab", 3)));
 }

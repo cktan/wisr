@@ -6,13 +6,19 @@
 #include "doctest.h"
 #include "util.h"
 
+#include "db.h"
+#include "session.h"
 #include "sm1.h"
+#include "version.h"
 
 #include <stdio.h>
 
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include <rocksdb/db.h>
 
 namespace {
 
@@ -603,6 +609,61 @@ TEST_CASE("a scan from an absent key crosses many userkeys in SSTs") {
   CHECK(rows.back().first == "k09998");
   rows = drain(scan(s, store, "k00101", 6, 1, "k00301", 6, 0));
   CHECK(rows.size() == 100);
+  REQUIRE(sm1::commit(s) == 0);
+}
+
+TEST_CASE("current keys in SSTs scan whole in total order, apart from the "
+          "versioned ones") {
+  // Verify the class byte's key spaces (../VCHAIN.md §2) in one store
+  // CF, under its prefix extractor and bloom filter.
+  // 1. Put 5000 current keys "k00000".."k09998" (every other number)
+  //    raw into a store's CF, and one versioned key by sm1::insert;
+  //    flush, so the bloom filter answers from SSTs.
+  // 2. An iterator in auto prefix mode, from the absent current key
+  //    "k00001" to the end of the class, returns all 4999 above it.
+  // 3. A Get finds a present current key and not an absent one.
+  // 4. sm1::scan of the whole store sees the versioned key alone.
+  db_fixture_t f;
+  sm1::session_t *s = f.session();
+  uint64_t store = mkstore_committed(s);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  put(s, store, "v", "versioned");
+  REQUIRE(sm1::commit(s) == 0);
+  wisr::store_t st = wisr::db_store(s->db, store);
+  auto current = [](const char *k) {
+    return std::string(1, wisr::key_class_current) + k;
+  };
+  char key[16];
+  for (int i = 0; i < 10000; i += 2) {
+    snprintf(key, sizeof(key), "k%05d", i);
+    REQUIRE(
+        st.rdb->Put(rocksdb::WriteOptions(), st.cf, current(key), "c").ok());
+  }
+  REQUIRE(st.rdb->Flush(rocksdb::FlushOptions(), st.cf).ok());
+
+  rocksdb::ReadOptions ro;
+  ro.auto_prefix_mode = true;
+  std::string upper(1, static_cast<char>(wisr::key_class_current + 1));
+  rocksdb::Slice upper_slice(upper);
+  ro.iterate_upper_bound = &upper_slice;
+  std::unique_ptr<rocksdb::Iterator> it(st.rdb->NewIterator(ro, st.cf));
+  size_t n = 0;
+  for (it->Seek(current("k00001")); it->Valid(); it->Next()) {
+    n++;
+  }
+  REQUIRE(it->status().ok());
+  CHECK(n == 4999);
+
+  std::string got;
+  CHECK(
+      st.rdb->Get(rocksdb::ReadOptions(), st.cf, current("k00002"), &got).ok());
+  CHECK(st.rdb->Get(rocksdb::ReadOptions(), st.cf, current("k00001"), &got)
+            .IsNotFound());
+
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  rows_t rows = scan_all(s, store);
+  REQUIRE(rows.size() == 1);
+  CHECK(rows[0].first == "v");
   REQUIRE(sm1::commit(s) == 0);
 }
 

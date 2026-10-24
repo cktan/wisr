@@ -136,7 +136,8 @@ Each store's versions live in their own column family, named
 by `storeid` in decimal (`store.0` is the catalog, §11).
 
 ```
-key   = userkey (variable)
+key   = class  (1B, 0x00: a versioned key)
+      | userkey (variable)
       | ~wts   (8B, big-endian, bitwise complement)
       | ~seq   (4B, big-endian, bitwise complement)
 
@@ -157,13 +158,13 @@ at 70 and 80. The figure shows what sits in `CF:store.<storeid>`,
 in key order, newest first:
 
 ```
-key                                          value
--------------------------------------------  ---------------------
-userkey        ~wts              ~seq        flags  commit_ts  payload
-61 63 63 74    FFFFFFFFFFFFFFC2  FFFFFFFE    02     0000...50  "bal=9"
-34 32          (wts 61)          (seq 1)            (80)
-61 63 63 74    FFFFFFFFFFFFFFCC  FFFFFFFE    00     0000...32  "bal=7"
-34 32          (wts 51)          (seq 1)            (xid 50)
+key                                             value
+----------------------------------------------  ---------------------
+class userkey      ~wts              ~seq       flags  commit_ts  payload
+00    61 63 63 74  FFFFFFFFFFFFFFC2  FFFFFFFE   02     0000...50  "bal=9"
+      34 32        (wts 61)          (seq 1)           (80)
+00    61 63 63 74  FFFFFFFFFFFFFFCC  FFFFFFFE   00     0000...32  "bal=7"
+      34 32        (wts 51)          (seq 1)           (xid 50)
                                              unstamped: the writer
                                              has not been swept by
                                              compaction yet, so its
@@ -207,10 +208,17 @@ Notes on the encoding:
   transaction sorts first.
 - `userkey` is stored raw and the two suffixes are fixed-width, so a
   version key is parsed from the tail. No escaping needed.
+- **The class byte** opens every key of a store: `0x00` for the
+  versioned keys this section describes; `0x01` and `0x02` for a
+  chained key's newest and older versions (`../VCHAIN.md` §2).
+  sm1 adds it when it builds a key and strips it when it hands a
+  userkey out; no caller sees it.
 - **Comparator.** Store CFs use a custom comparator,
-  `wisr.version.v1`: compare the `userkey` parts (key minus the
+  `wisr.store.v2`: compare the class bytes; within class `0x00`,
+  compare the `userkey` parts (key minus the class and the
   12-byte tail) with `memcmp`, shorter-is-less on a tie, then
-  compare the tails with `memcmp`. RocksDB's default bytewise
+  compare the tails with `memcmp`; within the other classes,
+  compare bytewise. RocksDB's default bytewise
   comparator is wrong here. With it, a key's tail is compared
   against the extra bytes of a longer userkey that begins with
   it: the versions of `"a"` (`61 FF FF …`, since `~wts` of any
@@ -220,8 +228,9 @@ Notes on the encoding:
   comparator, a key's versions are contiguous and userkeys
   sort in `memcmp` order, which is the order `sm1::scan` exposes.
 
-  Every key handed to RocksDB for a store CF — writes, seek
-  targets, iterator bounds — carries the full 12-byte tail.
+  Every versioned key handed to RocksDB for a store CF —
+  writes, seek targets, iterator bounds — carries the class byte
+  and the full 12-byte tail.
   `FindShortestSeparator` and `FindShortSuccessor` are no-ops
   (safe; index blocks are a little larger). RocksDB persists the
   comparator name and refuses to open a CF with another, so the
@@ -2731,9 +2740,12 @@ keep 4 KB; they are small and read by key.
 Bloom filters are worth enabling on store CFs, and `CF:txn`
 benefits from a
 large block cache since it is small and hot. For store CFs the
-prefix extractor strips the 12-byte tail, so the bloom key is the
-userkey; the comparator keeps each userkey's versions contiguous,
-which is what a prefix extractor requires.
+prefix extractor (`wisr.prefix.v2`) strips a versioned key's
+12-byte tail, so the bloom key is its class and userkey; the
+comparator keeps each userkey's versions contiguous, which is
+what a prefix extractor requires. A current or old key
+(`../VCHAIN.md` §2) is its own prefix, as a `Get` looks it up
+whole.
 
 Configuring that extractor obliges every iterator on a
 store CF to state its seek mode, because the RocksDB

@@ -1,5 +1,5 @@
 /*
- * version.cc -- the row-version codec, the wisr.version.v1
+ * version.cc -- the row-version codec, the wisr.store.v2
  * comparator, and the userkey prefix extractor (SM1_DESIGN.md §3.1).
  */
 
@@ -12,18 +12,27 @@ namespace wisr {
 namespace {
 
 /*
- * Compare userkeys with memcmp, shorter first on a tie, then
- * the tails with memcmp. The default bytewise comparator would
- * compare one key's tail against a longer key's extra bytes
- * (SM1_DESIGN.md §3.1).
+ * Order by class first. Versioned keys by userkey with memcmp,
+ * shorter first on a tie, then by tail, newest version first: the
+ * default bytewise comparator would compare one key's tail against
+ * a longer key's extra bytes (SM1_DESIGN.md §3.1). Current and old
+ * keys bytewise (../VCHAIN.md §2).
  */
 class version_comparator_t : public rocksdb::Comparator {
 public:
   /* The persisted name; changing the order means a new name. */
-  const char *Name() const override { return "wisr.version.v1"; }
+  const char *Name() const override { return "wisr.store.v2"; }
 
-  /* Order by userkey, then by tail (newest version first). */
+  /* Order by class, then within it. */
   int Compare(const rocksdb::Slice &a, const rocksdb::Slice &b) const override {
+    // Different classes, or an empty key: the first byte decides.
+    if (a.empty() || b.empty() || a[0] != b[0]) {
+      return a.compare(b);
+    }
+    // Current and old keys are bytewise.
+    if (a[0] != key_class_versioned) {
+      return a.compare(b);
+    }
     // Split off each key's userkey.
     rocksdb::Slice ua = version_userkey(a);
     rocksdb::Slice ub = version_userkey(b);
@@ -34,8 +43,10 @@ public:
       return c;
     }
     // Same userkey: compare the tails, newest version first.
-    rocksdb::Slice ta(a.data() + ua.size(), a.size() - ua.size());
-    rocksdb::Slice tb(b.data() + ub.size(), b.size() - ub.size());
+    size_t pa = ua.data() - a.data() + ua.size();
+    size_t pb = ub.data() - b.data() + ub.size();
+    rocksdb::Slice ta(a.data() + pa, a.size() - pa);
+    rocksdb::Slice tb(b.data() + pb, b.size() - pb);
     return ta.compare(tb);
   }
 
@@ -48,32 +59,38 @@ public:
 };
 
 /*
- * Strip the 12-byte tail so a bloom filter keys on the userkey.
+ * The bloom filter's prefix: a version key's class and userkey, its
+ * tail stripped; a current or old key whole, which a Get looks up.
  * Variable-length, so FullLengthEnabled stays false (§10.2).
  */
 class version_prefix_t : public rocksdb::SliceTransform {
 public:
   /* The persisted name. */
-  const char *Name() const override { return "wisr.userkey.v1"; }
+  const char *Name() const override { return "wisr.prefix.v2"; }
 
-  /* The userkey of a version key. */
+  /* A version key less its tail; any other key whole. */
   rocksdb::Slice Transform(const rocksdb::Slice &key) const override {
-    return version_userkey(key);
+    if (key[0] != key_class_versioned) {
+      return key;
+    }
+    return rocksdb::Slice(key.data(), key.size() - version_tail_size);
   }
 
-  /* Every version key carries a full tail. */
+  /* Every version key carries its class and a full tail. */
   bool InDomain(const rocksdb::Slice &key) const override {
-    return key.size() >= version_tail_size;
+    return !key.empty() && (key[0] != key_class_versioned ||
+                            key.size() >= 1 + version_tail_size);
   }
 };
 
 } // namespace
 
-/* Build userkey | ~wts | ~seq. */
+/* Build class | userkey | ~wts | ~seq. */
 std::string version_key(rocksdb::Slice userkey, uint64_t wts, uint32_t seq) {
   std::string k;
-  // Reserve room for the userkey and the 12-byte tail.
-  k.reserve(userkey.size() + version_tail_size);
+  // Reserve room for the class, the userkey and the 12-byte tail.
+  k.reserve(1 + userkey.size() + version_tail_size);
+  k.push_back(key_class_versioned);
   // Copy the userkey.
   k.append(userkey.data(), userkey.size());
   // Complement wts, so newer versions sort first.
@@ -83,11 +100,12 @@ std::string version_key(rocksdb::Slice userkey, uint64_t wts, uint32_t seq) {
   return k;
 }
 
-/* Build userkey followed by twelve fill bytes: a scan bound. */
+/* Build class | userkey, then twelve fill bytes: a scan bound. */
 std::string version_bound(rocksdb::Slice userkey, char fill) {
   std::string k;
-  // Reserve room for the userkey and the 12-byte tail.
-  k.reserve(userkey.size() + version_tail_size);
+  // Reserve room for the class, the userkey and the 12-byte tail.
+  k.reserve(1 + userkey.size() + version_tail_size);
+  k.push_back(key_class_versioned);
   // Copy the userkey.
   k.append(userkey.data(), userkey.size());
   // Fill the tail: all 00 sorts first, all FF last.
@@ -95,12 +113,14 @@ std::string version_bound(rocksdb::Slice userkey, char fill) {
   return k;
 }
 
-/* The userkey part: everything before the tail. */
+/* The userkey part: past the class byte, before the tail. */
 rocksdb::Slice version_userkey(rocksdb::Slice key) {
-  // Everything before the tail is the userkey.
-  size_t n = key.size() >= version_tail_size ? key.size() - version_tail_size
-                                             : key.size();
-  return rocksdb::Slice(key.data(), n);
+  // A key cut short has no userkey.
+  if (key.size() < 1 + version_tail_size) {
+    return rocksdb::Slice(key.data() + (key.empty() ? 0 : 1),
+                          key.empty() ? 0 : key.size() - 1);
+  }
+  return rocksdb::Slice(key.data() + 1, key.size() - 1 - version_tail_size);
 }
 
 /* Decode userkey, wts, and seq from a version key. */
@@ -108,7 +128,7 @@ void version_decode_key(rocksdb::Slice key, version_t *v) {
   // Split off the userkey.
   v->userkey = version_userkey(key);
   // Locate the tail after it.
-  const char *tail = key.data() + v->userkey.size();
+  const char *tail = v->userkey.data() + v->userkey.size();
   // Undo the complement of wts.
   v->wts = ~sm0::get_be64(tail);
   // Undo the complement of seq.

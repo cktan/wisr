@@ -61,6 +61,10 @@ public:
    */
   bool Filter(int, const rocksdb::Slice &key, const rocksdb::Slice &value,
               std::string *new_value, bool *value_changed) const override {
+    // Only a versioned key is judged here (../VCHAIN.md §2).
+    if (key.empty() || key[0] != key_class_versioned) {
+      return false;
+    }
     // Decode the version's userkey, xid, and seq.
     version_t v;
     version_decode_key(key, &v);

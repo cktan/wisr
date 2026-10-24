@@ -648,16 +648,19 @@ sm1::scan_t *access_scan(sm1::session_t *s, uint64_t storeid,
   rocksdb::ReadOptions ro;
   ro.snapshot = c->snap;
   ro.auto_prefix_mode = true; // a scan crosses userkeys (§10.2)
-  // Bound the iterator at ekey, carrying a full tail.
+  // Bound the iterator at ekey, carrying a full tail; with none, at
+  // the end of the versioned keys (../VCHAIN.md §2).
   if (ekey) {
     // Build the bound; the cursor owns its bytes.
     c->upper = version_bound(rocksdb::Slice(ekey, eklen),
                              ekey_inclusive ? '\xff' : '\x00');
-    // RocksDB borrows the bound through this slice.
-    c->upper_slice = rocksdb::Slice(c->upper);
-    // Install the bound.
-    ro.iterate_upper_bound = &c->upper_slice;
+  } else {
+    c->upper.assign(1, key_class_current);
   }
+  // RocksDB borrows the bound through this slice.
+  c->upper_slice = rocksdb::Slice(c->upper);
+  // Install the bound.
+  ro.iterate_upper_bound = &c->upper_slice;
   // Open the iterator.
   c->it.reset(st.rdb->NewIterator(ro, st.cf));
   // Position at skey, or at the start.
