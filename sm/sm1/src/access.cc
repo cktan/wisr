@@ -720,6 +720,17 @@ int scan_seek(sm1::scan_t *c, const char *key, size_t klen, int inclusive) {
                      "sm1_scan_seek moves forward only; the cursor has "
                      "already read past that key");
   }
+  // A chained cursor's lower bound is its start key, as given.
+  if (c->chained) {
+    if (target.compare(rocksdb::Slice(c->lower)) < 0) {
+      return set_error(sm1::SM_ERR_INVALID,
+                       "sm1_scan_seek target is below the scan's start key");
+    }
+    if (c->state != 1) {
+      chain_scan_seek(c, target, inclusive);
+    }
+    return 0;
+  }
   // Build the seek bound, past the target if exclusive.
   std::string bound = version_bound(target, inclusive ? '\x00' : '\xff');
   // Refuse a target below the range the cursor registered.
@@ -761,6 +772,10 @@ int scan_next(sm1::scan_t *c, const char **key, size_t *klen, const char **data,
   // A cursor at its end, or failed, stays so.
   if (c->state != 0) {
     return c->state;
+  }
+  // A chained store's cursor walks its current keys and their chains.
+  if (c->chained) {
+    return chain_scan_next(c, key, klen, data, datalen);
   }
   // The view frozen at sm1::scan.
   db_t *db = c->session->db;
@@ -1087,17 +1102,8 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
   s->wts_hi = wts;
   // The write used the re-read; the next needs its own.
   lock_clear_latest(s, storeid, key);
-  // Record it for savepoint rollback, if a savepoint could
-  // still roll it back; with none set, or every one lost,
-  // nothing is kept (§6.5).
-  if (s->savepoints.size() > s->lost_marks) {
-    s->undo.push_back({storeid, key.ToString(), wts, seq});
-    s->undo_bytes += sizeof(sm1::session_t::undo_t) + key.size();
-    // Past the cap: give up the savepoints, not the write.
-    if (s->undo_bytes > s->db->undo_max_bytes) {
-      xct_undo_overflow(s);
-    }
-  }
+  // Record it for savepoint rollback.
+  access_undo_add(s, {storeid, key.ToString(), wts, seq});
   // A temporary store has no other reader, and bars a prepare.
   if (st.owner) {
     s->temp_touched = true;
@@ -1107,6 +1113,39 @@ int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
   // reader arriving later steps past the version instead (§7.2).
   ssi_on_write(s, storeid, key);
   return 0;
+}
+
+/*
+ * Record a write for savepoint rollback, if a savepoint could still
+ * roll it back; with none set, or every one lost, nothing is kept
+ * (§6.5).
+ */
+void access_undo_add(sm1::session_t *s, sm1::session_t::undo_t undo) {
+  if (s->savepoints.size() <= s->lost_marks) {
+    return;
+  }
+  s->undo_bytes += sizeof(sm1::session_t::undo_t) + undo.key.size();
+  s->undo.push_back(std::move(undo));
+  // Past the cap: give up the savepoints, not the write.
+  if (s->undo_bytes > s->db->undo_max_bytes) {
+    xct_undo_overflow(s);
+  }
+}
+
+/* The visibility test of §4.4, for chain.cc. */
+int access_visible(db_t *db, const version_t &v, const view_t &view) {
+  return visible(db, v, view);
+}
+
+/* Step past an invisible version, as a read does, for chain.cc. */
+int access_skip(sm1::session_t *s, const version_t &v, const view_t &view) {
+  return skip_version(s, v, view);
+}
+
+/* The entry checks of a data operation, for chain.cc. */
+int access_enter(sm1::session_t *s, const view_t &view, uint64_t storeid,
+                 const char *key, size_t klen) {
+  return enter(s, view, storeid, key, klen);
 }
 
 /*
@@ -1317,8 +1356,10 @@ int sm1::scannxt(sm1::scan_t *scan, std::string_view &key,
 /* Release a cursor's hold: the iterator first, then its snapshot. */
 void wisr::scan_release(sm1::scan_t *scan) {
   ssi_range_close(scan); // narrow the SIREAD range to what was read
-  // Destroy the iterator before its snapshot and bound.
+  // Destroy the iterator, and a chained cursor's row, before the
+  // snapshot and bound.
   scan->it.reset();
+  scan->got.Reset();
   // Release the RocksDB snapshot.
   scan->rdb->ReleaseSnapshot(scan->snap);
   // Stop holding back the CF:txn sweep.

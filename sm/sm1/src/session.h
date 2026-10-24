@@ -28,7 +28,9 @@
  */
 struct sm1::rawpin_t {
   std::unique_ptr<rocksdb::Iterator> it; /* found the row; null when empty */
-  rocksdb::Slice row; /* the row's bytes, in a block it holds */
+  /* A chained store's row, found by Get: the block it holds. */
+  rocksdb::PinnableSlice got;
+  rocksdb::Slice row; /* the row's bytes, in a block it or got holds */
   /*
    * For an iterator a point read opened (access_read), what
    * decides whether the next read into the pin may seek it again
@@ -137,6 +139,7 @@ struct sm1::session_t {
     std::string key;
     uint64_t wts;
     uint32_t seq;
+    bool chained = false; /* a chained key's write (../VCHAIN.md §6) */
   };
   std::vector<undo_t> undo;
   size_t undo_bytes = 0; /* what undo holds, keys included */
@@ -278,9 +281,19 @@ struct sm1::scan_t {
    * past at the next call.
    */
   bool on_row = false;
+  /*
+   * A cursor over a chained store's keys (sm1::chain_scan): it walks
+   * the current keys, and reads a version it does not see there from
+   * the old ones, at snap, into got, which then lends the row.
+   */
+  bool chained = false;
+  rocksdb::ColumnFamilyHandle *cf = nullptr; /* a chained cursor's store */
+  rocksdb::PinnableSlice got;
 };
 
 namespace wisr {
+
+struct version_t;
 
 /* What a read sees: the MVCC snapshot and the reader's own writes. */
 struct view_t {
@@ -571,6 +584,43 @@ sm1::scan_t *access_scan(sm1::session_t *session, uint64_t storeid,
  */
 int access_write(sm1::session_t *session, uint64_t storeid, write_op_t op,
                  rocksdb::Slice key, rocksdb::Slice data, sm1::rawpin_t *pin);
+
+/* 1 if v is visible at view, 0 if not, -1 on error (§4.4). */
+int access_visible(db_t *db, const version_t &v, const view_t &view);
+
+/* Step past v, invisible at view: under SSI, owe its writer an edge. */
+int access_skip(sm1::session_t *session, const version_t &v,
+                const view_t &view);
+
+/*
+ * A data operation's entry checks: a valid key, and a storeid that
+ * names a live store at view. Returns 0 or -1.
+ */
+int access_enter(sm1::session_t *session, const view_t &view, uint64_t storeid,
+                 const char *key, size_t klen);
+
+/* Record a write for savepoint rollback, if a savepoint can reach it. */
+void access_undo_add(sm1::session_t *session, sm1::session_t::undo_t undo);
+
+/*
+ * sm1::scannxt of a chained cursor: 0 with the next key it sees, 1
+ * at the end, or -1 (chain.cc).
+ */
+int chain_scan_next(sm1::scan_t *scan, const char **key, size_t *klen,
+                    const char **data, size_t *datalen);
+
+/* sm1::scan_seek of a chained cursor, its checks made (chain.cc). */
+void chain_scan_seek(sm1::scan_t *scan, rocksdb::Slice target, int inclusive);
+
+/*
+ * Put key's chain back as a rollback leaves it, the caller holding
+ * the key's latch: its newest version becomes the newest not written
+ * by xid above seq seq_above, and the old versions passed are
+ * unlinked; with none left, the key goes. Nothing is done if its
+ * newest version is not one to undo. Returns 0 or -1 (chain.cc).
+ */
+int chain_restore(db_t *db, const store_t &st, rocksdb::Slice key, uint64_t xid,
+                  uint32_t seq_above);
 
 } // namespace wisr
 

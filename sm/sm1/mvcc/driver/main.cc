@@ -20,19 +20,22 @@
 /* Parse the arguments, run the script, print the transcript. */
 int main(int argc, char **argv) {
   int block_ms = 250;
+  bool chained = false;
   const char *path = nullptr;
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--block-ms") == 0 && i + 1 < argc) {
       block_ms = atoi(argv[++i]);
+    } else if (strcmp(argv[i], "--chained") == 0) {
+      chained = true;
     } else if (argv[i][0] == '-') {
-      fprintf(stderr, "usage: driver [--block-ms N] script.t\n");
+      fprintf(stderr, "usage: driver [--block-ms N] [--chained] script.t\n");
       return 2;
     } else {
       path = argv[i];
     }
   }
   if (!path) {
-    fprintf(stderr, "usage: driver [--block-ms N] script.t\n");
+    fprintf(stderr, "usage: driver [--block-ms N] [--chained] script.t\n");
     return 2;
   }
 
@@ -46,7 +49,7 @@ int main(int argc, char **argv) {
 
   // Run every selected pairing, then print what happened.
   std::string transcript;
-  int failures = script_run(script, block_ms, &transcript);
+  int failures = script_run(script, block_ms, chained, &transcript);
   fputs(transcript.c_str(), stdout);
   if (failures < 0) {
     fprintf(stderr, "%s: the database could not be created\n", path);

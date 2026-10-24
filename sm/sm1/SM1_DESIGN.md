@@ -133,7 +133,8 @@ and `CF:meta`.
 ### 3.1 `CF:store.<storeid>` — row versions
 
 Each store's versions live in their own column family, named
-by `storeid` in decimal (`store.0` is the catalog, §11).
+by `storeid` in decimal (`store.0` is the catalog, §11); a
+chained store's is named `chain.<storeid>` (`../VCHAIN.md` §3).
 
 ```
 key   = class  (1B, 0x00: a versioned key)

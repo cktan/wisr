@@ -12,6 +12,7 @@
  * them as neighbours.
  */
 
+#include "chain.h"
 #include "error.h"
 #include "session.h"
 #include "version.h"
@@ -44,6 +45,8 @@ constexpr size_t entry_overhead = 2 * sizeof(std::string);
 /* One stream of a load: a range of the store's keys. */
 struct stream_t {
   bool ascending = false;
+  /* Its keys are a chained store's chained keys (sm1::load_stream). */
+  bool chained = false;
   std::vector<entry_t> buf;      /* not yet in a file or a run */
   size_t bytes = 0;              /* what buf is charged */
   std::vector<std::string> runs; /* sorted runs on disk, to merge */
@@ -105,6 +108,32 @@ int finish_file(stream_t &t) {
 }
 
 /*
+ * The store key stream t puts key under: the load's version of it,
+ * or for a chained stream its current key (../VCHAIN.md §8).
+ */
+std::string stream_key(const sm1::loader_t *l, const stream_t &t,
+                       const std::string &key) {
+  return t.chained ? curr_key(key) : version_key(key, l->wts, l->seq);
+}
+
+/*
+ * The value stream t puts with key: the load's version, or for a
+ * chained stream a current version with nothing before it.
+ */
+std::string stream_value(const sm1::loader_t *l, const stream_t &t,
+                         const std::string &value) {
+  if (!t.chained) {
+    return version_value(0, l->s->xid, value);
+  }
+  chain_version_t v;
+  v.xid = l->s->xid;
+  v.wts = l->wts;
+  v.seq = l->seq;
+  v.payload = rocksdb::Slice(value);
+  return chain_value(v, false);
+}
+
+/*
  * Add key and value to stream t's sorted file as the load's
  * version of the key, opening a file if none is open and closing
  * it once it is load_file_bytes long. Keys come in order.
@@ -130,8 +159,8 @@ int add_to_file(sm1::loader_t *l, stream_t &t, const std::string &key,
     }
     l->files.push_back(path);
   }
-  rocksdb::Status st = t.writer->Put(version_key(key, l->wts, l->seq),
-                                     version_value(0, l->s->xid, value));
+  rocksdb::Status st =
+      t.writer->Put(stream_key(l, t, key), stream_value(l, t, value));
   if (!st.ok()) {
     return set_status_error(st, "load: write a sorted file");
   }
@@ -353,8 +382,8 @@ int write_batch(sm1::loader_t *l) {
       return -1;
     }
     for (const entry_t &e : t.buf) {
-      batch.Put(l->st.cf, version_key(e.first, l->wts, l->seq),
-                version_value(0, l->s->xid, e.second));
+      batch.Put(l->st.cf, stream_key(l, t, e.first),
+                stream_value(l, t, e.second));
     }
   }
   // One write, not synced, as any version's put is.
@@ -366,8 +395,8 @@ int write_batch(sm1::loader_t *l) {
   for (const stream_t &t : l->streams) {
     for (const entry_t &e : t.buf) {
       count_write(l->st, e.first,
-                  version_key(e.first, l->wts, l->seq).size() +
-                      version_value(0, l->s->xid, e.second).size());
+                  stream_key(l, t, e.first).size() +
+                      stream_value(l, t, e.second).size());
     }
   }
   return 0;
@@ -519,13 +548,19 @@ int sm1::load_open(sm1::session_t *s, uint64_t storeid, sm1::loader_t *&out) {
 }
 
 /* Declare a stream of the load; see sm1.h. */
-int sm1::load_stream(sm1::loader_t *l, bool ascending, size_t &stream) {
+int sm1::load_stream(sm1::loader_t *l, bool ascending, size_t &stream,
+                     bool chained) {
   if (!l) {
     return set_error(sm1::SM_ERR_INVALID, "load: no loader");
+  }
+  if (chained && !l->st.chained) {
+    return set_error(sm1::SM_ERR_INVALID, "load: store {} is not chained",
+                     l->storeid);
   }
   stream = l->streams.size();
   l->streams.emplace_back();
   l->streams.back().ascending = ascending;
+  l->streams.back().chained = chained;
   return 0;
 }
 

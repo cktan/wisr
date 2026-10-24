@@ -43,7 +43,7 @@ std::string catalog_key(uint64_t storeid) {
 }
 
 /* sm1::mkstore, minus the out-of-memory guard. */
-int mkstore(sm1::session_t *s, uint64_t *out, bool temporary) {
+int mkstore(sm1::session_t *s, uint64_t *out, bool temporary, bool chained) {
   // Require the out-parameter.
   if (!out) {
     return set_error(sm1::SM_ERR_INVALID, "sm1_mkstore: storeid is NULL");
@@ -64,7 +64,8 @@ int mkstore(sm1::session_t *s, uint64_t *out, bool temporary) {
 
   // Create the column family eagerly, before the catalog row,
   // so this transaction can write into it at once (§11).
-  if (db_create_store_cf(s->db, storeid, temporary ? s : nullptr) != 0) {
+  if (db_create_store_cf(s->db, storeid, temporary ? s : nullptr, chained) !=
+      0) {
     return -1;
   }
   // Remember the CF, so abort or rollback drops it.
@@ -218,8 +219,9 @@ int catalog_lookup(sm1::session_t *s, const view_t &view, uint64_t storeid) {
 } // namespace wisr
 
 /* Create a store and hand out its storeid. */
-int sm1::mkstore(sm1::session_t *session, uint64_t &storeid, bool temporary) {
-  return ::mkstore(session, &storeid, temporary);
+int sm1::mkstore(sm1::session_t *session, uint64_t &storeid, bool temporary,
+                 bool chained) {
+  return ::mkstore(session, &storeid, temporary, chained);
 }
 
 /* Drop a store and all of its rows. */

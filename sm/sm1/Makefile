@@ -141,7 +141,9 @@ test: all scenarios
 
 # Run every scenario script and diff its transcript against the
 # expected one. A difference is a failure: mvcc/good is the
-# claim, mvcc/out is what the engine did.
+# claim, mvcc/out is what the engine did. Each runs twice, on
+# versioned stores and on chained ones (DRIVER.md §7), against the
+# one expected transcript.
 scenarios: $(DRIVER)
 	@mkdir -p $(SCRIPT_OUT)
 	@fail=0; \
@@ -151,12 +153,16 @@ scenarios: $(DRIVER)
 	  if ! diff -u $(SCRIPT_GOOD)/$$b.out $(SCRIPT_OUT)/$$b.out; then \
 	    fail=1; \
 	  fi; \
+	  $(DRIVER) --chained $$f > $(SCRIPT_OUT)/$$b.chained.out || fail=1; \
+	  if ! diff -u $(SCRIPT_GOOD)/$$b.out $(SCRIPT_OUT)/$$b.chained.out; then \
+	    fail=1; \
+	  fi; \
 	done; \
 	if [ $$fail -ne 0 ]; then \
 	  echo "scenario transcripts differ; see the diffs above"; \
 	  exit 1; \
 	fi; \
-	echo "scenarios: $(words $(SCRIPTS)) scripts match"
+	echo "scenarios: $(words $(SCRIPTS)) scripts match, versioned and chained"
 
 # Take the current transcripts as expected. Never run by
 # "make test": accepting a transcript is a deliberate act.

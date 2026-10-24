@@ -112,9 +112,11 @@ bool script_parse(const std::string &path, script_t *out, std::string *err);
 
 /*
  * Run script once per selected pairing, writing the transcript
- * to out. Returns the number of failed checks, or -1 if the
- * run could not finish.
+ * to out; with chained, against chained stores through the chain_
+ * calls (DRIVER.md §7). Returns the number of failed checks, or -1
+ * if the run could not finish.
  */
-int script_run(const script_t &script, int block_ms, std::string *out);
+int script_run(const script_t &script, int block_ms, bool chained,
+               std::string *out);
 
 #endif /* WISR_DRIVER_H */

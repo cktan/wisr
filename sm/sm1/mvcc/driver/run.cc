@@ -58,6 +58,70 @@ const errinfo_t errtab[] = {
     {sm1::SM_ERR_MOVED, "moved", "serialize"},
 };
 
+/*
+ * The run's mode: with --chained, the scenario's stores are chained
+ * and every row call is its chain_ counterpart (DRIVER.md §7).
+ */
+bool g_chained = false;
+
+/* sm1::read, or sm1::chain_read in chained mode. */
+int row_read(sm1::session_t *s, uint64_t store, std::string_view key,
+             std::string_view &data) {
+  return g_chained ? sm1::chain_read(s, store, key, data)
+                   : sm1::read(s, store, key, data);
+}
+
+/* sm1::read_latest, or sm1::chain_read_latest in chained mode. */
+int row_read_latest(sm1::session_t *s, uint64_t store, std::string_view key,
+                    std::string_view &data) {
+  return g_chained ? sm1::chain_read_latest(s, store, key, data)
+                   : sm1::read_latest(s, store, key, data);
+}
+
+/* sm1::update, or sm1::chain_update in chained mode. */
+int row_update(sm1::session_t *s, uint64_t store, std::string_view key,
+               std::string_view data) {
+  return g_chained ? sm1::chain_update(s, store, key, data)
+                   : sm1::update(s, store, key, data);
+}
+
+/* sm1::insert, or sm1::chain_insert in chained mode. */
+int row_insert(sm1::session_t *s, uint64_t store, std::string_view key,
+               std::string_view data) {
+  return g_chained ? sm1::chain_insert(s, store, key, data)
+                   : sm1::insert(s, store, key, data);
+}
+
+/* sm1::erase, or sm1::chain_erase in chained mode. */
+int row_erase(sm1::session_t *s, uint64_t store, std::string_view key) {
+  return g_chained ? sm1::chain_erase(s, store, key)
+                   : sm1::erase(s, store, key);
+}
+
+/* sm1::erase_moved, or sm1::chain_erase_moved in chained mode. */
+int row_erase_moved(sm1::session_t *s, uint64_t store, std::string_view key,
+                    sm1::rawpin_t *pin, std::string_view &old) {
+  return g_chained ? sm1::chain_erase_moved(s, store, key, pin, old)
+                   : sm1::erase_moved(s, store, key, pin, old);
+}
+
+/* sm1::scan, or sm1::chain_scan in chained mode. */
+int row_scan(sm1::session_t *s, uint64_t store, const char *skey, size_t sklen,
+             int skey_inclusive, const char *ekey, size_t eklen,
+             int ekey_inclusive, sm1::scan_t *&out) {
+  return g_chained ? sm1::chain_scan(s, store, skey, sklen, skey_inclusive,
+                                     ekey, eklen, ekey_inclusive, out)
+                   : sm1::scan(s, store, skey, sklen, skey_inclusive, ekey,
+                               eklen, ekey_inclusive, out);
+}
+
+/* sm1::lock of a row, or sm1::chain_lock in chained mode. */
+int row_lock(sm1::session_t *s, uint64_t store, std::string_view key,
+             sm1::lockmode_t mode) {
+  return g_chained ? sm1::chain_lock(s, store, key, mode)
+                   : sm1::lock(s, sm1::LOCKTYPE_ROW, store, key, mode);
+}
+
 /* The symbolic name of the current error (DRIVER.md §4). */
 std::string error_name() {
   sm1::errnum_t num = sm1::errnum();
@@ -134,7 +198,7 @@ std::string execute(worker_t *w, const item_t &it) {
   }
   if (it.verb == "read") {
     std::string_view data;
-    int rc = sm1::read(w->sess, w->store, a[0], data);
+    int rc = row_read(w->sess, w->store, a[0], data);
     if (rc < 0) {
       return error_name();
     }
@@ -144,26 +208,26 @@ std::string execute(worker_t *w, const item_t &it) {
     // readlatest <row>: the newest committed version of a row
     // this transaction holds locked, past its snapshot.
     std::string_view data;
-    int rc = sm1::read_latest(w->sess, w->store, a[0], data);
+    int rc = row_read_latest(w->sess, w->store, a[0], data);
     if (rc < 0) {
       return error_name();
     }
     return rc == 1 ? "-" : std::string(data);
   }
   if (it.verb == "write" || it.verb == "insert") {
-    int rc = it.verb == "write" ? sm1::update(w->sess, w->store, a[0], a[1])
-                                : sm1::insert(w->sess, w->store, a[0], a[1]);
+    int rc = it.verb == "write" ? row_update(w->sess, w->store, a[0], a[1])
+                                : row_insert(w->sess, w->store, a[0], a[1]);
     return rc == 0 ? "ok" : error_name();
   }
   if (it.verb == "delete") {
-    return sm1::erase(w->sess, w->store, a[0]) == 0 ? "ok" : error_name();
+    return row_erase(w->sess, w->store, a[0]) == 0 ? "ok" : error_name();
   }
   if (it.verb == "move") {
     // move <row>: the erase of a row whose key changed, its
     // tombstone a move's (sm1::erase_moved).
     sm1::rawpin_t *pin = sm1::rawpin_new();
     std::string_view old;
-    int rc = sm1::erase_moved(w->sess, w->store, a[0], pin, old);
+    int rc = row_erase_moved(w->sess, w->store, a[0], pin, old);
     sm1::rawpin_free(pin);
     return 0 == rc ? "ok" : error_name();
   }
@@ -172,8 +236,8 @@ std::string execute(worker_t *w, const item_t &it) {
     // v = new WHERE v = old, over the rows lo..hi: a scan, so the
     // read is a range, then a write of each row that matched.
     sm1::scan_t *c = nullptr;
-    if (sm1::scan(w->sess, w->store, a[0].data(), a[0].size(), 1, a[1].data(),
-                  a[1].size(), 1, c) != 0) {
+    if (row_scan(w->sess, w->store, a[0].data(), a[0].size(), 1, a[1].data(),
+                 a[1].size(), 1, c) != 0) {
       return error_name();
     }
     std::vector<std::string> hit;
@@ -187,7 +251,7 @@ std::string execute(worker_t *w, const item_t &it) {
     std::ostringstream out;
     out << "{";
     for (size_t i = 0; i < hit.size(); i++) {
-      if (sm1::update(w->sess, w->store, hit[i], a[3]) != 0) {
+      if (row_update(w->sess, w->store, hit[i], a[3]) != 0) {
         return error_name();
       }
       out << (i ? ", " : "") << hit[i];
@@ -202,8 +266,8 @@ std::string execute(worker_t *w, const item_t &it) {
       limit = strtol(a[3].c_str(), nullptr, 10);
     }
     sm1::scan_t *c = nullptr;
-    if (sm1::scan(w->sess, w->store, a[0].data(), a[0].size(), 1, a[1].data(),
-                  a[1].size(), 1, c) != 0) {
+    if (row_scan(w->sess, w->store, a[0].data(), a[0].size(), 1, a[1].data(),
+                 a[1].size(), 1, c) != 0) {
       return error_name();
     }
     std::ostringstream out;
@@ -220,8 +284,8 @@ std::string execute(worker_t *w, const item_t &it) {
   if (it.verb == "open") {
     // open <name> <lo> <hi>: a cursor that outlives this step.
     sm1::scan_t *c = nullptr;
-    if (sm1::scan(w->sess, w->store, a[1].data(), a[1].size(), 1, a[2].data(),
-                  a[2].size(), 1, c) != 0) {
+    if (row_scan(w->sess, w->store, a[1].data(), a[1].size(), 1, a[2].data(),
+                 a[2].size(), 1, c) != 0) {
       return error_name();
     }
     w->cursors[a[0]] = c;
@@ -285,9 +349,8 @@ std::string execute(worker_t *w, const item_t &it) {
     };
     for (const auto &[name, mode] : modes) {
       if (a[1] == name) {
-        return sm1::lock(w->sess, sm1::LOCKTYPE_ROW, w->store, a[0], mode) == 0
-                   ? "ok"
-                   : error_name();
+        return row_lock(w->sess, w->store, a[0], mode) == 0 ? "ok"
+                                                            : error_name();
       }
     }
     return "ERROR: lock mode must be is, ix, shared, six or exclusive, not " +
@@ -298,7 +361,7 @@ std::string execute(worker_t *w, const item_t &it) {
     // the scenario is usually after is the storeid resolution
     // this takes, which is a tracked catalog read (§11).
     std::string_view data;
-    int rc = sm1::read(w->sess, w->store2, a[0], data);
+    int rc = row_read(w->sess, w->store2, a[0], data);
     if (rc < 0) {
       return error_name();
     }
@@ -447,8 +510,8 @@ public:
     sm1::opendb(m_env, "db", m_checker, &opt);
     m_ok = m_checker &&
            sm1::begin(m_checker, sm1::xctlevel_t::repeatable_read) == 0 &&
-           sm1::mkstore(m_checker, m_store) == 0 &&
-           sm1::mkstore(m_checker, m_store2) == 0 &&
+           sm1::mkstore(m_checker, m_store, false, g_chained) == 0 &&
+           sm1::mkstore(m_checker, m_store2, false, g_chained) == 0 &&
            sm1::commit(m_checker) == 0;
     m_ok = m_ok && make_stores();
 
@@ -503,7 +566,7 @@ public:
       std::vector<std::string> keys;
       sm1::scan_t *c = nullptr;
       ok = ok &&
-           sm1::scan(m_checker, store, nullptr, 0, 0, nullptr, 0, 0, c) == 0;
+           row_scan(m_checker, store, nullptr, 0, 0, nullptr, 0, 0, c) == 0;
       std::string_view k, d;
       while (ok && sm1::scannxt(c, k, d) == 0) {
         keys.emplace_back(k);
@@ -512,11 +575,11 @@ public:
         sm1::scanend(c);
       }
       for (const std::string &key : keys) {
-        ok = ok && sm1::erase(m_checker, store, key) == 0;
+        ok = ok && row_erase(m_checker, store, key) == 0;
       }
       // The same rows in both, so a script can read either.
       for (const auto &kv : m_script.seeds) {
-        ok = ok && sm1::insert(m_checker, store, kv.first, kv.second) == 0;
+        ok = ok && row_insert(m_checker, store, kv.first, kv.second) == 0;
       }
     }
     ok = ok && sm1::commit(m_checker) == 0;
@@ -835,7 +898,7 @@ private:
       return error_name();
     }
     sm1::scan_t *c = nullptr;
-    sm1::scan(m_checker, m_store, nullptr, 0, 0, nullptr, 0, 0, c);
+    row_scan(m_checker, m_store, nullptr, 0, 0, nullptr, 0, 0, c);
     out << "{";
     std::string_view k, d;
     int n = 0;
@@ -854,7 +917,7 @@ private:
       return error_name();
     }
     std::string_view data;
-    int rc = sm1::read(m_checker, m_store, row, data);
+    int rc = row_read(m_checker, m_store, row, data);
     std::string v = rc == 0 ? std::string(data) : "-";
     sm1::commit(m_checker);
     return v;
@@ -942,7 +1005,9 @@ private:
 } // namespace
 
 /* Run script once per selected pairing (DRIVER.md §2.1). */
-int script_run(const script_t &script, int block_ms, std::string *out) {
+int script_run(const script_t &script, int block_ms, bool chained,
+               std::string *out) {
+  g_chained = chained;
   std::ostringstream text;
   int failures = 0;
   // The comments a script opens with describe the scenario, so

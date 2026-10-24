@@ -15,6 +15,7 @@
  * the COMMITTED records it no longer needs.
  */
 
+#include "chain.h"
 #include "db.h"
 #include "log.h"
 #include "session.h"
@@ -61,9 +62,11 @@ public:
    */
   bool Filter(int, const rocksdb::Slice &key, const rocksdb::Slice &value,
               std::string *new_value, bool *value_changed) const override {
-    // Only a versioned key is judged here (../VCHAIN.md §2).
-    if (key.empty() || key[0] != key_class_versioned) {
-      return false;
+    // A chained key's versions have rules of their own (../VCHAIN.md
+    // §7).
+    if (!key.empty() && key[0] != key_class_versioned) {
+      return filter_chained(key, value, key[0] == key_class_old, new_value,
+                            value_changed);
     }
     // Decode the version's userkey, xid, and seq.
     version_t v;
@@ -135,6 +138,142 @@ public:
   }
 
 private:
+  /*
+   * Judge a chained key's version, a current one or with old an old
+   * one (../VCHAIN.md §7): true drops it (RocksDB writes a delete
+   * over the key, so no older entry of it comes back); false keeps
+   * it, with *new_value set when it gains a stamp.
+   */
+  bool filter_chained(const rocksdb::Slice &key, const rocksdb::Slice &value,
+                      bool old, std::string *new_value,
+                      bool *value_changed) const {
+    chain_version_t v;
+    if (!chain_decode(value, &v, old)) {
+      return doubt();
+    }
+    if (old) {
+      return filter_old(v, new_value, value_changed);
+    }
+    uint64_t commit_ts;
+    switch (writer(v, &commit_ts)) {
+    case XCT_DEAD:
+      // Left by an abort or a crash: the worker puts the version
+      // before it back. The key less its class byte is the userkey.
+      chain_report(m_db, m_storeid,
+                   rocksdb::Slice(key.data() + 1, key.size() - 1), v.xid);
+      return false;
+    case XCT_IN_FLIGHT:
+      return false;
+    case XCT_ERROR:
+      return doubt();
+    case XCT_COMMITTED:
+      break;
+    }
+    if (commit_ts > m_watermark) {
+      return false; // some live snapshot may not see it yet
+    }
+    // A delete every snapshot sees: the key goes, and the chain
+    // behind it goes by its displacer's rule.
+    if (v.flags & version_tombstone) {
+      return true;
+    }
+    stamp(&v, commit_ts, false, new_value, value_changed);
+    return false;
+  }
+
+  /* Count a version kept out of doubt; returns false, to keep it. */
+  bool doubt() const {
+    m_db->gc_filter_errors++;
+    m_doubts++;
+    return false;
+  }
+
+  /* The fate of v's own writer, its commit_ts into *commit_ts. */
+  xct_state_t writer(const chain_version_t &v, uint64_t *commit_ts) const {
+    if (v.flags & version_stamped) {
+      *commit_ts = v.commit_ts;
+      return XCT_COMMITTED;
+    }
+    return xct_status(m_db, v.xid, commit_ts);
+  }
+
+  /* Stamp v's own writer's commit_ts, if it is not yet. */
+  void stamp(chain_version_t *v, uint64_t commit_ts, bool old,
+             std::string *new_value, bool *value_changed) const {
+    if (v->flags & version_stamped) {
+      return;
+    }
+    v->flags |= version_stamped;
+    v->commit_ts = commit_ts;
+    *new_value = chain_value(*v, old);
+    *value_changed = true;
+  }
+
+  /* Judge an old version; see filter_chained. */
+  bool filter_old(chain_version_t &v, std::string *new_value,
+                  bool *value_changed) const {
+    // Unlinked: no chain reaches it; a reader on its way is older
+    // than the ts it was unlinked at.
+    if (v.flags & chain_unlinked) {
+      return v.displaced <= m_watermark;
+    }
+    // When its displacer committed, or that it has not.
+    uint64_t displaced_ts = v.displaced;
+    if (!(v.flags & chain_displaced_stamped)) {
+      switch (xct_status(m_db, v.displaced, &displaced_ts)) {
+      case XCT_DEAD:
+        // Its displacer aborted: the dead version still points to it
+        // until the repair unlinks it.
+        return stamp_own(v, new_value, value_changed);
+      case XCT_IN_FLIGHT:
+        return stamp_own(v, new_value, value_changed);
+      case XCT_ERROR:
+        return doubt();
+      case XCT_COMMITTED:
+        break;
+      }
+    }
+    // Displaced by a version every snapshot sees: no one's, nor is
+    // anything older in its chain.
+    if (displaced_ts <= m_watermark) {
+      return true;
+    }
+    // Kept: stamp the displacer, and its own writer, so the sweep may
+    // delete their status records.
+    bool changed = !(v.flags & chain_displaced_stamped);
+    v.flags |= chain_displaced_stamped;
+    v.displaced = displaced_ts;
+    uint64_t own_ts;
+    xct_state_t own = writer(v, &own_ts);
+    if (XCT_ERROR == own) {
+      return doubt();
+    }
+    if (XCT_COMMITTED == own && !(v.flags & version_stamped)) {
+      v.flags |= version_stamped;
+      v.commit_ts = own_ts;
+      changed = true;
+    }
+    if (changed) {
+      *new_value = chain_value(v, true);
+      *value_changed = true;
+    }
+    return false;
+  }
+
+  /* Keep an old version, stamping its own writer if it committed. */
+  bool stamp_own(chain_version_t &v, std::string *new_value,
+                 bool *value_changed) const {
+    uint64_t ts;
+    xct_state_t own = writer(v, &ts);
+    if (XCT_ERROR == own) {
+      return doubt();
+    }
+    if (XCT_COMMITTED == own) {
+      stamp(&v, ts, true, new_value, value_changed);
+    }
+    return false;
+  }
+
   db_t *m_db;
   uint64_t m_storeid;
   uint64_t m_watermark;
@@ -478,6 +617,7 @@ void gc_run_once(db_t *db) {
   std::lock_guard<std::mutex> run(db->gc_run_mu);
   std::vector<db_t::purge_t> purges;
   std::vector<uint64_t> drops;
+  std::vector<db_t::repair_t> repairs;
   // Take the watermark once, for the whole run.
   uint64_t watermark = db_watermark(db);
   {
@@ -485,6 +625,7 @@ void gc_run_once(db_t *db) {
     std::lock_guard<std::mutex> guard(db->gc_mu);
     // Take every queued purge.
     purges.swap(db->purges);
+    repairs.swap(db->repairs);
     // Take the drops the watermark has passed.
     auto end = db->drops.upper_bound(watermark);
     for (auto it = db->drops.begin(); it != end; ++it) {
@@ -493,6 +634,9 @@ void gc_run_once(db_t *db) {
     // Remove them from the queue.
     db->drops.erase(db->drops.begin(), end);
   }
+
+  // Put back the chained keys compaction found dead.
+  chain_repair(db, repairs);
 
   // Purge first: a key queued from a store about to be
   // dropped is simply skipped once its CF is gone.

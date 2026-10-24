@@ -33,6 +33,7 @@ void sm1::unpin(sm1::rawpin_t *pin) {
   // Let go of the iterator, and with it the blocks and the
   // SuperVersion it holds.
   pin->it.reset();
+  pin->got.Reset();
   pin->row = rocksdb::Slice();
   pin->reuse = {};
 }

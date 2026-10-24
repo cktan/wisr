@@ -488,10 +488,16 @@ int rollback(sm1::session_t *s, int depth) {
   // one fails the transaction is doomed: some deletes may be written
   // and others not.
   std::map<rocksdb::DB *, rocksdb::WriteBatch> batches;
+  // The chained keys written after the mark, put back below.
+  std::vector<const sm1::session_t::undo_t *> chained;
   // Queue a delete for each version written after the mark.
   for (size_t i = s->undo.size(); i-- > m.undo;) {
     // The next undo entry, newest first.
     const sm1::session_t::undo_t &u = s->undo[i];
+    if (u.chained) {
+      chained.push_back(&u);
+      continue;
+    }
     // Find its store.
     store_t store = db_store(db, u.storeid);
     // Skip a CF already dropped.
@@ -535,6 +541,21 @@ int rollback(sm1::session_t *s, int depth) {
     rocksdb::Status st = kv.first->Write(wo, &kv.second);
     if (!st.ok()) {
       set_status_error(st, "roll back to savepoint");
+      return doom(s);
+    }
+  }
+
+  // Put back each chained key written after the mark, to the version
+  // in effect at it, under its latch (../VCHAIN.md §6). A key written
+  // twice finds nothing left to undo the second time.
+  for (const sm1::session_t::undo_t *u : chained) {
+    store_t store = db_store(db, u->storeid);
+    // A store made since the mark is dropped below.
+    if (!store.chained) {
+      continue;
+    }
+    std::lock_guard<std::mutex> latch(lock_latch(db, u->storeid, u->key));
+    if (chain_restore(db, store, u->key, s->xid, m.seq_hwm) != 0) {
       return doom(s);
     }
   }

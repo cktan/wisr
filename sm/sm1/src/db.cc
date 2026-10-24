@@ -294,9 +294,9 @@ int dbid(sm1::env_t *env, const char *dbname, uint64_t *out) {
 
 namespace wisr {
 
-/* store.<storeid>, in decimal. */
-std::string store_cf_name(uint64_t storeid) {
-  return "store." + std::to_string(storeid);
+/* store.<storeid>, or chain.<storeid>, in decimal. */
+std::string store_cf_name(uint64_t storeid, bool chained) {
+  return (chained ? "chain." : "store.") + std::to_string(storeid);
 }
 
 /*
@@ -379,12 +379,20 @@ int db_options(const sm1::options_t *opt, rocksdb::DBOptions *out) {
   return 0;
 }
 
-/* Parse "store.<storeid>"; false if name is not a store CF's. */
-static bool parse_store_cf_name(const std::string &name, uint64_t *storeid) {
-  // Require the "store." prefix, a number, and a canonical spelling.
-  return name.compare(0, 6, "store.") == 0 &&
+/*
+ * Parse "store.<storeid>" or "chain.<storeid>", setting *chained;
+ * false if name is not a store CF's.
+ */
+static bool parse_store_cf_name(const std::string &name, uint64_t *storeid,
+                                bool *chained = nullptr) {
+  // Require a prefix, a number, and a canonical spelling.
+  bool c = name.compare(0, 6, "chain.") == 0;
+  if (chained) {
+    *chained = c;
+  }
+  return (c || name.compare(0, 6, "store.") == 0) &&
          sscanf(name.c_str() + 6, "%" SCNu64, storeid) == 1 &&
-         store_cf_name(*storeid) == name;
+         store_cf_name(*storeid, c) == name;
 }
 
 /*
@@ -497,6 +505,7 @@ db_t *db_open(const std::string &path, const char *dbname,
   for (size_t i = 0; i < handles.size(); i++) {
     const std::string &name = names[i];
     uint64_t storeid;
+    bool chained;
     // The default CF, unused but always present.
     if (name == rocksdb::kDefaultColumnFamilyName) {
       db->cf_default = handles[i];
@@ -507,12 +516,21 @@ db_t *db_open(const std::string &path, const char *dbname,
     } else if (name == WISR_CF_META) {
       db->cf_meta = handles[i];
       // A store's CF.
-    } else if (parse_store_cf_name(name, &storeid)) {
+    } else if (parse_store_cf_name(name, &storeid, &chained)) {
       // Its memtables were flushed in recovery: its counts start at 0.
       auto mem = std::make_shared<memcount_t>();
       db->listener->add(name, mem);
-      db->stores[storeid] = store_t{db->rdb, handles[i], nullptr, mem,
-                                    std::make_shared<filesize_t>()};
+      // A chained store's old versions are numbered on from its last.
+      db->stores[storeid] =
+          store_t{db->rdb,
+                  handles[i],
+                  nullptr,
+                  mem,
+                  std::make_shared<filesize_t>(),
+                  chained,
+                  chained ? std::make_shared<std::atomic<uint64_t>>(
+                                chain_next_old(db->rdb, handles[i]))
+                          : nullptr};
     } else {
       // Unknown CF: release its handle and fail the open.
       db->rdb->DestroyColumnFamilyHandle(handles[i]);
@@ -827,17 +845,19 @@ store_t db_store(db_t *db, uint64_t storeid) {
 }
 
 /*
- * Create store.<storeid>, or a temporary store's <dbid>.<storeid> in
+ * Create store.<storeid>, chain.<storeid> if chained, or a temporary
+ * store's <dbid>.<storeid>, chained or not, in
  * the temporary instance, and register its handle.
  */
-int db_create_store_cf(db_t *db, uint64_t storeid, sm1::session_t *owner) {
+int db_create_store_cf(db_t *db, uint64_t storeid, sm1::session_t *owner,
+                       bool chained) {
   rocksdb::ColumnFamilyHandle *h = nullptr;
   // A temporary store is named by its database too: two databases
   // hand out the same storeids.
   rocksdb::DB *rdb = owner ? db->tmp : db->rdb;
   std::string name =
       owner ? std::to_string(db->dbid) + "." + std::to_string(storeid)
-            : store_cf_name(storeid);
+            : store_cf_name(storeid, chained);
   // Create the store's column family; this is not transactional.
   rocksdb::Status s =
       rdb->CreateColumnFamily(store_cf_options(db, storeid), name, &h);
@@ -851,8 +871,15 @@ int db_create_store_cf(db_t *db, uint64_t storeid, sm1::session_t *owner) {
   // Hold store_mu exclusively while registering it.
   std::unique_lock<std::shared_mutex> guard(db->store_mu);
   // Register the handle, with the instance it is in.
+  // A chained store's flag; a temporary one's lives only here.
   db->stores[storeid] =
-      store_t{rdb, h, owner, mem, std::make_shared<filesize_t>()};
+      store_t{rdb,
+              h,
+              owner,
+              mem,
+              std::make_shared<filesize_t>(),
+              chained,
+              chained ? std::make_shared<std::atomic<uint64_t>>(1) : nullptr};
   db->had_temp = db->had_temp || owner;
   return 0;
 }
@@ -869,7 +896,8 @@ int db_drop_store_cf(db_t *db, uint64_t storeid) {
   }
   // Drop the store's column family, and stop counting its memtables.
   store_t st = it->second;
-  (st.owner ? db->tmp_listener : db->listener.get())->remove(st.cf->GetName());
+  const std::string name = st.cf->GetName();
+  (st.owner ? db->tmp_listener : db->listener.get())->remove(name);
   rocksdb::Status s = st.rdb->DropColumnFamily(st.cf);
   // Release the handle either way.
   st.rdb->DestroyColumnFamilyHandle(st.cf);
@@ -878,8 +906,8 @@ int db_drop_store_cf(db_t *db, uint64_t storeid) {
   // Report a failed drop; most callers cannot act on it, so log it.
   if (!s.ok()) {
     log_msg(sm1::loglevel_t::error,
-            "database {}: dropping column family store.{} failed: {}",
-            db->name.c_str(), storeid, s.ToString().c_str());
+            "database {}: dropping column family {} failed: {}",
+            db->name.c_str(), name.c_str(), s.ToString().c_str());
     return set_status_error(s, "drop column family");
   }
   return 0;

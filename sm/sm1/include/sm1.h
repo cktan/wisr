@@ -993,11 +993,18 @@ int abort_prepared(session_t* session, std::string_view gid);
  * declared read-only may make, write and drop one. A transaction
  * that has done any of the three cannot sm1::prepare().
  *
+ * A CHAINED STORE, asked for with chained, also holds chained keys
+ * (the chain_ calls, ../VCHAIN.md): each key's newest version under
+ * the plain key, the older ones chained behind it. Today's calls
+ * reach its versioned keys as any store's. A temporary store may be
+ * chained too.
+ *
  * Errors: SM_ERR_NOTRANS, SM_ERR_CONFLICT (retryable),
  * SM_ERR_INVALID, SM_ERR_PREPARED, SM_ERR_DISKFULL,
  * SM_ERR_IO.
  */
-int mkstore(session_t* session, uint64_t& storeid, bool temporary = false);
+int mkstore(session_t* session, uint64_t& storeid, bool temporary = false,
+            bool chained = false);
 
 /*
  * Drop a store and all of its rows. Transactional, as
@@ -1342,6 +1349,84 @@ void scanend(scan_t* scan);
 bool scan_rolled_back(const scan_t* scan);
 
 /*
+ * CHAINED KEYS (../VCHAIN.md), in a store sm1::mkstore made chained.
+ *
+ * A chained key keeps its newest version under the plain key and
+ * the older ones chained behind it, so a read is a Get, and one
+ * that does not see the newest follows the chain. Its keys are
+ * apart from the store's versioned ones: a chained key and a
+ * versioned key of the same bytes are two keys.
+ *
+ * Each call is the call of its name without chain_, with the same
+ * checks, conflicts, waits and errors (sm1::insert, sm1::insert_new,
+ * sm1::update, sm1::erase, sm1::erase_moved, sm1::read,
+ * sm1::read_latest, and sm1::lock or sm1::trylock of a
+ * LOCKTYPE_ROW), and SM_ERR_INVALID besides on a store that is not
+ * chained. An abort leaves its versions for readers to pass and GC
+ * to remove; a rollback to a savepoint puts the chain back.
+ */
+/*
+ * Whether storeid was made chained (sm1::mkstore), in out: fixed
+ * when the store is made, so read with no transaction. Errors:
+ * SM_ERR_INVALID, SM_ERR_NOTFOUND.
+ */
+int store_chained(session_t* session, uint64_t storeid, bool& out);
+
+int chain_insert(session_t* session, uint64_t storeid,
+                 std::string_view key, std::string_view data);
+int chain_insert_new(session_t* session, uint64_t storeid,
+                     std::string_view key, std::string_view data);
+int chain_update(session_t* session, uint64_t storeid,
+                 std::string_view key, std::string_view data);
+int chain_update(session_t* session, uint64_t storeid,
+                 std::string_view key, std::string_view data,
+                 rawpin_t* pin, std::string_view& old);
+int chain_erase(session_t* session, uint64_t storeid,
+                std::string_view key);
+int chain_erase(session_t* session, uint64_t storeid,
+                std::string_view key, rawpin_t* pin, std::string_view& old);
+int chain_erase_moved(session_t* session, uint64_t storeid,
+                      std::string_view key, rawpin_t* pin,
+                      std::string_view& old);
+int chain_read(session_t* session, uint64_t storeid,
+               std::string_view key, rawpin_t* pin,
+               std::string_view& data);
+int chain_read(session_t* session, uint64_t storeid,
+               std::string_view key, std::string_view& data);
+int chain_read_latest(session_t* session, uint64_t storeid,
+                      std::string_view key, std::string_view& data);
+int chain_read_latest(session_t* session, uint64_t storeid,
+                      std::string_view key, rawpin_t* pin,
+                      std::string_view& data);
+int chain_lock(session_t* session, uint64_t storeid,
+               std::string_view key, lockmode_t mode);
+int chain_trylock(session_t* session, uint64_t storeid,
+                  std::string_view key, lockmode_t mode);
+
+/*
+ * sm1::approxsize of a chained store's chained keys in [lo, hi):
+ * their newest versions alone; with old, the store's older versions
+ * too, which no key range divides.
+ */
+int chain_approxsize(session_t* session, uint64_t storeid,
+                     const char* lo, size_t lolen,
+                     const char* hi, size_t hilen,
+                     uint64_t& disk, uint64_t& mem, bool old = false);
+
+/*
+ * sm1::scan over a chained store's chained keys: the same bounds,
+ * view, SIREAD range and forward-only order, and the same
+ * sm1::scannxt, sm1::scan_seek and sm1::scanend. A key whose newest
+ * version the cursor does not see is handed out as the version it
+ * does, read from the chain as the store stood when the cursor
+ * opened.
+ */
+int chain_scan(session_t* session, uint64_t storeid,
+               const char* skey, size_t sklen, int skey_inclusive,
+               const char* ekey, size_t eklen, int ekey_inclusive,
+               scan_t*& out);
+
+/*
  * BULK LOAD (BULKLOAD.md section 5, file mode).
  *
  * A load fills an empty store in the caller's transaction without
@@ -1408,9 +1493,12 @@ int store_empty(session_t* session, uint64_t storeid, bool& empty);
 /*
  * Declare a stream of the load, numbered from 0 in the order
  * declared, in stream. With ascending, every key put to it must be
- * greater than the one before.
+ * greater than the one before. With chained, its keys are the
+ * store's chained keys (sm1::chain_insert), which a chained store
+ * alone has (SM_ERR_INVALID).
  */
-int load_stream(loader_t* loader, bool ascending, size_t& stream);
+int load_stream(loader_t* loader, bool ascending, size_t& stream,
+                bool chained = false);
 
 /*
  * Put a key and its value into a stream. A key equal to another of

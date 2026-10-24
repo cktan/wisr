@@ -77,6 +77,14 @@ struct store_t {
   std::shared_ptr<memcount_t> mem;
   /* Its sorted files' bytes as last estimated (memcount.h): shared. */
   std::shared_ptr<filesize_t> files;
+  /*
+   * Made chained (sm1::mkstore, ../VCHAIN.md §3): its CF is named
+   * chain.<storeid>. next_old is the next id of an old version,
+   * started at open past the store's last one: shared, as store_t
+   * is copied.
+   */
+  bool chained = false;
+  std::shared_ptr<std::atomic<uint64_t>> next_old;
 };
 
 /*
@@ -348,6 +356,18 @@ struct db_t {
     std::string key; /* the tombstone's version key */
   };
   std::vector<purge_t> purges;
+  /*
+   * Chained keys whose newest version is a dead transaction's (xid),
+   * which the compaction filter found, for the worker to put back
+   * (../VCHAIN.md §7). A key queued twice finds nothing to do the
+   * second time.
+   */
+  struct repair_t {
+    uint64_t storeid;
+    std::string key;
+    uint64_t xid;
+  };
+  std::vector<repair_t> repairs;
   std::multimap<uint64_t, uint64_t> drops; /* commit_ts -> storeid */
   std::thread gc_thread;
   std::mutex gc_run_mu; /* one gc_run_once at a time */
@@ -481,16 +501,20 @@ inline rocksdb::ColumnFamilyHandle *db_store_cf(db_t *db, uint64_t storeid) {
 /*
  * Create the CF for storeid and register it: in the database's
  * instance, or with owner given, a temporary store's in the
- * temporary instance. Returns 0 or -1.
+ * temporary instance; with chained, a chained store's
+ * (../VCHAIN.md §3). Returns 0 or -1.
  */
 int db_create_store_cf(db_t *db, uint64_t storeid,
-                       sm1::session_t *owner = nullptr);
+                       sm1::session_t *owner = nullptr, bool chained = false);
 
 /* Drop storeid's CF and unregister it. Returns 0 or -1. */
 int db_drop_store_cf(db_t *db, uint64_t storeid);
 
-/* The column family name of store storeid: store.<storeid>. */
-std::string store_cf_name(uint64_t storeid);
+/*
+ * The column family name of store storeid: store.<storeid>, or for a
+ * chained store chain.<storeid>.
+ */
+std::string store_cf_name(uint64_t storeid, bool chained = false);
 
 /*
  * How many range tombstones a store CF's memtable holds before
@@ -556,6 +580,22 @@ void gc_stop(db_t *db);
 /* Queue storeids dropped by a transaction committed at commit_ts. */
 void gc_queue_drops(db_t *db, uint64_t commit_ts,
                     const std::vector<uint64_t> &storeids);
+
+/*
+ * Queue storeid's chained key, whose newest version is xid's, a dead
+ * transaction's, for the worker to put back (../VCHAIN.md §7;
+ * chain.cc).
+ */
+void chain_report(db_t *db, uint64_t storeid, rocksdb::Slice key, uint64_t xid);
+
+/* Put back each queued chained key (chain.cc). */
+void chain_repair(db_t *db, const std::vector<db_t::repair_t> &repairs);
+
+/*
+ * The id after the store's last old version, for next_old: 1 if it
+ * has none (chain.cc).
+ */
+uint64_t chain_next_old(rocksdb::DB *rdb, rocksdb::ColumnFamilyHandle *cf);
 
 /*
  * Do the GC work that is due now: purge queued tombstones, drop
