@@ -8615,3 +8615,28 @@ has no `_id`, and nothing keeps one for it.
   a keyless table and finds its rows' `_id`s gone, with nothing
   under 0xFFFE; `server.sh` sizes a secondary index, the
   primary key's being 0.
+
+## Step 299: rowno is _id, on a keyless table alone
+
+`../sm/ROWKEY.md` §3.1, the last of its step 3: the system
+column SQL reads by the name sm gives it, and only where a row
+has one.
+
+- **The system column is `_id`** (`heap.c`), `rowno` renamed;
+  the junk column a keyless table's UPDATE and DELETE carry is
+  `_id` too. The C names, `RownoAttributeNumber` and
+  `tts_rowno`, stay.
+- **A table with a primary key has none**: naming `_id` there
+  is "column does not exist" (`parse_relation.c`'s
+  `system_column_is_kept()`), as its rows have no `_id` since
+  step 298. The planner's check for a primary key before a TID
+  scan (`tidpath.c`'s `has_primary_key()`) went with it: no
+  `_id` Var can name such a table's row.
+- **No table may have a column named `_id`**: CREATE TABLE now
+  refuses a system column's name (`check_column_name()`), as
+  ADD COLUMN and RENAME did. `rowno` is a name like any other.
+- **Tests**: `slt/rowno_scan.test` is `slt/id_scan.test`, its
+  table with a primary key now an error by `_id`;
+  `slt/system_columns.test` adds a keyed table without `_id`, a
+  column named `rowno`, and one named `_id` refused;
+  `scan_columns.test` and `point_read.test` name `_id`.

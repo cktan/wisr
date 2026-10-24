@@ -24,7 +24,7 @@ Paths are relative to `sm/`; digres's are under `../dg/`.
   the heap it is today.
 - **A row of a table without a primary key has an `_id`**, an
   `int8` from the table's sequence, its key, never reused and
-  never changed. SQL reads it as `rowno`. It was what the
+  never changed. SQL reads it as `_id`. It was what the
   executor's TID held, in every row; digres now names a row by
   its key, and a row of a table with a primary key has no
   `_id` (`ROWKEY.md` §2.1).
@@ -232,8 +232,9 @@ The reasons `sm2/SM2_DESIGN.md` §5 gave for a heap, answered:
 
 - **A row is named by its key**, its primary key's columns'
   values, or a keyless table's `_id`; nothing is a TID
-  (`ROWKEY.md` §3). The system column SQL reads stays an
-  `int8`, `rowno`, to be renamed `_id` (§10, question 1).
+  (`ROWKEY.md` §3). The system column SQL reads is an `int8`,
+  `_id`, `rowno` renamed (§10, question 1), of a keyless table
+  alone.
 - **A scan of the primary key index is a scan of the rows**:
   `smstore_index_getnext()` sees the index is the primary key
   and opens a range scan of the table over the bounds, instead
@@ -259,11 +260,9 @@ The reasons `sm2/SM2_DESIGN.md` §5 gave for a heap, answered:
   without.
 - **No TID scan of a table with a primary key** but `WHERE
   CURRENT OF`'s, which reads by the cursor's row's key
-  (`../dg/src/backend/optimizer/path/tidpath.c`): `rowno = …`
-  is a filter there, and finds no row, a keyed row's `rowno`
-  reading 0 until it is refused (`ROWKEY.md` §3.1). A keyless
-  table's TID scan reads by `rowno`,
-  its `_id`, its key: one seek. digres has no `ctid`.
+  (`../dg/src/backend/optimizer/path/tidpath.c`): it has no
+  `_id` to name (`ROWKEY.md` §3.1). A keyless table's TID scan
+  reads by `_id`, its key: one seek. digres has no `ctid`.
 - **ADD PRIMARY KEY, DROP PRIMARY KEY**, and a change of a key
   column's type or collation, rewrite the table (§8).
 - **Foreign keys** that reference the primary key look the
@@ -365,9 +364,8 @@ nothing migrates.
 
 1. **The system column is renamed `_id`**, still the `int8`
    SQL reads: one name in SQL, in sm and here. digres's
-   tests that print `rowno` change with it. Not built: SQL
-   reads `rowno` still; `ROWKEY.md` §3.1 keeps it on a keyless
-   table alone.
+   tests that print `rowno` change with it. Built, on a keyless
+   table alone (`ROWKEY.md` §3.1).
 2. **A keyless table keeps `_id` in its value**, though its
    key holds it too: one row format and one deform path, for
    8 bytes a row. Undone: the value is the tuple alone in both
@@ -440,8 +438,8 @@ Each step leaves every suite passing.
    measured, and cut (§10, question 6). The backfill and
    ANALYZE's correlation in key order, and ANALYZE and
    TABLESAMPLE by key ranges, are built with `ROWKEY.md`'s
-   step 2. To do: the system column renamed `_id` (§10,
-   question 1).
+   step 2, and the system column renamed `_id` (§10, question
+   1) with its step 3.
 3. **digres's DDL.** ADD and DROP PRIMARY KEY, and the
    key-column ALTERs, through the rewrite.
 4. **The documents of §9**, each as its step lands, and this

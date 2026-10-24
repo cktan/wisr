@@ -1328,7 +1328,7 @@ nobitmap_psql 'explain (costs off) select a from t7 where a < 25 or b = 3' |
 # 2. With sequential and bitmap scans off, a range on a plans an
 #    index-only scan, and returns a, b and c, nulls and the sign kept.
 # 3. A range on d, by the unique index, returns its values; d IS NULL,
-#    whose entry carries its rowno, returns its one row.
+#    whose entry carries its row's key, returns its one row.
 only_psql() {
   local_psql -c 'set enable_seqscan = off' -c 'set enable_bitmapscan = off' \
     -c "$1" 2>&1 | grep -v '^SET$'

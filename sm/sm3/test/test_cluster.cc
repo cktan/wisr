@@ -699,7 +699,7 @@ TEST_CASE("a writer at READ COMMITTED writes by key after a re-read") {
   acct_t f;
   start(f.a);
   sm3::table_t *t = f.write(f.a);
-  uint64_t id = put(t, 1, "one");
+  put(t, 1, "one");
   sm3::tbl_close(t);
   REQUIRE(sm3::commit(f.a) == 0);
   start(f.b);

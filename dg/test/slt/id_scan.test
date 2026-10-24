@@ -1,0 +1,206 @@
+# Verify a row named by its _id is fetched by a TID scan, as a tid is
+# in PostgreSQL, and not found by reading the whole table: _id = n,
+# _id IN (...), an OR of them, and a join on _id; and that what it
+# fetches is right. PostgreSQL has no _id, so every record is digres's.
+# 1. Make a table of 1000 rows, and analyze it: on a smaller one a
+#    sequential scan costs less, as in PostgreSQL.
+# 2. Fetch a row by _id = n, with the plan a TID scan; n on either side,
+#    and of int2 as of int8.
+# 3. Fetch rows by _id IN (...), = ANY (array) and an OR, each a TID
+#    scan, an _id given twice fetched once.
+# 4. Name _ids no row has, 0, negative and past what a tid holds: none.
+# 5. Name an _id and another condition that row fails: none.
+# 6. Update and delete a row by its _id, the update's plan a TID scan.
+# 7. Join on _id in a nested loop, the inner side a TID scan rescanned
+#    for each outer row, plain and left, with _ids missing and NULL.
+# 8. Name a range of _ids: still a sequential scan, and right.
+# 9. A table with a primary key has no _id (../sm/ROWKEY.md section
+#    3.1): _id = n and a join on _id fail, the column not there.
+
+onlyif digres
+statement ok
+create table r (a int4, b text)
+
+onlyif digres
+statement ok
+insert into r select g, 'r' || g from generate_series(1, 1000) g
+
+onlyif digres
+statement ok
+analyze r
+
+onlyif digres
+query T nosort
+explain (costs off) select b from r where _id = 2
+----
+Tid Scan on r
+  TID Cond: (_id = 2)
+
+onlyif digres
+query IT nosort
+select _id, b from r where _id = 2
+----
+2	r2
+
+onlyif digres
+query T nosort
+select b from r where 7 = _id
+----
+r7
+
+onlyif digres
+query T nosort
+select b from r where _id = 8::int2
+----
+r8
+
+onlyif digres
+query T nosort
+explain (costs off) select b from r where _id in (2, 3)
+----
+Tid Scan on r
+  TID Cond: (_id = ANY ('{2,3}'::bigint[]))
+
+onlyif digres
+query IT nosort
+select _id, b from r where _id in (3, 2, 3) order by _id
+----
+2	r2
+3	r3
+
+onlyif digres
+query T nosort
+select b from r where _id = any (array[4, 5]) order by b
+----
+r4
+r5
+
+onlyif digres
+query T nosort
+explain (costs off) select b from r where _id = 2 or _id = 9
+----
+Tid Scan on r
+  TID Cond: ((_id = 2) OR (_id = 9))
+
+onlyif digres
+query T nosort
+select b from r where _id = 2 or _id = 9 order by b
+----
+r2
+r9
+
+onlyif digres
+query I nosort
+select count(*) from r where _id in (0, -1, 9223372036854775807)
+----
+0
+
+onlyif digres
+query I nosort
+select count(*) from r where _id = 2 and a = 3
+----
+0
+
+onlyif digres
+query T nosort
+explain (costs off) update r set b = 'X' where _id = 4
+----
+Update on r
+  ->  Tid Scan on r
+        TID Cond: (_id = 4)
+
+onlyif digres
+statement ok
+update r set b = 'X' where _id = 4
+
+onlyif digres
+statement ok
+delete from r where _id = 5
+
+onlyif digres
+query IT nosort
+select _id, b from r where _id in (4, 5)
+----
+4	X
+
+onlyif digres
+statement ok
+create table j (n int8)
+
+onlyif digres
+statement ok
+insert into j values (2), (5), (1001), (null)
+
+onlyif digres
+statement ok
+analyze j
+
+onlyif digres
+statement ok
+set enable_hashjoin = off
+
+onlyif digres
+statement ok
+set enable_mergejoin = off
+
+onlyif digres
+statement ok
+set enable_memoize = off
+
+onlyif digres
+query T nosort
+explain (costs off) select r.b from j join r on r._id = j.n
+----
+Nested Loop
+  ->  Seq Scan on j
+  ->  Tid Scan on r
+        TID Cond: (_id = j.n)
+
+onlyif digres
+query IT nosort
+select j.n, r.b from j join r on r._id = j.n order by j.n
+----
+2	r2
+
+onlyif digres
+query IT nosort
+select j.n, r.b from j left join r on r._id = j.n order by j.n
+----
+2	r2
+5	NULL
+1001	NULL
+NULL	NULL
+
+onlyif digres
+query T nosort
+explain (costs off) select b from r where _id > 998
+----
+Seq Scan on r
+  Filter: (_id > 998)
+
+onlyif digres
+query T nosort
+select b from r where _id > 998 order by b
+----
+r1000
+r999
+
+onlyif digres
+statement ok
+create table k (a int4 primary key, b text)
+
+onlyif digres
+statement ok
+insert into k select g, 'k' || g from generate_series(1, 1000) g
+
+onlyif digres
+statement ok
+analyze k
+
+onlyif digres
+statement error column "_id" does not exist
+select b from k where _id = 5
+
+onlyif digres
+statement error column k._id does not exist
+select j.n, k.b from j join k on k._id = j.n order by j.n

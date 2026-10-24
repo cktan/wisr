@@ -1468,6 +1468,8 @@ static const char *column_default(ColumnDef *col, Oid typid, int32 typmod) {
   return nodeToString(expr);
 }
 
+static void check_column_name(const char *name);
+
 /*
  * Create the table a CREATE TABLE, after parse analysis, describes, in sm,
  * in this transaction: its columns and their NOT NULL.  Returns its address.
@@ -1493,6 +1495,7 @@ ObjectAddress smstore_create_table(CreateStmt *stmt) {
     Oid typid;
     int32 typmod;
 
+    check_column_name(col->colname);
     if (col->collClause != NULL || col->cooked_default != NULL ||
         col->generated != 0 || !only_taken(col->constraints))
       ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -6308,12 +6311,12 @@ int RowKeyAttnums(Relation rel, AttrNumber *attnums) {
 
 /*
  * The name of the junk column that carries rel's row key's column i, of
- * attribute attnum, in a plan that updates or deletes its rows: "rowno"
+ * attribute attnum, in a plan that updates or deletes its rows: "_id"
  * in a keyless table, else one named for rel and the column.
  */
 const char *RowKeyColumnName(Relation rel, int i, AttrNumber attnum) {
   if (RownoAttributeNumber == attnum)
-    return "rowno";
+    return "_id";
   return psprintf("rowkey%u_%d", RelationGetRelid(rel), i);
 }
 

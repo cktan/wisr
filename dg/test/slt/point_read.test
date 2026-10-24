@@ -1,4 +1,4 @@
-# Verify that a row read by rowno keeps its values while another scan in
+# Verify that a row read by _id keeps its values while another scan in
 # the same statement reads rows, as a join's inner side does.
 # 1. Make two tables with text columns, each with an index.
 # 2. Plan nested loops of bitmap scans, of index scans, and of an index
@@ -102,7 +102,7 @@ a row 5	b row 5
 statement ok
 savepoint s
 
-# The second, its inner row read by rowno after the savepoint.
+# The second, its inner row read by _id after the savepoint.
 query TT
 fetch 1 from c
 ----

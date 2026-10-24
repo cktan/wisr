@@ -6,10 +6,8 @@ go on naming a row by a 6-byte TID. This file takes the next
 step (`CLUSTER.md` §10, question 6): a table with a primary
 key has no `_id` and no `_id` index, and nothing in the system
 is a TID. A row is named by its key, a tuple of the key
-columns' values. Steps 1 to 4 of §5 are built but for the
-system column's rename (§3.1): SQL still reads `rowno`, 0 for
-a row of a table with a primary key. The work is on the branch
-`wip-noctid`.
+columns' values. Steps 1 to 4 of §5 are built. The work is on
+the branch `wip-noctid`.
 
 Paths are relative to `sm/`; digres's are under `../dg/`.
 
@@ -196,7 +194,8 @@ Nothing reads many rows of a table with a primary key in
 - **`_id`** is `rowno` renamed (`CLUSTER.md` §10, question 1),
   and a column of a keyless table alone: a table with a
   primary key has none, and naming it there is "column `_id`
-  does not exist".
+  does not exist". Built (`../dg/WORKNOTE.md` step 299); the
+  C names (`RownoAttributeNumber`, `tts_rowno`) stay.
 
 ### 3.2 The row's name in a plan
 
@@ -294,14 +293,13 @@ Each step leaves every suite passing.
    EvalPlanQual, triggers, `ON CONFLICT`, CURRENT OF and the
    key scan, built (`../dg/WORKNOTE.md` step 292); `ctid`
    gone, built (steps 293 to 295); `rowno` renamed `_id` on a
-   keyless table, not built.
+   keyless table, built (step 299).
 4. **No `_id` with a primary key.** The `_id` index, the
    follow, and the `_id` calls of a keyed table go; the value
    is the tuple alone; a key change writes the moved
    tombstone. Built (steps 296 to 298). Not as planned: the
    `_id` sequence is still made for a keyed table, which draws
-   nothing from it; relid 0xFFFE stays reserved, unused; SQL's
-   `rowno` reads 0 on a keyed row until §3.1 refuses it there.
+   nothing from it; relid 0xFFFE stays reserved, unused.
 5. **The documents**: `CLUSTER.md` §0 and §2 to §11,
    `sm2/SM2_DESIGN.md` §5, `sm3/SM3_DESIGN.md` §3 and §6,
    `STATISTICS.md`, `LOCK.md`, `BULKLOAD.md`, `GLOSSARY.md`,

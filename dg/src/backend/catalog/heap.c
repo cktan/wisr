@@ -200,11 +200,11 @@ static const FormData_pg_attribute a6 = {
 };
 
 /*
- * digres: a row's rowno in sm, its identity in its table (sm2/SM2_DESIGN.md
- * section 5).
+ * digres: a row's _id in sm, its key in a table without a primary key
+ * (../sm/ROWKEY.md section 3.1), the rowno of RownoAttributeNumber.
  */
 static const FormData_pg_attribute a7 = {
-    .attname = {"rowno"},
+    .attname = {"_id"},
     .atttypid = INT8OID,
     .attlen = sizeof(int64),
     .attnum = RownoAttributeNumber,

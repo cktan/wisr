@@ -1,15 +1,19 @@
-# Verify the system columns a query can name in digres: rowno, a row's
-# number in sm, and tableoid; and that PostgreSQL's ctid, xmin, xmax,
-# cmin and cmax are columns no relation has.
-# 1. Make a table of three rows.
-# 2. Read each row's rowno, plain and qualified: 1 to 3, an int8.
-# 3. Find one row by its rowno.
+# Verify the system columns a query can name in digres: _id, a row's key
+# in sm in a table without a primary key, and tableoid; and that
+# PostgreSQL's ctid, xmin, xmax, cmin and cmax are columns no relation
+# has (../sm/ROWKEY.md section 3.1).
+# 1. Make a table of three rows, with no primary key.
+# 2. Read each row's _id, plain and qualified: 1 to 3, an int8.
+# 3. Find one row by its _id.
 # 4. Read tableoid: each row's is the table's.
-# 5. Update one row and delete another by their rownos, and insert one,
-#    returning its rowno.
-# 6. Show the plan's output naming rowno.
+# 5. Update one row and delete another by their _ids, and insert one,
+#    returning its _id.
+# 6. Show the plan's output naming _id.
 # 7. Confirm ctid, xmin, xmax, cmin and cmax do not exist in digres, as
-#    PostgreSQL reads them; and that a catalog relation has no rowno.
+#    PostgreSQL reads them; and that a catalog relation has no _id.
+# 8. A table with a primary key has no _id; rowno, its name before, is no
+#    system column, and a table may have a column of that name, but not
+#    one named _id.
 
 statement ok
 create table sc (a int, b text)
@@ -19,7 +23,7 @@ insert into sc values (1, 'one'), (2, 'two'), (3, 'three')
 
 onlyif digres
 query II nosort
-select rowno, a from sc order by rowno
+select _id, a from sc order by _id
 ----
 1	1
 2	2
@@ -27,13 +31,13 @@ select rowno, a from sc order by rowno
 
 onlyif digres
 query T nosort
-select distinct pg_typeof(sc.rowno) from sc
+select distinct pg_typeof(sc._id) from sc
 ----
 bigint
 
 onlyif digres
 query T nosort
-select b from sc where rowno = 2
+select b from sc where _id = 2
 ----
 two
 
@@ -93,26 +97,26 @@ statement error column "cmax" does not exist
 select count(cmax) from sc
 
 onlyif digres
-statement error column "rowno" does not exist
-select rowno from pg_namespace
+statement error column "_id" does not exist
+select _id from pg_namespace
 
 onlyif digres
 statement ok
-update sc set b = 'TWO' where rowno = 2
+update sc set b = 'TWO' where _id = 2
 
 onlyif digres
 statement ok
-delete from sc where rowno = 3
+delete from sc where _id = 3
 
 onlyif digres
 query IT nosort
-insert into sc values (4, 'four') returning rowno, b
+insert into sc values (4, 'four') returning _id, b
 ----
 4	four
 
 onlyif digres
 query IIT nosort
-select rowno, a, b from sc order by rowno
+select _id, a, b from sc order by _id
 ----
 1	1	one
 2	2	TWO
@@ -120,7 +124,31 @@ select rowno, a, b from sc order by rowno
 
 onlyif digres
 query T nosort
-explain (verbose, costs off) select rowno from sc
+explain (verbose, costs off) select _id from sc
 ----
 Seq Scan on public.sc
-  Output: rowno
+  Output: _id
+
+onlyif digres
+statement ok
+create table sk (a int primary key, b text)
+
+onlyif digres
+statement ok
+insert into sk values (1, 'one')
+
+onlyif digres
+statement error column "_id" does not exist
+select _id from sk
+
+onlyif digres
+statement error column "rowno" does not exist
+select rowno from sc
+
+onlyif digres
+statement ok
+create table sr (rowno int)
+
+onlyif digres
+statement error column name "_id" conflicts with a system column name
+create table sx (_id int)

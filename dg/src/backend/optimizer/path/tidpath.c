@@ -23,7 +23,7 @@
  * a function, but in practice it works better to keep the special node
  * representation all the way through to execution.
  *
- * digres: no row has a CTID.  The CTID of these comments is the rowno of a
+ * digres: no row has a CTID.  The CTID of these comments is the _id of a
  * table in sm without a primary key, which names its row (IsRownoVar()), and
  * CURRENT OF's row is named by its key (access/rowkey.h).
  *
@@ -40,7 +40,6 @@
 
 #include "access/stratnum.h"
 #include "access/sysattr.h"
-#include "access/table.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_opfamily.h"
 #include "catalog/pg_type.h"
@@ -50,16 +49,13 @@
 #include "optimizer/pathnode.h"
 #include "optimizer/paths.h"
 #include "optimizer/restrictinfo.h"
-#include "parser/parsetree.h"
 #include "utils/lsyscache.h"
-#include "utils/rel.h"
-#include "utils/relcache.h"
 
 /*
- * Does this Var represent the rowno column of the specified baserel?  A
- * table in sm without a primary key names a row by its rowno, so
- * "rowno = n" fetches the row as PostgreSQL's "CTID = tid" does; digres has
- * no CTID (../../../../sm/ROWKEY.md section 3.1).
+ * Does this Var represent the _id column of the specified baserel?  A
+ * table in sm without a primary key names a row by its _id, so "_id = n"
+ * fetches the row as PostgreSQL's "CTID = tid" does; digres has no CTID
+ * (../../../../sm/ROWKEY.md section 3.1).
  */
 static inline bool IsRownoVar(Var *var, RelOptInfo *rel) {
   return var->varattno == RownoAttributeNumber && var->vartype == INT8OID &&
@@ -67,7 +63,7 @@ static inline bool IsRownoVar(Var *var, RelOptInfo *rel) {
          var->varlevelsup == 0;
 }
 
-/* Is opno the equality of int8 with an integer, as "rowno = n" names? */
+/* Is opno the equality of int8 with an integer, as "_id = n" names? */
 static bool IsRownoEqualOperator(Oid opno) {
   return get_op_opfamily_strategy(opno, INTEGER_BTREE_FAM_OID) ==
          BTEqualStrategyNumber;
@@ -80,7 +76,7 @@ static bool IsRownoEqualOperator(Oid opno) {
  *		pseudoconstant OP CTID
  * where OP is a binary operation, the CTID Var belongs to relation "rel",
  * and nothing on the other side of the clause does: in digres the Var is
- * rowno's.
+ * _id's.
  */
 static bool IsBinaryTidClause(RestrictInfo *rinfo, RelOptInfo *rel) {
   OpExpr *node;
@@ -126,7 +122,7 @@ static bool IsBinaryTidClause(RestrictInfo *rinfo, RelOptInfo *rel) {
  * or
  *		pseudoconstant = CTID
  * where the CTID Var belongs to relation "rel", and nothing on the
- * other side of the clause does: in digres, "rowno = pseudoconstant".
+ * other side of the clause does: in digres, "_id = pseudoconstant".
  */
 static bool IsTidEqualClause(RestrictInfo *rinfo, RelOptInfo *rel) {
   return IsBinaryTidClause(rinfo, rel) &&
@@ -138,7 +134,7 @@ static bool IsTidEqualClause(RestrictInfo *rinfo, RelOptInfo *rel) {
  *		CTID = ANY (pseudoconstant_array)
  * where the CTID Var belongs to relation "rel", and nothing on the
  * other side of the clause does: in digres,
- * "rowno = ANY (pseudoconstant_array)".
+ * "_id = ANY (pseudoconstant_array)".
  */
 static bool IsTidEqualAnyClause(PlannerInfo *root, RestrictInfo *rinfo,
                                 RelOptInfo *rel) {
@@ -156,7 +152,7 @@ static bool IsTidEqualAnyClause(PlannerInfo *root, RestrictInfo *rinfo,
   arg1 = (Node *)linitial(node->args);
   arg2 = (Node *)lsecond(node->args);
 
-  /* rowno must be first argument, and the operator an integer equality */
+  /* _id must be first argument, and the operator an integer equality */
   if (arg1 && IsA(arg1, Var) && IsRownoEqualOperator(node->opno) &&
       IsRownoVar((Var *)arg1, rel)) {
     /* The other argument must be a pseudoconstant */
@@ -390,7 +386,7 @@ static void BuildParameterizedTidPaths(PlannerInfo *root, RelOptInfo *rel,
 }
 
 /*
- * Test whether an EquivalenceClass member matches our rel's rowno Var.
+ * Test whether an EquivalenceClass member matches our rel's _id Var.
  *
  * This is a callback for use by generate_implied_equalities_for_column.
  */
@@ -404,46 +400,29 @@ static bool ec_member_matches_ctid(PlannerInfo *root, RelOptInfo *rel,
 }
 
 /*
- * Whether rel, a table, has a primary key: its rows are keyed by it in sm,
- * and a rowno, a row's _id, reaches one only through the _id index, two
- * seeks (../sm/CLUSTER.md section 6).
- */
-static bool has_primary_key(PlannerInfo *root, RelOptInfo *rel) {
-  /* The planner holds the table's lock already. */
-  Relation r = table_open(planner_rt_fetch(rel->relid, root)->relid, NoLock);
-  bool keyed = OidIsValid(RelationGetPrimaryKeyIndex(r, true));
-
-  table_close(r, NoLock);
-  return keyed;
-}
-
-/*
  * create_tidscan_paths
  *	  Create paths corresponding to direct TID scans of the given rel.
  *
  *	  Candidate paths are added to the rel's pathlist (using add_path).
  *
- * A table with a primary key gets no TID scan but CURRENT OF's, which is
- * the only correct one: "rowno = n" is a filter there, as a row's _id is
- * not the key the rows are found by.
+ * A table with a primary key gets no TID scan but CURRENT OF's: it has no
+ * _id to name (../../../../sm/ROWKEY.md section 3.1).
  */
 bool create_tidscan_paths(PlannerInfo *root, RelOptInfo *rel) {
   List *tidquals;
   bool isCurrentOf;
-  bool tidscans = enable_tidscan && !has_primary_key(root, rel);
 
   /*
    * If any suitable quals exist in the rel's baserestrict list, generate a
    * plain (unparameterized) TidPath with them.
    *
-   * We skip this when enable_tidscan = false, or the table has a primary
-   * key, except when the qual is CurrentOfExpr. In that case, a TID scan is
-   * the only correct path.
+   * We skip this when enable_tidscan = false, except when the qual is
+   * CurrentOfExpr. In that case, a TID scan is the only correct path.
    */
   tidquals = TidQualFromRestrictInfoList(root, rel->baserestrictinfo, rel,
                                          &isCurrentOf);
 
-  if (tidquals != NIL && (tidscans || isCurrentOf)) {
+  if (tidquals != NIL && (enable_tidscan || isCurrentOf)) {
     /*
      * This path uses no join clauses, but it could still have required
      * parameterization due to LATERAL refs in its tlist.
@@ -463,8 +442,8 @@ bool create_tidscan_paths(PlannerInfo *root, RelOptInfo *rel) {
       return true;
   }
 
-  /* Skip the rest if TID scans are disabled, or the table has a key. */
-  if (!tidscans)
+  /* Skip the rest if TID scans are disabled. */
+  if (!enable_tidscan)
     return false;
 
   /*
