@@ -8517,3 +8517,31 @@ carries a TID now.
 - **Left on purpose**: `HeapTupleData`'s `t_self`, which
   catalog code and the heap tuple format still use, the `tid`
   type, and the index access method's TID calls (step 294).
+
+## Step 296: a row moved meanwhile is a serialization failure
+
+Since step 292 a write names its row by its key, and sm3's
+follow of a moved row went by `_id`, which no write of
+digres's takes. A writer at READ COMMITTED whose row a
+concurrent update had moved to another primary key re-read it
+at the old key, found it gone, and skipped it as deleted:
+`UPDATE t SET v = 'x' WHERE v = 'a'` said `UPDATE 0` where
+PostgreSQL updates the row. `../sm/ROWKEY.md` §2.3's moved
+tombstone, from its step 4, is built now:
+
+- **A move erases the old key with sm1's moved tombstone**
+  (sm2 `move_row()`, `sm1::erase_moved`): the newest read of
+  the old key, after `SM_ERR_UPDATED`, fails with
+  `SM_ERR_MOVED`. A delete's tombstone is as it was.
+- **sm3's follow is gone** (`moved_to()`, `write_followed()`,
+  and `read_latest()`'s follow): no row is followed by its
+  `_id`. Its test, `test_cluster.cc`'s "a writer at READ
+  COMMITTED follows a row moved since", is now one of
+  `SM_ERR_MOVED`, by key.
+- **digres raises `SM_ERR_MOVED` as a serialization failure**
+  (`smstore.c`'s `sm_error()`), "could not serialize access
+  due to concurrent update", as PostgreSQL refuses a row moved
+  to another partition. Above READ COMMITTED sm fails the
+  write itself, as before.
+- **`test/server.sh`**: an UPDATE and a FOR UPDATE of a row
+  whose key changed meanwhile fail with 40001.

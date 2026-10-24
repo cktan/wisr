@@ -247,6 +247,8 @@ static int sm_sqlstate(void) {
     return ERRCODE_QUERY_CANCELED;
   case SM_ERR_DOOMED:
     return ERRCODE_IN_FAILED_SQL_TRANSACTION;
+  case SM_ERR_MOVED:
+    return ERRCODE_T_R_SERIALIZATION_FAILURE;
   default:
     return sm_retryable() == 1 ? ERRCODE_T_R_SERIALIZATION_FAILURE
                                : ERRCODE_INTERNAL_ERROR;
@@ -262,6 +264,18 @@ static void sm_error(const char *what) {
              errmsg("deadlock detected"),
              errdetail("This transaction was chosen to end a cycle of waits "
                        "while it tried to %s.",
+                       what)));
+  /*
+   * A row a concurrent update moved to another key, its primary key
+   * changed: it is not followed there (../sm/ROWKEY.md section 2.3), as
+   * PostgreSQL follows no row moved to another partition.
+   */
+  if (sm_errnum() == SM_ERR_MOVED)
+    ereport(ERROR,
+            (errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+             errmsg("could not serialize access due to concurrent update"),
+             errdetail("The row's primary key was changed by a concurrent "
+                       "update while this transaction tried to %s.",
                        what)));
   /*
    * A scan begun inside a savepoint, such as a cursor's inner scan begun

@@ -646,52 +646,6 @@ static int key_given(table_t *t, uint64_t id, std::string_view given,
   return 0;
 }
 
-/*
- * Where the row with _id id went, at READ COMMITTED, once a write
- * or a newest read found it gone from key (../CLUSTER.md §4): its
- * key now, from the newest version of its _id entry, read under a
- * shared lock on it held to the end of the transaction, so that
- * none moves it again. 0 with to set if it moved; 1 if it did not,
- * being gone or still at key, or if the table has no primary key
- * or the level is another; or -1.
- */
-int moved_to(table_t *t, uint64_t id, std::string_view key, std::string &to) {
-  if (!sm2::rel_keyed(t->rel) ||
-      t->session->level != sm1::xctlevel_t::read_committed) {
-    return 1;
-  }
-  if (sm2::rel_lock_id(t->rel, id, sm1::SM_LOCKMODE_SH) != 0) {
-    return -1;
-  }
-  int rc = sm2::rel_find_latest(t->rel, id, to);
-  return rc != 0 ? rc : to == key ? 1 : 0;
-}
-
-/*
- * A write of the row with _id id at key, by write, followed to
- * where the row moved if it found the row gone (moved_to): sm1
- * says SM_ERR_NOTFOUND once the newest version at key, read after
- * SM_ERR_UPDATED, is the move's erase. key is left the key the row
- * was written at.
- */
-template <typename F>
-int write_followed(table_t *t, uint64_t id, std::string &key, F write) {
-  int rc = write(key);
-  if (rc == 0 || sm1::errnum() != sm1::SM_ERR_NOTFOUND) {
-    return rc;
-  }
-  std::string reason = sm1::errmsg(), to;
-  int m = moved_to(t, id, key, to);
-  if (m < 0) {
-    return -1;
-  }
-  if (m == 1) {
-    return sm1::seterr(sm1::SM_ERR_NOTFOUND, reason);
-  }
-  key = std::move(to);
-  return write(key);
-}
-
 } // namespace
 
 /* Insert the row, then its entry in every index; see sm3.h. */
@@ -909,13 +863,13 @@ static int update_row(table_t *table, uint64_t id, std::string_view given,
     }
   };
   // A row whose primary key changes moves, and every entry of it,
-  // naming it by its key, moves with it (../CLUSTER.md §4).
+  // naming it by its key, moves with it (../CLUSTER.md §4). A row
+  // a concurrent transaction moved is SM_ERR_MOVED, not followed
+  // (../ROWKEY.md §2.3).
   std::string_view image;
   std::string at;
-  if (0 != write_followed(table, id, key, [&](const std::string &k) {
-        return sm2::rel_update(table->rel, k, id, values, isnull, p->raw, image,
-                               true, &at);
-      })) {
+  if (0 != sm2::rel_update(table->rel, key, id, values, isnull, p->raw, image,
+                           true, &at)) {
     return row_failed(table);
   }
   const bool moved = at != key;
@@ -1027,9 +981,7 @@ static int delete_row(table_t *table, uint64_t id, std::string_view given,
     }
   };
   std::string_view image;
-  if (0 != write_followed(table, id, key, [&](const std::string &k) {
-        return sm2::rel_delete(table->rel, k, p->raw, image, true);
-      })) {
+  if (0 != sm2::rel_delete(table->rel, key, p->raw, image, true)) {
     return -1;
   }
   const table_def_t &def = *table->def;
@@ -1229,24 +1181,15 @@ int tbl_read(table_t *table, uint64_t id, std::string_view &tuple) {
 
 /*
  * Read the newest committed version of the row with _id id, by
- * read, sm2::rel_read_latest at a key: where the snapshot has the
- * row, or where it moved since, taking the row's lock there
- * exclusive, as the write that met SM_ERR_UPDATED took it where it
- * was (../CLUSTER.md §4).
+ * read, sm2::rel_read_latest at the key the snapshot has the row
+ * at. A row moved since is SM_ERR_MOVED, not followed
+ * (../ROWKEY.md §2.3).
  */
 template <typename F>
 static int read_latest(table_t *table, uint64_t id, F read) {
-  std::string key, to;
+  std::string key;
   int rc = key_of(table, id, false, key);
-  if (rc != 0 || (rc = read(key)) != 1) {
-    return rc;
-  }
-  int m = moved_to(table, id, key, to);
-  if (m != 0) {
-    return m < 0 ? -1 : 1;
-  }
-  return sm2::rel_lock(table->rel, to, sm1::SM_LOCKMODE_EX) != 0 ? -1
-                                                                 : read(to);
+  return rc != 0 ? rc : read(key);
 }
 
 /* Read the newest committed version of the row with _id id. */

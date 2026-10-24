@@ -3351,6 +3351,10 @@ grep -q 'does not exist, skipping' "$work/drop2.out" || fail "drop if exists"
 #    joined out of 'EU'.
 # 9. Joined to tw1 itself, the copy's re-check reads the version it joined,
 #    as PostgreSQL's does, so the second updates the row.
+# 10. The first changes row 3's key: the second's update of it, found by
+#    another column, fails with a serialization failure, as PostgreSQL's
+#    does of a row moved to another partition (../sm/ROWKEY.md section 2.3);
+#    so does a FOR UPDATE of it.
 local_psql -c 'create table tw1 (a int4 primary key, b int4 not null)' \
   -c 'insert into tw1 values (1, 10), (2, 20), (3, 30), (4, 40)' \
   > "$work/write.out" 2>&1
@@ -3439,6 +3443,15 @@ local_psql -c 'insert into tw1 values (3, 30)' \
 [ "$(after_update -c 'update tw1 set b = 0 from tw1 t2 where t2.a = tw1.a
   and tw1.a = 3 and t2.b < 3000')" = "UPDATE 1 " ] ||
   fail "a self-join's re-check reads the row it joined"
+after_held 'update tw1 set a = 33 where a = 3;' -v VERBOSITY=verbose \
+  -c 'update tw1 set b = 1 where b = 0' |
+  grep -q 'ERROR:  40001: could not serialize access due to concurrent update' ||
+  fail "update of a row whose key changed meanwhile"
+after_held 'update tw1 set a = 3 where a = 33;' -v VERBOSITY=verbose \
+  -c 'select a from tw1 where b = 0 for update' |
+  grep -q 'ERROR:  40001' || fail "for update of a row whose key changed"
+[ "$(local_psql -c 'select a, b from tw1 where b = 0')" = "3|0" ] ||
+  fail "the row moved twice"
 local_psql -c 'drop table tj' > /dev/null 2>&1
 local_psql -c 'drop table tw1' > /dev/null 2>&1
 

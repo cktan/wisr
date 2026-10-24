@@ -260,36 +260,43 @@ TEST_CASE("an update of a primary key moves the row, and its entries") {
   REQUIRE(sm3::commit(f.a) == 0);
 }
 
-TEST_CASE("a writer at READ COMMITTED follows a row moved since") {
-  // Verify a write by _id finds a row another transaction moved.
-  // 1. a inserts id 1 and commits; b's statement reads it.
-  // 2. a moves it to id 2 and commits.
-  // 3. b's update of it by _id meets SM_ERR_UPDATED; its newest
-  //    version is the moved row, and the update then goes through,
-  //    at the new key.
+TEST_CASE("a writer that meets a row moved since fails with SM_ERR_MOVED") {
+  // Verify a write by key at a key another transaction moved the row
+  // from is refused, not followed (../ROWKEY.md §2.3).
+  // 1. a inserts id 1 and commits; b's statement reads it by key.
+  // 2. a moves it to id 2 by key and commits.
+  // 3. At READ COMMITTED b's update by key meets SM_ERR_UPDATED, and
+  //    its newest read by key SM_ERR_MOVED.
   // 4. Above READ COMMITTED the same update fails with
   //    SM_ERR_CONFLICT.
+  // 5. The row is at id 2, as a left it.
   for (sm1::xctlevel_t level :
        {sm1::xctlevel_t::read_committed, sm1::xctlevel_t::repeatable_read}) {
     CAPTURE(static_cast<int>(level));
     acct_t f;
+    sm2::datum_t one = sm2::datum_from_int32(1), two = sm2::datum_from_int32(2);
+    bool null = false;
+    sm3::row_key_t at1{{&one, 1}, {&null, 1}}, at2{{&two, 1}, {&null, 1}};
     start(f.a);
     sm3::table_t *t = f.write(f.a);
-    uint64_t id = put(t, 1, "one");
+    put(t, 1, "one");
     sm3::tbl_close(t);
     REQUIRE(sm3::commit(f.a) == 0);
     start(f.b, level);
     REQUIRE(sm3::stmt_begin(f.b) == 0);
     sm3::table_t *tb = f.write(f.b);
-    CHECK(get(tb, id) == "1|one|0");
+    std::string_view tuple;
+    REQUIRE(sm3::tbl_read(tb, at1, tuple) == 0);
+    CHECK(show(tb, tuple) == "1|one|0");
     start(f.a);
     t = f.write(f.a);
     row_t moved(2, "one", 0);
-    REQUIRE(sm3::tbl_update(t, id, moved.d(), moved.null()) == 0);
+    REQUIRE_MESSAGE(sm3::tbl_update(t, at1, moved.d(), moved.null()) == 0,
+                    sm1::errmsg());
     sm3::tbl_close(t);
     REQUIRE(sm3::commit(f.a) == 0);
-    row_t mine(2, "mine", 7);
-    CHECK(sm3::tbl_update(tb, id, mine.d(), mine.null()) == -1);
+    row_t mine(1, "mine", 7);
+    CHECK(sm3::tbl_update(tb, at1, mine.d(), mine.null()) == -1);
     if (level != sm1::xctlevel_t::read_committed) {
       CHECK(sm1::errnum() == sm1::SM_ERR_CONFLICT);
       sm3::tbl_close(tb);
@@ -297,18 +304,15 @@ TEST_CASE("a writer at READ COMMITTED follows a row moved since") {
       continue;
     }
     REQUIRE(sm1::errnum() == sm1::SM_ERR_UPDATED);
-    std::string_view tuple;
-    REQUIRE_MESSAGE(sm3::tbl_read_latest(tb, id, tuple) == 0, sm1::errmsg());
-    CHECK(show(tb, tuple) == "2|one|0");
-    REQUIRE_MESSAGE(sm3::tbl_update(tb, id, mine.d(), mine.null()) == 0,
-                    sm1::errmsg());
+    CHECK(sm3::tbl_read_latest(tb, at1, tuple) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_MOVED);
     sm3::tbl_close(tb);
-    REQUIRE(sm3::commit(f.b) == 0);
+    REQUIRE(sm3::abort(f.b) == 0);
     start(f.a);
     t = f.write(f.a);
-    CHECK(rows(t) == std::vector<std::string>{"1:2|mine|7"});
-    CHECK(entries(t, f.pkey) ==
-          std::vector<std::pair<uint64_t, std::string>>{{id, key_of(2)}});
+    REQUIRE(sm3::tbl_read(t, at2, tuple) == 0);
+    CHECK(show(t, tuple) == "2|one|0");
+    CHECK(sm3::tbl_read(t, at1, tuple) == 1);
     sm3::tbl_close(t);
     REQUIRE(sm3::commit(f.a) == 0);
   }

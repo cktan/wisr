@@ -475,15 +475,17 @@ int insert_row(sm2::rel_t *rel, std::span<const sm2::datum_t> datums,
 }
 
 /*
- * Move the row at key, _id id, to new_key, with tuple: erase it,
- * its old row pinned into p and viewed by was, then insert it
- * under new_key, and point its _id entry there (../CLUSTER.md §4).
+ * Move the row at key, _id id, to new_key, with tuple: erase it
+ * with a move's tombstone, which a writer at key then meets as
+ * SM_ERR_MOVED (../ROWKEY.md §2.3), its old row pinned into p and
+ * viewed by was; then insert it under new_key, and point its _id
+ * entry there (../CLUSTER.md §4).
  */
 int move_row(sm2::rel_t *rel, std::string_view key, uint64_t id,
              std::string_view new_key, std::string_view tuple, sm1::rawpin_t *p,
              std::string_view &was) {
-  if (split_read(sm1::erase(rel->session, rel->storeid,
-                            row_key(rel->relid, key), p, was),
+  if (split_read(sm1::erase_moved(rel->session, rel->storeid,
+                                  row_key(rel->relid, key), p, was),
                  was, nullptr) != 0) {
     return -1;
   }
