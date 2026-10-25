@@ -42,16 +42,8 @@ version_t chain_version_t::as_version() const {
 /* Encode the header, then displaced for an old one, then the payload. */
 std::string chain_value(const chain_version_t &v, bool old) {
   std::string out;
-  // A frozen current version keeps its flags alone; moved to OLD, it
-  // takes the whole header again.
-  if (!old && (v.flags & chain_frozen)) {
-    out.reserve(1 + v.payload.size());
-    out.push_back(static_cast<char>(v.flags));
-    out.append(v.payload.data(), v.payload.size());
-    return out;
-  }
   out.reserve(1 + 8 + 8 + 4 + 8 + (old ? 8 : 0) + v.payload.size());
-  out.push_back(static_cast<char>(v.flags & ~chain_frozen));
+  out.push_back(static_cast<char>(v.flags));
   // A stamped version carries its commit_ts, an unstamped one its xid.
   sm0::put_be64(out, (v.flags & version_stamped) ? v.commit_ts : v.xid);
   sm0::put_be64(out, v.wts);
@@ -66,21 +58,11 @@ std::string chain_value(const chain_version_t &v, bool old) {
 
 /* Decode chain_value's encoding; false if it is cut short. */
 bool chain_decode(rocksdb::Slice value, chain_version_t *v, bool old) {
-  if (value.empty()) {
-    return false;
-  }
-  const char *p = value.data();
-  // A frozen current version: stamped at 0, as every snapshot sees it.
-  if (!old && (static_cast<uint8_t>(p[0]) & chain_frozen)) {
-    *v = chain_version_t();
-    v->flags = static_cast<uint8_t>(p[0]);
-    v->payload = rocksdb::Slice(p + 1, value.size() - 1);
-    return true;
-  }
   const size_t header = 1 + 8 + 8 + 4 + 8 + (old ? 8 : 0);
   if (value.size() < header) {
     return false;
   }
+  const char *p = value.data();
   v->flags = static_cast<uint8_t>(p[0]);
   uint64_t who = sm0::get_be64(p + 1);
   v->xid = (v->flags & version_stamped) ? 0 : who;

@@ -5,8 +5,7 @@
  * sm3 with a primary key; and under them RocksDB alone, as if sm
  * went to it directly: the bare rows under its own comparator, and
  * the rows as sm1 lays a chained one, class byte, sm1's comparator
- * and prefix extractor, and a frozen chained version's 1-byte
- * header, as GC leaves a row every snapshot sees.
+ * and prefix extractor, and a chained version's 29-byte header.
  * What digres adds is what its own timings of the same rows add to
  * the sm3 table's.
  *
@@ -35,7 +34,6 @@
 #include "sm1.h"
 #include "sm2.h"
 #include "sm3.h"
-#include "chain.h"
 #include "version.h"
 
 #include <stdio.h>
@@ -275,15 +273,14 @@ std::string raw_key(uint64_t id, bool classed) {
 
 /*
  * Write rows rows of pad bytes into a raw store, compacted to one
- * level: classed, each after a frozen chained version's header.
+ * level: classed, each after a stamped chained version's header.
  */
 void raw_fill(rocksdb::DB *db, bool classed, uint64_t rows, size_t pad) {
   rocksdb::WriteOptions w;
   w.disableWAL = true;
-  std::string header;
+  std::string header(classed ? 29 : 0, '\0');
   if (classed) {
-    header.push_back(
-        static_cast<char>(wisr::version_stamped | wisr::chain_frozen));
+    header[0] = static_cast<char>(wisr::version_stamped);
   }
   for (uint64_t i = 1; i <= rows; i++) {
     if (!db->Put(w, raw_key(i, classed), header + row_value(i, pad, 'v'))
@@ -344,7 +341,7 @@ double raw_reads(rocksdb::DB *db, bool classed,
   for (const std::string &k : keys) {
     v.Reset();
     need(db->Get(ro, db->DefaultColumnFamily(), k, &v).ok(), "raw get");
-    sum += x_in(std::string_view(v.data(), v.size()), classed ? 1 : 0);
+    sum += x_in(std::string_view(v.data(), v.size()), classed ? 29 : 0);
   }
   double ns = since(t0);
   g_sink = g_sink + sum;

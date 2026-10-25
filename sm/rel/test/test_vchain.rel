@@ -31,10 +31,6 @@
 # 9. A chained table's bytes in memtables are counted as written:
 #    its rows, their old versions, a savepoint's undoing, and not
 #    its index's entries.
-# 10. A compaction freezes rows every snapshot sees, cutting their
-#    header to their flags: they read, conflict and roll back as the
-#    committed rows they are, and an older snapshot keeps rows from
-#    freezing.
 
 (def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_vchain"))
 (rm-rf test-dir)
@@ -435,74 +431,6 @@
 (rollback mt-sp)
 (assert-versions 1000 (table-size mt))
 (commit)
-
-# 10. Frozen rows. 2000 rows of 8 bytes, each row's header 28
-#     bytes of its entry when it is not frozen.
-# 10.1 Insert the rows and commit; c2 holds a REPEATABLE READ
-#      snapshot from before the commit; compact: the size is held,
-#      and c2 still sees no row.
-# 10.2 c2 ends; compact: the rows freeze, and the size falls by
-#      close to 2000 headers' 28 bytes, at least 27 a row.
-# 10.3 c2 begins at REPEATABLE READ; c1 updates row 5 under its own
-#      REPEATABLE READ, begun after the freeze, with no conflict, and
-#      commits: c2 reads row 5 as it was; its update of it conflicts.
-# 10.4 c1 sets a savepoint, updates row 6 and rolls back: row 6 is
-#      as it was. c2 ends; compact: the size is the frozen size
-#      again, give or take one row's entries.
-(begin :rc)
-(table-create fz (columns (id :int4 :not-null) (v :text)))
-(commit)
-(session-use c2)
-(begin :rr)
-(assert-count 0 (scan fz))
-(session-use c1)
-(begin :rc)
-(def fz-rows (seq [i :range [0 2000]] (insert fz [i (string/format "%08d" i)])))
-(commit)
-(begin :rc)
-(compact fz)
-(def fz-held (table-size fz))
-(commit)
-
-(session-use c2)
-(assert-count 0 (scan fz))
-(commit)
-(session-use c1)
-(begin :rc)
-(compact fz)
-(def fz-frozen (table-size fz))
-(commit)
-(assert-eq (<= fz-frozen (- fz-held (* 2000 27))) true)
-
-(session-use c2)
-(begin :rr)
-(assert-eq (read fz (fz-rows 5)) [5 "00000005"])
-(session-use c1)
-(begin :rr)
-(update fz (fz-rows 5) [5 "updated5"])
-(commit)
-(session-use c2)
-(assert-eq (read fz (fz-rows 5)) [5 "00000005"])
-(assert-err :err-conflict (update fz (fz-rows 5) [5 "c2"]))
-(abort)
-(begin :rr)
-(assert-eq (read fz (fz-rows 5)) [5 "updated5"])
-
-(session-use c1)
-(begin :rc)
-(def fz-sp (savepoint))
-(update fz (fz-rows 6) [6 "updated6"])
-(rollback fz-sp)
-(assert-eq (read fz (fz-rows 6)) [6 "00000006"])
-(commit)
-(session-use c2)
-(commit)
-(session-use c1)
-(begin :rc)
-(compact fz)
-(def fz-again (table-size fz))
-(commit)
-(assert-eq (<= (math/abs (- fz-again fz-frozen)) 100) true)
 
 (env-detach)
 (rm-rf test-dir)
