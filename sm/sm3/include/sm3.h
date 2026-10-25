@@ -517,6 +517,20 @@ uint64_t cat_table_version(const session_t* s, uint64_t oid);
  */
 uint64_t cat_namespace_epoch(const session_t* s);
 
+/* cat_epoch while s's transaction has DDL of its own. */
+constexpr uint64_t epoch_own = UINT64_MAX;
+
+/*
+ * The catalog's epoch as s sees it: the count of the catalog's
+ * publishes -- every commit of shared DDL, an analyze's statistics,
+ * an index made valid -- plus the count of changes to s's temporary
+ * catalog, so it moves whenever what s can look up does; epoch_own
+ * while s's transaction has DDL of its own, which no epoch dates. A
+ * host that caches what it looks up reads it before each lookup, and
+ * keeps an answer while it reads the same (../dg/SCHEMACACHE.md).
+ */
+uint64_t cat_epoch(const session_t* s);
+
 /*
  * As cat_lock_table, but never waiting (sm1::trylock): 0 with the
  * lock held and out set; 1, with nothing taken, if another

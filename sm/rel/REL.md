@@ -397,6 +397,18 @@ the active transaction sees them.
 # => @["app" "pg_catalog" "public"]
 ```
 
+### `(cat-epoch)`
+Returns the catalog's epoch as the active session sees it
+(`sm_cat_epoch`): a number that moves whenever a DDL, an
+analyze or an index made valid is published, or the session's
+temporary tables change; `:own` while the session's transaction
+has DDL of its own (`../../dg/SCHEMACACHE.md` §3).
+
+```janet
+(cat-epoch)
+# => 12
+```
+
 ### `(list-tables)`
 Returns an array of the names of the tables in `public`, sorted,
 as the active transaction sees them: its own uncommitted DDL

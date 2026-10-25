@@ -81,6 +81,7 @@ void drop_doomed(sm3::session_t *s) {
   for (uint64_t v : doomed_views(s)) {
     s->temp_views.erase(v);
     s->cat->temp_readers.erase(v);
+    s->temp_seq++;
   }
   s->doomed.clear();
   s->has_doomed.store(false);
@@ -134,6 +135,14 @@ bool made_shared_ddl(const sm3::session_t *s) {
  * when s has one.
  */
 void publish_temp(sm3::session_t *s) {
+  auto temp = [](const auto &c) { return c.temp; };
+  // What it moves changes what s looks up: the epoch moves with it.
+  if (std::any_of(s->states.begin(), s->states.end(), temp) ||
+      std::any_of(s->tables.begin(), s->tables.end(), temp) ||
+      std::any_of(s->names.begin(), s->names.end(), temp_name) ||
+      std::any_of(s->views.begin(), s->views.end(), temp)) {
+    s->temp_seq++;
+  }
   for (const sm3::state_change_t &c : s->states) {
     if (!c.temp) {
       continue;
@@ -909,6 +918,14 @@ uint64_t cat_table_version(const session_t *s, uint64_t oid) {
 /* The namespaces' epoch; see sm3.h. */
 uint64_t cat_namespace_epoch(const session_t *s) {
   return s->cat->nsp_seq.load();
+}
+
+/* The catalog's epoch as s sees it; see sm3.h. */
+uint64_t cat_epoch(const session_t *s) {
+  if (made_ddl(s)) {
+    return epoch_own;
+  }
+  return s->cat->seq.load() + s->temp_seq;
 }
 
 /* Lock a table's schema, then read its definition; see sm3.h. */

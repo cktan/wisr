@@ -1,0 +1,119 @@
+# test_epoch.rel -- the catalog's epoch (sm_cat_epoch,
+# ../../dg/SCHEMACACHE.md section 3) moves whenever what a session
+# looks up may have changed, and only then.
+#
+# 1. Reads, writes and commits with no DDL leave it as it was.
+# 2. DDL makes it :own until the transaction ends; a commit moves
+#    it, for this session and for another.
+# 3. An abort of DDL, and a rollback to a savepoint taken before
+#    it, give it back as it was.
+# 4. An analyze committed moves it.
+# 5. An index built in the background moves it once valid.
+# 6. A temporary table's create and drop move the creating
+#    session's epoch, and not another's.
+
+(def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_epoch"))
+(rm-rf test-dir)
+(env-init test-dir)
+(env-attach test-dir)
+(db-create "epochdb")
+
+(session-open s1 "epochdb")
+(session-open s2 "epochdb")
+
+# A table to read and write, made before the epochs are noted.
+(session-use s1)
+(begin :rc)
+(table-create jobs (columns (id :int4 :not-null) (owner :text)))
+(for i 1 201 (insert jobs [i (string "w" (% i 7))]))
+(commit)
+
+# 1. No DDL, no move.
+# 1.1 Note the epoch, insert and read rows, and commit.
+# 1.2 The epoch is as it was, in both sessions.
+(def e0 (cat-epoch))
+(begin :rc)
+(insert jobs [201 "w0"])
+(assert-count 201 (scan jobs))
+(commit)
+(assert-eq (cat-epoch) e0)
+(session-use s2)
+(assert-eq (cat-epoch) e0)
+
+# 2. DDL committed.
+# 2.1 In s1, a table's create makes the epoch :own.
+# 2.2 s2 meanwhile reads the epoch as it was.
+# 2.3 Committed, the epoch has moved, and s2 reads the same.
+(session-use s1)
+(begin :rc)
+(table-create more (columns (id :int4)))
+(assert-eq (cat-epoch) :own)
+(session-use s2)
+(assert-eq (cat-epoch) e0)
+(session-use s1)
+(commit)
+(def e1 (cat-epoch))
+(assert-eq (> e1 e0) true)
+(session-use s2)
+(assert-eq (cat-epoch) e1)
+
+# 3. DDL undone.
+# 3.1 A table's create aborted: the epoch is e1 again.
+# 3.2 A table's create rolled back to a savepoint before it: :own
+#     until then, e1 after, though the transaction goes on.
+(session-use s1)
+(begin :rc)
+(table-create gone (columns (id :int4)))
+(abort)
+(assert-eq (cat-epoch) e1)
+(begin :rc)
+(def sp (savepoint))
+(table-create gone (columns (id :int4)))
+(assert-eq (cat-epoch) :own)
+(rollback sp)
+(assert-eq (cat-epoch) e1)
+(commit)
+(assert-eq (cat-epoch) e1)
+
+# 4. An analyze: :own until it commits, then moved.
+(begin :rc)
+(analyze jobs 10)
+(assert-eq (cat-epoch) :own)
+(commit)
+(def e2 (cat-epoch))
+(assert-eq (> e2 e1) true)
+
+# 5. An index built in the background: its create's commit is one
+#    publish and its being made valid another, and each moves the
+#    epoch by one, so once it is valid the epoch is two past.
+(begin :rc)
+(index-create jobs_owner (table jobs) (key (owner :asc)) :unique false)
+(commit)
+(index-wait jobs_owner)
+(def e4 (cat-epoch))
+(assert-eq e4 (+ e2 2))
+
+# 6. A temporary table: the creator's epoch alone.
+# 6.1 s1 creates one: :own, then moved for s1 at commit.
+# 6.2 s2 reads the epoch as it was.
+# 6.3 s1 drops it: moved again for s1, not for s2.
+(begin :rc)
+(temp-table-create scratch (columns (id :int4)))
+(assert-eq (cat-epoch) :own)
+(commit)
+(def e5 (cat-epoch))
+(assert-eq (> e5 e4) true)
+(session-use s2)
+(assert-eq (cat-epoch) e4)
+(session-use s1)
+(begin :rc)
+(table-drop scratch)
+(commit)
+(assert-eq (> (cat-epoch) e5) true)
+(session-use s2)
+(assert-eq (cat-epoch) e4)
+
+(session-close s1)
+(session-close s2)
+(env-detach)
+(print "test_epoch.rel passed")

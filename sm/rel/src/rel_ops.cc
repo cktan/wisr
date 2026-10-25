@@ -396,6 +396,21 @@ static Janet cfun_snapshot(int32_t argc, Janet *argv) {
   return janet_wrap_nil();
 }
 
+/*
+ * (cat-epoch) -- the catalog's epoch as the session sees it
+ * (sm_cat_epoch), or :own while its transaction has DDL of its own.
+ */
+static Janet cfun_cat_epoch(int32_t argc, Janet *argv) {
+  (void)argc;
+  (void)argv;
+  session_ctx_t *s = require_session();
+  uint64_t epoch = sm_cat_epoch(s->session);
+  if (UINT64_MAX == epoch) {
+    return janet_ckeywordv("own");
+  }
+  return janet_wrap_number(static_cast<double>(epoch));
+}
+
 /* (stmt-inner) */
 static Janet cfun_stmt_inner(int32_t argc, Janet *argv) {
   (void)argv;
@@ -2415,6 +2430,9 @@ static const JanetReg s_rel_cfuns[] = {
     {"abort", cfun_abort, "(abort) -- abort transaction"},
     {"snapshot", cfun_snapshot, "(snapshot) -- pin/advance statement snapshot"},
     {"stmt-begin", cfun_snapshot, "(stmt-begin) -- alias for (snapshot)"},
+    {"cat-epoch", cfun_cat_epoch,
+     "(cat-epoch) -- the catalog's epoch, or :own with DDL of the "
+     "transaction's own"},
     {"stmt-inner", cfun_stmt_inner,
      "(stmt-inner) -- begin a statement inside the running one"},
     {"stmt-end", cfun_stmt_end,

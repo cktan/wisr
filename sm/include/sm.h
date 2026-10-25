@@ -799,6 +799,17 @@ struct sm_table_def_t {
 uint64_t sm_cat_namespace_epoch(sm_session_t* session);
 
 /*
+ * The catalog's epoch as the session sees it: a number that moves
+ * whenever a DDL, an analyze or an index made valid is published to
+ * what the session looks up, its temporary tables' changes among
+ * them; UINT64_MAX while the session's transaction has DDL of its
+ * own. A host that caches what it looks up -- names, statistics,
+ * sizes -- reads it before each lookup, and keeps an answer while it
+ * reads the same (../dg/SCHEMACACHE.md).
+ */
+uint64_t sm_cat_epoch(sm_session_t* session);
+
+/*
  * Create the namespace name, SQL's schema, in the session's
  * transaction, which sees it at once and others at commit; its oid
  * is set in oid. A name another namespace has fails with

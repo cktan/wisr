@@ -1197,6 +1197,11 @@ uint64_t sm_cat_namespace_epoch(sm_session_t *session) {
   return session && session->sm3 ? sm3::cat_namespace_epoch(session->sm3) : 0;
 }
 
+/* The catalog's epoch as the session sees it; see sm.h. */
+uint64_t sm_cat_epoch(sm_session_t *session) {
+  return session && session->sm3 ? sm3::cat_epoch(session->sm3) : 0;
+}
+
 /* Create a namespace. */
 int sm_cat_create_namespace(sm_session_t *session, const char *name,
                             uint64_t *oid) {

@@ -233,6 +233,8 @@ struct sm3::session_t {
    */
   std::vector<uint64_t> doomed;
   std::atomic<bool> has_doomed{false};
+  /* Changes to its temporary catalog, counted for cat_epoch. */
+  uint64_t temp_seq = 0;
 
   /*
    * The pool of pins (../ROW.md §4.1): every pin made, freed at
