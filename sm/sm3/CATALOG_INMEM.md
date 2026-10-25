@@ -434,7 +434,7 @@ begins with `cat_get_table_rec` and ends with `cat_put_table`.
 - **`set_index_state(session, table, oid, state, error,
   reason, dup)`** puts an index's state, as the build does when
   it ends, with the error and its message for a failed one,
-  and a duplicated key's rows. It
+  and the key of a row that holds a duplicated key. It
   is `cat_put_index_state` and nothing more, so it does not
   wait for the table's users.
 - **`drop_index(session, table, oid)`** erases the index's

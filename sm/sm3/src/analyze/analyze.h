@@ -58,7 +58,7 @@ struct sample_t {
  * a sparse table may then give fewer rows. rng makes the draws.
  *
  * A table with a primary key has its slots in key order instead
- * (../../ROWKEY.md §2.4): each a page's share of its bytes, the
+ * (../ROWKEY.md §2.4): each a page's share of its bytes, the
  * rows between the keys at its two ends (tbl_keys_at), chosen by
  * Floyd's algorithm as runs are, after a pilot of a few that
  * measures the rows a slot. Its rows are estimated as the rows

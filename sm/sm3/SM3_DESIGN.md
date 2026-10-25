@@ -26,8 +26,8 @@ load, DDL, a session's overlay and the table-oid locks of §2
 per table, index relids allocated and never reused, and
 `DROP TABLE` as one `sm1::rmstore`. §3's index maintenance
 is built, the C API's one way to write a row, and so is its
-index build, for partial and expression indexes too; §6's
-statistics are not. sm2, which it is built on, is, and its
+index build, for partial and expression indexes too, and so
+are §6's statistics. sm2, which it is built on, is, and its
 TOAST (`sm2/SM2_DESIGN.md` §4.2) is used here once the host
 says it reads TOAST pointers (§3.4).
 This file exists so the protocols are argued before they are
@@ -83,10 +83,12 @@ answer.
 
 ## 2. Catalog
 
-*To be written.* Tables, indexes, columns, types and
-collations, stored in sm3's own sm2 relations and
-written in the same sm1 transaction as the DDL that changes
-them — which is what makes DDL transactional for free. It is
+Tables, indexes, columns, types and collations, stored in
+sm1's catalog store, store 0, under the key prefix `"U"`,
+through sm2's catalog key-value store, `catkv`
+(`CATALOG_ONDISK.md` §1), and written in the same sm1
+transaction as the DDL that changes them — which is what
+makes DDL transactional for free. It is
 also where a collation's recorded version lives
 (`sm2/SM2_DESIGN.md` §3), and where each column's dropped
 mark and missing value live: a table's columns are only ever
@@ -302,10 +304,10 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   `rel_update` / `rel_delete` gives the old index entries to
   remove — as a tuple, so sm3 reads the indexed columns out
   of it without decoding bytes itself. The image views sm1
-  session memory, valid only until the next call on the
-  session, and the index calls that use it are calls on the
-  session: sm3 copies it first, or a later index's old key is
-  read from memory an earlier call reused.
+  session memory, and the index calls that use it are calls
+  on the session: the write pins it into a ref, the caller's
+  or one of its own, so a later index's old key is read from
+  where the image is and sm3 copies nothing (`../PIN.md`).
 - **One call writes a row and its indexes.** The executor
   writes a table through a table-level call that sm3 owns. It
   changes the heap row and then every index the table's
@@ -537,8 +539,9 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   - uniqueness is not enforced against a row the backfill has
     not reached, so a build can fail late, over a row
     committed while it ran;
-  - the state is in the index's record, which changes the
-    catalog's format;
+  - the state is an entry of its own, of kind `INDEX_STATE`
+    (`CATALOG_ONDISK.md` §2), which changed the catalog's
+    format;
   - four workers are not four times the speed: builds contend
     on sm1's lock table, one mutex, and on RocksDB's write
     path, and the default is unmeasured;
@@ -1019,16 +1022,15 @@ where a datum was. Built in `src/table/table.cc`, with
 
 **Decision: one sm1 store per table.** A store is a
 collection of **rels**, and a table's rows, each of its
-secondary indexes, its `_id` index and its TOAST data is one of
-them. They are told apart by sm2's 2-byte **relid**
-(`sm2/SM2_DESIGN.md` §5):
+secondary indexes and its TOAST data is one of them. They are
+told apart by sm2's 2-byte **relid** (`sm2/SM2_DESIGN.md` §5):
 
 | relid | Relation |
 | --- | --- |
 | `0x0000` | unused |
 | `0x0001` | the table's rows, always |
 | `0x0002`–`0xFFFD` | its indexes, one relid each; a primary key's is recorded and holds nothing |
-| `0xFFFE` | its `_id` index, from `_id` to row key, with a primary key (`../CLUSTER.md` §3) |
+| `0xFFFE` | reserved, unused: once the `_id` index's (`../CLUSTER.md` §3) |
 | `0xFFFF` | its TOAST data |
 
 This table is the only place these values are written down;
@@ -1038,22 +1040,28 @@ every other document points here for them.
   `sm3::heap_relid` and is never drawn from the counter that
   hands out index relids, so a table's rows sit at the same
   relid in every database and nothing about it is recorded.
-  So is the `_id` index's, `sm2::id_relid`: a table has one
-  exactly when it has a primary key, and adding or dropping
-  one makes a new store.
+- **`0xFFFE`, `sm2::id_relid`, is reserved.** There is no
+  `_id` index: a keyed row has no `_id`, and a keyless one is
+  keyed by it (`../CLUSTER.md` §3, `../ROWKEY.md` §2.1). No
+  index takes the relid and nothing is written under it.
 - **`0x0000` is left unused**, so a zeroed or unset relid is
   never a live rel.
 
 A relid names a rel within its store and nowhere else; a rel
 is reached as its store and its relid, and there is no wider
 identity for one. sm3 chooses an index's relid and records it
-in the catalog; the rows', the `_id` index's and TOAST's are
-fixed. An sm3 table
+in the catalog; the rows' and TOAST's are fixed. An sm3 table
 or index is one `rel` over the
 table's sm1 store with its relid; sm2 prepends and strips it
 and otherwise ignores it. sm2 never learns what a table is,
 and sm3 never encodes a key itself.
 
+- **Every table's store is chained** (`../VCHAIN.md` §3):
+  `sm1::mkstore` is told so, for a temporary table too, and
+  its one column family is `chain.<storeid>`. A row's newest
+  version sits under its plain key and the older ones in a
+  chain behind it; index entries and TOAST data, in the same
+  store, stay versioned.
 - **`DROP TABLE` is one `sm1::rmstore`**, sm1's O(1) column
   family drop, and takes the indexes and TOAST data with it.
 - **`TRUNCATE` swaps the store.** `truncate_table` makes a
@@ -1187,10 +1195,10 @@ callbacks** (`scan_analyze_next_block`,
 **Decision: a size is two numbers, never one.** sm1 answers,
 for a key range of a store:
 
-| Part | What it is | From RocksDB |
+| Part | What it is | From |
 | --- | --- | --- |
-| `disk` | bytes in sorted files, compressed | `GetApproximateSizes`, files only |
-| `mem` | bytes in the memtables, uncompressed | `GetApproximateMemTableStats` |
+| `disk` | bytes in sorted files, compressed | RocksDB's `GetApproximateSizes`, files only |
+| `mem` | bytes in the memtables, uncompressed | sm1's own count of the writes under the relid (`sm1/src/memcount.h`) |
 
 sm2 asks it of a relid's range, and sm3 of the heap and of
 each index. Neither part is corrected, and the stack does not
@@ -1210,17 +1218,16 @@ add them.
   never flushed is then charged its uncompressed size, which
   is what it occupies, and a flushed one is charged its rows
   in memory at its own compression.
-- **`mem` is an order of magnitude.** RocksDB samples its
-  memtables. Over a whole store it was measured from 0.4 to
-  1.05 times the bytes, but for one rel among others, however
-  large, from 0 to 4 times (`sm1/API.md`). Accepted, not
-  corrected: `mem` is bounded by the store's memtables, 64 MB
-  each by default, so for a large table it is a small share of
-  the total and its error moves little; it dominates only for
-  a table that is mostly unflushed, which is small and cheap
-  whichever plan is chosen (`STATISTICS.md` §5). If it bites,
-  an exact count by reading the memtables alone belongs in
-  `tbl_analyze`, not at plan time.
+- **`mem` is counted exactly, per relid.** RocksDB answers
+  for a range within the memtables only by sampling them, and
+  for one rel among others it was measured from 0 to 4 times
+  the bytes. So sm1, which makes every write, counts the bytes
+  written under each 2-byte key prefix, a relid, into
+  memtables not yet flushed: each version's key and value as
+  sm1 writes it, a chained row's older versions included
+  (`sm1/src/memcount.h`). It is answered live, at no cost to a
+  plan. A range that is not whole relids, as the bisection of
+  §6.4 asks, still gets RocksDB's sample.
 - **The rejected alternative** was to flush before measuring.
   It would make the number exact, and costs a flush per plan,
   or per analyze for a number that is stale by the next plan.
@@ -1507,8 +1514,9 @@ analyzed.** The host plans it as PostgreSQL plans a truncated
 table, `reltuples` -1 and its ten-page guess, not as empty.
 Only a new store is 0 bytes: a table emptied by `DELETE`
 keeps its tombstones until compaction, and is planned from
-its statistics. The sizes are RocksDB's estimates, which may
-read 0 for a heap with rows, mid-flush, so the sample has the
+its statistics. The bytes in sorted files are RocksDB's
+estimate, and those in memtables sm1's count (§6.2): mid-flush
+a heap with rows may read 0 in both, so the sample has the
 last word: rows read are recorded, whatever the bytes. This
 needs nothing of the stack, since §6.2 already answers the
 size, and nothing of the truncate.
@@ -1643,7 +1651,7 @@ that matter most are the ones with two sessions in them.
 | 2 | Object mapping | built | §4 |
 | 3 | Indexes | built | §3 |
 | 4 | Scans | settled, nothing to build | §5 |
-| 5 | Statistics, constraints, bulk load | statistics built, constraints settled, bulk load in part | §6, `../BULKLOAD.md`, `NEXT.md` |
+| 5 | Statistics, constraints, bulk load | statistics built, constraints settled, bulk load in part | §6, `../BULKLOAD.md`, `../NEXT.md` |
 
 1. **Catalog** comes first because everything else needs a
    definition to work from. Tables, indexes, columns, types,
@@ -1657,8 +1665,7 @@ that matter most are the ones with two sessions in them.
    table-oid lock never sees a definition change under it; two
    sessions doing concurrent DDL behave as sm1's isolation
    says they must.
-2. **Object mapping** is inside the catalog's DDL
-   (`src/catalog/ddl.cc`).
+2. **Object mapping** is inside DDL (`src/ddl/ddl.cc`).
    Verified: a table's rows and indexes share its store
    without meeting; `DROP TABLE` removes the store, indexes
    and all; a dropped index's relid is never handed out
@@ -1681,7 +1688,7 @@ that matter most are the ones with two sessions in them.
    with `tbl_lock` as the stack's share of a foreign key
    (`DESIGN.md` §5). **Statistics** is built (§6).
    **Bulk load** is built for files into an empty table
-   (`../BULKLOAD.md`); the rest of it is not. `NEXT.md` has
+   (`../BULKLOAD.md`); the rest of it is not. `../NEXT.md` has
    what is left and in what order.
 
 ### 8.2 Testing

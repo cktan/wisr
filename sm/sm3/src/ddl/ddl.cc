@@ -227,9 +227,9 @@ static int make_table(session_t *session, uint64_t nspoid,
                            std::nullopt, std::nullopt, c.default_expr,
                            c.identity, c.identity_seq});
   }
-  // The table's store and its rowno sequence (DESIGN.md §5): for a
+  // The table's store and its _id sequence (../DESIGN.md §5): for a
   // temporary table, both temporary, and so the session's alone
-  // (TEMPTABLE.md §4).
+  // (../TEMPTABLE.md §4).
   const bool temp = nspoid == nsp_temp;
   // Its rows chained, a temporary table's too (../VCHAIN.md §3).
   if (sm1::mkstore(session->sm1, rec.storeid, temp, true) != 0) {
@@ -361,7 +361,7 @@ int drop_table(session_t *session, uint64_t oid) {
   if (cat_get_table_rec(session, oid, rec) != 0) {
     return -1;
   }
-  // A table a view reads stays (VIEW.md §5).
+  // A table a view reads stays (../VIEW.md §5).
   std::vector<view_reader_t> readers = cat_view_readers(session, oid);
   if (!readers.empty()) {
     return sm1::seterr(sm1::SM_ERR_INUSE, "drop table: " + rec.name +
@@ -369,7 +369,7 @@ int drop_table(session_t *session, uint64_t oid) {
                                               readers[0].def->name);
   }
   // A parent another table's foreign key references stays; one of its
-  // own goes with it (FOREIGNKEY.md §5).
+  // own goes with it (../FOREIGNKEY.md §5).
   for (const fkey_ref_t &r : rec.referenced_by) {
     if (r.table != oid) {
       return sm1::seterr(sm1::SM_ERR_INUSE,
@@ -389,7 +389,7 @@ int drop_table(session_t *session, uint64_t oid) {
       cat_del_table(session, oid) != 0) {
     return -1;
   }
-  // Its store takes its rows and index entries with it (DESIGN.md §5).
+  // Its store takes its rows and index entries with it (../DESIGN.md §5).
   if (sm1::rmstore(session->sm1, rec.storeid) != 0 ||
       sm1::rmseq(session->sm1, rec.id_seq) != 0 ||
       sm1::rmseq(session->sm1, toast_seq_name(oid)) != 0) {
@@ -414,7 +414,7 @@ int truncate_table(session_t *session, uint64_t oid) {
     return -1;
   }
   // The old store goes at commit, taking the rows and index
-  // entries with it (DESIGN.md §5).
+  // entries with it (../DESIGN.md §5).
   return sm1::rmstore(session->sm1, old_store);
 }
 
@@ -618,8 +618,8 @@ int drop_column(session_t *session, uint64_t oid, std::string_view name) {
                                                 std::string(name));
     }
   }
-  // A column a view reads stays (VIEW.md §5).
-  // Another session's temporary view among them (VIEW.md §12.3).
+  // A column a view reads stays (../VIEW.md §5).
+  // Another session's temporary view among them (../VIEW.md §12.3).
   for (const view_reader_t &v : cat_view_readers(session, oid)) {
     for (const view_read_t &r : v.def->reads) {
       if (r.relation == oid && r.attnum == at) {
@@ -755,8 +755,8 @@ int create_index(session_t *session, uint64_t table, std::string_view name,
     }
     x.includes.push_back(a);
   }
-  // 0xFFFF is TOAST's and 0xFFFE the _id index's (SM2_DESIGN.md
-  // §5); relids are never reused.
+  // 0xFFFF is TOAST's and 0xFFFE reserved, once the _id index's
+  // (../sm2/SM2_DESIGN.md §5); relids are never reused.
   if (rec.next_relid >= sm2::id_relid) {
     return invalid("create index: the table has no index relid left");
   }
@@ -1032,7 +1032,7 @@ int create_fkey(session_t *session, uint64_t table, const fkey_rec_t &def,
       (def.match != 's' && def.match != 'f')) {
     return invalid("create foreign key: an action or a match type unknown");
   }
-  // The child's lock X, then the parent's (FOREIGNKEY.md §7).
+  // The child's lock X, then the parent's (../FOREIGNKEY.md §7).
   table_rec_t child, parent;
   bool self = def.ref_table == table;
   if (cat_get_table_rec(session, table, child) != 0 ||
@@ -1195,7 +1195,7 @@ static bool temp_relation(const session_t *session, uint64_t oid) {
 
 /*
  * Lock each relation reads names intent_shared, to the end of the
- * transaction, and check it is one a view may read (VIEW.md §5): a
+ * transaction, and check it is one a view may read (../VIEW.md §5): a
  * table, with a live column where one is named; or a view, with none
  * named, that does not read self, the view being replaced, or 0 for a
  * new one. A temporary relation is read by a temporary view alone,
@@ -1302,7 +1302,7 @@ int rename_view(session_t *session, uint64_t oid, std::string_view name) {
 /* Drop a view, if no other view reads it; see sm3.h. */
 int drop_view(session_t *session, uint64_t oid) {
   // Another session's temporary view has no lock: its session alone
-  // uses it, and drops it at its next begin (VIEW.md §12.4).
+  // uses it, and drops it at its next begin (../VIEW.md §12.4).
   std::shared_ptr<const view_def_t> old = other_view(session, oid);
   bool other = old != nullptr;
   // Exclusive: this waits out the view's readers, and a view being

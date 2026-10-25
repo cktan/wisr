@@ -16,15 +16,19 @@ document is what it is for.
 
 - **A catalog.** Table and index definitions, column types,
   collations, dropped columns and missing values, held in
-  memory and persisted through sm2 relations in the same
-  transactions as the data.
+  memory and persisted through sm2 in the same transactions as
+  the data. The aim was sm2 relations; they are kept instead
+  in sm1's catalog store, store 0, under `"U"`, through sm2's
+  `catkv` (`CATALOG_ONDISK.md` §1).
   It also replaces PostgreSQL's heap catalogs and sequences,
   which the fork can no longer keep on heap (`PART4.md` §4).
 - **Secondary indexes.** Unique and non-unique, maintained
   transactionally with the base row, built online on a
   populated relation.
-- **Object mapping.** Many logical tables and indexes onto few
-  sm1 stores, through the key prefix sm2 offers.
+- **Object mapping.** Logical tables and indexes onto sm1
+  stores, through the key prefix sm2 offers. The aim was many
+  onto few; as decided below, each table has a store of its
+  own, its indexes and TOAST data inside it.
 - **A scan interface** over a table and over each of its
   indexes, between key bounds. It began as one that takes a
   predicate and derives the key range from it; deriving the
@@ -62,12 +66,16 @@ document is what it is for.
 
 These are settled and drive `SM3_DESIGN.md`.
 
-- **An index entry is `encode(sk) ‖ rowno`**, mapping to a tuple
-  of the `rowno`, whether the key was cut, and the INCLUDE
-  columns; a unique index drops the suffix. The table is a heap
-  keyed by `rowno` and the primary key is one of these indexes,
-  as in PostgreSQL (`sm2/SM2_OBJECTIVE.md`). A lookup is an index
-  scan followed by a read by `rowno`.
+- **An index entry is `encode(sk) ‖ row key`**, mapping to a
+  tuple of whether the key was cut, the INCLUDE columns and the
+  row's key; a unique index drops the suffix. The decision was
+  `encode(sk) ‖ rowno`, over a heap keyed by `rowno` with the
+  primary key one of these indexes, as in PostgreSQL
+  (`sm2/SM2_OBJECTIVE.md`). The table is now clustered: a row
+  is keyed by its primary key, or by its `_id` without one,
+  and the primary key has no entries of its own
+  (`../CLUSTER.md`, `../ROWKEY.md`). A lookup is an index scan
+  followed by a read by the row's key.
 - **sm2's encoder is the only encoder.** sm3 builds index keys
   from the same function, with the same per-column arguments
   (`sm2/SM2_OBJECTIVE.md`).
@@ -119,5 +127,9 @@ These are settled and drive `SM3_DESIGN.md`.
   itself, undone on abort and savepoint rollback, and publishes
   it at commit (`CATALOG_INMEM.md` §1, §2).
 - **How good RocksDB's approximate statistics are** for
-  `reltuples` and `relpages`. It has not been measured, and
-  `SM3_DESIGN.md` §6 depends on the answer.
+  `reltuples` and `relpages` — unmeasured when this was
+  written, with `SM3_DESIGN.md` §6 depending on the answer.
+  Settled: measured (`../STATISTICS.md` §6): exact at rest,
+  within 8% by relid, and 7x over for rows not yet flushed;
+  so sm1 now counts a relid's memtable bytes exactly itself
+  (`SM3_DESIGN.md` §6.2).

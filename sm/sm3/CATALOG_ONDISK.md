@@ -183,7 +183,7 @@ statistic's, the second; their parts are in
 | table | namespace `int8`, name `text`, storeid `int8`, `_id` sequence `text`, next index relid `int2` |
 | column | name `text`, type code `int2`, typmod `int4`, not null `bool`, dropped `bool`, missing value `bytea` or null, collation oid `int8` or null, default `bytea` or null: the host's expression, opaque, kept and never run; identity kind `int2` (`a` or `d`) or null, identity sequence `int8` or null |
 | index | oid `int8`, name `text`, relid `int2`, unique `bool`, nkey `int4`, ninclude `int4`, three retired and null, eval `bytea` or null, nread `int4` or null, primary `bool` or null, constraint `bool` or null: true, or null for false |
-| index state | state `int2`, error `int2` or null, reason `text` or null, the `_id`s of a duplicated key's two rows, `int8` or null each |
+| index state | state `int2`, error `int2` or null, reason `text` or null, the key of a row that holds a duplicated key, `bytea` or null (`../ROWKEY.md` §2.5) |
 | key | attnum `int4`, desc `bool`, nulls first `bool`, collation oid `int8` or null, type code `int2` or null, typmod `int4` or null |
 | include | attnum `int4` |
 | read | attnum `int4`, laid out as an include part is |

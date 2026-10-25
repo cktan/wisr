@@ -89,7 +89,7 @@ struct index_key_spec_t {
     bool                    desc;
     bool                    nulls_first;
     std::optional<uint64_t> collation;   /* text, varchar only */
-    uint8_t                 type_code = 0;  /* an expression's (TYPE.md §3) */
+    uint8_t                 type_code = 0;  /* expression's (sm2/TYPE.md §3) */
     int32_t                 typmod = -1;    /* an expression's */
 };
 
@@ -154,7 +154,7 @@ struct index_key_rec_t {
   bool desc;
   bool nulls_first;
   std::optional<uint64_t> collation;
-  uint8_t type_code = 0; /* an expression's, attnum -1 (TYPE.md §3) */
+  uint8_t type_code = 0; /* an expression's, attnum -1 (sm2/TYPE.md §3) */
   int32_t typmod = -1;   /* an expression's */
   bool operator==(const index_key_rec_t&) const = default;
 };
@@ -808,9 +808,9 @@ int rename_column(session_t* session, uint64_t oid,
 
 /*
  * Drop the column name of the table oid. It keeps its place, read
- * as null from then on (SM2_DESIGN.md §4); one an index uses is
- * refused, and one a view reads with SM_ERR_INUSE. The sequences
- * it owns are dropped with it.
+ * as null from then on (sm2/SM2_DESIGN.md §4); one an index uses
+ * is refused, and one a view reads with SM_ERR_INUSE. The
+ * sequences it owns are dropped with it.
  */
 int drop_column(session_t* session, uint64_t oid,
                 std::string_view name);
@@ -1251,7 +1251,8 @@ index_state_t tbl_index_state(const table_t* table, uint64_t index);
  * caller must roll back to a savepoint of its own, or abort,
  * before going on. SM_ERR_UPDATED is the exception: it comes from
  * the heap write, which is the first step, so nothing is half done
- * and the transaction goes on as sm1 says (SM1_DESIGN.md §5.4).
+ * and the transaction goes on as sm1 says (sm1/SM1_DESIGN.md
+ * §5.4).
  * A table opened in a mode that does not cover intent_exclusive
  * fails with SM_ERR_INVALID, and a row with a NULL in a NOT NULL
  * column with SM_ERR_NOTNULL; both before anything is written. A
