@@ -451,7 +451,7 @@ static int leftmost_loc(int loc1, int loc2) {
 }
 
 /* The location of the first node of a list that has one, as for a List. */
-static int list_location(const std::vector<sq_node_t *> &items) {
+static int list_location(const sq_items_t &items) {
   for (const sq_node_t *item : items) {
     int loc = expr_location(item);
     if (loc >= 0) {

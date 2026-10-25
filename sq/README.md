@@ -51,9 +51,9 @@ for (const sq_raw_stmt_t* raw : tree.stmts) {
   when it is destroyed. Nothing is freed by hand.
 - **The nodes are PostgreSQL's**, in `include/sq_nodes.h`, by
   sq's names: `SelectStmt` is `sq_select_stmt_t` and its
-  `targetList` is `target_list`. A list is a
-  `std::vector<sq_node_t*>`; text is a `const char*`, NULL where
-  absent.
+  `targetList` is `target_list`. A list is an `sq_items_t`, an
+  array in the tree, read as a `std::vector`; text is a
+  `const char*`, NULL where absent.
 - **Options** are an `sq_options_t`, or NULL for PostgreSQL's
   defaults: its three settings that change how a string literal
   is read, and a hook for notices.

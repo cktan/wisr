@@ -41,7 +41,8 @@ The interface is C in style, as `../sm/include/sm.h` is: an
 `int` result, 0 or -1; the error read back from the calling
 thread; names prefixed `sq_`. Three C++ types cross it and no
 others: `std::string_view` for text in, `std::string` for text
-out, `std::vector` for a node's lists.
+out, `std::vector` for a tree's statements. A node's list is
+sq's own `sq_items_t` (§3).
 
 ## 2. What is PostgreSQL's, and what is sq's
 
@@ -93,10 +94,12 @@ What changes on the way from PostgreSQL's struct to sq's:
 - **Names.** Types end `_t` and carry `sq_`; fields are
   snake_case; an enum's values carry `SQ_`, which keeps them
   apart from PostgreSQL's own where digres includes both.
-- **A list is a `std::vector<sq_node_t*>`**, empty where
-  PostgreSQL has `NIL`. PostgreSQL also puts a list where any
+- **A list is an `sq_items_t`** (`include/sq_items.h`), empty
+  where PostgreSQL has `NIL`: an array in the tree's arena, as
+  PostgreSQL's `List` is an array in its memory context, read
+  as a `std::vector` is. PostgreSQL also puts a list where any
   node may go — an element of another list, a field typed
-  `Node *`. There it is an `sq_list_t`, a node holding a vector.
+  `Node *`. There it is an `sq_list_t`, a node holding one.
 - **Text is a `const char*`**, owned by the tree. NULL is
   absent, which PostgreSQL tells apart from empty: `COMMENT ...
   IS NULL` and `IS ''` are different trees.
@@ -124,14 +127,14 @@ destructor. Nothing in a tree is freed by hand, and nothing
 points outside it: text is copied in, so a tree outlives what it
 was parsed from. A tree moves and does not copy.
 
-**Nodes and text are cut from the tree's arena**, as
+**Nodes, lists and text are cut from the tree's arena**, as
 PostgreSQL's `palloc` cuts from a memory context: blocks, the
 first inside the store, each next twice the last up to 1 MB,
-freed together. A node whose type holds a list also gets a
-record of how to destroy it, as a list's vector has storage of
-its own; the tree runs those, newest first, then frees the
-blocks. A parse so makes no allocation per node or per string,
-which made its cost twice PostgreSQL's.
+freed together. No node has a destructor; a list that grows
+takes a new array twice the size, the old one staying until the
+tree goes. A parse so makes no allocation per node, list or
+string, which made its cost twice PostgreSQL's. Whatever
+changes a list runs in a parse, or with a tree named current.
 
 This is what makes cleanup after an error one line. A parse that
 fails halfway has made hundreds of nodes, some reachable from
@@ -182,7 +185,7 @@ is PostgreSQL's defaults.
 
 ## 6. Lists in the grammar
 
-A node's list is a vector, but the grammar builds lists
+A node's list is an `sq_items_t`, but the grammar builds lists
 piecemeal across many rules, passes them about, appends to them
 and nests them, as PostgreSQL does with `List *`. In the grammar
 a list is therefore a handle, `list_ref_t`: NIL, or the name of
@@ -191,8 +194,8 @@ over it by their own names, so an action reads as it does
 upstream.
 
 **Assigning a handle to a node's field copies the list** into
-the field's vector. The handle can go on being used; the node
-has its own.
+the field's array, in the arena. The handle can go on being
+used; the node has its own.
 
 ## 7. Threads
 

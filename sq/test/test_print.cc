@@ -86,6 +86,7 @@ TEST_CASE("SELECT 1 + 1 prints as PostgreSQL prints it") {
   // 1. Build SELECT 1 + 1: a SelectStmt, a ResTarget, an A_Expr.
   // 2. Print it and compare with PostgreSQL's text.
   sq_tree_t t;
+  sq::current_tree_t current(t); // lists grow in the tree being built
   sq_a_expr_t *plus = sq::make_node<sq_a_expr_t>(t);
   plus->kind = SQ_AEXPR_OP;
   plus->name.push_back(string_node(t, "+"));
@@ -112,6 +113,7 @@ TEST_CASE("constants of every kind, a qualified table, and AND and NOT") {
   // 3. Build x AND NOT y.
   // 4. Print the statement and compare with PostgreSQL's text.
   sq_tree_t t;
+  sq::current_tree_t current(t); // lists grow in the tree being built
   sq_select_stmt_t *sel = sq::make_node<sq_select_stmt_t>(t);
 
   sq_a_const_t *null_const = sq::make_node<sq_a_const_t>(t);
@@ -171,6 +173,7 @@ TEST_CASE("empty text is not absent text, and a list can stand as a node") {
   // 1. Build the statement with the name list as its object node.
   // 2. Print it with an empty comment, then with none.
   sq_tree_t t;
+  sq::current_tree_t current(t); // lists grow in the tree being built
   sq_comment_stmt_t *c = sq::make_node<sq_comment_stmt_t>(t);
   c->objtype = SQ_OBJECT_TABLE;
   c->object = name_list(t, {"t"});
@@ -187,6 +190,7 @@ TEST_CASE("a list of lists prints nested") {
   // 1. Build the statement with two name lists as its objects.
   // 2. Print it and compare with PostgreSQL's text.
   sq_tree_t t;
+  sq::current_tree_t current(t); // lists grow in the tree being built
   sq_drop_stmt_t *d = sq::make_node<sq_drop_stmt_t>(t);
   d->objects.push_back(name_list(t, {"a"}));
   d->objects.push_back(name_list(t, {"b", "c"}));
@@ -203,6 +207,7 @@ TEST_CASE("text is escaped as PostgreSQL's node reader needs") {
   // 2. Print an empty string.
   // 3. Print strings that begin with a digit and with '<'.
   sq_tree_t t;
+  sq::current_tree_t current(t); // lists grow in the tree being built
   CHECK(text_of(string_const(t, "it's (x) \"q\"")) ==
         "{A_CONST :val \"it's\\ \\(x\\)\\ \"q\"\" :location -1}");
   CHECK(text_of(string_const(t, "")) == "{A_CONST :val \"\" :location -1}");
@@ -220,6 +225,7 @@ TEST_CASE("locations are hidden, or shown when asked for") {
   // 3. Print it with locations: each is the one it was given.
   // 4. Print the plain way again: asking once does not stick.
   sq_tree_t t;
+  sq::current_tree_t current(t); // lists grow in the tree being built
   sq_column_ref_t *col = sq::make_node<sq_column_ref_t>(t);
   col->fields.push_back(string_node(t, "a"));
   col->location = 7;

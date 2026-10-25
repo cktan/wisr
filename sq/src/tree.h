@@ -60,24 +60,11 @@ private:
   size_t m_block_size = 8192; /* the next block's size */
 };
 
-/*
- * What a tree owns: an arena with its nodes and text in it, and, for
- * each node whose type holds a list, how to destroy it: a list's
- * vector has storage of its own.
- */
+/* What a tree owns: an arena with its nodes, lists and text in it. */
 struct store_t {
-  /* A node to destroy when the tree goes; the newest first. */
-  struct destroy_t {
-    destroy_t *next;
-    void *node;
-    void (*destroy)(void *);
-  };
-
   arena_t arena;
-  destroy_t *destroys = nullptr;
 
   store_t() = default;
-  ~store_t();
   store_t(const store_t &) = delete;
   store_t &operator=(const store_t &) = delete;
 };
@@ -90,20 +77,10 @@ struct tree_access_t {
 
 /* Make a node of type T, zeroed but for its tag, owned by tree. */
 template <typename T> T *make_node(sq_tree_t &tree) {
+  // A node is never destroyed: its arena goes with the tree.
+  static_assert(std::is_trivially_destructible_v<T>);
   store_t &store = tree_access_t::store(tree);
-  void *at = store.arena.alloc(sizeof(T), alignof(T));
-  if constexpr (std::is_trivially_destructible_v<T>) {
-    return new (at) T();
-  } else {
-    // Room for the record first, so that nothing can throw between
-    // making the node and recording it.
-    auto *d = static_cast<store_t::destroy_t *>(store.arena.alloc(
-        sizeof(store_t::destroy_t), alignof(store_t::destroy_t)));
-    T *node = new (at) T();
-    *d = {store.destroys, node, [](void *p) { static_cast<T *>(p)->~T(); }};
-    store.destroys = d;
-    return node;
-  }
+  return new (store.arena.alloc(sizeof(T), alignof(T))) T();
 }
 
 /*
@@ -119,6 +96,12 @@ char *dup_string(sq_tree_t &tree, std::string_view text);
  * names its tree here for as long as it runs.
  */
 sq_tree_t *current_tree();
+
+/*
+ * The arena of the tree being built, where a list grows; throws
+ * logic_error if no tree is being built.
+ */
+arena_t &current_arena();
 
 /* Names a tree as the one being built, for as long as this lives. */
 class current_tree_t {

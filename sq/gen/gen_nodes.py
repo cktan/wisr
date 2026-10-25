@@ -14,8 +14,8 @@ What changes on the way from PostgreSQL's struct to sq's:
 
   - names: SelectStmt is sq_select_stmt_t, targetList is target_list,
     JoinType is sq_join_type_t and JOIN_INNER is SQ_JOIN_INNER;
-  - a List * is a std::vector<sq_node_t*>, empty where PostgreSQL has
-    NIL;
+  - a List * is an sq_items_t, an array in the tree's arena, empty
+    where PostgreSQL has NIL;
   - a char * is a const char *, owned by the tree, NULL where
     PostgreSQL's is;
   - every node derives from sq_node_t, which holds the tag;
@@ -214,7 +214,7 @@ class model_t:
         """The C++ type of a field of the given kind."""
         t = f.ctype.replace("struct ", "").replace("const ", "").strip()
         if kind == "list":
-            return "std::vector<sq_node_t*>"
+            return "sq_items_t"
         if kind == "string":
             return "const char*"
         if kind == "node":
@@ -242,7 +242,7 @@ HEADER_TOP = """\
  *
  *   - Every node derives from sq_node_t and sets its own tag when
  *     made. A node is told apart by its tag, and cast.
- *   - A list is a std::vector<sq_node_t*>. Where a list stands in a
+ *   - A list is an sq_items_t (sq_items.h). Where a list stands in a
  *     place that holds any node -- an element of another list, or a
  *     field typed sq_node_t* -- it is an sq_list_t.
  *   - Text is a const char*, NUL-terminated and owned by the tree.
@@ -256,7 +256,8 @@ HEADER_TOP = """\
 
 #include <climits>
 #include <cstdint>
-#include <vector>
+
+#include "sq_items.h"
 """
 
 
@@ -319,7 +320,7 @@ def write_header(model, out):
     w("struct sq_node_t {\n    sq_nodetag_t tag = SQ_T_INVALID;\n};\n")
     w("\n/* A list, where a node is expected: PostgreSQL's List. */\n")
     w("struct sq_list_t : sq_node_t {\n")
-    w("    std::vector<sq_node_t*> items;\n\n")
+    w("    sq_items_t items;\n\n")
     w("    sq_list_t() { tag = SQ_T_LIST; }\n};\n\n")
 
     for s in model.structs:
@@ -420,9 +421,8 @@ static const char *copy_text(const char *text) {
 }
 
 /* Copy each node of a list. */
-static std::vector<sq_node_t *> copy_items(const std::vector<sq_node_t *> &from) {
-  std::vector<sq_node_t *> to;
-  to.reserve(from.size());
+static sq_items_t copy_items(const sq_items_t &from) {
+  sq_items_t to;
   for (const sq_node_t *item : from) {
     to.push_back(copy_node(item));
   }
@@ -435,8 +435,7 @@ static bool equal_text(const char *a, const char *b) {
 }
 
 /* Whether two lists hold equal nodes in the same order. */
-static bool equal_items(const std::vector<sq_node_t *> &a,
-                        const std::vector<sq_node_t *> &b) {
+static bool equal_items(const sq_items_t &a, const sq_items_t &b) {
   if (a.size() != b.size()) {
     return false;
   }
@@ -557,7 +556,7 @@ CONVERTER_TOP = """\
 #include "parser/sq_convert.h"
 
 /* Convert each node of one of sq's lists; NIL for an empty one. */
-static List *convert_items(const std::vector<sq_node_t *> &items) {
+static List *convert_items(const sq_items_t &items) {
   List *list = NIL;
   for (const sq_node_t *item : items)
     list = lappend(list, sq_convert(item));

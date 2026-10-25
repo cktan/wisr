@@ -1,7 +1,7 @@
 /*
  * list.h -- PostgreSQL's List, as the grammar's actions use it.
  *
- * A node's own list is a std::vector<sq_node_t*> (sq_nodes.h). While
+ * A node's own list is an sq_items_t (sq_items.h). While
  * the grammar is building, a list is passed about by handle, as
  * PostgreSQL passes a List *: a list_ref_t, which is NIL or names an
  * sq_list_t in the tree. Assigning a handle to a node's field copies
@@ -14,7 +14,6 @@
 #define SQ_SRC_LIST_H
 
 #include <cstddef>
-#include <vector>
 
 #include "sq_nodes.h"
 
@@ -36,9 +35,7 @@ struct list_ref_t {
   explicit list_ref_t(sq_node_t *node) : list(static_cast<sq_list_t *>(node)) {}
 
   /* A copy of the list's nodes, for a node's field. */
-  operator std::vector<sq_node_t *>() const {
-    return list ? list->items : std::vector<sq_node_t *>();
-  }
+  operator sq_items_t() const { return list ? list->items : sq_items_t(); }
 
   /* The list as a node, for where any node may go; NULL for NIL. */
   operator sq_node_t *() const { return list; }
@@ -100,7 +97,7 @@ list_ref_t list_make3(sq_node_t *a, sq_node_t *b, sq_node_t *c);
 list_ref_t list_make4(sq_node_t *a, sq_node_t *b, sq_node_t *c, sq_node_t *d);
 
 /* A new list holding a copy of a node's own list; NIL if it is empty. */
-list_ref_t list_from(const std::vector<sq_node_t *> &items);
+list_ref_t list_from(const sq_items_t &items);
 
 /* Add node at the end of l, which may be NIL. Returns the list. */
 list_ref_t lappend(list_ref_t l, sq_node_t *node);
@@ -115,7 +112,7 @@ list_ref_t lcons(sq_node_t *node, list_ref_t l);
 list_ref_t list_concat(list_ref_t a, list_ref_t b);
 
 /* Add l's nodes at the end of a node's own list. */
-void append_list(std::vector<sq_node_t *> &items, list_ref_t l);
+void append_list(sq_items_t &items, list_ref_t l);
 
 /* Cut l to its first n nodes. Returns l, or NIL when n is 0. */
 list_ref_t list_truncate(list_ref_t l, int n);

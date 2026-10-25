@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include <algorithm>
+#include <stdexcept>
 
 namespace sq {
 
@@ -37,14 +38,6 @@ void *arena_t::grow(size_t size, size_t align) {
   return alloc(size, align);
 }
 
-/* Destroy each node that holds a list, the newest first; the arena goes after.
- */
-store_t::~store_t() {
-  for (destroy_t *d = destroys; d != nullptr; d = d->next) {
-    d->destroy(d->node);
-  }
-}
-
 /* Return tree's store, making it if this is the first use. */
 store_t &tree_access_t::store(sq_tree_t &tree) {
   if (tree.m_store == nullptr) {
@@ -68,6 +61,14 @@ thread_local sq_tree_t *t_current_tree = nullptr;
 
 /* The tree the calling thread is building, or NULL outside a parse. */
 sq_tree_t *current_tree() { return t_current_tree; }
+
+/* The current tree's arena; a list changed with no tree is a bug. */
+arena_t &current_arena() {
+  if (t_current_tree == nullptr) {
+    throw std::logic_error("sq: a list changed with no tree being built");
+  }
+  return tree_access_t::store(*t_current_tree).arena;
+}
 
 /* Remember what was current and make tree current. */
 current_tree_t::current_tree_t(sq_tree_t &tree) : m_previous(t_current_tree) {

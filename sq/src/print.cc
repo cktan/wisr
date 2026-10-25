@@ -82,7 +82,7 @@ void out_int64(std::string &s, int64_t v) { s += std::to_string(v); }
 void out_long(std::string &s, long v) { s += std::to_string(v); }
 
 /* Write a list: its nodes, one space apart, in parentheses. */
-void out_list(std::string &s, const std::vector<sq_node_t *> &items) {
+void out_list(std::string &s, const sq_items_t &items) {
   // PostgreSQL's empty list is NIL, a null pointer.
   if (items.empty()) {
     s += "<>";

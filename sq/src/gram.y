@@ -15,7 +15,7 @@
  *     helpers here have sq's names to match;
  *   - a list is passed about as a list_ref_t (src/list.h), where
  *     PostgreSQL has a List *, and is copied into a node's field, a
- *     std::vector, when it is assigned there;
+ *     sq_items_t, when it is assigned there;
  *   - an error is raised with sq::raise (src/error.h), not ereport, and
  *     a warning goes to the options' notice hook;
  *   - everything is made in the tree being built (src/tree.h), where
@@ -173,7 +173,7 @@ static sq_range_var_t *make_range_var_from_any_name(list_ref_t names, int positi
 static sq_range_var_t *make_range_var_from_qualified_name(char *name, list_ref_t namelist, int location,
 											   core_yyscan_t yyscanner);
 static void split_col_qual_list(list_ref_t qual_list,
-							 std::vector<sq_node_t *> *constraint_list, sq_collate_clause_t **coll_clause,
+							 sq_items_t *constraint_list, sq_collate_clause_t **coll_clause,
 							 core_yyscan_t yyscanner);
 static void process_ca_sbits(int cas_bits, int location, const char *constr_type,
 			   bool *deferrable, bool *initdeferred, bool *is_enforced,
@@ -19158,7 +19158,7 @@ make_range_var_from_qualified_name(char *name, list_ref_t namelist, int location
 /* Separate Constraint nodes from COLLATE clauses in a ColQualList */
 static void
 split_col_qual_list(list_ref_t qual_list,
-				 std::vector<sq_node_t *> *constraint_list, sq_collate_clause_t **coll_clause,
+				 sq_items_t *constraint_list, sq_collate_clause_t **coll_clause,
 				 core_yyscan_t yyscanner)
 {
 	list_cell_t   cell;

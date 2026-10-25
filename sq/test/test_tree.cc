@@ -48,6 +48,7 @@ TEST_CASE("a moved tree keeps its nodes, and frees them once") {
   // 3. Confirm the node still prints from the last tree.
   // 4. Let all three trees be destroyed; the leak checker sees the rest.
   sq_tree_t a;
+  sq::current_tree_t current(a); // lists grow in the tree being built
   sq_column_ref_t *col = sq::make_node<sq_column_ref_t>(a);
   sq_string_t *name = sq::make_node<sq_string_t>(a);
   name->sval = sq::dup_string(a, "x");
@@ -90,6 +91,7 @@ TEST_CASE("a tree past its first block keeps every node and string whole") {
   //    its list, and each string reads back as written.
   // 3. Let the tree go; the leak checker sees its blocks and lists.
   sq_tree_t t;
+  sq::current_tree_t current(t); // lists grow in the tree being built
   std::vector<sq_column_ref_t *> cols;
   for (int i = 0; i < 5000; i++) {
     sq_column_ref_t *col = sq::make_node<sq_column_ref_t>(t);

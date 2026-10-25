@@ -11,7 +11,7 @@
  *
  *   - Every node derives from sq_node_t and sets its own tag when
  *     made. A node is told apart by its tag, and cast.
- *   - A list is a std::vector<sq_node_t*>. Where a list stands in a
+ *   - A list is an sq_items_t (sq_items.h). Where a list stands in a
  *     place that holds any node -- an element of another list, or a
  *     field typed sq_node_t* -- it is an sq_list_t.
  *   - Text is a const char*, NUL-terminated and owned by the tree.
@@ -25,7 +25,8 @@
 
 #include <climits>
 #include <cstdint>
-#include <vector>
+
+#include "sq_items.h"
 
 /* What a node is: one tag for each struct below. */
 enum sq_nodetag_t {
@@ -945,7 +946,7 @@ struct sq_node_t {
 
 /* A list, where a node is expected: PostgreSQL's List. */
 struct sq_list_t : sq_node_t {
-    std::vector<sq_node_t*> items;
+    sq_items_t items;
 
     sq_list_t() { tag = SQ_T_LIST; }
 };
@@ -1205,7 +1206,7 @@ struct sq_bit_string_t : sq_node_t {
 /* PostgreSQL's Alias (primnodes.h). */
 struct sq_alias_t : sq_node_t {
     const char* aliasname = nullptr;
-    std::vector<sq_node_t*> colnames;
+    sq_items_t colnames;
 
     sq_alias_t() { tag = SQ_T_ALIAS; }
 };
@@ -1226,9 +1227,9 @@ struct sq_range_var_t : sq_node_t {
 /* PostgreSQL's IntoClause (primnodes.h). */
 struct sq_into_clause_t : sq_node_t {
     sq_range_var_t* rel = nullptr;
-    std::vector<sq_node_t*> col_names;
+    sq_items_t col_names;
     const char* access_method = nullptr;
-    std::vector<sq_node_t*> options;
+    sq_items_t options;
     sq_on_commit_action_t on_commit{};
     const char* table_space_name = nullptr;
     /* The analyzer's to fill; NULL from the parser. */
@@ -1240,9 +1241,9 @@ struct sq_into_clause_t : sq_node_t {
 
 /* PostgreSQL's GroupingFunc (primnodes.h). */
 struct sq_grouping_func_t : sq_node_t {
-    std::vector<sq_node_t*> args;
-    std::vector<sq_node_t*> refs;
-    std::vector<sq_node_t*> cols;
+    sq_items_t args;
+    sq_items_t refs;
+    sq_items_t cols;
     uint32_t agglevelsup = 0;
     int location = 0;
 
@@ -1271,7 +1272,7 @@ struct sq_named_arg_expr_t : sq_node_t {
 /* PostgreSQL's BoolExpr (primnodes.h). */
 struct sq_bool_expr_t : sq_node_t {
     sq_bool_expr_type_t boolop{};
-    std::vector<sq_node_t*> args;
+    sq_items_t args;
     int location = 0;
 
     sq_bool_expr_t() { tag = SQ_T_BOOL_EXPR; }
@@ -1282,7 +1283,7 @@ struct sq_sub_link_t : sq_node_t {
     sq_sub_link_type_t sub_link_type{};
     int sub_link_id = 0;
     sq_node_t* testexpr = nullptr;
-    std::vector<sq_node_t*> oper_name;
+    sq_items_t oper_name;
     sq_node_t* subselect = nullptr;
     int location = 0;
 
@@ -1294,7 +1295,7 @@ struct sq_case_expr_t : sq_node_t {
     uint32_t casetype = 0;
     uint32_t casecollid = 0;
     sq_node_t* arg = nullptr;
-    std::vector<sq_node_t*> args;
+    sq_items_t args;
     sq_node_t* defresult = nullptr;
     int location = 0;
 
@@ -1312,10 +1313,10 @@ struct sq_case_when_t : sq_node_t {
 
 /* PostgreSQL's RowExpr (primnodes.h). */
 struct sq_row_expr_t : sq_node_t {
-    std::vector<sq_node_t*> args;
+    sq_items_t args;
     uint32_t row_typeid = 0;
     sq_coercion_form_t row_format{};
-    std::vector<sq_node_t*> colnames;
+    sq_items_t colnames;
     int location = 0;
 
     sq_row_expr_t() { tag = SQ_T_ROW_EXPR; }
@@ -1325,7 +1326,7 @@ struct sq_row_expr_t : sq_node_t {
 struct sq_coalesce_expr_t : sq_node_t {
     uint32_t coalescetype = 0;
     uint32_t coalescecollid = 0;
-    std::vector<sq_node_t*> args;
+    sq_items_t args;
     int location = 0;
 
     sq_coalesce_expr_t() { tag = SQ_T_COALESCE_EXPR; }
@@ -1337,7 +1338,7 @@ struct sq_min_max_expr_t : sq_node_t {
     uint32_t minmaxcollid = 0;
     uint32_t inputcollid = 0;
     sq_min_max_op_t op{};
-    std::vector<sq_node_t*> args;
+    sq_items_t args;
     int location = 0;
 
     sq_min_max_expr_t() { tag = SQ_T_MIN_MAX_EXPR; }
@@ -1357,9 +1358,9 @@ struct sq_sql_value_function_t : sq_node_t {
 struct sq_xml_expr_t : sq_node_t {
     sq_xml_expr_op_t op{};
     const char* name = nullptr;
-    std::vector<sq_node_t*> named_args;
-    std::vector<sq_node_t*> arg_names;
-    std::vector<sq_node_t*> args;
+    sq_items_t named_args;
+    sq_items_t arg_names;
+    sq_items_t args;
     sq_xml_option_type_t xmloption{};
     bool indent = false;
     uint32_t type = 0;
@@ -1461,7 +1462,7 @@ struct sq_join_expr_t : sq_node_t {
     bool is_natural = false;
     sq_node_t* larg = nullptr;
     sq_node_t* rarg = nullptr;
-    std::vector<sq_node_t*> using_clause;
+    sq_items_t using_clause;
     sq_alias_t* join_using_alias = nullptr;
     sq_node_t* quals = nullptr;
     sq_alias_t* alias = nullptr;
@@ -1472,13 +1473,13 @@ struct sq_join_expr_t : sq_node_t {
 
 /* PostgreSQL's TypeName (parsenodes.h). */
 struct sq_type_name_t : sq_node_t {
-    std::vector<sq_node_t*> names;
+    sq_items_t names;
     uint32_t type_oid = 0;
     bool setof = false;
     bool pct_type = false;
-    std::vector<sq_node_t*> typmods;
+    sq_items_t typmods;
     int32_t typemod = 0;
-    std::vector<sq_node_t*> array_bounds;
+    sq_items_t array_bounds;
     int location = 0;
 
     sq_type_name_t() { tag = SQ_T_TYPE_NAME; }
@@ -1486,7 +1487,7 @@ struct sq_type_name_t : sq_node_t {
 
 /* PostgreSQL's ColumnRef (parsenodes.h). */
 struct sq_column_ref_t : sq_node_t {
-    std::vector<sq_node_t*> fields;
+    sq_items_t fields;
     int location = 0;
 
     sq_column_ref_t() { tag = SQ_T_COLUMN_REF; }
@@ -1503,7 +1504,7 @@ struct sq_param_ref_t : sq_node_t {
 /* PostgreSQL's A_Expr (parsenodes.h). */
 struct sq_a_expr_t : sq_node_t {
     sq_a_expr_kind_t kind{};
-    std::vector<sq_node_t*> name;
+    sq_items_t name;
     sq_node_t* lexpr = nullptr;
     sq_node_t* rexpr = nullptr;
     int rexpr_list_start = 0;
@@ -1535,7 +1536,7 @@ struct sq_type_cast_t : sq_node_t {
 /* PostgreSQL's CollateClause (parsenodes.h). */
 struct sq_collate_clause_t : sq_node_t {
     sq_node_t* arg = nullptr;
-    std::vector<sq_node_t*> collname;
+    sq_items_t collname;
     int location = 0;
 
     sq_collate_clause_t() { tag = SQ_T_COLLATE_CLAUSE; }
@@ -1552,9 +1553,9 @@ struct sq_role_spec_t : sq_node_t {
 
 /* PostgreSQL's FuncCall (parsenodes.h). */
 struct sq_func_call_t : sq_node_t {
-    std::vector<sq_node_t*> funcname;
-    std::vector<sq_node_t*> args;
-    std::vector<sq_node_t*> agg_order;
+    sq_items_t funcname;
+    sq_items_t args;
+    sq_items_t agg_order;
     sq_node_t* agg_filter = nullptr;
     sq_window_def_t* over = nullptr;
     bool agg_within_group = false;
@@ -1585,14 +1586,14 @@ struct sq_a_indices_t : sq_node_t {
 /* PostgreSQL's A_Indirection (parsenodes.h). */
 struct sq_a_indirection_t : sq_node_t {
     sq_node_t* arg = nullptr;
-    std::vector<sq_node_t*> indirection;
+    sq_items_t indirection;
 
     sq_a_indirection_t() { tag = SQ_T_A_INDIRECTION; }
 };
 
 /* PostgreSQL's A_ArrayExpr (parsenodes.h). */
 struct sq_a_array_expr_t : sq_node_t {
-    std::vector<sq_node_t*> elements;
+    sq_items_t elements;
     int list_start = 0;
     int list_end = 0;
     int location = 0;
@@ -1603,7 +1604,7 @@ struct sq_a_array_expr_t : sq_node_t {
 /* PostgreSQL's ResTarget (parsenodes.h). */
 struct sq_res_target_t : sq_node_t {
     const char* name = nullptr;
-    std::vector<sq_node_t*> indirection;
+    sq_items_t indirection;
     sq_node_t* val = nullptr;
     int location = 0;
 
@@ -1624,7 +1625,7 @@ struct sq_sort_by_t : sq_node_t {
     sq_node_t* node = nullptr;
     sq_sort_by_dir_t sortby_dir{};
     sq_sort_by_nulls_t sortby_nulls{};
-    std::vector<sq_node_t*> use_op;
+    sq_items_t use_op;
     int location = 0;
 
     sq_sort_by_t() { tag = SQ_T_SORT_BY; }
@@ -1634,8 +1635,8 @@ struct sq_sort_by_t : sq_node_t {
 struct sq_window_def_t : sq_node_t {
     const char* name = nullptr;
     const char* refname = nullptr;
-    std::vector<sq_node_t*> partition_clause;
-    std::vector<sq_node_t*> order_clause;
+    sq_items_t partition_clause;
+    sq_items_t order_clause;
     int frame_options = 0;
     sq_node_t* start_offset = nullptr;
     sq_node_t* end_offset = nullptr;
@@ -1658,9 +1659,9 @@ struct sq_range_function_t : sq_node_t {
     bool lateral = false;
     bool ordinality = false;
     bool is_rowsfrom = false;
-    std::vector<sq_node_t*> functions;
+    sq_items_t functions;
     sq_alias_t* alias = nullptr;
-    std::vector<sq_node_t*> coldeflist;
+    sq_items_t coldeflist;
 
     sq_range_function_t() { tag = SQ_T_RANGE_FUNCTION; }
 };
@@ -1670,8 +1671,8 @@ struct sq_range_table_func_t : sq_node_t {
     bool lateral = false;
     sq_node_t* docexpr = nullptr;
     sq_node_t* rowexpr = nullptr;
-    std::vector<sq_node_t*> namespaces;
-    std::vector<sq_node_t*> columns;
+    sq_items_t namespaces;
+    sq_items_t columns;
     sq_alias_t* alias = nullptr;
     int location = 0;
 
@@ -1694,8 +1695,8 @@ struct sq_range_table_func_col_t : sq_node_t {
 /* PostgreSQL's RangeTableSample (parsenodes.h). */
 struct sq_range_table_sample_t : sq_node_t {
     sq_node_t* relation = nullptr;
-    std::vector<sq_node_t*> method;
-    std::vector<sq_node_t*> args;
+    sq_items_t method;
+    sq_items_t args;
     sq_node_t* repeatable = nullptr;
     int location = 0;
 
@@ -1720,8 +1721,8 @@ struct sq_column_def_t : sq_node_t {
     char generated = 0;
     sq_collate_clause_t* coll_clause = nullptr;
     uint32_t coll_oid = 0;
-    std::vector<sq_node_t*> constraints;
-    std::vector<sq_node_t*> fdwoptions;
+    sq_items_t constraints;
+    sq_items_t fdwoptions;
     int location = 0;
 
     sq_column_def_t() { tag = SQ_T_COLUMN_DEF; }
@@ -1741,9 +1742,9 @@ struct sq_index_elem_t : sq_node_t {
     const char* name = nullptr;
     sq_node_t* expr = nullptr;
     const char* indexcolname = nullptr;
-    std::vector<sq_node_t*> collation;
-    std::vector<sq_node_t*> opclass;
-    std::vector<sq_node_t*> opclassopts;
+    sq_items_t collation;
+    sq_items_t opclass;
+    sq_items_t opclassopts;
     sq_sort_by_dir_t ordering{};
     sq_sort_by_nulls_t nulls_ordering{};
 
@@ -1763,7 +1764,7 @@ struct sq_def_elem_t : sq_node_t {
 
 /* PostgreSQL's LockingClause (parsenodes.h). */
 struct sq_locking_clause_t : sq_node_t {
-    std::vector<sq_node_t*> locked_rels;
+    sq_items_t locked_rels;
     sq_lock_clause_strength_t strength{};
     sq_lock_wait_policy_t wait_policy{};
 
@@ -1785,8 +1786,8 @@ struct sq_xml_serialize_t : sq_node_t {
 struct sq_partition_elem_t : sq_node_t {
     const char* name = nullptr;
     sq_node_t* expr = nullptr;
-    std::vector<sq_node_t*> collation;
-    std::vector<sq_node_t*> opclass;
+    sq_items_t collation;
+    sq_items_t opclass;
     int location = 0;
 
     sq_partition_elem_t() { tag = SQ_T_PARTITION_ELEM; }
@@ -1795,7 +1796,7 @@ struct sq_partition_elem_t : sq_node_t {
 /* PostgreSQL's PartitionSpec (parsenodes.h). */
 struct sq_partition_spec_t : sq_node_t {
     sq_partition_strategy_t strategy{};
-    std::vector<sq_node_t*> part_params;
+    sq_items_t part_params;
     int location = 0;
 
     sq_partition_spec_t() { tag = SQ_T_PARTITION_SPEC; }
@@ -1807,9 +1808,9 @@ struct sq_partition_bound_spec_t : sq_node_t {
     bool is_default = false;
     int modulus = 0;
     int remainder = 0;
-    std::vector<sq_node_t*> listdatums;
-    std::vector<sq_node_t*> lowerdatums;
-    std::vector<sq_node_t*> upperdatums;
+    sq_items_t listdatums;
+    sq_items_t lowerdatums;
+    sq_items_t upperdatums;
     int location = 0;
 
     sq_partition_bound_spec_t() { tag = SQ_T_PARTITION_BOUND_SPEC; }
@@ -1827,7 +1828,7 @@ struct sq_partition_cmd_t : sq_node_t {
 /* PostgreSQL's GroupingSet (parsenodes.h). */
 struct sq_grouping_set_t : sq_node_t {
     sq_grouping_set_kind_t kind{};
-    std::vector<sq_node_t*> content;
+    sq_items_t content;
     int location = 0;
 
     sq_grouping_set_t() { tag = SQ_T_GROUPING_SET; }
@@ -1835,7 +1836,7 @@ struct sq_grouping_set_t : sq_node_t {
 
 /* PostgreSQL's WithClause (parsenodes.h). */
 struct sq_with_clause_t : sq_node_t {
-    std::vector<sq_node_t*> ctes;
+    sq_items_t ctes;
     bool recursive = false;
     int location = 0;
 
@@ -1844,7 +1845,7 @@ struct sq_with_clause_t : sq_node_t {
 
 /* PostgreSQL's InferClause (parsenodes.h). */
 struct sq_infer_clause_t : sq_node_t {
-    std::vector<sq_node_t*> index_elems;
+    sq_items_t index_elems;
     sq_node_t* where_clause = nullptr;
     const char* conname = nullptr;
     int location = 0;
@@ -1856,7 +1857,7 @@ struct sq_infer_clause_t : sq_node_t {
 struct sq_on_conflict_clause_t : sq_node_t {
     sq_on_conflict_action_t action{};
     sq_infer_clause_t* infer = nullptr;
-    std::vector<sq_node_t*> target_list;
+    sq_items_t target_list;
     sq_node_t* where_clause = nullptr;
     int location = 0;
 
@@ -1865,7 +1866,7 @@ struct sq_on_conflict_clause_t : sq_node_t {
 
 /* PostgreSQL's CTESearchClause (parsenodes.h). */
 struct sq_cte_search_clause_t : sq_node_t {
-    std::vector<sq_node_t*> search_col_list;
+    sq_items_t search_col_list;
     bool search_breadth_first = false;
     const char* search_seq_column = nullptr;
     int location = 0;
@@ -1875,7 +1876,7 @@ struct sq_cte_search_clause_t : sq_node_t {
 
 /* PostgreSQL's CTECycleClause (parsenodes.h). */
 struct sq_cte_cycle_clause_t : sq_node_t {
-    std::vector<sq_node_t*> cycle_col_list;
+    sq_items_t cycle_col_list;
     const char* cycle_mark_column = nullptr;
     sq_node_t* cycle_mark_value = nullptr;
     sq_node_t* cycle_mark_default = nullptr;
@@ -1892,7 +1893,7 @@ struct sq_cte_cycle_clause_t : sq_node_t {
 /* PostgreSQL's CommonTableExpr (parsenodes.h). */
 struct sq_common_table_expr_t : sq_node_t {
     const char* ctename = nullptr;
-    std::vector<sq_node_t*> aliascolnames;
+    sq_items_t aliascolnames;
     sq_cte_materialize_t ctematerialized{};
     sq_node_t* ctequery = nullptr;
     sq_cte_search_clause_t* search_clause = nullptr;
@@ -1900,10 +1901,10 @@ struct sq_common_table_expr_t : sq_node_t {
     int location = 0;
     bool cterecursive = false;
     int cterefcount = 0;
-    std::vector<sq_node_t*> ctecolnames;
-    std::vector<sq_node_t*> ctecoltypes;
-    std::vector<sq_node_t*> ctecoltypmods;
-    std::vector<sq_node_t*> ctecolcollations;
+    sq_items_t ctecolnames;
+    sq_items_t ctecoltypes;
+    sq_items_t ctecoltypmods;
+    sq_items_t ctecolcollations;
 
     sq_common_table_expr_t() { tag = SQ_T_COMMON_TABLE_EXPR; }
 };
@@ -1914,8 +1915,8 @@ struct sq_merge_when_clause_t : sq_node_t {
     sq_cmd_type_t command_type{};
     sq_overriding_kind_t override{};
     sq_node_t* condition = nullptr;
-    std::vector<sq_node_t*> target_list;
-    std::vector<sq_node_t*> values;
+    sq_items_t target_list;
+    sq_items_t values;
 
     sq_merge_when_clause_t() { tag = SQ_T_MERGE_WHEN_CLAUSE; }
 };
@@ -1931,8 +1932,8 @@ struct sq_returning_option_t : sq_node_t {
 
 /* PostgreSQL's ReturningClause (parsenodes.h). */
 struct sq_returning_clause_t : sq_node_t {
-    std::vector<sq_node_t*> options;
-    std::vector<sq_node_t*> exprs;
+    sq_items_t options;
+    sq_items_t exprs;
 
     sq_returning_clause_t() { tag = SQ_T_RETURNING_CLAUSE; }
 };
@@ -1968,7 +1969,7 @@ struct sq_json_func_expr_t : sq_node_t {
     const char* column_name = nullptr;
     sq_json_value_expr_t* context_item = nullptr;
     sq_node_t* pathspec = nullptr;
-    std::vector<sq_node_t*> passing;
+    sq_items_t passing;
     sq_json_output_t* output = nullptr;
     sq_json_behavior_t* on_empty = nullptr;
     sq_json_behavior_t* on_error = nullptr;
@@ -1993,8 +1994,8 @@ struct sq_json_table_path_spec_t : sq_node_t {
 struct sq_json_table_t : sq_node_t {
     sq_json_value_expr_t* context_item = nullptr;
     sq_json_table_path_spec_t* pathspec = nullptr;
-    std::vector<sq_node_t*> passing;
-    std::vector<sq_node_t*> columns;
+    sq_items_t passing;
+    sq_items_t columns;
     sq_json_behavior_t* on_error = nullptr;
     sq_alias_t* alias = nullptr;
     bool lateral = false;
@@ -2012,7 +2013,7 @@ struct sq_json_table_column_t : sq_node_t {
     sq_json_format_t* format = nullptr;
     sq_json_wrapper_t wrapper{};
     sq_json_quotes_t quotes{};
-    std::vector<sq_node_t*> columns;
+    sq_items_t columns;
     sq_json_behavior_t* on_empty = nullptr;
     sq_json_behavior_t* on_error = nullptr;
     int location = 0;
@@ -2058,7 +2059,7 @@ struct sq_json_serialize_expr_t : sq_node_t {
 
 /* PostgreSQL's JsonObjectConstructor (parsenodes.h). */
 struct sq_json_object_constructor_t : sq_node_t {
-    std::vector<sq_node_t*> exprs;
+    sq_items_t exprs;
     sq_json_output_t* output = nullptr;
     bool absent_on_null = false;
     bool unique = false;
@@ -2069,7 +2070,7 @@ struct sq_json_object_constructor_t : sq_node_t {
 
 /* PostgreSQL's JsonArrayConstructor (parsenodes.h). */
 struct sq_json_array_constructor_t : sq_node_t {
-    std::vector<sq_node_t*> exprs;
+    sq_items_t exprs;
     sq_json_output_t* output = nullptr;
     bool absent_on_null = false;
     int location = 0;
@@ -2092,7 +2093,7 @@ struct sq_json_array_query_constructor_t : sq_node_t {
 struct sq_json_agg_constructor_t : sq_node_t {
     sq_json_output_t* output = nullptr;
     sq_node_t* agg_filter = nullptr;
-    std::vector<sq_node_t*> agg_order;
+    sq_items_t agg_order;
     sq_window_def_t* over = nullptr;
     int location = 0;
 
@@ -2130,7 +2131,7 @@ struct sq_raw_stmt_t : sq_node_t {
 /* PostgreSQL's InsertStmt (parsenodes.h). */
 struct sq_insert_stmt_t : sq_node_t {
     sq_range_var_t* relation = nullptr;
-    std::vector<sq_node_t*> cols;
+    sq_items_t cols;
     sq_node_t* select_stmt = nullptr;
     sq_on_conflict_clause_t* on_conflict_clause = nullptr;
     sq_returning_clause_t* returning_clause = nullptr;
@@ -2143,7 +2144,7 @@ struct sq_insert_stmt_t : sq_node_t {
 /* PostgreSQL's DeleteStmt (parsenodes.h). */
 struct sq_delete_stmt_t : sq_node_t {
     sq_range_var_t* relation = nullptr;
-    std::vector<sq_node_t*> using_clause;
+    sq_items_t using_clause;
     sq_node_t* where_clause = nullptr;
     sq_returning_clause_t* returning_clause = nullptr;
     sq_with_clause_t* with_clause = nullptr;
@@ -2154,9 +2155,9 @@ struct sq_delete_stmt_t : sq_node_t {
 /* PostgreSQL's UpdateStmt (parsenodes.h). */
 struct sq_update_stmt_t : sq_node_t {
     sq_range_var_t* relation = nullptr;
-    std::vector<sq_node_t*> target_list;
+    sq_items_t target_list;
     sq_node_t* where_clause = nullptr;
-    std::vector<sq_node_t*> from_clause;
+    sq_items_t from_clause;
     sq_returning_clause_t* returning_clause = nullptr;
     sq_with_clause_t* with_clause = nullptr;
 
@@ -2168,7 +2169,7 @@ struct sq_merge_stmt_t : sq_node_t {
     sq_range_var_t* relation = nullptr;
     sq_node_t* source_relation = nullptr;
     sq_node_t* join_condition = nullptr;
-    std::vector<sq_node_t*> merge_when_clauses;
+    sq_items_t merge_when_clauses;
     sq_returning_clause_t* returning_clause = nullptr;
     sq_with_clause_t* with_clause = nullptr;
 
@@ -2177,21 +2178,21 @@ struct sq_merge_stmt_t : sq_node_t {
 
 /* PostgreSQL's SelectStmt (parsenodes.h). */
 struct sq_select_stmt_t : sq_node_t {
-    std::vector<sq_node_t*> distinct_clause;
+    sq_items_t distinct_clause;
     sq_into_clause_t* into_clause = nullptr;
-    std::vector<sq_node_t*> target_list;
-    std::vector<sq_node_t*> from_clause;
+    sq_items_t target_list;
+    sq_items_t from_clause;
     sq_node_t* where_clause = nullptr;
-    std::vector<sq_node_t*> group_clause;
+    sq_items_t group_clause;
     bool group_distinct = false;
     sq_node_t* having_clause = nullptr;
-    std::vector<sq_node_t*> window_clause;
-    std::vector<sq_node_t*> values_lists;
-    std::vector<sq_node_t*> sort_clause;
+    sq_items_t window_clause;
+    sq_items_t values_lists;
+    sq_items_t sort_clause;
     sq_node_t* limit_offset = nullptr;
     sq_node_t* limit_count = nullptr;
     sq_limit_option_t limit_option{};
-    std::vector<sq_node_t*> locking_clause;
+    sq_items_t locking_clause;
     sq_with_clause_t* with_clause = nullptr;
     sq_set_operation_t op{};
     bool all = false;
@@ -2211,7 +2212,7 @@ struct sq_return_stmt_t : sq_node_t {
 /* PostgreSQL's PLAssignStmt (parsenodes.h). */
 struct sq_pl_assign_stmt_t : sq_node_t {
     const char* name = nullptr;
-    std::vector<sq_node_t*> indirection;
+    sq_items_t indirection;
     int nnames = 0;
     sq_select_stmt_t* val = nullptr;
     int location = 0;
@@ -2223,7 +2224,7 @@ struct sq_pl_assign_stmt_t : sq_node_t {
 struct sq_create_schema_stmt_t : sq_node_t {
     const char* schemaname = nullptr;
     sq_role_spec_t* authrole = nullptr;
-    std::vector<sq_node_t*> schema_elts;
+    sq_items_t schema_elts;
     bool if_not_exists = false;
 
     sq_create_schema_stmt_t() { tag = SQ_T_CREATE_SCHEMA_STMT; }
@@ -2232,7 +2233,7 @@ struct sq_create_schema_stmt_t : sq_node_t {
 /* PostgreSQL's AlterTableStmt (parsenodes.h). */
 struct sq_alter_table_stmt_t : sq_node_t {
     sq_range_var_t* relation = nullptr;
-    std::vector<sq_node_t*> cmds;
+    sq_items_t cmds;
     sq_object_type_t objtype{};
     bool missing_ok = false;
 
@@ -2277,7 +2278,7 @@ struct sq_replica_identity_stmt_t : sq_node_t {
 
 /* PostgreSQL's AlterCollationStmt (parsenodes.h). */
 struct sq_alter_collation_stmt_t : sq_node_t {
-    std::vector<sq_node_t*> collname;
+    sq_items_t collname;
 
     sq_alter_collation_stmt_t() { tag = SQ_T_ALTER_COLLATION_STMT; }
 };
@@ -2285,7 +2286,7 @@ struct sq_alter_collation_stmt_t : sq_node_t {
 /* PostgreSQL's AlterDomainStmt (parsenodes.h). */
 struct sq_alter_domain_stmt_t : sq_node_t {
     char subtype = 0;
-    std::vector<sq_node_t*> type_name;
+    sq_items_t type_name;
     const char* name = nullptr;
     sq_node_t* def = nullptr;
     sq_drop_behavior_t behavior{};
@@ -2299,9 +2300,9 @@ struct sq_grant_stmt_t : sq_node_t {
     bool is_grant = false;
     sq_grant_target_type_t targtype{};
     sq_object_type_t objtype{};
-    std::vector<sq_node_t*> objects;
-    std::vector<sq_node_t*> privileges;
-    std::vector<sq_node_t*> grantees;
+    sq_items_t objects;
+    sq_items_t privileges;
+    sq_items_t grantees;
     bool grant_option = false;
     sq_role_spec_t* grantor = nullptr;
     sq_drop_behavior_t behavior{};
@@ -2311,9 +2312,9 @@ struct sq_grant_stmt_t : sq_node_t {
 
 /* PostgreSQL's ObjectWithArgs (parsenodes.h). */
 struct sq_object_with_args_t : sq_node_t {
-    std::vector<sq_node_t*> objname;
-    std::vector<sq_node_t*> objargs;
-    std::vector<sq_node_t*> objfuncargs;
+    sq_items_t objname;
+    sq_items_t objargs;
+    sq_items_t objfuncargs;
     bool args_unspecified = false;
 
     sq_object_with_args_t() { tag = SQ_T_OBJECT_WITH_ARGS; }
@@ -2322,17 +2323,17 @@ struct sq_object_with_args_t : sq_node_t {
 /* PostgreSQL's AccessPriv (parsenodes.h). */
 struct sq_access_priv_t : sq_node_t {
     const char* priv_name = nullptr;
-    std::vector<sq_node_t*> cols;
+    sq_items_t cols;
 
     sq_access_priv_t() { tag = SQ_T_ACCESS_PRIV; }
 };
 
 /* PostgreSQL's GrantRoleStmt (parsenodes.h). */
 struct sq_grant_role_stmt_t : sq_node_t {
-    std::vector<sq_node_t*> granted_roles;
-    std::vector<sq_node_t*> grantee_roles;
+    sq_items_t granted_roles;
+    sq_items_t grantee_roles;
     bool is_grant = false;
-    std::vector<sq_node_t*> opt;
+    sq_items_t opt;
     sq_role_spec_t* grantor = nullptr;
     sq_drop_behavior_t behavior{};
 
@@ -2341,7 +2342,7 @@ struct sq_grant_role_stmt_t : sq_node_t {
 
 /* PostgreSQL's AlterDefaultPrivilegesStmt (parsenodes.h). */
 struct sq_alter_default_privileges_stmt_t : sq_node_t {
-    std::vector<sq_node_t*> options;
+    sq_items_t options;
     sq_grant_stmt_t* action = nullptr;
 
     sq_alter_default_privileges_stmt_t() { tag = SQ_T_ALTER_DEFAULT_PRIVILEGES_STMT; }
@@ -2351,11 +2352,11 @@ struct sq_alter_default_privileges_stmt_t : sq_node_t {
 struct sq_copy_stmt_t : sq_node_t {
     sq_range_var_t* relation = nullptr;
     sq_node_t* query = nullptr;
-    std::vector<sq_node_t*> attlist;
+    sq_items_t attlist;
     bool is_from = false;
     bool is_program = false;
     const char* filename = nullptr;
-    std::vector<sq_node_t*> options;
+    sq_items_t options;
     sq_node_t* where_clause = nullptr;
 
     sq_copy_stmt_t() { tag = SQ_T_COPY_STMT; }
@@ -2365,7 +2366,7 @@ struct sq_copy_stmt_t : sq_node_t {
 struct sq_variable_set_stmt_t : sq_node_t {
     sq_variable_set_kind_t kind{};
     const char* name = nullptr;
-    std::vector<sq_node_t*> args;
+    sq_items_t args;
     bool jumble_args = false;
     bool is_local = false;
     int location = 0;
@@ -2383,14 +2384,14 @@ struct sq_variable_show_stmt_t : sq_node_t {
 /* PostgreSQL's CreateStmt (parsenodes.h). */
 struct sq_create_stmt_t : sq_node_t {
     sq_range_var_t* relation = nullptr;
-    std::vector<sq_node_t*> table_elts;
-    std::vector<sq_node_t*> inh_relations;
+    sq_items_t table_elts;
+    sq_items_t inh_relations;
     sq_partition_bound_spec_t* partbound = nullptr;
     sq_partition_spec_t* partspec = nullptr;
     sq_type_name_t* of_typename = nullptr;
-    std::vector<sq_node_t*> constraints;
-    std::vector<sq_node_t*> nnconstraints;
-    std::vector<sq_node_t*> options;
+    sq_items_t constraints;
+    sq_items_t nnconstraints;
+    sq_items_t options;
     sq_on_commit_action_t oncommit{};
     const char* tablespacename = nullptr;
     const char* access_method = nullptr;
@@ -2414,26 +2415,26 @@ struct sq_constraint_t : sq_node_t {
     char generated_when = 0;
     char generated_kind = 0;
     bool nulls_not_distinct = false;
-    std::vector<sq_node_t*> keys;
+    sq_items_t keys;
     bool without_overlaps = false;
-    std::vector<sq_node_t*> including;
-    std::vector<sq_node_t*> exclusions;
-    std::vector<sq_node_t*> options;
+    sq_items_t including;
+    sq_items_t exclusions;
+    sq_items_t options;
     const char* indexname = nullptr;
     const char* indexspace = nullptr;
     bool reset_default_tblspc = false;
     const char* access_method = nullptr;
     sq_node_t* where_clause = nullptr;
     sq_range_var_t* pktable = nullptr;
-    std::vector<sq_node_t*> fk_attrs;
-    std::vector<sq_node_t*> pk_attrs;
+    sq_items_t fk_attrs;
+    sq_items_t pk_attrs;
     bool fk_with_period = false;
     bool pk_with_period = false;
     char fk_matchtype = 0;
     char fk_upd_action = 0;
     char fk_del_action = 0;
-    std::vector<sq_node_t*> fk_del_set_cols;
-    std::vector<sq_node_t*> old_conpfeqop;
+    sq_items_t fk_del_set_cols;
+    sq_items_t old_conpfeqop;
     uint32_t old_pktable_oid = 0;
     int location = 0;
 
@@ -2445,7 +2446,7 @@ struct sq_create_table_space_stmt_t : sq_node_t {
     const char* tablespacename = nullptr;
     sq_role_spec_t* owner = nullptr;
     const char* location = nullptr;
-    std::vector<sq_node_t*> options;
+    sq_items_t options;
 
     sq_create_table_space_stmt_t() { tag = SQ_T_CREATE_TABLE_SPACE_STMT; }
 };
@@ -2461,7 +2462,7 @@ struct sq_drop_table_space_stmt_t : sq_node_t {
 /* PostgreSQL's AlterTableSpaceOptionsStmt (parsenodes.h). */
 struct sq_alter_table_space_options_stmt_t : sq_node_t {
     const char* tablespacename = nullptr;
-    std::vector<sq_node_t*> options;
+    sq_items_t options;
     bool is_reset = false;
 
     sq_alter_table_space_options_stmt_t() { tag = SQ_T_ALTER_TABLE_SPACE_OPTIONS_STMT; }
@@ -2471,7 +2472,7 @@ struct sq_alter_table_space_options_stmt_t : sq_node_t {
 struct sq_alter_table_move_all_stmt_t : sq_node_t {
     const char* orig_tablespacename = nullptr;
     sq_object_type_t objtype{};
-    std::vector<sq_node_t*> roles;
+    sq_items_t roles;
     const char* new_tablespacename = nullptr;
     bool nowait = false;
 
@@ -2482,7 +2483,7 @@ struct sq_alter_table_move_all_stmt_t : sq_node_t {
 struct sq_create_extension_stmt_t : sq_node_t {
     const char* extname = nullptr;
     bool if_not_exists = false;
-    std::vector<sq_node_t*> options;
+    sq_items_t options;
 
     sq_create_extension_stmt_t() { tag = SQ_T_CREATE_EXTENSION_STMT; }
 };
@@ -2490,7 +2491,7 @@ struct sq_create_extension_stmt_t : sq_node_t {
 /* PostgreSQL's AlterExtensionStmt (parsenodes.h). */
 struct sq_alter_extension_stmt_t : sq_node_t {
     const char* extname = nullptr;
-    std::vector<sq_node_t*> options;
+    sq_items_t options;
 
     sq_alter_extension_stmt_t() { tag = SQ_T_ALTER_EXTENSION_STMT; }
 };
@@ -2508,8 +2509,8 @@ struct sq_alter_extension_contents_stmt_t : sq_node_t {
 /* PostgreSQL's CreateFdwStmt (parsenodes.h). */
 struct sq_create_fdw_stmt_t : sq_node_t {
     const char* fdwname = nullptr;
-    std::vector<sq_node_t*> func_options;
-    std::vector<sq_node_t*> options;
+    sq_items_t func_options;
+    sq_items_t options;
 
     sq_create_fdw_stmt_t() { tag = SQ_T_CREATE_FDW_STMT; }
 };
@@ -2517,8 +2518,8 @@ struct sq_create_fdw_stmt_t : sq_node_t {
 /* PostgreSQL's AlterFdwStmt (parsenodes.h). */
 struct sq_alter_fdw_stmt_t : sq_node_t {
     const char* fdwname = nullptr;
-    std::vector<sq_node_t*> func_options;
-    std::vector<sq_node_t*> options;
+    sq_items_t func_options;
+    sq_items_t options;
 
     sq_alter_fdw_stmt_t() { tag = SQ_T_ALTER_FDW_STMT; }
 };
@@ -2530,7 +2531,7 @@ struct sq_create_foreign_server_stmt_t : sq_node_t {
     const char* version = nullptr;
     const char* fdwname = nullptr;
     bool if_not_exists = false;
-    std::vector<sq_node_t*> options;
+    sq_items_t options;
 
     sq_create_foreign_server_stmt_t() { tag = SQ_T_CREATE_FOREIGN_SERVER_STMT; }
 };
@@ -2539,7 +2540,7 @@ struct sq_create_foreign_server_stmt_t : sq_node_t {
 struct sq_alter_foreign_server_stmt_t : sq_node_t {
     const char* servername = nullptr;
     const char* version = nullptr;
-    std::vector<sq_node_t*> options;
+    sq_items_t options;
     bool has_version = false;
 
     sq_alter_foreign_server_stmt_t() { tag = SQ_T_ALTER_FOREIGN_SERVER_STMT; }
@@ -2549,7 +2550,7 @@ struct sq_alter_foreign_server_stmt_t : sq_node_t {
 struct sq_create_foreign_table_stmt_t : sq_node_t {
     sq_create_stmt_t base;
     const char* servername = nullptr;
-    std::vector<sq_node_t*> options;
+    sq_items_t options;
 
     sq_create_foreign_table_stmt_t() { tag = SQ_T_CREATE_FOREIGN_TABLE_STMT; }
 };
@@ -2559,7 +2560,7 @@ struct sq_create_user_mapping_stmt_t : sq_node_t {
     sq_role_spec_t* user = nullptr;
     const char* servername = nullptr;
     bool if_not_exists = false;
-    std::vector<sq_node_t*> options;
+    sq_items_t options;
 
     sq_create_user_mapping_stmt_t() { tag = SQ_T_CREATE_USER_MAPPING_STMT; }
 };
@@ -2568,7 +2569,7 @@ struct sq_create_user_mapping_stmt_t : sq_node_t {
 struct sq_alter_user_mapping_stmt_t : sq_node_t {
     sq_role_spec_t* user = nullptr;
     const char* servername = nullptr;
-    std::vector<sq_node_t*> options;
+    sq_items_t options;
 
     sq_alter_user_mapping_stmt_t() { tag = SQ_T_ALTER_USER_MAPPING_STMT; }
 };
@@ -2588,8 +2589,8 @@ struct sq_import_foreign_schema_stmt_t : sq_node_t {
     const char* remote_schema = nullptr;
     const char* local_schema = nullptr;
     sq_import_foreign_schema_type_t list_type{};
-    std::vector<sq_node_t*> table_list;
-    std::vector<sq_node_t*> options;
+    sq_items_t table_list;
+    sq_items_t options;
 
     sq_import_foreign_schema_stmt_t() { tag = SQ_T_IMPORT_FOREIGN_SCHEMA_STMT; }
 };
@@ -2600,7 +2601,7 @@ struct sq_create_policy_stmt_t : sq_node_t {
     sq_range_var_t* table = nullptr;
     const char* cmd_name = nullptr;
     bool permissive = false;
-    std::vector<sq_node_t*> roles;
+    sq_items_t roles;
     sq_node_t* qual = nullptr;
     sq_node_t* with_check = nullptr;
 
@@ -2611,7 +2612,7 @@ struct sq_create_policy_stmt_t : sq_node_t {
 struct sq_alter_policy_stmt_t : sq_node_t {
     const char* policy_name = nullptr;
     sq_range_var_t* table = nullptr;
-    std::vector<sq_node_t*> roles;
+    sq_items_t roles;
     sq_node_t* qual = nullptr;
     sq_node_t* with_check = nullptr;
 
@@ -2621,7 +2622,7 @@ struct sq_alter_policy_stmt_t : sq_node_t {
 /* PostgreSQL's CreateAmStmt (parsenodes.h). */
 struct sq_create_am_stmt_t : sq_node_t {
     const char* amname = nullptr;
-    std::vector<sq_node_t*> handler_name;
+    sq_items_t handler_name;
     char amtype = 0;
 
     sq_create_am_stmt_t() { tag = SQ_T_CREATE_AM_STMT; }
@@ -2633,14 +2634,14 @@ struct sq_create_trig_stmt_t : sq_node_t {
     bool isconstraint = false;
     const char* trigname = nullptr;
     sq_range_var_t* relation = nullptr;
-    std::vector<sq_node_t*> funcname;
-    std::vector<sq_node_t*> args;
+    sq_items_t funcname;
+    sq_items_t args;
     bool row = false;
     int16_t timing = 0;
     int16_t events = 0;
-    std::vector<sq_node_t*> columns;
+    sq_items_t columns;
     sq_node_t* when_clause = nullptr;
-    std::vector<sq_node_t*> transition_rels;
+    sq_items_t transition_rels;
     bool deferrable = false;
     bool initdeferred = false;
     sq_range_var_t* constrrel = nullptr;
@@ -2652,8 +2653,8 @@ struct sq_create_trig_stmt_t : sq_node_t {
 struct sq_create_event_trig_stmt_t : sq_node_t {
     const char* trigname = nullptr;
     const char* eventname = nullptr;
-    std::vector<sq_node_t*> whenclause;
-    std::vector<sq_node_t*> funcname;
+    sq_items_t whenclause;
+    sq_items_t funcname;
 
     sq_create_event_trig_stmt_t() { tag = SQ_T_CREATE_EVENT_TRIG_STMT; }
 };
@@ -2670,9 +2671,9 @@ struct sq_alter_event_trig_stmt_t : sq_node_t {
 struct sq_create_p_lang_stmt_t : sq_node_t {
     bool replace = false;
     const char* plname = nullptr;
-    std::vector<sq_node_t*> plhandler;
-    std::vector<sq_node_t*> plinline;
-    std::vector<sq_node_t*> plvalidator;
+    sq_items_t plhandler;
+    sq_items_t plinline;
+    sq_items_t plvalidator;
     bool pltrusted = false;
 
     sq_create_p_lang_stmt_t() { tag = SQ_T_CREATE_P_LANG_STMT; }
@@ -2682,7 +2683,7 @@ struct sq_create_p_lang_stmt_t : sq_node_t {
 struct sq_create_role_stmt_t : sq_node_t {
     sq_role_stmt_type_t stmt_type{};
     const char* role = nullptr;
-    std::vector<sq_node_t*> options;
+    sq_items_t options;
 
     sq_create_role_stmt_t() { tag = SQ_T_CREATE_ROLE_STMT; }
 };
@@ -2690,7 +2691,7 @@ struct sq_create_role_stmt_t : sq_node_t {
 /* PostgreSQL's AlterRoleStmt (parsenodes.h). */
 struct sq_alter_role_stmt_t : sq_node_t {
     sq_role_spec_t* role = nullptr;
-    std::vector<sq_node_t*> options;
+    sq_items_t options;
     int action = 0;
 
     sq_alter_role_stmt_t() { tag = SQ_T_ALTER_ROLE_STMT; }
@@ -2707,7 +2708,7 @@ struct sq_alter_role_set_stmt_t : sq_node_t {
 
 /* PostgreSQL's DropRoleStmt (parsenodes.h). */
 struct sq_drop_role_stmt_t : sq_node_t {
-    std::vector<sq_node_t*> roles;
+    sq_items_t roles;
     bool missing_ok = false;
 
     sq_drop_role_stmt_t() { tag = SQ_T_DROP_ROLE_STMT; }
@@ -2716,7 +2717,7 @@ struct sq_drop_role_stmt_t : sq_node_t {
 /* PostgreSQL's CreateSeqStmt (parsenodes.h). */
 struct sq_create_seq_stmt_t : sq_node_t {
     sq_range_var_t* sequence = nullptr;
-    std::vector<sq_node_t*> options;
+    sq_items_t options;
     uint32_t owner_id = 0;
     bool for_identity = false;
     bool if_not_exists = false;
@@ -2727,7 +2728,7 @@ struct sq_create_seq_stmt_t : sq_node_t {
 /* PostgreSQL's AlterSeqStmt (parsenodes.h). */
 struct sq_alter_seq_stmt_t : sq_node_t {
     sq_range_var_t* sequence = nullptr;
-    std::vector<sq_node_t*> options;
+    sq_items_t options;
     bool for_identity = false;
     bool missing_ok = false;
 
@@ -2738,9 +2739,9 @@ struct sq_alter_seq_stmt_t : sq_node_t {
 struct sq_define_stmt_t : sq_node_t {
     sq_object_type_t kind{};
     bool oldstyle = false;
-    std::vector<sq_node_t*> defnames;
-    std::vector<sq_node_t*> args;
-    std::vector<sq_node_t*> definition;
+    sq_items_t defnames;
+    sq_items_t args;
+    sq_items_t definition;
     bool if_not_exists = false;
     bool replace = false;
 
@@ -2749,21 +2750,21 @@ struct sq_define_stmt_t : sq_node_t {
 
 /* PostgreSQL's CreateDomainStmt (parsenodes.h). */
 struct sq_create_domain_stmt_t : sq_node_t {
-    std::vector<sq_node_t*> domainname;
+    sq_items_t domainname;
     sq_type_name_t* type_name = nullptr;
     sq_collate_clause_t* coll_clause = nullptr;
-    std::vector<sq_node_t*> constraints;
+    sq_items_t constraints;
 
     sq_create_domain_stmt_t() { tag = SQ_T_CREATE_DOMAIN_STMT; }
 };
 
 /* PostgreSQL's CreateOpClassStmt (parsenodes.h). */
 struct sq_create_op_class_stmt_t : sq_node_t {
-    std::vector<sq_node_t*> opclassname;
-    std::vector<sq_node_t*> opfamilyname;
+    sq_items_t opclassname;
+    sq_items_t opfamilyname;
     const char* amname = nullptr;
     sq_type_name_t* datatype = nullptr;
-    std::vector<sq_node_t*> items;
+    sq_items_t items;
     bool is_default = false;
 
     sq_create_op_class_stmt_t() { tag = SQ_T_CREATE_OP_CLASS_STMT; }
@@ -2774,8 +2775,8 @@ struct sq_create_op_class_item_t : sq_node_t {
     int itemtype = 0;
     sq_object_with_args_t* name = nullptr;
     int number = 0;
-    std::vector<sq_node_t*> order_family;
-    std::vector<sq_node_t*> class_args;
+    sq_items_t order_family;
+    sq_items_t class_args;
     sq_type_name_t* storedtype = nullptr;
 
     sq_create_op_class_item_t() { tag = SQ_T_CREATE_OP_CLASS_ITEM; }
@@ -2783,7 +2784,7 @@ struct sq_create_op_class_item_t : sq_node_t {
 
 /* PostgreSQL's CreateOpFamilyStmt (parsenodes.h). */
 struct sq_create_op_family_stmt_t : sq_node_t {
-    std::vector<sq_node_t*> opfamilyname;
+    sq_items_t opfamilyname;
     const char* amname = nullptr;
 
     sq_create_op_family_stmt_t() { tag = SQ_T_CREATE_OP_FAMILY_STMT; }
@@ -2791,17 +2792,17 @@ struct sq_create_op_family_stmt_t : sq_node_t {
 
 /* PostgreSQL's AlterOpFamilyStmt (parsenodes.h). */
 struct sq_alter_op_family_stmt_t : sq_node_t {
-    std::vector<sq_node_t*> opfamilyname;
+    sq_items_t opfamilyname;
     const char* amname = nullptr;
     bool is_drop = false;
-    std::vector<sq_node_t*> items;
+    sq_items_t items;
 
     sq_alter_op_family_stmt_t() { tag = SQ_T_ALTER_OP_FAMILY_STMT; }
 };
 
 /* PostgreSQL's DropStmt (parsenodes.h). */
 struct sq_drop_stmt_t : sq_node_t {
-    std::vector<sq_node_t*> objects;
+    sq_items_t objects;
     sq_object_type_t remove_type{};
     sq_drop_behavior_t behavior{};
     bool missing_ok = false;
@@ -2812,7 +2813,7 @@ struct sq_drop_stmt_t : sq_node_t {
 
 /* PostgreSQL's TruncateStmt (parsenodes.h). */
 struct sq_truncate_stmt_t : sq_node_t {
-    std::vector<sq_node_t*> relations;
+    sq_items_t relations;
     bool restart_seqs = false;
     sq_drop_behavior_t behavior{};
 
@@ -2870,11 +2871,11 @@ struct sq_index_stmt_t : sq_node_t {
     sq_range_var_t* relation = nullptr;
     const char* access_method = nullptr;
     const char* table_space = nullptr;
-    std::vector<sq_node_t*> index_params;
-    std::vector<sq_node_t*> index_including_params;
-    std::vector<sq_node_t*> options;
+    sq_items_t index_params;
+    sq_items_t index_including_params;
+    sq_items_t options;
     sq_node_t* where_clause = nullptr;
-    std::vector<sq_node_t*> exclude_op_names;
+    sq_items_t exclude_op_names;
     const char* idxcomment = nullptr;
     uint32_t index_oid = 0;
     uint32_t old_number = 0;
@@ -2897,10 +2898,10 @@ struct sq_index_stmt_t : sq_node_t {
 
 /* PostgreSQL's CreateStatsStmt (parsenodes.h). */
 struct sq_create_stats_stmt_t : sq_node_t {
-    std::vector<sq_node_t*> defnames;
-    std::vector<sq_node_t*> stat_types;
-    std::vector<sq_node_t*> exprs;
-    std::vector<sq_node_t*> relations;
+    sq_items_t defnames;
+    sq_items_t stat_types;
+    sq_items_t exprs;
+    sq_items_t relations;
     const char* stxcomment = nullptr;
     bool transformed = false;
     bool if_not_exists = false;
@@ -2919,7 +2920,7 @@ struct sq_stats_elem_t : sq_node_t {
 
 /* PostgreSQL's AlterStatsStmt (parsenodes.h). */
 struct sq_alter_stats_stmt_t : sq_node_t {
-    std::vector<sq_node_t*> defnames;
+    sq_items_t defnames;
     sq_node_t* stxstattarget = nullptr;
     bool missing_ok = false;
 
@@ -2930,10 +2931,10 @@ struct sq_alter_stats_stmt_t : sq_node_t {
 struct sq_create_function_stmt_t : sq_node_t {
     bool is_procedure = false;
     bool replace = false;
-    std::vector<sq_node_t*> funcname;
-    std::vector<sq_node_t*> parameters;
+    sq_items_t funcname;
+    sq_items_t parameters;
     sq_type_name_t* return_type = nullptr;
-    std::vector<sq_node_t*> options;
+    sq_items_t options;
     sq_node_t* sql_body = nullptr;
 
     sq_create_function_stmt_t() { tag = SQ_T_CREATE_FUNCTION_STMT; }
@@ -2954,14 +2955,14 @@ struct sq_function_parameter_t : sq_node_t {
 struct sq_alter_function_stmt_t : sq_node_t {
     sq_object_type_t objtype{};
     sq_object_with_args_t* func = nullptr;
-    std::vector<sq_node_t*> actions;
+    sq_items_t actions;
 
     sq_alter_function_stmt_t() { tag = SQ_T_ALTER_FUNCTION_STMT; }
 };
 
 /* PostgreSQL's DoStmt (parsenodes.h). */
 struct sq_do_stmt_t : sq_node_t {
-    std::vector<sq_node_t*> args;
+    sq_items_t args;
 
     sq_do_stmt_t() { tag = SQ_T_DO_STMT; }
 };
@@ -2971,7 +2972,7 @@ struct sq_call_stmt_t : sq_node_t {
     sq_func_call_t* funccall = nullptr;
     /* The analyzer's to fill; NULL from the parser. */
     sq_node_t* funcexpr = nullptr;
-    std::vector<sq_node_t*> outargs;
+    sq_items_t outargs;
 
     sq_call_stmt_t() { tag = SQ_T_CALL_STMT; }
 };
@@ -3025,15 +3026,15 @@ struct sq_alter_owner_stmt_t : sq_node_t {
 /* PostgreSQL's AlterOperatorStmt (parsenodes.h). */
 struct sq_alter_operator_stmt_t : sq_node_t {
     sq_object_with_args_t* opername = nullptr;
-    std::vector<sq_node_t*> options;
+    sq_items_t options;
 
     sq_alter_operator_stmt_t() { tag = SQ_T_ALTER_OPERATOR_STMT; }
 };
 
 /* PostgreSQL's AlterTypeStmt (parsenodes.h). */
 struct sq_alter_type_stmt_t : sq_node_t {
-    std::vector<sq_node_t*> type_name;
-    std::vector<sq_node_t*> options;
+    sq_items_t type_name;
+    sq_items_t options;
 
     sq_alter_type_stmt_t() { tag = SQ_T_ALTER_TYPE_STMT; }
 };
@@ -3045,7 +3046,7 @@ struct sq_rule_stmt_t : sq_node_t {
     sq_node_t* where_clause = nullptr;
     sq_cmd_type_t event{};
     bool instead = false;
-    std::vector<sq_node_t*> actions;
+    sq_items_t actions;
     bool replace = false;
 
     sq_rule_stmt_t() { tag = SQ_T_RULE_STMT; }
@@ -3076,7 +3077,7 @@ struct sq_unlisten_stmt_t : sq_node_t {
 /* PostgreSQL's TransactionStmt (parsenodes.h). */
 struct sq_transaction_stmt_t : sq_node_t {
     sq_transaction_stmt_kind_t kind{};
-    std::vector<sq_node_t*> options;
+    sq_items_t options;
     const char* savepoint_name = nullptr;
     const char* gid = nullptr;
     bool chain = false;
@@ -3088,30 +3089,30 @@ struct sq_transaction_stmt_t : sq_node_t {
 /* PostgreSQL's CompositeTypeStmt (parsenodes.h). */
 struct sq_composite_type_stmt_t : sq_node_t {
     sq_range_var_t* typevar = nullptr;
-    std::vector<sq_node_t*> coldeflist;
+    sq_items_t coldeflist;
 
     sq_composite_type_stmt_t() { tag = SQ_T_COMPOSITE_TYPE_STMT; }
 };
 
 /* PostgreSQL's CreateEnumStmt (parsenodes.h). */
 struct sq_create_enum_stmt_t : sq_node_t {
-    std::vector<sq_node_t*> type_name;
-    std::vector<sq_node_t*> vals;
+    sq_items_t type_name;
+    sq_items_t vals;
 
     sq_create_enum_stmt_t() { tag = SQ_T_CREATE_ENUM_STMT; }
 };
 
 /* PostgreSQL's CreateRangeStmt (parsenodes.h). */
 struct sq_create_range_stmt_t : sq_node_t {
-    std::vector<sq_node_t*> type_name;
-    std::vector<sq_node_t*> params;
+    sq_items_t type_name;
+    sq_items_t params;
 
     sq_create_range_stmt_t() { tag = SQ_T_CREATE_RANGE_STMT; }
 };
 
 /* PostgreSQL's AlterEnumStmt (parsenodes.h). */
 struct sq_alter_enum_stmt_t : sq_node_t {
-    std::vector<sq_node_t*> type_name;
+    sq_items_t type_name;
     const char* old_val = nullptr;
     const char* new_val = nullptr;
     const char* new_val_neighbor = nullptr;
@@ -3124,10 +3125,10 @@ struct sq_alter_enum_stmt_t : sq_node_t {
 /* PostgreSQL's ViewStmt (parsenodes.h). */
 struct sq_view_stmt_t : sq_node_t {
     sq_range_var_t* view = nullptr;
-    std::vector<sq_node_t*> aliases;
+    sq_items_t aliases;
     sq_node_t* query = nullptr;
     bool replace = false;
-    std::vector<sq_node_t*> options;
+    sq_items_t options;
     sq_view_check_option_t with_check_option{};
 
     sq_view_stmt_t() { tag = SQ_T_VIEW_STMT; }
@@ -3143,7 +3144,7 @@ struct sq_load_stmt_t : sq_node_t {
 /* PostgreSQL's CreatedbStmt (parsenodes.h). */
 struct sq_createdb_stmt_t : sq_node_t {
     const char* dbname = nullptr;
-    std::vector<sq_node_t*> options;
+    sq_items_t options;
 
     sq_createdb_stmt_t() { tag = SQ_T_CREATEDB_STMT; }
 };
@@ -3151,7 +3152,7 @@ struct sq_createdb_stmt_t : sq_node_t {
 /* PostgreSQL's AlterDatabaseStmt (parsenodes.h). */
 struct sq_alter_database_stmt_t : sq_node_t {
     const char* dbname = nullptr;
-    std::vector<sq_node_t*> options;
+    sq_items_t options;
 
     sq_alter_database_stmt_t() { tag = SQ_T_ALTER_DATABASE_STMT; }
 };
@@ -3175,7 +3176,7 @@ struct sq_alter_database_set_stmt_t : sq_node_t {
 struct sq_dropdb_stmt_t : sq_node_t {
     const char* dbname = nullptr;
     bool missing_ok = false;
-    std::vector<sq_node_t*> options;
+    sq_items_t options;
 
     sq_dropdb_stmt_t() { tag = SQ_T_DROPDB_STMT; }
 };
@@ -3191,15 +3192,15 @@ struct sq_alter_system_stmt_t : sq_node_t {
 struct sq_cluster_stmt_t : sq_node_t {
     sq_range_var_t* relation = nullptr;
     const char* indexname = nullptr;
-    std::vector<sq_node_t*> params;
+    sq_items_t params;
 
     sq_cluster_stmt_t() { tag = SQ_T_CLUSTER_STMT; }
 };
 
 /* PostgreSQL's VacuumStmt (parsenodes.h). */
 struct sq_vacuum_stmt_t : sq_node_t {
-    std::vector<sq_node_t*> options;
-    std::vector<sq_node_t*> rels;
+    sq_items_t options;
+    sq_items_t rels;
     bool is_vacuumcmd = false;
 
     sq_vacuum_stmt_t() { tag = SQ_T_VACUUM_STMT; }
@@ -3209,7 +3210,7 @@ struct sq_vacuum_stmt_t : sq_node_t {
 struct sq_vacuum_relation_t : sq_node_t {
     sq_range_var_t* relation = nullptr;
     uint32_t oid = 0;
-    std::vector<sq_node_t*> va_cols;
+    sq_items_t va_cols;
 
     sq_vacuum_relation_t() { tag = SQ_T_VACUUM_RELATION; }
 };
@@ -3217,7 +3218,7 @@ struct sq_vacuum_relation_t : sq_node_t {
 /* PostgreSQL's ExplainStmt (parsenodes.h). */
 struct sq_explain_stmt_t : sq_node_t {
     sq_node_t* query = nullptr;
-    std::vector<sq_node_t*> options;
+    sq_items_t options;
 
     sq_explain_stmt_t() { tag = SQ_T_EXPLAIN_STMT; }
 };
@@ -3257,7 +3258,7 @@ struct sq_discard_stmt_t : sq_node_t {
 
 /* PostgreSQL's LockStmt (parsenodes.h). */
 struct sq_lock_stmt_t : sq_node_t {
-    std::vector<sq_node_t*> relations;
+    sq_items_t relations;
     int mode = 0;
     bool nowait = false;
 
@@ -3266,7 +3267,7 @@ struct sq_lock_stmt_t : sq_node_t {
 
 /* PostgreSQL's ConstraintsSetStmt (parsenodes.h). */
 struct sq_constraints_set_stmt_t : sq_node_t {
-    std::vector<sq_node_t*> constraints;
+    sq_items_t constraints;
     bool deferred = false;
 
     sq_constraints_set_stmt_t() { tag = SQ_T_CONSTRAINTS_SET_STMT; }
@@ -3277,17 +3278,17 @@ struct sq_reindex_stmt_t : sq_node_t {
     sq_reindex_object_type_t kind{};
     sq_range_var_t* relation = nullptr;
     const char* name = nullptr;
-    std::vector<sq_node_t*> params;
+    sq_items_t params;
 
     sq_reindex_stmt_t() { tag = SQ_T_REINDEX_STMT; }
 };
 
 /* PostgreSQL's CreateConversionStmt (parsenodes.h). */
 struct sq_create_conversion_stmt_t : sq_node_t {
-    std::vector<sq_node_t*> conversion_name;
+    sq_items_t conversion_name;
     const char* for_encoding_name = nullptr;
     const char* to_encoding_name = nullptr;
-    std::vector<sq_node_t*> func_name;
+    sq_items_t func_name;
     bool def = false;
 
     sq_create_conversion_stmt_t() { tag = SQ_T_CREATE_CONVERSION_STMT; }
@@ -3318,7 +3319,7 @@ struct sq_create_transform_stmt_t : sq_node_t {
 /* PostgreSQL's PrepareStmt (parsenodes.h). */
 struct sq_prepare_stmt_t : sq_node_t {
     const char* name = nullptr;
-    std::vector<sq_node_t*> argtypes;
+    sq_items_t argtypes;
     sq_node_t* query = nullptr;
 
     sq_prepare_stmt_t() { tag = SQ_T_PREPARE_STMT; }
@@ -3327,7 +3328,7 @@ struct sq_prepare_stmt_t : sq_node_t {
 /* PostgreSQL's ExecuteStmt (parsenodes.h). */
 struct sq_execute_stmt_t : sq_node_t {
     const char* name = nullptr;
-    std::vector<sq_node_t*> params;
+    sq_items_t params;
 
     sq_execute_stmt_t() { tag = SQ_T_EXECUTE_STMT; }
 };
@@ -3343,7 +3344,7 @@ struct sq_deallocate_stmt_t : sq_node_t {
 
 /* PostgreSQL's DropOwnedStmt (parsenodes.h). */
 struct sq_drop_owned_stmt_t : sq_node_t {
-    std::vector<sq_node_t*> roles;
+    sq_items_t roles;
     sq_drop_behavior_t behavior{};
 
     sq_drop_owned_stmt_t() { tag = SQ_T_DROP_OWNED_STMT; }
@@ -3351,7 +3352,7 @@ struct sq_drop_owned_stmt_t : sq_node_t {
 
 /* PostgreSQL's ReassignOwnedStmt (parsenodes.h). */
 struct sq_reassign_owned_stmt_t : sq_node_t {
-    std::vector<sq_node_t*> roles;
+    sq_items_t roles;
     sq_role_spec_t* newrole = nullptr;
 
     sq_reassign_owned_stmt_t() { tag = SQ_T_REASSIGN_OWNED_STMT; }
@@ -3359,8 +3360,8 @@ struct sq_reassign_owned_stmt_t : sq_node_t {
 
 /* PostgreSQL's AlterTSDictionaryStmt (parsenodes.h). */
 struct sq_alter_ts_dictionary_stmt_t : sq_node_t {
-    std::vector<sq_node_t*> dictname;
-    std::vector<sq_node_t*> options;
+    sq_items_t dictname;
+    sq_items_t options;
 
     sq_alter_ts_dictionary_stmt_t() { tag = SQ_T_ALTER_TS_DICTIONARY_STMT; }
 };
@@ -3368,9 +3369,9 @@ struct sq_alter_ts_dictionary_stmt_t : sq_node_t {
 /* PostgreSQL's AlterTSConfigurationStmt (parsenodes.h). */
 struct sq_alter_ts_configuration_stmt_t : sq_node_t {
     sq_alter_ts_config_type_t kind{};
-    std::vector<sq_node_t*> cfgname;
-    std::vector<sq_node_t*> tokentype;
-    std::vector<sq_node_t*> dicts;
+    sq_items_t cfgname;
+    sq_items_t tokentype;
+    sq_items_t dicts;
     bool override = false;
     bool replace = false;
     bool missing_ok = false;
@@ -3382,7 +3383,7 @@ struct sq_alter_ts_configuration_stmt_t : sq_node_t {
 struct sq_publication_table_t : sq_node_t {
     sq_range_var_t* relation = nullptr;
     sq_node_t* where_clause = nullptr;
-    std::vector<sq_node_t*> columns;
+    sq_items_t columns;
 
     sq_publication_table_t() { tag = SQ_T_PUBLICATION_TABLE; }
 };
@@ -3400,8 +3401,8 @@ struct sq_publication_obj_spec_t : sq_node_t {
 /* PostgreSQL's CreatePublicationStmt (parsenodes.h). */
 struct sq_create_publication_stmt_t : sq_node_t {
     const char* pubname = nullptr;
-    std::vector<sq_node_t*> options;
-    std::vector<sq_node_t*> pubobjects;
+    sq_items_t options;
+    sq_items_t pubobjects;
     bool for_all_tables = false;
 
     sq_create_publication_stmt_t() { tag = SQ_T_CREATE_PUBLICATION_STMT; }
@@ -3410,8 +3411,8 @@ struct sq_create_publication_stmt_t : sq_node_t {
 /* PostgreSQL's AlterPublicationStmt (parsenodes.h). */
 struct sq_alter_publication_stmt_t : sq_node_t {
     const char* pubname = nullptr;
-    std::vector<sq_node_t*> options;
-    std::vector<sq_node_t*> pubobjects;
+    sq_items_t options;
+    sq_items_t pubobjects;
     bool for_all_tables = false;
     sq_alter_publication_action_t action{};
 
@@ -3422,8 +3423,8 @@ struct sq_alter_publication_stmt_t : sq_node_t {
 struct sq_create_subscription_stmt_t : sq_node_t {
     const char* subname = nullptr;
     const char* conninfo = nullptr;
-    std::vector<sq_node_t*> publication;
-    std::vector<sq_node_t*> options;
+    sq_items_t publication;
+    sq_items_t options;
 
     sq_create_subscription_stmt_t() { tag = SQ_T_CREATE_SUBSCRIPTION_STMT; }
 };
@@ -3433,8 +3434,8 @@ struct sq_alter_subscription_stmt_t : sq_node_t {
     sq_alter_subscription_type_t kind{};
     const char* subname = nullptr;
     const char* conninfo = nullptr;
-    std::vector<sq_node_t*> publication;
-    std::vector<sq_node_t*> options;
+    sq_items_t publication;
+    sq_items_t options;
 
     sq_alter_subscription_stmt_t() { tag = SQ_T_ALTER_SUBSCRIPTION_STMT; }
 };
