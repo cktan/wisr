@@ -1,9 +1,15 @@
 # VCHAIN — the newest version in place, the older ones chained
 
-**Built** (branch `wip-vchain-1`): steps 1 to 3 of §11, the
-class byte, chained rows in sm1, and every table's rows chained
-by sm2 and sm3; each case of §10 is tested as its last column
-says. **Not built**: step 4, the benchmark.
+**Built** (branch `wip-vchain-1`): steps 1 to 4 of §11, the
+class byte, chained rows in sm1, every table's rows chained by
+sm2 and sm3, and the benchmark (run 20261024-1214, in
+`../bench/results`); each case of §10 is tested as its last
+column says. **Measured**: the scans' ratio to PostgreSQL did
+not move as §1's figures for RocksDB alone promised (q1 2.4 to
+3.5 times, one run). Why: a scan's cost follows the bytes of
+each entry, and a CURR entry, its 29-byte header against a
+versioned entry's 9 bytes and 12-byte key tail, is 8 bytes
+longer (`../bench/getseek`, `../bench/smbench`).
 
 sm1 keeps every version of a
 key as a key of its own, `userkey ‖ wts ‖ seq`, so a read seeks
@@ -244,7 +250,7 @@ handling does not change.
 | TRUNCATE, ALTER rewrite | a new store, chained; the old one dropped whole, as today. | rel test_truncate; sm3 test_table |
 | temporary table | chained too; its flag lives in its `store_t`. | rel test_vchain §7, test_temp |
 | keyless table (`_id`) | rows keyed by `_id`, put with `chain_insert_new`, which reads nothing. | every rel test |
-| bulk load | a chained stream puts CURR versions of the load's xid, `prev` `0`. An abort leaves them dead, for GC to delete; a rollback to a savepoint deletes the store's keys, every class, as today. | sm3 test_load |
+| bulk load | a chained stream puts CURR versions of the load's xid, `prev` `0`. An abort leaves them dead, for GC to delete; a rollback to a savepoint deletes the store's keys, every class, as today. | rel test_vchain §8; sm3 test_load |
 | the isolation scenarios | they call sm1's versioned calls alone (`mvcc/driver/run.cc`), so today they never touch a chained row. The driver gains a mode that makes its store chained and its verbs the `chain_` calls; every scenario must give its expected output unchanged in both modes. | `make scenarios`, both modes |
 ---
 

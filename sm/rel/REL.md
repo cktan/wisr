@@ -607,6 +607,19 @@ rollback to a savepoint taken before it, brings the rows back.
 (truncate jobs)
 ```
 
+### `(load table rows)`
+A bulk load of `rows`, an array of rows, into the table
+(`sm_tbl_load_begin`, `sm_tbl_load_add`, `sm_tbl_load_end`):
+into an empty table, as sorted files past 4 MB or as one batch,
+under the table's lock taken exclusive to the end of the
+transaction; into one that has rows, as inserts. Returns the
+rows' numbers. Until the transaction ends it may not set a
+savepoint.
+
+```janet
+(load jobs [[1 "free"] [2 "busy"]])
+```
+
 ### `(compact table)`
 Compacts the table's store through GC (`sm_tbl_compact`), as
 `VACUUM`: versions no reader needs are dropped, and a newest

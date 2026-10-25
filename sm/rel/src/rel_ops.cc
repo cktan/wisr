@@ -1679,6 +1679,56 @@ static Janet cfun_truncate(int32_t argc, Janet *argv) {
 }
 
 /*
+ * (load table rows): a bulk load of rows, an array of rows, into the
+ * table (sm_tbl_load_begin, _add, _end): into an empty table, as
+ * sorted files or one batch, under the table's lock exclusive; into
+ * one that has rows, as inserts. Returns the rows' numbers.
+ */
+static Janet cfun_load(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 2);
+  session_ctx_t *s = require_session();
+  std::string tbl_name = identifier_of(argv[0]);
+  table_def_t *p_tdef = need_table(s, tbl_name, SM_LOCKMODE_IX, "load");
+  sm_tbl_t *tbl = p_tdef->tbl;
+  JanetView rows = janet_getindexed(argv, 1);
+  if (sm_tbl_load_begin(tbl) != 0) {
+    abort_failed_write(s);
+    panic_sm_error("load sm_tbl_load_begin");
+  }
+  JanetArray *out = janet_array(rows.len);
+  for (int32_t r = 0; r < rows.len; r++) {
+    JanetView items;
+    if (!janet_indexed_view(rows.items[r], &items.items, &items.len) ||
+        static_cast<size_t>(items.len) != p_tdef->columns.size()) {
+      janet_panicf("load: row %d must hold %zu values", r,
+                   p_tdef->columns.size());
+    }
+    row_values_t row(items.len);
+    for (int32_t i = 0; i < items.len; i++) {
+      if (janet_to_value(items.items[i], p_tdef->columns[i], row.bufs[i],
+                         &row.values[i], &row.isnull[i]) != 0) {
+        janet_panicf("load: invalid value for column '%s' (type %s)",
+                     p_tdef->columns[i].name.c_str(),
+                     type_name_of(p_tdef->columns[i].type_code));
+      }
+    }
+    uint64_t rowno = 0;
+    if (sm_tbl_load_add(tbl, row.values.data(), row.isnull.get(),
+                        row.values.size(), &rowno) != 0) {
+      abort_failed_write(s);
+      panic_sm_error("load sm_tbl_load_add");
+    }
+    janet_array_push(out, janet_wrap_number(static_cast<double>(rowno)));
+  }
+  // Every row handed over goes into the table.
+  if (sm_tbl_load_end(tbl) != 0) {
+    abort_failed_write(s);
+    panic_sm_error("load sm_tbl_load_end");
+  }
+  return janet_wrap_array(out);
+}
+
+/*
  * (compact table): compact the table's store through GC, as VACUUM
  * (sm_tbl_compact): what no reader needs is dropped, and a version
  * an aborted writer left is queued for GC to put back.
@@ -2416,6 +2466,7 @@ static const JanetReg s_rel_cfuns[] = {
     {"_lock-row", cfun_lock_row, "internal"},
     {"_truncate", cfun_truncate, "internal"},
     {"_compact", cfun_compact, "internal"},
+    {"_load", cfun_load, "internal"},
     {"_table-size", cfun_table_size, "internal"},
     {"_analyze", cfun_analyze, "internal"},
     {"_stats", cfun_stats, "internal"},
@@ -2515,6 +2566,9 @@ static const char *s_prelude = R"janet(
 
 (defmacro truncate [tbl]
   ~(_truncate (string ',tbl)))
+
+(defmacro load [tbl rows]
+  ~(_load (string ',tbl) ,rows))
 
 (defmacro compact [tbl]
   ~(_compact (string ',tbl)))

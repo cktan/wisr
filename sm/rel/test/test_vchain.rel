@@ -24,6 +24,10 @@
 #    the row is written again.
 # 7. A temporary table's rows are chained too: written in a
 #    read-only transaction, rolled back to a savepoint.
+# 8. A bulk load puts chained rows, as one batch and as sorted
+#    files; an aborted load leaves none; a loaded row is updated
+#    under an older snapshot; a transaction that loaded cannot be
+#    prepared.
 
 (def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_vchain"))
 (rm-rf test-dir)
@@ -310,6 +314,78 @@
 (abort)
 (begin :rc)
 (assert-eq (read scratch x1) [1 "one"])
+(commit)
+
+# 8. A bulk load.
+# 8.1 Load 10 rows into an empty table, one batch; set a savepoint,
+#     and commit: all 10 read back.
+# 8.2 Load them into another empty table and abort: it is empty.
+#     A transaction that loaded into a third cannot be prepared:
+#     ERR_INVALID.
+# 8.3 s1 begins at REPEATABLE READ; another session updates a
+#     loaded row and commits; s1 reads it as loaded, a new reader
+#     as updated.
+# 8.4 Load 6000 rows of 1000 bytes into another empty table, past
+#     the batch's 4 MB, as sorted files, with an index; commit: a
+#     row reads back, and the index finds it.
+(session-use c1)
+(begin :rc)
+(table-create small (columns (id :int4 :not-null) (v :text)))
+(commit)
+(def ten (seq [i :range [0 10]] [i (string "row" i)]))
+(begin :rc)
+(def ten-rows (load small ten))
+(savepoint)
+(commit)
+(begin :rc)
+(assert-count 10 (scan small))
+(assert-eq (read small (ten-rows 3)) [3 "row3"])
+(commit)
+(begin :rc)
+(table-create small2 (columns (id :int4 :not-null) (v :text)))
+(table-create small3 (columns (id :int4 :not-null) (v :text)))
+(commit)
+(begin :rc)
+(load small2 ten)
+(abort)
+(begin :rc)
+(assert-count 0 (scan small2))
+(commit)
+(begin :rc)
+(load small3 ten)
+(assert-err :err-invalid (prepare "load-gid"))
+(abort)
+
+(session-open c2 "vdb")
+(session-use c2)
+(begin :rr)
+(assert-eq (read small (ten-rows 3)) [3 "row3"])
+(session-use c1)
+(begin :rc)
+(update small (ten-rows 3) [3 "changed"])
+(commit)
+(session-use c2)
+(assert-eq (read small (ten-rows 3)) [3 "row3"])
+(commit)
+(begin :rc)
+(assert-eq (read small (ten-rows 3)) [3 "changed"])
+(commit)
+
+(session-use c1)
+(begin :rc)
+(table-create big (columns (id :int4 :not-null) (v :text)))
+(index-create big_v (table big) (key (v :asc)))
+(commit)
+(def many (seq [i :range [0 6000]] [i (string (string/format "%06d" i) pad)]))
+(begin :rc)
+(def big-rows (load big many))
+(commit)
+(begin :rc)
+(assert-count 6000 (scan big))
+(assert-eq (read big (big-rows 4321)) (many 4321))
+(def key4321 ((many 4321) 1))
+(assert-eq (map (fn [hit] (hit 0)) (idx-scan big_v :ge [key4321] :le [key4321]))
+           @[(big-rows 4321)])
 (commit)
 
 (env-detach)
