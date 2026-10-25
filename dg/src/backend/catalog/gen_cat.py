@@ -88,6 +88,19 @@ TEXT_ROWS = {"pg_cast", "pg_collation", "pg_language", "pg_operator",
              "pg_proc", "pg_type"}
 
 
+# catalog -> {name: its key columns}: the rows in order of those columns,
+# and cat_SHORTs_by_NAME() to find the ones with given values, a binary
+# search where a scan of every row would be: PostgreSQL's syscache
+# indexes on them.
+INDEXES = {
+    "pg_amop": {
+        "operator": ["amopopr"],
+        "strategy": ["amopfamily", "amoplefttype", "amoprighttype",
+                     "amopstrategy"],
+    },
+}
+
+
 def key_col(entry):
     """The column a catalog's rows are ordered and found by."""
     return entry[2] if len(entry) > 2 else "oid"
@@ -256,6 +269,13 @@ def write_header(catalogs, out):
         w(f"extern const cat_{short}_t *cat_{short}(Oid {key});\n\n")
         w(f"/* Every {catalog} row, in {key} order, and how many in *count. */\n")
         w(f"extern const cat_{short}_t *cat_{plural(short)}(int *count);\n")
+        for index, keys in INDEXES.get(catalog, {}).items():
+            types = dict(cols)
+            params = ", ".join(f"{field_type(types[k])} {k}" for k in keys)
+            w(f"\n/*\n * The {catalog} rows with these {', '.join(keys)}, in oid order,\n")
+            w(" * and how many in *count; NULL and 0 if there are none.\n */\n")
+            w(f"extern const cat_{short}_t *const *cat_{plural(short)}_by_{index}({params},\n")
+            w(f"{' ' * 4}int *count);\n")
         if name_col is None:
             continue
         w("\n")
@@ -326,6 +346,8 @@ def write_source(catalogs, out):
         w(f"/* Every {catalog} row, in {key} order. */\n")
         w(f"const cat_{short}_t *cat_{plural(short)}(int *count) {{\n")
         w(f"  *count = lengthof({short}_rows);\n  return {short}_rows;\n}}\n")
+        for index, keys in INDEXES.get(catalog, {}).items():
+            write_index(short, names, cols, rows, index, keys, w)
         if name_col is None:
             continue
         w("\n")
@@ -347,6 +369,37 @@ def write_source(catalogs, out):
         w(f"         strcmp({short}_by_name[lo + n]->{name_col}, name) == 0)\n    n++;\n")
         w("  *count = n;\n")
         w(f"  return n > 0 ? &{short}_by_name[lo] : NULL;\n}}\n")
+
+
+def write_index(short, names, cols, rows, index, keys, w):
+    """Write the rows in order of keys, and cat_SHORTs_by_INDEX()."""
+    at = [names.index(k) for k in keys]
+    oid_at = names.index("oid")
+    order = sorted(range(len(rows)),
+                   key=lambda i: tuple(int(rows[i][a][1]) for a in at + [oid_at]))
+    arr = f"{short}_by_{index}"
+    types = dict(cols)
+    params = ", ".join(f"{field_type(types[k])} {k}" for k in keys)
+    w(f"\n/* The rows in order of {', '.join(keys)}, and of oid within them. */\n")
+    w(f"static const cat_{short}_t *const {arr}[] = {{\n")
+    for i in order:
+        w(f"    &{short}_rows[{i}],\n")
+    w("};\n\n")
+    w(f"/* Whether row r comes before the rows with these {', '.join(keys)}. */\n")
+    w(f"static bool {arr}_before(const cat_{short}_t *r, {params}) {{\n")
+    for k in keys[:-1]:
+        w(f"  if (r->{k} != {k})\n    return r->{k} < {k};\n")
+    w(f"  return r->{keys[-1]} < {keys[-1]};\n}}\n\n")
+    w(f"/* Find the rows with these {', '.join(keys)}: a binary search for the first. */\n")
+    w(f"const cat_{short}_t *const *cat_{plural(short)}_by_{index}({params}, int *count) {{\n")
+    w(f"  int lo = 0, hi = lengthof({arr});\n  int n = 0;\n\n")
+    w("  while (lo < hi) {\n    int mid = (lo + hi) / 2;\n\n")
+    w(f"    if ({arr}_before({arr}[mid], {', '.join(keys)}))\n      lo = mid + 1;\n")
+    w("    else\n      hi = mid;\n  }\n")
+    match = " && ".join(f"{arr}[lo + n]->{k} == {k}" for k in keys)
+    w(f"  while (lo + n < (int)lengthof({arr}) && {match})\n    n++;\n")
+    w("  *count = n;\n")
+    w(f"  return n > 0 ? &{arr}[lo] : NULL;\n}}\n")
 
 
 def write_relations(catalogs, oids, forced, w):

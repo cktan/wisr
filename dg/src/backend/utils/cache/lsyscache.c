@@ -60,18 +60,16 @@
 /*
  * The pg_amop rows of operator opno, in a palloc'd array, and how many in
  * *count: every row is compiled in (catalog/cat_builtin.h), since there is
- * no CREATE OPERATOR CLASS.  A thousand-odd rows, searched in order.
+ * no CREATE OPERATOR CLASS, and found by its index on the operator.
  */
 static const cat_amop_t **amops_of_operator(Oid opno, int *count) {
-  int nrows;
-  const cat_amop_t *rows = cat_amops(&nrows);
+  int n;
+  const cat_amop_t *const *rows = cat_amops_by_operator(opno, &n);
   const cat_amop_t **result =
-      (const cat_amop_t **)palloc(sizeof(cat_amop_t *) * (nrows + 1));
-  int n = 0;
+      (const cat_amop_t **)palloc(sizeof(cat_amop_t *) * (n + 1));
 
-  for (int i = 0; i < nrows; i++)
-    if (rows[i].amopopr == opno)
-      result[n++] = &rows[i];
+  for (int i = 0; i < n; i++)
+    result[i] = rows[i];
   *count = n;
   return result;
 }
@@ -79,27 +77,23 @@ static const cat_amop_t **amops_of_operator(Oid opno, int *count) {
 /* The pg_amop row of opno for purpose in opfamily, or NULL. */
 static const cat_amop_t *amop_of_operator(Oid opno, char purpose,
                                           Oid opfamily) {
-  int nrows;
-  const cat_amop_t *rows = cat_amops(&nrows);
+  int n;
+  const cat_amop_t *const *rows = cat_amops_by_operator(opno, &n);
 
-  for (int i = 0; i < nrows; i++)
-    if (rows[i].amopopr == opno && rows[i].amoppurpose == purpose &&
-        rows[i].amopfamily == opfamily)
-      return &rows[i];
+  for (int i = 0; i < n; i++)
+    if (rows[i]->amoppurpose == purpose && rows[i]->amopfamily == opfamily)
+      return rows[i];
   return NULL;
 }
 
 /* The pg_amop row of opfamily's strategy for these types, or NULL. */
 static const cat_amop_t *amop_of_strategy(Oid opfamily, Oid lefttype,
                                           Oid righttype, int16 strategy) {
-  int nrows;
-  const cat_amop_t *rows = cat_amops(&nrows);
+  int n;
+  const cat_amop_t *const *rows =
+      cat_amops_by_strategy(opfamily, lefttype, righttype, strategy, &n);
 
-  for (int i = 0; i < nrows; i++)
-    if (rows[i].amopfamily == opfamily && rows[i].amoplefttype == lefttype &&
-        rows[i].amoprighttype == righttype && rows[i].amopstrategy == strategy)
-      return &rows[i];
-  return NULL;
+  return n > 0 ? rows[0] : NULL;
 }
 
 /*
