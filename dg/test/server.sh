@@ -1981,6 +1981,46 @@ n=$(grep -o 'rows=[0-9]*' "$work/own.out" | sed -n 1p | cut -d= -f2)
 n=$(grep -o 'rows=[0-9]*' "$work/own.out" | sed -n 2p | cut -d= -f2)
 within "$n" 160000 40 || fail "a size not kept in a transaction that changed it: $n"
 
+# Verify that a session keeps what a name means while the catalog's
+# epoch holds, and looks it up again once a DDL moves it
+# (SCHEMACACHE.md section 4.1).
+# 1. A held session reads n1, which does not exist: refused, and the
+#    miss is kept.
+# 2. Another session makes n1 with one row: the held session reads it.
+# 3. Another session renames n1 and makes a new n1 of two rows: the
+#    held session reads the new one.
+# 4. The held session makes a temporary n1 of three rows and reads its
+#    own; dropped, it reads public's two again.
+# 5. In a transaction it makes n2 and reads it; rolled back, n2 is
+#    refused again.
+held_start names
+held_send names "select count(*) from n1; select 'one';"
+held_wait names one || fail "a name's miss"
+local_psql -c 'create table n1 (a int4)' -c 'insert into n1 values (1)' \
+  >> "$work/names.log" 2>&1
+held_send names "select count(*) from n1; select 'two';"
+held_wait names two || fail "a name made since"
+local_psql -c 'alter table n1 rename to n1old' \
+  -c 'create table n1 (a int4)' -c 'insert into n1 values (1), (2)' \
+  >> "$work/names.log" 2>&1
+held_send names "select count(*) from n1; select 'three';"
+held_wait names three || fail "a name made again"
+held_send names "create temporary table n1 (a int4);
+  insert into n1 values (1), (2), (3); select count(*) from n1;
+  drop table n1; select count(*) from n1; select 'four';"
+held_wait names four || fail "a temporary name"
+held_send names "begin; create table n2 (a int4); select count(*) from n2;
+  rollback; select count(*) from n2; select 'five';"
+held_wait names five || fail "a name of the transaction's own"
+held_end names
+tr '\n' ' ' < "$work/names.out" > "$work/names.flat"
+grep -q 'relation "n1" does not exist.*one 1 two 2 three' \
+  "$work/names.flat" || fail "names after another session's DDL"
+grep -q 'three .*3 .*2 four' "$work/names.flat" ||
+  fail "a temporary table's name"
+grep -q 'four .*0 .*relation "n2" does not exist.*five' \
+  "$work/names.flat" || fail "a name of a rolled back transaction"
+
 # Verify that VACUUM compacts a table's store in sm, and that VACUUM
 # ANALYZE also analyzes it.
 # 1. Make t32 with 20,000 rows of 200 bytes, and VACUUM ANALYZE it: a

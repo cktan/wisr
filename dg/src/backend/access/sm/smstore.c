@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -159,6 +160,17 @@ struct size_entry_t {
 /* The version a table is while this transaction has changed it. */
 static constexpr uint64_t version_own = UINT64_MAX;
 
+/*
+ * What a name means in a namespace, as sm last said (smstore_relation_oid()):
+ * a table, an index with its table, a view or a sequence, or nothing.
+ * Good while the catalog's epoch is the one it was looked up at
+ * (sm_cat_epoch(), SCHEMACACHE.md section 4.1).
+ */
+struct name_entry_t {
+  Oid oid;   /* InvalidOid: nothing by that name */
+  Oid table; /* an index's table, else InvalidOid */
+};
+
 /* How long a size is good for, in ms: a plan's estimate may be this stale. */
 static constexpr int size_cache_age = 10000;
 
@@ -168,6 +180,9 @@ struct smstore_state_t {
   std::unordered_map<uint64_t, statistic_entry_t> statistics;
   /* The sizes it took, by table oid << 32 | index oid, 0 for the heap. */
   std::unordered_map<uint64_t, size_entry_t> sizes;
+  /* The names it looked up, by namespace and name, and the epoch of all. */
+  std::map<std::pair<Oid, std::string>, name_entry_t> names;
+  uint64_t names_epoch = 0;
   /* The views it locked, as a table's lock is its handle's (open_tables). */
   std::vector<held_view_t> held_views;
   /* sm's namespaces' epoch when this session last flushed them. */
@@ -1185,15 +1200,13 @@ static uint64_t sm_nspoid(Oid nspoid) {
 }
 
 /*
- * The oid of the relation named name in nspoid, a table, an index, a view
- * or a sequence, or InvalidOid if there is none.
+ * The relation name means in nspoid, from sm: a table, an index, whose
+ * table goes in *table, a view or a sequence; InvalidOid if none.
  */
-Oid smstore_relation_oid(const char *name, Oid nspoid) {
-  uint64_t oid, table;
+static Oid lookup_relation_oid(const char *name, Oid nspoid, Oid *table) {
+  uint64_t oid, idx_table;
 
-  /* No namespace holds nothing: InvalidOid is SM_NSP_TEMP's number. */
-  if (!OidIsValid(nspoid))
-    return InvalidOid;
+  *table = InvalidOid;
   switch (sm_cat_table_oid(session(), sm_nspoid(nspoid), name, &oid)) {
   case 0:
     return (Oid)oid;
@@ -1202,10 +1215,12 @@ Oid smstore_relation_oid(const char *name, Oid nspoid) {
   default:
     sm_error("look up a table");
   }
-  switch (sm_cat_index_oid(session(), sm_nspoid(nspoid), name, &table, &oid)) {
+  switch (sm_cat_index_oid(session(), sm_nspoid(nspoid), name, &idx_table,
+                           &oid)) {
   case 0:
     /* So the index can be opened by its oid alone (RelationBuildDesc()). */
-    remember_index((Oid)oid, (Oid)table);
+    remember_index((Oid)oid, (Oid)idx_table);
+    *table = (Oid)idx_table;
     return (Oid)oid;
   case 1:
     break;
@@ -1222,6 +1237,43 @@ Oid smstore_relation_oid(const char *name, Oid nspoid) {
   }
   /* A sequence is never temporary yet. */
   return nspoid == PG_TEMP_NAMESPACE ? InvalidOid : sequence_oid(name, nspoid);
+}
+
+/*
+ * The oid of the relation named name in nspoid, a table, an index, a view
+ * or a sequence, or InvalidOid if there is none: this session's
+ * name_entry_t while the catalog's epoch holds, else sm's, kept as one.
+ */
+Oid smstore_relation_oid(const char *name, Oid nspoid) {
+  /* No namespace holds nothing: InvalidOid is SM_NSP_TEMP's number. */
+  if (!OidIsValid(nspoid))
+    return InvalidOid;
+  /* Read before the lookup, so a publish meanwhile retires what it finds. */
+  uint64_t epoch = sm_cat_epoch(session());
+  auto &names = tcb->smstore->names;
+
+  if (UINT64_MAX != epoch && tcb->smstore->names_epoch != epoch) {
+    names.clear();
+    tcb->smstore->names_epoch = epoch;
+  }
+  std::pair<Oid, std::string> key(nspoid, name);
+
+  if (UINT64_MAX != epoch) {
+    auto it = names.find(key);
+
+    if (names.end() != it) {
+      if (OidIsValid(it->second.table))
+        remember_index(it->second.oid, it->second.table);
+      return it->second.oid;
+    }
+  }
+  name_entry_t found;
+
+  found.oid = lookup_relation_oid(name, nspoid, &found.table);
+  /* With DDL of the transaction's own, sm's answer is the overlay's. */
+  if (UINT64_MAX != epoch)
+    names[key] = found;
+  return found.oid;
 }
 
 static void drop_table(RangeVar *rv, bool missing_ok, bool cascade,
