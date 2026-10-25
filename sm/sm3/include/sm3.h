@@ -488,10 +488,13 @@ bool cat_get_index(const session_t* s, uint64_t nspoid,
  * exclusive itself, so it waits for them, and they for it. Once
  * held, the definition cannot change under s. A table dropped
  * while s waited fails with SM_ERR_NOTFOUND; a deadlock as
- * sm1::lock does.
+ * sm1::lock does. With fresh, it is set to whether the shared
+ * catalog has no definition of it: s's transaction made it, or it
+ * is s's temporary table, and no other transaction sees its rows.
  */
 int cat_lock_table(session_t* s, uint64_t oid, sm1::lockmode_t mode,
-                   std::shared_ptr<const table_def_t>& out);
+                   std::shared_ptr<const table_def_t>& out,
+                   bool* fresh = nullptr);
 
 /* cat_table_version while s's transaction has changed the table. */
 constexpr uint64_t table_version_own = UINT64_MAX;
@@ -537,7 +540,8 @@ uint64_t cat_epoch(const session_t* s);
  * transaction holds the lock in a mode that conflicts; or -1.
  */
 int cat_trylock_table(session_t* s, uint64_t oid, sm1::lockmode_t mode,
-                      std::shared_ptr<const table_def_t>& out);
+                      std::shared_ptr<const table_def_t>& out,
+                      bool* fresh = nullptr);
 
 /*
  * ---- the catalog's writes: put and del ----

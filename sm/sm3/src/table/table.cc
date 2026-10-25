@@ -499,8 +499,9 @@ int open_table(session_t *session, uint64_t oid, sm1::lockmode_t mode,
                bool wait, table_t *&out) {
   std::unique_ptr<table_t, void (*)(table_t *)> t(new table_t, tbl_close);
   // Take the table-oid lock, so the definition holds to commit.
-  int rc = wait ? cat_lock_table(session, oid, mode, t->def)
-                : cat_trylock_table(session, oid, mode, t->def);
+  bool fresh = false;
+  int rc = wait ? cat_lock_table(session, oid, mode, t->def, &fresh)
+                : cat_trylock_table(session, oid, mode, t->def, &fresh);
   if (rc != 0) {
     return rc;
   }
@@ -508,8 +509,8 @@ int open_table(session_t *session, uint64_t oid, sm1::lockmode_t mode,
   t->writable = covers_write(mode);
   t->exclusive = mode == sm1::SM_LOCKMODE_EX;
   // No committed definition: this transaction made the table, and
-  // no other can see it or its rows.
-  t->fresh = cat_get_table(session->cat, oid) == nullptr;
+  // no other can see it or its rows. The lock's lookup said.
+  t->fresh = fresh;
   load_states(t.get());
   if (open_rels(t.get()) != 0) {
     return -1;

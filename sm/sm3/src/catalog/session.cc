@@ -311,6 +311,26 @@ void publish(sm3::session_t *s) {
   s->names.clear();
 }
 
+/*
+ * The table oid as s's own changes or temporary catalog have it: its
+ * newest change, nullptr with *dropped set if that change dropped it;
+ * else its temporary table; else nullptr, for the shared catalog to say.
+ */
+std::shared_ptr<const sm3::table_def_t>
+session_table(const sm3::session_t *s, uint64_t oid, bool *dropped = nullptr) {
+  for (auto it = s->tables.rbegin(); it != s->tables.rend(); ++it) {
+    if (it->oid == oid) {
+      if (dropped) {
+        *dropped = !it->def;
+      }
+      return it->def;
+    }
+  }
+  // Its own temporary table, which the catalog never has.
+  auto own = s->temp_tables.find(oid);
+  return own != s->temp_tables.end() ? own->second : nullptr;
+}
+
 } // namespace
 
 namespace sm3 {
@@ -805,17 +825,9 @@ bool session_collation(const session_t *s, uint64_t oid,
 /* A table as s sees it: its newest change, else the shared one. */
 std::shared_ptr<const table_def_t> cat_get_table(const session_t *s,
                                                  uint64_t oid) {
-  for (auto it = s->tables.rbegin(); it != s->tables.rend(); ++it) {
-    if (it->oid == oid) {
-      return it->def;
-    }
-  }
-  // Its own temporary table, which the catalog never has.
-  auto own = s->temp_tables.find(oid);
-  if (own != s->temp_tables.end()) {
-    return own->second;
-  }
-  return cat_get_table(s->cat, oid);
+  bool dropped = false;
+  std::shared_ptr<const table_def_t> own = session_table(s, oid, &dropped);
+  return own || dropped ? own : cat_get_table(s->cat, oid);
 }
 
 /* A foreign key by its oid, as s sees it; see sm3.h. */
@@ -863,10 +875,16 @@ namespace {
  * -1.
  */
 int lock_and_get_table(session_t *s, uint64_t oid, sm1::lockmode_t mode,
-                       bool wait, std::shared_ptr<const table_def_t> &out) {
-  // A temporary table is the session's alone: no one to lock out.
-  out = cat_get_table(s, oid);
+                       bool wait, std::shared_ptr<const table_def_t> &out,
+                       bool *fresh) {
+  // A temporary table is the session's alone: no one to lock out. It
+  // is in the session's own changes or temporary catalog, never the
+  // shared one, which this need not read.
+  out = session_table(s, oid);
   if (out && out->nspoid == nsp_temp) {
+    if (fresh) {
+      *fresh = true;
+    }
     return 0;
   }
   int rc =
@@ -875,8 +893,15 @@ int lock_and_get_table(session_t *s, uint64_t oid, sm1::lockmode_t mode,
     return rc;
   }
   // Under the lock, the definition cannot change until commit;
-  // one dropped while this waited is gone.
-  out = cat_get_table(s, oid);
+  // one dropped while this waited is gone. One read of the shared
+  // catalog says both what it has and whether it has any.
+  std::shared_ptr<const table_def_t> shared = cat_get_table(s->cat, oid);
+  bool dropped = false;
+  std::shared_ptr<const table_def_t> own = session_table(s, oid, &dropped);
+  out = own || dropped ? own : shared;
+  if (fresh) {
+    *fresh = !shared;
+  }
   return out ? 0
              : sm1::seterr(sm1::SM_ERR_NOTFOUND,
                            "table " + std::to_string(oid) + " does not exist");
@@ -930,14 +955,14 @@ uint64_t cat_epoch(const session_t *s) {
 
 /* Lock a table's schema, then read its definition; see sm3.h. */
 int cat_lock_table(session_t *s, uint64_t oid, sm1::lockmode_t mode,
-                   std::shared_ptr<const table_def_t> &out) {
-  return lock_and_get_table(s, oid, mode, true, out);
+                   std::shared_ptr<const table_def_t> &out, bool *fresh) {
+  return lock_and_get_table(s, oid, mode, true, out, fresh);
 }
 
 /* As cat_lock_table, if the lock is free now; see sm3.h. */
 int cat_trylock_table(session_t *s, uint64_t oid, sm1::lockmode_t mode,
-                      std::shared_ptr<const table_def_t> &out) {
-  return lock_and_get_table(s, oid, mode, false, out);
+                      std::shared_ptr<const table_def_t> &out, bool *fresh) {
+  return lock_and_get_table(s, oid, mode, false, out, fresh);
 }
 
 /* The table names in nspoid as s sees them: its changes over the shared. */

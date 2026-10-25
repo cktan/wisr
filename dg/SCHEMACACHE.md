@@ -1,12 +1,13 @@
 # SCHEMACACHE — a session's schema, kept across transactions
 
-**Status: being built.** §7's steps 1 to 5 are built: the
-epoch, a name's relation (Q7's name lookup from 3,000
-instructions to 500), the version check after a lock (from 900
-to 100), statistics rows (from about 4,700 to 1,300, with
-pg_statistic's descriptor made once a session), and size
-estimates (from 2,400 to 900). Q7 is at about 110,000
-instructions to PostgreSQL's 106,300, from 122,400.
+**Status: built.** §7's six steps: the epoch, a name's relation
+(Q7's name lookup from 3,000 instructions to 500), the version
+check after a lock (900 to 100), statistics rows (about 4,700 to
+1,300, with pg_statistic's descriptor made once a session), size
+estimates (2,400 to 900), and sm3's table open (3,400 to 1,800).
+Q7 is at about 110,000 user instructions to PostgreSQL's
+107,000-108,500, from 122,400; its latency and CPU time a query
+are now below PostgreSQL's.
 
 A query of one row by its key, Q7 of `../bench/DESIGN.md`,
 runs 16,000 more instructions in digres than in PostgreSQL, and
