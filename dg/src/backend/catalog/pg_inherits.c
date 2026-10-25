@@ -307,26 +307,13 @@ List *find_all_inheritors(Oid parentrelId, LOCKMODE lockmode,
 /*
  * has_subclass - does this relation have any children?
  *
- * In the current implementation, has_subclass returns whether a
- * particular class *might* have a subclass. It will not return the
- * correct result if a class had a subclass which was later dropped.
- * This is because relhassubclass in pg_class is not updated immediately
- * when a subclass is dropped, primarily because of concurrency concerns.
- *
- * Currently has_subclass is only used as an efficiency hack to skip
- * unnecessary inheritance searches, so this is OK.  Note that ANALYZE
- * on a childless table will clean up the obsolete relhassubclass flag.
- *
- * Although this doesn't actually touch pg_inherits, it seems reasonable
- * to keep it here since it's normally used with the other routines here.
+ * In digres none does: table inheritance and partitioning are refused
+ * (UNSUPPORTED.md), so no relation is ever a parent, and the planner's
+ * question costs nothing.
  */
 bool has_subclass(Oid relationId) {
-  FormData_pg_class form;
-
-  /* From the descriptor: a user's relation has no pg_class row. */
-  if (!RelationGetClassForm(relationId, &form))
-    elog(ERROR, "cache lookup failed for relation %u", relationId);
-  return form.relhassubclass;
+  (void)relationId;
+  return false;
 }
 
 /*
