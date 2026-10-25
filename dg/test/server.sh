@@ -1928,10 +1928,12 @@ within "$n" 5000 10 || fail "b = 0 after the second analyze: $n"
 # 4. Insert 20,000 more and estimate: still 40,000; after 10 s, 60,000
 #    within 10%.
 # 5. Make t34 of 20,000 rows, and analyze it. In one session, estimate a
-#    scan, keeping its size; insert 60,000 more, analyze and estimate, in
-#    well under 10 s: 80,000 within 40%, by its size now. By the size
-#    kept, it would be 20,000. (A flush between the analyze and the plan
-#    moves the estimate, by up to a third in this suite.)
+#    scan, keeping its size; insert 60,000 more, VACUUM, analyze and
+#    estimate, in well under 10 s: 80,000 within 40%, by its size now.
+#    By the size kept, it would be 20,000. The VACUUM puts every row in
+#    sorted files first, so the analyze counts them from sizes RocksDB
+#    estimates well, not memtables it estimates up to 7x over
+#    (../sm/STATISTICS.md section 6).
 # 6. In a transaction, analyze t34 and estimate: 80,000. Insert 80,000
 #    more from another session, and estimate again in the transaction:
 #    160,000 within 40%, sized again. The table's version stays the same
@@ -1963,7 +1965,8 @@ local_psql -c 'create table t34 (a int4 primary key, b int8)' \
   -c 'analyze t34' >> "$work/stats.out" 2>&1
 local_psql -c 'explain select * from t34' \
   -c 'insert into t34 select g, g from generate_series(20001, 80000) g' \
-  -c 'analyze t34' -c 'explain select * from t34' > "$work/sizes2.out" 2>&1
+  -c 'vacuum t34' -c 'analyze t34' -c 'explain select * from t34' \
+  > "$work/sizes2.out" 2>&1
 n=$(grep -o 'rows=[0-9]*' "$work/sizes2.out" | sed -n 2p | cut -d= -f2)
 within "$n" 80000 40 || fail "a size taken again after an analyze: $n"
 held_start own
