@@ -110,6 +110,12 @@ rows of 500 bytes, compacted, in the block cache.
 - **CURR**: key `01 ‖ rowkey`; value `flags | xid or commit_ts |
   wts | seq | prev | tuple`, today's version header plus
   `prev`, the OLD id of the version before, `0` for none.
+- **A frozen CURR value is `flags | tuple`**: GC cuts the header
+  of a row committed at or below the watermark. Every snapshot,
+  and every one to come, sees it, so no one walks past it, and
+  the versions behind it go by the same watermark (§7). It reads
+  as stamped at commit_ts `0`, `wts` and `seq` `0`, `prev` `0`;
+  displaced to OLD, it is written so, with the whole header.
 - **OLD**: key `02 ‖ be64(id)`; value CURR's, plus `displaced`,
   the xid of the writer that replaced it (its commit_ts once GC
   stamps it). Ids come from a counter in memory, started at
@@ -182,7 +188,7 @@ The store's one compaction filter judges each key by class.
 
 - **`0x00`**: as today.
 - **`0x01`**: a version committed at or below the watermark is
-  stamped; a tombstone so committed is dropped. A dead one is
+  frozen (§3); a tombstone so committed is dropped. A dead one is
   queued for the GC worker, which, under the key's latch, puts
   back the version before it and unlinks its entry.
 - **`0x02`**: an unlinked entry goes once the watermark passes
@@ -244,6 +250,7 @@ handling does not change.
 | SERIALIZABLE | SIREAD on the row's key and the scan's range; a version passed over owes its writer an edge, as today. | scenarios c01–c36, p01–p10 (both modes) |
 | open cursor | reads CURR and OLD at one RocksDB snapshot, and its sm1 view keeps the watermark back, so nothing it can reach is dropped. Its own transaction's later versions are passed by their seq. | scenarios a09, a14, c18 (both modes); rel test_cursor |
 | GC and the watermark | OLD goes when its displacer committed at or below it; an unlinked entry when its ts is; a reader that reaches a dropped id would have seen its displacer first. | rel test_vchain §2, §4; sm1 test_chain |
+| frozen row | GC cuts a CURR row's header to its flags once its writer committed at or below the watermark, the watermark that drops the versions behind it. It reads as committed at `0`: seen by every snapshot, a conflict for none, no edge under SSI. Displaced, rolled back to, or put back by a repair, it is written with the whole header, frozen again by a later compaction. An old snapshot keeps its rows from freezing. Rows a load ingested freeze when a compaction reaches them. | rel test_vchain §10; sm1 test_chain |
 | CF:txn sweep | the filter stamps a kept OLD version's writer and displacer, and CURR's committed versions, before the sweep deletes their records; a dead version whose record is gone still reads dead. | sm1 test_chain |
 | CREATE INDEX, pending | the backfill reads each row with `chain_read_latest` under a shared lock, and puts versioned entries, as today. | rel test_build |
 | DROP INDEX | as today. | rel test_index |

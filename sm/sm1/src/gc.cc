@@ -177,7 +177,14 @@ private:
     if (v.flags & version_tombstone) {
       return true;
     }
-    stamp(&v, commit_ts, false, new_value, value_changed);
+    // A row every snapshot sees, and every one to come: no one walks
+    // past it, and the versions behind it are dropped by the same
+    // watermark, so it keeps its flags alone (chain.h).
+    if (!(v.flags & chain_frozen)) {
+      v.flags |= version_stamped | chain_frozen;
+      *new_value = chain_value(v, false);
+      *value_changed = true;
+    }
     return false;
   }
 

@@ -7,6 +7,7 @@
  *   current value = flags (1B) | xid (8B, unstamped) or commit_ts
  *                   (8B, stamped) | wts (8B) | seq (4B) | prev (8B) |
  *                   payload
+ *   frozen value  = flags (1B) | payload
  *   old key       = key_class_old | be64(id)
  *   old value     = the current value's header | displaced (8B) |
  *                   payload
@@ -15,6 +16,12 @@
  * the xid of the writer whose version replaced this one, its
  * commit_ts once stamped (chain_displaced_stamped), or, once the
  * entry is unlinked (chain_unlinked), the ts it was unlinked at.
+ *
+ * A frozen current value (chain_frozen) is one GC found committed at
+ * or below the watermark: every snapshot, and every one to come, sees
+ * it, and no one walks past it, so it keeps its flags alone. It reads
+ * as stamped at commit_ts 0, wts 0, seq 0, prev 0; moved to OLD, it is
+ * written so, with the whole header (../VCHAIN.md §3).
  */
 #ifndef WISR_CHAIN_H
 #define WISR_CHAIN_H
@@ -42,6 +49,12 @@ constexpr uint8_t chain_unlinked = 0x10;
  * swept (SM1_DESIGN.md §3.4).
  */
 constexpr uint8_t chain_displaced_stamped = 0x20;
+
+/*
+ * A current version every snapshot sees, its header cut to its flags
+ * (see above). Always with version_stamped; never in an old value.
+ */
+constexpr uint8_t chain_frozen = 0x40;
 
 /* A chained version, current or old, decoded. Slices borrow the input. */
 struct chain_version_t {

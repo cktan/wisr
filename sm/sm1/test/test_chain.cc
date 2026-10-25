@@ -661,6 +661,120 @@ TEST_CASE("GC harvests what no snapshot of a chained store needs") {
   commit_xct(t);
 }
 
+namespace {
+
+/* The bytes of CURR's value of key, as stored; 0 if it has none. */
+size_t curr_bytes(sm1::session_t *s, uint64_t storeid, std::string_view key) {
+  store_t st = db_store(s->db, storeid);
+  std::string value;
+  rocksdb::Status got =
+      st.rdb->Get(rocksdb::ReadOptions(), st.cf,
+                  curr_key(rocksdb::Slice(key.data(), key.size())), &value);
+  return got.ok() ? value.size() : 0;
+}
+
+} // namespace
+
+TEST_CASE("a frozen chained value is its flags and payload alone") {
+  // Verify the codec: a frozen current value keeps its flags alone and
+  // reads as committed at 0; as an old value it has the whole header.
+  // 1. Encode a frozen version as a current value: flags and payload.
+  // 2. Decode it: stamped at commit_ts 0, wts, seq and prev 0.
+  // 3. Encode it as an old value: the whole header, flagged stamped
+  //    and not frozen, and it decodes so.
+  chain_version_t v;
+  v.flags = version_stamped | chain_frozen;
+  v.commit_ts = 77;
+  v.wts = 70;
+  v.seq = 3;
+  v.prev = 9;
+  v.payload = "row";
+  std::string curr = chain_value(v, false);
+  CHECK(curr.size() == 1 + 3);
+
+  chain_version_t d;
+  REQUIRE(chain_decode(curr, &d, false));
+  CHECK(d.flags == (version_stamped | chain_frozen));
+  CHECK(d.commit_ts == 0);
+  CHECK(d.wts == 0);
+  CHECK(d.seq == 0);
+  CHECK(d.prev == 0);
+  CHECK(d.payload == "row");
+
+  d.displaced = 5;
+  std::string old = chain_value(d, true);
+  CHECK(old.size() == 1 + 8 + 8 + 4 + 8 + 8 + 3);
+  chain_version_t o;
+  REQUIRE(chain_decode(old, &o, true));
+  CHECK(o.flags == version_stamped);
+  CHECK(o.commit_ts == 0);
+  CHECK(o.displaced == 5);
+  CHECK(o.payload == "row");
+}
+
+TEST_CASE("GC freezes a chained row every snapshot sees, and only that") {
+  // Verify that compaction cuts a CURR header once its writer is at or
+  // below the watermark, and that the frozen row reads, conflicts and
+  // rolls back as the committed row it is.
+  // 1. Insert k = v1; t begins at REPEATABLE READ; update k to v2.
+  // 2. Compact: v2 is above the watermark t holds, so its header
+  //    stays; t reads v1.
+  // 3. t ends; compact: k's CURR value is its flags and payload alone,
+  //    and a new reader reads v2.
+  // 4. u begins at REPEATABLE READ; w begins at REPEATABLE READ after
+  //    the freeze and updates k to v3 with no conflict, and commits:
+  //    u reads v2 through OLD, a new reader v3.
+  // 5. u ends; compact, so v3 freezes; set a savepoint, update k to
+  //    v4, roll back: k reads v3, its CURR value with the whole header
+  //    again; commit and compact: frozen again.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  const size_t header = 1 + 8 + 8 + 4 + 8;
+  chain_put(f.s, c, "k", "v1", true);
+  sm1::session_t *t = f.open();
+  begin_xct(t, sm1::xctlevel_t::repeatable_read);
+  CHECK(chain_get(t, c, "k") == "v1");
+  chain_put(f.s, c, "k", "v2", false);
+
+  compact_chain(f.s, c);
+  CHECK(curr_bytes(f.s, c, "k") == header + 2);
+  CHECK(chain_get(t, c, "k") == "v1");
+  commit_xct(t);
+
+  compact_chain(f.s, c);
+  CHECK(curr_bytes(f.s, c, "k") == 1 + 2);
+  begin_xct(t);
+  CHECK(chain_get(t, c, "k") == "v2");
+  commit_xct(t);
+
+  sm1::session_t *u = f.open();
+  begin_xct(u, sm1::xctlevel_t::repeatable_read);
+  CHECK(chain_get(u, c, "k") == "v2");
+  begin_xct(t, sm1::xctlevel_t::repeatable_read);
+  REQUIRE_MESSAGE(sm1::chain_update(t, c, "k", "v3") == 0, sm1::errmsg());
+  commit_xct(t);
+  CHECK(chain_get(u, c, "k") == "v2");
+  commit_xct(u);
+  begin_xct(t);
+  CHECK(chain_get(t, c, "k") == "v3");
+  commit_xct(t);
+
+  compact_chain(f.s, c);
+  CHECK(curr_bytes(f.s, c, "k") == 1 + 2);
+  begin_xct(f.s);
+  int depth = sm1::savepoint(f.s);
+  REQUIRE(sm1::chain_update(f.s, c, "k", "v4") == 0);
+  REQUIRE(sm1::rollback(f.s, depth) == 0);
+  CHECK(chain_get(f.s, c, "k") == "v3");
+  CHECK(curr_bytes(f.s, c, "k") == header + 2);
+  commit_xct(f.s);
+  compact_chain(f.s, c);
+  CHECK(curr_bytes(f.s, c, "k") == 1 + 2);
+  begin_xct(t);
+  CHECK(chain_get(t, c, "k") == "v3");
+  commit_xct(t);
+}
+
 TEST_CASE("GC drops unlinked OLD entries, and the CF:txn sweep keeps "
           "chained reads right") {
   // Verify that a repair's unlinked entries go, and that once the
