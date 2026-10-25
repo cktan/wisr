@@ -136,6 +136,8 @@ struct statistic_entry_t {
   Oid typid;
   Oid coll;
   std::string bytes;
+  /* The catalog's epoch it was made at, UINT64_MAX for none. */
+  uint64_t epoch;
 };
 
 /* At most this many rows are kept; past it, they are forgotten. */
@@ -4882,6 +4884,18 @@ static HeapTuple statistic_copy(const std::string &bytes) {
 HeapTuple smstore_statistic_tuple(Oid relid, AttrNumber attnum, bool inh) {
   if (inh || attnum <= 0 || relid < FirstNormalObjectId)
     return NULL;
+  uint64_t key = (uint64_t)relid << 16 | (uint16)attnum;
+  auto &kept = tcb->smstore->statistics;
+  /* Read before the lookup, so a publish meanwhile retires what it finds. */
+  uint64_t epoch = sm_cat_epoch(session());
+
+  /* Made while the epoch holds: no analyze or DDL since (SCHEMACACHE.md). */
+  if (UINT64_MAX != epoch) {
+    auto it = kept.find(key);
+
+    if (kept.end() != it && it->second.epoch == epoch)
+      return statistic_copy(it->second.bytes);
+  }
   /* An index's statistics are its table's, by the index's oid. */
   Oid table = smstore_index_table(relid);
   bool is_index = OidIsValid(table);
@@ -4904,13 +4918,13 @@ HeapTuple smstore_statistic_tuple(Oid relid, AttrNumber attnum, bool inh) {
   relation_close(rel, NoLock);
 
   /* The row made before, if from these statistics and this type. */
-  auto &kept = tcb->smstore->statistics;
-  uint64_t key = (uint64_t)relid << 16 | (uint16)attnum;
   auto it = kept.find(key);
 
   if (it != kept.end() && it->second.stats == st &&
-      it->second.typid == typid && it->second.coll == coll)
+      it->second.typid == typid && it->second.coll == coll) {
+    it->second.epoch = epoch;
     return statistic_copy(it->second.bytes);
+  }
 
   const sm_stat_t *found = NULL;
 
@@ -4921,7 +4935,8 @@ HeapTuple smstore_statistic_tuple(Oid relid, AttrNumber attnum, bool inh) {
       break;
     }
   if (found == NULL) {
-    keep_statistic(key, statistic_entry_t{st, typid, coll, std::string()});
+    keep_statistic(key,
+                   statistic_entry_t{st, typid, coll, std::string(), epoch});
     return NULL;
   }
   TypeCacheEntry *tc =
@@ -4980,14 +4995,12 @@ HeapTuple smstore_statistic_tuple(Oid relid, AttrNumber attnum, bool inh) {
          float4_array(&*found->correlation, 1), true, 0, false);
 
   /* Formed in pg_statistic's shape, which it has no rows of, and kept. */
-  TupleDesc desc = statistic_tupdesc();
-  HeapTuple tup = heap_form_tuple(desc, values, nulls);
+  HeapTuple tup = heap_form_tuple(statistic_tupdesc(), values, nulls);
 
-  FreeTupleDesc(desc);
-  keep_statistic(key,
-                 statistic_entry_t{st, typid, coll,
-                                   std::string((const char *)tup->t_data,
-                                               tup->t_len)});
+  keep_statistic(key, statistic_entry_t{st, typid, coll,
+                                        std::string((const char *)tup->t_data,
+                                                    tup->t_len),
+                                        epoch});
   return tup;
 }
 

@@ -2046,6 +2046,31 @@ tr '\n' ' ' < "$work/defs.out" > "$work/defs.flat"
 grep -q '^7 7 one 7|8 two .*column "b" does not exist.*three' \
   "$work/defs.flat" || fail "a definition after another session's DDL"
 
+# Verify that a session's statistics rows follow another session's
+# ANALYZE, though kept while the catalog's epoch holds
+# (SCHEMACACHE.md section 4.3).
+# 1. Make t36, 10,000 rows with b = 0 in a tenth, and analyze it. A
+#    held session estimates b = 0 twice: 1,000 within 10%.
+# 2. Another session makes b = 0 in half the rows and analyzes: the
+#    held session estimates 5,000 within 10%.
+local_psql -c 'create table t36 (a int4, b int8)' \
+  -c 'insert into t36 select g, g % 10 from generate_series(1, 10000) g' \
+  -c 'analyze t36' >> "$work/stats.out" 2>&1
+held_start st36
+held_send st36 "explain select * from t36 where b = 0;
+  explain select * from t36 where b = 0; select 'one';"
+held_wait st36 one || fail "statistics read"
+local_psql -c 'update t36 set b = 0 where a % 2 = 0' -c 'analyze t36' \
+  >> "$work/stats.out" 2>&1
+held_send st36 "explain select * from t36 where b = 0; select 'two';"
+held_wait st36 two || fail "statistics read after an analyze"
+held_end st36
+grep -o 'rows=[0-9]*' "$work/st36.out" | cut -d= -f2 > "$work/st36.rows"
+n=$(sed -n 2p "$work/st36.rows")
+within "$n" 1000 10 || fail "statistics kept: $n"
+n=$(sed -n 3p "$work/st36.rows")
+within "$n" 5000 10 || fail "statistics after another session's analyze: $n"
+
 # Verify that VACUUM compacts a table's store in sm, and that VACUUM
 # ANALYZE also analyzes it.
 # 1. Make t32 with 20,000 rows of 200 bytes, and VACUUM ANALYZE it: a

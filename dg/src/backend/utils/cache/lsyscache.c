@@ -2844,14 +2844,23 @@ HeapTuple get_statistic_tuple(Oid relid, AttrNumber attnum, bool inh) {
   return smstore_statistic_tuple(relid, attnum, inh);
 }
 
+/* pg_statistic's tuple descriptor, made once a session (statistic_tupdesc). */
+static thread_local /*LOCAL*/ TupleDesc statistic_desc = NULL;
+
 /*
- * pg_statistic's tuple descriptor, made in the current memory context from
- * its compiled-in attributes: pg_statistic has no rows and no relcache
- * entry, only the shape sm's statistics are formed in.
+ * pg_statistic's tuple descriptor, made from its compiled-in attributes the
+ * first time a session asks, in CacheMemoryContext, and kept: pg_statistic
+ * has no rows and no relcache entry, only the shape sm's statistics are
+ * formed in, which never changes. The caller does not free it.
  */
 TupleDesc statistic_tupdesc(void) {
   static const FormData_pg_attribute attrs[Natts_pg_statistic] = {
       Schema_pg_statistic};
+
+  if (NULL != statistic_desc)
+    return statistic_desc;
+  /* Kept for the session's life, as a relcache entry's descriptor is. */
+  MemoryContext old = MemoryContextSwitchTo(CacheMemoryContext);
   TupleDesc desc = CreateTemplateTupleDesc(Natts_pg_statistic);
 
   for (int i = 0; i < Natts_pg_statistic; i++) {
@@ -2859,16 +2868,16 @@ TupleDesc statistic_tupdesc(void) {
     populate_compact_attribute(desc, i);
   }
   TupleDescCompactAttr(desc, 0)->attcacheoff = 0;
+  MemoryContextSwitchTo(old);
+  statistic_desc = desc;
   return desc;
 }
 
 /* The attribute attno of a pg_statistic row, which is never null. */
 static Datum statistic_attr(HeapTuple statstuple, AttrNumber attno) {
-  TupleDesc desc = statistic_tupdesc();
   bool isnull;
-  Datum val = heap_getattr(statstuple, attno, desc, &isnull);
+  Datum val = heap_getattr(statstuple, attno, statistic_tupdesc(), &isnull);
 
-  FreeTupleDesc(desc);
   if (isnull)
     elog(ERROR, "pg_statistic attribute %d is null", attno);
   return val;
