@@ -112,7 +112,8 @@ the repository.
   which digres refuses: `a relation's storage cannot be made:
   digres has no catalog table`. A view needs a place in sm3's
   catalog for its query, which is a design decision, not made
-  here; it is recorded in `sm/NEXT.md` §2.
+  here; it is recorded in `sm/NEXT.md` §2. Views are built
+  since (`sm/VIEW.md`).
 - Everything else in the sample, index scans, `IN`,
   `BETWEEN`, `ORDER BY`, aggregates, expressions, `GROUP BY`,
   `DELETE`, digres answers as PostgreSQL 18 does.
@@ -184,4 +185,5 @@ sessions running, which is what sm asks of the numbers.
   digres does not have (`FOR KEY SHARE`), are not triaged yet.
   Run with `pg_isolation_regress --use-existing` from
   `~/p/postgres18/src/test/isolation`; it is in no `make`
-  target yet.
+  target yet. It is since: `make -j4 isolation` in `dg/`
+  (`dg/CODE.md` §1).

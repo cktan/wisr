@@ -89,16 +89,18 @@ client's cost is the same on both sides.
 | --- | --- | --- |
 | Q1 | `select count(*) from T` | the scan, deforming nothing |
 | Q2 | `select sum(c1) from T` | the scan, and the first column |
-| Q3 | `select sum(c49) from T` | the scan, and the last column |
+| Q3 | `select sum(c49) from T`, `sum(c4)` on `narrow` | the scan, and the last column |
 | Q4 | `select sum(length(body)) from toasted` | a value out of line, read whole |
 | Q5 | `select count(*) from toasted` | the same scan, not reading the values |
 | Q6 | `select sum(c1) from T where id between :a and :a + 9999`, index scan only | an index range of 10,000 rows |
 | Q7 | `select c1 from T where id = :k`, `:k` random | one row by key, a query at a time |
 
-Q1 to Q3 run on `narrow`, `wide_fixed` and `wide_mixed`. Q6
-and Q7 run with `enable_seqscan`, `enable_bitmapscan` off, so
-the plan is the index scan each names; each run checks the
-plan with `EXPLAIN` first.
+Q1 to Q3 run on `narrow`, `wide_fixed` and `wide_mixed`. Q1
+to Q5 run with index, index-only and bitmap scans off, and Q6
+with `enable_seqscan`, `enable_bitmapscan` off, so the plan is
+the scan each names; each run records the plan's scan node
+from `EXPLAIN` in the report, and does not enforce it. Q7 is
+plain pgbench, with no setting and no plan recorded.
 
 ### 5.1 How a query is timed
 
@@ -150,10 +152,12 @@ Two ways to see the cost directly, besides:
 ## 7. A report
 
 `results/YYYYMMDD-HHMM.md`, one a run: the machine (CPU,
-cores, memory, kernel), both commits and builds, the settings
-of §3, each table's size on disk on both sides, and a table of
-§5's numbers with their ratios. A run is the unit: numbers
-from two runs are not mixed in one table.
+cores, memory, kernel), both commits and builds, the runs a
+query, a table of §5's numbers with their ratios and each
+side's scan node, and each table's size as each system
+reports it, with each data directory's. The settings of §3
+are not in it. A run is the unit: numbers from two runs are
+not mixed in one table.
 
 Each report also gets a row in `results/LOG.md`, the log of
 every run: its date, commit, machine and file (`CODE.md`).
@@ -166,7 +170,8 @@ every run: its date, commit, machine and file (`CODE.md`).
   memory on the other; the warm-up runs and §3's sizes are to
   keep every measured run in memory.
 - **Plans**: the two planners have different statistics, so a
-  plan may differ; each run checks it (§5).
+  plan may differ; each report shows each side's scan node
+  (§5), which is read, not checked.
 - **Sizes**: sm's store and PostgreSQL's heap hold the same
   rows in different bytes; each report gives both, as a cost
   of its own.
@@ -176,4 +181,6 @@ every run: its date, commit, machine and file (`CODE.md`).
 1. **PostgreSQL at the fork point**, `724edf9`.
 2. **digres's `release` build** as its own objects.
 3. **The sizes** of §4.
-4. **The microbenchmark** of §6 waits for the profile.
+4. **The microbenchmark** of §6 waits for the profile. It is
+   built since, as `smbench/`, on rows of its own, layer by
+   layer down to RocksDB.

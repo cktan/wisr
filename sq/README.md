@@ -48,7 +48,9 @@ for (const sq_raw_stmt_t* raw : tree.stmts) {
   what went wrong: `sq_errmsg`, `sq_sqlstate`, `sq_errpos`, and
   PostgreSQL's `sq_errdetail` and `sq_errhint`.
 - **The tree owns every node and string in it** and frees them
-  when it is destroyed. Nothing is freed by hand.
+  when it is destroyed. Nothing is freed by hand. Given an
+  allocator, as digres gives its memory context, the tree
+  frees none of the nodes: they are the caller's.
 - **The nodes are PostgreSQL's**, in `include/sq_nodes.h`, by
   sq's names: `SelectStmt` is `sq_select_stmt_t` and its
   `targetList` is `target_list`, laid out as digres's own. A
@@ -56,7 +58,8 @@ for (const sq_raw_stmt_t* raw : tree.stmts) {
   `const char*`, NULL where absent.
 - **Options** are an `sq_options_t`, or NULL for PostgreSQL's
   defaults: its three settings that change how a string literal
-  is read, and a hook for notices.
+  is read, a hook for notices, and an allocator for the nodes
+  in place of the tree's own arena.
 - **Any number of threads** may parse at once.
 
 sq parses and no more. It reads no catalog, and it has no notion
@@ -69,7 +72,7 @@ nodes like any other statement.
 | --- | --- |
 | `include/sq.h`, `sq_error.h` | the interface |
 | `include/sq_nodes.h` | the nodes; generated, and committed |
-| `spec/` | PostgreSQL 18.6's node headers and keyword list, unedited, and the list of the nodes its grammar can build |
+| `spec/` | PostgreSQL 18.6's node headers and keyword list, unedited, but `nodetags.h`, digres's copy; and the list of the nodes its grammar can build |
 | `gen/` | the generators: the nodes and the functions over them, the keyword hash, and digres's checks that sq's nodes are its own |
 | `src/scan.l`, `src/gram.y` | PostgreSQL's scanner and grammar, forked: the rules are PostgreSQL's, the code around them is sq's |
 | `src/parser.cc` | the two parsing calls, and the filter between scanner and grammar |

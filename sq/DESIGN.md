@@ -52,7 +52,7 @@ over by reading two files side by side.
 
 | What | Where | How it relates to PostgreSQL |
 | --- | --- | --- |
-| The node definitions | `spec/*.h` | PostgreSQL's headers, unedited |
+| The node definitions | `spec/*.h` | PostgreSQL's headers, unedited, but `nodetags.h`, digres's copy (§3) |
 | The keyword list | `spec/kwlist.h` | PostgreSQL's, unedited |
 | The scanner | `src/scan.l` | a fork: the rules are PostgreSQL's, untouched |
 | The grammar | `src/gram.y` | a fork: the rules are PostgreSQL's, untouched |
@@ -194,8 +194,8 @@ it has them. A server sends those to its client as they are.
   happens and the parse goes on. With no hook it is dropped.
 
 **Settings come in `sq_options_t`**: PostgreSQL's three that
-change how a string literal is read, and the notice hook. NULL
-is PostgreSQL's defaults.
+change how a string literal is read, the notice hook, and the
+allocator (§4). NULL is PostgreSQL's defaults.
 
 ## 6. Lists in the grammar
 

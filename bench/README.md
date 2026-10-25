@@ -29,7 +29,7 @@ not a tuning exercise. Both servers run as built, with the
 few settings `DESIGN.md` §3 lists to make the comparison
 fair.
 
-## Layout (planned)
+## Layout
 
 | Path | What it is |
 | --- | --- |
@@ -37,11 +37,13 @@ fair.
 | `DESIGN.md` | the builds, the data, the queries, the method |
 | `CODE.md` | rules for running it: optimized builds only |
 | `run.sh` | builds, loads, runs, and writes a report |
-| `sql/` | the schema, the load, and one file per query |
+| `sql/` | the schema, the load, PostgreSQL's one setting of storage (`pg_only.sql`), Q1-Q6 one a line in `queries.txt`, and Q7, pgbench's script, in `q7.sql` |
+| `smbench/` | the floor of a scan and a point read in sm, layer by layer down to RocksDB, on the same rows; `sqlbench.sh` times those rows through SQL in digres and PostgreSQL |
+| `getseek/` | one row read by key in RocksDB, a seek to its newest version against a Get of the plain key (`../sm/VCHAIN.md` §1) |
 | `results/` | one report per run, dated, with the machine and commits |
 | `results/LOG.md` | the log of every report: date, commit, machine |
 
 ## Status
 
 Designed, and its open questions decided (`DESIGN.md` §9);
-`run.sh` is being written.
+`run.sh` is built, and its reports are in `results/`.

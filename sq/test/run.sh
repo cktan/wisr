@@ -24,7 +24,8 @@
 #
 # SQ_PARSE names another program to parse with, in place of
 # build/sq_parse: one that prints what it does, and takes --type-name.
-# digres checks its own parser this way, which is sq and a converter.
+# digres checks its own parser this way, which is sq, building
+# digres's nodes with nothing converted.
 # Step 3 is then left out: it is sq's scanner alone, and needs sq's
 # own tools built.
 #
