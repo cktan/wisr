@@ -411,6 +411,71 @@ TEST_CASE("a row that cannot be encoded draws no rowno") {
         -1);
 }
 
+TEST_CASE("a rel opened on a layout made once is the rel rel_open makes") {
+  // Verify rel_open_desc, which every open of a table uses (sm3).
+  // 1. Lay a schema of every type out once, and open a rel on the
+  //    layout with rel_open_desc: its schema is the layout's.
+  // 2. Insert random rows through it, commit, and close it, as a
+  //    transaction's end closes its tables.
+  // 3. Read each row through a second rel on the same layout, and
+  //    through one rel_open makes: each decodes to its row.
+  // 4. rel_open_desc refuses a layout with an attribute sm2 cannot
+  //    lay out, naming it, and a null session.
+  INFO("seed ", test_seed());
+  std::mt19937_64 rng(test_seed());
+  db_t db;
+  sm1::session_t *s = db.open();
+  std::vector<sm2::attribute_t> schema = wide_schema();
+  sm2::tup_desc_t desc(schema);
+  sm2::rel_t *rel = nullptr;
+  REQUIRE(sm2::rel_open_desc(s, db.store(), 0, desc, {}, "rowno", "", rel) ==
+          0);
+  CHECK(sm2::rel_schema(rel).data() == schema.data());
+  std::vector<uint64_t> rownos;
+  std::vector<row_t> rows;
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  for (int i = 0; i < 20; i++) {
+    row_t row = gen_row(schema, rng);
+    values_t d = datums_of(schema, row);
+    uint64_t rowno;
+    REQUIRE_MESSAGE(sm2::rel_insert(rel, d.d(), d.null(), rowno) == 0,
+                    sm1::errmsg());
+    rownos.push_back(rowno);
+    rows.push_back(row);
+  }
+  REQUIRE(sm1::commit(s) == 0);
+  sm2::rel_close(rel);
+
+  sm2::rel_t *again = nullptr;
+  REQUIRE(sm2::rel_open_desc(s, db.store(), 0, desc, {}, "rowno", "", again) ==
+          0);
+  sm2::rel_t *laid = open_rel(db, s, schema);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  for (sm2::rel_t *r : {again, laid}) {
+    for (size_t i = 0; i < rows.size(); i++) {
+      std::string_view tuple;
+      REQUIRE(sm2::rel_read(r, sm2::id_key(rownos[i]), tuple) == 0);
+      CHECK(decode(schema, tuple) == rows[i]);
+    }
+  }
+  REQUIRE(sm1::commit(s) == 0);
+  sm2::rel_close(laid);
+  sm2::rel_close(again);
+
+  std::vector<sm2::attribute_t> bad = {
+      {&sm2::type_int4, -1, false, std::nullopt},
+      {&sm2::type_decimal64, 3, false, std::nullopt}};
+  sm2::tup_desc_t bad_desc(bad);
+  sm2::rel_t *out = nullptr;
+  CHECK(sm2::rel_open_desc(s, db.store(), 0, bad_desc, {}, "rowno", "", out) ==
+        -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(std::string(sm1::errmsg()).find("attribute 1") != std::string::npos);
+  CHECK(sm2::rel_open_desc(nullptr, db.store(), 0, desc, {}, "rowno", "",
+                           out) == -1);
+  CHECK(nullptr == out);
+}
+
 TEST_CASE("rel supports raw tuple bytes and datum_t/isnull writes") {
   // Verify a heap rel stores exactly the tuple it is given, from
   // pre-encoded bytes or from Datums and null flags.

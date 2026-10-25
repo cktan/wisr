@@ -460,16 +460,19 @@ int open_rels(table_t *table) {
   if (pk) {
     key = {pk->key, pk->key_attnums};
   }
-  if (sm2::rel_open(s, def.storeid, heap_relid, def.schema, key, def.id_seq,
-                    toast_seq, table->rel) != 0) {
+  // The definition's layouts, made once with it, which the table
+  // keeps alive by holding the definition.
+  if (sm2::rel_open_desc(s, def.storeid, heap_relid, def.desc, key, def.id_seq,
+                         toast_seq, table->rel) != 0) {
     return -1;
   }
   for (const index_def_t &x : def.indexes) {
     sm2::index_t *ix = nullptr;
-    if ((x.primary ? sm2::idx_open_primary(table->rel, x.include,
-                                           x.include_attnums, ix)
-                   : sm2::idx_open(s, def.storeid, x.relid, x.key, x.unique,
-                                   x.include, pk != nullptr, ix)) != 0) {
+    if ((x.primary
+             ? sm2::idx_open_primary_layout(table->rel, *x.layout,
+                                            x.include_attnums, ix)
+             : sm2::idx_open_layout(s, def.storeid, x.relid, x.key, x.unique,
+                                    *x.layout, pk != nullptr, ix)) != 0) {
       return -1;
     }
     table->indexes.push_back(ix);
@@ -1800,7 +1803,7 @@ int rewrite_table(session_t *session, uint64_t oid, table_rec_t rec) {
     return -1;
   }
   // The old store goes at commit, with the rows and entries in it,
-  // as a truncate's does (CATALOG.md §5.2).
+  // as a truncate's does (CATALOG_INMEM.md §2.2).
   return sm1::rmstore(session->sm1, old_store);
 }
 

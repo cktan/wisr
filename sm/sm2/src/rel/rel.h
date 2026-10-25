@@ -8,6 +8,7 @@
 
 #include "sm2.h"
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -15,7 +16,9 @@ struct sm2::rel_t {
   sm1::session_t *session;
   uint64_t storeid;
   uint16_t relid;
-  tup_desc_t desc;                        /* over the borrowed schema */
+  /* rel_open's layout of the schema it borrows; none from rel_open_desc */
+  std::unique_ptr<tup_desc_t> own_desc;
+  const tup_desc_t *desc; /* own_desc, or the one rel_open_desc borrows */
   std::span<const sm2::key_column_t> key; /* borrowed; none: by _id */
   std::span<const int32_t> key_atts;      /* each key column's attribute */
   std::string id_seq;

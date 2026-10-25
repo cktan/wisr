@@ -602,6 +602,16 @@ int rel_open(sm1::session_t* session, uint64_t storeid, uint16_t relid,
              std::string_view id_seq, std::string_view toast_seq,
              rel_t*& out);
 
+/*
+ * As rel_open, laid out by desc, a layout of the schema made once
+ * for every open -- borrowed, so the caller keeps it alive for the
+ * rel's lifetime -- where rel_open lays the schema out each time.
+ */
+int rel_open_desc(sm1::session_t* session, uint64_t storeid,
+                  uint16_t relid, const tup_desc_t& desc,
+                  const rel_key_t& key, std::string_view id_seq,
+                  std::string_view toast_seq, rel_t*& out);
+
 /* Close a rel from rel_open; nullptr is a no-op. */
 void rel_close(rel_t* rel);
 
@@ -948,6 +958,22 @@ struct bound_t {
 };
 
 /*
+ * An index entry's value laid out: cut, the INCLUDE columns, then
+ * the row's key, as a bytea (../ROWKEY.md §2.1), and the desc over
+ * it, whose bad is past the cut flag if an INCLUDE column cannot be
+ * laid out. Made once, it serves every open of the index
+ * (idx_open_layout); never copied, as desc views value.
+ */
+struct idx_layout_t {
+    std::vector<attribute_t> value;
+    tup_desc_t               desc; /* over value */
+
+    explicit idx_layout_t(std::span<const attribute_t> include);
+    idx_layout_t(const idx_layout_t&) = delete;
+    idx_layout_t& operator=(const idx_layout_t&) = delete;
+};
+
+/*
  * Open an index over storeid through session, under relid, keyed
  * by key -- borrowed, as a rel's schema is -- unique or not, with
  * the INCLUDE columns include, also borrowed, of a table whose rel
@@ -967,6 +993,19 @@ int idx_open(sm1::session_t* session, uint64_t storeid, uint16_t relid,
  */
 int idx_open_primary(rel_t* rel, std::span<const attribute_t> include,
                      std::span<const int32_t> include_attnums, index_t*& out);
+
+/*
+ * As idx_open and idx_open_primary, the entries' value laid out by
+ * layout, made once for every open -- borrowed, so the caller keeps
+ * it alive for the index's lifetime.
+ */
+int idx_open_layout(sm1::session_t* session, uint64_t storeid,
+                    uint16_t relid, std::span<const key_column_t> key,
+                    bool unique, const idx_layout_t& layout, bool keyed,
+                    index_t*& out);
+int idx_open_primary_layout(rel_t* rel, const idx_layout_t& layout,
+                            std::span<const int32_t> include_attnums,
+                            index_t*& out);
 
 /* Close an index from idx_open; nullptr is a no-op. */
 void idx_close(index_t* index);
@@ -1122,7 +1161,7 @@ int decode_key_front(std::span<const key_column_t> cols,
 bool key_decodable(std::span<const key_column_t> cols);
 
 /*
- * The catalog key-value store (sm3/CATALOG.md §1): the level
+ * The catalog key-value store (sm3/CATALOG_ONDISK.md §1): the level
  * above's catalog, kept as sm1's store 0 under sm1::upper_prefix.
  * Every call is one sm1 call in the session's transaction, so the
  * catalog is transactional with the DDL that writes it; sm1's

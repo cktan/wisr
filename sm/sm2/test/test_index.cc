@@ -451,6 +451,88 @@ TEST_CASE("a key too long for sm1 is cut, flagged, and kept apart") {
   sm2::idx_close(ix);
 }
 
+TEST_CASE("an index opened on a layout made once is the index idx_open "
+          "makes") {
+  // Verify idx_open_layout and idx_open_primary_layout, by which every
+  // open of a table opens its indexes (sm3).
+  // 1. Lay out an index's INCLUDE of an int4 once, and open an index
+  //    on the layout with idx_open_layout: its value schema is the
+  //    layout's own, not a copy.
+  // 2. Insert three entries through it, each with an INCLUDE value,
+  //    and commit.
+  // 3. Scan them through an index idx_open makes over the same relid:
+  //    each entry's INCLUDE value is the one inserted.
+  // 4. idx_open_layout refuses a layout whose INCLUDE column sm2
+  //    cannot lay out, naming it; idx_open_primary_layout refuses a
+  //    rel keyed by _id.
+  db_t db;
+  sm1::session_t *s = db.open();
+  std::vector<sm2::key_column_t> cols = {
+      {&sm2::type_int4, -1, nullptr, false, false}};
+  std::vector<sm2::attribute_t> include = {
+      {&sm2::type_int4, -1, false, std::nullopt}};
+  sm2::idx_layout_t layout(include);
+  sm2::index_t *ix = nullptr;
+  REQUIRE_MESSAGE(sm2::idx_open_layout(s, db.store(), 1, cols, false, layout,
+                                       false, ix) == 0,
+                  sm1::errmsg());
+  CHECK(sm2::idx_value_schema(ix).data() == layout.value.data());
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  for (int32_t i = 1; i <= 3; i++) {
+    std::vector<std::optional<std::string>> key = {le(i)};
+    values_t d = datums_of(cols, key);
+    sm2::datum_t inc[1] = {sm2::datum_from_int32(i * 100)};
+    bool incn[1] = {false};
+    REQUIRE_MESSAGE(
+        sm2::idx_insert(ix, d.d(), d.null(), sm2::id_key(i), inc, incn) == 0,
+        sm1::errmsg());
+  }
+  REQUIRE(sm1::commit(s) == 0);
+  sm2::idx_close(ix);
+
+  sm2::index_t *laid = open_index(db, s, cols, false, 1, include);
+  CHECK(sm2::idx_value_schema(laid).data() != layout.value.data());
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::repeatable_read) == 0);
+  sm2::index_scan_t *scan = nullptr;
+  REQUIRE(sm2::idx_scan(laid, nullptr, nullptr, scan) == 0);
+  uint64_t rowno;
+  bool cut;
+  std::string_view value;
+  size_t seen = 0;
+  while (sm2::idx_scannxt(scan, rowno, cut, value) == 0) {
+    sm2::datum_t got;
+    bool null;
+    REQUIRE(sm2::tup_decode(layout.desc, value, 1, got, null) == 0);
+    REQUIRE_FALSE(null);
+    CHECK(sm2::datum_to_int32(got) == static_cast<int32_t>(rowno * 100));
+    seen++;
+  }
+  CHECK(3 == seen);
+  sm2::idx_scanend(scan);
+  REQUIRE(sm1::commit(s) == 0);
+  sm2::idx_close(laid);
+
+  std::vector<sm2::attribute_t> bad = {
+      {&sm2::type_int4, -1, false, std::nullopt},
+      {&sm2::type_decimal64, 3, false, std::nullopt}};
+  sm2::idx_layout_t bad_layout(bad);
+  sm2::index_t *out = nullptr;
+  CHECK(sm2::idx_open_layout(s, db.store(), 1, cols, false, bad_layout, false,
+                             out) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(std::string(sm1::errmsg()).find("INCLUDE column 1") !=
+        std::string::npos);
+  sm2::rel_t *heap = nullptr;
+  std::vector<sm2::attribute_t> schema = {
+      {&sm2::type_int4, -1, false, std::nullopt}};
+  REQUIRE(sm2::rel_open(s, db.store(), 0, schema, {}, "rowno", "", heap) == 0);
+  CHECK(sm2::idx_open_primary_layout(heap, layout, std::vector<int32_t>{0},
+                                     out) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(nullptr == out);
+  sm2::rel_close(heap);
+}
+
 TEST_CASE("a key too long for sm1 is refused in a unique index") {
   // Verify a unique index never holds a cut key (SM2_DESIGN.md §3.2).
   // 1. Inserting a 5000-byte text fails with SM_ERR_KEYTOOLONG.

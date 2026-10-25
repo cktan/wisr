@@ -184,12 +184,12 @@ struct ready_t {
  */
 int make_ready(sm2::rel_t *rel, std::span<const sm2::datum_t> datums,
                std::span<const bool> isnull, bool update, ready_t &out) {
-  const auto &schema = rel->desc.schema;
+  const auto &schema = rel->desc->schema;
   std::vector<sm2::datum_t> d(datums.begin(), datums.end());
   if (!rel->toasts || d.size() != schema.size() ||
       isnull.size() != schema.size()) {
     // Nothing to move, or a row tup_encode refuses for its count.
-    return sm2::tup_encode(rel->desc, d, isnull, out.tuple);
+    return sm2::tup_encode(*rel->desc, d, isnull, out.tuple);
   }
   // own's strings must not move once a datum points at one: at most
   // a fetched value and a pointer for each attribute.
@@ -197,7 +197,7 @@ int make_ready(sm2::rel_t *rel, std::span<const sm2::datum_t> datums,
   // The variable-width datums, by attribute, each with its bytes.
   std::vector<std::pair<size_t, std::string_view>> var;
   for (size_t i = 0; i < d.size(); i++) {
-    if (isnull[i] || rel->desc.width[i] > 0 || schema[i].dropped) {
+    if (isnull[i] || rel->desc->width[i] > 0 || schema[i].dropped) {
       continue;
     }
     std::string_view v;
@@ -228,7 +228,7 @@ int make_ready(sm2::rel_t *rel, std::span<const sm2::datum_t> datums,
     var.emplace_back(i, out.own.back());
   }
   size_t len;
-  if (sm2::tup_size(rel->desc, d, isnull, len) != 0) {
+  if (sm2::tup_size(*rel->desc, d, isnull, len) != 0) {
     return -1;
   }
   // Longest first, until the tuple is short enough.
@@ -252,7 +252,7 @@ int make_ready(sm2::rel_t *rel, std::span<const sm2::datum_t> datums,
     // What the tuple held of it, in its shortest form, less a pointer.
     len -= data.size() + (data.size() <= 126 ? 1 : 4) - sm2::toast_ptr_len;
   }
-  return sm2::tup_encode(rel->desc, d, isnull, out.tuple);
+  return sm2::tup_encode(*rel->desc, d, isnull, out.tuple);
 }
 
 /* Write the datums a row moved out of line, after the row. */
@@ -271,13 +271,13 @@ int write_moved(sm2::rel_t *rel, const ready_t &row) {
  */
 int pointers_of(const sm2::rel_t *rel, std::string_view tuple,
                 std::vector<std::pair<size_t, std::string>> &out) {
-  for (size_t i = 0; i < rel->desc.schema.size(); i++) {
-    if (rel->desc.width[i] > 0) {
+  for (size_t i = 0; i < rel->desc->schema.size(); i++) {
+    if (rel->desc->width[i] > 0) {
       continue;
     }
     sm2::datum_t val;
     bool isnull;
-    if (sm2::tup_decode(rel->desc, tuple, i, val, isnull) != 0) {
+    if (sm2::tup_decode(*rel->desc, tuple, i, val, isnull) != 0) {
       return -1;
     }
     const char *v = static_cast<const char *>(sm2::datum_to_ptr(val));
@@ -338,7 +338,7 @@ int settle_old(sm2::rel_t *rel, std::string_view old,
  */
 int encode_cols(sm2::rel_t *rel, std::span<const sm2::datum_t> cols,
                 std::span<const bool> isnull, std::string &key) {
-  const auto &schema = rel->desc.schema;
+  const auto &schema = rel->desc->schema;
   size_t n = rel->key.size();
   std::vector<sm2::datum_t> c(cols.begin(), cols.end());
   std::unique_ptr<bool[]> nulls(new bool[n]());
@@ -352,7 +352,7 @@ int encode_cols(sm2::rel_t *rel, std::span<const sm2::datum_t> cols,
                          "rel: attribute " + std::to_string(att) +
                              " of the primary key is null");
     }
-    if (rel->desc.width[att] > 0) {
+    if (rel->desc->width[att] > 0) {
       continue;
     }
     std::string_view v;
@@ -387,7 +387,7 @@ int key_of(sm2::rel_t *rel, uint64_t id, std::span<const sm2::datum_t> d,
     sm2::put_be(id, key);
     return 0;
   }
-  const auto &schema = rel->desc.schema;
+  const auto &schema = rel->desc->schema;
   if (d.size() != schema.size() || isnull.size() != schema.size()) {
     return sm1::seterr(sm1::SM_ERR_INVALID,
                        "rel: a datum and null flag for every attribute");
@@ -523,10 +523,10 @@ int update_row(sm2::rel_t *rel, std::string_view key, uint64_t id,
 /* The datums and null flags of a tuple, already checked, under rel. */
 int deform(const sm2::rel_t *rel, std::string_view tuple,
            std::vector<sm2::datum_t> &datums, std::unique_ptr<bool[]> &isnull) {
-  size_t n = rel->desc.schema.size();
+  size_t n = rel->desc->schema.size();
   datums.assign(n, 0);
   isnull.reset(new bool[n]());
-  return sm2::tup_deform(rel->desc, tuple, datums,
+  return sm2::tup_deform(*rel->desc, tuple, datums,
                          std::span<bool>(isnull.get(), n));
 }
 
@@ -541,21 +541,23 @@ std::string id_key(uint64_t id) {
   return k;
 }
 
-/* Open a rel; see sm2.h. */
-int rel_open(sm1::session_t *session, uint64_t storeid, uint16_t relid,
-             std::span<const attribute_t> schema, const rel_key_t &key,
-             std::string_view id_seq, std::string_view toast_seq, rel_t *&out) {
+/*
+ * Open a rel laid out by desc, which own holds or the caller keeps
+ * alive: rel_open's and rel_open_desc's body.
+ */
+static int open_rel(sm1::session_t *session, uint64_t storeid, uint16_t relid,
+                    const tup_desc_t &desc, std::unique_ptr<tup_desc_t> own,
+                    const rel_key_t &key, std::string_view id_seq,
+                    std::string_view toast_seq, rel_t *&out) {
   if (session == nullptr) {
     return sm1::seterr(sm1::SM_ERR_INVALID, "rel: no session");
   }
+  std::span<const attribute_t> schema = desc.schema;
   // Every attribute must be one the codec can lay out.
-  for (size_t i = 0; i < schema.size(); i++) {
-    if (schema[i].type == nullptr ||
-        datum_width(schema[i].type, schema[i].typmod) == 0) {
-      return sm1::seterr(sm1::SM_ERR_INVALID,
-                         "rel: attribute " + std::to_string(i) +
-                             " has no type, or a typmod its type refuses");
-    }
+  if (SIZE_MAX != desc.bad) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       "rel: attribute " + std::to_string(desc.bad) +
+                           " has no type, or a typmod its type refuses");
   }
   // Every key column is a live attribute of its own type.
   if (key.cols.size() != key.attnums.size()) {
@@ -571,31 +573,47 @@ int rel_open(sm1::session_t *session, uint64_t storeid, uint16_t relid,
                              " is no live attribute of its type");
     }
   }
-  // Lay the schema out once, for every row the rel encodes.
-  out = new rel_t{session,
-                  storeid,
-                  relid,
-                  tup_desc_t(schema),
-                  key.cols,
-                  key.attnums,
-                  std::string(id_seq),
-                  std::string(toast_seq),
-                  false,
-                  {},
-                  nullptr,
-                  {},
-                  false};
+  auto rel = std::make_unique<rel_t>();
+  rel->session = session;
+  rel->storeid = storeid;
+  rel->relid = relid;
+  rel->own_desc = std::move(own);
+  rel->desc = &desc;
+  rel->key = key.cols;
+  rel->key_atts = key.attnums;
+  rel->id_seq = std::string(id_seq);
+  rel->toast_seq = std::string(toast_seq);
+  rel->toasts = false;
   // Only a variable-width datum is ever moved out of line.
-  for (int32_t w : out->desc.width) {
-    out->toasts = out->toasts || (w < 0 && !toast_seq.empty());
+  for (int32_t w : desc.width) {
+    rel->toasts = rel->toasts || (w < 0 && !toast_seq.empty());
   }
   // Its rows are chained keys if its store was made so.
-  if (sm1::store_chained(session, storeid, out->chained) != 0) {
-    rel_close(out);
-    out = nullptr;
+  if (sm1::store_chained(session, storeid, rel->chained) != 0) {
     return -1;
   }
+  out = rel.release();
   return 0;
+}
+
+/* Open a rel, laying its schema out; see sm2.h. */
+int rel_open(sm1::session_t *session, uint64_t storeid, uint16_t relid,
+             std::span<const attribute_t> schema, const rel_key_t &key,
+             std::string_view id_seq, std::string_view toast_seq, rel_t *&out) {
+  // Lay the schema out once, for every row the rel encodes.
+  auto own = std::make_unique<tup_desc_t>(schema);
+  const tup_desc_t &desc = *own;
+  return open_rel(session, storeid, relid, desc, std::move(own), key, id_seq,
+                  toast_seq, out);
+}
+
+/* Open a rel laid out by a desc it borrows; see sm2.h. */
+int rel_open_desc(sm1::session_t *session, uint64_t storeid, uint16_t relid,
+                  const tup_desc_t &desc, const rel_key_t &key,
+                  std::string_view id_seq, std::string_view toast_seq,
+                  rel_t *&out) {
+  return open_rel(session, storeid, relid, desc, nullptr, key, id_seq,
+                  toast_seq, out);
 }
 
 /* Close a rel, and free its scratch pin; nullptr is a no-op. */
@@ -608,7 +626,7 @@ void rel_close(rel_t *rel) {
 
 /* The schema a rel lays its rows out by. */
 std::span<const attribute_t> rel_schema(const rel_t *rel) {
-  return rel->desc.schema;
+  return rel->desc->schema;
 }
 
 /* Whether a rel is keyed by a primary key; see sm2.h. */
@@ -645,7 +663,7 @@ int rel_key(rel_t *rel, std::span<const datum_t> datums,
 int rel_insert(rel_t *rel, std::string_view tuple, uint64_t &id,
                std::string *key) {
   // Check first, so a tuple that cannot be stored draws no _id.
-  if (tup_check(rel->desc, tuple) != 0) {
+  if (tup_check(*rel->desc, tuple) != 0) {
     return -1;
   }
   std::string k;
@@ -791,7 +809,7 @@ static int update_tuple(rel_t *rel, std::string_view key, uint64_t id,
   if (nullptr != old) {
     *old = {};
   }
-  if (tup_check(rel->desc, tuple) != 0) {
+  if (tup_check(*rel->desc, tuple) != 0) {
     return -1;
   }
   if (!rel->toasts && rel->key.empty()) {
@@ -890,7 +908,7 @@ int rel_load(rel_t *rel, sm1::loader_t *loader, size_t stream,
              std::span<const datum_t> datums, std::span<const bool> isnull,
              uint64_t &id, std::string *key) {
   size_t len;
-  if (tup_size(rel->desc, datums, isnull, len) != 0) {
+  if (tup_size(*rel->desc, datums, isnull, len) != 0) {
     return -1;
   }
   // A row longer than a tuple may be goes the other way, where it
@@ -902,11 +920,11 @@ int rel_load(rel_t *rel, sm1::loader_t *loader, size_t stream,
   // no stream for the chunks. And one given a pointer, whose
   // value rel_insert copies.
   for (size_t i = 0; rel->toasts && i < datums.size(); i++) {
-    if (isnull[i] || rel->desc.width[i] > 0) {
+    if (isnull[i] || rel->desc->width[i] > 0) {
       continue;
     }
     std::string_view v;
-    if (datum_bytes(rel->desc.schema[i].type, rel->desc.schema[i].typmod,
+    if (datum_bytes(rel->desc->schema[i].type, rel->desc->schema[i].typmod,
                     datums[i], v) != 0) {
       return -1;
     }
@@ -916,7 +934,7 @@ int rel_load(rel_t *rel, sm1::loader_t *loader, size_t stream,
     }
   }
   std::string tuple, k;
-  if (tup_encode(rel->desc, datums, isnull, tuple) != 0 ||
+  if (tup_encode(*rel->desc, datums, isnull, tuple) != 0 ||
       (!rel->key.empty() && key_of(rel, 0, datums, isnull, k) != 0)) {
     return -1;
   }

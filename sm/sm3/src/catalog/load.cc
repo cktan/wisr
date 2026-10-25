@@ -1,6 +1,6 @@
 /*
  * load.cc -- cat_open: the catalog read into memory with one scan
- * of each kind (CATALOG.md §4, §5). Every definition is built
+ * of each kind (CATALOG_INMEM.md §1, §2). Every definition is built
  * whole, its sm2 schema and layout with it, so a reader never lays
  * out a row itself.
  */
@@ -189,6 +189,11 @@ int build_table(const collation_lookup_t &lookup, uint64_t oid,
       const sm3::column_def_t &col = t->columns[a];
       d.include_attnums.push_back(a);
       d.include.push_back({col.type, col.typmod, false, std::nullopt});
+    }
+    // Lay its entries out once, for every open of the index.
+    d.layout = std::make_shared<const sm2::idx_layout_t>(d.include);
+    if (SIZE_MAX != d.layout->desc.bad) {
+      return corrupt("an INCLUDE column of " + x.name + " sm2 cannot lay out");
     }
     t->indexes.push_back(std::move(d));
   }

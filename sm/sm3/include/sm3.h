@@ -1,7 +1,7 @@
 /*
  * sm3.h -- level 3: schema and index maintenance (SM3_DESIGN.md).
  *
- * So far, the catalog (CATALOG.md): made in a database with
+ * So far, the catalog (CATALOG_INMEM.md): made in a database with
  * cat_init, loaded into memory with cat_open, and changed by DDL
  * through a session, whose transaction sees its own changes and
  * publishes them at commit. Every call reports failure as sm1
@@ -127,7 +127,7 @@ struct index_status_t {
  *
  * A record is stored as a key and a value for the table's own
  * fields, one for each column, by its place, and one for each
- * index, by its oid (CATALOG.md §2); a put writes only the ones
+ * index, by its oid (CATALOG_ONDISK.md §2); a put writes only the ones
  * that changed. A column keeps its place for good, and the
  * indexes are in the order of their oids, which is the order they
  * were made in.
@@ -248,6 +248,8 @@ struct index_def_t {
     std::vector<int32_t>              include_attnums; /* 0-based */
     std::vector<sm2::key_column_t>    key;             /* for sm2 */
     std::vector<sm2::attribute_t>     include;         /* for sm2 */
+    /* Its entries' value laid out, once, for every open of it. */
+    std::shared_ptr<const sm2::idx_layout_t> layout;
     /*
      * A partial or an expression index (SM3_DESIGN.md §3): eval is
      * its predicate and its expressions as the host serialized
@@ -610,7 +612,7 @@ int cat_put_namespace(session_t* s, uint64_t namespace_oid,
  * in, pg_catalog and public, with SM_ERR_INVALID. It waits for
  * every transaction that is putting something in the namespace,
  * and one that tries after it has committed finds no namespace
- * (CATALOG.md §5).
+ * (CATALOG_INMEM.md §2).
  */
 int cat_del_namespace(session_t* s, uint64_t namespace_oid);
 
@@ -830,7 +832,7 @@ int create_namespace(session_t* session, std::string_view name,
  * pg_catalog and public, with SM_ERR_INVALID. It waits for every
  * transaction that is creating something in the namespace, and
  * one that tries after it has committed finds no namespace
- * (CATALOG.md §5).
+ * (CATALOG_INMEM.md §2).
  */
 int drop_namespace(session_t* session, uint64_t oid);
 

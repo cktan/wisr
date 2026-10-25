@@ -31,8 +31,9 @@ struct sm2::index_t {
   std::span<const key_column_t> key; /* borrowed */
   bool unique;
   bool keyed; /* its table's rows are keyed by a primary key */
-  std::vector<attribute_t> value; /* cut, INCLUDE, then a row key */
-  tup_desc_t value_desc;          /* over value */
+  /* idx_open's layout of its INCLUDE columns; none from idx_open_layout */
+  std::unique_ptr<idx_layout_t> own;
+  const idx_layout_t *layout; /* own, or the one idx_open_layout borrows */
   /*
    * A primary key's: the rel whose rows are its entries, and the
    * attribute there of each INCLUDE column. nullptr otherwise.
@@ -177,19 +178,24 @@ int lower_key(const sm2::index_t *ix, const sm2::bound_t &lo, std::string &out,
 
 namespace sm2 {
 
-/* The index's value schema: cut, include, then the row's key. */
-static std::vector<attribute_t>
-value_schema(std::span<const attribute_t> include) {
-  std::vector<attribute_t> value = {{&type_bool, -1, false, std::nullopt}};
+/* Lay out an entry's value: cut, include, then the row's key. */
+idx_layout_t::idx_layout_t(std::span<const attribute_t> include) {
+  value = {{&type_bool, -1, false, std::nullopt}};
   value.insert(value.end(), include.begin(), include.end());
   value.push_back({&type_bytea, -1, false, std::nullopt});
-  return value;
+  desc = tup_desc_t(value);
 }
 
-/* Open an index; see sm2.h. */
-int idx_open(sm1::session_t *session, uint64_t storeid, uint16_t relid,
-             std::span<const key_column_t> key, bool unique,
-             std::span<const attribute_t> include, bool keyed, index_t *&out) {
+/*
+ * Open an index whose entries' value is laid out by layout, which own
+ * holds or the caller keeps alive: idx_open's and idx_open_layout's
+ * body.
+ */
+static int open_index(sm1::session_t *session, uint64_t storeid, uint16_t relid,
+                      std::span<const key_column_t> key, bool unique,
+                      const idx_layout_t &layout,
+                      std::unique_ptr<idx_layout_t> own, bool keyed,
+                      index_t *&out) {
   if (session == nullptr || key.empty()) {
     return sm1::seterr(sm1::SM_ERR_INVALID,
                        "index: a session and at least one key column");
@@ -207,33 +213,61 @@ int idx_open(sm1::session_t *session, uint64_t storeid, uint16_t relid,
                          "index: a key column without a type");
     }
   }
-  std::vector<attribute_t> value = value_schema(include);
-  for (size_t i = 1; i + 1 < value.size(); i++) {
-    if (value[i].type == nullptr ||
-        datum_width(value[i].type, value[i].typmod) == 0) {
-      return sm1::seterr(sm1::SM_ERR_INVALID,
-                         "index: INCLUDE column " + std::to_string(i - 1) +
-                             " has no type, or a typmod its type refuses");
-    }
+  // The cut flag and the row key always lay out: a refusal is an
+  // INCLUDE column's.
+  if (SIZE_MAX != layout.desc.bad) {
+    return sm1::seterr(sm1::SM_ERR_INVALID,
+                       "index: INCLUDE column " +
+                           std::to_string(layout.desc.bad - 1) +
+                           " has no type, or a typmod its type refuses");
   }
-  out = new index_t{session, storeid,          relid, key,     unique,
-                    keyed,   std::move(value), {},    nullptr, {}};
-  // Lay the value out once, for every entry; it borrows out->value.
-  out->value_desc = tup_desc_t(out->value);
+  auto ix = std::make_unique<index_t>();
+  ix->session = session;
+  ix->storeid = storeid;
+  ix->relid = relid;
+  ix->key = key;
+  ix->unique = unique;
+  ix->keyed = keyed;
+  ix->own = std::move(own);
+  ix->layout = &layout;
+  out = ix.release();
   return 0;
 }
 
-/* Open a rel's primary key as an index; see sm2.h. */
-int idx_open_primary(rel_t *rel, std::span<const attribute_t> include,
-                     std::span<const int32_t> include_atts, index_t *&out) {
-  if (!rel_keyed(rel) || include.size() != include_atts.size()) {
+/* Open an index, laying its entries' value out; see sm2.h. */
+int idx_open(sm1::session_t *session, uint64_t storeid, uint16_t relid,
+             std::span<const key_column_t> key, bool unique,
+             std::span<const attribute_t> include, bool keyed, index_t *&out) {
+  auto own = std::make_unique<idx_layout_t>(include);
+  const idx_layout_t &layout = *own;
+  return open_index(session, storeid, relid, key, unique, layout,
+                    std::move(own), keyed, out);
+}
+
+/* Open an index laid out by a layout it borrows; see sm2.h. */
+int idx_open_layout(sm1::session_t *session, uint64_t storeid, uint16_t relid,
+                    std::span<const key_column_t> key, bool unique,
+                    const idx_layout_t &layout, bool keyed, index_t *&out) {
+  return open_index(session, storeid, relid, key, unique, layout, nullptr,
+                    keyed, out);
+}
+
+/*
+ * Open rel's primary key as an index, its entries laid out by layout,
+ * which own holds or the caller keeps alive: idx_open_primary's and
+ * idx_open_primary_layout's body.
+ */
+static int open_primary(rel_t *rel, const idx_layout_t &layout,
+                        std::unique_ptr<idx_layout_t> own,
+                        std::span<const int32_t> include_atts, index_t *&out) {
+  if (!rel_keyed(rel) || layout.value.size() != include_atts.size() + 2) {
     return sm1::seterr(sm1::SM_ERR_INVALID,
                        "index: a primary key of a keyed rel, and an "
                        "attribute for every INCLUDE column");
   }
   index_t *ix = nullptr;
-  if (idx_open(rel->session, rel->storeid, rel->relid, rel->key, true, include,
-               false, ix) != 0) {
+  if (open_index(rel->session, rel->storeid, rel->relid, rel->key, true, layout,
+                 std::move(own), false, ix) != 0) {
     return -1;
   }
   ix->rel = rel;
@@ -242,12 +276,27 @@ int idx_open_primary(rel_t *rel, std::span<const attribute_t> include,
   return 0;
 }
 
+/* Open a rel's primary key as an index; see sm2.h. */
+int idx_open_primary(rel_t *rel, std::span<const attribute_t> include,
+                     std::span<const int32_t> include_atts, index_t *&out) {
+  auto own = std::make_unique<idx_layout_t>(include);
+  const idx_layout_t &layout = *own;
+  return open_primary(rel, layout, std::move(own), include_atts, out);
+}
+
+/* Open a rel's primary key as an index laid out by a layout it borrows. */
+int idx_open_primary_layout(rel_t *rel, const idx_layout_t &layout,
+                            std::span<const int32_t> include_atts,
+                            index_t *&out) {
+  return open_primary(rel, layout, nullptr, include_atts, out);
+}
+
 /* Close an index; nullptr is a no-op. */
 void idx_close(index_t *index) { delete index; }
 
 /* The schema of an entry's value: cut, INCLUDE, a row key. */
 std::span<const attribute_t> idx_value_schema(const index_t *index) {
-  return index->value;
+  return index->layout->value;
 }
 
 /* Fail on a write to a primary key, whose entries are its rows. */
@@ -273,7 +322,7 @@ static int entry_of(index_t *index, std::span<const datum_t> key,
       entry_key(index, key, key_isnull, row, k, cut) != 0) {
     return -1;
   }
-  if (include.size() + 2 != index->value.size() ||
+  if (include.size() + 2 != index->layout->value.size() ||
       include_isnull.size() != include.size()) {
     return sm1::seterr(
         sm1::SM_ERR_INVALID,
@@ -288,7 +337,7 @@ static int entry_of(index_t *index, std::span<const datum_t> key,
   for (size_t i = 0; i < include.size(); i++) {
     nulls[i + 1] = include_isnull[i];
   }
-  return tup_encode(index->value_desc, datums,
+  return tup_encode(index->layout->desc, datums,
                     std::span<const bool>(nulls.get(), datums.size()), value);
 }
 
@@ -340,7 +389,7 @@ static int entry_row(const index_t *index, std::string_view k,
   }
   datum_t d;
   bool isnull;
-  if (tup_decode(index->value_desc, value, index->value.size() - 1, d,
+  if (tup_decode(index->layout->desc, value, index->layout->value.size() - 1, d,
                  isnull) != 0) {
     return -1;
   }
@@ -565,7 +614,7 @@ static int primary_value(index_scan_t *scan, std::string_view row) {
   auto nulls = std::make_unique<bool[]>(n + 2);
   for (size_t i = 0; i < n; i++) {
     datum_t d;
-    if (tup_decode(ix->rel->desc, row, ix->include_atts[i], d, nulls[i + 1]) !=
+    if (tup_decode(*ix->rel->desc, row, ix->include_atts[i], d, nulls[i + 1]) !=
         0) {
       return -1;
     }
@@ -573,7 +622,7 @@ static int primary_value(index_scan_t *scan, std::string_view row) {
   }
   std::string row_varlena = make_varlena(scan->key.substr(relid_len));
   datums.push_back(datum_from_ptr(row_varlena.data()));
-  return tup_encode(ix->value_desc, datums,
+  return tup_encode(ix->layout->desc, datums,
                     std::span<const bool>(nulls.get(), n + 2), scan->value);
 }
 
@@ -600,7 +649,7 @@ int idx_scannxt(index_scan_t *scan, uint64_t &id, bool &cut,
   // The value opens with the cut flag, and ends with the row's key.
   datum_t c;
   bool c_null;
-  if (tup_decode(scan->index->value_desc, value, 0, c, c_null) != 0) {
+  if (tup_decode(scan->index->layout->desc, value, 0, c, c_null) != 0) {
     return -1;
   }
   if (c_null) {
