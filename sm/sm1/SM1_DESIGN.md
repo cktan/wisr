@@ -37,7 +37,7 @@ secondary index a layer above builds out of stores
 (`SM1_OBJECTIVE.md`). Descending order is built into the key —
 an index whose key bytes are inverted, scanned forward — and
 the stack above keeps no mirror copy of an index for the other
-direction (`PART4.md` §5).
+direction (`../PART4.md` §5).
 
 The engine cost is part of why. A key's versions are stored
 newest first (`key|~wts|~seq`, §3.1), so a backward scan
@@ -50,7 +50,7 @@ key examined up to `ekey`, inverting §10.2's bookkeeping.
 **Phases.** Phase 1 is a solid MVCC storage manager: the API in
 `sm1.h` and the design in this document, nothing more. Phase 2
 adds the API a secondary-index layer built on top of it needs
-(`sm3/SM3_DESIGN.md` §3), and it is built:
+(`../sm3/SM3_DESIGN.md` §3), and it is built:
 `sm1::lsstore`, which came with naming stores by storeid (§11);
 `sm1::stmt_begin`, for read-committed statement snapshots
 (§6.2); the savepoint stack with `sm1::forget` (§6.5);
@@ -84,8 +84,7 @@ benchmark asks for it (§10.1).
   bytewise (`memcmp`), which is what `sm1::scan` exposes.
 - Implementation language is C++ (RocksDB's native API), and
   so is the interface, in `namespace sm1`; only the top level
-  wraps the stack in a C API (`DESIGN.md` §5 at the top
-  level).
+  wraps the stack in a C API (`../DESIGN.md` §5).
 
 ---
 
@@ -254,7 +253,7 @@ value = { state: PREPARED | COMMITTED | ABORTED,
           snapshot_ts, commit_ts,
           gid (global txn id string, 2PC only),
           prepared_at: epoch seconds           (PREPARED only),
-          writeset: [ (storeid, userkey) ... ]   (PREPARED only),
+          lockset:  [ (lock key, mode) ... ]   (PREPARED only),
           created:  [ storeid ... ]            (PREPARED only),
           dropped:  [ storeid ... ]            (PREPARED only) }
 ```
@@ -264,20 +263,19 @@ ones that prepare (§8.4), and only at prepare/commit/abort time —
 nothing is written at `sm1::begin`. Absence of a record is
 meaningful (§3.4).
 
-The `writeset` is carried only in a `PREPARED` record, and only
-so that recovery can re-acquire the row locks a prepared
-transaction still holds. `created` lists the stores the
-transaction made with `sm1::mkstore`, so that recovery keeps
-their column families (§9.1); `dropped` lists those it removed
-with `sm1::rmstore`, so that a commit after restart still queues
-their column families for removal (§8.3). `prepared_at` is the
-wall-clock time of `sm1::prepare`, reported by
+The `lockset` is carried only in a `PREPARED` record, and only so
+that recovery can re-acquire the locks a prepared transaction
+still holds, each in the mode it is held in: those `sm1::lock`
+took, since a write keeps none (§5.1, §8.4). `created` lists the
+stores the transaction made with `sm1::mkstore`, so that recovery
+keeps their column families (§9.1); `dropped` lists those it
+removed with `sm1::rmstore`, so that a commit after restart still
+queues their column families for removal (§8.3). `prepared_at` is
+the wall-clock time of `sm1::prepare`, reported by
 `sm1::list_prepared` (§8.5); it must be durable because the
 listing is mostly needed after a restart. All four are dropped
-when the record flips to COMMITTED or ABORTED. For a prepared
-transaction with a very large write set the list spills to
-additional keys `xid | chunkno` in the same CF, deleted in the
-same batch as the flip.
+when the record flips to COMMITTED or ABORTED. The record is one
+value, however many locks it lists.
 
 ### 3.3 `CF:meta` — bootstrap state
 
@@ -606,11 +604,13 @@ sm1::update(storeid, k, v):
                  (an insert: no check)                  # §5.4
      if latest is a move's tombstone: SM_ERR_MOVED      # (insert: goes in)
      if latest is absent or tombstone: SM_ERR_NOTFOUND  # (insert: DUPKEY)
-     if old wanted: copy latest's payload into the session buffer  # §5.3
+     if old wanted: keep latest in a pin, the session's or caller's  # §5.3
   4. if T.xid == 0: T.xid = global_ts++
   5. wts = global_ts++                                  # no other writer in flight, §4.1
      seq = T.seq++;  T.seq_hwm = seq                   # T.seq starts at 1
      db.Put(cf(storeid), encode(k, ~wts, ~seq), encode(flags, T.xid, v))
+         # a chained store instead writes CURR, moving the old
+         # version to OLD, in one batch (../VCHAIN.md §5)
      T.lock(k).latest = false                          # §5.4
   6. if a savepoint is set and not lost:                # §6.5
          T.undo.push(storeid, k, wts, seq)
@@ -717,7 +717,7 @@ is never a victim, and sessions polling each other's locks
 poll for ever; that cycle is the caller's to break. It exists
 so one thread can play several sessions, and a script can say
 "this step blocks" with no thread and no sleep
-(`rel/REL.md`). It is not the interface for PostgreSQL's
+(`../rel/REL.md`). It is not the interface for PostgreSQL's
 `NOWAIT` and `SKIP LOCKED`: PostgreSQL passes a wait policy
 with each call, and sm1 is to take one the same way, as a flag
 on the calls that can wait. `SM_ERR_BLOCKED` is the code those
@@ -851,7 +851,7 @@ committed version of the row ignoring the snapshot, re-evaluates
 its `WHERE` clause and new values from it, and only then repeats
 the write. This is what PostgreSQL's executor does at its default
 level after a lock wait, and workloads written for it rely on it
-(`PART4.md` §5a).
+(`../PART4.md` §5a).
 
 The commonest case is a hot row, a shared counter or a
 `next_order_id`. Two read committed sessions each add one to `R1`,
@@ -908,13 +908,13 @@ the caller.
   taken by the refused write or by `sm1::lock`; otherwise
   `SM_ERR_INVALID`. Under a shared lock it reads but sets no
   mark, since a shared holder cannot write without upgrading. A
-  caller that waited in `sm1::lock(SHARED)` (a writer reading a
-  schema row, §3 of `sm3/SM3_DESIGN.md`) uses it to see what
-  committed while it waited. - **An insert** has no predicate to
-  re-evaluate, so it is judged against the newest committed
-  version (`SM_ERR_DUPKEY` if live) with no check, as
-  PostgreSQL's unique check does. - **`sm1::lock`** at READ
-  COMMITTED no longer fails with `SM_ERR_CONFLICT`. At the
+  caller that waited in `sm1::lock(SHARED)` (sm3's index
+  build reading a row, step 3 of `../sm3/SM3_DESIGN.md` §3)
+  uses it to see what committed while it waited. - **An insert**
+  has no predicate to re-evaluate, so it is judged against the
+  newest committed version (`SM_ERR_DUPKEY` if live) with no
+  check, as PostgreSQL's unique check does. - **`sm1::lock`** at
+  READ COMMITTED no longer fails with `SM_ERR_CONFLICT`. At the
   higher levels it is unchanged. - REPEATABLE READ, SERIALIZABLE,
   SSI (READ COMMITTED takes no part, §7.4), 2PC and the GC
   watermark are unchanged: a read committed transaction already
@@ -1009,7 +1009,7 @@ Halloween problem.
   statement's later reads see its writes so far. The rule
   above is unchanged; only the mark's value moves. It is how a
   statement uses what it made: a table, its store and its
-  rowno sequence, which `CREATE TABLE AS` makes and fills. A
+  `_id` sequence, which `CREATE TABLE AS` makes and fills. A
   store or a sequence is looked up at the mark like a row, and
   until the advance the statement does not see it.
 - **A transaction that never calls `sm1::stmt_begin`** sees all
@@ -1042,7 +1042,7 @@ writer in flight, is refused with `SM_ERR_UPDATED`, and goes
 ahead
 against the newest committed version once the caller has read it
 with `sm1::read_latest` (§5.4). PostgreSQL does the same at its
-default level, and workloads rely on it (`PART4.md` §5a).
+default level, and workloads rely on it (`../PART4.md` §5a).
 REPEATABLE READ and SERIALIZABLE keep §5.2 as it is.
 
 What makes that safe is that a version's key is its `wts`, taken
@@ -1074,7 +1074,8 @@ Repeatable read plus SSI validation (§7).
 
 A savepoint is a mark into the per-transaction **undo
 list** — an in-memory vector of `(storeid, userkey, wts, seq)`
-tuples in write order, holding no payloads, so a large
+tuples in write order, each flagged if its key is chained
+(`../VCHAIN.md` §6), holding no payloads, so a large
 transaction costs bytes per write, not rows.
 
 **A write is listed only while a savepoint is set.** A
@@ -1211,8 +1212,11 @@ sm1::rollback(depth):
     if no mark at depth: fail with SM_ERR_NOSAVEPOINT # API.md divergence 8
     if depth <= T.lost_marks: doom T; fail with SM_ERR_UNDOLIMIT
     m = T.savepoints[depth-1].undo
-    for e in reverse(T.undo[m..]):
-        db.Delete(cf(e.storeid), encode(e.key, ~T.xid, ~e.seq))
+    for e in reverse(T.undo[m..]) if not e.chained:
+        db.Delete(cf(e.storeid), encode(e.key, ~e.wts, ~e.seq))
+    for e in reverse(T.undo[m..]) if e.chained:     # ../VCHAIN.md §6
+        under latch(e.storeid, e.key):
+            chain_restore(e.key, T.xid, mark.seq_hwm)
     r = T.savepoints[depth-1].stores
     for storeid in reverse(T.created[r..]):
         db.DropColumnFamily(cf(storeid))            # §11
@@ -1238,7 +1242,12 @@ the enclosing mark, or to the transaction when there is none.
 Rolling back is a delete of exactly the versions written since the
 mark. Nothing else can see them, so there is no visibility window to
 worry about, and `seq` guarantees a re-write of an already-written key
-did not clobber the pre-savepoint version.
+did not clobber the pre-savepoint version. A chained key has
+no version of its own to delete: its newest version sits in
+place, the one before moved to OLD. `chain_restore` puts back
+the newest version at or below the mark's `seq_hwm` or not the
+transaction's, and unlinks the entries it passes
+(`../VCHAIN.md` §6).
 
 `seq_hwm` is the last `seq` still in effect: each write sets it,
 and a rollback lowers it to the mark. Rewinding `T.seq` with it
@@ -1533,9 +1542,14 @@ atomic and durable at commit: **the status record**.
 ```
 sm1::commit(T):
   1. close T's open scan cursors               (§10.2)
-     if SERIALIZABLE: ssi.validate(T)         → may SM_ERR_SERIALIZATION
-     if T.xid == 0: go to step 6               ← read-only: nothing to publish
+     if T.xid == 0:                            ← read-only: nothing to publish
+         if SERIALIZABLE: ssi.validate(T, visible_ts + 1)
+                                               → may SM_ERR_SERIALIZATION
+         go to step 6
   2. commit_ts = sequencer.claim()           ← global_ts++, joins the set
+     if SERIALIZABLE: ssi.validate(T, commit_ts)    (§7.3)
+         → on failure: sequencer.done(commit_ts), unused;
+           SM_ERR_SERIALIZATION
   3. batch = { CF:txn[T.xid] = {COMMITTED, T.snapshot_ts, commit_ts} }
   4. db.Write(batch, sync = durability_sync)   ← group-committed
   5. commit_cache.insert(T.xid → commit_ts);  active_table.remove(T.xid)
@@ -1549,7 +1563,10 @@ Step 1 closes cursors first, as `API.md` requires of
 `sm1::commit` and `sm1::abort`: this releases their RocksDB
 snapshots, which pin `gc_watermark`, and narrows each cursor's
 SIREAD predicate to the range it actually traversed (§10.2)
-before validation runs.
+before validation runs. A writer validates only once it holds
+its `commit_ts`, so the rules of §7.3 judge it at the time it
+commits; a read-only transaction takes none, and counts as
+ending just after the current `visible_ts`.
 
 **A failed status write is fail-stop.** If step 4 returns an
 error, the record may or may not have reached the WAL — a sync
@@ -1622,6 +1639,20 @@ runs at any time, including over versions of transactions that
 are still running, and such a version has no `commit_ts` to
 stamp. A stamp there would make readers skip status resolution
 and see an uncommitted write, and it would outlive an abort.
+
+The rules above are those of a versioned key, class `0x00`. A
+chained store's keys, its CURR (`0x01`) and OLD (`0x02`)
+versions, are judged by rules of their own in the same filter,
+`filter_chained` (`../VCHAIN.md` §7): a CURR version committed at
+or below the watermark is stamped, and a tombstone so committed
+dropped, with no purge queued: RocksDB writes a delete over the
+key, so no older entry of it comes back; a dead CURR version is
+queued for the GC worker, which, under the key's latch, puts back
+the version before it. An OLD entry goes once it is unlinked and
+the watermark has passed its ts, or once its displacer committed
+at or below the watermark; one kept is stamped with its writer's
+and its displacer's `commit_ts`, so the `CF:txn` sweep below
+holds for chained keys as well.
 
 A tombstone that every live snapshot sees is never "superseded",
 so the rules above would keep it forever — one record per
@@ -1863,17 +1894,17 @@ sm1::prepare(T, gid):
 Step 4 moves the transaction out of its session into an object
 the database owns, registered under its `gid`: the transaction's
 state, its snapshot's place in `gc_watermark`, its SSI node, and
-its row locks, whose table entries are re-pointed at the new
-owner. The session keeps only the `gid`. Any session can then
-resolve the transaction, `sm1::closedb` leaves it untouched, and
-recovery (§9.1 step 5) rebuilds exactly the same object from the
-`PREPARED` record, so a transaction prepared before a crash and
-one prepared in this process are handled alike. The record is a
-single `CF:txn` value however large the write set; the write set
-is stored as the lock keys the transaction holds, each with the
-mode it is held in, so a shared lock taken by `sm1::lock` is
-restored as shared. Database format version 4 added that mode
-byte.
+its locks (a write keeps none, §5.1), whose table entries are
+re-pointed at the new owner. The session keeps only the `gid`.
+Any session can then resolve the transaction, `sm1::closedb`
+leaves it untouched, and recovery (§9.1 step 5) rebuilds exactly
+the same object from the `PREPARED` record, so a transaction
+prepared before a crash and one prepared in this process are
+handled alike. The record is a single `CF:txn` value however
+large the write set; the write set is stored as the lock keys the
+transaction holds, each with the mode it is held in, so a shared
+lock taken by `sm1::lock` is restored as shared. Database format
+version 4 added that mode byte.
 
 Step 1 closes cursors for the reasons given in §8.2. No data
 operation is accepted after prepare, so an open cursor could
@@ -1946,9 +1977,9 @@ a new transaction can write a key the prepared one read and no
 edge appears. Unchecked, that admits write skew:
 
 1. Before the crash, `T_prep` reads `A = a0`, writes `B = b1`,
-   and prepares. Only `B` is in its `writeset`.
-2. After restart, `T_prep` holds its lock on `B`, but its
-   SIREAD lock on `A` is gone.
+   and prepares. Only `B` has a version of it.
+2. After restart, `b1` is in flight again, so a writer of `B`
+   waits for `T_prep`, but its SIREAD lock on `A` is gone.
 3. `T_new` reads `B`, skips `b1` as in-flight, and reads `b0`:
    edge `T_new ──rw──▶ T_prep`.
 4. `T_new` writes `A = a1`. No SIREAD covers `A`, so the edge
@@ -1974,19 +2005,19 @@ T_reader skips a version written by a restored transaction (§7.2)
 
 This is enough without replaying the SSI graph. Nothing written
 by the restored transaction can be read before it commits, and
-its row locks block any write to its keys, so every edge *into*
-it from a post-restart transaction is an rw-edge from reading
-past one of its versions — which the rule sees. Edges *out* of it
-are unknowable, so every transaction with an edge in is doomed,
-and no cycle can pass through it. The rule still holds after the
-coordinator commits it: a reader whose snapshot predates that
-commit still skips its versions and is still doomed; a reader
-whose snapshot follows it sees them and forms no edge. The
-tracker keeps a restored xid in its restored set, after the
-transaction leaves the active table, until `gc_watermark` passes
-its `commit_ts`. The cost is false aborts for serializable
-readers of in-doubt keys, which is acceptable for a state that
-only follows a crash.
+its versions in flight make any writer of its keys wait (§5.1),
+so every edge *into* it from a post-restart transaction is an
+rw-edge from reading past one of its versions — which the rule
+sees. Edges *out* of it are unknowable, so every transaction with
+an edge in is doomed, and no cycle can pass through it. The rule
+still holds after the coordinator commits it: a reader whose
+snapshot predates that commit still skips its versions and is
+still doomed; a reader whose snapshot follows it sees them and
+forms no edge. The tracker keeps a restored xid in its restored
+set, after the transaction leaves the active table, until
+`gc_watermark` passes its `commit_ts`. The cost is false aborts
+for serializable readers of in-doubt keys, which is acceptable
+for a state that only follows a crash.
 
 ### 8.5 The 2PC API surface
 
@@ -2031,7 +2062,7 @@ the status resolution rule.
 ```
 1. ListColumnFamilies, then open RocksDB with every CF
    (replays WAL → memtable state as of last sync).
-2. Read CF:meta → format version, persisted next_ts, next_cfid.
+2. Read CF:meta → format version, persisted next_ts, next_objid.
 3. global_ts = next_ts + 1;  visible_ts = next_ts.
 4. Scan CF:txn for records in state PREPARED.
    (COMMITTED / ABORTED records need no action.)
@@ -2045,9 +2076,10 @@ the status resolution rule.
         again, so a writer waits for it as before
       - pin gc_watermark at its snapshot_ts
 6. Orphan CF sweep: read the catalog (store.0) and drop every
-   store.<storeid> CF that has neither a live catalog row naming
-   it (a name's newest committed version, not a tombstone) nor
-   an entry in a prepared record's `created`.
+   store CF, store.<storeid> or chain.<storeid>, that has
+   neither a live catalog row naming it (a name's newest
+   committed version, not a tombstone) nor an entry in a
+   prepared record's `created`.
 7. Start the GC / compaction filter and commit advancer.
 8. Open for sessions.
 ```
@@ -2063,7 +2095,8 @@ There is no "abort recovery" step: every transaction that was
 running at the crash is absent from the fresh active table and
 has no status record, so rule §3.4/4 declares it dead the first
 time anyone looks at one of its versions. Its orphaned versions
-are dropped by the next compaction. No scan of the data is
+are dropped by the next compaction, or, a chained key's, put
+back by the GC worker (§8.3). No scan of the data is
 needed, and recovery time is independent of the size of the
 crashed transactions.
 
@@ -2081,13 +2114,13 @@ crashed transactions.
 
 ### 9.3 In-doubt transactions
 
-A restored prepared transaction blocks writers on its keys (it holds
-locks) and pins GC. `sm1::list_prepared` exposes them by `gid` so
-the coordinator can finish them. An operator escape hatch
-(`sm1::abort_prepared`) is required, because an abandoned
-prepared transaction otherwise blocks GC forever; this is the
-same operational hazard as in any 2PC system and is exposed, not
-hidden.
+A restored prepared transaction blocks writers on its keys (its
+versions are in flight, §5.1) and pins GC. `sm1::list_prepared`
+exposes them by `gid` so the coordinator can finish them. An
+operator escape hatch (`sm1::abort_prepared`) is required,
+because an abandoned prepared transaction otherwise blocks GC
+forever; this is the same operational hazard as in any 2PC system
+and is exposed, not hidden.
 
 ### 9.4 Torn or corrupt state
 
@@ -2109,7 +2142,7 @@ having committed.
 sm1::read(session, storeid, key, &val):
     catalog.lookup(storeid)                              # SIREAD too, §11
     snap  = (level == READ_COMMITTED) ? visible_ts : T.snapshot_ts
-    hi    = max(T.xid, snap)                             # own writes, §4.4
+    hi    = max(T.wts_hi, snap)                          # own writes, §4.4
     if SERIALIZABLE:
         ssi.on_read(T, storeid, key)                     # SIREAD, §7.1
     it = pin.reusable ? pin.it                           # below
@@ -2223,9 +2256,9 @@ iterate_upper_bound  = ekey | (ekey_inclusive ? FF×12 : 00×12)
 
 The bounds carry a full tail because the comparator requires one
 (§3.1). No real version has an all-`00` or all-`FF` tail, since
-xid 0 means "no xid yet" and xid 2^64−1 is never reached, so
-these tails fall strictly before or after every version of the
-bound key.
+the tail is `~wts | ~seq`, and `wts` 2^64−1 is never reached
+while `wts` and `seq` both start at 1, so these tails fall
+strictly before or after every version of the bound key.
 
 **Seek mode.** Store CFs carry a prefix extractor
 (§12.2), and a RocksDB iterator on such a CF defaults to
@@ -2614,8 +2647,8 @@ family.** A store is made temporary when it is created, and the
 property belongs to the whole store — its column family — not
 to any key in it: everything written into a temporary store is
 temporary. sm1 does not know what a store holds. Above it, sm3
-puts a table's heap, its indexes and its TOAST data in one
-store (`DESIGN.md` §5), so a temporary table and all its
+puts a table's rows, its indexes and its TOAST data in one
+store (`../DESIGN.md` §5), so a temporary table and all its
 indexes are one temporary store, and no per-row or per-key
 marking exists at any level.
 
@@ -2662,7 +2695,7 @@ suits them:
 
 Settled since: `sm1::mkstore` takes a `temporary` flag, and a
 temporary store's files are those of the instance of their
-own, under `base/pgsql_tmp/sm` (`TEMPTABLE.md` §3).
+own, under `base/pgsql_tmp/sm` (`../TEMPTABLE.md` §3).
 
 ---
 
@@ -2682,6 +2715,13 @@ SM_ERR_SERIALIZATION   SSI validation failure (§7.3)
 SM_ERR_DEADLOCK        victim of deadlock detection (§5.1)
 SM_ERR_NOTFOUND        store or key does not exist
 SM_ERR_DUPKEY          insert onto a live key (§5)
+SM_ERR_MOVED           update, erase or read_latest meeting a move's
+                       tombstone (§5); not an abort
+SM_ERR_BLOCKED         a write or lock would wait, under set_qa_nowait
+                       (§5.1); not an abort
+SM_ERR_INTERRUPTED     a wait ended by an interrupt (§5.1); not an abort
+SM_ERR_READONLY        a write in a transaction declared read-only (§7.4);
+                       not an abort
 SM_ERR_NOSAVEPOINT     no savepoint at the given depth (§6.5)
 SM_ERR_UNDOLIMIT       the savepoint was lost at savepoint_undo_bytes (§6.5)
 SM_ERR_DOOMED          a rollback failed; only an abort is let through (§6.5)
@@ -2696,6 +2736,7 @@ SM_ERR_EXISTS          home dir, database, or store exists (§11)
 SM_ERR_INUSE           database still open in this process
 SM_ERR_VERSION         home directory format unsupported (§3.5)
 SM_ERR_CORRUPT         RocksDB integrity failure (§9.4)
+SM_ERR_INVALID         a bad argument, or a call the state forbids
 SM_ERR_IO / SM_ERR_NOMEM / SM_ERR_PERMISSION / SM_ERR_DISKFULL
 ```
 
@@ -2789,17 +2830,23 @@ forgotten cursor holding back reclamation.
 ```
 include/sm1.h           public C++ API, namespace sm1
 src/env.cc              init/attach/detach, root db, db sweep
-src/db.cc               mkdb/rmdb, open registry, CF setup, storeid→CF map
-src/session.cc          open/close, per-session state and buffers
+src/db.cc               mkdb/rmdb, CF setup, CF create/drop, storeid→CF map
+src/session.cc          opendb/closedb, the registry of open databases
 src/xct.cc              transaction manager, timestamps, sequencer, 2PC
-src/version.cc          key/value codec, version comparator, visibility
-src/access.cc           read / scan / insert / update / delete
+src/version.cc          key/value codec, version comparator, prefix extractor
+src/access.cc           read / scan / insert / update / delete, visibility
+src/chain.cc            chained stores: codec, chain_ calls, chain_restore,
+                        GC's repair (../VCHAIN.md)
+src/load.cc             bulk load into an empty store (../BULKLOAD.md)
+src/pin.cc              raw pins (../ROW.md §2)
 src/lockmgr.cc          lock table, write latches, waits-for graph, deadlocks
 src/ssi.cc              SIREAD locks, rw-edges, validation
-src/catalog.cc          store catalog: DDL, sm1::lsstore, CF create/drop
+src/catalog.cc          store catalog: lookup, mkstore/rmstore, sm1::lsstore
 src/seq.cc              named sequences: sm1::mkseq, sm1::rmseq, sm1::nextseq
 src/gc.cc               compaction filter, watermarks, drop-store purge
 src/recover.cc          startup, prepared-transaction restore, orphan CF sweep
+src/stats.cc            sm1::approxsize, sm1::probes, sm1::compact
+src/memcount.cc         memtable bytes of a store's writes, by key prefix
 src/error.cc            set_status_error: a RocksDB status as an error
 test/                   the engine's tests: API, limits, locks, GC,
                         2PC, crash, sequences, logging
@@ -2887,11 +2934,13 @@ bullets below cover the rest of the engine.
   it does not fail, and the caller reads the row with
   `sm1::read_latest` (§5.4). A savepoint rollback releases an
   explicit lock first taken after the mark but never downgrades an
-  upgrade. The whole index-build protocol runs end to end: a
-  builder taking the schema row exclusive blocks a writer,
-  sees the row an earlier writer committed, and the blocked
-  writer then fails, retries, and reads the new schema
-  (§5.1, `sm3/SM3_DESIGN.md` §3).
+  upgrade. The whole index-build protocol runs end to end, the
+  test modelling a layer's catalog with a schema row: a builder
+  taking the schema row exclusive blocks a writer, sees the row
+  an earlier writer committed, and the blocked writer then
+  fails, retries, and reads the new schema (§5.1). sm3 itself
+  orders DDL by table-oid locks (`../sm3/SM3_DESIGN.md` §2,
+  §3).
 - **Deadlock.** Build a two-transaction cycle in both orders:
   the older waiter finds the cycle and the younger is the
   victim, and the younger finds it and is itself the victim.
@@ -3054,7 +3103,7 @@ bullets below cover the rest of the engine.
   `SAVEPOINT.md` designs the fix, rolled-back writes
   marked dead by their `seq`, and it is not built. A bulk
   load into an empty store has a path of its own, which lists
-  one entry for the whole load (§6.5, `BULKLOAD.md`).
+  one entry for the whole load (§6.5, `../BULKLOAD.md`).
 - **Every write takes a timestamp.** A version is keyed by a `wts`
   taken under its key's latch (§4.1), so the counter is used
   once per
@@ -3064,8 +3113,10 @@ bullets below cover the rest of the engine.
   mutex, but no throughput benchmark has been run, so neither
   cost is measured. A larger `ts_lease` is the first lever.
 - **The format changed.** Keying versions by `wts` and moving the
-  `xid` into the value bumped `WISR_DB_VERSION` to 5. A database
-  written before it is refused, not migrated.
+  `xid` into the value bumped `WISR_DB_VERSION` to 5; it is 6
+  since the store column families were named `store.<storeid>`.
+  A database written in an older format is refused, not
+  migrated.
 - **The READ COMMITTED protocol is unproven under a race
   detector.** `e06` shows no lost increment, but a
   `-fsanitize=thread` build reports races, mostly through

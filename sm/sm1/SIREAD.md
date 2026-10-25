@@ -147,10 +147,13 @@ that skips one of its versions.
   As in PostgreSQL, READ COMMITTED and REPEATABLE READ
   transactions skip SSI entirely, so serializability holds
   among SERIALIZABLE transactions only (§7.4).
-- **Read-only transactions could free them early.** Once such a
-  transaction commits and its snapshot is proven *safe*, its
-  entries could go (the safe-snapshot rule in §7.4). Not
-  implemented yet: they are kept like any other.
+- **Read-only transactions free them early.** A transaction
+  declared read-only at `sm1::begin` drops its entries once its
+  snapshot is proven *safe*: every writer concurrent with it
+  has ended without an edge out to a transaction committed
+  before its snapshot (the safe-snapshot rule in §7.4,
+  `src/ssi.cc`). That can happen while it still runs. One not
+  declared read-only keeps them like any other.
 - **They don't survive a restart.** They are kept only in memory,
   which is why §8 has to handle prepared transactions losing
   their SIREAD entries after a crash.

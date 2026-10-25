@@ -39,17 +39,20 @@ The worker supplies its **own** filter:
 configurations are not passed to compaction service compaction
 so the user needs to set it"*. That is fine for a filter that
 is a pure function of the bytes it is given. `gc_filter_t` is
-not. Every `Filter()` call reaches into the primary's memory:
+not. Every `Filter()` call reaches into the primary's memory,
+and so does `filter_chained`, to which `Filter()` hands a
+chained key's versions (`../VCHAIN.md` §7):
 
 | what it needs | where that lives |
 | --- | --- |
-| `xct_status(db, xid, &commit_ts)` (`src/gc.cc:76`) | the in-memory active table, the commit cache, and `CF:txn` |
+| `xct_status(db, xid, &commit_ts)` (`src/gc.cc`, `gc_filter_t::Filter`, `filter_chained`, `filter_old`) | the in-memory active table, the commit cache, and `CF:txn` |
 | the watermark it judges against | `min` over live snapshots, open cursors and prepared transactions (§8.3) |
-| `db->purges` and `gc_cv` (`src/gc.cc:110-114`) | the in-process purge queue the tombstone rule pushes onto |
-| `db->gc_filter_errors` (`src/gc.cc:68`, `:82`) | the counter the `CF:txn` sweep consults before trusting a pass |
+| `db->purges` and `gc_cv` (`Filter`'s tombstone rule) | the in-process purge queue the tombstone rule pushes onto |
+| `db->repairs` (`filter_chained`, through `chain_report` in `src/chain.cc`) | the in-process queue of chained keys a dead version left, for the worker to put back |
+| `db->gc_filter_errors` (`Filter`, and `doubt()` for chained keys) | the counter the `CF:txn` sweep consults before trusting a pass |
 
 The first two are inputs the worker does not have. The last
-two are **side effects travelling outward**, which a remote
+three are **side effects travelling outward**, which a remote
 worker cannot perform and would have to return instead.
 
 ## 3. Why it is nonetheless tractable
@@ -78,10 +81,11 @@ So a job can carry its own answers:
    constructor argument (`gc_filter_t(db, storeid, watermark)`),
    so this is nearly free.
 3. **Return the side effects rather than performing them.**
-   The queued tombstone purges and the doubt count become part
-   of the job's result, and the primary applies them when it
-   installs the output. The `DeleteRange` purge itself stays on
-   the primary in any case: it is a write.
+   The queued tombstone purges, the chained keys to repair and
+   the doubt count become part of the job's result, and the
+   primary applies them when it installs the output. The
+   `DeleteRange` purge itself stays on the primary in any case:
+   it is a write.
 
 Step 1 is worth doing even with no remote worker in sight. It
 replaces a per-key status resolution with one batch resolution

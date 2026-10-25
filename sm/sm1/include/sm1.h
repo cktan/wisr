@@ -11,8 +11,9 @@
  * Conventions that hold throughout:
  *
  *   - A function returning int returns 0 on success and -1 on
- *     error. Exactly two, sm1::read() and sm1::scannxt(), also
- *     return 1 to mean "no row", which is not an error.
+ *     error. A few also return 1, which is not an error: "no
+ *     row" from the reads and sm1::scannxt(), "not had at once"
+ *     from the trylocks; API.md lists them.
  *   - A call that yields a handle -- sm1::attach(), sm1::opendb(),
  *     sm1::scan() -- returns 0 or -1 like any other and hands the
  *     handle back through its last parameter, set only on success.

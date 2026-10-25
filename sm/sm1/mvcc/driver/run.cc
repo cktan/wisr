@@ -499,7 +499,7 @@ public:
     // The driver's own session creates the stores and seeds
     // them. There are two: the one every row verb works in,
     // and a second holding the same rows, which exists to be
-    // dropped and looked up (DRIVER.md §5).
+    // dropped and looked up (DRIVER.md §2.2, §5).
     // A permutation script runs hundreds of short transactions,
     // and what it checks never needs a commit to survive a crash:
     // its database does not sync each commit (DRIVER.md §6).

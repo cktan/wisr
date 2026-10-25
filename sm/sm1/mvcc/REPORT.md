@@ -49,6 +49,11 @@ The suite is in six families:
   its specs, run as permutation scripts against the outcome
   its expected output gives.
 
+These counts are as of the audit, 109 scripts (`AUDIT.md`
+dates it). The suite has 114 now, in seven families: C runs
+to `c36`, F to `f11`, and family G (`g01`, `g02`) holds a
+key's versions (`MVCC.md` §7c).
+
 ---
 
 ## 2. Three behaviours the audit verified

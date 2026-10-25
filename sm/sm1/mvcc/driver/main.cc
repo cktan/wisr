@@ -2,7 +2,7 @@
  * main.cc -- the driver: run one scenario script and print its
  * transcript (mvcc/DRIVER.md).
  *
- *   driver [--block-ms N] script.t
+ *   driver [--block-ms N] [--chained] script.t
  *
  * The transcript goes to stdout, so a caller redirects it into
  * out/ and diffs it against good/. The exit status is 0 only

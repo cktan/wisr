@@ -36,18 +36,19 @@ are the reason the language has the features it has:
 The language stays small for the same reason: one verb per
 API call, no expressions, no variables, no control flow. A
 scenario that needs more belongs in C++ beside `e01` to
-`e03`.
+`e03` and `e06`.
 
 ## 1. Usage
 
 ```
-driver [--block-ms N] script.t
+driver [--block-ms N] [--chained] script.t
 ```
 
 | | |
 |---|---|
 | `script.t` | the script to run; exactly one is required |
 | `--block-ms N` | how long a step marked `blocks` is given before it is reported blocked (default 250) |
+| `--chained` | run against chained stores, every row verb through its `chain_` call (§7) |
 
 The transcript goes to **stdout**. Errors -- a script that
 does not parse, a database that will not open, a count of
@@ -233,10 +234,11 @@ argument.
 **`stmt`** starts a statement. It matters only at READ
 COMMITTED, where every read after it uses one snapshot until
 the next `stmt`; above that level the transaction already has
-one snapshot and the step is accepted and does nothing. There
-is no pairing for READ COMMITTED: a script that wants it
-declares `session <name> rc`, as `a15` and `a16` do, because
-the level is the scenario rather than one axis of it.
+one snapshot and the step is accepted and does nothing. Only
+`pairings levels` includes READ COMMITTED: a script about the
+level itself declares `session <name> rc`, as `a15` and `a16`
+do, because the level is the scenario rather than one axis of
+it.
 
 **Two stores.** Every run creates a second store
 holding the same seeded rows as the first. Every verb above
@@ -396,10 +398,13 @@ noise.
 
 ## 5. Limits
 
-- **One store per script**, created by the driver. Rows
-  are keys in it, and their values are opaque single words.
+- **Two stores per script**, created by the driver (§2.1,
+  §2.2). Rows are keys in the first, and their values are
+  opaque single words; the second, holding the same rows, is
+  reached only by `lookup` and `rmstore`.
 - **No expressions, variables, or control flow.** A scenario
-  that needs them belongs in C++ beside `e01` to `e03`.
+  that needs them belongs in C++ beside `e01` to `e03` and
+  `e06`.
 - **Sessions are one step at a time.** A session with a
   blocked step cannot be given another; doing so is reported
   as an error rather than queued.

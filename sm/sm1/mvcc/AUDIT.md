@@ -20,6 +20,10 @@ Grittner's commit-order and read-only refinements, on
 later figures, and §4a the three scenarios that arrived with
 it.
 
+The counts below are as of those dates, 109 scripts. There are
+114 now: `c35`, `c36`, `f11`, `g01` and `g02` arrived since,
+and this audit has not re-derived them.
+
 **Method.** Every expected outcome was re-derived from
 `MVCC.md` §1 and `SM1_DESIGN.md` §7.3 by hand — the edge set
 of each history, then the abort rule applied to it — and

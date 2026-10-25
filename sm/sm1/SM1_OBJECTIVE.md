@@ -65,10 +65,14 @@ These were open; they are now settled and drive `SM1_DESIGN.md`.
   serializable implemented as **SSI (optimistic)** — read/write
   dependency tracking with SIREAD predicate locks and pivot detection.
   No read locks; serialization failures surface as errors at commit.
-  Write-write conflicts are still prevented eagerly by in-memory row
-  locks (first-writer-wins). At read committed this is being
-  relaxed: a write that meets a newer commit waits and then
-  proceeds instead of failing (`SM1_DESIGN.md` §6.2).
+  Write-write conflicts are still prevented eagerly
+  (first-writer-wins), with no lock kept for a write: a second
+  writer of a key waits for the transaction whose uncommitted
+  version it meets, and fails if that one commits
+  (`WRITELOCK.md`). At read committed a write that meets a newer
+  commit fails with `SM_ERR_UPDATED` instead, which does not
+  abort: the caller reads the newest version with
+  `sm1::read_latest` and writes again (`SM1_DESIGN.md` §5.4).
 - **Uncommitted writes go eagerly into RocksDB**, stamped with the
   writing transaction's id, and are made visible through a durable
   commit-status table. This keeps transaction size unbounded by RAM,
@@ -88,7 +92,5 @@ These were open; they are now settled and drive `SM1_DESIGN.md`.
 
 ## Notes
 
-- `API.md` is a sketch. `SM1_DESIGN.md` proposes concrete C
-  signatures and flags where it must diverge — notably the
-  read/scan calls, and the extra 2PC entry points (`sm1::prepare`
-  taking a global id, plus recovery of in-doubt transactions).
+- `API.md` is the specification of `include/sm1.h`, the C++
+  interface; `SM1_DESIGN.md` is the design behind it.

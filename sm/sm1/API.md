@@ -20,10 +20,12 @@ interface, and the handles are opaque.
 
 - A call returns an `int`: **0 on success** and **-1 on
   error**, except where a positive return is documented for
-  that specific call. Exactly three have one: `sm1::read` and
-  `sm1::scannxt` both return 1 to mean "no row", and
-  `sm1::lastseq` 1 to mean "no value handed out yet", which are
-  not errors.
+  that specific call, which is never an error. `sm1::read`,
+  `sm1::read_latest`, `sm1::chain_read`,
+  `sm1::chain_read_latest` and `sm1::scannxt` return 1 to mean
+  "no row"; `sm1::lastseq` 1 to mean "no value handed out
+  yet"; `sm1::trylock` and `sm1::chain_trylock` 1 to mean "it
+  would have waited".
 - A call that yields a handle — `sm1::attach`, `sm1::opendb`,
   `sm1::scan` — returns 0 or -1 like any other, and hands the
   handle back through its last parameter, set only on success.
@@ -96,8 +98,20 @@ typedef enum sm_errnum_t {
     /* sm1's: NOT an abort; a wait an interrupt ended (sm_sys.h) */
     SM_ERR_INTERRUPTED   = 28,  /* the wait was interrupted */
 
+    /* sm0's: no file descriptor to be had (sm_vfd.h) */
+    SM_ERR_NOFDS         = 29,  /* out of file descriptors */
+
+    /* sm1's: a rollback to a savepoint failed; only abort is left */
+    SM_ERR_DOOMED        = 30,  /* the transaction can only be aborted */
+
+    /* sm1's: NOT an abort; a rollback closed the cursor */
+    SM_ERR_SCANCLOSED    = 31,  /* a rollback closed the cursor */
+
+    /* sm1's: NOT an abort; the newest version is a move's tombstone */
+    SM_ERR_MOVED         = 32,  /* the row moved to another key */
+
     /* The highest code, for code that walks them all. */
-    SM_ERR_LAST          = SM_ERR_INTERRUPTED
+    SM_ERR_LAST          = SM_ERR_MOVED
 } sm_errnum_t;
 
 /* sm1.h */
@@ -149,11 +163,18 @@ and "no error", the one way to start a sequence of calls from
 a known state.
 
 `sm1::errdup()` says where an `SM_ERR_DUPKEY` met its key, as
-far as the level that raised it knows: the unique index's oid,
-0 if not known, and the rownos of up to two rows that hold the
-key, `nrows` of them. A failed index build gives both rows
-(`sm3/SM3_DESIGN.md` §3); a write sm3 refuses gives the index
-alone, as its caller has the row. `sm1::setdup(d)` records it
+far as the level that raised it knows, in a `dupkey_t`:
+
+```cpp
+struct dupkey_t {
+    uint64_t    index = 0;   /* the unique index's oid; 0 if not known */
+    std::string row;         /* a row key; empty if not known */
+};
+```
+
+`row` is the key of a row that holds the duplicate key in its
+table, past the relid (`../ROWKEY.md` §2.5): a host reads the
+row by it to say the key. `sm1::setdup(d)` records it
 with the error just set, and a level above may call it again
 to add what it knows; setting the next error, or
 `reseterr()`, clears it. In C it is `sm_errdup()`.
@@ -289,6 +310,8 @@ key is a valid bound: a `std::string_view` cannot say both.
 struct env_t;       /* opaque */
 struct session_t;   /* opaque */
 struct scan_t;      /* opaque */
+struct loader_t;    /* opaque: a bulk load (sm1::load_open) */
+struct rawpin_t;    /* opaque: a raw pin (sm1::rawpin_new) */
 ```
 
 ### Isolation levels
@@ -319,6 +342,9 @@ typedef struct sm_options_t {
     int         commit_cache_entries;  /* default 65536 */
     long long   savepoint_undo_bytes;  /* default 64 MB */
     long long   idle_close_ms;         /* default 60000 */
+    long long   load_small_bytes;      /* default 4 MB */
+    long long   load_sort_bytes;       /* default 256 MB */
+    long long   load_file_bytes;       /* default 256 MB */
 } sm_options_t;
 
 /* sm1.h */
@@ -360,6 +386,13 @@ memory to roll back to its savepoints (SM1_DESIGN.md §6.5).
 Past it the transaction keeps writing, a warning is logged,
 and the savepoints then set can no longer be rolled back to.
 It must be at least 1.
+
+The three `load_` options are a bulk load's (`../BULKLOAD.md`
+§5), each at least 1. `load_small_bytes` is the size below
+which a load is written as one batch and not as files;
+`load_sort_bytes` is the memory a load sorts in before it
+writes a run to disk; `load_file_bytes` is the size at which a
+sorted file is closed and the next begun.
 
 ### Logging
 
@@ -445,7 +478,8 @@ write is rejected. At `sm1::xctlevel_t::repeatable_read` and
 the transaction is aborted, and the caller retries. At
 `sm1::xctlevel_t::read_committed` an update or delete fails with
 `SM_ERR_UPDATED`, which does not abort: the transaction stays
-active and keeps the row lock. The caller calls
+active, holding the key's row lock, which the refused write
+takes (`WRITELOCK.md` §3.5). The caller calls
 `sm1::read_latest`, re-evaluates the row, and writes again, as
 PostgreSQL's executor does at its default level. The engine
 never applies the write to the newer row on its own: a write
@@ -1047,12 +1081,16 @@ only this table on each key:
 | SIX | ok | — | — | — | — |
 | X | — | — | — | — | — |
 
-A write takes the key it writes exclusive, so every mode stops
-others writing the key.
+A write meets a lock on its key as an exclusive one would, so
+every mode stops others writing the key. The write itself
+keeps no lock: a lock the transaction already holds on the key
+it converts to exclusive, and otherwise it takes none
+(`WRITELOCK.md`).
 
 The call **blocks** while another transaction holds the row
-in a conflicting mode, exactly as a write does, and can fail
-with `SM_ERR_DEADLOCK` for the same reason. A transaction
+in a conflicting mode, exactly as a write does, or has written
+the row and not yet ended, and can fail with `SM_ERR_DEADLOCK`
+for the same reason. A transaction
 already holding the row and asking for a mode it does not
 cover — including by writing it — **converts** to the weakest
 mode covering both (IX and S make SIX; anything and X make X),
@@ -1122,7 +1160,7 @@ current one.
 Returns the depth (>= 1), or -1 on error.
 
 Errors: `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`,
-`SM_ERR_INVALID` (the stack is full).
+`SM_ERR_INVALID` (the stack is full, or a bulk load is open).
 
 ### int sm1::rollback(sm1::session_t* session, int depth)
 
@@ -1161,8 +1199,15 @@ changes nothing, and leaves the transaction to be aborted. A
 savepoint set afterwards works as usual, and forgetting a
 lost one is allowed.
 
+A rollback that fails past its checks, at a lost savepoint or
+on `SM_ERR_IO`, **dooms** the transaction: the writes it was
+to undo are still there, so every later call on it but
+`sm1::abort` fails with `SM_ERR_DOOMED`, the commit too.
+
 Errors: `SM_ERR_NOSAVEPOINT` (no savepoint at that depth),
-`SM_ERR_UNDOLIMIT`, `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`.
+`SM_ERR_UNDOLIMIT`, `SM_ERR_IO`, `SM_ERR_INVALID` (a bulk load
+is open), `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`,
+`SM_ERR_DOOMED`.
 
 ### int sm1::forget(sm1::session_t* session, int depth)
 
@@ -1286,7 +1331,7 @@ that stay inside it — a start key under it, and an end key
 under it or `"V"`, exclusive. Any other key in store 0 fails
 with `SM_ERR_INVALID`, so sm1's own rows stay its own.
 
-### int sm1::mkstore(sm1::session_t* session, uint64_t& storeid, bool temporary = false)
+### int sm1::mkstore(sm1::session_t* session, uint64_t& storeid, bool temporary = false, bool chained = false)
 
 Create a store and hand out its storeid in `storeid`.
 Transactional: visible to others only at commit, and undone
@@ -1312,6 +1357,14 @@ conflict and are tracked by no SERIALIZABLE check;
 `sm1::read_latest` on one needs no lock. A transaction declared
 read-only may make, write and drop one. A transaction that
 has done any of the three cannot `sm1::prepare`.
+
+With `chained`, the store is a **chained store**
+(`../VCHAIN.md`): it also holds chained keys, reached by the
+`chain_` calls below, each key's newest version under the
+plain key and the older ones chained behind it. Its column
+family is `chain.<storeid>` rather than `store.<storeid>`. The
+other calls reach its versioned keys as any store's. A
+temporary store may be chained too.
 
 Errors: `SM_ERR_NOTRANS`, `SM_ERR_CONFLICT` (retryable),
 `SM_ERR_INVALID`, `SM_ERR_PREPARED`,
@@ -1503,6 +1556,30 @@ snapshot, as `sm1::nextseq` does. Errors: `SM_ERR_NOTFOUND`,
 `SM_ERR_INVALID`, `SM_ERR_PREPARED`, `SM_ERR_CORRUPT`,
 `SM_ERR_IO`.
 
+### int sm1::seqref(sm1::session_t* session, std::string_view name, sm1::seqref_t& ref)
+
+### int sm1::nextseq(sm1::session_t* session, const sm1::seqref_t& ref, uint64_t& out)
+
+```cpp
+struct seqref_t {
+    std::string name;   /* a temporary sequence's; else "" */
+    uint64_t seqid = 0; /* 0 for a temporary sequence */
+    uint64_t start = 0;
+    uint64_t increment = 0;
+};
+```
+
+`sm1::seqref` looks the sequence `name` up into `ref`, as
+`sm1::nextseq` does: at the transaction's view if there is
+one, else at the newest committed state. The second
+`sm1::nextseq` takes `ref` in place of a name and draws from
+the sequence it holds, with no look-up of the name, a read of
+the catalog, each time: a session's temporary sequence by its
+name, which is the session's own, and any other by its seqid.
+`ref` stays good while the sequence is not dropped, which the
+caller sees to, as sm2 does by the table it has open. Errors
+as `sm1::nextseq`'s.
+
 ---
 
 ## Update API
@@ -1514,10 +1591,12 @@ SERIALIZABLE, and `sm1::update` and `sm1::erase` with
 committed a change to the same key after this transaction's
 snapshot.
 
-Each blocks while another active transaction holds a write
-lock on the same key, until that transaction ends. A
-blocked call can return `SM_ERR_DEADLOCK` if it is selected
-as the victim of a deadlock cycle.
+Each blocks while another active transaction has written the
+same key and not ended, or holds a lock on it taken with
+`sm1::lock`, until that transaction ends. A blocked call can
+return `SM_ERR_DEADLOCK` if it is selected as the victim of a
+deadlock cycle. A write itself keeps no lock: its uncommitted
+version is what the next writer waits for (`WRITELOCK.md`).
 
 ```cpp
 int insert(session_t* session, uint64_t storeid,
@@ -1574,9 +1653,34 @@ Errors for all three: `SM_ERR_CONFLICT` /
 `SM_ERR_DEADLOCK` (retryable), `SM_ERR_UPDATED` (READ
 COMMITTED; not retryable, the transaction stays active; call
 `sm1::read_latest`, then write again), `SM_ERR_NOTFOUND` (store
-or, for update/delete, key), `SM_ERR_DUPKEY` (insert),
-`SM_ERR_NOTRANS`, `SM_ERR_PREPARED`, `SM_ERR_INVALID`,
-`SM_ERR_DISKFULL`, `SM_ERR_IO`.
+or, for update/delete, key), `SM_ERR_MOVED` (update/delete of
+a key a move erased, `sm1::erase_moved`; not an abort),
+`SM_ERR_DUPKEY` (insert), `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`,
+`SM_ERR_INVALID`, `SM_ERR_DISKFULL`, `SM_ERR_IO`.
+
+### int sm1::insert_new(sm1::session_t* session, uint64_t storeid, std::string_view key, std::string_view data)
+
+`sm1::insert` of a key no version of has ever been written,
+which the caller knows: one made from a sequence of its own,
+as sm2 makes a row's `_id`. With no version to check against,
+the write reads nothing, where `sm1::insert` reads the key's
+newest version; a lock taken on the key is still waited for,
+and under SERIALIZABLE the write still finds the readers it
+invalidates. A debug build reads the key, and asserts it has
+no version. Errors as `sm1::insert`'s.
+
+### int sm1::erase_moved(sm1::session_t* session, uint64_t storeid, std::string_view key, sm1::rawpin_t* pin, std::string_view& old)
+
+`sm1::erase` of a row that moved to another key
+(`../ROWKEY.md` §2.3): its tombstone is marked a move's, flags
+bit 2 (`MVCC.md` §2). A reader sees it as any tombstone. A
+writer that meets it as the key's newest version, an
+`sm1::update` or `sm1::erase`, fails with `SM_ERR_MOVED` where
+a plain tombstone is `SM_ERR_NOTFOUND`, and so does
+`sm1::read_latest` where a plain one returns 1: at READ
+COMMITTED, after `SM_ERR_UPDATED`, the writer learns the row
+lives on elsewhere. The row erased is pinned into `pin`, as
+`sm1::erase`'s. Errors as `sm1::erase`'s.
 
 ---
 
@@ -1639,10 +1743,13 @@ a lock on the store the answer may change at once.
 Errors: `SM_ERR_NOTFOUND`, `SM_ERR_NOTRANS`,
 `SM_ERR_PREPARED`, `SM_ERR_IO`.
 
-### int sm1::load_stream(sm1::loader_t* loader, bool ascending, size_t& stream)
+### int sm1::load_stream(sm1::loader_t* loader, bool ascending, size_t& stream, bool chained = false)
 
 Declare a stream; they are numbered from 0 in the order
-declared.
+declared. With `ascending`, every key put to it must be
+greater than the one before. With `chained`, its keys are the
+store's chained keys (`sm1::chain_insert`), which a chained
+store alone has (`SM_ERR_INVALID`).
 
 ### int sm1::load_put(sm1::loader_t* loader, size_t stream, std::string_view key, std::string_view value)
 
@@ -1721,7 +1828,8 @@ if (rc != 0 && sm1::errnum() == sm1::SM_ERR_UPDATED) {
 Errors: `SM_ERR_NOTFOUND` (the *store* does not exist),
 `SM_ERR_NOTRANS`, `SM_ERR_PREPARED`, `SM_ERR_INVALID`
 (not READ COMMITTED, or neither a lock held nor a write of the
-key), `SM_ERR_CORRUPT`,
+key), `SM_ERR_MOVED` (the newest version is a move's
+tombstone, `sm1::erase_moved`), `SM_ERR_CORRUPT`,
 `SM_ERR_IO`.
 
 ### Raw pins
@@ -1797,8 +1905,9 @@ serialization failures.
 Scanning is **forward only**. Descending iteration is not
 supported, and is not a planned addition: no index serves a
 backward scan (`SM1_OBJECTIVE.md`). A caller that needs
-descending order keeps a second store with inverted key
-bytes and scans that one forward.
+descending order builds it into the key, inverted key bytes
+scanned forward, rather than keeping a mirror store for the
+other direction (`../PART4.md` §5).
 
 The cursor's view is fixed at this call (see "Isolation and
 visibility semantics", point 3). Its snapshot also pins
@@ -1808,7 +1917,9 @@ promptly.
 
 The cursor is owned by the session, must be used only from
 the thread using that session, and is invalidated by
-`sm1::commit`, `sm1::abort`, and `sm1::closedb`. Multiple cursors
+`sm1::commit`, `sm1::abort`, and `sm1::closedb`. An
+`sm1::rollback` to a savepoint older than it closes it: it then
+fails each read, and `sm1::scanend` frees it. Multiple cursors
 may be open on one session at once.
 
 Returns 0 with the cursor in `out`, or -1 on error:
@@ -1882,6 +1993,81 @@ Whether a rollback to a savepoint set before the cursor
 opened has closed it: its last row is then gone, and it reads
 no more. sm3 asks it after a rollback, to make the refs to
 such a cursor's row stale (`../ROW.md` §4.5).
+
+## Chained keys API
+
+Chained keys (`../VCHAIN.md`) are kept in a store
+`sm1::mkstore` made chained. A chained key keeps its newest
+version under the plain key and the older ones chained behind
+it, so a read is a Get, and one that does not see the newest
+follows the chain. Its keys are apart from the store's
+versioned ones: a chained key and a versioned key of the same
+bytes are two keys.
+
+Each call is the call of its name without `chain_`, with the
+same checks, conflicts, waits and errors (`sm1::insert`,
+`sm1::insert_new`, `sm1::update`, `sm1::erase`,
+`sm1::erase_moved`, `sm1::read`, `sm1::read_latest`, and
+`sm1::lock` or `sm1::trylock` of a `LOCKTYPE_ROW`), and
+`SM_ERR_INVALID` besides on a store that is not chained. An
+abort leaves its versions for readers to pass and GC to
+remove; a rollback to a savepoint puts the chain back.
+
+```cpp
+int chain_insert(session_t* session, uint64_t storeid,
+                 std::string_view key, std::string_view data);
+int chain_insert_new(session_t* session, uint64_t storeid,
+                     std::string_view key, std::string_view data);
+int chain_update(session_t* session, uint64_t storeid,
+                 std::string_view key, std::string_view data);
+int chain_update(session_t* session, uint64_t storeid,
+                 std::string_view key, std::string_view data,
+                 rawpin_t* pin, std::string_view& old);
+int chain_erase(session_t* session, uint64_t storeid,
+                std::string_view key);
+int chain_erase(session_t* session, uint64_t storeid,
+                std::string_view key, rawpin_t* pin,
+                std::string_view& old);
+int chain_erase_moved(session_t* session, uint64_t storeid,
+                      std::string_view key, rawpin_t* pin,
+                      std::string_view& old);
+int chain_read(session_t* session, uint64_t storeid,
+               std::string_view key, rawpin_t* pin,
+               std::string_view& data);
+int chain_read(session_t* session, uint64_t storeid,
+               std::string_view key, std::string_view& data);
+int chain_read_latest(session_t* session, uint64_t storeid,
+                      std::string_view key, std::string_view& data);
+int chain_read_latest(session_t* session, uint64_t storeid,
+                      std::string_view key, rawpin_t* pin,
+                      std::string_view& data);
+int chain_lock(session_t* session, uint64_t storeid,
+               std::string_view key, lockmode_t mode);
+int chain_trylock(session_t* session, uint64_t storeid,
+                  std::string_view key, lockmode_t mode);
+```
+
+### int sm1::store_chained(sm1::session_t* session, uint64_t storeid, bool& out)
+
+Whether `storeid` was made chained (`sm1::mkstore`), in `out`:
+fixed when the store is made, so read with no transaction.
+
+Errors: `SM_ERR_INVALID`, `SM_ERR_NOTFOUND`.
+
+### int sm1::chain_approxsize(sm1::session_t* session, uint64_t storeid, const char* lo, size_t lolen, const char* hi, size_t hilen, uint64_t& disk, uint64_t& mem, bool old = false)
+
+`sm1::approxsize` of a chained store's chained keys in
+[`lo`, `hi`): their newest versions alone; with `old`, the
+store's older versions too, which no key range divides.
+
+### int sm1::chain_scan(sm1::session_t* session, uint64_t storeid, const char* skey, size_t sklen, int skey_inclusive, const char* ekey, size_t eklen, int ekey_inclusive, sm1::scan_t*& out)
+
+`sm1::scan` over a chained store's chained keys: the same
+bounds, view, SIREAD range and forward-only order, and the
+same `sm1::scannxt`, `sm1::scan_seek` and `sm1::scanend`. A
+key whose newest version the cursor does not see is handed
+out as the version it does, read from the chain as the store
+stood when the cursor opened.
 
 ## Build
 

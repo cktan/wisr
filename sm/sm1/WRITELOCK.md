@@ -1,13 +1,13 @@
 # WRITELOCK — writes that keep no row lock
 
-A write in sm1 takes its key's row lock, exclusive, and keeps it
-to the end of the transaction. A transaction therefore holds a
-lock entry for every key it writes. This file is the design of
+A write in sm1 took its key's row lock, exclusive, and kept it
+to the end of the transaction, so a transaction held a lock
+entry for every key it wrote. This file is the design of
 writes that keep none, as PostgreSQL's do: the uncommitted
 version itself stands for the lock, and a second writer of the
 key waits for the transaction that wrote it.
 
-**Status: built**, on the `writelock` branch. Every scenario in
+**Status: built**, and merged. Every scenario in
 `mvcc/` passes unchanged, with two added (`b33`, `b34`), and so
 do the stress tests and every level's suite. Paths are relative
 to `sm1/`.
@@ -118,7 +118,7 @@ version whose writer aborted or crashed is skipped, as now.
 
 Step 2 keeps a write behind an explicit lock: a `FOR SHARE` of
 the row, a foreign key check on a parent row, an index build's
-shared lock on the heap row it is backfilling. It takes the
+shared lock on the table row it is backfilling. It takes the
 lock table's mutex for a look-up, not an insert.
 
 ### 3.3 An explicit lock
@@ -212,10 +212,10 @@ change.**
 
 ### 3.10 sm3's protocols still hold
 
-Two of sm3's protocols rely on a writer holding its heap row to
-commit:
+Two of sm3's protocols rely on a writer holding its table row
+to commit:
 
-- **The index build's backfill** takes a heap row's lock shared
+- **The index build's backfill** takes a table row's lock shared
   and adds the row's entry, relying on a writer of the row
   holding it exclusive to commit (`sm3/SM3_DESIGN.md` §3). The
   backfill's lock is explicit, so it now waits for the

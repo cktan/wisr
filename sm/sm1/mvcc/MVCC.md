@@ -175,12 +175,15 @@ S+S either side of a write skew may be the one doomed -- the
 script writes `commit?`, which records the result without
 printing it, and states what must hold with a `check`.
 
-Three scenarios are not timelines and stay in C++, built into
+Four scenarios are not timelines and stay in C++, built into
 `build/mvcc_tests`: `e01` reaches into the database object to
-prove SSI state is released, and `e02` and `e03` run four
-threads for fifty rounds each, with retries. Everything else
--- families A, B and C, the blocking scenarios included --
-is a script.
+prove SSI state is released, `e02` and `e03` run four threads
+for fifty rounds each, with retries, and `e06` runs four READ
+COMMITTED threads for forty rounds each, with compaction
+running. Everything else -- families A, B, C, F, G and P, and
+`e04` and `e05`, the blocking scenarios included -- is a
+script, 114 of them, and `make scenarios` runs each twice, on
+versioned stores and on chained ones (`DRIVER.md` §7).
 
 ## 4. Family A — visibility
 
@@ -376,6 +379,8 @@ that costs.
 | c32 | c07 with T3 declared read-only | all commit | all commit | not all commit | `in/c32_read_only_declared_anomaly.t` |
 | c33 | `T2: r(R1)` ‖ `T1: w(R1) c` ‖ `T3 (declared read-only): r(R2)` ‖ `T2: w(R2) c` ‖ `T3: c` | all commit | all commit | all commit | `in/c33_read_only_spares_pivot.t` |
 | c34 | `T1 (declared read-only): w(R1) r(R1) c` | write refused, T1 commits | write refused, T1 commits | write refused, T1 commits | `in/c34_read_only_refuses_writes.t` |
+| c35 | c31 with T2's lookup of the store already in its session's store cache | all commit | all commit | at most one commits | `in/c35_write_skew_across_a_cached_drop.t` |
+| c36 | `T1: r(R1)` ‖ `T2: w(R2)` ‖ `T1: r(R2)` ‖ `T2: r(R3)` ‖ `T1: w(R3)`, T1's read of R2 past a reused iterator | all commit | all commit | at most one commits | `in/c36_write_skew_past_a_reused_iterator.t` |
 
 Half of this family — c01, c08 through c12, c14, c15, c19,
 c20, c25, c33 — exists to bound the other half. A level that failed
@@ -438,6 +443,7 @@ which does not abort; the caller reads the newest version with
 | f08 | `T1`, `T2`, `T3` in turn on R1 | each wakes with UPDATED, reads, writes; R1 ends at the last | `in/f08_chained_contention.t` |
 | f09 | `T1: w(R1) c` ‖ `T2: d(R1)` | UPDATED, readlatest 1, delete skipped | `in/f09_delete_meets_concurrent_update.t` |
 | f10 | savepoint, failed write, readlatest, rollback | a lock taken after the savepoint drops its mark; one taken before keeps it | `in/f10_savepoint_rollback_around_readlatest.t` |
+| f11 | `T1: move(R1) c` while T2 waits to write | BLOCK → UPDATED, readlatest and the write again MOVED; a reader sees no row, a delete gets MOVED | `in/f11_row_moved_meanwhile.t` |
 
 ## 7b. Family P — PostgreSQL's own isolation tests
 
@@ -473,6 +479,16 @@ of the 390 permutations end as PostgreSQL's do. The rest:
   a serial order. sm1 applies the read-only test to any
   transaction that committed having written nothing;
   PostgreSQL only to one declared `READ ONLY`, which s3 is not.
+
+## 7c. Family G — a key's versions
+
+How a key's versions read when one is set back, or left dead
+by an abort and then written over.
+
+| # | Schedule | Pairings | Outcome | File |
+|---|---|---|---|---|
+| g01 | `T1: r(R1)` ‖ `T2: w(R1 = 1) c` ‖ `T3: r(R1)` ‖ `T2: w(R1 = 0) c` ‖ `T1, T3: r(R1)`, `T3: w(R1)` | RR | T1 reads 0, T3 reads 1 still; T3's write CONFLICT | `in/g01_value_set_back.t` |
+| g02 | `T2: w(R1) w(R1) a` ‖ `T1, T3: r(R1)` ‖ `T3: w(R1) c` | all | readers pass both dead versions to 0; T3's insert of R2 DUPKEY, write of R9 NOTFOUND; T3 writes over the dead versions, T1 still reads 0 | `in/g02_dead_version_overwritten.t` |
 
 ## 8. What wisr does not detect, by design
 
@@ -521,10 +537,11 @@ c24, c30, c31 — plus the shapes that must not fail.
 **It is not a model check.** Each scenario is one schedule,
 chosen because it is the one that distinguishes the levels.
 Interleavings other than the ones written here are not
-explored, and the twenty blocking scenarios (b09 to b11,
-b16, b17, b19 to b32) and two stress scenarios (e02, e03)
-are the only places where real concurrency, rather than a
-scripted order, is involved. They are also where it belongs:
+explored, and the thirty blocking scenarios (b09 to b11,
+b16, b17, b19 to b28, b30 to b36, f01 to f06, f08 and f11)
+and three stress scenarios (e02, e03, e06) are the only
+places where real concurrency, rather than a scripted order,
+is involved. They are also where it belongs:
 `test/test_lock.cc` and `test/test_savepoint.cc` used to
 play the same timelines out with threads and sleeps, and
 keep only what a script cannot say — error codes, argument
@@ -532,15 +549,17 @@ handling, engine state, contention under load, and the
 index-build protocol, which needs a write to a second
 store the language has no verb for.
 
-**Read committed is covered by two scenarios, not a
-pairing.** a15 and a16 declare `session <name> rc` and run
+**Read committed is mostly pinned, not paired.** a15, a16,
+f01 to f05 and f07 to f11 declare `session <name> rc` and run
 once, because the level is what those scenarios are about;
-every other script runs at repeatable read and above, where
-the four pairings say something. What a15 and a16 pin is the
-level's definition — a fresh snapshot per call, and one
-snapshot per statement between `stmt` boundaries — not its
-interaction with SSI, which §7.4 settles by making
-non-serializable transactions untracked.
+b35 and b36 alone run it as one axis, under `pairings
+levels`. Every other script runs at repeatable read and
+above, where the four pairings say something. What a15 and
+a16 pin is the level's definition — a fresh snapshot per
+call, and one snapshot per statement between `stmt`
+boundaries — and family F its writes, not its interaction
+with SSI, which §7.4 settles by making non-serializable
+transactions untracked.
 
 **It assumes two stores and a single process.** Rows
 live in the first; the second exists to be dropped and

@@ -313,8 +313,8 @@ gone is still true, and nothing asks for it (§3.5).
   add it here too, or every version of such a transaction
   falls through to `CF:txn`.
 - **It is not sized by bytes.** The bound is a count of
-  entries. Each is two map nodes of two 8-byte numbers, a few
-  megabytes in all at the default.
+  entries. Each is a 16-byte slot of an array, an `xid` and a
+  `commit_ts`, so 1 MB in all at the default of 65,536.
 
 ---
 

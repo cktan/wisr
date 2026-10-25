@@ -68,16 +68,19 @@ it (`SM1_DESIGN.md` §4.2).
 
 ## 2. A version on disk
 
-Each store is a RocksDB column family. A version is one pair
-in it (`SM1_DESIGN.md` §3.1):
+Each store is a RocksDB column family, `store.<storeid>`, or
+`chain.<storeid>` for a store made chained. A version is one
+pair in it (`SM1_DESIGN.md` §3.1):
 
 ```
-key   = userkey (variable)
+key   = class   (1 byte, 0x00: a versioned key)
+      | userkey (variable)
       | ~wts   (8 bytes, big-endian, complemented)
       | ~seq   (4 bytes, big-endian, complemented)
 
 value = flags   (1 byte)   bit 0: tombstone, this version is a delete
                            bit 1: stamped, the next field is a commit_ts
+                           bit 2: a move's tombstone (sm1::erase_moved)
       | xid       (8 bytes) while unstamped: the writer
         commit_ts (8 bytes) once stamped, in its place
       | payload  (variable; none for a tombstone)
@@ -86,7 +89,12 @@ value = flags   (1 byte)   bit 0: tombstone, this version is a delete
 - The complements make a key's versions sort **newest
   first**, so a seek to `userkey | ~snapshot_ts` lands on the
   newest version written at or before the snapshot.
-- A custom comparator orders by `userkey` first and the
+- The class byte opens every key and no caller sees it:
+  `0x00` for the versioned keys this digest describes, `0x01`
+  and `0x02` for a chained key's newest and older versions,
+  which a chained store also holds (`../VCHAIN.md` §2).
+- A custom comparator, `wisr.store.v2`, orders by the class
+  byte, then within class `0x00` by `userkey` and by the
   12-byte tail second, so a key's versions are contiguous.
 - **A write is eager.** The version is put into RocksDB at
   once, before the transaction commits. That is why a
@@ -457,7 +465,9 @@ coordinator.
 **A rollback to a savepoint** is not like these. The
 transaction lives on and may commit, and every version it
 wrote carries the same `xid`, so the versions to undo are
-deleted one by one. `SAVEPOINT.md` is the design that would
+deleted one by one; a chained key's are not deleted, but the
+key's version from before the mark is put back under it
+(`../VCHAIN.md` §6). `SAVEPOINT.md` is the design that would
 make it work as abort does.
 
 ---
@@ -475,7 +485,7 @@ Each is a RocksDB column family of one database.
 
 | Structure | Key → value | Holds |
 | --- | --- | --- |
-| `CF:store.<storeid>`, one for each store | `userkey ‖ ~wts ‖ ~seq` → `flags ‖ xid or commit_ts ‖ payload` | the versions (§2). `store.0` is sm1's own catalog, versioned like any other store |
+| `CF:store.<storeid>`, one for each store; `CF:chain.<storeid>` for a chained one | `class ‖ userkey ‖ ~wts ‖ ~seq` → `flags ‖ xid or commit_ts ‖ payload` | the versions (§2); a chained store's chained keys too (`../VCHAIN.md` §2). `store.0` is sm1's own catalog, versioned like any other store |
 | `CF:txn` | `xid` → state, `snapshot_ts`, `commit_ts`, and more if prepared | the fate of each transaction that reached a decision (§6) |
 | `CF:meta` | a name → a number | the format version, and the leases of the counters: `next_ts` for `global_ts`, one for object ids, one for each sequence (§1) |
 
@@ -572,3 +582,4 @@ transaction writes after it opened.
 | serializable isolation | `SIREAD.md` |
 | savepoints without an undo list | `SAVEPOINT.md` |
 | the calls | `API.md` |
+| chained keys, newest version under the plain key | `../VCHAIN.md` |

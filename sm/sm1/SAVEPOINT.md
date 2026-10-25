@@ -7,7 +7,7 @@ file is the design of a rollback that deletes nothing and
 remembers nothing per write.
 
 **We are leaning towards keeping the current
-implementation**, the undo list, and not building this. Four
+implementation**, the undo list, and not building this. Three
 reasons:
 
 - **A rollback is rare.** What this design saves is paid
@@ -18,19 +18,17 @@ reasons:
   `savepoint_undo_bytes` caps it. Past the cap the
   transaction keeps writing and only the rare rollback
   becomes an abort.
-- **The saving would be partial.** The lock list, one entry
-  for each key written, is larger than the undo list and
-  stays either way, so a transaction holding a savepoint
-  over a large statement would still cost a great deal.
 - **The change is to the core.** The visibility rule, the
   status record, the commit cache, the compaction filter and
   recovery all change, and the database format with them,
   for that partial saving.
 
 It would be worth revisiting if drivers that set a savepoint
-around every statement turn out to be common for the fork,
-or when the lock list is reduced too, so that the two
-together make a large transaction cheap.
+around every statement turn out to be common for the fork.
+A fourth reason, that the lock list held an entry for each
+key written and would stay either way, is gone: a write keeps
+no lock (`WRITELOCK.md`), so the undo list is now what a
+large transaction holding a savepoint costs.
 
 It is a design and not yet built. It changes sm1's visibility
 rule, its status record and its compaction filter, so it is a
@@ -79,8 +77,9 @@ change to the core and is argued here first.
 - The version's key and value. `seq` is already in the key.
 - Abort, which was always done this way: nothing deleted,
   the versions dead by their status.
-- The lock list, `T.locks`. A rollback still releases the
-  locks taken after the mark, so they are still listed.
+- The lock list, `T.locks`, of explicit locks alone, since a
+  write keeps none (`WRITELOCK.md`). A rollback still releases
+  the locks taken after the mark, so they are still listed.
 
 ---
 
@@ -221,11 +220,12 @@ COMMITTED answers *dead* for a `seq` in its dead ranges.
 | aborted | nowhere: everything is dead |
 
 **Others must be able to ask of a running transaction.** A
-rollback releases the locks taken after its mark. Another
-writer can then lock such a key and look for its newest
-version, and what it finds first is the rolled-back one: in
-RocksDB still, written by a transaction still running. Today
-it would have been deleted. Here the writer resolves it,
+rollback wakes the writers waiting on the transaction
+(`WRITELOCK.md` §3.4). Such a writer then looks again for its
+key's newest version, and what it finds first is the
+rolled-back one: in RocksDB still, written by a transaction
+still running. Today it would have been deleted. Here the
+writer resolves it, rather than waiting for its writer,
 finds its `seq` dead, and steps to the version below, as if
 it had never been written. So the list in the active table is
 read by other threads while its owner adds to it, and is
@@ -324,9 +324,6 @@ The others are untouched by this design.
 - **A new format version.** The status record gains a field,
   so `WISR_DB_VERSION` goes from 6 to 7, and an older
   database is refused, not migrated, as before.
-- **The lock list still grows.** `T.locks` holds an entry for
-  each key written, in every transaction, to release them at
-  the end. This design does nothing for it.
 
 ---
 
