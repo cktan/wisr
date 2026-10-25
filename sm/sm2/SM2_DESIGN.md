@@ -112,10 +112,11 @@ The rules it satisfies:
   (§4). A type is not added until it has all three.
 - Every type has a **small stable code that goes on disk**, in
   the schema rather than in each row. The codes in `TYPE.md`
-  §3 are frozen as they stand, `bool` = 1 through `uuid` = 16:
-  assigned once, never renumbered and never reused, so a type
-  removed from the set does not free its number. Codes 64–127
-  are reserved for types added later, and 0 is never a code.
+  §3 are frozen as they stand, `bool` = 1 through `name` = 20,
+  7 retired (§2.2): assigned once, never renumbered and never
+  reused, so a type removed from the set does not free its
+  number. Codes 64–127 are reserved for types added later, and
+  0 is never a code.
 - **Null is a property of the column, not of the type.** It is
   carried by the tuple's null bitmap (§4) and by a null
   marker in the key encoding (§3), so no type needs a reserved
@@ -675,8 +676,8 @@ meets them (§4.1):
   largest datums out of line until the tuple fits, since many
   columns each under a datum threshold can still pass the
   limit. The fixed part always fits: PostgreSQL's 1600
-  columns at 16 bytes, or an 18-byte TOAST pointer each, stay
-  under 29 KB.
+  columns at 16 bytes, or a 22-byte TOAST pointer each, stay
+  under 35 KB.
   The TOAST data lives in the table's own sm1 store, under
   the relid `0xFFFF` (§5), so writing a row and its
   TOAST data is one atomic sm1 write, no chunk ever falls
@@ -952,11 +953,23 @@ value is its tuple alone:
   then the row **moves**, its old key erased with a move's
   tombstone and the row inserted under the new one.
 - **`_id` is no TID.** A query reads it as the system column
-  `rowno`, an `int8`, and names no `ctid` (`PART4.md` §3). It
+  `_id`, an `int8`, of a table without a primary key alone, and
+  names no `ctid` (`PART4.md` §3, `../ROWKEY.md` §3.1). It
   names the row, not the row version, so it does not change on
   `UPDATE`. digres names a row by its key, not by `_id`
   (`../ROWKEY.md`): every call that names a row takes its key,
   and `rel_key` encodes one from the key's values.
+
+**A rel's rows are chained when its store is**
+(`../VCHAIN.md`): a store made chained, by `sm1::mkstore`,
+keeps a row's newest version under its plain key and the older
+ones in a chain behind it, and `rel_open` asks
+`sm1::store_chained` which kind it is over. Over a chained
+store a `rel` reads, writes, locks, scans and sizes its rows
+with sm1's `chain_` calls, as the table below names them, and
+so does the primary key's index `rel`, whose entries are the
+rows. A secondary index's entries and the TOAST data stay
+sm1's versioned keys, under the plain calls.
 
 Why clustered: on an LSM a heap's key is a key like any other,
 so a heap pays an index's price on every read through an index
@@ -967,15 +980,15 @@ its key, as `rel_insert` gives it:
 
 | sm2 | what it adds | over |
 | --- | --- | --- |
-| `rel_insert` | writes a tuple under its key, and returns the key, and a keyless row's new `_id`, 0 for a keyed row; the tuple is encoded from datums, or handed in pre-encoded and checked by `tup_check` before an `_id` is drawn; the `_id` from a `seqref_t` looked up at the rel's first draw, and a keyless row's key, made of it, written unchecked, as none was before | `sm1::seqref`, `sm1::nextseq`, `sm1::insert`, `sm1::insert_new` |
+| `rel_insert` | writes a tuple under its key, and returns the key, and a keyless row's new `_id`, 0 for a keyed row; the tuple is encoded from datums, or handed in pre-encoded and checked by `tup_check` before an `_id` is drawn; the `_id` from a `seqref_t` looked up at the rel's first draw, and a keyless row's key, made of it, written unchecked, as none was before | `sm1::seqref`, `sm1::nextseq`, `sm1::insert`, `sm1::insert_new`; chained, `sm1::chain_insert`, `sm1::chain_insert_new` |
 | `rel_key` | the key of a row from its primary key's values, or a keyless row's from its `_id`, encoded; no read (`../ROWKEY.md` §1) | — |
-| `rel_read` | reads a row by its key, and its `_id`, from the key, 0 for a keyed row | `sm1::read` |
-| `rel_update`, `rel_delete` | by key; hands back the old image as a **tuple**, not bytes; `rel_update` takes datums or a pre-encoded tuple, checked as `rel_insert`'s is, and moves a row whose primary key changed, its old key erased with a move's tombstone (`../ROWKEY.md` §2.3) | `sm1::update`, `sm1::erase`, `sm1::erase_moved`, `sm1::insert` |
-| `rel_read_latest` | the newest committed image, decoded | `sm1::read_latest` |
-| `rel_scan`, `rel_scan_seek` | tuples in `_id` order, forward only, of a keyless rel; a keyed one's are scanned by key (`idx_scan_rows`) | `sm1::scan`, `sm1::scan_seek` |
+| `rel_read` | reads a row by its key, and its `_id`, from the key, 0 for a keyed row | `sm1::read`; chained, `sm1::chain_read` |
+| `rel_update`, `rel_delete` | by key; hands back the old image as a **tuple**, not bytes; `rel_update` takes datums or a pre-encoded tuple, checked as `rel_insert`'s is, and moves a row whose primary key changed, its old key erased with a move's tombstone (`../ROWKEY.md` §2.3) | `sm1::update`, `sm1::erase`, `sm1::erase_moved`, `sm1::insert`; chained, `sm1::chain_update`, `sm1::chain_erase`, `sm1::chain_erase_moved`, `sm1::chain_insert` |
+| `rel_read_latest` | the newest committed image, decoded | `sm1::read_latest`; chained, `sm1::chain_read_latest` |
+| `rel_scan`, `rel_scan_seek` | tuples in `_id` order, forward only, of a keyless rel; a keyed one's are scanned by key (`idx_scan_rows`) | `sm1::scan`, `sm1::scan_seek`; chained, `sm1::chain_scan`, `sm1::scan_seek` |
 | `rel_scan_seek_key` | moves a scan in key order, `idx_scan_rows`' or a keyless rel's, forward to a key | `sm1::scan_seek` |
-| `rel_keys_at`, `rel_range_size` | the keys at fractions of the rel's bytes, by bisecting its key range on the store's size estimates, and the bytes of a key range; no row read (`../ROWKEY.md` §2.4) | `sm1::approxsize` |
-| `relid_size` | the bytes under a relid, a rel's or an index's, in files and in memtables apart; no open rel and no transaction (`sm3/SM3_DESIGN.md` §6.2) | `sm1::approxsize` |
+| `rel_keys_at`, `rel_range_size` | the keys at fractions of the rel's bytes, by bisecting its key range on the store's size estimates, and the bytes of a key range; no row read (`../ROWKEY.md` §2.4) | `sm1::approxsize`; chained, `sm1::chain_approxsize` |
+| `relid_size` | the bytes under a relid, a rel's or an index's, in files and in memtables apart; no open rel and no transaction (`sm3/SM3_DESIGN.md` §6.2) | `sm1::approxsize`, and on a chained store `sm1::chain_approxsize` too, the two files' estimates added |
 
 **Decision: two kinds of `rel`, over the same sm1 store, told
 apart by their relid.** Index entries are keyed by encoded
@@ -999,9 +1012,10 @@ columns, and sm3 never encodes a key itself, so sm2 gives it a
   `idx_scan_rows` hands them out in key order as rows.
 
 `rel_lock` takes a row's lock without writing it, as
-`sm1::lock` does: `SELECT … FOR SHARE` and `FOR UPDATE`, and
-what sm3's index build holds on a row while it adds the row's
-entry (`sm3/SM3_DESIGN.md` §3).
+`sm1::lock` does, or `sm1::chain_lock` over a chained store:
+`SELECT … FOR SHARE` and `FOR UPDATE`, and what sm3's index
+build holds on a row while it adds the row's entry
+(`sm3/SM3_DESIGN.md` §3).
 
 sm2 prepends and strips the relid for both kinds, and the
 table above is the `rel`'s; an index `rel`'s operations are
@@ -1174,7 +1188,7 @@ will find them:
   removed the IPC boundary but not this (`PART4.md` §2).
 - **decimal is the exception, and pays for it.** It follows
   DuckDB's decimal, not PostgreSQL's numeric (§2.2), so it is the
-  one type converted datum by datum, it caps at 38 digits
+  one type converted datum by datum, it caps at 36 digits
   where PG allows 1000, and it has no NaN and no infinity.
   Bought in exchange for a `decimal` key encoding that is
   an integer's, and a fixed-width `decimal` column.
@@ -1202,10 +1216,11 @@ will find them:
   bytes for most primary keys, and a key's columns are cut at
   `key_budget(max_pk_len)`, 3070 bytes, in a keyed table.
 - **`ctid` is gone.** A query that reads `ctid` fails, and
-  reads `rowno` instead (`PART4.md` §3); inside, the fork names
-  a row by its key, with no TID at all (`../ROWKEY.md`). And
-  since `_id` names a row, not a version, code that expects it
-  to change on `UPDATE` sees it stay put.
+  reads `_id` instead, in a table without a primary key
+  (`PART4.md` §3); inside, the fork names a row by its key,
+  with no TID at all (`../ROWKEY.md`). And since `_id` names a
+  row, not a version, code that expects it to change on
+  `UPDATE` sees it stay put.
 - **Descending order costs an encoding, not a structure.**
   Inverted bytes scanned forward means no mirror relation and
   no second copy, but it also means a column's direction is
@@ -1248,7 +1263,7 @@ sm2 mirrors sm1: nothing about its build deserves novelty.
 ```
 sm2/
   Makefile      the same targets as sm1's; sm2 joins LEVELS
-  include/      the public header (`QUESTIONS.md` 5.1)
+  include/      the public header (§5)
   src/type/     steps 1 and 2: the ADT table, each type's
                 representation, and its key encoding
   src/ryu/      PostgreSQL 18's float printers, copied verbatim
@@ -1297,8 +1312,8 @@ before them.
 - A stable on-disk type code per type, assigned once.
 - Null and collation as properties of a column, not of a type.
 - The `decimal` rules in §2.2: only
-  `decimal(p, s)`, a bare `decimal` is `decimal(18, 3)`, and NaN
-  and infinity are refused.
+  `decimal(p, s)`, a bare `decimal` resolved by the host
+  (digres's `decimal(17, 3)`), and NaN and infinity refused.
 
 **Verify:** for every type, a datum round trips through the
 in-memory representation, and the type's own comparison
@@ -1369,11 +1384,11 @@ The three above, joined to sm1.
   codec of step 3 rather than a second copy of it.
 - The 2-byte relid, chosen by sm3, opaque to sm2
   (§5).
-- Rows keyed by `rowno`, an unsigned 64-bit number from the
-  table's sm1 sequence, kept across updates (§5); since keyed by
-  the primary key, with that number their `_id`
-  (`../CLUSTER.md`), and a keyed row with none
-  (`../ROWKEY.md`).
+- Rows keyed by the primary key, or without one by `_id`, an
+  unsigned 64-bit number from the table's sm1 sequence (§5,
+  `../CLUSTER.md`, `../ROWKEY.md`); first built keyed by
+  `rowno` in every table, with the primary key an index. Rows
+  chained when the store is (`../VCHAIN.md`).
 - Errors from sm1 passed through, not translated —
   `SM_ERR_UPDATED` in particular.
 - Per-column decoding, so a reader that wants one column does
@@ -1383,9 +1398,9 @@ The three above, joined to sm1.
 back out, under every isolation level; the old image returned
 by an update or a delete is the tuple that was there; a
 savepoint rollback leaves no sm2 state behind, because there
-is none to leave; an update keeps its `rowno`; two `rel`s over
-the same sm1 store with different relids never see each
-other's rows.
+is none to leave; an update keeps its key unless its primary
+key changed, when the row moves; two `rel`s over the same sm1
+store with different relids never see each other's rows.
 
 ### 8.3 Testing
 

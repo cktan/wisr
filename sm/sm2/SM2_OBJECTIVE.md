@@ -60,18 +60,21 @@ sm2 the way sm2 is built on sm1 (`sm3/SM3_OBJECTIVE.md`).
 
 These are settled and drive `SM2_DESIGN.md`.
 
-- **Row identity is `rowno`, and the table is a heap.** A row
-  is keyed by an unsigned 64-bit `rowno` from a per-table sm1
-  sequence, never reused and kept across updates; the primary
-  key is an index over it, as in PostgreSQL. A query reads it
-  as the system column `rowno`, and has no `ctid`
-  (`SM2_DESIGN.md` §5). This reverses an earlier choice to
-  cluster the table on its primary key, as YugabyteDB does: a
-  heap is what PostgreSQL's planner and executor assume, it
-  serves a table with no primary key, and a primary key change no
-  longer rewrites every index. It costs a second read on a
-  primary key lookup and locality on a primary key range
-  scan.
+- **A row is keyed by its primary key, or by `_id` without
+  one.** A table with a primary key is clustered on it, and
+  the primary key has no entries of its own; a table without
+  one keys a row by `_id`, an unsigned 64-bit number from a
+  per-table sm1 sequence, never reused and never changed. A
+  query reads `_id` as a keyless table's system column, and no
+  row has a `ctid` (`SM2_DESIGN.md` §5, `../CLUSTER.md`,
+  `../ROWKEY.md`). This bullet first recorded the opposite: a
+  heap keyed by a `rowno` in every table, the primary key an
+  index over it, reversing a still earlier choice to cluster,
+  as YugabyteDB does. The heap was dropped in turn: on an LSM
+  its key costs an index's price on every read through an
+  index (`../CLUSTER.md` §1), so it paid a second read on a
+  primary key lookup and locality on a range scan. A primary
+  key change now moves the row and rewrites its index entries.
 - **Every column is in the tuple.** An encoded index key is
   an ordering device, not storage: an indexed column is
   written twice, encoded in the index and native in the
@@ -95,8 +98,8 @@ These are settled and drive `SM2_DESIGN.md`.
   (`SM2_DESIGN.md` §2.1).
 - **Except the decimals, which follow DuckDB's**: a fixed-width
   two's-complement integer with the scale in the schema, as two
-  types — `decimal64`, 64 bits to 18 digits of precision, and
-  `decimal128`, 128 bits to 38 — to which sm3 maps SQL's
+  types — `decimal64`, 64 bits to 17 digits of precision, and
+  `decimal128`, 128 bits to 36 — to which the host maps SQL's
   `decimal(p, s)`. It buys a key encoding that is just an
   integer's, and fixed-width decimal columns; it costs PG's
   unbounded precision, PG's NaN and infinity, and a per-datum
@@ -120,7 +123,7 @@ These are settled and drive `SM2_DESIGN.md`.
   part of sm2 that touches no database — so it is built and
   tested on its own (`SM2_DESIGN.md` §4).
 - **One encoder, two callers.** The key encoder is sm2's, and
-  sm3 builds its index entries — `encode(sk) ‖ rowno` —
+  sm3 builds its index entries — `encode(sk) ‖ row key` —
   from the same function with the same per-column arguments.
   Two encoders that have to agree is a bug waiting to be
   written.
@@ -179,21 +182,23 @@ sm3's indexes that feel them most.
   Refuse it, pick a default, or keep a second variable-width
   representation for it?
 
-  *Decided: a default of `decimal(18, 3)`*, DuckDB's — now
-  sm3's to apply, since sm2's `decimal64` and `decimal128`
-  require a typmod (`sm3/SM3_DESIGN.md` §2.1). A bare `decimal`
-  has 15 integer digits and 3 fractional, as a `decimal64`. A
-  datum with more fractional digits is rounded to 3, as
-  PostgreSQL rounds for a declared typmod; one whose integer part
-  needs more than 15 digits is an error. `decimal(p)` means
+  *Decided: a default of `decimal(18, 3)`*, DuckDB's. It is
+  now `decimal(17, 3)`, the widest `decimal64`, and the host's
+  to apply — digres's (`../../dg/DECIMAL.md` §2.3) — since
+  sm2's `decimal64` and `decimal128` require a typmod and sm3
+  supplies none (`sm3/SM3_DESIGN.md` §2.1). A bare `decimal`
+  has 14 integer digits and 3 fractional. A datum with more
+  fractional digits is rounded to 3, as PostgreSQL rounds for
+  a declared typmod; one whose integer part needs more than 14
+  digits is an error. `decimal(p)` means
   `decimal(p, 0)`. The cost is accepted knowingly: a datum a
   user believed exact can lose digits past the third fractional
   place without an error. A variable-width representation is
   rejected, because it means a second key encoding and
   comparison path, which is most of what §2.2 was avoiding.
-  `numeric` is an alias of `decimal`, resolved by sm3, so a
-  schema ported from PostgreSQL keeps its `numeric(p, s)`
-  columns, within 38 digits.
+  `numeric` is an alias of `decimal`, resolved by the host, so
+  a schema ported from PostgreSQL keeps its `numeric(p, s)`
+  columns, within 36 digits.
 
 - **Decimal NaN and infinity.** PG's numeric has both; a
   fixed-width decimal is an integer and has neither. Refuse
@@ -201,11 +206,11 @@ sm3's indexes that feel them most.
 
   *Decided: refuse them* (`SM2_DESIGN.md` §2.2). A NaN or an
   infinity is rejected on insert with a clear error, and no
-  value is reserved as a sentinel. The door stays open: a
-  precision of 18 digits does not reach the 64-bit limit, nor
-  38 the 128-bit one, so the extreme integers are never
-  written and could still be reserved later without changing
-  the meaning of stored bytes — provided the codec keeps
+  value is reserved as a sentinel. The door stays open: 17
+  digits do not reach the limit of the 59 bits above the
+  scale, nor 36 that of the 122, so the extreme integers are
+  never written and could still be reserved later without
+  changing the meaning of stored bytes — provided the codec keeps
   rejecting any value outside the declared precision.
 
 - **Over-long keys.** `sm1::max_keylen` is 4096 and bounds an
@@ -232,8 +237,9 @@ sm3's indexes that feel them most.
   distinct (`sm3/SM3_DESIGN.md` §3). A hash is out, because it
   keeps equality but destroys order, and an index that cannot
   serve a range or an `ORDER BY` is not worth having. The budget
-  for an index key is `4094` after the relid, less 8 for `rowno`
-  where the entry carries one.
+  for an index key is `4094` after the relid, less the row's
+  key where the entry carries one: 8 for `_id`, or
+  `max_pk_len`, 1024, for a primary key.
 
 - **Collation stability.** A sort key is only valid for the
   collation library version that produced it. The version is
@@ -254,9 +260,10 @@ sm3's indexes that feel them most.
   from a new version into an old index corrupts it further, and a
   unique index quietly stops being unique. Rebuilding any index,
   the primary key's included, is an online build
-  (`sm3/SM3_DESIGN.md` §3); the table is keyed by `rowno` and
-  never needs rewriting. The refusal is still the default and the
-  rebuild a command someone chooses to run.
+  (`sm3/SM3_DESIGN.md` §3); a table keyed by `_id` never needs
+  rewriting, and one keyed by a primary key under a collation
+  is rewritten (`../CLUSTER.md` §8). The refusal is still the
+  default and the rebuild a command someone chooses to run.
 
 - **Non-deterministic collations.** Equal keys are not
   byte-equal under them, which is what unique indexes rest on.

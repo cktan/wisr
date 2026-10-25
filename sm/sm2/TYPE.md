@@ -38,10 +38,10 @@ Three rules follow, and they apply to every type below.
 - **`key_encode` need not be reversible.** The tuple holds
   the datum, so nothing depends on getting it back out of the
   key. `key_decode` is provided for sm3's index-only scans, and
-  is an optimization rather than a requirement. Every type has
-  one; a float's gives back the datum its key keeps, `0` for
-  `-0` and the quiet NaN for any NaN (§3.3), which PostgreSQL
-  calls equal to the original.
+  is an optimization rather than a requirement. Every type but
+  `bpchar` has one (§3.5); a float's gives back the datum its
+  key keeps, `0` for `-0` and the quiet NaN for any NaN (§3.3),
+  which PostgreSQL calls equal to the original.
 - **Where PostgreSQL calls two datums equal, they may share a
   key.** That is agreement with PostgreSQL, not a collision.
   `-0.0` and `0.0` are the case that comes up.

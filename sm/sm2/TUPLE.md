@@ -38,7 +38,8 @@ varlena's header, not the table, holds its length.
 The parts are laid out by the row's **schema**, the table's
 attributes in order: each attribute's type and typmod give its
 **width** (`datum_width` in `include/sm2.h`) — the type's own
-width, or *variable* for `text`, `varchar` and `bytea`.
+width, or *variable* for `text`, `varchar`, `bpchar` and
+`bytea`.
 
 ## 2. The header
 
@@ -149,8 +150,10 @@ No count of leading non-null attributes is kept in the header:
 it is the bitmap's first set bit, found the same way, and the
 flag bits stay reserved for the format to grow into. The codec
 keeps `off[]` in a `tup_desc_t` (`include/sm2.h`), built once
-per schema — a heap `rel` and an index each build theirs when
-opened — and `tup_decode` finds an entry by it.
+per schema — `rel_open` and `idx_open` build theirs when
+opened, while sm3's opens borrow one built once per table
+definition (`rel_open_desc`, `idx_open_layout`) — and
+`tup_decode` finds an entry by it.
 
 ## 7. Examples
 

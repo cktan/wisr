@@ -1,9 +1,10 @@
 # VARLENA — sm2, a variable-width datum's bytes
 
 The reference for how a variable-width datum — `text`,
-`varchar`, `bytea` — is stored inside a tuple and handed
-across the tuple codec. `SM2_DESIGN.md` §4.1 argues *why*;
-`TUPLE.md` is the tuple around it; this file is the bytes.
+`varchar`, `bpchar`, `bytea` — is stored inside a tuple and
+handed across the tuple codec. `SM2_DESIGN.md` §4.1 argues
+*why*; `TUPLE.md` is the tuple around it; this file is the
+bytes.
 
 **Status: built**, in `src/tuple/tuple.cc`, with the helpers
 in `include/sm2.h`. The compressed form is specified here but

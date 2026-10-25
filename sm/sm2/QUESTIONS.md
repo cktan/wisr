@@ -71,7 +71,9 @@ Settled, and listed so nobody reopens them by accident:
   `SM2_DESIGN.md` §2.
 - The decimals' widths, their required `(p, s)` typmod, and the
   refusal of NaN — `SM2_DESIGN.md` §2.2; the bare `decimal`
-  default is sm3's — `sm3/SM3_DESIGN.md` §2.1.
+  default is the host's, digres's `(17, 3)`, not sm3's, which
+  supplies none — `sm3/SM3_DESIGN.md` §2.1,
+  `../../dg/DECIMAL.md` §2.3.
 - That `in` / `out` are filled in v1 and `recv` / `send` wait —
   `SM2_DESIGN.md` §2.3.
 - Null markers, escaping and terminators — `SM2_DESIGN.md` §3.1.
@@ -79,9 +81,12 @@ Settled, and listed so nobody reopens them by accident:
 - Collation version and determinism — `SM2_DESIGN.md` §3.3.
 - One sm1 store per table and the 2-byte relid —
   `SM2_DESIGN.md` §5, `sm3/SM3_DESIGN.md` §4.
-- That the table is a heap keyed by a 64-bit `rowno`, the
-  primary key is an index, and `rowno` is `ctid` —
-  `SM2_DESIGN.md` §5, `sm3/SM3_DESIGN.md` §3.
+- That a table is keyed by its primary key, which has no
+  entries of its own, or by a 64-bit `_id` without one, and
+  that no row has a `ctid` — `SM2_DESIGN.md` §5,
+  `../CLUSTER.md`, `../ROWKEY.md`. First settled the other way,
+  as a heap keyed by `rowno`, the primary key an index and
+  `rowno` standing for `ctid`; `../CLUSTER.md` reversed it.
 - That NULLs are distinct in a unique index —
   `sm3/SM3_DESIGN.md` §3.
 - sm2's build and source layout — `SM2_DESIGN.md` §8.1.
