@@ -9,7 +9,12 @@ not move as §1's figures for RocksDB alone promised (q1 2.4 to
 3.5 times, one run). Why: a scan's cost follows the bytes of
 each entry, and a CURR entry, its 29-byte header against a
 versioned entry's 9 bytes and 12-byte key tail, is 8 bytes
-longer (`../bench/getseek`, `../bench/smbench`).
+longer (`../bench/getseek`, `../bench/smbench`). **Frozen rows**
+(§3) cut the header to 1 byte: smbench, 1M rows of 500 bytes,
+fresh, sm1's chained scan 242 to 160 ns a row, at RocksDB's
+floor; the sm3 table's only 251 to about 235, and digres's
+`count(*)` 276 to 263, within the runs' noise. Where the sm3
+table's cost over sm1 goes is not yet known.
 
 sm1 keeps every version of a
 key as a key of its own, `userkey ‖ wts ‖ seq`, so a read seeks

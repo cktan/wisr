@@ -31,6 +31,7 @@ rows=${1:-1000000}
 pad=${2:-60}
 churn=${3:-0,0,0}
 work=${WORK:-$(mktemp -d)}
+mkdir -p "$work"
 # The servers' sockets, in a short directory of their own: a socket's
 # path may hold no more than 107 bytes, and its directory no comma.
 sock=$(mktemp -d /tmp/sqlb.XXXXXX)
