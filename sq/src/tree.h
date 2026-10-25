@@ -4,24 +4,77 @@
  * A tree keeps a store of everything made for it and frees it all in
  * its destructor (sq.h). The parser makes every node with make_node
  * and copies every piece of text with dup_string, so that a parse
- * which fails halfway leaves nothing behind but the tree.
+ * which fails halfway leaves nothing behind but the tree. Both are
+ * cut from the store's arena, as PostgreSQL's palloc cuts from a
+ * memory context, and go with it at once.
  */
 #ifndef SQ_SRC_TREE_H
 #define SQ_SRC_TREE_H
 
-#include <memory>
+#include <cstddef>
+#include <cstdint>
+#include <new>
 #include <string_view>
-#include <utility>
-#include <vector>
+#include <type_traits>
 
 #include "sq.h"
 
 namespace sq {
 
-/* What a tree owns: its nodes, each with how to delete it, and text. */
+/*
+ * Memory handed out in pieces and freed all at once: blocks, the first
+ * held inline, each next twice the last's size up to a limit.
+ */
+class arena_t {
+public:
+  arena_t() = default;
+  ~arena_t();
+  arena_t(const arena_t &) = delete;
+  arena_t &operator=(const arena_t &) = delete;
+
+  /* size bytes aligned to align, a power of two; throws bad_alloc. */
+  void *alloc(size_t size, size_t align) {
+    char *p = reinterpret_cast<char *>(
+        (reinterpret_cast<uintptr_t>(m_next) + align - 1) & ~(align - 1));
+    if (p > m_end || size > static_cast<size_t>(m_end - p)) {
+      return grow(size, align);
+    }
+    m_next = p + size;
+    return p;
+  }
+
+private:
+  /* A block past the first, its bytes after it. */
+  struct block_t {
+    block_t *next;
+    size_t size;
+  };
+
+  /* A new block holding size bytes aligned to align; returns them. */
+  void *grow(size_t size, size_t align);
+
+  alignas(std::max_align_t) char m_first[4096];
+  char *m_next = m_first;
+  char *m_end = m_first + sizeof(m_first);
+  block_t *m_blocks = nullptr;
+  size_t m_block_size = 8192; /* the next block's size */
+};
+
+/*
+ * What a tree owns: an arena with its nodes and text in it, and, for
+ * each node whose type holds a list, how to destroy it: a list's
+ * vector has storage of its own.
+ */
 struct store_t {
-  std::vector<std::pair<void *, void (*)(void *)>> nodes;
-  std::vector<std::unique_ptr<char[]>> strings;
+  /* A node to destroy when the tree goes; the newest first. */
+  struct destroy_t {
+    destroy_t *next;
+    void *node;
+    void (*destroy)(void *);
+  };
+
+  arena_t arena;
+  destroy_t *destroys = nullptr;
 
   store_t() = default;
   ~store_t();
@@ -38,12 +91,19 @@ struct tree_access_t {
 /* Make a node of type T, zeroed but for its tag, owned by tree. */
 template <typename T> T *make_node(sq_tree_t &tree) {
   store_t &store = tree_access_t::store(tree);
-  // Room for the record first, so that nothing can throw between
-  // making the node and recording it.
-  store.nodes.reserve(store.nodes.size() + 1);
-  T *node = new T();
-  store.nodes.emplace_back(node, [](void *p) { delete static_cast<T *>(p); });
-  return node;
+  void *at = store.arena.alloc(sizeof(T), alignof(T));
+  if constexpr (std::is_trivially_destructible_v<T>) {
+    return new (at) T();
+  } else {
+    // Room for the record first, so that nothing can throw between
+    // making the node and recording it.
+    auto *d = static_cast<store_t::destroy_t *>(store.arena.alloc(
+        sizeof(store_t::destroy_t), alignof(store_t::destroy_t)));
+    T *node = new (at) T();
+    *d = {store.destroys, node, [](void *p) { static_cast<T *>(p)->~T(); }};
+    store.destroys = d;
+    return node;
+  }
 }
 
 /*

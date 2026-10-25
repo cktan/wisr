@@ -4,14 +4,44 @@
 
 #include "tree.h"
 
+#include <stdlib.h>
 #include <string.h>
+
+#include <algorithm>
 
 namespace sq {
 
-/* Delete every node, each as the type it was made. */
+/* Free every block past the first. */
+arena_t::~arena_t() {
+  while (m_blocks != nullptr) {
+    block_t *next = m_blocks->next;
+    free(m_blocks);
+    m_blocks = next;
+  }
+}
+
+/* Start a block big enough for size bytes at align, and cut them from it. */
+void *arena_t::grow(size_t size, size_t align) {
+  // A block twice the last up to 1 MB, or as big as the piece asked.
+  size_t need = sizeof(block_t) + align + size;
+  size_t bytes = std::max(m_block_size, need);
+  m_block_size = std::min(m_block_size * 2, size_t(1) << 20);
+  auto *b = static_cast<block_t *>(malloc(bytes));
+  if (b == nullptr) {
+    throw std::bad_alloc();
+  }
+  *b = {m_blocks, bytes};
+  m_blocks = b;
+  m_next = reinterpret_cast<char *>(b + 1);
+  m_end = reinterpret_cast<char *>(b) + bytes;
+  return alloc(size, align);
+}
+
+/* Destroy each node that holds a list, the newest first; the arena goes after.
+ */
 store_t::~store_t() {
-  for (auto &[node, destroy] : nodes) {
-    destroy(node);
+  for (destroy_t *d = destroys; d != nullptr; d = d->next) {
+    d->destroy(d->node);
   }
 }
 
@@ -26,11 +56,10 @@ store_t &tree_access_t::store(sq_tree_t &tree) {
 /* Copy text into tree's store and return the copy. */
 char *dup_string(sq_tree_t &tree, std::string_view text) {
   store_t &store = tree_access_t::store(tree);
-  auto copy = std::make_unique<char[]>(text.size() + 1);
-  memcpy(copy.get(), text.data(), text.size());
+  char *copy = static_cast<char *>(store.arena.alloc(text.size() + 1, 1));
+  memcpy(copy, text.data(), text.size());
   copy[text.size()] = '\0';
-  store.strings.push_back(std::move(copy));
-  return store.strings.back().get();
+  return copy;
 }
 
 namespace {

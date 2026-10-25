@@ -124,6 +124,15 @@ destructor. Nothing in a tree is freed by hand, and nothing
 points outside it: text is copied in, so a tree outlives what it
 was parsed from. A tree moves and does not copy.
 
+**Nodes and text are cut from the tree's arena**, as
+PostgreSQL's `palloc` cuts from a memory context: blocks, the
+first inside the store, each next twice the last up to 1 MB,
+freed together. A node whose type holds a list also gets a
+record of how to destroy it, as a list's vector has storage of
+its own; the tree runs those, newest first, then frees the
+blocks. A parse so makes no allocation per node or per string,
+which made its cost twice PostgreSQL's.
+
 This is what makes cleanup after an error one line. A parse that
 fails halfway has made hundreds of nodes, some reachable from
 bison's stack and some from nowhere. The tree owns them all the

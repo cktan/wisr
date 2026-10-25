@@ -11,7 +11,9 @@
 #include "tree.h"
 
 #include <string>
+#include <cstdint>
 #include <utility>
+#include <vector>
 
 TEST_CASE("a node is made zeroed, with its own tag") {
   // Verify make_node gives what PostgreSQL's makeNode gives.
@@ -77,4 +79,36 @@ TEST_CASE("a failed parse frees the tree it was given") {
   sq::dup_string(t, "text");
   CHECK(sq_parse("SELECT FROM WHERE", nullptr, t) == -1);
   CHECK(t.stmts.empty());
+}
+
+TEST_CASE("a tree past its first block keeps every node and string whole") {
+  // Verify the arena under a tree: many blocks, and a piece bigger
+  // than any block, each node aligned and each string intact.
+  // 1. Make 5000 column refs, each holding a string of its own number,
+  //    and one string of 2 MB, past the largest block.
+  // 2. Confirm each node is aligned for its type, keeps its tag and
+  //    its list, and each string reads back as written.
+  // 3. Let the tree go; the leak checker sees its blocks and lists.
+  sq_tree_t t;
+  std::vector<sq_column_ref_t *> cols;
+  for (int i = 0; i < 5000; i++) {
+    sq_column_ref_t *col = sq::make_node<sq_column_ref_t>(t);
+    sq_string_t *name = sq::make_node<sq_string_t>(t);
+    name->sval = sq::dup_string(t, std::to_string(i));
+    col->fields.push_back(name);
+    cols.push_back(col);
+  }
+  std::string big(2 << 20, 'b');
+  const char *copy = sq::dup_string(t, big);
+
+  for (int i = 0; i < 5000; i++) {
+    sq_column_ref_t *col = cols[i];
+    CHECK(reinterpret_cast<uintptr_t>(col) % alignof(sq_column_ref_t) == 0);
+    CHECK(col->tag == SQ_T_COLUMN_REF);
+    REQUIRE(col->fields.size() == 1);
+    auto *name = static_cast<sq_string_t *>(col->fields[0]);
+    CHECK(name->tag == SQ_T_STRING);
+    CHECK(std::string(name->sval) == std::to_string(i));
+  }
+  CHECK(std::string(copy) == big);
 }
