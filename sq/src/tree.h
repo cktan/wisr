@@ -75,7 +75,17 @@ struct store_t {
   store_t &operator=(const store_t &) = delete;
 
   /* size bytes aligned to align, at most 8; throws bad_alloc. */
-  void *alloc(size_t size, size_t align);
+  void *alloc(size_t size, size_t align) {
+    if (allocator == nullptr) {
+      return arena.alloc(size, align);
+    }
+    // The caller's memory is aligned for any node.
+    void *p = allocator->alloc(allocator->arg, size);
+    if (p == nullptr) {
+      throw std::bad_alloc();
+    }
+    return p;
+  }
 
   /* ptr, alloc'd with old bytes, grown to size; throws bad_alloc. */
   void *realloc(void *ptr, size_t old, size_t size);
@@ -84,7 +94,13 @@ struct store_t {
 /* The one way into a tree's store from outside sq_tree_t. */
 struct tree_access_t {
   /* The store of tree, made on first use. */
-  static store_t &store(sq_tree_t &tree);
+  static store_t &store(sq_tree_t &tree) {
+    if (tree.m_store == nullptr) {
+      // Not value-initialized: the arena's first block is left as it is.
+      tree.m_store = new store_t;
+    }
+    return *tree.m_store;
+  }
 };
 
 /* Make a node of type T, zeroed but for its tag, owned by tree. */
@@ -102,7 +118,20 @@ template <typename T> T *make_node(sq_tree_t &tree) {
  * Copy text into tree, NUL-terminated. The copy is the caller's to
  * change until it is put in a node.
  */
-char *dup_string(sq_tree_t &tree, std::string_view text);
+inline char *dup_string(sq_tree_t &tree, std::string_view text) {
+  char *copy =
+      static_cast<char *>(tree_access_t::store(tree).alloc(text.size() + 1, 1));
+  memcpy(copy, text.data(), text.size());
+  copy[text.size()] = '\0';
+  return copy;
+}
+
+/* The calling thread's current tree: current_tree_t sets it. Constant
+ * initialized, so reading it from another file is a plain TLS load. */
+extern constinit thread_local sq_tree_t *t_current_tree;
+
+/* Thrown from current_store() with no tree being built. */
+[[noreturn]] void no_current_tree();
 
 /*
  * The tree the calling thread is building. The grammar's actions make
@@ -110,13 +139,18 @@ char *dup_string(sq_tree_t &tree, std::string_view text);
  * PostgreSQL's allocate in its current memory context, so a parse
  * names its tree here for as long as it runs.
  */
-sq_tree_t *current_tree();
+inline sq_tree_t *current_tree() { return t_current_tree; }
 
 /*
  * The store of the tree being built, where a list grows; throws
  * logic_error if no tree is being built.
  */
-store_t &current_store();
+inline store_t &current_store() {
+  if (t_current_tree == nullptr) {
+    no_current_tree();
+  }
+  return tree_access_t::store(*t_current_tree);
+}
 
 /* Names a tree as the one being built, for as long as this lives. */
 class current_tree_t {

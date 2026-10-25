@@ -81,7 +81,9 @@ struct parse_state_t {
 };
 
 /* The parse a scan belongs to. */
-parse_state_t *parse_state(core_yyscan_t yyscanner);
+inline parse_state_t *parse_state(core_yyscan_t yyscanner) {
+  return scanner_extra(yyscanner)->parse;
+}
 
 /* Memory for bison's stacks, released when the parse ends. */
 void *parse_alloc(core_yyscan_t yyscanner, size_t size);

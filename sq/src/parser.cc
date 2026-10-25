@@ -27,11 +27,6 @@
 
 namespace sq {
 
-/* The parse that the scan behind yyscanner is part of. */
-parse_state_t *parse_state(core_yyscan_t yyscanner) {
-  return scanner_extra(yyscanner)->parse;
-}
-
 /* Take size bytes for bison from the parse, which frees them at its end. */
 void *parse_alloc(core_yyscan_t yyscanner, size_t size) {
   parse_state_t *state = parse_state(yyscanner);

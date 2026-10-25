@@ -38,19 +38,6 @@ void *arena_t::grow(size_t size, size_t align) {
   return alloc(size, align);
 }
 
-/* Cut size bytes from the caller's allocator, or from the arena. */
-void *store_t::alloc(size_t size, size_t align) {
-  if (allocator == nullptr) {
-    return arena.alloc(size, align);
-  }
-  // The caller's memory is aligned for any node.
-  void *p = allocator->alloc(allocator->arg, size);
-  if (p == nullptr) {
-    throw std::bad_alloc();
-  }
-  return p;
-}
-
 /* Grow ptr by the caller's realloc, or by a copy in the arena. */
 void *store_t::realloc(void *ptr, size_t old, size_t size) {
   if (allocator != nullptr) {
@@ -66,36 +53,12 @@ void *store_t::realloc(void *ptr, size_t old, size_t size) {
   return p;
 }
 
-/* Return tree's store, making it if this is the first use. */
-store_t &tree_access_t::store(sq_tree_t &tree) {
-  if (tree.m_store == nullptr) {
-    tree.m_store = new store_t();
-  }
-  return *tree.m_store;
-}
+/* The calling thread's current tree (tree.h). */
+constinit thread_local sq_tree_t *t_current_tree = nullptr;
 
-/* Copy text into tree's store and return the copy. */
-char *dup_string(sq_tree_t &tree, std::string_view text) {
-  store_t &store = tree_access_t::store(tree);
-  char *copy = static_cast<char *>(store.alloc(text.size() + 1, 1));
-  memcpy(copy, text.data(), text.size());
-  copy[text.size()] = '\0';
-  return copy;
-}
-
-namespace {
-thread_local sq_tree_t *t_current_tree = nullptr;
-} // namespace
-
-/* The tree the calling thread is building, or NULL outside a parse. */
-sq_tree_t *current_tree() { return t_current_tree; }
-
-/* The current tree's store; a list changed with no tree is a bug. */
-store_t &current_store() {
-  if (t_current_tree == nullptr) {
-    throw std::logic_error("sq: a list changed with no tree being built");
-  }
-  return tree_access_t::store(*t_current_tree);
+/* A list changed with no tree being built is a bug. */
+void no_current_tree() {
+  throw std::logic_error("sq: a list changed with no tree being built");
 }
 
 /* Remember what was current and make tree current. */

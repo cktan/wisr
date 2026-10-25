@@ -1081,14 +1081,10 @@ other			.
 #undef yyleng
 #define yyleng	(((struct yyguts_t *) yyscanner)->yyleng_r)
 
-namespace sq {
+/* scanner_extra (scan.h) reads the extra as the handle's first field. */
+static_assert(offsetof(struct yyguts_t, yyextra_r) == 0);
 
-/* The state of the scan behind flex's handle. */
-scan_extra_t *
-scanner_extra(void *yyscanner)
-{
-	return yyextra;
-}
+namespace sq {
 
 /*
  * scanner_errposition

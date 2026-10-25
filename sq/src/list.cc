@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include <algorithm>
+#include <bit>
 
 namespace sq {
 
@@ -20,13 +21,7 @@ constexpr int header_cells =
     static_cast<int>((sizeof(sq_list_t) - 1) / sizeof(sq_list_cell_t) + 1);
 
 /* The least power of two not below n: pg_nextpower2_32. */
-int next_power2(int n) {
-  int p = 1;
-  while (p < n) {
-    p <<= 1;
-  }
-  return p;
-}
+int next_power2(int n) { return static_cast<int>(std::bit_ceil(unsigned(n))); }
 
 /*
  * A new list of length cells, whose nodes the caller sets, with room

@@ -93,8 +93,13 @@ private:
   void *m_scanner = nullptr;
 };
 
-/* The state of the scan behind flex's handle. */
-scan_extra_t *scanner_extra(void *yyscanner);
+/*
+ * The state of the scan behind flex's handle: the first field of
+ * flex's reentrant state, as PostgreSQL's pg_yyget_extra reads it.
+ */
+inline scan_extra_t *scanner_extra(void *yyscanner) {
+  return *static_cast<scan_extra_t **>(yyscanner);
+}
 
 /* The position in characters, from 1, of byte offset location. */
 int scanner_errposition(int location, void *yyscanner);
