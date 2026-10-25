@@ -25,10 +25,12 @@ predicate locks (68); the buffer manager (65); pgstat (28);
 procsignal barriers (66); `barrier.c` (10); shared invalidation,
 `sinval.c` and `sinvaladt.c` (146).
 
-What is left is built at start by `CreateOrAttachShmemStructs()`
-(storage/ipc `ipci.c`): the init list of `varsup` and the
-session registry. The lock manager is gone (step 156), the
-LWLocks and semaphores (step 157), and PGPROC (step 159).
+What is left is built at start by
+`CreateSharedMemoryAndSemaphores()` (storage/ipc `ipci.c`): the
+session registry, the advisory lock table and, with the build
+option, the injection points' (§2). The lock manager is gone
+(step 156), the LWLocks and semaphores (step 157), and PGPROC
+(step 159).
 
 ## 2. Allocation: shmem's fields
 
@@ -41,7 +43,9 @@ makes the session registry, the advisory lock table and, with
 the build option, the injection points'. A session thread
 finds them in shmem and attaches to nothing. What the main
 thread fixes before then and no thread writes after is
-`pcb_t`'s, read through a const pointer; nothing is in it yet.
+`pcb_t`'s, read through a const pointer: the program's paths,
+the data directory, `MaxBackends` and the other limits, the
+file modes, and modules' own state (`utils/control_block.h`).
 
 - **Gone**: storage/ipc `shmem.c`'s registry of named blocks,
   `ShmemInitStruct()`, `ShmemInitHash()`, `ShmemAlloc()` and
@@ -200,10 +204,10 @@ instead of being told.
   sees it: `SM_VERSION_OWN` while its own DDL or ANALYZE of the
   table is uncommitted, else the newest committed, never one at
   its snapshot, since the catalog is not versioned
-  (`SM3_DESIGN.md` §2). A DDL that aborts leaves it as it was.
-  An index has no version of its own: it takes no lock in sm
-  (`WORKNOTE.md` step 111), so its entry is checked under its
-  table's lock, by its table's version.
+  (`../sm/sm3/SM3_DESIGN.md` §2). A DDL that aborts leaves it
+  as it was. An index has no version of its own: it takes no
+  lock in sm (`WORKNOTE.md` step 111), so its entry is checked
+  under its table's lock, by its table's version.
 - **It is checked under the lock.** A statement takes sm's
   table-oid lock before it reads a definition (step 111): IS to
   read, IX to write, held to the end of the transaction. After

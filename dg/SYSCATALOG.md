@@ -131,9 +131,10 @@ what runs now.
   is converted.
 - **A column with nothing true to say** has a fixed value,
   listed by catalog in §4: the owner is the superuser, an ACL
-  is null, a tablespace is 0. `reltuples` and `relpages` are
-  sm's estimates (`smstore_estimate_size()`), and -1 before
-  an ANALYZE, as PostgreSQL has it.
+  is null, a tablespace is 0. `reltuples` is -1 and
+  `relpages` 0, a table never analyzed as PostgreSQL has it
+  (`class_row()` in `catrel.c`); the planner takes sm's
+  estimates (`smstore_estimate_size()`), not these.
 - **A catalog that digres has nothing of is empty**, and still
   readable: `pg_trigger`, `pg_policy`, `pg_inherits`,
   `pg_publication`. `\d` reads them, and an empty answer is

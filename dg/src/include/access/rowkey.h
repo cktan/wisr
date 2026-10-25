@@ -2,10 +2,10 @@
  *
  * rowkey.h
  *	  A row's name in a table in sm, where PostgreSQL named it by its TID
- *	  (../../../sm/ROWKEY.md section 1).
+ *	  (../../../../sm/ROWKEY.md section 1).
  *
  * A row is named by its key: the values of its table's primary key's
- * columns, in the key's order, or in a table without one its rowno alone.
+ * columns, in the key's order, or in a table without one its `_id` alone.
  * The executor carries the key's columns where PostgreSQL carried ctid, and
  * the table access method finds the row by them.  A value by reference
  * points into memory its holder keeps; RowKeyCopy() makes a copy that

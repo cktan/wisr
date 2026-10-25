@@ -1115,8 +1115,8 @@ postmaster's queue of ended threads was guarded by a
 A latch's setter woke its owner with `tgkill(SIGURG)`, which
 the owner read from a `signalfd` in its epoll set: a signal to
 carry a wake-up from one thread of the process to another.
-sys (`../sys/INTERRUPT.md`) has one already: each thread's wake
-fd, an eventfd that `sys_interrupt()` writes.
+sys (`../sm/sm0/INTERRUPT.md`) has one already: each thread's
+wake fd, an eventfd that `sys_interrupt()` writes.
 
 - **A latch keeps its owner's handle** (`sys_thread_ref_t`),
   made by `OwnLatch()` or `InitLatch()`, dropped by
@@ -1393,8 +1393,8 @@ and a table dropped.
 ## Step 40: a wait in sm ends on an interrupt
 
 sm's waits for another transaction are a `sys_wait()` on the
-thread's wait mask (`../sys/INTERRUPT.md` §8), and fail with
-`SM_ERR_INTERRUPTED` when a bit in it is raised.
+thread's wait mask (`../sm/sm0/INTERRUPT.md` §8), and fail
+with `SM_ERR_INTERRUPTED` when a bit in it is raised.
 
 - **A session thread's wait mask** is `INTERRUPT_CANCEL`,
   `_DIE`, `_QUIT` and `_ALARM`, set where `MyInterrupts` is:
@@ -2212,14 +2212,13 @@ new instance. An audit of `global/` and `base/` came first.
 
 ## Step 73: sequences are sm's
 
-- **A sequence is an object in sm's catalog**, in a schema,
-  with an sm counter behind it (`sm3/CATALOG_ONDISK.md` kind 11;
+- **A sequence is an object in sm's catalog**, in a schema, with
+  an sm counter behind it (`../sm/sm3/CATALOG_ONDISK.md` kind 11;
   `REVIEW.md` §5 has why). CREATE SEQUENCE is
   `smstore_create_sequence()`, in the transaction: START and
-  INCREMENT, each at least 1, and AS bigint. Every other
-  option, TEMPORARY, an owner and an identity column are
-  refused, as are ALTER SEQUENCE and `setval()`: sm's counters
-  only go forward.
+  INCREMENT, each at least 1, and AS bigint. Every other option,
+  TEMPORARY, an owner and an identity column are refused, as are
+  ALTER SEQUENCE and `setval()`: sm's counters only go forward.
 - **Its name is a relation's.** `smstore_relation_oid()` finds
   a sequence after a table and an index, reading sm's catalog in
   the transaction, which it begins; a table and a sequence
@@ -4240,7 +4239,8 @@ after a restart, which flushed them.
   bytes for the heap and 39,000 for the index in every run.
 - sm1 `test_stats.cc`: each prefix's memtable bytes are exactly
   its rows' versions, 0 after a flush, and only the new rows'
-  after more. `sm1/API.md`, `sm1.h`, `STATISTICS.md` §3.1.
+  after more. `../sm/sm1/API.md`, `sm1.h`, `../sm/STATISTICS.md`
+  §3.1.
 
 ## Step 145: another session's DDL is learned from sm, not sent
 
@@ -5015,8 +5015,9 @@ lock's queue closes it, and sm1 looked only after a waiter had
 slept `deadlock_ms`. The victim was the same.
 
 - **sm1 searches as a wait begins** (`../sm/sm1/src/lockmgr.cc`,
-  `SM1_DESIGN.md` §5.1): `lock_wait` and `lock_wait_xact` call
-  `check_deadlock()` once their edges are set, before they
+  `../sm/sm1/SM1_DESIGN.md` §5.1): `lock_wait` and
+  `lock_wait_xact` call `check_deadlock()` once their edges
+  are set, before they
   first sleep; a cycle the wait closes is found at once. One
   that forms while a session sleeps, its holders changing under
   it, is still found after `deadlock_ms`, the session's
@@ -5965,8 +5966,9 @@ the scan read by, opened in the subtransaction.
   after the mark is closed by the rollback as before, but
   stays the session's: each read and seek fails with
   `SM_ERR_INVALID`, until `sm1::scanend()` or the
-  transaction's end frees it (sm1 `SM1_DESIGN.md` §6.5). A
-  cursor whose nested loop began its inner scan again inside
+  transaction's end frees it (`../sm/sm1/SM1_DESIGN.md`
+  §6.5). A cursor whose nested loop began its inner scan
+  again inside
   the savepoint fails at its next `FETCH`, `could not scan a
   table: the cursor was closed by a rollback ...`, where
   PostgreSQL reads on.
@@ -7298,12 +7300,12 @@ keep which.
 
 - **sm marks a constraint's index**
   (`sm_index_def_t::constraint`, `sm_cat_create_index()`'s and
-  `sm3::create_index()`'s `constraint`, `sm3/CATALOG_ONDISK.md`):
-  kept in the index's part of the catalog blob as a thirteenth
-  attribute, null unless set, so an index written before reads
-  false. It must be unique and on columns alone.
-  `sm3/test/test_ddl.cc` checks it, and that it survives a
-  restart.
+  `sm3::create_index()`'s `constraint`,
+  `../sm/sm3/CATALOG_ONDISK.md`): kept in the index's part of the
+  catalog blob as a thirteenth attribute, null unless set, so an
+  index written before reads false. It must be unique and on
+  columns alone. `sm3/test/test_ddl.cc` checks it, and that it
+  survives a restart.
 - **digres sets it** from `IndexStmt.isconstraint`, true for an
   index a `UNIQUE` or `PRIMARY KEY` constraint makes, at `CREATE
   TABLE`; `smstore_relation_t` carries it to `catrel.c`.

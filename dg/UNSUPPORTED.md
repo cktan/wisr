@@ -65,8 +65,9 @@ regression files are taken out for it (`test/pgregress`,
 - **The heap** — removed. Heap, nbtree, TOAST tables, the
   visibility map, free space map, buffer manager, smgr,
   checksums and pages are gone (steps 58, 59, 65, 243); every
-  table is in sm. `pg_relation_size(regclass)` is gone
-  (step 87).
+  table is in sm. `pg_relation_size()` and the other size
+  functions answer a table's or an index's bytes in sm
+  (steps 120, 121).
 - **Tables are clustered on their primary key** — differs. A
   SELECT with no ORDER BY reads in key order; a primary key is
   capped at 1024 encoded bytes; `CLUSTER` does nothing, every

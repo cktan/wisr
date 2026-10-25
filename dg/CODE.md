@@ -46,18 +46,22 @@ The import itself is not built yet (`PLAN.md` §7).
 
 - **Build with `make -j4`**, never plain `make`, from `dg/`.
   It builds `../sq` and `../sm` as needed.
-- **`make -j4 test`** runs everything: sq's parser tests on
-  `build/digres --parse`, the statements in `test/` alone and
-  in eight sessions of a server, `initdb`, `test/server.sh`,
-  which starts a server and connects with `psql`, and the
-  sqllogictest files. It passes with these lines:
+- **`DEBUG=1 make -j4 test`** runs everything, on the debug
+  build (sm `-O0 -g`, with `assert()`), as tests are run: sq's
+  parser tests on `build/digres --parse`, the statements in
+  `test/` alone and in eight sessions of a server, `initdb`,
+  `test/server.sh`, which starts a server and connects with
+  `psql`, the sqllogictest files, and PostgreSQL 18's
+  regression files as ported (`make pgregress`). It passes
+  with these lines:
 
   ```
   run: PASSED (118 files)
   run: PASSED (8 files, alone and in 8 sessions)
   initdb: PASSED
   server: PASSED
-  slt: PASSED (41 files on digres, 10192 records, 10 skipped)
+  slt: PASSED (42 files on digres, 10192 records, 10 skipped)
+  all 231 ok
   ```
 
 - **`make -j4 slt`** runs every sqllogictest file in
@@ -195,10 +199,12 @@ digres is one process; each session is a thread of it.
   thread's signal mask, which the standard library cannot.
 - **Signals between threads are interrupt bits** (sm_sys.h),
   named in `storage/procsignal.h`: `INTERRUPT_CANCEL`, `_DIE`,
-  `_QUIT`, `_RELOAD`, `_PROCSIG`, `_ALARM`.
+  `_QUIT`, `_RELOAD`, `_LOG_MEMORY`, `_ALARM`, and `_LATCH`,
+  the thread's latch, which runs no handler.
   `session_interrupt()` raises them in a session's own thread,
   found by its record (`storage/session_registry.h`); a thread
-  sets a handler for each with `SetInterruptHandler()`, not
+  sets a handler for each of the others with
+  `SetInterruptHandler()`, not
   `pqsignal()`, and it runs at its next
   `CHECK_FOR_INTERRUPTS()` or wait. Signal numbers are left
   only where the postmaster speaks to its children and in the

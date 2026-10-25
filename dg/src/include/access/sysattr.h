@@ -16,14 +16,14 @@
 
 /*
  * Attribute numbers for the system-defined attributes.  digres: -1 was ctid,
- * a row's TID, which no row has (../../../sm/ROWKEY.md section 3.1).
+ * a row's TID, which no row has (../../../../sm/ROWKEY.md section 3.1).
  */
 #define MinTransactionIdAttributeNumber			(-2)
 #define MinCommandIdAttributeNumber				(-3)
 #define MaxTransactionIdAttributeNumber			(-4)
 #define MaxCommandIdAttributeNumber				(-5)
 #define TableOidAttributeNumber					(-6)
-/* digres: a row's rowno in sm, the number its tid carries */
+/* digres: a keyless table's _id in sm (../../../../sm/ROWKEY.md) */
 #define RownoAttributeNumber					(-7)
 #define FirstLowInvalidHeapAttributeNumber		(-8)
 

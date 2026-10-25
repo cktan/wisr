@@ -431,14 +431,17 @@ Do not reopen these without the owner:
 - **No VACUUM.** sm collects its own garbage. `VACUUM`
   succeeds and does nothing; `ANALYZE` stays. `CLUSTER` and
   `REINDEX` succeed too, doing nothing, with a warning: a table
-  in sm is kept by rowno, and its indexes with its rows.
+  in sm is kept in its primary key's order, or by its `_id`
+  without one (rowno once; `../sm/ROWKEY.md`), and its indexes
+  with its rows.
 - **No WAL.** sm keeps what is durable. There is no recovery,
   archiving or hot standby, and `PREPARE TRANSACTION` is
   refused.
 - **No buffer manager, smgr or free-space map.** Every
   relation with storage is sm's, and sm reads and writes its
   own; there are no pages in shared buffers, no relation files,
-  and no PostgreSQL sequences until sm's replace them.
+  and no PostgreSQL sequences: a sequence is sm's, a counter
+  in its catalog (`commands/sequence.c`).
 - **No multixacts.** A heap row named its lockers in its
   header, and several needed a MultiXactId. A row in sm names
   none: sm's lock manager holds row locks, shared by as many
@@ -490,7 +493,7 @@ Do not reopen these without the owner:
   one (`utils/time/snapmgr.c`).
 - **A table in sm has no bitmap scans.** A row in sm has no
   page or block, and a table with a primary key is read by its
-  key: a bitmap of rownos would read a row a seek, in no order
+  key: a bitmap of row keys would read a row a seek, in no order
   the store keeps (`../sm/CLUSTER.md` §6). An index in sm has
   no `amgetbitmap`, so the planner plans none.
 - **Storage and replication features go.** Tablespaces,

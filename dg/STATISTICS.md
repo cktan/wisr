@@ -71,16 +71,20 @@ Where it stood before §3 was built.
   - tuples are `rec.live_rows × now / then`: the row count
     grows and shrinks with the table since the analyze. When
     the analyze found nothing on disk, its compression is
-    unknown, and a flush since would read as a shrink: tuples
-    are then `rec.live_rows × N now / N then`, by the row
-    numbers handed out, which counts inserts exactly and not
-    deletes;
+    unknown, and a flush since would read as a shrink: for a
+    table without a primary key, tuples are then
+    `rec.live_rows × N now / N then`, by the row numbers (its
+    `_id`s) handed out, which counts inserts exactly and not
+    deletes. A table with a primary key draws no row numbers
+    (`../sm/ROWKEY.md` §2.1), and its bytes scale it still;
   - pages are `⌈now / 8192⌉`, at least 1; `allvisfrac` 1, as
     there is no visibility map.
 - **An index** gets the same from its own entry
   (`sm_tbl_idx_size`, `stats_index_t`): its pages from its
-  bytes, its tuples its entries scaled as the table's rows are,
-  so a partial index is the share of rows that belong to it.
+  bytes, its tuples its entries scaled as the table's rows
+  are. A partial index would be the share of rows that belong
+  to it, but CREATE INDEX refuses one (`check_create_index()`
+  in `smstore.c`).
   The scale is the plan's estimate of the table's rows over
   `rec.live_rows`: `get_relation_info()` estimates the table
   first, and passes its rows in, so the table is not sized a
@@ -195,7 +199,8 @@ Where it stood before §3 was built.
    → verify: `EXPLAIN` of a scan shows the live row count
    after ANALYZE, within a few percent, and follows the table
    as it grows without another; an index's estimate follows
-   its entries, a partial one's its share.
+   its entries (a partial one's would be its share; partial
+   indexes are refused).
 3. Column statistics (§2.3, §2.4).
    → verify: `EXPLAIN` of `=` on a common value estimates its
    frequency times the rows; of `<` a histogram's share; a

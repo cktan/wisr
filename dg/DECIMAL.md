@@ -25,7 +25,7 @@ Where it stood before §3 was built.
   with it.
 - **sm does not store it.** sm2's decimals are DuckDB's: the
   value times 10^s as a two's complement integer, 8 bytes up to
-  18 digits (`decimal64`), 16 up to 38 (`decimal128`), with
+  17 digits (`decimal64`), 16 up to 36 (`decimal128`), with
   `(p, s)` in the schema, not in the datum, and no NaN or
   infinity. So a table cannot have a `numeric` column today.
 
@@ -227,17 +227,17 @@ path.
    comparison and hashing, the btree and hash opclasses, casts.
    `numeric.c` is replaced by `decimal.c`.
    → verify: a regression file of PostgreSQL's own numeric
-   tests, trimmed to 38 digits, gives PostgreSQL's output.
+   tests, trimmed to 36 digits, gives PostgreSQL's output.
 2. **Arithmetic and functions** (§2.5).
    → verify: the same file's arithmetic and functions; the
    transcendental ones agree to their scale.
 3. **Aggregates** (§2.6).
    → verify: sums and averages of integers and decimals,
-   overflow past 38 digits refused.
+   overflow past 36 digits refused.
 4. **Columns** (§2.3).
    → verify: `server.sh` stores `numeric(10, 2)` and
    `numeric(30, 5)`, indexes and keys them, rescales on insert,
-   and refuses an unconstrained column.
+   and makes an unconstrained column `numeric(17, 3)`.
 5. **The other users** (§2.7), jsonb last.
    → verify: each one's results in `server.sh`.
 6. `numeric.c` is gone.
@@ -247,16 +247,16 @@ path.
 1. **An unconstrained `numeric` column** is given a default,
    DuckDB's `DECIMAL(18, 3)`; `(17, 3)` since sm's decimals
    carry their scale (`../sm/SM_DECIMAL_PLAN.md`).
-2. **A literal past 38 digits** was to be an error; building
+2. **A literal past 36 digits** was to be an error; building
    it showed that this refuses `1e300` as a float, so it is a
-   `float8`, as in DuckDB. Text cast to numeric past 38 digits
+   `float8`, as in DuckDB. Text cast to numeric past 36 digits
    is still an error.
 3. **`sqrt`, `ln`, `exp`, `power`** in `long double`, some 33
    digits, are enough.
 4. **jsonb**: a number with an exponent is a `float8`, one
-   without a numeric (an error past 38 digits). This replaced
+   without a numeric (an error past 36 digits). This replaced
    the first answer, to keep each number's text as written.
-5. **`sum(int8)` past 38 digits** is an error.
+5. **`sum(int8)` past 36 digits** is an error.
 
 ## 5. decimal64 by value: built
 
