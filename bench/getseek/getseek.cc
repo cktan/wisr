@@ -12,7 +12,15 @@
  * read by any variant with _bw appended, and plain keys padded with
  * a version tail, scanned by scan_plain with LONG set. NOPREFIX and
  * NODECODE take the prefix extractor and the version decode out of
- * scan_versioned.
+ * scan_versioned. load_classed builds a store as sm1 builds a
+ * chained one: class-byte keys under sm1's comparator and prefix
+ * extractor, values with a chained version's 29-byte header; read
+ * by scan_classed as sm1::chain_scan reads, with a snapshot, auto
+ * prefix mode and an upper bound, which NOSNAP, NOAUTO and NOUPPER
+ * each take away. CLS_BYTEWISE builds and reads it under RocksDB's
+ * comparator with no prefix extractor, CLS_NOHEADER with no version
+ * header, CLS_HEADER=n with an n-byte one, CLS_RANDOM with its bytes
+ * random, each in a store of its own.
  *
  * Variants: seek (today: sm1's comparator and prefix bloom, a new
  * iterator a read), seek_reuse (one iterator for every read),
@@ -269,6 +277,75 @@ int main(int argc, char **argv) {
     rocksdb::CompactRangeOptions c;
     c.bottommost_level_compaction = rocksdb::BottommostLevelCompaction::kForce;
     db->CompactRange(c, nullptr, nullptr);
+    return 0;
+  }
+  // The classed store's options and directory, as CLS_ toggles say.
+  bool cls_bw = getenv("CLS_BYTEWISE") != nullptr;
+  size_t cls_header = getenv("CLS_NOHEADER") ? 0
+                      : getenv("CLS_HEADER")
+                          ? strtoul(getenv("CLS_HEADER"), nullptr, 10)
+                          : 29;
+  std::string cls_dir = dir + "/classed" + (cls_bw ? "_bw" : "") + "_h" +
+                        std::to_string(cls_header) +
+                        (getenv("CLS_RANDOM") ? "_r" : "");
+  rocksdb::Options co = options(!cls_bw, false, 16);
+  if (what == "load_classed") {
+    // As sm1 builds a chained store: current keys, a version header.
+    std::unique_ptr<rocksdb::DB> db(open(cls_dir, co));
+    rocksdb::WriteOptions w;
+    w.disableWAL = true;
+    std::string header(cls_header, '\0');
+    if (cls_header)
+      header[0] = static_cast<char>(wisr::version_stamped);
+    // CLS_RANDOM: the header's bytes random, as the payload's are.
+    bool random_header = getenv("CLS_RANDOM") != nullptr;
+    for (uint64_t id = 1; id <= nrows; id++) {
+      if (random_header)
+        header = row_value(id + nrows).substr(0, cls_header);
+      db->Put(w, std::string(1, wisr::key_class_current) + row_key(id),
+              header + row_value(id));
+    }
+    rocksdb::CompactRangeOptions c;
+    c.bottommost_level_compaction = rocksdb::BottommostLevelCompaction::kForce;
+    db->CompactRange(c, nullptr, nullptr);
+    return 0;
+  }
+  if (what == "scan_classed") {
+    co.create_if_missing = false;
+    std::unique_ptr<rocksdb::DB> db(open(cls_dir, co));
+    double best = 0;
+    for (int pass = 0; pass < 4; pass++) {
+      // As sm1::chain_scan reads: a snapshot, auto prefix mode, the
+      // end of the current keys as the upper bound.
+      rocksdb::ReadOptions ro;
+      const rocksdb::Snapshot *snap =
+          getenv("NOSNAP") ? nullptr : db->GetSnapshot();
+      ro.snapshot = snap;
+      ro.auto_prefix_mode = !getenv("NOAUTO");
+      std::string upper(1, wisr::key_class_old);
+      rocksdb::Slice upper_slice(upper);
+      if (!getenv("NOUPPER"))
+        ro.iterate_upper_bound = &upper_slice;
+      std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(ro));
+      uint64_t rows = 0;
+      size_t bytes = 0;
+      auto t0 = std::chrono::steady_clock::now();
+      for (it->Seek(std::string(1, wisr::key_class_current)); it->Valid();
+           it->Next()) {
+        bytes += it->value().size() - cls_header;
+        rows++;
+      }
+      auto t1 = std::chrono::steady_clock::now();
+      it.reset();
+      if (snap)
+        db->ReleaseSnapshot(snap);
+      double ns = std::chrono::duration<double, std::nano>(t1 - t0).count();
+      if (pass > 0 && (best == 0 || ns < best))
+        best = ns;
+      if (rows != nrows || bytes != nrows * value_len)
+        return 1;
+    }
+    printf("%-14s %6.1f ns/row\n", what.c_str(), best / nrows);
     return 0;
   }
   if (what == "load_bw") {
