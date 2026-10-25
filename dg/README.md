@@ -61,6 +61,8 @@ its catalog is being replaced, not created (`../sm/PART4.md`
   two decimals; built.
 - `STATISTICS.md`: how ANALYZE and the planner use sm's
   statistics.
+- `SCHEMACACHE.md`: a session's schema kept across
+  transactions; proposed.
 - `SHMEM.md`: what is left of PostgreSQL's shared memory,
   locks and signals, and what replaces it.
 - `WIP_THREADS.md`: the record of the step that made a
