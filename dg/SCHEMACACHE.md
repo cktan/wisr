@@ -1,8 +1,10 @@
 # SCHEMACACHE — a session's schema, kept across transactions
 
-**Status: being built.** §7's steps 1 and 2 are built: the
-epoch, and a name's relation (Q7's name lookup from 3,000
-instructions to 500).
+**Status: being built.** §7's steps 1 to 3 are built: the
+epoch, a name's relation (Q7's name lookup from 3,000
+instructions to 500), and the version check after a lock (from
+900 to 100). Q7 is at 116,700 instructions to PostgreSQL's
+106,300, from 122,400.
 
 A query of one row by its key, Q7 of `../bench/DESIGN.md`,
 runs 16,000 more instructions in digres than in PostgreSQL, and

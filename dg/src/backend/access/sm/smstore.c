@@ -183,6 +183,8 @@ struct smstore_state_t {
   /* The names it looked up, by namespace and name, and the epoch of all. */
   std::map<std::pair<Oid, std::string>, name_entry_t> names;
   uint64_t names_epoch = 0;
+  /* The epoch each relation's cached version was last checked at. */
+  std::unordered_map<Oid, uint64_t> checked;
   /* The views it locked, as a table's lock is its handle's (open_tables). */
   std::vector<held_view_t> held_views;
   /* sm's namespaces' epoch when this session last flushed them. */
@@ -5336,6 +5338,8 @@ static bool lock_view(Oid oid, sm_lockmode_t mode, uint64_t *version) {
   return true;
 }
 
+static void check_version(Oid relid, sm_tbl_t *tbl);
+
 /*
  * Lock the relation relid, if it is a table in sm, as PostgreSQL locks a
  * relation before it reads its definition (lmgr.c): so a definition a DDL
@@ -5357,9 +5361,34 @@ void smstore_lock_relation(Oid relid, LOCKMODE lockmode) {
 
   /* What this session caches of it is from the version now held, or goes. */
   if (tbl != NULL)
-    RelationCheckSmVersion(relid, lock_target(relid), sm_tbl_version(tbl));
+    check_version(relid, tbl);
   else if (lock_view(relid, mode, &version))
     RelationCheckSmVersion(relid, relid, version);
+}
+
+/*
+ * Bring what this session caches of relid to the version tbl, just opened,
+ * holds (RelationCheckSmVersion()), unless it was checked at the catalog's
+ * epoch now: no publish has moved it since (SCHEMACACHE.md section 4.2).
+ * Read after the open, whose lock waits out a DDL and its publish.
+ */
+static void check_version(Oid relid, sm_tbl_t *tbl) {
+  uint64_t epoch = sm_cat_epoch(session());
+  auto &checked = tcb->smstore->checked;
+
+  if (UINT64_MAX != epoch) {
+    auto it = checked.find(relid);
+
+    if (checked.end() != it && it->second == epoch)
+      return;
+  }
+  RelationCheckSmVersion(relid, lock_target(relid), sm_tbl_version(tbl));
+  if (UINT64_MAX == epoch)
+    return;
+  /* Past the limit, the epochs are forgotten, and checked again as needed. */
+  if (checked.size() >= statistic_cache_max)
+    checked.clear();
+  checked[relid] = epoch;
 }
 
 /*
@@ -5379,7 +5408,7 @@ bool smstore_trylock_relation(Oid relid, LOCKMODE lockmode) {
 
   /* What this session caches of it is from the version now held, or goes. */
   if (tbl != NULL)
-    RelationCheckSmVersion(relid, lock_target(relid), sm_tbl_version(tbl));
+    check_version(relid, tbl);
   /*
    * A view's lock, which sm's open of no table took as it would a table's,
    * if it was free: so this does not wait.

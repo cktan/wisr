@@ -2021,6 +2021,31 @@ grep -q 'three .*3 .*2 four' "$work/names.flat" ||
 grep -q 'four .*0 .*relation "n2" does not exist.*five' \
   "$work/names.flat" || fail "a name of a rolled back transaction"
 
+# Verify that what a session caches of a table's definition follows
+# another session's DDL, though its version is not checked again
+# while the catalog's epoch holds (SCHEMACACHE.md section 4.2).
+# 1. A held session reads v1, one column: its row, twice, in two
+#    transactions, the second checking nothing.
+# 2. Another session adds column b and sets it: the held session reads
+#    b.
+# 3. Another session drops b: the held session's read of b is refused.
+local_psql -c 'create table v1 (a int4)' -c 'insert into v1 values (7)' \
+  >> "$work/defs.log" 2>&1
+held_start defs
+held_send defs "select a from v1; select a from v1; select 'one';"
+held_wait defs one || fail "a definition read"
+local_psql -c 'alter table v1 add column b int4' -c 'update v1 set b = 8' \
+  >> "$work/defs.log" 2>&1
+held_send defs "select a, b from v1; select 'two';"
+held_wait defs two || fail "a column added since"
+local_psql -c 'alter table v1 drop column b' >> "$work/defs.log" 2>&1
+held_send defs "select b from v1; select 'three';"
+held_wait defs three || fail "a column dropped since"
+held_end defs
+tr '\n' ' ' < "$work/defs.out" > "$work/defs.flat"
+grep -q '^7 7 one 7|8 two .*column "b" does not exist.*three' \
+  "$work/defs.flat" || fail "a definition after another session's DDL"
+
 # Verify that VACUUM compacts a table's store in sm, and that VACUUM
 # ANALYZE also analyzes it.
 # 1. Make t32 with 20,000 rows of 200 bytes, and VACUUM ANALYZE it: a
