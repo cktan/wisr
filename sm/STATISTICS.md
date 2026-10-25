@@ -218,7 +218,9 @@ next, so a table's index read 0 bytes in about one run in six.
 sm1 counts each write's bytes by the first two bytes of its key,
 which is sm2's relid, for the active memtable and for each sealed
 one until RocksDB flushes it, and answers a relid's range from
-that (`sm1/API.md`, `sm1::approxsize`). The bytes in files are
+that (`sm1/API.md`, `sm1::approxsize`). A chained row's writes
+count under its own key's relid, the OLD entries they put too,
+which carry no relid (`VCHAIN.md`). The bytes in files are
 still RocksDB's estimate.
 
 **A range's file bytes are estimated once a version of the

@@ -1214,7 +1214,9 @@ int relid_size(sm1::session_t *session, uint64_t storeid, uint16_t relid,
     return -1;
   }
   // A chained store's rows are its chained keys: a rel lives in the
-  // one or the other, so the two estimates add.
+  // one or the other, so the two files' estimates add. The memtables'
+  // bytes are sm1's count of the relid's writes, chained ones and
+  // their old versions included, so the chained estimate's are not.
   bool chained;
   if (sm1::store_chained(session, storeid, chained) != 0) {
     return -1;
@@ -1226,7 +1228,6 @@ int relid_size(sm1::session_t *session, uint64_t storeid, uint16_t relid,
       return -1;
     }
     disk += cdisk;
-    mem += cmem;
   }
   return 0;
 }

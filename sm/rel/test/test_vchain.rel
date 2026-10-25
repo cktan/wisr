@@ -28,6 +28,9 @@
 #    files; an aborted load leaves none; a loaded row is updated
 #    under an older snapshot; a transaction that loaded cannot be
 #    prepared.
+# 9. A chained table's bytes in memtables are counted as written:
+#    its rows, their old versions, a savepoint's undoing, and not
+#    its index's entries.
 
 (def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_vchain"))
 (rm-rf test-dir)
@@ -386,6 +389,47 @@
 (def key4321 ((many 4321) 1))
 (assert-eq (map (fn [hit] (hit 0)) (idx-scan big_v :ge [key4321] :le [key4321]))
            @[(big-rows 4321)])
+(commit)
+
+# 9. Memtable bytes. Rows of over 1000 bytes in a table's own store,
+#    never flushed: each version written is 1000 to 1100 bytes.
+# 9.1 Create mt with an index on v, insert 200 rows and commit: the
+#     size is 200 versions', the index's entries not among them.
+# 9.2 Update every row and commit: 600 versions', the old rows and
+#     the ones replaced counted.
+# 9.3 Update 100 rows past a savepoint and roll back to it: 400
+#     versions more: each row's update, its OLD and CURR entries,
+#     then its old version put back in CURR and its OLD entry
+#     rewritten unlinked.
+(defn assert-versions [n size]
+  (assert-eq [n (and (>= size (* n 1000)) (<= size (* n 1100)))]
+             [n true]))
+(begin :rc)
+(table-create mt (columns (id :int4 :not-null) (v :text)))
+(index-create mt_v (table mt) (key (v :asc)))
+(commit)
+(begin :rc)
+(def mt-rows (seq [i :range [0 200]] (insert mt [i (string i pad)])))
+(commit)
+(begin :rc)
+(assert-versions 200 (table-size mt))
+(commit)
+
+(begin :rc)
+(each r mt-rows
+  (def i (- r (mt-rows 0)))
+  (update mt r [i (string i "." pad)]))
+(commit)
+(begin :rc)
+(assert-versions 600 (table-size mt))
+(commit)
+
+(begin :rc)
+(def mt-sp (savepoint))
+(each r (slice mt-rows 0 100)
+  (update mt r [0 (string "x" pad)]))
+(rollback mt-sp)
+(assert-versions 1000 (table-size mt))
 (commit)
 
 (env-detach)

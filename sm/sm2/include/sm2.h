@@ -872,9 +872,10 @@ bool rel_scan_rolled_back(const rel_scan_t* scan);
  * Estimate the bytes of the rel under relid in storeid, a heap's
  * or an index's alike: in disk, those in sorted files, and in
  * mem, those in memtables, as sm1::approxsize() reports them and
- * with its caveats. With old, a chained store's older versions too,
- * which belong to its row rel alone (sm1::chain_approxsize). Needs
- * no open rel and no transaction.
+ * with its caveats. With old, a chained store's older versions in
+ * files too, which belong to its row rel alone
+ * (sm1::chain_approxsize); those in memtables are counted under the
+ * row's relid, old or not. Needs no open rel and no transaction.
  */
 int relid_size(sm1::session_t* session, uint64_t storeid, uint16_t relid,
                uint64_t& disk, uint64_t& mem, bool old = false);

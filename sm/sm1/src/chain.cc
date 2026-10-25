@@ -96,6 +96,18 @@ std::string old_key(uint64_t id) {
 namespace {
 
 /*
+ * Put key and value into batch, adding their bytes to bytes: what
+ * the batch puts into the memtable, counted once it is written
+ * (memcount.h).
+ */
+void batch_put(rocksdb::WriteBatch &batch, const store_t &st,
+               const std::string &key, const std::string &value,
+               uint64_t &bytes) {
+  batch.Put(st.cf, key, value);
+  bytes += key.size() + value.size();
+}
+
+/*
  * Get the old version id of the store CF cf, in rdb, into *v, its
  * bytes kept in *buf, at snap when given: 0, 1 if there is none (GC
  * dropped it: no older version), or -1.
@@ -390,12 +402,13 @@ int chain_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
   nv.seq = seq;
   nv.payload = erasing ? rocksdb::Slice() : data;
   rocksdb::WriteBatch batch;
+  uint64_t bytes = 0;
   if (c.have_head && !c.head_dead) {
     // CURR's version moves to OLD under a fresh id, displaced by us.
     uint64_t id = st.next_old->fetch_add(1);
     chain_version_t moved = c.head;
     moved.displaced = s->xid;
-    batch.Put(st.cf, old_key(id), chain_value(moved, true));
+    batch_put(batch, st, old_key(id), chain_value(moved, true), bytes);
     nv.prev = id;
   } else if (c.have_head) {
     // A dead version in CURR is overwritten; the version it hid,
@@ -416,25 +429,28 @@ int chain_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
       if (r == 0) {
         gone.flags |= chain_unlinked;
         gone.displaced = now;
-        batch.Put(st.cf, old_key(id), chain_value(gone, true));
+        batch_put(batch, st, old_key(id), chain_value(gone, true), bytes);
       }
     }
     if (c.found && c.at != 0) {
       chain_version_t hid = c.version;
       hid.flags &= ~chain_displaced_stamped;
       hid.displaced = s->xid;
-      batch.Put(st.cf, old_key(c.at), chain_value(hid, true));
+      batch_put(batch, st, old_key(c.at), chain_value(hid, true), bytes);
       nv.prev = c.at;
     } else {
       nv.prev = 0;
     }
   }
-  batch.Put(st.cf, curr_key(key), chain_value(nv, false));
+  batch_put(batch, st, curr_key(key), chain_value(nv, false), bytes);
   // Put the versions eagerly; they are not synced (§5 step 5).
   rocksdb::Status status = st.rdb->Write(store_write_options(st), &batch);
   if (!status.ok()) {
     return set_status_error(status, "write version");
   }
+  // Every entry, OLD's too, counts under the row's key: OLD keys
+  // carry no relid, and a table's size takes in its old rows.
+  count_write(st, std::string_view(key.data(), key.size()), bytes);
   // Advance seq, and make the write visible to ourselves.
   s->seq = seq;
   s->seq_hwm = seq;
@@ -795,16 +811,19 @@ int chain_restore(db_t *db, const store_t &st, rocksdb::Slice key, uint64_t xid,
     id = keep.prev;
   }
   rocksdb::WriteBatch batch;
+  uint64_t bytes = 0;
   if (found) {
     // The version kept goes back to CURR, its own prev unchanged, as
     // CURR holds it: none of OLD's flags.
     chain_version_t back = keep;
     back.flags &= ~(chain_unlinked | chain_displaced_stamped);
     back.displaced = 0;
-    batch.Put(st.cf, curr_key(key), chain_value(back, false));
+    batch_put(batch, st, curr_key(key), chain_value(back, false), bytes);
   } else {
     // Nothing older: the key had no version before.
-    batch.Delete(st.cf, curr_key(key));
+    std::string k = curr_key(key);
+    batch.Delete(st.cf, k);
+    bytes += k.size();
   }
   // The entries passed are no chain's now; the ts they leave at keeps
   // them for readers already on their way (../VCHAIN.md §3).
@@ -823,7 +842,7 @@ int chain_restore(db_t *db, const store_t &st, rocksdb::Slice key, uint64_t xid,
       if (r == 0) {
         gone.flags |= chain_unlinked;
         gone.displaced = now;
-        batch.Put(st.cf, old_key(id), chain_value(gone, true));
+        batch_put(batch, st, old_key(id), chain_value(gone, true), bytes);
       }
     }
   }
@@ -831,6 +850,8 @@ int chain_restore(db_t *db, const store_t &st, rocksdb::Slice key, uint64_t xid,
   if (!status.ok()) {
     return set_status_error(status, "put a chained version back");
   }
+  // Counted under the row's key, as a write's are.
+  count_write(st, std::string_view(key.data(), key.size()), bytes);
   return 0;
 }
 
