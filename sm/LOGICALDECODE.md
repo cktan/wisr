@@ -34,7 +34,8 @@ primary's help. That asks for:
   missed or applied twice.
 - **Enough to apply a change elsewhere**: each row's values,
   and for an update or a delete the values that identify the
-  row, since a replica's rownos are not the primary's.
+  row, since a keyless table's `_id`s on a replica are not the
+  primary's.
 - **Schema changes in the stream**, at their place in it, so
   a consumer always knows the shape of what it reads.
 - **A bounded cost on the primary.** A consumer that falls
@@ -100,10 +101,19 @@ Five facts of sm1 and sm3 shape the design:
 - **Writes are eager, and undone by key.** A version is in
   RocksDB from the moment it is written, under its writer's
   `xid`, with no record of the transaction's writes kept in
-  memory (`sm1/SM1_DESIGN.md` §5, §6.5). A rollback deletes
-  the versions written since its mark and rewinds `seq`; an
-  abort writes nothing, and a crash leaves versions no status
-  record covers, which are dead (§3.4 there).
+  memory but, while a savepoint is set, the keys written under
+  it (`sm1/SM1_DESIGN.md` §5, §6.5). A row is named by its
+  key, the values of its primary key's columns, or a keyless
+  table's `_id` (`ROWKEY.md`). Every table's store is chained,
+  CF `chain.<storeid>`: a row's key holds its newest version,
+  the older ones chained behind it, while TOAST and index
+  entries stay versioned keys (`VCHAIN.md` §3). A rollback
+  deletes the versioned keys written since its mark, puts back
+  each chained key it wrote to the version in effect at the
+  mark (`VCHAIN.md` §6), and rewinds `seq`; an abort writes
+  nothing, its versions dead by the status lookup, and a crash
+  leaves versions no status record covers, which are dead
+  (`sm1/SM1_DESIGN.md` §3.4).
 - **The WAL is RocksDB's, and not all of a write goes
   through it.** A bulk load in file mode ingests sorted files
   past the WAL (`BULKLOAD.md`), a dropped store is a column
@@ -305,22 +315,23 @@ past that is split over records of one `seq`, told apart by
 
 | Kind | Holds | Written by |
 | --- | --- | --- |
-| insert | table oid, rowno, the new row | `tbl_insert`, `tbl_insert_arbiter` when it inserts, a load |
-| update | table oid, rowno, the old row's identity, the new row | `tbl_update` |
-| delete | table oid, rowno, the old row's identity | `tbl_delete` |
+| insert | table oid, the row's key, the new row | `tbl_insert`, `tbl_insert_arbiter` when it inserts, a load |
+| update | table oid, the row's key, the old row's identity, the new row | `tbl_update` |
+| delete | table oid, the row's key, the old row's identity | `tbl_delete` |
 | truncate | table oid | `truncate_table` |
 | schema | what changed: the kind and oid of a namespace, table, sequence or view, and its definition as the catalog keeps it, or that it was dropped | the commit of DDL that changed a logged object |
 | sequence | sequence oid, the lease's end | a lease renewal of a logged sequence |
 
-- **Only the heap is logged.** A table's index entries and
+- **Only the rows are logged.** A table's index entries and
   TOAST chunks are writes to its store too (relids
   `0x0002`–`0xFFFF`, `sm3/SM3_DESIGN.md` §4), but they follow
   from the row and from the definition, and a consumer has no
   use for them. A row write is logged once, after its index
   entries are written, so a write refused partway logs
   nothing a rollback must undo beyond the versions.
-- **The rowno is carried** so that a replica that keeps the
-  primary's rownos, as a digres replica could, applies a
+- **The row's key is carried**, its primary key's values or
+  a keyless table's `_id`, so that a replica that keeps the
+  primary's `_id`s, as a digres replica could, applies a
   change by it; any other replica applies by identity.
 
 ### 6.2 Identity

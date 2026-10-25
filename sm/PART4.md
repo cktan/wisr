@@ -160,16 +160,17 @@ that suggests: the offset is effectively 11 bits, giving
 roughly 2^43 rows per relation, and block locality is assumed
 by bitmap scans, BRIN, `CLUSTER`, `ANALYZE`'s block sampling,
 `relpages` in the cost model, and the user-visible `ctid`. sm1
-has no TID. sm2 now keys every row by a 64-bit `rowno` from an
-sm1 sequence, which is crash-safe and never reused, and the
-primary key is an index over it (`sm2/SM2_DESIGN.md` §5) — but a
-64-bit `rowno` does not fit a 6-byte TID. A query names a row
-by `rowno`, a system column of its own, an `int8`; `ctid` is no
-relation's column, nor are `xmin`, `xmax`, `cmin` and `cmax`,
-as sm keeps no transaction ids in a row (decided 2026-10-16,
-`../dg/WORKNOTE.md` step 200). Inside, the fork carries a small
-`rowno` in the TID (§9.3, gap 2) rather than fitting `rowno`
-into the table AM's shape.
+has no TID. sm2 keys every row by its primary key, or in a
+table without one by `_id`, a 64-bit number from an sm1
+sequence, crash-safe and never reused (`ROWKEY.md`,
+`sm2/SM2_DESIGN.md` §5); neither fits a 6-byte TID. A query
+names a keyless table's row by `_id`, a system column of its
+own, an `int8`; `ctid` is no relation's column, nor are `xmin`,
+`xmax`, `cmin` and `cmax`, as sm keeps no transaction ids in a
+row (decided 2026-10-16, `../dg/WORKNOTE.md` step 200). Inside,
+the fork carries the key's columns where the executor carried
+a TID (`ROWKEY.md` §3), rather than fitting a key into the
+table AM's shape.
 
 **PostgreSQL's MVCC would have to be the authority, which
 deletes sm1's.** A table AM is handed PG's transaction ids and
@@ -379,7 +380,7 @@ reflected in each level's own `SMn_OBJECTIVE.md` and
 | Forced | Level | Why |
 | --- | --- | --- |
 | **Tuple format cheap to turn into a PG tuple** | sm2 | the executor works in tuple slots; a bespoke encoding pays a conversion per row, in both directions; the threaded fork removes the IPC boundary, not the conversion |
-| **Row identity is `rowno`; the table is a heap** | sm2 | the planner and executor assume a heap with every index secondary, and tables may have no primary key; `rowno` is a 64-bit number from an sm1 sequence; a query reads it as the system column `rowno`, and has no `ctid` |
+| **Row identity is the row's key, or `_id` without a primary key** | sm2 | tables may have no primary key, so a table without one is keyed by `_id`, a 64-bit number from an sm1 sequence, which a query reads as the system column `_id`; the executor carries the key's columns where it carried a TID, and there is no `ctid` (`ROWKEY.md`) |
 | **Key encoder takes a collation** | sm2 | PG's text order is `strcoll`/ICU, not memcmp; the encoder needs `(type, collation, direction, nulls-order)` per column or half of SQL's `ORDER BY` is unrepresentable |
 | **Collated keys store the sort key *and* the original** | sm2 | the collation transform is lossy and irreversible; this is what YugabyteDB does, and it costs storing the datum twice |
 | **Batch-shaped API** | sm3 | was forced by §2's out-of-process engine; with a threaded fork it is no longer forced, and is open |

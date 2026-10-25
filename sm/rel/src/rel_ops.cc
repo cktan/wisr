@@ -653,7 +653,7 @@ static Janet table_create(int32_t argc, Janet *argv, bool temp) {
     janet_panic("table-create: table must have at least one column");
   }
 
-  // sm3 makes its store, rowno sequence and catalog entry.
+  // sm3 makes its store, _id sequence and catalog entry.
   std::vector<sm_column_spec_t> specs;
   for (const col_def_t &c : columns) {
     specs.push_back({c.name.c_str(), c.type_code, c.typmod, c.not_null});
@@ -690,7 +690,7 @@ static Janet cfun_table_drop(int32_t argc, Janet *argv) {
   if (rc == 1) {
     janet_panicf("table-drop: table '%s' does not exist", tbl_name.c_str());
   }
-  // Its store, rows, indexes and rowno sequence go with it.
+  // Its store, rows, indexes and _id sequence go with it.
   if (rc != 0 || sm_cat_drop_table(s->session, oid) != 0) {
     panic_sm_error("table-drop");
   }
@@ -1571,7 +1571,7 @@ static Janet cfun_insert(int32_t argc, Janet *argv) {
   return janet_wrap_number(static_cast<double>(rowno));
 }
 
-/* (read table rowno) */
+/* (read table id) */
 static Janet cfun_read(int32_t argc, Janet *argv) {
   janet_fixarity(argc, 2);
   session_ctx_t *s = require_session();
@@ -1607,7 +1607,7 @@ static Janet cfun_read(int32_t argc, Janet *argv) {
   return janet_wrap_tuple(janet_tuple_end(vals));
 }
 
-/* (read-latest table rowno) */
+/* (read-latest table id) */
 static Janet cfun_read_latest(int32_t argc, Janet *argv) {
   janet_fixarity(argc, 2);
   session_ctx_t *s = require_session();
@@ -1643,7 +1643,7 @@ static Janet cfun_read_latest(int32_t argc, Janet *argv) {
   return janet_wrap_tuple(janet_tuple_end(vals));
 }
 
-/* (lock-row table rowno :shared|:exclusive) */
+/* (lock-row table id :shared|:exclusive) */
 static Janet cfun_lock_row(int32_t argc, Janet *argv) {
   janet_fixarity(argc, 3);
   session_ctx_t *s = require_session();
@@ -1885,7 +1885,7 @@ static Janet cfun_stats(int32_t argc, Janet *argv) {
   return janet_wrap_struct(janet_struct_end(kv));
 }
 
-/* (update table rowno [new_val1 new_val2 ...]) */
+/* (update table id [new_val1 new_val2 ...]) */
 static Janet cfun_update(int32_t argc, Janet *argv) {
   janet_fixarity(argc, 3);
   session_ctx_t *s = require_session();
@@ -1948,7 +1948,7 @@ static Janet cfun_update(int32_t argc, Janet *argv) {
   return janet_wrap_tuple(janet_tuple_end(old_vals));
 }
 
-/* (delete table rowno) */
+/* (delete table id) */
 static Janet cfun_delete(int32_t argc, Janet *argv) {
   janet_fixarity(argc, 2);
   session_ctx_t *s = require_session();

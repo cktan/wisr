@@ -1,17 +1,15 @@
 # CLUSTER — a table clustered on its primary key
 
-A table today is a heap keyed by `rowno`, and its primary key
-is an index over it (`sm2/SM2_DESIGN.md` §5). On RocksDB that
-makes every read through an index two seeks, the primary
-key's included, where PostgreSQL's heap fetch is a buffer
-lookup. This file is the pivot away from it: a table is kept
-in its primary key's order, and a hidden `_id` kept the
-6-byte TID PostgreSQL's executor ran on. Steps 1 and 2 of §11
-are built. `ROWKEY.md` took the next step, built: digres names
-a row by its key, nothing in it is a TID, and a table with a
-primary key has no `_id` and no `_id` index.
-The state before the pivot is on the branch
-`prepivot-heap-with-recno`.
+A table was a heap keyed by `rowno`, and its primary key an index
+over it. On RocksDB that makes every read through an index two
+seeks, the primary key's included, where PostgreSQL's heap fetch
+is a buffer lookup. This file is the pivot away from it: a table
+is kept in its primary key's order, and a hidden `_id` kept the
+6-byte TID PostgreSQL's executor ran on. Steps 1 and 2 of §11 are
+built. `ROWKEY.md` took the next step, built: digres names a row
+by its key, nothing in it is a TID, and a table with a primary
+key has no `_id` and no `_id` index. The state before the pivot
+is on the branch `prepivot-heap-with-recno`.
 
 Paths are relative to `sm/`; digres's are under `../dg/`.
 
@@ -323,7 +321,11 @@ birth and is never rewritten.
 
 ## 9. What changes where
 
-- **sm1**: nothing. The isolation scenarios are untouched.
+- **sm1**: the moved tombstone, `sm1::erase_moved`, and
+  `SM_ERR_MOVED` for a write or `read_latest` that meets it
+  (§4, `ROWKEY.md` §2.3); and `insert_new`, an insert that
+  leaves out the check of its key (§10). The isolation
+  scenarios are untouched; f11, of a moved row, is added.
 - **sm2**: the rel is keyed by its clustering key, the primary
   key's columns or `_id`, given at its open; its value is the
   tuple alone; `rel_insert` returns the key, and a keyless

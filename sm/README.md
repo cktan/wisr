@@ -5,10 +5,10 @@ built on the level below it.
 
 | Level | Where | What it is |
 | --- | --- | --- |
-| — | — | RocksDB: an ordered, durable, crash-atomic key-value store, under the stack |
+| — | — | RocksDB: an ordered, durable, crash-atomic key-value store, under level 1 |
 | 0 | `sm0/` | the error state, the log hook, general-purpose helpers that are about no storage, and the system services sm and dg build on, `sm_sys.h` |
 | 1 | `sm1/` | the MVCC storage manager: stores, transactions, isolation, locks, 2PC, recovery |
-| 2 | `sm2/` | types and tuples: a type system, a key encoding, a tuple format, heap and index relations |
+| 2 | `sm2/` | types and tuples: a type system, a key encoding, a tuple format, row and index relations |
 | 3 | `sm3/` | schema and index maintenance: a catalog, index maintenance and builds, scans, statistics |
 | top | `include/`, `src/` | the API over the stack, the only one, for PostgreSQL to call: C in style, compiled as C++ |
 
@@ -114,9 +114,13 @@ the wrapper through the `rel/` test suite.
   a view's query and what it reads, and the host expands it
 - `FOREIGNKEY.md` — the design of foreign keys, which is
   built: sm3 keeps them, and the host checks them
-- `CLUSTER.md` — a table clustered on its primary key, with a
-  hidden `_id` for the executor's TID; built in sm, digres to
-  follow
+- `CLUSTER.md` — a table clustered on its primary key, its
+  rows keyed by it, or by a hidden `_id` without one; built
+- `ROWKEY.md` — a row named by its key in sm and digres alike:
+  no `ctid`, and no `_id` in a table with a primary key; built
+- `VCHAIN.md` — a table row's newest version under its plain
+  key and the older ones chained behind it, in a chained
+  store's one column family, `chain.<storeid>`; built
 - `PIN.md` and `ROW.md` — a row read without a copy, as a pin,
   and deformed only as far as it is read; built
 - `SM_DECIMAL_PLAN.md` — the decimals carry their scale in

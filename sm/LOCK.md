@@ -138,7 +138,7 @@ involved.
 - **A row write, update or delete.** The uncommitted version
   is the lock.
 - **Gaps and ranges.** Phantoms are SSI's SIREAD range
-  predicates, checked by `ssi.on_write`. Nothing is held on a
+  predicates, checked by `ssi_on_write`. Nothing is held on a
   gap and a conflict is a serialization failure, not a wait.
 - **A sequence's position.** `sm1::nextseq` is outside MVCC,
   takes no locks and is not undone by an abort.
@@ -290,20 +290,20 @@ between `ROW` and the other types.
 
 The build must not add an entry for a row while a writer is
 changing it. The entry key is the obvious thing to serialize
-on, and it is the wrong one — the build locks the **heap row**
+on, and it is the wrong one — the build locks the **row**
 instead:
 
 ```cpp
 // Hold the row shared to the end of the batch: a writer
-// changes the heap row first, so it and the build never
-// work on one row at once (SM3_DESIGN.md §3).
+// changes the row first, so it and the build never
+// work on one row at once (sm3/SM3_DESIGN.md §3).
 sm2::rel_lock(table->rel, r, SM_LOCKMODE_SH)
 ```
 
 The build is also the only thing that writes index entries
-without writing the heap row — which is exactly why §3's claim
+without writing the row — which is exactly why §3's claim
 that a non-unique entry needs no lock holds: every writer of
-such an entry holds a lock or a version on its heap row.
+such an entry holds a lock or a version on its row.
 
 ### 4.5 Lock, read current, act — at READ COMMITTED
 
@@ -352,11 +352,12 @@ table-oid lock. The oid is the only identity stable for the
 table's whole life, so it is the name.
 
 This is also why the lock cannot live *in* the table's store:
-it has to outlive `DROP TABLE`'s `rmstore` — `CATALOG_INMEM.md`
-§2 promises that a table dropped while a caller waited is
-`SM_ERR_NOTFOUND`, which means getting the lock and *then*
-finding no definition — and it has to pre-date the store,
-since `CREATE TABLE` inserts the name before making the store.
+it has to outlive `DROP TABLE`'s `rmstore` —
+`sm3/CATALOG_INMEM.md` §2 promises that a table dropped while
+a caller waited is `SM_ERR_NOTFOUND`, which means getting the
+lock and *then* finding no definition — and it has to pre-date
+the store, since `CREATE TABLE` inserts the name before making
+the store.
 
 ### 4.8 Publishing under the lock
 
@@ -377,7 +378,7 @@ definition, never the old.
   where no version exists has to be a real lock-table entry.
   Moving dedup off the key it writes — hashing the value, say
   — would put one entry per inserted row back into every
-  transaction, which is the cost `WRITELOCK.md` removed. The
+  transaction, which is the cost `sm1/WRITELOCK.md` removed. The
   hash is not the problem; leaving the written key is.
 - **Hashing a lock *name* is safe; hashing a *key* is not.** A
   name collision costs a false wait, and sometimes a false
@@ -386,6 +387,6 @@ definition, never the old.
 - **Deadlock is reported, not avoided.** There is no lock
   ordering rule in the stack; `SM_ERR_DEADLOCK` is retryable
   and the caller retries.
-- **Subjects 4 to 7 are not built.** `DROP COLLATION` in use
-  is `CATALOG_INMEM.md` §4's open item, and `DROP INDEX` leans on
-  the table's oid lock.
+- **Subjects 5 to 7 are not built.** `DROP COLLATION` in use
+  is `sm3/CATALOG_INMEM.md` §4's open item, `DROP INDEX` leans
+  on the table's oid lock, and sm3 has no sequence object.

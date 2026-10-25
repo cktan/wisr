@@ -1,6 +1,6 @@
 # VCHAIN — the newest version in place, the older ones chained
 
-**Built** (branch `wip-vchain-1`): steps 1 to 4 of §11, the
+**Built**, and merged into `main`: steps 1 to 4 of §11, the
 class byte, chained rows in sm1, every table's rows chained by
 sm2 and sm3, and the benchmark (run 20261024-1214, in
 `../bench/results`); each case of §10 is tested as its last
@@ -235,7 +235,7 @@ handling does not change.
 | index-only scan | as today: the entry's versions say what the reader sees. | rel test_vchain §1 (INCLUDE), test_index |
 | update A→B→A | rows: CURR A, then OLD B, then OLD A, each snapshot stopping at the one it sees. Index: `A‖1` erased at B and put again at A, as versions, as today. | scenario g01 (both modes); rel test_vchain §1 |
 | INCLUDE-only update | as today: the entry is erased and put again, versioned. | rel test_vchain §1 (n changes) |
-| primary key change | the old key gets a moved tombstone, the new key a new chain; a writer meeting the tombstone gets `SM_ERR_MOVED`; an old snapshot reads the old key's chain. | scenario f11 (both modes) |
+| primary key change | the old key gets a moved tombstone, the new key a new chain; a writer meeting the tombstone gets `SM_ERR_MOVED`, after `SM_ERR_UPDATED` or `SM_ERR_CONFLICT` if the move committed after it began (`ROWKEY.md` §2.3); an old snapshot reads the old key's chain. | scenario f11 (both modes) |
 | delete, then insert again | the tombstone moves to OLD behind the new version; an older snapshot passes the new version and the tombstone to the row. GC drops a committed tombstone left in CURR; the next insert then has `prev` `0`. | scenarios a10, b07 (both modes) |
 | abort | nothing repaired. Readers pass the dead head by the chain; the next writer overwrites it; GC repairs the rest. The cost: until then, each read of the row hops and looks up a dead xid. | scenarios a03, g02 (both modes); rel test_vchain §3 |
 | two writes by one transaction, then abort | both dead; readers pass both; GC's repair walks to the first version not the transaction's. | scenario g02; rel test_vchain §3 |
@@ -266,7 +266,7 @@ handling does not change.
    scan of `0x01` with the extractor set returns its whole
    range.
 2. **Chained rows in sm1** (§3–§7), and the bulk load; the
-   driver's chained mode. → sm1's suite; the 112 isolation
+   driver's chained mode. → sm1's suite; the 114 isolation
    scenarios unchanged, versioned and chained.
 3. **sm2 and sm3 chain every table's rows.** → every suite.
 4. **Benchmark against PostgreSQL.**

@@ -79,7 +79,7 @@ Why Janet over Python or Lua?
 
 `rel` provides a relational simulation layer on top of `sm.h`.
 In this layer, tables and indexes are named relational entities
-that manage the underlying `sm_` stores, sequences, heap rels,
+that manage the underlying `sm_` stores, sequences, row rels,
 and index rels automatically.
 
 ### 3.1 Data Types
@@ -104,8 +104,8 @@ exposed via `sm_type(code)`:
 | `:timestamptz` | 14 | `timestamptz` | Timestamp in UTC |
 | `:interval` | 15 | `interval` | Months, days, microseconds |
 | `:uuid` | 16 | `uuid` | 16-byte UUID |
-| `:decimal64` | 17 | `decimal64` | Fixed-point decimal, p <= 18 |
-| `:decimal128` | 18 | `decimal128` | Fixed-point decimal, p <= 38 |
+| `:decimal64` | 17 | `decimal64` | Fixed-point decimal, p <= 17 |
+| `:decimal128` | 18 | `decimal128` | Fixed-point decimal, p <= 36 |
 
 ### 3.2 Defining Tables and Indexes
 
@@ -148,26 +148,27 @@ columns, sort order, and uniqueness.
 ### 3.3 Direct Row Manipulation
 
 Rows are manipulated directly as tuples without SQL
-`INSERT INTO`, `UPDATE`, or `DELETE` syntax:
+`INSERT INTO`, `UPDATE`, or `DELETE` syntax. A `rel` table has
+no primary key, so each row is named by its `_id`:
 
 ```lisp
-# 1. Insert a row directly: returns generated rowno (e.g. 1)
+# 1. Insert a row directly: returns generated _id (e.g. 1)
 (insert users [1 "Andy Pavlo" 44])
 
-# 2. Read row by rowno: returns decoded tuple
+# 2. Read row by _id: returns decoded tuple
 (read users 1)
 # => [1 "Andy Pavlo" 44]
 
-# 3. Read latest committed version of row by rowno
+# 3. Read latest committed version of row by _id
 # Useful under READ COMMITTED to inspect newer commits
 (read-latest users 1)
 # => [1 "Andy Pavlo" 44]
 
-# 4. Update row directly: replaces row at rowno, returns old tuple
+# 4. Update row directly: replaces row at _id, returns old tuple
 (update users 1 [1 "Andy Pavlo" 45])
 # => [1 "Andy Pavlo" 44]
 
-# 5. Delete row directly: removes row at rowno, returns old tuple
+# 5. Delete row directly: removes row at _id, returns old tuple
 (delete users 1)
 # => [1 "Andy Pavlo" 45]
 ```
@@ -179,17 +180,17 @@ which return Janet arrays; Janet's own `filter` and `map`
 compose over them, and `rel` adds no stream operators:
 
 ```lisp
-# Heap scan: scan all rows from rowno 1 to 100
+# Table scan: scan all rows from _id 1 to 100
 (scan users :from 1 :to 100)
 # => ([1 [1 "Andy" 45]] [2 [2 "Lin" 30]])
 
 # Index scan with bounds: scan idx_users_name between "A" and "M"
 (idx-scan idx_users_name :ge ["A"] :lt ["M"])
-# => ([1 false nil] [2 false nil]) ; (rowno, cut, includes)
+# => ([1 false nil] [2 false nil]) ; (_id, cut, includes)
 
 # Filter and project with Janet's own functions
-(map (fn [[rowno r]] [(r 1) (r 2)])
-     (filter (fn [[rowno r]] (> (r 2) 21)) (scan users)))
+(map (fn [[id r]] [(r 1) (r 2)])
+     (filter (fn [[id r]] (> (r 2) 21)) (scan users)))
 ```
 
 ---
@@ -200,7 +201,7 @@ Every statement in `rel` maps directly to one or more `sm_`
 functions in `include/sm.h`. `rel` supports two levels of
 statements:
 
-1. **High-Level Relational Statements:** Coordinate heap rels and
+1. **High-Level Relational Statements:** Coordinate row rels and
    attached secondary indexes automatically.
 2. **Low-Level Direct `sm_` Statements:** Expose the exact C
    API calls for granular unit testing of individual API handles.
@@ -258,13 +259,13 @@ catalog of its own.
 1. Builds an `sm_column_spec_t` per column: its name, type code,
    typmod and `:not-null`.
 2. Calls `sm_cat_create_table(s, SM_NSP_PUBLIC, name, cols, n,
-   &oid)`, which makes the table's store, rowno sequence and
+   &oid)`, which makes the table's store, `_id` sequence and
    catalog entry.
 
 #### `(table-drop <name>)`
 1. Calls `sm_cat_table_oid` for the table's oid.
 2. Calls `sm_cat_drop_table(s, oid)`, which drops its store, its
-   rows and index entries, and its rowno sequence.
+   rows and index entries, and its `_id` sequence.
 
 #### `(index-create <idx_name> (table <table>) (key ...) [:unique bool] [:include ...])`
 1. Opens the table under its table-oid lock X, as the DDL takes
@@ -341,11 +342,11 @@ forms back.
 Each statement first opens its table by name: `sm_cat_table_oid`,
 then `sm_tbl_open` -- `SM_LOCKMODE_IS` to read,
 `SM_LOCKMODE_IX` to write -- which holds the table's
-table-oid lock to the end of the transaction and opens its heap
+table-oid lock to the end of the transaction and opens its rows
 and its indexes under it. `sm_tbl_def` gives its definition.
 The handle is closed when the session's next statement begins.
 
-A write is one call. sm3 writes the heap row and then every
+A write is one call. sm3 writes the row and then every
 index the write changes (`sm3/SM3_DESIGN.md` §3); `rel` names
 no index and computes no key. The call sets no savepoint, so a
 write that fails partway, on a duplicate in a unique index for
@@ -353,7 +354,7 @@ one, has left its earlier steps done. `rel` then aborts the
 transaction, as PostgreSQL does on an error, and that undoes
 them. `SM_ERR_UPDATED` and `SM_ERR_BLOCKED` are outcomes, not
 errors, and leave the transaction active. One limit follows:
-a `SM_ERR_BLOCKED` that struck after the heap write, on a
+a `SM_ERR_BLOCKED` that struck after the row's write, on a
 later index, cannot be repeated safely, and a script that
 meets one must abort.
 
@@ -368,14 +369,14 @@ meets one must abort.
      pointing at them.
    - Any other type parsed from its canonical text by
      `sm_type_in`.
-3. Calls `sm_tbl_insert(tbl, values, isnull, n, &rowno)`.
+3. Calls `sm_tbl_insert(tbl, values, isnull, n, &id)`.
 4. If it fails (e.g., `SM_ERR_DUPKEY` from a unique index),
    aborts the transaction; the error is preserved and
    returned.
-5. Returns `rowno`.
+5. Returns the new row's `_id`.
 
-#### `(read <table> <rowno>)`
-1. Calls `sm_tbl_read(tbl, rowno, &tuple, &len)`.
+#### `(read <table> <id>)`
+1. Calls `sm_tbl_read(tbl, id, &tuple, &len)`.
 2. If return is 1, returns `nil` ("no row").
 3. Calls `sm_tbl_deform(tbl, tuple, len, values, isnull,
    ncols)`.
@@ -387,20 +388,20 @@ meets one must abort.
    - Null datums to `nil`.
 5. Returns tuple vector `[v0 v1 ... vn]`.
 
-#### `(read-latest <table> <rowno>)`
-1. Calls `sm_tbl_read_latest(tbl, rowno, &tuple, &len)`.
+#### `(read-latest <table> <id>)`
+1. Calls `sm_tbl_read_latest(tbl, id, &tuple, &len)`.
 2. Deforms and decodes tuple identically to `read`.
 3. Returns newest committed tuple vector.
 
-#### `(lock-row <table> <rowno> <mode>)`
+#### `(lock-row <table> <id> <mode>)`
 1. Opens the table under `SM_LOCKMODE_IS` for
    `:shared`, `SM_LOCKMODE_IX` for `:exclusive`.
-2. Calls `sm_tbl_lock(tbl, rowno, mode)`, which holds the row
+2. Calls `sm_tbl_lock(tbl, id, mode)`, which holds the row
    to the end of the transaction and writes nothing.
 
-#### `(update <table> <rowno> <new-row-tuple>)`
+#### `(update <table> <id> <new-row-tuple>)`
 1. Converts `<new-row-tuple>` into `values[]` and `isnull[]`.
-2. Calls `sm_tbl_update(tbl, rowno, values, isnull, n,
+2. Calls `sm_tbl_update(tbl, id, values, isnull, n,
    &old_tuple, &old_len)`.
 3. If it fails, aborts the transaction, except on
    `SM_ERR_UPDATED`, which keeps the row lock for the
@@ -410,20 +411,21 @@ meets one must abort.
    values.
 5. Returns decoded old tuple vector.
 
-#### `(delete <table> <rowno>)`
-1. Calls `sm_tbl_delete(tbl, rowno, &old_tuple, &old_len)`,
+#### `(delete <table> <id>)`
+1. Calls `sm_tbl_delete(tbl, id, &old_tuple, &old_len)`,
    and on failure does as `update`.
 2. Calls `sm_tbl_deform` on `old_tuple`.
 3. Returns decoded deleted tuple vector.
 
 #### `(scan <table> [:from first] [:to last])`
 1. Defaults: `first = 1`, `last = UINT64_MAX`.
-2. Calls `sm_tbl_scan(tbl, first, last, &rscan)`.
-3. Loops `sm_rel_scannxt(rscan, &rowno, &tuple, &len)` until 1.
+2. Calls `sm_tbl_scan(tbl, first, last, &rscan)`, the scan of
+   a keyless table by `_id`.
+3. Loops `sm_rel_scannxt(rscan, &id, &tuple, &len)` until 1.
 4. Decodes each column of a tuple via `sm_tbl_decode`.
 5. Calls `sm_rel_scanend(rscan)`.
 6. Returns list of pairs:
-   `([rowno_1 tuple_1] [rowno_2 tuple_2] ...)`.
+   `([id_1 tuple_1] [id_2 tuple_2] ...)`.
 
 #### `(idx-scan <index> [:ge lo] [:gt lo] [:le hi] [:lt hi])`
 1. Constructs lower bound `sm_bound_t lo_b`:
@@ -434,12 +436,12 @@ meets one must abort.
      `:lt` (exclusive).
 3. Calls `sm_tbl_idx_scan(tbl, index, &lo_b, &hi_b,
    &widened, &iscan)`, the index named by its oid.
-4. Loops `sm_idx_scannxt(iscan, &rowno, &cut, &val, &len)`
+4. Loops `sm_idx_scannxt(iscan, &id, &cut, &val, &len)`
    until 1.
 5. If INCLUDE columns exist, decodes value via
    `sm_tbl_idx_deform`.
 6. Calls `sm_idx_scanend(iscan)`.
-7. Returns list of index entries `([rowno cut includes] ...)`,
+7. Returns list of index entries `([id cut includes] ...)`,
    `includes` being nil for an index without INCLUDE columns.
 
 ### 4.5 Low-Level Direct `sm_` Builtins
@@ -457,7 +459,7 @@ calling thread's error state as unadorned `sm:` primitives:
 
 Sequences are reached through `(seq-create)`, `(seq-drop)` and
 `(nextseq)`, over `sm_mkseq`, `sm_rmseq` and `sm_nextseq`.
-Stores, heap rels and indexes are reached only through tables.
+Stores, row rels and indexes are reached only through tables.
 
 ---
 

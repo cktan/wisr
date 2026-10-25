@@ -9,18 +9,18 @@ has sm3's own order of work.
 
 ## 1. Next
 
-1. **A table clustered on its primary key** (`CLUSTER.md`).
-   The heap keyed by `rowno` goes; a row is keyed by its
-   primary key, or by `_id` when it has none, and `_id` keeps
-   the executor's TID. In the steps of `CLUSTER.md` §11: the
-   first, sm's, is built; next, digres reads by key.
-
 The spike `PART4.md` §7 aimed the stack at is long past:
 digres runs on it (`PART4.md` §10). Statistics for a planner
 are built, the stack's part and digres's
 (`../dg/STATISTICS.md`, `../dg/WORKNOTE.md` steps 74 to 78),
 and so are the catalog tables psql reads
 (`../dg/SYSCATALOG.md` §6).
+
+1. **digres's primary-key DDL** (`CLUSTER.md` §11, step 3):
+   ADD and DROP PRIMARY KEY and the key-column ALTERs, through
+   sm3's rewrite, which moves every row to its new key. sm3
+   has the rewrite; digres refuses the statements today
+   (`../dg/UNSUPPORTED.md` §3).
 
 Low priority:
 
@@ -32,8 +32,8 @@ Low priority:
    `../dg/src/backend/access/sm/smtable.c`); a load from
    files into a table that has rows, which inserts a row at a
    time today; rows stored out of line, which end a load's
-   files; a `rel` verb; and batch mode and mini-batch, which
-   matter less now that no write keeps a row lock.
+   files; and batch mode and mini-batch, which matter less
+   now that no write keeps a row lock.
 2. **digres's `xact.c`, until it is empty.** sm keeps the
    transaction; `xact.c` keeps only what a session needs
    around it (`../dg/PLAN.md` §7), and what it no longer needs
@@ -90,32 +90,20 @@ Owed, and blocking nothing above:
 - **The index build is unmeasured.** Four workers is a guess:
   builds contend on sm1's lock table, one mutex, and on
   RocksDB's write path. Two indexes built on one table walk
-  its heap twice where one pass could fill both.
+  its rows twice where one pass could fill both.
 - **Nothing reads a range at its newest version.** An
   over-long key in a unique index is refused instead
-  (`SM3_DESIGN.md` §7). The primitive is built when a workload
-  asks.
+  (`sm3/SM3_DESIGN.md` §7). The primitive is built when a
+  workload asks.
 
-- **A point read pins its row** (`PIN.md`, `ROW.md`).
-  `sm1::read` and `sm1::read_latest` read into a raw pin, and
-  the lent forms into one the session keeps, so neither
-  copies the row; sm3 keeps the pool of pins its clients hold
-  refs to (`ROW.md` §4). digres's index, index-only and
-  bitmap heap scans hold a pin ref each and copy nothing
-  (`../dg/WORKNOTE.md` step 263), and so is the old row of an
-  update or an erase, at every level (step 266).
-
-- **A row is deformed as far as it is read** (`ROW.md`). A
-  sequential, an index, a bitmap heap and a sample scan hand
-  digres's slot a pin ref (`TTSOpsSmRow`), which the
-  executor's fetch steps deform column by column, checking
-  only what they read (`../dg/WORKNOTE.md` step 276), and an
-  index-only scan whose key does not give its columns back
-  decodes the index's columns alone (step 279). Not yet:
-  - *A TID scan and a DELETE's RETURNING* read a lent copy by
-    tid, their first columns up to the last the plan names
-    (`smstore_scan_natts()`, `smstore_expr_natts()`); they
-    would read into a pin of their own.
+- **A key scan and a DELETE's RETURNING copy their rows**
+  (`ROW.md`). Every other scan hands digres's slot a pin ref,
+  deformed as far as it is read. The key scan, which replaced
+  the TID scan (`ROWKEY.md` §3.3), and RETURNING read a lent
+  copy by the row's key, their first columns up to the last
+  the plan names (`smstore_scan_natts()`,
+  `smstore_expr_natts()`); they would read into a pin of their
+  own.
 
 - **Views, the rest of them** (`VIEW.md` §10). CREATE, OR
   REPLACE, DROP and the cascades are built, sm3's and digres's
@@ -168,8 +156,8 @@ Owed, and blocking nothing above:
 - **What temporary tables left for later** (`TEMPTABLE.md`
   §9). They are built, in digres too. Not built: skipping the
   sync of a commit that wrote only temporary stores,
-  statistics of a temporary table, `CREATE TEMPORARY
-  SEQUENCE`, and a bulk load into one.
+  statistics of a temporary table, and `CREATE TEMPORARY
+  SEQUENCE`.
 - **Dependency checks**, such as refusing `DROP COLLATION` in
   use and `DROP SCHEMA … CASCADE`: low priority. They wait
   for a dependency index (`sm3/CATALOG_INMEM.md` §4), and

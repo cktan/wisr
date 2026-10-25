@@ -112,8 +112,10 @@ CONSTRAINT value = constraint | fkey | pair × npairs
   need, with no dependency index (`sm3/CATALOG_INMEM.md` §4: a
   dependency is derived, and the catalog is in memory).
 - **A constraint is found by its oid alone**, as PostgreSQL's
-  `CONSTROID` syscache finds one: the catalog keeps a map from
-  constraint oid to child table oid beside the definitions.
+  `CONSTROID` syscache finds one. There is no map from
+  constraint oid to table: `cat_get_fkey` scans the tables'
+  `fkeys`, the transaction's own changes first, then the
+  session's temporary tables, then the shared catalog's.
 - **Both tables' versions move**: adding or dropping a foreign
   key publishes both definitions, and validating or renaming one
   the child's, so a host's cache of either, the parent's triggers
@@ -250,7 +252,7 @@ Outlined here; designed with the work, in `../dg`.
 ## 9. Not here
 
 - **`CHECK`**: the same kind, another type (§3).
-- **The dependency index** (`sm3/CATALOG_INMEM.md` §4):
+- **A dependency index** (`sm3/CATALOG_INMEM.md` §4):
   `referenced_by` is the one reverse lookup foreign keys need,
   and it is derived in memory.
 - **`FOR KEY SHARE` and `FOR NO KEY UPDATE`** in sm1: they would

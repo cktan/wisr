@@ -70,7 +70,8 @@ table without a primary key, which is sampled as then.
 **What stays the host's**
 
 - Turning the stack's numbers into the planner's (§3.7).
-- The cost of an index lookup, from the level count.
+- The cost of an index lookup, from the level count; not yet
+  done, as digres leaves the tree height unknown (§3.7).
 - Deciding when to analyze again.
 - Extended statistics over groups of columns, if ever wanted.
 
@@ -225,13 +226,18 @@ still RocksDB's estimate.
 
 **A range's file bytes are estimated once a version of the
 tree.** RocksDB's estimate seeks the index of every file the
-range touches, and the planner asks for a table's and each
+range touches, and the planner asked for a table's and each
 index's at every plan: 11% of a point query's time, measured.
 The files change only when the store's LSM tree does, so sm1
 keeps each range's estimate under the tree's version and
 answers from it until a flush, a compaction or an ingest moves
 the version (`sm1/API.md`, `sm1::approxsize`). The answer is
-the one RocksDB would give.
+the one RocksDB would give. `sm1::chain_approxsize`, which
+gives the file bytes of a chained store's rows, keeps no such
+cache and asks RocksDB each time. digres also keeps the bytes
+it read for a table and its indexes per session, for 10
+seconds, so it asks sm far less often than at every plan
+(`../dg/STATISTICS.md` §2.2).
 
 `sm_tbl_analyze` records the size it saw, beside the row count
 it estimated at the same moment. The size is also answered
@@ -469,13 +475,15 @@ definition is corruption: read last week's column list after a
 `DROP COLUMN` committed and a row is decoded wrong. A stale
 histogram is a worse plan and nothing else. The catalog pays
 for correctness with the table-oid lock and a session overlay;
-statistics need neither, and most of what follows is the
+statistics take the overlay only to show a transaction its own,
+and a lock only on their own entry, to queue two analyzes
+(`sm3/SM3_DESIGN.md` §6.7); most of what follows is the
 saving.
 
 **On disk: store 0, under a key kind of their own.** The
 catalog is a key-value map in store 0 under the prefix `"U"`,
-reached through sm2's `catkv_*` (`CATALOG_ONDISK.md` §1), and
-statistics go there like everything else — written in the
+reached through sm2's `catkv_*` (`sm3/CATALOG_ONDISK.md` §1),
+and statistics go there like everything else — written in the
 caller's transaction, so they commit, roll back and survive a
 crash with it, and sm3 writes no undo of its own.
 
@@ -483,9 +491,9 @@ crash with it, and sm3 writes no undo of its own.
   one catalog entry and every DDL rewrites it, so writing
   statistics into it would make `sm_tbl_analyze` contend with DDL
   for the same key under first-committer-wins, and mutate the
-  definition its readers hold. `CATALOG_ONDISK.md` §2's kinds run
-  to 9 and are frozen because they are on disk; statistics are
-  kind 10, and that document has to say so.
+  definition its readers hold. `sm3/CATALOG_ONDISK.md` §2's
+  kinds run to 13 and are frozen because they are on disk;
+  statistics are kind 10, `STATS`.
 - **One entry a table** was the first plan, as `sm_tbl_analyze`
   writes every column at once and a plan reads them at once.
   It became one a statistic, with one for the table: an sm1
@@ -515,19 +523,21 @@ At the default target a column's statistics run about 1.2 KB —
 101 histogram bounds, up to 100 common values, their
 frequencies — so a twenty-column table is some 24 KB and a
 thousand tables some 24 MB, against definitions that are
-bytes. `CATALOG_INMEM.md` §4 lists startup cost for thousands of
-tables as unmeasured and open; loading statistics eagerly
-would be most of it, and none of it is wanted until something
-plans against that table. The definition must be there
+bytes. `sm3/CATALOG_INMEM.md` §4 lists startup cost for
+thousands of tables as unmeasured and open; loading statistics
+eagerly would be most of it, and none of it is wanted until
+something plans against that table. The definition must be there
 eagerly, because the table-oid lock is taken before it is read.
 Statistics are under no such rule.
 
-**Not in the session overlay.** The overlay exists to give a
-transaction its own correct view of a definition, at the cost
-of a publish that cannot be made atomic with sm1's commit. A
-transaction's own statistics are not worth that: see the
-truncate below, where the one case that looked as though it
-needed two versions turns out not to.
+**In the session overlay until commit.** `sm_tbl_analyze`
+records the statistics it wrote in the session's overlay
+(`overlay_stats`, `sm3/src/catalog/session.cc`), as DDL records
+a definition, so the transaction plans with its own, a savepoint
+rolled back discards them, and the commit publishes them to the
+shared map. A truncate needs no second version of them: see
+below, where the one case that looked as though it did turns
+out not to.
 
 **Written in the transaction, published after it commits.**
 The in-memory publish and the sm1 commit are two steps and
@@ -560,14 +570,14 @@ catalog behaves. Two reasons not to.
   lock is an `sm1::LOCKTYPE_OID` lock, which writes
   nothing, so that taking it "never fails on a newer commit,
   at any level"
-  (`CATALOG_ONDISK.md` §2). Reading statistics per plan through
+  (`sm3/SM3_DESIGN.md` §2). Reading statistics per plan through
   sm1 would put the snapshot sensitivity back.
 
 **What a `TRUNCATE` does, and why it needs no versioning.**
 `truncate_table` makes a new empty store, writes the new
 storeid into the table's record, publishes the rebuilt
 definition to the session's overlay, and drops the old store
-at commit (`src/catalog/ddl.cc`, `SM3_DESIGN.md` §4). A
+at commit (`sm3/src/ddl/ddl.cc`, `sm3/SM3_DESIGN.md` §4). A
 table's oid is stable but the store holding its rows is a
 field of its definition, and the definition is already
 overlay-versioned. So after an uncommitted truncate the
@@ -602,18 +612,18 @@ table's. Small, and the only place the free ride stops.
 marker, and the truncating transaction then plans 2,260 rows
 rather than 0 (§7). That is deliberate: a truncated table is
 usually about to be refilled, and planning it empty invites a
-nested loop that turns bad the moment it is. An AM callback
+nested loop that turns bad the moment it is. A size estimate
 returning 0 tuples from a live size of 0 would be more
 aggressive than PostgreSQL, so §3.7's floor on `pages` wants a
-companion on `tuples`, and whoever writes
-`sm3/SM3_DESIGN.md` §6 should choose it rather than inherit it.
+companion on `tuples`. digres chose it: a heap of 0 bytes is
+planned as one never analyzed (`../dg/STATISTICS.md` §2.2).
 
 **The cost of keeping them separate.** Statistics inside the
 catalog entry would go when it went. A side structure has to
 be swept on `DROP`, which is code. sm3's oids come from a
-sequence and are not reused (`CATALOG_ONDISK.md` §1), so an entry
-left behind is never mistaken for another table's — it is
-wasted memory until the sweep, not a wrong answer.
+sequence and are not reused (`sm3/CATALOG_ONDISK.md` §1), so
+an entry left behind is never mistaken for another table's —
+it is wasted memory until the sweep, not a wrong answer.
 
 ### 3.7 What the host derives
 
@@ -624,15 +634,19 @@ used to read `pg_class` and `pg_statistic`.
 **Where the conversion goes, corrected.** This file said the
 host converts "where it used to read `pg_class` and
 `pg_statistic`". For a relation's size that is the wrong
-place, and §7 found it: `estimate_rel_size` hands a table
-straight to the table access method's `relation_estimate_size`
-callback, and only an *index* is sized by the planner itself.
-The fork has its own table AM, so it implements that callback
-and answers `pages`, `tuples` and `allvisfrac` from sm3's
-numbers directly. There is no `pg_class` row to fake and no
-density to store: the callback is handed the relation and
-returns the three, so the "scaled by bytes now over bytes
-recorded" of the row below happens inside it, at every plan.
+place, and §7 found it: in PostgreSQL `estimate_rel_size`
+hands a table straight to the table access method's
+`relation_estimate_size` callback, and only an *index* is sized
+by the planner itself. digres sizes an sm table in
+`estimate_rel_size`'s own sm branch, which calls
+`smstore_estimate_size` (`../dg/src/backend/access/sm/smstore.c`;
+`../dg/STATISTICS.md` §2.2), not a table AM callback, and an
+index through `smstore_estimate_index_size` from
+`get_relation_info`. They answer `pages`, `tuples` and
+`allvisfrac` from sm3's numbers directly. There is no
+`pg_class` row to fake and no density to store: the "scaled by
+bytes now over bytes recorded" of the row below happens inside
+them, at each plan, from bytes a session keeps for 10 seconds.
 
 For column statistics the shape is firmer than "the same
 shape". `examine_variable` reaches them through
@@ -644,14 +658,14 @@ from sm3's statistics; it does not hand over loose numbers.
 
 | The planner wants | The host makes it from |
 | --- | --- |
-| `pages` | bytes now, over 8 KB, and never less than 1 for an object with a row, so that the page cost constants keep their meaning. Returned from the AM callback, not stored |
-| `tuples` | recorded live rows, scaled by bytes now over bytes recorded, or, for a table without a primary key that had nothing on disk, moved by the `_id`s handed out since. Also from the callback |
+| `pages` | bytes now, over 8 KB, and never less than 1 for an object with a row, so that the page cost constants keep their meaning. Returned from `smstore_estimate_size`, not stored |
+| `tuples` | recorded live rows, scaled by bytes now over bytes recorded, or, for a table without a primary key that had nothing on disk, moved by the `_id`s handed out since. Also from `smstore_estimate_size` |
 | `allvisfrac` | 1. An index entry carries versions of its own (`sm3/SM3_DESIGN.md` §3), so an index-only scan never visits the heap, and §7 measured that this is exactly what removes the heap-fetch charge |
 | null fraction, most common values, histogram | the same, values decoded to PostgreSQL's datums |
 | average width | average bytes as stored |
 | distinct count | the count, negated as a multiplier of **total** rows, nulls included, when it grows with the table. That is PostgreSQL's convention, and §7 found the reason it exists: the row count is refreshed more often than the statistics, so a multiplier stays right as the count drifts — which is exactly what §3.2 does between runs |
 | correlation | correlation with the rows' stored order, the key's, which a sequential scan reads in. The fork has no `ctid` (`ROWKEY.md` §3). PostgreSQL computes its own from the sample in physical order, and relies on the sample being returned that way; sm3 sorts its sample so |
-| a B-tree's height | nothing. The fork's index access method costs a lookup from the level count, the index's bytes and its entries, with weights to be calibrated (§6). What the height buys in PostgreSQL is a CPU charge, `(height + 1)` times 50 `cpu_operator_cost`, not page I/O, so the level count should buy the same kind of thing. An AM that leaves the height unknown has it guessed as `log(pages)/log(100)` |
+| a B-tree's height | nothing yet. digres's index access method costs a lookup with PostgreSQL's `btcostestimate` and leaves `tree_height` at -1 (`../dg/STATISTICS.md` §2.2), so the descent charge, `(height + 1)` times 50 `cpu_operator_cost`, a CPU charge and not page I/O, is 0. Costing a lookup from the level count, the index's bytes and its entries needs weights calibrated (§6), and is left for later |
 | dead rows | none. Vacuum is gone (`PART4.md` §4) |
 
 Each row of that table is a choice the host can change
@@ -686,7 +700,7 @@ would need the stack to decide when, and nothing here does.
 | sm3 | on an open table: the table's size, an index's size, and the `_id` limit `N` | §3.1, §3.2 |
 | sm3 | the sampler, over runs of `_id`s or slots of a key range | §3.3 |
 | sm3 | the estimators, ported from PostgreSQL | §3.4 |
-| sm3 | catalog kind 10 for statistics, one entry a table, outside the `TABLE` blob and the table-oid lock | §3.6 |
+| sm3 | catalog kind 10 for statistics, one entry for the table and one per statistic, outside the `TABLE` blob and the table-oid lock | §3.6 |
 | sm3 | the in-memory statistics map, beside the catalog: immutable, lazily loaded, published after commit | §3.6 |
 | sm3 | `analyze`, over those four | §3.6 |
 | top | `sm_tbl_analyze`, and the calls that read, in `include/sm.h` | all |

@@ -33,7 +33,8 @@ calls in `sm.h`, and what digres builds on them.
 - **sm3 keeps the view true to what it reads**: a table, a
   column or a view a view reads cannot be dropped from under
   it (§5). This is the one dependency check sm3 must make;
-  the others wait for the dependency index (§9).
+  the others wait for a dependency index (§9,
+  `sm3/CATALOG_INMEM.md` §4).
 - **The host expands it.** In digres that is PostgreSQL's
   rewriter, unchanged: the view's relation cache entry carries
   its `_RETURN` rule, made from the query sm3 keeps, and
@@ -193,7 +194,7 @@ struct sm_view_def_t {
 ## 7. Locks
 
 - **A view has an oid lock**, sm1's `LOCKTYPE_OID` on its oid,
-  as a table has (`SM3_DESIGN.md` §2). A query takes it IS,
+  as a table has (`sm3/SM3_DESIGN.md` §2). A query takes it IS,
   DDL on the view X: a `DROP VIEW` or `CREATE OR REPLACE`
   waits for the transactions reading it, and they for it, as
   PostgreSQL's `AccessShareLock` and `AccessExclusiveLock` do.
@@ -272,8 +273,6 @@ struct sm_view_def_t {
 
 ## 9. Not here
 
-- **Temporary views**: refused, `not supported yet`, as is a
-  view that reads a temporary table. §12 is their design.
 - **Materialized views**: they have storage, and are refused
   as they are now (`../dg/WORKNOTE.md` step 64).
 - **`INSTEAD OF` triggers and user rules** (`CREATE RULE`):
@@ -389,9 +388,8 @@ saying so in a notice. It is the largest part of what
   when the session closes, and written nowhere. Nothing of it
   is in store 0, so nothing survives a crash, and a database
   copied as its directory has none.
-- **`create_view` takes namespace 0**, which it refuses now,
-  and makes one. Its oid comes from `sm3.oid`, as a temporary
-  table's does.
+- **`create_view` takes namespace 0** and makes one. Its oid
+  comes from `sm3.oid`, as a temporary table's does.
 - **Its name** is one of the session's temporary names,
   shared with its temporary tables and their indexes, and
   checked in memory.

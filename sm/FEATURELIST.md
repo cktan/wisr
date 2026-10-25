@@ -67,8 +67,8 @@ ordered key as the only access path below sm2.
 ## 2. Index access methods
 
 - [x] B-tree
-      — already assumed; the primary key is a B-tree index
-        over the heap (sm2/SM2_DESIGN.md §5)
+      — already assumed; the primary key orders the table's
+        rows, which are its entries (CLUSTER.md)
 - [ ] Hash
 - [ ] GiST
       — needed for range / geometric / exclusion

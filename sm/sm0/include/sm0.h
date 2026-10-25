@@ -5,7 +5,7 @@
  *
  * sm1.h brings each of these into namespace sm1, so the stack
  * and its callers name them sm1::errnum(), sm1::set_log() and
- * so on; API.md documents them there.
+ * so on; ../../sm1/API.md documents them there.
  */
 #ifndef SM0_H
 #define SM0_H

@@ -6,8 +6,8 @@ go on naming a row by a 6-byte TID. This file takes the next
 step (`CLUSTER.md` §10, question 6): a table with a primary
 key has no `_id` and no `_id` index, and nothing in the system
 is a TID. A row is named by its key, a tuple of the key
-columns' values. Steps 1 to 4 of §5 are built. The work is on
-the branch `wip-noctid`.
+columns' values. Steps 1 to 4 of §5 are built, and the work is
+merged into `main`.
 
 Paths are relative to `sm/`; digres's are under `../dg/`.
 
@@ -123,12 +123,18 @@ at hand, and their encoding costs no read.
   reader sees it as any tombstone.
 - **A writer that meets it** — an update, delete or lock at
   the old key whose newest version is a moved tombstone —
-  fails with a new `SM_ERR_MOVED`, at every isolation level.
-  At READ COMMITTED a plain tombstone is still
-  `SM_ERR_NOTFOUND`, which the executor takes as a delete and
-  skips. digres raises `SM_ERR_MOVED` as a serialization
-  failure, PostgreSQL's "tuple to be locked was already moved
-  to another partition due to concurrent update".
+  fails as over any newer commit when the move committed after
+  it began: `SM_ERR_UPDATED` at READ COMMITTED,
+  `SM_ERR_CONFLICT` above (`CLUSTER.md` §4,
+  `sm1/src/chain.cc`). At READ COMMITTED its re-read,
+  `read_latest`, then fails with a new `SM_ERR_MOVED`, as does
+  the write taken again (scenario f11), where a plain
+  tombstone reads as absent, which the executor takes as a
+  delete and skips; a write at a key whose move committed
+  before it began fails with `SM_ERR_MOVED` straight away.
+  digres raises `SM_ERR_MOVED` as a serialization failure,
+  PostgreSQL's "tuple to be locked was already moved to
+  another partition due to concurrent update".
 - **What goes**: sm3's `moved_to`, `write_followed`, the
   follow in `read_latest`, sm2's `set_id_entry`, and
   `LOCK.md`'s lock on an `_id` entry (row 2a). Its tests in

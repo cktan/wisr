@@ -302,15 +302,16 @@ and never recycled on abort.
 
 ## 5. Schema: Tables & Indexes (DDL)
 
-Define and manage heap tables and secondary indexes. Tables and
+Define and manage tables and secondary indexes. Tables and
 indexes live in sm3's catalog, in the `public` namespace. Every
 DDL statement runs in the active transaction: it is undone by
 `(abort)` or `(rollback sp)`, seen by other sessions only once
 committed, and kept across a restart.
 
 ### `(table-create name (columns ...))`
-Defines and creates a heap table, backed by a store and a row
-sequence of its own.
+Defines and creates a table without a primary key, its rows
+named by `_id`, backed by a store and an `_id` sequence of its
+own.
 
 Supported column types:
 - Integer: `:int2`, `:int4`, `:int8`
@@ -361,8 +362,8 @@ same name.
 ```
 
 ### `(table-drop name)`
-Drops the heap table `name`, its underlying store, and its
-associated row sequence.
+Drops the table `name`, its underlying store, and its
+associated `_id` sequence.
 
 ```janet
 (table-drop users)
@@ -504,8 +505,10 @@ and cannot be scanned; it can only be dropped.
 ### `(fkey-create name (table child) (columns c...) (references parent p...) ...)`
 Adds the foreign key `name` to the table `child`
 (`../FOREIGNKEY.md`). sm keeps it and checks no row: that is
-the host's. Without parent columns it takes the parent's primary
-key. Its index is the parent's unique index whose keys are the
+the host's. Without parent columns it needs the parent's
+primary key, and rel makes none, so it fails with `table
+'<parent>' has no primary key`: name the parent's columns. Its
+index is the parent's unique index whose keys are the
 referenced columns, in any order, unless `:index` names one.
 
 Options:
@@ -557,7 +560,7 @@ committed, fails with `<op>: table '<name>' not found`.
 
 ### `(insert table [val1 val2 ...])`
 Encodes and inserts a new row into `table` and all attached
-secondary indexes. Returns the allocated 64-bit `rowno`. If a
+secondary indexes. Returns the new row's 64-bit `_id`. If a
 unique index violation occurs, raises `SM_ERR_DUPKEY`, and the
 transaction is aborted (§7).
 
@@ -565,24 +568,25 @@ transaction is aborted (§7).
 (def r1 (insert users [1 "Alice" "alice@example.com" true]))
 ```
 
-### `(read table rowno)`
-Reads the row tuple at `rowno` under the transaction's snapshot.
+### `(read table id)`
+Reads the row tuple with `_id` `id` under the transaction's
+snapshot.
 Returns a tuple of values `[val1 val2 ...]` or `nil` if absent.
 
 ```janet
 (def u (read users r1))
 ```
 
-### `(read-latest table rowno)`
-Reads the latest committed version of `rowno`. Valid only under
+### `(read-latest table id)`
+Reads the latest committed version of row `id`. Valid only under
 Read Committed isolation.
 
 ```janet
 (def u (read-latest users r1))
 ```
 
-### `(lock-row table rowno mode)`
-Locks the row at `rowno` without writing it, to the end of the
+### `(lock-row table id mode)`
+Locks the row `id` without writing it, to the end of the
 transaction. `mode` is `:shared`, which other shared lockers
 join and a writer of the row waits for, or `:exclusive`, which
 everyone waits for. It is what a host takes on the parent row
@@ -600,7 +604,7 @@ transaction: `TRUNCATE`. It takes the table's lock
 exclusive, so it waits for every other reader and writer of
 the table; under `(qa-nowait true)` it fails with
 `ERR_BLOCKED` instead. Columns and indexes are kept, and new
-rows go on from the last row number handed out. An abort, or a
+rows go on from the last `_id` handed out. An abort, or a
 rollback to a savepoint taken before it, brings the rows back.
 
 ```janet
@@ -613,7 +617,7 @@ A bulk load of `rows`, an array of rows, into the table
 into an empty table, as sorted files past 4 MB or as one batch,
 under the table's lock taken exclusive to the end of the
 transaction; into one that has rows, as inserts. Returns the
-rows' numbers. Until the transaction ends it may not set a
+rows' `_id`s. Until the transaction ends it may not set a
 savepoint.
 
 ```janet
@@ -644,7 +648,7 @@ counted too.
 Analyzes the table in the current transaction
 (`sm3/SM3_DESIGN.md` §6): samples up to 300 × `target` rows,
 100 if none is given, reading no more than ten times that in
-row numbers whatever the table's size, and records each
+`_id`s whatever the table's size, and records each
 column's statistics, each partial or expression index's from
 rel's evaluator, and the sizes. They commit and roll back with
 the transaction. It takes the table's lock as a reader.
@@ -668,16 +672,16 @@ expressions' by place. A column's or an expression's has
 (((stats jobs) :columns) "state")
 ```
 
-### `(update table rowno [val1 val2 ...])`
-Updates the row at `rowno` and synchronizes secondary indexes.
+### `(update table id [val1 val2 ...])`
+Updates the row `id` and synchronizes secondary indexes.
 Returns the previous tuple values `[old1 old2 ...]`.
 
 ```janet
 (def old (update users r1 [1 "Alice C." "alice@example.com" true]))
 ```
 
-### `(delete table rowno)`
-Deletes the row at `rowno` from the table and secondary indexes.
+### `(delete table id)`
+Deletes the row `id` from the table and secondary indexes.
 Returns the previous tuple values `[old1 old2 ...]`.
 
 ```janet
@@ -685,8 +689,9 @@ Returns the previous tuple values `[old1 old2 ...]`.
 ```
 
 ### `(scan table [:from first] [:to last])`
-Performs an ordered heap scan over `rowno` range `[first, last]`.
-Returns an array of `[rowno [val1 val2 ...]]` pairs.
+Scans the table, keyless, in `_id` order over the `_id`s
+`[first, last]`. Returns an array of `[id [val1 val2 ...]]`
+pairs.
 
 ```janet
 (def all-rows (scan users))
@@ -696,7 +701,8 @@ Returns an array of `[rowno [val1 val2 ...]]` pairs.
 ### `(idx-scan index [:ge lo] [:gt lo] [:le hi] [:lt hi])`
 Scans a secondary index across key prefix bounds.
 Bounds are tuples matching key prefix columns.
-Returns an array of `[rowno cut include-tuple]` entries: `cut`
+Returns an array of `[id cut include-tuple]` entries, `id` the
+row's `_id`: `cut`
 is true when sm2 truncated an over-long key, so the caller must
 recheck the row; `include-tuple` is nil for an index without
 INCLUDE columns. The key itself is not returned, since the index
@@ -772,7 +778,7 @@ translates the error into a **Janet panic** via
    When `insert`, `update` or `delete` fails inside the storage
    manager, `rel` aborts the session's transaction before it
    panics, as PostgreSQL does on an error. The write may have
-   changed the heap and some indexes before it failed, and the
+   changed the row and some indexes before it failed, and the
    abort is what undoes that. A script that catches the panic
    calls `(abort)`, which is harmless, and `(begin)` again. Two
    outcomes are not errors and leave the transaction active:

@@ -183,7 +183,7 @@ int tup_read(tup_reader_t& r, size_t n, std::span<datum_t> datums,
   columns out of order, as MySQL's `read_set` does, decodes
   each one; it walks the null bitmap, not the entries before.
 - **`tup_deform` stays as it is**, the whole tuple checked
-  when every column is read (TUPLE.md §8), for its callers
+  when every column is read (`sm2/TUPLE.md` §8), for its callers
   that hold bytes, not a pin.
 - **A rel keeps a scratch raw pin** for a write of a row with
   datums out of line and no pin of the caller's: the old row
@@ -367,7 +367,8 @@ audited.
 - **`clear`** drops the ref; it does not unpin. The pin is
   the reader's: the cursor's, or the index or fetch scan's ref.
 - **System columns** need nothing: `slot_getsysattr` serves
-  `ctid`, `tableoid` and the rowno from the slot itself.
+  `tableoid` and a keyless table's `_id` from the slot itself;
+  no row has a `ctid` (`ROWKEY.md`).
 - **Who reads the values directly** asks the slot for them
   first: an index scan checks each row against its keys
   (`keys_met()`), so it deforms up to each key's column.
@@ -375,9 +376,11 @@ audited.
   once, as a virtual tuple (`ref_into_slot()`).
 - **What goes**: the column count the sequential, index,
   bitmap heap and sample scans deformed to, and
-  `smtable_scan_set_natts()`. A TID scan and a DELETE's
-  RETURNING read a lent copy by tid and keep theirs
-  (`smstore_scan_natts()`, `smstore_expr_natts()`).
+  `smtable_scan_set_natts()`. A TID scan, for `WHERE CURRENT
+  OF` or `_id = n` only (`../dg/UNSUPPORTED.md`), and a
+  DELETE's RETURNING read a lent copy by the row's key and
+  keep theirs (`smstore_scan_natts()`,
+  `smstore_expr_natts()`).
 - **A stale ref is an error**, not a wrong answer: a node
   that kept a slot after its scan moved, without copying it,
   is found by the test that runs it.

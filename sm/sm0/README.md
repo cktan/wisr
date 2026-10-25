@@ -19,10 +19,12 @@ error codes, besides the C++ standard library and POSIX.
 | interrupting a thread, interruptible waits, and timers that interrupt (`INTERRUPT.md`) | `include/sm_sys.h` | `src/interrupt.cc` |
 | virtual file descriptors over a share of real ones, under one ceiling for the process (`VFD.md`) | `include/sm_vfd.h` | `src/vfd.cc` |
 
-Everything is in `namespace sm0`. `sm1/include/sm1.h` brings
-the error state and the log hook into `namespace sm1`, so the
-stack and its callers call them `sm1::errnum()`,
-`sm1::set_log()` and so on; `sm1/API.md` documents them there.
+Everything is in `namespace sm0` but `sm_sys.h` and
+`sm_vfd.h`, whose `sm_` names are outside any namespace.
+`../sm1/include/sm1.h` brings the error state and the log hook
+into `namespace sm1`, so the stack and its callers call them
+`sm1::errnum()`, `sm1::set_log()` and so on; `../sm1/API.md`
+documents them there.
 sm1's `src/error.h` and `src/log.h` likewise bring the setters
 and `log_msg` into its `namespace wisr`, beside
 `set_status_error`, which knows RocksDB and so stays in sm1.

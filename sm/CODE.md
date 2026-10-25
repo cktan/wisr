@@ -53,15 +53,17 @@ the two differ, `CLAUDE.md` wins.
   (`make -C sm1 -j4`), never plain `make`. `make -j4` in `sm/`
   builds every level, then `build/libsm.a`, the one archive
   of every level's objects and the wrapper's that dg links.
-- **`make -j4 test` in `sm/`** runs every level's tests in
-  order, then the `rel` suite. It passes when every doctest
-  line reads `0 failed`, sm1's line reads
-  `scenarios: 111 scripts match` (or however many there are),
-  and the last line is `All rel tests passed.`
+- **`DEBUG=1 make -j4 test` in `sm/`** runs every level's
+  tests in order, then the `rel` suite, on the debug build
+  (`-O0 -g`, with `assert()`), as `CLAUDE.md` requires. It
+  passes when every doctest line reads `0 failed`, sm1's line
+  reads `scenarios: 114 scripts match, versioned and chained`
+  (or however many there are), and the last line is
+  `All rel tests passed.`
 - **Run the full suite before every commit** that touches
-  source, and dg's (`make -C ../dg -j4 test`) when the change
-  reaches what dg calls: `include/sm.h`, `sm_sys.h`, or the
-  build. A commit of documents alone needs none.
+  source, and dg's (`DEBUG=1 make -C ../dg -j4 test`) when the
+  change reaches what dg calls: `include/sm.h`, `sm_sys.h`, or
+  the build. A commit of documents alone needs none.
 - **`make tsan` and `make asan` in sm0** run its tests under
   the sanitizers; run them for a change to `sm_sys.h`'s
   threads, waits or timers.

@@ -25,8 +25,9 @@ check first, kept as it was written.
   it sets `disableWAL`, and `sm1::attach` destroys whatever
   it finds there and makes X empty.
 - **A temporary table is a temporary store**, as decided
-  (`DESIGN.md` §5): one column family of X for its heap, its
-  indexes and its TOAST data.
+  (`DESIGN.md` §5): one column family of X for its rows, its
+  indexes and its TOAST data, its rows chained as any table's
+  (`VCHAIN.md`).
 - **Its definition is in the session's memory**, in a
   temporary catalog of its own, never in store 0
   (`sm3/CATALOG_INMEM.md` §1).
@@ -42,7 +43,7 @@ check first, kept as it was written.
 
 | | A table | A temporary table |
 | --- | --- | --- |
-| rows | `base/{dbid}`, `CF:store.<id>` | X, `CF:<dbid>.<id>` |
+| rows | `base/{dbid}`, `CF:chain.<id>` | X, `CF:<dbid>.<id>` |
 | logged | yes | no |
 | definition | store 0 | the session's memory |
 | seen by | every session | its session |
@@ -203,7 +204,7 @@ transaction at a time. So, for a temporary store:
   Making and dropping one follow the transaction; its values
   do not, as with any sequence. To its session the name
   means the temporary sequence, whatever else has it. A
-  temporary table counts its rownos with one (§4).
+  temporary table counts its `_id`s with one (§4).
 - **A temporary-only transaction still writes to its
   database**: its commit record. That record need not be
   synced, since nothing it commits survives a crash; the sync
@@ -243,7 +244,7 @@ transaction at a time. So, for a temporary store:
   temporary table of the same name.
 - **A table's oid** comes from the database's `sm3.oid`
   sequence, as any table's does.
-- **A table's rowno counter** is a temporary sequence of sm1
+- **A table's `_id` counter** is a temporary sequence of sm1
   (§3.5), in the session's memory: an ordinary one is a row
   in store 0 and a lease in `CF:meta`. sm2 draws from it by
   name, as it does for any table.
@@ -363,7 +364,6 @@ that no longer exist, and are swept with the rest.
 - **`CREATE TEMPORARY SEQUENCE`**: sm1 has the counter (§3.5),
   and sm3's sequence catalog is not yet routed to the
   session.
-- **Bulk load** into one (`BULKLOAD.md`).
 
 ---
 
@@ -399,3 +399,12 @@ Each step lands on its own, with its tests.
 6. **digres**: Built (`dg/WORKNOTE.md` step 80).
    `CREATE TEMPORARY TABLE`, `ON COMMIT`, and
    the temporary namespace in the search path.
+
+Bulk load into a temporary table (`BULKLOAD.md`), first left
+for later, is built too. `tbl_load_open` in
+`sm3/src/table/table.cc` takes no table lock for one, its
+session's alone. In `sm1/src/load.cc`, `load_open` lets a
+read-only transaction load a temporary store, as it may write
+one; `load_put` owes no SSI edge, since no one else reads it;
+and `load_close` marks the transaction as one that wrote a
+temporary store, so `sm1::prepare` refuses it.

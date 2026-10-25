@@ -15,8 +15,8 @@ format, sm3's catalog — are argued in that level's own
                              │  include/ — the one C API
         ┌────────────────────┴─────────────────────────┐
         │  top level  the C wrapper                    │
-        │  sessions · transactions · 2PC → sm1 ·       │
-        │  everything else → sm3                       │
+        │  everything → sm3, but the rest of 2PC,      │
+        │  stores and sequences → sm1                  │
         └────────────────────┬─────────────────────────┘
                              │  sm3::
         ┌────────────────────┴─────────────────────────┐
@@ -24,12 +24,12 @@ format, sm3's catalog — are argued in that level's own
         │  catalog · index maintenance ·               │
         │  scan-by-predicate · statistics              │
         └────────────────────┬─────────────────────────┘
-                             │  sm2::  heap and index relations
+                             │  sm2::  row and index relations
                              │         (sm3 also calls sm1::)
         ┌────────────────────┴─────────────────────────┐
         │  sm2/  types and tuples                      │
         │  type system · key encoding ·                │
-        │  tuple format · heap and index relations     │
+        │  tuple format · row and index relations      │
         └────────────────────┬─────────────────────────┘
                              │  sm1::
         ┌────────────────────┴─────────────────────────┐
@@ -47,11 +47,15 @@ format, sm3's catalog — are argued in that level's own
 sm1's unit of storage is the **store**: an ordered map of byte
 keys to byte values, named by a `uint64_t` storeid. **A store
 is exactly one RocksDB column family**, `CF:store.<storeid>`
-(`sm1/SM1_DESIGN.md` §3.1): `sm1::mkstore` creates it and
-`sm1::rmstore` drops it. Whatever RocksDB offers per column
-family is therefore offered per store — an O(1) drop, and
-temporariness (§5) — and no level above sees a column family
-by that name.
+for a versioned store and `CF:chain.<storeid>` for a chained
+one (`sm1/SM1_DESIGN.md` §3.1, `VCHAIN.md` §3): `sm1::mkstore`
+creates it and `sm1::rmstore` drops it. sm3 chains every
+table's store: a row's newest version is kept under its plain
+key and the older ones in a chain behind it, while its index
+entries and TOAST stay versioned. Whatever RocksDB offers per
+column family is therefore offered per store — an O(1) drop,
+and temporariness (§5) — and no level above sees a column
+family by that name.
 
 sm2 is a client of sm1, nothing more: it holds no RocksDB
 handle of its own and reaches storage only through sm1's
@@ -145,7 +149,7 @@ rule is that nothing turns them off.
 | --- | --- |
 | sm0 | built and tested: the error state, the log hook, the general-purpose helpers and the system services (`sm0/include/sm_sys.h`, `sm0/INTERRUPT.md`), with its C++ interface in `sm0/include/sm0.h`; `sm0/README.md` describes it |
 | sm1 | built and tested, with its C++ interface in `sm1/include/sm1.h`; the design of record is `sm1/SM1_DESIGN.md` |
-| sm2 | built: its types, key encoding, tuple codec, heap and index relations and TOAST, with its C++ interface in `sm2/include/sm2.h`; `sm2/SM2_DESIGN.md` is the design of record, and its §8 has the build order |
+| sm2 | built: its types, key encoding, tuple codec, row and index relations and TOAST, with its C++ interface in `sm2/include/sm2.h`; `sm2/SM2_DESIGN.md` is the design of record, and its §8 has the build order |
 | sm3 | being built: its catalog (`sm3/CATALOG_INMEM.md`), object mapping, index maintenance through table-level writes, and the concurrent index build with its background workers, partial and expression indexes among them, with its C++ interface in `sm3/include/sm3.h`; constraints are settled, `NOT NULL` built in sm3 and the rest the host's (§5); statistics built (`sm3/SM3_DESIGN.md` §6), TOAST built (§3.4 there), and bulk load into an empty table (`BULKLOAD.md`); the order of work is in `sm3/SM3_DESIGN.md` §8, and what is left in `NEXT.md` |
 | top level | built: `include/sm.h` over sm1, sm2 and sm3, with `src/sm.cc`. A row is read and written through an open table, `sm_tbl_*`, by the table's oid from `sm_cat_*`; the heap-level and index-level calls that took a store id and a relid are gone. The `rel` driver runs on it |
 
@@ -210,30 +214,29 @@ design:
   level's C++ interface returns a plain `int` — 0 on success, -1
   on failure — and the code and message are read afterwards from
   the thread-local `sm1::errnum()` and `sm1::errmsg()`. Every
-  error call lives in `namespace sm1`; the code accessor is
-  `errnum`, not `errno`, because `errno` is a macro. The codes
-  are `SM_ERR_*` and `SM_OK`, values of the enum `sm1::errnum_t`
-  — the stack's codes, not sm1's alone, which is why they carry
-  no `1`. There is no status type and no `std::expected`, so the
-  build stays at `-std=c++20`. A result comes back through an
-  out-parameter. This keeps sm1's allocation-free message and
-  per-thread state, and the C wrapper passes the convention
-  through unchanged; the price is that nothing stops a caller
-  ignoring a -1. It is one errno namespace for the whole stack:
-  sm2 and sm3 report through the same thread-local state, and
-  every error code any level uses is defined in the root's
-  `include/sm_error.h`, a C header that sm1 includes and that
-  `sm1.h` brings into `namespace sm1`, so the list holds codes
-  only an upper level produces and the C wrapper passes one
-  enum through unchanged. The enum is
-  append only: a number is never reused or renumbered, a retired
-  code stays with a note, and codes are grouped by the level that
-  produces them under a comment naming it, with no reserved
-  numeric ranges — a number matters once PostgreSQL sees it
-  through the C wrapper, and this is the rule `sm2/TYPE.md`
-  already applies to type codes. An upper level records an error
-  with
-  `int sm1::seterr(sm1::errnum_t code, std::string_view msg)`,
+  error call is sm0's, brought into `namespace sm1` by `sm1.h`;
+  the code accessor is `errnum`, not `errno`, because `errno` is
+  a macro. The codes are `SM_ERR_*` and `SM_OK`, values of the
+  enum `sm1::errnum_t` — the stack's codes, not sm1's alone,
+  which is why they carry no `1`. There is no status type and no
+  `std::expected`, so the build stays at `-std=c++20`. A result
+  comes back through an out-parameter. This keeps sm1's
+  allocation-free message and per-thread state, and the C wrapper
+  passes the convention through unchanged; the price is that
+  nothing stops a caller ignoring a -1. It is one errno namespace
+  for the whole stack: sm2 and sm3 report through the same
+  thread-local state, and every error code any level uses is
+  defined in the root's `include/sm_error.h`, a C header that sm1
+  includes and that `sm1.h` brings into `namespace sm1`, so the
+  list holds codes only an upper level produces and the C wrapper
+  passes one enum through unchanged. The enum is append only: a
+  number is never reused or renumbered, a retired code stays with
+  a note, and codes are grouped by the level that produces them
+  under a comment naming it, with no reserved numeric ranges — a
+  number matters once PostgreSQL sees it through the C wrapper,
+  and this is the rule `sm2/TYPE.md` already applies to type
+  codes. An upper level records an error with `int
+  sm1::seterr(sm1::errnum_t code, std::string_view msg)`,
   exported by sm1: it copies the message into the fixed
   thread-local buffer, cut short if it does not fit, and returns
   -1, so a failing path is `return sm1::seterr(...);`. The caller
@@ -336,8 +339,8 @@ design:
   SQLSTATE lives in the stack: it is a SQL notion, sm1 is
   meant to be useful without PostgreSQL, and some mappings
   depend on context only the glue has — `DUPKEY` is
-  `unique_violation` from a unique index but a bug from a
-  fresh `rowno`. The glue's mapping starts from:
+  `unique_violation` from a unique index or a primary key but
+  a bug from a fresh `_id`. The glue's mapping starts from:
 
   | Code | SQLSTATE | PostgreSQL name |
   | --- | --- | --- |
@@ -454,7 +457,8 @@ design:
 - **One encoder, one tuple format, two callers.** The key
   encoding and the tuple layout are sm2's alone
   (`sm2/SM2_DESIGN.md` §3, §4), and sm3 builds its index entries
-  — `encode(sk) ‖ rowno` — by calling sm2's encoder
+  — `encode(sk)`, ending with the row's key — by calling sm2's
+  encoder
   with the same per-column arguments. Two encoders that have
   to agree bytewise is a corruption bug waiting to be
   written, so there is only one.
@@ -465,32 +469,22 @@ design:
   which sm3's DDL and index-build protocols rest on
   (`sm3/SM3_DESIGN.md` §2). sm2 still calls only sm1, and
   nothing calls upward.
-- **A table is keyed by its primary key, and every row has an
-  `_id`** (`CLUSTER.md`). A row's key is its primary key's
-  encoding, or for a table without one its `_id`, an unsigned
-  64-bit number from a per-table sm1 sequence, never reused
-  and unchanged by `UPDATE`; a keyed table keeps an index from
-  `_id` to key (`sm2/SM2_DESIGN.md` §5). Every other index is
-  sm3's and names its row by its key and `_id`
-  (`sm3/SM3_DESIGN.md` §3). Before the pivot the table was a
-  heap keyed by `rowno`, which `_id` is, and the passage below
-  says `rowno` where digres still does. digres keeps
-  PostgreSQL's 6-byte `ItemPointerData` and maps `rowno` into
-  it: block
-  `rowno / 256`, offset `rowno % 256 + 1`, as an offset of 0
-  is no tid (`../dg/src/backend/access/sm/smstore.c`,
-  `SMSTORE_ROWS_PER_BLOCK`). A block of 256 rownos is what
-  `TABLESAMPLE` picks, as PostgreSQL's picks a page
-  (`../dg/WORKNOTE.md` step 244), and a tid holds a rowno up
-  to about 2^40. The mapping is a bridge: SQL sees no `ctid`,
-  only a `rowno` system column (`../dg/WORKNOTE.md` step
-  200), and the executor still carries the tid inside, which
-  the aim is to remove too, so that a row is named by its
-  `rowno` alone. A read by the primary key is one read, and a
-  read by `rowno` two in a table with a primary key; a primary
-  key change moves the row and rewrites its index entries
-  (`CLUSTER.md` §7).
-- **One sm1 store per table.** A table's heap, all its
+- **A table is keyed by its primary key, or by `_id` without
+  one** (`CLUSTER.md`, `ROWKEY.md`). A row's key is its
+  primary key's encoding; a table without a primary key is
+  keyed by `_id`, an unsigned 64-bit number from a per-table
+  sm1 sequence, never reused and unchanged by `UPDATE`, which
+  SQL reads as the system column `_id`. A table with a primary
+  key has no `_id` and no `_id` index (`sm2/SM2_DESIGN.md` §5).
+  Every other index is sm3's, and its entry names its row by
+  the row's key (`sm3/SM3_DESIGN.md` §3). There is no `ctid`:
+  digres names a row by its key's column values wherever
+  PostgreSQL's executor carried a TID (`ROWKEY.md` §3). A read
+  by the primary key is one read; a primary key change is a
+  delete at the old key, which leaves a moved tombstone, and an
+  insert at the new one, and rewrites the row's index entries
+  (`ROWKEY.md` §2.3).
+- **One sm1 store per table.** A table's rows, all its
   indexes and its TOAST data are rels in one sm1 store, told
   apart by a 2-byte relid whose values `sm3/SM3_DESIGN.md` §4
   fixes. sm3 chooses an index's relid; sm2 prepends and strips
@@ -507,7 +501,7 @@ design:
 - **A temporary table is a temporary store.** Temporariness
   belongs to an sm1 store, and so to its RocksDB column family,
   not to any row, key or relid: every object in a
-  temporary store is temporary with it. Because a table's heap,
+  temporary store is temporary with it. Because a table's rows,
   its indexes and its TOAST data share one store (above), a
   temporary table is one temporary store, and an index is
   temporary exactly when its table is. sm3 asks for a temporary
@@ -559,7 +553,7 @@ design:
   lock: a row locked without being written, in a mode a
   reader of the key can share and a writer cannot, held to
   the end of the transaction. sm1 has it, `sm1::lock`; sm2
-  has it on a heap row, `rel_lock`; sm3 hands it out on an
+  has it on a table's row, `rel_lock`; sm3 hands it out on an
   open table, `tbl_lock`, and the C API as `sm_tbl_lock`. It
   is what `SELECT … FOR SHARE` and `FOR UPDATE` take too. It
   waits as a write does; `NOWAIT` and `SKIP LOCKED` take it
@@ -618,7 +612,7 @@ design:
   row through one table-level call that sm3 owns, `sm_tbl_*`,
   and the C wrapper's heap-level and index-level calls are
   gone (`sm3/SM3_DESIGN.md` §3). The rules of a unique index's
-  key, the index build and the index-heap invariant must
+  key, the index build and the index-row invariant must
   stay below the executor, and the invariant holds only if one
   layer writes both a row and its entries.
 - **Evaluation is the host's, by callback.** No level of the
@@ -637,13 +631,13 @@ design:
   residual are the planner's and the executor's
   (`sm3/SM3_DESIGN.md` §3, §5).
 - **A write that fails partway is the caller's to undo.** A
-  table write is the heap write and then a write or two per
+  table write is the row's write and then a write or two per
   index, and sm3 sets no savepoint inside it. One that fails
   on a later step, a duplicate in a unique index for one, has
   left the earlier steps done. The caller rolls back to a
   savepoint of its own or aborts, as PostgreSQL's errors abort
   the transaction or the subtransaction anyway; `rel` aborts.
-  `SM_ERR_UPDATED` needs no undoing: it comes from the heap
+  `SM_ERR_UPDATED` needs no undoing: it comes from the row's
   write, the first step (`sm3/SM3_DESIGN.md` §3).
 - **An index is built in the background.** An index made on a
   table that has rows is recorded as pending, maintained by

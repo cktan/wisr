@@ -23,7 +23,7 @@ confusion lives. §1 does the same for the identifiers.
 - a **key column** — one column of an index definition, with
   its direction, null order and collation.
 - a **catalog key** — a key in store 0 under `"U"`
-  (`sm3/CATALOG_ONDISK.md` §3).
+  (`sm3/CATALOG_ONDISK.md` §2).
 
 **prefix.** Two things, both of them about position in a key
 and neither of them an identifier.
@@ -39,7 +39,7 @@ The 2 bytes at the head of every userkey in a table's store
 are a **relid**, not a prefix; see **relation** below.
 
 **relation**, **rel.** A store is a collection of rels: a
-table's heap, one per index, one for TOAST. Each is named
+table's rows, one per index, one for TOAST. Each is named
 within its store by a **relid**, a `uint16`, and nowhere
 else: a rel is reached as its store and its relid, and has no
 wider identity (§1, §8). PostgreSQL uses the word
@@ -75,12 +75,12 @@ entry in a table.
   only inside a call, which makes check-then-write one step.
 
 A lock-table entry is one of two kinds, by what it names
-(`LOCK.md` §1). A **row lock** names a key in a store: a heap
-row locked without being written, or a catalog key about to
-be. An **OID lock** names an object's oid, a key in no store:
-a table's is its **table-oid lock**, and a namespace has one
-too. "Row lock" never means what a write does to the row it
-writes: that is the uncommitted version.
+(`LOCK.md` §1). A **row lock** names a key in a store: a
+table's row locked without being written, or a catalog key
+about to be. An **OID lock** names an object's oid, a key in
+no store: a table's is its **table-oid lock**, and a namespace
+has one too. "Row lock" never means what a write does to the
+row it writes: that is the uncommitted version.
 
 **index.** Two things: an sm3 **index**, an object that maps
 an encoded key to a row's key; and "index" used
@@ -145,22 +145,26 @@ Six numbers name things, and none of the six is ever reused.
   of a row in a table without a primary key; a row of a table
   with one has none, its key its primary key's encoding, and
   the calls that hand out an `_id` give 0 for it (`ROWKEY.md`
-  §2.1). Before the pivot it was `rowno`, and digres's system
-  column still is.
-- Ids 1 to 999 are reserved in both database-wide spaces:
-  sm1's objid lease starts at 1000, and so does `sm3.oid`,
-  which leaves `pg_catalog` = 1 and `public` = 2 as fixed
-  oids (`sm3/CATALOG_ONDISK.md` §1).
+  §2.1). It was `rowno` before the pivot; SQL reads it as the
+  system column `_id`, in a keyless table alone, and there is
+  no `ctid`.
+- Ids 1 to 999 are reserved in sm1's objid lease, which starts
+  at 1000. `sm3.oid` starts at 16384, PostgreSQL's
+  `FirstNormalObjectId`; the oids below it are PostgreSQL's
+  own for built-in objects, so `pg_catalog` is 11 and `public`
+  2200 (`sm3/CATALOG_ONDISK.md` §1).
 
 ---
 
 ## 2. The stack
 
-**level** — one of the four layers of `README.md`: RocksDB
-(0), the MVCC storage manager `sm1/` (1), types and tuples
-`sm2/` (2), schema and index maintenance `sm3/` (3), with the
-C wrapper above them all. Each level is a client of the one
-below, and no level reaches past its neighbour.
+**level** — one of the four layers of `README.md`: the error
+state, helpers and system services `sm0/` (0), the MVCC
+storage manager `sm1/` (1), types and tuples `sm2/` (2),
+schema and index maintenance `sm3/` (3), with the C wrapper
+above them all and RocksDB under sm1. A level calls only the
+levels below it: sm3 calls sm2, and sm1 directly where sm2 has
+nothing to add, and nothing calls upward (`CODE.md` §1).
 
 **the wrapper** — `include/sm.h` and `src/`, the one API the
 host calls. Belongs to no level.
@@ -170,8 +174,10 @@ host calls. Belongs to no level.
 ## 3. Level 1: stores and keys
 
 **store** — sm1's unit of key space, named by a `storeid`.
-Every store *is* a RocksDB column family, `CF:store.<storeid>`,
-but nothing above sm1 calls it one.
+Every store *is* a RocksDB column family: `CF:chain.<storeid>`
+for a chained store, as every table's is, `CF:store.<storeid>`
+for a versioned one (`VCHAIN.md` §3). Nothing above sm1 calls
+it one.
 
 **store 0** — sm1's own catalog, an ordinary MVCC store
 holding a `"R"` row per store, a `"S"` row per sequence, and
@@ -195,13 +201,19 @@ MB for a value.
 
 ## 4. Level 1: versions and visibility
 
-**row version** — one RocksDB key-value pair: the userkey
-followed by the version tail, holding one value of that key.
-There is no "row" object on disk, only a chain of versions
-(`sm1/SM1_DESIGN.md` §3.1).
+**row version** — one value of a key. A versioned key's
+version is one RocksDB key-value pair: the class byte, the
+userkey and the version tail (`sm1/SM1_DESIGN.md` §3.1,
+`VCHAIN.md` §2). A chained store keeps a row's newest version
+under its plain key and the older ones in a chain behind it,
+each pointing to the one before; its index entries and TOAST
+stay versioned (`VCHAIN.md` §3). There is no "row" object on
+disk, only versions.
 
 **version tail** — `~wts | ~seq`, 12 bytes, bitwise
-complemented so that a key's newest version sorts first.
+complemented so that a key's newest version sorts first. A
+chained row's versions carry `wts` and `seq` in their value
+instead.
 
 **`wts`** — the write timestamp a version was written at.
 

@@ -2,11 +2,11 @@
  * sm_error.h -- the error codes of the whole wisr stack, in C.
  *
  * One errno namespace serves every level (DESIGN.md section 5):
- * sm1, sm2, sm3 and the C wrapper all report through sm1's
+ * every level and the C wrapper report through sm0's
  * thread-local error state, and every code any of them uses is
- * defined here. sm1.h includes this file and names the enum
- * sm1::errnum_t; sm.h includes it for C callers. It belongs to
- * no level, so it lives at the root.
+ * defined here. sm0.h and sm1.h include this file and name the
+ * enum sm0::errnum_t and sm1::errnum_t; sm.h includes it for C
+ * callers. It belongs to no level, so it lives at the root.
  *
  * Values are explicit and stable: new codes are appended,
  * grouped under a comment naming the level that produces them,
@@ -45,7 +45,7 @@ typedef enum sm_errnum_t {
     SM_ERR_PERMISSION    = 17,
     SM_ERR_VERSION       = 18,  /* home dir format not supported */
 
-    /* Not an abort: the transaction stays active (SM1_DESIGN.md §5.4). */
+    /* Not an abort: the transaction stays active (sm1/SM1_DESIGN.md §5.4). */
     SM_ERR_UPDATED       = 19,  /* newer commit; sm1::read_latest, then retry */
 
     /* sm2's: types and tuples (sm2/SM2_DESIGN.md §3.2, §4, §5) */
@@ -61,7 +61,7 @@ typedef enum sm_errnum_t {
 
     /*
      * sm1's, and not an abort either: a lock another transaction
-     * holds, met by a session set qa_nowait (SM1_DESIGN.md §5.1).
+     * holds, met by a session set qa_nowait (sm1/SM1_DESIGN.md §5.1).
      */
     SM_ERR_BLOCKED       = 23,  /* would wait for a lock; repeat the call */
 
@@ -70,28 +70,28 @@ typedef enum sm_errnum_t {
 
     /*
      * sm1's: a rollback to a savepoint whose undo list was
-     * dropped at savepoint_undo_bytes (SM1_DESIGN.md §6.5). The
+     * dropped at savepoint_undo_bytes (sm1/SM1_DESIGN.md §6.5). The
      * transaction can only be aborted.
      */
     SM_ERR_UNDOLIMIT     = 25,  /* the savepoint can no longer be rolled back to */
 
     /*
      * sm1's, and not an abort: an update or delete of a row the
-     * running statement has already changed (SM1_DESIGN.md §6.2).
+     * running statement has already changed (sm1/SM1_DESIGN.md §6.2).
      * Nothing is written; the caller skips the row.
      */
     SM_ERR_SELFMODIFIED  = 26,  /* the statement already changed this row */
 
     /*
      * sm1's, and not an abort: a write in a transaction begun
-     * read-only (SM1_DESIGN.md §7.4). Nothing is written.
+     * read-only (sm1/SM1_DESIGN.md §7.4). Nothing is written.
      */
     SM_ERR_READONLY      = 27,  /* the transaction was declared read-only */
 
     /*
      * sm1's, and not an abort: a wait for another transaction that
      * an interrupt to the calling thread ended (sm_sys.h, through its
-     * wait mask; SM1_DESIGN.md §5.1). The transaction stays active
+     * wait mask; sm1/SM1_DESIGN.md §5.1). The transaction stays active
      * and holds what it held.
      */
     SM_ERR_INTERRUPTED   = 28,  /* the wait was interrupted */
@@ -105,7 +105,7 @@ typedef enum sm_errnum_t {
 
     /*
      * sm1's: a rollback to a savepoint failed, leaving the writes
-     * it was to undo (SM1_DESIGN.md §6.5). Every call on the
+     * it was to undo (sm1/SM1_DESIGN.md §6.5). Every call on the
      * transaction but an abort then fails with it.
      */
     SM_ERR_DOOMED        = 30,  /* the transaction can only be aborted */
@@ -113,7 +113,7 @@ typedef enum sm_errnum_t {
     /*
      * sm1's, and not an abort: a read or seek on a cursor a
      * rollback to a savepoint set before it opened has closed
-     * (SM1_DESIGN.md §6.5). Its old view cannot be recreated.
+     * (sm1/SM1_DESIGN.md §6.5). Its old view cannot be recreated.
      */
     SM_ERR_SCANCLOSED    = 31,  /* a rollback closed the cursor */
 

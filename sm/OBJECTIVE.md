@@ -21,7 +21,7 @@ The stack, as a whole:
 
 | Level | What it is | Owns |
 | --- | --- | --- |
-| — | RocksDB, under the stack | bytes, ordering, durability, crash atomicity |
+| — | RocksDB, under sm1 | bytes, ordering, durability, crash atomicity |
 | 0 | `sm0/` — the error state, helpers and system services | nothing of storage |
 | 1 | `sm1/` — the MVCC storage manager | row version, transaction, isolation, visibility |
 | 2 | `sm2/` — types and tuples | column, type, row, index entry |
@@ -31,15 +31,17 @@ Each level is built on the level directly below it, through
 that level's own interface — `sm1` on RocksDB's API, `sm2` on
 sm1's, `sm3` on sm2's tuple relation. Two callers may also
 reach further down: `sm3` calls sm1's interface as well as
-sm2's, and the top level calls sm1 for sessions,
-transactions, savepoints and 2PC and sm3 for everything else
-(`DESIGN.md` §1). Nothing calls upward. A notion that belongs
-to level N is never reimplemented at level N+1, and level N+1's
-internals are never reached into from level N-1. This is the
-discipline that lets `sm2/SM2_OBJECTIVE.md` say "anything sm1
-already does ... sm2 calls it; it does not reimplement it",
-and it is the rule this document exists to state once, for
-the whole stack, instead of per level.
+sm2's where sm2 has nothing to add, and the top level calls
+sm1 for the rest of 2PC, stores and sequences and sm3 for
+everything else, sessions, transactions, savepoints and
+prepare among it (`DESIGN.md` §1). Nothing calls upward. A
+notion that belongs to level N is never reimplemented at level
+N+1, and level N+1's internals are never reached into from
+level N-1. This is the discipline that lets
+`sm2/SM2_OBJECTIVE.md` say "anything sm1 already does ... sm2
+calls it; it does not reimplement it", and it is the rule this
+document exists to state once, for the whole stack, instead of
+per level.
 
 **Not in scope, at any level, yet.** A query language, a
 planner, an executor, multi-process deployment. sm1 keeps

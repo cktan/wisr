@@ -9,14 +9,15 @@ answers. Built: §3 and §4.
 
 ## 1. Why
 
-- **digres wants `numeric` by value** (`../dg/DECIMAL.md`
-  §5). Most numerics fit in 17 digits. PostgreSQL's executor
-  loses the typmod through an expression, so dg's value must
-  carry its scale (`../dg/DECIMAL.md` §2.2). An 8-byte datum
-  that already holds it is one dg can hand to PostgreSQL as a
-  `Datum` with no conversion, where today `numeric_from_sm()`
-  (`../dg/src/backend/access/sm/smstore.c`) pallocs a 32-byte
-  `decimal_t` for every value read.
+- **digres wanted `numeric` by value** (`../dg/DECIMAL.md`
+  §5, built since). Most numerics fit in 17 digits.
+  PostgreSQL's executor loses the typmod through an
+  expression, so dg's value must carry its scale
+  (`../dg/DECIMAL.md` §2.2). An 8-byte datum that already
+  holds it is one dg can hand to PostgreSQL as a `Datum` with
+  no conversion, where `numeric_from_sm()`
+  (`../dg/src/backend/access/sm/smstore.c`) pallocked a
+  32-byte `decimal_t` for every value read; it is gone now.
 - **The cost**: a digit of `decimal64` and two of
   `decimal128` (§2), and DuckDB's decimal is no longer sm's
   format byte for byte.
@@ -68,22 +69,28 @@ the same width; its low bits are the scale.
 
 - `sm2/TYPE.md` §3.4 and `sm2/SM2_DESIGN.md` §2.2: the format
   of §2, and why it parts from DuckDB's.
-- `sm3/SM3_DESIGN.md` §2.1: `p <= 17` is `decimal64`,
-  `18 <= p <= 36` is `decimal128`, past 36 refused at
-  `CREATE TABLE`; a bare `decimal` or `numeric` is `(17, 3)`
-  (§5).
+- `sm3/SM3_DESIGN.md` §2.1: a precision past `decimal64`'s 17
+  or `decimal128`'s 36 digits refused at `CREATE TABLE`. Which
+  width a `(p, s)` takes, and the `(17, 3)` of a bare
+  `decimal` or `numeric` (§5), are digres's
+  (`../dg/DECIMAL.md` §2.3); sm3 supplies no default.
 
 ### 3.3 dg, at the border only
 
 - **`numeric_to_sm()`** packs the scale into the word it
   passes, after rounding to the column's scale as now.
-- **`numeric_from_sm()`** unpacks the value and the scale.
+- **`numeric_from_sm()`** unpacked the value and the scale;
+  it is gone since (below).
 - **`type_code()`** splits at 17, not 18, and a column past 36
   digits is refused.
 - **`numeric_bound()`** packs its bound the same way.
-- dg's in-memory `decimal_t` is left as it is. Making
-  `numeric` by value in dg is the next piece of work
-  (`../dg/DECIMAL.md` §5), not this one.
+- dg's in-memory `decimal_t` was left as it was. Making
+  `numeric` by value in dg came next, and is built
+  (`../dg/DECIMAL.md` §5): a `decimal64` is a by-value
+  `Datum`, sm's datum handed to PostgreSQL as it is, with no
+  `numeric_from_sm()`; `type_code()` now maps digres's
+  `decimal64` and `decimal128` types to sm's, whatever the
+  precision.
 
 ## 4. Order of work
 
@@ -116,11 +123,12 @@ regression files. None is an isolation scenario of
 ## 5. Answers
 
 1. **The bare default.** A bare `decimal` or `numeric` was
-   DuckDB's `(18, 3)` (`sm3/SM3_DESIGN.md` §2.1), which no
-   longer fits `decimal64`. Settled: **`(17, 3)`**, a
-   `decimal64`, by value, 14 integer digits; `(18, 3)` as a
-   `decimal128` was the alternative, 16 bytes for every bare
-   numeric.
+   DuckDB's `(18, 3)`, which no longer fits `decimal64`.
+   Settled: **`(17, 3)`**, a `decimal64`, by value, 14
+   integer digits; `(18, 3)` as a `decimal128` was the
+   alternative, 16 bytes for every bare numeric. The default
+   is digres's (`../dg/DECIMAL.md` §2.3); sm3 supplies none
+   (`sm3/SM3_DESIGN.md` §2.1).
 2. **Databases already written.** Settled: **there is no
    existing database.** The format changes with no migration
    and no format version; databases already written are not

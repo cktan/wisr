@@ -196,9 +196,9 @@ itself does not read it.
 
 sm is the first such library. Its waits a caller can block in
 -- for a row lock, for a row another transaction is writing,
-and the deadlock wait -- are to use `sm_wait()` with the wait
-mask. An interrupt in the mask ends the wait, and the call fails
-with a new sm error, `SM_ERR_INTERRUPTED`. That is not an abort:
+and the deadlock wait -- use `sm_wait()` with the wait mask.
+An interrupt in the mask ends the wait, and the call fails with
+the sm error `SM_ERR_INTERRUPTED`. That is not an abort:
 the transaction stays as it was, holding what it held, and the
 caller decides what the interrupt meant and whether to abort.
 sm never takes a bit, so every later wait the thread makes
@@ -351,17 +351,19 @@ sanitizers by `make tsan` and `make asan`:
   timer thread kept busy, so that the race is met: without the
   cancel's wait for a firing, the test fails most runs.
 
-And in sm, when its waits use `sm_sys.h`: a row lock waiter
-interrupted from another thread fails with
-`SM_ERR_INTERRUPTED`, its transaction intact -- a new scenario
-in `sm1/mvcc/`, added beside the others, none changed.
+And in sm1, whose waits use `sm_sys.h`: a waiter for another
+transaction, interrupted from another thread, fails with
+`SM_ERR_INTERRUPTED`, its transaction intact, and a bit its
+thread's wait mask leaves out does not end the wait
+(`../sm1/test/test_lock.cc`).
 
-## 11. Open questions
+## 11. Settled questions
 
-1. **The eventfd.** Keep `sm_wake_fd()` in `sm_sys.h`, or keep
-   `sm_sys.h` to condition variables and let a caller register
-   a waker of its own?
-2. **The wait mask.** A mask per thread lets a bit that should
-   not abort a lock wait -- digres's reload -- pass. Without
-   it, every wait sm makes for a caller ends on any bit, which
-   is simpler.
+1. **The eventfd.** `sm_wake_fd()` stays in `sm_sys.h`, and
+   digres's epoll loop waits on it (§9), rather than
+   `sm_sys.h` keeping to condition variables and a caller
+   registering a waker of its own.
+2. **The wait mask.** A mask per thread is kept (§5), so a bit
+   that should not abort a lock wait -- digres's reload --
+   passes, where without it every wait sm makes for a caller
+   would end on any bit.

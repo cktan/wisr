@@ -106,6 +106,10 @@ For each key sm1 does this (`sm1/SM1_DESIGN.md` §5):
 | remember it for a savepoint, if one is set | an entry in `T.undo`, with the key inline, kept to the end |
 | tell SSI | one lookup |
 
+Since `sm1/WRITELOCK.md`, a write keeps no lock: the first
+step is the key's write latch, held for the write alone, and
+the lock entries below are gone. The rest stands.
+
 **Memory.** The lock entries are kept for the life of the
 transaction, and the undo entries too when a savepoint is
 set, so a load of `n` rows holds `n × (1 + k)` entries or
@@ -212,10 +216,13 @@ is checked.
 ### 3.3 Timestamps and `seq`
 
 A version's key is `userkey | ~wts | ~seq`
-(`sm1/SM1_DESIGN.md` §3.1). An ordinary write takes one `wts`
-and one `seq` for each key. A load takes one of each for many
-keys: for 100 rows in mini-batch, for a chunk in batch mode,
-for the whole load in file mode.
+(`sm1/SM1_DESIGN.md` §3.1). A loaded row is instead a chained
+key's current version, keyed by the row's key alone, whose
+value carries the same `wts` and `seq` (`VCHAIN.md` §3, §8);
+an index entry is a version as above. An ordinary write takes
+one `wts` and one `seq` for each key. A load takes one of each
+for many keys: for 100 rows in mini-batch, for a chunk in batch
+mode, for the whole load in file mode.
 
 - **One `wts` is enough** because of the lock. The rule `wts`
   serves is that a key's versions sort in commit order. Every
@@ -545,10 +552,14 @@ database kept for loads. A key must be added in the
 comparator's order, which is the whole of the difficulty.
 
 What goes into a file is exactly what a write would have put
-into RocksDB: a version, keyed `userkey | ~wts | ~seq`, with
-the transaction's `xid` in its value
-(`sm1/SM1_DESIGN.md` §3.1). A version in an ingested file is
-no different from one in a memtable. It is uncommitted until
+into RocksDB: for an index entry a version, keyed
+`userkey | ~wts | ~seq`, with the transaction's `xid` in its
+value (`sm1/SM1_DESIGN.md` §3.1); for a row, from a stream
+`load_stream` declares chained, as sm3 declares a table's rows,
+a current version under the row's key with nothing chained
+behind it, `prev` `0`, as `chain_insert` puts one
+(`VCHAIN.md` §8). A version in an ingested file is no
+different from one in a memtable. It is uncommitted until
 the transaction's status record says otherwise, so the files
 can be handed to RocksDB before the commit.
 
@@ -783,7 +794,7 @@ the key waits for its transaction. Locks held for 1,000 rows
 into a table with two unique indexes and one non-unique one,
 to the end of the transaction:
 
-| Path | Row locks, before `WRITELOCK.md` | Row locks, now |
+| Path | Row locks, before `sm1/WRITELOCK.md` | Row locks, now |
 | --- | --- | --- |
 | `tbl_insert` | 4,000: the heap row, both unique keys and the non-unique entry, for each row | 0 |
 | mini-batch | 2,000: the two unique keys, for each row | 0 |
@@ -1144,9 +1155,11 @@ narrowed, with these differences.
 
 **The streams, and the checks**
 
-- **The heap is one ascending stream, and each index one that
+- **The heap is one chained stream, and each index one that
   is sorted**, a partial or an expression index among them,
-  its entries made as `tbl_insert` makes them.
+  its entries made as `tbl_insert` makes them. The heap's is
+  ascending in a keyless table, by `_id`, and unsorted in one
+  with a primary key, sorted at the close as an index's is.
 - **No stream is declared unique.** With the store empty and
   no one else in it, two equal keys are both the load's, in a
   unique index or not, so every stream is checked alike: a
@@ -1187,4 +1200,5 @@ narrowed, with these differences.
   `load_close` and `store_empty`; `sm2::rel_load` and
   `idx_load`; `sm3::tbl_load_open`, `tbl_load_add`,
   `tbl_load_close`; `sm_tbl_load_begin`, `sm_tbl_load_add`,
-  `sm_tbl_load_end`. `rel` has no verb for it yet.
+  `sm_tbl_load_end`; `rel`'s verb is `(load table rows)`
+  (`rel/REL.md`).
