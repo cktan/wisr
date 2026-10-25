@@ -151,7 +151,7 @@ TEST_CASE("a view is kept, and loads back") {
 
 TEST_CASE("a view's query longer than a tuple is kept whole") {
   // Verify a query past a part's 65535 bytes is kept in pieces
-  // (CATALOG.md §3).
+  // (CATALOG_ONDISK.md §3).
   // 1. Make v with a query of 200,000 bytes, and one of 60,000, a
   //    piece's length exactly.
   // 2. Restart: both load back byte for byte.

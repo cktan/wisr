@@ -1,5 +1,5 @@
 /*
- * test_ddl.cc -- the DDL beyond create_table (CATALOG.md §5):
+ * test_ddl.cc -- the DDL beyond create_table (CATALOG_INMEM.md §2):
  * each change written, then read back after a restart.
  */
 

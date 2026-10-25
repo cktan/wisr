@@ -1,8 +1,8 @@
 # LOCK — what gets locked, and how
 
 Locking in this stack is spread over `sm1/SM1_DESIGN.md` §5
-and §7, `sm1/WRITELOCK.md`, `sm3/SM3_DESIGN.md` §2 and
-`sm3/CATALOG3.md` §0.4. This file gathers it: the two
+and §7, `sm1/WRITELOCK.md` and `sm3/SM3_DESIGN.md` §2. This
+file gathers it: the two
 mechanisms, the interface, what is a lock subject and what only
 looks like one, and the scenarios that are easy to get wrong.
 
@@ -227,7 +227,7 @@ has just added.
 
 Then, in `cat_put_table`, it locks each catalog key it is
 about to write, and only those — a table's own fields, one
-column, one index each have a key (`sm3/CATALOG.md` §2):
+column, one index each have a key (`sm3/CATALOG_ONDISK.md` §2):
 
 ```
 sm2::catkv_lock(kv, part_key(column, 16384, 3), X)
@@ -255,7 +255,7 @@ lock at all: the table-oid lock alone puts them in order.
 
 A namespace has the same kind of lock, on its oid: shared by a
 transaction putting a table or a collation in it, exclusive by
-the one that drops it (`sm3/CATALOG.md` §5.1).
+the one that drops it (`sm3/CATALOG_INMEM.md` §2.1).
 
 ### 4.3 `FOR UPDATE` against a writer
 
@@ -352,8 +352,8 @@ table-oid lock. The oid is the only identity stable for the
 table's whole life, so it is the name.
 
 This is also why the lock cannot live *in* the table's store:
-it has to outlive `DROP TABLE`'s `rmstore` — `CATALOG.md` §5
-promises that a table dropped while a caller waited is
+it has to outlive `DROP TABLE`'s `rmstore` — `CATALOG_INMEM.md`
+§2 promises that a table dropped while a caller waited is
 `SM_ERR_NOTFOUND`, which means getting the lock and *then*
 finding no definition — and it has to pre-date the store,
 since `CREATE TABLE` inserts the name before making the store.
@@ -387,5 +387,5 @@ definition, never the old.
   ordering rule in the stack; `SM_ERR_DEADLOCK` is retryable
   and the caller retries.
 - **Subjects 4 to 7 are not built.** `DROP COLLATION` in use
-  is `CATALOG.md` §7's open item, and `DROP INDEX` leans on
+  is `CATALOG_INMEM.md` §4's open item, and `DROP INDEX` leans on
   the table's oid lock.

@@ -67,7 +67,7 @@ calls in `sm.h`, and what digres builds on them.
 
 ## 3. The entry
 
-A new kind in `sm3/CATALOG.md` §2, and a part in §3:
+A new kind in `sm3/CATALOG_ONDISK.md` §2, and a part in §3:
 
 | Kind | Value | Key after the kind | Holds |
 | --- | --- | --- | --- |
@@ -281,7 +281,7 @@ struct sm_view_def_t {
   updatable refuses DML, as PostgreSQL does with neither.
 - **Dependencies on what is not a relation**: a sequence a
   view's `nextval('s')` names, a user's collation. They wait
-  for the dependency index (`sm3/CATALOG3.md` §0.5), as the
+  for a dependency index (`sm3/CATALOG_INMEM.md` §4), as the
   same checks for tables do (`NEXT.md` §3).
 - **A view's row type**: a view's whole-row value is a
   record, as a table's in sm is, not a named composite type.
@@ -429,7 +429,7 @@ the drop; for that, the other session must learn of the view.
 - **It changes at commit**, with the temporary catalog: a
   commit that makes, replaces or drops a temporary view
   changes the register under the shared catalog's mutex, as
-  a commit of shared DDL does (`sm3/CATALOG.md` §4). Such a
+  a commit of shared DDL does (`sm3/CATALOG_INMEM.md` §1). Such a
   commit counts as shared DDL.
 - **A session's close takes its entries out**, under the
   same mutex, as it drops its temporary catalog.

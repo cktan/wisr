@@ -247,12 +247,12 @@ Isolation levels map directly to `sm_xctlevel_t`:
 
 ### 4.3 High-Level Table and Index Operations
 
-Tables and indexes live in sm3's catalog (`sm3/CATALOG.md`),
-through the C API's `sm_cat_*` calls, in the `public`
-namespace. DDL is transactional -- undone by abort and by
-rollback to a savepoint, private to its session until commit --
-and a table outlives a restart. `rel` keeps no catalog of its
-own.
+Tables and indexes live in sm3's catalog
+(`sm3/CATALOG_INMEM.md`), through the C API's `sm_cat_*` calls,
+in the `public` namespace. DDL is transactional -- undone by
+abort and by rollback to a savepoint, private to its session
+until commit -- and a table outlives a restart. `rel` keeps no
+catalog of its own.
 
 #### `(table-create <name> (columns ...))`
 1. Builds an `sm_column_spec_t` per column: its name, type code,

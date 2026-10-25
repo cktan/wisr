@@ -29,7 +29,7 @@ check first, kept as it was written.
   indexes and its TOAST data.
 - **Its definition is in the session's memory**, in a
   temporary catalog of its own, never in store 0
-  (`sm3/CATALOG.md` §7).
+  (`sm3/CATALOG_INMEM.md` §1).
 - **Its transactions are the database's.** A row version in
   X carries the `xid` and timestamps of the session's
   transaction in its own database, and is resolved against
@@ -215,7 +215,7 @@ transaction at a time. So, for a temporary store:
 
 - **A second overlay, which commit does not publish.** A
   session has an overlay of its open transaction's DDL
-  (`sm3/CATALOG.md` §4). The temporary catalog is the same
+  (`sm3/CATALOG_INMEM.md` §1). The temporary catalog is the same
   structure with a longer life: definitions of the session's
   temporary tables, kept from commit to commit, and dropped
   when the session closes.

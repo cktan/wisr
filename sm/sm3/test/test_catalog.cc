@@ -1,6 +1,6 @@
 /*
- * test_catalog.cc -- init, load and table creation (CATALOG.md
- * §5).
+ * test_catalog.cc -- init, load and table creation (CATALOG_INMEM.md
+ * §2).
  */
 
 #include "catalog.h"
@@ -264,7 +264,7 @@ size_t count_keys(sm1::session_t *s, sm3::kind_t kind) {
 } // namespace
 
 TEST_CASE("a table's columns and indexes each have a key of their own") {
-  // Verify the layout of a table's record (CATALOG.md §2).
+  // Verify the layout of a table's record (CATALOG_ONDISK.md §2).
   // 1. A table of three columns is created: the catalog holds one
   //    table key, three column keys and no index key.
   // 2. A column is added, and an index created: one more of each.

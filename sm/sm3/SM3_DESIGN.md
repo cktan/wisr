@@ -22,7 +22,7 @@ decisions in `SM3_OBJECTIVE.md`:
 
 **Status: the catalog is implemented** — its keys, values,
 load, DDL, a session's overlay and the table-oid locks of §2
-(`CATALOG.md`), and §4's object mapping with them: a store
+(`CATALOG_INMEM.md`), and §4's object mapping with them: a store
 per table, index relids allocated and never reused, and
 `DROP TABLE` as one `sm1::rmstore`. §3's index maintenance
 is built, the C API's one way to write a row, and so is its
@@ -148,9 +148,10 @@ over PostgreSQL's WAL do not apply to data held in RocksDB
 Making memory authoritative moves the hard part; it does not
 remove it. A definition that outlives the transaction that
 changed it is the usual place such a design goes wrong.
-`CATALOG.md` documents the catalog as built, which settles
-privacy until commit, bootstrap, row size and temporary
-tables; its §7 leaves size and startup open, unmeasured:
+`CATALOG_ONDISK.md` and `CATALOG_INMEM.md` document the
+catalog as built, which settles privacy until commit,
+bootstrap, row size and temporary tables; `CATALOG_INMEM.md` §4
+leaves size and startup open, unmeasured:
 
 - **Privacy until commit.** A DDL change must be invisible to
   other transactions until it commits, and undone on abort and
@@ -378,24 +379,24 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
   forget it.
 - **Building an index on a populated relation.** There is one
   build and it is concurrent: neither writers nor readers are
-  shut out for longer than a catalog change takes. An index
-  has a state, *pending*, *valid* or *failed*, kept by index
-  and outside the table's definition (`CATALOG.md` §2, §4).
-  A pending index a worker is filling is *building*, which
-  only the builder knows and nothing records. The danger is a
-  writer that does
-  not know the index exists, changes the base relation and
-  writes no entry. PostgreSQL's `CREATE INDEX CONCURRENTLY`
-  meets it by entering the index as not ready and not valid,
-  waiting out older transactions, scanning the table twice and
-  waiting again. Here the table-oid lock does the waiting and the
-  row lock stands in for the second scan:
+  shut out for longer than a catalog change takes. An index has a
+  state, *pending*, *valid* or *failed*, kept by index and
+  outside the table's definition (`CATALOG_ONDISK.md` §2,
+  `CATALOG_INMEM.md` §1). A pending index a worker is filling is
+  *building*, which only the builder knows and nothing records.
+  The danger is a writer that does not know the index exists,
+  changes the base relation and writes no entry. PostgreSQL's
+  `CREATE INDEX CONCURRENTLY` meets it by entering the index as
+  not ready and not valid, waiting out older transactions,
+  scanning the table twice and waiting again. Here the table-oid
+  lock does the waiting and the row lock stands in for the second
+  scan:
   1. **Create.** `create_index` takes the table-oid lock X,
      as every DDL does, and records the index as pending. A
      writer holds that lock IX to the end of its transaction,
      so when this commits no writer is left that does not know
      the index, and the next one reads a definition that lists
-     it (`CATALOG.md` §5).
+     it (`CATALOG_INMEM.md` §2).
   2. **Maintain.** From then on every writer maintains the
      index as it does any other, with one allowance: while the
      index is pending, an entry to remove that is not there
@@ -506,7 +507,7 @@ from sm1 is in sm1 already: `sm1::lock` (`sm1/SM1_DESIGN.md`
     any other fails the build.
   - **The builder is a caller of the catalog.** It reads and
     changes one through the catalog's own calls
-    (`CATALOG.md` §5), and the catalog knows nothing of it.
+    (`CATALOG_INMEM.md` §2), and the catalog knows nothing of it.
     The DDL knows its queue: `create_index` gives
     `sm1::on_commit` a function that puts the pending index on
     the queue, so it is queued once its transaction has
@@ -912,11 +913,11 @@ to commit would write the first one's old state back. So:
 
 - on disk an index's state has an entry of its own, under the
   table's oid and the index's, apart from the index's entry
-  (`CATALOG.md` §2). A pending index has none: no entry is
+  (`CATALOG_ONDISK.md` §2). A pending index has none: no entry is
   what pending means, so `create_index` writes nothing for
   it;
 - in memory it is in a map by index oid, beside the
-  definitions and not in them (`CATALOG.md` §4).
+  definitions and not in them (`CATALOG_INMEM.md` §1).
 
 **Why IX, and not no lock at all.** IX admits every reader
 and writer of the table and keeps out only DDL, which takes
@@ -1069,10 +1070,10 @@ and sm3 never encodes a key itself.
   `tbl_truncate`, which needs the table opened exclusive and
   reopens the handle on the new store.
 - **`DROP INDEX` erases the index's keys** one by one, as sm1
-  has no range delete (`CATALOG.md` §5.2); dropping a primary
-  key rewrites the table into a new store, keyed by `_id`, the
-  rows drawing theirs from the table's sequence in key order
-  (`../CLUSTER.md` §8).
+  has no range delete (`CATALOG_INMEM.md` §2.2); dropping a
+  primary key rewrites the table into a new store, keyed by
+  `_id`, the rows drawing theirs from the table's sequence in key
+  order (`../CLUSTER.md` §8).
 - **Index relids are allocated in increasing order and never
   reused.** A dropped index's versions linger until sm1's
   garbage collection passes them; never reusing a relid means
@@ -1404,7 +1405,7 @@ and its DDL (`STATISTICS.md` §3.6). The key after the kind is
 index expression's, so a table's entries are together, its own
 first. Each value is parts, each an sm2 tuple under a fixed
 schema with its length as a varint, as every catalog value is
-(`CATALOG.md` §3):
+(`CATALOG_ONDISK.md` §3):
 
 ```
 the table's entry     = table | index × nindex
@@ -1496,8 +1497,8 @@ analyze writes every entry the definition allows, or erases it
 if it has no statistic for it, reading each as of the newest
 commit under its lock, so it needs no scan; `DROP TABLE` erases
 them the same way. An attnum is never reused, nor an index oid
-(`CATALOG.md` §1), so an index part left behind is never read
-as another's.
+(`CATALOG_ONDISK.md` §1), so an index part left behind is never
+read as another's.
 
 **After a `TRUNCATE`**, `STATISTICS.md` §3.6 asks for a choice
 of floor on rows. **Decision: a live heap of 0 bytes, `disk`
@@ -1638,7 +1639,7 @@ that matter most are the ones with two sessions in them.
 
 | Step | What | State | Where |
 | --- | --- | --- | --- |
-| 1 | Catalog | built | §2, `CATALOG.md` |
+| 1 | Catalog | built | §2, `CATALOG_INMEM.md` |
 | 2 | Object mapping | built | §4 |
 | 3 | Indexes | built | §3 |
 | 4 | Scans | settled, nothing to build | §5 |
@@ -1650,7 +1651,7 @@ that matter most are the ones with two sessions in them.
    value, in memory, written through to sm2 and loaded at
    startup, under the table-oid locks of §2. A DDL change
    stays private until it commits in a session's overlay
-   (`CATALOG.md` §4).
+   (`CATALOG_INMEM.md` §1).
    Verified: DDL rolls back with its transaction, the
    in-memory copy included; a transaction holding the shared
    table-oid lock never sees a definition change under it; two

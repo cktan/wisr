@@ -314,7 +314,7 @@ row's key is, so the table is copied into a new store:
 3. Fill every secondary index.
 4. At commit the catalog names the new store, and the old one
    is dropped, as `TRUNCATE` swaps a store now
-   (`sm3/CATALOG.md` §5.2).
+   (`sm3/CATALOG_INMEM.md` §2.2).
 
 A table created with a primary key is clustered from its
 birth and is never rewritten.
@@ -352,8 +352,8 @@ birth and is never rewritten.
 - **Documents** rewritten as the code lands:
   `sm2/SM2_DESIGN.md` §5 and §7, `sm3/SM3_DESIGN.md` §3 and
   §6, `DESIGN.md` §5, `PART4.md` §3, `STATISTICS.md`,
-  `BULKLOAD.md`, `LOCK.md`, `GLOSSARY.md`, `sm3/CATALOG.md`,
-  `rel/REL.md`.
+  `BULKLOAD.md`, `LOCK.md`, `GLOSSARY.md`,
+  `sm3/CATALOG_INMEM.md`, `rel/REL.md`.
 
 No database on disk is carried over: the format changes and
 nothing migrates.

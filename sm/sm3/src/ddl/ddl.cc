@@ -1,5 +1,5 @@
 /*
- * ddl.cc -- DDL (SM3_DESIGN.md §2, CATALOG.md §5): what a CREATE,
+ * ddl.cc -- DDL (SM3_DESIGN.md §2, CATALOG_INMEM.md §2): what a CREATE,
  * a DROP or an ALTER does. Each call makes or drops what its
  * object needs outside the catalog -- a store, a sequence, an
  * index's entries -- and puts the object's record in the catalog

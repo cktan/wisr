@@ -1140,7 +1140,7 @@ sm3 is a client of sm2 the way sm2 is a client of sm1.
   persists one nor looks one up, and it has no notion of a
   table name, a DDL statement or a table-oid lock. It does keep
   sm3's catalog bytes for it — `catkv_*`, a key-value store in
-  sm1's store 0 under sm1's upper prefix (`sm3/CATALOG.md`
+  sm1's store 0 under sm1's upper prefix (`sm3/CATALOG_ONDISK.md`
   §1) — but never reads them.
 - **Secondary indexes.** sm2 maintains no index. It gives sm3
   the two things index maintenance needs: the encoder (§3) and

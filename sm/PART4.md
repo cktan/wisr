@@ -672,15 +672,15 @@ What replaces it:
   nothing about them is stored, locked or invalidated.
 - **What a user creates is in sm3**: namespaces, tables,
   columns and their defaults, indexes, collations,
-  sequences, foreign keys and views (`sm3/CATALOG.md` §2);
-  what is left is in `sm3/CATALOG3.md` §10.
+  sequences, foreign keys and views (`sm3/CATALOG_ONDISK.md` §2);
+  what is open is in `sm3/CATALOG_INMEM.md` §4.
 
-**An oid is 64 bits**, in digres as in sm3. For now digres
-keeps PostgreSQL's 32-bit `Oid`, so sm3 hands out none past
-2^32 - 1 (`sm3/CATALOG.md` §1); widening it is to come. The
-numbers are PostgreSQL's where it has them: sm3 hands out
-oids from 16384, PostgreSQL's `FirstNormalObjectId`, and its two
-built-in namespaces are `pg_catalog` at 11 and `public` at
+**An oid is 64 bits**, in digres as in sm3. For now digres keeps
+PostgreSQL's 32-bit `Oid`, so sm3 hands out none past 2^32 - 1
+(`sm3/CATALOG_ONDISK.md` §1); widening it is to come. The numbers
+are PostgreSQL's where it has them: sm3 hands out oids from
+16384, PostgreSQL's `FirstNormalObjectId`, and its two built-in
+namespaces are `pg_catalog` at 11 and `public` at
 2200. Below 16384 are the built-ins, compiled in with the
 oids PostgreSQL gave them.
 

@@ -294,7 +294,7 @@ sweep at open asks `CF:txn`.
 sm3 knows which rel a write is to, which table that is, and
 what the row holds, so it is sm3 that writes the records.
 Each is a header, an sm2 tuple framed as the catalog's parts
-are (`sm3/CATALOG.md` §3), so that its schema evolves as a
+are (`sm3/CATALOG_ONDISK.md` §3), so that its schema evolves as a
 part's does, then the row's values, each its bytes with their
 length. A long value is in it whole (§6.3), so a record is
 held to an sm1 value's 64 MB, not to a tuple's 64 KB; a row
@@ -356,9 +356,9 @@ the old row.
 The catalog is not versioned (§3), so the stream carries the
 definitions itself: a schema record at the commit of each DDL
 that changed a logged object, holding the object's record as
-the catalog keeps it (`sm3/CATALOG.md` §3). sm3 knows what
+the catalog keeps it (`sm3/CATALOG_ONDISK.md` §3). sm3 knows what
 changed from the overlay it publishes at commit
-(`sm3/CATALOG.md` §4), and writes the records just before
+(`sm3/CATALOG_INMEM.md` §1), and writes the records just before
 `sm1::commit`, in the same transaction. A reader keeps the
 definitions the stream has given it, and decodes each row by
 its table's newest one (§3); it never asks the live catalog,

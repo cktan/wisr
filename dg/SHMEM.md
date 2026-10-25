@@ -195,7 +195,7 @@ instead of being told.
   changes in the DDL's own transaction: sm3's count of the
   catalog's publishes at which the table's definition or its
   statistics were last published, or an index of it made valid
-  (`sm_table_def_t::version`, `../sm/sm3/CATALOG.md` §4;
+  (`sm_table_def_t::version`, `../sm/sm3/CATALOG_INMEM.md` §1;
   `WORKNOTE.md` step 143). A version is read as the transaction
   sees it: `SM_VERSION_OWN` while its own DDL or ANALYZE of the
   table is uncommitted, else the newest committed, never one at

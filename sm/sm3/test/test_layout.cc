@@ -1,5 +1,5 @@
 /*
- * test_layout.cc -- the catalog's keys and blobs (CATALOG.md §2,
+ * test_layout.cc -- the catalog's keys and blobs (CATALOG_ONDISK.md §2,
  * §3).
  */
 
@@ -56,7 +56,7 @@ sm3::table_rec_t sample_table() {
 } // namespace
 
 TEST_CASE("catalog keys group by kind and order by their columns") {
-  // Verify the key layout of CATALOG.md §2.
+  // Verify the key layout of CATALOG_ONDISK.md §2.
   // 1. Every key of a kind begins with that kind's prefix, and no
   //    other kind's; META's key is its kind alone.
   // 2. Entity keys order by oid, and NAME keys by namespace, then
@@ -129,7 +129,7 @@ TEST_CASE("catalog keys group by kind and order by their columns") {
 }
 
 TEST_CASE("every catalog entity round trips through its value") {
-  // Verify the blob codec of CATALOG.md §3.
+  // Verify the blob codec of CATALOG_ONDISK.md §3.
   // 1. META, a NAME value with and without its table, a table's
   //    own fields, each of its columns -- nullable, with a missing
   //    value, dropped -- each of its two indexes, an index's state,
@@ -215,7 +215,7 @@ TEST_CASE("every catalog entity round trips through its value") {
 }
 
 TEST_CASE("a part written before a field was appended reads it as missing") {
-  // Verify that a part evolves as a tuple does (CATALOG.md §3).
+  // Verify that a part evolves as a tuple does (CATALOG_ONDISK.md §3).
   // 1. Write a collation part under its schema.
   // 2. Read it under that schema with one attribute appended, whose
   //    missing value is set: the new attribute reads as that value,

@@ -117,7 +117,7 @@ These are settled and drive `SM3_DESIGN.md`.
 - **Privacy of a catalog change until commit** — settled and
   built: a session's overlay keeps its transaction's DDL to
   itself, undone on abort and savepoint rollback, and publishes
-  it at commit (`CATALOG.md` §4, §5).
+  it at commit (`CATALOG_INMEM.md` §1, §2).
 - **How good RocksDB's approximate statistics are** for
   `reltuples` and `relpages`. It has not been measured, and
   `SM3_DESIGN.md` §6 depends on the answer.

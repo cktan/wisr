@@ -1,5 +1,5 @@
 /*
- * test_lock.cc -- table-oid locks (SM3_DESIGN.md §2, CATALOG.md §5):
+ * test_lock.cc -- table-oid locks (SM3_DESIGN.md §2, CATALOG_INMEM.md §2):
  * readers and writers of a table coexist, and DDL waits for them
  * and they for it.
  */

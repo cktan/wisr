@@ -474,7 +474,7 @@ saving.
 
 **On disk: store 0, under a key kind of their own.** The
 catalog is a key-value map in store 0 under the prefix `"U"`,
-reached through sm2's `catkv_*` (`CATALOG.md` §1), and
+reached through sm2's `catkv_*` (`CATALOG_ONDISK.md` §1), and
 statistics go there like everything else — written in the
 caller's transaction, so they commit, roll back and survive a
 crash with it, and sm3 writes no undo of its own.
@@ -483,8 +483,8 @@ crash with it, and sm3 writes no undo of its own.
   one catalog entry and every DDL rewrites it, so writing
   statistics into it would make `sm_tbl_analyze` contend with DDL
   for the same key under first-committer-wins, and mutate the
-  definition its readers hold. `CATALOG.md` §2's kinds run to
-  9 and are frozen because they are on disk; statistics are
+  definition its readers hold. `CATALOG_ONDISK.md` §2's kinds run
+  to 9 and are frozen because they are on disk; statistics are
   kind 10, and that document has to say so.
 - **One entry a table** was the first plan, as `sm_tbl_analyze`
   writes every column at once and a plan reads them at once.
@@ -515,7 +515,7 @@ At the default target a column's statistics run about 1.2 KB —
 101 histogram bounds, up to 100 common values, their
 frequencies — so a twenty-column table is some 24 KB and a
 thousand tables some 24 MB, against definitions that are
-bytes. `CATALOG.md` §7 lists startup cost for thousands of
+bytes. `CATALOG_INMEM.md` §4 lists startup cost for thousands of
 tables as unmeasured and open; loading statistics eagerly
 would be most of it, and none of it is wanted until something
 plans against that table. The definition must be there
@@ -560,8 +560,8 @@ catalog behaves. Two reasons not to.
   lock is an `sm1::LOCKTYPE_OID` lock, which writes
   nothing, so that taking it "never fails on a newer commit,
   at any level"
-  (`CATALOG.md` §2). Reading statistics per plan through sm1
-  would put the snapshot sensitivity back.
+  (`CATALOG_ONDISK.md` §2). Reading statistics per plan through
+  sm1 would put the snapshot sensitivity back.
 
 **What a `TRUNCATE` does, and why it needs no versioning.**
 `truncate_table` makes a new empty store, writes the new
@@ -611,7 +611,7 @@ companion on `tuples`, and whoever writes
 **The cost of keeping them separate.** Statistics inside the
 catalog entry would go when it went. A side structure has to
 be swept on `DROP`, which is code. sm3's oids come from a
-sequence and are not reused (`CATALOG.md` §1), so an entry
+sequence and are not reused (`CATALOG_ONDISK.md` §1), so an entry
 left behind is never mistaken for another table's — it is
 wasted memory until the sweep, not a wrong answer.
 

@@ -65,7 +65,7 @@ the constraint and keeps none (§8).
 
 **A new kind, `CONSTRAINT`, 12**, keyed by the child table's oid
 and the constraint's oid, as an index is keyed by its table's
-(`sm3/CATALOG.md` §2):
+(`sm3/CATALOG_ONDISK.md` §2):
 
 | Kind | Value | Key after the kind | Holds |
 | --- | --- | --- | --- |
@@ -86,15 +86,15 @@ CONSTRAINT value = constraint | fkey | pair × npairs
   child's constraints, and `DROP CONSTRAINT` names it on the
   child. Nothing is written under the parent.
 - **The kind is a constraint's, not a foreign key's.** A `CHECK`
-  is the other rule `sm3/CATALOG3.md` §0.3 names; it would be
-  type `c`, with a part of its own in place of `fkey`, the host's
-  expression in `host`. It is not built here.
+  is the other kind of constraint; it would be type `c`, with a
+  part of its own in place of `fkey`, the host's expression in
+  `host`. It is not built here.
 - **Its name is not a `NAME` key.** A constraint's name is unique
   per table, not per namespace, in PostgreSQL; sm3 checks it
   against the child's constraints, under the child's lock X,
   and refuses a taken one with `SM_ERR_DUPKEY`.
 - **A new kind changes no key's layout**, so `META` stays at 4
-  (`sm3/CATALOG.md` §3).
+  (`sm3/CATALOG_ONDISK.md` §3).
 - **Its oid** is from `cat_new_oid()`, as a table's and an
   index's.
 
@@ -109,7 +109,7 @@ CONSTRAINT value = constraint | fkey | pair × npairs
   each DDL that adds or drops a foreign key puts the parent's
   definition back with it changed. This is the reverse lookup a
   `DROP TABLE` of a parent and the host's parent-side triggers
-  need, with no dependency index (`sm3/CATALOG3.md` §0.5: a
+  need, with no dependency index (`sm3/CATALOG_INMEM.md` §4: a
   dependency is derived, and the catalog is in memory).
 - **A constraint is found by its oid alone**, as PostgreSQL's
   `CONSTROID` syscache finds one: the catalog keeps a map from
@@ -250,7 +250,7 @@ Outlined here; designed with the work, in `../dg`.
 ## 9. Not here
 
 - **`CHECK`**: the same kind, another type (§3).
-- **The dependency index** (`sm3/CATALOG3.md` §0.5):
+- **The dependency index** (`sm3/CATALOG_INMEM.md` §4):
   `referenced_by` is the one reverse lookup foreign keys need,
   and it is derived in memory.
 - **`FOR KEY SHARE` and `FOR NO KEY UPDATE`** in sm1: they would

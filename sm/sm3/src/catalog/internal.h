@@ -1,5 +1,5 @@
 /*
- * internal.h -- the catalog in memory (CATALOG.md §4, §7): the
+ * internal.h -- the catalog in memory (CATALOG_INMEM.md §1, §4): the
  * shared catalog, a session's overlay on it, and what load.cc,
  * ddl.cc and session.cc share. Internal to sm3.
  */
@@ -440,8 +440,8 @@ int cat_del_view(session_t *s, uint64_t oid, const view_def_t &def);
  * set in name; and whether a table, a collation, a sequence or a
  * view is in it. Both
  * read the catalog in memory, which holds every commit published
- * so far, not what the transaction's snapshot shows (CATALOG.md
- * §5).
+ * so far, not what the transaction's snapshot shows (CATALOG_INMEM.md
+ * §2).
  */
 bool nspace_in_use(const session_t *s, uint64_t oid);
 

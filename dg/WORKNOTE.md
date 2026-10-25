@@ -2213,7 +2213,7 @@ new instance. An audit of `global/` and `base/` came first.
 ## Step 73: sequences are sm's
 
 - **A sequence is an object in sm's catalog**, in a schema,
-  with an sm counter behind it (`sm3/CATALOG.md` kind 11;
+  with an sm counter behind it (`sm3/CATALOG_ONDISK.md` kind 11;
   `REVIEW.md` §5 has why). CREATE SEQUENCE is
   `smstore_create_sequence()`, in the transaction: START and
   INCREMENT, each at least 1, and AS bigint. Every other
@@ -2825,8 +2825,8 @@ keep it, as there is no `pg_attrdef`.
 
 - **sm keeps it, opaque**: a column spec's `default_expr`, the
   column part's eighth attribute, bytes sm stores and loads and
-  never runs (`../sm/sm3/CATALOG.md`). A part written before it
-  reads as null, so the catalog's format is unchanged.
+  never runs (`../sm/sm3/CATALOG_ONDISK.md`). A part written
+  before it reads as null, so the catalog's format is unchanged.
 - **CREATE TABLE cooks it** as PostgreSQL does
   (`cookDefault()`): coerced to the column's type, a column
   reference or a subquery refused; its `nodeToString()` is
@@ -2895,7 +2895,7 @@ not the default, and `regcollation` output, read `pg_collation`.
 
 - **sm3: a sequence has an owner**, a table's column, set by
   `own_sequence` (`sm_cat_own_sequence`): appended, nullable
-  fields of the sequence part (`../sm/sm3/CATALOG.md`).
+  fields of the sequence part (`../sm/sm3/CATALOG_ONDISK.md`).
   Dropping the table or the column drops the sequences it owns;
   dropping an owned one alone is `SM_ERR_INUSE`.
 - **`ALTER SEQUENCE ... OWNED BY`** is taken, `OWNED BY NONE`
@@ -2964,11 +2964,12 @@ put in a memtable and compacted. sm now has a bulk load
 
 - **sm3: a column may be an identity column**, its kind (`a` or
   `d`, PostgreSQL's `attidentity`) and its sequence appended,
-  nullable fields of the column part (`../sm/sm3/CATALOG.md`).
-  `create_table` makes the column own the sequence; it must be
-  a NOT NULL smallint, integer or bigint with no default, and
-  not in a temporary table. `own_sequence` on that sequence is
-  `SM_ERR_INUSE`, and `add_column` refuses an identity column.
+  nullable fields of the column part
+  (`../sm/sm3/CATALOG_ONDISK.md`). `create_table` makes the
+  column own the sequence; it must be a NOT NULL smallint,
+  integer or bigint with no default, and not in a temporary
+  table. `own_sequence` on that sequence is `SM_ERR_INUSE`, and
+  `add_column` refuses an identity column.
 - **`GENERATED ALWAYS | BY DEFAULT AS IDENTITY`** is taken in
   CREATE TABLE, with START and INCREMENT. Parse analysis makes
   the sequence first; `smstore_create_table` passes its oid, and
@@ -7295,13 +7296,14 @@ CONSTRAINT`. PostgreSQL gives a unique index a row only when a
 constraint made it, not `CREATE UNIQUE INDEX`, and sm did not
 keep which.
 
-- **sm marks a constraint's index** (`sm_index_def_t::constraint`,
-  `sm_cat_create_index()`'s and `sm3::create_index()`'s
-  `constraint`, `sm3/CATALOG.md`): kept in the index's part of the
-  catalog blob as a thirteenth attribute, null unless set, so an
-  index written before reads false. It must be unique and on
-  columns alone. `sm3/test/test_ddl.cc` checks it, and that it
-  survives a restart.
+- **sm marks a constraint's index**
+  (`sm_index_def_t::constraint`, `sm_cat_create_index()`'s and
+  `sm3::create_index()`'s `constraint`, `sm3/CATALOG_ONDISK.md`):
+  kept in the index's part of the catalog blob as a thirteenth
+  attribute, null unless set, so an index written before reads
+  false. It must be unique and on columns alone.
+  `sm3/test/test_ddl.cc` checks it, and that it survives a
+  restart.
 - **digres sets it** from `IndexStmt.isconstraint`, true for an
   index a `UNIQUE` or `PRIMARY KEY` constraint makes, at `CREATE
   TABLE`; `smstore_relation_t` carries it to `catrel.c`.

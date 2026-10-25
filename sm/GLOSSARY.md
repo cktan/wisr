@@ -23,7 +23,7 @@ confusion lives. §1 does the same for the identifiers.
 - a **key column** — one column of an index definition, with
   its direction, null order and collation.
 - a **catalog key** — a key in store 0 under `"U"`
-  (`sm3/CATALOG3.md` §3).
+  (`sm3/CATALOG_ONDISK.md` §3).
 
 **prefix.** Two things, both of them about position in a key
 and neither of them an identifier.
@@ -56,7 +56,7 @@ is *one* catalog object and *several* rels.
 - a table's oid lock was once called its *schema lock*, in
   sm2's sense: a lock on the table's *definition*, and
   nothing to do with a namespace. It is the **table-oid
-  lock** now (`sm3/CATALOG3.md` §0.4).
+  lock** now (`sm3/SM3_DESIGN.md` §2).
 
 **version.** Three things: a **row version**, one entry in a
 key's MVCC chain; the catalog's **format version**, in its
@@ -85,15 +85,15 @@ writes: that is the uncommitted version.
 **index.** Two things: an sm3 **index**, an object that maps
 an encoded key to a row's key; and "index" used
 loosely of a
-lookup structure in the catalog — the **name index** and the
-**dependency index** of `sm3/CATALOG3.md`, which are key
-shapes and not objects.
+lookup structure in the catalog — the **name index**, its
+`NAME` keys (`sm3/CATALOG_ONDISK.md` §2), and the
+**dependency index**, not built (`sm3/CATALOG_INMEM.md` §4) —
+which are keys and not objects.
 
-**part.** Two things, one replacing the other: in
-`sm3/CATALOG.md` §3 a part is one sm2 tuple inside a
-hand-framed catalog value; in `sm3/CATALOG3.md` §0.1 a part is
-a member of an object that has no oid of its own — a column,
-an index key column.
+**part.** Two things, both in `sm3/CATALOG_ONDISK.md`: in §3 a
+part is one sm2 tuple inside a hand-framed catalog value; in
+§2 a part is a member of an object that has no oid of its own
+— a column, an index key column.
 
 **catalog.** Three things: sm1's **store 0**; the `"U"` region
 of store 0, which is sm3's catalog; and the in-memory
@@ -150,7 +150,7 @@ Six numbers name things, and none of the six is ever reused.
 - Ids 1 to 999 are reserved in both database-wide spaces:
   sm1's objid lease starts at 1000, and so does `sm3.oid`,
   which leaves `pg_catalog` = 1 and `public` = 2 as fixed
-  oids (`sm3/CATALOG.md` §1).
+  oids (`sm3/CATALOG_ONDISK.md` §1).
 
 ---
 
@@ -373,7 +373,7 @@ reads.
 
 **object** — a thing with an **oid** and a name unique in its
 namespace: a namespace, table, index, collation, constraint
-(`sm3/CATALOG3.md` §0.1).
+(`sm3/CATALOG_ONDISK.md` §2).
 
 **part** — a member of an object with no oid, identified by
 its position: a column, an index key column.
@@ -396,7 +396,7 @@ and held to the end of the transaction. It is what makes an
 in-memory catalog safe. The name it locks is a key in no
 store, which nothing writes, so the lock only orders and
 never fails as a row lock can (`LOCK.md` §4.2,
-`sm3/CATALOG3.md` §0.4). A namespace has the same kind of
+`sm3/SM3_DESIGN.md` §2). A namespace has the same kind of
 lock on its own oid. It was called the schema lock.
 
 **overlay** — a session's own uncommitted DDL, tagged with the
@@ -418,12 +418,7 @@ read. Its **read columns** are the columns they use.
 **referenced and dependent** — the two ends of a dependency.
 The referenced object is the one a `DROP` is aimed at; the
 dependent is the one that would be left broken
-(`sm3/CATALOG3.md` §0.5).
-
-**tag** — one ASCII byte naming a field in a catalog value,
-frozen per kind. An uppercase tag is a **flag**, whose
-presence is its truth and which always names the non-default
-condition (`sm3/CATALOG3.md` §4).
+(`sm3/CATALOG_INMEM.md` §4).
 
 ---
 

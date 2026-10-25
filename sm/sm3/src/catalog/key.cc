@@ -1,5 +1,5 @@
 /*
- * key.cc -- the catalog's keys (CATALOG.md §2): a kind, then the
+ * key.cc -- the catalog's keys (CATALOG_ONDISK.md §2): a kind, then the
  * kind's own columns, encoded ascending by sm2's encode_key, so a
  * kind's keys are contiguous and every key of one kind orders by
  * its columns.

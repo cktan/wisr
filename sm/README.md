@@ -96,10 +96,10 @@ the wrapper through the `rel/` test suite.
 - `sm3/SM3_OBJECTIVE.md` — what level 3 is for
 - `sm3/SM3_DESIGN.md` — the catalog, index maintenance and
   builds, scans and statistics
-- `sm3/CATALOG.md` — the catalog as built: its store, keys
-  and values, and how it comes into memory
-- `sm3/CATALOG3.md` — the catalog's layout, proposed, and
-  built only in part
+- `sm3/CATALOG_INMEM.md` — the catalog in memory: definitions,
+  a session's overlay, publishing, and the calls
+- `sm3/CATALOG_ONDISK.md` — the catalog on disk: its store, keys
+  and values
 - `rel/REL_DESIGN.md` and `rel/REL.md` — `rel`, the test
   driver over `include/sm.h`: its design and its verbs
 - `sm0/VFD.md` — virtual file descriptors, under one ceiling

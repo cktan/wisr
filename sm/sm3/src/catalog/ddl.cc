@@ -1,5 +1,5 @@
 /*
- * ddl.cc -- the catalog's writes (CATALOG.md §5): cat_init, and
+ * ddl.cc -- the catalog's writes (CATALOG_INMEM.md §2): cat_init, and
  * the puts and dels of its records. Each writes its entries
  * through sm2's catalog key-value store, in the session's
  * transaction, so it commits and rolls back with the transaction's
@@ -18,7 +18,8 @@ namespace {
 
 using kv_ptr = std::unique_ptr<sm2::catkv_t, decltype(&sm2::catkv_close)>;
 
-/* The sequence oids come from; they start at first_oid (CATALOG.md §1). */
+/* The sequence oids come from; they start at first_oid (CATALOG_ONDISK.md §1).
+ */
 constexpr const char *oid_seq = "sm3.oid";
 
 /*
@@ -74,7 +75,7 @@ int taken(const std::string &name) {
  * creator takes it shared and a drop exclusive, so a drop waits
  * out the creators and they it; and the check reads the catalog
  * in memory, which has every commit by then, where the
- * transaction's snapshot may not (CATALOG.md §5). name is set to
+ * transaction's snapshot may not (CATALOG_INMEM.md §2). name is set to
  * the namespace's.
  */
 int use_nspace(sm3::session_t *session, uint64_t nspoid, sm1::lockmode_t mode,
@@ -100,7 +101,7 @@ int use_nspace(sm3::session_t *session, uint64_t nspoid, sm1::lockmode_t mode,
  * session sees it. The record is read from the catalog in memory:
  * under the lock no other DDL can change it, and memory has every
  * commit by the time the lock is granted, where the transaction's
- * snapshot may be older (CATALOG.md §5).
+ * snapshot may be older (CATALOG_INMEM.md §2).
  */
 int latest_table(sm3::session_t *session, uint64_t oid, sm3::table_rec_t &rec) {
   std::shared_ptr<const sm3::table_def_t> d = sm3::cat_get_table(session, oid);

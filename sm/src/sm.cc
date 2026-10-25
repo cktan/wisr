@@ -87,7 +87,7 @@ struct sm_env_t {
 /*
  * A session as the wrapper holds it: an sm3 session, over the sm1
  * one, whose transaction calls go through sm3 so its overlay of
- * DDL stays in step (sm3/CATALOG.md §4).
+ * DDL stays in step (sm3/CATALOG_INMEM.md §1).
  */
 struct sm_session_t {
   sm_env_t *env;

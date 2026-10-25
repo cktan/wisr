@@ -1,5 +1,5 @@
 /*
- * session.cc -- a session and its overlay (CATALOG.md §7): the
+ * session.cc -- a session and its overlay (CATALOG_INMEM.md §1): the
  * DDL a transaction makes is kept here, tagged with the savepoint
  * depth it was made at, seen by its own lookups first, undone by
  * rollback and abort, and published into the shared catalog when
@@ -507,7 +507,7 @@ int forget(session_t *s, int depth) {
  * With DDL to publish, the shared catalog's mutex is held across
  * both: sm1's commit releases the table-oid locks, and a transaction
  * that gets one then waits on the mutex to read the definition,
- * so it sees the new one, never the old (CATALOG.md §4).
+ * so it sees the new one, never the old (CATALOG_INMEM.md §1).
  */
 int commit(session_t *s) {
   // Committed or not, the transaction is over, and its pins with it.

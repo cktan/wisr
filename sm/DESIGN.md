@@ -146,7 +146,7 @@ rule is that nothing turns them off.
 | sm0 | built and tested: the error state, the log hook, the general-purpose helpers and the system services (`sm0/include/sm_sys.h`, `sm0/INTERRUPT.md`), with its C++ interface in `sm0/include/sm0.h`; `sm0/README.md` describes it |
 | sm1 | built and tested, with its C++ interface in `sm1/include/sm1.h`; the design of record is `sm1/SM1_DESIGN.md` |
 | sm2 | built: its types, key encoding, tuple codec, heap and index relations and TOAST, with its C++ interface in `sm2/include/sm2.h`; `sm2/SM2_DESIGN.md` is the design of record, and its §8 has the build order |
-| sm3 | being built: its catalog (`sm3/CATALOG.md`), object mapping, index maintenance through table-level writes, and the concurrent index build with its background workers, partial and expression indexes among them, with its C++ interface in `sm3/include/sm3.h`; constraints are settled, `NOT NULL` built in sm3 and the rest the host's (§5); statistics built (`sm3/SM3_DESIGN.md` §6), TOAST built (§3.4 there), and bulk load into an empty table (`BULKLOAD.md`); the order of work is in `sm3/SM3_DESIGN.md` §8, and what is left in `NEXT.md` |
+| sm3 | being built: its catalog (`sm3/CATALOG_INMEM.md`), object mapping, index maintenance through table-level writes, and the concurrent index build with its background workers, partial and expression indexes among them, with its C++ interface in `sm3/include/sm3.h`; constraints are settled, `NOT NULL` built in sm3 and the rest the host's (§5); statistics built (`sm3/SM3_DESIGN.md` §6), TOAST built (§3.4 there), and bulk load into an empty table (`BULKLOAD.md`); the order of work is in `sm3/SM3_DESIGN.md` §8, and what is left in `NEXT.md` |
 | top level | built: `include/sm.h` over sm1, sm2 and sm3, with `src/sm.cc`. A row is read and written through an open table, `sm_tbl_*`, by the table's oid from `sm_cat_*`; the heap-level and index-level calls that took a store id and a relid are gone. The `rel` driver runs on it |
 
 sm1 was built first and alone, on purpose: it is usable
@@ -498,8 +498,8 @@ design:
   never learns what a table is. `DROP TABLE` is one
   `sm1::rmstore`, sm1's O(1) column family drop; `DROP INDEX`
   erases the entries under the index's relid one by one, as
-  sm1 has no range delete (`sm3/CATALOG.md` §5.2), and index
-  relids are never reused. The cost is
+  sm1 has no range delete (`sm3/CATALOG_INMEM.md` §2.2), and
+  index relids are never reused. The cost is
   that tables, partitions included, are bounded by the
   hundreds to low thousands of stores sm1 handles
   (`sm1/SM1_DESIGN.md` §13); accepted for v1 (`sm3/SM3_DESIGN.md`
@@ -594,7 +594,7 @@ design:
   publishes at which the definition or the table's statistics
   were last published, or an index of it made valid, and
   `SM_VERSION_OWN` while the reader's own transaction has
-  changed it (`sm3/CATALOG.md` §4). A host caching what it
+  changed it (`sm3/CATALOG_INMEM.md` §1). A host caching what it
   learns of a table uses it only under the table-oid lock and
   compares the version there: read under IS or IX, it changes
   only by an analyze or an index made valid, since DDL takes X.

@@ -172,16 +172,10 @@ Owed, and blocking nothing above:
   SEQUENCE`, and a bulk load into one.
 - **Dependency checks**, such as refusing `DROP COLLATION` in
   use and `DROP SCHEMA … CASCADE`: low priority. They wait
-  for the dependency index of `sm3/CATALOG3.md` §0.5, and
+  for a dependency index (`sm3/CATALOG_INMEM.md` §4), and
   nothing is waiting for them.
 - **The unmeasured startup cost for thousands of tables** —
-  open in `sm3/CATALOG.md` §7.
-- **The rest of the catalog's layout** (`sm3/CATALOG3.md`). A
-  key for each column and each index is built. Still
-  proposed: an index's own key, include and read columns as
-  entries, which removes the last counted framing; the
-  dependency index, which the checks above wait for; and keys
-  as words with tagged values.
+  open in `sm3/CATALOG_INMEM.md` §4.
 - **A table in a namespace other than `public`, from `rel`.**
   `rel` creates and drops namespaces but has no way to name
   one for a table.
