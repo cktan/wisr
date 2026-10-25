@@ -91,17 +91,18 @@ Where it stood before §3 was built.
   second time.
   `tree_height` stays -1: costing a lookup by the LSM's probes
   needs calibration, and is left for later.
-- **A session keeps the bytes it read** (`size_entry_t` in
-  `smstore.c`), a table's heap and each index apart, for 10
-  seconds: `sm_tbl_size` reads every sorted file's and
-  memtable's size, which cost more than the row itself in a
-  plan of one row by its key. An entry is used while the table
-  is the version it was read at (`sm_tbl_version`), which a
-  DDL, an ANALYZE or an index made valid changes. None is kept
-  while the transaction has changed the table itself, as its
-  version then stays the same through each change. Within the
-  10 seconds, rows written since count as they did when it was
-  read; a plan's estimate may be that stale.
+- **A session keeps the estimates it made** (`estimate_entry_t`
+  in `smstore.c`), a table's and each index's apart, for 10
+  seconds: making one reads every sorted file's and memtable's
+  size, which costs more than the row itself in a plan of one
+  row by its key. An entry is used while the catalog's epoch is
+  the one it was made at (`sm_cat_epoch`, `SCHEMACACHE.md`
+  §4.4), which a DDL, an ANALYZE or an index made valid moves;
+  none is made or used while the transaction has DDL of its
+  own. An index keeps its pages and its entries at the analyze,
+  and scales them by the plan's estimate of its table each time.
+  Within the 10 seconds, rows written since count as they did
+  when it was made; a plan's estimate may be that stale.
   `pg_relation_size()` and ANALYZE read sm each time.
 
 ### 2.3 Column statistics: a `pg_statistic` row, made

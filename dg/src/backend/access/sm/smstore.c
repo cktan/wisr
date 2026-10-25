@@ -144,23 +144,22 @@ struct statistic_entry_t {
 static constexpr size_t statistic_cache_max = 1024;
 
 /*
- * A table's heap or index bytes as sm last sized them, for the planner's
- * estimates (smstore_estimate_size()): asking sm reads every sorted file's
- * and memtable's size, which a plan of one row by its key would spend more
- * on than on the row.  Good for size_cache_age while the table is the
- * version it was sized at (sm_tbl_version()), which a DDL, an ANALYZE or
- * an index made valid changes; never kept while this transaction has
- * changed the table, as its version then stays the same across changes.
+ * A table's or an index's estimate for the planner, as this session last
+ * made it (smstore_estimate_size(), smstore_estimate_index_size()): making
+ * one reads every sorted file's and memtable's size, which a plan of one
+ * row by its key would spend more on than on the row.  Good for
+ * size_cache_age while the catalog's epoch is the one it was made at
+ * (sm_cat_epoch(), SCHEMACACHE.md section 4.4): a DDL, an ANALYZE and an
+ * index made valid move it.
  */
-struct size_entry_t {
-  uint64_t version;
+struct estimate_entry_t {
+  uint64_t epoch;
   TimestampTz at;
-  uint64_t disk;
-  uint64_t mem;
+  bool found;       /* false: plan it as never analyzed */
+  double pages;
+  double tuples;    /* a table's rows; an index's entries at its analyze */
+  double live_rows; /* an index's: its table's rows at the analyze */
 };
-
-/* The version a table is while this transaction has changed it. */
-static constexpr uint64_t version_own = UINT64_MAX;
 
 /*
  * What a name means in a namespace, as sm last said (smstore_relation_oid()):
@@ -180,8 +179,8 @@ struct smstore_state_t {
   open_tables_t open_tables;
   /* The pg_statistic rows it made, by relation oid << 16 | column. */
   std::unordered_map<uint64_t, statistic_entry_t> statistics;
-  /* The sizes it took, by table oid << 32 | index oid, 0 for the heap. */
-  std::unordered_map<uint64_t, size_entry_t> sizes;
+  /* The estimates it made, by table oid << 32 | index oid, 0 for the heap. */
+  std::unordered_map<uint64_t, estimate_entry_t> estimates;
   /* The names it looked up, by namespace and name, and the epoch of all. */
   std::map<std::pair<Oid, std::string>, name_entry_t> names;
   uint64_t names_epoch = 0;
@@ -4698,32 +4697,39 @@ static double compression(const sm_stats_t &st) {
 }
 
 /*
- * The bytes of table oid's heap (index 0) or of its index, in sorted files
- * and in memtables: this session's size_entry_t, or sm's, kept as one.
+ * This session's estimate of table oid (index 0) or of its index, if made at
+ * epoch, the catalog's now, within size_cache_age; else NULL.
  */
-static void table_size(Oid oid, uint64_t index, sm_tbl_t *tbl, uint64_t *disk,
-                       uint64_t *mem) {
-  auto &sizes = tcb->smstore->sizes;
-  TimestampTz clock = GetCurrentTimestamp();
-  uint64_t version = sm_tbl_version(tbl);
-  uint64_t key = (uint64_t)oid << 32 | index;
-  auto it = sizes.find(key);
+static const estimate_entry_t *kept_estimate(Oid oid, uint64_t index,
+                                             uint64_t epoch) {
+  if (UINT64_MAX == epoch)
+    return NULL;
+  auto &estimates = tcb->smstore->estimates;
+  auto it = estimates.find((uint64_t)oid << 32 | index);
 
-  if (sizes.end() != it && it->second.version == version &&
-      !TimestampDifferenceExceeds(it->second.at, clock, size_cache_age)) {
-    *disk = it->second.disk;
-    *mem = it->second.mem;
+  if (estimates.end() == it || it->second.epoch != epoch ||
+      TimestampDifferenceExceeds(it->second.at, GetCurrentTimestamp(),
+                                 size_cache_age))
+    return NULL;
+  return &it->second;
+}
+
+/*
+ * Keep e as this session's estimate of table oid (index 0) or of its
+ * index, made at epoch; none while the transaction has DDL of its own.
+ */
+static void keep_estimate(Oid oid, uint64_t index, uint64_t epoch,
+                          estimate_entry_t e) {
+  auto &estimates = tcb->smstore->estimates;
+
+  if (UINT64_MAX == epoch)
     return;
-  }
-  if (0 != (0 == index ? sm_tbl_size(tbl, disk, mem)
-                       : sm_tbl_idx_size(tbl, index, disk, mem)))
-    sm_error(0 == index ? "size a table" : "size an index");
-  if (version_own == version)
-    return;
-  /* Past the limit, the sizes are forgotten, and taken again as needed. */
-  if (sizes.size() >= statistic_cache_max)
-    sizes.clear();
-  sizes[key] = {version, clock, *disk, *mem};
+  /* Past the limit, the estimates are forgotten, and made again as needed. */
+  if (estimates.size() >= statistic_cache_max)
+    estimates.clear();
+  e.epoch = epoch;
+  e.at = GetCurrentTimestamp();
+  estimates[(uint64_t)oid << 32 | index] = e;
 }
 
 /*
@@ -4736,12 +4742,12 @@ static void table_size(Oid oid, uint64_t index, sm_tbl_t *tbl, uint64_t *disk,
  * (STATISTICS.md section 2.2).  A table with a primary key draws no row
  * numbers (../sm/ROWKEY.md section 2.1), and its bytes say all the same.
  */
-static double growth(Oid oid, sm_tbl_t *tbl, const sm_stats_t &st,
-                     double *now) {
+static double growth(sm_tbl_t *tbl, const sm_stats_t &st, double *now) {
   uint64_t disk, mem, n;
   double c = compression(st), then;
 
-  table_size(oid, 0, tbl, &disk, &mem);
+  if (sm_tbl_size(tbl, &disk, &mem) != 0)
+    sm_error("size a table");
   *now = disk + mem * c;
   /* A table with a primary key has no row numbers: its bytes say. */
   if (st.heap_disk == 0 && st.rowno_limit > 0) {
@@ -4761,20 +4767,35 @@ static double growth(Oid oid, sm_tbl_t *tbl, const sm_stats_t &st,
  * never analyzed.
  */
 bool smstore_estimate_size(Oid oid, double *pages, double *tuples) {
+  /* Read before the estimate, so a publish meanwhile retires it. */
+  uint64_t epoch = sm_cat_epoch(session());
+  const estimate_entry_t *kept = kept_estimate(oid, 0, epoch);
+
+  if (NULL != kept) {
+    *pages = kept->pages;
+    *tuples = kept->tuples;
+    return kept->found;
+  }
   sm_tbl_t *tbl = open_table(oid, SM_LOCKMODE_IS);
+  estimate_entry_t e = {};
   double now;
 
   if (tbl == NULL)
     return false;
   std::shared_ptr<const sm_stats_t> st = table_stats(oid);
-  if (st == nullptr)
-    return false;
-  double g = growth(oid, tbl, *st, &now);
-  if (now <= 0)
-    return false;
-  *tuples = st->live_rows * g;
-  *pages = std::max(1.0, std::ceil(now / BLCKSZ));
-  return true;
+  if (st != nullptr) {
+    double g = growth(tbl, *st, &now);
+
+    if (now > 0) {
+      e.found = true;
+      e.tuples = st->live_rows * g;
+      e.pages = std::max(1.0, std::ceil(now / BLCKSZ));
+    }
+  }
+  keep_estimate(oid, 0, epoch, e);
+  *pages = e.pages;
+  *tuples = e.tuples;
+  return e.found;
 }
 
 /*
@@ -4786,25 +4807,44 @@ bool smstore_estimate_size(Oid oid, double *pages, double *tuples) {
  */
 bool smstore_estimate_index_size(Oid table, Oid index, double table_tuples,
                                  double *pages, double *tuples) {
-  sm_tbl_t *tbl = open_table(table, SM_LOCKMODE_IS);
-  uint64_t disk, mem;
+  /* Read before the estimate, so a publish meanwhile retires it. */
+  uint64_t epoch = sm_cat_epoch(session());
+  const estimate_entry_t *kept = kept_estimate(table, index, epoch);
+  estimate_entry_t e = {};
 
-  if (tbl == NULL)
-    return false;
-  std::shared_ptr<const sm_stats_t> st = table_stats(table);
-  if (st == nullptr)
-    return false;
-  for (const sm_stats_index_t &x : st->indexes) {
-    if (x.oid != index)
-      continue;
-    /* The table's growth as the plan has it: no second look at its size. */
-    double g = st->live_rows > 0 ? table_tuples / st->live_rows : 1.0;
-    table_size(table, index, tbl, &disk, &mem);
-    *tuples = x.entries * g;
-    *pages = std::max(1.0, std::ceil((disk + mem * compression(*st)) / BLCKSZ));
-    return true;
+  if (NULL != kept) {
+    e = *kept;
+  } else {
+    sm_tbl_t *tbl = open_table(table, SM_LOCKMODE_IS);
+    uint64_t disk, mem;
+
+    if (tbl == NULL)
+      return false;
+    std::shared_ptr<const sm_stats_t> st = table_stats(table);
+    /* A table never analyzed has statistics for none of its indexes. */
+    for (size_t i = 0; st != nullptr && i < st->indexes.size(); i++) {
+      const sm_stats_index_t &x = st->indexes[i];
+
+      if (x.oid != index)
+        continue;
+      if (sm_tbl_idx_size(tbl, index, &disk, &mem) != 0)
+        sm_error("size an index");
+      e.found = true;
+      e.tuples = x.entries;
+      e.live_rows = st->live_rows;
+      e.pages =
+          std::max(1.0, std::ceil((disk + mem * compression(*st)) / BLCKSZ));
+      break;
+    }
+    keep_estimate(table, index, epoch, e);
   }
-  return false;
+  if (!e.found)
+    return false;
+  /* The table's growth as the plan has it: no second look at its size. */
+  double g = e.live_rows > 0 ? table_tuples / e.live_rows : 1.0;
+  *tuples = e.tuples * g;
+  *pages = e.pages;
+  return true;
 }
 
 /*
