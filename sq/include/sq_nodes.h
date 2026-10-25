@@ -11,14 +11,17 @@
  *
  *   - Every node derives from sq_node_t and sets its own tag when
  *     made. A node is told apart by its tag, and cast.
- *   - A list is an sq_items_t (sq_items.h). Where a list stands in a
- *     place that holds any node -- an element of another list, or a
- *     field typed sq_node_t* -- it is an sq_list_t.
+ *   - A list is an sq_list_t*, PostgreSQL's List: NULL where
+ *     PostgreSQL has NIL. A list is itself a node, and stands where
+ *     any node may go -- an element of another list, or a field
+ *     typed sq_node_t*.
  *   - Text is a const char*, NUL-terminated and owned by the tree.
  *     NULL means absent, which is not the same as empty.
  *   - A node pointer is NULL where the thing is absent.
  *   - A location is a byte offset into the text parsed, or -1.
  *   - An enum's values are PostgreSQL's, with SQ_ before each name.
+ *   - A node's tag is digres's number for it (spec/nodetags.h), and
+ *     its layout is PostgreSQL's: digres reads the tree as its own.
  */
 #ifndef SQ_NODES_H
 #define SQ_NODES_H
@@ -26,228 +29,226 @@
 #include <climits>
 #include <cstdint>
 
-#include "sq_items.h"
-
 /* What a node is: one tag for each struct below. */
 enum sq_nodetag_t {
     SQ_T_INVALID = 0,
-    SQ_T_LIST,
-    SQ_T_INTEGER,
-    SQ_T_FLOAT,
-    SQ_T_BOOLEAN,
-    SQ_T_STRING,
-    SQ_T_BIT_STRING,
-    SQ_T_ALIAS,
-    SQ_T_RANGE_VAR,
-    SQ_T_INTO_CLAUSE,
-    SQ_T_GROUPING_FUNC,
-    SQ_T_MERGE_SUPPORT_FUNC,
-    SQ_T_NAMED_ARG_EXPR,
-    SQ_T_BOOL_EXPR,
-    SQ_T_SUB_LINK,
-    SQ_T_CASE_EXPR,
-    SQ_T_CASE_WHEN,
-    SQ_T_ROW_EXPR,
-    SQ_T_COALESCE_EXPR,
-    SQ_T_MIN_MAX_EXPR,
-    SQ_T_SQL_VALUE_FUNCTION,
-    SQ_T_XML_EXPR,
-    SQ_T_JSON_FORMAT,
-    SQ_T_JSON_RETURNING,
-    SQ_T_JSON_VALUE_EXPR,
-    SQ_T_JSON_IS_PREDICATE,
-    SQ_T_JSON_BEHAVIOR,
-    SQ_T_NULL_TEST,
-    SQ_T_BOOLEAN_TEST,
-    SQ_T_SET_TO_DEFAULT,
-    SQ_T_CURRENT_OF_EXPR,
-    SQ_T_JOIN_EXPR,
-    SQ_T_TYPE_NAME,
-    SQ_T_COLUMN_REF,
-    SQ_T_PARAM_REF,
-    SQ_T_A_EXPR,
-    SQ_T_A_CONST,
-    SQ_T_TYPE_CAST,
-    SQ_T_COLLATE_CLAUSE,
-    SQ_T_ROLE_SPEC,
-    SQ_T_FUNC_CALL,
-    SQ_T_A_STAR,
-    SQ_T_A_INDICES,
-    SQ_T_A_INDIRECTION,
-    SQ_T_A_ARRAY_EXPR,
-    SQ_T_RES_TARGET,
-    SQ_T_MULTI_ASSIGN_REF,
-    SQ_T_SORT_BY,
-    SQ_T_WINDOW_DEF,
-    SQ_T_RANGE_SUBSELECT,
-    SQ_T_RANGE_FUNCTION,
-    SQ_T_RANGE_TABLE_FUNC,
-    SQ_T_RANGE_TABLE_FUNC_COL,
-    SQ_T_RANGE_TABLE_SAMPLE,
-    SQ_T_COLUMN_DEF,
-    SQ_T_TABLE_LIKE_CLAUSE,
-    SQ_T_INDEX_ELEM,
-    SQ_T_DEF_ELEM,
-    SQ_T_LOCKING_CLAUSE,
-    SQ_T_XML_SERIALIZE,
-    SQ_T_PARTITION_ELEM,
-    SQ_T_PARTITION_SPEC,
-    SQ_T_PARTITION_BOUND_SPEC,
-    SQ_T_PARTITION_CMD,
-    SQ_T_GROUPING_SET,
-    SQ_T_WITH_CLAUSE,
-    SQ_T_INFER_CLAUSE,
-    SQ_T_ON_CONFLICT_CLAUSE,
-    SQ_T_CTE_SEARCH_CLAUSE,
-    SQ_T_CTE_CYCLE_CLAUSE,
-    SQ_T_COMMON_TABLE_EXPR,
-    SQ_T_MERGE_WHEN_CLAUSE,
-    SQ_T_RETURNING_OPTION,
-    SQ_T_RETURNING_CLAUSE,
-    SQ_T_TRIGGER_TRANSITION,
-    SQ_T_JSON_OUTPUT,
-    SQ_T_JSON_ARGUMENT,
-    SQ_T_JSON_FUNC_EXPR,
-    SQ_T_JSON_TABLE_PATH_SPEC,
-    SQ_T_JSON_TABLE,
-    SQ_T_JSON_TABLE_COLUMN,
-    SQ_T_JSON_KEY_VALUE,
-    SQ_T_JSON_PARSE_EXPR,
-    SQ_T_JSON_SCALAR_EXPR,
-    SQ_T_JSON_SERIALIZE_EXPR,
-    SQ_T_JSON_OBJECT_CONSTRUCTOR,
-    SQ_T_JSON_ARRAY_CONSTRUCTOR,
-    SQ_T_JSON_ARRAY_QUERY_CONSTRUCTOR,
-    SQ_T_JSON_AGG_CONSTRUCTOR,
-    SQ_T_JSON_OBJECT_AGG,
-    SQ_T_JSON_ARRAY_AGG,
-    SQ_T_RAW_STMT,
-    SQ_T_INSERT_STMT,
-    SQ_T_DELETE_STMT,
-    SQ_T_UPDATE_STMT,
-    SQ_T_MERGE_STMT,
-    SQ_T_SELECT_STMT,
-    SQ_T_RETURN_STMT,
-    SQ_T_PL_ASSIGN_STMT,
-    SQ_T_CREATE_SCHEMA_STMT,
-    SQ_T_ALTER_TABLE_STMT,
-    SQ_T_ALTER_TABLE_CMD,
-    SQ_T_AT_ALTER_CONSTRAINT,
-    SQ_T_REPLICA_IDENTITY_STMT,
-    SQ_T_ALTER_COLLATION_STMT,
-    SQ_T_ALTER_DOMAIN_STMT,
-    SQ_T_GRANT_STMT,
-    SQ_T_OBJECT_WITH_ARGS,
-    SQ_T_ACCESS_PRIV,
-    SQ_T_GRANT_ROLE_STMT,
-    SQ_T_ALTER_DEFAULT_PRIVILEGES_STMT,
-    SQ_T_COPY_STMT,
-    SQ_T_VARIABLE_SET_STMT,
-    SQ_T_VARIABLE_SHOW_STMT,
-    SQ_T_CREATE_STMT,
-    SQ_T_CONSTRAINT,
-    SQ_T_CREATE_TABLE_SPACE_STMT,
-    SQ_T_DROP_TABLE_SPACE_STMT,
-    SQ_T_ALTER_TABLE_SPACE_OPTIONS_STMT,
-    SQ_T_ALTER_TABLE_MOVE_ALL_STMT,
-    SQ_T_CREATE_EXTENSION_STMT,
-    SQ_T_ALTER_EXTENSION_STMT,
-    SQ_T_ALTER_EXTENSION_CONTENTS_STMT,
-    SQ_T_CREATE_FDW_STMT,
-    SQ_T_ALTER_FDW_STMT,
-    SQ_T_CREATE_FOREIGN_SERVER_STMT,
-    SQ_T_ALTER_FOREIGN_SERVER_STMT,
-    SQ_T_CREATE_FOREIGN_TABLE_STMT,
-    SQ_T_CREATE_USER_MAPPING_STMT,
-    SQ_T_ALTER_USER_MAPPING_STMT,
-    SQ_T_DROP_USER_MAPPING_STMT,
-    SQ_T_IMPORT_FOREIGN_SCHEMA_STMT,
-    SQ_T_CREATE_POLICY_STMT,
-    SQ_T_ALTER_POLICY_STMT,
-    SQ_T_CREATE_AM_STMT,
-    SQ_T_CREATE_TRIG_STMT,
-    SQ_T_CREATE_EVENT_TRIG_STMT,
-    SQ_T_ALTER_EVENT_TRIG_STMT,
-    SQ_T_CREATE_P_LANG_STMT,
-    SQ_T_CREATE_ROLE_STMT,
-    SQ_T_ALTER_ROLE_STMT,
-    SQ_T_ALTER_ROLE_SET_STMT,
-    SQ_T_DROP_ROLE_STMT,
-    SQ_T_CREATE_SEQ_STMT,
-    SQ_T_ALTER_SEQ_STMT,
-    SQ_T_DEFINE_STMT,
-    SQ_T_CREATE_DOMAIN_STMT,
-    SQ_T_CREATE_OP_CLASS_STMT,
-    SQ_T_CREATE_OP_CLASS_ITEM,
-    SQ_T_CREATE_OP_FAMILY_STMT,
-    SQ_T_ALTER_OP_FAMILY_STMT,
-    SQ_T_DROP_STMT,
-    SQ_T_TRUNCATE_STMT,
-    SQ_T_COMMENT_STMT,
-    SQ_T_SEC_LABEL_STMT,
-    SQ_T_DECLARE_CURSOR_STMT,
-    SQ_T_CLOSE_PORTAL_STMT,
-    SQ_T_FETCH_STMT,
-    SQ_T_INDEX_STMT,
-    SQ_T_CREATE_STATS_STMT,
-    SQ_T_STATS_ELEM,
-    SQ_T_ALTER_STATS_STMT,
-    SQ_T_CREATE_FUNCTION_STMT,
-    SQ_T_FUNCTION_PARAMETER,
-    SQ_T_ALTER_FUNCTION_STMT,
-    SQ_T_DO_STMT,
-    SQ_T_CALL_STMT,
-    SQ_T_RENAME_STMT,
-    SQ_T_ALTER_OBJECT_DEPENDS_STMT,
-    SQ_T_ALTER_OBJECT_SCHEMA_STMT,
-    SQ_T_ALTER_OWNER_STMT,
-    SQ_T_ALTER_OPERATOR_STMT,
-    SQ_T_ALTER_TYPE_STMT,
-    SQ_T_RULE_STMT,
-    SQ_T_NOTIFY_STMT,
-    SQ_T_LISTEN_STMT,
-    SQ_T_UNLISTEN_STMT,
-    SQ_T_TRANSACTION_STMT,
-    SQ_T_COMPOSITE_TYPE_STMT,
-    SQ_T_CREATE_ENUM_STMT,
-    SQ_T_CREATE_RANGE_STMT,
-    SQ_T_ALTER_ENUM_STMT,
-    SQ_T_VIEW_STMT,
-    SQ_T_LOAD_STMT,
-    SQ_T_CREATEDB_STMT,
-    SQ_T_ALTER_DATABASE_STMT,
-    SQ_T_ALTER_DATABASE_REFRESH_COLL_STMT,
-    SQ_T_ALTER_DATABASE_SET_STMT,
-    SQ_T_DROPDB_STMT,
-    SQ_T_ALTER_SYSTEM_STMT,
-    SQ_T_CLUSTER_STMT,
-    SQ_T_VACUUM_STMT,
-    SQ_T_VACUUM_RELATION,
-    SQ_T_EXPLAIN_STMT,
-    SQ_T_CREATE_TABLE_AS_STMT,
-    SQ_T_REFRESH_MAT_VIEW_STMT,
-    SQ_T_CHECK_POINT_STMT,
-    SQ_T_DISCARD_STMT,
-    SQ_T_LOCK_STMT,
-    SQ_T_CONSTRAINTS_SET_STMT,
-    SQ_T_REINDEX_STMT,
-    SQ_T_CREATE_CONVERSION_STMT,
-    SQ_T_CREATE_CAST_STMT,
-    SQ_T_CREATE_TRANSFORM_STMT,
-    SQ_T_PREPARE_STMT,
-    SQ_T_EXECUTE_STMT,
-    SQ_T_DEALLOCATE_STMT,
-    SQ_T_DROP_OWNED_STMT,
-    SQ_T_REASSIGN_OWNED_STMT,
-    SQ_T_ALTER_TS_DICTIONARY_STMT,
-    SQ_T_ALTER_TS_CONFIGURATION_STMT,
-    SQ_T_PUBLICATION_TABLE,
-    SQ_T_PUBLICATION_OBJ_SPEC,
-    SQ_T_CREATE_PUBLICATION_STMT,
-    SQ_T_ALTER_PUBLICATION_STMT,
-    SQ_T_CREATE_SUBSCRIPTION_STMT,
-    SQ_T_ALTER_SUBSCRIPTION_STMT,
-    SQ_T_DROP_SUBSCRIPTION_STMT,
+    SQ_T_LIST = 1,
+    SQ_T_INTEGER = 440,
+    SQ_T_FLOAT = 441,
+    SQ_T_BOOLEAN = 442,
+    SQ_T_STRING = 443,
+    SQ_T_BIT_STRING = 444,
+    SQ_T_ALIAS = 2,
+    SQ_T_RANGE_VAR = 3,
+    SQ_T_INTO_CLAUSE = 5,
+    SQ_T_GROUPING_FUNC = 10,
+    SQ_T_MERGE_SUPPORT_FUNC = 13,
+    SQ_T_NAMED_ARG_EXPR = 16,
+    SQ_T_BOOL_EXPR = 21,
+    SQ_T_SUB_LINK = 22,
+    SQ_T_CASE_EXPR = 32,
+    SQ_T_CASE_WHEN = 33,
+    SQ_T_ROW_EXPR = 36,
+    SQ_T_COALESCE_EXPR = 38,
+    SQ_T_MIN_MAX_EXPR = 39,
+    SQ_T_SQL_VALUE_FUNCTION = 40,
+    SQ_T_XML_EXPR = 41,
+    SQ_T_JSON_FORMAT = 42,
+    SQ_T_JSON_RETURNING = 43,
+    SQ_T_JSON_VALUE_EXPR = 44,
+    SQ_T_JSON_IS_PREDICATE = 46,
+    SQ_T_JSON_BEHAVIOR = 47,
+    SQ_T_NULL_TEST = 52,
+    SQ_T_BOOLEAN_TEST = 53,
+    SQ_T_SET_TO_DEFAULT = 57,
+    SQ_T_CURRENT_OF_EXPR = 58,
+    SQ_T_JOIN_EXPR = 64,
+    SQ_T_TYPE_NAME = 68,
+    SQ_T_COLUMN_REF = 69,
+    SQ_T_PARAM_REF = 70,
+    SQ_T_A_EXPR = 71,
+    SQ_T_A_CONST = 72,
+    SQ_T_TYPE_CAST = 73,
+    SQ_T_COLLATE_CLAUSE = 74,
+    SQ_T_ROLE_SPEC = 75,
+    SQ_T_FUNC_CALL = 76,
+    SQ_T_A_STAR = 77,
+    SQ_T_A_INDICES = 78,
+    SQ_T_A_INDIRECTION = 79,
+    SQ_T_A_ARRAY_EXPR = 80,
+    SQ_T_RES_TARGET = 81,
+    SQ_T_MULTI_ASSIGN_REF = 82,
+    SQ_T_SORT_BY = 83,
+    SQ_T_WINDOW_DEF = 84,
+    SQ_T_RANGE_SUBSELECT = 85,
+    SQ_T_RANGE_FUNCTION = 86,
+    SQ_T_RANGE_TABLE_FUNC = 87,
+    SQ_T_RANGE_TABLE_FUNC_COL = 88,
+    SQ_T_RANGE_TABLE_SAMPLE = 89,
+    SQ_T_COLUMN_DEF = 90,
+    SQ_T_TABLE_LIKE_CLAUSE = 91,
+    SQ_T_INDEX_ELEM = 92,
+    SQ_T_DEF_ELEM = 93,
+    SQ_T_LOCKING_CLAUSE = 94,
+    SQ_T_XML_SERIALIZE = 95,
+    SQ_T_PARTITION_ELEM = 96,
+    SQ_T_PARTITION_SPEC = 97,
+    SQ_T_PARTITION_BOUND_SPEC = 98,
+    SQ_T_PARTITION_CMD = 100,
+    SQ_T_GROUPING_SET = 107,
+    SQ_T_WITH_CLAUSE = 110,
+    SQ_T_INFER_CLAUSE = 111,
+    SQ_T_ON_CONFLICT_CLAUSE = 112,
+    SQ_T_CTE_SEARCH_CLAUSE = 113,
+    SQ_T_CTE_CYCLE_CLAUSE = 114,
+    SQ_T_COMMON_TABLE_EXPR = 115,
+    SQ_T_MERGE_WHEN_CLAUSE = 116,
+    SQ_T_RETURNING_OPTION = 117,
+    SQ_T_RETURNING_CLAUSE = 118,
+    SQ_T_TRIGGER_TRANSITION = 119,
+    SQ_T_JSON_OUTPUT = 120,
+    SQ_T_JSON_ARGUMENT = 121,
+    SQ_T_JSON_FUNC_EXPR = 122,
+    SQ_T_JSON_TABLE_PATH_SPEC = 123,
+    SQ_T_JSON_TABLE = 124,
+    SQ_T_JSON_TABLE_COLUMN = 125,
+    SQ_T_JSON_KEY_VALUE = 126,
+    SQ_T_JSON_PARSE_EXPR = 127,
+    SQ_T_JSON_SCALAR_EXPR = 128,
+    SQ_T_JSON_SERIALIZE_EXPR = 129,
+    SQ_T_JSON_OBJECT_CONSTRUCTOR = 130,
+    SQ_T_JSON_ARRAY_CONSTRUCTOR = 131,
+    SQ_T_JSON_ARRAY_QUERY_CONSTRUCTOR = 132,
+    SQ_T_JSON_AGG_CONSTRUCTOR = 133,
+    SQ_T_JSON_OBJECT_AGG = 134,
+    SQ_T_JSON_ARRAY_AGG = 135,
+    SQ_T_RAW_STMT = 136,
+    SQ_T_INSERT_STMT = 137,
+    SQ_T_DELETE_STMT = 138,
+    SQ_T_UPDATE_STMT = 139,
+    SQ_T_MERGE_STMT = 140,
+    SQ_T_SELECT_STMT = 141,
+    SQ_T_RETURN_STMT = 143,
+    SQ_T_PL_ASSIGN_STMT = 144,
+    SQ_T_CREATE_SCHEMA_STMT = 145,
+    SQ_T_ALTER_TABLE_STMT = 146,
+    SQ_T_ALTER_TABLE_CMD = 147,
+    SQ_T_AT_ALTER_CONSTRAINT = 148,
+    SQ_T_REPLICA_IDENTITY_STMT = 149,
+    SQ_T_ALTER_COLLATION_STMT = 150,
+    SQ_T_ALTER_DOMAIN_STMT = 151,
+    SQ_T_GRANT_STMT = 152,
+    SQ_T_OBJECT_WITH_ARGS = 153,
+    SQ_T_ACCESS_PRIV = 154,
+    SQ_T_GRANT_ROLE_STMT = 155,
+    SQ_T_ALTER_DEFAULT_PRIVILEGES_STMT = 156,
+    SQ_T_COPY_STMT = 157,
+    SQ_T_VARIABLE_SET_STMT = 158,
+    SQ_T_VARIABLE_SHOW_STMT = 159,
+    SQ_T_CREATE_STMT = 160,
+    SQ_T_CONSTRAINT = 161,
+    SQ_T_CREATE_TABLE_SPACE_STMT = 162,
+    SQ_T_DROP_TABLE_SPACE_STMT = 163,
+    SQ_T_ALTER_TABLE_SPACE_OPTIONS_STMT = 164,
+    SQ_T_ALTER_TABLE_MOVE_ALL_STMT = 165,
+    SQ_T_CREATE_EXTENSION_STMT = 166,
+    SQ_T_ALTER_EXTENSION_STMT = 167,
+    SQ_T_ALTER_EXTENSION_CONTENTS_STMT = 168,
+    SQ_T_CREATE_FDW_STMT = 169,
+    SQ_T_ALTER_FDW_STMT = 170,
+    SQ_T_CREATE_FOREIGN_SERVER_STMT = 171,
+    SQ_T_ALTER_FOREIGN_SERVER_STMT = 172,
+    SQ_T_CREATE_FOREIGN_TABLE_STMT = 173,
+    SQ_T_CREATE_USER_MAPPING_STMT = 174,
+    SQ_T_ALTER_USER_MAPPING_STMT = 175,
+    SQ_T_DROP_USER_MAPPING_STMT = 176,
+    SQ_T_IMPORT_FOREIGN_SCHEMA_STMT = 177,
+    SQ_T_CREATE_POLICY_STMT = 178,
+    SQ_T_ALTER_POLICY_STMT = 179,
+    SQ_T_CREATE_AM_STMT = 180,
+    SQ_T_CREATE_TRIG_STMT = 181,
+    SQ_T_CREATE_EVENT_TRIG_STMT = 182,
+    SQ_T_ALTER_EVENT_TRIG_STMT = 183,
+    SQ_T_CREATE_P_LANG_STMT = 184,
+    SQ_T_CREATE_ROLE_STMT = 185,
+    SQ_T_ALTER_ROLE_STMT = 186,
+    SQ_T_ALTER_ROLE_SET_STMT = 187,
+    SQ_T_DROP_ROLE_STMT = 188,
+    SQ_T_CREATE_SEQ_STMT = 189,
+    SQ_T_ALTER_SEQ_STMT = 190,
+    SQ_T_DEFINE_STMT = 191,
+    SQ_T_CREATE_DOMAIN_STMT = 192,
+    SQ_T_CREATE_OP_CLASS_STMT = 193,
+    SQ_T_CREATE_OP_CLASS_ITEM = 194,
+    SQ_T_CREATE_OP_FAMILY_STMT = 195,
+    SQ_T_ALTER_OP_FAMILY_STMT = 196,
+    SQ_T_DROP_STMT = 197,
+    SQ_T_TRUNCATE_STMT = 198,
+    SQ_T_COMMENT_STMT = 199,
+    SQ_T_SEC_LABEL_STMT = 200,
+    SQ_T_DECLARE_CURSOR_STMT = 201,
+    SQ_T_CLOSE_PORTAL_STMT = 202,
+    SQ_T_FETCH_STMT = 203,
+    SQ_T_INDEX_STMT = 204,
+    SQ_T_CREATE_STATS_STMT = 205,
+    SQ_T_STATS_ELEM = 206,
+    SQ_T_ALTER_STATS_STMT = 207,
+    SQ_T_CREATE_FUNCTION_STMT = 208,
+    SQ_T_FUNCTION_PARAMETER = 209,
+    SQ_T_ALTER_FUNCTION_STMT = 210,
+    SQ_T_DO_STMT = 211,
+    SQ_T_CALL_STMT = 213,
+    SQ_T_RENAME_STMT = 215,
+    SQ_T_ALTER_OBJECT_DEPENDS_STMT = 216,
+    SQ_T_ALTER_OBJECT_SCHEMA_STMT = 217,
+    SQ_T_ALTER_OWNER_STMT = 218,
+    SQ_T_ALTER_OPERATOR_STMT = 219,
+    SQ_T_ALTER_TYPE_STMT = 220,
+    SQ_T_RULE_STMT = 221,
+    SQ_T_NOTIFY_STMT = 222,
+    SQ_T_LISTEN_STMT = 223,
+    SQ_T_UNLISTEN_STMT = 224,
+    SQ_T_TRANSACTION_STMT = 225,
+    SQ_T_COMPOSITE_TYPE_STMT = 226,
+    SQ_T_CREATE_ENUM_STMT = 227,
+    SQ_T_CREATE_RANGE_STMT = 228,
+    SQ_T_ALTER_ENUM_STMT = 229,
+    SQ_T_VIEW_STMT = 230,
+    SQ_T_LOAD_STMT = 231,
+    SQ_T_CREATEDB_STMT = 232,
+    SQ_T_ALTER_DATABASE_STMT = 233,
+    SQ_T_ALTER_DATABASE_REFRESH_COLL_STMT = 234,
+    SQ_T_ALTER_DATABASE_SET_STMT = 235,
+    SQ_T_DROPDB_STMT = 236,
+    SQ_T_ALTER_SYSTEM_STMT = 237,
+    SQ_T_CLUSTER_STMT = 238,
+    SQ_T_VACUUM_STMT = 239,
+    SQ_T_VACUUM_RELATION = 240,
+    SQ_T_EXPLAIN_STMT = 241,
+    SQ_T_CREATE_TABLE_AS_STMT = 242,
+    SQ_T_REFRESH_MAT_VIEW_STMT = 243,
+    SQ_T_CHECK_POINT_STMT = 244,
+    SQ_T_DISCARD_STMT = 245,
+    SQ_T_LOCK_STMT = 246,
+    SQ_T_CONSTRAINTS_SET_STMT = 247,
+    SQ_T_REINDEX_STMT = 248,
+    SQ_T_CREATE_CONVERSION_STMT = 249,
+    SQ_T_CREATE_CAST_STMT = 250,
+    SQ_T_CREATE_TRANSFORM_STMT = 251,
+    SQ_T_PREPARE_STMT = 252,
+    SQ_T_EXECUTE_STMT = 253,
+    SQ_T_DEALLOCATE_STMT = 254,
+    SQ_T_DROP_OWNED_STMT = 255,
+    SQ_T_REASSIGN_OWNED_STMT = 256,
+    SQ_T_ALTER_TS_DICTIONARY_STMT = 257,
+    SQ_T_ALTER_TS_CONFIGURATION_STMT = 258,
+    SQ_T_PUBLICATION_TABLE = 455,
+    SQ_T_PUBLICATION_OBJ_SPEC = 456,
+    SQ_T_CREATE_PUBLICATION_STMT = 457,
+    SQ_T_ALTER_PUBLICATION_STMT = 458,
+    SQ_T_CREATE_SUBSCRIPTION_STMT = 459,
+    SQ_T_ALTER_SUBSCRIPTION_STMT = 460,
+    SQ_T_DROP_SUBSCRIPTION_STMT = 461,
 };
 
 /* PostgreSQL's SetQuantifier. */
@@ -944,11 +945,23 @@ struct sq_node_t {
     sq_nodetag_t tag = SQ_T_INVALID;
 };
 
-/* A list, where a node is expected: PostgreSQL's List. */
-struct sq_list_t : sq_node_t {
-    sq_items_t items;
+/* A list's cell: PostgreSQL's ListCell. sq's lists hold nodes. */
+union sq_list_cell_t {
+    sq_node_t* ptr_value;
+    int int_value;
+    uint32_t oid_value;
+    uint32_t xid_value;
+};
 
-    sq_list_t() { tag = SQ_T_LIST; }
+/*
+ * A list: PostgreSQL's List, its cells in place after it until it
+ * outgrows them, then in an array of their own (src/list.h).
+ */
+struct sq_list_t : sq_node_t {
+    int length;
+    int max_length;
+    sq_list_cell_t* elements;
+    sq_list_cell_t initial_elements[];
 };
 
 struct sq_integer_t;
@@ -1206,7 +1219,7 @@ struct sq_bit_string_t : sq_node_t {
 /* PostgreSQL's Alias (primnodes.h). */
 struct sq_alias_t : sq_node_t {
     const char* aliasname = nullptr;
-    sq_items_t colnames;
+    sq_list_t* colnames = nullptr;
 
     sq_alias_t() { tag = SQ_T_ALIAS; }
 };
@@ -1227,9 +1240,9 @@ struct sq_range_var_t : sq_node_t {
 /* PostgreSQL's IntoClause (primnodes.h). */
 struct sq_into_clause_t : sq_node_t {
     sq_range_var_t* rel = nullptr;
-    sq_items_t col_names;
+    sq_list_t* col_names = nullptr;
     const char* access_method = nullptr;
-    sq_items_t options;
+    sq_list_t* options = nullptr;
     sq_on_commit_action_t on_commit{};
     const char* table_space_name = nullptr;
     /* The analyzer's to fill; NULL from the parser. */
@@ -1241,9 +1254,9 @@ struct sq_into_clause_t : sq_node_t {
 
 /* PostgreSQL's GroupingFunc (primnodes.h). */
 struct sq_grouping_func_t : sq_node_t {
-    sq_items_t args;
-    sq_items_t refs;
-    sq_items_t cols;
+    sq_list_t* args = nullptr;
+    sq_list_t* refs = nullptr;
+    sq_list_t* cols = nullptr;
     uint32_t agglevelsup = 0;
     int location = 0;
 
@@ -1272,7 +1285,7 @@ struct sq_named_arg_expr_t : sq_node_t {
 /* PostgreSQL's BoolExpr (primnodes.h). */
 struct sq_bool_expr_t : sq_node_t {
     sq_bool_expr_type_t boolop{};
-    sq_items_t args;
+    sq_list_t* args = nullptr;
     int location = 0;
 
     sq_bool_expr_t() { tag = SQ_T_BOOL_EXPR; }
@@ -1283,7 +1296,7 @@ struct sq_sub_link_t : sq_node_t {
     sq_sub_link_type_t sub_link_type{};
     int sub_link_id = 0;
     sq_node_t* testexpr = nullptr;
-    sq_items_t oper_name;
+    sq_list_t* oper_name = nullptr;
     sq_node_t* subselect = nullptr;
     int location = 0;
 
@@ -1295,7 +1308,7 @@ struct sq_case_expr_t : sq_node_t {
     uint32_t casetype = 0;
     uint32_t casecollid = 0;
     sq_node_t* arg = nullptr;
-    sq_items_t args;
+    sq_list_t* args = nullptr;
     sq_node_t* defresult = nullptr;
     int location = 0;
 
@@ -1313,10 +1326,10 @@ struct sq_case_when_t : sq_node_t {
 
 /* PostgreSQL's RowExpr (primnodes.h). */
 struct sq_row_expr_t : sq_node_t {
-    sq_items_t args;
+    sq_list_t* args = nullptr;
     uint32_t row_typeid = 0;
     sq_coercion_form_t row_format{};
-    sq_items_t colnames;
+    sq_list_t* colnames = nullptr;
     int location = 0;
 
     sq_row_expr_t() { tag = SQ_T_ROW_EXPR; }
@@ -1326,7 +1339,7 @@ struct sq_row_expr_t : sq_node_t {
 struct sq_coalesce_expr_t : sq_node_t {
     uint32_t coalescetype = 0;
     uint32_t coalescecollid = 0;
-    sq_items_t args;
+    sq_list_t* args = nullptr;
     int location = 0;
 
     sq_coalesce_expr_t() { tag = SQ_T_COALESCE_EXPR; }
@@ -1338,7 +1351,7 @@ struct sq_min_max_expr_t : sq_node_t {
     uint32_t minmaxcollid = 0;
     uint32_t inputcollid = 0;
     sq_min_max_op_t op{};
-    sq_items_t args;
+    sq_list_t* args = nullptr;
     int location = 0;
 
     sq_min_max_expr_t() { tag = SQ_T_MIN_MAX_EXPR; }
@@ -1358,9 +1371,9 @@ struct sq_sql_value_function_t : sq_node_t {
 struct sq_xml_expr_t : sq_node_t {
     sq_xml_expr_op_t op{};
     const char* name = nullptr;
-    sq_items_t named_args;
-    sq_items_t arg_names;
-    sq_items_t args;
+    sq_list_t* named_args = nullptr;
+    sq_list_t* arg_names = nullptr;
+    sq_list_t* args = nullptr;
     sq_xml_option_type_t xmloption{};
     bool indent = false;
     uint32_t type = 0;
@@ -1462,7 +1475,7 @@ struct sq_join_expr_t : sq_node_t {
     bool is_natural = false;
     sq_node_t* larg = nullptr;
     sq_node_t* rarg = nullptr;
-    sq_items_t using_clause;
+    sq_list_t* using_clause = nullptr;
     sq_alias_t* join_using_alias = nullptr;
     sq_node_t* quals = nullptr;
     sq_alias_t* alias = nullptr;
@@ -1473,13 +1486,13 @@ struct sq_join_expr_t : sq_node_t {
 
 /* PostgreSQL's TypeName (parsenodes.h). */
 struct sq_type_name_t : sq_node_t {
-    sq_items_t names;
+    sq_list_t* names = nullptr;
     uint32_t type_oid = 0;
     bool setof = false;
     bool pct_type = false;
-    sq_items_t typmods;
+    sq_list_t* typmods = nullptr;
     int32_t typemod = 0;
-    sq_items_t array_bounds;
+    sq_list_t* array_bounds = nullptr;
     int location = 0;
 
     sq_type_name_t() { tag = SQ_T_TYPE_NAME; }
@@ -1487,7 +1500,7 @@ struct sq_type_name_t : sq_node_t {
 
 /* PostgreSQL's ColumnRef (parsenodes.h). */
 struct sq_column_ref_t : sq_node_t {
-    sq_items_t fields;
+    sq_list_t* fields = nullptr;
     int location = 0;
 
     sq_column_ref_t() { tag = SQ_T_COLUMN_REF; }
@@ -1504,7 +1517,7 @@ struct sq_param_ref_t : sq_node_t {
 /* PostgreSQL's A_Expr (parsenodes.h). */
 struct sq_a_expr_t : sq_node_t {
     sq_a_expr_kind_t kind{};
-    sq_items_t name;
+    sq_list_t* name = nullptr;
     sq_node_t* lexpr = nullptr;
     sq_node_t* rexpr = nullptr;
     int rexpr_list_start = 0;
@@ -1514,10 +1527,22 @@ struct sq_a_expr_t : sq_node_t {
     sq_a_expr_t() { tag = SQ_T_A_EXPR; }
 };
 
+/* PostgreSQL's ValUnion: an A_Const's value, held in place. */
+union sq_val_union_t {
+    sq_node_t node;
+    sq_integer_t ival;
+    sq_float_t fval;
+    sq_boolean_t boolval;
+    sq_string_t sval;
+    sq_bit_string_t bsval;
+
+    sq_val_union_t() {}
+};
+
 /* PostgreSQL's A_Const (parsenodes.h). */
 struct sq_a_const_t : sq_node_t {
-    /* An Integer, Float, Boolean, String or BitString node. */
-    sq_node_t* val = nullptr;
+    /* An Integer, Float, Boolean, String or BitString. */
+    sq_val_union_t val;
     bool isnull = false;
     int location = 0;
 
@@ -1536,7 +1561,7 @@ struct sq_type_cast_t : sq_node_t {
 /* PostgreSQL's CollateClause (parsenodes.h). */
 struct sq_collate_clause_t : sq_node_t {
     sq_node_t* arg = nullptr;
-    sq_items_t collname;
+    sq_list_t* collname = nullptr;
     int location = 0;
 
     sq_collate_clause_t() { tag = SQ_T_COLLATE_CLAUSE; }
@@ -1553,9 +1578,9 @@ struct sq_role_spec_t : sq_node_t {
 
 /* PostgreSQL's FuncCall (parsenodes.h). */
 struct sq_func_call_t : sq_node_t {
-    sq_items_t funcname;
-    sq_items_t args;
-    sq_items_t agg_order;
+    sq_list_t* funcname = nullptr;
+    sq_list_t* args = nullptr;
+    sq_list_t* agg_order = nullptr;
     sq_node_t* agg_filter = nullptr;
     sq_window_def_t* over = nullptr;
     bool agg_within_group = false;
@@ -1586,14 +1611,14 @@ struct sq_a_indices_t : sq_node_t {
 /* PostgreSQL's A_Indirection (parsenodes.h). */
 struct sq_a_indirection_t : sq_node_t {
     sq_node_t* arg = nullptr;
-    sq_items_t indirection;
+    sq_list_t* indirection = nullptr;
 
     sq_a_indirection_t() { tag = SQ_T_A_INDIRECTION; }
 };
 
 /* PostgreSQL's A_ArrayExpr (parsenodes.h). */
 struct sq_a_array_expr_t : sq_node_t {
-    sq_items_t elements;
+    sq_list_t* elements = nullptr;
     int list_start = 0;
     int list_end = 0;
     int location = 0;
@@ -1604,7 +1629,7 @@ struct sq_a_array_expr_t : sq_node_t {
 /* PostgreSQL's ResTarget (parsenodes.h). */
 struct sq_res_target_t : sq_node_t {
     const char* name = nullptr;
-    sq_items_t indirection;
+    sq_list_t* indirection = nullptr;
     sq_node_t* val = nullptr;
     int location = 0;
 
@@ -1625,7 +1650,7 @@ struct sq_sort_by_t : sq_node_t {
     sq_node_t* node = nullptr;
     sq_sort_by_dir_t sortby_dir{};
     sq_sort_by_nulls_t sortby_nulls{};
-    sq_items_t use_op;
+    sq_list_t* use_op = nullptr;
     int location = 0;
 
     sq_sort_by_t() { tag = SQ_T_SORT_BY; }
@@ -1635,8 +1660,8 @@ struct sq_sort_by_t : sq_node_t {
 struct sq_window_def_t : sq_node_t {
     const char* name = nullptr;
     const char* refname = nullptr;
-    sq_items_t partition_clause;
-    sq_items_t order_clause;
+    sq_list_t* partition_clause = nullptr;
+    sq_list_t* order_clause = nullptr;
     int frame_options = 0;
     sq_node_t* start_offset = nullptr;
     sq_node_t* end_offset = nullptr;
@@ -1659,9 +1684,9 @@ struct sq_range_function_t : sq_node_t {
     bool lateral = false;
     bool ordinality = false;
     bool is_rowsfrom = false;
-    sq_items_t functions;
+    sq_list_t* functions = nullptr;
     sq_alias_t* alias = nullptr;
-    sq_items_t coldeflist;
+    sq_list_t* coldeflist = nullptr;
 
     sq_range_function_t() { tag = SQ_T_RANGE_FUNCTION; }
 };
@@ -1671,8 +1696,8 @@ struct sq_range_table_func_t : sq_node_t {
     bool lateral = false;
     sq_node_t* docexpr = nullptr;
     sq_node_t* rowexpr = nullptr;
-    sq_items_t namespaces;
-    sq_items_t columns;
+    sq_list_t* namespaces = nullptr;
+    sq_list_t* columns = nullptr;
     sq_alias_t* alias = nullptr;
     int location = 0;
 
@@ -1695,8 +1720,8 @@ struct sq_range_table_func_col_t : sq_node_t {
 /* PostgreSQL's RangeTableSample (parsenodes.h). */
 struct sq_range_table_sample_t : sq_node_t {
     sq_node_t* relation = nullptr;
-    sq_items_t method;
-    sq_items_t args;
+    sq_list_t* method = nullptr;
+    sq_list_t* args = nullptr;
     sq_node_t* repeatable = nullptr;
     int location = 0;
 
@@ -1721,8 +1746,8 @@ struct sq_column_def_t : sq_node_t {
     char generated = 0;
     sq_collate_clause_t* coll_clause = nullptr;
     uint32_t coll_oid = 0;
-    sq_items_t constraints;
-    sq_items_t fdwoptions;
+    sq_list_t* constraints = nullptr;
+    sq_list_t* fdwoptions = nullptr;
     int location = 0;
 
     sq_column_def_t() { tag = SQ_T_COLUMN_DEF; }
@@ -1742,9 +1767,9 @@ struct sq_index_elem_t : sq_node_t {
     const char* name = nullptr;
     sq_node_t* expr = nullptr;
     const char* indexcolname = nullptr;
-    sq_items_t collation;
-    sq_items_t opclass;
-    sq_items_t opclassopts;
+    sq_list_t* collation = nullptr;
+    sq_list_t* opclass = nullptr;
+    sq_list_t* opclassopts = nullptr;
     sq_sort_by_dir_t ordering{};
     sq_sort_by_nulls_t nulls_ordering{};
 
@@ -1764,7 +1789,7 @@ struct sq_def_elem_t : sq_node_t {
 
 /* PostgreSQL's LockingClause (parsenodes.h). */
 struct sq_locking_clause_t : sq_node_t {
-    sq_items_t locked_rels;
+    sq_list_t* locked_rels = nullptr;
     sq_lock_clause_strength_t strength{};
     sq_lock_wait_policy_t wait_policy{};
 
@@ -1786,8 +1811,8 @@ struct sq_xml_serialize_t : sq_node_t {
 struct sq_partition_elem_t : sq_node_t {
     const char* name = nullptr;
     sq_node_t* expr = nullptr;
-    sq_items_t collation;
-    sq_items_t opclass;
+    sq_list_t* collation = nullptr;
+    sq_list_t* opclass = nullptr;
     int location = 0;
 
     sq_partition_elem_t() { tag = SQ_T_PARTITION_ELEM; }
@@ -1796,7 +1821,7 @@ struct sq_partition_elem_t : sq_node_t {
 /* PostgreSQL's PartitionSpec (parsenodes.h). */
 struct sq_partition_spec_t : sq_node_t {
     sq_partition_strategy_t strategy{};
-    sq_items_t part_params;
+    sq_list_t* part_params = nullptr;
     int location = 0;
 
     sq_partition_spec_t() { tag = SQ_T_PARTITION_SPEC; }
@@ -1808,9 +1833,9 @@ struct sq_partition_bound_spec_t : sq_node_t {
     bool is_default = false;
     int modulus = 0;
     int remainder = 0;
-    sq_items_t listdatums;
-    sq_items_t lowerdatums;
-    sq_items_t upperdatums;
+    sq_list_t* listdatums = nullptr;
+    sq_list_t* lowerdatums = nullptr;
+    sq_list_t* upperdatums = nullptr;
     int location = 0;
 
     sq_partition_bound_spec_t() { tag = SQ_T_PARTITION_BOUND_SPEC; }
@@ -1828,7 +1853,7 @@ struct sq_partition_cmd_t : sq_node_t {
 /* PostgreSQL's GroupingSet (parsenodes.h). */
 struct sq_grouping_set_t : sq_node_t {
     sq_grouping_set_kind_t kind{};
-    sq_items_t content;
+    sq_list_t* content = nullptr;
     int location = 0;
 
     sq_grouping_set_t() { tag = SQ_T_GROUPING_SET; }
@@ -1836,7 +1861,7 @@ struct sq_grouping_set_t : sq_node_t {
 
 /* PostgreSQL's WithClause (parsenodes.h). */
 struct sq_with_clause_t : sq_node_t {
-    sq_items_t ctes;
+    sq_list_t* ctes = nullptr;
     bool recursive = false;
     int location = 0;
 
@@ -1845,7 +1870,7 @@ struct sq_with_clause_t : sq_node_t {
 
 /* PostgreSQL's InferClause (parsenodes.h). */
 struct sq_infer_clause_t : sq_node_t {
-    sq_items_t index_elems;
+    sq_list_t* index_elems = nullptr;
     sq_node_t* where_clause = nullptr;
     const char* conname = nullptr;
     int location = 0;
@@ -1857,7 +1882,7 @@ struct sq_infer_clause_t : sq_node_t {
 struct sq_on_conflict_clause_t : sq_node_t {
     sq_on_conflict_action_t action{};
     sq_infer_clause_t* infer = nullptr;
-    sq_items_t target_list;
+    sq_list_t* target_list = nullptr;
     sq_node_t* where_clause = nullptr;
     int location = 0;
 
@@ -1866,7 +1891,7 @@ struct sq_on_conflict_clause_t : sq_node_t {
 
 /* PostgreSQL's CTESearchClause (parsenodes.h). */
 struct sq_cte_search_clause_t : sq_node_t {
-    sq_items_t search_col_list;
+    sq_list_t* search_col_list = nullptr;
     bool search_breadth_first = false;
     const char* search_seq_column = nullptr;
     int location = 0;
@@ -1876,7 +1901,7 @@ struct sq_cte_search_clause_t : sq_node_t {
 
 /* PostgreSQL's CTECycleClause (parsenodes.h). */
 struct sq_cte_cycle_clause_t : sq_node_t {
-    sq_items_t cycle_col_list;
+    sq_list_t* cycle_col_list = nullptr;
     const char* cycle_mark_column = nullptr;
     sq_node_t* cycle_mark_value = nullptr;
     sq_node_t* cycle_mark_default = nullptr;
@@ -1893,7 +1918,7 @@ struct sq_cte_cycle_clause_t : sq_node_t {
 /* PostgreSQL's CommonTableExpr (parsenodes.h). */
 struct sq_common_table_expr_t : sq_node_t {
     const char* ctename = nullptr;
-    sq_items_t aliascolnames;
+    sq_list_t* aliascolnames = nullptr;
     sq_cte_materialize_t ctematerialized{};
     sq_node_t* ctequery = nullptr;
     sq_cte_search_clause_t* search_clause = nullptr;
@@ -1901,10 +1926,10 @@ struct sq_common_table_expr_t : sq_node_t {
     int location = 0;
     bool cterecursive = false;
     int cterefcount = 0;
-    sq_items_t ctecolnames;
-    sq_items_t ctecoltypes;
-    sq_items_t ctecoltypmods;
-    sq_items_t ctecolcollations;
+    sq_list_t* ctecolnames = nullptr;
+    sq_list_t* ctecoltypes = nullptr;
+    sq_list_t* ctecoltypmods = nullptr;
+    sq_list_t* ctecolcollations = nullptr;
 
     sq_common_table_expr_t() { tag = SQ_T_COMMON_TABLE_EXPR; }
 };
@@ -1915,8 +1940,8 @@ struct sq_merge_when_clause_t : sq_node_t {
     sq_cmd_type_t command_type{};
     sq_overriding_kind_t override{};
     sq_node_t* condition = nullptr;
-    sq_items_t target_list;
-    sq_items_t values;
+    sq_list_t* target_list = nullptr;
+    sq_list_t* values = nullptr;
 
     sq_merge_when_clause_t() { tag = SQ_T_MERGE_WHEN_CLAUSE; }
 };
@@ -1932,8 +1957,8 @@ struct sq_returning_option_t : sq_node_t {
 
 /* PostgreSQL's ReturningClause (parsenodes.h). */
 struct sq_returning_clause_t : sq_node_t {
-    sq_items_t options;
-    sq_items_t exprs;
+    sq_list_t* options = nullptr;
+    sq_list_t* exprs = nullptr;
 
     sq_returning_clause_t() { tag = SQ_T_RETURNING_CLAUSE; }
 };
@@ -1969,7 +1994,7 @@ struct sq_json_func_expr_t : sq_node_t {
     const char* column_name = nullptr;
     sq_json_value_expr_t* context_item = nullptr;
     sq_node_t* pathspec = nullptr;
-    sq_items_t passing;
+    sq_list_t* passing = nullptr;
     sq_json_output_t* output = nullptr;
     sq_json_behavior_t* on_empty = nullptr;
     sq_json_behavior_t* on_error = nullptr;
@@ -1994,8 +2019,8 @@ struct sq_json_table_path_spec_t : sq_node_t {
 struct sq_json_table_t : sq_node_t {
     sq_json_value_expr_t* context_item = nullptr;
     sq_json_table_path_spec_t* pathspec = nullptr;
-    sq_items_t passing;
-    sq_items_t columns;
+    sq_list_t* passing = nullptr;
+    sq_list_t* columns = nullptr;
     sq_json_behavior_t* on_error = nullptr;
     sq_alias_t* alias = nullptr;
     bool lateral = false;
@@ -2013,7 +2038,7 @@ struct sq_json_table_column_t : sq_node_t {
     sq_json_format_t* format = nullptr;
     sq_json_wrapper_t wrapper{};
     sq_json_quotes_t quotes{};
-    sq_items_t columns;
+    sq_list_t* columns = nullptr;
     sq_json_behavior_t* on_empty = nullptr;
     sq_json_behavior_t* on_error = nullptr;
     int location = 0;
@@ -2059,7 +2084,7 @@ struct sq_json_serialize_expr_t : sq_node_t {
 
 /* PostgreSQL's JsonObjectConstructor (parsenodes.h). */
 struct sq_json_object_constructor_t : sq_node_t {
-    sq_items_t exprs;
+    sq_list_t* exprs = nullptr;
     sq_json_output_t* output = nullptr;
     bool absent_on_null = false;
     bool unique = false;
@@ -2070,7 +2095,7 @@ struct sq_json_object_constructor_t : sq_node_t {
 
 /* PostgreSQL's JsonArrayConstructor (parsenodes.h). */
 struct sq_json_array_constructor_t : sq_node_t {
-    sq_items_t exprs;
+    sq_list_t* exprs = nullptr;
     sq_json_output_t* output = nullptr;
     bool absent_on_null = false;
     int location = 0;
@@ -2093,7 +2118,7 @@ struct sq_json_array_query_constructor_t : sq_node_t {
 struct sq_json_agg_constructor_t : sq_node_t {
     sq_json_output_t* output = nullptr;
     sq_node_t* agg_filter = nullptr;
-    sq_items_t agg_order;
+    sq_list_t* agg_order = nullptr;
     sq_window_def_t* over = nullptr;
     int location = 0;
 
@@ -2131,7 +2156,7 @@ struct sq_raw_stmt_t : sq_node_t {
 /* PostgreSQL's InsertStmt (parsenodes.h). */
 struct sq_insert_stmt_t : sq_node_t {
     sq_range_var_t* relation = nullptr;
-    sq_items_t cols;
+    sq_list_t* cols = nullptr;
     sq_node_t* select_stmt = nullptr;
     sq_on_conflict_clause_t* on_conflict_clause = nullptr;
     sq_returning_clause_t* returning_clause = nullptr;
@@ -2144,7 +2169,7 @@ struct sq_insert_stmt_t : sq_node_t {
 /* PostgreSQL's DeleteStmt (parsenodes.h). */
 struct sq_delete_stmt_t : sq_node_t {
     sq_range_var_t* relation = nullptr;
-    sq_items_t using_clause;
+    sq_list_t* using_clause = nullptr;
     sq_node_t* where_clause = nullptr;
     sq_returning_clause_t* returning_clause = nullptr;
     sq_with_clause_t* with_clause = nullptr;
@@ -2155,9 +2180,9 @@ struct sq_delete_stmt_t : sq_node_t {
 /* PostgreSQL's UpdateStmt (parsenodes.h). */
 struct sq_update_stmt_t : sq_node_t {
     sq_range_var_t* relation = nullptr;
-    sq_items_t target_list;
+    sq_list_t* target_list = nullptr;
     sq_node_t* where_clause = nullptr;
-    sq_items_t from_clause;
+    sq_list_t* from_clause = nullptr;
     sq_returning_clause_t* returning_clause = nullptr;
     sq_with_clause_t* with_clause = nullptr;
 
@@ -2169,7 +2194,7 @@ struct sq_merge_stmt_t : sq_node_t {
     sq_range_var_t* relation = nullptr;
     sq_node_t* source_relation = nullptr;
     sq_node_t* join_condition = nullptr;
-    sq_items_t merge_when_clauses;
+    sq_list_t* merge_when_clauses = nullptr;
     sq_returning_clause_t* returning_clause = nullptr;
     sq_with_clause_t* with_clause = nullptr;
 
@@ -2178,21 +2203,21 @@ struct sq_merge_stmt_t : sq_node_t {
 
 /* PostgreSQL's SelectStmt (parsenodes.h). */
 struct sq_select_stmt_t : sq_node_t {
-    sq_items_t distinct_clause;
+    sq_list_t* distinct_clause = nullptr;
     sq_into_clause_t* into_clause = nullptr;
-    sq_items_t target_list;
-    sq_items_t from_clause;
+    sq_list_t* target_list = nullptr;
+    sq_list_t* from_clause = nullptr;
     sq_node_t* where_clause = nullptr;
-    sq_items_t group_clause;
+    sq_list_t* group_clause = nullptr;
     bool group_distinct = false;
     sq_node_t* having_clause = nullptr;
-    sq_items_t window_clause;
-    sq_items_t values_lists;
-    sq_items_t sort_clause;
+    sq_list_t* window_clause = nullptr;
+    sq_list_t* values_lists = nullptr;
+    sq_list_t* sort_clause = nullptr;
     sq_node_t* limit_offset = nullptr;
     sq_node_t* limit_count = nullptr;
     sq_limit_option_t limit_option{};
-    sq_items_t locking_clause;
+    sq_list_t* locking_clause = nullptr;
     sq_with_clause_t* with_clause = nullptr;
     sq_set_operation_t op{};
     bool all = false;
@@ -2212,7 +2237,7 @@ struct sq_return_stmt_t : sq_node_t {
 /* PostgreSQL's PLAssignStmt (parsenodes.h). */
 struct sq_pl_assign_stmt_t : sq_node_t {
     const char* name = nullptr;
-    sq_items_t indirection;
+    sq_list_t* indirection = nullptr;
     int nnames = 0;
     sq_select_stmt_t* val = nullptr;
     int location = 0;
@@ -2224,7 +2249,7 @@ struct sq_pl_assign_stmt_t : sq_node_t {
 struct sq_create_schema_stmt_t : sq_node_t {
     const char* schemaname = nullptr;
     sq_role_spec_t* authrole = nullptr;
-    sq_items_t schema_elts;
+    sq_list_t* schema_elts = nullptr;
     bool if_not_exists = false;
 
     sq_create_schema_stmt_t() { tag = SQ_T_CREATE_SCHEMA_STMT; }
@@ -2233,7 +2258,7 @@ struct sq_create_schema_stmt_t : sq_node_t {
 /* PostgreSQL's AlterTableStmt (parsenodes.h). */
 struct sq_alter_table_stmt_t : sq_node_t {
     sq_range_var_t* relation = nullptr;
-    sq_items_t cmds;
+    sq_list_t* cmds = nullptr;
     sq_object_type_t objtype{};
     bool missing_ok = false;
 
@@ -2278,7 +2303,7 @@ struct sq_replica_identity_stmt_t : sq_node_t {
 
 /* PostgreSQL's AlterCollationStmt (parsenodes.h). */
 struct sq_alter_collation_stmt_t : sq_node_t {
-    sq_items_t collname;
+    sq_list_t* collname = nullptr;
 
     sq_alter_collation_stmt_t() { tag = SQ_T_ALTER_COLLATION_STMT; }
 };
@@ -2286,7 +2311,7 @@ struct sq_alter_collation_stmt_t : sq_node_t {
 /* PostgreSQL's AlterDomainStmt (parsenodes.h). */
 struct sq_alter_domain_stmt_t : sq_node_t {
     char subtype = 0;
-    sq_items_t type_name;
+    sq_list_t* type_name = nullptr;
     const char* name = nullptr;
     sq_node_t* def = nullptr;
     sq_drop_behavior_t behavior{};
@@ -2300,9 +2325,9 @@ struct sq_grant_stmt_t : sq_node_t {
     bool is_grant = false;
     sq_grant_target_type_t targtype{};
     sq_object_type_t objtype{};
-    sq_items_t objects;
-    sq_items_t privileges;
-    sq_items_t grantees;
+    sq_list_t* objects = nullptr;
+    sq_list_t* privileges = nullptr;
+    sq_list_t* grantees = nullptr;
     bool grant_option = false;
     sq_role_spec_t* grantor = nullptr;
     sq_drop_behavior_t behavior{};
@@ -2312,9 +2337,9 @@ struct sq_grant_stmt_t : sq_node_t {
 
 /* PostgreSQL's ObjectWithArgs (parsenodes.h). */
 struct sq_object_with_args_t : sq_node_t {
-    sq_items_t objname;
-    sq_items_t objargs;
-    sq_items_t objfuncargs;
+    sq_list_t* objname = nullptr;
+    sq_list_t* objargs = nullptr;
+    sq_list_t* objfuncargs = nullptr;
     bool args_unspecified = false;
 
     sq_object_with_args_t() { tag = SQ_T_OBJECT_WITH_ARGS; }
@@ -2323,17 +2348,17 @@ struct sq_object_with_args_t : sq_node_t {
 /* PostgreSQL's AccessPriv (parsenodes.h). */
 struct sq_access_priv_t : sq_node_t {
     const char* priv_name = nullptr;
-    sq_items_t cols;
+    sq_list_t* cols = nullptr;
 
     sq_access_priv_t() { tag = SQ_T_ACCESS_PRIV; }
 };
 
 /* PostgreSQL's GrantRoleStmt (parsenodes.h). */
 struct sq_grant_role_stmt_t : sq_node_t {
-    sq_items_t granted_roles;
-    sq_items_t grantee_roles;
+    sq_list_t* granted_roles = nullptr;
+    sq_list_t* grantee_roles = nullptr;
     bool is_grant = false;
-    sq_items_t opt;
+    sq_list_t* opt = nullptr;
     sq_role_spec_t* grantor = nullptr;
     sq_drop_behavior_t behavior{};
 
@@ -2342,7 +2367,7 @@ struct sq_grant_role_stmt_t : sq_node_t {
 
 /* PostgreSQL's AlterDefaultPrivilegesStmt (parsenodes.h). */
 struct sq_alter_default_privileges_stmt_t : sq_node_t {
-    sq_items_t options;
+    sq_list_t* options = nullptr;
     sq_grant_stmt_t* action = nullptr;
 
     sq_alter_default_privileges_stmt_t() { tag = SQ_T_ALTER_DEFAULT_PRIVILEGES_STMT; }
@@ -2352,11 +2377,11 @@ struct sq_alter_default_privileges_stmt_t : sq_node_t {
 struct sq_copy_stmt_t : sq_node_t {
     sq_range_var_t* relation = nullptr;
     sq_node_t* query = nullptr;
-    sq_items_t attlist;
+    sq_list_t* attlist = nullptr;
     bool is_from = false;
     bool is_program = false;
     const char* filename = nullptr;
-    sq_items_t options;
+    sq_list_t* options = nullptr;
     sq_node_t* where_clause = nullptr;
 
     sq_copy_stmt_t() { tag = SQ_T_COPY_STMT; }
@@ -2366,7 +2391,7 @@ struct sq_copy_stmt_t : sq_node_t {
 struct sq_variable_set_stmt_t : sq_node_t {
     sq_variable_set_kind_t kind{};
     const char* name = nullptr;
-    sq_items_t args;
+    sq_list_t* args = nullptr;
     bool jumble_args = false;
     bool is_local = false;
     int location = 0;
@@ -2384,14 +2409,14 @@ struct sq_variable_show_stmt_t : sq_node_t {
 /* PostgreSQL's CreateStmt (parsenodes.h). */
 struct sq_create_stmt_t : sq_node_t {
     sq_range_var_t* relation = nullptr;
-    sq_items_t table_elts;
-    sq_items_t inh_relations;
+    sq_list_t* table_elts = nullptr;
+    sq_list_t* inh_relations = nullptr;
     sq_partition_bound_spec_t* partbound = nullptr;
     sq_partition_spec_t* partspec = nullptr;
     sq_type_name_t* of_typename = nullptr;
-    sq_items_t constraints;
-    sq_items_t nnconstraints;
-    sq_items_t options;
+    sq_list_t* constraints = nullptr;
+    sq_list_t* nnconstraints = nullptr;
+    sq_list_t* options = nullptr;
     sq_on_commit_action_t oncommit{};
     const char* tablespacename = nullptr;
     const char* access_method = nullptr;
@@ -2415,26 +2440,26 @@ struct sq_constraint_t : sq_node_t {
     char generated_when = 0;
     char generated_kind = 0;
     bool nulls_not_distinct = false;
-    sq_items_t keys;
+    sq_list_t* keys = nullptr;
     bool without_overlaps = false;
-    sq_items_t including;
-    sq_items_t exclusions;
-    sq_items_t options;
+    sq_list_t* including = nullptr;
+    sq_list_t* exclusions = nullptr;
+    sq_list_t* options = nullptr;
     const char* indexname = nullptr;
     const char* indexspace = nullptr;
     bool reset_default_tblspc = false;
     const char* access_method = nullptr;
     sq_node_t* where_clause = nullptr;
     sq_range_var_t* pktable = nullptr;
-    sq_items_t fk_attrs;
-    sq_items_t pk_attrs;
+    sq_list_t* fk_attrs = nullptr;
+    sq_list_t* pk_attrs = nullptr;
     bool fk_with_period = false;
     bool pk_with_period = false;
     char fk_matchtype = 0;
     char fk_upd_action = 0;
     char fk_del_action = 0;
-    sq_items_t fk_del_set_cols;
-    sq_items_t old_conpfeqop;
+    sq_list_t* fk_del_set_cols = nullptr;
+    sq_list_t* old_conpfeqop = nullptr;
     uint32_t old_pktable_oid = 0;
     int location = 0;
 
@@ -2446,7 +2471,7 @@ struct sq_create_table_space_stmt_t : sq_node_t {
     const char* tablespacename = nullptr;
     sq_role_spec_t* owner = nullptr;
     const char* location = nullptr;
-    sq_items_t options;
+    sq_list_t* options = nullptr;
 
     sq_create_table_space_stmt_t() { tag = SQ_T_CREATE_TABLE_SPACE_STMT; }
 };
@@ -2462,7 +2487,7 @@ struct sq_drop_table_space_stmt_t : sq_node_t {
 /* PostgreSQL's AlterTableSpaceOptionsStmt (parsenodes.h). */
 struct sq_alter_table_space_options_stmt_t : sq_node_t {
     const char* tablespacename = nullptr;
-    sq_items_t options;
+    sq_list_t* options = nullptr;
     bool is_reset = false;
 
     sq_alter_table_space_options_stmt_t() { tag = SQ_T_ALTER_TABLE_SPACE_OPTIONS_STMT; }
@@ -2472,7 +2497,7 @@ struct sq_alter_table_space_options_stmt_t : sq_node_t {
 struct sq_alter_table_move_all_stmt_t : sq_node_t {
     const char* orig_tablespacename = nullptr;
     sq_object_type_t objtype{};
-    sq_items_t roles;
+    sq_list_t* roles = nullptr;
     const char* new_tablespacename = nullptr;
     bool nowait = false;
 
@@ -2483,7 +2508,7 @@ struct sq_alter_table_move_all_stmt_t : sq_node_t {
 struct sq_create_extension_stmt_t : sq_node_t {
     const char* extname = nullptr;
     bool if_not_exists = false;
-    sq_items_t options;
+    sq_list_t* options = nullptr;
 
     sq_create_extension_stmt_t() { tag = SQ_T_CREATE_EXTENSION_STMT; }
 };
@@ -2491,7 +2516,7 @@ struct sq_create_extension_stmt_t : sq_node_t {
 /* PostgreSQL's AlterExtensionStmt (parsenodes.h). */
 struct sq_alter_extension_stmt_t : sq_node_t {
     const char* extname = nullptr;
-    sq_items_t options;
+    sq_list_t* options = nullptr;
 
     sq_alter_extension_stmt_t() { tag = SQ_T_ALTER_EXTENSION_STMT; }
 };
@@ -2509,8 +2534,8 @@ struct sq_alter_extension_contents_stmt_t : sq_node_t {
 /* PostgreSQL's CreateFdwStmt (parsenodes.h). */
 struct sq_create_fdw_stmt_t : sq_node_t {
     const char* fdwname = nullptr;
-    sq_items_t func_options;
-    sq_items_t options;
+    sq_list_t* func_options = nullptr;
+    sq_list_t* options = nullptr;
 
     sq_create_fdw_stmt_t() { tag = SQ_T_CREATE_FDW_STMT; }
 };
@@ -2518,8 +2543,8 @@ struct sq_create_fdw_stmt_t : sq_node_t {
 /* PostgreSQL's AlterFdwStmt (parsenodes.h). */
 struct sq_alter_fdw_stmt_t : sq_node_t {
     const char* fdwname = nullptr;
-    sq_items_t func_options;
-    sq_items_t options;
+    sq_list_t* func_options = nullptr;
+    sq_list_t* options = nullptr;
 
     sq_alter_fdw_stmt_t() { tag = SQ_T_ALTER_FDW_STMT; }
 };
@@ -2531,7 +2556,7 @@ struct sq_create_foreign_server_stmt_t : sq_node_t {
     const char* version = nullptr;
     const char* fdwname = nullptr;
     bool if_not_exists = false;
-    sq_items_t options;
+    sq_list_t* options = nullptr;
 
     sq_create_foreign_server_stmt_t() { tag = SQ_T_CREATE_FOREIGN_SERVER_STMT; }
 };
@@ -2540,19 +2565,19 @@ struct sq_create_foreign_server_stmt_t : sq_node_t {
 struct sq_alter_foreign_server_stmt_t : sq_node_t {
     const char* servername = nullptr;
     const char* version = nullptr;
-    sq_items_t options;
+    sq_list_t* options = nullptr;
     bool has_version = false;
 
     sq_alter_foreign_server_stmt_t() { tag = SQ_T_ALTER_FOREIGN_SERVER_STMT; }
 };
 
 /* PostgreSQL's CreateForeignTableStmt (parsenodes.h). */
-struct sq_create_foreign_table_stmt_t : sq_node_t {
+struct sq_create_foreign_table_stmt_t {
     sq_create_stmt_t base;
     const char* servername = nullptr;
-    sq_items_t options;
+    sq_list_t* options = nullptr;
 
-    sq_create_foreign_table_stmt_t() { tag = SQ_T_CREATE_FOREIGN_TABLE_STMT; }
+    sq_create_foreign_table_stmt_t() { base.tag = SQ_T_CREATE_FOREIGN_TABLE_STMT; }
 };
 
 /* PostgreSQL's CreateUserMappingStmt (parsenodes.h). */
@@ -2560,7 +2585,7 @@ struct sq_create_user_mapping_stmt_t : sq_node_t {
     sq_role_spec_t* user = nullptr;
     const char* servername = nullptr;
     bool if_not_exists = false;
-    sq_items_t options;
+    sq_list_t* options = nullptr;
 
     sq_create_user_mapping_stmt_t() { tag = SQ_T_CREATE_USER_MAPPING_STMT; }
 };
@@ -2569,7 +2594,7 @@ struct sq_create_user_mapping_stmt_t : sq_node_t {
 struct sq_alter_user_mapping_stmt_t : sq_node_t {
     sq_role_spec_t* user = nullptr;
     const char* servername = nullptr;
-    sq_items_t options;
+    sq_list_t* options = nullptr;
 
     sq_alter_user_mapping_stmt_t() { tag = SQ_T_ALTER_USER_MAPPING_STMT; }
 };
@@ -2589,8 +2614,8 @@ struct sq_import_foreign_schema_stmt_t : sq_node_t {
     const char* remote_schema = nullptr;
     const char* local_schema = nullptr;
     sq_import_foreign_schema_type_t list_type{};
-    sq_items_t table_list;
-    sq_items_t options;
+    sq_list_t* table_list = nullptr;
+    sq_list_t* options = nullptr;
 
     sq_import_foreign_schema_stmt_t() { tag = SQ_T_IMPORT_FOREIGN_SCHEMA_STMT; }
 };
@@ -2601,7 +2626,7 @@ struct sq_create_policy_stmt_t : sq_node_t {
     sq_range_var_t* table = nullptr;
     const char* cmd_name = nullptr;
     bool permissive = false;
-    sq_items_t roles;
+    sq_list_t* roles = nullptr;
     sq_node_t* qual = nullptr;
     sq_node_t* with_check = nullptr;
 
@@ -2612,7 +2637,7 @@ struct sq_create_policy_stmt_t : sq_node_t {
 struct sq_alter_policy_stmt_t : sq_node_t {
     const char* policy_name = nullptr;
     sq_range_var_t* table = nullptr;
-    sq_items_t roles;
+    sq_list_t* roles = nullptr;
     sq_node_t* qual = nullptr;
     sq_node_t* with_check = nullptr;
 
@@ -2622,7 +2647,7 @@ struct sq_alter_policy_stmt_t : sq_node_t {
 /* PostgreSQL's CreateAmStmt (parsenodes.h). */
 struct sq_create_am_stmt_t : sq_node_t {
     const char* amname = nullptr;
-    sq_items_t handler_name;
+    sq_list_t* handler_name = nullptr;
     char amtype = 0;
 
     sq_create_am_stmt_t() { tag = SQ_T_CREATE_AM_STMT; }
@@ -2634,14 +2659,14 @@ struct sq_create_trig_stmt_t : sq_node_t {
     bool isconstraint = false;
     const char* trigname = nullptr;
     sq_range_var_t* relation = nullptr;
-    sq_items_t funcname;
-    sq_items_t args;
+    sq_list_t* funcname = nullptr;
+    sq_list_t* args = nullptr;
     bool row = false;
     int16_t timing = 0;
     int16_t events = 0;
-    sq_items_t columns;
+    sq_list_t* columns = nullptr;
     sq_node_t* when_clause = nullptr;
-    sq_items_t transition_rels;
+    sq_list_t* transition_rels = nullptr;
     bool deferrable = false;
     bool initdeferred = false;
     sq_range_var_t* constrrel = nullptr;
@@ -2653,8 +2678,8 @@ struct sq_create_trig_stmt_t : sq_node_t {
 struct sq_create_event_trig_stmt_t : sq_node_t {
     const char* trigname = nullptr;
     const char* eventname = nullptr;
-    sq_items_t whenclause;
-    sq_items_t funcname;
+    sq_list_t* whenclause = nullptr;
+    sq_list_t* funcname = nullptr;
 
     sq_create_event_trig_stmt_t() { tag = SQ_T_CREATE_EVENT_TRIG_STMT; }
 };
@@ -2671,9 +2696,9 @@ struct sq_alter_event_trig_stmt_t : sq_node_t {
 struct sq_create_p_lang_stmt_t : sq_node_t {
     bool replace = false;
     const char* plname = nullptr;
-    sq_items_t plhandler;
-    sq_items_t plinline;
-    sq_items_t plvalidator;
+    sq_list_t* plhandler = nullptr;
+    sq_list_t* plinline = nullptr;
+    sq_list_t* plvalidator = nullptr;
     bool pltrusted = false;
 
     sq_create_p_lang_stmt_t() { tag = SQ_T_CREATE_P_LANG_STMT; }
@@ -2683,7 +2708,7 @@ struct sq_create_p_lang_stmt_t : sq_node_t {
 struct sq_create_role_stmt_t : sq_node_t {
     sq_role_stmt_type_t stmt_type{};
     const char* role = nullptr;
-    sq_items_t options;
+    sq_list_t* options = nullptr;
 
     sq_create_role_stmt_t() { tag = SQ_T_CREATE_ROLE_STMT; }
 };
@@ -2691,7 +2716,7 @@ struct sq_create_role_stmt_t : sq_node_t {
 /* PostgreSQL's AlterRoleStmt (parsenodes.h). */
 struct sq_alter_role_stmt_t : sq_node_t {
     sq_role_spec_t* role = nullptr;
-    sq_items_t options;
+    sq_list_t* options = nullptr;
     int action = 0;
 
     sq_alter_role_stmt_t() { tag = SQ_T_ALTER_ROLE_STMT; }
@@ -2708,7 +2733,7 @@ struct sq_alter_role_set_stmt_t : sq_node_t {
 
 /* PostgreSQL's DropRoleStmt (parsenodes.h). */
 struct sq_drop_role_stmt_t : sq_node_t {
-    sq_items_t roles;
+    sq_list_t* roles = nullptr;
     bool missing_ok = false;
 
     sq_drop_role_stmt_t() { tag = SQ_T_DROP_ROLE_STMT; }
@@ -2717,7 +2742,7 @@ struct sq_drop_role_stmt_t : sq_node_t {
 /* PostgreSQL's CreateSeqStmt (parsenodes.h). */
 struct sq_create_seq_stmt_t : sq_node_t {
     sq_range_var_t* sequence = nullptr;
-    sq_items_t options;
+    sq_list_t* options = nullptr;
     uint32_t owner_id = 0;
     bool for_identity = false;
     bool if_not_exists = false;
@@ -2728,7 +2753,7 @@ struct sq_create_seq_stmt_t : sq_node_t {
 /* PostgreSQL's AlterSeqStmt (parsenodes.h). */
 struct sq_alter_seq_stmt_t : sq_node_t {
     sq_range_var_t* sequence = nullptr;
-    sq_items_t options;
+    sq_list_t* options = nullptr;
     bool for_identity = false;
     bool missing_ok = false;
 
@@ -2739,9 +2764,9 @@ struct sq_alter_seq_stmt_t : sq_node_t {
 struct sq_define_stmt_t : sq_node_t {
     sq_object_type_t kind{};
     bool oldstyle = false;
-    sq_items_t defnames;
-    sq_items_t args;
-    sq_items_t definition;
+    sq_list_t* defnames = nullptr;
+    sq_list_t* args = nullptr;
+    sq_list_t* definition = nullptr;
     bool if_not_exists = false;
     bool replace = false;
 
@@ -2750,21 +2775,21 @@ struct sq_define_stmt_t : sq_node_t {
 
 /* PostgreSQL's CreateDomainStmt (parsenodes.h). */
 struct sq_create_domain_stmt_t : sq_node_t {
-    sq_items_t domainname;
+    sq_list_t* domainname = nullptr;
     sq_type_name_t* type_name = nullptr;
     sq_collate_clause_t* coll_clause = nullptr;
-    sq_items_t constraints;
+    sq_list_t* constraints = nullptr;
 
     sq_create_domain_stmt_t() { tag = SQ_T_CREATE_DOMAIN_STMT; }
 };
 
 /* PostgreSQL's CreateOpClassStmt (parsenodes.h). */
 struct sq_create_op_class_stmt_t : sq_node_t {
-    sq_items_t opclassname;
-    sq_items_t opfamilyname;
+    sq_list_t* opclassname = nullptr;
+    sq_list_t* opfamilyname = nullptr;
     const char* amname = nullptr;
     sq_type_name_t* datatype = nullptr;
-    sq_items_t items;
+    sq_list_t* items = nullptr;
     bool is_default = false;
 
     sq_create_op_class_stmt_t() { tag = SQ_T_CREATE_OP_CLASS_STMT; }
@@ -2775,8 +2800,8 @@ struct sq_create_op_class_item_t : sq_node_t {
     int itemtype = 0;
     sq_object_with_args_t* name = nullptr;
     int number = 0;
-    sq_items_t order_family;
-    sq_items_t class_args;
+    sq_list_t* order_family = nullptr;
+    sq_list_t* class_args = nullptr;
     sq_type_name_t* storedtype = nullptr;
 
     sq_create_op_class_item_t() { tag = SQ_T_CREATE_OP_CLASS_ITEM; }
@@ -2784,7 +2809,7 @@ struct sq_create_op_class_item_t : sq_node_t {
 
 /* PostgreSQL's CreateOpFamilyStmt (parsenodes.h). */
 struct sq_create_op_family_stmt_t : sq_node_t {
-    sq_items_t opfamilyname;
+    sq_list_t* opfamilyname = nullptr;
     const char* amname = nullptr;
 
     sq_create_op_family_stmt_t() { tag = SQ_T_CREATE_OP_FAMILY_STMT; }
@@ -2792,17 +2817,17 @@ struct sq_create_op_family_stmt_t : sq_node_t {
 
 /* PostgreSQL's AlterOpFamilyStmt (parsenodes.h). */
 struct sq_alter_op_family_stmt_t : sq_node_t {
-    sq_items_t opfamilyname;
+    sq_list_t* opfamilyname = nullptr;
     const char* amname = nullptr;
     bool is_drop = false;
-    sq_items_t items;
+    sq_list_t* items = nullptr;
 
     sq_alter_op_family_stmt_t() { tag = SQ_T_ALTER_OP_FAMILY_STMT; }
 };
 
 /* PostgreSQL's DropStmt (parsenodes.h). */
 struct sq_drop_stmt_t : sq_node_t {
-    sq_items_t objects;
+    sq_list_t* objects = nullptr;
     sq_object_type_t remove_type{};
     sq_drop_behavior_t behavior{};
     bool missing_ok = false;
@@ -2813,7 +2838,7 @@ struct sq_drop_stmt_t : sq_node_t {
 
 /* PostgreSQL's TruncateStmt (parsenodes.h). */
 struct sq_truncate_stmt_t : sq_node_t {
-    sq_items_t relations;
+    sq_list_t* relations = nullptr;
     bool restart_seqs = false;
     sq_drop_behavior_t behavior{};
 
@@ -2871,11 +2896,11 @@ struct sq_index_stmt_t : sq_node_t {
     sq_range_var_t* relation = nullptr;
     const char* access_method = nullptr;
     const char* table_space = nullptr;
-    sq_items_t index_params;
-    sq_items_t index_including_params;
-    sq_items_t options;
+    sq_list_t* index_params = nullptr;
+    sq_list_t* index_including_params = nullptr;
+    sq_list_t* options = nullptr;
     sq_node_t* where_clause = nullptr;
-    sq_items_t exclude_op_names;
+    sq_list_t* exclude_op_names = nullptr;
     const char* idxcomment = nullptr;
     uint32_t index_oid = 0;
     uint32_t old_number = 0;
@@ -2898,10 +2923,10 @@ struct sq_index_stmt_t : sq_node_t {
 
 /* PostgreSQL's CreateStatsStmt (parsenodes.h). */
 struct sq_create_stats_stmt_t : sq_node_t {
-    sq_items_t defnames;
-    sq_items_t stat_types;
-    sq_items_t exprs;
-    sq_items_t relations;
+    sq_list_t* defnames = nullptr;
+    sq_list_t* stat_types = nullptr;
+    sq_list_t* exprs = nullptr;
+    sq_list_t* relations = nullptr;
     const char* stxcomment = nullptr;
     bool transformed = false;
     bool if_not_exists = false;
@@ -2920,7 +2945,7 @@ struct sq_stats_elem_t : sq_node_t {
 
 /* PostgreSQL's AlterStatsStmt (parsenodes.h). */
 struct sq_alter_stats_stmt_t : sq_node_t {
-    sq_items_t defnames;
+    sq_list_t* defnames = nullptr;
     sq_node_t* stxstattarget = nullptr;
     bool missing_ok = false;
 
@@ -2931,10 +2956,10 @@ struct sq_alter_stats_stmt_t : sq_node_t {
 struct sq_create_function_stmt_t : sq_node_t {
     bool is_procedure = false;
     bool replace = false;
-    sq_items_t funcname;
-    sq_items_t parameters;
+    sq_list_t* funcname = nullptr;
+    sq_list_t* parameters = nullptr;
     sq_type_name_t* return_type = nullptr;
-    sq_items_t options;
+    sq_list_t* options = nullptr;
     sq_node_t* sql_body = nullptr;
 
     sq_create_function_stmt_t() { tag = SQ_T_CREATE_FUNCTION_STMT; }
@@ -2955,14 +2980,14 @@ struct sq_function_parameter_t : sq_node_t {
 struct sq_alter_function_stmt_t : sq_node_t {
     sq_object_type_t objtype{};
     sq_object_with_args_t* func = nullptr;
-    sq_items_t actions;
+    sq_list_t* actions = nullptr;
 
     sq_alter_function_stmt_t() { tag = SQ_T_ALTER_FUNCTION_STMT; }
 };
 
 /* PostgreSQL's DoStmt (parsenodes.h). */
 struct sq_do_stmt_t : sq_node_t {
-    sq_items_t args;
+    sq_list_t* args = nullptr;
 
     sq_do_stmt_t() { tag = SQ_T_DO_STMT; }
 };
@@ -2972,7 +2997,7 @@ struct sq_call_stmt_t : sq_node_t {
     sq_func_call_t* funccall = nullptr;
     /* The analyzer's to fill; NULL from the parser. */
     sq_node_t* funcexpr = nullptr;
-    sq_items_t outargs;
+    sq_list_t* outargs = nullptr;
 
     sq_call_stmt_t() { tag = SQ_T_CALL_STMT; }
 };
@@ -3026,15 +3051,15 @@ struct sq_alter_owner_stmt_t : sq_node_t {
 /* PostgreSQL's AlterOperatorStmt (parsenodes.h). */
 struct sq_alter_operator_stmt_t : sq_node_t {
     sq_object_with_args_t* opername = nullptr;
-    sq_items_t options;
+    sq_list_t* options = nullptr;
 
     sq_alter_operator_stmt_t() { tag = SQ_T_ALTER_OPERATOR_STMT; }
 };
 
 /* PostgreSQL's AlterTypeStmt (parsenodes.h). */
 struct sq_alter_type_stmt_t : sq_node_t {
-    sq_items_t type_name;
-    sq_items_t options;
+    sq_list_t* type_name = nullptr;
+    sq_list_t* options = nullptr;
 
     sq_alter_type_stmt_t() { tag = SQ_T_ALTER_TYPE_STMT; }
 };
@@ -3046,7 +3071,7 @@ struct sq_rule_stmt_t : sq_node_t {
     sq_node_t* where_clause = nullptr;
     sq_cmd_type_t event{};
     bool instead = false;
-    sq_items_t actions;
+    sq_list_t* actions = nullptr;
     bool replace = false;
 
     sq_rule_stmt_t() { tag = SQ_T_RULE_STMT; }
@@ -3077,7 +3102,7 @@ struct sq_unlisten_stmt_t : sq_node_t {
 /* PostgreSQL's TransactionStmt (parsenodes.h). */
 struct sq_transaction_stmt_t : sq_node_t {
     sq_transaction_stmt_kind_t kind{};
-    sq_items_t options;
+    sq_list_t* options = nullptr;
     const char* savepoint_name = nullptr;
     const char* gid = nullptr;
     bool chain = false;
@@ -3089,30 +3114,30 @@ struct sq_transaction_stmt_t : sq_node_t {
 /* PostgreSQL's CompositeTypeStmt (parsenodes.h). */
 struct sq_composite_type_stmt_t : sq_node_t {
     sq_range_var_t* typevar = nullptr;
-    sq_items_t coldeflist;
+    sq_list_t* coldeflist = nullptr;
 
     sq_composite_type_stmt_t() { tag = SQ_T_COMPOSITE_TYPE_STMT; }
 };
 
 /* PostgreSQL's CreateEnumStmt (parsenodes.h). */
 struct sq_create_enum_stmt_t : sq_node_t {
-    sq_items_t type_name;
-    sq_items_t vals;
+    sq_list_t* type_name = nullptr;
+    sq_list_t* vals = nullptr;
 
     sq_create_enum_stmt_t() { tag = SQ_T_CREATE_ENUM_STMT; }
 };
 
 /* PostgreSQL's CreateRangeStmt (parsenodes.h). */
 struct sq_create_range_stmt_t : sq_node_t {
-    sq_items_t type_name;
-    sq_items_t params;
+    sq_list_t* type_name = nullptr;
+    sq_list_t* params = nullptr;
 
     sq_create_range_stmt_t() { tag = SQ_T_CREATE_RANGE_STMT; }
 };
 
 /* PostgreSQL's AlterEnumStmt (parsenodes.h). */
 struct sq_alter_enum_stmt_t : sq_node_t {
-    sq_items_t type_name;
+    sq_list_t* type_name = nullptr;
     const char* old_val = nullptr;
     const char* new_val = nullptr;
     const char* new_val_neighbor = nullptr;
@@ -3125,10 +3150,10 @@ struct sq_alter_enum_stmt_t : sq_node_t {
 /* PostgreSQL's ViewStmt (parsenodes.h). */
 struct sq_view_stmt_t : sq_node_t {
     sq_range_var_t* view = nullptr;
-    sq_items_t aliases;
+    sq_list_t* aliases = nullptr;
     sq_node_t* query = nullptr;
     bool replace = false;
-    sq_items_t options;
+    sq_list_t* options = nullptr;
     sq_view_check_option_t with_check_option{};
 
     sq_view_stmt_t() { tag = SQ_T_VIEW_STMT; }
@@ -3144,7 +3169,7 @@ struct sq_load_stmt_t : sq_node_t {
 /* PostgreSQL's CreatedbStmt (parsenodes.h). */
 struct sq_createdb_stmt_t : sq_node_t {
     const char* dbname = nullptr;
-    sq_items_t options;
+    sq_list_t* options = nullptr;
 
     sq_createdb_stmt_t() { tag = SQ_T_CREATEDB_STMT; }
 };
@@ -3152,7 +3177,7 @@ struct sq_createdb_stmt_t : sq_node_t {
 /* PostgreSQL's AlterDatabaseStmt (parsenodes.h). */
 struct sq_alter_database_stmt_t : sq_node_t {
     const char* dbname = nullptr;
-    sq_items_t options;
+    sq_list_t* options = nullptr;
 
     sq_alter_database_stmt_t() { tag = SQ_T_ALTER_DATABASE_STMT; }
 };
@@ -3176,7 +3201,7 @@ struct sq_alter_database_set_stmt_t : sq_node_t {
 struct sq_dropdb_stmt_t : sq_node_t {
     const char* dbname = nullptr;
     bool missing_ok = false;
-    sq_items_t options;
+    sq_list_t* options = nullptr;
 
     sq_dropdb_stmt_t() { tag = SQ_T_DROPDB_STMT; }
 };
@@ -3192,15 +3217,15 @@ struct sq_alter_system_stmt_t : sq_node_t {
 struct sq_cluster_stmt_t : sq_node_t {
     sq_range_var_t* relation = nullptr;
     const char* indexname = nullptr;
-    sq_items_t params;
+    sq_list_t* params = nullptr;
 
     sq_cluster_stmt_t() { tag = SQ_T_CLUSTER_STMT; }
 };
 
 /* PostgreSQL's VacuumStmt (parsenodes.h). */
 struct sq_vacuum_stmt_t : sq_node_t {
-    sq_items_t options;
-    sq_items_t rels;
+    sq_list_t* options = nullptr;
+    sq_list_t* rels = nullptr;
     bool is_vacuumcmd = false;
 
     sq_vacuum_stmt_t() { tag = SQ_T_VACUUM_STMT; }
@@ -3210,7 +3235,7 @@ struct sq_vacuum_stmt_t : sq_node_t {
 struct sq_vacuum_relation_t : sq_node_t {
     sq_range_var_t* relation = nullptr;
     uint32_t oid = 0;
-    sq_items_t va_cols;
+    sq_list_t* va_cols = nullptr;
 
     sq_vacuum_relation_t() { tag = SQ_T_VACUUM_RELATION; }
 };
@@ -3218,7 +3243,7 @@ struct sq_vacuum_relation_t : sq_node_t {
 /* PostgreSQL's ExplainStmt (parsenodes.h). */
 struct sq_explain_stmt_t : sq_node_t {
     sq_node_t* query = nullptr;
-    sq_items_t options;
+    sq_list_t* options = nullptr;
 
     sq_explain_stmt_t() { tag = SQ_T_EXPLAIN_STMT; }
 };
@@ -3258,7 +3283,7 @@ struct sq_discard_stmt_t : sq_node_t {
 
 /* PostgreSQL's LockStmt (parsenodes.h). */
 struct sq_lock_stmt_t : sq_node_t {
-    sq_items_t relations;
+    sq_list_t* relations = nullptr;
     int mode = 0;
     bool nowait = false;
 
@@ -3267,7 +3292,7 @@ struct sq_lock_stmt_t : sq_node_t {
 
 /* PostgreSQL's ConstraintsSetStmt (parsenodes.h). */
 struct sq_constraints_set_stmt_t : sq_node_t {
-    sq_items_t constraints;
+    sq_list_t* constraints = nullptr;
     bool deferred = false;
 
     sq_constraints_set_stmt_t() { tag = SQ_T_CONSTRAINTS_SET_STMT; }
@@ -3278,17 +3303,17 @@ struct sq_reindex_stmt_t : sq_node_t {
     sq_reindex_object_type_t kind{};
     sq_range_var_t* relation = nullptr;
     const char* name = nullptr;
-    sq_items_t params;
+    sq_list_t* params = nullptr;
 
     sq_reindex_stmt_t() { tag = SQ_T_REINDEX_STMT; }
 };
 
 /* PostgreSQL's CreateConversionStmt (parsenodes.h). */
 struct sq_create_conversion_stmt_t : sq_node_t {
-    sq_items_t conversion_name;
+    sq_list_t* conversion_name = nullptr;
     const char* for_encoding_name = nullptr;
     const char* to_encoding_name = nullptr;
-    sq_items_t func_name;
+    sq_list_t* func_name = nullptr;
     bool def = false;
 
     sq_create_conversion_stmt_t() { tag = SQ_T_CREATE_CONVERSION_STMT; }
@@ -3319,7 +3344,7 @@ struct sq_create_transform_stmt_t : sq_node_t {
 /* PostgreSQL's PrepareStmt (parsenodes.h). */
 struct sq_prepare_stmt_t : sq_node_t {
     const char* name = nullptr;
-    sq_items_t argtypes;
+    sq_list_t* argtypes = nullptr;
     sq_node_t* query = nullptr;
 
     sq_prepare_stmt_t() { tag = SQ_T_PREPARE_STMT; }
@@ -3328,7 +3353,7 @@ struct sq_prepare_stmt_t : sq_node_t {
 /* PostgreSQL's ExecuteStmt (parsenodes.h). */
 struct sq_execute_stmt_t : sq_node_t {
     const char* name = nullptr;
-    sq_items_t params;
+    sq_list_t* params = nullptr;
 
     sq_execute_stmt_t() { tag = SQ_T_EXECUTE_STMT; }
 };
@@ -3344,7 +3369,7 @@ struct sq_deallocate_stmt_t : sq_node_t {
 
 /* PostgreSQL's DropOwnedStmt (parsenodes.h). */
 struct sq_drop_owned_stmt_t : sq_node_t {
-    sq_items_t roles;
+    sq_list_t* roles = nullptr;
     sq_drop_behavior_t behavior{};
 
     sq_drop_owned_stmt_t() { tag = SQ_T_DROP_OWNED_STMT; }
@@ -3352,7 +3377,7 @@ struct sq_drop_owned_stmt_t : sq_node_t {
 
 /* PostgreSQL's ReassignOwnedStmt (parsenodes.h). */
 struct sq_reassign_owned_stmt_t : sq_node_t {
-    sq_items_t roles;
+    sq_list_t* roles = nullptr;
     sq_role_spec_t* newrole = nullptr;
 
     sq_reassign_owned_stmt_t() { tag = SQ_T_REASSIGN_OWNED_STMT; }
@@ -3360,8 +3385,8 @@ struct sq_reassign_owned_stmt_t : sq_node_t {
 
 /* PostgreSQL's AlterTSDictionaryStmt (parsenodes.h). */
 struct sq_alter_ts_dictionary_stmt_t : sq_node_t {
-    sq_items_t dictname;
-    sq_items_t options;
+    sq_list_t* dictname = nullptr;
+    sq_list_t* options = nullptr;
 
     sq_alter_ts_dictionary_stmt_t() { tag = SQ_T_ALTER_TS_DICTIONARY_STMT; }
 };
@@ -3369,9 +3394,9 @@ struct sq_alter_ts_dictionary_stmt_t : sq_node_t {
 /* PostgreSQL's AlterTSConfigurationStmt (parsenodes.h). */
 struct sq_alter_ts_configuration_stmt_t : sq_node_t {
     sq_alter_ts_config_type_t kind{};
-    sq_items_t cfgname;
-    sq_items_t tokentype;
-    sq_items_t dicts;
+    sq_list_t* cfgname = nullptr;
+    sq_list_t* tokentype = nullptr;
+    sq_list_t* dicts = nullptr;
     bool override = false;
     bool replace = false;
     bool missing_ok = false;
@@ -3383,7 +3408,7 @@ struct sq_alter_ts_configuration_stmt_t : sq_node_t {
 struct sq_publication_table_t : sq_node_t {
     sq_range_var_t* relation = nullptr;
     sq_node_t* where_clause = nullptr;
-    sq_items_t columns;
+    sq_list_t* columns = nullptr;
 
     sq_publication_table_t() { tag = SQ_T_PUBLICATION_TABLE; }
 };
@@ -3401,8 +3426,8 @@ struct sq_publication_obj_spec_t : sq_node_t {
 /* PostgreSQL's CreatePublicationStmt (parsenodes.h). */
 struct sq_create_publication_stmt_t : sq_node_t {
     const char* pubname = nullptr;
-    sq_items_t options;
-    sq_items_t pubobjects;
+    sq_list_t* options = nullptr;
+    sq_list_t* pubobjects = nullptr;
     bool for_all_tables = false;
 
     sq_create_publication_stmt_t() { tag = SQ_T_CREATE_PUBLICATION_STMT; }
@@ -3411,8 +3436,8 @@ struct sq_create_publication_stmt_t : sq_node_t {
 /* PostgreSQL's AlterPublicationStmt (parsenodes.h). */
 struct sq_alter_publication_stmt_t : sq_node_t {
     const char* pubname = nullptr;
-    sq_items_t options;
-    sq_items_t pubobjects;
+    sq_list_t* options = nullptr;
+    sq_list_t* pubobjects = nullptr;
     bool for_all_tables = false;
     sq_alter_publication_action_t action{};
 
@@ -3423,8 +3448,8 @@ struct sq_alter_publication_stmt_t : sq_node_t {
 struct sq_create_subscription_stmt_t : sq_node_t {
     const char* subname = nullptr;
     const char* conninfo = nullptr;
-    sq_items_t publication;
-    sq_items_t options;
+    sq_list_t* publication = nullptr;
+    sq_list_t* options = nullptr;
 
     sq_create_subscription_stmt_t() { tag = SQ_T_CREATE_SUBSCRIPTION_STMT; }
 };
@@ -3434,8 +3459,8 @@ struct sq_alter_subscription_stmt_t : sq_node_t {
     sq_alter_subscription_type_t kind{};
     const char* subname = nullptr;
     const char* conninfo = nullptr;
-    sq_items_t publication;
-    sq_items_t options;
+    sq_list_t* publication = nullptr;
+    sq_list_t* options = nullptr;
 
     sq_alter_subscription_stmt_t() { tag = SQ_T_ALTER_SUBSCRIPTION_STMT; }
 };

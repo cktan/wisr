@@ -403,12 +403,15 @@ static list_ref_t run_grammar(std::string_view text,
 /*
  * Run fill, which parses into tree, as a call of the API: tree is
  * emptied first and again if fill fails, and whatever fill throws
- * becomes the calling thread's error and -1.
+ * becomes the calling thread's error and -1. The tree's nodes go
+ * where opt's allocator says.
  */
-template <typename Fill> static int parse_call(sq_tree_t &tree, Fill fill) {
+template <typename Fill>
+static int parse_call(sq_tree_t &tree, const sq_options_t *opt, Fill fill) {
   try {
     // A parse is all or nothing, so what the tree held goes first.
     tree = sq_tree_t();
+    tree_access_t::store(tree).allocator = opt ? opt->allocator : nullptr;
     try {
       fill();
       return 0;
@@ -433,7 +436,7 @@ template <typename Fill> static int parse_call(sq_tree_t &tree, Fill fill) {
 
 /* Parse sql into out, or leave out empty and say why. */
 int sq_parse(std::string_view sql, const sq_options_t *opt, sq_tree_t &out) {
-  return parse_call(out, [&] {
+  return parse_call(out, opt, [&] {
     list_ref_t stmts = run_grammar(sql, opt ? *opt : sq_options_t(), out, 0);
     list_cell_t cell;
     foreach (cell, stmts) {
@@ -445,7 +448,7 @@ int sq_parse(std::string_view sql, const sq_options_t *opt, sq_tree_t &out) {
 /* Parse text as one type name, into tree, and hand the type back. */
 int sq_parse_type_name(std::string_view text, const sq_options_t *opt,
                        sq_tree_t &tree, sq_type_name_t **out) {
-  return parse_call(tree, [&] {
+  return parse_call(tree, opt, [&] {
     list_ref_t result =
         run_grammar(text, opt ? *opt : sq_options_t(), tree, MODE_TYPE_NAME);
     *out = static_cast<sq_type_name_t *>(linitial(result));

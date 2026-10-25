@@ -51,8 +51,8 @@ for (const sq_raw_stmt_t* raw : tree.stmts) {
   when it is destroyed. Nothing is freed by hand.
 - **The nodes are PostgreSQL's**, in `include/sq_nodes.h`, by
   sq's names: `SelectStmt` is `sq_select_stmt_t` and its
-  `targetList` is `target_list`. A list is an `sq_items_t`, an
-  array in the tree, read as a `std::vector`; text is a
+  `targetList` is `target_list`, laid out as digres's own. A
+  list is an `sq_list_t*`, PostgreSQL's `List`; text is a
   `const char*`, NULL where absent.
 - **Options** are an `sq_options_t`, or NULL for PostgreSQL's
   defaults: its three settings that change how a string literal
@@ -70,7 +70,7 @@ nodes like any other statement.
 | `include/sq.h`, `sq_error.h` | the interface |
 | `include/sq_nodes.h` | the nodes; generated, and committed |
 | `spec/` | PostgreSQL 18.6's node headers and keyword list, unedited, and the list of the nodes its grammar can build |
-| `gen/` | the generators: the nodes and the functions over them, the keyword hash, and digres's converter from sq's nodes to PostgreSQL's |
+| `gen/` | the generators: the nodes and the functions over them, the keyword hash, and digres's checks that sq's nodes are its own |
 | `src/scan.l`, `src/gram.y` | PostgreSQL's scanner and grammar, forked: the rules are PostgreSQL's, the code around them is sq's |
 | `src/parser.cc` | the two parsing calls, and the filter between scanner and grammar |
 | `src/tree.cc`, `error.cc`, `list.cc`, `utf8.cc` | what a tree owns, the thread's error, lists while the grammar builds them, UTF-8 |

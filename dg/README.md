@@ -86,8 +86,11 @@ catalog data, with every row that refers to them.
 digres parses with `../sq`, a library of its own: PostgreSQL
 18's grammar and scanner, which know nothing of the server.
 `make` builds it and links it in. `src/backend/parser/parser.c`
-is what joins the two, and `sq_convert.c`, which is generated,
-turns sq's tree into the nodes the analyzer reads.
+is what joins the two: sq builds its tree in the current memory
+context, as digres's own nodes, and the analyzer reads it as it
+is. `sq_nodes.c`, which sq's generator writes, holds at compile
+time that sq's nodes are digres's, and refuses what digres has
+no part of.
 
 `make test` checks it. `build/digres --parse` parses standard
 input and prints the trees, with no server started, and sq's

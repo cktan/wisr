@@ -3575,6 +3575,46 @@ against 'update tk1 set b = b + 1 where a = 2' -v VERBOSITY=verbose \
   "passed 1 2 " ] || fail "skip locked leaves out a written row"
 local_psql -c 'drop table tk1' > /dev/null 2>&1
 
+# Verify that the parser refuses what digres has no part of, a publication
+# or a subscription, by its statement or by a statement naming one, before
+# it runs anything of the text; and refuses nothing else.
+# 1. A publication's and a subscription's own statements are refused with
+#    0A000 and digres's message.
+# 2. Statements naming one as an object -- DROP, COMMENT ON, ALTER ... OWNER
+#    -- are refused alike, and so is one in a SQL function's BEGIN ATOMIC
+#    body.
+# 3. A text whose second statement is refused runs neither: the table its
+#    first would make is not there after.
+# 4. The same kinds of statement naming a table run.
+refused() {
+  local_psql -v VERBOSITY=verbose -c "$1" 2>&1 |
+    grep -q "ERROR:  0A000: $2 are not supported"
+}
+refused 'create publication p for all tables' publications ||
+  fail "create publication is refused"
+refused 'alter publication p add table t' publications ||
+  fail "alter publication is refused"
+refused "create subscription s connection 'x' publication p" subscriptions ||
+  fail "create subscription is refused"
+refused 'drop subscription s' subscriptions ||
+  fail "drop subscription is refused"
+refused 'drop publication p' publications ||
+  fail "drop of a publication is refused"
+refused "comment on publication p is 'x'" publications ||
+  fail "comment on a publication is refused"
+refused 'alter subscription s owner to nobody' subscriptions ||
+  fail "alter owner of a subscription is refused"
+refused 'create function fpub() returns int language sql begin atomic
+  create publication p for all tables; select 1; end' publications ||
+  fail "a publication in a function's body is refused"
+refused 'create table tpub (a int); create publication p for all tables' \
+  publications || fail "a text with a refused statement is refused"
+local_psql -c 'select 1 from tpub' > /dev/null 2>&1 &&
+  fail "a refused text runs none of its statements"
+local_psql -c 'create table tpub (a int)' -c "comment on table tpub is 'x'" \
+  -c 'alter table tpub rename to tpub2' -c 'drop table tpub2' \
+  > "$work/pub.out" 2>&1 || fail "statements naming a table are not refused"
+
 # Verify that INSERT ... ON CONFLICT finds the row that has a key before it
 # writes, in sm, and does nothing or updates that row.
 # 1. tu1 has a key, id, and a unique name. DO NOTHING on a taken id inserts

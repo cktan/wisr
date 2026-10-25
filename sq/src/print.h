@@ -26,7 +26,7 @@ inline void out_typed(std::string &s, const sq_node_t *node) {
 }
 
 /* Write a list's nodes in parentheses, or "<>" for an empty list. */
-void out_list(std::string &s, const sq_items_t &items);
+void out_list(std::string &s, const sq_list_t *l);
 
 /* Write text as a token, escaped; "<>" for NULL and "" for empty. */
 void out_string(std::string &s, const char *text);

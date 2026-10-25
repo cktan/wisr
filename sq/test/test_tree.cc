@@ -8,25 +8,35 @@
 
 #include "sq.h"
 
+#include "list.h"
 #include "tree.h"
 
 #include <string>
+#include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <utility>
 #include <vector>
 
 TEST_CASE("a node is made zeroed, with its own tag") {
-  // Verify make_node gives what PostgreSQL's makeNode gives.
-  // 1. Make a SelectStmt and a list node.
-  // 2. Confirm each one's tag, and that every field is empty.
+  // Verify make_node gives what PostgreSQL's makeNode gives, and a list
+  // what PostgreSQL's list_make1 gives.
+  // 1. Make a SelectStmt, and a list of it.
+  // 2. Confirm each one's tag, that every field of the SelectStmt is
+  //    empty, and that the list holds it in place.
   sq_tree_t t;
+  sq::current_tree_t current(t); // lists grow in the tree being built
   sq_select_stmt_t *sel = sq::make_node<sq_select_stmt_t>(t);
   CHECK(sel->tag == SQ_T_SELECT_STMT);
-  CHECK(sel->target_list.empty());
+  CHECK(sel->target_list == nullptr);
   CHECK(sel->where_clause == nullptr);
   CHECK(sel->all == false);
   CHECK(sel->op == SQ_SETOP_NONE);
-  CHECK(sq::make_node<sq_list_t>(t)->tag == SQ_T_LIST);
+  sq_list_t *l = sq::list_make1(sel);
+  CHECK(l->tag == SQ_T_LIST);
+  CHECK(l->length == 1);
+  CHECK(l->elements == l->initial_elements);
+  CHECK(l->elements[0].ptr_value == sel);
 }
 
 TEST_CASE("a tree's text is its own copy") {
@@ -52,7 +62,7 @@ TEST_CASE("a moved tree keeps its nodes, and frees them once") {
   sq_column_ref_t *col = sq::make_node<sq_column_ref_t>(a);
   sq_string_t *name = sq::make_node<sq_string_t>(a);
   name->sval = sq::dup_string(a, "x");
-  col->fields.push_back(name);
+  col->fields = sq::lappend(col->fields, name);
   sq_raw_stmt_t *raw = sq::make_node<sq_raw_stmt_t>(a);
   raw->stmt = col;
   a.stmts.push_back(raw);
@@ -97,7 +107,7 @@ TEST_CASE("a tree past its first block keeps every node and string whole") {
     sq_column_ref_t *col = sq::make_node<sq_column_ref_t>(t);
     sq_string_t *name = sq::make_node<sq_string_t>(t);
     name->sval = sq::dup_string(t, std::to_string(i));
-    col->fields.push_back(name);
+    col->fields = sq::lappend(col->fields, name);
     cols.push_back(col);
   }
   std::string big(2 << 20, 'b');
@@ -107,10 +117,113 @@ TEST_CASE("a tree past its first block keeps every node and string whole") {
     sq_column_ref_t *col = cols[i];
     CHECK(reinterpret_cast<uintptr_t>(col) % alignof(sq_column_ref_t) == 0);
     CHECK(col->tag == SQ_T_COLUMN_REF);
-    REQUIRE(col->fields.size() == 1);
-    auto *name = static_cast<sq_string_t *>(col->fields[0]);
+    REQUIRE(sq::list_length(col->fields) == 1);
+    auto *name = static_cast<sq_string_t *>(col->fields->elements[0].ptr_value);
     CHECK(name->tag == SQ_T_STRING);
     CHECK(std::string(name->sval) == std::to_string(i));
   }
   CHECK(std::string(copy) == big);
+}
+
+TEST_CASE(
+    "a list grows as PostgreSQL's does: in place, then an array of its own") {
+  // Verify list.c's growth: cells after the header until they run out,
+  // then an array apart that grows; and the functions that move cells.
+  // 1. Append 40 nodes one by one: the first fill the cells in place,
+  //    the next move to an array apart, which grows after.
+  // 2. Put one more at the front; concatenate the list with itself.
+  // 3. Confirm every node is where it should be.
+  sq_tree_t t;
+  sq::current_tree_t current(t); // lists grow in the tree being built
+  std::vector<sq_node_t *> nodes;
+  sq::list_ref_t l = sq::NIL;
+  for (int i = 0; i < 40; i++) {
+    nodes.push_back(sq::make_node<sq_integer_t>(t));
+    l = sq::lappend(l, nodes.back());
+    if (i == 0) {
+      CHECK(l.list->elements == l.list->initial_elements);
+    }
+  }
+  CHECK(l.list->elements != l.list->initial_elements);
+  CHECK(l.list->max_length >= 40);
+  sq_node_t *front = sq::make_node<sq_integer_t>(t);
+  l = sq::lcons(front, l);
+  l = sq::list_concat(l, l);
+
+  REQUIRE(sq::list_length(l) == 82);
+  for (int half = 0; half < 2; half++) {
+    CHECK(l.list->elements[half * 41].ptr_value == front);
+    for (int i = 0; i < 40; i++) {
+      CHECK(l.list->elements[half * 41 + 1 + i].ptr_value == nodes[i]);
+    }
+  }
+}
+
+namespace {
+
+/* An allocator that keeps what it hands out, for a test to free. */
+struct kept_t {
+  std::vector<void *> pieces;
+  int reallocs = 0;
+};
+
+/* sq_allocator_t's alloc, from malloc, kept. */
+void *kept_alloc(void *arg, size_t size) {
+  void *p = malloc(size);
+  static_cast<kept_t *>(arg)->pieces.push_back(p);
+  return p;
+}
+
+/* sq_allocator_t's realloc, kept in place of what it grew. */
+void *kept_realloc(void *arg, void *ptr, size_t size) {
+  kept_t *k = static_cast<kept_t *>(arg);
+  void *p = realloc(ptr, size);
+  for (void *&piece : k->pieces) {
+    if (piece == ptr) {
+      piece = p;
+    }
+  }
+  k->reallocs++;
+  return p;
+}
+
+} // namespace
+
+TEST_CASE(
+    "a parse with an allocator makes its tree there, and frees none of it") {
+  // Verify sq_options_t's allocator: a server's memory context holds
+  // the tree, and the server frees it.
+  // 1. Parse a SELECT of 40 columns with an allocator that keeps what
+  //    it hands out.
+  // 2. Confirm the statement and its select list came from it, and
+  //    that the list grew by its realloc.
+  // 3. Destroy the tree: everything kept is still the test's to free,
+  //    which it does; the leak checker sees anything else.
+  kept_t kept;
+  sq_allocator_t allocator{kept_alloc, kept_realloc, &kept};
+  sq_options_t opt;
+  opt.allocator = &allocator;
+  std::string sql = "select 0";
+  for (int i = 1; i < 40; i++) {
+    sql += ", " + std::to_string(i);
+  }
+  {
+    sq_tree_t tree;
+    REQUIRE(sq_parse(sql, &opt, tree) == 0);
+    REQUIRE(tree.stmts.size() == 1);
+    auto *sel = static_cast<sq_select_stmt_t *>(tree.stmts[0]->stmt);
+    auto kept_piece = [&](const void *p) {
+      return std::find(kept.pieces.begin(), kept.pieces.end(), p) !=
+             kept.pieces.end();
+    };
+    CHECK(kept_piece(tree.stmts[0]));
+    CHECK(kept_piece(sel));
+    CHECK(kept_piece(sel->target_list));
+    CHECK(kept_piece(sel->target_list->elements));
+    CHECK(sq::list_length(sel->target_list) == 40);
+    CHECK(kept.reallocs > 0);
+  }
+  for (void *p : kept.pieces) {
+    free(p);
+  }
 }

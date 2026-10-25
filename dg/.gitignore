@@ -15,7 +15,7 @@ src/include/catalog/system_fk_info.h
 src/include/catalog/postgres.bki
 src/include/catalog/system_constraints.sql
 src/include/nodes/nodetags.h
-src/backend/parser/sq_convert.c
+src/backend/parser/sq_nodes.c
 src/include/catalog/cat_builtin.h
 src/backend/catalog/cat_builtin.c
 src/include/utils/errcodes.h

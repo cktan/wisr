@@ -8,6 +8,8 @@
 
 #include "sq.h"
 
+#include "list.h"
+
 #include <string>
 #include <thread>
 #include <utility>
@@ -213,7 +215,7 @@ TEST_CASE("a type name is handed back, owned by its tree") {
   std::string out;
   REQUIRE(sq_to_string(type, out) == 0);
   CHECK(out.starts_with("{TYPENAME :names (\"pg_catalog\" \"varchar\")"));
-  CHECK(type->array_bounds.size() == 1);
+  CHECK(sq::list_length(type->array_bounds) == 1);
 }
 
 TEST_CASE("a refused type name leaves the caller's pointer alone") {

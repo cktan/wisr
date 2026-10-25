@@ -147,6 +147,20 @@ typedef void (*sq_notice_fn)(void* arg, const sq_notice_t* notice);
  * How to parse. The first three are PostgreSQL's settings of the
  * same names, at PostgreSQL's defaults.
  */
+/*
+ * Where a parse puts its nodes, lists and text, in place of the tree's
+ * own arena: a server's memory context, so that the server may keep,
+ * grow and free them as its own. alloc returns size bytes aligned for
+ * any node, or NULL when out of memory; realloc resizes what alloc
+ * returned, or returns NULL and leaves it be. What they hand out is
+ * the caller's: the tree frees none of it.
+ */
+struct sq_allocator_t {
+    void* (*alloc)(void* arg, size_t size);
+    void* (*realloc)(void* arg, void* ptr, size_t size);
+    void* arg;
+};
+
 struct sq_options_t {
     bool                 standard_conforming_strings = true;
     sq_backslash_quote_t backslash_quote = SQ_BACKSLASH_QUOTE_SAFE_ENCODING;
@@ -155,6 +169,9 @@ struct sq_options_t {
     /* Called for each notice, or NULL to drop them. */
     sq_notice_fn         notice = nullptr;
     void*                notice_arg = nullptr;
+
+    /* Where the tree's nodes go, or NULL for the tree's own arena. */
+    const sq_allocator_t* allocator = nullptr;
 };
 
 /* ---- parsing ---- */

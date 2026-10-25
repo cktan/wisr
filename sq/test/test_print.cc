@@ -9,16 +9,33 @@
 
 #include "sq.h"
 
+#include "list.h"
 #include "tree.h"
 
 #include <string>
 
 namespace {
 
-/* An A_Const holding the value node val. */
+/* An A_Const holding the value of the value node val, in place. */
 sq_node_t *constant(sq_tree_t &t, sq_node_t *val) {
   sq_a_const_t *c = sq::make_node<sq_a_const_t>(t);
-  c->val = val;
+  switch (val->tag) {
+  case SQ_T_INTEGER:
+    c->val.ival = *static_cast<sq_integer_t *>(val);
+    break;
+  case SQ_T_FLOAT:
+    c->val.fval = *static_cast<sq_float_t *>(val);
+    break;
+  case SQ_T_BOOLEAN:
+    c->val.boolval = *static_cast<sq_boolean_t *>(val);
+    break;
+  case SQ_T_STRING:
+    c->val.sval = *static_cast<sq_string_t *>(val);
+    break;
+  default:
+    c->val.bsval = *static_cast<sq_bit_string_t *>(val);
+    break;
+  }
   c->location = -1;
   return c;
 }
@@ -45,7 +62,7 @@ sq_node_t *string_const(sq_tree_t &t, const char *text) {
 /* A reference to the column called name. */
 sq_node_t *column(sq_tree_t &t, const char *name) {
   sq_column_ref_t *c = sq::make_node<sq_column_ref_t>(t);
-  c->fields.push_back(string_node(t, name));
+  c->fields = sq::lappend(c->fields, string_node(t, name));
   return c;
 }
 
@@ -58,9 +75,9 @@ sq_node_t *target(sq_tree_t &t, sq_node_t *val) {
 
 /* A list node holding the names given. */
 sq_node_t *name_list(sq_tree_t &t, std::initializer_list<const char *> names) {
-  sq_list_t *l = sq::make_node<sq_list_t>(t);
+  sq::list_ref_t l = sq::NIL;
   for (const char *name : names) {
-    l->items.push_back(string_node(t, name));
+    l = sq::lappend(l, string_node(t, name));
   }
   return l;
 }
@@ -89,11 +106,11 @@ TEST_CASE("SELECT 1 + 1 prints as PostgreSQL prints it") {
   sq::current_tree_t current(t); // lists grow in the tree being built
   sq_a_expr_t *plus = sq::make_node<sq_a_expr_t>(t);
   plus->kind = SQ_AEXPR_OP;
-  plus->name.push_back(string_node(t, "+"));
+  plus->name = sq::lappend(plus->name, string_node(t, "+"));
   plus->lexpr = int_const(t, 1);
   plus->rexpr = int_const(t, 1);
   sq_select_stmt_t *sel = sq::make_node<sq_select_stmt_t>(t);
-  sel->target_list.push_back(target(t, plus));
+  sel->target_list = sq::lappend(sel->target_list, target(t, plus));
 
   CHECK(text_of(sel) ==
         std::string(
@@ -118,32 +135,34 @@ TEST_CASE("constants of every kind, a qualified table, and AND and NOT") {
 
   sq_a_const_t *null_const = sq::make_node<sq_a_const_t>(t);
   null_const->isnull = true;
-  sel->target_list.push_back(target(t, null_const));
-  sel->target_list.push_back(target(t, string_const(t, "a b")));
+  sel->target_list = sq::lappend(sel->target_list, target(t, null_const));
+  sel->target_list =
+      sq::lappend(sel->target_list, target(t, string_const(t, "a b")));
   sq_float_t *f = sq::make_node<sq_float_t>(t);
   f->fval = sq::dup_string(t, "1.5");
-  sel->target_list.push_back(target(t, constant(t, f)));
+  sel->target_list = sq::lappend(sel->target_list, target(t, constant(t, f)));
   sq_boolean_t *b = sq::make_node<sq_boolean_t>(t);
   b->boolval = true;
-  sel->target_list.push_back(target(t, constant(t, b)));
+  sel->target_list = sq::lappend(sel->target_list, target(t, constant(t, b)));
   sq_bit_string_t *bits = sq::make_node<sq_bit_string_t>(t);
   bits->bsval = sq::dup_string(t, "b101");
-  sel->target_list.push_back(target(t, constant(t, bits)));
+  sel->target_list =
+      sq::lappend(sel->target_list, target(t, constant(t, bits)));
 
   sq_range_var_t *rel = sq::make_node<sq_range_var_t>(t);
   rel->schemaname = sq::dup_string(t, "s");
   rel->relname = sq::dup_string(t, "t");
   rel->inh = true;
   rel->relpersistence = 'p';
-  sel->from_clause.push_back(rel);
+  sel->from_clause = sq::lappend(sel->from_clause, rel);
 
   sq_bool_expr_t *not_y = sq::make_node<sq_bool_expr_t>(t);
   not_y->boolop = SQ_NOT_EXPR;
-  not_y->args.push_back(column(t, "y"));
+  not_y->args = sq::lappend(not_y->args, column(t, "y"));
   sq_bool_expr_t *both = sq::make_node<sq_bool_expr_t>(t);
   both->boolop = SQ_AND_EXPR;
-  both->args.push_back(column(t, "x"));
-  both->args.push_back(not_y);
+  both->args = sq::lappend(both->args, column(t, "x"));
+  both->args = sq::lappend(both->args, not_y);
   sel->where_clause = both;
 
   CHECK(text_of(sel) ==
@@ -192,8 +211,8 @@ TEST_CASE("a list of lists prints nested") {
   sq_tree_t t;
   sq::current_tree_t current(t); // lists grow in the tree being built
   sq_drop_stmt_t *d = sq::make_node<sq_drop_stmt_t>(t);
-  d->objects.push_back(name_list(t, {"a"}));
-  d->objects.push_back(name_list(t, {"b", "c"}));
+  d->objects = sq::lappend(d->objects, name_list(t, {"a"}));
+  d->objects = sq::lappend(d->objects, name_list(t, {"b", "c"}));
   d->remove_type = SQ_OBJECT_TABLE;
   CHECK(text_of(d) ==
         "{DROPSTMT :objects ((\"a\") (\"b\" \"c\")) :removeType 41 "
@@ -227,7 +246,7 @@ TEST_CASE("locations are hidden, or shown when asked for") {
   sq_tree_t t;
   sq::current_tree_t current(t); // lists grow in the tree being built
   sq_column_ref_t *col = sq::make_node<sq_column_ref_t>(t);
-  col->fields.push_back(string_node(t, "a"));
+  col->fields = sq::lappend(col->fields, string_node(t, "a"));
   col->location = 7;
   sq_raw_stmt_t *raw = sq::make_node<sq_raw_stmt_t>(t);
   raw->stmt = col;

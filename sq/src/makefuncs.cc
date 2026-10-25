@@ -303,7 +303,8 @@ sq_node_t *make_json_is_predicate(sq_node_t *expr, sq_json_format_t *format,
 sq_node_t *make_string_const(const char *str, int location) {
   sq_a_const_t *n = make_node<sq_a_const_t>();
 
-  n->val = make_string(str);
+  n->val.sval.tag = SQ_T_STRING;
+  n->val.sval.sval = str;
   n->location = location;
 
   return (sq_node_t *)n;
@@ -451,9 +452,9 @@ static int leftmost_loc(int loc1, int loc2) {
 }
 
 /* The location of the first node of a list that has one, as for a List. */
-static int list_location(const sq_items_t &items) {
-  for (const sq_node_t *item : items) {
-    int loc = expr_location(item);
+static int list_location(const sq_list_t *items) {
+  for (int i = 0; i < list_length(items); i++) {
+    int loc = expr_location(items->elements[i].ptr_value);
     if (loc >= 0) {
       return loc;
     }
@@ -591,7 +592,7 @@ int expr_location(const sq_node_t *expr) {
     break;
   case SQ_T_LIST:
     /* report location of first list member that has a location */
-    loc = list_location(static_cast<const sq_list_t *>(expr)->items);
+    loc = list_location(static_cast<const sq_list_t *>(expr));
     break;
   case SQ_T_A_EXPR: {
     const sq_a_expr_t *aexpr = (const sq_a_expr_t *)expr;

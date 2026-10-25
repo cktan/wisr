@@ -11,6 +11,8 @@
 #ifndef SQ_SRC_TREE_H
 #define SQ_SRC_TREE_H
 
+#include <string.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <new>
@@ -60,13 +62,23 @@ private:
   size_t m_block_size = 8192; /* the next block's size */
 };
 
-/* What a tree owns: an arena with its nodes, lists and text in it. */
+/*
+ * Where a tree's nodes, lists and text go: its arena, or the caller's
+ * allocator (sq_options_t), whose memory the tree never frees.
+ */
 struct store_t {
   arena_t arena;
+  const sq_allocator_t *allocator = nullptr;
 
   store_t() = default;
   store_t(const store_t &) = delete;
   store_t &operator=(const store_t &) = delete;
+
+  /* size bytes aligned to align, at most 8; throws bad_alloc. */
+  void *alloc(size_t size, size_t align);
+
+  /* ptr, alloc'd with old bytes, grown to size; throws bad_alloc. */
+  void *realloc(void *ptr, size_t old, size_t size);
 };
 
 /* The one way into a tree's store from outside sq_tree_t. */
@@ -77,10 +89,13 @@ struct tree_access_t {
 
 /* Make a node of type T, zeroed but for its tag, owned by tree. */
 template <typename T> T *make_node(sq_tree_t &tree) {
-  // A node is never destroyed: its arena goes with the tree.
+  // A node is never destroyed: its memory goes with the tree, or is
+  // the caller's.
   static_assert(std::is_trivially_destructible_v<T>);
-  store_t &store = tree_access_t::store(tree);
-  return new (store.arena.alloc(sizeof(T), alignof(T))) T();
+  void *at = tree_access_t::store(tree).alloc(sizeof(T), alignof(T));
+  // Zeroed, as PostgreSQL's makeNode zeroes, padding and all.
+  memset(at, 0, sizeof(T));
+  return new (at) T();
 }
 
 /*
@@ -98,10 +113,10 @@ char *dup_string(sq_tree_t &tree, std::string_view text);
 sq_tree_t *current_tree();
 
 /*
- * The arena of the tree being built, where a list grows; throws
+ * The store of the tree being built, where a list grows; throws
  * logic_error if no tree is being built.
  */
-arena_t &current_arena();
+store_t &current_store();
 
 /* Names a tree as the one being built, for as long as this lives. */
 class current_tree_t {

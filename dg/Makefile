@@ -73,7 +73,7 @@ GEN := $(I)/catalog/.stamp $(B)/nodes/.stamp $(B)/utils/.fmgr-stamp \
     $(I)/utils/errcodes.h \
     $(B)/utils/activity/.stamp $(I)/utils/probes.h \
     $(I)/pg_config_paths.h src/common/kwlist_d.h \
-    $(B)/parser/sq_convert.c $(I)/catalog/cat_builtin.h \
+    $(B)/parser/sq_nodes.c $(I)/catalog/cat_builtin.h \
     $(B)/catalog/cat_builtin.c $(B)/utils/adt/jsonpath_gram.c \
     $(B)/utils/adt/jsonpath_scan.c $(B)/utils/misc/guc-file.c \
     $(B)/utils/misc/tznames_builtin.c
@@ -128,7 +128,7 @@ tsan: gen $(LIBSQ) $(LIBSM_TSAN) $(ROCKSDB_TSAN)
 	$(MAKE) build/numbin
 	DIGRES="setarch $$(uname -m) -R build/digres-tsan" test/server.sh
 
-# The parser is sq and a converter (src/backend/parser/parser.c). sq's
+# The parser is sq (src/backend/parser/parser.c), whose nodes are digres's. sq's
 # tests keep what PostgreSQL's parser printed for each of their files;
 # "digres --parse" prints the same for raw_parser(), so they check
 # that digres still parses to PostgreSQL's nodes.
@@ -294,11 +294,11 @@ $(I)/catalog/cat_builtin.h: $(I)/catalog/.stamp $(B)/catalog/gen_cat.py
 $(B)/catalog/cat_builtin.c: $(I)/catalog/.stamp $(B)/catalog/gen_cat.py
 	python3 $(B)/catalog/gen_cat.py $(I)/catalog/postgres.bki source > $@
 
-# sq's tree as PostgreSQL's nodes, written by sq's generator from the
-# node headers it has: one function a node, as its other output is.
-$(B)/parser/sq_convert.c: $(SQ)/gen/gen_nodes.py $(SQ)/gen/nodespec.py \
+# That sq's nodes are digres's, held at compile time, and the statements
+# digres refuses: written by sq's generator from the node headers it has.
+$(B)/parser/sq_nodes.c: $(SQ)/gen/gen_nodes.py $(SQ)/gen/nodespec.py \
         $(wildcard $(SQ)/spec/*)
-	python3 $(SQ)/gen/gen_nodes.py converter > $@
+	python3 $(SQ)/gen/gen_nodes.py checks > $@
 
 # Grammars and scanners. SQL's own are sq's.
 $(B)/utils/adt/jsonpath_gram.c: $(B)/utils/adt/jsonpath_gram.y

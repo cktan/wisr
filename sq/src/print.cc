@@ -82,18 +82,18 @@ void out_int64(std::string &s, int64_t v) { s += std::to_string(v); }
 void out_long(std::string &s, long v) { s += std::to_string(v); }
 
 /* Write a list: its nodes, one space apart, in parentheses. */
-void out_list(std::string &s, const sq_items_t &items) {
+void out_list(std::string &s, const sq_list_t *l) {
   // PostgreSQL's empty list is NIL, a null pointer.
-  if (items.empty()) {
+  if (l == nullptr) {
     s += "<>";
     return;
   }
   s += '(';
-  for (size_t i = 0; i < items.size(); i++) {
+  for (int i = 0; i < l->length; i++) {
     if (i > 0) {
       s += ' ';
     }
-    out_node(s, items[i]);
+    out_node(s, l->elements[i].ptr_value);
   }
   s += ')';
 }
@@ -107,7 +107,7 @@ void out_a_const(std::string &s, const sq_a_const_t &n) {
     s += " NULL";
   } else {
     s += " :val ";
-    out_node(s, n.val);
+    out_node(s, &n.val.node);
   }
   s += " :location ";
   out_location(s, n.location);
@@ -196,7 +196,7 @@ void out_node(std::string &s, const sq_node_t *node) {
   }
   switch (node->tag) {
   case SQ_T_LIST:
-    out_list(s, static_cast<const sq_list_t *>(node)->items);
+    out_list(s, static_cast<const sq_list_t *>(node));
     return;
   case SQ_T_INTEGER:
     out_int(s, static_cast<const sq_integer_t *>(node)->ival);

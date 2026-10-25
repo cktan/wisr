@@ -42,7 +42,7 @@ The interface is C in style, as `../sm/include/sm.h` is: an
 thread; names prefixed `sq_`. Three C++ types cross it and no
 others: `std::string_view` for text in, `std::string` for text
 out, `std::vector` for a tree's statements. A node's list is
-sq's own `sq_items_t` (§3).
+PostgreSQL's `List`, under sq's name (§3).
 
 ## 2. What is PostgreSQL's, and what is sq's
 
@@ -60,7 +60,7 @@ over by reading two files side by side.
 | Node constructors | `src/makefuncs.cc` | PostgreSQL's `makefuncs.c`, renamed |
 | The nodes, their printer, copy and equality | generated | written by `gen/gen_nodes.py` from `spec/` |
 | The keyword hash | generated | `gen/gen_keywords.py`: PostgreSQL's `PerfectHash.pm` in Python |
-| digres's converter | generated, into `../dg` | by `gen/gen_nodes.py`: sq's nodes to PostgreSQL's own (§11) |
+| digres's checks | generated, into `../dg` | by `gen/gen_nodes.py`: that sq's nodes are digres's, and what digres refuses (§11) |
 | The tree, errors, lists, UTF-8 | `src/tree.cc`, `error.cc`, `list.cc`, `utf8.cc` | sq's own |
 
 What a fork changes is the code around the rules, never a rule:
@@ -94,22 +94,28 @@ What changes on the way from PostgreSQL's struct to sq's:
 - **Names.** Types end `_t` and carry `sq_`; fields are
   snake_case; an enum's values carry `SQ_`, which keeps them
   apart from PostgreSQL's own where digres includes both.
-- **A list is an `sq_items_t`** (`include/sq_items.h`), empty
-  where PostgreSQL has `NIL`: an array in the tree's arena, as
-  PostgreSQL's `List` is an array in its memory context, read
-  as a `std::vector` is. PostgreSQL also puts a list where any
-  node may go — an element of another list, a field typed
-  `Node *`. There it is an `sq_list_t`, a node holding one.
+- **A list is an `sq_list_t *`**, PostgreSQL's `List` under
+  sq's name, NULL where PostgreSQL has `NIL`. A list is itself
+  a node, and stands where any node may go — an element of
+  another list, a field typed `Node *`.
 - **Text is a `const char*`**, owned by the tree. NULL is
   absent, which PostgreSQL tells apart from empty: `COMMENT ...
   IS NULL` and `IS ''` are different trees.
 - **Every node derives from `sq_node_t`**, which holds the tag,
-  and sets its own tag when made.
-- **An `sq_a_const_t` points at its value node**; PostgreSQL's
-  holds a union of them.
+  and sets its own tag when made; but one whose first field is
+  a node, as `CreateForeignTableStmt`'s is a `CreateStmt`,
+  holds its tag there, as PostgreSQL's does.
 
 Fields that only PostgreSQL's analyzer fills are kept, zero or
 NULL from the parser: a node is PostgreSQL's node, whole.
+
+**A node is digres's, byte for byte.** Its fields are
+PostgreSQL's in PostgreSQL's order, an `A_Const` holds its value
+in place in PostgreSQL's union, and its tag is digres's number
+for it, from `spec/nodetags.h`, a copy of digres's own (a node
+digres has none of takes a number past its last). digres so
+reads sq's tree as its own nodes, with nothing converted, and
+holds that at compile time (§11).
 
 **The printer writes PostgreSQL's names**, not sq's:
 `sq_select_stmt_t` prints as `{SELECTSTMT :distinctClause ...`.
@@ -130,11 +136,19 @@ was parsed from. A tree moves and does not copy.
 **Nodes, lists and text are cut from the tree's arena**, as
 PostgreSQL's `palloc` cuts from a memory context: blocks, the
 first inside the store, each next twice the last up to 1 MB,
-freed together. No node has a destructor; a list that grows
-takes a new array twice the size, the old one staying until the
-tree goes. A parse so makes no allocation per node, list or
-string, which made its cost twice PostgreSQL's. Whatever
-changes a list runs in a parse, or with a tree named current.
+freed together. No node has a destructor. A list grows as
+PostgreSQL's `list.c` grows one: its first cells in place after
+it, then an array of its own, grown by realloc. A parse so makes
+no allocation per node, list or string, which made its cost
+twice PostgreSQL's. Whatever changes a list runs in a parse, or
+with a tree named current.
+
+**Or they go where the caller says.** `sq_options_t`'s
+allocator, alloc and realloc, takes the arena's place: digres's
+is its current memory context, so it keeps, grows and frees
+sq's nodes and lists as its own. What the allocator hands out
+the tree never frees. A failed alloc returns NULL, and sq
+reports running out of memory as it does any error.
 
 This is what makes cleanup after an error one line. A parse that
 fails halfway has made hundreds of nodes, some reachable from
@@ -185,7 +199,7 @@ is PostgreSQL's defaults.
 
 ## 6. Lists in the grammar
 
-A node's list is an `sq_items_t`, but the grammar builds lists
+A node's list is an `sq_list_t *`, and the grammar builds lists
 piecemeal across many rules, passes them about, appends to them
 and nests them, as PostgreSQL does with `List *`. In the grammar
 a list is therefore a handle, `list_ref_t`: NIL, or the name of
@@ -193,9 +207,9 @@ an `sq_list_t` in the tree. PostgreSQL's list functions are kept
 over it by their own names, so an action reads as it does
 upstream.
 
-**Assigning a handle to a node's field copies the list** into
-the field's array, in the arena. The handle can go on being
-used; the node has its own.
+**Assigning a handle to a node's field shares the list**, as
+PostgreSQL's assignment shares a `List *`: an action written
+upstream reads the same here.
 
 ## 7. Threads
 
@@ -247,19 +261,15 @@ the committed node header is what the generator writes; and
 
 ## 9. Known trade-offs
 
-- **A tree holds a little more than its nodes need.** A list
-  assigned to a field is copied (§6), and the list it came from
-  stays in the tree until the tree is freed, as do the scanner's
-  strings that no node kept. Measured over the 48,369 pieces of
-  the regression SQL that parse: a tree holds 1.06 times what a
-  copy of it holding only its nodes does. Moving a list where it
-  is not used again would recover part of that 6%, at the price
-  of the next point becoming a thing that can go wrong.
-- **A field's list and the handle it was copied from are
-  separate.** An action that appended to a list after assigning
-  it would, in PostgreSQL, change the node, and here would not.
-  None was found that does, and the comparison in §8 agrees, but
-  the compiler cannot show it.
+- **A tree holds a little more than its nodes need**: a list's
+  cells outgrown, in place or in an array the arena does not
+  give back, and the scanner's strings no node kept, until the
+  tree goes. In digres's memory context, a realloc gives an
+  outgrown array back.
+- **sq's tags are digres's.** A node that digres adds or drops
+  before the value nodes in its headers moves their numbers;
+  digres's build then fails its checks until `spec/nodetags.h`
+  is copied over again and `make nodes` run.
 - **Text is assumed to be UTF-8 and is not checked.** Text that
   is not is scanned as PostgreSQL's scanner would scan it; a
   server is expected to have checked what a client sent, as
@@ -282,9 +292,9 @@ the committed node header is what the generator writes; and
 - **Any notion of "supported".** sq parses `CREATE FUNCTION` as
   it parses anything. digres refuses what it does not handle,
   when it meets the node.
-- **PostgreSQL's nodes.** digres's analyzer reads PostgreSQL's
-  own node structs. sq does not know them: turning its tree into
-  those is digres's (§11).
+- **PostgreSQL's headers.** sq's nodes are laid out as
+  digres's, but sq includes none of digres's headers; the
+  layout comes from the generator, and digres checks it (§11).
 - **Deparsing**, a tree back to SQL text.
 - **Other encodings**, and the PL/pgSQL parse modes: their rules
   are in the grammar, as they are in PostgreSQL's, with no call
@@ -296,22 +306,24 @@ digres links `build/libsq.a` and has no grammar or scanner for
 SQL of its own. Its `raw_parser()` is sq's one caller there
 (`../dg/src/backend/parser/parser.c`):
 
-- It passes the session's three settings in `sq_options_t`.
-- It turns sq's tree into PostgreSQL's nodes with a converter,
-  `sq_convert.c`. The converter is digres's code, and the only
-  code that names both sets of nodes; sq's generator writes it,
-  when digres is built, because it is the same walk over the
-  same fields as the printer. It refuses what digres has no
-  part of: a publication's or subscription's statement, and
-  any statement naming one as an object (`REFUSED` and
-  `REFUSED_OBJECTS` in `gen/gen_nodes.py`). It copies an enum
-  by value, so digres keeps every member of PostgreSQL's.
+- It passes the session's three settings in `sq_options_t`,
+  and an allocator that is its current memory context, by
+  `palloc` and `repalloc` that return NULL when out of memory.
+- It hands sq's statements to the analyzer as they are: they
+  are digres's nodes. `sq_nodes.c`, which sq's generator writes
+  when digres is built, holds that at compile time, a
+  `static_assert` for each node's tag and size, each field's
+  offset and each enum's value; and refuses what digres has no
+  part of: a publication's or subscription's statement, and any
+  statement naming one as an object (`REFUSED` and
+  `REFUSED_OBJECTS` in `gen/gen_nodes.py`), in a statement or a
+  SQL function's body.
 - It raises sq's error as the server's own, with its SQLSTATE,
   position, detail and hint.
 
 digres raises an error as a C++ exception, so the tree is an
-ordinary object there, freed by its destructor whether the
-conversion finishes or raises.
+ordinary object there, freed by its destructor however
+`raw_parser()` leaves; its nodes stay in the memory context.
 
 - **A notice is kept and reported after sq returns.** Reported
   from sq's hook, an error raised while reporting would be an
@@ -320,5 +332,5 @@ conversion finishes or raises.
 
 digres is checked with sq's own tests. `digres --parse` prints
 what `build/sq_parse` prints, for `raw_parser()`, so the
-expected files and digests of §8 hold digres's parser, converter
-included, to what PostgreSQL's printed, locations among it.
+expected files and digests of §8 hold digres's parser to what
+PostgreSQL's printed, locations among it.

@@ -1,5 +1,6 @@
 /*
- * list.cc -- PostgreSQL's list functions over sq_list_t.
+ * list.cc -- PostgreSQL's list functions over sq_list_t, growing as
+ * PostgreSQL's list.c grows a List.
  */
 
 #include "list.h"
@@ -12,47 +13,93 @@
 
 namespace sq {
 
+namespace {
+
+/* Cells a list's header takes the room of: list.c's LIST_HEADER_OVERHEAD. */
+constexpr int header_cells =
+    static_cast<int>((sizeof(sq_list_t) - 1) / sizeof(sq_list_cell_t) + 1);
+
+/* The least power of two not below n: pg_nextpower2_32. */
+int next_power2(int n) {
+  int p = 1;
+  while (p < n) {
+    p <<= 1;
+  }
+  return p;
+}
+
+/*
+ * A new list of length cells, whose nodes the caller sets, with room
+ * in place for more: list.c's new_list.
+ */
+sq_list_t *new_list(int length) {
+  int max_length =
+      next_power2(std::max(8, length + header_cells)) - header_cells;
+  void *at = current_store().alloc(sizeof(sq_list_t) +
+                                       max_length * sizeof(sq_list_cell_t),
+                                   alignof(sq_list_t));
+  sq_list_t *l = new (at) sq_list_t;
+  l->tag = SQ_T_LIST;
+  l->length = length;
+  l->max_length = max_length;
+  l->elements = l->initial_elements;
+  return l;
+}
+
+/*
+ * Room in l for min_length cells: list.c's enlarge_list. The cells in
+ * place cannot be given back, so a list that outgrows them takes an
+ * array of its own, which grows by realloc after.
+ */
+void enlarge_list(sq_list_t *l, int min_length) {
+  int max_length = next_power2(std::max(16, min_length));
+  store_t &store = current_store();
+  if (l->elements == l->initial_elements) {
+    auto *cells = static_cast<sq_list_cell_t *>(store.alloc(
+        max_length * sizeof(sq_list_cell_t), alignof(sq_list_cell_t)));
+    memcpy(cells, l->elements, l->length * sizeof(sq_list_cell_t));
+    l->elements = cells;
+  } else {
+    l->elements = static_cast<sq_list_cell_t *>(
+        store.realloc(l->elements, l->max_length * sizeof(sq_list_cell_t),
+                      max_length * sizeof(sq_list_cell_t)));
+  }
+  l->max_length = max_length;
+}
+
+} // namespace
+
 /* A list of one node. */
 list_ref_t list_make1(sq_node_t *a) {
-  sq_list_t *l = make_node<sq_list_t>();
-  l->items.push_back(a);
+  sq_list_t *l = new_list(1);
+  l->elements[0].ptr_value = a;
   return {l};
 }
 
 /* A list of two nodes. */
 list_ref_t list_make2(sq_node_t *a, sq_node_t *b) {
-  sq_list_t *l = make_node<sq_list_t>();
-  l->items.push_back(a);
-  l->items.push_back(b);
+  sq_list_t *l = new_list(2);
+  l->elements[0].ptr_value = a;
+  l->elements[1].ptr_value = b;
   return {l};
 }
 
 /* A list of three nodes. */
 list_ref_t list_make3(sq_node_t *a, sq_node_t *b, sq_node_t *c) {
-  sq_list_t *l = make_node<sq_list_t>();
-  l->items.push_back(a);
-  l->items.push_back(b);
-  l->items.push_back(c);
+  sq_list_t *l = new_list(3);
+  l->elements[0].ptr_value = a;
+  l->elements[1].ptr_value = b;
+  l->elements[2].ptr_value = c;
   return {l};
 }
 
 /* A list of four nodes. */
 list_ref_t list_make4(sq_node_t *a, sq_node_t *b, sq_node_t *c, sq_node_t *d) {
-  sq_list_t *l = make_node<sq_list_t>();
-  l->items.push_back(a);
-  l->items.push_back(b);
-  l->items.push_back(c);
-  l->items.push_back(d);
-  return {l};
-}
-
-/* A list holding a copy of items, or NIL. */
-list_ref_t list_from(const sq_items_t &items) {
-  if (items.empty()) {
-    return NIL;
-  }
-  sq_list_t *l = make_node<sq_list_t>();
-  l->items = items;
+  sq_list_t *l = new_list(4);
+  l->elements[0].ptr_value = a;
+  l->elements[1].ptr_value = b;
+  l->elements[2].ptr_value = c;
+  l->elements[3].ptr_value = d;
   return {l};
 }
 
@@ -61,7 +108,10 @@ list_ref_t lappend(list_ref_t l, sq_node_t *node) {
   if (l == NIL) {
     return list_make1(node);
   }
-  l.list->items.push_back(node);
+  if (l.list->length >= l.list->max_length) {
+    enlarge_list(l.list, l.list->length + 1);
+  }
+  l.list->elements[l.list->length++].ptr_value = node;
   return l;
 }
 
@@ -70,27 +120,45 @@ list_ref_t lcons(sq_node_t *node, list_ref_t l) {
   if (l == NIL) {
     return list_make1(node);
   }
-  l.list->items.push_front(node);
+  if (l.list->length >= l.list->max_length) {
+    enlarge_list(l.list, l.list->length + 1);
+  }
+  memmove(&l.list->elements[1], &l.list->elements[0],
+          l.list->length * sizeof(sq_list_cell_t));
+  l.list->elements[0].ptr_value = node;
+  l.list->length++;
   return l;
 }
 
 /* PostgreSQL's list_concat. */
 list_ref_t list_concat(list_ref_t a, list_ref_t b) {
   if (a == NIL) {
-    return b == NIL ? NIL : list_from(b.list->items);
+    return list_copy(b);
   }
-  if (b != NIL) {
-    // a and b may be the same list, which append allows.
-    a.list->items.append(b.list->items);
+  if (b == NIL) {
+    return a;
   }
+  // b's length and cells read after a grows: a may be b, whose cells
+  // grow with it, and the copy's two ranges do not meet.
+  int length = a.list->length + b.list->length;
+  if (length > a.list->max_length) {
+    enlarge_list(a.list, length);
+  }
+  memcpy(&a.list->elements[a.list->length], &b.list->elements[0],
+         b.list->length * sizeof(sq_list_cell_t));
+  a.list->length = length;
   return a;
 }
 
-/* PostgreSQL's list_concat, onto a node's own list. */
-void append_list(sq_items_t &items, list_ref_t l) {
-  if (l != NIL) {
-    items.append(l.list->items);
+/* PostgreSQL's list_copy. */
+list_ref_t list_copy(list_ref_t l) {
+  if (l == NIL) {
+    return NIL;
   }
+  sq_list_t *copy = new_list(l.list->length);
+  memcpy(copy->elements, l.list->elements,
+         l.list->length * sizeof(sq_list_cell_t));
+  return {copy};
 }
 
 /* PostgreSQL's list_truncate. */
@@ -99,7 +167,7 @@ list_ref_t list_truncate(list_ref_t l, int n) {
     return NIL;
   }
   if (n < list_length(l)) {
-    l.list->items.truncate(n);
+    l.list->length = n;
   }
   return l;
 }
@@ -112,55 +180,10 @@ list_ref_t list_copy_tail(list_ref_t l, int nskip) {
   if (nskip >= list_length(l)) {
     return NIL;
   }
-  sq_list_t *tail = make_node<sq_list_t>();
-  for (int i = nskip; i < list_length(l); i++) {
-    tail->items.push_back(l.list->items[i]);
-  }
+  sq_list_t *tail = new_list(l.list->length - nskip);
+  memcpy(tail->elements, &l.list->elements[nskip],
+         tail->length * sizeof(sq_list_cell_t));
   return {tail};
 }
 
 } // namespace sq
-
-/* Room for n nodes, in an array cut anew from the current tree's arena. */
-void sq_items_t::reserve(size_t n) {
-  if (n <= m_cap) {
-    return;
-  }
-  // Twice the room, at least four, as PostgreSQL's List grows; the old
-  // array stays in the arena until the tree goes.
-  size_t cap = std::max<size_t>(n, m_cap ? 2 * size_t(m_cap) : 4);
-  auto **items = static_cast<sq_node_t **>(sq::current_arena().alloc(
-      cap * sizeof(sq_node_t *), alignof(sq_node_t *)));
-  if (m_size > 0) {
-    memcpy(items, m_items, m_size * sizeof(sq_node_t *));
-  }
-  m_items = items;
-  m_cap = static_cast<uint32_t>(cap);
-}
-
-/* Add node at the end. */
-void sq_items_t::push_back(sq_node_t *node) {
-  reserve(size_t(m_size) + 1);
-  m_items[m_size++] = node;
-}
-
-/* Add node at the front, moving the rest up. */
-void sq_items_t::push_front(sq_node_t *node) {
-  reserve(size_t(m_size) + 1);
-  memmove(m_items + 1, m_items, m_size * sizeof(sq_node_t *));
-  m_items[0] = node;
-  m_size++;
-}
-
-/* Add other's nodes at the end; read before any growth, as other may be this.
- */
-void sq_items_t::append(const sq_items_t &other) {
-  size_t n = other.m_size;
-  if (n == 0) {
-    return;
-  }
-  sq_node_t *const *from = other.m_items;
-  reserve(size_t(m_size) + n);
-  memcpy(m_items + m_size, from, n * sizeof(sq_node_t *));
-  m_size += static_cast<uint32_t>(n);
-}

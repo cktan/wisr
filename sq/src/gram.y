@@ -14,8 +14,8 @@
  *     sq_select_stmt_t and its targetList is target_list, and the
  *     helpers here have sq's names to match;
  *   - a list is passed about as a list_ref_t (src/list.h), where
- *     PostgreSQL has a List *, and is copied into a node's field, a
- *     sq_items_t, when it is assigned there;
+ *     PostgreSQL has a List *, and is shared with a node's field, an
+ *     sq_list_t *, when it is assigned there, as PostgreSQL shares it;
  *   - an error is raised with sq::raise (src/error.h), not ereport, and
  *     a warning goes to the options' notice hook;
  *   - everything is made in the tree being built (src/tree.h), where
@@ -173,7 +173,7 @@ static sq_range_var_t *make_range_var_from_any_name(list_ref_t names, int positi
 static sq_range_var_t *make_range_var_from_qualified_name(char *name, list_ref_t namelist, int location,
 											   core_yyscan_t yyscanner);
 static void split_col_qual_list(list_ref_t qual_list,
-							 sq_items_t *constraint_list, sq_collate_clause_t **coll_clause,
+							 sq_list_t **constraint_list, sq_collate_clause_t **coll_clause,
 							 core_yyscan_t yyscanner);
 static void process_ca_sbits(int cas_bits, int location, const char *constr_type,
 			   bool *deferrable, bool *initdeferred, bool *is_enforced,
@@ -1835,7 +1835,7 @@ zone_value:
 					{
 						sq_a_const_t	   *n = (sq_a_const_t *) linitial($3);
 
-						if ((int_val(n->val) & ~(INTERVAL_MASK(HOUR) | INTERVAL_MASK(MINUTE))) != 0)
+						if ((int_val(&n->val.node) & ~(INTERVAL_MASK(HOUR) | INTERVAL_MASK(MINUTE))) != 0)
 							raise({.sqlstate = sqlstate_syntax_error, .pos = parser_errposition(@3)}, "time zone interval must be HOUR or HOUR TO MINUTE");
 					}
 					t->typmods = $3;
@@ -3351,11 +3351,11 @@ CopyStmt:	COPY opt_binary qualified_name opt_column_list
 					n->options = NIL;
 					/* Concatenate user-supplied flags */
 					if ($2)
-						n->options.push_back($2);
+						n->options = lappend(n->options, $2);
 					if ($8)
-						n->options.push_back($8);
+						n->options = lappend(n->options, $8);
 					if ($10)
-						append_list(n->options, $10);
+						n->options = list_concat(n->options, $10);
 					$$ = (sq_node_t *) n;
 				}
 			| COPY '(' PreparableStmt ')' TO opt_program copy_file_name opt_with copy_options
@@ -3905,7 +3905,7 @@ ColConstraintElem:
 					n->contype = SQ_CONSTR_UNIQUE;
 					n->location = @1;
 					n->nulls_not_distinct = !$2;
-					n->keys.clear();
+					n->keys = NIL;
 					n->options = $3;
 					n->indexname = NULL;
 					n->indexspace = $4;
@@ -3917,7 +3917,7 @@ ColConstraintElem:
 
 					n->contype = SQ_CONSTR_PRIMARY;
 					n->location = @1;
-					n->keys.clear();
+					n->keys = NIL;
 					n->options = $3;
 					n->indexname = NULL;
 					n->indexspace = $4;
@@ -4259,13 +4259,13 @@ ConstraintElem:
 					n->fk_attrs = $4;
 					if ($5)
 					{
-						n->fk_attrs.push_back($5);
+						n->fk_attrs = lappend(n->fk_attrs, $5);
 						n->fk_with_period = true;
 					}
 					n->pk_attrs = (list_ref_t ) linitial($9);
 					if (lsecond($9))
 					{
-						n->pk_attrs.push_back(lsecond($9));
+						n->pk_attrs = lappend(n->pk_attrs, lsecond($9));
 						n->pk_with_period = true;
 					}
 					n->fk_matchtype = $10;
@@ -6178,7 +6178,7 @@ CreateEventTrigStmt:
 
 					n->trigname = $4;
 					n->eventname = $6;
-					n->whenclause.clear();
+					n->whenclause = NIL;
 					n->funcname = $9;
 					$$ = (sq_node_t *) n;
 				}
@@ -9201,7 +9201,7 @@ ReindexStmt:
 					n->name = NULL;
 					n->params = $2;
 					if ($4)
-						n->params.push_back(make_def_elem("concurrently", NULL, @4));
+						n->params = lappend(n->params, make_def_elem("concurrently", NULL, @4));
 					$$ = (sq_node_t *) n;
 				}
 			| REINDEX opt_reindex_option_list SCHEMA opt_concurrently name
@@ -9213,7 +9213,7 @@ ReindexStmt:
 					n->name = $5;
 					n->params = $2;
 					if ($4)
-						n->params.push_back(make_def_elem("concurrently", NULL, @4));
+						n->params = lappend(n->params, make_def_elem("concurrently", NULL, @4));
 					$$ = (sq_node_t *) n;
 				}
 			| REINDEX opt_reindex_option_list reindex_target_all opt_concurrently opt_single_name
@@ -9225,7 +9225,7 @@ ReindexStmt:
 					n->name = $5;
 					n->params = $2;
 					if ($4)
-						n->params.push_back(make_def_elem("concurrently", NULL, @4));
+						n->params = lappend(n->params, make_def_elem("concurrently", NULL, @4));
 					$$ = (sq_node_t *) n;
 				}
 		;
@@ -10548,7 +10548,7 @@ CreatePublicationStmt:
 					n->pubname = $3;
 					n->options = $6;
 					n->pubobjects = (list_ref_t ) $5;
-					preprocess_pubobj_list(list_from(n->pubobjects), yyscanner);
+					preprocess_pubobj_list(n->pubobjects, yyscanner);
 					$$ = (sq_node_t *) n;
 				}
 		;
@@ -10682,7 +10682,7 @@ AlterPublicationStmt:
 
 					n->pubname = $3;
 					n->pubobjects = $5;
-					preprocess_pubobj_list(list_from(n->pubobjects), yyscanner);
+					preprocess_pubobj_list(n->pubobjects, yyscanner);
 					n->action = SQ_AP_AddObjects;
 					$$ = (sq_node_t *) n;
 				}
@@ -10692,7 +10692,7 @@ AlterPublicationStmt:
 
 					n->pubname = $3;
 					n->pubobjects = $5;
-					preprocess_pubobj_list(list_from(n->pubobjects), yyscanner);
+					preprocess_pubobj_list(n->pubobjects, yyscanner);
 					n->action = SQ_AP_SetObjects;
 					$$ = (sq_node_t *) n;
 				}
@@ -10702,7 +10702,7 @@ AlterPublicationStmt:
 
 					n->pubname = $3;
 					n->pubobjects = $5;
-					preprocess_pubobj_list(list_from(n->pubobjects), yyscanner);
+					preprocess_pubobj_list(n->pubobjects, yyscanner);
 					n->action = SQ_AP_DropObjects;
 					$$ = (sq_node_t *) n;
 				}
@@ -11213,7 +11213,7 @@ ViewStmt: CREATE OptTemp VIEW qualified_name opt_column_list opt_reloptions
 					n->view = $5;
 					n->view->relpersistence = $2;
 					n->aliases = $7;
-					n->query = make_recursive_view_select(n->view->relname, list_from(n->aliases), $11);
+					n->query = make_recursive_view_select(n->view->relname, n->aliases, $11);
 					n->replace = false;
 					n->options = $9;
 					n->with_check_option = (sq_view_check_option_t) $12;
@@ -11229,7 +11229,7 @@ ViewStmt: CREATE OptTemp VIEW qualified_name opt_column_list opt_reloptions
 					n->view = $7;
 					n->view->relpersistence = $4;
 					n->aliases = $9;
-					n->query = make_recursive_view_select(n->view->relname, list_from(n->aliases), $13);
+					n->query = make_recursive_view_select(n->view->relname, n->aliases, $13);
 					n->replace = true;
 					n->options = $11;
 					n->with_check_option = (sq_view_check_option_t) $14;
@@ -11401,7 +11401,7 @@ DropdbStmt: DROP DATABASE name
 
 					n->dbname = $3;
 					n->missing_ok = false;
-					n->options.clear();
+					n->options = NIL;
 					$$ = (sq_node_t *) n;
 				}
 			| DROP DATABASE IF_P EXISTS name
@@ -11410,7 +11410,7 @@ DropdbStmt: DROP DATABASE name
 
 					n->dbname = $5;
 					n->missing_ok = true;
-					n->options.clear();
+					n->options = NIL;
 					$$ = (sq_node_t *) n;
 				}
 			| DROP DATABASE name opt_with '(' drop_option_list ')'
@@ -11750,7 +11750,7 @@ ClusterStmt:
 					n->indexname = $4;
 					n->params = NIL;
 					if ($2)
-						n->params.push_back(make_def_elem("verbose", NULL, @2));
+						n->params = lappend(n->params, make_def_elem("verbose", NULL, @2));
 					$$ = (sq_node_t *) n;
 				}
 			/* unparenthesized VERBOSE kept for pre-17 compatibility */
@@ -11762,7 +11762,7 @@ ClusterStmt:
 					n->indexname = NULL;
 					n->params = NIL;
 					if ($2)
-						n->params.push_back(make_def_elem("verbose", NULL, @2));
+						n->params = lappend(n->params, make_def_elem("verbose", NULL, @2));
 					$$ = (sq_node_t *) n;
 				}
 			/* kept for pre-8.3 compatibility */
@@ -11774,7 +11774,7 @@ ClusterStmt:
 					n->indexname = $3;
 					n->params = NIL;
 					if ($2)
-						n->params.push_back(make_def_elem("verbose", NULL, @2));
+						n->params = lappend(n->params, make_def_elem("verbose", NULL, @2));
 					$$ = (sq_node_t *) n;
 				}
 		;
@@ -11799,13 +11799,13 @@ VacuumStmt: VACUUM opt_full opt_freeze opt_verbose opt_analyze opt_vacuum_relati
 
 					n->options = NIL;
 					if ($2)
-						n->options.push_back(make_def_elem("full", NULL, @2));
+						n->options = lappend(n->options, make_def_elem("full", NULL, @2));
 					if ($3)
-						n->options.push_back(make_def_elem("freeze", NULL, @3));
+						n->options = lappend(n->options, make_def_elem("freeze", NULL, @3));
 					if ($4)
-						n->options.push_back(make_def_elem("verbose", NULL, @4));
+						n->options = lappend(n->options, make_def_elem("verbose", NULL, @4));
 					if ($5)
-						n->options.push_back(make_def_elem("analyze", NULL, @5));
+						n->options = lappend(n->options, make_def_elem("analyze", NULL, @5));
 					n->rels = $6;
 					n->is_vacuumcmd = true;
 					$$ = (sq_node_t *) n;
@@ -11827,7 +11827,7 @@ AnalyzeStmt: analyze_keyword opt_verbose opt_vacuum_relation_list
 
 					n->options = NIL;
 					if ($2)
-						n->options.push_back(make_def_elem("verbose", NULL, @2));
+						n->options = lappend(n->options, make_def_elem("verbose", NULL, @2));
 					n->rels = $3;
 					n->is_vacuumcmd = false;
 					$$ = (sq_node_t *) n;
@@ -11945,7 +11945,7 @@ ExplainStmt:
 					n->query = $4;
 					n->options = list_make1(make_def_elem("analyze", NULL, @2));
 					if ($3)
-						n->options.push_back(make_def_elem("verbose", NULL, @3));
+						n->options = lappend(n->options, make_def_elem("verbose", NULL, @3));
 					$$ = (sq_node_t *) n;
 				}
 		| EXPLAIN VERBOSE ExplainableStmt
@@ -13457,7 +13457,7 @@ values_clause:
 				{
 					sq_select_stmt_t *n = (sq_select_stmt_t *) $1;
 
-					n->values_lists.push_back($4);
+					n->values_lists = lappend(n->values_lists, $4);
 					$$ = (sq_node_t *) n;
 				}
 		;
@@ -14175,9 +14175,9 @@ json_table:
 					n->context_item = (sq_json_value_expr_t *) $3;
 					if (!is_a($5, SQ_T_A_CONST) ||
 						cast_node(sq_a_const_t, $5)->isnull ||
-						!is_a(cast_node(sq_a_const_t, $5)->val, SQ_T_STRING))
+						!is_a(&cast_node(sq_a_const_t, $5)->val.node, SQ_T_STRING))
 						raise({.sqlstate = sqlstate_feature_not_supported, .pos = parser_errposition(@5)}, "only string constants are supported in JSON_TABLE path specification");
-					pathstring = str_val(cast_node(sq_a_const_t, $5)->val);
+					pathstring = str_val(&cast_node(sq_a_const_t, $5)->val.node);
 					n->pathspec = make_json_table_path_spec(pathstring, $6, @5, @6);
 					n->passing = $7;
 					n->columns = $10;
@@ -15602,7 +15602,7 @@ func_expr: func_application within_group_clause filter_clause over_clause
 					 */
 					if ($2 != NIL)
 					{
-						if (!n->agg_order.empty())
+						if (n->agg_order != NIL)
 							raise({.sqlstate = sqlstate_syntax_error, .pos = parser_errposition(@2)}, "cannot use multiple ORDER BY clauses with WITHIN GROUP");
 						if (n->agg_distinct)
 							raise({.sqlstate = sqlstate_syntax_error, .pos = parser_errposition(@2)}, "cannot use DISTINCT with WITHIN GROUP");
@@ -15806,7 +15806,7 @@ func_expr_common_subexpr:
 					 * Convert SystemTypeName() to SystemFuncName() even though
 					 * at the moment they result in the same thing.
 					 */
-					$$ = (sq_node_t *) make_func_call(system_func_name(str_val($5->names.back())),
+					$$ = (sq_node_t *) make_func_call(system_func_name(str_val(llast($5->names))),
 											   list_make1($3),
 											   SQ_COERCE_EXPLICIT_CALL,
 											   @1);
@@ -15963,7 +15963,7 @@ func_expr_common_subexpr:
 				{
 					sq_json_object_constructor_t *n = make_node<sq_json_object_constructor_t>();
 
-					n->exprs.clear();
+					n->exprs = NIL;
 					n->absent_on_null = false;
 					n->unique = false;
 					n->output = (sq_json_output_t *) $3;
@@ -17019,7 +17019,7 @@ json_aggregate_func:
 					n->unique = $5;
 					n->constructor = make_node<sq_json_agg_constructor_t>();
 					n->constructor->output = (sq_json_output_t *) $6;
-					n->constructor->agg_order.clear();
+					n->constructor->agg_order = NIL;
 					n->constructor->location = @1;
 					$$ = (sq_node_t *) n;
 				}
@@ -17370,7 +17370,7 @@ PLpgSQL_Expr: opt_distinct_clause opt_target_list
 					{
 						n->limit_offset = $9->limit_offset;
 						n->limit_count = $9->limit_count;
-						if (n->sort_clause.empty() &&
+						if (n->sort_clause == NIL &&
 							$9->limit_option == SQ_LIMIT_OPTION_WITH_TIES)
 							raise({.sqlstate = sqlstate_syntax_error, .pos = parser_errposition($9->option_loc)}, "WITH TIES cannot be specified without ORDER BY clause");
 						n->limit_option = $9->limit_option;
@@ -18587,7 +18587,8 @@ make_int_const(int val, int location)
 {
 	sq_a_const_t    *n = make_node<sq_a_const_t>();
 
-	n->val = make_integer(val);
+	n->val.ival.tag = SQ_T_INTEGER;
+	n->val.ival.ival = val;
 	n->location = location;
 
 	return (sq_node_t *) n;
@@ -18598,7 +18599,8 @@ make_float_const(const char *str, int location)
 {
 	sq_a_const_t    *n = make_node<sq_a_const_t>();
 
-	n->val = make_float(str);
+	n->val.fval.tag = SQ_T_FLOAT;
+	n->val.fval.fval = str;
 	n->location = location;
 
 	return (sq_node_t *) n;
@@ -18609,7 +18611,8 @@ make_bool_a_const(bool state, int location)
 {
 	sq_a_const_t    *n = make_node<sq_a_const_t>();
 
-	n->val = make_boolean(state);
+	n->val.boolval.tag = SQ_T_BOOLEAN;
+	n->val.boolval.boolval = state;
 	n->location = location;
 
 	return (sq_node_t *) n;
@@ -18620,7 +18623,8 @@ make_bit_string_const(char *str, int location)
 {
 	sq_a_const_t    *n = make_node<sq_a_const_t>();
 
-	n->val = make_bit_string(str);
+	n->val.bsval.tag = SQ_T_BIT_STRING;
+	n->val.bsval.bsval = str;
 	n->location = location;
 
 	return (sq_node_t *) n;
@@ -18820,12 +18824,12 @@ insert_select_options(sq_select_stmt_t *stmt,
 	 */
 	if (sort_clause)
 	{
-		if (!stmt->sort_clause.empty())
+		if (stmt->sort_clause != NIL)
 			raise({.sqlstate = sqlstate_syntax_error, .pos = parser_errposition(expr_location((sq_node_t *) sort_clause))}, "multiple ORDER BY clauses not allowed");
 		stmt->sort_clause = sort_clause;
 	}
 	/* We can handle multiple locking clauses, though */
-	append_list(stmt->locking_clause, locking_clause);
+	stmt->locking_clause = list_concat(stmt->locking_clause, locking_clause);
 	if (limit_clause && limit_clause->limit_offset)
 	{
 		if (stmt->limit_offset)
@@ -18842,13 +18846,15 @@ insert_select_options(sq_select_stmt_t *stmt,
 	{
 		/* If there was a conflict, we must have detected it above */
 		assert(!stmt->limit_option);
-		if (stmt->sort_clause.empty() && limit_clause->limit_option == SQ_LIMIT_OPTION_WITH_TIES)
+		if (stmt->sort_clause == NIL && limit_clause->limit_option == SQ_LIMIT_OPTION_WITH_TIES)
 			raise({.sqlstate = sqlstate_syntax_error, .pos = parser_errposition(limit_clause->option_loc)}, "WITH TIES cannot be specified without ORDER BY clause");
-		if (limit_clause->limit_option == SQ_LIMIT_OPTION_WITH_TIES && !stmt->locking_clause.empty())
+		if (limit_clause->limit_option == SQ_LIMIT_OPTION_WITH_TIES && stmt->locking_clause != NIL)
 		{
-			for (sq_node_t *locking : stmt->locking_clause)
+			list_cell_t lc;
+
+			foreach(lc, stmt->locking_clause)
 			{
-				sq_locking_clause_t *lock = cast_node(sq_locking_clause_t, locking);
+				sq_locking_clause_t *lock = lfirst_node(sq_locking_clause_t, lc);
 
 				if (lock->wait_policy == SQ_LockWaitSkip)
 					raise({.sqlstate = sqlstate_syntax_error, .pos = parser_errposition(limit_clause->option_loc)}, "{} and {} options cannot be used together",
@@ -18922,14 +18928,14 @@ do_negate(sq_node_t *n, int location)
 		/* report the constant's location as that of the '-' sign */
 		con->location = location;
 
-		if (!con->isnull && is_a(con->val, SQ_T_INTEGER))
+		if (!con->isnull && is_a(&con->val.node, SQ_T_INTEGER))
 		{
-			int_val(con->val) = -int_val(con->val);
+			con->val.ival.ival = -con->val.ival.ival;
 			return n;
 		}
-		if (!con->isnull && is_a(con->val, SQ_T_FLOAT))
+		if (!con->isnull && is_a(&con->val.node, SQ_T_FLOAT))
 		{
-			do_negate_float(cast_node(sq_float_t, con->val));
+			do_negate_float(&con->val.fval);
 			return n;
 		}
 	}
@@ -18960,7 +18966,7 @@ make_and_expr(sq_node_t *lexpr, sq_node_t *rexpr, int location)
 
 		if (blexpr->boolop == SQ_AND_EXPR)
 		{
-			blexpr->args.push_back(rexpr);
+			blexpr->args = lappend(blexpr->args, rexpr);
 			return (sq_node_t *) blexpr;
 		}
 	}
@@ -18977,7 +18983,7 @@ make_or_expr(sq_node_t *lexpr, sq_node_t *rexpr, int location)
 
 		if (blexpr->boolop == SQ_OR_EXPR)
 		{
-			blexpr->args.push_back(rexpr);
+			blexpr->args = lappend(blexpr->args, rexpr);
 			return (sq_node_t *) blexpr;
 		}
 	}
@@ -19158,13 +19164,13 @@ make_range_var_from_qualified_name(char *name, list_ref_t namelist, int location
 /* Separate Constraint nodes from COLLATE clauses in a ColQualList */
 static void
 split_col_qual_list(list_ref_t qual_list,
-				 sq_items_t *constraint_list, sq_collate_clause_t **coll_clause,
+				 sq_list_t **constraint_list, sq_collate_clause_t **coll_clause,
 				 core_yyscan_t yyscanner)
 {
 	list_cell_t   cell;
 
 	*coll_clause = NULL;
-	constraint_list->clear();
+	*constraint_list = NIL;
 	foreach(cell, qual_list)
 	{
 		sq_node_t	   *n = (sq_node_t *) lfirst(cell);
@@ -19172,7 +19178,7 @@ split_col_qual_list(list_ref_t qual_list,
 		if (is_a(n, SQ_T_CONSTRAINT))
 		{
 			/* keep it in list */
-			constraint_list->push_back(n);
+			*constraint_list = lappend(*constraint_list, n);
 			continue;
 		}
 		if (is_a(n, SQ_T_COLLATE_CLAUSE))
@@ -19342,7 +19348,7 @@ preprocess_pubobj_list(list_ref_t pubobjspec_list, core_yyscan_t yyscanner)
 				raise({.sqlstate = sqlstate_syntax_error, .pos = parser_errposition(pubobj->location)}, "WHERE clause not allowed for schema");
 
 			/* Column list is not allowed on a schema object */
-			if (pubobj->pubtable && !pubobj->pubtable->columns.empty())
+			if (pubobj->pubtable && pubobj->pubtable->columns != NIL)
 				raise({.sqlstate = sqlstate_syntax_error, .pos = parser_errposition(pubobj->location)}, "column specification not allowed for schema");
 
 			/*

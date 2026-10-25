@@ -6,8 +6,9 @@
  * digres parses with sq (../sq): PostgreSQL 18's grammar and scanner
  * as a library that knows nothing of the server. raw_parser() is what
  * stands between the two. It hands sq the text and the session's
- * settings, turns sq's tree into PostgreSQL's nodes for the analyzer,
- * and reports sq's error as a server reports one.
+ * settings and the current memory context to build in, hands its tree
+ * to the analyzer as it is -- sq's nodes are digres's own -- and reports
+ * sq's error as a server reports one.
  *
  * Note that the grammar is not allowed to perform any table access
  * (since we need to be able to do basic parsing even while inside an
@@ -32,7 +33,7 @@
 
 #include "nodes/makefuncs.h"
 #include "parser/parser.h"
-#include "parser/sq_convert.h"
+#include "parser/sq_nodes.h"
 
 /*
  * The session's settings that change how a string literal is read.
@@ -57,7 +58,8 @@ struct pending_notice_t {
 /*
  * One parse's tree and notices. They are C++ objects, freed by their
  * destructors: an ERROR raised while they are held is an exception, and
- * unwinds through them.
+ * unwinds through them. The tree's nodes are not theirs: they are in
+ * the memory context that was current, which keeps them.
  */
 struct parse_job_t {
   sq_tree_t tree;
@@ -80,6 +82,24 @@ static void keep_notice(void *arg, const sq_notice_t *notice) {
   } catch (...) {
   }
 }
+
+/*
+ * sq's allocator: the current memory context, as palloc. Out of memory,
+ * it returns NULL for sq to report, and raises nothing: an ERROR thrown
+ * from inside sq would leave the error stack for sq to swallow.
+ */
+static void *sq_palloc(void *arg, size_t size) {
+  (void)arg;
+  return palloc_extended(size, MCXT_ALLOC_NO_OOM);
+}
+
+/* sq's allocator's realloc: repalloc, NULL when out of memory. */
+static void *sq_repalloc(void *arg, void *ptr, size_t size) {
+  (void)arg;
+  return repalloc_extended(ptr, size, MCXT_ALLOC_NO_OOM);
+}
+
+static const sq_allocator_t sq_allocator = {sq_palloc, sq_repalloc, NULL};
 
 /* PostgreSQL's error code for a SQLSTATE of five characters. */
 static int sqlstate_code(const char *state) {
@@ -133,6 +153,7 @@ List *raw_parser(const char *str, RawParseMode mode) {
   options.escape_string_warning = escape_string_warning;
   options.notice = keep_notice;
   options.notice_arg = &job;
+  options.allocator = &sq_allocator;
 
   /* Nothing in sq raises a server error, or throws: it returns. */
   if (mode == RAW_PARSE_TYPE_NAME)
@@ -145,14 +166,17 @@ List *raw_parser(const char *str, RawParseMode mode) {
   if (rc != 0)
     report_error();
 
-  /* The analyzer reads PostgreSQL's nodes, not sq's. */
+  /* sq's nodes are digres's (sq_nodes.c): the analyzer reads them as
+   * they are, but for what digres refuses. */
   if (mode == RAW_PARSE_TYPE_NAME)
-    result = list_make1(sq_convert(type_name));
+    result = list_make1(type_name);
   else
-    for (const sq_raw_stmt_t *raw : job.tree.stmts)
-      result = lappend(result, sq_convert(raw));
+    for (sq_raw_stmt_t *raw : job.tree.stmts) {
+      sq_refuse_unsupported(raw->stmt);
+      result = lappend(result, raw);
+    }
 
-  /* sq's tree, which no memory context knows of, goes with job. */
+  /* The tree's nodes stay in the memory context; only job goes. */
   return result;
 }
 
