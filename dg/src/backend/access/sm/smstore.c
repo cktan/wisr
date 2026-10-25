@@ -82,6 +82,7 @@
 #include "executor/executor.h"
 #include "optimizer/optimizer.h"
 #include "utils/datum.h"
+#include "utils/timestamp.h"
 
 /* Whether this session's PostgreSQL transaction has begun an sm one. */
 static thread_local /*LOCAL*/ bool sm_xact_open = false;
@@ -139,10 +140,34 @@ struct statistic_entry_t {
 /* At most this many rows are kept; past it, they are forgotten. */
 static constexpr size_t statistic_cache_max = 1024;
 
+/*
+ * A table's heap or index bytes as sm last sized them, for the planner's
+ * estimates (smstore_estimate_size()): asking sm reads every sorted file's
+ * and memtable's size, which a plan of one row by its key would spend more
+ * on than on the row.  Good for size_cache_age while the table is the
+ * version it was sized at (sm_tbl_version()), which a DDL, an ANALYZE or
+ * an index made valid changes; never kept while this transaction has
+ * changed the table, as its version then stays the same across changes.
+ */
+struct size_entry_t {
+  uint64_t version;
+  TimestampTz at;
+  uint64_t disk;
+  uint64_t mem;
+};
+
+/* The version a table is while this transaction has changed it. */
+static constexpr uint64_t version_own = UINT64_MAX;
+
+/* How long a size is good for, in ms: a plan's estimate may be this stale. */
+static constexpr int size_cache_age = 10000;
+
 struct smstore_state_t {
   open_tables_t open_tables;
   /* The pg_statistic rows it made, by relation oid << 16 | column. */
   std::unordered_map<uint64_t, statistic_entry_t> statistics;
+  /* The sizes it took, by table oid << 32 | index oid, 0 for the heap. */
+  std::unordered_map<uint64_t, size_entry_t> sizes;
   /* The views it locked, as a table's lock is its handle's (open_tables). */
   std::vector<held_view_t> held_views;
   /* sm's namespaces' epoch when this session last flushed them. */
@@ -4617,6 +4642,35 @@ static double compression(const sm_stats_t &st) {
 }
 
 /*
+ * The bytes of table oid's heap (index 0) or of its index, in sorted files
+ * and in memtables: this session's size_entry_t, or sm's, kept as one.
+ */
+static void table_size(Oid oid, uint64_t index, sm_tbl_t *tbl, uint64_t *disk,
+                       uint64_t *mem) {
+  auto &sizes = tcb->smstore->sizes;
+  TimestampTz clock = GetCurrentTimestamp();
+  uint64_t version = sm_tbl_version(tbl);
+  uint64_t key = (uint64_t)oid << 32 | index;
+  auto it = sizes.find(key);
+
+  if (sizes.end() != it && it->second.version == version &&
+      !TimestampDifferenceExceeds(it->second.at, clock, size_cache_age)) {
+    *disk = it->second.disk;
+    *mem = it->second.mem;
+    return;
+  }
+  if (0 != (0 == index ? sm_tbl_size(tbl, disk, mem)
+                       : sm_tbl_idx_size(tbl, index, disk, mem)))
+    sm_error(0 == index ? "size a table" : "size an index");
+  if (version_own == version)
+    return;
+  /* Past the limit, the sizes are forgotten, and taken again as needed. */
+  if (sizes.size() >= statistic_cache_max)
+    sizes.clear();
+  sizes[key] = {version, clock, *disk, *mem};
+}
+
+/*
  * How much the table has grown since it was analyzed, and its heap's bytes
  * now, in *now, at the compression recorded: bytes in memtables are
  * uncompressed, so they count at c.  The growth is its bytes now over then;
@@ -4626,12 +4680,12 @@ static double compression(const sm_stats_t &st) {
  * (STATISTICS.md section 2.2).  A table with a primary key draws no row
  * numbers (../sm/ROWKEY.md section 2.1), and its bytes say all the same.
  */
-static double growth(sm_tbl_t *tbl, const sm_stats_t &st, double *now) {
+static double growth(Oid oid, sm_tbl_t *tbl, const sm_stats_t &st,
+                     double *now) {
   uint64_t disk, mem, n;
   double c = compression(st), then;
 
-  if (sm_tbl_size(tbl, &disk, &mem) != 0)
-    sm_error("size a table");
+  table_size(oid, 0, tbl, &disk, &mem);
   *now = disk + mem * c;
   /* A table with a primary key has no row numbers: its bytes say. */
   if (st.heap_disk == 0 && st.rowno_limit > 0) {
@@ -4659,7 +4713,7 @@ bool smstore_estimate_size(Oid oid, double *pages, double *tuples) {
   std::shared_ptr<const sm_stats_t> st = table_stats(oid);
   if (st == nullptr)
     return false;
-  double g = growth(tbl, *st, &now);
+  double g = growth(oid, tbl, *st, &now);
   if (now <= 0)
     return false;
   *tuples = st->live_rows * g;
@@ -4689,8 +4743,7 @@ bool smstore_estimate_index_size(Oid table, Oid index, double table_tuples,
       continue;
     /* The table's growth as the plan has it: no second look at its size. */
     double g = st->live_rows > 0 ? table_tuples / st->live_rows : 1.0;
-    if (sm_tbl_idx_size(tbl, index, &disk, &mem) != 0)
-      sm_error("size an index");
+    table_size(table, index, tbl, &disk, &mem);
     *tuples = x.entries * g;
     *pages = std::max(1.0, std::ceil((disk + mem * compression(*st)) / BLCKSZ));
     return true;

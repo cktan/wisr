@@ -1202,8 +1202,11 @@ const sm_table_def_t* sm_tbl_def(const sm_tbl_t* tbl);
 
 /*
  * The table's version, sm_table_def_t's, as its session sees it
- * now. It copies nothing: a host that only checks what it caches
- * of the table asks this, not sm_tbl_def.
+ * now: changed by a DDL, an ANALYZE or an index made valid, and
+ * UINT64_MAX while the session's transaction has changed the table
+ * or its statistics and not committed, through every such change.
+ * It copies nothing: a host that only checks what it caches of the
+ * table asks this, not sm_tbl_def.
  */
 uint64_t sm_tbl_version(const sm_tbl_t* tbl);
 

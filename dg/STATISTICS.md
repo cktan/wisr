@@ -87,6 +87,18 @@ Where it stood before §3 was built.
   second time.
   `tree_height` stays -1: costing a lookup by the LSM's probes
   needs calibration, and is left for later.
+- **A session keeps the bytes it read** (`size_entry_t` in
+  `smstore.c`), a table's heap and each index apart, for 10
+  seconds: `sm_tbl_size` reads every sorted file's and
+  memtable's size, which cost more than the row itself in a
+  plan of one row by its key. An entry is used while the table
+  is the version it was read at (`sm_tbl_version`), which a
+  DDL, an ANALYZE or an index made valid changes. None is kept
+  while the transaction has changed the table itself, as its
+  version then stays the same through each change. Within the
+  10 seconds, rows written since count as they did when it was
+  read; a plan's estimate may be that stale.
+  `pg_relation_size()` and ANALYZE read sm each time.
 
 ### 2.3 Column statistics: a `pg_statistic` row, made
 

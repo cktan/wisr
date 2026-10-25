@@ -1919,6 +1919,65 @@ within "$n" 1000 10 || fail "b = 0 before the second analyze: $n"
 n=$(grep -o 'rows=[0-9]*' "$work/stats2.out" | sed -n 2p | cut -d= -f2)
 within "$n" 5000 10 || fail "b = 0 after the second analyze: $n"
 
+# Verify that a session keeps a table's size for its plans for 10 s, and
+# sizes it again after a DDL or an ANALYZE.
+# 1. Make t33, a table with a primary key, of 20,000 rows, and analyze it.
+# 2. In one session, estimate a scan, insert 20,000 rows and estimate
+#    again: 20,000 both times, by the size kept.
+# 3. Add a column: the estimate is 40,000 within 10%, sized again.
+# 4. Insert 20,000 more and estimate: still 40,000; after 10 s, 60,000
+#    within 10%.
+# 5. Make t34 of 20,000 rows, and analyze it. In one session, estimate a
+#    scan, keeping its size; insert 60,000 more, analyze and estimate, in
+#    well under 10 s: 80,000 within 40%, by its size now. By the size
+#    kept, it would be 20,000. (A flush between the analyze and the plan
+#    moves the estimate, by up to a third in this suite.)
+# 6. In a transaction, analyze t34 and estimate: 80,000. Insert 80,000
+#    more from another session, and estimate again in the transaction:
+#    160,000 within 40%, sized again. The table's version stays the same
+#    while the transaction has changed it, so a size kept would say
+#    80,000.
+local_psql -c 'create table t33 (a int4 primary key, b int8)' \
+  -c 'insert into t33 select g, g from generate_series(1, 20000) g' \
+  -c 'analyze t33' >> "$work/stats.out" 2>&1
+local_psql -c 'explain select * from t33' \
+  -c 'insert into t33 select g, g from generate_series(20001, 40000) g' \
+  -c 'explain select * from t33' \
+  -c 'alter table t33 add column c int4' -c 'explain select * from t33' \
+  -c 'insert into t33 select g, g, 0 from generate_series(40001, 60000) g' \
+  -c 'explain select * from t33' -c 'select pg_sleep(10.5)' \
+  -c 'explain select * from t33' > "$work/sizes.out" 2>&1
+grep -o 'rows=[0-9]*' "$work/sizes.out" | cut -d= -f2 > "$work/sizes.rows"
+n=$(sed -n 1p "$work/sizes.rows")
+[ "$n" = 20000 ] || fail "a size kept, before an insert: $n"
+n=$(sed -n 2p "$work/sizes.rows")
+[ "$n" = 20000 ] || fail "a size kept, after an insert: $n"
+n=$(sed -n 3p "$work/sizes.rows")
+within "$n" 40000 10 || fail "a size taken again after a DDL: $n"
+n=$(sed -n 4p "$work/sizes.rows")
+within "$n" 40000 10 || fail "a size kept for 10 s: $n"
+n=$(sed -n 5p "$work/sizes.rows")
+within "$n" 60000 10 || fail "a size taken again after 10 s: $n"
+local_psql -c 'create table t34 (a int4 primary key, b int8)' \
+  -c 'insert into t34 select g, g from generate_series(1, 20000) g' \
+  -c 'analyze t34' >> "$work/stats.out" 2>&1
+local_psql -c 'explain select * from t34' \
+  -c 'insert into t34 select g, g from generate_series(20001, 80000) g' \
+  -c 'analyze t34' -c 'explain select * from t34' > "$work/sizes2.out" 2>&1
+n=$(grep -o 'rows=[0-9]*' "$work/sizes2.out" | sed -n 2p | cut -d= -f2)
+within "$n" 80000 40 || fail "a size taken again after an analyze: $n"
+held_start own
+held_send own "begin; analyze t34; explain select * from t34; select 'one';"
+held_wait own one || fail "a transaction's own analyze"
+local_psql -c 'insert into t34 select g, g from generate_series(80001, 160000) g' \
+  >> "$work/stats.out" 2>&1
+held_send own "explain select * from t34; select 'two'; commit;"
+held_end own
+n=$(grep -o 'rows=[0-9]*' "$work/own.out" | sed -n 1p | cut -d= -f2)
+[ "$n" = 80000 ] || fail "a transaction's own analyze, estimated: $n"
+n=$(grep -o 'rows=[0-9]*' "$work/own.out" | sed -n 2p | cut -d= -f2)
+within "$n" 160000 40 || fail "a size not kept in a transaction that changed it: $n"
+
 # Verify that VACUUM compacts a table's store in sm, and that VACUUM
 # ANALYZE also analyzes it.
 # 1. Make t32 with 20,000 rows of 200 bytes, and VACUUM ANALYZE it: a
