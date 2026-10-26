@@ -2362,6 +2362,8 @@ struct smstore_scan_t {
   ScanKey keys;
   int nkeys;
   AttrNumber *keycols;
+  /* Which keys the scan's bounds hold of every row it reads (keys_met()). */
+  bool *bounded;
   /* An index scan's: its index, and its last entry's value. */
   Oid index;
   Form_pg_index form;
@@ -6128,7 +6130,8 @@ static bool plain_key(ScanKey key, Oid coltype) {
 /*
  * Whether the row in slot meets every scan key: each compares the row's
  * value in the key's column, by the key's operator, with the key's value.
- * A null meets only IS NULL.  With index_shaped, slot holds an index
+ * A null meets only IS NULL.  A key the scan's bounds hold is not checked
+ * (smstore_index_beginscan()).  With index_shaped, slot holds an index
  * entry's columns, not a row's.
  */
 static bool keys_met(smstore_scan_t *scan, TupleTableSlot *slot,
@@ -6137,6 +6140,9 @@ static bool keys_met(smstore_scan_t *scan, TupleTableSlot *slot,
     ScanKey key = &scan->keys[i];
     int col = (index_shaped ? key->sk_attno : scan->keycols[i]) - 1;
     bool isnull;
+
+    if (scan->bounded[i])
+      continue;
 
     /* A row's slot deforms as it is read: up to the key's column. */
     slot_getsomeattrs(slot, col + 1);
@@ -6169,7 +6175,10 @@ static bool keys_met(smstore_scan_t *scan, TupleTableSlot *slot,
  * leading columns are a prefix both bounds share; the next column's ranges
  * bound it below and above, in the index's own order, so a DESC column's
  * upper value is its lower bound.  Every row read is checked against every
- * key, so a key that bounds nothing still holds.
+ * key, so a key that bounds nothing still holds; but not a key the bounds
+ * hold exactly, one of a primary key's integer columns: its rows, keyed by
+ * those columns, are read only between the bounds (../sm/sm2/SM2_DESIGN.md
+ * section 5, a scan's bounds), and none is null.
  */
 smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
                                         ScanKey keys, int nkeys) {
@@ -6179,6 +6188,7 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
   sm_datum_t *lo_vals = (sm_datum_t *)palloc0(ncols * sizeof(sm_datum_t));
   sm_datum_t *hi_vals = (sm_datum_t *)palloc0(ncols * sizeof(sm_datum_t));
   bool *nulls = (bool *)palloc0(ncols * sizeof(bool));
+  bool *bounded = (bool *)palloc0(Max(nkeys, 1) * sizeof(bool));
   sm_bound_t lo = {lo_vals, nulls, 0, true};
   sm_bound_t hi = {hi_vals, nulls, 0, true};
   int neq = 0; /* the leading columns an equality gives one value */
@@ -6218,6 +6228,8 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
                            (uint8 *)palloc(16));
     };
     bool numeric_col = is_decimal(att->atttypid);
+    /* Whether a key bounding this column holds of every row read. */
+    bool exact = form->indisprimary && int_type(coltype);
 
     for (int i = 0; i < nkeys; i++) {
       ScanKey key = &keys[i];
@@ -6241,6 +6253,7 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
       lo_vals[c] = bound(eq, false);
       hi_vals[c] = bound(eq, true);
       lo.n = hi.n = c + 1;
+      bounded[eq - keys] = exact;
       /* A numeric's bounds may differ: no later column narrows them. */
       if (numeric_col && lo_vals[c] != hi_vals[c]) {
         lo.inclusive = hi.inclusive = true;
@@ -6258,6 +6271,7 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
       lo.inclusive = numeric_col ||
                      first->sk_strategy == BTGreaterEqualStrategyNumber ||
                      first->sk_strategy == BTLessEqualStrategyNumber;
+      bounded[first - keys] = exact;
     }
     if (last != NULL) {
       hi_vals[c] = bound(last, last == above);
@@ -6265,6 +6279,7 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
       hi.inclusive = numeric_col ||
                      last->sk_strategy == BTGreaterEqualStrategyNumber ||
                      last->sk_strategy == BTLessEqualStrategyNumber;
+      bounded[last - keys] = exact;
     }
     break;
   }
@@ -6274,10 +6289,11 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
   scan->relid = RelationGetRelid(heap);
   scan->keys = keys;
   scan->nkeys = nkeys;
+  scan->bounded = bounded;
   scan->index = RelationGetRelid(index);
   scan->form = form;
   scan->keycols = (AttrNumber *)palloc(Max(nkeys, 1) * sizeof(AttrNumber));
-  /* Each row is checked against every key (keys_met()). */
+  /* Each row is checked against every key not bounded (keys_met()). */
   for (int i = 0; i < nkeys; i++)
     scan->keycols[i] = form->indkey.values[keys[i].sk_attno - 1];
   /*
