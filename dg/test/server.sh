@@ -2100,6 +2100,39 @@ grep -o 'width=[0-9]*' "$work/st37.out" | cut -d= -f2 | tr '\n' ' ' \
 [ "$(cat "$work/st37.widths")" = "32 21 21 61 " ] ||
   fail "widths from statistics: $(cat "$work/st37.widths")"
 
+# Verify that a session keeps an index it found usable while the
+# catalog's epoch holds, and never one it found unusable
+# (SCHEMACACHE.md section 4.6).
+# 1. Make t38 of 10,000 rows, b distinct, and analyze it, and t38x.
+# 2. A held session begins a REPEATABLE READ transaction and reads t38x:
+#    its snapshot is taken, and it holds no lock on t38, which CREATE
+#    INDEX would wait for.
+# 3. Another session makes the index t38_b on b.
+# 4. The held session plans b = 5: a sequential scan, as its snapshot is
+#    older than the index.
+# 5. It commits, and plans b = 5 twice: by t38_b both times, the second
+#    from the index kept. Kept unusable from step 4, at the same epoch,
+#    it would be a sequential scan.
+local_psql -c 'create table t38 (a int4, b int4)' \
+  -c 'create table t38x (a int4)' \
+  -c 'insert into t38 select g, g from generate_series(1, 10000) g' \
+  -c 'analyze t38' >> "$work/stats.out" 2>&1
+held_start st38
+held_send st38 "begin isolation level repeatable read;
+  select count(*) from t38x; select 'one';"
+held_wait st38 one || fail "a snapshot before an index"
+local_psql -c 'create index t38_b on t38 (b)' >> "$work/stats.out" 2>&1
+held_send st38 "explain (costs off) select * from t38 where b = 5; commit;
+  explain (costs off) select * from t38 where b = 5;
+  explain (costs off) select * from t38 where b = 5; select 'two';"
+held_wait st38 two || fail "an index made since"
+held_end st38
+grep -o 'Seq Scan on t38\|Index Scan using t38_b' "$work/st38.out" |
+  tr '\n' ',' > "$work/st38.scans"
+[ "$(cat "$work/st38.scans")" = \
+  "Seq Scan on t38,Index Scan using t38_b,Index Scan using t38_b," ] ||
+  fail "an index's usability kept: $(cat "$work/st38.scans")"
+
 # Verify that VACUUM compacts a table's store in sm, and that VACUUM
 # ANALYZE also analyzes it.
 # 1. Make t32 with 20,000 rows of 200 bytes, and VACUUM ANALYZE it: a

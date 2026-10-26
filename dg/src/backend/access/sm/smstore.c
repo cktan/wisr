@@ -186,6 +186,8 @@ struct smstore_state_t {
   uint64_t names_epoch = 0;
   /* The epoch each relation's cached version was last checked at. */
   std::unordered_map<Oid, uint64_t> checked;
+  /* The epoch each index was last found usable at (smstore_index_usable). */
+  std::unordered_map<Oid, uint64_t> usable;
   /* The views it locked, as a table's lock is its handle's (open_tables). */
   std::vector<held_view_t> held_views;
   /* sm's namespaces' epoch when this session last flushed them. */
@@ -6040,11 +6042,38 @@ void smstore_drop_indexes(DropStmt *stmt) {
   }
 }
 
-/* Whether this transaction may scan rel's index indexoid now: built, valid. */
+/*
+ * Whether this transaction may scan rel's index indexoid now: built, valid,
+ * and valid since a count its snapshot is not older than.  An index found
+ * usable stays so while the catalog's epoch holds (SCHEMACACHE.md section
+ * 4.6): a valid index stays valid until dropped, which moves the epoch, and
+ * a snapshot of this session's is never older than one before it.  One not
+ * usable is asked again each time: its build may end, or a newer snapshot
+ * see it.
+ */
 bool smstore_index_usable(Relation rel, Oid indexoid) {
+  auto &usable = tcb->smstore->usable;
+  /* Read before the lookup, so a publish meanwhile retires what it finds. */
+  uint64_t epoch = sm_cat_epoch(session());
+
+  if (UINT64_MAX != epoch) {
+    auto it = usable.find(indexoid);
+
+    if (usable.end() != it && epoch == it->second)
+      return true;
+  }
   sm_tbl_t *tbl = open_table(RelationGetRelid(rel), SM_LOCKMODE_IS);
 
-  return tbl != NULL && sm_tbl_index_usable(tbl, indexoid);
+  if (NULL == tbl || !sm_tbl_index_usable(tbl, indexoid))
+    return false;
+  /* None kept while the transaction has DDL of its own. */
+  if (UINT64_MAX != epoch) {
+    /* Past the limit, they are forgotten, and asked again as needed. */
+    if (usable.size() >= statistic_cache_max)
+      usable.clear();
+    usable[indexoid] = epoch;
+  }
+  return true;
 }
 
 /* Whether type is one of the integers, int2, int4 and int8. */

@@ -155,6 +155,23 @@ read once into the definition instead of from sm1 at every open;
 whether this transaction made the table comes from the lock's own
 lookup instead of a second one.
 
+### 4.6 An index's usability
+
+`get_relation_info()` asks of each index whether the transaction
+may scan it (`smstore_index_usable()`, sm's
+`sm_tbl_index_usable`): built, valid, and valid since a count its
+snapshot is not older than. An index found usable is kept with
+the epoch, and is usable while the epoch holds: a valid index
+stays valid until it is dropped, a publish, and a session's
+snapshots only move forward, a transaction's at its start and a
+READ COMMITTED statement's at its own. One found unusable is not
+kept: its build may end, or a newer snapshot see it, with no
+publish between. The epoch is a guard more than the proof: an
+index's oid is never used again, and a dropped index leaves its
+table's list of indexes, so a usable index is never asked about
+once it is not; `server.sh` can break the unusable side of this
+and not the epoch's.
+
 ## 5. The cases
 
 | Case | What happens |
@@ -168,6 +185,7 @@ lookup instead of a second one.
 | DROP, then CREATE under the same name | a publish: the name's entry goes |
 | a name looked up, then the table renamed before the lock | the lock waits for the rename's X; once it is had, the relcache's version check finds the change, counts a message, and the name is looked up again with the epoch moved, so from sm (§2) |
 | REPEATABLE READ, an old snapshot | a catalog lookup reads the newest catalog, in PostgreSQL and in sm alike; unchanged |
+| REPEATABLE READ, a snapshot older than an index | the index is unusable to it, and not kept so: the next transaction asks sm again and may use it (§4.6) |
 | a prepared transaction | sm refuses PREPARE after DDL; nothing to date |
 | crash, restart | the caches are memory, made again |
 | another database | its own catalog, its own epoch |
