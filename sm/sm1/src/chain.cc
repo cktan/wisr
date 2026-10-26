@@ -18,6 +18,7 @@
 #include "sm0_defer.h"
 
 #include <cassert>
+#include <cstring>
 #include <memory>
 #include <vector>
 
@@ -769,6 +770,18 @@ sm1::scan_t *scan_chained(sm1::session_t *s, uint64_t storeid,
   return c.release();
 }
 
+/*
+ * Whether view sees v, as access_visible: a stamped version here,
+ * the common case, by its stamps alone (§4.4, access.cc visible()).
+ */
+int chain_visible(wisr::db_t *db, const wisr::chain_version_t &v,
+                  const wisr::view_t &view) {
+  if (v.flags & version_stamped) {
+    return v.wts <= view.snapshot_ts && v.commit_ts <= view.snapshot_ts;
+  }
+  return wisr::access_visible(db, v.as_version(), view);
+}
+
 } // namespace
 
 namespace wisr {
@@ -918,7 +931,10 @@ int chain_scan_next(sm1::scan_t *c, const char **key, size_t *klen,
     // How far the scan has read, for SIREAD narrowing; also the key
     // handed out.
     c->examined = true;
-    c->last_examined.assign(it->key().data() + 1, it->key().size() - 1);
+    rocksdb::Slice k = it->key();
+    // Keys of one length, the usual scan's, need no reallocation.
+    c->last_examined.resize(k.size() - 1);
+    std::memcpy(c->last_examined.data(), k.data() + 1, k.size() - 1);
     chain_version_t v;
     if (!chain_decode(it->value(), &v, false)) {
       c->state = -1;
@@ -926,7 +942,7 @@ int chain_scan_next(sm1::scan_t *c, const char **key, size_t *klen,
     }
     // Walk the key's chain to the version the cursor sees.
     for (;;) {
-      int r = access_visible(db, v.as_version(), view);
+      int r = chain_visible(db, v, view);
       if (r < 0) {
         c->state = -1;
         return -1;
