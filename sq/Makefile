@@ -65,7 +65,7 @@ build/gen/keyword_hash.h: gen/gen_keywords.py spec/kwlist.h
 	@mkdir -p $(dir $@)
 	python3 gen/gen_keywords.py > $@
 
-build/src/keywords.o: build/gen/keyword_hash.h
+build/src/keywords.o build/rel/src/keywords.o: build/gen/keyword_hash.h
 
 # The grammar. Its header has the tokens the scanner returns. bison
 # writes both files at once; the header is the one make follows.
