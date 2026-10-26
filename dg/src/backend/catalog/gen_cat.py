@@ -91,7 +91,8 @@ TEXT_ROWS = {"pg_cast", "pg_collation", "pg_language", "pg_operator",
 # catalog -> {name: its key columns}: the rows in order of those columns,
 # and cat_SHORTs_by_NAME() to find the ones with given values, a binary
 # search where a scan of every row would be: PostgreSQL's syscache
-# indexes on them.
+# indexes on them. An index on one oid is a direct index where the
+# catalog's oids are (direct()).
 INDEXES = {
     "pg_amop": {
         "operator": ["amopopr"],
@@ -304,8 +305,46 @@ def plural(short):
     return short + ("es" if short.endswith("s") else "s")
 
 
-def write_oid_lookup(catalog, short, key, w):
-    """Write cat_SHORT(key), a binary search of the rows in key order."""
+# A lookup by oid is a direct index, an array from each oid between the
+# lowest and the highest to its row, for a catalog of DIRECT_MIN_ROWS rows
+# or more whose oids span DIRECT_MAX_SPAN or fewer: a binary search of it
+# takes six steps or more, and the planner and the executor look its rows
+# up many times a query. A smaller catalog, or a sparser one, is searched.
+DIRECT_MIN_ROWS = 64
+DIRECT_MAX_SPAN = 16384
+
+
+def direct(keys):
+    """Whether rows of these keys, in order, are found by a direct index:
+    its entries are uint16, so the rows are fewer than 65535."""
+    return (DIRECT_MIN_ROWS <= len(keys) < 65535 and
+            keys[-1] - keys[0] + 1 <= DIRECT_MAX_SPAN)
+
+
+def write_uint16s(name, values, w):
+    """Write values as the static uint16 array name."""
+    w(f"static const uint16 {name}[] = {{\n")
+    for i in range(0, len(values), 16):
+        w("    " + ", ".join(str(v) for v in values[i:i + 16]) + ",\n")
+    w("};\n\n")
+
+
+def write_oid_lookup(catalog, short, key, keys, w):
+    """Write cat_SHORT(key): a direct index of the rows, whose keys in
+    order are keys, or a binary search of them."""
+    if direct(keys):
+        lo, hi = keys[0], keys[-1]
+        at = [0] * (hi - lo + 1)
+        for i, k in enumerate(keys):
+            at[k - lo] = i + 1
+        w(f"/* Each {key} from {lo} to {hi}: 1 + its row's place, 0 for none. */\n")
+        write_uint16s(f"{short}_at", at, w)
+        w(f"/* Find the {catalog} row with this {key}: a direct index. */\n")
+        w(f"const cat_{short}_t *cat_{short}(Oid {key}) {{\n")
+        w(f"  if ({key} < {lo} || {key} > {hi})\n    return NULL;\n")
+        w(f"  uint16 at = {short}_at[{key} - {lo}];\n\n")
+        w(f"  return 0 == at ? NULL : &{short}_rows[at - 1];\n}}\n\n")
+        return
     w(f"/* Find the {catalog} row with this {key}: a binary search. */\n")
     w(f"const cat_{short}_t *cat_{short}(Oid {key}) {{\n")
     w(f"  int lo = 0, hi = lengthof({short}_rows) - 1;\n\n")
@@ -342,7 +381,8 @@ def write_source(catalogs, out):
         w(f"\nstatic const cat_{short}_t {short}_rows[] = {{\n")
         w("".join(body))
         w("};\n\n")
-        write_oid_lookup(catalog, short, key, w)
+        write_oid_lookup(catalog, short, key,
+                         [int(r[oid_at][1]) for r in rows], w)
         w(f"/* Every {catalog} row, in {key} order. */\n")
         w(f"const cat_{short}_t *cat_{plural(short)}(int *count) {{\n")
         w(f"  *count = lengthof({short}_rows);\n  return {short}_rows;\n}}\n")
@@ -385,6 +425,10 @@ def write_index(short, names, cols, rows, index, keys, w):
     for i in order:
         w(f"    &{short}_rows[{i}],\n")
     w("};\n\n")
+    values = [int(rows[i][at[0]][1]) for i in order]
+    if len(keys) == 1 and types[keys[0]] == "oid" and direct(values):
+        write_direct_index(short, index, keys[0], values, w)
+        return
     w(f"/* Whether row r comes before the rows with these {', '.join(keys)}. */\n")
     w(f"static bool {arr}_before(const cat_{short}_t *r, {params}) {{\n")
     for k in keys[:-1]:
@@ -400,6 +444,28 @@ def write_index(short, names, cols, rows, index, keys, w):
     w(f"  while (lo + n < (int)lengthof({arr}) && {match})\n    n++;\n")
     w("  *count = n;\n")
     w(f"  return n > 0 ? &{arr}[lo] : NULL;\n}}\n")
+
+
+def write_direct_index(short, index, key, values, w):
+    """Write cat_SHORTs_by_INDEX() of an index on one oid, key, whose
+    rows' values in order are values: a direct index of where each
+    value's rows start."""
+    arr = f"{short}_by_{index}"
+    lo, hi = values[0], values[-1]
+    # The rows of v run from start[v - lo] to start[v - lo + 1].
+    start, j = [], 0
+    for v in range(lo, hi + 2):
+        while j < len(values) and values[j] < v:
+            j += 1
+        start.append(j)
+    w(f"/* Each {key} from {lo} to {hi} + 1: where its rows start in {arr}. */\n")
+    write_uint16s(f"{arr}_start", start, w)
+    w(f"/* Find the rows with this {key}: a direct index. */\n")
+    w(f"const cat_{short}_t *const *cat_{plural(short)}_by_{index}(Oid {key}, int *count) {{\n")
+    w(f"  if ({key} < {lo} || {key} > {hi}) {{\n    *count = 0;\n    return NULL;\n  }}\n")
+    w(f"  int first = {arr}_start[{key} - {lo}];\n\n")
+    w(f"  *count = {arr}_start[{key} - {lo} + 1] - first;\n")
+    w(f"  return *count > 0 ? &{arr}[first] : NULL;\n}}\n")
 
 
 def write_relations(catalogs, oids, forced, w):

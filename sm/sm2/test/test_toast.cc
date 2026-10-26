@@ -640,3 +640,44 @@ TEST_CASE("a key is never made of a TOAST pointer") {
   CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
   CHECK(key.empty());
 }
+
+TEST_CASE("a primary key given out of line is keyed by its value") {
+  // Verify a key column's TOAST pointer is fetched, then keyed.
+  // 1. A keyless rel takes a row whose texts are 1000 and 990
+  //    bytes: the longer goes out of line, and its pointer is read.
+  // 2. A rel keyed by that text column keys the pointer as it keys
+  //    the value itself.
+  // 3. A null key column is refused with SM_ERR_INVALID.
+  db_t db;
+  sm1::session_t *s = db.open();
+  sm2::rel_t *rel = open_rel(db, s);
+  std::string big = text_of(1000);
+  REQUIRE(sm1::begin(s, sm1::xctlevel_t::read_committed) == 0);
+  uint64_t rowno = insert(rel, {1, big, text_of(990, 'y')});
+  std::string ptr = *held(read(rel, rowno), 1);
+  REQUIRE(sm2::varlena_is_toast(ptr));
+
+  std::vector<sm2::key_column_t> key = {
+      {&sm2::type_text, -1, nullptr, false, false}};
+  std::vector<int32_t> atts = {1};
+  sm2::rel_t *keyed = nullptr;
+  REQUIRE(sm2::rel_open(s, db.store(), 1, schema(), {key, atts}, "rowno",
+                        "toast", keyed) == 0);
+  std::string inline_big = sm2::make_varlena(big);
+  sm2::datum_t by_ptr[1] = {sm2::datum_from_ptr(ptr.data())};
+  sm2::datum_t by_value[1] = {sm2::datum_from_ptr(inline_big.data())};
+  bool isnull[1] = {false};
+  std::string from_ptr, from_value;
+  REQUIRE_MESSAGE(sm2::rel_key(keyed, by_ptr, isnull, from_ptr) == 0,
+                  sm1::errmsg());
+  REQUIRE(sm2::rel_key(keyed, by_value, isnull, from_value) == 0);
+  CHECK(!from_value.empty());
+  CHECK(from_ptr == from_value);
+
+  isnull[0] = true;
+  CHECK(sm2::rel_key(keyed, by_value, isnull, from_value) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  REQUIRE(sm1::commit(s) == 0);
+  sm2::rel_close(keyed);
+  sm2::rel_close(rel);
+}

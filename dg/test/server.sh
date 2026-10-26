@@ -3674,6 +3674,34 @@ after_held 'update tw1 set a = 3 where a = 33;' -v VERBOSITY=verbose \
 local_psql -c 'drop table tj' > /dev/null 2>&1
 local_psql -c 'drop table tw1' > /dev/null 2>&1
 
+# Verify that the built-in catalog's direct indexes by oid (gen_cat.py)
+# find every row from the lowest oid to the highest, and none outside.
+# 1. The lowest and highest pg_proc, pg_operator and pg_type oids name
+#    their rows; an oid between them that has none, and one just below
+#    and just above them, print as numbers.
+# 2. The lowest and highest operators pg_amop has (=(int4,int8) and
+#    >=(numeric,numeric)) make index conditions; <>, in no operator
+#    family, does not.
+[ "$(local_psql -c 'select 3::regproc, 8845::regprocedure, 4::regproc,
+    2::regproc, 8846::regproc' \
+  -c 'select 15::regoperator, 8453::regoperator, 16::regoperator,
+    14::regoperator, 8454::regoperator' \
+  -c 'select 16::regtype, 8384::regtype, 31::regtype, 15::regtype,
+    8385::regtype' 2>&1 | tr '\n' ' ')" = \
+  "heap_tableam_handler|pg_stats(regclass)|4|2|8846 =(integer,bigint)|%(numeric,numeric)|16|14|8454 boolean|numeric[]|31|15|8385 " ] ||
+  fail "built-in catalog rows by oid"
+local_psql -c 'create table tc (a int4 primary key, n numeric(6, 1))' \
+  -c 'create index tc_n on tc (n)' \
+  -c 'insert into tc select i, i / 2.0 from generate_series(1, 20) i' \
+  > "$work/catoid.out" 2>&1
+[ "$(local_psql -c 'set enable_seqscan = off' \
+  -c 'set enable_bitmapscan = off' \
+  -c 'explain (costs off) select a from tc where a = 5::int8' \
+  -c 'explain (costs off) select a from tc where n >= 9.5' \
+  -c 'explain (costs off) select a from tc where a <> 5' 2>&1 |
+  grep -c 'Index Cond')" = 2 ] || fail "pg_amop rows by operator"
+local_psql -c 'drop table tc' > /dev/null 2>&1
+
 # Verify that SELECT ... FOR UPDATE and FOR SHARE lock rows in sm, until the
 # transaction ends, and read the newest version of a row changed meanwhile.
 # 1. Each of the four strengths returns the rows a plain SELECT would, and a
