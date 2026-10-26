@@ -176,7 +176,7 @@ invalid_pair:
  */
 int sq_base_yylex(SQ_BASE_YYSTYPE *lvalp, int *llocp, core_yyscan_t yyscanner) {
   parse_state_t *yyextra = parse_state(yyscanner);
-  char *scanbuf = scanner_extra(yyscanner)->scanbuf.data();
+  char *scanbuf = scanner_extra(yyscanner)->scanbuf;
   int cur_token;
   int next_token;
   int cur_token_length;

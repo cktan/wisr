@@ -166,8 +166,10 @@ same, and emptying it frees them.
 - **bison's stacks** come from the parse, not from `malloc`, and
   go with it. bison would free its own on a normal return, which
   an error raised from an action is not.
-- **flex's state** is held by `scanner_t`, whose destructor
-  releases it however the scan ends.
+- **flex's state** is held by `scanner_t`, in room inside it,
+  as is the copy of the text flex scans when the text is short:
+  a scan asks `malloc` for none of it. Its destructor releases
+  what a long text took, however the scan ends.
 
 So RAII reaches everything, and `sq.h` has no free function.
 

@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <cassert>
 #include <new>
 #include <stdexcept>
 #include <string>
@@ -61,7 +62,7 @@ typedef uint32_t pg_wchar;
  */
 #undef YYLTYPE
 #define YYLTYPE int
-#define SET_YYLLOC()  (*(yylloc) = yytext - yyextra->scanbuf.data())
+#define SET_YYLLOC()  (*(yylloc) = yytext - yyextra->scanbuf)
 
 /*
  * Advance yylloc by the given number of bytes.
@@ -1098,7 +1099,7 @@ scanner_errposition(int location, void *yyscanner)
 		return 0;				/* no-op if location is unknown */
 
 	/* Convert byte offset to character number */
-	return utf8_strlen_with_len(yyextra->scanbuf.data(), location) + 1;
+	return utf8_strlen_with_len(yyextra->scanbuf, location) + 1;
 }
 
 /*
@@ -1116,7 +1117,7 @@ scanner_errposition(int location, void *yyscanner)
 void
 scanner_yyerror(const char *message, void *yyscanner)
 {
-	const char *loc = yyextra->scanbuf.data() + *yylloc;
+	const char *loc = yyextra->scanbuf + *yylloc;
 
 	if (*loc == YY_END_OF_BUFFER_CHAR)
 		raise({.sqlstate = sqlstate_syntax_error,
@@ -1160,19 +1161,27 @@ scanner_t::scanner_t(std::string_view sql, const sq_options_t &options,
 	/*
 	 * Make a scan buffer with special termination needed by flex.
 	 */
-	m_extra.scanbuf.reserve(sql.size() + 2);
-	m_extra.scanbuf.assign(sql);
-	m_extra.scanbuf.append(2, YY_END_OF_BUFFER_CHAR);
+	size_t		size = sql.size() + 2;
 
-	if (yylex_init(&m_scanner) != 0)
+	if (size <= sizeof(m_extra.text_room))
+		m_extra.scanbuf = m_extra.text_room;
+	else
+	{
+		m_extra.scanbuf_heap = std::make_unique_for_overwrite<char[]>(size);
+		m_extra.scanbuf = m_extra.scanbuf_heap.get();
+	}
+	if (!sql.empty())
+		memcpy(m_extra.scanbuf, sql.data(), sql.size());
+	m_extra.scanbuf[size - 2] = YY_END_OF_BUFFER_CHAR;
+	m_extra.scanbuf[size - 1] = YY_END_OF_BUFFER_CHAR;
+
+	/* Given the extra first, flex's state is cut from its flex_room. */
+	if (yylex_init_extra(&m_extra, &m_scanner) != 0)
 		throw std::bad_alloc();
-
-	sq_core_yyset_extra(&m_extra, m_scanner);
 
 	try
 	{
-		yy_scan_buffer(m_extra.scanbuf.data(), m_extra.scanbuf.size(),
-					   m_scanner);
+		yy_scan_buffer(m_extra.scanbuf, size, m_scanner);
 	}
 	catch (...)
 	{
@@ -1370,33 +1379,57 @@ check_escape_warning(core_yyscan_t yyscanner)
  * Interface functions to make flex use operator new's way of failing:
  * memory that cannot be had is an exception, never a null pointer for
  * flex to print about and exit on.
+ *
+ * What flex asks for while a scanner_t is set up -- its state, its
+ * buffer's, and its stack of one buffer -- is cut from the extra's
+ * flex_room, which holds them all; only what does not fit is malloc's.
+ * yyscanner is NULL only from yylex_init, which scanner_t does not
+ * call.
  */
 
+/* flex's state, held in flex_room. */
+static_assert(sizeof(struct yyguts_t) + sizeof(struct yy_buffer_state) +
+			  sizeof(YY_BUFFER_STATE) + 2 * alignof(std::max_align_t) <=
+			  sizeof(scan_extra_t::flex_room),
+			  "flex's state does not fit the scan's room");
+
+/* bytes from flex_room, or from malloc when they do not fit. */
 void *
 sq_core_yyalloc(yy_size_t bytes, core_yyscan_t yyscanner)
 {
-	void	   *p = malloc(bytes);
+	void	   *p = yyscanner ? scanner_extra(yyscanner)->take(bytes) : NULL;
 
-	(void) yyscanner;
+	if (p == NULL)
+		p = malloc(bytes);
 	if (p == NULL)
 		throw std::bad_alloc();
 	return p;
 }
 
+/*
+ * ptr grown to bytes. flex grows only a buffer it reads input into,
+ * and a stack of buffers pushed, and a scanner_t has neither: nothing
+ * of flex_room is ever grown.
+ */
 void *
 sq_core_yyrealloc(void *ptr, yy_size_t bytes, core_yyscan_t yyscanner)
 {
-	void	   *p = realloc(ptr, bytes);
+	void	   *p;
 
+	assert(yyscanner == NULL || !scanner_extra(yyscanner)->in_room(ptr));
 	(void) yyscanner;
+	p = realloc(ptr, bytes);
 	if (p == NULL)
 		throw std::bad_alloc();
 	return p;
 }
 
+/* Give ptr back, unless it is flex_room's, which goes with the scan. */
 void
 sq_core_yyfree(void *ptr, core_yyscan_t yyscanner)
 {
-	(void) yyscanner;
+	if (ptr == NULL ||
+		(yyscanner != NULL && scanner_extra(yyscanner)->in_room(ptr)))
+		return;
 	free(ptr);
 }
