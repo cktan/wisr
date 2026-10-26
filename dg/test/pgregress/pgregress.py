@@ -10,6 +10,8 @@
 #                                           not run as PostgreSQL does
 #   pgregress.py [-j N] expected [FILE...]  write expected/ from PG 18
 #   pgregress.py [-j N] check [FILE...]     check split.py against PG 18
+#   pgregress.py [-j N] differs [FILE...]   each --dg-differs statement's
+#                                           output on both, to triage
 #
 # FILE is a name in schedule; none means all of them. Each runs alone, in
 # a fresh database, after test_setup. trim runs each file on both servers,
@@ -25,6 +27,7 @@
 #   --dg-unstable         PostgreSQL itself answers it differently twice
 import argparse
 import difflib
+import json
 import os
 import re
 import shutil
@@ -563,6 +566,31 @@ def test(w, name):
     return ok
 
 
+def differs(w, name):
+    """Write WORK/differs/name.json: each --dg-differs statement of name,
+    put back alone, with its output on PostgreSQL and on digres."""
+    text, units, off = load(os.path.join(HERE, 'sql', name + '.sql'))
+    setup = setup_text(name)
+    found = []
+    for k in sorted(off):
+        kind, why = off[k]
+        if kind != 'differs':
+            continue
+        back = dict(off)
+        del back[k]
+        inst = render(text, units, back, marks=True)
+        pg = blocks(w.pg.run(name, inst, setup)[0], len(units))[k]
+        dg = blocks(w.dg.run(name, inst, setup)[0], len(units))[k]
+        if not w.dg.alive():
+            w.dg.restart()
+        found.append({'unit': k, 'why': why,
+                      'sql': text[units[k].start:units[k].end],
+                      'pg': pg, 'dg': dg})
+    with open(os.path.join(WORK, 'differs', name + '.json'), 'w') as f:
+        json.dump(found, f, indent=1)
+    log('%-28s %4d differs' % (name, len(found)))
+
+
 def check(w, name):
     """Check split.py on name: PostgreSQL's output with a marker before
     each unit must be its output without them, every marker there but
@@ -589,7 +617,8 @@ def check(w, name):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('-j', type=int, default=4)
-    ap.add_argument('what', choices=['trim', 'expected', 'check', 'test'])
+    ap.add_argument('what', choices=['trim', 'expected', 'check', 'test',
+                                     'differs'])
     ap.add_argument('files', nargs='*')
     a = ap.parse_args()
     # A tree built but not installed into install/ has no client to run.
@@ -601,9 +630,10 @@ def main():
     with open(os.path.join(HERE, 'schedule')) as f:
         schedule = f.read().split()
     files = a.files or schedule
-    fn = {'trim': trim, 'expected': expected, 'check': check,
-          'test': test}[a.what]
-    kinds = {'trim': ('pg', 'dg'), 'test': ('dg',)}.get(a.what, ('pg',))
+    fn = {'trim': trim, 'expected': expected, 'check': check, 'test': test,
+          'differs': differs}[a.what]
+    kinds = {'trim': ('pg', 'dg'), 'differs': ('pg', 'dg'),
+             'test': ('dg',)}.get(a.what, ('pg',))
     sub = a.what if a.what != 'trim' else ''
     os.makedirs(os.path.join(WORK, sub), exist_ok=True)
     failed = []
