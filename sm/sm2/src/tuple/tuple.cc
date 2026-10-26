@@ -188,9 +188,9 @@ size_t entry_width(const sm2::tup_desc_t &desc, size_t i) {
   return w > 0 ? static_cast<size_t>(w) : slot_width;
 }
 
-/* The value of the slot at pos: where a varlena starts. */
-size_t slot_at(const parsed_t &t, size_t pos) {
-  return sm2::load_le<uint16_t>(t.tuple.substr(pos, slot_width));
+/* The value of the slot at pos in tuple: where a varlena starts. */
+size_t slot_at(std::string_view tuple, size_t pos) {
+  return sm2::load_le<uint16_t>(tuple.substr(pos, slot_width));
 }
 
 /*
@@ -264,7 +264,7 @@ int parse(const sm2::tup_desc_t &desc, std::string_view tuple, parsed_t &t) {
       continue;
     }
     if (desc.width[i] < 0) {
-      if (slot_at(t, entry) != next) {
+      if (slot_at(tuple, entry) != next) {
         return corrupt("a slot that does not point to its varlena");
       }
       size_t len;
@@ -340,18 +340,19 @@ size_t null_width(const parsed_t &t, const sm2::tup_desc_t &desc, size_t k) {
 }
 
 /*
- * The varlena the slot at pos points to, whole, header included.
- * With check, first that the slot points past its entry to a
- * varlena the codec reads, ending within the tuple; an empty view,
- * with SM_ERR_CORRUPT set, if not. Out of line, so its out
+ * The varlena the slot at pos in tuple points to, whole, header
+ * included. With check, first that the slot points past its entry
+ * to a varlena the codec reads, ending within the tuple; an empty
+ * view, with SM_ERR_CORRUPT set, if not. Out of line, so its out
  * parameters cost entry_at's callers nothing for a fixed-width
- * attribute.
+ * attribute; and given the tuple's view, not its parsed_t, so a
+ * reader's parsed_t stays in registers.
  */
-[[gnu::noinline]] std::string_view varlena_at(const parsed_t &t, size_t pos,
-                                              bool check) {
-  const char *data = t.tuple.data();
-  size_t size = t.tuple.size();
-  size_t start = slot_at(t, pos), len = 0;
+[[gnu::noinline]] std::string_view varlena_at(std::string_view tuple,
+                                              size_t pos, bool check) {
+  const char *data = tuple.data();
+  size_t size = tuple.size();
+  size_t start = slot_at(tuple, pos), len = 0;
   if (check && (start < pos || start >= size)) {
     corrupt("a slot that does not point to its varlena");
     return {};
@@ -383,7 +384,7 @@ int entry_at(const parsed_t &t, int32_t w, size_t pos, bool check,
     return 0;
   }
   // A varlena is at least its header, so empty is a failure.
-  d = varlena_at(t, pos, check);
+  d = varlena_at(t.tuple, pos, check);
   return check && d.empty() ? -1 : 0;
 }
 
@@ -393,11 +394,11 @@ int entry_at(const parsed_t &t, int32_t w, size_t pos, bool check,
  * tup_decode gives each, and pos left past the last entry read. A
  * null's datum is 0. With check, each entry read is checked as
  * tup_decode checks it; without, the caller has checked the whole
- * tuple.
+ * tuple. Inlined, so its callers' t and pos are not on the stack.
  */
-int read_each(const parsed_t &t, const sm2::tup_desc_t &desc, size_t from,
-              size_t n, size_t &pos, bool check, sm2::datum_t *datums,
-              bool *isnull) {
+[[gnu::always_inline]] inline int
+read_each(const parsed_t &t, const sm2::tup_desc_t &desc, size_t from, size_t n,
+          size_t &pos, bool check, sm2::datum_t *datums, bool *isnull) {
   // Locals, not desc's vectors or pos, so a store to datums is not
   // taken to change them.
   const sm2::attribute_t *schema = desc.schema.data();

@@ -917,8 +917,8 @@ void chain_scan_seek(sm1::scan_t *c, rocksdb::Slice target, int inclusive) {
 }
 
 /* The next key a chained cursor sees, its newest version or an older one. */
-int chain_scan_next(sm1::scan_t *c, const char **key, size_t *klen,
-                    const char **data, size_t *datalen) {
+int chain_scan_next(sm1::scan_t *c, std::string_view &key,
+                    std::string_view &data) {
   db_t *db = c->session->db;
   view_t view = {c->snapshot_ts, c->xid, c->seq_hwm};
   rocksdb::Iterator *it = c->it.get();
@@ -954,10 +954,8 @@ int chain_scan_next(sm1::scan_t *c, const char **key, size_t *klen,
           break;
         }
         c->on_row = true;
-        *key = c->last_examined.data();
-        *klen = c->last_examined.size();
-        *data = v.payload.data();
-        *datalen = v.payload.size();
+        key = c->last_examined;
+        data = std::string_view(v.payload.data(), v.payload.size());
         return 0;
       }
       if (0 != access_skip(c->session, v.as_version(), view)) {

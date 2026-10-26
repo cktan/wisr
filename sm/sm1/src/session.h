@@ -606,8 +606,8 @@ void access_undo_add(sm1::session_t *session, sm1::session_t::undo_t undo);
  * sm1::scannxt of a chained cursor: 0 with the next key it sees, 1
  * at the end, or -1 (chain.cc).
  */
-int chain_scan_next(sm1::scan_t *scan, const char **key, size_t *klen,
-                    const char **data, size_t *datalen);
+int chain_scan_next(sm1::scan_t *scan, std::string_view &key,
+                    std::string_view &data);
 
 /* sm1::scan_seek of a chained cursor, its checks made (chain.cc). */
 void chain_scan_seek(sm1::scan_t *scan, rocksdb::Slice target, int inclusive);

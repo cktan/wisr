@@ -751,32 +751,12 @@ int scan_seek(sm1::scan_t *c, const char *key, size_t klen, int inclusive) {
   return 0;
 }
 
-/* sm1::scannxt, minus the out-of-memory guard. */
-int scan_next(sm1::scan_t *c, const char **key, size_t *klen, const char **data,
-              size_t *datalen) {
-  // Require every out-parameter.
-  if (!c || !key || !klen || !data || !datalen) {
-    return set_error(sm1::SM_ERR_INVALID, "sm1_scannxt: NULL argument");
-  }
-  // Report no row until one is found.
-  *key = *data = nullptr;
-  *klen = *datalen = 0;
-  // A cursor a rollback closed reads no more.
-  if (c->rolled_back) {
-    return set_error(sm1::SM_ERR_SCANCLOSED, rolled_back_msg);
-  }
-  // Nor does one of a transaction a rollback doomed (§6.5).
-  if (c->session->active && c->session->doomed == sm1::SM_ERR_DOOMED) {
-    return xct_check_active(c->session);
-  }
-  // A cursor at its end, or failed, stays so.
-  if (c->state != 0) {
-    return c->state;
-  }
-  // A chained store's cursor walks its current keys and their chains.
-  if (c->chained) {
-    return chain_scan_next(c, key, klen, data, datalen);
-  }
+/*
+ * sm1::scannxt of an unchained cursor, its checks made. Out of line,
+ * so a chained cursor's step pays nothing for its frame.
+ */
+[[gnu::noinline]] int scan_next(sm1::scan_t *c, std::string_view &key,
+                                std::string_view &data) {
   // The view frozen at sm1::scan.
   db_t *db = c->session->db;
   view_t view = {c->snapshot_ts, c->xid, c->seq_hwm};
@@ -831,10 +811,8 @@ int scan_next(sm1::scan_t *c, const char **key, size_t *klen, const char **data,
       // next call (on_row).
       if (!(v.flags & version_tombstone)) {
         c->on_row = true;
-        *key = c->last_examined.data();
-        *klen = c->last_examined.size();
-        *data = v.payload.data();
-        *datalen = v.payload.size();
+        key = c->last_examined;
+        data = std::string_view(v.payload.data(), v.payload.size());
         return 0;
       }
     } else if (0 != skip_version(c->session, v, view)) {
@@ -1342,15 +1320,32 @@ int sm1::scan(sm1::session_t *session, uint64_t storeid, const char *skey,
 }
 
 /* Advance a cursor to its next row. */
-int sm1::scannxt(sm1::scan_t *scan, std::string_view &key,
+int sm1::scannxt(sm1::scan_t *c, std::string_view &key,
                  std::string_view &data) {
-  const char *k = nullptr, *d = nullptr;
-  size_t klen = 0, dlen = 0;
-  int rc = scan_next(scan, &k, &klen, &d, &dlen);
-  // Hand back both: empty at the end (1) and on failure.
-  key = std::string_view(k, klen);
-  data = std::string_view(d, dlen);
-  return rc;
+  // Require a cursor.
+  if (!c) {
+    return set_error(sm1::SM_ERR_INVALID, "sm1_scannxt: NULL argument");
+  }
+  // Report no row until one is found: both are empty at the end
+  // (1) and on failure.
+  key = data = {};
+  // A cursor a rollback closed reads no more.
+  if (c->rolled_back) {
+    return set_error(sm1::SM_ERR_SCANCLOSED, rolled_back_msg);
+  }
+  // Nor does one of a transaction a rollback doomed (§6.5).
+  if (c->session->active && c->session->doomed == sm1::SM_ERR_DOOMED) {
+    return xct_check_active(c->session);
+  }
+  // A cursor at its end, or failed, stays so.
+  if (c->state != 0) {
+    return c->state;
+  }
+  // A chained store's cursor walks its current keys and their chains.
+  if (c->chained) {
+    return chain_scan_next(c, key, data);
+  }
+  return scan_next(c, key, data);
 }
 
 /* Release a cursor's hold: the iterator first, then its snapshot. */
