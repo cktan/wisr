@@ -111,14 +111,20 @@ size_t stored_len(std::string_view v) {
                                   : varlena_len(sm2::varlena_payload(v).size());
 }
 
-/* Fail with SM_ERR_CORRUPT: the tuple is malformed. */
-int corrupt(const std::string &why) {
-  return sm1::seterr(sm1::SM_ERR_CORRUPT, "tuple: " + why);
+/*
+ * Fail with SM_ERR_CORRUPT: the tuple is malformed. Out of line
+ * and cold, so a read that finds nothing wrong builds no message.
+ */
+[[gnu::cold, gnu::noinline]] int corrupt(const char *why) {
+  return sm1::seterr(sm1::SM_ERR_CORRUPT, std::string("tuple: ") + why);
 }
 
-/* Fail with SM_ERR_INVALID: the call's arguments are wrong. */
-int invalid(const std::string &why) {
-  return sm1::seterr(sm1::SM_ERR_INVALID, "tuple: " + why);
+/*
+ * Fail with SM_ERR_INVALID: the call's arguments are wrong. Cold,
+ * as corrupt().
+ */
+[[gnu::cold, gnu::noinline]] int invalid(std::string_view why) {
+  return sm1::seterr(sm1::SM_ERR_INVALID, "tuple: " + std::string(why));
 }
 
 /* Append v as an unsigned LEB128 varint. */
@@ -157,13 +163,15 @@ bool bit(const char *bitmap, size_t i) {
   return (static_cast<uint8_t>(bitmap[i / 8]) >> (i % 8)) & 1;
 }
 
+/* Fail with SM_ERR_INVALID: attribute bad was refused. Cold, as corrupt(). */
+[[gnu::cold, gnu::noinline]] int refused(size_t bad) {
+  return invalid("attribute " + std::to_string(bad) +
+                 " has no type, or a typmod its type refuses");
+}
+
 /* Fail with SM_ERR_INVALID if desc has an attribute it refused. */
 int check_desc(const sm2::tup_desc_t &desc) {
-  if (desc.bad == SIZE_MAX) {
-    return 0;
-  }
-  return invalid("attribute " + std::to_string(desc.bad) +
-                 " has no type, or a typmod its type refuses");
+  return desc.bad == SIZE_MAX ? 0 : refused(desc.bad);
 }
 
 /* A tuple's parts, located and checked against the schema. */
@@ -198,8 +206,8 @@ int parse_head(const sm2::tup_desc_t &desc, std::string_view tuple,
     return corrupt("empty");
   }
   if (tuple.size() > sm2::max_tup_len) {
-    return corrupt("longer than " + std::to_string(sm2::max_tup_len) +
-                   " bytes");
+    static_assert(65535 == sm2::max_tup_len);
+    return corrupt("longer than 65535 bytes");
   }
   uint8_t flags = static_cast<uint8_t>(tuple[0]);
   if (flags & reserved) {
@@ -274,28 +282,14 @@ int parse(const sm2::tup_desc_t &desc, std::string_view tuple, parsed_t &t) {
 }
 
 /*
- * Attribute i of a parsed tuple, known non-null and within natts,
- * whose entry is at pos: a fixed-width datum, or the varlena its
- * slot points to.
- */
-std::string_view datum_at(const parsed_t &t, const sm2::tup_desc_t &desc,
-                          size_t i, size_t pos) {
-  if (desc.width[i] > 0) {
-    return t.tuple.substr(pos, desc.width[i]);
-  }
-  size_t start = slot_at(t, pos), len = 0;
-  varlena_extent(t.tuple.substr(start), len);
-  return t.tuple.substr(start, len);
-}
-
-/*
  * Convert bytes of attribute to datum_t representation. A by-value
  * one of 2 or 4 bytes is sign-extended, as every datum built here
  * is (sm2.h, datum_from_int32): an int2, an int4, a date, and a
  * float4 by its bits. One byte is a bool, 0 or 1.
  */
-void bytes_to_datum(const sm2::attribute_t &attr, std::string_view bytes,
-                    sm2::datum_t &val) {
+[[gnu::always_inline]] inline void bytes_to_datum(const sm2::attribute_t &attr,
+                                                  std::string_view bytes,
+                                                  sm2::datum_t &val) {
   if (attr.type && attr.type->byval) {
     if (bytes.size() == sizeof(int32_t)) {
       int32_t v;
@@ -305,6 +299,9 @@ void bytes_to_datum(const sm2::attribute_t &attr, std::string_view bytes,
       int16_t v;
       std::memcpy(&v, bytes.data(), sizeof(v));
       val = sm2::datum_from_int16(v);
+    } else if (bytes.size() == sizeof(val)) {
+      // A fixed size, so the copy is one load, not a call.
+      std::memcpy(&val, bytes.data(), sizeof(val));
     } else {
       val = 0;
       std::memcpy(&val, bytes.data(), bytes.size());
@@ -343,73 +340,108 @@ size_t null_width(const parsed_t &t, const sm2::tup_desc_t &desc, size_t k) {
 }
 
 /*
- * Check what reading attribute i, non-null, needs of its entry at
- * pos: that the entry lies within the tuple, and for a variable
- * attribute that its slot points past the entry to a varlena the
- * codec reads, ending within the tuple.
+ * The varlena the slot at pos points to, whole, header included.
+ * With check, first that the slot points past its entry to a
+ * varlena the codec reads, ending within the tuple; an empty view,
+ * with SM_ERR_CORRUPT set, if not. Out of line, so its out
+ * parameters cost entry_at's callers nothing for a fixed-width
+ * attribute.
  */
-int check_entry(const parsed_t &t, const sm2::tup_desc_t &desc, size_t i,
-                size_t pos) {
+[[gnu::noinline]] std::string_view varlena_at(const parsed_t &t, size_t pos,
+                                              bool check) {
+  const char *data = t.tuple.data();
+  size_t size = t.tuple.size();
+  size_t start = slot_at(t, pos), len = 0;
+  if (check && (start < pos || start >= size)) {
+    corrupt("a slot that does not point to its varlena");
+    return {};
+  }
+  const char *why = varlena_extent({data + start, size - start}, len);
+  if (check && why) {
+    corrupt(why);
+    return {};
+  }
+  return {data + start, len};
+}
+
+/*
+ * An attribute of a parsed tuple, known non-null and within natts,
+ * of width w (tup_desc_t), whose entry is at pos, into d: a
+ * fixed-width datum, or the varlena its slot points to. With
+ * check, first what reading it needs: that the entry lies within
+ * the tuple, and for a variable attribute what varlena_at checks.
+ * In one pass, so a varlena's header is read once.
+ */
+int entry_at(const parsed_t &t, int32_t w, size_t pos, bool check,
+             std::string_view &d) {
   // A truncated or damaged tuple could place the entry past it.
-  if (pos + entry_width(desc, i) > t.tuple.size()) {
+  if (check && pos + (w > 0 ? w : slot_width) > t.tuple.size()) {
     return corrupt("cut short in its fixed part");
   }
-  if (desc.width[i] < 0) {
-    size_t start = slot_at(t, pos), len;
-    if (start < pos || start >= t.tuple.size()) {
-      return corrupt("a slot that does not point to its varlena");
-    }
-    if (const char *why = varlena_extent(t.tuple.substr(start), len)) {
-      return corrupt(why);
-    }
+  if (w > 0) {
+    d = std::string_view(t.tuple.data() + pos, w);
+    return 0;
   }
-  return 0;
+  // A varlena is at least its header, so empty is a failure.
+  d = varlena_at(t, pos, check);
+  return check && d.empty() ? -1 : 0;
 }
 
 /*
  * Attributes from to n - 1 of a parsed tuple, attribute from's
- * entry at pos: put(i, datum) for each, datum as tup_decode's
- * view gives it, and pos left past the last entry read. With
- * check, each entry read is checked as tup_decode checks it;
- * without, the caller has checked the whole tuple.
+ * entry at pos, into datums and isnull at those places, as
+ * tup_decode gives each, and pos left past the last entry read. A
+ * null's datum is 0. With check, each entry read is checked as
+ * tup_decode checks it; without, the caller has checked the whole
+ * tuple.
  */
-template <class F>
 int read_each(const parsed_t &t, const sm2::tup_desc_t &desc, size_t from,
-              size_t n, size_t &pos, bool check, F &&put) {
-  const auto &schema = desc.schema;
+              size_t n, size_t &pos, bool check, sm2::datum_t *datums,
+              bool *isnull) {
+  // Locals, not desc's vectors or pos, so a store to datums is not
+  // taken to change them.
+  const sm2::attribute_t *schema = desc.schema.data();
+  const int32_t *width = desc.width.data();
+  size_t at = pos;
   for (size_t i = from; i < n; i++) {
+    const sm2::attribute_t &a = schema[i];
+    datums[i] = 0;
+    isnull[i] = true;
     // Past the row's attributes: the value it was added with.
     if (i >= t.natts) {
-      const auto &m = schema[i].missing;
-      put(i, !schema[i].dropped && m ? std::optional(std::string_view(*m))
-                                     : std::nullopt);
+      if (!a.dropped && a.missing) {
+        isnull[i] = false;
+        bytes_to_datum(a, *a.missing, datums[i]);
+      }
       continue;
     }
     if (t.nulls && bit(t.nulls, i)) {
-      put(i, std::nullopt);
       continue;
     }
-    if (check && check_entry(t, desc, i, pos) != 0) {
+    std::string_view d;
+    if (entry_at(t, width[i], at, check, d) != 0) {
       return -1;
     }
-    std::string_view d = datum_at(t, desc, i, pos);
-    pos += entry_width(desc, i);
+    at += width[i] > 0 ? width[i] : slot_width;
     // A dropped attribute's old bytes are skipped.
-    put(i, schema[i].dropped ? std::nullopt : std::optional(d));
+    if (!a.dropped) {
+      isnull[i] = false;
+      bytes_to_datum(a, d, datums[i]);
+    }
   }
+  pos = at;
   return 0;
 }
 
 /*
- * The first n attributes of a tuple, in one pass: put(i, datum)
- * for each, datum as tup_decode's view gives it. When n is every
- * attribute, the whole tuple is checked (parse), since the pass
- * reads all of it anyway; otherwise only what the pass reads, as
- * tup_decode checks.
+ * The first n attributes of a tuple, in one pass, into datums and
+ * isnull, as read_each gives them. When n is every attribute, the
+ * whole tuple is checked (parse), since the pass reads all of it
+ * anyway; otherwise only what the pass reads, as tup_decode
+ * checks.
  */
-template <class F>
 int deform_each(const sm2::tup_desc_t &desc, std::string_view tuple, size_t n,
-                F &&put) {
+                sm2::datum_t *datums, bool *isnull) {
   if (check_desc(desc) != 0) {
     return -1;
   }
@@ -419,17 +451,7 @@ int deform_each(const sm2::tup_desc_t &desc, std::string_view tuple, size_t n,
     return -1;
   }
   size_t pos = t.fixed;
-  return read_each(t, desc, 0, n, pos, !whole, put);
-}
-
-/* A datum view into datums[i] and isnull[i], as tup_deform stores it. */
-void put_datum(const sm2::attribute_t &attr, std::optional<std::string_view> d,
-               sm2::datum_t &datum, bool &isnull) {
-  isnull = !d;
-  datum = 0;
-  if (d) {
-    bytes_to_datum(attr, *d, datum);
-  }
+  return read_each(t, desc, 0, n, pos, !whole, datums, isnull);
 }
 
 /*
@@ -477,15 +499,16 @@ int decode_view(const sm2::tup_desc_t &desc, std::string_view tuple,
   // nulls, off[ordinal] from the fixed part's start, less the
   // entry widths the nulls before it do not take.
   size_t pos = t.fixed + desc.off[ordinal] - null_width(t, desc, ordinal);
-  // The entry -- a datum, or a 2-byte slot -- must lie within the
-  // tuple; and, variable width, the slot must point past its own
-  // entry to a varlena the codec reads, ending within the tuple.
-  if (check_entry(t, desc, ordinal, pos) != 0) {
+  // Step 5: the fixed-width datum itself, or the varlena whole,
+  // header included, as a view into tuple. The entry -- a datum,
+  // or a 2-byte slot -- must lie within the tuple; and, variable
+  // width, the slot must point past its own entry to a varlena the
+  // codec reads, ending within the tuple.
+  std::string_view d;
+  if (entry_at(t, desc.width[ordinal], pos, true, d) != 0) {
     return -1;
   }
-  // Step 5: the fixed-width datum itself, or the varlena whole,
-  // header included, as a view into tuple.
-  datum = datum_at(t, desc, ordinal, pos);
+  datum = d;
   return 0;
 }
 
@@ -742,10 +765,7 @@ int tup_deform(const tup_desc_t &desc, std::string_view tuple,
   if (datums.size() > schema.size() || isnull.size() != datums.size()) {
     return invalid("deform: output spans must match, at most schema size");
   }
-  return deform_each(desc, tuple, datums.size(),
-                     [&](size_t i, std::optional<std::string_view> d) {
-                       put_datum(schema[i], d, datums[i], isnull[i]);
-                     });
+  return deform_each(desc, tuple, datums.size(), datums.data(), isnull.data());
 }
 
 /* Parse tuple's header into r, at attribute 0; see sm2.h. */
@@ -768,16 +788,13 @@ int tup_read(tup_reader_t &r, size_t n, std::span<datum_t> datums,
       isnull.size() < n) {
     return invalid("read: past the schema, or outputs too short");
   }
-  const auto &schema = r.desc->schema;
   parsed_t t;
   t.tuple = r.tuple;
   t.natts = r.natts;
   t.nulls = r.nulls;
   size_t pos = r.pos;
-  int rc = read_each(t, *r.desc, r.next, n, pos, true,
-                     [&](size_t i, std::optional<std::string_view> d) {
-                       put_datum(schema[i], d, datums[i], isnull[i]);
-                     });
+  int rc =
+      read_each(t, *r.desc, r.next, n, pos, true, datums.data(), isnull.data());
   // Only a read that succeeded moves on; a failed one may be
   // retried, and fails the same way.
   if (rc == 0 && n > r.next) {
