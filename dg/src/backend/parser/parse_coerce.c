@@ -1518,6 +1518,17 @@ int32 select_common_typmod(ParseState *pstate, List *exprs, Oid common_type) {
  *
  * We do not ereport here, but just return false if a rule is violated.
  */
+/*
+ * Whether an element of type elem is one of a range whose subtype is
+ * range_typelem: the same type, or a decimal64 of a numrange, whose
+ * subtype is decimal128, as PostgreSQL's numeric is of its numrange
+ * (DG_DECIMAL_PLAN.md). The element is then cast to the subtype.
+ */
+static bool elem_fits_range(Oid elem, Oid range_typelem) {
+  return elem == range_typelem ||
+         (elem == DECIMAL64OID && range_typelem == DECIMAL128OID);
+}
+
 bool check_generic_type_consistency(const Oid *actual_arg_types,
                                     const Oid *declared_arg_types, int nargs) {
   Oid elem_typeid = InvalidOid;
@@ -1690,12 +1701,14 @@ bool check_generic_type_consistency(const Oid *actual_arg_types,
     if (!OidIsValid(range_typelem))
       return false; /* should be a range, but isn't */
 
-    if (!OidIsValid(elem_typeid)) {
+    if (!OidIsValid(elem_typeid) ||
+        elem_fits_range(elem_typeid, range_typelem)) {
       /*
-       * If we don't have an element type yet, use the one we just got
+       * If we don't have an element type yet, use the one we just got;
+       * so too if ours is cast to it
        */
       elem_typeid = range_typelem;
-    } else if (range_typelem != elem_typeid) {
+    } else {
       /* otherwise, they better match */
       return false;
     }
@@ -2154,13 +2167,14 @@ Oid enforce_generic_type_consistency(const Oid *actual_arg_types,
                  errmsg("argument declared %s is not a range type but type %s",
                         "anyrange", format_type_be(range_typeid))));
 
-      if (!OidIsValid(elem_typeid)) {
+      if (!OidIsValid(elem_typeid) ||
+          elem_fits_range(elem_typeid, range_typelem)) {
         /*
          * if we don't have an element type yet, use the one we just
-         * got
+         * got; so too if ours is cast to it
          */
         elem_typeid = range_typelem;
-      } else if (range_typelem != elem_typeid) {
+      } else {
         /* otherwise, they better match */
         ereport(ERROR, (errcode(ERRCODE_DATATYPE_MISMATCH),
                         errmsg("argument declared %s is not consistent with "
@@ -2416,6 +2430,20 @@ Oid enforce_generic_type_consistency(const Oid *actual_arg_types,
         declared_arg_types[j] = multirange_typeid;
       }
     }
+  }
+
+  /*
+   * An element of a type other than the one resolved, a decimal64 of a
+   * numrange (elem_fits_range()), is declared that type, so the caller
+   * casts it: as anyelement, it would be passed as it is.
+   */
+  for (int j = 0; j < nargs; j++) {
+    Oid decl_type = declared_arg_types[j];
+
+    if ((decl_type == ANYELEMENTOID || decl_type == ANYNONARRAYOID) &&
+        actual_arg_types[j] != UNKNOWNOID &&
+        actual_arg_types[j] != elem_typeid)
+      declared_arg_types[j] = elem_typeid;
   }
 
   /* if we return ANYELEMENT use the appropriate argument type */

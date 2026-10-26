@@ -8669,3 +8669,34 @@ alone were right.
   of order, and the four types' alignment; pgregress's
   `rangetypes` and `multirangetypes` ported again, their two
   statements back.
+
+## Step 301: a decimal64 is an element of a numrange
+
+`numrange(1.5, 2.5) @> 2.0` was `operator does not exist:
+numrange @> numeric`, as were `<@`, `range_contains_elem()`
+and `elem_contained_by_range()`: they take `anyrange` and
+`anyelement`, and PostgreSQL's resolver wants the element's
+type to be the range's subtype exactly. In PostgreSQL every
+numeric is the one type; in digres `2.0`, and a `numeric(10,2)`
+column, is a decimal64, and numrange's subtype is decimal128.
+
+- **A decimal64 fits a decimal128 subtype**
+  (`parse_coerce.c`'s `elem_fits_range()`), in
+  `check_generic_type_consistency()` and
+  `enforce_generic_type_consistency()`, which resolve the
+  element to the subtype. Nothing else is relaxed: two
+  `anyelement`s, or an array's element, still match exactly.
+- **The element is declared the subtype** for its caller to
+  cast: PostgreSQL rewrites a polymorphic argument's declared
+  type for an unknown input alone, so a decimal64 left
+  `anyelement` was passed as it was, and
+  `range_contains_elem()` read its by-value datum as a
+  decimal128's pointer and crashed.
+- **Tests**: `test/select_numrange.sql` adds a numrange of
+  `numeric(10,2)` values, alone, in an array and a multirange,
+  with the plan's cast to decimal128, and a decimal64 found or
+  not in a numrange by all four; from a VALUES list, not a
+  table, as `run.sh`'s 8 sessions share one database. The seven
+  pgregress files that use numrange, ported again, are as
+  they were: their statements with a decimal64 element read a
+  table of numranges, which sm does not store yet.
