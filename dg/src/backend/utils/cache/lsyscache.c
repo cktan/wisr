@@ -58,20 +58,13 @@
  */
 
 /*
- * The pg_amop rows of operator opno, in a palloc'd array, and how many in
- * *count: every row is compiled in (catalog/cat_builtin.h), since there is
- * no CREATE OPERATOR CLASS, and found by its index on the operator.
+ * The pg_amop rows of operator opno, and how many in *count: every row is
+ * compiled in (catalog/cat_builtin.h), since there is no CREATE OPERATOR
+ * CLASS, and found by its index on the operator.  The array is the built-in
+ * index itself, read in place: the caller neither writes nor frees it.
  */
-static const cat_amop_t **amops_of_operator(Oid opno, int *count) {
-  int n;
-  const cat_amop_t *const *rows = cat_amops_by_operator(opno, &n);
-  const cat_amop_t **result =
-      (const cat_amop_t **)palloc(sizeof(cat_amop_t *) * (n + 1));
-
-  for (int i = 0; i < n; i++)
-    result[i] = rows[i];
-  *count = n;
-  return result;
+static const cat_amop_t *const *amops_of_operator(Oid opno, int *count) {
+  return cat_amops_by_operator(opno, count);
 }
 
 /* The pg_amop row of opno for purpose in opfamily, or NULL. */
@@ -239,7 +232,7 @@ static bool get_opmethod_canorder(Oid amoid) {
 bool get_ordering_op_properties(Oid opno, Oid *opfamily, Oid *opcintype,
                                 CompareType *cmptype) {
   bool result = false;
-  const cat_amop_t **amops;
+  const cat_amop_t *const *amops;
   int namops;
   int i;
 
@@ -277,8 +270,6 @@ bool get_ordering_op_properties(Oid opno, Oid *opfamily, Oid *opcintype,
       }
     }
   }
-
-  pfree(amops);
 
   return result;
 }
@@ -328,7 +319,7 @@ Oid get_equality_op_for_ordering_op(Oid opno, bool *reverse) {
  */
 Oid get_ordering_op_for_equality_op(Oid opno, bool use_lhs_type) {
   Oid result = InvalidOid;
-  const cat_amop_t **amops;
+  const cat_amop_t *const *amops;
   int namops;
   int i;
 
@@ -361,8 +352,6 @@ Oid get_ordering_op_for_equality_op(Oid opno, bool use_lhs_type) {
     }
   }
 
-  pfree(amops);
-
   return result;
 }
 
@@ -387,7 +376,7 @@ Oid get_ordering_op_for_equality_op(Oid opno, bool use_lhs_type) {
  */
 List *get_mergejoin_opfamilies(Oid opno) {
   List *result = NIL;
-  const cat_amop_t **amops;
+  const cat_amop_t *const *amops;
   int namops;
   int i;
 
@@ -406,8 +395,6 @@ List *get_mergejoin_opfamilies(Oid opno) {
                                  aform->amopfamily, true) == COMPARE_EQ)
       result = lappend_oid(result, aform->amopfamily);
   }
-
-  pfree(amops);
 
   return result;
 }
@@ -435,7 +422,7 @@ List *get_mergejoin_opfamilies(Oid opno) {
  */
 bool get_compatible_hash_operators(Oid opno, Oid *lhs_opno, Oid *rhs_opno) {
   bool result = false;
-  const cat_amop_t **amops;
+  const cat_amop_t *const *amops;
   int namops;
   int i;
 
@@ -501,8 +488,6 @@ bool get_compatible_hash_operators(Oid opno, Oid *lhs_opno, Oid *rhs_opno) {
     }
   }
 
-  pfree(amops);
-
   return result;
 }
 
@@ -531,7 +516,7 @@ bool get_compatible_hash_operators(Oid opno, Oid *lhs_opno, Oid *rhs_opno) {
 bool get_op_hash_functions(Oid opno, RegProcedure *lhs_procno,
                            RegProcedure *rhs_procno) {
   bool result = false;
-  const cat_amop_t **amops;
+  const cat_amop_t *const *amops;
   int namops;
   int i;
 
@@ -592,8 +577,6 @@ bool get_op_hash_functions(Oid opno, RegProcedure *lhs_procno,
     }
   }
 
-  pfree(amops);
-
   return result;
 }
 
@@ -651,7 +634,7 @@ bool get_op_hash_functions_ext(Oid opno, Oid inputtype,
 List *get_op_index_interpretation(Oid opno) {
   List *result = NIL;
   OpIndexInterpretation *thisresult;
-  const cat_amop_t **amops;
+  const cat_amop_t *const *amops;
   int namops;
   int i;
 
@@ -683,8 +666,6 @@ List *get_op_index_interpretation(Oid opno) {
     thisresult->oprighttype = op_form->amoprighttype;
     result = lappend(result, thisresult);
   }
-
-  pfree(amops);
 
   /*
    * If we didn't find any btree opfamily containing the operator, perhaps
@@ -724,8 +705,6 @@ List *get_op_index_interpretation(Oid opno) {
         thisresult->oprighttype = op_form->amoprighttype;
         result = lappend(result, thisresult);
       }
-
-      pfree(amops);
     }
   }
 
@@ -753,7 +732,7 @@ List *get_op_index_interpretation(Oid opno) {
  */
 bool equality_ops_are_compatible(Oid opno1, Oid opno2) {
   bool result;
-  const cat_amop_t **amops;
+  const cat_amop_t *const *amops;
   int namops;
   int i;
 
@@ -785,8 +764,6 @@ bool equality_ops_are_compatible(Oid opno1, Oid opno2) {
     }
   }
 
-  pfree(amops);
-
   return result;
 }
 
@@ -805,7 +782,7 @@ bool equality_ops_are_compatible(Oid opno1, Oid opno2) {
  */
 bool comparison_ops_are_compatible(Oid opno1, Oid opno2) {
   bool result;
-  const cat_amop_t **amops;
+  const cat_amop_t *const *amops;
   int namops;
   int i;
 
@@ -836,8 +813,6 @@ bool comparison_ops_are_compatible(Oid opno1, Oid opno2) {
       }
     }
   }
-
-  pfree(amops);
 
   return result;
 }
@@ -891,7 +866,7 @@ bool collations_agree_on_equality(Oid coll1, Oid coll2) {
  */
 bool op_is_safe_index_member(Oid opno) {
   bool result = false;
-  const cat_amop_t **amops;
+  const cat_amop_t *const *amops;
   int namops;
   int i;
 
@@ -910,8 +885,6 @@ bool op_is_safe_index_member(Oid opno) {
       break;
     }
   }
-
-  pfree(amops);
 
   return result;
 }
