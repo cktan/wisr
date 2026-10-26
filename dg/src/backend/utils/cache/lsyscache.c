@@ -2897,7 +2897,6 @@ static Datum statistic_attr(HeapTuple statstuple, AttrNumber attno) {
  * plug-ins to control the result.
  */
 int32 get_attavgwidth(Oid relid, AttrNumber attnum) {
-  HeapTuple tp;
   int32 stawidth;
 
   if (tcb->hooks->get_attavgwidth_hook) {
@@ -2905,13 +2904,10 @@ int32 get_attavgwidth(Oid relid, AttrNumber attnum) {
     if (stawidth > 0)
       return stawidth;
   }
-  tp = get_statistic_tuple(relid, attnum, false);
-  if (HeapTupleIsValid(tp)) {
-    stawidth = ((Form_pg_statistic)GETSTRUCT(tp))->stawidth;
-    heap_freetuple(tp);
-    if (stawidth > 0)
-      return stawidth;
-  }
+  /* The width alone, read from the row sm's statistics keep: no copy. */
+  stawidth = smstore_statistic_width(relid, attnum);
+  if (stawidth > 0)
+    return stawidth;
   return 0;
 }
 
