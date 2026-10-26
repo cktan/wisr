@@ -894,6 +894,15 @@ pointer for each. Built in `src/rel/toast.cc` and
   (`sm_toast_fetch`).
 - **A key is never made of a pointer.** `encode_key` refuses
   one: the caller fetches the value first.
+- **To do: a column of an index's key is never moved out of
+  line.** A key is held to `max_pk_len`, 1024 bytes, for the
+  primary key, and to `sm1::max_keylen` for an index entry, so
+  no key column needs TOAST to fit. Kept in line, a key is
+  encoded from the row as it is, and the fetches for key
+  columns, in `encode_cols` and in sm3's index writes
+  (`sm3/SM3_DESIGN.md` §3.4), go. An insert or update given a
+  pointer for a key column stores the value in line. Not
+  built.
 - **Not built**: compression, and a fetch of part of a datum.
   Above sm2, sm3 gives a table its sequence and fetches for
   its indexes (`sm3/SM3_DESIGN.md` §3.4), once the host turns
