@@ -12,6 +12,7 @@
 #include "sm1.h"
 #include "version.h"
 
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -118,6 +119,25 @@ public:
       out.push_back(p->data_size / p->num_data_blocks);
     }
     return out;
+  }
+
+  /*
+   * The last word of the store's one data block, its restart count,
+   * read from the file; the store must be one file of one block,
+   * which starts the file.
+   */
+  uint32_t sole_block_restarts() {
+    rocksdb::TablePropertiesCollection props;
+    REQUIRE(m_s->db->rdb->GetPropertiesOfAllTables(cf(), &props).ok());
+    REQUIRE(1 == props.size());
+    const auto &[file, p] = *props.begin();
+    REQUIRE(1 == p->num_data_blocks);
+    // data_size counts the block's 5-byte trailer.
+    std::ifstream in(file, std::ios::binary);
+    in.seekg(p->data_size - 5 - 4);
+    unsigned char w[4];
+    REQUIRE(in.read(reinterpret_cast<char *>(w), 4));
+    return w[0] | w[1] << 8 | w[2] << 16 | uint32_t(w[3]) << 24;
   }
 
   /* The version of the store's LSM tree, RocksDB's super version. */
@@ -472,6 +492,19 @@ TEST_CASE("no sorted file is compressed") {
       CHECK(c == "NoCompression");
     }
   }
+}
+
+TEST_CASE("a store's data blocks carry a hash index") {
+  // Verify a store CF writes its data blocks with a hash index, which
+  // a Get looks its key up in.
+  // 1. Load a few short rows and flush: one file of one data block,
+  //    at the start of the file.
+  // 2. Read the block's last word, its restart count: its top bit
+  //    marks a block with a hash index.
+  stats_fixture_t f;
+  f.load('a', 20, 10);
+  f.flush();
+  CHECK(0 != (f.sole_block_restarts() & 0x80000000u));
 }
 
 TEST_CASE("a store's blocks are store_block_size") {

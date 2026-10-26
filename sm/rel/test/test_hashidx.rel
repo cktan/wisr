@@ -1,0 +1,54 @@
+# test_hashidx.rel -- a row read by its key out of sorted files,
+# whose data blocks carry a hash index (../sm1/SM1_DESIGN.md
+# §12.2), is the row written, and a key with no row reads none.
+#
+# 1. Insert 3000 rows and compact: they are in sorted files, many
+#    blocks of them.
+# 2. Every row reads back as written.
+# 3. Delete every tenth row and compact: each deleted row reads
+#    nil, each other row as written, and a number past the last
+#    row reads nil.
+
+(def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_hashidx"))
+(rm-rf test-dir)
+(env-init test-dir)
+(env-attach test-dir)
+(db-create "hdb")
+(db-open "hdb")
+
+# 1. Rows into sorted files.
+(def pad (string/repeat "x" 40))
+(begin :rc)
+(table-create rows (columns (n :int4 :not-null) (v :text)))
+(def ids (seq [i :range [0 3000]] (insert rows [i (string i pad)])))
+(commit)
+(begin :rc)
+(compact rows)
+(commit)
+
+# 2. Each row read by its key.
+(begin :rc)
+(eachp [i id] ids
+  (assert-eq (read rows id) [i (string i pad)]))
+(commit)
+
+# 3. Rows gone, and a key past the last.
+(begin :rc)
+(eachp [i id] ids
+  (when (zero? (% i 10)) (delete rows id)))
+(commit)
+(begin :rc)
+(compact rows)
+(commit)
+(begin :rc)
+(eachp [i id] ids
+  (if (zero? (% i 10))
+    (assert-nil (read rows id))
+    (assert-eq (read rows id) [i (string i pad)])))
+(assert-nil (read rows (+ (last ids) 1)))
+(commit)
+
+(db-close)
+(env-detach)
+(rm-rf test-dir)
+(print "test_hashidx.rel passed")

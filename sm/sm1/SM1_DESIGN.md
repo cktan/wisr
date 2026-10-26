@@ -2779,6 +2779,25 @@ quarter as many blocks in the block cache, about 19% off a scan
 of 566-byte rows, and a point read by key ran no slower in the
 benchmark (`bench/`), faster while the cache warms. Fixed CFs
 keep 4 KB; they are small and read by key.
+Each data block of a store CF carries a hash index
+(`kDataBlockBinaryAndHash`): a table of one byte a bucket, from
+a key's hash to the restart interval that holds it, so a `Get`
+jumps to its interval instead of binary searching the block's
+restart points. A scan, which seeks, searches as before. RocksDB
+builds the table only for a comparator that says two keys of
+different bytes never compare equal, which `wisr.store.v2`
+does: a versioned key's userkey is split from its tail by
+length alone. Measured on Q7 of the benchmark, a row read by
+its key: 0.3 thousand instructions fewer a query. A scan pays
+nothing, and the table is a few bytes, as a 16 KB block of
+Q7's rows has two restart intervals. A block of more than 253
+restart intervals goes without it.
+A restart point at every entry (`block_restart_interval` 1,
+not 16) was tried with it and dropped: Q7 a further 1.1
+thousand instructions fewer, but keys no longer share a
+prefix and each entry carries a restart point, so the
+benchmark's narrow table grew 15% and its scans slowed by up to
+13%.
 Bloom filters are worth enabling on store CFs, and `CF:txn`
 benefits from a
 large block cache since it is small and hot. For store CFs the

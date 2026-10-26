@@ -347,6 +347,10 @@ rocksdb::ColumnFamilyOptions store_cf_options(db_t *db, uint64_t storeid) {
   }
   // Blocks larger than RocksDB's 4 KB (store_block_size).
   bbto.block_size = store_block_size;
+  // A hash index in each data block, so a Get jumps to its key's
+  // restart interval instead of searching the block (§12.2).
+  bbto.data_block_index_type =
+      rocksdb::BlockBasedTableOptions::kDataBlockBinaryAndHash;
   // Ten bits per key.
   bbto.filter_policy.reset(rocksdb::NewBloomFilterPolicy(10));
   // Whole version keys are never looked up.

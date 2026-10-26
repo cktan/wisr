@@ -50,6 +50,15 @@ public:
     return ta.compare(tb);
   }
 
+  /*
+   * Two keys compare equal only when their bytes are: a userkey is
+   * split from its tail by length alone. RocksDB builds a data
+   * block's hash index only for a comparator that says so (§12.2).
+   */
+  bool CanKeysWithDifferentByteContentsBeEqual() const override {
+    return false;
+  }
+
   /* No-op: every key must keep its full tail. */
   void FindShortestSeparator(std::string *,
                              const rocksdb::Slice &) const override {}
