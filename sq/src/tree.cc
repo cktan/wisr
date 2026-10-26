@@ -12,7 +12,7 @@
 
 namespace sq {
 
-/* Free every block past the first. */
+/* Free every block. */
 arena_t::~arena_t() {
   while (m_blocks != nullptr) {
     block_t *next = m_blocks->next;
@@ -69,13 +69,43 @@ current_tree_t::current_tree_t(sq_tree_t &tree) : m_previous(t_current_tree) {
 /* Restore what was current. */
 current_tree_t::~current_tree_t() { t_current_tree = m_previous; }
 
+/* Make tree's store in allocator's memory, or with new for NULL. */
+void tree_access_t::begin(sq_tree_t &tree, const sq_allocator_t *allocator) {
+  if (allocator == nullptr) {
+    tree.m_store = new store_t;
+    return;
+  }
+  void *at = allocator->alloc(allocator->arg, sizeof(store_t));
+  if (at == nullptr) {
+    throw std::bad_alloc();
+  }
+  tree.m_store = new (at) store_t;
+  tree.m_store->allocator = allocator;
+}
+
+namespace {
+
+/*
+ * Free store and its arena's blocks; a store in the caller's memory
+ * has no blocks, and its memory is the caller's.
+ */
+void drop_store(store_t *store) {
+  if (store != nullptr && store->allocator != nullptr) {
+    store->~store_t();
+  } else {
+    delete store;
+  }
+}
+
+} // namespace
+
 } // namespace sq
 
 /* An empty tree, with no store until something is made for it. */
 sq_tree_t::sq_tree_t() = default;
 
 /* Destroy the tree, and with it every node and all the text it owns. */
-sq_tree_t::~sq_tree_t() { delete m_store; }
+sq_tree_t::~sq_tree_t() { sq::drop_store(m_store); }
 
 /* Take other's statements and store, leaving it empty. */
 sq_tree_t::sq_tree_t(sq_tree_t &&other) noexcept
@@ -87,7 +117,7 @@ sq_tree_t::sq_tree_t(sq_tree_t &&other) noexcept
 /* Replace this tree with other's, freeing what this one owned. */
 sq_tree_t &sq_tree_t::operator=(sq_tree_t &&other) noexcept {
   if (this != &other) {
-    delete m_store;
+    sq::drop_store(m_store);
     stmts = std::move(other.stmts);
     m_store = other.m_store;
     other.stmts.clear();
