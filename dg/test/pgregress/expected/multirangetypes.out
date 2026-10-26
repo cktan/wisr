@@ -387,8 +387,12 @@ HINT:  No function matches the given name and argument types. You might need to 
 --dg SELECT * FROM nummultirange_test WHERE nmr <> '{(,5)}';
 select nummultirange(numrange(2.0, 1.0));
 ERROR:  range lower bound must be less than or equal to range upper bound
---dg-differs: the result
---dg select nummultirange(numrange(5.0, 6.0), numrange(1.0, 2.0));
+select nummultirange(numrange(5.0, 6.0), numrange(1.0, 2.0));
+     nummultirange     
+-----------------------
+ {[1.0,2.0),[5.0,6.0)}
+(1 row)
+
 --dg-cascade
 --dg analyze nummultirange_test;
 -- overlaps

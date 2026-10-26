@@ -8644,3 +8644,28 @@ has one.
   `slt/system_columns.test` adds a keyed table without `_id`, a
   column named `rowno`, and one named `_id` refused;
   `scan_columns.test` and `point_read.test` name `_id`.
+
+## Step 300: a numrange aligns as its decimal128 bounds do
+
+`ISSUE.md` issue 3: a numeric range in an array or a
+multirange lost a bound, `ARRAY[numrange(1, 2), numrange(3,
+4), numrange(5, 6)]` giving `[3,2475880078570760549798248448)`
+for its second. numrange's bounds are decimal128s, aligned to
+8 (`typalign 'd'`), where PostgreSQL's numeric aligns to 4;
+numrange and nummultirange kept PostgreSQL's `'i'`. An array
+or a multirange puts each range at the range type's alignment,
+4, but `range_deserialize()` aligns a bound by its own address:
+a range put 4 bytes off 8 had its upper bound read from the
+wrong place. The first range, at 8, and a range copied out
+alone were right.
+
+- **numrange and nummultirange are `typalign 'd'`**
+  (`pg_type.dat`), as PostgreSQL's rule for a range type is its
+  subtype's alignment when that is `'d'`; their arrays follow
+  (`Catalog.pm`). No table holds a numrange yet, so no stored
+  value is read otherwise.
+- **Tests**: `test/select_numrange.sql`, an array of three
+  numranges, one of two, and a multirange given its ranges out
+  of order, and the four types' alignment; pgregress's
+  `rangetypes` and `multirangetypes` ported again, their two
+  statements back.

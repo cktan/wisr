@@ -4,7 +4,8 @@ Problems found and left unfixed, each with what it would take
 to fix. The code it concerns points here by number. A fixed
 issue is removed, and its number is not used again: issue 2,
 ON CONFLICT DO UPDATE affecting a row twice, was fixed in
-`WORKNOTE.md` step 237.
+`WORKNOTE.md` step 237, and issue 3, a numeric range in an
+array or a multirange losing its bound, in step 300.
 
 ---
 
@@ -65,26 +66,6 @@ yet: "where to start" is where the difference shows, not a
 cause found.
 
 ---
-
-## Issue 3: a numeric range in an array or multirange loses its bound
-
-A numeric range alone is right; inside an array or a
-multirange, one bound comes back as garbage. A wrong answer.
-
-```sql
-select nummultirange(numrange(5.0, 6.0), numrange(1.0, 2.0));
--- PostgreSQL: {[1.0,2.0),[5.0,6.0)}
--- digres:     {[1.0,2475880078570760549798248448)}
-select ARRAY[numrange(1.1, 1.2), numrange(12.3, 155.5)];
--- PostgreSQL: {"[1.1,1.2)","[12.3,155.5)"}
--- digres:     {"[1.1,1.2)","[12.3,2475880078570760549798248448)"}
-```
-
-pgregress: `multirangetypes`, `rangetypes`. **Where to start**:
-how a range of digres's decimal is packed when it is copied
-into a container (`range_serialize()`, `multirange` and array
-construction): a bound read with another width or by-value
-flag than it was written with would give this.
 
 ## Issue 4: a cursor sees its own transaction's later DELETE
 

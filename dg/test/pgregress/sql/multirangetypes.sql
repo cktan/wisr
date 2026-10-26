@@ -169,8 +169,7 @@ select unnest(textmultirange(textrange('\\\\', repeat('a', 200)), textrange('c',
 --dg SELECT * FROM nummultirange_test WHERE nmr <> '{(,5)}';
 
 select nummultirange(numrange(2.0, 1.0));
---dg-differs: the result
---dg select nummultirange(numrange(5.0, 6.0), numrange(1.0, 2.0));
+select nummultirange(numrange(5.0, 6.0), numrange(1.0, 2.0));
 
 --dg-cascade
 --dg analyze nummultirange_test;

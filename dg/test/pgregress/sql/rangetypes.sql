@@ -556,9 +556,8 @@ select count(*) from test_range_elem where i <@ int4range(10,50);
 -- also test spgist index on anyrange expression
 --dg-skip: access method "?" is not supported
 --dg create index on test_range_elem using spgist(int4range(i,i+10));
---dg-cascade
---dg explain (costs off)
---dg select count(*) from test_range_elem where int4range(i,i+10) <@ int4range(10,30);
+explain (costs off)
+select count(*) from test_range_elem where int4range(i,i+10) <@ int4range(10,30);
 select count(*) from test_range_elem where int4range(i,i+10) <@ int4range(10,30);
 
 RESET enable_seqscan;
@@ -760,8 +759,7 @@ select anycompatiblearray_anycompatiblerange_func(ARRAY[1.1,2], int4range(10,20)
 -- Arrays of ranges
 --
 
---dg-differs: the result
---dg select ARRAY[numrange(1.1, 1.2), numrange(12.3, 155.5)];
+select ARRAY[numrange(1.1, 1.2), numrange(12.3, 155.5)];
 
 --dg-skip: type ? is not supported yet
 --dg create table i8r_array (f1 int, f2 int8range[]);
