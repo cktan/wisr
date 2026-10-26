@@ -9,7 +9,8 @@
 -- 5. Keep 36 digits, round to a typmod, and cast to and from the integers
 --    and floats.
 -- 6. Take scales, gcd, lcm and a factorial.
--- 7. Sum, average and take deviations of numerics and integers.
+-- 7. Sum, average and take deviations of numerics and integers; int8 sums
+--    past int8, of nulls, and over a moving window whose frame empties.
 -- 8. Make a series and find a bucket.
 -- 9. Use numeric in jsonb, jsonpath, extract, to_char, money and pg_lsn.
 -- 10. Send values in PostgreSQL's binary format.
@@ -161,6 +162,29 @@ SELECT i, sum(x) OVER w, avg(x) OVER w FROM (VALUES (1, 1.5), (2, 2.25), (3, -3)
  3 |  -0.75 | -0.37500000000000000000
  4 | -2.999 | -1.49950000000000000000
 (4 rows)
+
+SELECT sum(x), avg(x), count(x) FROM (VALUES (9223372036854775807::int8), (9223372036854775807), (NULL), (-1)) v(x);
+         sum          |         avg         | count 
+----------------------+---------------------+-------
+ 18446744073709551613 | 6148914691236517204 |     3
+(1 row)
+
+SELECT sum(x), avg(x) FROM (VALUES (NULL::int8), (NULL)) v(x);
+ sum | avg 
+-----+-----
+     |    
+(1 row)
+
+SELECT i, sum(x) OVER w, avg(x) OVER w FROM (VALUES (1, 9223372036854775807::int8), (2, 5), (3, NULL), (4, NULL), (5, -7), (6, -9223372036854775808)) v(i, x) WINDOW w AS (ORDER BY i ROWS BETWEEN 1 PRECEDING AND CURRENT ROW);
+ i |         sum          |         avg          
+---+----------------------+----------------------
+ 1 |  9223372036854775807 |  9223372036854775807
+ 2 |  9223372036854775812 |  4611686018427387906
+ 3 |                    5 |   5.0000000000000000
+ 4 |                      |                     
+ 5 |                   -7 |  -7.0000000000000000
+ 6 | -9223372036854775815 | -4611686018427387908
+(6 rows)
 
 SELECT x, round(x, 1), round(x), round(x, -2), trunc(x, 1), trunc(x), trunc(x, -2), ceil(x), floor(x), to_char(x, '999,999.99'), bool_and(ceil(x)::text = ceil(x::decimal128)::text AND ceiling(x)::text = ceiling(x::decimal128)::text AND floor(x)::text = floor(x::decimal128)::text AND round(x, 1)::text = round(x::decimal128, 1)::text AND round(x)::text = round(x::decimal128)::text AND round(x, -2)::text = round(x::decimal128, -2)::text AND trunc(x, 1)::text = trunc(x::decimal128, 1)::text AND trunc(x)::text = trunc(x::decimal128)::text AND trunc(x, -2)::text = trunc(x::decimal128, -2)::text AND to_char(x, '999,999.99') = to_char(x::decimal128, '999,999.99')) OVER () FROM (VALUES (1234.567), (-0.05), (99.95), (-151.25), (-149.5), (149.5), (-7), (9999999999999999.9)) v(x);
          x          |       round        |       round       |       round       |       trunc        |      trunc       |      trunc       |       ceil        |      floor       |   to_char   | bool_and 

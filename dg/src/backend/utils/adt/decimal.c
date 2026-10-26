@@ -2263,6 +2263,26 @@ static void agg_flush(dec_agg_t *state) {
   state->fast = false;
 }
 
+/*
+ * Count v at scale s into state: into the 128-bit sum while the scale
+ * stays, without the wide path; sumX takes it when the scale changes, the
+ * sum would overflow, or sumX is read (agg_flush()).
+ */
+static void agg_fast_accum(dec_agg_t *state, int64 v, int s) {
+  i128 sum;
+
+  agg_count(state, s);
+  if (!state->fast || state->fast_scale != s) {
+    agg_flush(state);
+    agg_set_fast(state, 0, s);
+  }
+  if (__builtin_add_overflow(agg_fast_sum(state), (i128)v, &sum)) {
+    agg_flush(state);
+    sum = v;
+  }
+  agg_set_fast(state, sum, s);
+}
+
 /* Count x into state. */
 static void agg_accum(dec_agg_t *state, const wide_t &x) {
   agg_count(state, x.scale);
@@ -2358,9 +2378,13 @@ Datum int8_accum(PG_FUNCTION_ARGS) {
   return int_accum(fcinfo, PG_ARGISNULL(1) ? 0 : PG_GETARG_INT64(1), true);
 }
 
-/* Accumulate an int8 for sum and avg. */
+/* Accumulate an int8 for sum and avg, as a decimal64 of scale 0. */
 Datum int8_avg_accum(PG_FUNCTION_ARGS) {
-  return int_accum(fcinfo, PG_ARGISNULL(1) ? 0 : PG_GETARG_INT64(1), false);
+  dec_agg_t *state = agg_state_arg(fcinfo, false);
+
+  if (!PG_ARGISNULL(1))
+    agg_fast_accum(state, PG_GETARG_INT64(1), 0);
+  PG_RETURN_POINTER(state);
 }
 
 /* Take an integer out of a moving aggregate. */
@@ -3385,31 +3409,13 @@ Datum decimal64_abs(PG_FUNCTION_ARGS) {
                   d64_scale(a));
 }
 
-/*
- * Accumulate a decimal64 for sum and avg: into a 128-bit sum while the
- * scale stays, without the wide path; sumX takes it when the scale
- * changes, the sum would overflow, or sumX is read (agg_flush()).
- */
+/* Accumulate a decimal64 for sum and avg (agg_fast_accum()). */
 Datum decimal64_avg_accum(PG_FUNCTION_ARGS) {
   dec_agg_t *state = agg_state_arg(fcinfo, false);
-  Datum d;
-  int s;
-  i128 sum;
 
-  if (PG_ARGISNULL(1))
-    PG_RETURN_POINTER(state);
-  d = PG_GETARG_DATUM(1);
-  s = d64_scale(d);
-  agg_count(state, s);
-  if (!state->fast || state->fast_scale != s) {
-    agg_flush(state);
-    agg_set_fast(state, 0, s);
-  }
-  if (__builtin_add_overflow(agg_fast_sum(state), (i128)d64_value(d), &sum)) {
-    agg_flush(state);
-    sum = d64_value(d);
-  }
-  agg_set_fast(state, sum, s);
+  if (!PG_ARGISNULL(1))
+    agg_fast_accum(state, d64_value(PG_GETARG_DATUM(1)),
+                   d64_scale(PG_GETARG_DATUM(1)));
   PG_RETURN_POINTER(state);
 }
 
