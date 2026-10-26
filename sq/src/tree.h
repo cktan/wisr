@@ -24,8 +24,10 @@
 namespace sq {
 
 /*
- * Memory handed out in pieces and freed all at once: blocks, the first
- * held inline, each next twice the last's size up to a limit.
+ * Memory handed out in pieces and freed all at once: blocks, each next
+ * twice the last's size up to a limit. The first is made when the
+ * first piece is asked for, so a tree whose nodes go to the caller's
+ * allocator never makes one.
  */
 class arena_t {
 public:
@@ -46,7 +48,7 @@ public:
   }
 
 private:
-  /* A block past the first, its bytes after it. */
+  /* A block, its bytes after it. */
   struct block_t {
     block_t *next;
     size_t size;
@@ -55,11 +57,10 @@ private:
   /* A new block holding size bytes aligned to align; returns them. */
   void *grow(size_t size, size_t align);
 
-  alignas(std::max_align_t) char m_first[4096];
-  char *m_next = m_first;
-  char *m_end = m_first + sizeof(m_first);
+  char *m_next = nullptr; /* no block yet: the first piece makes one */
+  char *m_end = nullptr;
   block_t *m_blocks = nullptr;
-  size_t m_block_size = 8192; /* the next block's size */
+  size_t m_block_size = 4096; /* the next block's size */
 };
 
 /*
@@ -96,11 +97,17 @@ struct tree_access_t {
   /* The store of tree, made on first use. */
   static store_t &store(sq_tree_t &tree) {
     if (tree.m_store == nullptr) {
-      // Not value-initialized: the arena's first block is left as it is.
       tree.m_store = new store_t;
     }
     return *tree.m_store;
   }
+
+  /*
+   * Give tree, which has no store, one whose nodes go to allocator, or
+   * to its arena for NULL. With an allocator the store itself is cut
+   * from it too, so that a parse asks malloc for none of it.
+   */
+  static void begin(sq_tree_t &tree, const sq_allocator_t *allocator);
 };
 
 /* Make a node of type T, zeroed but for its tag, owned by tree. */

@@ -228,7 +228,7 @@ int unchanged(const sm3::table_def_t &def, const sm3::index_def_t &x,
 void load_states(sm3::table_t *t) {
   t->states.clear();
   for (const sm3::index_def_t &x : t->def->indexes) {
-    t->states.push_back(sm3::cat_get_index_state(t->session, x.oid).state);
+    t->states.push_back(sm3::cat_index_state(t->session, x.oid));
   }
 }
 
@@ -453,8 +453,8 @@ int open_rels(table_t *table) {
   sm1::session_t *s = table->session->sm1;
   // The sequence its TOAST ids come from, made with every table, or
   // none unless the host reads TOAST pointers; named, never read.
-  std::string toast_seq =
-      table->session->cat->toast ? toast_seq_name(def.oid) : "";
+  std::string_view toast_seq =
+      table->session->cat->toast ? std::string_view(def.toast_seq) : "";
   const index_def_t *pk = primary_of(def);
   sm2::rel_key_t key;
   if (pk) {
@@ -499,8 +499,9 @@ int open_table(session_t *session, uint64_t oid, sm1::lockmode_t mode,
                bool wait, table_t *&out) {
   std::unique_ptr<table_t, void (*)(table_t *)> t(new table_t, tbl_close);
   // Take the table-oid lock, so the definition holds to commit.
-  int rc = wait ? cat_lock_table(session, oid, mode, t->def)
-                : cat_trylock_table(session, oid, mode, t->def);
+  bool fresh = false;
+  int rc = wait ? cat_lock_table(session, oid, mode, t->def, &fresh)
+                : cat_trylock_table(session, oid, mode, t->def, &fresh);
   if (rc != 0) {
     return rc;
   }
@@ -508,8 +509,8 @@ int open_table(session_t *session, uint64_t oid, sm1::lockmode_t mode,
   t->writable = covers_write(mode);
   t->exclusive = mode == sm1::SM_LOCKMODE_EX;
   // No committed definition: this transaction made the table, and
-  // no other can see it or its rows.
-  t->fresh = cat_get_table(session->cat, oid) == nullptr;
+  // no other can see it or its rows. The lock's lookup said.
+  t->fresh = fresh;
   load_states(t.get());
   if (open_rels(t.get()) != 0) {
     return -1;

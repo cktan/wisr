@@ -177,6 +177,7 @@ extern bool smstore_estimate_index_size(Oid table, Oid index,
                                         double *tuples);
 extern HeapTuple smstore_statistic_tuple(Oid relid, AttrNumber attnum,
                                          bool inh);
+extern int32 smstore_statistic_width(Oid relid, AttrNumber attnum);
 extern ObjectAddress smstore_create_sequence(CreateSeqStmt *stmt);
 extern void smstore_drop_sequences(DropStmt *stmt);
 extern ObjectAddress smstore_own_sequence(AlterSeqStmt *stmt, List *owned_by);

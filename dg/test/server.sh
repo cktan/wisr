@@ -2071,6 +2071,68 @@ within "$n" 1000 10 || fail "statistics kept: $n"
 n=$(sed -n 3p "$work/st36.rows")
 within "$n" 5000 10 || fail "statistics after another session's analyze: $n"
 
+# Verify that a plan's width of a column is its statistics' average width,
+# read from the row a session keeps, and follows another session's ANALYZE
+# (STATISTICS.md section 2.3).
+# 1. Make t37 with b of 20 characters, unanalyzed: a held session
+#    estimates b 32 bytes wide, text's default.
+# 2. Analyze t37: the held session estimates b 21 bytes wide, twice, the
+#    second from the row kept.
+# 3. Another session makes b 60 characters and analyzes: the held session
+#    estimates 61.
+local_psql -c 'create table t37 (a int4, b text)' \
+  -c "insert into t37 select g, repeat('x', 20) from generate_series(1, 1000) g" \
+  >> "$work/stats.out" 2>&1
+held_start st37
+held_send st37 "explain select b from t37; select 'one';"
+held_wait st37 one || fail "width read"
+local_psql -c 'analyze t37' >> "$work/stats.out" 2>&1
+held_send st37 "explain select b from t37; explain select b from t37;
+  select 'two';"
+held_wait st37 two || fail "width read after an analyze"
+local_psql -c "update t37 set b = repeat('y', 60)" -c 'analyze t37' \
+  >> "$work/stats.out" 2>&1
+held_send st37 "explain select b from t37; select 'three';"
+held_wait st37 three || fail "width read after another analyze"
+held_end st37
+grep -o 'width=[0-9]*' "$work/st37.out" | cut -d= -f2 | tr '\n' ' ' \
+  > "$work/st37.widths"
+[ "$(cat "$work/st37.widths")" = "32 21 21 61 " ] ||
+  fail "widths from statistics: $(cat "$work/st37.widths")"
+
+# Verify that a session keeps an index it found usable while the
+# catalog's epoch holds, and never one it found unusable
+# (SCHEMACACHE.md section 4.6).
+# 1. Make t38 of 10,000 rows, b distinct, and analyze it, and t38x.
+# 2. A held session begins a REPEATABLE READ transaction and reads t38x:
+#    its snapshot is taken, and it holds no lock on t38, which CREATE
+#    INDEX would wait for.
+# 3. Another session makes the index t38_b on b.
+# 4. The held session plans b = 5: a sequential scan, as its snapshot is
+#    older than the index.
+# 5. It commits, and plans b = 5 twice: by t38_b both times, the second
+#    from the index kept. Kept unusable from step 4, at the same epoch,
+#    it would be a sequential scan.
+local_psql -c 'create table t38 (a int4, b int4)' \
+  -c 'create table t38x (a int4)' \
+  -c 'insert into t38 select g, g from generate_series(1, 10000) g' \
+  -c 'analyze t38' >> "$work/stats.out" 2>&1
+held_start st38
+held_send st38 "begin isolation level repeatable read;
+  select count(*) from t38x; select 'one';"
+held_wait st38 one || fail "a snapshot before an index"
+local_psql -c 'create index t38_b on t38 (b)' >> "$work/stats.out" 2>&1
+held_send st38 "explain (costs off) select * from t38 where b = 5; commit;
+  explain (costs off) select * from t38 where b = 5;
+  explain (costs off) select * from t38 where b = 5; select 'two';"
+held_wait st38 two || fail "an index made since"
+held_end st38
+grep -o 'Seq Scan on t38\|Index Scan using t38_b' "$work/st38.out" |
+  tr '\n' ',' > "$work/st38.scans"
+[ "$(cat "$work/st38.scans")" = \
+  "Seq Scan on t38,Index Scan using t38_b,Index Scan using t38_b," ] ||
+  fail "an index's usability kept: $(cat "$work/st38.scans")"
+
 # Verify that VACUUM compacts a table's store in sm, and that VACUUM
 # ANALYZE also analyzes it.
 # 1. Make t32 with 20,000 rows of 200 bytes, and VACUUM ANALYZE it: a
@@ -3611,6 +3673,34 @@ after_held 'update tw1 set a = 3 where a = 33;' -v VERBOSITY=verbose \
   fail "the row moved twice"
 local_psql -c 'drop table tj' > /dev/null 2>&1
 local_psql -c 'drop table tw1' > /dev/null 2>&1
+
+# Verify that the built-in catalog's direct indexes by oid (gen_cat.py)
+# find every row from the lowest oid to the highest, and none outside.
+# 1. The lowest and highest pg_proc, pg_operator and pg_type oids name
+#    their rows; an oid between them that has none, and one just below
+#    and just above them, print as numbers.
+# 2. The lowest and highest operators pg_amop has (=(int4,int8) and
+#    >=(numeric,numeric)) make index conditions; <>, in no operator
+#    family, does not.
+[ "$(local_psql -c 'select 3::regproc, 8845::regprocedure, 4::regproc,
+    2::regproc, 8846::regproc' \
+  -c 'select 15::regoperator, 8453::regoperator, 16::regoperator,
+    14::regoperator, 8454::regoperator' \
+  -c 'select 16::regtype, 8384::regtype, 31::regtype, 15::regtype,
+    8385::regtype' 2>&1 | tr '\n' ' ')" = \
+  "heap_tableam_handler|pg_stats(regclass)|4|2|8846 =(integer,bigint)|%(numeric,numeric)|16|14|8454 boolean|numeric[]|31|15|8385 " ] ||
+  fail "built-in catalog rows by oid"
+local_psql -c 'create table tc (a int4 primary key, n numeric(6, 1))' \
+  -c 'create index tc_n on tc (n)' \
+  -c 'insert into tc select i, i / 2.0 from generate_series(1, 20) i' \
+  > "$work/catoid.out" 2>&1
+[ "$(local_psql -c 'set enable_seqscan = off' \
+  -c 'set enable_bitmapscan = off' \
+  -c 'explain (costs off) select a from tc where a = 5::int8' \
+  -c 'explain (costs off) select a from tc where n >= 9.5' \
+  -c 'explain (costs off) select a from tc where a <> 5' 2>&1 |
+  grep -c 'Index Cond')" = 2 ] || fail "pg_amop rows by operator"
+local_psql -c 'drop table tc' > /dev/null 2>&1
 
 # Verify that SELECT ... FOR UPDATE and FOR SHARE lock rows in sm, until the
 # transaction ends, and read the newest version of a row changed meanwhile.

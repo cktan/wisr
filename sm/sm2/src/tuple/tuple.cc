@@ -504,6 +504,7 @@ tup_desc_t::tup_desc_t(std::span<const attribute_t> s) : schema(s) {
       bad = i;
     }
     width.push_back(w);
+    varwidth = varwidth || w < 0;
     off.push_back(off.back() + (w > 0 ? static_cast<size_t>(w) : slot_width));
   }
 }

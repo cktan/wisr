@@ -340,11 +340,9 @@ int encode_cols(sm2::rel_t *rel, std::span<const sm2::datum_t> cols,
                 std::span<const bool> isnull, std::string &key) {
   const auto &schema = rel->desc->schema;
   size_t n = rel->key.size();
-  std::vector<sm2::datum_t> c(cols.begin(), cols.end());
-  std::unique_ptr<bool[]> nulls(new bool[n]());
-  // A fetched value must not move once a datum points at it.
-  std::vector<std::string> own;
-  own.reserve(n);
+  // The first column out of line, n for none: the usual key is
+  // encoded from cols as they are, with nothing allocated.
+  size_t first_toast = n;
   for (size_t j = 0; j < n; j++) {
     int32_t att = rel->key_atts[j];
     if (isnull[j]) {
@@ -352,6 +350,32 @@ int encode_cols(sm2::rel_t *rel, std::span<const sm2::datum_t> cols,
                          "rel: attribute " + std::to_string(att) +
                              " of the primary key is null");
     }
+    if (n != first_toast || rel->desc->width[att] > 0) {
+      continue;
+    }
+    std::string_view v;
+    if (0 !=
+        sm2::datum_bytes(schema[att].type, schema[att].typmod, cols[j], v)) {
+      return -1;
+    }
+    sm2::toast_ptr_t p;
+    if (sm2::parse_toast_ptr(v, p)) {
+      first_toast = j;
+    }
+  }
+  key.clear();
+  bool cut;
+  // No null got this far: isnull is all false.
+  if (n == first_toast) {
+    return sm2::encode_key(rel->key, cols, isnull, sm2::max_pk_len,
+                           sm2::overflow_t::refuse, key, cut);
+  }
+  std::vector<sm2::datum_t> c(cols.begin(), cols.end());
+  // A fetched value must not move once a datum points at it.
+  std::vector<std::string> own;
+  own.reserve(n);
+  for (size_t j = first_toast; j < n; j++) {
+    int32_t att = rel->key_atts[j];
     if (rel->desc->width[att] > 0) {
       continue;
     }
@@ -370,10 +394,8 @@ int encode_cols(sm2::rel_t *rel, std::span<const sm2::datum_t> cols,
     own.push_back(sm2::make_varlena(value));
     c[j] = sm2::datum_from_ptr(own.back().data());
   }
-  key.clear();
-  bool cut;
-  return sm2::encode_key(rel->key, c, std::span<const bool>(nulls.get(), n),
-                         sm2::max_pk_len, sm2::overflow_t::refuse, key, cut);
+  return sm2::encode_key(rel->key, c, isnull, sm2::max_pk_len,
+                         sm2::overflow_t::refuse, key, cut);
 }
 
 /*
@@ -583,11 +605,8 @@ static int open_rel(sm1::session_t *session, uint64_t storeid, uint16_t relid,
   rel->key_atts = key.attnums;
   rel->id_seq = std::string(id_seq);
   rel->toast_seq = std::string(toast_seq);
-  rel->toasts = false;
   // Only a variable-width datum is ever moved out of line.
-  for (int32_t w : desc.width) {
-    rel->toasts = rel->toasts || (w < 0 && !toast_seq.empty());
-  }
+  rel->toasts = desc.varwidth && !toast_seq.empty();
   // Its rows are chained keys if its store was made so.
   if (sm1::store_chained(session, storeid, rel->chained) != 0) {
     return -1;

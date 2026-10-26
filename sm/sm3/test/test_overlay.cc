@@ -104,6 +104,40 @@ TEST_CASE("an abort drops the overlay, leaving the catalog as it was") {
   REQUIRE(sm3::commit(db.a) == 0);
 }
 
+TEST_CASE("a table dropped in a transaction cannot be locked in it") {
+  // Verify cat_lock_table's lookup after the lock: the transaction's own
+  // drop hides the definition the shared catalog still holds, and a
+  // table is fresh only if the shared catalog has none.
+  // 1. Commit t and u; a drops t and makes v.
+  // 2. a's lock of t fails with SM_ERR_NOTFOUND, and so does tbl_open.
+  // 3. a's lock of v reports it fresh, of u not.
+  // 4. a aborts: t is there to lock again.
+  two_t db;
+  begin(db.a);
+  uint64_t t = create(db.a, "t");
+  uint64_t u = create(db.a, "u");
+  REQUIRE(sm3::commit(db.a) == 0);
+  begin(db.a);
+  REQUIRE(sm3::drop_table(db.a, t) == 0);
+  uint64_t v = create(db.a, "v");
+  std::shared_ptr<const sm3::table_def_t> def;
+  CHECK(sm3::cat_lock_table(db.a, t, sm1::SM_LOCKMODE_IS, def) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  sm3::table_t *tbl = nullptr;
+  CHECK(sm3::tbl_open(db.a, t, sm1::SM_LOCKMODE_IS, tbl) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  bool fresh = false;
+  REQUIRE(sm3::cat_lock_table(db.a, v, sm1::SM_LOCKMODE_IS, def, &fresh) == 0);
+  CHECK(fresh);
+  REQUIRE(sm3::cat_lock_table(db.a, u, sm1::SM_LOCKMODE_IS, def, &fresh) == 0);
+  CHECK_FALSE(fresh);
+  REQUIRE(sm3::abort(db.a) == 0);
+  begin(db.a);
+  REQUIRE(sm3::cat_lock_table(db.a, t, sm1::SM_LOCKMODE_IS, def) == 0);
+  CHECK(def->oid == t);
+  REQUIRE(sm3::commit(db.a) == 0);
+}
+
 TEST_CASE("a rollback to a savepoint undoes only the DDL made under it") {
   // Verify savepoints.
   // 1. Create a; set a savepoint; create b and rename a to a2.

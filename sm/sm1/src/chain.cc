@@ -994,11 +994,15 @@ int sm1::store_chained(sm1::session_t *session, uint64_t storeid, bool &out) {
     return set_error(sm1::SM_ERR_INVALID, "sm1_store_chained: session is NULL");
   }
   // A store's layout is fixed when it is made: no snapshot is needed.
-  store_t st = db_store(session->db, storeid);
-  if (!st.cf || (st.owner && st.owner != session)) {
+  // Read in place under store_mu shared, copying none of its handles.
+  db_t *db = session->db;
+  std::shared_lock<std::shared_mutex> guard(db->store_mu);
+  auto it = db->stores.find(storeid);
+  if (it == db->stores.end() || !it->second.cf ||
+      (it->second.owner && it->second.owner != session)) {
     return set_error(sm1::SM_ERR_NOTFOUND, "store {} does not exist", storeid);
   }
-  out = st.chained;
+  out = it->second.chained;
   return 0;
 }
 

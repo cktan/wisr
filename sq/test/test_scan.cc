@@ -242,6 +242,31 @@ TEST_CASE("a NUL in the text is refused before anything is scanned") {
         "invalid byte sequence for encoding \"UTF8\": 0x00");
 }
 
+TEST_CASE("a text is scanned whole on either side of the scan's room") {
+  // Verify the copy flex scans, in the scanner's own room when the text
+  // fits it and in memory of its own when it does not.
+  // 1. For texts that fill the room exactly and that are one byte too
+  //    long, scan a string literal filling the text.
+  // 2. Confirm the literal comes back whole.
+  // 3. Scan the same texts with the closing quote cut off, and confirm
+  //    the error is at the literal's first character, which is read
+  //    back from the copy.
+  sq_options_t opt;
+  size_t room = sizeof(sq::scan_extra_t::text_room);
+  for (size_t len : {room - 2, room - 1}) {
+    std::string body(len - 3, 'x');
+    std::vector<token_t> tokens = scan("'" + body + "' ", opt);
+    REQUIRE(tokens.size() == 1);
+    CHECK(tokens[0].token == SCONST);
+    CHECK(tokens[0].text == body);
+
+    REQUIRE(scan_fails("  '" + body, opt));
+    CHECK(std::string(sq_errmsg())
+              .starts_with("unterminated quoted string at or near \"'xxx"));
+    CHECK(sq_errpos() == 3);
+  }
+}
+
 TEST_CASE("a scan that ends in an error frees what it made") {
   // Verify nothing is left behind by a scan abandoned halfway.
   // 1. Scan long literals, a dollar quote left open, into a tree.

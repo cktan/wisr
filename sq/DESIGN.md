@@ -135,8 +135,8 @@ was parsed from. A tree moves and does not copy.
 
 **Nodes, lists and text are cut from the tree's arena**, as
 PostgreSQL's `palloc` cuts from a memory context: blocks, the
-first inside the store, each next twice the last up to 1 MB,
-freed together. No node has a destructor. A list grows as
+first of 4 kB made with the first piece, each next twice the
+last up to 1 MB, freed together. No node has a destructor. A list grows as
 PostgreSQL's `list.c` grows one: its first cells in place after
 it, then an array of its own, grown by realloc. A parse so makes
 no allocation per node, list or string, which made its cost
@@ -146,9 +146,11 @@ with a tree named current.
 **Or they go where the caller says.** `sq_options_t`'s
 allocator, alloc and realloc, takes the arena's place: digres's
 is its current memory context, so it keeps, grows and frees
-sq's nodes and lists as its own. What the allocator hands out
-the tree never frees. A failed alloc returns NULL, and sq
-reports running out of memory as it does any error.
+sq's nodes and lists as its own. The store itself is cut from
+it too, and no arena block is made, so a parse asks `malloc`
+for none of its nodes. What the allocator hands out the tree
+never frees. A failed alloc returns NULL, and sq reports running
+out of memory as it does any error.
 
 This is what makes cleanup after an error one line. A parse that
 fails halfway has made hundreds of nodes, some reachable from
@@ -164,8 +166,10 @@ same, and emptying it frees them.
 - **bison's stacks** come from the parse, not from `malloc`, and
   go with it. bison would free its own on a normal return, which
   an error raised from an action is not.
-- **flex's state** is held by `scanner_t`, whose destructor
-  releases it however the scan ends.
+- **flex's state** is held by `scanner_t`, in room inside it,
+  as is the copy of the text flex scans when the text is short:
+  a scan asks `malloc` for none of it. Its destructor releases
+  what a long text took, however the scan ends.
 
 So RAII reaches everything, and `sq.h` has no free function.
 

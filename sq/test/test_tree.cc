@@ -196,7 +196,8 @@ TEST_CASE(
   // 1. Parse a SELECT of 40 columns with an allocator that keeps what
   //    it hands out.
   // 2. Confirm the statement and its select list came from it, and
-  //    that the list grew by its realloc.
+  //    that the list grew by its realloc; and that the tree's store
+  //    came from it too, so that the parse made none of its own.
   // 3. Destroy the tree: everything kept is still the test's to free,
   //    which it does; the leak checker sees anything else.
   kept_t kept;
@@ -222,6 +223,30 @@ TEST_CASE(
     CHECK(kept_piece(sel->target_list->elements));
     CHECK(sq::list_length(sel->target_list) == 40);
     CHECK(kept.reallocs > 0);
+    CHECK(kept_piece(&sq::tree_access_t::store(tree)));
+  }
+  for (void *p : kept.pieces) {
+    free(p);
+  }
+}
+
+TEST_CASE("a failed parse with an allocator leaves its store to the caller") {
+  // Verify a tree whose store is the caller's frees none of it, when a
+  // parse fails as when one succeeds.
+  // 1. Parse with an allocator that keeps what it hands out, then parse
+  //    text that fails into the same tree.
+  // 2. Confirm the tree is empty.
+  // 3. Let the tree go, then free what was kept; the leak checker sees
+  //    a store sq freed itself, or one it never freed.
+  kept_t kept;
+  sq_allocator_t allocator{kept_alloc, kept_realloc, &kept};
+  sq_options_t opt;
+  opt.allocator = &allocator;
+  {
+    sq_tree_t tree;
+    REQUIRE(sq_parse("select 1", &opt, tree) == 0);
+    CHECK(sq_parse("select from where", &opt, tree) == -1);
+    CHECK(tree.stmts.empty());
   }
   for (void *p : kept.pieces) {
     free(p);

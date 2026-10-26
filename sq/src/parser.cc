@@ -176,7 +176,7 @@ invalid_pair:
  */
 int sq_base_yylex(SQ_BASE_YYSTYPE *lvalp, int *llocp, core_yyscan_t yyscanner) {
   parse_state_t *yyextra = parse_state(yyscanner);
-  char *scanbuf = scanner_extra(yyscanner)->scanbuf.data();
+  char *scanbuf = scanner_extra(yyscanner)->scanbuf;
   int cur_token;
   int next_token;
   int cur_token_length;
@@ -406,7 +406,7 @@ static int parse_call(sq_tree_t &tree, const sq_options_t *opt, Fill fill) {
   try {
     // A parse is all or nothing, so what the tree held goes first.
     tree = sq_tree_t();
-    tree_access_t::store(tree).allocator = opt ? opt->allocator : nullptr;
+    tree_access_t::begin(tree, opt ? opt->allocator : nullptr);
     try {
       fill();
       return 0;

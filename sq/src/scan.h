@@ -8,7 +8,9 @@
 #ifndef SQ_SRC_SCAN_H
 #define SQ_SRC_SCAN_H
 
+#include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <string_view>
 
@@ -44,8 +46,14 @@ struct scan_extra_t {
   /* How to scan, and whom to tell of a notice. */
   sq_options_t options;
 
-  /* The text, with the two NUL bytes flex wants after it. */
-  std::string scanbuf;
+  /*
+   * The text, with the two NUL bytes flex wants after it: in
+   * text_room when it fits, so that a short text needs no malloc, and
+   * in scanbuf_heap when it does not.
+   */
+  char *scanbuf = nullptr;
+  std::unique_ptr<char[]> scanbuf_heap;
+  char text_room[1024];
 
   /* A literal, gathered across the rules that make it up. */
   std::string literal;
@@ -61,6 +69,29 @@ struct scan_extra_t {
   /* For the warnings about escapes in ordinary string literals. */
   bool warn_on_first_escape = false;
   bool saw_non_ascii = false;
+
+  /*
+   * Room for flex's own state, cut in order and never given back, so
+   * that a scan asks malloc for none of it (sq_core_yyalloc).
+   */
+  alignas(std::max_align_t) char flex_room[512];
+  size_t flex_used = 0;
+
+  /* bytes from flex_room, aligned for anything; NULL if they do not fit. */
+  void *take(size_t bytes) {
+    size_t at = (flex_used + alignof(std::max_align_t) - 1) &
+                ~(alignof(std::max_align_t) - 1);
+    if (bytes > sizeof(flex_room) - at) {
+      return nullptr;
+    }
+    flex_used = at + bytes;
+    return flex_room + at;
+  }
+
+  /* Whether p was cut from flex_room. */
+  bool in_room(const void *p) const {
+    return p >= flex_room && p < flex_room + sizeof(flex_room);
+  }
 };
 
 /* One scan of one text. */

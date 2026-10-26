@@ -127,6 +127,8 @@ int build_table(const collation_lookup_t &lookup, uint64_t oid,
   t->name = rec.name;
   t->storeid = rec.storeid;
   t->id_seq = rec.id_seq;
+  // Named once here, not at every open of the table.
+  t->toast_seq = toast_seq_name(oid);
   t->next_relid = rec.next_relid;
   t->rec = rec;
   for (const sm3::column_rec_t &c : rec.columns) {

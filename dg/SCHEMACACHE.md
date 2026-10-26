@@ -1,12 +1,13 @@
 # SCHEMACACHE — a session's schema, kept across transactions
 
-**Status: being built.** §7's steps 1 to 5 are built: the
-epoch, a name's relation (Q7's name lookup from 3,000
-instructions to 500), the version check after a lock (from 900
-to 100), statistics rows (from about 4,700 to 1,300, with
-pg_statistic's descriptor made once a session), and size
-estimates (from 2,400 to 900). Q7 is at about 110,000
-instructions to PostgreSQL's 106,300, from 122,400.
+**Status: built.** §7's six steps: the epoch, a name's relation
+(Q7's name lookup from 3,000 instructions to 500), the version
+check after a lock (900 to 100), statistics rows (about 4,700 to
+1,300, with pg_statistic's descriptor made once a session), size
+estimates (2,400 to 900), and sm3's table open (3,400 to 1,800).
+Q7 is at about 110,000 user instructions to PostgreSQL's
+107,000-108,500, from 122,400; its latency and CPU time a query
+are now below PostgreSQL's.
 
 A query of one row by its key, Q7 of `../bench/DESIGN.md`,
 runs 16,000 more instructions in digres than in PostgreSQL, and
@@ -152,7 +153,28 @@ learns from the definition's generation is learned once with it
 the store is chained is fixed when the store is made, so it is
 read once into the definition instead of from sm1 at every open;
 whether this transaction made the table comes from the lock's own
-lookup instead of a second one.
+lookup instead of a second one. The name of the table's TOAST
+sequence is made with the definition, whether its layout has a
+column of variable width with the layout, and an index's state is
+read without a copy of a failed one's error (Q7's parse analysis
+from 31,000 instructions to 30,400).
+
+### 4.6 An index's usability
+
+`get_relation_info()` asks of each index whether the transaction
+may scan it (`smstore_index_usable()`, sm's
+`sm_tbl_index_usable`): built, valid, and valid since a count its
+snapshot is not older than. An index found usable is kept with
+the epoch, and is usable while the epoch holds: a valid index
+stays valid until it is dropped, a publish, and a session's
+snapshots only move forward, a transaction's at its start and a
+READ COMMITTED statement's at its own. One found unusable is not
+kept: its build may end, or a newer snapshot see it, with no
+publish between. The epoch is a guard more than the proof: an
+index's oid is never used again, and a dropped index leaves its
+table's list of indexes, so a usable index is never asked about
+once it is not; `server.sh` can break the unusable side of this
+and not the epoch's.
 
 ## 5. The cases
 
@@ -167,6 +189,7 @@ lookup instead of a second one.
 | DROP, then CREATE under the same name | a publish: the name's entry goes |
 | a name looked up, then the table renamed before the lock | the lock waits for the rename's X; once it is had, the relcache's version check finds the change, counts a message, and the name is looked up again with the epoch moved, so from sm (§2) |
 | REPEATABLE READ, an old snapshot | a catalog lookup reads the newest catalog, in PostgreSQL and in sm alike; unchanged |
+| REPEATABLE READ, a snapshot older than an index | the index is unusable to it, and not kept so: the next transaction asks sm again and may use it (§4.6) |
 | a prepared transaction | sm refuses PREPARE after DDL; nothing to date |
 | crash, restart | the caches are memory, made again |
 | another database | its own catalog, its own epoch |
