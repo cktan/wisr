@@ -605,11 +605,8 @@ static int open_rel(sm1::session_t *session, uint64_t storeid, uint16_t relid,
   rel->key_atts = key.attnums;
   rel->id_seq = std::string(id_seq);
   rel->toast_seq = std::string(toast_seq);
-  rel->toasts = false;
   // Only a variable-width datum is ever moved out of line.
-  for (int32_t w : desc.width) {
-    rel->toasts = rel->toasts || (w < 0 && !toast_seq.empty());
-  }
+  rel->toasts = desc.varwidth && !toast_seq.empty();
   // Its rows are chained keys if its store was made so.
   if (sm1::store_chained(session, storeid, rel->chained) != 0) {
     return -1;

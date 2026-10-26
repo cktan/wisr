@@ -153,7 +153,11 @@ learns from the definition's generation is learned once with it
 the store is chained is fixed when the store is made, so it is
 read once into the definition instead of from sm1 at every open;
 whether this transaction made the table comes from the lock's own
-lookup instead of a second one.
+lookup instead of a second one. The name of the table's TOAST
+sequence is made with the definition, whether its layout has a
+column of variable width with the layout, and an index's state is
+read without a copy of a failed one's error (Q7's parse analysis
+from 31,000 instructions to 30,400).
 
 ### 4.6 An index's usability
 

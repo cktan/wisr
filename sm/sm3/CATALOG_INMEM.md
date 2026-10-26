@@ -23,8 +23,9 @@ values are `CATALOG_ONDISK.md`'s. §4 is what is open.
 
 `sm3/include/sm3.h` declares what `cat_open` builds:
 
-- **`table_def_t`**: the table's oid, namespace, name, storeid
-  and `_id` sequence; its `column_def_t`s, each with its sm2
+- **`table_def_t`**: the table's oid, namespace, name, storeid,
+  `_id` sequence and the name of its TOAST ids' sequence, so an
+  open makes no name; its `column_def_t`s, each with its sm2
   type, typmod, flags, missing value and collation; its
   `index_def_t`s, each with its `key_column_t`s and INCLUDE
   attributes built for sm2, and its entries' value laid out

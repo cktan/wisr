@@ -277,6 +277,7 @@ struct table_def_t {
     std::string                   name;
     uint64_t                      storeid;
     std::string                   id_seq;
+    std::string                   toast_seq; /* the sequence of its TOAST ids */
     uint16_t                      next_relid;
     std::vector<column_def_t>     columns;
     std::vector<sm2::attribute_t> schema;

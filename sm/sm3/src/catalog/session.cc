@@ -647,19 +647,44 @@ index_status_t cat_get_index_state(const catalog_t *cat, uint64_t index_oid) {
   return it == cat->index_states.end() ? index_status_t{} : it->second;
 }
 
-/* An index's state as s sees it: its own change first; see sm3.h. */
-index_status_t cat_get_index_state(const session_t *s, uint64_t index_oid) {
+namespace {
+
+/*
+ * f of index_oid's status as s sees it, its own change first, or of
+ * nullptr if none is recorded; a committed one under the catalog's
+ * mutex, so f reads it in place.
+ */
+template <typename F>
+auto with_index_status(const session_t *s, uint64_t index_oid, F f) {
   for (auto it = s->states.rbegin(); it != s->states.rend(); ++it) {
     if (it->index == index_oid) {
-      return it->status ? *it->status : index_status_t{};
+      return f(it->status ? &*it->status : nullptr);
     }
   }
   // Its own temporary table's index, which the catalog never has.
   auto own = s->temp_states.find(index_oid);
   if (own != s->temp_states.end()) {
-    return own->second;
+    return f(&own->second);
   }
-  return cat_get_index_state(s->cat, index_oid);
+  std::shared_lock lock(s->cat->mu);
+  auto it = s->cat->index_states.find(index_oid);
+  return f(it == s->cat->index_states.end() ? nullptr : &it->second);
+}
+
+} // namespace
+
+/* An index's state as s sees it: its own change first; see sm3.h. */
+index_status_t cat_get_index_state(const session_t *s, uint64_t index_oid) {
+  return with_index_status(s, index_oid, [](const index_status_t *st) {
+    return st ? *st : index_status_t{};
+  });
+}
+
+/* The state alone of an index as s sees it; see internal.h. */
+index_state_t cat_index_state(const session_t *s, uint64_t index_oid) {
+  return with_index_status(s, index_oid, [](const index_status_t *st) {
+    return st ? st->state : index_state_t::pending;
+  });
 }
 
 /* Record a namespace created, or dropped. */

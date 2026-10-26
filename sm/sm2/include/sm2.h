@@ -431,6 +431,7 @@ struct tup_desc_t {
     std::vector<int32_t> width; /* datum_width; -1 if variable */
     std::vector<size_t>  off;   /* schema.size() + 1 offsets */
     size_t bad = SIZE_MAX;      /* first refused attribute, if any */
+    bool varwidth = false;      /* an attribute of variable width */
 
     tup_desc_t() = default;
     tup_desc_t(std::span<const attribute_t> schema);

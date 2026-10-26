@@ -388,6 +388,13 @@ inline const index_def_t *primary_of(const table_def_t &def) {
  */
 int rewrite_table(session_t *session, uint64_t oid, table_rec_t rec);
 
+/*
+ * The state of the index index_oid as s sees it, as
+ * cat_get_index_state gives it, with no copy of a failed one's error:
+ * for a table's open, which reads the state alone.
+ */
+index_state_t cat_index_state(const session_t *s, uint64_t index_oid);
+
 /* The sm1 sequence the table oid draws its TOAST ids from. */
 inline std::string toast_seq_name(uint64_t oid) {
   return "sm3.toast." + std::to_string(oid);
