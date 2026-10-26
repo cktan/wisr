@@ -2364,6 +2364,8 @@ struct smstore_scan_t {
   AttrNumber *keycols;
   /* Which keys the scan's bounds hold of every row it reads (keys_met()). */
   bool *bounded;
+  /* How many keys are not bounded: each row is checked against these. */
+  int nchecked;
   /* An index scan's: its index, and its last entry's value. */
   Oid index;
   Form_pg_index form;
@@ -6136,6 +6138,8 @@ static bool plain_key(ScanKey key, Oid coltype) {
  */
 static bool keys_met(smstore_scan_t *scan, TupleTableSlot *slot,
                      bool index_shaped) {
+  if (0 == scan->nchecked)
+    return true;
   for (int i = 0; i < scan->nkeys; i++) {
     ScanKey key = &scan->keys[i];
     int col = (index_shaped ? key->sk_attno : scan->keycols[i]) - 1;
@@ -6294,8 +6298,11 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
   scan->form = form;
   scan->keycols = (AttrNumber *)palloc(Max(nkeys, 1) * sizeof(AttrNumber));
   /* Each row is checked against every key not bounded (keys_met()). */
-  for (int i = 0; i < nkeys; i++)
+  for (int i = 0; i < nkeys; i++) {
     scan->keycols[i] = form->indkey.values[keys[i].sk_attno - 1];
+    if (!bounded[i])
+      scan->nchecked++;
+  }
   /*
    * An equality on each of the primary key's columns names one row: read it
    * by its key, as a cursor would see it now, with none opened.
@@ -6341,10 +6348,11 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
  * (sm_idx_scan_row()), as this transaction sees it, read into the pin ref
  * names, and into slot by the ref, its tid its rowno; false, the slot empty,
  * if it sees none.  One read where the row by rowno is two in a table with a
- * primary key (../sm/CLUSTER.md section 5).
+ * primary key (../sm/CLUSTER.md section 5).  Out of line, so a primary
+ * key's scan (smstore_index_getnext()) pays for no stack protector.
  */
-static bool pin_entry_row(smstore_scan_t *scan, uint64_t rowno,
-                          TupleTableSlot *slot) {
+static pg_noinline bool pin_entry_row(smstore_scan_t *scan, uint64_t rowno,
+                                      TupleTableSlot *slot) {
   const void *key, *tuple;
   size_t klen, len;
 
@@ -6396,20 +6404,20 @@ static bool read_row_at(sm_tbl_t *tbl, const std::string &key, int natts,
  * (pin_entry_row()), its tid its rowno; false at the end.
  */
 bool smstore_index_getnext(smstore_scan_t *scan, TupleTableSlot *slot) {
-  uint64 rowno;
-
   slot->tts_tableOid = scan->relid;
-  while (smstore_index_getrowno(scan, &rowno)) {
+  while (smstore_index_getrowno(scan)) {
     /* A primary key's entry is its row, in the cursor's pin or the scan's. */
     if (scan->cursor != NULL || scan->point) {
       ExecClearTuple(slot);
-      ref_into_slot(scan->point ? scan->ref : scan->row_ref, rowno, slot);
+      ref_into_slot(scan->point ? scan->ref : scan->row_ref, scan->cur_rowno,
+                    slot);
       if (keys_met(scan, slot, false))
         return true;
       continue;
     }
     /* A row the transaction does not see is passed. */
-    if (pin_entry_row(scan, rowno, slot) && keys_met(scan, slot, false))
+    if (pin_entry_row(scan, scan->cur_rowno, slot) &&
+        keys_met(scan, slot, false))
       return true;
   }
   ExecClearTuple(slot);
@@ -6417,54 +6425,19 @@ bool smstore_index_getnext(smstore_scan_t *scan, TupleTableSlot *slot) {
 }
 
 /*
- * The rowno of the index scan's next entry into *rowno, the row unread;
- * false at the end.  The entry is within the scan's bounds, but its row may
- * be one the transaction does not see, or not meet every key: who reads
- * the row checks.
+ * smstore_index_getrowno() of a secondary index's scan.  Out of line, so
+ * a primary key's scan takes no address of a local, and pays for no stack
+ * protector.
  */
-bool smstore_index_getrowno(smstore_scan_t *scan, uint64 *rowno) {
-  uint64_t r;
+static pg_noinline bool next_entry(smstore_scan_t *scan) {
   bool cut;
-  const void *value;
-  size_t len;
 
-  CHECK_FOR_INTERRUPTS();
-  scan->cur = false;
-  /* The one row a primary key's equalities name, once; a keyed row's is 0. */
-  if (scan->point) {
-    if (!scan->point_row)
-      return false;
-    scan->point_row = false;
-    *rowno = 0;
-    scan->cur = true;
-    scan->cur_pinned = true;
-    scan->cur_rowno = 0;
-    return true;
-  }
-  /* A primary key's: its next row, into the cursor's pin. */
-  if (scan->cursor != NULL) {
-    switch (sm_rel_scannxt(scan->cursor, &r, &scan->row_ref)) {
-    case 0:
-      *rowno = r;
-      scan->cur = true;
-      scan->cur_pinned = true;
-      scan->cur_rowno = r;
-      return true;
-    case 1:
-      return false;
-    default:
-      sm_error("scan an index");
-    }
-  }
-  switch (sm_idx_scannxt(scan->icursor, &r, &cut, &value, &len)) {
+  switch (sm_idx_scannxt(scan->icursor, &scan->cur_rowno, &cut, &scan->value,
+                         &scan->len)) {
   case 0:
-    *rowno = r;
-    scan->value = value;
-    scan->len = len;
     /* Its row is pinned once read (pin_entry_row(), entry_from_row()). */
     scan->cur = true;
     scan->cur_pinned = false;
-    scan->cur_rowno = r;
     return true;
   case 1:
     return false;
@@ -6472,6 +6445,41 @@ bool smstore_index_getrowno(smstore_scan_t *scan, uint64 *rowno) {
     sm_error("scan an index");
   }
   return false; /* not reached */
+}
+
+/*
+ * The index scan's next entry, its rowno into scan->cur_rowno, the row
+ * unread; false at the end.  The entry is within the scan's bounds, but its
+ * row may be one the transaction does not see, or not meet every key: who
+ * reads the row checks.
+ */
+bool smstore_index_getrowno(smstore_scan_t *scan) {
+  CHECK_FOR_INTERRUPTS();
+  scan->cur = false;
+  /* The one row a primary key's equalities name, once; a keyed row's is 0. */
+  if (scan->point) {
+    if (!scan->point_row)
+      return false;
+    scan->point_row = false;
+    scan->cur = true;
+    scan->cur_pinned = true;
+    scan->cur_rowno = 0;
+    return true;
+  }
+  /* A primary key's: its next row, into the cursor's pin. */
+  if (scan->cursor != NULL) {
+    switch (sm_rel_scannxt(scan->cursor, &scan->cur_rowno, &scan->row_ref)) {
+    case 0:
+      scan->cur = true;
+      scan->cur_pinned = true;
+      return true;
+    case 1:
+      return false;
+    default:
+      sm_error("scan an index");
+    }
+  }
+  return next_entry(scan);
 }
 
 /*
@@ -6544,10 +6552,10 @@ static bool entry_from_row(smstore_scan_t *scan, TupleTableSlot *slot) {
  * key does not give them back, the row is read.
  */
 bool smstore_index_getentry(smstore_scan_t *scan, TupleTableSlot *slot) {
-  uint64 rowno;
-
   slot->tts_tableOid = scan->relid;
-  while (smstore_index_getrowno(scan, &rowno)) {
+  while (smstore_index_getrowno(scan)) {
+    uint64 rowno = scan->cur_rowno;
+
     ExecClearTuple(slot);
     switch (scan->cursor != NULL || scan->point
                 ? 1
