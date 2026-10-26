@@ -541,13 +541,15 @@ BEGIN;
 	savepoint x;
 		CREATE TABLE koju (a INT UNIQUE);
 		INSERT INTO koju VALUES (1);
---dg-differs: another error: could not open relation with OID N
---dg 		INSERT INTO koju VALUES (1);
+		INSERT INTO koju VALUES (1);
+ERROR:  duplicate key value violates unique constraint "koju_a_key"
+DETAIL:  Key (a)=(1) already exists.
 	rollback to x;
 	CREATE TABLE koju (a INT UNIQUE);
 	INSERT INTO koju VALUES (1);
---dg-differs: another error: could not open relation with OID N
---dg 	INSERT INTO koju VALUES (1);
+	INSERT INTO koju VALUES (1);
+ERROR:  duplicate key value violates unique constraint "koju_a_key"
+DETAIL:  Key (a)=(1) already exists.
 ROLLBACK;
 DROP TABLE trans_foo;
 DROP TABLE trans_baz;

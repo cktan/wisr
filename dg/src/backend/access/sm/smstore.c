@@ -5900,12 +5900,12 @@ ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt) {
     sm_error("create an index");
   }
   /*
-   * A primary key keys the table's rows, which sm has keyed anew, maybe in a
-   * new store (../sm/CLUSTER.md section 8): the handles this transaction
-   * holds were opened on the rows as they were.
+   * The handles this transaction holds were opened without the index, so
+   * would neither write it nor describe it (sm_tbl_def()); a primary key
+   * also keys the table's rows, which sm has keyed anew, maybe in a new
+   * store (../sm/CLUSTER.md section 8).
    */
-  if (stmt->primary)
-    forget_table(relid);
+  forget_table(relid);
   made_index_t made = {relid, oid, name, stmt->unique, {}};
 
   for (const sm_index_key_spec_t &k : keys)

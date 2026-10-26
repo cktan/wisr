@@ -8700,3 +8700,30 @@ column, is a decimal64, and numrange's subtype is decimal128.
   pgregress files that use numrange, ported again, are as
   they were: their statements with a decimal64 element read a
   table of numranges, which sm does not store yet.
+
+## Step 302: an index is its table's at once in its transaction
+
+A duplicate key in a table made in the open transaction, with
+a UNIQUE column, said `could not open relation with OID N`
+(`ISSUE.md` issue 6): the savepoint of the issue's repro had
+nothing to do with it. And a unique index made on a table the
+transaction had already written was not kept: the duplicate
+went in, `INSERT 0 1`.
+
+- **The cause**: a handle of a table holds the definition it
+  was opened with (`sm.h`'s `sm_tbl_def()`), and
+  `smstore_create_index()` closed the transaction's handles of
+  the table for a primary key alone. For any other index the
+  descriptor, rebuilt, read the handle's definition, with no
+  index: the index was never known as the table's, so
+  `index_open()` in `duplicate_write()` looked for a table of
+  its oid, and the planner never chose it. A handle opened
+  before the index, as an earlier INSERT's, wrote no entry to
+  it, so did not check it.
+- **The fix**: `smstore_create_index()` calls
+  `forget_table()` for every index, as `smstore_drop_indexes()`
+  does: the next use opens a handle with the index.
+- **Tests**: `test/server.sh` checks both, a UNIQUE column in
+  a savepoint and a unique index made after an INSERT, for
+  PostgreSQL's error and key. pgregress's `transactions`,
+  ported again, has its two statements back.

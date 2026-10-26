@@ -4,8 +4,10 @@ Problems found and left unfixed, each with what it would take
 to fix. The code it concerns points here by number. A fixed
 issue is removed, and its number is not used again: issue 2,
 ON CONFLICT DO UPDATE affecting a row twice, was fixed in
-`WORKNOTE.md` step 237, and issue 3, a numeric range in an
-array or a multirange losing its bound, in step 300.
+`WORKNOTE.md` step 237; issue 3, a numeric range in an array
+or a multirange losing its bound, in step 300; and issue 6, a
+duplicate key in a table made in a savepoint saying the wrong
+error, in step 302.
 
 ---
 
@@ -118,28 +120,6 @@ pgregress: `portals`. **Where to start**: the row lock a FOR
 UPDATE fetch takes, and what it does on finding the row
 updated by a later command of the same transaction
 (PostgreSQL's `TM_SelfModified`).
-
-## Issue 6: a duplicate key in a table made in a savepoint says the wrong error
-
-The row is refused, but with an error about a relation, not
-the unique violation.
-
-```sql
-begin;
-savepoint x;
-create table koju (a int unique);
-insert into koju values (1);
-insert into koju values (1);
--- PostgreSQL: ERROR:  duplicate key value violates unique
---             constraint "koju_a_key"
--- digres:     ERROR:  could not open relation with OID 16385
-rollback;
-```
-
-pgregress: `transactions`. **Where to start**: the three
-`could not open relation with OID` errors in
-`src/backend/access/sm/smstore.c`, which one this is, and what
-it opens on the way to the unique violation's message.
 
 ## Issue 7: ON COMMIT DELETE ROWS ignores a foreign key into the table
 

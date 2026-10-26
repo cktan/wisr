@@ -1188,6 +1188,37 @@ grep -qx 'INSERT 0 1' "$work/index.out" &&
   grep -q 'index "t3_b" does not exist' "$work/index.out" ||
   fail "drop index"
 
+# Verify that an index made in the open transaction is its table's at once,
+# though the transaction opened the table before: a unique one refuses a
+# duplicate with PostgreSQL's error (WORKNOTE.md step 302).
+# 1. In a savepoint, create t3u with a unique column, insert a row and its
+#    duplicate.
+# 2. Confirm the duplicate is refused naming t3u_a_key, and its key.
+# 3. In a transaction, create t3v, insert a row, then make a unique index,
+#    and insert the row's duplicate.
+# 4. Confirm the duplicate is refused naming t3v_a, and its key.
+local_psql > "$work/own_index.out" 2>&1 <<'SQL'
+begin;
+savepoint x;
+create table t3u (a int4 unique);
+insert into t3u values (1);
+insert into t3u values (1);
+rollback;
+begin;
+create table t3v (a int4);
+insert into t3v values (1);
+create unique index t3v_a on t3v (a);
+insert into t3v values (1);
+rollback;
+SQL
+grep -q 'duplicate key value violates unique constraint "t3u_a_key"' \
+  "$work/own_index.out" &&
+  grep -q 'duplicate key value violates unique constraint "t3v_a"' \
+    "$work/own_index.out" &&
+  [ "$(grep -cx 'DETAIL:  Key (a)=(1) already exists.' \
+    "$work/own_index.out")" = 2 ] ||
+  fail "unique index made in the open transaction"
+
 # Verify that DDL on a relation whose descriptor this session cached in an
 # earlier transaction takes sm's lock before it reads the descriptor: each
 # step stopped an assertion build at relation_open's NoLock check.

@@ -357,14 +357,12 @@ BEGIN;
 	savepoint x;
 		CREATE TABLE koju (a INT UNIQUE);
 		INSERT INTO koju VALUES (1);
---dg-differs: another error: could not open relation with OID N
---dg 		INSERT INTO koju VALUES (1);
+		INSERT INTO koju VALUES (1);
 	rollback to x;
 
 	CREATE TABLE koju (a INT UNIQUE);
 	INSERT INTO koju VALUES (1);
---dg-differs: another error: could not open relation with OID N
---dg 	INSERT INTO koju VALUES (1);
+	INSERT INTO koju VALUES (1);
 ROLLBACK;
 
 DROP TABLE trans_foo;
