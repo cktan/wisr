@@ -2071,6 +2071,35 @@ within "$n" 1000 10 || fail "statistics kept: $n"
 n=$(sed -n 3p "$work/st36.rows")
 within "$n" 5000 10 || fail "statistics after another session's analyze: $n"
 
+# Verify that a plan's width of a column is its statistics' average width,
+# read from the row a session keeps, and follows another session's ANALYZE
+# (STATISTICS.md section 2.3).
+# 1. Make t37 with b of 20 characters, unanalyzed: a held session
+#    estimates b 32 bytes wide, text's default.
+# 2. Analyze t37: the held session estimates b 21 bytes wide, twice, the
+#    second from the row kept.
+# 3. Another session makes b 60 characters and analyzes: the held session
+#    estimates 61.
+local_psql -c 'create table t37 (a int4, b text)' \
+  -c "insert into t37 select g, repeat('x', 20) from generate_series(1, 1000) g" \
+  >> "$work/stats.out" 2>&1
+held_start st37
+held_send st37 "explain select b from t37; select 'one';"
+held_wait st37 one || fail "width read"
+local_psql -c 'analyze t37' >> "$work/stats.out" 2>&1
+held_send st37 "explain select b from t37; explain select b from t37;
+  select 'two';"
+held_wait st37 two || fail "width read after an analyze"
+local_psql -c "update t37 set b = repeat('y', 60)" -c 'analyze t37' \
+  >> "$work/stats.out" 2>&1
+held_send st37 "explain select b from t37; select 'three';"
+held_wait st37 three || fail "width read after another analyze"
+held_end st37
+grep -o 'width=[0-9]*' "$work/st37.out" | cut -d= -f2 | tr '\n' ' ' \
+  > "$work/st37.widths"
+[ "$(cat "$work/st37.widths")" = "32 21 21 61 " ] ||
+  fail "widths from statistics: $(cat "$work/st37.widths")"
+
 # Verify that VACUUM compacts a table's store in sm, and that VACUUM
 # ANALYZE also analyzes it.
 # 1. Make t32 with 20,000 rows of 200 bytes, and VACUUM ANALYZE it: a

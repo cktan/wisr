@@ -5044,6 +5044,44 @@ HeapTuple smstore_statistic_tuple(Oid relid, AttrNumber attnum, bool inh) {
   return tup;
 }
 
+/*
+ * The average width of relid's column attnum, as its pg_statistic row says
+ * (smstore_statistic_tuple()), 0 if it has none: read from the row kept,
+ * not a copy of it, which a plan reads the width of for each column it
+ * returns.
+ */
+int32 smstore_statistic_width(Oid relid, AttrNumber attnum) {
+  if (attnum <= 0 || relid < FirstNormalObjectId)
+    return 0;
+  auto &kept = tcb->smstore->statistics;
+  /* Read before the lookup, so a publish meanwhile retires what it finds. */
+  uint64_t epoch = sm_cat_epoch(session());
+
+  /* Made while the epoch holds: no analyze or DDL since (SCHEMACACHE.md). */
+  if (UINT64_MAX != epoch) {
+    auto it = kept.find((uint64_t)relid << 16 | (uint16)attnum);
+
+    if (kept.end() != it && it->second.epoch == epoch) {
+      const std::string &bytes = it->second.bytes;
+      HeapTupleData row;
+
+      if (bytes.empty())
+        return 0;
+      row.t_data = (HeapTupleHeader) const_cast<char *>(bytes.data());
+      return ((Form_pg_statistic)GETSTRUCT(&row))->stawidth;
+    }
+  }
+  /* Made, and kept, as the planner's row is. */
+  HeapTuple tup = smstore_statistic_tuple(relid, attnum, false);
+  int32 width = 0;
+
+  if (HeapTupleIsValid(tup)) {
+    width = ((Form_pg_statistic)GETSTRUCT(tup))->stawidth;
+    heap_freetuple(tup);
+  }
+  return width;
+}
+
 /* An array of values' text, by the type's output function, as text[]. */
 static Datum text_array(const sm_type_t *smtype, Oid typid,
                         const std::vector<std::string> &bytes) {

@@ -151,6 +151,11 @@ Where it stood before §3 was built.
   statistics keeps their address from being reused, so
   comparing it is enough. A session keeps 1,024 rows at most,
   and starts over past them.
+- **A column's width is read where the row is kept.**
+  `get_attavgwidth()`, which a plan calls for each column it
+  returns, wants only `stawidth`: `smstore_statistic_width()`
+  reads it from the row kept, while the catalog's epoch holds,
+  and copies nothing.
 
 ### 2.4 What the planner must not do with them
 
