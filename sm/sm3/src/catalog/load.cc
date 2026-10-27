@@ -140,7 +140,7 @@ int build_table(const collation_lookup_t &lookup, uint64_t oid,
     }
     t->columns.push_back({c.name, type, c.typmod, c.not_null, c.dropped,
                           c.missing, coll, c.default_expr, c.identity,
-                          c.identity_seq});
+                          c.identity_seq, c.on_update_expr});
     t->schema.push_back({type, c.typmod, c.dropped, c.missing});
   }
   // Lay the rows out once, for every reader of the table.

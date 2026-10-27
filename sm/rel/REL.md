@@ -365,8 +365,12 @@ written and read as PostgreSQL's canonical text for it --
 `"2026-09-26"`, `"12.30"` under `decimal(10, 2)`,
 `"P1Y2M3DT4H5M6S"` -- which is the only text accepted.
 
-Column qualifier:
+Column qualifiers:
 - `:not-null` -- requires non-null value on insert/update.
+- `:on-update "text"` -- the column's update default, the
+  host's text, kept in the catalog and never run: what an
+  update that does not assign the column writes
+  (`../../dg/ONUPDATE.md`). rel writes nothing from it.
 
 ```janet
 (table-create users
@@ -472,7 +476,8 @@ included, another session's not. It takes no lock.
 Returns a struct describing table `name`, under its table-oid
 lock intent-shared, as a read takes it. `:columns` holds each
 live column in the form `table-create` takes it: its name,
-type, the numbers after the type, and `:not-null`. A decimal
+type, the numbers after the type, `:not-null`, and
+`:on-update` with its text. A decimal
 always shows
 both numbers: `(price :decimal64 10)` comes back as
 `[price :decimal64 10 0]`. With `:include-indices`, `:indexes`

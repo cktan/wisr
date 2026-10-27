@@ -1,0 +1,58 @@
+# test_on_update.rel -- a column's update default (dg/ONUPDATE.md
+# section 5) is kept in sm's catalog as the host's text, unread, across
+# a reopen.
+#
+# 1. A table with an int, a timestamptz and a text column given update
+#    defaults: describe-table shows each one's text, and none on the
+#    column without one.
+# 2. After the environment is detached and attached again, it shows
+#    the same.
+# 3. :on-update without a string after it panics.
+
+(def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_on_update"))
+(rm-rf test-dir)
+(env-init test-dir)
+(env-attach test-dir)
+(db-create "oudb")
+(db-open "oudb")
+
+(def described
+  '{:name "job"
+    :columns [[id :int8 :not-null]
+              [state :int4 :not-null :on-update "1"]
+              [mtime :timestamptz :on-update "CURRENT_TIMESTAMP"]
+              [note :text :on-update "'changed'"]
+              [ctime :timestamptz]]})
+
+# 1. Made with update defaults.
+(begin :rc)
+(table-create job
+  (columns (id :int8 :not-null)
+           (state :int4 :not-null :on-update "1")
+           (mtime :timestamptz :on-update "CURRENT_TIMESTAMP")
+           (note :text :on-update "'changed'")
+           (ctime :timestamptz)))
+(assert-eq (describe-table job) described)
+(commit)
+
+# 2. Kept across a reopen.
+(db-close)
+(env-detach)
+(env-attach test-dir)
+(db-open "oudb")
+(begin :rc)
+(assert-eq (describe-table job) described)
+(commit)
+
+# 3. :on-update takes a string.
+(begin :rc)
+(def msg (try (do (table-create bad (columns (t :int4 :on-update :now)))
+                  "no error")
+              ([e] (string e))))
+(assert-eq msg "table-create: column 't' takes :on-update and a string")
+(abort)
+
+(db-close)
+(env-detach)
+(rm-rf test-dir)
+(print "test_on_update.rel passed")

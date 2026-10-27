@@ -140,9 +140,9 @@ int check_columns(std::span<const sm3::column_spec_t> columns) {
       continue;
     }
     // An identity column: a NOT NULL integer with a sequence and
-    // no default, as PostgreSQL's is.
+    // no default, insert or update, as PostgreSQL's is.
     if ((c.identity != 'a' && c.identity != 'd') || c.identity_seq == 0 ||
-        !c.not_null || c.default_expr ||
+        !c.not_null || c.default_expr || c.on_update_expr ||
         (type != &sm2::type_int2 && type != &sm2::type_int4 &&
          type != &sm2::type_int8)) {
       return invalid("create table: identity column " + c.name +
@@ -225,7 +225,7 @@ static int make_table(session_t *session, uint64_t nspoid,
   for (const column_spec_t &c : columns) {
     rec.columns.push_back({c.name, c.type_code, c.typmod, c.not_null, false,
                            std::nullopt, std::nullopt, c.default_expr,
-                           c.identity, c.identity_seq});
+                           c.identity, c.identity_seq, c.on_update_expr});
   }
   // The table's store and its _id sequence (../DESIGN.md §5): for a
   // temporary table, both temporary, and so the session's alone
@@ -464,7 +464,7 @@ int add_column(session_t *session, uint64_t oid, const column_spec_t &col,
   rec.columns.push_back(
       {col.name, col.type_code, col.typmod, col.not_null, false,
        missing ? std::optional<std::string>(*missing) : std::nullopt,
-       std::nullopt, col.default_expr});
+       std::nullopt, col.default_expr, 0, 0, col.on_update_expr});
   return cat_put_table(session, oid, rec);
 }
 

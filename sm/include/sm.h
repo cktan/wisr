@@ -692,6 +692,7 @@ struct sm_column_spec_t {
     const char* default_expr = nullptr; /* the host's default, opaque */
     char        identity = 0;     /* 'a', 'd' or 0 (sm3::column_spec_t) */
     uint64_t    identity_seq = 0; /* an identity column's sequence */
+    const char* on_update_expr = nullptr; /* the host's update default */
 };
 
 /*
@@ -718,6 +719,8 @@ struct sm_column_def_t {
     std::string default_expr; /* the host's, opaque; "" if none */
     char        identity;     /* 'a', 'd' or 0 */
     uint64_t    identity_seq; /* an identity column's sequence */
+    bool        has_on_update;
+    std::string on_update_expr; /* the host's update default; "" if none */
 };
 
 /* Where an index's build stands (sm3::index_state_t). */
