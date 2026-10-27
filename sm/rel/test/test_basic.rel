@@ -199,6 +199,24 @@
 (table-drop strict)
 (commit)
 
+# A row of the wrong width is refused, by a message that says how wide
+# the table's rows are and how wide the row was.
+# 1. insert of two values into a table of three.
+# 2. load of a row of four into the same table.
+# 3. update of a row to two values.
+(begin :rc)
+(table-create wide3 (columns (a :int4) (b :int4) (c :int4)))
+(def rw (insert wide3 [1 2 3]))
+(defn panic-of [f] (try (do (f) "no error") ([e] (string e))))
+(assert-eq (panic-of |(insert wide3 [1 2]))
+           "insert: expected 3 values, got 2")
+(assert-eq (panic-of |(load wide3 [[1 2 3] [1 2 3 4]]))
+           "load: row 1 must hold 3 values")
+(assert-eq (panic-of |(update wide3 rw [1 2]))
+           "update: expected 3 values, got 2")
+(table-drop wide3)
+(commit)
+
 (db-close)
 (env-detach :force true)
 (rm-rf test-dir)

@@ -41,6 +41,30 @@ Low priority:
    so the file goes (`../dg/WORKNOTE.md` steps 232 to 236).
    It is 2,874 lines.
 
+### Feature gaps against PostgreSQL
+
+What a PostgreSQL user misses most in digres, largest first by
+the statements of PostgreSQL's regression files taken out for
+each (`../dg/UNSUPPORTED.md`, which has the full list and the
+steps behind each entry).
+
+| Gap | pgregress | Why it matters | Effort |
+| --- | --- | --- | --- |
+| Users, authentication, authorization: one superuser; CREATE ROLE, SET ROLE, GRANT and REVOKE fail; no row-level security; peer on the socket and SCRAM over TCP only, no `pg_hba.conf`, no TLS, no GSSAPI | about 1,400, policies about 90 | separate application, read-only and admin roles; encryption on the wire; compliance | large: roles and object ACLs in sm's catalog, and every privilege check reading them; TLS and `pg_hba` put back what step 92 removed |
+| Code in the server: no PL/pgSQL, no `sql` functions, no `DO`, so no triggers | 820, triggers 48, rules 132 | stored procedures, audit and `updated_at` triggers | large: waits for the scripting language SPI is kept for |
+| CREATE TABLE beyond columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY: CHECK, generated columns, `OF type`, UNLOGGED | 604, column-level 113 | CHECK is in most schemas | medium: constraints stored in sm's catalog, checked in the executor as PostgreSQL does |
+| ALTER TABLE: constraints added later, `ALTER COLUMN TYPE`, `SET`/`DROP NOT NULL`, `SET DEFAULT` | 264 | schema migrations | medium a subcommand; PRIMARY KEY is item 1 above |
+| Partial and expression indexes | 67 | `WHERE deleted_at IS NULL`, `lower(email)` | small: sm3 builds and maintains them through the host's evaluator (`rel/test/test_partial.rel`); digres refuses them in `check_create_index()` (`../dg/src/backend/access/sm/smstore.c`) |
+| Partitioning | refused | large time-series tables | large |
+
+- **Largest for adoption:** users and the scripting language;
+  a production deployment needs both. Of the first, roles
+  with GRANT and REVOKE on tables come first, TLS second, and
+  row-level security last, as it needs roles.
+- **Cheapest:** partial and expression indexes. sm has the
+  hard part; digres has only to pass the predicate and the
+  key expressions down and evaluate them.
+
 ---
 
 ## 2. Loose ends

@@ -1821,8 +1821,8 @@ static Janet cfun_insert(int32_t argc, Janet *argv) {
   }
 
   if (static_cast<size_t>(row_len) != p_tdef->columns.size()) {
-    janet_panicf("insert: expected %zu values, got %d", p_tdef->columns.size(),
-                 row_len);
+    janet_panicf("insert: expected %d values, got %d",
+                 static_cast<int>(p_tdef->columns.size()), row_len);
   }
 
   row_values_t row(row_len);
@@ -1981,8 +1981,8 @@ static Janet cfun_load(int32_t argc, Janet *argv) {
     JanetView items;
     if (!janet_indexed_view(rows.items[r], &items.items, &items.len) ||
         static_cast<size_t>(items.len) != p_tdef->columns.size()) {
-      janet_panicf("load: row %d must hold %zu values", r,
-                   p_tdef->columns.size());
+      janet_panicf("load: row %d must hold %d values", r,
+                   static_cast<int>(p_tdef->columns.size()));
     }
     row_values_t row(items.len);
     for (int32_t i = 0; i < items.len; i++) {
@@ -2193,8 +2193,8 @@ static Janet cfun_update(int32_t argc, Janet *argv) {
   }
 
   if (static_cast<size_t>(row_len) != p_tdef->columns.size()) {
-    janet_panicf("update: expected %zu values, got %d", p_tdef->columns.size(),
-                 row_len);
+    janet_panicf("update: expected %d values, got %d",
+                 static_cast<int>(p_tdef->columns.size()), row_len);
   }
 
   row_values_t row(row_len);
