@@ -2769,10 +2769,11 @@ Two consequences for the implementation:
 `ssi_max_entries`, `commit_cache_entries`,
 `savepoint_undo_bytes`, `ts_lease`, plus
 pass-through RocksDB options (block cache size, write buffer
-size, compaction style). No column family is compressed, at
-any level: a block is read as it is stored, so a scan pays no
-decompression and no copy out of a compressed block, for the
-price of the disk the bytes take (`fixed_cf_options()`).
+size, compaction style). Every column family is compressed
+with LZ4, at every level: a block takes less disk, and a read
+from disk decompresses it before the block cache holds it, so
+a scan of cached blocks pays nothing more
+(`fixed_cf_options()`).
 A store CF's data blocks are 16 KB (`store_block_size`), as
 MyRocks sets them, not RocksDB's 4 KB: a scan looks up a
 quarter as many blocks in the block cache, about 19% off a scan

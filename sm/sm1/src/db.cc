@@ -300,9 +300,9 @@ std::string store_cf_name(uint64_t storeid, bool chained) {
 }
 
 /*
- * RocksDB's default options with no compression, at any level:
- * a block is read as it is stored, so a scan pays no
- * decompression and no copy out of the compressed block (§12.2).
+ * RocksDB's default options with LZ4 compression, at every
+ * level: a block takes less disk, and a read from disk pays its
+ * decompression before the block cache holds it (§12.2).
  * With cache, the CF's blocks are read through it, the one block
  * cache of the environment, not a cache of the CF's own.
  */
@@ -310,7 +310,7 @@ rocksdb::ColumnFamilyOptions
 fixed_cf_options(const std::shared_ptr<rocksdb::Cache> &cache) {
   rocksdb::ColumnFamilyOptions cfo;
   // Every level, the bottommost too, as it follows compression.
-  cfo.compression = rocksdb::kNoCompression;
+  cfo.compression = rocksdb::kLZ4Compression;
   if (cache) {
     rocksdb::BlockBasedTableOptions bbto;
     bbto.block_cache = cache;
@@ -329,7 +329,7 @@ fixed_cf_options(const std::shared_ptr<rocksdb::Cache> &cache) {
  * flushed, so reads stop re-examining them (§8.3).
  */
 rocksdb::ColumnFamilyOptions store_cf_options(db_t *db, uint64_t storeid) {
-  // Start from a fixed CF's options: no compression.
+  // Start from a fixed CF's options: LZ4.
   rocksdb::ColumnFamilyOptions cfo = fixed_cf_options();
   // Attach the GC filter when opening a real database.
   if (db) {
@@ -488,7 +488,7 @@ db_t *db_open(const std::string &path, const char *dbname,
     if (parse_store_cf_name(name, &storeid)) {
       cfs.emplace_back(name, store_cf_options(db.get(), storeid));
     } else {
-      // A fixed CF: default options, uncompressed.
+      // A fixed CF: default options, LZ4.
       cfs.emplace_back(name, fixed_cf_options(cache));
     }
   }

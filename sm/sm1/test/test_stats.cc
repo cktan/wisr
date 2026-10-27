@@ -108,7 +108,9 @@ public:
 
   /*
    * The mean size of a data block in each sorted file of the
-   * store, as RocksDB recorded the file's data and block count.
+   * store, uncompressed: the keys' and values' bytes RocksDB
+   * recorded for the file over its block count. block_size bounds
+   * a block before compression, which data_size is after.
    */
   std::vector<uint64_t> mean_block_sizes() {
     rocksdb::TablePropertiesCollection props;
@@ -116,7 +118,7 @@ public:
     std::vector<uint64_t> out;
     for (const auto &[file, p] : props) {
       REQUIRE(p->num_data_blocks > 0);
-      out.push_back(p->data_size / p->num_data_blocks);
+      out.push_back((p->raw_key_size + p->raw_value_size) / p->num_data_blocks);
     }
     return out;
   }
@@ -468,28 +470,28 @@ TEST_CASE("sm1_approxsize counts a sealed memtable until it is flushed") {
   CHECK(mem_of(f.s(), f.store(), 1, 2, disk) == 0);
 }
 
-TEST_CASE("no sorted file is compressed") {
-  // Verify sm1 stores every column family's blocks uncompressed.
-  // 1. Load rows of repeated bytes, which would compress, and
-  //    flush the store, then compact it into its bottom level.
-  // 2. Every file of the store says NoCompression.
+TEST_CASE("every sorted file is LZ4") {
+  // Verify sm1 compresses every column family's blocks with LZ4.
+  // 1. Load rows of repeated bytes, which compress, and flush the
+  //    store, then compact it into its bottom level.
+  // 2. Every file of the store says LZ4.
   // 3. So does every file of CF:txn and CF:meta, flushed.
   stats_fixture_t f;
   f.load('a', 2000, 200);
   f.flush();
   REQUIRE(!f.compressions().empty());
   for (const std::string &c : f.compressions()) {
-    CHECK(c == "NoCompression");
+    CHECK(c == "LZ4");
   }
   f.compact();
   for (const std::string &c : f.compressions()) {
-    CHECK(c == "NoCompression");
+    CHECK(c == "LZ4");
   }
   wisr::db_t *db = f.s()->db;
   for (rocksdb::ColumnFamilyHandle *cf : {db->cf_txn, db->cf_meta}) {
     REQUIRE(db->rdb->Flush(rocksdb::FlushOptions(), cf).ok());
     for (const std::string &c : f.compressions(cf)) {
-      CHECK(c == "NoCompression");
+      CHECK(c == "LZ4");
     }
   }
 }

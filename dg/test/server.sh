@@ -1966,10 +1966,10 @@ within "$n" 5000 10 || fail "b = 0 after the second analyze: $n"
 #    estimates well, not memtables it estimates up to 7x over
 #    (../sm/STATISTICS.md section 6).
 # 6. In a transaction, analyze t34 and estimate: 80,000. Insert 80,000
-#    more from another session, and estimate again in the transaction:
-#    160,000 within 40%, sized again. The table's version stays the same
-#    while the transaction has changed it, so a size kept would say
-#    80,000.
+#    more from another session and VACUUM it, putting them in sorted
+#    files as in step 5, and estimate again in the transaction: 160,000
+#    within 40%, sized again. The table's version stays the same while
+#    the transaction has changed it, so a size kept would say 80,000.
 local_psql -c 'create table t33 (a int4 primary key, b int8)' \
   -c 'insert into t33 select g, g from generate_series(1, 20000) g' \
   -c 'analyze t33' >> "$work/stats.out" 2>&1
@@ -2004,7 +2004,7 @@ held_start own
 held_send own "begin; analyze t34; explain select * from t34; select 'one';"
 held_wait own one || fail "a transaction's own analyze"
 local_psql -c 'insert into t34 select g, g from generate_series(80001, 160000) g' \
-  >> "$work/stats.out" 2>&1
+  -c 'vacuum t34' >> "$work/stats.out" 2>&1
 held_send own "explain select * from t34; select 'two'; commit;"
 held_end own
 n=$(grep -o 'rows=[0-9]*' "$work/own.out" | sed -n 1p | cut -d= -f2)
@@ -2166,8 +2166,9 @@ grep -o 'Seq Scan on t38\|Index Scan using t38_b' "$work/st38.out" |
 
 # Verify that VACUUM compacts a table's store in sm, and that VACUUM
 # ANALYZE also analyzes it.
-# 1. Make t32 with 20,000 rows of 200 bytes, and VACUUM ANALYZE it: a
-#    scan is estimated at 20,000 rows exactly, and it takes over 2 MB.
+# 1. Make t32 with 20,000 rows of 200 bytes of hex digits, which LZ4
+#    leaves near their size, and VACUUM ANALYZE it: a scan is estimated
+#    at 20,000 rows exactly, and it takes over 2 MB.
 # 2. Delete every row: it still takes over 2 MB.
 # 3. VACUUM it: the versions no reader needs are gone, and it takes
 #    under a third of what it did -- the rows' tombstones, which sm's
@@ -2175,7 +2176,9 @@ grep -o 'Seq Scan on t38\|Index Scan using t38_b' "$work/st38.out" |
 # 4. VACUUM of a view is passed over with a warning; a bare VACUUM
 #    succeeds.
 local_psql -c 'create table t32 (a int4, b text)' \
-  -c "insert into t32 select g, repeat('x', 200) from generate_series(1, 20000) g" \
+  -c "insert into t32 select g, substr(encode(sha512(g::text::bytea), 'hex') ||
+      encode(sha512((g::text || 'x')::bytea), 'hex'), 1, 200)
+      from generate_series(1, 20000) g" \
   -c 'vacuum analyze t32' > "$work/vacuum2.out" 2>&1
 [ "$(rows_of 'select * from t32')" = 20000 ] || fail "vacuum analyze"
 full=$(local_psql -c "select pg_relation_size('t32')" 2>&1)

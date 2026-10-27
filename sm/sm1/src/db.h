@@ -531,7 +531,7 @@ constexpr uint32_t store_max_range_deletions = 1000;
 constexpr size_t store_block_size = 16 << 10;
 
 /*
- * Options for a fixed CF: RocksDB's defaults, uncompressed, its
+ * Options for a fixed CF: RocksDB's defaults, LZ4, its
  * blocks read through cache when one is given.
  */
 rocksdb::ColumnFamilyOptions

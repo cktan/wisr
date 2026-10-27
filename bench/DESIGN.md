@@ -48,7 +48,7 @@ Chosen so neither side does work the other cannot:
   hold the data. On digres it sizes sm's block cache, the one
   every database's RocksDB reads through
   (`../sm/sm1/SM1_DESIGN.md` §12.2), whose blocks sm stores
-  uncompressed.
+  compressed with LZ4 and the cache holds decompressed.
 - **Each side settled after the load**: `VACUUM (FREEZE,
   ANALYZE)` on both. On PostgreSQL no scan then pays for
   setting hint bits or pruning, and autovacuum is off, so none
