@@ -4233,6 +4233,43 @@ grep -qx 7 "$work/temp_drop.out" &&
   -c 'select count(*) from tt1' -c 'commit' -c 'select count(*) from tt1' \
   2>&1 | grep -v '^[A-Z]' | tr '\n' ' ')" = "2 0 " ] ||
   fail "on commit delete rows"
+
+# Verify that a commit that would empty a table a foreign key of a table
+# kept references is refused, and rolled back, as PostgreSQL's
+# (WORKNOTE.md step 303); one with the same ON COMMIT, or itself, is not.
+# 1. Create tf1, ON COMMIT DELETE ROWS, and tf2, PRESERVE ROWS, whose
+#    foreign key references it, with a row each, and commit.
+# 2. Confirm PostgreSQL's error and detail, and that neither table is left.
+# 3. Create tf3 and tf4, both DELETE ROWS, tf4 referencing tf3, and tf5,
+#    DELETE ROWS, referencing itself, with rows, and commit.
+# 4. Confirm the commit empties all three.
+local_psql > "$work/temp_fk.out" 2>&1 <<'SQL'
+begin;
+create temp table tf1 (a int4 primary key) on commit delete rows;
+create temp table tf2 (a int4 references tf1) on commit preserve rows;
+insert into tf1 values (1);
+insert into tf2 values (1);
+commit;
+select count(*) from tf2;
+begin;
+create temp table tf3 (a int4 primary key) on commit delete rows;
+create temp table tf4 (a int4 references tf3) on commit delete rows;
+create temp table tf5 (a int4 primary key, b int4 references tf5)
+  on commit delete rows;
+insert into tf3 values (1);
+insert into tf4 values (1);
+insert into tf5 values (1, 1);
+commit;
+select (select count(*) from tf3) + (select count(*) from tf4) +
+  (select count(*) from tf5) + 50;
+SQL
+grep -q 'ERROR:  unsupported ON COMMIT and foreign key combination' \
+  "$work/temp_fk.out" &&
+  grep -qx 'DETAIL:  Table "tf2" references "tf1", but they do not have the same ON COMMIT setting.' \
+    "$work/temp_fk.out" &&
+  grep -q 'relation "tf2" does not exist' "$work/temp_fk.out" &&
+  grep -qx 50 "$work/temp_fk.out" ||
+  fail "on commit delete rows and a foreign key"
 mkfifo "$work/temp.in"
 local_psql < "$work/temp.in" > "$work/temp_own.out" 2>&1 &
 owner=$!

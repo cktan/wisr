@@ -8727,3 +8727,27 @@ went in, `INSERT 0 1`.
   a savepoint and a unique index made after an INSERT, for
   PostgreSQL's error and key. pgregress's `transactions`,
   ported again, has its two statements back.
+
+## Step 303: ON COMMIT DELETE ROWS keeps a foreign key whole
+
+A temporary table that empties at commit, referenced by a
+foreign key of a table that keeps its rows, committed and
+emptied, leaving the child's rows referencing none
+(`ISSUE.md` issue 7). PostgreSQL's `heap_truncate()` first
+calls `heap_truncate_check_FKs(rels, true)`, which refuses
+the commit; digres's `PreCommit_on_commit_actions()` truncated
+each table by `smstore_truncate()` and skipped the check.
+
+- **The check**, in `PreCommit_on_commit_actions()`: each
+  table to empty is locked first, as `heap_truncate()` locks
+  them, then any table referencing one
+  (`smstore_referencing_tables()`, as TRUNCATE asks) that is
+  not to be emptied too is PostgreSQL's error, `unsupported ON
+  COMMIT and foreign key combination`, and the commit rolls
+  back. A table referencing itself, or one emptied with it,
+  passes.
+- **Tests**: `test/server.sh` checks the error, its detail and
+  the rollback, and that tables both DELETE ROWS, and one
+  referencing itself, commit empty. pgregress's `temp`,
+  ported again, has its COMMIT back, and two statements after
+  it that had been taken out as its cascade.

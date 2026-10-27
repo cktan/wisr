@@ -139,8 +139,7 @@ SELECT * FROM temptest2;
 BEGIN;
 CREATE TEMP TABLE temptest3(col int PRIMARY KEY) ON COMMIT DELETE ROWS;
 CREATE TEMP TABLE temptest4(col int REFERENCES temptest3);
---dg-differs: no error where PostgreSQL has: unsupported ON COMMIT and foreign key combination
---dg COMMIT;
+COMMIT;
 
 -- Test manipulation of temp schema's placement in search path
 
@@ -193,14 +192,12 @@ select nonempty('');
 --dg-cascade
 --dg select ''::nonempty;
 
---dg-cascade
---dg reset search_path;
+reset search_path;
 
 -- For partitioned temp tables, ON COMMIT actions ignore storage-less
 -- partitioned tables.
---dg-cascade
---dg begin;
---dg-cascade
+begin;
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg create temp table temp_parted_oncommit (a int)
 --dg   partition by list (a) on commit delete rows;
 --dg-cascade

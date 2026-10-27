@@ -5,9 +5,10 @@ to fix. The code it concerns points here by number. A fixed
 issue is removed, and its number is not used again: issue 2,
 ON CONFLICT DO UPDATE affecting a row twice, was fixed in
 `WORKNOTE.md` step 237; issue 3, a numeric range in an array
-or a multirange losing its bound, in step 300; and issue 6, a
+or a multirange losing its bound, in step 300; issue 6, a
 duplicate key in a table made in a savepoint saying the wrong
-error, in step 302.
+error, in step 302; and issue 7, ON COMMIT DELETE ROWS
+ignoring a foreign key into the table, in step 303.
 
 ---
 
@@ -120,32 +121,6 @@ pgregress: `portals`. **Where to start**: the row lock a FOR
 UPDATE fetch takes, and what it does on finding the row
 updated by a later command of the same transaction
 (PostgreSQL's `TM_SelfModified`).
-
-## Issue 7: ON COMMIT DELETE ROWS ignores a foreign key into the table
-
-PostgreSQL refuses to commit when a table that empties at
-commit is referenced by a foreign key of a table that does
-not, as emptying it would break the key. digres commits and
-empties it, leaving a child row with no parent.
-
-```sql
-begin;
-create temp table t (a int primary key) on commit delete rows;
-create temp table u (a int references t) on commit preserve rows;
-insert into t values (1);
-insert into u values (1);
-commit;
--- PostgreSQL: ERROR:  unsupported ON COMMIT and foreign key
---             combination
--- digres:     commits; u keeps 1, t is empty
-```
-
-pgregress: `temp`. **Where to start**:
-`PreCommit_on_commit_actions()` in
-`src/backend/commands/tablecmds.c` truncates each table by
-`smstore_truncate()`; PostgreSQL's calls `heap_truncate()`,
-which first calls `heap_truncate_check_FKs(rels, true)`, the
-check digres skips.
 
 ## Issue 8: a table can be made in pg_catalog
 

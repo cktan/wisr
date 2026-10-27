@@ -17282,11 +17282,27 @@ void PreCommit_on_commit_actions(void) {
   /*
    * The tables are sm's: each is truncated, or dropped, there, in the
    * transaction about to commit.  Only a table has an action, and nothing
-   * but its indexes depends on it, which go with it.
+   * but its indexes depends on it, which go with it.  Each to truncate is
+   * locked first, as heap_truncate() locks them, so the descriptors are
+   * sm's; then none may be referenced by a table that keeps its rows, as
+   * heap_truncate_check_FKs() has it.
    */
+  foreach (l, oids_to_truncate)
+    relation_close(relation_open(lfirst_oid(l), AccessExclusiveLock), NoLock);
   foreach (l, oids_to_truncate) {
-    /* Locked first, as heap_truncate() locks it, so the descriptor is sm's. */
-    Relation rel = relation_open(lfirst_oid(l), AccessExclusiveLock);
+    foreach_oid(child, smstore_referencing_tables(lfirst_oid(l))) {
+      if (list_member_oid(oids_to_truncate, child))
+        continue;
+      ereport(ERROR,
+              (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+               errmsg("unsupported ON COMMIT and foreign key combination"),
+               errdetail("Table \"%s\" references \"%s\", but they do not "
+                         "have the same ON COMMIT setting.",
+                         get_rel_name(child), get_rel_name(lfirst_oid(l)))));
+    }
+  }
+  foreach (l, oids_to_truncate) {
+    Relation rel = relation_open(lfirst_oid(l), NoLock);
 
     smstore_truncate(rel);
     relation_close(rel, NoLock);
