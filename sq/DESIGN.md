@@ -8,7 +8,9 @@ this document says how it is put together, and why.
 sq knows the grammar and nothing else. It reads no catalog, so
 it does not know what a name names, and it has no notion of what
 its caller supports: every statement PostgreSQL's parser
-accepts, sq accepts and builds the whole tree for.
+accepts, sq accepts and builds the whole tree for. It accepts
+one thing more, digres's `ON UPDATE` after a column's default
+(§2).
 
 ---
 
@@ -73,6 +75,17 @@ What a fork changes is the code around the rules, never a rule:
   PostgreSQL allocates in its current memory context.
 - The text is UTF-8. PostgreSQL asks what the encoding is; sq
   never does.
+
+**One rule is digres's, not PostgreSQL's**: `DEFAULT b_expr ON
+UPDATE` in `ColConstraintElem`, a column's update default, what
+an UPDATE that does not assign the column writes in it
+(`../dg/ONUPDATE.md`). It makes
+the `Constraint` that `DEFAULT b_expr` makes, with
+`generated_when` set to `'u'`, a field a default does not
+otherwise use, so no node changes. It needs no token of its own
+and no change to the lookahead filter: after a default, nothing
+in PostgreSQL's grammar goes on with `ON`. A port carries it
+over as it carries the forks.
 
 **Porting to a later PostgreSQL** is, in order: replace the
 headers in `spec/` and run `make nodes`; carry the changes to
@@ -229,7 +242,10 @@ A tree, once made, may be read from any number of threads.
 
 sq's claim is that it parses as PostgreSQL does, so the test is
 PostgreSQL: what its scanner and parser print for a text is what
-sq must print.
+sq must print. The one rule of digres's (§2) is the exception:
+`test/on_update.sql` and the two `test/err_on_update_*.sql`
+files expect sq's own output, and the corpus below shows that
+PostgreSQL's text parses as it did.
 
 Until sq could stand alone it was built beside PostgreSQL's own
 parser, compiled from `../dg`, and compared with it directly.
@@ -280,7 +296,8 @@ the committed node header is what the generator writes; and
   PostgreSQL does before it parses. A NUL byte is refused.
 - **The forks are forks.** A change upstream is carried over by
   hand. What sq changed is confined to the code around the
-  rules, which is what keeps that tractable.
+  rules, which is what keeps that tractable, but for one rule
+  of digres's (§2).
 - **PostgreSQL's naming survives in two places**: the grammar's
   symbols, which are grammar and not code, and the list
   functions, kept by PostgreSQL's names so that actions read as

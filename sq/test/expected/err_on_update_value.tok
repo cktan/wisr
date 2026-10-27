@@ -1,0 +1,13 @@
+354 179 create
+690 186 table
+258 192 a
+40 194
+258 195 m
+258 197 timestamptz
+375 209 default
+364 217 current_timestamp
+565 235 on
+726 238 update
+364 245 current_timestamp
+41 262
+59 263

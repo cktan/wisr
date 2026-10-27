@@ -3947,6 +3947,23 @@ ColConstraintElem:
 					n->cooked_expr = NULL;
 					$$ = (sq_node_t *) n;
 				}
+			/*
+			 * digres's, not PostgreSQL's: a column's update default, what
+			 * an UPDATE that does not assign the column writes in it
+			 * (../../dg/ONUPDATE.md). Marked by generated_when, which a
+			 * default does not use.
+			 */
+			| DEFAULT b_expr ON UPDATE
+				{
+					sq_constraint_t *n = make_node<sq_constraint_t>();
+
+					n->contype = SQ_CONSTR_DEFAULT;
+					n->location = @1;
+					n->raw_expr = $2;
+					n->cooked_expr = NULL;
+					n->generated_when = 'u';
+					$$ = (sq_node_t *) n;
+				}
 			| GENERATED generated_when AS IDENTITY_P OptParenthesizedSeqOptList
 				{
 					sq_constraint_t *n = make_node<sq_constraint_t>();
