@@ -8885,3 +8885,51 @@ it.
   has its five `selfconflict` statements back, and an
   `excluded.ctid` statement whose marker dated from the first
   port.
+
+## Step 307: a column's update default
+
+A column may have an update default, `DEFAULT x ON UPDATE`: the
+value an UPDATE writes in it when it does not assign it, beside
+an optional plain `DEFAULT y` for INSERT (`ONUPDATE.md`). It
+keeps a modification time, or a state an edit moves a row to,
+which PostgreSQL keeps with a trigger, and digres has none. It
+is digres's own: PostgreSQL refuses it (`UNSUPPORTED.md` §10).
+
+- **sq**: one rule beyond PostgreSQL's grammar, `DEFAULT b_expr
+  ON UPDATE`, making the DEFAULT's `Constraint` marked by
+  `generated_when = 'u'` (`../sq/DESIGN.md` §2). It needs one
+  token of lookahead; a clause of its own, `ON UPDATE x` or
+  `ON ROW UPDATE x`, conflicted with a foreign key's `ON
+  UPDATE` after `REFERENCES t`, and was dropped for it.
+- **sm**: a column's record keeps the update default as the
+  host's text, opaque, as it keeps the insert one
+  (`on_update_expr`); an identity column may not have one.
+- **dg**: parse analysis takes one plain and one update default
+  on a column, the plain one the column's default, or the
+  update one without it (`transformColumnDefinition()`).
+  `smstore.c` checks both are constants, cast or not, or
+  `CURRENT_TIMESTAMP`, `LOCALTIMESTAMP` or `CURRENT_DATE`, in
+  CREATE TABLE and ADD COLUMN, and keeps the update default
+  cooked to the column's type. The rewriter gives an UPDATE a
+  target entry with it for each column the UPDATE leaves out
+  (`rewriteTargetListIU()`, `smstore_update_defaults()`), as
+  it gives `SET c = DEFAULT` the insert default, so every
+  UPDATE path takes it: ON CONFLICT DO UPDATE, `WHERE CURRENT
+  OF`, a view, a foreign key's cascade.
+- **Left on purpose**: no ALTER COLUMN form sets or drops an
+  update default; psql's `\d` and `pg_dump` show the insert
+  default alone, PostgreSQL's catalog having a place for one.
+  ADD COLUMN, which digres analyses only for a serial or an
+  identity column, still takes the last of two plain defaults
+  where PostgreSQL refuses them; two update defaults it
+  refuses.
+- **Tests**: `test/slt/on_update.test`, every case of
+  `ONUPDATE.md` §8 and what it refuses, failing with the
+  rewrite, the check, the update default's keeping or the
+  analysis's choice of default each disabled;
+  `../sm/rel/test/test_on_update.rel` and an sm3 test of
+  `add_column` and of an identity column, failing with the
+  field's write, read, check or display disabled;
+  `../sq/test/on_update.sql` and two files of what it refuses.
+  sq's corpus is unchanged against PostgreSQL 18.6's scripts.
+

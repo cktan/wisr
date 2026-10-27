@@ -1337,6 +1337,42 @@ TEST_CASE("two tables that own sequences are dropped in one transaction") {
   db.commit();
 }
 
+TEST_CASE("a column keeps its update default; an identity column has none") {
+  // Verify add_column keeps a column's update default, the host's
+  // text, and that an identity column refuses one
+  // (../../dg/ONUPDATE.md §5).
+  // 1. Add state int4 with update default "1": after a restart it
+  //    keeps the text, and t's own columns have none.
+  // 2. An identity column with an update default is SM_ERR_INVALID,
+  //    in create_table.
+  cat_db_t db;
+  db.begin();
+  uint64_t t = make_t(db), q = 0, t2 = 0;
+  sm3::column_spec_t state{"state", sm2::type_int4.code, -1, true};
+  state.on_update_expr = "1";
+  REQUIRE_MESSAGE(sm3::add_column(db.ss, t, state, le(int32_t{0})) == 0,
+                  sm1::errmsg());
+  db.commit();
+  sm3::catalog_t *cat = db.reload();
+  auto d = sm3::cat_get_table(cat, t);
+  REQUIRE(d != nullptr);
+  REQUIRE(d->columns.size() == 3);
+  CHECK_FALSE(d->columns[0].on_update_expr);
+  CHECK_FALSE(d->columns[1].on_update_expr);
+  CHECK(d->columns[2].on_update_expr == "1");
+
+  // 2. No update default on an identity column.
+  db.begin();
+  REQUIRE(sm3::create_sequence(db.ss, sm3::nsp_public, "q", 1, 1, q) == 0);
+  sm3::column_spec_t id{"id", sm2::type_int8.code, -1, true, std::nullopt, 'a',
+                        q};
+  id.on_update_expr = "1";
+  std::vector<sm3::column_spec_t> cols = {id};
+  CHECK(-1 == sm3::create_table(db.ss, sm3::nsp_public, "t2", cols, t2));
+  CHECK(sm1::SM_ERR_INVALID == sm1::errnum());
+  REQUIRE(0 == sm3::abort(db.ss));
+}
+
 TEST_CASE("an identity column owns its sequence from its CREATE TABLE") {
   // Verify create_table's identity columns, and that their sequence
   // stays theirs.

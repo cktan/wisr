@@ -239,7 +239,7 @@ const std::vector<attribute_t> &schema_of(sm3::part_t part) {
       /* column */
       {att(type_text), att(type_int2), att(type_int4), att(type_bool),
        att(type_bool), att(type_bytea), att(type_int8), att(type_bytea),
-       att(type_int2), att(type_int8)},
+       att(type_int2), att(type_int8), att(type_bytea)},
       /* index */
       {att(type_int8), att(type_text), att(type_int2), att(type_bool),
        att(type_int4), att(type_int4), att(type_int2), att(type_int2),
@@ -410,7 +410,7 @@ int decode_table(std::string_view blob, table_rec_t &rec) {
 /* A column's value. */
 int encode_column(const column_rec_t &c, std::string &blob) {
   blob.clear();
-  writer_t w(10);
+  writer_t w(11);
   w.bytes(0, c.name);
   w.i2(1, c.type_code);
   w.i4(2, c.typmod);
@@ -427,6 +427,9 @@ int encode_column(const column_rec_t &c, std::string &blob) {
   if (c.identity != 0) {
     w.i2(8, c.identity);
     w.i8(9, c.identity_seq);
+  }
+  if (c.on_update_expr) {
+    w.bytes(10, *c.on_update_expr);
   }
   return w.append(part_desc(part_t::column), blob);
 }
@@ -448,6 +451,7 @@ int decode_column(std::string_view blob, column_rec_t &c) {
   c.default_expr = r.opt_bytes(7);
   c.identity = static_cast<char>(r.opt_i2(8).value_or(0));
   c.identity_seq = r.opt_i8(9).value_or(0);
+  c.on_update_expr = r.opt_bytes(10);
   if (!r.ok) {
     return corrupt("a column part cut short");
   }

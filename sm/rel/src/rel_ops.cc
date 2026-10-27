@@ -763,6 +763,15 @@ static Janet table_create(int32_t argc, Janet *argv, bool temp) {
           std::string flag = identifier_of(c_items[k]);
           if (flag == "not-null" || flag == ":not-null") {
             c.not_null = true;
+          } else if ("on-update" == flag) {
+            // The host's update default, which sm keeps unread.
+            if (k + 1 >= c_n ||
+                !janet_checktype(c_items[k + 1], JANET_STRING)) {
+              janet_panicf("table-create: column '%s' takes :on-update and "
+                           "a string",
+                           c.name.c_str());
+            }
+            c.on_update_expr = identifier_of(c_items[++k]);
           }
         }
         if (typmod_of(c.type_code, mods, &c.typmod) != 0) {
@@ -799,7 +808,9 @@ static Janet table_create(int32_t argc, Janet *argv, bool temp) {
   // sm3 makes its store, _id sequence and catalog entry.
   std::vector<sm_column_spec_t> specs;
   for (const col_def_t &c : columns) {
-    specs.push_back({c.name.c_str(), c.type_code, c.typmod, c.not_null});
+    specs.push_back({c.name.c_str(), c.type_code, c.typmod, c.not_null, nullptr,
+                     0, 0,
+                     c.on_update_expr ? c.on_update_expr->c_str() : nullptr});
   }
   uint64_t oid = 0;
   int rc =
@@ -1248,7 +1259,10 @@ static Janet tuple_of(const std::vector<Janet> &items) {
   return janet_wrap_tuple(janet_tuple_end(t));
 }
 
-/* A column of def as table-create takes it: [name :type mods... :not-null]. */
+/*
+ * A column of def as table-create takes it:
+ * [name :type mods... :not-null :on-update "text"].
+ */
 static Janet column_form(const sm_column_def_t &c) {
   std::vector<Janet> items = {janet_csymbolv(c.name.c_str()),
                               janet_ckeywordv(type_name_of(c.type_code))};
@@ -1257,6 +1271,10 @@ static Janet column_form(const sm_column_def_t &c) {
   }
   if (c.not_null) {
     items.push_back(janet_ckeywordv("not-null"));
+  }
+  if (c.has_on_update) {
+    items.push_back(janet_ckeywordv("on-update"));
+    items.push_back(janet_cstringv(c.on_update_expr.c_str()));
   }
   return tuple_of(items);
 }

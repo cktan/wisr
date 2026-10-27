@@ -190,6 +190,7 @@ extern bool smstore_sequence_exists(Oid oid);
 extern char *smstore_sequence_lookup(Oid oid, Oid *nspoid);
 extern const char *smstore_sequence_name(Oid oid);
 extern Oid smstore_identity_sequence(Oid relid, AttrNumber attnum);
+extern Node **smstore_update_defaults(Oid relid);
 extern ObjectAddress smstore_create_table(CreateStmt *stmt);
 extern void smstore_drop_tables(DropStmt *stmt);
 extern void smstore_drop_table(Oid oid);

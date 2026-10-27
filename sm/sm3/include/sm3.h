@@ -77,6 +77,11 @@ struct column_spec_t {
      */
     char        identity = 0;
     uint64_t    identity_seq = 0;
+    /*
+     * The host's update default, opaque to sm: what an UPDATE that
+     * does not assign the column writes in it. Kept, not run.
+     */
+    std::optional<std::string> on_update_expr = std::nullopt;
 };
 
 /*
@@ -145,6 +150,7 @@ struct column_rec_t {
   std::optional<std::string> default_expr; /* the host's, opaque */
   char identity = 0;         /* 'a', 'd', or 0: column_spec_t's */
   uint64_t identity_seq = 0; /* its sequence, with an identity */
+  std::optional<std::string> on_update_expr; /* the host's, opaque */
   bool operator==(const column_rec_t&) const = default;
 };
 
@@ -236,6 +242,7 @@ struct column_def_t {
     std::optional<std::string> default_expr; /* the host's, opaque */
     char                       identity = 0;     /* column_spec_t's */
     uint64_t                   identity_seq = 0; /* its sequence */
+    std::optional<std::string> on_update_expr; /* the host's, opaque */
 };
 
 /* An index of a loaded table. */

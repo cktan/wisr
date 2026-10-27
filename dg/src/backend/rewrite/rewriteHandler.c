@@ -21,6 +21,7 @@
 #include "postgres.h"
 
 #include "access/relation.h"
+#include "access/smstore.h"
 #include "access/sysattr.h"
 #include "access/table.h"
 #include "catalog/dependency.h"
@@ -755,6 +756,16 @@ static List *rewriteTargetListIU(List *targetList, CmdType commandType,
   new_tles = (TargetEntry **)palloc0(numattrs * sizeof(TargetEntry *));
   next_junk_attrno = numattrs + 1;
 
+  /*
+   * digres: an UPDATE writes a column's update default where it assigns the
+   * column nothing (ONUPDATE.md section 6); the table's are asked once.
+   */
+  Node **update_defaults =
+      CMD_UPDATE == commandType &&
+              RELKIND_RELATION == target_relation->rd_rel->relkind
+          ? smstore_update_defaults(RelationGetRelid(target_relation))
+          : NULL;
+
   foreach (temp, targetList) {
     TargetEntry *old_tle = (TargetEntry *)lfirst(temp);
 
@@ -810,6 +821,12 @@ static List *rewriteTargetListIU(List *targetList, CmdType commandType,
     apply_default =
         ((new_tle == NULL && commandType == CMD_INSERT) ||
          (new_tle && new_tle->expr && IsA(new_tle->expr, SetToDefault)));
+
+    /* digres: or an UPDATE leaves out a column with an update default. */
+    bool apply_update_default = NULL == new_tle && NULL != update_defaults &&
+                                NULL != update_defaults[attrno - 1];
+
+    apply_default = apply_default || apply_update_default;
 
     if (commandType == CMD_INSERT) {
       int values_attrno = 0;
@@ -936,7 +953,9 @@ static List *rewriteTargetListIU(List *targetList, CmdType commandType,
     } else if (apply_default) {
       Node *new_expr;
 
-      new_expr = build_column_default(target_relation, attrno);
+      new_expr = apply_update_default
+                     ? (Node *)copyObject(update_defaults[attrno - 1])
+                     : build_column_default(target_relation, attrno);
 
       /*
        * If there is no default (ie, default is effectively NULL), we
