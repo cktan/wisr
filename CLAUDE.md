@@ -167,6 +167,20 @@ Example:
 // 3. Confirm the least-recently-used key is gone.
 ```
 
+**Test at every layer the scenario reaches.** A test can go in
+three places:
+
+1. **mvcc**: an isolation scenario in `sm/sm1/mvcc` (adding one
+   is fine; changing an existing one needs approval, above).
+2. **sm**: the unit tests of the level concerned
+   (`sm/smN/test`), and `rel` (`sm/rel/test`), which drives
+   `sm.h`.
+3. **dg**: `dg/test` (`run.sh`'s `.sql` files, `server.sh`),
+   and pgregress, ported again.
+
+If a test is warranted, add the scenario to as many of these
+layers as can express it, and say which cannot and why.
+
 ### 6. Goal-Driven Execution
 
 **Define success criteria. Loop until verified.**
