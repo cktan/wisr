@@ -40,6 +40,7 @@ fair.
 | `sql/` | the schema, the load, PostgreSQL's one setting of storage (`pg_only.sql`), Q1-Q6 one a line in `queries.txt`, and Q7, pgbench's script, in `q7.sql` |
 | `smbench/` | the floor of a scan and a point read in sm, layer by layer down to RocksDB, on the same rows; `sqlbench.sh` times those rows through SQL in digres and PostgreSQL |
 | `getseek/` | one row read by key in RocksDB, a seek to its newest version against a Get of the plain key (`../sm/VCHAIN.md` §1) |
+| `relq6/` | Q6 as the calls it makes through sm to RocksDB, run by rel on a wide_mixed of its own, timed per row with no SQL above them |
 | `results/` | one report per run, dated, with the machine and commits |
 | `results/LOG.md` | the log of every report: date, commit, machine |
 

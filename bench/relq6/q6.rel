@@ -1,0 +1,137 @@
+# q6.rel -- the bench's q6 (../sql/queries.txt), select sum(c1)
+# from wide_mixed where id between a and a + 9999, as the calls it
+# makes through sm to RocksDB, with no SQL above them: in a
+# transaction each, a cursor over 10,000 rows of a 1,000,000-row
+# wide_mixed, each row stepped to and none decoded (scan-count).
+# Below sm the calls are digres's: a snapshot, an iterator with an
+# upper bound, one Seek, then Valid, key, value and Next a row.
+# rel's tables have no primary key, so a row's key is its _id,
+# which the load makes its id, where digres's is the id itself.
+#
+# Its settings are in the environment, as run.sh sets them:
+#   Q6_HOME     the wisr home the rows are in
+#   Q6_PHASE    load: make the home and load the rows; scan: time
+#               the queries on a home loaded before
+#   Q6_ROWS     rows to load, 1,000,000 as the bench's
+#   Q6_QUERIES  queries to time, each at a random a
+#   Q6_CACHE    the block cache's bytes, 2 GB as the bench's
+#               shared_buffers
+#
+# 1. load: the rows, as ../sql/load.sql makes them: c1 to c49 are
+#    id + n, every fifth a text of 10 to 30 hex digits; loaded in
+#    batches, then compacted, as the bench's VACUUM leaves them.
+# 2. scan: every row read once, so the blocks are in the cache, as
+#    the bench's warm-up has them; then the queries timed, each
+#    checked to read 10,000 rows.
+
+(def home (os/getenv "Q6_HOME"))
+(def phase (os/getenv "Q6_PHASE"))
+(defn setting [name default] (scan-number (or (os/getenv name) default)))
+(def nrows (setting "Q6_ROWS" "1000000"))
+(def nqueries (setting "Q6_QUERIES" "500"))
+(def cache (setting "Q6_CACHE" (string (* 2 1024 1024 1024))))
+(def span 10000)
+
+# A text of 10 to 30 hex digits for column n of row id, as md5's are.
+(defn hex [id n]
+  (def x (+ id n))
+  (def h (string/format "%08x%08x%08x%08x"
+                        (% (* x 2654435761) 4294967296)
+                        (% (* x 40503) 4294967296)
+                        (% (* x 2246822519) 4294967296)
+                        (% (* x 3266489917) 4294967296)))
+  (string/slice h 0 (+ 10 (% x 21))))
+
+(defn row [id]
+  (def r @[id])
+  (for n 1 50
+    (array/push r (if (zero? (% n 5)) (hex id n) (+ id n))))
+  r)
+
+(case phase
+  "load"
+  (do
+    (rm-rf home)
+    (env-init home)
+    (env-attach home :cache-bytes cache)
+    (db-create "q6")
+    (db-open "q6")
+    # create table wide_mixed (
+    #   id int8 not null,
+    #   c1 int8, c2 int8, c3 int8, c4 int8, c5 text,
+    #   ...
+    #   c46 int8, c47 int8, c48 int8, c49 int8);
+    # As ../sql/schema.sql's, but with no primary key: rel makes none.
+    (begin :rc)
+    (table-create wide_mixed
+      (columns
+        (id :int8 :not-null)
+        (c1 :int8) (c2 :int8) (c3 :int8) (c4 :int8) (c5 :text)
+        (c6 :int8) (c7 :int8) (c8 :int8) (c9 :int8) (c10 :text)
+        (c11 :int8) (c12 :int8) (c13 :int8) (c14 :int8) (c15 :text)
+        (c16 :int8) (c17 :int8) (c18 :int8) (c19 :int8) (c20 :text)
+        (c21 :int8) (c22 :int8) (c23 :int8) (c24 :int8) (c25 :text)
+        (c26 :int8) (c27 :int8) (c28 :int8) (c29 :int8) (c30 :text)
+        (c31 :int8) (c32 :int8) (c33 :int8) (c34 :int8) (c35 :text)
+        (c36 :int8) (c37 :int8) (c38 :int8) (c39 :int8) (c40 :text)
+        (c41 :int8) (c42 :int8) (c43 :int8) (c44 :int8) (c45 :text)
+        (c46 :int8) (c47 :int8) (c48 :int8) (c49 :int8)))
+    (commit)
+    # In batches, a transaction each; a row's _id is its id:
+    #   begin;
+    #   insert into wide_mixed
+    #   select id, id + 1, id + 2, id + 3, id + 4,
+    #          substr(md5((id + 5)::text), 1, 10 + ((id + 5) % 21)::int),
+    #          ...
+    #          id + 46, id + 47, id + 48, id + 49
+    #   from generate_series(:lo, :hi) id;
+    #   commit;
+    # The texts are hex of a hash of id + n, not md5's, of the same
+    # lengths.
+    (def batch 50000)
+    (var id 1)
+    (while (<= id nrows)
+      (def hi (min nrows (+ id batch -1)))
+      (begin :rc)
+      (def ids (load wide_mixed (seq [i :range-to [id hi]] (row i))))
+      (assert-eq (first ids) id)
+      (commit)
+      (set id (+ hi 1)))
+    # vacuum wide_mixed;
+    (begin :rc)
+    (compact wide_mixed)
+    (commit)
+    (print "loaded " nrows " rows"))
+
+  "scan"
+  (do
+    (env-attach home :cache-bytes cache)
+    (db-open "q6")
+    # The warm-up: select count(*) from wide_mixed;
+    (begin :rc)
+    (assert-eq (scan-count wide_mixed) nrows)
+    (commit)
+    (def rng (math/rng 6))
+    (def t0 (os/clock :monotonic))
+    (for q 0 nqueries
+      (def a (+ 1 (math/rng-int rng (- nrows span -1))))
+      # select sum(c1) from wide_mixed where id between :a and :a + 9999;
+      # in a transaction of its own, as digres runs it, but with the
+      # rows only counted: as
+      #   select count(*) from wide_mixed where _id between :a and :a + 9999;
+      # without the deform of c1, the sum, or the executor above them.
+      (begin :rc)
+      (assert-eq (scan-count wide_mixed :from a :to (+ a span -1)) span)
+      (commit))
+    (def t1 (os/clock :monotonic))
+    (def secs (- t1 t0))
+    (printf "q6 in rel: %d queries of %d rows, %.3f ms a query, %.1f ns a row"
+            nqueries span (/ (* secs 1e3) (max nqueries 1))
+            (/ (* secs 1e9) (max (* nqueries span) 1)))
+    # The timed loop's start and end, for run.sh to count in.
+    (printf "window %.6f %.6f" t0 t1))
+
+  (error "Q6_PHASE is load or scan"))
+
+(db-close)
+(env-detach)
