@@ -8933,3 +8933,37 @@ is digres's own: PostgreSQL refuses it (`UNSUPPORTED.md` §10).
   `../sq/test/on_update.sql` and two files of what it refuses.
   sq's corpus is unchanged against PostgreSQL 18.6's scripts.
 
+
+## Step 307: nothing is made in pg_catalog
+
+`CREATE TABLE pg_catalog.t ()` made a table (`ISSUE.md` issue
+8), as did CREATE VIEW and CREATE SEQUENCE there. PostgreSQL
+refuses one in `heap_create()`, which a relation made in sm
+does not reach. In digres no catalog is in sm: the 28 in
+pg_catalog are compiled in, and a database fresh from initdb
+has no relation of sm's in any schema. But pg_catalog is
+still the schema every search path looks in first, so a table
+made there hid one of its name in any schema, in every session:
+`public.hid`, read as `hid`, read the empty `pg_catalog.hid`.
+And a catalog's own name was free to sm, whose check of a
+taken name looks in sm alone: `CREATE TABLE pg_catalog.pg_class
+(x int)` made a second `pg_class`, which no name reached.
+
+- **The check**, `check_system_namespace()` in `smstore.c`,
+  from `smstore_create_table()`, `_view()` and `_sequence()`:
+  in pg_catalog or pg_toast, unless `allow_system_table_mods`,
+  a name a relation has there is PostgreSQL's "already exists",
+  as `heap_create_with_catalog()` finds it first, and any other
+  is "permission denied to create", as `heap_create()` says.
+  An index follows its table, as PostgreSQL lets it; ALTER
+  TABLE ... SET SCHEMA, which could move one there, is not
+  supported yet.
+- **Tests**: `test/server.sh`: a table, a view and a sequence
+  refused in pg_catalog, `pg_class` there already a relation,
+  a public table of the refused name still read by it, and
+  with `allow_system_table_mods` a table made and dropped
+  there. sm has no system schema, so no test of sm's reaches
+  it. pgregress's `alter_table`, ported again, has its
+  `CREATE TABLE pg_catalog.new_system_table()` back; and, from
+  work since it was last ported, a `select * from t1`, and two
+  `vacuum analyze` markers with ANALYZE's reason now.

@@ -1374,9 +1374,9 @@ drop view myview;
 --dg analyze atacc1(a);
 --dg-differs: another error: ANALYZE of chosen columns is not supported yet
 --dg analyze atacc1("........pg.dropped.1........");
---dg-differs: no error where PostgreSQL has: column "?" of relation "?" does not exist
+--dg-differs: another error: ANALYZE of chosen columns is not supported yet
 --dg vacuum analyze atacc1(a);
---dg-differs: no error where PostgreSQL has: column "?" of relation "?" does not exist
+--dg-differs: another error: ANALYZE of chosen columns is not supported yet
 --dg vacuum analyze atacc1("........pg.dropped.1........");
 --dg-differs: another error: COMMENT is not supported yet
 --dg comment on column atacc1.a is 'testing';
@@ -2232,8 +2232,7 @@ create temp table log (q1 int8, q2 int8);
 
 update v2 set q1 = q1 + 1 where q1 = 123;
 
---dg-differs: the result
---dg select * from t1;
+select * from t1;
 --dg-cascade
 --dg select * from log;
 rollback;
@@ -3038,8 +3037,7 @@ DROP TABLE tt9;
 
 SHOW allow_system_table_mods;
 -- disallowed because of search_path issues with pg_dump
---dg-differs: no error where PostgreSQL has: permission denied to create "?"
---dg CREATE TABLE pg_catalog.new_system_table();
+CREATE TABLE pg_catalog.new_system_table();
 -- instead create in public first, move to catalog
 CREATE TABLE new_system_table(id serial primary key, othercol text);
 --dg-skip: ALTER TABLE is not supported yet

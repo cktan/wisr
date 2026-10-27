@@ -4324,6 +4324,35 @@ local_psql -c 'create temp table public.tu1 (a int4)' 2>&1 |
   fail "temporary table in public"
 local_psql -c 'drop table tp1' > /dev/null 2>&1
 
+# Verify that no table, view or sequence is made in pg_catalog, as PostgreSQL
+# refuses one: every session's search path looks there first, so it would
+# hide a relation of its name in any schema; and a catalog's own name there,
+# compiled into digres and not in sm, is taken (WORKNOTE.md step 307).
+# 1. Make public.pc1 with a row; CREATE TABLE, VIEW and SEQUENCE named
+#    pc1 in pg_catalog are each refused, permission denied.
+# 2. CREATE TABLE pg_catalog.pg_class says the relation exists.
+# 3. pc1, unqualified, is still public's, with its row.
+# 4. With allow_system_table_mods on, a table is made in pg_catalog, and
+#    dropped.
+local_psql -c 'create table public.pc1 (a int4)' \
+  -c 'insert into pc1 values (7)' > /dev/null 2>&1
+[ "$(local_psql -c 'create table pg_catalog.pc1 (a int4)' \
+  -c 'create view pg_catalog.pc1 as select 1' \
+  -c 'create sequence pg_catalog.pc1' 2>&1 |
+  grep -c 'permission denied to create "pg_catalog.pc1"')" = 3 ] ||
+  fail "a relation made in pg_catalog"
+local_psql -c 'create table pg_catalog.pg_class (x int4)' 2>&1 |
+  grep -q 'relation "pg_class" already exists' ||
+  fail "a catalog's name made again in pg_catalog"
+[ "$(local_psql -c 'select a from pc1' 2>&1)" = 7 ] ||
+  fail "the public table pg_catalog would have hidden"
+[ "$(local_psql -c 'set allow_system_table_mods = on' \
+  -c 'create table pg_catalog.pc2 (a int4)' \
+  -c 'drop table pg_catalog.pc2' 2>&1 | tr '\n' ' ')" = \
+  "SET CREATE TABLE DROP TABLE " ] ||
+  fail "a table made in pg_catalog with allow_system_table_mods"
+local_psql -c 'drop table pc1' > /dev/null 2>&1
+
 # Verify that a relation's name, looked up by oid with no lock, as regclass's
 # output does, is what another session's DDL has left it: renamed, or gone.
 # 1. A held session reads table rn1, which caches it and its index rn1_b, and

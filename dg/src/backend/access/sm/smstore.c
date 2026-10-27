@@ -31,6 +31,7 @@
 #include "access/xact.h"
 #include "access/relation.h"
 #include "access/reloptions.h"
+#include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/index.h"
 #include "parser/parse_node.h"
@@ -1642,6 +1643,28 @@ static const char *column_update_default(ColumnDef *col, Node *raw_default,
   return nodeToString(expr);
 }
 
+/*
+ * Refuse a relation named relname in nspoid if nspoid is a system schema,
+ * pg_catalog or pg_toast, unless allow_system_table_mods: as PostgreSQL's
+ * heap_create(), since every search path looks in pg_catalog first, so one
+ * made there would hide its name's relation in any schema, in every session.
+ * A name a catalog has, compiled into digres and not in sm, is taken first,
+ * as heap_create_with_catalog() finds it before heap_create() refuses.
+ */
+static void check_system_namespace(const char *relname, Oid nspoid) {
+  if (allowSystemTableMods ||
+      !(IsCatalogNamespace(nspoid) || IsToastNamespace(nspoid)))
+    return;
+  if (OidIsValid(get_relname_relid(relname, nspoid)))
+    ereport(ERROR, (errcode(ERRCODE_DUPLICATE_TABLE),
+                    errmsg("relation \"%s\" already exists", relname)));
+  ereport(ERROR,
+          (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+           errmsg("permission denied to create \"%s.%s\"",
+                  get_namespace_name(nspoid), relname),
+           errdetail("System catalog modifications are currently disallowed.")));
+}
+
 static void check_column_name(const char *name);
 
 /*
@@ -1658,6 +1681,7 @@ ObjectAddress smstore_create_table(CreateStmt *stmt) {
 
   check_create_table(stmt);
   nspoid = RangeVarGetCreationNamespace(stmt->relation);
+  check_system_namespace(stmt->relation->relname, nspoid);
   /* A table in pg_temp is temporary, and a temporary one is in no other. */
   RangeVarAdjustRelationPersistence(stmt->relation, nspoid);
   temp = stmt->relation->relpersistence == RELPERSISTENCE_TEMP;
@@ -1772,6 +1796,7 @@ ObjectAddress smstore_create_sequence(CreateSeqStmt *stmt) {
                     errmsg("a sequence counts up from 1 or more, by 1 or "
                            "more, yet")));
   nspoid = RangeVarGetCreationNamespace(stmt->sequence);
+  check_system_namespace(name, nspoid);
   if (stmt->if_not_exists && OidIsValid(smstore_relation_oid(name, nspoid))) {
     ereport(NOTICE, (errcode(ERRCODE_DUPLICATE_TABLE),
                      errmsg("relation \"%s\" already exists, skipping", name)));
@@ -3301,6 +3326,8 @@ static void view_error(const char *name, const char *what) {
  */
 ObjectAddress smstore_create_view(RangeVar *rv, Query *query, List *options) {
   Oid nspoid = RangeVarGetCreationNamespace(rv);
+
+  check_system_namespace(rv->relname, nspoid);
   sm_session_t *s = xact_session();
   sm_view_def_t def = view_def(s, query, options);
   uint64_t oid;

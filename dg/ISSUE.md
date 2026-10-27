@@ -11,8 +11,9 @@ error, in step 302; issue 7, ON COMMIT DELETE ROWS ignoring a
 foreign key into the table, in step 303; issue 4, a cursor
 seeing its own transaction's later DELETE, in step 304; issue
 5, a FOR UPDATE cursor returning a row updated after it was
-declared, in step 305; and issue 9, ON CONFLICT above READ
-COMMITTED saying sm1's error, in step 306.
+declared, in step 305; issue 9, ON CONFLICT above READ
+COMMITTED saying sm1's error, in step 306; and issue 8, a table
+made in pg_catalog, in step 307.
 
 ---
 
@@ -73,20 +74,6 @@ yet: "where to start" is where the difference shows, not a
 cause found.
 
 ---
-
-## Issue 8: a table can be made in pg_catalog
-
-```sql
-create table pg_catalog.new_system_table();
--- PostgreSQL: ERROR:  permission denied to create
---             "pg_catalog.new_system_table"
--- digres:     CREATE TABLE
-```
-
-pgregress: `alter_table`. **Where to start**: PostgreSQL makes
-the check in `heap_create()` (`src/backend/catalog/heap.c`,
-`IsCatalogNamespace()` unless `allow_system_table_mods`),
-which digres's CREATE TABLE, made in sm, does not reach.
 
 ## Issue 10: CREATE TABLE (LIKE a, LIKE a) says sm's error
 
