@@ -1,0 +1,44 @@
+# a19 -- above read committed, a read of a key's newest version
+# reads the transaction's own version, and nothing else.
+#
+# sm1_read_latest looks past the snapshot, which only read
+# committed has to look past: at repeatable read and serializable
+# the snapshot is the transaction's for its life. A version the
+# transaction wrote itself is newer than its snapshot and is no
+# other's to change, so it is read at every level: an insert's
+# arbiter so finds a key its own statement took, where the
+# statement's own view does not show it (dg WORKNOTE.md step 306).
+#
+# For each of R (repeatable read) and S (serializable), on rows of
+# its own, and C (read committed) as before:
+# 1. In a statement, write the first row: the statement reads it as
+#    it was, and readlatest reads the new value.
+# 2. Lock the second row, which it has not written: readlatest is
+#    invalid above read committed, and reads the row at it.
+
+
+== pairing RR/RR == C=RC R=RR S=SER
+@1 R begin -> ok
+@2 R stmt -> ok
+@3 R write R1 a2 -> ok
+@4 R read R1 -> a
+@5 R readlatest R1 -> a2
+@6 R lock R2 shared -> ok
+@7 R readlatest R2 -> invalid
+@8 R abort -> ok
+@9 S begin -> ok
+@10 S stmt -> ok
+@11 S write R3 a2 -> ok
+@12 S read R3 -> a
+@13 S readlatest R3 -> a2
+@14 S lock R4 shared -> ok
+@15 S readlatest R4 -> invalid
+@16 S abort -> ok
+@17 C begin -> ok
+@18 C stmt -> ok
+@19 C write R5 a2 -> ok
+@20 C read R5 -> a
+@21 C readlatest R5 -> a2
+@22 C lock R6 shared -> ok
+@23 C readlatest R6 -> b
+@24 C abort -> ok

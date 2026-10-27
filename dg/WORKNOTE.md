@@ -8847,3 +8847,41 @@ version; a deleted one there was passed over as gone.
   back. Above READ COMMITTED an arbiter's own read still fails
   (issue 9), so `test_arbiter.cc` asks it at READ COMMITTED
   alone.
+
+## Step 306: ON CONFLICT above READ COMMITTED meets its own row
+
+`INSERT ... ON CONFLICT` at REPEATABLE READ or SERIALIZABLE
+failed with sm1's `sm1_read_latest requires READ COMMITTED`
+when two of its rows had one key (`ISSUE.md` issue 9). Not the
+message alone: DO NOTHING, which PostgreSQL runs, inserting
+the first row and passing over the second, failed with it;
+DO UPDATE, which PostgreSQL refuses, refused with sm1's words.
+A conflict with a committed row, or with one an earlier
+statement inserted, was right, the statement's view showing
+it.
+
+- **The cause**: sm3's arbiter looks with the statement's
+  view, which does not show a key its own statement took; the
+  insert of the entry then fails with `SM_ERR_DUPKEY`, and
+  `find_now()` names the row by `sm1::read_latest`, which sm1
+  allowed at READ COMMITTED alone. Above it a key taken since
+  the snapshot by another fails the insert with
+  `SM_ERR_CONFLICT` first, so the version found is the
+  transaction's own.
+- **The fix** (sm1): `read_latest` and `chain_read_latest`
+  read, above READ COMMITTED, a newest version that is the
+  transaction's own, which the snapshot does not hide and no
+  other writer changes; any other is `SM_ERR_INVALID` as
+  before (`SM1_DESIGN.md` §5.4). DO UPDATE then locks the row
+  as read, which is refused (step 305), and dg says
+  PostgreSQL's "cannot affect row a second time".
+- **Tests**: scenario `a19` (`../sm/sm1/mvcc`), at each level,
+  both layouts; `test_read_latest.cc`, an own version read
+  above READ COMMITTED and another refused; `test_arbiter.cc`'s
+  case of step 305 at every level now; `test/server.sh`'s
+  ON CONFLICT step 9, DO NOTHING and DO UPDATE on two rows of
+  one id at REPEATABLE READ and SERIALIZABLE. rel has no insert
+  with arbiters. pgregress's `insert_conflict`, ported again,
+  has its five `selfconflict` statements back, and an
+  `excluded.ctid` statement whose marker dated from the first
+  port.

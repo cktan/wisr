@@ -93,7 +93,7 @@ Each reproduces alone on both servers, and is an issue in
 | 6 | Fixed, `../../WORKNOTE.md` step 302: a duplicate key in a table made in a savepoint said `could not open relation with OID N`, not the unique violation: `BEGIN; SAVEPOINT x; CREATE TABLE koju (a int UNIQUE);` and the same INSERT twice. | `transactions` | medium: the row is refused, the error is wrong |
 | 7 | Fixed, `../../WORKNOTE.md` step 303: `ON COMMIT DELETE ROWS` on a table a foreign key references committed; PostgreSQL refuses it, as the delete would break the key. | `temp` | medium |
 | 8 | `CREATE TABLE pg_catalog.t()` succeeds; PostgreSQL refuses it. | `alter_table` | low |
-| 9 | `INSERT ... ON CONFLICT` under REPEATABLE READ or SERIALIZABLE fails with sm1's `sm1_read_latest requires READ COMMITTED`, not a refusal of its own. | `insert_conflict` | low: the message |
+| 9 | Fixed, `../../WORKNOTE.md` step 306: `INSERT ... ON CONFLICT` under REPEATABLE READ or SERIALIZABLE failed with sm1's `sm1_read_latest requires READ COMMITTED` on a key its own statement took; DO NOTHING failed where PostgreSQL succeeds. | `insert_conflict` | low: the message |
 | 10 | `CREATE TABLE t (LIKE a, LIKE a)` fails with sm's `create table: a column without a n...`, not `column "x" specified more than once`. | `create_table_like` | low: the message |
 | 11 | A foreign key's `SET DEFAULT (c, c)` keeps the column twice; PostgreSQL keeps it once. | `foreign_key` | low |
 | 12 | The hash access method says `can_exclude` is false; PostgreSQL's says true. | `amutils` | low |

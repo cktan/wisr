@@ -906,7 +906,11 @@ the caller.
   savepoint keeps its mark. - **`sm1::read_latest`** requires
   READ COMMITTED and a lock this transaction holds on the key,
   taken by the refused write or by `sm1::lock`; otherwise
-  `SM_ERR_INVALID`. Under a shared lock it reads but sets no
+  `SM_ERR_INVALID`. Above READ COMMITTED it reads only a newest
+  version that is the transaction's own, which the snapshot
+  does not hide and no other writer changes: an insert's
+  arbiter finds so a key its own statement took (scenario
+  `a19`). Under a shared lock it reads but sets no
   mark, since a shared holder cannot write without upgrading. A
   caller that waited in `sm1::lock(SHARED)` (sm3's index
   build reading a row, step 3 of `../sm3/SM3_DESIGN.md` §3)

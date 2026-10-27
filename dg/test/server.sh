@@ -3914,6 +3914,9 @@ local_psql -c 'create table tpub (a int)' -c "comment on table tpub is 'x'" \
 # 8. An upsert finds its row, and waits to lock it behind a session that has
 #    updated it; that session then deletes the row and commits: the upsert
 #    looks again, finds none, and inserts.
+# 9. At REPEATABLE READ and at SERIALIZABLE, two rows of one statement with
+#    one id: DO NOTHING inserts the first and passes over the second, and DO
+#    UPDATE fails with PostgreSQL's error (WORKNOTE.md step 306).
 local_psql -c 'create table tu1 (id int4 primary key, name text unique, n int4)' \
   -c "insert into tu1 values (1, 'one', 1), (2, 'two', 1)" \
   > "$work/upsert.out" 2>&1
@@ -4001,6 +4004,19 @@ upsert_against "insert into tu1 values (30, 'thirty', 1)" commit \
   "waited trois|7 INSERT 0 1 " ] || fail "upsert of a row deleted once found"
 [ "$(local_psql -c 'select name, n from tu1 where id = 3')" = "trois|7" ] ||
   fail "the row an upsert inserted after its conflict went"
+for level in 'repeatable read' 'serializable'; do
+  [ "$(local_psql -c "begin isolation level $level" \
+    -c "insert into tu1 values (40, 'a40', 1), (40, 'b40', 2)
+      on conflict (id) do nothing" \
+    -c 'select name from tu1 where id = 40' -c 'rollback' 2>&1 |
+    tr '\n' ' ')" = "BEGIN INSERT 0 1 a40 ROLLBACK " ] ||
+    fail "on conflict do nothing within a statement at $level"
+  local_psql -c "begin isolation level $level" \
+    -c "insert into tu1 values (41, 'a41', 1), (41, 'b41', 2)
+      on conflict (id) do update set n = 0" 2>&1 |
+    grep -q 'ON CONFLICT DO UPDATE command cannot affect row a second time' ||
+    fail "on conflict do update within a statement at $level"
+done
 local_psql -c 'drop table tu1' > /dev/null 2>&1
 
 # Verify that every statement that writes a table in sm runs above READ

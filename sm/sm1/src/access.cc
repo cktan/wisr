@@ -530,11 +530,6 @@ int read_latest_row(sm1::session_t *s, uint64_t storeid, const char *key,
   if (xct_check_active(s) != 0) {
     return -1;
   }
-  // Only read committed has a snapshot to look past.
-  if (s->level != sm1::xctlevel_t::read_committed) {
-    return set_error(sm1::SM_ERR_INVALID,
-                     "sm1_read_latest requires READ COMMITTED");
-  }
   // Validate the storeid and key.
   if (enter(s, xct_view(s), storeid, key, klen) != 0) {
     return -1;
@@ -554,6 +549,15 @@ int read_latest_row(sm1::session_t *s, uint64_t storeid, const char *key,
   if (0 != latest_version(s, st, k, &live, &commit_ts, nullptr, &own_seq,
                           nullptr, pin, &moved)) {
     return -1;
+  }
+  // Only read committed has a snapshot to look past. Above it the
+  // newest version is read only if it is the transaction's own,
+  // which no snapshot hides from it and no other writer changes:
+  // an insert's arbiter finding a key its own statement took.
+  if (s->level != sm1::xctlevel_t::read_committed && own_seq == 0) {
+    return set_error(sm1::SM_ERR_INVALID,
+                     "sm1_read_latest requires READ COMMITTED, or a "
+                     "version of this transaction's own");
   }
   // Something must keep the newest version from changing: a lock
   // on the key, every mode of which a writer waits for, or a

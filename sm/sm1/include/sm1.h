@@ -647,12 +647,16 @@ int trylock(session_t* session, locktype_t type, uint64_t storeid,
  * with a write of the key by this transaction still in effect,
  * which every other writer of it waits for.
  * Returns as sm1::read() does: 0 found, 1 no such key. At read
- * committed only. Under an exclusive lock it also lets the next
+ * committed; above it only when the newest version is this
+ * transaction's own, which its snapshot cannot hide and no other
+ * writer can change, as an insert's arbiter reads a key its own
+ * statement took. Under an exclusive lock it also lets the next
  * write of the key through, after SM_ERR_UPDATED (SM1_DESIGN.md
  * §5.4).
  *
- * Errors: SM_ERR_INVALID (not read committed, or neither a lock
- * held nor a write of the key), SM_ERR_NOTRANS, SM_ERR_PREPARED,
+ * Errors: SM_ERR_INVALID (above read committed with no version of
+ * this transaction's own, or neither a lock held nor a write of
+ * the key), SM_ERR_NOTRANS, SM_ERR_PREPARED,
  * SM_ERR_NOTFOUND (store), SM_ERR_MOVED (the newest version is a
  * move's tombstone, sm1::erase_moved).
  */

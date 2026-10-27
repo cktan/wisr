@@ -9,9 +9,10 @@ or a multirange losing its bound, in step 300; issue 6, a
 duplicate key in a table made in a savepoint saying the wrong
 error, in step 302; issue 7, ON COMMIT DELETE ROWS ignoring a
 foreign key into the table, in step 303; issue 4, a cursor
-seeing its own transaction's later DELETE, in step 304; and
-issue 5, a FOR UPDATE cursor returning a row updated after it
-was declared, in step 305.
+seeing its own transaction's later DELETE, in step 304; issue
+5, a FOR UPDATE cursor returning a row updated after it was
+declared, in step 305; and issue 9, ON CONFLICT above READ
+COMMITTED saying sm1's error, in step 306.
 
 ---
 
@@ -86,28 +87,6 @@ pgregress: `alter_table`. **Where to start**: PostgreSQL makes
 the check in `heap_create()` (`src/backend/catalog/heap.c`,
 `IsCatalogNamespace()` unless `allow_system_table_mods`),
 which digres's CREATE TABLE, made in sm, does not reach.
-
-## Issue 9: ON CONFLICT under REPEATABLE READ says sm1's error
-
-```sql
-create table sc (f1 int primary key, f2 int);
-begin isolation level repeatable read;
-insert into sc values (5, 1), (5, 2)
-  on conflict (f1) do update set f2 = 0;
--- PostgreSQL: ERROR:  ON CONFLICT DO UPDATE command cannot
---             affect row a second time
--- digres:     ERROR:  could not insert a row: sm1_read_latest
---             requires READ COMMITTED
-commit;
-```
-
-So does `ON CONFLICT DO NOTHING` under REPEATABLE READ or
-SERIALIZABLE. pgregress: `insert_conflict`. **Where to
-start**: ON CONFLICT reads the key's latest version
-(`sm1_read_latest`, `sm/sm1/src/access.cc`), which sm1 allows
-only under READ COMMITTED; digres should refuse ON CONFLICT
-at the other levels with an error of its own, or read
-otherwise.
 
 ## Issue 10: CREATE TABLE (LIKE a, LIKE a) says sm's error
 

@@ -515,11 +515,6 @@ int read_latest_chained(sm1::session_t *s, uint64_t storeid,
   if (xct_check_active(s) != 0) {
     return -1;
   }
-  // Only read committed has a snapshot to look past.
-  if (s->level != sm1::xctlevel_t::read_committed) {
-    return set_error(sm1::SM_ERR_INVALID,
-                     "sm1_read_latest requires READ COMMITTED");
-  }
   if (access_enter(s, xct_view(s), storeid, key.data(), key.size()) != 0) {
     return -1;
   }
@@ -531,6 +526,13 @@ int read_latest_chained(sm1::session_t *s, uint64_t storeid,
   checked_t c;
   if (0 != chain_latest(s, st, k, &c, true)) {
     return -1;
+  }
+  // Only read committed has a snapshot to look past; above it, the
+  // transaction's own newest version alone (sm1::read_latest).
+  if (s->level != sm1::xctlevel_t::read_committed && c.own_seq == 0) {
+    return set_error(sm1::SM_ERR_INVALID,
+                     "sm1_read_latest requires READ COMMITTED, or a "
+                     "version of this transaction's own");
   }
   // Something must keep the newest version from changing: a lock on
   // the key, or a write of our own still in flight (WRITELOCK.md §3.2).

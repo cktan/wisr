@@ -96,6 +96,41 @@ TEST_CASE(
   sm1::closedb(t);
 }
 
+TEST_CASE("above read committed sm1_read_latest reads the transaction's own "
+          "version alone") {
+  // Verify that the snapshot of repeatable read and serializable,
+  // which sm1_read_latest does not look past, does not stop it
+  // reading a version the transaction wrote itself, its newest: an
+  // insert's arbiter reads so a key its own statement took
+  // (../../dg/WORKNOTE.md step 306).
+  // At repeatable read and at serializable:
+  // 1. In a statement, write "x" = "2": the statement reads "x" as
+  //    "0", and sm1_read_latest reads "2".
+  // 2. In a new transaction, under a lock on "y" and with no write
+  //    of its own: SM_ERR_INVALID, as before.
+  for (sm1::xctlevel_t level :
+       {sm1::xctlevel_t::repeatable_read, sm1::xctlevel_t::serializable}) {
+    CAPTURE(static_cast<int>(level));
+    latest_fixture_t f;
+    sm1::session_t *t = f.open();
+    REQUIRE(sm1::begin(t, level) == 0);
+    REQUIRE(sm1::stmt_begin(t) == 0);
+    REQUIRE(set(t, "x", "2") == 0);
+    std::string_view seen;
+    REQUIRE(sm1::read(t, g_store, "x", seen) == 0);
+    CHECK(seen == "0");
+    CHECK(latest(t, "x") == "2");
+    REQUIRE(sm1::abort(t) == 0);
+    REQUIRE(sm1::begin(t, level) == 0);
+    REQUIRE(sm1::lock(t, sm1::LOCKTYPE_ROW, g_store, "y",
+                      sm1::SM_LOCKMODE_SH) == 0);
+    CHECK(latest(t, "y") == "<error>");
+    CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+    REQUIRE(sm1::abort(t) == 0);
+    sm1::closedb(t);
+  }
+}
+
 TEST_CASE("SM_ERR_UPDATED is not retryable and leaves the transaction active") {
   // Verify the failed write neither aborts nor releases the lock.
   // 1. T (read committed) begins; U commits a new "x".
