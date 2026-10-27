@@ -186,6 +186,7 @@ can be read at a glance. Several steps may share a time.
 | `savepoint` | — | the new mark's depth: `1`, `2`, … |
 | `rollback` | `<depth>` | `ok`, or an error name |
 | `lock` | `<row> <is\|ix\|shared\|six\|exclusive>` | `ok`, or an error name |
+| `lockread` | as `lock` | as `lock`; `selfmodified` on a row changed since the statement began |
 | `seek` | `<cursor> <key>` | `ok`, or an error name |
 | `stmt` | — | `ok`: starts a statement, for `rc` |
 | `readlatest` | `<row>` | the newest committed value, or `-`; at `rc`, under a lock the session holds |
@@ -197,7 +198,7 @@ can be read at a glance. Several steps may share a time.
 Error names are symbolic, never numbers or messages:
 `conflict`, `serialization`, `dupkey`, `notfound`, `notrans`,
 `deadlock`, `prepared`, `invalid`, `updated`, `readonly`,
-`moved`.
+`moved`, `selfmodified`.
 
 **`commit?`** is for a commit whose outcome may differ from
 run to run -- at S+S either side of a write skew may be the
@@ -221,6 +222,10 @@ a write does. A transaction already holding the row and asking
 for a stronger mode converts to the weakest mode covering both,
 which is how two transactions deadlock on one row (`b28`). Once held, the lock is checked against the
 transaction's snapshot, so `lock` can also answer `conflict`.
+**`lockread`** is `lock` of a row the running statement read,
+as SQL's FOR UPDATE takes it (`sm1::lock`'s `as_read`): a row
+the transaction changed after the statement began answers
+`selfmodified`, and is not locked (`a18`).
 
 **`seek`** moves an open cursor forward to a key, that key
 included, keeping the snapshot and bounds it opened with. It

@@ -7018,7 +7018,10 @@ TM_Result smstore_delete(Relation rel, const RowKey *key,
  * READ COMMITTED the newest version is read, and tmfd says whether it is
  * another than the statement saw, for the executor to check its WHERE
  * again.  The slot owns what it holds, since the
- * executor keeps it past sm's next call.  TM_Deleted if the row is gone.
+ * executor keeps it past sm's next call.  TM_Deleted if the row is gone;
+ * TM_SelfModified, with nothing locked, if this transaction changed it
+ * after the running statement began, as after a FOR UPDATE cursor's
+ * DECLARE: the executor passes over it, as PostgreSQL's.
  */
 TM_Result smstore_lock_row(Relation rel, const RowKey *key,
                            TupleTableSlot *slot, LockTupleMode mode,
@@ -7053,6 +7056,11 @@ TM_Result smstore_lock_row(Relation rel, const RowKey *key,
       rc = waiting([&] { return sm_tbl_lock(tbl, sk, smmode); });
     else
       rc = sm_tbl_trylock(tbl, sk, smmode);
+    /* Changed by a later command of this transaction: passed over. */
+    if (rc < 0 && sm_errnum() == SM_ERR_SELFMODIFIED) {
+      tmfd->xmax = InvalidTransactionId;
+      return TM_SelfModified;
+    }
     if (rc < 0)
       sm_error("lock a row");
     if (rc == 1) {

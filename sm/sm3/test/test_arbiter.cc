@@ -318,3 +318,43 @@ TEST_CASE("above READ COMMITTED a key taken since the snapshot fails the "
   CHECK(sm1::errnum() == sm1::SM_ERR_CONFLICT);
   sm3::tbl_close(ta);
 }
+
+TEST_CASE("a row the statement inserted is found by an insert with "
+          "arbiters, and refused to a lock as read") {
+  // Verify that the statement's own later change of a row stops
+  // SQL's row lock (tbl_lock, sm1::lock's as_read) and not the
+  // lock an insert with arbiters takes to read the key's newest
+  // version: digres's FOR UPDATE cursor and ON CONFLICT (dg
+  // WORKNOTE.md step 305).
+  // At each level:
+  // 1. In a statement, insert id 1, then, at READ COMMITTED,
+  //    insert with arbiters a row of id 1 again: 1, with the first
+  //    row's rowno. (Above it the arbiter's read of the newest
+  //    version is refused: dg's ISSUE.md issue 9.)
+  // 2. Lock the row as SQL does: SM_ERR_SELFMODIFIED, and the
+  //    transaction goes on.
+  // 3. In a new statement, lock it again: 0.
+  kv_t f;
+  for (sm1::xctlevel_t level :
+       {sm1::xctlevel_t::read_committed, sm1::xctlevel_t::repeatable_read,
+        sm1::xctlevel_t::serializable}) {
+    CAPTURE(static_cast<int>(level));
+    start(f.a, level);
+    sm3::table_t *t = f.write(f.a);
+    uint64_t first = 0, found = 0;
+    REQUIRE(sm3::stmt_begin(f.a) == 0);
+    REQUIRE(upsert(t, 1, "one", first) == 0);
+    if (level == sm1::xctlevel_t::read_committed) {
+      CHECK_MESSAGE(upsert(t, 1, "uno", found) == 1,
+                    std::string(sm1::errmsg()));
+      CHECK(found == first);
+    }
+    CHECK(sm3::tbl_lock(t, first, sm1::SM_LOCKMODE_EX) == -1);
+    CHECK(sm1::errnum() == sm1::SM_ERR_SELFMODIFIED);
+    REQUIRE(sm3::stmt_begin(f.a) == 0);
+    CHECK_MESSAGE(sm3::tbl_lock(t, first, sm1::SM_LOCKMODE_EX) == 0,
+                  std::string(sm1::errmsg()));
+    sm3::tbl_close(t);
+    REQUIRE(sm3::abort(f.a) == 0);
+  }
+}

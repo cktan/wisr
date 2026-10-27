@@ -431,6 +431,16 @@ void lock_restore(db_t *db, sm1::session_t *g);
  */
 int lock_wait_error(sm1::session_t *session, int waited);
 
+/*
+ * Refuse a row lock on a row whose newest version is the
+ * transaction's own, own_seq, written after the running statement
+ * began, as a write of it is refused (SM1_DESIGN.md §6.2): the
+ * statement does not see that version, so may not lock it as the
+ * row it read. PostgreSQL's TM_SelfModified, which a FOR UPDATE
+ * cursor passes over. 0 if not, else -1 with SM_ERR_SELFMODIFIED.
+ */
+int lock_self_modified(sm1::session_t *session, uint32_t own_seq);
+
 /* Release every lock the session's transaction holds. */
 void lock_release_all(sm1::session_t *session);
 

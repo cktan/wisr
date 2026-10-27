@@ -481,6 +481,15 @@ int lock_wait_xact(sm1::session_t *s, uint64_t xid) {
   }
 }
 
+/* Refuse a lock on a row the statement changed since; see session.h. */
+int lock_self_modified(sm1::session_t *s, uint32_t own_seq) {
+  if (s->stmt_marked && own_seq > s->stmt_seq) {
+    return set_error(sm1::SM_ERR_SELFMODIFIED,
+                     "the row was changed after this statement began");
+  }
+  return 0;
+}
+
 /* Fail the call for a wait that did not succeed; see session.h. */
 int lock_wait_error(sm1::session_t *s, int waited) {
   if (waited == 2) {

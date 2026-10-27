@@ -1392,7 +1392,9 @@ int sm_tbl_read_latest(sm_tbl_t* tbl, uint64_t id, sm_pin_ref_t* ref,
  * readers of the key may share and a writer waits for; or
  * SM_LOCKMODE_EX, as SELECT ... FOR UPDATE, which needs the
  * table opened to write. The row need not exist. It waits as a
- * write does.
+ * write does. A row the transaction changed after the running
+ * statement began is not locked: SM_ERR_SELFMODIFIED, as a write
+ * of it, which a FOR UPDATE cursor passes over.
  */
 int sm_tbl_lock(sm_tbl_t* tbl, uint64_t id, sm_lockmode_t mode);
 

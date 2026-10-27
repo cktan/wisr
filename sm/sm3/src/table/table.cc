@@ -1237,9 +1237,10 @@ static int lock_row(table_t *table, uint64_t id, sm1::lockmode_t mode,
   if (0 != id_key(table, id, key)) {
     return -1;
   }
-  // Held to the end of the transaction, as a write's lock is.
-  return nowait ? sm2::rel_trylock(table->rel, key, mode)
-                : sm2::rel_lock(table->rel, key, mode);
+  // Held to the end of the transaction, as a write's lock is: SQL's
+  // lock of a row its statement read, refused on one changed since.
+  return nowait ? sm2::rel_trylock(table->rel, key, mode, true)
+                : sm2::rel_lock(table->rel, key, mode, true);
 }
 
 /* Lock the row with _id id without writing it; see sm3.h. */
@@ -1369,9 +1370,10 @@ static int lock_key(table_t *table, const row_key_t &key, sm1::lockmode_t mode,
   if (0 != named(table, key, k, id)) {
     return -1;
   }
-  // Held to the end of the transaction, as a write's lock is.
-  return nowait ? sm2::rel_trylock(table->rel, k, mode)
-                : sm2::rel_lock(table->rel, k, mode);
+  // Held to the end of the transaction, as a write's lock is: SQL's
+  // lock of a row its statement read, refused on one changed since.
+  return nowait ? sm2::rel_trylock(table->rel, k, mode, true)
+                : sm2::rel_lock(table->rel, k, mode, true);
 }
 
 /* The encoding of a row's name; see sm3.h. */

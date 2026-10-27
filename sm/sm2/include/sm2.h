@@ -716,15 +716,19 @@ int rel_read_latest(rel_t* rel, std::string_view key, sm1::rawpin_t* pin,
  * Lock the row at key in mode without writing it, as sm1::lock
  * does: SQL's SELECT ... FOR SHARE and FOR UPDATE, and what an
  * index build holds on a row while it adds the row's entry
- * (sm3/SM3_DESIGN.md §3). The row need not exist.
+ * (sm3/SM3_DESIGN.md §3). The row need not exist. as_read, as
+ * sm1::lock's: a row the running statement read, which fails
+ * with SM_ERR_SELFMODIFIED if the transaction changed it since.
  */
-int rel_lock(rel_t* rel, std::string_view key, sm1::lockmode_t mode);
+int rel_lock(rel_t* rel, std::string_view key, sm1::lockmode_t mode,
+             bool as_read = false);
 
 /*
  * As rel_lock, but never waiting, as sm1::trylock does: 0 with the
  * row locked, 1 with nothing taken if it would have waited, or -1.
  */
-int rel_trylock(rel_t* rel, std::string_view key, sm1::lockmode_t mode);
+int rel_trylock(rel_t* rel, std::string_view key, sm1::lockmode_t mode,
+                bool as_read = false);
 
 /*
  * Replace the row at key, whose _id is id in a keyless rel, 0 in a

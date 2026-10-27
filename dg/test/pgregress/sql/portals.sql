@@ -652,8 +652,7 @@ CREATE TABLE cursor (a int);
 INSERT INTO cursor VALUES (1);
 DECLARE c1 NO SCROLL CURSOR FOR SELECT * FROM cursor FOR UPDATE;
 UPDATE cursor SET a = 2;
---dg-differs: the result
---dg FETCH ALL FROM c1;
+FETCH ALL FROM c1;
 COMMIT;
 DROP TABLE cursor;
 

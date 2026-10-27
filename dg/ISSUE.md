@@ -8,8 +8,10 @@ ON CONFLICT DO UPDATE affecting a row twice, was fixed in
 or a multirange losing its bound, in step 300; issue 6, a
 duplicate key in a table made in a savepoint saying the wrong
 error, in step 302; issue 7, ON COMMIT DELETE ROWS ignoring a
-foreign key into the table, in step 303; and issue 4, a cursor
-seeing its own transaction's later DELETE, in step 304.
+foreign key into the table, in step 303; issue 4, a cursor
+seeing its own transaction's later DELETE, in step 304; and
+issue 5, a FOR UPDATE cursor returning a row updated after it
+was declared, in step 305.
 
 ---
 
@@ -70,32 +72,6 @@ yet: "where to start" is where the difference shows, not a
 cause found.
 
 ---
-
-## Issue 5: a FOR UPDATE cursor returns a row updated after it was declared
-
-In a SERIALIZABLE transaction, a `FOR UPDATE` cursor declared
-before an UPDATE of its only row returns no row in
-PostgreSQL: the row it would lock was changed by a later
-command of its own transaction. digres returns the row as it
-was.
-
-```sql
-create table cursor (a int);
-insert into cursor values (1);
-begin;
-set transaction isolation level serializable;
-declare c1 no scroll cursor for select * from cursor for update;
-update cursor set a = 2;
-fetch all from c1;
--- PostgreSQL: (0 rows)
--- digres:     1
-commit;
-```
-
-pgregress: `portals`. **Where to start**: the row lock a FOR
-UPDATE fetch takes, and what it does on finding the row
-updated by a later command of the same transaction
-(PostgreSQL's `TM_SelfModified`).
 
 ## Issue 8: a table can be made in pg_catalog
 

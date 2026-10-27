@@ -8804,3 +8804,46 @@ command id.
 - **Not fixed**: issue 5, a FOR UPDATE cursor under
   SERIALIZABLE returning a row updated after its DECLARE, is
   as it was.
+
+## Step 305: FOR UPDATE passes over a row changed since
+
+A FOR UPDATE cursor returned a row its transaction updated or
+deleted after the DECLARE (`ISSUE.md` issue 5), where
+PostgreSQL's row lock answers `TM_SelfModified` and
+`ExecLockRows()` passes over the row. It was not SERIALIZABLE
+alone: at REPEATABLE READ and SERIALIZABLE the old row came
+back, read at the cursor's view (step 304), and at READ
+COMMITTED an updated row came back new, read as the newest
+version; a deleted one there was passed over as gone.
+
+- **sm1**: `sm1::lock`, `trylock`, `chain_lock` and
+  `chain_trylock` take `as_read`, a lock of a row the running
+  statement read: a key whose newest version is the
+  transaction's own, written after the statement's mark, fails
+  with `SM_ERR_SELFMODIFIED` and takes no lock, as a write of
+  it does (`SM1_DESIGN.md` §6.2), checked under the key's
+  latch, a temporary store's too (`lock_self_modified()`,
+  `lockmgr.cc`). Without it nothing changes: sm2's and sm3's
+  own locks, taken to read a key's newest version, the
+  transaction's own included, need it so. A first try that
+  refused every such lock broke INSERT ... ON CONFLICT, whose
+  arbiter locks a key its statement inserted.
+- **sm2, sm3**: `rel_lock` and `rel_trylock` pass `as_read`;
+  `tbl_lock` and `tbl_trylock`, SQL's row lock behind
+  `sm_tbl_lock()`, set it.
+- **dg**: `smstore_lock_row()` answers `TM_SelfModified` on
+  `SM_ERR_SELFMODIFIED`. `ExecOnConflictUpdate()`'s
+  `TM_SelfModified` is PostgreSQL's `TM_Invisible` case there,
+  a row its statement inserted: `refuse_on_conflict_twice()`.
+- **Tests**: scenario `a18` (`../sm/sm1/mvcc`, its driver's new
+  `lockread` verb and `selfmodified` error), at each level, on
+  a row updated and one deleted; `test_arbiter.cc`, an
+  arbiter's find of a row its statement inserted and SQL's
+  lock of it; `../sm/rel/test/test_stmt_view.rel` step 4, a
+  lock from a resumed view; `test/select_cursor.sql` step 6, a
+  FOR UPDATE cursor after an UPDATE and a DELETE at each
+  level, on a temporary table. Each fails with the check
+  disabled. pgregress's `portals`, ported again, has its FETCH
+  back. Above READ COMMITTED an arbiter's own read still fails
+  (issue 9), so `test_arbiter.cc` asks it at READ COMMITTED
+  alone.

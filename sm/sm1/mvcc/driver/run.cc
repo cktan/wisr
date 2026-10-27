@@ -56,6 +56,7 @@ const errinfo_t errtab[] = {
     {sm1::SM_ERR_UPDATED, "updated", "abort"},
     {sm1::SM_ERR_READONLY, "readonly", "abort"},
     {sm1::SM_ERR_MOVED, "moved", "serialize"},
+    {sm1::SM_ERR_SELFMODIFIED, "selfmodified", "abort"},
 };
 
 /*
@@ -117,9 +118,9 @@ int row_scan(sm1::session_t *s, uint64_t store, const char *skey, size_t sklen,
 
 /* sm1::lock of a row, or sm1::chain_lock in chained mode. */
 int row_lock(sm1::session_t *s, uint64_t store, std::string_view key,
-             sm1::lockmode_t mode) {
-  return g_chained ? sm1::chain_lock(s, store, key, mode)
-                   : sm1::lock(s, sm1::LOCKTYPE_ROW, store, key, mode);
+             sm1::lockmode_t mode, bool as_read) {
+  return g_chained ? sm1::chain_lock(s, store, key, mode, as_read)
+                   : sm1::lock(s, sm1::LOCKTYPE_ROW, store, key, mode, as_read);
 }
 
 /* The symbolic name of the current error (DRIVER.md §4). */
@@ -339,9 +340,10 @@ std::string execute(worker_t *w, const item_t &it) {
     return sm1::rollback(w->sess, atoi(a[0].c_str())) == 0 ? "ok"
                                                            : error_name();
   }
-  if (it.verb == "lock") {
+  if (it.verb == "lock" || it.verb == "lockread") {
     // lock <row> <is|ix|shared|six|exclusive>: take the row
-    // lock in one of Gray's modes without writing the row.
+    // lock in one of Gray's modes without writing the row;
+    // lockread, as a row the statement read (sm1::lock's as_read).
     static const std::pair<const char *, sm1::lockmode_t> modes[] = {
         {"is", sm1::SM_LOCKMODE_IS},        {"ix", sm1::SM_LOCKMODE_IX},
         {"shared", sm1::SM_LOCKMODE_SH},    {"six", sm1::SM_LOCKMODE_SIX},
@@ -349,8 +351,10 @@ std::string execute(worker_t *w, const item_t &it) {
     };
     for (const auto &[name, mode] : modes) {
       if (a[1] == name) {
-        return row_lock(w->sess, w->store, a[0], mode) == 0 ? "ok"
-                                                            : error_name();
+        return row_lock(w->sess, w->store, a[0], mode, it.verb == "lockread") ==
+                       0
+                   ? "ok"
+                   : error_name();
       }
     }
     return "ERROR: lock mode must be is, ix, shared, six or exclusive, not " +

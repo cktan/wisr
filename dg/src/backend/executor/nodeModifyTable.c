@@ -2447,7 +2447,12 @@ static bool ExecOnConflictUpdate(ModifyTableContext *context,
      * This state should never be reached. As a dirty snapshot is used
      * to find conflicting tuples, speculative insertion wouldn't have
      * seen this row to conflict with.
+     *
+     * In digres it is the TM_Invisible case above: sm refuses to lock a
+     * row this statement wrote (sm_tbl_lock()), one it inserted that a
+     * later row of it conflicts with.
      */
+    refuse_on_conflict_twice(context);
     elog(ERROR, "unexpected self-updated tuple");
     break;
 

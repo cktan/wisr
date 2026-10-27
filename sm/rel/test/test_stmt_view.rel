@@ -100,6 +100,32 @@
 (stmt-free v)
 (commit)
 
+# 4. A row the transaction changed after the view was saved is not
+#    locked as read from the view, as a FOR UPDATE cursor's FETCH
+#    passes over a row updated or deleted after its DECLARE (dg
+#    WORKNOTE.md step 305); the running statement locks it.
+#    1. In a statement read t and save its view.
+#    2. In later statements update row 1 and delete row 2.
+#    3. Resume the view: locking either row fails with
+#       ERR_SELFMODIFIED, and the row of 5, unchanged, is locked.
+#    4. End it: the running statement locks row 1.
+(begin :rc)
+(stmt-begin)
+(assert-eq (ks) @[1 2 3 5 6 7])
+(def v (stmt-save))
+(stmt-begin)
+(update t r1 [11])
+(delete t r2)
+(stmt-begin)
+(stmt-resume v)
+(assert-err :err-selfmodified (lock-row t r1 :exclusive))
+(assert-err :err-selfmodified (lock-row t r2 :shared))
+(lock-row t r5 :exclusive)
+(stmt-end)
+(lock-row t r1 :exclusive)
+(stmt-free v)
+(abort)
+
 (session-close s1)
 (session-close s2)
 (env-detach :force true)

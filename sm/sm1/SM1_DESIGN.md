@@ -1002,6 +1002,16 @@ Halloween problem.
   me", or raises an error, as `INSERT ... ON CONFLICT` does.
   An insert is unchanged: a key the statement inserted is
   still a duplicate.
+- **A lock of a row the statement read** is refused the same
+  way: `sm1::lock` and `sm1::chain_lock` with `as_read`, as
+  SQL's FOR UPDATE and FOR SHARE lock a row, fail with
+  `SM_ERR_SELFMODIFIED` on a key whose newest version is the
+  transaction's own with `seq` above the mark, and take no
+  lock. PostgreSQL's FOR UPDATE passes over such a row, as a
+  cursor's FETCH does after a later UPDATE or DELETE of its
+  transaction. A lock without it, which a caller takes to read
+  the key's newest version, its own included (an insert's
+  arbiter, an index build), is unchanged. Scenario `a18`.
 - **A rollback lowers the mark** with `seq` (§6.5), since the
   rewound numbers are written again by the same statement.
 - **`sm1::stmt_advance` moves the mark to now** and leaves the

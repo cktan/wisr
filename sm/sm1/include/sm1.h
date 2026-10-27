@@ -590,6 +590,17 @@ enum locktype_t : uint8_t {
  * caller reads next under that lock is current, which is what
  * makes "lock, then read, then act" safe.
  *
+ * as_read says the row is one the running statement read, as
+ * SQL's FOR UPDATE and FOR SHARE lock it. Then a row whose newest
+ * version this transaction wrote after the statement began
+ * (sm1::stmt_begin) is not locked: the call fails with
+ * SM_ERR_SELFMODIFIED, as a write of it does, since the statement
+ * does not see that version. It is not an abort; PostgreSQL's
+ * FOR UPDATE passes over such a row, a cursor's after a later
+ * UPDATE or DELETE of its transaction. Without it, as a caller
+ * locks a key to read its newest version, the transaction's own
+ * included, no such check is made.
+ *
  * The lock is held to the end of the transaction, or until an
  * sm1::rollback() past the point it was taken. A conversion is
  * never undone by a rollback: the row stays locked in the
@@ -602,11 +613,12 @@ enum locktype_t : uint8_t {
  * it.
  *
  * Errors: SM_ERR_CONFLICT / SM_ERR_DEADLOCK (retryable),
- * SM_ERR_BLOCKED (under sm1::set_qa_nowait), SM_ERR_NOTFOUND
- * (store), SM_ERR_NOTRANS, SM_ERR_PREPARED, SM_ERR_INVALID.
+ * SM_ERR_BLOCKED (under sm1::set_qa_nowait), SM_ERR_SELFMODIFIED,
+ * SM_ERR_NOTFOUND (store), SM_ERR_NOTRANS, SM_ERR_PREPARED,
+ * SM_ERR_INVALID.
  */
 int lock(session_t* session, locktype_t type, uint64_t storeid,
-         std::string_view key, lockmode_t mode);
+         std::string_view key, lockmode_t mode, bool as_read = false);
 
 /*
  * Take a lock as sm1::lock does, if it can be had at once: this
@@ -627,7 +639,7 @@ int lock(session_t* session, locktype_t type, uint64_t storeid,
  * and SM_ERR_INTERRUPTED, which come of waiting.
  */
 int trylock(session_t* session, locktype_t type, uint64_t storeid,
-            std::string_view key, lockmode_t mode);
+            std::string_view key, lockmode_t mode, bool as_read = false);
 
 /*
  * Read the newest committed version of a key, ignoring the
@@ -1400,9 +1412,10 @@ int chain_read_latest(session_t* session, uint64_t storeid,
                       std::string_view key, rawpin_t* pin,
                       std::string_view& data);
 int chain_lock(session_t* session, uint64_t storeid,
-               std::string_view key, lockmode_t mode);
+               std::string_view key, lockmode_t mode, bool as_read = false);
 int chain_trylock(session_t* session, uint64_t storeid,
-                  std::string_view key, lockmode_t mode);
+                  std::string_view key, lockmode_t mode,
+                  bool as_read = false);
 
 /*
  * sm1::approxsize of a chained store's chained keys in [lo, hi):

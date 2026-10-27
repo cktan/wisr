@@ -558,7 +558,7 @@ int read_latest_chained(sm1::session_t *s, uint64_t storeid,
 
 /* sm1::chain_lock and chain_trylock, minus the out-of-memory guard. */
 int lock_chained(sm1::session_t *s, uint64_t storeid, std::string_view key,
-                 sm1::lockmode_t mode, bool nowait) {
+                 sm1::lockmode_t mode, bool nowait, bool as_read) {
   if (xct_check_active(s) != 0) {
     return -1;
   }
@@ -572,12 +572,20 @@ int lock_chained(sm1::session_t *s, uint64_t storeid, std::string_view key,
   if (!st.cf) {
     return -1;
   }
-  // A temporary store is the session's alone: there is no one to
-  // lock a row against (TEMPTABLE.md §3.4).
-  if (st.owner) {
-    return 0;
-  }
   rocksdb::Slice k(key.data(), key.size());
+  // A temporary store is the session's alone: there is no one to
+  // lock a row against (TEMPTABLE.md §3.4); only the transaction's
+  // own later change of a row read refuses the lock.
+  if (st.owner) {
+    if (!as_read) {
+      return 0;
+    }
+    checked_t c;
+    if (chain_latest(s, st, k, &c) != 0) {
+      return -1;
+    }
+    return lock_self_modified(s, c.own_seq);
+  }
   uint64_t commit_ts = 0;
   for (;;) {
     uint64_t inflight;
@@ -587,6 +595,11 @@ int lock_chained(sm1::session_t *s, uint64_t storeid, std::string_view key,
       std::lock_guard<std::mutex> latch(lock_latch(s->db, storeid, k));
       checked_t c;
       if (chain_latest(s, st, k, &c) != 0) {
+        return -1;
+      }
+      // A row read, changed by a later write of this transaction:
+      // not locked.
+      if (as_read && lock_self_modified(s, c.own_seq) != 0) {
         return -1;
       }
       inflight = c.inflight;
@@ -1127,14 +1140,15 @@ int sm1::chain_approxsize(sm1::session_t *session, uint64_t storeid,
 
 /* Lock a chained key without writing it; see sm1.h. */
 int sm1::chain_lock(sm1::session_t *session, uint64_t storeid,
-                    std::string_view key, sm1::lockmode_t mode) {
-  return lock_chained(session, storeid, key, mode, false);
+                    std::string_view key, sm1::lockmode_t mode, bool as_read) {
+  return lock_chained(session, storeid, key, mode, false, as_read);
 }
 
 /* Lock a chained key if it can be had at once; see sm1.h. */
 int sm1::chain_trylock(sm1::session_t *session, uint64_t storeid,
-                       std::string_view key, sm1::lockmode_t mode) {
-  return lock_chained(session, storeid, key, mode, true);
+                       std::string_view key, sm1::lockmode_t mode,
+                       bool as_read) {
+  return lock_chained(session, storeid, key, mode, true, as_read);
 }
 
 /* Read a chained key into pin; see sm1.h. */

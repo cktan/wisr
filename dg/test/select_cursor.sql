@@ -12,6 +12,9 @@
 --    though deleted after the DECLARE, and as it was though updated.
 -- 5. A SCROLL cursor WITH HOLD, read again from its start at its commit
 --    to be kept, keeps a row deleted after its DECLARE.
+-- 6. A FOR UPDATE cursor passes over a row its transaction updated, or
+--    deleted, after the DECLARE, at each isolation level, as
+--    PostgreSQL's does (step 305): neither the old row nor the new.
 create temp table uc (f1 int, f2 text);
 insert into uc values (1, 'one'), (2, 'two'), (3, 'three');
 begin;
@@ -64,3 +67,25 @@ commit;
 fetch all from c4;
 close c4;
 select * from uc order by f1;
+create temp table uf (a int);
+insert into uf values (1), (2), (3);
+begin isolation level read committed;
+declare c5 cursor for select a from uf for update;
+update uf set a = 20 where a = 2;
+fetch all from c5;
+rollback;
+begin isolation level read committed;
+declare c5 cursor for select a from uf for update;
+delete from uf where a = 2;
+fetch all from c5;
+rollback;
+begin isolation level repeatable read;
+declare c5 cursor for select a from uf for update;
+update uf set a = 20 where a = 2;
+fetch all from c5;
+rollback;
+begin isolation level serializable;
+declare c5 cursor for select a from uf for update;
+delete from uf where a = 2;
+fetch all from c5;
+rollback;

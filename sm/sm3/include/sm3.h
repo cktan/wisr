@@ -1477,7 +1477,10 @@ int tbl_read_latest(table_t* table, uint64_t id, pin_ref_t& ref,
  * row need not exist. It waits as a write does. A mode other than
  * shared needs the table opened to write, SM_ERR_INVALID if not.
  * Above read committed, a row committed since the snapshot fails
- * with SM_ERR_CONFLICT, as sm1::lock says.
+ * with SM_ERR_CONFLICT, as sm1::lock says. The row is one the
+ * running statement read (sm1::lock's as_read): one the
+ * transaction changed after the statement began is not locked,
+ * SM_ERR_SELFMODIFIED, which a FOR UPDATE cursor passes over.
  */
 int tbl_lock(table_t* table, uint64_t id, sm1::lockmode_t mode);
 

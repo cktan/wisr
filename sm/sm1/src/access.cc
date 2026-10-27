@@ -365,7 +365,7 @@ int lock_name(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
 /* sm1::lock, minus the out-of-memory guard. */
 int lock_row(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
              const char *key, size_t klen, sm1::lockmode_t mode,
-             bool nowait = false) {
+             bool nowait = false, bool as_read = false) {
   // Require an active, non-prepared transaction.
   if (xct_check_active(s) != 0) {
     return -1;
@@ -405,9 +405,19 @@ int lock_row(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
     return -1;
   }
   // A temporary store is the session's alone: there is no one to
-  // lock a row against (TEMPTABLE.md §3.4).
+  // lock a row against (TEMPTABLE.md §3.4); only the transaction's
+  // own later change of a row read refuses the lock.
   if (st.owner) {
-    return 0;
+    if (!as_read) {
+      return 0;
+    }
+    bool live;
+    uint64_t commit_ts;
+    uint32_t own_seq;
+    if (latest_version(s, st, k, &live, &commit_ts, nullptr, &own_seq) != 0) {
+      return -1;
+    }
+    return lock_self_modified(s, own_seq);
   }
   for (;;) {
     uint64_t inflight;
@@ -417,8 +427,14 @@ int lock_row(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
       std::lock_guard<std::mutex> latch(lock_latch(s->db, storeid, k));
       bool live;
       uint64_t commit_ts;
-      if (latest_version(s, st, k, &live, &commit_ts, nullptr, nullptr,
+      uint32_t own_seq;
+      if (latest_version(s, st, k, &live, &commit_ts, nullptr, &own_seq,
                          &inflight) != 0) {
+        return -1;
+      }
+      // A row read, changed by a later write of this transaction:
+      // not locked.
+      if (as_read && lock_self_modified(s, own_seq) != 0) {
         return -1;
       }
       // Free of uncommitted writes: take the lock if no holder
@@ -1163,14 +1179,17 @@ int sm1::scan_seek(sm1::scan_t *scan, std::string_view key, int inclusive) {
 
 /* Take a lock without writing anything; see sm1.h. */
 int sm1::lock(sm1::session_t *session, sm1::locktype_t type, uint64_t storeid,
-              std::string_view key, sm1::lockmode_t mode) {
-  return lock_row(session, type, storeid, key.data(), key.size(), mode);
+              std::string_view key, sm1::lockmode_t mode, bool as_read) {
+  return lock_row(session, type, storeid, key.data(), key.size(), mode, false,
+                  as_read);
 }
 
 /* Take a lock if it can be had at once; see sm1.h. */
 int sm1::trylock(sm1::session_t *session, sm1::locktype_t type,
-                 uint64_t storeid, std::string_view key, sm1::lockmode_t mode) {
-  return lock_row(session, type, storeid, key.data(), key.size(), mode, true);
+                 uint64_t storeid, std::string_view key, sm1::lockmode_t mode,
+                 bool as_read) {
+  return lock_row(session, type, storeid, key.data(), key.size(), mode, true,
+                  as_read);
 }
 
 /* Insert a row; the key must not exist. */
