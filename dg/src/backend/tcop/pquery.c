@@ -455,6 +455,13 @@ void PortalStart(Portal portal, ParamListInfo params, int eflags,
       portal->queryDesc = queryDesc;
 
       /*
+       * A named portal, a cursor, may run on in later statements: each run
+       * reads at sm's view of this one, as at its snapshot.
+       */
+      if (portal->name[0] != '\0')
+        portal->smView = smstore_view_save();
+
+      /*
        * Remember tuple descriptor (computed by ExecutorStart)
        */
       portal->tupDesc = queryDesc->tupDesc;
@@ -826,7 +833,8 @@ static uint64 PortalRunSelect(Portal portal, bool forward, long count,
       nprocessed = RunFromStore(portal, direction, (uint64)count, dest);
     else {
       PushActiveSnapshot(queryDesc->snapshot);
-      ExecutorRun(queryDesc, direction, (uint64)count);
+      PortalRunInView(portal,
+                      [&] { ExecutorRun(queryDesc, direction, (uint64)count); });
       nprocessed = queryDesc->estate->es_processed;
       PopActiveSnapshot();
     }
@@ -860,7 +868,8 @@ static uint64 PortalRunSelect(Portal portal, bool forward, long count,
       nprocessed = RunFromStore(portal, direction, (uint64)count, dest);
     else {
       PushActiveSnapshot(queryDesc->snapshot);
-      ExecutorRun(queryDesc, direction, (uint64)count);
+      PortalRunInView(portal,
+                      [&] { ExecutorRun(queryDesc, direction, (uint64)count); });
       nprocessed = queryDesc->estate->es_processed;
       PopActiveSnapshot();
     }
@@ -1501,7 +1510,7 @@ static void DoPortalRewind(Portal portal) {
   queryDesc = portal->queryDesc;
   if (queryDesc) {
     PushActiveSnapshot(queryDesc->snapshot);
-    ExecutorRewind(queryDesc);
+    PortalRunInView(portal, [&] { ExecutorRewind(queryDesc); });
     PopActiveSnapshot();
   }
 

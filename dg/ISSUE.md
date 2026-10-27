@@ -7,8 +7,9 @@ ON CONFLICT DO UPDATE affecting a row twice, was fixed in
 `WORKNOTE.md` step 237; issue 3, a numeric range in an array
 or a multirange losing its bound, in step 300; issue 6, a
 duplicate key in a table made in a savepoint saying the wrong
-error, in step 302; and issue 7, ON COMMIT DELETE ROWS
-ignoring a foreign key into the table, in step 303.
+error, in step 302; issue 7, ON COMMIT DELETE ROWS ignoring a
+foreign key into the table, in step 303; and issue 4, a cursor
+seeing its own transaction's later DELETE, in step 304.
 
 ---
 
@@ -69,32 +70,6 @@ yet: "where to start" is where the difference shows, not a
 cause found.
 
 ---
-
-## Issue 4: a cursor sees its own transaction's later DELETE
-
-A cursor reads with the snapshot it was declared with, so a
-row the transaction deletes afterwards is still the cursor's,
-as `MOVE BACKWARD ALL` and a FETCH show. digres's cursor loses
-it. A wrong answer.
-
-```sql
-create table uc (f1 int, f2 text);
-insert into uc values (1, 'one'), (2, 'two'), (3, 'three');
-begin;
-declare c1 cursor for select * from uc;
-fetch 2 from c1;
-delete from uc where current of c1;
-move backward all in c1;
-fetch all from c1;
--- PostgreSQL: 1 one, 2 two, 3 three
--- digres:     1 one, 3 three
-commit;
-```
-
-pgregress: `portals`. **Where to start**: what a cursor's scan
-reads when it is rewound, and at which statement mark
-(`sm1::stmt_advance`): the DECLARE's would keep the row, the
-transaction's latest would not.
 
 ## Issue 5: a FOR UPDATE cursor returns a row updated after it was declared
 

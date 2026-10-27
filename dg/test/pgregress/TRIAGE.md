@@ -88,7 +88,7 @@ Each reproduces alone on both servers, and is an issue in
 | Issue | What | Where | Priority |
 | --- | --- | --- | --- |
 | 3 | Fixed, `../../WORKNOTE.md` step 300: a numeric range inside an array or a multirange came back with a garbage bound: `nummultirange(numrange(5.0, 6.0), numrange(1.0, 2.0))` is `{[1.0,2475880078570760549798248448)}`, `ARRAY[numrange(1.1, 1.2), numrange(12.3, 155.5)]` likewise. `numrange` alone is right. | `multirangetypes`, `rangetypes` | high: a wrong answer |
-| 4 | A cursor sees its own transaction's later DELETE: after `DELETE ... WHERE CURRENT OF c1`, `MOVE BACKWARD ALL` and `FETCH ALL` miss the deleted row, which a cursor's snapshot keeps. | `portals` | high: a wrong answer |
+| 4 | Fixed, `../../WORKNOTE.md` step 304: a cursor saw its own transaction's later DELETE: after `DELETE ... WHERE CURRENT OF c1`, `MOVE BACKWARD ALL` and `FETCH ALL` missed the deleted row, which a cursor's snapshot keeps. | `portals` | high: a wrong answer |
 | 5 | A `FOR UPDATE` cursor in a SERIALIZABLE transaction returns a row the transaction updated after DECLARE; PostgreSQL returns none. | `portals` | medium |
 | 6 | Fixed, `../../WORKNOTE.md` step 302: a duplicate key in a table made in a savepoint said `could not open relation with OID N`, not the unique violation: `BEGIN; SAVEPOINT x; CREATE TABLE koju (a int UNIQUE);` and the same INSERT twice. | `transactions` | medium: the row is refused, the error is wrong |
 | 7 | Fixed, `../../WORKNOTE.md` step 303: `ON COMMIT DELETE ROWS` on a table a foreign key references committed; PostgreSQL refuses it, as the delete would break the key. | `temp` | medium |

@@ -750,6 +750,7 @@ int sm_pin_tuple(sm_pin_ref_t ref, const void **tuple, size_t *len) {
 
 struct sm_stmt_t {
   sm3::stmt_t outer;
+  sm_stmt_t *resumed = nullptr; /* the view sm_stmt_resume ran, if any */
 };
 
 /* Begin a statement inside the running one, saving the outer. */
@@ -774,9 +775,61 @@ int sm_stmt_end(sm_session_t *session, sm_stmt_t *outer) {
     if (!session || !saved) {
       return null_arg("sm_stmt_end", !session ? "session" : "outer");
     }
+    // A resumed view with no snapshot keeps the one its run took.
+    sm_stmt_t *view = saved->resumed;
+    if (view && !view->outer.sm1.taken) {
+      sm3::stmt_t now;
+      if (sm3::stmt_begin(session->sm3, now) != 0) {
+        return -1;
+      }
+      view->outer.sm1.taken = now.sm1.taken;
+      view->outer.sm1.snapshot_ts = now.sm1.snapshot_ts;
+    }
     return sm3::stmt_end(session->sm3, saved->outer);
   });
 }
+
+/* Save the running statement's view, for sm_stmt_resume. */
+int sm_stmt_save(sm_session_t *session, sm_stmt_t **view) {
+  return guard(session, [&] {
+    if (!session || !view) {
+      return null_arg("sm_stmt_save", !session ? "session" : "view");
+    }
+    // Begun inside the running statement, which it copies, and
+    // ended at once, which puts the running one back unchanged.
+    auto saved = std::make_unique<sm_stmt_t>();
+    if (sm3::stmt_begin(session->sm3, saved->outer) != 0 ||
+        sm3::stmt_end(session->sm3, saved->outer) != 0) {
+      return -1;
+    }
+    *view = saved.release();
+    return 0;
+  });
+}
+
+/* Run a saved view's statement inside the running one. */
+int sm_stmt_resume(sm_session_t *session, sm_stmt_t *view, sm_stmt_t **outer) {
+  return guard(session, [&] {
+    if (!session || !view || !outer) {
+      return null_arg("sm_stmt_resume", !session ? "session"
+                                        : !view  ? "view"
+                                                 : "outer");
+    }
+    // The running statement is put aside, then the view put in its
+    // place, as sm_stmt_end puts an outer statement back.
+    auto saved = std::make_unique<sm_stmt_t>();
+    if (sm3::stmt_begin(session->sm3, saved->outer) != 0 ||
+        sm3::stmt_end(session->sm3, view->outer) != 0) {
+      return -1;
+    }
+    saved->resumed = view;
+    *outer = saved.release();
+    return 0;
+  });
+}
+
+/* Free a saved view. */
+void sm_stmt_free(sm_stmt_t *view) { delete view; }
 
 /* Advance the running statement's mark to now. */
 int sm_stmt_advance(sm_session_t *session) {

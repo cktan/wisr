@@ -638,6 +638,44 @@ void smstore_statement_advance(void) {
 }
 
 /*
+ * The running statement's view in sm, its snapshot and the transaction's
+ * writes it sees, for a cursor's later runs to read at
+ * (smstore_view_resume()), as its query's snapshot is PostgreSQL's
+ * (sm_stmt_save).  Freed by smstore_view_free().
+ */
+void *smstore_view_save(void) {
+  sm_stmt_t *view;
+
+  if (sm_stmt_save(xact_session(), &view) != 0)
+    sm_error("save a statement's view");
+  return view;
+}
+
+/*
+ * Read at view inside the running statement until smstore_view_end() of
+ * what this returns, the running statement put aside (sm_stmt_resume).
+ */
+void *smstore_view_resume(void *view) {
+  sm_stmt_t *outer;
+
+  if (sm_stmt_resume(xact_session(), (sm_stmt_t *)view, &outer) != 0)
+    sm_error("resume a statement's view");
+  return outer;
+}
+
+/*
+ * Put back the statement smstore_view_resume() put aside, and free it.
+ * Raises nothing, as it runs while an error unwinds too: one whose
+ * transaction sm has aborted has no statement to put back.
+ */
+void smstore_view_end(void *outer) {
+  sm_stmt_end(datadir_sm_session(), (sm_stmt_t *)outer);
+}
+
+/* Free a view smstore_view_save() made; NULL is a no-op. */
+void smstore_view_free(void *view) { sm_stmt_free((sm_stmt_t *)view); }
+
+/*
  * A decimal column with no precision is the widest of its sm type at three
  * places: numeric(17, 3) for decimal64, numeric(36, 3) for decimal128
  * (DECIMAL.md section 2.3), as sm needs a scale to store at.

@@ -64,6 +64,10 @@ int catalog_t::env_detach(int force) {
       sm_stmt_end(sctx.session, outer);
     }
     sctx.outer_stmts.clear();
+    for (auto &[handle, view] : sctx.views) {
+      sm_stmt_free(view);
+    }
+    sctx.views.clear();
 
     if (sctx.session != nullptr) {
       sm_closedb(sctx.session);
@@ -132,6 +136,10 @@ int catalog_t::session_close(const std::string &name) {
     sm_stmt_end(it->second.session, outer);
   }
   it->second.outer_stmts.clear();
+  for (auto &[handle, view] : it->second.views) {
+    sm_stmt_free(view);
+  }
+  it->second.views.clear();
 
   if (it->second.session != nullptr) {
     sm_closedb(it->second.session);

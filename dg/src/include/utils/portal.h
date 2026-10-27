@@ -184,6 +184,15 @@ typedef struct PortalData {
   Snapshot holdSnapshot; /* registered snapshot, or NULL if none */
 
   /*
+   * sm's view of a named portal's query when it started, its snapshot and
+   * the transaction's writes it sees (smstore_view_save()): each run of
+   * its executor reads at it, as PostgreSQL's reads at the query's
+   * snapshot, so a FETCH sees no write made since the DECLARE.  NULL for
+   * an unnamed portal, run to its end in its statement.
+   */
+  void *smView;
+
+  /*
    * atStart, atEnd and portalPos indicate the current cursor position.
    * portalPos is zero before the first row, N after fetching N'th row of
    * query.  After we run off the end, portalPos = # of rows in query, and

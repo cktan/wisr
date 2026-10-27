@@ -820,8 +820,14 @@ FETCH ALL FROM c1;
 
 -- cursor is insensitive
 MOVE BACKWARD ALL IN c1;
---dg-differs: the result
---dg FETCH ALL FROM c1;
+FETCH ALL FROM c1;
+ f1 |  f2   
+----+-------
+  1 | one
+  2 | two
+  3 | three
+(3 rows)
+
 COMMIT;
 -- should still see deletion
 SELECT * FROM uctest;
@@ -841,11 +847,21 @@ FETCH c1;
 (1 row)
 
 UPDATE uctest SET f1 = 8 WHERE CURRENT OF c1;
---dg-differs: the result
---dg SELECT * FROM uctest;
+SELECT * FROM uctest;
+ f1 |  f2   
+----+-------
+  3 | three
+  8 | one
+(2 rows)
+
 COMMIT;
---dg-differs: the result
---dg SELECT * FROM uctest;
+SELECT * FROM uctest;
+ f1 |  f2   
+----+-------
+  3 | three
+  8 | one
+(2 rows)
+
 -- Check repeated-update and update-then-delete cases
 BEGIN;
 DECLARE c1 CURSOR FOR SELECT * FROM uctest;
@@ -877,8 +893,13 @@ DECLARE c1 CURSOR FOR SELECT * FROM uctest;
 --dg-cascade
 --dg FETCH RELATIVE 0 FROM c1;
 ROLLBACK;
---dg-differs: the result
---dg SELECT * FROM uctest;
+SELECT * FROM uctest;
+ f1 |  f2   
+----+-------
+  3 | three
+  8 | one
+(2 rows)
+
 BEGIN;
 DECLARE c1 CURSOR FOR SELECT * FROM uctest FOR UPDATE;
 --dg-differs: the result
@@ -907,8 +928,13 @@ DECLARE c1 CURSOR FOR SELECT * FROM uctest FOR UPDATE;
 --dg-cascade
 --dg FETCH RELATIVE 0 FROM c1;
 ROLLBACK;
---dg-differs: the result
---dg SELECT * FROM uctest;
+SELECT * FROM uctest;
+ f1 |  f2   
+----+-------
+  3 | three
+  8 | one
+(2 rows)
+
 -- Check insensitive cursor with INSERT
 -- (The above tests don't test the SQL notion of an insensitive cursor
 -- correctly, because per SQL standard, changes from WHERE CURRENT OF
@@ -924,8 +950,14 @@ INSERT INTO uctest VALUES (10, 'ten');
 --dg-cascade
 --dg FETCH NEXT FROM c1;  -- insert not visible
 COMMIT;
---dg-differs: the result
---dg SELECT * FROM uctest;
+SELECT * FROM uctest;
+ f1 |  f2   
+----+-------
+  3 | three
+  8 | one
+ 10 | ten
+(3 rows)
+
 DELETE FROM uctest WHERE f1 = 10;  -- restore test table state
 -- Check inheritance cases
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet

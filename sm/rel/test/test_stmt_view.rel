@@ -1,0 +1,107 @@
+# test_stmt_view.rel -- (stmt-save) and (stmt-resume), a statement's
+# view read at again later in its transaction, as a cursor reads at
+# its DECLARE's view on each FETCH (dg WORKNOTE.md step 304): it sees
+# the transaction's writes made before the save, at the save's
+# snapshot, and nothing since.
+
+(def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_stmt_view"))
+(rm-rf test-dir)
+(env-init test-dir)
+(env-attach test-dir)
+
+(db-create "viewdb")
+(session-open s1 "viewdb")
+(session-open s2 "viewdb")
+(session-use s1)
+(begin :rc)
+(table-create t (columns (k :int4 :not-null)))
+(def r1 (insert t [1]))
+(def r2 (insert t [2]))
+(insert t [3])
+(commit)
+
+# The k of every row of t, in _id order.
+(defn ks [] (map |(($ 1) 0) (scan t)))
+
+# 1. A resumed view sees the transaction's writes as they stood at the
+#    save, and none made since; the running statement sees them all.
+#    1. Insert 10 in a statement; in the next, read t and save its view.
+#    2. In later statements delete 2, update 1 to 11, insert 4.
+#    3. Resume the view: it reads 1, 2, 3 and 10, and row 2 by _id.
+#    4. End it: the running statement reads 11, 3, 10 and 4.
+(begin :rc)
+(stmt-begin)
+(insert t [10])
+(stmt-begin)
+(assert-eq (ks) @[1 2 3 10])
+(def v (stmt-save))
+(stmt-begin)
+(delete t r2)
+(update t r1 [11])
+(insert t [4])
+(stmt-begin)
+(stmt-resume v)
+(assert-eq (ks) @[1 2 3 10])
+(assert-eq (read t r2) [2])
+(stmt-end)
+(assert-eq (ks) @[11 3 10 4])
+(stmt-free v)
+(abort)
+
+# 2. A view keeps its snapshot: under READ COMMITTED, a row another
+#    session commits after the save is not seen by the view, and is
+#    by a new statement.
+#    1. s1 reads t in a statement and saves its view.
+#    2. s2 inserts 5 and commits.
+#    3. s1 resumes the view: no 5; a new statement of s1 reads 5.
+(begin :rc)
+(stmt-begin)
+(assert-eq (ks) @[1 2 3])
+(def v (stmt-save))
+(session-use s2)
+(begin :rc)
+(def r5 (insert t [5]))
+(commit)
+(session-use s1)
+(stmt-begin)
+(stmt-resume v)
+(assert-eq (ks) @[1 2 3])
+(stmt-end)
+(assert-eq (ks) @[1 2 3 5])
+(stmt-free v)
+(commit)
+
+# 3. A view saved before its statement read takes its snapshot at its
+#    first resumed read, and keeps it for every later resume.
+#    1. s1 begins a statement and saves its view before any read.
+#    2. s2 inserts 6 and commits; s1 resumes the view: it reads 6.
+#    3. s2 inserts 7 and commits; s1 resumes the view again: no 7.
+(begin :rc)
+(stmt-begin)
+(def v (stmt-save))
+(session-use s2)
+(begin :rc)
+(insert t [6])
+(commit)
+(session-use s1)
+(stmt-begin)
+(stmt-resume v)
+(assert-eq (ks) @[1 2 3 5 6])
+(stmt-end)
+(session-use s2)
+(begin :rc)
+(insert t [7])
+(commit)
+(session-use s1)
+(stmt-begin)
+(stmt-resume v)
+(assert-eq (ks) @[1 2 3 5 6])
+(stmt-end)
+(stmt-free v)
+(commit)
+
+(session-close s1)
+(session-close s2)
+(env-detach :force true)
+(rm-rf test-dir)
+(print "test_stmt_view.rel: PASSED")

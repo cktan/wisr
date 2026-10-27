@@ -448,6 +448,52 @@ static Janet cfun_stmt_end(int32_t argc, Janet *argv) {
   return janet_wrap_nil();
 }
 
+/* The view (stmt-save) gave as handle argv[n]; a panic if none. */
+static sm_stmt_t *need_view(session_ctx_t *s, Janet *argv, int32_t n,
+                            const char *op) {
+  auto it = s->views.find(janet_getinteger(argv, n));
+  if (it == s->views.end()) {
+    janet_panicf("%s: no view %d", op, janet_getinteger(argv, n));
+  }
+  return it->second;
+}
+
+/* (stmt-save) -- the running statement's view, as a handle */
+static Janet cfun_stmt_save(int32_t argc, Janet *argv) {
+  (void)argv;
+  janet_fixarity(argc, 0);
+  session_ctx_t *s = require_session();
+  sm_stmt_t *view = nullptr;
+  if (sm_stmt_save(s->session, &view) != 0) {
+    panic_sm_error("stmt-save");
+  }
+  s->views[++s->next_view] = view;
+  return janet_wrap_integer(s->next_view);
+}
+
+/* (stmt-resume v) */
+static Janet cfun_stmt_resume(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 1);
+  session_ctx_t *s = require_session();
+  sm_stmt_t *view = need_view(s, argv, 0, "stmt-resume");
+  sm_stmt_t *outer = nullptr;
+  if (sm_stmt_resume(s->session, view, &outer) != 0) {
+    panic_sm_error("stmt-resume");
+  }
+  // Ended by (stmt-end), as a statement (stmt-inner) began.
+  s->outer_stmts.push_back(outer);
+  return janet_wrap_nil();
+}
+
+/* (stmt-free v) */
+static Janet cfun_stmt_free(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 1);
+  session_ctx_t *s = require_session();
+  sm_stmt_free(need_view(s, argv, 0, "stmt-free"));
+  s->views.erase(janet_getinteger(argv, 0));
+  return janet_wrap_nil();
+}
+
 /* (stmt-advance) */
 static Janet cfun_stmt_advance(int32_t argc, Janet *argv) {
   (void)argv;
@@ -2743,6 +2789,11 @@ static const JanetReg s_rel_cfuns[] = {
      "(stmt-inner) -- begin a statement inside the running one"},
     {"stmt-end", cfun_stmt_end,
      "(stmt-end) -- end the last (stmt-inner), resuming the outer"},
+    {"stmt-save", cfun_stmt_save,
+     "(stmt-save) -- save the running statement's view; returns a handle"},
+    {"stmt-resume", cfun_stmt_resume,
+     "(stmt-resume v) -- run view v's statement; (stmt-end) ends it"},
+    {"stmt-free", cfun_stmt_free, "(stmt-free v) -- free view v"},
     {"stmt-advance", cfun_stmt_advance,
      "(stmt-advance) -- the running statement sees its writes so far"},
     {"qa-nowait", cfun_qa_nowait,

@@ -367,7 +367,7 @@ void PersistHoldablePortal(Portal portal) {
      * explicitly.
      */
     if (portal->cursorOptions & CURSOR_OPT_SCROLL) {
-      ExecutorRewind(queryDesc);
+      PortalRunInView(portal, [&] { ExecutorRewind(queryDesc); });
     } else {
       /*
        * If we already reached end-of-query, set the direction to
@@ -391,7 +391,7 @@ void PersistHoldablePortal(Portal portal) {
                                     portal->holdContext, true, NULL, NULL);
 
     /* Fetch the result set into the tuplestore */
-    ExecutorRun(queryDesc, direction, 0);
+    PortalRunInView(portal, [&] { ExecutorRun(queryDesc, direction, 0); });
 
     queryDesc->dest->rDestroy(queryDesc->dest);
     queryDesc->dest = NULL;

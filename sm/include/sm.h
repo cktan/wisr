@@ -279,6 +279,30 @@ int sm_stmt_begin_inner(sm_session_t* session, sm_stmt_t** outer);
 int sm_stmt_end(sm_session_t* session, sm_stmt_t* outer);
 
 /*
+ * Save the running statement's view, its snapshot and mark, in
+ * *view, to read at again later in the transaction with
+ * sm_stmt_resume, as a cursor reads at its DECLARE's view on each
+ * FETCH. The running statement goes on unchanged. A view outlives
+ * no transaction: the caller frees it with sm_stmt_free before
+ * the transaction ends, or after.
+ */
+int sm_stmt_save(sm_session_t* session, sm_stmt_t** view);
+
+/*
+ * Run view's statement inside the running one, saving the running
+ * one in *outer, which sm_stmt_end takes back and frees. Reads
+ * then see the transaction's writes made before view was saved,
+ * at its snapshot, and none since. A view saved before its
+ * statement took a snapshot takes it at its first resumed read,
+ * and keeps it for every later resume.
+ */
+int sm_stmt_resume(sm_session_t* session, sm_stmt_t* view,
+                   sm_stmt_t** outer);
+
+/* Free a view sm_stmt_save made; NULL is a no-op. */
+void sm_stmt_free(sm_stmt_t* view);
+
+/*
  * Advance the running statement to now, as PostgreSQL's
  * CommandCounterIncrement does: its later reads see the
  * transaction's writes so far, its own included, at the same

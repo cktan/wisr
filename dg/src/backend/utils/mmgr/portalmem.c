@@ -18,6 +18,7 @@
  */
 #include "postgres.h"
 
+#include "access/smstore.h"
 #include "access/xact.h"
 #include "commands/portalcmds.h"
 #include "funcapi.h"
@@ -477,6 +478,10 @@ void PortalDrop(Portal portal, bool isTopCommit) {
       UnregisterSnapshotFromOwner(portal->holdSnapshot, portal->resowner);
     portal->holdSnapshot = NULL;
   }
+
+  /* Its view in sm, which outlives no transaction's use of it. */
+  smstore_view_free(portal->smView);
+  portal->smView = NULL;
 
   /*
    * Release any resources still attached to the portal.  There are several

@@ -404,8 +404,7 @@ SELECT * FROM uctest;
 FETCH ALL FROM c1;
 -- cursor is insensitive
 MOVE BACKWARD ALL IN c1;
---dg-differs: the result
---dg FETCH ALL FROM c1;
+FETCH ALL FROM c1;
 COMMIT;
 -- should still see deletion
 SELECT * FROM uctest;
@@ -415,11 +414,9 @@ BEGIN;
 DECLARE c1 CURSOR FOR SELECT * FROM uctest FOR UPDATE;
 FETCH c1;
 UPDATE uctest SET f1 = 8 WHERE CURRENT OF c1;
---dg-differs: the result
---dg SELECT * FROM uctest;
+SELECT * FROM uctest;
 COMMIT;
---dg-differs: the result
---dg SELECT * FROM uctest;
+SELECT * FROM uctest;
 
 -- Check repeated-update and update-then-delete cases
 BEGIN;
@@ -452,8 +449,7 @@ DECLARE c1 CURSOR FOR SELECT * FROM uctest;
 --dg-cascade
 --dg FETCH RELATIVE 0 FROM c1;
 ROLLBACK;
---dg-differs: the result
---dg SELECT * FROM uctest;
+SELECT * FROM uctest;
 
 BEGIN;
 DECLARE c1 CURSOR FOR SELECT * FROM uctest FOR UPDATE;
@@ -483,8 +479,7 @@ DECLARE c1 CURSOR FOR SELECT * FROM uctest FOR UPDATE;
 --dg-cascade
 --dg FETCH RELATIVE 0 FROM c1;
 ROLLBACK;
---dg-differs: the result
---dg SELECT * FROM uctest;
+SELECT * FROM uctest;
 
 -- Check insensitive cursor with INSERT
 -- (The above tests don't test the SQL notion of an insensitive cursor
@@ -501,8 +496,7 @@ INSERT INTO uctest VALUES (10, 'ten');
 --dg-cascade
 --dg FETCH NEXT FROM c1;  -- insert not visible
 COMMIT;
---dg-differs: the result
---dg SELECT * FROM uctest;
+SELECT * FROM uctest;
 DELETE FROM uctest WHERE f1 = 10;  -- restore test table state
 
 -- Check inheritance cases

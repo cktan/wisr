@@ -107,6 +107,8 @@ struct session_ctx_t {
   sm_session_t *session = nullptr;
   std::vector<std::unique_ptr<table_def_t>> stmt_tables; /* this statement's */
   std::vector<sm_stmt_t *> outer_stmts; /* put aside by (stmt-inner) */
+  std::map<int32_t, sm_stmt_t *> views; /* by (stmt-save)'s handle */
+  int32_t next_view = 0;                /* the last handle given out */
   std::map<int32_t, std::unique_ptr<cursor_t>> cursors; /* by handle */
   int32_t next_cursor = 0; /* the last handle given out */
 };

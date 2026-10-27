@@ -14,6 +14,7 @@
 #ifndef PQUERY_H
 #define PQUERY_H
 
+#include "access/smstore.h"
 #include "nodes/parsenodes.h"
 #include "utils/portal.h"
 
@@ -42,5 +43,29 @@ extern uint64 PortalRunFetch(Portal portal, FetchDirection fdirection,
 extern bool PlannedStmtRequiresSnapshot(struct PlannedStmt *pstmt);
 
 extern void EnsurePortalSnapshotExists(void);
+
+/*
+ * Run run, a step of portal's executor, at the portal's view in sm
+ * (PortalData's smView), if it has one, as its query's snapshot is pushed
+ * around each step: so a FETCH reads as its DECLARE did.
+ */
+template <typename F> static inline void PortalRunInView(Portal portal, F run) {
+  void *outer;
+
+  if (portal->smView == NULL) {
+    run();
+    return;
+  }
+  outer = smstore_view_resume(portal->smView);
+  PG_TRY();
+  {
+    run();
+  }
+  PG_FINALLY();
+  {
+    smstore_view_end(outer);
+  }
+  PG_END_TRY();
+}
 
 #endif /* PQUERY_H */

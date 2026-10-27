@@ -201,6 +201,26 @@ after it.
 (insert t [1])
 ```
 
+### `(stmt-save)`, `(stmt-resume v)` and `(stmt-free v)`
+`(stmt-save)` saves the running statement's view, its snapshot
+and mark, and returns a handle to it (`sm_stmt_save`).
+`(stmt-resume v)` runs view `v`'s statement inside the running
+one, as a cursor's FETCH reads at its DECLARE's view: it sees
+the transaction's writes made before the save, at its snapshot,
+and none since. `(stmt-end)` ends it, as it ends `(stmt-inner)`.
+A view saved before its statement read takes its snapshot at
+its first resumed read, and keeps it. `(stmt-free v)` frees it.
+
+```janet
+(def v (stmt-save))
+(stmt-begin)
+(delete t id)
+(stmt-resume v)
+(read t id)        # the row, as v saw it
+(stmt-end)
+(stmt-free v)
+```
+
 ### `(qa-nowait on)`
 Sets whether the active session waits for locks. With `true`,
 an operation that would wait for another session's lock fails

@@ -8751,3 +8751,56 @@ each table by `smstore_truncate()` and skipped the check.
   referencing itself, commit empty. pgregress's `temp`,
   ported again, has its COMMIT back, and two statements after
   it that had been taken out as its cascade.
+
+## Step 304: a cursor reads as its DECLARE did on each FETCH
+
+A cursor saw its own transaction's writes made after its
+DECLARE (`ISSUE.md` issue 4): a row deleted after it was
+gone once the cursor was rewound, `MOVE BACKWARD ALL`, and a
+row inserted after it was there. Not rewinds alone: a nested
+loop's inner scan, begun again for each outer row in a later
+FETCH, missed an inner row deleted since, and an index scan
+missed one with no rewind at all, its row read by rowno. A
+scan open since the DECLARE kept its view; anything the plan
+read anew in a FETCH read in the FETCH's statement, which
+sees the transaction's writes so far. PostgreSQL's FETCH runs
+the executor at the query's snapshot, with the DECLARE's
+command id.
+
+- **sm** (`sm.h`): `sm_stmt_save()` copies the running
+  statement's view, its snapshot and mark, and
+  `sm_stmt_resume()` runs a saved view inside the running
+  statement, until `sm_stmt_end()` puts the running one back;
+  `sm_stmt_free()` frees a view. Both are sm3's
+  `stmt_begin(outer)` and `stmt_end()`, a trigger's nesting:
+  sm1 is unchanged. No pin is needed: a READ COMMITTED
+  transaction keeps its begin snapshot registered, at or
+  below any statement's (`sm1/SM1_DESIGN.md` §6.2). A view
+  saved before its statement read takes its snapshot at its
+  first resumed read, and `sm_stmt_end()` keeps it in the
+  view for every later resume.
+- **dg**: `PortalStart()` saves the view of a named portal, a
+  cursor (`PortalData`'s `smView`); `PortalRunInView()`
+  (`tcop/pquery.h`) resumes it around each step of its
+  executor, `ExecutorRun()` in `PortalRunSelect()`,
+  `ExecutorRewind()` in `DoPortalRewind()`, and both in
+  `PersistHoldablePortal()`, putting the running statement
+  back by `PG_FINALLY` if the step raises; `PortalDrop()`
+  frees it. An unnamed portal runs to its end in its
+  statement, and saves none.
+- **Tests**: `test/select_cursor.sql` (run.sh, 10 files now):
+  a rewind after a DELETE and after an INSERT, a nested loop's
+  inner row deleted, an index scan's row deleted and updated,
+  and a SCROLL cursor WITH HOLD read again at its commit; each
+  case fails without the fix.
+  `../sm/rel/test/test_stmt_view.rel`: a resumed view sees
+  the writes before its save and none since, keeps its
+  snapshot under READ COMMITTED, and one saved before a read
+  keeps the snapshot its first resume took.
+  pgregress's `portals`, ported again, has its `FETCH ALL`
+  after `MOVE BACKWARD ALL` back, and five `SELECT * FROM
+  uctest` whose markers dated from the first port: digres
+  gives their rows today with or without this fix.
+- **Not fixed**: issue 5, a FOR UPDATE cursor under
+  SERIALIZABLE returning a row updated after its DECLARE, is
+  as it was.

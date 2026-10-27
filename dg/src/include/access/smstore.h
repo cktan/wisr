@@ -156,6 +156,10 @@ typedef struct smstore_view_t {
 extern void smstore_statement_start(void);
 extern void smstore_statement_end(void);
 extern void smstore_statement_advance(void);
+extern void *smstore_view_save(void);
+extern void *smstore_view_resume(void *view);
+extern void smstore_view_end(void *outer);
+extern void smstore_view_free(void *view);
 extern void smstore_commit(void);
 extern void smstore_abort(void);
 extern void smstore_subcommit(void);
