@@ -3,7 +3,8 @@
 digres is PostgreSQL 18 on sm, and leaves much of PostgreSQL
 out. This file lists what a PostgreSQL user will miss: features
 refused with an error, features removed outright, and features
-that run but behave differently. It is a map, not the record:
+that run but behave differently; and, in §10, what digres takes
+that PostgreSQL does not. It is a map, not the record:
 each entry names where the reasons are, a `WORKNOTE.md` step,
 `PLAN.md`'s decisions, or a design document under `../sm/`.
 
@@ -15,6 +16,7 @@ Each entry is marked:
 | **never** | refused or removed by a decision of record: not to be built |
 | **removed** | the code is gone; the feature cannot be asked for |
 | **differs** | it runs, and answers otherwise than PostgreSQL |
+| **added** | digres's own: PostgreSQL refuses it (§10) |
 
 "pgregress: N" is how many statements of PostgreSQL's
 regression files are taken out for it (`test/pgregress`,
@@ -237,3 +239,20 @@ regression files are taken out for it (`test/pgregress`,
   (`SYSCATALOG.md`). `information_schema`, the statistics views
   and `pg_description` are missing; `pg_stats` is a function
   (step 78).
+
+## 10. What digres adds
+
+What digres takes that PostgreSQL does not. A schema that uses
+it is digres's: PostgreSQL refuses it, and `pg_dump` from
+digres does not carry it.
+
+- **A column's update default** — added (`ONUPDATE.md`, step
+  306): `DEFAULT x ON UPDATE`, the value an UPDATE
+  writes in the column when it does not assign it, beside an
+  optional plain `DEFAULT y` for INSERT. `x` and `y` are
+  constants or `CURRENT_TIMESTAMP`, `LOCALTIMESTAMP` or
+  `CURRENT_DATE`. It keeps a modification time or a state an
+  edit moves a row to, which PostgreSQL keeps with a BEFORE
+  UPDATE trigger, and digres has none (§6). sq's grammar takes
+  it as its one rule beyond PostgreSQL's (`../sq/DESIGN.md`
+  §2); psql's `\d` shows the plain default alone.

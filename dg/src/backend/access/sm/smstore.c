@@ -1588,6 +1588,60 @@ static const char *column_default(ColumnDef *col, Oid typid, int32 typmod) {
   return nodeToString(expr);
 }
 
+/*
+ * Whether raw is a default ONUPDATE.md §2 takes beside an update default:
+ * a constant, cast or not, or CURRENT_TIMESTAMP, LOCALTIMESTAMP or
+ * CURRENT_DATE with no precision.
+ */
+static bool update_default_kind(const Node *raw) {
+  while (IsA(raw, TypeCast))
+    raw = ((const TypeCast *)raw)->arg;
+  if (IsA(raw, A_Const))
+    return true;
+  if (!IsA(raw, SQLValueFunction))
+    return false;
+  SQLValueFunctionOp op = ((const SQLValueFunction *)raw)->op;
+  return SVFOP_CURRENT_TIMESTAMP == op || SVFOP_LOCALTIMESTAMP == op ||
+         SVFOP_CURRENT_DATE == op;
+}
+
+/* col's update default, its CONSTR_DEFAULT marked 'u', or NULL. */
+static const Constraint *update_default_of(const ColumnDef *col) {
+  foreach_node(Constraint, c, col->constraints) {
+    if (CONSTR_DEFAULT == c->contype && 'u' == c->generated_when)
+      return c;
+  }
+  return NULL;
+}
+
+/*
+ * col's update default as sm keeps it, as column_default() gives its
+ * DEFAULT, or NULL with none (ONUPDATE.md §6).  With one, it and
+ * raw_default, the column's insert default, must be of
+ * update_default_kind().
+ */
+static const char *column_update_default(ColumnDef *col, Node *raw_default,
+                                         Oid typid, int32 typmod) {
+  const Constraint *update = update_default_of(col);
+
+  if (NULL == update)
+    return NULL;
+  if (!update_default_kind(update->raw_expr) ||
+      !update_default_kind(raw_default))
+    ereport(ERROR,
+            (errcode(ERRCODE_INVALID_COLUMN_DEFINITION),
+             errmsg("column \"%s\" has an update default, so its defaults "
+                    "must be constants, CURRENT_TIMESTAMP, LOCALTIMESTAMP "
+                    "or CURRENT_DATE",
+                    col->colname)));
+  ParseState *pstate = make_parsestate(NULL);
+  Node *expr =
+      cookDefault(pstate, update->raw_expr, typid, typmod, col->colname, 0);
+
+  free_parsestate(pstate);
+  return nodeToString(expr);
+}
+
 static void check_column_name(const char *name);
 
 /*
@@ -1629,6 +1683,8 @@ ObjectAddress smstore_create_table(CreateStmt *stmt) {
     columns.push_back({col->colname, type_code(typid), typmod,
                        column_not_null(stmt, col),
                        column_default(col, typid, typmod)});
+    columns.back().on_update_expr =
+        column_update_default(col, col->raw_default, typid, typmod);
     /*
      * An identity column's sequence was made before the table, by parse
      * analysis; sm makes the column own it as it makes the table.
@@ -2085,6 +2141,33 @@ smstore_table_t *smstore_table_desc(Oid oid) {
     if (smstore_get_fkey((Oid)r.fkey, &desc->referenced[desc->nreferenced]))
       desc->nreferenced++;
   return desc;
+}
+
+/*
+ * The update defaults of the table relid's columns (ONUPDATE.md §6), each
+ * the expression its column's type takes, in a palloc'd array by attnum
+ * less one, NULL where a column has none; or NULL if none has one.
+ */
+Node **smstore_update_defaults(Oid relid) {
+  sm_tbl_t *tbl = open_table(relid, SM_LOCKMODE_IS);
+  Node **out = NULL;
+
+  if (tbl == NULL)
+    return NULL;
+  const sm_table_def_t *def = sm_tbl_def(tbl);
+
+  if (NULL == def)
+    sm_error("define a table");
+  for (size_t i = 0; i < def->columns.size(); i++) {
+    const sm_column_def_t &c = def->columns[i];
+
+    if (!c.has_on_update || c.dropped)
+      continue;
+    if (NULL == out)
+      out = (Node **)palloc0(def->columns.size() * sizeof(Node *));
+    out[i] = (Node *)stringToNode(c.on_update_expr.c_str());
+  }
+  return out;
 }
 
 /*
@@ -3653,9 +3736,14 @@ static void add_column(Oid relid, const char *relname, ColumnDef *col,
 
     if (c->contype == CONSTR_NOTNULL)
       not_null = true;
-    else if (c->contype == CONSTR_DEFAULT)
+    else if (c->contype == CONSTR_DEFAULT && 'u' != c->generated_when)
       raw_default = c->raw_expr;
-    else if (c->contype != CONSTR_NULL)
+    else if (c->contype == CONSTR_DEFAULT && c != update_default_of(col))
+      ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR),
+                      errmsg("multiple default values specified for column "
+                             "\"%s\" of table \"%s\"",
+                             col->colname, relname)));
+    else if (c->contype != CONSTR_NULL && c->contype != CONSTR_DEFAULT)
       ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                       errmsg("ALTER TABLE ... ADD COLUMN supports only NOT "
                              "NULL and DEFAULT yet")));
@@ -3668,10 +3756,15 @@ static void add_column(Oid relid, const char *relname, ColumnDef *col,
   /* What parse analysis made of a serial's: its nextval() and NOT NULL. */
   if (NULL != col->raw_default)
     raw_default = col->raw_default;
+  /* Without a plain default, the update default is the column's too. */
+  if (NULL == raw_default && NULL != update_default_of(col))
+    raw_default = update_default_of(col)->raw_expr;
   typenameTypeIdAndMod(NULL, col->typeName, &typid, &typmod);
   /* A numeric with no precision is its type's default one, kept in sm. */
   if (is_decimal(typid))
     typmod = numeric_typmod(typid, typmod);
+  const char *update_default =
+      column_update_default(col, raw_default, typid, typmod);
   if (raw_default != NULL) {
     ParseState *pstate = make_parsestate(NULL);
     Node *expr =
@@ -3701,6 +3794,7 @@ static void add_column(Oid relid, const char *relname, ColumnDef *col,
   /* NOT NULL only once every row holds its value. */
   sm_column_spec_t spec = {col->colname, type_code(typid), typmod,
                            not_null && NULL == volatile_default, default_expr};
+  spec.on_update_expr = update_default;
   sm_session_t *s = xact_session();
 
   if (0 == waiting([&] {

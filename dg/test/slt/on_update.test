@@ -1,0 +1,402 @@
+# Verify a column's update default, DEFAULT x ON UPDATE (../ONUPDATE.md):
+# INSERT writes the plain default, or the update default without one;
+# an UPDATE that leaves the column out writes the update default; one
+# that assigns it keeps what it assigns. PostgreSQL has no update
+# default, so every record is digres's.
+# 1. Make job with update defaults of each kind: a constant beside a
+#    plain default, a constant alone, the three time keywords, and NULL
+#    beside a time; INSERT writes each insert default.
+# 2. An UPDATE that leaves them out writes each update default, the
+#    times the transaction's start; ctime and prio, with none, are
+#    kept; RETURNING shows what was written.
+# 3. An UPDATE that assigns a column keeps what it assigns, mtime too;
+#    one that changes nothing still writes the update defaults.
+# 4. SET c = DEFAULT writes the insert default.
+# 5. ON CONFLICT DO UPDATE writes the update defaults; ON CONFLICT DO
+#    NOTHING writes nothing.
+# 6. An UPDATE of the primary key, which moves the row, writes them.
+# 7. A rolled-back UPDATE leaves the row as it was.
+# 8. An index on a column with an update default finds the row by its
+#    new value, and not by its old.
+# 9. WHERE CURRENT OF, an UPDATE through a view, and a foreign key's ON
+#    UPDATE CASCADE each write the update defaults.
+# 10. NOT NULL with an update default of NULL: an UPDATE that leaves
+#     the column out is refused.
+# 11. ADD COLUMN with both defaults: the rows there take the insert
+#     default, and their next UPDATE the update default.
+# 12. A temporary table, and a table with no primary key, the same.
+# 13. Refused: a function, CURRENT_TIMESTAMP(3) or an operator as
+#     either default beside ON UPDATE, two update defaults, and two
+#     plain ones beside one; in CREATE TABLE and in ADD COLUMN.
+
+# 1. Each insert default.
+onlyif digres
+statement ok
+create table job (
+  id int8 primary key,
+  sync_state int4 not null default 0 default 1 on update,
+  note text default 'changed' on update,
+  neg int4 default -1 on update,
+  day date default '2020-01-01'::date on update,
+  mtime timestamptz not null default current_timestamp on update,
+  lmtime timestamp default localtimestamp on update,
+  mdate date not null default current_date on update,
+  edited timestamptz default null default current_timestamp on update,
+  ctime timestamptz not null default current_timestamp,
+  prio int4 not null default 5)
+
+onlyif digres
+statement ok
+insert into job (id) values (1)
+
+onlyif digres
+query ITITIBBBB nosort
+select sync_state, note, neg, day, prio, edited is null, mtime = ctime,
+       lmtime = localtimestamp(6) or lmtime < localtimestamp,
+       mdate = current_date
+from job
+----
+0	changed	-1	2020-01-01	5	t	t	t	t
+
+# 2. An UPDATE that leaves them out: each update default.
+onlyif digres
+statement ok
+begin
+
+onlyif digres
+query II nosort
+update job set prio = 9 where id = 1 returning sync_state, prio
+----
+1	9
+
+onlyif digres
+query ITIBBBBBI nosort
+select sync_state, note, neg, mtime = now(), lmtime = localtimestamp,
+       mdate = current_date, edited = now(), ctime < now(), prio
+from job
+----
+1	changed	-1	t	t	t	t	t	9
+
+onlyif digres
+statement ok
+commit
+
+# 3. What an UPDATE assigns is kept; one that changes nothing still writes.
+onlyif digres
+statement ok
+update job set sync_state = 2, note = 'mine', mtime = '2020-01-01 00:00:00+00'
+where id = 1
+
+onlyif digres
+query ITB nosort
+select sync_state, note, mtime = '2020-01-01 00:00:00+00' from job
+----
+2	mine	t
+
+onlyif digres
+statement ok
+update job set prio = prio where id = 1
+
+onlyif digres
+query ITB nosort
+select sync_state, note, mtime > '2020-01-01 00:00:00+00' from job
+----
+1	changed	t
+
+# 4. SET c = DEFAULT: the insert default.
+onlyif digres
+statement ok
+update job set sync_state = default, note = default where id = 1
+
+onlyif digres
+query IT nosort
+select sync_state, note from job
+----
+0	changed
+
+# 5. ON CONFLICT DO UPDATE as an UPDATE; DO NOTHING writes nothing.
+onlyif digres
+statement ok
+insert into job (id, sync_state) values (1, 7)
+on conflict (id) do update set prio = 0
+
+onlyif digres
+query II nosort
+select sync_state, prio from job
+----
+1	0
+
+onlyif digres
+statement ok
+update job set sync_state = 3 where id = 1
+
+onlyif digres
+statement ok
+insert into job (id) values (1) on conflict (id) do nothing
+
+onlyif digres
+query I nosort
+select sync_state from job
+----
+3
+
+# 6. A row moved by its primary key.
+onlyif digres
+statement ok
+update job set id = 2 where id = 1
+
+onlyif digres
+query II nosort
+select id, sync_state from job
+----
+2	1
+
+# 7. A rolled-back UPDATE.
+onlyif digres
+statement ok
+update job set sync_state = 4 where id = 2
+
+onlyif digres
+statement ok
+begin
+
+onlyif digres
+statement ok
+update job set prio = 1 where id = 2
+
+onlyif digres
+statement ok
+rollback
+
+onlyif digres
+query II nosort
+select sync_state, prio from job
+----
+4	0
+
+# 8. An index on the column follows its new value.
+onlyif digres
+statement ok
+create index job_sync on job (sync_state)
+
+onlyif digres
+statement ok
+set enable_seqscan = off
+
+onlyif digres
+statement ok
+update job set prio = 2 where id = 2
+
+onlyif digres
+query I nosort
+select id from job where sync_state = 1
+----
+2
+
+onlyif digres
+query I nosort
+select count(*) from job where sync_state = 4
+----
+0
+
+onlyif digres
+statement ok
+reset enable_seqscan
+
+# 9. WHERE CURRENT OF, a view, a cascade.
+onlyif digres
+statement ok
+update job set sync_state = 5 where id = 2
+
+onlyif digres
+statement ok
+begin
+
+onlyif digres
+statement ok
+declare c cursor for select id from job for update
+
+onlyif digres
+query I nosort
+fetch 1 from c
+----
+2
+
+onlyif digres
+statement ok
+update job set prio = 3 where current of c
+
+onlyif digres
+statement ok
+commit
+
+onlyif digres
+query II nosort
+select sync_state, prio from job
+----
+1	3
+
+onlyif digres
+statement ok
+create view v as select id, prio from job
+
+onlyif digres
+statement ok
+update job set sync_state = 5 where id = 2
+
+onlyif digres
+statement ok
+update v set prio = 4 where id = 2
+
+onlyif digres
+query II nosort
+select sync_state, prio from job
+----
+1	4
+
+onlyif digres
+statement ok
+create table p (k int4 primary key)
+
+onlyif digres
+statement ok
+create table ch (id int4 primary key, k int4 references p on update cascade,
+                 state int4 not null default 0 default 1 on update)
+
+onlyif digres
+statement ok
+insert into p values (10)
+
+onlyif digres
+statement ok
+insert into ch (id, k) values (1, 10)
+
+onlyif digres
+statement ok
+update p set k = 11
+
+onlyif digres
+query II nosort
+select k, state from ch
+----
+11	1
+
+# 10. NOT NULL, and an update default of NULL.
+onlyif digres
+statement ok
+create table nn (id int4 primary key, s int4 not null default 0 default null on update)
+
+onlyif digres
+statement ok
+insert into nn (id) values (1)
+
+onlyif digres
+statement error violates not-null constraint
+update nn set id = 1
+
+onlyif digres
+statement ok
+update nn set id = 1, s = 2
+
+onlyif digres
+query I nosort
+select s from nn
+----
+2
+
+# 11. ADD COLUMN with both defaults.
+onlyif digres
+statement ok
+alter table job add column flag bool default false default true on update
+
+onlyif digres
+query B nosort
+select flag from job
+----
+f
+
+onlyif digres
+statement ok
+update job set prio = 1
+
+onlyif digres
+query B nosort
+select flag from job
+----
+t
+
+# 12. A temporary table, a table with no primary key.
+onlyif digres
+statement ok
+create temp table tt (a int4, s int4 default 0 default 1 on update)
+
+onlyif digres
+statement ok
+insert into tt (a) values (1)
+
+onlyif digres
+statement ok
+update tt set a = 2
+
+onlyif digres
+query II nosort
+select a, s from tt
+----
+2	1
+
+onlyif digres
+statement ok
+create table nk (a int4, s text default 'new' default 'edited' on update)
+
+onlyif digres
+statement ok
+insert into nk (a) values (1)
+
+onlyif digres
+query T nosort
+select s from nk
+----
+new
+
+onlyif digres
+statement ok
+update nk set a = 2
+
+onlyif digres
+query T nosort
+select s from nk
+----
+edited
+
+# 13. Refused.
+onlyif digres
+statement error has an update default
+create table bad (m timestamptz default now() on update)
+
+onlyif digres
+statement error has an update default
+create table bad (m timestamptz default current_timestamp(3) on update)
+
+onlyif digres
+statement error has an update default
+create table bad (n int4 default 1 + 1 on update)
+
+onlyif digres
+statement error has an update default
+create table bad (m timestamptz default now() default current_timestamp on update)
+
+onlyif digres
+statement error multiple default values
+create table bad (n int4 default 1 on update default 2 on update)
+
+onlyif digres
+statement error multiple default values
+create table bad (n int4 default 0 default 1 default 2 on update)
+
+onlyif digres
+statement error has an update default
+alter table nk add column m timestamptz default now() on update
+
+onlyif digres
+statement error multiple default values
+alter table nk add column n int4 default 1 on update default 2 on update

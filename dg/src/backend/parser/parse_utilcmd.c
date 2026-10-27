@@ -557,6 +557,8 @@ static void transformColumnDefinition(CreateStmtContext *cxt,
   bool is_serial;
   bool saw_nullable;
   bool saw_default;
+  bool saw_plain_default = false;
+  bool saw_update_default = false;
   bool saw_identity;
   bool saw_generated;
   bool need_notnull = false;
@@ -754,17 +756,31 @@ static void transformColumnDefinition(CreateStmtContext *cxt,
 
       break;
 
-    case CONSTR_DEFAULT:
-      if (saw_default)
+    case CONSTR_DEFAULT: {
+      /*
+       * digres: a column may have a plain default and an update default,
+       * DEFAULT x ON UPDATE, marked 'u' (ONUPDATE.md); one of each.  The
+       * plain one is the column's default, or the update one without it.
+       * The update default stays in the constraints, for smstore.c.
+       */
+      bool update = 'u' == constraint->generated_when;
+
+      if (update ? saw_update_default : saw_plain_default)
         ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR),
                         errmsg("multiple default values specified for column "
                                "\"%s\" of table \"%s\"",
                                column->colname, cxt->relation->relname),
                         parser_errposition(cxt->pstate, constraint->location)));
-      column->raw_default = constraint->raw_expr;
+      if (!update || !saw_plain_default)
+        column->raw_default = constraint->raw_expr;
       Assert(constraint->cooked_expr == NULL);
+      if (update)
+        saw_update_default = true;
+      else
+        saw_plain_default = true;
       saw_default = true;
       break;
+    }
 
     case CONSTR_IDENTITY: {
       Type ctype;
