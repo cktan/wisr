@@ -14,6 +14,10 @@
 # 6. A key between a temporary table and a permanent one is refused.
 # 7. Adding a key takes the parent's lock X: another session's write to
 #    the parent is blocked until it commits.
+# 8. A key between two temporary tables made in the open transaction is
+#    listed by the parent at once, as after the commit: digres refuses a
+#    commit that would empty a parent its child does not empty by it
+#    (dg WORKNOTE.md step 303).
 
 (def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_fkey"))
 (rm-rf test-dir)
@@ -132,6 +136,20 @@
 (session-use s2)
 (begin :rc)
 (insert p [1 "one"])
+(commit)
+
+# 8. Temporary tp8 and tc8, tc8 keyed to tp8, all in one transaction:
+# tp8 lists tc8's key before the commit and after it.
+(session-use s1)
+(begin :rc)
+(temp-table-create tp8 (columns (id :int4 :not-null)))
+(index-create tp8_id (table tp8) (key (id :asc)) :unique true)
+(temp-table-create tc8 (columns (pid :int4)))
+(fkey-create tc8_pid (table tc8) (columns pid) (references tp8 id))
+(assert-eq (referenced-by tp8) '[["tc8" "tc8_pid"]])
+(commit)
+(begin :rc)
+(assert-eq (referenced-by tp8) '[["tc8" "tc8_pid"]])
 (commit)
 
 (session-close s1)

@@ -106,6 +106,26 @@
 (table-drop words)
 (commit)
 
+# 10. A unique index made in the transaction that wrote its table is
+# the table's at once, to a table opened after it: digres's handle
+# opened before it knew no index (dg WORKNOTE.md step 302).
+# 10.1 Make a table and write a row; then make a unique index on it.
+# 10.2 The table, described in the transaction, lists the index, valid.
+# 10.3 A row with the first's key is refused, which aborts the
+#      transaction; after it, neither table nor index is left.
+(begin :rc)
+(table-create own (columns (k :int4 :not-null)))
+(insert own [1])
+(index-create own_k (table own) (key (k :asc)) :unique true)
+(assert-eq (map |($ :name) ((describe-table own :include-indices) :indexes))
+           @["own_k"])
+(assert-eq (index-state own_k) :valid)
+(assert-err :err-dupkey (insert own [1]))
+(abort)
+(begin :rc)
+(assert-eq (find |(= $ "own") (list-tables)) nil)
+(commit)
+
 (db-close)
 (env-detach :force true)
 (rm-rf test-dir)
