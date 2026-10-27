@@ -1,0 +1,206 @@
+# test_pkey.rel -- a table with a primary key, made with one or given
+# one later, names its rows by their key in every row verb, scans the
+# key's ranges as the rows themselves, and refuses what a primary key
+# refuses.
+#
+# 1. A table made with (primary-key id): id is NOT NULL, its index
+#    t_pkey is the primary key, and insert gives back each row's key.
+#    A key inserted twice is ERR_DUPKEY, a null key ERR_NOTNULL.
+# 2. read, and read-latest under a lock-row, by key, as a tuple or
+#    one value; a key not there reads nil; a key of the wrong width
+#    panics.
+# 3. update of a column outside the key keeps the row's key; one of
+#    the key moves the row; a move onto a key there is ERR_DUPKEY.
+# 4. delete and lock-row by key.
+# 5. scan gives [key row] in key order, inserted out of it; :from
+#    and :to bound the key; scan-count counts what scan gives.
+# 6. A two-column key: a bound of its first column alone is a prefix.
+# 7. A secondary index of a keyed table gives each entry's row key.
+# 8. load into a keyed table gives back the rows' keys.
+# 9. add-primary-key on a keyless table with rows and an index: an
+#    abort leaves it keyless; committed, its rows are scanned and
+#    read by key, and its index gives keys.
+# 10. add-primary-key refuses a nullable column, duplicate keys, a
+#     second primary key and a column not there; table-create refuses
+#     two primary-key clauses and a key of no column.
+# 11. A foreign key naming no parent column takes the parent's key.
+
+(def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_pkey"))
+(rm-rf test-dir)
+(env-init test-dir)
+(env-attach test-dir)
+(db-create "pkdb")
+(db-open "pkdb")
+
+# The message of the error expr raises, or "no error".
+(defmacro err-of [expr]
+  ~(try (do ,expr "no error") ([e] (string e))))
+
+# Whether the error expr raises says what.
+(defn says [msg what]
+  (truthy? (string/find what msg)))
+
+# 1. Made with a primary key.
+(begin :rc)
+(table-create t
+  (columns (id :int8) (v :text))
+  (primary-key id))
+(assert-eq (describe-table t :include-indices)
+           '{:name "t"
+            :columns [[id :int8 :not-null] [v :text]]
+            :indexes [{:name "t_pkey" :unique true :primary true
+                       :key [[id :asc :nulls-last]] :include []}]})
+(each id [5 1 3 9 7]
+  (assert-eq (insert t [id (string "v" id)]) [id]))
+(commit)
+(begin :rc)
+(assert-err :err-dupkey (insert t [3 "again"]))
+(abort)
+(begin :rc)
+(assert-err :err-notnull (insert t [nil "no key"]))
+(abort)
+
+# 2. Read by key.
+(begin :rc)
+(assert-eq (read t [3]) [3 "v3"])
+(assert-eq (read t 3) [3 "v3"])
+(lock-row t [9] :shared)
+(assert-eq (read-latest t [9]) [9 "v9"])
+(assert-nil (read t [4]))
+(assert-eq (says (err-of (read t [3 4]))
+                 "read: a bound of 2 values on 1 key columns") true)
+(assert-eq (says (err-of (read t [])) "read: a key of 0 values") true)
+(commit)
+
+# 3. Update: in place, and moving the row.
+(begin :rc)
+(assert-eq (update t [3] [3 "three"]) [3 "v3"])
+(assert-eq (read t [3]) [3 "three"])
+(assert-eq (update t [3] [4 "four"]) [3 "three"])
+(assert-nil (read t [3]))
+(assert-eq (read t [4]) [4 "four"])
+(commit)
+(begin :rc)
+(assert-err :err-dupkey (update t [4] [5 "onto five"]))
+(abort)
+
+# 4. Delete and lock by key.
+(begin :rc)
+(lock-row t [1] :exclusive)
+(assert-eq (delete t [1]) [1 "v1"])
+(assert-nil (read t [1]))
+(commit)
+
+# 5. Scans of the key's ranges.
+(begin :rc)
+(assert-eq (scan t) @[[[4] [4 "four"]] [[5] [5 "v5"]] [[7] [7 "v7"]]
+                      [[9] [9 "v9"]]])
+(assert-eq (scan t :from 5 :to [8]) @[[[5] [5 "v5"]] [[7] [7 "v7"]]])
+(assert-eq (scan t :from [6]) @[[[7] [7 "v7"]] [[9] [9 "v9"]]])
+(assert-eq (scan t :to [4]) @[[[4] [4 "four"]]])
+(assert-eq (scan t :from [10]) @[])
+(assert-eq (scan-count t) 4)
+(assert-eq (scan-count t :from [5] :to [8]) 2)
+(commit)
+
+# 6. A two-column key, scanned by a prefix of it.
+(begin :rc)
+(table-create pair
+  (columns (a :int4) (b :text) (n :int4))
+  (primary-key a b))
+(each [a b] [[2 "y"] [1 "z"] [2 "x"] [3 "a"]]
+  (assert-eq (insert pair [a b 0]) [a b]))
+(assert-eq (map first (scan pair :from [2] :to [2])) @[[2 "x"] [2 "y"]])
+(assert-eq (map first (scan pair)) @[[1 "z"] [2 "x"] [2 "y"] [3 "a"]])
+(assert-eq (read pair [2 "y"]) [2 "y" 0])
+(assert-eq (says (err-of (read pair [2])) "read: a key of 1 values") true)
+(commit)
+
+# 7. A secondary index gives each entry's row key.
+(begin :rc)
+(index-create t_v (table t) (key (v)))
+(commit)
+(index-wait t_v)
+(begin :rc)
+(assert-eq (map first (idx-scan t_v :ge ["v"])) @[[5] [7] [9]])
+(def c (idx-open t_v :ge ["four"] :le ["four"]))
+(assert-eq (first (cursor-next c)) [4])
+(cursor-close c)
+(commit)
+
+# 8. A load gives back keys.
+(begin :rc)
+(table-create bulk (columns (k :int8) (w :int4)) (primary-key k))
+(commit)
+(begin :rc)
+(assert-eq (load bulk [[20 2] [10 1] [30 3]]) @[[20] [10] [30]])
+(commit)
+(begin :rc)
+(assert-eq (map first (scan bulk)) @[[10] [20] [30]])
+(commit)
+
+# 9. A key added to a keyless table with rows and an index.
+(begin :rc)
+(table-create late (columns (id :int8 :not-null) (tag :text)))
+(def late-ids (map |(insert late [$ (string "t" $)]) [30 10 20]))
+(index-create late_tag (table late) (key (tag)))
+(commit)
+(begin :rc)
+(add-primary-key late id)
+(assert-eq (map first (scan late)) @[[10] [20] [30]])
+(abort)
+(begin :rc)
+(assert-eq (map first (scan late)) late-ids)
+(add-primary-key late id)
+(commit)
+(begin :rc)
+(assert-eq (describe-table late :include-indices)
+           '{:name "late"
+            :columns [[id :int8 :not-null] [tag :text]]
+            :indexes [{:name "late_tag" :unique false
+                       :key [[tag :asc :nulls-last]] :include []}
+                      {:name "late_pkey" :unique true :primary true
+                       :key [[id :asc :nulls-last]] :include []}]})
+(assert-eq (scan late) @[[[10] [10 "t10"]] [[20] [20 "t20"]]
+                         [[30] [30 "t30"]]])
+(assert-eq (read late 20) [20 "t20"])
+(assert-eq (map first (idx-scan late_tag)) @[[10] [20] [30]])
+(commit)
+
+# 10. What a primary key refuses.
+(begin :rc)
+(table-create loose (columns (id :int8) (u :int4 :not-null)))
+(insert loose [1 7])
+(insert loose [2 7])
+(commit)
+(begin :rc)
+(assert-err :err-invalid (add-primary-key loose id))
+(abort)
+(begin :rc)
+(assert-err :err-dupkey (add-primary-key loose u))
+(abort)
+(begin :rc)
+(assert-err :err-invalid (add-primary-key t v))
+(abort)
+(begin :rc)
+(assert-eq (says (err-of (add-primary-key loose nosuch))
+                 "add-primary-key: column 'nosuch' not found") true)
+(assert-eq (says (err-of (table-create two (columns (a :int4))
+                                       (primary-key a) (primary-key a)))
+                 "table-create: a table has one primary key") true)
+(assert-eq (says (err-of (table-create none (columns (a :int4))
+                                       (primary-key)))
+                 "table-create: a primary key needs a column") true)
+(abort)
+
+# 11. A foreign key to the parent's primary key.
+(begin :rc)
+(table-create child (columns (cid :int8 :not-null) (tid :int8)))
+(fkey-create child_t (table child) (columns tid) (references t))
+(assert-eq ((first (fkeys child)) :ref-columns) '[id])
+(commit)
+
+(db-close)
+(env-detach)
+(rm-rf test-dir)
+(print "test_pkey.rel passed")

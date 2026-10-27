@@ -132,7 +132,8 @@ public:
 
   /* Environment lifecycle. */
   int env_init(const char *path);
-  int env_attach(const char *path, bool toast = false);
+  int env_attach(const char *path, bool toast = false,
+                 const sm_env_options_t *opt = nullptr);
   int env_detach(int force);
   sm_env_t *env() const { return m_env; }
   const std::string &env_path() const { return m_env_path; }

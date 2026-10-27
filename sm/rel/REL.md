@@ -28,18 +28,22 @@ Formats a fresh wisr storage home directory at `path`.
 (env-init "/tmp/wisr_home")
 ```
 
-### `(env-attach path [:toast bool])`
+### `(env-attach path [:toast bool] [:cache-bytes n])`
 Attaches to an existing storage home directory at `path` and
 initializes the environment handle for the process. With
 `:toast true`, a row's long values are stored out of line
 (`sm_set_toast`): a row may then be longer than 64 KB. A value
 read or scanned comes back whole. The old row `update` and
 `delete` return has the keyword `:toast` where a value was out
-of line, since that write erased it.
+of line, since that write erased it. `:cache-bytes` sizes the
+one block cache every database reads through
+(`sm_env_options_t`), 128 MB if not given; a size under 1
+fails with `ERR_INVALID`.
 
 ```janet
 (env-attach "/tmp/wisr_home")
 (env-attach "/tmp/wisr_home" :toast true)
+(env-attach "/tmp/wisr_home" :cache-bytes (* 2 1024 1024 1024))
 ```
 
 ### `(env-detach [:force bool])`
@@ -302,16 +306,22 @@ and never recycled on abort.
 
 ## 5. Schema: Tables & Indexes (DDL)
 
-Define and manage tables and secondary indexes. Tables and
-indexes live in sm3's catalog, in the `public` namespace. Every
-DDL statement runs in the active transaction: it is undone by
-`(abort)` or `(rollback sp)`, seen by other sessions only once
-committed, and kept across a restart.
+Define and manage tables, their primary keys, and secondary
+indexes. Tables and indexes live in sm3's catalog, in the
+`public` namespace. Every DDL statement runs in the active
+transaction: it is undone by `(abort)` or `(rollback sp)`, seen
+by other sessions only once committed, and kept across a
+restart.
 
-### `(table-create name (columns ...))`
-Defines and creates a table without a primary key, its rows
-named by `_id`, backed by a store and an `_id` sequence of its
-own.
+### `(table-create name (columns ...) [(primary-key c...)])`
+Defines and creates a table, backed by a store and an `_id`
+sequence of its own. Without `(primary-key ...)` its rows are
+named by `_id`. With it, the columns named are the table's
+primary key, in their order: each is made NOT NULL, as SQL
+makes it, the key is the unique index `<name>_pkey`, and the
+table's rows are keyed by it (`../CLUSTER.md`), named by their
+key's values (§6). A second `(primary-key ...)` clause, one of
+no column, or one of a column not there, panics.
 
 Supported column types:
 - Integer: `:int2`, `:int4`, `:int8`
@@ -345,6 +355,10 @@ Column qualifier:
     (name :text :not-null)
     (email :text)
     (active :bool)))
+
+(table-create accounts
+  (columns (id :int8) (owner :text))
+  (primary-key id))
 ```
 
 ### `(temp-table-create name (columns ...))`
@@ -359,6 +373,21 @@ same name.
 (temp-table-create scratch
   (columns
     (id :int4 :not-null)))
+```
+
+### `(add-primary-key table c...)`
+Makes the columns `c...`, in their order, the primary key of
+`table`, as `ALTER TABLE ... ADD PRIMARY KEY`: the unique
+index `<table>_pkey`, keying the table's rows from then on.
+sm rewrites a table that has rows into a new store, keyed by
+it, its secondary indexes filled anew (`../CLUSTER.md` §8);
+an abort, or a rollback to a savepoint before it, leaves the
+table as it was. It takes the table's lock exclusive. A
+nullable column, or a table with a primary key already, is
+`ERR_INVALID`; two rows of one key are `ERR_DUPKEY`.
+
+```janet
+(add-primary-key users id)
 ```
 
 ### `(table-drop name)`
@@ -428,7 +457,8 @@ always shows
 both numbers: `(price :decimal64 10)` comes back as
 `[price :decimal64 10 0]`. With `:include-indices`, `:indexes`
 holds each index as a struct of its `index-create` clauses,
-every key column's order and null placement spelled out.
+every key column's order and null placement spelled out, and
+`:primary true` in the primary key's.
 
 The forms are bracket tuples, so compare against a quoted
 literal: a quoted `[...]` keeps its brackets, which `=` tells
@@ -517,8 +547,8 @@ and cannot be scanned; it can only be dropped.
 ### `(fkey-create name (table child) (columns c...) (references parent p...) ...)`
 Adds the foreign key `name` to the table `child`
 (`../FOREIGNKEY.md`). sm keeps it and checks no row: that is
-the host's. Without parent columns it needs the parent's
-primary key, and rel makes none, so it fails with `table
+the host's. Without parent columns it takes the parent's
+primary key's, and a parent without one fails with `table
 '<parent>' has no primary key`: name the parent's columns. Its
 index is the parent's unique index whose keys are the
 referenced columns, in any order, unless `:index` names one.
@@ -570,9 +600,22 @@ so DDL on the table waits for it and it for DDL. A table that
 does not exist, or that another session has created but not
 committed, fails with `<op>: table '<name>' not found`.
 
+A row's name, the `id` below, is its `_id`, an integer, in a
+table without a primary key. In a table with one it is the
+row's key: a tuple of the key columns' values, in the key's
+order, or one value alone for a key of one column. A key of
+another width panics. Where a verb gives back an `_id`, it
+gives back the key, as a tuple, in such a table.
+
+```janet
+(read accounts [7])
+(read accounts 7)
+```
+
 ### `(insert table [val1 val2 ...])`
 Encodes and inserts a new row into `table` and all attached
-secondary indexes. Returns the new row's 64-bit `_id`. If a
+secondary indexes. Returns the new row's 64-bit `_id`, or its
+key in a table with a primary key. If a
 unique index violation occurs, raises `SM_ERR_DUPKEY`, and the
 transaction is aborted (§7).
 
@@ -629,8 +672,8 @@ A bulk load of `rows`, an array of rows, into the table
 into an empty table, as sorted files past 4 MB or as one batch,
 under the table's lock taken exclusive to the end of the
 transaction; into one that has rows, as inserts. Returns the
-rows' `_id`s. Until the transaction ends it may not set a
-savepoint.
+rows' `_id`s, or their keys. Until the transaction ends it may
+not set a savepoint.
 
 ```janet
 (load jobs [[1 "free"] [2 "busy"]])
@@ -686,7 +729,9 @@ expressions' by place. A column's or an expression's has
 
 ### `(update table id [val1 val2 ...])`
 Updates the row `id` and synchronizes secondary indexes.
-Returns the previous tuple values `[old1 old2 ...]`.
+Returns the previous tuple values `[old1 old2 ...]`. New values
+of a primary key's columns move the row to its new key; a key
+another row has is `ERR_DUPKEY`.
 
 ```janet
 (def old (update users r1 [1 "Alice C." "alice@example.com" true]))
@@ -705,16 +750,36 @@ Scans the table, keyless, in `_id` order over the `_id`s
 `[first, last]`. Returns an array of `[id [val1 val2 ...]]`
 pairs.
 
+In a table with a primary key it scans the rows in key order,
+the bounds keys or their first columns, both inclusive: the
+rows themselves over the range (`sm_tbl_idx_scan_rows`), as
+digres scans its primary key, or every row with no bound
+(`sm_tbl_scan_rows`), as its sequential scan. Each pair is
+`[key [val1 val2 ...]]`.
+
 ```janet
 (def all-rows (scan users))
 (def slice (scan users :from 2 :to 10))
+(def some (scan accounts :from [100] :to [199]))
+```
+
+### `(scan-count table [:from first] [:to last])`
+The number of rows `scan` gives over the same bounds, counted
+with none decoded: each is stepped to in the cursor's pin, as
+digres's scans step. What a scan costs in sm and RocksDB alone
+(`../../bench/relq6`).
+
+```janet
+(scan-count users :from 2 :to 10)
+# => 9
 ```
 
 ### `(idx-scan index [:ge lo] [:gt lo] [:le hi] [:lt hi])`
 Scans a secondary index across key prefix bounds.
 Bounds are tuples matching key prefix columns.
 Returns an array of `[id cut include-tuple]` entries, `id` the
-row's `_id`: `cut`
+row's `_id`, or its key, read from the row, in a table with a
+primary key: `cut`
 is true when sm2 truncated an over-long key, so the caller must
 recheck the row; `include-tuple` is nil for an index without
 INCLUDE columns. The key itself is not returned, since the index
