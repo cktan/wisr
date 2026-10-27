@@ -1104,6 +1104,43 @@ object id as the relid, which makes the relation count a
 tuning decision. It was rejected for v1 because `DROP TABLE`
 becomes a range delete instead of sm1's O(1) drop.
 
+### What a key is in RocksDB
+
+Each level puts its part in front of the one above. sm3 picks
+a rel's relid and what its key encodes (`../ROWKEY.md` §2.1);
+sm2 puts the relid first (`row_key()`); sm1 sees a storeid and
+a userkey, picks the store's column family, and puts its class
+byte first and, for a versioned key, the version after
+(`../sm1/src/version.h`, `../sm1/src/chain.h`):
+
+```
+RocksDB key  =  class (1B, sm1) ‖ userkey [‖ ~wts (8B) ‖ ~seq (4B), versioned]
+userkey      =  relid (2B BE, sm2) ‖ the rel's key (sm3)
+```
+
+| What | Class | Key in RocksDB | Value |
+| --- | --- | --- | --- |
+| row's newest version, with a primary key | `0x01` current | `0x01 ‖ 0x0001 ‖ encode(pk)` | flags, xid or commit_ts, wts, seq, prev ‖ tuple |
+| row's newest version, without one | `0x01` current | `0x01 ‖ 0x0001 ‖ be64(_id)` | as above |
+| an older version of a row | `0x02` old | `0x02 ‖ be64(old id)`, no relid | the header ‖ displaced ‖ tuple |
+| secondary index entry, not unique | `0x00` versioned | `0x00 ‖ relid ‖ encode(sk) ‖ encode(pk) ‖ ~wts ‖ ~seq` | flags, xid or commit_ts ‖ cut flag, INCLUDE columns, `encode(pk)` |
+| secondary index entry, unique | `0x00` versioned | `0x00 ‖ relid ‖ encode(sk) ‖ ~wts ‖ ~seq` | as above |
+| TOAST chunk | `0x00` versioned | `0x00 ‖ 0xFFFF ‖ id ‖ seq ‖ ~wts ‖ ~seq` | flags, xid or commit_ts ‖ the chunk |
+
+- **The class byte orders the column family**: the store's
+  comparator, `wisr.store.v2`, sorts versioned keys by userkey
+  then newest version first, and current and old keys
+  bytewise, so the three classes lie in three ranges and a
+  scan of rows bounds itself to one.
+- **A row's newest version is under its plain key**, so a scan
+  of the newest rows reads one key a row; index entries and
+  TOAST keep the version in the key (`../VCHAIN.md`).
+- **The bytes sort as the SQL key**: `encode()` is sm2's
+  order-preserving encoding, `_id` is big-endian, and `~wts ‖
+  ~seq` puts the newest version first.
+- **The catalog is a store of its own**, versioned, outside
+  every table's.
+
 ---
 
 ## 5. Scans
