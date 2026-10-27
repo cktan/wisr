@@ -1,7 +1,7 @@
 # ONROWUPDATE — a column stamped on every update
 
-**Status: proposed.** Not built. §11 has what is still to be
-decided, and §12 the order of work.
+**Status: approved, not built.** §11 has what was decided,
+and §12 the order of work.
 
 ```sql
 CREATE TABLE account (
@@ -67,7 +67,7 @@ mtime in every UPDATE it writes, and nothing holds it to that.
    a column in the statement's `SET` list, or its ON CONFLICT
    DO UPDATE's, keeps what the statement gives it, `DEFAULT`
    included. An UPDATE that changes no other value stamps too
-   (§11, question 1).
+   (§11).
 2. **What.** `CURRENT_TIMESTAMP` writes what the keyword reads:
    the transaction's start time, a `timestamptz`.
    `LOCALTIMESTAMP` writes the same instant as a `timestamp`
@@ -198,7 +198,7 @@ it returns the stamp.
 | UPDATE that does not assign the column | stamped |
 | UPDATE that assigns it, `DEFAULT` included | what it assigns |
 | ON CONFLICT DO UPDATE | as an UPDATE; ON CONFLICT DO NOTHING stamps nothing |
-| An UPDATE that changes no other value; A → B → A | stamped each time (§11, question 1) |
+| An UPDATE that changes no other value; A → B → A | stamped each time (§11) |
 | An UPDATE of the primary key, which moves the row (`../sm/CLUSTER.md`) | stamped; the other columns move with it, ctime too |
 | DELETE, then INSERT of the same key | a new row: its default |
 | Abort, rollback to a savepoint, a bulk load rolled back | an ordinary column's value, undone with the row |
@@ -245,16 +245,16 @@ it returns the stamp.
   read as a row's last commit time: a change to sm1's clock and
   its leases, and no creation time from it.
 
-## 11. Still to decide
+## 11. Decided
 
-1. **An UPDATE that changes nothing**: stamp it (proposed:
-   simpler, and what the trigger of §1 does), or stamp only
-   when another value changes, as MySQL does, at the cost of
-   comparing the row before and after.
+Both on 2026-10-27:
 
-Settled: **sq's grammar** takes §4's rule and token, the first
-change to what sq accepts beyond PostgreSQL's (approved
-2026-10-27).
+1. **An UPDATE that changes nothing is stamped**, as the
+   trigger of §1 stamps it; not only when another value
+   changes, as MySQL does, which would compare the row before
+   and after.
+2. **sq's grammar** takes §4's rule and token, the first
+   change to what sq accepts beyond PostgreSQL's.
 
 ## 12. Order of work
 
