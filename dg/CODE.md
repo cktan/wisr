@@ -57,7 +57,7 @@ The import itself is not built yet (`PLAN.md` §7).
 
   ```
   run: PASSED (118 files)
-  run: PASSED (10 files, alone and in 8 sessions)
+  run: PASSED (11 files, alone and in 8 sessions)
   initdb: PASSED
   server: PASSED
   slt: PASSED (42 files on digres, 10192 records, 10 skipped)

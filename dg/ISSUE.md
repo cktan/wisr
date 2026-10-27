@@ -12,8 +12,9 @@ foreign key into the table, in step 303; issue 4, a cursor
 seeing its own transaction's later DELETE, in step 304; issue
 5, a FOR UPDATE cursor returning a row updated after it was
 declared, in step 305; issue 9, ON CONFLICT above READ
-COMMITTED saying sm1's error, in step 306; and issue 8, a table
-made in pg_catalog, in step 307.
+COMMITTED saying sm1's error, in step 306; issue 8, a table
+made in pg_catalog, in step 307; and issue 11, a foreign key
+keeping a SET DEFAULT column twice, in step 308.
 
 ---
 
@@ -89,23 +90,6 @@ pgregress: `create_table_like`. **Where to start**: digres
 does not check the merged column list for a repeated name
 before it hands it to sm, as PostgreSQL's
 `MergeAttributes()` does.
-
-## Issue 11: a foreign key keeps a SET DEFAULT column twice
-
-```sql
-create table pk (tid int, id int, primary key (tid, id));
-create table fk (tid int, d int default 0,
-  foreign key (tid, d) references pk on delete set default (d, d));
-select pg_get_constraintdef(oid) from pg_constraint
-  where conrelid = 'fk'::regclass and contype = 'f';
--- PostgreSQL: ... ON DELETE SET DEFAULT (d)
--- digres:     ... ON DELETE SET DEFAULT (d, d)
-```
-
-pgregress: `foreign_key`. **Where to start**: PostgreSQL
-removes duplicates from the column list
-(`validateFkOnDeleteSetColumns()`); the list digres keeps in
-sm3's foreign key is the one given.
 
 ## Issue 12: the hash access method says it cannot exclude
 

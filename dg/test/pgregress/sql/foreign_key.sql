@@ -123,22 +123,19 @@ SELECT * FROM FKTABLE;
 DELETE FROM PKTABLE WHERE ptest1=1 and ptest2=2;
 
 -- Check FKTABLE for removal of matched row
---dg-differs: the result
---dg SELECT * FROM FKTABLE;
+SELECT * FROM FKTABLE;
 
 -- Delete another row from PK TABLE
 DELETE FROM PKTABLE WHERE ptest1=5 and ptest2=10;
 
 -- Check FKTABLE (should be no change)
---dg-differs: the result
---dg SELECT * FROM FKTABLE;
+SELECT * FROM FKTABLE;
 
 -- Update a row from PK TABLE
 UPDATE PKTABLE SET ptest1=1 WHERE ptest1=2;
 
 -- Check FKTABLE for update of matched row
---dg-differs: the result
---dg SELECT * FROM FKTABLE;
+SELECT * FROM FKTABLE;
 
 -- Check update with part of key null
 UPDATE FKTABLE SET ftest1 = NULL WHERE ftest1 = 1;
@@ -151,10 +148,8 @@ UPDATE FKTABLE SET ftest1 = 1 WHERE ftest1 = 1;
 --dg ALTER TABLE PKTABLE ALTER COLUMN ptest1 TYPE bigint;
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE FKTABLE ALTER COLUMN ftest1 TYPE bigint;
---dg-differs: the result
---dg SELECT * FROM PKTABLE;
---dg-differs: the result
---dg SELECT * FROM FKTABLE;
+SELECT * FROM PKTABLE;
+SELECT * FROM FKTABLE;
 
 DROP TABLE PKTABLE CASCADE;
 DROP TABLE FKTABLE;
@@ -197,22 +192,19 @@ SELECT * FROM FKTABLE;
 DELETE FROM PKTABLE WHERE ptest1=1 and ptest2=2;
 
 -- Check FKTABLE to check for removal
---dg-differs: the result
---dg SELECT * FROM FKTABLE;
+SELECT * FROM FKTABLE;
 
 -- Delete another row from PK TABLE
 DELETE FROM PKTABLE WHERE ptest1=5 and ptest2=10;
 
 -- Check FKTABLE (should be no change)
---dg-differs: the result
---dg SELECT * FROM FKTABLE;
+SELECT * FROM FKTABLE;
 
 -- Update a row from PK TABLE
 UPDATE PKTABLE SET ptest1=1 WHERE ptest1=2;
 
 -- Check FKTABLE for update of matched row
---dg-differs: the result
---dg SELECT * FROM FKTABLE;
+SELECT * FROM FKTABLE;
 
 -- this should fail for lack of CASCADE
 DROP TABLE PKTABLE;
@@ -411,17 +403,14 @@ UPDATE PKTABLE set ptest2=5 where ptest2=2;
 UPDATE PKTABLE set ptest1=1 WHERE ptest2=3;
 
 -- Show PKTABLE and FKTABLE
---dg-differs: the result
---dg SELECT * from PKTABLE;
---dg-differs: the result
---dg SELECT * from FKTABLE;
+SELECT * from PKTABLE;
+SELECT * from FKTABLE;
 
 -- Try to delete something that should cascade
 DELETE FROM PKTABLE where ptest1=1 and ptest2=5 and ptest3=3;
 
 -- Show PKTABLE and FKTABLE
---dg-differs: the result
---dg SELECT * from PKTABLE;
+SELECT * from PKTABLE;
 SELECT * from FKTABLE;
 
 -- Try to delete something that should not have a cascade
@@ -467,28 +456,22 @@ UPDATE PKTABLE set ptest2=5 where ptest2=2;
 UPDATE PKTABLE set ptest2=2 WHERE ptest2=3 and ptest1=1;
 
 -- Show PKTABLE and FKTABLE
---dg-differs: the result
---dg SELECT * from PKTABLE;
---dg-differs: the result
---dg SELECT * from FKTABLE;
+SELECT * from PKTABLE;
+SELECT * from FKTABLE;
 
 -- Try to delete something that should set default
 DELETE FROM PKTABLE where ptest1=2 and ptest2=3 and ptest3=4;
 
 -- Show PKTABLE and FKTABLE
---dg-differs: the result
---dg SELECT * from PKTABLE;
---dg-differs: the result
---dg SELECT * from FKTABLE;
+SELECT * from PKTABLE;
+SELECT * from FKTABLE;
 
 -- Try to delete something that should not set default
 DELETE FROM PKTABLE where ptest2=5;
 
 -- Show PKTABLE and FKTABLE
---dg-differs: the result
---dg SELECT * from PKTABLE;
---dg-differs: the result
---dg SELECT * from FKTABLE;
+SELECT * from PKTABLE;
+SELECT * from FKTABLE;
 
 DROP TABLE FKTABLE;
 DROP TABLE PKTABLE;
@@ -532,28 +515,22 @@ UPDATE PKTABLE set ptest2=10 where ptest2=4;
 UPDATE PKTABLE set ptest2=2 WHERE ptest2=3 and ptest1=1;
 
 -- Show PKTABLE and FKTABLE
---dg-differs: the result
---dg SELECT * from PKTABLE;
---dg-differs: the result
---dg SELECT * from FKTABLE;
+SELECT * from PKTABLE;
+SELECT * from FKTABLE;
 
 -- Try to delete something that should set null
 DELETE FROM PKTABLE where ptest1=2 and ptest2=3 and ptest3=4;
 
 -- Show PKTABLE and FKTABLE
---dg-differs: the result
---dg SELECT * from PKTABLE;
---dg-differs: the result
---dg SELECT * from FKTABLE;
+SELECT * from PKTABLE;
+SELECT * from FKTABLE;
 
 -- Try to delete something that should not set null
 DELETE FROM PKTABLE where ptest2=-1 and ptest3=5;
 
 -- Show PKTABLE and FKTABLE
---dg-differs: the result
---dg SELECT * from PKTABLE;
---dg-differs: the result
---dg SELECT * from FKTABLE;
+SELECT * from PKTABLE;
+SELECT * from FKTABLE;
 
 DROP TABLE FKTABLE;
 DROP TABLE PKTABLE;
@@ -572,19 +549,16 @@ CREATE TABLE FKTABLE (
   FOREIGN KEY (tid, fk_id_del_set_default) REFERENCES PKTABLE ON DELETE SET DEFAULT (fk_id_del_set_default, fk_id_del_set_default)
 );
 
---dg-differs: the result
---dg SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = 'fktable'::regclass::oid ORDER BY oid;
+SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = 'fktable'::regclass::oid ORDER BY oid;
 
 INSERT INTO PKTABLE VALUES (1, 0), (1, 1), (1, 2);
 INSERT INTO FKTABLE VALUES
   (1, 1, 1, NULL),
   (1, 2, NULL, 2);
 
---dg-skip: multiple assignments to same column "?"
---dg DELETE FROM PKTABLE WHERE id = 1 OR id = 2;
+DELETE FROM PKTABLE WHERE id = 1 OR id = 2;
 
---dg-cascade
---dg SELECT * FROM FKTABLE ORDER BY id;
+SELECT * FROM FKTABLE ORDER BY id;
 
 DROP TABLE FKTABLE;
 DROP TABLE PKTABLE;
@@ -1309,11 +1283,9 @@ SELECT * FROM tasks;
 -- could fail with only 2 changes to make, if row was already updated
 BEGIN;
 UPDATE tasks set id=id WHERE id=2;
---dg-differs: the result
---dg SELECT * FROM tasks;
+SELECT * FROM tasks;
 DELETE FROM users WHERE id = 2;
---dg-differs: the result
---dg SELECT * FROM tasks;
+SELECT * FROM tasks;
 COMMIT;
 
 --
@@ -1333,11 +1305,9 @@ values
 
 begin;
     update selfref set a = 123 where a = 0;
---dg-differs: the result
---dg     select a, b from selfref;
+    select a, b from selfref;
     update selfref set a = 456 where a = 123;
---dg-differs: the result
---dg     select a, b from selfref;
+    select a, b from selfref;
 commit;
 
 --

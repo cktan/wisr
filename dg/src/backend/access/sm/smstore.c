@@ -4503,7 +4503,7 @@ static void add_fkey(Oid relid, const char *relname, Constraint *con) {
   }
   foreach (l, con->fk_del_set_cols) {
     Oid t[INDEX_MAX_KEYS], c[INDEX_MAX_KEYS];
-    bool among = false;
+    bool among = false, again = false;
 
     fkey_column(rel, strVal(lfirst(l)), numdelset, delsetcols, t, c);
     for (int i = 0; i < numfks; i++)
@@ -4513,7 +4513,14 @@ static void add_fkey(Oid relid, const char *relname, Constraint *con) {
                       errmsg("column \"%s\" referenced in ON DELETE SET "
                              "action must be part of foreign key",
                              strVal(lfirst(l)))));
-    numdelset++;
+    /*
+     * A column named again is dropped, as validateFkOnDeleteSetColumns()
+     * drops it: the action's UPDATE would set it twice, and fail.
+     */
+    for (int i = 0; i < numdelset; i++)
+      again |= delsetcols[i] == delsetcols[numdelset];
+    if (!again)
+      numdelset++;
   }
 
   /* The referenced columns: those named, or the primary key's. */

@@ -8967,3 +8967,26 @@ taken name looks in sm alone: `CREATE TABLE pg_catalog.pg_class
   `CREATE TABLE pg_catalog.new_system_table()` back; and, from
   work since it was last ported, a `select * from t1`, and two
   `vacuum analyze` markers with ANALYZE's reason now.
+
+## Step 308: a SET DEFAULT column named twice is kept once
+
+A foreign key's `ON DELETE SET DEFAULT (d, d)` or `SET NULL
+(d, d, d)` kept every column named (`ISSUE.md` issue 11), where
+PostgreSQL's `validateFkOnDeleteSetColumns()` drops a repeat.
+Not the definition alone: the action's UPDATE set `d` twice,
+`multiple assignments to same column "d"`, so the parent's row
+could not be deleted at all.
+
+- **The fix**: the loop that reads the column list, in
+  `smstore.c`'s foreign key, drops a column already in it. The
+  list is dg's alone, kept in the key's host bytes, which sm
+  stores and never reads: no test of sm's reaches it.
+- **Tests**: `test/fkey_delete_set.sql` (run.sh, 11 files
+  now): SET DEFAULT (d, d) in CREATE TABLE and SET NULL (d, d,
+  d) in ALTER TABLE ... ADD FOREIGN KEY, each defined with d
+  once and acting on a parent's delete, as PostgreSQL's; each
+  part fails without the fix. pgregress's `foreign_key`,
+  ported again for the first time since its port, has 30
+  statements back: the SET DEFAULT block's definition, DELETE
+  and SELECT by this fix, the only ones a build without it
+  fails; the rest by the foreign key work since.
