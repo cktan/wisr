@@ -1131,7 +1131,8 @@ userkey      =  relid (2B BE, sm2) ‖ the rel's key (sm3)
   comparator, `wisr.store.v2`, sorts versioned keys by userkey
   then newest version first, and current and old keys
   bytewise, so the three classes lie in three ranges and a
-  scan of rows bounds itself to one.
+  scan of rows bounds itself to one. Why sm1 keeps a byte of
+  its own rather than read the relid: `../VCHAIN.md` §2.
 - **A row's newest version is under its plain key**, so a scan
   of the newest rows reads one key a row; index entries and
   TOAST keep the version in the key (`../VCHAIN.md`).

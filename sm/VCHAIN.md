@@ -100,6 +100,40 @@ rows of 500 bytes, compacted, in the block cache.
 - **A versioned key costs one byte more** than today; a current
   key, one byte instead of twelve.
 
+**Why a class byte, and not the relid.** In a table's store
+every userkey already opens with sm2's relid (`0x0001` rows,
+`0x0002`–`0xFFFD` indexes, `0xFFFF` TOAST, `0xFFFE` free;
+`sm3/SM3_DESIGN.md` §4), so the comparator could take its rule
+from the relid instead, with OLD keys under `0xFFFE`, and every
+key would be a byte shorter. Decided against (2026-10-27):
+
+- **sm1 would know sm2's relids.** sm1 is a store of versioned
+  keys that knows no relation; which kind a key is, its call
+  says (`chain_insert` or `insert`), and a chained key and a
+  versioned key of the same bytes are two keys (`sm1.h`). Read
+  from the relid, the kind would be sm2's numbering, built into
+  sm1's comparator, and an OLD key would be written under a
+  relid sm2 owns.
+- **Not every store has relids.** The catalog's store
+  (`catalog_store`, versioned) has none, nor do sm1's own
+  tests (`test_chain.cc`) and the scenario driver's `--chained`
+  runs, whose keys are `"k"` and `"R1"`: two key formats, or
+  every one of them rewritten.
+- **It changes the format**: a new comparator name, and every
+  data directory made before no longer opens.
+- **The byte is not shown to matter.** A current row's prefix
+  goes from 3 bytes to 2, an index entry's and a TOAST chunk's
+  lose 1, and an OLD key gains 1: about 1 + k bytes a row with
+  k indexes. A scan's cost does not follow a row's bytes
+  closely (this file's opening: the 1-byte frozen header was
+  built and reverted).
+
+To revisit, measure first: the q1 scan and `../bench/relq6`
+with a current row's prefix cut to 2 bytes, on a scratch build.
+A smaller step keeps sm1 apart from sm2: a store that is not
+chained, the catalog's, holds versioned keys alone and could
+drop the byte; that saves it on the catalog only.
+
 ---
 
 ## 3. A chained row
