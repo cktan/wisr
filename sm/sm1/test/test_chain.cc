@@ -661,6 +661,45 @@ TEST_CASE("GC harvests what no snapshot of a chained store needs") {
   commit_xct(t);
 }
 
+TEST_CASE("a chained cursor does not see an old version stamped after its "
+          "snapshot") {
+  // Verify that a stamped version written before a cursor's snapshot,
+  // but committed after it, is not seen: its stamp, not its write
+  // timestamp, decides (§4.4).
+  // 1. Insert k = v1 and commit.
+  // 2. Update k to v2 in a transaction w, and leave it open; insert j
+  //    and commit, so visible_ts passes v2's write (§4.3).
+  // 3. Begin a repeatable read reader t and read k: its snapshot is past
+  //    v2's write, and before its commit.
+  // 4. Commit w, then update k to v3, so v2 goes to OLD; compact, which
+  //    stamps v2 with w's commit, since t's snapshot keeps it.
+  // 5. Confirm t's cursor reads k = v1, and a new view's k = v3.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  chain_put(f.s, c, "k", "v1", true);
+  sm1::session_t *w = f.open();
+  begin_xct(w);
+  REQUIRE(sm1::chain_update(w, c, "k", "v2") == 0);
+  chain_put(f.s, c, "j", "j1", true);
+  sm1::session_t *t = f.open();
+  begin_xct(t, sm1::xctlevel_t::repeatable_read);
+  CHECK(chain_get(t, c, "k") == "v1");
+  commit_xct(w);
+  chain_put(f.s, c, "k", "v3", false);
+  compact_chain(f.s, c);
+  std::vector<std::string> payloads;
+  std::vector<chain_version_t> old = old_entries(f.s, c, &payloads);
+  REQUIRE(payloads == std::vector<std::string>{"v1", "v2"});
+  REQUIRE((old[1].flags & version_stamped));
+
+  using rows_t = std::vector<std::string>;
+  CHECK(chain_rows(t, c, nullptr, 0, nullptr, 0) == rows_t{"j=j1", "k=v1"});
+  commit_xct(t);
+  begin_xct(t);
+  CHECK(chain_rows(t, c, nullptr, 0, nullptr, 0) == rows_t{"j=j1", "k=v3"});
+  commit_xct(t);
+}
+
 TEST_CASE("GC drops unlinked OLD entries, and the CF:txn sweep keeps "
           "chained reads right") {
   // Verify that a repair's unlinked entries go, and that once the

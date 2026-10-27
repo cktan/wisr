@@ -9,7 +9,8 @@
 -- 5. Keep 36 digits, round to a typmod, and cast to and from the integers
 --    and floats.
 -- 6. Take scales, gcd, lcm and a factorial.
--- 7. Sum, average and take deviations of numerics and integers.
+-- 7. Sum, average and take deviations of numerics and integers; int8 sums
+--    past int8, of nulls, and over a moving window whose frame empties.
 -- 8. Make a series and find a bucket.
 -- 9. Use numeric in jsonb, jsonpath, extract, to_char, money and pg_lsn.
 -- 10. Send values in PostgreSQL's binary format.
@@ -42,4 +43,7 @@ SELECT numeric_send(1.5), numeric_send(-0.0001), numeric_send(0::numeric), numer
 SELECT a * b, a % b, mod(b, a), sign(a), gcd(a, b), lcm(a, b), bool_and(gcd(a, b)::text = gcd(a::decimal128, b::decimal128)::text AND lcm(a, b)::text = lcm(a::decimal128, b::decimal128)::text AND (a + b)::text = (a::decimal128 + b::decimal128)::text AND (a - b)::text = (a::decimal128 - b::decimal128)::text AND (a * b)::text = (a::decimal128 * b::decimal128)::text AND (a / b)::text = (a::decimal128 / b::decimal128)::text AND (-a)::text = (-(a::decimal128))::text AND abs(a)::text = abs(a::decimal128)::text AND (a % b)::text = (a::decimal128 % b::decimal128)::text AND mod(b, a)::text = mod(b::decimal128, a::decimal128)::text AND sign(a)::text = sign(a::decimal128)::text) OVER () FROM (VALUES (1.5, 2.25), (-99999999999999.999, 0.001), (12345678901234567::numeric(17,0), -3), (0.00000000000000001, 7), (99999999999999999::numeric(17,0), 99999999999999999::numeric(17,0))) v(a, b);
 SELECT sum(x), avg(x), sum(x)::text = sum(x::decimal128)::text, avg(x)::text = avg(x::decimal128)::text FROM (VALUES (1.5), (2.25), (-3), (0.001), (99999999999999999::numeric(17,0))) v(x);
 SELECT i, sum(x) OVER w, avg(x) OVER w FROM (VALUES (1, 1.5), (2, 2.25), (3, -3), (4, 0.001)) v(i, x) WINDOW w AS (ORDER BY i ROWS BETWEEN 1 PRECEDING AND CURRENT ROW);
+SELECT sum(x), avg(x), count(x) FROM (VALUES (9223372036854775807::int8), (9223372036854775807), (NULL), (-1)) v(x);
+SELECT sum(x), avg(x) FROM (VALUES (NULL::int8), (NULL)) v(x);
+SELECT i, sum(x) OVER w, avg(x) OVER w FROM (VALUES (1, 9223372036854775807::int8), (2, 5), (3, NULL), (4, NULL), (5, -7), (6, -9223372036854775808)) v(i, x) WINDOW w AS (ORDER BY i ROWS BETWEEN 1 PRECEDING AND CURRENT ROW);
 SELECT x, round(x, 1), round(x), round(x, -2), trunc(x, 1), trunc(x), trunc(x, -2), ceil(x), floor(x), to_char(x, '999,999.99'), bool_and(ceil(x)::text = ceil(x::decimal128)::text AND ceiling(x)::text = ceiling(x::decimal128)::text AND floor(x)::text = floor(x::decimal128)::text AND round(x, 1)::text = round(x::decimal128, 1)::text AND round(x)::text = round(x::decimal128)::text AND round(x, -2)::text = round(x::decimal128, -2)::text AND trunc(x, 1)::text = trunc(x::decimal128, 1)::text AND trunc(x)::text = trunc(x::decimal128)::text AND trunc(x, -2)::text = trunc(x::decimal128, -2)::text AND to_char(x, '999,999.99') = to_char(x::decimal128, '999,999.99')) OVER () FROM (VALUES (1234.567), (-0.05), (99.95), (-151.25), (-149.5), (149.5), (-7), (9999999999999999.9)) v(x);

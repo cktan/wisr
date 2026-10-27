@@ -1,0 +1,55 @@
+# test_scan_count.rel -- (scan-count) counts exactly the rows (scan)
+# gives over the same _ids, decoding none of them; and (env-attach
+# :cache-bytes) sizes the block cache, refusing one of 0 bytes.
+#
+# 1. Attach with a block cache of 0 bytes: refused, ERR_INVALID.
+#    Attach with one of 1 MB.
+# 2. Insert 50 rows, and delete every fifth: 40 are left.
+# 3. Over the whole table, a range, a range of one row, a range of
+#    one deleted row, and a range past the last row, scan-count is
+#    the length of scan: 40, 16, 1, 0 and 0.
+# 4. A table that does not exist fails, named in the error.
+
+(def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_scan_count"))
+(rm-rf test-dir)
+(env-init test-dir)
+
+# 1. A cache that holds nothing, then one of 1 MB.
+(assert-err :err-invalid (env-attach test-dir :cache-bytes 0))
+(env-attach test-dir :cache-bytes (* 1024 1024))
+(db-create "cdb")
+(db-open "cdb")
+
+# 2. 50 rows, every fifth deleted.
+(begin :rc)
+(table-create t (columns (n :int4 :not-null) (v :text)))
+(def ids (seq [i :range [0 50]] (insert t [i (string "row " i)])))
+(commit)
+(begin :rc)
+(eachp [i id] ids
+  (when (zero? (% i 5)) (delete t id)))
+(commit)
+
+# 3. Each range counted as scan gives it.
+(begin :rc)
+(defn same [& bounds]
+  (def n (length (scan t ;bounds)))
+  (assert-eq (scan-count t ;bounds) n)
+  n)
+(assert-eq (same) 40)
+(assert-eq (same :from (ids 10) :to (ids 29)) 16)
+(assert-eq (same :from (ids 11) :to (ids 11)) 1)
+(assert-eq (same :from (ids 10) :to (ids 10)) 0)
+(assert-eq (same :from (+ (last ids) 1)) 0)
+(commit)
+
+# 4. No such table.
+(begin :rc)
+(def err (try (do (scan-count nosuch) "no error") ([e] (string e))))
+(assert-eq (truthy? (string/find "scan-count: table 'nosuch' not found" err)) true)
+(abort)
+
+(db-close)
+(env-detach)
+(rm-rf test-dir)
+(print "test_scan_count.rel passed")

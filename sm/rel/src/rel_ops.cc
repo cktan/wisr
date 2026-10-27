@@ -145,20 +145,28 @@ static Janet cfun_env_init(int32_t argc, Janet *argv) {
   return janet_wrap_nil();
 }
 
-/* (env-attach path [:toast bool]) */
+/* (env-attach path [:toast bool] [:cache-bytes n]) */
 static Janet cfun_env_attach(int32_t argc, Janet *argv) {
-  janet_arity(argc, 1, 3);
+  janet_arity(argc, 1, 5);
   const char *path = janet_getcstring(argv, 0);
   bool toast = false;
-  if (argc >= 2) {
-    if (identifier_of(argv[1]) != "toast" &&
-        identifier_of(argv[1]) != ":toast") {
-      janet_panic("env-attach: the option after the path is :toast");
+  // sm's default block cache, unless :cache-bytes sizes it.
+  sm_env_options_t opt;
+  sm_env_options_init(&opt);
+  for (int32_t i = 1; i < argc; i += 2) {
+    std::string kw = identifier_of(argv[i]);
+    if (kw == "toast" || kw == ":toast") {
+      // :toast alone, last, means true.
+      toast = i + 1 == argc || janet_getboolean(argv, i + 1);
+    } else if ((kw == "cache-bytes" || kw == ":cache-bytes") && i + 1 < argc) {
+      opt.block_cache_bytes = janet_getinteger64(argv, i + 1);
+    } else {
+      janet_panic("env-attach: the options after the path are :toast and "
+                  ":cache-bytes");
     }
-    toast = argc == 2 || janet_getboolean(argv, 2);
   }
   // Attach to the wisr environment.
-  if (get_catalog().env_attach(path, toast) != 0) {
+  if (get_catalog().env_attach(path, toast, &opt) != 0) {
     panic_sm_error("env-attach");
   }
   return janet_wrap_nil();
@@ -571,13 +579,70 @@ int rel_index_oid(session_ctx_t *s, const std::string &name, uint64_t *table,
                  : rc;
 }
 
-/* (table-create name (columns ...)) and (temp-table-create ...) */
+/*
+ * Make the columns at attnums the primary key of the table oid, name,
+ * as PostgreSQL names one: name_pkey. sm keys the table's rows by it,
+ * rewriting a table that has rows (../CLUSTER.md section 8); op names
+ * the command in a panic.
+ */
+static void create_primary_key(session_ctx_t *s, uint64_t oid,
+                               const std::string &name,
+                               const std::vector<int32_t> &attnums,
+                               const char *op) {
+  std::vector<sm_index_key_spec_t> keys;
+  for (int32_t att : attnums) {
+    keys.push_back({att, false, false, 0, -1});
+  }
+  uint64_t index = 0;
+  if (sm_cat_create_index(s->session, oid, (name + "_pkey").c_str(), keys, {},
+                          true, "", {}, &index, true, true) != 0) {
+    panic_sm_error(op);
+  }
+}
+
+/*
+ * The places of the columns names among columns, in their order, as
+ * a primary key takes them; a panic for none, a name not there, or
+ * one named twice.
+ */
+static std::vector<int32_t> key_places(const std::vector<col_def_t> &columns,
+                                       const std::vector<std::string> &names,
+                                       const std::string &tbl_name,
+                                       const char *op) {
+  if (names.empty()) {
+    janet_panicf("%s: a primary key needs a column", op);
+  }
+  std::vector<int32_t> places;
+  for (const std::string &n : names) {
+    auto it = std::find_if(columns.begin(), columns.end(),
+                           [&n](const col_def_t &c) { return c.name == n; });
+    if (it == columns.end()) {
+      janet_panicf("%s: column '%s' not found in table '%s'", op, n.c_str(),
+                   tbl_name.c_str());
+    }
+    int32_t place = static_cast<int32_t>(it - columns.begin());
+    if (std::find(places.begin(), places.end(), place) != places.end()) {
+      janet_panicf("%s: column '%s' named twice in the primary key", op,
+                   n.c_str());
+    }
+    places.push_back(place);
+  }
+  return places;
+}
+
+/*
+ * (table-create name (columns ...) [(primary-key c...)]) and
+ * (temp-table-create ...)
+ */
 static Janet table_create(int32_t argc, Janet *argv, bool temp) {
   janet_arity(argc, 2, -1);
   session_ctx_t *s = require_session();
   std::string tbl_name = identifier_of(argv[0]);
+  const char *op = temp ? "temp-table-create" : "table-create";
 
   std::vector<col_def_t> columns;
+  std::vector<std::string> pk_names;
+  bool has_pk = false;
 
   std::vector<Janet> clauses;
   if (argc == 2 && (janet_checktype(argv[1], JANET_TUPLE) ||
@@ -661,11 +726,28 @@ static Janet table_create(int32_t argc, Janet *argv, bool temp) {
         }
         columns.push_back(std::move(c));
       }
+    } else if (identifier_of(items[0]) == "primary-key") {
+      if (has_pk) {
+        janet_panicf("%s: a table has one primary key", op);
+      }
+      has_pk = true;
+      for (int32_t j = 1; j < nitems; j++) {
+        pk_names.push_back(identifier_of(items[j]));
+      }
     }
   }
 
   if (columns.empty()) {
     janet_panic("table-create: table must have at least one column");
+  }
+
+  // A primary key's columns are NOT NULL, as SQL makes them.
+  std::vector<int32_t> pk_places;
+  if (has_pk) {
+    pk_places = key_places(columns, pk_names, tbl_name, op);
+    for (int32_t place : pk_places) {
+      columns[place].not_null = true;
+    }
   }
 
   // sm3 makes its store, _id sequence and catalog entry.
@@ -679,8 +761,35 @@ static Janet table_create(int32_t argc, Janet *argv, bool temp) {
            : sm_cat_create_table(s->session, SM_NSP_PUBLIC, tbl_name.c_str(),
                                  specs, &oid);
   if (rc != 0) {
-    panic_sm_error(temp ? "temp-table-create" : "table-create");
+    panic_sm_error(op);
   }
+  // Keyed from its birth: an empty table, so nothing is rewritten.
+  if (has_pk) {
+    create_primary_key(s, oid, tbl_name, pk_places, op);
+  }
+  return janet_wrap_nil();
+}
+
+/*
+ * (add-primary-key table c...): make the columns, each NOT NULL, the
+ * table's primary key, as ALTER TABLE ... ADD PRIMARY KEY; sm rewrites
+ * a table that has rows, keyed by it.
+ */
+static Janet cfun_add_primary_key(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 2);
+  session_ctx_t *s = require_session();
+  std::string tbl_name = identifier_of(argv[0]);
+  JanetView names = janet_getindexed(argv, 1);
+  std::vector<std::string> pk_names;
+  for (int32_t i = 0; i < names.len; i++) {
+    pk_names.push_back(identifier_of(names.items[i]));
+  }
+  // X, as the DDL takes it: the columns cannot change under us.
+  table_def_t *p_tdef =
+      need_table(s, tbl_name, SM_LOCKMODE_EX, "add-primary-key");
+  std::vector<int32_t> places =
+      key_places(p_tdef->columns, pk_names, tbl_name, "add-primary-key");
+  create_primary_key(s, p_tdef->def->oid, tbl_name, places, "add-primary-key");
   return janet_wrap_nil();
 }
 
@@ -1131,9 +1240,13 @@ static Janet index_form(const sm_table_def_t &def, const sm_index_def_t &x) {
   for (int32_t att : x.include_attnums) {
     includes.push_back(janet_csymbolv(def.columns[att].name.c_str()));
   }
-  JanetKV *st = janet_struct_begin(ev.has_where ? 5 : 4);
+  JanetKV *st = janet_struct_begin(4 + ev.has_where + x.primary);
   janet_struct_put(st, janet_ckeywordv("name"), janet_cstringv(x.name.c_str()));
   janet_struct_put(st, janet_ckeywordv("unique"), janet_wrap_boolean(x.unique));
+  // The primary key alone says so: a secondary index's struct is as before.
+  if (x.primary) {
+    janet_struct_put(st, janet_ckeywordv("primary"), janet_wrap_true());
+  }
   janet_struct_put(st, janet_ckeywordv("key"), tuple_of(keys));
   janet_struct_put(st, janet_ckeywordv("include"), tuple_of(includes));
   if (ev.has_where) {
@@ -1539,6 +1652,107 @@ static Janet cfun_index_state(int32_t argc, Janet *argv) {
   }
 }
 
+/* The table's primary key, or nullptr in a table without one. */
+static const index_def_t *primary_of(const table_def_t *t) {
+  for (const auto &[name, x] : t->indexes) {
+    if (x.def->primary) {
+      return &x;
+    }
+  }
+  return nullptr;
+}
+
+/*
+ * The values of the first of the index's key columns that v gives,
+ * a tuple or array of them or one value alone, into vals: a scan's
+ * bound, or a row's key; op names the command in a panic.
+ */
+static void key_values_of(const table_def_t *p_tdef, const index_def_t *p_idef,
+                          Janet v, row_values_t &vals, const char *op) {
+  const Janet *items = nullptr;
+  int32_t n = 0;
+  if (!janet_indexed_view(v, &items, &n)) {
+    items = &v;
+    n = 1;
+  }
+  if (static_cast<size_t>(n) > p_idef->keys.size()) {
+    janet_panicf("%s: a bound of %d values on %d key columns", op, n,
+                 static_cast<int>(p_idef->keys.size()));
+  }
+  vals = row_values_t(n);
+  for (int32_t j = 0; j < n; j++) {
+    const key_col_def_t &k = p_idef->keys[j];
+    col_def_t col = {p_tdef->columns[k.col_idx].name, k.type_code, k.typmod,
+                     false};
+    if (janet_to_value(items[j], col, vals.bufs[j], &vals.values[j],
+                       &vals.isnull[j]) != 0) {
+      janet_panicf("%s: invalid bound value for column '%s'", op,
+                   col.name.c_str());
+    }
+  }
+}
+
+/*
+ * A row's name, as a verb is given it: in a table without a primary
+ * key its _id; in one with, its key's values, in vals, which key
+ * points at (../ROWKEY.md section 1).
+ */
+struct row_name_t {
+  const index_def_t *pk = nullptr;
+  uint64_t id = 0;
+  row_values_t vals{0};
+  sm_row_key_t key = {nullptr, nullptr, 0};
+};
+
+/* The row argv[n] names in the table, into name; op names the command. */
+static void row_name_of(const table_def_t *p_tdef, Janet *argv, int32_t n,
+                        row_name_t &name, const char *op) {
+  name.pk = primary_of(p_tdef);
+  if (name.pk == nullptr) {
+    name.id = static_cast<uint64_t>(janet_getinteger64(argv, n));
+    return;
+  }
+  key_values_of(p_tdef, name.pk, argv[n], name.vals, op);
+  if (name.vals.values.size() != name.pk->keys.size()) {
+    janet_panicf("%s: a key of %d values on a primary key of %d columns", op,
+                 static_cast<int>(name.vals.values.size()),
+                 static_cast<int>(name.pk->keys.size()));
+  }
+  name.key = {name.vals.values.data(), name.vals.isnull.get(),
+              name.vals.values.size()};
+}
+
+/*
+ * The key of a row of the table, whose primary key is pk, as a verb
+ * gives it back: a tuple of the values of pk's columns in vals, each
+ * a Janet value already, in the row's column order.
+ */
+static Janet key_form(const index_def_t *pk, const Janet *vals) {
+  std::vector<Janet> items;
+  for (const key_col_def_t &k : pk->keys) {
+    items.push_back(vals[k.col_idx]);
+  }
+  return tuple_of(items);
+}
+
+/*
+ * What insert and load give back for a row of row's values: its key
+ * in a table with a primary key, else its _id, rowno.
+ */
+static Janet inserted_form(const table_def_t *p_tdef, const row_values_t &row,
+                           uint64_t rowno) {
+  const index_def_t *pk = primary_of(p_tdef);
+  if (pk == nullptr) {
+    return janet_wrap_number(static_cast<double>(rowno));
+  }
+  std::vector<Janet> vals(row.values.size(), janet_wrap_nil());
+  for (const key_col_def_t &k : pk->keys) {
+    vals[k.col_idx] = value_to_janet(
+        row.values[k.col_idx], row.isnull[k.col_idx], k.type_code, k.typmod);
+  }
+  return key_form(pk, vals.data());
+}
+
 /* (insert table [val1 val2 ...]) */
 static Janet cfun_insert(int32_t argc, Janet *argv) {
   janet_fixarity(argc, 2);
@@ -1583,22 +1797,24 @@ static Janet cfun_insert(int32_t argc, Janet *argv) {
     panic_sm_error("insert sm_tbl_insert");
   }
 
-  return janet_wrap_number(static_cast<double>(rowno));
+  return inserted_form(p_tdef, row, rowno);
 }
 
-/* (read table id) */
+/* (read table id), or (read table key) in a table with a primary key */
 static Janet cfun_read(int32_t argc, Janet *argv) {
   janet_fixarity(argc, 2);
   session_ctx_t *s = require_session();
   std::string tbl_name = identifier_of(argv[0]);
-  uint64_t rowno = static_cast<uint64_t>(janet_getinteger64(argv, 1));
 
   table_def_t *p_tdef = need_table(s, tbl_name, SM_LOCKMODE_IS, "read");
   sm_tbl_t *tbl = p_tdef->tbl;
+  row_name_t name;
+  row_name_of(p_tdef, argv, 1, name, "read");
 
   const void *tuple = nullptr;
   size_t len = 0;
-  int rc = sm_tbl_read(tbl, rowno, &tuple, &len);
+  int rc = name.pk ? sm_tbl_read(tbl, name.key, &tuple, &len)
+                   : sm_tbl_read(tbl, name.id, &tuple, &len);
   if (rc == 1) {
     return janet_wrap_nil();
   }
@@ -1622,19 +1838,21 @@ static Janet cfun_read(int32_t argc, Janet *argv) {
   return janet_wrap_tuple(janet_tuple_end(vals));
 }
 
-/* (read-latest table id) */
+/* (read-latest table id), or by key as (read) */
 static Janet cfun_read_latest(int32_t argc, Janet *argv) {
   janet_fixarity(argc, 2);
   session_ctx_t *s = require_session();
   std::string tbl_name = identifier_of(argv[0]);
-  uint64_t rowno = static_cast<uint64_t>(janet_getinteger64(argv, 1));
 
   table_def_t *p_tdef = need_table(s, tbl_name, SM_LOCKMODE_IS, "read-latest");
   sm_tbl_t *tbl = p_tdef->tbl;
+  row_name_t name;
+  row_name_of(p_tdef, argv, 1, name, "read-latest");
 
   const void *tuple = nullptr;
   size_t len = 0;
-  int rc = sm_tbl_read_latest(tbl, rowno, &tuple, &len);
+  int rc = name.pk ? sm_tbl_read_latest(tbl, name.key, &tuple, &len)
+                   : sm_tbl_read_latest(tbl, name.id, &tuple, &len);
   if (rc == 1) {
     return janet_wrap_nil();
   }
@@ -1658,12 +1876,11 @@ static Janet cfun_read_latest(int32_t argc, Janet *argv) {
   return janet_wrap_tuple(janet_tuple_end(vals));
 }
 
-/* (lock-row table id :shared|:exclusive) */
+/* (lock-row table id :shared|:exclusive), or by key as (read) */
 static Janet cfun_lock_row(int32_t argc, Janet *argv) {
   janet_fixarity(argc, 3);
   session_ctx_t *s = require_session();
   std::string tbl_name = identifier_of(argv[0]);
-  uint64_t rowno = static_cast<uint64_t>(janet_getinteger64(argv, 1));
   std::string how = identifier_of(argv[2]);
   if (how != "shared" && how != "exclusive") {
     janet_panic("lock-row: the mode is :shared or :exclusive");
@@ -1673,8 +1890,11 @@ static Janet cfun_lock_row(int32_t argc, Janet *argv) {
   // The table lock under the row's: IS for shared, IX for exclusive.
   table_def_t *p_tdef = need_table(
       s, tbl_name, exclusive ? SM_LOCKMODE_IX : SM_LOCKMODE_IS, "lock-row");
-  if (sm_tbl_lock(p_tdef->tbl, rowno,
-                  exclusive ? SM_LOCKMODE_EX : SM_LOCKMODE_SH) != 0) {
+  row_name_t name;
+  row_name_of(p_tdef, argv, 1, name, "lock-row");
+  sm_lockmode_t mode = exclusive ? SM_LOCKMODE_EX : SM_LOCKMODE_SH;
+  if ((name.pk ? sm_tbl_lock(p_tdef->tbl, name.key, mode)
+               : sm_tbl_lock(p_tdef->tbl, name.id, mode)) != 0) {
     panic_sm_error("lock-row sm_tbl_lock");
   }
   return janet_wrap_nil();
@@ -1733,7 +1953,7 @@ static Janet cfun_load(int32_t argc, Janet *argv) {
       abort_failed_write(s);
       panic_sm_error("load sm_tbl_load_add");
     }
-    janet_array_push(out, janet_wrap_number(static_cast<double>(rowno)));
+    janet_array_push(out, inserted_form(p_tdef, row, rowno));
   }
   // Every row handed over goes into the table.
   if (sm_tbl_load_end(tbl) != 0) {
@@ -1900,15 +2120,19 @@ static Janet cfun_stats(int32_t argc, Janet *argv) {
   return janet_wrap_struct(janet_struct_end(kv));
 }
 
-/* (update table id [new_val1 new_val2 ...]) */
+/*
+ * (update table id [new_val1 new_val2 ...]), or by key as (read); new
+ * values of a primary key's columns move the row to the new key.
+ */
 static Janet cfun_update(int32_t argc, Janet *argv) {
   janet_fixarity(argc, 3);
   session_ctx_t *s = require_session();
   std::string tbl_name = identifier_of(argv[0]);
-  uint64_t rowno = static_cast<uint64_t>(janet_getinteger64(argv, 1));
 
   table_def_t *p_tdef = need_table(s, tbl_name, SM_LOCKMODE_IX, "update");
   sm_tbl_t *tbl = p_tdef->tbl;
+  row_name_t name;
+  row_name_of(p_tdef, argv, 1, name, "update");
 
   const Janet *row_items = nullptr;
   int32_t row_len = 0;
@@ -1941,8 +2165,12 @@ static Janet cfun_update(int32_t argc, Janet *argv) {
   sm_pin_ref_t ref = {};
   const void *old_tuple = nullptr;
   size_t old_len = 0;
-  if (0 != sm_tbl_update(tbl, rowno, row.values.data(), row.isnull.get(),
-                         row.values.size(), &ref, &old_tuple, &old_len)) {
+  if (0 !=
+      (name.pk
+           ? sm_tbl_update(tbl, name.key, row.values.data(), row.isnull.get(),
+                           row.values.size(), &ref, &old_tuple, &old_len)
+           : sm_tbl_update(tbl, name.id, row.values.data(), row.isnull.get(),
+                           row.values.size(), &ref, &old_tuple, &old_len))) {
     abort_failed_write(s);
     panic_sm_error("update sm_tbl_update");
   }
@@ -1963,21 +2191,24 @@ static Janet cfun_update(int32_t argc, Janet *argv) {
   return janet_wrap_tuple(janet_tuple_end(old_vals));
 }
 
-/* (delete table id) */
+/* (delete table id), or by key as (read) */
 static Janet cfun_delete(int32_t argc, Janet *argv) {
   janet_fixarity(argc, 2);
   session_ctx_t *s = require_session();
   std::string tbl_name = identifier_of(argv[0]);
-  uint64_t rowno = static_cast<uint64_t>(janet_getinteger64(argv, 1));
 
   table_def_t *p_tdef = need_table(s, tbl_name, SM_LOCKMODE_IX, "delete");
   sm_tbl_t *tbl = p_tdef->tbl;
+  row_name_t name;
+  row_name_of(p_tdef, argv, 1, name, "delete");
 
   // The row deleted, pinned until its values are Janet's.
   sm_pin_ref_t ref = {};
   const void *old_tuple = nullptr;
   size_t old_len = 0;
-  if (0 != sm_tbl_delete(tbl, rowno, &ref, &old_tuple, &old_len)) {
+  if (0 != (name.pk
+                ? sm_tbl_delete(tbl, name.key, &ref, &old_tuple, &old_len)
+                : sm_tbl_delete(tbl, name.id, &ref, &old_tuple, &old_len))) {
     abort_failed_write(s);
     panic_sm_error("delete sm_tbl_delete");
   }
@@ -1998,35 +2229,76 @@ static Janet cfun_delete(int32_t argc, Janet *argv) {
   return janet_wrap_tuple(janet_tuple_end(old_vals));
 }
 
-/* (scan table [:from first] [:to last]) */
-static Janet cfun_scan(int32_t argc, Janet *argv) {
-  janet_arity(argc, 1, -1);
-  session_ctx_t *s = require_session();
+/*
+ * Open a cursor over the table argv[0] names, over the _ids the rest of
+ * argv gives, as (scan) takes them, or in a table with a primary key
+ * over its keys; op names the command in a panic. Sets p_tdef to the
+ * table.
+ */
+static sm_rel_scan_t *open_rel_cursor(session_ctx_t *s, int32_t argc,
+                                      Janet *argv, const char *op,
+                                      table_def_t *&p_tdef) {
   std::string tbl_name = identifier_of(argv[0]);
+  p_tdef = need_table(s, tbl_name, SM_LOCKMODE_IS, op);
+  const index_def_t *pk = primary_of(p_tdef);
 
   uint64_t first = 1;
   uint64_t last = UINT64_MAX;
+  // A keyed table's bounds: its key's values, or the first of them.
+  row_values_t lo_vals(0), hi_vals(0);
+  sm_bound_t lo_b = {nullptr, nullptr, 0, true};
+  sm_bound_t hi_b = {nullptr, nullptr, 0, true};
+  bool has_lo = false;
+  bool has_hi = false;
 
   for (int32_t i = 1; i < argc; i++) {
     if (janet_checktype(argv[i], JANET_KEYWORD)) {
       std::string kw = identifier_of(argv[i]);
-      if ((kw == "from" || kw == ":from") && i + 1 < argc) {
-        first = static_cast<uint64_t>(janet_getinteger64(argv, i + 1));
+      bool from = kw == "from" || kw == ":from";
+      if ((from || kw == "to" || kw == ":to") && i + 1 < argc) {
         i++;
-      } else if ((kw == "to" || kw == ":to") && i + 1 < argc) {
-        last = static_cast<uint64_t>(janet_getinteger64(argv, i + 1));
-        i++;
+        if (pk == nullptr) {
+          (from ? first : last) =
+              static_cast<uint64_t>(janet_getinteger64(argv, i));
+          continue;
+        }
+        row_values_t &vals = from ? lo_vals : hi_vals;
+        key_values_of(p_tdef, pk, argv[i], vals, op);
+        sm_bound_t &b = from ? lo_b : hi_b;
+        b = sm_bound_t{vals.values.data(), vals.isnull.get(),
+                       vals.values.size(), true};
+        (from ? has_lo : has_hi) = true;
       }
     }
   }
 
-  table_def_t *p_tdef = need_table(s, tbl_name, SM_LOCKMODE_IS, "scan");
-  sm_tbl_t *tbl = p_tdef->tbl;
-
   sm_rel_scan_t *rscan = nullptr;
-  if (sm_tbl_scan(tbl, first, last, &rscan) != 0) {
-    panic_sm_error("scan sm_tbl_scan");
+  if (pk == nullptr) {
+    if (sm_tbl_scan(p_tdef->tbl, first, last, &rscan) != 0) {
+      panic_sm_error((std::string(op) + " sm_tbl_scan").c_str());
+    }
+    return rscan;
   }
+  // The rows themselves over the key's range, as digres scans its
+  // primary key (../CLUSTER.md section 6).
+  if (sm_tbl_idx_scan_rows(p_tdef->tbl, pk->def->oid, has_lo ? &lo_b : nullptr,
+                           has_hi ? &hi_b : nullptr, nullptr, &rscan) != 0) {
+    panic_sm_error((std::string(op) + " sm_tbl_idx_scan_rows").c_str());
+  }
+  return rscan;
+}
+
+/*
+ * (scan table [:from first] [:to last]): [id row] for each row, or
+ * [key row] in a table with a primary key.
+ */
+static Janet cfun_scan(int32_t argc, Janet *argv) {
+  janet_arity(argc, 1, -1);
+  session_ctx_t *s = require_session();
+  table_def_t *p_tdef = nullptr;
+  sm_rel_scan_t *rscan = open_rel_cursor(s, argc, argv, "scan", p_tdef);
+  sm_tbl_t *tbl = p_tdef->tbl;
+  const index_def_t *pk = primary_of(p_tdef);
 
   JanetArray *rows = janet_array(16);
   uint64_t rowno = 0;
@@ -2047,11 +2319,10 @@ static Janet cfun_scan(int32_t argc, Janet *argv) {
       vals[i] = value_to_janet(val, isnull, p_tdef->columns[i].type_code,
                                p_tdef->columns[i].typmod, tbl);
     }
-    Janet t_val = janet_wrap_tuple(janet_tuple_end(vals));
-
     Janet *pair = janet_tuple_begin(2);
-    pair[0] = janet_wrap_number(static_cast<double>(rowno));
-    pair[1] = t_val;
+    pair[0] =
+        pk ? key_form(pk, vals) : janet_wrap_number(static_cast<double>(rowno));
+    pair[1] = janet_wrap_tuple(janet_tuple_end(vals));
     janet_array_push(rows, janet_wrap_tuple(janet_tuple_end(pair)));
   }
 
@@ -2065,6 +2336,34 @@ static Janet cfun_scan(int32_t argc, Janet *argv) {
   }
   sm_rel_scanend(rscan);
   return janet_wrap_array(rows);
+}
+
+/*
+ * (scan-count table [:from first] [:to last]): the rows (scan) gives,
+ * counted, none decoded. Each is stepped to in the cursor's pin, as
+ * digres's scans step (sm_rel_scannxt with a ref).
+ */
+static Janet cfun_scan_count(int32_t argc, Janet *argv) {
+  janet_arity(argc, 1, -1);
+  session_ctx_t *s = require_session();
+  table_def_t *p_tdef = nullptr;
+  sm_rel_scan_t *rscan = open_rel_cursor(s, argc, argv, "scan-count", p_tdef);
+  uint64_t rowno = 0;
+  sm_pin_ref_t ref;
+  int64_t n = 0;
+  int rc;
+  while ((rc = sm_rel_scannxt(rscan, &rowno, &ref)) == 0) {
+    n++;
+  }
+  // As (scan): a failed cursor's count is not the scan's.
+  if (rc < 0) {
+    if (!engine_aborted()) {
+      sm_rel_scanend(rscan);
+    }
+    panic_sm_error("scan-count sm_rel_scannxt");
+  }
+  sm_rel_scanend(rscan);
+  return janet_wrap_number(static_cast<double>(n));
 }
 
 /*
@@ -2100,38 +2399,8 @@ static sm_idx_scan_t *open_idx_cursor(session_ctx_t *s, int32_t argc,
       if ((is_lower || is_upper) && i + 1 < argc) {
         Janet val = argv[i + 1];
         i++;
-        const Janet *b_items = nullptr;
-        int32_t b_len = 0;
-        if (janet_checktype(val, JANET_TUPLE)) {
-          b_items = janet_unwrap_tuple(val);
-          b_len = janet_tuple_length(b_items);
-        } else if (janet_checktype(val, JANET_ARRAY)) {
-          b_items = janet_unwrap_array(val)->data;
-          b_len = janet_unwrap_array(val)->count;
-        } else {
-          b_items = &val;
-          b_len = 1;
-        }
-
-        if (static_cast<size_t>(b_len) > p_idef->keys.size()) {
-          janet_panicf("%s: a bound of %d values on %zu key columns", op, b_len,
-                       p_idef->keys.size());
-        }
         row_values_t &vals = is_lower ? lo_vals : hi_vals;
-        vals = row_values_t(b_len);
-        for (int32_t j = 0; j < b_len; j++) {
-          const auto &k = p_idef->keys[j];
-          col_def_t tmp_col;
-          tmp_col.name = p_tdef->columns[k.col_idx].name;
-          tmp_col.type_code = k.type_code;
-          tmp_col.typmod = k.typmod;
-          tmp_col.not_null = false;
-          if (janet_to_value(b_items[j], tmp_col, vals.bufs[j], &vals.values[j],
-                             &vals.isnull[j]) != 0) {
-            janet_panicf("%s: invalid bound value for column '%s'", op,
-                         tmp_col.name.c_str());
-          }
-        }
+        key_values_of(p_tdef, p_idef, val, vals, op);
 
         sm_bound_t &b = is_lower ? lo_b : hi_b;
         b.prefix = vals.values.data();
@@ -2153,14 +2422,51 @@ static sm_idx_scan_t *open_idx_cursor(session_ctx_t *s, int32_t argc,
 }
 
 /*
- * An index entry as [rowno cut include-tuple], include-tuple nil for
+ * The key of the row of the entry iscan last gave, in a table whose
+ * primary key is pk, as (scan) gives it: read from the row, as the
+ * entry holds it only encoded; op names the command in a panic.
+ */
+static Janet entry_key(table_def_t *p_tdef, const index_def_t *pk,
+                       sm_idx_scan_t *iscan, const char *op) {
+  sm_tbl_t *tbl = p_tdef->tbl;
+  const void *key = nullptr;
+  size_t len = 0;
+  sm_pin_ref_t ref = {};
+  const void *tuple = nullptr;
+  size_t tlen = 0;
+  // The entry is one the transaction sees, and so is its row.
+  if (sm_idx_scan_row(iscan, &key, &len) != 0 ||
+      sm_tbl_read_key(tbl, key, len, &ref, &tuple, &tlen) != 0) {
+    panic_sm_error(op);
+  }
+  std::vector<Janet> vals(p_tdef->columns.size(), janet_wrap_nil());
+  for (const key_col_def_t &k : pk->keys) {
+    sm_datum_t v = 0;
+    bool isnull = false;
+    if (sm_tbl_decode(tbl, tuple, tlen, k.col_idx, &v, &isnull) != 0) {
+      sm_unpin(&ref);
+      panic_sm_error(op);
+    }
+    vals[k.col_idx] = value_to_janet(v, isnull, k.type_code, k.typmod, tbl);
+  }
+  sm_unpin(&ref);
+  return key_form(pk, vals.data());
+}
+
+/*
+ * An index entry as [rowno cut include-tuple], or [key cut
+ * include-tuple] in a table with a primary key, include-tuple nil for
  * an index without INCLUDE columns; entry holds the deformed values.
  */
 static Janet idx_entry_to_janet(table_def_t *p_tdef, index_def_t *p_idef,
-                                uint64_t rowno, bool cut, const void *val,
-                                size_t val_len, row_values_t &entry) {
+                                sm_idx_scan_t *iscan, uint64_t rowno, bool cut,
+                                const void *val, size_t val_len,
+                                row_values_t &entry, const char *op) {
   sm_tbl_t *tbl = p_tdef->tbl;
   uint64_t index = p_idef->def->oid;
+  const index_def_t *pk = primary_of(p_tdef);
+  Janet row = pk ? entry_key(p_tdef, pk, iscan, op)
+                 : janet_wrap_number(static_cast<double>(rowno));
   Janet inc_val = janet_wrap_nil();
   if (p_idef->includes.size() > 0 && val != nullptr) {
     if (sm_tbl_idx_deform(tbl, index, val, val_len, entry.values.data(),
@@ -2178,7 +2484,7 @@ static Janet idx_entry_to_janet(table_def_t *p_tdef, index_def_t *p_idef,
   }
 
   Janet *item = janet_tuple_begin(3);
-  item[0] = janet_wrap_number(static_cast<double>(rowno));
+  item[0] = row;
   item[1] = janet_wrap_boolean(cut);
   item[2] = inc_val;
   return janet_wrap_tuple(janet_tuple_end(item));
@@ -2203,8 +2509,8 @@ static Janet cfun_idx_scan(int32_t argc, Janet *argv) {
 
   int rc;
   while ((rc = sm_idx_scannxt(iscan, &rowno, &cut, &val, &val_len)) == 0) {
-    janet_array_push(res, idx_entry_to_janet(p_tdef, p_idef, rowno, cut, val,
-                                             val_len, entry));
+    janet_array_push(res, idx_entry_to_janet(p_tdef, p_idef, iscan, rowno, cut,
+                                             val, val_len, entry, "idx-scan"));
   }
 
   // As (scan): a failed cursor's entries are not the scan's.
@@ -2273,8 +2579,8 @@ static Janet cfun_cursor_next(int32_t argc, Janet *argv) {
     panic_sm_error("cursor-next sm_idx_scannxt");
   }
   row_values_t entry(sm_tbl_idx_ncols(c->table->tbl, c->idef->def->oid));
-  return idx_entry_to_janet(c->table.get(), c->idef, rowno, cut, val, val_len,
-                            entry);
+  return idx_entry_to_janet(c->table.get(), c->idef, c->scan, rowno, cut, val,
+                            val_len, entry, "cursor-next");
 }
 
 /* (cursor-close c) */
@@ -2465,6 +2771,7 @@ static const JanetReg s_rel_cfuns[] = {
     {"_nextseq", cfun_nextseq, "internal"},
     {"nextseq", cfun_nextseq, "(nextseq name) -- get next sequence value"},
     {"_index-create", cfun_index_create, "internal"},
+    {"_add-primary-key", cfun_add_primary_key, "internal"},
     {"_index-drop", cfun_index_drop, "internal"},
     {"_index-wait", cfun_index_wait, "internal"},
     {"_index-state", cfun_index_state, "internal"},
@@ -2491,6 +2798,7 @@ static const JanetReg s_rel_cfuns[] = {
     {"_update", cfun_update, "internal"},
     {"_delete", cfun_delete, "internal"},
     {"_scan", cfun_scan, "internal"},
+    {"_scan-count", cfun_scan_count, "internal"},
     {"_idx-scan", cfun_idx_scan, "internal"},
     {"_idx-open", cfun_idx_open, "internal"},
     {"cursor-next", cfun_cursor_next,
@@ -2539,6 +2847,9 @@ static const char *s_prelude = R"janet(
 
 (defmacro index-create [name & body]
   ~(_index-create (string ',name) ',body))
+
+(defmacro add-primary-key [tbl & cols]
+  ~(_add-primary-key (string ',tbl) ',cols))
 
 (defmacro index-drop [name]
   ~(_index-drop (string ',name)))
@@ -2608,6 +2919,8 @@ static const char *s_prelude = R"janet(
 
 (defmacro scan [tbl & rest]
   ~(_scan (string ',tbl) ,;rest))
+(defmacro scan-count [tbl & rest]
+  ~(_scan-count (string ',tbl) ,;rest))
 
 (defmacro idx-scan [idx & rest]
   ~(_idx-scan (string ',idx) ,;rest))

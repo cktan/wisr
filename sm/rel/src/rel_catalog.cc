@@ -27,13 +27,14 @@ int catalog_t::env_init(const char *path) {
 }
 
 /* Attach an existing home directory. */
-int catalog_t::env_attach(const char *path, bool toast) {
+int catalog_t::env_attach(const char *path, bool toast,
+                          const sm_env_options_t *opt) {
   if (m_env != nullptr) {
     env_detach(0);
   }
   sm_env_t *env = nullptr;
-  // Attach to the storage environment.
-  if (sm_attach(path, &env) != 0) {
+  // Attach to the storage environment, its block cache as opt sizes it.
+  if (sm_attach(path, &env, opt) != 0) {
     return -1;
   }
   // rel evaluates its own partial and expression indexes; the

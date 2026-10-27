@@ -308,9 +308,11 @@ TEST_CASE("a malformed tuple is refused as corrupt") {
   //    the tuple, refuses every prefix too.
   // 2. A reserved flag, or more attributes than the schema has, is
   //    refused by both, whichever attribute is decoded.
-  // 3. A slot that does not point to its varlena, and a varlena
-  //    that is a TOAST pointer or compressed, which sm2 cannot read
-  //    yet, are refused by deform and by decoding that attribute.
+  // 3. A slot that does not point to its varlena -- a byte on, or
+  //    back into the fixed part, at a byte that reads as a varlena
+  //    header -- and a varlena that is a TOAST pointer or
+  //    compressed, which sm2 cannot read yet, are refused by deform
+  //    and by decoding that attribute.
   // 4. A varlena whose header claims a byte too many is refused by
   //    deform; decode, which does not check the slots after it,
   //    reads it as it claims.
@@ -354,6 +356,11 @@ TEST_CASE("a malformed tuple is refused as corrupt") {
   size_t slot = 3 + 4;
   REQUIRE(bad[slot] == 11);
   bad[slot] = 12;
+  refused(bad, 1);
+  // Back to byte 3, the int4 7: 0x07 is a 1-byte header of 3.
+  bad = good;
+  REQUIRE(bad[3] == '\x07');
+  bad[slot] = 3;
   refused(bad, 1);
   // The first varlena, "abc" with header 0x09: make it a TOAST
   // pointer, a compressed 4-byte header, and a 1-byte header one

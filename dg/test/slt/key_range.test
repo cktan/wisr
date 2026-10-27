@@ -1,0 +1,195 @@
+# Verify that a range scan of a primary key returns exactly the rows its
+# keys name, with the keys its bounds hold no longer checked of each row
+# (smstore_index_beginscan()), and every other key still checked.
+# 1. Make tables keyed by an int8, an int4, two int4 columns, a numeric
+#    and a text, and turn off every scan but an index scan.
+# 2. Read ranges of the int8 key, inclusive and exclusive at each end.
+# 3. Give one end two keys, in both orders, so only one bounds the scan,
+#    and an equality with a range on the same column.
+# 4. Read the int4 key by int8 constants, one past int4.
+# 5. Read the two-column key by its first column and a range of its
+#    second, by its second alone, and by a range of its first and an
+#    equality on its second.
+# 6. Read the numeric key between values finer than its scale, which
+#    its bounds widen, and the text key between two of its values.
+# 7. Read a range of the int8 key from an index only scan.
+
+statement ok
+create table r8 (id int8 primary key, v int4)
+
+statement ok
+insert into r8 select i, i * 2 from generate_series(1, 100) i
+
+statement ok
+create table r4 (id int4 primary key, v int4)
+
+statement ok
+insert into r4 select i, i * 2 from generate_series(1, 100) i
+
+statement ok
+create table r2 (a int4, b int4, v text, primary key (a, b))
+
+statement ok
+insert into r2 select i / 10, i % 10, 'pair ' || i from generate_series(0, 99) i
+
+statement ok
+create table rn (price numeric(6, 1) primary key, item text)
+
+statement ok
+insert into rn values (1.1, 'a'), (1.2, 'b'), (1.3, 'c'), (3.0, 'd')
+
+statement ok
+create table rt (name text primary key, n int4)
+
+statement ok
+insert into rt values ('apple', 1), ('banana', 2), ('cherry', 3)
+
+statement ok
+set enable_seqscan = off
+
+statement ok
+set enable_bitmapscan = off
+
+query III nosort
+select count(*), min(id), max(id) from r8 where id between 10 and 19
+----
+10	10	19
+
+query III nosort
+select count(*), min(id), max(id) from r8 where id > 10 and id < 20
+----
+9	11	19
+
+query III nosort
+select count(*), min(id), max(id) from r8 where id >= 10 and id < 20
+----
+10	10	19
+
+query III nosort
+select count(*), min(id), max(id) from r8 where id > 10 and id <= 20
+----
+10	11	20
+
+query III nosort
+select count(*), min(id), max(id) from r8 where id > 95
+----
+5	96	100
+
+query III nosort
+select count(*), min(id), max(id) from r8 where id < 4
+----
+3	1	3
+
+query III nosort
+select count(*), min(id), max(id) from r8 where id > 5 and id > 50 and id < 60
+----
+9	51	59
+
+query III nosort
+select count(*), min(id), max(id) from r8 where id > 50 and id > 5 and id < 60
+----
+9	51	59
+
+query III nosort
+select count(*), min(id), max(id) from r8 where id < 60 and id < 10 and id > 0
+----
+9	1	9
+
+query III nosort
+select count(*), min(id), max(id) from r8 where id < 10 and id < 60 and id > 0
+----
+9	1	9
+
+query I nosort
+select count(*) from r8 where id = 5 and id > 7
+----
+0
+
+query I nosort
+select count(*) from r8 where id > 7 and id = 5
+----
+0
+
+query III nosort
+select count(*), min(id), max(id) from r8 where id = 50 and id < 60
+----
+1	50	50
+
+query III nosort
+select count(*), min(id), max(id) from r4 where id > 10::int8 and id < 20::int8
+----
+9	11	19
+
+query III nosort
+select count(*), min(id), max(id) from r4 where id > 90 and id < 3000000000::int8
+----
+10	91	100
+
+query III nosort
+select count(*), min(id), max(id) from r4 where id > -3000000000::int8 and id < 5
+----
+4	1	4
+
+query II rowsort
+select a, b from r2 where a = 3 and b > 6
+----
+3	7
+3	8
+3	9
+
+query II rowsort
+select a, b from r2 where a = 3 and b >= 4 and b < 6
+----
+3	4
+3	5
+
+query II rowsort
+select a, b from r2 where b = 2 and a < 3
+----
+0	2
+1	2
+2	2
+
+query II rowsort
+select a, b from r2 where a > 7 and b = 2
+----
+8	2
+9	2
+
+query II rowsort
+select a, b from r2 where a >= 2 and a < 4 and b > 7
+----
+2	8
+2	9
+3	8
+3	9
+
+query T rowsort
+select item from rn where price > 1.15 and price < 1.25
+----
+b
+
+query T rowsort
+select item from rn where price > 1.2 and price < 3.0
+----
+c
+
+query T rowsort
+select item from rn where price >= 1.25 and price <= 1.3
+----
+c
+
+query T rowsort
+select name from rt where name > 'apple' and name < 'cherry'
+----
+banana
+
+statement ok
+set enable_indexscan = off
+
+query I rowsort
+select id from r8 where id > 40 and id <= 43
+----
+41
+42
+43

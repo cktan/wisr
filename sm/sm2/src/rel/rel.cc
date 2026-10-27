@@ -552,6 +552,15 @@ int deform(const sm2::rel_t *rel, std::string_view tuple,
                          std::span<bool>(isnull.get(), n));
 }
 
+/*
+ * Fail with SM_ERR_CORRUPT: a key of n bytes under an _id. Out of
+ * line, so the scan's step builds no message.
+ */
+[[gnu::cold, gnu::noinline]] int bad_id_key(size_t n) {
+  return sm1::seterr(sm1::SM_ERR_CORRUPT, "rel: a key of " + std::to_string(n) +
+                                              " bytes, not 10, under an _id");
+}
+
 } // namespace
 
 namespace sm2 {
@@ -1028,25 +1037,24 @@ int rel_scan(rel_t *rel, uint64_t first, uint64_t last, rel_scan_t *&out) {
  * row's _id, read from its key, or 0 for a keyed row.
  */
 int rel_scannxt(rel_scan_t *scan, uint64_t &id, std::string_view &tuple) {
-  std::string_view key, value;
-  int rc = sm1::scannxt(scan->scan, key, value);
+  // sm1 hands out the key into the cursor and the row into tuple,
+  // both empty at the end and on failure.
+  int rc = sm1::scannxt(scan->scan, scan->key, tuple);
   if (rc != 0) {
     return rc;
   }
-  // The row's key is sm1's, past the relid.
-  scan->key = key.substr(relid_len);
+  // The row's key is sm1's, past the relid, which every key in the
+  // range begins with.
+  scan->key.remove_prefix(relid_len);
   id = 0;
   if (!scan->by_key) {
     // The range holds only this relid's 10-byte keys.
     if (scan->key.size() != id_len) {
-      return sm1::seterr(sm1::SM_ERR_CORRUPT,
-                         "rel: a key of " + std::to_string(key.size()) +
-                             " bytes, not 10, under an _id");
+      return bad_id_key(relid_len + scan->key.size());
     }
     std::string_view k = scan->key;
     get_be(k, id);
   }
-  tuple = value;
   return 0;
 }
 
