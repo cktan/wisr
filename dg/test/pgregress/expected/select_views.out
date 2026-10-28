@@ -70,18 +70,12 @@ CREATE VIEW my_credit_card_usage_normal AS
        SELECT * FROM my_credit_card_secure l NATURAL JOIN credit_usage r;
 CREATE VIEW my_credit_card_usage_secure WITH (security_barrier) AS
        SELECT * FROM my_credit_card_secure l NATURAL JOIN credit_usage r;
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT SELECT ON my_property_normal TO public;
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT SELECT ON my_property_secure TO public;
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT SELECT ON my_credit_card_normal TO public;
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT SELECT ON my_credit_card_secure TO public;
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT SELECT ON my_credit_card_usage_normal TO public;
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT SELECT ON my_credit_card_usage_secure TO public;
+GRANT SELECT ON my_property_normal TO public;
+GRANT SELECT ON my_property_secure TO public;
+GRANT SELECT ON my_credit_card_normal TO public;
+GRANT SELECT ON my_credit_card_secure TO public;
+GRANT SELECT ON my_credit_card_usage_normal TO public;
+GRANT SELECT ON my_credit_card_usage_secure TO public;
 --
 -- Run leaky view scenarios
 --

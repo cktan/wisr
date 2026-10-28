@@ -1266,13 +1266,12 @@ SET ROLE regress_publication_user2;
 --dg CREATE PUBLICATION testpub2;  -- fail
 
 SET ROLE regress_publication_user;
---dg-skip: relation pg_database cannot be written: digres has no catalog tables
---dg GRANT CREATE ON DATABASE regression TO regress_publication_user2;
+GRANT CREATE ON DATABASE regression TO regress_publication_user2;
 SET ROLE regress_publication_user2;
 SET client_min_messages = 'ERROR';
 --dg-skip: publications are not supported
 --dg CREATE PUBLICATION testpub2;  -- ok
---dg-cascade
+--dg-differs: another error: publications are not supported
 --dg CREATE PUBLICATION testpub3 FOR TABLES IN SCHEMA pub_test;  -- fail
 --dg-skip: publications are not supported
 --dg CREATE PUBLICATION testpub3;  -- ok
@@ -1315,8 +1314,7 @@ SET ROLE regress_publication_user;
 --dg DROP PUBLICATION testpub4;
 DROP ROLE regress_publication_user3;
 
---dg-skip: relation pg_database cannot be written: digres has no catalog tables
---dg REVOKE CREATE ON DATABASE regression FROM regress_publication_user2;
+REVOKE CREATE ON DATABASE regression FROM regress_publication_user2;
 
 --dg-cascade
 --dg DROP TABLE testpub_parted;

@@ -1699,8 +1699,7 @@ drop table inh_nn1, inh_nn2;
 --
 create role regress_alice;
 create role regress_bob;
---dg-skip: relation pg_namespace cannot be written: digres has no catalog tables
---dg grant all on schema public to regress_alice, regress_bob;
+grant all on schema public to regress_alice, regress_bob;
 grant regress_alice to regress_bob;
 set session authorization regress_alice;
 --dg-cascade
@@ -1718,8 +1717,7 @@ set session authorization regress_bob;
 reset session authorization;
 --dg-cascade
 --dg drop table inh_parent, inh_child;
---dg-skip: relation pg_namespace cannot be written: digres has no catalog tables
---dg revoke all on schema public from regress_alice, regress_bob;
+revoke all on schema public from regress_alice, regress_bob;
 drop role regress_alice, regress_bob;
 --
 -- Check use of temporary tables with inheritance trees
@@ -2058,8 +2056,7 @@ create table permtest_grandchild (c text, b text, a int);
 --dg-cascade
 --dg analyze permtest_parent;
 create role regress_no_child_access;
---dg-skip: cache lookup failed for attribute -N of relation N
---dg revoke all on permtest_grandchild from regress_no_child_access;
+revoke all on permtest_grandchild from regress_no_child_access;
 --dg-cascade
 --dg grant select on permtest_parent to regress_no_child_access;
 set session authorization regress_no_child_access;

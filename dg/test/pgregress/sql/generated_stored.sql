@@ -2,8 +2,7 @@
 
 
 CREATE SCHEMA generated_stored_tests;
---dg-skip: relation pg_namespace cannot be written: digres has no catalog tables
---dg GRANT USAGE ON SCHEMA generated_stored_tests TO PUBLIC;
+GRANT USAGE ON SCHEMA generated_stored_tests TO PUBLIC;
 SET search_path = generated_stored_tests;
 
 --dg-skip: column "?" asks for what CREATE TABLE does not support yet

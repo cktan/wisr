@@ -948,8 +948,7 @@ SET SESSION AUTHORIZATION regress_view_user2;
 --dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.a = v.a
 --dg   WHEN MATCHED THEN UPDATE SET b = 'foo'; -- not allowed
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT SELECT ON base_tbl TO regress_view_user1;
+GRANT SELECT ON base_tbl TO regress_view_user1;
 SET SESSION AUTHORIZATION regress_view_user1;
 --dg-cascade
 --dg SELECT * FROM rw_view1;
@@ -984,8 +983,7 @@ SET SESSION AUTHORIZATION regress_view_user2;
 --dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.a = v.a
 --dg   WHEN MATCHED THEN UPDATE SET b = 'foo'; -- not allowed
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT UPDATE ON base_tbl TO regress_view_user1;
+GRANT UPDATE ON base_tbl TO regress_view_user1;
 SET SESSION AUTHORIZATION regress_view_user1;
 --dg-cascade
 --dg SELECT * FROM rw_view1;
@@ -1020,8 +1018,7 @@ SET SESSION AUTHORIZATION regress_view_user2;
 --dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.a = v.a
 --dg   WHEN MATCHED THEN UPDATE SET b = 'fud';
 RESET SESSION AUTHORIZATION;
---dg-skip: cache lookup failed for attribute -N of relation N
---dg REVOKE UPDATE ON base_tbl FROM regress_view_user1;
+REVOKE UPDATE ON base_tbl FROM regress_view_user1;
 SET SESSION AUTHORIZATION regress_view_user1;
 --dg-cascade
 --dg SELECT * FROM rw_view1;
@@ -1189,9 +1186,8 @@ SET SESSION AUTHORIZATION regress_view_user2;
 --dg MERGE INTO rw_view2 t USING (VALUES (2, 'Row 2', 2.0)) AS v(a,b,c) ON t.aaa = v.a
 --dg   WHEN NOT MATCHED THEN INSERT VALUES (v.c, v.a, v.b); -- not allowed
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT SELECT ON base_tbl TO regress_view_user1;
---dg-skip: relation pg_attribute cannot be written: digres has no catalog tables
+GRANT SELECT ON base_tbl TO regress_view_user1;
+--dg-skip: column privileges are not supported yet
 --dg GRANT UPDATE (a, b) ON base_tbl TO regress_view_user1;
 SET SESSION AUTHORIZATION regress_view_user1;
 --dg-cascade
@@ -1244,9 +1240,8 @@ SET SESSION AUTHORIZATION regress_view_user3;
 --dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
 --dg   WHEN MATCHED THEN UPDATE SET bbb = bbb; -- not allowed
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT SELECT ON base_tbl TO regress_view_user2;
---dg-skip: relation pg_attribute cannot be written: digres has no catalog tables
+GRANT SELECT ON base_tbl TO regress_view_user2;
+--dg-skip: column privileges are not supported yet
 --dg GRANT UPDATE (a, c) ON base_tbl TO regress_view_user2;
 SET SESSION AUTHORIZATION regress_view_user2;
 --dg-cascade
@@ -1285,9 +1280,8 @@ SET SESSION AUTHORIZATION regress_view_user3;
 --dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
 --dg   WHEN MATCHED THEN UPDATE SET ccc = ccc; -- not allowed
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT SELECT ON base_tbl TO regress_view_user3;
---dg-skip: relation pg_attribute cannot be written: digres has no catalog tables
+GRANT SELECT ON base_tbl TO regress_view_user3;
+--dg-skip: column privileges are not supported yet
 --dg GRANT UPDATE (a, c) ON base_tbl TO regress_view_user3;
 SET SESSION AUTHORIZATION regress_view_user3;
 --dg-cascade
@@ -1308,8 +1302,7 @@ SET SESSION AUTHORIZATION regress_view_user3;
 --dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
 --dg   WHEN MATCHED THEN UPDATE SET ccc = ccc; -- ok
 RESET SESSION AUTHORIZATION;
---dg-skip: cache lookup failed for attribute -N of relation N
---dg REVOKE SELECT, UPDATE ON base_tbl FROM regress_view_user1;
+REVOKE SELECT, UPDATE ON base_tbl FROM regress_view_user1;
 SET SESSION AUTHORIZATION regress_view_user1;
 --dg-cascade
 --dg SELECT * FROM rw_view1;  -- not allowed
@@ -1355,8 +1348,7 @@ SET SESSION AUTHORIZATION regress_view_user3;
 --dg MERGE INTO rw_view2 t USING (VALUES (1)) AS v(a) ON t.aaa = v.a
 --dg   WHEN MATCHED THEN UPDATE SET ccc = ccc; -- ok
 RESET SESSION AUTHORIZATION;
---dg-skip: cache lookup failed for attribute -N of relation N
---dg REVOKE SELECT, UPDATE ON base_tbl FROM regress_view_user2;
+REVOKE SELECT, UPDATE ON base_tbl FROM regress_view_user2;
 SET SESSION AUTHORIZATION regress_view_user2;
 --dg-cascade
 --dg SELECT * FROM rw_view2;  -- not allowed
@@ -1398,7 +1390,8 @@ RESET SESSION AUTHORIZATION;
 --dg DROP TABLE base_tbl CASCADE;
 DROP USER regress_view_user1;
 DROP USER regress_view_user2;
-DROP USER regress_view_user3;
+--dg-cascade
+--dg DROP USER regress_view_user3;
 -- column defaults
 --dg-cascade
 --dg CREATE TABLE base_tbl (a int PRIMARY KEY, b text DEFAULT 'Unspecified', c serial);

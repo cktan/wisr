@@ -5611,8 +5611,8 @@ static Oid sequence_owner_table(Oid oid) {
  * does.  A role that is not a superuser must be able to become the new
  * owner, which must have CREATE on the schema.  A table's sequences, those
  * its columns own, go with it; an index's owner is its table's, and a
- * sequence a column owns its table's.  Its ACL is the next step's
- * (sm/ROLE.md section 9).
+ * sequence a column owns its table's.  Its ACL, if it keeps one, names
+ * the new owner where it named the old (pg_global_change_owner()).
  */
 static void change_owner(Oid relid, const char *relname, RoleSpec *spec) {
   Oid owner = get_rolespec_oid(spec, false);
@@ -5644,8 +5644,8 @@ static void change_owner(Oid relid, const char *relname, RoleSpec *spec) {
     if (ACLCHECK_OK != result)
       aclcheck_error(result, OBJECT_SCHEMA, get_namespace_name(nspoid));
   }
-  pg_global_set_owner(dbid, RelationRelationId, relid, owner,
-                      RELPERSISTENCE_TEMP == get_rel_persistence(relid));
+  pg_global_change_owner(dbid, RelationRelationId, relid, owner,
+                         RELPERSISTENCE_TEMP == get_rel_persistence(relid));
   if (RELKIND_RELATION != kind || PG_TEMP_NAMESPACE == nspoid)
     return;
   /* Its sequences, which are in its schema, as OWNED BY requires. */
@@ -5657,7 +5657,7 @@ static void change_owner(Oid relid, const char *relname, RoleSpec *spec) {
     Oid seq = sequence_oid(name.c_str(), nspoid);
 
     if (OidIsValid(seq) && sequence_owner_table(seq) == relid)
-      pg_global_set_owner(dbid, RelationRelationId, seq, owner, false);
+      pg_global_change_owner(dbid, RelationRelationId, seq, owner, false);
   }
 }
 

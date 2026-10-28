@@ -62,7 +62,7 @@ DROP ROLE regress_role_limited;
 
 -- ok, having CREATEROLE is enough to create users with these privileges
 CREATE ROLE regress_createrole CREATEROLE NOINHERIT;
---dg-skip: relation pg_database cannot be written: digres has no catalog tables
+--dg-cascade
 --dg GRANT CREATE ON DATABASE regression TO regress_createrole WITH GRANT OPTION;
 CREATE ROLE regress_login LOGIN;
 CREATE ROLE regress_inherit INHERIT;
@@ -160,7 +160,7 @@ REASSIGN OWNED BY regress_tenant TO regress_createrole;
 -- ok, create a role with a value for createrole_self_grant
 SET createrole_self_grant = 'set, inherit';
 CREATE ROLE regress_tenant2;
---dg-skip: relation pg_database cannot be written: digres has no catalog tables
+--dg-cascade
 --dg GRANT CREATE ON DATABASE regression TO regress_tenant2;
 
 -- ok, regress_tenant2 can create objects within the database
@@ -218,7 +218,7 @@ DROP ROLE regress_nosuch_admin_recursive;
 DROP ROLE regress_plainrole;
 
 -- must revoke privileges before dropping role
---dg-skip: relation pg_database cannot be written: digres has no catalog tables
+--dg-cascade
 --dg REVOKE CREATE ON DATABASE regression FROM regress_createrole CASCADE;
 
 -- ok, should be able to drop non-superuser roles we created

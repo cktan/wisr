@@ -25,8 +25,7 @@ CREATE TABLE source2 (sid integer, delta integer)
   WITH (autovacuum_enabled=off);
 ALTER TABLE target2 OWNER TO regress_merge_no_privs;
 ALTER TABLE source2 OWNER TO regress_merge_no_privs;
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT INSERT ON target TO regress_merge_no_privs;
+GRANT INSERT ON target TO regress_merge_no_privs;
 SET SESSION AUTHORIZATION regress_merge_privs;
 --dg-skip: MERGE does not write to table "?" yet
 --dg EXPLAIN (COSTS OFF)
@@ -168,8 +167,7 @@ ON target.tid = source2.sid
 WHEN MATCHED THEN
 	UPDATE SET balance = 0;
 ERROR:  permission denied for table source2
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT INSERT ON target TO regress_merge_no_privs;
+GRANT INSERT ON target TO regress_merge_no_privs;
 SET SESSION AUTHORIZATION regress_merge_no_privs;
 MERGE INTO target
 USING source2
@@ -177,8 +175,7 @@ ON target.tid = source2.sid
 WHEN MATCHED THEN
 	UPDATE SET balance = 0;
 ERROR:  permission denied for table target
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT UPDATE ON target2 TO regress_merge_privs;
+GRANT UPDATE ON target2 TO regress_merge_privs;
 SET SESSION AUTHORIZATION regress_merge_privs;
 MERGE INTO target2
 USING source

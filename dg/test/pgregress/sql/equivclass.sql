@@ -283,8 +283,7 @@ set enable_mergejoin = off;
 --dg create policy p1 on ec1 using (f1 < '5'::int8alias1);
 
 create user regress_user_ectest;
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg grant select on ec0 to regress_user_ectest;
+grant select on ec0 to regress_user_ectest;
 --dg-cascade
 --dg grant select on ec1 to regress_user_ectest;
 
@@ -306,8 +305,7 @@ set session authorization regress_user_ectest;
 
 reset session authorization;
 
---dg-skip: cache lookup failed for attribute -N of relation N
---dg revoke select on ec0 from regress_user_ectest;
+revoke select on ec0 from regress_user_ectest;
 --dg-cascade
 --dg revoke select on ec1 from regress_user_ectest;
 

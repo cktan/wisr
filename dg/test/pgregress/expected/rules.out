@@ -1854,8 +1854,7 @@ CREATE TABLE ruletest_t1 (x int);
 CREATE TABLE ruletest_t2 (x int);
 CREATE VIEW ruletest_v1 WITH (security_invoker=true) AS
     SELECT * FROM ruletest_t1;
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT INSERT ON ruletest_v1 TO regress_rule_user1;
+GRANT INSERT ON ruletest_v1 TO regress_rule_user1;
 --dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE rule1 AS ON INSERT TO ruletest_v1
 --dg     DO INSTEAD INSERT INTO ruletest_t2 VALUES (NEW.*);
@@ -1869,10 +1868,8 @@ CREATE TABLE ruletest_t3 (x int);
 --dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg CREATE RULE rule2 AS ON UPDATE TO ruletest_t1
 --dg     DO INSTEAD INSERT INTO ruletest_t2 VALUES (OLD.*);
---dg-skip: cache lookup failed for attribute -N of relation N
---dg REVOKE ALL ON ruletest_t2 FROM regress_rule_user1;
---dg-skip: cache lookup failed for attribute -N of relation N
---dg REVOKE ALL ON ruletest_t3 FROM regress_rule_user1;
+REVOKE ALL ON ruletest_t2 FROM regress_rule_user1;
+REVOKE ALL ON ruletest_t3 FROM regress_rule_user1;
 ALTER TABLE ruletest_t1 OWNER TO regress_rule_user1;
 SET SESSION AUTHORIZATION regress_rule_user1;
 UPDATE ruletest_t1 t1 SET x = 0 FROM ruletest_t3 t3 WHERE t1.x = t3.x;

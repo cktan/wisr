@@ -1,7 +1,6 @@
 -- keep these tests aligned with generated_stored.sql
 CREATE SCHEMA generated_virtual_tests;
---dg-skip: relation pg_namespace cannot be written: digres has no catalog tables
---dg GRANT USAGE ON SCHEMA generated_virtual_tests TO PUBLIC;
+GRANT USAGE ON SCHEMA generated_virtual_tests TO PUBLIC;
 SET search_path = generated_virtual_tests;
 --dg-skip: column "?" asks for what CREATE TABLE does not support yet
 --dg CREATE TABLE gtest0 (a int PRIMARY KEY, b int GENERATED ALWAYS AS (55) VIRTUAL);

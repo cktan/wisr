@@ -548,9 +548,8 @@ COPY rls_t1 (a, b, c) from stdin;
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rls_t1 FORCE ROW LEVEL SECURITY;
 
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT SELECT ON TABLE rls_t1 TO regress_rls_copy_user;
---dg-skip: relation pg_attribute cannot be written: digres has no catalog tables
+GRANT SELECT ON TABLE rls_t1 TO regress_rls_copy_user;
+--dg-skip: column privileges are not supported yet
 --dg GRANT SELECT (a, b) ON TABLE rls_t1 TO regress_rls_copy_user_colperms;
 
 -- all columns

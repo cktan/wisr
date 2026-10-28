@@ -1437,10 +1437,13 @@ static Relation RelationBuildSmViewDesc(const smstore_view_t *view,
   rule->isInstead = true;
   rule->qual = NULL;
   rule->actions = (List *)stringToNode(view->query);
-  /* A security_invoker view's are checked as the user that reads it. */
+  /*
+   * Its relations are checked as its owner, as RelationBuildRuleLock() has
+   * it; a security_invoker view's as the user that reads it.
+   */
   setRuleCheckAsUser((Node *)rule->actions, RelationHasSecurityInvoker(relation)
                                                 ? InvalidOid
-                                                : BOOTSTRAP_SUPERUSERID);
+                                                : relation->rd_rel->relowner);
   rulelock = (RuleLock *)palloc(sizeof(RuleLock));
   rulelock->numLocks = 1;
   rulelock->rules = (RewriteRule **)palloc(sizeof(RewriteRule *));

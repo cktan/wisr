@@ -221,11 +221,11 @@ regression files are taken out for it (`test/pgregress`,
   session is a thread (`PLAN.md`).
 - **pg_hba.conf, pg_ident.conf, TLS, GSSAPI** — removed: peer
   on the socket, SCRAM over TCP (step 92).
-- **Roles** — differs: roles, memberships and owners are
-  `pg_global`'s (`../sm/ROLE.md`, steps 312 to 316), and role
-  DDL is refused in a transaction block; GRANT and REVOKE on
-  an object, ALTER ROLE ... SET, REASSIGN and DROP OWNED fail,
-  so a role is refused what it does not own. UTF8 only,
+- **Roles** — differs: roles, memberships, owners and ACLs are
+  `pg_global`'s (`../sm/ROLE.md`, steps 312 to 317), and role
+  DDL is refused in a transaction block; a column's
+  privileges, a function's, ALTER ROLE ... SET, ALTER DEFAULT
+  PRIVILEGES, REASSIGN and DROP OWNED fail. UTF8 only,
   collation C; `initdb` takes no other option (step 8).
 
 ## 8. Locking and isolation

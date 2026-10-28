@@ -2249,14 +2249,12 @@ reset search_path;
 
 -- User with no access
 CREATE USER regress_stats_user1;
---dg-skip: relation pg_namespace cannot be written: digres has no catalog tables
---dg GRANT USAGE ON SCHEMA tststats TO regress_stats_user1;
+GRANT USAGE ON SCHEMA tststats TO regress_stats_user1;
 SET SESSION AUTHORIZATION regress_stats_user1;
---dg-cascade
---dg SELECT * FROM tststats.priv_test_tbl; -- Permission denied
+SELECT * FROM tststats.priv_test_tbl; -- Permission denied
 
 -- Check individual columns if we don't have table privilege
---dg-cascade
+--dg-differs: another error: relation "?" does not have a composite type
 --dg SELECT * FROM tststats.priv_test_tbl
 --dg   WHERE a = 1 and tststats.priv_test_tbl.* > (1, 1) is not null;
 
@@ -2271,34 +2269,25 @@ CREATE FUNCTION op_leak(record, record) RETURNS bool
     LANGUAGE plpgsql;
 CREATE OPERATOR <<< (procedure = op_leak, leftarg = record, rightarg = record,
                      restrict = scalarltsel);
---dg-cascade
---dg SELECT * FROM tststats.priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Permission denied
---dg-cascade
---dg SELECT * FROM tststats.priv_test_tbl WHERE a <<< 0 OR b <<< 0; -- Permission denied
---dg-cascade
---dg SELECT * FROM tststats.priv_test_tbl t
---dg  WHERE a <<< 0 AND (b <<< 0 OR t.* <<< (1, 1) IS NOT NULL); -- Permission denied
---dg-cascade
---dg DELETE FROM tststats.priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Permission denied
+SELECT * FROM tststats.priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Permission denied
+SELECT * FROM tststats.priv_test_tbl WHERE a <<< 0 OR b <<< 0; -- Permission denied
+SELECT * FROM tststats.priv_test_tbl t
+ WHERE a <<< 0 AND (b <<< 0 OR t.* <<< (1, 1) IS NOT NULL); -- Permission denied
+DELETE FROM tststats.priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Permission denied
 
 -- Grant access via a security barrier view, but hide all data
 RESET SESSION AUTHORIZATION;
 CREATE VIEW tststats.priv_test_view WITH (security_barrier=true)
     AS SELECT * FROM tststats.priv_test_tbl WHERE false;
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT SELECT, DELETE ON tststats.priv_test_view TO regress_stats_user1;
+GRANT SELECT, DELETE ON tststats.priv_test_view TO regress_stats_user1;
 
 -- Should now have access via the view, but see nothing and leak nothing
 SET SESSION AUTHORIZATION regress_stats_user1;
---dg-cascade
---dg SELECT * FROM tststats.priv_test_view WHERE a <<< 0 AND b <<< 0; -- Should not leak
---dg-cascade
---dg SELECT * FROM tststats.priv_test_view WHERE a <<< 0 OR b <<< 0; -- Should not leak
---dg-cascade
---dg SELECT * FROM tststats.priv_test_view t
---dg  WHERE a <<< 0 AND (b <<< 0 OR t.* <<< (1, 1) IS NOT NULL); -- Should not leak
---dg-cascade
---dg DELETE FROM tststats.priv_test_view WHERE a <<< 0 AND b <<< 0; -- Should not leak
+SELECT * FROM tststats.priv_test_view WHERE a <<< 0 AND b <<< 0; -- Should not leak
+SELECT * FROM tststats.priv_test_view WHERE a <<< 0 OR b <<< 0; -- Should not leak
+SELECT * FROM tststats.priv_test_view t
+ WHERE a <<< 0 AND (b <<< 0 OR t.* <<< (1, 1) IS NOT NULL); -- Should not leak
+DELETE FROM tststats.priv_test_view WHERE a <<< 0 AND b <<< 0; -- Should not leak
 
 -- Grant table access, but hide all data with RLS
 RESET SESSION AUTHORIZATION;
@@ -2306,20 +2295,15 @@ RESET SESSION AUTHORIZATION;
 --dg ALTER TABLE tststats.priv_test_tbl ENABLE ROW LEVEL SECURITY;
 --dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY priv_test_tbl_pol ON tststats.priv_test_tbl USING (2 * a < 0);
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT SELECT, DELETE ON tststats.priv_test_tbl TO regress_stats_user1;
+GRANT SELECT, DELETE ON tststats.priv_test_tbl TO regress_stats_user1;
 
 -- Should now have direct table access, but see nothing and leak nothing
 SET SESSION AUTHORIZATION regress_stats_user1;
---dg-cascade
---dg SELECT * FROM tststats.priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Should not leak
---dg-cascade
---dg SELECT * FROM tststats.priv_test_tbl WHERE a <<< 0 OR b <<< 0; -- Should not leak
---dg-cascade
---dg SELECT * FROM tststats.priv_test_tbl t
---dg  WHERE a <<< 0 AND (b <<< 0 OR t.* <<< (1, 1) IS NOT NULL); -- Should not leak
---dg-cascade
---dg DELETE FROM tststats.priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Should not leak
+SELECT * FROM tststats.priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Should not leak
+SELECT * FROM tststats.priv_test_tbl WHERE a <<< 0 OR b <<< 0; -- Should not leak
+SELECT * FROM tststats.priv_test_tbl t
+ WHERE a <<< 0 AND (b <<< 0 OR t.* <<< (1, 1) IS NOT NULL); -- Should not leak
+DELETE FROM tststats.priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Should not leak
 
 -- Create plain inheritance parent table with no access permissions
 RESET SESSION AUTHORIZATION;
@@ -2329,15 +2313,11 @@ CREATE TABLE tststats.priv_test_parent_tbl (a int, b int);
 
 -- Should not have access to parent, and should leak nothing
 SET SESSION AUTHORIZATION regress_stats_user1;
---dg-cascade
---dg SELECT * FROM tststats.priv_test_parent_tbl WHERE a <<< 0 AND b <<< 0; -- Permission denied
---dg-cascade
---dg SELECT * FROM tststats.priv_test_parent_tbl WHERE a <<< 0 OR b <<< 0; -- Permission denied
---dg-cascade
---dg SELECT * FROM tststats.priv_test_parent_tbl t
---dg  WHERE a <<< 0 AND (b <<< 0 OR t.* <<< (1, 1) IS NOT NULL); -- Permission denied
---dg-cascade
---dg DELETE FROM tststats.priv_test_parent_tbl WHERE a <<< 0 AND b <<< 0; -- Permission denied
+SELECT * FROM tststats.priv_test_parent_tbl WHERE a <<< 0 AND b <<< 0; -- Permission denied
+SELECT * FROM tststats.priv_test_parent_tbl WHERE a <<< 0 OR b <<< 0; -- Permission denied
+SELECT * FROM tststats.priv_test_parent_tbl t
+ WHERE a <<< 0 AND (b <<< 0 OR t.* <<< (1, 1) IS NOT NULL); -- Permission denied
+DELETE FROM tststats.priv_test_parent_tbl WHERE a <<< 0 AND b <<< 0; -- Permission denied
 
 -- Grant table access to parent, but hide all data with RLS
 RESET SESSION AUTHORIZATION;
@@ -2345,20 +2325,15 @@ RESET SESSION AUTHORIZATION;
 --dg ALTER TABLE tststats.priv_test_parent_tbl ENABLE ROW LEVEL SECURITY;
 --dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY priv_test_parent_tbl_pol ON tststats.priv_test_parent_tbl USING (2 * a < 0);
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT SELECT, DELETE ON tststats.priv_test_parent_tbl TO regress_stats_user1;
+GRANT SELECT, DELETE ON tststats.priv_test_parent_tbl TO regress_stats_user1;
 
 -- Should now have direct table access to parent, but see nothing and leak nothing
 SET SESSION AUTHORIZATION regress_stats_user1;
---dg-cascade
---dg SELECT * FROM tststats.priv_test_parent_tbl WHERE a <<< 0 AND b <<< 0; -- Should not leak
---dg-cascade
---dg SELECT * FROM tststats.priv_test_parent_tbl WHERE a <<< 0 OR b <<< 0; -- Should not leak
---dg-cascade
---dg SELECT * FROM tststats.priv_test_parent_tbl t
---dg  WHERE a <<< 0 AND (b <<< 0 OR t.* <<< (1, 1) IS NOT NULL); -- Should not leak
---dg-cascade
---dg DELETE FROM tststats.priv_test_parent_tbl WHERE a <<< 0 AND b <<< 0; -- Should not leak
+SELECT * FROM tststats.priv_test_parent_tbl WHERE a <<< 0 AND b <<< 0; -- Should not leak
+SELECT * FROM tststats.priv_test_parent_tbl WHERE a <<< 0 OR b <<< 0; -- Should not leak
+SELECT * FROM tststats.priv_test_parent_tbl t
+ WHERE a <<< 0 AND (b <<< 0 OR t.* <<< (1, 1) IS NOT NULL); -- Should not leak
+DELETE FROM tststats.priv_test_parent_tbl WHERE a <<< 0 AND b <<< 0; -- Should not leak
 
 -- privilege checks for pg_stats_ext and pg_stats_ext_exprs
 RESET SESSION AUTHORIZATION;
@@ -2417,8 +2392,7 @@ SET SESSION AUTHORIZATION regress_stats_user1;
 RESET SESSION AUTHORIZATION;
 --dg-cascade
 --dg REVOKE CREATE ON SCHEMA sts_sch1 FROM regress_stats_user1;
---dg-skip: relation pg_namespace cannot be written: digres has no catalog tables
---dg GRANT CREATE ON SCHEMA sts_sch2 TO regress_stats_user1;
+GRANT CREATE ON SCHEMA sts_sch2 TO regress_stats_user1;
 SET SESSION AUTHORIZATION regress_stats_user1;
 --dg-cascade
 --dg CREATE STATISTICS ON a, b, c FROM sts_sch1.tbl;
@@ -2454,7 +2428,8 @@ DROP TABLE stats_ext_tbl;
 --dg DROP SCHEMA tststats CASCADE;
 --dg-cascade
 --dg DROP SCHEMA sts_sch1, sts_sch2 CASCADE;
-DROP USER regress_stats_user1;
+--dg-cascade
+--dg DROP USER regress_stats_user1;
 
 -- CREATE STATISTICS checks for the owner
 CREATE ROLE regress_relowner;

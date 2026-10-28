@@ -2258,8 +2258,7 @@ CREATE TABLE fk_partitioned_pk_6 (a int PRIMARY KEY);
 --dg DROP TABLE fk_partitioned_pk_6, fk_partitioned_fk_6;
 -- test the case when the referenced table is owned by a different user
 create role regress_other_partitioned_fk_owner;
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg grant references on fk_notpartitioned_pk to regress_other_partitioned_fk_owner;
+grant references on fk_notpartitioned_pk to regress_other_partitioned_fk_owner;
 set role regress_other_partitioned_fk_owner;
 create table other_partitioned_fk(a int, b int) partition by list (a);
 ERROR:  permission denied for schema public
@@ -2291,8 +2290,7 @@ ERROR:  relation "other_partitioned_fk" does not exist
 drop table other_partitioned_fk;
 ERROR:  table "other_partitioned_fk" does not exist
 reset role;
---dg-skip: cache lookup failed for attribute -N of relation N
---dg revoke all on fk_notpartitioned_pk from regress_other_partitioned_fk_owner;
+revoke all on fk_notpartitioned_pk from regress_other_partitioned_fk_owner;
 drop role regress_other_partitioned_fk_owner;
 --
 -- Test self-referencing foreign key with partition.

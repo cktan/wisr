@@ -22,8 +22,7 @@ CREATE VIEW lock_view6 AS SELECT * from (select * from lock_tbl1) sub;
 CREATE ROLE regress_rol_lock1;
 --dg-skip: relation pg_db_role_setting cannot be opened: digres has no catalog tables
 --dg ALTER ROLE regress_rol_lock1 SET search_path = lock_schema1;
---dg-skip: relation pg_namespace cannot be written: digres has no catalog tables
---dg GRANT USAGE ON SCHEMA lock_schema1 TO regress_rol_lock1;
+GRANT USAGE ON SCHEMA lock_schema1 TO regress_rol_lock1;
 
 -- Try all valid lock options; also try omitting the optional TABLE keyword.
 BEGIN TRANSACTION;
@@ -128,8 +127,7 @@ ROLLBACK;
 
 -- Child tables are locked without granting explicit permission to do so as
 -- long as we have permission to lock the parent.
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT UPDATE ON TABLE lock_tbl1 TO regress_rol_lock1;
+GRANT UPDATE ON TABLE lock_tbl1 TO regress_rol_lock1;
 SET ROLE regress_rol_lock1;
 -- fail when child locked directly
 BEGIN;
@@ -137,31 +135,26 @@ BEGIN;
 --dg LOCK TABLE lock_tbl2;
 ROLLBACK;
 BEGIN;
---dg-cascade
---dg LOCK TABLE lock_tbl1 * IN ACCESS EXCLUSIVE MODE;
+LOCK TABLE lock_tbl1 * IN ACCESS EXCLUSIVE MODE;
 ROLLBACK;
 BEGIN;
---dg-cascade
---dg LOCK TABLE ONLY lock_tbl1;
+LOCK TABLE ONLY lock_tbl1;
 ROLLBACK;
 RESET ROLE;
---dg-skip: cache lookup failed for attribute -N of relation N
---dg REVOKE UPDATE ON TABLE lock_tbl1 FROM regress_rol_lock1;
+REVOKE UPDATE ON TABLE lock_tbl1 FROM regress_rol_lock1;
 
 -- Tables referred to by views are locked without explicit permission to do so
 -- as long as we have permission to lock the view itself.
 SET ROLE regress_rol_lock1;
 -- fail without permissions on the view
 BEGIN;
---dg-cascade
---dg LOCK TABLE lock_view1;
+LOCK TABLE lock_view1;
 ROLLBACK;
 RESET ROLE;
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT UPDATE ON TABLE lock_view1 TO regress_rol_lock1;
+GRANT UPDATE ON TABLE lock_view1 TO regress_rol_lock1;
 SET ROLE regress_rol_lock1;
 BEGIN;
---dg-cascade
+--dg-skip: relation "?" does not exist
 --dg LOCK TABLE lock_view1 IN ACCESS EXCLUSIVE MODE;
 -- lock_view1 and lock_tbl1 (plus children lock_tbl2 and lock_tbl3) are locked.
 --dg-cascade
@@ -170,8 +163,7 @@ BEGIN;
 --dg  order by relname;
 ROLLBACK;
 RESET ROLE;
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg REVOKE UPDATE ON TABLE lock_view1 FROM regress_rol_lock1;
+REVOKE UPDATE ON TABLE lock_view1 FROM regress_rol_lock1;
 
 -- Tables referred to by security invoker views require explicit permission to
 -- be locked.
@@ -179,21 +171,18 @@ CREATE VIEW lock_view8 WITH (security_invoker) AS SELECT * FROM lock_tbl1;
 SET ROLE regress_rol_lock1;
 -- fail without permissions on the view
 BEGIN;
---dg-cascade
---dg LOCK TABLE lock_view8;
+LOCK TABLE lock_view8;
 ROLLBACK;
 RESET ROLE;
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT UPDATE ON TABLE lock_view8 TO regress_rol_lock1;
+GRANT UPDATE ON TABLE lock_view8 TO regress_rol_lock1;
 SET ROLE regress_rol_lock1;
 -- fail without permissions on the table referenced by the view
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation "?" does not exist
 --dg LOCK TABLE lock_view8;
 ROLLBACK;
 RESET ROLE;
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT UPDATE ON TABLE lock_tbl1 TO regress_rol_lock1;
+GRANT UPDATE ON TABLE lock_tbl1 TO regress_rol_lock1;
 BEGIN;
 --dg-skip: relation "?" does not exist
 --dg LOCK TABLE lock_view8 IN ACCESS EXCLUSIVE MODE;
@@ -204,8 +193,7 @@ BEGIN;
 --dg  order by relname;
 ROLLBACK;
 RESET ROLE;
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg REVOKE UPDATE ON TABLE lock_view8 FROM regress_rol_lock1;
+REVOKE UPDATE ON TABLE lock_view8 FROM regress_rol_lock1;
 
 --
 -- Clean up
@@ -228,7 +216,8 @@ DROP VIEW lock_view1;
 --dg DROP TABLE lock_tbl1a;
 --dg-cascade
 --dg DROP SCHEMA lock_schema1 CASCADE;
-DROP ROLE regress_rol_lock1;
+--dg-cascade
+--dg DROP ROLE regress_rol_lock1;
 
 
 -- atomic ops tests

@@ -348,13 +348,10 @@ CREATE TABLE itest7d (a int not null);
 -- privileges
 CREATE USER regress_identity_user1;
 CREATE TABLE itest8 (a int GENERATED ALWAYS AS IDENTITY, b text);
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT SELECT, INSERT ON itest8 TO regress_identity_user1;
+GRANT SELECT, INSERT ON itest8 TO regress_identity_user1;
 SET ROLE regress_identity_user1;
---dg-cascade
---dg INSERT INTO itest8 DEFAULT VALUES;
---dg-cascade
---dg SELECT * FROM itest8;
+INSERT INTO itest8 DEFAULT VALUES;
+SELECT * FROM itest8;
 RESET ROLE;
 DROP TABLE itest8;
 DROP USER regress_identity_user1;

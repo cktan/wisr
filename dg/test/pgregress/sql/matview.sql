@@ -392,23 +392,22 @@ CREATE USER regress_matview_user;
 --dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
 --dg ALTER DEFAULT PRIVILEGES FOR ROLE regress_matview_user
 --dg   REVOKE INSERT ON TABLES FROM regress_matview_user;
---dg-skip: relation pg_namespace cannot be written: digres has no catalog tables
---dg GRANT ALL ON SCHEMA matview_schema TO public;
+GRANT ALL ON SCHEMA matview_schema TO public;
 
 SET SESSION AUTHORIZATION regress_matview_user;
---dg-cascade
+--dg-skip: a relation's storage cannot be made: digres has no catalog tables
 --dg CREATE MATERIALIZED VIEW matview_schema.mv_withdata1 (a) AS
 --dg   SELECT generate_series(1, 10) WITH DATA;
---dg-cascade
+--dg-skip: a relation's storage cannot be made: digres has no catalog tables
 --dg EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
 --dg   CREATE MATERIALIZED VIEW matview_schema.mv_withdata2 (a) AS
 --dg   SELECT generate_series(1, 10) WITH DATA;
 --dg-cascade
 --dg REFRESH MATERIALIZED VIEW matview_schema.mv_withdata2;
---dg-cascade
+--dg-skip: a relation's storage cannot be made: digres has no catalog tables
 --dg CREATE MATERIALIZED VIEW matview_schema.mv_nodata1 (a) AS
 --dg   SELECT generate_series(1, 10) WITH NO DATA;
---dg-cascade
+--dg-skip: a relation's storage cannot be made: digres has no catalog tables
 --dg EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
 --dg   CREATE MATERIALIZED VIEW matview_schema.mv_nodata2 (a) AS
 --dg   SELECT generate_series(1, 10) WITH NO DATA;

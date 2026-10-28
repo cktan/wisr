@@ -242,8 +242,8 @@ ObjectAddress AlterDatabaseOwner(const char *dbname, Oid newOwnerId) {
     if (!have_createdb_privilege())
       ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
                       errmsg("permission denied to change owner of database")));
-    pg_global_set_owner(pg_global_dbid(db_id), DatabaseRelationId, InvalidOid,
-                        newOwnerId, false);
+    pg_global_change_owner(pg_global_dbid(db_id), DatabaseRelationId,
+                           InvalidOid, newOwnerId, false);
   }
   ObjectAddressSet(address, DatabaseRelationId, db_id);
   return address;

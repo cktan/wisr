@@ -374,11 +374,11 @@ static void AlterSchemaOwner_internal(HeapTuple tup, Relation rel,
 
     /*
      * The owner is pg_global's, written after the commit, and no
-     * pg_shdepend records it (sm/ROLE.md section 3).  Its ACL is the next
-     * step's (section 9).
+     * pg_shdepend records it (sm/ROLE.md section 3); its ACL, if it keeps
+     * one, names the new owner where it named the old.
      */
-    pg_global_set_owner(pg_global_dbid(MyDatabaseId), NamespaceRelationId,
-                        nspForm->oid, newOwnerId, false);
+    pg_global_change_owner(pg_global_dbid(MyDatabaseId), NamespaceRelationId,
+                           nspForm->oid, newOwnerId, false);
   }
 
   InvokeObjectPostAlterHook(NamespaceRelationId, nspForm->oid, 0);

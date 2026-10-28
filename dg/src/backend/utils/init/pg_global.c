@@ -47,7 +47,12 @@
 #include "catalog/pg_auth_members.h"
 #include "catalog/pg_authid.h"
 #include "catalog/pg_class_d.h"
+#include "catalog/pg_database_d.h"
+#include "catalog/pg_namespace_d.h"
+#include "catalog/pg_type_d.h"
 #include "miscadmin.h"
+#include "utils/acl.h"
+#include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/control_block.h"
 #include "utils/inval.h"
@@ -78,6 +83,21 @@ struct pg_global_t {
 
 /* An object's key: the database's id and the object's oid there. */
 typedef std::pair<uint64_t, Oid> object_key_t;
+
+/* An item of an ACL, as pg_object keeps it: its privilege bits, grant
+ * options among them, as PostgreSQL's AclItem has them. */
+struct acl_item_t {
+  Oid grantee;
+  Oid grantor;
+  uint64_t privs;
+};
+
+/* An entry's state before the database's commit, and what it was. */
+struct intermediate_t {
+  std::pair<uint64_t, Oid> key;
+  pg_global_object_t base;
+  pg_global_object_t middle;
+};
 
 /* A change to an object's entry the session's transaction made. */
 struct object_change_t {
@@ -112,6 +132,8 @@ struct pg_global_session_t {
   std::vector<std::pair<object_key_t, pg_global_object_t>> to_restore;
   /* The session's temporary objects' owners, never written. */
   std::map<Oid, Oid> temp_owners;
+  /* And their ACLs, PostgreSQL's text of them aside, as pg_object's. */
+  std::map<Oid, std::string> temp_acls;
 
   ~pg_global_session_t() { sm_closedb(session); }
 };
@@ -156,7 +178,7 @@ enum object_column_t { O_DBID, O_OBJID, O_CLASSID, O_OWNER, O_ACL, O_NATTS };
 /* The tables of pg_global, in its schema public, and its oid sequence. */
 #define AUTHID_TABLE "pg_authid"
 #define MEMBERS_TABLE "pg_auth_members"
-#define OBJECT_TABLE "pg_object"
+#define PG_OBJECT_TABLE "pg_object"
 #define OID_SEQUENCE "role_oid"
 
 /* sm's type codes (sm/sm2/TYPE.md section 3) of the columns used here. */
@@ -510,7 +532,7 @@ int pg_global_create(sm_env_t *env, const char *superuser, const char *secret) {
                                "pg_auth_members_role_member_index",
                                key_on({M_ROLEID, M_MEMBER, M_GRANTOR}), {},
                                true, "", {}, &index) ||
-      0 != sm_cat_create_table(guard.session, SM_NSP_PUBLIC, OBJECT_TABLE,
+      0 != sm_cat_create_table(guard.session, SM_NSP_PUBLIC, PG_OBJECT_TABLE,
                                object_columns(), &objects) ||
       0 != sm_cat_create_index(guard.session, objects, "pg_object_index",
                                key_on({O_DBID, O_OBJID}), {}, true, "", {},
@@ -620,7 +642,7 @@ static std::shared_ptr<pg_global_objects_t> read_objects(sm_session_t *session,
 
   if (0 != sm_begin(session, SM_XCT_READ_COMMITTED, 1))
     sm_failed(elevel, "begin a transaction");
-  read_rows(session, OBJECT_TABLE, O_NATTS, elevel,
+  read_rows(session, PG_OBJECT_TABLE, O_NATTS, elevel,
             [&](const sm_datum_t *v, const bool *isnull) {
               pg_global_object_t o = object_of_row(v, isnull);
 
@@ -934,6 +956,74 @@ static void write_changes(sm_session_t *session, const char *name, size_t natts,
   sm_tbl_close(tbl);
 }
 
+/*
+ * An ACL as pg_object keeps it, from its items: "grantee,grantor,privs"
+ * each, by role oid, space-separated, so a role's rename leaves it be.
+ */
+static std::string acl_text(const std::vector<acl_item_t> &items) {
+  std::string out;
+
+  for (const acl_item_t &i : items) {
+    if (!out.empty())
+      out += ' ';
+    out += std::to_string(i.grantee) + ',' + std::to_string(i.grantor) + ',' +
+           std::to_string(i.privs);
+  }
+  return out;
+}
+
+/* The items of an ACL as pg_object keeps it (acl_text()). */
+static std::vector<acl_item_t> acl_items(const std::string &text) {
+  std::vector<acl_item_t> out;
+  const char *p = text.c_str();
+
+  while (*p) {
+    unsigned long grantee, grantor;
+    unsigned long long privs;
+    int n = 0;
+
+    if (3 != sscanf(p, "%lu,%lu,%llu%n", &grantee, &grantor, &privs, &n))
+      break;
+    out.push_back({(Oid)grantee, (Oid)grantor, (uint64_t)privs});
+    p += n;
+    while (' ' == *p)
+      p++;
+  }
+  return out;
+}
+
+/* The items of PostgreSQL's ACL acl. */
+static std::vector<acl_item_t> acl_items_of(const Acl *acl) {
+  std::vector<acl_item_t> out;
+  const AclItem *items = ACL_DAT(acl);
+
+  for (int i = 0; i < ACL_NUM(acl); i++)
+    out.push_back({items[i].ai_grantee, items[i].ai_grantor,
+                   (uint64_t)items[i].ai_privs});
+  return out;
+}
+
+/* PostgreSQL's ACL of the items given, palloc'd, as acl.c's allocacl(). */
+static Acl *acl_of_items(const std::vector<acl_item_t> &items) {
+  int n = (int)items.size();
+  Acl *acl = (Acl *)palloc0(ACL_N_SIZE(n));
+  AclItem *dat;
+
+  SET_VARSIZE(acl, ACL_N_SIZE(n));
+  acl->ndim = 1;
+  acl->dataoffset = 0;
+  acl->elemtype = ACLITEMOID;
+  ARR_LBOUND(acl)[0] = 1;
+  ARR_DIMS(acl)[0] = n;
+  dat = ACL_DAT(acl);
+  for (int i = 0; i < n; i++) {
+    dat[i].ai_grantee = items[i].grantee;
+    dat[i].ai_grantor = items[i].grantor;
+    dat[i].ai_privs = (AclMode)items[i].privs;
+  }
+  return acl;
+}
+
 /* The objects' entries as last committed, copied under the lock. */
 static std::shared_ptr<const pg_global_objects_t> shared_objects(void) {
   std::lock_guard<std::mutex> lock(shmem->pg_global->mutex);
@@ -1056,6 +1146,7 @@ void pg_global_forget(uint64_t dbid, Oid objid) {
   pg_global_object_t object;
 
   s->temp_owners.erase(objid);
+  s->temp_acls.erase(objid);
   if (find_object(s, key, &object))
     s->changes.push_back(
         {GetCurrentTransactionNestLevel(), key, false, object});
@@ -1064,6 +1155,77 @@ void pg_global_forget(uint64_t dbid, Oid objid) {
 /* The database dbid goes: every entry of its with it, after the commit. */
 void pg_global_forget_database(uint64_t dbid) {
   session_state()->dropped_dbs.push_back(dbid);
+}
+
+/*
+ * Make acl the ACL of the object objid, of class classid, owned by owner,
+ * in the database dbid (objid 0 for the database itself), in the
+ * session's transaction, as pg_global_set_owner() makes an owner: GRANT
+ * and REVOKE's.  A temporary object's is the session's alone.
+ */
+void pg_global_set_acl(uint64_t dbid, Oid classid, Oid objid, Oid owner,
+                       const Acl *acl, bool temp) {
+  pg_global_session_t *s = session_state();
+  object_key_t key(dbid, objid);
+  pg_global_object_t object;
+  std::string text = acl_text(acl_items_of(acl));
+
+  if (temp) {
+    s->temp_acls[objid] = text;
+    return;
+  }
+  if (!find_object(s, key, &object)) {
+    object.dbid = dbid;
+    object.objid = objid;
+    object.classid = classid;
+    object.owner = owner;
+  }
+  object.has_acl = true;
+  object.acl = text;
+  s->changes.push_back({GetCurrentTransactionNestLevel(), key, true, object});
+  /* The relation's cache entry has no ACL, but is a view's: as an owner's. */
+  if (RelationRelationId == classid && pg_global_dbid(MyDatabaseId) == dbid)
+    CacheInvalidateRelcacheByOid(objid);
+}
+
+/*
+ * The ACL of the object objid in the database dbid (objid 0 for the
+ * database itself), as the session sees it, palloc'd; NULL if it keeps
+ * none, which is its owner's default one.
+ */
+Acl *pg_global_acl(uint64_t dbid, Oid objid) {
+  pg_global_session_t *s;
+  pg_global_object_t object;
+
+  if (!pg_global_is_loaded())
+    return NULL;
+  s = nullptr != tcb ? tcb->pg_global.get() : NULL;
+  if (NULL != s && pg_global_dbid(MyDatabaseId) == dbid) {
+    auto temp = s->temp_acls.find(objid);
+
+    if (s->temp_acls.end() != temp)
+      return acl_of_items(acl_items(temp->second));
+  }
+  if (!find_object(s, object_key_t(dbid, objid), &object) || !object.has_acl)
+    return NULL;
+  return acl_of_items(acl_items(object.acl));
+}
+
+/*
+ * ALTER ... OWNER TO: make owner the owner of the object objid, and its
+ * ACL, if it keeps one, the same with the old owner's items the new
+ * owner's, as PostgreSQL's aclnewowner() makes it.
+ */
+void pg_global_change_owner(uint64_t dbid, Oid classid, Oid objid, Oid owner,
+                            bool temp) {
+  Oid old = DatabaseRelationId == classid ? pg_global_database_owner(dbid)
+                                          : pg_global_owner(objid);
+  Acl *acl = pg_global_acl(dbid, objid);
+
+  pg_global_set_owner(dbid, classid, objid, owner, temp);
+  if (NULL != acl)
+    pg_global_set_acl(dbid, classid, objid, owner, aclnewowner(acl, old, owner),
+                      temp);
 }
 
 /* A subtransaction commits: its changes are its parent's. */
@@ -1092,15 +1254,48 @@ void pg_global_subabort(void) {
     s->changes.pop_back();
 }
 
+/* An entry's ACL items, or its owner's default ones if it keeps none. */
+static std::vector<acl_item_t> acl_or_default(const pg_global_object_t &o) {
+  ObjectType type = NamespaceRelationId == o.classid  ? OBJECT_SCHEMA
+                    : DatabaseRelationId == o.classid ? OBJECT_DATABASE
+                                                      : OBJECT_TABLE;
+
+  return o.has_acl ? acl_items(o.acl) : acl_items_of(acldefault(type, o.owner));
+}
+
 /*
- * The entries whose owner the session's transaction changes, as they are
- * now, to be the superuser's before the database's commit
- * (pg_global_commit()).
+ * The items of a granted in b too, each with the privileges both grant:
+ * what the two ACLs grant alike.
  */
-static std::vector<std::pair<object_key_t, pg_global_object_t>>
-intermediates(const pg_global_session_t *s) {
+static std::vector<acl_item_t> acl_intersect(const std::vector<acl_item_t> &a,
+                                             const std::vector<acl_item_t> &b) {
+  std::vector<acl_item_t> out;
+
+  for (const acl_item_t &x : a)
+    for (const acl_item_t &y : b)
+      if (x.grantee == y.grantee && x.grantor == y.grantor &&
+          0 != (x.privs & y.privs))
+        out.push_back({x.grantee, x.grantor, x.privs & y.privs});
+  return out;
+}
+
+/* Whether two entries say the same: owner and ACL. */
+static bool same_object(const pg_global_object_t &a,
+                        const pg_global_object_t &b) {
+  return a.owner == b.owner && a.has_acl == b.has_acl &&
+         (!a.has_acl || a.acl == b.acl);
+}
+
+/*
+ * The entries the session's transaction changes that grant less after the
+ * database's commit than before it, in part: each as it is now (base), and
+ * as it is to be until that commit (middle), granting what both grant and
+ * no more -- the superuser its owner if the owner changes, and of its ACL
+ * what both ACLs grant (pg_global_commit()).
+ */
+static std::vector<intermediate_t> intermediates(const pg_global_session_t *s) {
   std::map<object_key_t, const object_change_t *> last;
-  std::vector<std::pair<object_key_t, pg_global_object_t>> out;
+  std::vector<intermediate_t> out;
   std::shared_ptr<const pg_global_objects_t> all;
 
   if (s->changes.empty())
@@ -1110,17 +1305,29 @@ intermediates(const pg_global_session_t *s) {
   all = shared_objects();
   for (const auto &[key, c] : last) {
     auto found = all->find(key);
+    pg_global_object_t middle;
 
-    if (all->end() != found && c->present &&
-        c->object.owner != found->second.owner)
-      out.push_back(*found);
+    if (all->end() == found || !c->present ||
+        same_object(found->second, c->object))
+      continue;
+    middle = found->second;
+    if (c->object.owner != middle.owner)
+      middle.owner = BOOTSTRAP_SUPERUSERID;
+    if (c->object.has_acl != middle.has_acl ||
+        (middle.has_acl && c->object.acl != middle.acl)) {
+      middle.has_acl = true;
+      middle.acl = acl_text(acl_intersect(acl_or_default(found->second),
+                                          acl_or_default(c->object)));
+    }
+    if (!same_object(middle, found->second))
+      out.push_back({key, found->second, middle});
   }
   return out;
 }
 
 /* pg_object of pg_global, open to write in session's transaction. */
 static sm_tbl_t *open_objects(sm_session_t *session) {
-  uint64_t table = table_oid(session, OBJECT_TABLE, ERROR);
+  uint64_t table = table_oid(session, PG_OBJECT_TABLE, ERROR);
   sm_tbl_t *tbl;
 
   /* IX: writes to the table's rows. */
@@ -1271,7 +1478,7 @@ void pg_global_objects_moved(void) {
  */
 void pg_global_commit(void) {
   pg_global_session_t *s = nullptr != tcb ? tcb->pg_global.get() : NULL;
-  std::vector<std::pair<object_key_t, pg_global_object_t>> before;
+  std::vector<intermediate_t> before;
   bool roles;
   sm_session_t *session;
 
@@ -1299,15 +1506,12 @@ void pg_global_commit(void) {
       sm_tbl_t *tbl = open_objects(session);
 
       /*
-       * Each object whose owner changes is the superuser's until the
-       * database commits: a crash between leaves less granted, not more.
+       * Each object that is to grant less grants, until the database
+       * commits, only what it grants before and after: a crash between
+       * leaves less granted, not more.
        */
-      for (const auto &[key, object] : before) {
-        pg_global_object_t middle = object;
-
-        middle.owner = BOOTSTRAP_SUPERUSERID;
-        write_object(tbl, key, &middle);
-      }
+      for (const intermediate_t &i : before)
+        write_object(tbl, i.key, &i.middle);
       sm_tbl_close(tbl);
     }
     if (0 != sm_commit(session)) {
@@ -1323,7 +1527,9 @@ void pg_global_commit(void) {
   }
   PG_END_TRY();
   /* Put back if the database's commit fails (pg_global_abort()). */
-  s->to_restore = std::move(before);
+  s->to_restore.clear();
+  for (const intermediate_t &i : before)
+    s->to_restore.push_back({i.key, i.base});
   if (!roles)
     return;
   s->base.reset();

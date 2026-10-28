@@ -9,8 +9,7 @@
 CREATE USER regress_unpriv_user;
 
 CREATE SCHEMA temp_func_test;
---dg-skip: relation pg_namespace cannot be written: digres has no catalog tables
---dg GRANT ALL ON SCHEMA temp_func_test TO public;
+GRANT ALL ON SCHEMA temp_func_test TO public;
 
 SET search_path TO temp_func_test, public;
 
@@ -149,7 +148,7 @@ SET search_path TO temp_func_test, public;
 --dg-cascade
 --dg ALTER FUNCTION functest_E_2(int) LEAKPROOF;
 
---dg-cascade
+--dg-differs: another error: language "?" does not exist
 --dg CREATE FUNCTION functest_E_3(int) RETURNS bool LANGUAGE 'sql'
 --dg        LEAKPROOF AS 'SELECT $1 < 200';	-- fail
 

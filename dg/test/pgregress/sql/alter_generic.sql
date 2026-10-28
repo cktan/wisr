@@ -30,8 +30,7 @@ CREATE USER regress_alter_generic_user1 IN ROLE regress_alter_generic_user3;
 CREATE SCHEMA alt_nsp1;
 CREATE SCHEMA alt_nsp2;
 
---dg-skip: relation pg_namespace cannot be written: digres has no catalog tables
---dg GRANT ALL ON SCHEMA alt_nsp1, alt_nsp2 TO public;
+GRANT ALL ON SCHEMA alt_nsp1, alt_nsp2 TO public;
 
 SET search_path = alt_nsp1, public;
 
@@ -39,17 +38,17 @@ SET search_path = alt_nsp1, public;
 -- Function and Aggregate
 --
 SET SESSION AUTHORIZATION regress_alter_generic_user1;
---dg-cascade
+--dg-skip: language "?" does not exist
 --dg CREATE FUNCTION alt_func1(int) RETURNS int LANGUAGE sql
 --dg   AS 'SELECT $1 + 1';
---dg-cascade
+--dg-skip: language "?" does not exist
 --dg CREATE FUNCTION alt_func2(int) RETURNS int LANGUAGE sql
 --dg   AS 'SELECT $1 - 1';
---dg-cascade
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
 --dg CREATE AGGREGATE alt_agg1 (
 --dg   sfunc1 = int4pl, basetype = int4, stype1 = int4, initcond = 0
 --dg );
---dg-cascade
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
 --dg CREATE AGGREGATE alt_agg2 (
 --dg   sfunc1 = int4mi, basetype = int4, stype1 = int4, initcond = 0
 --dg );
@@ -85,17 +84,17 @@ SET SESSION AUTHORIZATION regress_alter_generic_user1;
 --dg ALTER AGGREGATE alt_agg2(int) SET SCHEMA alt_nsp2;  -- OK
 
 SET SESSION AUTHORIZATION regress_alter_generic_user2;
---dg-cascade
+--dg-skip: language "?" does not exist
 --dg CREATE FUNCTION alt_func1(int) RETURNS int LANGUAGE sql
 --dg   AS 'SELECT $1 + 2';
---dg-cascade
+--dg-skip: language "?" does not exist
 --dg CREATE FUNCTION alt_func2(int) RETURNS int LANGUAGE sql
 --dg   AS 'SELECT $1 - 2';
---dg-cascade
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
 --dg CREATE AGGREGATE alt_agg1 (
 --dg   sfunc1 = int4pl, basetype = int4, stype1 = int4, initcond = 100
 --dg );
---dg-cascade
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
 --dg CREATE AGGREGATE alt_agg2 (
 --dg   sfunc1 = int4mi, basetype = int4, stype1 = int4, initcond = -100
 --dg );
@@ -144,9 +143,9 @@ RESET SESSION AUTHORIZATION;
 -- Conversion
 --
 SET SESSION AUTHORIZATION regress_alter_generic_user1;
---dg-cascade
+--dg-skip: loading library "?" is not supported yet
 --dg CREATE CONVERSION alt_conv1 FOR 'LATIN1' TO 'UTF8' FROM iso8859_1_to_utf8;
---dg-cascade
+--dg-skip: loading library "?" is not supported yet
 --dg CREATE CONVERSION alt_conv2 FOR 'LATIN1' TO 'UTF8' FROM iso8859_1_to_utf8;
 
 --dg-cascade
@@ -161,9 +160,9 @@ SET SESSION AUTHORIZATION regress_alter_generic_user1;
 --dg ALTER CONVERSION alt_conv2 SET SCHEMA alt_nsp2;  -- OK
 
 SET SESSION AUTHORIZATION regress_alter_generic_user2;
---dg-cascade
+--dg-skip: loading library "?" is not supported yet
 --dg CREATE CONVERSION alt_conv1 FOR 'LATIN1' TO 'UTF8' FROM iso8859_1_to_utf8;
---dg-cascade
+--dg-skip: loading library "?" is not supported yet
 --dg CREATE CONVERSION alt_conv2 FOR 'LATIN1' TO 'UTF8' FROM iso8859_1_to_utf8;
 
 --dg-cascade
@@ -256,9 +255,9 @@ RESET SESSION AUTHORIZATION;
 --
 SET SESSION AUTHORIZATION regress_alter_generic_user1;
 
---dg-cascade
+--dg-skip: relation pg_operator cannot be written: digres has no catalog tables
 --dg CREATE OPERATOR @-@ ( leftarg = int4, rightarg = int4, procedure = int4mi );
---dg-cascade
+--dg-skip: relation pg_operator cannot be written: digres has no catalog tables
 --dg CREATE OPERATOR @+@ ( leftarg = int4, rightarg = int4, procedure = int4pl );
 
 --dg-cascade
@@ -270,7 +269,7 @@ SET SESSION AUTHORIZATION regress_alter_generic_user1;
 
 SET SESSION AUTHORIZATION regress_alter_generic_user2;
 
---dg-cascade
+--dg-skip: relation pg_operator cannot be written: digres has no catalog tables
 --dg CREATE OPERATOR @-@ ( leftarg = int4, rightarg = int4, procedure = int4mi );
 
 --dg-cascade
@@ -668,11 +667,10 @@ ROLLBACK;
 -- Statistics
 --
 SET SESSION AUTHORIZATION regress_alter_generic_user1;
---dg-cascade
---dg CREATE TABLE alt_regress_1 (a INTEGER, b INTEGER);
---dg-cascade
+CREATE TABLE alt_regress_1 (a INTEGER, b INTEGER);
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS alt_stat1 ON a, b FROM alt_regress_1;
---dg-cascade
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS alt_stat2 ON a, b FROM alt_regress_1;
 
 --dg-cascade
@@ -687,11 +685,10 @@ SET SESSION AUTHORIZATION regress_alter_generic_user1;
 --dg ALTER STATISTICS alt_stat2 SET SCHEMA alt_nsp2;    -- OK
 
 SET SESSION AUTHORIZATION regress_alter_generic_user2;
---dg-cascade
---dg CREATE TABLE alt_regress_2 (a INTEGER, b INTEGER);
---dg-cascade
+CREATE TABLE alt_regress_2 (a INTEGER, b INTEGER);
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS alt_stat1 ON a, b FROM alt_regress_2;
---dg-cascade
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS alt_stat2 ON a, b FROM alt_regress_2;
 
 --dg-cascade
@@ -893,6 +890,8 @@ RESET SESSION AUTHORIZATION;
 --dg-cascade
 --dg DROP SCHEMA alt_nsp2 CASCADE;
 
-DROP USER regress_alter_generic_user1;
-DROP USER regress_alter_generic_user2;
+--dg-cascade
+--dg DROP USER regress_alter_generic_user1;
+--dg-cascade
+--dg DROP USER regress_alter_generic_user2;
 DROP USER regress_alter_generic_user3;

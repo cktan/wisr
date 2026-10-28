@@ -3582,8 +3582,7 @@ create role regress_fn_owner;
 --dg alter function whoami() owner to regress_fn_owner;
 
 create table defer_trig (id integer);
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg grant insert on defer_trig to public;
+grant insert on defer_trig to public;
 --dg-cascade
 --dg create constraint trigger whoami after insert on defer_trig
 --dg   deferrable initially deferred
@@ -3593,16 +3592,11 @@ create table defer_trig (id integer);
 -- deferred triggers must run as the user that queued the trigger
 begin;
 set role regress_caller;
---dg-cascade
---dg insert into defer_trig values (1);
---dg-cascade
---dg reset role;
---dg-cascade
---dg set role regress_fn_owner;
---dg-cascade
---dg insert into defer_trig values (2);
---dg-cascade
---dg reset role;
+insert into defer_trig values (1);
+reset role;
+set role regress_fn_owner;
+insert into defer_trig values (2);
+reset role;
 --dg-cascade
 --dg commit;
 
@@ -3612,10 +3606,8 @@ set role regress_caller;
 --dg-cascade
 --dg begin;
 set role regress_caller;
---dg-cascade
---dg insert into defer_trig values (3);
---dg-cascade
---dg reset role;
+insert into defer_trig values (3);
+reset role;
 --dg-cascade
 --dg commit;
 --dg-cascade
@@ -3635,21 +3627,17 @@ set role regress_caller;
 --dg-cascade
 --dg begin;
 set role regress_caller;
---dg-cascade
---dg insert into defer_trig values (4);
---dg-cascade
---dg reset role;
+insert into defer_trig values (4);
+reset role;
 --dg-cascade
 --dg commit;  -- error expected
---dg-cascade
---dg select current_user = session_user;
+select current_user = session_user;
 
 -- clean up
---dg-cascade
---dg drop table defer_trig;
+drop table defer_trig;
 --dg-cascade
 --dg drop function whoami();
---dg-cascade
+--dg-skip: DROP ROLE cannot run inside a transaction block
 --dg drop role regress_fn_owner;
---dg-cascade
+--dg-skip: DROP ROLE cannot run inside a transaction block
 --dg drop role regress_caller;

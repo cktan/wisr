@@ -2088,8 +2088,7 @@ CREATE TABLE fk_partitioned_pk_6 (a int PRIMARY KEY);
 
 -- test the case when the referenced table is owned by a different user
 create role regress_other_partitioned_fk_owner;
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg grant references on fk_notpartitioned_pk to regress_other_partitioned_fk_owner;
+grant references on fk_notpartitioned_pk to regress_other_partitioned_fk_owner;
 set role regress_other_partitioned_fk_owner;
 create table other_partitioned_fk(a int, b int) partition by list (a);
 create table other_partitioned_fk_1 partition of other_partitioned_fk
@@ -2109,8 +2108,7 @@ alter table other_partitioned_fk add foreign key (a, b)
 -- clean up
 drop table other_partitioned_fk;
 reset role;
---dg-skip: cache lookup failed for attribute -N of relation N
---dg revoke all on fk_notpartitioned_pk from regress_other_partitioned_fk_owner;
+revoke all on fk_notpartitioned_pk from regress_other_partitioned_fk_owner;
 drop role regress_other_partitioned_fk_owner;
 
 --

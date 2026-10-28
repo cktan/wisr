@@ -333,22 +333,19 @@ SET SESSION AUTHORIZATION regress_subscription_user3;
 --dg CREATE SUBSCRIPTION regress_testsub CONNECTION 'dbname=regress_doesnotexist' PUBLICATION testpub WITH (connect = false);
 -- fail, must specify password
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_database cannot be written: digres has no catalog tables
---dg GRANT CREATE ON DATABASE REGRESSION TO regress_subscription_user3;
+GRANT CREATE ON DATABASE REGRESSION TO regress_subscription_user3;
 SET SESSION AUTHORIZATION regress_subscription_user3;
 --dg-cascade
 --dg CREATE SUBSCRIPTION regress_testsub CONNECTION 'dbname=regress_doesnotexist' PUBLICATION testpub WITH (connect = false);
 -- fail, can't set password_required=false
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_database cannot be written: digres has no catalog tables
---dg GRANT CREATE ON DATABASE REGRESSION TO regress_subscription_user3;
+GRANT CREATE ON DATABASE REGRESSION TO regress_subscription_user3;
 SET SESSION AUTHORIZATION regress_subscription_user3;
---dg-cascade
+--dg-differs: another error: subscriptions are not supported
 --dg CREATE SUBSCRIPTION regress_testsub CONNECTION 'dbname=regress_doesnotexist' PUBLICATION testpub WITH (connect = false, password_required = false);
 -- ok
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_database cannot be written: digres has no catalog tables
---dg GRANT CREATE ON DATABASE REGRESSION TO regress_subscription_user3;
+GRANT CREATE ON DATABASE REGRESSION TO regress_subscription_user3;
 SET SESSION AUTHORIZATION regress_subscription_user3;
 --dg-skip: subscriptions are not supported
 --dg CREATE SUBSCRIPTION regress_testsub CONNECTION 'dbname=regress_doesnotexist password=regress_fakepassword' PUBLICATION testpub WITH (connect = false);
@@ -366,8 +363,7 @@ SET SESSION AUTHORIZATION regress_subscription_user3;
 --dg ALTER SUBSCRIPTION regress_testsub2 RENAME TO regress_testsub;
 -- fail, after losing CREATE on the database we can't rename it any more
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_database cannot be written: digres has no catalog tables
---dg REVOKE CREATE ON DATABASE REGRESSION FROM regress_subscription_user3;
+REVOKE CREATE ON DATABASE REGRESSION FROM regress_subscription_user3;
 SET SESSION AUTHORIZATION regress_subscription_user3;
 --dg-cascade
 --dg ALTER SUBSCRIPTION regress_testsub RENAME TO regress_testsub2;

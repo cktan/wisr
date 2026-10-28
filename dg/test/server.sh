@@ -3243,6 +3243,98 @@ OUT
 cmp -s "$work/chowner.out" "$work/chowner.expected" ||
   fail "owners: ALTER ... OWNER TO"
 
+# Verify GRANT and REVOKE (sm/ROLE.md section 9, step 5): an ACL is
+# pg_global's, written at the database's commit, and the checks read it.
+# 1. Make rg1 LOGIN and rg2 LOGIN, table gt with a row, owned by the
+#    superuser, and schema gs; grant rg1 USAGE and CREATE on gs.
+# 2. As rg1, gt is refused; GRANT SELECT on it to rg1, and it is read.
+# 3. A GRANT in a transaction rolled back, and one in a savepoint rolled
+#    back to, grant nothing: rg2 is still refused gt.
+# 4. As rg1, view gs.gv reads gt; granted to rg2, rg2 reads it, as rg1.
+#    REVOKE SELECT on gt from rg1, and rg2 is refused through the view.
+# 5. pg_class, pg_namespace and \dp show the ACLs.
+# 6. A column's privileges and a function's are refused.
+local_psql -c "create role rg1 login password 'p1'" \
+  -c "create role rg2 login password 'p2'" -c 'create table gt (a int4)' \
+  -c 'insert into gt values (7)' -c 'create schema gs' \
+  -c 'grant usage, create on schema gs to rg1' \
+  -c 'grant usage on schema gs to rg2' > "$work/grant.out" 2>&1 ||
+  fail "grant: make"
+tcp_psql p1 -U rg1 -c 'select a from gt' > "$work/grant1.out" 2>&1
+local_psql -c 'grant select on gt to rg1' > "$work/grant.out" 2>&1
+tcp_psql p1 -U rg1 -c 'select a from gt' -c 'create view gs.gv as select a from gt' \
+  -c 'grant select on gs.gv to rg2' >> "$work/grant1.out" 2>&1
+local_psql -c 'begin' -c 'grant select on gt to rg2' -c 'rollback' \
+  -c 'begin' -c 'savepoint s' -c 'grant select on gt to rg2' \
+  -c 'rollback to s' -c 'commit' > "$work/grant.out" 2>&1
+tcp_psql p2 -U rg2 -c 'select a from gt' -c 'select a from gs.gv' \
+  >> "$work/grant1.out" 2>&1
+local_psql -c 'revoke select on gt from rg1' > "$work/grant.out" 2>&1
+tcp_psql p2 -U rg2 -c 'select a from gs.gv' >> "$work/grant1.out" 2>&1
+cat > "$work/grant1.expected" << OUT
+ERROR:  permission denied for table gt
+7
+CREATE VIEW
+GRANT
+ERROR:  permission denied for table gt
+7
+ERROR:  permission denied for table gt
+OUT
+cmp -s "$work/grant1.out" "$work/grant1.expected" ||
+  fail "grant: what each role may read"
+local_psql -c "select relname, relacl from pg_class
+                 where relname in ('gt', 'gv') order by 1" \
+  -c "select nspacl from pg_namespace where nspname = 'gs'" \
+  -c 'grant select (a) on gt to rg2' -c 'grant execute on function now() to rg2' \
+  > "$work/grant2.out" 2>&1
+cat > "$work/grant2.expected" << OUT
+gt|{$me=arwdDxtm/$me}
+gv|{rg1=arwdDxtm/rg1,rg2=r/rg1}
+{$me=UC/$me,rg1=UC/$me,rg2=U/$me}
+ERROR:  column privileges are not supported yet
+ERROR:  privileges on functions are not supported yet
+OUT
+cmp -s "$work/grant2.out" "$work/grant2.expected" ||
+  fail "grant: the ACLs shown, and what is refused"
+
+# Verify that REVOKE ... FROM PUBLIC of CONNECT keeps a role out, and a
+# GRANT of it lets one in (sm/ROLE.md section 5, the second check).
+# 1. Make database gdb; REVOKE CONNECT from PUBLIC, GRANT it to rg1.
+# 2. rg1 connects to gdb; rg2 is refused as a wrong password is.
+local_psql -c 'create database gdb' > "$work/gdb.out" 2>&1
+local_psql -d gdb -c 'revoke connect on database gdb from public' \
+  -c 'grant connect on database gdb to rg1' >> "$work/gdb.out" 2>&1
+[ "$(PGPASSWORD=p1 psql -X -A -t -h 127.0.0.1 -p "$port" -U rg1 -d gdb \
+  -c 'select 1' 2> "$work/gdb1.err")" = 1 ] || fail "grant: CONNECT granted"
+PGPASSWORD=p2 psql -X -A -t -h 127.0.0.1 -p "$port" -U rg2 -d gdb \
+  -c 'select 1' > "$work/gdb2.out" 2>&1 && fail "grant: CONNECT revoked"
+grep -q 'password authentication failed for user "rg2"' "$work/gdb2.out" ||
+  fail "grant: CONNECT's message"
+
+# Verify that a REVOKE whose transaction fails at its commit leaves the
+# ACL as it was: what pg_global took away before the commit, it puts back
+# (checked again after the restart below, which reads pg_global).
+# 1. Grant rg2 SELECT on gk; two SERIALIZABLE transactions write skew.
+# 2. The second to commit REVOKEs rg2's SELECT, and fails at COMMIT.
+# 3. gk's ACL still grants rg2 SELECT.
+local_psql -c 'create table gk (a int4)' -c 'create table gk1 (a int4)' \
+  -c 'create table gk2 (a int4)' -c 'grant select on gk to rg2' \
+  > "$work/gk.out" 2>&1
+held_start gks1
+held_start gks2
+held_send gks1 "begin isolation level serializable; select 'gks1 ' || count(*) from gk1; insert into gk2 values (1);"
+held_send gks2 "begin isolation level serializable; select 'gks2 ' || count(*) from gk2; insert into gk1 values (1);"
+held_wait gks1 "gks1 0" && held_wait gks2 "gks2 0" ||
+  fail "grant: the two transactions"
+held_send gks2 "commit;"
+held_wait gks2 "COMMIT" || fail "grant: the first commit"
+held_send gks1 "revoke select on gk from rg2; commit;"
+held_end gks1
+held_end gks2
+grep -q 'not serializable' "$work/gks1.out" || fail "grant: the second fails"
+[ "$(local_psql -c "select relacl from pg_class where relname = 'gk'")" = \
+  "{$me=arwdDxtm/$me,rg2=r/$me}" ] || fail "grant: a failed REVOKE"
+
 # Verify that psql's \d describes a sequence of sm's: pg_sequence has its
 # START and INCREMENT, and pg_depend the column that owns it.
 # 1. In schema sq1 make sequence q, START 5 INCREMENT 3, and table t with a
@@ -4923,11 +5015,15 @@ server_ready $server "$work/log2" || fail "max_connections: start"
 # pg_global's rows, read again at the start (sm/ROLE.md section 3).
 # 1. rr1, made above and made NOLOGIN, is there, still NOLOGIN.
 # 2. so.t, given to ro2 above, is still ro2's.
+# 3. gk's ACL, which a failed REVOKE left be, still grants rg2 SELECT.
 [ "$(local_psql -c "select rolcanlogin from pg_roles where rolname = 'rr1'" \
   2> "$work/rolekept.err")" = f ] || fail "role DDL: kept across a restart"
 [ "$(local_psql -c "select pg_get_userbyid(relowner) from pg_class
                      where oid = 'so.t'::regclass" 2> "$work/ownkept.err")" = \
   ro2 ] || fail "owners: kept across a restart"
+[ "$(local_psql -c "select relacl from pg_class where relname = 'gk'" \
+  2> "$work/aclkept.err")" = "{$me=arwdDxtm/$me,rg2=r/$me}" ] ||
+  fail "grant: an ACL, and a failed REVOKE's, kept across a restart"
 for n in 1 2 3; do
   held_start "conn$n"
   held_send "conn$n" "select 'up $n';"

@@ -917,8 +917,7 @@ SET SESSION AUTHORIZATION regress_view_user2;
 --dg   WHEN MATCHED THEN UPDATE SET b = 'foo'; -- not allowed
 
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT SELECT ON base_tbl TO regress_view_user1;
+GRANT SELECT ON base_tbl TO regress_view_user1;
 
 SET SESSION AUTHORIZATION regress_view_user1;
 --dg-cascade
@@ -958,8 +957,7 @@ SET SESSION AUTHORIZATION regress_view_user2;
 --dg   WHEN MATCHED THEN UPDATE SET b = 'foo'; -- not allowed
 
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT UPDATE ON base_tbl TO regress_view_user1;
+GRANT UPDATE ON base_tbl TO regress_view_user1;
 
 SET SESSION AUTHORIZATION regress_view_user1;
 --dg-cascade
@@ -999,8 +997,7 @@ SET SESSION AUTHORIZATION regress_view_user2;
 --dg   WHEN MATCHED THEN UPDATE SET b = 'fud';
 
 RESET SESSION AUTHORIZATION;
---dg-skip: cache lookup failed for attribute -N of relation N
---dg REVOKE UPDATE ON base_tbl FROM regress_view_user1;
+REVOKE UPDATE ON base_tbl FROM regress_view_user1;
 
 SET SESSION AUTHORIZATION regress_view_user1;
 --dg-cascade
@@ -1188,9 +1185,8 @@ SET SESSION AUTHORIZATION regress_view_user2;
 
 RESET SESSION AUTHORIZATION;
 
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT SELECT ON base_tbl TO regress_view_user1;
---dg-skip: relation pg_attribute cannot be written: digres has no catalog tables
+GRANT SELECT ON base_tbl TO regress_view_user1;
+--dg-skip: column privileges are not supported yet
 --dg GRANT UPDATE (a, b) ON base_tbl TO regress_view_user1;
 
 SET SESSION AUTHORIZATION regress_view_user1;
@@ -1251,9 +1247,8 @@ SET SESSION AUTHORIZATION regress_view_user3;
 
 RESET SESSION AUTHORIZATION;
 
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT SELECT ON base_tbl TO regress_view_user2;
---dg-skip: relation pg_attribute cannot be written: digres has no catalog tables
+GRANT SELECT ON base_tbl TO regress_view_user2;
+--dg-skip: column privileges are not supported yet
 --dg GRANT UPDATE (a, c) ON base_tbl TO regress_view_user2;
 
 SET SESSION AUTHORIZATION regress_view_user2;
@@ -1296,9 +1291,8 @@ SET SESSION AUTHORIZATION regress_view_user3;
 
 RESET SESSION AUTHORIZATION;
 
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT SELECT ON base_tbl TO regress_view_user3;
---dg-skip: relation pg_attribute cannot be written: digres has no catalog tables
+GRANT SELECT ON base_tbl TO regress_view_user3;
+--dg-skip: column privileges are not supported yet
 --dg GRANT UPDATE (a, c) ON base_tbl TO regress_view_user3;
 
 SET SESSION AUTHORIZATION regress_view_user3;
@@ -1322,8 +1316,7 @@ SET SESSION AUTHORIZATION regress_view_user3;
 
 RESET SESSION AUTHORIZATION;
 
---dg-skip: cache lookup failed for attribute -N of relation N
---dg REVOKE SELECT, UPDATE ON base_tbl FROM regress_view_user1;
+REVOKE SELECT, UPDATE ON base_tbl FROM regress_view_user1;
 
 SET SESSION AUTHORIZATION regress_view_user1;
 --dg-cascade
@@ -1374,8 +1367,7 @@ SET SESSION AUTHORIZATION regress_view_user3;
 
 RESET SESSION AUTHORIZATION;
 
---dg-skip: cache lookup failed for attribute -N of relation N
---dg REVOKE SELECT, UPDATE ON base_tbl FROM regress_view_user2;
+REVOKE SELECT, UPDATE ON base_tbl FROM regress_view_user2;
 
 SET SESSION AUTHORIZATION regress_view_user2;
 --dg-cascade
@@ -1422,7 +1414,8 @@ RESET SESSION AUTHORIZATION;
 
 DROP USER regress_view_user1;
 DROP USER regress_view_user2;
-DROP USER regress_view_user3;
+--dg-cascade
+--dg DROP USER regress_view_user3;
 
 -- column defaults
 

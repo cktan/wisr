@@ -335,8 +335,7 @@ DROP PROCEDURE nonexistent();
 -- privileges
 
 CREATE USER regress_cp_user1;
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT INSERT ON cp_test TO regress_cp_user1;
+GRANT INSERT ON cp_test TO regress_cp_user1;
 --dg-cascade
 --dg REVOKE EXECUTE ON PROCEDURE ptest1(text) FROM PUBLIC;
 SET ROLE regress_cp_user1;

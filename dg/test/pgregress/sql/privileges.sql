@@ -881,7 +881,8 @@ END;
 --dg REVOKE ALL PRIVILEGES ON LANGUAGE sql FROM PUBLIC;
 --dg-skip: language "?" does not exist
 --dg GRANT USAGE ON LANGUAGE sql TO regress_priv_user1; -- ok
-GRANT USAGE ON LANGUAGE c TO PUBLIC; -- fail
+--dg-differs: another error: privileges on languages are not supported yet
+--dg GRANT USAGE ON LANGUAGE c TO PUBLIC; -- fail
 
 SET SESSION AUTHORIZATION regress_priv_user1;
 --dg-skip: language "?" does not exist
@@ -941,7 +942,7 @@ DROP FUNCTION priv_testfunc1(int); -- ok
 -- verify privilege checks on array-element coercions
 BEGIN;
 SELECT '{1}'::int4[]::int8[];
---dg-skip: relation pg_proc cannot be written: digres has no catalog tables
+--dg-skip: privileges on functions are not supported yet
 --dg REVOKE ALL ON FUNCTION int8(integer) FROM PUBLIC;
 SELECT '{1}'::int4[]::int8[]; --superuser, succeed
 SET SESSION AUTHORIZATION regress_priv_user4;
@@ -1264,8 +1265,7 @@ select has_column_privilege('mytable','f2','select');
 select has_column_privilege('mytable','........pg.dropped.2........','select');
 select has_column_privilege('mytable',2::int2,'select');
 select has_column_privilege('mytable',99::int2,'select');
---dg-skip: cache lookup failed for attribute -N of relation N
---dg revoke select on table mytable from regress_priv_user3;
+revoke select on table mytable from regress_priv_user3;
 select has_column_privilege('mytable',2::int2,'select');
 select has_column_privilege('mytable',99::int2,'select');
 drop table mytable;
@@ -1447,8 +1447,7 @@ REVOKE regress_priv_group2 FROM regress_priv_user5;
 
 CREATE SEQUENCE x_seq;
 
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT USAGE on x_seq to regress_priv_user2;
+GRANT USAGE on x_seq to regress_priv_user2;
 
 SELECT has_sequence_privilege('regress_priv_user1', 'atest1', 'SELECT');
 SELECT has_sequence_privilege('regress_priv_user1', 'x_seq', 'INSERT');
@@ -1456,8 +1455,7 @@ SELECT has_sequence_privilege('regress_priv_user1', 'x_seq', 'SELECT');
 
 SET SESSION AUTHORIZATION regress_priv_user2;
 
---dg-cascade
---dg SELECT has_sequence_privilege('x_seq', 'USAGE');
+SELECT has_sequence_privilege('x_seq', 'USAGE');
 
 -- largeobject privilege tests
 \c -
@@ -1696,8 +1694,7 @@ GRANT pg_database_owner TO regress_priv_user1;
 GRANT regress_priv_user1 TO pg_database_owner;
 CREATE TABLE datdba_only ();
 ALTER TABLE datdba_only OWNER TO pg_database_owner;
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg REVOKE DELETE ON datdba_only FROM pg_database_owner;
+REVOKE DELETE ON datdba_only FROM pg_database_owner;
 SELECT
 	pg_has_role('regress_priv_user1', 'pg_database_owner', 'USAGE') as priv,
 	pg_has_role('regress_priv_user1', 'pg_database_owner', 'MEMBER') as mem,
@@ -1741,8 +1738,7 @@ ROLLBACK;
 \c -
 
 CREATE SCHEMA testns;
---dg-skip: relation pg_namespace cannot be written: digres has no catalog tables
---dg GRANT ALL ON SCHEMA testns TO regress_priv_user1;
+GRANT ALL ON SCHEMA testns TO regress_priv_user1;
 
 CREATE TABLE testns.acltest1 (x int);
 SELECT has_table_privilege('regress_priv_user1', 'testns.acltest1', 'SELECT'); -- no
@@ -1943,11 +1939,11 @@ SELECT has_schema_privilege('regress_priv_user2', 'testns5', 'CREATE'); -- no
 
 SET ROLE regress_priv_user1;
 
---dg-cascade
+--dg-skip: language "?" does not exist
 --dg CREATE FUNCTION testns.foo() RETURNS int AS 'select 1' LANGUAGE sql;
---dg-cascade
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
 --dg CREATE AGGREGATE testns.agg1(int) (sfunc = int4pl, stype = int4);
---dg-cascade
+--dg-skip: language "?" does not exist
 --dg CREATE PROCEDURE testns.bar() AS 'select 1' LANGUAGE sql;
 
 --dg-cascade
@@ -1962,15 +1958,15 @@ SET ROLE regress_priv_user1;
 
 --dg-cascade
 --dg DROP FUNCTION testns.foo();
---dg-cascade
+--dg-skip: language "?" does not exist
 --dg CREATE FUNCTION testns.foo() RETURNS int AS 'select 1' LANGUAGE sql;
 --dg-cascade
 --dg DROP AGGREGATE testns.agg1(int);
---dg-cascade
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
 --dg CREATE AGGREGATE testns.agg1(int) (sfunc = int4pl, stype = int4);
 --dg-cascade
 --dg DROP PROCEDURE testns.bar();
---dg-cascade
+--dg-skip: language "?" does not exist
 --dg CREATE PROCEDURE testns.bar() AS 'select 1' LANGUAGE sql;
 
 --dg-cascade
@@ -1990,7 +1986,7 @@ SET ROLE regress_priv_user1;
 --dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
 --dg ALTER DEFAULT PRIVILEGES FOR ROLE regress_priv_user1 REVOKE USAGE ON TYPES FROM public;
 
---dg-cascade
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
 --dg CREATE DOMAIN testns.priv_testdomain1 AS int;
 
 --dg-cascade
@@ -2001,7 +1997,7 @@ SET ROLE regress_priv_user1;
 
 --dg-cascade
 --dg DROP DOMAIN testns.priv_testdomain1;
---dg-cascade
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
 --dg CREATE DOMAIN testns.priv_testdomain1 AS int;
 
 --dg-cascade
@@ -2216,12 +2212,10 @@ CREATE USER regress_locktable_user;
 CREATE TABLE lock_table (a int);
 
 -- LOCK TABLE and SELECT permission
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT SELECT ON lock_table TO regress_locktable_user;
+GRANT SELECT ON lock_table TO regress_locktable_user;
 SET SESSION AUTHORIZATION regress_locktable_user;
 BEGIN;
---dg-cascade
---dg LOCK TABLE lock_table IN ACCESS SHARE MODE; -- should pass
+LOCK TABLE lock_table IN ACCESS SHARE MODE; -- should pass
 COMMIT;
 BEGIN;
 LOCK TABLE lock_table IN ROW EXCLUSIVE MODE; -- should fail
@@ -2230,107 +2224,82 @@ BEGIN;
 LOCK TABLE lock_table IN ACCESS EXCLUSIVE MODE; -- should fail
 ROLLBACK;
 \c
---dg-skip: cache lookup failed for attribute -N of relation N
---dg REVOKE SELECT ON lock_table FROM regress_locktable_user;
+REVOKE SELECT ON lock_table FROM regress_locktable_user;
 
 -- LOCK TABLE and INSERT permission
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT INSERT ON lock_table TO regress_locktable_user;
+GRANT INSERT ON lock_table TO regress_locktable_user;
 SET SESSION AUTHORIZATION regress_locktable_user;
 BEGIN;
---dg-cascade
---dg LOCK TABLE lock_table IN ACCESS SHARE MODE; -- should pass
+LOCK TABLE lock_table IN ACCESS SHARE MODE; -- should pass
 ROLLBACK;
 BEGIN;
---dg-cascade
---dg LOCK TABLE lock_table IN ROW EXCLUSIVE MODE; -- should pass
+LOCK TABLE lock_table IN ROW EXCLUSIVE MODE; -- should pass
 COMMIT;
 BEGIN;
 LOCK TABLE lock_table IN ACCESS EXCLUSIVE MODE; -- should fail
 ROLLBACK;
 \c
---dg-skip: cache lookup failed for attribute -N of relation N
---dg REVOKE INSERT ON lock_table FROM regress_locktable_user;
+REVOKE INSERT ON lock_table FROM regress_locktable_user;
 
 -- LOCK TABLE and UPDATE permission
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT UPDATE ON lock_table TO regress_locktable_user;
+GRANT UPDATE ON lock_table TO regress_locktable_user;
 SET SESSION AUTHORIZATION regress_locktable_user;
 BEGIN;
---dg-cascade
---dg LOCK TABLE lock_table IN ACCESS SHARE MODE; -- should pass
+LOCK TABLE lock_table IN ACCESS SHARE MODE; -- should pass
 ROLLBACK;
 BEGIN;
---dg-cascade
---dg LOCK TABLE lock_table IN ROW EXCLUSIVE MODE; -- should pass
+LOCK TABLE lock_table IN ROW EXCLUSIVE MODE; -- should pass
 COMMIT;
 BEGIN;
---dg-cascade
---dg LOCK TABLE lock_table IN ACCESS EXCLUSIVE MODE; -- should pass
+LOCK TABLE lock_table IN ACCESS EXCLUSIVE MODE; -- should pass
 COMMIT;
 \c
---dg-skip: cache lookup failed for attribute -N of relation N
---dg REVOKE UPDATE ON lock_table FROM regress_locktable_user;
+REVOKE UPDATE ON lock_table FROM regress_locktable_user;
 
 -- LOCK TABLE and DELETE permission
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT DELETE ON lock_table TO regress_locktable_user;
+GRANT DELETE ON lock_table TO regress_locktable_user;
 SET SESSION AUTHORIZATION regress_locktable_user;
 BEGIN;
---dg-cascade
---dg LOCK TABLE lock_table IN ACCESS SHARE MODE; -- should pass
+LOCK TABLE lock_table IN ACCESS SHARE MODE; -- should pass
 ROLLBACK;
 BEGIN;
---dg-cascade
---dg LOCK TABLE lock_table IN ROW EXCLUSIVE MODE; -- should pass
+LOCK TABLE lock_table IN ROW EXCLUSIVE MODE; -- should pass
 COMMIT;
 BEGIN;
---dg-cascade
---dg LOCK TABLE lock_table IN ACCESS EXCLUSIVE MODE; -- should pass
+LOCK TABLE lock_table IN ACCESS EXCLUSIVE MODE; -- should pass
 COMMIT;
 \c
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg REVOKE DELETE ON lock_table FROM regress_locktable_user;
+REVOKE DELETE ON lock_table FROM regress_locktable_user;
 
 -- LOCK TABLE and TRUNCATE permission
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT TRUNCATE ON lock_table TO regress_locktable_user;
+GRANT TRUNCATE ON lock_table TO regress_locktable_user;
 SET SESSION AUTHORIZATION regress_locktable_user;
 BEGIN;
---dg-cascade
---dg LOCK TABLE lock_table IN ACCESS SHARE MODE; -- should pass
+LOCK TABLE lock_table IN ACCESS SHARE MODE; -- should pass
 ROLLBACK;
 BEGIN;
---dg-cascade
---dg LOCK TABLE lock_table IN ROW EXCLUSIVE MODE; -- should pass
+LOCK TABLE lock_table IN ROW EXCLUSIVE MODE; -- should pass
 COMMIT;
 BEGIN;
---dg-cascade
---dg LOCK TABLE lock_table IN ACCESS EXCLUSIVE MODE; -- should pass
+LOCK TABLE lock_table IN ACCESS EXCLUSIVE MODE; -- should pass
 COMMIT;
 \c
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg REVOKE TRUNCATE ON lock_table FROM regress_locktable_user;
+REVOKE TRUNCATE ON lock_table FROM regress_locktable_user;
 
 -- LOCK TABLE and MAINTAIN permission
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT MAINTAIN ON lock_table TO regress_locktable_user;
+GRANT MAINTAIN ON lock_table TO regress_locktable_user;
 SET SESSION AUTHORIZATION regress_locktable_user;
 BEGIN;
---dg-cascade
---dg LOCK TABLE lock_table IN ACCESS SHARE MODE; -- should pass
+LOCK TABLE lock_table IN ACCESS SHARE MODE; -- should pass
 ROLLBACK;
 BEGIN;
---dg-cascade
---dg LOCK TABLE lock_table IN ROW EXCLUSIVE MODE; -- should pass
+LOCK TABLE lock_table IN ROW EXCLUSIVE MODE; -- should pass
 COMMIT;
 BEGIN;
---dg-cascade
---dg LOCK TABLE lock_table IN ACCESS EXCLUSIVE MODE; -- should pass
+LOCK TABLE lock_table IN ACCESS EXCLUSIVE MODE; -- should pass
 COMMIT;
 \c
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg REVOKE MAINTAIN ON lock_table FROM regress_locktable_user;
+REVOKE MAINTAIN ON lock_table FROM regress_locktable_user;
 
 -- clean up
 DROP TABLE lock_table;
@@ -2407,39 +2376,26 @@ CREATE ROLE regress_roleoption_protagonist;
 CREATE ROLE regress_roleoption_donor;
 CREATE ROLE regress_roleoption_recipient;
 CREATE SCHEMA regress_roleoption;
---dg-skip: relation pg_namespace cannot be written: digres has no catalog tables
---dg GRANT CREATE, USAGE ON SCHEMA regress_roleoption TO PUBLIC;
+GRANT CREATE, USAGE ON SCHEMA regress_roleoption TO PUBLIC;
 GRANT regress_roleoption_donor TO regress_roleoption_protagonist WITH INHERIT TRUE, SET FALSE;
 GRANT regress_roleoption_recipient TO regress_roleoption_protagonist WITH INHERIT FALSE, SET TRUE;
 SET SESSION AUTHORIZATION regress_roleoption_protagonist;
---dg-cascade
---dg CREATE TABLE regress_roleoption.t1 (a int);
---dg-cascade
---dg CREATE TABLE regress_roleoption.t2 (a int);
+CREATE TABLE regress_roleoption.t1 (a int);
+CREATE TABLE regress_roleoption.t2 (a int);
 SET SESSION AUTHORIZATION regress_roleoption_donor;
---dg-cascade
---dg CREATE TABLE regress_roleoption.t3 (a int);
+CREATE TABLE regress_roleoption.t3 (a int);
 SET SESSION AUTHORIZATION regress_roleoption_recipient;
---dg-cascade
---dg CREATE TABLE regress_roleoption.t4 (a int);
+CREATE TABLE regress_roleoption.t4 (a int);
 SET SESSION AUTHORIZATION regress_roleoption_protagonist;
---dg-cascade
---dg ALTER TABLE regress_roleoption.t1 OWNER TO regress_roleoption_donor; -- fails, can't be come donor
---dg-cascade
---dg ALTER TABLE regress_roleoption.t2 OWNER TO regress_roleoption_recipient; -- works
---dg-cascade
---dg ALTER TABLE regress_roleoption.t3 OWNER TO regress_roleoption_protagonist; -- works
---dg-cascade
---dg ALTER TABLE regress_roleoption.t4 OWNER TO regress_roleoption_protagonist; -- fails, we don't inherit from recipient
+ALTER TABLE regress_roleoption.t1 OWNER TO regress_roleoption_donor; -- fails, can't be come donor
+ALTER TABLE regress_roleoption.t2 OWNER TO regress_roleoption_recipient; -- works
+ALTER TABLE regress_roleoption.t3 OWNER TO regress_roleoption_protagonist; -- works
+ALTER TABLE regress_roleoption.t4 OWNER TO regress_roleoption_protagonist; -- fails, we don't inherit from recipient
 RESET SESSION AUTHORIZATION;
---dg-cascade
---dg DROP TABLE regress_roleoption.t1;
---dg-cascade
---dg DROP TABLE regress_roleoption.t2;
---dg-cascade
---dg DROP TABLE regress_roleoption.t3;
---dg-cascade
---dg DROP TABLE regress_roleoption.t4;
+DROP TABLE regress_roleoption.t1;
+DROP TABLE regress_roleoption.t2;
+DROP TABLE regress_roleoption.t3;
+DROP TABLE regress_roleoption.t4;
 DROP SCHEMA regress_roleoption;
 DROP ROLE regress_roleoption_protagonist;
 DROP ROLE regress_roleoption_donor;
@@ -2451,8 +2407,7 @@ CREATE ROLE regress_maintain;
 CREATE ROLE regress_maintain_all IN ROLE pg_maintain;
 CREATE TABLE maintain_test (a INT);
 CREATE INDEX ON maintain_test (a);
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT MAINTAIN ON maintain_test TO regress_maintain;
+GRANT MAINTAIN ON maintain_test TO regress_maintain;
 --dg-skip: a relation's storage cannot be made: digres has no catalog tables
 --dg CREATE MATERIALIZED VIEW refresh_test AS SELECT 1;
 --dg-cascade
@@ -2478,19 +2433,16 @@ ANALYZE maintain_test;
 RESET ROLE;
 
 SET ROLE regress_maintain;
---dg-cascade
---dg VACUUM maintain_test;
---dg-cascade
---dg ANALYZE maintain_test;
---dg-cascade
---dg VACUUM (ANALYZE) maintain_test;
---dg-cascade
+VACUUM maintain_test;
+ANALYZE maintain_test;
+VACUUM (ANALYZE) maintain_test;
+--dg-differs: the result
 --dg CLUSTER maintain_test USING maintain_test_a_idx;
 --dg-cascade
 --dg REFRESH MATERIALIZED VIEW refresh_test;
---dg-cascade
+--dg-differs: the result
 --dg REINDEX TABLE maintain_test;
---dg-cascade
+--dg-differs: the result
 --dg REINDEX INDEX maintain_test_a_idx;
 --dg-differs: no error where PostgreSQL has: must be owner of schema reindex_test
 --dg REINDEX SCHEMA reindex_test;
@@ -2527,20 +2479,16 @@ CREATE ROLE regress_grantor3;
 CREATE TABLE grantor_test1 ();
 CREATE TABLE grantor_test2 ();
 CREATE TABLE grantor_test3 ();
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT SELECT ON grantor_test2 TO regress_grantor1 WITH GRANT OPTION;
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT SELECT, UPDATE ON grantor_test3 TO regress_grantor2 WITH GRANT OPTION;
+GRANT SELECT ON grantor_test2 TO regress_grantor1 WITH GRANT OPTION;
+GRANT SELECT, UPDATE ON grantor_test3 TO regress_grantor2 WITH GRANT OPTION;
 
 SET ROLE regress_grantor1;
 GRANT SELECT, UPDATE ON grantor_test1 TO regress_grantor3;
---dg-cascade
---dg GRANT SELECT, UPDATE ON grantor_test2 TO regress_grantor3;
---dg-cascade
---dg GRANT SELECT, UPDATE ON grantor_test3 TO regress_grantor3;
+GRANT SELECT, UPDATE ON grantor_test2 TO regress_grantor3;
+GRANT SELECT, UPDATE ON grantor_test3 TO regress_grantor3;
 RESET ROLE;
 
---dg-cascade
+--dg-skip: relation "?" does not exist
 --dg SELECT * FROM information_schema.table_privileges t
 --dg 	WHERE grantor LIKE 'regress_grantor%' ORDER BY ROW(t.*);
 

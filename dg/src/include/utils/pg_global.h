@@ -20,6 +20,7 @@
 #include "access/htup.h"
 #include "access/tupdesc.h"
 #include "datatype/timestamp.h"
+#include "utils/acl.h"
 
 typedef struct sm_env_t sm_env_t;
 
@@ -110,6 +111,11 @@ extern void pg_global_set_owner(uint64_t dbid, Oid classid, Oid objid,
                                 Oid owner, bool temp);
 extern void pg_global_forget(uint64_t dbid, Oid objid);
 extern void pg_global_forget_database(uint64_t dbid);
+extern void pg_global_set_acl(uint64_t dbid, Oid classid, Oid objid, Oid owner,
+                              const Acl *acl, bool temp);
+extern Acl *pg_global_acl(uint64_t dbid, Oid objid);
+extern void pg_global_change_owner(uint64_t dbid, Oid classid, Oid objid,
+                                   Oid owner, bool temp);
 extern void pg_global_subcommit(void);
 extern void pg_global_subabort(void);
 extern void pg_global_post_commit(void);

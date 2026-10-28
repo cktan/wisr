@@ -929,8 +929,7 @@ create schema mr_sch;
 set role regress_mr;
 create type mytype as range (subtype=int4, multirange_type_name=mr_sch.mr_type);
 reset role;
---dg-skip: relation pg_namespace cannot be written: digres has no catalog tables
---dg grant create on schema mr_sch to regress_mr;
+grant create on schema mr_sch to regress_mr;
 set role regress_mr;
 create type mytype as range (subtype=int4, multirange_type_name=mr_sch.mr_type);
 reset role;

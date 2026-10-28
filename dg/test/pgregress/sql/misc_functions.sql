@@ -154,7 +154,7 @@ CREATE ROLE regress_log_memory;
 --dg SELECT has_function_privilege('regress_log_memory',
 --dg   'pg_log_backend_memory_contexts(integer)', 'EXECUTE'); -- no
 
---dg-skip: relation pg_proc cannot be written: digres has no catalog tables
+--dg-skip: privileges on functions are not supported yet
 --dg GRANT EXECUTE ON FUNCTION pg_log_backend_memory_contexts(integer)
 --dg   TO regress_log_memory;
 
@@ -167,7 +167,7 @@ SET ROLE regress_log_memory;
 --dg SELECT pg_log_backend_memory_contexts(pg_backend_pid());
 RESET ROLE;
 
---dg-skip: relation pg_proc cannot be written: digres has no catalog tables
+--dg-skip: privileges on functions are not supported yet
 --dg REVOKE EXECUTE ON FUNCTION pg_log_backend_memory_contexts(integer)
 --dg   FROM regress_log_memory;
 

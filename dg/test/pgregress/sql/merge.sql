@@ -29,8 +29,7 @@ CREATE TABLE source2 (sid integer, delta integer)
 ALTER TABLE target2 OWNER TO regress_merge_no_privs;
 ALTER TABLE source2 OWNER TO regress_merge_no_privs;
 
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT INSERT ON target TO regress_merge_no_privs;
+GRANT INSERT ON target TO regress_merge_no_privs;
 
 SET SESSION AUTHORIZATION regress_merge_privs;
 
@@ -140,8 +139,7 @@ ON target.tid = source2.sid
 WHEN MATCHED THEN
 	UPDATE SET balance = 0;
 
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT INSERT ON target TO regress_merge_no_privs;
+GRANT INSERT ON target TO regress_merge_no_privs;
 SET SESSION AUTHORIZATION regress_merge_no_privs;
 
 MERGE INTO target
@@ -150,8 +148,7 @@ ON target.tid = source2.sid
 WHEN MATCHED THEN
 	UPDATE SET balance = 0;
 
---dg-skip: relation pg_class cannot be written: digres has no catalog tables
---dg GRANT UPDATE ON target2 TO regress_merge_privs;
+GRANT UPDATE ON target2 TO regress_merge_privs;
 SET SESSION AUTHORIZATION regress_merge_privs;
 
 MERGE INTO target2

@@ -9372,3 +9372,52 @@ it. Every object was the superuser's.
   table, a sequence, an index and a schema, one in a savepoint
   rolled back to undone; and an owner kept across a restart.
   Each was shown to fail with its part undone.
+
+## Step 317: GRANT and REVOKE
+
+The fifth step of roles (`../sm/ROLE.md` §9): GRANT and REVOKE
+on tables, views, sequences, schemas and databases, and the
+checks that then refuse. `aclchk.c` is PostgreSQL's still: what
+it computes, PostgreSQL's ACL merged with the grant, goes to
+`pg_global` in place of the catalog row.
+
+- **An ACL is the object's entry's** in `pg_object`
+  (`pg_global_set_acl()`), as role oids and privilege bits,
+  `grantee,grantor,privs` an item, so a role's rename leaves
+  it be. A database's is its entry's by its own id; a
+  temporary object's is the session's alone. pg_shdepend is
+  gone: no dependency is recorded.
+- **Written at the commit** (ROLE.md §8 question 7): before the
+  database's, an entry that is to grant less is written to
+  grant only what it grants before and after, the items both
+  ACLs have, with the privileges both give; after, the ACL
+  asked for. An abort after the first write puts back what
+  was. So a crash, or a commit that fails, leaves less
+  granted, never more. In a transaction block, and in a
+  savepoint rolled back to, as an owner is (step 316).
+- **Who reads it**: `pg_class` (`relacl`), `pg_namespace`
+  (`nspacl`, a built-in schema's in place of the compiled-in
+  one once granted on), `pg_database` (`datacl`), so the
+  checks, `\dp`, `\dn+` and `\l` see it, and the second check
+  of ROLE.md §5, CONNECT, refuses a role at its login.
+- **A view's relations are checked as its owner**, as
+  PostgreSQL's rules are: digres checked them as the
+  superuser, so any role granted a view read what it read.
+- **A new owner** rewrites the ACL, the old owner's items the
+  new one's (`aclnewowner()`, `pg_global_change_owner()`).
+- **Refused**: a column's privileges (ROLE.md §8 question 2,
+  later), and a function's, a type's, a language's, which are
+  compiled in, and PUBLIC's.
+- **Left on purpose**: DROP ROLE does not yet refuse a role an
+  ACL names, nor one that owns an object: step 6.
+- **pgregress**: the 41 files that GRANT or REVOKE were ported
+  again: 338 statements are back.
+- **Tests**: `server.sh` grants and revokes a table to a role,
+  in a transaction rolled back and a savepoint rolled back to
+  too; has a view read as its owner, and refused when its
+  owner loses the table; shows the ACLs; refuses a column's
+  and a function's; keeps a role out of a database by REVOKE
+  CONNECT; and has a REVOKE whose SERIALIZABLE transaction
+  fails at its commit leave the ACL as it was, read again
+  after a restart. Each was shown to fail with its part
+  undone.

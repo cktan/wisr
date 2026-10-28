@@ -154,6 +154,7 @@ static void gen_pg_namespace(Tuplestorestate *ts, TupleDesc desc) {
   const cat_namespace_t *rows = cat_namespaces(&count);
   Datum values[4];
   bool nulls[4] = {false, false, false, true};
+  Acl *acl;
   ListCell *l;
 
   for (int i = 0; i < count; i++) {
@@ -166,8 +167,13 @@ static void gen_pg_namespace(Tuplestorestate *ts, TupleDesc desc) {
     values[2] = ObjectIdGetDatum(owner);
     nulls[3] = true;
     values[3] = (Datum)0;
-    if (PG_CATALOG_NAMESPACE == rows[i].oid ||
-        PG_PUBLIC_NAMESPACE == rows[i].oid) {
+    /* As GRANT and REVOKE left it, in pg_global, if they did. */
+    if (NULL !=
+        (acl = pg_global_acl(pg_global_dbid(MyDatabaseId), rows[i].oid))) {
+      nulls[3] = false;
+      values[3] = PointerGetDatum(acl);
+    } else if (PG_CATALOG_NAMESPACE == rows[i].oid ||
+               PG_PUBLIC_NAMESPACE == rows[i].oid) {
       nulls[3] = false;
       values[3] = make_acl(owner, ACL_ALL_RIGHTS_SCHEMA, ACL_USAGE);
     }
@@ -183,7 +189,9 @@ static void gen_pg_namespace(Tuplestorestate *ts, TupleDesc desc) {
     values[0] = ObjectIdGetDatum(oid);
     values[1] = name_datum(name);
     values[2] = ObjectIdGetDatum(pg_global_owner(oid));
-    values[3] = (Datum)0;
+    acl = pg_global_acl(pg_global_dbid(MyDatabaseId), oid);
+    nulls[3] = NULL == acl;
+    values[3] = PointerGetDatum(acl);
     tuplestore_putvalues(ts, desc, values, nulls);
   }
 }
@@ -250,6 +258,18 @@ static Oid relation_owner(const smstore_relation_t *r) {
 }
 
 /*
+ * The ACL of the relation r of sm's, pg_global's, or (Datum) 0 if it keeps
+ * none: an index has none.
+ */
+static Datum relation_acl(const smstore_relation_t *r) {
+  Acl *acl = RELKIND_INDEX == r->kind
+                 ? NULL
+                 : pg_global_acl(pg_global_dbid(MyDatabaseId), r->oid);
+
+  return NULL == acl ? (Datum)0 : PointerGetDatum(acl);
+}
+
+/*
  * pg_class's rows: the catalog relations, in pg_catalog, then sm's tables,
  * indexes, views and sequences, the session's temporary tables among them.
  */
@@ -275,7 +295,7 @@ static void gen_pg_class(Tuplestorestate *ts, TupleDesc desc, Oid only) {
     class_row(ts, desc, r->oid, r->name, r->nspoid, InvalidOid,
               relation_owner(r), r->kind, r->natts, r->hasindex, r->temp,
               smstore_view_reloptions(r->options),
-              r->nfkeys > 0 || r->referenced);
+              r->nfkeys > 0 || r->referenced, relation_acl(r));
   }
 }
 
@@ -739,6 +759,7 @@ static void gen_pg_roles(Tuplestorestate *ts, TupleDesc desc) {
 static void gen_pg_database(Tuplestorestate *ts, TupleDesc desc) {
   Datum values[Natts_pg_database];
   bool nulls[Natts_pg_database];
+  Acl *acl;
   ListCell *l;
 
   foreach (l, datadir_database_names()) {
@@ -765,7 +786,10 @@ static void gen_pg_database(Tuplestorestate *ts, TupleDesc desc) {
     nulls[Anum_pg_database_datlocale - 1] = true;
     nulls[Anum_pg_database_daticurules - 1] = true;
     nulls[Anum_pg_database_datcollversion - 1] = true;
-    nulls[Anum_pg_database_datacl - 1] = true;
+    /* Its ACL is pg_global's, by its id, if GRANT made one. */
+    acl = pg_global_acl(pg_global_dbid(datadir_database_oid(name)), InvalidOid);
+    nulls[Anum_pg_database_datacl - 1] = NULL == acl;
+    values[Anum_pg_database_datacl - 1] = PointerGetDatum(acl);
     tuplestore_putvalues(ts, desc, values, nulls);
   }
 }
