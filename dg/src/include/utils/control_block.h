@@ -46,7 +46,7 @@
 #include "common/file_perm.h"
 #include "datatype/timestamp.h"
 
-/* datadir.c: the superuser, and sm's home directory, the process's. */
+/* datadir.c: sm's home directory, the process's. */
 struct datadir_state_t;
 extern datadir_state_t *datadir_state_new(void);
 
@@ -71,6 +71,12 @@ struct sequence_state_free_t {
   void operator()(sequence_state_t *state) const;
 };
 extern sequence_state_t *sequence_state_new(void);
+
+/* pg_global.c: the roles, as last committed, that every session reads. */
+struct pg_global_t;
+struct pg_global_free_t {
+  void operator()(pg_global_t *global) const;
+};
 
 /* advisory_lock.c: the advisory locks held, and a session's keys of them. */
 struct advisory_table_t;
@@ -235,6 +241,12 @@ typedef struct shmem_t {
 
   /* advisory_lock.c: the advisory locks held, and their waiters */
   std::unique_ptr<advisory_table_t, advisory_table_free_t> advisory;
+
+  /*
+   * pg_global.c: the roles, made by the postmaster as it loads the data
+   * directory, before the first session; guarded by its own mutex
+   */
+  std::unique_ptr<pg_global_t, pg_global_free_t> pg_global;
 } shmem_t;
 
 /* The thread control block: one for each thread that runs digres code. */

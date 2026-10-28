@@ -12,8 +12,6 @@
 #include "nodes/pg_list.h"
 
 extern void datadir_load(void);
-extern const char *datadir_superuser(void);
-extern const char *datadir_superuser_secret(void);
 extern Oid datadir_database_oid(const char *dbname);
 extern void datadir_open_session(const char *dbname);
 extern char *datadir_database_name(Oid dboid);

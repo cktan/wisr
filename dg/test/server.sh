@@ -2918,6 +2918,38 @@ postgres|t|UTF8|c|C|C|t
 OUT
 cmp -s "$work/db.out" "$work/db.expected" || fail "pg_database"
 
+# Verify that the roles are pg_global's (sm/ROLE.md section 3): pg_authid
+# and pg_roles read them, the server's own lookups of a role go through
+# pg_authid, and pg_global is no database a client sees.
+# 1. pg_authid has the superuser, oid 10, with its password's SCRAM
+#    secret; pg_roles the same role, its password hidden.
+# 2. A role is found by name and by oid: regrole's input and output.
+# 3. pg_database does not list pg_global.
+# 4. Connecting to pg_global, dropping it and creating it are refused, as
+#    for a database that is not there and one that is.
+local_psql -c "select oid, rolname = current_user, rolsuper, rolcanlogin,
+                 rolreplication, rolpassword ~ '^SCRAM-SHA-256\\$',
+                 rolvaliduntil is null from pg_authid" \
+  -c "select rolname = current_user, rolpassword, oid from pg_roles" \
+  -c "select current_user::regrole::oid, 10::regrole::text = current_user" \
+  -c "select count(*) from pg_database where datname = 'pg_global'" \
+  > "$work/roles.out" 2>&1
+cat > "$work/roles.expected" << OUT
+10|t|t|t|f|t|t
+t|********|10
+10|t
+0
+OUT
+cmp -s "$work/roles.out" "$work/roles.expected" || fail "pg_authid, pg_roles"
+psql -X -h "$work" -p "$port" -d pg_global -c 'select 1' \
+  > "$work/pg_global.out" 2>&1 && fail "connected to pg_global"
+grep -q 'database "pg_global" does not exist' "$work/pg_global.out" ||
+  fail "pg_global connect message"
+local_psql -c 'drop database pg_global' 2>&1 |
+  grep -q 'database "pg_global" does not exist' || fail "drop pg_global"
+local_psql -c 'create database pg_global' 2>&1 |
+  grep -q 'database "pg_global" already exists' || fail "create pg_global"
+
 # Verify that psql's \d describes a sequence of sm's: pg_sequence has its
 # START and INCREMENT, and pg_depend the column that owns it.
 # 1. In schema sq1 make sequence q, START 5 INCREMENT 3, and table t with a

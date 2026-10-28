@@ -10,12 +10,15 @@
  * server, which answers to the name "initdb" as well.
  *
  * A data directory is an sm home directory (sm/sm1/SM1_DESIGN.md
- * section 3.5) holding one database, "postgres", with two files of
- * digres's beside it:
+ * section 3.5) holding two databases, with one file of digres's beside
+ * them:
  *
+ *   postgres     the database clients connect to
+ *   pg_global    the roles, which every database shares, and no client
+ *                connects to (utils/init/pg_global.c): the superuser
+ *                alone at first, with the SCRAM secret of its password,
+ *                if one was given
  *   PG_VERSION   the major version, as PostgreSQL writes it
- *   superuser    the superuser's name, and on a second line the SCRAM
- *                secret of its password, if one was given
  *
  * There is one encoding, UTF8, and one default collation, C; and
  * authentication is not configured: peer on the local socket, SCRAM
@@ -42,6 +45,7 @@
 #include "libpq/scram.h"
 #include "mb/pg_wchar.h"
 #include "postmaster/initdb.h"
+#include "utils/pg_global.h"
 
 /* The data directory, and what to undo if making it fails. */
 static thread_local /*LOCAL*/ const char *datadir = NULL;
@@ -193,8 +197,12 @@ static void make_datadir(void) {
   printf("ok\n");
 }
 
-/* Make the directory an sm home directory holding the database "postgres". */
-static void make_storage(void) {
+/*
+ * Make the directory an sm home directory holding the database "postgres",
+ * and pg_global, whose one role is the superuser username, with the SCRAM
+ * secret of its password, or none if secret is NULL.
+ */
+static void make_storage(const char *username, const char *secret) {
   sm_env_t *env = NULL;
 
   printf("creating storage ... ");
@@ -211,6 +219,14 @@ static void make_storage(void) {
     fatal("could not attach storage: %s", sm_errmsg());
   if (sm_mkdb(env, "postgres", NULL) != 0)
     fatal("could not create database \"postgres\": %s", sm_errmsg());
+  printf("ok\n");
+
+  printf("creating the superuser \"%s\" ... ", username);
+  fflush(stdout);
+  /* After postgres, so that postgres keeps the first database id. */
+  if (0 != pg_global_create(env, username, secret))
+    fatal("could not create database \"%s\": %s", PG_GLOBAL_DBNAME,
+          sm_errmsg());
   /* Detach, which closes the root db so that the server can open it. */
   if (sm_detach(env, 0) != 0)
     fatal("could not detach storage: %s", sm_errmsg());
@@ -350,10 +366,8 @@ int initdb_main(int argc, char **argv) {
   umask(S_IRWXG | S_IRWXO);
 
   make_datadir();
-  make_storage();
+  make_storage(username, secret);
   write_file("PG_VERSION", PG_MAJORVERSION "\n");
-  write_file(SUPERUSER_FILE,
-             psprintf("%s\n%s\n", username, secret ? secret : ""));
   sync_datadir();
 
   printf("\nSuccess. Local socket connections are allowed to OS user "

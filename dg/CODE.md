@@ -35,8 +35,13 @@ wins over convenience and over what PostgreSQL did.
   instance. The importing instance gives it those.
 - **What is compiled in is the same in every instance** of one
   version; a row may refer to it by oid. What the instance
-  keeps outside `base/` — the superuser, the settings — a
-  database must not depend on to be read.
+  keeps outside a database's directory — the settings, and the
+  roles, in the database `pg_global` — a database must not
+  depend on to be read.
+- **All role data is in `pg_global`, and only there**
+  (`../sm/ROLE.md` §3): no owner, privilege or role setting
+  in a database's directory, so a copy of it on another
+  instance takes that instance's roles.
 - **Before adding state, ask where it lives.** If a copied
   `base/X` would miss it, it is in the wrong place.
 

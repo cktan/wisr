@@ -117,8 +117,10 @@ stops it, and says which. `make test` runs the statements in
 
 `build/initdb DIR`, or `build/digres --init DIR`, makes a data
 directory: an sm home directory holding the database
-`postgres`, a `PG_VERSION` file, and a `superuser` file with
-the superuser's name and the SCRAM secret of its password.
+`postgres`, the database `pg_global`, which holds the roles
+and which no client connects to (`../sm/ROLE.md`), and a
+`PG_VERSION` file. Its one role at first is the superuser,
+with the SCRAM secret of its password if one is given.
 `initdb` is the server under another name, and `--help` lists
 its options, which are few: the encoding is UTF8, the default
 collation is C, and authentication is peer on the local socket

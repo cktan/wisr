@@ -46,7 +46,7 @@
 #include "storage/session_registry.h"
 #include "storage/procsignal.h"
 #include "utils/builtins.h"
-#include "utils/datadir.h"
+#include "utils/pg_global.h"
 #include "utils/guc.h"
 #include "utils/inval.h"
 #include "utils/memutils.h"
@@ -580,26 +580,24 @@ void InitializeSessionUserId(const char *rolename, Oid roleid,
    */
   Assert(!IsBootstrapProcessingMode());
 
-  /*
-   * digres has one role, the superuser that initdb named
-   * (utils/init/datadir.c): it is the built-in role with the bootstrap
-   * superuser's oid, and nothing limits its logging in.
-   */
+  /* The roles are pg_global's (utils/init/pg_global.c). */
+  pg_global_role_t role;
+
   if (rolename != NULL) {
-    if (strcmp(rolename, datadir_superuser()) != 0)
+    if (!pg_global_role_by_name(rolename, &role))
       ereport(FATAL, (errcode(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
                       errmsg("role \"%s\" does not exist", rolename)));
-  } else if (roleid != BOOTSTRAP_SUPERUSERID)
+  } else if (!pg_global_role_by_oid(roleid, &role))
     ereport(FATAL, (errcode(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
                     errmsg("role with OID %u does not exist", roleid)));
 
-  SetAuthenticatedUserId(BOOTSTRAP_SUPERUSERID);
+  SetAuthenticatedUserId(role.oid);
 
   /*
    * As InitializeSessionUserIdStandalone() does, and for its reason: the
    * "session_authorization" setting would look the role up by name.
    */
-  SetSessionAuthorization(BOOTSTRAP_SUPERUSERID, true);
+  SetSessionAuthorization(role.oid, role.rolsuper);
   SetCurrentRoleId(InvalidOid, false);
 }
 
@@ -737,17 +735,19 @@ void SetCurrentRoleId(Oid roleid, bool is_superuser) {
  */
 char *GetUserNameFromId(Oid roleid, bool noerr) {
   /*
-   * digres has one role, the superuser, and no pg_authid: its name is the
-   * one initdb gave it (utils/init/datadir.c), or with no data directory,
-   * as "digres --run" has, the operating system user's, initdb's default.
+   * The roles are pg_global's (utils/init/pg_global.c).  With no data
+   * directory, the bootstrap superuser is the operating system user,
+   * initdb's default.
    */
-  if (roleid == BOOTSTRAP_SUPERUSERID) {
-    const char *name = datadir_superuser();
-    char *errstr = NULL;
+  pg_global_role_t role;
 
-    if (name == NULL)
-      name = get_user_name(&errstr);
-    if (name != NULL)
+  if (pg_global_role_by_oid(roleid, &role))
+    return pstrdup(role.rolname.c_str());
+  if (!pg_global_is_loaded() && BOOTSTRAP_SUPERUSERID == roleid) {
+    char *errstr = NULL;
+    const char *name = get_user_name(&errstr);
+
+    if (NULL != name)
       return pstrdup(name);
   }
   if (!noerr)

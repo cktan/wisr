@@ -1,7 +1,8 @@
 # ROLE — users, roles, privileges, and how a client gets in
 
-**Designed**, not built. digres has one role, the superuser
-initdb names, and no privilege is ever refused. This file says
+**Being built**, a step at a time (§9): step 1 is done. digres
+has one role, the superuser initdb names, now kept in
+`pg_global`, and no privilege is ever refused. This file says
 what roles and privileges digres takes from PostgreSQL, where
 sm keeps them, and how a client is let in, by a rule much
 simpler than `pg_hba.conf`. Paths are relative to `sm/`;
@@ -118,8 +119,8 @@ a setting. So a database is its directory still
 (`../dg/CODE.md`, the overriding objective), and a copy of it
 on another server — replicated (`LOGICALDECODE.md`) or
 imported — finds no role of its source there, and that
-server's `pg_global` gives it roles of its own. Its sm3
-catalog holds:
+server's `pg_global` gives it roles of its own. Its tables,
+digres's (§6), hold:
 
 - **roles**: oid, name, attributes, the SCRAM secret,
   `VALID UNTIL`, `CONNECTION LIMIT`, `ALTER ROLE ... SET`,
@@ -330,23 +331,27 @@ as in PostgreSQL. No single-user mode is kept for this.
 
 ## 6. What changes, by level
 
-**sm3**: role, membership, database and object-privilege
-records, in `pg_global`'s catalog, and nothing in any other
-database's; lookups of a role by oid and by name, the list
-of a role's members, a database's object entries, and the
-sweep of entries whose object or database is gone. **sm1,
-sm2**: nothing. **sm.h**: the calls for those.
+**sm**: nothing. `pg_global` is an sm database like any
+other, and its tables are digres's: `pg_authid`, a role a row,
+keyed by oid, with a unique index on the name; memberships,
+owners and privileges as their steps come. digres reads and
+writes them through `sm.h`'s table calls
+(`../dg/src/backend/utils/init/pg_global.c`), so sm learns
+nothing of roles, as §3 wants of sm1, and needs no record kind
+of its own for them.
 
 **digres**:
 
 - initdb makes `pg_global` and the superuser's role in it;
-  the `superuser` file goes, and `datadir.c` reads the role.
-  A data directory made before, with the file and no
-  `pg_global`, is refused at start with a message to run
-  initdb again (§8 question 5).
-- The session's role cache, refreshed by `pg_global`'s epoch;
-  `superuser_arg()`, `has_privs_of_role()` and
-  `is_member_of_role()` read it.
+  the `superuser` file goes. A data directory made before,
+  with no `pg_global`, is refused at start with a message to
+  run initdb again (§8 question 5). Built, step 1.
+- The roles' cache: one snapshot of `pg_global`'s committed
+  roles, which the postmaster reads at start and every session
+  shares (`shmem->pg_global`), replaced whole by role DDL
+  after it commits; `superuser_arg()`, `has_privs_of_role()`
+  and `is_member_of_role()` read it, through `pg_authid` and
+  the syscache. Built for reading, step 1.
 - `user.c`'s CREATE, ALTER and DROP ROLE, GRANT and REVOKE of
   a membership, and `aclchk.c`'s GRANT and REVOKE, writing
   sm3's records instead of catalog tuples; role DDL refused in
@@ -367,12 +372,15 @@ sm2**: nothing. **sm.h**: the calls for those.
 Each step tests what it builds at every layer that reaches
 it (`../CLAUDE.md`, "Test at every layer"):
 
-- **sm3**: records of roles, memberships and privileges kept,
-  loaded back after a restart, versioned, and dropped.
-- **rel**: none, unless `rel` gains roles: sm keeps them, and
-  no check of sm's reads them.
+- **sm3, rel**: none. sm keeps no role of its own: `pg_global`
+  is tables, which sm's tests already cover, and no check of
+  sm's reads them.
 - **mvcc**: none; roles change nothing of sm1.
-- **digres**: `server.sh` for each of §5's four checks,
+- **digres**: `initdb.sh` for `pg_global` made, its
+  superuser's name and secret, and a data directory without
+  it refused; `server.sh` for `pg_authid` and `pg_roles`, a
+  role's lookup by name and oid, and `pg_global` hidden; and
+  `server.sh` for each of §5's four checks,
   admitted and refused, on the socket and over TCP; a role
   refused a table, then granted it; a REVOKE seen by another
   session at its next statement. pgregress's `privileges`,
@@ -415,7 +423,8 @@ it (`../CLAUDE.md`, "Test at every layer"):
 ## 9. Order of work
 
 1. `pg_global` and the role records; the superuser moves
-   there from the file; `pg_authid`, `pg_roles`, `\du`.
+   there from the file; `pg_authid`, `pg_roles`, `\du`. Done
+   (`../dg/WORKNOTE.md` step 312).
 2. CREATE, ALTER, DROP ROLE; membership; SET ROLE.
 3. §5's four checks, in place of the fixed rule.
 4. Owners: an object's entry in `pg_global`, `current_user`

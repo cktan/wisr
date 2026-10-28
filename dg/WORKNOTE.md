@@ -9086,3 +9086,52 @@ what its expression keys are; digres refused them in
   checks restored each file older than its object, so `make`
   kept the disabled part built in; they were run again, each
   file touched as it was restored.
+
+## Step 312: the roles live in pg_global
+
+The first step of roles (`../sm/ROLE.md` §9). digres had one
+role, the superuser initdb named, whose name and SCRAM secret
+were the data directory's `superuser` file. A role is the
+whole server's, and no sm transaction spans two databases, so
+the roles go to a database of their own, `pg_global`, which
+holds all role data and nothing else holds any (ROLE.md §3,
+the invariant).
+
+- **`pg_global`** (`utils/init/pg_global.c`) is an sm
+  database like any other, with a table of digres's,
+  `pg_authid`: a role a row, its primary key the oid, a unique
+  index on the name. sm learns nothing of roles. initdb makes
+  it after `postgres`, which keeps the first database id, with
+  the superuser in it, oid 10; the `superuser` file and
+  `SUPERUSER_FILE` are gone. The superuser has PostgreSQL's
+  attributes but REPLICATION, which digres has none of, as
+  `pg_roles` said before.
+- **The snapshot**: the postmaster reads every role at start
+  into one `pg_global_roles_t`, in `shmem->pg_global`, which
+  sessions copy a pointer to under its mutex. No session opens
+  `pg_global`. Role DDL, step 2, replaces it whole after its
+  commit.
+- **Who reads it**: `InitializeSessionUserId()` (the role by
+  name or oid, and its superuser flag), `get_role_password()`
+  (the secret, and PostgreSQL's check of `rolvaliduntil`,
+  which no role has yet), `GetUserNameFromId()`, and the
+  catalog relations `pg_authid`, new, and `pg_roles`, which
+  the syscache's `AUTHOID` and `AUTHNAME` scan.
+- **Hidden**: `pg_global` is not in `pg_database`, cannot be
+  connected to or dropped (`database does not exist`), and
+  `CREATE DATABASE pg_global` finds it there.
+- **A data directory made before** has no `pg_global`, and
+  the server refuses it at start, `data directory has no
+  database "pg_global"`, with a hint to run initdb (ROLE.md §8
+  question 5). No upgrade in place.
+- **Left on purpose**: single-user mode (`--single`) loads no
+  data directory and finds no role but the bootstrap one,
+  as before; ROLE.md keeps no single-user mode.
+- **Tests**: `initdb.sh` makes no `superuser` file, reads
+  `-U` and `--pwfile`'s role from `pg_authid` through a server
+  started on it, and has a directory whose `pg_global` sm's
+  `rel` dropped refused (so `make test` builds `../sm/rel`);
+  `server.sh` reads `pg_authid` and `pg_roles`, finds a role by
+  name and oid (`regrole`), and has `pg_global` hidden. Each
+  was shown to fail with its part disabled. sm and its `rel`
+  and mvcc tests have nothing to check: sm is unchanged.

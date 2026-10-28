@@ -68,8 +68,10 @@
 #include "utils/datadir.h"
 #include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
+#include "utils/pg_global.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
+#include "utils/timestamp.h"
 #include "utils/tuplestore.h"
 
 /* A callback of the access method that a catalog relation never takes. */
@@ -583,25 +585,64 @@ static void gen_text_rows(const cat_relation_t *cat, Tuplestorestate *ts,
 }
 
 /*
- * pg_roles's rows: digres has one role, the superuser, named as initdb
- * named it (GetUserNameFromId()), who may do anything but replicate.
+ * pg_authid's rows: pg_global's roles, as last committed
+ * (utils/init/pg_global.c).
+ */
+static void gen_pg_authid(Tuplestorestate *ts, TupleDesc desc) {
+  std::shared_ptr<const pg_global_roles_t> all = pg_global_roles();
+  Datum values[Natts_pg_authid];
+  bool nulls[Natts_pg_authid];
+
+  for (const pg_global_role_t &r : all->roles) {
+    memset(nulls, false, sizeof(nulls));
+    values[Anum_pg_authid_oid - 1] = ObjectIdGetDatum(r.oid);
+    values[Anum_pg_authid_rolname - 1] = name_datum(r.rolname.c_str());
+    values[Anum_pg_authid_rolsuper - 1] = BoolGetDatum(r.rolsuper);
+    values[Anum_pg_authid_rolinherit - 1] = BoolGetDatum(r.rolinherit);
+    values[Anum_pg_authid_rolcreaterole - 1] = BoolGetDatum(r.rolcreaterole);
+    values[Anum_pg_authid_rolcreatedb - 1] = BoolGetDatum(r.rolcreatedb);
+    values[Anum_pg_authid_rolcanlogin - 1] = BoolGetDatum(r.rolcanlogin);
+    values[Anum_pg_authid_rolreplication - 1] = BoolGetDatum(r.rolreplication);
+    values[Anum_pg_authid_rolbypassrls - 1] = BoolGetDatum(r.rolbypassrls);
+    values[Anum_pg_authid_rolconnlimit - 1] = Int32GetDatum(r.rolconnlimit);
+    nulls[Anum_pg_authid_rolpassword - 1] = !r.has_password;
+    values[Anum_pg_authid_rolpassword - 1] =
+        r.has_password ? CStringGetTextDatum(r.rolpassword.c_str()) : (Datum)0;
+    nulls[Anum_pg_authid_rolvaliduntil - 1] = !r.has_validuntil;
+    values[Anum_pg_authid_rolvaliduntil - 1] =
+        TimestampTzGetDatum(r.rolvaliduntil);
+    tuplestore_putvalues(ts, desc, values, nulls);
+  }
+}
+
+/*
+ * pg_roles's rows: pg_authid's, as PostgreSQL's view has them, the
+ * password hidden.  No role has settings of its own yet (rolconfig).
  */
 static void gen_pg_roles(Tuplestorestate *ts, TupleDesc desc) {
+  std::shared_ptr<const pg_global_roles_t> all = pg_global_roles();
   Datum values[13];
   bool nulls[13];
 
-  for (int i = 0; i < 13; i++) {
-    values[i] = BoolGetDatum(true);
-    nulls[i] = false;
+  for (const pg_global_role_t &r : all->roles) {
+    memset(nulls, false, sizeof(nulls));
+    values[0] = name_datum(r.rolname.c_str());
+    values[1] = BoolGetDatum(r.rolsuper);
+    values[2] = BoolGetDatum(r.rolinherit);
+    values[3] = BoolGetDatum(r.rolcreaterole);
+    values[4] = BoolGetDatum(r.rolcreatedb);
+    values[5] = BoolGetDatum(r.rolcanlogin);
+    values[6] = BoolGetDatum(r.rolreplication);
+    values[7] = Int32GetDatum(r.rolconnlimit);
+    values[8] = CStringGetTextDatum("********");
+    nulls[9] = !r.has_validuntil;
+    values[9] = TimestampTzGetDatum(r.rolvaliduntil);
+    values[10] = BoolGetDatum(r.rolbypassrls);
+    nulls[11] = true;
+    values[11] = (Datum)0;
+    values[12] = ObjectIdGetDatum(r.oid);
+    tuplestore_putvalues(ts, desc, values, nulls);
   }
-  values[0] = name_datum(GetUserNameFromId(BOOTSTRAP_SUPERUSERID, false));
-  values[6] = BoolGetDatum(false); /* rolreplication: there is none */
-  values[7] = Int32GetDatum(-1);
-  values[8] = CStringGetTextDatum("********");
-  nulls[9] = true;
-  nulls[11] = true;
-  values[12] = ObjectIdGetDatum(BOOTSTRAP_SUPERUSERID);
-  tuplestore_putvalues(ts, desc, values, nulls);
 }
 
 /*
@@ -837,6 +878,9 @@ static void generate(Relation rel, Tuplestorestate *ts, int nkeys,
     break;
   case DependRelationId:
     gen_pg_depend(ts, desc, only);
+    break;
+  case AuthIdRelationId:
+    gen_pg_authid(ts, desc);
     break;
   case CATREL_PG_ROLES:
     gen_pg_roles(ts, desc);
