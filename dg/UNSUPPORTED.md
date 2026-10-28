@@ -222,7 +222,7 @@ regression files are taken out for it (`test/pgregress`,
 - **pg_hba.conf, pg_ident.conf, TLS, GSSAPI** — removed: peer
   on the socket, SCRAM over TCP (step 92).
 - **Roles** — differs: roles, memberships, owners and ACLs are
-  `pg_global`'s (`../sm/ROLE.md`, steps 315 to 321), and role
+  `pg_global`'s (`../sm/ROLE.md`, steps 316 to 322), and role
   DDL is refused in a transaction block; a column's
   privileges, a function's, ALTER ROLE ... SET and ALTER
   DEFAULT PRIVILEGES fail. UTF8 only, collation C; `initdb`

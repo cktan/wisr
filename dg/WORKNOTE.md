@@ -9087,7 +9087,7 @@ what its expression keys are; digres refused them in
   kept the disabled part built in; they were run again, each
   file touched as it was restored.
 
-## Step 315: the roles live in pg_global
+## Step 316: the roles live in pg_global
 
 The first step of roles (`../sm/ROLE.md` §9). digres had one
 role, the superuser initdb named, whose name and SCRAM secret
@@ -9136,7 +9136,7 @@ the invariant).
   was shown to fail with its part disabled. sm and its `rel`
   and mvcc tests have nothing to check: sm is unchanged.
 
-## Step 316: role DDL writes pg_global
+## Step 317: role DDL writes pg_global
 
 The second step of roles (`../sm/ROLE.md` §9): CREATE, ALTER
 and DROP ROLE, GRANT and REVOKE of a membership, SET ROLE and
@@ -9148,7 +9148,7 @@ checks and messages too; what it wrote to `pg_authid` and
   `pg_authid`, keyed by oid, with a unique index on (role,
   member, grantor), and a catalog relation; the oids of both
   come from `pg_global`'s sequence `role_oid`, from 16384.
-  A data directory from step 315 has none, and is refused at
+  A data directory from step 316 has none, and is refused at
   start, to be made again.
 - **A session's changes** (`pg_global_put_role()` and the
   rest, in place of `CatalogTupleInsert()`, `Update()`,
@@ -9207,7 +9207,7 @@ checks and messages too; what it wrote to `pg_authid` and
   restart. sm is unchanged, so mvcc and `rel` have nothing to
   check.
 
-## Step 317: how a client gets in
+## Step 318: how a client gets in
 
 The third step of roles (`../sm/ROLE.md` §5, §9): the fixed
 rule of step 92, peer on the socket and SCRAM over TCP, gives
@@ -9237,7 +9237,7 @@ way to ROLE.md's four checks, with no `pg_hba.conf`.
   PostgreSQL's does for its own.
 - **Left on purpose**: a session of a role that is not a
   superuser gets in, but a statement that looks a name up
-  fails, at `pg_namespace`'s ACL (step 316): step 4.
+  fails, at `pg_namespace`'s ACL (step 317): step 4.
 - **Tests**: `server.sh` has a role get in by password on the
   socket and over TCP, and refuses one with no password, one
   NOLOGIN, one past VALID UNTIL and one at its CONNECTION
@@ -9247,10 +9247,10 @@ way to ROLE.md's four checks, with no `pg_hba.conf`.
   role. Each was shown to fail with its check disabled. sm is
   unchanged.
 
-## Step 318: a role that is not a superuser runs statements
+## Step 319: a role that is not a superuser runs statements
 
 The first half of step 4 of roles (`../sm/ROLE.md` §9). Since
-step 316 a session may be a role that is not a superuser, and
+step 317 a session may be a role that is not a superuser, and
 every statement of one that looked a name up failed: the
 privilege check of a schema read `pg_namespace` by the
 syscache, which opened an index no catalog relation has.
@@ -9297,7 +9297,7 @@ syscache, which opened an index no catalog relation has.
   session's check of a table dropped by another answered as
   for no table. Each was shown to fail with its part undone.
 
-## Step 319: owners
+## Step 320: owners
 
 The second half of step 4 of roles (`../sm/ROLE.md` §9): every
 object a role makes is its, in `pg_global`, and DDL on one is
@@ -9351,7 +9351,7 @@ it. Every object was the superuser's.
   REINDEX, a no-op, checks nothing. The crash between the two
   commits, and an abort after the first, are not tested: no
   test can stop the server between them.
-- **A crash of steps 316 to 318, found here**: the syscache,
+- **A crash of steps 317 to 319, found here**: the syscache,
   making a list of a catalog it keeps, `pg_auth_members`'s,
   looked for an entry it had of the same row by TID, which a
   catalog relation's row has none of, and failed an
@@ -9373,7 +9373,7 @@ it. Every object was the superuser's.
   rolled back to undone; and an owner kept across a restart.
   Each was shown to fail with its part undone.
 
-## Step 320: GRANT and REVOKE
+## Step 321: GRANT and REVOKE
 
 The fifth step of roles (`../sm/ROLE.md` §9): GRANT and REVOKE
 on tables, views, sequences, schemas and databases, and the
@@ -9394,7 +9394,7 @@ it computes, PostgreSQL's ACL merged with the grant, goes to
   asked for. An abort after the first write puts back what
   was. So a crash, or a commit that fails, leaves less
   granted, never more. In a transaction block, and in a
-  savepoint rolled back to, as an owner is (step 319).
+  savepoint rolled back to, as an owner is (step 320).
 - **Who reads it**: `pg_class` (`relacl`), `pg_namespace`
   (`nspacl`, a built-in schema's in place of the compiled-in
   one once granted on), `pg_database` (`datacl`), so the
@@ -9422,7 +9422,7 @@ it computes, PostgreSQL's ACL merged with the grant, goes to
   after a restart. Each was shown to fail with its part
   undone.
 
-## Step 321: what depends on a role
+## Step 322: what depends on a role
 
 The sixth step of roles (`../sm/ROLE.md` §9): DROP ROLE refuses
 a role anything depends on, in any database, and REASSIGN
@@ -9466,3 +9466,23 @@ read from `pg_global`'s entries, as PostgreSQL reads them from
   DROP ROLE succeed; DROP OWNED drop a schema, a table and a
   view; and a predefined role refused both. Each was shown to
   fail with its part undone.
+
+## Step 323: LIKE ... INCLUDING INDEXES of a table of sm's
+
+A crash the merge of steps 312 and 316 to 322 makes, neither
+alone: CREATE TABLE ... (LIKE t INCLUDING INDEXES), t with a
+primary key, which step 312 lets CREATE TABLE make. Its parse
+analysis, PostgreSQL's `generateClonedIndexStmt()`, read the
+source index's `pg_index` row from the relation cache, where an
+index of sm's keeps none (`rd_indextuple`), and dereferenced
+NULL. Before the merge it never got that far: the catalogs it
+reads first could not be read (step 319 made them readable),
+or the table had no index.
+
+- **The row is read from the syscache** (`INDEXRELID`) when the
+  relation cache has none: `pg_index`'s catalog relation makes
+  it, as `\d` reads it.
+- **pgregress**: `create_table_like` had four statements taken
+  out as crashing in the merge's port; it and the other files
+  that copy indexes, `alter_table`, `constraints`, `indexing`
+  and `without_overlaps`, are ported again with the merge.
