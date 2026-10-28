@@ -198,6 +198,12 @@ struct db_t {
 
   /* The ts and object-id allocators and their leases (§4.2). */
   std::mutex alloc_mu;
+  /*
+   * Signalled, under alloc_mu, when visible_ts rises or the
+   * database fails stop: a commit waits on it until its own
+   * commit_ts is visible (db_commit_wait(), COMMITVISIBLE.md).
+   */
+  std::condition_variable visible_cv;
   uint64_t lease = 0;
   /*
    * The timestamp counter. Values are taken with fetch_add and
@@ -461,6 +467,12 @@ int db_claim_commit_ts(db_t *db, uint64_t *out);
  * visible_ts to one below the oldest commit still in progress.
  */
 void db_commit_done(db_t *db, uint64_t commit_ts);
+
+/*
+ * Wait until commit_ts, done, is visible: visible_ts at or past
+ * it, or the database failed stop (COMMITVISIBLE.md).
+ */
+void db_commit_wait(db_t *db, uint64_t commit_ts);
 
 /* Allocate an object id -- a storeid or a seqid. Returns 0 or -1. */
 int db_alloc_objid(db_t *db, uint64_t *out);

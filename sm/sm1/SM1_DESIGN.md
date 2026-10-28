@@ -554,6 +554,10 @@ commit sequencer (ordered set of commit_ts in progress)
   wrap onto unpublished slots or block all allocation.
 - A snapshot is simply the current `visible_ts`. Everything with
   `commit_ts <= visible_ts` is durably committed and published.
+- A commit returns only once `visible_ts` has reached its
+  `commit_ts`: it waits, after it is done, for the older
+  commits still in progress, so the snapshot its session
+  takes next sees it (`COMMITVISIBLE.md`).
 
 The cost is that one slow commit briefly holds back new snapshots
 (bounded by the WAL sync, and by group commit it is one sync for the
@@ -1569,6 +1573,7 @@ sm1::commit(T):
   5. commit_cache.insert(T.xid → commit_ts);  active_table.remove(T.xid)
      if T made or dropped a store: last_ddl_ts = max(last_ddl_ts, commit_ts)  (§11)
      sequencer.done(commit_ts);  advancer moves visible_ts      (§4.3)
+     wait until visible_ts >= commit_ts      (COMMITVISIBLE.md)
   6. lockmgr.release(T);  ssi.on_commit(T)
      queue (T.dropped, commit_ts) for CF removal     (§8.3)
 ```

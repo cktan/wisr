@@ -775,6 +775,12 @@ int finish_commit(sm1::session_t *s, uint64_t commit_ts) {
     // reopen resolves it from the log (§8.2). Its locks go:
     // the database refuses writes from now on anyway.
     db->failed = true;
+    {
+      // Wake the newer commits waiting behind this one, which
+      // now never becomes visible (db_commit_wait()).
+      std::lock_guard<std::mutex> guard(db->alloc_mu);
+      db->visible_cv.notify_all();
+    }
     log_msg(sm1::loglevel_t::error,
             "database {}: commit record write failed, database stopped "
             "until reopened: {}",
@@ -820,8 +826,13 @@ void publish_commit(sm1::session_t *s, uint64_t xid,
   // Resolve before publishing: a reader that misses the xid in
   // the active table finds it in the cache or CF:txn (§3.4).
   enter_cache(db, xid, commit_ts);
-  // Publish: advance visible_ts past this commit.
+  // Publish: advance visible_ts past this commit, as far as the
+  // older commits still in progress allow.
   db_commit_done(db, commit_ts);
+  // And wait until it is visible: until the older commits are done
+  // too, so the session's next snapshot sees what it committed
+  // (db_commit_wait(), COMMITVISIBLE.md).
+  db_commit_wait(db, commit_ts);
   // Release the locks only once the commit is visible, and
   // queue dropped stores for removal once no snapshot can
   // see them (§8.3).

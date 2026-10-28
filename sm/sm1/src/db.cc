@@ -720,7 +720,57 @@ void db_commit_done(db_t *db, uint64_t commit_ts) {
   // Never move visible_ts backwards.
   if (v > db->visible_ts.load()) {
     db->visible_ts.store(v);
+    // Wake the commits waiting for theirs to be visible.
+    db->visible_cv.notify_all();
   }
+}
+
+/*
+ * ===================================================================
+ * Wait for visible_ts to catch up with commit_ts.
+ * ===================================================================
+ *
+ * A commit must be visible when sm1::commit returns: every snapshot
+ * taken after, in this session or any other, must see it, as
+ * PostgreSQL's COMMIT promises (COMMITVISIBLE.md).
+ *
+ * Commits are NOT serialized. Only their two ends take alloc_mu: the
+ * claim of commit_ts (db_claim_commit_ts()) and its done
+ * (db_commit_done()). Between them each writes and syncs its status
+ * record with no lock, side by side, so RocksDB groups their syncs.
+ * And visible_ts is published in commit_ts order (SM1_DESIGN.md
+ * section 4.3): one below the OLDEST commit still writing its record,
+ * so no snapshot sees a commit_ts whose record is not there yet. So a
+ * commit that finishes before an older one is done but not visible:
+ *
+ *     B claims 99; its record's sync is slow
+ *     A claims 100, writes its record, done(100):
+ *       99 is still in progress, so visible_ts stays 98
+ *     A's commit returned here, without this wait; A's next statement
+ *     took its snapshot at 98, and did not see the rows A had just
+ *     committed (dg's select_cursor.sql, 8 sessions: 4 in 80).
+ *     B's done(99) raises visible_ts to 100, past both.
+ *
+ * So the commit waits here, after its done, until visible_ts reaches
+ * its commit_ts: only behind older commits still writing their
+ * records -- with group commit often the same sync -- and not at all
+ * when none is older. It holds alloc_mu only while it checks, and its
+ * row locks until it returns, as it held them through its own sync.
+ *
+ * It is NOT cut short by an interrupt, unlike every other wait in sm
+ * (../CODE.md §7): the transaction has committed, and a
+ * cancel here would bring the bug back. It ends without its commit
+ * visible only when the database has failed stop: an older commit
+ * whose record write failed stays in the sequencer, holding back
+ * visible_ts until a reopen, and wakes this wait as it fails
+ * (finish_commit()). Everything after is refused anyway.
+ */
+void db_commit_wait(db_t *db, uint64_t commit_ts) {
+  // Hold alloc_mu, the sequencer's mutex, which visible_cv waits on.
+  std::unique_lock<std::mutex> guard(db->alloc_mu);
+  db->visible_cv.wait(guard, [&] {
+    return db->visible_ts.load() >= commit_ts || db->failed.load();
+  });
 }
 
 /* Allocate an object id: a storeid or a seqid. */

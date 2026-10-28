@@ -4549,6 +4549,30 @@ grep -q 'invalid command-line argument for server process: -Q' \
 grep -q 'Try "digres[^"]* --help"' "$work/progname.out" ||
   fail "a session's hint names the program"
 
+# Verify that a session's commit is visible to its next statement, however
+# the commits of other sessions interleave: sm1's commit returns only once
+# its commit_ts is visible (../sm/sm1/COMMITVISIBLE.md). Before, a commit
+# behind an older one still syncing returned unseen, and the next statement
+# missed its row, about 1 time in 20.
+# 1. Run 8 sessions at once, each making a temporary table and then, 50
+#    times, inserting a row and counting the table's rows.
+# 2. Confirm each count is the rows the session inserted so far.
+{
+  echo "create temp table cv (a int4);"
+  for k in $(seq 50); do
+    echo "insert into cv values ($k);"
+    echo "select 'n $k ' || count(*) from cv;"
+  done
+} > "$work/cv.sql"
+pids=()
+for i in $(seq 8); do
+  local_psql -f "$work/cv.sql" > "$work/cv.$i.out" 2>&1 &
+  pids+=($!)
+done
+wait "${pids[@]}"
+[ "$(cat "$work"/cv.*.out | awk '/^n / && $2 == $3 { n++ } END { print n }')" = 400 ] ||
+  fail "a commit is visible to its session's next statement"
+
 # Verify that SIGUSR1 and SIGUSR2 are ignored: there is no log rotation, nor
 # pmsignal, and no child to reserve SIGUSR2 for.
 # 1. Send the server SIGUSR1 and SIGUSR2.

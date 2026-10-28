@@ -12,6 +12,7 @@
 #include "sm1.h"
 
 #include <atomic>
+#include <chrono>
 #include <future>
 #include <string>
 #include <thread>
@@ -142,13 +143,16 @@ TEST_CASE("on_commit functions run after the commit, newest first, once") {
 }
 
 TEST_CASE("a stalled commit holds back every later commit's visibility") {
-  // Verify the sequencer publishes in commit_ts order (§4.3).
+  // Verify the sequencer publishes in commit_ts order (§4.3), and a
+  // later commit returns only once it is visible (COMMITVISIBLE.md).
   // 1. Session A commits "a" but stalls after claiming its
   //    commit_ts, before its status record is written.
-  // 2. Session B commits "b" meanwhile; its commit returns.
+  // 2. Session B commits "b" meanwhile: its commit does not return
+  //    while A's is unpublished.
   // 3. A new snapshot sees neither "a" nor "b": B's later
   //    commit_ts must stay hidden while A's is unpublished.
-  // 4. Release A; a new snapshot sees both.
+  // 4. Release A: both commits return, and B's next transaction
+  //    sees "b", as does a new snapshot both.
   xct_fixture_t f;
   sm1::session_t *a = f.first();
   sm1::session_t *b = f.open();
@@ -167,7 +171,19 @@ TEST_CASE("a stalled commit holds back every later commit's visibility") {
 
   std::thread ta([&] { CHECK(commit_one(a, f.store(), "a") == 0); });
   entered.get_future().wait();
-  REQUIRE(commit_one(b, f.store(), "b") == 0);
+  std::atomic<bool> b_done{false};
+  std::string b_sees;
+  // B's commit, then B's own next read of what it committed.
+  std::thread tb([&] {
+    CHECK(commit_one(b, f.store(), "b") == 0);
+    b_done = true;
+    CHECK(sm1::begin(b, sm1::xctlevel_t::repeatable_read) == 0);
+    b_sees = get(b, f.store(), "b");
+    CHECK(sm1::commit(b) == 0);
+  });
+  // Time for B's commit to have returned, were it not to wait.
+  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  CHECK(!b_done);
 
   REQUIRE(sm1::begin(c, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(c, f.store(), "a") == "<none>");
@@ -176,7 +192,9 @@ TEST_CASE("a stalled commit holds back every later commit's visibility") {
 
   release.set_value();
   ta.join();
+  tb.join();
   f.db()->test_before_commit = nullptr;
+  CHECK(b_sees == "v");
 
   REQUIRE(sm1::begin(c, sm1::xctlevel_t::repeatable_read) == 0);
   CHECK(get(c, f.store(), "a") == "v");
@@ -184,6 +202,49 @@ TEST_CASE("a stalled commit holds back every later commit's visibility") {
   REQUIRE(sm1::commit(c) == 0);
   sm1::closedb(b);
   sm1::closedb(c);
+}
+
+TEST_CASE("a commit waiting to be visible returns when an older one fails "
+          "stop") {
+  // Verify that a failed status write wakes the later commits
+  // waiting for theirs to be visible (COMMITVISIBLE.md).
+  // 1. Session A commits "a" and stalls after claiming its commit_ts.
+  // 2. Session B commits "b" meanwhile, and waits behind A.
+  // 3. A's status write fails: A's commit returns SM_ERR_IO, the
+  //    database fails stop, and B's commit returns, committed.
+  xct_fixture_t f;
+  sm1::session_t *a = f.first();
+  sm1::session_t *b = f.open();
+
+  std::promise<void> entered, release;
+  std::shared_future<void> released = release.get_future().share();
+  std::atomic<int> calls{0};
+  f.db()->test_before_commit = [&](uint64_t) {
+    if (calls++ == 0) {
+      entered.set_value();
+      released.wait();
+      return rocksdb::Status::IOError("injected");
+    }
+    return rocksdb::Status::OK();
+  };
+
+  int a_rc = 0;
+  std::thread ta([&] { a_rc = commit_one(a, f.store(), "a"); });
+  entered.get_future().wait();
+  std::future<int> b_rc = std::async(
+      std::launch::async, [&] { return commit_one(b, f.store(), "b"); });
+  // Time for B to reach its wait behind A.
+  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  CHECK(b_rc.wait_for(std::chrono::seconds(0)) != std::future_status::ready);
+
+  release.set_value();
+  ta.join();
+  CHECK(a_rc == -1);
+  REQUIRE(b_rc.wait_for(std::chrono::seconds(10)) == std::future_status::ready);
+  CHECK(b_rc.get() == 0);
+  CHECK(f.db()->failed.load());
+  f.db()->test_before_commit = nullptr;
+  REQUIRE(sm1::closedb(b) == 0);
 }
 
 TEST_CASE("a failed status write fails the database stop") {

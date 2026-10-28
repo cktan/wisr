@@ -9179,3 +9179,34 @@ benchmark's new Q7, 100 rows by key in one statement
   2,749 transactions a second to PostgreSQL's 2,907 (0.95),
   an index scan on both; Q8, 16 clients with writes, 13,648
   to 37,447 (0.36).
+
+## Step 315: a commit returns once it is visible
+
+`test/run.sh`'s `select_cursor.sql`, run in eight sessions at
+once, failed now and then: a cursor over a temporary table
+read no rows. Not the cursor: a SELECT right after an INSERT,
+each its own transaction, counted 0 rows in 4 of 160
+sessions, on main as on every branch.
+
+- **The cause, sm1's**: commits publish in commit_ts order
+  (`../sm/sm1/SM1_DESIGN.md` §4.3), and only claim and done
+  take the sequencer's mutex; the status record's write and
+  sync between them take none, so syncs are grouped. A
+  commit done behind an older one still syncing returned
+  while `visible_ts` was below it, and the session's next
+  snapshot missed its own rows.
+- **The fix** (`../sm/sm1/COMMITVISIBLE.md`): `sm1::commit`
+  waits, after its done, until `visible_ts` reaches its
+  commit_ts (`db_commit_wait()`), behind the older commits
+  still in progress only; an older commit whose record write
+  fails stop wakes it.
+- **Tests**: sm1's sequencer test now has the later commit
+  wait, and its own next read see its row; a failed older
+  record ends the wait. `server.sh`: eight sessions insert
+  and count 50 times each; with the wait taken out, 28
+  counts of 400 missed the session's own row.
+- **Measured** (release, `wide_mixed` alone, 20 s each,
+  against main): Q8 at 16 clients 11,465 transactions a
+  second to 12,969; updates alone 1,144 to 1,244; Q7's reads
+  at 16 clients, which commit nothing and never wait, 18,198
+  to 19,614, so about 7% of the change is the run's noise.
