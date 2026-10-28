@@ -1299,8 +1299,7 @@ SELECT * FROM t
 UNION ALL
 SELECT * FROM t2;
 
---dg-differs: the result
---dg SELECT * FROM y;
+SELECT * FROM y;
 
 -- unconditional DO INSTEAD rule
 --dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
@@ -1482,8 +1481,7 @@ SELECT q1 FROM
 
 -- data-modifying WITH containing INSERT...ON CONFLICT DO UPDATE
 CREATE TABLE withz AS SELECT i AS k, (i || ' v')::text v FROM generate_series(1, 16, 3) i;
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg ALTER TABLE withz ADD UNIQUE (k);
+ALTER TABLE withz ADD UNIQUE (k);
 
 --dg-cascade
 --dg WITH t AS (
@@ -1495,13 +1493,12 @@ CREATE TABLE withz AS SELECT i AS k, (i || ' v')::text v FROM generate_series(1,
 --dg SELECT * FROM t JOIN y ON t.k = y.a ORDER BY a, k;
 
 -- Test EXCLUDED.* reference within CTE
---dg-cascade
---dg WITH aa AS (
---dg     INSERT INTO withz VALUES(1, 5) ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v
---dg     WHERE withz.k != EXCLUDED.k
---dg     RETURNING *
---dg )
---dg SELECT * FROM aa;
+WITH aa AS (
+    INSERT INTO withz VALUES(1, 5) ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v
+    WHERE withz.k != EXCLUDED.k
+    RETURNING *
+)
+SELECT * FROM aa;
 
 -- New query/snapshot demonstrates side-effects of previous query.
 --dg-cascade
@@ -1511,26 +1508,21 @@ CREATE TABLE withz AS SELECT i AS k, (i || ' v')::text v FROM generate_series(1,
 -- Ensure subqueries within the update clause work, even if they
 -- reference outside values
 --
---dg-cascade
---dg WITH aa AS (SELECT 1 a, 2 b)
---dg INSERT INTO withz VALUES(1, 'insert')
---dg ON CONFLICT (k) DO UPDATE SET v = (SELECT b || ' update' FROM aa WHERE a = 1 LIMIT 1);
---dg-cascade
---dg WITH aa AS (SELECT 1 a, 2 b)
---dg INSERT INTO withz VALUES(1, 'insert')
---dg ON CONFLICT (k) DO UPDATE SET v = ' update' WHERE withz.k = (SELECT a FROM aa);
---dg-cascade
---dg WITH aa AS (SELECT 1 a, 2 b)
---dg INSERT INTO withz VALUES(1, 'insert')
---dg ON CONFLICT (k) DO UPDATE SET v = (SELECT b || ' update' FROM aa WHERE a = 1 LIMIT 1);
---dg-cascade
---dg WITH aa AS (SELECT 'a' a, 'b' b UNION ALL SELECT 'a' a, 'b' b)
---dg INSERT INTO withz VALUES(1, 'insert')
---dg ON CONFLICT (k) DO UPDATE SET v = (SELECT b || ' update' FROM aa WHERE a = 'a' LIMIT 1);
---dg-cascade
---dg WITH aa AS (SELECT 1 a, 2 b)
---dg INSERT INTO withz VALUES(1, (SELECT b || ' insert' FROM aa WHERE a = 1 ))
---dg ON CONFLICT (k) DO UPDATE SET v = (SELECT b || ' update' FROM aa WHERE a = 1 LIMIT 1);
+WITH aa AS (SELECT 1 a, 2 b)
+INSERT INTO withz VALUES(1, 'insert')
+ON CONFLICT (k) DO UPDATE SET v = (SELECT b || ' update' FROM aa WHERE a = 1 LIMIT 1);
+WITH aa AS (SELECT 1 a, 2 b)
+INSERT INTO withz VALUES(1, 'insert')
+ON CONFLICT (k) DO UPDATE SET v = ' update' WHERE withz.k = (SELECT a FROM aa);
+WITH aa AS (SELECT 1 a, 2 b)
+INSERT INTO withz VALUES(1, 'insert')
+ON CONFLICT (k) DO UPDATE SET v = (SELECT b || ' update' FROM aa WHERE a = 1 LIMIT 1);
+WITH aa AS (SELECT 'a' a, 'b' b UNION ALL SELECT 'a' a, 'b' b)
+INSERT INTO withz VALUES(1, 'insert')
+ON CONFLICT (k) DO UPDATE SET v = (SELECT b || ' update' FROM aa WHERE a = 'a' LIMIT 1);
+WITH aa AS (SELECT 1 a, 2 b)
+INSERT INTO withz VALUES(1, (SELECT b || ' insert' FROM aa WHERE a = 1 ))
+ON CONFLICT (k) DO UPDATE SET v = (SELECT b || ' update' FROM aa WHERE a = 1 LIMIT 1);
 
 -- Update a row more than once, in different parts of a wCTE. That is
 -- an allowed, presumably very rare, edge case, but since it was
@@ -1550,8 +1542,7 @@ DROP TABLE withz;
 
 -- WITH referenced by MERGE statement
 CREATE TABLE m AS SELECT i AS k, (i || ' v')::text v FROM generate_series(1, 16, 3) i;
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg ALTER TABLE m ADD UNIQUE (k);
+ALTER TABLE m ADD UNIQUE (k);
 
 WITH RECURSIVE cte_basic AS (SELECT 1 a, 'cte_basic val' b)
 MERGE INTO m USING (select 0 k, 'merge source SubPlan' v) o ON m.k=o.k

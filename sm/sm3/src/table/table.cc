@@ -1789,8 +1789,11 @@ int rewrite_table(session_t *session, uint64_t oid, table_rec_t rec) {
     return session_collation(session, c, out);
   };
   // Its rows chained, a temporary table's too (../VCHAIN.md §3).
+  // The running statement's mark is moved past the store's making,
+  // so the copy below may write it (sm1::stmt_advance()).
   const bool temp = rec.nspoid == nsp_temp;
   if (sm1::mkstore(session->sm1, rec.storeid, temp, true) != 0 ||
+      sm1::stmt_advance(session->sm1) != 0 ||
       build_table(lookup, oid, rec, def) != 0) {
     return -1;
   }

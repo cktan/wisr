@@ -4190,8 +4190,8 @@ Oid AlterTableLookupRelation(AlterTableStmt *stmt, LOCKMODE lockmode) {
                     errhint("Use ALTER TABLE instead.")));
   /*
    * sm's tables take ADD COLUMN and DROP COLUMN, and ADD, DROP and VALIDATE
-   * CONSTRAINT of a foreign key; its views SET and RESET of their options
-   * (smstore_alter_table()).
+   * CONSTRAINT, of a foreign key, a primary key or a unique constraint; its
+   * views SET and RESET of their options (smstore_alter_table()).
    */
   foreach (l, stmt->cmds) {
     AlterTableType subtype = lfirst_node(AlterTableCmd, l)->subtype;
@@ -4205,8 +4205,8 @@ Oid AlterTableLookupRelation(AlterTableStmt *stmt, LOCKMODE lockmode) {
         subtype != AT_ValidateConstraint)
       ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                       errmsg("ALTER TABLE supports only ADD COLUMN, DROP "
-                             "COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE "
-                             "CONSTRAINT, and RENAME yet")));
+                             "COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and "
+                             "RENAME yet")));
   }
   return relid;
 }

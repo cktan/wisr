@@ -2612,7 +2612,7 @@ wait $alter
 local_psql -c 'alter table al2 alter column a set not null' \
   -c 'alter table al2 set schema s7' \
   -c 'alter index al1a rename to al1b' > "$work/alter3.out" 2>&1
-grep -q "ERROR:  ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet" \
+grep -q "ERROR:  ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet" \
   "$work/alter3.out" &&
   grep -q 'ERROR:  ALTER TABLE is not supported yet' "$work/alter3.out" &&
   grep -q 'ERROR:  ALTER INDEX is not supported yet' "$work/alter3.out" ||
@@ -4714,6 +4714,44 @@ grep -q 'Index Scan using t3r_e' "$work/resume.out" &&
 kill -INT $server
 wait $server || fail "resumed build: shutdown status"
 
+# Verify that a primary key added and not committed when the server crashes
+# leaves the table as it was: the rows were copied into a new store, which
+# no committed catalog names (PKDDL.md section 4).
+# 1. Start the server again; make t3p with rows and no key.
+# 2. In a held session, begin and add a primary key; kill the server.
+# 3. Start it again: t3p has its rows, no index, and its column nullable.
+# 4. Add the primary key again, and commit: a row is found by its key.
+$digres -D "$work/data" -k "$work" -p "$port" > "$work/log7" 2>&1 &
+server=$!
+server_ready $server "$work/log7" || fail "crashed rewrite: start"
+local_psql -c 'create table t3p (a int4, b text)' \
+  -c "insert into t3p select g, 'P' || g from generate_series(1, 1000) g" \
+  > "$work/pkcrash.out" 2>&1
+held_start pkcrash
+held_send pkcrash "begin; alter table t3p add primary key (a);
+  select 'keyed ' || count(*) from t3p where a = 500;"
+held_wait pkcrash "keyed 1" || fail "crashed rewrite: the key added"
+kill -KILL $server
+wait $server 2> /dev/null
+held_end pkcrash
+$digres -D "$work/data" -k "$work" -p "$port" > "$work/log8" 2>&1 &
+server=$!
+server_ready $server "$work/log8" || fail "crashed rewrite: restart"
+local_psql -c 'select count(*) from t3p' \
+  -c "select 'indexes ' || count(*) from pg_index
+      where indrelid = 't3p'::regclass" \
+  -c "select 'notnull ' || attnotnull from pg_attribute
+      where attrelid = 't3p'::regclass and attname = 'a'" \
+  -c 'alter table t3p add primary key (a)' \
+  -c 'select b from t3p where a = 777' > "$work/pkcrash.out" 2>&1
+grep -qx 1000 "$work/pkcrash.out" &&
+  grep -qx 'indexes 0' "$work/pkcrash.out" &&
+  grep -qx 'notnull false' "$work/pkcrash.out" &&
+  grep -qx P777 "$work/pkcrash.out" ||
+  fail "crashed rewrite: the table as it was"
+kill -INT $server
+wait $server || fail "crashed rewrite: shutdown status"
+
 # Verify that a smart shutdown (SIGTERM) waits for its sessions: the
 # postmaster reads it from its signalfd, refuses new sessions, and stops
 # once the last has ended.
@@ -4749,9 +4787,11 @@ fi
 wait $server || fail "smart shutdown: status"
 
 grep -q "terminated by signal" "$work/log" "$work/log2" "$work/log3" \
-  "$work/log4" "$work/log5" "$work/log6" && fail "a process crashed"
+  "$work/log4" "$work/log5" "$work/log6" "$work/log7" "$work/log8" &&
+  fail "a process crashed"
 grep -q "ThreadSanitizer" "$work/log" "$work/log2" "$work/log3" \
-  "$work/log4" "$work/log5" "$work/log6" && fail "a thread sanitizer report"
+  "$work/log4" "$work/log5" "$work/log6" "$work/log7" "$work/log8" &&
+  fail "a thread sanitizer report"
 
 [ $failed = 0 ] && echo "server: PASSED"
 exit $failed

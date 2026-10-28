@@ -95,14 +95,12 @@ SELECT product_id, p.name, (sum(s.units) * p.price) AS sales
     FROM products p LEFT JOIN sales s USING (product_id)
     GROUP BY product_id;
 
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg ALTER TABLE products ADD PRIMARY KEY (product_id);
+ALTER TABLE products ADD PRIMARY KEY (product_id);
 
 -- OK now
---dg-cascade
---dg SELECT product_id, p.name, (sum(s.units) * p.price) AS sales
---dg     FROM products p LEFT JOIN sales s USING (product_id)
---dg     GROUP BY product_id;
+SELECT product_id, p.name, (sum(s.units) * p.price) AS sales
+    FROM products p LEFT JOIN sales s USING (product_id)
+    GROUP BY product_id;
 
 
 -- Drupal example, http://drupal.org/node/555530
@@ -159,7 +157,7 @@ FROM articles
 GROUP BY id;
 
 -- fail
---dg-differs: another error: constraint "?" of relation "?" does not exist
+--dg-differs: no error where PostgreSQL has: cannot drop constraint articles_pkey on table articles because other objects depend on it
 --dg ALTER TABLE articles DROP CONSTRAINT articles_pkey RESTRICT;
 
 DROP VIEW fdv1;
@@ -172,9 +170,9 @@ FROM articles AS a JOIN articles_in_category AS aic ON a.id = aic.article_id
 WHERE aic.category_id in (14,62,70,53,138)
 GROUP BY a.id, aic.category_id, aic.article_id;
 
---dg-differs: another error: constraint "?" of relation "?" does not exist
+--dg-differs: no error where PostgreSQL has: cannot drop constraint articles_pkey on table articles because other objects depend on it
 --dg ALTER TABLE articles DROP CONSTRAINT articles_pkey RESTRICT; -- fail
---dg-differs: another error: constraint "?" of relation "?" does not exist
+--dg-differs: no error where PostgreSQL has: cannot drop constraint articles_in_category_pkey on table articles_in_category because other objects depend on it
 --dg ALTER TABLE articles_in_category DROP CONSTRAINT articles_in_category_pkey RESTRICT; --fail
 
 DROP VIEW fdv2;
@@ -191,7 +189,7 @@ SELECT id, keywords, title, body, created
 FROM articles
 GROUP BY id;
 
---dg-differs: another error: constraint "?" of relation "?" does not exist
+--dg-differs: no error where PostgreSQL has: cannot drop constraint articles_pkey on table articles because other objects depend on it
 --dg ALTER TABLE articles DROP CONSTRAINT articles_pkey RESTRICT; -- fail
 
 DROP VIEW fdv3;
@@ -200,7 +198,7 @@ DROP VIEW fdv3;
 CREATE TEMP VIEW fdv4 AS
 SELECT * FROM articles WHERE title IN (SELECT title FROM articles GROUP BY id);
 
---dg-differs: another error: constraint "?" of relation "?" does not exist
+--dg-differs: no error where PostgreSQL has: cannot drop constraint articles_pkey on table articles because other objects depend on it
 --dg ALTER TABLE articles DROP CONSTRAINT articles_pkey RESTRICT; -- fail
 
 DROP VIEW fdv4;
@@ -215,8 +213,6 @@ PREPARE foo AS
 
 EXECUTE foo;
 
---dg-skip: constraint "?" of relation "?" does not exist
---dg ALTER TABLE articles DROP CONSTRAINT articles_pkey RESTRICT;
+ALTER TABLE articles DROP CONSTRAINT articles_pkey RESTRICT;
 
---dg-cascade
---dg EXECUTE foo;  -- fail
+EXECUTE foo;  -- fail

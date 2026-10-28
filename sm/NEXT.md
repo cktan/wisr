@@ -16,11 +16,11 @@ are built, the stack's part and digres's
 and so are the catalog tables psql reads
 (`../dg/SYSCATALOG.md` §6).
 
-1. **digres's primary-key DDL** (`CLUSTER.md` §11, step 3):
-   ADD and DROP PRIMARY KEY and the key-column ALTERs, through
-   sm3's rewrite, which moves every row to its new key. sm3
-   has the rewrite; digres refuses the statements today
-   (`../dg/UNSUPPORTED.md` §3).
+1. **digres's key-column ALTERs** (`CLUSTER.md` §11, step 3):
+   ADD and DROP PRIMARY KEY, and of a unique constraint, are
+   built (`../dg/PKDDL.md`); a key column's `ALTER COLUMN
+   TYPE` waits for that ALTER, which digres refuses for every
+   column (`../dg/UNSUPPORTED.md` §3).
 
 Low priority:
 

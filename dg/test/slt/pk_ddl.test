@@ -1,0 +1,514 @@
+# Verify ALTER TABLE's ADD and DROP of a primary key and a unique constraint
+# (../PKDDL.md): digres re-keys the rows as PostgreSQL's ALTER TABLE leaves
+# them, and says what PostgreSQL says of what it refuses.
+# 1. ADD PRIMARY KEY on a table with rows, TOAST, a view and plain, partial
+#    and expression indexes: the column is NOT NULL, a prepared statement
+#    sees the key, the indexes and the out-of-line value keep every row,
+#    and the catalog shows the key; it then refuses a duplicate and a
+#    null, and is an ON CONFLICT arbiter.
+# 2. DROP CONSTRAINT of it: the rows are keyless again, the column stays
+#    NOT NULL, a duplicate is taken, and the indexes and TOAST hold.
+# 3. Refused as PostgreSQL refuses them: a key over a duplicate or a null,
+#    a second primary key, a column not there, a name taken.
+# 4. Rolled back, whole and to a savepoint: the table as it was.
+# 5. ADD UNIQUE, named or not, with INCLUDE, named as PostgreSQL names it.
+# 6. An open cursor of the table refuses the ALTER.
+# 7. A temporary table, keyed and unkeyed; ADD COLUMN and ADD PRIMARY KEY
+#    in one statement.
+# 8. DROP INDEX of a constraint's index is refused, with PostgreSQL's hint.
+# 9. A foreign key that references the constraint: RESTRICT refuses,
+#    CASCADE drops it, the table's own and another's.
+# 10. Refused by digres alone: DEFERRABLE and USING INDEX.
+
+# 1. A primary key added to a table with rows.
+statement ok
+create table k (a int4, b text, c int4, big text)
+
+statement ok
+insert into k select g, 'B' || g, case when g % 2 = 0 then g end, case when g = 7 then repeat('x', 100000) end from generate_series(1, 50) g
+
+statement ok
+create index k_b on k (b)
+
+statement ok
+create index k_c on k (c) where c is not null
+
+statement ok
+create index k_lb on k (lower(b))
+
+statement ok
+create view kv as select a, b from k where a < 4
+
+statement ok
+prepare kq as select b from k where a = $1
+
+query T
+execute kq(5)
+----
+B5
+
+statement ok
+alter table k add primary key (a)
+
+query T
+execute kq(5)
+----
+B5
+
+query IT
+select a, b from k where a = 7
+----
+7	B7
+
+query IT
+select length(big), md5(big) from k where a = 7
+----
+100000	d5816f35916d1d9482fb0f1ec201101d
+
+statement ok
+set enable_seqscan = off
+
+query I
+select a from k where b = 'B12'
+----
+12
+
+query I
+select a from k where c = 12
+----
+12
+
+query I
+select a from k where lower(b) = 'b13'
+----
+13
+
+statement ok
+reset enable_seqscan
+
+query IT
+select * from kv order by a
+----
+1	B1
+2	B2
+3	B3
+
+query TI
+select attname, attnotnull::int from pg_attribute where attrelid = 'k'::regclass and attnum > 0 order by attnum
+----
+a	1
+b	0
+c	0
+big	0
+
+query TII
+select indexrelid::regclass::text, indisprimary::int, indisunique::int from pg_index where indrelid = 'k'::regclass order by 1
+----
+k_b	0	0
+k_c	0	0
+k_lb	0	0
+k_pkey	1	1
+
+query T
+select pg_get_indexdef('k_pkey'::regclass)
+----
+CREATE UNIQUE INDEX k_pkey ON public.k USING btree (a)
+
+query TT
+select conname, contype from pg_constraint where conrelid = 'k'::regclass and contype <> 'n' order by 1
+----
+k_pkey	p
+
+statement ok
+update k set a = 100 where a = 1
+
+statement error duplicate key value violates unique constraint "k_pkey"
+insert into k (a, b) values (2, 'dup')
+
+statement ok
+insert into k (a, b) values (2, 'dup') on conflict (a) do update set b = 'up'
+
+query IT
+select a, b from k where a in (2, 100) order by a
+----
+2	up
+100	B1
+
+statement error null value in column "a" of relation "k" violates not-null constraint
+insert into k (a, b) values (null, 'n')
+
+# 2. Dropped: keyless again, NOT NULL stays.
+statement ok
+alter table k drop constraint k_pkey
+
+query II
+select count(*), count(distinct a) from k
+----
+50	50
+
+statement ok
+insert into k (a, b) values (2, 'dup2')
+
+query IT
+select a, b from k where a = 2 order by b
+----
+2	dup2
+2	up
+
+statement error null value in column "a" of relation "k" violates not-null constraint
+insert into k (a, b) values (null, 'n')
+
+query IT
+select length(big), md5(big) from k where a = 7
+----
+100000	d5816f35916d1d9482fb0f1ec201101d
+
+statement ok
+set enable_seqscan = off
+
+query I
+select a from k where b = 'B12'
+----
+12
+
+query I
+select a from k where lower(b) = 'b13'
+----
+13
+
+statement ok
+reset enable_seqscan
+
+query TI
+select indexrelid::regclass::text, indisprimary::int from pg_index where indrelid = 'k'::regclass order by 1
+----
+k_b	0
+k_c	0
+k_lb	0
+
+query IT
+select * from kv order by a
+----
+2	up
+2	dup2
+3	B3
+
+# 3. What is refused.
+statement error could not create unique index "k_pkey"
+alter table k add primary key (a)
+
+statement error could not create unique index "k_u"
+alter table k add constraint k_u unique (a)
+
+statement ok
+create table q (a int4, b text)
+
+statement ok
+insert into q values (1, 'x'), (null, 'y')
+
+statement error column "a" of relation "q" contains null values
+alter table q add primary key (a)
+
+statement error column "zz" of relation "q" does not exist
+alter table q add primary key (zz)
+
+statement error column "zz" named in key does not exist
+alter table q add unique (zz)
+
+statement ok
+alter table q add primary key (b)
+
+statement error multiple primary keys for table "q" are not allowed
+alter table q add primary key (b)
+
+statement error relation "k" already exists
+alter table q add constraint k unique (b)
+
+query TII
+select indexrelid::regclass::text, indisprimary::int, indisunique::int from pg_index where indrelid in ('k'::regclass, 'q'::regclass) order by 1
+----
+k_b	0	0
+k_c	0	0
+k_lb	0	0
+q_pkey	1	1
+
+# 4. Rolled back, whole and to a savepoint.
+statement ok
+create table rb (a int4, b text)
+
+statement ok
+insert into rb values (3, 'c'), (1, 'a'), (2, 'b')
+
+statement ok
+begin
+
+statement ok
+alter table rb add primary key (a)
+
+query IT
+select * from rb where a = 2
+----
+2	b
+
+statement ok
+rollback
+
+query I
+select attnotnull::int from pg_attribute where attrelid = 'rb'::regclass and attname = 'a'
+----
+0
+
+query I
+select count(*) from pg_index where indrelid = 'rb'::regclass
+----
+0
+
+statement ok
+begin
+
+statement ok
+savepoint s
+
+statement ok
+alter table rb add constraint rb_k primary key (a)
+
+statement ok
+rollback to s
+
+statement ok
+alter table rb add constraint rb_u unique (b)
+
+statement ok
+commit
+
+query T
+select indexrelid::regclass::text from pg_index where indrelid = 'rb'::regclass order by 1
+----
+rb_u
+
+query IT
+select * from rb order by a
+----
+1	a
+2	b
+3	c
+
+statement error duplicate key value violates unique constraint "rb_u"
+insert into rb values (4, 'a')
+
+# 5. Unique constraints, and their names.
+statement ok
+create table u (a int4 not null, b text, c text)
+
+statement ok
+insert into u values (2, 'y', 'q'), (1, 'x', 'p')
+
+statement ok
+alter table u add unique (b) include (a)
+
+statement ok
+alter table u add constraint u_c unique (c, b)
+
+statement ok
+alter table u add unique (b)
+
+query TT
+select conname, contype from pg_constraint where conrelid = 'u'::regclass and contype <> 'n' order by 1
+----
+u_b_a_key	u
+u_b_key	u
+u_c	u
+
+query T
+select pg_get_indexdef(indexrelid) from pg_index where indrelid = 'u'::regclass order by 1
+----
+CREATE UNIQUE INDEX u_b_a_key ON public.u USING btree (b) INCLUDE (a)
+CREATE UNIQUE INDEX u_b_key ON public.u USING btree (b)
+CREATE UNIQUE INDEX u_c ON public.u USING btree (c, b)
+
+statement error duplicate key value violates unique constraint "u_b_a_key"
+insert into u values (3, 'x', 'r')
+
+statement ok
+alter table u drop constraint u_b_a_key
+
+statement ok
+alter table u drop constraint u_c
+
+statement ok
+alter table u drop constraint if exists u_c
+
+statement error constraint "u_c" of relation "u" does not exist
+alter table u drop constraint u_c
+
+query T
+select indexrelid::regclass::text from pg_index where indrelid = 'u'::regclass order by 1
+----
+u_b_key
+
+# 6. An open cursor.
+statement ok
+begin
+
+statement ok
+declare cur cursor for select * from rb
+
+query IT
+fetch 1 from cur
+----
+3	c
+
+statement error cannot ALTER TABLE "rb" because it is being used by active queries in this session
+alter table rb add primary key (a)
+
+statement ok
+rollback
+
+# 7. A temporary table; ADD COLUMN with ADD PRIMARY KEY.
+statement ok
+create temp table tt (a int4, b text)
+
+statement ok
+insert into tt values (2, 'b'), (1, 'a')
+
+statement ok
+alter table tt add primary key (a)
+
+statement ok
+alter table tt add unique (b)
+
+query IT
+select * from tt where a = 1
+----
+1	a
+
+statement error duplicate key value violates unique constraint "tt_b_key"
+insert into tt values (3, 'a')
+
+statement ok
+alter table tt drop constraint tt_pkey
+
+statement ok
+alter table tt drop constraint tt_b_key
+
+query I
+select count(*) from pg_index where indrelid = 'tt'::regclass
+----
+0
+
+statement ok
+create table ac (x text)
+
+statement ok
+insert into ac values ('p'), ('q')
+
+statement ok
+alter table ac add column id serial, add primary key (id)
+
+query TI
+select * from ac order by id
+----
+p	1
+q	2
+
+# 8. DROP INDEX of a constraint's index.
+statement ok
+create table s (a int4 primary key, b int4 unique)
+
+statement error cannot drop index s_pkey because constraint s_pkey on table s requires it
+drop index s_pkey
+
+statement error cannot drop index s_b_key because constraint s_b_key on table s requires it
+drop index s_b_key
+
+statement error cannot drop index rb_u because constraint rb_u on table rb requires it
+drop index rb_u
+
+statement ok
+create unique index s_b_plain on s (b)
+
+statement ok
+drop index s_b_plain
+
+# 9. Foreign keys that reference a constraint.
+statement ok
+create table t (x int4 references s, y int4 references s (b))
+
+statement error cannot drop constraint s_pkey on table s because other objects depend on it
+alter table s drop constraint s_pkey
+
+statement error cannot drop constraint s_b_key on table s because other objects depend on it
+alter table s drop constraint s_b_key
+
+statement ok
+alter table s drop constraint s_pkey cascade
+
+query T
+select conname from pg_constraint where conrelid = 't'::regclass and contype <> 'n' order by 1
+----
+t_y_fkey
+
+statement ok
+alter table s drop constraint s_b_key cascade
+
+query I
+select count(*) from pg_constraint where conrelid = 't'::regclass and contype <> 'n'
+----
+0
+
+statement ok
+insert into t values (5, 6)
+
+statement ok
+create table tree (id int4 primary key, parent int4 references tree)
+
+statement ok
+insert into tree values (1, null), (2, 1)
+
+statement error cannot drop constraint tree_pkey on table tree because other objects depend on it
+alter table tree drop constraint tree_pkey
+
+statement ok
+alter table tree drop constraint tree_pkey cascade
+
+statement ok
+insert into tree values (3, 99)
+
+statement ok
+create table par (id int4, v text)
+
+statement ok
+insert into par values (1, 'one')
+
+statement ok
+alter table par add primary key (id)
+
+statement ok
+create table chi (pid int4 references par, qid int4 references par)
+
+statement ok
+insert into chi values (1, 1)
+
+statement error insert or update on table "chi" violates foreign key constraint "chi_pid_fkey"
+insert into chi values (2, 1)
+
+statement ok
+alter table par drop constraint par_pkey cascade
+
+statement ok
+insert into chi values (2, 2)
+
+query II
+select * from chi order by pid
+----
+1	1
+2	2
+
+# 10. Refused by digres alone.
+onlyif digres
+statement error a DEFERRABLE primary key or unique constraint is not supported yet
+alter table par add primary key (id) deferrable
+
+onlyif digres
+statement error ALTER TABLE \.\.\. ADD CONSTRAINT \.\.\. USING INDEX is not supported yet
+alter table rb add constraint rb_x unique using index rb_u

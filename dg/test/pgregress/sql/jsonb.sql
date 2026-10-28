@@ -2079,7 +2079,7 @@ select '12345'::jsonb::int8;
 select 'null'::jsonb::int8;
 select '"hello"'::jsonb::int8;
 select '12345'::jsonb::numeric;
---dg-skip: function 0x64f2280517c0 returned NULL
+--dg-skip: function 0xac96b2bd8114 returned NULL
 --dg select 'null'::jsonb::numeric;
 select '{}'::jsonb::numeric;
 select '12345.05'::jsonb::numeric;

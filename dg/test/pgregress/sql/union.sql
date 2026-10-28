@@ -419,7 +419,7 @@ explain (costs off)
 --
 
 CREATE TEMP TABLE t1c (b text, a text);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE t1c INHERIT t1;
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TEMP TABLE t2c (primary key (ab)) INHERITS (t2);

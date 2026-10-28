@@ -9086,3 +9086,36 @@ what its expression keys are; digres refused them in
   checks restored each file older than its object, so `make`
   kept the disabled part built in; they were run again, each
   file touched as it was restored.
+
+## Step 312: primary keys and unique constraints added and dropped
+
+`ALTER TABLE ... ADD PRIMARY KEY`, `ADD UNIQUE` and their
+`DROP CONSTRAINT` (`PKDDL.md`). sm3 had the rewrite that keys
+a table's rows anew (`../sm/CLUSTER.md` §8); digres refused
+the statements.
+
+- **ADD** (`add_index_constraint()`, `smstore.c`): parse
+  analysis makes the constraint's `IndexStmt`, as PostgreSQL's
+  ALTER TABLE does, which `smstore_create_index()` makes; a
+  primary key's columns are made NOT NULL first. A null, a
+  duplicate, a second primary key and a column not there are
+  PostgreSQL's errors.
+- **DROP CONSTRAINT** finds the constraint's index by name and
+  drops it; a foreign key that references that index is what
+  depends on it, RESTRICT's error or CASCADE's notice, as for
+  DROP TABLE (`drop_referencing()`).
+- **DROP INDEX** of a constraint's index is refused, with
+  PostgreSQL's hint; digres dropped it before.
+- **sm3's rewrite in a statement**: the store it made was not
+  in the statement's view, so ADD PRIMARY KEY on a table with
+  rows failed; it advances the statement's mark now
+  (`rewrite_table()`), with a `rel` test that runs it in a
+  statement.
+- **An index's name** counts its INCLUDE columns, as
+  PostgreSQL's does: `u_b_a_key`.
+- **Left out**: `USING INDEX`, DEFERRABLE, and the key-column
+  ALTERs, which wait for `ALTER COLUMN TYPE`.
+- **Tests**: `test/slt/pk_ddl.test`, its results PostgreSQL
+  18's; a `server.sh` check of a crash before the commit; 52
+  pgregress files trimmed again; each part shown to fail
+  disabled (`PKDDL.md` §5).

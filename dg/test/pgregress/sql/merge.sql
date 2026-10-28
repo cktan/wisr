@@ -406,7 +406,7 @@ SELECT * FROM target ORDER BY tid;
 -- remove constraints
 --dg-cascade
 --dg alter table target drop CONSTRAINT target_pkey;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table target alter column tid drop not null;
 
 -- multiple actions

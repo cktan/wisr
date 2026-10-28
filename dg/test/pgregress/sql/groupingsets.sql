@@ -29,8 +29,7 @@ copy gstest3 from stdin;
 1	1	1	1
 2	2	2	2
 \.
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg alter table gstest3 add primary key (a);
+alter table gstest3 add primary key (a);
 
 --dg-skip: type ? is not supported yet
 --dg create temp table gstest4(id integer, v integer,
@@ -141,10 +140,9 @@ select a, b, grouping(a, b), sum(t1.v), max(t2.c)
  group by grouping sets ((a, b), ());
 
 -- check that functionally dependent cols are not nulled
---dg-cascade
---dg select a, d, grouping(a,b,c)
---dg   from gstest3
---dg  group by grouping sets ((a,b), (a,c));
+select a, d, grouping(a,b,c)
+  from gstest3
+ group by grouping sets ((a,b), (a,c));
 
 -- check that distinct grouping columns are kept separate
 -- even if they are equal()
@@ -219,13 +217,12 @@ select x, y
   group by grouping sets (x, y)
   order by 1, 2;
 
---dg-differs: the plan
---dg explain (costs off)
---dg select x, y
---dg   from (select t1.unique1 as x, t1.unique2 as y from tenk1 t1, tenk1 t2) as t
---dg   where x = 1
---dg   group by grouping sets (x, y)
---dg   order by 1, 2;
+explain (costs off)
+select x, y
+  from (select t1.unique1 as x, t1.unique2 as y from tenk1 t1, tenk1 t2) as t
+  where x = 1
+  group by grouping sets (x, y)
+  order by 1, 2;
 
 select x, y
   from (select t1.unique1 as x, t1.unique2 as y from tenk1 t1, tenk1 t2) as t
@@ -473,15 +470,13 @@ explain (costs off)
   select sum(v), count(*) from gstest_empty group by grouping sets ((),(),());
 
 -- check that functionally dependent cols are not nulled
---dg-cascade
---dg select a, d, grouping(a,b,c)
---dg   from gstest3
---dg  group by grouping sets ((a,b), (a,c));
---dg-cascade
---dg explain (costs off)
---dg   select a, d, grouping(a,b,c)
---dg     from gstest3
---dg    group by grouping sets ((a,b), (a,c));
+select a, d, grouping(a,b,c)
+  from gstest3
+ group by grouping sets ((a,b), (a,c));
+explain (costs off)
+  select a, d, grouping(a,b,c)
+    from gstest3
+   group by grouping sets ((a,b), (a,c));
 
 -- simple rescan tests
 
@@ -532,11 +527,11 @@ explain (costs off)
 -- e.g. due to an index scan.
 BEGIN;
 SET LOCAL enable_hashagg = false;
-EXPLAIN (COSTS OFF) SELECT a, b, count(*), max(a), max(b) FROM gstest3 GROUP BY GROUPING SETS(a, b,()) ORDER BY a, b;
+--dg-differs: the plan
+--dg EXPLAIN (COSTS OFF) SELECT a, b, count(*), max(a), max(b) FROM gstest3 GROUP BY GROUPING SETS(a, b,()) ORDER BY a, b;
 SELECT a, b, count(*), max(a), max(b) FROM gstest3 GROUP BY GROUPING SETS(a, b,()) ORDER BY a, b;
 SET LOCAL enable_seqscan = false;
---dg-cascade
---dg EXPLAIN (COSTS OFF) SELECT a, b, count(*), max(a), max(b) FROM gstest3 GROUP BY GROUPING SETS(a, b,()) ORDER BY a, b;
+EXPLAIN (COSTS OFF) SELECT a, b, count(*), max(a), max(b) FROM gstest3 GROUP BY GROUPING SETS(a, b,()) ORDER BY a, b;
 SELECT a, b, count(*), max(a), max(b) FROM gstest3 GROUP BY GROUPING SETS(a, b,()) ORDER BY a, b;
 COMMIT;
 
@@ -554,29 +549,26 @@ select array(select row(v.a,s1.*) from (select two,four, count(*) from onek grou
 set enable_indexscan = false;
 set hash_mem_multiplier = 1.0;
 set work_mem = '64kB';
---dg-differs: the plan
---dg explain (costs off)
---dg   select unique1,
---dg          count(two), count(four), count(ten),
---dg          count(hundred), count(thousand), count(twothousand),
---dg          count(*)
---dg     from tenk1 group by grouping sets (unique1,twothousand,thousand,hundred,ten,four,two);
---dg-differs: the plan
---dg explain (costs off)
---dg   select unique1,
---dg          count(two), count(four), count(ten),
---dg          count(hundred), count(thousand), count(twothousand),
---dg          count(*)
---dg     from tenk1 group by grouping sets (unique1,hundred,ten,four,two);
+explain (costs off)
+  select unique1,
+         count(two), count(four), count(ten),
+         count(hundred), count(thousand), count(twothousand),
+         count(*)
+    from tenk1 group by grouping sets (unique1,twothousand,thousand,hundred,ten,four,two);
+explain (costs off)
+  select unique1,
+         count(two), count(four), count(ten),
+         count(hundred), count(thousand), count(twothousand),
+         count(*)
+    from tenk1 group by grouping sets (unique1,hundred,ten,four,two);
 
 set work_mem = '384kB';
---dg-differs: the plan
---dg explain (costs off)
---dg   select unique1,
---dg          count(two), count(four), count(ten),
---dg          count(hundred), count(thousand), count(twothousand),
---dg          count(*)
---dg     from tenk1 group by grouping sets (unique1,twothousand,thousand,hundred,ten,four,two);
+explain (costs off)
+  select unique1,
+         count(two), count(four), count(ten),
+         count(hundred), count(thousand), count(twothousand),
+         count(*)
+    from tenk1 group by grouping sets (unique1,twothousand,thousand,hundred,ten,four,two);
 
 -- check collation-sensitive matching between grouping expressions
 -- (similar to a check for aggregates, but there are additional code
@@ -592,7 +584,7 @@ select v||'a', case when grouping(v||'a') = 1 then 1 else 0 end, count(*)
 -- Bug #16784
 create table bug_16784(i int, j int);
 analyze bug_16784;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table bug_16784 set (autovacuum_enabled = 'false');
 --dg-skip: permission denied for table pg_class
 --dg update pg_class set reltuples = 10 where relname='bug_16784';
@@ -619,7 +611,7 @@ select g%1000 as g1000, g%100 as g100, g%10 as g10, g
    from generate_series(0,1999) g;
 
 analyze gs_data_1;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table gs_data_1 set (autovacuum_enabled = 'false');
 --dg-skip: permission denied for table pg_class
 --dg update pg_class set reltuples = 10 where relname='gs_data_1';

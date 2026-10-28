@@ -97,6 +97,11 @@ regression files are taken out for it (`test/pgregress`,
   column's is. An error an expression raises in a
   build after the commit says `could not create index "x":`
   before PostgreSQL's message, with another SQLSTATE.
+- **A unique index or constraint made on a table with rows**
+  — differs: it is built after the commit (`../DECISION.md`,
+  wip-slt1), so in a transaction block a duplicate key is
+  reported at `COMMIT`, after the block's other work has
+  committed, and the index is not there.
 - **Bitmap scans** — never. No BitmapAnd or BitmapOr: an OR
   over two indexes is a sequential scan (`../sm/CLUSTER.md` §6,
   step 287).
@@ -114,13 +119,16 @@ regression files are taken out for it (`test/pgregress`,
 
 ## 3. DDL
 
-- **ALTER TABLE beyond ADD COLUMN, DROP COLUMN, a foreign key's
-  ADD, DROP and VALIDATE CONSTRAINT, and RENAME** — refused
-  (pgregress: 264): CHECK, PRIMARY KEY and UNIQUE constraints
-  added later, `SET SCHEMA`, `ALTER COLUMN TYPE`, `SET`/`DROP
-  NOT NULL`, `SET DEFAULT`, row level security, replica
-  identity (step 231); dropping a column an index uses
-  (step 110).
+- **ALTER TABLE beyond ADD COLUMN, DROP COLUMN, ADD and DROP
+  CONSTRAINT of a foreign key, a primary key or a unique
+  constraint, a foreign key's VALIDATE CONSTRAINT, and
+  RENAME** — refused (pgregress: 267): CHECK constraints added
+  later, `ADD CONSTRAINT ... USING INDEX`, `SET SCHEMA`,
+  `ALTER COLUMN TYPE`, `SET`/`DROP NOT NULL`, `SET DEFAULT`,
+  row level security, replica identity (step 231); dropping a
+  column an index uses (step 110). A primary key added or
+  dropped re-keys the rows, which a scan then gives in key
+  order (`PKDDL.md`, step 312).
 - **ALTER INDEX, ALTER TYPE, ALTER MATERIALIZED VIEW** —
   refused; ALTER VIEW takes only options and RENAME.
 - **DEFERRABLE constraints** — never for a primary key

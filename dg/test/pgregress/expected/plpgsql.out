@@ -4649,7 +4649,7 @@ INSERT INTO alter_table_under_transition_tables
 --dg UPDATE alter_table_under_transition_tables
 --dg   SET name = name || name;
 -- now change 'name' to an integer to see what happens...
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE alter_table_under_transition_tables
 --dg   ALTER COLUMN name TYPE int USING name::integer;
 --dg-cascade

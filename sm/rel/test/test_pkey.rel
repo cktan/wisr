@@ -24,6 +24,9 @@
 #     second primary key and a column not there; table-create refuses
 #     two primary-key clauses and a key of no column.
 # 11. A foreign key naming no parent column takes the parent's key.
+# 12. add-primary-key and its index-drop on a table with rows, each
+#     inside a statement, as digres runs them: the rewrite writes a
+#     store the statement made.
 
 (def test-dir (string (or (os/getenv "REL_TMP") "/tmp") "/wisr_rel_test_pkey"))
 (rm-rf test-dir)
@@ -199,6 +202,37 @@
 (fkey-create child_t (table child) (columns tid) (references t))
 (assert-eq ((first (fkeys child)) :ref-columns) '[id])
 (commit)
+
+# 12. A primary key added and dropped in a statement, by a rewrite.
+#     1. Make a keyless table with rows 30, 10, 20 and an index.
+#     2. In a statement, add a primary key; the next statement scans
+#        the rows in key order.
+#     3. In a statement, drop it; the next sees the rows keyless again.
+#     4. Commit; the index still finds every row.
+#     5. In a statement, a key on a column holding a duplicate fails.
+(begin :rc)
+(table-create stm (columns (id :int8 :not-null) (tag :text)))
+(each i [30 10 20] (insert stm [i (string "t" i)]))
+(index-create stm_tag (table stm) (key (tag)))
+(commit)
+(begin :rc)
+(stmt-begin)
+(add-primary-key stm id)
+(stmt-begin)
+(assert-eq (map |(($ 1) 0) (scan stm)) @[10 20 30])
+(stmt-begin)
+(index-drop stm_pkey)
+(stmt-begin)
+(assert-eq (sort (map |(($ 1) 0) (scan stm))) @[10 20 30])
+(commit)
+(begin :rc)
+(assert-eq (length (idx-scan stm_tag)) 3)
+(commit)
+(begin :rc)
+(insert stm [10 "again"])
+(stmt-begin)
+(assert-err :err-dupkey (add-primary-key stm id))
+(abort)
 
 (db-close)
 (env-detach)

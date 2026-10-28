@@ -3139,10 +3139,13 @@ static void forget_table(Oid relid);
  * Drop the foreign keys of other tables that reference the table oid,
  * named relname, as DROP TABLE ... CASCADE does, with PostgreSQL's notice;
  * without cascade, PostgreSQL's error.  One of a table in dropping, which
- * the same statement drops, is dropped without a word.
+ * the same statement drops, is dropped without a word.  With index, the
+ * index of a constraint, conname, that DROP CONSTRAINT drops, only those
+ * that reference it, the table's own among them.
  */
 static void drop_referencing(Oid oid, const char *relname, bool cascade,
-                             const std::vector<Oid> &dropping) {
+                             const std::vector<Oid> &dropping,
+                             uint64_t index = 0, const char *conname = NULL) {
   sm_table_def_t def;
   std::vector<std::pair<uint64_t, uint64_t>> drop; /* (table, fkey) */
   StringInfoData detail;
@@ -3152,17 +3155,17 @@ static void drop_referencing(Oid oid, const char *relname, bool cascade,
     return;
   initStringInfo(&detail);
   for (const sm_fkey_ref_t &r : def.referenced_by) {
-    if (r.table == oid)
+    smstore_fkey_t fk;
+    sm_table_def_t child;
+    bool found = smstore_get_fkey((Oid)r.fkey, &fk);
+
+    if (0 == index ? r.table == oid : !found || fk.ref_index != (Oid)index)
       continue;
     drop.push_back({r.table, r.fkey});
     if (std::find(dropping.begin(), dropping.end(), (Oid)r.table) !=
         dropping.end())
       continue;
-    smstore_fkey_t fk;
-    sm_table_def_t child;
-
-    if (!smstore_get_fkey((Oid)r.fkey, &fk) ||
-        !table_def_now((Oid)r.table, child))
+    if (!found || !table_def_now((Oid)r.table, child))
       continue;
     /* A line each, as PostgreSQL's reportDependentObjects() writes them. */
     if (n++ > 0)
@@ -3171,8 +3174,18 @@ static void drop_referencing(Oid oid, const char *relname, bool cascade,
                      cascade ? "drop cascades to " : "", NameStr(fk.name),
                      child.name.c_str());
     if (!cascade)
-      appendStringInfo(&detail, " depends on table %s", relname);
+      appendStringInfo(&detail, " depends on %s %s",
+                       0 == index ? "table" : "index",
+                       0 == index ? relname : conname);
   }
+  if (n > 0 && !cascade && 0 != index)
+    ereport(ERROR, (errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+                    errmsg("cannot drop constraint %s on table %s because "
+                           "other objects depend on it",
+                           conname, relname),
+                    errdetail("%s", detail.data),
+                    errhint("Use DROP ... CASCADE to drop the dependent "
+                            "objects too.")));
   if (n > 0 && !cascade)
     ereport(ERROR, (errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
                     errmsg("cannot drop table %s because other objects "
@@ -4012,7 +4025,7 @@ static void drop_column(Oid relid, const char *relname, const char *name,
 
 static void add_fkey(Oid relid, const char *relname, Constraint *con);
 static void drop_constraint(Oid relid, const char *relname, const char *name,
-                            bool missing_ok);
+                            bool missing_ok, bool cascade);
 static void validate_constraint(Oid relid, const char *relname,
                                 const char *name);
 
@@ -4082,9 +4095,103 @@ static void add_generated_column(Oid relid, const char *relname,
 }
 
 /*
+ * ADD PRIMARY KEY or ADD UNIQUE, cmd of stmt: parse analysis makes it the
+ * constraint's CREATE INDEX, as PostgreSQL's ALTER TABLE does, which
+ * smstore_create_index() makes; a primary key's columns are made NOT NULL
+ * first, as ATPrepAddPrimaryKey() has them (../PKDDL.md).
+ */
+static void add_index_constraint(Oid relid, const char *relname,
+                                 AlterTableStmt *stmt, AlterTableCmd *cmd) {
+  Constraint *con = castNode(Constraint, cmd->def);
+  AlterTableStmt *one = makeNode(AlterTableStmt);
+  List *before = NIL, *after = NIL;
+
+  if (NULL != con->indexname)
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("ALTER TABLE ... ADD CONSTRAINT ... USING INDEX "
+                           "is not supported yet")));
+  if (con->deferrable || con->initdeferred)
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("a DEFERRABLE primary key or unique constraint is "
+                           "not supported yet")));
+  one->relation = stmt->relation;
+  one->objtype = stmt->objtype;
+  one->cmds = list_make1(cmd);
+  /* Locked first, as parse analysis opens the table assuming it is. */
+  relation_close(relation_open(relid, AccessShareLock), NoLock);
+  one = transformAlterTableStmt(relid, one, NULL, &before, &after);
+  if (NIL != before || NIL != after)
+    elog(ERROR, "unexpected statement with ADD CONSTRAINT");
+  foreach_node(AlterTableCmd, c, one->cmds) {
+    if (AT_AddIndex != c->subtype)
+      elog(ERROR, "unexpected ALTER TABLE subcommand: %d", (int)c->subtype);
+    IndexStmt *index = castNode(IndexStmt, c->def);
+    Relation rel = relation_open(relid, NoLock);
+    sm_table_def_t def;
+    bool made_not_null = false;
+
+    if (index->primary && table_def_now(relid, def))
+      for (const sm_index_def_t &x : def.indexes)
+        if (x.primary)
+          ereport(ERROR,
+                  (errcode(ERRCODE_INVALID_TABLE_DEFINITION),
+                   errmsg("multiple primary keys for table \"%s\" are not "
+                          "allowed",
+                          relname)));
+    foreach_node(IndexElem, elem, index->indexParams) {
+      AttrNumber attnum = InvalidAttrNumber;
+
+      for (int i = 0; i < RelationGetDescr(rel)->natts; i++) {
+        Form_pg_attribute att = TupleDescAttr(RelationGetDescr(rel), i);
+
+        if (!att->attisdropped &&
+            0 == strcmp(NameStr(att->attname), elem->name))
+          attnum = i + 1;
+      }
+
+      /* A primary key's words are its SET NOT NULL's, a unique one's. */
+      if (InvalidAttrNumber == attnum && index->primary)
+        ereport(ERROR, (errcode(ERRCODE_UNDEFINED_COLUMN),
+                        errmsg("column \"%s\" of relation \"%s\" does not "
+                               "exist",
+                               elem->name, relname)));
+      if (InvalidAttrNumber == attnum)
+        ereport(ERROR, (errcode(ERRCODE_UNDEFINED_COLUMN),
+                        errmsg("column \"%s\" named in key does not exist",
+                               elem->name)));
+      if (!index->primary || TupleDescAttr(RelationGetDescr(rel),
+                                           attnum - 1)->attnotnull)
+        continue;
+      sm_session_t *s = xact_session();
+
+      if (0 != waiting([&] {
+            return sm_cat_set_not_null(s, relid, elem->name);
+          })) {
+        if (SM_ERR_NOTNULL == sm_errnum())
+          ereport(ERROR,
+                  (errcode(ERRCODE_NOT_NULL_VIOLATION),
+                   errmsg("column \"%s\" of relation \"%s\" contains null "
+                          "values",
+                          elem->name, relname)));
+        sm_error("make a column NOT NULL");
+      }
+      made_not_null = true;
+    }
+    relation_close(rel, NoLock);
+    /* The index is made on columns it sees NOT NULL. */
+    if (made_not_null) {
+      forget_table(relid);
+      CommandCounterIncrement();
+    }
+    smstore_create_index(relid, index);
+  }
+}
+
+/*
  * Do an ALTER TABLE of the table relid, in sm, in this transaction, one
- * subcommand after another: ADD COLUMN, DROP COLUMN, and ADD, DROP and
- * VALIDATE CONSTRAINT of a foreign key, the subcommands
+ * subcommand after another: ADD COLUMN, DROP COLUMN, ADD, DROP and
+ * VALIDATE CONSTRAINT of a foreign key, and ADD and DROP CONSTRAINT of a
+ * primary key or a unique constraint, the subcommands
  * AlterTableLookupRelation() lets through.  A view's is alter_view()'s.
  */
 void smstore_alter_table(Oid relid, AlterTableStmt *stmt) {
@@ -4107,13 +4214,17 @@ void smstore_alter_table(Oid relid, AlterTableStmt *stmt) {
     else if (cmd->subtype == AT_AddConstraint) {
       Constraint *con = castNode(Constraint, cmd->def);
 
-      if (con->contype != CONSTR_FOREIGN)
+      if (CONSTR_PRIMARY == con->contype || CONSTR_UNIQUE == con->contype)
+        add_index_constraint(relid, relname, stmt, cmd);
+      else if (con->contype != CONSTR_FOREIGN)
         ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                         errmsg("ALTER TABLE ... ADD CONSTRAINT supports only "
-                               "FOREIGN KEY yet")));
-      add_fkey(relid, relname, con);
+                               "FOREIGN KEY, PRIMARY KEY and UNIQUE yet")));
+      else
+        add_fkey(relid, relname, con);
     } else if (cmd->subtype == AT_DropConstraint)
-      drop_constraint(relid, relname, cmd->name, cmd->missing_ok);
+      drop_constraint(relid, relname, cmd->name, cmd->missing_ok,
+                      cmd->behavior == DROP_CASCADE);
     else if (cmd->subtype == AT_ValidateConstraint)
       validate_constraint(relid, relname, cmd->name);
     else
@@ -4848,12 +4959,40 @@ static void no_constraint(const char *name, const char *relname) {
                          name, relname)));
 }
 
-/* ALTER TABLE ... DROP CONSTRAINT: a foreign key, the only one sm keeps. */
+/*
+ * The index of the primary key or the unique constraint name of the table
+ * relid, the constraint's own name, or 0 if it has none.
+ */
+static uint64_t constraint_index(Oid relid, const char *name) {
+  sm_table_def_t def;
+
+  if (table_def_now(relid, def))
+    for (const sm_index_def_t &x : def.indexes)
+      if ((x.primary || x.constraint) && x.name == name)
+        return x.oid;
+  return 0;
+}
+
+static void drop_index(uint64_t table, uint64_t index);
+
+/*
+ * ALTER TABLE ... DROP CONSTRAINT: a foreign key, or a primary key or a
+ * unique constraint, whose index goes with it.  A foreign key that
+ * references that index is what depends on it: CASCADE drops it, RESTRICT
+ * is an error.  A primary key's columns stay NOT NULL, as PostgreSQL's do.
+ */
 static void drop_constraint(Oid relid, const char *relname, const char *name,
-                            bool missing_ok) {
+                            bool missing_ok, bool cascade) {
   sm_fkey_def_t f;
 
   if (!fkey_named(relid, name, f)) {
+    uint64_t index = constraint_index(relid, name);
+
+    if (0 != index) {
+      drop_referencing(relid, relname, cascade, {}, index, name);
+      drop_index(relid, index);
+      return;
+    }
     if (!missing_ok)
       no_constraint(name, relname);
     ereport(NOTICE, (errmsg("constraint \"%s\" of relation \"%s\" does not "
@@ -6325,7 +6464,9 @@ ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt) {
 
   check_create_index(stmt);
   rel = relation_open(relid, NoLock);
-  colnames = ChooseIndexColumnNames(stmt->indexParams);
+  /* The INCLUDE columns name the index too, as DefineIndex() has it. */
+  colnames = ChooseIndexColumnNames(
+      list_concat_copy(stmt->indexParams, stmt->indexIncludingParams));
   foreach (l, stmt->indexParams) {
     IndexElem *elem = lfirst_node(IndexElem, l);
     sm_index_key_spec_t key = {};
@@ -6555,8 +6696,42 @@ static bool find_index(const RangeVar *rv, uint64_t *table, uint64_t *index) {
 }
 
 /*
- * Drop the indexes a DROP INDEX names, from sm, in this transaction.  A
- * table's descriptor forgets the index in every session at commit.
+ * Drop the index of the table, from sm, in this transaction.  A table's
+ * descriptor forgets the index in every session at commit.
+ */
+static void drop_index(uint64_t table, uint64_t index) {
+  Relation rel;
+
+  /*
+   * Every session's descriptor of the table relearns its indexes, and
+   * one of the index is gone, as PostgreSQL's index_drop() has it.  The
+   * table is locked first, as index_drop() locks it, so the descriptor
+   * read is the one sm holds, and held until the transaction ends.
+   */
+  rel = relation_open((Oid)table, AccessExclusiveLock);
+  CacheInvalidateRelcache(rel);
+  relation_close(rel, NoLock);
+  rel = relation_open((Oid)index, NoLock);
+  CacheInvalidateRelcache(rel);
+  relation_close(rel, NoLock);
+
+  sm_session_t *s = xact_session();
+
+  if (waiting([&] { return sm_cat_drop_index(s, table, index); }) != 0)
+    sm_error("drop an index");
+  /*
+   * A primary key's drop keys the rows anew, in a new store
+   * (../sm/CLUSTER.md section 8), which the handles this transaction holds
+   * do not know; another index's leaves them be, and they reopen at no
+   * more cost than this.
+   */
+  forget_table((Oid)table);
+}
+
+/*
+ * Drop the indexes a DROP INDEX names, from sm, in this transaction.  The
+ * index of a primary key or a unique constraint is the constraint's, which
+ * DROP CONSTRAINT drops, as PostgreSQL has it.
  */
 void smstore_drop_indexes(DropStmt *stmt) {
   ListCell *l;
@@ -6567,7 +6742,7 @@ void smstore_drop_indexes(DropStmt *stmt) {
   foreach (l, stmt->objects) {
     RangeVar *rv = makeRangeVarFromNameList((List *)lfirst(l));
     uint64_t table, index;
-    Relation rel;
+    sm_table_def_t def;
 
     if (!find_index(rv, &table, &index)) {
       if (!stmt->missing_ok)
@@ -6577,30 +6752,17 @@ void smstore_drop_indexes(DropStmt *stmt) {
               (errmsg("index \"%s\" does not exist, skipping", rv->relname)));
       continue;
     }
-    /*
-     * Every session's descriptor of the table relearns its indexes, and
-     * one of the index is gone, as PostgreSQL's index_drop() has it.  The
-     * table is locked first, as index_drop() locks it, so the descriptor
-     * read is the one sm holds, and held until the transaction ends.
-     */
-    rel = relation_open((Oid)table, AccessExclusiveLock);
-    CacheInvalidateRelcache(rel);
-    relation_close(rel, NoLock);
-    rel = relation_open((Oid)index, NoLock);
-    CacheInvalidateRelcache(rel);
-    relation_close(rel, NoLock);
-
-    sm_session_t *s = xact_session();
-
-    if (waiting([&] { return sm_cat_drop_index(s, table, index); }) != 0)
-      sm_error("drop an index");
-    /*
-     * A primary key's drop keys the rows anew, in a new store
-     * (../sm/CLUSTER.md section 8), which the handles this transaction holds
-     * do not know; another index's leaves them be, and they reopen at no
-     * more cost than this.
-     */
-    forget_table((Oid)table);
+    if (table_def_now((Oid)table, def))
+      for (const sm_index_def_t &x : def.indexes)
+        if (x.oid == index && (x.primary || x.constraint))
+          ereport(ERROR,
+                  (errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+                   errmsg("cannot drop index %s because constraint %s on "
+                          "table %s requires it",
+                          x.name.c_str(), x.name.c_str(), def.name.c_str()),
+                   errhint("You can drop constraint %s on table %s instead.",
+                           x.name.c_str(), def.name.c_str())));
+    drop_index(table, index);
   }
 }
 

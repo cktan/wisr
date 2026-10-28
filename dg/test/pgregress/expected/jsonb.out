@@ -4403,7 +4403,7 @@ select '12345'::jsonb::numeric;
    12345
 (1 row)
 
---dg-skip: function 0x64f2280517c0 returned NULL
+--dg-skip: function 0xac96b2bd8114 returned NULL
 --dg select 'null'::jsonb::numeric;
 select '{}'::jsonb::numeric;
 ERROR:  cannot cast jsonb object to type numeric

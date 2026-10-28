@@ -545,9 +545,9 @@ COPY rls_t1 (a, b, c) from stdin;
 
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY p1 ON rls_t1 FOR SELECT USING (a % 2 = 0);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rls_t1 ENABLE ROW LEVEL SECURITY;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rls_t1 FORCE ROW LEVEL SECURITY;
 
 --dg-skip: relation pg_authid cannot be opened: digres has no catalog tables

@@ -63,8 +63,7 @@ INSERT INTO clstr_tst (b, c, d) VALUES (6, 'seis', repeat('xyzzy', 100000));
 --dg-differs: the result
 --dg CLUSTER clstr_tst_c ON clstr_tst;
 
---dg-cascade
---dg SELECT a,b,c,substring(d for 30), length(d) from clstr_tst;
+SELECT a,b,c,substring(d for 30), length(d) from clstr_tst;
 SELECT a,b,c,substring(d for 30), length(d) from clstr_tst ORDER BY a;
 SELECT a,b,c,substring(d for 30), length(d) from clstr_tst ORDER BY b;
 SELECT a,b,c,substring(d for 30), length(d) from clstr_tst ORDER BY c;
@@ -97,7 +96,7 @@ INSERT INTO clstr_tst (b, c) VALUES (1111, 'this should fail');
 --dg 	AND indisclustered;
 
 -- Try changing indisclustered
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE clstr_tst CLUSTER ON clstr_tst_b_c;
 --dg-cascade
 --dg SELECT pg_class.relname FROM pg_index, pg_class, pg_class AS pg_class_2
@@ -107,7 +106,7 @@ INSERT INTO clstr_tst (b, c) VALUES (1111, 'this should fail');
 --dg 	AND indisclustered;
 
 -- Try turning off all clustering
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE clstr_tst SET WITHOUT CLUSTER;
 SELECT pg_class.relname FROM pg_index, pg_class, pg_class AS pg_class_2
 WHERE pg_class.oid=indexrelid
@@ -146,10 +145,9 @@ INSERT INTO clstr_3 VALUES (1);
 --dg CLUSTER clstr_1_pkey ON clstr_1;
 --dg-differs: the result
 --dg CLUSTER clstr_2 USING clstr_2_pkey;
---dg-cascade
---dg SELECT * FROM clstr_1 UNION ALL
---dg   SELECT * FROM clstr_2 UNION ALL
---dg   SELECT * FROM clstr_3;
+SELECT * FROM clstr_1 UNION ALL
+  SELECT * FROM clstr_2 UNION ALL
+  SELECT * FROM clstr_3;
 
 -- revert to the original state
 DELETE FROM clstr_1;
@@ -169,10 +167,9 @@ INSERT INTO clstr_3 VALUES (1);
 SET client_min_messages = ERROR;  -- order of "skipping" warnings may vary
 CLUSTER;
 RESET client_min_messages;
---dg-cascade
---dg SELECT * FROM clstr_1 UNION ALL
---dg   SELECT * FROM clstr_2 UNION ALL
---dg   SELECT * FROM clstr_3;
+SELECT * FROM clstr_1 UNION ALL
+  SELECT * FROM clstr_2 UNION ALL
+  SELECT * FROM clstr_3;
 
 -- cluster a single table using the indisclustered bit previously set
 DELETE FROM clstr_1;
@@ -180,8 +177,7 @@ INSERT INTO clstr_1 VALUES (2);
 INSERT INTO clstr_1 VALUES (1);
 --dg-cascade
 --dg CLUSTER clstr_1;
---dg-cascade
---dg SELECT * FROM clstr_1;
+SELECT * FROM clstr_1;
 
 -- Test MVCC-safety of cluster. There isn't much we can do to verify the
 -- results with a single backend...
@@ -236,8 +232,7 @@ create temp table clstr_temp (col1 int primary key, col2 text);
 insert into clstr_temp values (2, 'two'), (1, 'one');
 --dg-differs: the result
 --dg cluster clstr_temp using clstr_temp_pkey;
---dg-cascade
---dg select * from clstr_temp;
+select * from clstr_temp;
 drop table clstr_temp;
 
 RESET SESSION AUTHORIZATION;

@@ -567,7 +567,7 @@ INSERT INTO dedup_unique_test_table SELECT i FROM generate_series(0,450) i;
 -- truncation would otherwise truncate tuples on internal pages, leaving us
 -- with a short tree.
 create table btree_tall_tbl(id int4, t text);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table btree_tall_tbl alter COLUMN t set storage plain;
 --dg-skip: CREATE INDEX supports only columns, expressions, WHERE, UNIQUE and INCLUDE yet
 --dg create index btree_tall_idx on btree_tall_tbl (t, id) with (fillfactor = 10);
@@ -609,8 +609,7 @@ reset enable_bitmapscan;
 --
 CREATE TABLE delete_test_table (a bigint, b bigint, c bigint, d bigint);
 INSERT INTO delete_test_table SELECT i, 1, 2, 3 FROM generate_series(1,80000) i;
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg ALTER TABLE delete_test_table ADD PRIMARY KEY (a,b,c,d);
+ALTER TABLE delete_test_table ADD PRIMARY KEY (a,b,c,d);
 -- Delete most entries, and vacuum, deleting internal pages and creating "fast
 -- root"
 DELETE FROM delete_test_table WHERE a < 79990;

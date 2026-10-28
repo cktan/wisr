@@ -113,9 +113,9 @@ SELECT relfilenode as main_filenode FROM pg_class
 --dg SELECT c.relname FROM pg_class c, pg_tablespace s
 --dg   WHERE c.reltablespace = s.oid AND s.spcname = 'regress_tblspace'
 --dg   ORDER BY c.relname;
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE regress_tblspace_test_tbl SET TABLESPACE regress_tblspace;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE regress_tblspace_test_tbl SET TABLESPACE pg_default;
 --dg-skip: relation "?" does not exist
 --dg SELECT c.relname FROM pg_class c, pg_tablespace s
@@ -464,20 +464,17 @@ DROP TABLE testschema.test_tab;
 CREATE TABLE testschema.test_tab(a int, b int, c int);
 --dg-differs: another error: unrecognized configuration parameter "?"
 --dg SET default_tablespace TO regress_tblspace;
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg ALTER TABLE testschema.test_tab ADD CONSTRAINT test_tab_unique UNIQUE (a);
+ALTER TABLE testschema.test_tab ADD CONSTRAINT test_tab_unique UNIQUE (a);
 CREATE INDEX test_tab_a_idx ON testschema.test_tab (a);
 --dg-skip: unrecognized configuration parameter "?"
 --dg SET default_tablespace TO '';
 CREATE INDEX test_tab_b_idx ON testschema.test_tab (b);
---dg-cascade
---dg \d testschema.test_tab_unique
+\d testschema.test_tab_unique
 \d testschema.test_tab_a_idx
 \d testschema.test_tab_b_idx
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE testschema.test_tab ALTER b TYPE bigint, ADD UNIQUE (c);
---dg-cascade
---dg \d testschema.test_tab_unique
+\d testschema.test_tab_unique
 \d testschema.test_tab_a_idx
 --dg-cascade
 --dg \d testschema.test_tab_b_idx
@@ -487,7 +484,7 @@ DROP TABLE testschema.test_tab;
 CREATE TABLE testschema.atable AS VALUES (1), (2);
 CREATE UNIQUE INDEX anindex ON testschema.atable(column1);
 
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE testschema.atable SET TABLESPACE regress_tblspace;
 --dg-differs: another error: ALTER INDEX is not supported yet
 --dg ALTER INDEX testschema.anindex SET TABLESPACE regress_tblspace;
@@ -547,7 +544,7 @@ ROLLBACK;
 
 CREATE TABLE testschema.tablespace_acl (c int);
 -- new owner lacks permission to create this index from scratch
---dg-differs: another error: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
+--dg-differs: another error: CREATE INDEX supports only columns, expressions, WHERE, UNIQUE and INCLUDE yet
 --dg CREATE INDEX k ON testschema.tablespace_acl (c) TABLESPACE regress_tblspace;
 --dg-cascade
 --dg ALTER TABLE testschema.tablespace_acl OWNER TO regress_tablespace_user2;
@@ -556,7 +553,7 @@ CREATE TABLE testschema.tablespace_acl (c int);
 --dg SET SESSION ROLE regress_tablespace_user2;
 --dg-cascade
 --dg CREATE TABLE tablespace_table (i int) TABLESPACE regress_tblspace; -- fail
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE testschema.tablespace_acl ALTER c TYPE bigint;
 --dg-differs: no error where PostgreSQL has: tablespace "?" does not exist
 --dg REINDEX (TABLESPACE regress_tblspace) TABLE tablespace_table; -- fail

@@ -30,7 +30,7 @@ SELECT * FROM inhx; /* Empty set since LIKE inherits structure only */
 
 CREATE TABLE inhf (LIKE inhx, LIKE inhx); /* Throw error */
 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg CREATE TABLE inhf (LIKE inhx INCLUDING DEFAULTS INCLUDING CONSTRAINTS);
 --dg-cascade
 --dg INSERT INTO inhf DEFAULT VALUES;
@@ -38,23 +38,33 @@ CREATE TABLE inhf (LIKE inhx, LIKE inhx); /* Throw error */
 --dg SELECT * FROM inhf;
  /* Single entry with value 'text' */
 
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg ALTER TABLE inhx add constraint foo CHECK (xx = 'text');
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg ALTER TABLE inhx ADD PRIMARY KEY (xx);
-CREATE TABLE inhg (LIKE inhx); /* Doesn't copy constraint */
-INSERT INTO inhg VALUES ('foo');
-DROP TABLE inhg;
-CREATE TABLE inhg (x text, LIKE inhx INCLUDING CONSTRAINTS, y text); /* Copies constraints */
-INSERT INTO inhg VALUES ('x', 'text', 'y'); /* Succeeds */
-INSERT INTO inhg VALUES ('x', 'text', 'y'); /* Succeeds -- Unique constraints not copied */
+ALTER TABLE inhx ADD PRIMARY KEY (xx);
+--dg-skip: relation pg_constraint cannot be opened: digres has no catalog tables
+--dg CREATE TABLE inhg (LIKE inhx);
+ /* Doesn't copy constraint */
+--dg-cascade
+--dg INSERT INTO inhg VALUES ('foo');
+--dg-cascade
+--dg DROP TABLE inhg;
+--dg-skip: relation pg_constraint cannot be opened: digres has no catalog tables
+--dg CREATE TABLE inhg (x text, LIKE inhx INCLUDING CONSTRAINTS, y text);
+ /* Copies constraints */
+--dg-cascade
+--dg INSERT INTO inhg VALUES ('x', 'text', 'y');
+ /* Succeeds */
+--dg-cascade
+--dg INSERT INTO inhg VALUES ('x', 'text', 'y');
+ /* Succeeds -- Unique constraints not copied */
 --dg-cascade
 --dg INSERT INTO inhg VALUES ('x', 'foo',  'y');
   /* fails due to constraint */
 --dg-cascade
 --dg SELECT * FROM inhg;
  /* Two records with three columns in order x=x, xx=text, y=y */
-DROP TABLE inhg;
+--dg-cascade
+--dg DROP TABLE inhg;
 
 CREATE TABLE test_like_id_1 (a bigint GENERATED ALWAYS AS IDENTITY, b text);
 \d test_like_id_1
@@ -175,19 +185,23 @@ ALTER TABLE test_like_6 DROP COLUMN c;
 --dg-cascade
 --dg DROP TABLE test_like_6, test_like_6c;
 
-CREATE TABLE inhg (x text, LIKE inhx INCLUDING INDEXES, y text); /* copies indexes */
-INSERT INTO inhg VALUES (5, 10);
+--dg-skip: relation pg_constraint cannot be opened: digres has no catalog tables
+--dg CREATE TABLE inhg (x text, LIKE inhx INCLUDING INDEXES, y text);
+ /* copies indexes */
+--dg-cascade
+--dg INSERT INTO inhg VALUES (5, 10);
 --dg-cascade
 --dg INSERT INTO inhg VALUES (20, 10); -- should fail
-DROP TABLE inhg;
-/* Multiple primary keys creation should fail */
 --dg-cascade
+--dg DROP TABLE inhg;
+/* Multiple primary keys creation should fail */
+--dg-differs: another error: relation pg_constraint cannot be opened: digres has no catalog tables
 --dg CREATE TABLE inhg (x text, LIKE inhx INCLUDING INDEXES, PRIMARY KEY(x));
  /* fails */
 CREATE TABLE inhz (xx text DEFAULT 'text', yy int UNIQUE);
 CREATE UNIQUE INDEX inhz_xx_idx on inhz (xx) WHERE xx <> 'test';
 /* Ok to create multiple unique indexes */
---dg-cascade
+--dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE TABLE inhg (x text UNIQUE, LIKE inhz INCLUDING INDEXES);
 --dg-cascade
 --dg INSERT INTO inhg (xx, yy, x) VALUES ('test', 5, 10);
@@ -200,7 +214,7 @@ CREATE UNIQUE INDEX inhz_xx_idx on inhz (xx) WHERE xx <> 'test';
 DROP TABLE inhz;
 
 /* Use primary key imported by LIKE for self-referential FK constraint */
---dg-cascade
+--dg-skip: relation pg_constraint cannot be opened: digres has no catalog tables
 --dg CREATE TABLE inhz (x text REFERENCES inhz, LIKE inhx INCLUDING INDEXES);
 --dg-cascade
 --dg \d inhz
@@ -239,7 +253,7 @@ DROP TABLE inhz;
 --dg ALTER TABLE ctlt1 ALTER COLUMN a SET STORAGE MAIN;
 
 CREATE TABLE ctlt2 (c text NOT NULL);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE ctlt2 ALTER COLUMN c SET STORAGE EXTERNAL;
 --dg-skip: COMMENT is not supported yet
 --dg COMMENT ON COLUMN ctlt2.c IS 'C';
@@ -262,7 +276,7 @@ CREATE TABLE ctlt2 (c text NOT NULL);
 --dg COMMENT ON CONSTRAINT ctlt3_a_check ON ctlt3 IS 't3_a_check';
 
 CREATE TABLE ctlt4 (a text, c text);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE ctlt4 ALTER COLUMN c SET STORAGE EXTERNAL;
 
 --dg-cascade

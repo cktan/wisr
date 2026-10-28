@@ -134,7 +134,7 @@ DROP TABLE remember_create_subid;
 -- Verify that subtransaction rollback restores rd_firstRelfilenodeSubid.
 CREATE TABLE remember_node_subid (c int);
 BEGIN;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE remember_node_subid ALTER c TYPE bigint;
 SAVEPOINT q; DROP TABLE remember_node_subid; ROLLBACK TO q;
 COMMIT;
@@ -1015,7 +1015,7 @@ create table defcheck_def (a int, c int, b int);
 alter table defcheck_def drop c;
 --dg-cascade
 --dg alter table defcheck attach partition defcheck_def default;
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg alter table defcheck_def add check (b <= 0 and b is not null);
 --dg-cascade
 --dg create table defcheck_1 partition of defcheck for values in (1, null);

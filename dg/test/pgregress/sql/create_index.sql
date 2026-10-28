@@ -583,7 +583,7 @@ INSERT INTO covering_index_heap VALUES(1,4,'AAA');
 -- Try to build index on table that already contains data
 CREATE UNIQUE INDEX covering_pkey on covering_index_heap (f1,f2) INCLUDE(f3);
 -- Try to use existing covering index as primary key
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT ... USING INDEX is not supported yet
 --dg ALTER TABLE covering_index_heap ADD CONSTRAINT covering_pkey PRIMARY KEY USING INDEX
 --dg covering_pkey;
 DROP TABLE covering_index_heap;
@@ -722,7 +722,7 @@ CREATE TABLE cwi_test( a int , b varchar(10), c char);
 INSERT INTO cwi_test VALUES(1, 2), (3, 4), (5, 6);
 
 CREATE UNIQUE INDEX cwi_uniq_idx ON cwi_test(a , b);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT ... USING INDEX is not supported yet
 --dg ALTER TABLE cwi_test ADD primary key USING INDEX cwi_uniq_idx;
 
 --dg-cascade
@@ -746,7 +746,7 @@ CREATE UNIQUE INDEX cwi_uniq2_idx ON cwi_test(b , a);
 
 -- Check that non-default index options are rejected
 CREATE UNIQUE INDEX cwi_uniq3_idx ON cwi_test(a desc);
---dg-differs: another error: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-differs: another error: ALTER TABLE ... ADD CONSTRAINT ... USING INDEX is not supported yet
 --dg ALTER TABLE cwi_test ADD UNIQUE USING INDEX cwi_uniq3_idx;  -- fail
 --dg-skip: collation "?" is not supported for an index key yet
 --dg CREATE UNIQUE INDEX cwi_uniq4_idx ON cwi_test(b collate "POSIX");
@@ -1232,7 +1232,7 @@ CREATE UNIQUE INDEX concur_reindex_ind3 ON concur_reindex_tab(abs(c1));
 -- Duplicate column names
 CREATE INDEX concur_reindex_ind4 ON concur_reindex_tab(c1, c1, c2);
 -- Create table for check on foreign key dependence switch with indexes swapped
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT ... USING INDEX is not supported yet
 --dg ALTER TABLE concur_reindex_tab ADD PRIMARY KEY USING INDEX concur_reindex_ind1;
 --dg-cascade
 --dg CREATE TABLE concur_reindex_tab2 (c1 int REFERENCES concur_reindex_tab);
@@ -1305,7 +1305,7 @@ DROP TABLE testcomment;
 -- Check that indisclustered updates are preserved
 CREATE TABLE concur_clustered(i int);
 CREATE INDEX concur_clustered_i_idx ON concur_clustered(i);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE concur_clustered CLUSTER ON concur_clustered_i_idx;
 --dg-differs: the result
 --dg REINDEX TABLE CONCURRENTLY concur_clustered;
@@ -1316,7 +1316,7 @@ DROP TABLE concur_clustered;
 -- Check that indisreplident updates are preserved.
 CREATE TABLE concur_replident(i int NOT NULL);
 CREATE UNIQUE INDEX concur_replident_i_idx ON concur_replident(i);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE concur_replident REPLICA IDENTITY
 --dg   USING INDEX concur_replident_i_idx;
 --dg-cascade
@@ -1645,7 +1645,7 @@ SELECT pg_get_indexdef('concur_exprs_index_pred_2'::regclass);
 SELECT pg_get_indexdef('concur_exprs_index_pred'::regclass);
 SELECT pg_get_indexdef('concur_exprs_index_pred_2'::regclass);
 -- ALTER TABLE recreates the indexes, which should keep their collations.
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE concur_exprs_tab ALTER c2 TYPE TEXT;
 --dg-cascade
 --dg SELECT pg_get_indexdef('concur_exprs_index_expr'::regclass);

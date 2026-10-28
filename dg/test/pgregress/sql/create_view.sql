@@ -62,7 +62,7 @@ CREATE TABLE view_base_table (key int PRIMARY KEY, data varchar(20));
 CREATE VIEW key_dependent_view AS
    SELECT * FROM view_base_table GROUP BY key;
 
---dg-differs: another error: constraint "?" of relation "?" does not exist
+--dg-differs: no error where PostgreSQL has: cannot drop constraint view_base_table_pkey on table view_base_table because other objects depend on it
 --dg ALTER TABLE view_base_table DROP CONSTRAINT view_base_table_pkey;  -- fails
 
 CREATE VIEW key_dependent_view_no_cols AS

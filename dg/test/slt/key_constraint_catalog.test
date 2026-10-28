@@ -19,7 +19,7 @@ query TTTT nosort
 select conname, contype, conindid::regclass::text, conkey::text
   from pg_constraint where conrelid = 'kp'::regclass order by conname
 ----
-kp_b_c_key	u	kp_b_c_key	{2,3}
+kp_b_c_d_key	u	kp_b_c_d_key	{2,3}
 kp_b_key	u	kp_b_key	{2}
 kp_pkey	p	kp_pkey	{1}
 
@@ -27,7 +27,7 @@ query TT nosort
 select conname, pg_get_constraintdef(oid) from pg_constraint
  where conrelid = 'kp'::regclass order by conname
 ----
-kp_b_c_key	UNIQUE (b, c) INCLUDE (d)
+kp_b_c_d_key	UNIQUE (b, c) INCLUDE (d)
 kp_b_key	UNIQUE (b)
 kp_pkey	PRIMARY KEY (a)
 

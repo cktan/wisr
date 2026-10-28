@@ -109,7 +109,7 @@ INSERT INTO document VALUES
     ( 9, 22, 1, 'regress_rls_dave', 'awesome science fiction'),
     (10, 33, 2, 'regress_rls_dave', 'awesome technology book');
 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE document ENABLE ROW LEVEL SECURITY;
 
 -- user's security level must be higher than or equal to document's
@@ -235,7 +235,7 @@ SET row_security TO ON;
 --dg            WHEN current_user = 'regress_rls_carol' THEN cid IN (22, 44)
 --dg            ELSE false END);
 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE category ENABLE ROW LEVEL SECURITY;
 
 -- cannot delete PK referenced by invisible FK
@@ -339,7 +339,7 @@ COPY t1 FROM stdin WITH ;
 --dg \.
 
 CREATE TABLE t3 (id int not null primary key, c text, b text, a int);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE t3 INHERIT t1;
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg GRANT ALL ON t3 TO public;
@@ -355,7 +355,7 @@ COPY t3(id, a,b,c) FROM stdin;
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY p2 ON t2 FOR ALL TO PUBLIC USING (a % 2 = 1); -- be odd number
 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE t1 ENABLE ROW LEVEL SECURITY;
 --dg-cascade
 --dg ALTER TABLE t2 ENABLE ROW LEVEL SECURITY;
@@ -666,7 +666,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM dependent; -- After drop, should be unqualifie
 CREATE TABLE rec1 (x integer, y integer);
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY r1 ON rec1 USING (x = (SELECT r.x FROM rec1 r WHERE y = r.y));
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rec1 ENABLE ROW LEVEL SECURITY;
 --dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
 --dg SET SESSION AUTHORIZATION regress_rls_bob;
@@ -683,7 +683,7 @@ CREATE TABLE rec2 (a integer, b integer);
 --dg ALTER POLICY r1 ON rec1 USING (x = (SELECT a FROM rec2 WHERE b = y));
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY r2 ON rec2 USING (a = (SELECT x FROM rec1 WHERE y = b));
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rec2 ENABLE ROW LEVEL SECURITY;
 
 --dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
@@ -756,9 +756,9 @@ INSERT INTO s2 (SELECT x, public.fipshash(x::text) FROM generate_series(-6,6) x)
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY p3 ON s1 FOR INSERT WITH CHECK (a = (SELECT a FROM s1));
 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE s1 ENABLE ROW LEVEL SECURITY;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE s2 ENABLE ROW LEVEL SECURITY;
 
 --dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
@@ -941,7 +941,7 @@ INSERT INTO b1 (SELECT x, public.fipshash(x::text) FROM generate_series(-10,10) 
 
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY p1 ON b1 USING (a % 2 = 0);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE b1 ENABLE ROW LEVEL SECURITY;
 --dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
 --dg GRANT ALL ON b1 TO regress_rls_bob;
@@ -1389,7 +1389,7 @@ INSERT INTO z1 VALUES
 --dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
 --dg CREATE POLICY p2 ON z1 TO regress_rls_group2 USING (a % 2 = 1);
 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE z1 ENABLE ROW LEVEL SECURITY;
 
 --dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
@@ -1757,7 +1757,7 @@ INSERT INTO x1 VALUES
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY p4 ON x1 FOR DELETE USING (a < 8);
 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE x1 ENABLE ROW LEVEL SECURITY;
 
 --dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
@@ -1796,9 +1796,9 @@ CREATE TABLE y2 (a int, b text);
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY p1 ON y2 FOR ALL USING (a % 2 = 0);  --OK
 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE y1 ENABLE ROW LEVEL SECURITY;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE y2 ENABLE ROW LEVEL SECURITY;
 
 --
@@ -1889,7 +1889,7 @@ RESET SESSION AUTHORIZATION;
 --dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
 --dg CREATE POLICY p2 ON t1 TO regress_rls_carol USING ((a % 4) = 0);
 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE t1 ENABLE ROW LEVEL SECURITY;
 
 -- Prepare as regress_rls_bob
@@ -1923,7 +1923,7 @@ CREATE TABLE t1 (a integer, b text);
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY p1 ON t1 USING (a % 2 = 0);
 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE t1 ENABLE ROW LEVEL SECURITY;
 
 --dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
@@ -2003,7 +2003,7 @@ CREATE TABLE comment (blog_id integer, message text);
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY blog_1 ON blog USING (id % 2 = 0);
 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE blog ENABLE ROW LEVEL SECURITY;
 
 INSERT INTO blog VALUES
@@ -2035,7 +2035,7 @@ INSERT INTO comment VALUES
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY comment_1 ON comment USING (blog_id < 4);
 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE comment ENABLE ROW LEVEL SECURITY;
 
 --dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
@@ -2097,7 +2097,7 @@ CREATE TABLE copy_t (a integer, b text);
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY p1 ON copy_t USING (a % 2 = 0);
 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE copy_t ENABLE ROW LEVEL SECURITY;
 
 --dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
@@ -2146,7 +2146,7 @@ CREATE TABLE copy_rel_to (a integer, b text);
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY p1 ON copy_rel_to USING (a % 2 = 0);
 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE copy_rel_to ENABLE ROW LEVEL SECURITY;
 
 --dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
@@ -2308,7 +2308,7 @@ INSERT INTO current_check VALUES
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY p3 ON current_check FOR UPDATE USING (currentid = 4) WITH CHECK (rlsuser = current_user);
 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE current_check ENABLE ROW LEVEL SECURITY;
 
 --dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
@@ -2360,9 +2360,9 @@ COMMIT;
 BEGIN;
 CREATE TABLE current_check_2 (a int, b text);
 INSERT INTO current_check_2 VALUES (1, 'Apple');
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE current_check_2 ENABLE ROW LEVEL SECURITY;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE current_check_2 FORCE ROW LEVEL SECURITY;
 -- policy must accept ctid = (InvalidBlockNumber,0) since updates check it
 -- before assigning a ctid to the new row
@@ -2412,7 +2412,7 @@ BEGIN;
 CREATE TABLE coll_t (c) AS VALUES ('bar'::text);
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY coll_p ON coll_t USING (c < ('foo'::text COLLATE "C"));
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE coll_t ENABLE ROW LEVEL SECURITY;
 --dg-cascade
 --dg GRANT SELECT ON coll_t TO regress_rls_alice;
@@ -2516,7 +2516,7 @@ INSERT INTO r2 VALUES (10), (20);
 
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY p1 ON r1 USING (true);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r1 ENABLE ROW LEVEL SECURITY;
 
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
@@ -2527,7 +2527,7 @@ INSERT INTO r2 VALUES (10), (20);
 --dg CREATE POLICY p3 ON r2 FOR UPDATE USING (false);
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY p4 ON r2 FOR DELETE USING (false);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r2 ENABLE ROW LEVEL SECURITY;
 
 --dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
@@ -2571,9 +2571,9 @@ INSERT INTO r1 VALUES (10), (20);
 
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY p1 ON r1 USING (false);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r1 ENABLE ROW LEVEL SECURITY;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r1 FORCE ROW LEVEL SECURITY;
 
 -- No error, but no rows
@@ -2620,9 +2620,9 @@ INSERT INTO r2 VALUES (10), (20);
 -- still see them.
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY p1 ON r2 USING (false);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r2 ENABLE ROW LEVEL SECURITY;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r2 FORCE ROW LEVEL SECURITY;
 
 -- Errors due to rows in r2
@@ -2631,9 +2631,9 @@ DELETE FROM r1;
 -- Reset r2 to no-RLS
 --dg-skip: relation pg_policy cannot be opened: digres has no catalog tables
 --dg DROP POLICY p1 ON r2;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r2 NO FORCE ROW LEVEL SECURITY;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r2 DISABLE ROW LEVEL SECURITY;
 
 -- clean out r2 for INSERT test below
@@ -2642,9 +2642,9 @@ DELETE FROM r2;
 -- Change r1 to not allow rows to be seen
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY p1 ON r1 USING (false);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r1 ENABLE ROW LEVEL SECURITY;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r1 FORCE ROW LEVEL SECURITY;
 
 -- No rows seen
@@ -2668,16 +2668,16 @@ INSERT INTO r2 VALUES (10), (20);
 -- still see them.
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY p1 ON r2 USING (false);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r2 ENABLE ROW LEVEL SECURITY;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r2 FORCE ROW LEVEL SECURITY;
 
 -- Deletes all records from both
 DELETE FROM r1;
 
 -- Remove FORCE from r2
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r2 NO FORCE ROW LEVEL SECURITY;
 
 -- As owner, we now bypass RLS
@@ -2698,16 +2698,16 @@ INSERT INTO r2 VALUES (10), (20);
 -- still see them.
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY p1 ON r2 USING (false);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r2 ENABLE ROW LEVEL SECURITY;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r2 FORCE ROW LEVEL SECURITY;
 
 -- Updates records in both
 UPDATE r1 SET a = a+5;
 
 -- Remove FORCE from r2
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r2 NO FORCE ROW LEVEL SECURITY;
 
 -- As owner, we now bypass RLS
@@ -2730,9 +2730,9 @@ CREATE TABLE r1 (a int);
 --dg CREATE POLICY p1 ON r1 FOR SELECT USING (false);
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY p2 ON r1 FOR INSERT WITH CHECK (true);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r1 ENABLE ROW LEVEL SECURITY;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r1 FORCE ROW LEVEL SECURITY;
 
 -- Works fine
@@ -2771,16 +2771,16 @@ CREATE TABLE r1 (a int PRIMARY KEY);
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY p3 ON r1 FOR INSERT WITH CHECK (true);
 INSERT INTO r1 VALUES (10);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r1 ENABLE ROW LEVEL SECURITY;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r1 FORCE ROW LEVEL SECURITY;
 
 -- Works fine
 UPDATE r1 SET a = 30;
 
 -- Show updated rows
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r1 NO FORCE ROW LEVEL SECURITY;
 TABLE r1;
 -- reset value in r1 for test with RETURNING
@@ -2789,7 +2789,7 @@ UPDATE r1 SET a = 10;
 -- Verify row reset
 TABLE r1;
 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r1 FORCE ROW LEVEL SECURITY;
 
 -- Error
@@ -2949,7 +2949,7 @@ INSERT INTO ref_tbl VALUES (1);
 
 CREATE TABLE rls_tbl (a int);
 INSERT INTO rls_tbl VALUES (10);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rls_tbl ENABLE ROW LEVEL SECURITY;
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY p1 ON rls_tbl USING (EXISTS (SELECT 1 FROM ref_tbl));
@@ -2983,7 +2983,7 @@ CREATE TABLE rls_tbl (a int);
 INSERT INTO rls_tbl SELECT x/10 FROM generate_series(1, 100) x;
 ANALYZE rls_tbl;
 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rls_tbl ENABLE ROW LEVEL SECURITY;
 --dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
 --dg GRANT SELECT ON rls_tbl TO regress_rls_alice;
@@ -3098,9 +3098,9 @@ CREATE TABLE rls_tbl (a int, b int, c int);
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY p1 ON rls_tbl USING (rls_tbl >= ROW(1,1,1));
 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rls_tbl ENABLE ROW LEVEL SECURITY;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rls_tbl FORCE ROW LEVEL SECURITY;
 
 INSERT INTO rls_tbl SELECT 10, 20, 30;
@@ -3118,7 +3118,7 @@ RESET SESSION AUTHORIZATION;
 -- CVE-2023-2455: inlining an SRF may introduce an RLS dependency
 create table rls_t (c text);
 insert into rls_t values ('invisible to bob');
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table rls_t enable row level security;
 --dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
 --dg grant select on rls_t to regress_rls_alice, regress_rls_bob;
@@ -3240,7 +3240,7 @@ create table rls_t (c text);
 create table test_t (c text);
 insert into rls_t values ('a'), ('b'), ('c'), ('d');
 insert into test_t values ('a'), ('b');
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table rls_t enable row level security;
 --dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
 --dg grant select on rls_t to regress_rls_alice;
@@ -3319,7 +3319,7 @@ RESET SESSION AUTHORIZATION;
 --dg-cascade
 --dg CREATE SCHEMA regress_rls_schema;
 CREATE TABLE rls_tbl (c1 int);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rls_tbl ENABLE ROW LEVEL SECURITY;
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY p1 ON rls_tbl USING (c1 > 5);
@@ -3331,9 +3331,9 @@ CREATE TABLE rls_tbl (c1 int);
 --dg CREATE POLICY p4 ON rls_tbl FOR DELETE USING (c1 <= 3);
 
 CREATE TABLE rls_tbl_force (c1 int);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rls_tbl_force ENABLE ROW LEVEL SECURITY;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rls_tbl_force FORCE ROW LEVEL SECURITY;
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY p1 ON rls_tbl_force USING (c1 = 5) WITH CHECK (c1 < 5);

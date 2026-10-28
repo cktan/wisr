@@ -354,15 +354,14 @@ alter table stud_emp rename to pg_toast_stud_emp;
 alter table pg_toast_stud_emp rename to stud_emp;
 
 -- renaming index should rename constraint as well
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg ALTER TABLE onek ADD CONSTRAINT onek_unique1_constraint UNIQUE (unique1);
+ALTER TABLE onek ADD CONSTRAINT onek_unique1_constraint UNIQUE (unique1);
 --dg-skip: ALTER INDEX is not supported yet
 --dg ALTER INDEX onek_unique1_constraint RENAME TO onek_unique1_constraint_foo;
 --dg-cascade
 --dg ALTER TABLE onek DROP CONSTRAINT onek_unique1_constraint_foo;
 
 -- renaming constraint
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg ALTER TABLE onek ADD CONSTRAINT onek_check_constraint CHECK (unique1 >= 0);
 --dg-cascade
 --dg ALTER TABLE onek RENAME CONSTRAINT onek_check_constraint TO onek_check_constraint_foo;
@@ -372,9 +371,8 @@ alter table pg_toast_stud_emp rename to stud_emp;
 -- renaming constraint should rename index as well
 --dg-cascade
 --dg ALTER TABLE onek ADD CONSTRAINT onek_unique1_constraint UNIQUE (unique1);
---dg-cascade
---dg DROP INDEX onek_unique1_constraint;  -- to see whether it's there
---dg-cascade
+DROP INDEX onek_unique1_constraint;  -- to see whether it's there
+--dg-skip: constraint "?" of relation "?" does not exist
 --dg ALTER TABLE onek RENAME CONSTRAINT onek_unique1_constraint TO onek_unique1_constraint_foo;
 --dg-cascade
 --dg DROP INDEX onek_unique1_constraint_foo;  -- to see whether it's there
@@ -497,11 +495,11 @@ ALTER TABLE attmp3 validate constraint attmpconstr;
 ALTER TABLE attmp3 validate constraint attmpconstr;
 
 -- Try a non-verified CHECK constraint
---dg-differs: another error: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-differs: another error: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg ALTER TABLE attmp3 ADD CONSTRAINT b_greater_than_ten CHECK (b > 10); -- fail
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg ALTER TABLE attmp3 ADD CONSTRAINT b_greater_than_ten CHECK (b > 10) NOT VALID; -- succeeds
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg ALTER TABLE attmp3 ADD CONSTRAINT b_greater_than_ten_not_enforced CHECK (b > 10) NOT ENFORCED; -- succeeds
 --dg-cascade
 --dg ALTER TABLE attmp3 VALIDATE CONSTRAINT b_greater_than_ten; -- fails
@@ -522,7 +520,7 @@ select * from attmp3;
 
 --dg-cascade
 --dg INSERT INTO attmp6 VALUES (6, 30), (7, 16);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg ALTER TABLE attmp3 ADD CONSTRAINT b_le_20 CHECK (b <= 20) NOT VALID;
 --dg-cascade
 --dg ALTER TABLE attmp3 VALIDATE CONSTRAINT b_le_20;	-- fails
@@ -550,7 +548,7 @@ create table parent_noinh_convalid (a int);
 insert into parent_noinh_convalid values (1);
 --dg-cascade
 --dg insert into child_noinh_convalid values (1);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg alter table parent_noinh_convalid add constraint check_a_is_2 check (a = 2) no inherit not valid;
 -- fail, because of the row in parent
 --dg-cascade
@@ -721,11 +719,11 @@ ALTER TABLE FKTABLE ADD CONSTRAINT fknd FOREIGN KEY(ftest1) REFERENCES pktable
 --dg ALTER TABLE FKTABLE ALTER CONSTRAINT fknd2 NOT DEFERRABLE;
 ALTER TABLE FKTABLE ADD CONSTRAINT fkdd2 FOREIGN KEY(ftest1) REFERENCES pktable
   ON DELETE CASCADE ON UPDATE NO ACTION NOT DEFERRABLE;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE FKTABLE ALTER CONSTRAINT fkdd2 DEFERRABLE INITIALLY DEFERRED;
 ALTER TABLE FKTABLE ADD CONSTRAINT fkdi2 FOREIGN KEY(ftest1) REFERENCES pktable
   ON DELETE CASCADE ON UPDATE NO ACTION NOT DEFERRABLE;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE FKTABLE ALTER CONSTRAINT fkdi2 DEFERRABLE INITIALLY IMMEDIATE;
 
 --dg-cascade
@@ -745,7 +743,7 @@ ALTER TABLE FKTABLE ADD CONSTRAINT fkdi2 FOREIGN KEY(ftest1) REFERENCES pktable
 
 create table atacc1 ( test int );
 -- add a check constraint
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg alter table atacc1 add constraint atacc_test1 check (test>3);
 -- should fail
 --dg-cascade
@@ -759,7 +757,7 @@ create table atacc1 ( test int );
 -- insert a soon to be failing row
 insert into atacc1 (test) values (2);
 -- add a check constraint (fails)
---dg-differs: another error: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-differs: another error: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg alter table atacc1 add constraint atacc_test1 check (test>3);
 insert into atacc1 (test) values (4);
 drop table atacc1;
@@ -767,14 +765,14 @@ drop table atacc1;
 -- let's do one where the check fails because the column doesn't exist
 create table atacc1 ( test int );
 -- add a check constraint (fails)
---dg-differs: another error: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-differs: another error: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg alter table atacc1 add constraint atacc_test1 check (test1>3);
 drop table atacc1;
 
 -- something a little more complicated
 create table atacc1 ( test int, test2 int, test3 int);
 -- add a check constraint (fails)
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg alter table atacc1 add constraint atacc_test1 check (test+test2<test3*4);
 -- should fail
 --dg-cascade
@@ -799,7 +797,7 @@ create table atacc1 (test int);
 create table atacc2 (test2 int);
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg create table atacc3 (test3 int) inherits (atacc1, atacc2);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg alter table atacc2 add constraint foo check (test2>0);
 -- fail and then succeed on atacc2
 --dg-cascade
@@ -830,7 +828,7 @@ create table atacc2 (test2 int);
 --dg insert into atacc3 (test2) values (3);
 select test2 from atacc2;
 -- fail due to missing constraint
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg alter table atacc2 add constraint foo check (test2>0);
 --dg-cascade
 --dg alter table atacc3 inherit atacc2;
@@ -860,7 +858,7 @@ select test2 from atacc2;
 --dg alter table atacc3 inherit atacc2;
 --dg-cascade
 --dg alter table atacc2 inherit atacc3;
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atacc2 inherit atacc2;
 -- test that we really are a child now (should see 4 not 3 and cascade should go through)
 --dg-cascade
@@ -875,7 +873,7 @@ create table atacc1 (test int);
 --dg-cascade
 --dg create table atacc2 (test2 int) inherits (atacc1);
 -- ok:
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg alter table atacc1 add constraint foo check (test>0) no inherit;
 -- check constraint is not there on child
 --dg-cascade
@@ -894,17 +892,15 @@ drop table atacc1;
 
 create table atacc1 ( test int ) ;
 -- add a unique constraint
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg alter table atacc1 add constraint atacc_test1 unique (test);
+alter table atacc1 add constraint atacc_test1 unique (test);
 -- insert first value
 insert into atacc1 (test) values (2);
 -- should fail
---dg-cascade
---dg insert into atacc1 (test) values (2);
+insert into atacc1 (test) values (2);
 -- should succeed
 insert into atacc1 (test) values (4);
 -- try to create duplicates via alter table using - should fail
---dg-cascade
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atacc1 alter column test type integer using 0;
 drop table atacc1;
 
@@ -914,8 +910,7 @@ create table atacc1 ( test int );
 insert into atacc1 (test) values (2);
 insert into atacc1 (test) values (2);
 -- add a unique constraint (fails)
---dg-differs: another error: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg alter table atacc1 add constraint atacc_test1 unique (test);
+alter table atacc1 add constraint atacc_test1 unique (test);
 insert into atacc1 (test) values (3);
 drop table atacc1;
 
@@ -923,20 +918,17 @@ drop table atacc1;
 -- because the column doesn't exist
 create table atacc1 ( test int );
 -- add a unique constraint (fails)
---dg-differs: another error: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg alter table atacc1 add constraint atacc_test1 unique (test1);
+alter table atacc1 add constraint atacc_test1 unique (test1);
 drop table atacc1;
 
 -- something a little more complicated
 create table atacc1 ( test int, test2 int);
 -- add a unique constraint
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg alter table atacc1 add constraint atacc_test1 unique (test, test2);
+alter table atacc1 add constraint atacc_test1 unique (test, test2);
 -- insert initial value
 insert into atacc1 (test,test2) values (4,4);
 -- should fail
---dg-cascade
---dg insert into atacc1 (test,test2) values (4,4);
+insert into atacc1 (test,test2) values (4,4);
 -- should all succeed
 insert into atacc1 (test,test2) values (4,5);
 insert into atacc1 (test,test2) values (5,4);
@@ -945,8 +937,7 @@ drop table atacc1;
 
 -- lets do some naming tests
 create table atacc1 (test int, test2 int, unique(test));
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg alter table atacc1 add unique (test2);
+alter table atacc1 add unique (test2);
 -- should fail for @@ second one @@
 insert into atacc1 (test2, test) values (3, 3);
 insert into atacc1 (test2, test) values (2, 3);
@@ -956,27 +947,21 @@ drop table atacc1;
 
 create table atacc1 ( id serial, test int) ;
 -- add a primary key constraint
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg alter table atacc1 add constraint atacc_test1 primary key (test);
+alter table atacc1 add constraint atacc_test1 primary key (test);
 -- insert first value
 insert into atacc1 (test) values (2);
 -- should fail
---dg-cascade
---dg insert into atacc1 (test) values (2);
+insert into atacc1 (test) values (2);
 -- should succeed
 insert into atacc1 (test) values (4);
 -- inserting NULL should fail
---dg-cascade
---dg insert into atacc1 (test) values(NULL);
+insert into atacc1 (test) values(NULL);
 -- try adding a second primary key (should fail)
---dg-cascade
---dg alter table atacc1 add constraint atacc_oid1 primary key(id);
+alter table atacc1 add constraint atacc_oid1 primary key(id);
 -- drop first primary key constraint
---dg-cascade
---dg alter table atacc1 drop constraint atacc_test1 restrict;
+alter table atacc1 drop constraint atacc_test1 restrict;
 -- try adding a primary key on oid (should succeed)
---dg-cascade
---dg alter table atacc1 add constraint atacc_oid1 primary key(id);
+alter table atacc1 add constraint atacc_oid1 primary key(id);
 drop table atacc1;
 
 -- let's do one where the primary key constraint fails when added
@@ -985,8 +970,7 @@ create table atacc1 ( test int );
 insert into atacc1 (test) values (2);
 insert into atacc1 (test) values (2);
 -- add a primary key (fails)
---dg-differs: another error: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg alter table atacc1 add constraint atacc_test1 primary key (test);
+alter table atacc1 add constraint atacc_test1 primary key (test);
 insert into atacc1 (test) values (3);
 drop table atacc1;
 
@@ -995,8 +979,7 @@ create table atacc1 ( test int );
 -- insert soon to be failing row
 insert into atacc1 (test) values (NULL);
 -- add a primary key (fails)
---dg-differs: another error: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg alter table atacc1 add constraint atacc_test1 primary key (test);
+alter table atacc1 add constraint atacc_test1 primary key (test);
 insert into atacc1 (test) values (3);
 drop table atacc1;
 
@@ -1004,8 +987,7 @@ drop table atacc1;
 -- because the column doesn't exist
 create table atacc1 ( test int );
 -- add a primary key constraint (fails)
---dg-differs: another error: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg alter table atacc1 add constraint atacc_test1 primary key (test1);
+alter table atacc1 add constraint atacc_test1 primary key (test1);
 drop table atacc1;
 
 -- adding a new column as primary key to a non-empty table.
@@ -1023,17 +1005,16 @@ drop table atacc1;
 -- this combination used to have order-of-execution problems (bug #15580)
 create table atacc1 (a int);
 insert into atacc1 values(1);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg alter table atacc1
---dg   add column b float8 not null default random(),
---dg   add primary key(a);
+alter table atacc1
+  add column b float8 not null default random(),
+  add primary key(a);
 drop table atacc1;
 
 -- additionally, we've seen issues with foreign key validation not being
 -- properly delayed until after a table rewrite.  Check that works ok.
 create table atacc1 (a int primary key);
 alter table atacc1 add constraint atacc1_fkey foreign key (a) references atacc1 (a) not valid;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atacc1 validate constraint atacc1_fkey, alter a type bigint;
 drop table atacc1;
 
@@ -1041,7 +1022,7 @@ drop table atacc1;
 -- time when there's a pending table rewrite.
 create table atacc1 (a bigint, b int);
 insert into atacc1 values(1,1);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg alter table atacc1 add constraint atacc1_chk check(b = 1) not valid;
 --dg-cascade
 --dg alter table atacc1 validate constraint atacc1_chk, alter a type int;
@@ -1050,7 +1031,7 @@ drop table atacc1;
 -- same as above, but ensure the constraint violation is detected
 create table atacc1 (a bigint, b int);
 insert into atacc1 values(1,2);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg alter table atacc1 add constraint atacc1_chk check(b = 1) not valid;
 --dg-cascade
 --dg alter table atacc1 validate constraint atacc1_chk, alter a type int;
@@ -1059,28 +1040,20 @@ drop table atacc1;
 -- something a little more complicated
 create table atacc1 ( test int, test2 int);
 -- add a primary key constraint
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg alter table atacc1 add constraint atacc_test1 primary key (test, test2);
+alter table atacc1 add constraint atacc_test1 primary key (test, test2);
 -- try adding a second primary key - should fail
---dg-cascade
---dg alter table atacc1 add constraint atacc_test2 primary key (test);
+alter table atacc1 add constraint atacc_test2 primary key (test);
 -- insert initial value
 insert into atacc1 (test,test2) values (4,4);
 -- should fail
---dg-cascade
---dg insert into atacc1 (test,test2) values (4,4);
---dg-differs: no error where PostgreSQL has: null value in column "?" of relation "?" violates not-null constraint
---dg insert into atacc1 (test,test2) values (NULL,3);
---dg-cascade
---dg insert into atacc1 (test,test2) values (3, NULL);
---dg-cascade
---dg insert into atacc1 (test,test2) values (NULL,NULL);
+insert into atacc1 (test,test2) values (4,4);
+insert into atacc1 (test,test2) values (NULL,3);
+insert into atacc1 (test,test2) values (3, NULL);
+insert into atacc1 (test,test2) values (NULL,NULL);
 -- should all succeed
---dg-cascade
---dg insert into atacc1 (test,test2) values (4,5);
+insert into atacc1 (test,test2) values (4,5);
 insert into atacc1 (test,test2) values (5,4);
---dg-cascade
---dg insert into atacc1 (test,test2) values (5,5);
+insert into atacc1 (test,test2) values (5,5);
 drop table atacc1;
 
 -- lets do some naming tests
@@ -1093,9 +1066,9 @@ drop table atacc1;
 
 -- alter table / alter column [set/drop] not null tests
 -- try altering system catalogs, should fail
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table pg_class alter column relname drop not null;
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table pg_class alter relname set not null;
 
 -- try altering non-existent table, should fail
@@ -1105,17 +1078,13 @@ alter table non_existent alter column bar drop not null;
 -- test setting columns to null and not null and vice versa
 -- test checking for null values and primary key
 create table atacc1 (test int not null);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg alter table atacc1 add constraint "atacc1_pkey" primary key (test);
---dg-cascade
---dg \d atacc1
---dg-cascade
+alter table atacc1 add constraint "atacc1_pkey" primary key (test);
+\d atacc1
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atacc1 alter column test drop not null;
---dg-cascade
---dg \d atacc1
---dg-cascade
---dg alter table atacc1 drop constraint "atacc1_pkey";
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+\d atacc1
+alter table atacc1 drop constraint "atacc1_pkey";
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atacc1 alter column test drop not null;
 --dg-cascade
 --dg \d atacc1
@@ -1124,13 +1093,13 @@ create table atacc1 (test int not null);
 --dg-cascade
 --dg alter table atacc1 alter test set not null;
 delete from atacc1;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atacc1 alter test set not null;
 
 -- try altering a non-existent column, should fail
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atacc1 alter bar set not null;
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atacc1 alter bar drop not null;
 
 -- try creating a view and altering that, should fail
@@ -1147,49 +1116,49 @@ drop table atacc1;
 create table atacc1 (test_a int, test_b int);
 insert into atacc1 values (null, 1);
 -- constraint not cover all values, should fail
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg alter table atacc1 add constraint atacc1_constr_or check(test_a is not null or test_b < 10);
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atacc1 alter test_a set not null;
 --dg-cascade
 --dg alter table atacc1 drop constraint atacc1_constr_or;
 -- not valid constraint, should fail
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg alter table atacc1 add constraint atacc1_constr_invalid check(test_a is not null) not valid;
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atacc1 alter test_a set not null;
 --dg-cascade
 --dg alter table atacc1 drop constraint atacc1_constr_invalid;
 -- with valid constraint
 update atacc1 set test_a = 1;
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg alter table atacc1 add constraint atacc1_constr_a_valid check(test_a is not null);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atacc1 alter test_a set not null;
 delete from atacc1;
 
 insert into atacc1 values (2, null);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atacc1 alter test_a drop not null;
 -- test multiple set not null at same time
 -- test_a checked by atacc1_constr_a_valid, test_b should fail by table scan
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atacc1 alter test_a set not null, alter test_b set not null;
 -- commands order has no importance
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atacc1 alter test_b set not null, alter test_a set not null;
 
 -- valid one by table scan, one by check constraints
 update atacc1 set test_b = 1;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atacc1 alter test_b set not null, alter test_a set not null;
 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atacc1 alter test_a drop not null, alter test_b drop not null;
 -- both column has check constraints
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg alter table atacc1 add constraint atacc1_constr_b_valid check(test_b is not null);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atacc1 alter test_b set not null, alter test_a set not null;
 drop table atacc1;
 
@@ -1199,10 +1168,9 @@ drop table atacc1;
 --dg-cascade
 --dg ALTER TABLE atnnparted ADD CONSTRAINT dummy_constr NOT NULL id NOT VALID;
 CREATE TABLE atnnpart1 (col1 int, id int);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg ALTER TABLE atnnpart1 ADD CONSTRAINT another_constr NOT NULL id;
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg ALTER TABLE atnnpart1 ADD PRIMARY KEY (id);
+ALTER TABLE atnnpart1 ADD PRIMARY KEY (id);
 --dg-cascade
 --dg ALTER TABLE atnnparted ATTACH PARTITION atnnpart1 FOR VALUES IN ('1');
 --dg-cascade
@@ -1220,18 +1188,18 @@ create table parent (a int);
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg create table child (b varchar(255)) inherits (parent);
 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table parent alter a set not null;
 --dg-cascade
 --dg insert into parent values (NULL);
 --dg-cascade
 --dg insert into child (a, b) values (NULL, 'foo');
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table parent alter a drop not null;
 insert into parent values (NULL);
 --dg-cascade
 --dg insert into child (a, b) values (NULL, 'foo');
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table only parent alter a set not null;
 --dg-cascade
 --dg alter table child alter a set not null;
@@ -1245,28 +1213,28 @@ create table def_test (
 	c2	text default 'initial_default'
 );
 insert into def_test default values;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table def_test alter column c1 drop default;
 insert into def_test default values;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table def_test alter column c2 drop default;
 insert into def_test default values;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table def_test alter column c1 set default 10;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table def_test alter column c2 set default 'new_default';
 insert into def_test default values;
 --dg-cascade
 --dg select * from def_test;
 
 -- set defaults to an incorrect type: this should fail
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table def_test alter column c1 set default 'wrong_datatype';
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table def_test alter column c2 set default 20;
 
 -- set defaults on a non-existent column: this should fail
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table def_test alter column c3 set default 30;
 
 -- set defaults on views: we need to create a view, add a rule
@@ -1351,7 +1319,7 @@ delete from atacc1;
 alter table atacc1 drop bar;
 
 -- try removing an oid column, should succeed (as it's nonexistent)
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atacc1 SET WITHOUT OIDS;
 
 -- try adding an oid column, should fail (not supported)
@@ -1381,43 +1349,39 @@ drop view myview;
 --dg comment on column atacc1.a is 'testing';
 --dg-differs: another error: COMMENT is not supported yet
 --dg comment on column atacc1."........pg.dropped.1........" is 'testing';
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atacc1 alter a set storage plain;
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atacc1 alter "........pg.dropped.1........" set storage plain;
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atacc1 alter a set statistics 0;
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atacc1 alter "........pg.dropped.1........" set statistics 0;
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atacc1 alter a set default 3;
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atacc1 alter "........pg.dropped.1........" set default 3;
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atacc1 alter a drop default;
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atacc1 alter "........pg.dropped.1........" drop default;
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atacc1 alter a set not null;
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atacc1 alter "........pg.dropped.1........" set not null;
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atacc1 alter a drop not null;
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atacc1 alter "........pg.dropped.1........" drop not null;
 alter table atacc1 rename a to x;
 alter table atacc1 rename "........pg.dropped.1........" to x;
---dg-differs: another error: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg alter table atacc1 add primary key(a);
---dg-differs: another error: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg alter table atacc1 add primary key("........pg.dropped.1........");
---dg-differs: another error: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg alter table atacc1 add unique(a);
---dg-differs: another error: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg alter table atacc1 add unique("........pg.dropped.1........");
---dg-differs: another error: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+alter table atacc1 add primary key(a);
+alter table atacc1 add primary key("........pg.dropped.1........");
+alter table atacc1 add unique(a);
+alter table atacc1 add unique("........pg.dropped.1........");
+--dg-differs: another error: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg alter table atacc1 add check (a > 3);
---dg-differs: another error: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-differs: another error: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg alter table atacc1 add check ("........pg.dropped.1........" > 3);
 create table atacc2 (id int4 unique);
 alter table atacc1 add foreign key (a) references atacc2(id);
@@ -1851,31 +1815,30 @@ create table depth0();
 -- Test index handling in alter table column type (cf. bugs #15835, #15865)
 create table anothertab(f1 int primary key, f2 int unique,
                         f3 int, f4 int, f5 int);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg alter table anothertab
 --dg   add exclude using btree (f3 with =);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg alter table anothertab
 --dg   add exclude using btree (f4 with =) where (f4 is not null);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg alter table anothertab
 --dg   add exclude using btree (f4 with =) where (f5 > 0);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg alter table anothertab
---dg   add unique(f1,f4);
+alter table anothertab
+  add unique(f1,f4);
 create index on anothertab(f2,f3);
 create unique index on anothertab(f4);
 
 --dg-cascade
 --dg \d anothertab
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table anothertab alter column f1 type bigint;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table anothertab
 --dg   alter column f2 type bigint,
 --dg   alter column f3 type bigint,
 --dg   alter column f4 type bigint;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table anothertab alter column f5 type bigint;
 --dg-cascade
 --dg \d anothertab
@@ -1891,7 +1854,7 @@ insert into another values(3, 'three', 'tre');
 
 select * from another;
 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table another
 --dg   alter f1 type text using f2 || ' and ' || f3 || ' more',
 --dg   alter f2 type bigint using f1 * 10,
@@ -1906,7 +1869,7 @@ drop table another;
 -- rewriting the index.
 begin;
 create table skip_wal_skip_rewrite_index (c varchar(10) primary key);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table skip_wal_skip_rewrite_index alter c type varchar(20);
 commit;
 
@@ -1921,7 +1884,7 @@ create table at_tab1 (a int, b text);
 -- Use of row type in an expression is defended differently
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg create table at_tab2 (x int, y text, check((x,y)::at_tab1 = (1,'42')::at_tab1));
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table at_tab1 alter column b type varchar; -- allowed, but ...
 --dg-cascade
 --dg insert into at_tab2 values(1,'42'); -- ... this will fail
@@ -2067,14 +2030,14 @@ create table test_storage (a text, c text storage plain);
 --dg-differs: the result
 --dg select reltoastrelid <> 0 as has_toast_table
 --dg   from pg_class where oid = 'test_storage'::regclass;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table test_storage alter a set storage plain;
 -- rewrite table to remove its TOAST table; need a non-constant column default
 alter table test_storage add b int default random()::int;
 --dg-cascade
 --dg select reltoastrelid <> 0 as has_toast_table
 --dg   from pg_class where oid = 'test_storage'::regclass;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table test_storage alter a set storage default; -- re-add TOAST table
 --dg-differs: the result
 --dg select reltoastrelid <> 0 as has_toast_table
@@ -2086,7 +2049,7 @@ alter table test_storage add b int default random()::int;
 
 -- test that SET STORAGE propagates to index correctly
 create index test_storage_idx on test_storage (b, a);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table test_storage alter column a set storage external;
 --dg-cascade
 --dg \d+ test_storage
@@ -2156,23 +2119,23 @@ CREATE TABLE test_type_diff (f1 int);
 ALTER TABLE test_type_diff ADD COLUMN f2 int;
 --dg-cascade
 --dg INSERT INTO test_type_diff_c VALUES (1, 2, 3);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE test_type_diff ALTER COLUMN f2 TYPE bigint USING f2::bigint;
 
 CREATE TABLE test_type_diff2 (int_two int2, int_four int4, int_eight int8);
 CREATE TABLE test_type_diff2_c1 (int_four int4, int_eight int8, int_two int2);
 CREATE TABLE test_type_diff2_c2 (int_eight int8, int_two int2, int_four int4);
 CREATE TABLE test_type_diff2_c3 (int_two int2, int_four int4, int_eight int8);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE test_type_diff2_c1 INHERIT test_type_diff2;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE test_type_diff2_c2 INHERIT test_type_diff2;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE test_type_diff2_c3 INHERIT test_type_diff2;
 INSERT INTO test_type_diff2_c1 VALUES (1, 2, 3);
 INSERT INTO test_type_diff2_c2 VALUES (4, 5, 6);
 INSERT INTO test_type_diff2_c3 VALUES (7, 8, 9);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE test_type_diff2 ALTER COLUMN int_four TYPE int8 USING int_four::int8;
 -- whole-row references are disallowed
 --dg-cascade
@@ -2344,56 +2307,56 @@ create table alterlock2 (f3 int primary key, f1 int);
 insert into alterlock2 values (1, 1);
 
 begin; 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table alterlock alter column f2 set statistics 150;
 --dg-cascade
 --dg select * from my_locks order by 1;
 rollback;
 
 begin; 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table alterlock cluster on alterlock_pkey;
 --dg-cascade
 --dg select * from my_locks order by 1;
 commit;
 
 begin; 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table alterlock set without cluster;
 --dg-cascade
 --dg select * from my_locks order by 1;
 commit;
 
 begin; 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table alterlock set (fillfactor = 100);
 --dg-cascade
 --dg select * from my_locks order by 1;
 commit;
 
 begin; 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table alterlock reset (fillfactor);
 --dg-cascade
 --dg select * from my_locks order by 1;
 commit;
 
 begin; 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table alterlock set (toast.autovacuum_enabled = off);
 --dg-cascade
 --dg select * from my_locks order by 1;
 commit;
 
 begin; 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table alterlock set (autovacuum_enabled = off);
 --dg-cascade
 --dg select * from my_locks order by 1;
 commit;
 
 begin; 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table alterlock alter column f2 set (n_distinct = 1);
 --dg-cascade
 --dg select * from my_locks order by 1;
@@ -2401,21 +2364,21 @@ rollback;
 
 -- test that mixing options with different lock levels works as expected
 begin; 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table alterlock set (autovacuum_enabled = off, fillfactor = 80);
 --dg-cascade
 --dg select * from my_locks order by 1;
 commit;
 
 begin; 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table alterlock alter column f2 set storage extended;
 --dg-cascade
 --dg select * from my_locks order by 1;
 rollback;
 
 begin; 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table alterlock alter column f2 set default 'x';
 --dg-cascade
 --dg select * from my_locks order by 1;
@@ -2871,11 +2834,10 @@ CREATE TABLE tt8(a int);
 --dg CREATE SCHEMA alter2;
 
 ALTER TABLE IF EXISTS tt8 ADD COLUMN f int;
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg ALTER TABLE IF EXISTS tt8 ADD CONSTRAINT xxx PRIMARY KEY(f);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+ALTER TABLE IF EXISTS tt8 ADD CONSTRAINT xxx PRIMARY KEY(f);
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg ALTER TABLE IF EXISTS tt8 ADD CHECK (f BETWEEN 0 AND 10);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE IF EXISTS tt8 ALTER COLUMN f SET DEFAULT 0;
 ALTER TABLE IF EXISTS tt8 RENAME COLUMN f TO f1;
 --dg-skip: ALTER TABLE is not supported yet
@@ -2892,28 +2854,24 @@ DROP SCHEMA alter2;
 -- Check conflicts between index and CHECK constraint names
 --
 CREATE TABLE tt9(c integer);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg ALTER TABLE tt9 ADD CHECK(c > 1);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg ALTER TABLE tt9 ADD CHECK(c > 2);  -- picks nonconflicting name
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg ALTER TABLE tt9 ADD CONSTRAINT foo CHECK(c > 3);
 --dg-cascade
 --dg ALTER TABLE tt9 ADD CONSTRAINT foo CHECK(c > 4);  -- fail, dup name
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg ALTER TABLE tt9 ADD UNIQUE(c);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg ALTER TABLE tt9 ADD UNIQUE(c);  -- picks nonconflicting name
---dg-cascade
---dg ALTER TABLE tt9 ADD CONSTRAINT tt9_c_key UNIQUE(c);  -- fail, dup name
---dg-cascade
+ALTER TABLE tt9 ADD UNIQUE(c);
+ALTER TABLE tt9 ADD UNIQUE(c);  -- picks nonconflicting name
+ALTER TABLE tt9 ADD CONSTRAINT tt9_c_key UNIQUE(c);  -- fail, dup name
+--dg-differs: no error where PostgreSQL has: constraint "?" for relation "?" already exists
 --dg ALTER TABLE tt9 ADD CONSTRAINT foo UNIQUE(c);  -- fail, dup name
---dg-differs: another error: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-differs: another error: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg ALTER TABLE tt9 ADD CONSTRAINT tt9_c_key CHECK(c > 5);  -- fail, dup name
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg ALTER TABLE tt9 ADD CONSTRAINT tt9_c_key2 CHECK(c > 6);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg ALTER TABLE tt9 ADD UNIQUE(c);  -- picks nonconflicting name
+ALTER TABLE tt9 ADD UNIQUE(c);  -- picks nonconflicting name
 --dg-cascade
 --dg \d tt9
 DROP TABLE tt9;
@@ -3054,8 +3012,7 @@ INSERT INTO old_system_table(othercol) VALUES ('somedata'), ('otherdata');
 UPDATE old_system_table SET id = -id;
 DELETE FROM old_system_table WHERE othercol = 'somedata';
 TRUNCATE old_system_table;
---dg-skip: constraint "?" of relation "?" does not exist
---dg ALTER TABLE old_system_table DROP CONSTRAINT new_system_table_pkey;
+ALTER TABLE old_system_table DROP CONSTRAINT new_system_table_pkey;
 --dg-skip: cannot drop column othercol of table old_system_table because other objects depend on it
 --dg ALTER TABLE old_system_table DROP COLUMN othercol;
 DROP TABLE old_system_table;
@@ -3110,11 +3067,11 @@ CREATE TABLE logged1(f1 SERIAL PRIMARY KEY, f2 TEXT); -- has sequence, toast
 --dg ORDER BY relname;
 CREATE TABLE logged2(f1 SERIAL PRIMARY KEY, f2 INTEGER REFERENCES logged1); -- foreign key
 CREATE TABLE logged3(f1 SERIAL PRIMARY KEY, f2 INTEGER REFERENCES logged3); -- self-referencing foreign key
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE logged1 SET UNLOGGED; -- fails because a foreign key from a permanent table exists
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE logged3 SET UNLOGGED; -- skip self-referencing foreign key
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE logged2 SET UNLOGGED;
 --dg-cascade
 --dg ALTER TABLE logged1 SET UNLOGGED;
@@ -3201,7 +3158,7 @@ DROP TABLE test_add_column;
 CREATE TABLE ataddindex(f1 INT);
 INSERT INTO ataddindex VALUES (42), (43);
 CREATE UNIQUE INDEX ataddindexi0 ON ataddindex(f1);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE ataddindex
 --dg   ADD PRIMARY KEY USING INDEX ataddindexi0,
 --dg   ALTER f1 TYPE BIGINT;
@@ -3211,7 +3168,7 @@ DROP TABLE ataddindex;
 
 CREATE TABLE ataddindex(f1 VARCHAR(10));
 INSERT INTO ataddindex(f1) VALUES ('foo'), ('a');
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE ataddindex
 --dg   ALTER f1 SET DATA TYPE TEXT,
 --dg   ADD EXCLUDE ((f1 LIKE 'a') WITH =);
@@ -3220,16 +3177,14 @@ INSERT INTO ataddindex(f1) VALUES ('foo'), ('a');
 DROP TABLE ataddindex;
 
 CREATE TABLE ataddindex(id int, ref_id int);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg ALTER TABLE ataddindex
---dg   ADD PRIMARY KEY (id),
---dg   ADD FOREIGN KEY (ref_id) REFERENCES ataddindex;
---dg-cascade
---dg \d ataddindex
+ALTER TABLE ataddindex
+  ADD PRIMARY KEY (id),
+  ADD FOREIGN KEY (ref_id) REFERENCES ataddindex;
+\d ataddindex
 DROP TABLE ataddindex;
 
 CREATE TABLE ataddindex(id int, ref_id int);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: there is no unique constraint matching given keys for referenced table "?"
 --dg ALTER TABLE ataddindex
 --dg   ADD UNIQUE (id),
 --dg   ADD FOREIGN KEY (ref_id) REFERENCES ataddindex (id);
@@ -3238,18 +3193,17 @@ CREATE TABLE ataddindex(id int, ref_id int);
 DROP TABLE ataddindex;
 
 CREATE TABLE atnotnull1 ();
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE atnotnull1
 --dg   ADD COLUMN a INT,
 --dg   ALTER a SET NOT NULL;
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg ALTER TABLE atnotnull1
 --dg   ADD COLUMN b INT,
 --dg   ADD NOT NULL b;
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg ALTER TABLE atnotnull1
---dg   ADD COLUMN c INT,
---dg   ADD PRIMARY KEY (c);
+ALTER TABLE atnotnull1
+  ADD COLUMN c INT,
+  ADD PRIMARY KEY (c);
 --dg-cascade
 --dg \d+ atnotnull1
 
@@ -3298,7 +3252,7 @@ CREATE TABLE unparted (
 	a int
 );
 CREATE TABLE fail_part (like unparted);
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE unparted ATTACH PARTITION fail_part FOR VALUES IN ('a');
 DROP TABLE unparted, fail_part;
 
@@ -3409,7 +3363,7 @@ CREATE TABLE fail_part (
 );
 --dg-cascade
 --dg ALTER TABLE list_parted ATTACH PARTITION fail_part FOR VALUES IN (1);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE fail_part ALTER b TYPE char (2) COLLATE "POSIX";
 --dg-cascade
 --dg ALTER TABLE list_parted ATTACH PARTITION fail_part FOR VALUES IN (1);
@@ -3797,11 +3751,11 @@ DROP TABLE fail_part;
 
 -- check that the table is partitioned at all
 CREATE TABLE regular_table (a int);
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE regular_table DETACH PARTITION any_name;
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE regular_table DETACH PARTITION any_name CONCURRENTLY;
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE regular_table DETACH PARTITION any_name FINALIZE;
 DROP TABLE regular_table;
 
@@ -4053,9 +4007,9 @@ drop table p1;
 -- test alter column options
 CREATE TABLE attmp(i integer);
 INSERT INTO attmp VALUES (1);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE attmp ALTER COLUMN i SET (n_distinct = 1, n_distinct_inherited = 2);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE attmp ALTER COLUMN i RESET (n_distinct_inherited);
 ANALYZE attmp;
 DROP TABLE attmp;
@@ -4078,7 +4032,7 @@ insert into defpart_attach_test_d values (1), (2);
 --dg-cascade
 --dg alter table defpart_attach_test attach partition defpart_attach_test_d default;
 delete from defpart_attach_test_d where a = 1;
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
+--dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg alter table defpart_attach_test_d add check (a > 1);
 
 -- should be attached successfully and without needing to be scanned
@@ -4210,19 +4164,19 @@ create table attbl (p1 int constraint pk_attbl primary key);
 create table atref (c1 int references attbl(p1));
 --dg-differs: the result
 --dg cluster attbl using pk_attbl;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table attbl alter column p1 set data type bigint;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atref alter column c1 set data type bigint;
 drop table attbl, atref;
 
 create table attbl (p1 int constraint pk_attbl primary key);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table attbl replica identity using index pk_attbl;
 create table atref (c1 int references attbl(p1));
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table attbl alter column p1 set data type bigint;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table atref alter column c1 set data type bigint;
 drop table attbl, atref;
 
@@ -4257,30 +4211,29 @@ create table attbl(a int);
 -- Test that ALTER TABLE rewrite preserves a clustered index
 -- for normal indexes and indexes on constraints.
 create table alttype_cluster (a int);
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg alter table alttype_cluster add primary key (a);
+alter table alttype_cluster add primary key (a);
 create index alttype_cluster_ind on alttype_cluster (a);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table alttype_cluster cluster on alttype_cluster_ind;
 -- Normal index remains clustered.
 --dg-cascade
 --dg select indexrelid::regclass, indisclustered from pg_index
 --dg   where indrelid = 'alttype_cluster'::regclass
 --dg   order by indexrelid::regclass::text;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table alttype_cluster alter a type bigint;
 --dg-cascade
 --dg select indexrelid::regclass, indisclustered from pg_index
 --dg   where indrelid = 'alttype_cluster'::regclass
 --dg   order by indexrelid::regclass::text;
 -- Constraint index remains clustered.
---dg-cascade
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table alttype_cluster cluster on alttype_cluster_pkey;
 --dg-cascade
 --dg select indexrelid::regclass, indisclustered from pg_index
 --dg   where indrelid = 'alttype_cluster'::regclass
 --dg   order by indexrelid::regclass::text;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table alttype_cluster alter a type int;
 --dg-cascade
 --dg select indexrelid::regclass, indisclustered from pg_index

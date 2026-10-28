@@ -144,9 +144,9 @@ UPDATE FKTABLE SET ftest1 = NULL WHERE ftest1 = 1;
 UPDATE FKTABLE SET ftest1 = 1 WHERE ftest1 = 1;
 
 -- Try altering the column type where foreign keys are involved
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE PKTABLE ALTER COLUMN ptest1 TYPE bigint;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE FKTABLE ALTER COLUMN ftest1 TYPE bigint;
 SELECT * FROM PKTABLE;
 SELECT * FROM FKTABLE;
@@ -1322,7 +1322,7 @@ select * from defc;
 delete from defp where f1 = 2;
 select * from defc;
 delete from defp where f1 = 0; -- fail
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table defc alter column f1 set default 1;
 --dg-cascade
 --dg delete from defp where f1 = 0;
@@ -1628,7 +1628,7 @@ INSERT INTO fk_notpartitioned_pk (a,b) VALUES (2502, 2503);
 --dg INSERT INTO fk_notpartitioned_pk VALUES (1);
 --dg-cascade
 --dg INSERT INTO fk_partitioned_fk VALUES (1);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE fk_notpartitioned_pk ALTER COLUMN a TYPE bigint;
 --dg-cascade
 --dg DELETE FROM fk_notpartitioned_pk WHERE a = 1;
@@ -2711,7 +2711,7 @@ ABORT;
 --dg CREATE TABLE pt2 PARTITION OF pt FOR VALUES IN (2);
 CREATE TABLE ref(f1 int, f2 int, f3 int);
 ALTER TABLE ref ADD FOREIGN KEY(f1,f2) REFERENCES pt;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE ref ALTER CONSTRAINT ref_f1_f2_fkey
 --dg   DEFERRABLE INITIALLY DEFERRED;
 --dg-cascade

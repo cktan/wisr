@@ -443,6 +443,8 @@ Each step leaves every suite passing.
    step 2, and the system column renamed `_id` (§10, question
    1) with its step 3.
 3. **digres's DDL.** ADD and DROP PRIMARY KEY, and the
-   key-column ALTERs, through the rewrite.
+   key-column ALTERs, through the rewrite. ADD and DROP are
+   built (`../dg/PKDDL.md`); the ALTERs wait for `ALTER
+   COLUMN TYPE`.
 4. **The documents of §9**, each as its step lands, and this
    file marked built. Brought up to `ROWKEY.md`'s step 4.

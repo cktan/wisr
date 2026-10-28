@@ -2700,7 +2700,7 @@ create table uv_iocu_tab (a int unique, b text);
 --dg-cascade
 --dg select * from uv_iocu_view;
 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table uv_iocu_tab alter column b set default 'table default';
 --dg-cascade
 --dg insert into uv_iocu_view (aa) values (1)

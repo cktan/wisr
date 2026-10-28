@@ -2718,8 +2718,27 @@ SELECT * FROM t2;
  10
 (16 rows)
 
---dg-differs: the result
---dg SELECT * FROM y;
+SELECT * FROM y;
+ a  
+----
+  0
+  1
+  2
+  3
+  4
+  5
+  6
+ 11
+  7
+ 12
+  8
+ 13
+  9
+ 14
+ 10
+ 15
+(16 rows)
+
 -- unconditional DO INSTEAD rule
 --dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
 --dg CREATE RULE y_rule AS ON DELETE TO y DO INSTEAD
@@ -2915,8 +2934,7 @@ SELECT q1 FROM
 --dg SELECT * FROM y;
 -- data-modifying WITH containing INSERT...ON CONFLICT DO UPDATE
 CREATE TABLE withz AS SELECT i AS k, (i || ' v')::text v FROM generate_series(1, 16, 3) i;
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg ALTER TABLE withz ADD UNIQUE (k);
+ALTER TABLE withz ADD UNIQUE (k);
 --dg-cascade
 --dg WITH t AS (
 --dg     INSERT INTO withz SELECT i, 'insert'
@@ -2926,13 +2944,16 @@ CREATE TABLE withz AS SELECT i AS k, (i || ' v')::text v FROM generate_series(1,
 --dg )
 --dg SELECT * FROM t JOIN y ON t.k = y.a ORDER BY a, k;
 -- Test EXCLUDED.* reference within CTE
---dg-cascade
---dg WITH aa AS (
---dg     INSERT INTO withz VALUES(1, 5) ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v
---dg     WHERE withz.k != EXCLUDED.k
---dg     RETURNING *
---dg )
---dg SELECT * FROM aa;
+WITH aa AS (
+    INSERT INTO withz VALUES(1, 5) ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v
+    WHERE withz.k != EXCLUDED.k
+    RETURNING *
+)
+SELECT * FROM aa;
+ k | v 
+---+---
+(0 rows)
+
 -- New query/snapshot demonstrates side-effects of previous query.
 --dg-cascade
 --dg SELECT * FROM withz ORDER BY k;
@@ -2940,26 +2961,21 @@ CREATE TABLE withz AS SELECT i AS k, (i || ' v')::text v FROM generate_series(1,
 -- Ensure subqueries within the update clause work, even if they
 -- reference outside values
 --
---dg-cascade
---dg WITH aa AS (SELECT 1 a, 2 b)
---dg INSERT INTO withz VALUES(1, 'insert')
---dg ON CONFLICT (k) DO UPDATE SET v = (SELECT b || ' update' FROM aa WHERE a = 1 LIMIT 1);
---dg-cascade
---dg WITH aa AS (SELECT 1 a, 2 b)
---dg INSERT INTO withz VALUES(1, 'insert')
---dg ON CONFLICT (k) DO UPDATE SET v = ' update' WHERE withz.k = (SELECT a FROM aa);
---dg-cascade
---dg WITH aa AS (SELECT 1 a, 2 b)
---dg INSERT INTO withz VALUES(1, 'insert')
---dg ON CONFLICT (k) DO UPDATE SET v = (SELECT b || ' update' FROM aa WHERE a = 1 LIMIT 1);
---dg-cascade
---dg WITH aa AS (SELECT 'a' a, 'b' b UNION ALL SELECT 'a' a, 'b' b)
---dg INSERT INTO withz VALUES(1, 'insert')
---dg ON CONFLICT (k) DO UPDATE SET v = (SELECT b || ' update' FROM aa WHERE a = 'a' LIMIT 1);
---dg-cascade
---dg WITH aa AS (SELECT 1 a, 2 b)
---dg INSERT INTO withz VALUES(1, (SELECT b || ' insert' FROM aa WHERE a = 1 ))
---dg ON CONFLICT (k) DO UPDATE SET v = (SELECT b || ' update' FROM aa WHERE a = 1 LIMIT 1);
+WITH aa AS (SELECT 1 a, 2 b)
+INSERT INTO withz VALUES(1, 'insert')
+ON CONFLICT (k) DO UPDATE SET v = (SELECT b || ' update' FROM aa WHERE a = 1 LIMIT 1);
+WITH aa AS (SELECT 1 a, 2 b)
+INSERT INTO withz VALUES(1, 'insert')
+ON CONFLICT (k) DO UPDATE SET v = ' update' WHERE withz.k = (SELECT a FROM aa);
+WITH aa AS (SELECT 1 a, 2 b)
+INSERT INTO withz VALUES(1, 'insert')
+ON CONFLICT (k) DO UPDATE SET v = (SELECT b || ' update' FROM aa WHERE a = 1 LIMIT 1);
+WITH aa AS (SELECT 'a' a, 'b' b UNION ALL SELECT 'a' a, 'b' b)
+INSERT INTO withz VALUES(1, 'insert')
+ON CONFLICT (k) DO UPDATE SET v = (SELECT b || ' update' FROM aa WHERE a = 'a' LIMIT 1);
+WITH aa AS (SELECT 1 a, 2 b)
+INSERT INTO withz VALUES(1, (SELECT b || ' insert' FROM aa WHERE a = 1 ))
+ON CONFLICT (k) DO UPDATE SET v = (SELECT b || ' update' FROM aa WHERE a = 1 LIMIT 1);
 -- Update a row more than once, in different parts of a wCTE. That is
 -- an allowed, presumably very rare, edge case, but since it was
 -- broken in the past, having a test seems worthwhile.
@@ -2976,8 +2992,7 @@ CREATE TABLE withz AS SELECT i AS k, (i || ' v')::text v FROM generate_series(1,
 DROP TABLE withz;
 -- WITH referenced by MERGE statement
 CREATE TABLE m AS SELECT i AS k, (i || ' v')::text v FROM generate_series(1, 16, 3) i;
---dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
---dg ALTER TABLE m ADD UNIQUE (k);
+ALTER TABLE m ADD UNIQUE (k);
 WITH RECURSIVE cte_basic AS (SELECT 1 a, 'cte_basic val' b)
 MERGE INTO m USING (select 0 k, 'merge source SubPlan' v) o ON m.k=o.k
 WHEN MATCHED THEN UPDATE SET v = (SELECT b || ' merge update' FROM cte_basic WHERE cte_basic.a = m.k LIMIT 1)

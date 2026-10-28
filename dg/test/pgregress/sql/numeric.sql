@@ -2249,7 +2249,7 @@ INSERT INTO num_variance VALUES (0);
 
 -- check that parallel execution produces the same result
 BEGIN;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE num_variance SET (parallel_workers = 4);
 --dg-skip: unrecognized configuration parameter "?"
 --dg SET LOCAL parallel_setup_cost = 0;
@@ -2268,7 +2268,7 @@ DELETE FROM num_variance;
 
 -- check that parallel execution produces the same result
 BEGIN;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE num_variance SET (parallel_workers = 4);
 --dg-skip: unrecognized configuration parameter "?"
 --dg SET LOCAL parallel_setup_cost = 0;

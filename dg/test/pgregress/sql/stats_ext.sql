@@ -162,14 +162,14 @@ SELECT stxname FROM pg_statistic_ext WHERE stxname LIKE 'ab1%';
 
 -- Ensure things work sanely with SET STATISTICS 0
 CREATE TABLE ab1 (a INTEGER, b INTEGER);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE ab1 ALTER a SET STATISTICS 0;
 INSERT INTO ab1 SELECT a, a%23 FROM generate_series(1, 1000) a;
 --dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
 --dg CREATE STATISTICS ab1_a_b_stats ON a, b FROM ab1;
 --dg-cascade
 --dg ANALYZE ab1;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE ab1 ALTER a SET STATISTICS -1;
 -- setting statistics target 0 skips the statistics, without printing any message, so check catalog
 --dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
@@ -1061,7 +1061,7 @@ ANALYZE functional_dependencies;
 -- changing the type of column c causes all its stats to be dropped, reverting
 -- to default estimates without any statistics, i.e. 0.5% selectivity for each
 -- condition
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE functional_dependencies ALTER COLUMN c TYPE numeric;
 
 --dg-cascade
@@ -2326,7 +2326,7 @@ CREATE VIEW tststats.priv_test_view WITH (security_barrier=true)
 
 -- Grant table access, but hide all data with RLS
 RESET SESSION AUTHORIZATION;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE tststats.priv_test_tbl ENABLE ROW LEVEL SECURITY;
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY priv_test_tbl_pol ON tststats.priv_test_tbl USING (2 * a < 0);
@@ -2349,7 +2349,7 @@ RESET SESSION AUTHORIZATION;
 -- Create plain inheritance parent table with no access permissions
 RESET SESSION AUTHORIZATION;
 CREATE TABLE tststats.priv_test_parent_tbl (a int, b int);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE tststats.priv_test_tbl INHERIT tststats.priv_test_parent_tbl;
 
 -- Should not have access to parent, and should leak nothing
@@ -2367,7 +2367,7 @@ CREATE TABLE tststats.priv_test_parent_tbl (a int, b int);
 
 -- Grant table access to parent, but hide all data with RLS
 RESET SESSION AUTHORIZATION;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE tststats.priv_test_parent_tbl ENABLE ROW LEVEL SECURITY;
 --dg-skip: relation pg_class cannot be opened: digres has no catalog tables
 --dg CREATE POLICY priv_test_parent_tbl_pol ON tststats.priv_test_parent_tbl USING (2 * a < 0);
@@ -2512,7 +2512,7 @@ CREATE TABLE stats_ext_tbl (a int, b int);
 --dg SELECT stxowner::regrole FROM pg_statistic_ext WHERE stxname = 'tst';
 
 -- re-creating statistics via ALTER TABLE preserve the statistics owner.
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE stats_ext_tbl ALTER COLUMN a TYPE bigint;
 --dg-cascade
 --dg SELECT stxowner::regrole FROM pg_statistic_ext WHERE stxname = 'tst';

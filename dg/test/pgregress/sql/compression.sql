@@ -70,23 +70,23 @@ DROP TABLE cmdata2;
 --test column type update varlena/non-varlena
 CREATE TABLE cmdata2 (f1 int);
 \d+ cmdata2
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE cmdata2 ALTER COLUMN f1 TYPE varchar;
 --dg-cascade
 --dg \d+ cmdata2
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE cmdata2 ALTER COLUMN f1 TYPE int USING f1::integer;
 \d+ cmdata2
 
 --changing column storage should not impact the compression method
 --but the data should not be compressed
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE cmdata2 ALTER COLUMN f1 TYPE varchar;
 --dg-cascade
 --dg ALTER TABLE cmdata2 ALTER COLUMN f1 SET COMPRESSION pglz;
 --dg-cascade
 --dg \d+ cmdata2
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE cmdata2 ALTER COLUMN f1 SET STORAGE plain;
 --dg-cascade
 --dg \d+ cmdata2
@@ -130,7 +130,7 @@ SET default_toast_compression = 'lz4';
 SET default_toast_compression = 'pglz';
 
 -- test alter compression method
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE cmdata ALTER COLUMN f1 SET COMPRESSION lz4;
 INSERT INTO cmdata VALUES (repeat('123456789', 4004));
 --dg-cascade
@@ -138,7 +138,7 @@ INSERT INTO cmdata VALUES (repeat('123456789', 4004));
 --dg-differs: the result
 --dg SELECT pg_column_compression(f1) FROM cmdata;
 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE cmdata2 ALTER COLUMN f1 SET COMPRESSION default;
 --dg-cascade
 --dg \d+ cmdata2
@@ -150,7 +150,7 @@ INSERT INTO cmdata VALUES (repeat('123456789', 4004));
 
 -- test alter compression method for partitioned tables
 ALTER TABLE cmpart1 ALTER COLUMN f1 SET COMPRESSION pglz;
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE cmpart2 ALTER COLUMN f1 SET COMPRESSION lz4;
 
 -- new data should be compressed with the current compression method
@@ -184,7 +184,7 @@ SELECT length(f1) FROM cmmove3;
 --dg-differs: no error where PostgreSQL has: invalid compression method "?"
 --dg CREATE TABLE badcompresstbl (a text COMPRESSION I_Do_Not_Exist_Compression); -- fails
 CREATE TABLE badcompresstbl (a text);
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE badcompresstbl ALTER a SET COMPRESSION I_Do_Not_Exist_Compression; -- fails
 DROP TABLE badcompresstbl;
 

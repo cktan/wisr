@@ -897,7 +897,7 @@ CHECKPOINT;
 -- Do this in a transaction to prevent spurious failures due to concurrent accesses to our newly
 -- rewritten table, e.g. by autovacuum.
 BEGIN;
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE test_io_shared SET TABLESPACE regress_tblspace;
 -- SELECT from the table so that the data is read into shared buffers and
 -- context 'normal', object 'relation' reads are counted.
@@ -983,7 +983,7 @@ SELECT COUNT(*) FROM test_io_local;
 -- Change the tablespaces so that the temporary table is rewritten to other
 -- local buffers, exercising a different codepath than standard local buffer
 -- writes.
---dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE test_io_local SET TABLESPACE regress_tblspace;
 --dg-skip: function ?(...) does not exist
 --dg SELECT pg_stat_force_next_flush();

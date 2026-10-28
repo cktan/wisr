@@ -46,7 +46,7 @@ TRUNCATE tid_tab;
 
 -- Sequence
 CREATE SEQUENCE tid_seq;
---dg-skip: "?" is a sequence, which cannot be used as a relation yet
+--dg-skip: function ?(...) does not exist
 --dg SELECT currtid2('tid_seq'::text, '(0,1)'::tid); -- ok
 DROP SEQUENCE tid_seq;
 
