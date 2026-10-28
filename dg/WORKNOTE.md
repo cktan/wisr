@@ -9240,3 +9240,33 @@ three `shared_ptr`s under `store_mu` shared.
   atomics are gone from the profile; RocksDB's memtable and
   block reads lead it now. Updates alone stay near 1,000 a
   second to PostgreSQL's 4,579: the next gap.
+
+## Step 317: RocksDB's log zero-filled before use, where that pays
+
+Updates alone, one row by key a transaction, ran at a third of
+PostgreSQL's rate, the server waiting, not working: one sync a
+commit, as PostgreSQL, but each 2.7 ms to its 0.95. RocksDB
+appends to its log, and on this machine (WSL2, ext4) a sync
+that grows a file costs 2,776 µs, one over bytes the file has
+545 µs; PostgreSQL zero-fills its WAL segments first.
+
+- **sm1** (`../sm/sm1/WALPREALLOC.md`): a file system wrapper
+  (`walfs.cc`) zero-fills each database's new log to 64 MB and
+  syncs it once, before RocksDB writes it over the zeros;
+  recovery reads a zeroed tail as the log's end. RocksDB has
+  no callback for a new log, and its own recycling of full
+  logs is off under the recovery sm1 runs.
+- **sm decides, once**: the home's first attach (`initdb`)
+  times 8 syncs after an append and 8 after an overwrite in
+  `base/`, zero-fills if the first cost half again the
+  second, and keeps the answer in the root db; no option, no
+  setting.
+- **Tests**: sm1, the decision kept and obeyed, the probe and
+  its rule, a kill with the logs zero-filled, a torn record in
+  the zeros; each shown to fail undone.
+- **Measured** (release, `wide_mixed` alone, 20 s each,
+  transactions a second, PostgreSQL's after): updates by a
+  Zipfian key, 1 client 262 to 721 (731), 16 clients 628 to
+  3,134 (2,607); by a uniform key, 1 client 319 to 632 (655),
+  16 clients 964 to 3,059 (3,002); Q8 15,087 to 23,634
+  (34,318).

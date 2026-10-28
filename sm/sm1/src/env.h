@@ -32,6 +32,12 @@ struct db_t;
 #define WISR_ROOT_DBNAME_PREFIX "D"
 #define WISR_ROOT_NEXT_DBID "Mnext_dbid"
 #define WISR_ROOT_VERSION "Mversion"
+/*
+ * The size each database's new log is zero-filled to, 0 for none: 8
+ * bytes big-endian, decided by the home's first attach
+ * (WALPREALLOC.md).
+ */
+#define WISR_ROOT_WAL_PREALLOC "Mwal_prealloc"
 
 struct sm1::env_t {
   std::string homedir;
@@ -40,6 +46,12 @@ struct sm1::env_t {
    * reads through (env_options_t), made by attach.
    */
   std::shared_ptr<rocksdb::Cache> block_cache;
+  /*
+   * The Env every database's instance writes through, its new logs
+   * zero-filled (walfs.h, WALPREALLOC.md); none, RocksDB's own, where
+   * the home's first attach found zero-filling does not pay.
+   */
+  std::unique_ptr<rocksdb::Env> wal_env;
   rocksdb::DB *root = nullptr; /* {homedir}/global/root */
   /*
    * The temporary instance, {homedir}/base/pgsql_tmp/sm

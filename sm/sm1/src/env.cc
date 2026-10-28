@@ -13,6 +13,7 @@
 
 #include "env.h"
 #include "db.h"
+#include "walfs.h"
 
 #include "error.h"
 #include "log.h"
@@ -98,6 +99,59 @@ bool parse_dbid(const char *name, uint64_t *dbid) {
   // Hand back the parsed dbid.
   *dbid = v;
   return true;
+}
+
+/*
+ * Decide how every database of the home writes its new logs, and make
+ * env->wal_env if they are zero-filled (WALPREALLOC.md). The home's
+ * first attach times a sync that grows a file against one that does
+ * not, in base/, and keeps the answer in the root db; every attach
+ * after reads it. A probe that fails zero-fills nothing and keeps
+ * nothing, so the next attach probes again.
+ */
+int wal_prealloc(sm1::env_t *env) {
+  std::string val;
+  rocksdb::Status s =
+      env->root->Get(rocksdb::ReadOptions(), WISR_ROOT_WAL_PREALLOC, &val);
+  if (!s.ok() && !s.IsNotFound()) {
+    return set_status_error(s, "read root db");
+  }
+  uint64_t bytes = 0;
+  if (s.ok()) {
+    if (val.size() != 8) {
+      return set_error(sm1::SM_ERR_CORRUPT, "{}: bad {}",
+                       root_path(env->homedir).c_str(), WISR_ROOT_WAL_PREALLOC);
+    }
+    bytes = sm0::get_be64(val.data());
+  } else {
+    double append_us, overwrite_us;
+    // The first attach: time the file system the databases are on.
+    if (wal_probe(base_dir(env->homedir), &append_us, &overwrite_us) != 0) {
+      log_msg(sm1::loglevel_t::warn,
+              "{}: could not time a sync; new logs are not zero-filled",
+              env->homedir.c_str());
+      return 0;
+    }
+    bytes = wal_prealloc_pays(append_us, overwrite_us) ? wal_prealloc_bytes : 0;
+    log_msg(sm1::loglevel_t::info,
+            "{}: a sync takes {:.0f} us after an append, {:.0f} us after an "
+            "overwrite: new logs are {}",
+            env->homedir.c_str(), append_us, overwrite_us,
+            bytes ? "zero-filled to 64 MB" : "not zero-filled");
+    std::string be;
+    sm0::put_be64(be, bytes);
+    rocksdb::WriteOptions wo;
+    wo.sync = true;
+    // Keep the answer, so no later attach probes again.
+    s = env->root->Put(wo, WISR_ROOT_WAL_PREALLOC, be);
+    if (!s.ok()) {
+      return set_status_error(s, "write root db");
+    }
+  }
+  if (bytes > 0) {
+    env->wal_env = walfs_env(bytes);
+  }
+  return 0;
 }
 
 /*
@@ -188,7 +242,8 @@ int recover_dbs(sm1::env_t *env) {
             path.c_str());
     // Open the database with the defaults: this is its recovery,
     // done when db_open returns (WAL replay, then §9.1 steps 2-6).
-    db_t *db = db_open(path, name.c_str(), nullptr, env->block_cache);
+    db_t *db = db_open(path, name.c_str(), nullptr, env->block_cache,
+                       env->wal_env.get());
     // Fail the attach: a database that cannot recover.
     if (!db) {
       return -1;
@@ -322,6 +377,10 @@ sm1::env_t *attach(const char *homedir, const sm1::env_options_t *opt) {
     return nullptr;
   }
 
+  // How every database writes its new logs, before any is opened.
+  if (wal_prealloc(env.get()) != 0) {
+    return nullptr;
+  }
   // Destroy database directories no name points at.
   if (sweep_base(env.get()) != 0) {
     return nullptr;

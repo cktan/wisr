@@ -453,11 +453,14 @@ struct db_t {
  * Open database dbname at path with every column family it
  * has, and load its allocators from CF:meta (SM1_DESIGN.md §9.1
  * steps 1-3), every column family reading through cache, the
- * environment's block cache. Returns NULL with the error set.
+ * environment's block cache, and its files written through renv,
+ * the environment's Env, or RocksDB's default if NULL
+ * (WALPREALLOC.md). Returns NULL with the error set.
  */
 db_t *db_open(const std::string &path, const char *dbname,
               const sm1::options_t *opt,
-              const std::shared_ptr<rocksdb::Cache> &cache);
+              const std::shared_ptr<rocksdb::Cache> &cache,
+              rocksdb::Env *renv = nullptr);
 
 /* Allocate a timestamp: lock-free within the lease. Returns 0 or -1. */
 int db_alloc_ts(db_t *db, uint64_t *out);

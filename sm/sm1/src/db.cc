@@ -108,6 +108,10 @@ int mkdb(sm1::env_t *env, const char *dbname, const sm1::options_t *opt) {
   if (db_options(opt, &dbo) != 0) {
     return -1;
   }
+  // Its logs through the environment's file system (WALPREALLOC.md).
+  if (env->wal_env) {
+    dbo.env = env->wal_env.get();
+  }
 
   // Hold the env mutex for the root db and the registry.
   std::lock_guard<std::mutex> guard(env->mu);
@@ -421,7 +425,8 @@ static bool read_meta(db_t *db, rocksdb::Slice key, uint64_t *out) {
 /* Open every column family of the database and load CF:meta. */
 db_t *db_open(const std::string &path, const char *dbname,
               const sm1::options_t *opt,
-              const std::shared_ptr<rocksdb::Cache> &cache) {
+              const std::shared_ptr<rocksdb::Cache> &cache,
+              rocksdb::Env *renv) {
   sm1::options_t defaults;
   // No options: use the defaults.
   if (!opt) {
@@ -497,6 +502,10 @@ db_t *db_open(const std::string &path, const char *dbname,
   // Count each store's memtable bytes as RocksDB seals and flushes them.
   db->listener = std::make_shared<memcount_listener_t>();
   dbo.listeners.push_back(db->listener);
+  // Its logs through the environment's file system (WALPREALLOC.md).
+  if (renv) {
+    dbo.env = renv;
+  }
   // Open RocksDB with every column family; this replays the WAL.
   s = rocksdb::DB::Open(dbo, path, cfs, &handles, &db->rdb);
   // Fail if RocksDB could not open it.
