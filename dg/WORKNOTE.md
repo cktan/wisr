@@ -9015,3 +9015,26 @@ specified more than once`, is not on a table in sm's path.
   (`table-create` of two columns `a`). sm1 knows no columns,
   so no scenario reaches it. pgregress's `create_table_like`,
   ported again, has its `(LIKE inhx, LIKE inhx)` back.
+
+## Step 310: the hash access method cannot exclude, rightly
+
+`pg_indexam_has_property(hash, 'can_exclude')` is false in
+digres and true in PostgreSQL (`ISSUE.md` issue 12). Closed as
+digres's answer, not a bug. `amutils.c` computes the property
+from the method's `amgettuple`, a scan an exclusion constraint
+checks its rows by; digres's hash method is one in name only
+(`hashfunc.c`), there for the planner and executor to find a
+type's hash function and equality through its operator
+classes, with no callback to build or scan an index. So CREATE
+INDEX USING hash is refused, and true would promise a tool what
+digres cannot do. Every other property of it is PostgreSQL's.
+
+- **Tests**: `test/server.sh` asks `can_exclude` of hash and
+  btree (false and true) and has CREATE INDEX USING hash
+  refused. No source changed; sm has no access methods.
+- **pgregress**: `amutils` keeps its `--dg-differs: the
+  result`; the marker's words are pgregress's own, made again
+  at each port, so `TRIAGE.md` says why it differs.
+- **ISSUE.md**: issue 12 is closed in the preamble. Every issue
+  the triage found (3 to 12) is closed, and its introduction
+  goes with them.

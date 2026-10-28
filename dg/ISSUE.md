@@ -16,6 +16,9 @@ COMMITTED saying sm1's error, in step 306; issue 8, a table
 made in pg_catalog, in step 307; issue 11, a foreign key
 keeping a SET DEFAULT column twice, in step 308; and issue 10,
 CREATE TABLE (LIKE a, LIKE a) saying sm's error, in step 309.
+Issue 12, the hash access method saying it cannot exclude, was
+closed as digres's answer, not a bug, in step 310: digres has
+no hash index.
 
 ---
 
@@ -64,28 +67,3 @@ one of:
 - **Run `_PG_init()` once per process**, with process-wide
   hooks under a lock. Undoes the per-session hooks
   (`WORKNOTE.md` step 222).
-
----
-
-The issues below were found by triaging pgregress's
-`--dg-differs` statements (`test/pgregress/TRIAGE.md`). Each
-repro runs in psql on an empty database, the statements on
-psql's input (`psql -f -`), not in one `-c`; each says what
-PostgreSQL 18 answers and what digres does. None is diagnosed
-yet: "where to start" is where the difference shows, not a
-cause found.
-
----
-
-## Issue 12: the hash access method says it cannot exclude
-
-```sql
-select pg_indexam_has_property(a.oid, 'can_exclude')
-  from pg_am a where amname = 'hash';
--- PostgreSQL: t
--- digres:     f
-```
-
-pgregress: `amutils`. **Where to start**: the `hash` row of
-`pg_am` and the routine its handler returns
-(`amcanexclude`).

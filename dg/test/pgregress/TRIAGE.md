@@ -44,6 +44,12 @@ Of the 147, all but the bugs below follow from a decision:
   2, `misc_sanity` 2, `type_sanity` 3, `amutils`,
   `btree_index`, `rules`, `sanity_check`, `replica_identity`
   2, `alter_table` 3, `tablespace`.
+- **The hash access method is in name only**: digres has no
+  hash index, and the method has no callback to build or scan
+  one, so `pg_indexam_has_property(hash, 'can_exclude')`,
+  computed from its `amgettuple`, is false; true would promise
+  what CREATE INDEX USING hash refuses. `amutils`
+  (`../../WORKNOTE.md` step 310).
 - **A serial column's sequence is `bigint`**, to
   9223372036854775807, not `integer`: sm's sequences have no
   type. `psql` 18, `identity`, `sequence`.
@@ -96,4 +102,4 @@ Each reproduces alone on both servers, and is an issue in
 | 9 | Fixed, `../../WORKNOTE.md` step 306: `INSERT ... ON CONFLICT` under REPEATABLE READ or SERIALIZABLE failed with sm1's `sm1_read_latest requires READ COMMITTED` on a key its own statement took; DO NOTHING failed where PostgreSQL succeeds. | `insert_conflict` | low: the message |
 | 10 | Fixed, `../../WORKNOTE.md` step 309: `CREATE TABLE t (LIKE a, LIKE a)` failed with sm's `create table: a column without a n...`, not `column "x" specified more than once`. | `create_table_like` | low: the message |
 | 11 | Fixed, `../../WORKNOTE.md` step 308: a foreign key's `SET DEFAULT (c, c)` kept the column twice, and the parent's row could not be deleted; PostgreSQL keeps it once. | `foreign_key` | low |
-| 12 | The hash access method says `can_exclude` is false; PostgreSQL's says true. | `amutils` | low |
+| 12 | Not a bug, `../../WORKNOTE.md` step 310: the hash access method says `can_exclude` is false, PostgreSQL's true; digres has no hash index (above). | `amutils` | low |

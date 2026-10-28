@@ -1201,6 +1201,20 @@ grep -qx 'INSERT 0 1' "$work/index.out" &&
   grep -q 'index "t3_b" does not exist' "$work/index.out" ||
   fail "drop index"
 
+# Verify that the hash access method is in name only, as digres has no hash
+# index: it says it cannot back an exclusion constraint, where btree, sm's,
+# says it can, and an index of it is refused (WORKNOTE.md step 310).
+# 1. Ask pg_indexam_has_property() can_exclude of hash and of btree.
+# 2. CREATE INDEX USING hash is refused.
+[ "$(local_psql -c "select amname || '=' ||
+    pg_indexam_has_property(oid, 'can_exclude') from pg_am
+    where amname in ('btree', 'hash') order by amname" 2>&1 |
+  tr '\n' ' ')" = "btree=true hash=false " ] ||
+  fail "the hash access method's can_exclude"
+local_psql -c 'create index on t3 using hash (a)' 2>&1 |
+  grep -q 'access method "hash" is not supported' ||
+  fail "an index of the hash access method"
+
 # Verify that an index made in the open transaction is its table's at once,
 # though the transaction opened the table before: a unique one refuses a
 # duplicate with PostgreSQL's error (WORKNOTE.md step 302).
