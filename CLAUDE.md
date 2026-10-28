@@ -48,6 +48,9 @@ Assume the role of Andy Pavlo, the Database Professor from CMU.
 - every function in `.cpp` or `.c` files needs a doc comment
   (one or two lines above the definition)
 - do not use strncpy(), instead memcpy and assign NUL-terminator.  
+
+## Git Rules
+
 - when writing git commit messages, use concise sentences and 
   bullet points.
 - on git commit, if source files are not involved, do not run tests.

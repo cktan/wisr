@@ -159,16 +159,20 @@ int get_curr(const store_t &st, rocksdb::Slice key, rocksdb::PinnableSlice *buf,
   return 0;
 }
 
-/* The chained store storeid, or a store_t with no CF and the error set. */
-store_t chained_store(sm1::session_t *s, uint64_t storeid) {
-  store_t st = db_store(s->db, storeid);
+/*
+ * The chained store storeid, the session's handle of it
+ * (STORECACHE.md), or a store_t with no CF and the error set.
+ */
+const store_t &chained_store(sm1::session_t *s, uint64_t storeid) {
+  static const store_t none;
+  const store_t &st = session_store(s, storeid);
   if (!st.cf) {
     set_error(sm1::SM_ERR_CORRUPT, "store {} has no column family", storeid);
-    return store_t{};
+    return none;
   }
   if (!st.chained) {
     set_error(sm1::SM_ERR_INVALID, "store {} is not chained", storeid);
-    return store_t{};
+    return none;
   }
   return st;
 }
@@ -289,7 +293,7 @@ void pin_checked(checked_t &c, sm1::rawpin_t *pin) {
  */
 int chain_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
                 rocksdb::Slice key, rocksdb::Slice data, sm1::rawpin_t *pin) {
-  store_t st = chained_store(s, storeid);
+  const store_t &st = chained_store(s, storeid);
   if (!st.cf) {
     return -1;
   }
@@ -518,7 +522,7 @@ int read_latest_chained(sm1::session_t *s, uint64_t storeid,
   if (access_enter(s, xct_view(s), storeid, key.data(), key.size()) != 0) {
     return -1;
   }
-  store_t st = chained_store(s, storeid);
+  const store_t &st = chained_store(s, storeid);
   if (!st.cf) {
     return -1;
   }
@@ -570,7 +574,7 @@ int lock_chained(sm1::session_t *s, uint64_t storeid, std::string_view key,
   if (access_enter(s, xct_view(s), storeid, key.data(), key.size()) != 0) {
     return -1;
   }
-  store_t st = chained_store(s, storeid);
+  const store_t &st = chained_store(s, storeid);
   if (!st.cf) {
     return -1;
   }
@@ -699,7 +703,7 @@ int read_chained(sm1::session_t *s, uint64_t storeid, std::string_view key,
   if (access_enter(s, view, storeid, key.data(), key.size()) != 0) {
     return -1;
   }
-  store_t st = chained_store(s, storeid);
+  const store_t &st = chained_store(s, storeid);
   if (!st.cf) {
     return -1;
   }
@@ -730,7 +734,7 @@ sm1::scan_t *scan_chained(sm1::session_t *s, uint64_t storeid,
        access_enter(s, view, storeid, ekey.data(), ekey.size()) != 0)) {
     return nullptr;
   }
-  store_t st = chained_store(s, storeid);
+  const store_t &st = chained_store(s, storeid);
   if (!st.cf) {
     return nullptr;
   }

@@ -9210,3 +9210,33 @@ sessions, on main as on every branch.
   second to 12,969; updates alone 1,144 to 1,244; Q7's reads
   at 16 clients, which commit nothing and never wait, 18,198
   to 19,614, so about 7% of the change is the run's noise.
+
+## Step 316: a session's store handles, read without a shared count
+
+Q8, 16 clients reading 100 rows by key and writing one in 10
+(`../bench/DESIGN.md` §5), ran at 0.38 of PostgreSQL's rate,
+the server on 4 of 12 cores. Its profile: 37% in atomic
+counts and a shared lock, from sm1's `db_store()`, which a
+row read called twice, each call copying a `store_t` and its
+three `shared_ptr`s under `store_mu` shared.
+
+- **sm1** (`../sm/sm1/STORECACHE.md`): the database counts
+  changes to its store map in an atomic, `stores_version`,
+  raised by a store's making and, before its handle goes, its
+  drop; a session keeps the handles it read, each at the
+  version it read it, and `session_store()` hands its entry
+  back by reference while the version holds, taking no lock.
+  `chained_store()`, `store_of()`, `catalog_lookup()` and
+  their callers hold the handle by `const store_t &`; a
+  transaction's end erases the handles of an older map.
+- **Tests**: sm1, a store dropped by another session and its
+  CF dropped by GC, one made, one aborted and one rolled back
+  to a savepoint, with each half shown to fail undone; `rel`
+  `test_catalog.rel` §9.
+- **Measured** (release, `wide_mixed` alone, 20 s each, with
+  step 315's commit wait under both): Q7 at 16 clients
+  34,008 transactions a second to 18,198, PostgreSQL's
+  50,317; Q8 15,087 to 11,465, PostgreSQL's 34,318. The
+  atomics are gone from the profile; RocksDB's memtable and
+  block reads lead it now. Updates alone stay near 1,000 a
+  second to PostgreSQL's 4,579: the next gap.

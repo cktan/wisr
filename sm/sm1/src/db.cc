@@ -898,6 +898,30 @@ store_t db_store(db_t *db, uint64_t storeid) {
   return it == db->stores.end() ? store_t{} : it->second;
 }
 
+/* The store storeid's handle, the session's own; see session.h. */
+const store_t &session_store(sm1::session_t *s, uint64_t storeid) {
+  static const store_t none;
+  db_t *db = s->db;
+  // Before the map is read: a change after it reads as one again.
+  uint64_t version = db->stores_version.load(std::memory_order_acquire);
+  auto it = s->store_handles.find(storeid);
+  if (it != s->store_handles.end() && it->second.version == version) {
+    return it->second.store;
+  }
+  // Hold store_mu shared while reading the map.
+  std::shared_lock<std::shared_mutex> guard(db->store_mu);
+  auto found = db->stores.find(storeid);
+  // Gone: an entry stays for the transaction's end to erase, as a
+  // reference to it may be held.
+  if (found == db->stores.end()) {
+    return none;
+  }
+  sm1::session_t::store_handle_t &h = s->store_handles[storeid];
+  h.store = found->second;
+  h.version = version;
+  return h.store;
+}
+
 /*
  * Create store.<storeid>, chain.<storeid> if chained, or a temporary
  * store's <dbid>.<storeid>, chained or not, in
@@ -935,6 +959,8 @@ int db_create_store_cf(db_t *db, uint64_t storeid, sm1::session_t *owner,
               chained,
               chained ? std::make_shared<std::atomic<uint64_t>>(1) : nullptr};
   db->had_temp = db->had_temp || owner;
+  // Sessions read their handles again (STORECACHE.md).
+  db->stores_version.fetch_add(1, std::memory_order_release);
   return 0;
 }
 
@@ -953,6 +979,8 @@ int db_drop_store_cf(db_t *db, uint64_t storeid) {
   const std::string name = st.cf->GetName();
   (st.owner ? db->tmp_listener : db->listener.get())->remove(name);
   rocksdb::Status s = st.rdb->DropColumnFamily(st.cf);
+  // Sessions read their handles again, before this one goes.
+  db->stores_version.fetch_add(1, std::memory_order_release);
   // Release the handle either way.
   st.rdb->DestroyColumnFamilyHandle(st.cf);
   // Unregister it.

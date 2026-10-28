@@ -181,7 +181,7 @@ namespace wisr {
  * it.
  */
 int catalog_lookup(sm1::session_t *s, const view_t &view, uint64_t storeid) {
-  if (db_store(s->db, storeid).owner) {
+  if (session_store(s, storeid).owner) {
     bool live = s->temp_stores.count(storeid) &&
                 std::find(s->dropped.begin(), s->dropped.end(), storeid) ==
                     s->dropped.end();

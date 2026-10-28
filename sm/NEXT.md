@@ -77,9 +77,13 @@ Owed, and blocking nothing above:
   after `size_cache_age`; whether it was made again from sizes
   RocksDB had not yet changed (`sm1`'s approxsize, kept per
   version of the tree), or a flush between the two read as no
-  growth, is not known. Next: repeat that check alone, and
-  print the table's bytes in files and memtables beside each
-  estimate.
+  growth, is not known. Under the thread sanitizer, once in
+  three runs (2026-10-28), "a transaction's own analyze"
+  estimated 107,256 rows right after the analyze's 80,000:
+  the table's bytes moved between the two, as a flush or a
+  compaction would move them. Next: repeat those checks
+  alone, and print the table's bytes in files and memtables
+  beside each estimate.
 - **The commit cache's size** (`sm1/COMMITCACHE.md` §7).
   65,536 entries reaches back under a second at 100,000
   transactions a second, while a version needs a lookup until

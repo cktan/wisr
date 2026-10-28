@@ -195,6 +195,12 @@ struct db_t {
   /* storeid -> its instance and CF handle, for every live store CF. */
   std::shared_mutex store_mu;
   std::unordered_map<uint64_t, store_t> stores;
+  /*
+   * Raised by one at every change to stores, before a dropped
+   * store's handle is destroyed: a session's handles read at
+   * another are read again (STORECACHE.md). Loaded, not locked.
+   */
+  std::atomic<uint64_t> stores_version{0};
 
   /* The ts and object-id allocators and their leases (§4.2). */
   std::mutex alloc_mu;

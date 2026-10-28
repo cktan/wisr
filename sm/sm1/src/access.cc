@@ -96,10 +96,13 @@ int skip_version(sm1::session_t *s, const version_t &v, const view_t &view) {
   return 0;
 }
 
-/* The store storeid; its absence after a catalog hit is corruption. */
-store_t store_of(db_t *db, uint64_t storeid) {
+/*
+ * The store storeid, the session's handle of it (STORECACHE.md);
+ * its absence after a catalog hit is corruption.
+ */
+const store_t &store_of(sm1::session_t *s, uint64_t storeid) {
   // Look up the store's instance and CF.
-  store_t st = db_store(db, storeid);
+  const store_t &st = session_store(s, storeid);
   // The catalog named it, so a missing CF is corruption.
   if (!st.cf) {
     set_error(sm1::SM_ERR_CORRUPT, "column family store.{} is missing",
@@ -155,7 +158,7 @@ bool reusable(const sm1::session_t *s, const sm1::rawpin_t &pin,
  * version's payload is copied into *value, or, with pin given,
  * left in the iterator the pin then holds. Returns 0 or -1.
  */
-int latest_version(sm1::session_t *s, store_t st, rocksdb::Slice key,
+int latest_version(sm1::session_t *s, const store_t &st, rocksdb::Slice key,
                    bool *live, uint64_t *commit_ts, std::string *value,
                    uint32_t *own_seq = nullptr, uint64_t *inflight = nullptr,
                    sm1::rawpin_t *pin = nullptr, bool *moved = nullptr) {
@@ -400,7 +403,7 @@ int lock_row(sm1::session_t *s, sm1::locktype_t type, uint64_t storeid,
   }
   rocksdb::Slice k(key ? key : "", klen);
   // Find the store's CF.
-  store_t st = store_of(s->db, storeid);
+  const store_t &st = store_of(s, storeid);
   if (!st.cf) {
     return -1;
   }
@@ -536,7 +539,7 @@ int read_latest_row(sm1::session_t *s, uint64_t storeid, const char *key,
   }
   rocksdb::Slice k(key ? key : "", klen);
   // Find the store's CF.
-  store_t st = store_of(s->db, storeid);
+  const store_t &st = store_of(s, storeid);
   if (!st.cf) {
     return -1;
   }
@@ -636,7 +639,7 @@ sm1::scan_t *access_scan(sm1::session_t *s, uint64_t storeid,
                          int skey_inclusive, const char *ekey, size_t eklen,
                          int ekey_inclusive) {
   // Find the column family.
-  store_t st = store_of(s->db, storeid);
+  const store_t &st = store_of(s, storeid);
   if (!st.cf) {
     return nullptr;
   }
@@ -858,7 +861,7 @@ namespace wisr {
 int access_read(sm1::session_t *s, uint64_t storeid, const view_t &view,
                 rocksdb::Slice key, std::string *out, sm1::rawpin_t *pin) {
   // Find the store's CF.
-  store_t st = store_of(s->db, storeid);
+  const store_t &st = store_of(s, storeid);
   if (!st.cf) {
     return -1;
   }
@@ -946,7 +949,7 @@ int access_read(sm1::session_t *s, uint64_t storeid, const view_t &view,
 int access_write(sm1::session_t *s, uint64_t storeid, write_op_t op,
                  rocksdb::Slice key, rocksdb::Slice data, sm1::rawpin_t *pin) {
   // Find the store's CF.
-  store_t st = store_of(s->db, storeid);
+  const store_t &st = store_of(s, storeid);
   if (!st.cf) {
     return -1;
   }
@@ -1154,7 +1157,7 @@ int access_enter(sm1::session_t *s, const view_t &view, uint64_t storeid,
 int access_check_current(sm1::session_t *s, uint64_t storeid,
                          rocksdb::Slice key) {
   // Find the store's CF.
-  store_t st = store_of(s->db, storeid);
+  const store_t &st = store_of(s, storeid);
   if (!st.cf) {
     return -1;
   }

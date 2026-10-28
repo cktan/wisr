@@ -233,6 +233,10 @@ void reset(sm1::session_t *s) {
   s->stmt_snapshot_ts = 0;
   s->stmt_marked = false;
   s->stmt_seq = 0;
+  // Its store handles of an older store map go (STORECACHE.md).
+  uint64_t version = s->db->stores_version.load(std::memory_order_acquire);
+  std::erase_if(s->store_handles,
+                [&](const auto &kv) { return kv.second.version != version; });
 }
 
 /*

@@ -878,3 +878,66 @@ TEST_CASE("a bulk load puts chained keys in CURR, as a batch and as files") {
   CHECK(empty);
   commit_xct(s);
 }
+
+TEST_CASE("a session's handle of a store is read again once the store map "
+          "changes") {
+  // Verify that a session's store handles (STORECACHE.md) follow
+  // the database's stores: a dropped store's handle has no CF, a new
+  // store's is read, and handles of an older map go at the
+  // transaction's end.
+  // 1. Session A reads chained store c: it keeps c's handle, at the
+  //    store map's version now.
+  // 2. Session B drops c, and GC drops its CF: the version is raised,
+  //    and A's handle of c has none.
+  // 3. B makes store d: A reads d's key, and c is not there for it;
+  //    at the end of A's transaction its handle of c is gone, d's
+  //    kept.
+  // 4. A makes store e and aborts, and makes e2 in a savepoint it
+  //    rolls back: neither handle has a CF, and both go at the end.
+  chain_fixture_t f;
+  uint64_t c = mkchain(f.s);
+  chain_put(f.s, c, "k", "v", true);
+  begin_xct(f.s);
+  CHECK(chain_get(f.s, c, "k") == "v");
+  commit_xct(f.s);
+  uint64_t v0 = f.s->db->stores_version.load();
+  REQUIRE(f.s->store_handles.count(c));
+  CHECK(f.s->store_handles.at(c).version == v0);
+
+  sm1::session_t *t = f.open();
+  begin_xct(t);
+  REQUIRE(sm1::rmstore(t, c) == 0);
+  commit_xct(t);
+  gc_run_once(f.s->db);
+  CHECK(f.s->db->stores_version.load() > v0);
+  CHECK(!session_store(f.s, c).cf);
+
+  uint64_t d = mkchain(t);
+  chain_put(t, d, "k", "w", true);
+  begin_xct(f.s);
+  CHECK(chain_get(f.s, d, "k") == "w");
+  std::string_view v;
+  CHECK(sm1::chain_read(f.s, c, "k", v) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_NOTFOUND);
+  commit_xct(f.s);
+  CHECK(!f.s->store_handles.count(c));
+  CHECK(f.s->store_handles.count(d));
+
+  uint64_t e = 0, e2 = 0;
+  begin_xct(f.s);
+  REQUIRE(sm1::mkstore(f.s, e, false, true) == 0);
+  REQUIRE(sm1::chain_insert(f.s, e, "k", "x") == 0);
+  REQUIRE(sm1::abort(f.s) == 0);
+  CHECK(!session_store(f.s, e).cf);
+  begin_xct(f.s);
+  int depth = sm1::savepoint(f.s);
+  REQUIRE(depth == 1);
+  REQUIRE(sm1::mkstore(f.s, e2, false, true) == 0);
+  REQUIRE(sm1::chain_insert(f.s, e2, "k", "x") == 0);
+  REQUIRE(sm1::rollback(f.s, depth) == 0);
+  CHECK(!session_store(f.s, e2).cf);
+  commit_xct(f.s);
+  CHECK(!f.s->store_handles.count(e));
+  CHECK(!f.s->store_handles.count(e2));
+  REQUIRE(sm1::closedb(t) == 0);
+}

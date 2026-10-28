@@ -228,6 +228,18 @@ struct sm1::session_t {
   };
   std::unordered_map<uint64_t, store_seen_t> store_cache;
 
+  /*
+   * The handles of the stores the session looked up, each with the
+   * database's stores_version it was read at (STORECACHE.md):
+   * refreshed in place, and erased only at a transaction's end, so
+   * a reference to one stays good through a call.
+   */
+  struct store_handle_t {
+    wisr::store_t store;
+    uint64_t version = 0;
+  };
+  std::unordered_map<uint64_t, store_handle_t> store_handles;
+
   std::unordered_set<sm1::scan_t *> scans; /* open cursors */
   uint64_t next_scan_id = 0;               /* hands out sm1::scan_t::id */
 
@@ -565,6 +577,13 @@ void scan_release(sm1::scan_t *scan);
  */
 int catalog_lookup(sm1::session_t *session, const view_t &view,
                    uint64_t storeid);
+
+/*
+ * The store storeid's handle, as db_store() gives it, from the
+ * session's own (STORECACHE.md): one with no CF if there is no
+ * such store. Good until the session's transaction ends.
+ */
+const store_t &session_store(sm1::session_t *s, uint64_t storeid);
 
 /*
  * Point read of key in storeid at view: 0 if a live version is
