@@ -82,8 +82,11 @@ repeated.
 
 ## 5. The queries
 
-Each is an aggregate, so a single row comes back and the
-client's cost is the same on both sides.
+Q1 to Q6 are aggregates, so a single row comes back and the
+client's cost is the same on both sides. Q6 to Q8 are what a
+database serving web pages does: a page of rows by a range of
+their key, a batch of rows by their keys, and those reads
+under many clients with writes among them.
 
 | # | Query | What it isolates |
 | --- | --- | --- |
@@ -92,15 +95,26 @@ client's cost is the same on both sides.
 | Q3 | `select sum(c49) from T`, `sum(c4)` on `narrow` | the scan, and the last column |
 | Q4 | `select sum(length(body)) from toasted` | a value out of line, read whole |
 | Q5 | `select count(*) from toasted` | the same scan, not reading the values |
-| Q6 | `select sum(c1) from T where id between :a and :a + 9999`, index scan only | an index range of 10,000 rows |
-| Q7 | `select c1 from T where id = :k`, `:k` random | one row by key, a query at a time |
+| Q6 | `select sum(c1) from T where id between :a and :a + 99`, index scan only | an index range of 100 rows: a page of them, its start costing as much as its rows |
+| Q7 | `select c1 from T where id = any(array[:k1, ..., :k100])`, each `:k` Zipfian | 100 rows by key in one statement, a batch loader's fetch, hot keys drawn often |
+| Q8 | Q7, 9 times in 10, and `update T set c1 = c1 + 1 where id = :k`, `:k` Zipfian, 1 in 10; 16 clients | reads and writes at once, the hot rows contended |
 
 Q1 to Q3 run on `narrow`, `wide_fixed` and `wide_mixed`. Q1
 to Q5 run with index, index-only and bitmap scans off, and Q6
 with `enable_seqscan`, `enable_bitmapscan` off, so the plan is
 the scan each names; each run records the plan's scan node
-from `EXPLAIN` in the report, and does not enforce it. Q7 is
-plain pgbench, with no setting and no plan recorded.
+from `EXPLAIN` in the report, and does not enforce it. Q7 and
+Q8 are plain pgbench, with no setting; Q7's plan is recorded
+as Q6's is, from its statement with keys 1 to 100.
+
+The keys of Q7 and Q8 are pgbench's `random_zipfian(1,
+1000000, 1.1)`: the most drawn key comes up about once in 8
+draws, the 10 most drawn a third of the time, and the 1,000
+most drawn 69%, as popular items and active users do in a
+site's traffic. The 100 keys of Q7 are drawn apart, so some
+repeat; the statement returns each row once. `sql/q7.sql`
+has the 100 `\set` lines written out, as pgbench has no
+loop.
 
 ### 5.1 How a query is timed
 
@@ -108,10 +122,15 @@ plain pgbench, with no setting and no plan recorded.
   `Execution Time` is the executor's alone, with no parse,
   plan or network in it; each query run 10 times after 2
   warm-up runs, and the median reported, with the spread.
-- **Q7**: `pgbench -n -f` with the query, one client, 30
-  seconds, its transactions a second: a point read is small
-  enough that the round trip is part of what it costs, on
-  both sides alike.
+- **Q7**: `pgbench -n -M prepared -f` with the query, one
+  client, 30 seconds, its transactions a second: a fetch of
+  100 rows is small enough that the round trip is part of
+  what it costs, on both sides alike. Prepared, as an
+  application's statements are, so the plan is made once.
+- **Q8**: `pgbench -n -M prepared -c 16 -j 4`, Q7's script
+  at weight 9 and `sql/q8.sql`'s update at weight 1, 30
+  seconds, its transactions a second. It runs last, as its
+  updates change `c1`.
 - Each report gives each number for both systems and their
   ratio, digres over PostgreSQL.
 

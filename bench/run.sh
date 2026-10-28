@@ -6,7 +6,7 @@
 #   bench/run.sh pg|dg       one, for a look; no report is written
 #
 # RUNS (10) timed runs of each query after WARM (2), and Q7_SECONDS (30)
-# of pgbench. PostgreSQL is bench/build/pg18 (DESIGN.md section 2) and
+# of pgbench for Q7 and for Q8. PostgreSQL is bench/build/pg18 (DESIGN.md section 2) and
 # digres ../dg/build/digres-release ("make -C dg release"). Each system's
 # data directory and log are under bench/build/run; the report goes to
 # bench/results.
@@ -137,10 +137,20 @@ measure() {
       2> /dev/null || echo '?')" >> "$out"
   done
   echo "size|datadir|$(du -sh "$work/$sys" | cut -f1)" >> "$out"
+  # Q7's plan, from its statement with keys 1 to 100.
+  local q7plan
+  q7plan=$(sql -c "explain (costs off) $(grep -v '^[-\\]' sql/q7.sql |
+    sed "s/:k\([0-9]*\)/\1/g")" | grep -m1 -o \
+    '[A-Z][A-Za-z ]*Scan\( using [a-z_]*\)\? on [a-z_]*')
   echo "run: $sys: q7, $q7_seconds seconds"
-  echo "q7|wide_mixed|$("$pgbench" -h "$work" -p "$port" -n -c 1 \
-    -T "$q7_seconds" -f sql/q7.sql postgres 2> /dev/null |
-    sed -n 's/^tps = \([0-9.]*\) .*/\1/p') tps|" >> "$out"
+  echo "q7|wide_mixed|$("$pgbench" -h "$work" -p "$port" -n -M prepared \
+    -c 1 -T "$q7_seconds" -f sql/q7.sql postgres 2> /dev/null |
+    sed -n 's/^tps = \([0-9.]*\) .*/\1/p') tps|$q7plan" >> "$out"
+  # Last: its updates change c1.
+  echo "run: $sys: q8, $q7_seconds seconds"
+  echo "q8|wide_mixed|$("$pgbench" -h "$work" -p "$port" -n -M prepared \
+    -c 16 -j 4 -T "$q7_seconds" -f sql/q7.sql@9 -f sql/q8.sql@1 postgres \
+    2> /dev/null | sed -n 's/^tps = \([0-9.]*\) .*/\1/p') tps|" >> "$out"
   stop
 }
 
@@ -171,9 +181,9 @@ report() {
     "$digres" --build | sed 's/^/      /'
     echo
     echo "- PostgreSQL: $("$pg18/bin/postgres" --version), at 724edf9"
-    echo "- $runs runs a query after $warm, Q7 for $q7_seconds seconds"
+    echo "- $runs runs a query after $warm, Q7 and Q8 for $q7_seconds seconds each"
     echo
-    echo "Execution time in ms, median (least-greatest); Q7 in" \
+    echo "Execution time in ms, median (least-greatest); Q7 and Q8 in" \
       "transactions a second."
     echo
     echo "| Query | Table | PostgreSQL | digres | digres / PostgreSQL |" \
