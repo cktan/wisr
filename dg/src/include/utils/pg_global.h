@@ -11,8 +11,10 @@
 #ifndef PG_GLOBAL_H
 #define PG_GLOBAL_H
 
+#include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "access/htup.h"
@@ -61,6 +63,25 @@ typedef struct pg_global_roles_t {
   std::vector<pg_global_member_t> members;
 } pg_global_roles_t;
 
+/*
+ * An object's owner and privileges, by the database it is in, by sm's id
+ * (dbid), and its oid there: a table's, a view's, a sequence's or a
+ * schema's; or, with objid 0, the database's own (sm/ROLE.md section 3).
+ */
+typedef struct pg_global_object_t {
+  uint64_t dbid = 0;
+  Oid objid = InvalidOid;
+  Oid classid = InvalidOid; /* pg_class's, pg_namespace's or pg_database's */
+  Oid owner = InvalidOid;
+  /* Its aclitem[] in PostgreSQL's text form, if has_acl. */
+  bool has_acl = false;
+  std::string acl;
+} pg_global_object_t;
+
+/* Every object's entry, by dbid and objid: a state of pg_global. */
+typedef std::map<std::pair<uint64_t, Oid>, pg_global_object_t>
+    pg_global_objects_t;
+
 extern int pg_global_create(sm_env_t *env, const char *superuser,
                             const char *secret);
 extern void pg_global_load(sm_env_t *env);
@@ -79,5 +100,19 @@ extern char *pg_global_role_dependents(Oid roleid);
 extern void pg_global_commit(void);
 extern void pg_global_abort(void);
 extern bool pg_global_epoch_moved(void);
+
+/* Owners: an object's entry, written after the database's commit. */
+extern uint64_t pg_global_dbid(Oid dboid);
+extern Oid pg_global_owner(Oid objid);
+extern bool pg_global_owner_of(Oid objid, Oid *owner);
+extern Oid pg_global_database_owner(uint64_t dbid);
+extern void pg_global_set_owner(uint64_t dbid, Oid classid, Oid objid,
+                                Oid owner, bool temp);
+extern void pg_global_forget(uint64_t dbid, Oid objid);
+extern void pg_global_forget_database(uint64_t dbid);
+extern void pg_global_subcommit(void);
+extern void pg_global_subabort(void);
+extern void pg_global_post_commit(void);
+extern void pg_global_objects_moved(void);
 
 #endif /* PG_GLOBAL_H */

@@ -557,8 +557,7 @@ select 1 where false;
 
 CREATE SCHEMA tableam_display;
 CREATE ROLE regress_display_role;
---dg-crash: the server crashed
---dg ALTER SCHEMA tableam_display OWNER TO regress_display_role;
+ALTER SCHEMA tableam_display OWNER TO regress_display_role;
 SET search_path TO tableam_display;
 --dg-skip: relation pg_am cannot be written: digres has no catalog tables
 --dg CREATE ACCESS METHOD heap_psql TYPE TABLE HANDLER heap_tableam_handler;
@@ -566,7 +565,7 @@ SET ROLE TO regress_display_role;
 -- Use only relations with a physical size of zero.
 --dg-cascade
 --dg CREATE TABLE tbl_heap_psql(f1 int, f2 char(100)) using heap_psql;
---dg-cascade
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE tbl_heap(f1 int, f2 char(100)) using heap;
 --dg-cascade
 --dg CREATE VIEW view_heap_psql AS SELECT f1 from tbl_heap_psql;
@@ -605,7 +604,8 @@ RESET search_path;
 --dg DROP SCHEMA tableam_display CASCADE;
 --dg-cascade
 --dg DROP ACCESS METHOD heap_psql;
-DROP ROLE regress_display_role;
+--dg-cascade
+--dg DROP ROLE regress_display_role;
 
 -- test numericlocale (as best we can without control of psql's locale)
 
@@ -1310,26 +1310,21 @@ select 1/(15-unique2) from tenk1 order by unique2 limit 19;
 create schema testpart;
 create role regress_partitioning_role;
 
---dg-crash: the server crashed
---dg alter schema testpart owner to regress_partitioning_role;
+alter schema testpart owner to regress_partitioning_role;
 
 set role to regress_partitioning_role;
 
 -- run test inside own schema and hide other partitions
 set search_path to testpart;
 
---dg-cascade
---dg create table testtable_apple(logdate date);
---dg-cascade
---dg create table testtable_orange(logdate date);
---dg-cascade
---dg create index testtable_apple_index on testtable_apple(logdate);
---dg-cascade
---dg create index testtable_orange_index on testtable_orange(logdate);
+create table testtable_apple(logdate date);
+create table testtable_orange(logdate date);
+create index testtable_apple_index on testtable_apple(logdate);
+create index testtable_orange_index on testtable_orange(logdate);
 
---dg-cascade
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg create table testpart_apple(logdate date) partition by range(logdate);
---dg-cascade
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg create table testpart_orange(logdate date) partition by range(logdate);
 
 --dg-cascade
@@ -1345,16 +1340,14 @@ set search_path to testpart;
 --dg-cascade
 --dg \dPi test*apple*
 
---dg-cascade
---dg drop table testtable_apple;
---dg-cascade
---dg drop table testtable_orange;
+drop table testtable_apple;
+drop table testtable_orange;
 --dg-cascade
 --dg drop table testpart_apple;
 --dg-cascade
 --dg drop table testpart_orange;
 
---dg-cascade
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg create table parent_tab (id int) partition by range (id);
 --dg-cascade
 --dg create index parent_index on parent_tab (id);
@@ -1404,8 +1397,7 @@ set search_path to testpart;
 --dg-cascade
 --dg drop table parent_tab cascade;
 
---dg-cascade
---dg drop schema testpart;
+drop schema testpart;
 
 set search_path to default;
 
@@ -2110,13 +2102,11 @@ GRANT regress_du_role0 TO regress_du_role1 WITH ADMIN TRUE,  INHERIT TRUE,  SET 
 GRANT regress_du_role0 TO regress_du_role2 WITH ADMIN TRUE,  INHERIT FALSE, SET FALSE GRANTED BY regress_du_admin;
 GRANT regress_du_role1 TO regress_du_role2 WITH ADMIN TRUE , INHERIT FALSE, SET TRUE  GRANTED BY regress_du_admin;
 GRANT regress_du_role0 TO regress_du_role1 WITH ADMIN FALSE, INHERIT TRUE,  SET FALSE GRANTED BY regress_du_role1;
---dg-crash: the server crashed
---dg GRANT regress_du_role0 TO regress_du_role2 WITH ADMIN FALSE, INHERIT TRUE , SET TRUE  GRANTED BY regress_du_role1;
+GRANT regress_du_role0 TO regress_du_role2 WITH ADMIN FALSE, INHERIT TRUE , SET TRUE  GRANTED BY regress_du_role1;
 GRANT regress_du_role0 TO regress_du_role1 WITH ADMIN FALSE, INHERIT FALSE, SET TRUE  GRANTED BY regress_du_role2;
 GRANT regress_du_role0 TO regress_du_role2 WITH ADMIN FALSE, INHERIT FALSE, SET FALSE GRANTED BY regress_du_role2;
 
---dg-cascade
---dg \drg regress_du_role*
+\drg regress_du_role*
 \du regress_du_role*
 
 DROP ROLE regress_du_role0;

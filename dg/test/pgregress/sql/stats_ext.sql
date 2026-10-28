@@ -2381,8 +2381,7 @@ SET SESSION AUTHORIZATION regress_stats_user1;
 
 -- give unprivileged role ownership of table
 RESET SESSION AUTHORIZATION;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE stats_ext_tbl OWNER TO regress_stats_user1;
+ALTER TABLE stats_ext_tbl OWNER TO regress_stats_user1;
 
 -- unprivileged role should now have access
 SET SESSION AUTHORIZATION regress_stats_user1;
@@ -2461,8 +2460,7 @@ DROP USER regress_stats_user1;
 CREATE ROLE regress_relowner;
 CREATE ROLE regress_stxowner;
 CREATE TABLE stats_ext_tbl (a int, b int);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE stats_ext_tbl OWNER TO regress_relowner;
+ALTER TABLE stats_ext_tbl OWNER TO regress_relowner;
 --dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS tst ON a, b FROM stats_ext_tbl;
 --dg-cascade

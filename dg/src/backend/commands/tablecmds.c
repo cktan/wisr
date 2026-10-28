@@ -1814,6 +1814,8 @@ static bool truncate_in_sm(TruncateStmt *stmt) {
       ereport(ERROR,
               (errcode(ERRCODE_WRONG_OBJECT_TYPE),
                errmsg("\"%s\" is not a table", RelationGetRelationName(rel))));
+    /* TRUNCATE's privilege on each, a table CASCADE adds too. */
+    truncate_check_perms(RelationGetRelid(rel), rel->rd_rel);
     /* Not while this session has a scan of it open, as a cursor's. */
     CheckTableNotInUse(rel, "TRUNCATE");
     smstore_truncate(rel);
@@ -4170,12 +4172,16 @@ Oid AlterTableLookupRelation(AlterTableStmt *stmt, LOCKMODE lockmode) {
   Oid relid;
   bool view;
 
-  if (stmt->objtype != OBJECT_TABLE && stmt->objtype != OBJECT_VIEW)
+  /* A sequence's and an index's ALTER take OWNER TO alone. */
+  if (stmt->objtype != OBJECT_TABLE && stmt->objtype != OBJECT_VIEW &&
+      !((stmt->objtype == OBJECT_SEQUENCE || stmt->objtype == OBJECT_INDEX) &&
+        list_length(stmt->cmds) == 1 &&
+        linitial_node(AlterTableCmd, stmt->cmds)->subtype == AT_ChangeOwner))
     refuse_alter(GetCommandTagName(AlterObjectTypeCommandTag(stmt->objtype)));
   /*
-   * No permission check: it would open pg_class, which digres has not.  No
-   * lock: sm's DDL takes the table's own, and a NOT NULL column with no
-   * default asks for it without waiting (smstore_alter_table()).
+   * The owner's check is smstore_alter_table()'s.  No lock: sm's DDL takes
+   * the table's own, and a NOT NULL column with no default asks for it
+   * without waiting (smstore_alter_table()).
    */
   (void)lockmode;
   relid = RangeVarGetRelidExtended(stmt->relation, NoLock,
@@ -4190,12 +4196,14 @@ Oid AlterTableLookupRelation(AlterTableStmt *stmt, LOCKMODE lockmode) {
                     errhint("Use ALTER TABLE instead.")));
   /*
    * sm's tables take ADD COLUMN and DROP COLUMN, and ADD, DROP and VALIDATE
-   * CONSTRAINT of a foreign key; its views SET and RESET of their options
-   * (smstore_alter_table()).
+   * CONSTRAINT of a foreign key; its views SET and RESET of their options;
+   * and every relation OWNER TO (smstore_alter_table()).
    */
   foreach (l, stmt->cmds) {
     AlterTableType subtype = lfirst_node(AlterTableCmd, l)->subtype;
 
+    if (subtype == AT_ChangeOwner)
+      continue;
     if (view && subtype != AT_SetRelOptions && subtype != AT_ResetRelOptions)
       ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                       errmsg("ALTER VIEW supports only SET and RESET of "

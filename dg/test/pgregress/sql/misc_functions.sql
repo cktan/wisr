@@ -261,16 +261,15 @@ CREATE ROLE regress_slot_dir_funcs;
 --dg-skip: function "?" does not exist
 --dg SELECT has_function_privilege('regress_slot_dir_funcs',
 --dg   'pg_ls_replslotdir(text)', 'EXECUTE');
---dg-skip: role "?" does not exist
---dg GRANT pg_monitor TO regress_slot_dir_funcs;
+GRANT pg_monitor TO regress_slot_dir_funcs;
 -- Role is now part of pg_monitor, so these are available.
---dg-cascade
+--dg-skip: function "?" does not exist
 --dg SELECT has_function_privilege('regress_slot_dir_funcs',
 --dg   'pg_ls_logicalsnapdir()', 'EXECUTE');
---dg-cascade
+--dg-skip: function "?" does not exist
 --dg SELECT has_function_privilege('regress_slot_dir_funcs',
 --dg   'pg_ls_logicalmapdir()', 'EXECUTE');
---dg-cascade
+--dg-skip: function "?" does not exist
 --dg SELECT has_function_privilege('regress_slot_dir_funcs',
 --dg   'pg_ls_replslotdir(text)', 'EXECUTE');
 DROP ROLE regress_slot_dir_funcs;
@@ -462,10 +461,9 @@ CREATE ROLE regress_current_logfile;
 --dg-skip: function "?" does not exist
 --dg SELECT has_function_privilege('regress_current_logfile',
 --dg   'pg_current_logfile()', 'EXECUTE');
---dg-skip: role "?" does not exist
---dg GRANT pg_monitor TO regress_current_logfile;
+GRANT pg_monitor TO regress_current_logfile;
 -- role has privileges of pg_monitor and can execute the function
---dg-cascade
+--dg-skip: function "?" does not exist
 --dg SELECT has_function_privilege('regress_current_logfile',
 --dg   'pg_current_logfile()', 'EXECUTE');
 DROP ROLE regress_current_logfile;

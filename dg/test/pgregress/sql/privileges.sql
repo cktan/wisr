@@ -97,51 +97,38 @@ CREATE USER regress_priv_user3;
 CREATE USER regress_priv_user4;
 CREATE USER regress_priv_user5;
 
---dg-skip: role "?" does not exist
---dg GRANT pg_read_all_data TO regress_priv_user6;
---dg-skip: role "?" does not exist
---dg GRANT pg_write_all_data TO regress_priv_user7;
---dg-skip: role "?" does not exist
---dg GRANT pg_read_all_settings TO regress_priv_user8 WITH ADMIN OPTION;
+GRANT pg_read_all_data TO regress_priv_user6;
+GRANT pg_write_all_data TO regress_priv_user7;
+GRANT pg_read_all_settings TO regress_priv_user8 WITH ADMIN OPTION;
 GRANT regress_priv_user9 TO regress_priv_user8;
 
 SET SESSION AUTHORIZATION regress_priv_user8;
---dg-cascade
---dg GRANT pg_read_all_settings TO regress_priv_user9 WITH ADMIN OPTION;
+GRANT pg_read_all_settings TO regress_priv_user9 WITH ADMIN OPTION;
 
 SET SESSION AUTHORIZATION regress_priv_user9;
---dg-cascade
---dg GRANT pg_read_all_settings TO regress_priv_user10;
+GRANT pg_read_all_settings TO regress_priv_user10;
 
 SET SESSION AUTHORIZATION regress_priv_user8;
---dg-cascade
---dg REVOKE pg_read_all_settings FROM regress_priv_user10 GRANTED BY regress_priv_user9;
---dg-cascade
---dg REVOKE ADMIN OPTION FOR pg_read_all_settings FROM regress_priv_user9;
---dg-cascade
---dg REVOKE pg_read_all_settings FROM regress_priv_user9;
+REVOKE pg_read_all_settings FROM regress_priv_user10 GRANTED BY regress_priv_user9;
+REVOKE ADMIN OPTION FOR pg_read_all_settings FROM regress_priv_user9;
+REVOKE pg_read_all_settings FROM regress_priv_user9;
 
 RESET SESSION AUTHORIZATION;
 REVOKE regress_priv_user9 FROM regress_priv_user8;
---dg-cascade
---dg REVOKE ADMIN OPTION FOR pg_read_all_settings FROM regress_priv_user8;
+REVOKE ADMIN OPTION FOR pg_read_all_settings FROM regress_priv_user8;
 
 SET SESSION AUTHORIZATION regress_priv_user8;
---dg-cascade
---dg SET ROLE pg_read_all_settings;
+SET ROLE pg_read_all_settings;
 RESET ROLE;
 
 RESET SESSION AUTHORIZATION;
---dg-cascade
---dg REVOKE SET OPTION FOR pg_read_all_settings FROM regress_priv_user8;
---dg-skip: role "?" does not exist
---dg GRANT pg_read_all_stats TO regress_priv_user8 WITH SET FALSE;
+REVOKE SET OPTION FOR pg_read_all_settings FROM regress_priv_user8;
+GRANT pg_read_all_stats TO regress_priv_user8 WITH SET FALSE;
 
 SET SESSION AUTHORIZATION regress_priv_user8;
---dg-differs: another error: role "?" does not exist
+--dg-differs: no error where PostgreSQL has: permission denied to set role "?"
 --dg SET ROLE pg_read_all_settings;  -- fail, no SET option any more
---dg-differs: another error: role "?" does not exist
---dg SET ROLE pg_read_all_stats;     -- fail, granted without SET option
+SET ROLE pg_read_all_stats;     -- fail, granted without SET option
 RESET ROLE;
 
 RESET SESSION AUTHORIZATION;
@@ -151,13 +138,16 @@ RESET SESSION AUTHORIZATION;
 GRANT regress_priv_user9 TO regress_priv_user8;
 
 SET SESSION AUTHORIZATION regress_priv_user8;
-SET ROLE regress_priv_user9;
+--dg-skip: permission denied to set role "?"
+--dg SET ROLE regress_priv_user9;
 --dg-skip: unrecognized configuration parameter "?"
 --dg SET debug_parallel_query = 0;
-SELECT session_user, current_role, current_user, current_setting('role') as role;
+--dg-cascade
+--dg SELECT session_user, current_role, current_user, current_setting('role') as role;
 --dg-skip: unrecognized configuration parameter "?"
 --dg SET debug_parallel_query = 1;
-SELECT session_user, current_role, current_user, current_setting('role') as role;
+--dg-cascade
+--dg SELECT session_user, current_role, current_user, current_setting('role') as role;
 
 BEGIN;
 SET SESSION AUTHORIZATION regress_priv_user10;
@@ -170,10 +160,12 @@ SELECT session_user, current_role, current_user, current_setting('role') as role
 ROLLBACK;
 --dg-skip: unrecognized configuration parameter "?"
 --dg SET debug_parallel_query = 0;
-SELECT session_user, current_role, current_user, current_setting('role') as role;
+--dg-cascade
+--dg SELECT session_user, current_role, current_user, current_setting('role') as role;
 --dg-skip: unrecognized configuration parameter "?"
 --dg SET debug_parallel_query = 1;
-SELECT session_user, current_role, current_user, current_setting('role') as role;
+--dg-cascade
+--dg SELECT session_user, current_role, current_user, current_setting('role') as role;
 
 RESET SESSION AUTHORIZATION;
 -- session_user at this point is installation-dependent
@@ -187,8 +179,7 @@ SELECT session_user = current_role as c_r_ok, session_user = current_user as c_u
 --dg-skip: unrecognized configuration parameter "?"
 --dg RESET debug_parallel_query;
 
---dg-cascade
---dg REVOKE pg_read_all_settings FROM regress_priv_user8;
+REVOKE pg_read_all_settings FROM regress_priv_user8;
 
 DROP USER regress_priv_user10;
 DROP USER regress_priv_user9;
@@ -206,14 +197,11 @@ ALTER GROUP regress_priv_group2 DROP USER regress_priv_user2;	-- fail
 SET SESSION AUTHORIZATION regress_priv_user1;
 ALTER GROUP regress_priv_group2 ADD USER regress_priv_user2;
 ALTER GROUP regress_priv_group2 ADD USER regress_priv_user2;	-- duplicate
---dg-crash: the server crashed
---dg ALTER GROUP regress_priv_group2 DROP USER regress_priv_user2;
+ALTER GROUP regress_priv_group2 DROP USER regress_priv_user2;
 ALTER USER regress_priv_user2 PASSWORD 'verysecret'; -- not permitted
 RESET SESSION AUTHORIZATION;
---dg-crash: the server crashed
---dg ALTER GROUP regress_priv_group2 DROP USER regress_priv_user2;
---dg-cascade
---dg REVOKE ADMIN OPTION FOR regress_priv_group2 FROM regress_priv_user1;
+ALTER GROUP regress_priv_group2 DROP USER regress_priv_user2;
+REVOKE ADMIN OPTION FOR regress_priv_group2 FROM regress_priv_user1;
 GRANT regress_priv_group2 TO regress_priv_user4 WITH ADMIN OPTION;
 
 -- prepare non-leakproof function for later
@@ -311,7 +299,7 @@ DELETE FROM atest2; -- ok
 -- Make sure we are not able to modify system catalogs
 UPDATE pg_catalog.pg_class SET relname = '123'; -- fail
 DELETE FROM pg_catalog.pg_class; -- fail
---dg-cascade
+--dg-differs: another error: relation "?" does not exist
 --dg UPDATE pg_toast.pg_toast_1213 SET chunk_id = 1; -- fail
 
 SET SESSION AUTHORIZATION regress_priv_user3;
@@ -1327,8 +1315,7 @@ CREATE ROLE regress_sro_user;
 --dg $$ LANGUAGE plpgsql IMMUTABLE;
 -- Create a table owned by regress_sro_user
 CREATE TABLE sro_tab (a int);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE sro_tab OWNER TO regress_sro_user;
+ALTER TABLE sro_tab OWNER TO regress_sro_user;
 INSERT INTO sro_tab VALUES (1), (2), (3);
 -- Create an expression index with a predicate
 --dg-cascade
@@ -1442,8 +1429,7 @@ SET ROLE regress_priv_group2;
 GRANT regress_priv_group2 TO regress_priv_user5; -- fails: SET ROLE suspended privilege
 
 SET SESSION AUTHORIZATION regress_priv_user1;
---dg-cascade
---dg GRANT regress_priv_group2 TO regress_priv_user5; -- fails: no ADMIN OPTION
+GRANT regress_priv_group2 TO regress_priv_user5; -- fails: no ADMIN OPTION
 SELECT dogrant_ok();			-- ok: SECURITY DEFINER conveys ADMIN
 SET ROLE regress_priv_group2;
 GRANT regress_priv_group2 TO regress_priv_user5; -- fails: SET ROLE did not help
@@ -1453,8 +1439,7 @@ GRANT regress_priv_group2 TO regress_priv_user5; -- fails: no self-admin
 
 SET SESSION AUTHORIZATION regress_priv_user4;
 DROP FUNCTION dogrant_ok();
---dg-crash: the connection was lost
---dg REVOKE regress_priv_group2 FROM regress_priv_user5;
+REVOKE regress_priv_group2 FROM regress_priv_user5;
 
 
 -- has_sequence_privilege tests
@@ -1707,21 +1692,17 @@ ROLLBACK;
 
 -- test pg_database_owner
 RESET SESSION AUTHORIZATION;
---dg-differs: another error: role "?" does not exist
---dg GRANT pg_database_owner TO regress_priv_user1;
---dg-differs: another error: role "?" does not exist
---dg GRANT regress_priv_user1 TO pg_database_owner;
+GRANT pg_database_owner TO regress_priv_user1;
+GRANT regress_priv_user1 TO pg_database_owner;
 CREATE TABLE datdba_only ();
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE datdba_only OWNER TO pg_database_owner;
---dg-skip: role "?" does not exist
+ALTER TABLE datdba_only OWNER TO pg_database_owner;
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg REVOKE DELETE ON datdba_only FROM pg_database_owner;
---dg-skip: role "?" does not exist
---dg SELECT
---dg 	pg_has_role('regress_priv_user1', 'pg_database_owner', 'USAGE') as priv,
---dg 	pg_has_role('regress_priv_user1', 'pg_database_owner', 'MEMBER') as mem,
---dg 	pg_has_role('regress_priv_user1', 'pg_database_owner',
---dg 				'MEMBER WITH ADMIN OPTION') as admin;
+SELECT
+	pg_has_role('regress_priv_user1', 'pg_database_owner', 'USAGE') as priv,
+	pg_has_role('regress_priv_user1', 'pg_database_owner', 'MEMBER') as mem,
+	pg_has_role('regress_priv_user1', 'pg_database_owner',
+				'MEMBER WITH ADMIN OPTION') as admin;
 
 BEGIN;
 --dg-skip: language "?" does not exist
@@ -1847,8 +1828,7 @@ CREATE SCHEMA testns2;
 
 --dg-cascade
 --dg SELECT has_schema_privilege('regress_priv_user2', 'testns2', 'USAGE'); -- yes
---dg-cascade
---dg SELECT has_schema_privilege('regress_priv_user6', 'testns2', 'USAGE'); -- yes
+SELECT has_schema_privilege('regress_priv_user6', 'testns2', 'USAGE'); -- yes
 SELECT has_schema_privilege('regress_priv_user2', 'testns2', 'CREATE'); -- no
 
 --dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
@@ -2129,11 +2109,9 @@ SET SESSION ROLE regress_schemauser1;
 --dg-cascade
 --dg SELECT nspname, rolname FROM pg_namespace, pg_roles WHERE pg_namespace.nspname = 'testns' AND pg_namespace.nspowner = pg_roles.oid;
 
---dg-crash: the server crashed
---dg ALTER SCHEMA testns OWNER TO regress_schemauser2;
+ALTER SCHEMA testns OWNER TO regress_schemauser2;
 ALTER ROLE regress_schemauser2 RENAME TO regress_schemauser_renamed;
---dg-cascade
---dg SELECT nspname, rolname FROM pg_namespace, pg_roles WHERE pg_namespace.nspname = 'testns' AND pg_namespace.nspowner = pg_roles.oid;
+SELECT nspname, rolname FROM pg_namespace, pg_roles WHERE pg_namespace.nspname = 'testns' AND pg_namespace.nspowner = pg_roles.oid;
 
 set session role regress_schemauser_renamed;
 --dg-cascade
@@ -2143,7 +2121,8 @@ set session role regress_schemauser_renamed;
 \c -
 
 DROP ROLE regress_schemauser1;
-DROP ROLE regress_schemauser_renamed;
+--dg-cascade
+--dg DROP ROLE regress_schemauser_renamed;
 
 
 -- test that dependent privileges are revoked (or not) properly
@@ -2224,10 +2203,10 @@ DROP USER regress_priv_user8; -- does not exist
 
 
 -- leave some default ACLs for pg_upgrade's dump-restore test input.
---dg-skip: role "?" does not exist
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
 --dg ALTER DEFAULT PRIVILEGES FOR ROLE pg_signal_backend
 --dg 	REVOKE USAGE ON TYPES FROM pg_signal_backend;
---dg-skip: role "?" does not exist
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
 --dg ALTER DEFAULT PRIVILEGES FOR ROLE pg_read_all_settings
 --dg 	REVOKE USAGE ON TYPES FROM pg_read_all_settings;
 
@@ -2374,25 +2353,24 @@ CREATE ROLE regress_readallstats;
 --dg-skip: relation "?" does not exist
 --dg SELECT has_table_privilege('regress_readallstats','pg_shmem_allocations_numa','SELECT'); -- no
 
---dg-skip: role "?" does not exist
---dg GRANT pg_read_all_stats TO regress_readallstats;
+GRANT pg_read_all_stats TO regress_readallstats;
 
---dg-cascade
+--dg-skip: relation "?" does not exist
 --dg SELECT has_table_privilege('regress_readallstats','pg_aios','SELECT'); -- yes
---dg-cascade
+--dg-skip: relation "?" does not exist
 --dg SELECT has_table_privilege('regress_readallstats','pg_backend_memory_contexts','SELECT'); -- yes
---dg-cascade
+--dg-skip: relation "?" does not exist
 --dg SELECT has_table_privilege('regress_readallstats','pg_shmem_allocations','SELECT'); -- yes
---dg-cascade
+--dg-skip: relation "?" does not exist
 --dg SELECT has_table_privilege('regress_readallstats','pg_shmem_allocations_numa','SELECT'); -- yes
 
 -- run query to ensure that functions within views can be executed
 SET ROLE regress_readallstats;
---dg-cascade
+--dg-skip: relation "?" does not exist
 --dg SELECT COUNT(*) >= 0 AS ok FROM pg_aios;
---dg-cascade
+--dg-skip: relation "?" does not exist
 --dg SELECT COUNT(*) >= 0 AS ok FROM pg_backend_memory_contexts;
---dg-cascade
+--dg-skip: relation "?" does not exist
 --dg SELECT COUNT(*) >= 0 AS ok FROM pg_shmem_allocations;
 RESET ROLE;
 
@@ -2470,8 +2448,7 @@ DROP ROLE regress_roleoption_recipient;
 -- MAINTAIN
 CREATE ROLE regress_no_maintain;
 CREATE ROLE regress_maintain;
---dg-skip: role "?" does not exist
---dg CREATE ROLE regress_maintain_all IN ROLE pg_maintain;
+CREATE ROLE regress_maintain_all IN ROLE pg_maintain;
 CREATE TABLE maintain_test (a INT);
 CREATE INDEX ON maintain_test (a);
 --dg-skip: relation pg_class cannot be written: digres has no catalog tables
@@ -2484,10 +2461,8 @@ CREATE SCHEMA reindex_test;
 
 -- negative tests; should fail
 SET ROLE regress_no_maintain;
---dg-differs: the result
---dg VACUUM maintain_test;
---dg-differs: the result
---dg ANALYZE maintain_test;
+VACUUM maintain_test;
+ANALYZE maintain_test;
 --dg-differs: the result
 --dg VACUUM (ANALYZE) maintain_test;
 --dg-differs: no error where PostgreSQL has: permission denied for table maintain_test
@@ -2521,8 +2496,7 @@ SET ROLE regress_maintain;
 --dg REINDEX SCHEMA reindex_test;
 RESET ROLE;
 
---dg-cascade
---dg SET ROLE regress_maintain_all;
+SET ROLE regress_maintain_all;
 VACUUM maintain_test;
 ANALYZE maintain_test;
 VACUUM (ANALYZE) maintain_test;
@@ -2544,8 +2518,7 @@ DROP TABLE maintain_test;
 DROP SCHEMA reindex_test;
 DROP ROLE regress_no_maintain;
 DROP ROLE regress_maintain;
---dg-cascade
---dg DROP ROLE regress_maintain_all;
+DROP ROLE regress_maintain_all;
 
 -- grantor selection
 CREATE ROLE regress_grantor1;

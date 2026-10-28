@@ -802,6 +802,9 @@ void AcceptInvalidationMessages(void) {
     SharedInvalidMessageCounter++;
   }
 
+  /* The relations whose owner another session changed. */
+  pg_global_objects_moved();
+
   /*----------
    * Test code to force cache flushes anytime a flush could happen.
    *
@@ -1273,6 +1276,17 @@ void CacheInvalidateRelcacheByRelid(Oid relid) {
     elog(ERROR, "cache lookup failed for relation %u", relid);
   CacheInvalidateRelcacheByTuple(tup);
   ReleaseSysCache(tup);
+}
+
+/*
+ * CacheInvalidateRelcacheByOid
+ *		Register invalidation of the relcache entry of the relation
+ *relid, in this database, at end of command, and again at abort: a relation of
+ *sm's whose owner changed (utils/init/pg_global.c), with no pg_class row to
+ *look up, as one made in this command has none.
+ */
+void CacheInvalidateRelcacheByOid(Oid relid) {
+  RegisterRelcacheInvalidation(PrepareInvalidationState(), MyDatabaseId, relid);
 }
 
 /*

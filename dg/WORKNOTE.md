@@ -9296,3 +9296,79 @@ syscache, which opened an index no catalog relation has.
   `pg_monitor`'s member and its DROP refused; and has a
   session's check of a table dropped by another answered as
   for no table. Each was shown to fail with its part undone.
+
+## Step 316: owners
+
+The second half of step 4 of roles (`../sm/ROLE.md` §9): every
+object a role makes is its, in `pg_global`, and DDL on one is
+refused to a role that does not own it, as PostgreSQL refuses
+it. Every object was the superuser's.
+
+- **`pg_object`**, a table of `pg_global`'s keyed by (database
+  id, object oid), holds an object's owner, and will hold its
+  ACL (step 5): a table's, a view's, a sequence's, a schema's,
+  and with oid 0 a database's own. sm's ids are never reused,
+  so an entry a crash leaves behind names nothing. A data
+  directory from before has none, and is refused at start.
+- **Written after the database's commit** (ROLE.md §8
+  question 7): CREATE TABLE, VIEW, SEQUENCE, SCHEMA and
+  DATABASE record the current role, DROP forgets the entry, in
+  a log of the session's (`pg_global_set_owner()`,
+  `pg_global_forget()`) that it reads itself, written by
+  `pg_global_post_commit()` once sm's commit is done. An error
+  there is a warning: the object falls to its database's
+  owner, or the superuser, never to a role it was not.
+- **ALTER ... OWNER TO** of an object with an entry writes it
+  the superuser's before the database's commit and the new
+  owner's after, and an abort puts back what was; so a crash
+  between leaves less granted, not more.
+- **Savepoints**: each change is tagged with its
+  subtransaction's level; a rollback to a savepoint drops the
+  log's tail, a release hands it to the parent.
+- **Temporary objects'** owners are the session's alone, never
+  written.
+- **Who reads it**: `pg_class` (an index's owner its table's,
+  a sequence a column owns its table's), `pg_namespace`,
+  `pg_database`, `pg_views`, and the relation cache, whose
+  owner a view's rules are checked as. Another session drops
+  the cache entries of the relations whose owner changed, from
+  the last 4,096 changes `pg_global` keeps, at its next
+  transaction; every entry, if it fell further behind.
+- **Ownership checks** (`check_owner()`, smstore.c): DROP of a
+  table, view, sequence or index (its owner, or its schema's),
+  of a schema (its owner); ALTER TABLE and VIEW, RENAME,
+  CREATE INDEX and CREATE OR REPLACE VIEW (its owner); TRUNCATE
+  (its privilege); `nextval()`, `currval()` and `lastval()`
+  (the sequence's); VACUUM and ANALYZE (MAINTAIN, passed over
+  with PostgreSQL's warning if named).
+- **ALTER TABLE, VIEW, SEQUENCE, INDEX, SCHEMA and DATABASE ...
+  OWNER TO**, with PostgreSQL's checks: owner, able to become
+  the new owner, which has CREATE on the schema (CREATEDB for a
+  database). A table's sequences go with it; a sequence a
+  column owns is refused, an index warns.
+- **Left on purpose**: an object's ACL, and its rewriting by a
+  new owner, is step 5; REASSIGN and DROP OWNED, step 6.
+  REINDEX, a no-op, checks nothing. The crash between the two
+  commits, and an abort after the first, are not tested: no
+  test can stop the server between them.
+- **A crash of steps 313 to 315, found here**: the syscache,
+  making a list of a catalog it keeps, `pg_auth_members`'s,
+  looked for an entry it had of the same row by TID, which a
+  catalog relation's row has none of, and failed an
+  assertion; whether it met such an entry depended on what
+  another session's role DDL had flushed, so it came and went.
+  A row with no TID is now never taken for one cached: at
+  worst a row is cached twice, which PostgreSQL tolerates.
+  `privileges` had four statements taken out as crashing, and
+  `psql` one; they are back.
+- **pgregress**: the 52 files that say OWNER TO, SET ROLE or
+  SESSION AUTHORIZATION were ported again, and `privileges`
+  and `psql` once more after the crash's fix: 137 statements
+  are back.
+- **Tests**: `server.sh` has a role's table, its serial and
+  index, view and schema its, none kept for a transaction
+  rolled back or a savepoint rolled back to; another role
+  refused each DDL, with PostgreSQL's messages; OWNER TO of a
+  table, a sequence, an index and a schema, one in a savepoint
+  rolled back to undone; and an owner kept across a restart.
+  Each was shown to fail with its part undone.

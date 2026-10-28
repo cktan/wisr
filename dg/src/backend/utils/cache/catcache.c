@@ -1713,7 +1713,14 @@ CatCList *SearchCatCacheList(CatCache *cache, int nkeys, Datum v1, Datum v2,
           if (ct->hash_value != hashValue)
             continue; /* quickly skip entry if wrong hash val */
 
-          if (!ItemPointerEquals(&(ct->tuple.t_self), &(ntp->t_self)))
+          /*
+           * A catalog relation's row has no TID (catalog/catrel.c): it is
+           * taken for another tuple, and cached again, as PostgreSQL
+           * tolerates a row cached twice.
+           */
+          if (!ItemPointerIsValid(&ntp->t_self) ||
+              !ItemPointerIsValid(&ct->tuple.t_self) ||
+              !ItemPointerEquals(&(ct->tuple.t_self), &(ntp->t_self)))
             continue; /* not same tuple */
 
           /*

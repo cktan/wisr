@@ -77,8 +77,7 @@ CREATE ROLE regress_noiseword SYSID 12345;
 CREATE ROLE regress_nosuch_super IN ROLE regress_role_super;
 
 -- fail, database owner cannot have members
---dg-differs: another error: role "?" does not exist
---dg CREATE ROLE regress_nosuch_dbowner IN ROLE pg_database_owner;
+CREATE ROLE regress_nosuch_dbowner IN ROLE pg_database_owner;
 
 -- ok, can grant other users into a role
 --dg-cascade
@@ -191,26 +190,16 @@ ALTER TABLE tenant2_table OWNER TO regress_tenant2;
 DROP TABLE tenant2_table;
 
 -- fail, CREATEROLE is not enough to create roles in privileged roles
---dg-differs: another error: role "?" does not exist
---dg CREATE ROLE regress_read_all_data IN ROLE pg_read_all_data;
---dg-differs: another error: role "?" does not exist
---dg CREATE ROLE regress_write_all_data IN ROLE pg_write_all_data;
---dg-differs: another error: role "?" does not exist
---dg CREATE ROLE regress_monitor IN ROLE pg_monitor;
---dg-differs: another error: role "?" does not exist
---dg CREATE ROLE regress_read_all_settings IN ROLE pg_read_all_settings;
---dg-differs: another error: role "?" does not exist
---dg CREATE ROLE regress_read_all_stats IN ROLE pg_read_all_stats;
---dg-differs: another error: role "?" does not exist
---dg CREATE ROLE regress_stat_scan_tables IN ROLE pg_stat_scan_tables;
---dg-differs: another error: role "?" does not exist
---dg CREATE ROLE regress_read_server_files IN ROLE pg_read_server_files;
---dg-differs: another error: role "?" does not exist
---dg CREATE ROLE regress_write_server_files IN ROLE pg_write_server_files;
---dg-differs: another error: role "?" does not exist
---dg CREATE ROLE regress_execute_server_program IN ROLE pg_execute_server_program;
---dg-differs: another error: role "?" does not exist
---dg CREATE ROLE regress_signal_backend IN ROLE pg_signal_backend;
+CREATE ROLE regress_read_all_data IN ROLE pg_read_all_data;
+CREATE ROLE regress_write_all_data IN ROLE pg_write_all_data;
+CREATE ROLE regress_monitor IN ROLE pg_monitor;
+CREATE ROLE regress_read_all_settings IN ROLE pg_read_all_settings;
+CREATE ROLE regress_read_all_stats IN ROLE pg_read_all_stats;
+CREATE ROLE regress_stat_scan_tables IN ROLE pg_stat_scan_tables;
+CREATE ROLE regress_read_server_files IN ROLE pg_read_server_files;
+CREATE ROLE regress_write_server_files IN ROLE pg_write_server_files;
+CREATE ROLE regress_execute_server_program IN ROLE pg_execute_server_program;
+CREATE ROLE regress_signal_backend IN ROLE pg_signal_backend;
 
 -- fail, role still owns database objects
 DROP ROLE regress_tenant;

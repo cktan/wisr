@@ -83,6 +83,7 @@
 #include "utils/inval.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
+#include "utils/pg_global.h"
 #include "utils/resowner.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
@@ -1371,7 +1372,8 @@ static Relation RelationBuildSmViewDesc(const smstore_view_t *view,
   form.oid = view->oid;
   namestrcpy(&form.relname, view->name);
   form.relnamespace = view->nspoid;
-  form.relowner = BOOTSTRAP_SUPERUSERID;
+  /* Its owner is pg_global's, whose privileges its rules are checked as. */
+  form.relowner = pg_global_owner(view->oid);
   form.relkind = RELKIND_VIEW;
   /* A view in pg_temp is the session's temporary one (../sm/VIEW.md 12). */
   form.relpersistence = view->nspoid == PG_TEMP_NAMESPACE
@@ -1494,7 +1496,7 @@ static Relation RelationBuildSmDesc(Oid targetRelId, bool insertIt) {
   form.oid = targetRelId;
   namestrcpy(&form.relname, desc->name);
   form.relnamespace = desc->nspoid;
-  form.relowner = BOOTSTRAP_SUPERUSERID;
+  form.relowner = pg_global_owner(targetRelId); /* pg_global's (ROLE.md) */
   form.relam = HEAP_TABLE_AM_OID;
   form.relfilenode = targetRelId;
   form.relkind = RELKIND_RELATION;
@@ -1726,7 +1728,7 @@ static Relation RelationBuildSmIndexDesc(Oid indexoid, Oid table,
   form.oid = indexoid;
   namestrcpy(&form.relname, ix->name);
   form.relnamespace = desc->nspoid;
-  form.relowner = BOOTSTRAP_SUPERUSERID;
+  form.relowner = pg_global_owner(table); /* an index is its table's */
   form.relam = BTREE_AM_OID;
   form.relfilenode = indexoid;
   form.relkind = RELKIND_INDEX;
@@ -1896,7 +1898,7 @@ bool RelationGetClassForm(Oid relid, FormData_pg_class *form) {
     form->oid = relid;
     namestrcpy(&form->relname, seqname);
     form->relnamespace = nspoid;
-    form->relowner = BOOTSTRAP_SUPERUSERID;
+    form->relowner = pg_global_owner(relid); /* pg_global's (ROLE.md) */
     form->relkind = RELKIND_SEQUENCE;
     form->relpersistence = RELPERSISTENCE_PERMANENT;
     return true;

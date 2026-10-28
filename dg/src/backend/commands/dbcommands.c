@@ -31,6 +31,7 @@
 #include "utils/acl.h"
 #include "utils/control_block.h"
 #include "utils/datadir.h"
+#include "utils/pg_global.h"
 #include "utils/pg_locale.h"
 #include "utils/syscache.h"
 
@@ -103,6 +104,8 @@ static void refuse_alter(void) {
  * for, are refused.  Returns the new database's oid.
  */
 Oid createdb(ParseState *pstate, const CreatedbStmt *stmt) {
+  Oid db_id;
+
   if (stmt->options != NIL)
     ereport(ERROR,
             (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -115,7 +118,11 @@ Oid createdb(ParseState *pstate, const CreatedbStmt *stmt) {
   if (!datadir_create_database(stmt->dbname))
     ereport(ERROR, (errcode(ERRCODE_DUPLICATE_DATABASE),
                     errmsg("database \"%s\" already exists", stmt->dbname)));
-  return datadir_database_oid(stmt->dbname);
+  db_id = datadir_database_oid(stmt->dbname);
+  /* Its owner, the current role, is pg_global's (sm/ROLE.md). */
+  pg_global_set_owner(pg_global_dbid(db_id), DatabaseRelationId, InvalidOid,
+                      GetUserId(), false);
+  return db_id;
 }
 
 /*
@@ -147,6 +154,8 @@ void dropdb(const char *dbname, bool missing_ok, bool force) {
   for (int tries = 0;; tries++) {
     switch (datadir_drop_database(dbname)) {
     case DATADIR_DROPPED:
+      /* Its entries in pg_global go, after the commit (sm/ROLE.md). */
+      pg_global_forget_database(pg_global_dbid(db_id));
       return;
     case DATADIR_NO_DATABASE:
       /* Dropped by another session meanwhile. */
@@ -213,10 +222,31 @@ Oid AlterDatabaseSet(AlterDatabaseSetStmt *stmt) {
   return InvalidOid; /* not reached */
 }
 
-/* ALTER DATABASE name OWNER TO: refused. */
+/*
+ * ALTER DATABASE name OWNER TO: the owner is pg_global's, written after
+ * the commit (sm/ROLE.md section 3), with PostgreSQL's checks: a role that
+ * is not a superuser must own the database, be able to become the new
+ * owner, and have CREATEDB.
+ */
 ObjectAddress AlterDatabaseOwner(const char *dbname, Oid newOwnerId) {
-  refuse_alter();
-  return InvalidObjectAddress; /* not reached */
+  Oid db_id = datadir_database_oid(dbname);
+  ObjectAddress address;
+
+  if (!OidIsValid(db_id))
+    ereport(ERROR, (errcode(ERRCODE_UNDEFINED_DATABASE),
+                    errmsg("database \"%s\" does not exist", dbname)));
+  if (pg_global_database_owner(pg_global_dbid(db_id)) != newOwnerId) {
+    if (!object_ownercheck(DatabaseRelationId, db_id, GetUserId()))
+      aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_DATABASE, dbname);
+    check_can_set_role(GetUserId(), newOwnerId);
+    if (!have_createdb_privilege())
+      ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                      errmsg("permission denied to change owner of database")));
+    pg_global_set_owner(pg_global_dbid(db_id), DatabaseRelationId, InvalidOid,
+                        newOwnerId, false);
+  }
+  ObjectAddressSet(address, DatabaseRelationId, db_id);
+  return address;
 }
 
 /*

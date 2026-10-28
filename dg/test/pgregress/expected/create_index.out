@@ -2321,9 +2321,9 @@ DROP INDEX t_b_partial_1_idx;
 DROP INDEX t_b_partial_2_idx;
 CREATE INDEX t_a_b_idx ON bitmap_split_or (a, b);
 CREATE INDEX t_b_c_idx ON bitmap_split_or (b, c);
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS t_a_b_stat (mcv) ON a, b FROM bitmap_split_or;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS t_b_c_stat (mcv) ON b, c FROM bitmap_split_or;
 ANALYZE bitmap_split_or;
 --dg-differs: the plan

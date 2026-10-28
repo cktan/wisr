@@ -4,8 +4,7 @@
 
 CREATE ROLE regress_subscription_user LOGIN SUPERUSER;
 CREATE ROLE regress_subscription_user2;
---dg-skip: role "?" does not exist
---dg CREATE ROLE regress_subscription_user3 IN ROLE pg_create_subscription;
+CREATE ROLE regress_subscription_user3 IN ROLE pg_create_subscription;
 CREATE ROLE regress_subscription_user_dummy LOGIN NOSUPERUSER;
 SET SESSION AUTHORIZATION 'regress_subscription_user';
 
@@ -411,37 +410,33 @@ END;
 --dg DROP SUBSCRIPTION regress_testsub;
 
 -- let's do some tests with pg_create_subscription rather than superuser
---dg-cascade
---dg SET SESSION AUTHORIZATION regress_subscription_user3;
+SET SESSION AUTHORIZATION regress_subscription_user3;
 
 -- fail, not enough privileges
---dg-cascade
+--dg-differs: another error: subscriptions are not supported
 --dg CREATE SUBSCRIPTION regress_testsub CONNECTION 'dbname=regress_doesnotexist' PUBLICATION testpub WITH (connect = false);
 
 -- fail, must specify password
 RESET SESSION AUTHORIZATION;
---dg-cascade
+--dg-skip: relation pg_database cannot be written: digres has no catalog tables
 --dg GRANT CREATE ON DATABASE REGRESSION TO regress_subscription_user3;
---dg-cascade
---dg SET SESSION AUTHORIZATION regress_subscription_user3;
+SET SESSION AUTHORIZATION regress_subscription_user3;
 --dg-cascade
 --dg CREATE SUBSCRIPTION regress_testsub CONNECTION 'dbname=regress_doesnotexist' PUBLICATION testpub WITH (connect = false);
 
 -- fail, can't set password_required=false
 RESET SESSION AUTHORIZATION;
---dg-cascade
+--dg-skip: relation pg_database cannot be written: digres has no catalog tables
 --dg GRANT CREATE ON DATABASE REGRESSION TO regress_subscription_user3;
---dg-cascade
---dg SET SESSION AUTHORIZATION regress_subscription_user3;
+SET SESSION AUTHORIZATION regress_subscription_user3;
 --dg-cascade
 --dg CREATE SUBSCRIPTION regress_testsub CONNECTION 'dbname=regress_doesnotexist' PUBLICATION testpub WITH (connect = false, password_required = false);
 
 -- ok
 RESET SESSION AUTHORIZATION;
---dg-cascade
+--dg-skip: relation pg_database cannot be written: digres has no catalog tables
 --dg GRANT CREATE ON DATABASE REGRESSION TO regress_subscription_user3;
---dg-cascade
---dg SET SESSION AUTHORIZATION regress_subscription_user3;
+SET SESSION AUTHORIZATION regress_subscription_user3;
 --dg-skip: subscriptions are not supported
 --dg CREATE SUBSCRIPTION regress_testsub CONNECTION 'dbname=regress_doesnotexist password=regress_fakepassword' PUBLICATION testpub WITH (connect = false);
 
@@ -455,19 +450,16 @@ RESET SESSION AUTHORIZATION;
 
 -- ok, even after losing pg_create_subscription we can still rename it
 RESET SESSION AUTHORIZATION;
---dg-cascade
---dg REVOKE pg_create_subscription FROM regress_subscription_user3;
---dg-cascade
---dg SET SESSION AUTHORIZATION regress_subscription_user3;
+REVOKE pg_create_subscription FROM regress_subscription_user3;
+SET SESSION AUTHORIZATION regress_subscription_user3;
 --dg-skip: subscriptions are not supported
 --dg ALTER SUBSCRIPTION regress_testsub2 RENAME TO regress_testsub;
 
 -- fail, after losing CREATE on the database we can't rename it any more
 RESET SESSION AUTHORIZATION;
---dg-cascade
+--dg-skip: relation pg_database cannot be written: digres has no catalog tables
 --dg REVOKE CREATE ON DATABASE REGRESSION FROM regress_subscription_user3;
---dg-cascade
---dg SET SESSION AUTHORIZATION regress_subscription_user3;
+SET SESSION AUTHORIZATION regress_subscription_user3;
 --dg-cascade
 --dg ALTER SUBSCRIPTION regress_testsub RENAME TO regress_testsub2;
 
@@ -487,6 +479,5 @@ RESET SESSION AUTHORIZATION;
 --dg-cascade
 --dg DROP ROLE regress_subscription_user;
 DROP ROLE regress_subscription_user2;
---dg-cascade
---dg DROP ROLE regress_subscription_user3;
+DROP ROLE regress_subscription_user3;
 DROP ROLE regress_subscription_user_dummy;

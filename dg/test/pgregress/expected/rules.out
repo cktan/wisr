@@ -1873,11 +1873,10 @@ CREATE TABLE ruletest_t3 (x int);
 --dg REVOKE ALL ON ruletest_t2 FROM regress_rule_user1;
 --dg-skip: cache lookup failed for attribute -N of relation N
 --dg REVOKE ALL ON ruletest_t3 FROM regress_rule_user1;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE ruletest_t1 OWNER TO regress_rule_user1;
+ALTER TABLE ruletest_t1 OWNER TO regress_rule_user1;
 SET SESSION AUTHORIZATION regress_rule_user1;
---dg-cascade
---dg UPDATE ruletest_t1 t1 SET x = 0 FROM ruletest_t3 t3 WHERE t1.x = t3.x;
+UPDATE ruletest_t1 t1 SET x = 0 FROM ruletest_t3 t3 WHERE t1.x = t3.x;
+ERROR:  permission denied for table ruletest_t3
 RESET SESSION AUTHORIZATION;
 SELECT * FROM ruletest_t1;
  x 

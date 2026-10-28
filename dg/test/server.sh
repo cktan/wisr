@@ -3142,6 +3142,107 @@ OUT
 cmp -s "$work/builtin_acl.out" "$work/builtin_acl.expected" ||
   fail "non-superuser: what initdb made"
 
+# Verify owners (sm/ROLE.md section 9, step 4): what a role makes is its,
+# kept in pg_global after the commit; DDL on what it does not own is
+# refused as PostgreSQL refuses it; and ALTER ... OWNER TO changes it.
+# 1. Make ro1 and ro2; schema so owned by ro1, in which, as ro1, table t
+#    with a serial and an index, and view v.
+# 2. pg_class and pg_namespace name ro1 the owner of each, the index and
+#    the sequence too.
+# 3. A table made in a transaction rolled back, and one in a savepoint
+#    rolled back to, leave no owner; one released is kept.
+# 4. Give ro1 table ot, with a serial and an index, and view ov, made in
+#    public, which ro2 may use. As ro2: DROP, ALTER, RENAME, CREATE INDEX,
+#    TRUNCATE and nextval() on them are refused; VACUUM and ANALYZE pass
+#    ot over with a warning; DROP SCHEMA so is refused.
+# 5. ALTER TABLE ... OWNER TO in a savepoint rolled back to changes
+#    nothing; ALTER TABLE and SCHEMA ... OWNER TO change the owner, the
+#    table's sequence with it; the sequence's own is refused, and the
+#    index's warns.
+local_psql -c 'create role ro1' -c 'create role ro2' \
+  -c 'create schema so authorization ro1' -c 'grant ro1 to ro2' \
+  -c 'set role ro1' -c 'create table so.t (a serial, b int4)' \
+  -c 'create index t_b on so.t (b)' -c 'create view so.v as select * from so.t' \
+  -c 'begin' -c 'create table so.gone (a int4)' -c 'rollback' \
+  -c 'begin' -c 'create table so.kept (a int4)' -c 'savepoint p' \
+  -c 'create table so.back (a int4)' -c 'rollback to p' -c 'commit' \
+  -c 'reset role' -c 'revoke ro1 from ro2' \
+  -c "select relname || ':' || pg_get_userbyid(relowner) from pg_class
+        where relnamespace = 'so'::regnamespace order by relname" \
+  -c "select pg_get_userbyid(nspowner) from pg_namespace where nspname = 'so'" \
+  > "$work/owners.out" 2>&1
+grep -v -e '^CREATE' -e '^SET$' -e '^RESET$' -e '^BEGIN$' -e '^COMMIT$' \
+  -e '^ROLLBACK$' -e '^SAVEPOINT$' -e '^GRANT ROLE$' -e '^REVOKE ROLE$' \
+  "$work/owners.out" > "$work/owners.rows"
+cat > "$work/owners.expected" << OUT
+kept:ro1
+t:ro1
+t_a_seq:ro1
+t_b:ro1
+v:ro1
+ro1
+OUT
+cmp -s "$work/owners.rows" "$work/owners.expected" || fail "owners: made"
+local_psql -c 'create table ot (a serial, b int4)' -c 'create index ot_b on ot (b)' \
+  -c 'create view ov as select * from ot' -c 'alter table ot owner to ro1' \
+  -c 'alter view ov owner to ro1' > "$work/notowner.out" 2>&1 ||
+  fail "owners: make ro1's in public"
+local_psql -c 'set role ro2' -c 'drop table ot' -c 'drop view ov' \
+  -c 'drop index ot_b' -c 'alter table ot add column c int4' \
+  -c 'alter table ot rename to ot2' -c 'create index ot_a on ot (a)' \
+  -c 'truncate ot' -c "select nextval('ot_a_seq')" -c 'vacuum ot' \
+  -c 'analyze ot' -c 'drop schema so cascade' > "$work/notowner.out" 2>&1
+cat > "$work/notowner.expected" << OUT
+SET
+ERROR:  must be owner of table ot
+ERROR:  must be owner of view ov
+ERROR:  must be owner of index ot_b
+ERROR:  must be owner of table ot
+ERROR:  must be owner of table ot
+ERROR:  must be owner of table ot
+ERROR:  permission denied for table ot
+ERROR:  permission denied for sequence ot_a_seq
+WARNING:  permission denied to vacuum "ot", skipping it
+VACUUM
+WARNING:  permission denied to analyze "ot", skipping it
+ANALYZE
+ERROR:  must be owner of schema so
+OUT
+cmp -s "$work/notowner.out" "$work/notowner.expected" ||
+  fail "owners: what a role that does not own may not do"
+local_psql -c 'drop view ov' -c 'drop table ot' > "$work/notowner2.out" 2>&1 ||
+  fail "owners: drop ro1's in public"
+local_psql -c 'begin' -c 'savepoint q' -c 'alter table so.kept owner to ro2' \
+  -c 'rollback to q' -c 'commit' -c 'alter table so.t owner to ro2' \
+  -c 'alter sequence so.t_a_seq owner to ro1' \
+  -c 'alter index so.t_b owner to ro1' -c 'alter schema so owner to ro2' \
+  -c "select relname || ':' || pg_get_userbyid(relowner) from pg_class
+        where relnamespace = 'so'::regnamespace
+          and (relname like 't%' or relname = 'kept') order by relname" \
+  -c "select pg_get_userbyid(nspowner) from pg_namespace where nspname = 'so'" \
+  > "$work/chowner.out" 2>&1
+cat > "$work/chowner.expected" << OUT
+BEGIN
+SAVEPOINT
+ALTER TABLE
+ROLLBACK
+COMMIT
+ALTER TABLE
+ERROR:  cannot change owner of sequence "t_a_seq"
+DETAIL:  Sequence "t_a_seq" is linked to table "t".
+WARNING:  cannot change owner of index "t_b"
+HINT:  Change the ownership of the index's table instead.
+ALTER INDEX
+ALTER SCHEMA
+kept:ro1
+t:ro2
+t_a_seq:ro2
+t_b:ro2
+ro2
+OUT
+cmp -s "$work/chowner.out" "$work/chowner.expected" ||
+  fail "owners: ALTER ... OWNER TO"
+
 # Verify that psql's \d describes a sequence of sm's: pg_sequence has its
 # START and INCREMENT, and pg_depend the column that owns it.
 # 1. In schema sq1 make sequence q, START 5 INCREMENT 3, and table t with a
@@ -4818,11 +4919,15 @@ $digres -D "$work/data" -k "$work" -p "$port" -c max_connections=3 \
   > "$work/log2" 2>&1 &
 server=$!
 server_ready $server "$work/log2" || fail "max_connections: start"
-# Verify that a role and its attributes outlive the restart: pg_global's
-# rows, read again at the start (sm/ROLE.md section 3).
+# Verify that a role and its attributes outlive the restart, and an owner:
+# pg_global's rows, read again at the start (sm/ROLE.md section 3).
 # 1. rr1, made above and made NOLOGIN, is there, still NOLOGIN.
+# 2. so.t, given to ro2 above, is still ro2's.
 [ "$(local_psql -c "select rolcanlogin from pg_roles where rolname = 'rr1'" \
   2> "$work/rolekept.err")" = f ] || fail "role DDL: kept across a restart"
+[ "$(local_psql -c "select pg_get_userbyid(relowner) from pg_class
+                     where oid = 'so.t'::regclass" 2> "$work/ownkept.err")" = \
+  ro2 ] || fail "owners: kept across a restart"
 for n in 1 2 3; do
   held_start "conn$n"
   held_send "conn$n" "select 'up $n';"

@@ -18,27 +18,23 @@ INSERT INTO target VALUES (3, 30);
 --dg-skip: column t.ctid does not exist
 --dg SELECT t.ctid is not null as matched, t.*, s.* FROM source s FULL OUTER JOIN target t ON s.sid = t.tid ORDER BY t.tid, s.sid;
 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE target OWNER TO regress_merge_privs;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE source OWNER TO regress_merge_privs;
+ALTER TABLE target OWNER TO regress_merge_privs;
+ALTER TABLE source OWNER TO regress_merge_privs;
 
 CREATE TABLE target2 (tid integer, balance integer)
   WITH (autovacuum_enabled=off);
 CREATE TABLE source2 (sid integer, delta integer)
   WITH (autovacuum_enabled=off);
 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE target2 OWNER TO regress_merge_no_privs;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE source2 OWNER TO regress_merge_no_privs;
+ALTER TABLE target2 OWNER TO regress_merge_no_privs;
+ALTER TABLE source2 OWNER TO regress_merge_no_privs;
 
 --dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg GRANT INSERT ON target TO regress_merge_no_privs;
 
 SET SESSION AUTHORIZATION regress_merge_privs;
 
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg EXPLAIN (COSTS OFF)
 --dg MERGE INTO target t
 --dg USING source AS s
@@ -138,14 +134,13 @@ WHEN MATCHED THEN
 	DO NOTHING;
 
 SET SESSION AUTHORIZATION regress_merge_privs;
---dg-cascade
---dg MERGE INTO target
---dg USING source2
---dg ON target.tid = source2.sid
---dg WHEN MATCHED THEN
---dg 	UPDATE SET balance = 0;
+MERGE INTO target
+USING source2
+ON target.tid = source2.sid
+WHEN MATCHED THEN
+	UPDATE SET balance = 0;
 
---dg-cascade
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg GRANT INSERT ON target TO regress_merge_no_privs;
 SET SESSION AUTHORIZATION regress_merge_no_privs;
 
@@ -155,7 +150,7 @@ ON target.tid = source2.sid
 WHEN MATCHED THEN
 	UPDATE SET balance = 0;
 
---dg-cascade
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg GRANT UPDATE ON target2 TO regress_merge_privs;
 SET SESSION AUTHORIZATION regress_merge_privs;
 
@@ -183,27 +178,27 @@ WHEN NOT MATCHED THEN
 -- initial tests
 --
 -- zero rows in source has no effect
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg MERGE INTO target
 --dg USING source
 --dg ON target.tid = source.sid
 --dg WHEN MATCHED THEN
 --dg 	UPDATE SET balance = 0;
 
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
 --dg WHEN MATCHED THEN
 --dg 	UPDATE SET balance = 0;
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
 --dg WHEN MATCHED THEN
 --dg 	DELETE;
 BEGIN;
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -212,33 +207,30 @@ BEGIN;
 ROLLBACK;
 
 -- insert some non-matching source rows to work from
---dg-cascade
---dg INSERT INTO source VALUES (4, 40);
---dg-cascade
---dg SELECT * FROM source ORDER BY sid;
---dg-cascade
---dg SELECT * FROM target ORDER BY tid;
+INSERT INTO source VALUES (4, 40);
+SELECT * FROM source ORDER BY sid;
+SELECT * FROM target ORDER BY tid;
 
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
 --dg WHEN NOT MATCHED THEN
 --dg 	DO NOTHING;
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
 --dg WHEN MATCHED THEN
 --dg 	UPDATE SET balance = 0;
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
 --dg WHEN MATCHED THEN
 --dg 	DELETE;
 BEGIN;
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -250,7 +242,7 @@ ROLLBACK;
 
 -- DELETE/INSERT not matched by source/target
 BEGIN;
---dg-cascade
+--dg-skip: relation "?" does not have a composite type
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -264,52 +256,44 @@ BEGIN;
 ROLLBACK;
 
 -- index plans
---dg-cascade
---dg INSERT INTO target SELECT generate_series(1000,2500), 0;
---dg-cascade
+INSERT INTO target SELECT generate_series(1000,2500), 0;
+--dg-differs: another error: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY yet
 --dg ALTER TABLE target ADD PRIMARY KEY (tid);
---dg-cascade
---dg ANALYZE target;
+ANALYZE target;
 
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg EXPLAIN (COSTS OFF)
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
 --dg WHEN MATCHED THEN
 --dg 	UPDATE SET balance = 0;
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg EXPLAIN (COSTS OFF)
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
 --dg WHEN MATCHED THEN
 --dg 	DELETE;
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg EXPLAIN (COSTS OFF)
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
 --dg WHEN NOT MATCHED THEN
 --dg 	INSERT VALUES (4, NULL);
---dg-cascade
---dg DELETE FROM target WHERE tid > 100;
---dg-cascade
---dg ANALYZE target;
+DELETE FROM target WHERE tid > 100;
+ANALYZE target;
 
 -- insert some matching source rows to work from
---dg-cascade
---dg INSERT INTO source VALUES (2, 5);
---dg-cascade
---dg INSERT INTO source VALUES (3, 20);
---dg-cascade
---dg SELECT * FROM source ORDER BY sid;
---dg-cascade
---dg SELECT * FROM target ORDER BY tid;
+INSERT INTO source VALUES (2, 5);
+INSERT INTO source VALUES (3, 20);
+SELECT * FROM source ORDER BY sid;
+SELECT * FROM target ORDER BY tid;
 
 -- equivalent of an UPDATE join
 BEGIN;
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -321,7 +305,7 @@ ROLLBACK;
 
 -- equivalent of a DELETE join
 BEGIN;
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -332,18 +316,17 @@ BEGIN;
 ROLLBACK;
 
 BEGIN;
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
 --dg WHEN MATCHED THEN
 --dg 	DO NOTHING;
---dg-cascade
---dg SELECT * FROM target ORDER BY tid;
+SELECT * FROM target ORDER BY tid;
 ROLLBACK;
 
 BEGIN;
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -354,14 +337,11 @@ BEGIN;
 ROLLBACK;
 
 -- duplicate source row causes multiple target row update ERROR
---dg-cascade
---dg INSERT INTO source VALUES (2, 5);
---dg-cascade
---dg SELECT * FROM source ORDER BY sid;
---dg-cascade
---dg SELECT * FROM target ORDER BY tid;
+INSERT INTO source VALUES (2, 5);
+SELECT * FROM source ORDER BY sid;
+SELECT * FROM target ORDER BY tid;
 BEGIN;
---dg-cascade
+--dg-differs: another error: MERGE does not write to table "?" yet
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -370,7 +350,7 @@ BEGIN;
 ROLLBACK;
 
 BEGIN;
---dg-cascade
+--dg-differs: another error: MERGE does not write to table "?" yet
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -379,20 +359,15 @@ BEGIN;
 ROLLBACK;
 
 -- remove duplicate MATCHED data from source data
---dg-cascade
---dg DELETE FROM source WHERE sid = 2;
---dg-cascade
---dg INSERT INTO source VALUES (2, 5);
---dg-cascade
---dg SELECT * FROM source ORDER BY sid;
---dg-cascade
---dg SELECT * FROM target ORDER BY tid;
+DELETE FROM source WHERE sid = 2;
+INSERT INTO source VALUES (2, 5);
+SELECT * FROM source ORDER BY sid;
+SELECT * FROM target ORDER BY tid;
 
 -- duplicate source row on INSERT should fail because of target_pkey
---dg-cascade
---dg INSERT INTO source VALUES (4, 40);
+INSERT INTO source VALUES (4, 40);
 BEGIN;
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -403,24 +378,19 @@ BEGIN;
 ROLLBACK;
 
 -- remove duplicate NOT MATCHED data from source data
---dg-cascade
---dg DELETE FROM source WHERE sid = 4;
---dg-cascade
---dg INSERT INTO source VALUES (4, 40);
---dg-cascade
---dg SELECT * FROM source ORDER BY sid;
---dg-cascade
---dg SELECT * FROM target ORDER BY tid;
+DELETE FROM source WHERE sid = 4;
+INSERT INTO source VALUES (4, 40);
+SELECT * FROM source ORDER BY sid;
+SELECT * FROM target ORDER BY tid;
 
 -- remove constraints
---dg-cascade
---dg alter table target drop CONSTRAINT target_pkey;
---dg-cascade
+alter table target drop CONSTRAINT target_pkey;
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table target alter column tid drop not null;
 
 -- multiple actions
 BEGIN;
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -434,7 +404,7 @@ ROLLBACK;
 
 -- should be equivalent
 BEGIN;
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -449,7 +419,7 @@ ROLLBACK;
 -- column references
 -- do a simple equivalent of an UPDATE join
 BEGIN;
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -461,7 +431,7 @@ ROLLBACK;
 
 -- do a simple equivalent of an INSERT SELECT
 BEGIN;
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -472,14 +442,12 @@ BEGIN;
 ROLLBACK;
 
 -- and again with duplicate source rows
---dg-cascade
---dg INSERT INTO source VALUES (5, 50);
---dg-cascade
---dg INSERT INTO source VALUES (5, 50);
+INSERT INTO source VALUES (5, 50);
+INSERT INTO source VALUES (5, 50);
 
 -- do a simple equivalent of an INSERT SELECT
 BEGIN;
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -490,12 +458,11 @@ BEGIN;
 ROLLBACK;
 
 -- removing duplicate source rows
---dg-cascade
---dg DELETE FROM source WHERE sid = 5;
+DELETE FROM source WHERE sid = 5;
 
 -- and again with explicitly identified column list
 BEGIN;
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -524,7 +491,7 @@ ROLLBACK;
 
 -- now the classic UPSERT
 BEGIN;
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -711,37 +678,24 @@ BEGIN
 	END IF;
 END;
 $$;
---dg-cascade
---dg CREATE TRIGGER merge_bsi BEFORE INSERT ON target FOR EACH STATEMENT EXECUTE PROCEDURE merge_trigfunc ();
---dg-cascade
---dg CREATE TRIGGER merge_bsu BEFORE UPDATE ON target FOR EACH STATEMENT EXECUTE PROCEDURE merge_trigfunc ();
---dg-cascade
---dg CREATE TRIGGER merge_bsd BEFORE DELETE ON target FOR EACH STATEMENT EXECUTE PROCEDURE merge_trigfunc ();
---dg-cascade
---dg CREATE TRIGGER merge_asi AFTER INSERT ON target FOR EACH STATEMENT EXECUTE PROCEDURE merge_trigfunc ();
---dg-cascade
---dg CREATE TRIGGER merge_asu AFTER UPDATE ON target FOR EACH STATEMENT EXECUTE PROCEDURE merge_trigfunc ();
---dg-cascade
---dg CREATE TRIGGER merge_asd AFTER DELETE ON target FOR EACH STATEMENT EXECUTE PROCEDURE merge_trigfunc ();
---dg-cascade
---dg CREATE TRIGGER merge_bri BEFORE INSERT ON target FOR EACH ROW EXECUTE PROCEDURE merge_trigfunc ();
---dg-cascade
---dg CREATE TRIGGER merge_bru BEFORE UPDATE ON target FOR EACH ROW EXECUTE PROCEDURE merge_trigfunc ();
---dg-cascade
---dg CREATE TRIGGER merge_brd BEFORE DELETE ON target FOR EACH ROW EXECUTE PROCEDURE merge_trigfunc ();
---dg-cascade
---dg CREATE TRIGGER merge_ari AFTER INSERT ON target FOR EACH ROW EXECUTE PROCEDURE merge_trigfunc ();
---dg-cascade
---dg CREATE TRIGGER merge_aru AFTER UPDATE ON target FOR EACH ROW EXECUTE PROCEDURE merge_trigfunc ();
---dg-cascade
---dg CREATE TRIGGER merge_ard AFTER DELETE ON target FOR EACH ROW EXECUTE PROCEDURE merge_trigfunc ();
+CREATE TRIGGER merge_bsi BEFORE INSERT ON target FOR EACH STATEMENT EXECUTE PROCEDURE merge_trigfunc ();
+CREATE TRIGGER merge_bsu BEFORE UPDATE ON target FOR EACH STATEMENT EXECUTE PROCEDURE merge_trigfunc ();
+CREATE TRIGGER merge_bsd BEFORE DELETE ON target FOR EACH STATEMENT EXECUTE PROCEDURE merge_trigfunc ();
+CREATE TRIGGER merge_asi AFTER INSERT ON target FOR EACH STATEMENT EXECUTE PROCEDURE merge_trigfunc ();
+CREATE TRIGGER merge_asu AFTER UPDATE ON target FOR EACH STATEMENT EXECUTE PROCEDURE merge_trigfunc ();
+CREATE TRIGGER merge_asd AFTER DELETE ON target FOR EACH STATEMENT EXECUTE PROCEDURE merge_trigfunc ();
+CREATE TRIGGER merge_bri BEFORE INSERT ON target FOR EACH ROW EXECUTE PROCEDURE merge_trigfunc ();
+CREATE TRIGGER merge_bru BEFORE UPDATE ON target FOR EACH ROW EXECUTE PROCEDURE merge_trigfunc ();
+CREATE TRIGGER merge_brd BEFORE DELETE ON target FOR EACH ROW EXECUTE PROCEDURE merge_trigfunc ();
+CREATE TRIGGER merge_ari AFTER INSERT ON target FOR EACH ROW EXECUTE PROCEDURE merge_trigfunc ();
+CREATE TRIGGER merge_aru AFTER UPDATE ON target FOR EACH ROW EXECUTE PROCEDURE merge_trigfunc ();
+CREATE TRIGGER merge_ard AFTER DELETE ON target FOR EACH ROW EXECUTE PROCEDURE merge_trigfunc ();
 
 -- now the classic UPSERT, with a DELETE
 BEGIN;
---dg-cascade
---dg UPDATE target SET balance = 0 WHERE tid = 3;
+UPDATE target SET balance = 0 WHERE tid = 3;
 --EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF)
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -757,9 +711,8 @@ ROLLBACK;
 
 -- UPSERT with UPDATE/DELETE when not matched by source
 BEGIN;
---dg-cascade
---dg DELETE FROM SOURCE WHERE sid = 2;
---dg-cascade
+DELETE FROM SOURCE WHERE sid = 2;
+--dg-skip: relation "?" does not have a composite type
 --dg MERGE INTO target t
 --dg USING source AS s
 --dg ON t.tid = s.sid
@@ -787,11 +740,9 @@ BEGIN
 END;
 $$;
 
---dg-cascade
---dg SELECT * FROM target full outer join source on (sid = tid);
---dg-cascade
---dg create trigger merge_skip BEFORE INSERT OR UPDATE or DELETE
---dg   ON target FOR EACH ROW EXECUTE FUNCTION skip_merge_op();
+SELECT * FROM target full outer join source on (sid = tid);
+create trigger merge_skip BEFORE INSERT OR UPDATE or DELETE
+  ON target FOR EACH ROW EXECUTE FUNCTION skip_merge_op();
 --dg-skip: language "?" does not exist
 --dg DO $$
 --dg DECLARE
@@ -834,7 +785,7 @@ ROLLBACK;
 
 --source constants
 BEGIN;
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg MERGE INTO target t
 --dg USING (SELECT 9 AS sid, 57 AS delta) AS s
 --dg ON t.tid = s.sid
@@ -846,7 +797,7 @@ ROLLBACK;
 
 --source query
 BEGIN;
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg MERGE INTO target t
 --dg USING (SELECT sid, delta FROM source WHERE delta > 0) AS s
 --dg ON t.tid = s.sid
@@ -857,7 +808,7 @@ BEGIN;
 ROLLBACK;
 
 BEGIN;
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg MERGE INTO target t
 --dg USING (SELECT sid, delta as newname FROM source WHERE delta > 0) AS s
 --dg ON t.tid = s.sid
@@ -869,7 +820,7 @@ ROLLBACK;
 
 --self-merge
 BEGIN;
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg MERGE INTO target t1
 --dg USING target t2
 --dg ON t1.tid = t2.tid
@@ -882,7 +833,7 @@ BEGIN;
 ROLLBACK;
 
 BEGIN;
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg MERGE INTO target t
 --dg USING (SELECT tid as sid, balance as delta FROM target WHERE balance > 0) AS s
 --dg ON t.tid = s.sid
@@ -893,7 +844,7 @@ BEGIN;
 ROLLBACK;
 
 BEGIN;
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg MERGE INTO target t
 --dg USING
 --dg (SELECT sid, max(delta) AS delta
@@ -935,7 +886,7 @@ ROLLBACK;
 -- PREPARE
 BEGIN;
 prepare foom as merge into target t using (select 1 as sid) s on (t.tid = s.sid) when matched then update set balance = 1;
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg execute foom;
 --dg-cascade
 --dg SELECT * FROM target ORDER BY tid;
@@ -949,7 +900,7 @@ ON t.tid = $1
 WHEN MATCHED THEN
 UPDATE SET balance = $2;
 --EXPLAIN (ANALYZE ON, COSTS OFF, SUMMARY OFF, TIMING OFF)
---dg-cascade
+--dg-skip: MERGE does not write to table "?" yet
 --dg execute foom2 (1, 1);
 --dg-cascade
 --dg SELECT * FROM target ORDER BY tid;

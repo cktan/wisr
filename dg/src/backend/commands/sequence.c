@@ -28,6 +28,8 @@
 #include "access/smstore.h"
 #include "catalog/namespace.h"
 #include "commands/sequence.h"
+#include "miscadmin.h"
+#include "utils/acl.h"
 #include "utils/builtins.h"
 #include "utils/control_block.h"
 #include "utils/fmgrprotos.h"
@@ -112,11 +114,26 @@ List *sequence_options(Oid relid) {
 }
 
 /*
+ * Refuse a use of the sequence relid to a role with none of the privileges
+ * in mode on it, as PostgreSQL's nextval(), currval() and lastval() do.
+ */
+static void check_sequence_privilege(Oid relid, AclMode mode) {
+  if (ACLCHECK_OK != pg_class_aclcheck(relid, GetUserId(), mode))
+    ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                    errmsg("permission denied for sequence %s",
+                           smstore_sequence_name(relid))));
+}
+
+/*
  * Draw the next value of the sequence relid, and remember it as this
- * session's last.  A sequence in sm has no privileges to check.
+ * session's last: with USAGE or UPDATE on it, if check_permissions.
  */
 int64 nextval_internal(Oid relid, bool check_permissions) {
-  int64 value = smstore_nextval(relid);
+  int64 value;
+
+  if (check_permissions)
+    check_sequence_privilege(relid, ACL_USAGE | ACL_UPDATE);
+  value = smstore_nextval(relid);
 
   ss().last[relid] = value;
   ss().last_oid = relid;
@@ -144,6 +161,7 @@ Datum currval_oid(PG_FUNCTION_ARGS) {
   Oid relid = PG_GETARG_OID(0);
   auto it = ss().last.find(relid);
 
+  check_sequence_privilege(relid, ACL_SELECT | ACL_USAGE);
   if (it == ss().last.end())
     ereport(ERROR,
             (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
@@ -163,6 +181,7 @@ Datum lastval(PG_FUNCTION_ARGS) {
   if (!OidIsValid(relid) || !smstore_sequence_exists(relid))
     ereport(ERROR, (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
                     errmsg("lastval is not yet defined in this session")));
+  check_sequence_privilege(relid, ACL_SELECT | ACL_USAGE);
   PG_RETURN_INT64(ss().last[relid]);
 }
 

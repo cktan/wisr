@@ -565,24 +565,18 @@ CREATE TABLE vacowned (a int);
 CREATE ROLE regress_vacuum;
 SET ROLE regress_vacuum;
 -- Simple table
---dg-differs: the result
---dg VACUUM vacowned;
---dg-differs: the result
---dg ANALYZE vacowned;
+VACUUM vacowned;
+ANALYZE vacowned;
 --dg-differs: the result
 --dg VACUUM (ANALYZE) vacowned;
 -- Catalog
---dg-differs: the result
---dg VACUUM pg_catalog.pg_class;
---dg-differs: the result
---dg ANALYZE pg_catalog.pg_class;
+VACUUM pg_catalog.pg_class;
+ANALYZE pg_catalog.pg_class;
 --dg-differs: the result
 --dg VACUUM (ANALYZE) pg_catalog.pg_class;
 -- Shared catalog
---dg-differs: the result
---dg VACUUM pg_catalog.pg_authid;
---dg-differs: the result
---dg ANALYZE pg_catalog.pg_authid;
+VACUUM pg_catalog.pg_authid;
+ANALYZE pg_catalog.pg_authid;
 --dg-differs: the result
 --dg VACUUM (ANALYZE) pg_catalog.pg_authid;
 -- Partitioned table and its partitions, nothing owned by other user.

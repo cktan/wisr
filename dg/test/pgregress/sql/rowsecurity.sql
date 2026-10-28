@@ -1982,8 +1982,7 @@ SET SESSION AUTHORIZATION regress_rls_alice;
 RESET SESSION AUTHORIZATION;
 --dg-cascade
 --dg DROP POLICY p2 ON t1;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE t1 OWNER TO regress_rls_alice;
+ALTER TABLE t1 OWNER TO regress_rls_alice;
 
 -- Check that default deny does not apply to superuser.
 RESET SESSION AUTHORIZATION;
@@ -2923,8 +2922,7 @@ INSERT INTO rls_tbl VALUES (10);
 --dg GRANT SELECT ON rls_tbl TO regress_rls_bob;
 
 CREATE VIEW rls_view AS SELECT * FROM rls_tbl;
---dg-skip: ALTER VIEW supports only SET and RESET of options, and RENAME yet
---dg ALTER VIEW rls_view OWNER TO regress_rls_bob;
+ALTER VIEW rls_view OWNER TO regress_rls_bob;
 --dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg GRANT SELECT ON rls_view TO regress_rls_alice;
 

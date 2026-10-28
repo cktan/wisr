@@ -21,10 +21,8 @@ CREATE VIEW seclabel_view1 AS SELECT * FROM seclabel_tbl2;
 --dg-skip: relation pg_type cannot be written: digres has no catalog tables
 --dg CREATE DOMAIN seclabel_domain AS text;
 
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE seclabel_tbl1 OWNER TO regress_seclabel_user1;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE seclabel_tbl2 OWNER TO regress_seclabel_user2;
+ALTER TABLE seclabel_tbl1 OWNER TO regress_seclabel_user1;
+ALTER TABLE seclabel_tbl2 OWNER TO regress_seclabel_user2;
 
 --
 -- Test of SECURITY LABEL statement without a plugin

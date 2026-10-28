@@ -123,10 +123,8 @@ CREATE USER regress_clstr_user;
 CREATE TABLE clstr_1 (a INT PRIMARY KEY);
 CREATE TABLE clstr_2 (a INT PRIMARY KEY);
 CREATE TABLE clstr_3 (a INT PRIMARY KEY);
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE clstr_1 OWNER TO regress_clstr_user;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE clstr_3 OWNER TO regress_clstr_user;
+ALTER TABLE clstr_1 OWNER TO regress_clstr_user;
+ALTER TABLE clstr_3 OWNER TO regress_clstr_user;
 --dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg GRANT SELECT ON clstr_2 TO regress_clstr_user;
 INSERT INTO clstr_1 VALUES (2);
@@ -171,16 +169,12 @@ RESET client_min_messages;
 --dg   SELECT * FROM clstr_3;
 
 -- cluster a single table using the indisclustered bit previously set
---dg-cascade
---dg DELETE FROM clstr_1;
---dg-cascade
---dg INSERT INTO clstr_1 VALUES (2);
---dg-cascade
---dg INSERT INTO clstr_1 VALUES (1);
+DELETE FROM clstr_1;
+INSERT INTO clstr_1 VALUES (2);
+INSERT INTO clstr_1 VALUES (1);
 --dg-cascade
 --dg CLUSTER clstr_1;
---dg-cascade
---dg SELECT * FROM clstr_1;
+SELECT * FROM clstr_1;
 
 -- Test MVCC-safety of cluster. There isn't much we can do to verify the
 -- results with a single backend...
@@ -216,16 +210,12 @@ COMMIT;
 SELECT * FROM clustertest;
 
 -- check that temp tables can be clustered
---dg-skip: must be owner of table clstr_temp
---dg create temp table clstr_temp (col1 int primary key, col2 text);
---dg-cascade
---dg insert into clstr_temp values (2, 'two'), (1, 'one');
---dg-cascade
+create temp table clstr_temp (col1 int primary key, col2 text);
+insert into clstr_temp values (2, 'two'), (1, 'one');
+--dg-differs: the result
 --dg cluster clstr_temp using clstr_temp_pkey;
---dg-cascade
---dg select * from clstr_temp;
---dg-cascade
---dg drop table clstr_temp;
+select * from clstr_temp;
+drop table clstr_temp;
 
 RESET SESSION AUTHORIZATION;
 

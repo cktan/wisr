@@ -842,6 +842,13 @@ static void CommitTransaction(void) {
   /* sm's transaction commits first: one sm refuses fails this one. */
   smstore_commit();
 
+  /*
+   * Then the owners of what it made, dropped or gave away, in pg_global
+   * (utils/init/pg_global.c): after, so a crash between leaves an object
+   * its database's owner's, or the superuser's, never one it was not.
+   */
+  pg_global_post_commit();
+
   /* Shut down the deferred-trigger manager */
   AfterTriggerEndXact(true);
 
@@ -2526,8 +2533,9 @@ static void CommitSubTransaction(void) {
   AtSubCommit_Portals(s->subTransactionId, s->parent->subTransactionId,
                       s->parent->nestingLevel, s->parent->curTransactionOwner);
 
-  /* sm keeps the subtransaction's writes. */
+  /* sm keeps the subtransaction's writes, and pg_global's owners. */
   smstore_subcommit();
+  pg_global_subcommit();
 
   ResourceOwnerRelease(s->curTransactionOwner, RESOURCE_RELEASE_BEFORE_LOCKS,
                        true, false);
@@ -2621,8 +2629,9 @@ static void AbortSubTransaction(void) {
     AtSubAbort_Portals(s->subTransactionId, s->parent->subTransactionId,
                        s->curTransactionOwner, s->parent->curTransactionOwner);
 
-    /* sm undoes the subtransaction's writes. */
+    /* sm undoes the subtransaction's writes, and pg_global's owners. */
     smstore_subabort();
+    pg_global_subabort();
 
     ResourceOwnerRelease(s->curTransactionOwner, RESOURCE_RELEASE_BEFORE_LOCKS,
                          false, false);

@@ -26,6 +26,7 @@
 #include "access/detoast.h"
 #include "access/rowkey.h"
 #include "access/smstore.h"
+#include "catalog/objectaddress.h"
 #include "access/sysattr.h"
 #include "utils/datum.h"
 #include "access/xact.h"
@@ -71,6 +72,8 @@
 #include "utils/inval.h"
 #include "utils/rel.h"
 #include "utils/memutils.h"
+#include "utils/pg_global.h"
+#include "utils/acl.h"
 #include "utils/numeric.h"
 #include "utils/portal.h"
 #include "utils/lsyscache.h"
@@ -1391,6 +1394,10 @@ Oid smstore_relation_oid(const char *name, Oid nspoid) {
 static void drop_table(RangeVar *rv, bool missing_ok, bool cascade,
                        const std::vector<Oid> &dropping);
 static void drop_sequence(RangeVar *rv, bool missing_ok);
+static void check_owner(Oid oid, const char *name, bool schema_too);
+static bool may_maintain(Oid oid, const char *name, const char *what,
+                         bool named);
+static void change_owner(Oid relid, const char *relname, RoleSpec *spec);
 
 /*
  * Create the schema name in sm, in this transaction, and return its oid.
@@ -1409,6 +1416,9 @@ Oid smstore_create_namespace(const char *name) {
   }
   /* A search path naming it may now find it. */
   CacheInvalidateCatalog(NamespaceRelationId);
+  /* Its owner, the role CREATE SCHEMA runs as, is pg_global's (ROLE.md). */
+  pg_global_set_owner(pg_global_dbid(MyDatabaseId), NamespaceRelationId,
+                      (Oid)oid, GetUserId(), false);
   return (Oid)oid;
 }
 
@@ -1508,6 +1518,8 @@ static void drop_namespace(const char *nspname, Oid nspoid, bool cascade) {
   }
   sm_session_t *s = xact_session();
 
+  /* Its owner's entry goes with it, after the commit (ROLE.md). */
+  pg_global_forget(pg_global_dbid(MyDatabaseId), nspoid);
   if (waiting([&] { return sm_cat_drop_namespace(s, nspoid); }) != 0) {
     if (sm_errnum() == SM_ERR_INUSE)
       ereport(ERROR,
@@ -1545,6 +1557,9 @@ void smstore_drop_namespaces(DropStmt *stmt) {
               (errmsg("schema \"%s\" does not exist, skipping", name)));
       continue;
     }
+    /* Its owner may drop it, and what is in it, as PostgreSQL's may. */
+    if (!object_ownercheck(NamespaceRelationId, nspoid, GetUserId()))
+      aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_SCHEMA, name);
     drop_namespace(name, nspoid, stmt->behavior == DROP_CASCADE);
   }
 }
@@ -1813,6 +1828,9 @@ ObjectAddress smstore_create_table(CreateStmt *stmt) {
   }
   /* What its ON COMMIT asks is done before each commit (xact.c). */
   register_on_commit_action((Oid)oid, stmt->oncommit);
+  /* Its owner, the current role, is pg_global's; a temporary one's not. */
+  pg_global_set_owner(pg_global_dbid(MyDatabaseId), RelationRelationId,
+                      (Oid)oid, GetUserId(), temp);
   ObjectAddressSet(address, RelationRelationId, (Oid)oid);
   return address;
 }
@@ -1890,6 +1908,9 @@ ObjectAddress smstore_create_sequence(CreateSeqStmt *stmt) {
                       errmsg("relation \"%s\" already exists", name)));
     sm_error("create a sequence");
   }
+  /* Its owner, the current role, is pg_global's (ROLE.md). */
+  pg_global_set_owner(pg_global_dbid(MyDatabaseId), RelationRelationId,
+                      (Oid)oid, GetUserId(), false);
   ObjectAddressSet(address, RelationRelationId, (Oid)oid);
   return address;
 }
@@ -1975,8 +1996,11 @@ static void drop_sequence(RangeVar *rv, bool missing_ok) {
   if (!smstore_sequence_exists(oid))
     ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
                     errmsg("\"%s\" is not a sequence", rv->relname)));
+  check_owner(oid, rv->relname, true);
   sm_session_t *s = xact_session();
 
+  /* Its owner's entry goes with it, after the commit (ROLE.md). */
+  pg_global_forget(pg_global_dbid(MyDatabaseId), oid);
   if (waiting([&] { return sm_cat_drop_sequence(s, oid); }) != 0) {
     if (sm_errnum() == SM_ERR_INUSE)
       ereport(ERROR,
@@ -3224,6 +3248,7 @@ static void drop_table(RangeVar *rv, bool missing_ok, bool cascade,
     ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
                     errmsg("\"%s\" is not a table", rv->relname)));
   relation_close(rel, NoLock);
+  check_owner(oid, rv->relname, true);
   drop_readers(oid, -1, std::string("table ") + rv->relname, cascade, {},
                nullptr);
   drop_referencing(oid, rv->relname, cascade, dropping);
@@ -3245,6 +3270,8 @@ void smstore_drop_table(Oid oid) {
   remove_on_commit_action(oid);
   sm_session_t *s = xact_session();
 
+  /* Its owner's entry goes with it, after the commit (ROLE.md). */
+  pg_global_forget(pg_global_dbid(MyDatabaseId), oid);
   if (waiting([&] { return sm_cat_drop_table(s, oid); }) != 0)
     sm_error("drop a table");
 }
@@ -3419,6 +3446,9 @@ ObjectAddress smstore_create_view(RangeVar *rv, Query *query, List *options) {
         return sm_cat_create_view(s, sm_nspoid(nspoid), rv->relname, def, &oid);
       }) != 0)
     view_error(rv->relname, "create a view");
+  /* Its owner, the current role, is pg_global's; a temporary one's not. */
+  pg_global_set_owner(pg_global_dbid(MyDatabaseId), RelationRelationId,
+                      (Oid)oid, GetUserId(), PG_TEMP_NAMESPACE == nspoid);
   ObjectAddressSet(address, RelationRelationId, (Oid)oid);
   return address;
 }
@@ -3432,6 +3462,7 @@ static void forget_table(Oid relid);
  */
 ObjectAddress smstore_replace_view(Oid oid, const char *name, Query *query,
                                    List *options) {
+  check_owner(oid, name, false);
   sm_session_t *s = xact_session();
   sm_view_def_t def = view_def(s, query, options);
   ObjectAddress address;
@@ -3492,6 +3523,8 @@ static void drop_view_oid(Oid oid) {
 
   /* Every session forgets its descriptor once this one commits. */
   forget_table(oid);
+  /* Its owner's entry goes with it, after the commit (ROLE.md). */
+  pg_global_forget(pg_global_dbid(MyDatabaseId), oid);
   if (waiting([&] { return sm_cat_drop_view(s, oid); }) != 0)
     sm_error("drop a view");
 }
@@ -3584,6 +3617,7 @@ void smstore_drop_views(DropStmt *stmt) {
                           ? errhint("Use DROP TABLE to remove a table.")
                           : 0));
     relation_close(rel, NoLock);
+    check_owner(oid, rv->relname, true);
     drop_readers(oid, -1, std::string("view ") + rv->relname,
                  stmt->behavior == DROP_CASCADE, dropping, &dropped);
     drop_view_oid(oid);
@@ -4091,6 +4125,14 @@ void smstore_alter_table(Oid relid, AlterTableStmt *stmt) {
   const char *relname = stmt->relation->relname;
   ListCell *l;
 
+  check_owner(relid, relname, false);
+  /* OWNER TO alone: a table's, a view's, a sequence's or an index's. */
+  if (1 == list_length(stmt->cmds) &&
+      AT_ChangeOwner == linitial_node(AlterTableCmd, stmt->cmds)->subtype) {
+    change_owner(relid, relname,
+                 linitial_node(AlterTableCmd, stmt->cmds)->newowner);
+    return;
+  }
   if (get_rel_relkind(relid) == RELKIND_VIEW) {
     alter_view(relid, stmt);
     return;
@@ -4129,6 +4171,23 @@ void smstore_alter_table(Oid relid, AlterTableStmt *stmt) {
  * is not there and stmt says IF EXISTS.  ALTER VIEW names a view, and ALTER
  * TABLE either, as type says; *view is whether it is one.
  */
+/*
+ * Refuse DDL on the relation oid, named name, to a role that does not own
+ * it, nor, if schema_too, as DROP allows, its schema: as PostgreSQL's
+ * RangeVarCallbackOwnsRelation() and RangeVarCallbackForDropRelation()
+ * do.  The owner is pg_global's (utils/init/pg_global.c).
+ */
+static void check_owner(Oid oid, const char *name, bool schema_too) {
+  char kind = get_rel_relkind(oid);
+
+  if (object_ownercheck(RelationRelationId, oid, GetUserId()))
+    return;
+  if (schema_too && object_ownercheck(NamespaceRelationId,
+                                      get_rel_namespace(oid), GetUserId()))
+    return;
+  aclcheck_error(ACLCHECK_NOT_OWNER, get_relkind_objtype(kind), name);
+}
+
 static Oid rename_target(RenameStmt *stmt, ObjectType type, bool *view) {
   /* Locked against other sessions' use until the transaction ends. */
   Oid relid = RangeVarGetRelid(stmt->relation, AccessExclusiveLock, true);
@@ -4142,6 +4201,7 @@ static Oid rename_target(RenameStmt *stmt, ObjectType type, bool *view) {
                             stmt->relation->relname)));
     return InvalidOid;
   }
+  check_owner(relid, stmt->relation->relname, false);
   *view = get_rel_relkind(relid) == RELKIND_VIEW;
   if (*view) {
     /* Every session builds its descriptor afresh once this one commits. */
@@ -5461,9 +5521,13 @@ static void skip_locked_table(const char *name, bool named) {
 static void analyze_table(Oid oid, const char *name, bool verbose,
                           bool skip_locked, bool named) {
   bool blocked = false;
-  sm_tbl_t *tbl = skip_locked ? try_open_table(oid, SM_LOCKMODE_IS, &blocked)
-                              : open_table(oid, SM_LOCKMODE_IS);
+  sm_tbl_t *tbl;
   int rc;
+
+  if (!may_maintain(oid, name, "analyze", named))
+    return;
+  tbl = skip_locked ? try_open_table(oid, SM_LOCKMODE_IS, &blocked)
+                    : open_table(oid, SM_LOCKMODE_IS);
 
   if (blocked) {
     skip_locked_table(name, named);
@@ -5531,6 +5595,90 @@ static std::vector<std::pair<Oid, std::string>> every_table() {
 }
 
 /*
+ * The table whose column owns the sequence oid, or InvalidOid if none does.
+ */
+static Oid sequence_owner_table(Oid oid) {
+  sm_sequence_def_t seq;
+
+  if (sm_cat_sequence_def(xact_session(), oid, &seq) != 0)
+    sm_error("read a sequence");
+  return (Oid)seq.owner;
+}
+
+/*
+ * ALTER ... OWNER TO: make the role spec names the owner of the relation
+ * relid, named relname, in pg_global, as PostgreSQL's ATExecChangeOwner()
+ * does.  A role that is not a superuser must be able to become the new
+ * owner, which must have CREATE on the schema.  A table's sequences, those
+ * its columns own, go with it; an index's owner is its table's, and a
+ * sequence a column owns its table's.  Its ACL is the next step's
+ * (sm/ROLE.md section 9).
+ */
+static void change_owner(Oid relid, const char *relname, RoleSpec *spec) {
+  Oid owner = get_rolespec_oid(spec, false);
+  char kind = get_rel_relkind(relid);
+  Oid nspoid = get_rel_namespace(relid);
+  uint64_t dbid = pg_global_dbid(MyDatabaseId);
+  Oid table;
+
+  if (RELKIND_INDEX == kind) {
+    ereport(WARNING,
+            (errcode(ERRCODE_WRONG_OBJECT_TYPE),
+             errmsg("cannot change owner of index \"%s\"", relname),
+             errhint("Change the ownership of the index's table instead.")));
+    return;
+  }
+  if (RELKIND_SEQUENCE == kind &&
+      OidIsValid(table = sequence_owner_table(relid)))
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("cannot change owner of sequence \"%s\"", relname),
+                    errdetail("Sequence \"%s\" is linked to table \"%s\".",
+                              relname, get_rel_name(table))));
+  if (pg_global_owner(relid) == owner)
+    return;
+  if (!superuser()) {
+    AclResult result;
+
+    check_can_set_role(GetUserId(), owner);
+    result = object_aclcheck(NamespaceRelationId, nspoid, owner, ACL_CREATE);
+    if (ACLCHECK_OK != result)
+      aclcheck_error(result, OBJECT_SCHEMA, get_namespace_name(nspoid));
+  }
+  pg_global_set_owner(dbid, RelationRelationId, relid, owner,
+                      RELPERSISTENCE_TEMP == get_rel_persistence(relid));
+  if (RELKIND_RELATION != kind || PG_TEMP_NAMESPACE == nspoid)
+    return;
+  /* Its sequences, which are in its schema, as OWNED BY requires. */
+  std::vector<std::string> names;
+
+  if (sm_cat_list_sequences(xact_session(), sm_nspoid(nspoid), names) != 0)
+    sm_error("list a schema's sequences");
+  for (const std::string &name : names) {
+    Oid seq = sequence_oid(name.c_str(), nspoid);
+
+    if (OidIsValid(seq) && sequence_owner_table(seq) == relid)
+      pg_global_set_owner(dbid, RelationRelationId, seq, owner, false);
+  }
+}
+
+/*
+ * Whether this role may vacuum or analyze, what, the table oid, named
+ * name: with MAINTAIN on it, which its owner has, as PostgreSQL 18's
+ * vacuum_is_permitted_for_relation() asks.  One the statement named, and
+ * it may not, is passed over with PostgreSQL's warning; one it did not,
+ * quietly.
+ */
+static bool may_maintain(Oid oid, const char *name, const char *what,
+                         bool named) {
+  if (ACLCHECK_OK == pg_class_aclcheck(oid, GetUserId(), ACL_MAINTAIN))
+    return true;
+  if (named)
+    ereport(WARNING, (errmsg("permission denied to %s \"%s\", skipping it",
+                             what, name)));
+  return false;
+}
+
+/*
  * Compact the table oid's store in sm, named name for a message, its heap
  * and its indexes into one sorted run: opened as a reader, so writers go on
  * meanwhile, and DDL waits.  What is not a table is passed over with a
@@ -5540,8 +5688,12 @@ static std::vector<std::pair<Oid, std::string>> every_table() {
 static void vacuum_table(Oid oid, const char *name, bool skip_locked,
                          bool named) {
   bool blocked = false;
-  sm_tbl_t *tbl = skip_locked ? try_open_table(oid, SM_LOCKMODE_IS, &blocked)
-                              : open_table(oid, SM_LOCKMODE_IS);
+  sm_tbl_t *tbl;
+
+  if (!may_maintain(oid, name, "vacuum", named))
+    return;
+  tbl = skip_locked ? try_open_table(oid, SM_LOCKMODE_IS, &blocked)
+                    : open_table(oid, SM_LOCKMODE_IS);
 
   if (blocked) {
     if (named)
@@ -6323,6 +6475,7 @@ ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt) {
   List *colnames;
   std::string eval;
 
+  check_owner(relid, stmt->relation->relname, false);
   check_create_index(stmt);
   rel = relation_open(relid, NoLock);
   colnames = ChooseIndexColumnNames(stmt->indexParams);
@@ -6577,6 +6730,7 @@ void smstore_drop_indexes(DropStmt *stmt) {
               (errmsg("index \"%s\" does not exist, skipping", rv->relname)));
       continue;
     }
+    check_owner((Oid)index, rv->relname, true);
     /*
      * Every session's descriptor of the table relearns its indexes, and
      * one of the index is gone, as PostgreSQL's index_drop() has it.  The

@@ -546,8 +546,7 @@ CREATE TABLE testschema.tablespace_acl (c int);
 -- new owner lacks permission to create this index from scratch
 --dg-differs: another error: CREATE INDEX supports only columns, expressions, WHERE, UNIQUE and INCLUDE yet
 --dg CREATE INDEX k ON testschema.tablespace_acl (c) TABLESPACE regress_tblspace;
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE testschema.tablespace_acl OWNER TO regress_tablespace_user2;
+ALTER TABLE testschema.tablespace_acl OWNER TO regress_tablespace_user2;
 
 SET SESSION ROLE regress_tablespace_user2;
 CREATE TABLE tablespace_table (i int) TABLESPACE regress_tblspace; -- fail

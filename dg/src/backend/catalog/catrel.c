@@ -157,15 +157,19 @@ static void gen_pg_namespace(Tuplestorestate *ts, TupleDesc desc) {
   ListCell *l;
 
   for (int i = 0; i < count; i++) {
+    Oid owner = rows[i].nspowner;
+
+    /* As ALTER SCHEMA ... OWNER TO left it, in pg_global, if it did. */
+    (void)pg_global_owner_of(rows[i].oid, &owner);
     values[0] = ObjectIdGetDatum(rows[i].oid);
     values[1] = name_datum(rows[i].nspname);
-    values[2] = ObjectIdGetDatum(rows[i].nspowner);
+    values[2] = ObjectIdGetDatum(owner);
     nulls[3] = true;
     values[3] = (Datum)0;
     if (PG_CATALOG_NAMESPACE == rows[i].oid ||
         PG_PUBLIC_NAMESPACE == rows[i].oid) {
       nulls[3] = false;
-      values[3] = make_acl(rows[i].nspowner, ACL_ALL_RIGHTS_SCHEMA, ACL_USAGE);
+      values[3] = make_acl(owner, ACL_ALL_RIGHTS_SCHEMA, ACL_USAGE);
     }
     tuplestore_putvalues(ts, desc, values, nulls);
   }
@@ -178,7 +182,7 @@ static void gen_pg_namespace(Tuplestorestate *ts, TupleDesc desc) {
       continue;
     values[0] = ObjectIdGetDatum(oid);
     values[1] = name_datum(name);
-    values[2] = ObjectIdGetDatum(BOOTSTRAP_SUPERUSERID);
+    values[2] = ObjectIdGetDatum(pg_global_owner(oid));
     values[3] = (Datum)0;
     tuplestore_putvalues(ts, desc, values, nulls);
   }
@@ -192,8 +196,8 @@ static void gen_pg_namespace(Tuplestorestate *ts, TupleDesc desc) {
  * triggers: the relation cache gives it RI triggers (sm_fkey_triggers()).
  */
 static void class_row(Tuplestorestate *ts, TupleDesc desc, Oid oid,
-                      const char *name, Oid nspoid, Oid reltype, char kind,
-                      int natts, bool hasindex, bool temp,
+                      const char *name, Oid nspoid, Oid reltype, Oid owner,
+                      char kind, int natts, bool hasindex, bool temp,
                       Datum reloptions = (Datum)0, bool hastriggers = false,
                       Datum acl = (Datum)0) {
   Datum values[Natts_pg_class];
@@ -205,7 +209,7 @@ static void class_row(Tuplestorestate *ts, TupleDesc desc, Oid oid,
   values[Anum_pg_class_relname - 1] = name_datum(name);
   values[Anum_pg_class_relnamespace - 1] = ObjectIdGetDatum(nspoid);
   values[Anum_pg_class_reltype - 1] = ObjectIdGetDatum(reltype);
-  values[Anum_pg_class_relowner - 1] = ObjectIdGetDatum(BOOTSTRAP_SUPERUSERID);
+  values[Anum_pg_class_relowner - 1] = ObjectIdGetDatum(owner);
   values[Anum_pg_class_relam - 1] =
       ObjectIdGetDatum(kind == RELKIND_RELATION ? HEAP_TABLE_AM_OID
                        : kind == RELKIND_INDEX  ? BTREE_AM_OID
@@ -234,6 +238,18 @@ static void class_row(Tuplestorestate *ts, TupleDesc desc, Oid oid,
 }
 
 /*
+ * The owner of the relation r of sm's, pg_global's (utils/init/pg_global.c):
+ * an index's is its table's, and a sequence's a column owns its table's.
+ */
+static Oid relation_owner(const smstore_relation_t *r) {
+  if (RELKIND_INDEX == r->kind)
+    return pg_global_owner(r->table);
+  if (RELKIND_SEQUENCE == r->kind && OidIsValid(r->owner))
+    return pg_global_owner(r->owner);
+  return pg_global_owner(r->oid);
+}
+
+/*
  * pg_class's rows: the catalog relations, in pg_catalog, then sm's tables,
  * indexes, views and sequences, the session's temporary tables among them.
  */
@@ -249,15 +265,15 @@ static void gen_pg_class(Tuplestorestate *ts, TupleDesc desc, Oid only) {
   for (int i = 0; i < count; i++)
     class_row(
         ts, desc, cats[i].oid, cats[i].name, PG_CATALOG_NAMESPACE,
-        cats[i].rowtype, RELKIND_RELATION, cats[i].natts, false, false,
-        (Datum)0, false,
+        cats[i].rowtype, BOOTSTRAP_SUPERUSERID, RELKIND_RELATION, cats[i].natts,
+        false, false, (Datum)0, false,
         make_acl(BOOTSTRAP_SUPERUSERID, ACL_ALL_RIGHTS_RELATION,
                  AuthIdRelationId == cats[i].oid ? ACL_NO_RIGHTS : ACL_SELECT));
   foreach (l, sm_relations(only)) {
     smstore_relation_t *r = (smstore_relation_t *)lfirst(l);
 
-    class_row(ts, desc, r->oid, r->name, r->nspoid, InvalidOid, r->kind,
-              r->natts, r->hasindex, r->temp,
+    class_row(ts, desc, r->oid, r->name, r->nspoid, InvalidOid,
+              relation_owner(r), r->kind, r->natts, r->hasindex, r->temp,
               smstore_view_reloptions(r->options),
               r->nfkeys > 0 || r->referenced);
   }
@@ -733,8 +749,8 @@ static void gen_pg_database(Tuplestorestate *ts, TupleDesc desc) {
     values[Anum_pg_database_oid - 1] =
         ObjectIdGetDatum(datadir_database_oid(name));
     values[Anum_pg_database_datname - 1] = name_datum(name);
-    values[Anum_pg_database_datdba - 1] =
-        ObjectIdGetDatum(BOOTSTRAP_SUPERUSERID);
+    values[Anum_pg_database_datdba - 1] = ObjectIdGetDatum(
+        pg_global_database_owner(pg_global_dbid(datadir_database_oid(name))));
     values[Anum_pg_database_encoding - 1] = Int32GetDatum(PG_UTF8);
     values[Anum_pg_database_datlocprovider - 1] =
         CharGetDatum(COLLPROVIDER_LIBC);
@@ -857,7 +873,7 @@ static void gen_pg_views(Tuplestorestate *ts, TupleDesc desc) {
       continue;
     values[0] = name_datum(get_namespace_name(r->nspoid));
     values[1] = name_datum(r->name);
-    values[2] = name_datum(GetUserNameFromId(BOOTSTRAP_SUPERUSERID, false));
+    values[2] = name_datum(GetUserNameFromId(relation_owner(r), false));
     values[3] = DirectFunctionCall1(pg_get_viewdef, ObjectIdGetDatum(r->oid));
     tuplestore_putvalues(ts, desc, values, nulls);
   }

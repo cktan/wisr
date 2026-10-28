@@ -38,15 +38,13 @@ DROP USER regress_dep_user2;
 -- the error message detail here would include a pg_toast_nnn name that
 -- is not constant, so suppress it
 \set VERBOSITY terse
---dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
---dg ALTER TABLE deptest OWNER TO regress_dep_user3;
---dg-cascade
+ALTER TABLE deptest OWNER TO regress_dep_user3;
+--dg-differs: no error where PostgreSQL has: role "?" cannot be dropped because some objects depend on it
 --dg DROP USER regress_dep_user3;
 \set VERBOSITY default
 -- if we drop the object, we can drop the user too
 DROP TABLE deptest;
---dg-cascade
---dg DROP USER regress_dep_user3;
+DROP USER regress_dep_user3;
 -- Test DROP OWNED
 CREATE USER regress_dep_user0;
 CREATE USER regress_dep_user1;

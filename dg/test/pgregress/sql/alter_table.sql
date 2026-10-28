@@ -331,8 +331,7 @@ CREATE VIEW attmp_view (unique1) AS SELECT unique1 FROM tenk1;
 ALTER TABLE attmp_view RENAME TO attmp_view_new;
 
 SET ROLE regress_alter_table_user1;
---dg-differs: no error where PostgreSQL has: must be owner of view attmp_view_new
---dg ALTER VIEW attmp_view_new RENAME TO fail;  -- permission denied
+ALTER VIEW attmp_view_new RENAME TO fail;  -- permission denied
 RESET ROLE;
 
 -- hack to ensure we get an indexscan here
