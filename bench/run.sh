@@ -71,11 +71,14 @@ sql() {
   "$psql" -h "$work" -p "$port" -d postgres -X -q -A -t -v ON_ERROR_STOP=1 "$@"
 }
 
-# The median, least and greatest of the numbers on stdin, as "M (L-G)".
+# The median, least and greatest of the numbers on stdin, as "M (L-G)": to
+# a tenth of a millisecond, or a thousandth below 10 ms, where a tenth
+# would hide a difference (Q6's 0.2 against 0.2).
 summary() {
   sort -g | awk '{ v[NR] = $1 } END {
     m = NR % 2 ? v[(NR + 1) / 2] : (v[NR / 2] + v[NR / 2 + 1]) / 2
-    printf "%.1f (%.1f-%.1f)", m, v[1], v[NR] }'
+    f = m < 10 ? "%.3f (%.3f-%.3f)" : "%.1f (%.1f-%.1f)"
+    printf f, m, v[1], v[NR] }'
 }
 
 # Load system $1, check each query's plan, time it, and write

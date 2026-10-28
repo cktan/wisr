@@ -121,7 +121,8 @@ loop.
 - **Q1 to Q6**: `EXPLAIN (ANALYZE, TIMING OFF)`, whose
   `Execution Time` is the executor's alone, with no parse,
   plan or network in it; each query run 10 times after 2
-  warm-up runs, and the median reported, with the spread.
+  warm-up runs, and the median reported, with the spread,
+  to a tenth of a millisecond, or a thousandth below 10 ms.
 - **Q7**: `pgbench -n -M prepared -f` with the query, one
   client, 30 seconds, its transactions a second: a fetch of
   100 rows is small enough that the round trip is part of
