@@ -7,8 +7,9 @@
  * and smstore.c scans it.  The planner still asks an index's access method
  * what its scans can do and what they cost, and this answers for sm's: a
  * btree, ordered, unique or not, of several columns, scanned forwards a row
- * at a time or its columns alone, keeping no position, and never into a
- * bitmap: a table in sm is read by its key (../sm/CLUSTER.md section 6).
+ * at a time or its columns alone, keeping no position, taking an array of
+ * values to probe (../INLIST.md), and never into a bitmap: a table in sm is
+ * read by its key (../sm/CLUSTER.md section 6).
  * Its costs and its strategies are btree's.  It has no build, insert,
  * vacuum or scan function: nothing calls them on an index in sm.
  *
@@ -97,8 +98,8 @@ IndexAmRoutine *smindex_routine(void) {
   amroutine->amcanunique = true;
   amroutine->amcanmulticol = true;
   amroutine->amoptionalkey = true;
-  /* smstore.c takes no array of values in a scan key yet. */
-  amroutine->amsearcharray = false;
+  /* smstore.c probes an array's values, one a probe (../INLIST.md). */
+  amroutine->amsearcharray = true;
   amroutine->amsearchnulls = true;
   amroutine->amstorage = false;
   amroutine->amclusterable = false;

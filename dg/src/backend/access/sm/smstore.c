@@ -2648,6 +2648,24 @@ struct smstore_scan_t {
   bool point_row;
   char *point_key;
   size_t point_len;
+  /*
+   * An index scan's bounds, those of the probe open when arrays give
+   * columns values (../INLIST.md): narrays such columns, each column's
+   * values' bounds sorted in the index's order, and the one in use; the
+   * next probe takes the next combination.  empty when an array has no
+   * value, and the scan no row.
+   */
+  sm_bound_t lo, hi;
+  sm_datum_t *lo_vals, *hi_vals;
+  int narrays;
+  int *arr_col;
+  int *arr_n;
+  int *arr_at;
+  sm_datum_t **arr_lo, **arr_hi;
+  bool empty;
+  /* Each array key's elements but its nulls, for keys_met(); NULL if none. */
+  Datum **elems;
+  int *nelems;
 };
 
 /*
@@ -6884,6 +6902,18 @@ static bool keys_met(smstore_scan_t *scan, TupleTableSlot *slot,
     }
     if (isnull || (key->sk_flags & SK_ISNULL))
       return false;
+    /* An array's key is met by any of its elements. */
+    if (key->sk_flags & SK_SEARCHARRAY) {
+      bool met = false;
+
+      for (int e = 0; e < scan->nelems[i] && !met; e++)
+        met = DatumGetBool(FunctionCall2Coll(&key->sk_func, key->sk_collation,
+                                             slot->tts_values[col],
+                                             scan->elems[i][e]));
+      if (!met)
+        return false;
+      continue;
+    }
     if (!DatumGetBool(FunctionCall2Coll(&key->sk_func, key->sk_collation,
                                         slot->tts_values[col],
                                         key->sk_argument)))
@@ -6893,12 +6923,111 @@ static bool keys_met(smstore_scan_t *scan, TupleTableSlot *slot,
 }
 
 /*
+ * The elements of an array key's array but its nulls, palloc'd, into
+ * *elems; their number.
+ */
+static int array_elems(ScanKey key, Datum **elems) {
+  ArrayType *arr = DatumGetArrayTypeP(key->sk_argument);
+  int16 elmlen;
+  bool elmbyval;
+  char elmalign;
+  Datum *vals;
+  bool *nulls;
+  int n, kept = 0;
+
+  get_typlenbyvalalign(ARR_ELEMTYPE(arr), &elmlen, &elmbyval, &elmalign);
+  deconstruct_array(arr, ARR_ELEMTYPE(arr), elmlen, elmbyval, elmalign, &vals,
+                    &nulls, &n);
+  for (int i = 0; i < n; i++)
+    if (!nulls[i])
+      vals[kept++] = vals[i];
+  *elems = vals;
+  return kept;
+}
+
+/*
+ * Open the index scan's probe at its bounds now (../INLIST.md): with point,
+ * the row an equality on each of the primary key's columns names, read by
+ * its key; else a range of the primary key's rows or of another index's
+ * entries.  The last probe's cursor is closed first.
+ */
+static void open_probe(smstore_scan_t *scan) {
+  sm_rel_scanend(scan->cursor);
+  sm_idx_scanend(scan->icursor);
+  scan->cursor = NULL;
+  scan->icursor = NULL;
+  /*
+   * An equality on each of the primary key's columns names one row: read it
+   * by its key, as a cursor would see it now, with none opened.
+   */
+  if (scan->point) {
+    sm_row_key_t key = {scan->lo_vals, scan->lo.isnull,
+                        (size_t)scan->form->indnkeyatts};
+    std::string bytes;
+    const void *tuple;
+    size_t len;
+
+    if (0 != sm_tbl_row_key(scan->tbl, key, bytes))
+      sm_error("name a row by its key");
+    scan->point_row = false;
+    if (scan->point_key)
+      pfree(scan->point_key);
+    scan->point_key = (char *)palloc(Max(bytes.size(), 1));
+    memcpy(scan->point_key, bytes.data(), bytes.size());
+    scan->point_len = bytes.size();
+    switch (sm_tbl_read_key(scan->tbl, bytes.data(), bytes.size(), &scan->ref,
+                            &tuple, &len)) {
+    case 0:
+      scan->point_row = true;
+      break;
+    case 1:
+      break;
+    default:
+      sm_error("read a row");
+    }
+    return;
+  }
+  /* The primary key's entries are the rows, keyed by it: read in place. */
+  if (scan->form->indisprimary
+          ? sm_tbl_idx_scan_rows(scan->tbl, scan->index,
+                                 scan->lo.n > 0 ? &scan->lo : NULL,
+                                 scan->hi.n > 0 ? &scan->hi : NULL, NULL,
+                                 &scan->cursor) != 0
+          : sm_tbl_idx_scan(scan->tbl, scan->index,
+                            scan->lo.n > 0 ? &scan->lo : NULL,
+                            scan->hi.n > 0 ? &scan->hi : NULL, NULL,
+                            &scan->icursor) != 0)
+    sm_error("scan an index");
+}
+
+/*
+ * Open the index scan's next probe: the next combination of its arrays'
+ * values, the last array's first; false after the last.
+ */
+static bool next_probe(smstore_scan_t *scan) {
+  int a = scan->narrays - 1;
+
+  while (a >= 0 && ++scan->arr_at[a] == scan->arr_n[a])
+    scan->arr_at[a--] = 0;
+  if (a < 0)
+    return false;
+  for (int i = 0; i < scan->narrays; i++) {
+    scan->lo_vals[scan->arr_col[i]] = scan->arr_lo[i][scan->arr_at[i]];
+    scan->hi_vals[scan->arr_col[i]] = scan->arr_hi[i][scan->arr_at[i]];
+  }
+  open_probe(scan);
+  return true;
+}
+
+/*
  * Begin a scan of index, a btree of heap, a table in sm, for the rows that
  * meet keys: btree scan keys on the index's columns, each row deformed as it
  * is read.  Equal keys on its
  * leading columns are a prefix both bounds share; the next column's ranges
  * bound it below and above, in the index's own order, so a DESC column's
- * upper value is its lower bound.  Every row read is checked against every
+ * upper value is its lower bound.  An array's equality on a column of the
+ * prefix gives it its values, the scan one probe a value, in the index's
+ * order (../INLIST.md).  Every row read is checked against every
  * key, so a key that bounds nothing still holds; but not a key the bounds
  * hold exactly, one of a primary key's integer columns: its rows, keyed by
  * those columns, are read only between the bounds (../sm/sm2/SM2_DESIGN.md
@@ -6923,15 +7052,29 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
                     errmsg("relation \"%s\" does not exist",
                            RelationGetRelationName(heap))));
   for (int i = 0; i < nkeys; i++)
-    if (keys[i].sk_flags & (SK_ROW_HEADER | SK_SEARCHARRAY))
+    if (keys[i].sk_flags & SK_ROW_HEADER)
       ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                       errmsg("an index scan in sm takes no row comparison "
-                             "or array yet")));
+                             "yet")));
+
+  scan = (smstore_scan_t *)palloc0(sizeof(smstore_scan_t));
+  scan->arr_col = (int *)palloc0(ncols * sizeof(int));
+  scan->arr_n = (int *)palloc0(ncols * sizeof(int));
+  scan->arr_at = (int *)palloc0(ncols * sizeof(int));
+  scan->arr_lo = (sm_datum_t **)palloc0(ncols * sizeof(sm_datum_t *));
+  scan->arr_hi = (sm_datum_t **)palloc0(ncols * sizeof(sm_datum_t *));
+  scan->elems = (Datum **)palloc0(Max(nkeys, 1) * sizeof(Datum *));
+  scan->nelems = (int *)palloc0(Max(nkeys, 1) * sizeof(int));
+  /* Each array's elements, but a null array's: it meets no row. */
+  for (int i = 0; i < nkeys; i++)
+    if ((keys[i].sk_flags & SK_SEARCHARRAY) &&
+        !(keys[i].sk_flags & SK_ISNULL))
+      scan->nelems[i] = array_elems(&keys[i], &scan->elems[i]);
 
   for (int c = 0; c < ncols; c++) {
     Oid coltype = index->rd_opcintype[c];
     bool desc = (index->rd_indoption[c] & INDOPTION_DESC) != 0;
-    ScanKey eq = NULL, below = NULL, above = NULL;
+    ScanKey eq = NULL, below = NULL, above = NULL, in = NULL;
     Form_pg_attribute att = TupleDescAttr(RelationGetDescr(index), c);
     /*
      * A key's datum as sm takes it: a numeric's integer at the scale, an
@@ -6958,6 +7101,15 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
     for (int i = 0; i < nkeys; i++) {
       ScanKey key = &keys[i];
 
+      /*
+       * An array's equality, its elements of the column's type or an
+       * integer's, gives the column values if no plain equality does.
+       */
+      if (key->sk_attno == c + 1 && (key->sk_flags & SK_SEARCHARRAY) &&
+          key->sk_strategy == BTEqualStrategyNumber &&
+          (!OidIsValid(key->sk_subtype) || coltype == key->sk_subtype ||
+           (int_type(coltype) && int_type(key->sk_subtype))))
+        in = key;
       if (key->sk_attno != c + 1 || !plain_key(key, coltype))
         continue;
       switch (key->sk_strategy) {
@@ -6986,6 +7138,68 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
       neq++;
       continue;
     }
+    if (in != NULL) {
+      int a = scan->narrays++, n = 0;
+      int k = in - keys;
+      Datum *vals = (Datum *)palloc(Max(scan->nelems[k], 1) * sizeof(Datum));
+      /* The column's operator class is its type's default btree one. */
+      FmgrInfo *cmp =
+          &lookup_type_cache(coltype, TYPECACHE_CMP_PROC_FINFO)->cmp_proc_finfo;
+      Oid coll = index->rd_indcollation[c];
+      bool spread = false;
+
+      /* Each element as the column's datum; one out of its range, none. */
+      for (int e = 0; e < scan->nelems[k]; e++) {
+        ScanKeyData one = *in;
+
+        one.sk_argument = scan->elems[k][e];
+        one.sk_flags &= ~SK_SEARCHARRAY;
+        if (!OidIsValid(in->sk_subtype) || coltype == in->sk_subtype)
+          vals[n++] = one.sk_argument;
+        else if (int_key_datum(&one, coltype, &vals[n]))
+          n++;
+      }
+      /* In the index's order, each value once. */
+      std::sort(vals, vals + n, [&](Datum x, Datum y) {
+        int32 r = DatumGetInt32(FunctionCall2Coll(cmp, coll, x, y));
+        return desc ? r > 0 : r < 0;
+      });
+      int m = 0;
+      for (int e = 0; e < n; e++)
+        if (0 == m ||
+            0 != DatumGetInt32(FunctionCall2Coll(cmp, coll, vals[m - 1],
+                                                 vals[e])))
+          vals[m++] = vals[e];
+      scan->arr_col[a] = c;
+      scan->arr_n[a] = m;
+      scan->arr_lo[a] = (sm_datum_t *)palloc(Max(m, 1) * sizeof(sm_datum_t));
+      scan->arr_hi[a] = (sm_datum_t *)palloc(Max(m, 1) * sizeof(sm_datum_t));
+      for (int e = 0; e < m; e++) {
+        ScanKeyData one = *in;
+
+        one.sk_argument = vals[e];
+        one.sk_subtype = coltype;
+        one.sk_flags &= ~SK_SEARCHARRAY;
+        scan->arr_lo[a][e] = bound(&one, false);
+        scan->arr_hi[a][e] = bound(&one, true);
+        spread |= scan->arr_lo[a][e] != scan->arr_hi[a][e];
+      }
+      if (0 == m) {
+        scan->empty = true;
+        break;
+      }
+      lo_vals[c] = scan->arr_lo[a][0];
+      hi_vals[c] = scan->arr_hi[a][0];
+      lo.n = hi.n = c + 1;
+      bounded[k] = exact;
+      /* A numeric's bounds may differ: no later column narrows them. */
+      if (numeric_col && spread) {
+        lo.inclusive = hi.inclusive = true;
+        break;
+      }
+      neq++;
+      continue;
+    }
     /* In the index's order a DESC column's high values come first. */
     ScanKey first = desc ? above : below, last = desc ? below : above;
 
@@ -7008,7 +7222,6 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
     break;
   }
 
-  scan = (smstore_scan_t *)palloc0(sizeof(smstore_scan_t));
   scan->tbl = tbl;
   scan->relid = RelationGetRelid(heap);
   scan->keys = keys;
@@ -7016,6 +7229,10 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
   scan->bounded = bounded;
   scan->index = RelationGetRelid(index);
   scan->form = form;
+  scan->lo = lo;
+  scan->hi = hi;
+  scan->lo_vals = lo_vals;
+  scan->hi_vals = hi_vals;
   scan->keycols = (AttrNumber *)palloc(Max(nkeys, 1) * sizeof(AttrNumber));
   /* Each row is checked against every key not bounded (keys_met()). */
   for (int i = 0; i < nkeys; i++) {
@@ -7027,42 +7244,10 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
     if (!bounded[i])
       scan->nchecked++;
   }
-  /*
-   * An equality on each of the primary key's columns names one row: read it
-   * by its key, as a cursor would see it now, with none opened.
-   */
-  if (form->indisprimary && ncols == neq) {
-    sm_row_key_t key = {lo_vals, nulls, (size_t)ncols};
-    std::string bytes;
-    const void *tuple;
-    size_t len;
-
-    if (0 != sm_tbl_row_key(tbl, key, bytes))
-      sm_error("name a row by its key");
-    scan->point = true;
-    scan->point_key = (char *)palloc(Max(bytes.size(), 1));
-    memcpy(scan->point_key, bytes.data(), bytes.size());
-    scan->point_len = bytes.size();
-    switch (sm_tbl_read_key(tbl, bytes.data(), bytes.size(), &scan->ref,
-                            &tuple, &len)) {
-    case 0:
-      scan->point_row = true;
-      break;
-    case 1:
-      break;
-    default:
-      sm_error("read a row");
-    }
-  }
-  /* The primary key's entries are the rows, keyed by it: read in place. */
-  else if (form->indisprimary
-               ? sm_tbl_idx_scan_rows(
-                     tbl, RelationGetRelid(index), lo.n > 0 ? &lo : NULL,
-                     hi.n > 0 ? &hi : NULL, NULL, &scan->cursor) != 0
-               : sm_tbl_idx_scan(tbl, RelationGetRelid(index),
-                                 lo.n > 0 ? &lo : NULL, hi.n > 0 ? &hi : NULL,
-                                 NULL, &scan->icursor) != 0)
-    sm_error("scan an index");
+  /* An equality on each of the primary key's columns: a read by key. */
+  scan->point = form->indisprimary && ncols == neq;
+  if (!scan->empty)
+    open_probe(scan);
   open_scans.push_back(scan);
   return scan;
 }
@@ -7178,14 +7363,10 @@ static pg_noinline bool next_entry(smstore_scan_t *scan) {
 }
 
 /*
- * The index scan's next entry, its rowno into scan->cur_rowno, the row
- * unread; false at the end.  The entry is within the scan's bounds, but its
- * row may be one the transaction does not see, or not meet every key: who
- * reads the row checks.
+ * The open probe's next entry, its rowno into scan->cur_rowno; false at
+ * the probe's end (smstore_index_getrowno()).
  */
-bool smstore_index_getrowno(smstore_scan_t *scan) {
-  CHECK_FOR_INTERRUPTS();
-  scan->cur = false;
+static inline bool probe_row(smstore_scan_t *scan) {
   /* The one row a primary key's equalities name, once; a keyed row's is 0. */
   if (scan->point) {
     if (!scan->point_row)
@@ -7210,6 +7391,25 @@ bool smstore_index_getrowno(smstore_scan_t *scan) {
     }
   }
   return next_entry(scan);
+}
+
+/*
+ * The index scan's next entry, its rowno into scan->cur_rowno, the row
+ * unread; false at the end.  The entry is within the scan's bounds, but its
+ * row may be one the transaction does not see, or not meet every key: who
+ * reads the row checks.  When a probe ends, the next opens (../INLIST.md).
+ */
+bool smstore_index_getrowno(smstore_scan_t *scan) {
+  CHECK_FOR_INTERRUPTS();
+  scan->cur = false;
+  if (scan->empty)
+    return false;
+  for (;;) {
+    if (probe_row(scan))
+      return true;
+    if (0 == scan->narrays || !next_probe(scan))
+      return false;
+  }
 }
 
 /*

@@ -9145,3 +9145,37 @@ at fault; the test was.
   starts psql.
 - **Shown**: with each background psql started 0.5 s late, the
   old helper failed 19 checks of 20 and the new one none.
+
+## Step 314: an index scan of = ANY(array) and IN (...)
+
+`col = ANY(array)` and `col IN (...)` were a sequential scan
+with a filter: sm's index access method took no array
+(`amsearcharray = false`), so the planner made no index path
+of the clause, even with `enable_seqscan` off. The
+benchmark's new Q7, 100 rows by key in one statement
+(`../bench/DESIGN.md` §5), read a million (`INLIST.md`).
+
+- **The access method takes arrays** (`smindex.c`), so
+  PostgreSQL 18 also makes `id = 1 OR id = 2` one array.
+- **Probes** (`smstore_index_beginscan()`, `smstore.c`): an
+  array's equality on a column of the equality prefix gives
+  the column its values, as the column's datums, nulls and
+  out-of-range values dropped, sorted in the index's order by
+  the column type's default btree comparison, each once; the
+  scan opens one probe a value, or a combination of values,
+  in order (`open_probe()`, `next_probe()`): a read by key
+  when the equalities cover the primary key, else a range.
+  The rows come in the index's order, which the planner
+  assumes of an array scan.
+- **Any other array key is a filter** (`keys_met()`): one
+  after a range's column, `< ANY`, another type.
+- **Found**: digres's relcache fills no support functions of
+  an index in sm, so `index_getprocinfo()` failed its assert;
+  the type cache has the same comparison.
+- **Tests**: `test/slt/in_list.test`, 50 records, PostgreSQL
+  18's results and plans; each of six parts disabled fails it
+  (`INLIST.md` §4).
+- **Measured** (`../bench/results/20261028-0854.md`): Q7,
+  2,749 transactions a second to PostgreSQL's 2,907 (0.95),
+  an index scan on both; Q8, 16 clients with writes, 13,648
+  to 37,447 (0.36).

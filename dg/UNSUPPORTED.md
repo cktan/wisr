@@ -108,8 +108,9 @@ regression files are taken out for it (`test/pgregress`,
 - **Backward index scans** — differs. `ORDER BY ... DESC
   LIMIT` sorts.
 - **Index quals** — refused: a row comparison, `(a, b) >
-  (...)`; differs: `IN (...)` and `= ANY` are filters, not
-  index quals (step 287).
+  (...)`; differs: `IN (...)` and `= ANY` on a column after
+  a range's are a filter of the range, not a skip scan
+  (`INLIST.md`, step 314).
 - **Index-only scans of a table a statement writes or locks**
   — differs: none, as EvalPlanQual cannot recheck one
   (step 292).

@@ -1,0 +1,288 @@
+# Verify that = ANY(array) and IN (...) are read through an index, one probe
+# a value, in the index's order (../INLIST.md), with PostgreSQL 18's rows.
+# 1. A primary key: duplicates, a null and a value not there in the array;
+#    IN; an empty and a null array, and one of nulls, which finds no row 0,
+#    a null's datum; an int4 array on an int8 column; the
+#    plan an index scan in key order, with no sort for ORDER BY.
+# 2. Prepared: an array parameter, and an array of parameters.
+# 3. OR of equalities made one array.
+# 4. A non-unique index, its duplicates, and an index-only scan of it.
+# 5. Two columns with an array each; an array after a range's column, which
+#    filters the range.
+# 6. A DESC column, a numeric column, a text column, an expression index and
+#    a partial index.
+# 7. A two-column primary key, an array on either column.
+# 8. < ANY, which no probe takes, and an array of 667 values.
+
+statement ok
+set enable_seqscan = off
+
+statement ok
+set enable_bitmapscan = off
+
+# 1. A primary key.
+statement ok
+create table t (id int8 primary key, v text)
+
+statement ok
+insert into t select g, 'v' || g from generate_series(0, 1000) g
+
+query IT
+select id, v from t where id = any(array[7, 3, 7, 900, null, 5000]) order by id
+----
+3	v3
+7	v7
+900	v900
+
+query I
+select id from t where id in (500, 1, 2000) order by id
+----
+1
+500
+
+query I
+select count(*) from t where id = any('{}'::int8[])
+----
+0
+
+query I
+select count(*) from t where id = any(null::int8[])
+----
+0
+
+query I
+select count(*) from t where id = any(array[null, null]::int8[])
+----
+0
+
+query I
+select id from t where id = any(array[9, 2, 4]::int4[]) order by id
+----
+2
+4
+9
+
+query T
+explain (costs off) select id, v from t where id = any(array[9, 2, 4]) order by id
+----
+Index Scan using t_pkey on t
+  Index Cond: (id = ANY ('{9,2,4}'::integer[]))
+
+query I nosort
+select id from t where id = any(array[30, 10, 20, 10]) order by id
+----
+10
+20
+30
+
+# 2. Prepared.
+statement ok
+prepare pa(int8[]) as select id from t where id = any($1) order by id
+
+query I nosort
+execute pa('{40, 4, 400}')
+----
+4
+40
+400
+
+query I nosort
+execute pa('{8}')
+----
+8
+
+statement ok
+prepare pp(int8, int8, int8) as select id from t where id = any(array[$1, $2, $3]) order by id
+
+query I nosort
+execute pp(6, 5, 6)
+----
+5
+6
+
+query I nosort
+execute pp(1001, 999, null)
+----
+999
+
+# 3. OR made one array.
+query T
+explain (costs off) select v from t where id = 12 or id = 11
+----
+Index Scan using t_pkey on t
+  Index Cond: (id = ANY ('{12,11}'::integer[]))
+
+query T
+select v from t where id = 12 or id = 11 order by v
+----
+v11
+v12
+
+# 4. A non-unique index.
+statement ok
+create table s (a int4, b int4, c text)
+
+statement ok
+insert into s select g, g % 10, 'c' || g from generate_series(1, 100) g
+
+statement ok
+create index s_b on s (b)
+
+query II
+select b, a from s where b = any(array[3, 7, 3]) order by b, a
+----
+3	3
+3	13
+3	23
+3	33
+3	43
+3	53
+3	63
+3	73
+3	83
+3	93
+7	7
+7	17
+7	27
+7	37
+7	47
+7	57
+7	67
+7	77
+7	87
+7	97
+
+query T
+explain (costs off) select b from s where b = any(array[3, 7]) order by b
+----
+Index Only Scan using s_b on s
+  Index Cond: (b = ANY ('{3,7}'::integer[]))
+
+query II
+select b, count(*) from s where b = any(array[3, 7, 11]) group by b order by b
+----
+3	10
+7	10
+
+# 5. Two arrays; an array after a range.
+statement ok
+create index s_ba on s (b, a)
+
+query II
+select b, a from s where b = any(array[2, 5]) and a = any(array[12, 15, 25, 52]) order by b, a
+----
+2	12
+2	52
+5	15
+5	25
+
+query II
+select b, a from s where b > 7 and a = any(array[8, 9, 18, 19, 20]) order by b, a
+----
+8	8
+8	18
+9	9
+9	19
+
+# 6. DESC, numeric, text, expression and partial indexes.
+statement ok
+create table d (k int4, n numeric(10, 2), name text)
+
+statement ok
+insert into d select g, g / 4.0, 'Name' || g from generate_series(1, 200) g
+
+statement ok
+create index d_k_desc on d (k desc)
+
+query I nosort
+select k from d where k = any(array[5, 150, 9]) order by k desc
+----
+150
+9
+5
+
+query T
+explain (costs off) select k from d where k = any(array[5, 150, 9]) order by k desc
+----
+Index Only Scan using d_k_desc on d
+  Index Cond: (k = ANY ('{5,150,9}'::integer[]))
+
+statement ok
+create index d_n on d (n)
+
+query IR
+select k, n from d where n = any(array[1.5, 2.50, 3.333, 50]) order by n
+----
+6	1.500
+10	2.500
+200	50.000
+
+statement ok
+create unique index d_name on d (name)
+
+query I
+select k from d where name in ('Name7', 'Name70', 'nope') order by k
+----
+7
+70
+
+statement ok
+create index d_lower on d (lower(name))
+
+query I
+select k from d where lower(name) = any(array['name3', 'name33', 'NAME4']) order by k
+----
+3
+33
+
+statement ok
+create index d_part on d (k) where k > 100
+
+query I
+select k from d where k > 100 and k = any(array[50, 101, 199, 300]) order by k
+----
+101
+199
+
+# 7. A two-column primary key.
+statement ok
+create table p (x int4, y int4, z text, primary key (x, y))
+
+statement ok
+insert into p select g / 10, g % 10, 'z' || g from generate_series(0, 99) g
+
+query IIT
+select x, y, z from p where x = any(array[3, 1]) and y = 4 order by x, y
+----
+1	4	z14
+3	4	z34
+
+query IIT
+select x, y, z from p where x = 2 and y = any(array[9, 0, 9]) order by x, y
+----
+2	0	z20
+2	9	z29
+
+query IIT
+select x, y, z from p where x = any(array[5, 6]) and y = any(array[1, 2]) order by x, y
+----
+5	1	z51
+5	2	z52
+6	1	z61
+6	2	z62
+
+query I
+select count(*) from p where x = any(array[7, 8])
+----
+20
+
+# 8. < ANY, and a long array.
+query I
+select count(*) from t where id < any(array[3, 5])
+----
+5
+
+query II
+select count(*), sum(id) from t where id = any(array(select generate_series(1, 2000, 3)::int8))
+----
+334	167167
