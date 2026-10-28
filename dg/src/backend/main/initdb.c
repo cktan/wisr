@@ -226,7 +226,7 @@ static void make_storage(const char *username, const char *secret) {
   /* After postgres, so that postgres keeps the first database id. */
   if (0 != pg_global_create(env, username, secret))
     fatal("could not create database \"%s\": %s", PG_GLOBAL_DBNAME,
-          sm_errmsg());
+          aa_errmsg());
   /* Detach, which closes the root db so that the server can open it. */
   if (sm_detach(env, 0) != 0)
     fatal("could not detach storage: %s", sm_errmsg());

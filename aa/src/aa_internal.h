@@ -1,0 +1,94 @@
+/*
+ * aa_internal.h -- what aa's own files share, and no user of aa sees.
+ */
+#ifndef AA_INTERNAL_H
+#define AA_INTERNAL_H
+
+#include <atomic>
+#include <deque>
+#include <mutex>
+
+#include "aa.h"
+#include "sm.h"
+
+/* Record an error; each returns -1, so a failing path is one line. */
+int aa_seterr(aa_errnum_t code, const char *fmt, ...)
+    __attribute__((format(printf, 2, 3)));
+int aa_sm_failed(const char *what);
+
+/* The process's: pg_global as last committed, which every session reads. */
+struct aa_env_t {
+  sm_env_t *env = NULL; /* the home directory pg_global is in */
+  std::mutex mutex;     /* guards roles and objects, and orders their
+                           replacement */
+  std::shared_ptr<const aa_roles_t> roles;
+  /* How many times roles was replaced: a session's caches of them are
+   * stale when it has moved (aa_roles_moved()). */
+  std::atomic<uint64_t> epoch{0};
+  /* Every object's entry, replaced as a whole, under mutex. */
+  std::shared_ptr<const aa_objects_t> objects;
+  /* How many times objects was replaced, and, for the last of them, which
+   * object each replacement changed: a session drops what it caches of
+   * those (aa_objects_moved()). */
+  std::atomic<uint64_t> objects_epoch{0};
+  std::deque<std::pair<uint64_t, aa_key_t>> changed;
+};
+
+/* A change to an object's entry the session's transaction made. */
+struct aa_change_t {
+  int level;    /* the subtransaction's nesting level that made it */
+  aa_key_t key; /* the object's */
+  bool present; /* false: the entry goes */
+  aa_object_t object;
+};
+
+/* A session's own: its changes not yet committed, and its sm session. */
+struct aa_session_t {
+  aa_env_t *env = NULL;
+  /* An sm session on pg_global, opened at the first need. */
+  sm_session_t *session = NULL;
+  /* The epoch this session's caches of the roles are of. */
+  uint64_t epoch = 0;
+  /* While the session's transaction has changed roles: the snapshot the
+   * changes began from, and it with the changes, which the session sees. */
+  std::shared_ptr<const aa_roles_t> base;
+  std::shared_ptr<aa_roles_t> working;
+
+  /* The objects epoch this session's caches are of. */
+  uint64_t objects_epoch = 0;
+  /* The transaction's changes to objects' entries, in order. */
+  std::vector<aa_change_t> changes;
+  /* The databases dropped by the transaction, whose entries go. */
+  std::vector<uint64_t> dropped_dbs;
+  /* Entries written before the database's commit, as they were, to put
+   * back if it fails (aa_commit()). */
+  std::vector<std::pair<aa_key_t, aa_object_t>> to_restore;
+  /* The session's temporary objects' owners and ACLs, never written. */
+  std::map<aa_oid_t, aa_oid_t> temp_owners;
+  std::map<aa_oid_t, std::string> temp_acls;
+};
+
+/* ---- pg_global's tables (aa_store.cc) ---- */
+
+/* Every role and membership, in a transaction of session's own. */
+int aa_store_read_roles(sm_session_t *session, aa_roles_t *out);
+
+/* Every object's entry, likewise. */
+int aa_store_read_objects(sm_session_t *session, aa_objects_t *out);
+
+/*
+ * Write the roles and memberships of working that differ from base, in
+ * session's transaction; one not as base had it is another session's
+ * change, AA_ERR_CONFLICT.
+ */
+int aa_store_write_roles(sm_session_t *session, const aa_roles_t &base,
+                         const aa_roles_t &working);
+
+/* pg_object, open to write in session's transaction. */
+int aa_store_open_objects(sm_session_t *session, sm_tbl_t **out);
+
+/* Make pg_object's row for key object, or none if object is NULL. */
+int aa_store_write_object(sm_tbl_t *tbl, const aa_key_t &key,
+                          const aa_object_t *object);
+
+#endif /* AA_INTERNAL_H */

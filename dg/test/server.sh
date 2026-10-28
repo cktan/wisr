@@ -2919,7 +2919,7 @@ postgres|t|UTF8|c|C|C|t
 OUT
 cmp -s "$work/db.out" "$work/db.expected" || fail "pg_database"
 
-# Verify that the roles are pg_global's (sm/ROLE.md section 3): pg_authid
+# Verify that the roles are pg_global's (aa/ROLE.md section 3): pg_authid
 # and pg_roles read them, the server's own lookups of a role go through
 # pg_authid, and pg_global is no database a client sees.
 # 1. pg_authid has the superuser, oid 10, with its password's SCRAM
@@ -2952,7 +2952,7 @@ local_psql -c 'drop database pg_global' 2>&1 |
 local_psql -c 'create database pg_global' 2>&1 |
   grep -q 'database "pg_global" already exists' || fail "create pg_global"
 
-# Verify role DDL (sm/ROLE.md section 9, step 2): roles and memberships go
+# Verify role DDL (aa/ROLE.md section 9, step 2): roles and memberships go
 # to pg_global at commit, a session already open sees them at its next
 # statement, and what PostgreSQL refuses is refused.
 # 1. Hold a session open; make rr1 LOGIN with a password, rr2 and rr3; grant
@@ -3028,7 +3028,7 @@ OUT
 cmp -s "$work/rolealter.out" "$work/rolealter.expected" ||
   fail "role DDL: ALTER and DROP ROLE"
 
-# Verify how a client gets in (sm/ROLE.md section 5): on the local socket
+# Verify how a client gets in (aa/ROLE.md section 5): on the local socket
 # by peer if the OS user is the role's name, else by the role's password;
 # over TCP by password; and a role that may not log in, is past VALID
 # UNTIL or at its CONNECTION LIMIT is refused. Each refusal tells the
@@ -3142,7 +3142,7 @@ OUT
 cmp -s "$work/builtin_acl.out" "$work/builtin_acl.expected" ||
   fail "non-superuser: what initdb made"
 
-# Verify owners (sm/ROLE.md section 9, step 4): what a role makes is its,
+# Verify owners (aa/ROLE.md section 9, step 4): what a role makes is its,
 # kept in pg_global after the commit; DDL on what it does not own is
 # refused as PostgreSQL refuses it; and ALTER ... OWNER TO changes it.
 # 1. Make ro1 and ro2; schema so owned by ro1, in which, as ro1, table t
@@ -3243,7 +3243,7 @@ OUT
 cmp -s "$work/chowner.out" "$work/chowner.expected" ||
   fail "owners: ALTER ... OWNER TO"
 
-# Verify GRANT and REVOKE (sm/ROLE.md section 9, step 5): an ACL is
+# Verify GRANT and REVOKE (aa/ROLE.md section 9, step 5): an ACL is
 # pg_global's, written at the database's commit, and the checks read it.
 # 1. Make rg1 LOGIN and rg2 LOGIN, table gt with a row, owned by the
 #    superuser, and schema gs; grant rg1 USAGE and CREATE on gs.
@@ -3298,7 +3298,7 @@ cmp -s "$work/grant2.out" "$work/grant2.expected" ||
   fail "grant: the ACLs shown, and what is refused"
 
 # Verify that REVOKE ... FROM PUBLIC of CONNECT keeps a role out, and a
-# GRANT of it lets one in (sm/ROLE.md section 5, the second check).
+# GRANT of it lets one in (aa/ROLE.md section 5, the second check).
 # 1. Make database gdb; REVOKE CONNECT from PUBLIC, GRANT it to rg1.
 # 2. rg1 connects to gdb; rg2 is refused as a wrong password is.
 local_psql -c 'create database gdb' > "$work/gdb.out" 2>&1
@@ -3335,7 +3335,7 @@ grep -q 'not serializable' "$work/gks1.out" || fail "grant: the second fails"
 [ "$(local_psql -c "select relacl from pg_class where relname = 'gk'")" = \
   "{$me=arwdDxtm/$me,rg2=r/$me}" ] || fail "grant: a failed REVOKE"
 
-# Verify DROP ROLE, REASSIGN OWNED and DROP OWNED (sm/ROLE.md section 9,
+# Verify DROP ROLE, REASSIGN OWNED and DROP OWNED (aa/ROLE.md section 9,
 # step 6): what depends on a role is read from pg_global, in this database
 # and in the others.
 # 1. Make rd1 and rd2; give rd1 schema ds, table dt and view dv, SELECT on
@@ -5111,7 +5111,7 @@ $digres -D "$work/data" -k "$work" -p "$port" -c max_connections=3 \
 server=$!
 server_ready $server "$work/log2" || fail "max_connections: start"
 # Verify that a role and its attributes outlive the restart, and an owner:
-# pg_global's rows, read again at the start (sm/ROLE.md section 3).
+# pg_global's rows, read again at the start (aa/ROLE.md section 3).
 # 1. rr1, made above and made NOLOGIN, is there, still NOLOGIN.
 # 2. so.t, given to ro2 above, is still ro2's.
 # 3. gk's ACL, which a failed REVOKE left be, still grants rg2 SELECT.

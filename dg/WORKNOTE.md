@@ -9273,7 +9273,7 @@ that grows a file costs 2,776 µs, one over bytes the file has
 
 ## Step 318: the roles live in pg_global
 
-The first step of roles (`../sm/ROLE.md` §9). digres had one
+The first step of roles (`../aa/ROLE.md` §9). digres had one
 role, the superuser initdb named, whose name and SCRAM secret
 were the data directory's `superuser` file. A role is the
 whole server's, and no sm transaction spans two databases, so
@@ -9322,7 +9322,7 @@ the invariant).
 
 ## Step 319: role DDL writes pg_global
 
-The second step of roles (`../sm/ROLE.md` §9): CREATE, ALTER
+The second step of roles (`../aa/ROLE.md` §9): CREATE, ALTER
 and DROP ROLE, GRANT and REVOKE of a membership, SET ROLE and
 SET SESSION AUTHORIZATION. `user.c` is PostgreSQL's still, its
 checks and messages too; what it wrote to `pg_authid` and
@@ -9393,7 +9393,7 @@ checks and messages too; what it wrote to `pg_authid` and
 
 ## Step 320: how a client gets in
 
-The third step of roles (`../sm/ROLE.md` §5, §9): the fixed
+The third step of roles (`../aa/ROLE.md` §5, §9): the fixed
 rule of step 92, peer on the socket and SCRAM over TCP, gives
 way to ROLE.md's four checks, with no `pg_hba.conf`.
 
@@ -9433,7 +9433,7 @@ way to ROLE.md's four checks, with no `pg_hba.conf`.
 
 ## Step 321: a role that is not a superuser runs statements
 
-The first half of step 4 of roles (`../sm/ROLE.md` §9). Since
+The first half of step 4 of roles (`../aa/ROLE.md` §9). Since
 step 319 a session may be a role that is not a superuser, and
 every statement of one that looked a name up failed: the
 privilege check of a schema read `pg_namespace` by the
@@ -9483,7 +9483,7 @@ syscache, which opened an index no catalog relation has.
 
 ## Step 322: owners
 
-The second half of step 4 of roles (`../sm/ROLE.md` §9): every
+The second half of step 4 of roles (`../aa/ROLE.md` §9): every
 object a role makes is its, in `pg_global`, and DDL on one is
 refused to a role that does not own it, as PostgreSQL refuses
 it. Every object was the superuser's.
@@ -9559,7 +9559,7 @@ it. Every object was the superuser's.
 
 ## Step 323: GRANT and REVOKE
 
-The fifth step of roles (`../sm/ROLE.md` §9): GRANT and REVOKE
+The fifth step of roles (`../aa/ROLE.md` §9): GRANT and REVOKE
 on tables, views, sequences, schemas and databases, and the
 checks that then refuse. `aclchk.c` is PostgreSQL's still: what
 it computes, PostgreSQL's ACL merged with the grant, goes to
@@ -9608,7 +9608,7 @@ it computes, PostgreSQL's ACL merged with the grant, goes to
 
 ## Step 324: what depends on a role
 
-The sixth step of roles (`../sm/ROLE.md` §9): DROP ROLE refuses
+The sixth step of roles (`../aa/ROLE.md` §9): DROP ROLE refuses
 a role anything depends on, in any database, and REASSIGN
 OWNED and DROP OWNED act on what it owns and is granted, all
 read from `pg_global`'s entries, as PostgreSQL reads them from
@@ -9670,3 +9670,40 @@ or the table had no index.
   out as crashing in the merge's port; it and the other files
   that copy indexes, `alter_table`, `constraints`, `indexing`
   and `without_overlaps`, are ported again with the merge.
+
+## Step 326: roles and privileges, a library of their own
+
+What `pg_global.c` kept of the roles, memberships, owners and
+ACLs moves to `../aa`, a library on sm that digres links as it
+links sm and sq (`../aa/README.md`; `../sm/NEXT.md` §3). Its
+design, `ROLE.md`, moves with it to `../aa/ROLE.md`.
+
+- **aa**: `pg_global`'s tables and their rows; the snapshots
+  every session reads, their mutex and their epochs; a
+  session's changes, by subtransaction level; the commit
+  around the database's, with the entries that grant less in
+  between; ACLs as text, their default and their
+  intersection. It includes no header of PostgreSQL's and
+  throws nothing: 0 or -1, and the thread's error.
+- **`pg_global.c` is digres's side**: tuples and `Acl`s to
+  aa's structs and back, the nesting level and the database
+  passed in, the caches invalidated, aa's errors reported by
+  kind (a conflict as a serialization failure), and DROP
+  ROLE's DETAIL, which names objects by PostgreSQL's
+  descriptions. `pg_global.h`'s types are aa's, renamed.
+- **The build**: `dg.mk` adds `../aa/include`; the plain,
+  tsan and release links take `libaa.a` built the same way as
+  their sm.
+- **Left in digres, to move next**: `ROLE.md` §5's checks as
+  one decision, and the evaluation of privileges with the
+  closures INHERIT, SET and ADMIN make.
+- **Tests**: aa's own, 15 cases on a throwaway home: initdb's
+  roles, a home without `pg_global`, role DDL committed and
+  read after a restart, two sessions' conflict, a role
+  dropped; an object's entry committed and its oid reported
+  to another session, subtransactions, a crash between the
+  two commits leaving less granted, an abort putting back,
+  objects and databases forgotten, a role's objects,
+  temporary objects; ACL text, default and intersection. Each
+  of 11 mutations of aa was caught by its case. digres's
+  suites pass unchanged.

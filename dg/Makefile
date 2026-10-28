@@ -54,6 +54,13 @@ LIBSM_TSAN := $(SM)/build/tsan/libsm.a
 LIBSM_REL := $(SM)/build/release/libsm.a
 # The sm library a link takes: the tsan build overrides it.
 LINK_SM = $(LIBSM)
+# Roles and privileges, a library of their own too (../aa), on sm; built
+# the same three ways.
+AA := ../aa
+LIBAA := $(AA)/build/libaa.a
+LIBAA_TSAN := $(AA)/build/tsan/libaa.a
+LIBAA_REL := $(AA)/build/release/libaa.a
+LINK_AA = $(LIBAA)
 # Where digres is installed, which the server is built knowing.
 PREFIX ?= /usr/local/dg
 
@@ -87,7 +94,7 @@ src: gen
 # below and this one cannot tell which of them changed.
 all: build/digres
 .PHONY: build/digres
-build/digres: src $(LIBSQ) $(LIBSM)
+build/digres: src $(LIBSQ) $(LIBSM) $(LIBAA)
 	@mkdir -p build
 	# A session is to be a thread: no writable global may be left
 	# that is not thread_local (PLAN.md section 3).
@@ -104,7 +111,7 @@ define link_server
 	$(CXX) $(3) -o $(1) build/rocksdb_build$(2) \
 	    $$(find src -name '*$(2)' \
 	        $(if $(filter .o,$(2)),! -name '*.tsan.o' ! -name '*.rel.o')) \
-	    $(LIBSQ) $(LINK_SM) $(LDLIBS)
+	    $(LIBSQ) $(LINK_AA) $(LINK_SM) $(LDLIBS)
 endef
 
 # The RocksDB each build links, as "digres --build" names it.
@@ -118,9 +125,10 @@ ROCKSDB_BUILD = shared, the system's (Ubuntu's build, with its assert()s)
 # test/rocksdb.sh. sq, the parser, is not.
 .PHONY: tsan
 tsan: LINK_SM = $(LIBSM_TSAN)
+tsan: LINK_AA = $(LIBAA_TSAN)
 tsan: LINK_ROCKSDB = $(ROCKSDB_TSAN) -lsnappy -llz4 -lzstd -lz -lbz2
 tsan: ROCKSDB_BUILD = static, $$(cat $(dir $(ROCKSDB_TSAN))flags)
-tsan: gen $(LIBSQ) $(LIBSM_TSAN) $(ROCKSDB_TSAN)
+tsan: gen $(LIBSQ) $(LIBSM_TSAN) $(LIBAA_TSAN) $(ROCKSDB_TSAN)
 	$(MAKE) -C src OBJ=tsan.o
 	@mkdir -p build
 	$(call link_server,build/digres-tsan,.tsan.o,-O1 -g -fsanitize=thread)
@@ -213,9 +221,10 @@ slt-corpus:
 .PHONY: release
 release: LIBSQ = $(LIBSQ_REL)
 release: LINK_SM = $(LIBSM_REL)
+release: LINK_AA = $(LIBAA_REL)
 release: LINK_ROCKSDB = $(ROCKSDB_REL) -lsnappy -llz4 -lzstd -lz -lbz2
 release: ROCKSDB_BUILD = static, $$(cat $(dir $(ROCKSDB_REL))flags)
-release: gen $(LIBSQ_REL) $(LIBSM_REL) $(ROCKSDB_REL)
+release: gen $(LIBSQ_REL) $(LIBSM_REL) $(LIBAA_REL) $(ROCKSDB_REL)
 	$(MAKE) -C src OBJ=rel.o OPT="-O2 -DNDEBUG" ASSERT=
 	@mkdir -p build
 	$(call link_server,build/digres-release,.rel.o,-O2)
@@ -236,6 +245,17 @@ $(LIBSM_TSAN):
 	    build/tsan/libsm.a
 $(LIBSM_REL):
 	$(MAKE) -C $(SM) BUILD=build/release OPTFLAGS="-O3 -DNDEBUG" build/release/libsm.a
+
+# So does aa, each way sm is built, and sm under it.
+.PHONY: $(LIBAA) $(LIBAA_TSAN) $(LIBAA_REL)
+$(LIBAA): $(LIBSM)
+	$(MAKE) -C $(AA) build/libaa.a
+$(LIBAA_TSAN): $(LIBSM_TSAN)
+	$(MAKE) -C $(AA) BUILD=build/tsan OPTFLAGS="-O1 -g -fsanitize=thread" \
+	    build/tsan/libaa.a
+$(LIBAA_REL): $(LIBSM_REL)
+	$(MAKE) -C $(AA) BUILD=build/release OPTFLAGS="-O3 -DNDEBUG" \
+	    build/release/libaa.a
 
 # RocksDB for the thread sanitizer, and for the release build, each built
 # once.

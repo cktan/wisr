@@ -174,7 +174,7 @@ static void PerformAuthentication(Port *port) {
 static void CheckMyDatabase(const char *name, bool am_superuser,
                             bool override_allow_connections) {
   /*
-   * The second of sm/ROLE.md section 5's checks: CONNECT on the database,
+   * The second of aa/ROLE.md section 5's checks: CONNECT on the database,
    * which a superuser need not have.  The client is told what a wrong
    * password tells it, and the log which check failed.
    */

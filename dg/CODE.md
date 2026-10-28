@@ -39,9 +39,11 @@ wins over convenience and over what PostgreSQL did.
   roles, in the database `pg_global` — a database must not
   depend on to be read.
 - **All role data is in `pg_global`, and only there**
-  (`../sm/ROLE.md` §3): no owner, privilege or role setting
+  (`../aa/ROLE.md` §3): no owner, privilege or role setting
   in a database's directory, so a copy of it on another
-  instance takes that instance's roles.
+  instance takes that instance's roles. aa keeps it
+  (`../aa/README.md`); `utils/init/pg_global.c` is digres's
+  side, turning tuples and `Acl`s into aa's structs.
 - **Before adding state, ask where it lives.** If a copied
   `base/X` would miss it, it is in the wrong place.
 

@@ -603,7 +603,7 @@ void InitializeSessionUserId(const char *rolename, Oid roleid,
                   PGC_S_OVERRIDE);
 
   /*
-   * The first of sm/ROLE.md section 5's checks: the role may log in, is
+   * The first of aa/ROLE.md section 5's checks: the role may log in, is
    * not past VALID UNTIL, and is under its CONNECTION LIMIT; the data
    * directory's owner, as the bootstrap superuser, always is.  The client
    * is told what a wrong password tells it, and the log which check failed.

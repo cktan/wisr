@@ -72,15 +72,15 @@ struct sequence_state_free_t {
 };
 extern sequence_state_t *sequence_state_new(void);
 
-/* pg_global.c: the roles, as last committed, that every session reads,
- * and a session's role DDL not yet committed. */
-struct pg_global_t;
+/* pg_global.c: aa's state of pg_global, as last committed, that every
+ * session reads, and a session's changes not yet committed (aa.h). */
+struct aa_env_t;
 struct pg_global_free_t {
-  void operator()(pg_global_t *global) const;
+  void operator()(aa_env_t *global) const;
 };
-struct pg_global_session_t;
+struct aa_session_t;
 struct pg_global_session_free_t {
-  void operator()(pg_global_session_t *state) const;
+  void operator()(aa_session_t *state) const;
 };
 
 /* advisory_lock.c: the advisory locks held, and a session's keys of them. */
@@ -251,7 +251,7 @@ typedef struct shmem_t {
    * pg_global.c: the roles, made by the postmaster as it loads the data
    * directory, before the first session; guarded by its own mutex
    */
-  std::unique_ptr<pg_global_t, pg_global_free_t> pg_global;
+  std::unique_ptr<aa_env_t, pg_global_free_t> pg_global;
 } shmem_t;
 
 /* The thread control block: one for each thread that runs digres code. */
@@ -275,7 +275,7 @@ typedef struct tcb_t {
    * pg_global.c: this session's role DDL not yet committed, its caches'
    * epoch of the roles, and its sm session on pg_global
    */
-  std::unique_ptr<pg_global_session_t, pg_global_session_free_t> pg_global;
+  std::unique_ptr<aa_session_t, pg_global_session_free_t> pg_global;
 
   /* -- the thread's resources -- */
   std::unique_ptr<timeout_state_t, timeout_state_free_t> timeout;

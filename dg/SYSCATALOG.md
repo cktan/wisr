@@ -230,7 +230,7 @@ What a row says, for the first of them:
   `FirstNormalObjectId` plus its `dbid` (`CODE.md` §5).
   Encoding is UTF-8, and the locale columns the server's.
 - **`pg_authid`**: a row a role of `pg_global`'s
-  (`../sm/ROLE.md`), from the snapshot the sessions share
+  (`../aa/ROLE.md`), from the snapshot the sessions share
   (`utils/init/pg_global.c`); the syscache's `AUTHOID` and
   `AUTHNAME` read it, as they always scanned it. Its password
   is the SCRAM secret.

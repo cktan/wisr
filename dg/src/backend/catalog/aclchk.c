@@ -1624,7 +1624,7 @@ static void ExecGrant_Relation(InternalGrant *istmt) {
   Relation attRelation;
   ListCell *cell;
 
-  /* A column's privileges are a later step's (sm/ROLE.md section 8). */
+  /* A column's privileges are a later step's (aa/ROLE.md section 8). */
   if (istmt->col_privs != NIL)
     ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                     errmsg("column privileges are not supported yet")));
@@ -1800,7 +1800,7 @@ static void ExecGrant_Relation(InternalGrant *istmt) {
 
       /*
        * The ACL is pg_global's, written at the database's commit, and no
-       * pg_shdepend records its roles (sm/ROLE.md sections 3 and 4).
+       * pg_shdepend records its roles (aa/ROLE.md sections 3 and 4).
        */
       pg_global_set_acl(pg_global_dbid(MyDatabaseId), RelationRelationId,
                         relOid, ownerId, new_acl,
@@ -1881,7 +1881,7 @@ ExecGrant_common(InternalGrant *istmt, Oid classid, AclMode default_privs,
   ListCell *cell;
 
   /*
-   * A schema's and a database's privileges are pg_global's (sm/ROLE.md
+   * A schema's and a database's privileges are pg_global's (aa/ROLE.md
    * section 3); a function's, a type's and a language's are compiled in,
    * and PUBLIC's.
    */
@@ -1958,7 +1958,7 @@ ExecGrant_common(InternalGrant *istmt, Oid classid, AclMode default_privs,
 
     /*
      * The ACL is pg_global's, written at the database's commit, and no
-     * pg_shdepend records its roles (sm/ROLE.md sections 3 and 4): a
+     * pg_shdepend records its roles (aa/ROLE.md sections 3 and 4): a
      * database's by its own id, a schema's in this database.
      */
     if (DatabaseRelationId == classid)

@@ -91,7 +91,7 @@ static bool peer_user(hbaPort *port, std::string *name, bool *owner) {
 
 /*
  * Choose how the connection is authenticated: no pg_hba.conf, but the rule
- * of sm/ROLE.md section 5.  On the local socket, by the OS user at its
+ * of aa/ROLE.md section 5.  On the local socket, by the OS user at its
  * other end (peer) if that user is the role's name, or is the data
  * directory's owner asking for the bootstrap superuser; else by the role's
  * password.  Over TCP, by the role's password.  Passwords are SCRAM-SHA-256.

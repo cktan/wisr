@@ -1,13 +1,14 @@
 # ROLE — users, roles, privileges, and how a client gets in
 
 **Being built**, a step at a time (§9): steps 1 to 6 are
-done; the later steps are not. Roles and memberships are `pg_global`'s, made, changed
-and dropped by SQL; no privilege on an object is refused yet,
-and every object's owner is the superuser. This file says
-what roles and privileges digres takes from PostgreSQL, where
-sm keeps them, and how a client is let in, by a rule much
-simpler than `pg_hba.conf`. Paths are relative to `sm/`;
-digres's are under `../dg/`.
+done; the later steps are not. Roles and memberships are
+`pg_global`'s, made, changed and dropped by SQL; no privilege
+on an object is refused yet, and every object's owner is the
+superuser. This file says what roles and privileges digres
+takes from PostgreSQL, where sm keeps them, and how a client
+is let in, by a rule much simpler than `pg_hba.conf`. aa
+(`README.md`) is the code that keeps them. Paths are relative
+to `aa/`; sm's are under `../sm/`, digres's under `../dg/`.
 
 ---
 
@@ -56,7 +57,7 @@ digres's are under `../dg/`.
   statements are taken out at a role's catalog (`pg_authid`),
   47 at default privileges, 18 at policies, before what each
   takes with it (`../dg/test/pgregress`). It is the largest gap
-  there, and `NEXT.md` puts it first for adoption: an
+  there, and `../sm/NEXT.md` puts it first for adoption: an
   application, a read-only and an administrator's role are
   the least a deployment asks.
 
@@ -87,13 +88,12 @@ digres's are under `../dg/`.
   `\du`, `\dp`, `\dn+`, `\l`'s owners. `has_table_privilege()`
   and the rest of its kind.
 
-**Later**, each on its own: column privileges (§8 question
-2); `ALTER DEFAULT PRIVILEGES`;
-row-level security, which needs roles first (`FEATURELIST.md`
-§7); privileges on functions, types and languages, which are
-compiled into digres and all `PUBLIC`'s; PostgreSQL's
-predefined roles (`pg_read_all_data` and the rest); TLS, after
-roles, by one setting (§8 question 4).
+**Later**, each on its own: column privileges (§8 question 2);
+`ALTER DEFAULT PRIVILEGES`; row-level security, which needs roles
+first (`../sm/FEATURELIST.md` §7); privileges on functions, types
+and languages, which are compiled into digres and all `PUBLIC`'s;
+PostgreSQL's predefined roles (`pg_read_all_data` and the rest);
+TLS, after roles, by one setting (§8 question 4).
 
 **Not at all**: `pg_hba.conf`, `pg_ident.conf`, and the
 methods only they choose — trust, ident, md5, password in the
@@ -106,8 +106,9 @@ clear, LDAP, RADIUS, PAM, GSSAPI, SSPI (§5).
 A role is the whole server's: one connects to any database,
 and owns objects in several. PostgreSQL keeps roles in shared
 catalogs, which every database's transaction reads and writes.
-In sm a database is a RocksDB of its own (`sm1/SM1_DESIGN.md`
-§3.5), and no transaction spans two.
+In sm a database is a RocksDB of its own
+(`../sm/sm1/SM1_DESIGN.md` §3.5), and no transaction spans
+two.
 
 **Decision: a database for what is shared, `pg_global`.**
 initdb makes it beside `postgres`; no client connects to it,
@@ -118,7 +119,7 @@ there** (decided, §8 question 6). Nothing in a database's
 directory names a role: not an owner, not an `aclitem`, not
 a setting. So a database is its directory still
 (`../dg/CODE.md`, the overriding objective), and a copy of it
-on another server — replicated (`LOGICALDECODE.md`) or
+on another server — replicated (`../sm/LOGICALDECODE.md`) or
 imported — finds no role of its source there, and that
 server's `pg_global` gives it roles of its own. Its tables,
 digres's (§6), hold:
@@ -140,9 +141,9 @@ nothing else; it stays so. The superuser is the role of oid
 10, and the `superuser` file goes.
 
 **Keys that are never reused.** A `dbid` is never reused
-(`sm1/SM1_DESIGN.md` §3.5), nor an object's oid in its
+(`../sm/sm1/SM1_DESIGN.md` §3.5), nor an object's oid in its
 database, which comes from the sequence `sm3.oid`
-(`sm3/CATALOG_INMEM.md`). So an entry left behind for a
+(`../sm/sm3/CATALOG_INMEM.md`). So an entry left behind for a
 dropped object or database, by a crash between its two
 commits, names nothing and can never name a new one; it is
 swept, not trusted.
@@ -225,11 +226,11 @@ statement's start as a database's catalog is
 (`../dg/SCHEMACACHE.md`): a REVOKE takes effect at the next
 statement of every session, as in PostgreSQL.
 
-**A replicated database leaves `pg_global` behind.** The
-unit of replication is a database (`LOGICALDECODE.md`): A, B
-and C on one server may go to X, Y and Z. `pg_global` is not
-replicated with them. By the invariant, that loses nothing A
-needs to be read, and leaks nothing of A's server:
+**A replicated database leaves `pg_global` behind.** The unit of
+replication is a database (`../sm/LOGICALDECODE.md`): A, B and C
+on one server may go to X, Y and Z. `pg_global` is not replicated
+with them. By the invariant, that loses nothing A needs to be
+read, and leaks nothing of A's server:
 
 - **X's roles are X's own.** On X, A is its owner's, every
   object in it, with no grant, until X's administrator sets
@@ -239,8 +240,8 @@ needs to be read, and leaks nothing of A's server:
   servers, beside A.
 - **Grants and role DDL on A's server**, after replication
   starts or before, do not reach X; X's are made on X. Nor
-  does `LOGICALDECODE.md`'s feed carry them: they are not in
-  A.
+  does `../sm/LOGICALDECODE.md`'s feed carry them: they are
+  not in A.
 
 ---
 
