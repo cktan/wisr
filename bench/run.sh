@@ -6,9 +6,10 @@
 #   bench/run.sh pg|dg       one, for a look; no report is written
 #
 # RUNS (10) timed runs of each query after WARM (2), and Q7_SECONDS (30)
-# of pgbench for Q7 and for Q8. PostgreSQL is bench/build/pg18 (DESIGN.md section 2) and
-# digres ../dg/build/digres-release ("make -C dg release"). Each system's
-# data directory and log are under bench/build/run; the report goes to
+# of pgbench for each of Q7, Q8, Q10 and Q11. PostgreSQL is
+# bench/build/pg18 (DESIGN.md section 2) and digres
+# ../dg/build/digres-release ("make -C dg release"). Each system's data
+# directory and log are under bench/build/run; the report goes to
 # bench/results.
 cd "$(dirname "$0")" || exit 1
 set -u
@@ -71,6 +72,16 @@ sql() {
   "$psql" -h "$work" -p "$port" -d postgres -X -q -A -t -v ON_ERROR_STOP=1 "$@"
 }
 
+# pgbench on the running server for Q7_SECONDS, prepared, with the
+# arguments given: its transactions a second.
+tps() {
+  "$pgbench" -h "$work" -p "$port" -n -M prepared -T "$q7_seconds" "$@" \
+    postgres 2> /dev/null | sed -n 's/^tps = \([0-9.]*\) .*/\1/p'
+}
+
+# A plan's scan node, as a report shows it: its kind, index and table.
+scan_node='[A-Z][A-Za-z ]*Scan\( using [a-z0-9_]*\)\? on [a-z0-9_]*'
+
 # The median, least and greatest of the numbers on stdin, as "M (L-G)": to
 # a tenth of a millisecond, or a thousandth below 10 ms, where a tenth
 # would hide a difference (Q6's 0.2 against 0.2).
@@ -122,8 +133,8 @@ measure() {
     fi
     # The plan's scan node, for the report to show it is the one meant.
     local plan
-    plan=$(sql -c "$set explain (costs off) ${query//:a/1}" | grep -m1 -o \
-      '[A-Z][A-Za-z ]*Scan\( using [a-z_]*\)\? on [a-z_]*')
+    plan=$(sql -c "$set explain (costs off) ${query//:a/1}" |
+      grep -m1 -o "$scan_node")
     for r in $(seq $((warm + runs))); do
       a=$(((r * 90001) % 990000 + 1))
       local t
@@ -140,20 +151,23 @@ measure() {
       2> /dev/null || echo '?')" >> "$out"
   done
   echo "size|datadir|$(du -sh "$work/$sys" | cut -f1)" >> "$out"
-  # Q7's plan, from its statement with keys 1 to 100.
-  local q7plan
-  q7plan=$(sql -c "explain (costs off) $(grep -v '^[-\\]' sql/q7.sql |
-    sed "s/:k\([0-9]*\)/\1/g")" | grep -m1 -o \
-    '[A-Z][A-Za-z ]*Scan\( using [a-z_]*\)\? on [a-z_]*')
-  echo "run: $sys: q7, $q7_seconds seconds"
-  echo "q7|wide_mixed|$("$pgbench" -h "$work" -p "$port" -n -M prepared \
-    -c 1 -T "$q7_seconds" -f sql/q7.sql postgres 2> /dev/null |
-    sed -n 's/^tps = \([0-9.]*\) .*/\1/p') tps|$q7plan" >> "$out"
-  # Last: its updates change c1.
+  # Q7 by the primary key and Q10 by c2's index, one client each, with
+  # each one's plan, from its statement with keys 1 to 100.
+  local q plan
+  for q in q7 q10; do
+    plan=$(sql -c "explain (costs off) $(grep -v '^[-\\]' sql/$q.sql |
+      sed "s/:k\([0-9]*\)/\1/g")" | grep -m1 -o "$scan_node")
+    echo "run: $sys: $q, $q7_seconds seconds"
+    echo "$q|wide_mixed|$(tps -c 1 -f sql/$q.sql) tps|$plan" >> "$out"
+  done
+  # Last, Q8 and Q11, whose updates change c1: 16 clients, the reads of
+  # Q7 and of Q10 9 times in 10.
   echo "run: $sys: q8, $q7_seconds seconds"
-  echo "q8|wide_mixed|$("$pgbench" -h "$work" -p "$port" -n -M prepared \
-    -c 16 -j 4 -T "$q7_seconds" -f sql/q7.sql@9 -f sql/q8.sql@1 postgres \
-    2> /dev/null | sed -n 's/^tps = \([0-9.]*\) .*/\1/p') tps|" >> "$out"
+  echo "q8|wide_mixed|$(tps -c 16 -j 4 -f sql/q7.sql@9 -f sql/q8.sql@1) tps|" \
+    >> "$out"
+  echo "run: $sys: q11, $q7_seconds seconds"
+  echo "q11|wide_mixed|$(tps -c 16 -j 4 -f sql/q10.sql@9 -f sql/q11.sql@1) tps|" \
+    >> "$out"
   stop
 }
 
@@ -184,10 +198,11 @@ report() {
     "$digres" --build | sed 's/^/      /'
     echo
     echo "- PostgreSQL: $("$pg18/bin/postgres" --version), at 724edf9"
-    echo "- $runs runs a query after $warm, Q7 and Q8 for $q7_seconds seconds each"
+    echo "- $runs runs a query after $warm; Q7, Q8, Q10 and Q11 for" \
+      "$q7_seconds seconds each"
     echo
-    echo "Execution time in ms, median (least-greatest); Q7 and Q8 in" \
-      "transactions a second."
+    echo "Execution time in ms, median (least-greatest); Q7, Q8, Q10 and" \
+      "Q11 in transactions a second."
     echo
     echo "| Query | Table | PostgreSQL | digres | digres / PostgreSQL |" \
       "Plan, PostgreSQL | Plan, digres |"

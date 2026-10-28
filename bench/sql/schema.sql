@@ -114,6 +114,11 @@ create table wide_mixed (
   c49 int8
 );
 
+-- A secondary index, for Q9 to Q11 (DESIGN.md section 5): c2 is id + 2,
+-- one row a value. Made before the load, which then fills it, so neither
+-- side builds it afterwards.
+create index wide_mixed_c2 on wide_mixed (c2);
+
 create table toasted (
   id int8 primary key,
   body text

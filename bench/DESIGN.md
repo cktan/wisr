@@ -69,7 +69,9 @@ table at most.
   49 fixed-width ones before it.
 - **`wide_mixed`**: as `wide_fixed`, but every fifth column
   `text` of 10 to 30 bytes: a variable-width column before the
-  last makes PostgreSQL walk each one (§6).
+  last makes PostgreSQL walk each one (§6). It has a secondary
+  index, `wide_mixed_c2` on `c2`, which is `id + 2`, one row a
+  value, made before the load, for Q9 to Q11.
 - **`toasted`**: `id int8` primary key and `body text` of
   8 KB, 100,000 rows. The text is random, so neither side can
   compress it; on PostgreSQL the column is `STORAGE EXTERNAL`
@@ -82,11 +84,14 @@ repeated.
 
 ## 5. The queries
 
-Q1 to Q6 are aggregates, so a single row comes back and the
-client's cost is the same on both sides. Q6 to Q8 are what a
-database serving web pages does: a page of rows by a range of
-their key, a batch of rows by their keys, and those reads
-under many clients with writes among them.
+Q1 to Q6 and Q9 are aggregates, so a single row comes back
+and the client's cost is the same on both sides. Q6 to Q8 are
+what a database serving web pages does: a page of rows by a
+range of their key, a batch of rows by their keys, and those
+reads under many clients with writes among them. Q9 to Q11
+are Q6 to Q8 by a secondary index, the same rows: an entry
+found, then its row read, where the primary key's entry is
+the row.
 
 | # | Query | What it isolates |
 | --- | --- | --- |
@@ -98,14 +103,18 @@ under many clients with writes among them.
 | Q6 | `select sum(c1) from T where id between :a and :a + 99`, index scan only | an index range of 100 rows: a page of them, its start costing as much as its rows |
 | Q7 | `select c1 from T where id = any(array[:k1, ..., :k100])`, each `:k` Zipfian | 100 rows by key in one statement, a batch loader's fetch, hot keys drawn often |
 | Q8 | Q7, 9 times in 10, and `update T set c1 = c1 + 1 where id = :k`, `:k` Zipfian, 1 in 10; 16 clients | reads and writes at once, the hot rows contended |
+| Q9 | `select sum(c1) from T where c2 between :a and :a + 99`, index scan only | Q6 by the secondary index |
+| Q10 | `select c1 from T where c2 = any(array[:k1, ..., :k100])`, each `:k` Zipfian | Q7 by the secondary index |
+| Q11 | Q10, 9 times in 10, and `update T set c1 = c1 + 1 where c2 = :k`, 1 in 10; 16 clients | Q8 by the secondary index |
 
 Q1 to Q3 run on `narrow`, `wide_fixed` and `wide_mixed`. Q1
 to Q5 run with index, index-only and bitmap scans off, and Q6
-with `enable_seqscan`, `enable_bitmapscan` off, so the plan is
-the scan each names; each run records the plan's scan node
-from `EXPLAIN` in the report, and does not enforce it. Q7 and
-Q8 are plain pgbench, with no setting; Q7's plan is recorded
-as Q6's is, from its statement with keys 1 to 100.
+and Q9 with `enable_seqscan`, `enable_bitmapscan` off, so the
+plan is the scan each names; each run records the plan's scan
+node from `EXPLAIN` in the report, and does not enforce it.
+Q7, Q8, Q10 and Q11 are plain pgbench, with no setting; Q7's
+and Q10's plans are recorded as Q6's is, from each statement
+with keys 1 to 100.
 
 The keys of Q7 and Q8 are pgbench's `random_zipfian(1,
 1000000, 1.1)`: the most drawn key comes up about once in 8
@@ -114,24 +123,25 @@ most drawn 69%, as popular items and active users do in a
 site's traffic. The 100 keys of Q7 are drawn apart, so some
 repeat; the statement returns each row once. `sql/q7.sql`
 has the 100 `\set` lines written out, as pgbench has no
-loop.
+loop. Q10 and Q11 draw theirs from `random_zipfian(3,
+1000002, 1.1)`, `c2`'s values, so each key names Q7's row.
 
 ### 5.1 How a query is timed
 
-- **Q1 to Q6**: `EXPLAIN (ANALYZE, TIMING OFF)`, whose
+- **Q1 to Q6, Q9**: `EXPLAIN (ANALYZE, TIMING OFF)`, whose
   `Execution Time` is the executor's alone, with no parse,
   plan or network in it; each query run 10 times after 2
   warm-up runs, and the median reported, with the spread,
   to a tenth of a millisecond, or a thousandth below 10 ms.
-- **Q7**: `pgbench -n -M prepared -f` with the query, one
+- **Q7, Q10**: `pgbench -n -M prepared -f` with the query, one
   client, 30 seconds, its transactions a second: a fetch of
   100 rows is small enough that the round trip is part of
   what it costs, on both sides alike. Prepared, as an
   application's statements are, so the plan is made once.
-- **Q8**: `pgbench -n -M prepared -c 16 -j 4`, Q7's script
-  at weight 9 and `sql/q8.sql`'s update at weight 1, 30
-  seconds, its transactions a second. It runs last, as its
-  updates change `c1`.
+- **Q8, Q11**: `pgbench -n -M prepared -c 16 -j 4`, Q7's
+  script at weight 9 and `sql/q8.sql`'s update at weight 1,
+  or Q10's and `sql/q11.sql`'s, 30 seconds, its transactions
+  a second. They run last, as their updates change `c1`.
 - Each report gives each number for both systems and their
   ratio, digres over PostgreSQL.
 

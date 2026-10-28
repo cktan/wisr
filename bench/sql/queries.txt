@@ -2,7 +2,8 @@
 # SCAN is the plan each is to have: seq, with index and bitmap scans
 # off, or index, with sequential and bitmap scans off. run.sh times each
 # with EXPLAIN (ANALYZE, TIMING OFF); :a is an index range's first id, a
-# new one each run. Q7 and Q8 are pgbench's (q7.sql, q8.sql).
+# new one each run. Q7, Q8, Q10 and Q11 are pgbench's (q7.sql, q8.sql,
+# q10.sql, q11.sql).
 q1|narrow|seq|select count(*) from narrow
 q2|narrow|seq|select sum(c1) from narrow
 q3|narrow|seq|select sum(c4) from narrow
@@ -15,3 +16,4 @@ q3|wide_mixed|seq|select sum(c49) from wide_mixed
 q4|toasted|seq|select sum(length(body)) from toasted
 q5|toasted|seq|select count(*) from toasted
 q6|wide_mixed|index|select sum(c1) from wide_mixed where id between :a and :a + 99
+q9|wide_mixed|index|select sum(c1) from wide_mixed where c2 between :a and :a + 99
