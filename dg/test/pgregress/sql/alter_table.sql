@@ -4,12 +4,10 @@
 
 -- Clean up in case a prior regression run failed
 SET client_min_messages TO 'warning';
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE IF EXISTS regress_alter_table_user1;
+DROP ROLE IF EXISTS regress_alter_table_user1;
 RESET client_min_messages;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_alter_table_user1;
+CREATE USER regress_alter_table_user1;
 
 --
 -- add attribute
@@ -228,8 +226,7 @@ DROP TABLE attmp_new2;
 --dg ALTER TABLE part_attmp RENAME TO part_at2tmp;
 --dg-cascade
 --dg ALTER TABLE part_attmp1 RENAME TO part_at2tmp1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_alter_table_user1;
+SET ROLE regress_alter_table_user1;
 --dg-cascade
 --dg ALTER INDEX part_attmp_index RENAME TO fail;
 --dg-cascade
@@ -281,8 +278,7 @@ DROP TABLE _attmp_array;
 --dg-differs: another error: ALTER INDEX is not supported yet
 --dg ALTER INDEX attmp_onek_unique1 RENAME TO onek_unique1;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_alter_table_user1;
+SET ROLE regress_alter_table_user1;
 --dg-differs: another error: ALTER INDEX is not supported yet
 --dg ALTER INDEX onek_unique1 RENAME TO fail;  -- permission denied
 RESET ROLE;
@@ -334,10 +330,8 @@ COMMIT;
 CREATE VIEW attmp_view (unique1) AS SELECT unique1 FROM tenk1;
 ALTER TABLE attmp_view RENAME TO attmp_view_new;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_alter_table_user1;
---dg-cascade
---dg ALTER VIEW attmp_view_new RENAME TO fail;  -- permission denied
+SET ROLE regress_alter_table_user1;
+ALTER VIEW attmp_view_new RENAME TO fail;  -- permission denied
 RESET ROLE;
 
 -- hack to ensure we get an indexscan here
@@ -1241,7 +1235,7 @@ insert into def_test default values;
 -- to allow insertions into it, and then alter the view to add
 -- a default
 create view def_view_test as select * from def_test;
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule def_view_test_ins as
 --dg 	on insert to def_view_test
 --dg 	do instead insert into def_test select new.*;
@@ -1255,7 +1249,7 @@ insert into def_view_test default values;
 --dg-cascade
 --dg select * from def_view_test;
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop rule def_view_test_ins on def_view_test;
 drop view def_view_test;
 drop table def_test;
@@ -2188,7 +2182,7 @@ create or replace temp view v1 with (security_barrier = true)
   as select * from t1;
 
 create temp table log (q1 int8, q2 int8);
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule v1_upd_rule as on update to v1
 --dg   do also insert into log values (new.*);
 
@@ -3275,29 +3269,22 @@ DROP TABLE unparted, fail_part;
 --dg ALTER TABLE list_parted ATTACH PARTITION nonexistent FOR VALUES IN (1);
 
 -- check ownership of the source table
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_test_me;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_test_not_me;
+CREATE ROLE regress_test_me;
+CREATE ROLE regress_test_not_me;
 --dg-cascade
 --dg CREATE TABLE not_owned_by_me (LIKE list_parted);
 --dg-cascade
 --dg ALTER TABLE not_owned_by_me OWNER TO regress_test_not_me;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_test_me;
---dg-cascade
---dg CREATE TABLE owned_by_me (
---dg 	a int
---dg ) PARTITION BY LIST (a);
---dg-cascade
---dg ALTER TABLE owned_by_me ATTACH PARTITION not_owned_by_me FOR VALUES IN (1);
+SET SESSION AUTHORIZATION regress_test_me;
+CREATE TABLE owned_by_me (
+	a int
+) PARTITION BY LIST (a);
+ALTER TABLE owned_by_me ATTACH PARTITION not_owned_by_me FOR VALUES IN (1);
 RESET SESSION AUTHORIZATION;
---dg-cascade
---dg DROP TABLE owned_by_me, not_owned_by_me;
+DROP TABLE owned_by_me, not_owned_by_me;
 --dg-cascade
 --dg DROP ROLE regress_test_not_me;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_test_me;
+DROP ROLE regress_test_me;
 
 -- check that the table being attached is not part of regular inheritance
 --dg-cascade
@@ -4014,8 +4001,7 @@ INSERT INTO attmp VALUES (1);
 ANALYZE attmp;
 DROP TABLE attmp;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_alter_table_user1;
+DROP USER regress_alter_table_user1;
 
 -- check that violating rows are correctly reported when attaching as the
 -- default partition
@@ -4196,7 +4182,7 @@ create table attbl(a int);
 --dg create statistics atref_stat on ((b).a is not null) from atref;
 --dg-cascade
 --dg alter table attbl alter column a type numeric;  -- someday this should work
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop statistics atref_stat;
 
 --dg-cascade

@@ -95,13 +95,10 @@ create event trigger regress_event_trigger2 on ddl_command_start
 --dg comment on event trigger regress_event_trigger is 'test comment';
 
 -- drop as non-superuser should fail
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg create role regress_evt_user;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set role regress_evt_user;
---dg-cascade
---dg create event trigger regress_event_trigger_noperms on ddl_command_start
---dg    execute procedure test_event_trigger();
+create role regress_evt_user;
+set role regress_evt_user;
+create event trigger regress_event_trigger_noperms on ddl_command_start
+   execute procedure test_event_trigger();
 reset role;
 
 -- test enabling and disabling
@@ -160,11 +157,11 @@ reset session_replication_role;
 --dg drop routine f1(), p1();
 
 -- regress_event_trigger_end should fire on these commands
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg grant all on table event_trigger_fire1 to public;
 --dg-skip: COMMENT is not supported yet
 --dg comment on table event_trigger_fire1 is 'here is a comment';
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg revoke all on table event_trigger_fire1 from public;
 --dg-cascade
 --dg drop table event_trigger_fire1;
@@ -174,7 +171,7 @@ reset session_replication_role;
 --dg create server useless_server foreign data wrapper useless;
 --dg-skip: relation pg_user_mapping cannot be opened: digres has no catalog tables
 --dg create user mapping for regress_evt_user server useless_server;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
 --dg alter default privileges for role regress_evt_user
 --dg  revoke delete on tables from regress_evt_user;
 
@@ -183,9 +180,8 @@ reset session_replication_role;
 --dg alter event trigger regress_event_trigger owner to regress_evt_user;
 
 -- alter owner to superuser should work
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg alter role regress_evt_user superuser;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+alter role regress_evt_user superuser;
+--dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
 --dg alter event trigger regress_event_trigger owner to regress_evt_user;
 
 -- should fail, name collision
@@ -216,14 +212,14 @@ reset session_replication_role;
 --dg drop event trigger regress_event_trigger_end;
 
 -- test support for dropped objects
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE SCHEMA schema_one authorization regress_evt_user;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE SCHEMA schema_two authorization regress_evt_user;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE SCHEMA audit_tbls authorization regress_evt_user;
 CREATE TEMP TABLE a_temp_tbl ();
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SET SESSION AUTHORIZATION regress_evt_user;
 
 --dg-cascade
@@ -346,12 +342,12 @@ DELETE FROM undroppable_objs WHERE object_identity = 'schema_one.table_three';
 --dg SELECT * FROM dropped_objects
 --dg   WHERE schema_name IS NULL OR schema_name <> 'pg_toast';
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP OWNED BY regress_evt_user;
 --dg-cascade
 --dg SELECT * FROM dropped_objects WHERE object_type = 'schema';
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP ROLE regress_evt_user;
 
 --dg-skip: relation pg_event_trigger cannot be opened: digres has no catalog tables
@@ -475,7 +471,7 @@ DELETE FROM undroppable_objs WHERE object_identity = 'schema_one.table_three';
 --dg CREATE TRIGGER evtrg_nontemp_trig
 --dg   BEFORE INSERT ON evtrg_nontemp_table
 --dg   EXECUTE FUNCTION event_trigger_dummy_trigger();
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY evtrg_nontemp_pol ON evtrg_nontemp_table USING (f2 > 0);
 --dg-cascade
 --dg DROP TABLE evtrg_nontemp_table;
@@ -486,7 +482,7 @@ DELETE FROM undroppable_objs WHERE object_identity = 'schema_one.table_three';
 --dg CREATE TRIGGER a_temp_trig
 --dg   BEFORE INSERT ON a_temp_tbl
 --dg   EXECUTE FUNCTION event_trigger_dummy_trigger();
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY a_temp_pol ON a_temp_tbl USING (f2 > 0);
 --dg-cascade
 --dg DROP TABLE a_temp_tbl;
@@ -768,13 +764,13 @@ CREATE TABLE event_trigger_test (a integer, b text);
 --dg CREATE EVENT TRIGGER sql_drop_command ON sql_drop
 --dg     WHEN TAG IN ('DROP POLICY') EXECUTE PROCEDURE drop_sql_command();
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON event_trigger_test USING (FALSE);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER POLICY p1 ON event_trigger_test USING (TRUE);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER POLICY p1 ON event_trigger_test RENAME TO p2;
---dg-skip: relation pg_policy cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP POLICY p2 ON event_trigger_test;
 
 -- Check the object addresses of all the event triggers.
@@ -815,13 +811,13 @@ CREATE TABLE event_trigger_test (a integer, b text);
 --dg 	WHEN TAG IN ('DROP POLICY') EXECUTE FUNCTION test_event_trigger_guc();
 
 SET event_triggers = 'on';
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY pguc ON event_trigger_test USING (FALSE);
---dg-skip: relation pg_policy cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP POLICY pguc ON event_trigger_test;
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY pguc ON event_trigger_test USING (FALSE);
 SET event_triggers = 'off';
---dg-skip: relation pg_policy cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP POLICY pguc ON event_trigger_test;

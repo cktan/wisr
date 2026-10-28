@@ -12,8 +12,7 @@ SELECT * FROM toyemp WHERE name = 'sharon';
 --
 -- Test for Leaky view scenario
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_alice;
+CREATE ROLE regress_alice;
 
 --dg-skip: language "?" does not exist
 --dg CREATE FUNCTION f_leak (text)
@@ -75,24 +74,17 @@ CREATE VIEW my_credit_card_usage_normal AS
 CREATE VIEW my_credit_card_usage_secure WITH (security_barrier) AS
        SELECT * FROM my_credit_card_secure l NATURAL JOIN credit_usage r;
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
---dg GRANT SELECT ON my_property_normal TO public;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
---dg GRANT SELECT ON my_property_secure TO public;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
---dg GRANT SELECT ON my_credit_card_normal TO public;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
---dg GRANT SELECT ON my_credit_card_secure TO public;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
---dg GRANT SELECT ON my_credit_card_usage_normal TO public;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
---dg GRANT SELECT ON my_credit_card_usage_secure TO public;
+GRANT SELECT ON my_property_normal TO public;
+GRANT SELECT ON my_property_secure TO public;
+GRANT SELECT ON my_credit_card_normal TO public;
+GRANT SELECT ON my_credit_card_secure TO public;
+GRANT SELECT ON my_credit_card_usage_normal TO public;
+GRANT SELECT ON my_credit_card_usage_secure TO public;
 
 --
 -- Run leaky view scenarios
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_alice;
+SET SESSION AUTHORIZATION regress_alice;
 
 --
 -- scenario: if a qualifier with tiny-cost is given, it shall be launched
@@ -175,8 +167,7 @@ CREATE VIEW my_credit_card_usage_secure WITH (security_barrier) AS
 RESET SESSION AUTHORIZATION;
 ALTER VIEW my_property_normal SET (security_barrier=true);
 ALTER VIEW my_property_secure SET (security_barrier=false);
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_alice;
+SET SESSION AUTHORIZATION regress_alice;
 --dg-cascade
 --dg EXECUTE p1;		-- To be perform as a view with security-barrier
 --dg-cascade
@@ -184,5 +175,4 @@ ALTER VIEW my_property_secure SET (security_barrier=false);
 
 -- Cleanup.
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_alice;
+DROP ROLE regress_alice;

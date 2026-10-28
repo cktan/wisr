@@ -85,6 +85,7 @@
 #include "utils/guc.h"
 #include "utils/hooks.h"
 #include "utils/lsyscache.h"
+#include "utils/pg_global.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
 
@@ -1623,6 +1624,10 @@ static void ExecGrant_Relation(InternalGrant *istmt) {
   Relation attRelation;
   ListCell *cell;
 
+  /* A column's privileges are a later step's (sm/ROLE.md section 8). */
+  if (istmt->col_privs != NIL)
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("column privileges are not supported yet")));
   relation = table_open(RelationRelationId, RowExclusiveLock);
   attRelation = table_open(AttributeRelationId, RowExclusiveLock);
 
@@ -1637,8 +1642,6 @@ static void ExecGrant_Relation(InternalGrant *istmt) {
     bool have_col_privileges;
     Acl *old_acl;
     Acl *old_rel_acl;
-    int noldmembers;
-    Oid *oldmembers;
     Oid ownerId;
     HeapTuple tuple;
     ListCell *cell_colprivs;
@@ -1734,12 +1737,7 @@ static void ExecGrant_Relation(InternalGrant *istmt) {
      * during GRANT because the permissions-checking code always checks
      * both relation and per-column privileges.)
      */
-    if (!istmt->is_grant && (this_privileges & ACL_ALL_RIGHTS_COLUMN) != 0) {
-      expand_all_col_privileges(relOid, pg_class_tuple,
-                                this_privileges & ACL_ALL_RIGHTS_COLUMN,
-                                col_privileges, num_col_privileges);
-      have_col_privileges = true;
-    }
+    /* A column has no privileges of its own yet: none to revoke. */
 
     /*
      * Get owner ID and working copy of existing ACL. If there's no ACL,
@@ -1756,14 +1754,8 @@ static void ExecGrant_Relation(InternalGrant *istmt) {
         old_acl = acldefault(OBJECT_TABLE, ownerId);
         break;
       }
-      /* There are no old member roles according to the catalogs */
-      noldmembers = 0;
-      oldmembers = NULL;
-    } else {
+    } else
       old_acl = DatumGetAclPCopy(aclDatum);
-      /* Get the roles mentioned in the existing ACL */
-      noldmembers = aclmembers(old_acl, &oldmembers);
-    }
 
     /* Need an extra copy of original rel ACL for column handling */
     old_rel_acl = aclcopy(old_acl);
@@ -1775,12 +1767,6 @@ static void ExecGrant_Relation(InternalGrant *istmt) {
       AclMode avail_goptions;
       Acl *new_acl;
       Oid grantorId;
-      HeapTuple newtuple;
-      Datum values[Natts_pg_class] = {0};
-      bool nulls[Natts_pg_class] = {0};
-      bool replaces[Natts_pg_class] = {0};
-      int nnewmembers;
-      Oid *newmembers;
       ObjectType objtype;
 
       /* Determine ID to do the grant as, and available grant options */
@@ -1813,26 +1799,12 @@ static void ExecGrant_Relation(InternalGrant *istmt) {
           istmt->grantees, this_privileges, grantorId, ownerId);
 
       /*
-       * We need the members of both old and new ACLs so we can correct
-       * the shared dependency information.
+       * The ACL is pg_global's, written at the database's commit, and no
+       * pg_shdepend records its roles (sm/ROLE.md sections 3 and 4).
        */
-      nnewmembers = aclmembers(new_acl, &newmembers);
-
-      /* finished building new ACL value, now insert it */
-      replaces[Anum_pg_class_relacl - 1] = true;
-      values[Anum_pg_class_relacl - 1] = PointerGetDatum(new_acl);
-
-      newtuple = heap_modify_tuple(tuple, RelationGetDescr(relation), values,
-                                   nulls, replaces);
-
-      CatalogTupleUpdate(relation, &newtuple->t_self, newtuple);
-
-      /* Update initial privileges for extensions */
-      recordExtensionInitPriv(relOid, RelationRelationId, 0, new_acl);
-
-      /* Update the shared dependency ACL info */
-      updateAclDependencies(RelationRelationId, relOid, 0, ownerId, noldmembers,
-                            oldmembers, nnewmembers, newmembers);
+      pg_global_set_acl(pg_global_dbid(MyDatabaseId), RelationRelationId,
+                        relOid, ownerId, new_acl,
+                        RELPERSISTENCE_TEMP == pg_class_tuple->relpersistence);
 
       pfree(new_acl);
     }
@@ -1908,6 +1880,15 @@ ExecGrant_common(InternalGrant *istmt, Oid classid, AclMode default_privs,
   Relation relation;
   ListCell *cell;
 
+  /*
+   * A schema's and a database's privileges are pg_global's (sm/ROLE.md
+   * section 3); a function's, a type's and a language's are compiled in,
+   * and PUBLIC's.
+   */
+  if (NamespaceRelationId != classid && DatabaseRelationId != classid)
+    ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    errmsg("privileges on %ss are not supported yet",
+                           get_object_class_descr(classid))));
   if (istmt->all_privs && istmt->privileges == ACL_NO_RIGHTS)
     istmt->privileges = default_privs;
 
@@ -1927,14 +1908,6 @@ ExecGrant_common(InternalGrant *istmt, Oid classid, AclMode default_privs,
     Oid grantorId;
     Oid ownerId;
     HeapTuple tuple;
-    HeapTuple newtuple;
-    Datum *values = palloc0_array(Datum, RelationGetDescr(relation)->natts);
-    bool *nulls = palloc0_array(bool, RelationGetDescr(relation)->natts);
-    bool *replaces = palloc0_array(bool, RelationGetDescr(relation)->natts);
-    int noldmembers;
-    int nnewmembers;
-    Oid *oldmembers;
-    Oid *newmembers;
 
     tuple = SearchSysCacheLocked1(cacheid, ObjectIdGetDatum(objectid));
     if (!HeapTupleIsValid(tuple))
@@ -1957,14 +1930,8 @@ ExecGrant_common(InternalGrant *istmt, Oid classid, AclMode default_privs,
                                &isNull);
     if (isNull) {
       old_acl = acldefault(get_object_type(classid, objectid), ownerId);
-      /* There are no old member roles according to the catalogs */
-      noldmembers = 0;
-      oldmembers = NULL;
-    } else {
+    } else
       old_acl = DatumGetAclPCopy(aclDatum);
-      /* Get the roles mentioned in the existing ACL */
-      noldmembers = aclmembers(old_acl, &oldmembers);
-    }
 
     /* Determine ID to do the grant as, and available grant options */
     select_best_grantor(GetUserId(), istmt->privileges, old_acl, ownerId,
@@ -1990,26 +1957,16 @@ ExecGrant_common(InternalGrant *istmt, Oid classid, AclMode default_privs,
         istmt->grantees, this_privileges, grantorId, ownerId);
 
     /*
-     * We need the members of both old and new ACLs so we can correct the
-     * shared dependency information.
+     * The ACL is pg_global's, written at the database's commit, and no
+     * pg_shdepend records its roles (sm/ROLE.md sections 3 and 4): a
+     * database's by its own id, a schema's in this database.
      */
-    nnewmembers = aclmembers(new_acl, &newmembers);
-
-    /* finished building new ACL value, now insert it */
-    replaces[get_object_attnum_acl(classid) - 1] = true;
-    values[get_object_attnum_acl(classid) - 1] = PointerGetDatum(new_acl);
-
-    newtuple = heap_modify_tuple(tuple, RelationGetDescr(relation), values,
-                                 nulls, replaces);
-
-    CatalogTupleUpdate(relation, &newtuple->t_self, newtuple);
-
-    /* Update initial privileges for extensions */
-    recordExtensionInitPriv(objectid, classid, 0, new_acl);
-
-    /* Update the shared dependency ACL info */
-    updateAclDependencies(classid, objectid, 0, ownerId, noldmembers,
-                          oldmembers, nnewmembers, newmembers);
+    if (DatabaseRelationId == classid)
+      pg_global_set_acl(pg_global_dbid(objectid), classid, InvalidOid, ownerId,
+                        new_acl, false);
+    else
+      pg_global_set_acl(pg_global_dbid(MyDatabaseId), classid, objectid,
+                        ownerId, new_acl, false);
 
     ReleaseSysCache(tuple);
 
@@ -2723,9 +2680,12 @@ static AclMode pg_attribute_aclmask_ext(Oid table_oid, AttrNumber attnum,
   Acl *acl;
   Oid ownerId;
 
-  /* A catalog a query can read: its columns are read, never written. */
+  /*
+   * A catalog a query can read has no column ACL, as PostgreSQL's catalogs
+   * have none: what it grants, it grants on the whole relation.
+   */
   if (cat_relation(table_oid) != NULL)
-    return mask & ACL_SELECT;
+    return 0;
 
   /*
    * First, get the column's ACL from its pg_attribute entry
@@ -2834,23 +2794,17 @@ static AclMode pg_class_aclmask_ext(Oid table_oid, Oid roleid, AclMode mask,
   Oid ownerId;
 
   /*
-   * A user's relation is sm's: no pg_class row, and no ACL but the default
-   * one, of its owner, the one superuser there is.
+   * A superuser may do anything to a relation of sm's, and read a catalog a
+   * query can read (catalog/catrel.c), which has nothing stored to write:
+   * decided before its pg_class row is made, as most checks are a
+   * superuser's.  Another role's check reads the row's ACL, below.
    */
-  if (table_oid >= FirstNormalObjectId) {
-    if (superuser_arg(roleid))
+  if (superuser_arg(roleid)) {
+    if (table_oid >= FirstNormalObjectId)
       return mask;
-    acl = acldefault(OBJECT_TABLE, BOOTSTRAP_SUPERUSERID);
-    return aclmask(acl, roleid, BOOTSTRAP_SUPERUSERID, mask, how);
+    if (cat_relation(table_oid) != NULL)
+      return mask & ACL_SELECT;
   }
-
-  /*
-   * A catalog a query can read (catalog/catrel.c) has no pg_class row
-   * either: anyone may read it, as PostgreSQL grants its catalogs, and no
-   * one may write it, as it has nothing stored.
-   */
-  if (cat_relation(table_oid) != NULL)
-    return mask & ACL_SELECT;
 
   /*
    * Must get the relation's tuple from pg_class
@@ -3337,9 +3291,9 @@ AclResult pg_attribute_aclcheck_all_ext(Oid table_oid, Oid roleid, AclMode mode,
   AttrNumber nattrs;
   AttrNumber curr_att;
 
-  /* A catalog a query can read: its columns are read, never written. */
+  /* A catalog a query can read has no column ACL (above). */
   if (cat_relation(table_oid) != NULL)
-    return (mode & ~ACL_SELECT) == 0 ? ACLCHECK_OK : ACLCHECK_NO_PRIV;
+    return ACLCHECK_NO_PRIV;
 
   /*
    * Must fetch pg_class row to get owner ID and number of attributes.

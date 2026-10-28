@@ -12,9 +12,12 @@
  */
 #include "postgres.h"
 
+#include <algorithm>
+
 #include "access/genam.h"
 #include "access/htup_details.h"
 #include "access/table.h"
+#include "access/smstore.h"
 #include "access/xact.h"
 #include "catalog/binary_upgrade.h"
 #include "catalog/catalog.h"
@@ -24,21 +27,23 @@
 #include "catalog/pg_auth_members.h"
 #include "catalog/pg_authid.h"
 #include "catalog/pg_database.h"
+#include "catalog/pg_namespace_d.h"
 #include "catalog/pg_db_role_setting.h"
-#include "commands/comment.h"
 #include "commands/dbcommands.h"
 #include "commands/defrem.h"
-#include "commands/seclabel.h"
 #include "commands/user.h"
 #include "libpq/crypt.h"
 #include "miscadmin.h"
+#include "nodes/makefuncs.h"
 #include "storage/lmgr.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
 #include "utils/catcache.h"
 #include "utils/control_block.h"
 #include "utils/fmgroids.h"
+#include "utils/lsyscache.h"
 #include "utils/hooks.h"
+#include "utils/pg_global.h"
 #include "utils/syscache.h"
 #include "utils/varlena.h"
 
@@ -411,8 +416,8 @@ Oid CreateRole(ParseState *pstate, CreateRoleStmt *stmt) {
     roleid = binary_upgrade_next_pg_authid_oid;
     binary_upgrade_next_pg_authid_oid = InvalidOid;
   } else {
-    roleid =
-        GetNewOidWithIndex(pg_authid_rel, AuthIdOidIndexId, Anum_pg_authid_oid);
+    /* The roles are pg_global's (utils/init/pg_global.c), and its oids. */
+    roleid = pg_global_new_oid();
   }
 
   new_record[Anum_pg_authid_oid - 1] = ObjectIdGetDatum(roleid);
@@ -420,9 +425,9 @@ Oid CreateRole(ParseState *pstate, CreateRoleStmt *stmt) {
   tuple = heap_form_tuple(pg_authid_dsc, new_record, new_record_nulls);
 
   /*
-   * Insert new record in the pg_authid table
+   * Insert new record in the pg_authid table: pg_global's, at commit.
    */
-  CatalogTupleInsert(pg_authid_rel, tuple);
+  pg_global_put_role(tuple, pg_authid_dsc);
 
   /*
    * Advance command counter so we can see new record; else tests in
@@ -829,7 +834,7 @@ Oid AlterRole(ParseState *pstate, AlterRoleStmt *stmt) {
 
   new_tuple = heap_modify_tuple(tuple, pg_authid_dsc, new_record,
                                 new_record_nulls, new_record_repl);
-  CatalogTupleUpdate(pg_authid_rel, &tuple->t_self, new_tuple);
+  pg_global_put_role(new_tuple, pg_authid_dsc);
 
   InvokeObjectPostAlterHook(AuthIdRelationId, roleid, 0);
 
@@ -1065,8 +1070,8 @@ void DropRole(DropRoleStmt *stmt) {
       Form_pg_auth_members authmem_form;
 
       authmem_form = (Form_pg_auth_members)GETSTRUCT(tmp_tuple);
-      deleteSharedDependencyRecordsFor(AuthMemRelationId, authmem_form->oid, 0);
-      CatalogTupleDelete(pg_auth_members_rel, &tmp_tuple->t_self);
+      /* No pg_shdepend: its grantor is read from pg_global. */
+      pg_global_delete_member(authmem_form->oid);
     }
 
     systable_endscan(sscan);
@@ -1081,8 +1086,8 @@ void DropRole(DropRoleStmt *stmt) {
       Form_pg_auth_members authmem_form;
 
       authmem_form = (Form_pg_auth_members)GETSTRUCT(tmp_tuple);
-      deleteSharedDependencyRecordsFor(AuthMemRelationId, authmem_form->oid, 0);
-      CatalogTupleDelete(pg_auth_members_rel, &tmp_tuple->t_self);
+      /* No pg_shdepend: its grantor is read from pg_global. */
+      pg_global_delete_member(authmem_form->oid);
     }
 
     systable_endscan(sscan);
@@ -1110,7 +1115,6 @@ void DropRole(DropRoleStmt *stmt) {
     HeapTuple tuple;
     Form_pg_authid roleform;
     char *detail;
-    char *detail_log;
 
     /*
      * Re-find the pg_authid tuple.
@@ -1125,37 +1129,39 @@ void DropRole(DropRoleStmt *stmt) {
     roleform = (Form_pg_authid)GETSTRUCT(tuple);
 
     /*
-     * Check for pg_shdepend entries depending on this role.
+     * Check for what depends on this role: in pg_global alone, as there is
+     * no pg_shdepend (sm/ROLE.md section 4).
      *
      * This needs to happen after we've completed removing any
      * pg_auth_members entries that can be removed silently, in order to
      * avoid spurious failures. See notes above for more details.
      */
-    if (checkSharedDependencies(AuthIdRelationId, roleid, &detail, &detail_log))
+    /* A role initdb made is the database system's (IsPinnedObject()). */
+    if (roleid < FirstUnpinnedObjectId)
+      ereport(ERROR, (errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+                      errmsg("cannot drop role %s because it is required by "
+                             "the database system",
+                             NameStr(roleform->rolname))));
+    detail = pg_global_role_dependents(roleid);
+    if (detail != NULL)
       ereport(ERROR, (errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
                       errmsg("role \"%s\" cannot be dropped because some "
                              "objects depend on it",
                              NameStr(roleform->rolname)),
-                      errdetail_internal("%s", detail),
-                      errdetail_log("%s", detail_log)));
+                      errdetail_internal("%s", detail)));
 
     /*
-     * Remove the role from the pg_authid table
+     * Remove the role from the pg_authid table: pg_global's, at commit.
      */
-    CatalogTupleDelete(pg_authid_rel, &tuple->t_self);
+    pg_global_delete_role(roleid);
 
     ReleaseSysCache(tuple);
 
     /*
-     * Remove any comments or security labels on this role.
+     * A role has no comment, security label or setting of its own to
+     * remove: digres keeps none (pg_shdescription, pg_shseclabel and
+     * pg_db_role_setting are not kept).
      */
-    DeleteSharedComments(roleid, AuthIdRelationId);
-    DeleteSharedSecurityLabel(roleid, AuthIdRelationId);
-
-    /*
-     * Remove settings for this role.
-     */
-    DropSetting(InvalidOid, roleid);
   }
 
   /*
@@ -1281,7 +1287,7 @@ ObjectAddress RenameRole(const char *oldname, const char *newname) {
   }
 
   newtuple = heap_modify_tuple(oldtuple, dsc, repl_val, repl_null, repl_repl);
-  CatalogTupleUpdate(rel, &oldtuple->t_self, newtuple);
+  pg_global_put_role(newtuple, dsc);
 
   InvokeObjectPostAlterHook(AuthIdRelationId, roleid, 0);
 
@@ -1386,6 +1392,134 @@ void GrantRole(ParseState *pstate, GrantRoleStmt *stmt) {
 }
 
 /*
+ * Refuse, with message, which names it, to act on what the role roleid owns
+ * if initdb made it, as PostgreSQL's IsPinnedObject() does.
+ */
+static void refuse_pinned(Oid roleid, const char *message) {
+  if (roleid < FirstUnpinnedObjectId)
+    ereport(ERROR, (errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+                    errmsg(message, psprintf("role %s",
+                                             GetUserNameFromId(roleid, false)))));
+}
+
+/*
+ * DROP OWNED's, as PostgreSQL's shdepDropOwned() does from pg_shdepend,
+ * from pg_global's entries (sm/ROLE.md section 4): of each role of
+ * roleids, revoke what an ACL grants it, in this database and on the
+ * databases; delete the memberships it granted; and drop what it owns in
+ * this database, its relations, the newest first, then its schemas.  A
+ * temporary object's owner is the session's alone, and none is dropped.
+ */
+static void drop_owned(List *roleids, DropBehavior behavior) {
+  uint64_t dbid = pg_global_dbid(MyDatabaseId);
+  std::vector<Oid> relations, schemas;
+
+  foreach_oid(roleid, roleids) {
+    std::vector<pg_global_object_t> owned, granted;
+    std::shared_ptr<const pg_global_roles_t> all = pg_global_roles();
+
+    refuse_pinned(roleid, "cannot drop objects owned by %s because they are "
+                          "required by the database system");
+    pg_global_objects_of(roleid, &owned, &granted);
+    for (const pg_global_object_t &o : granted) {
+      if (InvalidOid == o.objid) {
+        Oid dboid = FirstNormalObjectId + (Oid)o.dbid;
+
+        if (NULL != get_database_name(dboid))
+          RemoveRoleFromObjectACL(roleid, DatabaseRelationId, dboid);
+      } else if (dbid == o.dbid &&
+                 (RelationRelationId == o.classid
+                      ? '\0' != get_rel_relkind(o.objid)
+                      : NULL != get_namespace_name(o.objid)))
+        RemoveRoleFromObjectACL(roleid, o.classid, o.objid);
+    }
+    for (const pg_global_member_t &m : all->members)
+      if (m.grantor == roleid)
+        pg_global_delete_member(m.oid);
+    for (const pg_global_object_t &o : owned)
+      if (dbid == o.dbid && InvalidOid != o.objid)
+        (NamespaceRelationId == o.classid ? schemas : relations)
+            .push_back(o.objid);
+  }
+  CommandCounterIncrement();
+
+  /* The newest first, as PostgreSQL sorts them; one a cascade took, not. */
+  std::sort(relations.rbegin(), relations.rend());
+  std::sort(schemas.rbegin(), schemas.rend());
+  for (Oid relid : relations) {
+    char kind = get_rel_relkind(relid);
+    DropStmt *stmt;
+
+    if (RELKIND_RELATION != kind && RELKIND_VIEW != kind &&
+        RELKIND_SEQUENCE != kind)
+      continue;
+    stmt = makeNode(DropStmt);
+    stmt->objects = list_make1(
+        list_make2(makeString(get_namespace_name(get_rel_namespace(relid))),
+                   makeString(get_rel_name(relid))));
+    stmt->behavior = behavior;
+    stmt->missing_ok = false;
+    if (RELKIND_VIEW == kind) {
+      stmt->removeType = OBJECT_VIEW;
+      smstore_drop_views(stmt);
+    } else if (RELKIND_SEQUENCE == kind) {
+      stmt->removeType = OBJECT_SEQUENCE;
+      smstore_drop_sequences(stmt);
+    } else {
+      stmt->removeType = OBJECT_TABLE;
+      smstore_drop_tables(stmt);
+    }
+    CommandCounterIncrement();
+  }
+  for (Oid nspoid : schemas) {
+    char *name = get_namespace_name(nspoid);
+    DropStmt *stmt;
+
+    if (NULL == name)
+      continue;
+    stmt = makeNode(DropStmt);
+    stmt->objects = list_make1(makeString(name));
+    stmt->removeType = OBJECT_SCHEMA;
+    stmt->behavior = behavior;
+    smstore_drop_namespaces(stmt);
+    CommandCounterIncrement();
+  }
+}
+
+/*
+ * REASSIGN OWNED's, as PostgreSQL's shdepReassignOwned() does from
+ * pg_shdepend, from pg_global's entries: give what each role of roleids
+ * owns in this database, and the databases it owns, to newrole.
+ */
+static void reassign_owned(List *roleids, Oid newrole) {
+  uint64_t dbid = pg_global_dbid(MyDatabaseId);
+
+  foreach_oid(roleid, roleids) {
+    std::vector<pg_global_object_t> owned;
+
+    refuse_pinned(roleid,
+                  "cannot reassign ownership of objects owned by %s because "
+                  "they are required by the database system");
+    pg_global_objects_of(roleid, &owned, NULL);
+    for (const pg_global_object_t &o : owned) {
+      if (InvalidOid == o.objid)
+        pg_global_change_owner(o.dbid, DatabaseRelationId, InvalidOid, newrole,
+                               false);
+      else if (dbid != o.dbid)
+        continue;
+      else if (RelationRelationId == o.classid)
+        smstore_reassign_owner(o.objid, newrole);
+      else if (NamespaceRelationId == o.classid &&
+               NULL != get_namespace_name(o.objid))
+        pg_global_change_owner(dbid, NamespaceRelationId, o.objid, newrole,
+                               false);
+      /* Make sure the next one sees this one's change */
+      CommandCounterIncrement();
+    }
+  }
+}
+
+/*
  * DropOwnedObjects
  *
  * Drop the objects owned by a given list of roles.
@@ -1407,7 +1541,7 @@ void DropOwnedObjects(DropOwnedStmt *stmt) {
   }
 
   /* Ok, do it */
-  shdepDropOwned(role_ids, stmt->behavior);
+  drop_owned(role_ids, stmt->behavior);
 }
 
 /*
@@ -1443,7 +1577,7 @@ void ReassignOwnedObjects(ReassignOwnedStmt *stmt) {
                               GetUserNameFromId(newrole, false))));
 
   /* Ok, do it */
-  shdepReassignOwned(role_ids, newrole);
+  reassign_owned(role_ids, newrole);
 }
 
 /*
@@ -1674,12 +1808,11 @@ static void AddRoleMems(Oid currentUserId, const char *rolename, Oid roleid,
 
       tuple = heap_modify_tuple(authmem_tuple, pg_authmem_dsc, new_record,
                                 new_record_nulls, new_record_repl);
-      CatalogTupleUpdate(pg_authmem_rel, &tuple->t_self, tuple);
+      pg_global_put_member(tuple);
 
       ReleaseSysCache(authmem_tuple);
     } else {
       Oid objectId;
-      Oid *newmembers = (Oid *)palloc(sizeof(Oid));
 
       /*
        * The values for these options can be taken directly from 'popt'.
@@ -1710,17 +1843,14 @@ static void AddRoleMems(Oid currentUserId, const char *rolename, Oid roleid,
         ReleaseSysCache(mrtup);
       }
 
-      /* get an OID for the new row and insert it */
-      objectId = GetNewOidWithIndex(pg_authmem_rel, AuthMemOidIndexId,
-                                    Anum_pg_auth_members_oid);
+      /*
+       * get an OID for the new row and insert it: pg_global's, at commit.
+       * No pg_shdepend records the grantor: DROP ROLE reads it there.
+       */
+      objectId = pg_global_new_oid();
       new_record[Anum_pg_auth_members_oid - 1] = objectId;
       tuple = heap_form_tuple(pg_authmem_dsc, new_record, new_record_nulls);
-      CatalogTupleInsert(pg_authmem_rel, tuple);
-
-      /* updateAclDependencies wants to pfree array inputs */
-      newmembers[0] = grantorId;
-      updateAclDependencies(AuthMemRelationId, objectId, 0, InvalidOid, 0, NULL,
-                            1, newmembers);
+      pg_global_put_member(tuple);
     }
 
     /* CCI after each change, in case there are duplicates in list */
@@ -1809,12 +1939,8 @@ static void DelRoleMems(Oid currentUserId, const char *rolename, Oid roleid,
     authmem_form = (Form_pg_auth_members)GETSTRUCT(authmem_tuple);
 
     if (actions[i] == RRG_DELETE_GRANT) {
-      /*
-       * Remove the entry altogether, after first removing its
-       * dependencies
-       */
-      deleteSharedDependencyRecordsFor(AuthMemRelationId, authmem_form->oid, 0);
-      CatalogTupleDelete(pg_authmem_rel, &authmem_tuple->t_self);
+      /* Remove the entry altogether: pg_global's, at commit. */
+      pg_global_delete_member(authmem_form->oid);
     } else {
       /* Just turn off the specified option */
       HeapTuple tuple;
@@ -1838,7 +1964,7 @@ static void DelRoleMems(Oid currentUserId, const char *rolename, Oid roleid,
 
       tuple = heap_modify_tuple(authmem_tuple, pg_authmem_dsc, new_record,
                                 new_record_nulls, new_record_repl);
-      CatalogTupleUpdate(pg_authmem_rel, &tuple->t_self, tuple);
+      pg_global_put_member(tuple);
     }
   }
 

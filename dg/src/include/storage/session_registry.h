@@ -54,6 +54,7 @@ extern void session_interrupt(const session_ref_t &record, uint32 bits);
 extern void session_unregister(void);
 extern session_ref_t session_by_pid(int pid);
 extern std::vector<session_ref_t> sessions_all(void);
+extern int sessions_of_role(Oid role);
 extern bool session_have_free(int n, int *nfree);
 
 #endif /* SESSION_REGISTRY_H */

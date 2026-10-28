@@ -140,6 +140,9 @@ test:
 	$(MAKE) all
 	SQ_PARSE="$(CURDIR)/build/digres --parse" $(SQ)/test/run.sh
 	test/run.sh
+	# initdb.sh drops pg_global with sm's driver, to make a data directory
+	# from before digres kept roles.
+	$(MAKE) -C $(SM)/rel
 	test/initdb.sh
 	$(MAKE) build/numbin
 	test/server.sh

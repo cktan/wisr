@@ -48,7 +48,7 @@ INSERT INTO test_ns_schema_1.abc DEFAULT VALUES;
 SELECT * FROM test_ns_schema_1.abc;
 SELECT * FROM test_ns_schema_1.abc_view;
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_namespace cannot be written: digres has no catalog tables
 --dg ALTER SCHEMA test_ns_schema_1 RENAME TO test_ns_schema_renamed;
 --dg-cascade
 --dg SELECT COUNT(*) FROM pg_class WHERE relnamespace =

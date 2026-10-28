@@ -170,17 +170,23 @@ class server_t:
             os.killpg(self.proc.pid, signal.SIGKILL)
             self.proc.wait()
 
+    def start_or_init(self):
+        """Start the server, on a new data directory if it will not start
+        on the one there: one a crash left, or an older build made, as
+        digres's from before its roles were kept in pg_global."""
+        try:
+            self.start()
+        except RuntimeError:
+            shutil.rmtree(os.path.join(self.dir, 'data'), ignore_errors=True)
+            self.start()
+
     def restart(self):
         """Start the server again after a crash or a hang, on a new data
         directory if it will not start on its own."""
         if self.alive():
             os.killpg(self.proc.pid, signal.SIGKILL)
             self.proc.wait()
-        try:
-            self.start()
-        except RuntimeError:
-            shutil.rmtree(os.path.join(self.dir, 'data'), ignore_errors=True)
-            self.start()
+        self.start_or_init()
 
     def fresh_database(self):
         """Make the database regression afresh, with nothing left of the
@@ -194,10 +200,13 @@ class server_t:
                             'drop subscription %s'):
                     self.psql(sql % sub, db='regression', check=False)
         self.psql('drop database if exists regression with (force)')
+        # The roles in one DROP ROLE, which drops a grantor with what it
+        # granted, whatever their order.
         sql = ("select format('drop database if exists %I with (force)', "
                "datname) from pg_database where datname like 'regression%' "
-               "union all select format('drop role if exists %I', rolname) "
-               "from pg_roles where rolname like 'regress%'")
+               "union all select 'drop role if exists ' || "
+               "string_agg(format('%I', rolname), ', ') from pg_roles "
+               "where rolname like 'regress%' having count(*) > 0")
         # digres has no tablespaces.
         if self.kind == 'pg':
             sql += (" union all select format('drop tablespace if exists %I',"
@@ -429,7 +438,7 @@ class worker_t:
         try:
             for kind in kinds:
                 s = server_t(kind, os.path.join(dir, kind))
-                s.start()
+                s.start_or_init()
                 setattr(self, kind, s)
         except BaseException:
             self.stop()

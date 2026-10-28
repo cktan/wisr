@@ -20,16 +20,13 @@ DROP TABLE sitmp1;
 -- SELECT INTO and INSERT permission, if owner is not allowed to insert.
 --
 CREATE SCHEMA selinto_schema;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_selinto_user;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+CREATE USER regress_selinto_user;
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
 --dg ALTER DEFAULT PRIVILEGES FOR ROLE regress_selinto_user
 --dg 	  REVOKE INSERT ON TABLES FROM regress_selinto_user;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT ALL ON SCHEMA selinto_schema TO public;
+GRANT ALL ON SCHEMA selinto_schema TO public;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_selinto_user;
+SET SESSION AUTHORIZATION regress_selinto_user;
 -- WITH DATA, passes.
 CREATE TABLE selinto_schema.tbl_withdata1 (a)
   AS SELECT generate_series(1,3) WITH DATA;
@@ -59,18 +56,17 @@ EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
   EXECUTE data_sel WITH NO DATA;
 RESET SESSION AUTHORIZATION;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
 --dg ALTER DEFAULT PRIVILEGES FOR ROLE regress_selinto_user
 --dg 	  GRANT INSERT ON TABLES TO regress_selinto_user;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_selinto_user;
+SET SESSION AUTHORIZATION regress_selinto_user;
 RESET SESSION AUTHORIZATION;
 
 DEALLOCATE data_sel;
 --dg-differs: the result
 --dg DROP SCHEMA selinto_schema CASCADE;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP USER regress_selinto_user;
 
 -- Tests for WITH NO DATA and column name consistency

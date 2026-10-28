@@ -202,13 +202,15 @@ local_psql -c 'select 1/0' -c 'select 2 + 3' > "$work/error.out" 2>&1
 grep -q "division by zero" "$work/error.out" || fail "error reported"
 grep -qx 5 "$work/error.out" || fail "statement after an error"
 
-# Verify that the local socket admits only the superuser, to a database
-# that exists.
-# 1. Connect as another role, and confirm peer authentication refuses it.
+# Verify that the local socket admits a role that is not the OS user's
+# name only by password, and only to a database that exists.
+# 1. Connect as a role that is not there, with a password, and confirm it
+#    is refused as a wrong password would be.
 # 2. Connect to a database that is not there, and confirm it is refused.
-psql -X -h "$work" -p "$port" -U nobody_here -d postgres -c 'select 1' \
-  > "$work/peer.out" 2>&1 && fail "peer admitted another role"
-grep -q "Peer authentication failed" "$work/peer.out" || fail "peer message"
+PGPASSWORD=x psql -X -w -h "$work" -p "$port" -U nobody_here -d postgres \
+  -c 'select 1' > "$work/peer.out" 2>&1 && fail "peer admitted another role"
+grep -q 'password authentication failed for user "nobody_here"' \
+  "$work/peer.out" || fail "peer message"
 psql -X -h "$work" -p "$port" -d no_such_db -c 'select 1' \
   > "$work/nodb.out" 2>&1 && fail "unknown database admitted"
 grep -q 'database "no_such_db" does not exist' "$work/nodb.out" ||
@@ -617,8 +619,7 @@ done
 # Verify that a role cannot be given REPLICATION, as digres has no
 # replication, while NOREPLICATION, which pg_dumpall writes, passes it by.
 # 1. CREATE ROLE and ALTER ROLE with REPLICATION each fail, saying so.
-# 2. With NOREPLICATION neither fails on the attribute (it fails later, as
-#    digres has no roles to make yet).
+# 2. With NOREPLICATION neither fails; the role made is dropped.
 # 3. ALTER TABLE ... REPLICA IDENTITY on a table made for it is refused.
 for sql in "create role r replication" "alter role current_user replication"; do
   local_psql -c "$sql" 2>&1 |
@@ -627,9 +628,9 @@ for sql in "create role r replication" "alter role current_user replication"; do
 done
 for sql in "create role r noreplication" \
   "alter role current_user noreplication"; do
-  local_psql -c "$sql" 2>&1 | grep -q 'REPLICATION attribute' &&
-    fail "NOREPLICATION passes: $sql"
+  local_psql -c "$sql" > "$work/norepl.out" 2>&1 || fail "NOREPLICATION passes: $sql"
 done
+local_psql -c "drop role r" > "$work/norepl.out" 2>&1 || fail "drop role r"
 local_psql -c "create table ri (a int4 primary key)" \
   -c "alter table ri replica identity full" -c "drop table ri" 2>&1 |
   grep -q 'ERROR:  ALTER TABLE supports only' || fail "REPLICA IDENTITY refused"
@@ -2918,6 +2919,486 @@ postgres|t|UTF8|c|C|C|t
 OUT
 cmp -s "$work/db.out" "$work/db.expected" || fail "pg_database"
 
+# Verify that the roles are pg_global's (sm/ROLE.md section 3): pg_authid
+# and pg_roles read them, the server's own lookups of a role go through
+# pg_authid, and pg_global is no database a client sees.
+# 1. pg_authid has the superuser, oid 10, with its password's SCRAM
+#    secret; pg_roles the same role, its password hidden.
+# 2. A role is found by name and by oid: regrole's input and output.
+# 3. pg_database does not list pg_global.
+# 4. Connecting to pg_global, dropping it and creating it are refused, as
+#    for a database that is not there and one that is.
+local_psql -c "select oid, rolname = current_user, rolsuper, rolcanlogin,
+                 rolreplication, rolpassword ~ '^SCRAM-SHA-256\\$',
+                 rolvaliduntil is null from pg_authid where oid = 10" \
+  -c "select rolname = current_user, rolpassword, oid from pg_roles
+        where oid = 10" \
+  -c "select current_user::regrole::oid, 10::regrole::text = current_user" \
+  -c "select count(*) from pg_database where datname = 'pg_global'" \
+  > "$work/roles.out" 2>&1
+cat > "$work/roles.expected" << OUT
+10|t|t|t|f|t|t
+t|********|10
+10|t
+0
+OUT
+cmp -s "$work/roles.out" "$work/roles.expected" || fail "pg_authid, pg_roles"
+psql -X -h "$work" -p "$port" -d pg_global -c 'select 1' \
+  > "$work/pg_global.out" 2>&1 && fail "connected to pg_global"
+grep -q 'database "pg_global" does not exist' "$work/pg_global.out" ||
+  fail "pg_global connect message"
+local_psql -c 'drop database pg_global' 2>&1 |
+  grep -q 'database "pg_global" does not exist' || fail "drop pg_global"
+local_psql -c 'create database pg_global' 2>&1 |
+  grep -q 'database "pg_global" already exists' || fail "create pg_global"
+
+# Verify role DDL (sm/ROLE.md section 9, step 2): roles and memberships go
+# to pg_global at commit, a session already open sees them at its next
+# statement, and what PostgreSQL refuses is refused.
+# 1. Hold a session open; make rr1 LOGIN with a password, rr2 and rr3; grant
+#    rr2 to rr1 WITH ADMIN OPTION, and rr2 to rr3 GRANTED BY rr1.
+# 2. pg_auth_members has both grants; the held session finds rr1 by name.
+# 3. CREATE ROLE in a transaction block is refused, and makes no role.
+# 4. DROP ROLE rr1 is refused, as the grantor of rr3's membership, with
+#    PostgreSQL's DETAIL; rr2's grant to rr3 goes with rr3 dropped.
+# 5. As rr1, SET ROLE rr2 is allowed; rr1, without CREATEROLE, may not
+#    make a role, nor SET ROLE to rr4, which it is no member of.
+# 6. ALTER ROLE renames rr2 to rr2b and makes rr1 NOLOGIN; DROP ROLE of
+#    both leaves rr1's memberships none, and pg_roles the roles kept.
+held_start roleheld
+held_send roleheld "select 'up';"
+held_wait roleheld "up" || fail "role DDL: held session"
+local_psql -c "create role rr1 login password 'pw1'" -c 'create role rr2' \
+  -c 'create role rr3' -c 'grant rr2 to rr1 with admin option' \
+  -c 'grant rr2 to rr3 granted by rr1' > "$work/roleddl.out" 2>&1 ||
+  fail "role DDL: make"
+local_psql -c "select r.rolname, m.rolname, g.rolname, admin_option
+                 from pg_auth_members a join pg_roles r on r.oid = a.roleid
+                 join pg_roles m on m.oid = a.member
+                 join pg_roles g on g.oid = a.grantor
+                 where r.rolname like 'rr%' order by 2" \
+  > "$work/rolemem.out" 2>&1
+cat > "$work/rolemem.expected" << OUT
+rr2|rr1|$me|t
+rr2|rr3|rr1|f
+OUT
+cmp -s "$work/rolemem.out" "$work/rolemem.expected" ||
+  fail "role DDL: pg_auth_members"
+held_send roleheld "select 'rr1:' || 'rr1'::regrole::oid::int8 / 16384;"
+held_wait roleheld "rr1:1" ||
+  fail "role DDL: seen by a session already open"
+held_end roleheld
+local_psql -c 'begin' -c 'create role rr9' -c 'rollback' \
+  -c "select count(*) from pg_roles where rolname = 'rr9'" \
+  > "$work/roleblock.out" 2>&1
+grep -q 'CREATE ROLE cannot run inside a transaction block' \
+  "$work/roleblock.out" && grep -qx 0 "$work/roleblock.out" ||
+  fail "role DDL: refused in a transaction block"
+local_psql -c 'drop role rr1' > "$work/roledep.out" 2>&1 &&
+  fail "role DDL: a grantor is not dropped"
+grep -q 'DETAIL:  privileges for membership of role rr3 in role rr2' \
+  "$work/roledep.out" || fail "role DDL: the grantor's DETAIL"
+local_psql -c 'drop role rr3' > "$work/roledep.out" 2>&1 ||
+  fail "role DDL: drop rr3"
+local_psql -c 'set session authorization rr1' -c 'set role rr2' \
+  -c 'select current_user' > "$work/roleset.out" 2>&1
+grep -qx rr2 "$work/roleset.out" || fail "role DDL: SET ROLE"
+local_psql -c 'set session authorization rr1' -c 'create role rr4' \
+  -c 'reset session authorization' -c 'create role rr4' \
+  -c 'set session authorization rr1' -c 'set role rr4' \
+  > "$work/roleset2.out" 2>&1
+grep -q 'permission denied to create role' "$work/roleset2.out" &&
+  grep -q 'permission denied to set role "rr4"' "$work/roleset2.out" ||
+  fail "role DDL: what a role without CREATEROLE may not do"
+local_psql -c 'alter role rr2 rename to rr2b' -c 'alter role rr1 nologin' \
+  -c "select rolname, rolcanlogin from pg_roles where rolname like 'rr%'
+        order by 1" -c 'drop role rr2b, rr4' \
+  -c "select count(*) from pg_auth_members a join pg_roles m
+        on m.oid = a.member where m.rolname = 'rr1'" \
+  > "$work/rolealter.out" 2>&1
+cat > "$work/rolealter.expected" << OUT
+ALTER ROLE
+ALTER ROLE
+rr1|f
+rr2b|f
+rr4|f
+DROP ROLE
+0
+OUT
+cmp -s "$work/rolealter.out" "$work/rolealter.expected" ||
+  fail "role DDL: ALTER and DROP ROLE"
+
+# Verify how a client gets in (sm/ROLE.md section 5): on the local socket
+# by peer if the OS user is the role's name, else by the role's password;
+# over TCP by password; and a role that may not log in, is past VALID
+# UNTIL or at its CONNECTION LIMIT is refused. Each refusal tells the
+# client what a wrong password tells it, and the log which check failed.
+# 1. Make ra (LOGIN, a password), rb (LOGIN, none), rc (NOLOGIN, a
+#    password), rd (CONNECTION LIMIT 1) and re (VALID UNTIL 2000).
+# 2. ra gets in on the socket and over TCP with its password, and not on
+#    the socket without one.
+# 3. rb is refused on the socket and over TCP; rc and re are refused.
+# 4. With one rd session held, a second is refused.
+# 5. The log says which check refused each.
+local_psql -c "create role ra login password 'pa'" -c 'create role rb login' \
+  -c "create role rc password 'pc'" \
+  -c "create role rd login password 'pd' connection limit 1" \
+  -c "create role re login password 'pe' valid until '2000-01-01'" \
+  > "$work/auth.out" 2>&1 || fail "auth: make roles"
+[ "$(PGPASSWORD=pa local_psql -U ra -c 'select current_user')" = ra ] ||
+  fail "auth: ra on the socket by password"
+[ "$(PGPASSWORD=pa tcp_psql pa -U ra -c 'select current_user')" = ra ] ||
+  fail "auth: ra over TCP"
+local_psql -w -U ra -c 'select 1' > "$work/auth1.out" 2>&1 &&
+  fail "auth: ra on the socket with no password"
+n=0
+for who in "rb local" "rb tcp" "rc local" "re tcp"; do
+  read -r role via <<< "$who"
+  n=$((n + 1))
+  # Each role's own password, p and its last letter: rb has none.
+  if [ "$via" = local ]; then
+    PGPASSWORD=p${role#r} local_psql -w -U "$role" -c 'select 1'
+  else
+    tcp_psql "p${role#r}" -U "$role" -c 'select 1'
+  fi > "$work/auth_r$n.out" 2>&1 && fail "auth: $who admitted"
+  grep -q "password authentication failed for user \"$role\"" \
+    "$work/auth_r$n.out" || fail "auth: $who message"
+done
+held_start rd_held
+held_send rd_held "\\c 'host=127.0.0.1 port=$port dbname=postgres user=rd password=pd'"
+held_send rd_held "select current_user;"
+held_wait rd_held "rd" || fail "auth: rd's first session"
+tcp_psql pd -U rd -c 'select 1' > "$work/auth_rd.out" 2>&1 &&
+  fail "auth: rd's second session admitted"
+grep -q 'password authentication failed for user "rd"' "$work/auth_rd.out" ||
+  fail "auth: rd's message"
+held_end rd_held
+for detail in 'User "rb" has no password assigned' \
+  'Role "rc" is not permitted to log in' \
+  'User "re" has an expired password' \
+  'Role "rd" has reached its CONNECTION LIMIT'; do
+  grep -q "DETAIL:  $detail" "$work/log" || fail "auth: log says $detail"
+done
+local_psql -c 'drop role ra, rb, rc, rd, re' > "$work/auth.out" 2>&1 ||
+  fail "auth: drop roles"
+
+# Verify that a role that is not a superuser runs statements, with
+# PostgreSQL 18's privileges on what initdb made: the catalogs PUBLIC may
+# read but pg_authid, schema public pg_database_owner's with USAGE for
+# PUBLIC, and the predefined roles there.
+# 1. Make rn LOGIN with a password, and table np owned by the superuser.
+# 2. As rn: a statement that looks names up runs; pg_class and pg_roles are
+#    read, pg_authid is not; np is refused, and so is CREATE in public;
+#    USAGE on public is had.
+# 3. pg_namespace has public's and pg_catalog's ACLs as PostgreSQL's.
+# 4. A row of sm's catalog is not kept by a session: rn's check of np2,
+#    made before the superuser drops it, is not answered from it after.
+# 5. pg_monitor, a predefined role, has pg_read_all_stats, and cannot be
+#    dropped.
+local_psql -c "create role rn login password 'pn'" \
+  -c 'create table np (a int4)' > "$work/nonsuper.out" 2>&1 ||
+  fail "non-superuser: make"
+tcp_psql pn -U rn -c "select 'x' || 1" -c 'select count(*) > 0 from pg_class' \
+  -c "select count(*) > 0 from pg_roles" -c 'select oid from pg_authid' \
+  -c 'select * from np' -c 'create table nq (a int4)' \
+  -c "select has_schema_privilege('public', 'usage')" \
+  > "$work/nonsuper.out" 2>&1
+cat > "$work/nonsuper.expected" << OUT
+x1
+t
+t
+ERROR:  permission denied for table pg_authid
+ERROR:  permission denied for table np
+ERROR:  permission denied for schema public
+LINE 1: create table nq (a int4)
+                     ^
+t
+OUT
+cmp -s "$work/nonsuper.out" "$work/nonsuper.expected" ||
+  fail "non-superuser: what it may do"
+local_psql -c 'create table np2 (a int4)' > "$work/np2.out" 2>&1
+np2=$(local_psql -c "select 'np2'::regclass::oid")
+held_start npheld
+held_send npheld "\\c 'host=127.0.0.1 port=$port dbname=postgres user=rn password=pn'"
+held_send npheld "select 'np2:' || has_table_privilege($np2, 'select');"
+held_wait npheld "np2:false" || fail "non-superuser: np2 before its drop"
+local_psql -c 'drop table np2' > "$work/np2.out" 2>&1
+held_send npheld "select 'np2:' || coalesce(has_table_privilege($np2, 'select')::text, 'none');"
+held_wait npheld "np2:none" || fail "non-superuser: np2 after its drop"
+held_end npheld
+local_psql -c "select nspname, nspacl from pg_namespace
+                 where nspname in ('pg_catalog', 'public') order by 1" \
+  -c "select pg_has_role('pg_monitor', 'pg_read_all_stats', 'member')" \
+  -c 'drop role pg_monitor' -c 'drop table np' -c 'drop role rn' \
+  > "$work/builtin_acl.out" 2>&1
+cat > "$work/builtin_acl.expected" << OUT
+pg_catalog|{$me=UC/$me,=U/$me}
+public|{pg_database_owner=UC/pg_database_owner,=U/pg_database_owner}
+t
+ERROR:  cannot drop role pg_monitor because it is required by the database system
+DROP TABLE
+DROP ROLE
+OUT
+cmp -s "$work/builtin_acl.out" "$work/builtin_acl.expected" ||
+  fail "non-superuser: what initdb made"
+
+# Verify owners (sm/ROLE.md section 9, step 4): what a role makes is its,
+# kept in pg_global after the commit; DDL on what it does not own is
+# refused as PostgreSQL refuses it; and ALTER ... OWNER TO changes it.
+# 1. Make ro1 and ro2; schema so owned by ro1, in which, as ro1, table t
+#    with a serial and an index, and view v.
+# 2. pg_class and pg_namespace name ro1 the owner of each, the index and
+#    the sequence too.
+# 3. A table made in a transaction rolled back, and one in a savepoint
+#    rolled back to, leave no owner; one released is kept.
+# 4. Give ro1 table ot, with a serial and an index, and view ov, made in
+#    public, which ro2 may use. As ro2: DROP, ALTER, RENAME, CREATE INDEX,
+#    TRUNCATE and nextval() on them are refused; VACUUM and ANALYZE pass
+#    ot over with a warning; DROP SCHEMA so is refused.
+# 5. ALTER TABLE ... OWNER TO in a savepoint rolled back to changes
+#    nothing; ALTER TABLE and SCHEMA ... OWNER TO change the owner, the
+#    table's sequence with it; the sequence's own is refused, and the
+#    index's warns.
+local_psql -c 'create role ro1' -c 'create role ro2' \
+  -c 'create schema so authorization ro1' -c 'grant ro1 to ro2' \
+  -c 'set role ro1' -c 'create table so.t (a serial, b int4)' \
+  -c 'create index t_b on so.t (b)' -c 'create view so.v as select * from so.t' \
+  -c 'begin' -c 'create table so.gone (a int4)' -c 'rollback' \
+  -c 'begin' -c 'create table so.kept (a int4)' -c 'savepoint p' \
+  -c 'create table so.back (a int4)' -c 'rollback to p' -c 'commit' \
+  -c 'reset role' -c 'revoke ro1 from ro2' \
+  -c "select relname || ':' || pg_get_userbyid(relowner) from pg_class
+        where relnamespace = 'so'::regnamespace order by relname" \
+  -c "select pg_get_userbyid(nspowner) from pg_namespace where nspname = 'so'" \
+  > "$work/owners.out" 2>&1
+grep -v -e '^CREATE' -e '^SET$' -e '^RESET$' -e '^BEGIN$' -e '^COMMIT$' \
+  -e '^ROLLBACK$' -e '^SAVEPOINT$' -e '^GRANT ROLE$' -e '^REVOKE ROLE$' \
+  "$work/owners.out" > "$work/owners.rows"
+cat > "$work/owners.expected" << OUT
+kept:ro1
+t:ro1
+t_a_seq:ro1
+t_b:ro1
+v:ro1
+ro1
+OUT
+cmp -s "$work/owners.rows" "$work/owners.expected" || fail "owners: made"
+local_psql -c 'create table ot (a serial, b int4)' -c 'create index ot_b on ot (b)' \
+  -c 'create view ov as select * from ot' -c 'alter table ot owner to ro1' \
+  -c 'alter view ov owner to ro1' > "$work/notowner.out" 2>&1 ||
+  fail "owners: make ro1's in public"
+local_psql -c 'set role ro2' -c 'drop table ot' -c 'drop view ov' \
+  -c 'drop index ot_b' -c 'alter table ot add column c int4' \
+  -c 'alter table ot rename to ot2' -c 'create index ot_a on ot (a)' \
+  -c 'truncate ot' -c "select nextval('ot_a_seq')" -c 'vacuum ot' \
+  -c 'analyze ot' -c 'drop schema so cascade' > "$work/notowner.out" 2>&1
+cat > "$work/notowner.expected" << OUT
+SET
+ERROR:  must be owner of table ot
+ERROR:  must be owner of view ov
+ERROR:  must be owner of index ot_b
+ERROR:  must be owner of table ot
+ERROR:  must be owner of table ot
+ERROR:  must be owner of table ot
+ERROR:  permission denied for table ot
+ERROR:  permission denied for sequence ot_a_seq
+WARNING:  permission denied to vacuum "ot", skipping it
+VACUUM
+WARNING:  permission denied to analyze "ot", skipping it
+ANALYZE
+ERROR:  must be owner of schema so
+OUT
+cmp -s "$work/notowner.out" "$work/notowner.expected" ||
+  fail "owners: what a role that does not own may not do"
+local_psql -c 'drop view ov' -c 'drop table ot' > "$work/notowner2.out" 2>&1 ||
+  fail "owners: drop ro1's in public"
+local_psql -c 'begin' -c 'savepoint q' -c 'alter table so.kept owner to ro2' \
+  -c 'rollback to q' -c 'commit' -c 'alter table so.t owner to ro2' \
+  -c 'alter sequence so.t_a_seq owner to ro1' \
+  -c 'alter index so.t_b owner to ro1' -c 'alter schema so owner to ro2' \
+  -c "select relname || ':' || pg_get_userbyid(relowner) from pg_class
+        where relnamespace = 'so'::regnamespace
+          and (relname like 't%' or relname = 'kept') order by relname" \
+  -c "select pg_get_userbyid(nspowner) from pg_namespace where nspname = 'so'" \
+  > "$work/chowner.out" 2>&1
+cat > "$work/chowner.expected" << OUT
+BEGIN
+SAVEPOINT
+ALTER TABLE
+ROLLBACK
+COMMIT
+ALTER TABLE
+ERROR:  cannot change owner of sequence "t_a_seq"
+DETAIL:  Sequence "t_a_seq" is linked to table "t".
+WARNING:  cannot change owner of index "t_b"
+HINT:  Change the ownership of the index's table instead.
+ALTER INDEX
+ALTER SCHEMA
+kept:ro1
+t:ro2
+t_a_seq:ro2
+t_b:ro2
+ro2
+OUT
+cmp -s "$work/chowner.out" "$work/chowner.expected" ||
+  fail "owners: ALTER ... OWNER TO"
+
+# Verify GRANT and REVOKE (sm/ROLE.md section 9, step 5): an ACL is
+# pg_global's, written at the database's commit, and the checks read it.
+# 1. Make rg1 LOGIN and rg2 LOGIN, table gt with a row, owned by the
+#    superuser, and schema gs; grant rg1 USAGE and CREATE on gs.
+# 2. As rg1, gt is refused; GRANT SELECT on it to rg1, and it is read.
+# 3. A GRANT in a transaction rolled back, and one in a savepoint rolled
+#    back to, grant nothing: rg2 is still refused gt.
+# 4. As rg1, view gs.gv reads gt; granted to rg2, rg2 reads it, as rg1.
+#    REVOKE SELECT on gt from rg1, and rg2 is refused through the view.
+# 5. pg_class, pg_namespace and \dp show the ACLs.
+# 6. A column's privileges and a function's are refused.
+local_psql -c "create role rg1 login password 'p1'" \
+  -c "create role rg2 login password 'p2'" -c 'create table gt (a int4)' \
+  -c 'insert into gt values (7)' -c 'create schema gs' \
+  -c 'grant usage, create on schema gs to rg1' \
+  -c 'grant usage on schema gs to rg2' > "$work/grant.out" 2>&1 ||
+  fail "grant: make"
+tcp_psql p1 -U rg1 -c 'select a from gt' > "$work/grant1.out" 2>&1
+local_psql -c 'grant select on gt to rg1' > "$work/grant.out" 2>&1
+tcp_psql p1 -U rg1 -c 'select a from gt' -c 'create view gs.gv as select a from gt' \
+  -c 'grant select on gs.gv to rg2' >> "$work/grant1.out" 2>&1
+local_psql -c 'begin' -c 'grant select on gt to rg2' -c 'rollback' \
+  -c 'begin' -c 'savepoint s' -c 'grant select on gt to rg2' \
+  -c 'rollback to s' -c 'commit' > "$work/grant.out" 2>&1
+tcp_psql p2 -U rg2 -c 'select a from gt' -c 'select a from gs.gv' \
+  >> "$work/grant1.out" 2>&1
+local_psql -c 'revoke select on gt from rg1' > "$work/grant.out" 2>&1
+tcp_psql p2 -U rg2 -c 'select a from gs.gv' >> "$work/grant1.out" 2>&1
+cat > "$work/grant1.expected" << OUT
+ERROR:  permission denied for table gt
+7
+CREATE VIEW
+GRANT
+ERROR:  permission denied for table gt
+7
+ERROR:  permission denied for table gt
+OUT
+cmp -s "$work/grant1.out" "$work/grant1.expected" ||
+  fail "grant: what each role may read"
+local_psql -c "select relname, relacl from pg_class
+                 where relname in ('gt', 'gv') order by 1" \
+  -c "select nspacl from pg_namespace where nspname = 'gs'" \
+  -c 'grant select (a) on gt to rg2' -c 'grant execute on function now() to rg2' \
+  > "$work/grant2.out" 2>&1
+cat > "$work/grant2.expected" << OUT
+gt|{$me=arwdDxtm/$me}
+gv|{rg1=arwdDxtm/rg1,rg2=r/rg1}
+{$me=UC/$me,rg1=UC/$me,rg2=U/$me}
+ERROR:  column privileges are not supported yet
+ERROR:  privileges on functions are not supported yet
+OUT
+cmp -s "$work/grant2.out" "$work/grant2.expected" ||
+  fail "grant: the ACLs shown, and what is refused"
+
+# Verify that REVOKE ... FROM PUBLIC of CONNECT keeps a role out, and a
+# GRANT of it lets one in (sm/ROLE.md section 5, the second check).
+# 1. Make database gdb; REVOKE CONNECT from PUBLIC, GRANT it to rg1.
+# 2. rg1 connects to gdb; rg2 is refused as a wrong password is.
+local_psql -c 'create database gdb' > "$work/gdb.out" 2>&1
+local_psql -d gdb -c 'revoke connect on database gdb from public' \
+  -c 'grant connect on database gdb to rg1' >> "$work/gdb.out" 2>&1
+[ "$(PGPASSWORD=p1 psql -X -A -t -h 127.0.0.1 -p "$port" -U rg1 -d gdb \
+  -c 'select 1' 2> "$work/gdb1.err")" = 1 ] || fail "grant: CONNECT granted"
+PGPASSWORD=p2 psql -X -A -t -h 127.0.0.1 -p "$port" -U rg2 -d gdb \
+  -c 'select 1' > "$work/gdb2.out" 2>&1 && fail "grant: CONNECT revoked"
+grep -q 'password authentication failed for user "rg2"' "$work/gdb2.out" ||
+  fail "grant: CONNECT's message"
+
+# Verify that a REVOKE whose transaction fails at its commit leaves the
+# ACL as it was: what pg_global took away before the commit, it puts back
+# (checked again after the restart below, which reads pg_global).
+# 1. Grant rg2 SELECT on gk; two SERIALIZABLE transactions write skew.
+# 2. The second to commit REVOKEs rg2's SELECT, and fails at COMMIT.
+# 3. gk's ACL still grants rg2 SELECT.
+local_psql -c 'create table gk (a int4)' -c 'create table gk1 (a int4)' \
+  -c 'create table gk2 (a int4)' -c 'grant select on gk to rg2' \
+  > "$work/gk.out" 2>&1
+held_start gks1
+held_start gks2
+held_send gks1 "begin isolation level serializable; select 'gks1 ' || count(*) from gk1; insert into gk2 values (1);"
+held_send gks2 "begin isolation level serializable; select 'gks2 ' || count(*) from gk2; insert into gk1 values (1);"
+held_wait gks1 "gks1 0" && held_wait gks2 "gks2 0" ||
+  fail "grant: the two transactions"
+held_send gks2 "commit;"
+held_wait gks2 "COMMIT" || fail "grant: the first commit"
+held_send gks1 "revoke select on gk from rg2; commit;"
+held_end gks1
+held_end gks2
+grep -q 'not serializable' "$work/gks1.out" || fail "grant: the second fails"
+[ "$(local_psql -c "select relacl from pg_class where relname = 'gk'")" = \
+  "{$me=arwdDxtm/$me,rg2=r/$me}" ] || fail "grant: a failed REVOKE"
+
+# Verify DROP ROLE, REASSIGN OWNED and DROP OWNED (sm/ROLE.md section 9,
+# step 6): what depends on a role is read from pg_global, in this database
+# and in the others.
+# 1. Make rd1 and rd2; give rd1 schema ds, table dt and view dv, SELECT on
+#    dt2, database dd2, and in dd2 a table of its own.
+# 2. DROP ROLE rd1 is refused, its DETAIL naming each, and the one object
+#    in dd2.
+# 3. REASSIGN OWNED BY rd1 TO rd2 gives rd2 ds, dt, dv and dd2.
+# 4. DROP OWNED BY rd1, here and in dd2, revokes its SELECT and drops its
+#    table in dd2; then DROP ROLE rd1 succeeds.
+# 5. DROP OWNED BY rd2 drops ds, dt and dv; DROP OWNED and REASSIGN OWNED
+#    of a predefined role are refused.
+local_psql -c 'create role rd1' -c 'create role rd2' \
+  -c 'create schema ds authorization rd1' -c 'create table dt (a int4)' \
+  -c 'alter table dt owner to rd1' -c 'create view dv as select * from dt' \
+  -c 'alter view dv owner to rd1' -c 'create table dt2 (a int4)' \
+  -c 'grant select on dt2 to rd1' -c 'create database dd2' \
+  -c 'alter database dd2 owner to rd1' > "$work/dep.out" 2>&1 ||
+  fail "dependents: make"
+local_psql -d dd2 -c 'create table ot (a int4)' -c 'alter table ot owner to rd1' \
+  >> "$work/dep.out" 2>&1 || fail "dependents: make in dd2"
+local_psql -c 'drop role rd1' > "$work/dep1.out" 2>&1 &&
+  fail "dependents: a role that owns is dropped"
+for line in 'owner of schema ds' 'owner of table dt' 'owner of view dv' \
+  'privileges for table dt2' 'owner of database dd2' \
+  '1 object in database dd2'; do
+  grep -qx -e "DETAIL:  $line" -e "$line" "$work/dep1.out" ||
+    fail "dependents: DETAIL $line"
+done
+local_psql -c 'reassign owned by rd1 to rd2' \
+  -c "select string_agg(relname || ':' || pg_get_userbyid(relowner), ' '
+                        order by relname)
+        from pg_class where relname in ('dt', 'dv', 'dt2')" \
+  -c "select pg_get_userbyid(nspowner) from pg_namespace where nspname = 'ds'" \
+  -c "select pg_get_userbyid(datdba) from pg_database where datname = 'dd2'" \
+  -c 'drop owned by rd1' -c "select relacl from pg_class where relname = 'dt2'" \
+  > "$work/dep2.out" 2>&1
+local_psql -d dd2 -c 'drop owned by rd1' -c "select count(*) from pg_class
+                                            where relname = 'ot'" \
+  >> "$work/dep2.out" 2>&1
+local_psql -c 'drop role rd1' -c 'drop owned by rd2' \
+  -c "select count(*) from pg_class where relname in ('dt', 'dv')" \
+  -c "select count(*) from pg_namespace where nspname = 'ds'" \
+  -c 'drop owned by pg_monitor' -c 'reassign owned by pg_monitor to rd2' \
+  >> "$work/dep2.out" 2>&1
+cat > "$work/dep2.expected" << OUT
+REASSIGN OWNED
+dt:rd2 dt2:$me dv:rd2
+rd2
+rd2
+DROP OWNED
+{$me=arwdDxtm/$me}
+DROP OWNED
+0
+DROP ROLE
+DROP OWNED
+0
+0
+ERROR:  cannot drop objects owned by role pg_monitor because they are required by the database system
+ERROR:  cannot reassign ownership of objects owned by role pg_monitor because they are required by the database system
+OUT
+cmp -s "$work/dep2.out" "$work/dep2.expected" ||
+  fail "dependents: REASSIGN and DROP OWNED"
+
 # Verify that psql's \d describes a sequence of sm's: pg_sequence has its
 # START and INCREMENT, and pg_depend the column that owns it.
 # 1. In schema sq1 make sequence q, START 5 INCREMENT 3, and table t with a
@@ -4629,6 +5110,19 @@ $digres -D "$work/data" -k "$work" -p "$port" -c max_connections=3 \
   > "$work/log2" 2>&1 &
 server=$!
 server_ready $server "$work/log2" || fail "max_connections: start"
+# Verify that a role and its attributes outlive the restart, and an owner:
+# pg_global's rows, read again at the start (sm/ROLE.md section 3).
+# 1. rr1, made above and made NOLOGIN, is there, still NOLOGIN.
+# 2. so.t, given to ro2 above, is still ro2's.
+# 3. gk's ACL, which a failed REVOKE left be, still grants rg2 SELECT.
+[ "$(local_psql -c "select rolcanlogin from pg_roles where rolname = 'rr1'" \
+  2> "$work/rolekept.err")" = f ] || fail "role DDL: kept across a restart"
+[ "$(local_psql -c "select pg_get_userbyid(relowner) from pg_class
+                     where oid = 'so.t'::regclass" 2> "$work/ownkept.err")" = \
+  ro2 ] || fail "owners: kept across a restart"
+[ "$(local_psql -c "select relacl from pg_class where relname = 'gk'" \
+  2> "$work/aclkept.err")" = "{$me=arwdDxtm/$me,rg2=r/$me}" ] ||
+  fail "grant: an ACL, and a failed REVOKE's, kept across a restart"
 for n in 1 2 3; do
   held_start "conn$n"
   held_send "conn$n" "select 'up $n';"

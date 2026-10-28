@@ -334,21 +334,17 @@ DROP PROCEDURE nonexistent();
 
 -- privileges
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_cp_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT INSERT ON cp_test TO regress_cp_user1;
+CREATE USER regress_cp_user1;
+GRANT INSERT ON cp_test TO regress_cp_user1;
 --dg-cascade
 --dg REVOKE EXECUTE ON PROCEDURE ptest1(text) FROM PUBLIC;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_cp_user1;
+SET ROLE regress_cp_user1;
 --dg-cascade
 --dg CALL ptest1('a');  -- error
 RESET ROLE;
 --dg-cascade
 --dg GRANT EXECUTE ON PROCEDURE ptest1(text) TO regress_cp_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_cp_user1;
+SET ROLE regress_cp_user1;
 --dg-cascade
 --dg CALL ptest1('a');  -- ok
 RESET ROLE;
@@ -381,5 +377,4 @@ RESET ROLE;
 
 DROP TABLE cp_test;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_cp_user1;
+DROP USER regress_cp_user1;

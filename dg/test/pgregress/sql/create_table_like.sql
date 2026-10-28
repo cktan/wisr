@@ -41,43 +41,30 @@ CREATE TABLE inhf (LIKE inhx, LIKE inhx); /* Throw error */
 --dg-skip: ALTER TABLE ... ADD CONSTRAINT supports only FOREIGN KEY, PRIMARY KEY and UNIQUE yet
 --dg ALTER TABLE inhx add constraint foo CHECK (xx = 'text');
 ALTER TABLE inhx ADD PRIMARY KEY (xx);
---dg-skip: relation pg_constraint cannot be opened: digres has no catalog tables
---dg CREATE TABLE inhg (LIKE inhx);
- /* Doesn't copy constraint */
---dg-cascade
---dg INSERT INTO inhg VALUES ('foo');
---dg-cascade
---dg DROP TABLE inhg;
---dg-skip: relation pg_constraint cannot be opened: digres has no catalog tables
---dg CREATE TABLE inhg (x text, LIKE inhx INCLUDING CONSTRAINTS, y text);
- /* Copies constraints */
---dg-cascade
---dg INSERT INTO inhg VALUES ('x', 'text', 'y');
- /* Succeeds */
---dg-cascade
---dg INSERT INTO inhg VALUES ('x', 'text', 'y');
- /* Succeeds -- Unique constraints not copied */
+CREATE TABLE inhg (LIKE inhx); /* Doesn't copy constraint */
+INSERT INTO inhg VALUES ('foo');
+DROP TABLE inhg;
+CREATE TABLE inhg (x text, LIKE inhx INCLUDING CONSTRAINTS, y text); /* Copies constraints */
+INSERT INTO inhg VALUES ('x', 'text', 'y'); /* Succeeds */
+INSERT INTO inhg VALUES ('x', 'text', 'y'); /* Succeeds -- Unique constraints not copied */
 --dg-cascade
 --dg INSERT INTO inhg VALUES ('x', 'foo',  'y');
   /* fails due to constraint */
 --dg-cascade
 --dg SELECT * FROM inhg;
  /* Two records with three columns in order x=x, xx=text, y=y */
---dg-cascade
---dg DROP TABLE inhg;
+DROP TABLE inhg;
 
 CREATE TABLE test_like_id_1 (a bigint GENERATED ALWAYS AS IDENTITY, b text);
 \d test_like_id_1
 INSERT INTO test_like_id_1 (b) VALUES ('b1');
 SELECT * FROM test_like_id_1;
---dg-skip: relation pg_constraint cannot be opened: digres has no catalog tables
---dg CREATE TABLE test_like_id_2 (LIKE test_like_id_1);
---dg-cascade
+CREATE TABLE test_like_id_2 (LIKE test_like_id_1);
+--dg-differs: the result
 --dg \d test_like_id_2
---dg-cascade
+--dg-differs: no error where PostgreSQL has: null value in column "?" of relation "?" violates not-null constraint
 --dg INSERT INTO test_like_id_2 (b) VALUES ('b2');
---dg-cascade
---dg SELECT * FROM test_like_id_2;  -- identity was not copied
+SELECT * FROM test_like_id_2;  -- identity was not copied
 --dg-skip: copying a sequence's options is not supported yet
 --dg CREATE TABLE test_like_id_3 (LIKE test_like_id_1 INCLUDING IDENTITY);
 --dg-cascade
@@ -170,11 +157,10 @@ SELECT * FROM test_like_id_1;
 
 -- Test updating of column numbers in statistics expressions (bug #18468)
 CREATE TABLE test_like_6 (a int, c text, b text);
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS ext_stat ON (a || b) FROM test_like_6;
 ALTER TABLE test_like_6 DROP COLUMN c;
---dg-skip: relation pg_description cannot be opened: digres has no catalog tables
---dg CREATE TABLE test_like_6c (LIKE test_like_6 INCLUDING ALL);
+CREATE TABLE test_like_6c (LIKE test_like_6 INCLUDING ALL);
 --dg-cascade
 --dg \d+ test_like_6c
 
@@ -182,10 +168,9 @@ ALTER TABLE test_like_6 DROP COLUMN c;
 --dg DROP TABLE test_like_4, test_like_4a, test_like_4b, test_like_4c, test_like_4d;
 --dg-cascade
 --dg DROP TABLE test_like_5, test_like_5x, test_like_5c;
---dg-cascade
---dg DROP TABLE test_like_6, test_like_6c;
+DROP TABLE test_like_6, test_like_6c;
 
---dg-skip: relation pg_constraint cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_opclass cannot be opened: digres has no catalog tables
 --dg CREATE TABLE inhg (x text, LIKE inhx INCLUDING INDEXES, y text);
  /* copies indexes */
 --dg-cascade
@@ -195,13 +180,13 @@ ALTER TABLE test_like_6 DROP COLUMN c;
 --dg-cascade
 --dg DROP TABLE inhg;
 /* Multiple primary keys creation should fail */
---dg-differs: another error: relation pg_constraint cannot be opened: digres has no catalog tables
+--dg-differs: another error: relation pg_opclass cannot be opened: digres has no catalog tables
 --dg CREATE TABLE inhg (x text, LIKE inhx INCLUDING INDEXES, PRIMARY KEY(x));
  /* fails */
 CREATE TABLE inhz (xx text DEFAULT 'text', yy int UNIQUE);
 CREATE UNIQUE INDEX inhz_xx_idx on inhz (xx) WHERE xx <> 'test';
 /* Ok to create multiple unique indexes */
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_opclass cannot be opened: digres has no catalog tables
 --dg CREATE TABLE inhg (x text UNIQUE, LIKE inhz INCLUDING INDEXES);
 --dg-cascade
 --dg INSERT INTO inhg (xx, yy, x) VALUES ('test', 5, 10);
@@ -214,7 +199,7 @@ CREATE UNIQUE INDEX inhz_xx_idx on inhz (xx) WHERE xx <> 'test';
 DROP TABLE inhz;
 
 /* Use primary key imported by LIKE for self-referential FK constraint */
---dg-skip: relation pg_constraint cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_opclass cannot be opened: digres has no catalog tables
 --dg CREATE TABLE inhz (x text REFERENCES inhz, LIKE inhx INCLUDING INDEXES);
 --dg-cascade
 --dg \d inhz
@@ -235,9 +220,9 @@ DROP TABLE inhz;
 --dg CREATE STATISTICS ctlt1_a_b_stat ON a,b FROM ctlt1;
 --dg-cascade
 --dg CREATE STATISTICS ctlt1_expr_stat ON (a || b) FROM ctlt1;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg COMMENT ON STATISTICS ctlt1_a_b_stat IS 'ab stats';
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg COMMENT ON STATISTICS ctlt1_expr_stat IS 'ab expr stats';
 --dg-skip: COMMENT is not supported yet
 --dg COMMENT ON COLUMN ctlt1.a IS 'A';
@@ -257,7 +242,7 @@ CREATE TABLE ctlt2 (c text NOT NULL);
 --dg ALTER TABLE ctlt2 ALTER COLUMN c SET STORAGE EXTERNAL;
 --dg-skip: COMMENT is not supported yet
 --dg COMMENT ON COLUMN ctlt2.c IS 'C';
---dg-skip: relation pg_constraint cannot be opened: digres has no catalog tables
+--dg-skip: constraint "?" for table "?" does not exist
 --dg COMMENT ON CONSTRAINT ctlt2_c_not_null ON ctlt2 IS 't2_c_not_null';
 
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
@@ -383,8 +368,7 @@ CREATE SEQUENCE ctlseq1;
 
 CREATE VIEW ctlv1 AS SELECT * FROM ctlt4;
 CREATE TABLE ctlt11 (LIKE ctlv1);
---dg-skip: relation pg_description cannot be opened: digres has no catalog tables
---dg CREATE TABLE ctlt11a (LIKE ctlv1 INCLUDING ALL);
+CREATE TABLE ctlt11a (LIKE ctlv1 INCLUDING ALL);
 
 --dg-skip: a relation's storage cannot be made: digres has no catalog tables
 --dg CREATE TYPE ctlty1 AS (a int, b text);
@@ -454,12 +438,12 @@ DROP VIEW ctlv1;
 -- so stxkeys attnums are not contiguous.
 CREATE TABLE ctl_stats3_parent (a int, b int, c int);
 ALTER TABLE ctl_stats3_parent DROP COLUMN b;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS ctl_stats3_stat ON a, c FROM ctl_stats3_parent;
 CREATE TABLE ctl_stats3_child (LIKE ctl_stats3_parent INCLUDING STATISTICS);
 CREATE TABLE ctl_stats4_parent (a int, b int, c int, d int);
 ALTER TABLE ctl_stats4_parent DROP COLUMN b;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS ctl_stats4_stat ON a, c FROM ctl_stats4_parent;
 CREATE TABLE ctl_stats4_child (LIKE ctl_stats4_parent INCLUDING STATISTICS);
 --dg-cascade

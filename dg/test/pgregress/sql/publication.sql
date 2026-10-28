@@ -1,14 +1,10 @@
 --
 -- PUBLICATION
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_publication_user LOGIN SUPERUSER;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_publication_user2;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_publication_user_dummy LOGIN NOSUPERUSER;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION 'regress_publication_user';
+CREATE ROLE regress_publication_user LOGIN SUPERUSER;
+CREATE ROLE regress_publication_user2;
+CREATE ROLE regress_publication_user_dummy LOGIN NOSUPERUSER;
+SET SESSION AUTHORIZATION 'regress_publication_user';
 
 -- suppress warning that depends on wal_level
 SET client_min_messages = 'ERROR';
@@ -1263,21 +1259,17 @@ UPDATE pub_test.testpub_addpk SET id = 2;
 DROP TABLE pub_test.testpub_addpk;
 
 -- permissions
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_publication_user2;
---dg-cascade
+SET ROLE regress_publication_user2;
+--dg-differs: another error: publications are not supported
 --dg CREATE PUBLICATION testpub2;  -- fail
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_publication_user;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT CREATE ON DATABASE regression TO regress_publication_user2;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_publication_user2;
+SET ROLE regress_publication_user;
+GRANT CREATE ON DATABASE regression TO regress_publication_user2;
+SET ROLE regress_publication_user2;
 SET client_min_messages = 'ERROR';
 --dg-skip: publications are not supported
 --dg CREATE PUBLICATION testpub2;  -- ok
---dg-cascade
+--dg-differs: another error: publications are not supported
 --dg CREATE PUBLICATION testpub3 FOR TABLES IN SCHEMA pub_test;  -- fail
 --dg-skip: publications are not supported
 --dg CREATE PUBLICATION testpub3;  -- ok
@@ -1288,12 +1280,9 @@ RESET client_min_messages;
 --dg-cascade
 --dg ALTER PUBLICATION testpub3 ADD TABLES IN SCHEMA pub_test;  -- fail
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_publication_user;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT regress_publication_user TO regress_publication_user2;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_publication_user2;
+SET ROLE regress_publication_user;
+GRANT regress_publication_user TO regress_publication_user2;
+SET ROLE regress_publication_user2;
 --dg-skip: publications are not supported
 --dg ALTER PUBLICATION testpub2 ADD TABLE testpub_tbl1;  -- ok
 
@@ -1302,35 +1291,28 @@ RESET client_min_messages;
 --dg-skip: publications are not supported
 --dg DROP PUBLICATION testpub3;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_publication_user;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_publication_user3;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT regress_publication_user2 TO regress_publication_user3;
+SET ROLE regress_publication_user;
+CREATE ROLE regress_publication_user3;
+GRANT regress_publication_user2 TO regress_publication_user3;
 SET client_min_messages = 'ERROR';
 --dg-skip: publications are not supported
 --dg CREATE PUBLICATION testpub4 FOR TABLES IN SCHEMA pub_test;
 RESET client_min_messages;
 --dg-skip: publications are not supported
 --dg ALTER PUBLICATION testpub4 OWNER TO regress_publication_user3;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_publication_user3;
+SET ROLE regress_publication_user3;
 -- fail - new owner must be superuser
 --dg-cascade
 --dg ALTER PUBLICATION testpub4 owner to regress_publication_user2; -- fail
 --dg-skip: publications are not supported
 --dg ALTER PUBLICATION testpub4 owner to regress_publication_user; -- ok
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_publication_user;
+SET ROLE regress_publication_user;
 --dg-skip: publications are not supported
 --dg DROP PUBLICATION testpub4;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_publication_user3;
+DROP ROLE regress_publication_user3;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg REVOKE CREATE ON DATABASE regression FROM regress_publication_user2;
+REVOKE CREATE ON DATABASE regression FROM regress_publication_user2;
 
 --dg-cascade
 --dg DROP TABLE testpub_parted;
@@ -1340,8 +1322,7 @@ DROP TABLE testpub_tbl1;
 --dg \dRp+ testpub_default
 
 -- fail - must be owner of publication
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_publication_user_dummy;
+SET ROLE regress_publication_user_dummy;
 --dg-cascade
 --dg ALTER PUBLICATION testpub_default RENAME TO testpub_dummy;
 RESET ROLE;
@@ -1440,12 +1421,12 @@ DROP SCHEMA pub_test3;
 --dg \dRp+ testpub2_forschema
 
 -- renaming the schema should reflect the change in publication
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_namespace cannot be written: digres has no catalog tables
 --dg ALTER SCHEMA pub_test1 RENAME to pub_test1_renamed;
 --dg-cascade
 --dg \dRp+ testpub2_forschema
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER SCHEMA pub_test1_renamed RENAME to pub_test1;
 --dg-cascade
 --dg \dRp+ testpub2_forschema
@@ -1869,10 +1850,9 @@ DROP TABLE testpub_merge_no_ri;
 DROP TABLE testpub_merge_pk;
 
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP ROLE regress_publication_user, regress_publication_user2;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_publication_user_dummy;
+DROP ROLE regress_publication_user_dummy;
 
 -- stage objects for pg_dump tests
 CREATE SCHEMA pubme CREATE TABLE t0 (c int, d int) CREATE TABLE t1 (c int);

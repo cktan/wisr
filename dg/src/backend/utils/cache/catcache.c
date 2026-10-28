@@ -31,6 +31,7 @@
 #endif
 #include "storage/lmgr.h"
 #include "utils/builtins.h"
+#include "catalog/catrel.h"
 #include "utils/catcache.h"
 #include "utils/datum.h"
 #include "utils/fmgroids.h"
@@ -1386,7 +1387,8 @@ static pg_noinline HeapTuple SearchCatCacheMiss(CatCache *cache, int nkeys,
    * cache inval for that.)
    */
   if (ct == NULL) {
-    if (IsBootstrapProcessingMode())
+    /* Nor is a negative entry kept, for sm's catalog's rows (above). */
+    if (IsBootstrapProcessingMode() || !catrel_is_cached(cache->cc_reloid))
       return NULL;
 
     ct = CatalogCacheCreateEntry(cache, NULL, arguments, hashValue, hashIndex);
@@ -1711,7 +1713,14 @@ CatCList *SearchCatCacheList(CatCache *cache, int nkeys, Datum v1, Datum v2,
           if (ct->hash_value != hashValue)
             continue; /* quickly skip entry if wrong hash val */
 
-          if (!ItemPointerEquals(&(ct->tuple.t_self), &(ntp->t_self)))
+          /*
+           * A catalog relation's row has no TID (catalog/catrel.c): it is
+           * taken for another tuple, and cached again, as PostgreSQL
+           * tolerates a row cached twice.
+           */
+          if (!ItemPointerIsValid(&ntp->t_self) ||
+              !ItemPointerIsValid(&ct->tuple.t_self) ||
+              !ItemPointerEquals(&(ct->tuple.t_self), &(ntp->t_self)))
             continue; /* not same tuple */
 
           /*
@@ -1986,7 +1995,12 @@ static CatCTup *CatalogCacheCreateEntry(CatCache *cache, HeapTuple ntp,
   ct->my_cache = cache;
   ct->c_list = NULL;
   ct->refcount = 0; /* for the moment */
-  ct->dead = false;
+  /*
+   * A row of a catalog relation made from sm's catalog is not kept: no DDL
+   * of sm's invalidates it, so it goes once released, and the next lookup
+   * makes it again (catrel_is_cached()).
+   */
+  ct->dead = !catrel_is_cached(cache->cc_reloid);
   ct->negative = (ntp == NULL);
   ct->hash_value = hashValue;
 

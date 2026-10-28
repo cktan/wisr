@@ -592,7 +592,7 @@ INSERT INTO toasttest values (repeat('1234567890',300));
 INSERT INTO toasttest values (repeat('1234567890',300));
 INSERT INTO toasttest values (repeat('1234567890',300));
 -- expect >0 blocks
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SELECT pg_relation_size(reltoastrelid) = 0 AS is_empty
 --dg   FROM pg_class where relname = 'toasttest';
 
@@ -604,7 +604,7 @@ INSERT INTO toasttest values (repeat('1234567890',300));
 INSERT INTO toasttest values (repeat('1234567890',300));
 INSERT INTO toasttest values (repeat('1234567890',300));
 -- expect 0 blocks
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-differs: the result
 --dg SELECT pg_relation_size(reltoastrelid) = 0 AS is_empty
 --dg   FROM pg_class where relname = 'toasttest';
 

@@ -558,7 +558,7 @@ LINE 1: update dposintatable set (f1[2])[1] = array[98];
 --dg-skip: relation pg_type cannot be written: digres has no catalog tables
 --dg create domain ddef3 text DEFAULT 5;
 create sequence ddef4_seq;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_type cannot be written: digres has no catalog tables
 --dg create domain ddef4 int4 DEFAULT nextval('ddef4_seq');
 --dg-skip: relation pg_type cannot be written: digres has no catalog tables
 --dg create domain ddef5 numeric(8,2) NOT NULL DEFAULT '12.12';

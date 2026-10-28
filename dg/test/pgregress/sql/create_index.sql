@@ -886,17 +886,15 @@ DROP TABLE onek_with_null;
 -- Check bitmap index path planning
 --
 
---dg-differs: the plan
---dg EXPLAIN (COSTS OFF)
---dg SELECT * FROM tenk1
---dg   WHERE thousand = 42 AND (tenthous = 1 OR tenthous = 3 OR tenthous = 42 OR tenthous = 0);
+EXPLAIN (COSTS OFF)
+SELECT * FROM tenk1
+  WHERE thousand = 42 AND (tenthous = 1 OR tenthous = 3 OR tenthous = 42 OR tenthous = 0);
 SELECT * FROM tenk1
   WHERE thousand = 42 AND (tenthous = 1 OR tenthous = 3 OR tenthous = 42 OR tenthous = 0);
 
---dg-differs: the plan
---dg EXPLAIN (COSTS OFF)
---dg SELECT * FROM tenk1
---dg   WHERE thousand = 42 AND (tenthous = 1 OR tenthous = (SELECT 1 + 2) OR tenthous = 42);
+EXPLAIN (COSTS OFF)
+SELECT * FROM tenk1
+  WHERE thousand = 42 AND (tenthous = 1 OR tenthous = (SELECT 1 + 2) OR tenthous = 42);
 SELECT * FROM tenk1
   WHERE thousand = 42 AND (tenthous = 1 OR tenthous = (SELECT 1 + 2) OR tenthous = 42);
 
@@ -923,10 +921,9 @@ SELECT count(*) FROM tenk1
 SELECT count(*) FROM tenk1
   WHERE hundred = 42 AND (thousand = 42 OR thousand = 99);
 
---dg-differs: the plan
---dg EXPLAIN (COSTS OFF)
---dg SELECT * FROM tenk1
---dg   WHERE thousand = 42 AND (tenthous = 1 OR tenthous = 3 OR tenthous = 42);
+EXPLAIN (COSTS OFF)
+SELECT * FROM tenk1
+  WHERE thousand = 42 AND (tenthous = 1 OR tenthous = 3 OR tenthous = 42);
 SELECT * FROM tenk1
   WHERE thousand = 42 AND (tenthous = 1 OR tenthous = 3 OR tenthous = 42);
 
@@ -1017,22 +1014,20 @@ SELECT count(*) FROM dupindexcols
 -- return rows in index order
 --
 
---dg-differs: the plan
---dg explain (costs off)
---dg SELECT unique1 FROM tenk1
---dg WHERE unique1 IN (1,42,7)
---dg ORDER BY unique1;
+explain (costs off)
+SELECT unique1 FROM tenk1
+WHERE unique1 IN (1,42,7)
+ORDER BY unique1;
 
 SELECT unique1 FROM tenk1
 WHERE unique1 IN (1,42,7)
 ORDER BY unique1;
 
 -- Skip array on "thousand", SAOP array on "tenthous":
---dg-differs: the plan
---dg explain (costs off)
---dg SELECT thousand, tenthous FROM tenk1
---dg WHERE thousand < 2 AND tenthous IN (1001,3000)
---dg ORDER BY thousand;
+explain (costs off)
+SELECT thousand, tenthous FROM tenk1
+WHERE thousand < 2 AND tenthous IN (1001,3000)
+ORDER BY thousand;
 
 SELECT thousand, tenthous FROM tenk1
 WHERE thousand < 2 AND tenthous IN (1001,3000)
@@ -1062,27 +1057,23 @@ ORDER BY thousand desc;
 --
 -- Check elimination of redundant and contradictory index quals
 --
---dg-differs: the plan
---dg explain (costs off)
---dg SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 = ANY('{7, 8, 9}');
+explain (costs off)
+SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 = ANY('{7, 8, 9}');
 
 SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 = ANY('{7, 8, 9}');
 
---dg-differs: the plan
---dg explain (costs off)
---dg SELECT unique1 FROM tenk1 WHERE unique1 = ANY('{7, 14, 22}') and unique1 = ANY('{33, 44}'::bigint[]);
+explain (costs off)
+SELECT unique1 FROM tenk1 WHERE unique1 = ANY('{7, 14, 22}') and unique1 = ANY('{33, 44}'::bigint[]);
 
 SELECT unique1 FROM tenk1 WHERE unique1 = ANY('{7, 14, 22}') and unique1 = ANY('{33, 44}'::bigint[]);
 
---dg-differs: the plan
---dg explain (costs off)
---dg SELECT unique1 FROM tenk1 WHERE unique1 = ANY(NULL);
+explain (costs off)
+SELECT unique1 FROM tenk1 WHERE unique1 = ANY(NULL);
 
 SELECT unique1 FROM tenk1 WHERE unique1 = ANY(NULL);
 
---dg-differs: the plan
---dg explain (costs off)
---dg SELECT unique1 FROM tenk1 WHERE unique1 = ANY('{NULL,NULL,NULL}');
+explain (costs off)
+SELECT unique1 FROM tenk1 WHERE unique1 = ANY('{NULL,NULL,NULL}');
 
 SELECT unique1 FROM tenk1 WHERE unique1 = ANY('{NULL,NULL,NULL}');
 
@@ -1091,27 +1082,23 @@ SELECT unique1 FROM tenk1 WHERE unique1 IS NULL AND unique1 IS NULL;
 
 SELECT unique1 FROM tenk1 WHERE unique1 IS NULL AND unique1 IS NULL;
 
---dg-differs: the plan
---dg explain (costs off)
---dg SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 = 1;
+explain (costs off)
+SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 = 1;
 
 SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 = 1;
 
---dg-differs: the plan
---dg explain (costs off)
---dg SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 = 12345;
+explain (costs off)
+SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 = 12345;
 
 SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 = 12345;
 
---dg-differs: the plan
---dg explain (costs off)
---dg SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 >= 42;
+explain (costs off)
+SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 >= 42;
 
 SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 >= 42;
 
---dg-differs: the plan
---dg explain (costs off)
---dg SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 > 42;
+explain (costs off)
+SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 > 42;
 
 SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 > 42;
 
@@ -1130,16 +1117,15 @@ SELECT unique1 FROM tenk1 WHERE unique1 < 3 and unique1 < (-1)::bigint;
 
 SELECT unique1 FROM tenk1 WHERE unique1 < 3 and unique1 < (-1)::bigint;
 
---dg-differs: the plan
---dg explain (costs off)
---dg SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 < (-1)::bigint;
+explain (costs off)
+SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 < (-1)::bigint;
 
 SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 < (-1)::bigint;
 
 explain (costs off)
 SELECT unique1 FROM tenk1 WHERE (thousand, tenthous) > (NULL, 5);
 
---dg-skip: an index scan in sm takes no row comparison or array yet
+--dg-skip: an index scan in sm takes no row comparison yet
 --dg SELECT unique1 FROM tenk1 WHERE (thousand, tenthous) > (NULL, 5);
 
 -- Skip array redundancy (pair of redundant low_compare inequalities)
@@ -1746,15 +1732,14 @@ DROP INDEX t_b_partial_1_idx;
 DROP INDEX t_b_partial_2_idx;
 CREATE INDEX t_a_b_idx ON bitmap_split_or (a, b);
 CREATE INDEX t_b_c_idx ON bitmap_split_or (b, c);
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS t_a_b_stat (mcv) ON a, b FROM bitmap_split_or;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS t_b_c_stat (mcv) ON b, c FROM bitmap_split_or;
 ANALYZE bitmap_split_or;
---dg-differs: the plan
---dg EXPLAIN (COSTS OFF)
---dg SELECT * FROM bitmap_split_or t1, bitmap_split_or t2
---dg WHERE t1.a = t2.b OR t1.a = 2;
+EXPLAIN (COSTS OFF)
+SELECT * FROM bitmap_split_or t1, bitmap_split_or t2
+WHERE t1.a = t2.b OR t1.a = 2;
 --dg-cascade
 --dg EXPLAIN (COSTS OFF)
 --dg SELECT * FROM bitmap_split_or WHERE a = 1 AND (b = 1 OR b = 2) AND c = 2;
@@ -1818,18 +1803,15 @@ END;
 --dg REINDEX SCHEMA CONCURRENTLY schema_to_reindex;
 
 -- Failure for unauthorized user
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_reindexuser NOLOGIN;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION ROLE regress_reindexuser;
---dg-cascade
+CREATE ROLE regress_reindexuser NOLOGIN;
+SET SESSION ROLE regress_reindexuser;
+--dg-differs: no error where PostgreSQL has: must be owner of schema schema_to_reindex
 --dg REINDEX SCHEMA schema_to_reindex;
 -- Permission failures with toast tables and indexes (pg_authid here)
 RESET ROLE;
---dg-cascade
+--dg-skip: schema "?" does not exist
 --dg GRANT USAGE ON SCHEMA pg_toast TO regress_reindexuser;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION ROLE regress_reindexuser;
+SET SESSION ROLE regress_reindexuser;
 --dg-cascade
 --dg REINDEX TABLE pg_toast.pg_toast_1262;
 --dg-cascade
@@ -1837,9 +1819,8 @@ RESET ROLE;
 
 -- Clean up
 RESET ROLE;
---dg-cascade
+--dg-skip: schema "?" does not exist
 --dg REVOKE USAGE ON SCHEMA pg_toast FROM regress_reindexuser;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_reindexuser;
+DROP ROLE regress_reindexuser;
 --dg-cascade
 --dg DROP SCHEMA schema_to_reindex CASCADE;

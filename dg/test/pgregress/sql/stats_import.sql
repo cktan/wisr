@@ -325,13 +325,11 @@ COMMIT;
 -- invalid relkinds for statistics
 CREATE SEQUENCE stats_import.testseq;
 
---dg-differs: another error: relation pg_class cannot be opened: digres has no catalog tables
---dg SELECT pg_catalog.pg_restore_relation_stats(
---dg         'schemaname', 'stats_import',
---dg         'relname', 'testseq');
+SELECT pg_catalog.pg_restore_relation_stats(
+        'schemaname', 'stats_import',
+        'relname', 'testseq');
 
---dg-differs: another error: relation pg_class cannot be opened: digres has no catalog tables
---dg SELECT pg_catalog.pg_clear_relation_stats(schemaname => 'stats_import', relname => 'testseq');
+SELECT pg_catalog.pg_clear_relation_stats(schemaname => 'stats_import', relname => 'testseq');
 
 --dg-cascade
 --dg CREATE VIEW stats_import.testview AS SELECT * FROM stats_import.test;
@@ -1202,7 +1200,7 @@ SELECT pg_catalog.pg_restore_attribute_stats(
 
 -- temp tables
 CREATE TEMP TABLE stats_temp(i int);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_class cannot be written: digres has no catalog tables
 --dg SELECT pg_restore_relation_stats(
 --dg         'schemaname', 'pg_temp',
 --dg         'relname', 'stats_temp',
@@ -1217,7 +1215,7 @@ CREATE TEMP TABLE stats_temp(i int);
 --dg WHERE oid = 'pg_temp.stats_temp'::regclass
 --dg ORDER BY relname;
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic cannot be opened: digres has no catalog tables
 --dg SELECT pg_catalog.pg_restore_attribute_stats(
 --dg     'schemaname', 'pg_temp',
 --dg     'relname', 'stats_temp',

@@ -3,16 +3,17 @@
  * datadir.c
  *	  What the server reads from its data directory at startup.
  *
- * initdb leaves two things the server needs before it takes a connection
- * (src/backend/main/initdb.c): the superuser file, which names the one
- * role there is and holds the SCRAM secret of its password; and sm's home
- * directory, which knows the databases.
+ * initdb leaves what the server needs before it takes a connection
+ * (src/backend/main/initdb.c): sm's home directory, which knows the
+ * databases, among them pg_global, which holds the roles
+ * (utils/init/pg_global.c).
  *
- * The postmaster reads the superuser file once, and attaches sm's home
- * directory once: sm keeps its state in the memory of the process that
- * attached it (sm/PART4.md section 2), and every session is a thread of
- * that process, given both (SHARED). A session asks sm for its database,
- * and opens an sm session on it for as long as it lasts.
+ * The postmaster attaches sm's home directory once, and reads the roles
+ * once: sm keeps its state in the memory of the process that attached it
+ * (sm/PART4.md section 2), and every session is a thread of that process,
+ * given both (SHARED). A session asks sm for its database, and opens an sm
+ * session on it for as long as it lasts.  pg_global is no database a
+ * client sees: it is not listed, connected to or dropped.
  *
  * src/backend/utils/init/datadir.c
  *
@@ -29,26 +30,20 @@
 
 #include "access/smstore.h"
 #include "access/transam.h"
-#include "common/string.h"
 #include "miscadmin.h"
-#include "postmaster/initdb.h"
-#include "storage/fd.h"
 #include "storage/ipc.h"
 #include "storage/proc.h"
 #include "utils/control_block.h"
 #include "utils/datadir.h"
 #include "utils/guc_hooks.h"
 #include "utils/memutils.h"
+#include "utils/pg_global.h"
 
 /*
  * The process's, set by the main thread as it loads the data directory, and
  * read by every session: pcb->datadir (utils/control_block.h).
  */
 struct datadir_state_t {
-  /* The superuser's name, and its SCRAM secret or NULL. */
-  char *superuser_name = NULL;
-  char *superuser_secret = NULL;
-
   /* sm's home directory, attached by the postmaster for every session. */
   sm_env_t *sm_env = NULL;
 };
@@ -65,27 +60,6 @@ static inline datadir_state_t &dds_main(void) { return *pcb_main()->datadir; }
 /* This session's sm session on its database, or NULL. */
 static thread_local /*LOCAL*/ sm_session_t *sm_session = NULL;
 
-/* Read the superuser file of the data directory, which is the current one. */
-static void load_superuser(void) {
-  FILE *file = AllocateFile(SUPERUSER_FILE, "r");
-  char *line;
-
-  if (file == NULL)
-    ereport(FATAL, (errcode_for_file_access(),
-                    errmsg("could not open file \"%s\": %m", SUPERUSER_FILE),
-                    errhint("Run initdb to make a digres data directory.")));
-
-  line = pg_get_line(file, NULL);
-  if (line == NULL || pg_strip_crlf(line) == 0)
-    ereport(FATAL, (errmsg("file \"%s\" names no superuser", SUPERUSER_FILE)));
-  dds_main().superuser_name = MemoryContextStrdup(TopMemoryContext, line);
-
-  line = pg_get_line(file, NULL);
-  if (line != NULL && pg_strip_crlf(line) > 0)
-    dds_main().superuser_secret = MemoryContextStrdup(TopMemoryContext, line);
-  FreeFile(file);
-}
-
 /* Detach sm's home directory as the postmaster exits. */
 static void detach_sm(int code, Datum arg) {
   sm_detach(dds().sm_env, 1);
@@ -99,13 +73,12 @@ static void close_sm_session(int code, Datum arg) {
 }
 
 /*
- * Read the superuser file and attach sm's home directory. The postmaster
- * calls this once it is in the data directory.
+ * Attach sm's home directory and read the roles. The postmaster calls this
+ * once it is in the data directory.
  */
 void datadir_load(void) {
   int rc;
 
-  load_superuser();
   /*
    * Once for the process: every session opens its database on it, and reads
    * through one block cache of shared_buffers.
@@ -130,13 +103,14 @@ void datadir_load(void) {
   if (smstore_set_index_evaluator(dds().sm_env) != 0)
     ereport(FATAL,
             (errmsg("could not set the index evaluator: %s", sm_errmsg())));
+  /* Once for the process, after the two above, as it opens a database. */
+  pg_global_load(dds().sm_env);
 }
 
-/* The name of the superuser, the one role there is. */
-const char *datadir_superuser(void) { return dds().superuser_name; }
-
-/* The SCRAM secret of the superuser's password, or NULL if it has none. */
-const char *datadir_superuser_secret(void) { return dds().superuser_secret; }
+/* Whether dbname is pg_global, which no client sees. */
+static bool is_pg_global(const char *dbname) {
+  return 0 == strcmp(dbname, PG_GLOBAL_DBNAME);
+}
 
 /*
  * The oid of the database dbname, or InvalidOid if there is none: the id sm
@@ -146,6 +120,8 @@ const char *datadir_superuser_secret(void) { return dds().superuser_secret; }
 Oid datadir_database_oid(const char *dbname) {
   uint64_t dbid;
 
+  if (is_pg_global(dbname))
+    return InvalidOid;
   if (sm_dbid(dds().sm_env, dbname, &dbid) != 0) {
     if (sm_errnum() == SM_ERR_NOTFOUND)
       return InvalidOid;
@@ -173,7 +149,7 @@ char *datadir_database_name(Oid dboid) {
   return NULL;
 }
 
-/* The names of sm's databases, palloc'd, as sm lists them. */
+/* The names of sm's databases, palloc'd, as sm lists them, but pg_global. */
 List *datadir_database_names(void) {
   std::vector<std::string> names;
   List *out = NIL;
@@ -181,7 +157,8 @@ List *datadir_database_names(void) {
   if (sm_lsdb(dds().sm_env, names) != 0)
     ereport(ERROR, (errmsg("could not list databases: %s", sm_errmsg())));
   for (const std::string &name : names)
-    out = lappend(out, pstrdup(name.c_str()));
+    if (!is_pg_global(name.c_str()))
+      out = lappend(out, pstrdup(name.c_str()));
   return out;
 }
 
@@ -205,6 +182,8 @@ bool datadir_create_database(const char *dbname) {
  * session has it open.
  */
 datadir_drop_t datadir_drop_database(const char *dbname) {
+  if (is_pg_global(dbname))
+    return DATADIR_NO_DATABASE;
   if (sm_rmdb(dds().sm_env, dbname) == 0)
     return DATADIR_DROPPED;
   switch (sm_errnum()) {

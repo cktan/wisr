@@ -208,6 +208,13 @@ typedef struct Port {
   bool last_read_was_eof;
 
   /*
+   * The client is the data directory's owner, on the local socket, asking
+   * for the bootstrap superuser: let in by peer whatever the role says
+   * (sm/ROLE.md section 5, "Locked out").
+   */
+  bool datadir_owner;
+
+  /*
    * OpenSSL structures.  As with GSSAPI above, to keep struct offsets
    * constant, NULL pointers are stored when SSL support is not enabled.
    * (Although extensions should have no business accessing the raw_buf

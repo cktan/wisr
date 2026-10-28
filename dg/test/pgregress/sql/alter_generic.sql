@@ -17,35 +17,27 @@
 -- Clean up in case a prior regression run failed
 SET client_min_messages TO 'warning';
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE IF EXISTS regress_alter_generic_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE IF EXISTS regress_alter_generic_user2;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE IF EXISTS regress_alter_generic_user3;
+DROP ROLE IF EXISTS regress_alter_generic_user1;
+DROP ROLE IF EXISTS regress_alter_generic_user2;
+DROP ROLE IF EXISTS regress_alter_generic_user3;
 
 RESET client_min_messages;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_alter_generic_user3;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_alter_generic_user2;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_alter_generic_user1 IN ROLE regress_alter_generic_user3;
+CREATE USER regress_alter_generic_user3;
+CREATE USER regress_alter_generic_user2;
+CREATE USER regress_alter_generic_user1 IN ROLE regress_alter_generic_user3;
 
 CREATE SCHEMA alt_nsp1;
 CREATE SCHEMA alt_nsp2;
 
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT ALL ON SCHEMA alt_nsp1, alt_nsp2 TO public;
+GRANT ALL ON SCHEMA alt_nsp1, alt_nsp2 TO public;
 
 SET search_path = alt_nsp1, public;
 
 --
 -- Function and Aggregate
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_alter_generic_user1;
+SET SESSION AUTHORIZATION regress_alter_generic_user1;
 --dg-skip: language "?" does not exist
 --dg CREATE FUNCTION alt_func1(int) RETURNS int LANGUAGE sql
 --dg   AS 'SELECT $1 + 1';
@@ -73,7 +65,7 @@ SET search_path = alt_nsp1, public;
 --dg ALTER FUNCTION alt_func1(int) RENAME TO alt_func3;  -- OK
 --dg-cascade
 --dg ALTER FUNCTION alt_func2(int) OWNER TO regress_alter_generic_user2;  -- failed (no role membership)
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER FUNCTION alt_func2(int) OWNER TO regress_alter_generic_user3;  -- OK
 --dg-cascade
 --dg ALTER FUNCTION alt_func2(int) SET SCHEMA alt_nsp1;  -- OK, already there
@@ -86,13 +78,12 @@ SET search_path = alt_nsp1, public;
 --dg ALTER AGGREGATE alt_agg1(int) RENAME TO alt_agg3;   -- OK
 --dg-cascade
 --dg ALTER AGGREGATE alt_agg2(int) OWNER TO regress_alter_generic_user2;  -- failed (no role membership)
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER AGGREGATE alt_agg2(int) OWNER TO regress_alter_generic_user3;  -- OK
 --dg-cascade
 --dg ALTER AGGREGATE alt_agg2(int) SET SCHEMA alt_nsp2;  -- OK
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_alter_generic_user2;
+SET SESSION AUTHORIZATION regress_alter_generic_user2;
 --dg-skip: language "?" does not exist
 --dg CREATE FUNCTION alt_func1(int) RETURNS int LANGUAGE sql
 --dg   AS 'SELECT $1 + 2';
@@ -151,8 +142,7 @@ RESET SESSION AUTHORIZATION;
 --
 -- Conversion
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_alter_generic_user1;
+SET SESSION AUTHORIZATION regress_alter_generic_user1;
 --dg-skip: loading library "?" is not supported yet
 --dg CREATE CONVERSION alt_conv1 FOR 'LATIN1' TO 'UTF8' FROM iso8859_1_to_utf8;
 --dg-skip: loading library "?" is not supported yet
@@ -164,13 +154,12 @@ RESET SESSION AUTHORIZATION;
 --dg ALTER CONVERSION alt_conv1 RENAME TO alt_conv3;  -- OK
 --dg-cascade
 --dg ALTER CONVERSION alt_conv2 OWNER TO regress_alter_generic_user2;  -- failed (no role membership)
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_conversion cannot be opened: digres has no catalog tables
 --dg ALTER CONVERSION alt_conv2 OWNER TO regress_alter_generic_user3;  -- OK
 --dg-skip: relation pg_conversion cannot be opened: digres has no catalog tables
 --dg ALTER CONVERSION alt_conv2 SET SCHEMA alt_nsp2;  -- OK
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_alter_generic_user2;
+SET SESSION AUTHORIZATION regress_alter_generic_user2;
 --dg-skip: loading library "?" is not supported yet
 --dg CREATE CONVERSION alt_conv1 FOR 'LATIN1' TO 'UTF8' FROM iso8859_1_to_utf8;
 --dg-skip: loading library "?" is not supported yet
@@ -234,13 +223,12 @@ RESET SESSION AUTHORIZATION;
 --dg-skip: function ?(...) does not exist
 --dg CREATE LANGUAGE alt_lang2 HANDLER plpgsql_call_handler;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: language "?" does not exist
 --dg ALTER LANGUAGE alt_lang1 OWNER TO regress_alter_generic_user1;  -- OK
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: language "?" does not exist
 --dg ALTER LANGUAGE alt_lang2 OWNER TO regress_alter_generic_user2;  -- OK
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_alter_generic_user1;
+SET SESSION AUTHORIZATION regress_alter_generic_user1;
 --dg-cascade
 --dg ALTER LANGUAGE alt_lang1 RENAME TO alt_lang2;   -- failed (name conflict)
 --dg-cascade
@@ -252,7 +240,7 @@ RESET SESSION AUTHORIZATION;
 --dg ALTER LANGUAGE alt_lang2 OWNER TO regress_alter_generic_user3;  -- failed (not owner)
 --dg-cascade
 --dg ALTER LANGUAGE alt_lang3 OWNER TO regress_alter_generic_user2;  -- failed (no role membership)
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: language "?" does not exist
 --dg ALTER LANGUAGE alt_lang3 OWNER TO regress_alter_generic_user3;  -- OK
 
 RESET SESSION AUTHORIZATION;
@@ -265,8 +253,7 @@ RESET SESSION AUTHORIZATION;
 --
 -- Operator
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_alter_generic_user1;
+SET SESSION AUTHORIZATION regress_alter_generic_user1;
 
 --dg-skip: relation pg_operator cannot be written: digres has no catalog tables
 --dg CREATE OPERATOR @-@ ( leftarg = int4, rightarg = int4, procedure = int4mi );
@@ -275,13 +262,12 @@ RESET SESSION AUTHORIZATION;
 
 --dg-cascade
 --dg ALTER OPERATOR @+@(int4, int4) OWNER TO regress_alter_generic_user2;  -- failed (no role membership)
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER OPERATOR @+@(int4, int4) OWNER TO regress_alter_generic_user3;  -- OK
 --dg-cascade
 --dg ALTER OPERATOR @-@(int4, int4) SET SCHEMA alt_nsp2;           -- OK
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_alter_generic_user2;
+SET SESSION AUTHORIZATION regress_alter_generic_user2;
 
 --dg-skip: relation pg_operator cannot be written: digres has no catalog tables
 --dg CREATE OPERATOR @-@ ( leftarg = int4, rightarg = int4, procedure = int4mi );
@@ -312,22 +298,21 @@ RESET SESSION AUTHORIZATION;
 --dg CREATE OPERATOR FAMILY alt_opf1 USING hash;
 --dg-skip: relation pg_opfamily cannot be opened: digres has no catalog tables
 --dg CREATE OPERATOR FAMILY alt_opf2 USING hash;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_opfamily cannot be opened: digres has no catalog tables
 --dg ALTER OPERATOR FAMILY alt_opf1 USING hash OWNER TO regress_alter_generic_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_opfamily cannot be opened: digres has no catalog tables
 --dg ALTER OPERATOR FAMILY alt_opf2 USING hash OWNER TO regress_alter_generic_user1;
 
 --dg-skip: relation pg_opfamily cannot be opened: digres has no catalog tables
 --dg CREATE OPERATOR CLASS alt_opc1 FOR TYPE uuid USING hash AS STORAGE uuid;
 --dg-skip: relation pg_opfamily cannot be opened: digres has no catalog tables
 --dg CREATE OPERATOR CLASS alt_opc2 FOR TYPE uuid USING hash AS STORAGE uuid;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER OPERATOR CLASS alt_opc1 USING hash OWNER TO regress_alter_generic_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER OPERATOR CLASS alt_opc2 USING hash OWNER TO regress_alter_generic_user1;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_alter_generic_user1;
+SET SESSION AUTHORIZATION regress_alter_generic_user1;
 
 --dg-cascade
 --dg ALTER OPERATOR FAMILY alt_opf1 USING hash RENAME TO alt_opf2;  -- failed (name conflict)
@@ -335,7 +320,7 @@ RESET SESSION AUTHORIZATION;
 --dg ALTER OPERATOR FAMILY alt_opf1 USING hash RENAME TO alt_opf3;  -- OK
 --dg-cascade
 --dg ALTER OPERATOR FAMILY alt_opf2 USING hash OWNER TO regress_alter_generic_user2;  -- failed (no role membership)
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_opfamily cannot be opened: digres has no catalog tables
 --dg ALTER OPERATOR FAMILY alt_opf2 USING hash OWNER TO regress_alter_generic_user3;  -- OK
 --dg-skip: relation pg_opfamily cannot be opened: digres has no catalog tables
 --dg ALTER OPERATOR FAMILY alt_opf2 USING hash SET SCHEMA alt_nsp2;  -- OK
@@ -346,7 +331,7 @@ RESET SESSION AUTHORIZATION;
 --dg ALTER OPERATOR CLASS alt_opc1 USING hash RENAME TO alt_opc3;  -- OK
 --dg-cascade
 --dg ALTER OPERATOR CLASS alt_opc2 USING hash OWNER TO regress_alter_generic_user2;  -- failed (no role membership)
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER OPERATOR CLASS alt_opc2 USING hash OWNER TO regress_alter_generic_user3;  -- OK
 --dg-cascade
 --dg ALTER OPERATOR CLASS alt_opc2 USING hash SET SCHEMA alt_nsp2;  -- OK
@@ -357,22 +342,21 @@ RESET SESSION AUTHORIZATION;
 --dg CREATE OPERATOR FAMILY alt_opf1 USING hash;
 --dg-skip: relation pg_opfamily cannot be opened: digres has no catalog tables
 --dg CREATE OPERATOR FAMILY alt_opf2 USING hash;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_opfamily cannot be opened: digres has no catalog tables
 --dg ALTER OPERATOR FAMILY alt_opf1 USING hash OWNER TO regress_alter_generic_user2;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_opfamily cannot be opened: digres has no catalog tables
 --dg ALTER OPERATOR FAMILY alt_opf2 USING hash OWNER TO regress_alter_generic_user2;
 
 --dg-skip: relation pg_opfamily cannot be opened: digres has no catalog tables
 --dg CREATE OPERATOR CLASS alt_opc1 FOR TYPE macaddr USING hash AS STORAGE macaddr;
 --dg-skip: relation pg_opfamily cannot be opened: digres has no catalog tables
 --dg CREATE OPERATOR CLASS alt_opc2 FOR TYPE macaddr USING hash AS STORAGE macaddr;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER OPERATOR CLASS alt_opc1 USING hash OWNER TO regress_alter_generic_user2;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER OPERATOR CLASS alt_opc2 USING hash OWNER TO regress_alter_generic_user2;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_alter_generic_user2;
+SET SESSION AUTHORIZATION regress_alter_generic_user2;
 
 --dg-cascade
 --dg ALTER OPERATOR FAMILY alt_opf3 USING hash RENAME TO alt_opf4;	-- failed (not owner)
@@ -467,7 +451,7 @@ ALTER OPERATOR FAMILY alt_opf4 USING invalid_index_method ADD  OPERATOR 1 < (int
 
 -- Should fail. Need to be SUPERUSER to do ALTER OPERATOR FAMILY .. ADD / DROP
 BEGIN TRANSACTION;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: CREATE ROLE cannot run inside a transaction block
 --dg CREATE ROLE regress_alter_generic_user5 NOSUPERUSER;
 --dg-skip: relation pg_opfamily cannot be opened: digres has no catalog tables
 --dg CREATE OPERATOR FAMILY alt_opf5 USING btree;
@@ -483,7 +467,7 @@ ROLLBACK;
 
 -- Should fail. Need rights to namespace for ALTER OPERATOR FAMILY .. ADD / DROP
 BEGIN TRANSACTION;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: CREATE ROLE cannot run inside a transaction block
 --dg CREATE ROLE regress_alter_generic_user6;
 CREATE SCHEMA alt_nsp6;
 --dg-cascade
@@ -682,36 +666,34 @@ ROLLBACK;
 --
 -- Statistics
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_alter_generic_user1;
+SET SESSION AUTHORIZATION regress_alter_generic_user1;
 CREATE TABLE alt_regress_1 (a INTEGER, b INTEGER);
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS alt_stat1 ON a, b FROM alt_regress_1;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS alt_stat2 ON a, b FROM alt_regress_1;
 
 --dg-cascade
 --dg ALTER STATISTICS alt_stat1 RENAME TO alt_stat2;   -- failed (name conflict)
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER STATISTICS alt_stat1 RENAME TO alt_stat3;   -- OK
 --dg-cascade
 --dg ALTER STATISTICS alt_stat2 OWNER TO regress_alter_generic_user2;  -- failed (no role membership)
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER STATISTICS alt_stat2 OWNER TO regress_alter_generic_user3;  -- OK
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER STATISTICS alt_stat2 SET SCHEMA alt_nsp2;    -- OK
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_alter_generic_user2;
+SET SESSION AUTHORIZATION regress_alter_generic_user2;
 CREATE TABLE alt_regress_2 (a INTEGER, b INTEGER);
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS alt_stat1 ON a, b FROM alt_regress_2;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS alt_stat2 ON a, b FROM alt_regress_2;
 
 --dg-cascade
 --dg ALTER STATISTICS alt_stat3 RENAME TO alt_stat4;    -- failed (not owner)
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER STATISTICS alt_stat1 RENAME TO alt_stat4;    -- OK
 --dg-cascade
 --dg ALTER STATISTICS alt_stat3 OWNER TO regress_alter_generic_user2; -- failed (not owner)
@@ -733,8 +715,7 @@ RESET SESSION AUTHORIZATION;
 --
 -- Text Search Dictionary
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_alter_generic_user1;
+SET SESSION AUTHORIZATION regress_alter_generic_user1;
 --dg-skip: text search is not supported
 --dg CREATE TEXT SEARCH DICTIONARY alt_ts_dict1 (template=simple);
 --dg-skip: text search is not supported
@@ -746,13 +727,12 @@ RESET SESSION AUTHORIZATION;
 --dg ALTER TEXT SEARCH DICTIONARY alt_ts_dict1 RENAME TO alt_ts_dict3;  -- OK
 --dg-cascade
 --dg ALTER TEXT SEARCH DICTIONARY alt_ts_dict2 OWNER TO regress_alter_generic_user2;  -- failed (no role membership)
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_ts_dict cannot be opened: digres has no catalog tables
 --dg ALTER TEXT SEARCH DICTIONARY alt_ts_dict2 OWNER TO regress_alter_generic_user3;  -- OK
 --dg-skip: relation pg_ts_dict cannot be opened: digres has no catalog tables
 --dg ALTER TEXT SEARCH DICTIONARY alt_ts_dict2 SET SCHEMA alt_nsp2;  -- OK
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_alter_generic_user2;
+SET SESSION AUTHORIZATION regress_alter_generic_user2;
 --dg-skip: text search is not supported
 --dg CREATE TEXT SEARCH DICTIONARY alt_ts_dict1 (template=simple);
 --dg-skip: text search is not supported
@@ -783,8 +763,7 @@ RESET SESSION AUTHORIZATION;
 --
 -- Text Search Configuration
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_alter_generic_user1;
+SET SESSION AUTHORIZATION regress_alter_generic_user1;
 --dg-skip: text search is not supported
 --dg CREATE TEXT SEARCH CONFIGURATION alt_ts_conf1 (copy=english);
 --dg-skip: text search is not supported
@@ -796,13 +775,12 @@ RESET SESSION AUTHORIZATION;
 --dg ALTER TEXT SEARCH CONFIGURATION alt_ts_conf1 RENAME TO alt_ts_conf3;  -- OK
 --dg-cascade
 --dg ALTER TEXT SEARCH CONFIGURATION alt_ts_conf2 OWNER TO regress_alter_generic_user2;  -- failed (no role membership)
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_ts_config cannot be opened: digres has no catalog tables
 --dg ALTER TEXT SEARCH CONFIGURATION alt_ts_conf2 OWNER TO regress_alter_generic_user3;  -- OK
 --dg-skip: relation pg_ts_config cannot be opened: digres has no catalog tables
 --dg ALTER TEXT SEARCH CONFIGURATION alt_ts_conf2 SET SCHEMA alt_nsp2;  -- OK
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_alter_generic_user2;
+SET SESSION AUTHORIZATION regress_alter_generic_user2;
 --dg-skip: text search is not supported
 --dg CREATE TEXT SEARCH CONFIGURATION alt_ts_conf1 (copy=english);
 --dg-skip: text search is not supported
@@ -912,9 +890,8 @@ RESET SESSION AUTHORIZATION;
 --dg-cascade
 --dg DROP SCHEMA alt_nsp2 CASCADE;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP USER regress_alter_generic_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP USER regress_alter_generic_user2;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_alter_generic_user3;
+DROP USER regress_alter_generic_user3;

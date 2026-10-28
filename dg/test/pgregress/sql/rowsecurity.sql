@@ -7,49 +7,32 @@
 -- Suppress NOTICE messages when users/groups don't exist
 SET client_min_messages TO 'warning';
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER IF EXISTS regress_rls_alice;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER IF EXISTS regress_rls_bob;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER IF EXISTS regress_rls_carol;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER IF EXISTS regress_rls_dave;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER IF EXISTS regress_rls_exempt_user;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE IF EXISTS regress_rls_group1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE IF EXISTS regress_rls_group2;
+DROP USER IF EXISTS regress_rls_alice;
+DROP USER IF EXISTS regress_rls_bob;
+DROP USER IF EXISTS regress_rls_carol;
+DROP USER IF EXISTS regress_rls_dave;
+DROP USER IF EXISTS regress_rls_exempt_user;
+DROP ROLE IF EXISTS regress_rls_group1;
+DROP ROLE IF EXISTS regress_rls_group2;
 
 DROP SCHEMA IF EXISTS regress_rls_schema CASCADE;
 
 RESET client_min_messages;
 
 -- initial setup
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_rls_alice NOLOGIN;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_rls_bob NOLOGIN;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_rls_carol NOLOGIN;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_rls_dave NOLOGIN;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_rls_exempt_user BYPASSRLS NOLOGIN;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_rls_group1 NOLOGIN;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_rls_group2 NOLOGIN;
+CREATE USER regress_rls_alice NOLOGIN;
+CREATE USER regress_rls_bob NOLOGIN;
+CREATE USER regress_rls_carol NOLOGIN;
+CREATE USER regress_rls_dave NOLOGIN;
+CREATE USER regress_rls_exempt_user BYPASSRLS NOLOGIN;
+CREATE ROLE regress_rls_group1 NOLOGIN;
+CREATE ROLE regress_rls_group2 NOLOGIN;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT regress_rls_group1 TO regress_rls_bob;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT regress_rls_group2 TO regress_rls_carol;
+GRANT regress_rls_group1 TO regress_rls_bob;
+GRANT regress_rls_group2 TO regress_rls_carol;
 
 CREATE SCHEMA regress_rls_schema;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT ALL ON SCHEMA regress_rls_schema to public;
+GRANT ALL ON SCHEMA regress_rls_schema to public;
 SET search_path = regress_rls_schema;
 
 -- setup of malicious function
@@ -62,14 +45,12 @@ SET search_path = regress_rls_schema;
 
 -- BASIC Row-Level Security Scenario
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 CREATE TABLE uaccount (
     pguser      name primary key,
     seclv       int
 );
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
---dg GRANT SELECT ON uaccount TO public;
+GRANT SELECT ON uaccount TO public;
 INSERT INTO uaccount VALUES
     ('regress_rls_alice', 99),
     ('regress_rls_bob', 1),
@@ -80,8 +61,7 @@ CREATE TABLE category (
     cid        int primary key,
     cname      text
 );
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
---dg GRANT ALL ON category TO public;
+GRANT ALL ON category TO public;
 INSERT INTO category VALUES
     (11, 'novel'),
     (22, 'science fiction'),
@@ -95,8 +75,7 @@ CREATE TABLE document (
     dauthor     name,
     dtitle      text
 );
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
---dg GRANT ALL ON document TO public;
+GRANT ALL ON document TO public;
 INSERT INTO document VALUES
     ( 1, 11, 1, 'regress_rls_bob', 'my first novel'),
     ( 2, 11, 2, 'regress_rls_bob', 'my second novel'),
@@ -113,7 +92,7 @@ INSERT INTO document VALUES
 --dg ALTER TABLE document ENABLE ROW LEVEL SECURITY;
 
 -- user's security level must be higher than or equal to document's
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON document AS PERMISSIVE
 --dg     USING (dlevel <= (SELECT seclv FROM uaccount WHERE pguser = current_user));
 
@@ -125,12 +104,12 @@ CREATE POLICY p1 ON document AS UGLY
 -- this is to make sure that we sort the policies by name first
 -- when applying WITH CHECK, a later INSERT by Dave should fail due
 -- to p1r first
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p2r ON document AS RESTRICTIVE TO regress_rls_dave
 --dg     USING (cid <> 44 AND cid < 50);
 
 -- and Dave isn't allowed to see manga documents
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1r ON document AS RESTRICTIVE TO regress_rls_dave
 --dg     USING (cid <> 44);
 
@@ -142,8 +121,7 @@ CREATE POLICY p1 ON document AS UGLY
 --dg SELECT * FROM pg_policies WHERE schemaname = 'regress_rls_schema' AND tablename = 'document' ORDER BY policyname;
 
 -- viewpoint from regress_rls_bob
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 SET row_security TO ON;
 --dg-cascade
 --dg SELECT * FROM document WHERE f_leak(dtitle) ORDER BY did;
@@ -156,8 +134,7 @@ SET row_security TO ON;
 --dg   WHERE f_leak(dtitle) ORDER BY did;
 
 -- viewpoint from regress_rls_carol
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_carol;
+SET SESSION AUTHORIZATION regress_rls_carol;
 --dg-cascade
 --dg SELECT * FROM document WHERE f_leak(dtitle) ORDER BY did;
 --dg-cascade
@@ -174,8 +151,7 @@ SET row_security TO ON;
 --dg EXPLAIN (COSTS OFF) SELECT * FROM document NATURAL JOIN category WHERE f_leak(dtitle);
 
 -- viewpoint from regress_rls_dave
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_dave;
+SET SESSION AUTHORIZATION regress_rls_dave;
 --dg-cascade
 --dg SELECT * FROM document WHERE f_leak(dtitle) ORDER BY did;
 --dg-cascade
@@ -195,27 +171,23 @@ SET row_security TO ON;
 --dg INSERT INTO document VALUES (100, 55, 1, 'regress_rls_dave', 'testing sorting of policies'); -- fail
 
 -- only owner can change policies
---dg-cascade
---dg ALTER POLICY p1 ON document USING (true);    --fail
+ALTER POLICY p1 ON document USING (true);    --fail
 --dg-cascade
 --dg DROP POLICY p1 ON document;                  --fail
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+SET SESSION AUTHORIZATION regress_rls_alice;
+--dg-cascade
 --dg ALTER POLICY p1 ON document USING (dauthor = current_user);
 
 -- viewpoint from regress_rls_bob again
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 --dg-cascade
 --dg SELECT * FROM document WHERE f_leak(dtitle) ORDER BY did;
 --dg-cascade
 --dg SELECT * FROM document NATURAL JOIN category WHERE f_leak(dtitle) ORDER by did;
 
 -- viewpoint from rls_regres_carol again
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_carol;
+SET SESSION AUTHORIZATION regress_rls_carol;
 --dg-cascade
 --dg SELECT * FROM document WHERE f_leak(dtitle) ORDER BY did;
 --dg-cascade
@@ -227,9 +199,8 @@ SET row_security TO ON;
 --dg EXPLAIN (COSTS OFF) SELECT * FROM document NATURAL JOIN category WHERE f_leak(dtitle);
 
 -- interaction of FK/PK constraints
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+SET SESSION AUTHORIZATION regress_rls_alice;
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p2 ON category
 --dg     USING (CASE WHEN current_user = 'regress_rls_bob' THEN cid IN (11, 33)
 --dg            WHEN current_user = 'regress_rls_carol' THEN cid IN (22, 44)
@@ -239,23 +210,21 @@ SET row_security TO ON;
 --dg ALTER TABLE category ENABLE ROW LEVEL SECURITY;
 
 -- cannot delete PK referenced by invisible FK
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 --dg-cascade
 --dg SELECT * FROM document d FULL OUTER JOIN category c on d.cid = c.cid ORDER BY d.did, c.cid;
 --dg-cascade
 --dg DELETE FROM category WHERE cid = 33;    -- fails with FK violation
 
 -- can insert FK referencing invisible PK
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_carol;
+SET SESSION AUTHORIZATION regress_rls_carol;
 --dg-cascade
 --dg SELECT * FROM document d FULL OUTER JOIN category c on d.cid = c.cid ORDER BY d.did, c.cid;
-INSERT INTO document VALUES (11, 33, 1, current_user, 'hoge');
+--dg-cascade
+--dg INSERT INTO document VALUES (11, 33, 1, current_user, 'hoge');
 
 -- UNIQUE or PRIMARY KEY constraint violation DOES reveal presence of row
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 --dg-cascade
 --dg INSERT INTO document VALUES (8, 44, 1, 'regress_rls_bob', 'my third manga'); -- Must fail with unique violation, revealing presence of did we can't see
 --dg-cascade
@@ -282,24 +251,21 @@ SET row_security TO OFF;
 SELECT * FROM category;
 
 -- database non-superuser with bypass privilege can bypass RLS policy when disabled
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_exempt_user;
+SET SESSION AUTHORIZATION regress_rls_exempt_user;
 SET row_security TO OFF;
 --dg-cascade
 --dg SELECT * FROM document;
 SELECT * FROM category;
 
 -- RLS policy does not apply to table owner when RLS enabled.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 SET row_security TO ON;
 --dg-cascade
 --dg SELECT * FROM document;
 SELECT * FROM category;
 
 -- RLS policy does not apply to table owner when RLS disabled.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 SET row_security TO OFF;
 --dg-cascade
 --dg SELECT * FROM document;
@@ -308,15 +274,13 @@ SELECT * FROM category;
 --
 -- Table inheritance and RLS policy
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 
 SET row_security TO ON;
 
 CREATE TABLE t1 (id int not null primary key, a int, junk1 text, b text);
 ALTER TABLE t1 DROP COLUMN junk1;    -- just a disturbing factor
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
---dg GRANT ALL ON t1 TO public;
+GRANT ALL ON t1 TO public;
 
 COPY t1 FROM stdin WITH ;
 101	1	aba
@@ -341,8 +305,7 @@ COPY t1 FROM stdin WITH ;
 CREATE TABLE t3 (id int not null primary key, c text, b text, a int);
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE t3 INHERIT t1;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
---dg GRANT ALL ON t3 TO public;
+GRANT ALL ON t3 TO public;
 
 COPY t3(id, a,b,c) FROM stdin;
 301	1	xxx	X
@@ -350,9 +313,9 @@ COPY t3(id, a,b,c) FROM stdin;
 303	3	zzz	Z
 \.
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON t1 FOR ALL TO PUBLIC USING (a % 2 = 0); -- be even number
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE POLICY p2 ON t2 FOR ALL TO PUBLIC USING (a % 2 = 1); -- be odd number
 
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
@@ -360,8 +323,7 @@ COPY t3(id, a,b,c) FROM stdin;
 --dg-cascade
 --dg ALTER TABLE t2 ENABLE ROW LEVEL SECURITY;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 
 --dg-cascade
 --dg SELECT * FROM t1;
@@ -411,8 +373,7 @@ SET row_security TO OFF;
 --dg EXPLAIN (COSTS OFF) SELECT * FROM t1 WHERE f_leak(b);
 
 -- non-superuser with bypass privilege can bypass RLS policy when disabled
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_exempt_user;
+SET SESSION AUTHORIZATION regress_rls_exempt_user;
 SET row_security TO OFF;
 --dg-cascade
 --dg SELECT * FROM t1 WHERE f_leak(b);
@@ -423,8 +384,7 @@ SET row_security TO OFF;
 -- Partitioned Tables
 --
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE part_document (
@@ -470,12 +430,12 @@ SET row_security TO OFF;
 
 -- Create policy on parent
 -- user's security level must be higher than or equal to document's
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE POLICY pp1 ON part_document AS PERMISSIVE
 --dg     USING (dlevel <= (SELECT seclv FROM uaccount WHERE pguser = current_user));
 
 -- Dave is only allowed to see cid < 55
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE POLICY pp1r ON part_document AS RESTRICTIVE TO regress_rls_dave
 --dg     USING (cid < 55);
 
@@ -485,8 +445,7 @@ SET row_security TO OFF;
 --dg SELECT * FROM pg_policies WHERE schemaname = 'regress_rls_schema' AND tablename like '%part_document%' ORDER BY policyname;
 
 -- viewpoint from regress_rls_bob
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 SET row_security TO ON;
 --dg-cascade
 --dg SELECT * FROM part_document WHERE f_leak(dtitle) ORDER BY did;
@@ -494,16 +453,14 @@ SET row_security TO ON;
 --dg EXPLAIN (COSTS OFF) SELECT * FROM part_document WHERE f_leak(dtitle);
 
 -- viewpoint from regress_rls_carol
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_carol;
+SET SESSION AUTHORIZATION regress_rls_carol;
 --dg-cascade
 --dg SELECT * FROM part_document WHERE f_leak(dtitle) ORDER BY did;
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) SELECT * FROM part_document WHERE f_leak(dtitle);
 
 -- viewpoint from regress_rls_dave
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_dave;
+SET SESSION AUTHORIZATION regress_rls_dave;
 --dg-cascade
 --dg SELECT * FROM part_document WHERE f_leak(dtitle) ORDER BY did;
 --dg-cascade
@@ -531,16 +488,14 @@ SET row_security TO ON;
 --dg SELECT * FROM part_document_satire WHERE f_leak(dtitle) ORDER BY did;
 
 -- Turn on RLS and create policy on child to show RLS is checked before constraints
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 --dg-cascade
 --dg ALTER TABLE part_document_satire ENABLE ROW LEVEL SECURITY;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE POLICY pp3 ON part_document_satire AS RESTRICTIVE
 --dg     USING (cid < 55);
 -- This should fail with RLS violation now.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_dave;
+SET SESSION AUTHORIZATION regress_rls_dave;
 --dg-cascade
 --dg INSERT INTO part_document_satire VALUES (101, 55, 1, 'regress_rls_dave', 'testing RLS with partitions'); -- fail
 -- And now we cannot see directly into the partition either, due to RLS
@@ -554,8 +509,7 @@ SET row_security TO ON;
 --dg EXPLAIN (COSTS OFF) SELECT * FROM part_document WHERE f_leak(dtitle);
 
 -- viewpoint from regress_rls_carol
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_carol;
+SET SESSION AUTHORIZATION regress_rls_carol;
 --dg-cascade
 --dg SELECT * FROM part_document WHERE f_leak(dtitle) ORDER BY did;
 --dg-cascade
@@ -567,20 +521,17 @@ SET row_security TO ON;
 --dg-cascade
 --dg DROP POLICY pp1 ON part_document;                  --fail
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+SET SESSION AUTHORIZATION regress_rls_alice;
+--dg-cascade
 --dg ALTER POLICY pp1 ON part_document USING (dauthor = current_user);
 
 -- viewpoint from regress_rls_bob again
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 --dg-cascade
 --dg SELECT * FROM part_document WHERE f_leak(dtitle) ORDER BY did;
 
 -- viewpoint from rls_regres_carol again
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_carol;
+SET SESSION AUTHORIZATION regress_rls_carol;
 --dg-cascade
 --dg SELECT * FROM part_document WHERE f_leak(dtitle) ORDER BY did;
 
@@ -596,8 +547,7 @@ SET row_security TO ON;
 --dg SELECT * FROM part_document_satire ORDER by did;
 
 -- database non-superuser with bypass privilege can bypass RLS policy when disabled
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_exempt_user;
+SET SESSION AUTHORIZATION regress_rls_exempt_user;
 SET row_security TO OFF;
 --dg-cascade
 --dg SELECT * FROM part_document ORDER BY did;
@@ -605,8 +555,7 @@ SET row_security TO OFF;
 --dg SELECT * FROM part_document_satire ORDER by did;
 
 -- RLS policy does not apply to table owner when RLS enabled.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 SET row_security TO ON;
 --dg-cascade
 --dg SELECT * FROM part_document ORDER by did;
@@ -614,8 +563,7 @@ SET row_security TO ON;
 --dg SELECT * FROM part_document_satire ORDER by did;
 
 -- When RLS disabled, other users get ERROR.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_dave;
+SET SESSION AUTHORIZATION regress_rls_dave;
 SET row_security TO OFF;
 --dg-cascade
 --dg SELECT * FROM part_document ORDER by did;
@@ -623,27 +571,24 @@ SET row_security TO OFF;
 --dg SELECT * FROM part_document_satire ORDER by did;
 
 -- Check behavior with a policy that uses a SubPlan not an InitPlan.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 SET row_security TO ON;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE POLICY pp3 ON part_document AS RESTRICTIVE
 --dg     USING ((SELECT dlevel <= seclv FROM uaccount WHERE pguser = current_user));
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_carol;
+SET SESSION AUTHORIZATION regress_rls_carol;
 --dg-cascade
 --dg INSERT INTO part_document VALUES (100, 11, 5, 'regress_rls_carol', 'testing pp3'); -- fail
 
 ----- Dependencies -----
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 SET row_security TO ON;
 
 CREATE TABLE dependee (x integer, y integer);
 
 CREATE TABLE dependent (x integer, y integer);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY d1 ON dependent FOR ALL
 --dg     TO PUBLIC
 --dg     USING (x = (SELECT d.x FROM dependee d WHERE d.y = y));
@@ -661,60 +606,52 @@ EXPLAIN (COSTS OFF) SELECT * FROM dependent; -- After drop, should be unqualifie
 --
 -- Simple recursion
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 CREATE TABLE rec1 (x integer, y integer);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY r1 ON rec1 USING (x = (SELECT r.x FROM rec1 r WHERE y = r.y));
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rec1 ENABLE ROW LEVEL SECURITY;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 --dg-cascade
 --dg SELECT * FROM rec1; -- fail, direct recursion
 
 --
 -- Mutual recursion
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 CREATE TABLE rec2 (a integer, b integer);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER POLICY r1 ON rec1 USING (x = (SELECT a FROM rec2 WHERE b = y));
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY r2 ON rec2 USING (a = (SELECT x FROM rec1 WHERE y = b));
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rec2 ENABLE ROW LEVEL SECURITY;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 --dg-cascade
 --dg SELECT * FROM rec1;    -- fail, mutual recursion
 
 --
 -- Mutual recursion via views
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 CREATE VIEW rec1v AS SELECT * FROM rec1;
 CREATE VIEW rec2v AS SELECT * FROM rec2;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+SET SESSION AUTHORIZATION regress_rls_alice;
+--dg-cascade
 --dg ALTER POLICY r1 ON rec1 USING (x = (SELECT a FROM rec2v WHERE b = y));
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER POLICY r2 ON rec2 USING (a = (SELECT x FROM rec1v WHERE y = b));
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 --dg-cascade
 --dg SELECT * FROM rec1;    -- fail, mutual recursion via views
 
 --
 -- Mutual recursion via .s.b views
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 
 --dg-cascade
 --dg DROP VIEW rec1v, rec2v CASCADE;
@@ -723,37 +660,33 @@ CREATE VIEW rec2v AS SELECT * FROM rec2;
 --dg CREATE VIEW rec1v WITH (security_barrier) AS SELECT * FROM rec1;
 --dg-cascade
 --dg CREATE VIEW rec2v WITH (security_barrier) AS SELECT * FROM rec2;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+SET SESSION AUTHORIZATION regress_rls_alice;
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY r1 ON rec1 USING (x = (SELECT a FROM rec2v WHERE b = y));
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY r2 ON rec2 USING (a = (SELECT x FROM rec1v WHERE y = b));
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 --dg-cascade
 --dg SELECT * FROM rec1;    -- fail, mutual recursion via s.b. views
 
 --
 -- recursive RLS and VIEWs in policy
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 CREATE TABLE s1 (a int, b text);
 INSERT INTO s1 (SELECT x, public.fipshash(x::text) FROM generate_series(-10,10) x);
 
 CREATE TABLE s2 (x int, y text);
 INSERT INTO s2 (SELECT x, public.fipshash(x::text) FROM generate_series(-6,6) x);
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT SELECT ON s1, s2 TO regress_rls_bob;
+GRANT SELECT ON s1, s2 TO regress_rls_bob;
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON s1 USING (a in (select x from s2 where y like '%2f%'));
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p2 ON s2 USING (x in (select a from s1 where b like '%22%'));
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p3 ON s1 FOR INSERT WITH CHECK (a = (SELECT a FROM s1));
 
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
@@ -761,8 +694,7 @@ INSERT INTO s2 (SELECT x, public.fipshash(x::text) FROM generate_series(-6,6) x)
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE s2 ENABLE ROW LEVEL SECURITY;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 CREATE VIEW v2 AS SELECT * FROM s2 WHERE y like '%af%';
 --dg-cascade
 --dg SELECT * FROM s1 WHERE f_leak(b); -- fail (infinite recursion)
@@ -770,26 +702,22 @@ CREATE VIEW v2 AS SELECT * FROM s2 WHERE y like '%af%';
 --dg-cascade
 --dg INSERT INTO s1 VALUES (1, 'foo'); -- fail (infinite recursion)
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
---dg-skip: relation pg_policy cannot be opened: digres has no catalog tables
+SET SESSION AUTHORIZATION regress_rls_alice;
+--dg-cascade
 --dg DROP POLICY p3 on s1;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER POLICY p2 ON s2 USING (x % 2 = 0);
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 --dg-cascade
 --dg SELECT * FROM s1 WHERE f_leak(b);	-- OK
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) SELECT * FROM only s1 WHERE f_leak(b);
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+SET SESSION AUTHORIZATION regress_rls_alice;
+--dg-cascade
 --dg ALTER POLICY p1 ON s1 USING (a in (select x from v2)); -- using VIEW in RLS policy
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 --dg-cascade
 --dg SELECT * FROM s1 WHERE f_leak(b);	-- OK
 --dg-cascade
@@ -799,12 +727,10 @@ SELECT (SELECT x FROM s1 LIMIT 1) xx, * FROM s2 WHERE y like '%28%';
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) SELECT (SELECT x FROM s1 LIMIT 1) xx, * FROM s2 WHERE y like '%28%';
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+SET SESSION AUTHORIZATION regress_rls_alice;
+--dg-cascade
 --dg ALTER POLICY p2 ON s2 USING (x in (select a from s1 where b like '%d2%'));
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 --dg-cascade
 --dg SELECT * FROM s1 WHERE f_leak(b);	-- fail (infinite recursion via view)
 
@@ -836,8 +762,7 @@ PREPARE p2(int) AS SELECT * FROM t1 WHERE a = $1;
 --dg EXPLAIN (COSTS OFF) EXECUTE p2(2);
 
 -- also, case when privilege switch from superuser
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 SET row_security TO ON;
 --dg-cascade
 --dg EXECUTE p2(2);
@@ -847,8 +772,7 @@ SET row_security TO ON;
 --
 -- UPDATE / DELETE and Row-level security
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) UPDATE t1 SET b = b || b WHERE f_leak(b);
 --dg-cascade
@@ -918,8 +842,7 @@ SET row_security TO OFF;
 --dg-cascade
 --dg SELECT * FROM t1 ORDER BY a,b;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 SET row_security TO ON;
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) DELETE FROM only t1 WHERE f_leak(b);
@@ -934,26 +857,21 @@ SET row_security TO ON;
 --
 -- S.b. view on top of Row-level security
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 CREATE TABLE b1 (a int, b text);
 INSERT INTO b1 (SELECT x, public.fipshash(x::text) FROM generate_series(-10,10) x);
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON b1 USING (a % 2 = 0);
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE b1 ENABLE ROW LEVEL SECURITY;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT ALL ON b1 TO regress_rls_bob;
+GRANT ALL ON b1 TO regress_rls_bob;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 CREATE VIEW bv1 WITH (security_barrier) AS SELECT * FROM b1 WHERE a > 0 WITH CHECK OPTION;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT ALL ON bv1 TO regress_rls_carol;
+GRANT ALL ON bv1 TO regress_rls_carol;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_carol;
+SET SESSION AUTHORIZATION regress_rls_carol;
 
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) SELECT * FROM bv1 WHERE f_leak(b);
@@ -964,7 +882,8 @@ CREATE VIEW bv1 WITH (security_barrier) AS SELECT * FROM b1 WHERE a > 0 WITH CHE
 --dg INSERT INTO bv1 VALUES (-1, 'xxx'); -- should fail view WCO
 --dg-cascade
 --dg INSERT INTO bv1 VALUES (11, 'xxx'); -- should fail RLS check
-INSERT INTO bv1 VALUES (12, 'xxx'); -- ok
+--dg-cascade
+--dg INSERT INTO bv1 VALUES (12, 'xxx'); -- ok
 
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) UPDATE bv1 SET b = 'yyy' WHERE a = 4 AND f_leak(b);
@@ -976,35 +895,33 @@ INSERT INTO bv1 VALUES (12, 'xxx'); -- ok
 --dg-cascade
 --dg DELETE FROM bv1 WHERE a = 6 AND f_leak(b);
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 --dg-cascade
 --dg SELECT * FROM b1;
 --
 -- INSERT ... ON CONFLICT DO UPDATE and Row-level security
 --
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
---dg-skip: relation pg_policy cannot be opened: digres has no catalog tables
+SET SESSION AUTHORIZATION regress_rls_alice;
+--dg-cascade
 --dg DROP POLICY p1 ON document;
---dg-skip: relation pg_policy cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP POLICY p1r ON document;
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON document FOR SELECT USING (true);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p2 ON document FOR INSERT WITH CHECK (dauthor = current_user);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p3 ON document FOR UPDATE
 --dg   USING (cid = (SELECT cid from category WHERE cname = 'novel'))
 --dg   WITH CHECK (dauthor = current_user);
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 
 -- Exists...
-SELECT * FROM document WHERE did = 2;
+--dg-cascade
+--dg SELECT * FROM document WHERE did = 2;
 
 -- ...so violates actual WITH CHECK OPTION within UPDATE (not INSERT, since
 -- alternative UPDATE path happens to be taken):
@@ -1017,7 +934,8 @@ SELECT * FROM document WHERE did = 2;
 -- UPDATE path is taken, but UPDATE fails purely because *existing* row to be
 -- updated is not a "novel"/cid 11 (row is not leaked, even though we have
 -- SELECT privileges sufficient to see the row in this instance):
-INSERT INTO document VALUES (33, 22, 1, 'regress_rls_bob', 'okay science fiction'); -- preparation for next statement
+--dg-cascade
+--dg INSERT INTO document VALUES (33, 22, 1, 'regress_rls_bob', 'okay science fiction'); -- preparation for next statement
 --dg-cascade
 --dg INSERT INTO document VALUES (33, (SELECT cid from category WHERE cname = 'novel'), 1, 'regress_rls_bob', 'Some novel, replaces sci-fi') -- takes UPDATE path
 --dg     ON CONFLICT (did) DO UPDATE SET dtitle = EXCLUDED.dtitle;
@@ -1027,12 +945,14 @@ INSERT INTO document VALUES (33, 22, 1, 'regress_rls_bob', 'okay science fiction
 --dg INSERT INTO document VALUES (2, (SELECT cid from category WHERE cname = 'novel'), 1, 'regress_rls_bob', 'my first novel')
 --dg     ON CONFLICT (did) DO UPDATE SET dtitle = EXCLUDED.dtitle RETURNING *;
 -- Fine (we INSERT, so "cid = 33" ("technology") isn't evaluated):
-INSERT INTO document VALUES (78, (SELECT cid from category WHERE cname = 'novel'), 1, 'regress_rls_bob', 'some technology novel')
-    ON CONFLICT (did) DO UPDATE SET dtitle = EXCLUDED.dtitle, cid = 33 RETURNING *;
+--dg-cascade
+--dg INSERT INTO document VALUES (78, (SELECT cid from category WHERE cname = 'novel'), 1, 'regress_rls_bob', 'some technology novel')
+--dg     ON CONFLICT (did) DO UPDATE SET dtitle = EXCLUDED.dtitle, cid = 33 RETURNING *;
 -- Fine (same query, but we UPDATE, so "cid = 33", ("technology") is not the
 -- case in respect of *existing* tuple):
-INSERT INTO document VALUES (78, (SELECT cid from category WHERE cname = 'novel'), 1, 'regress_rls_bob', 'some technology novel')
-    ON CONFLICT (did) DO UPDATE SET dtitle = EXCLUDED.dtitle, cid = 33 RETURNING *;
+--dg-cascade
+--dg INSERT INTO document VALUES (78, (SELECT cid from category WHERE cname = 'novel'), 1, 'regress_rls_bob', 'some technology novel')
+--dg     ON CONFLICT (did) DO UPDATE SET dtitle = EXCLUDED.dtitle, cid = 33 RETURNING *;
 -- Same query a third time, but now fails due to existing tuple finally not
 -- passing quals:
 --dg-cascade
@@ -1041,8 +961,9 @@ INSERT INTO document VALUES (78, (SELECT cid from category WHERE cname = 'novel'
 -- Don't fail just because INSERT doesn't satisfy WITH CHECK option that
 -- originated as a barrier/USING() qual from the UPDATE.  Note that the UPDATE
 -- path *isn't* taken, and so UPDATE-related policy does not apply:
-INSERT INTO document VALUES (79, (SELECT cid from category WHERE cname = 'technology'), 1, 'regress_rls_bob', 'technology book, can only insert')
-    ON CONFLICT (did) DO UPDATE SET dtitle = EXCLUDED.dtitle RETURNING *;
+--dg-cascade
+--dg INSERT INTO document VALUES (79, (SELECT cid from category WHERE cname = 'technology'), 1, 'regress_rls_bob', 'technology book, can only insert')
+--dg     ON CONFLICT (did) DO UPDATE SET dtitle = EXCLUDED.dtitle RETURNING *;
 -- But this time, the same statement fails, because the UPDATE path is taken,
 -- and updating the row just inserted falls afoul of security barrier qual
 -- (enforced as WCO) -- what we might have updated target tuple to is
@@ -1052,21 +973,19 @@ INSERT INTO document VALUES (79, (SELECT cid from category WHERE cname = 'techno
 --dg     ON CONFLICT (did) DO UPDATE SET dtitle = EXCLUDED.dtitle RETURNING *;
 
 -- Test default USING qual enforced as WCO
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
---dg-skip: relation pg_policy cannot be opened: digres has no catalog tables
+SET SESSION AUTHORIZATION regress_rls_alice;
+--dg-cascade
 --dg DROP POLICY p1 ON document;
---dg-skip: relation pg_policy cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP POLICY p2 ON document;
---dg-skip: relation pg_policy cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP POLICY p3 ON document;
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p3_with_default ON document FOR UPDATE
 --dg   USING (cid = (SELECT cid from category WHERE cname = 'novel'));
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 -- Just because WCO-style enforcement of USING quals occurs with
 -- existing/target tuple does not mean that the implementation can be allowed
 -- to fail to also enforce this qual against the final tuple appended to
@@ -1090,22 +1009,20 @@ INSERT INTO document VALUES (79, (SELECT cid from category WHERE cname = 'techno
 --dg INSERT INTO document VALUES (2, (SELECT cid from category WHERE cname = 'technology'), 1, 'regress_rls_bob', 'my first novel')
 --dg     ON CONFLICT (did) DO UPDATE SET cid = EXCLUDED.cid, dtitle = EXCLUDED.dtitle RETURNING *;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
---dg-skip: relation pg_policy cannot be opened: digres has no catalog tables
+SET SESSION AUTHORIZATION regress_rls_alice;
+--dg-cascade
 --dg DROP POLICY p3_with_default ON document;
 
 --
 -- Test ALL policies with ON CONFLICT DO UPDATE (much the same as existing UPDATE
 -- tests)
 --
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p3_with_all ON document FOR ALL
 --dg   USING (cid = (SELECT cid from category WHERE cname = 'novel'))
 --dg   WITH CHECK (dauthor = current_user);
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 
 -- Fails, since ALL WCO is enforced in insert path:
 --dg-cascade
@@ -1125,31 +1042,30 @@ INSERT INTO document VALUES (79, (SELECT cid from category WHERE cname = 'techno
 -- MERGE
 --
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_policy cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP POLICY p3_with_all ON document;
 
 ALTER TABLE document ADD COLUMN dnotes text DEFAULT '';
 -- all documents are readable
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON document FOR SELECT USING (true);
 -- one may insert documents only authored by them
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p2 ON document FOR INSERT WITH CHECK (dauthor = current_user);
 -- one may only update documents in 'novel' category and new dlevel must be > 0
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p3 ON document FOR UPDATE
 --dg   USING (cid = (SELECT cid from category WHERE cname = 'novel'))
 --dg   WITH CHECK (dlevel > 0);
 -- one may only delete documents in 'manga' category
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p4 ON document FOR DELETE
 --dg   USING (cid = (SELECT cid from category WHERE cname = 'manga'));
 
 --dg-cascade
 --dg SELECT * FROM document;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 
 -- Fails, since update violates WITH CHECK qual on dlevel
 --dg-cascade
@@ -1233,8 +1149,7 @@ ALTER TABLE document ADD COLUMN dnotes text DEFAULT '';
 -- Switch to regress_rls_carol role and try the DELETE again. It should succeed
 -- this time
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_carol;
+SET SESSION AUTHORIZATION regress_rls_carol;
 
 --dg-skip: MERGE does not write to table "?" yet
 --dg MERGE INTO document d
@@ -1247,8 +1162,7 @@ RESET SESSION AUTHORIZATION;
 
 -- Switch back to regress_rls_bob role
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 
 -- Try INSERT action. This fails because we are trying to insert
 -- dauthor = regress_rls_dave and INSERT's WITH CHECK does not allow
@@ -1263,7 +1177,7 @@ RESET SESSION AUTHORIZATION;
 --dg 	INSERT VALUES (12, 11, 1, 'regress_rls_dave', 'another novel');
 
 -- This should be fine
---dg-skip: MERGE does not write to table "?" yet
+--dg-cascade
 --dg MERGE INTO document d
 --dg USING (SELECT 12 as sdid) s
 --dg ON did = s.sdid
@@ -1273,7 +1187,7 @@ RESET SESSION AUTHORIZATION;
 --dg 	INSERT VALUES (12, 11, 1, 'regress_rls_bob', 'another novel');
 
 -- ok
---dg-skip: MERGE does not write to table "?" yet
+--dg-cascade
 --dg MERGE INTO document d
 --dg USING (SELECT 1 as sdid) s
 --dg ON did = s.sdid
@@ -1285,14 +1199,13 @@ RESET SESSION AUTHORIZATION;
 -- drop and create a new SELECT policy which prevents us from reading
 -- any document except with category 'novel'
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_policy cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP POLICY p1 ON document;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON document FOR SELECT
 --dg   USING (cid = (SELECT cid from category WHERE cname = 'novel'));
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 
 -- MERGE can no longer see the matching row and hence attempts the
 -- NOT MATCHED action, which results in unique key violation
@@ -1324,7 +1237,7 @@ RESET SESSION AUTHORIZATION;
 --dg 			   cid = (SELECT cid from category WHERE cname = 'novel');
 
 -- OK to insert a new row that is not visible
---dg-skip: MERGE does not write to table "?" yet
+--dg-cascade
 --dg MERGE INTO document d
 --dg USING (SELECT 13 as sdid) s
 --dg ON did = s.sdid
@@ -1332,8 +1245,7 @@ RESET SESSION AUTHORIZATION;
 --dg 	UPDATE SET dnotes = dnotes || ' notes added by merge8 '
 --dg WHEN NOT MATCHED THEN
 --dg 	INSERT VALUES (13, 44, 1, 'regress_rls_bob', 'new manga');
---dg-cascade
---dg SELECT * FROM document WHERE did = 13;
+SELECT * FROM document WHERE did = 13;
 
 -- but not OK if RETURNING is used
 --dg-cascade
@@ -1360,7 +1272,7 @@ RESET SESSION AUTHORIZATION;
 RESET SESSION AUTHORIZATION;
 -- drop the restrictive SELECT policy so that we can look at the
 -- final state of the table
---dg-skip: relation pg_policy cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP POLICY p1 ON document;
 -- Just check everything went per plan
 --dg-cascade
@@ -1369,14 +1281,12 @@ RESET SESSION AUTHORIZATION;
 --
 -- ROLE/GROUP
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 CREATE TABLE z1 (a int, b text);
 CREATE TABLE z2 (a int, b text);
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT SELECT ON z1,z2 TO regress_rls_group1, regress_rls_group2,
---dg     regress_rls_bob, regress_rls_carol;
+GRANT SELECT ON z1,z2 TO regress_rls_group1, regress_rls_group2,
+    regress_rls_bob, regress_rls_carol;
 
 INSERT INTO z1 VALUES
     (1, 'aba'),
@@ -1384,16 +1294,15 @@ INSERT INTO z1 VALUES
     (3, 'ccc'),
     (4, 'dad');
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON z1 TO regress_rls_group1 USING (a % 2 = 0);
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p2 ON z1 TO regress_rls_group2 USING (a % 2 = 1);
 
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE z1 ENABLE ROW LEVEL SECURITY;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 --dg-cascade
 --dg SELECT * FROM z1 WHERE f_leak(b);
 --dg-cascade
@@ -1414,8 +1323,7 @@ INSERT INTO z1 VALUES
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) EXECUTE plancache_test3;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_rls_group1;
+SET ROLE regress_rls_group1;
 --dg-cascade
 --dg SELECT * FROM z1 WHERE f_leak(b);
 --dg-cascade
@@ -1428,8 +1336,7 @@ INSERT INTO z1 VALUES
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) EXECUTE plancache_test3;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_carol;
+SET SESSION AUTHORIZATION regress_rls_carol;
 --dg-cascade
 --dg SELECT * FROM z1 WHERE f_leak(b);
 --dg-cascade
@@ -1442,8 +1349,7 @@ INSERT INTO z1 VALUES
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) EXECUTE plancache_test3;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_rls_group2;
+SET ROLE regress_rls_group2;
 --dg-cascade
 --dg SELECT * FROM z1 WHERE f_leak(b);
 --dg-cascade
@@ -1460,24 +1366,21 @@ INSERT INTO z1 VALUES
 -- Views should follow policy for view owner.
 --
 -- View and Table owner are the same.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 --dg-cascade
 --dg CREATE VIEW rls_view AS SELECT * FROM z1 WHERE f_leak(b);
 --dg-cascade
 --dg GRANT SELECT ON rls_view TO regress_rls_bob;
 
 -- Query as role that is not owner of view or table.  Should return all records.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 --dg-cascade
 --dg SELECT * FROM rls_view;
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) SELECT * FROM rls_view;
 
 -- Query as view/table owner.  Should return all records.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 --dg-cascade
 --dg SELECT * FROM rls_view;
 --dg-cascade
@@ -1486,8 +1389,7 @@ INSERT INTO z1 VALUES
 --dg DROP VIEW rls_view;
 
 -- View and Table owners are different.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 --dg-cascade
 --dg CREATE VIEW rls_view AS SELECT * FROM z1 WHERE f_leak(b);
 --dg-cascade
@@ -1495,8 +1397,7 @@ INSERT INTO z1 VALUES
 
 -- Query as role that is not owner of view but is owner of table.
 -- Should return records based on view owner policies.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 --dg-cascade
 --dg SELECT * FROM rls_view;
 --dg-cascade
@@ -1504,88 +1405,74 @@ INSERT INTO z1 VALUES
 
 -- Query as role that is not owner of table but is owner of view.
 -- Should return records based on view owner policies.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 --dg-cascade
 --dg SELECT * FROM rls_view;
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) SELECT * FROM rls_view;
 
 -- Query as role that is not the owner of the table or view without permissions.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_carol;
+SET SESSION AUTHORIZATION regress_rls_carol;
 --dg-cascade
 --dg SELECT * FROM rls_view; --fail - permission denied.
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) SELECT * FROM rls_view; --fail - permission denied.
 
 -- Query as role that is not the owner of the table or view with permissions.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 --dg-cascade
 --dg GRANT SELECT ON rls_view TO regress_rls_carol;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_carol;
+SET SESSION AUTHORIZATION regress_rls_carol;
 --dg-cascade
 --dg SELECT * FROM rls_view;
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) SELECT * FROM rls_view;
 
 -- Policy requiring access to another table.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 CREATE TABLE z1_blacklist (a int);
 INSERT INTO z1_blacklist VALUES (3), (4);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p3 ON z1 AS RESTRICTIVE USING (a NOT IN (SELECT a FROM z1_blacklist));
 
 -- Query as role that is not owner of table but is owner of view without permissions.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 --dg-cascade
 --dg SELECT * FROM rls_view; --fail - permission denied.
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) SELECT * FROM rls_view; --fail - permission denied.
 
 -- Query as role that is not the owner of the table or view without permissions.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_carol;
+SET SESSION AUTHORIZATION regress_rls_carol;
 --dg-cascade
 --dg SELECT * FROM rls_view; --fail - permission denied.
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) SELECT * FROM rls_view; --fail - permission denied.
 
 -- Query as role that is not owner of table but is owner of view with permissions.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT SELECT ON z1_blacklist TO regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_alice;
+GRANT SELECT ON z1_blacklist TO regress_rls_bob;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 --dg-cascade
 --dg SELECT * FROM rls_view;
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) SELECT * FROM rls_view;
 
 -- Query as role that is not the owner of the table or view with permissions.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_carol;
+SET SESSION AUTHORIZATION regress_rls_carol;
 --dg-cascade
 --dg SELECT * FROM rls_view;
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) SELECT * FROM rls_view;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg REVOKE SELECT ON z1_blacklist FROM regress_rls_bob;
---dg-skip: relation pg_policy cannot be opened: digres has no catalog tables
+SET SESSION AUTHORIZATION regress_rls_alice;
+REVOKE SELECT ON z1_blacklist FROM regress_rls_bob;
+--dg-cascade
 --dg DROP POLICY p3 ON z1;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 --dg-cascade
 --dg DROP VIEW rls_view;
 
@@ -1593,8 +1480,7 @@ INSERT INTO z1_blacklist VALUES (3), (4);
 -- Security invoker views should follow policy for current user.
 --
 -- View and table owner are the same.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 --dg-cascade
 --dg CREATE VIEW rls_view WITH (security_invoker) AS
 --dg     SELECT * FROM z1 WHERE f_leak(b);
@@ -1611,28 +1497,24 @@ INSERT INTO z1_blacklist VALUES (3), (4);
 
 -- Queries as other users.
 -- Should return records based on current user's policies.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 --dg-cascade
 --dg SELECT * FROM rls_view;
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) SELECT * FROM rls_view;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_carol;
+SET SESSION AUTHORIZATION regress_rls_carol;
 --dg-cascade
 --dg SELECT * FROM rls_view;
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) SELECT * FROM rls_view;
 
 -- View and table owners are different.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 --dg-cascade
 --dg DROP VIEW rls_view;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 --dg-cascade
 --dg CREATE VIEW rls_view WITH (security_invoker) AS
 --dg     SELECT * FROM z1 WHERE f_leak(b);
@@ -1642,8 +1524,7 @@ INSERT INTO z1_blacklist VALUES (3), (4);
 --dg GRANT SELECT ON rls_view TO regress_rls_carol;
 
 -- Query as table owner.  Should return all records.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 --dg-cascade
 --dg SELECT * FROM rls_view;
 --dg-cascade
@@ -1651,90 +1532,75 @@ INSERT INTO z1_blacklist VALUES (3), (4);
 
 -- Queries as other users.
 -- Should return records based on current user's policies.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 --dg-cascade
 --dg SELECT * FROM rls_view;
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) SELECT * FROM rls_view;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_carol;
+SET SESSION AUTHORIZATION regress_rls_carol;
 --dg-cascade
 --dg SELECT * FROM rls_view;
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) SELECT * FROM rls_view;
 
 -- Policy requiring access to another table.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+SET SESSION AUTHORIZATION regress_rls_alice;
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p3 ON z1 AS RESTRICTIVE USING (a NOT IN (SELECT a FROM z1_blacklist));
 
 -- Query as role that is not owner of table but is owner of view without permissions.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 --dg-cascade
 --dg SELECT * FROM rls_view; --fail - permission denied.
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) SELECT * FROM rls_view; --fail - permission denied.
 
 -- Query as role that is not the owner of the table or view without permissions.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_carol;
+SET SESSION AUTHORIZATION regress_rls_carol;
 --dg-cascade
 --dg SELECT * FROM rls_view; --fail - permission denied.
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) SELECT * FROM rls_view; --fail - permission denied.
 
 -- Query as role that is not owner of table but is owner of view with permissions.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT SELECT ON z1_blacklist TO regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_alice;
+GRANT SELECT ON z1_blacklist TO regress_rls_bob;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 --dg-cascade
 --dg SELECT * FROM rls_view;
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) SELECT * FROM rls_view;
 
 -- Query as role that is not the owner of the table or view without permissions.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_carol;
+SET SESSION AUTHORIZATION regress_rls_carol;
 --dg-cascade
 --dg SELECT * FROM rls_view; --fail - permission denied.
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) SELECT * FROM rls_view; --fail - permission denied.
 
 -- Query as role that is not the owner of the table or view with permissions.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT SELECT ON z1_blacklist TO regress_rls_carol;
+SET SESSION AUTHORIZATION regress_rls_alice;
+GRANT SELECT ON z1_blacklist TO regress_rls_carol;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_carol;
+SET SESSION AUTHORIZATION regress_rls_carol;
 --dg-cascade
 --dg SELECT * FROM rls_view;
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) SELECT * FROM rls_view;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 --dg-cascade
 --dg DROP VIEW rls_view;
 
 --
 -- Command specific
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 
 CREATE TABLE x1 (a int, b text, c text);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
---dg GRANT ALL ON x1 TO PUBLIC;
+GRANT ALL ON x1 TO PUBLIC;
 
 INSERT INTO x1 VALUES
     (1, 'abc', 'regress_rls_bob'),
@@ -1746,29 +1612,27 @@ INSERT INTO x1 VALUES
     (7, 'fgh', 'regress_rls_carol'),
     (8, 'fgh', 'regress_rls_carol');
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p0 ON x1 FOR ALL USING (c = current_user);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON x1 FOR SELECT USING (a % 2 = 0);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p2 ON x1 FOR INSERT WITH CHECK (a % 2 = 1);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p3 ON x1 FOR UPDATE USING (a % 2 = 0);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p4 ON x1 FOR DELETE USING (a < 8);
 
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE x1 ENABLE ROW LEVEL SECURITY;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 --dg-cascade
 --dg SELECT * FROM x1 WHERE f_leak(b) ORDER BY a ASC;
 --dg-cascade
 --dg UPDATE x1 SET b = b || '_updt' WHERE f_leak(b) RETURNING *;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_carol;
+SET SESSION AUTHORIZATION regress_rls_carol;
 --dg-cascade
 --dg SELECT * FROM x1 WHERE f_leak(b) ORDER BY a ASC;
 --dg-cascade
@@ -1779,21 +1643,19 @@ INSERT INTO x1 VALUES
 --
 -- Duplicate Policy Names
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 CREATE TABLE y1 (a int, b text);
 CREATE TABLE y2 (a int, b text);
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT ALL ON y1, y2 TO regress_rls_bob;
+GRANT ALL ON y1, y2 TO regress_rls_bob;
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON y1 FOR ALL USING (a % 2 = 0);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p2 ON y1 FOR SELECT USING (a > 2);
 --dg-cascade
 --dg CREATE POLICY p1 ON y1 FOR SELECT USING (a % 2 = 1);  --fail
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON y2 FOR ALL USING (a % 2 = 0);  --OK
 
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
@@ -1805,8 +1667,7 @@ CREATE TABLE y2 (a int, b text);
 -- Expression structure with SBV
 --
 -- Create view as table owner.  RLS should NOT be applied.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 --dg-cascade
 --dg CREATE VIEW rls_sbv WITH (security_barrier) AS
 --dg     SELECT * FROM y1 WHERE f_leak(b);
@@ -1816,8 +1677,7 @@ CREATE TABLE y2 (a int, b text);
 --dg DROP VIEW rls_sbv;
 
 -- Create view as role that does not own table.  RLS should be applied.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 --dg-cascade
 --dg CREATE VIEW rls_sbv WITH (security_barrier) AS
 --dg     SELECT * FROM y1 WHERE f_leak(b);
@@ -1829,16 +1689,14 @@ CREATE TABLE y2 (a int, b text);
 --
 -- Expression structure
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 INSERT INTO y2 (SELECT x, public.fipshash(x::text) FROM generate_series(0,20) x);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p2 ON y2 USING (a % 3 = 0);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p3 ON y2 USING (a % 4 = 0);
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 --dg-cascade
 --dg SELECT * FROM y2 WHERE f_leak(b);
 --dg-cascade
@@ -1881,35 +1739,31 @@ RESET SESSION AUTHORIZATION;
 --dg-cascade
 --dg CREATE TABLE t1 (a integer);
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT SELECT ON t1 TO regress_rls_bob, regress_rls_carol;
+GRANT SELECT ON t1 TO regress_rls_bob, regress_rls_carol;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON t1 TO regress_rls_bob USING ((a % 2) = 0);
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p2 ON t1 TO regress_rls_carol USING ((a % 4) = 0);
 
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE t1 ENABLE ROW LEVEL SECURITY;
 
 -- Prepare as regress_rls_bob
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_rls_bob;
+SET ROLE regress_rls_bob;
 PREPARE role_inval AS SELECT * FROM t1;
 -- Check plan
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) EXECUTE role_inval;
 
 -- Change to regress_rls_carol
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_rls_carol;
+SET ROLE regress_rls_carol;
 -- Check plan- should be different
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) EXECUTE role_inval;
 
 -- Change back to regress_rls_bob
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_rls_bob;
+SET ROLE regress_rls_bob;
 -- Check plan- should be back to original
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) EXECUTE role_inval;
@@ -1920,19 +1774,17 @@ PREPARE role_inval AS SELECT * FROM t1;
 RESET SESSION AUTHORIZATION;
 DROP TABLE t1 CASCADE;
 CREATE TABLE t1 (a integer, b text);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON t1 USING (a % 2 = 0);
 
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE t1 ENABLE ROW LEVEL SECURITY;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT ALL ON t1 TO regress_rls_bob;
+GRANT ALL ON t1 TO regress_rls_bob;
 
 INSERT INTO t1 (SELECT x, public.fipshash(x::text) FROM generate_series(0,20) x);
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 
 --dg-cascade
 --dg WITH cte1 AS MATERIALIZED (SELECT * FROM t1 WHERE f_leak(b)) SELECT * FROM cte1;
@@ -1945,7 +1797,8 @@ WITH cte1 AS (UPDATE t1 SET a = a RETURNING *) SELECT * FROM cte1; --ok
 
 --dg-cascade
 --dg WITH cte1 AS (INSERT INTO t1 VALUES (21, 'Fail') RETURNING *) SELECT * FROM cte1; --fail
-WITH cte1 AS (INSERT INTO t1 VALUES (20, 'Success') RETURNING *) SELECT * FROM cte1; --ok
+--dg-cascade
+--dg WITH cte1 AS (INSERT INTO t1 VALUES (20, 'Success') RETURNING *) SELECT * FROM cte1; --ok
 
 --
 -- Rename Policy
@@ -1960,7 +1813,7 @@ RESET SESSION AUTHORIZATION;
 --dg     JOIN pg_class pc ON (pc.oid = pol.polrelid)
 --dg     WHERE relname = 't1';
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER POLICY p1 ON t1 RENAME TO p2; --ok
 
 --dg-cascade
@@ -1972,8 +1825,7 @@ RESET SESSION AUTHORIZATION;
 --
 -- Check INSERT SELECT
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 CREATE TABLE t2 (a integer, b text);
 INSERT INTO t2 (SELECT * FROM t1);
 --dg-cascade
@@ -1992,15 +1844,13 @@ SELECT * INTO t4 FROM t1;
 --
 -- RLS with JOIN
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 CREATE TABLE blog (id integer, author text, post text);
 CREATE TABLE comment (blog_id integer, message text);
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT ALL ON blog, comment TO regress_rls_bob;
+GRANT ALL ON blog, comment TO regress_rls_bob;
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY blog_1 ON blog USING (id % 2 = 0);
 
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
@@ -2021,8 +1871,7 @@ INSERT INTO comment VALUES
     (4, 'insane!'),
     (2, 'who did it?');
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 -- Check RLS JOIN with Non-RLS.
 --dg-cascade
 --dg SELECT id, author, message FROM blog JOIN comment ON id = blog_id;
@@ -2030,34 +1879,30 @@ INSERT INTO comment VALUES
 --dg-cascade
 --dg SELECT id, author, message FROM comment JOIN blog ON id = blog_id;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+SET SESSION AUTHORIZATION regress_rls_alice;
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY comment_1 ON comment USING (blog_id < 4);
 
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE comment ENABLE ROW LEVEL SECURITY;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 -- Check RLS JOIN RLS
 --dg-cascade
 --dg SELECT id, author, message FROM blog JOIN comment ON id = blog_id;
 --dg-cascade
 --dg SELECT id, author, message FROM comment JOIN blog ON id = blog_id;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 DROP TABLE blog, comment;
 
 --
 -- Default Deny Policy
 --
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_policy cannot be opened: digres has no catalog tables
---dg DROP POLICY p2 ON t1;
 --dg-cascade
---dg ALTER TABLE t1 OWNER TO regress_rls_alice;
+--dg DROP POLICY p2 ON t1;
+ALTER TABLE t1 OWNER TO regress_rls_alice;
 
 -- Check that default deny does not apply to superuser.
 RESET SESSION AUTHORIZATION;
@@ -2066,22 +1911,19 @@ RESET SESSION AUTHORIZATION;
 EXPLAIN (COSTS OFF) SELECT * FROM t1;
 
 -- Check that default deny does not apply to table owner.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 --dg-cascade
 --dg SELECT * FROM t1;
 EXPLAIN (COSTS OFF) SELECT * FROM t1;
 
 -- Check that default deny applies to non-owner/non-superuser when RLS on.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 SET row_security TO ON;
 --dg-cascade
 --dg SELECT * FROM t1;
 --dg-cascade
 --dg EXPLAIN (COSTS OFF) SELECT * FROM t1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 --dg-cascade
 --dg SELECT * FROM t1;
 --dg-cascade
@@ -2094,14 +1936,13 @@ SET row_security TO ON;
 RESET SESSION AUTHORIZATION;
 DROP TABLE copy_t CASCADE;
 CREATE TABLE copy_t (a integer, b text);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON copy_t USING (a % 2 = 0);
 
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE copy_t ENABLE ROW LEVEL SECURITY;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT ALL ON copy_t TO regress_rls_bob, regress_rls_exempt_user;
+GRANT ALL ON copy_t TO regress_rls_bob, regress_rls_exempt_user;
 
 INSERT INTO copy_t (SELECT x, public.fipshash(x::text) FROM generate_series(0,10) x);
 
@@ -2113,8 +1954,7 @@ SET row_security TO ON;
 COPY (SELECT * FROM copy_t ORDER BY a ASC) TO STDOUT WITH DELIMITER ',';
 
 -- Check COPY TO as user with permissions.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 SET row_security TO OFF;
 --dg-cascade
 --dg COPY (SELECT * FROM copy_t ORDER BY a ASC) TO STDOUT WITH DELIMITER ','; --fail - would be affected by RLS
@@ -2122,35 +1962,31 @@ SET row_security TO ON;
 COPY (SELECT * FROM copy_t ORDER BY a ASC) TO STDOUT WITH DELIMITER ','; --ok
 
 -- Check COPY TO as user with permissions and BYPASSRLS
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_exempt_user;
+SET SESSION AUTHORIZATION regress_rls_exempt_user;
 SET row_security TO OFF;
 COPY (SELECT * FROM copy_t ORDER BY a ASC) TO STDOUT WITH DELIMITER ','; --ok
 SET row_security TO ON;
 COPY (SELECT * FROM copy_t ORDER BY a ASC) TO STDOUT WITH DELIMITER ','; --ok
 
 -- Check COPY TO as user without permissions. SET row_security TO OFF;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_carol;
+SET SESSION AUTHORIZATION regress_rls_carol;
 SET row_security TO OFF;
 --dg-cascade
 --dg COPY (SELECT * FROM copy_t ORDER BY a ASC) TO STDOUT WITH DELIMITER ','; --fail - would be affected by RLS
 SET row_security TO ON;
---dg-cascade
---dg COPY (SELECT * FROM copy_t ORDER BY a ASC) TO STDOUT WITH DELIMITER ','; --fail - permission denied
+COPY (SELECT * FROM copy_t ORDER BY a ASC) TO STDOUT WITH DELIMITER ','; --fail - permission denied
 
 -- Check COPY relation TO; keep it just one row to avoid reordering issues
 RESET SESSION AUTHORIZATION;
 SET row_security TO ON;
 CREATE TABLE copy_rel_to (a integer, b text);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON copy_rel_to USING (a % 2 = 0);
 
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE copy_rel_to ENABLE ROW LEVEL SECURITY;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT ALL ON copy_rel_to TO regress_rls_bob, regress_rls_exempt_user;
+GRANT ALL ON copy_rel_to TO regress_rls_bob, regress_rls_exempt_user;
 
 INSERT INTO copy_rel_to VALUES (1, public.fipshash('1'));
 
@@ -2162,8 +1998,7 @@ SET row_security TO ON;
 COPY copy_rel_to TO STDOUT WITH DELIMITER ',';
 
 -- Check COPY TO as user with permissions.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 SET row_security TO OFF;
 --dg-cascade
 --dg COPY copy_rel_to TO STDOUT WITH DELIMITER ','; --fail - would be affected by RLS
@@ -2171,22 +2006,18 @@ SET row_security TO ON;
 COPY copy_rel_to TO STDOUT WITH DELIMITER ','; --ok
 
 -- Check COPY TO as user with permissions and BYPASSRLS
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_exempt_user;
+SET SESSION AUTHORIZATION regress_rls_exempt_user;
 SET row_security TO OFF;
 COPY copy_rel_to TO STDOUT WITH DELIMITER ','; --ok
 SET row_security TO ON;
 COPY copy_rel_to TO STDOUT WITH DELIMITER ','; --ok
 
 -- Check COPY TO as user without permissions. SET row_security TO OFF;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_carol;
+SET SESSION AUTHORIZATION regress_rls_carol;
 SET row_security TO OFF;
---dg-cascade
---dg COPY copy_rel_to TO STDOUT WITH DELIMITER ','; --fail - permission denied
+COPY copy_rel_to TO STDOUT WITH DELIMITER ','; --fail - permission denied
 SET row_security TO ON;
---dg-cascade
---dg COPY copy_rel_to TO STDOUT WITH DELIMITER ','; --fail - permission denied
+COPY copy_rel_to TO STDOUT WITH DELIMITER ','; --fail - permission denied
 
 -- Check behavior with a child table.
 RESET SESSION AUTHORIZATION;
@@ -2204,8 +2035,7 @@ SET row_security TO ON;
 COPY copy_rel_to TO STDOUT WITH DELIMITER ',';
 
 -- Check COPY TO as user with permissions.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 SET row_security TO OFF;
 --dg-cascade
 --dg COPY copy_rel_to TO STDOUT WITH DELIMITER ','; --fail - would be affected by RLS
@@ -2213,22 +2043,18 @@ SET row_security TO ON;
 COPY copy_rel_to TO STDOUT WITH DELIMITER ','; --ok
 
 -- Check COPY TO as user with permissions and BYPASSRLS
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_exempt_user;
+SET SESSION AUTHORIZATION regress_rls_exempt_user;
 SET row_security TO OFF;
 COPY copy_rel_to TO STDOUT WITH DELIMITER ','; --ok
 SET row_security TO ON;
 COPY copy_rel_to TO STDOUT WITH DELIMITER ','; --ok
 
 -- Check COPY TO as user without permissions. SET row_security TO OFF;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_carol;
+SET SESSION AUTHORIZATION regress_rls_carol;
 SET row_security TO OFF;
---dg-cascade
---dg COPY copy_rel_to TO STDOUT WITH DELIMITER ','; --fail - permission denied
+COPY copy_rel_to TO STDOUT WITH DELIMITER ','; --fail - permission denied
 SET row_security TO ON;
---dg-cascade
---dg COPY copy_rel_to TO STDOUT WITH DELIMITER ','; --fail - permission denied
+COPY copy_rel_to TO STDOUT WITH DELIMITER ','; --fail - permission denied
 
 -- Check COPY FROM as Superuser/owner.
 RESET SESSION AUTHORIZATION;
@@ -2248,8 +2074,7 @@ COPY copy_t FROM STDIN; --ok
 \.
 
 -- Check COPY FROM as user with permissions.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 SET row_security TO OFF;
 --dg-cascade
 --dg COPY copy_t FROM STDIN; --fail - would be affected by RLS.
@@ -2260,8 +2085,7 @@ SET row_security TO ON;
 --dg \.
 
 -- Check COPY FROM as user with permissions and BYPASSRLS
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_exempt_user;
+SET SESSION AUTHORIZATION regress_rls_exempt_user;
 SET row_security TO ON;
 COPY copy_t FROM STDIN; --ok
 1	abc
@@ -2271,16 +2095,13 @@ COPY copy_t FROM STDIN; --ok
 \.
 
 -- Check COPY FROM as user without permissions.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_carol;
+SET SESSION AUTHORIZATION regress_rls_carol;
 SET row_security TO OFF;
---dg-cascade
---dg COPY copy_t FROM STDIN; --fail - permission denied.
---dg \.
+COPY copy_t FROM STDIN; --fail - permission denied.
+\.
 SET row_security TO ON;
---dg-cascade
---dg COPY copy_t FROM STDIN; --fail - permission denied.
---dg \.
+COPY copy_t FROM STDIN; --fail - permission denied.
+\.
 
 RESET SESSION AUTHORIZATION;
 DROP TABLE copy_t;
@@ -2288,12 +2109,10 @@ DROP TABLE copy_t;
 --dg DROP TABLE copy_rel_to CASCADE;
 
 -- Check WHERE CURRENT OF
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 
 CREATE TABLE current_check (currentid int, payload text, rlsuser text);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
---dg GRANT ALL ON current_check TO PUBLIC;
+GRANT ALL ON current_check TO PUBLIC;
 
 INSERT INTO current_check VALUES
     (1, 'abc', 'regress_rls_bob'),
@@ -2301,18 +2120,17 @@ INSERT INTO current_check VALUES
     (3, 'cde', 'regress_rls_bob'),
     (4, 'def', 'regress_rls_bob');
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON current_check FOR SELECT USING (currentid % 2 = 0);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p2 ON current_check FOR DELETE USING (currentid = 4 AND rlsuser = current_user);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p3 ON current_check FOR UPDATE USING (currentid = 4) WITH CHECK (rlsuser = current_user);
 
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE current_check ENABLE ROW LEVEL SECURITY;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 
 -- Can SELECT even rows
 --dg-cascade
@@ -2366,7 +2184,7 @@ INSERT INTO current_check_2 VALUES (1, 'Apple');
 --dg ALTER TABLE current_check_2 FORCE ROW LEVEL SECURITY;
 -- policy must accept ctid = (InvalidBlockNumber,0) since updates check it
 -- before assigning a ctid to the new row
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: column "?" does not exist
 --dg CREATE POLICY p1 ON current_check_2 AS PERMISSIVE
 --dg   USING (ctid IN ('(0,1)', '(0,2)', '(4294967295,0)'));
 --dg-skip: column "?" does not exist
@@ -2385,8 +2203,7 @@ ROLLBACK;
 -- check pg_stats view filtering
 --
 SET row_security TO ON;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 ANALYZE current_check;
 -- Stats visible
 SELECT row_security_active('current_check');
@@ -2395,8 +2212,7 @@ SELECT row_security_active('current_check');
 --dg   WHERE tablename = 'current_check'
 --dg   ORDER BY 1;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
+SET SESSION AUTHORIZATION regress_rls_bob;
 -- Stats not visible
 --dg-cascade
 --dg SELECT row_security_active('current_check');
@@ -2410,16 +2226,14 @@ SELECT row_security_active('current_check');
 --
 BEGIN;
 CREATE TABLE coll_t (c) AS VALUES ('bar'::text);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY coll_p ON coll_t USING (c < ('foo'::text COLLATE "C"));
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE coll_t ENABLE ROW LEVEL SECURITY;
---dg-cascade
---dg GRANT SELECT ON coll_t TO regress_rls_alice;
+GRANT SELECT ON coll_t TO regress_rls_alice;
 --dg-cascade
 --dg SELECT (string_to_array(polqual, ':'))[7] AS inputcollid FROM pg_policy WHERE polrelid = 'coll_t'::regclass;
---dg-cascade
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 --dg-cascade
 --dg SELECT * FROM coll_t;
 ROLLBACK;
@@ -2429,9 +2243,9 @@ ROLLBACK;
 --
 RESET SESSION AUTHORIZATION;
 BEGIN;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: CREATE ROLE cannot run inside a transaction block
 --dg CREATE ROLE regress_rls_eve;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: CREATE ROLE cannot run inside a transaction block
 --dg CREATE ROLE regress_rls_frank;
 CREATE TABLE tbl1 (c) AS VALUES ('bar'::text);
 --dg-cascade
@@ -2497,43 +2311,41 @@ ROLLBACK; -- cleanup
 --
 BEGIN;
 CREATE TABLE t (c) AS VALUES ('bar'::text);
---dg-differs: another error: relation pg_class cannot be opened: digres has no catalog tables
---dg CREATE POLICY p ON t USING (max(c)); -- fails: aggregate functions are not allowed in policy expressions
+CREATE POLICY p ON t USING (max(c)); -- fails: aggregate functions are not allowed in policy expressions
 ROLLBACK;
 
 --
 -- Non-target relations are only subject to SELECT policies
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 CREATE TABLE r1 (a int);
 CREATE TABLE r2 (a int);
 INSERT INTO r1 VALUES (10), (20);
 INSERT INTO r2 VALUES (10), (20);
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT ALL ON r1, r2 TO regress_rls_bob;
+GRANT ALL ON r1, r2 TO regress_rls_bob;
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON r1 USING (true);
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r1 ENABLE ROW LEVEL SECURITY;
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON r2 FOR SELECT USING (true);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p2 ON r2 FOR INSERT WITH CHECK (false);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p3 ON r2 FOR UPDATE USING (false);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p4 ON r2 FOR DELETE USING (false);
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r2 ENABLE ROW LEVEL SECURITY;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_bob;
-SELECT * FROM r1;
-SELECT * FROM r2;
+SET SESSION AUTHORIZATION regress_rls_bob;
+--dg-cascade
+--dg SELECT * FROM r1;
+--dg-cascade
+--dg SELECT * FROM r2;
 
 -- r2 is read-only
 --dg-cascade
@@ -2555,21 +2367,19 @@ SELECT * FROM r2;
 --dg-cascade
 --dg SELECT * FROM r2;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 DROP TABLE r1;
 DROP TABLE r2;
 
 --
 -- FORCE ROW LEVEL SECURITY applies RLS to owners too
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 SET row_security = on;
 CREATE TABLE r1 (a int);
 INSERT INTO r1 VALUES (10), (20);
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON r1 USING (false);
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r1 ENABLE ROW LEVEL SECURITY;
@@ -2607,8 +2417,7 @@ DROP TABLE r1;
 --
 -- FORCE ROW LEVEL SECURITY does not break RI
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 SET row_security = on;
 CREATE TABLE r1 (a int PRIMARY KEY);
 CREATE TABLE r2 (a int REFERENCES r1);
@@ -2618,7 +2427,7 @@ INSERT INTO r2 VALUES (10), (20);
 -- Create policies on r2 which prevent the
 -- owner from seeing any rows, but RI should
 -- still see them.
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON r2 USING (false);
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r2 ENABLE ROW LEVEL SECURITY;
@@ -2629,7 +2438,7 @@ INSERT INTO r2 VALUES (10), (20);
 DELETE FROM r1;
 
 -- Reset r2 to no-RLS
---dg-skip: relation pg_policy cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP POLICY p1 ON r2;
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r2 NO FORCE ROW LEVEL SECURITY;
@@ -2640,7 +2449,7 @@ DELETE FROM r1;
 DELETE FROM r2;
 
 -- Change r1 to not allow rows to be seen
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON r1 USING (false);
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r1 ENABLE ROW LEVEL SECURITY;
@@ -2666,7 +2475,7 @@ INSERT INTO r2 VALUES (10), (20);
 -- Create policies on r2 which prevent the
 -- owner from seeing any rows, but RI should
 -- still see them.
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON r2 USING (false);
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r2 ENABLE ROW LEVEL SECURITY;
@@ -2696,7 +2505,7 @@ INSERT INTO r2 VALUES (10), (20);
 -- Create policies on r2 which prevent the
 -- owner from seeing any rows, but RI should
 -- still see them.
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON r2 USING (false);
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r2 ENABLE ROW LEVEL SECURITY;
@@ -2721,14 +2530,13 @@ DROP TABLE r1;
 -- Test INSERT+RETURNING applies SELECT policies as
 -- WithCheckOptions (meaning an error is thrown)
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 SET row_security = on;
 CREATE TABLE r1 (a int);
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON r1 FOR SELECT USING (false);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p2 ON r1 FOR INSERT WITH CHECK (true);
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r1 ENABLE ROW LEVEL SECURITY;
@@ -2736,11 +2544,11 @@ CREATE TABLE r1 (a int);
 --dg ALTER TABLE r1 FORCE ROW LEVEL SECURITY;
 
 -- Works fine
-INSERT INTO r1 VALUES (10), (20);
+--dg-cascade
+--dg INSERT INTO r1 VALUES (10), (20);
 
 -- No error, but no rows
---dg-cascade
---dg TABLE r1;
+TABLE r1;
 
 SET row_security = off;
 -- fail, would be affected by RLS
@@ -2759,16 +2567,15 @@ DROP TABLE r1;
 -- Test UPDATE+RETURNING applies SELECT policies as
 -- WithCheckOptions (meaning an error is thrown)
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 SET row_security = on;
 CREATE TABLE r1 (a int PRIMARY KEY);
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON r1 FOR SELECT USING (a < 20);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p2 ON r1 FOR UPDATE USING (a < 20) WITH CHECK (true);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p3 ON r1 FOR INSERT WITH CHECK (true);
 INSERT INTO r1 VALUES (10);
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
@@ -2782,7 +2589,8 @@ UPDATE r1 SET a = 30;
 -- Show updated rows
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE r1 NO FORCE ROW LEVEL SECURITY;
-TABLE r1;
+--dg-cascade
+--dg TABLE r1;
 -- reset value in r1 for test with RETURNING
 UPDATE r1 SET a = 10;
 
@@ -2815,8 +2623,7 @@ DROP TABLE r1;
 --
 -- Test policies using virtual generated columns
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 SET row_security = on;
 --dg-skip: column "?" asks for what CREATE TABLE does not support yet
 --dg CREATE TABLE r1 (a int, b int GENERATED ALWAYS AS (a * 10) VIRTUAL);
@@ -2825,11 +2632,11 @@ SET row_security = on;
 --dg-cascade
 --dg INSERT INTO r1 VALUES (1), (2), (4);
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE POLICY p0 ON r1 USING (b * 10 = c);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE POLICY p1 ON r1 AS RESTRICTIVE USING (b > 10);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE POLICY p2 ON r1 AS RESTRICTIVE USING ((SELECT c) < 400);
 --dg-cascade
 --dg ALTER TABLE r1 ENABLE ROW LEVEL SECURITY;
@@ -2858,9 +2665,9 @@ RESET SESSION AUTHORIZATION;
 CREATE TABLE dep1 (c1 int);
 CREATE TABLE dep2 (c1 int);
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY dep_p1 ON dep1 TO regress_rls_bob USING (c1 > (select max(dep2.c1) from dep2));
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER POLICY dep_p1 ON dep1 TO regress_rls_bob,regress_rls_carol;
 
 -- Should return one
@@ -2869,7 +2676,7 @@ CREATE TABLE dep2 (c1 int);
 --dg 				   WHERE objid = (SELECT oid FROM pg_policy WHERE polname = 'dep_p1')
 --dg 					 AND refobjid = (SELECT oid FROM pg_class WHERE relname = 'dep2');
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER POLICY dep_p1 ON dep1 USING (true);
 
 -- Should return one
@@ -2892,56 +2699,45 @@ SELECT count(*) = 0 FROM pg_depend
 -- DROP OWNED BY testing
 RESET SESSION AUTHORIZATION;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_rls_dob_role1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_rls_dob_role2;
+CREATE ROLE regress_rls_dob_role1;
+CREATE ROLE regress_rls_dob_role2;
 
 CREATE TABLE dob_t1 (c1 int);
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE dob_t2 (c1 int) PARTITION BY RANGE (c1);
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON dob_t1 TO regress_rls_dob_role1 USING (true);
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP OWNED BY regress_rls_dob_role1;
---dg-differs: another error: relation pg_policy cannot be opened: digres has no catalog tables
---dg DROP POLICY p1 ON dob_t1; -- should fail, already gone
+DROP OWNED BY regress_rls_dob_role1;
+DROP POLICY p1 ON dob_t1; -- should fail, already gone
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON dob_t1 TO regress_rls_dob_role1,regress_rls_dob_role2 USING (true);
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP OWNED BY regress_rls_dob_role1;
---dg-skip: relation pg_policy cannot be opened: digres has no catalog tables
+DROP OWNED BY regress_rls_dob_role1;
+--dg-cascade
 --dg DROP POLICY p1 ON dob_t1; -- should succeed
 
 -- same cases with duplicate polroles entries
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON dob_t1 TO regress_rls_dob_role1,regress_rls_dob_role1 USING (true);
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP OWNED BY regress_rls_dob_role1;
---dg-differs: another error: relation pg_policy cannot be opened: digres has no catalog tables
---dg DROP POLICY p1 ON dob_t1; -- should fail, already gone
+DROP OWNED BY regress_rls_dob_role1;
+DROP POLICY p1 ON dob_t1; -- should fail, already gone
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON dob_t1 TO regress_rls_dob_role1,regress_rls_dob_role1,regress_rls_dob_role2 USING (true);
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP OWNED BY regress_rls_dob_role1;
---dg-skip: relation pg_policy cannot be opened: digres has no catalog tables
+DROP OWNED BY regress_rls_dob_role1;
+--dg-cascade
 --dg DROP POLICY p1 ON dob_t1; -- should succeed
 
 -- partitioned target
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE POLICY p1 ON dob_t2 TO regress_rls_dob_role1,regress_rls_dob_role2 USING (true);
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP OWNED BY regress_rls_dob_role1;
+DROP OWNED BY regress_rls_dob_role1;
 --dg-cascade
 --dg DROP POLICY p1 ON dob_t2; -- should succeed
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_rls_dob_role1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_rls_dob_role2;
+DROP USER regress_rls_dob_role1;
+DROP USER regress_rls_dob_role2;
 
 -- Bug #15708: view + table with RLS should check policies as view owner
 CREATE TABLE ref_tbl (a int);
@@ -2951,27 +2747,21 @@ CREATE TABLE rls_tbl (a int);
 INSERT INTO rls_tbl VALUES (10);
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rls_tbl ENABLE ROW LEVEL SECURITY;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON rls_tbl USING (EXISTS (SELECT 1 FROM ref_tbl));
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT SELECT ON ref_tbl TO regress_rls_bob;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT SELECT ON rls_tbl TO regress_rls_bob;
+GRANT SELECT ON ref_tbl TO regress_rls_bob;
+GRANT SELECT ON rls_tbl TO regress_rls_bob;
 
 CREATE VIEW rls_view AS SELECT * FROM rls_tbl;
---dg-cascade
---dg ALTER VIEW rls_view OWNER TO regress_rls_bob;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT SELECT ON rls_view TO regress_rls_alice;
+ALTER VIEW rls_view OWNER TO regress_rls_bob;
+GRANT SELECT ON rls_view TO regress_rls_alice;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
+SELECT * FROM ref_tbl; -- Permission denied
+SELECT * FROM rls_tbl; -- Permission denied
 --dg-cascade
---dg SELECT * FROM ref_tbl; -- Permission denied
---dg-cascade
---dg SELECT * FROM rls_tbl; -- Permission denied
-SELECT * FROM rls_view; -- OK
+--dg SELECT * FROM rls_view; -- OK
 RESET SESSION AUTHORIZATION;
 
 DROP VIEW rls_view;
@@ -2985,11 +2775,9 @@ ANALYZE rls_tbl;
 
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rls_tbl ENABLE ROW LEVEL SECURITY;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT SELECT ON rls_tbl TO regress_rls_alice;
+GRANT SELECT ON rls_tbl TO regress_rls_alice;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 --dg-skip: language "?" does not exist
 --dg CREATE FUNCTION op_leak(int, int) RETURNS bool
 --dg     AS 'BEGIN RAISE NOTICE ''op_leak => %, %'', $1, $2; RETURN $1 < $2; END'
@@ -3027,15 +2815,14 @@ RESET SESSION AUTHORIZATION;
 --dg GRANT SELECT ON rls_ptbl TO regress_rls_alice;
 --dg-cascade
 --dg GRANT SELECT ON rls_part TO regress_rls_alice;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON rls_tbl USING (a < 0);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE POLICY p2 ON rls_ptbl USING (a < 0);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE POLICY p3 ON rls_part USING (a < 0);
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 --dg-cascade
 --dg SELECT * FROM rls_tbl WHERE a <<< 1000;
 --dg-cascade
@@ -3052,19 +2839,17 @@ RESET SESSION AUTHORIZATION;
 --dg                SELECT * FROM rls_child_tbl) t WHERE a <<< 1000;
 RESET SESSION AUTHORIZATION;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg REVOKE SELECT ON rls_tbl FROM regress_rls_alice;
+REVOKE SELECT ON rls_tbl FROM regress_rls_alice;
 CREATE VIEW rls_tbl_view AS SELECT * FROM rls_tbl;
 
 --dg-cascade
 --dg ALTER TABLE rls_child_tbl ENABLE ROW LEVEL SECURITY;
 --dg-cascade
 --dg GRANT SELECT ON rls_child_tbl TO regress_rls_alice;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE POLICY p4 ON rls_child_tbl USING (a < 0);
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 --dg-cascade
 --dg SELECT * FROM rls_tbl WHERE a <<< 1000;
 --dg-cascade
@@ -3092,10 +2877,9 @@ DROP VIEW rls_tbl_view;
 DROP TABLE rls_tbl;
 
 -- Bug #16006: whole-row Vars in a policy don't play nice with sub-selects
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
 CREATE TABLE rls_tbl (a int, b int, c int);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation "?" does not have a composite type
 --dg CREATE POLICY p1 ON rls_tbl USING (rls_tbl >= ROW(1,1,1));
 
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
@@ -3103,14 +2887,16 @@ CREATE TABLE rls_tbl (a int, b int, c int);
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rls_tbl FORCE ROW LEVEL SECURITY;
 
-INSERT INTO rls_tbl SELECT 10, 20, 30;
+--dg-cascade
+--dg INSERT INTO rls_tbl SELECT 10, 20, 30;
 --dg-cascade
 --dg EXPLAIN (VERBOSE, COSTS OFF)
 --dg INSERT INTO rls_tbl
 --dg   SELECT * FROM (SELECT b, c FROM rls_tbl ORDER BY a) ss;
 INSERT INTO rls_tbl
   SELECT * FROM (SELECT b, c FROM rls_tbl ORDER BY a) ss;
-SELECT * FROM rls_tbl;
+--dg-cascade
+--dg SELECT * FROM rls_tbl;
 
 DROP TABLE rls_tbl;
 RESET SESSION AUTHORIZATION;
@@ -3120,11 +2906,10 @@ create table rls_t (c text);
 insert into rls_t values ('invisible to bob');
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table rls_t enable row level security;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg grant select on rls_t to regress_rls_alice, regress_rls_bob;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+grant select on rls_t to regress_rls_alice, regress_rls_bob;
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg create policy p1 on rls_t for select to regress_rls_alice using (true);
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg create policy p2 on rls_t for select to regress_rls_bob using (false);
 --dg-skip: language "?" does not exist
 --dg create function rls_f () returns setof rls_t
@@ -3132,12 +2917,10 @@ insert into rls_t values ('invisible to bob');
 --dg   as $$ select * from rls_t $$;
 --dg-cascade
 --dg prepare q as select current_user, * from rls_f();
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set role regress_rls_alice;
+set role regress_rls_alice;
 --dg-cascade
 --dg execute q;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set role regress_rls_bob;
+set role regress_rls_bob;
 --dg-cascade
 --dg execute q;
 
@@ -3149,12 +2932,10 @@ reset role;
 --dg   as $$ with cte as (select * from rls_t) select * from cte $$;
 --dg-cascade
 --dg prepare r as select current_user, * from rls_f();
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set role regress_rls_alice;
+set role regress_rls_alice;
 --dg-cascade
 --dg execute r;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set role regress_rls_bob;
+set role regress_rls_bob;
 --dg-cascade
 --dg execute r;
 
@@ -3166,12 +2947,10 @@ reset role;
 --dg   as $$ select * from (select * from rls_t) _ $$;
 --dg-cascade
 --dg prepare s as select current_user, * from rls_f();
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set role regress_rls_alice;
+set role regress_rls_alice;
 --dg-cascade
 --dg execute s;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set role regress_rls_bob;
+set role regress_rls_bob;
 --dg-cascade
 --dg execute s;
 
@@ -3183,12 +2962,10 @@ reset role;
 --dg   as $$ select exists(select * from rls_t)::text $$;
 --dg-cascade
 --dg prepare t as select current_user, * from rls_f();
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set role regress_rls_alice;
+set role regress_rls_alice;
 --dg-cascade
 --dg execute t;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set role regress_rls_bob;
+set role regress_rls_bob;
 --dg-cascade
 --dg execute t;
 
@@ -3200,32 +2977,27 @@ reset role;
 --dg   as $$ select * from (select array_agg(c) as cs from rls_t) _ group by cs $$;
 --dg-cascade
 --dg prepare u as select current_user, * from rls_f();
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set role regress_rls_alice;
+set role regress_rls_alice;
 --dg-cascade
 --dg execute u;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set role regress_rls_bob;
+set role regress_rls_bob;
 --dg-cascade
 --dg execute u;
 
 -- make sure RLS dependencies in security invoker views are handled
 reset role;
 create view rls_v with (security_invoker) as select * from rls_t;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg grant select on rls_v to regress_rls_alice, regress_rls_bob;
+grant select on rls_v to regress_rls_alice, regress_rls_bob;
 --dg-skip: language "?" does not exist
 --dg create or replace function rls_f() returns setof rls_t
 --dg   stable language sql
 --dg   as $$ select * from rls_v $$;
 --dg-cascade
 --dg prepare v as select current_user, * from rls_f();
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set role regress_rls_alice;
+set role regress_rls_alice;
 --dg-cascade
 --dg execute v;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set role regress_rls_bob;
+set role regress_rls_bob;
 --dg-cascade
 --dg execute v;
 
@@ -3242,11 +3014,9 @@ insert into rls_t values ('a'), ('b'), ('c'), ('d');
 insert into test_t values ('a'), ('b');
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table rls_t enable row level security;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg grant select on rls_t to regress_rls_alice;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg grant select on test_t to regress_rls_alice;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+grant select on rls_t to regress_rls_alice;
+grant select on test_t to regress_rls_alice;
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg create policy p1 on rls_t for select to regress_rls_alice
 --dg   using (c = current_setting('rls_test.blah'));
 
@@ -3265,8 +3035,7 @@ set plan_cache_mode to force_custom_plan;
 
 -- For other users, changes in row_security setting
 -- should lead to RLS error during query rewrite
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set role regress_rls_alice;
+set role regress_rls_alice;
 --dg-cascade
 --dg select rls_f(c) from test_t order by rls_f;
 reset role;
@@ -3279,8 +3048,7 @@ set plan_cache_mode to force_generic_plan;
 
 -- For other users, changes in row_security setting
 -- should lead to plan invalidation and RLS error during query rewrite
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set role regress_rls_alice;
+set role regress_rls_alice;
 --dg-cascade
 --dg select rls_f(c) from test_t order by rls_f;
 reset role;
@@ -3299,19 +3067,19 @@ RESET SESSION AUTHORIZATION;
 --dg-cascade
 --dg DROP SCHEMA regress_rls_schema CASCADE;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP USER regress_rls_alice;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP USER regress_rls_bob;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP USER regress_rls_carol;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP USER regress_rls_dave;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP USER regress_rls_exempt_user;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP ROLE regress_rls_group1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP ROLE regress_rls_group2;
 
 -- Arrange to have a few policies left over, for testing
@@ -3321,13 +3089,13 @@ RESET SESSION AUTHORIZATION;
 CREATE TABLE rls_tbl (c1 int);
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rls_tbl ENABLE ROW LEVEL SECURITY;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON rls_tbl USING (c1 > 5);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p2 ON rls_tbl FOR SELECT USING (c1 <= 3);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p3 ON rls_tbl FOR UPDATE USING (c1 <= 3) WITH CHECK (c1 > 5);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p4 ON rls_tbl FOR DELETE USING (c1 <= 3);
 
 CREATE TABLE rls_tbl_force (c1 int);
@@ -3335,11 +3103,11 @@ CREATE TABLE rls_tbl_force (c1 int);
 --dg ALTER TABLE rls_tbl_force ENABLE ROW LEVEL SECURITY;
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rls_tbl_force FORCE ROW LEVEL SECURITY;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON rls_tbl_force USING (c1 = 5) WITH CHECK (c1 < 5);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p2 ON rls_tbl_force FOR SELECT USING (c1 = 8);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p3 ON rls_tbl_force FOR UPDATE USING (c1 = 8) WITH CHECK (c1 >= 5);
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p4 ON rls_tbl_force FOR DELETE USING (c1 = 8);

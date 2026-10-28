@@ -2950,15 +2950,12 @@ Type                | func
 -- check conditional am display
 \pset expanded off
 CREATE SCHEMA tableam_display;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_display_role;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg ALTER SCHEMA tableam_display OWNER TO regress_display_role;
+CREATE ROLE regress_display_role;
+ALTER SCHEMA tableam_display OWNER TO regress_display_role;
 SET search_path TO tableam_display;
 --dg-skip: relation pg_am cannot be written: digres has no catalog tables
 --dg CREATE ACCESS METHOD heap_psql TYPE TABLE HANDLER heap_tableam_handler;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE TO regress_display_role;
+SET ROLE TO regress_display_role;
 -- Use only relations with a physical size of zero.
 --dg-cascade
 --dg CREATE TABLE tbl_heap_psql(f1 int, f2 char(100)) using heap_psql;
@@ -3001,7 +2998,7 @@ RESET search_path;
 --dg DROP SCHEMA tableam_display CASCADE;
 --dg-cascade
 --dg DROP ACCESS METHOD heap_psql;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP ROLE regress_display_role;
 -- test numericlocale (as best we can without control of psql's locale)
 \pset format aligned
@@ -4651,12 +4648,9 @@ last error code: 22012
 --dg reset debug_parallel_query;
 \unset FETCH_COUNT
 create schema testpart;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg create role regress_partitioning_role;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg alter schema testpart owner to regress_partitioning_role;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set role to regress_partitioning_role;
+create role regress_partitioning_role;
+alter schema testpart owner to regress_partitioning_role;
+set role to regress_partitioning_role;
 -- run test inside own schema and hide other partitions
 set search_path to testpart;
 create table testtable_apple(logdate date);
@@ -4732,8 +4726,7 @@ drop table testtable_orange;
 drop schema testpart;
 set search_path to default;
 set role to default;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg drop role regress_partitioning_role;
+drop role regress_partitioning_role;
 -- \d on toast table (use pg_statistic's toast table, which has a known name)
 --dg-differs: the result
 --dg \d pg_toast.pg_toast_2619
@@ -4893,11 +4886,9 @@ reset work_mem;
 --dg \do && anyarray *
 -- check \df+
 -- we have to use functions with a predictable owner name, so make a role
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg create role regress_psql_user superuser;
+create role regress_psql_user superuser;
 begin;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set session authorization regress_psql_user;
+set session authorization regress_psql_user;
 --dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
 --dg create function psql_df_internal (float8)
 --dg   returns float8
@@ -4918,8 +4909,7 @@ begin;
 --dg-cascade
 --dg \df+ psql_df_*
 rollback;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg drop role regress_psql_user;
+drop role regress_psql_user;
 -- check \sf
 --dg-skip: function "?" does not exist
 --dg \sf information_schema._pg_index_position
@@ -5981,50 +5971,49 @@ cross-database references are not implemented: "no.such.database"."no.such.schem
 \dX "no.such.database"."no.such.schema"."no.such.extended.statistics"
 cross-database references are not implemented: "no.such.database"."no.such.schema"."no.such.extended.statistics"
 -- check \drg and \du
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_du_role0;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_du_role1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_du_role2;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_du_admin;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT regress_du_role0 TO regress_du_admin WITH ADMIN TRUE;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT regress_du_role1 TO regress_du_admin WITH ADMIN TRUE;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT regress_du_role2 TO regress_du_admin WITH ADMIN TRUE;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT regress_du_role0 TO regress_du_role1 WITH ADMIN TRUE,  INHERIT TRUE,  SET TRUE  GRANTED BY regress_du_admin;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT regress_du_role0 TO regress_du_role2 WITH ADMIN TRUE,  INHERIT FALSE, SET FALSE GRANTED BY regress_du_admin;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT regress_du_role1 TO regress_du_role2 WITH ADMIN TRUE , INHERIT FALSE, SET TRUE  GRANTED BY regress_du_admin;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT regress_du_role0 TO regress_du_role1 WITH ADMIN FALSE, INHERIT TRUE,  SET FALSE GRANTED BY regress_du_role1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT regress_du_role0 TO regress_du_role2 WITH ADMIN FALSE, INHERIT TRUE , SET TRUE  GRANTED BY regress_du_role1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT regress_du_role0 TO regress_du_role1 WITH ADMIN FALSE, INHERIT FALSE, SET TRUE  GRANTED BY regress_du_role2;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT regress_du_role0 TO regress_du_role2 WITH ADMIN FALSE, INHERIT FALSE, SET FALSE GRANTED BY regress_du_role2;
---dg-cascade
---dg \drg regress_du_role*
---dg-cascade
---dg \du regress_du_role*
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_du_role0;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_du_role1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_du_role2;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_du_admin;
+CREATE ROLE regress_du_role0;
+CREATE ROLE regress_du_role1;
+CREATE ROLE regress_du_role2;
+CREATE ROLE regress_du_admin;
+GRANT regress_du_role0 TO regress_du_admin WITH ADMIN TRUE;
+GRANT regress_du_role1 TO regress_du_admin WITH ADMIN TRUE;
+GRANT regress_du_role2 TO regress_du_admin WITH ADMIN TRUE;
+GRANT regress_du_role0 TO regress_du_role1 WITH ADMIN TRUE,  INHERIT TRUE,  SET TRUE  GRANTED BY regress_du_admin;
+GRANT regress_du_role0 TO regress_du_role2 WITH ADMIN TRUE,  INHERIT FALSE, SET FALSE GRANTED BY regress_du_admin;
+GRANT regress_du_role1 TO regress_du_role2 WITH ADMIN TRUE , INHERIT FALSE, SET TRUE  GRANTED BY regress_du_admin;
+GRANT regress_du_role0 TO regress_du_role1 WITH ADMIN FALSE, INHERIT TRUE,  SET FALSE GRANTED BY regress_du_role1;
+GRANT regress_du_role0 TO regress_du_role2 WITH ADMIN FALSE, INHERIT TRUE , SET TRUE  GRANTED BY regress_du_role1;
+GRANT regress_du_role0 TO regress_du_role1 WITH ADMIN FALSE, INHERIT FALSE, SET TRUE  GRANTED BY regress_du_role2;
+GRANT regress_du_role0 TO regress_du_role2 WITH ADMIN FALSE, INHERIT FALSE, SET FALSE GRANTED BY regress_du_role2;
+\drg regress_du_role*
+                             List of role grants
+    Role name     |    Member of     |       Options       |     Grantor      
+------------------+------------------+---------------------+------------------
+ regress_du_role1 | regress_du_role0 | ADMIN, INHERIT, SET | regress_du_admin
+ regress_du_role1 | regress_du_role0 | INHERIT             | regress_du_role1
+ regress_du_role1 | regress_du_role0 | SET                 | regress_du_role2
+ regress_du_role2 | regress_du_role0 | ADMIN               | regress_du_admin
+ regress_du_role2 | regress_du_role0 | INHERIT, SET        | regress_du_role1
+ regress_du_role2 | regress_du_role0 |                     | regress_du_role2
+ regress_du_role2 | regress_du_role1 | ADMIN, SET          | regress_du_admin
+(7 rows)
+
+\du regress_du_role*
+          List of roles
+    Role name     |  Attributes  
+------------------+--------------
+ regress_du_role0 | Cannot login
+ regress_du_role1 | Cannot login
+ regress_du_role2 | Cannot login
+
+DROP ROLE regress_du_role0;
+DROP ROLE regress_du_role1;
+DROP ROLE regress_du_role2;
+DROP ROLE regress_du_admin;
 -- Test display of empty privileges.
 BEGIN;
 -- Create an owner for tested objects because output contains owner name.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: CREATE ROLE cannot run inside a transaction block
 --dg CREATE ROLE regress_zeropriv_owner;
 --dg-cascade
 --dg SET LOCAL ROLE regress_zeropriv_owner;

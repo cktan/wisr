@@ -1592,6 +1592,7 @@ IndexStmt *generateClonedIndexStmt(RangeVar *heapRel, Relation source_idx,
   Oid source_relid = RelationGetRelid(source_idx);
   HeapTuple ht_idxrel;
   HeapTuple ht_idx;
+  HeapTuple ht_idx_own = NULL;
   HeapTuple ht_am;
   Form_pg_class idxrelrec;
   Form_pg_index idxrec;
@@ -1619,8 +1620,17 @@ IndexStmt *generateClonedIndexStmt(RangeVar *heapRel, Relation source_idx,
     elog(ERROR, "cache lookup failed for relation %u", source_relid);
   idxrelrec = (Form_pg_class)GETSTRUCT(ht_idxrel);
 
-  /* Fetch pg_index tuple for source index from relcache entry */
+  /*
+   * Fetch pg_index tuple for source index from relcache entry; an index of
+   * sm's has none there, and its catalog relation's row is read instead.
+   */
   ht_idx = source_idx->rd_indextuple;
+  if (ht_idx == NULL) {
+    ht_idx_own = SearchSysCache1(INDEXRELID, ObjectIdGetDatum(source_relid));
+    if (!HeapTupleIsValid(ht_idx_own))
+      elog(ERROR, "cache lookup failed for index %u", source_relid);
+    ht_idx = ht_idx_own;
+  }
   idxrec = (Form_pg_index)GETSTRUCT(ht_idx);
   indrelid = idxrec->indrelid;
 
@@ -1894,6 +1904,8 @@ IndexStmt *generateClonedIndexStmt(RangeVar *heapRel, Relation source_idx,
   /* Clean up */
   ReleaseSysCache(ht_idxrel);
   ReleaseSysCache(ht_am);
+  if (ht_idx_own != NULL)
+    ReleaseSysCache(ht_idx_own);
 
   return index;
 }

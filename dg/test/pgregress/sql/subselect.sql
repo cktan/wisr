@@ -301,7 +301,7 @@ create temp table shipped (
 create temp view shipped_view as
     select * from shipped where ttype = 'wt';
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule shipped_view_insert as on insert to shipped_view do instead
 --dg     insert into shipped values('wt', new.ordnum, new.partnum, new.value);
 
@@ -313,7 +313,7 @@ insert into shipped_view (ordnum, partnum, value)
 --dg-cascade
 --dg select * from shipped_view;
 
---dg-skip: relation pg_rewrite cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_rewrite cannot be written: digres has no catalog tables
 --dg create rule shipped_view_update as on update to shipped_view do instead
 --dg     update shipped set partnum = new.partnum, value = new.value
 --dg         where ttype = new.ttype and ordnum = new.ordnum;
@@ -613,11 +613,10 @@ where (exists(select 1 from tenk1 k where k.unique1 = t.unique2) or ten < 0);
 select count(*) from tenk1 t
 where (exists(select 1 from tenk1 k where k.unique1 = t.unique2) or ten < 0);
 
---dg-differs: the plan
---dg explain (costs off)
---dg select count(*) from tenk1 t
---dg where (exists(select 1 from tenk1 k where k.unique1 = t.unique2) or ten < 0)
---dg   and thousand = 1;
+explain (costs off)
+select count(*) from tenk1 t
+where (exists(select 1 from tenk1 k where k.unique1 = t.unique2) or ten < 0)
+  and thousand = 1;
 select count(*) from tenk1 t
 where (exists(select 1 from tenk1 k where k.unique1 = t.unique2) or ten < 0)
   and thousand = 1;
@@ -738,18 +737,17 @@ rollback;
 --
 -- Test rescan of a RecursiveUnion node
 --
---dg-differs: the plan
---dg explain (costs off)
---dg select sum(o.four), sum(ss.a) from
---dg   onek o cross join lateral (
---dg     with recursive x(a) as
---dg       (select o.four as a
---dg        union
---dg        select a + 1 from x
---dg        where a < 10)
---dg     select * from x
---dg   ) ss
---dg where o.ten = 1;
+explain (costs off)
+select sum(o.four), sum(ss.a) from
+  onek o cross join lateral (
+    with recursive x(a) as
+      (select o.four as a
+       union
+       select a + 1 from x
+       where a < 10)
+    select * from x
+  ) ss
+where o.ten = 1;
 
 select sum(o.four), sum(ss.a) from
   onek o cross join lateral (
@@ -1200,14 +1198,13 @@ rollback;
 --dg where tname = 'tenk1' and attnum = 1;
 
 -- Check behavior when there's a lateral reference in the output expression
---dg-differs: the plan
---dg explain (verbose, costs off)
---dg select t1.ten, sum(x) from
---dg   tenk1 t1 left join lateral (
---dg     select t1.ten + t2.ten as x, t2.fivethous from tenk1 t2
---dg   ) ss on t1.unique1 = ss.fivethous
---dg group by t1.ten
---dg order by t1.ten;
+explain (verbose, costs off)
+select t1.ten, sum(x) from
+  tenk1 t1 left join lateral (
+    select t1.ten + t2.ten as x, t2.fivethous from tenk1 t2
+  ) ss on t1.unique1 = ss.fivethous
+group by t1.ten
+order by t1.ten;
 
 select t1.ten, sum(x) from
   tenk1 t1 left join lateral (
@@ -1463,17 +1460,15 @@ SELECT * FROM tenk1 A LEFT JOIN tenk2 B
 ON B.hundred in (SELECT c.hundred FROM tenk2 C WHERE c.odd = b.odd);
 
 -- we can pull up the sublink into the inner JoinExpr.
---dg-differs: the plan
---dg explain (costs off)
---dg SELECT * FROM tenk1 A INNER JOIN tenk2 B
---dg ON A.hundred in (SELECT c.hundred FROM tenk2 C WHERE c.odd = b.odd)
---dg WHERE a.thousand < 750;
+explain (costs off)
+SELECT * FROM tenk1 A INNER JOIN tenk2 B
+ON A.hundred in (SELECT c.hundred FROM tenk2 C WHERE c.odd = b.odd)
+WHERE a.thousand < 750;
 
 -- we can pull up the aggregate sublink into RHS of a left join.
---dg-differs: the plan
---dg explain (costs off)
---dg SELECT * FROM tenk1 A LEFT JOIN tenk2 B
---dg ON B.hundred in (SELECT min(c.hundred) FROM tenk2 C WHERE c.odd = b.odd);
+explain (costs off)
+SELECT * FROM tenk1 A LEFT JOIN tenk2 B
+ON B.hundred in (SELECT min(c.hundred) FROM tenk2 C WHERE c.odd = b.odd);
 
 --
 -- Test VALUES to ARRAY (VtA) transformation
@@ -1514,14 +1509,12 @@ EXPLAIN (COSTS OFF)
 SELECT * from onek WHERE unique1 in (VALUES(1200::bigint), (1));
 
 -- VtA shouldn't depend on the side of the join probing with the VALUES expression.
---dg-differs: the plan
---dg EXPLAIN (COSTS OFF)
---dg SELECT c.unique1,c.ten FROM tenk1 c JOIN onek a USING (ten)
---dg WHERE a.ten IN (VALUES (1), (2));
---dg-differs: the plan
---dg EXPLAIN (COSTS OFF)
---dg SELECT c.unique1,c.ten FROM tenk1 c JOIN onek a USING (ten)
---dg WHERE c.ten IN (VALUES (1), (2));
+EXPLAIN (COSTS OFF)
+SELECT c.unique1,c.ten FROM tenk1 c JOIN onek a USING (ten)
+WHERE a.ten IN (VALUES (1), (2));
+EXPLAIN (COSTS OFF)
+SELECT c.unique1,c.ten FROM tenk1 c JOIN onek a USING (ten)
+WHERE c.ten IN (VALUES (1), (2));
 
 -- Constant expressions are simplified
 EXPLAIN (COSTS OFF)

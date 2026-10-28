@@ -894,15 +894,13 @@ drop table float8multirange_test;
 --
 --dg-skip: relation pg_type cannot be written: digres has no catalog tables
 --dg create type textrange1 as range(subtype=text, multirange_type_name=multitextrange1, collation="C");
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg create role regress_multirange_owner;
+create role regress_multirange_owner;
 
 --dg-cascade
 --dg alter type multitextrange1 owner to regress_multirange_owner;  -- fail
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg alter type textrange1 owner to regress_multirange_owner;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set role regress_multirange_owner;
+set role regress_multirange_owner;
 --dg-cascade
 --dg revoke usage on type multitextrange1 from public;  -- fail
 --dg-cascade
@@ -921,32 +919,23 @@ drop table float8multirange_test;
 --dg-cascade
 --dg drop type textrange1;
 reset role;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg drop role regress_multirange_owner;
+drop role regress_multirange_owner;
 
 --
 -- CREATE TYPE checks for CREATE on multirange schema
 --
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg create role regress_mr;
+create role regress_mr;
 create schema mr_sch;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set role regress_mr;
---dg-cascade
---dg create type mytype as range (subtype=int4, multirange_type_name=mr_sch.mr_type);
+set role regress_mr;
+create type mytype as range (subtype=int4, multirange_type_name=mr_sch.mr_type);
 reset role;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg grant create on schema mr_sch to regress_mr;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set role regress_mr;
---dg-cascade
---dg create type mytype as range (subtype=int4, multirange_type_name=mr_sch.mr_type);
+grant create on schema mr_sch to regress_mr;
+set role regress_mr;
+create type mytype as range (subtype=int4, multirange_type_name=mr_sch.mr_type);
 reset role;
---dg-cascade
---dg drop type mytype;
+drop type mytype;
 drop schema mr_sch;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg drop role regress_mr;
+drop role regress_mr;
 
 --
 -- Test polymorphic type system

@@ -36,6 +36,7 @@
 #include "utils/acl.h"
 #include "utils/builtins.h"
 #include "utils/hooks.h"
+#include "utils/pg_global.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
 
@@ -336,7 +337,7 @@ static void AlterSchemaOwner_internal(HeapTuple tup, Relation rel,
                                       Oid newOwnerId) {
   Form_pg_namespace nspForm;
 
-  Assert(tup->t_tableOid == NamespaceRelationId);
+  /* A row of the catalog relation pg_namespace, which names no table. */
   Assert(RelationGetRelid(rel) == NamespaceRelationId);
 
   nspForm = (Form_pg_namespace)GETSTRUCT(tup);
@@ -346,13 +347,6 @@ static void AlterSchemaOwner_internal(HeapTuple tup, Relation rel,
    * command to have succeeded.  This is for dump restoration purposes.
    */
   if (nspForm->nspowner != newOwnerId) {
-    Datum repl_val[Natts_pg_namespace];
-    bool repl_null[Natts_pg_namespace];
-    bool repl_repl[Natts_pg_namespace];
-    Acl *newAcl;
-    Datum aclDatum;
-    bool isNull;
-    HeapTuple newtuple;
     AclResult aclresult;
 
     /* Otherwise, must be owner of the existing object */
@@ -378,34 +372,13 @@ static void AlterSchemaOwner_internal(HeapTuple tup, Relation rel,
       aclcheck_error(aclresult, OBJECT_DATABASE,
                      get_database_name(MyDatabaseId));
 
-    memset(repl_null, false, sizeof(repl_null));
-    memset(repl_repl, false, sizeof(repl_repl));
-
-    repl_repl[Anum_pg_namespace_nspowner - 1] = true;
-    repl_val[Anum_pg_namespace_nspowner - 1] = ObjectIdGetDatum(newOwnerId);
-
     /*
-     * Determine the modified ACL for the new owner.  This is only
-     * necessary when the ACL is non-null.
+     * The owner is pg_global's, written after the commit, and no
+     * pg_shdepend records it (sm/ROLE.md section 3); its ACL, if it keeps
+     * one, names the new owner where it named the old.
      */
-    aclDatum =
-        SysCacheGetAttr(NAMESPACENAME, tup, Anum_pg_namespace_nspacl, &isNull);
-    if (!isNull) {
-      newAcl =
-          aclnewowner(DatumGetAclP(aclDatum), nspForm->nspowner, newOwnerId);
-      repl_repl[Anum_pg_namespace_nspacl - 1] = true;
-      repl_val[Anum_pg_namespace_nspacl - 1] = PointerGetDatum(newAcl);
-    }
-
-    newtuple = heap_modify_tuple(tup, RelationGetDescr(rel), repl_val,
-                                 repl_null, repl_repl);
-
-    CatalogTupleUpdate(rel, &newtuple->t_self, newtuple);
-
-    heap_freetuple(newtuple);
-
-    /* Update owner dependency reference */
-    changeDependencyOnOwner(NamespaceRelationId, nspForm->oid, newOwnerId);
+    pg_global_change_owner(pg_global_dbid(MyDatabaseId), NamespaceRelationId,
+                           nspForm->oid, newOwnerId, false);
   }
 
   InvokeObjectPostAlterHook(NamespaceRelationId, nspForm->oid, 0);

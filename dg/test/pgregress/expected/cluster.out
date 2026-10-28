@@ -251,17 +251,13 @@ WHERE pg_class.oid=indexrelid
 --dg-differs: the result
 --dg CLUSTER pg_toast.pg_toast_826 USING pg_toast_826_index;
 -- Verify that clustering all tables does in fact cluster the right ones
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_clstr_user;
+CREATE USER regress_clstr_user;
 CREATE TABLE clstr_1 (a INT PRIMARY KEY);
 CREATE TABLE clstr_2 (a INT PRIMARY KEY);
 CREATE TABLE clstr_3 (a INT PRIMARY KEY);
---dg-cascade
---dg ALTER TABLE clstr_1 OWNER TO regress_clstr_user;
---dg-cascade
---dg ALTER TABLE clstr_3 OWNER TO regress_clstr_user;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT SELECT ON clstr_2 TO regress_clstr_user;
+ALTER TABLE clstr_1 OWNER TO regress_clstr_user;
+ALTER TABLE clstr_3 OWNER TO regress_clstr_user;
+GRANT SELECT ON clstr_2 TO regress_clstr_user;
 INSERT INTO clstr_1 VALUES (2);
 INSERT INTO clstr_1 VALUES (1);
 INSERT INTO clstr_2 VALUES (2);
@@ -300,8 +296,7 @@ INSERT INTO clstr_3 VALUES (2);
 INSERT INTO clstr_3 VALUES (1);
 -- this user can only cluster clstr_1 and clstr_3, but the latter
 -- has not been clustered
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_clstr_user;
+SET SESSION AUTHORIZATION regress_clstr_user;
 SET client_min_messages = ERROR;  -- order of "skipping" warnings may vary
 CLUSTER;
 RESET client_min_messages;
@@ -333,42 +328,58 @@ SELECT * FROM clstr_1;
 
 -- Test MVCC-safety of cluster. There isn't much we can do to verify the
 -- results with a single backend...
---dg-cascade
---dg CREATE TABLE clustertest (key int PRIMARY KEY);
---dg-cascade
---dg INSERT INTO clustertest VALUES (10);
---dg-cascade
---dg INSERT INTO clustertest VALUES (20);
---dg-cascade
---dg INSERT INTO clustertest VALUES (30);
---dg-cascade
---dg INSERT INTO clustertest VALUES (40);
---dg-cascade
---dg INSERT INTO clustertest VALUES (50);
+CREATE TABLE clustertest (key int PRIMARY KEY);
+ERROR:  permission denied for schema public
+LINE 1: CREATE TABLE clustertest (key int PRIMARY KEY);
+                     ^
+INSERT INTO clustertest VALUES (10);
+ERROR:  relation "clustertest" does not exist
+LINE 1: INSERT INTO clustertest VALUES (10);
+                    ^
+INSERT INTO clustertest VALUES (20);
+ERROR:  relation "clustertest" does not exist
+LINE 1: INSERT INTO clustertest VALUES (20);
+                    ^
+INSERT INTO clustertest VALUES (30);
+ERROR:  relation "clustertest" does not exist
+LINE 1: INSERT INTO clustertest VALUES (30);
+                    ^
+INSERT INTO clustertest VALUES (40);
+ERROR:  relation "clustertest" does not exist
+LINE 1: INSERT INTO clustertest VALUES (40);
+                    ^
+INSERT INTO clustertest VALUES (50);
+ERROR:  relation "clustertest" does not exist
+LINE 1: INSERT INTO clustertest VALUES (50);
+                    ^
 -- Use a transaction so that updates are not committed when CLUSTER sees 'em
 BEGIN;
 -- Test update where the old row version is found first in the scan
---dg-cascade
---dg UPDATE clustertest SET key = 100 WHERE key = 10;
+UPDATE clustertest SET key = 100 WHERE key = 10;
+ERROR:  relation "clustertest" does not exist
+LINE 1: UPDATE clustertest SET key = 100 WHERE key = 10;
+               ^
 -- Test update where the new row version is found first in the scan
---dg-cascade
---dg UPDATE clustertest SET key = 35 WHERE key = 40;
+UPDATE clustertest SET key = 35 WHERE key = 40;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 -- Test longer update chain
---dg-cascade
---dg UPDATE clustertest SET key = 60 WHERE key = 50;
---dg-cascade
---dg UPDATE clustertest SET key = 70 WHERE key = 60;
---dg-cascade
---dg UPDATE clustertest SET key = 80 WHERE key = 70;
---dg-cascade
---dg SELECT * FROM clustertest;
---dg-cascade
---dg CLUSTER clustertest_pkey ON clustertest;
---dg-cascade
---dg SELECT * FROM clustertest;
+UPDATE clustertest SET key = 60 WHERE key = 50;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
+UPDATE clustertest SET key = 70 WHERE key = 60;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
+UPDATE clustertest SET key = 80 WHERE key = 70;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
+SELECT * FROM clustertest;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
+CLUSTER clustertest_pkey ON clustertest;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
+SELECT * FROM clustertest;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 COMMIT;
---dg-cascade
---dg SELECT * FROM clustertest;
+SELECT * FROM clustertest;
+ERROR:  relation "clustertest" does not exist
+LINE 1: SELECT * FROM clustertest;
+                      ^
 -- check that temp tables can be clustered
 create temp table clstr_temp (col1 int primary key, col2 text);
 insert into clstr_temp values (2, 'two'), (1, 'one');
@@ -384,8 +395,8 @@ select * from clstr_temp;
 drop table clstr_temp;
 RESET SESSION AUTHORIZATION;
 -- check clustering an empty table
---dg-cascade
---dg DROP TABLE clustertest;
+DROP TABLE clustertest;
+ERROR:  table "clustertest" does not exist
 CREATE TABLE clustertest (f1 int PRIMARY KEY);
 --dg-differs: the result
 --dg CLUSTER clustertest USING clustertest_pkey;
@@ -441,14 +452,12 @@ CREATE TABLE clustertest (f1 int PRIMARY KEY);
 --dg CREATE INDEX ptnowner_i_idx ON ptnowner(i);
 --dg-cascade
 --dg CREATE TABLE ptnowner1 PARTITION OF ptnowner FOR VALUES IN (1);
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_ptnowner;
+CREATE ROLE regress_ptnowner;
 --dg-cascade
 --dg CREATE TABLE ptnowner2 PARTITION OF ptnowner FOR VALUES IN (2);
 --dg-cascade
 --dg ALTER TABLE ptnowner1 OWNER TO regress_ptnowner;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_ptnowner;
+SET SESSION AUTHORIZATION regress_ptnowner;
 --dg-cascade
 --dg CLUSTER ptnowner USING ptnowner_i_idx;
 RESET SESSION AUTHORIZATION;
@@ -458,8 +467,7 @@ RESET SESSION AUTHORIZATION;
 --dg CREATE TEMP TABLE ptnowner_oldnodes AS
 --dg   SELECT oid, relname, relfilenode FROM pg_partition_tree('ptnowner') AS tree
 --dg   JOIN pg_class AS c ON c.oid=tree.relid;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_ptnowner;
+SET SESSION AUTHORIZATION regress_ptnowner;
 --dg-cascade
 --dg CLUSTER ptnowner USING ptnowner_i_idx;
 RESET SESSION AUTHORIZATION;
@@ -468,8 +476,7 @@ RESET SESSION AUTHORIZATION;
 --dg   JOIN ptnowner_oldnodes b USING (oid) ORDER BY a.relname COLLATE "C";
 --dg-cascade
 --dg DROP TABLE ptnowner;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_ptnowner;
+DROP ROLE regress_ptnowner;
 -- Test CLUSTER with external tuplesorting
 create table clstr_4 as select * from tenk1;
 create index cluster_sort on clstr_4 (hundred, thousand, tenthous);
@@ -552,5 +559,4 @@ DROP TABLE clstr_3;
 DROP TABLE clstr_4;
 --dg-cascade
 --dg DROP TABLE clstr_expression;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_clstr_user;
+DROP USER regress_clstr_user;

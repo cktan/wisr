@@ -21,18 +21,13 @@ BEGIN;
 --dg ALTER DATABASE regression_utf8 RESET TABLESPACE;
 ROLLBACK;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_datdba_before;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_datdba_after;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+CREATE ROLE regress_datdba_before;
+CREATE ROLE regress_datdba_after;
+--dg-cascade
 --dg ALTER DATABASE regression_utf8 OWNER TO regress_datdba_before;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg REASSIGN OWNED BY regress_datdba_before TO regress_datdba_after;
+REASSIGN OWNED BY regress_datdba_before TO regress_datdba_after;
 
 --dg-cascade
 --dg DROP DATABASE regression_utf8;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_datdba_before;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_datdba_after;
+DROP ROLE regress_datdba_before;
+DROP ROLE regress_datdba_after;

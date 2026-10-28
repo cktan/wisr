@@ -530,10 +530,8 @@ create table check_con_tbl (f1 int);
 --dg select * from check_con_tbl;
 
 -- test with RLS enabled.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_rls_copy_user;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_rls_copy_user_colperms;
+CREATE ROLE regress_rls_copy_user;
+CREATE ROLE regress_rls_copy_user_colperms;
 CREATE TABLE rls_t1 (a int, b int, c int);
 
 COPY rls_t1 (a, b, c) from stdin;
@@ -543,16 +541,15 @@ COPY rls_t1 (a, b, c) from stdin;
 4	1	4
 \.
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY p1 ON rls_t1 FOR SELECT USING (a % 2 = 0);
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rls_t1 ENABLE ROW LEVEL SECURITY;
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE rls_t1 FORCE ROW LEVEL SECURITY;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT SELECT ON TABLE rls_t1 TO regress_rls_copy_user;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+GRANT SELECT ON TABLE rls_t1 TO regress_rls_copy_user;
+--dg-skip: column privileges are not supported yet
 --dg GRANT SELECT (a, b) ON TABLE rls_t1 TO regress_rls_copy_user_colperms;
 
 -- all columns
@@ -566,8 +563,7 @@ COPY rls_t1 (a, b) TO stdout;
 -- column reordering
 COPY rls_t1 (b, a) TO stdout;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_copy_user;
+SET SESSION AUTHORIZATION regress_rls_copy_user;
 
 -- all columns
 --dg-cascade
@@ -587,18 +583,14 @@ COPY rls_t1 (b, a) TO stdout;
 
 RESET SESSION AUTHORIZATION;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_rls_copy_user_colperms;
+SET SESSION AUTHORIZATION regress_rls_copy_user_colperms;
 
 -- attempt all columns (should fail)
---dg-cascade
---dg COPY rls_t1 TO stdout;
---dg-cascade
---dg COPY rls_t1 (a, b, c) TO stdout;
+COPY rls_t1 TO stdout;
+COPY rls_t1 (a, b, c) TO stdout;
 
 -- try to copy column with no privileges (should fail)
---dg-cascade
---dg COPY rls_t1 (c) TO stdout;
+COPY rls_t1 (c) TO stdout;
 
 -- subset of columns (should succeed)
 --dg-cascade
@@ -756,10 +748,8 @@ DROP TABLE vistest;
 --dg-cascade
 --dg DROP TABLE x, y;
 DROP TABLE rls_t1 CASCADE;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_rls_copy_user;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_rls_copy_user_colperms;
+DROP ROLE regress_rls_copy_user;
+DROP ROLE regress_rls_copy_user_colperms;
 --dg-cascade
 --dg DROP FUNCTION fn_x_before();
 --dg-cascade

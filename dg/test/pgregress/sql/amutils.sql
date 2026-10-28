@@ -80,23 +80,21 @@ CREATE TEMP TABLE foo (f1 int, f2 int, f3 int, f4 int);
 
 CREATE INDEX fooindex ON foo (f1 desc, f2 asc, f3 nulls first, f4 nulls last);
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
---dg select col, prop, pg_index_column_has_property(o, col, prop)
---dg   from (values ('fooindex'::regclass)) v1(o),
---dg        (values (1,'orderable'),(2,'asc'),(3,'desc'),
---dg                (4,'nulls_first'),(5,'nulls_last'),
---dg                (6, 'bogus')) v2(idx,prop),
---dg        generate_series(1,4) col
---dg  order by col, idx;
+select col, prop, pg_index_column_has_property(o, col, prop)
+  from (values ('fooindex'::regclass)) v1(o),
+       (values (1,'orderable'),(2,'asc'),(3,'desc'),
+               (4,'nulls_first'),(5,'nulls_last'),
+               (6, 'bogus')) v2(idx,prop),
+       generate_series(1,4) col
+ order by col, idx;
 
 CREATE INDEX foocover ON foo (f1) INCLUDE (f2,f3);
 
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
---dg select col, prop, pg_index_column_has_property(o, col, prop)
---dg   from (values ('foocover'::regclass)) v1(o),
---dg        (values (1,'orderable'),(2,'asc'),(3,'desc'),
---dg                (4,'nulls_first'),(5,'nulls_last'),
---dg                (6,'distance_orderable'),(7,'returnable'),
---dg                (8, 'bogus')) v2(idx,prop),
---dg        generate_series(1,3) col
---dg  order by col, idx;
+select col, prop, pg_index_column_has_property(o, col, prop)
+  from (values ('foocover'::regclass)) v1(o),
+       (values (1,'orderable'),(2,'asc'),(3,'desc'),
+               (4,'nulls_first'),(5,'nulls_last'),
+               (6,'distance_orderable'),(7,'returnable'),
+               (8, 'bogus')) v2(idx,prop),
+       generate_series(1,3) col
+ order by col, idx;

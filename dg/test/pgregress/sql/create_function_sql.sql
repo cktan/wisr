@@ -6,12 +6,10 @@
 
 -- All objects made in this test are in temp_func_test schema
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_unpriv_user;
+CREATE USER regress_unpriv_user;
 
 CREATE SCHEMA temp_func_test;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT ALL ON SCHEMA temp_func_test TO public;
+GRANT ALL ON SCHEMA temp_func_test TO public;
 
 SET search_path TO temp_func_test, public;
 
@@ -138,20 +136,19 @@ SET search_path TO temp_func_test, public;
 --dg                      'functest_E_2'::regproc) ORDER BY proname;
 
 -- it takes superuser privilege to turn on leakproof, but not to turn off
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER FUNCTION functest_E_1(int) OWNER TO regress_unpriv_user;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER FUNCTION functest_E_2(int) OWNER TO regress_unpriv_user;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_unpriv_user;
+SET SESSION AUTHORIZATION regress_unpriv_user;
 SET search_path TO temp_func_test, public;
 --dg-cascade
 --dg ALTER FUNCTION functest_E_1(int) NOT LEAKPROOF;
 --dg-cascade
 --dg ALTER FUNCTION functest_E_2(int) LEAKPROOF;
 
---dg-cascade
+--dg-differs: another error: language "?" does not exist
 --dg CREATE FUNCTION functest_E_3(int) RETURNS bool LANGUAGE 'sql'
 --dg        LEAKPROOF AS 'SELECT $1 < 200';	-- fail
 
@@ -628,6 +625,5 @@ RESET check_function_bodies;
 -- Cleanup
 --dg-cascade
 --dg DROP SCHEMA temp_func_test CASCADE;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_unpriv_user;
+DROP USER regress_unpriv_user;
 RESET search_path;

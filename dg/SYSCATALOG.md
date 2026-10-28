@@ -229,8 +229,13 @@ What a row says, for the first of them:
 - **`pg_database`**: a row a database of sm's; its oid is
   `FirstNormalObjectId` plus its `dbid` (`CODE.md` §5).
   Encoding is UTF-8, and the locale columns the server's.
-- **`pg_roles`**: one row, the superuser, until there are
-  roles.
+- **`pg_authid`**: a row a role of `pg_global`'s
+  (`../sm/ROLE.md`), from the snapshot the sessions share
+  (`utils/init/pg_global.c`); the syscache's `AUTHOID` and
+  `AUTHNAME` read it, as they always scanned it. Its password
+  is the SCRAM secret.
+- **`pg_roles`**: `pg_authid`'s rows, the password hidden, as
+  PostgreSQL's view has them.
 
 ---
 

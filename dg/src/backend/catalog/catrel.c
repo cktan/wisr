@@ -49,6 +49,7 @@
 #include "catalog/pg_statistic_ext_d.h"
 #include "catalog/pg_trigger_d.h"
 #include "catalog/pg_type_d.h"
+#include "catalog/pg_auth_members_d.h"
 #include "catalog/pg_authid_d.h"
 #include "catalog/pg_class_d.h"
 #include "catalog/pg_index.h"
@@ -63,13 +64,16 @@
 #include "commands/defrem.h"
 #include "optimizer/optimizer.h"
 #include "mb/pg_wchar.h"
+#include "utils/acl.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/datadir.h"
 #include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
+#include "utils/pg_global.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
+#include "utils/timestamp.h"
 #include "utils/tuplestore.h"
 
 /* A callback of the access method that a catalog relation never takes. */
@@ -111,23 +115,71 @@ static const cat_relation_t *cat_rels(Oid only, int *count) {
 }
 
 /*
+ * An ACL of two items, granted by owner: owner_privs to owner, and
+ * public_privs to PUBLIC if there are any.
+ */
+static Datum make_acl(Oid owner, AclMode owner_privs, AclMode public_privs) {
+  int n = ACL_NO_RIGHTS == public_privs ? 1 : 2;
+  /* As acl.c's allocacl() makes one: a one-dimensional aclitem array. */
+  Acl *acl = (Acl *)palloc0(ACL_N_SIZE(n));
+  AclItem *items;
+
+  SET_VARSIZE(acl, ACL_N_SIZE(n));
+  acl->ndim = 1;
+  acl->dataoffset = 0;
+  acl->elemtype = ACLITEMOID;
+  ARR_LBOUND(acl)[0] = 1;
+  ARR_DIMS(acl)[0] = n;
+  items = ACL_DAT(acl);
+
+  items[0].ai_grantee = owner;
+  items[0].ai_grantor = owner;
+  ACLITEM_SET_PRIVS_GOPTIONS(items[0], owner_privs, ACL_NO_RIGHTS);
+  if (ACL_NO_RIGHTS != public_privs) {
+    items[1].ai_grantee = ACL_ID_PUBLIC;
+    items[1].ai_grantor = owner;
+    ACLITEM_SET_PRIVS_GOPTIONS(items[1], public_privs, ACL_NO_RIGHTS);
+  }
+  return PointerGetDatum(acl);
+}
+
+/*
  * pg_namespace's rows: those compiled in, then sm's schemas not among them.
- * Every owner is the superuser, and no ACL is kept.
+ * The compiled-in ones are as initdb leaves PostgreSQL 18's: pg_catalog's
+ * USAGE is PUBLIC's, and public is pg_database_owner's, its USAGE PUBLIC's.
+ * Every other is the superuser's, with no ACL kept.
  */
 static void gen_pg_namespace(Tuplestorestate *ts, TupleDesc desc) {
   int count;
   const cat_namespace_t *rows = cat_namespaces(&count);
   Datum values[4];
   bool nulls[4] = {false, false, false, true};
+  Acl *acl;
   ListCell *l;
 
   for (int i = 0; i < count; i++) {
+    Oid owner = rows[i].nspowner;
+
+    /* As ALTER SCHEMA ... OWNER TO left it, in pg_global, if it did. */
+    (void)pg_global_owner_of(rows[i].oid, &owner);
     values[0] = ObjectIdGetDatum(rows[i].oid);
     values[1] = name_datum(rows[i].nspname);
-    values[2] = ObjectIdGetDatum(BOOTSTRAP_SUPERUSERID);
+    values[2] = ObjectIdGetDatum(owner);
+    nulls[3] = true;
     values[3] = (Datum)0;
+    /* As GRANT and REVOKE left it, in pg_global, if they did. */
+    if (NULL !=
+        (acl = pg_global_acl(pg_global_dbid(MyDatabaseId), rows[i].oid))) {
+      nulls[3] = false;
+      values[3] = PointerGetDatum(acl);
+    } else if (PG_CATALOG_NAMESPACE == rows[i].oid ||
+               PG_PUBLIC_NAMESPACE == rows[i].oid) {
+      nulls[3] = false;
+      values[3] = make_acl(owner, ACL_ALL_RIGHTS_SCHEMA, ACL_USAGE);
+    }
     tuplestore_putvalues(ts, desc, values, nulls);
   }
+  nulls[3] = true;
   foreach (l, smstore_namespace_names()) {
     const char *name = (const char *)lfirst(l);
     Oid oid = smstore_namespace_oid(name);
@@ -136,8 +188,10 @@ static void gen_pg_namespace(Tuplestorestate *ts, TupleDesc desc) {
       continue;
     values[0] = ObjectIdGetDatum(oid);
     values[1] = name_datum(name);
-    values[2] = ObjectIdGetDatum(BOOTSTRAP_SUPERUSERID);
-    values[3] = (Datum)0;
+    values[2] = ObjectIdGetDatum(pg_global_owner(oid));
+    acl = pg_global_acl(pg_global_dbid(MyDatabaseId), oid);
+    nulls[3] = NULL == acl;
+    values[3] = PointerGetDatum(acl);
     tuplestore_putvalues(ts, desc, values, nulls);
   }
 }
@@ -150,9 +204,10 @@ static void gen_pg_namespace(Tuplestorestate *ts, TupleDesc desc) {
  * triggers: the relation cache gives it RI triggers (sm_fkey_triggers()).
  */
 static void class_row(Tuplestorestate *ts, TupleDesc desc, Oid oid,
-                      const char *name, Oid nspoid, Oid reltype, char kind,
-                      int natts, bool hasindex, bool temp,
-                      Datum reloptions = (Datum)0, bool hastriggers = false) {
+                      const char *name, Oid nspoid, Oid reltype, Oid owner,
+                      char kind, int natts, bool hasindex, bool temp,
+                      Datum reloptions = (Datum)0, bool hastriggers = false,
+                      Datum acl = (Datum)0) {
   Datum values[Natts_pg_class];
   bool nulls[Natts_pg_class];
 
@@ -162,7 +217,7 @@ static void class_row(Tuplestorestate *ts, TupleDesc desc, Oid oid,
   values[Anum_pg_class_relname - 1] = name_datum(name);
   values[Anum_pg_class_relnamespace - 1] = ObjectIdGetDatum(nspoid);
   values[Anum_pg_class_reltype - 1] = ObjectIdGetDatum(reltype);
-  values[Anum_pg_class_relowner - 1] = ObjectIdGetDatum(BOOTSTRAP_SUPERUSERID);
+  values[Anum_pg_class_relowner - 1] = ObjectIdGetDatum(owner);
   values[Anum_pg_class_relam - 1] =
       ObjectIdGetDatum(kind == RELKIND_RELATION ? HEAP_TABLE_AM_OID
                        : kind == RELKIND_INDEX  ? BTREE_AM_OID
@@ -182,11 +237,36 @@ static void class_row(Tuplestorestate *ts, TupleDesc desc, Oid oid,
   values[Anum_pg_class_relreplident - 1] =
       CharGetDatum(kind == RELKIND_RELATION ? REPLICA_IDENTITY_DEFAULT
                                             : REPLICA_IDENTITY_NOTHING);
-  nulls[Anum_pg_class_relacl - 1] = true;
+  values[Anum_pg_class_relacl - 1] = acl;
+  nulls[Anum_pg_class_relacl - 1] = acl == (Datum)0;
   values[Anum_pg_class_reloptions - 1] = reloptions;
   nulls[Anum_pg_class_reloptions - 1] = reloptions == (Datum)0;
   nulls[Anum_pg_class_relpartbound - 1] = true;
   tuplestore_putvalues(ts, desc, values, nulls);
+}
+
+/*
+ * The owner of the relation r of sm's, pg_global's (utils/init/pg_global.c):
+ * an index's is its table's, and a sequence's a column owns its table's.
+ */
+static Oid relation_owner(const smstore_relation_t *r) {
+  if (RELKIND_INDEX == r->kind)
+    return pg_global_owner(r->table);
+  if (RELKIND_SEQUENCE == r->kind && OidIsValid(r->owner))
+    return pg_global_owner(r->owner);
+  return pg_global_owner(r->oid);
+}
+
+/*
+ * The ACL of the relation r of sm's, pg_global's, or (Datum) 0 if it keeps
+ * none: an index has none.
+ */
+static Datum relation_acl(const smstore_relation_t *r) {
+  Acl *acl = RELKIND_INDEX == r->kind
+                 ? NULL
+                 : pg_global_acl(pg_global_dbid(MyDatabaseId), r->oid);
+
+  return NULL == acl ? (Datum)0 : PointerGetDatum(acl);
 }
 
 /*
@@ -198,16 +278,24 @@ static void gen_pg_class(Tuplestorestate *ts, TupleDesc desc, Oid only) {
   const cat_relation_t *cats = cat_rels(only, &count);
   ListCell *l;
 
+  /*
+   * A catalog relation is readable by PUBLIC, as initdb grants PostgreSQL's,
+   * but pg_authid, which holds the passwords.
+   */
   for (int i = 0; i < count; i++)
-    class_row(ts, desc, cats[i].oid, cats[i].name, PG_CATALOG_NAMESPACE,
-              cats[i].rowtype, RELKIND_RELATION, cats[i].natts, false, false);
+    class_row(
+        ts, desc, cats[i].oid, cats[i].name, PG_CATALOG_NAMESPACE,
+        cats[i].rowtype, BOOTSTRAP_SUPERUSERID, RELKIND_RELATION, cats[i].natts,
+        false, false, (Datum)0, false,
+        make_acl(BOOTSTRAP_SUPERUSERID, ACL_ALL_RIGHTS_RELATION,
+                 AuthIdRelationId == cats[i].oid ? ACL_NO_RIGHTS : ACL_SELECT));
   foreach (l, sm_relations(only)) {
     smstore_relation_t *r = (smstore_relation_t *)lfirst(l);
 
-    class_row(ts, desc, r->oid, r->name, r->nspoid, InvalidOid, r->kind,
-              r->natts, r->hasindex, r->temp,
+    class_row(ts, desc, r->oid, r->name, r->nspoid, InvalidOid,
+              relation_owner(r), r->kind, r->natts, r->hasindex, r->temp,
               smstore_view_reloptions(r->options),
-              r->nfkeys > 0 || r->referenced);
+              r->nfkeys > 0 || r->referenced, relation_acl(r));
   }
 }
 
@@ -583,25 +671,84 @@ static void gen_text_rows(const cat_relation_t *cat, Tuplestorestate *ts,
 }
 
 /*
- * pg_roles's rows: digres has one role, the superuser, named as initdb
- * named it (GetUserNameFromId()), who may do anything but replicate.
+ * pg_authid's rows: pg_global's roles, as this session sees them
+ * (utils/init/pg_global.c).
+ */
+static void gen_pg_authid(Tuplestorestate *ts, TupleDesc desc) {
+  std::shared_ptr<const pg_global_roles_t> all = pg_global_roles();
+  Datum values[Natts_pg_authid];
+  bool nulls[Natts_pg_authid];
+
+  for (const pg_global_role_t &r : all->roles) {
+    memset(nulls, false, sizeof(nulls));
+    values[Anum_pg_authid_oid - 1] = ObjectIdGetDatum(r.oid);
+    values[Anum_pg_authid_rolname - 1] = name_datum(r.rolname.c_str());
+    values[Anum_pg_authid_rolsuper - 1] = BoolGetDatum(r.rolsuper);
+    values[Anum_pg_authid_rolinherit - 1] = BoolGetDatum(r.rolinherit);
+    values[Anum_pg_authid_rolcreaterole - 1] = BoolGetDatum(r.rolcreaterole);
+    values[Anum_pg_authid_rolcreatedb - 1] = BoolGetDatum(r.rolcreatedb);
+    values[Anum_pg_authid_rolcanlogin - 1] = BoolGetDatum(r.rolcanlogin);
+    values[Anum_pg_authid_rolreplication - 1] = BoolGetDatum(r.rolreplication);
+    values[Anum_pg_authid_rolbypassrls - 1] = BoolGetDatum(r.rolbypassrls);
+    values[Anum_pg_authid_rolconnlimit - 1] = Int32GetDatum(r.rolconnlimit);
+    nulls[Anum_pg_authid_rolpassword - 1] = !r.has_password;
+    values[Anum_pg_authid_rolpassword - 1] =
+        r.has_password ? CStringGetTextDatum(r.rolpassword.c_str()) : (Datum)0;
+    nulls[Anum_pg_authid_rolvaliduntil - 1] = !r.has_validuntil;
+    values[Anum_pg_authid_rolvaliduntil - 1] =
+        TimestampTzGetDatum(r.rolvaliduntil);
+    tuplestore_putvalues(ts, desc, values, nulls);
+  }
+}
+
+/* pg_auth_members's rows: pg_global's memberships, as this session sees. */
+static void gen_pg_auth_members(Tuplestorestate *ts, TupleDesc desc) {
+  std::shared_ptr<const pg_global_roles_t> all = pg_global_roles();
+  Datum values[Natts_pg_auth_members];
+  bool nulls[Natts_pg_auth_members] = {};
+
+  for (const pg_global_member_t &m : all->members) {
+    values[Anum_pg_auth_members_oid - 1] = ObjectIdGetDatum(m.oid);
+    values[Anum_pg_auth_members_roleid - 1] = ObjectIdGetDatum(m.roleid);
+    values[Anum_pg_auth_members_member - 1] = ObjectIdGetDatum(m.member);
+    values[Anum_pg_auth_members_grantor - 1] = ObjectIdGetDatum(m.grantor);
+    values[Anum_pg_auth_members_admin_option - 1] =
+        BoolGetDatum(m.admin_option);
+    values[Anum_pg_auth_members_inherit_option - 1] =
+        BoolGetDatum(m.inherit_option);
+    values[Anum_pg_auth_members_set_option - 1] = BoolGetDatum(m.set_option);
+    tuplestore_putvalues(ts, desc, values, nulls);
+  }
+}
+
+/*
+ * pg_roles's rows: pg_authid's, as PostgreSQL's view has them, the
+ * password hidden.  No role has settings of its own yet (rolconfig).
  */
 static void gen_pg_roles(Tuplestorestate *ts, TupleDesc desc) {
+  std::shared_ptr<const pg_global_roles_t> all = pg_global_roles();
   Datum values[13];
   bool nulls[13];
 
-  for (int i = 0; i < 13; i++) {
-    values[i] = BoolGetDatum(true);
-    nulls[i] = false;
+  for (const pg_global_role_t &r : all->roles) {
+    memset(nulls, false, sizeof(nulls));
+    values[0] = name_datum(r.rolname.c_str());
+    values[1] = BoolGetDatum(r.rolsuper);
+    values[2] = BoolGetDatum(r.rolinherit);
+    values[3] = BoolGetDatum(r.rolcreaterole);
+    values[4] = BoolGetDatum(r.rolcreatedb);
+    values[5] = BoolGetDatum(r.rolcanlogin);
+    values[6] = BoolGetDatum(r.rolreplication);
+    values[7] = Int32GetDatum(r.rolconnlimit);
+    values[8] = CStringGetTextDatum("********");
+    nulls[9] = !r.has_validuntil;
+    values[9] = TimestampTzGetDatum(r.rolvaliduntil);
+    values[10] = BoolGetDatum(r.rolbypassrls);
+    nulls[11] = true;
+    values[11] = (Datum)0;
+    values[12] = ObjectIdGetDatum(r.oid);
+    tuplestore_putvalues(ts, desc, values, nulls);
   }
-  values[0] = name_datum(GetUserNameFromId(BOOTSTRAP_SUPERUSERID, false));
-  values[6] = BoolGetDatum(false); /* rolreplication: there is none */
-  values[7] = Int32GetDatum(-1);
-  values[8] = CStringGetTextDatum("********");
-  nulls[9] = true;
-  nulls[11] = true;
-  values[12] = ObjectIdGetDatum(BOOTSTRAP_SUPERUSERID);
-  tuplestore_putvalues(ts, desc, values, nulls);
 }
 
 /*
@@ -612,6 +759,7 @@ static void gen_pg_roles(Tuplestorestate *ts, TupleDesc desc) {
 static void gen_pg_database(Tuplestorestate *ts, TupleDesc desc) {
   Datum values[Natts_pg_database];
   bool nulls[Natts_pg_database];
+  Acl *acl;
   ListCell *l;
 
   foreach (l, datadir_database_names()) {
@@ -622,8 +770,8 @@ static void gen_pg_database(Tuplestorestate *ts, TupleDesc desc) {
     values[Anum_pg_database_oid - 1] =
         ObjectIdGetDatum(datadir_database_oid(name));
     values[Anum_pg_database_datname - 1] = name_datum(name);
-    values[Anum_pg_database_datdba - 1] =
-        ObjectIdGetDatum(BOOTSTRAP_SUPERUSERID);
+    values[Anum_pg_database_datdba - 1] = ObjectIdGetDatum(
+        pg_global_database_owner(pg_global_dbid(datadir_database_oid(name))));
     values[Anum_pg_database_encoding - 1] = Int32GetDatum(PG_UTF8);
     values[Anum_pg_database_datlocprovider - 1] =
         CharGetDatum(COLLPROVIDER_LIBC);
@@ -638,7 +786,10 @@ static void gen_pg_database(Tuplestorestate *ts, TupleDesc desc) {
     nulls[Anum_pg_database_datlocale - 1] = true;
     nulls[Anum_pg_database_daticurules - 1] = true;
     nulls[Anum_pg_database_datcollversion - 1] = true;
-    nulls[Anum_pg_database_datacl - 1] = true;
+    /* Its ACL is pg_global's, by its id, if GRANT made one. */
+    acl = pg_global_acl(pg_global_dbid(datadir_database_oid(name)), InvalidOid);
+    nulls[Anum_pg_database_datacl - 1] = NULL == acl;
+    values[Anum_pg_database_datacl - 1] = PointerGetDatum(acl);
     tuplestore_putvalues(ts, desc, values, nulls);
   }
 }
@@ -746,7 +897,7 @@ static void gen_pg_views(Tuplestorestate *ts, TupleDesc desc) {
       continue;
     values[0] = name_datum(get_namespace_name(r->nspoid));
     values[1] = name_datum(r->name);
-    values[2] = name_datum(GetUserNameFromId(BOOTSTRAP_SUPERUSERID, false));
+    values[2] = name_datum(GetUserNameFromId(relation_owner(r), false));
     values[3] = DirectFunctionCall1(pg_get_viewdef, ObjectIdGetDatum(r->oid));
     tuplestore_putvalues(ts, desc, values, nulls);
   }
@@ -837,6 +988,12 @@ static void generate(Relation rel, Tuplestorestate *ts, int nkeys,
     break;
   case DependRelationId:
     gen_pg_depend(ts, desc, only);
+    break;
+  case AuthIdRelationId:
+    gen_pg_authid(ts, desc);
+    break;
+  case AuthMemRelationId:
+    gen_pg_auth_members(ts, desc);
     break;
   case CATREL_PG_ROLES:
     gen_pg_roles(ts, desc);
@@ -1034,6 +1191,25 @@ bool catrel_is_builtin(Oid relid) {
   default:
     return false;
   }
+}
+
+/*
+ * Whether the catalog relation relid has pg_global's rows, the roles':
+ * a session drops what it caches of them when pg_global's epoch moves
+ * (utils/init/pg_global.c).
+ */
+bool catrel_is_global(Oid relid) {
+  return AuthIdRelationId == relid || AuthMemRelationId == relid;
+}
+
+/*
+ * Whether the syscache may keep a row of the catalog relid: one compiled in,
+ * or of pg_global's, or of a catalog that is no catalog relation; not one
+ * made from sm's catalog, which no DDL invalidates (SYSCATALOG.md).
+ */
+bool catrel_is_cached(Oid relid) {
+  return NULL == cat_relation(relid) || catrel_is_builtin(relid) ||
+         catrel_is_global(relid);
 }
 
 /*

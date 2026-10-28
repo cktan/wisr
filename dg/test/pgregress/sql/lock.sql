@@ -19,12 +19,10 @@ CREATE VIEW lock_view3 AS SELECT * from lock_view2;
 CREATE VIEW lock_view4 AS SELECT (select a from lock_tbl1a limit 1) from lock_tbl1;
 CREATE VIEW lock_view5 AS SELECT * from lock_tbl1 where a in (select * from lock_tbl1a);
 CREATE VIEW lock_view6 AS SELECT * from (select * from lock_tbl1) sub;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_rol_lock1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+CREATE ROLE regress_rol_lock1;
+--dg-skip: relation pg_db_role_setting cannot be opened: digres has no catalog tables
 --dg ALTER ROLE regress_rol_lock1 SET search_path = lock_schema1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT USAGE ON SCHEMA lock_schema1 TO regress_rol_lock1;
+GRANT USAGE ON SCHEMA lock_schema1 TO regress_rol_lock1;
 
 -- Try all valid lock options; also try omitting the optional TABLE keyword.
 BEGIN TRANSACTION;
@@ -129,10 +127,8 @@ ROLLBACK;
 
 -- Child tables are locked without granting explicit permission to do so as
 -- long as we have permission to lock the parent.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT UPDATE ON TABLE lock_tbl1 TO regress_rol_lock1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_rol_lock1;
+GRANT UPDATE ON TABLE lock_tbl1 TO regress_rol_lock1;
+SET ROLE regress_rol_lock1;
 -- fail when child locked directly
 BEGIN;
 --dg-cascade
@@ -145,23 +141,18 @@ BEGIN;
 LOCK TABLE ONLY lock_tbl1;
 ROLLBACK;
 RESET ROLE;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg REVOKE UPDATE ON TABLE lock_tbl1 FROM regress_rol_lock1;
+REVOKE UPDATE ON TABLE lock_tbl1 FROM regress_rol_lock1;
 
 -- Tables referred to by views are locked without explicit permission to do so
 -- as long as we have permission to lock the view itself.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_rol_lock1;
+SET ROLE regress_rol_lock1;
 -- fail without permissions on the view
 BEGIN;
---dg-cascade
---dg LOCK TABLE lock_view1;
+LOCK TABLE lock_view1;
 ROLLBACK;
 RESET ROLE;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT UPDATE ON TABLE lock_view1 TO regress_rol_lock1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_rol_lock1;
+GRANT UPDATE ON TABLE lock_view1 TO regress_rol_lock1;
+SET ROLE regress_rol_lock1;
 BEGIN;
 --dg-skip: relation "?" does not exist
 --dg LOCK TABLE lock_view1 IN ACCESS EXCLUSIVE MODE;
@@ -172,32 +163,26 @@ BEGIN;
 --dg  order by relname;
 ROLLBACK;
 RESET ROLE;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg REVOKE UPDATE ON TABLE lock_view1 FROM regress_rol_lock1;
+REVOKE UPDATE ON TABLE lock_view1 FROM regress_rol_lock1;
 
 -- Tables referred to by security invoker views require explicit permission to
 -- be locked.
 CREATE VIEW lock_view8 WITH (security_invoker) AS SELECT * FROM lock_tbl1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_rol_lock1;
+SET ROLE regress_rol_lock1;
 -- fail without permissions on the view
 BEGIN;
---dg-cascade
---dg LOCK TABLE lock_view8;
+LOCK TABLE lock_view8;
 ROLLBACK;
 RESET ROLE;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT UPDATE ON TABLE lock_view8 TO regress_rol_lock1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_rol_lock1;
+GRANT UPDATE ON TABLE lock_view8 TO regress_rol_lock1;
+SET ROLE regress_rol_lock1;
 -- fail without permissions on the table referenced by the view
 BEGIN;
---dg-cascade
+--dg-differs: another error: relation "?" does not exist
 --dg LOCK TABLE lock_view8;
 ROLLBACK;
 RESET ROLE;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT UPDATE ON TABLE lock_tbl1 TO regress_rol_lock1;
+GRANT UPDATE ON TABLE lock_tbl1 TO regress_rol_lock1;
 BEGIN;
 --dg-skip: relation "?" does not exist
 --dg LOCK TABLE lock_view8 IN ACCESS EXCLUSIVE MODE;
@@ -208,8 +193,7 @@ BEGIN;
 --dg  order by relname;
 ROLLBACK;
 RESET ROLE;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg REVOKE UPDATE ON TABLE lock_view8 FROM regress_rol_lock1;
+REVOKE UPDATE ON TABLE lock_view8 FROM regress_rol_lock1;
 
 --
 -- Clean up
@@ -232,7 +216,7 @@ DROP VIEW lock_view1;
 --dg DROP TABLE lock_tbl1a;
 --dg-cascade
 --dg DROP SCHEMA lock_schema1 CASCADE;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP ROLE regress_rol_lock1;
 
 

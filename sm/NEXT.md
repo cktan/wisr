@@ -167,6 +167,21 @@ Owed, and blocking nothing above:
 
 ## 3. Not blocking
 
+- **Roles, authentication and authorization, a module of their
+  own**, beside `sm` and `sq`, once the code of `ROLE.md`
+  settles: not before (decided 2026-10-28). What would move
+  out of digres: the roles, memberships, owners and ACLs, and
+  their storage in `pg_global` through `sm.h`
+  (`../dg/src/backend/utils/init/pg_global.c`); the
+  transaction's changes and their writes around the
+  database's commit; ROLE.md §5's checks as one decision; and
+  the evaluation of privileges, with the closures over the
+  membership graph that INHERIT, SET and ADMIN make. What
+  would stay: PostgreSQL's protocol (the SCRAM exchange, the
+  socket's peer), its SQL (`user.c`, `aclchk.c`'s calls), the
+  catalog relations and the caches' invalidation. What it buys:
+  one authority over roles, tested without a server, the crash
+  between the two commits among its tests.
 - **Explore dropping a chained store's OLD entries at
   startup.** After a restart no snapshot is older than the
   start, so an old entry (class `0x02`, `VCHAIN.md` §2) whose

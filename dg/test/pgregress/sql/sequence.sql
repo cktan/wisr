@@ -89,8 +89,7 @@ INSERT INTO serialTest1 VALUES ('wrong', NULL);
 
 SELECT * FROM serialTest1;
 
---dg-skip: relation pg_attribute cannot be opened: digres has no catalog tables
---dg SELECT pg_get_serial_sequence('serialTest1', 'f2');
+SELECT pg_get_serial_sequence('serialTest1', 'f2');
 
 -- test smallserial / bigserial
 CREATE TABLE serialTest2 (f1 text, f2 serial, f3 smallserial, f4 serial2,
@@ -402,14 +401,12 @@ ROLLBACK;
 
 -- privileges tests
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_seq_user;
+CREATE USER regress_seq_user;
 
 -- nextval
 BEGIN;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET LOCAL SESSION AUTHORIZATION regress_seq_user;
---dg-cascade
+SET LOCAL SESSION AUTHORIZATION regress_seq_user;
+--dg-differs: no error where PostgreSQL has: permission denied for schema public
 --dg CREATE SEQUENCE seq3;
 --dg-cascade
 --dg REVOKE ALL ON seq3 FROM regress_seq_user;
@@ -420,9 +417,8 @@ BEGIN;
 ROLLBACK;
 
 BEGIN;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET LOCAL SESSION AUTHORIZATION regress_seq_user;
---dg-cascade
+SET LOCAL SESSION AUTHORIZATION regress_seq_user;
+--dg-differs: no error where PostgreSQL has: permission denied for schema public
 --dg CREATE SEQUENCE seq3;
 --dg-cascade
 --dg REVOKE ALL ON seq3 FROM regress_seq_user;
@@ -433,9 +429,8 @@ BEGIN;
 ROLLBACK;
 
 BEGIN;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET LOCAL SESSION AUTHORIZATION regress_seq_user;
---dg-cascade
+SET LOCAL SESSION AUTHORIZATION regress_seq_user;
+--dg-differs: no error where PostgreSQL has: permission denied for schema public
 --dg CREATE SEQUENCE seq3;
 --dg-cascade
 --dg REVOKE ALL ON seq3 FROM regress_seq_user;
@@ -447,9 +442,8 @@ ROLLBACK;
 
 -- currval
 BEGIN;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET LOCAL SESSION AUTHORIZATION regress_seq_user;
---dg-cascade
+SET LOCAL SESSION AUTHORIZATION regress_seq_user;
+--dg-differs: no error where PostgreSQL has: permission denied for schema public
 --dg CREATE SEQUENCE seq3;
 --dg-cascade
 --dg SELECT nextval('seq3');
@@ -462,9 +456,8 @@ BEGIN;
 ROLLBACK;
 
 BEGIN;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET LOCAL SESSION AUTHORIZATION regress_seq_user;
---dg-cascade
+SET LOCAL SESSION AUTHORIZATION regress_seq_user;
+--dg-differs: no error where PostgreSQL has: permission denied for schema public
 --dg CREATE SEQUENCE seq3;
 --dg-cascade
 --dg SELECT nextval('seq3');
@@ -477,9 +470,8 @@ BEGIN;
 ROLLBACK;
 
 BEGIN;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET LOCAL SESSION AUTHORIZATION regress_seq_user;
---dg-cascade
+SET LOCAL SESSION AUTHORIZATION regress_seq_user;
+--dg-differs: no error where PostgreSQL has: permission denied for schema public
 --dg CREATE SEQUENCE seq3;
 --dg-cascade
 --dg SELECT nextval('seq3');
@@ -493,9 +485,8 @@ ROLLBACK;
 
 -- lastval
 BEGIN;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET LOCAL SESSION AUTHORIZATION regress_seq_user;
---dg-cascade
+SET LOCAL SESSION AUTHORIZATION regress_seq_user;
+--dg-differs: no error where PostgreSQL has: permission denied for schema public
 --dg CREATE SEQUENCE seq3;
 --dg-cascade
 --dg SELECT nextval('seq3');
@@ -508,9 +499,8 @@ BEGIN;
 ROLLBACK;
 
 BEGIN;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET LOCAL SESSION AUTHORIZATION regress_seq_user;
---dg-cascade
+SET LOCAL SESSION AUTHORIZATION regress_seq_user;
+--dg-differs: no error where PostgreSQL has: permission denied for schema public
 --dg CREATE SEQUENCE seq3;
 --dg-cascade
 --dg SELECT nextval('seq3');
@@ -523,9 +513,8 @@ BEGIN;
 ROLLBACK;
 
 BEGIN;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET LOCAL SESSION AUTHORIZATION regress_seq_user;
---dg-cascade
+SET LOCAL SESSION AUTHORIZATION regress_seq_user;
+--dg-differs: no error where PostgreSQL has: permission denied for schema public
 --dg CREATE SEQUENCE seq3;
 --dg-cascade
 --dg SELECT nextval('seq3');
@@ -539,9 +528,8 @@ ROLLBACK;
 
 -- setval
 BEGIN;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET LOCAL SESSION AUTHORIZATION regress_seq_user;
---dg-cascade
+SET LOCAL SESSION AUTHORIZATION regress_seq_user;
+--dg-differs: no error where PostgreSQL has: permission denied for schema public
 --dg CREATE SEQUENCE seq3;
 --dg-cascade
 --dg REVOKE ALL ON seq3 FROM regress_seq_user;
@@ -561,9 +549,8 @@ ROLLBACK;
 
 -- ALTER SEQUENCE
 BEGIN;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET LOCAL SESSION AUTHORIZATION regress_seq_user;
---dg-cascade
+SET LOCAL SESSION AUTHORIZATION regress_seq_user;
+--dg-differs: another error: ALTER SEQUENCE is not supported yet
 --dg ALTER SEQUENCE sequence_test2 START WITH 1;
 ROLLBACK;
 
@@ -577,8 +564,7 @@ DROP TABLE serialTest1, serialTest2;
 --dg    'serialtest2_f4_seq', 'serialtest2_f5_seq', 'serialtest2_f6_seq')
 --dg   ORDER BY sequence_name ASC;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_seq_user;
+DROP USER regress_seq_user;
 DROP SEQUENCE seq;
 
 -- cache tests

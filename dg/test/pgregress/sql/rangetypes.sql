@@ -605,28 +605,22 @@ select '[2010-01-01 01:00:00 -08, 2010-01-01 02:00:00 -05)'::tstzrange;
 set timezone to default;
 
 -- CREATE TYPE AS RANGE checks for USAGE on subtype
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_subtype;
+CREATE ROLE regress_subtype;
 --dg-skip: a relation's storage cannot be made: digres has no catalog tables
 --dg CREATE TYPE mytype AS (a INT, b INT);
 --dg-cascade
 --dg REVOKE USAGE ON TYPE mytype FROM PUBLIC;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_subtype;
---dg-cascade
---dg CREATE TYPE myrange AS RANGE (subtype = mytype);
+SET ROLE regress_subtype;
+CREATE TYPE myrange AS RANGE (subtype = mytype);
 RESET ROLE;
 --dg-cascade
 --dg GRANT USAGE ON TYPE mytype TO regress_subtype;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_subtype;
---dg-cascade
---dg CREATE TYPE myrange AS RANGE (subtype = mytype);
+SET ROLE regress_subtype;
+CREATE TYPE myrange AS RANGE (subtype = mytype);
 RESET ROLE;
 --dg-cascade
 --dg DROP TYPE mytype CASCADE;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_subtype;
+DROP ROLE regress_subtype;
 
 --
 -- Test user-defined range of floats

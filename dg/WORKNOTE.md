@@ -9270,3 +9270,403 @@ that grows a file costs 2,776 µs, one over bytes the file has
   3,134 (2,607); by a uniform key, 1 client 319 to 632 (655),
   16 clients 964 to 3,059 (3,002); Q8 15,087 to 23,634
   (34,318).
+
+## Step 318: the roles live in pg_global
+
+The first step of roles (`../sm/ROLE.md` §9). digres had one
+role, the superuser initdb named, whose name and SCRAM secret
+were the data directory's `superuser` file. A role is the
+whole server's, and no sm transaction spans two databases, so
+the roles go to a database of their own, `pg_global`, which
+holds all role data and nothing else holds any (ROLE.md §3,
+the invariant).
+
+- **`pg_global`** (`utils/init/pg_global.c`) is an sm
+  database like any other, with a table of digres's,
+  `pg_authid`: a role a row, its primary key the oid, a unique
+  index on the name. sm learns nothing of roles. initdb makes
+  it after `postgres`, which keeps the first database id, with
+  the superuser in it, oid 10; the `superuser` file and
+  `SUPERUSER_FILE` are gone. The superuser has PostgreSQL's
+  attributes but REPLICATION, which digres has none of, as
+  `pg_roles` said before.
+- **The snapshot**: the postmaster reads every role at start
+  into one `pg_global_roles_t`, in `shmem->pg_global`, which
+  sessions copy a pointer to under its mutex. No session opens
+  `pg_global`. Role DDL, step 2, replaces it whole after its
+  commit.
+- **Who reads it**: `InitializeSessionUserId()` (the role by
+  name or oid, and its superuser flag), `get_role_password()`
+  (the secret, and PostgreSQL's check of `rolvaliduntil`,
+  which no role has yet), `GetUserNameFromId()`, and the
+  catalog relations `pg_authid`, new, and `pg_roles`, which
+  the syscache's `AUTHOID` and `AUTHNAME` scan.
+- **Hidden**: `pg_global` is not in `pg_database`, cannot be
+  connected to or dropped (`database does not exist`), and
+  `CREATE DATABASE pg_global` finds it there.
+- **A data directory made before** has no `pg_global`, and
+  the server refuses it at start, `data directory has no
+  database "pg_global"`, with a hint to run initdb (ROLE.md §8
+  question 5). No upgrade in place.
+- **Left on purpose**: single-user mode (`--single`) loads no
+  data directory and finds no role but the bootstrap one,
+  as before; ROLE.md keeps no single-user mode.
+- **Tests**: `initdb.sh` makes no `superuser` file, reads
+  `-U` and `--pwfile`'s role from `pg_authid` through a server
+  started on it, and has a directory whose `pg_global` sm's
+  `rel` dropped refused (so `make test` builds `../sm/rel`);
+  `server.sh` reads `pg_authid` and `pg_roles`, finds a role by
+  name and oid (`regrole`), and has `pg_global` hidden. Each
+  was shown to fail with its part disabled. sm and its `rel`
+  and mvcc tests have nothing to check: sm is unchanged.
+
+## Step 319: role DDL writes pg_global
+
+The second step of roles (`../sm/ROLE.md` §9): CREATE, ALTER
+and DROP ROLE, GRANT and REVOKE of a membership, SET ROLE and
+SET SESSION AUTHORIZATION. `user.c` is PostgreSQL's still, its
+checks and messages too; what it wrote to `pg_authid` and
+`pg_auth_members` goes to `pg_global` instead.
+
+- **`pg_auth_members`** is a table of `pg_global`'s beside
+  `pg_authid`, keyed by oid, with a unique index on (role,
+  member, grantor), and a catalog relation; the oids of both
+  come from `pg_global`'s sequence `role_oid`, from 16384.
+  A data directory from step 318 has none, and is refused at
+  start, to be made again.
+- **A session's changes** (`pg_global_put_role()` and the
+  rest, in place of `CatalogTupleInsert()`, `Update()`,
+  `Delete()` and `GetNewOidWithIndex()`) go to a copy of the
+  snapshot the session alone reads, and its caches of the two
+  catalogs are invalidated at its next command, as a catalog
+  tuple's write would.
+- **At commit**, before the database's (`CommitTransaction()`),
+  what differs from the snapshot the changes began from is
+  written to `pg_global` in one transaction, each row checked
+  first to be as the session read it: one another session
+  changed meanwhile fails the commit, `could not serialize
+  access due to concurrent update`, rather than lose that
+  change. Then the snapshot is read again and replaced, under
+  its mutex, and its epoch moves. An abort forgets the copy.
+- **Other sessions** drop their caches of the roles at their
+  next transaction, when the epoch has moved
+  (`AcceptInvalidationMessages()`), as they do a schema's.
+- **No pg_shdepend**: a membership's grantor was recorded
+  there. DROP ROLE now reads it from `pg_global`
+  (`pg_global_role_dependents()`), with PostgreSQL's DETAIL;
+  the cleanup of a role's comments, security labels and
+  settings is gone, as digres keeps none.
+- **The session's role is set as PostgreSQL sets it**, through
+  the `session_authorization` setting, now that a role can be
+  looked up by name: digres set the user ids alone, and RESET
+  SESSION AUTHORIZATION then left the session as the role SET
+  had made it, superuser or not.
+- **In a transaction block** CREATE, ALTER, DROP ROLE, a
+  role's GRANT and REVOKE, and ALTER ROLE RENAME are refused
+  (ROLE.md §8 question 1).
+- **System-table scans** of the two catalogs read their rows,
+  as of a catalog of compiled-in rows: they have no index
+  (`catrel_is_global()`).
+- **pgregress**: between files, the `regress%` roles are
+  dropped in one DROP ROLE, which drops a grantor with what it
+  granted whatever their order. The 55 files with statements
+  taken out at `pg_authid` were ported again, and 1,115 of
+  their statements are back: `password` keeps all 44 it took
+  out, `roleattributes` 73 of 80, `privileges` 461 of 1,361,
+  `rowsecurity` 53 of 907, `create_role` 53 of 139. Statements
+  that ran as no role before now run as one that is not a
+  superuser, whose privilege checks read `pg_namespace`'s ACL
+  by the syscache, which opens an index a catalog relation
+  does not have: 1,020 now stop at `relation pg_namespace
+  cannot be opened`, until owners and GRANT (steps 4 and 5).
+- **Left on purpose**: ALTER ROLE ... SET (`pg_db_role_setting`)
+  still fails; REASSIGN OWNED and DROP OWNED are step 6. Two
+  sessions changing one role at once is not tested: role DDL
+  is one statement, with nothing to hold one between its read
+  and its commit.
+- **Tests**: `server.sh` makes, grants, alters and drops roles,
+  and checks what a session already open sees, the refusal in
+  a transaction block, the grantor's DETAIL, SET ROLE and what
+  a role without CREATEROLE may not do, and the roles after a
+  restart. sm is unchanged, so mvcc and `rel` have nothing to
+  check.
+
+## Step 320: how a client gets in
+
+The third step of roles (`../sm/ROLE.md` §5, §9): the fixed
+rule of step 92, peer on the socket and SCRAM over TCP, gives
+way to ROLE.md's four checks, with no `pg_hba.conf`.
+
+- **How it proves who it is** (`hba_getauthmethod()`): on the
+  local socket, peer if the OS user at its other end is the
+  role's name; else the role's password, by SCRAM-SHA-256, as
+  over TCP. A role with no password has only peer.
+- **Locked out**: on the local socket, the data directory's
+  owner, the OS user the server runs as, asking for the
+  bootstrap superuser by its name, is let in by peer, whatever
+  that role's LOGIN, VALID UNTIL or CONNECTION LIMIT say
+  (`Port.datadir_owner`, ROLE.md §8 question 3). Another role
+  it asks for is any role's.
+- **The role may log in** (`InitializeSessionUserId()`): LOGIN,
+  not past VALID UNTIL, under its CONNECTION LIMIT, counted in
+  the session registry (`sessions_of_role()`); a superuser has
+  no limit, as in PostgreSQL. VALID UNTIL refuses peer too,
+  where PostgreSQL's only refuses the password.
+- **CONNECT on the database** (`CheckMyDatabase()`), which a
+  superuser need not have. No database has an ACL yet (step
+  5), so `PUBLIC` has it everywhere.
+- **What the client is told**: `password authentication failed
+  for user`, whatever failed, as PostgreSQL tells it of a
+  wrong password; the log's DETAIL says which check, as
+  PostgreSQL's does for its own.
+- **Left on purpose**: a session of a role that is not a
+  superuser gets in, but a statement that looks a name up
+  fails, at `pg_namespace`'s ACL (step 319): step 4.
+- **Tests**: `server.sh` has a role get in by password on the
+  socket and over TCP, and refuses one with no password, one
+  NOLOGIN, one past VALID UNTIL and one at its CONNECTION
+  LIMIT, the log naming each; `initdb.sh` lets the owner in as
+  a bootstrap superuser made NOLOGIN, CONNECTION LIMIT 0 and
+  past VALID UNTIL, under another name, and not as another
+  role. Each was shown to fail with its check disabled. sm is
+  unchanged.
+
+## Step 321: a role that is not a superuser runs statements
+
+The first half of step 4 of roles (`../sm/ROLE.md` §9). Since
+step 319 a session may be a role that is not a superuser, and
+every statement of one that looked a name up failed: the
+privilege check of a schema read `pg_namespace` by the
+syscache, which opened an index no catalog relation has.
+
+- **No index for a catalog relation**: `systable_beginscan()`
+  scans one, as a catalog of compiled-in rows was scanned
+  already; its access method makes the rows its keys pass.
+- **A row of sm's catalog is not kept** by the syscache
+  (`catrel_is_cached()`): no DDL of sm's invalidates one, so
+  an entry made for `pg_class`, `pg_namespace` and the rest is
+  dead at once, and goes once released; nor is a negative
+  entry kept. Rows compiled in, and `pg_global`'s, are kept as
+  before.
+- **What initdb leaves, as PostgreSQL 18's**: `pg_catalog`'s
+  USAGE is PUBLIC's; `public` is `pg_database_owner`'s, with
+  USAGE for PUBLIC and CREATE for its owner alone; a catalog
+  relation is PUBLIC's to read, but `pg_authid`. PostgreSQL's
+  sixteen predefined roles are rows of `pg_global`'s
+  `pg_authid`, with their oids, and `pg_monitor` has its three
+  members; DROP ROLE refuses one, and the bootstrap superuser,
+  as required by the database system.
+- **`aclchk.c`'s shortcuts go**: a relation of sm's was taken
+  to be the superuser's with the default ACL, and a catalog
+  relation and every column of one readable by anyone, as no
+  row could be read. A superuser's check is still decided
+  before a row is made; another role's reads the row's ACL. A
+  catalog relation's column has no ACL, as PostgreSQL's has
+  none: the column checks the executor falls back to had let
+  any role read `pg_authid`.
+- **Left on purpose**: every object made is still the
+  superuser's (step 4's second half), so another role is
+  refused every table and may create none, as in PostgreSQL
+  with no GRANT, which is step 5.
+- **pgregress**: the 59 files with statements taken out at a
+  catalog relation that could not be opened, `pg_namespace`,
+  `pg_class`, `pg_rewrite` and the others the syscache read,
+  were ported again: 933 statements are back, and none is
+  taken out at those three now.
+- **Tests**: `server.sh` has a role that is not a superuser run
+  a statement that looks names up, read `pg_class` and
+  `pg_roles` and not `pg_authid`, be refused the superuser's
+  table and CREATE in `public`; checks the two schemas' ACLs,
+  `pg_monitor`'s member and its DROP refused; and has a
+  session's check of a table dropped by another answered as
+  for no table. Each was shown to fail with its part undone.
+
+## Step 322: owners
+
+The second half of step 4 of roles (`../sm/ROLE.md` §9): every
+object a role makes is its, in `pg_global`, and DDL on one is
+refused to a role that does not own it, as PostgreSQL refuses
+it. Every object was the superuser's.
+
+- **`pg_object`**, a table of `pg_global`'s keyed by (database
+  id, object oid), holds an object's owner, and will hold its
+  ACL (step 5): a table's, a view's, a sequence's, a schema's,
+  and with oid 0 a database's own. sm's ids are never reused,
+  so an entry a crash leaves behind names nothing. A data
+  directory from before has none, and is refused at start.
+- **Written after the database's commit** (ROLE.md §8
+  question 7): CREATE TABLE, VIEW, SEQUENCE, SCHEMA and
+  DATABASE record the current role, DROP forgets the entry, in
+  a log of the session's (`pg_global_set_owner()`,
+  `pg_global_forget()`) that it reads itself, written by
+  `pg_global_post_commit()` once sm's commit is done. An error
+  there is a warning: the object falls to its database's
+  owner, or the superuser, never to a role it was not.
+- **ALTER ... OWNER TO** of an object with an entry writes it
+  the superuser's before the database's commit and the new
+  owner's after, and an abort puts back what was; so a crash
+  between leaves less granted, not more.
+- **Savepoints**: each change is tagged with its
+  subtransaction's level; a rollback to a savepoint drops the
+  log's tail, a release hands it to the parent.
+- **Temporary objects'** owners are the session's alone, never
+  written.
+- **Who reads it**: `pg_class` (an index's owner its table's,
+  a sequence a column owns its table's), `pg_namespace`,
+  `pg_database`, `pg_views`, and the relation cache, whose
+  owner a view's rules are checked as. Another session drops
+  the cache entries of the relations whose owner changed, from
+  the last 4,096 changes `pg_global` keeps, at its next
+  transaction; every entry, if it fell further behind.
+- **Ownership checks** (`check_owner()`, smstore.c): DROP of a
+  table, view, sequence or index (its owner, or its schema's),
+  of a schema (its owner); ALTER TABLE and VIEW, RENAME,
+  CREATE INDEX and CREATE OR REPLACE VIEW (its owner); TRUNCATE
+  (its privilege); `nextval()`, `currval()` and `lastval()`
+  (the sequence's); VACUUM and ANALYZE (MAINTAIN, passed over
+  with PostgreSQL's warning if named).
+- **ALTER TABLE, VIEW, SEQUENCE, INDEX, SCHEMA and DATABASE ...
+  OWNER TO**, with PostgreSQL's checks: owner, able to become
+  the new owner, which has CREATE on the schema (CREATEDB for a
+  database). A table's sequences go with it; a sequence a
+  column owns is refused, an index warns.
+- **Left on purpose**: an object's ACL, and its rewriting by a
+  new owner, is step 5; REASSIGN and DROP OWNED, step 6.
+  REINDEX, a no-op, checks nothing. The crash between the two
+  commits, and an abort after the first, are not tested: no
+  test can stop the server between them.
+- **A crash of steps 319 to 321, found here**: the syscache,
+  making a list of a catalog it keeps, `pg_auth_members`'s,
+  looked for an entry it had of the same row by TID, which a
+  catalog relation's row has none of, and failed an
+  assertion; whether it met such an entry depended on what
+  another session's role DDL had flushed, so it came and went.
+  A row with no TID is now never taken for one cached: at
+  worst a row is cached twice, which PostgreSQL tolerates.
+  `privileges` had four statements taken out as crashing, and
+  `psql` one; they are back.
+- **pgregress**: the 52 files that say OWNER TO, SET ROLE or
+  SESSION AUTHORIZATION were ported again, and `privileges`
+  and `psql` once more after the crash's fix: 137 statements
+  are back.
+- **Tests**: `server.sh` has a role's table, its serial and
+  index, view and schema its, none kept for a transaction
+  rolled back or a savepoint rolled back to; another role
+  refused each DDL, with PostgreSQL's messages; OWNER TO of a
+  table, a sequence, an index and a schema, one in a savepoint
+  rolled back to undone; and an owner kept across a restart.
+  Each was shown to fail with its part undone.
+
+## Step 323: GRANT and REVOKE
+
+The fifth step of roles (`../sm/ROLE.md` §9): GRANT and REVOKE
+on tables, views, sequences, schemas and databases, and the
+checks that then refuse. `aclchk.c` is PostgreSQL's still: what
+it computes, PostgreSQL's ACL merged with the grant, goes to
+`pg_global` in place of the catalog row.
+
+- **An ACL is the object's entry's** in `pg_object`
+  (`pg_global_set_acl()`), as role oids and privilege bits,
+  `grantee,grantor,privs` an item, so a role's rename leaves
+  it be. A database's is its entry's by its own id; a
+  temporary object's is the session's alone. pg_shdepend is
+  gone: no dependency is recorded.
+- **Written at the commit** (ROLE.md §8 question 7): before the
+  database's, an entry that is to grant less is written to
+  grant only what it grants before and after, the items both
+  ACLs have, with the privileges both give; after, the ACL
+  asked for. An abort after the first write puts back what
+  was. So a crash, or a commit that fails, leaves less
+  granted, never more. In a transaction block, and in a
+  savepoint rolled back to, as an owner is (step 322).
+- **Who reads it**: `pg_class` (`relacl`), `pg_namespace`
+  (`nspacl`, a built-in schema's in place of the compiled-in
+  one once granted on), `pg_database` (`datacl`), so the
+  checks, `\dp`, `\dn+` and `\l` see it, and the second check
+  of ROLE.md §5, CONNECT, refuses a role at its login.
+- **A view's relations are checked as its owner**, as
+  PostgreSQL's rules are: digres checked them as the
+  superuser, so any role granted a view read what it read.
+- **A new owner** rewrites the ACL, the old owner's items the
+  new one's (`aclnewowner()`, `pg_global_change_owner()`).
+- **Refused**: a column's privileges (ROLE.md §8 question 2,
+  later), and a function's, a type's, a language's, which are
+  compiled in, and PUBLIC's.
+- **Left on purpose**: DROP ROLE does not yet refuse a role an
+  ACL names, nor one that owns an object: step 6.
+- **pgregress**: the 41 files that GRANT or REVOKE were ported
+  again: 338 statements are back.
+- **Tests**: `server.sh` grants and revokes a table to a role,
+  in a transaction rolled back and a savepoint rolled back to
+  too; has a view read as its owner, and refused when its
+  owner loses the table; shows the ACLs; refuses a column's
+  and a function's; keeps a role out of a database by REVOKE
+  CONNECT; and has a REVOKE whose SERIALIZABLE transaction
+  fails at its commit leave the ACL as it was, read again
+  after a restart. Each was shown to fail with its part
+  undone.
+
+## Step 324: what depends on a role
+
+The sixth step of roles (`../sm/ROLE.md` §9): DROP ROLE refuses
+a role anything depends on, in any database, and REASSIGN
+OWNED and DROP OWNED act on what it owns and is granted, all
+read from `pg_global`'s entries, as PostgreSQL reads them from
+`pg_shdepend`, which digres has none of.
+
+- **DROP ROLE's DETAIL** (`pg_global_role_dependents()`):
+  `owner of` and `privileges for` each object of this database,
+  and each database, whose entry names the role, and each
+  membership it granted, sorted by oid; then `N objects in
+  database X` for each other database; a hundred lines at most,
+  as PostgreSQL's. An ACL that names its object's owner is not
+  a dependency, as in PostgreSQL. digres's oids are not
+  PostgreSQL's, so the lines may come in another order.
+- **REASSIGN OWNED** gives what the role owns in this database,
+  and the databases it owns, to the new role, with no check of
+  each, as PostgreSQL's does (`smstore_reassign_owner()`): an
+  index and a sequence a column owns go with their table.
+- **DROP OWNED** revokes what an ACL grants the role, in this
+  database and on the databases (`RemoveRoleFromObjectACL()`,
+  now writing `pg_global`), deletes the memberships it
+  granted, and drops what it owns in this database, its
+  relations the newest first, then its schemas, by the DROP
+  that each kind takes, RESTRICT or CASCADE as asked.
+- **A predefined role**, or the bootstrap superuser, is refused
+  both, as required by the database system.
+- **Left on purpose**: a temporary object's owner is the
+  session's alone, and DROP OWNED drops none. A membership
+  DROP OWNED deletes in a savepoint rolled back to stays
+  deleted: role changes have no savepoints, as role DDL runs
+  outside a transaction block; it leaves less granted, not
+  more. The sweep of entries a crash left behind is still to
+  come.
+- **pgregress**: the 56 files that drop a role, or what one
+  owns, were ported again: 30 statements are back.
+- **Tests**: `server.sh` has DROP ROLE refused with each line of
+  its DETAIL, an object in another database counted; REASSIGN
+  OWNED give a schema, a table, a view and a database away;
+  DROP OWNED revoke here, drop in the other database, and then
+  DROP ROLE succeed; DROP OWNED drop a schema, a table and a
+  view; and a predefined role refused both. Each was shown to
+  fail with its part undone.
+
+## Step 325: LIKE ... INCLUDING INDEXES of a table of sm's
+
+A crash the merge of steps 312 and 318 to 324 makes, neither
+alone: CREATE TABLE ... (LIKE t INCLUDING INDEXES), t with a
+primary key, which step 312 lets CREATE TABLE make. Its parse
+analysis, PostgreSQL's `generateClonedIndexStmt()`, read the
+source index's `pg_index` row from the relation cache, where an
+index of sm's keeps none (`rd_indextuple`), and dereferenced
+NULL. Before the merge it never got that far: the catalogs it
+reads first could not be read (step 321 made them readable),
+or the table had no index.
+
+- **The row is read from the syscache** (`INDEXRELID`) when the
+  relation cache has none: `pg_index`'s catalog relation makes
+  it, as `\d` reads it.
+- **pgregress**: `create_table_like` had four statements taken
+  out as crashing in the merge's port; it and the other files
+  that copy indexes, `alter_table`, `constraints`, `indexing`
+  and `without_overlaps`, are ported again with the merge.

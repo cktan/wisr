@@ -34,20 +34,13 @@ CREATE STATISTICS tst;
 CREATE STATISTICS tst ON a, b;
 CREATE STATISTICS tst FROM sometab;
 CREATE STATISTICS tst ON a, b FROM nonexistent;
---dg-differs: another error: relation pg_statistic_ext cannot be opened: digres has no catalog tables
---dg CREATE STATISTICS tst ON a, b FROM ext_stats_test;
---dg-differs: another error: relation pg_statistic_ext cannot be opened: digres has no catalog tables
---dg CREATE STATISTICS tst ON x, x, y FROM ext_stats_test;
---dg-differs: another error: relation pg_statistic_ext cannot be opened: digres has no catalog tables
---dg CREATE STATISTICS tst ON x, x, y, x, x, y, x, x, y FROM ext_stats_test;
---dg-differs: another error: relation pg_statistic_ext cannot be opened: digres has no catalog tables
---dg CREATE STATISTICS tst ON x, x, y, x, x, (x || 'x'), (y + 1), (x || 'x'), (x || 'x'), (y + 1) FROM ext_stats_test;
---dg-differs: another error: relation pg_statistic_ext cannot be opened: digres has no catalog tables
---dg CREATE STATISTICS tst ON (x || 'x'), (x || 'x'), (y + 1), (x || 'x'), (x || 'x'), (y + 1), (x || 'x'), (x || 'x'), (y + 1) FROM ext_stats_test;
---dg-differs: another error: relation pg_statistic_ext cannot be opened: digres has no catalog tables
---dg CREATE STATISTICS tst ON (x || 'x'), (x || 'x'), y FROM ext_stats_test;
---dg-differs: another error: relation pg_statistic_ext cannot be opened: digres has no catalog tables
---dg CREATE STATISTICS tst (unrecognized) ON x, y FROM ext_stats_test;
+CREATE STATISTICS tst ON a, b FROM ext_stats_test;
+CREATE STATISTICS tst ON x, x, y FROM ext_stats_test;
+CREATE STATISTICS tst ON x, x, y, x, x, y, x, x, y FROM ext_stats_test;
+CREATE STATISTICS tst ON x, x, y, x, x, (x || 'x'), (y + 1), (x || 'x'), (x || 'x'), (y + 1) FROM ext_stats_test;
+CREATE STATISTICS tst ON (x || 'x'), (x || 'x'), (y + 1), (x || 'x'), (x || 'x'), (y + 1), (x || 'x'), (x || 'x'), (y + 1) FROM ext_stats_test;
+CREATE STATISTICS tst ON (x || 'x'), (x || 'x'), y FROM ext_stats_test;
+CREATE STATISTICS tst (unrecognized) ON x, y FROM ext_stats_test;
 -- unsupported targets
 CREATE STATISTICS tst ON x, y FROM ext_stats_test, ext_stats_test;
 CREATE STATISTICS tst ON x, y FROM ext_stats_test, (SELECT * FROM ext_stats_test) AS foo;
@@ -65,8 +58,7 @@ CREATE STATISTICS alt_stat2 ON a FROM tftest(1);
 --dg-cascade
 --dg DROP FUNCTION tftest;
 -- incorrect expressions
---dg-differs: another error: relation pg_statistic_ext cannot be opened: digres has no catalog tables
---dg CREATE STATISTICS tst ON (y) FROM ext_stats_test; -- single column reference
+CREATE STATISTICS tst ON (y) FROM ext_stats_test; -- single column reference
 CREATE STATISTICS tst ON y + z FROM ext_stats_test; -- missing parentheses
 CREATE STATISTICS tst ON (x, y) FROM ext_stats_test; -- tuple expression
 DROP TABLE ext_stats_test;
@@ -98,14 +90,12 @@ DROP TABLE ext_stats_test;
 
 -- Ensure stats are dropped sanely, and test IF NOT EXISTS while at it
 CREATE TABLE ab1 (a INTEGER, b INTEGER, c INTEGER);
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS IF NOT EXISTS ab1_a_b_stats ON a, b FROM ab1;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg COMMENT ON STATISTICS ab1_a_b_stats IS 'new comment';
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_stats_ext;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_stats_ext;
+CREATE ROLE regress_stats_ext;
+SET SESSION AUTHORIZATION regress_stats_ext;
 --dg-cascade
 --dg COMMENT ON STATISTICS ab1_a_b_stats IS 'changed comment';
 --dg-cascade
@@ -113,9 +103,8 @@ CREATE TABLE ab1 (a INTEGER, b INTEGER, c INTEGER);
 --dg-cascade
 --dg ALTER STATISTICS ab1_a_b_stats RENAME TO ab1_a_b_stats_new;
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_stats_ext;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+DROP ROLE regress_stats_ext;
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS pg_temp.stats_ext_temp ON a, b FROM ab1;
 --dg-cascade
 --dg SELECT regexp_replace(pg_describe_object(tableoid, oid, 0),
@@ -123,33 +112,32 @@ RESET SESSION AUTHORIZATION;
 --dg        pg_statistics_obj_is_visible(oid) AS visible
 --dg   FROM pg_statistic_ext
 --dg  WHERE stxname = 'stats_ext_temp';
---dg-differs: another error: relation pg_statistic_ext cannot be opened: digres has no catalog tables
---dg DROP STATISTICS stats_ext_temp;  -- shall fail
+DROP STATISTICS stats_ext_temp;  -- shall fail
 --dg-cascade
 --dg DROP STATISTICS pg_temp.stats_ext_temp;
 
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS IF NOT EXISTS ab1_a_b_stats ON a, b FROM ab1;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP STATISTICS ab1_a_b_stats;
 
 CREATE SCHEMA regress_schema_2;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS regress_schema_2.ab1_a_b_stats ON a, b FROM ab1;
 
 -- Let's also verify the pg_get_statisticsobjdef output looks sane.
 --dg-cascade
 --dg SELECT pg_get_statisticsobjdef(oid) FROM pg_statistic_ext WHERE stxname = 'ab1_a_b_stats';
 
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP STATISTICS regress_schema_2.ab1_a_b_stats;
 
 -- Ensure statistics are dropped when columns are
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS ab1_b_c_stats ON b, c FROM ab1;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS ab1_a_b_c_stats ON a, b, c FROM ab1;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS ab1_b_a_stats ON b, a FROM ab1;
 ALTER TABLE ab1 DROP COLUMN a;
 --dg-cascade
@@ -165,14 +153,14 @@ CREATE TABLE ab1 (a INTEGER, b INTEGER);
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE ab1 ALTER a SET STATISTICS 0;
 INSERT INTO ab1 SELECT a, a%23 FROM generate_series(1, 1000) a;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS ab1_a_b_stats ON a, b FROM ab1;
 --dg-cascade
 --dg ANALYZE ab1;
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE ab1 ALTER a SET STATISTICS -1;
 -- setting statistics target 0 skips the statistics, without printing any message, so check catalog
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER STATISTICS ab1_a_b_stats SET STATISTICS 0;
 --dg-cascade
 --dg \d ab1
@@ -181,7 +169,7 @@ ANALYZE ab1;
 --dg SELECT stxname, stxdndistinct, stxddependencies, stxdmcv, stxdinherit
 --dg   FROM pg_statistic_ext s LEFT JOIN pg_statistic_ext_data d ON (d.stxoid = s.oid)
 --dg  WHERE s.stxname = 'ab1_a_b_stats';
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER STATISTICS ab1_a_b_stats SET STATISTICS -1;
 --dg-cascade
 --dg \d+ ab1
@@ -190,17 +178,15 @@ ANALYZE ab1;
 --dg ANALYZE ab1 (a);
 ANALYZE ab1;
 DROP TABLE ab1;
---dg-differs: another error: relation pg_statistic_ext cannot be opened: digres has no catalog tables
---dg ALTER STATISTICS ab1_a_b_stats SET STATISTICS 0;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
---dg ALTER STATISTICS IF EXISTS ab1_a_b_stats SET STATISTICS 0;
+ALTER STATISTICS ab1_a_b_stats SET STATISTICS 0;
+ALTER STATISTICS IF EXISTS ab1_a_b_stats SET STATISTICS 0;
 
 -- Ensure we can build statistics for tables with inheritance.
 CREATE TABLE ab1 (a INTEGER, b INTEGER);
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE ab1c () INHERITS (ab1);
 INSERT INTO ab1 VALUES (1,1);
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS ab1_a_b_stats ON a, b FROM ab1;
 ANALYZE ab1;
 --dg-cascade
@@ -225,7 +211,7 @@ INSERT INTO stxdinh SELECT mod(a,50), mod(a,100) FROM generate_series(0, 1999) a
 --dg SELECT * FROM check_estimated_rows('SELECT a, b FROM stxdinh* GROUP BY 1, 2');
 --dg-cascade
 --dg SELECT * FROM check_estimated_rows('SELECT a, b FROM stxdinh* WHERE a = 0 AND b = 0');
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS stxdinh ON a, b FROM stxdinh;
 --dg-cascade
 --dg VACUUM ANALYZE stxdinh, stxdinh1, stxdinh2;
@@ -269,31 +255,31 @@ INSERT INTO stxdinh SELECT mod(a,50), mod(a,100) FROM generate_series(0, 1999) a
 --dg CREATE TABLE ab1 (a INTEGER, b INTEGER, c TIMESTAMP, d TIMESTAMPTZ);
 
 -- expression stats may be built on a single expression column
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS ab1_exprstat_1 ON (a+b) FROM ab1;
 
 -- with a single expression, we only enable expression statistics
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS ab1_exprstat_2 ON (a+b) FROM ab1;
 --dg-cascade
 --dg SELECT stxkind FROM pg_statistic_ext WHERE stxname = 'ab1_exprstat_2';
 
 -- adding anything to the expression builds all statistics kinds
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS ab1_exprstat_3 ON (a+b), a FROM ab1;
 --dg-cascade
 --dg SELECT stxkind FROM pg_statistic_ext WHERE stxname = 'ab1_exprstat_3';
 
 -- date_trunc on timestamptz is not immutable, but that should not matter
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS ab1_exprstat_4 ON date_trunc('day', d) FROM ab1;
 
 -- date_trunc on timestamp is immutable
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS ab1_exprstat_5 ON date_trunc('day', c) FROM ab1;
 
 -- check use of a boolean-returning expression
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS ab1_exprstat_6 ON
 --dg   (case a when 1 then true else false end), b FROM ab1;
 
@@ -334,7 +320,7 @@ CREATE VIEW tststats.v AS SELECT * FROM tststats.t;
 --dg-cascade
 --dg CREATE TABLE tststats.pt1 PARTITION OF tststats.pt FOR VALUES FROM (-10, -10) TO (10, 10);
 
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS tststats.s1 ON a, b FROM tststats.t;
 CREATE STATISTICS tststats.s2 ON a, b FROM tststats.ti;
 --dg-differs: another error: "?" is a sequence, which cannot be used as a relation yet
@@ -414,7 +400,7 @@ ANALYZE ndistinct;
 --dg SELECT * FROM check_estimated_rows('SELECT COUNT(*) FROM ndistinct GROUP BY a, (a+1), (b+100)');
 
 -- correct command
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS s10 ON a, b, c FROM ndistinct;
 
 ANALYZE ndistinct;
@@ -505,7 +491,7 @@ ANALYZE ndistinct;
 --dg-cascade
 --dg SELECT * FROM check_estimated_rows('SELECT COUNT(*) FROM ndistinct GROUP BY a, (a+1), (b+100)');
 
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP STATISTICS s10;
 
 --dg-skip: relation "?" does not exist
@@ -552,7 +538,7 @@ ANALYZE ndistinct;
 --dg-cascade
 --dg SELECT * FROM check_estimated_rows('SELECT COUNT(*) FROM ndistinct GROUP BY a, (a+1), (b+100)');
 
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS s10 (ndistinct) ON (a+1), (b+100), (2*c) FROM ndistinct;
 
 ANALYZE ndistinct;
@@ -572,7 +558,7 @@ ANALYZE ndistinct;
 --dg-cascade
 --dg SELECT * FROM check_estimated_rows('SELECT COUNT(*) FROM ndistinct GROUP BY a, (a+1), (b+100)');
 
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP STATISTICS s10;
 
 -- a mix of attributes and expressions
@@ -585,7 +571,7 @@ ANALYZE ndistinct;
 --dg-cascade
 --dg SELECT * FROM check_estimated_rows('SELECT COUNT(*) FROM ndistinct GROUP BY a, b, (2*c)');
 
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS s10 (ndistinct) ON a, b, (2*c) FROM ndistinct;
 
 ANALYZE ndistinct;
@@ -605,7 +591,7 @@ ANALYZE ndistinct;
 --dg-cascade
 --dg SELECT * FROM check_estimated_rows('SELECT COUNT(*) FROM ndistinct GROUP BY a, b, (2*c)');
 
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP STATISTICS s10;
 
 -- combination of multiple ndistinct statistics, with/without expressions
@@ -640,10 +626,10 @@ ANALYZE ndistinct;
 --dg SELECT * FROM check_estimated_rows('SELECT COUNT(*) FROM ndistinct GROUP BY a, (b+1), c, (d - 1)');
 
 -- basic statistics on both attributes (no expressions)
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS s11 (ndistinct) ON a, b FROM ndistinct;
 
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS s12 (ndistinct) ON c, d FROM ndistinct;
 
 ANALYZE ndistinct;
@@ -672,10 +658,10 @@ ANALYZE ndistinct;
 
 -- replace the second statistics by statistics on expressions
 
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP STATISTICS s12;
 
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS s12 (ndistinct) ON (c * 10), (d - 1) FROM ndistinct;
 
 ANALYZE ndistinct;
@@ -704,10 +690,10 @@ ANALYZE ndistinct;
 
 -- replace the second statistics by statistics on both attributes and expressions
 
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP STATISTICS s12;
 
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS s12 (ndistinct) ON c, d, (c * 10), (d - 1) FROM ndistinct;
 
 ANALYZE ndistinct;
@@ -736,10 +722,10 @@ ANALYZE ndistinct;
 
 -- replace the other statistics by statistics on both attributes and expressions
 
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP STATISTICS s11;
 
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS s11 (ndistinct) ON a, b, (a*5), (b+1) FROM ndistinct;
 
 ANALYZE ndistinct;
@@ -770,14 +756,14 @@ ANALYZE ndistinct;
 -- because the first statistics shall be applied to 3 columns, and the second one can't
 -- be really applied)
 
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP STATISTICS s11;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP STATISTICS s12;
 
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS s11 (ndistinct) ON a, b, (a*5), (b+1) FROM ndistinct;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS s12 (ndistinct) ON a, (b+1), (c * 10) FROM ndistinct;
 
 ANALYZE ndistinct;
@@ -803,9 +789,9 @@ ANALYZE ndistinct;
 --dg-cascade
 --dg SELECT * FROM check_estimated_rows('SELECT COUNT(*) FROM ndistinct GROUP BY a, (b+1), c, (d - 1)');
 
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP STATISTICS s11;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP STATISTICS s12;
 
 -- functional dependencies tests
@@ -836,7 +822,7 @@ ANALYZE functional_dependencies;
 --dg SELECT * FROM check_estimated_rows('SELECT * FROM functional_dependencies WHERE a = 1 AND b = ''1'' AND c = 1');
 
 -- create statistics
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS func_deps_stat (dependencies) ON a, b, c FROM functional_dependencies;
 
 ANALYZE functional_dependencies;
@@ -849,7 +835,7 @@ ANALYZE functional_dependencies;
 
 -- a => b, a => c, b => c
 TRUNCATE functional_dependencies;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP STATISTICS func_deps_stat;
 
 -- now do the same thing, but with expressions
@@ -865,7 +851,7 @@ ANALYZE functional_dependencies;
 --dg SELECT * FROM check_estimated_rows('SELECT * FROM functional_dependencies WHERE mod(a, 11) = 1 AND mod(b::int, 13) = 1 AND mod(c, 7) = 1');
 
 -- create statistics
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS func_deps_stat (dependencies) ON (mod(a,11)), (mod(b::int, 13)), (mod(c, 7)) FROM functional_dependencies;
 
 ANALYZE functional_dependencies;
@@ -878,7 +864,7 @@ ANALYZE functional_dependencies;
 
 -- a => b, a => c, b => c
 TRUNCATE functional_dependencies;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP STATISTICS func_deps_stat;
 
 INSERT INTO functional_dependencies (a, b, c, filler1)
@@ -968,7 +954,7 @@ ANALYZE functional_dependencies;
 --dg SELECT * FROM check_estimated_rows('SELECT * FROM functional_dependencies WHERE a IN (1, 2, 51, 52) AND b = ALL (ARRAY[''1'', ''2''])');
 
 -- create statistics
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS func_deps_stat (dependencies) ON a, b, c FROM functional_dependencies;
 
 ANALYZE functional_dependencies;
@@ -1072,7 +1058,7 @@ ANALYZE functional_dependencies;
 --dg-cascade
 --dg SELECT * FROM check_estimated_rows('SELECT * FROM functional_dependencies WHERE a = 1 AND b = ''1'' AND c = 1');
 
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP STATISTICS func_deps_stat;
 
 -- now try functional dependencies with expressions
@@ -1160,7 +1146,7 @@ ANALYZE functional_dependencies;
 --dg SELECT * FROM check_estimated_rows('SELECT * FROM functional_dependencies WHERE (a * 2) IN (2, 4, 102, 104) AND upper(b) = ALL (ARRAY[''1'', ''2''])');
 
 -- create statistics on expressions
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS func_deps_stat (dependencies) ON (a * 2), upper(b), (c + 1) FROM functional_dependencies;
 
 ANALYZE functional_dependencies;
@@ -1283,9 +1269,9 @@ ANALYZE functional_dependencies_multi;
 --dg SELECT * FROM check_estimated_rows('SELECT * FROM functional_dependencies_multi WHERE 0 = a AND b = 0 AND 0 = c AND d = 0');
 
 -- create separate functional dependencies
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS functional_dependencies_multi_1 (dependencies) ON a, b FROM functional_dependencies_multi;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS functional_dependencies_multi_2 (dependencies) ON c, d FROM functional_dependencies_multi;
 
 ANALYZE functional_dependencies_multi;
@@ -1346,7 +1332,7 @@ DROP TABLE functional_dependencies_multi;
 
 --dg-cascade
 --dg TRUNCATE mcv_lists;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP STATISTICS mcv_lists_stats;
 
 -- random data (no MCV list), but with expression
@@ -1379,7 +1365,7 @@ DROP TABLE functional_dependencies_multi;
 -- 100 distinct combinations, all in the MCV list
 --dg-cascade
 --dg TRUNCATE mcv_lists;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP STATISTICS mcv_lists_stats;
 
 --dg-cascade
@@ -1571,7 +1557,7 @@ DROP TABLE functional_dependencies_multi;
 -- 100 distinct combinations, all in the MCV list, but with expressions
 --dg-cascade
 --dg TRUNCATE mcv_lists;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP STATISTICS mcv_lists_stats;
 
 --dg-cascade
@@ -1655,11 +1641,11 @@ DROP TABLE functional_dependencies_multi;
 --dg-cascade
 --dg SELECT * FROM check_estimated_rows('SELECT * FROM mcv_lists WHERE mod(a,20) < ALL (ARRAY[4, 5]) AND mod(b::int,10) IN (1, 2, 3) AND mod(c,5) > ANY (ARRAY[1, 2, 3])');
 
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP STATISTICS mcv_lists_stats_1;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP STATISTICS mcv_lists_stats_2;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP STATISTICS mcv_lists_stats_3;
 
 -- create statistics with both MCV and expressions
@@ -1706,7 +1692,7 @@ DROP TABLE functional_dependencies_multi;
 -- 100 distinct combinations with NULL values, all in the MCV list
 --dg-cascade
 --dg TRUNCATE mcv_lists;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP STATISTICS mcv_lists_stats;
 
 --dg-cascade
@@ -1776,7 +1762,7 @@ DROP TABLE functional_dependencies_multi;
 -- 2 distinct combinations with NULL values, all in the MCV list
 --dg-cascade
 --dg TRUNCATE mcv_lists;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP STATISTICS mcv_lists_stats;
 
 --dg-cascade
@@ -1847,7 +1833,7 @@ ANALYZE mcv_lists_uuid;
 --dg-cascade
 --dg SELECT * FROM check_estimated_rows('SELECT * FROM mcv_lists_uuid WHERE a = ''e7f6c011-776e-8db7-cd33-0b54174fd76f'' AND b = ''e7f6c011-776e-8db7-cd33-0b54174fd76f'' AND c = ''e7f6c011-776e-8db7-cd33-0b54174fd76f''');
 
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS mcv_lists_uuid_stats (mcv) ON a, b, c
 --dg   FROM mcv_lists_uuid;
 
@@ -1912,7 +1898,7 @@ ANALYZE mcv_lists_bool;
 --dg-cascade
 --dg SELECT * FROM check_estimated_rows('SELECT * FROM mcv_lists_bool WHERE NOT a AND b AND NOT c');
 
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS mcv_lists_bool_stats (mcv) ON a, b, c
 --dg   FROM mcv_lists_bool;
 
@@ -1987,7 +1973,7 @@ ANALYZE mcv_lists_partial;
 --dg-cascade
 --dg SELECT * FROM check_estimated_rows('SELECT * FROM mcv_lists_partial WHERE (a = 0 AND b = 0) OR (a = 0 AND c = 0) OR (b = 0 AND c = 0)');
 
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS mcv_lists_partial_stats (mcv) ON a, b, c
 --dg   FROM mcv_lists_partial;
 
@@ -2055,9 +2041,9 @@ ANALYZE mcv_lists_multi;
 --dg SELECT * FROM check_estimated_rows('SELECT * FROM mcv_lists_multi WHERE a = 0 OR b = 0 OR c = 0 OR d = 0');
 
 -- create separate MCV statistics
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS mcv_lists_multi_1 (mcv) ON a, b FROM mcv_lists_multi;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS mcv_lists_multi_2 (mcv) ON c, d FROM mcv_lists_multi;
 
 ANALYZE mcv_lists_multi;
@@ -2090,7 +2076,7 @@ ANALYZE expr_stats;
 --dg-cascade
 --dg SELECT * FROM check_estimated_rows('SELECT * FROM expr_stats WHERE (a+b) = 0 AND (a-b) = 0');
 
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS expr_stats_1 (mcv) ON (a+b), (a-b), (2*a), (3*b) FROM expr_stats;
 ANALYZE expr_stats;
 
@@ -2099,7 +2085,7 @@ ANALYZE expr_stats;
 --dg-cascade
 --dg SELECT * FROM check_estimated_rows('SELECT * FROM expr_stats WHERE (a+b) = 0 AND (a-b) = 0');
 
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP STATISTICS expr_stats_1;
 DROP TABLE expr_stats;
 
@@ -2115,7 +2101,7 @@ ANALYZE expr_stats;
 --dg-cascade
 --dg SELECT * FROM check_estimated_rows('SELECT * FROM expr_stats WHERE a = 0 AND b = 1 AND (a-b) = 0');
 
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS expr_stats_1 (mcv) ON a, b, (2*a), (3*b), (a+b), (a-b) FROM expr_stats;
 ANALYZE expr_stats;
 
@@ -2136,7 +2122,7 @@ ANALYZE expr_stats;
 --dg-cascade
 --dg SELECT * FROM check_estimated_rows('SELECT * FROM expr_stats WHERE a = 0 AND (b || c) <= ''z'' AND (c || b) >= ''0''');
 
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS expr_stats_1 (mcv) ON a, b, (b || c), (c || b) FROM expr_stats;
 ANALYZE expr_stats;
 
@@ -2151,7 +2137,7 @@ CREATE TABLE expr_stats_incompatible_test (
     c1 boolean NOT NULL
 );
 
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS expr_stat_comp_1 ON c0, c1 FROM expr_stats_incompatible_test;
 
 INSERT INTO expr_stats_incompatible_test VALUES (1234,false), (5678,true);
@@ -2182,7 +2168,7 @@ CREATE TABLE tststats.priv_test_tbl (
 INSERT INTO tststats.priv_test_tbl
      SELECT mod(i,5), mod(i,10) FROM generate_series(1,100) s(i);
 
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS tststats.priv_test_stats (mcv) ON a, b
 --dg   FROM tststats.priv_test_tbl;
 
@@ -2190,26 +2176,26 @@ ANALYZE tststats.priv_test_tbl;
 
 -- Check printing info about extended statistics by \dX
 create table stts_t1 (a int, b int);
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg create statistics (ndistinct) on a, b from stts_t1;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg create statistics (ndistinct, dependencies) on a, b from stts_t1;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg create statistics (ndistinct, dependencies, mcv) on a, b from stts_t1;
 
 create table stts_t2 (a int, b int, c int);
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg create statistics on b, c from stts_t2;
 
 create table stts_t3 (col1 int, col2 int, col3 int);
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg create statistics stts_hoge on col1, col2, col3 from stts_t3;
 
 create schema stts_s1;
 create schema stts_s2;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg create statistics stts_s1.stts_foo on col1, col2 from stts_t3;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg create statistics stts_s2.stts_yama (dependencies, mcv) on col1, col3 from stts_t3;
 
 insert into stts_t1 select i,i from generate_series(1,100) i;
@@ -2231,120 +2217,93 @@ set search_path to public, stts_s1, stts_s2, tststats;
 --dg-cascade
 --dg \dX+ stts_s2.stts_yama
 
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg create statistics (mcv) ON a, b, (a+b), (a-b) FROM stts_t1;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg create statistics (mcv) ON a, b, (a+b), (a-b) FROM stts_t1;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg create statistics (mcv) ON (a+b), (a-b) FROM stts_t1;
 --dg-cascade
 --dg \dX stts_t*expr*
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop statistics stts_t1_a_b_expr_expr_stat;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop statistics stts_t1_a_b_expr_expr_stat1;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg drop statistics stts_t1_expr_expr_stat;
 
 set search_path to public, stts_s1;
 --dg-cascade
 --dg \dX
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg create role regress_stats_ext nosuperuser;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set role regress_stats_ext;
+create role regress_stats_ext nosuperuser;
+set role regress_stats_ext;
 --dg-cascade
 --dg \dX
 reset role;
 
 drop table stts_t1, stts_t2, stts_t3;
 drop schema stts_s1, stts_s2 cascade;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg drop user regress_stats_ext;
+drop user regress_stats_ext;
 reset search_path;
 
 -- User with no access
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_stats_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT USAGE ON SCHEMA tststats TO regress_stats_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_stats_user1;
---dg-cascade
---dg SELECT * FROM tststats.priv_test_tbl; -- Permission denied
+CREATE USER regress_stats_user1;
+GRANT USAGE ON SCHEMA tststats TO regress_stats_user1;
+SET SESSION AUTHORIZATION regress_stats_user1;
+SELECT * FROM tststats.priv_test_tbl; -- Permission denied
 
 -- Check individual columns if we don't have table privilege
---dg-cascade
+--dg-differs: another error: relation "?" does not have a composite type
 --dg SELECT * FROM tststats.priv_test_tbl
 --dg   WHERE a = 1 and tststats.priv_test_tbl.* > (1, 1) is not null;
 
 -- Attempt to gain access using a leaky operator
---dg-cascade
---dg CREATE FUNCTION op_leak(int, int) RETURNS bool
---dg     AS 'BEGIN RAISE NOTICE ''op_leak => %, %'', $1, $2; RETURN $1 < $2; END'
---dg     LANGUAGE plpgsql;
---dg-cascade
---dg CREATE OPERATOR <<< (procedure = op_leak, leftarg = int, rightarg = int,
---dg                      restrict = scalarltsel);
---dg-cascade
---dg CREATE FUNCTION op_leak(record, record) RETURNS bool
---dg     AS 'BEGIN RAISE NOTICE ''op_leak => %, %'', $1, $2; RETURN $1 < $2; END'
---dg     LANGUAGE plpgsql;
---dg-cascade
---dg CREATE OPERATOR <<< (procedure = op_leak, leftarg = record, rightarg = record,
---dg                      restrict = scalarltsel);
---dg-cascade
---dg SELECT * FROM tststats.priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Permission denied
---dg-cascade
---dg SELECT * FROM tststats.priv_test_tbl WHERE a <<< 0 OR b <<< 0; -- Permission denied
---dg-cascade
---dg SELECT * FROM tststats.priv_test_tbl t
---dg  WHERE a <<< 0 AND (b <<< 0 OR t.* <<< (1, 1) IS NOT NULL); -- Permission denied
---dg-cascade
---dg DELETE FROM tststats.priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Permission denied
+CREATE FUNCTION op_leak(int, int) RETURNS bool
+    AS 'BEGIN RAISE NOTICE ''op_leak => %, %'', $1, $2; RETURN $1 < $2; END'
+    LANGUAGE plpgsql;
+CREATE OPERATOR <<< (procedure = op_leak, leftarg = int, rightarg = int,
+                     restrict = scalarltsel);
+CREATE FUNCTION op_leak(record, record) RETURNS bool
+    AS 'BEGIN RAISE NOTICE ''op_leak => %, %'', $1, $2; RETURN $1 < $2; END'
+    LANGUAGE plpgsql;
+CREATE OPERATOR <<< (procedure = op_leak, leftarg = record, rightarg = record,
+                     restrict = scalarltsel);
+SELECT * FROM tststats.priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Permission denied
+SELECT * FROM tststats.priv_test_tbl WHERE a <<< 0 OR b <<< 0; -- Permission denied
+SELECT * FROM tststats.priv_test_tbl t
+ WHERE a <<< 0 AND (b <<< 0 OR t.* <<< (1, 1) IS NOT NULL); -- Permission denied
+DELETE FROM tststats.priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Permission denied
 
 -- Grant access via a security barrier view, but hide all data
 RESET SESSION AUTHORIZATION;
 CREATE VIEW tststats.priv_test_view WITH (security_barrier=true)
     AS SELECT * FROM tststats.priv_test_tbl WHERE false;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT SELECT, DELETE ON tststats.priv_test_view TO regress_stats_user1;
+GRANT SELECT, DELETE ON tststats.priv_test_view TO regress_stats_user1;
 
 -- Should now have access via the view, but see nothing and leak nothing
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_stats_user1;
---dg-cascade
---dg SELECT * FROM tststats.priv_test_view WHERE a <<< 0 AND b <<< 0; -- Should not leak
---dg-cascade
---dg SELECT * FROM tststats.priv_test_view WHERE a <<< 0 OR b <<< 0; -- Should not leak
---dg-cascade
---dg SELECT * FROM tststats.priv_test_view t
---dg  WHERE a <<< 0 AND (b <<< 0 OR t.* <<< (1, 1) IS NOT NULL); -- Should not leak
---dg-cascade
---dg DELETE FROM tststats.priv_test_view WHERE a <<< 0 AND b <<< 0; -- Should not leak
+SET SESSION AUTHORIZATION regress_stats_user1;
+SELECT * FROM tststats.priv_test_view WHERE a <<< 0 AND b <<< 0; -- Should not leak
+SELECT * FROM tststats.priv_test_view WHERE a <<< 0 OR b <<< 0; -- Should not leak
+SELECT * FROM tststats.priv_test_view t
+ WHERE a <<< 0 AND (b <<< 0 OR t.* <<< (1, 1) IS NOT NULL); -- Should not leak
+DELETE FROM tststats.priv_test_view WHERE a <<< 0 AND b <<< 0; -- Should not leak
 
 -- Grant table access, but hide all data with RLS
 RESET SESSION AUTHORIZATION;
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE tststats.priv_test_tbl ENABLE ROW LEVEL SECURITY;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY priv_test_tbl_pol ON tststats.priv_test_tbl USING (2 * a < 0);
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT SELECT, DELETE ON tststats.priv_test_tbl TO regress_stats_user1;
+GRANT SELECT, DELETE ON tststats.priv_test_tbl TO regress_stats_user1;
 
 -- Should now have direct table access, but see nothing and leak nothing
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_stats_user1;
---dg-cascade
---dg SELECT * FROM tststats.priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Should not leak
---dg-cascade
---dg SELECT * FROM tststats.priv_test_tbl WHERE a <<< 0 OR b <<< 0; -- Should not leak
---dg-cascade
---dg SELECT * FROM tststats.priv_test_tbl t
---dg  WHERE a <<< 0 AND (b <<< 0 OR t.* <<< (1, 1) IS NOT NULL); -- Should not leak
---dg-cascade
---dg DELETE FROM tststats.priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Should not leak
+SET SESSION AUTHORIZATION regress_stats_user1;
+SELECT * FROM tststats.priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Should not leak
+SELECT * FROM tststats.priv_test_tbl WHERE a <<< 0 OR b <<< 0; -- Should not leak
+SELECT * FROM tststats.priv_test_tbl t
+ WHERE a <<< 0 AND (b <<< 0 OR t.* <<< (1, 1) IS NOT NULL); -- Should not leak
+DELETE FROM tststats.priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Should not leak
 
 -- Create plain inheritance parent table with no access permissions
 RESET SESSION AUTHORIZATION;
@@ -2353,53 +2312,41 @@ CREATE TABLE tststats.priv_test_parent_tbl (a int, b int);
 --dg ALTER TABLE tststats.priv_test_tbl INHERIT tststats.priv_test_parent_tbl;
 
 -- Should not have access to parent, and should leak nothing
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_stats_user1;
---dg-cascade
---dg SELECT * FROM tststats.priv_test_parent_tbl WHERE a <<< 0 AND b <<< 0; -- Permission denied
---dg-cascade
---dg SELECT * FROM tststats.priv_test_parent_tbl WHERE a <<< 0 OR b <<< 0; -- Permission denied
---dg-cascade
---dg SELECT * FROM tststats.priv_test_parent_tbl t
---dg  WHERE a <<< 0 AND (b <<< 0 OR t.* <<< (1, 1) IS NOT NULL); -- Permission denied
---dg-cascade
---dg DELETE FROM tststats.priv_test_parent_tbl WHERE a <<< 0 AND b <<< 0; -- Permission denied
+SET SESSION AUTHORIZATION regress_stats_user1;
+SELECT * FROM tststats.priv_test_parent_tbl WHERE a <<< 0 AND b <<< 0; -- Permission denied
+SELECT * FROM tststats.priv_test_parent_tbl WHERE a <<< 0 OR b <<< 0; -- Permission denied
+SELECT * FROM tststats.priv_test_parent_tbl t
+ WHERE a <<< 0 AND (b <<< 0 OR t.* <<< (1, 1) IS NOT NULL); -- Permission denied
+DELETE FROM tststats.priv_test_parent_tbl WHERE a <<< 0 AND b <<< 0; -- Permission denied
 
 -- Grant table access to parent, but hide all data with RLS
 RESET SESSION AUTHORIZATION;
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE tststats.priv_test_parent_tbl ENABLE ROW LEVEL SECURITY;
---dg-skip: relation pg_class cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_policy cannot be written: digres has no catalog tables
 --dg CREATE POLICY priv_test_parent_tbl_pol ON tststats.priv_test_parent_tbl USING (2 * a < 0);
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT SELECT, DELETE ON tststats.priv_test_parent_tbl TO regress_stats_user1;
+GRANT SELECT, DELETE ON tststats.priv_test_parent_tbl TO regress_stats_user1;
 
 -- Should now have direct table access to parent, but see nothing and leak nothing
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_stats_user1;
---dg-cascade
---dg SELECT * FROM tststats.priv_test_parent_tbl WHERE a <<< 0 AND b <<< 0; -- Should not leak
---dg-cascade
---dg SELECT * FROM tststats.priv_test_parent_tbl WHERE a <<< 0 OR b <<< 0; -- Should not leak
---dg-cascade
---dg SELECT * FROM tststats.priv_test_parent_tbl t
---dg  WHERE a <<< 0 AND (b <<< 0 OR t.* <<< (1, 1) IS NOT NULL); -- Should not leak
---dg-cascade
---dg DELETE FROM tststats.priv_test_parent_tbl WHERE a <<< 0 AND b <<< 0; -- Should not leak
+SET SESSION AUTHORIZATION regress_stats_user1;
+SELECT * FROM tststats.priv_test_parent_tbl WHERE a <<< 0 AND b <<< 0; -- Should not leak
+SELECT * FROM tststats.priv_test_parent_tbl WHERE a <<< 0 OR b <<< 0; -- Should not leak
+SELECT * FROM tststats.priv_test_parent_tbl t
+ WHERE a <<< 0 AND (b <<< 0 OR t.* <<< (1, 1) IS NOT NULL); -- Should not leak
+DELETE FROM tststats.priv_test_parent_tbl WHERE a <<< 0 AND b <<< 0; -- Should not leak
 
 -- privilege checks for pg_stats_ext and pg_stats_ext_exprs
 RESET SESSION AUTHORIZATION;
 CREATE TABLE stats_ext_tbl (id INT PRIMARY KEY GENERATED BY DEFAULT AS IDENTITY, col TEXT);
 INSERT INTO stats_ext_tbl (col) VALUES ('secret'), ('secret'), ('very secret');
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS s_col ON id, col FROM stats_ext_tbl;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS s_expr ON mod(id, 2), lower(col) FROM stats_ext_tbl;
 ANALYZE stats_ext_tbl;
 
 -- unprivileged role should not have access
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_stats_user1;
+SET SESSION AUTHORIZATION regress_stats_user1;
 --dg-skip: relation "?" does not exist
 --dg SELECT statistics_name, most_common_vals FROM pg_stats_ext x
 --dg     WHERE tablename = 'stats_ext_tbl' ORDER BY ROW(x.*);
@@ -2409,12 +2356,10 @@ ANALYZE stats_ext_tbl;
 
 -- give unprivileged role ownership of table
 RESET SESSION AUTHORIZATION;
---dg-cascade
---dg ALTER TABLE stats_ext_tbl OWNER TO regress_stats_user1;
+ALTER TABLE stats_ext_tbl OWNER TO regress_stats_user1;
 
 -- unprivileged role should now have access
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_stats_user1;
+SET SESSION AUTHORIZATION regress_stats_user1;
 --dg-cascade
 --dg SELECT statistics_name, most_common_vals FROM pg_stats_ext x
 --dg     WHERE tablename = 'stats_ext_tbl' ORDER BY ROW(x.*);
@@ -2431,8 +2376,7 @@ CREATE SCHEMA sts_sch2;
 --dg GRANT USAGE ON SCHEMA sts_sch1, sts_sch2 TO regress_stats_user1;
 --dg-cascade
 --dg ALTER TABLE sts_sch1.tbl OWNER TO regress_stats_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_stats_user1;
+SET SESSION AUTHORIZATION regress_stats_user1;
 --dg-cascade
 --dg CREATE STATISTICS ON a, b, c FROM sts_sch1.tbl;
 --dg-cascade
@@ -2440,8 +2384,7 @@ CREATE SCHEMA sts_sch2;
 RESET SESSION AUTHORIZATION;
 --dg-cascade
 --dg GRANT CREATE ON SCHEMA sts_sch1 TO regress_stats_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_stats_user1;
+SET SESSION AUTHORIZATION regress_stats_user1;
 --dg-cascade
 --dg CREATE STATISTICS ON a, b, c FROM sts_sch1.tbl;
 --dg-cascade
@@ -2449,10 +2392,8 @@ RESET SESSION AUTHORIZATION;
 RESET SESSION AUTHORIZATION;
 --dg-cascade
 --dg REVOKE CREATE ON SCHEMA sts_sch1 FROM regress_stats_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT CREATE ON SCHEMA sts_sch2 TO regress_stats_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_stats_user1;
+GRANT CREATE ON SCHEMA sts_sch2 TO regress_stats_user1;
+SET SESSION AUTHORIZATION regress_stats_user1;
 --dg-cascade
 --dg CREATE STATISTICS ON a, b, c FROM sts_sch1.tbl;
 --dg-cascade
@@ -2460,8 +2401,7 @@ RESET SESSION AUTHORIZATION;
 RESET SESSION AUTHORIZATION;
 --dg-cascade
 --dg GRANT CREATE ON SCHEMA sts_sch1, sts_sch2 TO regress_stats_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_stats_user1;
+SET SESSION AUTHORIZATION regress_stats_user1;
 --dg-cascade
 --dg CREATE STATISTICS ON a, b, c FROM sts_sch1.tbl;
 --dg-cascade
@@ -2471,42 +2411,34 @@ RESET SESSION AUTHORIZATION;
 RESET SESSION AUTHORIZATION;
 --dg-cascade
 --dg REVOKE CREATE ON SCHEMA sts_sch1, sts_sch2 FROM regress_stats_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_stats_user1;
+SET SESSION AUTHORIZATION regress_stats_user1;
 --dg-cascade
 --dg ALTER TABLE sts_sch1.tbl ALTER COLUMN a TYPE SMALLINT;
 --dg-cascade
 --dg ALTER TABLE sts_sch1.tbl ALTER COLUMN c SET EXPRESSION AS (a * 3);
 
 -- Tidy up
---dg-cascade
---dg DROP OPERATOR <<< (int, int);
---dg-cascade
---dg DROP FUNCTION op_leak(int, int);
---dg-cascade
---dg DROP OPERATOR <<< (record, record);
---dg-cascade
---dg DROP FUNCTION op_leak(record, record);
+DROP OPERATOR <<< (int, int);
+DROP FUNCTION op_leak(int, int);
+DROP OPERATOR <<< (record, record);
+DROP FUNCTION op_leak(record, record);
 RESET SESSION AUTHORIZATION;
 DROP TABLE stats_ext_tbl;
 --dg-cascade
 --dg DROP SCHEMA tststats CASCADE;
 --dg-cascade
 --dg DROP SCHEMA sts_sch1, sts_sch2 CASCADE;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg DROP USER regress_stats_user1;
 
 -- CREATE STATISTICS checks for the owner
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_relowner;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_stxowner;
+CREATE ROLE regress_relowner;
+CREATE ROLE regress_stxowner;
 CREATE TABLE stats_ext_tbl (a int, b int);
---dg-cascade
---dg ALTER TABLE stats_ext_tbl OWNER TO regress_relowner;
---dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables
+ALTER TABLE stats_ext_tbl OWNER TO regress_relowner;
+--dg-skip: relation pg_statistic_ext cannot be written: digres has no catalog tables
 --dg CREATE STATISTICS tst ON a, b FROM stats_ext_tbl;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg ALTER STATISTICS tst OWNER TO regress_stxowner;
 --dg-cascade
 --dg SELECT stxowner::regrole FROM pg_statistic_ext WHERE stxname = 'tst';
@@ -2519,10 +2451,8 @@ CREATE TABLE stats_ext_tbl (a int, b int);
 
 -- Tidy up
 DROP TABLE stats_ext_tbl;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_relowner;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_stxowner;
+DROP ROLE regress_relowner;
+DROP ROLE regress_stxowner;
 
 CREATE TABLE grouping_unique (x integer);
 INSERT INTO grouping_unique (x) SELECT gs FROM generate_series(1,1000) AS gs;

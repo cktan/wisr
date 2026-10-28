@@ -617,6 +617,10 @@ void standard_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 
   case T_GrantRoleStmt:
     /* no event triggers for global objects */
+    /* Role DDL writes pg_global, apart from the database (sm/ROLE.md). */
+    PreventInTransactionBlock(isTopLevel, ((GrantRoleStmt *)parsetree)->is_grant
+                                              ? "GRANT"
+                                              : "REVOKE");
     GrantRole(pstate, (GrantRoleStmt *)parsetree);
     break;
 
@@ -720,11 +724,14 @@ void standard_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
      */
   case T_CreateRoleStmt:
     /* no event triggers for global objects */
+    /* Role DDL writes pg_global, apart from the database (sm/ROLE.md). */
+    PreventInTransactionBlock(isTopLevel, "CREATE ROLE");
     CreateRole(pstate, (CreateRoleStmt *)parsetree);
     break;
 
   case T_AlterRoleStmt:
     /* no event triggers for global objects */
+    PreventInTransactionBlock(isTopLevel, "ALTER ROLE");
     AlterRole(pstate, (AlterRoleStmt *)parsetree);
     break;
 
@@ -735,6 +742,7 @@ void standard_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 
   case T_DropRoleStmt:
     /* no event triggers for global objects */
+    PreventInTransactionBlock(isTopLevel, "DROP ROLE");
     DropRole((DropRoleStmt *)parsetree);
     break;
 
@@ -799,6 +807,9 @@ void standard_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
   case T_RenameStmt: {
     RenameStmt *stmt = (RenameStmt *)parsetree;
 
+    /* A role's rename writes pg_global, as role DDL does (sm/ROLE.md). */
+    if (OBJECT_ROLE == stmt->renameType)
+      PreventInTransactionBlock(isTopLevel, "ALTER ROLE");
     if (EventTriggerSupportsObjectType(stmt->renameType))
       ProcessUtilitySlow(pstate, pstmt, queryString, context, params, queryEnv,
                          dest, qc);

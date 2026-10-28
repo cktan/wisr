@@ -79,11 +79,10 @@ SELECT 3<=/**/2, 2>=/**/3, 2<>/**/2;
 
 -- Should fail. CREATE OPERATOR requires USAGE on SCHEMA
 BEGIN TRANSACTION;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: CREATE ROLE cannot run inside a transaction block
 --dg CREATE ROLE regress_rol_op1;
 CREATE SCHEMA schema_op1;
---dg-skip: relation pg_namespace cannot be opened: digres has no catalog tables
---dg GRANT USAGE ON SCHEMA schema_op1 TO PUBLIC;
+GRANT USAGE ON SCHEMA schema_op1 TO PUBLIC;
 --dg-cascade
 --dg REVOKE USAGE ON SCHEMA schema_op1 FROM regress_rol_op1;
 --dg-cascade
@@ -154,7 +153,7 @@ CREATE OPERATOR #@%# (
 
 -- Should fail. CREATE OPERATOR requires USAGE on TYPE
 BEGIN TRANSACTION;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: CREATE ROLE cannot run inside a transaction block
 --dg CREATE ROLE regress_rol_op3;
 --dg-skip: relation pg_type cannot be written: digres has no catalog tables
 --dg CREATE TYPE type_op3 AS ENUM ('new', 'open', 'closed');
@@ -179,7 +178,7 @@ ROLLBACK;
 
 -- Should fail. CREATE OPERATOR requires USAGE on TYPE (need to check separately for rightarg)
 BEGIN TRANSACTION;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: CREATE ROLE cannot run inside a transaction block
 --dg CREATE ROLE regress_rol_op4;
 --dg-skip: relation pg_type cannot be written: digres has no catalog tables
 --dg CREATE TYPE type_op4 AS ENUM ('new', 'open', 'closed');
@@ -204,7 +203,7 @@ ROLLBACK;
 
 -- Should fail. CREATE OPERATOR requires EXECUTE on function
 BEGIN TRANSACTION;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: CREATE ROLE cannot run inside a transaction block
 --dg CREATE ROLE regress_rol_op5;
 --dg-skip: relation pg_type cannot be written: digres has no catalog tables
 --dg CREATE TYPE type_op5 AS ENUM ('new', 'open', 'closed');
@@ -229,7 +228,7 @@ ROLLBACK;
 
 -- Should fail. CREATE OPERATOR requires USAGE on return TYPE
 BEGIN TRANSACTION;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+--dg-skip: CREATE ROLE cannot run inside a transaction block
 --dg CREATE ROLE regress_rol_op6;
 --dg-skip: relation pg_type cannot be written: digres has no catalog tables
 --dg CREATE TYPE type_op6 AS ENUM ('new', 'open', 'closed');

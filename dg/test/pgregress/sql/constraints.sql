@@ -484,7 +484,7 @@ ROLLBACK;
 -- explicitly defer the constraint
 BEGIN;
 
---dg-skip: relation pg_constraint cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg SET CONSTRAINTS unique_tbl_i_key DEFERRED;
 
 --dg-cascade
@@ -708,17 +708,14 @@ BEGIN;
 --dg-cascade
 --dg SELECT * FROM unique_tbl;
 
---dg-cascade
---dg COMMIT;
+COMMIT;
 
 --dg-cascade
 --dg SELECT * FROM unique_tbl;
 
 -- enforceability cannot be specified or set for unique constraint
---dg-cascade
---dg CREATE TABLE UNIQUE_EN_TBL(i int UNIQUE ENFORCED);
---dg-cascade
---dg CREATE TABLE UNIQUE_NOTEN_TBL(i int UNIQUE NOT ENFORCED);
+CREATE TABLE UNIQUE_EN_TBL(i int UNIQUE ENFORCED);
+CREATE TABLE UNIQUE_NOTEN_TBL(i int UNIQUE NOT ENFORCED);
 --dg-cascade
 --dg ALTER TABLE unique_tbl ALTER CONSTRAINT unique_tbl_i_key ENFORCED;
 --dg-cascade
@@ -784,7 +781,7 @@ ALTER TABLE unique_tbl ALTER CONSTRAINT unique_tbl_i_key NOT VALID;
 
 -- Check deferred exclusion constraint
 
---dg-cascade
+--dg-skip: CREATE INDEX supports only columns, expressions, WHERE, UNIQUE and INCLUDE yet
 --dg CREATE TABLE deferred_excl (
 --dg   f1 int,
 --dg   f2 int,
@@ -799,8 +796,7 @@ ALTER TABLE unique_tbl ALTER CONSTRAINT unique_tbl_i_key NOT VALID;
 --dg INSERT INTO deferred_excl VALUES(1); -- fail
 --dg-cascade
 --dg INSERT INTO deferred_excl VALUES(1) ON CONFLICT ON CONSTRAINT deferred_excl_con DO NOTHING; -- fail
---dg-cascade
---dg BEGIN;
+BEGIN;
 --dg-cascade
 --dg INSERT INTO deferred_excl VALUES(2); -- no fail here
 --dg-cascade
@@ -899,12 +895,10 @@ create table notnull_tbl4 (a int not null constraint foo not null);
 create table notnull_tbl5 (a int constraint foo not null constraint foo not null);
 --dg-differs: the result
 --dg \d+ notnull_tbl5
---dg-skip: relation pg_constraint cannot be opened: digres has no catalog tables
---dg create table notnull_tbl6 (like notnull_tbl1, constraint foo not null a);
---dg-cascade
+create table notnull_tbl6 (like notnull_tbl1, constraint foo not null a);
+--dg-differs: the result
 --dg \d+ notnull_tbl6
---dg-cascade
---dg drop table notnull_tbl2, notnull_tbl3, notnull_tbl4, notnull_tbl5, notnull_tbl6;
+drop table notnull_tbl2, notnull_tbl3, notnull_tbl4, notnull_tbl5, notnull_tbl6;
 
 -- error cases:
 create table notnull_tbl_fail (a serial constraint foo not null constraint bar not null);
@@ -918,7 +912,7 @@ create table notnull_tbl_fail (a serial constraint foo not null no inherit const
 --dg-differs: no error where PostgreSQL has: conflicting NO INHERIT declaration for not-null constraint on column "?"
 --dg create table notnull_tbl_fail (a serial, constraint foo not null a no inherit);
 create table notnull_tbl_fail (a serial not null no inherit);
---dg-differs: another error: relation pg_constraint cannot be opened: digres has no catalog tables
+--dg-differs: no error where PostgreSQL has: conflicting not-null constraint names "?" and "?"
 --dg create table notnull_tbl_fail (like notnull_tbl1, constraint foo2 not null a);
 create table notnull_tbl_fail (a int primary key constraint foo not null no inherit);
 create table notnull_tbl_fail (a int not null no inherit primary key);
@@ -996,24 +990,25 @@ CREATE TABLE ATACC2 (a int, CONSTRAINT a_is_not_null NOT NULL a NO INHERIT);
 --dg DROP TABLE ATACC1, ATACC2, ATACC3;
 
 -- Can't have two constraints with the same name
---dg-cascade
+--dg-differs: no error where PostgreSQL has: constraint "?" for relation "?" already exists
 --dg CREATE TABLE notnull_tbl2 (a INTEGER CONSTRAINT blah NOT NULL, b INTEGER CONSTRAINT blah NOT NULL);
 
 -- can't drop not-null in primary key
---dg-cascade
---dg CREATE TABLE notnull_tbl2 (a INTEGER PRIMARY KEY);
---dg-cascade
+CREATE TABLE notnull_tbl2 (a INTEGER PRIMARY KEY);
+--dg-differs: another error: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE notnull_tbl2 ALTER a DROP NOT NULL;
 DROP TABLE notnull_tbl2;
 
---dg-cascade
+--dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE notnull_tbl3 (a INTEGER NOT NULL, CHECK (a IS NOT NULL));
 --dg-cascade
 --dg ALTER TABLE notnull_tbl3 ALTER A DROP NOT NULL;
-ALTER TABLE notnull_tbl3 ADD b int, ADD CONSTRAINT pk PRIMARY KEY (a, b);
+--dg-cascade
+--dg ALTER TABLE notnull_tbl3 ADD b int, ADD CONSTRAINT pk PRIMARY KEY (a, b);
 --dg-cascade
 --dg \d notnull_tbl3
-ALTER TABLE notnull_tbl3 DROP CONSTRAINT pk;
+--dg-cascade
+--dg ALTER TABLE notnull_tbl3 DROP CONSTRAINT pk;
 --dg-cascade
 --dg \d notnull_tbl3
 
@@ -1096,21 +1091,21 @@ drop table cnn_pk;
 
 -- columns in regular and LIKE inheritance should be marked not-nullable
 -- for primary keys, even if those are deferred
---dg-cascade
+--dg-skip: column "?" asks for what CREATE TABLE does not support yet
 --dg CREATE TABLE notnull_tbl4 (a INTEGER PRIMARY KEY INITIALLY DEFERRED);
---dg-skip: relation pg_constraint cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE TABLE notnull_tbl4_lk (LIKE notnull_tbl4);
---dg-skip: relation pg_constraint cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE TABLE notnull_tbl4_lk2 (LIKE notnull_tbl4 INCLUDING INDEXES);
---dg-skip: relation pg_constraint cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg CREATE TABLE notnull_tbl4_lk3 (LIKE notnull_tbl4 INCLUDING INDEXES, NOT NULL a);
 --dg-cascade
 --dg ALTER TABLE notnull_tbl4_lk3 RENAME CONSTRAINT notnull_tbl4_a_not_null TO a_nn;
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg-cascade
 --dg CREATE TABLE notnull_tbl4_cld () INHERITS (notnull_tbl4);
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg-cascade
 --dg CREATE TABLE notnull_tbl4_cld2 (PRIMARY KEY (a) DEFERRABLE) INHERITS (notnull_tbl4);
---dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
+--dg-cascade
 --dg CREATE TABLE notnull_tbl4_cld3 (PRIMARY KEY (a) DEFERRABLE, CONSTRAINT a_nn NOT NULL a) INHERITS (notnull_tbl4);
 --dg-cascade
 --dg \d+ notnull_tbl4
@@ -1129,14 +1124,13 @@ drop table cnn_pk;
 -- leave these tables around for pg_upgrade testing
 
 -- It's possible to remove a constraint from parents without affecting children
---dg-cascade
---dg CREATE TABLE notnull_tbl5 (a int CONSTRAINT ann NOT NULL,
---dg 	b int CONSTRAINT bnn NOT NULL);
+CREATE TABLE notnull_tbl5 (a int CONSTRAINT ann NOT NULL,
+	b int CONSTRAINT bnn NOT NULL);
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TABLE notnull_tbl5_child () INHERITS (notnull_tbl5);
---dg-cascade
+--dg-skip: constraint "?" of relation "?" does not exist
 --dg ALTER TABLE ONLY notnull_tbl5 DROP CONSTRAINT ann;
---dg-cascade
+--dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE ONLY notnull_tbl5 ALTER b DROP NOT NULL;
 --dg-cascade
 --dg \d+ notnull_tbl5_child
@@ -1445,7 +1439,7 @@ create table constr_parent3 (a int not null);
 --dg-cascade
 --dg EXECUTE get_nnconstraint_info('{constr_parent3, constr_child3}');
 
---dg-skip: relation pg_constraint cannot be opened: digres has no catalog tables
+--dg-cascade
 --dg COMMENT ON CONSTRAINT constr_parent2_a_not_null ON constr_parent2 IS 'this constraint is invalid';
 --dg-cascade
 --dg COMMENT ON CONSTRAINT constr_parent2_a_not_null ON constr_child2 IS 'this constraint is valid';
@@ -1457,57 +1451,39 @@ DEALLOCATE get_nnconstraint_info;
 
 -- Comments
 -- Setup a low-level role to enforce non-superuser checks.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_constraint_comments;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_constraint_comments;
+CREATE ROLE regress_constraint_comments;
+SET SESSION AUTHORIZATION regress_constraint_comments;
 
---dg-cascade
---dg CREATE TABLE constraint_comments_tbl (a int CONSTRAINT the_constraint CHECK (a > 0));
---dg-cascade
---dg CREATE DOMAIN constraint_comments_dom AS int CONSTRAINT the_constraint CHECK (value > 0);
+CREATE TABLE constraint_comments_tbl (a int CONSTRAINT the_constraint CHECK (a > 0));
+CREATE DOMAIN constraint_comments_dom AS int CONSTRAINT the_constraint CHECK (value > 0);
 
---dg-cascade
---dg COMMENT ON CONSTRAINT the_constraint ON constraint_comments_tbl IS 'yes, the comment';
---dg-cascade
---dg COMMENT ON CONSTRAINT the_constraint ON DOMAIN constraint_comments_dom IS 'yes, another comment';
+COMMENT ON CONSTRAINT the_constraint ON constraint_comments_tbl IS 'yes, the comment';
+COMMENT ON CONSTRAINT the_constraint ON DOMAIN constraint_comments_dom IS 'yes, another comment';
 
 -- no such constraint
---dg-cascade
---dg COMMENT ON CONSTRAINT no_constraint ON constraint_comments_tbl IS 'yes, the comment';
---dg-cascade
---dg COMMENT ON CONSTRAINT no_constraint ON DOMAIN constraint_comments_dom IS 'yes, another comment';
+COMMENT ON CONSTRAINT no_constraint ON constraint_comments_tbl IS 'yes, the comment';
+COMMENT ON CONSTRAINT no_constraint ON DOMAIN constraint_comments_dom IS 'yes, another comment';
 
 -- no such table/domain
 COMMENT ON CONSTRAINT the_constraint ON no_comments_tbl IS 'bad comment';
 COMMENT ON CONSTRAINT the_constraint ON DOMAIN no_comments_dom IS 'another bad comment';
 
---dg-cascade
---dg COMMENT ON CONSTRAINT the_constraint ON constraint_comments_tbl IS NULL;
---dg-cascade
---dg COMMENT ON CONSTRAINT the_constraint ON DOMAIN constraint_comments_dom IS NULL;
+COMMENT ON CONSTRAINT the_constraint ON constraint_comments_tbl IS NULL;
+COMMENT ON CONSTRAINT the_constraint ON DOMAIN constraint_comments_dom IS NULL;
 
 -- unauthorized user
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_constraint_comments_noaccess;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_constraint_comments_noaccess;
---dg-cascade
---dg COMMENT ON CONSTRAINT the_constraint ON constraint_comments_tbl IS 'no, the comment';
---dg-cascade
---dg COMMENT ON CONSTRAINT the_constraint ON DOMAIN constraint_comments_dom IS 'no, another comment';
+CREATE ROLE regress_constraint_comments_noaccess;
+SET SESSION AUTHORIZATION regress_constraint_comments_noaccess;
+COMMENT ON CONSTRAINT the_constraint ON constraint_comments_tbl IS 'no, the comment';
+COMMENT ON CONSTRAINT the_constraint ON DOMAIN constraint_comments_dom IS 'no, another comment';
 RESET SESSION AUTHORIZATION;
 
---dg-cascade
---dg DROP TABLE constraint_comments_tbl;
---dg-cascade
---dg DROP DOMAIN constraint_comments_dom;
+DROP TABLE constraint_comments_tbl;
+DROP DOMAIN constraint_comments_dom;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_constraint_comments;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_constraint_comments_noaccess;
+DROP ROLE regress_constraint_comments;
+DROP ROLE regress_constraint_comments_noaccess;
 
 -- Leave some constraints for the pg_upgrade test to pick up
 --dg-skip: relation pg_type cannot be written: digres has no catalog tables

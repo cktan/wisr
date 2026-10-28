@@ -21,7 +21,7 @@
 #include "libpq/crypt.h"
 #include "libpq/scram.h"
 #include "utils/builtins.h"
-#include "utils/datadir.h"
+#include "utils/pg_global.h"
 #include "utils/syscache.h"
 #include "utils/timestamp.h"
 
@@ -36,19 +36,24 @@ thread_local /*LOCAL*/ bool md5_password_warnings = true;
  * sent to the client, to avoid giving away user information!
  */
 char *get_role_password(const char *role, const char **logdetail) {
-  /*
-   * digres has one role, the superuser that initdb named, and keeps its
-   * secret in the data directory's superuser file (utils/init/datadir.c).
-   */
-  if (strcmp(role, datadir_superuser()) != 0) {
+  /* The roles are pg_global's (utils/init/pg_global.c). */
+  pg_global_role_t found;
+
+  if (!pg_global_role_by_name(role, &found)) {
     *logdetail = psprintf(_("Role \"%s\" does not exist."), role);
     return NULL; /* no such user */
   }
-  if (datadir_superuser_secret() == NULL) {
+  if (!found.has_password) {
     *logdetail = psprintf(_("User \"%s\" has no password assigned."), role);
     return NULL; /* user has no password */
   }
-  return pstrdup(datadir_superuser_secret());
+
+  /* Password OK, but check to be sure we are not past rolvaliduntil */
+  if (found.has_validuntil && found.rolvaliduntil < GetCurrentTimestamp()) {
+    *logdetail = psprintf(_("User \"%s\" has an expired password."), role);
+    return NULL;
+  }
+  return pstrdup(found.rolpassword.c_str());
 }
 
 /*

@@ -1,9 +1,7 @@
 -- Test maintenance commands that visit every eligible relation.  Run as a
 -- non-superuser, to skip other users' tables.
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE ROLE regress_maintain;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET ROLE regress_maintain;
+CREATE ROLE regress_maintain;
+SET ROLE regress_maintain;
 -- Test database-wide ANALYZE ("use_own_xacts" mode) setting relhassubclass=f
 -- for non-partitioning inheritance, w/ ON COMMIT DELETE ROWS building an
 -- empty index.
@@ -27,5 +25,4 @@ RESET client_min_messages;
 --dg   FROM pg_class WHERE oid = 'past_inh_db_parent'::regclass;
 DROP TABLE past_inh_db_parent, past_inh_db_other;
 RESET ROLE;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP ROLE regress_maintain;
+DROP ROLE regress_maintain;

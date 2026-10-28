@@ -2,176 +2,118 @@
 -- DEPENDENCIES
 --
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_dep_user;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_dep_user2;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_dep_user3;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE GROUP regress_dep_group;
+CREATE USER regress_dep_user;
+CREATE USER regress_dep_user2;
+CREATE USER regress_dep_user3;
+CREATE GROUP regress_dep_group;
 
 CREATE TABLE deptest (f1 serial primary key, f2 text);
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT SELECT ON TABLE deptest TO GROUP regress_dep_group;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT ALL ON TABLE deptest TO regress_dep_user, regress_dep_user2;
+GRANT SELECT ON TABLE deptest TO GROUP regress_dep_group;
+GRANT ALL ON TABLE deptest TO regress_dep_user, regress_dep_user2;
 
 -- can't drop neither because they have privileges somewhere
---dg-cascade
---dg DROP USER regress_dep_user;
---dg-cascade
---dg DROP GROUP regress_dep_group;
+DROP USER regress_dep_user;
+DROP GROUP regress_dep_group;
 
 -- if we revoke the privileges we can drop the group
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg REVOKE SELECT ON deptest FROM GROUP regress_dep_group;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP GROUP regress_dep_group;
+REVOKE SELECT ON deptest FROM GROUP regress_dep_group;
+DROP GROUP regress_dep_group;
 
 -- can't drop the user if we revoke the privileges partially
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg REVOKE SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, MAINTAIN ON deptest FROM regress_dep_user;
---dg-cascade
---dg DROP USER regress_dep_user;
+REVOKE SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, MAINTAIN ON deptest FROM regress_dep_user;
+DROP USER regress_dep_user;
 
 -- now we are OK to drop him
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg REVOKE TRIGGER ON deptest FROM regress_dep_user;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_dep_user;
+REVOKE TRIGGER ON deptest FROM regress_dep_user;
+DROP USER regress_dep_user;
 
 -- we are OK too if we drop the privileges all at once
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg REVOKE ALL ON deptest FROM regress_dep_user2;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_dep_user2;
+REVOKE ALL ON deptest FROM regress_dep_user2;
+DROP USER regress_dep_user2;
 
 -- can't drop the owner of an object
 -- the error message detail here would include a pg_toast_nnn name that
 -- is not constant, so suppress it
 \set VERBOSITY terse
---dg-cascade
---dg ALTER TABLE deptest OWNER TO regress_dep_user3;
---dg-cascade
---dg DROP USER regress_dep_user3;
+ALTER TABLE deptest OWNER TO regress_dep_user3;
+DROP USER regress_dep_user3;
 \set VERBOSITY default
 
 -- if we drop the object, we can drop the user too
 DROP TABLE deptest;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_dep_user3;
+DROP USER regress_dep_user3;
 
 -- Test DROP OWNED
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_dep_user0;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_dep_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg CREATE USER regress_dep_user2;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_dep_user0;
+CREATE USER regress_dep_user0;
+CREATE USER regress_dep_user1;
+CREATE USER regress_dep_user2;
+SET SESSION AUTHORIZATION regress_dep_user0;
 -- permission denied
---dg-cascade
---dg DROP OWNED BY regress_dep_user1;
---dg-cascade
---dg DROP OWNED BY regress_dep_user0, regress_dep_user2;
---dg-cascade
---dg REASSIGN OWNED BY regress_dep_user0 TO regress_dep_user1;
---dg-cascade
---dg REASSIGN OWNED BY regress_dep_user1 TO regress_dep_user0;
+DROP OWNED BY regress_dep_user1;
+DROP OWNED BY regress_dep_user0, regress_dep_user2;
+REASSIGN OWNED BY regress_dep_user0 TO regress_dep_user1;
+REASSIGN OWNED BY regress_dep_user1 TO regress_dep_user0;
 -- this one is allowed
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP OWNED BY regress_dep_user0;
+DROP OWNED BY regress_dep_user0;
 
---dg-cascade
---dg CREATE TABLE deptest1 (f1 int unique);
---dg-cascade
---dg GRANT ALL ON deptest1 TO regress_dep_user1 WITH GRANT OPTION;
+CREATE TABLE deptest1 (f1 int unique);
+GRANT ALL ON deptest1 TO regress_dep_user1 WITH GRANT OPTION;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_dep_user1;
---dg-cascade
---dg CREATE TABLE deptest (a serial primary key, b text);
---dg-cascade
---dg GRANT ALL ON deptest1 TO regress_dep_user2;
+SET SESSION AUTHORIZATION regress_dep_user1;
+CREATE TABLE deptest (a serial primary key, b text);
+GRANT ALL ON deptest1 TO regress_dep_user2;
 RESET SESSION AUTHORIZATION;
---dg-cascade
---dg \z deptest1
+\z deptest1
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP OWNED BY regress_dep_user1;
+DROP OWNED BY regress_dep_user1;
 -- all grants revoked
---dg-cascade
---dg \z deptest1
+\z deptest1
 -- table was dropped
---dg-cascade
---dg \d deptest
+\d deptest
 
 -- Test REASSIGN OWNED
---dg-cascade
---dg GRANT ALL ON deptest1 TO regress_dep_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg GRANT CREATE ON DATABASE regression TO regress_dep_user1;
+GRANT ALL ON deptest1 TO regress_dep_user1;
+GRANT CREATE ON DATABASE regression TO regress_dep_user1;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg SET SESSION AUTHORIZATION regress_dep_user1;
+SET SESSION AUTHORIZATION regress_dep_user1;
 CREATE SCHEMA deptest;
---dg-cascade
---dg CREATE TABLE deptest (a serial primary key, b text);
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
+CREATE TABLE deptest (a serial primary key, b text);
+--dg-skip: relation pg_default_acl cannot be opened: digres has no catalog tables
 --dg ALTER DEFAULT PRIVILEGES FOR ROLE regress_dep_user1 IN SCHEMA deptest
 --dg   GRANT ALL ON TABLES TO regress_dep_user2;
---dg-cascade
---dg CREATE FUNCTION deptest_func() RETURNS void LANGUAGE plpgsql
---dg   AS $$ BEGIN END; $$;
---dg-cascade
---dg CREATE TYPE deptest_enum AS ENUM ('red');
---dg-cascade
---dg CREATE TYPE deptest_range AS RANGE (SUBTYPE = int4);
+CREATE FUNCTION deptest_func() RETURNS void LANGUAGE plpgsql
+  AS $$ BEGIN END; $$;
+CREATE TYPE deptest_enum AS ENUM ('red');
+CREATE TYPE deptest_range AS RANGE (SUBTYPE = int4);
 
---dg-cascade
---dg CREATE TABLE deptest2 (f1 int);
+CREATE TABLE deptest2 (f1 int);
 -- make a serial column the hard way
---dg-cascade
+--dg-differs: no error where PostgreSQL has: permission denied for schema public
 --dg CREATE SEQUENCE ss1;
---dg-cascade
---dg ALTER TABLE deptest2 ALTER f1 SET DEFAULT nextval('ss1');
---dg-cascade
---dg ALTER SEQUENCE ss1 OWNED BY deptest2.f1;
+ALTER TABLE deptest2 ALTER f1 SET DEFAULT nextval('ss1');
+ALTER SEQUENCE ss1 OWNED BY deptest2.f1;
 
 -- When reassigning ownership of a composite type, its pg_class entry
 -- should match
---dg-cascade
---dg CREATE TYPE deptest_t AS (a int);
---dg-cascade
---dg SELECT typowner = relowner
---dg FROM pg_type JOIN pg_class c ON typrelid = c.oid WHERE typname = 'deptest_t';
+CREATE TYPE deptest_t AS (a int);
+SELECT typowner = relowner
+FROM pg_type JOIN pg_class c ON typrelid = c.oid WHERE typname = 'deptest_t';
 
 RESET SESSION AUTHORIZATION;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg REASSIGN OWNED BY regress_dep_user1 TO regress_dep_user2;
---dg-cascade
---dg \dt deptest
+REASSIGN OWNED BY regress_dep_user1 TO regress_dep_user2;
+\dt deptest
 
---dg-cascade
---dg SELECT typowner = relowner
---dg FROM pg_type JOIN pg_class c ON typrelid = c.oid WHERE typname = 'deptest_t';
+SELECT typowner = relowner
+FROM pg_type JOIN pg_class c ON typrelid = c.oid WHERE typname = 'deptest_t';
 
 -- doesn't work: grant still exists
 --dg-cascade
 --dg DROP USER regress_dep_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP OWNED BY regress_dep_user1;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_dep_user1;
+DROP OWNED BY regress_dep_user1;
+DROP USER regress_dep_user1;
 
---dg-cascade
---dg DROP USER regress_dep_user2;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP OWNED BY regress_dep_user2, regress_dep_user0;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_dep_user2;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg DROP USER regress_dep_user0;
+DROP USER regress_dep_user2;
+DROP OWNED BY regress_dep_user2, regress_dep_user0;
+DROP USER regress_dep_user2;
+DROP USER regress_dep_user0;

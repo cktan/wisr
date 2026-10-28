@@ -138,6 +138,19 @@ std::vector<session_ref_t> sessions_all(void) {
   return out;
 }
 
+/* How many sessions run as role: its CONNECTION LIMIT counts them. */
+int sessions_of_role(Oid role) {
+  session_registry_t *registry = shmem->session_registry.get();
+  std::lock_guard<std::mutex> lock(registry->mu);
+  int n = 0;
+
+  for (const auto &[pid, record] : registry->sessions)
+    if (record->role.load(std::memory_order_acquire) == role &&
+        !record->ended.load(std::memory_order_acquire))
+      n++;
+  return n;
+}
+
 /*
  * Whether n more sessions may register: if not, *nfree is how many may.
  * Else *nfree is n.  The caller is registered already.

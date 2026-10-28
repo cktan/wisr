@@ -768,15 +768,13 @@ create table mlparted5_b (d int, b int, c text, a int);
 --dg-cascade
 --dg create table key_desc_1 partition of key_desc for values in (1) partition by range (b);
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg create user regress_insert_other_user;
+create user regress_insert_other_user;
 --dg-cascade
 --dg grant select (a) on key_desc_1 to regress_insert_other_user;
 --dg-cascade
 --dg grant insert on key_desc to regress_insert_other_user;
 
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set role regress_insert_other_user;
+set role regress_insert_other_user;
 -- no key description is shown
 --dg-cascade
 --dg insert into key_desc values (1, 1);
@@ -784,8 +782,7 @@ create table mlparted5_b (d int, b int, c text, a int);
 reset role;
 --dg-cascade
 --dg grant select (b) on key_desc_1 to regress_insert_other_user;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set role regress_insert_other_user;
+set role regress_insert_other_user;
 -- key description (b)=(1) is now shown
 --dg-cascade
 --dg insert into key_desc values (1, 1);
@@ -798,8 +795,7 @@ reset role;
 --dg revoke all on key_desc from regress_insert_other_user;
 --dg-cascade
 --dg revoke all on key_desc_1 from regress_insert_other_user;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg drop role regress_insert_other_user;
+drop role regress_insert_other_user;
 --dg-cascade
 --dg drop table key_desc, key_desc_1;
 
@@ -901,28 +897,23 @@ reset role;
 -- check that the message shows the appropriate column description in a
 -- situation where the partitioned table is not the primary ModifyTable node
 create table inserttest3 (f1 text default 'foo', f2 text default 'bar', f3 int);
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg create role regress_coldesc_role;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg grant insert on inserttest3 to regress_coldesc_role;
+create role regress_coldesc_role;
+grant insert on inserttest3 to regress_coldesc_role;
 --dg-cascade
 --dg grant insert on brtrigpartcon to regress_coldesc_role;
 --dg-cascade
 --dg revoke select on brtrigpartcon from regress_coldesc_role;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg set role regress_coldesc_role;
+set role regress_coldesc_role;
 --dg-cascade
 --dg with result as (insert into brtrigpartcon values (1, 'hi there') returning 1)
 --dg   insert into inserttest3 (f3) select * from result;
 reset role;
 
 -- cleanup
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg revoke all on inserttest3 from regress_coldesc_role;
+revoke all on inserttest3 from regress_coldesc_role;
 --dg-cascade
 --dg revoke all on brtrigpartcon from regress_coldesc_role;
---dg-skip: relation pg_authid cannot be opened: digres has no catalog tables
---dg drop role regress_coldesc_role;
+drop role regress_coldesc_role;
 drop table inserttest3;
 --dg-cascade
 --dg drop table brtrigpartcon;
