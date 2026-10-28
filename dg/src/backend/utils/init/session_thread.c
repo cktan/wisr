@@ -35,6 +35,11 @@
 #include "utils/control_block.h"
 #include "utils/guc.h"
 #include "utils/memutils.h"
+#include "utils/pg_locale.h"
+#include "utils/portal.h"
+#include "utils/relcache.h"
+#include "utils/syscache.h"
+#include "catalog/pg_authid_d.h"
 #include "utils/session_thread.h"
 #include "utils/hooks.h"
 #include "utils/snapmgr.h"
@@ -131,6 +136,64 @@ static void session_thread_main(session_start_t *p) {
   } catch (const proc_exit_t &) {
     session_thread_end();
   }
+}
+
+/*
+ * A thread digres did not start, adopted (session_thread_adopt()): what it
+ * was given is freed as the thread ends, as a session's end frees it.
+ */
+struct adopted_thread_t {
+  bool adopted = false;
+  ~adopted_thread_t();
+};
+
+static thread_local /*LOCAL*/ adopted_thread_t adopted_thread;
+
+/* Free an adopted thread's memory contexts and control block, at its end. */
+adopted_thread_t::~adopted_thread_t() {
+  if (!adopted)
+    return;
+  /* Nothing allocates from here on, as in session_thread_end(). */
+  MemoryContextSwitchTo(NULL);
+  MemoryContext top = TopMemoryContext;
+  TopMemoryContext = NULL;
+  ErrorContext = NULL;
+  MemoryContextDelete(top);
+  AllocSetFreeFreeLists();
+  tcb_free();
+}
+
+/*
+ * Make this thread, one digres did not start -- one of sm's index builders,
+ * which runs digres's evaluator (smstore_index_eval()) -- able to run
+ * PostgreSQL's executor and read the compiled-in catalogs, with no session:
+ * set up as session_thread_main() sets a session up, with the settings at
+ * their defaults, the database's collation and the superuser, and freed as
+ * the thread ends.  A thread that has a control block is left alone.
+ */
+void session_thread_adopt(void) {
+  if (tcb != NULL)
+    return;
+  MyProcPid = gettid();
+
+  /* This thread's control block: what it has its own of. */
+  tcb_init();
+  adopted_thread.adopted = true;
+
+  /* check_stack_depth() measures from here. */
+  (void)set_stack_base();
+
+  /* Errors and allocations need the memory contexts, so they come first. */
+  MemoryContextInit();
+  InitializeGUCOptions();
+
+  /* The caches the catalogs are read through, empty; then whose reads. */
+  RelationCacheInitialize();
+  InitCatalogCache();
+  /* A transaction's commit visits the portals, of which it has none. */
+  EnablePortalManager();
+  init_database_collation();
+  SetUserIdAndSecContext(BOOTSTRAP_SUPERUSERID, 0);
 }
 
 /*

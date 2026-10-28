@@ -80,7 +80,19 @@ static TupleTableSlot *IndexOnlyNext(IndexOnlyScanState *node) {
       node->ioss_SmScan = smstore_index_beginscan(
           node->ss.ss_currentRelation, node->ioss_RelationDesc,
           node->ioss_ScanKeys, node->ioss_NumScanKeys);
-    return smstore_index_getentry(node->ioss_SmScan, slot) ? slot : NULL;
+    while (smstore_index_getentry(node->ioss_SmScan, slot)) {
+      /*
+       * A key on an expression is checked here, by the quals on the index's
+       * columns, the expression's value among them.
+       */
+      if (!smstore_index_recheck(node->ioss_SmScan))
+        return slot;
+      econtext->ecxt_scantuple = slot;
+      if (ExecQualAndReset(node->recheckqual, econtext))
+        return slot;
+      InstrCountFiltered2(node, 1);
+    }
+    return NULL;
   }
 
   if (scandesc == NULL) {

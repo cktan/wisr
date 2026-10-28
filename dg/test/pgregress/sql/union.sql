@@ -157,10 +157,9 @@ select count(*) from
 select count(*) from
   ( select unique1 from tenk1 union select fivethous from tenk1 ) ss;
 
---dg-differs: the plan
---dg explain (costs off)
---dg select count(*) from
---dg   ( select unique1 from tenk1 intersect select fivethous from tenk1 ) ss;
+explain (costs off)
+select count(*) from
+  ( select unique1 from tenk1 intersect select fivethous from tenk1 ) ss;
 select count(*) from
   ( select unique1 from tenk1 intersect select fivethous from tenk1 ) ss;
 
@@ -390,8 +389,7 @@ SELECT '3.4'::numeric UNION SELECT 'foo';
 --
 
 CREATE TEMP TABLE t1 (a text, b text);
---dg-skip: an index key is a column, not an expression, yet
---dg CREATE INDEX t1_ab_idx on t1 ((a || b));
+CREATE INDEX t1_ab_idx on t1 ((a || b));
 CREATE TEMP TABLE t2 (ab text primary key);
 INSERT INTO t1 VALUES ('a', 'b'), ('x', 'y');
 INSERT INTO t2 VALUES ('ab'), ('xy');
@@ -401,21 +399,19 @@ set enable_indexscan = on;
 set enable_bitmapscan = off;
 set enable_sort = off;
 
---dg-cascade
---dg explain (costs off)
---dg  SELECT * FROM
---dg  (SELECT a || b AS ab FROM t1
---dg   UNION ALL
---dg   SELECT * FROM t2) t
---dg  WHERE ab = 'ab';
+explain (costs off)
+ SELECT * FROM
+ (SELECT a || b AS ab FROM t1
+  UNION ALL
+  SELECT * FROM t2) t
+ WHERE ab = 'ab';
 
---dg-cascade
---dg explain (costs off)
---dg  SELECT * FROM
---dg  (SELECT a || b AS ab FROM t1
---dg   UNION
---dg   SELECT * FROM t2) t
---dg  WHERE ab = 'ab';
+explain (costs off)
+ SELECT * FROM
+ (SELECT a || b AS ab FROM t1
+  UNION
+  SELECT * FROM t2) t
+ WHERE ab = 'ab';
 
 --
 -- Test that ORDER BY for UNION ALL can be pushed down to inheritance
@@ -430,8 +426,7 @@ CREATE TEMP TABLE t1c (b text, a text);
 INSERT INTO t1c VALUES ('v', 'w'), ('c', 'd'), ('m', 'n'), ('e', 'f');
 --dg-cascade
 --dg INSERT INTO t2c VALUES ('vw'), ('cd'), ('mn'), ('ef');
---dg-skip: an index key is a column, not an expression, yet
---dg CREATE INDEX t1c_ab_idx on t1c ((a || b));
+CREATE INDEX t1c_ab_idx on t1c ((a || b));
 
 set enable_seqscan = on;
 set enable_indexonlyscan = off;

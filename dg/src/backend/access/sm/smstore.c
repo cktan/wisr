@@ -57,6 +57,7 @@
 #include "access/table.h"
 #include "access/stratnum.h"
 #include "catalog/pg_am_d.h"
+#include "catalog/pg_collation_d.h"
 #include "catalog/pg_constraint_d.h"
 #include "commands/trigger.h"
 #include "parser/parse_coerce.h"
@@ -64,6 +65,7 @@
 #include "utils/control_block.h"
 #include "utils/fmgrprotos.h"
 #include "utils/datadir.h"
+#include "utils/session_thread.h"
 #include "utils/hsearch.h"
 #include "utils/inval.h"
 #include "utils/rel.h"
@@ -114,7 +116,24 @@ struct made_index_t {
   uint64_t index;
   std::string name;
   bool unique;
-  std::vector<int32_t> keys; /* its key columns' 0-based places */
+  /* Its key columns' 0-based places, -1 for an expression. */
+  std::vector<int32_t> keys;
+  std::string eval; /* its expressions and predicate, or empty */
+};
+
+/*
+ * What a thread keeps to evaluate a partial or an expression index
+ * (smstore_index_eval()): its predicate and expressions made ready, in a
+ * memory context under the thread's TopMemoryContext, which goes with it.
+ */
+struct index_eval_t {
+  MemoryContext cxt; /* what it holds is in it */
+  EState *estate;
+  ExprState *pred; /* NULL: no predicate */
+  std::vector<ExprState *> exprs;
+  std::vector<int16> typlens; /* each expression's type's */
+  std::vector<bool> typbyvals;
+  TupleTableSlot *slot; /* the row, virtual, as sm shows it */
 };
 
 /* A view this transaction locked (lock_view()): in mode, at level. */
@@ -195,6 +214,15 @@ struct smstore_state_t {
   /* The indexes this transaction made, and those its commit is to wait on. */
   std::vector<made_index_t> made_indexes;
   std::vector<made_index_t> built_after_commit;
+  /* The indexes this thread has evaluated rows for, by oid. */
+  std::unordered_map<uint64_t, index_eval_t> evals;
+  /*
+   * The error the evaluator last failed with, in eval_error_cxt, raised
+   * again when sm's call that asked it fails with it (sm_error()).  The
+   * context is reset as the next is kept.
+   */
+  ErrorData *eval_error = nullptr;
+  MemoryContext eval_error_cxt = nullptr;
 };
 
 /* The tables this session's transaction opened. */
@@ -302,6 +330,17 @@ static int sm_sqlstate(void) {
 
 /* Raise the error sm left, saying what was being done. */
 static void sm_error(const char *what) {
+  ErrorData *eval_error = tcb->smstore->eval_error;
+
+  /*
+   * The evaluator's error, if sm's call failed with it: PostgreSQL's, as
+   * the expression raised it (smstore_index_eval()).
+   */
+  if (NULL != eval_error && SM_ERR_INVALID == sm_errnum() &&
+      0 == strcmp(sm_errmsg(), eval_error->message)) {
+    tcb->smstore->eval_error = NULL;
+    ReThrowError(eval_error);
+  }
   /* PostgreSQL's words for a deadlock, which clients and tests look for. */
   if (sm_errnum() == SM_ERR_DEADLOCK)
     ereport(ERROR,
@@ -988,6 +1027,30 @@ static void set_column(smstore_relation_t *r, int i, const sm_column_def_t &c) {
   r->notnull[i] = c.not_null;
 }
 
+/*
+ * Name and type the key columns of an index whose eval is eval that are
+ * expressions, those of attnums, nkeys of them, that are 0: in key order,
+ * each the next of its expressions, named as CREATE INDEX named it.
+ */
+static void index_expr_columns(const char *eval, const int16 *attnums,
+                               int nkeys, char **names, Oid *typids,
+                               int32 *typmods) {
+  List *exprs, *pred, *colnames;
+  int e = 0;
+
+  smstore_index_eval_parts(eval, &exprs, &pred, &colnames);
+  for (int k = 0; k < nkeys; k++) {
+    if (0 != attnums[k])
+      continue;
+    Node *expr = (Node *)list_nth(exprs, e);
+
+    names[k] = pstrdup(strVal(list_nth(colnames, e)));
+    typids[k] = exprType(expr);
+    typmods[k] = exprTypmod(expr);
+    e++;
+  }
+}
+
 /* Add to *out the index x of the table def, in pg_index's terms. */
 static void add_index(List **out, const sm_table_def_t &def,
                       const sm_index_def_t &x, Oid nspoid, bool temp) {
@@ -1014,6 +1077,11 @@ static void add_index(List **out, const sm_table_def_t &def,
       set_column(r, i, def.columns[at]);
       r->notnull[i] = false;
     }
+  }
+  if (!x.eval.empty()) {
+    r->eval = pstrdup(x.eval.c_str());
+    index_expr_columns(r->eval, r->attnums, nkeys, r->attnames, r->typids,
+                       r->typmods);
   }
   for (int k = 0; k < nkeys; k++) {
     r->desc[k] = x.key[k].desc;
@@ -2126,6 +2194,7 @@ smstore_table_t *smstore_table_desc(Oid oid) {
     }
     for (size_t k = 0; k < x.include_attnums.size(); k++)
       ix->attnums[ix->nkeys + k] = (int16)(x.include_attnums[k] + 1);
+    ix->eval = x.eval.empty() ? NULL : pstrdup(x.eval.c_str());
     remember_index(ix->oid, oid);
   }
   /* Its foreign keys, and those that reference it, whole: their triggers. */
@@ -2297,13 +2366,11 @@ bool smstore_relation_name(Oid relid, uint64 version, char **name,
                     RelationGetRelationName(rel)),
              errdetail("%s", sm_errmsg())));
   Relation index = index_open((Oid)indexoid, AccessShareLock);
+  EState *estate = CreateExecutorState();
 
-  for (int i = 0; i < IndexRelationGetNumberOfKeyAttributes(index); i++) {
-    AttrNumber attno = index->rd_index->indkey.values[i];
-
-    values[i] = slot->tts_values[attno - 1];
-    isnull[i] = slot->tts_isnull[attno - 1];
-  }
+  /* Its key columns, an expression's evaluated on the row. */
+  GetPerTupleExprContext(estate)->ecxt_scantuple = slot;
+  FormIndexDatum(BuildIndexInfo(index), slot, estate, values, isnull);
   char *key = BuildIndexValueDescription(index, values, isnull);
 
   ereport(ERROR,
@@ -2487,6 +2554,12 @@ struct smstore_scan_t {
   bool *bounded;
   /* How many keys are not bounded: each row is checked against these. */
   int nchecked;
+  /*
+   * A key on an expression column, which no column of the row holds: the
+   * executor checks each row against the scan's quals (smstore_index_
+   * recheck()), and keys_met() leaves it alone.
+   */
+  bool recheck;
   /* An index scan's: its index, and its last entry's value. */
   Oid index;
   Form_pg_index form;
@@ -5713,6 +5786,191 @@ void smstore_lock_table(Relation rel, LOCKMODE lockmode, bool nowait) {
                            RelationGetRelationName(rel))));
 }
 
+/*
+ * A partial or an expression index's eval, as digres writes it for sm to
+ * keep (../EXPRINDEX.md section 4.1): a List of its expressions in key
+ * order, its predicate as an implicit-AND list, and its expression
+ * columns' names, nodeToString()'s; each NIL if it has none.
+ */
+static std::string index_eval_string(List *exprs, List *pred, List *names) {
+  char *s = nodeToString(list_make3(exprs, pred, names));
+  std::string out(s);
+
+  pfree(s);
+  return out;
+}
+
+/* The parts of eval, an index's, index_eval_string()'s, palloc'd. */
+void smstore_index_eval_parts(const char *eval, List **exprs, List **pred,
+                              List **names) {
+  List *parts = (List *)stringToNode(eval);
+
+  *exprs = (List *)linitial(parts);
+  *pred = (List *)lsecond(parts);
+  *names = (List *)lthird(parts);
+}
+
+/*
+ * Make index's predicate and expressions, eval, ready to evaluate in this
+ * thread, over a row of natts columns: once, kept for the thread's life
+ * (index_eval_t), as an index's eval never changes and its oid is never
+ * reused.  A row of more columns, one added since, makes it again.
+ */
+static index_eval_t *index_eval_ready(uint64_t index, const std::string &eval,
+                                      size_t natts) {
+  auto it = tcb->smstore->evals.find(index);
+
+  if (tcb->smstore->evals.end() != it &&
+      (size_t)it->second.slot->tts_tupleDescriptor->natts == natts)
+    return &it->second;
+  /*
+   * The catalogs are read in a transaction: on one of sm's index builders,
+   * which runs none, one of its own, which reads nothing of sm's.
+   */
+  bool own_xact = !IsTransactionState();
+
+  if (own_xact)
+    StartTransactionCommand();
+  MemoryContext cxt = AllocSetContextCreate(TopMemoryContext,
+                                            "index evaluator",
+                                            ALLOCSET_SMALL_SIZES);
+  MemoryContext old = MemoryContextSwitchTo(cxt);
+  index_eval_t e = {};
+  List *exprs, *pred, *names;
+
+  e.cxt = cxt;
+  try {
+    smstore_index_eval_parts(eval.c_str(), &exprs, &pred, &names);
+    e.estate = CreateExecutorState();
+    e.pred = NIL != pred ? ExecPrepareQual(pred, e.estate) : NULL;
+    foreach_ptr(Expr, expr, exprs) {
+      int16 typlen;
+      bool typbyval;
+
+      e.exprs.push_back(ExecPrepareExpr(expr, e.estate));
+      get_typlenbyval(exprType((Node *)expr), &typlen, &typbyval);
+      e.typlens.push_back(typlen);
+      e.typbyvals.push_back(typbyval);
+    }
+    /*
+     * Its columns are sm's datums, which a Var of the row reads as they are;
+     * those read are typed by their Vars, as the executor checks them.
+     */
+    TupleDesc desc = CreateTemplateTupleDesc((int)natts);
+
+    foreach_node(Var, var,
+                 pull_var_clause((Node *)list_concat_copy(exprs, pred), 0)) {
+      if (var->varattno > 0 && var->varattno <= (AttrNumber)natts)
+        TupleDescInitEntry(desc, var->varattno, NULL, var->vartype,
+                           var->vartypmod, 0);
+    }
+    e.slot = MakeSingleTupleTableSlot(desc, &TTSOpsVirtual);
+  } catch (...) {
+    MemoryContextSwitchTo(old);
+    MemoryContextDelete(cxt);
+    if (own_xact)
+      AbortCurrentTransaction();
+    throw;
+  }
+  MemoryContextSwitchTo(old);
+  if (own_xact)
+    CommitTransactionCommand();
+  if (tcb->smstore->evals.end() != it) {
+    MemoryContextDelete(it->second.cxt);
+    tcb->smstore->evals.erase(it);
+  }
+  return &tcb->smstore->evals.emplace(index, std::move(e)).first->second;
+}
+
+/* value, of a type of typlen and typbyval, as the bytes sm keys it by. */
+static std::string key_value_bytes(Datum value, int16 typlen, bool typbyval) {
+  std::string out;
+
+  if (typbyval) {
+    out.resize(typlen);
+    memcpy(out.data(), &value, typlen);
+  } else if (-1 == typlen) {
+    struct varlena *v = pg_detoast_datum_packed(
+        (struct varlena *)DatumGetPointer(value));
+
+    out.assign((const char *)v, VARSIZE_ANY(v));
+  } else
+    out.assign((const char *)DatumGetPointer(value), typlen);
+  return out;
+}
+
+/*
+ * Keep the error just caught, and say it to sm: sm's call that asked the
+ * evaluator fails with it, and sm_error() raises it again, as PostgreSQL's.
+ */
+static int keep_eval_error(void) {
+  smstore_state_t *st = tcb->smstore.get();
+
+  MemoryContextSwitchTo(TopMemoryContext);
+  if (NULL == st->eval_error_cxt)
+    st->eval_error_cxt = AllocSetContextCreate(
+        TopMemoryContext, "index evaluator error", ALLOCSET_SMALL_SIZES);
+  else
+    MemoryContextReset(st->eval_error_cxt);
+  MemoryContextSwitchTo(st->eval_error_cxt);
+  st->eval_error = CopyErrorData();
+  FlushErrorState();
+  MemoryContextSwitchTo(TopMemoryContext);
+  return sm_seterr(SM_ERR_INVALID, st->eval_error->message);
+}
+
+/*
+ * sm's evaluator of digres's partial and expression indexes
+ * (sm_index_eval_fn, ../EXPRINDEX.md section 4.3): whether the row of n
+ * values belongs in index, by its predicate, and its expressions' values,
+ * by PostgreSQL's executor.  An error is caught and kept, never thrown
+ * through sm (keep_eval_error()).
+ */
+static int smstore_index_eval(void *ctx, uint64_t table, uint64_t index,
+                              const std::string &eval,
+                              const sm_datum_t *values, const bool *isnull,
+                              size_t n, bool *belongs,
+                              std::vector<std::string> &out,
+                              bool *out_isnull) noexcept {
+  MemoryContext old;
+  int rc = 0;
+
+  /* One of sm's index builders, at its first call: made able to evaluate. */
+  session_thread_adopt();
+  old = CurrentMemoryContext;
+  PG_TRY();
+  {
+    index_eval_t *e = index_eval_ready(index, eval, n);
+    ExprContext *econtext = GetPerTupleExprContext(e->estate);
+    TupleTableSlot *slot = e->slot;
+
+    ExecClearTuple(slot);
+    memcpy(slot->tts_values, values, n * sizeof(Datum));
+    memcpy(slot->tts_isnull, isnull, n * sizeof(bool));
+    ExecStoreVirtualTuple(slot);
+    econtext->ecxt_scantuple = slot;
+    *belongs = NULL == e->pred || ExecQual(e->pred, econtext);
+    for (size_t k = 0; *belongs && k < e->exprs.size(); k++) {
+      Datum value =
+          ExecEvalExprSwitchContext(e->exprs[k], econtext, &out_isnull[k]);
+
+      if (!out_isnull[k])
+        out[k] = key_value_bytes(value, e->typlens[k], e->typbyvals[k]);
+    }
+    ResetExprContext(econtext);
+  }
+  PG_CATCH();
+  { rc = keep_eval_error(); }
+  PG_END_TRY();
+  MemoryContextSwitchTo(old);
+  return rc;
+}
+
+/* Give sm digres's evaluator, before a database is opened (datadir.c). */
+int smstore_set_index_evaluator(sm_env_t *env) {
+  return sm_set_index_evaluator(env, smstore_index_eval, NULL);
+}
+
 /* Refuse what a CREATE INDEX asks that sm's indexes do not have yet. */
 static void check_create_index(const IndexStmt *stmt) {
   ListCell *l;
@@ -5721,19 +5979,52 @@ static void check_create_index(const IndexStmt *stmt) {
     ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                     errmsg("access method \"%s\" is not supported",
                            stmt->accessMethod)));
-  if (stmt->whereClause != NULL || stmt->excludeOpNames != NIL ||
-      stmt->options != NIL || stmt->tableSpace != NULL ||
-      stmt->nulls_not_distinct || stmt->deferrable)
+  if (stmt->excludeOpNames != NIL || stmt->options != NIL ||
+      stmt->tableSpace != NULL || stmt->nulls_not_distinct ||
+      stmt->deferrable)
     ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    errmsg("CREATE INDEX supports only columns, UNIQUE and "
-                           "INCLUDE yet")));
-  foreach (l, stmt->indexParams) {
+                    errmsg("CREATE INDEX supports only columns, expressions, "
+                           "WHERE, UNIQUE and INCLUDE yet")));
+  foreach (l, stmt->indexIncludingParams) {
     IndexElem *elem = lfirst_node(IndexElem, l);
 
     if (elem->name == NULL)
       ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      errmsg("an index key is a column, not an expression, "
-                             "yet")));
+                      errmsg("expressions are not supported in included "
+                             "columns")));
+  }
+}
+
+/*
+ * Refuse what PostgreSQL refuses of a predicate or an index expression,
+ * expr, which what (DefineIndex(), CheckPredicate(), ComputeIndexAttrs()):
+ * a function not immutable, a system column; and what sm cannot evaluate
+ * a row for: the whole row.  Add the columns it reads, 0-based, to reads.
+ */
+static void check_index_expr(Node *expr, const char *what,
+                             std::vector<int32_t> &reads) {
+  Bitmapset *attrs = NULL;
+  int i = -1;
+
+  if (contain_mutable_functions_after_planning((Expr *)expr))
+    ereport(ERROR, (errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+                    errmsg("functions in index %s must be marked IMMUTABLE",
+                           what)));
+  pull_varattnos(expr, 1, &attrs);
+  while ((i = bms_next_member(attrs, i)) >= 0) {
+    AttrNumber attno = i + FirstLowInvalidHeapAttributeNumber;
+
+    if (attno < 0)
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("index creation on system columns is not "
+                             "supported")));
+    if (0 == attno)
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg("an index %s that reads the whole row is not "
+                             "supported",
+                             what)));
+    if (reads.end() == std::find(reads.begin(), reads.end(), attno - 1))
+      reads.push_back(attno - 1);
   }
 }
 
@@ -5883,44 +6174,70 @@ static std::string error_dup_row(void) {
 
 /*
  * PostgreSQL's words for the key the row at row, a key of the table relid,
- * holds in the columns keys, "(k)=(1)"; empty if the transaction does not
- * see the row, or the table is gone.
+ * holds in the columns keys, "(k)=(1)", a key of -1 the next of the
+ * expressions eval holds, an index's (index_eval_string()), evaluated on
+ * the row; empty if the transaction does not see the row, or the table is
+ * gone.
  */
 static std::string dup_key(Oid relid, const std::vector<int32_t> &keys,
-                           const std::string &row) {
+                           const std::string &eval, const std::string &row) {
   Relation rel = try_relation_open(relid, AccessShareLock);
   sm_tbl_t *tbl;
   std::string out;
   int natts = 0;
+  List *exprs = NIL, *pred, *expr_names;
 
   if (rel == NULL)
     return out;
   tbl = open_table(relid, SM_LOCKMODE_IS);
+  if (!eval.empty())
+    smstore_index_eval_parts(eval.c_str(), &exprs, &pred, &expr_names);
+  /* An expression may read any column. */
+  natts = NIL != exprs ? RelationGetDescr(rel)->natts : 0;
   for (int32_t k : keys)
     natts = Max(natts, k + 1);
   TupleTableSlot *slot =
       MakeSingleTupleTableSlot(RelationGetDescr(rel), &TTSOpsVirtual);
   if (NULL != tbl && !row.empty() && read_row_at(tbl, row, natts, slot)) {
+    EState *estate = CreateExecutorState();
+    ExprContext *econtext = GetPerTupleExprContext(estate);
     std::string names, values;
+    int e = 0;
 
+    econtext->ecxt_scantuple = slot;
     for (int32_t k : keys) {
-      Form_pg_attribute att = TupleDescAttr(RelationGetDescr(rel), k);
-      Oid output;
-      bool varlena;
+      Oid typid, output;
+      Datum value;
+      bool isnull, varlena;
 
       if (!names.empty()) {
         names += ", ";
         values += ", ";
       }
-      names += quote_identifier(NameStr(att->attname));
-      if (slot->tts_isnull[k]) {
+      if (k >= 0) {
+        Form_pg_attribute att = TupleDescAttr(RelationGetDescr(rel), k);
+
+        names += quote_identifier(NameStr(att->attname));
+        typid = att->atttypid;
+        value = slot->tts_values[k];
+        isnull = slot->tts_isnull[k];
+      } else {
+        Expr *expr = (Expr *)list_nth(exprs, e++);
+
+        names += pg_get_index_expr_column((Node *)expr, relid);
+        typid = exprType((Node *)expr);
+        value = ExecEvalExprSwitchContext(ExecPrepareExpr(expr, estate),
+                                          econtext, &isnull);
+      }
+      if (isnull) {
         values += "null";
         continue;
       }
-      getTypeOutputInfo(att->atttypid, &output, &varlena);
-      values += OidOutputFunctionCall(output, slot->tts_values[k]);
+      getTypeOutputInfo(typid, &output, &varlena);
+      values += OidOutputFunctionCall(output, value);
     }
     out = "(" + names + ")=(" + values + ")";
+    FreeExecutorState(estate);
   }
   ExecDropSingleTupleTableSlot(slot);
   relation_close(rel, AccessShareLock);
@@ -5958,17 +6275,77 @@ ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt) {
   ObjectAddress address;
   ListCell *l;
 
+  List *exprs = NIL, *pred = NIL, *expr_names = NIL;
+  std::vector<int32_t> reads;
+  List *colnames;
+  std::string eval;
+
   check_create_index(stmt);
   rel = relation_open(relid, NoLock);
+  colnames = ChooseIndexColumnNames(stmt->indexParams);
   foreach (l, stmt->indexParams) {
     IndexElem *elem = lfirst_node(IndexElem, l);
     sm_index_key_spec_t key = {};
     bool desc = elem->ordering == SORTBY_DESC;
+    Node *expr = elem->expr;
+    Oid typid, collation;
 
-    key.attnum = column_place(rel, elem->name);
-    Form_pg_attribute att = TupleDescAttr(RelationGetDescr(rel), key.attnum);
+    /* "(column)" is the column, as ComputeIndexAttrs() takes it. */
+    while (NULL != expr && IsA(expr, CollateExpr))
+      expr = (Node *)((CollateExpr *)expr)->arg;
+    if (NULL != expr && IsA(expr, Var) &&
+        ((Var *)expr)->varattno > InvalidAttrNumber)
+      key.attnum = ((Var *)expr)->varattno - 1;
+    else if (NULL != expr) {
+      key.attnum = -1;
+      expr = elem->expr;
+      check_index_expr(expr, "expression", reads);
+      exprs = lappend(exprs, expr);
+      expr_names = lappend(
+          expr_names,
+          makeString(pstrdup((char *)list_nth(colnames,
+                                              foreach_current_index(l)))));
+    } else
+      key.attnum = column_place(rel, elem->name);
+    if (key.attnum >= 0) {
+      Form_pg_attribute att =
+          TupleDescAttr(RelationGetDescr(rel), key.attnum);
 
-    check_index_key(elem, att->atttypid, att->attcollation);
+      typid = att->atttypid;
+      collation = att->attcollation;
+    } else {
+      typid = exprType(expr);
+      key.typmod = exprTypmod(expr);
+      key.type_code = type_code(typid);
+      /*
+       * A decimal is keyed at a scale, its typmod's, which an expression
+       * of none would round its values to.
+       */
+      if (is_decimal(typid) && key.typmod < (int32)VARHDRSZ)
+        ereport(ERROR,
+                (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                 errmsg("an index expression of type numeric needs a "
+                        "precision and scale"),
+                 errhint("Cast the expression to numeric(p, s).")));
+    }
+    /*
+     * An expression's own collation, "(column COLLATE c)"'s among them, as
+     * check_index_key() takes one: a column's own, and for an expression
+     * the default, the database's, C's order, which sm keys text in.
+     * PostgreSQL would keep a COLLATE on top as the key's collation.
+     */
+    if (NULL != elem->expr) {
+      Oid c = exprCollation(elem->expr);
+
+      if (key.attnum >= 0 ? c != collation
+                          : OidIsValid(c) && DEFAULT_COLLATION_OID != c)
+        ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                        errmsg("collation \"%s\" is not supported for an "
+                               "index key yet",
+                               get_collation_name(c))));
+      collation = c;
+    }
+    check_index_key(elem, typid, collation);
     /*
      * sm keys an interval in an order finer than PostgreSQL's: '1 mon' and
      * '30 days', which PostgreSQL calls equal, are two keys
@@ -5976,7 +6353,7 @@ ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt) {
      * one and UNIQUE would take both.  So an interval is never an index
      * key; it may be an INCLUDE column.
      */
-    if (att->atttypid == INTERVALOID)
+    if (typid == INTERVALOID)
       ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                       errmsg("an index key of type interval is not "
                              "supported"),
@@ -5991,12 +6368,18 @@ ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt) {
   }
   foreach (l, stmt->indexIncludingParams)
     includes.push_back(column_place(rel, lfirst_node(IndexElem, l)->name));
+  if (NULL != stmt->whereClause) {
+    check_index_expr(stmt->whereClause, "predicate", reads);
+    pred = make_ands_implicit((Expr *)stmt->whereClause);
+  }
+  if (NIL != exprs || NIL != pred)
+    eval = index_eval_string(exprs, pred, expr_names);
   name = stmt->idxname != NULL
              ? stmt->idxname
              : ChooseIndexName(RelationGetRelationName(rel),
                                RelationGetNamespace(rel),
-                               ChooseIndexColumnNames(stmt->indexParams), NIL,
-                               stmt->primary, stmt->isconstraint);
+                               colnames, NIL, stmt->primary,
+                               stmt->isconstraint);
   /* A table, an index and a sequence share a namespace's names. */
   if (OidIsValid(smstore_relation_oid(name, RelationGetNamespace(rel)))) {
     relation_close(rel, NoLock);
@@ -6017,7 +6400,7 @@ ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt) {
 
   if (waiting([&] {
         return sm_cat_create_index(s, relid, name, keys, includes, stmt->unique,
-                                   std::string(), {}, &oid, stmt->primary,
+                                   eval, reads, &oid, stmt->primary,
                                    stmt->isconstraint);
       }) != 0) {
     /* A name taken since it was looked up, or a unique key duplicated. */
@@ -6031,7 +6414,7 @@ ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt) {
 
       for (const sm_index_key_spec_t &k : keys)
         places.push_back(k.attnum);
-      duplicate_build(name, dup_key(relid, places, row), why.c_str());
+      duplicate_build(name, dup_key(relid, places, eval, row), why.c_str());
     }
     sm_error("create an index");
   }
@@ -6042,7 +6425,7 @@ ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt) {
    * store (../sm/CLUSTER.md section 8).
    */
   forget_table(relid);
-  made_index_t made = {relid, oid, name, stmt->unique, {}};
+  made_index_t made = {relid, oid, name, stmt->unique, {}, eval};
 
   for (const sm_index_key_spec_t &k : keys)
     made.keys.push_back(k.attnum);
@@ -6086,7 +6469,7 @@ void smstore_wait_indexes(void) {
      */
     StartTransactionCommand();
     if (errnum == SM_ERR_DUPKEY && m.unique)
-      key = dup_key(m.table, m.keys, row);
+      key = dup_key(m.table, m.keys, m.eval, row);
     if (waiting([&] {
           return sm_cat_drop_index(xact_session(), m.table, m.index);
         }) != 0 &&
@@ -6432,6 +6815,10 @@ smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
   /* Each row is checked against every key not bounded (keys_met()). */
   for (int i = 0; i < nkeys; i++) {
     scan->keycols[i] = form->indkey.values[keys[i].sk_attno - 1];
+    if (0 == scan->keycols[i]) {
+      bounded[i] = true;
+      scan->recheck = true;
+    }
     if (!bounded[i])
       scan->nchecked++;
   }
@@ -6530,6 +6917,12 @@ static bool read_row_at(sm_tbl_t *tbl, const std::string &key, int natts,
   sm_unpin(&ref);
   return true;
 }
+
+/*
+ * Whether the executor is to check each row the index scan gives against
+ * its quals: a key on an expression, which the scan does not check.
+ */
+bool smstore_index_recheck(smstore_scan_t *scan) { return scan->recheck; }
 
 /*
  * The index scan's next row that meets its keys into slot, by its pin

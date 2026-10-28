@@ -54,7 +54,10 @@ typedef struct smstore_relation_t {
   bool constraint;   /* a UNIQUE or PRIMARY KEY constraint's */
   bool valid;        /* built, and used by the planner */
   int nkeys;         /* its key columns, the first of its columns */
-  int16 *attnums;    /* each column's place in the table, from 1 */
+  int16 *attnums;    /* each column's place in the table, from 1; 0 an
+                        expression's */
+  /* A partial or an expression index's eval (EXPRINDEX.md), or NULL. */
+  char *eval;
   /* A sequence's, as pg_sequence and pg_depend list it. */
   int64 seqstart;
   int64 seqincrement;
@@ -91,9 +94,11 @@ typedef struct smstore_index_t {
   bool usable;  /* the session may scan it now (sm_tbl_index_usable) */
   int nkeys;
   int ncolumns;
-  int16 *attnums;    /* ncolumns of them */
+  int16 *attnums;    /* ncolumns of them; 0 an expression's */
   bool *desc;        /* nkeys of them */
   bool *nulls_first; /* nkeys of them */
+  /* A partial or an expression index's eval (EXPRINDEX.md), or NULL. */
+  char *eval;
 } smstore_index_t;
 
 /*
@@ -199,6 +204,10 @@ extern void smstore_alter_table(Oid relid, AlterTableStmt *stmt);
 extern ObjectAddress smstore_rename_table(RenameStmt *stmt);
 extern ObjectAddress smstore_rename_column(RenameStmt *stmt);
 extern ObjectAddress smstore_create_index(Oid relid, IndexStmt *stmt);
+extern void smstore_index_eval_parts(const char *eval, List **exprs,
+                                     List **pred, List **names);
+struct sm_env_t;
+extern int smstore_set_index_evaluator(struct sm_env_t *env);
 extern void smstore_wait_indexes(void);
 extern bool smstore_get_fkey(Oid oid, smstore_fkey_t *out);
 extern List *smstore_referencing_tables(Oid relid);
@@ -269,6 +278,7 @@ extern int smstore_scan_natts(const struct Scan *plan, Relation rel);
 extern int smstore_expr_natts(Node *expr, Index varno, Relation rel);
 extern smstore_scan_t *smstore_index_beginscan(Relation heap, Relation index,
                                                ScanKey keys, int nkeys);
+extern bool smstore_index_recheck(smstore_scan_t *scan);
 extern bool smstore_index_getnext(smstore_scan_t *scan, TupleTableSlot *slot);
 extern bool smstore_index_getrowno(smstore_scan_t *scan);
 extern bool smstore_index_getentry(smstore_scan_t *scan, TupleTableSlot *slot);

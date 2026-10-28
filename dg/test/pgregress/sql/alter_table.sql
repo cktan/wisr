@@ -170,12 +170,11 @@ ALTER TABLE attmp ADD COLUMN w interval;
 --dg-cascade
 --dg SELECT * FROM attmp;
 
---dg-skip: an index key is a column, not an expression, yet
---dg CREATE INDEX attmp_idx ON attmp (a, (d + e), b);
+CREATE INDEX attmp_idx ON attmp (a, (d + e), b);
 
 ALTER INDEX attmp_idx ALTER COLUMN 0 SET STATISTICS 1000;
 
---dg-cascade
+--dg-differs: another error: ALTER INDEX is not supported yet
 --dg ALTER INDEX attmp_idx ALTER COLUMN 1 SET STATISTICS 1000;
 
 --dg-skip: ALTER INDEX is not supported yet
@@ -184,10 +183,10 @@ ALTER INDEX attmp_idx ALTER COLUMN 0 SET STATISTICS 1000;
 --dg-cascade
 --dg \d+ attmp_idx
 
---dg-cascade
+--dg-differs: another error: ALTER INDEX is not supported yet
 --dg ALTER INDEX attmp_idx ALTER COLUMN 3 SET STATISTICS 1000;
 
---dg-cascade
+--dg-differs: another error: ALTER INDEX is not supported yet
 --dg ALTER INDEX attmp_idx ALTER COLUMN 4 SET STATISTICS 1000;
 
 --dg-skip: ALTER INDEX is not supported yet
@@ -1374,9 +1373,9 @@ drop view myview;
 --dg analyze atacc1(a);
 --dg-differs: another error: ANALYZE of chosen columns is not supported yet
 --dg analyze atacc1("........pg.dropped.1........");
---dg-differs: no error where PostgreSQL has: column "?" of relation "?" does not exist
+--dg-differs: another error: ANALYZE of chosen columns is not supported yet
 --dg vacuum analyze atacc1(a);
---dg-differs: no error where PostgreSQL has: column "?" of relation "?" does not exist
+--dg-differs: another error: ANALYZE of chosen columns is not supported yet
 --dg vacuum analyze atacc1("........pg.dropped.1........");
 --dg-differs: another error: COMMENT is not supported yet
 --dg comment on column atacc1.a is 'testing';
@@ -2232,8 +2231,7 @@ create temp table log (q1 int8, q2 int8);
 
 update v2 set q1 = q1 + 1 where q1 = 123;
 
---dg-differs: the result
---dg select * from t1;
+select * from t1;
 --dg-cascade
 --dg select * from log;
 rollback;

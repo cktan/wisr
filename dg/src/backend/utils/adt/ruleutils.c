@@ -1212,13 +1212,39 @@ static char *column_name(Oid relid, AttrNumber attnum) {
  * default operator class and collation, so only its uniqueness, its
  * columns' order and nulls, and its INCLUDE columns are printed.
  */
+/*
+ * An index's key expr as pg_get_indexdef() writes it, in context, the
+ * table's: a function call bare, anything else in parentheses.
+ */
+static char *index_expr_text(Node *expr, List *context, int prettyFlags) {
+  char *str =
+      deparse_expression_pretty(expr, context, false, false, prettyFlags, 0);
+
+  /* Need parens if it's not a bare function call */
+  return looks_like_function(expr) ? str : psprintf("(%s)", str);
+}
+
+/*
+ * The key expression expr of an index of the table relid as the key of a
+ * duplicate is named: as pg_get_indexdef_columns() writes it, pretty, for
+ * BuildIndexValueDescription().
+ */
+char *pg_get_index_expr_column(Node *expr, Oid relid) {
+  return index_expr_text(expr,
+                         deparse_context_for(get_relation_name(relid), relid),
+                         GET_PRETTY_FLAGS(true));
+}
+
 static char *sm_indexdef(Oid indexrelid, int colno, bool attrsOnly,
-                         bool keysOnly, bool missing_ok) {
+                         bool keysOnly, int prettyFlags, bool missing_ok) {
   Relation index;
   Relation table;
   StringInfoData buf;
   Form_pg_index idx;
   bool sep = false;
+  List *exprs = NIL, *pred = NIL, *names, *context;
+  ListCell *expr_item;
+  smstore_table_t *desc;
 
   /*
    * An index is known by its table once found by its name or listed in
@@ -1238,6 +1264,13 @@ static char *sm_indexdef(Oid indexrelid, int colno, bool attrsOnly,
   }
   idx = index->rd_index;
   table = relation_open(idx->indrelid, AccessShareLock);
+  /* Its expressions and predicate as CREATE INDEX gave them, not folded. */
+  desc = smstore_table_desc(idx->indrelid);
+  for (int i = 0; desc != NULL && i < desc->nindexes; i++)
+    if (desc->indexes[i].oid == indexrelid && desc->indexes[i].eval != NULL)
+      smstore_index_eval_parts(desc->indexes[i].eval, &exprs, &pred, &names);
+  expr_item = list_head(exprs);
+  context = deparse_context_for(RelationGetRelationName(table), idx->indrelid);
   initStringInfo(&buf);
   if (!attrsOnly)
     appendStringInfo(&buf, "CREATE %sINDEX %s ON %s USING btree (",
@@ -1258,15 +1291,26 @@ static char *sm_indexdef(Oid indexrelid, int colno, bool attrsOnly,
         sep = false;
       }
     }
+    Node *indexkey = NULL;
+
+    /* An expression, the next of them, whether this column is shown or not. */
+    if (0 == attnum) {
+      indexkey = (Node *)lfirst(expr_item);
+      expr_item = lnext(exprs, expr_item);
+    }
     if (colno && colno != keyno + 1)
       continue;
     if (!colno && sep)
       appendStringInfoString(&buf, ", ");
     sep = true;
-    appendStringInfoString(
-        &buf,
-        quote_identifier(NameStr(
-            TupleDescAttr(RelationGetDescr(table), attnum - 1)->attname)));
+    if (NULL != indexkey)
+      appendStringInfoString(
+          &buf, index_expr_text(indexkey, context, prettyFlags));
+    else
+      appendStringInfoString(
+          &buf,
+          quote_identifier(NameStr(
+              TupleDescAttr(RelationGetDescr(table), attnum - 1)->attname)));
     if (attrsOnly || keyno >= idx->indnkeyatts)
       continue;
     /* The order and the nulls, where not a btree's own. */
@@ -1278,8 +1322,14 @@ static char *sm_indexdef(Oid indexrelid, int colno, bool attrsOnly,
     } else if (opt & INDOPTION_NULLS_FIRST)
       appendStringInfoString(&buf, " NULLS FIRST");
   }
-  if (!attrsOnly)
+  if (!attrsOnly) {
     appendStringInfoChar(&buf, ')');
+    if (NIL != pred)
+      appendStringInfo(&buf, " WHERE %s",
+                       deparse_expression_pretty(
+                           (Node *)make_ands_explicit(pred), context, false,
+                           false, prettyFlags, 0));
+  }
   relation_close(table, AccessShareLock);
   relation_close(index, AccessShareLock);
   return buf.data;
@@ -1292,7 +1342,8 @@ static char *pg_get_indexdef_worker(Oid indexrelid, int colno,
                                     bool missing_ok) {
   /* An index of sm's has no pg_index row. */
   if (indexrelid >= FirstNormalObjectId)
-    return sm_indexdef(indexrelid, colno, attrsOnly, keysOnly, missing_ok);
+    return sm_indexdef(indexrelid, colno, attrsOnly, keysOnly, prettyFlags,
+                       missing_ok);
 
   /* might want a separate isConstraint parameter later */
   bool isConstraint = (excludeOps != NULL);

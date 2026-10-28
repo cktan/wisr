@@ -54,16 +54,12 @@ steps behind each entry).
 | Code in the server: no PL/pgSQL, no `sql` functions, no `DO`, so no triggers | 820, triggers 48, rules 132 | stored procedures, audit and `updated_at` triggers | large: waits for the scripting language SPI is kept for |
 | CREATE TABLE beyond columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY: CHECK, generated columns, `OF type`, UNLOGGED | 604, column-level 113 | CHECK is in most schemas | medium: constraints stored in sm's catalog, checked in the executor as PostgreSQL does |
 | ALTER TABLE: constraints added later, `ALTER COLUMN TYPE`, `SET`/`DROP NOT NULL`, `SET DEFAULT` | 264 | schema migrations | medium a subcommand; PRIMARY KEY is item 1 above |
-| Partial and expression indexes | 67 | `WHERE deleted_at IS NULL`, `lower(email)` | small: sm3 builds and maintains them through the host's evaluator (`rel/test/test_partial.rel`); digres refuses them in `check_create_index()` (`../dg/src/backend/access/sm/smstore.c`) |
 | Partitioning | refused | large time-series tables | large |
 
 - **Largest for adoption:** users and the scripting language;
   a production deployment needs both. Of the first, roles
   with GRANT and REVOKE on tables come first, TLS second, and
   row-level security last, as it needs roles.
-- **Cheapest:** partial and expression indexes. sm has the
-  hard part; digres has only to pass the predicate and the
-  key expressions down and evaluate them.
 
 ---
 
@@ -148,6 +144,15 @@ Owed, and blocking nothing above:
   169), beyond the key-share modes above: sm1
   has no wait queue to reorder, so a soft deadlock PostgreSQL
   untangles ends a transaction (`deadlock-soft`).
+- **digres's OID is 32 bits; sm's is 64.** sm gives every
+  table, index, view, sequence and namespace a `uint64_t` oid,
+  and digres narrows each to PostgreSQL's 32-bit `Oid`
+  (`(Oid)oid` in `../dg/src/backend/access/sm/smstore.c`, 57
+  places), so a database past 2^32 oids would see two objects
+  as one. Extend `Oid` in digres to 64 bits, matching sm:
+  `Oid`, its `Datum` macros, the `oid` type and `regclass` and
+  its kin, and what lays an oid out in 4 bytes.
+
 - **A bulk load's duplicate at its close is sm's.** A unique
   build and every write say PostgreSQL's key now
   (`../dg/WORKNOTE.md` steps 260 and 261). A COPY in file mode

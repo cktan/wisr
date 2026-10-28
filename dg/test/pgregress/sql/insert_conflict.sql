@@ -16,7 +16,7 @@ create view insertconflictview as select * from insertconflicttest;
 --dg create unique index collation_index_key on insertconflicttest(key, fruit collate "C");
 --dg-skip: operator class text_pattern_ops is not supported yet
 --dg create unique index both_index_key on insertconflicttest(key, fruit collate "C" text_pattern_ops);
---dg-skip: an index key is a column, not an expression, yet
+--dg-skip: operator class text_pattern_ops is not supported yet
 --dg create unique index both_index_expr_key on insertconflicttest(key, lower(fruit) collate "C" text_pattern_ops);
 
 -- fails
@@ -83,7 +83,7 @@ explain (costs off) insert into insertconflicttest values(0, 'Crowberry') on con
 --
 -- Make sure that cross matching of attribute opclass/collation does not occur
 --
---dg-skip: an index key is a column, not an expression, yet
+--dg-skip: collation "?" is not supported for an index key yet
 --dg create unique index cross_match on insertconflicttest(lower(fruit) collate "C", upper(fruit) text_pattern_ops);
 
 -- fails:
@@ -171,10 +171,8 @@ drop index comp_key_index;
 --
 -- Partial index tests, no inference predicate specified
 --
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
---dg create unique index part_comp_key_index on insertconflicttest(key, fruit) where key < 5;
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
---dg create unique index expr_part_comp_key_index on insertconflicttest(key, lower(fruit)) where key < 5;
+create unique index part_comp_key_index on insertconflicttest(key, fruit) where key < 5;
+create unique index expr_part_comp_key_index on insertconflicttest(key, lower(fruit)) where key < 5;
 
 -- inference fails:
 insert into insertconflicttest values (13, 'Grape') on conflict (key, fruit) do update set fruit = excluded.fruit;
@@ -184,56 +182,43 @@ insert into insertconflicttest values (16, 'Melon') on conflict (key, key, key) 
 insert into insertconflicttest values (17, 'Mulberry') on conflict (key, lower(fruit)) do update set fruit = excluded.fruit;
 insert into insertconflicttest values (18, 'Pineapple') on conflict (lower(fruit), key) do update set fruit = excluded.fruit;
 
---dg-cascade
---dg drop index part_comp_key_index;
---dg-cascade
---dg drop index expr_part_comp_key_index;
+drop index part_comp_key_index;
+drop index expr_part_comp_key_index;
 
 --
 -- Expression index tests
 --
---dg-skip: an index key is a column, not an expression, yet
---dg create unique index expr_key_index on insertconflicttest(lower(fruit));
+create unique index expr_key_index on insertconflicttest(lower(fruit));
 
 -- inference succeeds:
---dg-cascade
---dg insert into insertconflicttest values (20, 'Quince') on conflict (lower(fruit)) do update set fruit = excluded.fruit;
---dg-cascade
---dg insert into insertconflicttest values (21, 'Pomegranate') on conflict (lower(fruit), lower(fruit)) do update set fruit = excluded.fruit;
+insert into insertconflicttest values (20, 'Quince') on conflict (lower(fruit)) do update set fruit = excluded.fruit;
+insert into insertconflicttest values (21, 'Pomegranate') on conflict (lower(fruit), lower(fruit)) do update set fruit = excluded.fruit;
 
 -- inference fails:
 insert into insertconflicttest values (22, 'Apricot') on conflict (upper(fruit)) do update set fruit = excluded.fruit;
 insert into insertconflicttest values (23, 'Blackberry') on conflict (fruit) do update set fruit = excluded.fruit;
 
---dg-cascade
---dg drop index expr_key_index;
+drop index expr_key_index;
 
 --
 -- Expression index tests (with regular column)
 --
---dg-skip: an index key is a column, not an expression, yet
---dg create unique index expr_comp_key_index on insertconflicttest(key, lower(fruit));
---dg-skip: an index key is a column, not an expression, yet
---dg create unique index tricky_expr_comp_key_index on insertconflicttest(key, lower(fruit), upper(fruit));
+create unique index expr_comp_key_index on insertconflicttest(key, lower(fruit));
+create unique index tricky_expr_comp_key_index on insertconflicttest(key, lower(fruit), upper(fruit));
 
 -- inference succeeds:
---dg-cascade
---dg insert into insertconflicttest values (24, 'Plum') on conflict (key, lower(fruit)) do update set fruit = excluded.fruit;
---dg-cascade
---dg insert into insertconflicttest values (25, 'Peach') on conflict (lower(fruit), key) do update set fruit = excluded.fruit;
+insert into insertconflicttest values (24, 'Plum') on conflict (key, lower(fruit)) do update set fruit = excluded.fruit;
+insert into insertconflicttest values (25, 'Peach') on conflict (lower(fruit), key) do update set fruit = excluded.fruit;
 -- Should not infer "tricky_expr_comp_key_index" index:
---dg-cascade
---dg explain (costs off) insert into insertconflicttest values (26, 'Fig') on conflict (lower(fruit), key, lower(fruit), key) do update set fruit = excluded.fruit;
+explain (costs off) insert into insertconflicttest values (26, 'Fig') on conflict (lower(fruit), key, lower(fruit), key) do update set fruit = excluded.fruit;
 
 -- inference fails:
 insert into insertconflicttest values (27, 'Prune') on conflict (key, upper(fruit)) do update set fruit = excluded.fruit;
 insert into insertconflicttest values (28, 'Redcurrant') on conflict (fruit, key) do update set fruit = excluded.fruit;
 insert into insertconflicttest values (29, 'Nectarine') on conflict (key) do update set fruit = excluded.fruit;
 
---dg-cascade
---dg drop index expr_comp_key_index;
---dg-cascade
---dg drop index tricky_expr_comp_key_index;
+drop index expr_comp_key_index;
+drop index tricky_expr_comp_key_index;
 
 --
 -- Non-spurious duplicate violation tests
@@ -245,8 +230,7 @@ create unique index fruit_index on insertconflicttest(fruit);
 insert into insertconflicttest values (26, 'Fig') on conflict (key) do update set fruit = excluded.fruit;
 -- fails, since UPDATE is to row with key value 26, and we're updating "fruit"
 -- to a value that happens to exist in another row ('peach'):
---dg-cascade
---dg insert into insertconflicttest values (26, 'Peach') on conflict (key) do update set fruit = excluded.fruit;
+insert into insertconflicttest values (26, 'Peach') on conflict (key) do update set fruit = excluded.fruit;
 -- succeeds, since "key" isn't repeated/referenced in UPDATE, and "fruit"
 -- arbitrates that statement updates existing "Fig" row:
 insert into insertconflicttest values (25, 'Fig') on conflict (fruit) do update set fruit = excluded.fruit;
@@ -257,24 +241,19 @@ drop index fruit_index;
 --
 -- Test partial unique index inference
 --
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
---dg create unique index partial_key_index on insertconflicttest(key) where fruit like '%berry';
+create unique index partial_key_index on insertconflicttest(key) where fruit like '%berry';
 
 -- Succeeds
---dg-cascade
---dg insert into insertconflicttest values (23, 'Blackberry') on conflict (key) where fruit like '%berry' do update set fruit = excluded.fruit;
---dg-cascade
---dg insert into insertconflicttest as t values (23, 'Blackberry') on conflict (key) where fruit like '%berry' and t.fruit = 'inconsequential' do nothing;
---dg-cascade
---dg insert into insertconflictview as t values (23, 'Blackberry') on conflict (key) where fruit like '%berry' and t.fruit = 'inconsequential' do nothing;
+insert into insertconflicttest values (23, 'Blackberry') on conflict (key) where fruit like '%berry' do update set fruit = excluded.fruit;
+insert into insertconflicttest as t values (23, 'Blackberry') on conflict (key) where fruit like '%berry' and t.fruit = 'inconsequential' do nothing;
+insert into insertconflictview as t values (23, 'Blackberry') on conflict (key) where fruit like '%berry' and t.fruit = 'inconsequential' do nothing;
 
 -- fails
 insert into insertconflicttest values (23, 'Blackberry') on conflict (key) do update set fruit = excluded.fruit;
 insert into insertconflicttest values (23, 'Blackberry') on conflict (key) where fruit like '%berry' or fruit = 'consequential' do nothing;
 insert into insertconflicttest values (23, 'Blackberry') on conflict (fruit) where fruit like '%berry' do update set fruit = excluded.fruit;
 
---dg-cascade
---dg drop index partial_key_index;
+drop index partial_key_index;
 
 --
 -- Test that wholerow references to ON CONFLICT's EXCLUDED work
@@ -294,7 +273,7 @@ create unique index plain on insertconflicttest(key);
 --dg insert into insertconflicttest as i values (23, 'Jackfruit') on conflict (key) do update set fruit = excluded.fruit
 --dg   where i.* = excluded.* returning *;
 -- Assign:
---dg-cascade
+--dg-skip: relation "?" does not have a composite type
 --dg insert into insertconflicttest as i values (23, 'Avocado') on conflict (key) do update set fruit = excluded.*::text
 --dg   returning *;
 -- deparse whole row var in WHERE and SET clauses:
@@ -326,24 +305,19 @@ drop table syscolconflicttest;
 --
 create table insertconflict (a bigint, b bigint);
 
---dg-skip: an index key is a column, not an expression, yet
---dg create unique index insertconflicti1 on insertconflict(coalesce(a, 0));
+create unique index insertconflicti1 on insertconflict(coalesce(a, 0));
 
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
---dg create unique index insertconflicti2 on insertconflict(b)
---dg   where coalesce(a, 1) > 0;
+create unique index insertconflicti2 on insertconflict(b)
+  where coalesce(a, 1) > 0;
 
---dg-cascade
---dg insert into insertconflict values (1, 2)
---dg on conflict (coalesce(a, 0)) do nothing;
+insert into insertconflict values (1, 2)
+on conflict (coalesce(a, 0)) do nothing;
 
---dg-cascade
---dg insert into insertconflict values (1, 2)
---dg on conflict (b) where coalesce(a, 1) > 0 do nothing;
+insert into insertconflict values (1, 2)
+on conflict (b) where coalesce(a, 1) > 0 do nothing;
 
---dg-cascade
---dg insert into insertconflict values (1, 2)
---dg on conflict (b) where coalesce(a, 1) > 1 do nothing;
+insert into insertconflict values (1, 2)
+on conflict (b) where coalesce(a, 1) > 1 do nothing;
 
 drop table insertconflict;
 

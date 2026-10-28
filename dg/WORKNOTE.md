@@ -8933,3 +8933,51 @@ is digres's own: PostgreSQL refuses it (`UNSUPPORTED.md` §10).
   `../sq/test/on_update.sql` and two files of what it refuses.
   sq's corpus is unchanged against PostgreSQL 18.6's scripts.
 
+
+## Step 311: partial and expression indexes
+
+An index may have a predicate, `WHERE`, and key columns that
+are expressions (`EXPRINDEX.md`). sm3 kept and maintained both
+already, asking its host's evaluator whether a row belongs and
+what its expression keys are; digres refused them in
+`check_create_index()`, and registered no evaluator.
+
+- **The evaluator** (`smstore_index_eval()`, `smstore.c`) runs
+  PostgreSQL's executor on the expressions and the predicate,
+  made ready once a thread and index, over sm's row as it is.
+  An error is caught and kept, never thrown through sm, and
+  `sm_error()` raises it again as PostgreSQL's when sm's call
+  fails with it.
+- **sm's builders**, threads digres did not start, run it too:
+  each is adopted at its first call (`session_thread_adopt()`),
+  set up as a session thread is, without a session, and freed
+  as it ends. It reads the compiled-in catalogs in a
+  transaction of its own, which touches nothing of sm's.
+- **CREATE INDEX** passes sm the expressions, the predicate and
+  the expression columns' names, `nodeToString()`'s, and the
+  columns they read; it refuses what PostgreSQL refuses, and a
+  numeric expression with no scale, which sm would round.
+- **The catalog**: the relcache gives an index in sm its
+  `rd_indexprs` and `rd_indpred`, so the planner uses it as
+  PostgreSQL's; `pg_index`, `pg_attribute` and
+  `pg_get_indexdef()` show them.
+- **Scans**: a key on an expression is checked by the executor
+  against the original quals, as a lossy index's, as digres's
+  own check reads a row's column; an index-only scan's against
+  the quals on the index's columns.
+- **A duplicate** names the expression and its value as
+  PostgreSQL does, in a write and in a build.
+- **Left on purpose**: an error in a build on sm's builders
+  says `could not create index "x":` before PostgreSQL's
+  message; settings on a builder are their defaults
+  (`EXPRINDEX.md` §8); what ANALYZE gives an expression's
+  statistics, and the planner reads of them, was not looked at
+  (§10 step 6).
+- **Tests**: `test/slt/expr_index.test`, its results
+  PostgreSQL 18's, and two `server.sh` checks, of PostgreSQL's
+  DETAIL in each path and of a build a crash cut short,
+  resumed on an adopted builder; each shown to fail with one
+  part disabled (`EXPRINDEX.md` §10). A first run of those
+  checks restored each file older than its object, so `make`
+  kept the disabled part built in; they were run again, each
+  file touched as it was restored.

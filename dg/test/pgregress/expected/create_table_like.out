@@ -192,8 +192,7 @@ DROP TABLE inhg;
 --dg CREATE TABLE inhg (x text, LIKE inhx INCLUDING INDEXES, PRIMARY KEY(x));
  /* fails */
 CREATE TABLE inhz (xx text DEFAULT 'text', yy int UNIQUE);
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
---dg CREATE UNIQUE INDEX inhz_xx_idx on inhz (xx) WHERE xx <> 'test';
+CREATE UNIQUE INDEX inhz_xx_idx on inhz (xx) WHERE xx <> 'test';
 /* Ok to create multiple unique indexes */
 --dg-cascade
 --dg CREATE TABLE inhg (x text UNIQUE, LIKE inhz INCLUDING INDEXES);

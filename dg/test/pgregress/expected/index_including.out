@@ -213,15 +213,14 @@ DROP TABLE tbl;
  * 3.3 Test ALTER TABLE SET STATISTICS
  */
 CREATE TABLE tbl (c1 int, c2 int);
---dg-skip: an index key is a column, not an expression, yet
---dg CREATE INDEX tbl_idx ON tbl (c1, (c1+0)) INCLUDE (c2);
---dg-cascade
+CREATE INDEX tbl_idx ON tbl (c1, (c1+0)) INCLUDE (c2);
+--dg-differs: another error: ALTER INDEX is not supported yet
 --dg ALTER INDEX tbl_idx ALTER COLUMN 1 SET STATISTICS 1000;
 --dg-skip: ALTER INDEX is not supported yet
 --dg ALTER INDEX tbl_idx ALTER COLUMN 2 SET STATISTICS 1000;
---dg-cascade
+--dg-differs: another error: ALTER INDEX is not supported yet
 --dg ALTER INDEX tbl_idx ALTER COLUMN 3 SET STATISTICS 1000;
---dg-cascade
+--dg-differs: another error: ALTER INDEX is not supported yet
 --dg ALTER INDEX tbl_idx ALTER COLUMN 4 SET STATISTICS 1000;
 DROP TABLE tbl;
 /*

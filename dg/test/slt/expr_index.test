@@ -1,0 +1,495 @@
+# Verify partial and expression indexes (../EXPRINDEX.md): each holds the
+# rows and keys PostgreSQL's would, through every write that moves a row
+# into, out of or within it, and the planner uses them.
+# 1. Build a unique expression index and a partial index on a table with
+#    rows, after its commit (on sm's builders), and on one this
+#    transaction made (on the session's own thread); pg_index and
+#    pg_get_indexdef() show their expressions and predicate.
+# 2. The planner scans each, and they give the rows a scan of the table
+#    gives: equality, a range and a strict bound on an expression, a
+#    predicate the query implies, and a row the predicate turns away,
+#    which the partial index must not be used to look for; an index-only
+#    scan reads the plain column of an index whose next key is an
+#    expression, and checks a strict bound on an expression key, and two
+#    bounds on it, of which sm's scan takes one.
+# 3. The unique expression index refuses a key that differs only in case,
+#    with PostgreSQL's detail, on insert and on update.
+# 4. Updates move rows into and out of the partial index, change an
+#    expression's key, change it and back (A to B to A), change only a
+#    column neither reads, and change the primary key, moving the row;
+#    the indexes follow each.
+# 5. A delete and an insert of the same key; a rolled-back insert and a
+#    savepoint rolled back leave the key free.
+# 6. A partial unique index holds a key once among the rows it takes, and
+#    any number of times among those it does not.
+# 7. An expression that is null, and a predicate that is null.
+# 8. ON CONFLICT names an expression index, and a partial unique index
+#    with its predicate, as its arbiter; without the predicate, none.
+# 9. An expression that fails: at an insert, and at the build of an index
+#    on rows, in this transaction's table and after a commit.
+# 10. A temporary table and a table with no primary key.
+# 11. Refused as PostgreSQL refuses them: a volatile function, in an
+#     expression and in a predicate, and an expression among INCLUDE
+#     columns; and as digres alone does: a key of type interval or of
+#     numeric with no scale (one with a scale is taken), and a column
+#     the index reads dropped.
+
+# 1. The indexes, built after a commit and in the table's transaction.
+statement ok
+create table acct (id int8 primary key, email text not null, gone int4, note text)
+
+statement ok
+insert into acct select g, 'User' || g || '@Example.com', case when g % 3 = 0 then 1 end, 'n' from generate_series(1, 300) g
+
+statement ok
+create unique index acct_email on acct (lower(email))
+
+statement ok
+create index acct_live on acct (id) where gone is null
+
+statement ok
+begin
+
+statement ok
+create table acct2 (id int8 primary key, email text not null, gone int4)
+
+statement ok
+insert into acct2 select g, 'U' || g, case when g % 2 = 0 then 1 end from generate_series(1, 20) g
+
+statement ok
+create unique index acct2_email on acct2 (upper(email))
+
+statement ok
+create index acct2_live on acct2 (id) where gone is null
+
+statement ok
+commit
+
+query T rowsort
+select pg_get_indexdef(indexrelid) from pg_index where indrelid in ('acct'::regclass, 'acct2'::regclass) and not indisprimary
+----
+CREATE INDEX acct2_live ON public.acct2 USING btree (id) WHERE (gone IS NULL)
+CREATE INDEX acct_live ON public.acct USING btree (id) WHERE (gone IS NULL)
+CREATE UNIQUE INDEX acct2_email ON public.acct2 USING btree (upper(email))
+CREATE UNIQUE INDEX acct_email ON public.acct USING btree (lower(email))
+
+query TTT rowsort
+select indexrelid::regclass::text, indexprs is not null, indpred is not null from pg_index where indrelid = 'acct'::regclass
+----
+acct_email	t	f
+acct_live	f	t
+acct_pkey	f	f
+
+# 2. Scans of each, against the table's own rows.
+statement ok
+set enable_seqscan = off
+
+query T nosort
+explain (costs off) select id from acct where lower(email) = 'user7@example.com'
+----
+Index Scan using acct_email on acct
+  Index Cond: (lower(email) = 'user7@example.com'::text)
+
+query I nosort
+select id from acct where lower(email) = 'user7@example.com'
+----
+7
+
+query I nosort
+select count(*) from acct where lower(email) between 'user10' and 'user19~'
+----
+110
+
+query I nosort
+select count(*) from acct where lower(email) > 'user7@example.com'
+----
+22
+
+onlyif digres
+query T nosort
+explain (costs off) select id from acct where id < 100 and gone is null
+----
+Index Only Scan using acct_live on acct
+  Index Cond: (id < 100)
+
+query I nosort
+select count(*) from acct where id = 3
+----
+1
+
+query I nosort
+select count(*) from acct where id < 100 and gone is null
+----
+66
+
+query I nosort
+select id from acct2 where upper(email) = 'U5'
+----
+5
+
+query I nosort
+select count(*) from acct2 where gone is null and id > 0
+----
+10
+
+statement ok
+create table mixed (id int4 primary key, e text, n int4)
+
+statement ok
+insert into mixed select g, 'E' || g, g from generate_series(1, 100) g
+
+statement ok
+create index mixed_n on mixed (n, lower(e))
+
+statement ok
+set enable_indexscan = off
+
+statement ok
+set enable_bitmapscan = off
+
+onlyif digres
+query T nosort
+explain (costs off) select n from mixed where n < 4
+----
+Index Only Scan using mixed_n on mixed
+  Disabled: true
+  Index Cond: (n < 4)
+
+query I nosort
+select n from mixed where n < 4
+----
+1
+2
+3
+
+statement ok
+create index mixed_l on mixed (lower(e), e)
+
+onlyif digres
+query T nosort
+explain (costs off) select e from mixed where lower(e) > 'e98'
+----
+Index Only Scan using mixed_l on mixed
+  Disabled: true
+  Index Cond: ((lower(e)) > 'e98'::text)
+
+query T nosort
+select e from mixed where lower(e) > 'e98'
+----
+E99
+
+query I nosort
+select count(*) from mixed where lower(e) > 'e98' and lower(e) > 'a'
+----
+1
+
+query I nosort
+select count(*) from mixed where lower(e) > 'a' and lower(e) > 'e98'
+----
+1
+
+statement ok
+reset enable_indexscan
+
+statement ok
+reset enable_bitmapscan
+
+statement ok
+reset enable_seqscan
+
+# 3. A key differing only in case is the same key.
+statement error duplicate key value violates unique constraint "acct_email"
+insert into acct values (1000, 'USER7@example.COM', null, 'n')
+
+statement error duplicate key value violates unique constraint "acct_email"
+update acct set email = 'user8@EXAMPLE.com' where id = 9
+
+# 4. Updates into, out of and within the indexes.
+statement ok
+update acct set gone = null where id = 3
+
+statement ok
+update acct set gone = 1 where id = 4
+
+statement ok
+update acct set email = 'Renamed@x' where id = 10
+
+statement ok
+update acct set email = 'tmp@x' where id = 11
+
+statement ok
+update acct set email = 'User11@Example.com' where id = 11
+
+statement ok
+update acct set note = 'other' where id = 12
+
+statement ok
+update acct set id = 5000 where id = 13
+
+statement ok
+set enable_seqscan = off
+
+query I rowsort
+select id from acct where gone is null and id < 15
+----
+1
+10
+11
+14
+2
+3
+5
+7
+8
+
+query I rowsort
+select id from acct where gone is null and id > 4000
+----
+5000
+
+query I rowsort
+select id from acct where lower(email) in ('renamed@x', 'user10@example.com', 'user11@example.com', 'tmp@x', 'user13@example.com')
+----
+10
+11
+5000
+
+statement ok
+reset enable_seqscan
+
+# 5. Delete and insert one key; roll back an insert and a savepoint.
+statement ok
+delete from acct where id = 10
+
+statement ok
+insert into acct values (10, 'RENAMED@X', null, 'n')
+
+statement ok
+begin
+
+statement ok
+insert into acct values (2000, 'Held@x', null, 'n')
+
+statement ok
+rollback
+
+statement ok
+begin
+
+statement ok
+savepoint s
+
+statement ok
+insert into acct values (2001, 'Held@x', null, 'n')
+
+statement ok
+rollback to savepoint s
+
+statement ok
+insert into acct values (2002, 'held@X', null, 'n')
+
+statement ok
+commit
+
+statement ok
+set enable_seqscan = off
+
+query I nosort
+select id from acct where lower(email) = 'held@x'
+----
+2002
+
+query I nosort
+select id from acct where lower(email) = 'renamed@x'
+----
+10
+
+statement ok
+reset enable_seqscan
+
+# 6. A partial unique index: once among its rows, any number outside.
+statement ok
+create table tag (id int4 primary key, name text, live bool)
+
+statement ok
+create unique index tag_live on tag (name) where live
+
+statement ok
+insert into tag values (1, 'a', true), (2, 'a', false), (3, 'a', false)
+
+statement error duplicate key value violates unique constraint "tag_live"
+insert into tag values (4, 'a', true)
+
+statement error duplicate key value violates unique constraint "tag_live"
+update tag set live = true where id = 2
+
+statement ok
+update tag set live = false where id = 1
+
+statement ok
+update tag set live = true where id = 2
+
+query IT rowsort
+select id, name from tag where live
+----
+2	a
+
+# 7. A null expression, and a null predicate.
+statement ok
+create table nul (id int4 primary key, a text, b int4)
+
+statement ok
+create index nul_a on nul (lower(a))
+
+statement ok
+create index nul_b on nul (id) where b > 0
+
+statement ok
+insert into nul values (1, null, null), (2, 'X', 1), (3, null, 0)
+
+statement ok
+set enable_seqscan = off
+
+query I nosort
+select id from nul where lower(a) is null order by id
+----
+1
+3
+
+query I nosort
+select id from nul where b > 0 and id > 0
+----
+2
+
+statement ok
+reset enable_seqscan
+
+# 8. An expression index and a partial unique index as arbiters.
+statement ok
+insert into acct values (3000, 'USER20@example.com', null, 'n') on conflict (lower(email)) do update set note = 'upserted'
+
+query IT nosort
+select id, note from acct where id in (20, 3000) order by id
+----
+20	upserted
+
+statement error there is no unique or exclusion constraint matching the ON CONFLICT specification
+insert into tag values (5, 'a', true) on conflict (name) do nothing
+
+statement ok
+insert into tag values (5, 'a', true) on conflict (name) where live do nothing
+
+statement ok
+insert into tag values (6, 'b', true) on conflict (name) where live do nothing
+
+query IT rowsort
+select id, name from tag where live
+----
+2	a
+6	b
+
+# 9. An expression that fails, at a write and at a build; a predicate
+#    false for a row keeps its expression from being evaluated.
+statement ok
+create table div (id int4 primary key, d int4)
+
+statement ok
+insert into div values (1, 1), (2, 0)
+
+statement ok
+create index div_ok on div ((10 / d)) where d <> 0
+
+statement ok
+insert into div values (3, 0)
+
+statement ok
+create table div2 (id int4 primary key, d int4)
+
+statement ok
+insert into div2 values (1, 1)
+
+statement ok
+create index div2_q on div2 ((10 / d))
+
+statement error ^division by zero$
+insert into div2 values (2, 0)
+
+skipif digres
+statement error ^division by zero$
+create index div_bad on div ((10 / d))
+
+onlyif digres
+statement error could not create index "div_bad": division by zero
+create index div_bad on div ((10 / d))
+
+statement ok
+begin
+
+statement ok
+create table div3 (id int4 primary key, d int4)
+
+statement ok
+insert into div3 values (1, 0)
+
+statement error ^division by zero$
+create index div3_bad on div3 ((10 / d))
+
+statement ok
+rollback
+
+query I nosort
+select count(*) from pg_class where relname in ('div_bad', 'div3_bad')
+----
+0
+
+# 10. A temporary table, and one with no primary key.
+statement ok
+create temporary table tmp (id int4, s text)
+
+statement ok
+insert into tmp values (1, 'Aa'), (2, 'bb'), (3, null)
+
+statement ok
+create unique index tmp_s on tmp (lower(s)) where id > 1
+
+statement error duplicate key value violates unique constraint "tmp_s"
+insert into tmp values (4, 'BB')
+
+statement ok
+insert into tmp values (5, 'AA')
+
+statement ok
+set enable_seqscan = off
+
+query I nosort
+select id from tmp where lower(s) = 'aa' and id > 1
+----
+5
+
+statement ok
+reset enable_seqscan
+
+# 11. Refused.
+statement error functions in index expression must be marked IMMUTABLE
+create index bad1 on acct (lower(email || random()::text))
+
+statement error functions in index predicate must be marked IMMUTABLE
+create index bad2 on acct (id) where random() > 0.5
+
+statement error expressions are not supported in included columns
+create index bad3 on acct (id) include ((id + 1))
+
+onlyif digres
+statement error an index key of type interval is not supported
+create index bad4 on acct ((id * interval '1 day'))
+
+onlyif digres
+statement error an index expression of type numeric needs a precision and scale
+create index bad5 on acct ((id::numeric * 2))
+
+statement ok
+create index num2 on acct (((id * 2)::numeric(10, 2)))
+
+onlyif digres
+statement error cannot drop column gone of table acct because other objects depend on it
+alter table acct drop column gone

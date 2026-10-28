@@ -15,13 +15,12 @@ CREATE INDEX regular_sized_index ON parallel_vacuum_table(a);
 CREATE INDEX typically_sized_index ON parallel_vacuum_table(a);
 -- Note: vacuum_in_leader_small_index can apply deduplication, making it ~3x
 -- smaller than the other indexes
---dg-skip: an index key is a column, not an expression, yet
---dg CREATE INDEX vacuum_in_leader_small_index ON parallel_vacuum_table((1));
+CREATE INDEX vacuum_in_leader_small_index ON parallel_vacuum_table((1));
 
 -- Verify (as best we can) that the cost model for parallel VACUUM
 -- will make our VACUUM run in parallel, while always leaving it up to the
 -- parallel leader to handle the vacuum_in_leader_small_index index:
---dg-cascade
+--dg-skip: unrecognized configuration parameter "?"
 --dg SELECT EXISTS (
 --dg SELECT 1
 --dg FROM pg_class

@@ -1219,6 +1219,56 @@ grep -q 'duplicate key value violates unique constraint "t3u_a_key"' \
     "$work/own_index.out")" = 2 ] ||
   fail "unique index made in the open transaction"
 
+# Verify that a partial and an expression index say what PostgreSQL's do
+# (EXPRINDEX.md): a duplicate names the expression and its value, an error
+# in an expression is PostgreSQL's, psql shows each index as written, and
+# COPY's load evaluates them.
+# 1. Make t3e with rows; build a unique index on lower(e) after the commit,
+#    on sm's builders, and one on id % 10 that meets a duplicate there.
+# 2. In one transaction make t3f, a row and its duplicate key, and a unique
+#    index on (a + 1), which meets the duplicate in this session's build.
+# 3. Insert a duplicate of lower(e), and a row whose expression fails.
+# 4. Confirm each duplicate's DETAIL, and the failure's ERROR, are
+#    PostgreSQL's, and pg_get_indexdef() shows lower(e) and the WHERE.
+# 5. COPY two rows into t3g, empty, with a partial unique index, then
+#    COPY a duplicate key the index takes: refused with its DETAIL.
+local_psql > "$work/expr_index.out" 2>&1 <<'SQL'
+create table t3e (id int8 primary key, e text, d int4);
+insert into t3e select g, 'E' || g, g from generate_series(1, 50) g;
+create unique index t3e_e on t3e (lower(e)) where d > 0;
+create unique index t3e_m on t3e ((id % 10));
+begin;
+create table t3f (a int4);
+insert into t3f values (1), (1);
+create unique index t3f_a on t3f ((a + 1));
+rollback;
+insert into t3e values (100, 'e7', 1);
+create index t3e_q on t3e ((10 / (d - 3)));
+select pg_get_indexdef('t3e_e'::regclass);
+create table t3g (id int4, k text, live bool);
+create unique index t3g_k on t3g (upper(k)) where live;
+copy t3g from stdin;
+1	a	t
+2	A	f
+\.
+copy t3g from stdin;
+3	A	t
+\.
+SQL
+grep -qx 'DETAIL:  Key ((id % 10::bigint))=([0-9]) is duplicated.' \
+  "$work/expr_index.out" &&
+  grep -qx 'DETAIL:  Key ((a + 1))=(2) is duplicated.' \
+    "$work/expr_index.out" &&
+  grep -qx 'DETAIL:  Key (lower(e))=(e7) already exists.' \
+    "$work/expr_index.out" &&
+  grep -qx 'ERROR:  could not create index "t3e_q": division by zero' \
+    "$work/expr_index.out" &&
+  grep -qx 'CREATE UNIQUE INDEX t3e_e ON public.t3e USING btree (lower(e)) WHERE (d > 0)' \
+    "$work/expr_index.out" &&
+  grep -qx 'DETAIL:  Key (upper(k))=(A) already exists.' \
+    "$work/expr_index.out" ||
+  fail "partial and expression indexes"
+
 # Verify that DDL on a relation whose descriptor this session cached in an
 # earlier transaction takes sm's lock before it reads the descriptor: each
 # step stopped an assertion build at relation_open's NoLock check.
@@ -4558,6 +4608,56 @@ for n in 1 2; do
     "$work/imm_idle$n.out" || fail "immediate shutdown: idle client $n told"
 done
 
+# Verify that the build of an expression index a crash cut short resumes
+# when the server starts again, on sm's builders, and evaluates every row:
+# the evaluator runs on a thread no session started (EXPRINDEX.md
+# section 5).
+# 1. Start the server again; make t3r with rows, and in the background a
+#    unique index on lower(e), built after its commit.
+# 2. Once the index is there and not yet valid, kill the server.
+# 3. Start it again: the index becomes valid, within five minutes, as
+#    the thread sanitizer's build is slow.
+# 4. Confirm the planner scans it and it finds every row's key.
+$digres -D "$work/data" -k "$work" -p "$port" > "$work/log5" 2>&1 &
+server=$!
+server_ready $server "$work/log5" || fail "resumed build: start"
+local_psql -c 'create table t3r (id int8 primary key, e text)' \
+  -c "insert into t3r select g, 'R' || g from generate_series(1, 200000) g" \
+  > "$work/resume.out" 2>&1
+bg_start resume_build -c 'create unique index t3r_e on t3r (lower(e))'
+pending=
+for _ in $(seq 300); do
+  pending=$(local_psql -c "select indisvalid from pg_index i join pg_class c
+    on c.oid = i.indexrelid where c.relname = 't3r_e'" 2> /dev/null)
+  [ -n "$pending" ] && break
+  sleep 0.01
+done
+kill -KILL $server
+wait $server 2> /dev/null
+bg_end resume_build
+[ "$pending" = f ] || fail "resumed build: the build was cut short"
+$digres -D "$work/data" -k "$work" -p "$port" > "$work/log6" 2>&1 &
+server=$!
+server_ready $server "$work/log6" || fail "resumed build: restart"
+valid=
+for _ in $(seq 600); do
+  valid=$(local_psql -c "select indisvalid from pg_index i join pg_class c
+    on c.oid = i.indexrelid where c.relname = 't3r_e'" 2> /dev/null)
+  [ "$valid" = t ] && break
+  sleep 0.5
+done
+[ "$valid" = t ] || fail "resumed build: the index becomes valid"
+local_psql -c 'set enable_seqscan = off' \
+  -c "explain (costs off) select id from t3r where lower(e) = 'r77'" \
+  -c "select count(*) from t3r where lower(e) between 'r' and 'r~'" \
+  -c "select id from t3r where lower(e) = 'r199999'" \
+  > "$work/resume.out" 2>&1
+grep -q 'Index Scan using t3r_e' "$work/resume.out" &&
+  grep -qx 200000 "$work/resume.out" && grep -qx 199999 "$work/resume.out" ||
+  fail "resumed build: every row's key"
+kill -INT $server
+wait $server || fail "resumed build: shutdown status"
+
 # Verify that a smart shutdown (SIGTERM) waits for its sessions: the
 # postmaster reads it from its signalfd, refuses new sessions, and stops
 # once the last has ended.
@@ -4593,9 +4693,9 @@ fi
 wait $server || fail "smart shutdown: status"
 
 grep -q "terminated by signal" "$work/log" "$work/log2" "$work/log3" \
-  "$work/log4" && fail "a process crashed"
+  "$work/log4" "$work/log5" "$work/log6" && fail "a process crashed"
 grep -q "ThreadSanitizer" "$work/log" "$work/log2" "$work/log3" \
-  "$work/log4" && fail "a thread sanitizer report"
+  "$work/log4" "$work/log5" "$work/log6" && fail "a thread sanitizer report"
 
 [ $failed = 0 ] && echo "server: PASSED"
 exit $failed

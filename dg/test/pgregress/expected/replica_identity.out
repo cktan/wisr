@@ -1,4 +1,4 @@
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
+--dg-skip: CREATE INDEX supports only columns, expressions, WHERE, UNIQUE and INCLUDE yet
 --dg CREATE TABLE test_replica_identity (
 --dg        id serial primary key,
 --dg        keya text not null,

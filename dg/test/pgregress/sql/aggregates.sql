@@ -495,7 +495,7 @@ from tenk1 a2(col2);
 
 create temp table t1 (a int, b int, c int, d int, primary key (a, b));
 create temp table t2 (x int, y int, z int, primary key (x, y));
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
+--dg-skip: CREATE INDEX supports only columns, expressions, WHERE, UNIQUE and INCLUDE yet
 --dg create temp table t3 (a int, b int, c int, primary key(a, b) deferrable);
 
 -- Non-primary-key columns can be removed from GROUP BY
@@ -570,18 +570,16 @@ explain (costs off) select y,z from t2 group by y,z;
 
 -- Ensure we don't use a partial index as proof of functional dependency
 drop index t2_z_uidx;
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
---dg create index t2_z_uidx on t2 (z) where z > 0;
+create index t2_z_uidx on t2 (z) where z > 0;
 explain (costs off) select y,z from t2 group by y,z;
 
 -- A unique index defined as NULLS NOT DISTINCT does not need a supporting NOT
 -- NULL constraint on the indexed columns.  Ensure the redundant columns are
 -- removed from the GROUP BY for such a table.
---dg-cascade
---dg drop index t2_z_uidx;
+drop index t2_z_uidx;
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table t2 alter column z drop not null;
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
+--dg-skip: CREATE INDEX supports only columns, expressions, WHERE, UNIQUE and INCLUDE yet
 --dg create unique index t2_z_uidx on t2(z) nulls not distinct;
 --dg-cascade
 --dg explain (costs off) select y,z from t2 group by y,z;

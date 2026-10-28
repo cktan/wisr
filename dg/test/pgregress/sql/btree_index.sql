@@ -270,15 +270,12 @@ select hundred, twenty from tenk1 where hundred <= 48 order by hundred desc limi
 --
 -- Add coverage for ScalarArrayOp btree quals with pivot tuple constants
 --
---dg-differs: the plan
---dg explain (costs off)
---dg select distinct hundred from tenk1 where hundred in (47, 48, 72, 82);
---dg-differs: the result
---dg select distinct hundred from tenk1 where hundred in (47, 48, 72, 82);
+explain (costs off)
+select distinct hundred from tenk1 where hundred in (47, 48, 72, 82);
+select distinct hundred from tenk1 where hundred in (47, 48, 72, 82);
 
---dg-differs: the plan
---dg explain (costs off)
---dg select distinct hundred from tenk1 where hundred in (47, 48, 72, 82) order by hundred desc;
+explain (costs off)
+select distinct hundred from tenk1 where hundred in (47, 48, 72, 82) order by hundred desc;
 select distinct hundred from tenk1 where hundred in (47, 48, 72, 82) order by hundred desc;
 
 explain (costs off)
@@ -307,13 +304,11 @@ select proname from pg_proc where proname ilike '00%foo' order by 1;
 
 set enable_indexscan to false;
 set enable_bitmapscan to true;
---dg-differs: the plan
---dg explain (costs off)
---dg select proname from pg_proc where proname like E'RI\\_FKey%del' order by 1;
+explain (costs off)
 select proname from pg_proc where proname like E'RI\\_FKey%del' order by 1;
---dg-differs: the plan
---dg explain (costs off)
---dg select proname from pg_proc where proname ilike '00%foo' order by 1;
+select proname from pg_proc where proname like E'RI\\_FKey%del' order by 1;
+explain (costs off)
+select proname from pg_proc where proname ilike '00%foo' order by 1;
 select proname from pg_proc where proname ilike '00%foo' order by 1;
 explain (costs off)
 select proname from pg_proc where proname ilike 'ri%foo' order by 1;
@@ -361,9 +356,9 @@ reset enable_bitmapscan;
 -- Perform unique checking, with and without the use of deduplication
 --
 CREATE TABLE dedup_unique_test_table (a int) WITH (autovacuum_enabled=false);
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
+--dg-skip: CREATE INDEX supports only columns, expressions, WHERE, UNIQUE and INCLUDE yet
 --dg CREATE UNIQUE INDEX dedup_unique ON dedup_unique_test_table (a) WITH (deduplicate_items=on);
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
+--dg-skip: CREATE INDEX supports only columns, expressions, WHERE, UNIQUE and INCLUDE yet
 --dg CREATE UNIQUE INDEX plain_unique ON dedup_unique_test_table (a) WITH (deduplicate_items=off);
 -- Generate enough garbage tuples in index to ensure that even the unique index
 -- with deduplication enabled has to check multiple leaf pages during unique
@@ -402,7 +397,7 @@ INSERT INTO dedup_unique_test_table SELECT i FROM generate_series(0,450) i;
 create table btree_tall_tbl(id int4, t text);
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg alter table btree_tall_tbl alter COLUMN t set storage plain;
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
+--dg-skip: CREATE INDEX supports only columns, expressions, WHERE, UNIQUE and INCLUDE yet
 --dg create index btree_tall_idx on btree_tall_tbl (t, id) with (fillfactor = 10);
 insert into btree_tall_tbl select g, repeat('x', 250)
 from generate_series(1, 130) g;

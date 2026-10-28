@@ -13,5 +13,6 @@
 #include <thread>
 
 extern std::thread session_thread_start(void (*fn)(void *), void *arg);
+extern void session_thread_adopt(void);
 
 #endif /* SESSION_THREAD_H */
