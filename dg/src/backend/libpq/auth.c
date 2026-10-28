@@ -23,6 +23,7 @@
 #include <pwd.h>
 #include <unistd.h>
 
+#include "catalog/pg_authid_d.h"
 #include "commands/user.h"
 #include "common/ip.h"
 #include "common/md5.h"
@@ -40,6 +41,7 @@
 #include "tcop/backend_startup.h"
 #include "utils/hooks.h"
 #include "utils/memutils.h"
+#include "utils/pg_global.h"
 
 /*
  * The name of each authentication method, by its UserAuth (libpq/hba.h):
@@ -68,18 +70,53 @@ const char *hba_authname(UserAuth auth_method) {
 bool pg_isblank(const char c) { return c == ' ' || c == '\t' || c == '\r'; }
 
 /*
- * Choose how the connection is authenticated. digres has no pg_hba.conf
- * and nothing in its place yet: the rule is fixed, and depends only on how
- * the client arrived. A local socket connection is authenticated by the OS
- * user at its other end (peer), and a TCP connection by password
- * (SCRAM-SHA-256).
+ * The OS user at the other end of the local socket port: its name, into
+ * *name, and whether it is the data directory's owner, the user the server
+ * runs as.  False if the kernel cannot say.
+ */
+static bool peer_user(hbaPort *port, std::string *name, bool *owner) {
+  uid_t uid;
+  gid_t gid;
+  struct passwd pwbuf;
+  struct passwd *pw;
+  char buf[1024];
+
+  if (getpeereid(port->sock, &uid, &gid) != 0 ||
+      getpwuid_r(uid, &pwbuf, buf, sizeof buf, &pw) != 0 || NULL == pw)
+    return false;
+  *name = pw->pw_name;
+  *owner = uid == geteuid();
+  return true;
+}
+
+/*
+ * Choose how the connection is authenticated: no pg_hba.conf, but the rule
+ * of sm/ROLE.md section 5.  On the local socket, by the OS user at its
+ * other end (peer) if that user is the role's name, or is the data
+ * directory's owner asking for the bootstrap superuser; else by the role's
+ * password.  Over TCP, by the role's password.  Passwords are SCRAM-SHA-256.
  */
 void hba_getauthmethod(hbaPort *port) {
   HbaLine *hba = (HbaLine *)palloc0(sizeof(HbaLine));
 
+  port->datadir_owner = false;
   if (port->raddr.addr.ss_family == AF_UNIX) {
+    std::string os_user;
+    pg_global_role_t bootstrap;
+    bool owner = false;
+
     hba->conntype = ctLocal;
-    hba->auth_method = uaPeer;
+    hba->auth_method = uaSCRAM;
+    if (peer_user(port, &os_user, &owner)) {
+      if (os_user == port->user_name)
+        hba->auth_method = uaPeer;
+      else if (owner &&
+               pg_global_role_by_oid(BOOTSTRAP_SUPERUSERID, &bootstrap) &&
+               bootstrap.rolname == port->user_name) {
+        hba->auth_method = uaPeer;
+        port->datadir_owner = true;
+      }
+    }
   } else {
     hba->conntype = ctHost;
     hba->auth_method = uaSCRAM;
@@ -1734,6 +1771,10 @@ static int auth_peer(hbaPort *port) {
    * has already succeeded and we want the log file to reflect that.
    */
   set_authn_id(port, pw->pw_name);
+
+  /* The data directory's owner is the bootstrap superuser, by any name. */
+  if (port->datadir_owner && uid == geteuid())
+    return STATUS_OK;
 
   ret = check_usermap(port->hba->usermap, port->user_name,
                       MyClientConnectionInfo.authn_id, false);

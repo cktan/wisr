@@ -202,13 +202,15 @@ local_psql -c 'select 1/0' -c 'select 2 + 3' > "$work/error.out" 2>&1
 grep -q "division by zero" "$work/error.out" || fail "error reported"
 grep -qx 5 "$work/error.out" || fail "statement after an error"
 
-# Verify that the local socket admits only the superuser, to a database
-# that exists.
-# 1. Connect as another role, and confirm peer authentication refuses it.
+# Verify that the local socket admits a role that is not the OS user's
+# name only by password, and only to a database that exists.
+# 1. Connect as a role that is not there, with a password, and confirm it
+#    is refused as a wrong password would be.
 # 2. Connect to a database that is not there, and confirm it is refused.
-psql -X -h "$work" -p "$port" -U nobody_here -d postgres -c 'select 1' \
-  > "$work/peer.out" 2>&1 && fail "peer admitted another role"
-grep -q "Peer authentication failed" "$work/peer.out" || fail "peer message"
+PGPASSWORD=x psql -X -w -h "$work" -p "$port" -U nobody_here -d postgres \
+  -c 'select 1' > "$work/peer.out" 2>&1 && fail "peer admitted another role"
+grep -q 'password authentication failed for user "nobody_here"' \
+  "$work/peer.out" || fail "peer message"
 psql -X -h "$work" -p "$port" -d no_such_db -c 'select 1' \
   > "$work/nodb.out" 2>&1 && fail "unknown database admitted"
 grep -q 'database "no_such_db" does not exist' "$work/nodb.out" ||
@@ -3023,6 +3025,60 @@ DROP ROLE
 OUT
 cmp -s "$work/rolealter.out" "$work/rolealter.expected" ||
   fail "role DDL: ALTER and DROP ROLE"
+
+# Verify how a client gets in (sm/ROLE.md section 5): on the local socket
+# by peer if the OS user is the role's name, else by the role's password;
+# over TCP by password; and a role that may not log in, is past VALID
+# UNTIL or at its CONNECTION LIMIT is refused. Each refusal tells the
+# client what a wrong password tells it, and the log which check failed.
+# 1. Make ra (LOGIN, a password), rb (LOGIN, none), rc (NOLOGIN, a
+#    password), rd (CONNECTION LIMIT 1) and re (VALID UNTIL 2000).
+# 2. ra gets in on the socket and over TCP with its password, and not on
+#    the socket without one.
+# 3. rb is refused on the socket and over TCP; rc and re are refused.
+# 4. With one rd session held, a second is refused.
+# 5. The log says which check refused each.
+local_psql -c "create role ra login password 'pa'" -c 'create role rb login' \
+  -c "create role rc password 'pc'" \
+  -c "create role rd login password 'pd' connection limit 1" \
+  -c "create role re login password 'pe' valid until '2000-01-01'" \
+  > "$work/auth.out" 2>&1 || fail "auth: make roles"
+[ "$(PGPASSWORD=pa local_psql -U ra -c 'select current_user')" = ra ] ||
+  fail "auth: ra on the socket by password"
+[ "$(PGPASSWORD=pa tcp_psql pa -U ra -c 'select current_user')" = ra ] ||
+  fail "auth: ra over TCP"
+local_psql -w -U ra -c 'select 1' > "$work/auth1.out" 2>&1 &&
+  fail "auth: ra on the socket with no password"
+n=0
+for who in "rb local" "rb tcp" "rc local" "re tcp"; do
+  read -r role via <<< "$who"
+  n=$((n + 1))
+  # Each role's own password, p and its last letter: rb has none.
+  if [ "$via" = local ]; then
+    PGPASSWORD=p${role#r} local_psql -w -U "$role" -c 'select 1'
+  else
+    tcp_psql "p${role#r}" -U "$role" -c 'select 1'
+  fi > "$work/auth_r$n.out" 2>&1 && fail "auth: $who admitted"
+  grep -q "password authentication failed for user \"$role\"" \
+    "$work/auth_r$n.out" || fail "auth: $who message"
+done
+held_start rd_held
+held_send rd_held "\\c 'host=127.0.0.1 port=$port dbname=postgres user=rd password=pd'"
+held_send rd_held "select current_user;"
+held_wait rd_held "rd" || fail "auth: rd's first session"
+tcp_psql pd -U rd -c 'select 1' > "$work/auth_rd.out" 2>&1 &&
+  fail "auth: rd's second session admitted"
+grep -q 'password authentication failed for user "rd"' "$work/auth_rd.out" ||
+  fail "auth: rd's message"
+held_end rd_held
+for detail in 'User "rb" has no password assigned' \
+  'Role "rc" is not permitted to log in' \
+  'User "re" has an expired password' \
+  'Role "rd" has reached its CONNECTION LIMIT'; do
+  grep -q "DETAIL:  $detail" "$work/log" || fail "auth: log says $detail"
+done
+local_psql -c 'drop role ra, rb, rc, rd, re' > "$work/auth.out" 2>&1 ||
+  fail "auth: drop roles"
 
 # Verify that psql's \d describes a sequence of sm's: pg_sequence has its
 # START and INCREMENT, and pg_depend the column that owns it.

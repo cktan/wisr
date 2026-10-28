@@ -174,9 +174,24 @@ static void PerformAuthentication(Port *port) {
 static void CheckMyDatabase(const char *name, bool am_superuser,
                             bool override_allow_connections) {
   /*
-   * digres keeps no pg_database row to check. A database takes connections
-   * from the one role there is; its encoding is UTF8, and its collation
-   * and character classification are C (WORKNOTE.md step 8).
+   * The second of sm/ROLE.md section 5's checks: CONNECT on the database,
+   * which a superuser need not have.  The client is told what a wrong
+   * password tells it, and the log which check failed.
+   */
+  if (IsUnderPostmaster && !am_superuser &&
+      ACLCHECK_OK != object_aclcheck(DatabaseRelationId, MyDatabaseId,
+                                     GetUserId(), ACL_CONNECT))
+    ereport(FATAL,
+            (errcode(ERRCODE_INVALID_PASSWORD),
+             errmsg("password authentication failed for user \"%s\"",
+                    GetUserNameFromId(GetUserId(), false)),
+             errdetail_log("Role has no CONNECT privilege on database \"%s\".",
+                           name)));
+
+  /*
+   * digres keeps no pg_database row to check otherwise.  Its encoding is
+   * UTF8, and its collation and character classification are C
+   * (WORKNOTE.md step 8).
    */
   SetDatabaseEncoding(PG_UTF8);
 

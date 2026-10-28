@@ -9206,3 +9206,43 @@ checks and messages too; what it wrote to `pg_authid` and
   a role without CREATEROLE may not do, and the roles after a
   restart. sm is unchanged, so mvcc and `rel` have nothing to
   check.
+
+## Step 314: how a client gets in
+
+The third step of roles (`../sm/ROLE.md` §5, §9): the fixed
+rule of step 92, peer on the socket and SCRAM over TCP, gives
+way to ROLE.md's four checks, with no `pg_hba.conf`.
+
+- **How it proves who it is** (`hba_getauthmethod()`): on the
+  local socket, peer if the OS user at its other end is the
+  role's name; else the role's password, by SCRAM-SHA-256, as
+  over TCP. A role with no password has only peer.
+- **Locked out**: on the local socket, the data directory's
+  owner, the OS user the server runs as, asking for the
+  bootstrap superuser by its name, is let in by peer, whatever
+  that role's LOGIN, VALID UNTIL or CONNECTION LIMIT say
+  (`Port.datadir_owner`, ROLE.md §8 question 3). Another role
+  it asks for is any role's.
+- **The role may log in** (`InitializeSessionUserId()`): LOGIN,
+  not past VALID UNTIL, under its CONNECTION LIMIT, counted in
+  the session registry (`sessions_of_role()`); a superuser has
+  no limit, as in PostgreSQL. VALID UNTIL refuses peer too,
+  where PostgreSQL's only refuses the password.
+- **CONNECT on the database** (`CheckMyDatabase()`), which a
+  superuser need not have. No database has an ACL yet (step
+  5), so `PUBLIC` has it everywhere.
+- **What the client is told**: `password authentication failed
+  for user`, whatever failed, as PostgreSQL tells it of a
+  wrong password; the log's DETAIL says which check, as
+  PostgreSQL's does for its own.
+- **Left on purpose**: a session of a role that is not a
+  superuser gets in, but a statement that looks a name up
+  fails, at `pg_namespace`'s ACL (step 313): step 4.
+- **Tests**: `server.sh` has a role get in by password on the
+  socket and over TCP, and refuses one with no password, one
+  NOLOGIN, one past VALID UNTIL and one at its CONNECTION
+  LIMIT, the log naming each; `initdb.sh` lets the owner in as
+  a bootstrap superuser made NOLOGIN, CONNECTION LIMIT 0 and
+  past VALID UNTIL, under another name, and not as another
+  role. Each was shown to fail with its check disabled. sm is
+  unchanged.

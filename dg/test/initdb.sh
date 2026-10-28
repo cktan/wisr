@@ -44,6 +44,10 @@ build/digres --init "$work/empty" > "$work/empty.out" 2>&1 || fail "--init"
 # 3. Start the server on it, and connect over TCP as alice, by password.
 # 4. Confirm pg_authid has alice as oid 10, the superuser, with a SCRAM
 #    secret, not the password, kept.
+# 5. Make alice NOLOGIN, CONNECTION LIMIT 0 and past VALID UNTIL: the
+#    data directory's owner, the OS user, still gets in as alice on the
+#    local socket, by peer (sm/ROLE.md section 5, "Locked out"); eve,
+#    another role, does not without its password.
 echo "secret" > "$work/pw"
 $initdb -D "$work/named" -U alice --pwfile="$work/pw" -E UTF8 \
   --locale=C.UTF-8 > "$work/named.out" 2>&1 || fail "named run"
@@ -62,10 +66,21 @@ s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')}
                       rolpassword ~ '^SCRAM-SHA-256\\$',
                       rolpassword ~ 'secret'
                     from pg_authid" > "$work/named.authid" 2>&1
+  PGPASSWORD=secret psql -X -A -t -h 127.0.0.1 -p "$port" -U alice \
+    -d postgres -c "alter role alice nologin connection limit 0
+                      valid until '2000-01-01'" -c 'create role eve login' \
+    > "$work/named.alter" 2>&1
+  psql -X -A -t -w -h "$PWD/$work" -p "$port" -U alice -d postgres \
+    -c 'select current_user' > "$work/named.owner" 2>&1
+  psql -X -A -t -w -h "$PWD/$work" -p "$port" -U eve -d postgres \
+    -c 'select current_user' > "$work/named.eve" 2>&1 &&
+    fail "another role by the owner's peer"
   kill $server
   wait $server
   [ "$(cat "$work/named.authid")" = "10|alice|t|t|f" ] ||
     fail "-U and --pwfile in pg_authid"
+  [ "$(cat "$work/named.owner")" = alice ] ||
+    fail "the data directory's owner as the bootstrap superuser"
 fi
 
 # Verify that a data directory made before digres kept roles, with no

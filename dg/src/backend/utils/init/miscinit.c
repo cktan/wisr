@@ -53,6 +53,7 @@
 #include "utils/pidfile.h"
 #include "utils/syscache.h"
 #include "utils/control_block.h"
+#include "utils/timestamp.h"
 #include "utils/varlena.h"
 
 #define DIRECTORY_LOCK_FILE		"postmaster.pid"
@@ -600,6 +601,32 @@ void InitializeSessionUserId(const char *rolename, Oid roleid,
    */
   SetConfigOption("session_authorization", role.rolname.c_str(), PGC_BACKEND,
                   PGC_S_OVERRIDE);
+
+  /*
+   * The first of sm/ROLE.md section 5's checks: the role may log in, is
+   * not past VALID UNTIL, and is under its CONNECTION LIMIT; the data
+   * directory's owner, as the bootstrap superuser, always is.  The client
+   * is told what a wrong password tells it, and the log which check failed.
+   */
+  if (IsUnderPostmaster && !bypass_login_check &&
+      !(NULL != MyProcPort && MyProcPort->datadir_owner)) {
+    const char *why = NULL;
+
+    if (!role.rolcanlogin)
+      why = "is not permitted to log in";
+    else if (role.has_validuntil &&
+             role.rolvaliduntil < GetCurrentTimestamp())
+      why = "is past its VALID UNTIL";
+    else if (0 <= role.rolconnlimit && AmRegularBackendProcess() &&
+             !role.rolsuper && sessions_of_role(role.oid) > role.rolconnlimit)
+      why = "has reached its CONNECTION LIMIT";
+    if (NULL != why)
+      ereport(FATAL, (errcode(ERRCODE_INVALID_PASSWORD),
+                      errmsg("password authentication failed for user \"%s\"",
+                             role.rolname.c_str()),
+                      errdetail_log("Role \"%s\" %s.", role.rolname.c_str(),
+                                    why)));
+  }
 }
 
 /*

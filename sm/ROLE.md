@@ -1,6 +1,6 @@
 # ROLE — users, roles, privileges, and how a client gets in
 
-**Being built**, a step at a time (§9): steps 1 and 2 are
+**Being built**, a step at a time (§9): steps 1 to 3 are
 done. Roles and memberships are `pg_global`'s, made, changed
 and dropped by SQL; no privilege on an object is refused yet,
 and every object's owner is the superuser. This file says
@@ -432,7 +432,8 @@ it (`../CLAUDE.md`, "Test at every layer"):
    (`../dg/WORKNOTE.md` step 312).
 2. CREATE, ALTER, DROP ROLE; membership; SET ROLE. Done
    (`../dg/WORKNOTE.md` step 313).
-3. §5's four checks, in place of the fixed rule.
+3. §5's four checks, in place of the fixed rule. Done
+   (`../dg/WORKNOTE.md` step 314).
 4. Owners: an object's entry in `pg_global`, `current_user`
    after CREATE commits, the database's owner without one,
    `ALTER ... OWNER TO`; the sweep of entries left behind.
