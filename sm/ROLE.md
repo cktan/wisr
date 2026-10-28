@@ -17,9 +17,13 @@ digres's are under `../dg/`.
   sequences and columns. PostgreSQL 18's semantics, a subset.
 - **They live in a database of their own**, `pg_global`, an
   sm database no client connects to, as PostgreSQL keeps them
-  in shared catalogs: a role is every database's. An object's
-  owner and its privileges live in its own record, in its own
-  database.
+  in shared catalogs: a role is every database's.
+- **Invariant: all role data is in `pg_global`, and only
+  there** (§3). Roles, memberships, and every owner and
+  privilege of every object, by database and object; a
+  database's own directory holds nothing that names a role.
+  A database copied or replicated to another server takes no
+  role with it, and that server gives it its own.
 - **PostgreSQL's privilege checks stay as they are.** The 183
   calls into `aclchk.c` are in digres's tree and pass today
   only because every role is the superuser. The work is to
@@ -105,18 +109,49 @@ In sm a database is a RocksDB of its own (`sm1/SM1_DESIGN.md`
 
 **Decision: a database for what is shared, `pg_global`.**
 initdb makes it beside `postgres`; no client connects to it,
-and `pg_database` does not list it. Its sm3 catalog holds:
+and `pg_database` does not list it.
+
+**Invariant: all role data is in `pg_global`, and only
+there** (decided, §8 question 6). Nothing in a database's
+directory names a role: not an owner, not an `aclitem`, not
+a setting. So a database is its directory still
+(`../dg/CODE.md`, the overriding objective), and a copy of it
+on another server — replicated (`LOGICALDECODE.md`) or
+imported — finds no role of its source there, and that
+server's `pg_global` gives it roles of its own. Its sm3
+catalog holds:
 
 - **roles**: oid, name, attributes, the SCRAM secret,
-  `VALID UNTIL`, `CONNECTION LIMIT`;
+  `VALID UNTIL`, `CONNECTION LIMIT`, `ALTER ROLE ... SET`,
+  `COMMENT ON ROLE`;
 - **memberships**: role, member, grantor, and the `ADMIN`,
   `INHERIT` and `SET` options;
-- **databases' owners and privileges**, by database oid. sm1's
-  root database maps a name to its dbid and keeps nothing
-  else; it stays so.
+- **each database's owner, privileges and role settings**
+  (`ALTER ROLE ... IN DATABASE ... SET`), by `dbid`;
+- **each object's owner and privileges**, by `dbid` and the
+  object's oid in its database: a table's, a view's, a
+  sequence's and a schema's; later, default privileges and
+  row-level security's policies' roles.
 
-The superuser is the role of oid 10 there, and the `superuser`
-file goes.
+sm1's root database maps a name to its `dbid` and keeps
+nothing else; it stays so. The superuser is the role of oid
+10, and the `superuser` file goes.
+
+**Keys that are never reused.** A `dbid` is never reused
+(`sm1/SM1_DESIGN.md` §3.5), nor an object's oid in its
+database, which comes from the sequence `sm3.oid`
+(`sm3/CATALOG_INMEM.md`). So an entry left behind for a
+dropped object or database, by a crash between its two
+commits, names nothing and can never name a new one; it is
+swept, not trusted.
+
+**An object with no entry is its database's owner's**, with
+PostgreSQL's default privileges, and a database with no owner
+the superuser's. That is what a copied or replicated
+database is on its new server, every object in it, until its
+owner is set there (`ALTER DATABASE ... OWNER TO`) and grants
+are made; and what an object is whose entry a crash lost
+(below).
 
 **What it costs: role DDL is a transaction of its own**
 (decided, §8 question 1).
@@ -145,17 +180,65 @@ The alternatives:
   Worth it only if scripts that mix the two are common; not
   for now (§8, question 1, decided).
 
-**An object's owner and privileges are in its own record**: a
-table's, a view's, a sequence's and a schema's in sm3's
-catalog of its database, beside its columns. So `CREATE TABLE`
-and `GRANT SELECT` on it commit together, and dropping a table
-takes its privileges with it.
+**What the invariant costs: an object and its owner commit
+apart.** `CREATE TABLE` writes the session's database, and its
+owner, `current_user`, is an entry in `pg_global`; `DROP
+TABLE` likewise; and `GRANT`, `REVOKE` and `ALTER ... OWNER
+TO` on an object write `pg_global` alone. No transaction spans
+the two, so they are written at the database's commit
+(decided, §8 question 7):
+
+- **The entry is written after the database commits**, by the
+  session, and a rollback writes none. Until then the session
+  sees its own pending entries, as it sees its own uncommitted
+  catalog. A crash between the two commits loses the entry:
+  the object falls to its database's owner, which fails
+  closed for its creator, not open for anyone else.
+- **A dropped object's entries are removed after its drop
+  commits**; a crash leaves them, naming nothing, to be
+  swept. `DROP DATABASE` removes its `dbid`'s.
+- **`GRANT`, `REVOKE` and `ALTER ... OWNER TO` on an object**
+  run in a transaction block, as a migration script asks, and
+  are written at the database's commit as the owner is: a
+  `REVOKE`, and the old owner's removal, before the commit; a
+  `GRANT`, and the new owner, after. So a crash leaves fewer
+  privileges than asked, never more.
+- **A commit's entries are one `pg_global` transaction**: an
+  object's owner and its grants are written together, or not
+  at all; a crash never leaves a grant without its owner.
+- **A view whose owner's entry was lost** falls to its
+  database's owner, and runs with that owner's privileges.
+  Only that owner may use it, so nothing is exposed, but its
+  creator did not choose it: the sweep reports such objects.
+
+The alternative, an owner and an `aclitem[]` in the object's
+own record, commits them together, and breaks the invariant:
+a copy of the database names its source's role oids, which on
+another server name no role, or another role, which then
+holds what was granted.
 
 **A session caches the roles.** It reads `pg_global` at
 connect, and again when its epoch has moved, checked at a
 statement's start as a database's catalog is
 (`../dg/SCHEMACACHE.md`): a REVOKE takes effect at the next
 statement of every session, as in PostgreSQL.
+
+**A replicated database leaves `pg_global` behind.** The
+unit of replication is a database (`LOGICALDECODE.md`): A, B
+and C on one server may go to X, Y and Z. `pg_global` is not
+replicated with them. By the invariant, that loses nothing A
+needs to be read, and leaks nothing of A's server:
+
+- **X's roles are X's own.** On X, A is its owner's, every
+  object in it, with no grant, until X's administrator sets
+  them (above); at the least, X's superuser alone.
+- **No oid of A's server reaches X**, so none can name a role
+  of X's, and X may hold databases of its own, or from other
+  servers, beside A.
+- **Grants and role DDL on A's server**, after replication
+  starts or before, do not reach X; X's are made on X. Nor
+  does `LOGICALDECODE.md`'s feed carry them: they are not in
+  A.
 
 ---
 
@@ -164,9 +247,9 @@ statement of every session, as in PostgreSQL.
 **PostgreSQL's checks run unchanged.** `aclchk.c` asks for an
 object's owner and its `aclitem[]`: a relation's through the
 relcache (`relowner`, `relacl`), a schema's and a database's
-through the syscache. digres fills those from sm3's records
-and from `pg_global`, and `superuser_arg()` and role
-membership read the session's role cache. A check that fails
+through the syscache. digres fills those from `pg_global`'s
+entries for the session's database, and `superuser_arg()` and
+role membership read the session's role cache. A check that fails
 today on a missing catalog row is the work; a check itself is
 not.
 
@@ -176,15 +259,16 @@ not.
   owned by `pg_database_owner`, `USAGE` to `PUBLIC`, `CREATE`
   to no one else.
 - **The `aclitem[]` is stored as PostgreSQL's text form**,
-  `{alice=arw/bob}`, by role oid, in the record: sm3 keeps it
-  and does not read it, as it keeps a column's default.
+  `{alice=arw/bob}`, by role oid, in the object's entry in
+  `pg_global`: sm3 keeps it and does not read it, as it keeps
+  a column's default. No entry, or no `aclitem[]` in one, is
+  PostgreSQL's null ACL: the owner's default privileges.
 - **A dropped role leaves nothing behind.** PostgreSQL refuses
   `DROP ROLE` while the role owns an object or holds a
-  privilege in any database (`pg_shdepend`). digres asks each
-  database's catalog, which is in memory
-  (`sm3/CATALOG_INMEM.md`), opening those not open; a database
-  with a dependent object names it, as PostgreSQL's message
-  does.
+  privilege in any database (`pg_shdepend`). Here every such
+  entry is in `pg_global`, so `DROP ROLE` reads one database,
+  in one transaction, and names a database with a dependent
+  object as PostgreSQL's message does.
   `REASSIGN OWNED` and `DROP OWNED` act in the session's
   database, as in PostgreSQL.
 
@@ -246,12 +330,12 @@ as in PostgreSQL. No single-user mode is kept for this.
 
 ## 6. What changes, by level
 
-**sm3**: role, membership and database records, in
-`pg_global`'s catalog; an owner and an `aclitem[]` in table,
-view, sequence and namespace records, versioned as the record
-is (`sm3/SM3_DESIGN.md` §2); lookups of a role by oid and by
-name, and the list of a role's members. **sm1, sm2**: nothing.
-**sm.h**: the calls for those.
+**sm3**: role, membership, database and object-privilege
+records, in `pg_global`'s catalog, and nothing in any other
+database's; lookups of a role by oid and by name, the list
+of a role's members, a database's object entries, and the
+sweep of entries whose object or database is gone. **sm1,
+sm2**: nothing. **sm.h**: the calls for those.
 
 **digres**:
 
@@ -267,8 +351,10 @@ name, and the list of a role's members. **sm1, sm2**: nothing.
   a membership, and `aclchk.c`'s GRANT and REVOKE, writing
   sm3's records instead of catalog tuples; role DDL refused in
   a transaction block.
-- relcache: `relowner` and `relacl` from the record; the
-  owner given at CREATE as the session's `current_user`.
+- relcache: `relowner` and `relacl` from the object's entry,
+  else its database's owner; the entry written for
+  `current_user` after a CREATE commits, and removed after a
+  DROP commits (§3).
 - The catalog relations of §2 (`../dg/SYSCATALOG.md`), and
   `pg_get_userbyid()` reading the cache.
 - Authentication by §5, in place of `check_hba()`'s fixed
@@ -313,6 +399,16 @@ it (`../CLAUDE.md`, "Test at every layer"):
 5. **A data directory made before roles**: decided
    (2026-10-27), refused, with a message to run initdb again;
    no upgrade in place.
+6. **All role data is in `pg_global`, and only there**:
+   decided (2026-10-27), an invariant (§3). A database is
+   replicated or copied without its roles, and its new server
+   gives it its own.
+7. **An object and its owner commit apart** (§3): decided
+   (2026-10-27), `GRANT`, `REVOKE` and `ALTER ... OWNER TO` on
+   an object run in a transaction block and are written at
+   the database's commit, a `REVOKE` before it and a `GRANT`
+   after, from step 4; not refused, as migration tools grant
+   inside their transactions.
 
 ---
 
@@ -322,11 +418,12 @@ it (`../CLAUDE.md`, "Test at every layer"):
    there from the file; `pg_authid`, `pg_roles`, `\du`.
 2. CREATE, ALTER, DROP ROLE; membership; SET ROLE.
 3. §5's four checks, in place of the fixed rule.
-4. Owners: the record's, `current_user` at CREATE, `ALTER
-   ... OWNER TO`.
+4. Owners: an object's entry in `pg_global`, `current_user`
+   after CREATE commits, the database's owner without one,
+   `ALTER ... OWNER TO`; the sweep of entries left behind.
 5. GRANT and REVOKE on tables, views, sequences, schemas and
    databases; the checks that then refuse.
-6. `DROP ROLE` across databases, `REASSIGN OWNED`, `DROP
+6. `DROP ROLE` and its dependents, `REASSIGN OWNED`, `DROP
    OWNED`.
 7. Later: column privileges, default privileges, row-level
    security, TLS.
