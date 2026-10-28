@@ -1,6 +1,6 @@
 # ROLE — users, roles, privileges, and how a client gets in
 
-**Proposed**, not built. digres has one role, the superuser
+**Designed**, not built. digres has one role, the superuser
 initdb names, and no privilege is ever refused. This file says
 what roles and privileges digres takes from PostgreSQL, where
 sm keeps them, and how a client is let in, by a rule much
@@ -72,20 +72,22 @@ digres's are under `../dg/`.
 - `GRANT`, `REVOKE` on databases (`CONNECT`, `CREATE`,
   `TEMPORARY`), schemas (`USAGE`, `CREATE`), tables and views
   (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`,
-  `REFERENCES`, `TRIGGER`, `MAINTAIN`), their columns, and
-  sequences (`USAGE`, `SELECT`, `UPDATE`); `PUBLIC`; `WITH
-  GRANT OPTION`.
+  `REFERENCES`, `TRIGGER`, `MAINTAIN`), and sequences
+  (`USAGE`, `SELECT`, `UPDATE`); `PUBLIC`; `WITH GRANT
+  OPTION`.
 - The catalogs psql and drivers read: `pg_authid`,
   `pg_roles`, `pg_user`, `pg_auth_members`, and the `acl`
   columns of `pg_class`, `pg_namespace`, `pg_database`;
   `\du`, `\dp`, `\dn+`, `\l`'s owners. `has_table_privilege()`
   and the rest of its kind.
 
-**Later**, each on its own: `ALTER DEFAULT PRIVILEGES`;
+**Later**, each on its own: column privileges (§8 question
+2); `ALTER DEFAULT PRIVILEGES`;
 row-level security, which needs roles first (`FEATURELIST.md`
 §7); privileges on functions, types and languages, which are
 compiled into digres and all `PUBLIC`'s; PostgreSQL's
-predefined roles (`pg_read_all_data` and the rest); TLS.
+predefined roles (`pg_read_all_data` and the rest); TLS, after
+roles, by one setting (§8 question 4).
 
 **Not at all**: `pg_hba.conf`, `pg_ident.conf`, and the
 methods only they choose — trust, ident, md5, password in the
@@ -116,7 +118,8 @@ and `pg_database` does not list it. Its sm3 catalog holds:
 The superuser is the role of oid 10 there, and the `superuser`
 file goes.
 
-**What it costs: role DDL is a transaction of its own.**
+**What it costs: role DDL is a transaction of its own**
+(decided, §8 question 1).
 CREATE, ALTER and DROP ROLE, GRANT and REVOKE of a membership,
 and GRANT on a database write `pg_global`, not the database
 the session is in. Each runs alone, outside a transaction
@@ -140,7 +143,7 @@ The alternatives:
   inside the server, between `pg_global` and the session's
   database, sm1 has the parts of (prepared transactions).
   Worth it only if scripts that mix the two are common; not
-  for the first build (§8, question 1).
+  for now (§8, question 1, decided).
 
 **An object's owner and privileges are in its own record**: a
 table's, a view's, a sequence's and a schema's in sm3's
@@ -229,14 +232,15 @@ which check, and why.
 | `peer` with an `ident` map | peer by the same name, or a password |
 | `md5`, `password` | SCRAM alone |
 | from which addresses | `listen_addresses`, and the host's firewall |
-| `hostssl`, `hostnossl` | when TLS comes, one setting: every TCP client must use it, or not |
+| `hostssl`, `hostnossl` | when TLS comes, one setting: every TCP client must use it, or not (§8 question 4) |
 | ldap, radius, pam, gss, sspi, cert | not at all, for now |
 
-**Locked out.** A superuser who loses its password connects
-on the local socket as the OS user of its name, by peer, as
-now. One whose role is gone is found again by `digres
---single`, PostgreSQL's single-user mode, if it is kept
-(§8, question 3).
+**Locked out** (§8 question 3). On the local socket, a client
+whose OS user is the data directory's owner, the user the
+server runs as, is let in as the bootstrap superuser, oid 10,
+by peer, whatever the catalog says of it: its password, its
+`LOGIN`, its `CONNECTION LIMIT`. Role oid 10 cannot be dropped,
+as in PostgreSQL. No single-user mode is kept for this.
 
 ---
 
@@ -253,6 +257,9 @@ name, and the list of a role's members. **sm1, sm2**: nothing.
 
 - initdb makes `pg_global` and the superuser's role in it;
   the `superuser` file goes, and `datadir.c` reads the role.
+  A data directory made before, with the file and no
+  `pg_global`, is refused at start with a message to run
+  initdb again (§8 question 5).
 - The session's role cache, refreshed by `pg_global`'s epoch;
   `superuser_arg()`, `has_privs_of_role()` and
   `is_member_of_role()` read it.
@@ -288,21 +295,24 @@ it (`../CLAUDE.md`, "Test at every layer"):
 
 ---
 
-## 8. Open questions
+## 8. Decisions
 
-1. **Role DDL outside a transaction block** (§3). Accept it
-   for the first build, or make role DDL transactional with
-   the session's database by a two-phase commit between the
-   two? The proposal: accept it, and see whether scripts
-   that mix them are common.
-2. **Column privileges in the first build**, or later?
-   PostgreSQL's regression files use them; most
-   applications do not.
-3. **A way in when every superuser is gone**: keep
-   `digres --single`, or let the data directory's owner,
-   by peer, always connect as superuser?
-4. **TLS**: when, and whether "every TCP client must use it"
-   is the only setting, as §5 proposes.
+1. **Role DDL outside a transaction block** (§3). Decided
+   (2026-10-27): accepted for now. A two-phase commit between
+   `pg_global` and the session's database, which would make
+   role DDL transactional with the rest, waits until scripts
+   that mix the two are found common.
+2. **Column privileges**: decided (2026-10-27), later, a step
+   of their own after table privileges.
+3. **A way in when every superuser is gone**: decided
+   (2026-10-27), the data directory's owner by peer, always,
+   as the bootstrap superuser (§5); no `digres --single`.
+4. **TLS**: decided (2026-10-27), after roles, by one setting:
+   when on, every TCP client must use it; the local socket
+   never does.
+5. **A data directory made before roles**: decided
+   (2026-10-27), refused, with a message to run initdb again;
+   no upgrade in place.
 
 ---
 
@@ -318,5 +328,5 @@ it (`../CLAUDE.md`, "Test at every layer"):
    databases; the checks that then refuse.
 6. `DROP ROLE` across databases, `REASSIGN OWNED`, `DROP
    OWNED`.
-7. Later: default privileges, row-level security, column
-   privileges if not in step 5, TLS.
+7. Later: column privileges, default privileges, row-level
+   security, TLS.
