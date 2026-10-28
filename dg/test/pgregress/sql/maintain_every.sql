@@ -13,8 +13,7 @@ CREATE TEMP TABLE past_inh_db_other (); -- need 2 tables for "use_own_xacts"
 CREATE TEMP TABLE past_inh_db_parent () ON COMMIT DELETE ROWS;
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TEMP TABLE past_inh_db_child () INHERITS (past_inh_db_parent);
---dg-skip: an index key is a column, not an expression, yet
---dg CREATE INDEX ON past_inh_db_parent ((1));
+CREATE INDEX ON past_inh_db_parent ((1));
 --dg-differs: the result
 --dg ANALYZE past_inh_db_parent;
 --dg-cascade

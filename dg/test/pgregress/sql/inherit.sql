@@ -87,8 +87,7 @@ UPDATE a SET aa='zzzzzz' WHERE aa LIKE 'aaa%';
 --dg SELECT relname, c.* FROM c, pg_class where c.tableoid = pg_class.oid;
 --dg-cascade
 --dg SELECT relname, d.* FROM d, pg_class where d.tableoid = pg_class.oid;
---dg-differs: the result
---dg SELECT relname, a.* FROM ONLY a, pg_class where a.tableoid = pg_class.oid;
+SELECT relname, a.* FROM ONLY a, pg_class where a.tableoid = pg_class.oid;
 --dg-cascade
 --dg SELECT relname, b.* FROM ONLY b, pg_class where b.tableoid = pg_class.oid;
 --dg-cascade
@@ -107,8 +106,7 @@ UPDATE a SET aa='zzzzzz' WHERE aa LIKE 'aaa%';
 --dg SELECT relname, c.* FROM c, pg_class where c.tableoid = pg_class.oid;
 --dg-cascade
 --dg SELECT relname, d.* FROM d, pg_class where d.tableoid = pg_class.oid;
---dg-differs: the result
---dg SELECT relname, a.* FROM ONLY a, pg_class where a.tableoid = pg_class.oid;
+SELECT relname, a.* FROM ONLY a, pg_class where a.tableoid = pg_class.oid;
 --dg-cascade
 --dg SELECT relname, b.* FROM ONLY b, pg_class where b.tableoid = pg_class.oid;
 --dg-cascade
@@ -979,8 +977,7 @@ create table matest0 (id serial primary key, name text);
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg create table matest3 (id integer primary key) inherits (matest0);
 
---dg-skip: an index key is a column, not an expression, yet
---dg create index matest0i on matest0 ((1-id));
+create index matest0i on matest0 ((1-id));
 --dg-cascade
 --dg create index matest1i on matest1 ((1-id));
 -- create index matest2i on matest2 ((1-id));  -- intentionally missing

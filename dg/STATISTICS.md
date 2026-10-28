@@ -82,9 +82,8 @@ Where it stood before §3 was built.
 - **An index** gets the same from its own entry
   (`sm_tbl_idx_size`, `stats_index_t`): its pages from its
   bytes, its tuples its entries scaled as the table's rows
-  are. A partial index would be the share of rows that belong
-  to it, but CREATE INDEX refuses one (`check_create_index()`
-  in `smstore.c`).
+  are. A partial index's entries are the rows that belong to
+  it (`EXPRINDEX.md`).
   The scale is the plan's estimate of the table's rows over
   `rec.live_rows`: `get_relation_info()` estimates the table
   first, and passes its rows in, so the table is not sized a
@@ -205,8 +204,7 @@ Where it stood before §3 was built.
    → verify: `EXPLAIN` of a scan shows the live row count
    after ANALYZE, within a few percent, and follows the table
    as it grows without another; an index's estimate follows
-   its entries (a partial one's would be its share; partial
-   indexes are refused).
+   its entries (a partial one's, its share).
 3. Column statistics (§2.3, §2.4).
    → verify: `EXPLAIN` of `=` on a common value estimates its
    frequency times the rows; of `<` a histogram's share; a

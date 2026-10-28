@@ -26,6 +26,7 @@ struct PlannedStmt;
 
 extern char *pg_get_indexdef_string(Oid indexrelid);
 extern char *pg_get_indexdef_columns(Oid indexrelid, bool pretty);
+extern char *pg_get_index_expr_column(Node *expr, Oid relid);
 extern char *pg_get_indexdef_columns_extended(Oid indexrelid, bits16 flags);
 extern char *pg_get_querydef(Query *query, bool pretty);
 

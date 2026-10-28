@@ -85,10 +85,18 @@ regression files are taken out for it (`test/pgregress`,
 
 - **Index methods other than btree** — removed: hash, GIN,
   GiST, SP-GiST and BRIN (`README.md`; pgregress: 39).
-- **Partial and expression indexes, NULLS NOT DISTINCT,
-  non-default operator classes and collations, interval keys**
-  — refused (step 50, 99; pgregress: 67). An index is btree
-  over plain columns, ASC or DESC, UNIQUE, with INCLUDE.
+- **NULLS NOT DISTINCT, non-default operator classes and
+  collations, interval keys** — refused (step 50, 99). An
+  index is btree over columns and expressions, ASC or DESC,
+  UNIQUE, partial, with INCLUDE.
+- **Partial and expression indexes** — differs (`EXPRINDEX.md`,
+  step 311): an expression key of type numeric needs a
+  precision and scale, and one of interval is refused, as a
+  column of it is; an expression in a collation other than
+  the default is refused, as a column key in another than its
+  column's is. An error an expression raises in a
+  build after the commit says `could not create index "x":`
+  before PostgreSQL's message, with another SQLSTATE.
 - **Bitmap scans** — never. No BitmapAnd or BitmapOr: an OR
   over two indexes is a sequential scan (`../sm/CLUSTER.md` §6,
   step 287).

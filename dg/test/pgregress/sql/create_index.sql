@@ -53,17 +53,14 @@ SELECT obj_description('six'::regclass, 'pg_class') IS NULL AS six_comment_is_nu
 --
 -- BTREE partial indices
 --
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
---dg CREATE INDEX onek2_u1_prtl ON onek2 USING btree(unique1 int4_ops)
---dg 	where unique1 < 20 or unique1 > 980;
+CREATE INDEX onek2_u1_prtl ON onek2 USING btree(unique1 int4_ops)
+	where unique1 < 20 or unique1 > 980;
 
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
---dg CREATE INDEX onek2_u2_prtl ON onek2 USING btree(unique2 int4_ops)
---dg 	where stringu1 < 'B';
+CREATE INDEX onek2_u2_prtl ON onek2 USING btree(unique2 int4_ops)
+	where stringu1 < 'B';
 
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
---dg CREATE INDEX onek2_stu1_prtl ON onek2 USING btree(stringu1 name_ops)
---dg 	where onek2.stringu1 >= 'J' and onek2.stringu1 < 'K';
+CREATE INDEX onek2_stu1_prtl ON onek2 USING btree(stringu1 name_ops)
+	where onek2.stringu1 >= 'J' and onek2.stringu1 < 'K';
 
 --
 -- GiST (rtree-equivalent opclasses only)
@@ -489,7 +486,7 @@ RESET maintenance_work_mem;
 CREATE TABLE unique_tbl (i int, t text);
 
 CREATE UNIQUE INDEX unique_idx1 ON unique_tbl (i) NULLS DISTINCT;
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
+--dg-skip: CREATE INDEX supports only columns, expressions, WHERE, UNIQUE and INCLUDE yet
 --dg CREATE UNIQUE INDEX unique_idx2 ON unique_tbl (i) NULLS NOT DISTINCT;
 
 INSERT INTO unique_tbl VALUES (1, 'one');
@@ -508,12 +505,12 @@ INSERT INTO unique_tbl (t) VALUES ('seven');
 
 -- build indexes on filled table
 CREATE UNIQUE INDEX unique_idx3 ON unique_tbl (i) NULLS DISTINCT;  -- ok
---dg-differs: another error: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
+--dg-differs: another error: CREATE INDEX supports only columns, expressions, WHERE, UNIQUE and INCLUDE yet
 --dg CREATE UNIQUE INDEX unique_idx4 ON unique_tbl (i) NULLS NOT DISTINCT;  -- error
 
 DELETE FROM unique_tbl WHERE t = 'seven';
 
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
+--dg-skip: CREATE INDEX supports only columns, expressions, WHERE, UNIQUE and INCLUDE yet
 --dg CREATE UNIQUE INDEX unique_idx4 ON unique_tbl (i) NULLS NOT DISTINCT;  -- ok now
 
 --dg-cascade
@@ -532,23 +529,19 @@ DROP TABLE unique_tbl;
 -- Test functional index
 --
 CREATE TABLE func_index_heap (f1 text, f2 text);
---dg-skip: an index key is a column, not an expression, yet
---dg CREATE UNIQUE INDEX func_index_index on func_index_heap (textcat(f1,f2));
+CREATE UNIQUE INDEX func_index_index on func_index_heap (textcat(f1,f2));
 
 INSERT INTO func_index_heap VALUES('ABC','DEF');
 INSERT INTO func_index_heap VALUES('AB','CDEFG');
 INSERT INTO func_index_heap VALUES('QWE','RTY');
 -- this should fail because of unique index:
---dg-cascade
---dg INSERT INTO func_index_heap VALUES('ABCD', 'EF');
+INSERT INTO func_index_heap VALUES('ABCD', 'EF');
 -- but this shouldn't:
 INSERT INTO func_index_heap VALUES('QWERTY');
 
 -- while we're here, see that the metadata looks sane
---dg-cascade
---dg \d func_index_heap
---dg-cascade
---dg \d func_index_index
+\d func_index_heap
+\d func_index_index
 
 
 --
@@ -556,26 +549,22 @@ INSERT INTO func_index_heap VALUES('QWERTY');
 --
 DROP TABLE func_index_heap;
 CREATE TABLE func_index_heap (f1 text, f2 text);
---dg-skip: an index key is a column, not an expression, yet
---dg CREATE UNIQUE INDEX func_index_index on func_index_heap ((f1 || f2) text_ops);
+CREATE UNIQUE INDEX func_index_index on func_index_heap ((f1 || f2) text_ops);
 
 INSERT INTO func_index_heap VALUES('ABC','DEF');
 INSERT INTO func_index_heap VALUES('AB','CDEFG');
 INSERT INTO func_index_heap VALUES('QWE','RTY');
 -- this should fail because of unique index:
---dg-cascade
---dg INSERT INTO func_index_heap VALUES('ABCD', 'EF');
+INSERT INTO func_index_heap VALUES('ABCD', 'EF');
 -- but this shouldn't:
 INSERT INTO func_index_heap VALUES('QWERTY');
 
 -- while we're here, see that the metadata looks sane
---dg-cascade
---dg \d func_index_heap
---dg-cascade
---dg \d func_index_index
+\d func_index_heap
+\d func_index_index
 
 -- this should fail because of unsafe column type (anonymous record)
---dg-differs: another error: an index key is a column, not an expression, yet
+--dg-differs: another error: type ? is not supported yet
 --dg create index on func_index_heap ((f1 || f2), (row(f1, f2)));
 
 
@@ -617,16 +606,12 @@ CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS concur_index2 ON concur_heap(f1);
 -- check if constraint is set up properly to be enforced
 INSERT INTO concur_heap VALUES ('b','x');
 -- check if constraint is enforced properly at build time
---dg-differs: another error: could not create unique index "?"
---dg CREATE UNIQUE INDEX CONCURRENTLY concur_index3 ON concur_heap(f2);
+CREATE UNIQUE INDEX CONCURRENTLY concur_index3 ON concur_heap(f2);
 -- test that expression indexes and partial indexes work concurrently
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
---dg CREATE INDEX CONCURRENTLY concur_index4 on concur_heap(f2) WHERE f1='a';
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
---dg CREATE INDEX CONCURRENTLY concur_index5 on concur_heap(f2) WHERE f1='x';
+CREATE INDEX CONCURRENTLY concur_index4 on concur_heap(f2) WHERE f1='a';
+CREATE INDEX CONCURRENTLY concur_index5 on concur_heap(f2) WHERE f1='x';
 -- here we also check that you can default the index name
---dg-skip: an index key is a column, not an expression, yet
---dg CREATE INDEX CONCURRENTLY on concur_heap((f2||f1));
+CREATE INDEX CONCURRENTLY on concur_heap((f2||f1));
 -- You can't do a concurrent index build in a transaction
 BEGIN;
 CREATE INDEX CONCURRENTLY concur_index7 ON concur_heap(f1);
@@ -655,11 +640,11 @@ COMMIT;
 
 -- Failed builds are left invalid by VACUUM FULL, fixed by REINDEX
 VACUUM FULL concur_heap;
---dg-cascade
+--dg-differs: no error where PostgreSQL has: could not create unique index "?"
 --dg REINDEX TABLE concur_heap;
 DELETE FROM concur_heap WHERE f1 = 'b';
 VACUUM FULL concur_heap;
---dg-cascade
+--dg-differs: the result
 --dg \d concur_heap
 --dg-differs: the result
 --dg REINDEX TABLE concur_heap;
@@ -782,7 +767,7 @@ DROP TABLE cwi_test;
 
 -- PRIMARY KEY constraint cannot be backed by a NULLS NOT DISTINCT index
 CREATE TABLE cwi_test(a int, b int);
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
+--dg-skip: CREATE INDEX supports only columns, expressions, WHERE, UNIQUE and INCLUDE yet
 --dg CREATE UNIQUE INDEX cwi_a_nnd ON cwi_test (a) NULLS NOT DISTINCT;
 --dg-cascade
 --dg ALTER TABLE cwi_test ADD PRIMARY KEY USING INDEX cwi_a_nnd;
@@ -915,10 +900,9 @@ SELECT * FROM tenk1
 SELECT * FROM tenk1
   WHERE thousand = 42 AND (tenthous = 1 OR tenthous = (SELECT 1 + 2) OR tenthous = 42);
 
---dg-differs: the plan
---dg EXPLAIN (COSTS OFF)
---dg SELECT * FROM tenk1
---dg   WHERE thousand = 42 AND (tenthous = 1 OR tenthous = 3 OR tenthous = 42 OR tenthous IS NULL);
+EXPLAIN (COSTS OFF)
+SELECT * FROM tenk1
+  WHERE thousand = 42 AND (tenthous = 1 OR tenthous = 3 OR tenthous = 42 OR tenthous IS NULL);
 
 EXPLAIN (COSTS OFF)
 SELECT * FROM tenk1
@@ -929,15 +913,13 @@ SELECT * FROM tenk1
   WHERE thousand = 42 AND (tenthous = 1::int2 OR tenthous::int2 = 3::int8 OR tenthous::int2 = 42::int8);
 
 
---dg-differs: the plan
---dg EXPLAIN (COSTS OFF)
---dg SELECT * FROM tenk1
---dg   WHERE thousand = 42 AND (tenthous = 1::int2 OR tenthous = 3::int8 OR tenthous = 42::int8);
+EXPLAIN (COSTS OFF)
+SELECT * FROM tenk1
+  WHERE thousand = 42 AND (tenthous = 1::int2 OR tenthous = 3::int8 OR tenthous = 42::int8);
 
---dg-differs: the plan
---dg EXPLAIN (COSTS OFF)
---dg SELECT count(*) FROM tenk1
---dg   WHERE hundred = 42 AND (thousand = 42 OR thousand = 99);
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM tenk1
+  WHERE hundred = 42 AND (thousand = 42 OR thousand = 99);
 SELECT count(*) FROM tenk1
   WHERE hundred = 42 AND (thousand = 42 OR thousand = 99);
 
@@ -963,38 +945,33 @@ SELECT * FROM tenk1
 SELECT count(*) FROM tenk1 t1
   WHERE t1.thousand = 42 OR t1.thousand = (SELECT t2.tenthous FROM tenk1 t2 WHERE t2.thousand = t1.tenthous + 1 LIMIT 1);
 
---dg-differs: the plan
---dg EXPLAIN (COSTS OFF)
---dg SELECT count(*) FROM tenk1
---dg   WHERE hundred = 42 AND (thousand = 42 OR thousand = 99);
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM tenk1
+  WHERE hundred = 42 AND (thousand = 42 OR thousand = 99);
 SELECT count(*) FROM tenk1
   WHERE hundred = 42 AND (thousand = 42 OR thousand = 99);
 
---dg-differs: the plan
---dg EXPLAIN (COSTS OFF)
---dg SELECT count(*) FROM tenk1
---dg   WHERE hundred = 42 AND (thousand < 42 OR thousand < 99 OR 43 > thousand OR 42 > thousand);
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM tenk1
+  WHERE hundred = 42 AND (thousand < 42 OR thousand < 99 OR 43 > thousand OR 42 > thousand);
 SELECT count(*) FROM tenk1
   WHERE hundred = 42 AND (thousand < 42 OR thousand < 99 OR 43 > thousand OR 42 > thousand);
 
---dg-differs: the plan
---dg EXPLAIN (COSTS OFF)
---dg SELECT count(*) FROM tenk1
---dg   WHERE thousand = 42 AND (tenthous = 1 OR tenthous = 3) OR thousand = 41;
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM tenk1
+  WHERE thousand = 42 AND (tenthous = 1 OR tenthous = 3) OR thousand = 41;
 SELECT count(*) FROM tenk1
   WHERE thousand = 42 AND (tenthous = 1 OR tenthous = 3) OR thousand = 41;
 
---dg-differs: the plan
---dg EXPLAIN (COSTS OFF)
---dg SELECT count(*) FROM tenk1
---dg   WHERE hundred = 42 AND (thousand = 42 OR thousand = 99 OR tenthous < 2) OR thousand = 41;
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM tenk1
+  WHERE hundred = 42 AND (thousand = 42 OR thousand = 99 OR tenthous < 2) OR thousand = 41;
 SELECT count(*) FROM tenk1
   WHERE hundred = 42 AND (thousand = 42 OR thousand = 99 OR tenthous < 2) OR thousand = 41;
 
---dg-differs: the plan
---dg EXPLAIN (COSTS OFF)
---dg SELECT count(*) FROM tenk1
---dg   WHERE hundred = 42 AND (thousand = 42 OR thousand = 41 OR thousand = 99 AND tenthous = 2);
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM tenk1
+  WHERE hundred = 42 AND (thousand = 42 OR thousand = 41 OR thousand = 99 AND tenthous = 2);
 SELECT count(*) FROM tenk1
   WHERE hundred = 42 AND (thousand = 42 OR thousand = 41 OR thousand = 99 AND tenthous = 2);
 
@@ -1138,22 +1115,18 @@ SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 >= 42;
 
 SELECT unique1 FROM tenk1 WHERE unique1 IN (1, 42, 7) and unique1 > 42;
 
---dg-differs: the plan
---dg explain (costs off)
---dg SELECT unique1 FROM tenk1 WHERE unique1 > 9996 and unique1 >= 9999;
+explain (costs off)
+SELECT unique1 FROM tenk1 WHERE unique1 > 9996 and unique1 >= 9999;
 
 SELECT unique1 FROM tenk1 WHERE unique1 > 9996 and unique1 >= 9999;
 
---dg-differs: the plan
---dg explain (costs off)
---dg SELECT unique1 FROM tenk1 WHERE unique1 < 3 and unique1 <= 3;
+explain (costs off)
+SELECT unique1 FROM tenk1 WHERE unique1 < 3 and unique1 <= 3;
 
---dg-differs: the result
---dg SELECT unique1 FROM tenk1 WHERE unique1 < 3 and unique1 <= 3;
+SELECT unique1 FROM tenk1 WHERE unique1 < 3 and unique1 <= 3;
 
---dg-differs: the plan
---dg explain (costs off)
---dg SELECT unique1 FROM tenk1 WHERE unique1 < 3 and unique1 < (-1)::bigint;
+explain (costs off)
+SELECT unique1 FROM tenk1 WHERE unique1 < 3 and unique1 < (-1)::bigint;
 
 SELECT unique1 FROM tenk1 WHERE unique1 < 3 and unique1 < (-1)::bigint;
 
@@ -1181,11 +1154,10 @@ WHERE thousand > -1 and thousand >= 0 AND tenthous = 3000
 ORDER BY thousand;
 
 -- Skip array redundancy (pair of redundant high_compare inequalities)
---dg-differs: the plan
---dg explain (costs off)
---dg SELECT thousand, tenthous FROM tenk1
---dg WHERE thousand < 3 and thousand <= 2 AND tenthous = 1001
---dg ORDER BY thousand;
+explain (costs off)
+SELECT thousand, tenthous FROM tenk1
+WHERE thousand < 3 and thousand <= 2 AND tenthous = 1001
+ORDER BY thousand;
 
 SELECT thousand, tenthous FROM tenk1
 WHERE thousand < 3 and thousand <= 2 AND tenthous = 1001
@@ -1256,8 +1228,7 @@ CREATE UNIQUE INDEX concur_reindex_ind1 ON concur_reindex_tab(c1);
 -- Normal index with text column
 CREATE INDEX concur_reindex_ind2 ON concur_reindex_tab(c2);
 -- UNIQUE index with expression
---dg-skip: an index key is a column, not an expression, yet
---dg CREATE UNIQUE INDEX concur_reindex_ind3 ON concur_reindex_tab(abs(c1));
+CREATE UNIQUE INDEX concur_reindex_ind3 ON concur_reindex_tab(abs(c1));
 -- Duplicate column names
 CREATE INDEX concur_reindex_ind4 ON concur_reindex_tab(c1, c1, c2);
 -- Create table for check on foreign key dependence switch with indexes swapped
@@ -1616,11 +1587,10 @@ COMMIT;
 CREATE TABLE concur_reindex_tab4 (c1 int);
 INSERT INTO concur_reindex_tab4 VALUES (1), (1), (2);
 -- This trick creates an invalid index.
---dg-differs: another error: could not create unique index "?"
---dg CREATE UNIQUE INDEX CONCURRENTLY concur_reindex_ind5 ON concur_reindex_tab4 (c1);
+CREATE UNIQUE INDEX CONCURRENTLY concur_reindex_ind5 ON concur_reindex_tab4 (c1);
 -- Reindexing concurrently this index fails with the same failure.
 -- The extra index created is itself invalid, and can be dropped.
---dg-cascade
+--dg-differs: no error where PostgreSQL has: could not create unique index "?"
 --dg REINDEX INDEX CONCURRENTLY concur_reindex_ind5;
 --dg-cascade
 --dg \d concur_reindex_tab4
@@ -1629,12 +1599,12 @@ INSERT INTO concur_reindex_tab4 VALUES (1), (1), (2);
 -- This makes the previous failure go away, so the index can become valid.
 DELETE FROM concur_reindex_tab4 WHERE c1 = 1;
 -- The invalid index is not processed when running REINDEX TABLE.
---dg-cascade
+--dg-differs: the result
 --dg REINDEX TABLE CONCURRENTLY concur_reindex_tab4;
---dg-cascade
+--dg-differs: the result
 --dg \d concur_reindex_tab4
 -- But it is fixed with REINDEX INDEX.
---dg-cascade
+--dg-differs: the result
 --dg REINDEX INDEX CONCURRENTLY concur_reindex_ind5;
 --dg-cascade
 --dg \d concur_reindex_tab4
@@ -1647,16 +1617,14 @@ CREATE TABLE concur_exprs_tab (c1 int , c2 boolean);
 INSERT INTO concur_exprs_tab (c1, c2) VALUES (1369652450, FALSE),
   (414515746, TRUE),
   (897778963, FALSE);
---dg-skip: an index key is a column, not an expression, yet
+--dg-skip: collation "?" is not supported for an index key yet
 --dg CREATE UNIQUE INDEX concur_exprs_index_expr
 --dg   ON concur_exprs_tab ((c1::text COLLATE "C"));
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
---dg CREATE UNIQUE INDEX concur_exprs_index_pred ON concur_exprs_tab (c1)
---dg   WHERE (c1::text > 500000000::text COLLATE "C");
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
---dg CREATE UNIQUE INDEX concur_exprs_index_pred_2
---dg   ON concur_exprs_tab ((1 / c1))
---dg   WHERE ('-H') >= (c2::TEXT) COLLATE "C";
+CREATE UNIQUE INDEX concur_exprs_index_pred ON concur_exprs_tab (c1)
+  WHERE (c1::text > 500000000::text COLLATE "C");
+CREATE UNIQUE INDEX concur_exprs_index_pred_2
+  ON concur_exprs_tab ((1 / c1))
+  WHERE ('-H') >= (c2::TEXT) COLLATE "C";
 --dg-skip: ALTER INDEX is not supported yet
 --dg ALTER INDEX concur_exprs_index_expr ALTER COLUMN 1 SET STATISTICS 100;
 ANALYZE concur_exprs_tab;
@@ -1668,25 +1636,20 @@ ANALYZE concur_exprs_tab;
 --dg   GROUP BY starelid ORDER BY starelid::regclass::text;
 --dg-cascade
 --dg SELECT pg_get_indexdef('concur_exprs_index_expr'::regclass);
---dg-cascade
---dg SELECT pg_get_indexdef('concur_exprs_index_pred'::regclass);
---dg-cascade
---dg SELECT pg_get_indexdef('concur_exprs_index_pred_2'::regclass);
---dg-cascade
+SELECT pg_get_indexdef('concur_exprs_index_pred'::regclass);
+SELECT pg_get_indexdef('concur_exprs_index_pred_2'::regclass);
+--dg-differs: the result
 --dg REINDEX TABLE CONCURRENTLY concur_exprs_tab;
 --dg-cascade
 --dg SELECT pg_get_indexdef('concur_exprs_index_expr'::regclass);
---dg-cascade
---dg SELECT pg_get_indexdef('concur_exprs_index_pred'::regclass);
---dg-cascade
---dg SELECT pg_get_indexdef('concur_exprs_index_pred_2'::regclass);
+SELECT pg_get_indexdef('concur_exprs_index_pred'::regclass);
+SELECT pg_get_indexdef('concur_exprs_index_pred_2'::regclass);
 -- ALTER TABLE recreates the indexes, which should keep their collations.
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg ALTER TABLE concur_exprs_tab ALTER c2 TYPE TEXT;
 --dg-cascade
 --dg SELECT pg_get_indexdef('concur_exprs_index_expr'::regclass);
---dg-cascade
---dg SELECT pg_get_indexdef('concur_exprs_index_pred'::regclass);
+SELECT pg_get_indexdef('concur_exprs_index_pred'::regclass);
 --dg-cascade
 --dg SELECT pg_get_indexdef('concur_exprs_index_pred_2'::regclass);
 -- Statistics should remain intact.
@@ -1760,16 +1723,14 @@ SELECT pg_my_temp_schema()::regnamespace as temp_schema_name \gset
 
 -- No OR-clause groupings should happen, and there should be no clause
 -- permutations in the filtering conditions we could see in the EXPLAIN.
---dg-differs: the plan
---dg EXPLAIN (COSTS OFF)
---dg SELECT * FROM tenk1 WHERE unique1 < 1 OR hundred < 2;
+EXPLAIN (COSTS OFF)
+SELECT * FROM tenk1 WHERE unique1 < 1 OR hundred < 2;
 
 -- OR clauses in the 'unique1' column are grouped, so clause permutation
 -- occurs. W e can see it in the 'Recheck Cond': the second clause involving
 -- the 'unique1' column goes just after the first one.
---dg-differs: the plan
---dg EXPLAIN (COSTS OFF)
---dg SELECT * FROM tenk1 WHERE unique1 < 1 OR unique1 < 3 OR hundred < 2;
+EXPLAIN (COSTS OFF)
+SELECT * FROM tenk1 WHERE unique1 < 1 OR unique1 < 3 OR hundred < 2;
 
 -- Check bitmap scan can consider similar OR arguments separately without
 -- grouping them into SAOP.
@@ -1777,17 +1738,12 @@ CREATE TABLE bitmap_split_or (a int NOT NULL, b int NOT NULL, c int NOT NULL);
 INSERT INTO bitmap_split_or (SELECT 1, 1, i FROM generate_series(1, 1000) i);
 INSERT INTO bitmap_split_or (select i, 2, 2 FROM generate_series(1, 1000) i);
 VACUUM ANALYZE bitmap_split_or;
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
---dg CREATE INDEX t_b_partial_1_idx ON bitmap_split_or (b) WHERE a = 1;
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
---dg CREATE INDEX t_b_partial_2_idx ON bitmap_split_or (b) WHERE a = 2;
---dg-cascade
---dg EXPLAIN (COSTS OFF)
---dg SELECT * FROM bitmap_split_or WHERE (a = 1 OR a = 2) AND b = 2;
---dg-cascade
---dg DROP INDEX t_b_partial_1_idx;
---dg-cascade
---dg DROP INDEX t_b_partial_2_idx;
+CREATE INDEX t_b_partial_1_idx ON bitmap_split_or (b) WHERE a = 1;
+CREATE INDEX t_b_partial_2_idx ON bitmap_split_or (b) WHERE a = 2;
+EXPLAIN (COSTS OFF)
+SELECT * FROM bitmap_split_or WHERE (a = 1 OR a = 2) AND b = 2;
+DROP INDEX t_b_partial_1_idx;
+DROP INDEX t_b_partial_2_idx;
 CREATE INDEX t_a_b_idx ON bitmap_split_or (a, b);
 CREATE INDEX t_b_c_idx ON bitmap_split_or (b, c);
 --dg-skip: relation pg_statistic_ext cannot be opened: digres has no catalog tables

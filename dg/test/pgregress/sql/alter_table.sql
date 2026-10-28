@@ -170,12 +170,11 @@ ALTER TABLE attmp ADD COLUMN w interval;
 --dg-cascade
 --dg SELECT * FROM attmp;
 
---dg-skip: an index key is a column, not an expression, yet
---dg CREATE INDEX attmp_idx ON attmp (a, (d + e), b);
+CREATE INDEX attmp_idx ON attmp (a, (d + e), b);
 
 ALTER INDEX attmp_idx ALTER COLUMN 0 SET STATISTICS 1000;
 
---dg-cascade
+--dg-differs: another error: ALTER INDEX is not supported yet
 --dg ALTER INDEX attmp_idx ALTER COLUMN 1 SET STATISTICS 1000;
 
 --dg-skip: ALTER INDEX is not supported yet
@@ -184,10 +183,10 @@ ALTER INDEX attmp_idx ALTER COLUMN 0 SET STATISTICS 1000;
 --dg-cascade
 --dg \d+ attmp_idx
 
---dg-cascade
+--dg-differs: another error: ALTER INDEX is not supported yet
 --dg ALTER INDEX attmp_idx ALTER COLUMN 3 SET STATISTICS 1000;
 
---dg-cascade
+--dg-differs: another error: ALTER INDEX is not supported yet
 --dg ALTER INDEX attmp_idx ALTER COLUMN 4 SET STATISTICS 1000;
 
 --dg-skip: ALTER INDEX is not supported yet

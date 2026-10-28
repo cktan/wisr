@@ -252,6 +252,22 @@ static void index_row(Tuplestorestate *ts, TupleDesc desc,
       PointerGetDatum(buildint2vector(options, r->nkeys));
   nulls[Anum_pg_index_indexprs - 1] = true;
   nulls[Anum_pg_index_indpred - 1] = true;
+  /* A partial or an expression index's, as nodeToString() wrote them. */
+  if (r->eval != NULL) {
+    List *exprs, *pred, *names;
+
+    smstore_index_eval_parts(r->eval, &exprs, &pred, &names);
+    if (exprs != NIL) {
+      values[Anum_pg_index_indexprs - 1] =
+          CStringGetTextDatum(nodeToString(exprs));
+      nulls[Anum_pg_index_indexprs - 1] = false;
+    }
+    if (pred != NIL) {
+      values[Anum_pg_index_indpred - 1] =
+          CStringGetTextDatum(nodeToString(pred));
+      nulls[Anum_pg_index_indpred - 1] = false;
+    }
+  }
   tuplestore_putvalues(ts, desc, values, nulls);
 }
 

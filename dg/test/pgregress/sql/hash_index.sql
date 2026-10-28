@@ -65,12 +65,9 @@ ANALYZE hash_f8_heap;
 -- Also try building functional, expressional, and partial indexes on
 -- tables that already contain data.
 --
---dg-skip: an index key is a column, not an expression, yet
---dg create unique index hash_f8_index_1 on hash_f8_heap(abs(random));
---dg-skip: an index key is a column, not an expression, yet
---dg create unique index hash_f8_index_2 on hash_f8_heap((seqno + 1), random);
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
---dg create unique index hash_f8_index_3 on hash_f8_heap(random) where seqno > 1000;
+create unique index hash_f8_index_1 on hash_f8_heap(abs(random));
+create unique index hash_f8_index_2 on hash_f8_heap((seqno + 1), random);
+create unique index hash_f8_index_3 on hash_f8_heap(random) where seqno > 1000;
 
 --
 -- hash index

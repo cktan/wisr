@@ -214,12 +214,11 @@ SELECT *
 --
 -- semijoin selectivity for <>
 --
---dg-differs: the plan
---dg explain (costs off)
---dg select * from tenk1 a, tenk1 b
---dg where exists(select * from tenk1 c
---dg              where b.twothousand = c.twothousand and b.fivethous <> c.fivethous)
---dg       and a.tenthous = b.tenthous and a.tenthous < 5000;
+explain (costs off)
+select * from tenk1 a, tenk1 b
+where exists(select * from tenk1 c
+             where b.twothousand = c.twothousand and b.fivethous <> c.fivethous)
+      and a.tenthous = b.tenthous and a.tenthous < 5000;
 
 
 --
@@ -449,14 +448,13 @@ where b.f1 = t.thousand and a.f1 = b.f1 and (a.f1+b.f1+999) = t.tenthous;
 --
 
 -- First ensure we get a hash join with multiple hash keys.
---dg-differs: the plan
---dg explain (costs off)
---dg select t1.unique1,t2.unique1 from tenk1 t1
---dg inner join tenk1 t2 on t1.two = t2.two
---dg   and t1.unique1 = (select min(unique1) from tenk1
---dg                     where t2.unique1=unique1)
---dg where t1.unique1 < 10 and t2.unique1 < 10
---dg order by t1.unique1;
+explain (costs off)
+select t1.unique1,t2.unique1 from tenk1 t1
+inner join tenk1 t2 on t1.two = t2.two
+  and t1.unique1 = (select min(unique1) from tenk1
+                    where t2.unique1=unique1)
+where t1.unique1 < 10 and t2.unique1 < 10
+order by t1.unique1;
 
 -- Ensure we get the expected result
 select t1.unique1,t2.unique1 from tenk1 t1
@@ -540,12 +538,11 @@ where t1.f1 = coalesce(t2.f1, 1);
 --dg              left join tenk1 t4 on s.f1 > 1)
 --dg     on s.f1 = t1.f1;
 
---dg-differs: the plan
---dg explain (costs off)
---dg select * from onek t1
---dg     left join onek t2 on t1.unique1 = t2.unique1
---dg     left join onek t3 on t2.unique1 = t3.unique1
---dg     left join onek t4 on t3.unique1 = t4.unique1 and t2.unique2 = t4.unique2;
+explain (costs off)
+select * from onek t1
+    left join onek t2 on t1.unique1 = t2.unique1
+    left join onek t3 on t2.unique1 = t3.unique1
+    left join onek t4 on t3.unique1 = t4.unique1 and t2.unique2 = t4.unique2;
 
 --dg-differs: the plan
 --dg explain (costs off)
@@ -575,13 +572,12 @@ select * from int8_tbl t1
       (select t2.q1 from int8_tbl t3) s
       on t2.q1 = 1;
 
---dg-differs: the plan
---dg explain (costs off)
---dg select * from onek t1
---dg     left join onek t2 on true
---dg     left join lateral
---dg       (select * from onek t3 where t3.two = t2.two offset 0) s
---dg       on t2.unique1 = 1;
+explain (costs off)
+select * from onek t1
+    left join onek t2 on true
+    left join lateral
+      (select * from onek t3 where t3.two = t2.two offset 0) s
+      on t2.unique1 = 1;
 
 --
 -- check a case where we formerly got confused by conflicting sort orders
@@ -865,20 +861,18 @@ reset enable_nestloop;
 -- basic semijoin and antijoin recognition tests
 --
 
---dg-differs: the plan
---dg explain (costs off)
---dg select a.* from tenk1 a
---dg where unique1 in (select unique2 from tenk1 b);
+explain (costs off)
+select a.* from tenk1 a
+where unique1 in (select unique2 from tenk1 b);
 
 -- sadly, this is not an antijoin
 explain (costs off)
 select a.* from tenk1 a
 where unique1 not in (select unique2 from tenk1 b);
 
---dg-differs: the plan
---dg explain (costs off)
---dg select a.* from tenk1 a
---dg where exists (select 1 from tenk1 b where a.unique1 = b.unique2);
+explain (costs off)
+select a.* from tenk1 a
+where exists (select 1 from tenk1 b where a.unique1 = b.unique2);
 
 explain (costs off)
 select a.* from tenk1 a
@@ -890,20 +884,18 @@ where b.unique2 is null;
 
 -- check that we avoid de-duplicating columns redundantly
 set enable_memoize to off;
---dg-differs: the plan
---dg explain (costs off)
---dg select 1 from tenk1
---dg where (hundred, thousand) in (select twothousand, twothousand from onek);
+explain (costs off)
+select 1 from tenk1
+where (hundred, thousand) in (select twothousand, twothousand from onek);
 reset enable_memoize;
 
 --
 -- regression test for bogus RTE_GROUP entries
 --
 
---dg-differs: the plan
---dg explain (costs off)
---dg select a.* from tenk1 a
---dg where exists (select 1 from tenk1 b where a.unique1 = b.unique2 group by b.unique1);
+explain (costs off)
+select a.* from tenk1 a
+where exists (select 1 from tenk1 b where a.unique1 = b.unique2 group by b.unique1);
 
 --
 -- regression test for proper handling of outer joins within antijoins
@@ -1453,24 +1445,22 @@ rollback;
 begin;
 create temp table t(i int primary key);
 
---dg-differs: the plan
---dg explain (verbose, costs off)
---dg select * from t t1
---dg     left join (select 1 as x, * from t t2(i2)) t2ss on t1.i = t2ss.i2
---dg     left join t t3(i3) on false
---dg     left join t t4(i4) on t4.i4 > t2ss.x;
+explain (verbose, costs off)
+select * from t t1
+    left join (select 1 as x, * from t t2(i2)) t2ss on t1.i = t2ss.i2
+    left join t t3(i3) on false
+    left join t t4(i4) on t4.i4 > t2ss.x;
 
---dg-differs: the plan
---dg explain (verbose, costs off)
---dg select * from
---dg      (select k from
---dg          (select i, coalesce(i, j) as k from
---dg              (select i from t union all select 0)
---dg              join (select 1 as j limit 1) on i = j)
---dg          right join (select 2 as x) on true
---dg          join (select 3 as y) on i is not null
---dg      ),
---dg      lateral (select k as kl limit 1);
+explain (verbose, costs off)
+select * from
+     (select k from
+         (select i, coalesce(i, j) as k from
+             (select i from t union all select 0)
+             join (select 1 as j limit 1) on i = j)
+         right join (select 2 as x) on true
+         join (select 3 as y) on i is not null
+     ),
+     lateral (select k as kl limit 1);
 
 rollback;
 
@@ -1688,25 +1678,21 @@ rollback;
 -- (we used to only do this for indexable clauses)
 --
 
---dg-differs: the plan
---dg explain (costs off)
---dg select * from tenk1 a join tenk1 b on
---dg   (a.unique1 = 1 and b.unique1 = 2) or (a.unique2 = 3 and b.hundred = 4);
---dg-differs: the plan
---dg explain (costs off)
---dg select * from tenk1 a join tenk1 b on
---dg   (a.unique1 = 1 and b.unique1 = 2) or (a.unique2 = 3 and b.ten = 4);
---dg-differs: the plan
---dg explain (costs off)
---dg select * from tenk1 a join tenk1 b on
---dg   (a.unique1 = 1 and b.unique1 = 2) or
---dg   ((a.unique2 = 3 or a.unique2 = 7) and b.hundred = 4);
+explain (costs off)
+select * from tenk1 a join tenk1 b on
+  (a.unique1 = 1 and b.unique1 = 2) or (a.unique2 = 3 and b.hundred = 4);
+explain (costs off)
+select * from tenk1 a join tenk1 b on
+  (a.unique1 = 1 and b.unique1 = 2) or (a.unique2 = 3 and b.ten = 4);
+explain (costs off)
+select * from tenk1 a join tenk1 b on
+  (a.unique1 = 1 and b.unique1 = 2) or
+  ((a.unique2 = 3 or a.unique2 = 7) and b.hundred = 4);
 
---dg-differs: the plan
---dg explain (costs off)
---dg select * from tenk1 a join tenk1 b on
---dg   (a.unique1 = 1 and b.unique1 = 2) or
---dg   ((a.unique2 = 3 or a.unique2 = 7) and b.hundred = 4);
+explain (costs off)
+select * from tenk1 a join tenk1 b on
+  (a.unique1 = 1 and b.unique1 = 2) or
+  ((a.unique2 = 3 or a.unique2 = 7) and b.hundred = 4);
 explain (costs off)
 select * from tenk1 a join tenk1 b on
   (a.unique1 < 20 or a.unique1 = 3 or a.unique1 = 1 and b.unique1 = 2) or
@@ -1829,9 +1815,8 @@ select a.unique1, b.unique1, c.unique1, coalesce(b.twothousand, a.twothousand)
 --dg select * from int8_tbl t1 left join int8_tbl t2 on t1.q2 = t2.q1,
 --dg   lateral (select * from int8_tbl t3 where t2.q1 = t2.q2) ss;
 
---dg-differs: the result
---dg select * from int8_tbl t1 left join int8_tbl t2 on t1.q2 = t2.q1,
---dg   lateral (select * from int8_tbl t3 where t2.q1 = t2.q2) ss;
+select * from int8_tbl t1 left join int8_tbl t2 on t1.q2 = t2.q1,
+  lateral (select * from int8_tbl t3 where t2.q1 = t2.q2) ss;
 
 --
 -- check handling of join aliases when flattening multiple levels of subquery
@@ -2195,31 +2180,28 @@ select a.unique1, b.unique2
 -- test full-join strength reduction
 --
 
---dg-differs: the plan
---dg explain (costs off)
---dg select a.unique1, b.unique2
---dg   from onek a full join onek b on a.unique1 = b.unique2
---dg   where a.unique1 = 42;
+explain (costs off)
+select a.unique1, b.unique2
+  from onek a full join onek b on a.unique1 = b.unique2
+  where a.unique1 = 42;
 
 select a.unique1, b.unique2
   from onek a full join onek b on a.unique1 = b.unique2
   where a.unique1 = 42;
 
---dg-differs: the plan
---dg explain (costs off)
---dg select a.unique1, b.unique2
---dg   from onek a full join onek b on a.unique1 = b.unique2
---dg   where b.unique2 = 43;
+explain (costs off)
+select a.unique1, b.unique2
+  from onek a full join onek b on a.unique1 = b.unique2
+  where b.unique2 = 43;
 
 select a.unique1, b.unique2
   from onek a full join onek b on a.unique1 = b.unique2
   where b.unique2 = 43;
 
---dg-differs: the plan
---dg explain (costs off)
---dg select a.unique1, b.unique2
---dg   from onek a full join onek b on a.unique1 = b.unique2
---dg   where a.unique1 = 42 and b.unique2 = 42;
+explain (costs off)
+select a.unique1, b.unique2
+  from onek a full join onek b on a.unique1 = b.unique2
+  where a.unique1 = 42 and b.unique2 = 42;
 
 select a.unique1, b.unique2
   from onek a full join onek b on a.unique1 = b.unique2
@@ -2260,49 +2242,41 @@ INSERT INTO d VALUES (1,3), (2,2), (3,1);
 INSERT INTO e VALUES (0,0), (2,2), (3,1);
 
 -- all these cases should be optimizable into a simple seqscan
---dg-differs: the plan
---dg explain (costs off) SELECT a.* FROM a LEFT JOIN b ON a.b_id = b.id;
---dg-differs: the plan
---dg explain (costs off) SELECT b.* FROM b LEFT JOIN c ON b.c_id = c.id;
---dg-differs: the plan
---dg explain (costs off)
---dg   SELECT a.* FROM a LEFT JOIN (b left join c on b.c_id = c.id)
---dg   ON (a.b_id = b.id);
---dg-differs: the plan
---dg explain (costs off)
---dg   SELECT a.* FROM a LEFT JOIN b ON a.id = b.id
---dg   LEFT JOIN e ON e.id1 = a.b_id AND b.c_id = e.id2;
+explain (costs off) SELECT a.* FROM a LEFT JOIN b ON a.b_id = b.id;
+explain (costs off) SELECT b.* FROM b LEFT JOIN c ON b.c_id = c.id;
+explain (costs off)
+  SELECT a.* FROM a LEFT JOIN (b left join c on b.c_id = c.id)
+  ON (a.b_id = b.id);
+explain (costs off)
+  SELECT a.* FROM a LEFT JOIN b ON a.id = b.id
+  LEFT JOIN e ON e.id1 = a.b_id AND b.c_id = e.id2;
 
 -- check optimization of outer join within another special join
---dg-differs: the plan
---dg explain (costs off)
---dg select id from a where id in (
---dg 	select b.id from b left join c on b.id = c.id
---dg );
+explain (costs off)
+select id from a where id in (
+	select b.id from b left join c on b.id = c.id
+);
 
 -- check optimization with oddly-nested outer joins
---dg-differs: the plan
---dg explain (costs off)
---dg select a1.id from
---dg   (a a1 left join a a2 on true)
---dg   left join
---dg   (a a3 left join a a4 on a3.id = a4.id)
---dg   on a2.id = a3.id;
+explain (costs off)
+select a1.id from
+  (a a1 left join a a2 on true)
+  left join
+  (a a3 left join a a4 on a3.id = a4.id)
+  on a2.id = a3.id;
 
---dg-differs: the plan
---dg explain (costs off)
---dg select a1.id from
---dg   (a a1 left join a a2 on a1.id = a2.id)
---dg   left join
---dg   (a a3 left join a a4 on a3.id = a4.id)
---dg   on a2.id = a3.id;
+explain (costs off)
+select a1.id from
+  (a a1 left join a a2 on a1.id = a2.id)
+  left join
+  (a a3 left join a a4 on a3.id = a4.id)
+  on a2.id = a3.id;
 
---dg-differs: the plan
---dg explain (costs off)
---dg select 1 from a t1
---dg     left join a t2 on true
---dg    inner join a t3 on true
---dg     left join a t4 on t2.id = t4.id and t2.id = t3.id;
+explain (costs off)
+select 1 from a t1
+    left join a t2 on true
+   inner join a t3 on true
+    left join a t4 on t2.id = t4.id and t2.id = t3.id;
 
 -- another example (bug #17781)
 explain (costs off)
@@ -2333,12 +2307,11 @@ from int4_tbl as t1
     on false;
 
 -- per further discussion of bug #17781
---dg-differs: the plan
---dg explain (costs off)
---dg select ss1.x
---dg from (select f1/2 as x from int4_tbl i4 left join a on a.id = i4.f1) ss1
---dg      right join int8_tbl i8 on true
---dg where current_user is not null;  -- this is to add a Result node
+explain (costs off)
+select ss1.x
+from (select f1/2 as x from int4_tbl i4 left join a on a.id = i4.f1) ss1
+     right join int8_tbl i8 on true
+where current_user is not null;  -- this is to add a Result node
 
 -- and further discussion of bug #17781
 --dg-differs: the plan
@@ -2351,29 +2324,27 @@ from int4_tbl as t1
 --dg     on t2.q2 < t3.unique2;
 
 -- bug #19460: we need to clean up RestrictInfos more than we had been doing
---dg-differs: the plan
---dg explain (costs off)
---dg select * from
---dg   (select 1::int as id) as lhs
---dg full join
---dg   (select dummy_source.id
---dg    from (select null::int as id) as dummy_source
---dg    left join (select a.id from a where a.id = 42) as sub
---dg    on sub.id = dummy_source.id
---dg   ) as rhs
---dg on lhs.id = rhs.id;
+explain (costs off)
+select * from
+  (select 1::int as id) as lhs
+full join
+  (select dummy_source.id
+   from (select null::int as id) as dummy_source
+   left join (select a.id from a where a.id = 42) as sub
+   on sub.id = dummy_source.id
+  ) as rhs
+on lhs.id = rhs.id;
 
---dg-differs: the plan
---dg explain (costs off)
---dg select * from
---dg   (select 1::int as id) as lhs
---dg full join
---dg   (select dummy_source.id
---dg    from (select 2::int as id) as dummy_source
---dg    left join (select a.id from a) as sub
---dg    on sub.id = dummy_source.id
---dg   ) as rhs
---dg on lhs.id = rhs.id;
+explain (costs off)
+select * from
+  (select 1::int as id) as lhs
+full join
+  (select dummy_source.id
+   from (select 2::int as id) as dummy_source
+   left join (select a.id from a) as sub
+   on sub.id = dummy_source.id
+  ) as rhs
+on lhs.id = rhs.id;
 
 -- More tests of correct placement of pseudoconstant quals
 
@@ -2415,22 +2386,19 @@ select d.* from d left join (select distinct * from b) s
 -- not in the join condition.  (Note: as of 9.6, we notice that b.id is a
 -- primary key and so drop b.c_id from the GROUP BY of the resulting plan;
 -- but this happens too late for join removal in the outer plan level.)
---dg-differs: the plan
---dg explain (costs off)
---dg select d.* from d left join (select * from b group by b.id, b.c_id) s
---dg   on d.a = s.id;
+explain (costs off)
+select d.* from d left join (select * from b group by b.id, b.c_id) s
+  on d.a = s.id;
 
 -- similarly, but keying off a DISTINCT clause
---dg-differs: the plan
---dg explain (costs off)
---dg select d.* from d left join (select distinct * from b) s
---dg   on d.a = s.id;
+explain (costs off)
+select d.* from d left join (select distinct * from b) s
+  on d.a = s.id;
 
 -- join removal is not possible here
---dg-differs: the plan
---dg explain (costs off)
---dg select 1 from a t1
---dg   left join (a t2 left join a t3 on t2.id = 1) on t2.id = 1;
+explain (costs off)
+select 1 from a t1
+  left join (a t2 left join a t3 on t2.id = 1) on t2.id = 1;
 
 -- check join removal works when uniqueness of the join condition is enforced
 -- by a UNION
@@ -2444,10 +2412,9 @@ select i8.* from int8_tbl i8 left join (select f1 from int4_tbl group by f1) i4
   on i8.q1 = i4.f1;
 
 -- check join removal with lateral references
---dg-differs: the plan
---dg explain (costs off)
---dg select 1 from (select a.id FROM a left join b on a.b_id = b.id) q,
---dg 			  lateral generate_series(1, q.id) gs(i) where q.id = gs.i;
+explain (costs off)
+select 1 from (select a.id FROM a left join b on a.b_id = b.id) q,
+			  lateral generate_series(1, q.id) gs(i) where q.id = gs.i;
 
 -- check join removal within RHS of an outer join
 --dg-cascade
@@ -2458,15 +2425,14 @@ select i8.* from int8_tbl i8 left join (select f1 from int4_tbl group by f1) i4
 
 -- check the case when the placeholder relates to an outer join and its
 -- inner in the press field but actually uses only the outer side of the join
---dg-differs: the plan
---dg explain (costs off)
---dg SELECT q.val FROM b LEFT JOIN (
---dg   SELECT (q1.z IS NOT NULL) AS val
---dg   FROM b LEFT JOIN (
---dg     SELECT (t1.b_id IS NOT NULL) AS z FROM a t1 LEFT JOIN a t2 USING (id)
---dg     ) AS q1
---dg   ON true
---dg ) AS q ON true;
+explain (costs off)
+SELECT q.val FROM b LEFT JOIN (
+  SELECT (q1.z IS NOT NULL) AS val
+  FROM b LEFT JOIN (
+    SELECT (t1.b_id IS NOT NULL) AS z FROM a t1 LEFT JOIN a t2 USING (id)
+    ) AS q1
+  ON true
+) AS q ON true;
 
 --dg-skip: CREATE TABLE supports only columns, NOT NULL, PRIMARY KEY, UNIQUE and TEMPORARY yet
 --dg CREATE TEMP TABLE parted_b (id int PRIMARY KEY) partition by range(id);
@@ -2557,13 +2523,12 @@ begin;
 create temp table innertab (id int8 primary key, dat1 int8);
 insert into innertab values(123, 42);
 
---dg-differs: the result
---dg SELECT * FROM
---dg     (SELECT 1 AS x) ss1
---dg   LEFT JOIN
---dg     (SELECT q1, q2, COALESCE(dat1, q1) AS y
---dg      FROM int8_tbl LEFT JOIN innertab ON q2 = id) ss2
---dg   ON true;
+SELECT * FROM
+    (SELECT 1 AS x) ss1
+  LEFT JOIN
+    (SELECT q1, q2, COALESCE(dat1, q1) AS y
+     FROM int8_tbl LEFT JOIN innertab ON q2 = id) ss2
+  ON true;
 
 -- join removal bug #17769: can't remove if there's a pushed-down reference
 --dg-differs: the plan
@@ -2596,14 +2561,13 @@ begin;
 
 create temp table uniquetbl (f1 text unique);
 
---dg-differs: the plan
---dg explain (costs off)
---dg select t1.* from
---dg   uniquetbl as t1
---dg   left join (select *, '***'::text as d1 from uniquetbl) t2
---dg   on t1.f1 = t2.f1
---dg   left join uniquetbl t3
---dg   on t2.d1 = t3.f1;
+explain (costs off)
+select t1.* from
+  uniquetbl as t1
+  left join (select *, '***'::text as d1 from uniquetbl) t2
+  on t1.f1 = t2.f1
+  left join uniquetbl t3
+  on t2.d1 = t3.f1;
 
 --dg-differs: the plan
 --dg explain (costs off)
@@ -2639,14 +2603,13 @@ begin;
 create temp table t (a int unique);
 insert into t values (1);
 
---dg-differs: the plan
---dg explain (costs off)
---dg select 1
---dg from t t1
---dg   left join (select 2 as c
---dg              from t t2 left join t t3 on t2.a = t3.a) s
---dg     on true
---dg where t1.a = s.c;
+explain (costs off)
+select 1
+from t t1
+  left join (select 2 as c
+             from t t2 left join t t3 on t2.a = t3.a) s
+    on true
+where t1.a = s.c;
 
 select 1
 from t t1
@@ -2664,15 +2627,14 @@ begin;
 create temp table t (a int unique, b int);
 insert into t values (1, 2);
 
---dg-differs: the plan
---dg explain (verbose, costs off)
---dg select t1.a from t t1
---dg   left join t t2 on t1.a = t2.a
---dg        join t t3 on true
---dg where exists (select 1 from t t4
---dg                 join t t5 on t4.b = t5.b
---dg                 join t t6 on t5.b = t6.b
---dg               where t1.a = t4.a and t3.a = t5.a and t4.a = 1);
+explain (verbose, costs off)
+select t1.a from t t1
+  left join t t2 on t1.a = t2.a
+       join t t3 on true
+where exists (select 1 from t t4
+                join t t5 on t4.b = t5.b
+                join t t6 on t5.b = t6.b
+              where t1.a = t4.a and t3.a = t5.a and t4.a = 1);
 
 select t1.a from t t1
   left join t t2 on t1.a = t2.a
@@ -2735,25 +2697,23 @@ begin;
 create temp table t (a int unique, b int);
 insert into t values (1,1), (2,2);
 
---dg-differs: the plan
---dg explain (costs off)
---dg select 1
---dg from t t1
---dg   left join (select t2.a, 1 as c
---dg              from t t2 left join t t3 on t2.a = t3.a) s
---dg   on true
---dg   left join t t4 on true
---dg where s.a < s.c;
+explain (costs off)
+select 1
+from t t1
+  left join (select t2.a, 1 as c
+             from t t2 left join t t3 on t2.a = t3.a) s
+  on true
+  left join t t4 on true
+where s.a < s.c;
 
---dg-differs: the plan
---dg explain (costs off)
---dg select t1.a, s.*
---dg from t t1
---dg   left join lateral (select t2.a, coalesce(t1.a, 1) as c
---dg                      from t t2 left join t t3 on t2.a = t3.a) s
---dg   on true
---dg   left join t t4 on true
---dg where s.a < s.c;
+explain (costs off)
+select t1.a, s.*
+from t t1
+  left join lateral (select t2.a, coalesce(t1.a, 1) as c
+                     from t t2 left join t t3 on t2.a = t3.a) s
+  on true
+  left join t t4 on true
+where s.a < s.c;
 
 select t1.a, s.*
 from t t1
@@ -2900,15 +2860,14 @@ explain (costs off)
 select * from sj x join sj y on x.a = y.a
 left join int8_tbl z on y.a = z.q1;
 
---dg-differs: the plan
---dg explain (costs off)
---dg select * from (
---dg   select t1.*, t2.a as ax from sj t1 join sj t2
---dg   on (t1.a = t2.a and t1.c * t1.c = t2.c + 2 and t2.b is null)
---dg ) as q1
---dg left join
---dg   (select t3.* from sj t3, sj t4 where t3.c = t4.c) as q2
---dg on q1.ax = q2.a;
+explain (costs off)
+select * from (
+  select t1.*, t2.a as ax from sj t1 join sj t2
+  on (t1.a = t2.a and t1.c * t1.c = t2.c + 2 and t2.b is null)
+) as q1
+left join
+  (select t3.* from sj t3, sj t4 where t3.c = t4.c) as q2
+on q1.ax = q2.a;
 
 -- Test that placeholders are updated correctly after join removal
 explain (costs off)
@@ -2937,10 +2896,9 @@ select t4.a from sj t1
 
 -- Check updating of semi_rhs_exprs links from upper-level semi join to
 -- the removing relation
---dg-differs: the plan
---dg explain (verbose, costs off)
---dg select t1.a from sj t1 where t1.b in (
---dg   select t2.b from sj t2 join sj t3 on t2.c=t3.c);
+explain (verbose, costs off)
+select t1.a from sj t1 where t1.b in (
+  select t2.b from sj t2 join sj t3 on t2.c=t3.c);
 
 --
 -- SJE corner case: uniqueness of an inner is [partially] derived from
@@ -2997,26 +2955,23 @@ FROM (SELECT t1.*, t2.a AS a1 FROM sj t1, sj t2 WHERE t1.b = t2.b) AS t3
 JOIN sj t4 ON (t4.a = t3.a) WHERE t3.a1 = 42;
 
 -- Functional index
---dg-skip: an index key is a column, not an expression, yet
---dg CREATE UNIQUE INDEX sj_fn_idx ON sj((a * a));
+CREATE UNIQUE INDEX sj_fn_idx ON sj((a * a));
 
 -- Remove SJ
---dg-cascade
---dg EXPLAIN (COSTS OFF)
---dg SELECT * FROM sj j1, sj j2
---dg 	WHERE j1.b = j2.b AND j1.a*j1.a = 1 AND j2.a*j2.a = 1;
+EXPLAIN (COSTS OFF)
+SELECT * FROM sj j1, sj j2
+	WHERE j1.b = j2.b AND j1.a*j1.a = 1 AND j2.a*j2.a = 1;
 -- Don't remove SJ
 EXPLAIN (COSTS OFF)
 SELECT * FROM sj j1, sj j2
 	WHERE j1.b = j2.b AND j1.a*j1.a = 1 AND j2.a*j2.a = 2;
 
 -- Restriction contains expressions in both sides, Remove SJ.
---dg-cascade
---dg EXPLAIN (COSTS OFF)
---dg SELECT * FROM sj j1, sj j2
---dg WHERE j1.b = j2.b
---dg   AND (j1.a*j1.a) = (EXTRACT(DOW FROM current_timestamp(0))/15 + 3)::int
---dg   AND (EXTRACT(DOW FROM current_timestamp(0))/15 + 3)::int = (j2.a*j2.a);
+EXPLAIN (COSTS OFF)
+SELECT * FROM sj j1, sj j2
+WHERE j1.b = j2.b
+  AND (j1.a*j1.a) = (EXTRACT(DOW FROM current_timestamp(0))/15 + 3)::int
+  AND (EXTRACT(DOW FROM current_timestamp(0))/15 + 3)::int = (j2.a*j2.a);
 -- Empty set of rows should be returned
 SELECT * FROM sj j1, sj j2
 WHERE j1.b = j2.b
@@ -3062,8 +3017,7 @@ SELECT * FROM sj j1, sj j2 WHERE j1.b = j2.b AND 2 = j2.a;
 EXPLAIN (COSTS OFF)
 SELECT * FROM sj j1, sj j2 WHERE j1.b = j2.b AND (j1.a = 1 OR j2.a = 1);
 
---dg-cascade
---dg DROP INDEX sj_fn_idx, sj_temp_idx1, sj_temp_idx;
+DROP INDEX sj_fn_idx, sj_temp_idx1, sj_temp_idx;
 
 -- Test that OR predicated are updated correctly after join removal
 CREATE TABLE tab_with_flag ( id INT PRIMARY KEY, is_flag SMALLINT);
@@ -3096,9 +3050,8 @@ explain (costs off) select * from sj p join sj q on p.a = q.a
 
 -- FIXME this constant false filter doesn't look good. Should we merge
 -- equivalence classes?
---dg-cascade
---dg explain (costs off)
---dg select * from sj p, sj q where p.a = q.a and p.b = 1 and q.b = 2;
+explain (costs off)
+select * from sj p, sj q where p.a = q.a and p.b = 1 and q.b = 2;
 
 -- Check that attr_needed is updated correctly after self-join removal. In this
 -- test, the join of j1 with j2 is removed. k1.b is required at either j1 or j2.
@@ -3110,14 +3063,12 @@ create table sk (a int, b int);
 create index on sk(a);
 set join_collapse_limit to 1;
 set enable_seqscan to off;
---dg-cascade
---dg explain (costs off) select 1 from
---dg 	(sk k1 join sk k2 on k1.a = k2.a)
---dg 	join (sj j1 join sj j2 on j1.a = j2.a) on j1.b = k1.b;
---dg-cascade
---dg explain (costs off) select 1 from
---dg 	(sk k1 join sk k2 on k1.a = k2.a)
---dg 	join (sj j1 join sj j2 on j1.a = j2.a) on j2.b = k1.b;
+explain (costs off) select 1 from
+	(sk k1 join sk k2 on k1.a = k2.a)
+	join (sj j1 join sj j2 on j1.a = j2.a) on j1.b = k1.b;
+explain (costs off) select 1 from
+	(sk k1 join sk k2 on k1.a = k2.a)
+	join (sj j1 join sj j2 on j1.a = j2.a) on j2.b = k1.b;
 reset join_collapse_limit;
 reset enable_seqscan;
 
@@ -3128,23 +3079,19 @@ SELECT * FROM emp1 e1, emp1 e2 WHERE e1.id = e2.id AND e2.code <> e1.code;
 
 -- Shuffle self-joined relations. Only in the case of iterative deletion
 -- attempts explains of these queries will be identical.
---dg-skip: an index key is a column, not an expression, yet
---dg CREATE UNIQUE INDEX ON emp1((id*id));
+CREATE UNIQUE INDEX ON emp1((id*id));
 
---dg-cascade
---dg EXPLAIN (COSTS OFF)
---dg SELECT count(*) FROM emp1 c1, emp1 c2, emp1 c3
---dg WHERE c1.id=c2.id AND c1.id*c2.id=c3.id*c3.id;
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM emp1 c1, emp1 c2, emp1 c3
+WHERE c1.id=c2.id AND c1.id*c2.id=c3.id*c3.id;
 
---dg-cascade
---dg EXPLAIN (COSTS OFF)
---dg SELECT count(*) FROM emp1 c1, emp1 c2, emp1 c3
---dg WHERE c1.id=c3.id AND c1.id*c3.id=c2.id*c2.id;
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM emp1 c1, emp1 c2, emp1 c3
+WHERE c1.id=c3.id AND c1.id*c3.id=c2.id*c2.id;
 
---dg-cascade
---dg EXPLAIN (COSTS OFF)
---dg SELECT count(*) FROM emp1 c1, emp1 c2, emp1 c3
---dg WHERE c3.id=c2.id AND c3.id*c2.id=c1.id*c1.id;
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM emp1 c1, emp1 c2, emp1 c3
+WHERE c3.id=c2.id AND c3.id*c2.id=c1.id*c1.id;
 
 -- Check the usage of a parse tree by the set operations (bug #18170)
 EXPLAIN (COSTS OFF)
@@ -3163,13 +3110,12 @@ on true;
 
 -- Try PHV, which could potentially be removed completely by SJE, but that's
 -- not implemented yet.
---dg-differs: the plan
---dg explain (verbose, costs off)
---dg select 1 from emp1 t1 left join
---dg     ((select 1 as x, * from emp1 t2) s1 inner join
---dg         (select * from emp1 t3) s2 on s1.id = s2.id)
---dg     on true
---dg where s1.x = 1;
+explain (verbose, costs off)
+select 1 from emp1 t1 left join
+    ((select 1 as x, * from emp1 t2) s1 inner join
+        (select * from emp1 t3) s2 on s1.id = s2.id)
+    on true
+where s1.x = 1;
 
 -- Check that PHVs do not impose any constraints on removing self joins
 explain (verbose, costs off)
@@ -3193,13 +3139,12 @@ CREATE INDEX tbl_phv_idx ON tbl_phv(x);
 INSERT INTO tbl_phv (x, y)
   SELECT gs, gs FROM generate_series(1,100) AS gs;
 VACUUM ANALYZE tbl_phv;
---dg-differs: the plan
---dg EXPLAIN (COSTS OFF, VERBOSE)
---dg SELECT 1 FROM tbl_phv t1 LEFT JOIN
---dg   (SELECT 1 extra, x, y FROM tbl_phv tl) t3 JOIN
---dg     (SELECT y FROM tbl_phv tr) t4
---dg   ON t4.y = t3.y
---dg ON true WHERE t3.extra IS NOT NULL AND t3.x = t1.x % 2;
+EXPLAIN (COSTS OFF, VERBOSE)
+SELECT 1 FROM tbl_phv t1 LEFT JOIN
+  (SELECT 1 extra, x, y FROM tbl_phv tl) t3 JOIN
+    (SELECT y FROM tbl_phv tr) t4
+  ON t4.y = t3.y
+ON true WHERE t3.extra IS NOT NULL AND t3.x = t1.x % 2;
 DROP TABLE IF EXISTS tbl_phv;
 
 -- Check that SJE replaces join clauses involving the removed rel correctly
@@ -3321,25 +3266,24 @@ CREATE TABLE sj_t4 (id serial, a int);
 CREATE UNIQUE INDEX ON sj_t3 USING btree (a,id);
 CREATE UNIQUE INDEX ON sj_t2 USING btree (id);
 
---dg-differs: the plan
---dg EXPLAIN (COSTS OFF)
---dg SELECT * FROM sj_t1
---dg JOIN (
---dg 	SELECT sj_t2.id AS id FROM sj_t2
---dg 	WHERE EXISTS
---dg 		(
---dg 		SELECT TRUE FROM sj_t3,sj_t4 WHERE sj_t3.a = 1 AND sj_t3.id = sj_t2.id
---dg 		)
---dg 	) t2t3t4
---dg ON sj_t1.id = t2t3t4.id
---dg JOIN (
---dg 	SELECT sj_t2.id AS id FROM sj_t2
---dg 	WHERE EXISTS
---dg 		(
---dg 		SELECT TRUE FROM sj_t3,sj_t4 WHERE sj_t3.a = 1 AND sj_t3.id = sj_t2.id
---dg 		)
---dg 	) _t2t3t4
---dg ON sj_t1.id = _t2t3t4.id;
+EXPLAIN (COSTS OFF)
+SELECT * FROM sj_t1
+JOIN (
+	SELECT sj_t2.id AS id FROM sj_t2
+	WHERE EXISTS
+		(
+		SELECT TRUE FROM sj_t3,sj_t4 WHERE sj_t3.a = 1 AND sj_t3.id = sj_t2.id
+		)
+	) t2t3t4
+ON sj_t1.id = t2t3t4.id
+JOIN (
+	SELECT sj_t2.id AS id FROM sj_t2
+	WHERE EXISTS
+		(
+		SELECT TRUE FROM sj_t3,sj_t4 WHERE sj_t3.a = 1 AND sj_t3.id = sj_t2.id
+		)
+	) _t2t3t4
+ON sj_t1.id = _t2t3t4.id;
 
 --
 -- Test RowMarks-related code
@@ -3403,9 +3347,8 @@ from int4_tbl x, lateral (select unique2 from tenk1 where f1 = unique1) ss;
 --dg explain (costs off)
 --dg   select unique2, x.*
 --dg   from int4_tbl x cross join lateral (select unique2 from tenk1 where f1 = unique1) ss;
---dg-differs: the result
---dg select unique2, x.*
---dg from int4_tbl x left join lateral (select unique1, unique2 from tenk1 where f1 = unique1) ss on true;
+select unique2, x.*
+from int4_tbl x left join lateral (select unique1, unique2 from tenk1 where f1 = unique1) ss on true;
 --dg-differs: the plan
 --dg explain (costs off)
 --dg   select unique2, x.*
@@ -3418,16 +3361,13 @@ select *, (select r from (select q1 as q2) x, lateral (select q2 as r) y) from i
 
 -- lateral with function in FROM
 select count(*) from tenk1 a, lateral generate_series(1,two) g;
---dg-differs: the plan
---dg explain (costs off)
---dg   select count(*) from tenk1 a, lateral generate_series(1,two) g;
---dg-differs: the plan
---dg explain (costs off)
---dg   select count(*) from tenk1 a cross join lateral generate_series(1,two) g;
+explain (costs off)
+  select count(*) from tenk1 a, lateral generate_series(1,two) g;
+explain (costs off)
+  select count(*) from tenk1 a cross join lateral generate_series(1,two) g;
 -- don't need the explicit LATERAL keyword for functions
---dg-differs: the plan
---dg explain (costs off)
---dg   select count(*) from tenk1 a, generate_series(1,two) g;
+explain (costs off)
+  select count(*) from tenk1 a, generate_series(1,two) g;
 
 -- lateral with UNION ALL subselect
 explain (costs off)
@@ -3467,9 +3407,8 @@ select * from int8_tbl a,
 -- lateral reference to a join alias variable
 select * from (select f1/2 as x from int4_tbl) ss1 join int4_tbl i4 on x = f1,
   lateral (select x) ss2(y);
---dg-differs: the result
---dg select * from (select f1 as x from int4_tbl) ss1 join int4_tbl i4 on x = f1,
---dg   lateral (values(x)) ss2(y);
+select * from (select f1 as x from int4_tbl) ss1 join int4_tbl i4 on x = f1,
+  lateral (values(x)) ss2(y);
 select * from ((select f1/2 as x from int4_tbl) ss1 join int4_tbl i4 on x = f1) j,
   lateral (select x) ss2(y);
 
@@ -3482,33 +3421,27 @@ select * from (values(1)) x(lb),
   lateral (values(lb)) y(lbcopy);
 select * from (values(1)) x(lb),
   lateral (select lb from int4_tbl) y(lbcopy);
---dg-differs: the result
---dg select * from
---dg   int8_tbl x left join (select q1,coalesce(q2,0) q2 from int8_tbl) y on x.q2 = y.q1,
---dg   lateral (values(x.q1,y.q1,y.q2)) v(xq1,yq1,yq2);
---dg-differs: the result
---dg select * from
---dg   int8_tbl x left join (select q1,coalesce(q2,0) q2 from int8_tbl) y on x.q2 = y.q1,
---dg   lateral (select x.q1,y.q1,y.q2) v(xq1,yq1,yq2);
---dg-differs: the result
---dg select x.* from
---dg   int8_tbl x left join (select q1,coalesce(q2,0) q2 from int8_tbl) y on x.q2 = y.q1,
---dg   lateral (select x.q1,y.q1,y.q2) v(xq1,yq1,yq2);
---dg-differs: the result
---dg select v.* from
---dg   (int8_tbl x left join (select q1,coalesce(q2,0) q2 from int8_tbl) y on x.q2 = y.q1)
---dg   left join int4_tbl z on z.f1 = x.q2,
---dg   lateral (select x.q1,y.q1 union all select x.q2,y.q2) v(vx,vy);
---dg-differs: the result
---dg select v.* from
---dg   (int8_tbl x left join (select q1,(select coalesce(q2,0)) q2 from int8_tbl) y on x.q2 = y.q1)
---dg   left join int4_tbl z on z.f1 = x.q2,
---dg   lateral (select x.q1,y.q1 union all select x.q2,y.q2) v(vx,vy);
---dg-differs: the result
---dg select v.* from
---dg   (int8_tbl x left join (select q1,(select coalesce(q2,0)) q2 from int8_tbl) y on x.q2 = y.q1)
---dg   left join int4_tbl z on z.f1 = x.q2,
---dg   lateral (select x.q1,y.q1 from onerow union all select x.q2,y.q2 from onerow) v(vx,vy);
+select * from
+  int8_tbl x left join (select q1,coalesce(q2,0) q2 from int8_tbl) y on x.q2 = y.q1,
+  lateral (values(x.q1,y.q1,y.q2)) v(xq1,yq1,yq2);
+select * from
+  int8_tbl x left join (select q1,coalesce(q2,0) q2 from int8_tbl) y on x.q2 = y.q1,
+  lateral (select x.q1,y.q1,y.q2) v(xq1,yq1,yq2);
+select x.* from
+  int8_tbl x left join (select q1,coalesce(q2,0) q2 from int8_tbl) y on x.q2 = y.q1,
+  lateral (select x.q1,y.q1,y.q2) v(xq1,yq1,yq2);
+select v.* from
+  (int8_tbl x left join (select q1,coalesce(q2,0) q2 from int8_tbl) y on x.q2 = y.q1)
+  left join int4_tbl z on z.f1 = x.q2,
+  lateral (select x.q1,y.q1 union all select x.q2,y.q2) v(vx,vy);
+select v.* from
+  (int8_tbl x left join (select q1,(select coalesce(q2,0)) q2 from int8_tbl) y on x.q2 = y.q1)
+  left join int4_tbl z on z.f1 = x.q2,
+  lateral (select x.q1,y.q1 union all select x.q2,y.q2) v(vx,vy);
+select v.* from
+  (int8_tbl x left join (select q1,(select coalesce(q2,0)) q2 from int8_tbl) y on x.q2 = y.q1)
+  left join int4_tbl z on z.f1 = x.q2,
+  lateral (select x.q1,y.q1 from onerow union all select x.q2,y.q2 from onerow) v(vx,vy);
 
 explain (verbose, costs off)
 select * from
@@ -3531,9 +3464,8 @@ select * from
 --dg explain (verbose, costs off)
 --dg select * from int4_tbl i left join
 --dg   lateral (select * from int2_tbl j where i.f1 = j.f1) k on true;
---dg-differs: the result
---dg select * from int4_tbl i left join
---dg   lateral (select * from int2_tbl j where i.f1 = j.f1) k on true;
+select * from int4_tbl i left join
+  lateral (select * from int2_tbl j where i.f1 = j.f1) k on true;
 --dg-skip: relation "?" does not have a composite type
 --dg explain (verbose, costs off)
 --dg select * from int4_tbl i left join
@@ -3559,12 +3491,11 @@ select * from int4_tbl a,
 --dg   (select b.q1 as bq1, c.q1 as cq1, least(a.q1,b.q1,c.q1) from
 --dg    int8_tbl b cross join int8_tbl c) ss
 --dg   on a.q2 = ss.bq1;
---dg-differs: the result
---dg select * from
---dg   int8_tbl a left join lateral
---dg   (select b.q1 as bq1, c.q1 as cq1, least(a.q1,b.q1,c.q1) from
---dg    int8_tbl b cross join int8_tbl c) ss
---dg   on a.q2 = ss.bq1;
+select * from
+  int8_tbl a left join lateral
+  (select b.q1 as bq1, c.q1 as cq1, least(a.q1,b.q1,c.q1) from
+   int8_tbl b cross join int8_tbl c) ss
+  on a.q2 = ss.bq1;
 
 -- case requiring nested PlaceHolderVars
 --dg-differs: the plan
@@ -3750,12 +3681,11 @@ insert into fkest select x, x/10, x/10, x/100 from generate_series(1,1000) x;
 create unique index on fkest(x, x10, x100);
 analyze fkest;
 
---dg-differs: the plan
---dg explain (costs off)
---dg select * from fkest f1
---dg   join fkest f2 on (f1.x = f2.x and f1.x10 = f2.x10b and f1.x100 = f2.x100)
---dg   join fkest f3 on f1.x = f3.x
---dg   where f1.x100 = 2;
+explain (costs off)
+select * from fkest f1
+  join fkest f2 on (f1.x = f2.x and f1.x10 = f2.x10b and f1.x100 = f2.x100)
+  join fkest f3 on f1.x = f3.x
+  where f1.x100 = 2;
 
 alter table fkest add constraint fk
   foreign key (x, x10b, x100) references fkest (x, x10, x100);
@@ -3895,17 +3825,14 @@ explain (verbose, costs off)
 select * from j1
 left join j2 on j1.id1 = j2.id1 where j1.id2 = 1;
 
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
---dg create unique index j1_id2_idx on j1(id2) where id2 is not null;
+create unique index j1_id2_idx on j1(id2) where id2 is not null;
 
 -- ensure we don't use a partial unique index as unique proofs
---dg-cascade
---dg explain (verbose, costs off)
---dg select * from j1
---dg inner join j2 on j1.id2 = j2.id2;
+explain (verbose, costs off)
+select * from j1
+inner join j2 on j1.id2 = j2.id2;
 
---dg-cascade
---dg drop index j1_id2_idx;
+drop index j1_id2_idx;
 
 -- validate logic in merge joins which skips mark and restore.
 -- it should only do this if all quals which were used to detect the unique
@@ -3915,16 +3842,14 @@ set enable_hashjoin to 0;
 set enable_sort to 0;
 
 -- create indexes that will be preferred over the PKs to perform the join
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
---dg create index j1_id1_idx on j1 (id1) where id1 % 1000 = 1;
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
---dg create index j2_id1_idx on j2 (id1) where id1 % 1000 = 1;
+create index j1_id1_idx on j1 (id1) where id1 % 1000 = 1;
+create index j2_id1_idx on j2 (id1) where id1 % 1000 = 1;
 
 -- need an additional row in j2, if we want j2_id1_idx to be preferred
 insert into j2 values(1,2);
 analyze j2;
 
---dg-cascade
+--dg-differs: the plan
 --dg explain (costs off) select * from j1
 --dg inner join j2 on j1.id1 = j2.id1 and j1.id2 = j2.id2
 --dg where j1.id1 % 1000 = 1 and j2.id1 % 1000 = 1;
@@ -3934,7 +3859,7 @@ inner join j2 on j1.id1 = j2.id1 and j1.id2 = j2.id2
 where j1.id1 % 1000 = 1 and j2.id1 % 1000 = 1;
 
 -- Exercise array keys mark/restore B-Tree code
---dg-cascade
+--dg-differs: the plan
 --dg explain (costs off) select * from j1
 --dg inner join j2 on j1.id1 = j2.id1 and j1.id2 = j2.id2
 --dg where j1.id1 % 1000 = 1 and j2.id1 % 1000 = 1 and j2.id1 = any (array[1]);
@@ -3944,7 +3869,7 @@ inner join j2 on j1.id1 = j2.id1 and j1.id2 = j2.id2
 where j1.id1 % 1000 = 1 and j2.id1 % 1000 = 1 and j2.id1 = any (array[1]);
 
 -- Exercise array keys "find extreme element" B-Tree code
---dg-cascade
+--dg-differs: the plan
 --dg explain (costs off) select * from j1
 --dg inner join j2 on j1.id1 = j2.id1 and j1.id2 = j2.id2
 --dg where j1.id1 % 1000 = 1 and j2.id1 % 1000 = 1 and j2.id1 >= any (array[1,5]);
@@ -3962,26 +3887,24 @@ drop table j2;
 drop table j3;
 
 -- check that semijoin inner is not seen as unique for a portion of the outerrel
---dg-differs: the plan
---dg explain (verbose, costs off)
---dg select t1.unique1, t2.hundred
---dg from onek t1, tenk1 t2
---dg where exists (select 1 from tenk1 t3
---dg               where t3.thousand = t1.unique1 and t3.tenthous = t2.hundred)
---dg       and t1.unique1 < 1;
+explain (verbose, costs off)
+select t1.unique1, t2.hundred
+from onek t1, tenk1 t2
+where exists (select 1 from tenk1 t3
+              where t3.thousand = t1.unique1 and t3.tenthous = t2.hundred)
+      and t1.unique1 < 1;
 
 -- ... unless it actually is unique
 create table j3 as select unique1, tenthous from onek;
 vacuum analyze j3;
 create unique index on j3(unique1, tenthous);
 
---dg-differs: the plan
---dg explain (verbose, costs off)
---dg select t1.unique1, t2.hundred
---dg from onek t1, tenk1 t2
---dg where exists (select 1 from j3
---dg               where j3.unique1 = t1.unique1 and j3.tenthous = t2.hundred)
---dg       and t1.unique1 < 1;
+explain (verbose, costs off)
+select t1.unique1, t2.hundred
+from onek t1, tenk1 t2
+where exists (select 1 from j3
+              where j3.unique1 = t1.unique1 and j3.tenthous = t2.hundred)
+      and t1.unique1 < 1;
 
 drop table j3;
 
@@ -4042,11 +3965,10 @@ GROUP BY s.c1, s.c2;
 DROP TABLE group_tbl;
 
 -- Test that we ignore PlaceHolderVars when looking up statistics
---dg-differs: the plan
---dg EXPLAIN (COSTS OFF)
---dg SELECT t1.unique1 FROM tenk1 t1 LEFT JOIN
---dg   (SELECT *, 42 AS phv FROM tenk1 t2) ss ON t1.unique2 = ss.unique2
---dg WHERE ss.unique1 = ss.phv AND t1.unique1 < 100;
+EXPLAIN (COSTS OFF)
+SELECT t1.unique1 FROM tenk1 t1 LEFT JOIN
+  (SELECT *, 42 AS phv FROM tenk1 t2) ss ON t1.unique2 = ss.unique2
+WHERE ss.unique1 = ss.phv AND t1.unique1 < 100;
 
 SELECT t1.unique1 FROM tenk1 t1 LEFT JOIN
   (SELECT *, 42 AS phv FROM tenk1 t2) ss ON t1.unique2 = ss.unique2

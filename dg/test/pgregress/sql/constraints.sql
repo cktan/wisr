@@ -404,12 +404,11 @@ INSERT INTO UNIQUE_TBL VALUES (6, 'six-upsert-insert') ON CONFLICT (i) DO UPDATE
 -- should fail
 INSERT INTO UNIQUE_TBL VALUES (1, 'a'), (2, 'b'), (2, 'b') ON CONFLICT (i) DO UPDATE SET t = 'fails';
 
---dg-differs: the result
---dg SELECT * FROM UNIQUE_TBL;
+SELECT * FROM UNIQUE_TBL;
 
 DROP TABLE UNIQUE_TBL;
 
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
+--dg-skip: CREATE INDEX supports only columns, expressions, WHERE, UNIQUE and INCLUDE yet
 --dg CREATE TABLE UNIQUE_TBL (i int UNIQUE NULLS NOT DISTINCT, t text);
 
 --dg-cascade

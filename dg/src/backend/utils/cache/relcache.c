@@ -1713,6 +1713,8 @@ static Relation RelationBuildSmIndexDesc(Oid indexoid, Oid table,
   Form_pg_index index;
   int nopclasses;
   const cat_opclass_t *opclasses = cat_opclasses(&nopclasses);
+  List *exprs = NIL, *pred = NIL, *names = NIL;
+  int e = 0;
 
   for (int i = 0; desc != NULL && i < desc->nindexes; i++)
     if (desc->indexes[i].oid == indexoid)
@@ -1747,15 +1749,32 @@ static Relation RelationBuildSmIndexDesc(Oid indexoid, Oid table,
   relation->rd_backend = INVALID_PROC_NUMBER;
   relation->rd_islocaltemp = desc->nspoid == PG_TEMP_NAMESPACE;
 
+  /*
+   * A key that is an expression takes its name and type from it, read here,
+   * outside the cache's context.
+   */
+  if (ix->eval != NULL)
+    smstore_index_eval_parts(ix->eval, &exprs, &pred, &names);
+
   /* Its columns are the table's, in the cache's context. */
   oldcxt = MemoryContextSwitchTo(CacheMemoryContext);
   relation->rd_att->tdtypeid = RECORDOID;
   relation->rd_att->tdtypmod = -1;
   for (int i = 0; i < ix->ncolumns; i++) {
-    smstore_column_t *col = &desc->columns[ix->attnums[i] - 1];
+    if (0 == ix->attnums[i]) {
+      Node *expr = (Node *)list_nth(exprs, e);
 
-    TupleDescInitEntry(relation->rd_att, i + 1, col->name, col->typid,
-                       col->typmod, 0);
+      TupleDescInitEntry(relation->rd_att, i + 1,
+                         strVal(list_nth(names, e)), exprType(expr),
+                         exprTypmod(expr), 0);
+      TupleDescAttr(relation->rd_att, i)->attcollation = exprCollation(expr);
+      e++;
+    } else {
+      smstore_column_t *col = &desc->columns[ix->attnums[i] - 1];
+
+      TupleDescInitEntry(relation->rd_att, i + 1, col->name, col->typid,
+                         col->typmod, 0);
+    }
     TupleDescAttr(relation->rd_att, i)->attrelid = indexoid;
     populate_compact_attribute(relation->rd_att, i);
   }
@@ -1823,6 +1842,30 @@ static Relation RelationBuildSmIndexDesc(Oid indexoid, Oid table,
     relation->rd_indcollation[i] = att->attcollation;
     relation->rd_indoption[i] = (ix->desc[i] ? INDOPTION_DESC : 0) |
                                 (ix->nulls_first[i] ? INDOPTION_NULLS_FIRST : 0);
+  }
+
+  /*
+   * Its expressions and predicate, as RelationGetIndexExpressions() and
+   * RelationGetIndexPredicate() make pg_index's ready: it has no
+   * rd_indextuple for them to read.
+   */
+  if (NIL != exprs) {
+    exprs = (List *)eval_const_expressions(NULL, (Node *)exprs);
+    fix_opfuncids((Node *)exprs);
+    oldcxt = MemoryContextSwitchTo(relation->rd_indexcxt);
+    relation->rd_indexprs = copyObject(exprs);
+    MemoryContextSwitchTo(oldcxt);
+  }
+  if (NIL != pred) {
+    Node *clause =
+        eval_const_expressions(NULL, (Node *)make_ands_explicit(pred));
+
+    clause = (Node *)canonicalize_qual((Expr *)clause, false);
+    pred = make_ands_implicit((Expr *)clause);
+    fix_opfuncids((Node *)pred);
+    oldcxt = MemoryContextSwitchTo(relation->rd_indexcxt);
+    relation->rd_indpred = copyObject(pred);
+    MemoryContextSwitchTo(oldcxt);
   }
 
   RelationInitLockInfo(relation);

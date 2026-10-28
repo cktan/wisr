@@ -58,10 +58,10 @@ statement error collations are not supported by type integer
 create index kbad on k (i collate "C")
 
 # Verify that what sm cannot key by yet is refused: an operator class not
-# the type's default, a collation not the column's, and an expression.
+# the type's default, and a collation not the column's. An expression is
+# keyed (expr_index.test).
 # 1. Name text_pattern_ops on a text column.
 # 2. Name collation "C" on a column of the default collation.
-# 3. Index an expression.
 
 onlyif digres
 statement error operator class text_pattern_ops is not supported yet
@@ -70,7 +70,3 @@ create index kbad on k (t text_pattern_ops)
 onlyif digres
 statement error collation "C" is not supported for an index key yet
 create index kbad on k (t collate "C")
-
-onlyif digres
-statement error an index key is a column, not an expression, yet
-create index kbad on k (lower(t))

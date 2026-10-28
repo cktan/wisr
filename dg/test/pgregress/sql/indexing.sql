@@ -236,10 +236,8 @@ select indexrelid::regclass, indrelid::regclass
 create table idxpart1 (a int, b int);
 --dg-skip: access method "?" is not supported
 --dg create index on idxpart1 using hash (a);
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
---dg create index on idxpart1 (a) where b > 1;
---dg-skip: an index key is a column, not an expression, yet
---dg create index on idxpart1 ((a + 0));
+create index on idxpart1 (a) where b > 1;
+create index on idxpart1 ((a + 0));
 create index on idxpart1 (a, a);
 --dg-cascade
 --dg create index on idxpart (a);
@@ -404,8 +402,7 @@ create index on only idxpart1 (a);
 -- create parent indexes
 --dg-cascade
 --dg create index on only idxpart ((a/b));
---dg-skip: an index key is a column, not an expression, yet
---dg create index on only idxpart1 ((a/b));
+create index on only idxpart1 ((a/b));
 --dg-cascade
 --dg create index on only idxpart2 ((a/b));
 -- fail, leaves behind an invalid index on the leaf partition
@@ -472,7 +469,7 @@ create index on only idxpart1 (a);
 --dg    where relname like 'idxpart%' order by relname;
 -- fix only idxpart1's index, leave idxpart2's still invalid
 delete from idxpart1 where b = 0;
---dg-cascade
+--dg-differs: the result
 --dg reindex index concurrently idxpart1_expr_idx;
 -- re-attach the fixed child; parent should stay invalid
 --dg-skip: ALTER INDEX is not supported yet
@@ -577,8 +574,7 @@ create index on idxpart1 (a);
 --dg create table idxpart (a int, b int) partition by range (a);
 --dg-cascade
 --dg create table idxpart1 (like idxpart);
---dg-skip: an index key is a column, not an expression, yet
---dg create index on idxpart1 ((a + b));
+create index on idxpart1 ((a + b));
 --dg-cascade
 --dg create index on idxpart ((a + b));
 --dg-cascade
@@ -681,12 +677,9 @@ create index idxpart1_1b_idx on idxpart1 (b);
 -- test expressions and partial-index predicate, too
 --dg-cascade
 --dg create index idxpart_2_idx on only idxpart ((b + a)) where a > 1;
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
---dg create index idxpart1_2_idx on idxpart1 ((b + a)) where a > 1;
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
---dg create index idxpart1_2b_idx on idxpart1 ((a + b)) where a > 1;
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
---dg create index idxpart1_2c_idx on idxpart1 ((b + a)) where b > 1;
+create index idxpart1_2_idx on idxpart1 ((b + a)) where a > 1;
+create index idxpart1_2b_idx on idxpart1 ((a + b)) where a > 1;
+create index idxpart1_2c_idx on idxpart1 ((b + a)) where b > 1;
 --dg-cascade
 --dg alter index idxpart_1_idx attach partition idxpart1_1b_idx;	-- fail
 --dg-skip: ALTER INDEX is not supported yet
@@ -742,8 +735,7 @@ create index on idxpart2 (c, b);
 --dg alter table idxpart1 drop column col1, drop column col2;
 --dg-cascade
 --dg alter table idxpart2 drop column col1, drop column col2;
---dg-skip: an index key is a column, not an expression, yet
---dg create index on idxpart2 (abs(b));
+create index on idxpart2 (abs(b));
 --dg-cascade
 --dg alter table idxpart attach partition idxpart2 for values from (0) to (1);
 --dg-cascade
@@ -773,8 +765,7 @@ create index on idxpart2 (c, b);
 --dg alter table idxpart attach partition idxpart1 for values from (0) to (1000);
 --dg-cascade
 --dg create table idxpart2 (col1 int, col2 int, b int, a int);
---dg-skip: CREATE INDEX supports only columns, UNIQUE and INCLUDE yet
---dg create index on idxpart2 (a) where b > 1000;
+create index on idxpart2 (a) where b > 1000;
 --dg-cascade
 --dg alter table idxpart2 drop column col1, drop column col2;
 --dg-cascade

@@ -56,8 +56,7 @@ SELECT * FROM temptest;
 CREATE TEMP TABLE temptest(col int) ON COMMIT DELETE ROWS;
 
 -- while we're here, verify successful truncation of index with SQL function
---dg-skip: an index key is a column, not an expression, yet
---dg CREATE INDEX ON temptest(bit_length(''));
+CREATE INDEX ON temptest(bit_length(''));
 
 BEGIN;
 INSERT INTO temptest VALUES (1);

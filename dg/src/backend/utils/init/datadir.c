@@ -27,6 +27,7 @@
 #include <pthread.h>
 #include <signal.h>
 
+#include "access/smstore.h"
 #include "access/transam.h"
 #include "common/string.h"
 #include "miscadmin.h"
@@ -122,6 +123,13 @@ void datadir_load(void) {
    */
   if (sm_set_toast(dds().sm_env, 1) != 0)
     ereport(FATAL, (errmsg("could not turn on TOAST: %s", sm_errmsg())));
+  /*
+   * Before any database is opened, which may resume the build of a partial
+   * or an expression index at once: digres evaluates them (smstore.c).
+   */
+  if (smstore_set_index_evaluator(dds().sm_env) != 0)
+    ereport(FATAL,
+            (errmsg("could not set the index evaluator: %s", sm_errmsg())));
 }
 
 /* The name of the superuser, the one role there is. */
