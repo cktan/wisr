@@ -1694,6 +1694,15 @@ ObjectAddress smstore_create_table(CreateStmt *stmt) {
     int32 typmod;
 
     check_column_name(col->colname);
+    /*
+     * A name given twice, by the list or by its LIKE clauses, PostgreSQL's
+     * MergeAttributes() refuses before sm would.
+     */
+    for (const sm_column_spec_t &c : columns)
+      if (strcmp(c.name, col->colname) == 0)
+        ereport(ERROR, (errcode(ERRCODE_DUPLICATE_COLUMN),
+                        errmsg("column \"%s\" specified more than once",
+                               col->colname)));
     if (col->collClause != NULL || col->cooked_default != NULL ||
         col->generated != 0 || !only_taken(col->constraints))
       ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),

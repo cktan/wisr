@@ -217,6 +217,20 @@
 (table-drop wide3)
 (commit)
 
+# A table whose columns two share a name is refused, and not made, as
+# digres refuses one first with PostgreSQL's error (dg WORKNOTE.md step
+# 309); "A" and "a" are two names.
+# 1. table-create with two columns named a: ERR_INVALID.
+# 2. The table is not there; one with columns A and a is made.
+(begin :rc)
+(assert-err :err-invalid (table-create dup2 (columns (a :int4) (a :int4))))
+(abort)
+(begin :rc)
+(assert-eq (find |(= $ "dup2") (list-tables)) nil)
+(table-create cased (columns (A :int4) (a :int4)))
+(table-drop cased)
+(commit)
+
 (db-close)
 (env-detach :force true)
 (rm-rf test-dir)

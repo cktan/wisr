@@ -94,6 +94,6 @@ Each reproduces alone on both servers, and is an issue in
 | 7 | Fixed, `../../WORKNOTE.md` step 303: `ON COMMIT DELETE ROWS` on a table a foreign key references committed; PostgreSQL refuses it, as the delete would break the key. | `temp` | medium |
 | 8 | Fixed, `../../WORKNOTE.md` step 307: `CREATE TABLE pg_catalog.t()` succeeded; PostgreSQL refuses it. | `alter_table` | low |
 | 9 | Fixed, `../../WORKNOTE.md` step 306: `INSERT ... ON CONFLICT` under REPEATABLE READ or SERIALIZABLE failed with sm1's `sm1_read_latest requires READ COMMITTED` on a key its own statement took; DO NOTHING failed where PostgreSQL succeeds. | `insert_conflict` | low: the message |
-| 10 | `CREATE TABLE t (LIKE a, LIKE a)` fails with sm's `create table: a column without a n...`, not `column "x" specified more than once`. | `create_table_like` | low: the message |
+| 10 | Fixed, `../../WORKNOTE.md` step 309: `CREATE TABLE t (LIKE a, LIKE a)` failed with sm's `create table: a column without a n...`, not `column "x" specified more than once`. | `create_table_like` | low: the message |
 | 11 | Fixed, `../../WORKNOTE.md` step 308: a foreign key's `SET DEFAULT (c, c)` kept the column twice, and the parent's row could not be deleted; PostgreSQL keeps it once. | `foreign_key` | low |
 | 12 | The hash access method says `can_exclude` is false; PostgreSQL's says true. | `amutils` | low |

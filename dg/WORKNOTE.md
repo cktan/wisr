@@ -8990,3 +8990,28 @@ could not be deleted at all.
   statements back: the SET DEFAULT block's definition, DELETE
   and SELECT by this fix, the only ones a build without it
   fails; the rest by the foreign key work since.
+
+## Step 309: a column named twice is PostgreSQL's error
+
+`CREATE TABLE t (LIKE a, LIKE a)` failed with sm's `could not
+create a table: create table: a column without a name, or two
+with one: xx` (`ISSUE.md` issue 10). Not LIKE alone: any column
+named twice, `(a int, a int)` or `(LIKE a, xx text)`, did; the
+table was refused, as PostgreSQL refuses it, with sm's words.
+PostgreSQL's `MergeAttributes()`, which says `column "xx"
+specified more than once`, is not on a table in sm's path.
+
+- **The check**: `smstore_create_table()`'s loop over the
+  columns, LIKE's among them after parse analysis, refuses a
+  name an earlier column has, with PostgreSQL's error and code
+  (`ERRCODE_DUPLICATE_COLUMN`), before sm is asked. `"A"` and
+  `a` are two names, as in PostgreSQL.
+- **Tests**: `test/server.sh`, a name twice in the list, by
+  two LIKEs and by a LIKE and the list, each PostgreSQL's
+  error, and no table made; the step fails without the check.
+  sm3's own refusal, which the check stands in front of, had
+  no test: `test_ddl.cc` (two columns of one name, one of
+  none, and `A` and `a` taken) and rel's `test_basic.rel`
+  (`table-create` of two columns `a`). sm1 knows no columns,
+  so no scenario reaches it. pgregress's `create_table_like`,
+  ported again, has its `(LIKE inhx, LIKE inhx)` back.

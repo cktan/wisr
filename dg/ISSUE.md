@@ -13,8 +13,9 @@ seeing its own transaction's later DELETE, in step 304; issue
 5, a FOR UPDATE cursor returning a row updated after it was
 declared, in step 305; issue 9, ON CONFLICT above READ
 COMMITTED saying sm1's error, in step 306; issue 8, a table
-made in pg_catalog, in step 307; and issue 11, a foreign key
-keeping a SET DEFAULT column twice, in step 308.
+made in pg_catalog, in step 307; issue 11, a foreign key
+keeping a SET DEFAULT column twice, in step 308; and issue 10,
+CREATE TABLE (LIKE a, LIKE a) saying sm's error, in step 309.
 
 ---
 
@@ -75,21 +76,6 @@ yet: "where to start" is where the difference shows, not a
 cause found.
 
 ---
-
-## Issue 10: CREATE TABLE (LIKE a, LIKE a) says sm's error
-
-```sql
-create table inhx (xx text default 'text');
-create table inhf (like inhx, like inhx);
--- PostgreSQL: ERROR:  column "xx" specified more than once
--- digres:     ERROR:  could not create a table: create table: a
---             column without a name, or two with one: xx
-```
-
-pgregress: `create_table_like`. **Where to start**: digres
-does not check the merged column list for a repeated name
-before it hands it to sm, as PostgreSQL's
-`MergeAttributes()` does.
 
 ## Issue 12: the hash access method says it cannot exclude
 

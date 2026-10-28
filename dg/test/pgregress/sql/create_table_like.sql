@@ -28,9 +28,7 @@ SELECT * FROM inhx; /* Empty set since LIKE inherits structure only */
 --dg SELECT * FROM ctla;
  /* Has ee entry */
 
---dg-differs: another error: could not create a table: create table: a column without a name, or two with one: xx
---dg CREATE TABLE inhf (LIKE inhx, LIKE inhx);
- /* Throw error */
+CREATE TABLE inhf (LIKE inhx, LIKE inhx); /* Throw error */
 
 --dg-skip: ALTER TABLE supports only ADD COLUMN, DROP COLUMN, a FOREIGN KEY's ADD, DROP and VALIDATE CONSTRAINT, and RENAME yet
 --dg CREATE TABLE inhf (LIKE inhx INCLUDING DEFAULTS INCLUDING CONSTRAINTS);

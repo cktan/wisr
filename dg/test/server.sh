@@ -361,6 +361,9 @@ grep -q "canceling authentication due to timeout" "$work/log" ||
 # 2. Confirm another session cannot create it again, and IF NOT EXISTS
 #    passes over it.
 # 3. Confirm a column type sm's tables do not take yet is refused.
+# 4. Confirm a column named twice, in the list, by two LIKE clauses or by
+#    one and the list, is PostgreSQL's error, and makes no table
+#    (WORKNOTE.md step 309).
 [ "$(local_psql -c 'create table t1 (a int2, b int4, c int8 not null)' \
   2>&1)" = "CREATE TABLE" ] || fail "create table"
 local_psql -c 'create table t1 (a int4)' > "$work/table.out" 2>&1
@@ -372,6 +375,16 @@ grep -q 'relation "t1" already exists, skipping' "$work/table.out" ||
 local_psql -c 'create table t2 (a point)' >> "$work/table.out" 2>&1
 grep -q 'type point is not supported yet' "$work/table.out" ||
   fail "create table, a type not taken"
+[ "$(local_psql -c 'create table td1 (a int4, a int4)' \
+  -c "create table td0 (xx text default 'text')" \
+  -c 'create table td2 (like td0, like td0)' \
+  -c 'create table td3 (like td0, xx text)' 2>&1 |
+  grep -c 'column "[a-z]*" specified more than once')" = 3 ] ||
+  fail "create table, a column named twice"
+[ "$(local_psql -c "select count(*) from pg_class
+    where relname in ('td1', 'td2', 'td3')" 2>&1)" = 0 ] ||
+  fail "create table, a column named twice, made a table"
+local_psql -c 'drop table td0' > /dev/null 2>&1
 
 # Verify that INSERT writes rows to sm and a scan reads them back, in the
 # transaction's isolation.

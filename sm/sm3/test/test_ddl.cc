@@ -212,6 +212,33 @@ TEST_CASE("a create that fails leaves no store behind") {
   db.commit();
 }
 
+TEST_CASE("a table's columns each have a name, and no two the same") {
+  // Verify that create_table refuses a column list the table cannot
+  // name its columns by, the host's last line behind its own check
+  // (../../dg/WORKNOTE.md step 309).
+  // 1. Two columns named a: SM_ERR_INVALID; so is a column with no
+  //    name. "A" and "a" are two names.
+  // 2. Neither refused table is found; the third is.
+  cat_db_t db;
+  auto col = [](const char *name) {
+    return sm3::column_spec_t{name, sm2::type_int4.code, -1, false};
+  };
+  std::vector<sm3::column_spec_t> twice = {col("a"), col("a")};
+  std::vector<sm3::column_spec_t> unnamed = {col("")};
+  std::vector<sm3::column_spec_t> cased = {col("A"), col("a")};
+  uint64_t t = 0;
+  db.begin();
+  CHECK(sm3::create_table(db.ss, sm3::nsp_public, "t2", twice, t) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  CHECK(sm3::create_table(db.ss, sm3::nsp_public, "t0", unnamed, t) == -1);
+  CHECK(sm1::errnum() == sm1::SM_ERR_INVALID);
+  REQUIRE(sm3::create_table(db.ss, sm3::nsp_public, "tc", cased, t) == 0);
+  CHECK(!sm3::cat_get_table(db.ss, sm3::nsp_public, "t2"));
+  CHECK(!sm3::cat_get_table(db.ss, sm3::nsp_public, "t0"));
+  CHECK(sm3::cat_get_table(db.ss, sm3::nsp_public, "tc"));
+  db.commit();
+}
+
 TEST_CASE("a namespace is created like a table, and found by name") {
   // Verify create_namespace, cat_get_namespace and
   // cat_list_namespaces.
